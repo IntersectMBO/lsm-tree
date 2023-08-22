@@ -1,0 +1,221 @@
+name: Haskell CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+  merge_group:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+
+permissions:
+  contents: read
+
+jobs:
+  # Build and test
+  build:
+
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        ghc: ["8.10.7", "9.2.8", "9.6.2"]
+        cabal: ["3.10.1.0"]
+        os: [ubuntu-latest, windows-latest, macOS-latest]
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Setup Haskell
+      id: setup-haskell
+      uses: haskell/actions/setup@v2
+      with:
+        ghc-version: ${{ matrix.ghc }}
+        cabal-version: ${{ matrix.cabal }}
+        cabal-update: false
+
+    - name: "Configure cabal.project.local"
+      run: |
+        cp .github/workflows/cabal.project.local.haskell cabal.project.local
+
+    - name: Cabal update
+      run: cabal update
+
+    - name: Record cabal dependencies
+      id: record-deps
+      run: |
+        cabal build all --dry-run
+
+    - name: Cache cabal store
+      uses: actions/cache@v3
+      env:
+        cache-name: cache-cabal-build
+      with:
+        path: ${{ steps.setup-haskell.outputs.cabal-store }}
+        key: ${{ runner.os }}-${{ matrix.ghc }}-${{ env.cache-name }}-${{ hashFiles('**/*.cabal') }}-${{ hashFiles('**/cabal.project') }}
+        restore-keys: |
+          ${{ runner.os }}-${{ matrix.ghc }}-${{ env.cache-name }}-${{ hashFiles('**/*.cabal') }}-${{ hashFiles('**/cabal.project') }}
+          ${{ runner.os }}-${{ matrix.ghc }}-${{ env.cache-name }}-${{ hashFiles('**/*.cabal') }}-
+          ${{ runner.os }}-${{ matrix.ghc }}-${{ env.cache-name }}-
+
+    - name: Install cabal dependencies
+      run: cabal build --only-dependencies --enable-tests --enable-benchmarks all
+
+    - name: Build
+      run: cabal build --enable-tests --enable-benchmarks all
+
+    - name: Run tests
+      run: cabal test all
+
+  # Check formatting for Haskell files
+  stylish-haskell:
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        ghc: ["9.2.8"]
+        cabal: ["3.10.1.0"]
+        os: [ubuntu-latest]
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Install system dependencies (apt-get)
+      run: |
+        sudo apt-get update
+        sudo apt-get -y install fd-find
+
+    - name: Setup Haskell
+      id: setup-haskell
+      uses: haskell/actions/setup@v2
+      with:
+        ghc-version: ${{ matrix.ghc }}
+        cabal-version: ${{ matrix.cabal }}
+        cabal-update: false
+
+    - name: Cabal update
+      run: cabal update
+
+    - name: Setup cabal bin path
+      run: echo "$HOME/.cabal/bin" >> $GITHUB_PATH
+
+    - name: Cache cabal store
+      uses: actions/cache@v3
+      env:
+        cache-name: cache-cabal-stylish
+      with:
+        path: ${{ steps.setup-haskell.outputs.cabal-store }}
+        key: ${{ runner.os }}-${{ matrix.ghc }}-${{ env.cache-name }}-${{ hashFiles('**/*.cabal') }}-${{ hashFiles('**/cabal.project') }}
+        restore-keys: |
+          ${{ runner.os }}-${{ matrix.ghc }}-${{ env.cache-name }}-${{ hashFiles('**/*.cabal') }}-${{ hashFiles('**/cabal.project') }}
+          ${{ runner.os }}-${{ matrix.ghc }}-${{ env.cache-name }}-${{ hashFiles('**/*.cabal') }}-
+          ${{ runner.os }}-${{ matrix.ghc }}-${{ env.cache-name }}-
+
+    - name: Install stylish-haskell
+      run: cabal install stylish-haskell --constraint 'stylish-haskell == 0.14.4.0'
+
+    - name: Record stylish-haskell version
+      run: |
+        which stylish-haskell
+        stylish-haskell --version
+
+    - name: Run stylish-haskell
+      run: |
+        ./scripts/format-stylish.sh -p . -d
+        git diff --exit-code
+
+  # Check formatting for cabal files
+  cabal-fmt:
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        ghc: ["9.2.8"]
+        cabal: ["3.10.1.0"]
+        os: [ubuntu-latest]
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Install system dependencies (apt-get)
+      run: |
+        sudo apt-get update
+        sudo apt-get -y install fd-find
+
+    - name: Setup Haskell
+      id: setup-haskell
+      uses: haskell/actions/setup@v2
+      with:
+        ghc-version: ${{ matrix.ghc }}
+        cabal-version: ${{ matrix.cabal }}
+        cabal-update: false
+
+    - name: Cabal update
+      run: cabal update
+
+    - name: Setup cabal bin path
+      run: echo "$HOME/.cabal/bin" >> $GITHUB_PATH
+
+    - name: Cache cabal store
+      uses: actions/cache@v3
+      env:
+        cache-name: cache-cabal-cabal-fmt
+      with:
+        path: ${{ steps.setup-haskell.outputs.cabal-store }}
+        key: ${{ runner.os }}-${{ matrix.ghc }}-${{ env.cache-name }}-${{ hashFiles('**/*.cabal') }}-${{ hashFiles('**/cabal.project') }}
+        restore-keys: |
+          ${{ runner.os }}-${{ matrix.ghc }}-${{ env.cache-name }}-${{ hashFiles('**/*.cabal') }}-${{ hashFiles('**/cabal.project') }}
+          ${{ runner.os }}-${{ matrix.ghc }}-${{ env.cache-name }}-${{ hashFiles('**/*.cabal') }}-
+          ${{ runner.os }}-${{ matrix.ghc }}-${{ env.cache-name }}-
+
+    - name: Install cabal-fmt
+      run: cabal install cabal-fmt --constraint 'cabal-fmt == 0.1.7'
+
+    - name: Record cabal-fmt version
+      run: |
+        which cabal-fmt
+        cabal-fmt --version
+
+    - name: Run cabal-fmt
+      run: |
+        ./scripts/format-cabal.sh
+        git diff --exit-code
+
+  # Check cabal files
+  cabal-check:
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        ghc: ["9.6.2"]
+        cabal: ["3.10.1.0"]
+        os: [ubuntu-latest]
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Setup Haskell
+      id: setup-haskell
+      uses: haskell/actions/setup@v2
+      with:
+        ghc-version: ${{ matrix.ghc }}
+        cabal-version: ${{ matrix.cabal }}
+        cabal-update: false
+
+    - name: Cabal update
+      run: cabal update
+
+    - name: Run cabal check
+      run: |
+        ./scripts/check-cabal.sh
