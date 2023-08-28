@@ -1,0 +1,123 @@
+# Sources
+# * https://github.com/haskell/actions/tree/v2/setup#model-cabal-workflow-with-caching
+# * https://github.com/actions/starter-workflows/blob/main/pages/static.yml
+# * https://haskell-haddock.readthedocs.io/en/latest/multi-components.html
+# * https://github.com/input-output-hk/ouroboros-consensus/blob/main/.github/workflows/ci.yml
+# * https://github.com/input-output-hk/ouroboros-consensus/blob/main/scripts/docs/haddocks.sh
+#
+name: Documentation
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Allow only one concurrent deployment, skipping runs queued between the run in-progress and latest queued.
+# However, do NOT cancel in-progress runs as we want to allow these production deployments to complete.
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+
+  build-documentation:
+    name: Build documentation
+
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+
+    env:
+      ghc: "9.2.8"
+      cabal: "3.10.1.0"
+      os: ubuntu-latest"
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Setup Haskell
+      id: setup-haskell
+      uses: haskell/actions/setup@v2
+      with:
+        ghc-version: ${{ env.ghc }}
+        cabal-version: ${{ env.cabal }}
+        cabal-update: true
+
+    - name: Configure the build
+      run: |
+        cabal configure --disable-tests --disable-benchmarks --enable-documentation
+        cabal build all --dry-run
+      # The last step generates dist-newstyle/cache/plan.json for the cache key.
+
+    - name: Cache cabal store
+      uses: actions/cache@v3
+      env:
+        cache-name: ${{ runner.os }}-${{ env.ghc }}-documentation-cabal-store
+      with:
+        path: ${{ steps.setup-haskell.outputs.cabal-store }}
+        key: ${{ env.cache-name }}-${{ hashFiles('**/plan.json') }}
+        restore-keys: |
+          ${{ env.cache-name }}-${{ hashFiles('**/plan.json') }}
+          ${{ env.cache-name }}-
+
+    - name: Build haddocks
+      run: |
+        ./scripts/haddocks.sh
+        tar vzcf haddocks.tgz ./docs/haddocks
+
+    - name: Upload haddocks as an artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: haddocks
+        path: haddocks.tgz
+        retention-days: 1
+
+
+  deploy-documentation:
+    name: Deploy documentation to GitHub Pages
+
+    needs: build-documentation
+
+    runs-on: ubuntu-latest
+
+    strategy:
+        fail-fast: false
+
+    # https://github.com/actions/deploy-pages
+    permissions:
+      pages: write
+      id-token: write
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v3
+
+      - name: Download haddocks artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: haddocks
+
+      - name: Unpack haddocks artifact
+        run: |
+          tar vzxf haddocks.tgz
+
+      - name: Upload haddocks artifact to pages
+        uses: actions/upload-pages-artifact@v2
+        with:
+          path: ./docs/haddocks
+
+      - name: Deploy to GitHub pages
+        id: deployment
+        uses: actions/deploy-pages@v2

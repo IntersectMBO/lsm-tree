@@ -1,7 +1,9 @@
 # lsm-tree
 
 [![handbook](https://img.shields.io/badge/policy-Cardano%20Engineering%20Handbook-informational)](https://input-output-hk.github.io/cardano-engineering-handbook)
-[![Haskell CI](https://img.shields.io/github/actions/workflow/status/input-output-hk/lsm-tree/haskell.yml?label=Build&style=flat)](https://github.com/input-output-hk/lsm-tree/actions/workflows/haskell.yml)
+[![Haskell CI](https://img.shields.io/github/actions/workflow/status/input-output-hk/lsm-tree/haskell.yml?label=Build)](https://github.com/input-output-hk/lsm-tree/actions/workflows/haskell.yml)
+[![Documentation CI](https://img.shields.io/github/actions/workflow/status/input-output-hk/lsm-tree/documentation.yml?label=Documentation%20build)](https://github.com/input-output-hk/lsm-tree/actions/workflows/documentation.yml)
+[![Haddocks](https://img.shields.io/badge/documentation-Haddocks-purple)](https://input-output-hk.github.io/lsm-tree/)
 
 `lsm-tree` is a project that is developed by Well-Typed LLP on behalf of Input Output Global Inc (IOG). The main contributors are Duncan Coutts, Joris Dral, and Oleg Grenrus.
 

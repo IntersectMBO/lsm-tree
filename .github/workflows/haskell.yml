@@ -17,6 +17,7 @@ permissions:
 jobs:
   # Build and test
   build:
+    needs: [stylish-haskell, cabal-fmt, cabal-check]
 
     runs-on: ${{ matrix.os }}
 
@@ -37,14 +38,11 @@ jobs:
       with:
         ghc-version: ${{ matrix.ghc }}
         cabal-version: ${{ matrix.cabal }}
-        cabal-update: false
+        cabal-update: true
 
-    - name: "Configure cabal.project.local"
+    - name: Configure the build
       run: |
-        cp .github/workflows/cabal.project.local.haskell cabal.project.local
-
-    - name: Cabal update
-      run: cabal update
+        cabal configure --enable-test --enable-benchmark --ghc-options="-Werror"
 
     - name: Record cabal dependencies
       id: record-deps

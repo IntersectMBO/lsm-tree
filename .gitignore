@@ -24,4 +24,7 @@ cabal.project.local~
 .ghc.environment.*
 
 # Visual Studio Code
-/.vscode
+.vscode/
+
+# Documentation
+docs/haddocks
