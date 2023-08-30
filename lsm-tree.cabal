@@ -11,7 +11,7 @@ copyright:       2023 Input Output Global Inc (IOG)
 category:        Database
 build-type:      Simple
 extra-doc-files: CHANGELOG.md
-tested-with:     GHC ==8.10 || ==9.2 || ==9.6
+tested-with:     GHC ==8.10 || ==9.2 || ==9.4 || ==9.6
 
 source-repository head
   type:     git
