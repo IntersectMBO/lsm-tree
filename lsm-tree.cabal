@@ -32,12 +32,15 @@ library
     Data.Map.Range
     Database.LSMTree
     Database.LSMTree.Common
+    Database.LSMTree.Model.Normal
     Database.LSMTree.Monoidal
     Database.LSMTree.Normal
 
   build-depends:
     , base                 >=4.14     && <4.19
+    , bytestring
     , containers
+    , cryptohash-sha256
     , fs-api               ^>=0.2
     , io-classes           ^>=1.2
     , strict-checked-vars  ^>=0.1.0.3
@@ -53,13 +56,18 @@ test-suite lsm-tree-test
   type:             exitcode-stdio-1.0
   hs-source-dirs:   test
   main-is:          Main.hs
-  other-modules:    Test.Database.LSMTree
+  other-modules:
+    Test.Database.LSMTree
+    Test.Database.LSMTree.Model.Normal
+
   build-depends:
-    , base              >=4.14 && <4.19
+    , base                  >=4.14 && <4.19
+    , bytestring
     , fs-api
-    , fs-sim            ^>=0.2
-    , io-sim            ^>=1.2
+    , fs-sim                ^>=0.2
+    , io-sim                ^>=1.2
     , lsm-tree
+    , quickcheck-instances
     , tasty
     , tasty-quickcheck
 
