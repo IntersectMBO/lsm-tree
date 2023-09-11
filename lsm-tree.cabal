@@ -29,6 +29,7 @@ common warnings
 library
   import:           warnings
   exposed-modules:
+    Data.Map.Range
     Database.LSMTree
     Database.LSMTree.Common
     Database.LSMTree.Monoidal
@@ -36,6 +37,7 @@ library
 
   build-depends:
     , base                 >=4.14     && <4.19
+    , containers
     , fs-api               ^>=0.2
     , io-classes           ^>=1.2
     , strict-checked-vars  ^>=0.1.0.3
@@ -59,4 +61,19 @@ test-suite lsm-tree-test
     , io-sim            ^>=1.2
     , lsm-tree
     , tasty
+    , tasty-quickcheck
+
+test-suite map-range-test
+  import:           warnings
+  default-language: Haskell2010
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          map-range-test.hs
+  build-depends:
+    , base              >=4.14 && <4.19
+    , containers
+    , lsm-tree
+    , QuickCheck
+    , tasty
+    , tasty-hunit
     , tasty-quickcheck
