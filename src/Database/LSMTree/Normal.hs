@@ -27,7 +27,7 @@ module Database.LSMTree.Normal (
   , close
     -- * Table querying and updates
     -- ** Queries
-  , Range
+  , Range (..)
   , LookupResult (..)
   , lookups
   , RangeLookupResult (..)
