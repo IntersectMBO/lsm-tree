@@ -38,22 +38,10 @@ import           Data.Foldable (foldl')
 import           Data.Map (Map)
 import qualified Data.Map.Range as Map.R
 import qualified Data.Map.Strict as Map
+import           Database.LSMTree.Model.Common
+                     (SomeSerialisationConstraint (..))
 import           Database.LSMTree.Normal (Range (..))
 import           GHC.Exts (IsList (..))
-
-{-------------------------------------------------------------------------------
-  Temporary placeholder types
--------------------------------------------------------------------------------}
-
-class SomeSerialisationConstraint a where
-    serialise :: a -> BS.ByteString
-
-    -- Note: cannot fail.
-    deserialise :: BS.ByteString -> a
-
-instance SomeSerialisationConstraint BS.ByteString where
-    serialise = id
-    deserialise = id
 
 {-------------------------------------------------------------------------------
   Tables

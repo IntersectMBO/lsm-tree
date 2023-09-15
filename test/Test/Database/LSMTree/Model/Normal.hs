@@ -9,7 +9,7 @@ import           Test.Tasty
 import           Test.Tasty.QuickCheck
 
 tests :: TestTree
-tests = testGroup "Test.Database.LSMTree.Model.Normal"
+tests = testGroup "Database.LSMTree.Model.Normal"
     [ testProperty "lookup-insert" prop_lookupInsert
     , testProperty "lookup-delete" prop_lookupDelete
     , testProperty "insert-insert" prop_insertInsert
