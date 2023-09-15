@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts         #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 
 -- TODO: remove once the API is implemented.
@@ -22,6 +23,7 @@ module Database.LSMTree.Common (
   ) where
 
 import           Control.Concurrent.Class.MonadMVar (MonadMVar)
+import           Control.Concurrent.Class.MonadSTM (MonadSTM, STM)
 import           Control.Monad.Class.MonadThrow (MonadCatch, MonadThrow)
 import           Data.Bits (shiftR, (.&.))
 import qualified Data.ByteString as BS
@@ -36,7 +38,7 @@ import           System.FS.API (FsPath, SomeHasFS)
 -------------------------------------------------------------------------------}
 
 -- | Utility class for grouping @io-classes@ constraints.
-class (MonadMVar m, MonadThrow m, MonadCatch m) => IOLike m where
+class (MonadMVar m, MonadSTM m, MonadThrow (STM m), MonadThrow m, MonadCatch m) => IOLike m where
 instance IOLike IO
 
 {-------------------------------------------------------------------------------

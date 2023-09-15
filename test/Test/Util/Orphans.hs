@@ -19,6 +19,8 @@ import           Control.Monad ((<=<))
 import           Control.Monad.IOSim (IOSim)
 import           Data.Kind (Type)
 import           Database.LSMTree.Normal
+import           Test.QuickCheck (Arbitrary (..), frequency)
+import           Test.QuickCheck.Instances ()
 import           Test.QuickCheck.StateModel (Realized)
 import           Test.QuickCheck.StateModel.Lockstep (InterpretOp)
 import qualified Test.QuickCheck.StateModel.Lockstep.Op as Op
@@ -38,6 +40,15 @@ instance Functor (RangeLookupResult k v) where
   fmap f = \case
       FoundInRange         k v     -> FoundInRange         k v
       FoundInRangeWithBlob k v ref -> FoundInRangeWithBlob k v (f ref)
+
+instance (Arbitrary v, Arbitrary blob) => Arbitrary (Update v blob) where
+  arbitrary = frequency
+    [ (10, Insert <$> arbitrary <*> arbitrary)
+    , (1, pure Delete)
+    ]
+
+  shrink (Insert v blob) = Delete : map (uncurry Insert) (shrink (v, blob))
+  shrink Delete          = []
 
 {-------------------------------------------------------------------------------
   IOSim
