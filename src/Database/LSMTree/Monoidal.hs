@@ -27,7 +27,7 @@ module Database.LSMTree.Monoidal (
   , close
     -- * Table querying and updates
     -- ** Queries
-  , Range
+  , Range (..)
   , LookupResult (..)
   , lookups
   , RangeLookupResult (..)
@@ -37,6 +37,7 @@ module Database.LSMTree.Monoidal (
   , updates
   , inserts
   , deletes
+  , mupserts
     -- * Snapshots
   , VerificationFailure
   , SnapshotName
@@ -334,7 +335,7 @@ duplicate = undefined
 -- Multiple tables of the same type but with different configuration parameters
 -- can live in the same session. However, some operations, like
 mergeTables ::
-     (IOLike m, Monoid v)
+     (IOLike m, SomeUpdateConstraint v)
   => TableHandle m k v
   -> TableHandle m k v
   -> m (TableHandle m k v)
