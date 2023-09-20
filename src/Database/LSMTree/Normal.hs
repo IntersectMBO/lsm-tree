@@ -51,7 +51,7 @@ module Database.LSMTree.Normal (
 
 import           Data.Kind (Type)
 import           Data.Word (Word64)
-import           Database.LSMTree.Common (IOLike, Session,
+import           Database.LSMTree.Common (IOLike, Range (..), Session,
                      SomeSerialisationConstraint, closeSession, newSession)
 
 {-------------------------------------------------------------------------------
@@ -119,20 +119,12 @@ close = undefined
   Table querying and updates
 -------------------------------------------------------------------------------}
 
--- | A range of keys.
---
--- TODO: consider adding key prefixes to the range type.
-data Range k =
-    -- | Inclusive lower bound, exclusive upper bound
-    FromToExcluding k k
-    -- | Inclusive lower bound, inclusive upper bound
-  | FromToIncluding k k
-
 -- | Result of a single point lookup.
-data LookupResult k v blob =
+data LookupResult k v blobref =
     NotFound      !k
   | Found         !k !v
-  | FoundWithBlob !k !v !(BlobRef blob)
+  | FoundWithBlob !k !v !blobref
+  deriving (Eq, Show)
 
 -- | Perform a batch of lookups.
 --
@@ -141,13 +133,14 @@ lookups ::
      (IOLike m, SomeSerialisationConstraint k, SomeSerialisationConstraint v)
   => [k]
   -> TableHandle m k v blob
-  -> m [LookupResult k v blob]
+  -> m [LookupResult k v (BlobRef blob)]
 lookups = undefined
 
 -- | A result for one point in a range lookup.
-data RangeLookupResult k v blob =
+data RangeLookupResult k v blobref =
     FoundInRange         !k !v
-  | FoundInRangeWithBlob !k !v !(BlobRef blob)
+  | FoundInRangeWithBlob !k !v !blobref
+  deriving (Eq, Show)
 
 -- | Perform a range lookup.
 --
@@ -156,7 +149,7 @@ rangeLookup ::
      (IOLike m, SomeSerialisationConstraint k, SomeSerialisationConstraint v)
   => Range k
   -> TableHandle m k v blob
-  -> m [RangeLookupResult k v blob]
+  -> m [RangeLookupResult k v (BlobRef blob)]
 rangeLookup = undefined
 
 -- | Normal tables support insert and delete operations.

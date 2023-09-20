@@ -48,9 +48,11 @@ import           Data.Foldable (foldl')
 import           Data.Map (Map)
 import qualified Data.Map.Range as Map.R
 import qualified Data.Map.Strict as Map
-import           Database.LSMTree.Common (SomeSerialisationConstraint (..),
+import           Database.LSMTree.Common (Range (..),
+                     SomeSerialisationConstraint (..),
                      SomeUpdateConstraint (..))
-import           Database.LSMTree.Normal (Range (..))
+import           Database.LSMTree.Monoidal (LookupResult (..),
+                     RangeLookupResult (..), Update (..))
 import           GHC.Exts (IsList (..))
 
 {-------------------------------------------------------------------------------
@@ -97,12 +99,6 @@ deriving instance Eq (Table k v)
   Table querying and updates
 -------------------------------------------------------------------------------}
 
--- | Result of a single point lookup.
-data LookupResult k v =
-    NotFound      !k
-  | Found         !k !v
-  deriving (Eq, Show)
-
 -- | Perform a batch of lookups.
 --
 -- Lookups can be performed concurrently from multiple Haskell threads.
@@ -120,11 +116,6 @@ lookups ks tbl =
         Just v  -> Found k (deserialise v)
     | k <- ks
     ]
-
--- | A result for one point in a range lookup.
-data RangeLookupResult k v =
-    FoundInRange         !k !v
-  deriving (Eq, Show)
 
 -- | Perform a range lookup.
 --
@@ -150,17 +141,6 @@ rangeLookup r tbl =
     convertRange (FromToIncluding lb ub) =
         ( Map.R.Bound (serialise lb) Map.R.Inclusive
         , Map.R.Bound (serialise ub) Map.R.Inclusive )
-
--- | Normal tables support insert, delete and monoidal upsert operations.
---
--- An __update__ is a term that groups all types of table-manipulating
--- operations, like inserts and deletes.
-data Update v =
-    Insert !v
-  | Delete
-    -- | TODO: should be given a more suitable name.
-  | Mupsert !v
-  deriving (Eq, Show)
 
 -- | Perform a mixed batch of inserts, deletes and monoidal upserts.
 --

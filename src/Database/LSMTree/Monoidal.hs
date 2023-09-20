@@ -52,7 +52,7 @@ module Database.LSMTree.Monoidal (
 import           Data.Bifunctor (Bifunctor (second))
 import           Data.Kind (Type)
 import           Data.Word (Word64)
-import           Database.LSMTree.Common (IOLike, Session,
+import           Database.LSMTree.Common (IOLike, Range (..), Session,
                      SomeSerialisationConstraint, SomeUpdateConstraint,
                      closeSession, newSession)
 
@@ -121,19 +121,11 @@ close = undefined
   Table querying and updates
 -------------------------------------------------------------------------------}
 
--- | A range of keys.
---
--- TODO: consider adding key prefixes to the range type.
-data Range k =
-    -- | Inclusive lower bound, exclusive upper bound
-    FromToExcluding k k
-    -- | Inclusive lower bound, inclusive upper bound
-  | FromToIncluding k k
-
 -- | Result of a single point lookup.
 data LookupResult k v =
     NotFound      !k
   | Found         !k !v
+  deriving (Eq, Show)
 
 -- | Perform a batch of lookups.
 --
@@ -152,6 +144,7 @@ lookups = undefined
 -- | A result for one point in a range lookup.
 data RangeLookupResult k v =
     FoundInRange         !k !v
+  deriving (Eq, Show)
 
 -- | Perform a range lookup.
 --
@@ -167,7 +160,7 @@ rangeLookup ::
   -> m [RangeLookupResult k v]
 rangeLookup = undefined
 
--- | Normal tables support insert, delete and monoidal upsert operations.
+-- | Monoidal tables support insert, delete and monoidal upsert operations.
 --
 -- An __update__ is a term that groups all types of table-manipulating
 -- operations, like inserts and deletes.
