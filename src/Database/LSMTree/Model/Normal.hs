@@ -40,7 +40,8 @@ import qualified Data.Map.Range as Map.R
 import qualified Data.Map.Strict as Map
 import           Database.LSMTree.Common (Range (..),
                      SomeSerialisationConstraint (..))
-import           Database.LSMTree.Normal (Update (..))
+import           Database.LSMTree.Normal (LookupResult (..),
+                     RangeLookupResult (..), Update (..))
 import           GHC.Exts (IsList (..))
 
 {-------------------------------------------------------------------------------
@@ -91,16 +92,6 @@ deriving instance Eq (Table k v blob)
   Table querying and updates
 -------------------------------------------------------------------------------}
 
--- | Result of a single point lookup.
-data LookupResult k v blob =
-    NotFound      !k
-  | Found         !k !v
-  | FoundWithBlob !k !v !(BlobRef blob)
-  deriving (Eq, Show)
-
--- Note: unfortunately we have to copy these types, as we need to implement BlobRef.
-
-
 -- | Perform a batch of lookups.
 --
 -- Lookups can be performed concurrently from multiple Haskell threads.
@@ -108,7 +99,7 @@ lookups ::
     (SomeSerialisationConstraint k, SomeSerialisationConstraint v)
   => [k]
   -> Table k v blob
-  -> [LookupResult k v blob]
+  -> [LookupResult k v (BlobRef blob)]
 lookups ks tbl =
     [ case Map.lookup (serialise k) (_values tbl) of
         Nothing           -> NotFound k
@@ -117,12 +108,6 @@ lookups ks tbl =
     | k <- ks
     ]
 
--- | A result for one point in a range lookup.
-data RangeLookupResult k v blob =
-    FoundInRange         !k !v
-  | FoundInRangeWithBlob !k !v !(BlobRef blob)
-  deriving (Eq, Show)
-
 -- | Perform a range lookup.
 --
 -- Range lookups can be performed concurrently from multiple Haskell threads.
@@ -130,7 +115,7 @@ rangeLookup :: forall k v blob.
      (SomeSerialisationConstraint k, SomeSerialisationConstraint v)
   => Range k
   -> Table k v blob
-  -> [RangeLookupResult k v blob]
+  -> [RangeLookupResult k v (BlobRef blob)]
 rangeLookup r tbl =
     [ case v of
         (v', Nothing) -> FoundInRange (deserialise k) (deserialise v')
