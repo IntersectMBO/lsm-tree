@@ -22,7 +22,7 @@ module Database.LSMTree.Monoidal (
   , closeSession
     -- * Tables
   , TableHandle
-  , TableConfig
+  , TableConfig (..)
   , new
   , close
     -- * Table querying and updates
@@ -39,7 +39,6 @@ module Database.LSMTree.Monoidal (
   , deletes
   , mupserts
     -- * Snapshots
-  , VerificationFailure
   , SnapshotName
   , snapshot
   , open
@@ -94,6 +93,7 @@ data TableConfig = TableConfig {
 --
 -- For more information about compatibility, see 'Session'.
 deriving instance Eq TableConfig
+deriving instance Show TableConfig
 
 -- | Create a new table referenced by a table handle.
 --
@@ -169,6 +169,7 @@ data Update v =
   | Delete
     -- | TODO: should be given a more suitable name.
   | Mupsert !v
+  deriving (Show, Eq)
 
 -- | Perform a mixed batch of inserts, deletes and monoidal upserts.
 --
@@ -230,8 +231,6 @@ mupserts = updates . fmap (second Mupsert)
   Snapshots
 -------------------------------------------------------------------------------}
 
-data VerificationFailure
-
 -- | Take a snapshot.
 --
 -- Snapshotting does not close the table handle.
@@ -266,10 +265,7 @@ open ::
      )
   => Session m
   -> SnapshotName
-  -> m (Either
-          VerificationFailure
-          (TableHandle m k v)
-       )
+  -> m (TableHandle m k v)
 open = undefined
 
 {-------------------------------------------------------------------------------
@@ -293,7 +289,6 @@ duplicate ::
   => TableHandle m k v
   -> m (TableHandle m k v)
 duplicate = undefined
-
 
 {-------------------------------------------------------------------------------
   Merging tables

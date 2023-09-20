@@ -34,6 +34,7 @@ library
     Database.LSMTree.Common
     Database.LSMTree.Model.Monoidal
     Database.LSMTree.Model.Normal
+    Database.LSMTree.Model.Normal.Session
     Database.LSMTree.Monoidal
     Database.LSMTree.Normal
 
@@ -46,6 +47,7 @@ library
     , filepath
     , fs-api               ^>=0.2
     , io-classes           ^>=1.2
+    , mtl
     , strict-checked-vars  ^>=0.1.0.3
     , strict-mvar          ^>=1.2
     , strict-stm           ^>=1.2
@@ -68,10 +70,11 @@ test-suite lsm-tree-test
   build-depends:
     , base                  >=4.14 && <4.19
     , bytestring
+    , containers
     , deepseq
     , fs-api
-    , fs-sim                ^>=0.2
-    , io-sim                ^>=1.2
+    , fs-sim                >=0.2
+    , io-sim                >=1.2
     , lsm-tree
     , quickcheck-instances
     , tasty

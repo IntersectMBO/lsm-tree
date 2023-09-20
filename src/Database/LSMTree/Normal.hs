@@ -22,7 +22,7 @@ module Database.LSMTree.Normal (
   , closeSession
     -- * Tables
   , TableHandle
-  , TableConfig
+  , TableConfig (..)
   , new
   , close
     -- * Table querying and updates
@@ -41,7 +41,6 @@ module Database.LSMTree.Normal (
   , BlobRef
   , retrieveBlobs
     -- * Snapshots
-  , VerificationFailure
   , SnapshotName
   , snapshot
   , open
@@ -93,6 +92,7 @@ data TableConfig = TableConfig {
 --
 -- For more information about compatibility, see 'Session'.
 deriving instance Eq TableConfig
+deriving instance Show TableConfig
 
 -- | Create a new table referenced by a table handle.
 --
@@ -160,6 +160,7 @@ rangeLookup = undefined
 data Update v blob =
     Insert !v !(Maybe blob)
   | Delete
+  deriving (Show, Eq)
 
 -- | Perform a mixed batch of inserts and deletes.
 --
@@ -211,7 +212,7 @@ deletes = updates . fmap (,Delete)
 -- database implementations refers to binary data that is larger than usual
 -- values and is handled specially. In our context we will allow optionally a
 -- blob associated with each value in the table.
-data BlobRef blob
+data BlobRef blob = BlobRef
 
 -- | Perform a batch of blob retrievals.
 --
@@ -230,8 +231,6 @@ retrieveBlobs = undefined
 {-------------------------------------------------------------------------------
   Snapshots
 -------------------------------------------------------------------------------}
-
-data VerificationFailure
 
 -- | Take a snapshot.
 --
@@ -269,10 +268,7 @@ open ::
      )
   => Session m
   -> SnapshotName
-  -> m (Either
-          VerificationFailure
-          (TableHandle m k v blob)
-       )
+  -> m (TableHandle m k v blob)
 open = undefined
 
 {-------------------------------------------------------------------------------

@@ -29,7 +29,7 @@ import           Data.Kind (Type)
 import           Data.Word (Word64)
 import qualified System.FilePath.Posix
 import qualified System.FilePath.Windows
-import           System.FS.API (FsPath, HasFS, SomeHasFS)
+import           System.FS.API (FsPath, SomeHasFS)
 
 {-------------------------------------------------------------------------------
   IOLike
@@ -62,7 +62,7 @@ data Session m = Session {
 
 newSession ::
      IOLike m
-  => HasFS m h
+  => SomeHasFS m
   -> FsPath -- ^ Path to an empty directory.
   -> m (Session m)
 newSession = undefined
