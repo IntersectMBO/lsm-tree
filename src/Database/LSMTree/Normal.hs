@@ -51,19 +51,8 @@ module Database.LSMTree.Normal (
 
 import           Data.Kind (Type)
 import           Data.Word (Word64)
-import           Database.LSMTree.Common (IOLike, Session, closeSession,
-                     newSession)
-
-{-------------------------------------------------------------------------------
-  Temporary placeholder types
--------------------------------------------------------------------------------}
-
--- | An empty placeholder class for (de)serialisation constraints.
---
--- TODO: Should be replaced with whatever (de)serialisation class we eventually
--- want to use. Some prerequisites:
--- *  Serialisation/deserialisation should preserve ordering.
-class SomeSerialisationConstraint a where
+import           Database.LSMTree.Common (IOLike, Session,
+                     SomeSerialisationConstraint, closeSession, newSession)
 
 {-------------------------------------------------------------------------------
   Tables

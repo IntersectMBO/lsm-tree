@@ -11,11 +11,17 @@ module Database.LSMTree.Common (
   , Session
   , newSession
   , closeSession
+    -- * Constraints
+  , SomeSerialisationConstraint (..)
+  , SomeUpdateConstraint (..)
   ) where
 
 import           Control.Concurrent.Class.MonadMVar (MonadMVar)
 import           Control.Monad.Class.MonadThrow (MonadCatch, MonadThrow)
+import           Data.Bits (shiftR, (.&.))
+import qualified Data.ByteString as BS
 import           Data.Kind (Type)
+import           Data.Word (Word64)
 import           System.FS.API (FsPath, HasFS, SomeHasFS)
 
 {-------------------------------------------------------------------------------
@@ -56,3 +62,54 @@ newSession = undefined
 
 closeSession :: IOLike m => Session m -> m ()
 closeSession = undefined
+
+{-------------------------------------------------------------------------------
+  Serialization constraints
+-------------------------------------------------------------------------------}
+
+-- | A placeholder class for (de)serialisation constraints.
+--
+-- TODO: Should be replaced with whatever (de)serialisation class we eventually
+-- want to use. Some prerequisites:
+-- *  Serialisation/deserialisation should preserve ordering.
+class SomeSerialisationConstraint a where
+    serialise :: a -> BS.ByteString
+
+    -- Note: cannot fail.
+    deserialise :: BS.ByteString -> a
+
+instance SomeSerialisationConstraint BS.ByteString where
+    serialise = id
+    deserialise = id
+
+-- | A placeholder class for constraints on 'Update's.
+--
+-- TODO: should be replaced by the actual constraints we want to use. Some
+-- prerequisites:
+-- * Combining/merging/resolving 'Update's should be associative.
+-- * Should include a function that determines whether it is safe to remove an
+--   'Update' from the last level of an LSM tree.
+--
+class SomeUpdateConstraint a where
+    merge :: a -> a -> a
+
+instance SomeUpdateConstraint BS.ByteString where
+    merge = (<>)
+
+-- | MSB, so order is preserved.
+instance SomeSerialisationConstraint Word64 where
+    -- TODO: optimize me when SomeSerialisationConstraint is replaced with its
+    -- final version
+    serialise w = BS.pack [b1,b2,b3,b4,b5,b6,b7,b8] where
+        b8 = fromIntegral $        w    .&. 0xff
+        b7 = fromIntegral $ shiftR w  8 .&. 0xff
+        b6 = fromIntegral $ shiftR w 16 .&. 0xff
+        b5 = fromIntegral $ shiftR w 24 .&. 0xff
+        b4 = fromIntegral $ shiftR w 32 .&. 0xff
+        b3 = fromIntegral $ shiftR w 40 .&. 0xff
+        b2 = fromIntegral $ shiftR w 48 .&. 0xff
+        b1 = fromIntegral $ shiftR w 56 .&. 0xff
+
+    -- TODO: optimize me when SomeSerialisationConstraint is replaced with its
+    -- final version
+    deserialise = BS.foldl' (\acc d -> acc * 0x100 + fromIntegral d) 0
