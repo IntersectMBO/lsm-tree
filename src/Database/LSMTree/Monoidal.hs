@@ -125,6 +125,7 @@ close = undefined
 data LookupResult k v =
     NotFound      !k
   | Found         !k !v
+  deriving (Eq, Show)
 
 -- | Perform a batch of lookups.
 --
@@ -143,6 +144,7 @@ lookups = undefined
 -- | A result for one point in a range lookup.
 data RangeLookupResult k v =
     FoundInRange         !k !v
+  deriving (Eq, Show)
 
 -- | Perform a range lookup.
 --

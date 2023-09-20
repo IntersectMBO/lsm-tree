@@ -51,7 +51,8 @@ import qualified Data.Map.Strict as Map
 import           Database.LSMTree.Common (Range (..),
                      SomeSerialisationConstraint (..),
                      SomeUpdateConstraint (..))
-import           Database.LSMTree.Monoidal (Update (..))
+import           Database.LSMTree.Monoidal (LookupResult (..),
+                     RangeLookupResult (..), Update (..))
 import           GHC.Exts (IsList (..))
 
 {-------------------------------------------------------------------------------
@@ -98,12 +99,6 @@ deriving instance Eq (Table k v)
   Table querying and updates
 -------------------------------------------------------------------------------}
 
--- | Result of a single point lookup.
-data LookupResult k v =
-    NotFound      !k
-  | Found         !k !v
-  deriving (Eq, Show)
-
 -- | Perform a batch of lookups.
 --
 -- Lookups can be performed concurrently from multiple Haskell threads.
@@ -121,11 +116,6 @@ lookups ks tbl =
         Just v  -> Found k (deserialise v)
     | k <- ks
     ]
-
--- | A result for one point in a range lookup.
-data RangeLookupResult k v =
-    FoundInRange         !k !v
-  deriving (Eq, Show)
 
 -- | Perform a range lookup.
 --
