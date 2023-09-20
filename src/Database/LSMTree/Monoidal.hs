@@ -158,7 +158,7 @@ rangeLookup ::
   -> m [RangeLookupResult k v]
 rangeLookup = undefined
 
--- | Normal tables support insert, delete and monoidal upsert operations.
+-- | Monoidal tables support insert, delete and monoidal upsert operations.
 --
 -- An __update__ is a term that groups all types of table-manipulating
 -- operations, like inserts and deletes.

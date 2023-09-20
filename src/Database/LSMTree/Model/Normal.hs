@@ -40,6 +40,7 @@ import qualified Data.Map.Range as Map.R
 import qualified Data.Map.Strict as Map
 import           Database.LSMTree.Common (Range (..),
                      SomeSerialisationConstraint (..))
+import           Database.LSMTree.Normal (Update (..))
 import           GHC.Exts (IsList (..))
 
 {-------------------------------------------------------------------------------
@@ -145,15 +146,6 @@ rangeLookup r tbl =
     convertRange (FromToIncluding lb ub) =
         ( Map.R.Bound (serialise lb) Map.R.Inclusive
         , Map.R.Bound (serialise ub) Map.R.Inclusive )
-
--- | Normal tables support insert and delete operations.
---
--- An __update__ is a term that groups all types of table-manipulating
--- operations, like inserts and deletes.
-data Update v blob =
-    Insert !v !(Maybe blob)
-  | Delete
-  deriving (Eq, Show)
 
 -- | Perform a mixed batch of inserts and deletes.
 --

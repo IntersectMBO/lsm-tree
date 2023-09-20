@@ -51,6 +51,7 @@ import qualified Data.Map.Strict as Map
 import           Database.LSMTree.Common (Range (..),
                      SomeSerialisationConstraint (..),
                      SomeUpdateConstraint (..))
+import           Database.LSMTree.Monoidal (Update (..))
 import           GHC.Exts (IsList (..))
 
 {-------------------------------------------------------------------------------
@@ -150,17 +151,6 @@ rangeLookup r tbl =
     convertRange (FromToIncluding lb ub) =
         ( Map.R.Bound (serialise lb) Map.R.Inclusive
         , Map.R.Bound (serialise ub) Map.R.Inclusive )
-
--- | Normal tables support insert, delete and monoidal upsert operations.
---
--- An __update__ is a term that groups all types of table-manipulating
--- operations, like inserts and deletes.
-data Update v =
-    Insert !v
-  | Delete
-    -- | TODO: should be given a more suitable name.
-  | Mupsert !v
-  deriving (Eq, Show)
 
 -- | Perform a mixed batch of inserts, deletes and monoidal upserts.
 --
