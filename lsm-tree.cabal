@@ -60,12 +60,14 @@ test-suite lsm-tree-test
   main-is:          Main.hs
   other-modules:
     Test.Database.LSMTree
+    Test.Database.LSMTree.Model.Common
     Test.Database.LSMTree.Model.Monoidal
     Test.Database.LSMTree.Model.Normal
 
   build-depends:
     , base                  >=4.14 && <4.19
     , bytestring
+    , deepseq
     , fs-api
     , fs-sim                ^>=0.2
     , io-sim                ^>=1.2
