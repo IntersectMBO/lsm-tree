@@ -38,8 +38,7 @@ import           Data.Foldable (foldl')
 import           Data.Map (Map)
 import qualified Data.Map.Range as Map.R
 import qualified Data.Map.Strict as Map
-import           Database.LSMTree.Model.Common
-                     (SomeSerialisationConstraint (..))
+import           Database.LSMTree.Common (SomeSerialisationConstraint (..))
 import           Database.LSMTree.Normal (Range (..))
 import           GHC.Exts (IsList (..))
 

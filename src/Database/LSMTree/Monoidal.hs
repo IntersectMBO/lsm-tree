@@ -52,28 +52,9 @@ module Database.LSMTree.Monoidal (
 import           Data.Bifunctor (Bifunctor (second))
 import           Data.Kind (Type)
 import           Data.Word (Word64)
-import           Database.LSMTree.Common (IOLike, Session, closeSession,
-                     newSession)
-
-{-------------------------------------------------------------------------------
-  Temporary placeholder types
--------------------------------------------------------------------------------}
-
--- | An empty placeholder class for (de)serialisation constraints.
---
--- TODO: Should be replaced with whatever (de)serialisation class we eventually
--- want to use. Some prerequisites:
--- *  Serialisation/deserialisation should preserve ordering.
-class SomeSerialisationConstraint a where
-
--- | An empty placeholder class for constraints on 'Update's.
---
--- TODO: should be replaced by the actual constraints we want to use. Some
--- prerequisites:
--- * Combining/merging/resolving 'Update's should be associative.
--- * Should include a function that determines whether it is safe to remove an
---   'Update' from the last level of an LSM tree.
-class SomeUpdateConstraint a where
+import           Database.LSMTree.Common (IOLike, Session,
+                     SomeSerialisationConstraint, SomeUpdateConstraint,
+                     closeSession, newSession)
 
 {-------------------------------------------------------------------------------
   Tables

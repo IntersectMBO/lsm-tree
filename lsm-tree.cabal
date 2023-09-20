@@ -60,7 +60,7 @@ test-suite lsm-tree-test
   main-is:          Main.hs
   other-modules:
     Test.Database.LSMTree
-    Test.Database.LSMTree.Model.Common
+    Test.Database.LSMTree.Common
     Test.Database.LSMTree.Model.Monoidal
     Test.Database.LSMTree.Model.Normal
 

@@ -1,13 +1,12 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications    #-}
-module Test.Database.LSMTree.Model.Common (tests) where
+module Test.Database.LSMTree.Common (tests) where
 
 import           Control.DeepSeq (NFData, deepseq)
 import qualified Data.ByteString as BS
 import           Data.Proxy (Proxy (..))
 import           Data.Word (Word64)
-import           Database.LSMTree.Model.Normal
-                     (SomeSerialisationConstraint (..))
+import           Database.LSMTree.Common (SomeSerialisationConstraint (..))
 import           Test.QuickCheck.Instances ()
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
