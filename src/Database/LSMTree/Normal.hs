@@ -51,7 +51,7 @@ module Database.LSMTree.Normal (
 
 import           Data.Kind (Type)
 import           Data.Word (Word64)
-import           Database.LSMTree.Common (IOLike, Session,
+import           Database.LSMTree.Common (IOLike, Range (..), Session,
                      SomeSerialisationConstraint, closeSession, newSession)
 
 {-------------------------------------------------------------------------------
@@ -118,15 +118,6 @@ close = undefined
 {-------------------------------------------------------------------------------
   Table querying and updates
 -------------------------------------------------------------------------------}
-
--- | A range of keys.
---
--- TODO: consider adding key prefixes to the range type.
-data Range k =
-    -- | Inclusive lower bound, exclusive upper bound
-    FromToExcluding k k
-    -- | Inclusive lower bound, inclusive upper bound
-  | FromToIncluding k k
 
 -- | Result of a single point lookup.
 data LookupResult k v blob =

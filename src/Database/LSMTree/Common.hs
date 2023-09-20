@@ -14,6 +14,8 @@ module Database.LSMTree.Common (
     -- * Constraints
   , SomeSerialisationConstraint (..)
   , SomeUpdateConstraint (..)
+    -- * Small types
+  , Range (..)
   ) where
 
 import           Control.Concurrent.Class.MonadMVar (MonadMVar)
@@ -113,3 +115,16 @@ instance SomeSerialisationConstraint Word64 where
     -- TODO: optimize me when SomeSerialisationConstraint is replaced with its
     -- final version
     deserialise = BS.foldl' (\acc d -> acc * 0x100 + fromIntegral d) 0
+
+{-------------------------------------------------------------------------------
+  Small auxiliary types
+-------------------------------------------------------------------------------}
+
+-- | A range of keys.
+--
+-- TODO: consider adding key prefixes to the range type.
+data Range k =
+    -- | Inclusive lower bound, exclusive upper bound
+    FromToExcluding k k
+    -- | Inclusive lower bound, inclusive upper bound
+  | FromToIncluding k k
