@@ -52,7 +52,8 @@ module Database.LSMTree.Normal (
 import           Data.Kind (Type)
 import           Data.Word (Word64)
 import           Database.LSMTree.Common (IOLike, Range (..), Session,
-                     SomeSerialisationConstraint, closeSession, newSession)
+                     SnapshotName, SomeSerialisationConstraint, closeSession,
+                     newSession)
 
 {-------------------------------------------------------------------------------
   Tables
@@ -231,8 +232,6 @@ retrieveBlobs = undefined
 -------------------------------------------------------------------------------}
 
 data VerificationFailure
-
-data SnapshotName
 
 -- | Take a snapshot.
 --

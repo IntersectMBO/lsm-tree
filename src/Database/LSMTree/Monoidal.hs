@@ -53,8 +53,8 @@ import           Data.Bifunctor (Bifunctor (second))
 import           Data.Kind (Type)
 import           Data.Word (Word64)
 import           Database.LSMTree.Common (IOLike, Range (..), Session,
-                     SomeSerialisationConstraint, SomeUpdateConstraint,
-                     closeSession, newSession)
+                     SnapshotName, SomeSerialisationConstraint,
+                     SomeUpdateConstraint, closeSession, newSession)
 
 {-------------------------------------------------------------------------------
   Tables
@@ -231,8 +231,6 @@ mupserts = updates . fmap (second Mupsert)
 -------------------------------------------------------------------------------}
 
 data VerificationFailure
-
-data SnapshotName
 
 -- | Take a snapshot.
 --

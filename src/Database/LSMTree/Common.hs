@@ -16,6 +16,9 @@ module Database.LSMTree.Common (
   , SomeUpdateConstraint (..)
     -- * Small types
   , Range (..)
+    -- * Snapshot names
+  , SnapshotName
+  , mkSnapshotName
   ) where
 
 import           Control.Concurrent.Class.MonadMVar (MonadMVar)
@@ -24,6 +27,8 @@ import           Data.Bits (shiftR, (.&.))
 import qualified Data.ByteString as BS
 import           Data.Kind (Type)
 import           Data.Word (Word64)
+import qualified System.FilePath.Posix
+import qualified System.FilePath.Windows
 import           System.FS.API (FsPath, HasFS, SomeHasFS)
 
 {-------------------------------------------------------------------------------
@@ -128,3 +133,43 @@ data Range k =
     FromToExcluding k k
     -- | Inclusive lower bound, inclusive upper bound
   | FromToIncluding k k
+
+{-------------------------------------------------------------------------------
+  Snapshot name
+-------------------------------------------------------------------------------}
+
+newtype SnapshotName = MkSnapshotName FilePath
+  deriving (Eq, Ord)
+
+instance Show SnapshotName where
+  showsPrec d (MkSnapshotName p) = showsPrec d p
+
+-- | Create snapshot name.
+--
+-- The name may consist of lowercase characters, digits, dashes @-@ and underscores @_@.
+-- It must be non-empty and less than 65 characters long.
+-- It may not be a special filepath name.
+--
+-- >>> mkSnapshotName "main"
+-- Just "main"
+--
+-- >>> mkSnapshotName "temporary-123-test_"
+-- Just "temporary-123-test_"
+--
+-- >>> map mkSnapshotName ["UPPER", "dir/dot.exe", "..", "\\", "com1", "", replicate 100 'a']
+-- [Nothing,Nothing,Nothing,Nothing,Nothing,Nothing,Nothing]
+--
+mkSnapshotName :: String -> Maybe SnapshotName
+mkSnapshotName s
+  | all isValid s
+  , len > 0
+  , len < 65
+  , System.FilePath.Posix.isValid s
+  , System.FilePath.Windows.isValid s
+  = Just (MkSnapshotName s)
+
+  | otherwise
+  = Nothing
+  where
+    len = length s
+    isValid c = ('a' <= c && c <= 'z') || ('0' <= c && c <= '9' ) || c `elem` "-_"
