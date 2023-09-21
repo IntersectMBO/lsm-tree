@@ -43,6 +43,7 @@ library
     , bytestring
     , containers
     , cryptohash-sha256
+    , filepath
     , fs-api               ^>=0.2
     , io-classes           ^>=1.2
     , strict-checked-vars  ^>=0.1.0.3
