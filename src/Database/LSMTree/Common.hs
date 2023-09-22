@@ -133,6 +133,7 @@ data Range k =
     FromToExcluding k k
     -- | Inclusive lower bound, inclusive upper bound
   | FromToIncluding k k
+  deriving (Show, Eq)
 
 {-------------------------------------------------------------------------------
   Snapshot name

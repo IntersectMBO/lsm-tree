@@ -66,19 +66,31 @@ test-suite lsm-tree-test
     Test.Database.LSMTree.Common
     Test.Database.LSMTree.Model.Monoidal
     Test.Database.LSMTree.Model.Normal
+    Test.Database.LSMTree.Normal.StateMachine
+    Test.Database.LSMTree.Normal.StateMachine.Op
+    Test.Util.Orphans
 
   build-depends:
     , base                  >=4.14 && <4.19
     , bytestring
     , containers
     , deepseq
+    , directory
     , fs-api
     , fs-sim                >=0.2
+    , io-classes
     , io-sim                >=1.2
     , lsm-tree
+    , mtl
+    , QuickCheck
+    , quickcheck-dynamic
     , quickcheck-instances
+    , quickcheck-lockstep
+    , stm
     , tasty
+    , tasty-hunit
     , tasty-quickcheck
+    , temporary
 
 test-suite map-range-test
   import:           warnings
