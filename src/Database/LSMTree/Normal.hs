@@ -6,46 +6,73 @@
 {-# OPTIONS_GHC -Wno-redundant-constraints #-}
 {-# OPTIONS_GHC -Wno-unused-top-binds #-}
 
--- |
+-- | On disk key-value tables, implemented as Log Structured Merge (LSM) trees.
+--
+-- This module is the API for \"normal\" tables, as opposed to \"monoidal\"
+-- tables (that support monoidal updates and unions).
+--
+-- Key features:
+--
+-- * Basic key\/value operations: lookup, insert, delete.
+-- * Range lookups by key or key prefix
+-- * Support for BLOBs: large auxilliary values associated with a key
+-- * On-disk durability is /only/ via named snapshots: ordinary operations
+--   are otherwise not durable
+-- * Opening tables from previous named snapshots
+-- * Full persistent data structure by cheap table duplication: all duplicate
+--   tables can be both accessed and modified
+-- * High performance lookups on SSDs by I\/O batching and concurrency
 --
 -- This module is intended to be imported qualified.
 --
 -- > import qualified Database.LSMTree.Normal as LSMT
 module Database.LSMTree.Normal (
-    -- * Temporary placeholder types
-    SomeSerialisationConstraint
-    -- * Utility types
-  , IOLike
-    -- * Sessions
-  , Session
+
+    -- * Table sessions
+    Session
   , newSession
   , closeSession
-    -- * Tables
+
+    -- * Table handles
   , TableHandle
   , TableConfig (..)
   , new
   , close
-    -- * Table querying and updates
+    -- ** Resource management
+    -- $resource-management
+
+    -- * Table queries and updates
     -- ** Queries
-  , Range (..)
-  , LookupResult (..)
   , lookups
-  , RangeLookupResult (..)
+  , LookupResult (..)
   , rangeLookup
+  , Range (..)
+  , RangeLookupResult (..)
     -- ** Updates
-  , Update (..)
-  , updates
   , inserts
   , deletes
+  , updates
+  , Update (..)
     -- ** Blobs
   , BlobRef
   , retrieveBlobs
-    -- * Snapshots
+
+    -- * Durability (snapshots)
   , SnapshotName
   , snapshot
   , open
-    -- * Multiple writable table handles
+
+    -- * Persistence
+    -- $persistence
   , duplicate
+
+    -- * Concurrency
+    -- $concurrency
+
+    -- * Temporary placeholder types
+  , SomeSerialisationConstraint
+    -- * Utility types
+  , IOLike
   ) where
 
 import           Data.Kind (Type)
@@ -54,15 +81,78 @@ import           Database.LSMTree.Common (IOLike, Range (..), Session,
                      SnapshotName, SomeSerialisationConstraint, closeSession,
                      newSession)
 
+-- $resource-management
+-- Table handles use resources and as such need to be managed. In particular
+-- handles retain memory (for indexes, Bloom filters and write buffers) and
+-- hold open multiple file handles.
+--
+-- The resource management style that this library uses is explicit management,
+-- with backup from automatic management. Explicit management is required to
+-- enable prompt release of resources. Explicit management means using 'close'
+-- on 'TableHandle's when they are no longer needed. The backup management
+-- relies on GC finalisers and thus is not guaranteed to be prompt.
+--
+-- In particular, certain operations create new table handles:
+--
+-- * 'new'
+-- * 'open'
+-- * 'duplicate'
+--
+-- These ones must be paired with a corresponding 'close'.
+
+-- $concurrency
+-- Table handles are mutable objects and as such applications should restrict
+-- their concurrent use to avoid races.
+--
+-- It is a reasonable mental model to think of a 'TableHandle' as being like a
+-- @IORef (Map k v)@ (though without any equivalent of @atomicModifyIORef@).
+--
+-- The rules are:
+--
+-- * It is a race to read and modify the same table concurrently.
+-- * It is a race to modify and modify the same table concurrently.
+-- * No concurrent table operations create a /happens-before/ relation.
+-- * All synchronisation needs to occur using other concurrency constructs.
+--
+-- * It is /not/ a race to read and read the same table concurrently.
+-- * It is /not/ a race to read or modify /separate/ tables concurrently.
+--
+-- We can classify all table operations as \"read\" or \"modify\" for the
+-- purpose of the rules above. The read operations are:
+--
+-- * 'lookups'
+-- * 'rangeLookup'
+-- * 'retrieveBlobs'
+-- * 'snapshot'
+-- * 'duplicate'
+--
+-- The write operations are:
+--
+-- * 'inserts'
+-- * 'deletes'
+-- * 'updates'
+-- * 'close'
+--
+-- In particular it is possible to read a stable view of a table while
+-- concurrently modifying it: 'duplicate' the table handle first and then
+-- perform reads on the duplicate, while modifying the original handle. Note
+-- however that it would still be a race to 'duplicate' concurrently with
+-- modifications: the duplication must /happen before/ subsequent modifications.
+--
+-- It safe to read a table (using 'lookups' or 'rangeLookup') concurrently, and
+-- doing so can take advantage of CPU and I\/O parallelism, and thus may
+-- improve throughput.
+
+
 {-------------------------------------------------------------------------------
   Tables
 -------------------------------------------------------------------------------}
 
--- | A handle to a table.
+-- | A handle to an on-disk key\/value table.
 --
 -- An LSMT table is an individual key value mapping with in-memory and on-disk
--- parts. A table handle is the object/reference by which an in-use LSM table
--- will be operated upon. In our API it identifies a single mutable instance of
+-- parts. A table handle is the object\/reference by which an in-use LSM table
+-- will be operated upon. In this API it identifies a single mutable instance of
 -- an LSM table. The multiple-handles feature allows for there to may be many
 -- such instances in use at once.
 type TableHandle :: (Type -> Type) -> Type -> Type -> Type -> Type
@@ -71,7 +161,7 @@ data TableHandle m k v blob = TableHandle {
   , thConfig  :: !TableConfig
   }
 
--- | Table configuration parameters, like tuning parameters.
+-- | Table configuration parameters, including LSM tree tuning parameters.
 --
 -- Some config options are fixed (for now):
 -- * Merge policy: Tiering
@@ -94,10 +184,11 @@ data TableConfig = TableConfig {
 deriving instance Eq TableConfig
 deriving instance Show TableConfig
 
--- | Create a new table referenced by a table handle.
+-- | Create a new empty table, returning a fresh table handle.
 --
--- NOTE: close table handles using 'close' as soon as they are
--- unused.
+-- NOTE: table handles hold open resources (such as open files) and should be
+-- closed using 'close' as soon as they are no longer used.
+--
 new ::
      IOLike m
   => Session m
@@ -232,15 +323,28 @@ retrieveBlobs = undefined
   Snapshots
 -------------------------------------------------------------------------------}
 
--- | Take a snapshot.
+-- | Make the current value of a table durable on-disk by taking a snapshot and
+-- giving the snapshot a name. This is the _only_ mechanism to make a table
+-- durable -- ordinary insert\/delete operations are otherwise not preserved.
+--
+-- Snapshots have names and the table may be opened later using 'open' via that
+-- name. Names are strings and the management of the names is up to the user of
+-- the library.
+--
+-- The names correspond to disk files, which imposes some constraints on length
+-- and what characters can be used.
 --
 -- Snapshotting does not close the table handle.
 --
--- Taking a snapshot should be relatively cheap, but it is not so cheap that one
--- can use one after every operation. It is relatively cheap because of a reason
--- similar to the reason why 'duplicate' is cheap. On-disk and in-memory data is
--- immutable, which means we can write (the relatively small) in-memory parts to
--- disk, and create hard links for existing files.
+-- Taking a snapshot is /relatively/ cheap, but it is not so cheap that one can
+-- use it after every operation. In the implementation, it must at least flush
+-- the write buffer to disk.
+--
+-- Concurrency:
+--
+-- * It is safe to concurrently make snapshots from any table, provided that
+--   the snapshot names are distinct (otherwise this would be a race).
+--
 snapshot ::
      ( IOLike m
      , SomeSerialisationConstraint k
@@ -252,10 +356,14 @@ snapshot ::
   -> m ()
 snapshot = undefined
 
--- | Open a table through a snapshot, returning a new table handle.
+-- | Open a table from a named snapshot, returning a new table handle.
 --
 -- NOTE: close table handles using 'close' as soon as they are
 -- unused.
+--
+-- Exceptions:
+--
+-- * Opening a non-existent snapshot is an error.
 --
 -- TOREMOVE: before snapshots are implemented, the snapshot name should be ignored.
 -- Instead, this function should open a table handle from files that exist in
@@ -271,22 +379,45 @@ open ::
   -> m (TableHandle m k v blob)
 open = undefined
 
+--TODO: we're missing an operation to delete a snapshot that is no longer
+-- required. This is necessary for management of disk space.
+--
+-- Also missing an operation to list existing snapshots.
+
 {-------------------------------------------------------------------------------
   Mutiple writable table handles
 -------------------------------------------------------------------------------}
 
--- | Create a cheap, independent duplicate of a table handle. This returns a new
+-- | Create an independent duplicate of a table handle. This returns a new
 -- table handle.
 --
 -- A table handle and its duplicate are logically independent: changes to one
 -- are not visible to the other.
 --
--- Duplication is cheap because on-disk and in-memory data is immutable, which
--- means we can /share/ data instead of copying it. Duplication has small
--- computation, storage and memory overheads.
+-- This operation enables /fully persistent/ use of tables by duplicating the
+-- table prior to a batch of mutating operations. The duplicate retains the
+-- the original table value, and can still be modified independently.
 --
--- NOTE: close table handles using 'close' as soon as they are
--- unused.
+-- This is persistence in the sense persistent data structures (not of on-disk
+-- persistence). The usual definition of a persistent data structure is one in
+-- which each operation preserves the previous version of the structure when
+-- the structure is modified. Full persistence is if every version can be both
+-- accessed and modified. This API does not directly fit the definition because
+-- the update operations do mutate the table value, however full persistence
+-- can be emulated by duplicating the table prior to a mutating operation.
+--
+-- Duplication itself is cheap. In particular it requires no disk I\/O, and
+-- requires little additional memory. Just as with normal persistent data
+-- structures, making use of multiple tables will have corresponding costs in
+-- terms of memory and disk space. Initially the two tables will share
+-- everything (both in memory and on disk) but as more and more update
+-- operations are performed on each, the sharing will decrease. Ultimately the
+-- memory and disk cost will be the same as if each table were entirely
+-- independent.
+--
+-- NOTE: duplication create a new table handle, which should be closed when no
+-- longer needed.
+--
 duplicate ::
      IOLike m
   => TableHandle m k v blob

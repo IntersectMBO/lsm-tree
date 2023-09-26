@@ -43,30 +43,71 @@ instance IOLike IO
   Sessions
 -------------------------------------------------------------------------------}
 
--- | Context shared across multiple table handles, like counters and filesystem
--- information.
+-- | A session provides context that is shared across multiple table handles.
 --
--- For one, this is necessary if we want to be able to manipulate and query
--- table handles, duplicate table handles, and load snapshots, all at the same
--- time in the same directory.
+-- Sessions are needed to support sharing between multiple table instances.
+-- Sharing occurs when tables are duplicated using 'duplicate', or when tables
+-- are combined using 'union'. Sharing is preserved by snapshots, using
+-- 'snapshot' and 'open'.
 --
--- Different types of tables can be live in the same session, but operations
--- like 'merge' only work for __compatible__ tables: tables that belong to the
--- same session, store the same key and value types, and have the same
--- configuration parameters.
+-- The \"monoidal\" table types support a 'union' operation, which has the
+-- constraint that the two input tables must be from the same 'Session'.
+--
+-- Each session places files for table data under a given directory. It is
+-- not permitted to open multiple sessions for the same directory at once.
+-- Instead a session should be opened once and shared for all uses of
+-- tables. This restriction implies that tables cannot be shared between OS
+-- processes. The restriction is enforced using file locks.
+--
+-- Sessions support both related and independent tables. Related tables are
+-- created using 'duplicate', while independent tables can be created using
+-- 'new'. It is possible to have multiple independent tables with different
+-- configuration and key and value types in the same session. Similarly,
+-- a session can have both \"normal\" and \"monoidal\" tables. For independent
+-- tables (that are not involved in a 'union') one has a choice between using
+-- multiple sessions or a shared session. Using multiple sessions requires
+-- using separate directories, while a shared session will place all files
+-- under one directory.
+--
 type Session :: (Type -> Type) -> Type
 data Session m = Session {
     sessionRoot  :: !FsPath
   , sessionHasFS :: !(SomeHasFS m)
   }
 
+-- | Create either a new empty table session or open an existing table session,
+-- given the path to the session directory.
+--
+-- A new empty table session is created if the given directory is entirely
+-- empty. Otherwise it is intended to open an existing table session.
+--
+-- Exceptions:
+--
+-- * This can throw exceptions if the directory does not have the expected file
+--   layout for a table session
+-- * It will throw an exception if the session is already open (in the current
+--   process or another OS process)
+--
+-- Sessions should be closed using 'closeSession' when no longer needed.
+--
 newSession ::
      IOLike m
   => SomeHasFS m
-  -> FsPath -- ^ Path to an empty directory.
+  -> FsPath -- ^ Path to the session directory
   -> m (Session m)
 newSession = undefined
 
+-- | Close the table session.
+--
+-- This also closes any open table handles in the session. It would typically
+-- be good practice however to close all table handles first rather than
+-- relying on this for cleanup.
+--
+-- Closing a table session allows the session to be opened again elsewhere, for
+-- example in a different process. Note that the session will be closed
+-- automatically if the processes is terminated (in particular the session file
+-- lock will be released).
+--
 closeSession :: IOLike m => Session m -> m ()
 closeSession = undefined
 
