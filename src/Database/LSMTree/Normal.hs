@@ -133,7 +133,7 @@ import           Database.LSMTree.Common (IOLike, Range (..), Session,
 -- * 'updates'
 -- * 'close'
 --
--- In particular it is possible to read a stable view of a table while 
+-- In particular it is possible to read a stable view of a table while
 -- concurrently modifying it: 'duplicate' the table handle first and then
 -- perform reads on the duplicate, while modifying the original handle. Note
 -- however that it would still be a race to 'duplicate' concurrently with
