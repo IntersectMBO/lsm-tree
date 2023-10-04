@@ -120,7 +120,7 @@ rangeLookup r tbl =
     [ case v of
         (v', Nothing) -> FoundInRange (deserialise k) (deserialise v')
         (v', Just br) -> FoundInRangeWithBlob (deserialise k) (deserialise v') br
-    | let (ub, lb) = convertRange r
+    | let (lb, ub) = convertRange r
     , (k, v) <- Map.R.rangeLookup lb ub (_values tbl)
     ]
   where

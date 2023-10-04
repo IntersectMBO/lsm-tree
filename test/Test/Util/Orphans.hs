@@ -19,7 +19,7 @@ import           Control.Monad ((<=<))
 import           Control.Monad.IOSim (IOSim)
 import           Data.Kind (Type)
 import           Database.LSMTree.Normal
-import           Test.QuickCheck (Arbitrary (..), frequency)
+import           Test.QuickCheck (Arbitrary (..), frequency, oneof)
 import           Test.QuickCheck.Instances ()
 import           Test.QuickCheck.StateModel (Realized)
 import           Test.QuickCheck.StateModel.Lockstep (InterpretOp)
@@ -49,6 +49,12 @@ instance (Arbitrary v, Arbitrary blob) => Arbitrary (Update v blob) where
 
   shrink (Insert v blob) = Delete : map (uncurry Insert) (shrink (v, blob))
   shrink Delete          = []
+
+instance Arbitrary k => Arbitrary (Range k) where
+  arbitrary = oneof
+    [ FromToExcluding <$> arbitrary <*> arbitrary
+    , FromToIncluding <$> arbitrary <*> arbitrary
+    ]
 
 {-------------------------------------------------------------------------------
   IOSim
