@@ -55,7 +55,7 @@ close_handle :: MonadSTM m => Session m -> Int -> STM m ()
 close_handle Session {..} i = do
     modifyTVar' openHandles $ Map.delete i
 
--- | Create either a new empty table session.
+-- | Create a new empty table session.
 newSession :: IOLike m => m (Session m)
 newSession = atomically $ do
     session_open <- newTVar True
