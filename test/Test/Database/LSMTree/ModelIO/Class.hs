@@ -39,8 +39,8 @@ class (IsSession (Session h)) => IsTableHandle h where
 
     lookups ::
             (IOLike m, SomeSerialisationConstraint k, SomeSerialisationConstraint v)
-        => [k]
-        -> h m k v blob
+        => h m k v blob
+        -> [k]
         -> m [LookupResult k v (BlobRef h blob)]
 
     updates ::
@@ -49,8 +49,8 @@ class (IsSession (Session h)) => IsTableHandle h where
         , SomeSerialisationConstraint v
         , SomeSerialisationConstraint blob
         )
-        => [(k, Update v blob)]
-        -> h m k v blob
+        => h m k v blob
+        -> [(k, Update v blob)]
         -> m ()
 
     inserts ::
@@ -59,8 +59,8 @@ class (IsSession (Session h)) => IsTableHandle h where
         , SomeSerialisationConstraint v
         , SomeSerialisationConstraint blob
         )
-        => [(k, v, Maybe blob)]
-        -> h m k v blob
+        => h m k v blob
+        -> [(k, v, Maybe blob)]
         -> m ()
 
     deletes ::
@@ -69,8 +69,8 @@ class (IsSession (Session h)) => IsTableHandle h where
         , SomeSerialisationConstraint v
         , SomeSerialisationConstraint blob
         )
-        => [k]
-        -> h m k v blob
+        => h m k v blob
+        -> [k]
         -> m ()
 
 instance IsSession M.Session where
@@ -84,10 +84,10 @@ instance IsTableHandle M.TableHandle where
     testTableConfig _ = M.TableConfig
 
     new = M.new
-    lookups = M.lookups
-    updates = M.updates
-    inserts = M.inserts
-    deletes = M.deletes
+    lookups = flip M.lookups
+    updates = flip M.updates
+    inserts = flip M.inserts
+    deletes = flip M.deletes
 
 instance IsSession R.Session where
     newSession = throwIO (userError "newSession unimplemented")
@@ -100,7 +100,7 @@ instance IsTableHandle R.TableHandle where
     testTableConfig _ = error "TODO: test TableConfig"
 
     new = R.new
-    lookups = R.lookups
-    updates = R.updates
-    inserts = R.inserts
-    deletes = R.deletes
+    lookups = flip R.lookups
+    updates = flip R.updates
+    inserts = flip R.inserts
+    deletes = flip R.deletes

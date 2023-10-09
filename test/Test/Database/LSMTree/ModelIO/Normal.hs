@@ -36,11 +36,11 @@ prop_lookupInsert h k v ups = ioProperty $ do
     -- create session, table handle, and populate it with some data.
     s <- newSession
     hdl <- new @h s (testTableConfig h)
-    updates ups hdl
+    updates hdl ups
 
     -- the main dish
-    inserts [(k, v, Nothing)] hdl
-    res <- lookups [k] hdl
+    inserts hdl [(k, v, Nothing)]
+    res <- lookups hdl [k]
 
     -- void makes blobrefs into ()
     return $ fmap void res === [Found k v]
