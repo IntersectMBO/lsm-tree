@@ -45,12 +45,17 @@ class (IsSession (Session h)) => IsTableHandle h where
         -> [k]
         -> m [LookupResult k v (BlobRef h blob)]
 
-
     rangeLookup ::
             (IOLike m, SomeSerialisationConstraint k, SomeSerialisationConstraint v)
         => h m k v blob
         -> Range k
         -> m [RangeLookupResult k v (BlobRef h blob)]
+
+    retrieveBlobs ::
+            (IOLike m, SomeSerialisationConstraint blob)
+        => h m k v blob
+        -> [BlobRef h blob]
+        -> m [blob]
 
     updates ::
         ( IOLike m
@@ -104,6 +109,7 @@ instance IsTableHandle M.TableHandle where
     deletes = flip M.deletes
 
     rangeLookup = flip M.rangeLookup
+    retrieveBlobs = M.retrieveBlobs
 
     duplicate = M.duplicate
 
@@ -124,5 +130,6 @@ instance IsTableHandle R.TableHandle where
     deletes = flip R.deletes
 
     rangeLookup = flip R.rangeLookup
+    retrieveBlobs = R.retrieveBlobs
 
     duplicate = R.duplicate

@@ -3,13 +3,17 @@
 {-# LANGUAGE TypeApplications    #-}
 module Test.Database.LSMTree.ModelIO.Normal (tests) where
 
+import           Control.Monad.Trans.State
 import qualified Data.ByteString as BS
+import           Data.Foldable (toList)
 import           Data.Functor (void)
+import           Data.Functor.Compose (Compose (..))
 import           Data.List (sortOn)
 import           Data.Proxy (Proxy (..))
 import           Data.Word (Word64)
-import           Database.LSMTree.ModelIO.Normal (LookupResult (..), Range (..),
-                     RangeLookupResult (..), TableHandle, Update (..))
+import           Database.LSMTree.ModelIO.Normal (IOLike, LookupResult (..),
+                     Range (..), RangeLookupResult (..),
+                     SomeSerialisationConstraint, TableHandle, Update (..))
 import           Test.Database.LSMTree.ModelIO.Class
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck
@@ -48,6 +52,33 @@ makeNewTable h ups = do
     updates hdl ups
     return (s, hdl)
 
+-- | Like 'retrieveBlobs' but works for any 'Traversable'.
+--
+-- Like 'partsOf' in @lens@ this uses state monad.
+retrieveBlobsTrav ::
+  (IsTableHandle h, IOLike m, SomeSerialisationConstraint blob, Traversable t)
+  => h m k v blob -> t (BlobRef h blob) -> m (t blob)
+retrieveBlobsTrav hdl brefs = do
+  blobs <- retrieveBlobs hdl (toList brefs)
+  evalStateT (traverse (\_ -> state un) brefs) blobs
+  where
+    un []     = error "invalid traversal"
+    un (x:xs) = (x, xs)
+
+lookupsWithBlobs :: (IsTableHandle h, IOLike m,
+    SomeSerialisationConstraint k, SomeSerialisationConstraint v, SomeSerialisationConstraint blob) =>
+    h m k v blob -> [k] -> m [LookupResult k v blob]
+lookupsWithBlobs hdl ks = do
+    res <- lookups hdl ks
+    getCompose <$> retrieveBlobsTrav hdl (Compose res)
+
+rangeLookupWithBlobs :: (IsTableHandle h, IOLike m,
+    SomeSerialisationConstraint k,  SomeSerialisationConstraint v, SomeSerialisationConstraint a)
+    => h m k v a -> Range k -> m [RangeLookupResult k v a]
+rangeLookupWithBlobs hdl r = do
+    res <- rangeLookup hdl r
+    getCompose <$> retrieveBlobsTrav hdl (Compose res)
+
 -------------------------------------------------------------------------------
 -- implement classic QC tests for basic k/v properties
 -------------------------------------------------------------------------------
@@ -63,9 +94,8 @@ prop_lookupInsert h ups k v = ioProperty $ do
 
     -- the main dish
     inserts hdl [(k, v, Nothing)]
-    res <- lookups hdl [k]
+    res <- lookupsWithBlobs hdl [k]
 
-    -- void makes blobrefs into ()
     return $ fmap void res === [Found k v]
 
 -- | Insert doesn't change the lookup results of other keys.
@@ -78,12 +108,11 @@ prop_lookupInsertElse h ups k v testKeys = ioProperty $ do
     (_, hdl) <- makeNewTable h ups
 
     let testKeys' = filter (/= k) testKeys
-    res1 <- lookups hdl testKeys'
+    res1 <- lookupsWithBlobs hdl testKeys'
     inserts hdl [(k, v, Nothing)]
-    res2 <-  lookups hdl testKeys'
+    res2 <-  lookupsWithBlobs hdl testKeys'
 
-    -- void makes blobrefs into ()
-    return $ fmap void res1 === fmap void res2
+    return $ res1 === res2
 
 -- | You cannot lookup what you have just deleted
 prop_lookupDelete ::
@@ -93,8 +122,8 @@ prop_lookupDelete ::
 prop_lookupDelete h ups k = ioProperty $ do
     (_, hdl) <- makeNewTable h ups
     deletes hdl [k]
-    res <- lookups hdl [k]
-    return $ fmap void res === [NotFound k]
+    res <- lookupsWithBlobs hdl [k]
+    return $ res === [NotFound k]
 
 -- | Delete doesn't change the lookup results of other keys
 prop_lookupDeleteElse ::
@@ -106,12 +135,11 @@ prop_lookupDeleteElse h ups k testKeys = ioProperty $ do
     (_, hdl) <- makeNewTable h ups
 
     let testKeys' = filter (/= k) testKeys
-    res1 <- lookups hdl testKeys'
+    res1 <- lookupsWithBlobs hdl testKeys'
     deletes hdl [k]
-    res2 <-  lookups hdl testKeys'
+    res2 <-  lookupsWithBlobs hdl testKeys'
 
-    -- void makes blobrefs into ()
-    return $ fmap void res1 === fmap void res2
+    return $ res1 === res2
 
 -- | Last insert wins.
 prop_insertInsert ::
@@ -121,8 +149,8 @@ prop_insertInsert ::
 prop_insertInsert h ups k v1 v2 = ioProperty $ do
     (_, hdl) <- makeNewTable h ups
     inserts hdl [(k, v1, Nothing), (k, v2, Nothing)]
-    res <- lookups hdl [k]
-    return $ fmap void res === [Found k v2]
+    res <- lookupsWithBlobs hdl [k]
+    return $ res === [Found k v2]
 
 -- | Inserts with different keys don't interfere.
 prop_insertCommutes ::
@@ -133,8 +161,8 @@ prop_insertCommutes h ups k1 v1 k2 v2 = k1 /= k2 ==> ioProperty do
     (_, hdl) <- makeNewTable h ups
     inserts hdl [(k1, v1, Nothing), (k2, v2, Nothing)]
 
-    res <- lookups hdl [k1,k2]
-    return $ fmap void res === [Found k1 v1, Found k2 v2]
+    res <- lookupsWithBlobs hdl [k1,k2]
+    return $ res === [Found k1 v1, Found k2 v2]
 
 -------------------------------------------------------------------------------
 -- implement classic QC tests for range lookups
@@ -156,18 +184,18 @@ prop_insertLookupRange ::
 prop_insertLookupRange h ups k v r = ioProperty $ do
     (_, hdl) <- makeNewTable h ups
 
-    res <- rangeLookup hdl r
+    res <- rangeLookupWithBlobs hdl r
 
     inserts hdl [(k, v, Nothing)]
 
-    res' <- rangeLookup hdl r
+    res' <- rangeLookupWithBlobs hdl r
 
     let p :: RangeLookupResult Key Value b -> Bool
         p rlr = rangeLookupResultKey rlr /= k
 
     if evalRange r k
-    then return $ sortOn rangeLookupResultKey (FoundInRange k v : fmap void (filter p res)) === fmap void res'
-    else return $ fmap void res === fmap void res'
+    then return $ sortOn rangeLookupResultKey (FoundInRange k v : filter p res) === res'
+    else return $ res === res'
 
 -------------------------------------------------------------------------------
 -- implement classic QC tests for split-value BLOB retrieval
@@ -212,9 +240,9 @@ prop_dupInsertInsert h ups k v1 v2 testKeys = ioProperty $ do
     inserts hdl1 [(k, v1, Nothing), (k, v2, Nothing)]
     inserts hdl2 [(k, v2, Nothing)]
 
-    res1 <- lookups hdl1 testKeys
-    res2 <- lookups hdl2 testKeys
-    return $ fmap void res1 === fmap void res2
+    res1 <- lookupsWithBlobs hdl1 testKeys
+    res2 <- lookupsWithBlobs hdl2 testKeys
+    return $ res1 === res2
 
 -- | Different key inserts commute.
 prop_dupInsertCommutes ::
@@ -228,9 +256,9 @@ prop_dupInsertCommutes h ups k1 v1 k2 v2 testKeys = k1 /= k2 ==> ioProperty do
     inserts hdl1 [(k1, v1, Nothing), (k2, v2, Nothing)]
     inserts hdl2 [(k2, v2, Nothing), (k1, v1, Nothing)]
 
-    res1 <- lookups hdl1 testKeys
-    res2 <- lookups hdl2 testKeys
-    return $ fmap void res1 === fmap void res2
+    res1 <- lookupsWithBlobs hdl1 testKeys
+    res2 <- lookupsWithBlobs hdl2 testKeys
+    return $ res1 === res2
 
 -- changes to one handle should not cause any visible changes in any others
 prop_dupNoChanges ::
@@ -240,12 +268,12 @@ prop_dupNoChanges ::
 prop_dupNoChanges h ups ups' testKeys = ioProperty $ do
     (_, hdl1) <- makeNewTable h ups
 
-    res <- lookups hdl1 testKeys
+    res <- lookupsWithBlobs hdl1 testKeys
 
     hdl2 <- duplicate hdl1
     updates hdl2 ups'
 
     -- lookup hdl1 again.
-    res' <- lookups hdl1 testKeys
+    res' <- lookupsWithBlobs hdl1 testKeys
 
-    return $ fmap void res == fmap void res'
+    return $ res == res'

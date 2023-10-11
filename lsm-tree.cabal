@@ -95,6 +95,7 @@ test-suite lsm-tree-test
     , tasty-hunit
     , tasty-quickcheck
     , temporary
+    , transformers
 
 test-suite map-range-test
   import:           warnings

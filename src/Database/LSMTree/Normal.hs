@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveTraversable        #-}
 {-# LANGUAGE StandaloneDeriving       #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TupleSections            #-}
@@ -218,7 +219,7 @@ data LookupResult k v blobref =
     NotFound      !k
   | Found         !k !v
   | FoundWithBlob !k !v !blobref
-  deriving (Eq, Show)
+  deriving (Eq, Show, Functor, Foldable, Traversable)
 
 -- | Perform a batch of lookups.
 --
@@ -234,7 +235,7 @@ lookups = undefined
 data RangeLookupResult k v blobref =
     FoundInRange         !k !v
   | FoundInRangeWithBlob !k !v !blobref
-  deriving (Eq, Show)
+  deriving (Eq, Show, Functor, Foldable, Traversable)
 
 -- | Perform a range lookup.
 --
