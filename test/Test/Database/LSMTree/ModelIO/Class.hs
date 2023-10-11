@@ -12,9 +12,11 @@ module Test.Database.LSMTree.ModelIO.Class (
 import           Control.Monad.Class.MonadThrow (MonadThrow (throwIO))
 import           Data.Kind (Constraint, Type)
 import           Data.Proxy (Proxy)
-import           Database.LSMTree.Common (IOLike, SomeSerialisationConstraint)
+import           Database.LSMTree.Common (IOLike, Range (..),
+                     SomeSerialisationConstraint)
 import qualified Database.LSMTree.ModelIO.Normal as M
-import           Database.LSMTree.Normal (LookupResult (..), Update (..))
+import           Database.LSMTree.Normal (LookupResult (..),
+                     RangeLookupResult (..), Update (..))
 import qualified Database.LSMTree.Normal as R
 
 type IsSession :: ((Type -> Type) -> Type) -> Constraint
@@ -42,6 +44,13 @@ class (IsSession (Session h)) => IsTableHandle h where
         => h m k v blob
         -> [k]
         -> m [LookupResult k v (BlobRef h blob)]
+
+
+    rangeLookup ::
+            (IOLike m, SomeSerialisationConstraint k, SomeSerialisationConstraint v)
+        => h m k v blob
+        -> Range k
+        -> m [RangeLookupResult k v (BlobRef h blob)]
 
     updates ::
         ( IOLike m
@@ -73,6 +82,11 @@ class (IsSession (Session h)) => IsTableHandle h where
         -> [k]
         -> m ()
 
+    duplicate ::
+            IOLike m
+        => h m k v blob
+        -> m (h m k v blob)
+
 instance IsSession M.Session where
     newSession = M.newSession
 
@@ -89,6 +103,10 @@ instance IsTableHandle M.TableHandle where
     inserts = flip M.inserts
     deletes = flip M.deletes
 
+    rangeLookup = flip M.rangeLookup
+
+    duplicate = M.duplicate
+
 instance IsSession R.Session where
     newSession = throwIO (userError "newSession unimplemented")
 
@@ -104,3 +122,7 @@ instance IsTableHandle R.TableHandle where
     updates = flip R.updates
     inserts = flip R.inserts
     deletes = flip R.deletes
+
+    rangeLookup = flip R.rangeLookup
+
+    duplicate = R.duplicate
