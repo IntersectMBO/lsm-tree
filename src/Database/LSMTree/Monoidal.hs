@@ -42,6 +42,8 @@ module Database.LSMTree.Monoidal (
   , SnapshotName
   , snapshot
   , open
+  , deleteSnapshot
+  , listSnapshots
     -- * Multiple writable table handles
   , duplicate
     -- * Merging tables
@@ -245,7 +247,8 @@ snapshot ::
      , SomeSerialisationConstraint k
      , SomeSerialisationConstraint v
      )
-  => SnapshotName
+  => Session m
+  -> SnapshotName
   -> TableHandle m k v
   -> m ()
 snapshot = undefined
@@ -267,6 +270,21 @@ open ::
   -> SnapshotName
   -> m (TableHandle m k v)
 open = undefined
+
+-- | Delete a named snapshot.
+--
+-- NOTE: has similar behaviour to 'removeDirectory'.
+--
+-- Exceptions:
+--
+-- * Deleting a snapshot that doesn't exist is an error.
+deleteSnapshot :: IOLike m => Session m -> SnapshotName -> m ()
+deleteSnapshot = undefined
+
+-- | List snapshots
+--
+listSnapshots :: IOLike m => Session m -> m [SnapshotName]
+listSnapshots = undefined
 
 {-------------------------------------------------------------------------------
   Mutiple writable table handles

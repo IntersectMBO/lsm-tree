@@ -454,7 +454,7 @@ runIO action lookUp = ReaderT $ \session -> aux session action
         RetrieveBlobs tableVar blobRefsVar -> catchErr $
           fmap Wrap <$> SUT.retrieveBlobs (lookUp' tableVar) (lookUp' blobRefsVar)
         Snapshot name tableVar -> catchErr $
-          SUT.snapshot name (lookUp' tableVar)
+          SUT.snapshot session name (lookUp' tableVar)
         Open name -> catchErr $
           SUT.open session name
         Duplicate tableVar -> catchErr $
@@ -488,7 +488,7 @@ runIOSim action lookUp = ReaderT $ \session -> aux session action
         RetrieveBlobs tableVar blobRefsVar -> catchErr $
           fmap Wrap <$> SUT.retrieveBlobs (lookUp' tableVar) (lookUp' blobRefsVar)
         Snapshot name tableVar -> catchErr $
-          SUT.snapshot name (lookUp' tableVar)
+          SUT.snapshot session name (lookUp' tableVar)
         Open name -> catchErr $
           SUT.open session name
         Duplicate tableVar -> catchErr $

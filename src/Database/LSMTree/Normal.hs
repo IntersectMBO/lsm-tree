@@ -61,6 +61,8 @@ module Database.LSMTree.Normal (
   , SnapshotName
   , snapshot
   , open
+  , deleteSnapshot
+  , listSnapshots
 
     -- * Persistence
     -- $persistence
@@ -351,7 +353,8 @@ snapshot ::
      , SomeSerialisationConstraint v
      , SomeSerialisationConstraint blob
      )
-  => SnapshotName
+  => Session m
+  -> SnapshotName
   -> TableHandle m k v blob
   -> m ()
 snapshot = undefined
@@ -364,6 +367,16 @@ snapshot = undefined
 -- Exceptions:
 --
 -- * Opening a non-existent snapshot is an error.
+--
+-- * Opening a snapshot but expecting the wrong type of table is an error. e.g.,
+--   the following will fail:
+--
+-- @
+-- example session = do
+--   th <- 'new' \@IO \@Int \@Int \@Int session _
+--   'snapshot' "intTable" th
+--   'open' \@IO \@Bool \@Bool \@Bool session "intTable"
+-- @
 --
 -- TOREMOVE: before snapshots are implemented, the snapshot name should be ignored.
 -- Instead, this function should open a table handle from files that exist in
@@ -379,10 +392,20 @@ open ::
   -> m (TableHandle m k v blob)
 open = undefined
 
---TODO: we're missing an operation to delete a snapshot that is no longer
--- required. This is necessary for management of disk space.
+-- | Delete a named snapshot.
 --
--- Also missing an operation to list existing snapshots.
+-- NOTE: has similar behaviour to 'removeDirectory'.
+--
+-- Exceptions:
+--
+-- * Deleting a snapshot that doesn't exist is an error.
+deleteSnapshot :: IOLike m => Session m -> SnapshotName -> m ()
+deleteSnapshot = undefined
+
+-- | List snapshots
+--
+listSnapshots :: IOLike m => Session m -> m [SnapshotName]
+listSnapshots = undefined
 
 {-------------------------------------------------------------------------------
   Mutiple writable table handles
