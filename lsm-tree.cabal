@@ -32,18 +32,13 @@ library
     Data.Map.Range
     Database.LSMTree
     Database.LSMTree.Common
-    Database.LSMTree.Model.Monoidal
-    Database.LSMTree.Model.Normal
-    Database.LSMTree.Model.Normal.Session
     Database.LSMTree.Monoidal
     Database.LSMTree.Normal
 
-  other-modules:    Database.LSMTree.Model.Common
   build-depends:
     , base                 >=4.14     && <4.19
     , bytestring
     , containers
-    , cryptohash-sha256
     , filepath
     , fs-api               ^>=0.2
     , io-classes           ^>=1.2
@@ -62,6 +57,9 @@ test-suite lsm-tree-test
   hs-source-dirs:   test
   main-is:          Main.hs
   other-modules:
+    Database.LSMTree.Model.Monoidal
+    Database.LSMTree.Model.Normal
+    Database.LSMTree.Model.Normal.Session
     Database.LSMTree.ModelIO.Normal
     Database.LSMTree.ModelIO.Session
     Test.Database.LSMTree
@@ -78,6 +76,7 @@ test-suite lsm-tree-test
     , base                  >=4.14 && <4.19
     , bytestring
     , containers
+    , cryptohash-sha256
     , deepseq
     , directory
     , fs-api
