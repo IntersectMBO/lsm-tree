@@ -30,17 +30,6 @@ import qualified Test.QuickCheck.StateModel.Lockstep.Op.SumProd as SumProd
   Common LSMTree types
 -------------------------------------------------------------------------------}
 
-instance Functor (LookupResult k v) where
-  fmap f = \case
-      NotFound      k       -> NotFound      k
-      Found         k v     -> Found         k v
-      FoundWithBlob k v ref -> FoundWithBlob k v (f ref)
-
-instance Functor (RangeLookupResult k v) where
-  fmap f = \case
-      FoundInRange         k v     -> FoundInRange         k v
-      FoundInRangeWithBlob k v ref -> FoundInRangeWithBlob k v (f ref)
-
 instance (Arbitrary v, Arbitrary blob) => Arbitrary (Update v blob) where
   arbitrary = frequency
     [ (10, Insert <$> arbitrary <*> arbitrary)
