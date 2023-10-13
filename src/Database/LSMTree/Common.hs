@@ -17,7 +17,10 @@ module Database.LSMTree.Common (
   , SomeUpdateConstraint (..)
     -- * Small types
   , Range (..)
-    -- * Snapshot names
+    -- * Snapshots
+  , deleteSnapshot
+  , listSnapshots
+    -- ** Snapshot names
   , SnapshotName
   , mkSnapshotName
   ) where
@@ -177,6 +180,25 @@ data Range k =
     -- | Inclusive lower bound, inclusive upper bound
   | FromToIncluding k k
   deriving (Show, Eq)
+
+{-------------------------------------------------------------------------------
+  Snapshots
+-------------------------------------------------------------------------------}
+
+-- | Delete a named snapshot.
+--
+-- NOTE: has similar behaviour to 'removeDirectory'.
+--
+-- Exceptions:
+--
+-- * Deleting a snapshot that doesn't exist is an error.
+deleteSnapshot :: IOLike m => Session m -> SnapshotName -> m ()
+deleteSnapshot = undefined
+
+-- | List snapshots
+--
+listSnapshots :: IOLike m => Session m -> m [SnapshotName]
+listSnapshots = undefined
 
 {-------------------------------------------------------------------------------
   Snapshot name

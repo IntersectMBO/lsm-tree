@@ -82,7 +82,7 @@ import           Data.Kind (Type)
 import           Data.Word (Word64)
 import           Database.LSMTree.Common (IOLike, Range (..), Session,
                      SnapshotName, SomeSerialisationConstraint, closeSession,
-                     newSession)
+                     deleteSnapshot, listSnapshots, newSession)
 
 -- $resource-management
 -- Table handles use resources and as such need to be managed. In particular
@@ -392,21 +392,6 @@ open ::
   -> SnapshotName
   -> m (TableHandle m k v blob)
 open = undefined
-
--- | Delete a named snapshot.
---
--- NOTE: has similar behaviour to 'removeDirectory'.
---
--- Exceptions:
---
--- * Deleting a snapshot that doesn't exist is an error.
-deleteSnapshot :: IOLike m => Session m -> SnapshotName -> m ()
-deleteSnapshot = undefined
-
--- | List snapshots
---
-listSnapshots :: IOLike m => Session m -> m [SnapshotName]
-listSnapshots = undefined
 
 {-------------------------------------------------------------------------------
   Mutiple writable table handles
