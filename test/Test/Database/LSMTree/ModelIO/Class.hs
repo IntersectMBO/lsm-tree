@@ -139,8 +139,8 @@ class (IsSession (Session h)) => IsTableHandle h where
 
 instance IsSession M.Session where
     newSession = M.newSession
-    deleteSnapshot = undefined -- TODO
-    listSnapshots = undefined -- TODO
+    deleteSnapshot = M.deleteSnapshot
+    listSnapshots = M.listSnapshots
 
 instance IsTableHandle M.TableHandle where
     type Session M.TableHandle = M.Session

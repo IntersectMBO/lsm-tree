@@ -1,4 +1,5 @@
 {-# LANGUAGE ConstraintKinds          #-}
+{-# LANGUAGE FlexibleContexts         #-}
 {-# LANGUAGE GADTs                    #-}
 {-# LANGUAGE RecordWildCards          #-}
 {-# LANGUAGE ScopedTypeVariables      #-}
@@ -12,18 +13,23 @@ module Database.LSMTree.ModelIO.Session (
      Session (..)
   , newSession
   , closeSession
+  , listSnapshots
+  , deleteSnapshot
     -- * Internals
   , new_handle
   , close_handle
+  , check_session_open
 ) where
 
 import           Control.Concurrent.Class.MonadSTM
-import           Control.Monad (void)
+import           Control.Monad (unless, void)
+import           Control.Monad.Class.MonadThrow (MonadThrow)
 import           Data.Dynamic (Dynamic)
 import           Data.Kind (Type)
 import           Data.Map (Map)
 import qualified Data.Map.Strict as Map
 import           Database.LSMTree.Common (IOLike, SnapshotName)
+import           GHC.IO.Exception (IOErrorType (..), IOException (..))
 
 type Session :: (Type -> Type) -> Type
 data Session m = Session
@@ -55,6 +61,18 @@ close_handle :: MonadSTM m => Session m -> Int -> STM m ()
 close_handle Session {..} i = do
     modifyTVar' openHandles $ Map.delete i
 
+check_session_open :: (MonadSTM m, MonadThrow (STM m)) => String -> Session m -> STM m ()
+check_session_open fun s = do
+    sok <- readTVar (session_open s)
+    unless sok $ throwSTM IOError
+        { ioe_handle      = Nothing
+        , ioe_type        = IllegalOperation
+        , ioe_location    = fun
+        , ioe_description = "session closed"
+        , ioe_errno       = Nothing
+        , ioe_filename    = Nothing
+        }
+
 -- | Create a new empty table session.
 newSession :: IOLike m => m (Session m)
 newSession = atomically $ do
@@ -73,3 +91,30 @@ closeSession Session {..} = atomically $ do
     writeTVar session_open False
     hdls <- readTVar openHandles
     sequence_ hdls
+
+-- | List snapshots.
+listSnapshots :: IOLike m => Session m -> m [SnapshotName]
+listSnapshots s@Session {..} = atomically $ do
+    check_session_open "listSnapshots" s
+    Map.keys <$> readTVar snapshots
+
+-- | Delete a named snapshot.
+--
+-- Exceptions:
+--
+-- * Deleting a snapshot that doesn't exist is an error.
+deleteSnapshot :: IOLike m => Session m -> SnapshotName -> m ()
+deleteSnapshot s@Session {..} name = atomically $ do
+    check_session_open "deleteSnapshot" s
+
+    sss <- readTVar snapshots
+    if Map.member name sss
+    then writeTVar snapshots (Map.delete name sss)
+    else throwSTM IOError
+        { ioe_handle      = Nothing
+        , ioe_type        = NoSuchThing
+        , ioe_location    = "deleteSnapshot"
+        , ioe_description = "no such snapshot"
+        , ioe_errno       = Nothing
+        , ioe_filename    = Nothing
+        }
