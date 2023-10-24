@@ -354,8 +354,7 @@ snapshot ::
      , SomeSerialisationConstraint v
      , SomeSerialisationConstraint blob
      )
-  => Session m
-  -> SnapshotName
+  => SnapshotName
   -> TableHandle m k v blob
   -> m ()
 snapshot = undefined
