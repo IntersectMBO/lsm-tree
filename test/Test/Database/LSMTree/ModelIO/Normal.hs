@@ -6,7 +6,6 @@ module Test.Database.LSMTree.ModelIO.Normal (tests) where
 import           Control.Monad.Trans.State
 import qualified Data.ByteString as BS
 import           Data.Foldable (toList)
-import           Data.Functor (void)
 import           Data.Functor.Compose (Compose (..))
 import           Data.List (sortOn)
 import           Data.Proxy (Proxy (..))
@@ -23,10 +22,13 @@ tests :: TestTree
 tests = testGroup "Database.LSMTree.ModelIO.Normal"
     [ testProperty "lookup-insert" $ prop_lookupInsert tbl
     , testProperty "lookup-insert-else" $ prop_lookupInsertElse tbl
+    , testProperty "lookup-insert-blob" $ prop_lookupInsertBlob tbl
     , testProperty "lookup-delete" $ prop_lookupDelete tbl
     , testProperty "lookup-delete-else" $ prop_lookupDeleteElse tbl
     , testProperty "insert-insert" $ prop_insertInsert tbl
+    , testProperty "insert-insert-blob" $ prop_insertInsertBlob tbl
     , testProperty "insert-commutes" $ prop_insertCommutes tbl
+    , testProperty "insert-commutes-blob" $ prop_insertCommutesBlob tbl
     , testProperty "dup-insert-insert" $ prop_dupInsertInsert tbl
     , testProperty "dup-insert-comm" $ prop_dupInsertCommutes tbl
     , testProperty "dup-nochanges" $ prop_dupNoChanges tbl
@@ -96,7 +98,7 @@ prop_lookupInsert h ups k v = ioProperty $ do
     inserts hdl [(k, v, Nothing)]
     res <- lookupsWithBlobs hdl [k]
 
-    return $ fmap void res === [Found k v]
+    return $ res === [Found k v]
 
 -- | Insert doesn't change the lookup results of other keys.
 prop_lookupInsertElse ::
@@ -201,7 +203,50 @@ prop_insertLookupRange h ups k v r = ioProperty $ do
 -- implement classic QC tests for split-value BLOB retrieval
 -------------------------------------------------------------------------------
 
--- TODO: split-value?
+-- | You can lookup what you inserted.
+prop_lookupInsertBlob ::
+     IsTableHandle h
+  => Proxy h -> [(Key, Update Value Blob)]
+  -> Key  -> Value -> Blob -> Property
+prop_lookupInsertBlob h ups k v blob = ioProperty $ do
+    -- create session, table handle, and populate it with some data.
+    (_, hdl) <- makeNewTable h ups
+
+    -- the main dish
+    inserts hdl [(k, v, Just blob)]
+    res <- lookupsWithBlobs hdl [k]
+
+    return $ res === [FoundWithBlob k v blob]
+
+-- | Last insert wins.
+prop_insertInsertBlob ::
+     IsTableHandle h
+  => Proxy h -> [(Key, Update Value Blob)]
+  -> Key -> Value -> Value -> Maybe Blob -> Maybe Blob -> Property
+prop_insertInsertBlob h ups k v1 v2 mblob1 mblob2 = ioProperty $ do
+    (_, hdl) <- makeNewTable h ups
+    inserts hdl [(k, v1, mblob1), (k, v2, mblob2)]
+    res <- lookupsWithBlobs hdl [k]
+    return $ res === case mblob2 of
+        Nothing    -> [Found k v2]
+        Just blob2 -> [FoundWithBlob k v2 blob2]
+
+-- | Inserts with different keys don't interfere.
+prop_insertCommutesBlob ::
+       IsTableHandle h
+    => Proxy h -> [(Key, Update Value Blob)]
+    -> Key -> Value -> Maybe Blob
+    -> Key -> Value -> Maybe Blob -> Property
+prop_insertCommutesBlob h ups k1 v1 mblob1 k2 v2 mblob2 = k1 /= k2 ==> ioProperty do
+    (_, hdl) <- makeNewTable h ups
+    inserts hdl [(k1, v1, mblob1), (k2, v2, mblob2)]
+
+    res <- lookupsWithBlobs hdl [k1,k2]
+    return $ res === case (mblob1, mblob2) of
+        (Nothing,    Nothing)    -> [Found k1 v1,               Found k2 v2]
+        (Just blob1, Nothing)    -> [FoundWithBlob k1 v1 blob1, Found k2 v2]
+        (Nothing,    Just blob2) -> [Found k1 v1,               FoundWithBlob k2 v2 blob2]
+        (Just blob1, Just blob2) -> [FoundWithBlob k1 v1 blob1, FoundWithBlob k2 v2 blob2]
 
 -------------------------------------------------------------------------------
 -- implement classic QC tests for monoidal updates
