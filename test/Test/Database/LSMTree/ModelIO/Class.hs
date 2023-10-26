@@ -12,7 +12,8 @@ module Test.Database.LSMTree.ModelIO.Class (
 import           Control.Monad.Class.MonadThrow (MonadThrow (throwIO))
 import           Data.Kind (Constraint, Type)
 import           Data.Proxy (Proxy)
-import           Database.LSMTree.Common (IOLike, Range (..),
+import           Data.Typeable (Typeable)
+import           Database.LSMTree.Common (IOLike, Range (..), SnapshotName,
                      SomeSerialisationConstraint)
 import qualified Database.LSMTree.ModelIO.Normal as M
 import           Database.LSMTree.Normal (LookupResult (..),
@@ -22,6 +23,17 @@ import qualified Database.LSMTree.Normal as R
 type IsSession :: ((Type -> Type) -> Type) -> Constraint
 class IsSession s where
     newSession :: IOLike m => m (s m)
+
+    deleteSnapshot ::
+           IOLike m
+        => s m
+        -> SnapshotName
+        -> m ()
+
+    listSnapshots ::
+           IOLike m
+        => s m
+        -> m [SnapshotName]
 
 -- | Class abstracting over table handle operations.
 --
@@ -38,6 +50,11 @@ class (IsSession (Session h)) => IsTableHandle h where
         => Session h m
         -> TableConfig h
         -> m (h m k v blob)
+
+    close ::
+           IOLike m
+        => h m k v blob
+        -> m ()
 
     lookups ::
             (IOLike m, SomeSerialisationConstraint k, SomeSerialisationConstraint v)
@@ -87,6 +104,34 @@ class (IsSession (Session h)) => IsTableHandle h where
         -> [k]
         -> m ()
 
+    snapshot ::
+        ( IOLike m
+        , SomeSerialisationConstraint k
+        , SomeSerialisationConstraint v
+        , SomeSerialisationConstraint blob
+          -- Model-specific constraints
+        , Typeable k
+        , Typeable v
+        , Typeable blob
+        )
+        => SnapshotName
+        -> h m k v blob
+        -> m ()
+
+    open ::
+        ( IOLike m
+        , SomeSerialisationConstraint k
+        , SomeSerialisationConstraint v
+        , SomeSerialisationConstraint blob
+          -- Model-specific constraints
+        , Typeable k
+        , Typeable v
+        , Typeable blob
+        )
+        => Session h m
+        -> SnapshotName
+        -> m (h m k v blob)
+
     duplicate ::
             IOLike m
         => h m k v blob
@@ -94,6 +139,8 @@ class (IsSession (Session h)) => IsTableHandle h where
 
 instance IsSession M.Session where
     newSession = M.newSession
+    deleteSnapshot = undefined -- TODO
+    listSnapshots = undefined -- TODO
 
 instance IsTableHandle M.TableHandle where
     type Session M.TableHandle = M.Session
@@ -103,6 +150,7 @@ instance IsTableHandle M.TableHandle where
     testTableConfig _ = M.TableConfig
 
     new = M.new
+    close = M.close
     lookups = flip M.lookups
     updates = flip M.updates
     inserts = flip M.inserts
@@ -111,10 +159,15 @@ instance IsTableHandle M.TableHandle where
     rangeLookup = flip M.rangeLookup
     retrieveBlobs = M.retrieveBlobs
 
+    snapshot = M.snapshot
+    open = M.open
+
     duplicate = M.duplicate
 
 instance IsSession R.Session where
     newSession = throwIO (userError "newSession unimplemented")
+    deleteSnapshot = R.deleteSnapshot
+    listSnapshots = R.listSnapshots
 
 instance IsTableHandle R.TableHandle where
     type Session R.TableHandle = R.Session
@@ -124,6 +177,7 @@ instance IsTableHandle R.TableHandle where
     testTableConfig _ = error "TODO: test TableConfig"
 
     new = R.new
+    close = R.close
     lookups = flip R.lookups
     updates = flip R.updates
     inserts = flip R.inserts
@@ -131,5 +185,8 @@ instance IsTableHandle R.TableHandle where
 
     rangeLookup = flip R.rangeLookup
     retrieveBlobs = R.retrieveBlobs
+
+    snapshot = R.snapshot
+    open = R.open
 
     duplicate = R.duplicate
