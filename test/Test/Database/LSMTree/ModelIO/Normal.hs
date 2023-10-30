@@ -8,8 +8,10 @@ import qualified Data.ByteString as BS
 import           Data.Foldable (toList)
 import           Data.Functor.Compose (Compose (..))
 import           Data.List (sortOn)
+import           Data.Maybe (fromMaybe)
 import           Data.Proxy (Proxy (..))
 import           Data.Word (Word64)
+import           Database.LSMTree.Common (mkSnapshotName)
 import           Database.LSMTree.ModelIO.Normal (IOLike, LookupResult (..),
                      Range (..), RangeLookupResult (..),
                      SomeSerialisationConstraint, TableHandle, Update (..))
@@ -33,6 +35,8 @@ tests = testGroup "Database.LSMTree.ModelIO.Normal"
     , testProperty "dup-insert-comm" $ prop_dupInsertCommutes tbl
     , testProperty "dup-nochanges" $ prop_dupNoChanges tbl
     , testProperty "lookupRange-insert" $ prop_insertLookupRange tbl
+    , testProperty "snapshot-nochanges" $ prop_snapshotNoChanges tbl
+    , testProperty "snapshot-nochanges2" $ prop_snapshotNoChanges2 tbl
     ]
   where
     tbl = Proxy :: Proxy TableHandle
@@ -264,7 +268,46 @@ prop_insertCommutesBlob h ups k1 v1 mblob1 k2 v2 mblob2 = k1 /= k2 ==> ioPropert
 -- implement classic QC tests for snapshots
 -------------------------------------------------------------------------------
 
-{- TODO -}
+-- changes to handle would not change the snapshot
+prop_snapshotNoChanges :: forall h.
+     IsTableHandle h
+    => Proxy h -> [(Key, Update Value Blob)]
+    -> [(Key, Update Value Blob)] -> [Key] -> Property
+prop_snapshotNoChanges h ups ups' testKeys = ioProperty $ do
+    (sess, hdl1) <- makeNewTable h ups
+
+    res <- lookupsWithBlobs hdl1 testKeys
+
+    let name = fromMaybe (error "invalid name") $ mkSnapshotName "foo"
+
+    snapshot name hdl1
+    updates hdl1 ups'
+
+    hdl2 <- open @h sess name
+
+    res' <- lookupsWithBlobs hdl2 testKeys
+
+    return $ res == res'
+
+-- same snapshot may be opened multiple times,
+-- and the handles are separate.
+prop_snapshotNoChanges2 :: forall h.
+     IsTableHandle h
+    => Proxy h -> [(Key, Update Value Blob)]
+    -> [(Key, Update Value Blob)] -> [Key] -> Property
+prop_snapshotNoChanges2 h ups ups' testKeys = ioProperty $ do
+    (sess, hdl0) <- makeNewTable h ups
+    let name = fromMaybe (error "invalid name") $ mkSnapshotName "foo"
+    snapshot name hdl0
+
+    hdl1 <- open @h sess name
+    hdl2 <- open @h sess name
+
+    res <- lookupsWithBlobs hdl1 testKeys
+    updates hdl1 ups'
+    res' <- lookupsWithBlobs hdl2 testKeys
+
+    return $ res == res'
 
 -------------------------------------------------------------------------------
 -- implement classic QC tests for multiple writable table handles
