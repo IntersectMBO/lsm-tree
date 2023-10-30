@@ -8,7 +8,8 @@ import           Data.List (sortOn)
 import           Data.Maybe (fromMaybe)
 import           Data.Proxy (Proxy (..))
 import           Data.Word (Word64)
-import           Database.LSMTree.Common (mkSnapshotName)
+import           Database.LSMTree.Common (SomeUpdateConstraint (..),
+                     mkSnapshotName)
 import           Database.LSMTree.ModelIO.Monoidal (LookupResult (..),
                      Range (..), RangeLookupResult (..), TableHandle,
                      Update (..))
@@ -31,6 +32,8 @@ tests = testGroup "Database.LSMTree.ModelIO.Monoidal"
     , testProperty "lookupRange-insert" $ prop_insertLookupRange tbl
     , testProperty "snapshot-nochanges" $ prop_snapshotNoChanges tbl
     , testProperty "snapshot-nochanges2" $ prop_snapshotNoChanges2 tbl
+    , testProperty "lookup-mupsert" $ prop_lookupUpdate tbl
+    , testProperty "mergeTables" $ prop_mergeTables tbl
     ]
   where
     tbl = Proxy :: Proxy TableHandle
@@ -178,13 +181,53 @@ prop_insertLookupRange h ups k v r = ioProperty $ do
 -- implement classic QC tests for monoidal updates
 -------------------------------------------------------------------------------
 
-{- TODO -}
+-- | You can lookup what you inserted.
+prop_lookupUpdate ::
+     IsTableHandle h
+  => Proxy h -> [(Key, Update Value)]
+  -> Key  -> Value -> Value -> Property
+prop_lookupUpdate h ups k v1 v2 = ioProperty $ do
+    -- create session, table handle, and populate it with some data.
+    (_, hdl) <- makeNewTable h ups
+
+    -- the main dish
+    inserts hdl [(k, v1)]
+    mupserts hdl [(k, v2)]
+    res <- lookups hdl [k]
+
+    -- notice the order.
+    return $ res === [Found k $ merge v2 v1]
 
 -------------------------------------------------------------------------------
 -- implement classic QC tests for monoidal table merges
 -------------------------------------------------------------------------------
 
-{- TODO -}
+prop_mergeTables :: forall h.
+     IsTableHandle h
+  => Proxy h -> [(Key, Update Value)] -> [(Key, Update Value)]
+  -> [Key] -> Property
+prop_mergeTables h ups1 ups2 testKeys = ioProperty $ do
+    -- create two tables, from ups1 and ups2
+    (s, hdl1) <- makeNewTable h ups1
+
+    hdl2 <- new @h s (testTableConfig h)
+    updates hdl2 ups2
+
+    -- merge them.
+    hdl3 <- mergeTables hdl1 hdl2
+
+    -- results in parts and the merge table
+    res1 <- lookups hdl1 testKeys
+    res2 <- lookups hdl2 testKeys
+    res3 <- lookups hdl3 testKeys
+
+    let mergeResult :: LookupResult Key Value -> LookupResult Key Value -> LookupResult Key Value
+        mergeResult r@(NotFound _)   (NotFound _) = r
+        mergeResult   (NotFound _) r@(Found _ _)  = r
+        mergeResult r@(Found _ _)    (NotFound _) = r
+        mergeResult   (Found k v1)   (Found _ v2) = Found k (merge v1 v2)
+
+    return $ zipWith mergeResult res1 res2  == res3
 
 -------------------------------------------------------------------------------
 -- implement classic QC tests for snapshots
