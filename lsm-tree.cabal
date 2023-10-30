@@ -60,6 +60,7 @@ test-suite lsm-tree-test
     Database.LSMTree.Model.Monoidal
     Database.LSMTree.Model.Normal
     Database.LSMTree.Model.Normal.Session
+    Database.LSMTree.ModelIO.Monoidal
     Database.LSMTree.ModelIO.Normal
     Database.LSMTree.ModelIO.Session
     Test.Database.LSMTree
@@ -67,6 +68,8 @@ test-suite lsm-tree-test
     Test.Database.LSMTree.Model.Monoidal
     Test.Database.LSMTree.Model.Normal
     Test.Database.LSMTree.ModelIO.Class
+    Test.Database.LSMTree.ModelIO.Monoidal
+    Test.Database.LSMTree.ModelIO.Monoidal.Class
     Test.Database.LSMTree.ModelIO.Normal
     Test.Database.LSMTree.Normal.StateMachine
     Test.Database.LSMTree.Normal.StateMachine.Op

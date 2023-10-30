@@ -130,7 +130,7 @@ rangeLookup :: forall k v.
   -> [RangeLookupResult k v]
 rangeLookup r tbl =
     [ FoundInRange (deserialise k) (deserialise v)
-    | let (ub, lb) = convertRange r
+    | let (lb, ub) = convertRange r
     , (k, v) <- Map.R.rangeLookup lb ub (_values tbl)
     ]
   where
