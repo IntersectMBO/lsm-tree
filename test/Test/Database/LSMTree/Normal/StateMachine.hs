@@ -1,16 +1,23 @@
-{-# LANGUAGE ConstraintKinds       #-}
-{-# LANGUAGE EmptyDataDeriving     #-}
-{-# LANGUAGE FlexibleInstances     #-}
-{-# LANGUAGE GADTs                 #-}
-{-# LANGUAGE InstanceSigs          #-}
-{-# LANGUAGE LambdaCase            #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE NamedFieldPuns        #-}
-{-# LANGUAGE RankNTypes            #-}
-{-# LANGUAGE ScopedTypeVariables   #-}
-{-# LANGUAGE StandaloneDeriving    #-}
-{-# LANGUAGE TypeApplications      #-}
-{-# LANGUAGE TypeFamilies          #-}
+{-# LANGUAGE ConstraintKinds          #-}
+{-# LANGUAGE EmptyDataDeriving        #-}
+{-# LANGUAGE FlexibleContexts         #-}
+{-# LANGUAGE FlexibleInstances        #-}
+{-# LANGUAGE GADTs                    #-}
+{-# LANGUAGE InstanceSigs             #-}
+{-# LANGUAGE LambdaCase               #-}
+{-# LANGUAGE MultiParamTypeClasses    #-}
+{-# LANGUAGE NamedFieldPuns           #-}
+{-# LANGUAGE RankNTypes               #-}
+{-# LANGUAGE ScopedTypeVariables      #-}
+{-# LANGUAGE StandaloneDeriving       #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
+{-# LANGUAGE TypeApplications         #-}
+{-# LANGUAGE TypeFamilies             #-}
+{-# LANGUAGE UndecidableInstances     #-}
+
+{-# OPTIONS_GHC -Wno-orphans #-}
+
+{- HLINT ignore "Use camelCase" -}
 
 {-
   TODO: improve generation and shrinking of dependencies. See
@@ -30,25 +37,33 @@
 -}
 module Test.Database.LSMTree.Normal.StateMachine (tests) where
 
-import           Control.Exception (SomeException (..))
 import           Control.Monad ((<=<))
-import           Control.Monad.Class.MonadThrow (MonadCatch (..),
+import           Control.Monad.Class.MonadThrow (Handler (..), MonadCatch (..),
                      MonadThrow (..))
 import           Control.Monad.IOSim (IOSim)
 import           Control.Monad.Reader (ReaderT (..))
 import           Data.Bifunctor (Bifunctor (..))
+import           Data.Kind (Type)
 import           Data.Maybe (fromJust, mapMaybe)
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Typeable (Proxy (..), Typeable, cast)
 import           Data.Word (Word64)
-import qualified Database.LSMTree.Common as SUT
+import qualified Database.LSMTree.Common as SUT (SomeSerialisationConstraint,
+                     mkSnapshotName)
 import qualified Database.LSMTree.Model.Normal.Session as Model
-import qualified Database.LSMTree.Normal as SUT
-import           System.FS.API (MountPoint (..), SomeHasFS (..))
+import qualified Database.LSMTree.ModelIO.Normal as Impl.ModelIO
+import qualified Database.LSMTree.Normal as Impl.Real
+import qualified Database.LSMTree.Normal as SUT (LookupResult (..), Range (..),
+                     RangeLookupResult (..), SnapshotName, Update (..))
+import           System.Directory (removeDirectoryRecursive)
+import           System.FS.API (MountPoint (..), SomeHasFS (..), mkFsPath)
 import           System.FS.IO (ioHasFS)
+import qualified System.FS.Sim.MockFS as MockFS
+import           System.FS.Sim.STM (simHasFS')
 import           System.IO.Temp (createTempDirectory,
                      getCanonicalTemporaryDirectory)
+import qualified Test.Database.LSMTree.ModelIO.Class as SUT.Class
 import           Test.Database.LSMTree.Normal.StateMachine.Op
                      (HasBlobRef (getBlobRef), Op (..))
 import qualified Test.QuickCheck as QC
@@ -59,56 +74,133 @@ import qualified Test.QuickCheck.StateModel.Lockstep.Defaults as Lockstep.Defaul
 import qualified Test.QuickCheck.StateModel.Lockstep.Run as Lockstep.Run
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.HUnit (testCase)
-import           Test.Util.Orphans (Wrap (..))
+import           Test.Tasty.QuickCheck (testProperty)
+import           Test.Util.Orphans ()
+import           Test.Util.TypeFamilyWrappers (WrapBlob (..), WrapBlobRef (..),
+                     WrapSession (..), WrapTableHandle (..))
 
 {-------------------------------------------------------------------------------
   Test tree
 -------------------------------------------------------------------------------}
 
+-- TODO: run lockstep tests with IOSim too
 tests :: TestTree
 tests = testGroup "Normal.StateMachine" [
       testCase "labelledExamples" $
-        QC.labelledExamples $ Lockstep.Run.tagActions (Proxy @ModelState)
-      -- TODO: enable once we at least have an implementation for SUT sessions.
-    --  , testProperty "propLockstep @IO" $
-    --     Lockstep.Run.runActionsBracket (Proxy @ModelState)
-    --       (createSystemTempDirectory "Lockstep")
-    --       (removeDirectoryRecursive . fst)
-    --       (\r (_, someHasFS) -> SUT.newSession someHasFS (mkFsPath []) >>= runReaderT r)
-    -- , testProperty "propLockstep @IOSim" $
-    --     Lockstep.Run.runActionsBracket (Proxy @ModelState)
-    --       (SomeHasFS <$> simHasFS' MockFS.empty)
-    --       (const (pure ()))
-    --       (\r someHasFS -> SUT.newSession someHasFS (mkFsPath []) >>= runReaderT r)
+        QC.labelledExamples $ Lockstep.Run.tagActions (Proxy @(ModelState Impl.Real.TableHandle))
+    , propLockstepIO_ModelIOImpl
+    , propLockstepIO_RealImpl_RealFS
+    , propLockstepIO_RealImpl_MockFS
     ]
 
--- TODO: enable once we at least have an implementation for SUT sessions.
-_createSystemTempDirectory ::  [Char] -> IO (FilePath, SomeHasFS IO)
-_createSystemTempDirectory prefix = do
+propLockstepIO_ModelIOImpl :: TestTree
+propLockstepIO_ModelIOImpl = testProperty "propLockstepIO_ModelIOImpl" $
+    QC.expectFailure $ -- TODO: remove once we have filled in handler'
+    Lockstep.Run.runActionsBracket
+      (Proxy @(ModelState Impl.ModelIO.TableHandle))
+      acquire
+      release
+      (\r session -> runReaderT r (session, handler))
+  where
+    acquire :: IO (WrapSession Impl.ModelIO.TableHandle IO)
+    acquire = WrapSession <$> Impl.ModelIO.newSession
+
+    release :: WrapSession Impl.ModelIO.TableHandle IO -> IO ()
+    release (WrapSession session) = Impl.ModelIO.closeSession session
+
+    handler :: Handler IO (Maybe Model.Err)
+    handler = Handler $ pure . handler'
+      where
+        handler' :: IOError -> Maybe Model.Err
+        handler' _err = Nothing
+
+propLockstepIO_RealImpl_RealFS :: TestTree
+propLockstepIO_RealImpl_RealFS = testProperty "propLockstepIO_RealImpl_RealFS" $
+   QC.expectFailure $ -- TODO: remove once we have a real implementation
+    Lockstep.Run.runActionsBracket
+      (Proxy @(ModelState Impl.Real.TableHandle))
+      acquire
+      release
+      (\r (_, session) -> runReaderT r (session, handler))
+  where
+    acquire :: IO (FilePath, WrapSession Impl.Real.TableHandle IO)
+    acquire = do
+        (tmpDir, someHasFS) <- createSystemTempDirectory "propLockstepIO_RealIO"
+        session <- Impl.Real.newSession someHasFS (mkFsPath [])
+        pure (tmpDir, WrapSession session)
+
+    release :: (FilePath, WrapSession Impl.Real.TableHandle IO) -> IO ()
+    release (tmpDir, WrapSession session) = do
+        Impl.Real.closeSession session
+        removeDirectoryRecursive tmpDir
+
+    handler :: Handler IO (Maybe Model.Err)
+    handler = Handler $ pure . handler'
+      where
+        handler' :: IOError -> Maybe Model.Err
+        handler' _err = Nothing
+
+propLockstepIO_RealImpl_MockFS :: TestTree
+propLockstepIO_RealImpl_MockFS = testProperty "propLockstepIO_RealImpl_MockFS" $
+   QC.expectFailure $ -- TODO: remove once we have a real implementation
+    Lockstep.Run.runActionsBracket
+      (Proxy @(ModelState Impl.Real.TableHandle))
+      acquire
+      release
+      (\r session -> runReaderT r (session, handler))
+  where
+    acquire :: IO (WrapSession Impl.Real.TableHandle IO)
+    acquire = do
+        someHasFS <- SomeHasFS <$> simHasFS' MockFS.empty
+        WrapSession <$> Impl.Real.newSession someHasFS (mkFsPath [])
+
+    release :: WrapSession Impl.Real.TableHandle IO -> IO ()
+    release (WrapSession session) = Impl.Real.closeSession session
+
+    handler :: Handler IO (Maybe Model.Err)
+    handler = Handler $ pure . handler'
+      where
+        handler' :: IOError -> Maybe Model.Err
+        handler' _err = Nothing
+
+createSystemTempDirectory ::  [Char] -> IO (FilePath, SomeHasFS IO)
+createSystemTempDirectory prefix = do
     systemTempDir <- getCanonicalTemporaryDirectory
     tempDir <- createTempDirectory systemTempDir prefix
     pure (tempDir, SomeHasFS $ ioHasFS (MountPoint tempDir))
+
+instance Arbitrary Impl.ModelIO.TableConfig where
+  arbitrary :: Gen Impl.ModelIO.TableConfig
+  arbitrary = pure Impl.ModelIO.TableConfig
+
+-- TODO: improve, more types of configs
+instance Arbitrary Impl.Real.TableConfig where
+  arbitrary :: Gen Impl.Real.TableConfig
+  arbitrary = pure $  Impl.Real.TableConfig {
+        Impl.Real.tcMaxBufferMemory = 2 * 1024 * 1024
+      , Impl.Real.tcMaxBloomFilterMemory = 2 * 1024 * 1024
+      , Impl.Real.tcBitPrecision = ()
+      }
 
 {-------------------------------------------------------------------------------
   Model state
 -------------------------------------------------------------------------------}
 
-data ModelState = ModelState Model.Model Stats
+type ModelState :: ((Type -> Type) -> Type -> Type -> Type -> Type) -> Type
+data ModelState h = ModelState Model.Model Stats
   deriving Show
 
-initModelState :: ModelState
+initModelState :: ModelState h
 initModelState = ModelState Model.initModel initStats
 
 {-------------------------------------------------------------------------------
   Type synonyms
 -------------------------------------------------------------------------------}
 
-type Act a = Action (Lockstep ModelState) (Either Model.Err a)
-type Var a = ModelVar ModelState a
-type Val a = ModelValue ModelState a
-type Obs a = Observable ModelState a
-
-type RealMonad m = ReaderT (SUT.Session m) m
+type Act h a = Action (Lockstep (ModelState h)) (Either Model.Err a)
+type Var h a = ModelVar (ModelState h) a
+type Val h a = ModelValue (ModelState h) a
+type Obs h a = Observable (ModelState h) a
 
 -- | Common constraints for keys, values and blobs
 type C k v blob = (
@@ -125,39 +217,52 @@ type C k v blob = (
   StateModel
 -------------------------------------------------------------------------------}
 
-instance StateModel (Lockstep ModelState) where
-  data instance Action (Lockstep ModelState) a where
+instance ( Show (SUT.Class.TableConfig h)
+         , Eq (SUT.Class.TableConfig h)
+         , Arbitrary (SUT.Class.TableConfig h)
+         , Typeable h
+         ) => StateModel (Lockstep (ModelState h)) where
+  -- TODO: add missing operations like listSnapshot and deleteSnapshot
+  data instance Action (Lockstep (ModelState h)) a where
     -- Tables
     New :: C k v blob
-        => SUT.TableConfig -> Act (SUT.TableHandle IO k v blob)
+        => SUT.Class.TableConfig h
+        -> Act h (WrapTableHandle h IO k v blob)
     Close :: C k v blob
-          => Var (SUT.TableHandle IO k v blob) -> Act ()
-    -- Table queries
+          => Var h (WrapTableHandle h IO k v blob)
+          -> Act h ()
+    -- Table queriehs
     Lookups :: C k v blob
-            => [k] -> Var (SUT.TableHandle IO k v blob)
-            -> Act [SUT.LookupResult k v (SUT.BlobRef blob)]
+            => [k] -> Var h (WrapTableHandle h IO k v blob)
+            -> Act h [SUT.LookupResult k v (WrapBlobRef h blob)]
     RangeLookup :: C k v blob
-                => SUT.Range k -> Var (SUT.TableHandle IO k v blob)
-                -> Act [SUT.RangeLookupResult k v (SUT.BlobRef blob)]
+                => SUT.Range k -> Var h (WrapTableHandle h IO k v blob)
+                -> Act h [SUT.RangeLookupResult k v (WrapBlobRef h blob)]
     -- Updates
     Updates :: C k v blob
-            => [(k, SUT.Update v blob)] -> Var (SUT.TableHandle IO k v blob) -> Act ()
+            => [(k, SUT.Update v blob)] -> Var h (WrapTableHandle h IO k v blob)
+            -> Act h ()
     Inserts :: C k v blob
-            => [(k, v, Maybe blob)] -> Var (SUT.TableHandle IO k v blob) -> Act ()
+            => [(k, v, Maybe blob)] -> Var h (WrapTableHandle h IO k v blob)
+            -> Act h ()
     Deletes :: C k v blob
-            => [k] -> Var (SUT.TableHandle IO k v blob) -> Act ()
+            => [k] -> Var h (WrapTableHandle h IO k v blob)
+            -> Act h ()
     -- Blobs
     RetrieveBlobs :: C k v blob
-                  => Var (SUT.TableHandle IO k v blob) -> Var [SUT.BlobRef blob]
-                  -> Act [Wrap blob]
+                  => Var h (WrapTableHandle h IO k v blob) -> Var h [WrapBlobRef h blob]
+                  -> Act h [WrapBlob blob]
     -- Snapshots
     Snapshot :: C k v blob
-             => SUT.SnapshotName -> Var (SUT.TableHandle IO k v blob) -> Act ()
+             => SUT.SnapshotName -> Var h (WrapTableHandle h IO k v blob)
+             -> Act h ()
     Open     :: C k v blob
-             => SUT.SnapshotName -> Act (SUT.TableHandle IO k v blob)
+             => SUT.SnapshotName
+             -> Act h (WrapTableHandle h IO k v blob)
     -- Multiple writable table handles
     Duplicate :: C k v blob
-              => Var (SUT.TableHandle IO k v blob) -> Act (SUT.TableHandle IO k v blob)
+              => Var h (WrapTableHandle h IO k v blob)
+              -> Act h (WrapTableHandle h IO k v blob)
 
   initialState    = Lockstep.Defaults.initialState initModelState
   nextState       = Lockstep.Defaults.nextState
@@ -165,13 +270,16 @@ instance StateModel (Lockstep ModelState) where
   arbitraryAction = Lockstep.Defaults.arbitraryAction
   shrinkAction    = Lockstep.Defaults.shrinkAction
 
-deriving instance Show (LockstepAction ModelState a)
+deriving instance Show (SUT.Class.TableConfig h)
+               => Show (LockstepAction (ModelState h) a)
 
-instance Eq (LockstepAction ModelState a) where
-  (==) :: LockstepAction ModelState a -> LockstepAction ModelState a -> Bool
+instance ( Eq (SUT.Class.TableConfig h)
+         , Typeable h
+         ) => Eq (LockstepAction (ModelState h) a) where
+  (==) :: LockstepAction (ModelState h) a -> LockstepAction (ModelState h) a -> Bool
   x == y = go x y
     where
-      go :: LockstepAction ModelState a -> LockstepAction ModelState a -> Bool
+      go :: LockstepAction (ModelState h) a -> LockstepAction (ModelState h) a -> Bool
       go (New conf1)                (New conf2) =
           conf1 == conf2
       go (Close var1)               (Close var2) =
@@ -196,7 +304,7 @@ instance Eq (LockstepAction ModelState a) where
           Just var1 == cast var2
       go _  _ = False
 
-      _coveredAllCases :: LockstepAction ModelState a -> ()
+      _coveredAllCases :: LockstepAction (ModelState h) a -> ()
       _coveredAllCases = \case
           New{} -> ()
           Close{} -> ()
@@ -214,48 +322,54 @@ instance Eq (LockstepAction ModelState a) where
   InLockstep
 -------------------------------------------------------------------------------}
 
-instance InLockstep ModelState where
-  type instance ModelOp ModelState = Op
+instance ( Eq (SUT.Class.TableConfig h)
+         , Show (SUT.Class.TableConfig h)
+         , Arbitrary (SUT.Class.TableConfig h)
+         , Typeable h
+         ) => InLockstep (ModelState h) where
+  type instance ModelOp (ModelState h) = Op
 
-  data instance ModelValue ModelState a where
-    MTableHandle :: Model.TableHandle k v blob -> Val (SUT.TableHandle IO k v blob)
-    MBlobRef :: Model.BlobRef blob -> Val (SUT.BlobRef blob)
+  data instance ModelValue (ModelState h) a where
+    MTableHandle :: Model.TableHandle k v blob
+                 -> Val h (WrapTableHandle h IO k v blob)
+    MBlobRef :: Model.BlobRef blob -> Val h (WrapBlobRef h blob)
 
     MLookupResult :: Model.C k v blob
-                  => Model.LookupResult k v (Val (SUT.BlobRef blob))
-                  -> Val (SUT.LookupResult k v (SUT.BlobRef blob))
+                  => Model.LookupResult k v (Val h (WrapBlobRef h blob))
+                  -> Val h (SUT.LookupResult k v (WrapBlobRef h blob))
     MRangeLookupResult :: Model.C k v blob
-                       => Model.RangeLookupResult k v (Val (SUT.BlobRef blob))
-                       -> Val (SUT.RangeLookupResult k v (SUT.BlobRef blob))
+                       => Model.RangeLookupResult k v (Val h (WrapBlobRef h blob))
+                       -> Val h (SUT.RangeLookupResult k v (WrapBlobRef h blob))
 
-    MBlob :: (Show blob, Typeable blob, Eq blob) => Wrap blob -> Val (Wrap blob)
-    MErr :: Model.Err -> Val Model.Err
+    MBlob :: (Show blob, Typeable blob, Eq blob)
+          => WrapBlob blob -> Val h (WrapBlob blob)
+    MErr :: Model.Err -> Val h Model.Err
 
-    MUnit   :: () -> Val ()
-    MPair   :: (Val a, Val b) -> Val (a, b)
-    MEither :: Either (Val a) (Val b) -> Val (Either a b)
-    MList   :: [Val a] -> Val [a]
+    MUnit   :: () -> Val h ()
+    MPair   :: (Val h a, Val h b) -> Val h (a, b)
+    MEither :: Either (Val h a) (Val h b) -> Val h (Either a b)
+    MList   :: [Val h a] -> Val h [a]
 
-  data instance Observable ModelState a where
-    OTableHandle :: Obs (SUT.TableHandle IO k v blob)
-    OBlobRef :: Obs (SUT.BlobRef blob)
+  data instance Observable (ModelState h) a where
+    OTableHandle :: Obs h (WrapTableHandle h IO k v blob)
+    OBlobRef :: Obs h (WrapBlobRef h blob)
 
     -- TODO: can we use OId for lookup results and range lookup results instead,
     -- or are these separate constructors necessary?
     OLookupResult :: Model.C k v blob
-                  => Model.LookupResult k v (Obs (SUT.BlobRef blob))
-                  -> Obs (SUT.LookupResult k v (SUT.BlobRef blob))
+                  => Model.LookupResult k v (Obs h (WrapBlobRef h blob))
+                  -> Obs h (SUT.LookupResult k v (WrapBlobRef h blob))
     ORangeLookupResult :: Model.C k v blob
-                       => Model.RangeLookupResult k v (Obs (SUT.BlobRef blob))
-                       -> Obs (SUT.RangeLookupResult k v (SUT.BlobRef blob))
+                       => Model.RangeLookupResult k v (Obs h (WrapBlobRef h blob))
+                       -> Obs h (SUT.RangeLookupResult k v (WrapBlobRef h blob))
 
-    OId :: (Show a, Typeable a, Eq a) => a -> Obs a
+    OId :: (Show a, Typeable a, Eq a) => a -> Obs h a
 
-    OPair   :: (Obs a, Obs b) -> Obs (a, b)
-    OEither :: Either (Obs a) (Obs b) -> Obs (Either a b)
-    OList   :: [Obs a] -> Obs [a]
+    OPair   :: (Obs h a, Obs h b) -> Obs h (a, b)
+    OEither :: Either (Obs h a) (Obs h b) -> Obs h (Either a b)
+    OList   :: [Obs h a] -> Obs h [a]
 
-  observeModel :: Val a -> Obs a
+  observeModel :: Val h a -> Obs h a
   observeModel = \case
       MTableHandle _       -> OTableHandle
       MBlobRef _           -> OBlobRef
@@ -269,18 +383,18 @@ instance InLockstep ModelState where
       MList x              -> OList $ map observeModel x
 
   modelNextState ::  forall a.
-       LockstepAction ModelState a
-    -> ModelLookUp ModelState
-    -> ModelState
-    -> (ModelValue ModelState a, ModelState)
+       LockstepAction (ModelState h) a
+    -> ModelLookUp (ModelState h)
+    -> ModelState h
+    -> (ModelValue (ModelState h) a, ModelState h)
   modelNextState action lookUp (ModelState mock stats) =
       auxStats $ runModel lookUp action mock
     where
-      auxStats :: (Val a, Model.Model) -> (Val a, ModelState)
+      auxStats :: (Val h a, Model.Model) -> (Val h a, ModelState h)
       auxStats (result, state') =
           (result, ModelState state' $ updateStats action result stats)
 
-  usedVars :: LockstepAction ModelState a -> [AnyGVar (ModelOp ModelState)]
+  usedVars :: LockstepAction (ModelState h) a -> [AnyGVar (ModelOp (ModelState h))]
   usedVars = \case
       New _                           -> []
       Close tableVar                  -> [SomeGVar tableVar]
@@ -295,39 +409,56 @@ instance InLockstep ModelState where
       Duplicate tableVar              -> [SomeGVar tableVar]
 
   arbitraryWithVars ::
-       ModelFindVariables ModelState
-    -> ModelState
-    -> Gen (Any (LockstepAction ModelState))
+       ModelFindVariables (ModelState h)
+    -> ModelState h
+    -> Gen (Any (LockstepAction (ModelState h)))
   arbitraryWithVars = arbitraryActionWithVars (Proxy @(Word64, Word64, Word64))
 
   shrinkWithVars ::
-       ModelFindVariables ModelState
-    -> ModelState
-    -> LockstepAction ModelState a
-    -> [Any (LockstepAction ModelState)]
+       ModelFindVariables (ModelState h)
+    -> ModelState h
+    -> LockstepAction (ModelState h) a
+    -> [Any (LockstepAction (ModelState h))]
   shrinkWithVars = shrinkActionWithVars
 
   tagStep ::
-       (ModelState, ModelState)
-    -> LockstepAction ModelState a
-    -> Val a
+       (ModelState h, ModelState h)
+    -> LockstepAction (ModelState h) a
+    -> Val h a
     -> [String]
   tagStep states action = map show . tagStep' states action
 
-deriving instance Show (Val a)
-deriving instance Eq (Obs a)
-deriving instance Show (Obs a)
+deriving instance Show (SUT.Class.TableConfig h) => Show (Val h a)
+deriving instance Eq (Obs h a)
+deriving instance Show (Obs h a)
+
+{-------------------------------------------------------------------------------
+  Real monad
+-------------------------------------------------------------------------------}
+
+-- | Uses 'WrapSession' such that we can define class instances that mention
+-- 'RealMonad' in the class head. This is necessary because class heads can not
+-- mention type families directly.
+--
+-- Also carries an exception handle that is specific to the table implementation
+-- identified by the table handle @h@.
+type RealMonad h m = ReaderT (WrapSession h m, Handler m (Maybe Model.Err)) m
 
 {-------------------------------------------------------------------------------
   RunLockstep
 -------------------------------------------------------------------------------}
 
-instance  RunLockstep ModelState (RealMonad IO) where
+instance ( Eq (SUT.Class.TableConfig h)
+         , SUT.Class.IsTableHandle h
+         , Show (SUT.Class.TableConfig h)
+         , Arbitrary (SUT.Class.TableConfig h)
+         , Typeable h
+         ) => RunLockstep (ModelState h) (RealMonad h IO) where
   observeReal ::
-       Proxy (RealMonad IO)
-    -> LockstepAction ModelState a
-    -> Realized (RealMonad IO) a
-    -> Obs a
+       Proxy (RealMonad h IO)
+    -> LockstepAction (ModelState h) a
+    -> Realized (RealMonad h IO) a
+    -> Obs h a
   observeReal _proxy action result = case action of
       New{}           -> OEither $ bimap OId (const OTableHandle) result
       Close{}         -> OEither $ bimap OId OId result
@@ -343,12 +474,17 @@ instance  RunLockstep ModelState (RealMonad IO) where
       Open{}          -> OEither $ bimap OId (const OTableHandle) result
       Duplicate{}     -> OEither $ bimap OId (const OTableHandle) result
 
-instance  RunLockstep ModelState (RealMonad (IOSim s)) where
+instance ( Eq (SUT.Class.TableConfig h)
+         , SUT.Class.IsTableHandle h
+         , Show (SUT.Class.TableConfig h)
+         , Arbitrary (SUT.Class.TableConfig h)
+         , Typeable h
+         ) => RunLockstep (ModelState h) (RealMonad h (IOSim s)) where
   observeReal ::
-       Proxy (RealMonad (IOSim s))
-    -> LockstepAction ModelState a
-    -> Realized (RealMonad (IOSim s)) a
-    -> Obs a
+       Proxy (RealMonad h (IOSim s))
+    -> LockstepAction (ModelState h) a
+    -> Realized (RealMonad h (IOSim s)) a
+    -> Obs h a
   observeReal _proxy action result = case action of
       New{}           -> OEither $ bimap OId (const OTableHandle) result
       Close{}         -> OEither $ bimap OId OId result
@@ -368,27 +504,37 @@ instance  RunLockstep ModelState (RealMonad (IOSim s)) where
   RunModel
 -------------------------------------------------------------------------------}
 
-instance RunModel (Lockstep ModelState) (RealMonad IO) where
+instance ( Eq (SUT.Class.TableConfig h)
+         , SUT.Class.IsTableHandle h
+         , Show (SUT.Class.TableConfig h)
+         , Arbitrary (SUT.Class.TableConfig h)
+         , Typeable h
+         ) => RunModel (Lockstep (ModelState h)) (RealMonad h IO) where
   perform _     = runIO
   postcondition = Lockstep.Defaults.postcondition
-  monitoring    = Lockstep.Defaults.monitoring (Proxy @(RealMonad IO))
+  monitoring    = Lockstep.Defaults.monitoring (Proxy @(RealMonad h IO))
 
-instance RunModel (Lockstep ModelState) (RealMonad (IOSim s)) where
+instance ( Eq (SUT.Class.TableConfig h)
+         , SUT.Class.IsTableHandle h
+         , Show (SUT.Class.TableConfig h)
+         , Arbitrary (SUT.Class.TableConfig h)
+         , Typeable h
+         ) => RunModel (Lockstep (ModelState h)) (RealMonad h (IOSim s)) where
   perform _     = runIOSim
   postcondition = Lockstep.Defaults.postcondition
-  monitoring    = Lockstep.Defaults.monitoring (Proxy @(RealMonad (IOSim s)))
+  monitoring    = Lockstep.Defaults.monitoring (Proxy @(RealMonad h (IOSim s)))
 
 {-------------------------------------------------------------------------------
   Interpreter for the model
 -------------------------------------------------------------------------------}
 
 runModel ::
-     ModelLookUp ModelState
-  -> LockstepAction ModelState a
-  -> Model.Model -> (Val a, Model.Model)
+     ModelLookUp (ModelState h)
+  -> LockstepAction (ModelState h) a
+  -> Model.Model -> (Val h a, Model.Model)
 runModel lookUp = \case
-    New cfg -> wrap MTableHandle .
-      Model.runModelM (Model.new cfg)
+    New _cfg -> wrap MTableHandle .
+      Model.runModelM (Model.new Model.TableConfig)
     Close tableVar -> wrap MUnit .
       Model.runModelM (Model.close (getTableHandle $ lookUp tableVar))
     Lookups ks tableVar -> wrap (MList . fmap (MLookupResult . fmap MBlobRef)) .
@@ -401,7 +547,7 @@ runModel lookUp = \case
       Model.runModelM (Model.inserts kins (getTableHandle $ lookUp tableVar))
     Deletes kdels tableVar -> wrap MUnit .
       Model.runModelM (Model.deletes kdels (getTableHandle $ lookUp tableVar))
-    RetrieveBlobs tableVar blobsVar -> wrap (MList . fmap (MBlob . Wrap)) .
+    RetrieveBlobs tableVar blobsVar -> wrap (MList . fmap (MBlob . WrapBlob)) .
       Model.runModelM (Model.retrieveBlobs (getTableHandle $ lookUp tableVar) (getBlobRefs . lookUp $ blobsVar))
     Snapshot name tableVar -> wrap MUnit .
       Model.runModelM (Model.snapshot name (getTableHandle $ lookUp tableVar))
@@ -410,115 +556,131 @@ runModel lookUp = \case
     Duplicate tableVar -> wrap MTableHandle .
       Model.runModelM (Model.duplicate (getTableHandle $ lookUp tableVar))
   where
-    wrap ::
-         (a -> Val b)
-      -> (Either Model.Err a, Model.Model)
-      -> (Val (Either Model.Err b), Model.Model)
-    wrap f = first (MEither . bimap MErr f)
-
     getTableHandle ::
-         ModelValue ModelState (SUT.TableHandle IO k v blob)
+         ModelValue (ModelState h) (WrapTableHandle h IO k v blob)
       -> Model.TableHandle k v blob
     getTableHandle (MTableHandle th) = th
 
-    getBlobRefs :: ModelValue ModelState [SUT.BlobRef blob] -> [Model.BlobRef blob]
+    getBlobRefs :: ModelValue (ModelState h) [WrapBlobRef h blob] -> [Model.BlobRef blob]
     getBlobRefs (MList brs) = fmap (\(MBlobRef br) -> br) brs
 
+wrap ::
+     (a -> Val h b)
+  -> (Either Model.Err a, Model.Model)
+  -> (Val h (Either Model.Err b), Model.Model)
+wrap f = first (MEither . bimap MErr f)
 
 {-------------------------------------------------------------------------------
   Interpreters for @'IOLike' m@
 -------------------------------------------------------------------------------}
 
-runIO :: forall a.
-     LockstepAction ModelState a
-  -> LookUp (RealMonad IO)
-  -> RealMonad IO (Realized (RealMonad IO) a)
-runIO action lookUp = ReaderT $ \session -> aux session action
+runIO ::
+     forall a h. SUT.Class.IsTableHandle h
+  => LockstepAction (ModelState h) a
+  -> LookUp (RealMonad h IO)
+  -> RealMonad h IO (Realized (RealMonad h IO) a)
+runIO action lookUp = ReaderT $ \(session, handler) ->
+    aux (unwrapSession session) handler action
   where
-    aux :: SUT.Session IO -> LockstepAction ModelState a -> IO (Realized IO a)
-    aux session = \case
-        New cfg -> catchErr $
-          SUT.new session cfg
-        Close tableVar -> catchErr $
-          SUT.close (lookUp' tableVar)
-        Lookups ks tableVar -> catchErr $
-          SUT.lookups ks (lookUp' tableVar)
-        RangeLookup range tableVar -> catchErr $
-          SUT.rangeLookup range (lookUp' tableVar)
-        Updates kups tableVar -> catchErr $
-          SUT.updates kups (lookUp' tableVar)
-        Inserts kins tableVar -> catchErr $
-          SUT.inserts kins (lookUp' tableVar)
-        Deletes kdels tableVar -> catchErr $
-          SUT.deletes kdels (lookUp' tableVar)
-        RetrieveBlobs tableVar blobRefsVar -> catchErr $
-          fmap Wrap <$> SUT.retrieveBlobs (lookUp' tableVar) (lookUp' blobRefsVar)
-        Snapshot name tableVar -> catchErr $
-          SUT.snapshot name (lookUp' tableVar)
-        Open name -> catchErr $
-          SUT.open session name
-        Duplicate tableVar -> catchErr $
-          SUT.duplicate (lookUp' tableVar)
+    aux ::
+         SUT.Class.Session h IO
+      -> Handler IO (Maybe Model.Err)
+      -> LockstepAction (ModelState h) a
+      -> IO (Realized IO a)
+    aux session handler = \case
+        New cfg -> catchErr handler $
+          WrapTableHandle <$> SUT.Class.new session cfg
+        Close tableVar -> catchErr handler $
+          SUT.Class.close (unwrapTableHandle $ lookUp' tableVar)
+        Lookups ks tableVar -> catchErr handler $
+          fmap (fmap WrapBlobRef) <$> SUT.Class.lookups (unwrapTableHandle $ lookUp' tableVar) ks
+        RangeLookup range tableVar -> catchErr handler $
+          fmap (fmap WrapBlobRef) <$> SUT.Class.rangeLookup (unwrapTableHandle $ lookUp' tableVar) range
+        Updates kups tableVar -> catchErr handler $
+          SUT.Class.updates (unwrapTableHandle $ lookUp' tableVar) kups
+        Inserts kins tableVar -> catchErr handler $
+          SUT.Class.inserts (unwrapTableHandle $ lookUp' tableVar) kins
+        Deletes kdels tableVar -> catchErr handler $
+          SUT.Class.deletes (unwrapTableHandle $ lookUp' tableVar) kdels
+        RetrieveBlobs tableVar blobRefsVar -> catchErr handler $
+          fmap WrapBlob <$> SUT.Class.retrieveBlobs (unwrapTableHandle $ lookUp' tableVar) (unwrapBlobRef <$> lookUp' blobRefsVar)
+        Snapshot name tableVar -> catchErr handler $
+          SUT.Class.snapshot name (unwrapTableHandle $ lookUp' tableVar)
+        Open name -> catchErr handler $
+          WrapTableHandle <$> SUT.Class.open session name
+        Duplicate tableVar -> catchErr handler $
+          WrapTableHandle <$> SUT.Class.duplicate (unwrapTableHandle $ lookUp' tableVar)
 
-    lookUp' :: Var x -> Realized IO x
-    lookUp' = lookUpGVar (Proxy @(RealMonad IO)) lookUp
+    lookUp' :: Var j x -> Realized IO x
+    lookUp' = lookUpGVar (Proxy @(RealMonad h IO)) lookUp
 
-runIOSim :: forall s a.
-     LockstepAction ModelState a
-  -> LookUp (RealMonad (IOSim s))
-  -> RealMonad (IOSim s) (Realized (RealMonad (IOSim s)) a)
-runIOSim action lookUp = ReaderT $ \session -> aux session action
+runIOSim ::
+     forall s a h. SUT.Class.IsTableHandle h
+  => LockstepAction (ModelState h) a
+  -> LookUp (RealMonad h (IOSim s))
+  -> RealMonad h (IOSim s) (Realized (RealMonad h (IOSim s)) a)
+runIOSim action lookUp = ReaderT $ \(session, handler) ->
+    aux (unwrapSession session) handler action
   where
-    aux :: SUT.Session (IOSim s) -> LockstepAction ModelState a -> IOSim s (Realized (IOSim s) a)
-    aux session = \case
-        New cfg -> catchErr $
-          SUT.new session cfg
-        Close tableVar -> catchErr $
-          SUT.close (lookUp' tableVar)
-        Lookups ks tableVar -> catchErr $
-          SUT.lookups ks (lookUp' tableVar)
-        RangeLookup range tableVar -> catchErr $
-          SUT.rangeLookup range (lookUp' tableVar)
-        Updates kups tableVar -> catchErr $
-          SUT.updates kups (lookUp' tableVar)
-        Inserts kins tableVar -> catchErr $
-          SUT.inserts kins (lookUp' tableVar)
-        Deletes kdels tableVar -> catchErr $
-          SUT.deletes kdels (lookUp' tableVar)
-        RetrieveBlobs tableVar blobRefsVar -> catchErr $
-          fmap Wrap <$> SUT.retrieveBlobs (lookUp' tableVar) (lookUp' blobRefsVar)
-        Snapshot name tableVar -> catchErr $
-          SUT.snapshot name (lookUp' tableVar)
-        Open name -> catchErr $
-          SUT.open session name
-        Duplicate tableVar -> catchErr $
-          SUT.duplicate (lookUp' tableVar)
+    aux ::
+         SUT.Class.Session h (IOSim s)
+      -> Handler (IOSim s) (Maybe Model.Err)
+      -> LockstepAction (ModelState h) a
+      -> IOSim s (Realized (IOSim s) a)
+    aux session handler = \case
+        New cfg -> catchErr handler $
+          WrapTableHandle <$> SUT.Class.new session cfg
+        Close tableVar -> catchErr handler $
+          SUT.Class.close (unwrapTableHandle $ lookUp' tableVar)
+        Lookups ks tableVar -> catchErr handler $
+          fmap (fmap WrapBlobRef) <$> SUT.Class.lookups (unwrapTableHandle $ lookUp' tableVar) ks
+        RangeLookup range tableVar -> catchErr handler $
+          fmap (fmap WrapBlobRef) <$> SUT.Class.rangeLookup (unwrapTableHandle $ lookUp' tableVar) range
+        Updates kups tableVar -> catchErr handler $
+          SUT.Class.updates (unwrapTableHandle $ lookUp' tableVar) kups
+        Inserts kins tableVar -> catchErr handler $
+          SUT.Class.inserts (unwrapTableHandle $ lookUp' tableVar) kins
+        Deletes kdels tableVar -> catchErr handler $
+          SUT.Class.deletes (unwrapTableHandle $ lookUp' tableVar) kdels
+        RetrieveBlobs tableVar blobRefsVar -> catchErr handler $
+          fmap WrapBlob <$> SUT.Class.retrieveBlobs (unwrapTableHandle $ lookUp' tableVar) (unwrapBlobRef <$> lookUp' blobRefsVar)
+        Snapshot name tableVar -> catchErr handler $
+          SUT.Class.snapshot name (unwrapTableHandle $ lookUp' tableVar)
+        Open name -> catchErr handler $
+          WrapTableHandle <$> SUT.Class.open session name
+        Duplicate tableVar -> catchErr handler $
+          WrapTableHandle <$> SUT.Class.duplicate (unwrapTableHandle $ lookUp' tableVar)
+    lookUp' :: Var h x -> Realized (IOSim s) x
+    lookUp' = lookUpGVar (Proxy @(RealMonad h (IOSim s))) lookUp
 
-    lookUp' :: Var x -> Realized (IOSim s) x
-    lookUp' = lookUpGVar (Proxy @(RealMonad (IOSim s))) lookUp
-
-catchErr :: forall m a. MonadCatch m => m a -> m (Either Model.Err a)
-catchErr action = catch (Right <$> action) handler
+catchErr ::
+     forall m a. MonadCatch m
+  => Handler m (Maybe Model.Err) -> m a -> m (Either Model.Err a)
+catchErr (Handler f) action = catch (Right <$> action) f'
   where
-    handler :: SomeException -> m (Either Model.Err b)
-    handler (SomeException e) = maybe (throwIO e) (pure . Left) Nothing
+    f' e = maybe (throwIO e) (pure . Left) =<< f e
 
 {-------------------------------------------------------------------------------
   Generator and shrinking
 -------------------------------------------------------------------------------}
 
 arbitraryActionWithVars ::
-     forall k v blob. (C k v blob, Arbitrary k, Arbitrary v, Arbitrary blob)
+     forall h k v blob. (
+       C k v blob, Arbitrary k, Arbitrary v, Arbitrary blob
+     , Eq (SUT.Class.TableConfig h)
+     , Arbitrary (SUT.Class.TableConfig h)
+     , Typeable h
+     )
   => Proxy (k, v, blob)
-  -> ModelFindVariables ModelState
-  -> ModelState
-  -> Gen (Any (LockstepAction ModelState))
+  -> ModelFindVariables (ModelState h)
+  -> ModelState h
+  -> Gen (Any (LockstepAction (ModelState h)))
 arbitraryActionWithVars _ findVars _st = QC.oneof $ concat [
       withoutVars
-    , case findVars (Proxy @(Either Model.Err (SUT.TableHandle IO k v blob))) of
+    , case findVars (Proxy @(Either Model.Err (WrapTableHandle h IO k v blob))) of
         []   -> []
         vars -> withVars (QC.elements vars)
-    , case ( findVars (Proxy @(Either Model.Err (SUT.TableHandle IO k v blob)))
+    , case ( findVars (Proxy @(Either Model.Err (WrapTableHandle h IO k v blob)))
            , findBlobRefsVars
            ) of
         ([], _ )      -> []
@@ -526,30 +688,30 @@ arbitraryActionWithVars _ findVars _st = QC.oneof $ concat [
         (vars, vars') -> withVars' (QC.elements vars) (QC.elements vars')
     ]
   where
-    findBlobRefsVars :: [Var (Either Model.Err [SUT.BlobRef blob])]
+    findBlobRefsVars :: [Var h (Either Model.Err [WrapBlobRef h blob])]
     findBlobRefsVars = fmap fromLookupResults vars1 ++ fmap fromRangeLookupResults vars2
       where
-        vars1 = findVars (Proxy @(Either Model.Err [SUT.LookupResult k v (SUT.BlobRef blob)]))
-        vars2 = findVars (Proxy @(Either Model.Err [SUT.RangeLookupResult k v (SUT.BlobRef blob)]))
+        vars1 = findVars (Proxy @(Either Model.Err [SUT.LookupResult k v (WrapBlobRef h blob)]))
+        vars2 = findVars (Proxy @(Either Model.Err [SUT.RangeLookupResult k v (WrapBlobRef h blob)]))
 
         fromLookupResults ::
-             Var (Either Model.Err [SUT.LookupResult k v (SUT.BlobRef blob)])
-          -> Var (Either Model.Err [SUT.BlobRef blob])
+             Var h (Either Model.Err [SUT.LookupResult k v (WrapBlobRef h blob)])
+          -> Var h (Either Model.Err [WrapBlobRef h blob])
         fromLookupResults = mapGVar (\op -> OpRight `OpComp` OpLookupResults `OpComp` OpFromRight `OpComp` op)
 
         fromRangeLookupResults ::
-             Var (Either Model.Err [SUT.RangeLookupResult k v (SUT.BlobRef blob)])
-          -> Var (Either Model.Err [SUT.BlobRef blob])
+             Var h (Either Model.Err [SUT.RangeLookupResult k v (WrapBlobRef h blob)])
+          -> Var h (Either Model.Err [WrapBlobRef h blob])
         fromRangeLookupResults = mapGVar (\op -> OpRight `OpComp` OpRangeLookupResults `OpComp` OpFromRight `OpComp` op)
 
-    withoutVars :: [Gen (Any (LockstepAction ModelState))]
+    withoutVars :: [Gen (Any (LockstepAction (ModelState h)))]
     withoutVars = [
-          Some . New @k @v @blob <$> genTableConfig
+          Some . New @k @v @blob <$> QC.arbitrary
         ]
 
     withVars ::
-         Gen (Var (Either Model.Err (SUT.TableHandle IO k v blob)))
-      -> [Gen (Any (LockstepAction ModelState))]
+         Gen (Var h (Either Model.Err (WrapTableHandle h IO k v blob)))
+      -> [Gen (Any (LockstepAction (ModelState h)))]
     withVars genVar = [
           fmap Some $ Close <$> (fromRight <$> genVar)
         , fmap Some $ Lookups <$> genLookupKeys <*> (fromRight <$> genVar)
@@ -563,25 +725,17 @@ arbitraryActionWithVars _ findVars _st = QC.oneof $ concat [
         ]
 
     withVars' ::
-         Gen (Var (Either Model.Err (SUT.TableHandle IO k v blob)))
-      -> Gen (Var (Either Model.Err [SUT.BlobRef blob]))
-      -> [Gen (Any (LockstepAction ModelState))]
+         Gen (Var h (Either Model.Err (WrapTableHandle h IO k v blob)))
+      -> Gen (Var h (Either Model.Err [WrapBlobRef h blob]))
+      -> [Gen (Any (LockstepAction (ModelState h)))]
     withVars' genTableHandleVar genBlobRefsVar = [
           fmap Some $ RetrieveBlobs <$> (fromRight <$> genTableHandleVar) <*> (fromRight <$> genBlobRefsVar)
         ]
 
     fromRight ::
-         Var (Either Model.Err a)
-      -> Var a
+         Var h (Either Model.Err a)
+      -> Var h a
     fromRight = mapGVar (\op -> OpFromRight `OpComp` op)
-
-    -- TODO: improve, more types of configs
-    genTableConfig :: Gen SUT.TableConfig
-    genTableConfig = pure $ SUT.TableConfig {
-          SUT.tcMaxBufferMemory = 2 * 1024 * 1024
-        , SUT.tcMaxBloomFilterMemory = 2 * 1024 * 1024
-        , SUT.tcBitPrecision = ()
-        }
 
     -- TODO: improve
     genLookupKeys :: Gen [k]
@@ -624,17 +778,17 @@ arbitraryActionWithVars _ findVars _st = QC.oneof $ concat [
     genSnapshotName = pure $ fromJust $ SUT.mkSnapshotName "snap"
 
 shrinkActionWithVars ::
-       ModelFindVariables ModelState
-    -> ModelState
-    -> LockstepAction ModelState a
-    -> [Any (LockstepAction ModelState)]
+       ModelFindVariables (ModelState h)
+    -> ModelState h
+    -> LockstepAction (ModelState h) a
+    -> [Any (LockstepAction (ModelState h))]
 shrinkActionWithVars _ _ _ = []
 
 {-------------------------------------------------------------------------------
   Interpret 'Op' against 'ModelValue'
 -------------------------------------------------------------------------------}
 
-instance InterpretOp Op (ModelValue ModelState) where
+instance InterpretOp Op (ModelValue (ModelState h)) where
   intOp = \case
     OpId                 -> Just
     OpFst                -> \case MPair   x -> Just (fst x)
@@ -669,7 +823,7 @@ data ConstructorName =
   | CDuplicate
   deriving (Show, Eq, Ord, Enum, Bounded)
 
-toConstructorName :: LockstepAction ModelState a -> ConstructorName
+toConstructorName :: LockstepAction (ModelState h) a -> ConstructorName
 toConstructorName = \case
     New{} -> CNew
     Close{} -> CClose
@@ -693,7 +847,7 @@ initStats = Stats {
       seenActions = Set.empty
     }
 
-updateStats :: LockstepAction ModelState a -> Val a -> Stats -> Stats
+updateStats :: LockstepAction (ModelState h) a -> Val h a -> Stats -> Stats
 updateStats action _result Stats{seenActions} = Stats {
       seenActions = Set.insert (toConstructorName action) seenActions
     }
@@ -706,9 +860,9 @@ data Tag =
   deriving Show
 
 tagStep' ::
-     (ModelState, ModelState)
-  -> LockstepAction ModelState a
-  -> Val a
+     (ModelState h, ModelState h)
+  -> LockstepAction (ModelState h) a
+  -> Val h a
   -> [Tag]
 tagStep' (_before, ModelState _ statsAfter) _action _result = Top :
     [All | seenActions statsAfter == Set.fromList [minBound .. maxBound]]

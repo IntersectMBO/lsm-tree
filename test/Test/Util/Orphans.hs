@@ -4,12 +4,14 @@
 {-# LANGUAGE InstanceSigs             #-}
 {-# LANGUAGE LambdaCase               #-}
 {-# LANGUAGE MultiParamTypeClasses    #-}
+{-# LANGUAGE StandaloneDeriving       #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeFamilies             #-}
+{-# LANGUAGE UndecidableInstances     #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module Test.Util.Orphans (Wrap (..)) where
+module Test.Util.Orphans () where
 
 import           Control.Concurrent.Class.MonadMVar (MonadMVar (..))
 import           Control.Concurrent.Class.MonadSTM (MonadSTM (..))
@@ -26,6 +28,8 @@ import           Test.QuickCheck.StateModel (Realized)
 import           Test.QuickCheck.StateModel.Lockstep (InterpretOp)
 import qualified Test.QuickCheck.StateModel.Lockstep.Op as Op
 import qualified Test.QuickCheck.StateModel.Lockstep.Op.SumProd as SumProd
+import           Test.Util.TypeFamilyWrappers (WrapBlob (..), WrapBlobRef (..),
+                     WrapTableHandle (..))
 
 {-------------------------------------------------------------------------------
   Common LSMTree types
@@ -76,18 +80,15 @@ type family RealizeIOSim s a where
   RealizeIOSim s (LookupResult k v blobref)      = LookupResult k v blobref
   RealizeIOSim s (RangeLookupResult k v blobref) = RangeLookupResult k v blobref
   RealizeIOSim s (BlobRef blob)                  = BlobRef blob
-  -- Override
-  RealizeIOSim s (Wrap a) = Wrap a
+  -- Type family wrappers
+  RealizeIOSim s (WrapTableHandle h IO k v blob) = WrapTableHandle h (IOSim s) k v blob
+  RealizeIOSim s (WrapBlobRef h blob)            = WrapBlobRef h blob
+  RealizeIOSim s (WrapBlob blob)                 = WrapBlob blob
   -- Congruence
   RealizeIOSim s (f a b) = f (RealizeIOSim s a) (RealizeIOSim s b)
   RealizeIOSim s (f a)   = f (RealizeIOSim s a)
   -- Default
   RealizeIOSim s a = a
-
--- | A wrapper for types such that @'RealizeIOSim' s ('Wrap' a)@ maps to @'Wrap'
--- a@.
-newtype Wrap a = Wrap { unwrap :: a }
-  deriving (Show, Eq, Ord)
 
 instance InterpretOp SumProd.Op (Op.WrapRealized (IOSim s)) where
   intOp ::
