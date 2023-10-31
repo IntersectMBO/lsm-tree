@@ -34,7 +34,7 @@ module Database.LSMTree.Model.Normal.Session (
   , Err (..)
     -- * Tables
   , TableHandle
-  , SUT.TableConfig (..)
+  , TableConfig (..)
   , new
   , close
     -- * Table querying and updates
@@ -152,13 +152,16 @@ type TableHandleID = Int
 
 data TableHandle k v blob = TableHandle {
     tableHandleID :: TableHandleID
-  , config        :: SUT.TableConfig
+  , config        :: TableConfig
   }
+  deriving Show
+
+data TableConfig = TableConfig
   deriving Show
 
 new ::
      forall k v blob m. (MonadState Model m, C k v blob)
-  => SUT.TableConfig
+  => TableConfig
   -> m (TableHandle k v blob)
 new config = state $ \Model{..} ->
     let tableHandle = TableHandle {
@@ -200,12 +203,12 @@ guardTableHandleIsOpen TableHandle{..} =
     gets (Map.lookup tableHandleID . tableHandles) >>= \case
       Nothing ->
         throwError $ ErrTableHandleClosed tableHandleID
-      Just table ->
+      Just (SomeTable table) ->
         pure $ unsafeCoerce table
 
 newTableWith ::
      (MonadState Model m, C k v blob)
-  => SUT.TableConfig
+  => TableConfig
   -> Model.Table k v blob
   -> m (TableHandle k v blob)
 newTableWith config tbl = state $ \Model{..} ->
@@ -319,7 +322,7 @@ retrieveBlobs th refs = do
   Snapshots
 -------------------------------------------------------------------------------}
 
-data Snapshot = Snapshot SUT.TableConfig SomeTable
+data Snapshot = Snapshot TableConfig SomeTable
   deriving Show
 
 --

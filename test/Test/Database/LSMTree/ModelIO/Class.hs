@@ -24,6 +24,8 @@ type IsSession :: ((Type -> Type) -> Type) -> Constraint
 class IsSession s where
     newSession :: IOLike m => m (s m)
 
+    closeSession :: IOLike m => s m -> m ()
+
     deleteSnapshot ::
            IOLike m
         => s m
@@ -139,6 +141,7 @@ class (IsSession (Session h)) => IsTableHandle h where
 
 instance IsSession M.Session where
     newSession = M.newSession
+    closeSession = M.closeSession
     deleteSnapshot = M.deleteSnapshot
     listSnapshots = M.listSnapshots
 
@@ -166,6 +169,7 @@ instance IsTableHandle M.TableHandle where
 
 instance IsSession R.Session where
     newSession = throwIO (userError "newSession unimplemented")
+    closeSession = R.closeSession
     deleteSnapshot = R.deleteSnapshot
     listSnapshots = R.listSnapshots
 

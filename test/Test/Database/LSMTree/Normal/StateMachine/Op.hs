@@ -19,12 +19,13 @@ import           Control.Monad.IOSim (IOSim)
 import           Control.Monad.Reader (ReaderT)
 import           Control.Monad.State (StateT)
 import           Data.Maybe (mapMaybe)
-import           Database.LSMTree.Normal (BlobRef, LookupResult (..),
+import           Database.LSMTree.Normal as SUT (LookupResult (..),
                      RangeLookupResult (..))
 import           GHC.Show (appPrec)
 import           Test.QuickCheck.StateModel.Lockstep (InterpretOp, Operation)
 import qualified Test.QuickCheck.StateModel.Lockstep.Op as Op
 import           Test.Util.Orphans ()
+import           Test.Util.TypeFamilyWrappers (WrapBlobRef)
 
 {-------------------------------------------------------------------------------
   'Op'
@@ -39,8 +40,8 @@ data Op a b where
   OpFromLeft           :: Op (Either a b) a
   OpFromRight          :: Op (Either a b) b
   OpComp               :: Op b c -> Op a b -> Op a c
-  OpLookupResults      :: Op [LookupResult k v (BlobRef blob)] [BlobRef blob]
-  OpRangeLookupResults :: Op [RangeLookupResult k v (BlobRef blob)] [BlobRef blob]
+  OpLookupResults      :: Op [LookupResult k v (WrapBlobRef h blobref)] [WrapBlobRef h blobref]
+  OpRangeLookupResults :: Op [RangeLookupResult k v (WrapBlobRef h blobref)] [WrapBlobRef h blobref]
 
 intOpId :: Op a b -> a -> Maybe b
 intOpId OpId                 = Just
@@ -132,6 +133,7 @@ instance Eq (Op a b)  where
 
 -- TODO: parentheses
 instance Show (Op a b) where
+  showsPrec :: Int -> Op a b -> ShowS
   showsPrec p = \op -> case op of
       OpComp{} -> showParen (p > appPrec) (go op)
       _        -> go op

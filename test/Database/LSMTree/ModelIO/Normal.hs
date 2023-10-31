@@ -84,6 +84,7 @@ data TableHandle m k v blob = TableHandle {
   }
 
 data TableConfig = TableConfig
+  deriving Show
 
 -- | Configs should be comparable, because only tables with the same config
 -- options are __compatible__.
