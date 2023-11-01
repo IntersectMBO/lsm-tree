@@ -51,12 +51,14 @@ module Database.LSMTree.ModelIO.Normal (
   , SnapshotName
   , snapshot
   , open
+  , deleteSnapshot
+  , listSnapshots
     -- * Multiple writable table handles
   , duplicate
   ) where
 
 import           Control.Concurrent.Class.MonadSTM
-import           Control.Monad (unless, void)
+import           Control.Monad (void)
 import           Data.Dynamic (fromDynamic, toDyn)
 import           Data.Kind (Type)
 import qualified Data.Map.Strict as Map
@@ -221,7 +223,7 @@ open s n = atomically $ do
             { ioe_handle      = Nothing
             , ioe_type        = NoSuchThing
             , ioe_location    = "open"
-            , ioe_description = "no such snapshotd"
+            , ioe_description = "no such snapshot"
             , ioe_errno       = Nothing
             , ioe_filename    = Nothing
             }
@@ -274,16 +276,7 @@ withModel fun s ref kont = do
             , ioe_filename    = Nothing
             }
         Just m' -> do
-            sok <- readTVar (session_open s)
-            unless sok $ throwSTM IOError
-                { ioe_handle      = Nothing
-                , ioe_type        = IllegalOperation
-                , ioe_location    = fun
-                , ioe_description = "session closed"
-                , ioe_errno       = Nothing
-                , ioe_filename    = Nothing
-                }
-
+            check_session_open fun s
             kont m'
 
 writeTMVar :: MonadSTM m => TMVar m a -> a -> STM m ()
