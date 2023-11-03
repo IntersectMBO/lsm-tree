@@ -313,6 +313,8 @@ data BlobRef blob = BlobRef
 -- 'Blob'.
 --
 -- Blob lookups can be performed concurrently from multiple Haskell threads.
+--
+-- TODO: remove table handle argument
 retrieveBlobs ::
      (IOLike m, SomeSerialisationConstraint blob)
   => TableHandle m k v blob

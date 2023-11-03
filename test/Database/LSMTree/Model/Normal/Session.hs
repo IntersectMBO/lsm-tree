@@ -134,10 +134,10 @@ runModelM m = runIdentity . runModelT m
 --
 
 data Err =
-    ErrTableHandleClosed TableHandleID
-  | ErrSnapshotExists TableHandleID SUT.SnapshotName
-  | ErrSnapshotDoesNotExist SUT.SnapshotName
-  | ErrSnapshotWrongType SUT.SnapshotName
+    ErrTableHandleClosed
+  | ErrSnapshotExists
+  | ErrSnapshotDoesNotExist
+  | ErrSnapshotWrongType
   deriving (Show, Eq)
 
 {-------------------------------------------------------------------------------
@@ -202,7 +202,7 @@ guardTableHandleIsOpen ::
 guardTableHandleIsOpen TableHandle{..} =
     gets (Map.lookup tableHandleID . tableHandles) >>= \case
       Nothing ->
-        throwError $ ErrTableHandleClosed tableHandleID
+        throwError ErrTableHandleClosed
       Just (SomeTable table) ->
         pure $ unsafeCoerce table
 
@@ -341,7 +341,7 @@ snapshot name th@TableHandle{..} = do
     table <- guardTableHandleIsOpen th
     snaps <- gets snapshots
     when (Map.member name snaps) $
-      throwError (ErrSnapshotExists tableHandleID name)
+      throwError ErrSnapshotExists
     modify (\m -> m {
         snapshots = Map.insert name (Snapshot config $ SomeTable $ Model.snapshot table) (snapshots m)
       })
@@ -358,11 +358,11 @@ open name = do
     snaps <- gets snapshots
     case Map.lookup name snaps of
       Nothing ->
-        throwError (ErrSnapshotDoesNotExist name)
+        throwError ErrSnapshotDoesNotExist
       Just (Snapshot conf (SomeTable (table :: Model.Table k' v' blob'))) ->
         case cast @(Model.Table k' v' blob') @(Model.Table k v blob) table of
           Nothing ->
-            throwError $ ErrSnapshotWrongType name
+            throwError ErrSnapshotWrongType
           Just table' ->
             newTableWith conf table'
 
@@ -384,5 +384,3 @@ duplicate ::
 duplicate th@TableHandle{..} = do
     table <- guardTableHandleIsOpen th
     newTableWith config $ Model.duplicate table
-
--- TODO: listing snapshots, and deleting snapshots

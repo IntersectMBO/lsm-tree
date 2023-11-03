@@ -70,6 +70,7 @@ import           Database.LSMTree.ModelIO.Session
 import           Database.LSMTree.Normal (LookupResult (..),
                      RangeLookupResult (..), Update (..))
 import           GHC.IO.Exception (IOErrorType (..), IOException (..))
+import           System.IO.Error (alreadyExistsErrorType)
 
 {-------------------------------------------------------------------------------
   Tables
@@ -200,8 +201,19 @@ snapshot ::
   -> TableHandle m k v blob
   -> m ()
 snapshot n TableHandle {..} = atomically $
-    withModel "snapshot" thSession thRef $ \tbl ->
-        modifyTVar' (snapshots thSession) (Map.insert n (toDyn tbl))
+    withModel "snapshot" thSession thRef $ \tbl -> do
+        snaps <- readTVar $ snapshots thSession
+        if Map.member n snaps then
+          throwSTM IOError
+            { ioe_handle      = Nothing
+            , ioe_type        = alreadyExistsErrorType
+            , ioe_location    = "snapshot"
+            , ioe_description = "snapshot already exists"
+            , ioe_errno       = Nothing
+            , ioe_filename    = Nothing
+            }
+        else
+          modifyTVar' (snapshots thSession) (Map.insert n (toDyn tbl))
 
 -- | Open a table through a snapshot, returning a new table handle.
 open ::
