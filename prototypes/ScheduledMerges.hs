@@ -287,24 +287,32 @@ supplyMergeCredits c (MergingRun _ _ ref) = do
 mergeBatchSize :: Int
 mergeBatchSize = 32
 
-data MergeDebt = MergeDebt Credit Debt
+data MergeDebt = 
+    MergeDebt 
+      Credit -- ^ Cumulative, not yet used credits.
+      Debt -- ^ Leftover debt.
   deriving Show
 
-newMergeDebt :: Int -> MergeDebt
+newMergeDebt :: Debt -> MergeDebt
 newMergeDebt d = MergeDebt 0 d
 
-data MergeDebtPaydown = MergeDebtDischarged     !Int
-                      | MergeDebtPaydownCredited     !MergeDebt
-                      | MergeDebtPaydownPerform !Int !MergeDebt
+-- | As credits are paid, debt is reduced in batches when sufficient credits have accumulated.
+data MergeDebtPaydown = 
+    -- | This remaining merge debt is fully paid off with credits.
+    MergeDebtDischarged      !Debt
+    -- | Credits were paid, but not enough for merge debt to be reduced by some batches of merging work.
+  | MergeDebtPaydownCredited       !MergeDebt
+    -- | Enough credits were paid to reduce merge debt by performing some batches of merging work.
+  | MergeDebtPaydownPerform  !Debt !MergeDebt
   deriving Show
 
--- |
+-- | Pay credits to merge debt, which might trigger performing some merge work in batches. See 'MergeDebtPaydown'.
 --
-paydownMergeDebt :: Int -> MergeDebt -> MergeDebtPaydown
+paydownMergeDebt :: Credit -> MergeDebt -> MergeDebtPaydown
 paydownMergeDebt c2 (MergeDebt c d)
-  | d-(c+c2) <= 0 = MergeDebtDischarged d
-
-paydownMergeDebt c2 (MergeDebt c d)
+  | d-c' <= 0 
+  = MergeDebtDischarged d
+  
   | c' >= mergeBatchSize
   , let (!b, !r) = divMod c' mergeBatchSize
         !perform = b * mergeBatchSize
@@ -360,9 +368,8 @@ lookups :: LSM s -> [Key] -> ST s [LookupResult Key Value Blob]
 lookups lsm = mapM (lookup lsm)
 
 lookup :: LSM s -> Key -> ST s (LookupResult Key Value Blob)
-lookup (LSMHandle _ lsmr) k = do
-    LSMContent wb ls <- readSTRef lsmr
-    rss <- flattenLevels ls
+lookup lsm k = do
+    rs <- allLayers lsm
     return $!
       foldr (\lookures continue ->
               case lookures of
@@ -371,7 +378,7 @@ lookup (LSMHandle _ lsmr) k = do
                 Just (Insert v (Just b)) -> FoundWithBlob k v b
                 Just  Delete             -> NotFound k)
             (NotFound k)
-            [ Map.lookup k r | rs <- [wb] : rss, r <- rs ]
+            [ Map.lookup k r | r <- rs ]
 
 bufferToRun :: Buffer -> Run
 bufferToRun = id
