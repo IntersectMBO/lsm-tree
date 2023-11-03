@@ -39,7 +39,7 @@ module Database.LSMTree.Model.Monoidal (
     -- * Multiple writable table handles
   , duplicate
     -- * Merging tables
-  , mergeTables
+  , merge
   ) where
 
 import           Data.Bifunctor (second)
@@ -162,7 +162,7 @@ updates ups tbl0 = foldl' update tbl0 ups where
     update tbl (k, Mupsert v) = tbl
         { _values = mapUpsert (serialise k) (serialise v) f (_values tbl) }
       where
-        f old = serialise (merge v (deserialise old))
+        f old = serialise (mergeU v (deserialise old))
 
 mapUpsert :: Ord k => k -> v -> (v -> v) -> Map k v -> Map k v
 mapUpsert k v f = Map.alter (Just . g) k where
@@ -237,12 +237,12 @@ duplicate = id
 --
 -- Multiple tables of the same type but with different configuration parameters
 -- can live in the same session. However, some operations, like
-mergeTables :: forall k v.
+merge :: forall k v.
      (SomeSerialisationConstraint v, SomeUpdateConstraint v)
   => Table k v
   -> Table k v
   -> Table k v
-mergeTables (Table xs) (Table ys) =
+merge (Table xs) (Table ys) =
     Table (Map.unionWith f xs ys)
   where
-    f x y = serialise (merge @v (deserialise x) (deserialise y))
+    f x y = serialise (mergeU @v (deserialise x) (deserialise y))

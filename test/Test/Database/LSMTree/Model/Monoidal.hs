@@ -43,7 +43,7 @@ prop_insertInsert k v1 v2 tbl =
 -- Note: the order of merge.
 prop_upsertInsert :: Key -> Key -> Value -> Tbl -> Property
 prop_upsertInsert k v1 v2 tbl =
-    updates [(k, Insert v1), (k, Mupsert v2)] tbl === inserts [(k, merge v2 v1)] tbl
+    updates [(k, Insert v1), (k, Mupsert v2)] tbl === inserts [(k, mergeU v2 v1)] tbl
 
 -- | Upsert is the same as lookup followed by an insert.
 prop_upsertDef :: Key -> Value -> Tbl -> Property
@@ -51,7 +51,7 @@ prop_upsertDef k v tbl =
     tbl' === mupserts [(k, v)] tbl
   where
     tbl' = case lookups [k] tbl of
-        [Found _ v'] -> inserts [(k, merge v v')] tbl
+        [Found _ v'] -> inserts [(k, mergeU v v')] tbl
         _            -> inserts [(k, v)] tbl
 
 -- | Different key inserts commute.

@@ -14,7 +14,7 @@
 --
 -- Key features:
 --
--- * Basic key\/value operations: lookup, insert, delete.
+-- * Basic key\/value operations: lookup, insert, delete
 -- * Range lookups by key or key prefix
 -- * Support for BLOBs: large auxilliary values associated with a key
 -- * On-disk durability is /only/ via named snapshots: ordinary operations
@@ -27,11 +27,12 @@
 -- This module is intended to be imported qualified.
 --
 -- > import qualified Database.LSMTree.Normal as LSMT
+--
 module Database.LSMTree.Normal (
 
     -- * Table sessions
     Session
-  , newSession
+  , openSession
   , closeSession
 
     -- * Table handles
@@ -39,7 +40,7 @@ module Database.LSMTree.Normal (
   , TableConfig (..)
   , new
   , close
-    -- ** Resource management
+    -- ** Resource management #resource#
     -- $resource-management
 
     -- * Table queries and updates
@@ -66,10 +67,9 @@ module Database.LSMTree.Normal (
   , listSnapshots
 
     -- * Persistence
-    -- $persistence
   , duplicate
 
-    -- * Concurrency
+    -- * Concurrency #concurrency#
     -- $concurrency
 
     -- * Temporary placeholder types
@@ -82,7 +82,7 @@ import           Data.Kind (Type)
 import           Data.Word (Word64)
 import           Database.LSMTree.Common (IOLike, Range (..), Session,
                      SnapshotName, SomeSerialisationConstraint, closeSession,
-                     deleteSnapshot, listSnapshots, newSession)
+                     deleteSnapshot, listSnapshots, openSession)
 
 -- $resource-management
 -- Table handles use resources and as such need to be managed. In particular
@@ -167,7 +167,9 @@ data TableHandle m k v blob = TableHandle {
 -- | Table configuration parameters, including LSM tree tuning parameters.
 --
 -- Some config options are fixed (for now):
+--
 -- * Merge policy: Tiering
+--
 -- * Size ratio: 4
 data TableConfig = TableConfig {
     -- | Total number of bytes that the write buffer can use.
@@ -176,14 +178,10 @@ data TableConfig = TableConfig {
   , tcMaxBloomFilterMemory :: Word64
     -- | Bit precision for the compact index
     --
-    -- TODO: fill in with a realistic, non-unit type.
+    -- TODO: fill this in with a realistic, non-unit type.
   , tcBitPrecision         :: ()
   }
 
--- | Configs should be comparable, because only tables with the same config
--- options are __compatible__.
---
--- For more information about compatibility, see 'Session'.
 deriving instance Eq TableConfig
 deriving instance Show TableConfig
 
@@ -310,7 +308,7 @@ data BlobRef blob = BlobRef
 
 -- | Perform a batch of blob retrievals.
 --
--- This is a separate step from 'lookups' and 'rangeLookups. The result of a
+-- This is a separate step from 'lookups' and 'rangeLookups'. The result of a
 -- lookup can include a 'BlobRef', which can be used to retrieve the actual
 -- 'Blob'.
 --
@@ -327,7 +325,7 @@ retrieveBlobs = undefined
 -------------------------------------------------------------------------------}
 
 -- | Make the current value of a table durable on-disk by taking a snapshot and
--- giving the snapshot a name. This is the _only_ mechanism to make a table
+-- giving the snapshot a name. This is the __only__ mechanism to make a table
 -- durable -- ordinary insert\/delete operations are otherwise not preserved.
 --
 -- Snapshots have names and the table may be opened later using 'open' via that
@@ -396,17 +394,18 @@ open = undefined
   Mutiple writable table handles
 -------------------------------------------------------------------------------}
 
--- | Create an independent duplicate of a table handle. This returns a new
--- table handle.
+-- | Create a logically independent duplicate of a table handle. This returns a
+-- new table handle.
 --
 -- A table handle and its duplicate are logically independent: changes to one
--- are not visible to the other.
+-- are not visible to the other. However, in-memory and on-disk data are
+-- shared internally.
 --
 -- This operation enables /fully persistent/ use of tables by duplicating the
 -- table prior to a batch of mutating operations. The duplicate retains the
--- the original table value, and can still be modified independently.
+-- original table value, and can still be modified independently.
 --
--- This is persistence in the sense persistent data structures (not of on-disk
+-- This is persistence in the sense of persistent data structures (not of on-disk
 -- persistence). The usual definition of a persistent data structure is one in
 -- which each operation preserves the previous version of the structure when
 -- the structure is modified. Full persistence is if every version can be both
