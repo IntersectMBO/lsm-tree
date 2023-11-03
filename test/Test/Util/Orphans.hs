@@ -18,6 +18,7 @@ import qualified Control.Concurrent.STM as Real
 import           Control.Monad ((<=<))
 import           Control.Monad.IOSim (IOSim)
 import           Data.Kind (Type)
+import qualified Database.LSMTree.Monoidal as Monoidal
 import           Database.LSMTree.Normal
 import           Test.QuickCheck (Arbitrary (..), frequency, oneof)
 import           Test.QuickCheck.Instances ()
@@ -38,6 +39,17 @@ instance (Arbitrary v, Arbitrary blob) => Arbitrary (Update v blob) where
 
   shrink (Insert v blob) = Delete : map (uncurry Insert) (shrink (v, blob))
   shrink Delete          = []
+
+instance (Arbitrary v) => Arbitrary (Monoidal.Update v) where
+  arbitrary = frequency
+    [ (10, Monoidal.Insert <$> arbitrary)
+    , (5, Monoidal.Mupsert <$> arbitrary)
+    , (1, pure Monoidal.Delete)
+    ]
+
+  shrink (Monoidal.Insert v)  = Monoidal.Delete : map Monoidal.Insert (shrink v)
+  shrink (Monoidal.Mupsert v) = Monoidal.Insert v : map Monoidal.Mupsert (shrink v)
+  shrink Monoidal.Delete      = []
 
 instance Arbitrary k => Arbitrary (Range k) where
   arbitrary = oneof

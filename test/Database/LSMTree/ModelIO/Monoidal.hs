@@ -10,17 +10,11 @@
 -- Model's 'open' and 'snapshot' have redundant constraints.
 {-# OPTIONS_GHC -Wno-redundant-constraints #-}
 
--- | IO-based model implementation.
+-- | IO-based monoidal table model implementation.
 --
--- Differences from the (current) real API:
---
--- * `newSession` doesn't take file-system arguments.
---
--- * `snapshot` and `open` require `Typeable` constraints
---
-module Database.LSMTree.ModelIO.Normal (
+module Database.LSMTree.ModelIO.Monoidal (
     -- * Temporary placeholder types
-    Model.SomeSerialisationConstraint (..)
+    SomeSerialisationConstraint
     -- * Utility types
   , IOLike
     -- * Sessions
@@ -34,19 +28,17 @@ module Database.LSMTree.ModelIO.Normal (
   , close
     -- * Table querying and updates
     -- ** Queries
-  , Model.Range (..)
-  , Model.LookupResult (..)
+  , Range (..)
+  , LookupResult (..)
   , lookups
-  , Model.RangeLookupResult (..)
+  , RangeLookupResult (..)
   , rangeLookup
     -- ** Updates
-  , Model.Update (..)
+  , Update (..)
   , updates
   , inserts
   , deletes
-    -- ** Blobs
-  , Model.BlobRef
-  , retrieveBlobs
+  , mupserts
     -- * Snapshots
   , SnapshotName
   , snapshot
@@ -55,19 +47,22 @@ module Database.LSMTree.ModelIO.Normal (
   , listSnapshots
     -- * Multiple writable table handles
   , duplicate
+    -- * Merging tables
+  , mergeTables
   ) where
 
 import           Control.Concurrent.Class.MonadSTM
 import           Control.Monad (void)
+import           Data.Bifunctor (Bifunctor (second))
 import           Data.Dynamic (fromDynamic, toDyn)
 import           Data.Kind (Type)
 import qualified Data.Map.Strict as Map
 import           Data.Typeable (Typeable)
-import           Database.LSMTree.Common (IOLike, SnapshotName,
-                     SomeSerialisationConstraint)
-import qualified Database.LSMTree.Model.Normal as Model
+import           Database.LSMTree.Common (IOLike, Range (..), SnapshotName,
+                     SomeSerialisationConstraint, SomeUpdateConstraint)
+import qualified Database.LSMTree.Model.Monoidal as Model
 import           Database.LSMTree.ModelIO.Session
-import           Database.LSMTree.Normal (LookupResult (..),
+import           Database.LSMTree.Monoidal (LookupResult (..),
                      RangeLookupResult (..), Update (..))
 import           GHC.IO.Exception (IOErrorType (..), IOException (..))
 
@@ -76,25 +71,25 @@ import           GHC.IO.Exception (IOErrorType (..), IOException (..))
 -------------------------------------------------------------------------------}
 
 -- | A handle to a table.
-type TableHandle :: (Type -> Type) -> Type -> Type -> Type -> Type
-data TableHandle m k v blob = TableHandle {
+type TableHandle :: (Type -> Type) -> Type -> Type -> Type
+data TableHandle m k v = TableHandle {
     thSession :: !(Session m)
   , thId      :: !Int
-  , thRef     :: !(TMVar m (Model.Table k v blob))
+  , thRef     :: !(TMVar m (Model.Table k v))
   }
 
+-- | Table configuration parameters, like tuning parameters.
 data TableConfig = TableConfig
 
--- | Configs should be comparable, because only tables with the same config
--- options are __compatible__.
 deriving instance Eq TableConfig
+deriving instance Show TableConfig
 
 -- | Create a new table referenced by a table handle.
 new ::
      IOLike m
   => Session m
   -> TableConfig
-  -> m (TableHandle m k v blob)
+  -> m (TableHandle m k v)
 new session _config = atomically $ do
     ref <- newTMVar Model.empty
     i <- new_handle session ref
@@ -103,7 +98,7 @@ new session _config = atomically $ do
 -- | Close a table handle.
 close ::
      IOLike m
-  => TableHandle m k v blob
+  => TableHandle m k v
   -> m ()
 close TableHandle {..} = atomically $ do
     close_handle thSession thId
@@ -115,33 +110,41 @@ close TableHandle {..} = atomically $ do
 
 -- | Perform a batch of lookups.
 lookups ::
-     (IOLike m, SomeSerialisationConstraint k, SomeSerialisationConstraint v)
+     ( IOLike m
+     , SomeSerialisationConstraint k
+     , SomeSerialisationConstraint v
+     , SomeUpdateConstraint v
+     )
   => [k]
-  -> TableHandle m k v blob
-  -> m [LookupResult k v (Model.BlobRef blob)]
+  -> TableHandle m k v
+  -> m [LookupResult k v]
 lookups ks TableHandle {..} = atomically $
     withModel "lookups" thSession thRef $ \tbl ->
         return $ Model.lookups ks tbl
 
 -- | Perform a range lookup.
 rangeLookup ::
-     (IOLike m, SomeSerialisationConstraint k, SomeSerialisationConstraint v)
-  => Model.Range k
-  -> TableHandle m k v blob
-  -> m [RangeLookupResult k v (Model.BlobRef blob)]
+     ( IOLike m
+     , SomeSerialisationConstraint k
+     , SomeSerialisationConstraint v
+     , SomeUpdateConstraint v
+     )
+  => Range k
+  -> TableHandle m k v
+  -> m [RangeLookupResult k v]
 rangeLookup r TableHandle {..} = atomically $
     withModel "rangeLookup" thSession thRef $ \tbl ->
         return $ Model.rangeLookup r tbl
 
--- | Perform a mixed batch of inserts and deletes.
+-- | Perform a mixed batch of inserts, deletes and monoidal upserts.
 updates ::
      ( IOLike m
      , SomeSerialisationConstraint k
      , SomeSerialisationConstraint v
-     , SomeSerialisationConstraint blob
+     , SomeUpdateConstraint v
      )
-  => [(k, Update v blob)]
-  -> TableHandle m k v blob
+  => [(k, Update v)]
+  -> TableHandle m k v
   -> m ()
 updates ups TableHandle {..} = atomically $
     withModel "updates" thSession thRef $ \tbl ->
@@ -152,34 +155,36 @@ inserts ::
      ( IOLike m
      , SomeSerialisationConstraint k
      , SomeSerialisationConstraint v
-     , SomeSerialisationConstraint blob
+     , SomeUpdateConstraint v
      )
-  => [(k, v, Maybe blob)]
-  -> TableHandle m k v blob
+  => [(k, v)]
+  -> TableHandle m k v
   -> m ()
-inserts = updates . fmap (\(k, v, blob) -> (k, Model.Insert v blob))
+inserts = updates . fmap (second Insert)
 
 -- | Perform a batch of deletes.
 deletes ::
      ( IOLike m
      , SomeSerialisationConstraint k
      , SomeSerialisationConstraint v
-     , SomeSerialisationConstraint blob
+     , SomeUpdateConstraint v
      )
   => [k]
-  -> TableHandle m k v blob
+  -> TableHandle m k v
   -> m ()
-deletes = updates . fmap (,Model.Delete)
+deletes = updates . fmap (,Delete)
 
--- | Perform a batch of blob retrievals.
-retrieveBlobs ::
-     (IOLike m, SomeSerialisationConstraint blob)
-  => TableHandle m k v blob
-  -> [Model.BlobRef blob]
-  -> m [blob]
-retrieveBlobs TableHandle {..} brefs = atomically $
-  withModel "retrieveBlobs" thSession thRef $ \tbl ->
-    return $ Model.retrieveBlobs tbl brefs
+-- | Perform a batch of monoidal upserts.
+mupserts ::
+     ( IOLike m
+     , SomeSerialisationConstraint k
+     , SomeSerialisationConstraint v
+     , SomeUpdateConstraint v
+     )
+  => [(k, v)]
+  -> TableHandle m k v
+  -> m ()
+mupserts = updates . fmap (second Mupsert)
 
 {-------------------------------------------------------------------------------
   Snapshots
@@ -190,13 +195,11 @@ snapshot ::
      ( IOLike m
      , SomeSerialisationConstraint k
      , SomeSerialisationConstraint v
-     , SomeSerialisationConstraint blob
      , Typeable k
      , Typeable v
-     , Typeable blob
      )
   => SnapshotName
-  -> TableHandle m k v blob
+  -> TableHandle m k v
   -> m ()
 snapshot n TableHandle {..} = atomically $
     withModel "snapshot" thSession thRef $ \tbl ->
@@ -207,14 +210,12 @@ open ::
      ( IOLike m
      , SomeSerialisationConstraint k
      , SomeSerialisationConstraint v
-     , SomeSerialisationConstraint blob
      , Typeable k
      , Typeable v
-     , Typeable blob
      )
   => Session m
   -> SnapshotName
-  -> m (TableHandle m k v blob)
+  -> m (TableHandle m k v)
 open s n = atomically $ do
     ss <- readTVar (snapshots s)
     case Map.lookup n ss of
@@ -250,13 +251,45 @@ open s n = atomically $ do
 -- table handle.
 duplicate ::
      IOLike m
-  => TableHandle m k v blob
-  -> m (TableHandle m k v blob)
+  => TableHandle m k v
+  -> m (TableHandle m k v)
 duplicate TableHandle {..} = atomically $
     withModel "duplicate" thSession thRef $ \tbl -> do
         thRef' <- newTMVar tbl
         i <- new_handle thSession thRef'
         return TableHandle { thRef = thRef', thId = i, thSession = thSession }
+
+{-------------------------------------------------------------------------------
+  Merging tables
+-------------------------------------------------------------------------------}
+
+-- | Merge full tables, creating a new table handle.
+mergeTables ::
+     (IOLike m, SomeSerialisationConstraint v, SomeUpdateConstraint v)
+  => TableHandle m k v
+  -> TableHandle m k v
+  -> m (TableHandle m k v)
+mergeTables hdl1 hdl2
+{-
+    -- cannot == io-sim TVars.
+    | thSession hdl1 /= thSession hdl2
+    = throwSTM IOError
+        { ioe_handle      = Nothing
+        , ioe_type        = InappropriateType
+        , ioe_location    = "mergeTables"
+        , ioe_description = "different sessions"
+        , ioe_errno       = Nothing
+        , ioe_filename    = Nothing
+        }
+-}
+
+    | otherwise = atomically $
+    withModel "mergeTables" (thSession hdl1) (thRef hdl1) $ \tbl1 ->
+    withModel "mergeTables" (thSession hdl2) (thRef hdl2) $ \tbl2 -> do
+        let tbl = Model.mergeTables tbl1 tbl2
+        thRef' <- newTMVar tbl
+        i <- new_handle (thSession hdl1) thRef'
+        return TableHandle { thRef = thRef', thId = i, thSession = thSession hdl1 }
 
 {-------------------------------------------------------------------------------
   Internal helpers
