@@ -34,6 +34,10 @@
 
   TODO: it is currently not correctly modelled what happens if blob references
   are retrieved from an incorrect table handle.
+
+  TODO: listing and deleting snapshots
+
+  TODO: run lockstep tests with IOSim too
 -}
 module Test.Database.LSMTree.Normal.StateMachine (tests) where
 
@@ -43,6 +47,8 @@ import           Control.Monad.Class.MonadThrow (Handler (..), MonadCatch (..),
 import           Control.Monad.IOSim (IOSim)
 import           Control.Monad.Reader (ReaderT (..))
 import           Data.Bifunctor (Bifunctor (..))
+import qualified Data.ByteString as BS
+import           Data.Constraint (Dict (..))
 import           Data.Kind (Type)
 import           Data.Maybe (fromJust, mapMaybe)
 import           Data.Set (Set)
@@ -56,11 +62,13 @@ import qualified Database.LSMTree.ModelIO.Normal as Impl.ModelIO
 import qualified Database.LSMTree.Normal as Impl.Real
 import qualified Database.LSMTree.Normal as SUT (LookupResult (..), Range (..),
                      RangeLookupResult (..), SnapshotName, Update (..))
+import           GHC.IO.Exception (IOErrorType (..), IOException (..))
 import           System.Directory (removeDirectoryRecursive)
 import           System.FS.API (MountPoint (..), SomeHasFS (..), mkFsPath)
 import           System.FS.IO (ioHasFS)
 import qualified System.FS.Sim.MockFS as MockFS
 import           System.FS.Sim.STM (simHasFS')
+import           System.IO.Error
 import           System.IO.Temp (createTempDirectory,
                      getCanonicalTemporaryDirectory)
 import qualified Test.Database.LSMTree.ModelIO.Class as SUT.Class
@@ -83,7 +91,6 @@ import           Test.Util.TypeFamilyWrappers (WrapBlob (..), WrapBlobRef (..),
   Test tree
 -------------------------------------------------------------------------------}
 
--- TODO: run lockstep tests with IOSim too
 tests :: TestTree
 tests = testGroup "Normal.StateMachine" [
       testCase "labelledExamples" $
@@ -95,7 +102,6 @@ tests = testGroup "Normal.StateMachine" [
 
 propLockstepIO_ModelIOImpl :: TestTree
 propLockstepIO_ModelIOImpl = testProperty "propLockstepIO_ModelIOImpl" $
-    QC.expectFailure $ -- TODO: remove once we have filled in handler'
     Lockstep.Run.runActionsBracket
       (Proxy @(ModelState Impl.ModelIO.TableHandle))
       acquire
@@ -112,7 +118,25 @@ propLockstepIO_ModelIOImpl = testProperty "propLockstepIO_ModelIOImpl" $
     handler = Handler $ pure . handler'
       where
         handler' :: IOError -> Maybe Model.Err
-        handler' _err = Nothing
+        handler' err
+          | isDoesNotExistError err
+          , ioeGetLocation err == "open"
+          = Just Model.ErrSnapshotDoesNotExist
+
+          | isIllegalOperation err
+          , ioe_description err == "table handle closed"
+          = Just Model.ErrTableHandleClosed
+
+          | isAlreadyExistsError err
+          , ioe_location err == "snapshot"
+          = Just Model.ErrSnapshotExists
+
+          | ioeGetErrorType err == InappropriateType
+          , ioe_location err == "open"
+          = Just Model.ErrSnapshotWrongType
+
+          | otherwise
+          = Nothing
 
 propLockstepIO_RealImpl_RealFS :: TestTree
 propLockstepIO_RealImpl_RealFS = testProperty "propLockstepIO_RealImpl_RealFS" $
@@ -270,6 +294,15 @@ instance ( Show (SUT.Class.TableConfig h)
   arbitraryAction = Lockstep.Defaults.arbitraryAction
   shrinkAction    = Lockstep.Defaults.shrinkAction
 
+-- TODO: show instance does not show key-value-blob types. Example:
+--
+-- Normal.StateMachine
+--   propLockstepIO_ModelIOImpl: FAIL
+--     *** Failed! Exception: 'open: inappropriate type (table type mismatch)' (after 25 tests and 2 shrinks):
+--     do action $ New TableConfig
+--        action $ Snapshot "snap" (GVar var1 (FromRight . id))
+--        action $ Open "snap"
+--        pure ()
 deriving instance Show (SUT.Class.TableConfig h)
                => Show (LockstepAction (ModelState h) a)
 
@@ -412,7 +445,10 @@ instance ( Eq (SUT.Class.TableConfig h)
        ModelFindVariables (ModelState h)
     -> ModelState h
     -> Gen (Any (LockstepAction (ModelState h)))
-  arbitraryWithVars = arbitraryActionWithVars (Proxy @(Word64, Word64, Word64))
+  arbitraryWithVars findVars st = QC.oneof [
+        arbitraryActionWithVars (Proxy @(Word64, Word64, Word64)) findVars st
+      , arbitraryActionWithVars (Proxy @(BS.ByteString, BS.ByteString, BS.ByteString)) findVars st
+      ]
 
   shrinkWithVars ::
        ModelFindVariables (ModelState h)
@@ -474,6 +510,23 @@ instance ( Eq (SUT.Class.TableConfig h)
       Open{}          -> OEither $ bimap OId (const OTableHandle) result
       Duplicate{}     -> OEither $ bimap OId (const OTableHandle) result
 
+  showRealResponse ::
+       Proxy (RealMonad h IO)
+    -> LockstepAction (ModelState h) a
+    -> Maybe (Dict (Show (Realized (RealMonad h IO) a)))
+  showRealResponse _ = \case
+      New{}           -> Nothing
+      Close{}         -> Just Dict
+      Lookups{}       -> Nothing
+      RangeLookup{}   -> Nothing
+      Updates{}       -> Just Dict
+      Inserts{}       -> Just Dict
+      Deletes{}       -> Just Dict
+      RetrieveBlobs{} -> Just Dict
+      Snapshot{}      -> Just Dict
+      Open{}          -> Nothing
+      Duplicate{}     -> Nothing
+
 instance ( Eq (SUT.Class.TableConfig h)
          , SUT.Class.IsTableHandle h
          , Show (SUT.Class.TableConfig h)
@@ -499,6 +552,23 @@ instance ( Eq (SUT.Class.TableConfig h)
       Snapshot{}      -> OEither $ bimap OId OId result
       Open{}          -> OEither $ bimap OId (const OTableHandle) result
       Duplicate{}     -> OEither $ bimap OId (const OTableHandle) result
+
+  showRealResponse ::
+       Proxy (RealMonad h (IOSim s))
+    -> LockstepAction (ModelState h) a
+    -> Maybe (Dict (Show (Realized (RealMonad h (IOSim s)) a)))
+  showRealResponse _ = \case
+      New{}           -> Nothing
+      Close{}         -> Just Dict
+      Lookups{}       -> Nothing
+      RangeLookup{}   -> Nothing
+      Updates{}       -> Just Dict
+      Inserts{}       -> Just Dict
+      Deletes{}       -> Just Dict
+      RetrieveBlobs{} -> Just Dict
+      Snapshot{}      -> Just Dict
+      Open{}          -> Nothing
+      Duplicate{}     -> Nothing
 
 {-------------------------------------------------------------------------------
   RunModel
