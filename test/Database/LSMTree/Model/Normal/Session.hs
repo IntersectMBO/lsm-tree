@@ -56,6 +56,8 @@ module Database.LSMTree.Model.Normal.Session (
   , SUT.SnapshotName
   , snapshot
   , open
+  , deleteSnapshot
+  , listSnapshots
     -- * Multiple writable table handles
   , duplicate
   ) where
@@ -365,6 +367,25 @@ open name = do
             throwError ErrSnapshotWrongType
           Just table' ->
             newTableWith conf table'
+
+deleteSnapshot ::
+     (MonadState Model m, MonadError Err m)
+  => SUT.SnapshotName
+  -> m ()
+deleteSnapshot name = do
+    snaps <- gets snapshots
+    case Map.lookup name snaps of
+      Nothing ->
+        throwError ErrSnapshotDoesNotExist
+      Just _ ->
+        modify (\m -> m {
+            snapshots = Map.delete name snaps
+          })
+
+listSnapshots ::
+     MonadState Model m
+  => m [SUT.SnapshotName]
+listSnapshots = gets (Map.keys . snapshots)
 
 {-------------------------------------------------------------------------------
   Mutiple writable table handles
