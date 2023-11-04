@@ -35,8 +35,6 @@
   TODO: it is currently not correctly modelled what happens if blob references
   are retrieved from an incorrect table handle.
 
-  TODO: listing and deleting snapshots
-
   TODO: run lockstep tests with IOSim too
 -}
 module Test.Database.LSMTree.Normal.StateMachine (tests) where
@@ -134,6 +132,10 @@ propLockstepIO_ModelIOImpl = testProperty "propLockstepIO_ModelIOImpl" $
           | ioeGetErrorType err == InappropriateType
           , ioe_location err == "open"
           = Just Model.ErrSnapshotWrongType
+
+          | isDoesNotExistError err
+          , ioe_location err == "deleteSnapshot"
+          = Just Model.ErrSnapshotDoesNotExist
 
           | otherwise
           = Nothing
@@ -283,6 +285,8 @@ instance ( Show (SUT.Class.TableConfig h)
     Open     :: C k v blob
              => SUT.SnapshotName
              -> Act h (WrapTableHandle h IO k v blob)
+    DeleteSnapshot :: SUT.SnapshotName -> Act h ()
+    ListSnapshots  :: Act h [SUT.SnapshotName]
     -- Multiple writable table handles
     Duplicate :: C k v blob
               => Var h (WrapTableHandle h IO k v blob)
@@ -333,6 +337,10 @@ instance ( Eq (SUT.Class.TableConfig h)
           name1 == name2 && Just var1 == cast var2
       go (Open name1)               (Open name2) =
           name1 == name2
+      go (DeleteSnapshot name1)     (DeleteSnapshot name2) =
+          name1 == name2
+      go ListSnapshots ListSnapshots =
+          True
       go (Duplicate var1) (Duplicate var2) =
           Just var1 == cast var2
       go _  _ = False
@@ -348,6 +356,8 @@ instance ( Eq (SUT.Class.TableConfig h)
           Deletes{} -> ()
           RetrieveBlobs{} -> ()
           Snapshot{} -> ()
+          DeleteSnapshot{} -> ()
+          ListSnapshots{} -> ()
           Open{} -> ()
           Duplicate{} -> ()
 
@@ -376,6 +386,7 @@ instance ( Eq (SUT.Class.TableConfig h)
 
     MBlob :: (Show blob, Typeable blob, Eq blob)
           => WrapBlob blob -> Val h (WrapBlob blob)
+    MSnapshotName :: SUT.SnapshotName -> Val h SUT.SnapshotName
     MErr :: Model.Err -> Val h Model.Err
 
     MUnit   :: () -> Val h ()
@@ -408,6 +419,7 @@ instance ( Eq (SUT.Class.TableConfig h)
       MBlobRef _           -> OBlobRef
       MLookupResult x      -> OLookupResult $ fmap observeModel x
       MRangeLookupResult x -> ORangeLookupResult $ fmap observeModel x
+      MSnapshotName x      -> OId x
       MBlob x              -> OId x
       MErr x               -> OId x
       MUnit x              -> OId x
@@ -439,6 +451,8 @@ instance ( Eq (SUT.Class.TableConfig h)
       RetrieveBlobs tableVar blobsVar -> [SomeGVar tableVar, SomeGVar blobsVar]
       Snapshot _ tableVar             -> [SomeGVar tableVar]
       Open _                          -> []
+      DeleteSnapshot _                -> []
+      ListSnapshots                   -> []
       Duplicate tableVar              -> [SomeGVar tableVar]
 
   arbitraryWithVars ::
@@ -496,36 +510,40 @@ instance ( Eq (SUT.Class.TableConfig h)
     -> Realized (RealMonad h IO) a
     -> Obs h a
   observeReal _proxy action result = case action of
-      New{}           -> OEither $ bimap OId (const OTableHandle) result
-      Close{}         -> OEither $ bimap OId OId result
-      Lookups{}       -> OEither $
+      New{}            -> OEither $ bimap OId (const OTableHandle) result
+      Close{}          -> OEither $ bimap OId OId result
+      Lookups{}        -> OEither $
           bimap OId (OList . fmap (OLookupResult . fmap (const OBlobRef))) result
-      RangeLookup{}   -> OEither $
+      RangeLookup{}    -> OEither $
           bimap OId (OList . fmap (ORangeLookupResult . fmap (const OBlobRef))) result
-      Updates{}       -> OEither $ bimap OId OId result
-      Inserts{}       -> OEither $ bimap OId OId result
-      Deletes{}       -> OEither $ bimap OId OId result
-      RetrieveBlobs{} -> OEither $ bimap OId (OList . fmap OId) result
-      Snapshot{}      -> OEither $ bimap OId OId result
-      Open{}          -> OEither $ bimap OId (const OTableHandle) result
-      Duplicate{}     -> OEither $ bimap OId (const OTableHandle) result
+      Updates{}        -> OEither $ bimap OId OId result
+      Inserts{}        -> OEither $ bimap OId OId result
+      Deletes{}        -> OEither $ bimap OId OId result
+      RetrieveBlobs{}  -> OEither $ bimap OId (OList . fmap OId) result
+      Snapshot{}       -> OEither $ bimap OId OId result
+      Open{}           -> OEither $ bimap OId (const OTableHandle) result
+      DeleteSnapshot{} -> OEither $ bimap OId OId result
+      ListSnapshots{}  -> OEither $ bimap OId (OList . fmap OId) result
+      Duplicate{}      -> OEither $ bimap OId (const OTableHandle) result
 
   showRealResponse ::
        Proxy (RealMonad h IO)
     -> LockstepAction (ModelState h) a
     -> Maybe (Dict (Show (Realized (RealMonad h IO) a)))
   showRealResponse _ = \case
-      New{}           -> Nothing
-      Close{}         -> Just Dict
-      Lookups{}       -> Nothing
-      RangeLookup{}   -> Nothing
-      Updates{}       -> Just Dict
-      Inserts{}       -> Just Dict
-      Deletes{}       -> Just Dict
-      RetrieveBlobs{} -> Just Dict
-      Snapshot{}      -> Just Dict
-      Open{}          -> Nothing
-      Duplicate{}     -> Nothing
+      New{}            -> Nothing
+      Close{}          -> Just Dict
+      Lookups{}        -> Nothing
+      RangeLookup{}    -> Nothing
+      Updates{}        -> Just Dict
+      Inserts{}        -> Just Dict
+      Deletes{}        -> Just Dict
+      RetrieveBlobs{}  -> Just Dict
+      Snapshot{}       -> Just Dict
+      Open{}           -> Nothing
+      DeleteSnapshot{} -> Just Dict
+      ListSnapshots    -> Just Dict
+      Duplicate{}      -> Nothing
 
 instance ( Eq (SUT.Class.TableConfig h)
          , SUT.Class.IsTableHandle h
@@ -539,36 +557,40 @@ instance ( Eq (SUT.Class.TableConfig h)
     -> Realized (RealMonad h (IOSim s)) a
     -> Obs h a
   observeReal _proxy action result = case action of
-      New{}           -> OEither $ bimap OId (const OTableHandle) result
-      Close{}         -> OEither $ bimap OId OId result
-      Lookups{}       -> OEither $
+      New{}            -> OEither $ bimap OId (const OTableHandle) result
+      Close{}          -> OEither $ bimap OId OId result
+      Lookups{}        -> OEither $
           bimap OId (OList . fmap (OLookupResult . fmap (const OBlobRef))) result
-      RangeLookup{}   -> OEither $
+      RangeLookup{}    -> OEither $
           bimap OId (OList . fmap (ORangeLookupResult . fmap (const OBlobRef))) result
-      Updates{}       -> OEither $ bimap OId OId result
-      Inserts{}       -> OEither $ bimap OId OId result
-      Deletes{}       -> OEither $ bimap OId OId result
-      RetrieveBlobs{} -> OEither $ bimap OId (OList . fmap OId) result
-      Snapshot{}      -> OEither $ bimap OId OId result
-      Open{}          -> OEither $ bimap OId (const OTableHandle) result
-      Duplicate{}     -> OEither $ bimap OId (const OTableHandle) result
+      Updates{}        -> OEither $ bimap OId OId result
+      Inserts{}        -> OEither $ bimap OId OId result
+      Deletes{}        -> OEither $ bimap OId OId result
+      RetrieveBlobs{}  -> OEither $ bimap OId (OList . fmap OId) result
+      Snapshot{}       -> OEither $ bimap OId OId result
+      Open{}           -> OEither $ bimap OId (const OTableHandle) result
+      DeleteSnapshot{} -> OEither $ bimap OId OId result
+      ListSnapshots{}  -> OEither $ bimap OId OId result
+      Duplicate{}      -> OEither $ bimap OId (const OTableHandle) result
 
   showRealResponse ::
        Proxy (RealMonad h (IOSim s))
     -> LockstepAction (ModelState h) a
     -> Maybe (Dict (Show (Realized (RealMonad h (IOSim s)) a)))
   showRealResponse _ = \case
-      New{}           -> Nothing
-      Close{}         -> Just Dict
-      Lookups{}       -> Nothing
-      RangeLookup{}   -> Nothing
-      Updates{}       -> Just Dict
-      Inserts{}       -> Just Dict
-      Deletes{}       -> Just Dict
-      RetrieveBlobs{} -> Just Dict
-      Snapshot{}      -> Just Dict
-      Open{}          -> Nothing
-      Duplicate{}     -> Nothing
+      New{}            -> Nothing
+      Close{}          -> Just Dict
+      Lookups{}        -> Nothing
+      RangeLookup{}    -> Nothing
+      Updates{}        -> Just Dict
+      Inserts{}        -> Just Dict
+      Deletes{}        -> Just Dict
+      RetrieveBlobs{}  -> Just Dict
+      Snapshot{}       -> Just Dict
+      Open{}           -> Nothing
+      DeleteSnapshot{} -> Just Dict
+      ListSnapshots    -> Just Dict
+      Duplicate{}      -> Nothing
 
 {-------------------------------------------------------------------------------
   RunModel
@@ -623,6 +645,10 @@ runModel lookUp = \case
       Model.runModelM (Model.snapshot name (getTableHandle $ lookUp tableVar))
     Open name -> wrap MTableHandle .
       Model.runModelM (Model.open name)
+    DeleteSnapshot name -> wrap MUnit .
+      Model.runModelM (Model.deleteSnapshot name)
+    ListSnapshots -> wrap (MList . fmap MSnapshotName) .
+      Model.runModelM Model.listSnapshots
     Duplicate tableVar -> wrap MTableHandle .
       Model.runModelM (Model.duplicate (getTableHandle $ lookUp tableVar))
   where
@@ -678,6 +704,10 @@ runIO action lookUp = ReaderT $ \(session, handler) ->
           SUT.Class.snapshot name (unwrapTableHandle $ lookUp' tableVar)
         Open name -> catchErr handler $
           WrapTableHandle <$> SUT.Class.open session name
+        DeleteSnapshot name -> catchErr handler $
+          SUT.Class.deleteSnapshot session name
+        ListSnapshots -> catchErr handler $
+          SUT.Class.listSnapshots session
         Duplicate tableVar -> catchErr handler $
           WrapTableHandle <$> SUT.Class.duplicate (unwrapTableHandle $ lookUp' tableVar)
 
@@ -718,6 +748,10 @@ runIOSim action lookUp = ReaderT $ \(session, handler) ->
           SUT.Class.snapshot name (unwrapTableHandle $ lookUp' tableVar)
         Open name -> catchErr handler $
           WrapTableHandle <$> SUT.Class.open session name
+        DeleteSnapshot name -> catchErr handler $
+          SUT.Class.deleteSnapshot session name
+        ListSnapshots -> catchErr handler $
+          SUT.Class.listSnapshots session
         Duplicate tableVar -> catchErr handler $
           WrapTableHandle <$> SUT.Class.duplicate (unwrapTableHandle $ lookUp' tableVar)
     lookUp' :: Var h x -> Realized (IOSim s) x
@@ -758,6 +792,22 @@ arbitraryActionWithVars _ findVars _st = QC.oneof $ concat [
         (vars, vars') -> withVars' (QC.elements vars) (QC.elements vars')
     ]
   where
+    _coveredAllCases :: LockstepAction (ModelState h) a -> ()
+    _coveredAllCases = \case
+        New{} -> ()
+        Close{} -> ()
+        Lookups{} -> ()
+        RangeLookup{} -> ()
+        Updates{} -> ()
+        Inserts{} -> ()
+        Deletes{} -> ()
+        RetrieveBlobs{} -> ()
+        Snapshot{} -> ()
+        DeleteSnapshot{} -> ()
+        ListSnapshots{} -> ()
+        Open{} -> ()
+        Duplicate{} -> ()
+
     findBlobRefsVars :: [Var h (Either Model.Err [WrapBlobRef h blob])]
     findBlobRefsVars = fmap fromLookupResults vars1 ++ fmap fromRangeLookupResults vars2
       where
@@ -777,6 +827,9 @@ arbitraryActionWithVars _ findVars _st = QC.oneof $ concat [
     withoutVars :: [Gen (Any (LockstepAction (ModelState h)))]
     withoutVars = [
           Some . New @k @v @blob <$> QC.arbitrary
+        , fmap Some $ Open @k @v @blob <$> genSnapshotName
+        , fmap Some $ DeleteSnapshot <$> genSnapshotName
+        , pure $ Some ListSnapshots
         ]
 
     withVars ::
@@ -790,7 +843,6 @@ arbitraryActionWithVars _ findVars _st = QC.oneof $ concat [
         , fmap Some $ Inserts <$> genInserts <*> (fromRight <$> genVar)
         , fmap Some $ Deletes <$> genDeletes <*> (fromRight <$> genVar)
         , fmap Some $ Snapshot <$> genSnapshotName <*> (fromRight <$> genVar)
-        , fmap Some $ Open @k @v @blob <$> genSnapshotName
         , fmap Some $ Duplicate <$> (fromRight <$> genVar)
         ]
 
@@ -890,6 +942,8 @@ data ConstructorName =
   | CRetrieveBlobs
   | CSnapshot
   | COpen
+  | CDeleteSnapshot
+  | CListSnapshots
   | CDuplicate
   deriving (Show, Eq, Ord, Enum, Bounded)
 
@@ -905,6 +959,8 @@ toConstructorName = \case
     RetrieveBlobs{} -> CRetrieveBlobs
     Snapshot{} -> CSnapshot
     Open{} -> COpen
+    DeleteSnapshot{} -> CDeleteSnapshot
+    ListSnapshots{} -> CListSnapshots
     Duplicate{} -> CDuplicate
 
 newtype Stats = Stats {
