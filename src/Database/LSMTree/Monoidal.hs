@@ -6,48 +6,77 @@
 {-# OPTIONS_GHC -Wno-redundant-constraints #-}
 {-# OPTIONS_GHC -Wno-unused-top-binds #-}
 
--- |
+-- | On disk key-value tables, implemented as Log Structured Merge (LSM) trees.
+--
+-- This module is the API for \"monoidal\" tables, as opposed to \"normal\"
+-- tables (that do not support monoidal updates and unions).
+--
+-- Key features:
+--
+-- * Basic key\/value operations: lookup, insert, delete
+-- * Monoidal operations: mupsert
+-- * Merging of tables
+-- * Range lookups by key or key prefix
+-- * On-disk durability is /only/ via named snapshots: ordinary operations
+--   are otherwise not durable
+-- * Opening tables from previous named snapshots
+-- * Full persistent data structure by cheap table duplication: all duplicate
+--   tables can be both accessed and modified
+-- * High performance lookups on SSDs by I\/O batching and concurrency
 --
 -- This module is intended to be imported qualified.
 --
 -- > import qualified Database.LSMTree.Monoidal as LSMT
+--
 module Database.LSMTree.Monoidal (
-    -- * Temporary placeholder types
-    SomeSerialisationConstraint
-    -- * Utility types
-  , IOLike
-    -- * Sessions
-  , Session
-  , newSession
+
+    -- * Table sessions
+    Session
+  , openSession
   , closeSession
-    -- * Tables
+
+    -- * Table handles
   , TableHandle
   , TableConfig (..)
   , new
   , close
-    -- * Table querying and updates
+    -- ** Resource management
+    -- $resource-management
+
+    -- * Table queries and updates
     -- ** Queries
-  , Range (..)
-  , LookupResult (..)
   , lookups
-  , RangeLookupResult (..)
+  , LookupResult (..)
   , rangeLookup
+  , Range (..)
+  , RangeLookupResult (..)
     -- ** Updates
-  , Update (..)
-  , updates
   , inserts
   , deletes
   , mupserts
-    -- * Snapshots
+  , updates
+  , Update (..)
+
+    -- * Durability (snapshots)
   , SnapshotName
   , snapshot
   , open
   , deleteSnapshot
   , listSnapshots
-    -- * Multiple writable table handles
+
+    -- * Persistence
   , duplicate
+
     -- * Merging tables
-  , mergeTables
+  , merge
+
+    -- * Concurrency
+    -- $concurrency
+
+    -- * Temporary placeholder types
+  , SomeSerialisationConstraint
+    -- * Utility types
+  , IOLike
   ) where
 
 import           Data.Bifunctor (Bifunctor (second))
@@ -56,17 +85,23 @@ import           Data.Word (Word64)
 import           Database.LSMTree.Common (IOLike, Range (..), Session,
                      SnapshotName, SomeSerialisationConstraint,
                      SomeUpdateConstraint, closeSession, deleteSnapshot,
-                     listSnapshots, newSession)
+                     listSnapshots, openSession)
+
+-- $resource-management
+-- See "Database.LSMTree.Normal#g:resource"
+
+-- $concurrency
+-- See "Database.LSMTree.Normal#g:concurrency"
 
 {-------------------------------------------------------------------------------
   Tables
 -------------------------------------------------------------------------------}
 
--- | A handle to a table.
+-- | A handle to an on-disk key\/value table.
 --
 -- An LSMT table is an individual key value mapping with in-memory and on-disk
--- parts. A table handle is the object/reference by which an in-use LSM table
--- will be operated upon. In our API it identifies a single mutable instance of
+-- parts. A table handle is the object\/reference by which an in-use LSM table
+-- will be operated upon. In this API it identifies a single mutable instance of
 -- an LSM table. The multiple-handles feature allows for there to may be many
 -- such instances in use at once.
 type TableHandle :: (Type -> Type) -> Type -> Type -> Type
@@ -75,10 +110,12 @@ data TableHandle m k v = TableHandle {
   , thConfig  :: !TableConfig
   }
 
--- | Table configuration parameters, like tuning parameters.
+-- | Table configuration parameters, including LSM tree tuning parameters.
 --
 -- Some config options are fixed (for now):
+--
 -- * Merge policy: Tiering
+--
 -- * Size ratio: 4
 data TableConfig = TableConfig {
     -- | Total number of bytes that the write buffer can use.
@@ -87,21 +124,18 @@ data TableConfig = TableConfig {
   , tcMaxBloomFilterMemory :: Word64
     -- | Bit precision for the compact index
     --
-    -- TODO: fill in with a realistic, non-unit type.
+    -- TODO: fill this in with a realistic, non-unit type.
   , tcBitPrecision         :: ()
   }
 
--- | Configs should be comparable, because only tables with the same config
--- options are __compatible__.
---
--- For more information about compatibility, see 'Session'.
 deriving instance Eq TableConfig
 deriving instance Show TableConfig
 
--- | Create a new table referenced by a table handle.
+-- | Create a new empty table, returning a fresh table handle.
 --
--- NOTE: close table handles using 'close' as soon as they are
--- unused.
+-- NOTE: table handles hold open resources (such as open files) and should be
+-- closed using 'close' as soon as they are no longer used.
+--
 new ::
      IOLike m
   => Session m
@@ -166,7 +200,7 @@ rangeLookup = undefined
 -- | Monoidal tables support insert, delete and monoidal upsert operations.
 --
 -- An __update__ is a term that groups all types of table-manipulating
--- operations, like inserts and deletes.
+-- operations, like inserts, deletes and mupserts.
 data Update v =
     Insert !v
   | Delete
@@ -234,15 +268,28 @@ mupserts = updates . fmap (second Mupsert)
   Snapshots
 -------------------------------------------------------------------------------}
 
--- | Take a snapshot.
+-- | Make the current value of a table durable on-disk by taking a snapshot and
+-- giving the snapshot a name. This is the __only__ mechanism to make a table
+-- durable -- ordinary insert\/delete operations are otherwise not preserved.
+--
+-- Snapshots have names and the table may be opened later using 'open' via that
+-- name. Names are strings and the management of the names is up to the user of
+-- the library.
+--
+-- The names correspond to disk files, which imposes some constraints on length
+-- and what characters can be used.
 --
 -- Snapshotting does not close the table handle.
 --
--- Taking a snapshot should be relatively cheap, but it is not so cheap that one
--- can use one after every operation. It is relatively cheap because of a reason
--- similar to the reason why 'duplicate' is cheap. On-disk and in-memory data is
--- immutable, which means we can write (the relatively small) in-memory parts to
--- disk, and create hard links for existing files.
+-- Taking a snapshot is /relatively/ cheap, but it is not so cheap that one can
+-- use it after every operation. In the implementation, it must at least flush
+-- the write buffer to disk.
+--
+-- Concurrency:
+--
+-- * It is safe to concurrently make snapshots from any table, provided that
+--   the snapshot names are distinct (otherwise this would be a race).
+--
 snapshot ::
      ( IOLike m
      , SomeSerialisationConstraint k
@@ -253,10 +300,24 @@ snapshot ::
   -> m ()
 snapshot = undefined
 
--- | Open a table through a snapshot, returning a new table handle.
+-- | Open a table from a named snapshot, returning a new table handle.
 --
 -- NOTE: close table handles using 'close' as soon as they are
 -- unused.
+--
+-- Exceptions:
+--
+-- * Opening a non-existent snapshot is an error.
+--
+-- * Opening a snapshot but expecting the wrong type of table is an error. e.g.,
+--   the following will fail:
+--
+-- @
+-- example session = do
+--   th <- 'new' \@IO \@Int \@Int \@Int session _
+--   'snapshot' "intTable" th
+--   'open' \@IO \@Bool \@Bool \@Bool session "intTable"
+-- @
 --
 -- TOREMOVE: before snapshots are implemented, the snapshot name should be ignored.
 -- Instead, this function should open a table handle from files that exist in
@@ -275,18 +336,37 @@ open = undefined
   Mutiple writable table handles
 -------------------------------------------------------------------------------}
 
--- | Create a cheap, independent duplicate of a table handle. This returns a new
--- table handle.
+-- | Create a logically independent duplicate of a table handle. This returns a
+-- new table handle.
 --
 -- A table handle and its duplicate are logically independent: changes to one
--- are not visible to the other.
+-- are not visible to the other. However, in-memory and on-disk data are
+-- shared internally.
 --
--- Duplication is cheap because on-disk and in-memory data is immutable, which
--- means we can /share/ data instead of copying it. Duplication has small
--- computation, storage and memory overheads.
+-- This operation enables /fully persistent/ use of tables by duplicating the
+-- table prior to a batch of mutating operations. The duplicate retains the
+-- original table value, and can still be modified independently.
 --
--- NOTE: close table handles using 'close' as soon as they are
--- unused.
+-- This is persistence in the sense of persistent data structures (not of on-disk
+-- persistence). The usual definition of a persistent data structure is one in
+-- which each operation preserves the previous version of the structure when
+-- the structure is modified. Full persistence is if every version can be both
+-- accessed and modified. This API does not directly fit the definition because
+-- the update operations do mutate the table value, however full persistence
+-- can be emulated by duplicating the table prior to a mutating operation.
+--
+-- Duplication itself is cheap. In particular it requires no disk I\/O, and
+-- requires little additional memory. Just as with normal persistent data
+-- structures, making use of multiple tables will have corresponding costs in
+-- terms of memory and disk space. Initially the two tables will share
+-- everything (both in memory and on disk) but as more and more update
+-- operations are performed on each, the sharing will decrease. Ultimately the
+-- memory and disk cost will be the same as if each table were entirely
+-- independent.
+--
+-- NOTE: duplication create a new table handle, which should be closed when no
+-- longer needed.
+--
 duplicate ::
      IOLike m
   => TableHandle m k v
@@ -299,14 +379,15 @@ duplicate = undefined
 
 -- | Merge full tables, creating a new table handle.
 --
--- NOTE: close table handles using 'close' as soon as they are
--- unused.
---
 -- Multiple tables of the same type but with different configuration parameters
--- can live in the same session. However, some operations, like
-mergeTables ::
+-- can live in the same session. However, 'merge' only works for tables that
+-- have the same key\/value types and configuration parameters.
+--
+-- NOTE: merging table handles creates a new table handle, but does not close
+-- the table handles that were used as inputs.
+merge ::
      (IOLike m, SomeUpdateConstraint v)
   => TableHandle m k v
   -> TableHandle m k v
   -> m (TableHandle m k v)
-mergeTables = undefined
+merge = undefined

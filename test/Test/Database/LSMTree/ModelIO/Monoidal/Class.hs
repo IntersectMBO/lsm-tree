@@ -122,7 +122,7 @@ class (IsSession (Session h)) => IsTableHandle h where
         => h m k v
         -> m (h m k v)
 
-    mergeTables ::
+    merge ::
         (IOLike m, SomeSerialisationConstraint v, SomeUpdateConstraint v)
         => h m k v
         -> h m k v
@@ -148,7 +148,7 @@ instance IsTableHandle M.TableHandle where
     open = M.open
 
     duplicate = M.duplicate
-    mergeTables = M.mergeTables
+    merge = M.merge
 
 instance IsTableHandle R.TableHandle where
     type Session R.TableHandle = R.Session
@@ -170,4 +170,4 @@ instance IsTableHandle R.TableHandle where
     open = R.open
 
     duplicate = R.duplicate
-    mergeTables = R.mergeTables
+    merge = R.merge

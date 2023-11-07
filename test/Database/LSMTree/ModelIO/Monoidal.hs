@@ -48,7 +48,7 @@ module Database.LSMTree.ModelIO.Monoidal (
     -- * Multiple writable table handles
   , duplicate
     -- * Merging tables
-  , mergeTables
+  , merge
   ) where
 
 import           Control.Concurrent.Class.MonadSTM
@@ -264,19 +264,19 @@ duplicate TableHandle {..} = atomically $
 -------------------------------------------------------------------------------}
 
 -- | Merge full tables, creating a new table handle.
-mergeTables ::
+merge ::
      (IOLike m, SomeSerialisationConstraint v, SomeUpdateConstraint v)
   => TableHandle m k v
   -> TableHandle m k v
   -> m (TableHandle m k v)
-mergeTables hdl1 hdl2
+merge hdl1 hdl2
 {-
     -- cannot == io-sim TVars.
     | thSession hdl1 /= thSession hdl2
     = throwSTM IOError
         { ioe_handle      = Nothing
         , ioe_type        = InappropriateType
-        , ioe_location    = "mergeTables"
+        , ioe_location    = "merge"
         , ioe_description = "different sessions"
         , ioe_errno       = Nothing
         , ioe_filename    = Nothing
@@ -284,9 +284,9 @@ mergeTables hdl1 hdl2
 -}
 
     | otherwise = atomically $
-    withModel "mergeTables" (thSession hdl1) (thRef hdl1) $ \tbl1 ->
-    withModel "mergeTables" (thSession hdl2) (thRef hdl2) $ \tbl2 -> do
-        let tbl = Model.mergeTables tbl1 tbl2
+    withModel "merge" (thSession hdl1) (thRef hdl1) $ \tbl1 ->
+    withModel "merge" (thSession hdl2) (thRef hdl2) $ \tbl2 -> do
+        let tbl = Model.merge tbl1 tbl2
         thRef' <- newTMVar tbl
         i <- new_handle (thSession hdl1) thRef'
         return TableHandle { thRef = thRef', thId = i, thSession = thSession hdl1 }

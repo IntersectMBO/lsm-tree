@@ -10,7 +10,7 @@ module Database.LSMTree.Common (
     IOLike
     -- * Sessions
   , Session
-  , newSession
+  , openSession
   , closeSession
     -- * Constraints
   , SomeSerialisationConstraint (..)
@@ -52,8 +52,10 @@ instance IOLike IO
 --
 -- Sessions are needed to support sharing between multiple table instances.
 -- Sharing occurs when tables are duplicated using 'duplicate', or when tables
--- are combined using 'union'. Sharing is preserved by snapshots, using
--- 'snapshot' and 'open'.
+-- are combined using 'union'. Sharing is not fully preserved by snapshots:
+-- existing runs are shared, but ongoing merges are not. As such, restoring of
+-- snapshots (using 'open') is expensive, but snapshotting (using 'snapshot') is
+-- relatively cheap.
 --
 -- The \"monoidal\" table types support a 'union' operation, which has the
 -- constraint that the two input tables must be from the same 'Session'.
@@ -64,15 +66,14 @@ instance IOLike IO
 -- tables. This restriction implies that tables cannot be shared between OS
 -- processes. The restriction is enforced using file locks.
 --
--- Sessions support both related and independent tables. Related tables are
--- created using 'duplicate', while independent tables can be created using
--- 'new'. It is possible to have multiple independent tables with different
--- configuration and key and value types in the same session. Similarly,
--- a session can have both \"normal\" and \"monoidal\" tables. For independent
--- tables (that are not involved in a 'union') one has a choice between using
--- multiple sessions or a shared session. Using multiple sessions requires
--- using separate directories, while a shared session will place all files
--- under one directory.
+-- Sessions support both related and unrelated tables. Related tables are
+-- created using 'duplicate', while unrelated tables can be created using 'new'.
+-- It is possible to have multiple unrelated tables with different configuration
+-- and key and value types in the same session. Similarly, a session can have
+-- both \"normal\" and \"monoidal\" tables. For unrelated tables (that are not
+-- involved in a 'union') one has a choice between using multiple sessions or a
+-- shared session. Using multiple sessions requires using separate directories,
+-- while a shared session will place all files under one directory.
 --
 type Session :: (Type -> Type) -> Type
 data Session m = Session {
@@ -88,21 +89,25 @@ data Session m = Session {
 --
 -- Exceptions:
 --
+-- * Throws an exception if the directory does not exist (regardless of whether
+--   it is empty or not).
+--
 -- * This can throw exceptions if the directory does not have the expected file
 --   layout for a table session
+--
 -- * It will throw an exception if the session is already open (in the current
 --   process or another OS process)
 --
 -- Sessions should be closed using 'closeSession' when no longer needed.
 --
-newSession ::
+openSession ::
      IOLike m
   => SomeHasFS m
   -> FsPath -- ^ Path to the session directory
   -> m (Session m)
-newSession = undefined
+openSession = undefined
 
--- | Close the table session.
+-- | Close the table session. 'closeSession' is idempotent.
 --
 -- This also closes any open table handles in the session. It would typically
 -- be good practice however to close all table handles first rather than
@@ -110,7 +115,7 @@ newSession = undefined
 --
 -- Closing a table session allows the session to be opened again elsewhere, for
 -- example in a different process. Note that the session will be closed
--- automatically if the processes is terminated (in particular the session file
+-- automatically if the process is terminated (in particular the session file
 -- lock will be released).
 --
 closeSession :: IOLike m => Session m -> m ()
@@ -122,9 +127,13 @@ closeSession = undefined
 
 -- | A placeholder class for (de)serialisation constraints.
 --
--- TODO: Should be replaced with whatever (de)serialisation class we eventually
--- want to use. Some prerequisites:
+-- === TODO
+--
+-- This class should be replaced by the actual (de)serialisation class we want
+-- to use. Some prerequisites:
+--
 -- *  Serialisation/deserialisation should preserve ordering.
+--
 class SomeSerialisationConstraint a where
     serialise :: a -> BS.ByteString
 
@@ -137,17 +146,21 @@ instance SomeSerialisationConstraint BS.ByteString where
 
 -- | A placeholder class for constraints on 'Update's.
 --
--- TODO: should be replaced by the actual constraints we want to use. Some
+-- === TODO
+--
+-- This class should be replaced by the actual constraints we want to use. Some
 -- prerequisites:
--- * Combining/merging/resolving 'Update's should be associative.
+--
+-- * Combining\/merging\/resolving 'Update's should be associative.
+--
 -- * Should include a function that determines whether it is safe to remove an
 --   'Update' from the last level of an LSM tree.
 --
 class SomeUpdateConstraint a where
-    merge :: a -> a -> a
+    mergeU :: a -> a -> a
 
 instance SomeUpdateConstraint BS.ByteString where
-    merge = (<>)
+    mergeU = (<>)
 
 -- | MSB, so order is preserved.
 instance SomeSerialisationConstraint Word64 where
@@ -192,10 +205,11 @@ data Range k =
 -- Exceptions:
 --
 -- * Deleting a snapshot that doesn't exist is an error.
+--
 deleteSnapshot :: IOLike m => Session m -> SnapshotName -> m ()
 deleteSnapshot = undefined
 
--- | List snapshots
+-- | List snapshots by name.
 --
 listSnapshots :: IOLike m => Session m -> m [SnapshotName]
 listSnapshots = undefined
