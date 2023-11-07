@@ -2,6 +2,24 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE EmptyCase #-}
 
+-- | A prototype of an LSM with explicitly scheduled incremental merges.
+--
+-- The scheduled incremental merges is about ensuring that the merging
+-- work (CPU and I\/O) can be spread out over time evenly. This also means
+-- the LSM update operations have worst case complexity rather than amortised
+-- complexity, because they do a fixed amount of merging work each.
+--
+-- The other thing this prototype demonstrates is a design for duplicating
+-- LSM handles and sharing ongoing incremental merges.
+--
+-- The merging policy that this prototype uses is power 4 \"lazy levelling\".
+-- Power 4 means each level is 4 times bigger than the previous level.
+-- Lazy levelling means we use tiering for every level except the last level
+-- which uses levelling. Though note that the first level always uses tiering,
+-- even if the first level is also the last level. This is to simplify flushing
+-- the write buffer: if we used levelling on the first level we would need a
+-- code path for merging the write buffer into the first level.
+--
 module ScheduledMerges (
     -- * Main API
     LSM,
@@ -43,6 +61,10 @@ data LSM s  = LSMHandle !(STRef s Counter)
                         !(STRef s (LSMContent s))
 data LSMContent s = LSMContent Buffer (Levels s)
 
+-- | A simple count of LSM operations to allow logging the operation
+-- number in each event. This enables relating merge events to the
+-- operation number (which is interesting for numerical representations
+-- like this). We would not need this in the real implementation.
 type Counter = Int
 
 type Levels s = [Level s]
@@ -53,15 +75,34 @@ data Level s =
        -- result run to live at this level.
        Level !(MergingRun s) ![Run]
 
+-- | The merge policy for a LSM level can be either tiering or levelling.
+-- In this design we use levelling for the last level, and tiering for
+-- all other levels. The first level always uses tiering however, even if
+-- it's also the last level. So 'MergePolicy' and 'MergeLastLevel' are
+-- orthogonal, all combinations are possible.
+--
 data MergePolicy = MergePolicyTiering | MergePolicyLevelling
   deriving (Eq, Show)
 
+-- | A last level merge behaves differenrly from a mid-level merge: last level
+-- merges can actually remove delete operations, whereas mid-level merges must
+-- preserve them. This is orthogonal to the 'MergePolicy'.
+--
 data MergeLastLevel = MergeMidLevel | MergeLastLevel
   deriving (Eq, Show)
 
+-- | A \"merging run\" is the representation of an ongoing incremental merge,
+-- and in mutable. It is also a unit of sharing between duplicated LSM handles.
+--
 data MergingRun s = MergingRun !MergePolicy !MergeLastLevel
                                !(STRef s MergingRunState)
                   | SingleRun  !Run
+                    -- ^ We represent single runs specially, rather than
+                    -- putting them in as a 'CompletedMerge'. This is for two
+                    -- reasons: to see statically that it's a single run
+                    -- without having to read the 'STRef', and secondly
+                    -- to make it easier to avoid supplying merge credits.
+                    -- It's not essential, but simplifies things somewhat.
 
 data MergingRunState = CompletedMerge !Run
 
@@ -143,6 +184,11 @@ invariant = go 1
     expectedRunLengths :: Int -> [Run] -> [Level s] -> Bool
     expectedRunLengths ln rs ls =
       case mergePolicyForLevel ln ls of
+        -- Levels using levelling have only one run, and that single run is
+        -- (almost) always involved in an ongoing merge. Thus there are no
+        -- other "normal" runs. The exception is when a levelling run becomes
+        -- too large and is promoted, in that case initilly there's no merge,
+        -- but it is still represented as a 'MergingRun', using 'SingleRun'.
         MergePolicyLevelling -> null rs
         MergePolicyTiering   -> all (\r -> tieringRunSizeToLevel r == ln) rs
 
@@ -155,7 +201,7 @@ invariant = go 1
         MergePolicyLevelling ->
           case (mr, mrs) of
             -- A single incoming run (which thus didn't need merging) must be
-            -- of the expected size already
+            -- of the expected size range already
             (SingleRun r, CompletedMerge{}) ->
               assert (levellingRunSizeToLevel r == ln) True
 
@@ -388,6 +434,9 @@ supplyCredits ls =
   sequence_
     [ supplyMergeCredits (creditsForMerge mr) mr | Level mr _rs <- ls ]
 
+-- | The general case (and thus worst case) of how many merge credits we need
+-- for a level. This is based on the merging policy at the level.
+--
 creditsForMerge :: MergingRun s -> Credit
 creditsForMerge SingleRun{} = 0
 
