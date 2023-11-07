@@ -1,34 +1,34 @@
-{-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FlexibleInstances     #-}
+{-# LANGUAGE GADTs                 #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE NamedFieldPuns        #-}
+{-# LANGUAGE RankNTypes            #-}
+{-# LANGUAGE ScopedTypeVariables   #-}
+{-# LANGUAGE StandaloneDeriving    #-}
+{-# LANGUAGE TypeFamilies          #-}
 
 module ScheduledMergesTestQLS (tests) where
 
-import           Prelude hiding (lookup)
+import Prelude hiding (lookup)
 
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 
-import           Data.Proxy
-import           Data.Constraint (Dict(..))
+import Data.Constraint (Dict (..))
+import Data.Proxy
 
-import           Control.Monad.ST
-import           Control.Tracer (Tracer, nullTracer)
+import Control.Monad.ST
+import Control.Tracer   (Tracer, nullTracer)
 
-import           ScheduledMerges
+import ScheduledMerges
 
 import           Test.QuickCheck
-import           Test.QuickCheck.StateModel hiding (lookUpVar)
-import           Test.QuickCheck.StateModel.Lockstep hiding (ModelOp)
+import           Test.QuickCheck.StateModel                   hiding (lookUpVar)
+import           Test.QuickCheck.StateModel.Lockstep          hiding (ModelOp)
 import qualified Test.QuickCheck.StateModel.Lockstep.Defaults as Lockstep
 import qualified Test.QuickCheck.StateModel.Lockstep.Run      as Lockstep
 import           Test.Tasty
-import           Test.Tasty.QuickCheck (testProperty)
+import           Test.Tasty.QuickCheck                        (testProperty)
 
 
 -------------------------------------------------------------------------------
@@ -96,7 +96,7 @@ modelDump mlsm model@Model {mlsms} =
 instance StateModel (Lockstep Model) where
   data Action (Lockstep Model) a where
     ANew    :: Action (Lockstep Model) (LSM RealWorld)
-    
+
     AInsert :: ModelVar Model (LSM RealWorld)
             -> Either (ModelVar Model Key) Key -- to refer to a prior key
             -> Value
@@ -105,7 +105,7 @@ instance StateModel (Lockstep Model) where
     ADelete :: ModelVar Model (LSM RealWorld)
             -> Either (ModelVar Model Key) Key
             -> Action (Lockstep Model) ()
-   
+
     ALookup :: ModelVar Model (LSM RealWorld)
             -> Either (ModelVar Model Key) Key
             -> Action (Lockstep Model) (Maybe Value)
@@ -220,7 +220,7 @@ instance InLockstep Model where
     [ Some $ ADelete var (Right k) | k <- shrink 100 ]
 
   shrinkWithVars _findVars _model _action = []
-    
+
 
 instance RunLockstep Model IO where
   observeReal _ action result =
@@ -232,11 +232,11 @@ instance RunLockstep Model IO where
       (ADump{},      x) -> OId x
       (ADuplicate{}, _) -> ORef
 
-  showRealResponse _ ANew = Nothing
-  showRealResponse _ AInsert{} = Just Dict
-  showRealResponse _ ADelete{} = Just Dict
-  showRealResponse _ ALookup{} = Just Dict
-  showRealResponse _ ADump{}   = Just Dict
+  showRealResponse _ ANew         = Nothing
+  showRealResponse _ AInsert{}    = Just Dict
+  showRealResponse _ ADelete{}    = Just Dict
+  showRealResponse _ ALookup{}    = Just Dict
+  showRealResponse _ ADump{}      = Just Dict
   showRealResponse _ ADuplicate{} = Nothing
 
 deriving instance Show (Action (Lockstep Model) a)

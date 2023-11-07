@@ -1,6 +1,6 @@
-{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE BangPatterns        #-}
+{-# LANGUAGE EmptyCase           #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE EmptyCase #-}
 
 -- | A prototype of an LSM with explicitly scheduled incremental merges.
 --
@@ -42,19 +42,19 @@ module ScheduledMerges (
     EventDetail(..)
   ) where
 
-import           Prelude hiding (lookup)
+import Prelude hiding (lookup)
 
 import           Data.Bits
-import           Data.STRef
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import           Data.STRef
 
-import           Control.Monad.ST
-import           Control.Tracer (Tracer, traceWith, contramap)
-import           Control.Exception (assert)
-import           GHC.Stack (HasCallStack)
+import Control.Exception (assert)
+import Control.Monad.ST
+import Control.Tracer    (Tracer, contramap, traceWith)
+import GHC.Stack         (HasCallStack)
 
-import           Database.LSMTree.Normal (LookupResult (..), Update (..))
+import Database.LSMTree.Normal (LookupResult (..), Update (..))
 
 
 data LSM s  = LSMHandle !(STRef s Counter)
@@ -69,7 +69,7 @@ type Counter = Int
 
 type Levels s = [Level s]
 
-data Level s = 
+data Level s =
        -- | A level with a sequence of runs at this level, prefixed by
        -- a sequence of incoming run or runs that are being merged, with the
        -- result run to live at this level.
@@ -333,8 +333,8 @@ supplyMergeCredits c (MergingRun _ _ ref) = do
 mergeBatchSize :: Int
 mergeBatchSize = 32
 
-data MergeDebt = 
-    MergeDebt 
+data MergeDebt =
+    MergeDebt
       Credit -- ^ Cumulative, not yet used credits.
       Debt -- ^ Leftover debt.
   deriving Show
@@ -343,7 +343,7 @@ newMergeDebt :: Debt -> MergeDebt
 newMergeDebt d = MergeDebt 0 d
 
 -- | As credits are paid, debt is reduced in batches when sufficient credits have accumulated.
-data MergeDebtPaydown = 
+data MergeDebtPaydown =
     -- | This remaining merge debt is fully paid off with credits.
     MergeDebtDischarged      !Debt
     -- | Credits were paid, but not enough for merge debt to be reduced by some batches of merging work.
@@ -356,9 +356,9 @@ data MergeDebtPaydown =
 --
 paydownMergeDebt :: Credit -> MergeDebt -> MergeDebtPaydown
 paydownMergeDebt c2 (MergeDebt c d)
-  | d-c' <= 0 
+  | d-c' <= 0
   = MergeDebtDischarged d
-  
+
   | c' >= mergeBatchSize
   , let (!b, !r) = divMod c' mergeBatchSize
         !perform = b * mergeBatchSize
@@ -438,7 +438,7 @@ supplyCredits ls =
 -- for a level. This is based on the merging policy at the level.
 --
 creditsForMerge :: MergingRun s -> Credit
-creditsForMerge SingleRun{} = 0
+creditsForMerge SingleRun{}                           = 0
 
 -- A levelling merge is 5x the cost of a tiering merge.
 -- That's because for levelling one of the runs as an input to the merge
@@ -468,9 +468,9 @@ data EventDetail =
          mergeRunsSize :: [Int]
        }
      | MergeCompletedEvent {
-         mergePolicy   :: MergePolicy,
-         mergeLast     :: MergeLastLevel,
-         mergeSize     :: Int
+         mergePolicy :: MergePolicy,
+         mergeLast   :: MergeLastLevel,
+         mergeSize   :: Int
        }
   deriving Show
 
@@ -522,7 +522,7 @@ increment tr sc = \r ls -> do
         -- run is too large for this level, we promote the run to the next
         -- level and start merging the incoming runs into this (otherwise
         -- empty) level .
-        MergePolicyLevelling | levellingRunSizeToLevel r > ln -> do 
+        MergePolicyLevelling | levellingRunSizeToLevel r > ln -> do
           assert (null rs && null ls) $ return ()
           mr' <- newMerge tr' ln MergePolicyTiering MergeMidLevel rs'
           ls' <- go (ln+1) [r] []
@@ -602,6 +602,6 @@ representationShape =
       , map summaryRun rs)
   where
     summaryRun = Map.size
-    summaryMRS (CompletedMerge r) = Left (summaryRun r)
+    summaryMRS (CompletedMerge r)    = Left (summaryRun r)
     summaryMRS (OngoingMerge _ rs _) = Right (map summaryRun rs)
 
