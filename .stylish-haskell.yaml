@@ -326,7 +326,7 @@ steps:
       #   > import Control.Monad.MonadError
       #
       # Default: false
-      group_imports: true
+      group_imports: false
 
       # A list of rules specifying how to group modules and how to
       # order the groups.
