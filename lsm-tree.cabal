@@ -30,10 +30,18 @@ library
   import:           warnings
   exposed-modules:
     Data.Map.Range
-    Database.LSMTree
     Database.LSMTree.Common
     Database.LSMTree.Monoidal
     Database.LSMTree.Normal
+
+  other-modules:
+    Database.LSMTree.BlobRef
+    Database.LSMTree.Integration
+    Database.LSMTree.KMerge
+    Database.LSMTree.Run
+    Database.LSMTree.Run.BloomFilter
+    Database.LSMTree.Run.Index.Compact
+    Database.LSMTree.WriteBuffer
 
   build-depends:
     , base                 >=4.14     && <4.19
@@ -63,7 +71,6 @@ test-suite lsm-tree-test
     Database.LSMTree.ModelIO.Monoidal
     Database.LSMTree.ModelIO.Normal
     Database.LSMTree.ModelIO.Session
-    Test.Database.LSMTree
     Test.Database.LSMTree.Common
     Test.Database.LSMTree.Model.Monoidal
     Test.Database.LSMTree.Model.Normal
