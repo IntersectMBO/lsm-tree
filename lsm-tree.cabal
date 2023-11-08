@@ -114,3 +114,29 @@ test-suite map-range-test
     , tasty
     , tasty-hunit
     , tasty-quickcheck
+
+test-suite lsm-prototypes
+  import:           warnings
+  default-language: Haskell2010
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   prototypes test
+  main-is:          Test.hs
+  other-modules:
+    ScheduledMerges
+    ScheduledMergesTestQLS
+
+  build-depends:
+    , base
+    , constraints
+    , containers
+    , contra-tracer
+    , lsm-tree
+    , QuickCheck
+    , quickcheck-dynamic
+    , quickcheck-lockstep
+    , tasty
+    , tasty-quickcheck
+
+  ghc-options:
+    -Wno-incomplete-uni-patterns -Wno-partial-fields
+    -Wno-missing-export-lists -fno-ignore-asserts
