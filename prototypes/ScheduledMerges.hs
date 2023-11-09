@@ -42,19 +42,19 @@ module ScheduledMerges (
     EventDetail(..)
   ) where
 
-import Prelude hiding (lookup)
+import           Prelude hiding (lookup)
 
 import           Data.Bits
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.STRef
 
-import Control.Exception (assert)
-import Control.Monad.ST
-import Control.Tracer    (Tracer, contramap, traceWith)
-import GHC.Stack         (HasCallStack)
+import           Control.Exception (assert)
+import           Control.Monad.ST
+import           Control.Tracer (Tracer, contramap, traceWith)
+import           GHC.Stack (HasCallStack)
 
-import Database.LSMTree.Normal (LookupResult (..), Update (..))
+import           Database.LSMTree.Normal (LookupResult (..), Update (..))
 
 
 data LSM s  = LSMHandle !(STRef s Counter)
@@ -415,7 +415,7 @@ lookups lsm = mapM (lookup lsm)
 
 lookup :: LSM s -> Key -> ST s (LookupResult Key Value Blob)
 lookup lsm k = do
-    rs <- allLayers lsm
+    rss <- allLayers lsm
     return $!
       foldr (\lookures continue ->
               case lookures of
@@ -424,7 +424,7 @@ lookup lsm k = do
                 Just (Insert v (Just b)) -> FoundWithBlob k v b
                 Just  Delete             -> NotFound k)
             (NotFound k)
-            [ Map.lookup k r | r <- rs ]
+            [ Map.lookup k r | rs <- rss, r <- rs ]
 
 bufferToRun :: Buffer -> Run
 bufferToRun = id
