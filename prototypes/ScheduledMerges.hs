@@ -415,7 +415,7 @@ lookups lsm = mapM (lookup lsm)
 
 lookup :: LSM s -> Key -> ST s (LookupResult Key Value Blob)
 lookup lsm k = do
-    rs <- allLayers lsm
+    rss <- allLayers lsm
     return $!
       foldr (\lookures continue ->
               case lookures of
@@ -424,7 +424,7 @@ lookup lsm k = do
                 Just (Insert v (Just b)) -> FoundWithBlob k v b
                 Just  Delete             -> NotFound k)
             (NotFound k)
-            [ Map.lookup k r | r <- rs ]
+            [ Map.lookup k r | rs <- rss, r <- rs ]
 
 bufferToRun :: Buffer -> Run
 bufferToRun = id
