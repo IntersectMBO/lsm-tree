@@ -19,7 +19,7 @@ module Database.LSMTree.ModelIO.Monoidal (
   , IOLike
     -- * Sessions
   , Session
-  , newSession
+  , openSession
   , closeSession
     -- * Tables
   , TableHandle

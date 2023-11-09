@@ -53,7 +53,7 @@ makeNewTable :: forall h. IsTableHandle h => Proxy h
     -> [(Key, Update Value Blob)]
     -> IO (Session h IO, h IO Key Value Blob)
 makeNewTable h ups = do
-    s <- newSession
+    s <- openSession
     hdl <- new @h s (testTableConfig h)
     updates hdl ups
     return (s, hdl)

@@ -107,7 +107,7 @@ propLockstepIO_ModelIOImpl = testProperty "propLockstepIO_ModelIOImpl" $
       (\r session -> runReaderT r (session, handler))
   where
     acquire :: IO (WrapSession Impl.ModelIO.TableHandle IO)
-    acquire = WrapSession <$> Impl.ModelIO.newSession
+    acquire = WrapSession <$> Impl.ModelIO.openSession
 
     release :: WrapSession Impl.ModelIO.TableHandle IO -> IO ()
     release (WrapSession session) = Impl.ModelIO.closeSession session
@@ -152,7 +152,7 @@ propLockstepIO_RealImpl_RealFS = testProperty "propLockstepIO_RealImpl_RealFS" $
     acquire :: IO (FilePath, WrapSession Impl.Real.TableHandle IO)
     acquire = do
         (tmpDir, someHasFS) <- createSystemTempDirectory "propLockstepIO_RealIO"
-        session <- Impl.Real.newSession someHasFS (mkFsPath [])
+        session <- Impl.Real.openSession someHasFS (mkFsPath [])
         pure (tmpDir, WrapSession session)
 
     release :: (FilePath, WrapSession Impl.Real.TableHandle IO) -> IO ()
@@ -178,7 +178,7 @@ propLockstepIO_RealImpl_MockFS = testProperty "propLockstepIO_RealImpl_MockFS" $
     acquire :: IO (WrapSession Impl.Real.TableHandle IO)
     acquire = do
         someHasFS <- SomeHasFS <$> simHasFS' MockFS.empty
-        WrapSession <$> Impl.Real.newSession someHasFS (mkFsPath [])
+        WrapSession <$> Impl.Real.openSession someHasFS (mkFsPath [])
 
     release :: WrapSession Impl.Real.TableHandle IO -> IO ()
     release (WrapSession session) = Impl.Real.closeSession session

@@ -12,7 +12,7 @@
 module Database.LSMTree.ModelIO.Session (
     -- * Sessions
      Session (..)
-  , newSession
+  , openSession
   , closeSession
   , listSnapshots
   , deleteSnapshot
@@ -75,8 +75,8 @@ check_session_open fun s = do
         }
 
 -- | Create a new empty table session.
-newSession :: IOLike m => m (Session m)
-newSession = atomically $ do
+openSession :: IOLike m => m (Session m)
+openSession = atomically $ do
     session_open <- newTVar True
     snapshots <- newTVar Map.empty
     counter <- newTVar 0

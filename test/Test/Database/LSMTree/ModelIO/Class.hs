@@ -22,7 +22,7 @@ import qualified Database.LSMTree.Normal as R
 
 type IsSession :: ((Type -> Type) -> Type) -> Constraint
 class IsSession s where
-    newSession :: IOLike m => m (s m)
+    openSession :: IOLike m => m (s m)
 
     closeSession :: IOLike m => s m -> m ()
 
@@ -140,7 +140,7 @@ class (IsSession (Session h)) => IsTableHandle h where
         -> m (h m k v blob)
 
 instance IsSession M.Session where
-    newSession = M.newSession
+    openSession = M.openSession
     closeSession = M.closeSession
     deleteSnapshot = M.deleteSnapshot
     listSnapshots = M.listSnapshots
@@ -168,7 +168,7 @@ instance IsTableHandle M.TableHandle where
     duplicate = M.duplicate
 
 instance IsSession R.Session where
-    newSession = throwIO (userError "newSession unimplemented")
+    openSession = throwIO (userError "openSession unimplemented")
     closeSession = R.closeSession
     deleteSnapshot = R.deleteSnapshot
     listSnapshots = R.listSnapshots

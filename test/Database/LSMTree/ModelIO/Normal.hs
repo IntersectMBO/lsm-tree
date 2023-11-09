@@ -14,7 +14,7 @@
 --
 -- Differences from the (current) real API:
 --
--- * `newSession` doesn't take file-system arguments.
+-- * `openSession` doesn't take file-system arguments.
 --
 -- * `snapshot` and `open` require `Typeable` constraints
 --
@@ -25,7 +25,7 @@ module Database.LSMTree.ModelIO.Normal (
   , IOLike
     -- * Sessions
   , Session
-  , newSession
+  , openSession
   , closeSession
     -- * Tables
   , TableHandle
