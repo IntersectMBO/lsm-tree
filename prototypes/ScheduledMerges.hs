@@ -42,19 +42,19 @@ module ScheduledMerges (
     EventDetail(..)
   ) where
 
-import Prelude hiding (lookup)
+import           Prelude hiding (lookup)
 
 import           Data.Bits
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.STRef
 
-import Control.Exception (assert)
-import Control.Monad.ST
-import Control.Tracer    (Tracer, contramap, traceWith)
-import GHC.Stack         (HasCallStack)
+import           Control.Exception (assert)
+import           Control.Monad.ST
+import           Control.Tracer (Tracer, contramap, traceWith)
+import           GHC.Stack (HasCallStack)
 
-import Database.LSMTree.Normal (LookupResult (..), Update (..))
+import           Database.LSMTree.Normal (LookupResult (..), Update (..))
 
 
 data LSM s  = LSMHandle !(STRef s Counter)

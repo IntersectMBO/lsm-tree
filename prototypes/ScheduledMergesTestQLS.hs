@@ -9,26 +9,26 @@
 
 module ScheduledMergesTestQLS (tests) where
 
-import Prelude hiding (lookup)
+import           Prelude hiding (lookup)
 
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 
-import Data.Constraint (Dict (..))
-import Data.Proxy
+import           Data.Constraint (Dict (..))
+import           Data.Proxy
 
-import Control.Monad.ST
-import Control.Tracer   (Tracer, nullTracer)
+import           Control.Monad.ST
+import           Control.Tracer (Tracer, nullTracer)
 
-import ScheduledMerges
+import           ScheduledMerges
 
 import           Test.QuickCheck
-import           Test.QuickCheck.StateModel                   hiding (lookUpVar)
-import           Test.QuickCheck.StateModel.Lockstep          hiding (ModelOp)
+import           Test.QuickCheck.StateModel hiding (lookUpVar)
+import           Test.QuickCheck.StateModel.Lockstep hiding (ModelOp)
 import qualified Test.QuickCheck.StateModel.Lockstep.Defaults as Lockstep
-import qualified Test.QuickCheck.StateModel.Lockstep.Run      as Lockstep
+import qualified Test.QuickCheck.StateModel.Lockstep.Run as Lockstep
 import           Test.Tasty
-import           Test.Tasty.QuickCheck                        (testProperty)
+import           Test.Tasty.QuickCheck (testProperty)
 
 
 -------------------------------------------------------------------------------
