@@ -34,7 +34,7 @@ module Database.LSMTree.Model.Normal.Session (
   , Err (..)
     -- * Tables
   , TableHandle
-  , SUT.TableConfig (..)
+  , TableConfig (..)
   , new
   , close
     -- * Table querying and updates
@@ -56,6 +56,8 @@ module Database.LSMTree.Model.Normal.Session (
   , SUT.SnapshotName
   , snapshot
   , open
+  , deleteSnapshot
+  , listSnapshots
     -- * Multiple writable table handles
   , duplicate
   ) where
@@ -134,10 +136,10 @@ runModelM m = runIdentity . runModelT m
 --
 
 data Err =
-    ErrTableHandleClosed TableHandleID
-  | ErrSnapshotExists TableHandleID SUT.SnapshotName
-  | ErrSnapshotDoesNotExist SUT.SnapshotName
-  | ErrSnapshotWrongType SUT.SnapshotName
+    ErrTableHandleClosed
+  | ErrSnapshotExists
+  | ErrSnapshotDoesNotExist
+  | ErrSnapshotWrongType
   deriving (Show, Eq)
 
 {-------------------------------------------------------------------------------
@@ -152,13 +154,16 @@ type TableHandleID = Int
 
 data TableHandle k v blob = TableHandle {
     tableHandleID :: TableHandleID
-  , config        :: SUT.TableConfig
+  , config        :: TableConfig
   }
+  deriving Show
+
+data TableConfig = TableConfig
   deriving Show
 
 new ::
      forall k v blob m. (MonadState Model m, C k v blob)
-  => SUT.TableConfig
+  => TableConfig
   -> m (TableHandle k v blob)
 new config = state $ \Model{..} ->
     let tableHandle = TableHandle {
@@ -199,13 +204,13 @@ guardTableHandleIsOpen ::
 guardTableHandleIsOpen TableHandle{..} =
     gets (Map.lookup tableHandleID . tableHandles) >>= \case
       Nothing ->
-        throwError $ ErrTableHandleClosed tableHandleID
-      Just table ->
+        throwError ErrTableHandleClosed
+      Just (SomeTable table) ->
         pure $ unsafeCoerce table
 
 newTableWith ::
      (MonadState Model m, C k v blob)
-  => SUT.TableConfig
+  => TableConfig
   -> Model.Table k v blob
   -> m (TableHandle k v blob)
 newTableWith config tbl = state $ \Model{..} ->
@@ -319,7 +324,7 @@ retrieveBlobs th refs = do
   Snapshots
 -------------------------------------------------------------------------------}
 
-data Snapshot = Snapshot SUT.TableConfig SomeTable
+data Snapshot = Snapshot TableConfig SomeTable
   deriving Show
 
 --
@@ -338,7 +343,7 @@ snapshot name th@TableHandle{..} = do
     table <- guardTableHandleIsOpen th
     snaps <- gets snapshots
     when (Map.member name snaps) $
-      throwError (ErrSnapshotExists tableHandleID name)
+      throwError ErrSnapshotExists
     modify (\m -> m {
         snapshots = Map.insert name (Snapshot config $ SomeTable $ Model.snapshot table) (snapshots m)
       })
@@ -355,13 +360,32 @@ open name = do
     snaps <- gets snapshots
     case Map.lookup name snaps of
       Nothing ->
-        throwError (ErrSnapshotDoesNotExist name)
+        throwError ErrSnapshotDoesNotExist
       Just (Snapshot conf (SomeTable (table :: Model.Table k' v' blob'))) ->
         case cast @(Model.Table k' v' blob') @(Model.Table k v blob) table of
           Nothing ->
-            throwError $ ErrSnapshotWrongType name
+            throwError ErrSnapshotWrongType
           Just table' ->
             newTableWith conf table'
+
+deleteSnapshot ::
+     (MonadState Model m, MonadError Err m)
+  => SUT.SnapshotName
+  -> m ()
+deleteSnapshot name = do
+    snaps <- gets snapshots
+    case Map.lookup name snaps of
+      Nothing ->
+        throwError ErrSnapshotDoesNotExist
+      Just _ ->
+        modify (\m -> m {
+            snapshots = Map.delete name snaps
+          })
+
+listSnapshots ::
+     MonadState Model m
+  => m [SUT.SnapshotName]
+listSnapshots = gets (Map.keys . snapshots)
 
 {-------------------------------------------------------------------------------
   Mutiple writable table handles
@@ -381,5 +405,3 @@ duplicate ::
 duplicate th@TableHandle{..} = do
     table <- guardTableHandleIsOpen th
     newTableWith config $ Model.duplicate table
-
--- TODO: listing snapshots, and deleting snapshots

@@ -74,10 +74,12 @@ test-suite lsm-tree-test
     Test.Database.LSMTree.Normal.StateMachine
     Test.Database.LSMTree.Normal.StateMachine.Op
     Test.Util.Orphans
+    Test.Util.TypeFamilyWrappers
 
   build-depends:
     , base                  >=4.14 && <4.19
     , bytestring
+    , constraints
     , containers
     , cryptohash-sha256
     , deepseq
