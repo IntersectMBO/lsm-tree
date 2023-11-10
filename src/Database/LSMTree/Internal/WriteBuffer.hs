@@ -1,0 +1,21 @@
+-- | The in-memory LSM level 0.
+--
+-- === TODO
+--
+-- This is temporary module header documentation. The module will be
+-- fleshed out more as we implement bits of it.
+--
+-- Related work packages: 5
+--
+-- This module includes in-memory parts parts for, amongst others,
+--
+-- * Incremental construction
+--
+-- * Updates (inserts, deletes, mupserts)
+--
+-- * Queries (lookups, range lookups)
+--
+-- The above list is a sketch. Functionality may move around, and the list is
+-- not exhaustive.
+--
+module Database.LSMTree.Internal.WriteBuffer () where

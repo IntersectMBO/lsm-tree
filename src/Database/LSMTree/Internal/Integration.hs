@@ -1,0 +1,29 @@
+-- | Integration of LSM-Tree components into a full levels structure.
+--
+-- === TODO
+--
+-- This is temporary module header documentation. The module will be
+-- fleshed out more as we implement bits of it.
+--
+-- Related work packages: 7
+--
+-- This module includes in-memory parts and I\/O parts for, amongst others,
+--
+-- * LSM table handles (multiple runs in multiple levels)
+--
+-- * Opening and verifying a table
+--
+-- * Updates (inserts, deletes, mupserts)
+--
+-- * High performance batch lookups in multiple runs
+--
+-- * Range lookups
+--
+-- * Flushing the write buffer when full
+--
+-- * Merging of runs and levels
+--
+-- The above list is a sketch. Functionality may move around, and the list is
+-- not exhaustive.
+--
+module Database.LSMTree.Internal.Integration () where

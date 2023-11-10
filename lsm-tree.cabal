@@ -30,8 +30,13 @@ library
   import:           warnings
   exposed-modules:
     Data.Map.Range
-    Database.LSMTree
     Database.LSMTree.Common
+    Database.LSMTree.Internal.Integration
+    Database.LSMTree.Internal.KMerge
+    Database.LSMTree.Internal.Run
+    Database.LSMTree.Internal.Run.BloomFilter
+    Database.LSMTree.Internal.Run.Index.Compact
+    Database.LSMTree.Internal.WriteBuffer
     Database.LSMTree.Monoidal
     Database.LSMTree.Normal
 
@@ -63,7 +68,6 @@ test-suite lsm-tree-test
     Database.LSMTree.ModelIO.Monoidal
     Database.LSMTree.ModelIO.Normal
     Database.LSMTree.ModelIO.Session
-    Test.Database.LSMTree
     Test.Database.LSMTree.Common
     Test.Database.LSMTree.Model.Monoidal
     Test.Database.LSMTree.Model.Normal
@@ -100,6 +104,22 @@ test-suite lsm-tree-test
     , tasty-quickcheck
     , temporary
     , transformers
+
+benchmark lsm-tree-micro-bench
+  import:           warnings
+  default-language: Haskell2010
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   bench/micro
+  main-is:          Main.hs
+  build-depends:    base
+
+benchmark lsm-tree-macro-bench
+  import:           warnings
+  default-language: Haskell2010
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   bench/macro
+  main-is:          Main.hs
+  build-depends:    base
 
 test-suite map-range-test
   import:           warnings
