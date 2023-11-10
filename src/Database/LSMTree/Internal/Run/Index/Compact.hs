@@ -1,0 +1,21 @@
+-- | A compact fence-pointer index for uniformly distributed keys.
+--
+-- === TODO
+--
+-- This is temporary module header documentation. The module will be
+-- fleshed out more as we implement bits of it.
+--
+-- Related work packages: 5, 6
+--
+-- This module includes in-memory parts and I\/O parts:
+--
+-- * Incremental construction
+--
+-- * Index lookup (index search)
+--
+-- * (de-)serialisation
+--
+-- The above list is a sketch. Functionality may move around, and the list is
+-- not exhaustive.
+--
+module Database.LSMTree.Internal.Run.Index.Compact () where

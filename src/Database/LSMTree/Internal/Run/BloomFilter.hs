@@ -1,0 +1,25 @@
+-- | Bloom filters for probing runs during lookups.
+--
+-- === TODO
+--
+-- This is temporary module header documentation. The module will be
+-- fleshed out more as we implement bits of it.
+--
+-- Related work packages: 5, 6
+--
+-- This module includes in-memory parts and I\/O parts for, amongst others,
+--
+-- * Incremental construction
+--
+-- * Membership queries
+--
+-- * Calculations for false positive rates, memory use
+--
+-- * Hashing
+--
+-- * (de-)serialisation
+--
+-- The above list is a sketch. Functionality may move around, and the list is
+-- not exhaustive.
+--
+module Database.LSMTree.Internal.Run.BloomFilter () where

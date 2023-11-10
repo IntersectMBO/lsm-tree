@@ -1,3 +1,5 @@
+-- | Tests for the @lsm-tree@ library.
+--
 module Main (main) where
 
 import qualified Test.Database.LSMTree.Common
