@@ -86,6 +86,7 @@ import           Database.LSMTree.Common (IOLike, Range (..), Session,
                      SnapshotName, SomeSerialisationConstraint,
                      SomeUpdateConstraint, closeSession, deleteSnapshot,
                      listSnapshots, openSession)
+import           Database.LSMTree.Internal.Monoidal
 
 -- $resource-management
 -- See "Database.LSMTree.Normal#g:resource"
@@ -158,12 +159,6 @@ close = undefined
   Table querying and updates
 -------------------------------------------------------------------------------}
 
--- | Result of a single point lookup.
-data LookupResult k v =
-    NotFound      !k
-  | Found         !k !v
-  deriving (Eq, Show)
-
 -- | Perform a batch of lookups.
 --
 -- Lookups can be performed concurrently from multiple Haskell threads.
@@ -178,11 +173,6 @@ lookups ::
   -> m [LookupResult k v]
 lookups = undefined
 
--- | A result for one point in a range lookup.
-data RangeLookupResult k v =
-    FoundInRange         !k !v
-  deriving (Eq, Show)
-
 -- | Perform a range lookup.
 --
 -- Range lookups can be performed concurrently from multiple Haskell threads.
@@ -196,17 +186,6 @@ rangeLookup ::
   -> TableHandle m k v
   -> m [RangeLookupResult k v]
 rangeLookup = undefined
-
--- | Monoidal tables support insert, delete and monoidal upsert operations.
---
--- An __update__ is a term that groups all types of table-manipulating
--- operations, like inserts, deletes and mupserts.
-data Update v =
-    Insert !v
-  | Delete
-    -- | TODO: should be given a more suitable name.
-  | Mupsert !v
-  deriving (Show, Eq)
 
 -- | Perform a mixed batch of inserts, deletes and monoidal upserts.
 --

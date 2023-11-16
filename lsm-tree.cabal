@@ -33,8 +33,11 @@ library
   exposed-modules:
     Data.Map.Range
     Database.LSMTree.Common
+    Database.LSMTree.Internal.BlobRef
     Database.LSMTree.Internal.Integration
     Database.LSMTree.Internal.KMerge
+    Database.LSMTree.Internal.Monoidal
+    Database.LSMTree.Internal.Normal
     Database.LSMTree.Internal.Run
     Database.LSMTree.Internal.Run.BloomFilter
     Database.LSMTree.Internal.Run.Index.Compact
