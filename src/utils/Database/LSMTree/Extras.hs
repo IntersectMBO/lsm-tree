@@ -8,6 +8,18 @@ module Database.LSMTree.Extras (
   , mkBloomST
   , mkBloomST_Monkey
   , mkBloomEasy
+    -- * Page residency
+  , Bytes
+  , oneGB
+  , pageSize
+  , overhead
+  , numEntriesInPage
+  , numPages
+    -- ** UTxO
+  , utxoNumEntries
+  , utxoKeySize
+  , utxoValueSize
+  , utxoNumPages
   ) where
 
 import           Control.Monad.ST (runST)
@@ -60,3 +72,53 @@ mkBloomST_Monkey requestedFPR xs = runST $ do
 mkBloomEasy :: Hashable a => Double -> BloomMaker a
 mkBloomEasy = Bloom.Easy.easyList
 
+{-------------------------------------------------------------------------------
+  Page residency
+-------------------------------------------------------------------------------}
+
+type Bytes = Int
+
+oneGB :: Bytes
+oneGB = 1024 * 1024 * 1024
+
+-- | The size of a disk page.
+pageSize :: Bytes
+pageSize = 4096
+
+-- | Per entry in a page: 16 bits for the key index, 16 bits for the value
+-- index.
+overhead :: Bytes
+overhead = 2 + 2
+
+-- | How many key-value entries fit in a single page.
+numEntriesInPage :: Bytes -> Bytes -> Int
+numEntriesInPage keySize valueSize = floor @Double $
+    fromIntegral pageSize / fromIntegral (overhead + keySize + valueSize)
+
+-- | How many pages are needed to store a given number of key-value pairs of a
+-- given size.
+numPages :: Int -> Bytes -> Bytes -> (Int, Int)
+numPages numEntries keySize valueSize =
+    ( m
+    , ceiling @Double (fromIntegral n / fromIntegral m)
+    )
+  where
+    n = numEntries
+    m = numEntriesInPage keySize valueSize
+
+--
+-- UTxO
+--
+
+utxoNumEntries :: Int
+utxoNumEntries = 100_000_000
+
+-- These are not worst-case sizes. For now, I'm ignoring multi-asset values and
+-- blobs.
+utxoKeySize, utxoValueSize :: Bytes
+utxoKeySize   = 32
+utxoValueSize = 64
+
+-- | How many pages does it take to fit the stretch target of 100 million UTxOs?
+utxoNumPages :: (Int, Int)
+utxoNumPages = numPages utxoNumEntries utxoKeySize utxoValueSize

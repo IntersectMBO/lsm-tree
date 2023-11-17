@@ -9,5 +9,10 @@
 --
 module Main (main) where
 
+import qualified Bench.Database.LSMTree.Internal.Run.BloomFilter
+import           Criterion.Main
+
 main :: IO ()
-main = putStrLn "Hello, micro-benchmarks!"
+main = defaultMain [
+      Bench.Database.LSMTree.Internal.Run.BloomFilter.benchmarks
+    ]
