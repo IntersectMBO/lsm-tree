@@ -263,8 +263,8 @@ data MCompactIndex s k = MCompactIndex {
 -- | One-shot construction.
 --
 fromList :: (SliceBits k, Integral k) => Int -> [(k, k)] -> CompactIndex k
-fromList tb ks = runST $ do
-    mci <- new tb n
+fromList rfprec ks = runST $ do
+    mci <- new rfprec n
     mapM_ (`append` mci) ks
     unsafeFreeze mci
   where
