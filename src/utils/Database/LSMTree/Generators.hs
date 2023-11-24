@@ -1,12 +1,16 @@
 {-# LANGUAGE DeriveAnyClass             #-}
 {-# LANGUAGE DeriveGeneric              #-}
-{-# LANGUAGE DerivingStrategies         #-}
+{-# LANGUAGE DerivingVia                #-}
 {-# LANGUAGE GeneralisedNewtypeDeriving #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
+{-# LANGUAGE StandaloneDeriving         #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 module Database.LSMTree.Generators (
+    -- * UTxO keys
+    UTxOKey (..)
     -- * Range-finder precision
-    RFPrecision (..)
+  , RFPrecision (..)
   , rfprecInvariant
     -- * Pages (non-partitioned)
   , Pages (..)
@@ -23,12 +27,45 @@ import           Data.Containers.ListUtils (nubOrd)
 import           Data.List (sort)
 import           Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
-import           Database.LSMTree.Internal.Run.Index.Compact (SliceBits,
-                     rangeFinderPrecisionBounds, suggestRangeFinderPrecision,
-                     topBits16)
+import           Data.WideWord.Word256 (Word256 (..))
+import           Database.LSMTree.Internal.Run.BloomFilter (Hashable (..))
+import           Database.LSMTree.Internal.Run.Index.Compact (FiniteB (..),
+                     SliceBits, rangeFinderPrecisionBounds,
+                     suggestRangeFinderPrecision, topBits16)
 import           GHC.Generics (Generic)
+import           System.Random (Uniform)
 import           Test.QuickCheck (Arbitrary (..), NonEmptyList (..), Property,
                      chooseInt, scale, tabulate)
+
+{-------------------------------------------------------------------------------
+  UTxO keys
+-------------------------------------------------------------------------------}
+
+-- | A model of a UTxO key (256-bit hash)
+newtype UTxOKey = UTxOKey Word256
+  deriving stock (Show, Generic)
+  deriving newtype ( Eq, Ord, NFData, SliceBits, Num, Real, Enum, Integral
+                   , Hashable
+                   )
+  deriving anyclass (Uniform)
+
+instance Arbitrary UTxOKey where
+  arbitrary = UTxOKey <$>
+      (Word256 <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary)
+  shrink (UTxOKey w256) = [
+        UTxOKey w256'
+      | let i256 = toInteger w256
+      , i256' <- shrink i256
+      , toInteger (minBound :: Word256) <= i256'
+      , toInteger (maxBound :: Word256) >= i256'
+      , let w256' = fromIntegral i256'
+      ]
+
+deriving anyclass instance Uniform Word256
+deriving via FiniteB Word256 instance SliceBits Word256
+
+instance Hashable Word256 where
+  hashIO32 (Word256 a b c d) = hashIO32 (a, b, c, d)
 
 {-------------------------------------------------------------------------------
   Range-finder precision

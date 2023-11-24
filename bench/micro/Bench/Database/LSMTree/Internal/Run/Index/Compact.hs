@@ -14,7 +14,6 @@ import qualified Data.Array.Unboxed as A
 import           Data.Foldable (Foldable (..))
 import qualified Data.List.NonEmpty as NonEmpty
 import           Data.Maybe (fromMaybe)
-import           Data.Word
 import           Database.LSMTree.Generators
 import           Database.LSMTree.Internal.Run.Index.Compact
 import           GHC.Generics
@@ -43,7 +42,7 @@ searchEnv ::
      RFPrecision -- ^ Range-finder bit-precision
   -> Int         -- ^ Number of pages
   -> Int         -- ^ Number of searches
-  -> IO (CompactIndex Word64, [Word64])
+  -> IO (CompactIndex UTxOKey, [UTxOKey])
 searchEnv fpr npages nsearches = do
     ci <- constructCompactIndex <$> constructionEnv fpr npages
     stdgen  <- newStdGen
@@ -63,7 +62,7 @@ searches ci ks = foldl' (\acc k -> f (search k ci) `seq` acc) () ks
 constructionEnv ::
      RFPrecision -- ^ Range-finder bit-precision
   -> Int         -- ^ Number of pages
-  -> IO (Pages Word64)
+  -> IO (Pages UTxOKey)
 constructionEnv rfprec n = do
     stdgen <- newStdGen
     let ks = uniformWithoutReplacement stdgen (2 * n)

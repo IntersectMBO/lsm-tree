@@ -77,6 +77,7 @@ library lsm-tree-utils
     , lsm-tree
     , QuickCheck
     , random
+    , wide-word
 
 test-suite lsm-tree-test
   import:           warnings
