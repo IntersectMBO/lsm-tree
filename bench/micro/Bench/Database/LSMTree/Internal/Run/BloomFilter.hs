@@ -29,15 +29,12 @@ benchmarks = bgroup "Bench.Database.LSMTree.Internal.Run.BloomFilter" [
         , env (elemEnv 0.9 2_500_000 0 1_000_000) $ \ ~(b, xs) ->
             bench "onlyNegatives 0.9" $ whnf (elems b) xs
         ]
-    , bgroup "construction" [
-          env (constructionEnv 2_500_000) $ \ m ->
-            bench "incrementalST 0.1" $ whnf (constructBloom mkBloomST 0.1) m
-        , env (constructionEnv 2_500_000) $ \ m ->
-            bench "incrementalST 0.9" $ whnf (constructBloom mkBloomST 0.9) m
-        , env (constructionEnv 2_500_000) $ \ m ->
-            bench "easyList 0.1" $ whnf (constructBloom mkBloomEasy 0.1) m
-        , env (constructionEnv 2_500_000) $ \ m ->
-            bench "easyList 0.9" $ whnf (constructBloom mkBloomEasy 0.9) m
+    , env (constructionEnv 2_500_000) $ \ m ->
+      bgroup "construction" [
+          bench "incrementalST 0.1" $ whnf (constructBloom mkBloomST 0.1) m
+        , bench "incrementalST 0.9" $ whnf (constructBloom mkBloomST 0.9) m
+        , bench "easyList 0.1" $ whnf (constructBloom mkBloomEasy 0.1) m
+        , bench "easyList 0.9" $ whnf (constructBloom mkBloomEasy 0.9) m
         ]
     ]
 
@@ -57,15 +54,17 @@ elemEnv fpr nbloom nelemsPositive nelemsNegative = do
     zs <- generate $ shuffle (ys1 ++ ys2)
     pure (Bloom.Easy.easyList fpr xs, zs)
 
+-- | Used for benchmarking 'Bloom.elem'.
 elems :: Bloom a -> [a] -> ()
 elems b xs = foldl' (\acc x -> Bloom.elem x b `seq` acc) () xs
 
 -- | Input environment for benchmarking 'constructBloom'.
 constructionEnv :: Int -> IO (Map Word64 Word64)
 constructionEnv n = do
-    stdgen <- newStdGen
+    stdgen  <- newStdGen
+    stdgen' <- newStdGen
     let ks = uniformWithoutReplacement stdgen n
-        vs = uniformWithReplacement stdgen n
+        vs = uniformWithReplacement stdgen' n
     pure $ Map.fromList (zip ks vs)
 
 -- | Used for benchmarking the construction of bloom filters from write buffers.

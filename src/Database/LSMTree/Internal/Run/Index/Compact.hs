@@ -22,7 +22,7 @@
 --
 module Database.LSMTree.Internal.Run.Index.Compact (
     -- $compact
-    CompactIndex
+    CompactIndex (..)
     -- * Invariants and bounds
   , rangeFinderPrecisionBounds
     -- * Queries
