@@ -66,13 +66,16 @@ library lsm-tree-utils
   default-language: Haskell2010
   exposed-modules:
     Database.LSMTree.Extras
+    Database.LSMTree.Generators
     System.Random.Extras
 
   build-depends:
     , base
     , bloomfilter
     , containers
+    , deepseq
     , lsm-tree
+    , QuickCheck
     , random
 
 test-suite lsm-tree-test
@@ -89,6 +92,7 @@ test-suite lsm-tree-test
     Database.LSMTree.ModelIO.Normal
     Database.LSMTree.ModelIO.Session
     Test.Database.LSMTree.Common
+    Test.Database.LSMTree.Generators
     Test.Database.LSMTree.Internal.Run.BloomFilter
     Test.Database.LSMTree.Internal.Run.Index.Compact
     Test.Database.LSMTree.Model.Monoidal
