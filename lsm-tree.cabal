@@ -130,7 +130,15 @@ benchmark lsm-tree-micro-bench
   type:             exitcode-stdio-1.0
   hs-source-dirs:   bench/micro
   main-is:          Main.hs
-  build-depends:    base
+  other-modules:    Bench.Database.LSMTree.Internal.Run.BloomFilter
+  build-depends:
+    , base
+    , bloomfilter
+    , containers
+    , criterion
+    , lsm-tree:{lsm-tree, lsm-tree-utils}
+    , QuickCheck
+    , random
 
 benchmark lsm-tree-macro-bench
   import:           warnings

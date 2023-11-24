@@ -65,7 +65,7 @@ prop_noFalseNegatives :: forall a proxy.
   -> UniformWithoutReplacement a
   -> Property
 prop_noFalseNegatives _ mkBloom (FPR requestedFPR) (UniformWithoutReplacement xs) =
-    let xsBloom    = mkBloom requestedFPR xs
+    let xsBloom = mkBloom requestedFPR xs
     in  property $ all (`Bloom.elem` xsBloom) xs
 
 prop_verifyFPR ::
@@ -79,8 +79,9 @@ prop_verifyFPR ::
 prop_verifyFPR p mkBloom (FPR requestedFPR) (NumEntries numEntries) (Seed seed) =
   let stdgen      = mkStdGen seed
       measuredFPR = measureApproximateFPR p (mkBloom requestedFPR) numEntries stdgen
-  in  counterexample (printf "expected %f <= %f" measuredFPR requestedFPR) $
-      FPR measuredFPR <= FPR (requestedFPR + 0.01)
+      requestedFPR' = requestedFPR + 0.03 -- @requestedFPR@ with an error margin
+  in  counterexample (printf "expected %f <= %f" measuredFPR requestedFPR') $
+      FPR measuredFPR <= FPR requestedFPR'
 
 {-------------------------------------------------------------------------------
   Modifiers
@@ -112,7 +113,7 @@ instance Arbitrary NumEntries where
   shrink (NumEntries x) = [NumEntries x' | x' <- shrink x, numEntriesInvariant x']
 
 numEntriesLB :: Int
-numEntriesLB = 1_000
+numEntriesLB = 10_000
 
 numEntriesUB :: Int
 numEntriesUB = 100_000

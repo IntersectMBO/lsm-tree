@@ -2,6 +2,8 @@
 
 -- | Bloom filters for probing runs during lookups.
 --
+-- TODO: guarantee file format stability
+--
 -- === TODO
 --
 -- This is temporary module header documentation. The module will be
