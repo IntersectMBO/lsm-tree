@@ -77,7 +77,7 @@ jobs:
       run: cabal build --enable-tests --enable-benchmarks all
 
     - name: Run tests
-      run: cabal test all
+      run: cabal test -j1 --test-show-details=direct all
 
   # Check formatting for Haskell files
   stylish-haskell:
