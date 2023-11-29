@@ -43,7 +43,9 @@ library
     Database.LSMTree.Normal
 
   build-depends:
+    , array                ^>=0.5
     , base                 >=4.14     && <4.19
+    , bitvec               ^>=1.1
     , bloomfilter          ^>=2.0.1.2
     , bytestring
     , containers
@@ -54,6 +56,8 @@ library
     , strict-checked-vars  ^>=0.1.0.3
     , strict-mvar          ^>=1.2
     , strict-stm           ^>=1.2
+    , vector               ^>=0.13
+    , vector-algorithms    ^>=0.9
 
 library lsm-tree-utils
   import:           warnings
@@ -62,13 +66,16 @@ library lsm-tree-utils
   default-language: Haskell2010
   exposed-modules:
     Database.LSMTree.Extras
+    Database.LSMTree.Generators
     System.Random.Extras
 
   build-depends:
     , base
     , bloomfilter
     , containers
+    , deepseq
     , lsm-tree
+    , QuickCheck
     , random
 
 test-suite lsm-tree-test
@@ -85,7 +92,9 @@ test-suite lsm-tree-test
     Database.LSMTree.ModelIO.Normal
     Database.LSMTree.ModelIO.Session
     Test.Database.LSMTree.Common
+    Test.Database.LSMTree.Generators
     Test.Database.LSMTree.Internal.Run.BloomFilter
+    Test.Database.LSMTree.Internal.Run.Index.Compact
     Test.Database.LSMTree.Model.Monoidal
     Test.Database.LSMTree.Model.Normal
     Test.Database.LSMTree.ModelIO.Class

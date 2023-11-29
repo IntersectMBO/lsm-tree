@@ -3,7 +3,9 @@
 module Main (main) where
 
 import qualified Test.Database.LSMTree.Common
+import qualified Test.Database.LSMTree.Generators
 import qualified Test.Database.LSMTree.Internal.Run.BloomFilter
+import qualified Test.Database.LSMTree.Internal.Run.Index.Compact
 import qualified Test.Database.LSMTree.Model.Monoidal
 import qualified Test.Database.LSMTree.Model.Normal
 import qualified Test.Database.LSMTree.ModelIO.Monoidal
@@ -14,6 +16,8 @@ import           Test.Tasty
 main :: IO ()
 main = defaultMain $ testGroup "lsm-tree"
     [ Test.Database.LSMTree.Common.tests
+    , Test.Database.LSMTree.Generators.tests
+    , Test.Database.LSMTree.Internal.Run.Index.Compact.tests
     , Test.Database.LSMTree.Model.Normal.tests
     , Test.Database.LSMTree.Model.Monoidal.tests
     , Test.Database.LSMTree.ModelIO.Normal.tests
