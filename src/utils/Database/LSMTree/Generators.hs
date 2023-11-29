@@ -1,4 +1,8 @@
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE DeriveAnyClass             #-}
+{-# LANGUAGE DeriveGeneric              #-}
+{-# LANGUAGE DerivingStrategies         #-}
+{-# LANGUAGE GeneralisedNewtypeDeriving #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
 
 module Database.LSMTree.Generators (
     -- * Range-finder precision
@@ -14,6 +18,7 @@ module Database.LSMTree.Generators (
   , chunkSizeInvariant
   ) where
 
+import           Control.DeepSeq (NFData)
 import           Data.Containers.ListUtils (nubOrd)
 import           Data.List (sort)
 import           Data.List.NonEmpty (NonEmpty)
@@ -21,6 +26,7 @@ import qualified Data.List.NonEmpty as NonEmpty
 import           Database.LSMTree.Internal.Run.Index.Compact (SliceBits,
                      rangeFinderPrecisionBounds, suggestRangeFinderPrecision,
                      topBits16)
+import           GHC.Generics (Generic)
 import           Test.QuickCheck (Arbitrary (..), NonEmptyList (..), Property,
                      chooseInt, scale, tabulate)
 
@@ -29,7 +35,9 @@ import           Test.QuickCheck (Arbitrary (..), NonEmptyList (..), Property,
 -------------------------------------------------------------------------------}
 
 newtype RFPrecision = RFPrecision Int
-  deriving Show
+  deriving stock (Show, Generic)
+  deriving newtype Num
+  deriving anyclass NFData
 
 instance Arbitrary RFPrecision where
   arbitrary = RFPrecision <$> chooseInt (rfprecLB, rfprecUB)
@@ -55,7 +63,8 @@ data Pages k = Pages {
     getRangeFinderPrecision :: RFPrecision
   , getPages                :: [(k, k)]
   }
-  deriving Show
+  deriving stock (Show, Generic)
+  deriving anyclass NFData
 
 instance (Arbitrary k, SliceBits k, Integral k) => Arbitrary (Pages k) where
   arbitrary = mkPages
