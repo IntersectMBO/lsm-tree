@@ -1,7 +1,8 @@
 {-# LANGUAGE BangPatterns        #-}
+{-# LANGUAGE PatternSynonyms     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 module Data.Map.Range (
-    Bound (..)
+    Bound (.., BoundExclusive, BoundInclusive)
   , Clusive (..)
   , rangeLookup
   ) where
@@ -12,6 +13,14 @@ import           Data.Map.Internal (Map (..))
 
 data Clusive = Exclusive | Inclusive deriving Show
 data Bound k = NoBound | Bound !k !Clusive deriving Show
+
+{-# COMPLETE BoundExclusive, BoundInclusive #-}
+
+pattern BoundExclusive :: k -> Bound k
+pattern BoundExclusive k = Bound k Exclusive
+
+pattern BoundInclusive :: k -> Bound k
+pattern BoundInclusive k = Bound k Inclusive
 
 -- | Find all the keys in the given range and return the corresponding
 -- (key, value) pairs (in ascending order).
