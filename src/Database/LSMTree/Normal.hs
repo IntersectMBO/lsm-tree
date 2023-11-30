@@ -1,4 +1,3 @@
-{-# LANGUAGE DeriveTraversable        #-}
 {-# LANGUAGE StandaloneDeriving       #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TupleSections            #-}
@@ -83,6 +82,8 @@ import           Data.Word (Word64)
 import           Database.LSMTree.Common (IOLike, Range (..), Session,
                      SnapshotName, SomeSerialisationConstraint, closeSession,
                      deleteSnapshot, listSnapshots, openSession)
+import           Database.LSMTree.Internal.BlobRef
+import           Database.LSMTree.Internal.Normal
 
 -- $resource-management
 -- Table handles use resources and as such need to be managed. In particular
@@ -212,13 +213,6 @@ close = undefined
   Table querying and updates
 -------------------------------------------------------------------------------}
 
--- | Result of a single point lookup.
-data LookupResult k v blobref =
-    NotFound      !k
-  | Found         !k !v
-  | FoundWithBlob !k !v !blobref
-  deriving (Eq, Show, Functor, Foldable, Traversable)
-
 -- | Perform a batch of lookups.
 --
 -- Lookups can be performed concurrently from multiple Haskell threads.
@@ -229,12 +223,6 @@ lookups ::
   -> m [LookupResult k v (BlobRef blob)]
 lookups = undefined
 
--- | A result for one point in a range lookup.
-data RangeLookupResult k v blobref =
-    FoundInRange         !k !v
-  | FoundInRangeWithBlob !k !v !blobref
-  deriving (Eq, Show, Functor, Foldable, Traversable)
-
 -- | Perform a range lookup.
 --
 -- Range lookups can be performed concurrently from multiple Haskell threads.
@@ -244,15 +232,6 @@ rangeLookup ::
   -> TableHandle m k v blob
   -> m [RangeLookupResult k v (BlobRef blob)]
 rangeLookup = undefined
-
--- | Normal tables support insert and delete operations.
---
--- An __update__ is a term that groups all types of table-manipulating
--- operations, like inserts and deletes.
-data Update v blob =
-    Insert !v !(Maybe blob)
-  | Delete
-  deriving (Show, Eq)
 
 -- | Perform a mixed batch of inserts and deletes.
 --
@@ -295,16 +274,6 @@ deletes ::
   -> TableHandle m k v blob
   -> m ()
 deletes = updates . fmap (,Delete)
-
--- | A reference to an on-disk blob.
---
--- The blob can be retrieved based on the reference.
---
--- Blob comes from the acronym __Binary Large OBject (BLOB)__ and in many
--- database implementations refers to binary data that is larger than usual
--- values and is handled specially. In our context we will allow optionally a
--- blob associated with each value in the table.
-data BlobRef blob = BlobRef
 
 -- | Perform a batch of blob retrievals.
 --
