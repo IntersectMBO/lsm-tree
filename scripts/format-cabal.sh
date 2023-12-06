@@ -2,4 +2,4 @@
 
 set -euo pipefail
 
-fdfind -p . -e cabal -x cabal-fmt -i
+fdfind -p . -E bloomfilter -e cabal -x cabal-fmt -i

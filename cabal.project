@@ -27,3 +27,9 @@ source-repository-package
   location: https://github.com/well-typed/quickcheck-lockstep
   tag: ad0b6eee2600bcb2f2c20204812534ecbc83c66c
   --sha256: 0r9031q5gvzqvhqzsh53v5886s0r0hm3n5vyb1sjx73c39vj5i2d
+
+-- this prevents occurence of Hackage bloomfilter anywhere in the install plan
+-- that is overconstraining, as we'd only need to make sure lsm-tree
+-- doesn't depend on Hackage bloomfilter.
+-- Luckily, bloomfilter is not commonly used package, so this is good enough.
+constraints: bloomfilter <0
