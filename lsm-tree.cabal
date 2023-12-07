@@ -151,6 +151,19 @@ benchmark lsm-tree-macro-bench
   main-is:          Main.hs
   build-depends:    base
 
+library kmerge
+  import:           warnings
+  default-language: Haskell2010
+  hs-source-dirs:   src-kmerge
+  exposed-modules:
+    KMerge.Heap
+    KMerge.LoserTree
+
+  build-depends:
+    , base
+    , indexed-traversable
+    , primitive
+
 test-suite kmerge-test
   import:           warnings
   default-language: Haskell2010
@@ -158,9 +171,12 @@ test-suite kmerge-test
   hs-source-dirs:   test
   main-is:          kmerge-test.hs
   build-depends:
-    , base              >=4.14 && <4.19
+    , base                 >=4.14 && <4.19
     , deepseq
     , heaps
+    , indexed-traversable
+    , lsm-tree:kmerge
+    , primitive
     , QuickCheck
     , splitmix
     , tasty
