@@ -17,8 +17,6 @@ permissions:
 jobs:
   # Build and test
   build:
-    needs: [stylish-haskell, cabal-fmt, cabal-check]
-
     runs-on: ${{ matrix.os }}
 
     strategy:
