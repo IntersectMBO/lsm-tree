@@ -107,7 +107,8 @@ openSession ::
   -> m (Session m)
 openSession = undefined
 
--- | Close the table session. 'closeSession' is idempotent.
+-- | Close the table session. 'closeSession' is idempotent. All subsequent
+-- operations on the session or the tables within it will throw an exception.
 --
 -- This also closes any open table handles in the session. It would typically
 -- be good practice however to close all table handles first rather than

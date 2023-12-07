@@ -3,6 +3,7 @@
 {-# LANGUAGE TypeApplications    #-}
 module Test.Database.LSMTree.ModelIO.Normal (tests) where
 
+import           Control.Exception (SomeException, try)
 import           Control.Monad.Trans.State
 import qualified Data.ByteString as BS
 import           Data.Foldable (toList)
@@ -16,6 +17,7 @@ import           Database.LSMTree.ModelIO.Normal (IOLike, LookupResult (..),
                      Range (..), RangeLookupResult (..),
                      SomeSerialisationConstraint, TableHandle, Update (..))
 import           Test.Database.LSMTree.ModelIO.Class
+import           Test.QuickCheck.Monadic (monadicIO, monitor, run)
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans ()
@@ -31,6 +33,7 @@ tests = testGroup "Database.LSMTree.ModelIO.Normal"
     , testProperty "insert-insert-blob" $ prop_insertInsertBlob tbl
     , testProperty "insert-commutes" $ prop_insertCommutes tbl
     , testProperty "insert-commutes-blob" $ prop_insertCommutesBlob tbl
+    , testProperty "invalidated-blob-references" $ prop_updatesMayInvalidateBlobRefs tbl
     , testProperty "dup-insert-insert" $ prop_dupInsertInsert tbl
     , testProperty "dup-insert-comm" $ prop_dupInsertCommutes tbl
     , testProperty "dup-nochanges" $ prop_dupNoChanges tbl
@@ -63,7 +66,7 @@ makeNewTable h ups = do
 -- Like 'partsOf' in @lens@ this uses state monad.
 retrieveBlobsTrav ::
   (IsTableHandle h, IOLike m, SomeSerialisationConstraint blob, Traversable t)
-  => h m k v blob -> t (BlobRef h blob) -> m (t blob)
+  => proxy h -> t (BlobRef h m blob) -> m (t blob)
 retrieveBlobsTrav hdl brefs = do
   blobs <- retrieveBlobs hdl (toList brefs)
   evalStateT (traverse (\_ -> state un) brefs) blobs
@@ -71,19 +74,23 @@ retrieveBlobsTrav hdl brefs = do
     un []     = error "invalid traversal"
     un (x:xs) = (x, xs)
 
-lookupsWithBlobs :: (IsTableHandle h, IOLike m,
-    SomeSerialisationConstraint k, SomeSerialisationConstraint v, SomeSerialisationConstraint blob) =>
-    h m k v blob -> [k] -> m [LookupResult k v blob]
+lookupsWithBlobs ::
+    forall h m k v blob. ( IsTableHandle h, IOLike m
+    , SomeSerialisationConstraint k, SomeSerialisationConstraint v, SomeSerialisationConstraint blob
+    )
+  => h m k v blob -> [k] -> m [LookupResult k v blob]
 lookupsWithBlobs hdl ks = do
     res <- lookups hdl ks
-    getCompose <$> retrieveBlobsTrav hdl (Compose res)
+    getCompose <$> retrieveBlobsTrav (Proxy @h) (Compose res)
 
-rangeLookupWithBlobs :: (IsTableHandle h, IOLike m,
-    SomeSerialisationConstraint k,  SomeSerialisationConstraint v, SomeSerialisationConstraint a)
-    => h m k v a -> Range k -> m [RangeLookupResult k v a]
+rangeLookupWithBlobs ::
+     forall h m k v blob. ( IsTableHandle h, IOLike m
+     , SomeSerialisationConstraint k, SomeSerialisationConstraint v, SomeSerialisationConstraint blob
+     )
+  => h m k v blob -> Range k -> m [RangeLookupResult k v blob]
 rangeLookupWithBlobs hdl r = do
     res <- rangeLookup hdl r
-    getCompose <$> retrieveBlobsTrav hdl (Compose res)
+    getCompose <$> retrieveBlobsTrav (Proxy @h) (Compose res)
 
 -------------------------------------------------------------------------------
 -- implement classic QC tests for basic k/v properties
@@ -251,6 +258,31 @@ prop_insertCommutesBlob h ups k1 v1 mblob1 k2 v2 mblob2 = k1 /= k2 ==> ioPropert
         (Just blob1, Nothing)    -> [FoundWithBlob k1 v1 blob1, Found k2 v2]
         (Nothing,    Just blob2) -> [Found k1 v1,               FoundWithBlob k2 v2 blob2]
         (Just blob1, Just blob2) -> [FoundWithBlob k1 v1 blob1, FoundWithBlob k2 v2 blob2]
+
+-- | A blob reference may be invalidated by an update.
+prop_updatesMayInvalidateBlobRefs ::
+     IsTableHandle h
+  => Proxy h -> [(Key, Update Value Blob)]
+  -> Key -> Value -> Blob
+  -> [(Key, Update Value Blob)]
+  -> Property
+prop_updatesMayInvalidateBlobRefs h ups k1 v1 blob1 ups' = monadicIO $ do
+    (res, blobs, res') <- run $ do
+      (_, hdl) <- makeNewTable h ups
+      inserts hdl [(k1, v1, Just blob1)]
+      res <- lookups hdl [k1]
+      blobs <- getCompose <$> retrieveBlobsTrav h (Compose res)
+      updates hdl ups'
+      res' <- try @SomeException (getCompose <$> retrieveBlobsTrav h (Compose res))
+      pure (res, blobs, res')
+
+    case (res, blobs) of
+      ([FoundWithBlob{}], [FoundWithBlob _ _ x])
+        | Left _ <- res' ->
+            monitor (label "blob reference invalidated") >> pure True
+        | Right [FoundWithBlob _ _ y] <- res' ->
+            monitor (label "blob reference valid") >> pure (x == y)
+      _ -> monitor (counterexample "insert before lookup failed, somehow...") >> pure False
 
 -------------------------------------------------------------------------------
 -- implement classic QC tests for monoidal updates

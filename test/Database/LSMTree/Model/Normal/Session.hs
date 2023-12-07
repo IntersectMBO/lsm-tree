@@ -11,6 +11,7 @@
 {-# LANGUAGE RankNTypes                 #-}
 {-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
+{-# LANGUAGE StandaloneDeriving         #-}
 {-# LANGUAGE TupleSections              #-}
 {-# LANGUAGE TypeApplications           #-}
 
@@ -22,8 +23,10 @@ module Database.LSMTree.Model.Normal.Session (
     -- * Model
     Model (..)
   , initModel
+  , UpdateCounter (..)
     -- ** Constraints
   , C
+  , C_
   , Model.SomeSerialisationConstraint (..)
     -- ** ModelT and ModelM
   , ModelT (..)
@@ -50,7 +53,7 @@ module Database.LSMTree.Model.Normal.Session (
   , inserts
   , deletes
     -- ** Blobs
-  , Model.BlobRef
+  , BlobRef
   , retrieveBlobs
     -- * Snapshots
   , SUT.SnapshotName
@@ -68,19 +71,21 @@ import           Control.Monad.Except (ExceptT (..), MonadError (..),
 import           Control.Monad.Identity (Identity (runIdentity))
 import           Control.Monad.State.Strict (MonadState (..), StateT (..), gets,
                      modify)
-import           Data.Data (Typeable, cast)
+import           Data.Data
+import           Data.Dynamic
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import           Data.Maybe (fromJust)
+import           Data.Word
 import qualified Database.LSMTree.Model.Normal as Model
 import qualified Database.LSMTree.Normal as SUT
-import           Unsafe.Coerce (unsafeCoerce)
 
 {-------------------------------------------------------------------------------
   Model
 -------------------------------------------------------------------------------}
 
 data Model = Model {
-    tableHandles      :: Map TableHandleID SomeTable
+    tableHandles      :: Map TableHandleID (UpdateCounter, SomeTable)
   , nextTableHandleID :: TableHandleID
   , snapshots         :: Map SUT.SnapshotName Snapshot
   }
@@ -93,23 +98,37 @@ initModel = Model {
     , snapshots = Map.empty
     }
 
-data SomeTable where
-  SomeTable :: forall k v blob. C k v blob
-            => Model.Table k v blob -> SomeTable
+-- | We conservatively model blob reference invalidation: each update after
+-- acquiring a blob reference will invalidate it. We use 'UpdateCounter' to
+-- track updates.
+newtype UpdateCounter = UpdateCounter Word64
+  deriving (Show, Eq, Ord, Num)
+
+newtype SomeTable = SomeTable Dynamic
 
 instance Show SomeTable where
   show (SomeTable table) = show table
+
+toSomeTable ::
+     (Typeable k, Typeable v, Typeable blob)
+  => Model.Table k v blob
+  -> SomeTable
+toSomeTable = SomeTable . toDyn
+
+fromSomeTable ::
+     (Typeable k, Typeable v, Typeable blob)
+  => SomeTable
+  -> Maybe (Model.Table k v blob)
+fromSomeTable (SomeTable tbl) = fromDynamic tbl
 
 --
 -- Constraints
 --
 
+type C_ a = (Show a, Eq a, Typeable a)
+
 -- | Common constraints for keys, values and blobs
-type C k v blob = (
-    Show k, Show v, Show blob
-  , Eq k, Eq v, Eq blob
-  , Typeable k, Typeable v, Typeable blob
-  )
+type C k v blob = (C_ k, C_ v, C_ blob)
 
 --
 -- ModelT and ModelM
@@ -140,6 +159,7 @@ data Err =
   | ErrSnapshotExists
   | ErrSnapshotDoesNotExist
   | ErrSnapshotWrongType
+  | ErrBlobRefInvalidated
   deriving (Show, Eq)
 
 {-------------------------------------------------------------------------------
@@ -170,8 +190,8 @@ new config = state $ \Model{..} ->
             tableHandleID = nextTableHandleID
           , ..
           }
-        someTable = SomeTable $ Model.empty @k @v @blob
-        tableHandles' = Map.insert nextTableHandleID someTable tableHandles
+        someTable = toSomeTable $ Model.empty @k @v @blob
+        tableHandles' = Map.insert nextTableHandleID (0, someTable) tableHandles
         nextTableHandleID' = nextTableHandleID + 1
         model' = Model {
             tableHandles = tableHandles'
@@ -198,15 +218,27 @@ close TableHandle{..} = state $ \Model{..} ->
 --
 
 guardTableHandleIsOpen ::
-     forall k v blob m. (MonadState Model m, MonadError Err m)
+     forall k v blob m. (
+       MonadState Model m, MonadError Err m
+     , Typeable k, Typeable v, Typeable blob
+     )
   => TableHandle k v blob
-  -> m (Model.Table k v blob)
+  -> m (UpdateCounter, Model.Table k v blob)
 guardTableHandleIsOpen TableHandle{..} =
     gets (Map.lookup tableHandleID . tableHandles) >>= \case
       Nothing ->
         throwError ErrTableHandleClosed
-      Just (SomeTable table) ->
-        pure $ unsafeCoerce table
+      Just (updc, tbl) ->
+        pure (updc, fromJust $ fromSomeTable tbl)
+
+guardTableHandleIsOpen' ::
+     forall m. (MonadState Model m, MonadError Err m)
+  => TableHandleID
+  -> m UpdateCounter
+guardTableHandleIsOpen' thid =
+    gets (Map.lookup thid . tableHandles) >>= \case
+      Nothing   -> throwError ErrTableHandleClosed
+      Just (updc, _) -> pure updc
 
 newTableWith ::
      (MonadState Model m, C k v blob)
@@ -218,8 +250,8 @@ newTableWith config tbl = state $ \Model{..} ->
           tableHandleID = nextTableHandleID
         , config
         }
-      someTable = SomeTable tbl
-      tableHandles' = Map.insert nextTableHandleID someTable tableHandles
+      someTable = toSomeTable tbl
+      tableHandles' = Map.insert nextTableHandleID (0, someTable) tableHandles
       nextTableHandleID' = nextTableHandleID + 1
       model' = Model {
           tableHandles = tableHandles'
@@ -241,13 +273,14 @@ lookups ::
      , MonadError Err m
      , Model.SomeSerialisationConstraint k
      , Model.SomeSerialisationConstraint v
+     , C k v blob
      )
   => [k]
   -> TableHandle k v blob
-  -> m [Model.LookupResult k v (Model.BlobRef blob)]
+  -> m [Model.LookupResult k v (BlobRef blob)]
 lookups ks th = do
-    table <- guardTableHandleIsOpen th
-    pure $ Model.lookups ks table
+    (updc, table) <- guardTableHandleIsOpen th
+    pure $ liftBlobRefs th updc $ Model.lookups ks table
 
 type RangeLookupResult k v blobref = Model.RangeLookupResult k v blobref
 
@@ -256,13 +289,14 @@ rangeLookup ::
      , MonadError Err m
      , Model.SomeSerialisationConstraint k
      , Model.SomeSerialisationConstraint v
+     , C k v blob
      )
   => Model.Range k
   -> TableHandle k v blob
-  -> m [RangeLookupResult k v (Model.BlobRef blob)]
+  -> m [RangeLookupResult k v (BlobRef blob)]
 rangeLookup r th = do
-    table <- guardTableHandleIsOpen th
-    pure $ Model.rangeLookup r table
+    (updc, table) <- guardTableHandleIsOpen th
+    pure $ liftBlobRefs th updc $ Model.rangeLookup r table
 
 updates ::
      ( MonadState Model m
@@ -276,10 +310,10 @@ updates ::
   -> TableHandle k v blob
   -> m ()
 updates ups th@TableHandle{..} = do
-  table <- guardTableHandleIsOpen th
+  (updc, table) <- guardTableHandleIsOpen th
   let table' = Model.updates ups table
   modify (\m -> m {
-      tableHandles = Map.insert tableHandleID (SomeTable table') (tableHandles m)
+      tableHandles = Map.insert tableHandleID (updc + 1, toSomeTable table') (tableHandles m)
     })
 
 inserts ::
@@ -308,17 +342,42 @@ deletes ::
   -> m ()
 deletes = updates . fmap (,Model.Delete)
 
+-- | For more details: 'Database.LSMTree.Internal.BlobRef' describes the
+-- intended semantics of blob references.
+data BlobRef blob = BlobRef {
+    parentTableID :: TableHandleID
+  , createdAt     :: UpdateCounter
+  , innerBlob     :: Model.BlobRef blob
+  }
+
+deriving instance Show blob => Show (BlobRef blob)
+
 retrieveBlobs ::
      ( MonadState Model m
      , MonadError Err m
      , Model.SomeSerialisationConstraint blob
      )
-  => TableHandle k v blob
-  -> [Model.BlobRef blob]
+  => [BlobRef blob]
   -> m [blob]
-retrieveBlobs th refs = do
-    table <- guardTableHandleIsOpen th
-    pure $ Model.retrieveBlobs table refs
+retrieveBlobs refs = Model.retrieveBlobs <$> mapM guard refs
+  where
+    -- guard that the table is still open, and the table wasn't updated
+    guard BlobRef{..} = do
+        updc <- guardTableHandleIsOpen' parentTableID
+        when (updc /= createdAt) $ throwError ErrBlobRefInvalidated
+        pure innerBlob
+
+--
+-- Utility
+--
+
+liftBlobRefs ::
+     Functor f
+  => TableHandle k v blob
+  -> UpdateCounter
+  -> [f (Model.BlobRef blob)]
+  -> [f (BlobRef blob)]
+liftBlobRefs th c = fmap (fmap (BlobRef (tableHandleID th) c))
 
 {-------------------------------------------------------------------------------
   Snapshots
@@ -340,12 +399,12 @@ snapshot ::
   -> TableHandle k v blob
   -> m ()
 snapshot name th@TableHandle{..} = do
-    table <- guardTableHandleIsOpen th
+    table <- snd <$> guardTableHandleIsOpen th
     snaps <- gets snapshots
     when (Map.member name snaps) $
       throwError ErrSnapshotExists
     modify (\m -> m {
-        snapshots = Map.insert name (Snapshot config $ SomeTable $ Model.snapshot table) (snapshots m)
+        snapshots = Map.insert name (Snapshot config $ toSomeTable $ Model.snapshot table) (snapshots m)
       })
 
 open ::
@@ -361,8 +420,8 @@ open name = do
     case Map.lookup name snaps of
       Nothing ->
         throwError ErrSnapshotDoesNotExist
-      Just (Snapshot conf (SomeTable (table :: Model.Table k' v' blob'))) ->
-        case cast @(Model.Table k' v' blob') @(Model.Table k v blob) table of
+      Just (Snapshot conf tbl) ->
+        case fromSomeTable tbl of
           Nothing ->
             throwError ErrSnapshotWrongType
           Just table' ->
@@ -403,5 +462,5 @@ duplicate ::
   => TableHandle k v blob
   -> m (TableHandle k v blob)
 duplicate th@TableHandle{..} = do
-    table <- guardTableHandleIsOpen th
+    table <- snd <$> guardTableHandleIsOpen th
     newTableWith config $ Model.duplicate table

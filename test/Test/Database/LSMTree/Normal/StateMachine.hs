@@ -74,7 +74,7 @@ import           Test.Database.LSMTree.Normal.StateMachine.Op
                      (HasBlobRef (getBlobRef), Op (..))
 import qualified Test.QuickCheck as QC
 import           Test.QuickCheck (Arbitrary, Gen)
-import           Test.QuickCheck.StateModel hiding (Var, vars)
+import           Test.QuickCheck.StateModel hiding (Var)
 import           Test.QuickCheck.StateModel.Lockstep
 import qualified Test.QuickCheck.StateModel.Lockstep.Defaults as Lockstep.Defaults
 import qualified Test.QuickCheck.StateModel.Lockstep.Run as Lockstep.Run
@@ -136,6 +136,10 @@ propLockstepIO_ModelIOImpl = testProperty "propLockstepIO_ModelIOImpl" $
           | isDoesNotExistError err
           , ioe_location err == "deleteSnapshot"
           = Just Model.ErrSnapshotDoesNotExist
+
+          | isIllegalOperation err
+          , ioe_description err == "blob reference invalidated"
+          = Just Model.ErrBlobRefInvalidated
 
           | otherwise
           = Nothing
@@ -228,16 +232,14 @@ type Var h a = ModelVar (ModelState h) a
 type Val h a = ModelValue (ModelState h) a
 type Obs h a = Observable (ModelState h) a
 
--- | Common constraints for keys, values and blobs
-type C k v blob = (
-    Model.C k v blob
-  , Model.SomeSerialisationConstraint k
-  , Model.SomeSerialisationConstraint v
-  , Model.SomeSerialisationConstraint blob
-  , SUT.SomeSerialisationConstraint k
-  , SUT.SomeSerialisationConstraint v
-  , SUT.SomeSerialisationConstraint blob
+type C_ a = (
+    Model.C_ a
+  , Model.SomeSerialisationConstraint a
+  , SUT.SomeSerialisationConstraint a
   )
+
+-- | Common constraints for keys, values and blobs
+type C k v blob = (C_ k, C_ v, C_ blob)
 
 {-------------------------------------------------------------------------------
   StateModel
@@ -260,10 +262,10 @@ instance ( Show (SUT.Class.TableConfig h)
     -- Table queriehs
     Lookups :: C k v blob
             => [k] -> Var h (WrapTableHandle h IO k v blob)
-            -> Act h [SUT.LookupResult k v (WrapBlobRef h blob)]
+            -> Act h [SUT.LookupResult k v (WrapBlobRef h IO blob)]
     RangeLookup :: C k v blob
                 => SUT.Range k -> Var h (WrapTableHandle h IO k v blob)
-                -> Act h [SUT.RangeLookupResult k v (WrapBlobRef h blob)]
+                -> Act h [SUT.RangeLookupResult k v (WrapBlobRef h IO blob)]
     -- Updates
     Updates :: C k v blob
             => [(k, SUT.Update v blob)] -> Var h (WrapTableHandle h IO k v blob)
@@ -275,8 +277,8 @@ instance ( Show (SUT.Class.TableConfig h)
             => [k] -> Var h (WrapTableHandle h IO k v blob)
             -> Act h ()
     -- Blobs
-    RetrieveBlobs :: C k v blob
-                  => Var h (WrapTableHandle h IO k v blob) -> Var h [WrapBlobRef h blob]
+    RetrieveBlobs :: C_ blob
+                  => Var h [WrapBlobRef h IO blob]
                   -> Act h [WrapBlob blob]
     -- Snapshots
     Snapshot :: C k v blob
@@ -331,8 +333,8 @@ instance ( Eq (SUT.Class.TableConfig h)
           Just inss1 == cast inss2 && Just var1 == cast var2
       go (Deletes ks1 var1)         (Deletes ks2 var2) =
           Just ks1 == cast ks2 && Just var1 == cast var2
-      go (RetrieveBlobs var1 vars1) (RetrieveBlobs var2 vars2) =
-          Just var1 == cast var2 && Just vars1 == cast vars2
+      go (RetrieveBlobs vars1) (RetrieveBlobs vars2) =
+          Just vars1 == cast vars2
       go (Snapshot name1 var1)      (Snapshot name2 var2) =
           name1 == name2 && Just var1 == cast var2
       go (Open name1)               (Open name2) =
@@ -375,14 +377,15 @@ instance ( Eq (SUT.Class.TableConfig h)
   data instance ModelValue (ModelState h) a where
     MTableHandle :: Model.TableHandle k v blob
                  -> Val h (WrapTableHandle h IO k v blob)
-    MBlobRef :: Model.BlobRef blob -> Val h (WrapBlobRef h blob)
+    MBlobRef :: Model.C_ blob
+             => Model.BlobRef blob -> Val h (WrapBlobRef h IO blob)
 
     MLookupResult :: Model.C k v blob
-                  => Model.LookupResult k v (Val h (WrapBlobRef h blob))
-                  -> Val h (SUT.LookupResult k v (WrapBlobRef h blob))
+                  => Model.LookupResult k v (Val h (WrapBlobRef h IO blob))
+                  -> Val h (SUT.LookupResult k v (WrapBlobRef h IO blob))
     MRangeLookupResult :: Model.C k v blob
-                       => Model.RangeLookupResult k v (Val h (WrapBlobRef h blob))
-                       -> Val h (SUT.RangeLookupResult k v (WrapBlobRef h blob))
+                       => Model.RangeLookupResult k v (Val h (WrapBlobRef h IO blob))
+                       -> Val h (SUT.RangeLookupResult k v (WrapBlobRef h IO blob))
 
     MBlob :: (Show blob, Typeable blob, Eq blob)
           => WrapBlob blob -> Val h (WrapBlob blob)
@@ -396,16 +399,18 @@ instance ( Eq (SUT.Class.TableConfig h)
 
   data instance Observable (ModelState h) a where
     OTableHandle :: Obs h (WrapTableHandle h IO k v blob)
-    OBlobRef :: Obs h (WrapBlobRef h blob)
+    OBlobRef :: Obs h (WrapBlobRef h IO blob)
 
     -- TODO: can we use OId for lookup results and range lookup results instead,
     -- or are these separate constructors necessary?
     OLookupResult :: Model.C k v blob
-                  => Model.LookupResult k v (Obs h (WrapBlobRef h blob))
-                  -> Obs h (SUT.LookupResult k v (WrapBlobRef h blob))
+                  => Model.LookupResult k v (Obs h (WrapBlobRef h IO blob))
+                  -> Obs h (SUT.LookupResult k v (WrapBlobRef h IO blob))
     ORangeLookupResult :: Model.C k v blob
-                       => Model.RangeLookupResult k v (Obs h (WrapBlobRef h blob))
-                       -> Obs h (SUT.RangeLookupResult k v (WrapBlobRef h blob))
+                       => Model.RangeLookupResult k v (Obs h (WrapBlobRef h IO blob))
+                       -> Obs h (SUT.RangeLookupResult k v (WrapBlobRef h IO blob))
+    OBlob :: (Show blob, Typeable blob, Eq blob)
+          => WrapBlob blob -> Obs h (WrapBlob blob)
 
     OId :: (Show a, Typeable a, Eq a) => a -> Obs h a
 
@@ -448,7 +453,7 @@ instance ( Eq (SUT.Class.TableConfig h)
       Updates _ tableVar              -> [SomeGVar tableVar]
       Inserts _ tableVar              -> [SomeGVar tableVar]
       Deletes _ tableVar              -> [SomeGVar tableVar]
-      RetrieveBlobs tableVar blobsVar -> [SomeGVar tableVar, SomeGVar blobsVar]
+      RetrieveBlobs blobsVar          -> [SomeGVar blobsVar]
       Snapshot _ tableVar             -> [SomeGVar tableVar]
       Open _                          -> []
       DeleteSnapshot _                -> []
@@ -479,8 +484,39 @@ instance ( Eq (SUT.Class.TableConfig h)
   tagStep states action = map show . tagStep' states action
 
 deriving instance Show (SUT.Class.TableConfig h) => Show (Val h a)
-deriving instance Eq (Obs h a)
 deriving instance Show (Obs h a)
+
+instance Eq (Obs h a) where
+  obsReal == obsModel = case (obsReal, obsModel) of
+      -- The model is conservative about blob retrieval: the model invalidates a
+      -- blob reference immediately after an update to the table, and if the SUT
+      -- returns a blob, then that's okay. If both return a blob or both return
+      -- an error, then those must match exactly.
+      (OEither (Right (OBlob (WrapBlob _))), OEither (Left (OId y)))
+        | Just Model.ErrBlobRefInvalidated <- cast y -> True
+      -- default equalities
+      (OTableHandle, OTableHandle) -> True
+      (OBlobRef, OBlobRef) -> True
+      (OLookupResult x, OLookupResult y) -> x == y
+      (ORangeLookupResult x, ORangeLookupResult y) -> x == y
+      (OBlob x, OBlob y) -> x == y
+      (OId x, OId y) -> x == y
+      (OPair x, OPair y) -> x == y
+      (OEither x, OEither y) -> x == y
+      (OList x, OList y) -> x == y
+      (_, _) -> False
+    where
+      _coveredAllCases :: Obs h a -> ()
+      _coveredAllCases = \case
+          OTableHandle{} -> ()
+          OBlobRef{} -> ()
+          OLookupResult{} -> ()
+          ORangeLookupResult{} -> ()
+          OBlob{} -> ()
+          OId{} -> ()
+          OPair{} -> ()
+          OEither{} -> ()
+          OList{} -> ()
 
 {-------------------------------------------------------------------------------
   Real monad
@@ -639,8 +675,8 @@ runModel lookUp = \case
       Model.runModelM (Model.inserts kins (getTableHandle $ lookUp tableVar))
     Deletes kdels tableVar -> wrap MUnit .
       Model.runModelM (Model.deletes kdels (getTableHandle $ lookUp tableVar))
-    RetrieveBlobs tableVar blobsVar -> wrap (MList . fmap (MBlob . WrapBlob)) .
-      Model.runModelM (Model.retrieveBlobs (getTableHandle $ lookUp tableVar) (getBlobRefs . lookUp $ blobsVar))
+    RetrieveBlobs blobsVar -> wrap (MList . fmap (MBlob . WrapBlob)) .
+      Model.runModelM (Model.retrieveBlobs (getBlobRefs . lookUp $ blobsVar))
     Snapshot name tableVar -> wrap MUnit .
       Model.runModelM (Model.snapshot name (getTableHandle $ lookUp tableVar))
     Open name -> wrap MTableHandle .
@@ -657,7 +693,7 @@ runModel lookUp = \case
       -> Model.TableHandle k v blob
     getTableHandle (MTableHandle th) = th
 
-    getBlobRefs :: ModelValue (ModelState h) [WrapBlobRef h blob] -> [Model.BlobRef blob]
+    getBlobRefs :: ModelValue (ModelState h) [WrapBlobRef h IO blob] -> [Model.BlobRef blob]
     getBlobRefs (MList brs) = fmap (\(MBlobRef br) -> br) brs
 
 wrap ::
@@ -698,8 +734,8 @@ runIO action lookUp = ReaderT $ \(session, handler) ->
           SUT.Class.inserts (unwrapTableHandle $ lookUp' tableVar) kins
         Deletes kdels tableVar -> catchErr handler $
           SUT.Class.deletes (unwrapTableHandle $ lookUp' tableVar) kdels
-        RetrieveBlobs tableVar blobRefsVar -> catchErr handler $
-          fmap WrapBlob <$> SUT.Class.retrieveBlobs (unwrapTableHandle $ lookUp' tableVar) (unwrapBlobRef <$> lookUp' blobRefsVar)
+        RetrieveBlobs blobRefsVar -> catchErr handler $
+          fmap WrapBlob <$> SUT.Class.retrieveBlobs (Proxy @h) (unwrapBlobRef <$> lookUp' blobRefsVar)
         Snapshot name tableVar -> catchErr handler $
           SUT.Class.snapshot name (unwrapTableHandle $ lookUp' tableVar)
         Open name -> catchErr handler $
@@ -742,8 +778,8 @@ runIOSim action lookUp = ReaderT $ \(session, handler) ->
           SUT.Class.inserts (unwrapTableHandle $ lookUp' tableVar) kins
         Deletes kdels tableVar -> catchErr handler $
           SUT.Class.deletes (unwrapTableHandle $ lookUp' tableVar) kdels
-        RetrieveBlobs tableVar blobRefsVar -> catchErr handler $
-          fmap WrapBlob <$> SUT.Class.retrieveBlobs (unwrapTableHandle $ lookUp' tableVar) (unwrapBlobRef <$> lookUp' blobRefsVar)
+        RetrieveBlobs blobRefsVar -> catchErr handler $
+          fmap WrapBlob <$> SUT.Class.retrieveBlobs (Proxy @h) (unwrapBlobRef <$> lookUp' blobRefsVar)
         Snapshot name tableVar -> catchErr handler $
           SUT.Class.snapshot name (unwrapTableHandle $ lookUp' tableVar)
         Open name -> catchErr handler $
@@ -784,12 +820,9 @@ arbitraryActionWithVars _ findVars _st = QC.oneof $ concat [
     , case findVars (Proxy @(Either Model.Err (WrapTableHandle h IO k v blob))) of
         []   -> []
         vars -> withVars (QC.elements vars)
-    , case ( findVars (Proxy @(Either Model.Err (WrapTableHandle h IO k v blob)))
-           , findBlobRefsVars
-           ) of
-        ([], _ )      -> []
-        (_ , [])      -> []
-        (vars, vars') -> withVars' (QC.elements vars) (QC.elements vars')
+    , case findBlobRefsVars of
+        []    -> []
+        vars' -> withVars' (QC.elements vars')
     ]
   where
     _coveredAllCases :: LockstepAction (ModelState h) a -> ()
@@ -808,20 +841,20 @@ arbitraryActionWithVars _ findVars _st = QC.oneof $ concat [
         Open{} -> ()
         Duplicate{} -> ()
 
-    findBlobRefsVars :: [Var h (Either Model.Err [WrapBlobRef h blob])]
+    findBlobRefsVars :: [Var h (Either Model.Err [WrapBlobRef h IO blob])]
     findBlobRefsVars = fmap fromLookupResults vars1 ++ fmap fromRangeLookupResults vars2
       where
-        vars1 = findVars (Proxy @(Either Model.Err [SUT.LookupResult k v (WrapBlobRef h blob)]))
-        vars2 = findVars (Proxy @(Either Model.Err [SUT.RangeLookupResult k v (WrapBlobRef h blob)]))
+        vars1 = findVars (Proxy @(Either Model.Err [SUT.LookupResult k v (WrapBlobRef h IO blob)]))
+        vars2 = findVars (Proxy @(Either Model.Err [SUT.RangeLookupResult k v (WrapBlobRef h IO blob)]))
 
         fromLookupResults ::
-             Var h (Either Model.Err [SUT.LookupResult k v (WrapBlobRef h blob)])
-          -> Var h (Either Model.Err [WrapBlobRef h blob])
+             Var h (Either Model.Err [SUT.LookupResult k v (WrapBlobRef h IO blob)])
+          -> Var h (Either Model.Err [WrapBlobRef h IO blob])
         fromLookupResults = mapGVar (\op -> OpRight `OpComp` OpLookupResults `OpComp` OpFromRight `OpComp` op)
 
         fromRangeLookupResults ::
-             Var h (Either Model.Err [SUT.RangeLookupResult k v (WrapBlobRef h blob)])
-          -> Var h (Either Model.Err [WrapBlobRef h blob])
+             Var h (Either Model.Err [SUT.RangeLookupResult k v (WrapBlobRef h IO blob)])
+          -> Var h (Either Model.Err [WrapBlobRef h IO blob])
         fromRangeLookupResults = mapGVar (\op -> OpRight `OpComp` OpRangeLookupResults `OpComp` OpFromRight `OpComp` op)
 
     withoutVars :: [Gen (Any (LockstepAction (ModelState h)))]
@@ -847,11 +880,10 @@ arbitraryActionWithVars _ findVars _st = QC.oneof $ concat [
         ]
 
     withVars' ::
-         Gen (Var h (Either Model.Err (WrapTableHandle h IO k v blob)))
-      -> Gen (Var h (Either Model.Err [WrapBlobRef h blob]))
+         Gen (Var h (Either Model.Err [WrapBlobRef h IO blob]))
       -> [Gen (Any (LockstepAction (ModelState h)))]
-    withVars' genTableHandleVar genBlobRefsVar = [
-          fmap Some $ RetrieveBlobs <$> (fromRight <$> genTableHandleVar) <*> (fromRight <$> genBlobRefsVar)
+    withVars' genBlobRefsVar = [
+          fmap Some $ RetrieveBlobs <$> (fromRight <$> genBlobRefsVar)
         ]
 
     fromRight ::
@@ -897,7 +929,11 @@ arbitraryActionWithVars _ findVars _st = QC.oneof $ concat [
 
     -- TODO: improve, actual snapshot names
     genSnapshotName :: Gen SUT.SnapshotName
-    genSnapshotName = pure $ fromJust $ SUT.mkSnapshotName "snap"
+    genSnapshotName = QC.elements [
+        fromJust $ SUT.mkSnapshotName "snap1"
+      , fromJust $ SUT.mkSnapshotName "snap2"
+      , fromJust $ SUT.mkSnapshotName "snap3"
+      ]
 
 shrinkActionWithVars ::
        ModelFindVariables (ModelState h)
