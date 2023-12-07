@@ -1,17 +1,20 @@
-cabal-version:   3.4
-name:            lsm-tree
-version:         0.1.0.0
-synopsis:        Log-structured merge-tree
-description:     Log-structured merge-tree.
-license:         Apache-2.0
-license-file:    LICENSE
-author:          Duncan Coutts, Joris Dral, Oleg Grenrus
-maintainer:      Duncan Coutts, Joris Dral, Oleg Grenrus
-copyright:       2023 Input Output Global Inc (IOG)
-category:        Database
-build-type:      Simple
-extra-doc-files: CHANGELOG.md
-tested-with:     GHC ==8.10 || ==9.2 || ==9.4 || ==9.6
+cabal-version:      3.4
+name:               lsm-tree
+version:            0.1.0.0
+synopsis:           Log-structured merge-tree
+description:        Log-structured merge-tree.
+license:            Apache-2.0
+license-file:       LICENSE
+author:             Duncan Coutts, Joris Dral, Oleg Grenrus
+maintainer:         Duncan Coutts, Joris Dral, Oleg Grenrus
+copyright:          2023 Input Output Global Inc (IOG)
+category:           Database
+build-type:         Simple
+extra-doc-files:    CHANGELOG.md
+tested-with:        GHC ==8.10 || ==9.2 || ==9.4 || ==9.6
+extra-source-files:
+  bloomfilter/cbits/lookup3.c
+  bloomfilter/cbits/lookup3.h
 
 source-repository head
   type:     git
@@ -46,17 +49,44 @@ library
     Database.LSMTree.Normal
 
   build-depends:
-    , base                 >=4.14     && <4.19
-    , bloomfilter          ^>=2.0.1.2
+    , base                  >=4.14     && <4.19
     , bytestring
     , containers
     , filepath
-    , fs-api               ^>=0.2
-    , io-classes           ^>=1.2
+    , fs-api                ^>=0.2
+    , io-classes            ^>=1.2
+    , lsm-tree:bloomfilter
     , mtl
-    , strict-checked-vars  ^>=0.1.0.3
-    , strict-mvar          ^>=1.2
-    , strict-stm           ^>=1.2
+    , strict-checked-vars   ^>=0.1.0.3
+    , strict-mvar           ^>=1.2
+    , strict-stm            ^>=1.2
+
+library bloomfilter
+  visibility:       private
+  hs-source-dirs:   bloomfilter
+  default-language: Haskell2010
+  build-depends:
+    , array
+    , base        >=4.5 && <5
+    , bytestring  >=0.9
+    , deepseq
+
+  exposed-modules:
+    Data.BloomFilter
+    Data.BloomFilter.Easy
+    Data.BloomFilter.Hash
+    Data.BloomFilter.Mutable
+
+  other-modules:
+    Data.BloomFilter.Array
+    Data.BloomFilter.Mutable.Internal
+    Data.BloomFilter.Util
+
+  c-sources:        bloomfilter/cbits/lookup3.c
+  ghc-options:      -O2 -Wall
+  include-dirs:     bloomfilter/cbits
+  includes:         lookup3.h
+  install-includes: lookup3.h
 
 library lsm-tree-utils
   import:           warnings
@@ -69,9 +99,8 @@ library lsm-tree-utils
 
   build-depends:
     , base
-    , bloomfilter
     , containers
-    , lsm-tree
+    , lsm-tree:{lsm-tree, bloomfilter}
     , random
 
 test-suite lsm-tree-test
@@ -101,8 +130,7 @@ test-suite lsm-tree-test
     Test.Util.TypeFamilyWrappers
 
   build-depends:
-    , base                                 >=4.14 && <4.19
-    , bloomfilter
+    , base                                              >=4.14 && <4.19
     , bytestring
     , constraints
     , containers
@@ -110,10 +138,10 @@ test-suite lsm-tree-test
     , deepseq
     , directory
     , fs-api
-    , fs-sim                               >=0.2
+    , fs-sim                                            >=0.2
     , io-classes
-    , io-sim                               >=1.2
-    , lsm-tree:{lsm-tree, lsm-tree-utils}
+    , io-sim                                            >=1.2
+    , lsm-tree:{lsm-tree, bloomfilter, lsm-tree-utils}
     , mtl
     , QuickCheck
     , quickcheck-dynamic
@@ -136,10 +164,9 @@ benchmark lsm-tree-micro-bench
   other-modules:    Bench.Database.LSMTree.Internal.Run.BloomFilter
   build-depends:
     , base
-    , bloomfilter
     , containers
     , criterion
-    , lsm-tree:{lsm-tree, lsm-tree-utils}
+    , lsm-tree:{lsm-tree, bloomfilter, lsm-tree-utils}
     , QuickCheck
     , random
 
