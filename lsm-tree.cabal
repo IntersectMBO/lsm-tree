@@ -253,3 +253,18 @@ test-suite lsm-prototypes
   ghc-options:
     -Wno-incomplete-uni-patterns -Wno-partial-fields
     -Wno-missing-export-lists -fno-ignore-asserts
+
+test-suite bloomfilter-tests
+  default-language: Haskell2010
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   bloomfilter/tests
+  main-is:          QC.hs
+  other-modules:    QCSupport
+  build-depends:
+    , base
+    , bytestring
+    , lsm-tree:bloomfilter
+    , QuickCheck
+    , random
+    , test-framework
+    , test-framework-quickcheck2
