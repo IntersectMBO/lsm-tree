@@ -1,8 +1,18 @@
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE DeriveAnyClass             #-}
+{-# LANGUAGE DeriveFunctor              #-}
+{-# LANGUAGE DeriveGeneric              #-}
+{-# LANGUAGE DerivingVia                #-}
+{-# LANGUAGE GeneralisedNewtypeDeriving #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 module Database.LSMTree.Generators (
+    -- * WithSerialised
+    WithSerialised (..)
+    -- * UTxO keys
+  , UTxOKey (..)
     -- * Range-finder precision
-    RFPrecision (..)
+  , RFPrecision (..)
   , rfprecInvariant
     -- * Pages (non-partitioned)
   , Pages (..)
@@ -14,23 +24,82 @@ module Database.LSMTree.Generators (
   , chunkSizeInvariant
   ) where
 
+import           Control.DeepSeq (NFData)
 import           Data.Containers.ListUtils (nubOrd)
 import           Data.List (sort)
 import           Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
+import           Data.WideWord.Word256 (Word256 (..))
+import           Database.LSMTree.Internal.Run.BloomFilter (Hashable (..))
 import           Database.LSMTree.Internal.Run.Index.Compact
                      (rangeFinderPrecisionBounds, suggestRangeFinderPrecision)
-import           Database.LSMTree.Internal.Serialise (Serialise (..), topBits16)
+import           Database.LSMTree.Internal.Serialise (Serialise (..),
+                     SerialisedKey, topBits16)
+import           Database.LSMTree.Util.Orphans ()
+import           GHC.Generics (Generic)
+import           System.Random (Uniform)
 import           Test.QuickCheck (Arbitrary (..), NonEmptyList (..), Property,
                      chooseInt, scale, tabulate)
 import           Text.Printf (printf)
+
+{-------------------------------------------------------------------------------
+  WithSerialised
+-------------------------------------------------------------------------------}
+
+-- | Cach serialised keys
+--
+-- Also useful for failing tests that have keys as inputs, because the printed
+-- 'WithSerialised' values will show both keys and their serialised form.
+data WithSerialised k = TestKey k SerialisedKey
+  deriving Show
+
+instance Eq k => Eq (WithSerialised k) where
+  TestKey k1 _ == TestKey k2 _ = k1 == k2
+
+instance Ord k => Ord (WithSerialised k) where
+  TestKey k1 _ `compare` TestKey k2 _ = k1 `compare` k2
+
+instance (Arbitrary k, Serialise k) => Arbitrary (WithSerialised k) where
+  arbitrary = do
+    x <- arbitrary
+    pure $ TestKey x (serialise x)
+  shrink (TestKey k _) = [TestKey k' (serialise k') | k' <- shrink k]
+
+instance Serialise (WithSerialised k) where
+  serialise (TestKey _ skey) = skey
+
+{-------------------------------------------------------------------------------
+  UTxO keys
+-------------------------------------------------------------------------------}
+
+-- | A model of a UTxO key (256-bit hash)
+newtype UTxOKey = UTxOKey Word256
+  deriving stock (Show, Generic)
+  deriving newtype ( Eq, Ord, NFData
+                   , Hashable, Serialise
+                   )
+  deriving anyclass Uniform
+
+instance Arbitrary UTxOKey where
+  arbitrary = UTxOKey <$>
+      (Word256 <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary)
+  shrink (UTxOKey w256) = [
+        UTxOKey w256'
+      | let i256 = toInteger w256
+      , i256' <- shrink i256
+      , toInteger (minBound :: Word256) <= i256'
+      , toInteger (maxBound :: Word256) >= i256'
+      , let w256' = fromIntegral i256'
+      ]
 
 {-------------------------------------------------------------------------------
   Range-finder precision
 -------------------------------------------------------------------------------}
 
 newtype RFPrecision = RFPrecision Int
-  deriving Show
+  deriving stock (Show, Generic)
+  deriving newtype Num
+  deriving anyclass NFData
 
 instance Arbitrary RFPrecision where
   arbitrary = RFPrecision <$> chooseInt (rfprecLB, rfprecUB)
@@ -55,7 +124,8 @@ data Pages k = Pages {
     getRangeFinderPrecision :: RFPrecision
   , getPages                :: [(k, k)]
   }
-  deriving Show
+  deriving stock (Show, Generic, Functor)
+  deriving anyclass NFData
 
 instance (Arbitrary k, Ord k, Serialise k) => Arbitrary (Pages k) where
   arbitrary = mkPages <$>
@@ -66,10 +136,6 @@ instance (Arbitrary k, Ord k, Serialise k) => Arbitrary (Pages k) where
       ] <> [
         Pages rfprec' ks
       | rfprec' <- shrink rfprec, pagesInvariant (Pages rfprec' ks)
-      ] <> [
-        Pages rfprec' ks'
-      | ks' <- shrink ks
-      , rfprec' <- shrink rfprec, pagesInvariant (Pages rfprec' ks')
       ]
 
 mkPages ::
@@ -132,7 +198,8 @@ labelPages (Pages (RFPrecision rfprec) ks) =
 -------------------------------------------------------------------------------}
 
 newtype ChunkSize = ChunkSize Int
-  deriving Show
+  deriving stock Show
+  deriving newtype Num
 
 instance Arbitrary ChunkSize where
   arbitrary = ChunkSize <$> chooseInt (chunkSizeLB, chunkSizeUB)
