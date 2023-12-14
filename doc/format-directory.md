@@ -159,8 +159,8 @@ Saving a snapshot involves a few steps:
    - metadata file and metadata checksum file
    - the snapshot directory itself
 
-All five files for each LSM (including the checksum file) are hard-linked into
-the snapshot directory under new number. The number of the file changes
+All five files for each LSM run (including the checksum file) are hard-linked
+into the snapshot directory under new number. The number of the file changes
 because the LSM run numbers within a snapshot are counted from 0 within the
 snapshot, whereas the run numbers in the active directory are shared across all
 open LSM handles. For this reason, the checksum file content uses relative

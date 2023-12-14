@@ -22,14 +22,14 @@ This document is part of a group of documents that cover the formats:
 
 # LSM runs
 
-Each LSM run consists of three components:
+Each LSM run consists of four components:
 
 1. the sorted run of key/operation pairs
 2. the blobs associated with the key/operation pairs, if any
 3. a Bloom filter of all the keys in the run
 4. an index from keys to disk page numbers
 
-Each one is represented on-disk in a separate file. Thus there are three files
+Each one is represented on-disk in a separate file. Thus there are four files
 per run.
 
 ## Represented in memory or on-disk
@@ -38,7 +38,7 @@ The bloom filter and index are loaded into memory when the LSM run is in use.
 The key/operations and blob files remain primarily on disk and pages are loaded
 as needed for lookup and merge operations.
 
-## Inhereited metadata
+## Inherited metadata
 
 Metadata is kept at the LSM handle level, not per-run. This is because we
 expect all metadata to be the same for all runs in an LSM tree.
@@ -61,7 +61,7 @@ This file contains all the key/operation/blobref entries for the LSM run,
 sorted by key and arranged into pages. The individual page format is detailed
 in `format-page.md`.
 
-The overall file format consists exclusivly of these pages, with no additional
+The overall file format consists exclusively of these pages, with no additional
 metadata or file headers. The page size will typically be 4k but can be any
 power of 2 up to 64k.
 
@@ -103,7 +103,7 @@ numbers.
 * 32k pages, 2^15-44, rounded: 32,000
 * 64k pages, 2^16-44, rounded: 64,000
 
-The maximum value size is 2^32-1 less the page overhead, and conservatively
+The maximum value size is 2^32-1 minus the page overhead, and conservatively
 assuming a maximum sized key with maximum page size. This is approximately
 2^32 - 2^16 - 1 = 4294901759, though this limit could also be rounded down in
 a public API.
@@ -111,11 +111,11 @@ a public API.
 ## Blobs file
 
 Each key/operation in the key/operations file optionally contains a blob
-references. A blob reference is of course a reference to a blob value, which
+reference. A blob reference is of course a reference to a blob value, which
 is simply a sequence of bytes. These blob values are stored in the blobs file.
 
-The representation of a blob reference is a 64bit byte file offset and a 32bit
-byte length. This identifies a span of bytes within this blob file.
+The representation of a blob reference is a 64bit file offset (in bytes) and a
+32bit length (in bytes). This identifies a span of bytes within this blob file.
 
 The file format is simple: the concatenation of all the blob values, in the
 same order as the key/operations that refer to the blobs (which is sorted by
@@ -152,7 +152,7 @@ indicates the endianness of the 32bit words.
 The index maps keys to the number of the disk page(s) in the key/operation file
 that _could_ contain this key.
 
-That is, the index says where the key could possiblly be, and thus what pages
+That is, the index says where the key could possibly be, and thus what pages
 to load from disk to search for the key. The index does not say whether a key
 exists or not (the bloom filter does this, albeit probabilistically, with false
 positives).
@@ -164,13 +164,13 @@ for the first page to indicate that it is a multi-page value, and then require
 a second round of disk I/O to read in the remaining pages.)
 
 The design is intended to be somewhat extensible by allowing for different
-choices of index representation, to suite different kinds of key and key
+choices of index representation, to suit different kinds of key and key
 properties. In particular initially we will support a compact index type.
-For more general purpose applications one can forsee the need for a more
+For more general purpose applications one can foresee the need for a more
 ordinary index type.
 
-The type of index in use is metadata that must be known for the whole LSM tree.
-It does not vary per run.
+The type of index in use is metadata that must be known for the whole LSM table
+handle. It does not vary per run.
 
 ### Compact index
 
@@ -186,7 +186,7 @@ is a factor of 8 saving for 32 byte keys.
 
 The representation consists of
 1. the number of range finder bits (0..16)
-2. a range finder array, of 2^n entries of 32bit each (n = range finder bits)
+2. a range finder array, of 2^n+1 entries of 32bit each (n = range finder bits)
 3. a primary array of 32bit words, one entry per page in the index
 4. a clash indicator bit vector, one bit per page in the index
 5. a clash map, mapping each page with a clash indicator to the full minimum
