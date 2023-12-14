@@ -235,11 +235,14 @@ test-suite lsm-prototypes
   hs-source-dirs:   prototypes test
   main-is:          Test.hs
   other-modules:
+    FormatPage
     ScheduledMerges
     ScheduledMergesTestQLS
 
   build-depends:
     , base
+    , binary
+    , bytestring
     , constraints
     , containers
     , contra-tracer
