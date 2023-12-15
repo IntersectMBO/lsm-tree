@@ -37,6 +37,7 @@ The ephemeral directory contains all of the files for all the LSM runs that are
 in use by any open LSM handle in the session.
 
  * `${session}/active/${n}.keyops`
+ * `${session}/active/${n}.blobs`
  * `${session}/active/${n}.filter`
  * `${session}/active/${n}.index`
  * `${session}/active/${n}.checksums`
