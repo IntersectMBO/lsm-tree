@@ -56,7 +56,7 @@ library
     , fs-api                ^>=0.2
     , io-classes            ^>=1.2
     , lsm-tree:bloomfilter
-    , primitive
+    , primitive             ^>=0.9
     , vector                ^>=0.13
     , vector-algorithms     ^>=0.9
 
