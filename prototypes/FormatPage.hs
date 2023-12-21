@@ -7,7 +7,16 @@
 -- and a precise reference. It is intended to demonstrate that the page
 -- format works.
 --
-module FormatPage (tests) where
+module FormatPage (
+    tests,
+    PageLogical (..),
+    Operation (..),
+    Key,
+    Value,
+    PageSerialised,
+    encodePage,
+    serialisePage,
+) where
 
 import           Data.Bits
 import           Data.Function (on)
