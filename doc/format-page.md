@@ -191,6 +191,27 @@ obtain which 64bit word to inspect, and then within the 64bit word, selecting
 bit i where i is the lower 6 bits of the query index. The selected bit
 indicates whether a blob reference is present for this key.
 
+## Operation types
+
+This is a bitmap with 2 bits for each key/operation pair, indicating the type of
+operation for that key/operation pair.
+
+The bitmap is aligned and padded to 64 bits. The bitmap is arranged in words of
+64 bits, in little-endian format.
+
+The bitmap is indexed by taking the query index, shifting right 5 bits to obtain
+which 64-bit word to expect, and then within the 64bit word, selecting bit (2 \*
+i) and bit (2 \* i + 1) where i is the lower 5 bits of the query index. The
+selected bits indicate the operation type for this key.
+
+For each 2-bit pair in little-endian format, the mapping is:
+
+```
+00 -> Insert
+10 -> Mupsert
+01 -> Delete
+```
+
 ## Blob reference arrays
 
 Each blob reference is a 64bit byte offset and a 32bit byte length. This
