@@ -21,13 +21,11 @@ source-repository head
   location: https://github.com/input-output-hk/lsm-tree
 
 common warnings
-  -- TODO: add -Wunused-packages once we actually start using io-classes and
-  -- fs-api (and related) packages.
   ghc-options:
     -Wall -Wcompat -Wincomplete-uni-patterns
     -Wincomplete-record-updates -Wpartial-fields -Widentities
     -Wredundant-constraints -Wmissing-export-lists
-    -Wno-unticked-promoted-constructors
+    -Wno-unticked-promoted-constructors -Wunused-packages
 
 library
   import:           warnings
@@ -44,22 +42,23 @@ library
     Database.LSMTree.Internal.Run
     Database.LSMTree.Internal.Run.BloomFilter
     Database.LSMTree.Internal.Run.Index.Compact
+    Database.LSMTree.Internal.Serialise
     Database.LSMTree.Internal.WriteBuffer
     Database.LSMTree.Monoidal
     Database.LSMTree.Normal
 
   build-depends:
-    , base                  >=4.14     && <4.19
+    , base                  >=4.14  && <4.19
+    , bitvec                ^>=1.1
     , bytestring
     , containers
     , filepath
     , fs-api                ^>=0.2
     , io-classes            ^>=1.2
     , lsm-tree:bloomfilter
-    , mtl
-    , strict-checked-vars   ^>=0.1.0.3
-    , strict-mvar           ^>=1.2
-    , strict-stm            ^>=1.2
+    , primitive
+    , vector                ^>=0.13
+    , vector-algorithms     ^>=0.9
 
 library bloomfilter
   visibility:       private
@@ -95,12 +94,14 @@ library lsm-tree-utils
   default-language: Haskell2010
   exposed-modules:
     Database.LSMTree.Extras
+    Database.LSMTree.Generators
     System.Random.Extras
 
   build-depends:
     , base
     , containers
     , lsm-tree:{lsm-tree, bloomfilter}
+    , QuickCheck
     , random
 
 test-suite lsm-tree-test
@@ -117,7 +118,9 @@ test-suite lsm-tree-test
     Database.LSMTree.ModelIO.Normal
     Database.LSMTree.ModelIO.Session
     Test.Database.LSMTree.Common
+    Test.Database.LSMTree.Generators
     Test.Database.LSMTree.Internal.Run.BloomFilter
+    Test.Database.LSMTree.Internal.Run.Index.Compact
     Test.Database.LSMTree.Model.Monoidal
     Test.Database.LSMTree.Model.Normal
     Test.Database.LSMTree.ModelIO.Class
@@ -130,7 +133,7 @@ test-suite lsm-tree-test
     Test.Util.TypeFamilyWrappers
 
   build-depends:
-    , base                                              >=4.14 && <4.19
+    , base                                 >=4.14 && <4.19
     , bytestring
     , constraints
     , containers
@@ -138,11 +141,12 @@ test-suite lsm-tree-test
     , deepseq
     , directory
     , fs-api
-    , fs-sim                                            >=0.2
+    , fs-sim                               >=0.2
     , io-classes
-    , io-sim                                            >=1.2
-    , lsm-tree:{lsm-tree, bloomfilter, lsm-tree-utils}
+    , io-sim                               >=1.2
+    , lsm-tree:{lsm-tree, lsm-tree-utils}
     , mtl
+    , primitive
     , QuickCheck
     , quickcheck-dynamic
     , quickcheck-instances
@@ -198,13 +202,10 @@ test-suite kmerge-test
   hs-source-dirs:   test
   main-is:          kmerge-test.hs
   build-depends:
-    , base                 >=4.14 && <4.19
+    , base              >=4.14 && <4.19
     , deepseq
     , heaps
-    , indexed-traversable
     , lsm-tree:kmerge
-    , primitive
-    , QuickCheck
     , splitmix
     , tasty
     , tasty-bench
