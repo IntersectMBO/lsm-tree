@@ -15,12 +15,21 @@
 #      (the default is true)
 # $3 - cabal build directory
 #      (the default is "dist-newstyle")
+# $4 - include documentation for sub-libraries
+#      (the default is true)
+# $5 - include documentation for test suites
+#      (the default is false)
+# $6 - include documentation for benchmark suites
+#      (the default is false)
 
 set -euo pipefail
 
 OUTPUT_DIR=${1:-"./docs/haddocks"}
 REGENERATE=${2:-"true"}
 BUILD_DIR=${3:-"dist-newstyle"}
+INCLUDE_SUBLIBS=${4:-"true"}
+INCLUDE_TESTS=${5:-"false"}
+INCLUDE_BENCHMARKS=${6:-"false"}
 
 # the directory containing this script
 SCRIPTS_DIR=$(realpath $(dirname $(realpath $0)))
@@ -67,10 +76,26 @@ for dir in $(ls "${BUILD_DIR}/build/${OS_ARCH}/ghc-${GHC_VERSION}"); do
   package=$(echo "${dir}" | sed 's/-[0-9]\+\(\.[0-9]\+\)*//')
   cp -r "${BUILD_DIR}/build/${OS_ARCH}/ghc-${GHC_VERSION}/${dir}/noopt/doc/html/${package}" ${OUTPUT_DIR}
   # copy test packages documentation when it exists
-  if [ -d "${BUILD_DIR}/build/${OS_ARCH}/ghc-${GHC_VERSION}/${dir}/t" ]; then
+  if [ ${INCLUDE_TESTS} == "true" ] && [ -d "${BUILD_DIR}/build/${OS_ARCH}/ghc-${GHC_VERSION}/${dir}/t" ]; then
       for test_package in $(ls "${BUILD_DIR}/build/${OS_ARCH}/ghc-${GHC_VERSION}/${dir}/t"); do
           if [ -d "${BUILD_DIR}/build/${OS_ARCH}/ghc-${GHC_VERSION}/${dir}/t/${test_package}/noopt/doc/html/${package}/${test_package}" ]; then
               cp -r "${BUILD_DIR}/build/${OS_ARCH}/ghc-${GHC_VERSION}/${dir}/t/${test_package}/noopt/doc/html/${package}/${test_package}" "${OUTPUT_DIR}/${package}-${test_package}"
+          fi
+      done
+  fi
+  # copy benchmark packages documentation when it exists
+  if [ ${INCLUDE_BENCHMARKS} == "true" ] && [ -d "${BUILD_DIR}/build/${OS_ARCH}/ghc-${GHC_VERSION}/${dir}/b" ]; then
+      for bench_package in $(ls "${BUILD_DIR}/build/${OS_ARCH}/ghc-${GHC_VERSION}/${dir}/b"); do
+          if [ -d "${BUILD_DIR}/build/${OS_ARCH}/ghc-${GHC_VERSION}/${dir}/b/${bench_package}/noopt/doc/html/${package}/${bench_package}" ]; then
+              cp -r "${BUILD_DIR}/build/${OS_ARCH}/ghc-${GHC_VERSION}/${dir}/b/${bench_package}/noopt/doc/html/${package}/${bench_package}" "${OUTPUT_DIR}/${package}-${bench_package}"
+          fi
+      done
+  fi
+  # copy sublib documentation when it exists
+  if [ ${INCLUDE_SUBLIBS} == "true" ] && [ -d "${BUILD_DIR}/build/${OS_ARCH}/ghc-${GHC_VERSION}/${dir}/l" ]; then
+      for sublib in $(ls "${BUILD_DIR}/build/${OS_ARCH}/ghc-${GHC_VERSION}/${dir}/l"); do
+          if [ -d "${BUILD_DIR}/build/${OS_ARCH}/ghc-${GHC_VERSION}/${dir}/l/${sublib}/noopt/doc/html/${package}" ]; then
+              cp -r "${BUILD_DIR}/build/${OS_ARCH}/ghc-${GHC_VERSION}/${dir}/l/${sublib}/noopt/doc/html/${package}" "${OUTPUT_DIR}/${package}-${sublib}"
           fi
       done
   fi
