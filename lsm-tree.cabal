@@ -229,13 +229,11 @@ test-suite map-range-test
     , tasty-hunit
     , tasty-quickcheck
 
-test-suite lsm-prototypes
+library prototypes
   import:           warnings
   default-language: Haskell2010
-  type:             exitcode-stdio-1.0
-  hs-source-dirs:   prototypes test
-  main-is:          Test.hs
-  other-modules:
+  hs-source-dirs:   prototypes
+  exposed-modules:
     FormatPage
     ScheduledMerges
     ScheduledMergesTestQLS
@@ -257,6 +255,17 @@ test-suite lsm-prototypes
   ghc-options:
     -Wno-incomplete-uni-patterns -Wno-partial-fields
     -Wno-missing-export-lists -fno-ignore-asserts
+
+test-suite lsm-prototypes-tests
+  import:           warnings
+  default-language: Haskell2010
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          lsm-prototypes-tests.hs
+  build-depends:
+    , base
+    , lsm-tree:prototypes
+    , tasty
 
 test-suite bloomfilter-tests
   default-language: Haskell2010
