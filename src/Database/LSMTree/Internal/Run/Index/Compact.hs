@@ -23,6 +23,7 @@ module Database.LSMTree.Internal.Run.Index.Compact (
   , search
   , countClashes
   , hasClashes
+  , sizeInPages
     -- * Construction
     -- $construction-invariants
   , fromList
@@ -229,6 +230,9 @@ countClashes = IntMap.size . ciTieBreaker
 
 hasClashes :: CompactIndex -> Bool
 hasClashes = not . IntMap.null . ciTieBreaker
+
+sizeInPages :: CompactIndex -> Int
+sizeInPages = VU.length . ciPrimary
 
 {-------------------------------------------------------------------------------
   Construction

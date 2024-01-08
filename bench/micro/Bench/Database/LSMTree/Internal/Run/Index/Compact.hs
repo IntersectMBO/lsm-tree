@@ -2,7 +2,11 @@
 {-# LANGUAGE TypeApplications   #-}
 {- HLINT ignore "Eta reduce" -}
 
-module Bench.Database.LSMTree.Internal.Run.Index.Compact (benchmarks) where
+module Bench.Database.LSMTree.Internal.Run.Index.Compact (
+    benchmarks
+    -- * Benchmarked functions
+  , searches
+  ) where
 
 import           Control.DeepSeq (deepseq)
 import           Criterion.Main

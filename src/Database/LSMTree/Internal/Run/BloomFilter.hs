@@ -43,6 +43,8 @@ module Database.LSMTree.Internal.Run.BloomFilter (
   , Hash
   , Hash.Hashable (..)
   , Hash.cheapHashes
+    -- ** Construction
+  , fromList
     -- ** Incremental construction
   , MBloom
   , Mutable.new
@@ -51,6 +53,7 @@ module Database.LSMTree.Internal.Run.BloomFilter (
   , Bloom.unsafeFreeze
   ) where
 
+import           Control.Monad.ST.Strict (runST)
 import           Data.BloomFilter (Bloom, Hash)
 import qualified Data.BloomFilter as Bloom
 import qualified Data.BloomFilter.Easy as Easy
@@ -58,6 +61,17 @@ import qualified Data.BloomFilter.Hash as Hash
 import           Data.BloomFilter.Mutable (MBloom)
 import qualified Data.BloomFilter.Mutable as Mutable
 import           Prelude hiding (elem)
+
+-- | Create a bloom filter through the 'MBloom' interface. Tunes the bloom
+-- filter using 'suggestSizing'.
+fromList :: Hash.Hashable a => Double -> [a] -> Bloom a
+fromList requestedFPR xs = runST $ do
+    b <- Mutable.new (Hash.cheapHashes numHashFuncs) numBits
+    mapM_ (Mutable.insert b) xs
+    Bloom.freeze b
+  where
+    numEntries              = length xs
+    (numBits, numHashFuncs) = Easy.suggestSizing numEntries requestedFPR
 
 {-------------------------------------------------------------------------------
   Tuning a la Monkey

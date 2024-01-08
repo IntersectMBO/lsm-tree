@@ -3,7 +3,11 @@
 {- HLINT ignore "Use camelCase" -}
 {- HLINT ignore "Eta reduce" -}
 
-module Bench.Database.LSMTree.Internal.Run.BloomFilter (benchmarks) where
+module Bench.Database.LSMTree.Internal.Run.BloomFilter (
+    benchmarks
+    -- * Benchmarked functions
+  , elems
+  ) where
 
 import           Criterion.Main
 import qualified Data.BloomFilter.Easy as Bloom.Easy
