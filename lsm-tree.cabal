@@ -95,14 +95,20 @@ library lsm-tree-utils
   exposed-modules:
     Database.LSMTree.Extras
     Database.LSMTree.Generators
+    Database.LSMTree.Util.Orphans
     System.Random.Extras
 
   build-depends:
+    , array
     , base
+    , bytestring
     , containers
+    , deepseq
     , lsm-tree:{lsm-tree, bloomfilter}
+    , primitive
     , QuickCheck
     , random
+    , wide-word
 
 test-suite lsm-tree-test
   import:           warnings
@@ -146,7 +152,6 @@ test-suite lsm-tree-test
     , io-sim                               >=1.2
     , lsm-tree:{lsm-tree, lsm-tree-utils}
     , mtl
-    , primitive
     , QuickCheck
     , quickcheck-dynamic
     , quickcheck-instances
@@ -165,11 +170,15 @@ benchmark lsm-tree-micro-bench
   type:             exitcode-stdio-1.0
   hs-source-dirs:   bench/micro
   main-is:          Main.hs
-  other-modules:    Bench.Database.LSMTree.Internal.Run.BloomFilter
+  other-modules:
+    Bench.Database.LSMTree.Internal.Run.BloomFilter
+    Bench.Database.LSMTree.Internal.Run.Index.Compact
+
   build-depends:
     , base
     , containers
     , criterion
+    , deepseq
     , lsm-tree:{lsm-tree, bloomfilter, lsm-tree-utils}
     , QuickCheck
     , random

@@ -4,19 +4,14 @@
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module Test.Database.LSMTree.Internal.Run.Index.Compact (tests, TestKey(..)) where
+module Test.Database.LSMTree.Internal.Run.Index.Compact (tests) where
 
 import           Data.Bifunctor (Bifunctor (bimap))
-import qualified Data.ByteString.Builder as B
-import qualified Data.ByteString.Lazy as LBS
-import qualified Data.ByteString.Short.Internal as SBS
-import           Data.Primitive.ByteArray (ByteArray (..))
-import           Data.Word (Word64)
 import           Database.LSMTree.Generators (ChunkSize (..), Pages (..),
-                     RFPrecision (..), labelPages)
+                     RFPrecision (..), UTxOKey (..), WithSerialised (..),
+                     labelPages)
 import           Database.LSMTree.Internal.Run.Index.Compact
-import           Database.LSMTree.Internal.Serialise (Serialise (..),
-                     SerialisedKey (..))
+import           Database.LSMTree.Internal.Serialise (Serialise (..))
 import           Test.QuickCheck
 import           Test.Tasty (TestTree, adjustOption, testGroup)
 import           Test.Tasty.QuickCheck (QuickCheckMaxSize (..), testProperty)
@@ -29,9 +24,9 @@ tests = testGroup "Test.Database.LSMTree.Internal.Run.Index.Compact" [
       adjustOption (const $ QuickCheckMaxSize 5000) $
       testGroup "Contruction, searching, chunking" [
         testProperty "prop_searchMinMaxKeysAfterConstruction" $
-          prop_searchMinMaxKeysAfterConstruction @TestKey
+          prop_searchMinMaxKeysAfterConstruction @(WithSerialised UTxOKey)
       , testProperty "prop_differentChunkSizesSameResults" $
-          prop_differentChunkSizesSameResults @TestKey
+          prop_differentChunkSizesSameResults @(WithSerialised UTxOKey)
       ]
     ]
 
@@ -89,26 +84,3 @@ prop_differentChunkSizesSameResults
 
 deriving instance Eq CompactIndex
 deriving instance Show CompactIndex
-
-{-------------------------------------------------------------------------------
-  Test keys
--------------------------------------------------------------------------------}
-
-data TestKey = TestKey Word64 SerialisedKey
-  deriving (Show, Eq, Ord)
-
-instance Arbitrary TestKey where
-  arbitrary = do
-    w64 <- arbitrary
-    pure $ TestKey w64 (serialise w64)
-  shrink (TestKey k _) = [TestKey k' (serialise k') | k' <- shrink k]
-
-fromByteString :: LBS.ByteString -> SerialisedKey
-fromByteString =
-    (\(SBS.SBS ba) -> SerialisedKey (ByteArray ba)) . SBS.toShort . LBS.toStrict
-
-instance Serialise Word64 where
-  serialise x = fromByteString $ B.toLazyByteString $ B.word64BE x
-
-instance Serialise TestKey where
-  serialise (TestKey _ skey) = skey

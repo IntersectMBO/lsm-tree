@@ -1,4 +1,5 @@
 {-# LANGUAGE NumericUnderscores #-}
+{-# LANGUAGE TypeApplications   #-}
 {- HLINT ignore "Use camelCase" -}
 {- HLINT ignore "Eta reduce" -}
 
@@ -9,9 +10,12 @@ import qualified Data.BloomFilter.Easy as Bloom.Easy
 import           Data.Foldable (Foldable (..))
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Word
 import           Database.LSMTree.Extras
+import           Database.LSMTree.Generators
 import           Database.LSMTree.Internal.Run.BloomFilter as Bloom
+import           Database.LSMTree.Internal.Serialise (Serialise (serialise),
+                     SerialisedKey)
+import           Database.LSMTree.Util.Orphans ()
 import           System.Random
 import           System.Random.Extras
 import           Test.QuickCheck (generate, shuffle)
@@ -29,15 +33,12 @@ benchmarks = bgroup "Bench.Database.LSMTree.Internal.Run.BloomFilter" [
         , env (elemEnv 0.9 2_500_000 0 1_000_000) $ \ ~(b, xs) ->
             bench "onlyNegatives 0.9" $ whnf (elems b) xs
         ]
-    , bgroup "construction" [
-          env (constructionEnv 2_500_000) $ \ m ->
-            bench "incrementalST 0.1" $ whnf (constructBloom mkBloomST 0.1) m
-        , env (constructionEnv 2_500_000) $ \ m ->
-            bench "incrementalST 0.9" $ whnf (constructBloom mkBloomST 0.9) m
-        , env (constructionEnv 2_500_000) $ \ m ->
-            bench "easyList 0.1" $ whnf (constructBloom mkBloomEasy 0.1) m
-        , env (constructionEnv 2_500_000) $ \ m ->
-            bench "easyList 0.9" $ whnf (constructBloom mkBloomEasy 0.9) m
+    , env (constructionEnv 2_500_000) $ \ m ->
+      bgroup "construction" [
+          bench "incrementalST 0.1" $ whnf (constructBloom mkBloomST 0.1) m
+        , bench "incrementalST 0.9" $ whnf (constructBloom mkBloomST 0.9) m
+        , bench "easyList 0.1" $ whnf (constructBloom mkBloomEasy 0.1) m
+        , bench "easyList 0.9" $ whnf (constructBloom mkBloomEasy 0.9) m
         ]
     ]
 
@@ -47,31 +48,33 @@ elemEnv ::
   -> Int    -- ^ Number of entries in the bloom filter
   -> Int    -- ^ Number of positive lookups
   -> Int    -- ^ Number of negative lookups
-  -> IO (Bloom Word64, [Word64])
+  -> IO (Bloom SerialisedKey, [SerialisedKey])
 elemEnv fpr nbloom nelemsPositive nelemsNegative = do
     stdgen  <- newStdGen
     stdgen' <- newStdGen
     let (xs, ys1) = splitAt nbloom
-                  $ uniformWithoutReplacement    stdgen  (nbloom + nelemsNegative)
-        ys2       = sampleUniformWithReplacement stdgen' nelemsPositive xs
+                  $ uniformWithoutReplacement    @UTxOKey stdgen  (nbloom + nelemsNegative)
+        ys2       = sampleUniformWithReplacement @UTxOKey stdgen' nelemsPositive xs
     zs <- generate $ shuffle (ys1 ++ ys2)
-    pure (Bloom.Easy.easyList fpr xs, zs)
+    pure (Bloom.Easy.easyList fpr (fmap serialise xs), fmap serialise zs)
 
+-- | Used for benchmarking 'Bloom.elem'.
 elems :: Bloom a -> [a] -> ()
 elems b xs = foldl' (\acc x -> Bloom.elem x b `seq` acc) () xs
 
 -- | Input environment for benchmarking 'constructBloom'.
-constructionEnv :: Int -> IO (Map Word64 Word64)
+constructionEnv :: Int -> IO (Map SerialisedKey SerialisedKey)
 constructionEnv n = do
-    stdgen <- newStdGen
-    let ks = uniformWithoutReplacement stdgen n
-        vs = uniformWithReplacement stdgen n
-    pure $ Map.fromList (zip ks vs)
+    stdgen  <- newStdGen
+    stdgen' <- newStdGen
+    let ks = uniformWithoutReplacement @UTxOKey stdgen n
+        vs = uniformWithReplacement @UTxOKey stdgen' n
+    pure $ Map.fromList (zipWith (\k v -> (serialise k, serialise v)) ks vs)
 
 -- | Used for benchmarking the construction of bloom filters from write buffers.
 constructBloom ::
-     (Double -> BloomMaker Word64)
+     (Double -> BloomMaker SerialisedKey)
   -> Double
-  -> Map Word64 Word64
-  -> Bloom Word64
+  -> Map SerialisedKey SerialisedKey
+  -> Bloom SerialisedKey
 constructBloom mkBloom fpr m = mkBloom fpr (Map.keys m)
