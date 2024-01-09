@@ -10,7 +10,6 @@
 module Database.LSMTree.Util.Orphans () where
 
 import           Control.DeepSeq (NFData (..))
-import qualified Data.Array.Unboxed as A
 import qualified Data.ByteString.Builder as B
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ByteString.Short.Internal as SBS
@@ -29,9 +28,6 @@ deriving instance NFData SerialisedKey
 
 deriving instance Generic CompactIndex
 deriving instance NFData CompactIndex
-
-instance NFData (A.UArray Int Bool) where
-  rnf x = rnf (A.bounds x, A.elems x)
 
 {-------------------------------------------------------------------------------
   Word256

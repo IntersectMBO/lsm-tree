@@ -99,7 +99,6 @@ library lsm-tree-utils
     System.Random.Extras
 
   build-depends:
-    , array
     , base
     , bytestring
     , containers
