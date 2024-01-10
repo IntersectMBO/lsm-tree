@@ -2,8 +2,8 @@
 # * https://github.com/haskell/actions/tree/v2/setup#model-cabal-workflow-with-caching
 # * https://github.com/actions/starter-workflows/blob/main/pages/static.yml
 # * https://haskell-haddock.readthedocs.io/en/latest/multi-components.html
-# * https://github.com/input-output-hk/ouroboros-consensus/blob/main/.github/workflows/ci.yml
-# * https://github.com/input-output-hk/ouroboros-consensus/blob/main/scripts/docs/haddocks.sh
+# * https://github.com/IntersectMBO/ouroboros-consensus/blob/main/.github/workflows/ci.yml
+# * https://github.com/IntersectMBO/ouroboros-consensus/blob/main/scripts/docs/haddocks.sh
 #
 name: Documentation
 

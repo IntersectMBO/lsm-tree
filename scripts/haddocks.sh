@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# This script is based on https://github.com/input-output-hk/ouroboros-consensus/blob/4ff9aa5596598bb3681864b830c8a33e294d9bfe/scripts/docs/haddocks.sh
+# This script is based on https://github.com/IntersectMBO/ouroboros-consensus/blob/4ff9aa5596598bb3681864b830c8a33e294d9bfe/scripts/docs/haddocks.sh
 #
 # Build haddock documentation and an index for all projects in the `lsm-tree`
 # repository.
