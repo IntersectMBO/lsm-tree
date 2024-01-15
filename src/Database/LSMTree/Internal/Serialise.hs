@@ -15,13 +15,18 @@ module Database.LSMTree.Internal.Serialise (
   , SerialisedKey (..)
   , topBits16
   , sliceBits32
+  , sizeofKey
+  , sizeofKey16
+  , sizeofKey64
+  , toShortByteString
+  , fromShortByteString
   ) where
 
 import           Data.Bits (Bits (shiftL, shiftR))
 import qualified Data.ByteString.Short as SBS
 import           Data.ByteString.Short.Internal (ShortByteString (SBS))
 import           Data.Kind (Type)
-import           Data.Primitive.ByteArray (ByteArray (..))
+import           Data.Primitive.ByteArray (ByteArray (..), sizeofByteArray)
 import           Database.LSMTree.Internal.Run.BloomFilter (Hashable (..))
 import           GHC.Exts
 import           GHC.Word
@@ -118,3 +123,21 @@ toWord32 = W32#
 #else
 toWord32 x# = byteSwap32 (W32# x#)
 #endif
+
+-- | Size of key in number of bytes.
+sizeofKey :: SerialisedKey -> Int
+sizeofKey (SerialisedKey ba) = sizeofByteArray ba
+
+-- | Size of key in number of bytes.
+sizeofKey16 :: SerialisedKey -> Word16
+sizeofKey16 = fromIntegral . sizeofKey
+
+-- | Size of key in number of bytes.
+sizeofKey64 :: SerialisedKey -> Word64
+sizeofKey64 = fromIntegral . sizeofKey
+
+toShortByteString :: SerialisedKey -> ShortByteString
+toShortByteString (SerialisedKey (ByteArray ba#)) = SBS ba#
+
+fromShortByteString :: ShortByteString -> SerialisedKey
+fromShortByteString (SBS ba#) = SerialisedKey (ByteArray ba#)

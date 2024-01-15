@@ -43,6 +43,7 @@ library
     Database.LSMTree.Internal.RawPage
     Database.LSMTree.Internal.Run
     Database.LSMTree.Internal.Run.BloomFilter
+    Database.LSMTree.Internal.Run.Construction
     Database.LSMTree.Internal.Run.Index.Compact
     Database.LSMTree.Internal.Serialise
     Database.LSMTree.Internal.WriteBuffer
@@ -129,6 +130,7 @@ test-suite lsm-tree-test
     Test.Database.LSMTree.Generators
     Test.Database.LSMTree.Internal.RawPage
     Test.Database.LSMTree.Internal.Run.BloomFilter
+    Test.Database.LSMTree.Internal.Run.Construction
     Test.Database.LSMTree.Internal.Run.Index.Compact
     Test.Database.LSMTree.Model.Monoidal
     Test.Database.LSMTree.Model.Normal
@@ -168,6 +170,8 @@ test-suite lsm-tree-test
     , temporary
     , transformers
     , vector
+
+  ghc-options:      -fno-ignore-asserts
 
 benchmark lsm-tree-micro-bench
   import:           warnings

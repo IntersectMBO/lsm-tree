@@ -6,6 +6,7 @@ import qualified Test.Database.LSMTree.Common
 import qualified Test.Database.LSMTree.Generators
 import qualified Test.Database.LSMTree.Internal.RawPage
 import qualified Test.Database.LSMTree.Internal.Run.BloomFilter
+import qualified Test.Database.LSMTree.Internal.Run.Construction
 import qualified Test.Database.LSMTree.Internal.Run.Index.Compact
 import qualified Test.Database.LSMTree.Model.Monoidal
 import qualified Test.Database.LSMTree.Model.Normal
@@ -18,6 +19,7 @@ main :: IO ()
 main = defaultMain $ testGroup "lsm-tree"
     [ Test.Database.LSMTree.Common.tests
     , Test.Database.LSMTree.Generators.tests
+    , Test.Database.LSMTree.Internal.Run.Construction.tests
     , Test.Database.LSMTree.Internal.Run.Index.Compact.tests
     , Test.Database.LSMTree.Internal.RawPage.tests
     , Test.Database.LSMTree.Model.Normal.tests
