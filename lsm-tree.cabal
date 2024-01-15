@@ -35,6 +35,7 @@ library
     Data.Map.Range
     Database.LSMTree.Common
     Database.LSMTree.Internal.BlobRef
+    Database.LSMTree.Internal.Entry
     Database.LSMTree.Internal.Integration
     Database.LSMTree.Internal.KMerge
     Database.LSMTree.Internal.Monoidal
