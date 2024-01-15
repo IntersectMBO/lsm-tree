@@ -40,6 +40,7 @@ library
     Database.LSMTree.Internal.KMerge
     Database.LSMTree.Internal.Monoidal
     Database.LSMTree.Internal.Normal
+    Database.LSMTree.Internal.RawPage
     Database.LSMTree.Internal.Run
     Database.LSMTree.Internal.Run.BloomFilter
     Database.LSMTree.Internal.Run.Index.Compact
@@ -125,6 +126,7 @@ test-suite lsm-tree-test
     Database.LSMTree.ModelIO.Session
     Test.Database.LSMTree.Common
     Test.Database.LSMTree.Generators
+    Test.Database.LSMTree.Internal.RawPage
     Test.Database.LSMTree.Internal.Run.BloomFilter
     Test.Database.LSMTree.Internal.Run.Index.Compact
     Test.Database.LSMTree.Model.Monoidal
@@ -139,19 +141,20 @@ test-suite lsm-tree-test
     Test.Util.TypeFamilyWrappers
 
   build-depends:
-    , base                                 >=4.16 && <4.19
-    , bytestring
+    , base                                             >=4.16      && <4.19
+    , bytestring                                       ^>=0.11.4.0
     , constraints
     , containers
     , cryptohash-sha256
     , deepseq
     , directory
     , fs-api
-    , fs-sim                               >=0.2
+    , fs-sim                                           >=0.2
     , io-classes
-    , io-sim                               >=1.2
-    , lsm-tree:{lsm-tree, lsm-tree-utils}
+    , io-sim                                           >=1.2
+    , lsm-tree:{lsm-tree, lsm-tree-utils, prototypes}
     , mtl
+    , primitive
     , QuickCheck
     , quickcheck-dynamic
     , quickcheck-instances
@@ -163,6 +166,7 @@ test-suite lsm-tree-test
     , tasty-quickcheck
     , temporary
     , transformers
+    , vector
 
 benchmark lsm-tree-micro-bench
   import:           warnings
