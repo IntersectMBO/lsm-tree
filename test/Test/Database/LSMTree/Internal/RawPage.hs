@@ -5,13 +5,18 @@ module Test.Database.LSMTree.Internal.RawPage (
 ) where
 
 import qualified Data.ByteString.Short as SBS
+import           Data.Coerce (coerce)
+import           Data.Maybe (isJust)
 import           Data.Primitive.ByteArray (ByteArray (..), byteArrayFromList)
 import qualified Data.Vector.Primitive as V
+import qualified Data.Vector.Unboxed as UV
 import           Data.Word (Word16)
 import           GHC.Word (byteSwap16)
 import           Test.Tasty (TestTree, testGroup)
-import           Test.Tasty.HUnit (testCase, (@=?))
+import           Test.Tasty.HUnit (testCase, (@=?), (@?=))
+import           Test.Tasty.QuickCheck
 
+import qualified Database.LSMTree.Internal.BitVec as BV
 import           Database.LSMTree.Internal.RawPage
 import           FormatPage (Key (..), Operation (..), PageLogical (..),
                      Value (..), encodePage, serialisePage)
@@ -55,8 +60,19 @@ tests = testGroup "Database.LSMTree.Internal.RawPage"
         rawPageNumKeys page @=? 1
         rawPageNumBlobs page @=? 0
         rawPageKeyOffsets page @=? V.fromList [32]
+        rawPageBlobRefs page @?= UV.fromList [BV.Bit False]
+
+    , testProperty "blobrefs" prop_blobrefs
     ]
 
 toRawPage :: PageLogical -> RawPage
 toRawPage p = case SBS.toShort $ serialisePage $ encodePage p of
     SBS.SBS ba -> makeRawPage (ByteArray ba) 0
+
+prop_blobrefs :: PageLogical -> Property
+prop_blobrefs p@(PageLogical xs) =
+    -- label (show hasBlobRefs) $
+    rawPageBlobRefs (toRawPage p) === UV.fromList (coerce hasBlobRefs)
+  where
+    hasBlobRefs :: [Bool]
+    hasBlobRefs = [ isJust mb | (_, _, mb) <- xs ]

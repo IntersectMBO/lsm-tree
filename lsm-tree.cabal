@@ -34,6 +34,8 @@ library
   exposed-modules:
     Data.Map.Range
     Database.LSMTree.Common
+    Database.LSMTree.Internal.BitUtils
+    Database.LSMTree.Internal.BitVec
     Database.LSMTree.Internal.BlobRef
     Database.LSMTree.Internal.Entry
     Database.LSMTree.Internal.Integration
@@ -54,6 +56,7 @@ library
     , bitvec                ^>=1.1
     , bytestring
     , containers
+    , deepseq
     , filepath
     , fs-api                ^>=0.2
     , io-classes            ^>=1.2

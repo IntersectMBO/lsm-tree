@@ -6,6 +6,7 @@ module Database.LSMTree.Internal.RawPage (
     rawPageNumBlobs,
     -- * Debug
     rawPageKeyOffsets,
+    rawPageBlobRefs,
 ) where
 
 import           Data.Bits (Bits, unsafeShiftR)
@@ -13,6 +14,8 @@ import           Data.Primitive.ByteArray (ByteArray (..), indexByteArray,
                      sizeofByteArray)
 import           Data.Vector.Primitive (Vector (..))
 import           Data.Word (Word16)
+
+import qualified Database.LSMTree.Internal.BitVec as BV
 
 -------------------------------------------------------------------------------
 -- RawPage type
@@ -54,6 +57,13 @@ type KeyOffset = Word16
 rawPageKeyOffsets :: RawPage -> Vector KeyOffset
 rawPageKeyOffsets page@(RawPage off ba) =
     Vector (off + fromIntegral (div2 dirOffset)) (fromIntegral dirNumKeys) ba
+  where
+    Dir {..} = rawPageDirectory page
+
+rawPageBlobRefs :: RawPage -> BV.Vector BV.Bit
+rawPageBlobRefs page@(RawPage off ba) =
+    -- bitvec offset and length are in bits
+    BV.BitVec (off * 16 + 64) (fromIntegral dirNumKeys) ba
   where
     Dir {..} = rawPageDirectory page
 
