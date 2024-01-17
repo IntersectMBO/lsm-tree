@@ -8,4 +8,4 @@ data Entry v blobref
     | InsertWithBlob !v !blobref
     | Mupdate !v
     | Delete
-  deriving (Show, Functor, Foldable, Traversable)
+  deriving (Eq, Show, Functor, Foldable, Traversable)
