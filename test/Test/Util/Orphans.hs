@@ -1,13 +1,15 @@
-{-# LANGUAGE FlexibleContexts         #-}
-{-# LANGUAGE FlexibleInstances        #-}
-{-# LANGUAGE GADTs                    #-}
-{-# LANGUAGE InstanceSigs             #-}
-{-# LANGUAGE LambdaCase               #-}
-{-# LANGUAGE MultiParamTypeClasses    #-}
-{-# LANGUAGE StandaloneDeriving       #-}
-{-# LANGUAGE StandaloneKindSignatures #-}
-{-# LANGUAGE TypeFamilies             #-}
-{-# LANGUAGE UndecidableInstances     #-}
+{-# LANGUAGE DerivingStrategies         #-}
+{-# LANGUAGE FlexibleContexts           #-}
+{-# LANGUAGE FlexibleInstances          #-}
+{-# LANGUAGE GADTs                      #-}
+{-# LANGUAGE GeneralisedNewtypeDeriving #-}
+{-# LANGUAGE InstanceSigs               #-}
+{-# LANGUAGE LambdaCase                 #-}
+{-# LANGUAGE MultiParamTypeClasses      #-}
+{-# LANGUAGE StandaloneDeriving         #-}
+{-# LANGUAGE StandaloneKindSignatures   #-}
+{-# LANGUAGE TypeFamilies               #-}
+{-# LANGUAGE UndecidableInstances       #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -20,10 +22,12 @@ import qualified Control.Concurrent.STM as Real
 import           Control.Monad ((<=<))
 import           Control.Monad.IOSim (IOSim)
 import           Data.Kind (Type)
+import           Database.LSMTree.Internal.Serialise (Serialise)
 import qualified Database.LSMTree.Monoidal as Monoidal
 import           Database.LSMTree.Normal
 import           Test.QuickCheck (Arbitrary (..), frequency, oneof)
 import           Test.QuickCheck.Instances ()
+import           Test.QuickCheck.Modifiers
 import           Test.QuickCheck.StateModel (Realized)
 import           Test.QuickCheck.StateModel.Lockstep (InterpretOp)
 import qualified Test.QuickCheck.StateModel.Lockstep.Op as Op
@@ -102,3 +106,9 @@ instance InterpretOp SumProd.Op (Op.WrapRealized (IOSim s)) where
       SumProd.OpLeft  -> either (Just . Op.WrapRealized) (const Nothing) . Op.unwrapRealized
       SumProd.OpRight -> either (const Nothing) (Just . Op.WrapRealized) . Op.unwrapRealized
       SumProd.OpComp g f -> Op.intOp g <=< Op.intOp f
+
+{-------------------------------------------------------------------------------
+  QuickCheck
+-------------------------------------------------------------------------------}
+
+deriving newtype instance Serialise a => Serialise (Small a)
