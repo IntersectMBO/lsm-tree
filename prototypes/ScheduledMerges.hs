@@ -156,6 +156,9 @@ mergeLastForLevel :: [Level s] -> MergeLastLevel
 mergeLastForLevel [] = MergeLastLevel
 mergeLastForLevel _  = MergeMidLevel
 
+-- | Note that the invariants rely on the fact that levelling is only used on
+-- the last level.
+--
 invariant :: forall s. HasCallStack => Levels s -> ST s Bool
 invariant = go 1
   where
@@ -187,7 +190,7 @@ invariant = go 1
         -- Levels using levelling have only one run, and that single run is
         -- (almost) always involved in an ongoing merge. Thus there are no
         -- other "normal" runs. The exception is when a levelling run becomes
-        -- too large and is promoted, in that case initilly there's no merge,
+        -- too large and is promoted, in that case initially there's no merge,
         -- but it is still represented as a 'MergingRun', using 'SingleRun'.
         MergePolicyLevelling -> null rs
         MergePolicyTiering   -> all (\r -> tieringRunSizeToLevel r == ln) rs
@@ -218,8 +221,8 @@ invariant = go 1
             -- a new level, it'll have only 4 runs.
             (_, OngoingMerge _ rs _) ->
                 assert (length rs == 4 || length rs == 5) True
-             && assert (all (\r -> tieringRunSizeToLevel r == ln-1) (init rs)) True
-             && assert (levellingRunSizeToLevel (last rs) <= ln+1) True
+             && assert (all (\r -> tieringRunSizeToLevel r == ln-1) (take 4 rs)) True
+             && assert (all (\r -> levellingRunSizeToLevel r <= ln+1) (drop 4 rs)) True
 
         MergePolicyTiering ->
           case (mr, mrs, mergeLastForLevel ls) of
@@ -230,8 +233,11 @@ invariant = go 1
 
             -- A completed last level run can be of almost any smaller size due
             -- to deletions, but it can't be bigger than the next level down.
+            -- Note that tiering on the last level only occurs when there is
+            -- a single level only.
             (_, CompletedMerge r, MergeLastLevel) ->
-              tieringRunSizeToLevel r <= ln+1
+                ln == 1
+             && tieringRunSizeToLevel r <= ln+1
 
             -- A completed mid level run is usually of the size for the
             -- level it is entering, but can also be one smaller (in which case
@@ -241,7 +247,7 @@ invariant = go 1
               where
                 rln = tieringRunSizeToLevel r
 
-            -- An ongoing merge for levelling should have 4 incoming runs of
+            -- An ongoing merge for tiering should have 4 incoming runs of
             -- the right size for the level below, and at most 1 run held back
             -- due to being too small (which would thus also be of the size of
             -- the level below).
