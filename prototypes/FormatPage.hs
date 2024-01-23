@@ -13,6 +13,7 @@ module FormatPage (
     Operation (..),
     Key (..),
     Value (..),
+    BlobRef (..),
     PageSerialised,
     encodePage,
     serialisePage,
@@ -20,7 +21,7 @@ module FormatPage (
 
 import           Data.Bits
 import           Data.Function (on)
-import           Data.List (foldl', sortBy, unfoldr)
+import           Data.List (foldl', nubBy, sortBy, unfoldr)
 import           Data.Maybe (fromJust, isJust)
 import           Data.Word
 
@@ -343,8 +344,10 @@ fromBitmap =
     fromWord64 w = [ testBit w i | i <- [0..63] ]
 
 tests :: TestTree
-tests = testGroup "FormatPage" [
-      testProperty "to/from bitmap" prop_toFromBitmap
+tests = testGroup "FormatPage"
+    [ testProperty "invariant" prop_invariant
+    , testProperty "shrink" prop_shrink_invariant
+    , testProperty "to/from bitmap" prop_toFromBitmap
     , testProperty "size distribution" prop_size_distribution
     , testProperty "size 1" prop_size1
     , testProperty "size 2" prop_size2
@@ -355,6 +358,30 @@ tests = testGroup "FormatPage" [
                    prop_encodeSerialiseDeserialiseDecode
     ]
 
+-- Generated keys are unique and in increasing order
+prop_invariant :: PageLogical -> Property
+prop_invariant page = case invariant page of
+    Left ks  -> counterexample (show ks) $ property False
+    Right () -> property True
+
+prop_shrink_invariant :: PageLogical -> Property
+prop_shrink_invariant page = case mapM_ invariant (shrink page) of
+    Left ks  -> counterexample (show ks) $ property False
+    Right () -> property True
+
+invariant :: PageLogical -> Either (Key, Key) ()
+invariant (PageLogical xs0) = go xs0
+  where
+    go :: [(Key, b, c)] -> Either (Key, Key) ()
+    go []           = Right ()
+    go ((k,_,_):xs) = go1 k xs
+
+    go1 :: Key -> [(Key, b, c)] -> Either (Key, Key) ()
+    go1 _  []            = Right ()
+    go1 k1 ((k2,_,_):xs) =
+        if k1 < k2
+        then go1 k2 xs
+        else Left (k1, k2)
 
 prop_toFromBitmap :: [Bool] -> Bool
 prop_toFromBitmap bits =
@@ -362,9 +389,9 @@ prop_toFromBitmap bits =
   where
     roundTrip = fromBitmap . toBitmap
 
-prop_encodeDecode :: PageLogical -> Bool
+prop_encodeDecode :: PageLogical -> Property
 prop_encodeDecode p =
-    p == roundTrip p
+    p === roundTrip p
   where
     roundTrip = decodePage . encodePage
 
@@ -499,13 +526,18 @@ instance Arbitrary PageLogical where
                  go [] n pageSizeEmpty)
       ]
     where
-      go es 0 _  = return (PageLogical (sortBy (compare `on` (\(k,_,_)->k)) es))
+      go es 0 _  = return (mkPageLogical es)
       go es i sz = do
         e <- arbitrary
         case pageSizeAddElem e sz of
-          Nothing  -> return (PageLogical es)
+          Nothing  -> return (mkPageLogical es)
           Just sz' -> go (e:es) (i-1) sz'
 
   shrink (PageLogical p) =
-    [ PageLogical p' | p' <- shrink p ]
+    [ mkPageLogical p' | p' <- shrink p ]
 
+-- | Create 'PageLogical' enforcing the invariant.
+mkPageLogical :: [(Key, Operation, Maybe BlobRef)] -> PageLogical
+mkPageLogical xs = PageLogical (nubBy ((==) `on` fstOf3) (sortBy (compare `on` fstOf3) xs))
+  where
+    fstOf3 (k,_,_) = k
