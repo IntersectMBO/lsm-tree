@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns     #-}
+{-# LANGUAGE InstanceSigs     #-}
 {-# LANGUAGE NamedFieldPuns   #-}
 {-# LANGUAGE ParallelListComp #-}
 {-# LANGUAGE RecordWildCards  #-}
@@ -12,14 +13,18 @@ module FormatPage (
     PageLogical (..),
     Operation (..),
     Key (..),
+    unKey,
     Value (..),
     BlobRef (..),
     PageSerialised,
     encodePage,
     serialisePage,
+    genFullPageLogical,
+    mkPageLogical,
 ) where
 
 import           Data.Bits
+import           Data.Coerce (coerce)
 import           Data.Function (on)
 import           Data.List (foldl', nubBy, sortBy, unfoldr)
 import           Data.Maybe (fromJust, isJust)
@@ -46,6 +51,9 @@ newtype PageLogical = PageLogical [(Key, Operation, Maybe BlobRef)]
 
 newtype Key   = Key   ByteString deriving (Eq, Ord, Show)
 newtype Value = Value ByteString deriving (Eq, Show)
+
+unKey :: Key -> ByteString
+unKey = coerce
 
 data Operation = Insert  Value
                | Mupsert Value
@@ -499,16 +507,19 @@ instance Arbitrary Value where
   shrink (Value v) = [ Value (BS.pack v') | v' <- shrink (BS.unpack v) ]
 
 instance Arbitrary Operation where
-  arbitrary =
-    oneof
-      [ Insert  <$> arbitrary
-      , Mupsert <$> arbitrary
-      , pure Delete
-      ]
+  arbitrary = genOperation arbitrary
 
+  shrink :: Operation -> [Operation]
   shrink Delete      = []
   shrink (Insert v)  = Delete   : [ Insert  v' | v' <- shrink v ]
   shrink (Mupsert v) = Insert v : [ Mupsert v' | v' <- shrink v ]
+
+genOperation :: Gen Value -> Gen Operation
+genOperation gv = oneof
+      [ Insert  <$> gv
+      , Mupsert <$> gv
+      , pure Delete
+      ]
 
 instance Arbitrary BlobRef where
   arbitrary = BlobRef <$> arbitrary <*> arbitrary
@@ -535,6 +546,16 @@ instance Arbitrary PageLogical where
 
   shrink (PageLogical p) =
     [ mkPageLogical p' | p' <- shrink p ]
+
+genFullPageLogical :: Gen Key -> Gen Value -> Gen PageLogical
+genFullPageLogical gk gv = go [] pageSizeEmpty
+  where
+    go :: [(Key, Operation, Maybe BlobRef)] -> PageSize -> Gen PageLogical
+    go es sz = do
+      e <- (,,) <$> gk <*> genOperation gv <*> arbitrary
+      case pageSizeAddElem e sz of
+        Nothing  -> return (mkPageLogical es)
+        Just sz' -> go (e:es) sz'
 
 -- | Create 'PageLogical' enforcing the invariant.
 mkPageLogical :: [(Key, Operation, Maybe BlobRef)] -> PageLogical

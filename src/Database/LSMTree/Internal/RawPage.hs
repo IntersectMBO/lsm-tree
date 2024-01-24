@@ -18,6 +18,7 @@ module Database.LSMTree.Internal.RawPage (
     rawPageValues,
 ) where
 
+import           Control.DeepSeq (NFData (rnf))
 import           Data.Bits (Bits, complement, popCount, unsafeShiftL,
                      unsafeShiftR, (.&.))
 import           Data.Primitive.ByteArray (ByteArray (..), indexByteArray,
@@ -36,6 +37,9 @@ data RawPage = RawPage
     !Int        -- ^ offset in Word16s.
     !ByteArray
   deriving (Show)
+
+instance NFData RawPage where
+  rnf (RawPage _ _) = ()
 
 -- | This instance assumes pages are 4096 bytes in size
 instance Eq RawPage where

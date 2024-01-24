@@ -54,6 +54,7 @@ library
     , bitvec                ^>=1.1
     , bytestring
     , containers
+    , deepseq
     , filepath
     , fs-api                ^>=0.2
     , io-classes            ^>=1.2
@@ -176,18 +177,22 @@ benchmark lsm-tree-micro-bench
   main-is:          Main.hs
   other-modules:
     Bench.Database.LSMTree.Internal.Integration
+    Bench.Database.LSMTree.Internal.RawPage
     Bench.Database.LSMTree.Internal.Run.BloomFilter
     Bench.Database.LSMTree.Internal.Run.Index.Compact
 
   build-depends:
     , base
+    , bytestring
     , containers
     , criterion
     , deepseq
     , extra
-    , lsm-tree:{lsm-tree, bloomfilter, lsm-tree-utils}
+    , lsm-tree:{lsm-tree, bloomfilter, lsm-tree-utils, prototypes}
+    , primitive
     , QuickCheck
     , random
+    , vector
 
 benchmark lsm-tree-macro-bench
   import:           warnings
