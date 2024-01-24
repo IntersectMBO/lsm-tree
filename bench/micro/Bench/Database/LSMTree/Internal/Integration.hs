@@ -68,7 +68,7 @@ benchmarks = bgroup "Bench.Database.LSMTree.Internal.Integration" [
     benchPrepLookups conf@Config{name} =
       env (prepLookupsEnv (Proxy @UTxOKey) conf) $ \ ~(b, ci, ks) ->
         -- see 'npages'.
-        bgroup (printf "%s, %d actual pages" name (Index.sizeInPages ci)) [
+        bgroup (printf "%s, ? actual pages" name) [
             -- the bloomfilter is queried for all lookup keys
             bench "Bloomfilter query"    $ whnf (elems b) ks
             -- the compact index is only searched for (true and false) positive
