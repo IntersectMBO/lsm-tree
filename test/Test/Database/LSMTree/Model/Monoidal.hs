@@ -4,9 +4,9 @@ module Test.Database.LSMTree.Model.Monoidal (tests) where
 import qualified Data.ByteString as BS
 import           Database.LSMTree.Model.Monoidal
 import           GHC.Exts (IsList (..))
+import           Test.QuickCheck.Instances ()
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
-import           Test.Util.Orphans ()
 
 tests :: TestTree
 tests = testGroup "Database.LSMTree.Model.Monoidal"

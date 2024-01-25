@@ -45,7 +45,9 @@ library
     Database.LSMTree.Internal.Run
     Database.LSMTree.Internal.Run.BloomFilter
     Database.LSMTree.Internal.Run.Construction
+    Database.LSMTree.Internal.Run.FsPaths
     Database.LSMTree.Internal.Run.Index.Compact
+    Database.LSMTree.Internal.Run.Mutable
     Database.LSMTree.Internal.Serialise
     Database.LSMTree.Internal.Serialise.Class
     Database.LSMTree.Internal.Serialise.RawBytes
@@ -115,6 +117,7 @@ library lsm-tree-utils
     , deepseq
     , lsm-tree:{lsm-tree, bloomfilter}
     , QuickCheck
+    , quickcheck-instances
     , random
     , wide-word
 
@@ -135,6 +138,7 @@ test-suite lsm-tree-test
     Test.Database.LSMTree.Generators
     Test.Database.LSMTree.Internal.CRC32C
     Test.Database.LSMTree.Internal.RawPage
+    Test.Database.LSMTree.Internal.Run
     Test.Database.LSMTree.Internal.Run.BloomFilter
     Test.Database.LSMTree.Internal.Run.Construction
     Test.Database.LSMTree.Internal.Run.Index.Compact
@@ -160,6 +164,7 @@ test-suite lsm-tree-test
     , cryptohash-sha256
     , deepseq
     , directory
+    , filepath
     , fs-api
     , fs-sim                                           >=0.2
     , io-classes

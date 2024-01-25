@@ -12,8 +12,12 @@
 {- HLINT ignore "Use camelCase" -}
 
 module Database.LSMTree.Generators (
+    -- * WriteBuffer
+    genWriteBuffer
+  , shrinkWriteBuffer
+  , writeBufferInvariant
     -- * WithSerialised
-    WithSerialised (..)
+  , WithSerialised (..)
     -- * UTxO keys
   , UTxOKey (..)
     -- * Range-finder precision
@@ -47,24 +51,163 @@ module Database.LSMTree.Generators (
   ) where
 
 import           Control.DeepSeq (NFData)
+import           Data.Bifunctor (bimap)
+import           Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
 import           Data.Coerce (coerce)
 import           Data.Containers.ListUtils (nubOrd)
 import           Data.List (sort)
+import qualified Data.Map as Map
 import           Data.WideWord.Word256 (Word256 (..))
 import           Data.Word
+import           Database.LSMTree.Common (Range (..))
+import           Database.LSMTree.Internal.Entry (Entry (..))
 import           Database.LSMTree.Internal.Run.BloomFilter (Hashable (..))
 import           Database.LSMTree.Internal.Run.Index.Compact (Append (..),
                      rangeFinderPrecisionBounds, suggestRangeFinderPrecision)
-import           Database.LSMTree.Internal.Serialise (SerialiseKey,
-                     SerialisedKey (SerialisedKey), keyTopBits16, serialiseKey)
+import           Database.LSMTree.Internal.Serialise
 import qualified Database.LSMTree.Internal.Serialise.Class as S.Class
+import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer (..))
+import qualified Database.LSMTree.Internal.WriteBuffer as WB
+import qualified Database.LSMTree.Monoidal as Monoidal
+import qualified Database.LSMTree.Normal as Normal
 import           Database.LSMTree.Util
 import           Database.LSMTree.Util.Orphans ()
 import           GHC.Generics (Generic)
 import           System.Random (Uniform)
 import qualified Test.QuickCheck as QC
-import           Test.QuickCheck (Arbitrary (..), Gen, Property)
+import           Test.QuickCheck (Arbitrary (..), Arbitrary1 (..),
+                     Arbitrary2 (..), Gen, Property, frequency, oneof)
 import           Test.QuickCheck.Gen (genDouble)
+import           Test.QuickCheck.Instances ()
+
+{-------------------------------------------------------------------------------
+  Common LSMTree types
+-------------------------------------------------------------------------------}
+
+instance (Arbitrary v, Arbitrary blob) => Arbitrary (Normal.Update v blob) where
+  arbitrary = QC.arbitrary2
+  shrink = QC.shrink2
+
+instance Arbitrary2 Normal.Update where
+  liftArbitrary2 genVal genBlob = frequency
+    [ (10, Normal.Insert <$> genVal <*> liftArbitrary genBlob)
+    , (1, pure Normal.Delete)
+    ]
+
+  liftShrink2 shrinkVal shrinkBlob = \case
+    Normal.Insert v blob ->
+        Normal.Delete
+      : map (uncurry Normal.Insert)
+            (liftShrink2 shrinkVal (liftShrink shrinkBlob) (v, blob))
+    Normal.Delete ->
+      []
+
+instance (Arbitrary v) => Arbitrary (Monoidal.Update v) where
+  arbitrary = QC.arbitrary1
+  shrink = QC.shrink1
+
+instance Arbitrary1 Monoidal.Update where
+  liftArbitrary genVal = frequency
+    [ (10, Monoidal.Insert <$> genVal)
+    , (5, Monoidal.Mupsert <$> genVal)
+    , (1, pure Monoidal.Delete)
+    ]
+
+  liftShrink shrinkVal = \case
+    Monoidal.Insert v  -> Monoidal.Delete : map Monoidal.Insert (shrinkVal v)
+    Monoidal.Mupsert v -> Monoidal.Insert v : map Monoidal.Mupsert (shrinkVal v)
+    Monoidal.Delete    -> []
+
+instance Arbitrary k => Arbitrary (Range k) where
+  arbitrary = oneof
+    [ FromToExcluding <$> arbitrary <*> arbitrary
+    , FromToIncluding <$> arbitrary <*> arbitrary
+    ]
+
+  shrink (FromToExcluding f t) =
+    uncurry FromToExcluding <$> shrink (f, t)
+  shrink (FromToIncluding f t) =
+    uncurry FromToIncluding <$> shrink (f, t)
+
+{-------------------------------------------------------------------------------
+  Entry
+-------------------------------------------------------------------------------}
+
+instance Arbitrary2 Entry where
+  liftArbitrary2 genVal genBlob = frequency
+    [ (10, Insert <$> genVal)
+    , (1,  InsertWithBlob <$> genVal <*> genBlob)
+    , (1,  Mupdate <$> genVal)
+    , (1,  pure Delete)
+    ]
+
+  liftShrink2 shrinkVal shrinkBlob = \case
+    Insert v           -> Delete : (Insert <$> shrinkVal v)
+    InsertWithBlob v b -> [Delete, Insert v]
+                       ++ fmap (uncurry InsertWithBlob)
+                            (liftShrink2 shrinkVal shrinkBlob (v, b))
+    Mupdate v          -> Delete : Insert v : (Mupdate <$> shrinkVal v)
+    Delete             -> []
+
+{-------------------------------------------------------------------------------
+  WriteBuffer
+-------------------------------------------------------------------------------}
+
+instance (Arbitrary v, Arbitrary blob, SerialiseValue v, SerialiseValue blob)
+      => Arbitrary (WriteBuffer ByteString v blob) where
+  arbitrary = genWriteBuffer arbitrary arbitrary
+  shrink = shrinkWriteBuffer shrink shrink
+
+-- | We cannot implement 'Arbitrary2' since we have constraints on the type
+-- parameters.
+-- Assuming that keys are bytestrings gives us control over their length,
+-- so we can ensure to always generate suitable keys for a compact index
+-- (at least 6 bytes).
+genWriteBuffer ::
+     (SerialiseValue v, SerialiseValue blob)
+  => Gen v
+  -> Gen blob
+  -> Gen (WriteBuffer ByteString v blob)
+genWriteBuffer genVal genBlob = fmap fromKOps genKOps
+  where
+    -- minimum length 6 bytes
+    genKey = (<>) <$> (BS.pack <$> QC.vector 6) <*> arbitrary
+    genKOps = QC.listOf (liftArbitrary2 genKey (liftArbitrary2 genVal genBlob))
+
+shrinkWriteBuffer ::
+     (SerialiseValue v, SerialiseValue blob)
+  => (v -> [v]) -> (blob -> [blob])
+  -> WriteBuffer ByteString v blob
+  -> [WriteBuffer ByteString v blob]
+shrinkWriteBuffer shrinkVal shrinkBlob = map fromKOps . shrinkKOps . toKOps
+  where
+    -- minimum length 6 bytes
+    shrinkKey k = fmap (BS.take 6 k <>) (shrink (BS.drop 6 k))
+    shrinkKOps =
+      liftShrink (liftShrink2 shrinkKey (liftShrink2 shrinkVal shrinkBlob))
+
+fromKOps ::
+     (SerialiseKey k, SerialiseValue v, SerialiseValue blob)
+  => [(k, Entry v blob)]
+  -> WriteBuffer k v blob
+fromKOps = WB . Map.fromList . map serialiseKOp
+  where
+    serialiseKOp = bimap serialiseKey (bimap serialiseValue serialiseBlob)
+
+toKOps ::
+     (SerialiseKey k, SerialiseValue v, SerialiseValue blob)
+  => WriteBuffer k v blob
+  -> [(k, Entry v blob)]
+toKOps = map deserialiseKOp . Map.assocs . WB.unWB
+  where
+    deserialiseKOp =
+      bimap deserialiseKey (bimap deserialiseValue deserialiseBlob)
+
+writeBufferInvariant :: WriteBuffer k v blob -> Bool
+writeBufferInvariant (WB wb) = all isValidKey (Map.keys wb)
+  where
+    isValidKey k = sizeofKey k >= 6
 
 {-------------------------------------------------------------------------------
   WithSerialised

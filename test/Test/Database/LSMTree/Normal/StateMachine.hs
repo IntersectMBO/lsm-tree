@@ -55,6 +55,7 @@ import           Data.Typeable (Proxy (..), Typeable, cast)
 import           Data.Word (Word64)
 import qualified Database.LSMTree.Common as SUT (SomeSerialisationConstraint,
                      mkSnapshotName)
+import           Database.LSMTree.Generators ()
 import qualified Database.LSMTree.Model.Normal.Session as Model
 import qualified Database.LSMTree.ModelIO.Normal as Impl.ModelIO
 import qualified Database.LSMTree.Normal as Impl.Real
@@ -81,7 +82,6 @@ import qualified Test.QuickCheck.StateModel.Lockstep.Run as Lockstep.Run
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.HUnit (testCase)
 import           Test.Tasty.QuickCheck (testProperty)
-import           Test.Util.Orphans ()
 import           Test.Util.TypeFamilyWrappers (WrapBlob (..), WrapBlobRef (..),
                      WrapSession (..), WrapTableHandle (..))
 

@@ -52,8 +52,8 @@ import           Data.Monoid (Dual (..))
 import           Data.STRef
 import           Data.Word (Word16, Word32, Word64, Word8)
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
-import           Database.LSMTree.Internal.Entry (Entry (..), onBlobRef,
-                     onValue)
+import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..),
+                     onBlobRef, onValue)
 import           Database.LSMTree.Internal.Run.BloomFilter (Bloom, MBloom)
 import qualified Database.LSMTree.Internal.Run.BloomFilter as Bloom
 import           Database.LSMTree.Internal.Run.Index.Compact (CompactIndex,
@@ -85,8 +85,8 @@ data RunAcc s = RunAcc {
 --
 -- @nentries@ and @npages@ should be an upper bound on the expected number of
 -- entries and pages in the output run.
-new :: Int -> Int -> ST s (RunAcc s)
-new nentries npages = do
+new :: NumEntries -> Int -> ST s (RunAcc s)
+new (NumEntries nentries) npages = do
     mbloom <- Bloom.newEasy 0.1 nentries -- TODO(optimise): tune bloom filter
     let rangeFinderPrecision = Index.suggestRangeFinderPrecision npages
     mindex <- Index.new rangeFinderPrecision 100 -- TODO(optimise): tune chunk size

@@ -10,13 +10,13 @@ import           Data.Proxy (Proxy (..))
 import           Data.Word (Word64)
 import           Database.LSMTree.Common (SomeUpdateConstraint (..),
                      mkSnapshotName)
+import           Database.LSMTree.Generators ()
 import           Database.LSMTree.ModelIO.Monoidal (LookupResult (..),
                      Range (..), RangeLookupResult (..), TableHandle,
                      Update (..))
 import           Test.Database.LSMTree.ModelIO.Monoidal.Class
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck
-import           Test.Util.Orphans ()
 
 tests :: TestTree
 tests = testGroup "Database.LSMTree.ModelIO.Monoidal"

@@ -11,6 +11,7 @@
 module Database.LSMTree.Util.Orphans () where
 
 import           Control.DeepSeq (NFData (..))
+import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as B
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ByteString.Short.Internal as SBS
@@ -77,5 +78,22 @@ instance SerialiseKey Word64 where
 
 -- | Placeholder instance, not optimised
 instance SerialiseKey LBS.ByteString where
-  serialiseKey = fromShortByteString . SBS.toShort . LBS.toStrict
-  deserialiseKey = error "deserialiseKey: LazyByteString" -- TODO
+  serialiseKey = serialiseKey . LBS.toStrict
+  deserialiseKey = B.toLazyByteString . rawBytes
+
+-- | Placeholder instance, not optimised
+instance SerialiseKey BS.ByteString where
+  serialiseKey = fromShortByteString . SBS.toShort
+  deserialiseKey = LBS.toStrict . deserialiseKey
+
+-- | Placeholder instance, not optimised
+instance SerialiseValue LBS.ByteString where
+  serialiseValue = serialiseValue . LBS.toStrict
+  deserialiseValue = deserialiseValueN . pure
+  deserialiseValueN = B.toLazyByteString . foldMap rawBytes
+
+-- | Placeholder instance, not optimised
+instance SerialiseValue BS.ByteString where
+  serialiseValue = fromShortByteString . SBS.toShort
+  deserialiseValue = deserialiseValueN . pure
+  deserialiseValueN = LBS.toStrict . deserialiseValueN

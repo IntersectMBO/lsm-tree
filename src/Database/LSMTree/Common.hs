@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveFunctor            #-}
 {-# LANGUAGE FlexibleContexts         #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 
@@ -192,7 +193,7 @@ data Range k =
     FromToExcluding k k
     -- | Inclusive lower bound, inclusive upper bound
   | FromToIncluding k k
-  deriving (Show, Eq)
+  deriving (Show, Eq, Functor)
 
 {-------------------------------------------------------------------------------
   Snapshots

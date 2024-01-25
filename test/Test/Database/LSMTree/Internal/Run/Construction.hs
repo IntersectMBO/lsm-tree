@@ -13,7 +13,7 @@ import           Data.Foldable (Foldable (..))
 import           Data.Maybe
 import qualified Data.Vector.Primitive as P
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
-import           Database.LSMTree.Internal.Entry (Entry (..))
+import           Database.LSMTree.Internal.Entry
 import qualified Database.LSMTree.Internal.Run.BloomFilter as Bloom
 import           Database.LSMTree.Internal.Run.Construction as Real
 import qualified Database.LSMTree.Internal.Run.Index.Compact as Index
@@ -54,7 +54,7 @@ test_singleKeyRun =  do
         !e = InsertWithBlob (SerialisedValue' (P.fromList [48, 19])) (BlobSpan 55 77)
 
     (addRes, (mp, mc, _mfc, b, cix)) <- stToIO $ do
-      racc <- new 1 1
+      racc <- new (NumEntries 1) 1
       addRes <- addFullKOp racc k e
       (addRes,) <$> unsafeFinalise racc
 

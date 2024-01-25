@@ -1,5 +1,5 @@
-{-# LANGUAGE DeriveTraversable   #-}
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE RoleAnnotations #-}
+
 -- | The in-memory LSM level 0.
 --
 -- === TODO
@@ -21,8 +21,10 @@
 -- not exhaustive.
 --
 module Database.LSMTree.Internal.WriteBuffer (
-    WriteBuffer,
-    emptyWriteBuffer,
+    WriteBuffer (..),
+    empty,
+    numEntries,
+    content,
     addEntryMonoidal,
     addEntryNormal,
     lookups,
@@ -36,21 +38,40 @@ import           Database.LSMTree.Common (Range (..))
 import           Database.LSMTree.Internal.Entry
 import qualified Database.LSMTree.Internal.Monoidal as Monoidal
 import qualified Database.LSMTree.Internal.Normal as Normal
+import           Database.LSMTree.Internal.Serialise
 
 {-------------------------------------------------------------------------------
   Writebuffer type
 -------------------------------------------------------------------------------}
 
-newtype WriteBuffer k v blobref = WB (Map k (Entry v blobref))
+-- | The phantom type parameters provide some safety, enforcing that the types
+-- of inserted entries are consistent.
+--
+-- TODO: Revisit this when using the write buffer from the table handle.
+-- It would be consistent with other internal APIs (e.g. for @Run@ and
+-- @CompactIndex@ to remove the type parameters here and move the responsibility
+-- for these constraints and (de)serialisation to the layer above.
+newtype WriteBuffer k v blob =
+  WB { unWB :: Map SerialisedKey (Entry SerialisedValue SerialisedBlob) }
+  deriving (Show)
+type role WriteBuffer nominal nominal nominal
 
-emptyWriteBuffer :: WriteBuffer k v blobref
-emptyWriteBuffer = WB Map.empty
+empty :: WriteBuffer k v blob
+empty = WB Map.empty
+
+numEntries :: WriteBuffer k v blob -> NumEntries
+numEntries (WB m) = NumEntries (Map.size m)
+
+-- | \( O(n) \)
+content :: WriteBuffer k v blob ->
+           [(SerialisedKey, Entry SerialisedValue SerialisedBlob)]
+content (WB m) = Map.assocs m
 
 {-------------------------------------------------------------------------------
   Updates
 -------------------------------------------------------------------------------}
 
-combine :: (v -> v -> v) -> Entry v blobref -> Entry v blobref -> Entry v blobref
+combine :: (v -> v -> v) -> Entry v blob -> Entry v blob -> Entry v blob
 combine _ e@Delete            _                       = e
 combine _ e@Insert {}         _                       = e
 combine _ e@InsertWithBlob {} _                       = e
@@ -59,56 +80,58 @@ combine f   (Mupdate u)       (Insert v)              = Insert (f u v)
 combine f   (Mupdate u)       (InsertWithBlob v blob) = InsertWithBlob (f u v) blob
 combine f   (Mupdate u)       (Mupdate v)             = Mupdate (f u v)
 
-addEntryMonoidal :: Ord k
-  => (v -> v -> v) -- ^ merge function
-  -> k -> Monoidal.Update v -> WriteBuffer k v blobref -> WriteBuffer k v blobref
-addEntryMonoidal f k e (WB wb) = WB (Map.insertWith (combine f) k (g e) wb) where
-  g :: Monoidal.Update v -> Entry v blobref
-  g (Monoidal.Insert v)  = Insert v
-  g (Monoidal.Mupsert v) = Mupdate v
-  g (Monoidal.Delete)    = Delete
+addEntryMonoidal :: (SerialiseKey k, SerialiseValue v)
+  => (SerialisedValue -> SerialisedValue -> SerialisedValue) -- ^ merge function
+  -> k -> Monoidal.Update v -> WriteBuffer k v blob -> WriteBuffer k v blob
+addEntryMonoidal f k e (WB wb) =
+    WB (Map.insertWith (combine f) (serialiseKey k) (g e) wb)
+  where
+    g (Monoidal.Insert v)  = Insert (serialiseValue v)
+    g (Monoidal.Mupsert v) = Mupdate (serialiseValue v)
+    g (Monoidal.Delete)    = Delete
 
-addEntryNormal :: Ord k
-  => k -> Normal.Update v blobref -> WriteBuffer k v blobref -> WriteBuffer k v blobref
-addEntryNormal k e (WB wb) = WB (Map.insert k (g e) wb) where
-  g :: Normal.Update v blobref -> Entry v blobref
-  g (Normal.Insert v Nothing)     = Insert v
-  g (Normal.Insert v (Just bref)) = InsertWithBlob v bref
-  g Normal.Delete                 = Delete
+addEntryNormal :: (SerialiseKey k, SerialiseValue v, SerialiseValue blob)
+  => k -> Normal.Update v blob -> WriteBuffer k v blob -> WriteBuffer k v blob
+addEntryNormal k e (WB wb) =
+    WB (Map.insert (serialiseKey k) (g e) wb)
+  where
+    g (Normal.Insert v Nothing)  = Insert (serialiseValue v)
+    g (Normal.Insert v (Just b)) = InsertWithBlob (serialiseValue v) (serialiseBlob b)
+    g Normal.Delete              = Delete
 
 {-------------------------------------------------------------------------------
   Querying
 -------------------------------------------------------------------------------}
 
--- We return 'Entry', so it can be properly combined with the lookups in other
--- runs.
+-- We return an 'Entry' with serialised values, so it can be properly combined
+-- with the lookups in other runs. Deserialisation only occurs afterwards.
 --
 -- Note: the entry may be 'Delete'.
 --
-lookups :: forall k v blobref. Ord k
-  => WriteBuffer k v blobref
+lookups :: SerialiseKey k
+  => WriteBuffer k v blob
   -> [k]
-  -> [(k, Maybe (Entry v blobref))]
-lookups (WB m) = fmap f where
-   f :: k -> (k, Maybe (Entry v blobref))
-   f k = (k, Map.lookup k m)
+  -> [(SerialisedKey, Maybe (Entry SerialisedValue SerialisedBlob))]
+lookups (WB m) = fmap (f . serialiseKey)
+  where
+    f k = (k, Map.lookup k m)
 
 {-------------------------------------------------------------------------------
   RangeQueries
 -------------------------------------------------------------------------------}
 
--- | We return 'Entry' instead of either @angeLookupResult@,
+-- | We return 'Entry' instead of either @RangeLookupResult@,
 -- so we can properly combine lookup results.
 --
 -- Note: 'Delete's are not filtered out.
 --
-rangeLookups :: Ord k
-  => WriteBuffer k v blobref
+rangeLookups :: SerialiseKey k
+  => WriteBuffer k v blob
   -> Range k
-  -> [(k, Entry v blobref)]
+  -> [(SerialisedKey, Entry SerialisedValue SerialisedBlob)]
 rangeLookups (WB m) r =
     [ (k, e)
-    | let (lb, ub) = convertRange r
+    | let (lb, ub) = convertRange (fmap serialiseKey r)
     , (k, e) <- Map.R.rangeLookup lb ub m
     ]
 
