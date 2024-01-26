@@ -63,8 +63,9 @@ rawPageEntry
     :: RawPage
     -> P.Vector Word8 -- ^ key
     -> Maybe (Entry (P.Vector Word8) (Word64, Word32))
-rawPageEntry page key = bisect 0 (fromIntegral dirNumKeys)
+rawPageEntry !page !key = bisect 0 (fromIntegral dirNumKeys)
   where
+    --TODO: these Dir values don't unbox properly:
     Dir {..} = rawPageDirectory page
 
     -- when to switch to linear scan
@@ -73,7 +74,7 @@ rawPageEntry page key = bisect 0 (fromIntegral dirNumKeys)
     threshold = 3
 
     found :: Int -> Maybe (Entry (P.Vector Word8) (Word64, Word32))
-    found i = Just $ case rawPageOpAt page i of
+    found !i = Just $! case rawPageOpAt page i of
         0 -> if rawPageHasBlobRefAt page i == 0
              then Insert (rawPageValueAt page i)
              else InsertWithBlob (rawPageValueAt page i) (rawPageBlobRefIndex page (rawPageCalculateBlobIndex page i))
@@ -81,7 +82,7 @@ rawPageEntry page key = bisect 0 (fromIntegral dirNumKeys)
         _ -> Delete
 
     bisect :: Int -> Int -> Maybe (Entry (P.Vector Word8) (Word64, Word32))
-    bisect i j
+    bisect !i !j
         | j - i < threshold = linear i j
         | otherwise = case compare key (rawPageKeyAt page k) of
             EQ -> found k
@@ -210,6 +211,7 @@ rawPageSingleValue page@(RawPage off ba) =
     (start, end) = rawPageValueOffsets1 page
 
 -- we could create unboxed array.
+{-# INLINE rawPageBlobRefIndex #-}
 rawPageBlobRefIndex :: RawPage
     -> Int -- ^ blobref index. Calculate with 'rawPageCalculateBlobIndex'
     -> (Word64, Word32)
