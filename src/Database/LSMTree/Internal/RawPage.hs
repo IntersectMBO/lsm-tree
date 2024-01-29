@@ -1,5 +1,5 @@
-{-# LANGUAGE BangPatterns    #-}
-{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE BangPatterns   #-}
+{-# LANGUAGE NamedFieldPuns #-}
 module Database.LSMTree.Internal.RawPage (
     RawPage,
     makeRawPage,
@@ -18,6 +18,7 @@ module Database.LSMTree.Internal.RawPage (
     rawPageValues,
 ) where
 
+import           Control.DeepSeq (NFData (rnf))
 import           Data.Bits (Bits, complement, popCount, unsafeShiftL,
                      unsafeShiftR, (.&.))
 import           Data.Primitive.ByteArray (ByteArray (..), indexByteArray,
@@ -36,6 +37,9 @@ data RawPage = RawPage
     !Int        -- ^ offset in Word16s.
     !ByteArray
   deriving (Show)
+
+instance NFData RawPage where
+  rnf (RawPage _ _) = ()
 
 -- | This instance assumes pages are 4096 bytes in size
 instance Eq RawPage where
@@ -59,9 +63,9 @@ rawPageEntry
     :: RawPage
     -> P.Vector Word8 -- ^ key
     -> Maybe (Entry (P.Vector Word8) (Word64, Word32))
-rawPageEntry page key = bisect 0 (fromIntegral dirNumKeys)
+rawPageEntry !page !key = bisect 0 (fromIntegral dirNumKeys)
   where
-    Dir {..} = rawPageDirectory page
+    !dirNumKeys = rawPageNumKeys page
 
     -- when to switch to linear scan
     -- this a tuning knob
@@ -69,7 +73,7 @@ rawPageEntry page key = bisect 0 (fromIntegral dirNumKeys)
     threshold = 3
 
     found :: Int -> Maybe (Entry (P.Vector Word8) (Word64, Word32))
-    found i = Just $ case rawPageOpAt page i of
+    found !i = Just $! case rawPageOpAt page i of
         0 -> if rawPageHasBlobRefAt page i == 0
              then Insert (rawPageValueAt page i)
              else InsertWithBlob (rawPageValueAt page i) (rawPageBlobRefIndex page (rawPageCalculateBlobIndex page i))
@@ -77,7 +81,7 @@ rawPageEntry page key = bisect 0 (fromIntegral dirNumKeys)
         _ -> Delete
 
     bisect :: Int -> Int -> Maybe (Entry (P.Vector Word8) (Word64, Word32))
-    bisect i j
+    bisect !i !j
         | j - i < threshold = linear i j
         | otherwise = case compare key (rawPageKeyAt page k) of
             EQ -> found k
@@ -112,21 +116,28 @@ rawPageNumKeys (RawPage off ba) = indexByteArray ba off
 rawPageNumBlobs :: RawPage -> Word16
 rawPageNumBlobs (RawPage off ba) = indexByteArray ba (off + 1)
 
+rawPageKeysOffset :: RawPage -> Word16
+rawPageKeysOffset (RawPage off ba) = indexByteArray ba (off + 2)
+
 type KeyOffset = Word16
 type ValueOffset = Word16
 
 rawPageKeyOffsets :: RawPage -> P.Vector KeyOffset
 rawPageKeyOffsets page@(RawPage off ba) =
-    P.Vector (off + fromIntegral (div2 dirOffset)) (fromIntegral dirNumKeys + 1) ba
+    P.Vector (off + fromIntegral (div2 dirOffset))
+             (fromIntegral dirNumKeys + 1) ba
   where
-    Dir {..} = rawPageDirectory page
+    !dirNumKeys = rawPageNumKeys page
+    !dirOffset  = rawPageKeysOffset page
 
 -- | for non-single key page case
 rawPageValueOffsets :: RawPage -> P.Vector ValueOffset
 rawPageValueOffsets page@(RawPage off ba) =
-    P.Vector (off + fromIntegral (div2 dirOffset) + fromIntegral dirNumKeys) (fromIntegral dirNumKeys + 1) ba
+    P.Vector (off + fromIntegral (div2 dirOffset) + fromIntegral dirNumKeys)
+             (fromIntegral dirNumKeys + 1) ba
   where
-    Dir {..} = rawPageDirectory page
+    !dirNumKeys = rawPageNumKeys page
+    !dirOffset  = rawPageKeysOffset page
 
 -- | single key page case
 rawPageValueOffsets1 :: RawPage -> (Word16, Word32)
@@ -135,7 +146,7 @@ rawPageValueOffsets1 page@(RawPage off ba) =
     , indexByteArray ba (div2 (off + fromIntegral (div2 dirOffset)) + 1)
     )
   where
-    Dir {..} = rawPageDirectory page
+    !dirOffset = rawPageKeysOffset page
 
 rawPageHasBlobRefAt :: RawPage -> Int -> Word64
 rawPageHasBlobRefAt _page@(RawPage off ba) i = do
@@ -151,7 +162,7 @@ rawPageOpAt page@(RawPage off ba) i = do
     let word = indexByteArray ba (div4 off + 1 + roundUpTo64 (fromIntegral dirNumKeys) + j)
     unsafeShiftR word (mul2 k) .&. 3
   where
-    Dir {..} = rawPageDirectory page
+    !dirNumKeys = rawPageNumKeys page
 
 roundUpTo64 :: Int -> Int
 roundUpTo64 i = unsafeShiftR (i + 63) 6
@@ -166,7 +177,7 @@ rawPageKeys page@(RawPage off ba) = do
         , let end   = fromIntegral (P.unsafeIndex offs (i + 1)) :: Int
         ]
   where
-    Dir {..} = rawPageDirectory page
+    !dirNumKeys = rawPageNumKeys page
 
 rawPageKeyAt :: RawPage -> Int -> P.Vector Word8
 rawPageKeyAt page@(RawPage off ba) i = do
@@ -187,7 +198,7 @@ rawPageValues page@(RawPage off ba) = do
         , let end   = fromIntegral (P.unsafeIndex offs (i + 1)) :: Int
         ]
   where
-    Dir {..} = rawPageDirectory page
+    !dirNumKeys = rawPageNumKeys page
 
 rawPageValueAt :: RawPage -> Int -> P.Vector Word8
 rawPageValueAt page@(RawPage off ba) i = do
@@ -206,6 +217,7 @@ rawPageSingleValue page@(RawPage off ba) =
     (start, end) = rawPageValueOffsets1 page
 
 -- we could create unboxed array.
+{-# INLINE rawPageBlobRefIndex #-}
 rawPageBlobRefIndex :: RawPage
     -> Int -- ^ blobref index. Calculate with 'rawPageCalculateBlobIndex'
     -> (Word64, Word32)
@@ -214,7 +226,8 @@ rawPageBlobRefIndex page@(RawPage off ba) i =
     , indexByteArray ba (off2 + i)
     )
   where
-    Dir {..} = rawPageDirectory page
+    !dirNumKeys  = rawPageNumKeys page
+    !dirNumBlobs = rawPageNumBlobs page
 
     -- offset to start of blobrefs arr
     off1 = div4 off + 1 + roundUpTo64 (fromIntegral dirNumKeys) + roundUpTo64 (fromIntegral (mul2 dirNumKeys))
@@ -231,22 +244,6 @@ rawPageCalculateBlobIndex (RawPage off ba) i = do
     let s = foldl' (+) 0 [ popCount (indexByteArray ba (div4 off + 1 + jj) :: Word64) | jj <- [0 .. j-1 ] ]
     let word = indexByteArray ba (div4 off + 1 + j) :: Word64
     s + popCount (word .&. complement (unsafeShiftL 0xffffffffffffffff k))
-
--------------------------------------------------------------------------------
--- Directory
--------------------------------------------------------------------------------
-
-data Directory = Dir
-    { dirNumKeys  :: !Word16
-    , dirNumBlobs :: !Word16
-    , dirOffset   :: !Word16
-    }
-
-rawPageDirectory :: RawPage -> Directory
-rawPageDirectory (RawPage off ba) = Dir
-    (indexByteArray ba off)
-    (indexByteArray ba (off + 1))
-    (indexByteArray ba (off + 2))
 
 -------------------------------------------------------------------------------
 -- Utils
