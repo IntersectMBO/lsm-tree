@@ -2,7 +2,6 @@
 {-# LANGUAGE DeriveFoldable  #-}
 {-# LANGUAGE DeriveFunctor   #-}
 {-# LANGUAGE MagicHash       #-}
-{-# LANGUAGE NamedFieldPuns  #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ViewPatterns    #-}
@@ -12,8 +11,16 @@
 -- | Incremental, in-memory run consruction
 --
 module Database.LSMTree.Internal.Run.Construction (
+    -- * Incremental, in-memory run construction
+    MRun
+  , new
+  , finalise
+    -- ** Adding k\/op pairs
+  , Add
+  , add
+  , addMultiPageInChunks
     -- * Types
-    RawValue (RawValue, EmptyRawValue)
+  , RawValue (RawValue, EmptyRawValue)
   , BlobRef (..)
     -- * Pages
     -- ** Page Builder
@@ -41,6 +48,8 @@ module Database.LSMTree.Internal.Run.Construction (
   ) where
 
 import           Control.Exception (assert)
+import           Control.Monad (unless)
+import           Control.Monad.ST.Strict
 import           Data.Bits (Bits (..))
 import qualified Data.ByteString.Builder as BB
 import           Data.ByteString.Short.Internal (ShortByteString (SBS))
@@ -48,12 +57,182 @@ import           Data.Foldable (Foldable (..))
 import           Data.Maybe (fromMaybe)
 import           Data.Monoid (Dual (..))
 import           Data.Primitive.ByteArray (ByteArray (..), sizeofByteArray)
+import           Data.STRef
 import           Data.Word (Word16, Word32, Word64, Word8)
 import           Database.LSMTree.Internal.Entry (Entry (..), onBlobRef,
                      onValue)
+import           Database.LSMTree.Internal.Run.BloomFilter (Bloom, MBloom)
+import qualified Database.LSMTree.Internal.Run.BloomFilter as Bloom
+import           Database.LSMTree.Internal.Run.Index.Compact (Chunk,
+                     CompactIndex, MCompactIndex)
+import qualified Database.LSMTree.Internal.Run.Index.Compact as Index
 import           Database.LSMTree.Internal.Serialise (SerialisedKey,
                      serialisedKey, shortByteStringFromTo, sizeofKey16,
                      sizeofKey64, topBits16)
+
+{------------------------------------------------------------------------------
+  TODO: placeholders until #55 is merged
+-------------------------------------------------------------------------------}
+
+data Append =
+    -- | One or more keys are in this page, and their values fit within a single
+    -- page.
+    AppendSinglePage SerialisedKey SerialisedKey
+    -- | There is only one key in this page, and it's value does not fit within
+    -- a single page.
+  | AppendMultiPage SerialisedKey Word32 -- ^ Number of overflow pages
+
+-- | Append a new page entry to a mutable compact index.
+append :: Append -> MCompactIndex s -> ST s [Chunk]
+append = error "append: replace by Database.LSMTree.Internal.Run.Index.Compact.append"
+
+mkAppend :: PageAcc -> Append
+mkAppend p = case unStricterList $ pageKeys p of
+    []                     -> error "mkAppend: empty list"
+    [k] | numBytes <= 4096 -> AppendSinglePage k k
+        | otherwise        -> AppendMultiPage  k (fromIntegral $ numBytes `rem` 4096 - 1)
+    ks                     -> AppendSinglePage (last ks) (head ks)
+  where
+    numBytes = pageSizeNumBytes $ pageSize p
+
+{-------------------------------------------------------------------------------
+  Incremental, in-memory run construction
+-------------------------------------------------------------------------------}
+
+-- | A mutable structure that keeps track of incremental, in-memory run
+-- construction.
+--
+-- Use 'new' to start run construction, add new key\/operation pairs to the run
+-- by using 'add' and co, and complete run construction using 'finalise'.
+data MRun s = MRun {
+      mbloom               :: !(MBloom s SerialisedKey)
+    , mindex               :: !(MCompactIndex s)
+      -- | Used to construct the full CompactIndex when run construction is
+      -- completed.
+    , indexChunksRef       :: !(STRef s [[Index.Chunk]]) -- TODO: make stricter
+    , currentPageRef       :: !(STRef s PageAcc)
+    , rangeFinderPrecision :: !Int
+    }
+
+-- | @'new' npages@ starts an incremental run construction.
+--
+-- @npages@ should be an upper bound on the number of pages that will be yielded
+-- by incremental run construction.
+new :: Int -> ST s (MRun s)
+new npages = do
+    mbloom <- Bloom.newEasy 0.1 npages -- TODO(optimise): tune bloom filter
+    let rangeFinderPrecision = Index.suggestRangeFinderPrecision npages
+    mindex <- Index.new rangeFinderPrecision 100 -- TODO(optimise): tune chunk size
+    indexChunksRef <- newSTRef []
+    currentPageRef <- newSTRef paEmpty
+    pure MRun{..}
+
+-- | Finalise an incremental run construction. Do /not/ use an 'MRun' after
+-- finalising it.
+--
+-- The frozen bloom filter and compact index will be returned, along with the
+-- final page of the run (if necessary), and the remaining chunks of the
+-- incrementally constructed compact index.
+finalise ::
+     MRun s
+  -> ST s ( Maybe BB.Builder
+          , Index.Chunk
+          , Index.FinalChunk
+          , Bloom SerialisedKey
+          , CompactIndex
+          )
+finalise mrun@MRun {..} = do
+    p <- readSTRef currentPageRef
+    mlastPage <-
+      if paIsEmpty p then
+        pure Nothing
+      else do
+        newChunks <- append (mkAppend p) mindex
+        storeChunks mrun newChunks
+        pure $ Just $ pageBuilder p
+    (chunk, fchunk) <- Index.unsafeEnd mindex
+    bloom <- Bloom.freeze mbloom
+    chunkss <- readSTRef indexChunksRef
+    let chunks = concat (reverse ([chunk] : chunkss))
+        index = Index.fromChunks chunks fchunk
+    pure (mlastPage, chunk, fchunk, bloom, index)
+
+{-------------------------------------------------------------------------------
+  Adding k\/op pairs
+-------------------------------------------------------------------------------}
+
+type Add s = MRun s -> ST s (Maybe (BB.Builder, [Index.Chunk]))
+
+-- | Add a serialised k\/op pair with an optional blob reference.
+--
+-- Use only for full values.
+add :: SerialisedKey -> Entry RawValue BlobRef -> Add s
+add k e mrun@MRun{..} = do
+    Bloom.insert mbloom k
+    p <- readSTRef currentPageRef
+    case paAddElem rangeFinderPrecision k e p of
+      Nothing -> do
+        (pb, cs) <- yieldAlways mrun
+        let p' = paSingleton k e
+        writeSTRef currentPageRef $! p'
+        pure $ Just (pb, cs)
+      Just p' -> do
+        writeSTRef currentPageRef $! p'
+        pure Nothing
+
+-- | __For multi-page values only during run merging:__ add the first chunk of a
+-- serialised k\/op pair with an optional blob reference. The caller of this
+-- function is responsible for copying the remaining chunks to the output file.
+--
+-- Will throw an error if the result of adding the k\/op pair is not exactly the
+-- size of a disk page.
+--
+-- During a merge, raw values that span multiple pages may not be read into memory
+-- as a whole, but in chunks. If you have access to the full bytes of a raw
+-- value, use 'add' and co instead.
+addMultiPageInChunks :: SerialisedKey -> Entry RawValue BlobRef -> Word32 -> MRun s -> ST s (BB.Builder, [Index.Chunk])
+addMultiPageInChunks k e nOverflow mrun@MRun{..}
+  | pageSizeNumBytes (psSingleton k e) == 4096 = do
+      prev <- yield mrun
+
+      Bloom.insert mbloom k
+      cs' <- append (AppendMultiPage k nOverflow) mindex
+      storeChunks mrun cs'
+      let p'  = paSingleton k e
+          pb' = pageBuilder p'
+
+      case prev of
+        Nothing       -> pure (pb', cs')
+        Just (pb, cs) -> pure (pb <> pb', cs' <> cs)
+  | otherwise = error "addMultiPage: expected exactly 4096 bytes"
+
+-- | Yield the current page if it is non-empty. New chunks are recorded in the
+-- mutable run, and the current page is set to empty.
+yield :: MRun s -> ST s (Maybe (BB.Builder, [Index.Chunk]))
+yield mrun@MRun{..} = do
+    p <- readSTRef currentPageRef
+    if paIsEmpty p then do
+      cs <- append (mkAppend p) mindex
+      storeChunks mrun cs
+      writeSTRef currentPageRef $! paEmpty
+      pure $ Just (pageBuilder p, cs)
+    else
+      pure Nothing
+
+-- | Yield the current page regardless of its contents. New chunks are recorded
+-- in the mutable run, and the current page is set to empty.
+yieldAlways :: MRun s -> ST s (BB.Builder, [Index.Chunk])
+yieldAlways mrun@MRun{..} = do
+    p <- readSTRef currentPageRef
+    cs <- append (mkAppend p) mindex
+    storeChunks mrun cs
+    writeSTRef currentPageRef $! paEmpty
+    pure (pageBuilder p, cs)
+
+-- | Store the given chunks in the MRun if non-empty.
+storeChunks :: MRun s -> [Index.Chunk] -> ST s ()
+storeChunks MRun{..} cs = unless (null cs) $
+    modifySTRef' indexChunksRef $ \css -> cs : css
 
 {-------------------------------------------------------------------------------
   Types
@@ -200,24 +379,22 @@ pageBuilder PageAcc{..} =
 -- a priori exactly how large those vectors should be, but we know they are
 -- bounded, though special care should be taken for multi-page values.
 data PageAcc = PageAcc {
-    -- | To check partitioning of keys
-    rangeFinderPrecision :: !Int -- ^ TODO: use a newtype
     -- | (1) directory of components
-  , pageSize             :: !PageSize
+    pageSize           :: !PageSize
     -- | (2) an array of 1-bit blob reference indicators
-  , pageBlobRefBitmap    :: !BitMap
+  , pageBlobRefBitmap  :: !BitMap
     -- | (3) an array of 2-bit operation types
-  , pageOperations       :: !CrumbMap
+  , pageOperations     :: !CrumbMap
     -- | (4) a pair of arrays of blob references
-  , pageBlobRefOffsets   :: !(StricterList Word64)
+  , pageBlobRefOffsets :: !(StricterList Word64)
     -- | (4) a pair of arrays of blob references, ctd
-  , pageBlobRefSizes     :: !(StricterList Word32)
+  , pageBlobRefSizes   :: !(StricterList Word32)
     --   (5) key offsets will be computed when serialising the page
     --   (6) value offsets will be computed when serialising the page
     -- | (7) the concatenation of all keys
-  , pageKeys             :: !(StricterList SerialisedKey)
+  , pageKeys           :: !(StricterList SerialisedKey)
     -- | (8) the concatenation of all values
-  , pageValues           :: !(StricterList RawValue)
+  , pageValues         :: !(StricterList RawValue)
   }
   deriving Show
 
@@ -227,10 +404,9 @@ paIsEmpty p = psIsEmpty (pageSize p)
 paIsOverfull :: PageAcc -> Bool
 paIsOverfull p = psIsOverfull (pageSize p)
 
-paEmpty :: Int -> PageAcc
-paEmpty rangeFinderPrecision = PageAcc {
-      rangeFinderPrecision
-    , pageSize           = psEmpty
+paEmpty :: PageAcc
+paEmpty = PageAcc {
+      pageSize           = psEmpty
     , pageBlobRefBitmap  = emptyBitMap
     , pageOperations     = emptyCrumbMap
     , pageBlobRefOffsets = SNil
@@ -240,16 +416,16 @@ paEmpty rangeFinderPrecision = PageAcc {
     }
 
 paAddElem ::
-     SerialisedKey
+     Int -- ^ Range-finder precision
+  -> SerialisedKey
   -> Entry RawValue BlobRef
   -> PageAcc
   -> Maybe PageAcc
-paAddElem k e PageAcc{..}
+paAddElem rangeFinderPrecision k e PageAcc{..}
   | Just pgsz' <- psAddElem k e pageSize
   , partitioned
   = Just $ PageAcc {
-        rangeFinderPrecision
-      , pageSize           = pgsz'
+        pageSize           = pgsz'
       , pageBlobRefBitmap  = pageBlobRefBitmap'
       , pageOperations     = pageOperations'
       , pageBlobRefOffsets = onBlobRef pageBlobRefOffsets ((`SCons` pageBlobRefOffsets ) . blobRefOffset) e
@@ -271,8 +447,11 @@ paAddElem k e PageAcc{..}
     entryToCrumb Mupdate{}        = 1
     entryToCrumb Delete{}         = 2
 
-paSingleton :: Int -> SerialisedKey -> Entry RawValue BlobRef -> PageAcc
-paSingleton rfp k e = fromMaybe (error err) $ paAddElem k e (paEmpty rfp)
+paSingleton :: SerialisedKey -> Entry RawValue BlobRef -> PageAcc
+paSingleton k e = fromMaybe (error err) $
+    -- range-finder precision only matters when the page is non-empty, so any
+    -- value would suffice, so we pick 0.
+    paAddElem 0 k e paEmpty
   where
     err = "Failed to add k/op pair to an empty page, but this should have \
           \worked! Are you sure the implementation of paAddElem is correct?"
@@ -315,8 +494,8 @@ psAddElem k e (PageSize n b sz)
         + sizeofKey64 k                         -- (7) key bytes
         + onValue 0 sizeofValue64 e             -- (8) value bytes
 
-_psSingleton :: SerialisedKey -> Entry RawValue BlobRef -> PageSize
-_psSingleton k e = fromMaybe (error err) $ psAddElem k e psEmpty
+psSingleton :: SerialisedKey -> Entry RawValue BlobRef -> PageSize
+psSingleton k e = fromMaybe (error err) $ psAddElem k e psEmpty
   where
     err = "Failed to add k/op pair to an empty page, but this should have \
           \worked! Are you sure the implementation of psAddElem is correct?"

@@ -86,15 +86,14 @@ fromListPageAcc :: [(SerialisedKey, Entry RawValue BlobRef)] -> PageAcc
 fromListPageAcc = fromListPageAcc' 0
 
 fromListPageAcc' :: Int -> [(SerialisedKey, Entry RawValue BlobRef)] -> PageAcc
-fromListPageAcc' rfp kops = fromJust $ go (paEmpty rfp) kops
+fromListPageAcc' rfp kops = fromJust $ go paEmpty kops
   where
     -- Add keys until full
     go !pacc [] = Just pacc
     go !pacc ((k, e):kops') =
-      case paAddElem k e pacc of
+      case paAddElem rfp k e pacc of
         Nothing    -> Just pacc
         Just pacc' -> go pacc' kops'
-
 
 fromProtoKOp ::
      (Proto.Key, Proto.Operation, Maybe Proto.BlobRef)
