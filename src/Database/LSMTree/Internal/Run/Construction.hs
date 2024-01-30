@@ -50,11 +50,13 @@ import           Data.Foldable (Foldable (..))
 import           Data.Maybe (fromMaybe)
 import           Data.Monoid (Dual (..))
 import           Data.Primitive.ByteArray (ByteArray (..), sizeofByteArray)
+import qualified Data.Vector.Primitive as P
 import           Data.Word (Word16, Word32, Word64, Word8)
 import           Database.LSMTree.Internal.Entry (Entry (..), onBlobRef,
                      onValue)
-import           Database.LSMTree.Internal.Serialise (SerialisedKey,
-                     sizeofKey16, sizeofKey64, toShortByteString, topBits16)
+import           Database.LSMTree.Internal.Serialise
+                     (SerialisedKey (SerialisedKey), sizeofKey16, sizeofKey64,
+                     topBits16)
 import           Foreign.Ptr (minusPtr, plusPtr)
 
 {-------------------------------------------------------------------------------
@@ -173,7 +175,8 @@ pageBuilder PageAcc{..} =
       vs  -> Left (scanr (\v o -> o + sizeofValue16 v) offValues vs)
 
     rawKey :: SerialisedKey -> BB.Builder
-    rawKey = BB.shortByteString . toShortByteString
+    rawKey (SerialisedKey (P.Vector off size (ByteArray ba#))) =
+        shortByteStringFromTo off (off + size) (SBS ba#)
 
     rawValue :: RawValue -> BB.Builder
     rawValue EmptyRawValue                  = mempty

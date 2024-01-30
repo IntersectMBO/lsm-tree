@@ -51,9 +51,9 @@ library
     Database.LSMTree.Normal
 
   build-depends:
-    , base                  >=4.16  && <4.19
+    , base                  >=4.16      && <4.19
     , bitvec                ^>=1.1
-    , bytestring
+    , bytestring            ^>=0.11.4.0
     , containers
     , deepseq
     , filepath
@@ -109,7 +109,6 @@ library lsm-tree-utils
     , containers
     , deepseq
     , lsm-tree:{lsm-tree, bloomfilter}
-    , primitive
     , QuickCheck
     , random
     , wide-word
@@ -133,6 +132,7 @@ test-suite lsm-tree-test
     Test.Database.LSMTree.Internal.Run.BloomFilter
     Test.Database.LSMTree.Internal.Run.Construction
     Test.Database.LSMTree.Internal.Run.Index.Compact
+    Test.Database.LSMTree.Internal.Serialise
     Test.Database.LSMTree.Model.Monoidal
     Test.Database.LSMTree.Model.Normal
     Test.Database.LSMTree.ModelIO.Class
@@ -145,9 +145,9 @@ test-suite lsm-tree-test
     Test.Util.TypeFamilyWrappers
 
   build-depends:
-    , base                                             >=4.16      && <4.19
+    , base                                             >=4.16 && <4.19
     , bitvec
-    , bytestring                                       ^>=0.11.4.0
+    , bytestring
     , constraints
     , containers
     , cryptohash-sha256
