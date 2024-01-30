@@ -90,7 +90,7 @@ mkAppend :: PageAcc -> Append
 mkAppend p = case unStricterList $ pageKeys p of
     []                     -> error "mkAppend: empty list"
     [k] | numBytes <= 4096 -> AppendSinglePage k k
-        | otherwise        -> AppendMultiPage  k (fromIntegral $ numBytes `rem` 4096 - 1)
+        | otherwise        -> AppendMultiPage  k (fromIntegral $ (numBytes - 1) `quot` 4096)
     ks                     -> AppendSinglePage (last ks) (head ks)
   where
     numBytes = pageSizeNumBytes $ pageSize p
@@ -211,13 +211,13 @@ addMultiPageInChunks k e nOverflow mrun@MRun{..}
 yield :: MRun s -> ST s (Maybe (BB.Builder, [Index.Chunk]))
 yield mrun@MRun{..} = do
     p <- readSTRef currentPageRef
-    if paIsEmpty p then do
+    if paIsEmpty p then
+      pure Nothing
+    else do
       cs <- append (mkAppend p) mindex
       storeChunks mrun cs
       writeSTRef currentPageRef $! paEmpty
       pure $ Just (pageBuilder p, cs)
-    else
-      pure Nothing
 
 -- | Yield the current page regardless of its contents. New chunks are recorded
 -- in the mutable run, and the current page is set to empty.
