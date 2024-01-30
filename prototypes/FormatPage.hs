@@ -21,6 +21,7 @@ module FormatPage (
     serialisePage,
     genFullPageLogical,
     mkPageLogical,
+    toBitmap,
 ) where
 
 import           Data.Bits
