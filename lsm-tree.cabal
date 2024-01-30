@@ -35,6 +35,7 @@ library
     Data.Map.Range
     Database.LSMTree.Common
     Database.LSMTree.Internal.BlobRef
+    Database.LSMTree.Internal.CRC32C
     Database.LSMTree.Internal.Entry
     Database.LSMTree.Internal.Integration
     Database.LSMTree.Internal.KMerge
@@ -57,6 +58,7 @@ library
     , bitvec                ^>=1.1
     , bytestring            ^>=0.11.4.0
     , containers
+    , crc32c                >=0.1
     , deepseq
     , filepath
     , fs-api                ^>=0.2
@@ -131,6 +133,7 @@ test-suite lsm-tree-test
     Database.LSMTree.ModelIO.Session
     Test.Database.LSMTree.Common
     Test.Database.LSMTree.Generators
+    Test.Database.LSMTree.Internal.CRC32C
     Test.Database.LSMTree.Internal.RawPage
     Test.Database.LSMTree.Internal.Run.BloomFilter
     Test.Database.LSMTree.Internal.Run.Construction
@@ -153,6 +156,7 @@ test-suite lsm-tree-test
     , bytestring
     , constraints
     , containers
+    , crc32c                                           >=0.1
     , cryptohash-sha256
     , deepseq
     , directory
