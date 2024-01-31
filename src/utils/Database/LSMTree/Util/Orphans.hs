@@ -13,14 +13,13 @@ import           Control.DeepSeq (NFData (..))
 import qualified Data.ByteString.Builder as B
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ByteString.Short.Internal as SBS
-import           Data.Primitive.ByteArray (ByteArray (..))
 import           Data.WideWord.Word256 (Word256 (..))
 import           Data.Word (Word64)
 import           Database.LSMTree.Internal.Run.BloomFilter (Hashable (..))
 import           Database.LSMTree.Internal.Run.Index.Compact (Append (..),
                      CompactIndex (..), SearchResult (..))
 import           Database.LSMTree.Internal.Serialise (Serialise (..),
-                     SerialisedKey (..))
+                     SerialisedKey (..), fromShortByteString)
 import           GHC.Generics (Generic)
 import           System.Random (Uniform)
 
@@ -56,7 +55,7 @@ instance Serialise Word256 where
     where
       fromByteString :: LBS.ByteString -> SerialisedKey
       fromByteString =
-            (\(SBS.SBS ba) -> SerialisedKey (ByteArray ba))
+            fromShortByteString
           . SBS.toShort
           . LBS.toStrict
 
@@ -70,6 +69,6 @@ instance Serialise Word64 where
     where
       fromByteString :: LBS.ByteString -> SerialisedKey
       fromByteString =
-            (\(SBS.SBS ba) -> SerialisedKey (ByteArray ba))
+            fromShortByteString
           . SBS.toShort
           . LBS.toStrict
