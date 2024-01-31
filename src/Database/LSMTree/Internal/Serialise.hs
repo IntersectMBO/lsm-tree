@@ -6,6 +6,8 @@
 {-# LANGUAGE MagicHash                  #-}
 {-# LANGUAGE StandaloneKindSignatures   #-}
 {-# LANGUAGE UnboxedTuples              #-}
+{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
+{- HLINT ignore "Redundant lambda" -}
 
 #include <MachDeps.h>
 
@@ -18,22 +20,29 @@ module Database.LSMTree.Internal.Serialise (
   , sizeofKey
   , sizeofKey16
   , sizeofKey64
+    -- * @bytestring@ utils
   , fromShortByteString
+  , serialisedKey
+  , shortByteStringFromTo
   ) where
 
 import           Control.Exception (assert)
 import           Data.Bits (Bits (shiftL, shiftR))
 import           Data.BloomFilter.Hash (hashList32)
+import qualified Data.ByteString.Builder as BB
+import qualified Data.ByteString.Builder.Internal as BB
 import           Data.ByteString.Short (ShortByteString (SBS))
 import qualified Data.ByteString.Short as SBS
+import qualified Data.ByteString.Short.Internal as SBS
 import           Data.Kind (Type)
-import           Data.Primitive.ByteArray
+import           Data.Primitive.ByteArray (ByteArray (..), compareByteArrays)
 import qualified Data.Vector.Primitive as P
 import           Database.LSMTree.Internal.Run.BloomFilter (Hashable (..))
+import           Foreign.Ptr
 import           GHC.Exts
 import           GHC.Word
 
--- | Serialisation into a 'SerialisedKey' (i.e., a 'ByteArray').
+-- | Serialisation into a 'SerialisedKey'
 --
 -- INVARIANT: Serialisation should preserve ordering, @x `compare` y ==
 -- serialise x `compare` serialise y@. Serialised keys are lexicographically
@@ -64,8 +73,8 @@ compareBytes k1@(SerialisedKey vec1) k2@(SerialisedKey vec2) =
         !len2 = sizeofKey k2
         !len  = min len1 len2
      in case compareByteArrays ba1 off1 ba2 off2 len of
-          EQ | len2 > len1 -> LT
-             | len2 < len1 -> GT
+          EQ | len1 < len2 -> LT
+             | len1 > len2 -> GT
           o  -> o
   where
     P.Vector off1 _size1 ba1 = vec1
@@ -157,6 +166,40 @@ sizeofKey16 = fromIntegral . sizeofKey
 sizeofKey64 :: SerialisedKey -> Word64
 sizeofKey64 = fromIntegral . sizeofKey
 
+{-------------------------------------------------------------------------------
+  @bytestring@ utils
+-------------------------------------------------------------------------------}
+
 fromShortByteString :: ShortByteString -> SerialisedKey
 fromShortByteString sbs@(SBS ba#) =
     SerialisedKey (P.Vector 0 (SBS.length sbs) (ByteArray ba#))
+
+{-# INLINE serialisedKey #-}
+serialisedKey :: SerialisedKey -> BB.Builder
+serialisedKey (SerialisedKey (P.Vector off size (ByteArray ba#))) =
+    shortByteStringFromTo off (off + size) (SBS ba#)
+
+-- | Copy of 'SBS.shortByteString', but with bounds (unchecked)
+{-# INLINE shortByteStringFromTo #-}
+shortByteStringFromTo :: Int -> Int -> ShortByteString -> BB.Builder
+shortByteStringFromTo = \i j sbs -> BB.builder $ shortByteStringCopyStepFromTo i j sbs
+
+-- | Copy of 'SBS.shortByteStringCopyStep' but with bounds (unchecked)
+{-# INLINE shortByteStringCopyStepFromTo #-}
+shortByteStringCopyStepFromTo ::
+  Int -> Int -> ShortByteString -> BB.BuildStep a -> BB.BuildStep a
+shortByteStringCopyStepFromTo !ip0 !ipe0 !sbs k =
+    go ip0 ipe0
+  where
+    go !ip !ipe (BB.BufferRange op ope)
+      | inpRemaining <= outRemaining = do
+          SBS.copyToPtr sbs ip op inpRemaining
+          let !br' = BB.BufferRange (op `plusPtr` inpRemaining) ope
+          k br'
+      | otherwise = do
+          SBS.copyToPtr sbs ip op outRemaining
+          let !ip' = ip + outRemaining
+          return $ BB.bufferFull 1 ope (go ip' ipe)
+      where
+        outRemaining = ope `minusPtr` op
+        inpRemaining = ipe - ip

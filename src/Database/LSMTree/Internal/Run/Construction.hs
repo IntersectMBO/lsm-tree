@@ -43,21 +43,17 @@ module Database.LSMTree.Internal.Run.Construction (
 import           Control.Exception (assert)
 import           Data.Bits (Bits (..))
 import qualified Data.ByteString.Builder as BB
-import qualified Data.ByteString.Builder.Internal as BB
 import           Data.ByteString.Short.Internal (ShortByteString (SBS))
-import qualified Data.ByteString.Short.Internal as SBS
 import           Data.Foldable (Foldable (..))
 import           Data.Maybe (fromMaybe)
 import           Data.Monoid (Dual (..))
 import           Data.Primitive.ByteArray (ByteArray (..), sizeofByteArray)
-import qualified Data.Vector.Primitive as P
 import           Data.Word (Word16, Word32, Word64, Word8)
 import           Database.LSMTree.Internal.Entry (Entry (..), onBlobRef,
                      onValue)
-import           Database.LSMTree.Internal.Serialise
-                     (SerialisedKey (SerialisedKey), sizeofKey16, sizeofKey64,
-                     topBits16)
-import           Foreign.Ptr (minusPtr, plusPtr)
+import           Database.LSMTree.Internal.Serialise (SerialisedKey,
+                     serialisedKey, shortByteStringFromTo, sizeofKey16,
+                     sizeofKey64, topBits16)
 
 {-------------------------------------------------------------------------------
   Types
@@ -138,7 +134,7 @@ pageBuilder PageAcc{..} =
           Right (offset1, offset2) -> BB.word16LE offset1
                                   <> BB.word32LE offset2
     -- (7) the concatenation of all keys
-    <> dfoldMap rawKey pageKeys
+    <> dfoldMap serialisedKey pageKeys
     -- (8) the concatenation of all values
     <> dfoldMap rawValue pageValues
     -- padding
@@ -174,10 +170,6 @@ pageBuilder PageAcc{..} =
       [v] -> Right (offValues, fromIntegral offValues + sizeofValue32 v)
       vs  -> Left (scanr (\v o -> o + sizeofValue16 v) offValues vs)
 
-    rawKey :: SerialisedKey -> BB.Builder
-    rawKey (SerialisedKey (P.Vector off size (ByteArray ba#))) =
-        shortByteStringFromTo off (off + size) (SBS ba#)
-
     rawValue :: RawValue -> BB.Builder
     rawValue EmptyRawValue                  = mempty
     rawValue (RawValue i j (ByteArray ba#)) = shortByteStringFromTo i j (SBS ba#)
@@ -187,30 +179,6 @@ pageBuilder PageAcc{..} =
                  | otherwise           = 4096 - bytesRemaining
       where bytesRemaining = pageSizeNumBytes `rem` 4096
 
--- | Copy of 'SBS.shortByteString', but with bounds (unchecked)
-{-# INLINE shortByteStringFromTo #-}
-shortByteStringFromTo :: Int -> Int -> ShortByteString -> BB.Builder
-shortByteStringFromTo = \i j sbs -> BB.builder $ shortByteStringCopyStepFromTo i j sbs
-
--- | Copy of 'SBS.shortByteStringCopyStep' but with bounds (unchecked)
-{-# INLINE shortByteStringCopyStepFromTo #-}
-shortByteStringCopyStepFromTo ::
-  Int -> Int -> ShortByteString -> BB.BuildStep a -> BB.BuildStep a
-shortByteStringCopyStepFromTo !ip0 !ipe0 !sbs k =
-    go ip0 ipe0
-  where
-    go !ip !ipe (BB.BufferRange op ope)
-      | inpRemaining <= outRemaining = do
-          SBS.copyToPtr sbs ip op inpRemaining
-          let !br' = BB.BufferRange (op `plusPtr` inpRemaining) ope
-          k br'
-      | otherwise = do
-          SBS.copyToPtr sbs ip op outRemaining
-          let !ip' = ip + outRemaining
-          return $ BB.bufferFull 1 ope (go ip' ipe)
-      where
-        outRemaining = ope `minusPtr` op
-        inpRemaining = ipe - ip
 
 {-------------------------------------------------------------------------------
   Accumulator for page contents
