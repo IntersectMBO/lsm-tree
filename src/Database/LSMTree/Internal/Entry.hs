@@ -3,12 +3,16 @@
 
 module Database.LSMTree.Internal.Entry (
     Entry (..)
+  , RawEntry
   , onValue
   , onBlobRef
   ) where
 
 import           Control.DeepSeq (NFData (..))
 import           Data.Bifunctor (Bifunctor (..))
+import qualified Data.Vector.Primitive as P
+import           Data.Word (Word32, Word64, Word8)
+
 
 data Entry v blobref
     = Insert !v
@@ -16,6 +20,8 @@ data Entry v blobref
     | Mupdate !v
     | Delete
   deriving (Eq, Show, Functor, Foldable, Traversable)
+
+type RawEntry = Entry (P.Vector Word8) (Word64, Word32)
 
 instance (NFData v, NFData blobref) => NFData (Entry v blobref) where
     rnf (Insert v)            = rnf v

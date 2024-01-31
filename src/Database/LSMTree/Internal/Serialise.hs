@@ -15,6 +15,7 @@
 module Database.LSMTree.Internal.Serialise (
     Serialise (..)
   , SerialisedKey (..)
+  , copySerialisedKey
   , topBits16
   , sliceBits32
   , sizeofKey
@@ -27,6 +28,7 @@ module Database.LSMTree.Internal.Serialise (
   ) where
 
 import           Control.Exception (assert)
+import           Control.Monad.ST.Strict
 import           Data.Bits (Bits (shiftL, shiftR))
 import           Data.BloomFilter.Hash (hashList32)
 import qualified Data.ByteString.Builder as BB
@@ -87,6 +89,11 @@ instance Hashable SerialisedKey where
 -- TODO: optimisation
 hashBytes :: SerialisedKey -> Word32 -> IO Word32
 hashBytes (SerialisedKey vec) = hashList32 (P.toList vec)
+
+-- TODO: is there a faster option than copying through the mutable interace?
+copySerialisedKey :: SerialisedKey -> SerialisedKey
+copySerialisedKey (SerialisedKey pvec) = SerialisedKey $
+    runST (P.thaw pvec >>= P.unsafeFreeze)
 
 -- | @'topBits16' n k@ slices the first @n@ bits from the /top/ of the
 -- serialised key @k@. Returns the string of bits as a 'Word16'.

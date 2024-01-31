@@ -41,6 +41,7 @@ library
     Database.LSMTree.Internal.Monoidal
     Database.LSMTree.Internal.Normal
     Database.LSMTree.Internal.RawPage
+    Database.LSMTree.Internal.RawPage.Mutable
     Database.LSMTree.Internal.Run
     Database.LSMTree.Internal.Run.BloomFilter
     Database.LSMTree.Internal.Run.Construction
