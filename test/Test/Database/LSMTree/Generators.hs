@@ -4,8 +4,9 @@
 module Test.Database.LSMTree.Generators (tests) where
 
 import           Data.Word (Word64)
-import           Database.LSMTree.Generators (ChunkSize, Pages, RFPrecision,
-                     chunkSizeInvariant, pagesInvariant, rfprecInvariant)
+import           Database.LSMTree.Generators (ChunkSize, LogicalPageSummaries,
+                     RFPrecision, chunkSizeInvariant, pagesInvariant,
+                     rfprecInvariant)
 import           Test.Database.LSMTree.Internal.Run.Index.Compact ()
 import           Test.QuickCheck (Arbitrary (..), Testable (..))
 import           Test.Tasty (TestTree, testGroup)
@@ -19,11 +20,11 @@ tests = testGroup "Test.Database.LSMTree.Generators" [
         , testProperty "Shrinking satisfies invariant" $
             property . all rfprecInvariant . shrink @RFPrecision
       ]
-    , testGroup "Pages (partitioned)" [
+    , testGroup "LogicalPageSummaries" [
           testProperty "Arbitrary satisfies invariant" $
             property . pagesInvariant @Word64
         , testProperty "Shrinking satisfies invariant" $
-            property . all pagesInvariant . shrink @(Pages Word64)
+            property . all pagesInvariant . shrink @(LogicalPageSummaries Word64)
         ]
     , testGroup "Chunk size" [
         testProperty "Arbitrary satisfies invariant" $

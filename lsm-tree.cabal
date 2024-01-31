@@ -99,6 +99,7 @@ library lsm-tree-utils
   exposed-modules:
     Database.LSMTree.Extras
     Database.LSMTree.Generators
+    Database.LSMTree.Util
     Database.LSMTree.Util.Orphans
     System.Random.Extras
 
@@ -145,6 +146,7 @@ test-suite lsm-tree-test
 
   build-depends:
     , base                                             >=4.16      && <4.19
+    , bitvec
     , bytestring                                       ^>=0.11.4.0
     , constraints
     , containers
