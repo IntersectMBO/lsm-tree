@@ -44,15 +44,14 @@ import           Data.Bits (Bits (shiftL, shiftR))
 import           Data.BloomFilter.Hash (hashList32)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BB
-import qualified Data.ByteString.Builder.Internal as BB
 import           Data.ByteString.Internal as BS.Internal
 import           Data.ByteString.Short (ShortByteString (SBS))
 import qualified Data.ByteString.Short as SBS
-import qualified Data.ByteString.Short.Internal as SBS
 import           Data.Primitive.ByteArray (ByteArray (..), compareByteArrays)
 import qualified Data.Vector.Primitive as P
+import           Database.LSMTree.Internal.ByteString (shortByteStringFromTo)
 import           Database.LSMTree.Internal.Run.BloomFilter (Hashable (..))
-import           Foreign.Ptr
+
 import           GHC.Exts
 import           GHC.ForeignPtr as GHC
 import           GHC.Word
@@ -240,28 +239,3 @@ fromShortByteString sbs@(SBS ba#) =
 rawBytes :: RawBytes -> BB.Builder
 rawBytes (RawBytes (P.Vector off size (ByteArray ba#))) =
     shortByteStringFromTo off (off + size) (SBS ba#)
-
--- | Copy of 'SBS.shortByteString', but with bounds (unchecked)
-{-# INLINE shortByteStringFromTo #-}
-shortByteStringFromTo :: Int -> Int -> ShortByteString -> BB.Builder
-shortByteStringFromTo = \i j sbs -> BB.builder $ shortByteStringCopyStepFromTo i j sbs
-
--- | Copy of 'SBS.shortByteStringCopyStep' but with bounds (unchecked)
-{-# INLINE shortByteStringCopyStepFromTo #-}
-shortByteStringCopyStepFromTo ::
-  Int -> Int -> ShortByteString -> BB.BuildStep a -> BB.BuildStep a
-shortByteStringCopyStepFromTo !ip0 !ipe0 !sbs k =
-    go ip0 ipe0
-  where
-    go !ip !ipe (BB.BufferRange op ope)
-      | inpRemaining <= outRemaining = do
-          SBS.copyToPtr sbs ip op inpRemaining
-          let !br' = BB.BufferRange (op `plusPtr` inpRemaining) ope
-          k br'
-      | otherwise = do
-          SBS.copyToPtr sbs ip op outRemaining
-          let !ip' = ip + outRemaining
-          return $ BB.bufferFull 1 ope (go ip' ipe)
-      where
-        outRemaining = ope `minusPtr` op
-        inpRemaining = ipe - ip

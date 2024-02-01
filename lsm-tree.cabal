@@ -42,6 +42,8 @@ library
     Data.Map.Range
     Database.LSMTree.Common
     Database.LSMTree.Internal.BlobRef
+    Database.LSMTree.Internal.BloomFilter
+    Database.LSMTree.Internal.ByteString
     Database.LSMTree.Internal.CRC32C
     Database.LSMTree.Internal.Entry
     Database.LSMTree.Internal.KMerge
@@ -145,6 +147,7 @@ test-suite lsm-tree-test
     Database.LSMTree.ModelIO.Session
     Test.Database.LSMTree.Common
     Test.Database.LSMTree.Generators
+    Test.Database.LSMTree.Internal.BloomFilter
     Test.Database.LSMTree.Internal.CRC32C
     Test.Database.LSMTree.Internal.Entry
     Test.Database.LSMTree.Internal.RawPage
@@ -165,21 +168,21 @@ test-suite lsm-tree-test
     Test.Util.TypeFamilyWrappers
 
   build-depends:
-    , base                                             >=4.16 && <4.20
+    , base                                                          >=4.16 && <4.20
     , bitvec
     , bytestring
     , constraints
     , containers
-    , crc32c                                           >=0.1
+    , crc32c                                                        >=0.1
     , cryptohash-sha256
     , deepseq
     , directory
     , filepath
     , fs-api
-    , fs-sim                                           >=0.2
+    , fs-sim                                                        >=0.2
     , io-classes
-    , io-sim                                           >=1.2
-    , lsm-tree:{lsm-tree, lsm-tree-utils, prototypes}
+    , io-sim                                                        >=1.2
+    , lsm-tree:{lsm-tree, bloomfilter, lsm-tree-utils, prototypes}
     , mtl
     , primitive
     , QuickCheck

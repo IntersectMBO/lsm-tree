@@ -37,7 +37,7 @@ module Data.BloomFilter
 
     -- * Types
       Hash
-    , Bloom
+    , Bloom (..)
     , MBloom
 
     -- * Immutable Bloom filters
@@ -68,9 +68,6 @@ module Data.BloomFilter
     -- | If you serialize the raw bit arrays below to disk, do not
     -- expect them to be portable to systems with different
     -- conventions for endianness or word size.
-
-    -- | The raw bit array used by the immutable 'Bloom' type.
-    , bitArray
     ) where
 
 import Control.Monad (liftM, forM_)
@@ -93,14 +90,13 @@ data Bloom a = B {
     , size     :: {-# UNPACK #-} !Int   -- ^ Size in bits. This is a multiple of 64
     , bitArray :: {-# UNPACK #-} !V.BitVec64
     }
+  deriving (Eq, Show)
 type role Bloom nominal
 
 hashes :: Hash.Hashable a => Bloom a -> a -> [Hash.Hash]
 hashes ub = Hash.cheapHashes (hashesN ub)
 {-# INLINE hashes #-}
 
-instance Show (Bloom a) where
-    show ub = "Bloom { " ++ show (size ub) ++ " bits } "
 
 instance NFData (Bloom a) where
     rnf !_ = ()

@@ -141,11 +141,15 @@ The remainder of the header for format 0 consists of:
  2. The bit size of the filter (32bit)
  3. A boolean to indicate endianness, 0 little, 1 big (32bit)
 
+The fields of the header are serialized in little-endian format.
+
+Note: due the bitsize field being 32 bit we can only serialize up to 512MB large bloom filters.
+
 The family of hash functions to use is implied by the format version.
 
-The filter bit vector itself is organised as a whole number of 32bit words.
+The filter bit vector itself is organised as a whole number of 64 bit words.
 It follows immediately after the header. The endianness from the header
-indicates the endianness of the 32bit words.
+indicates the endianness of the 64 bit words.
 
 ## Index file
 
