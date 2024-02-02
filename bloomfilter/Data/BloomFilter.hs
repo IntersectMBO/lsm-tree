@@ -75,26 +75,23 @@ module Data.BloomFilter
 import Control.Monad (liftM, forM_)
 import Control.Monad.ST (ST, runST)
 import Control.DeepSeq (NFData(..))
-import Data.Array.Base (unsafeAt)
-import qualified Data.Array.Base as ST
-import Data.Array.Unboxed (UArray)
-import Data.Bits ((.&.), unsafeShiftL, unsafeShiftR)
-import Data.BloomFilter.Util ((:*)(..))
+import Data.Bits ((.&.), unsafeShiftL)
 import qualified Data.BloomFilter.Mutable as MB
 import qualified Data.BloomFilter.Mutable.Internal as MB
 import Data.BloomFilter.Mutable.Internal (Hash, MBloom)
-import Data.Word (Word32)
 
 import Prelude hiding (elem, length, notElem,
                        (/), (*), div, divMod, mod, rem)
 
+import Data.Bit (Bit (..))
+import qualified Data.Vector.Unboxed as UV
 
 -- | An immutable Bloom filter, suitable for querying from pure code.
 data Bloom a = B {
       hashes :: !(a -> [Hash])
     , shift :: {-# UNPACK #-} !Int
     , mask :: {-# UNPACK #-} !Int
-    , bitArray :: {-# UNPACK #-} !(UArray Int Hash)
+    , bitArray :: {-# UNPACK #-} !(UV.Vector Bit)
     }
 
 instance Show (Bloom a) where
@@ -102,9 +99,6 @@ instance Show (Bloom a) where
 
 instance NFData (Bloom a) where
     rnf !_ = ()
-
-logBitsInHash :: Int
-logBitsInHash = 5 -- Data.BloomFilter.Mutable.logPower2 bitsInHash
 
 -- | Create an immutable Bloom filter, using the given setup function
 -- which executes in the 'ST' monad.
@@ -134,19 +128,19 @@ create hash numBits body = runST $ do
 -- filter may be modified afterwards.
 freeze :: MBloom s a -> ST s (Bloom a)
 freeze mb = B (MB.hashes mb) (MB.shift mb) (MB.mask mb) `liftM`
-            ST.freeze (MB.bitArray mb)
+            UV.freeze (MB.bitArray mb)
 
 -- | Create an immutable Bloom filter from a mutable one.  The mutable
 -- filter /must not/ be modified afterwards, or a runtime crash may
 -- occur.  For a safer creation interface, use 'freeze' or 'create'.
 unsafeFreeze :: MBloom s a -> ST s (Bloom a)
 unsafeFreeze mb = B (MB.hashes mb) (MB.shift mb) (MB.mask mb) `liftM`
-                    ST.unsafeFreeze (MB.bitArray mb)
+                    UV.unsafeFreeze (MB.bitArray mb)
 
 -- | Copy an immutable Bloom filter to create a mutable one.  There is
 -- no non-copying equivalent.
 thaw :: Bloom a -> ST s (MBloom s a)
-thaw ub = MB.MB (hashes ub) (shift ub) (mask ub) `liftM` ST.thaw (bitArray ub)
+thaw ub = MB.MB (hashes ub) (shift ub) (mask ub) `liftM` UV.thaw (bitArray ub)
 
 -- | Create an empty Bloom filter.
 --
@@ -169,25 +163,15 @@ singleton :: (a -> [Hash])     -- ^ family of hash functions to use
 {-# INLINE [1] singleton #-}
 singleton hash numBits elt = create hash numBits (\mb -> MB.insert mb elt)
 
--- | Given a filter's mask and a hash value, compute an offset into
--- a word array and a bit offset within that word.
-hashIdx :: Int -> Word32 -> (Int :* Int)
-hashIdx msk x = (y `unsafeShiftR` logBitsInHash) :* (y .&. hashMask)
-  where hashMask = 31 -- bitsInHash - 1
-        y = fromIntegral x .&. msk
-
--- | Hash the given value, returning a list of (word offset, bit
--- offset) pairs, one per hash value.
-hashesU :: Bloom a -> a -> [Int :* Int]
-hashesU ub elt = hashIdx (mask ub) `map` hashes ub elt
-
 -- | Query an immutable Bloom filter for membership.  If the value is
 -- present, return @True@.  If the value is not present, there is
 -- /still/ some possibility that @True@ will be returned.
 elem :: a -> Bloom a -> Bool
-elem elt ub = all test (hashesU ub elt)
-  where test (off :* bit) = (bitArray ub `unsafeAt` off) .&. (1 `unsafeShiftL` bit) /= 0
-          
+elem elt ub = all test (hashes ub elt)
+  where test idx' =
+          let !idx = fromIntegral idx' .&. mask ub :: Int
+          in unBit (bitArray ub UV.! idx)
+
 modify :: (forall s. (MBloom s a -> ST s z))  -- ^ mutation function (result is discarded)
         -> Bloom a
         -> Bloom a
@@ -249,8 +233,10 @@ insertList elts = modify $ \mb -> mapM_ (MB.insert mb) elts
 -- /is/ present, return @False@.  If the value is not present, there
 -- is /still/ some possibility that @False@ will be returned.
 notElem :: a -> Bloom a -> Bool
-notElem elt ub = any test (hashesU ub elt)
-  where test (off :* bit) = (bitArray ub `unsafeAt` off) .&. (1 `unsafeShiftL` bit) == 0
+notElem elt ub = any test (hashes ub elt)
+  where test idx' =
+          let !idx = fromIntegral idx' .&. mask ub :: Int
+          in not (unBit (bitArray ub UV.! idx))
 
 -- | Return the size of an immutable Bloom filter, in bits.
 length :: Bloom a -> Int

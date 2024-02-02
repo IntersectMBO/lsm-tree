@@ -14,9 +14,11 @@ module Data.BloomFilter.Mutable.Internal
     , MBloom(..)
     ) where
 
-import Data.Array.Base (STUArray)
 import Data.Bits (shiftL)
 import Data.Word (Word32)
+
+import Data.Bit (Bit)
+import qualified Data.Vector.Unboxed as UV
 
 import Prelude hiding (elem, length, notElem,
                        (/), (*), div, divMod, mod, rem)
@@ -30,7 +32,7 @@ data MBloom s a = MB {
       hashes :: !(a -> [Hash])
     , shift :: {-# UNPACK #-} !Int
     , mask :: {-# UNPACK #-} !Int
-    , bitArray :: {-# UNPACK #-} !(STUArray s Int Hash)
+    , bitArray :: {-# UNPACK #-} !(UV.MVector s Bit)
     }
 
 instance Show (MBloom s a) where

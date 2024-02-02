@@ -3,16 +3,10 @@
 module Data.BloomFilter.Util
     (
       nextPowerOfTwo
-    , (:*)(..)
     ) where
 
 import Data.Bits ((.|.), unsafeShiftR)
 
--- | A strict pair type.
-data a :* b = !a :* !b
-            deriving (Eq, Ord, Show)
-
--- | Compute the nearest power of two greater to or equal than the
 -- given number.
 nextPowerOfTwo :: Int -> Int
 {-# INLINE nextPowerOfTwo #-}

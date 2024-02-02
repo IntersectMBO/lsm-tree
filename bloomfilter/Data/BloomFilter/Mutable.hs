@@ -64,12 +64,12 @@ module Data.BloomFilter.Mutable
 
 import Control.Monad (liftM, forM_)
 import Control.Monad.ST (ST)
-import Data.Array.Base (unsafeRead, unsafeWrite)
-import Data.Bits ((.&.), (.|.), unsafeShiftL, unsafeShiftR)
-import Data.BloomFilter.Array (newArray)
-import Data.BloomFilter.Util ((:*)(..), nextPowerOfTwo)
-import Data.Word (Word32)
+import Data.Bits ((.&.), unsafeShiftL, unsafeShiftR)
+import Data.BloomFilter.Util (nextPowerOfTwo)
 import Data.BloomFilter.Mutable.Internal
+
+import Data.Bit (Bit (..))
+import qualified Data.Vector.Unboxed.Mutable as MUV
 
 import Prelude hiding (elem, length, notElem,
                        (/), (*), div, divMod, mod, rem)
@@ -81,13 +81,12 @@ import Prelude hiding (elem, length, notElem,
 new :: (a -> [Hash])          -- ^ family of hash functions to use
     -> Int                    -- ^ number of bits in filter
     -> ST s (MBloom s a)
-new hash numBits = MB hash shft msk `liftM` newArray numElems numBytes
+new hash numBits = MB hash shft msk `liftM` MUV.new trueBits
   where twoBits | numBits < 1 = 1
                 | numBits > maxHash = maxHash
                 | isPowerOfTwo numBits = numBits
                 | otherwise = nextPowerOfTwo numBits
         numElems = max 2 (twoBits `unsafeShiftR` logBitsInHash)
-        numBytes = numElems `unsafeShiftL` logBytesInHash
         trueBits = numElems `unsafeShiftL` logBitsInHash
         shft     = logPower2 trueBits
         msk      = trueBits - 1
@@ -103,41 +102,27 @@ maxHash = 1073741824
 logBitsInHash :: Int
 logBitsInHash = 5 -- logPower2 bitsInHash
 
-logBytesInHash :: Int
-logBytesInHash = 2 -- logPower2 (sizeOf (undefined :: Hash))
-
--- | Given a filter's mask and a hash value, compute an offset into
--- a word array and a bit offset within that word.
-hashIdx :: Int -> Word32 -> (Int :* Int)
-hashIdx msk x = (y `unsafeShiftR` logBitsInHash) :* (y .&. hashMask)
-  where hashMask = 31 -- bitsInHash - 1
-        y = fromIntegral x .&. msk
-
--- | Hash the given value, returning a list of (word offset, bit
--- offset) pairs, one per hash value.
-hashesM :: MBloom s a -> a -> [Int :* Int]
-hashesM mb elt = hashIdx (mask mb) `map` hashes mb elt
-
 -- | Insert a value into a mutable Bloom filter.  Afterwards, a
 -- membership query for the same value is guaranteed to return @True@.
 insert :: MBloom s a -> a -> ST s ()
 insert mb elt = do
   let mu = bitArray mb
-  forM_ (hashesM mb elt) $ \(word :* bit) -> do
-      old <- unsafeRead mu word
-      unsafeWrite mu word (old .|. (1 `unsafeShiftL` bit))
+  forM_ (hashes mb elt) $ \idx' -> do
+      let !idx = fromIntegral idx' .&. mask mb :: Int
+      MUV.unsafeWrite mu idx (Bit True)
 
 -- | Query a mutable Bloom filter for membership.  If the value is
 -- present, return @True@.  If the value is not present, there is
 -- /still/ some possibility that @True@ will be returned.
 elem :: a -> MBloom s a -> ST s Bool
-elem elt mb = loop (hashesM mb elt)
+elem elt mb = loop (hashes mb elt)
   where mu = bitArray mb
-        loop ((word :* bit):wbs) = do
-          i <- unsafeRead mu word
-          if i .&. (1 `unsafeShiftL` bit) == 0
-            then return False
-            else loop wbs
+        loop (idx':wbs) = do
+          let !idx = fromIntegral idx' .&. mask mb :: Int
+          Bit b <- MUV.unsafeRead mu idx
+          case b of
+              False -> return False
+              True  -> loop wbs
         loop _ = return True
 
 -- bitsInHash :: Int
