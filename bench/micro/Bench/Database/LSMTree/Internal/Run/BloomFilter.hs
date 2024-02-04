@@ -63,7 +63,7 @@ elemEnv fpr nbloom nelemsPositive nelemsNegative = do
     pure (Bloom.Easy.easyList fpr (fmap serialise xs), fmap serialise zs)
 
 -- | Used for benchmarking 'Bloom.elem'.
-elems :: Bloom a -> [a] -> ()
+elems :: Bloom.Hashable a => Bloom a -> [a] -> ()
 elems b xs = foldl' (\acc x -> Bloom.elem x b `seq` acc) () xs
 
 -- | Input environment for benchmarking 'constructBloom'.

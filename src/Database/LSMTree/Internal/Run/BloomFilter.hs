@@ -66,7 +66,7 @@ import           Prelude hiding (elem)
 -- filter using 'suggestSizing'.
 fromList :: Hash.Hashable a => Double -> [a] -> Bloom a
 fromList requestedFPR xs = runST $ do
-    b <- Mutable.new (Hash.cheapHashes numHashFuncs) numBits
+    b <- Mutable.new numHashFuncs numBits
     mapM_ (Mutable.insert b) xs
     Bloom.freeze b
   where

@@ -21,8 +21,9 @@
 
 module Data.BloomFilter.Hash
     (
+      Hash
     -- * Basic hash functionality
-      Hashable(..)
+    , Hashable(..)
     , hash32
     , hash64
     , hashSalt32
@@ -58,6 +59,10 @@ import Data.ByteString.Internal (ByteString(..))
 import qualified Data.ByteString as SB
 import qualified Data.ByteString.Lazy.Internal as LB
 import qualified Data.ByteString.Lazy as LB
+
+-- | A hash value is 32 bits wide.  This limits the maximum size of a
+-- filter to about four billion elements, or 512 megabytes of memory.
+type Hash = Word32
 
 #include "HsBaseConfig.h"
 
@@ -121,7 +126,7 @@ hashSalt64 salt k = unsafePerformIO $ hashIO64 k salt
 -- inspected as many times as there are hashes requested.
 hashes :: Hashable a => Int     -- ^ number of hashes to compute
        -> a                     -- ^ value to hash
-       -> [Word32]
+       -> [Hash]
 hashes n v = unfoldr go (n,0x3f56da2d)
     where go (k,s) | k <= 0    = Nothing
                    | otherwise = let s' = hashSalt32 s v
@@ -141,7 +146,7 @@ hashes n v = unfoldr go (n,0x3f56da2d)
 -- low order bits of the final hash stay well mixed.
 cheapHashes :: Hashable a => Int -- ^ number of hashes to compute
             -> a                 -- ^ value to hash
-            -> [Word32]
+            -> [Hash]
 {-# SPECIALIZE cheapHashes :: Int -> SB.ByteString -> [Word32] #-}
 {-# SPECIALIZE cheapHashes :: Int -> LB.ByteString -> [Word32] #-}
 {-# SPECIALIZE cheapHashes :: Int -> String -> [Word32] #-}

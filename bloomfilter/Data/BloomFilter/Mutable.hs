@@ -67,6 +67,7 @@ import Control.Monad.ST (ST)
 import Data.Bits ((.&.), unsafeShiftL, unsafeShiftR)
 import Data.BloomFilter.Util (nextPowerOfTwo)
 import Data.BloomFilter.Mutable.Internal
+import Data.BloomFilter.Hash (Hashable)
 
 import Data.Bit (Bit (..))
 import qualified Data.Vector.Unboxed.Mutable as MUV
@@ -78,7 +79,7 @@ import Prelude hiding (elem, length, notElem,
 -- bits used may be larger than the number requested.  It is always
 -- rounded up to the nearest higher power of two, but will be clamped
 -- at a maximum of 4 gigabits, since hashes are 32 bits in size.
-new :: (a -> [Hash])          -- ^ family of hash functions to use
+new :: Int                    -- ^ number of hash functions to use
     -> Int                    -- ^ number of bits in filter
     -> ST s (MBloom s a)
 new hash numBits = MB hash shft msk `liftM` MUV.new trueBits
@@ -104,7 +105,7 @@ logBitsInHash = 5 -- logPower2 bitsInHash
 
 -- | Insert a value into a mutable Bloom filter.  Afterwards, a
 -- membership query for the same value is guaranteed to return @True@.
-insert :: MBloom s a -> a -> ST s ()
+insert :: Hashable a => MBloom s a -> a -> ST s ()
 insert mb elt = do
   let mu = bitArray mb
   forM_ (hashes mb elt) $ \idx' -> do
@@ -114,7 +115,7 @@ insert mb elt = do
 -- | Query a mutable Bloom filter for membership.  If the value is
 -- present, return @True@.  If the value is not present, there is
 -- /still/ some possibility that @True@ will be returned.
-elem :: a -> MBloom s a -> ST s Bool
+elem :: Hashable a => a -> MBloom s a -> ST s Bool
 elem elt mb = loop (hashes mb elt)
   where mu = bitArray mb
         loop (idx':wbs) = do
