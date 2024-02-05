@@ -3,7 +3,7 @@
 
 # Scope
 
-This document is intend to cover the format of the files used to represent an
+This document is intended to cover the format of the files used to represent an
 individual LSM run, including:
 
 * any header for metadata
