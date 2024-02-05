@@ -17,8 +17,8 @@ import qualified Data.Map.Strict as Map
 import           Database.LSMTree.Extras
 import           Database.LSMTree.Generators
 import           Database.LSMTree.Internal.Run.BloomFilter as Bloom
-import           Database.LSMTree.Internal.Serialise (Serialise (serialise),
-                     SerialisedKey)
+import           Database.LSMTree.Internal.Serialise (SerialisedKey,
+                     serialiseKey)
 import           Database.LSMTree.Util.Orphans ()
 import           System.Random
 import           System.Random.Extras
@@ -60,7 +60,7 @@ elemEnv fpr nbloom nelemsPositive nelemsNegative = do
                   $ uniformWithoutReplacement    @UTxOKey stdgen  (nbloom + nelemsNegative)
         ys2       = sampleUniformWithReplacement @UTxOKey stdgen' nelemsPositive xs
     zs <- generate $ shuffle (ys1 ++ ys2)
-    pure (Bloom.Easy.easyList fpr (fmap serialise xs), fmap serialise zs)
+    pure (Bloom.Easy.easyList fpr (fmap serialiseKey xs), fmap serialiseKey zs)
 
 -- | Used for benchmarking 'Bloom.elem'.
 elems :: Bloom.Hashable a => Bloom a -> [a] -> ()
@@ -73,7 +73,7 @@ constructionEnv n = do
     stdgen' <- newStdGen
     let ks = uniformWithoutReplacement @UTxOKey stdgen n
         vs = uniformWithReplacement @UTxOKey stdgen' n
-    pure $ Map.fromList (zipWith (\k v -> (serialise k, serialise v)) ks vs)
+    pure $ Map.fromList (zipWith (\k v -> (serialiseKey k, serialiseKey v)) ks vs)
 
 -- | Used for benchmarking the construction of bloom filters from write buffers.
 constructBloom ::

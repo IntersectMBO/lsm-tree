@@ -22,7 +22,7 @@ import qualified Control.Concurrent.STM as Real
 import           Control.Monad ((<=<))
 import           Control.Monad.IOSim (IOSim)
 import           Data.Kind (Type)
-import           Database.LSMTree.Internal.Serialise (Serialise)
+import           Database.LSMTree.Internal.Serialise (SerialiseKey)
 import qualified Database.LSMTree.Monoidal as Monoidal
 import           Database.LSMTree.Normal
 import           Test.QuickCheck (Arbitrary (..), frequency, oneof)
@@ -111,4 +111,4 @@ instance InterpretOp SumProd.Op (Op.WrapRealized (IOSim s)) where
   QuickCheck
 -------------------------------------------------------------------------------}
 
-deriving newtype instance Serialise a => Serialise (Small a)
+deriving newtype instance SerialiseKey a => SerialiseKey (Small a)

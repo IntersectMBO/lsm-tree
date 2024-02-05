@@ -46,6 +46,8 @@ library
     Database.LSMTree.Internal.Run.Construction
     Database.LSMTree.Internal.Run.Index.Compact
     Database.LSMTree.Internal.Serialise
+    Database.LSMTree.Internal.Serialise.Class
+    Database.LSMTree.Internal.Serialise.RawBytes
     Database.LSMTree.Internal.WriteBuffer
     Database.LSMTree.Monoidal
     Database.LSMTree.Normal

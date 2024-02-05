@@ -11,13 +11,14 @@ import           Data.Maybe (isJust)
 import           Data.Primitive.ByteArray (ByteArray (..), byteArrayFromList)
 import qualified Data.Vector as V
 import qualified Data.Vector.Primitive as P
-import           Data.Word (Word16, Word32, Word64, Word8)
+import           Data.Word (Word16, Word64, Word8)
 import           GHC.Word (byteSwap16)
 import           Test.QuickCheck.Instances ()
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.HUnit (testCase, (@=?))
 import           Test.Tasty.QuickCheck
 
+import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import qualified Database.LSMTree.Internal.Entry as Entry
 import           Database.LSMTree.Internal.RawPage
 import           FormatPage (BlobRef (..), Key (..), Operation (..),
@@ -64,15 +65,15 @@ tests = testGroup "Database.LSMTree.Internal.RawPage"
         rawPageNumBlobs page @=? 0
         rawPageKeyOffsets page @=? P.fromList [32, 34]
         rawPageValueOffsets1 page @=? (34, 36)
-        rawPageHasBlobRefAt page 0 @=? 0
+        rawPageHasBlobSpanAt page 0 @=? 0
         rawPageOpAt page 0 @=? 0
         rawPageKeys page @=? V.singleton (P.fromList [0x42, 0x43])
 
-    , testCase "single-insert-blobref" $ do
+    , testCase "single-insert-blobspan" $ do
         let bytes :: [Word16]
             bytes =
                 [ 1, 1, 36, 0             -- directory
-                , 1, 0, 0, 0              -- has blobrefs
+                , 1, 0, 0, 0              -- has blobspan
                 , 0, 0, 0, 0              -- ops
                 , 0xff, 0, 0, 0
                 , 0xfe, 0
@@ -90,8 +91,8 @@ tests = testGroup "Database.LSMTree.Internal.RawPage"
         rawPageNumBlobs page @=? 1
         rawPageKeyOffsets page @=? P.fromList [44, 46]
         rawPageValueOffsets1 page @=? (46, 48)
-        rawPageHasBlobRefAt page 0 @=? 1
-        rawPageBlobRefIndex page 0 @=? (0xff,0xfe)
+        rawPageHasBlobSpanAt page 0 @=? 1
+        rawPageBlobSpanIndex page 0 @=? BlobSpan 0xff 0xfe
         rawPageOpAt page 0 @=? 0
         rawPageKeys page @=? V.singleton (P.fromList [0x42, 0x43])
 
@@ -113,7 +114,7 @@ tests = testGroup "Database.LSMTree.Internal.RawPage"
         rawPageNumBlobs page @=? 0
         rawPageKeyOffsets page @=? P.fromList [32, 34]
         rawPageValueOffsets1 page @=? (34, 34)
-        rawPageHasBlobRefAt page 0 @=? 0
+        rawPageHasBlobSpanAt page 0 @=? 0
         rawPageOpAt page 0 @=? 2
         rawPageKeys page @=? V.singleton (P.fromList [0x42, 0x43])
 
@@ -137,8 +138,8 @@ tests = testGroup "Database.LSMTree.Internal.RawPage"
         rawPageNumBlobs page @=? 0
         rawPageKeyOffsets page @=? P.fromList [34, 36, 38]
         rawPageValueOffsets page @=? P.fromList [38, 40, 42]
-        rawPageHasBlobRefAt page 0 @=? 0
-        rawPageHasBlobRefAt page 1 @=? 0
+        rawPageHasBlobSpanAt page 0 @=? 0
+        rawPageHasBlobSpanAt page 1 @=? 0
         rawPageOpAt page 0 @=? 1
         rawPageOpAt page 1 @=? 1
         rawPageKeys page @=? V.fromList [P.fromList [0x42, 0x43], P.fromList [0x52, 0x53]]
@@ -149,8 +150,8 @@ tests = testGroup "Database.LSMTree.Internal.RawPage"
 
     , testProperty "keys" prop_keys
     , testProperty "values" prop_values
-    , testProperty "hasblobrefs" prop_hasblobrefs
-    , testProperty "blobrefs" prop_blobrefs
+    , testProperty "hasblobspans" prop_hasblobspans
+    , testProperty "blobspans" prop_blobspans
     , testProperty "ops" prop_ops
     , testProperty "entries" prop_entries_exists
     , testProperty "missing" prop_entries_all
@@ -187,23 +188,23 @@ prop_values p@(PageLogical xs) =
     extractValue (Mupsert (Value bs)) = bsToVector bs
     extractValue Delete               = P.empty
 
-prop_blobrefs :: PageLogical -> Property
-prop_blobrefs p@(PageLogical xs) =
-    [rawPageBlobRefIndex rawpage i | i <- [0 .. length blobRefs - 1] ] === blobRefs
+prop_blobspans :: PageLogical -> Property
+prop_blobspans p@(PageLogical xs) =
+    [rawPageBlobSpanIndex rawpage i | i <- [0 .. length blobSpans - 1] ] === blobSpans
   where
     rawpage = fst $ toRawPage p
 
-    blobRefs :: [(Word64,Word32)]
-    blobRefs = [ (x, y) | (_, _, Just (BlobRef x y)) <- xs ]
+    blobSpans :: [BlobSpan]
+    blobSpans = [ BlobSpan x y | (_, _, Just (BlobRef x y)) <- xs ]
 
-prop_hasblobrefs :: PageLogical -> Property
-prop_hasblobrefs p@(PageLogical xs) =
-    [ rawPageHasBlobRefAt rawpage i /= 0 | i <- [0 .. length xs - 1] ] === blobRefs
+prop_hasblobspans :: PageLogical -> Property
+prop_hasblobspans p@(PageLogical xs) =
+    [ rawPageHasBlobSpanAt rawpage i /= 0 | i <- [0 .. length xs - 1] ] === blobSpans
   where
     rawpage = fst $ toRawPage p
 
-    blobRefs :: [Bool]
-    blobRefs = [ isJust mb | (_, _, mb) <- xs ]
+    blobSpans :: [Bool]
+    blobSpans = [ isJust mb | (_, _, mb) <- xs ]
 
 prop_ops :: PageLogical -> Property
 prop_ops p@(PageLogical xs) =
@@ -225,7 +226,7 @@ prop_entries_exists (PageLogical xs) =
     rawPageEntry rawpage (bsToVector k) === Just case op of
         Insert (Value v)       -> case blobref of
             Nothing            -> Entry.Insert (bsToVector v)
-            Just (BlobRef x y) -> Entry.InsertWithBlob (bsToVector v) (x, y)
+            Just (BlobRef x y) -> Entry.InsertWithBlob (bsToVector v) (BlobSpan x y)
         Mupsert (Value v)      -> Entry.Mupdate (bsToVector v)
         Delete                 -> Entry.Delete
   where
@@ -242,11 +243,11 @@ prop_entries_all page@(PageLogical xs) bs =
     lookup3 _ []            = Nothing
     lookup3 a ((a',b,c):zs) = if a == a' then Just (b, c) else lookup3 a zs
 
-    expected :: Maybe (Entry.Entry (P.Vector Word8) (Word64, Word32))
+    expected :: Maybe (Entry.Entry (P.Vector Word8) BlobSpan)
     expected = case lookup3 (Key (bsFromVector k)) xs of
         Nothing                                     -> Nothing
         Just (Insert (Value v), Nothing)            -> Just (Entry.Insert (bsToVector v))
-        Just (Insert (Value v), Just (BlobRef x y)) -> Just (Entry.InsertWithBlob (bsToVector v) (x, y))
+        Just (Insert (Value v), Just (BlobRef x y)) -> Just (Entry.InsertWithBlob (bsToVector v) (BlobSpan x y))
         Just (Mupsert (Value v), _)                 -> Just (Entry.Mupdate (bsToVector v))
         Just (Delete, _)                            -> Just Entry.Delete
 
@@ -254,7 +255,7 @@ prop_big_insert :: Key -> Maybe BlobRef -> Property
 prop_big_insert k blobref =
     rawPageValue1Prefix rawpage === case blobref of
         Nothing            -> Entry.Insert (bsToVector (BS.take size v), fromIntegral sfxSize)
-        Just (BlobRef x y) -> Entry.InsertWithBlob (bsToVector (BS.take size v), fromIntegral sfxSize) (x, y)
+        Just (BlobRef x y) -> Entry.InsertWithBlob (bsToVector (BS.take size v), fromIntegral sfxSize) (BlobSpan x y)
   where
     page = PageLogical [(k, Insert (Value v), blobref)]
     (rawpage, sfx) = toRawPage page
@@ -273,7 +274,7 @@ prop_single_entry k op blobref = label (show $ BS.null sfx) $
     rawPageValue1Prefix rawpage === case op of
         Insert (Value v)       -> case blobref of
             Nothing            -> Entry.Insert (bsToVector (trim v), fromIntegral sfxSize)
-            Just (BlobRef x y) -> Entry.InsertWithBlob (bsToVector (trim v), fromIntegral sfxSize) (x, y)
+            Just (BlobRef x y) -> Entry.InsertWithBlob (bsToVector (trim v), fromIntegral sfxSize) (BlobSpan x y)
         Mupsert (Value v)      -> Entry.Mupdate (bsToVector (trim v), fromIntegral sfxSize)
         Delete                 -> Entry.Delete
   where

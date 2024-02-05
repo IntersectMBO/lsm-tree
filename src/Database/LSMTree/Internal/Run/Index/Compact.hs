@@ -525,11 +525,11 @@ fromPageSpan (Just (i, j)) | i > j     = error $ printf "fromPageSpan: %d > %d" 
 -- describe the interval at that point.
 search :: SerialisedKey -> CompactIndex -> SearchResult
 search k CompactIndex{..} = -- Pre: @[0, V.length ciPrimary)@
-    let !rfbits    = fromIntegral $ topBits16 ciRangeFinderPrecision k
+    let !rfbits    = fromIntegral $ keyTopBits16 ciRangeFinderPrecision k
         !lb        = fromIntegral $ ciRangeFinder VU.! rfbits
         !ub        = fromIntegral $ ciRangeFinder VU.! (rfbits + 1)
         -- Post: @[lb, ub)@
-        !primbits  = sliceBits32 ciRangeFinderPrecision k
+        !primbits  = keySliceBits32 ciRangeFinderPrecision k
     in  fromPageSpan $
       case unsafeSearchLEBounds primbits ciPrimary lb ub of
         Nothing -> Nothing -- Post: @[lb, lb)@ (empty).
@@ -687,11 +687,11 @@ appendSingle (minKey, maxKey) mci@MCompactIndex{..} = do
     yield mci
   where
     minRfbits :: Word16
-    minRfbits = topBits16 mciRangeFinderPrecision minKey
+    minRfbits = keyTopBits16 mciRangeFinderPrecision minKey
 
     minPrimbits, maxPrimbits :: Word32
-    minPrimbits = sliceBits32 mciRangeFinderPrecision minKey
-    maxPrimbits = sliceBits32 mciRangeFinderPrecision maxKey
+    minPrimbits = keySliceBits32 mciRangeFinderPrecision minKey
+    maxPrimbits = keySliceBits32 mciRangeFinderPrecision maxKey
 
     -- | Meat of the function
     goAppend ::
@@ -746,7 +746,7 @@ appendMulti (k, n0) mci@MCompactIndex{..} =
     maybe id (:) <$> appendSingle (k, k) mci <*> overflows (fromIntegral n0)
   where
     minPrimbits :: Word32
-    minPrimbits = sliceBits32 mciRangeFinderPrecision k
+    minPrimbits = keySliceBits32 mciRangeFinderPrecision k
 
     -- | Fill primary, clash and LTP vectors for a larger-than-page value. Yields
     -- chunks if necessary
@@ -831,12 +831,14 @@ data Chunk = Chunk {
   , cClashes        :: !(VU.Vector Bit)
   , cLargerThanPage :: !(VU.Vector Bit)
   }
+  deriving (Show, Eq)
 
 data FinalChunk = FinalChunk {
     fcRangeFinder          :: !(VU.Vector Word32)
   , fcRangeFinderPrecision :: !Int
   , fcTieBreaker           :: !(Map SerialisedKey Int)
   }
+  deriving (Show, Eq)
 
 -- | Feed in 'Chunk's in the same order that they were yielded from incremental
 -- construction.
