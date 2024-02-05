@@ -1,4 +1,4 @@
-{-# LANGUAGE BangPatterns, Rank2Types, ScopedTypeVariables, TypeOperators #-}
+{-# LANGUAGE BangPatterns, Rank2Types, ScopedTypeVariables, TypeOperators, RoleAnnotations #-}
 
 -- |
 -- Module: Data.BloomFilter
@@ -79,6 +79,8 @@ import Data.Bits ((.&.), unsafeShiftL)
 import qualified Data.BloomFilter.Mutable as MB
 import qualified Data.BloomFilter.Mutable.Internal as MB
 import Data.BloomFilter.Mutable.Internal (Hash, MBloom)
+import Data.BloomFilter.Hash (Hashable)
+import qualified Data.BloomFilter.Hash as Hash
 
 import Prelude hiding (elem, length, notElem,
                        (/), (*), div, divMod, mod, rem)
@@ -88,11 +90,16 @@ import qualified Data.Vector.Unboxed as UV
 
 -- | An immutable Bloom filter, suitable for querying from pure code.
 data Bloom a = B {
-      hashes :: !(a -> [Hash])
+      hashesN :: {-# UNPACK #-} !Int
     , shift :: {-# UNPACK #-} !Int
     , mask :: {-# UNPACK #-} !Int
     , bitArray :: {-# UNPACK #-} !(UV.Vector Bit)
     }
+type role Bloom nominal
+
+hashes :: Hash.Hashable a => Bloom a -> a -> [Hash.Hash]
+hashes ub = Hash.cheapHashes (hashesN ub)
+{-# INLINE hashes #-}
 
 instance Show (Bloom a) where
     show ub = "Bloom { " ++ show ((1::Int) `unsafeShiftL` shift ub) ++ " bits } "
@@ -114,7 +121,7 @@ instance NFData (Bloom a) where
 -- @
 --
 -- Note that the result of the setup function is not used.
-create :: (a -> [Hash])        -- ^ family of hash functions to use
+create :: Int        -- ^ number of hash functions to use
         -> Int                  -- ^ number of bits in filter
         -> (forall s. (MBloom s a -> ST s ()))  -- ^ setup function
         -> Bloom a
@@ -127,26 +134,26 @@ create hash numBits body = runST $ do
 -- | Create an immutable Bloom filter from a mutable one.  The mutable
 -- filter may be modified afterwards.
 freeze :: MBloom s a -> ST s (Bloom a)
-freeze mb = B (MB.hashes mb) (MB.shift mb) (MB.mask mb) `liftM`
+freeze mb = B (MB.hashesN mb) (MB.shift mb) (MB.mask mb) `liftM`
             UV.freeze (MB.bitArray mb)
 
 -- | Create an immutable Bloom filter from a mutable one.  The mutable
 -- filter /must not/ be modified afterwards, or a runtime crash may
 -- occur.  For a safer creation interface, use 'freeze' or 'create'.
 unsafeFreeze :: MBloom s a -> ST s (Bloom a)
-unsafeFreeze mb = B (MB.hashes mb) (MB.shift mb) (MB.mask mb) `liftM`
+unsafeFreeze mb = B (MB.hashesN mb) (MB.shift mb) (MB.mask mb) `liftM`
                     UV.unsafeFreeze (MB.bitArray mb)
 
 -- | Copy an immutable Bloom filter to create a mutable one.  There is
 -- no non-copying equivalent.
 thaw :: Bloom a -> ST s (MBloom s a)
-thaw ub = MB.MB (hashes ub) (shift ub) (mask ub) `liftM` UV.thaw (bitArray ub)
+thaw ub = MB.MB (hashesN ub) (shift ub) (mask ub) `liftM` UV.thaw (bitArray ub)
 
 -- | Create an empty Bloom filter.
 --
 -- This function is subject to fusion with 'insert'
 -- and 'insertList'.
-empty :: (a -> [Hash])         -- ^ family of hash functions to use
+empty :: Int                    -- ^ number of hash functions to use
        -> Int                   -- ^ number of bits in filter
        -> Bloom a
 {-# INLINE [1] empty #-}
@@ -156,7 +163,8 @@ empty hash numBits = create hash numBits (\_ -> return ())
 --
 -- This function is subject to fusion with 'insert'
 -- and 'insertList'.
-singleton :: (a -> [Hash])     -- ^ family of hash functions to use
+singleton :: Hashable a
+           => Int               -- ^ number of hash functions to use
            -> Int               -- ^ number of bits in filter
            -> a                 -- ^ element to insert
            -> Bloom a
@@ -166,7 +174,7 @@ singleton hash numBits elt = create hash numBits (\mb -> MB.insert mb elt)
 -- | Query an immutable Bloom filter for membership.  If the value is
 -- present, return @True@.  If the value is not present, there is
 -- /still/ some possibility that @True@ will be returned.
-elem :: a -> Bloom a -> Bool
+elem :: Hashable a => a -> Bloom a -> Bool
 elem elt ub = all test (hashes ub elt)
   where test idx' =
           let !idx = fromIntegral idx' .&. mask ub :: Int
@@ -189,7 +197,7 @@ modify body ub = runST $ do
 --
 -- Repeated applications of this function with itself are subject to
 -- fusion.
-insert :: a -> Bloom a -> Bloom a
+insert :: Hashable a => a -> Bloom a -> Bloom a
 {-# NOINLINE insert #-}
 insert elt = modify (flip MB.insert elt)
 
@@ -201,7 +209,7 @@ insert elt = modify (flip MB.insert elt)
 --
 -- Repeated applications of this function with itself are subject to
 -- fusion.
-insertList :: [a] -> Bloom a -> Bloom a
+insertList :: Hashable a => [a] -> Bloom a -> Bloom a
 {-# NOINLINE insertList #-}
 insertList elts = modify $ \mb -> mapM_ (MB.insert mb) elts
 
@@ -232,7 +240,7 @@ insertList elts = modify $ \mb -> mapM_ (MB.insert mb) elts
 -- | Query an immutable Bloom filter for non-membership.  If the value
 -- /is/ present, return @False@.  If the value is not present, there
 -- is /still/ some possibility that @False@ will be returned.
-notElem :: a -> Bloom a -> Bool
+notElem :: Hashable a => a -> Bloom a -> Bool
 notElem elt ub = any test (hashes ub elt)
   where test idx' =
           let !idx = fromIntegral idx' .&. mask ub :: Int
@@ -250,7 +258,8 @@ length = unsafeShiftL 1 . shift
 --
 --   * If it returns @'Just' (a,b)@, @a@ is added to the filter and
 --     @b@ is used as a new seed.
-unfold :: forall a b. (a -> [Hash]) -- ^ family of hash functions to use
+unfold :: forall a b. Hashable a
+        => Int                       -- ^ number of hash functions to use
         -> Int                       -- ^ number of bits in filter
         -> (b -> Maybe (a, b))       -- ^ seeding function
         -> b                         -- ^ initial seed
@@ -272,9 +281,10 @@ unfold hs numBits f k = create hs numBits (loop k)
 -- @
 --import "Data.BloomFilter.Hash" (cheapHashes)
 --
---filt = fromList (cheapHashes 3) 1024 [\"foo\", \"bar\", \"quux\"]
+--filt = fromList 3 1024 [\"foo\", \"bar\", \"quux\"]
 -- @
-fromList :: (a -> [Hash])      -- ^ family of hash functions to use
+fromList :: Hashable a
+          => Int                -- ^ number of hash functions to use
           -> Int                -- ^ number of bits in filter
           -> [a]                -- ^ values to populate with
           -> Bloom a

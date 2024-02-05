@@ -30,7 +30,7 @@ import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Word (Word64)
 import           Database.LSMTree.Extras
-import           Database.LSMTree.Internal.Run.BloomFilter (Bloom)
+import           Database.LSMTree.Internal.Run.BloomFilter (Bloom, Hashable)
 import qualified Database.LSMTree.Internal.Run.BloomFilter as Bloom
 import           System.Random
 import           System.Random.Extras
@@ -58,8 +58,8 @@ tests = testGroup "Database.LSMTree.Internal.Run.BloomFilter" [
   Properties
 -------------------------------------------------------------------------------}
 
-prop_noFalseNegatives :: forall a proxy.
-     proxy a
+prop_noFalseNegatives :: forall a proxy. Hashable a
+  => proxy a
   -> (Double -> BloomMaker a)
   -> FPR                      -- ^ Requested FPR
   -> UniformWithoutReplacement a
@@ -69,7 +69,7 @@ prop_noFalseNegatives _ mkBloom (FPR requestedFPR) (UniformWithoutReplacement xs
     in  property $ all (`Bloom.elem` xsBloom) xs
 
 prop_verifyFPR ::
-     (Ord a, Uniform a)
+     (Ord a, Uniform a, Hashable a)
   => proxy a
   -> (Double -> BloomMaker a)
   -> FPR                      -- ^ Requested FPR
@@ -160,7 +160,7 @@ instance (Ord a, Uniform a) => Arbitrary (UniformWithoutReplacement a) where
 --
 -- REF: https://en.wikipedia.org/wiki/False_positive_rate
 measureApproximateFPR ::
-     forall a proxy. (Ord a, Uniform a)
+     forall a proxy. (Ord a, Uniform a, Hashable a)
   => proxy a      -- ^ The types of values to generate.
   -> BloomMaker a -- ^ How to construct the bloom filter.
   -> Int          -- ^ @numEntries@: number of entries to put into the bloom filter.
@@ -183,7 +183,7 @@ measureApproximateFPR _ mkBloom numEntries stdgen =
 -- time. For example, a 'Word16' would be fine, but a 'Word32' would take much
 -- too long.
 measureExactFPR ::
-     forall a proxy. (Ord a, Enum a, Bounded a, Uniform a)
+     forall a proxy. (Ord a, Enum a, Bounded a, Uniform a, Hashable a)
   => proxy a      -- ^ The types of values to generate.
   -> BloomMaker a -- ^ How to construct the bloom filter.
   -> Int          -- ^ @numEntries@: number of entries to put into the bloom filter.
@@ -205,7 +205,7 @@ data Test =
   | TrueNegative
   | FalseNegative
 
-analyse :: Ord a => Bloom a -> Set a -> a -> Test
+analyse :: (Ord a, Hashable a) => Bloom a -> Set a -> a -> Test
 analyse xsBloom xsSet y
     |     isBloomMember &&     isTrueMember = TruePositive
     |     isBloomMember && not isTrueMember = FalsePositive

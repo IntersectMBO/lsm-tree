@@ -37,7 +37,7 @@ type BloomMaker a = [a] -> Bloom a
 -- filter using 'suggestSizing'.
 mkBloomST :: Hashable a => Double -> BloomMaker a
 mkBloomST requestedFPR xs = runST $ do
-    b <- Bloom.new (Bloom.cheapHashes numHashFuncs) numBits
+    b <- Bloom.new numHashFuncs numBits
     mapM_ (Bloom.insert b) xs
     Bloom.freeze b
   where
@@ -59,7 +59,7 @@ mkBloomST requestedFPR xs = runST $ do
 --   rounding of th ebits.
 mkBloomST_Monkey :: Hashable a => Double -> BloomMaker a
 mkBloomST_Monkey requestedFPR xs = runST $ do
-    b <- Bloom.new (Bloom.cheapHashes numHashFuncs) numBits
+    b <- Bloom.new numHashFuncs numBits
     mapM_ (Bloom.insert b) xs
     Bloom.freeze b
   where

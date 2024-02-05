@@ -6,34 +6,37 @@
 -- Maintainer: Bryan O'Sullivan <bos@serpentine.com>
 -- Stability: unstable
 -- Portability: portable
-
+{-# LANGUAGE RoleAnnotations #-}
 module Data.BloomFilter.Mutable.Internal
     (
     -- * Types
-      Hash
+      Hash.Hash
     , MBloom(..)
+    , hashes
     ) where
 
 import Data.Bits (shiftL)
-import Data.Word (Word32)
 
 import Data.Bit (Bit)
 import qualified Data.Vector.Unboxed as UV
 
+import qualified Data.BloomFilter.Hash as Hash
+
 import Prelude hiding (elem, length, notElem,
                        (/), (*), div, divMod, mod, rem)
 
--- | A hash value is 32 bits wide.  This limits the maximum size of a
--- filter to about four billion elements, or 512 megabytes of memory.
-type Hash = Word32
-
 -- | A mutable Bloom filter, for use within the 'ST' monad.
 data MBloom s a = MB {
-      hashes :: !(a -> [Hash])
+      hashesN :: {-# UNPACK #-} !Int
     , shift :: {-# UNPACK #-} !Int
     , mask :: {-# UNPACK #-} !Int
     , bitArray :: {-# UNPACK #-} !(UV.MVector s Bit)
     }
+type role MBloom nominal nominal
+
+hashes :: Hash.Hashable a => MBloom s a -> a -> [Hash.Hash]
+hashes mb = Hash.cheapHashes (hashesN mb)
+{-# INLINE hashes #-}
 
 instance Show (MBloom s a) where
     show mb = "MBloom { " ++ show ((1::Int) `shiftL` shift mb) ++ " bits } "
