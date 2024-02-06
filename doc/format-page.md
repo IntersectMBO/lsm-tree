@@ -3,7 +3,7 @@
 
 # Scope
 
-This document is intend to cover the format of the pages within the
+This document is intended to cover the format of the pages within the
 key/operation file of each LSM run, including:
 
 * page header for metadata
@@ -266,7 +266,7 @@ to the N=1 special case.
 
 ## Key and value byte strings
 
-This is the concatenation of all the key byte strings, follow by all the value
+This is the concatenation of all the key byte strings, followed by all the value
 byte strings. The spans are given by the key and value offset arrays.
 
 Note that the concatenation of keys must fit within the first page, but for the

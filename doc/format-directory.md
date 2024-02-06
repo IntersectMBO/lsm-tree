@@ -3,7 +3,7 @@
 
 # Scope
 
-This document is intend to cover the overall LSM directory format, including:
+This document is intended to cover the overall LSM directory format, including:
 
  * persistent snapshots
  * live handles
@@ -112,7 +112,7 @@ Each `.checksum` file lists the CRC-32C (Castagnoli) of other files.
 
 The file uses the BSD-style checksum format (e.g. as produced by tools like
 `md5sum --tag`), with the algorithm name "CRC32C". This format is text,
-one line per file, using hexedecimal for the 32bit output.
+one line per file, using hexadecimal for the 32bit output.
 
 Checksum files are used for each LSM run, and for the snapshot metadata.
 ```
@@ -144,7 +144,7 @@ which must list the other files.
 
 The checksum of each LSM run file must be verified.
 
-If verfification passes, this ensures all the files are present and have their
+If verification passes, this ensures all the files are present and have their
 expected content. The use of CRCs protects against accidental corruption, not
 deliberate corruption.
 
