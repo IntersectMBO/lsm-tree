@@ -1,0 +1,78 @@
+cabal-version: 1.12
+
+-- This file has been generated from package.yaml by hpack version 0.35.1.
+--
+-- see: https://github.com/sol/hpack
+--
+-- hash: 1a4d90d4e9381a7e6ebad0ead5753fb5d408d10dca3875cc575fa3b9a83becbc
+
+name:           crc32c
+version:        0.1.0
+synopsis:       Haskell bindings for crc32c
+category:       FFI, Raw
+homepage:       https://github.com/leptonyu/crc32c#readme
+author:         Daniel YU
+maintainer:     leptonyu@gmail.com
+copyright:      (c) Daniel YU
+license:        BSD3
+license-file:   LICENSE
+build-type:     Simple
+extra-source-files:
+    README.md
+    include/LICENSE
+    include/crc32c_arm64.h
+    include/crc32c_arm64_linux_check.h
+    include/crc32c_internal.h
+    include/crc32c_prefetch.h
+    include/crc32c_read_le.h
+    include/crc32c_round_up.h
+    include/crc32c_sse42.h
+    include/crc32c_sse42_check.h
+    include/crc32c/crc32c.h
+    include/crc32c/crc32c_config.h
+
+library
+  exposed-modules:
+      Data.Digest.CRC32C
+  other-modules:
+      Data.Digest.CRC32C.Internal
+  hs-source-dirs:
+      src
+  include-dirs:
+      include
+  c-sources:
+      include/crc32c.cc
+      include/crc32c_arm64.cc
+      include/crc32c_portable.cc
+      include/crc32c_sse42.cc
+  extra-libraries:
+      stdc++
+  build-tools:
+      c2hs
+  build-depends:
+      base >=4.9 && <5
+    , bytestring >=0.10.8.2
+  default-language: Haskell2010
+  if arch(x86_64)
+    cc-options: -std=c++11 -D__HAVE_SSE42=1 -D__HAVE_ARM64_CRC32C=0 -msse4.2
+  else
+    if arch(arm)
+      cc-options: -std=c++11 -D__HAVE_SSE42=0 -D__HAVE_ARM64_CRC32C=1
+    else
+      cc-options: -std=c++11 -D__HAVE_SSE42=0 -D__HAVE_ARM64_CRC32C=0
+
+test-suite crc32c-test
+  type: exitcode-stdio-1.0
+  main-is: Spec.hs
+  other-modules:
+      Paths_crc32c
+  hs-source-dirs:
+      test
+  build-depends:
+      QuickCheck
+    , base >=4.9 && <5
+    , bytestring >=0.10.8.2 && <0.11
+    , crc32c
+    , hspec
+    , hspec-core
+  default-language: Haskell2010
