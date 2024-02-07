@@ -69,8 +69,7 @@ import Data.BloomFilter.Util (nextPowerOfTwo)
 import Data.BloomFilter.Mutable.Internal
 import Data.BloomFilter.Hash (Hashable)
 
-import Data.Bit (Bit (..))
-import qualified Data.Vector.Unboxed.Mutable as MUV
+import qualified Data.BloomFilter.BitVec64 as V
 
 import Prelude hiding (elem, length, notElem,
                        (/), (*), div, divMod, mod, rem)
@@ -82,7 +81,7 @@ import Prelude hiding (elem, length, notElem,
 new :: Int                    -- ^ number of hash functions to use
     -> Int                    -- ^ number of bits in filter
     -> ST s (MBloom s a)
-new hash numBits = MB hash shft msk `liftM` MUV.new trueBits
+new hash numBits = MB hash shft msk `liftM` V.new trueBits
   where twoBits | numBits < 1 = 1
                 | numBits > maxHash = maxHash
                 | isPowerOfTwo numBits = numBits
@@ -110,7 +109,7 @@ insert mb elt = do
   let mu = bitArray mb
   forM_ (hashes mb elt) $ \idx' -> do
       let !idx = fromIntegral idx' .&. mask mb :: Int
-      MUV.unsafeWrite mu idx (Bit True)
+      V.unsafeWrite mu idx True
 
 -- | Query a mutable Bloom filter for membership.  If the value is
 -- present, return @True@.  If the value is not present, there is
@@ -120,7 +119,7 @@ elem elt mb = loop (hashes mb elt)
   where mu = bitArray mb
         loop (idx':wbs) = do
           let !idx = fromIntegral idx' .&. mask mb :: Int
-          Bit b <- MUV.unsafeRead mu idx
+          b <- V.unsafeRead mu idx
           case b of
               False -> return False
               True  -> loop wbs

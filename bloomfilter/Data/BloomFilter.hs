@@ -85,15 +85,14 @@ import qualified Data.BloomFilter.Hash as Hash
 import Prelude hiding (elem, length, notElem,
                        (/), (*), div, divMod, mod, rem)
 
-import Data.Bit (Bit (..))
-import qualified Data.Vector.Unboxed as UV
+import qualified Data.BloomFilter.BitVec64 as V
 
 -- | An immutable Bloom filter, suitable for querying from pure code.
 data Bloom a = B {
       hashesN :: {-# UNPACK #-} !Int
     , shift :: {-# UNPACK #-} !Int
     , mask :: {-# UNPACK #-} !Int
-    , bitArray :: {-# UNPACK #-} !(UV.Vector Bit)
+    , bitArray :: {-# UNPACK #-} !V.BitVec64
     }
 type role Bloom nominal
 
@@ -135,19 +134,19 @@ create hash numBits body = runST $ do
 -- filter may be modified afterwards.
 freeze :: MBloom s a -> ST s (Bloom a)
 freeze mb = B (MB.hashesN mb) (MB.shift mb) (MB.mask mb) `liftM`
-            UV.freeze (MB.bitArray mb)
+            V.freeze (MB.bitArray mb)
 
 -- | Create an immutable Bloom filter from a mutable one.  The mutable
 -- filter /must not/ be modified afterwards, or a runtime crash may
 -- occur.  For a safer creation interface, use 'freeze' or 'create'.
 unsafeFreeze :: MBloom s a -> ST s (Bloom a)
 unsafeFreeze mb = B (MB.hashesN mb) (MB.shift mb) (MB.mask mb) `liftM`
-                    UV.unsafeFreeze (MB.bitArray mb)
+                    V.unsafeFreeze (MB.bitArray mb)
 
 -- | Copy an immutable Bloom filter to create a mutable one.  There is
 -- no non-copying equivalent.
 thaw :: Bloom a -> ST s (MBloom s a)
-thaw ub = MB.MB (hashesN ub) (shift ub) (mask ub) `liftM` UV.thaw (bitArray ub)
+thaw ub = MB.MB (hashesN ub) (shift ub) (mask ub) `liftM` V.thaw (bitArray ub)
 
 -- | Create an empty Bloom filter.
 --
@@ -178,7 +177,7 @@ elem :: Hashable a => a -> Bloom a -> Bool
 elem elt ub = all test (hashes ub elt)
   where test idx' =
           let !idx = fromIntegral idx' .&. mask ub :: Int
-          in unBit (bitArray ub UV.! idx)
+          in V.unsafeIndex (bitArray ub) idx
 
 modify :: (forall s. (MBloom s a -> ST s z))  -- ^ mutation function (result is discarded)
         -> Bloom a
@@ -244,7 +243,7 @@ notElem :: Hashable a => a -> Bloom a -> Bool
 notElem elt ub = any test (hashes ub elt)
   where test idx' =
           let !idx = fromIntegral idx' .&. mask ub :: Int
-          in not (unBit (bitArray ub UV.! idx))
+          in not (V.unsafeIndex (bitArray ub) idx)
 
 -- | Return the size of an immutable Bloom filter, in bits.
 length :: Bloom a -> Int

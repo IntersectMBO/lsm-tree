@@ -17,8 +17,7 @@ module Data.BloomFilter.Mutable.Internal
 
 import Data.Bits (shiftL)
 
-import Data.Bit (Bit)
-import qualified Data.Vector.Unboxed as UV
+import qualified Data.BloomFilter.BitVec64 as V
 
 import qualified Data.BloomFilter.Hash as Hash
 
@@ -30,7 +29,7 @@ data MBloom s a = MB {
       hashesN :: {-# UNPACK #-} !Int
     , shift :: {-# UNPACK #-} !Int
     , mask :: {-# UNPACK #-} !Int
-    , bitArray :: {-# UNPACK #-} !(UV.MVector s Bit)
+    , bitArray :: {-# UNPACK #-} !(V.MBitVec64 s)
     }
 type role MBloom nominal nominal
 
