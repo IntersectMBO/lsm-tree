@@ -191,7 +191,7 @@ The representation consists of
 4. a larger-than-page indicator bit vector, one bit per page in the index
 5. a clash map, mapping each page with a clash indicator to the full minimum
    key for the page
-6. the number of range finder bits (0..16) (as a 8bit value)
+6. the number of range finder bits (0..16) (as a 64bit value)
 7. the number of pages in the primary array (as a 64bit value)
 8. the number of keys in the corresponding key/ops file (as a 64bit value)
 
@@ -207,6 +207,21 @@ means they are at a known offset relative to the end of the file, and can be
 read first. This helps with pre-allocating the memory needed for the
 in-memory representation of the other main components, and knowing how much
 data to read from disk for each component.
+
+Size granularity, alignment and any trailing padding of the components:
+1. 32bit size granularity, 32bit alignment
+2. 32bit size granularity, 32bit alignment, trailing padding to 64bit alignment
+3. 64bit size granularity, 64bit alignment
+4. 64bit size granularity, 64bit alignment
+5. 8bit size granularity, 8bit alignment, trailing padding to 64bit alignment
+6. 64bit size granularity, 64bit alignment
+7. 64bit size granularity, 64bit alignment
+8. 64bit size granularity, 64bit alignment
+
+The alignment of the components is arranged such that it would be possible (if
+desired) to mmap the whole file and access almost all of the components with
+natural alignment. The clash map however is not a simple flat array, so it is
+is expected to be decoded, rather than to be accessed in-place.
 
 ### Ordinary index
 
