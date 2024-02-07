@@ -185,9 +185,9 @@ whole key per page: we can typically store just 4 bytes (32bits) per page. This
 is a factor of 8 saving for 32 byte keys.
 
 The representation consists of
-1. the number of range finder bits (0..16)
-2. a range finder array, of 2^n+1 entries of 32bit each (n = range finder bits)
-3. a primary array of 32bit words, one entry per page in the index
+1. a primary array of 32bit words, one entry per page in the index
+2. the number of range finder bits (0..16)
+3. a range finder array, of 2^n+1 entries of 32bit each (n = range finder bits)
 4. a clash indicator bit vector, one bit per page in the index
 5. a clash map, mapping each page with a clash indicator to the full minimum
    key for the page
@@ -195,14 +195,9 @@ The representation consists of
 The file format consists of each part, sequentially within the file. This
 format can in-part be written out incrementally as the index is constructed.
 The primary array is the largest component, and this is the part that can be
-written out to disk incrementally. Its size is bounded but not known precisely
-prior to the completion of the index. The range finder array cannot be written
-until index completion, but its size is known in advance and so space in the
-file can be reserved. The clash indicator bit vector has the same number of
-elements as the primary array, but is of course 32 times smaller, so it is
-reasonable to keep this in memory while the index is constructed and flush it
-upon completion. Similarly, the clash map is small and it can be written upon
-index completion.
+written out to disk incrementally. All the remaining parts can only be written
+upon the completion of the index. These parts must be kept in memory while the
+index is constructed and can be flushed upon completion.
 
 ### Ordinary index
 
