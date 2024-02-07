@@ -186,12 +186,14 @@ is a factor of 8 saving for 32 byte keys.
 
 The representation consists of
 1. a primary array of 32bit words, one entry per page in the index
-2. the number of range finder bits (0..16)
-3. a range finder array, of 2^n+1 entries of 32bit each (n = range finder bits)
-4. a clash indicator bit vector, one bit per page in the index
-5. a larger-than-page indicator bit vector, one bit per page in the index
-6. a clash map, mapping each page with a clash indicator to the full minimum
+2. a range finder array, of 2^n+1 entries of 32bit each (n = range finder bits)
+3. a clash indicator bit vector, one bit per page in the index
+4. a larger-than-page indicator bit vector, one bit per page in the index
+5. a clash map, mapping each page with a clash indicator to the full minimum
    key for the page
+6. the number of range finder bits (0..16) (as a 8bit value)
+7. the number of pages in the primary array (as a 64bit value)
+8. the number of keys in the corresponding key/ops file (as a 64bit value)
 
 The file format consists of each part, sequentially within the file. This
 format can in-part be written out incrementally as the index is constructed.
@@ -199,6 +201,12 @@ The primary array is the largest component, and this is the part that can be
 written out to disk incrementally. All the remaining parts can only be written
 upon the completion of the index. These parts must be kept in memory while the
 index is constructed and can be flushed upon completion.
+
+The rationale for the various numbers being at the end of the file is that it
+means they are at a known offset relative to the end of the file, and can be
+read first. This helps with pre-allocating the memory needed for the
+in-memory representation of the other main components, and knowing how much
+data to read from disk for each component.
 
 ### Ordinary index
 
