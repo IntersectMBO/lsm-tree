@@ -189,7 +189,8 @@ The representation consists of
 2. the number of range finder bits (0..16)
 3. a range finder array, of 2^n+1 entries of 32bit each (n = range finder bits)
 4. a clash indicator bit vector, one bit per page in the index
-5. a clash map, mapping each page with a clash indicator to the full minimum
+5. a larger-than-page indicator bit vector, one bit per page in the index
+6. a clash map, mapping each page with a clash indicator to the full minimum
    key for the page
 
 The file format consists of each part, sequentially within the file. This
