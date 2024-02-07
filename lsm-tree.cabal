@@ -82,6 +82,7 @@ library bloomfilter
     Data.BloomFilter.Mutable
 
   other-modules:
+    Data.BloomFilter.BitVec64
     Data.BloomFilter.Mutable.Internal
     Data.BloomFilter.Util
 
