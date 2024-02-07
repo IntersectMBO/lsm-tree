@@ -11,8 +11,8 @@ module Database.LSMTree.Internal.RawPage (
     rawPageKeyOffsets,
     rawPageValueOffsets,
     rawPageValueOffsets1,
-    rawPageHasBlobRefAt,
-    rawPageBlobRefIndex,
+    rawPageHasBlobSpanAt,
+    rawPageBlobSpanIndex,
     rawPageOpAt,
     rawPageKeys,
     rawPageValues,
@@ -26,6 +26,7 @@ import           Data.Primitive.ByteArray (ByteArray (..), indexByteArray,
 import qualified Data.Vector as V
 import qualified Data.Vector.Primitive as P
 import           Data.Word (Word16, Word32, Word64, Word8)
+import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Entry (Entry (..))
 import           GHC.List (foldl')
 
@@ -62,7 +63,7 @@ makeRawPage ba off = RawPage (div2 off) ba
 rawPageEntry
     :: RawPage
     -> P.Vector Word8 -- ^ key
-    -> Maybe (Entry (P.Vector Word8) (Word64, Word32))
+    -> Maybe (Entry (P.Vector Word8) BlobSpan)
 rawPageEntry !page !key = bisect 0 (fromIntegral dirNumKeys)
   where
     !dirNumKeys = rawPageNumKeys page
@@ -72,15 +73,15 @@ rawPageEntry !page !key = bisect 0 (fromIntegral dirNumKeys)
     -- can be set to zero.
     threshold = 3
 
-    found :: Int -> Maybe (Entry (P.Vector Word8) (Word64, Word32))
+    found :: Int -> Maybe (Entry (P.Vector Word8) BlobSpan)
     found !i = Just $! case rawPageOpAt page i of
-        0 -> if rawPageHasBlobRefAt page i == 0
+        0 -> if rawPageHasBlobSpanAt page i == 0
              then Insert (rawPageValueAt page i)
-             else InsertWithBlob (rawPageValueAt page i) (rawPageBlobRefIndex page (rawPageCalculateBlobIndex page i))
+             else InsertWithBlob (rawPageValueAt page i) (rawPageBlobSpanIndex page (rawPageCalculateBlobIndex page i))
         1 -> Mupdate (rawPageValueAt page i)
         _ -> Delete
 
-    bisect :: Int -> Int -> Maybe (Entry (P.Vector Word8) (Word64, Word32))
+    bisect :: Int -> Int -> Maybe (Entry (P.Vector Word8) BlobSpan)
     bisect !i !j
         | j - i < threshold = linear i j
         | otherwise = case compare key (rawPageKeyAt page k) of
@@ -90,17 +91,17 @@ rawPageEntry !page !key = bisect 0 (fromIntegral dirNumKeys)
       where
         k = i + div2 (j - i)
 
-    linear :: Int -> Int -> Maybe (Entry (P.Vector Word8) (Word64, Word32))
+    linear :: Int -> Int -> Maybe (Entry (P.Vector Word8) BlobSpan)
     linear !i !j
         | i >= j                       = Nothing
         | key == rawPageKeyAt page i   = found i
         | otherwise                    = linear (i + 1) j
 
-rawPageValue1Prefix :: RawPage -> Entry (P.Vector Word8, Word32) (Word64, Word32)
+rawPageValue1Prefix :: RawPage -> Entry (P.Vector Word8, Word32) BlobSpan
 rawPageValue1Prefix page = case rawPageOpAt page 0 of
-  0 -> if rawPageHasBlobRefAt page 0 == 0
+  0 -> if rawPageHasBlobSpanAt page 0 == 0
        then Insert (rawPageSingleValue page)
-       else InsertWithBlob (rawPageSingleValue page) (rawPageBlobRefIndex page (rawPageCalculateBlobIndex page 0))
+       else InsertWithBlob (rawPageSingleValue page) (rawPageBlobSpanIndex page (rawPageCalculateBlobIndex page 0))
   1 -> Mupdate (rawPageSingleValue page)
   _ -> Delete
 
@@ -148,8 +149,8 @@ rawPageValueOffsets1 page@(RawPage off ba) =
   where
     !dirOffset = rawPageKeysOffset page
 
-rawPageHasBlobRefAt :: RawPage -> Int -> Word64
-rawPageHasBlobRefAt _page@(RawPage off ba) i = do
+rawPageHasBlobSpanAt :: RawPage -> Int -> Word64
+rawPageHasBlobSpanAt _page@(RawPage off ba) i = do
     let j = unsafeShiftR i 6 -- `div` 64
     let k = i .&. 63         -- `mod` 64
     let word = indexByteArray ba (div4 off + 1 + j)
@@ -217,26 +218,25 @@ rawPageSingleValue page@(RawPage off ba) =
     (start, end) = rawPageValueOffsets1 page
 
 -- we could create unboxed array.
-{-# INLINE rawPageBlobRefIndex #-}
-rawPageBlobRefIndex :: RawPage
-    -> Int -- ^ blobref index. Calculate with 'rawPageCalculateBlobIndex'
-    -> (Word64, Word32)
-rawPageBlobRefIndex page@(RawPage off ba) i =
-    ( indexByteArray ba (off1 + i)
-    , indexByteArray ba (off2 + i)
-    )
+{-# INLINE rawPageBlobSpanIndex #-}
+rawPageBlobSpanIndex :: RawPage
+    -> Int -- ^ blobspan index. Calculate with 'rawPageCalculateBlobIndex'
+    -> BlobSpan
+rawPageBlobSpanIndex page@(RawPage off ba) i = BlobSpan
+    ( indexByteArray ba (off1 + i) )
+    ( indexByteArray ba (off2 + i) )
   where
     !dirNumKeys  = rawPageNumKeys page
     !dirNumBlobs = rawPageNumBlobs page
 
-    -- offset to start of blobrefs arr
+    -- offset to start of blobspan arr
     off1 = div4 off + 1 + roundUpTo64 (fromIntegral dirNumKeys) + roundUpTo64 (fromIntegral (mul2 dirNumKeys))
     off2 = mul2 (off1 + fromIntegral dirNumBlobs)
 
 rawPageCalculateBlobIndex
     :: RawPage
     -> Int  -- ^ key index
-    -> Int  -- ^ blobref index
+    -> Int  -- ^ blobspan index
 rawPageCalculateBlobIndex (RawPage off ba) i = do
     let j = unsafeShiftR i 6 -- `div` 64
     let k = i .&. 63         -- `mod` 64

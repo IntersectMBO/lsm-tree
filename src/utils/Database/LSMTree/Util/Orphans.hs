@@ -18,8 +18,9 @@ import           Data.Word (Word64)
 import           Database.LSMTree.Internal.Run.BloomFilter (Hashable (..))
 import           Database.LSMTree.Internal.Run.Index.Compact (Append (..),
                      CompactIndex (..), SearchResult (..))
-import           Database.LSMTree.Internal.Serialise (Serialise (..),
-                     SerialisedKey (..), fromShortByteString)
+import           Database.LSMTree.Internal.Serialise (SerialisedKey (..))
+import           Database.LSMTree.Internal.Serialise.Class
+import           Database.LSMTree.Internal.Serialise.RawBytes
 import           GHC.Generics (Generic)
 import           System.Random (Uniform)
 
@@ -44,31 +45,31 @@ deriving anyclass instance Uniform Word256
 instance Hashable Word256 where
   hashIO32 (Word256 a b c d) = hashIO32 (a, b, c, d)
 
-instance Serialise Word256 where
-  serialise (Word256{word256hi, word256m1, word256m0, word256lo}) =
-      fromByteString $ B.toLazyByteString $ mconcat [
+-- | Placeholder instance, not optimised
+instance SerialiseKey Word256 where
+  serialiseKey (Word256{word256hi, word256m1, word256m0, word256lo}) =
+      serialiseKey $ B.toLazyByteString $ mconcat [
           B.word64BE word256hi
         , B.word64BE word256m1
         , B.word64BE word256m0
         , B.word64BE word256lo
         ]
-    where
-      fromByteString :: LBS.ByteString -> SerialisedKey
-      fromByteString =
-            fromShortByteString
-          . SBS.toShort
-          . LBS.toStrict
+  deserialiseKey = error "deserialiseKey: Word256" -- TODO
 
 {-------------------------------------------------------------------------------
   Word64
 -------------------------------------------------------------------------------}
 
-instance Serialise Word64 where
-  serialise x =
-      fromByteString $ B.toLazyByteString $ B.word64BE x
-    where
-      fromByteString :: LBS.ByteString -> SerialisedKey
-      fromByteString =
-            fromShortByteString
-          . SBS.toShort
-          . LBS.toStrict
+-- | Placeholder instance, not optimised
+instance SerialiseKey Word64 where
+  serialiseKey x = serialiseKey $ B.toLazyByteString $ B.word64BE x
+  deserialiseKey = error "deserialiseKey: Word64" -- TODO
+
+{-------------------------------------------------------------------------------
+  ByteString
+-------------------------------------------------------------------------------}
+
+-- | Placeholder instance, not optimised
+instance SerialiseKey LBS.ByteString where
+  serialiseKey = fromShortByteString . SBS.toShort . LBS.toStrict
+  deserialiseKey = error "deserialiseKey: LazyByteString" -- TODO

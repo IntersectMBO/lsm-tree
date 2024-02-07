@@ -20,8 +20,7 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Vector.Unboxed as V
 import           Database.LSMTree.Generators as Gen
 import           Database.LSMTree.Internal.Run.Index.Compact as Index
-import           Database.LSMTree.Internal.Serialise (Serialise (..),
-                     SerialisedKey)
+import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Util
 import           Prelude hiding (max, min, pi)
 import qualified Test.QuickCheck as QC
@@ -95,7 +94,7 @@ plusCounter n = get >>= \c -> put (c+n) >> pure c
 -- | After construction, searching for the minimum/maximum key of every page
 -- @pageNr@ returns the @pageNr@.
 prop_searchMinMaxKeysAfterConstruction ::
-     forall k. (Serialise k, Show k, Ord k)
+     forall k. (SerialiseKey k, Show k, Ord k)
   => ChunkSize
   -> LogicalPageSummaries k
   -> Property
@@ -124,17 +123,17 @@ prop_searchMinMaxKeysAfterConstruction csize ps = eqMapProp real model
 
     realSearch :: LogicalPageSummary k -> Map k SearchResult
     realSearch = \case
-        OnePageOneKey k           -> Map.singleton k (search (serialise k) ci)
-        OnePageManyKeys k1 k2     -> Map.fromList [ (k1, search (serialise k1) ci)
-                                               , (k2, search (serialise k2) ci)]
-        MultiPageOneKey k _ -> Map.singleton k (search (serialise k) ci)
+        OnePageOneKey k           -> Map.singleton k (search (serialiseKey k) ci)
+        OnePageManyKeys k1 k2     -> Map.fromList [ (k1, search (serialiseKey k1) ci)
+                                                  , (k2, search (serialiseKey k2) ci)]
+        MultiPageOneKey k _       -> Map.singleton k (search (serialiseKey k) ci)
 
 --
 -- Construction
 --
 
 prop_differentChunkSizesSameResults ::
-     Serialise k
+     SerialiseKey k
   => ChunkSize
   -> ChunkSize
   -> LogicalPageSummaries k
@@ -152,7 +151,7 @@ prop_differentChunkSizesSameResults
 -- | Constructing an index using only 'appendSingle' is equivalent to using a
 -- mix of 'appendSingle' and 'appendMulti'.
 prop_singlesEquivMulti ::
-     Serialise k
+     SerialiseKey k
   => ChunkSize
   -> ChunkSize
   -> LogicalPageSummaries k
@@ -170,7 +169,7 @@ prop_singlesEquivMulti csize1 csize2 ps = ci1 === ci2
     toSingles (AppendMultiPage k n)    = replicate (fromIntegral n + 1) (k, k)
 
 -- | Distribution of generated test data
-prop_distribution :: Serialise k => LogicalPageSummaries k -> Property
+prop_distribution :: SerialiseKey k => LogicalPageSummaries k -> Property
 prop_distribution ps = labelPages ps $ labelIndex ci $ property True
   where
     apps   = toAppends ps

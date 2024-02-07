@@ -1,205 +1,160 @@
-{-# LANGUAGE BangPatterns               #-}
-{-# LANGUAGE CPP                        #-}
 {-# LANGUAGE DerivingStrategies         #-}
 {-# LANGUAGE GeneralisedNewtypeDeriving #-}
-{-# LANGUAGE InstanceSigs               #-}
-{-# LANGUAGE MagicHash                  #-}
-{-# LANGUAGE StandaloneKindSignatures   #-}
-{-# LANGUAGE UnboxedTuples              #-}
-{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
-{- HLINT ignore "Redundant lambda" -}
+{-# LANGUAGE PatternSynonyms            #-}
 
-#include <MachDeps.h>
-
--- | Temporary placeholders for serialisation.
+-- | Newtype wrappers and utilities for serialised keys, values and blobs.
 module Database.LSMTree.Internal.Serialise (
-    Serialise (..)
-  , SerialisedKey (..)
-  , topBits16
-  , sliceBits32
+    -- * Re-exports
+    SerialiseKey
+  , SerialiseValue
+    -- * Keys
+  , SerialisedKey (SerialisedKey, SerialisedKey')
+  , serialiseKey
+  , deserialiseKey
   , sizeofKey
   , sizeofKey16
   , sizeofKey64
-    -- * @bytestring@ utils
-  , fromShortByteString
   , serialisedKey
-  , shortByteStringFromTo
+  , keyTopBits16
+  , keySliceBits32
+    -- * Values
+  , SerialisedValue (SerialisedValue, SerialisedValue')
+  , serialiseValue
+  , deserialiseValue
+  , sizeofValue
+  , sizeofValue16
+  , sizeofValue32
+  , sizeofValue64
+  , serialisedValue
+    -- * Blobs
+  , SerialisedBlob (SerialisedBlob, SerialisedBlob')
+  , serialiseBlob
+  , deserialiseBlob
   ) where
 
-import           Control.Exception (assert)
-import           Data.Bits (Bits (shiftL, shiftR))
-import           Data.BloomFilter.Hash (hashList32)
 import qualified Data.ByteString.Builder as BB
-import qualified Data.ByteString.Builder.Internal as BB
-import           Data.ByteString.Short (ShortByteString (SBS))
-import qualified Data.ByteString.Short as SBS
-import qualified Data.ByteString.Short.Internal as SBS
-import           Data.Kind (Type)
-import           Data.Primitive.ByteArray (ByteArray (..), compareByteArrays)
 import qualified Data.Vector.Primitive as P
+import           Data.Word
 import           Database.LSMTree.Internal.Run.BloomFilter (Hashable (..))
-import           Foreign.Ptr
-import           GHC.Exts
-import           GHC.Word
+import           Database.LSMTree.Internal.Serialise.Class (SerialiseKey,
+                     SerialiseValue)
+import qualified Database.LSMTree.Internal.Serialise.Class as Class
+import           Database.LSMTree.Internal.Serialise.RawBytes
 
--- | Serialisation into a 'SerialisedKey'
---
--- INVARIANT: Serialisation should preserve ordering, @x `compare` y ==
--- serialise x `compare` serialise y@. Serialised keys are lexicographically
--- ordered, in particular this means that values should be serialised into
--- big-endian formats.
-class Serialise a where
-  serialise :: a -> SerialisedKey
+{-------------------------------------------------------------------------------
+  Keys
+-------------------------------------------------------------------------------}
 
 -- | Representation of a serialised key.
 --
 -- Serialisation should preserve equality and ordering. The 'Ord' instance for
 -- 'SerialisedKey' uses lexicographical ordering.
-type SerialisedKey :: Type
-newtype SerialisedKey = SerialisedKey (P.Vector Word8)
-  deriving newtype (Show)
+newtype SerialisedKey = SerialisedKey RawBytes
+  deriving stock Show
+  deriving newtype (Eq, Ord, Hashable)
 
-instance Eq SerialisedKey where
-  k1 == k2 = compareBytes k1 k2 == EQ
+{-# COMPLETE SerialisedKey' #-}
+pattern SerialisedKey' :: P.Vector Word8 -> SerialisedKey
+pattern SerialisedKey' pvec = SerialisedKey (RawBytes pvec)
 
--- | Lexicographical 'Ord' instance.
-instance Ord SerialisedKey where
-  compare = compareBytes
+{-# INLINE serialiseKey #-}
+serialiseKey :: SerialiseKey k => k -> SerialisedKey
+serialiseKey k = SerialisedKey (Class.serialiseKey k)
 
--- | Based on @Ord 'ShortByteString'@.
-compareBytes :: SerialisedKey -> SerialisedKey -> Ordering
-compareBytes k1@(SerialisedKey vec1) k2@(SerialisedKey vec2) =
-    let !len1 = sizeofKey k1
-        !len2 = sizeofKey k2
-        !len  = min len1 len2
-     in case compareByteArrays ba1 off1 ba2 off2 len of
-          EQ | len1 < len2 -> LT
-             | len1 > len2 -> GT
-          o  -> o
-  where
-    P.Vector off1 _size1 ba1 = vec1
-    P.Vector off2 _size2 ba2 = vec2
+{-# INLINE deserialiseKey #-}
+deserialiseKey :: SerialiseKey k => SerialisedKey -> k
+deserialiseKey (SerialisedKey bytes) = Class.deserialiseKey bytes
 
-instance Hashable SerialisedKey where
-  hashIO32 :: SerialisedKey -> Word32 -> IO Word32
-  hashIO32 = hashBytes
-
--- TODO: optimisation
-hashBytes :: SerialisedKey -> Word32 -> IO Word32
-hashBytes (SerialisedKey vec) = hashList32 (P.toList vec)
-
--- | @'topBits16' n k@ slices the first @n@ bits from the /top/ of the
--- serialised key @k@. Returns the string of bits as a 'Word16'.
---
--- The /top/ corresponds to the most significant bit (big-endian).
---
--- PRECONDITION: @n >= 0 && n <= 16. We can slice out at most 16 bits,
--- all bits beyond that are truncated.
---
--- PRECONDITION: The byte-size of the serialised key should be at least 2 bytes.
---
--- TODO: optimisation ideas: use unsafe shift/byteswap primops, look at GHC
--- core, find other opportunities for using primops.
---
-topBits16 :: Int -> SerialisedKey -> Word16
-topBits16 n k@(SerialisedKey (P.Vector (I# off#) _size (ByteArray k#))) =
-    assert (sizeofKey k >= 2) $ shiftR w16 (16 - n)
-  where
-    w16 = toWord16 (indexWord8ArrayAsWord16# k# off#)
-
-toWord16 :: Word16# -> Word16
-#if WORDS_BIGENDIAN
-toWord16 = W16#
-#else
-toWord16 x# = byteSwap16 (W16# x#)
-#endif
-
--- | @'sliceBits32' off k@ slices from the serialised key @k@ a string of @32@
--- bits, starting at the @0@-based offset @off@. Returns the string of bits as a
--- 'Word32'.
---
--- Offsets are counted in bits from the /top/: offset @0@ corresponds to the
--- most significant bit (big-endian).
---
--- PRECONDITION: the byte-size @n@ of the serialised key should be at least 4
--- bytes.
---
--- PRECONDITION: The serialised key should be large enough that we can slice out
--- 4 bytes after of the bit-offset @off, since we can only slice out bits that
--- are within the bounds of the byte array.
---
--- TODO: optimisation ideas: use unsafe shift/byteswap primops, look at GHC
--- core, find other opportunities for using primops.
---
-sliceBits32 :: Int -> SerialisedKey -> Word32
-sliceBits32 off@(I# off1#) k@(SerialisedKey (P.Vector (I# off2#) _size (ByteArray k#)))
-    | 0# <- r#
-    = assert (off + 32 <= 8 * sizeofKey k) $
-      toWord32 (indexWord8ArrayAsWord32# k# q#)
-    | otherwise
-    = assert (off + 32 <= 8 * sizeofKey k) $
-        toWord32 (indexWord8ArrayAsWord32# k# q#       ) `shiftL` r
-      + w8w32#   (indexWord8Array#         k# (q# +# 4#)) `shiftR` (8 - r)
-  where
-    !(# q0#, r# #) = quotRemInt# off1# 8#
-    !q#            = q0# +# off2#
-    r              = I# r#
-    -- No need for byteswapping here
-    w8w32# x#     = W32# (wordToWord32# (word8ToWord# x#))
-
-toWord32 :: Word32# -> Word32
-#if WORDS_BIGENDIAN
-toWord32 = W32#
-#else
-toWord32 x# = byteSwap32 (W32# x#)
-#endif
-
+{-# INLINE sizeofKey #-}
 -- | Size of key in number of bytes.
 sizeofKey :: SerialisedKey -> Int
-sizeofKey (SerialisedKey pvec) = P.length pvec
+sizeofKey (SerialisedKey rb) = sizeofRawBytes rb
 
+{-# INLINE sizeofKey16 #-}
 -- | Size of key in number of bytes.
 sizeofKey16 :: SerialisedKey -> Word16
 sizeofKey16 = fromIntegral . sizeofKey
 
+{-# INLINE sizeofKey64 #-}
 -- | Size of key in number of bytes.
 sizeofKey64 :: SerialisedKey -> Word64
 sizeofKey64 = fromIntegral . sizeofKey
 
-{-------------------------------------------------------------------------------
-  @bytestring@ utils
--------------------------------------------------------------------------------}
-
-fromShortByteString :: ShortByteString -> SerialisedKey
-fromShortByteString sbs@(SBS ba#) =
-    SerialisedKey (P.Vector 0 (SBS.length sbs) (ByteArray ba#))
-
 {-# INLINE serialisedKey #-}
 serialisedKey :: SerialisedKey -> BB.Builder
-serialisedKey (SerialisedKey (P.Vector off size (ByteArray ba#))) =
-    shortByteStringFromTo off (off + size) (SBS ba#)
+serialisedKey (SerialisedKey rb) = rawBytes rb
 
--- | Copy of 'SBS.shortByteString', but with bounds (unchecked)
-{-# INLINE shortByteStringFromTo #-}
-shortByteStringFromTo :: Int -> Int -> ShortByteString -> BB.Builder
-shortByteStringFromTo = \i j sbs -> BB.builder $ shortByteStringCopyStepFromTo i j sbs
+{-# INLINE keyTopBits16 #-}
+-- | See 'topBits16'
+keyTopBits16 :: Int -> SerialisedKey -> Word16
+keyTopBits16 n (SerialisedKey rb) = topBits16 n rb
 
--- | Copy of 'SBS.shortByteStringCopyStep' but with bounds (unchecked)
-{-# INLINE shortByteStringCopyStepFromTo #-}
-shortByteStringCopyStepFromTo ::
-  Int -> Int -> ShortByteString -> BB.BuildStep a -> BB.BuildStep a
-shortByteStringCopyStepFromTo !ip0 !ipe0 !sbs k =
-    go ip0 ipe0
-  where
-    go !ip !ipe (BB.BufferRange op ope)
-      | inpRemaining <= outRemaining = do
-          SBS.copyToPtr sbs ip op inpRemaining
-          let !br' = BB.BufferRange (op `plusPtr` inpRemaining) ope
-          k br'
-      | otherwise = do
-          SBS.copyToPtr sbs ip op outRemaining
-          let !ip' = ip + outRemaining
-          return $ BB.bufferFull 1 ope (go ip' ipe)
-      where
-        outRemaining = ope `minusPtr` op
-        inpRemaining = ipe - ip
+{-# INLINE keySliceBits32 #-}
+-- | See 'sliceBits32'
+keySliceBits32 :: Int -> SerialisedKey -> Word32
+keySliceBits32 n (SerialisedKey rb) = sliceBits32 n rb
+
+{-------------------------------------------------------------------------------
+  Values
+-------------------------------------------------------------------------------}
+
+-- | Representation of a serialised value.
+newtype SerialisedValue = SerialisedValue RawBytes
+  deriving stock Show
+  deriving newtype (Eq, Ord)
+
+{-# COMPLETE SerialisedValue' #-}
+pattern SerialisedValue' :: P.Vector Word8 -> SerialisedValue
+pattern SerialisedValue' pvec = (SerialisedValue (RawBytes pvec))
+
+{-# INLINE serialiseValue #-}
+serialiseValue :: SerialiseValue v => v -> SerialisedValue
+serialiseValue v = SerialisedValue (Class.serialiseValue v)
+
+{-# INLINE deserialiseValue #-}
+deserialiseValue :: SerialiseValue v => SerialisedValue -> v
+deserialiseValue (SerialisedValue bytes) = Class.deserialiseValue bytes
+
+{-# INLINE sizeofValue #-}
+sizeofValue :: SerialisedValue -> Int
+sizeofValue (SerialisedValue rb) = sizeofRawBytes rb
+
+{-# INLINE sizeofValue16 #-}
+-- | Size of value in number of bytes.
+sizeofValue16 :: SerialisedValue -> Word16
+sizeofValue16 = fromIntegral . sizeofValue
+
+{-# INLINE sizeofValue32 #-}
+-- | Size of value in number of bytes.
+sizeofValue32 :: SerialisedValue -> Word32
+sizeofValue32 = fromIntegral . sizeofValue
+
+{-# INLINE sizeofValue64 #-}
+-- | Size of value in number of bytes.
+sizeofValue64 :: SerialisedValue -> Word64
+sizeofValue64 = fromIntegral . sizeofValue
+
+{-# LANGUAGE serialisedValue #-}
+serialisedValue :: SerialisedValue -> BB.Builder
+serialisedValue (SerialisedValue rb) = rawBytes rb
+
+{-------------------------------------------------------------------------------
+  Blobs
+-------------------------------------------------------------------------------}
+
+-- | Representation of a serialised blob.
+newtype SerialisedBlob = SerialisedBlob RawBytes
+  deriving stock Show
+  deriving newtype (Eq, Ord)
+
+{-# COMPLETE SerialisedBlob' #-}
+pattern SerialisedBlob' :: P.Vector Word8 -> SerialisedBlob
+pattern SerialisedBlob' pvec = (SerialisedBlob (RawBytes pvec))
+
+{-# INLINE serialiseBlob #-}
+serialiseBlob :: SerialiseValue v => v -> SerialisedBlob
+serialiseBlob v = SerialisedBlob (Class.serialiseValue v)
+
+{-# INLINE deserialiseBlob #-}
+deserialiseBlob :: SerialiseValue v => SerialisedBlob -> v
+deserialiseBlob (SerialisedBlob bytes) = Class.deserialiseValue bytes

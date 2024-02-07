@@ -29,8 +29,8 @@ import qualified Database.LSMTree.Internal.Run.BloomFilter as Bloom
 import           Database.LSMTree.Internal.Run.Index.Compact (Append (..),
                      CompactIndex)
 import qualified Database.LSMTree.Internal.Run.Index.Compact as Index
-import           Database.LSMTree.Internal.Serialise (Serialise (..),
-                     SerialisedKey, topBits16)
+import           Database.LSMTree.Internal.Serialise (SerialiseKey,
+                     SerialisedKey, keyTopBits16, serialiseKey)
 import           Database.LSMTree.Util.Orphans ()
 import           GHC.Generics (Generic)
 import           Prelude hiding (getContents)
@@ -150,18 +150,18 @@ defaultConfig = Config {
 -- | Use 'lookupsEnv' to set up an environment for the in-memory aspect of
 -- lookups.
 prepLookupsEnv ::
-     forall k. (Ord k, Uniform k, Serialise k)
+     forall k. (Ord k, Uniform k, SerialiseKey k)
   => Proxy k
   -> Config
   -> IO (Bloom SerialisedKey, CompactIndex, [SerialisedKey])
 prepLookupsEnv _ Config {..} = do
     (storedKeys, lookupKeys) <- lookupsEnv @k totalEntries npos nneg
-    let b    = Bloom.fromList fpr $ fmap serialise storedKeys
+    let b    = Bloom.fromList fpr $ fmap serialiseKey storedKeys
         ps   = mkPages (RFPrecision rfprec) $ NonEmpty.fromList storedKeys
-        ps'  = fmap serialise ps
+        ps'  = fmap serialiseKey ps
         ps'' = fromPage <$> getPages ps'
         ci   = Index.fromList rfprec csize ps''
-    pure (b, ci, fmap serialise lookupKeys)
+    pure (b, ci, fmap serialiseKey lookupKeys)
   where
     totalEntries = npages * npageEntries
     rfprec = fromMaybe (Index.suggestRangeFinderPrecision npages) rfprecDef
@@ -225,7 +225,7 @@ data Pages f k = Pages {
   deriving anyclass NFData
 
 mkPages ::
-     forall k. (Ord k, Serialise k)
+     forall k. (Ord k, SerialiseKey k)
   => RFPrecision
   -> NonEmpty k
   -> Pages NonEmpty k
@@ -239,10 +239,10 @@ mkPages rfprec@(RFPrecision n) =
       where
         (ks1, ks2) = spanN
                 (pageResidency - 1)
-                (\k' -> topBits16 n (serialise k) == topBits16 n (serialise k'))
+                (\k' -> keyTopBits16 n (serialiseKey k) == keyTopBits16 n (serialiseKey k'))
                 ks
 
-_pagesInvariant :: (Ord k, Serialise k) => Pages NonEmpty k -> Bool
+_pagesInvariant :: (Ord k, SerialiseKey k) => Pages NonEmpty k -> Bool
 _pagesInvariant (Pages (RFPrecision rfprec) ks) =
        sort ks'   == ks'
     && nubSort ks' == ks'
@@ -253,8 +253,8 @@ _pagesInvariant (Pages (RFPrecision rfprec) ks) =
     partitioned p =
          -- keys should be sorted within pages, so it's sufficient to check
          -- the minimum key against the maximum key
-         topBits16 rfprec (serialise $ minKey p)
-      == topBits16 rfprec (serialise $ maxKey p)
+         keyTopBits16 rfprec (serialiseKey $ minKey p)
+      == keyTopBits16 rfprec (serialiseKey $ maxKey p)
 
     flatten :: Eq k => [Page NonEmpty k] -> [k]
     flatten []              = []

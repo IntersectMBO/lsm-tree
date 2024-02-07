@@ -55,8 +55,9 @@ import           Data.Word
 import           Database.LSMTree.Internal.Run.BloomFilter (Hashable (..))
 import           Database.LSMTree.Internal.Run.Index.Compact (Append (..),
                      rangeFinderPrecisionBounds, suggestRangeFinderPrecision)
-import           Database.LSMTree.Internal.Serialise (Serialise (..),
-                     SerialisedKey, topBits16)
+import           Database.LSMTree.Internal.Serialise (SerialiseKey,
+                     SerialisedKey (SerialisedKey), keyTopBits16, serialiseKey)
+import qualified Database.LSMTree.Internal.Serialise.Class as S.Class
 import           Database.LSMTree.Util
 import           Database.LSMTree.Util.Orphans ()
 import           GHC.Generics (Generic)
@@ -82,14 +83,15 @@ instance Eq k => Eq (WithSerialised k) where
 instance Ord k => Ord (WithSerialised k) where
   TestKey k1 _ `compare` TestKey k2 _ = k1 `compare` k2
 
-instance (Arbitrary k, Serialise k) => Arbitrary (WithSerialised k) where
+instance (Arbitrary k, SerialiseKey k) => Arbitrary (WithSerialised k) where
   arbitrary = do
     x <- arbitrary
-    pure $ TestKey x (serialise x)
-  shrink (TestKey k _) = [TestKey k' (serialise k') | k' <- shrink k]
+    pure $ TestKey x (serialiseKey x)
+  shrink (TestKey k _) = [TestKey k' (serialiseKey k') | k' <- shrink k]
 
-instance Serialise (WithSerialised k) where
-  serialise (TestKey _ skey) = skey
+instance SerialiseKey k => SerialiseKey (WithSerialised k) where
+  serialiseKey (TestKey _ (SerialisedKey bytes)) = bytes
+  deserialiseKey bytes = TestKey (S.Class.deserialiseKey bytes) (SerialisedKey bytes)
 
 {-------------------------------------------------------------------------------
   UTxO keys
@@ -99,7 +101,7 @@ instance Serialise (WithSerialised k) where
 newtype UTxOKey = UTxOKey Word256
   deriving stock (Show, Generic)
   deriving newtype ( Eq, Ord, NFData
-                   , Hashable, Serialise
+                   , Hashable, SerialiseKey
                    , Num, Enum, Real, Integral
                    )
   deriving anyclass Uniform
@@ -227,8 +229,8 @@ flattenLogicalPageSummaries (Pages f ps) = Pages f (concatMap flattenLogicalPage
 
 type LogicalPageSummaries k = Pages LogicalPageSummary k
 
-toAppends :: Serialise k => LogicalPageSummaries k -> [Append]
-toAppends (Pages _ ps) = fmap (toAppend . fmap serialise) ps
+toAppends :: SerialiseKey k => LogicalPageSummaries k -> [Append]
+toAppends (Pages _ ps) = fmap (toAppend . fmap serialiseKey) ps
 
 --
 -- Labelling
@@ -265,11 +267,15 @@ labelPages ps =
 -- Generation and shrinking
 --
 
-instance (Arbitrary k, Ord k, Serialise k) => Arbitrary (LogicalPageSummaries k) where
+instance (Arbitrary k, Ord k, SerialiseKey k)
+      => Arbitrary (LogicalPageSummaries k) where
   arbitrary = genPages 0.03 (QC.choose (0, 16))
   shrink = shrinkPages
 
-shrinkPages :: (Arbitrary k, Ord k, Serialise k) => LogicalPageSummaries k -> [LogicalPageSummaries k]
+shrinkPages ::
+     (Arbitrary k, Ord k, SerialiseKey k)
+  => LogicalPageSummaries k
+  -> [LogicalPageSummaries k]
 shrinkPages (Pages rfprec ps) = [
       Pages rfprec ps'
     | ps' <- QC.shrinkList shrinkLogicalPageSummary ps, pagesInvariant (Pages rfprec ps')
@@ -279,7 +285,7 @@ shrinkPages (Pages rfprec ps) = [
     ]
 
 genPages ::
-     (Arbitrary k, Ord k, Serialise k)
+     (Arbitrary k, Ord k, SerialiseKey k)
   => Double -- ^ Probability of a value being larger-than-page
   -> Gen Word32 -- ^ Number of overflow pages for a larger-than-page value
   -> Gen (LogicalPageSummaries k)
@@ -289,7 +295,7 @@ genPages p genN = do
     mkPages p genN rfprec ks
 
 mkPages ::
-     forall k. (Ord k, Serialise k)
+     forall k. (Ord k, SerialiseKey k)
   => Double -- ^ Probability of a value being larger-than-page
   -> Gen Word32 -- ^ Number of overflow pages for a larger-than-page value
   -> RFPrecision
@@ -306,7 +312,7 @@ mkPages p genN rfprec@(RFPrecision n) =
     go  (k1:k2:ks) = do b <- largerThanPage
                         if | b
                            -> (:) <$> (MultiPageOneKey k1 <$> genN) <*> go (k2 : ks)
-                           | topBits16 n (serialise k1) == topBits16 n (serialise k2)
+                           | keyTopBits16 n (serialiseKey k1) == keyTopBits16 n (serialiseKey k2)
                            -> (OnePageManyKeys k1 k2 :) <$> go ks
                            | otherwise
                            -> (OnePageOneKey k1 :) <$>  go (k2 : ks)
@@ -314,7 +320,7 @@ mkPages p genN rfprec@(RFPrecision n) =
     largerThanPage :: Gen Bool
     largerThanPage = genDouble >>= \x -> pure (x < p)
 
-pagesInvariant :: (Ord k, Serialise k) => LogicalPageSummaries k -> Bool
+pagesInvariant :: (Ord k, SerialiseKey k) => LogicalPageSummaries k -> Bool
 pagesInvariant (Pages (RFPrecision rfprec) ps0) =
        sort ks   == ks
     && nubOrd ks == ks
@@ -323,7 +329,8 @@ pagesInvariant (Pages (RFPrecision rfprec) ps0) =
     ks = flatten ps0
     partitioned = \case
       OnePageOneKey _       -> True
-      OnePageManyKeys k1 k2 -> topBits16 rfprec (serialise k1) == topBits16 rfprec (serialise k2)
+      OnePageManyKeys k1 k2 -> keyTopBits16 rfprec (serialiseKey k1)
+                               == keyTopBits16 rfprec (serialiseKey k2)
       MultiPageOneKey _ _   -> True
 
     flatten :: Eq k => [LogicalPageSummary k] -> [k]

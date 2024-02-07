@@ -13,8 +13,8 @@ import           Criterion.Main
 import           Data.Foldable (Foldable (..))
 import           Database.LSMTree.Generators
 import           Database.LSMTree.Internal.Run.Index.Compact
-import           Database.LSMTree.Internal.Serialise (Serialise (serialise),
-                     SerialisedKey)
+import           Database.LSMTree.Internal.Serialise (SerialisedKey,
+                     serialiseKey)
 import           System.Random
 import           System.Random.Extras
 import           Test.QuickCheck (generate)
@@ -45,7 +45,7 @@ searchEnv ::
 searchEnv rfprec npages nsearches = do
     ci <- constructCompactIndex 100 <$> constructionEnv rfprec npages
     stdgen  <- newStdGen
-    let ks = serialise <$> uniformWithReplacement @UTxOKey stdgen nsearches
+    let ks = serialiseKey <$> uniformWithReplacement @UTxOKey stdgen nsearches
     pure (ci, ks)
 
 -- | Used for benchmarking 'search'.

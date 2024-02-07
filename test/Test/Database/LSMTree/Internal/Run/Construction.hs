@@ -7,15 +7,13 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BB
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ByteString.Short as SBS
-import           Data.ByteString.Short.Internal (ShortByteString (SBS))
 import           Data.Foldable (Foldable (..))
-import           Data.Maybe (fromJust)
-import           Data.Primitive.ByteArray (ByteArray (ByteArray),
-                     sizeofByteArray)
+import           Data.Maybe
+import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Entry (Entry (..))
 import           Database.LSMTree.Internal.Run.Construction as Real
-import           Database.LSMTree.Internal.Serialise (SerialisedKey,
-                     fromShortByteString)
+import           Database.LSMTree.Internal.Serialise
+import           Database.LSMTree.Internal.Serialise.RawBytes
 import qualified FormatPage as Proto
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
@@ -82,10 +80,10 @@ prop_pageBuilderMatchesPrototype page = counterexample "real /= model" $ real ==
   Util
 -------------------------------------------------------------------------------}
 
-fromListPageAcc :: [(SerialisedKey, Entry RawValue BlobRef)] -> PageAcc
+fromListPageAcc :: [(SerialisedKey, Entry SerialisedValue BlobSpan)] -> PageAcc
 fromListPageAcc = fromListPageAcc' 0
 
-fromListPageAcc' :: Int -> [(SerialisedKey, Entry RawValue BlobRef)] -> PageAcc
+fromListPageAcc' :: Int -> [(SerialisedKey, Entry SerialisedValue BlobSpan)] -> PageAcc
 fromListPageAcc' rfp kops = fromJust $ go (paEmpty rfp) kops
   where
     -- Add keys until full
@@ -98,7 +96,7 @@ fromListPageAcc' rfp kops = fromJust $ go (paEmpty rfp) kops
 
 fromProtoKOp ::
      (Proto.Key, Proto.Operation, Maybe Proto.BlobRef)
-  -> (SerialisedKey, Entry RawValue BlobRef)
+  -> (SerialisedKey, Entry SerialisedValue BlobSpan)
 fromProtoKOp (k, op, mblobref) = (fromProtoKey k, bimap fromProtoValue fromProtoBlobRef e)
   where e = case op of
               Proto.Insert v  -> case mblobref of
@@ -108,21 +106,20 @@ fromProtoKOp (k, op, mblobref) = (fromProtoKey k, bimap fromProtoValue fromProto
               Proto.Delete -> Delete
 
 fromProtoKey :: Proto.Key -> SerialisedKey
-fromProtoKey (Proto.Key bs) = fromShortByteString $ SBS.toShort bs
+fromProtoKey (Proto.Key bs) = SerialisedKey . fromShortByteString $ SBS.toShort bs
 
-fromProtoValue :: Proto.Value -> RawValue
-fromProtoValue (Proto.Value bs) = RawValue 0 (sizeofByteArray ba) ba
-  where ba = case SBS.toShort bs of SBS ba' -> ByteArray ba'
+fromProtoValue :: Proto.Value -> SerialisedValue
+fromProtoValue (Proto.Value bs) = SerialisedValue . fromShortByteString $ SBS.toShort bs
 
-fromProtoBlobRef :: Proto.BlobRef -> BlobRef
-fromProtoBlobRef (Proto.BlobRef x y) = BlobRef x y
+fromProtoBlobRef :: Proto.BlobRef -> BlobSpan
+fromProtoBlobRef (Proto.BlobRef x y) = BlobSpan x y
 
 -- | Wrapper around 'PageLogical' that only generates a k\/op pair with a blob
 -- reference if the op is an insert.
 newtype PageLogical' = PageLogical' {getPageLogical' :: Proto.PageLogical}
   deriving Show
 
-getRealKOps :: PageLogical' -> [(SerialisedKey, Entry RawValue BlobRef)]
+getRealKOps :: PageLogical' -> [(SerialisedKey, Entry SerialisedValue BlobSpan)]
 getRealKOps = fmap fromProtoKOp . getPrototypeKOps
 
 getPrototypeKOps :: PageLogical' -> [(Proto.Key, Proto.Operation, Maybe Proto.BlobRef)]

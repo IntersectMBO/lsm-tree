@@ -1,6 +1,15 @@
+{-# LANGUAGE DeriveAnyClass     #-}
+{-# LANGUAGE DeriveGeneric      #-}
+{-# LANGUAGE DerivingStrategies #-}
+
 module Database.LSMTree.Internal.BlobRef (
-    BlobRef (..),
-) where
+    BlobRef (..)
+  , BlobSpan (..)
+  ) where
+
+import           Control.DeepSeq (NFData)
+import           Data.Word (Word32, Word64)
+import           GHC.Generics (Generic)
 
 -- | A reference to an on-disk blob.
 --
@@ -11,3 +20,11 @@ module Database.LSMTree.Internal.BlobRef (
 -- values and is handled specially. In our context we will allow optionally a
 -- blob associated with each value in the table.
 data BlobRef blob = BlobRef
+
+-- | Location of a blob inside a blob file.
+data BlobSpan = BlobSpan {
+    blobSpanOffset :: !Word64
+  , blobSpanSize   :: !Word32
+  }
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass NFData
