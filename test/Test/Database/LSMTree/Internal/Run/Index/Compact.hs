@@ -106,15 +106,15 @@ prop_searchMinMaxKeysAfterConstruction csize ps = eqMapProp real model
     modelSearch m = \case
         OnePageOneKey k       -> do
           c <- incrCounter
-          pure $ Map.insert k (SinglePage c) m
+          pure $ Map.insert k (SinglePage (PageNo c)) m
         OnePageManyKeys k1 k2 -> do
           c <- incrCounter
-          pure $ Map.insert k1 (SinglePage c) $ Map.insert k2 (SinglePage c) m
+          pure $ Map.insert k1 (SinglePage (PageNo c)) $ Map.insert k2 (SinglePage (PageNo c)) m
         MultiPageOneKey k n -> do
           let incr = 1 + fromIntegral n
           c <- plusCounter incr
-          pure $ if incr == 1 then Map.insert k (SinglePage c) m
-                              else Map.insert k (MultiPage c (c + fromIntegral n)) m
+          pure $ if incr == 1 then Map.insert k (SinglePage (PageNo c)) m
+                              else Map.insert k (MultiPage (PageNo c) (PageNo $ c + fromIntegral n)) m
 
     real = foldMap' realSearch (getPages ps)
 
