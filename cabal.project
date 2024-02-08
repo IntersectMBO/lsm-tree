@@ -22,6 +22,9 @@ packages: . crc32c
 tests: True
 benchmarks: True
 
+package crc32c
+  tests: False
+
 -- TODO: remove when new versions are released
 source-repository-package
   type: git
