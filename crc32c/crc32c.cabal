@@ -34,8 +34,6 @@ extra-source-files:
 library
   exposed-modules:
       Data.Digest.CRC32C
-  other-modules:
-      Data.Digest.CRC32C.Internal
   hs-source-dirs:
       src
   build-depends:
