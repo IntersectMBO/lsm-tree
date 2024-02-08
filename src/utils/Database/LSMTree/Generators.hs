@@ -70,7 +70,7 @@ import           Test.QuickCheck.Gen (genDouble)
   WithSerialised
 -------------------------------------------------------------------------------}
 
--- | Cach serialised keys
+-- | Cache serialised keys
 --
 -- Also useful for failing tests that have keys as inputs, because the printed
 -- 'WithSerialised' values will show both keys and their serialised form.
