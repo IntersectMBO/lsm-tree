@@ -64,15 +64,14 @@ module Data.BloomFilter.Mutable
 
 import Control.Monad (liftM, forM_)
 import Control.Monad.ST (ST)
-import Data.Bits ((.&.), unsafeShiftL, unsafeShiftR)
-import Data.BloomFilter.Util (nextPowerOfTwo)
+import Data.BloomFilter.Util (ceil64)
 import Data.BloomFilter.Mutable.Internal
 import Data.BloomFilter.Hash (Hashable)
 
 import qualified Data.BloomFilter.BitVec64 as V
 
 import Prelude hiding (elem, length, notElem,
-                       (/), (*), div, divMod, mod, rem)
+                       (/), (*), div, divMod, mod)
 
 -- | Create a new mutable Bloom filter.  For efficiency, the number of
 -- bits used may be larger than the number requested.  It is always
@@ -81,17 +80,11 @@ import Prelude hiding (elem, length, notElem,
 new :: Int                    -- ^ number of hash functions to use
     -> Int                    -- ^ number of bits in filter
     -> ST s (MBloom s a)
-new hash numBits = MB hash shft msk `liftM` V.new trueBits
-  where twoBits | numBits < 1 = 1
-                | numBits > maxHash = maxHash
-                | isPowerOfTwo numBits = numBits
-                | otherwise = nextPowerOfTwo numBits
-        numElems = max 2 (twoBits `unsafeShiftR` logBitsInHash)
-        trueBits = numElems `unsafeShiftL` logBitsInHash
-        shft     = logPower2 trueBits
-        msk      = trueBits - 1
-        isPowerOfTwo n = n .&. (n - 1) == 0
-
+new hash numBits = MB hash numBits' `liftM` V.new numBits'
+  where numBits' | numBits < 64 = 64
+                 | numBits > maxHash = maxHash
+                 | otherwise = ceil64 numBits
+              
 maxHash :: Int
 #if WORD_SIZE_IN_BITS == 64
 maxHash = 4294967296
@@ -99,16 +92,13 @@ maxHash = 4294967296
 maxHash = 1073741824
 #endif
 
-logBitsInHash :: Int
-logBitsInHash = 5 -- logPower2 bitsInHash
-
 -- | Insert a value into a mutable Bloom filter.  Afterwards, a
 -- membership query for the same value is guaranteed to return @True@.
 insert :: Hashable a => MBloom s a -> a -> ST s ()
 insert mb elt = do
   let mu = bitArray mb
   forM_ (hashes mb elt) $ \idx' -> do
-      let !idx = fromIntegral idx' .&. mask mb :: Int
+      let !idx = fromIntegral idx' `rem` size mb :: Int
       V.unsafeWrite mu idx True
 
 -- | Query a mutable Bloom filter for membership.  If the value is
@@ -118,7 +108,7 @@ elem :: Hashable a => a -> MBloom s a -> ST s Bool
 elem elt mb = loop (hashes mb elt)
   where mu = bitArray mb
         loop (idx':wbs) = do
-          let !idx = fromIntegral idx' .&. mask mb :: Int
+          let !idx = fromIntegral idx' `rem` size mb :: Int
           b <- V.unsafeRead mu idx
           case b of
               False -> return False
@@ -130,15 +120,7 @@ elem elt mb = loop (hashes mb elt)
 
 -- | Return the size of a mutable Bloom filter, in bits.
 length :: MBloom s a -> Int
-length = unsafeShiftL 1 . shift
-
-
--- | Slow, crummy way of computing the integer log of an integer known
--- to be a power of two.
-logPower2 :: Int -> Int
-logPower2 k = go 0 k
-    where go j 1 = j
-          go j n = go (j+1) (n `unsafeShiftR` 1)
+length = size
 
 -- $overview
 --

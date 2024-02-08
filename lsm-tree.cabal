@@ -79,12 +79,12 @@ library bloomfilter
 
   exposed-modules:
     Data.BloomFilter
+    Data.BloomFilter.BitVec64
     Data.BloomFilter.Easy
     Data.BloomFilter.Hash
     Data.BloomFilter.Mutable
 
   other-modules:
-    Data.BloomFilter.BitVec64
     Data.BloomFilter.Mutable.Internal
     Data.BloomFilter.Util
 

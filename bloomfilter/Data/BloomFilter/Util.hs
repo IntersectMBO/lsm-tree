@@ -3,9 +3,10 @@
 module Data.BloomFilter.Util
     (
       nextPowerOfTwo
+    , ceil64
     ) where
 
-import Data.Bits ((.|.), unsafeShiftR)
+import Data.Bits ((.|.), (.&.), complement, unsafeShiftR)
 
 -- given number.
 nextPowerOfTwo :: Int -> Int
@@ -20,3 +21,10 @@ nextPowerOfTwo n =
         g = f .|. (f `unsafeShiftR` 32)  -- in case we're on a 64-bit host
         !h = g + 1
     in h
+
+-- >>> let ceil64ref x = let y = (x `div` 64) * 64 in if x == y then y else y + 64
+-- >>> and [ ceil64 i == ceil64ref i | i <- [0..200] ]
+-- True
+--
+ceil64 :: Int -> Int
+ceil64 i = (i + 63) .&. complement 0x3f
