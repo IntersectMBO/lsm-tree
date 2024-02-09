@@ -51,7 +51,7 @@ library
   extra-libraries:
       stdc++
   cxx-options: -std=c++11
-  if arch(x86_64)
+  if arch(x86_64) && !os(windows)
     cxx-options: -DHAVE_SSE42=1 -msse4.2
   if arch(arm)
     cxx-options: -DHAVE_ARM64_CRC32C=1
