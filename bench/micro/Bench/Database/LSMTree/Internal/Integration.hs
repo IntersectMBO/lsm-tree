@@ -34,7 +34,7 @@ import           Database.LSMTree.Internal.Serialise (SerialiseKey,
 import           Database.LSMTree.Util.Orphans ()
 import           GHC.Generics (Generic)
 import           Prelude hiding (getContents)
-import           System.Random (Uniform, newStdGen)
+import           System.Random as R
 import           System.Random.Extras (sampleUniformWithReplacement,
                      uniformWithoutReplacement)
 import           Test.QuickCheck (generate, shuffle)
@@ -155,7 +155,7 @@ prepLookupsEnv ::
   -> Config
   -> IO (Bloom SerialisedKey, CompactIndex, [SerialisedKey])
 prepLookupsEnv _ Config {..} = do
-    (storedKeys, lookupKeys) <- lookupsEnv @k totalEntries npos nneg
+    (storedKeys, lookupKeys) <- lookupsEnv @k (mkStdGen 17) totalEntries npos nneg
     let b    = Bloom.fromList fpr $ fmap serialiseKey storedKeys
         ps   = mkPages (RFPrecision rfprec) $ NonEmpty.fromList storedKeys
         ps'  = fmap serialiseKey ps
@@ -169,16 +169,16 @@ prepLookupsEnv _ Config {..} = do
 -- | Generate keys to store and keys to lookup
 lookupsEnv ::
      (Ord k, Uniform k)
-  => Int -- ^ Number of stored keys
+  => StdGen -- ^ RNG
+  -> Int -- ^ Number of stored keys
   -> Int -- ^ Number of positive lookups
   -> Int -- ^ Number of negative lookups
   -> IO ([k], [k])
-lookupsEnv nkeys npos nneg = do
-    stdgen <- newStdGen
-    stdgen' <- newStdGen
+lookupsEnv g nkeys npos nneg = do
+    let  (g1, g2) = R.split g
     let (xs, ys1) = splitAt nkeys
-                  $ uniformWithoutReplacement    stdgen  (nkeys + nneg)
-        ys2       = sampleUniformWithReplacement stdgen' npos xs
+                  $ uniformWithoutReplacement    g1 (nkeys + nneg)
+        ys2       = sampleUniformWithReplacement g2 npos xs
     zs <- generate $ shuffle (ys1 ++ ys2)
     pure (xs, zs)
 
