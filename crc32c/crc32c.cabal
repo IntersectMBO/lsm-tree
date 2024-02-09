@@ -1,4 +1,4 @@
-cabal-version: 3.4
+cabal-version:      3.4
 
 -- This file has been generated from package.yaml by hpack version 0.35.1.
 --
@@ -6,66 +6,71 @@ cabal-version: 3.4
 --
 -- hash: 1a4d90d4e9381a7e6ebad0ead5753fb5d408d10dca3875cc575fa3b9a83becbc
 
-name:           crc32c
-version:        0.1.0
-synopsis:       Haskell bindings for crc32c
-category:       FFI, Raw
-homepage:       https://github.com/leptonyu/crc32c#readme
-author:         Daniel YU
-maintainer:     leptonyu@gmail.com
-copyright:      (c) Daniel YU
-license:        BSD-3-Clause
-license-file:   LICENSE
-build-type:     Simple
+name:               crc32c
+version:            0.1.0
+synopsis:           Haskell bindings for crc32c
+description:
+  Functions for computing the CRC-32C (Castagnoli) cyclic
+  redundancy check. It is implemented as an FFI binding
+  to the Google @crc32c@ C++ library, the code for which
+  is bundled with this library.
+
+category:           FFI, Raw
+homepage:           https://github.com/leptonyu/crc32c#readme
+author:             Daniel YU
+maintainer:         leptonyu@gmail.com
+copyright:          (c) Daniel YU
+license:            BSD-3-Clause
+license-file:       LICENSE
+build-type:         Simple
 extra-source-files:
-    README.md
-    include/LICENSE
-    include/crc32c_arm64.h
-    include/crc32c_arm64_linux_check.h
-    include/crc32c_internal.h
-    include/crc32c_prefetch.h
-    include/crc32c_read_le.h
-    include/crc32c_round_up.h
-    include/crc32c_sse42.h
-    include/crc32c_sse42_check.h
-    include/crc32c/crc32c.h
-    include/crc32c/crc32c_config.h
+  include/crc32c/crc32c.h
+  include/crc32c/crc32c_config.h
+  include/crc32c_arm64.h
+  include/crc32c_arm64_linux_check.h
+  include/crc32c_internal.h
+  include/crc32c_prefetch.h
+  include/crc32c_read_le.h
+  include/crc32c_round_up.h
+  include/crc32c_sse42.h
+  include/crc32c_sse42_check.h
+  include/LICENSE
+  README.md
 
 library
-  exposed-modules:
-      Data.Digest.CRC32C
-  hs-source-dirs:
-      src
+  exposed-modules:  Data.Digest.CRC32C
+  hs-source-dirs:   src
   build-depends:
-      base >=4.9 && <5
-    , bytestring >=0.10.8.2
-  default-language: Haskell2010
+    , base        >=4.9      && <5
+    , bytestring  >=0.10.8.2
 
-  include-dirs:
-      include
+  default-language: Haskell2010
+  include-dirs:     include
   cxx-sources:
-      include/crc32c.cc
-      include/crc32c_arm64.cc
-      include/crc32c_portable.cc
-      include/crc32c_sse42.cc
-  extra-libraries:
-      stdc++
-  cxx-options: -std=c++11
-  if arch(x86_64) && !os(windows)
+    include/crc32c.cc
+    include/crc32c_arm64.cc
+    include/crc32c_portable.cc
+    include/crc32c_sse42.cc
+
+  extra-libraries:  stdc++
+  cxx-options:      -std=c++11
+
+  if (arch(x86_64) && !os(windows))
     cxx-options: -DHAVE_SSE42=1 -msse4.2
+
   if arch(arm)
     cxx-options: -DHAVE_ARM64_CRC32C=1
 
 test-suite crc32c-test
-  type: exitcode-stdio-1.0
-  main-is: Spec.hs
-  hs-source-dirs:
-      test
+  type:             exitcode-stdio-1.0
+  main-is:          Spec.hs
+  hs-source-dirs:   test
   build-depends:
-      QuickCheck
-    , base >=4.9 && <5
-    , bytestring >=0.10.8.2 && <0.11
+    , base        >=4.9      && <5
+    , bytestring  >=0.10.8.2 && <0.11
     , crc32c
     , hspec
     , hspec-core
+    , QuickCheck
+
   default-language: Haskell2010
