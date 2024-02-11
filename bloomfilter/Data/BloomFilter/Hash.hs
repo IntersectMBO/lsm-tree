@@ -1,5 +1,5 @@
 {-# LANGUAGE BangPatterns, CPP, ForeignFunctionInterface,
-    TypeOperators #-}
+    TypeOperators, RoleAnnotations #-}
 
 -- |
 -- Module: Data.BloomFilter.Hash
@@ -30,7 +30,10 @@ module Data.BloomFilter.Hash
     , hashSalt64
     -- * Compute a family of hash values
     , hashes
+    , CheapHashes (..)
     , cheapHashes
+    , evalCheapHashes
+    , makeCheapHashes
     -- * Hash functions for 'Storable' instances
     , hashOne32
     , hashOne64
@@ -144,20 +147,34 @@ hashes n v = unfoldr go (n,0x3f56da2d)
 -- coefficient, we shift right by the coefficient.  This offers better
 -- performance (as a shift is much cheaper than a multiply), and the
 -- low order bits of the final hash stay well mixed.
+data CheapHashes a = CheapHashes !Hash !Hash
+  deriving Show
+type role CheapHashes nominal
+
+evalCheapHashes :: CheapHashes a -> Int -> Hash
+evalCheapHashes (CheapHashes h1 h2) i = h1 + (h2 `unsafeShiftR` i)
+
+makeCheapHashes :: Hashable a => a -> CheapHashes a
+{-# SPECIALIZE makeCheapHashes :: SB.ByteString -> CheapHashes SB.ByteString #-}
+{-# SPECIALIZE makeCheapHashes :: LB.ByteString -> CheapHashes LB.ByteString #-}
+{-# SPECIALIZE makeCheapHashes :: String -> CheapHashes String #-}
+makeCheapHashes v = CheapHashes h1 h2
+    where h1 = fromIntegral (h `unsafeShiftR` 32)
+          h2 = fromIntegral h
+          h = hashSalt64 0x9150a946c4a8966e v
+
 cheapHashes :: Hashable a => Int -- ^ number of hashes to compute
             -> a                 -- ^ value to hash
             -> [Hash]
-{-# SPECIALIZE cheapHashes :: Int -> SB.ByteString -> [Word32] #-}
-{-# SPECIALIZE cheapHashes :: Int -> LB.ByteString -> [Word32] #-}
-{-# SPECIALIZE cheapHashes :: Int -> String -> [Word32] #-}
+{-# SPECIALIZE cheapHashes :: Int -> SB.ByteString -> [Hash] #-}
+{-# SPECIALIZE cheapHashes :: Int -> LB.ByteString -> [Hash] #-}
+{-# SPECIALIZE cheapHashes :: Int -> String -> [Hash] #-}
 cheapHashes k v = go 0
-    where go i | i == j = []
-               | otherwise = hash : go (i + 1)
-               where !hash = h1 + (h2 `unsafeShiftR` i)
-          h1 = fromIntegral (h `unsafeShiftR` 32)
-          h2 = fromIntegral h
-          h = hashSalt64 0x9150a946c4a8966e v
-          j = fromIntegral k
+    where !ch = makeCheapHashes v
+
+          go :: Int -> [Hash]
+          go !i | i == k = []
+                | otherwise = evalCheapHashes ch i : go (i + 1)
 
 instance Hashable () where
     hashIO32 _ salt = return salt
