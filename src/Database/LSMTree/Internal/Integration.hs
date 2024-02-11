@@ -1,6 +1,3 @@
-{-# LANGUAGE TupleSections #-}
-{- HLINT ignore "Eta reduce" -}
-
 -- | Integration of LSM-Tree components into a full levels structure.
 --
 -- === TODO
