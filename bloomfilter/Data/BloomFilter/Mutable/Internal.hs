@@ -15,8 +15,6 @@ module Data.BloomFilter.Mutable.Internal
     , hashes
     ) where
 
-import Data.Bits (shiftL)
-
 import qualified Data.BloomFilter.BitVec64 as V
 
 import qualified Data.BloomFilter.Hash as Hash
@@ -26,9 +24,8 @@ import Prelude hiding (elem, length, notElem,
 
 -- | A mutable Bloom filter, for use within the 'ST' monad.
 data MBloom s a = MB {
-      hashesN :: {-# UNPACK #-} !Int
-    , shift :: {-# UNPACK #-} !Int
-    , mask :: {-# UNPACK #-} !Int
+      hashesN  :: {-# UNPACK #-} !Int
+    , size     :: {-# UNPACK #-} !Int  -- ^ size is multiple of 64
     , bitArray :: {-# UNPACK #-} !(V.MBitVec64 s)
     }
 type role MBloom nominal nominal
@@ -38,4 +35,4 @@ hashes mb = Hash.cheapHashes (hashesN mb)
 {-# INLINE hashes #-}
 
 instance Show (MBloom s a) where
-    show mb = "MBloom { " ++ show ((1::Int) `shiftL` shift mb) ++ " bits } "
+    show mb = "MBloom { " ++ show (size mb) ++ " bits } "

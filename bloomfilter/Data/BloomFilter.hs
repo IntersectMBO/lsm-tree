@@ -75,7 +75,6 @@ module Data.BloomFilter
 import Control.Monad (liftM, forM_)
 import Control.Monad.ST (ST, runST)
 import Control.DeepSeq (NFData(..))
-import Data.Bits ((.&.), unsafeShiftL)
 import qualified Data.BloomFilter.Mutable as MB
 import qualified Data.BloomFilter.Mutable.Internal as MB
 import Data.BloomFilter.Mutable.Internal (Hash, MBloom)
@@ -83,15 +82,14 @@ import Data.BloomFilter.Hash (Hashable)
 import qualified Data.BloomFilter.Hash as Hash
 
 import Prelude hiding (elem, length, notElem,
-                       (/), (*), div, divMod, mod, rem)
+                       (/), (*), div, divMod, mod)
 
 import qualified Data.BloomFilter.BitVec64 as V
 
 -- | An immutable Bloom filter, suitable for querying from pure code.
 data Bloom a = B {
-      hashesN :: {-# UNPACK #-} !Int
-    , shift :: {-# UNPACK #-} !Int
-    , mask :: {-# UNPACK #-} !Int
+      hashesN  :: {-# UNPACK #-} !Int
+    , size     :: {-# UNPACK #-} !Int   -- ^ size is multiple of 64
     , bitArray :: {-# UNPACK #-} !V.BitVec64
     }
 type role Bloom nominal
@@ -101,7 +99,7 @@ hashes ub = Hash.cheapHashes (hashesN ub)
 {-# INLINE hashes #-}
 
 instance Show (Bloom a) where
-    show ub = "Bloom { " ++ show ((1::Int) `unsafeShiftL` shift ub) ++ " bits } "
+    show ub = "Bloom { " ++ show (size ub) ++ " bits } "
 
 instance NFData (Bloom a) where
     rnf !_ = ()
@@ -133,20 +131,20 @@ create hash numBits body = runST $ do
 -- | Create an immutable Bloom filter from a mutable one.  The mutable
 -- filter may be modified afterwards.
 freeze :: MBloom s a -> ST s (Bloom a)
-freeze mb = B (MB.hashesN mb) (MB.shift mb) (MB.mask mb) `liftM`
+freeze mb = B (MB.hashesN mb) (MB.size mb) `liftM`
             V.freeze (MB.bitArray mb)
 
 -- | Create an immutable Bloom filter from a mutable one.  The mutable
 -- filter /must not/ be modified afterwards, or a runtime crash may
 -- occur.  For a safer creation interface, use 'freeze' or 'create'.
 unsafeFreeze :: MBloom s a -> ST s (Bloom a)
-unsafeFreeze mb = B (MB.hashesN mb) (MB.shift mb) (MB.mask mb) `liftM`
+unsafeFreeze mb = B (MB.hashesN mb) (MB.size mb) `liftM`
                     V.unsafeFreeze (MB.bitArray mb)
 
 -- | Copy an immutable Bloom filter to create a mutable one.  There is
 -- no non-copying equivalent.
 thaw :: Bloom a -> ST s (MBloom s a)
-thaw ub = MB.MB (hashesN ub) (shift ub) (mask ub) `liftM` V.thaw (bitArray ub)
+thaw ub = MB.MB (hashesN ub) (size ub) `liftM` V.thaw (bitArray ub)
 
 -- | Create an empty Bloom filter.
 --
@@ -176,7 +174,7 @@ singleton hash numBits elt = create hash numBits (\mb -> MB.insert mb elt)
 elem :: Hashable a => a -> Bloom a -> Bool
 elem elt ub = all test (hashes ub elt)
   where test idx' =
-          let !idx = fromIntegral idx' .&. mask ub :: Int
+          let !idx = fromIntegral idx' `rem` size ub :: Int
           in V.unsafeIndex (bitArray ub) idx
 
 modify :: (forall s. (MBloom s a -> ST s z))  -- ^ mutation function (result is discarded)
@@ -242,12 +240,12 @@ insertList elts = modify $ \mb -> mapM_ (MB.insert mb) elts
 notElem :: Hashable a => a -> Bloom a -> Bool
 notElem elt ub = any test (hashes ub elt)
   where test idx' =
-          let !idx = fromIntegral idx' .&. mask ub :: Int
+          let !idx = fromIntegral idx' `rem` size ub :: Int
           in not (V.unsafeIndex (bitArray ub) idx)
 
 -- | Return the size of an immutable Bloom filter, in bits.
 length :: Bloom a -> Int
-length = unsafeShiftL 1 . shift
+length = size
 
 -- | Build an immutable Bloom filter from a seed value.  The seeding
 -- function populates the filter as follows.
