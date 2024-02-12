@@ -144,7 +144,8 @@ new ::
   -> m (TableHandle m k v)
 new = undefined
 
--- | Close a table handle.
+-- | Close a table handle. 'close' is idempotent. All operations on a closed
+-- handle will throw an exception.
 --
 -- Any on-disk files and in-memory data that are no longer referenced after
 -- closing the table handle are lost forever. Use 'Snapshot's to ensure data is
