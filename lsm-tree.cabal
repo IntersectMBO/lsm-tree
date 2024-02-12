@@ -68,6 +68,7 @@ library
     , vector                ^>=0.13
     , vector-algorithms     ^>=0.9
 
+-- this fork doesn't work on 32bit systems
 library bloomfilter
   visibility:       private
   hs-source-dirs:   bloomfilter

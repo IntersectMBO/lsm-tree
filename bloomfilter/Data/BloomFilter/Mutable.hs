@@ -73,10 +73,7 @@ import qualified Data.BloomFilter.BitVec64 as V
 import Prelude hiding (elem, length, notElem,
                        (/), (*), div, divMod, mod)
 
--- | Create a new mutable Bloom filter.  For efficiency, the number of
--- bits used may be larger than the number requested.  It is always
--- rounded up to the nearest higher power of two, but will be clamped
--- at a maximum of 4 gigabits, since hashes are 32 bits in size.
+-- | Create a new mutable Bloom filter.
 new :: Int                    -- ^ number of hash functions to use
     -> Int                    -- ^ number of bits in filter
     -> ST s (MBloom s a)
@@ -108,6 +105,7 @@ elem :: Hashable a => a -> MBloom s a -> ST s Bool
 elem elt mb = loop (hashes mb elt)
   where mu = bitArray mb
         loop (idx':wbs) = do
+          -- the index calculation works as long as sizeof(Int) >= sizeof(Hash).
           let !idx = fromIntegral idx' `rem` size mb :: Int
           b <- V.unsafeRead mu idx
           case b of

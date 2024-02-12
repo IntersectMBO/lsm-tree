@@ -57,6 +57,7 @@ module Data.BloomFilter
     -- ** Accessors
     , length
     , elem
+    , elemCheapHashes
     , notElem
 
     -- ** Modification
@@ -78,7 +79,7 @@ import Control.DeepSeq (NFData(..))
 import qualified Data.BloomFilter.Mutable as MB
 import qualified Data.BloomFilter.Mutable.Internal as MB
 import Data.BloomFilter.Mutable.Internal (Hash, MBloom)
-import Data.BloomFilter.Hash (Hashable)
+import Data.BloomFilter.Hash (Hashable, CheapHashes, evalCheapHashes, makeCheapHashes)
 import qualified Data.BloomFilter.Hash as Hash
 
 import Prelude hiding (elem, length, notElem,
@@ -89,7 +90,7 @@ import qualified Data.BloomFilter.BitVec64 as V
 -- | An immutable Bloom filter, suitable for querying from pure code.
 data Bloom a = B {
       hashesN  :: {-# UNPACK #-} !Int
-    , size     :: {-# UNPACK #-} !Int   -- ^ size is multiple of 64
+    , size     :: {-# UNPACK #-} !Int   -- ^ Size in bits. This is a multiple of 64
     , bitArray :: {-# UNPACK #-} !V.BitVec64
     }
 type role Bloom nominal
@@ -172,10 +173,16 @@ singleton hash numBits elt = create hash numBits (\mb -> MB.insert mb elt)
 -- present, return @True@.  If the value is not present, there is
 -- /still/ some possibility that @True@ will be returned.
 elem :: Hashable a => a -> Bloom a -> Bool
-elem elt ub = all test (hashes ub elt)
-  where test idx' =
-          let !idx = fromIntegral idx' `rem` size ub :: Int
-          in V.unsafeIndex (bitArray ub) idx
+elem elt ub = elemCheapHashes (makeCheapHashes elt) ub
+
+elemCheapHashes :: CheapHashes a -> Bloom a -> Bool
+elemCheapHashes ch ub = go 0 where
+  go :: Int -> Bool
+  go !i | i >= hashesN ub = True
+        | otherwise       = let !idx = fromIntegral (evalCheapHashes ch i)`rem` size ub :: Int
+                            in if V.unsafeIndex (bitArray ub) idx
+                               then go (i + 1)
+                               else False
 
 modify :: (forall s. (MBloom s a -> ST s z))  -- ^ mutation function (result is discarded)
         -> Bloom a
