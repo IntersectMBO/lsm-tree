@@ -4,6 +4,7 @@ module Database.LSMTree.Internal.Run.FsPaths (
   , runBlobPath
   , runFilterPath
   , runIndexPath
+  , runChecksumsPath
   , activeRunsDir
   ) where
 
@@ -38,6 +39,9 @@ runFilterPath = runFilePathWithExt ".filter"
 
 runIndexPath :: RunFsPaths -> FsPath
 runIndexPath = runFilePathWithExt ".index"
+
+runChecksumsPath :: RunFsPaths -> FsPath
+runChecksumsPath = runFilePathWithExt ".checksums"
 
 runFilePathWithExt :: String -> RunFsPaths -> FsPath
 runFilePathWithExt ext (RunFsPaths n) =
