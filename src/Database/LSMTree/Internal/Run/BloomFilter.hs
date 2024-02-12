@@ -48,12 +48,13 @@ module Database.LSMTree.Internal.Run.BloomFilter (
     -- ** Incremental construction
   , MBloom
   , Mutable.new
+  , newEasy
   , Mutable.insert
   , Bloom.freeze
   , Bloom.unsafeFreeze
   ) where
 
-import           Control.Monad.ST.Strict (runST)
+import           Control.Monad.ST.Strict
 import           Data.BloomFilter (Bloom, Hash)
 import qualified Data.BloomFilter as Bloom
 import qualified Data.BloomFilter.Easy as Easy
@@ -121,3 +122,15 @@ monkeyHashFuncs ::
   -> Int
 monkeyHashFuncs numBits numEntries = truncate @Double $
     (fromIntegral numBits / fromIntegral numEntries) * log 2
+
+{-------------------------------------------------------------------------------
+  Incremental construction
+-------------------------------------------------------------------------------}
+
+-- | Like 'new', but uses 'Easy.suggestSizing' by default.
+newEasy ::
+     Double            -- ^ Requested false-positive rate
+  -> Int               -- ^ Number of entries to insert
+  -> ST s (MBloom s a)
+newEasy targetFpr numEntries = Mutable.new numHashFuncs numBits
+  where (numBits, numHashFuncs) = Easy.suggestSizing numEntries targetFpr

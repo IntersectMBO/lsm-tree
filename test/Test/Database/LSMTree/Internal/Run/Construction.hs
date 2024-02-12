@@ -1,7 +1,9 @@
-{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE BangPatterns  #-}
+{-# LANGUAGE TupleSections #-}
 
 module Test.Database.LSMTree.Internal.Run.Construction (tests) where
 
+import           Control.Monad.ST
 import           Data.Bifunctor (Bifunctor (..))
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BB
@@ -9,29 +11,62 @@ import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ByteString.Short as SBS
 import           Data.Foldable (Foldable (..))
 import           Data.Maybe
+import qualified Data.Vector.Primitive as P
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Entry (Entry (..))
+import qualified Database.LSMTree.Internal.Run.BloomFilter as Bloom
 import           Database.LSMTree.Internal.Run.Construction as Real
+import qualified Database.LSMTree.Internal.Run.Index.Compact as Index
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.Serialise.RawBytes
 import qualified FormatPage as Proto
 import           Test.Tasty
+import           Test.Tasty.HUnit
 import           Test.Tasty.QuickCheck
 
 tests :: TestTree
 tests = testGroup "Database.LSMTree.Internal.Run.Construction" [
-      testProperty "prop_BitMapMatchesPrototype"   prop_BitMapMatchesPrototype
-    , testProperty "prop_CrumbMapMatchesPrototype" prop_CrumbMapMatchesPrototype
-    , largerTestCases $
-      testProperty "prop_paddedToDiskPageSize with trivially partitioned pages" $
-        prop_paddedToDiskPageSize 0
-    , largerTestCases $
-      testProperty "prop_paddedToDiskPageSize with partitioned pages" $
-        prop_paddedToDiskPageSize 8
-    , largerTestCases $
-      testProperty "prop_pageBuilderMatchesPrototype" prop_pageBuilderMatchesPrototype
+      testGroup "RunAcc" [
+          testCase "test_singleKeyRun" $ test_singleKeyRun
+        ]
+    , testGroup "PageAcc" [
+          testProperty "prop_BitMapMatchesPrototype"   prop_BitMapMatchesPrototype
+        , testProperty "prop_CrumbMapMatchesPrototype" prop_CrumbMapMatchesPrototype
+        , largerTestCases $
+          testProperty "prop_paddedToDiskPageSize with trivially partitioned pages" $
+            prop_paddedToDiskPageSize 0
+        , largerTestCases $
+          testProperty "prop_paddedToDiskPageSize with partitioned pages" $
+            prop_paddedToDiskPageSize 8
+        , largerTestCases $
+          testProperty "prop_pageBuilderMatchesPrototype" prop_pageBuilderMatchesPrototype
+        ]
     ]
   where largerTestCases = localOption (QuickCheckMaxSize 500) . localOption (QuickCheckTests 10000)
+
+{-------------------------------------------------------------------------------
+  RunAcc
+-------------------------------------------------------------------------------}
+
+test_singleKeyRun :: Assertion
+test_singleKeyRun =  do
+    let !k = SerialisedKey' (P.fromList [37])
+        !e = InsertWithBlob (SerialisedValue' (P.fromList [48, 19])) (BlobSpan 55 77)
+
+    (addRes, (mp, mc, _mfc, b, cix)) <- stToIO $ do
+      racc <- new 1 1
+      addRes <- addFullKOp racc k e
+      (addRes,) <$> unsafeFinalise racc
+
+    Nothing @=? addRes
+    Just (paSingleton k e, []) @=? mp
+    isJust mc @? "expected a chunk"
+    True @=? Bloom.elem k b
+    Index.SinglePage (Index.PageNo 0) @=? Index.search k cix
+
+{-------------------------------------------------------------------------------
+  PageAcc
+-------------------------------------------------------------------------------}
 
 -- Constructing a bitmap incrementally yields the same result as constructing it
 -- in one go
@@ -84,15 +119,14 @@ fromListPageAcc :: [(SerialisedKey, Entry SerialisedValue BlobSpan)] -> PageAcc
 fromListPageAcc = fromListPageAcc' 0
 
 fromListPageAcc' :: Int -> [(SerialisedKey, Entry SerialisedValue BlobSpan)] -> PageAcc
-fromListPageAcc' rfp kops = fromJust $ go (paEmpty rfp) kops
+fromListPageAcc' rfp kops = fromJust $ go paEmpty kops
   where
     -- Add keys until full
     go !pacc [] = Just pacc
     go !pacc ((k, e):kops') =
-      case paAddElem k e pacc of
+      case paAddElem rfp k e pacc of
         Nothing    -> Just pacc
         Just pacc' -> go pacc' kops'
-
 
 fromProtoKOp ::
      (Proto.Key, Proto.Operation, Maybe Proto.BlobRef)
