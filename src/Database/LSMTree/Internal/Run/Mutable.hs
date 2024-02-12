@@ -51,6 +51,8 @@ type RefCount = IORef Int
 -- representation of a run. Each file handle is opened write-only and should be
 -- written to using normal buffered I\/O.
 --
+-- __Not suitable for concurrent construction from multiple threads!__
+--
 data MRun fhandle = MRun {
       -- | The reference count for the LSM run. This counts the
       -- number of references from LSM handles to this run. When
@@ -159,7 +161,7 @@ unsafeFinalise fs mrun@MRun {..} = do
 -- | Increase the reference count by one.
 addMRunReference :: HasFS IO h -> MRun (FS.Handle h) -> IO ()
 addMRunReference _ MRun {..} =
-    atomicModifyIORef' lsmMRunRefCount (\n -> (n+1, ()))
+    modifyIORef' lsmMRunRefCount (+1)
 
 -- | Decrease the reference count by one.
 -- After calling this operation, the run must not be used anymore.
@@ -167,7 +169,8 @@ addMRunReference _ MRun {..} =
 -- associated files from disk.
 removeMRunReference :: HasFS IO h -> MRun (FS.Handle h) -> IO ()
 removeMRunReference fs mrun@MRun {..} = do
-    count <- atomicModifyIORef' lsmMRunRefCount (\n -> (n-1, n-1))
+    modifyIORef' lsmMRunRefCount (\n -> n-1)
+    count <- readIORef lsmMRunRefCount
     when (count <= 0) $
       closeMRun fs mrun
 
@@ -193,7 +196,8 @@ closeMRun fs MRun {..} = do
 writeBlob :: HasFS IO h -> MRun (FS.Handle h) -> SerialisedBlob -> IO BlobSpan
 writeBlob fs MRun{..} blob = do
     let size = sizeofBlob64 blob
-    offset <- atomicModifyIORef' lsmMRunBlobOffset (\o -> (o + size, o))
+    offset <- readIORef lsmMRunBlobOffset
+    modifyIORef' lsmMRunBlobOffset (+size)
     writeToHandle fs lsmMRunBlobHandle (serialisedBlob blob)
     return (BlobSpan offset (fromIntegral size))
 
