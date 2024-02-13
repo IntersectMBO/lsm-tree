@@ -43,6 +43,7 @@ module Database.LSMTree.Internal.Run (
   , fromWriteBuffer
   ) where
 
+import           Control.Exception (finally)
 import           Control.Monad (when)
 import           Data.Foldable (for_)
 import           Data.IORef
@@ -98,18 +99,16 @@ removeReference fs run@Run {..} = do
     when (count <= 0) $
       close fs run
 
--- | Close the run, removing all files associated with it from disk.
+-- | Close the files used in the run, but do not remove them from disk.
 -- After calling this operation, the run must not be used anymore.
 --
--- TODO: Ensure proper cleanup even in presence of exceptions.
+-- TODO: Once snapshots are implemented, files should get removed, but for now
+-- we want to be able to re-open closed runs from disk.
 close :: HasFS IO h -> Run (FS.Handle h) -> IO ()
 close fs Run {..} = do
     FS.hClose fs lsmRunKOpsFile
-    FS.hClose fs lsmRunBlobFile
-    FS.removeFile fs (runKOpsPath lsmRunFsPaths)
-    FS.removeFile fs (runBlobPath lsmRunFsPaths)
-    FS.removeFile fs (runFilterPath lsmRunFsPaths)
-    FS.removeFile fs (runIndexPath lsmRunFsPaths)
+      `finally`
+        FS.hClose fs lsmRunBlobFile
 
 -- | Create a run by finalising a mutable run.
 fromMutable :: HasFS IO h -> MRun (FS.Handle h) -> IO (Run (FS.Handle h))
