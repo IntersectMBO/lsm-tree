@@ -16,6 +16,7 @@ import qualified Data.Primitive.ByteArray as BA
 import qualified Data.Vector.Primitive as V
 import           System.FilePath
 import qualified System.FS.API as FS
+import qualified System.FS.API.Lazy as FS
 import qualified System.FS.IO as FsIO
 import qualified System.FS.Sim.Error as FsSim
 import qualified System.FS.Sim.MockFS as FsSim
@@ -117,14 +118,8 @@ prop_WriteAndRead wb = ioProperty $ do
       tabulate "Value size" (map (showPowersOf10 . sizeofValue) vals) $
         pagesContainEntries bsBlobs pages (WB.content wb)
   where
-    getFile fs path = FS.withFile fs path FS.ReadMode $ \h -> do
-      n <- FS.hGetSize fs h
-      getFile' fs h n
-    getFile' fs h n
-      | n <= 0 = return ""
-      | otherwise = do
-          bs <- FS.hGetSome fs h n
-          (bs <>) <$> getFile' fs h (n - fromIntegral (BS.length bs))
+    getFile fs path =
+      FS.withFile fs path FS.ReadMode (fmap BS.toStrict . FS.hGetAll fs)
 
 pagesContainEntries :: ByteString -> [RawPage] ->
                        [(SerialisedKey, Entry SerialisedValue SerialisedBlob)] ->

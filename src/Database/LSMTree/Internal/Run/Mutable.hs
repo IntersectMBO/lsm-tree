@@ -30,14 +30,12 @@ import           Database.LSMTree.Internal.Run.BloomFilter (Bloom)
 import           Database.LSMTree.Internal.Run.Construction (RunAcc)
 import qualified Database.LSMTree.Internal.Run.Construction as Cons
 import           Database.LSMTree.Internal.Run.FsPaths
-import           Database.LSMTree.Internal.Run.Index.Compact (CompactIndex)
+import           Database.LSMTree.Internal.Run.Index.Compact (CompactIndex,
+                     NumPages)
 import qualified Database.LSMTree.Internal.Run.Index.Compact as Index
 import           Database.LSMTree.Internal.Serialise
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
-
--- TODO: define newtype somewhere else
-type NumPages = Int
 
 -- | The 'Run' and 'MRun' objects are reference counted.
 type RefCount = IORef Int
@@ -58,7 +56,7 @@ data MRun fhandle = MRun {
       lsmMRunRefCount   :: !RefCount
       -- | The file system paths for all the files used by the run.
     , lsmMRunFsPaths    :: !RunFsPaths
-      -- | The run accumulateor. This is the representation used for the
+      -- | The run accumulator. This is the representation used for the
       -- morally pure subset of the run cnstruction functionality. In
       -- particular it contains the (mutable) index, bloom filter and buffered
       -- pending output for the key\/ops file.
