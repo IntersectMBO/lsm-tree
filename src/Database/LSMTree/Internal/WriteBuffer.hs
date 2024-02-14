@@ -31,6 +31,7 @@ module Database.LSMTree.Internal.WriteBuffer (
     rangeLookups,
 ) where
 
+import           Data.Bifunctor (Bifunctor (..))
 import qualified Data.Map.Range as Map.R
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -71,33 +72,16 @@ content (WB m) = Map.assocs m
   Updates
 -------------------------------------------------------------------------------}
 
-combine :: (v -> v -> v) -> Entry v blob -> Entry v blob -> Entry v blob
-combine _ e@Delete            _                       = e
-combine _ e@Insert {}         _                       = e
-combine _ e@InsertWithBlob {} _                       = e
-combine _   (Mupdate u)       Delete                  = Insert u
-combine f   (Mupdate u)       (Insert v)              = Insert (f u v)
-combine f   (Mupdate u)       (InsertWithBlob v blob) = InsertWithBlob (f u v) blob
-combine f   (Mupdate u)       (Mupdate v)             = Mupdate (f u v)
-
 addEntryMonoidal :: (SerialiseKey k, SerialiseValue v)
   => (SerialisedValue -> SerialisedValue -> SerialisedValue) -- ^ merge function
   -> k -> Monoidal.Update v -> WriteBuffer k v blob -> WriteBuffer k v blob
 addEntryMonoidal f k e (WB wb) =
-    WB (Map.insertWith (combine f) (serialiseKey k) (g e) wb)
-  where
-    g (Monoidal.Insert v)  = Insert (serialiseValue v)
-    g (Monoidal.Mupsert v) = Mupdate (serialiseValue v)
-    g (Monoidal.Delete)    = Delete
+    WB (Map.insertWith (combine f) (serialiseKey k) (first serialiseValue (updateToEntryMonoidal e)) wb)
 
 addEntryNormal :: (SerialiseKey k, SerialiseValue v, SerialiseValue blob)
   => k -> Normal.Update v blob -> WriteBuffer k v blob -> WriteBuffer k v blob
 addEntryNormal k e (WB wb) =
-    WB (Map.insert (serialiseKey k) (g e) wb)
-  where
-    g (Normal.Insert v Nothing)  = Insert (serialiseValue v)
-    g (Normal.Insert v (Just b)) = InsertWithBlob (serialiseValue v) (serialiseBlob b)
-    g Normal.Delete              = Delete
+    WB (Map.insert (serialiseKey k) (bimap serialiseValue serialiseBlob (updateToEntryNormal e)) wb)
 
 {-------------------------------------------------------------------------------
   Querying
