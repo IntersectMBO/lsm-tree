@@ -1,6 +1,5 @@
-{-# LANGUAGE DerivingStrategies         #-}
-{-# LANGUAGE GeneralisedNewtypeDeriving #-}
-{-# LANGUAGE ScopedTypeVariables        #-}
+{-# LANGUAGE DerivingStrategies  #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 {- HLINT ignore "Use /=" -}
 
@@ -12,9 +11,9 @@ import qualified Data.ByteString.Builder as BB
 import qualified Data.ByteString.Short as SBS
 import qualified Data.Vector.Primitive as P
 import           Data.Word
+import           Database.LSMTree.Generators ()
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.Serialise.RawBytes
-import           Database.LSMTree.Util (showPowersOf10)
 import           Test.Tasty
 import           Test.Tasty.HUnit
 import           Test.Tasty.QuickCheck
@@ -24,7 +23,7 @@ tests = testGroup "Test.Database.LSMTree.Internal.Serialise" [
       testGroup "SerialisedKey Eq and Ord laws" [
           testProperty "Eq reflexivity" propEqReflexivity
         , testProperty "Eq symmetry" propEqSymmetry
-        , localOption (QuickCheckMaxRatio 1000) $
+        , localOption (QuickCheckMaxRatio 10000) $
           testProperty "Eq transitivity" propEqTransitivity
         , testProperty "Eq negation" propEqNegation
         , testProperty "Ord comparability" propOrdComparability
@@ -32,10 +31,6 @@ tests = testGroup "Test.Database.LSMTree.Internal.Serialise" [
         , testProperty "Ord reflexivity" propOrdReflexivity
         , localOption (QuickCheckMaxRatio 1000) $
           testProperty "Ord antisymmetry" propOrdAntiSymmetry
-        ]
-    , testGroup "Distributions" [
-          testProperty "arbitrary SerialisedKey" distribution
-        , testProperty "shrink serialisedKey" $ conjoin . fmap distribution . shrink
         ]
     , testCase "example keyTopBits16" $ do
         let k = SerialisedKey' (P.fromList [37, 42, 204, 130])
@@ -83,8 +78,8 @@ propEqReflexivity k = k === k
 propEqSymmetry :: SerialisedKey -> SerialisedKey -> Property
 propEqSymmetry k1 k2 = (k1 == k2) === (k2 == k1)
 
-propEqTransitivity :: SmallSerialisedKey -> SmallSerialisedKey -> SmallSerialisedKey -> Property
-propEqTransitivity k1 k2 k3 = k1 == k2 && k2 == k3 ==> k1 === k3
+propEqTransitivity :: SerialisedKey -> SerialisedKey -> SerialisedKey -> Property
+propEqTransitivity k1 k2 k3 = mapSize (const 5) $ k1 == k2 && k2 == k3 ==> k1 === k3
 
 propEqNegation :: SerialisedKey -> SerialisedKey -> Property
 propEqNegation k1 k2 = (k1 /= k2) === not (k1 == k2)
@@ -98,37 +93,5 @@ propOrdTransitivity k1 k2 k3 = k1 <= k2 && k2 <= k3 ==> k1 <= k3
 propOrdReflexivity :: SerialisedKey -> Property
 propOrdReflexivity k = property $ k <= k
 
-propOrdAntiSymmetry :: SmallSerialisedKey -> SmallSerialisedKey -> Property
-propOrdAntiSymmetry k1 k2 = k1 <= k2 && k2 <= k1 ==> k1 === k2
-
-{-------------------------------------------------------------------------------
-  Arbitrary
--------------------------------------------------------------------------------}
-
-distribution :: SerialisedKey -> Property
-distribution k =
-    tabulate "size of key in bytes" [showPowersOf10 $ sizeofKey k] $
-    property True
-
-instance Arbitrary SerialisedKey where
-  arbitrary = do
-    pvec <- P.fromList <$> arbitrary
-    n <- chooseInt (0, P.length pvec)
-    m <- chooseInt (0, P.length pvec - n)
-    pure $ SerialisedKey' (P.slice m n pvec)
-  shrink (SerialisedKey' pvec) =
-         [ SerialisedKey' (P.fromList ws) | ws <- shrink (P.toList pvec) ]
-      ++ [ SerialisedKey' (P.slice m n pvec)
-         | n <- shrink (P.length pvec)
-         , m <- shrink (P.length pvec - n)
-         ]
-
-newtype SmallSerialisedKey = SmallSerialisedKey SerialisedKey
-  deriving newtype (Show, Eq, Ord)
-
-instance Arbitrary SmallSerialisedKey where
-  arbitrary = do
-      n <- choose (0, 5)
-      SerialisedKey (RawBytes pvec) <- arbitrary
-      pure $ SmallSerialisedKey (SerialisedKey' (P.take n pvec))
-  shrink (SmallSerialisedKey k) = SmallSerialisedKey <$> shrink k
+propOrdAntiSymmetry :: SerialisedKey -> SerialisedKey -> Property
+propOrdAntiSymmetry k1 k2 = mapSize (const 5) $ k1 <= k2 && k2 <= k1 ==> k1 === k2

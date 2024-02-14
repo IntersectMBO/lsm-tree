@@ -1,43 +1,53 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications    #-}
 
-module Test.Database.LSMTree.Generators (tests) where
+module Test.Database.LSMTree.Generators (
+    tests
+  , prop_arbitraryAndShrinkPreserveInvariant
+  , prop_forAllArbitraryAndShrinkPreserveInvariant
+  , deepseqInvariant
+  ) where
 
+import           Control.DeepSeq (NFData, deepseq)
 import           Data.ByteString (ByteString)
 import           Data.Word (Word64)
-import           Database.LSMTree.Generators (ChunkSize, LogicalPageSummaries,
-                     RFPrecision, chunkSizeInvariant, pagesInvariant,
-                     rfprecInvariant, writeBufferInvariant)
+import           Database.LSMTree.Generators (chunkSizeInvariant,
+                     pagesInvariant, rfprecInvariant, writeBufferInvariant)
+import           Database.LSMTree.Internal.Serialise.RawBytes (RawBytes)
 import           Test.Database.LSMTree.Internal.Run.Index.Compact ()
-import           Test.QuickCheck (Arbitrary (..), Testable (..))
+import           Test.QuickCheck (Arbitrary (..), Gen, Testable (..),
+                     forAllShrink)
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck (testProperty)
 
 tests :: TestTree
 tests = testGroup "Test.Database.LSMTree.Generators" [
-      testGroup "WriteBuffer" [
-          testProperty "Arbitrary satisfies invariant" $ property $
-            writeBufferInvariant @ByteString @ByteString @ByteString
-        , testProperty "Shrinking satisfies invariant" $ property $
-            all (writeBufferInvariant @ByteString @ByteString @ByteString)
-              . shrink
-      ]
-    , testGroup "Range-finder bit-precision" [
-          testProperty "Arbitrary satisfies invariant" $
-            property . rfprecInvariant
-        , testProperty "Shrinking satisfies invariant" $
-            property . all rfprecInvariant . shrink @RFPrecision
-      ]
-    , testGroup "LogicalPageSummaries" [
-          testProperty "Arbitrary satisfies invariant" $
-            property . pagesInvariant @Word64
-        , testProperty "Shrinking satisfies invariant" $
-            property . all pagesInvariant . shrink @(LogicalPageSummaries Word64)
-        ]
-    , testGroup "Chunk size" [
-        testProperty "Arbitrary satisfies invariant" $
-            property . chunkSizeInvariant
-        , testProperty "Shrinking satisfies invariant" $
-            property . all chunkSizeInvariant . shrink @ChunkSize
-        ]
+      testGroup "WriteBuffer" $
+        prop_arbitraryAndShrinkPreserveInvariant (writeBufferInvariant @ByteString @ByteString @ByteString)
+    , testGroup "Range-finder bit-precision" $
+        prop_arbitraryAndShrinkPreserveInvariant rfprecInvariant
+    , testGroup "LogicalPageSummaries" $
+        prop_arbitraryAndShrinkPreserveInvariant (pagesInvariant @Word64)
+    , testGroup "Chunk size" $
+        prop_arbitraryAndShrinkPreserveInvariant chunkSizeInvariant
+    , testGroup "Raw bytes" $
+        prop_arbitraryAndShrinkPreserveInvariant (deepseqInvariant @RawBytes)
     ]
+
+prop_arbitraryAndShrinkPreserveInvariant ::
+    forall a. (Arbitrary a, Show a) => (a -> Bool) -> [TestTree]
+prop_arbitraryAndShrinkPreserveInvariant =
+    prop_forAllArbitraryAndShrinkPreserveInvariant arbitrary shrink
+
+prop_forAllArbitraryAndShrinkPreserveInvariant ::
+    forall a. Show a => Gen a -> (a -> [a]) -> (a -> Bool) -> [TestTree]
+prop_forAllArbitraryAndShrinkPreserveInvariant gen shr inv =
+    [ testProperty "Arbitrary satisfies invariant" $
+            property $ forAllShrink gen shr inv
+    , testProperty "Shrinking satisfies invariant" $
+            property $ forAllShrink gen shr (all inv . shr)
+    ]
+
+-- | Trivial invariant, but checks that the value is finite
+deepseqInvariant :: NFData a => a -> Bool
+deepseqInvariant x = x `deepseq` True
