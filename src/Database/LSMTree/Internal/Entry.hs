@@ -5,9 +5,11 @@ module Database.LSMTree.Internal.Entry (
     Entry (..)
   , onValue
   , onBlobRef
+  , NumEntries (..)
   ) where
 
 import           Control.DeepSeq (NFData (..))
+import           Data.Bifoldable (Bifoldable (..))
 import           Data.Bifunctor (Bifunctor (..))
 
 data Entry v blobref
@@ -49,3 +51,14 @@ instance Bifunctor Entry where
       InsertWithBlob v br -> InsertWithBlob v (g br)
       Mupdate v           -> Mupdate v
       Delete              -> Delete
+
+instance Bifoldable Entry where
+  bifoldMap f g = \case
+      Insert v            -> f v
+      InsertWithBlob v br -> f v <> g br
+      Mupdate v           -> f v
+      Delete              -> mempty
+
+
+newtype NumEntries = NumEntries { unNumEntries :: Int }
+  deriving (Eq, Ord, Show)

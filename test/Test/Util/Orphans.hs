@@ -1,7 +1,5 @@
 {-# LANGUAGE DerivingStrategies         #-}
-{-# LANGUAGE FlexibleContexts           #-}
 {-# LANGUAGE FlexibleInstances          #-}
-{-# LANGUAGE GADTs                      #-}
 {-# LANGUAGE GeneralisedNewtypeDeriving #-}
 {-# LANGUAGE InstanceSigs               #-}
 {-# LANGUAGE LambdaCase                 #-}
@@ -9,7 +7,6 @@
 {-# LANGUAGE StandaloneDeriving         #-}
 {-# LANGUAGE StandaloneKindSignatures   #-}
 {-# LANGUAGE TypeFamilies               #-}
-{-# LANGUAGE UndecidableInstances       #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -22,48 +19,19 @@ import qualified Control.Concurrent.STM as Real
 import           Control.Monad ((<=<))
 import           Control.Monad.IOSim (IOSim)
 import           Data.Kind (Type)
+import           Database.LSMTree.Common (IOLike)
+import           Database.LSMTree.Internal.BlobRef
 import           Database.LSMTree.Internal.Serialise (SerialiseKey)
-import qualified Database.LSMTree.Monoidal as Monoidal
-import           Database.LSMTree.Normal
-import           Test.QuickCheck (Arbitrary (..), frequency, oneof)
-import           Test.QuickCheck.Instances ()
-import           Test.QuickCheck.Modifiers
+import           Database.LSMTree.Normal (LookupResult, RangeLookupResult,
+                     TableHandle)
+import qualified Database.LSMTree.Util.Orphans ()
+import           Test.QuickCheck.Modifiers (Small (..))
 import           Test.QuickCheck.StateModel (Realized)
 import           Test.QuickCheck.StateModel.Lockstep (InterpretOp)
 import qualified Test.QuickCheck.StateModel.Lockstep.Op as Op
 import qualified Test.QuickCheck.StateModel.Lockstep.Op.SumProd as SumProd
 import           Test.Util.TypeFamilyWrappers (WrapBlob (..), WrapBlobRef (..),
                      WrapTableHandle (..))
-
-{-------------------------------------------------------------------------------
-  Common LSMTree types
--------------------------------------------------------------------------------}
-
-instance (Arbitrary v, Arbitrary blob) => Arbitrary (Update v blob) where
-  arbitrary = frequency
-    [ (10, Insert <$> arbitrary <*> arbitrary)
-    , (1, pure Delete)
-    ]
-
-  shrink (Insert v blob) = Delete : map (uncurry Insert) (shrink (v, blob))
-  shrink Delete          = []
-
-instance (Arbitrary v) => Arbitrary (Monoidal.Update v) where
-  arbitrary = frequency
-    [ (10, Monoidal.Insert <$> arbitrary)
-    , (5, Monoidal.Mupsert <$> arbitrary)
-    , (1, pure Monoidal.Delete)
-    ]
-
-  shrink (Monoidal.Insert v)  = Monoidal.Delete : map Monoidal.Insert (shrink v)
-  shrink (Monoidal.Mupsert v) = Monoidal.Insert v : map Monoidal.Mupsert (shrink v)
-  shrink Monoidal.Delete      = []
-
-instance Arbitrary k => Arbitrary (Range k) where
-  arbitrary = oneof
-    [ FromToExcluding <$> arbitrary <*> arbitrary
-    , FromToIncluding <$> arbitrary <*> arbitrary
-    ]
 
 {-------------------------------------------------------------------------------
   IOSim

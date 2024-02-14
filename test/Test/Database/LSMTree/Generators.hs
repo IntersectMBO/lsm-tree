@@ -3,10 +3,11 @@
 
 module Test.Database.LSMTree.Generators (tests) where
 
+import           Data.ByteString (ByteString)
 import           Data.Word (Word64)
 import           Database.LSMTree.Generators (ChunkSize, LogicalPageSummaries,
                      RFPrecision, chunkSizeInvariant, pagesInvariant,
-                     rfprecInvariant)
+                     rfprecInvariant, writeBufferInvariant)
 import           Test.Database.LSMTree.Internal.Run.Index.Compact ()
 import           Test.QuickCheck (Arbitrary (..), Testable (..))
 import           Test.Tasty (TestTree, testGroup)
@@ -14,7 +15,14 @@ import           Test.Tasty.QuickCheck (testProperty)
 
 tests :: TestTree
 tests = testGroup "Test.Database.LSMTree.Generators" [
-      testGroup "Range-finder bit-precision" [
+      testGroup "WriteBuffer" [
+          testProperty "Arbitrary satisfies invariant" $ property $
+            writeBufferInvariant @ByteString @ByteString @ByteString
+        , testProperty "Shrinking satisfies invariant" $ property $
+            all (writeBufferInvariant @ByteString @ByteString @ByteString)
+              . shrink
+      ]
+    , testGroup "Range-finder bit-precision" [
           testProperty "Arbitrary satisfies invariant" $
             property . rfprecInvariant
         , testProperty "Shrinking satisfies invariant" $

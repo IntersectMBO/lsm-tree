@@ -13,6 +13,7 @@ import           Data.Maybe (fromMaybe)
 import           Data.Proxy (Proxy (..))
 import           Data.Word (Word64)
 import           Database.LSMTree.Common (mkSnapshotName)
+import           Database.LSMTree.Generators ()
 import           Database.LSMTree.ModelIO.Normal (IOLike, LookupResult (..),
                      Range (..), RangeLookupResult (..),
                      SomeSerialisationConstraint, TableHandle, Update (..))
@@ -20,7 +21,6 @@ import           Test.Database.LSMTree.ModelIO.Class
 import           Test.QuickCheck.Monadic (monadicIO, monitor, run)
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck
-import           Test.Util.Orphans ()
 
 tests :: TestTree
 tests = testGroup "Database.LSMTree.ModelIO.Normal"

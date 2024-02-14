@@ -17,6 +17,7 @@ module Database.LSMTree.Internal.Run.Index.Compact (
     CompactIndex (..)
     -- * Invariants and bounds
   , rangeFinderPrecisionBounds
+  , NumPages
   , suggestRangeFinderPrecision
     -- * Queries
   , PageNo (..)
@@ -469,11 +470,14 @@ data CompactIndex = CompactIndex {
 rangeFinderPrecisionBounds :: (Int, Int)
 rangeFinderPrecisionBounds = (0, 16)
 
+-- TODO: Turn into newtype, maybe also other types, e.g. range finder precision.
+type NumPages = Int
+
 -- | Given the number of expected pages in an index, suggest a range-finder
 -- bit-precision.
 --
 -- https://en.wikipedia.org/wiki/Birthday_problem#Probability_of_a_shared_birthday_(collision)
-suggestRangeFinderPrecision :: Int -> Int
+suggestRangeFinderPrecision :: NumPages -> Int
 suggestRangeFinderPrecision maxPages =
     -- The calculation (before clamping) gives us the /total/ number of bits we
     -- expect to use for prefixes
@@ -560,7 +564,7 @@ countClashes = Map.size . ciTieBreaker
 hasClashes :: CompactIndex -> Bool
 hasClashes = not . Map.null . ciTieBreaker
 
-sizeInPages :: CompactIndex -> Int
+sizeInPages :: CompactIndex -> NumPages
 sizeInPages = VU.length . ciPrimary
 
 {-------------------------------------------------------------------------------
@@ -758,7 +762,7 @@ appendMulti (k, n0) mci@MCompactIndex{..} =
 
     -- | Fill primary, clash and LTP vectors for a larger-than-page value. Yields
     -- chunks if necessary
-    overflows :: Int -> ST s [Chunk]
+    overflows :: NumPages -> ST s [Chunk]
     overflows n
       | n <= 0 = pure []
       | otherwise = do

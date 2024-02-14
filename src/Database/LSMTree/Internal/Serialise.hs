@@ -30,6 +30,9 @@ module Database.LSMTree.Internal.Serialise (
   , SerialisedBlob (SerialisedBlob, SerialisedBlob')
   , serialiseBlob
   , deserialiseBlob
+  , sizeofBlob
+  , sizeofBlob64
+  , serialisedBlob
   ) where
 
 import qualified Data.ByteString.Builder as BB
@@ -158,3 +161,16 @@ serialiseBlob v = SerialisedBlob (Class.serialiseValue v)
 {-# INLINE deserialiseBlob #-}
 deserialiseBlob :: SerialiseValue v => SerialisedBlob -> v
 deserialiseBlob (SerialisedBlob bytes) = Class.deserialiseValue bytes
+
+{-# INLINE sizeofBlob #-}
+-- | Size of blob in number of bytes.
+sizeofBlob :: SerialisedBlob -> Int
+sizeofBlob (SerialisedBlob rb) = sizeofRawBytes rb
+
+{-# INLINE sizeofBlob64 #-}
+sizeofBlob64 :: SerialisedBlob -> Word64
+sizeofBlob64 = fromIntegral . sizeofBlob
+
+{-# INLINE serialisedBlob #-}
+serialisedBlob :: SerialisedBlob -> BB.Builder
+serialisedBlob (SerialisedBlob rb) = rawBytes rb
