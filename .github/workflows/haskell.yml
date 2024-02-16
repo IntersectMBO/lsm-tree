@@ -52,8 +52,9 @@ jobs:
       run: |
         cabal build all --dry-run
 
-    - name: Cache cabal store
-      uses: actions/cache@v3
+    - name: "Restore cache"
+      uses: actions/cache/restore@v4
+      id: restore-cabal-cache
       env:
         cache-name: cache-cabal-build
       with:
@@ -65,7 +66,16 @@ jobs:
           ${{ runner.os }}-${{ matrix.ghc }}-${{ env.cache-name }}-
 
     - name: Install cabal dependencies
+      id: build-dependencies
       run: cabal build --only-dependencies --enable-tests --enable-benchmarks all
+
+    - name: "Save cache"
+      uses: actions/cache/save@v4
+      id: save-cabal-cache
+      if: steps.build-dependencies.outcome == 'success' && steps.restore-cabal-cache.outputs.cache-hit != 'true'
+      with:
+        path: ${{ steps.setup-haskell.outputs.cabal-store }}
+        key:  ${{ steps.restore-cabal-cache.outputs.cache-primary-key }}
 
     - name: Build
       run: cabal build --enable-tests --enable-benchmarks all
