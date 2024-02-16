@@ -12,6 +12,7 @@ import           Data.Bifunctor (bimap)
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Short as SBS
+import qualified Data.Map.Strict as Map
 import qualified Data.Primitive.ByteArray as BA
 import qualified Data.Vector.Primitive as V
 import           System.FilePath
@@ -27,6 +28,7 @@ import           Test.Tasty.QuickCheck
 
 import           Database.LSMTree.Generators ()
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
+import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry
 import qualified Database.LSMTree.Internal.Normal as N
 import           Database.LSMTree.Internal.RawPage
@@ -78,14 +80,25 @@ testSingleInsert sessionRoot key val mblob = do
     let wb = WB.addEntryNormal key (N.Insert val mblob) WB.empty
     _ <- fromWriteBuffer fs (RunFsPaths 42) wb
     -- check all files have been written
-    bsFilter <- BS.readFile (sessionRoot </> "active" </> "42.filter")
+    let activeDir = sessionRoot </> "active"
+    bsKops <- BS.readFile (activeDir </> "42.keyops")
+    bsBlobs <- BS.readFile (activeDir </> "42.blobs")
+    bsFilter <- BS.readFile (activeDir </> "42.filter")
+    bsIndex <- BS.readFile (activeDir </> "42.index")
     mempty @=? bsFilter  -- TODO: empty for now, should be written later
-    bsIndex <- BS.readFile (sessionRoot </> "active" </> "42.index")
     mempty @=? bsIndex   -- TODO: empty for now, should be written later
-    bsBlobs <- BS.readFile (sessionRoot </> "active" </> "42.blobs")
-    bsKops <- BS.readFile (sessionRoot </> "active" </> "42.keyops")
-    let page = rawPageFromByteString bsKops 0
+    -- checksums
+    checksums <- CRC.readChecksumsFile fs (FS.mkFsPath ["active", "42.checksums"])
+    Map.lookup (CRC.ChecksumsFileName "keyops") checksums
+      @=? Just (CRC.updateCRC32C bsKops CRC.initialCRC32C)
+    Map.lookup (CRC.ChecksumsFileName "blobs") checksums
+      @=? Just (CRC.updateCRC32C bsBlobs CRC.initialCRC32C)
+    Map.lookup (CRC.ChecksumsFileName "filter") checksums
+      @=? Just (CRC.updateCRC32C bsFilter CRC.initialCRC32C)
+    Map.lookup (CRC.ChecksumsFileName "index") checksums
+      @=? Just (CRC.updateCRC32C bsIndex CRC.initialCRC32C)
     -- check page
+    let page = rawPageFromByteString bsKops 0
     1 @=? rawPageNumKeys page
     let SerialisedKey' key' = serialiseKey key
     let SerialisedValue' val' = serialiseValue val
