@@ -19,6 +19,7 @@ module Database.LSMTree.Internal.RawPage (
 ) where
 
 import           Control.DeepSeq (NFData (rnf))
+import           Control.Exception (assert)
 import           Data.Bits (Bits, complement, popCount, unsafeShiftL,
                      unsafeShiftR, (.&.))
 import           Data.Primitive.ByteArray (ByteArray (..), indexByteArray,
@@ -134,6 +135,7 @@ rawPageKeyOffsets page@(RawPage off ba) =
 -- | for non-single key page case
 rawPageValueOffsets :: RawPage -> P.Vector ValueOffset
 rawPageValueOffsets page@(RawPage off ba) =
+    assert (dirNumKeys /= 1) $
     P.Vector (off + fromIntegral (div2 dirOffset) + fromIntegral dirNumKeys)
              (fromIntegral dirNumKeys + 1) ba
   where
@@ -143,6 +145,7 @@ rawPageValueOffsets page@(RawPage off ba) =
 -- | single key page case
 rawPageValueOffsets1 :: RawPage -> (Word16, Word32)
 rawPageValueOffsets1 page@(RawPage off ba) =
+    assert (rawPageNumKeys page == 1) $
     ( indexByteArray ba (off + fromIntegral (div2 dirOffset) + 1)
     , indexByteArray ba (div2 (off + fromIntegral (div2 dirOffset)) + 1)
     )
