@@ -19,9 +19,8 @@ module Database.LSMTree.Internal.Run.Mutable (
 import           Control.Monad (when)
 import qualified Control.Monad.ST as ST
 import qualified Data.ByteString.Builder as BSB
-import           Data.Foldable (for_)
+import           Data.Foldable (for_, traverse_)
 import           Data.IORef
-import qualified Data.Map as Map
 import           Data.Traversable (for)
 import           Data.Word (Word64)
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
@@ -57,28 +56,22 @@ data MRun fhandle = MRun {
       -- | The reference count for the LSM run. This counts the
       -- number of references from LSM handles to this run. When
       -- this drops to zero the open files will be closed.
-      lsmMRunRefCount     :: !RefCount
+      lsmMRunRefCount   :: !RefCount
 
       -- | The file system paths for all the files used by the run.
-    , lsmMRunFsPaths      :: !RunFsPaths
+    , lsmMRunFsPaths    :: !RunFsPaths
 
       -- | The run accumulator. This is the representation used for the
       -- morally pure subset of the run cnstruction functionality. In
       -- particular it contains the (mutable) index, bloom filter and buffered
       -- pending output for the key\/ops file.
-    , lsmMRunAcc          :: !(RunAcc ST.RealWorld)
+    , lsmMRunAcc        :: !(RunAcc ST.RealWorld)
 
       -- | The byte offset within the blob file for the next blob to be written.
-    , lsmMRunBlobOffset   :: !(IORef Word64)
+    , lsmMRunBlobOffset :: !(IORef Word64)
 
-      -- | The file handle for the Key\/Ops file.
-    , lsmMRunKOpsHandle   :: !(ChecksumHandle fhandle)
-      -- | The file handle for the BLOBs file.
-    , lsmMRunBlobHandle   :: !(ChecksumHandle fhandle)
-      -- | The file handle for the bloom filter file.
-    , lsmMRunFilterHandle :: !(ChecksumHandle fhandle)
-      -- | The file handle for the index file.
-    , lsmMRunIndexHandle  :: !(ChecksumHandle fhandle)
+      -- | The (write mode) file handles.
+    , lsmMRunHandles    :: {-# UNPACK #-} !(ForRunFiles (ChecksumHandle fhandle))
     }
 
 -- | Create an 'MRun' to start building a run.
@@ -97,10 +90,7 @@ new fs lsmMRunFsPaths numEntries estimatedNumPages = do
     lsmMRunBlobOffset <- newIORef 0
 
     FS.createDirectoryIfMissing fs False activeRunsDir
-    lsmMRunKOpsHandle   <- makeHandle fs (runKOpsPath lsmMRunFsPaths)
-    lsmMRunBlobHandle   <- makeHandle fs (runBlobPath lsmMRunFsPaths)
-    lsmMRunFilterHandle <- makeHandle fs (runFilterPath lsmMRunFsPaths)
-    lsmMRunIndexHandle  <- makeHandle fs (runIndexPath lsmMRunFsPaths)
+    lsmMRunHandles <- traverse (makeHandle fs) (runFsPaths lsmMRunFsPaths)
     return MRun {..}
 
 -- | Add a serialised k\/op pair. Blobs will be written to disk. Use only for
@@ -148,13 +138,7 @@ unsafeFinalise fs mrun@MRun {..} = do
     writeIndexFinalChunk fs mrun finalChunk
     writeFilter fs mrun runFilter
     -- close all handles and write their checksums
-    let named n = (,) (CRC.ChecksumsFileName n)
-    checksums <- fmap Map.fromList $ sequenceA
-      [ named "keyops" <$> closeHandle fs lsmMRunKOpsHandle
-      , named "blobs"  <$> closeHandle fs lsmMRunBlobHandle
-      , named "index"  <$> closeHandle fs lsmMRunIndexHandle
-      , named "filter" <$> closeHandle fs lsmMRunFilterHandle
-      ]
+    checksums <- toChecksumsFile <$> traverse (closeHandle fs) lsmMRunHandles
     CRC.writeChecksumsFile fs (runChecksumsPath lsmMRunFsPaths) checksums
     return (lsmMRunRefCount, lsmMRunFsPaths, runFilter, runIndex)
 
@@ -180,30 +164,28 @@ removeMRunReference fs mrun@MRun {..} = do
 -- TODO: Ensure proper cleanup even in presence of exceptions.
 closeMRun :: HasFS IO h -> MRun (FS.Handle h) -> IO ()
 closeMRun fs MRun {..} = do
-    _ <- closeHandle fs lsmMRunKOpsHandle
-    _ <- closeHandle fs lsmMRunBlobHandle
-    _ <- closeHandle fs lsmMRunFilterHandle
-    _ <- closeHandle fs lsmMRunIndexHandle
-    FS.removeFile fs (runKOpsPath lsmMRunFsPaths)
-    FS.removeFile fs (runBlobPath lsmMRunFsPaths)
-    FS.removeFile fs (runFilterPath lsmMRunFsPaths)
-    FS.removeFile fs (runIndexPath lsmMRunFsPaths)
+    traverse_ (closeHandle fs) lsmMRunHandles
+    traverse_ (FS.removeFile fs) (runFsPaths lsmMRunFsPaths)
 
 {-------------------------------------------------------------------------------
   Helpers
 -------------------------------------------------------------------------------}
+
+writePageAcc :: HasFS IO h -> MRun (FS.Handle h) -> Cons.PageAcc -> IO ()
+writePageAcc fs MRun {..} =
+    writeToHandle fs (forRunKOps lsmMRunHandles) . Cons.pageBuilder
 
 writeBlob :: HasFS IO h -> MRun (FS.Handle h) -> SerialisedBlob -> IO BlobSpan
 writeBlob fs MRun{..} blob = do
     let size = sizeofBlob64 blob
     offset <- readIORef lsmMRunBlobOffset
     modifyIORef' lsmMRunBlobOffset (+size)
-    writeToHandle fs lsmMRunBlobHandle (serialisedBlob blob)
+    writeToHandle fs (forRunBlob lsmMRunHandles) (serialisedBlob blob)
     return (BlobSpan offset (fromIntegral size))
 
-writePageAcc :: HasFS IO h -> MRun (FS.Handle h) -> Cons.PageAcc -> IO ()
-writePageAcc fs MRun {..} =
-    writeToHandle fs lsmMRunKOpsHandle . Cons.pageBuilder
+-- TODO: Fill in once serialisation of the filter is implemented.
+writeFilter :: HasFS IO h -> MRun (FS.Handle h) -> Bloom SerialisedKey -> IO ()
+writeFilter _ _ _ = return ()
 
 -- TODO: Fill in once serialisation of the index is implemented.
 writeIndexFinalChunk ::
@@ -216,10 +198,6 @@ writeIndexFinalChunk _ _ _ = return ()
 -- TODO: Fill in once serialisation of the index is implemented.
 writeIndexChunks :: HasFS IO h -> MRun (FS.Handle h) -> [Index.Chunk] -> IO ()
 writeIndexChunks _ _ _ = return ()
-
--- TODO: Fill in once serialisation of the filter is implemented.
-writeFilter :: HasFS IO h -> MRun (FS.Handle h) -> Bloom SerialisedKey -> IO ()
-writeFilter _ _ _ = return ()
 
 {-------------------------------------------------------------------------------
   ChecksumHandle
