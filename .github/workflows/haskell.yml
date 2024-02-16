@@ -22,13 +22,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ghc: ["9.2.8", "9.4.7", "9.6.3"]
-        cabal: ["3.10.1.0"]
+        ghc: ["9.2.8", "9.4.8", "9.6.4"]
+        cabal: ["3.10.2.1"]
         os: [ubuntu-latest, windows-latest, macOS-latest]
         exclude:
-          - ghc: "9.4.7"
+          - ghc: "9.4.8"
             os: windows-latest
-          - ghc: "9.4.7"
+          - ghc: "9.4.8"
             os: macOS-latest
 
     steps:
@@ -72,6 +72,9 @@ jobs:
     - name: "Save cache"
       uses: actions/cache/save@v4
       id: save-cabal-cache
+      # Note: cache-hit will be set to true only when cache hit occurs for the
+      # exact key match. For a partial key match via restore-keys or a cache
+      # miss, it will be set to false.
       if: steps.build-dependencies.outcome == 'success' && steps.restore-cabal-cache.outputs.cache-hit != 'true'
       with:
         path: ${{ steps.setup-haskell.outputs.cabal-store }}
@@ -90,8 +93,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ghc: ["9.2.8"]
-        cabal: ["3.10.1.0"]
+        ghc: ["9.6.4"]
+        cabal: ["3.10.2.1"]
         os: [ubuntu-latest]
 
     steps:
@@ -130,7 +133,7 @@ jobs:
           ${{ runner.os }}-${{ matrix.ghc }}-${{ env.cache-name }}-
 
     - name: Install stylish-haskell
-      run: cabal install stylish-haskell --constraint 'stylish-haskell == 0.14.4.0'
+      run: cabal install stylish-haskell --constraint 'stylish-haskell == 0.14.6.0'
 
     - name: Record stylish-haskell version
       run: |
@@ -149,8 +152,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ghc: ["9.2.8"]
-        cabal: ["3.10.1.0"]
+        ghc: ["9.6.4"]
+        cabal: ["3.10.2.1"]
         os: [ubuntu-latest]
 
     steps:
@@ -189,7 +192,7 @@ jobs:
           ${{ runner.os }}-${{ matrix.ghc }}-${{ env.cache-name }}-
 
     - name: Install cabal-fmt
-      run: cabal install cabal-fmt --constraint 'cabal-fmt == 0.1.7'
+      run: cabal install cabal-fmt --constraint 'cabal-fmt == 0.1.10'
 
     - name: Record cabal-fmt version
       run: |
@@ -208,8 +211,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ghc: ["9.6.2"]
-        cabal: ["3.10.1.0"]
+        ghc: ["9.6.4"]
+        cabal: ["3.10.2.1"]
         os: [ubuntu-latest]
 
     steps:
