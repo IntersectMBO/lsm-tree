@@ -33,7 +33,7 @@ import qualified Database.LSMTree.Internal.Run.Construction as Cons
 import           Database.LSMTree.Internal.Run.FsPaths
 import           Database.LSMTree.Internal.Run.Index.Compact (CompactIndex,
                      NumPages)
-import qualified Database.LSMTree.Internal.Run.Index.Compact as Index
+import qualified Database.LSMTree.Internal.Run.Index.Compact.Construction as Index
 import           Database.LSMTree.Internal.Serialise
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)

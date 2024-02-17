@@ -56,6 +56,7 @@ library
     Database.LSMTree.Internal.Run.Construction
     Database.LSMTree.Internal.Run.FsPaths
     Database.LSMTree.Internal.Run.Index.Compact
+    Database.LSMTree.Internal.Run.Index.Compact.Construction
     Database.LSMTree.Internal.Run.Mutable
     Database.LSMTree.Internal.Serialise
     Database.LSMTree.Internal.Serialise.Class

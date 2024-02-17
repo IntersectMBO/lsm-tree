@@ -64,8 +64,11 @@ import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..),
 import           Database.LSMTree.Internal.Run.BloomFilter (Bloom, MBloom)
 import qualified Database.LSMTree.Internal.Run.BloomFilter as Bloom
 import           Database.LSMTree.Internal.Run.Index.Compact (CompactIndex,
-                     MCompactIndex, NumPages)
+                     NumPages)
 import qualified Database.LSMTree.Internal.Run.Index.Compact as Index
+import           Database.LSMTree.Internal.Run.Index.Compact.Construction
+                     (MCompactIndex)
+import qualified Database.LSMTree.Internal.Run.Index.Compact.Construction as Index
 import           Database.LSMTree.Internal.Serialise (SerialisedKey,
                      SerialisedValue, keyTopBits16, serialisedKey,
                      serialisedValue, sizeofKey16, sizeofKey64, sizeofValue16,
