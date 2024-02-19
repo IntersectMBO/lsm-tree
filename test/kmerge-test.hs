@@ -24,11 +24,11 @@ import qualified KMerge.Heap as K.Heap
 import qualified KMerge.LoserTree as K.Tree
 
 -- tests and benchmarks for various k-way merge implementations.
--- in short: loser tree is optimal in comparision counts performed,
+-- in short: loser tree is optimal in comparison counts performed,
 -- but mutable heap implementation has lower constant factors.
 --
 -- Noteworthy, maybe not obvious observations:
--- - mutable heap does the same amount of comparisions as persistent heap
+-- - mutable heap does the same amount of comparisons as persistent heap
 --   (from @heaps@ package),
 -- - tree-shaped iterative two-way merge performs optimal amount of comparisons
 --   loser tree is an explicit state variant of that.
@@ -64,9 +64,9 @@ main = do
                     , testCount "loserTreeMerge"  2391 loserTreeMerge    input8
                     , testCount "mutHeapMerge"    3169 mutHeapMerge      input8
                     ]
-                    -- seven inputs: we have 6x100 elements with 3 comparisions
+                    -- seven inputs: we have 6x100 elements with 3 comparisons
                     -- and 1x100 elements with just 2.
-                    -- i.e. target is 2000 total comparisions.
+                    -- i.e. target is 2000 total comparisons.
                     --
                     -- The difference here and in five-input case between
                     -- treeMerge and loserTreeMerge is caused by
@@ -106,7 +106,7 @@ main = do
                     ]
                     -- five inputs: we have 3x100 elements with 2 comparisons
                     -- and 2x100 with 3 comparisons.
-                    -- i.e. target is 1200 total comparisions.
+                    -- i.e. target is 1200 total comparisons.
                 , testGroup "five"
                     [ testCount "sortConcat"      1790 (L.sort . concat) input5
                     , testCount "listMerge"       1389 listMerge         input5
