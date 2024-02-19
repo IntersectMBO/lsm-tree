@@ -115,6 +115,22 @@ main = do
                     , testCount "loserTreeMerge"  1191 loserTreeMerge    input5
                     , testCount "mutHeapMerge"    1592 mutHeapMerge      input5
                     ]
+                , testGroup "levelling-min"
+                    [ testCount "sortConcat"      3729 (L.sort . concat) inputLevellingMin
+                    , testCount "listMerge"       2112 listMerge         inputLevellingMin
+                    , testCount "treeMerge"       2730 treeMerge         inputLevellingMin
+                    , testCount "heapMerge"       2655 heapMerge         inputLevellingMin
+                    , testCount "loserTreeMerge"  2235 loserTreeMerge    inputLevellingMin
+                    , testCount "mutHeapMerge"    3021 mutHeapMerge      inputLevellingMin
+                    ]
+                , testGroup "levelling-max"
+                    [ testCount "sortConcat"      3872 (L.sort . concat) inputLevellingMax
+                    , testCount "listMerge"       1440 listMerge         inputLevellingMax
+                    , testCount "treeMerge"       2873 treeMerge         inputLevellingMax
+                    , testCount "heapMerge"       1784 heapMerge         inputLevellingMax
+                    , testCount "loserTreeMerge"  2081 loserTreeMerge    inputLevellingMax
+                    , testCount "mutHeapMerge"    2493 mutHeapMerge      inputLevellingMax
+                    ]
                 ]
             ]
         , testGroup "bench"
@@ -141,6 +157,22 @@ main = do
                 , B.bench "heapMerge"      $ B.nf heapMerge         input5
                 , B.bench "loserTreeMerge" $ B.nf loserTreeMerge    input5
                 , B.bench "mutHeapMerge"   $ B.nf mutHeapMerge      input5
+                ]
+            , testGroup "levelling-min"
+                [ B.bench "sortConcat"     $ B.nf (L.sort . concat) inputLevellingMin
+                , B.bench "listMerge"      $ B.nf listMerge         inputLevellingMin
+                , B.bench "treeMerge"      $ B.nf treeMerge         inputLevellingMin
+                , B.bench "heapMerge"      $ B.nf heapMerge         inputLevellingMin
+                , B.bench "loserTreeMerge" $ B.nf loserTreeMerge    inputLevellingMin
+                , B.bench "mutHeapMerge"   $ B.nf mutHeapMerge      inputLevellingMin
+                ]
+            , testGroup "levelling-max"
+                [ B.bench "sortConcat"     $ B.nf (L.sort . concat) inputLevellingMax
+                , B.bench "listMerge"      $ B.nf listMerge         inputLevellingMax
+                , B.bench "treeMerge"      $ B.nf treeMerge         inputLevellingMax
+                , B.bench "heapMerge"      $ B.nf heapMerge         inputLevellingMax
+                , B.bench "loserTreeMerge" $ B.nf loserTreeMerge    inputLevellingMax
+                , B.bench "mutHeapMerge"   $ B.nf mutHeapMerge      inputLevellingMax
                 ]
             ]
         ]
@@ -193,23 +225,41 @@ mergeProperty name f = testProperty name $ \xss ->
         rhs = f $ map L.sort (xss :: [[Word64]])
     in lhs === rhs
 
+-- Using Word256 to make key comparison a bit more expensive.
 type Element = Word256
 -- type Element = (Word256, Word256, Word256, Word256)
 
--- Using Word256 to make key comparison a bit more expensive.
 input8 :: [[Element]]
-input8 =
-    [ L.sort $ take 100 $ L.unfoldr (Just . genElement) $ SM.mkSMGen seed
-    | seed <- take 8 $ iterate (3 +) 42
-    ]
+input8 = take 8 $ inputs 100
 
 -- Seven inputs is not optimal case for "binary tree" patterns.
 input7 :: [[Element]]
-input7 = take 7 input8
+input7 = take 7 $ inputs 100
 
 -- Five inputs is bad case for "binary tree" patterns.
 input5 :: [[Element]]
-input5 = take 5 input8
+input5 = take 5 $ inputs 100
+
+-- This input corresponds to a levelling merge with minimal or maximal skew.
+-- For each, there are 500 elements total, just as 'input5'.
+inputLevellingMin, inputLevellingMax :: [[Element]]
+inputLevellingMin =
+      head (inputs (4*n))
+    : take 4 (tail (inputs n))
+  where
+    n = 1000 `div` (4+4)
+inputLevellingMax =
+      head (inputs (16*n))
+    : take 4 (tail (inputs n))
+  where
+    n = 1000 `div` (16+4)
+
+inputs :: Int -> [[Element]]
+inputs n =
+    [ L.sort $ take n $ L.unfoldr (Just . genElement) $ SM.mkSMGen seed
+    | seed <- iterate (3 +) 42
+    ]
+
 
 genElement :: SM.SMGen -> (Element, SM.SMGen)
 genElement = genWord256
