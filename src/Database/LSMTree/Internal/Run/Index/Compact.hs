@@ -590,9 +590,9 @@ fromChunks cs FinalChunk{..} = CompactIndex {
       ciRangeFinder          = fcRangeFinder
     , ciRangeFinderPrecision = fcRangeFinderPrecision
     , ciPrimary              = VU.concat $ fmap cPrimary cs
-    , ciClashes              = VU.concat $ fmap cClashes cs
+    , ciClashes              = fcClashes
     , ciTieBreaker           = fcTieBreaker
-    , ciLargerThanPage       = VU.concat $ fmap cLargerThanPage cs
+    , ciLargerThanPage       = fcLargerThanPage
     }
 
 {-------------------------------------------------------------------------------

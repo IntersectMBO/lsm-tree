@@ -22,6 +22,8 @@ import           Control.Monad (forM_, when)
 import           Control.Monad.ST
 import           Data.Bit hiding (flipBit)
 import           Data.Foldable (toList)
+import           Data.List.NonEmpty (NonEmpty)
+import qualified Data.List.NonEmpty as NE
 import           Data.Map.Range (Bound (..), Clusive (Exclusive, Inclusive))
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -66,15 +68,17 @@ import           Database.LSMTree.Internal.Serialise
 -- construction](#incremental).
 data MCompactIndex s = MCompactIndex {
     -- * Core index structure
+    -- | Accumulates the range finder bits 'ciRangeFinder'.
     mciRangeFinder          :: !(VU.MVector s Word32)
   , mciRangeFinderPrecision :: !Int
     -- | Accumulates a chunk of 'ciPrimary'.
   , mciPrimary              :: !(STRef s (VU.MVector s Word32))
-    -- | Accumulates a chunk of 'ciClashes'
-  , mciClashes              :: !(STRef s (VU.MVector s Bit))
+    -- | Accumulates chunks of 'ciClashes'.
+  , mciClashes              :: !(STRef s (NonEmpty (VU.MVector s Bit)))
+    -- | Accumulates the 'ciTieBreaker'.
   , mciTieBreaker           :: !(STRef s (Map SerialisedKey Int))
-    -- | Accumulates a chunk of 'ciLargerThanPage'
-  , mciLargerThanPage       :: !(STRef s (VU.MVector s Bit))
+    -- | Accumulates chunks of 'ciLargerThanPage'.
+  , mciLargerThanPage       :: !(STRef s (NonEmpty (VU.MVector s Bit)))
     -- * Aux information required for incremental construction
 
     -- | Maximum size of a chunk
@@ -109,10 +113,10 @@ new rfprec maxcsize = MCompactIndex
     -- Core index structure
     <$> VUM.new (2 ^ rfprec + 1)
     <*> pure rfprec
-    <*> (VUM.new maxcsize >>= newSTRef)
-    <*> (VUM.new maxcsize >>= newSTRef)
+    <*> (newSTRef =<< VUM.new maxcsize)
+    <*> (newSTRef . pure =<< VUM.new maxcsize)
     <*> newSTRef Map.empty
-    <*> (VUM.new maxcsize >>= newSTRef)
+    <*> (newSTRef . pure =<< VUM.new maxcsize)
     -- Aux information required for incremental construction
     <*> pure maxcsize
     <*> newSTRef 0
@@ -191,8 +195,8 @@ appendSingle (minKey, maxKey) mci@MCompactIndex{..} = do
             let ltp = SJust minKey == lastMinKey
             writeSTRef mciLastMinKey $! SJust minKey
 
-            readSTRef mciClashes >>= \vum -> VUM.write vum ix (Bit clash)
-            readSTRef mciLargerThanPage >>= \vum -> VUM.write vum ix (Bit ltp)
+            readSTRef mciClashes >>= \cs -> VUM.write (NE.head cs) ix (Bit clash)
+            readSTRef mciLargerThanPage >>= \cs -> VUM.write (NE.head cs) ix (Bit ltp)
             when (clash && not ltp) $ modifySTRef' mciTieBreaker (Map.insert minKey pageNr)
 
 -- | Append multiple pages to the index. The minimum keys and maximum keys for
@@ -220,10 +224,10 @@ appendMulti (k, n0) mci@MCompactIndex{..} =
               remInChunk = min n (mciMaxChunkSize - ix)
           readSTRef mciPrimary >>= \vum ->
             writeRange vum (BoundInclusive ix) (BoundExclusive $ ix + remInChunk) minPrimbits
-          readSTRef mciClashes >>= \vum ->
-            writeRange vum (BoundInclusive ix) (BoundExclusive $ ix + remInChunk) (Bit True)
-          readSTRef mciLargerThanPage >>= \vum ->
-            writeRange vum (BoundInclusive ix) (BoundExclusive $ ix + remInChunk) (Bit True)
+          readSTRef mciClashes >>= \cs ->
+            writeRange (NE.head cs) (BoundInclusive ix) (BoundExclusive $ ix + remInChunk) (Bit True)
+          readSTRef mciLargerThanPage >>= \cs ->
+            writeRange (NE.head cs) (BoundInclusive ix) (BoundExclusive $ ix + remInChunk) (Bit True)
           writeSTRef mciCurrentPageNumber $! pageNr + remInChunk
           res <- yield mci
           maybe id (:) res <$> overflows (n - remInChunk)
@@ -240,11 +244,9 @@ yield MCompactIndex{..} = do
     if pageNr `mod` mciMaxChunkSize == 0 then do -- The current chunk is full
       cPrimary <- VU.unsafeFreeze =<< readSTRef mciPrimary
       (writeSTRef mciPrimary $!) =<< VUM.new mciMaxChunkSize
-      cClashes <- VU.unsafeFreeze =<< readSTRef mciClashes
-      (writeSTRef mciClashes $!) =<< VUM.new mciMaxChunkSize
-      cLargerThanPage <- VU.unsafeFreeze =<< readSTRef mciLargerThanPage
-      (writeSTRef mciLargerThanPage $!) =<< VUM.new mciMaxChunkSize
-      pure $ Just (Chunk{..})
+      modifySTRef' mciClashes . NE.cons =<< VUM.new mciMaxChunkSize
+      modifySTRef' mciLargerThanPage . NE.cons =<< VUM.new mciMaxChunkSize
+      pure $ Just (Chunk cPrimary)
     else -- the current chunk is not yet full
       pure Nothing
 
@@ -261,20 +263,28 @@ unsafeEnd mci@MCompactIndex{..} = do
 
     -- Only slice out a chunk if there are entries in the chunk
     mchunk <- if ix == 0 then pure Nothing else do
-      cPrimary        <- VU.unsafeFreeze . VUM.slice 0 ix =<< readSTRef mciPrimary
-      cClashes        <- VU.unsafeFreeze . VUM.slice 0 ix =<< readSTRef mciClashes
-      cLargerThanPage <- VU.unsafeFreeze . VUM.slice 0 ix =<< readSTRef mciLargerThanPage
-      pure $ Just Chunk{..}
+      Just . Chunk <$> (VU.unsafeFreeze . VUM.slice 0 ix =<< readSTRef mciPrimary)
 
     -- We are not guaranteed to have seen all possible range-finder bit
     -- combinations, so we have to fill in the remainder of the rangerfinder
     -- vector.
     fillRangeFinderToEnd mci
+
     fcRangeFinder <- VU.unsafeFreeze mciRangeFinder
-    let fcRangeFinderPrecision = mciRangeFinderPrecision
+    fcClashes <- fmap (VU.concat . reverse) $
+      traverse VU.unsafeFreeze . sliceCurrent ix =<< readSTRef mciClashes
+    fcLargerThanPage <- fmap (VU.concat . reverse) $
+      traverse VU.unsafeFreeze . sliceCurrent ix =<< readSTRef mciLargerThanPage
     fcTieBreaker <- readSTRef mciTieBreaker
+    let fcRangeFinderPrecision = mciRangeFinderPrecision
 
     pure (mchunk, FinalChunk {..})
+  where
+    -- The current (most recent) chunk of the bitvectors is only partially
+    -- constructed, so we need to only use the part that is already filled.
+    sliceCurrent ix (c NE.:| cs)
+      | ix == 0 = cs  -- current chunk is completely empty, just ignore it
+      | otherwise = VUM.slice 0 ix c : cs
 
 -- | Fill the remainder of the range-finder vector.
 fillRangeFinderToEnd :: MCompactIndex s -> ST s ()
@@ -293,15 +303,15 @@ fillRangeFinderToEnd MCompactIndex{..} = do
 
 data Chunk = Chunk {
     cPrimary        :: !(VU.Vector Word32)
-  , cClashes        :: !(VU.Vector Bit)
-  , cLargerThanPage :: !(VU.Vector Bit)
   }
   deriving stock (Show, Eq)
 
 data FinalChunk = FinalChunk {
     fcRangeFinder          :: !(VU.Vector Word32)
-  , fcRangeFinderPrecision :: !Int
+  , fcClashes              :: !(VU.Vector Bit)
+  , fcLargerThanPage       :: !(VU.Vector Bit)
   , fcTieBreaker           :: !(Map SerialisedKey Int)
+  , fcRangeFinderPrecision :: !Int
   }
   deriving stock (Show, Eq)
 
