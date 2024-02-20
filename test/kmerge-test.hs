@@ -28,10 +28,22 @@ import qualified KMerge.LoserTree as K.Tree
 -- but mutable heap implementation has lower constant factors.
 --
 -- Noteworthy, maybe not obvious observations:
--- - mutable heap does the same amount of comparisons as persistent heap
---   (from @heaps@ package),
+-- - mutable heap does a similar amount of comparisons as persistent heap
+--   (from @heaps@ package) on full trees with evenly sized input lists,
+--   but performs more comparisons when these constraints get lifted.
 -- - tree-shaped iterative two-way merge performs optimal amount of comparisons
 --   loser tree is an explicit state variant of that.
+-- - on skewed input sizes, the heap does benefit a little, as two consecutive
+--   outputs often come from the same input, which then is already at the root,
+--   only requiring two comparisons. sadly, this benefit does not translate as
+--   quite as nicely to the mutable implementation.
+-- - the loser tree with its balanced tree structure is not optimal for skewed
+--   merges, but it can be if the tree structure is managed explicitly.
+--   for a hacky proof of concept, see 'loserTreeMerge\'', where we make sure
+--   that one side of the tree only contains the large input plus dummy inputs,
+--   allowing a path to the root using a single comparison.
+-- - 'listMerge' performs very well for skewed inputs since it merges the first
+--   (i.e. long) input only once. If the last input is largest, it gets very bad.
 --
 main :: IO ()
 main = do
@@ -115,20 +127,32 @@ main = do
                     , testCount "loserTreeMerge"  1191 loserTreeMerge    input5
                     , testCount "mutHeapMerge"    1592 mutHeapMerge      input5
                     ]
+                    -- minimal skew for a levelling merge of 1000 elements.
+                    -- with a tree that gives the long input a short path:
+                    -- 1x500 elements with 1 comparison
+                    -- 4x125 elements with 3 comparisons
+                    -- i.e. target is 2000 total comparisons.
                 , testGroup "levelling-min"
                     [ testCount "sortConcat"      3729 (L.sort . concat) inputLevellingMin
                     , testCount "listMerge"       2112 listMerge         inputLevellingMin
                     , testCount "treeMerge"       2730 treeMerge         inputLevellingMin
                     , testCount "heapMerge"       2655 heapMerge         inputLevellingMin
                     , testCount "loserTreeMerge"  2235 loserTreeMerge    inputLevellingMin
+                    , testCount "loserTreeMerge'" 1999 loserTreeMerge    inputLevellingMin'
                     , testCount "mutHeapMerge"    3021 mutHeapMerge      inputLevellingMin
                     ]
+                    -- maximal skew for a levelling merge of 1000 elements.
+                    -- with a tree that gives the long input a short path:
+                    -- 1x800 elements with 1 comparison
+                    -- 4x 50 elements with 3 comparisons
+                    -- i.e. target is 1400 total comparisons.
                 , testGroup "levelling-max"
                     [ testCount "sortConcat"      3872 (L.sort . concat) inputLevellingMax
                     , testCount "listMerge"       1440 listMerge         inputLevellingMax
                     , testCount "treeMerge"       2873 treeMerge         inputLevellingMax
                     , testCount "heapMerge"       1784 heapMerge         inputLevellingMax
                     , testCount "loserTreeMerge"  2081 loserTreeMerge    inputLevellingMax
+                    , testCount "loserTreeMerge'" 1400 loserTreeMerge    inputLevellingMax'
                     , testCount "mutHeapMerge"    2493 mutHeapMerge      inputLevellingMax
                     ]
                 ]
@@ -164,6 +188,7 @@ main = do
                 , B.bench "treeMerge"      $ B.nf treeMerge         inputLevellingMin
                 , B.bench "heapMerge"      $ B.nf heapMerge         inputLevellingMin
                 , B.bench "loserTreeMerge" $ B.nf loserTreeMerge    inputLevellingMin
+                , B.bench "loserTreeMerge'"$ B.nf loserTreeMerge    inputLevellingMin'
                 , B.bench "mutHeapMerge"   $ B.nf mutHeapMerge      inputLevellingMin
                 ]
             , testGroup "levelling-max"
@@ -172,6 +197,7 @@ main = do
                 , B.bench "treeMerge"      $ B.nf treeMerge         inputLevellingMax
                 , B.bench "heapMerge"      $ B.nf heapMerge         inputLevellingMax
                 , B.bench "loserTreeMerge" $ B.nf loserTreeMerge    inputLevellingMax
+                , B.bench "loserTreeMerge'"$ B.nf loserTreeMerge    inputLevellingMax'
                 , B.bench "mutHeapMerge"   $ B.nf mutHeapMerge      inputLevellingMax
                 ]
             ]
@@ -253,6 +279,20 @@ inputLevellingMax =
     : take 4 (tail (inputs n))
   where
     n = 1000 `div` (16+4)
+
+inputLevellingMin', inputLevellingMax' :: [[Element]]
+inputLevellingMin' = arrangeInputForLoserTree inputLevellingMin
+inputLevellingMax' = arrangeInputForLoserTree inputLevellingMax
+
+-- A hacky way to create a degenerate loser tree where one side of the whole
+-- tournament tree effectively only consists of a single (large) input,
+-- so it can immediately "play in the final" and get chosen with just one
+-- comparison.
+arrangeInputForLoserTree :: [[Element]] -> [[Element]]
+arrangeInputForLoserTree input =
+      head input
+    : replicate 3 [minBound]  -- non-empty to be considered during tree building
+   ++ tail input
 
 inputs :: Int -> [[Element]]
 inputs n =
