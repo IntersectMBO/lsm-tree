@@ -3,6 +3,7 @@
 {-# LANGUAGE NamedFieldPuns #-}
 module Database.LSMTree.Internal.RawPage (
     RawPage,
+    emptyRawPage,
     makeRawPage,
     unsafeMakeRawPage,
     rawPageRawBytes,
@@ -25,12 +26,13 @@ import           Control.DeepSeq (NFData (rnf))
 import           Control.Exception (assert)
 import           Data.Bits (complement, popCount, unsafeShiftL, unsafeShiftR,
                      (.&.))
-import           Data.Primitive.ByteArray (ByteArray (..), copyByteArray,
-                     fillByteArray, indexByteArray, isByteArrayPinned,
-                     newAlignedPinnedByteArray, runByteArray, sizeofByteArray)
+import           Data.Primitive.ByteArray (ByteArray (..), byteArrayFromList,
+                     copyByteArray, fillByteArray, indexByteArray,
+                     isByteArrayPinned, newAlignedPinnedByteArray, runByteArray,
+                     sizeofByteArray)
 import qualified Data.Vector as V
 import qualified Data.Vector.Primitive as P
-import           Data.Word (Word16, Word32, Word64)
+import           Data.Word (Word16, Word32, Word64, Word8)
 import           Database.LSMTree.Internal.BitMath
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Entry (Entry (..))
@@ -48,6 +50,13 @@ data RawPage = RawPage
     !Int        -- ^ offset in Word16s.
     !ByteArray
   deriving (Show)
+
+emptyRawPage :: RawPage
+emptyRawPage = flip makeRawPage 0 $ byteArrayFromList
+   [ 0, 0, 0, 0
+   , 8, 0, 0, 0
+   , 10 :: Word8
+   ]
 
 invariant :: RawPage -> Bool
 invariant (RawPage off ba) = and

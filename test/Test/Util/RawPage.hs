@@ -1,6 +1,7 @@
 module Test.Util.RawPage (
     toRawPage,
     assertEqualRawPages,
+    propEqualRawPages,
 ) where
 
 import           Control.Monad (unless)
@@ -18,6 +19,7 @@ import qualified Database.LSMTree.Internal.Serialise.RawBytes as RB
 import           FormatPage (PageLogical, encodePage, serialisePage)
 import qualified System.Console.ANSI as ANSI
 import           Test.Tasty.HUnit (Assertion, assertFailure)
+import           Test.Tasty.QuickCheck (Property, counterexample)
 
 -- | Convert prototype 'PageLogical' to 'RawPage'.
 toRawPage :: PageLogical -> (RawPage, BS.ByteString)
@@ -30,6 +32,11 @@ toRawPage p = (page, sfx)
 assertEqualRawPages :: RawPage -> RawPage -> Assertion
 assertEqualRawPages a b = unless (a == b) $ do
     assertFailure $ "unequal pages:\n" ++ ANSI.setSGRCode [ANSI.Reset] ++ compareBytes (RB.unpack (rawPageRawBytes a)) (RB.unpack (rawPageRawBytes b))
+
+propEqualRawPages :: RawPage -> RawPage -> Property
+propEqualRawPages a b = counterexample
+    (ANSI.setSGRCode [ANSI.Reset] ++ compareBytes (RB.unpack (rawPageRawBytes a)) (RB.unpack (rawPageRawBytes b)))
+    (a == b)
 
 -- Print two bytestreams next to each other highlighting the differences.
 compareBytes :: [Word8] -> [Word8] -> String

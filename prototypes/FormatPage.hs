@@ -22,6 +22,10 @@ module FormatPage (
     genFullPageLogical,
     mkPageLogical,
     toBitmap,
+    -- * Page size
+    PageSize (..),
+    pageSizeEmpty,
+    pageSizeAddElem,
 ) where
 
 import           Data.Bits
