@@ -255,12 +255,13 @@ test-suite kmerge-test
     , deepseq
     , heaps
     , lsm-tree:kmerge
+    , primitive
     , splitmix
     , tasty
     , tasty-bench
     , tasty-hunit
     , tasty-quickcheck
-    , wide-word
+    , vector
 
 test-suite map-range-test
   import:           warnings, wno-x-partial

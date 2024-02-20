@@ -1,17 +1,21 @@
-{-# LANGUAGE BangPatterns        #-}
-{-# LANGUAGE RankNTypes          #-}
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE BangPatterns               #-}
+{-# LANGUAGE DerivingStrategies         #-}
+{-# LANGUAGE GeneralisedNewtypeDeriving #-}
+{-# LANGUAGE RankNTypes                 #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
 {-# OPTIONS_GHC -fspecialize-aggressively #-}
 module Main (main) where
 
 import           Control.DeepSeq (NFData (..), force)
 import           Control.Exception (evaluate)
 import           Control.Monad.ST.Strict (ST, runST)
+import           Data.Bits (unsafeShiftR)
 import qualified Data.Heap as Heap
 import           Data.IORef
 import qualified Data.List as L
-import           Data.WideWord.Word256 (Word256 (..))
-import           Data.Word (Word64)
+import           Data.Primitive.ByteArray (compareByteArrays)
+import qualified Data.Vector.Primitive as P
+import           Data.Word (Word64, Word8)
 import           System.IO.Unsafe (unsafePerformIO)
 import qualified System.Random.SplitMix as SM
 import           Test.Tasty (TestName, TestTree, defaultMainWithIngredients,
@@ -251,9 +255,57 @@ mergeProperty name f = testProperty name $ \xss ->
         rhs = f $ map L.sort (xss :: [[Word64]])
     in lhs === rhs
 
--- Using Word256 to make key comparison a bit more expensive.
-type Element = Word256
--- type Element = (Word256, Word256, Word256, Word256)
+{-------------------------------------------------------------------------------
+  Element type
+-------------------------------------------------------------------------------}
+
+-- This type corresponds to the @SerialisedKey@ type we are using (or rather the
+-- @RawBytes@ it wraps), so the cost of comparisons should be similar.
+-- We expect key lengths of 32 bytes.
+newtype Element = Element (P.Vector Word8)
+  deriving newtype (Show, NFData)
+
+instance Eq Element where
+  bs1 == bs2 = compareBytes bs1 bs2 == EQ
+
+-- | Lexicographical 'Ord' instance.
+instance Ord Element where
+  compare = compareBytes
+
+-- | Based on @Ord 'ShortByteString'@.
+compareBytes :: Element -> Element -> Ordering
+compareBytes rb1@(Element vec1) rb2@(Element vec2) =
+    let !len1 = sizeofElement rb1
+        !len2 = sizeofElement rb2
+        !len  = min len1 len2
+     in case compareByteArrays ba1 off1 ba2 off2 len of
+          EQ | len1 < len2 -> LT
+             | len1 > len2 -> GT
+          o  -> o
+  where
+    P.Vector off1 _size1 ba1 = vec1
+    P.Vector off2 _size2 ba2 = vec2
+
+sizeofElement :: Element -> Int
+sizeofElement (Element pvec) = P.length pvec
+
+genElement :: SM.SMGen -> (Element, SM.SMGen)
+genElement g0 = (Element (P.fromListN 32 bytes), g4)
+  where
+    -- we expect a shared 16 bit prefix
+    bytes = 0 : 0 : concatMap toBytes [w1, w2, w3, w4]
+    (!w1, g1) = SM.nextWord64 g0
+    (!w2, g2) = SM.nextWord64 g1
+    (!w3, g3) = SM.nextWord64 g2
+    (!w4, g4) = SM.nextWord64 g3
+    toBytes = reverse . take 8 . map fromIntegral . iterate (`unsafeShiftR` 8)
+
+minElement :: Element
+minElement = Element (P.fromListN 32 (L.repeat 0))
+
+{-------------------------------------------------------------------------------
+  Inputs
+-------------------------------------------------------------------------------}
 
 input8 :: [[Element]]
 input8 = take 8 $ inputs 100
@@ -291,7 +343,7 @@ inputLevellingMax' = arrangeInputForLoserTree inputLevellingMax
 arrangeInputForLoserTree :: [[Element]] -> [[Element]]
 arrangeInputForLoserTree input =
       head input
-    : replicate 3 [minBound]  -- non-empty to be considered during tree building
+    : replicate 3 [minElement]  -- non-empty to be considered during tree building
    ++ tail input
 
 inputs :: Int -> [[Element]]
@@ -299,26 +351,6 @@ inputs n =
     [ L.sort $ take n $ L.unfoldr (Just . genElement) $ SM.mkSMGen seed
     | seed <- iterate (3 +) 42
     ]
-
-
-genElement :: SM.SMGen -> (Element, SM.SMGen)
-genElement = genWord256
-{-
-genElement g0 =
-    let (!w1, g1) = genWord256 g0
-        (!w2, g2) = genWord256 g1
-        (!w3, g3) = genWord256 g2
-        (!w4, g4) = genWord256 g3
-    in ((w1, w2, w3, w4), g4)
--}
-
-genWord256 :: SM.SMGen -> (Word256, SM.SMGen)
-genWord256 g0 =
-    let (!w1, g1) = SM.nextWord64 g0
-        (!w2, g2) = SM.nextWord64 g1
-        (!w3, g3) = SM.nextWord64 g2
-        (!w4, g4) = SM.nextWord64 g3
-    in (Word256 w1 w2 w3 w4, g4)
 
 {-------------------------------------------------------------------------------
   Recursive 2-way merge
