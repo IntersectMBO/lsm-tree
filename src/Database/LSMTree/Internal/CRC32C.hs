@@ -20,6 +20,7 @@ module Database.LSMTree.Internal.CRC32C (
   hGetSomeCRC32C,
   hPutSomeCRC32C,
   hPutAllCRC32C,
+  hPutAllChunksCRC32C,
   readFileCRC32C,
 
   -- * Checksum files
@@ -101,6 +102,21 @@ hPutAllCRC32C fs h = go 0
       if BS.null bs'
         then return (written', crc')
         else go written' bs' crc'
+
+-- | This function makes sure that the whole /lazy/ 'BSL.ByteString' is written.
+hPutAllChunksCRC32C :: forall m h
+                    .  Monad m
+                    => HasFS m h
+                    -> Handle h
+                    -> BSL.ByteString
+                    -> CRC32C -> m (Word64, CRC32C)
+hPutAllChunksCRC32C fs h = \lbs crc ->
+    foldM (uncurry putChunk) (0, crc) (BSL.toChunks lbs)
+  where
+    putChunk :: Word64 -> CRC32C -> BS.ByteString -> m (Word64, CRC32C)
+    putChunk !written !crc !bs = do
+      (n, crc') <- hPutAllCRC32C fs h bs crc
+      return (written + n, crc')
 
 readFileCRC32C :: forall m h. MonadThrow m => HasFS m h -> FsPath -> m CRC32C
 readFileCRC32C fs file =
