@@ -44,8 +44,8 @@ library
     Database.LSMTree.Internal.BlobRef
     Database.LSMTree.Internal.CRC32C
     Database.LSMTree.Internal.Entry
-    Database.LSMTree.Internal.Integration
     Database.LSMTree.Internal.KMerge
+    Database.LSMTree.Internal.Lookup
     Database.LSMTree.Internal.Monoidal
     Database.LSMTree.Internal.Normal
     Database.LSMTree.Internal.RawPage
@@ -205,7 +205,7 @@ benchmark lsm-tree-micro-bench
   hs-source-dirs:   bench/micro
   main-is:          Main.hs
   other-modules:
-    Bench.Database.LSMTree.Internal.Integration
+    Bench.Database.LSMTree.Internal.Lookup
     Bench.Database.LSMTree.Internal.RawPage
     Bench.Database.LSMTree.Internal.Run.BloomFilter
     Bench.Database.LSMTree.Internal.Run.Index.Compact
