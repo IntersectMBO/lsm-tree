@@ -4,19 +4,36 @@
 {-# LANGUAGE GeneralisedNewtypeDeriving #-}
 {-# LANGUAGE InstanceSigs               #-}
 {-# LANGUAGE MagicHash                  #-}
+{-# LANGUAGE TypeFamilies               #-}
 {-# LANGUAGE UnboxedTuples              #-}
 {- HLINT ignore "Redundant lambda" -}
 
 #include <MachDeps.h>
 
+-- See Note: [Export structure]
 module Database.LSMTree.Internal.Serialise.RawBytes (
+    -- * Raw bytes
     RawBytes (..)
+  , mkRawBytes
+    -- * Accessors
+    -- ** Length information
+  , sizeofRawBytes
+    -- ** Extracting subvectors (slicing)
+  , take
   , topBits16
   , sliceBits32
-  , sizeofRawBytes
-  , Database.LSMTree.Internal.Serialise.RawBytes.concat
+    -- * Construction
+    -- ** Concatenation
+  , (++)
+  , concat
+    -- * Conversions
+    -- ** Lists
+  , pack
+  , unpack
     -- * @bytestring@ utils
+  , fromByteString
   , unsafeFromByteString
+  , toByteString
   , fromShortByteString
   , rawBytes
   ) where
@@ -25,7 +42,7 @@ import           Control.DeepSeq
 import           Control.Exception (assert)
 import           Data.Bits (Bits (shiftL, shiftR))
 import           Data.BloomFilter.Hash (hashList32)
-import           Data.ByteString as BS
+import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BB
 import qualified Data.ByteString.Builder.Internal as BB
 import           Data.ByteString.Internal as BS.Internal
@@ -39,14 +56,25 @@ import           Foreign.Ptr
 import           GHC.Exts
 import           GHC.ForeignPtr as GHC
 import           GHC.Word
+import           Prelude hiding (concat, take, (++))
+
+{- Note: [Export structure]
+   ~~~~~~~~~~~~~~~~~~~~~~~
+   Since RawBytes are very similar to Primitive Vectors, the code is sectioned
+   and structured much like the "Data.Vector.Primitive" module.
+-}
+
+{-------------------------------------------------------------------------------
+  Raw bytes
+-------------------------------------------------------------------------------}
 
 -- | Raw bytes with no alignment constraint (i.e. byte aligned), and no
 -- guarantee of pinned or unpinned memory (i.e. could be either).
 newtype RawBytes = RawBytes (P.Vector Word8)
   deriving newtype (Show, NFData)
 
-toVector :: RawBytes -> P.Vector Word8
-toVector (RawBytes vec) = vec
+mkRawBytes :: Int -> Int -> ByteArray -> RawBytes
+mkRawBytes off len ba = RawBytes (P.Vector off len ba)
 
 instance Eq RawBytes where
   bs1 == bs2 = compareBytes bs1 bs2 == EQ
@@ -76,6 +104,25 @@ instance Hashable RawBytes where
 -- TODO: optimisation
 hashRawBytes :: RawBytes -> Word32 -> IO Word32
 hashRawBytes (RawBytes vec) = hashList32 (P.toList vec)
+
+instance IsList RawBytes where
+  type Item RawBytes = Word8
+
+  fromList :: [Item RawBytes] -> RawBytes
+  fromList = pack
+
+  toList :: RawBytes -> [Item RawBytes]
+  toList = unpack
+
+{-------------------------------------------------------------------------------
+  Accessors
+-------------------------------------------------------------------------------}
+
+sizeofRawBytes :: RawBytes -> Int
+sizeofRawBytes = coerce P.length
+
+take :: Int -> RawBytes -> RawBytes
+take = coerce P.take
 
 -- | @'topBits16' n rb@ slices the first @n@ bits from the /top/ of the raw
 -- bytes @rb@. Returns the string of bits as a 'Word16'.
@@ -140,15 +187,35 @@ toWord32 = W32#
 toWord32 x# = byteSwap32 (W32# x#)
 #endif
 
-sizeofRawBytes :: RawBytes -> Int
-sizeofRawBytes (RawBytes pvec) = P.length pvec
+{-------------------------------------------------------------------------------
+  Construction
+-------------------------------------------------------------------------------}
+
+infixr 5 ++
+
+(++) :: RawBytes -> RawBytes -> RawBytes
+(++) = coerce (P.++)
 
 concat :: [RawBytes] -> RawBytes
-concat rbs = RawBytes (P.concat (fmap toVector rbs))
+concat = coerce P.concat
+
+{-------------------------------------------------------------------------------
+  Conversions
+-------------------------------------------------------------------------------}
+
+pack :: [Word8] -> RawBytes
+pack = coerce P.fromList
+
+unpack :: RawBytes -> [Word8]
+unpack = coerce P.toList
 
 {-------------------------------------------------------------------------------
   @bytestring@ utils
 -------------------------------------------------------------------------------}
+
+-- | \( O(n) \) conversion from a strict bytestring to raw bytes.
+fromByteString :: BS.ByteString -> RawBytes
+fromByteString = fromShortByteString . SBS.toShort
 
 -- | \( O(1) \) conversion from a strict bytestring to raw bytes.
 unsafeFromByteString :: BS.ByteString -> RawBytes
@@ -159,6 +226,10 @@ unsafeFromByteString (BS.Internal.BS (GHC.ForeignPtr _ contents) n) =
       PlainPtr mba# -> case unsafeFreezeByteArray# mba# realWorld# of
                    (# _, ba# #) -> RawBytes (P.Vector 0 n (ByteArray ba#))
       _            -> error "unsafeFromByteString: expected plain pointer"
+
+-- | \( O(n) \) conversion from raw bytes to a bytestring.
+toByteString :: RawBytes -> BS.ByteString
+toByteString = BS.pack . toList
 
 -- | \( O(1) \) conversion from a short bytestring to raw bytes.
 fromShortByteString :: ShortByteString -> RawBytes

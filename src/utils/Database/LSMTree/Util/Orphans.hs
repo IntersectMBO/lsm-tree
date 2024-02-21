@@ -21,13 +21,16 @@ import           Database.LSMTree.Internal.Run.BloomFilter (Hashable (..))
 import           Database.LSMTree.Internal.Run.Index.Compact (Append (..),
                      CompactIndex (..), PageNo (..), PageSpan (..),
                      SearchResult (..))
-import           Database.LSMTree.Internal.Serialise (SerialisedKey (..))
+import           Database.LSMTree.Internal.Serialise (SerialisedBlob (..),
+                     SerialisedKey (..), SerialisedValue (..))
 import           Database.LSMTree.Internal.Serialise.Class
 import           Database.LSMTree.Internal.Serialise.RawBytes
 import           GHC.Generics (Generic)
 import           System.Random (Uniform)
 
 deriving newtype instance NFData SerialisedKey
+deriving newtype instance NFData SerialisedValue
+deriving newtype instance NFData SerialisedBlob
 
 deriving stock instance Generic SearchResult
 deriving anyclass instance NFData SearchResult
