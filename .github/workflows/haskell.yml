@@ -49,7 +49,8 @@ jobs:
 
     - name: Configure the build
       run: |
-        cabal configure --enable-test --enable-benchmark --ghc-options="-Werror"
+        cabal configure --enable-test --enable-benchmark --ghc-options="-Werror" --ghc-options="-fno-ignore-asserts"
+        cat cabal.project.local
 
     - name: Record cabal dependencies
       id: record-deps
@@ -85,7 +86,7 @@ jobs:
         key:  ${{ steps.restore-cabal-cache.outputs.cache-primary-key }}
 
     - name: Build
-      run: cabal build --enable-tests --enable-benchmarks all
+      run: cabal build all
 
     - name: Run tests
       run: cabal test -j1 --test-show-details=direct all

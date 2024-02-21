@@ -50,7 +50,7 @@ tests = testGroup "Database.LSMTree.Internal.Run.Construction" [
 
 test_singleKeyRun :: Assertion
 test_singleKeyRun =  do
-    let !k = SerialisedKey' (P.fromList [37])
+    let !k = SerialisedKey' (P.fromList [37, 37, 37, 37, 37, 37])
         !e = InsertWithBlob (SerialisedValue' (P.fromList [48, 19])) (BlobSpan 55 77)
 
     (addRes, (mp, mc, _mfc, b, cix)) <- stToIO $ do
@@ -160,7 +160,10 @@ getPrototypeKOps :: PageLogical' -> [(Proto.Key, Proto.Operation, Maybe Proto.Bl
 getPrototypeKOps (PageLogical' (Proto.PageLogical kops)) = kops
 
 instance Arbitrary PageLogical' where
-  arbitrary = PageLogical' . demoteBlobRefs <$> arbitrary
+  arbitrary = PageLogical' . demoteBlobRefs <$>
+      Proto.genFullPageLogical
+        (arbitrary `suchThat` \(Proto.Key bs) -> BS.length bs >= 6)
+        arbitrary
   shrink (PageLogical' page) = [ PageLogical' (demoteBlobRefs page')
                                | page' <- shrink page ]
 
