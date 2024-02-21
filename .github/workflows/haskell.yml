@@ -22,13 +22,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ghc: ["9.2.8", "9.4.8", "9.6.4"]
+        ghc: ["9.2.8", "9.4.8", "9.6.4", "9.8.1"]
         cabal: ["3.10.2.1"]
         os: [ubuntu-latest, windows-latest, macOS-latest]
         exclude:
           - ghc: "9.4.8"
             os: windows-latest
           - ghc: "9.4.8"
+            os: macOS-latest
+          - ghc: "9.8.1"
+            os: windows-latest
+          - ghc: "9.8.1"
             os: macOS-latest
 
     steps:
@@ -37,7 +41,7 @@ jobs:
 
     - name: Setup Haskell
       id: setup-haskell
-      uses: haskell/actions/setup@v2
+      uses: haskell-actions/setup@v2
       with:
         ghc-version: ${{ matrix.ghc }}
         cabal-version: ${{ matrix.cabal }}
@@ -108,7 +112,7 @@ jobs:
 
     - name: Setup Haskell
       id: setup-haskell
-      uses: haskell/actions/setup@v2
+      uses: haskell-actions/setup@v2
       with:
         ghc-version: ${{ matrix.ghc }}
         cabal-version: ${{ matrix.cabal }}
@@ -167,7 +171,7 @@ jobs:
 
     - name: Setup Haskell
       id: setup-haskell
-      uses: haskell/actions/setup@v2
+      uses: haskell-actions/setup@v2
       with:
         ghc-version: ${{ matrix.ghc }}
         cabal-version: ${{ matrix.cabal }}
@@ -221,7 +225,7 @@ jobs:
 
     - name: Setup Haskell
       id: setup-haskell
-      uses: haskell/actions/setup@v2
+      uses: haskell-actions/setup@v2
       with:
         ghc-version: ${{ matrix.ghc }}
         cabal-version: ${{ matrix.cabal }}
