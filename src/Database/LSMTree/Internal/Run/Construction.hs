@@ -26,6 +26,13 @@ module Database.LSMTree.Internal.Run.Construction (
   , paEmpty
   , paAddElem
   , paSingleton
+    -- ** Page size
+  , PageSize(..)
+  , psEmpty
+  , psIsEmpty
+  , psIsOverfull
+  , psAddElem
+  , psSingleton
     -- * Exposed only for testing
     -- ** StricterList
   , StricterList (..)
