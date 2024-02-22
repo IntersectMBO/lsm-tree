@@ -9,7 +9,7 @@
 {-# LANGUAGE TypeApplications    #-}
 {- HLINT ignore "Use const" -}
 
-module Bench.Database.LSMTree.Internal.Integration (benchmarks, analysis) where
+module Bench.Database.LSMTree.Internal.Lookup (benchmarks, analysis) where
 
 import           Bench.Database.LSMTree.Internal.Run.BloomFilter (elems)
 import           Bench.Database.LSMTree.Internal.Run.Index.Compact (searches)
@@ -23,7 +23,7 @@ import qualified Data.List.NonEmpty as NonEmpty
 import           Data.Maybe (fromMaybe)
 import           Data.Proxy (Proxy (..))
 import           Database.LSMTree.Generators (RFPrecision (..), UTxOKey)
-import           Database.LSMTree.Internal.Integration (prepLookups)
+import           Database.LSMTree.Internal.Lookup (prepLookups)
 import           Database.LSMTree.Internal.Run.BloomFilter (Bloom)
 import qualified Database.LSMTree.Internal.Run.BloomFilter as Bloom
 import           Database.LSMTree.Internal.Run.Index.Compact (Append (..),
@@ -42,7 +42,7 @@ import           Text.Printf (printf)
 
 -- | TODO: add a separate micro-benchmark that includes multi-pages.
 benchmarks :: Benchmark
-benchmarks = bgroup "Bench.Database.LSMTree.Internal.Integration" [
+benchmarks = bgroup "Bench.Database.LSMTree.Internal.Lookup" [
       bgroup "prepLookups for a single run" [
           benchPrepLookups defaultConfig
         , benchPrepLookups (defaultConfig {
