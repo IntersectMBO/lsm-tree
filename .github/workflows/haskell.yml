@@ -47,6 +47,25 @@ jobs:
         cabal-version: ${{ matrix.cabal }}
         cabal-update: true
 
+    - name: Install liburing (on Linux)
+      id: setup-liburing
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        sudo apt-get update
+        sudo apt-get -y install pkg-config
+        echo "PKG_CONFIG_PATH=$PKG_CONFIG_PATH"
+        mkdir tmp
+        cd tmp
+        git clone https://github.com/axboe/liburing.git
+        cd liburing
+        git checkout liburing-2.5
+        ./configure --cc=gcc --cxx=g++
+        make -j$(nproc)
+        sudo make install
+        cd ../..
+        sudo rm -rf ./tmp
+        pkg-config --modversion liburing
+
     - name: Configure the build
       run: |
         cabal configure --enable-tests --enable-benchmark --ghc-options="-Werror" --ghc-options="-fno-ignore-asserts"
