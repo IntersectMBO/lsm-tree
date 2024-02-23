@@ -28,10 +28,13 @@ import           Data.Primitive.ByteArray (ByteArray (..), indexByteArray,
                      sizeofByteArray)
 import qualified Data.Vector as V
 import qualified Data.Vector.Primitive as P
-import           Data.Word (Word16, Word32, Word64, Word8)
+import           Data.Word (Word16, Word32, Word64)
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Entry (Entry (..))
-import           Database.LSMTree.Internal.Serialise.RawBytes (RawBytes (..))
+import           Database.LSMTree.Internal.Serialise (SerialisedKey (..),
+                     SerialisedValue (..))
+import           Database.LSMTree.Internal.Serialise.RawBytes (RawBytes (..),
+                     mkRawBytes)
 import           GHC.List (foldl')
 
 -------------------------------------------------------------------------------
@@ -62,7 +65,7 @@ makeRawPage ba off = RawPage (div2 off) ba
 
 rawPageRawBytes :: RawPage -> RawBytes
 rawPageRawBytes (RawPage off ba) =
-    RawBytes (P.Vector (mul2 off) 4096 ba)
+      mkRawBytes (mul2 off) 4096 ba
 
 -------------------------------------------------------------------------------
 -- Lookup function
@@ -85,8 +88,8 @@ data RawPageLookup entry =
 
 rawPageLookup
     :: RawPage
-    -> P.Vector Word8 -- ^ key
-    -> RawPageLookup (Entry (P.Vector Word8) BlobSpan)
+    -> SerialisedKey
+    -> RawPageLookup (Entry SerialisedValue BlobSpan)
 rawPageLookup !page !key
   | dirNumKeys == 1 = lookup1
   | otherwise       = bisect 0 (fromIntegral dirNumKeys)
@@ -108,7 +111,7 @@ rawPageLookup !page !key
     -- can be set to zero.
     threshold = 3
 
-    bisect :: Int -> Int -> RawPageLookup (Entry (P.Vector Word8) BlobSpan)
+    bisect :: Int -> Int -> RawPageLookup (Entry SerialisedValue BlobSpan)
     bisect !i !j
         | j - i < threshold = linear i j
         | otherwise = case compare key (rawPageKeyAt page k) of
@@ -118,14 +121,14 @@ rawPageLookup !page !key
       where
         k = i + div2 (j - i)
 
-    linear :: Int -> Int -> RawPageLookup (Entry (P.Vector Word8) BlobSpan)
+    linear :: Int -> Int -> RawPageLookup (Entry SerialisedValue BlobSpan)
     linear !i !j
         | i >= j                     = LookupEntryNotPresent
         | key == rawPageKeyAt page i = LookupEntry (rawPageEntryAt page i)
         | otherwise                  = linear (i + 1) j
 
 -- | for non-single key page case
-rawPageEntryAt :: RawPage -> Int -> Entry (P.Vector Word8) BlobSpan
+rawPageEntryAt :: RawPage -> Int -> Entry SerialisedValue BlobSpan
 rawPageEntryAt page i =
     case rawPageOpAt page i of
       0 -> if rawPageHasBlobSpanAt page i == 0
@@ -137,7 +140,7 @@ rawPageEntryAt page i =
       _ -> Delete
 
 -- | single key page case
-rawPageEntry1 :: RawPage -> Entry (P.Vector Word8) BlobSpan
+rawPageEntry1 :: RawPage -> Entry SerialisedValue BlobSpan
 rawPageEntry1 page =
     case rawPageOpAt page 0 of
       0 -> if rawPageHasBlobSpanAt page 0 == 0
@@ -214,11 +217,11 @@ rawPageOpAt page@(RawPage off ba) i = do
 roundUpTo64 :: Int -> Int
 roundUpTo64 i = unsafeShiftR (i + 63) 6
 
-rawPageKeys :: RawPage -> V.Vector (P.Vector Word8)
+rawPageKeys :: RawPage -> V.Vector SerialisedKey
 rawPageKeys page@(RawPage off ba) = do
     let offs = rawPageKeyOffsets page
     V.fromList
-        [ P.Vector (mul2 off + start) (end - start) ba
+        [ SerialisedKey (mkRawBytes (mul2 off + start) (end - start) ba)
         | i <- [ 0 .. fromIntegral dirNumKeys -  1 ] :: [Int]
         , let start = fromIntegral (P.unsafeIndex offs i) :: Int
         , let end   = fromIntegral (P.unsafeIndex offs (i + 1)) :: Int
@@ -226,20 +229,20 @@ rawPageKeys page@(RawPage off ba) = do
   where
     !dirNumKeys = rawPageNumKeys page
 
-rawPageKeyAt :: RawPage -> Int -> P.Vector Word8
+rawPageKeyAt :: RawPage -> Int -> SerialisedKey
 rawPageKeyAt page@(RawPage off ba) i = do
-    P.Vector (mul2 off + start) (end - start) ba
+    SerialisedKey (mkRawBytes (mul2 off + start) (end - start) ba)
   where
     offs  = rawPageKeyOffsets page
     start = fromIntegral (P.unsafeIndex offs i) :: Int
     end   = fromIntegral (P.unsafeIndex offs (i + 1)) :: Int
 
 -- | Non-single page case
-rawPageValues :: RawPage -> V.Vector (P.Vector Word8)
-rawPageValues page@(RawPage off ba) = do
-    let offs = rawPageValueOffsets page
+rawPageValues :: RawPage -> V.Vector SerialisedValue
+rawPageValues page@(RawPage off ba) =
+    let offs = rawPageValueOffsets page in
     V.fromList
-        [ P.Vector (mul2 off + start) (end - start) ba
+        [ SerialisedValue $ mkRawBytes (mul2 off + start) (end - start) ba
         | i <- [ 0 .. fromIntegral dirNumKeys -  1 ] :: [Int]
         , let start = fromIntegral (P.unsafeIndex offs i) :: Int
         , let end   = fromIntegral (P.unsafeIndex offs (i + 1)) :: Int
@@ -247,19 +250,20 @@ rawPageValues page@(RawPage off ba) = do
   where
     !dirNumKeys = rawPageNumKeys page
 
-rawPageValueAt :: RawPage -> Int -> P.Vector Word8
-rawPageValueAt page@(RawPage off ba) i = do
-    P.Vector (mul2 off + start) (end - start) ba
+rawPageValueAt :: RawPage -> Int -> SerialisedValue
+rawPageValueAt page@(RawPage off ba) i =
+    SerialisedValue (mkRawBytes (mul2 off + start) (end - start) ba)
   where
     offs  = rawPageValueOffsets page
     start = fromIntegral (P.unsafeIndex offs i) :: Int
     end   = fromIntegral (P.unsafeIndex offs (i + 1)) :: Int
 
-rawPageSingleValuePrefix :: RawPage -> P.Vector Word8
+rawPageSingleValuePrefix :: RawPage -> SerialisedValue
 rawPageSingleValuePrefix page@(RawPage off ba) =
-    P.Vector (mul2 off + fromIntegral start)
-             (fromIntegral prefix_end - fromIntegral start)
-             ba
+    SerialisedValue $
+      mkRawBytes (mul2 off + fromIntegral start)
+                 (fromIntegral prefix_end - fromIntegral start)
+                 ba
   where
     (start, end) = rawPageValueOffsets1 page
     prefix_end   = min 4096 end

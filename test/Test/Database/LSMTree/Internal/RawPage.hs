@@ -3,10 +3,6 @@
 module Test.Database.LSMTree.Internal.RawPage (
     -- * Main test tree
     tests,
-
-    -- * Utils
-    bsToVector,
-    bsFromVector,
 ) where
 
 import qualified Data.ByteString as BS
@@ -15,7 +11,7 @@ import           Data.Maybe (isJust)
 import           Data.Primitive.ByteArray (ByteArray (..), byteArrayFromList)
 import qualified Data.Vector as V
 import qualified Data.Vector.Primitive as P
-import           Data.Word (Word16, Word64, Word8)
+import           Data.Word (Word16, Word64)
 import           GHC.Word (byteSwap16)
 import           Test.QuickCheck.Instances ()
 import           Test.Tasty (TestTree, testGroup)
@@ -25,6 +21,9 @@ import           Test.Tasty.QuickCheck
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import qualified Database.LSMTree.Internal.Entry as Entry
 import           Database.LSMTree.Internal.RawPage
+import           Database.LSMTree.Internal.Serialise
+import           Database.LSMTree.Internal.Serialise.RawBytes (fromByteString,
+                     pack)
 import           FormatPage (BlobRef (..), Key (..), Operation (..),
                      PageLogical (..), Value (..), encodePage, serialisePage,
                      unKey)
@@ -72,9 +71,9 @@ tests = testGroup "Database.LSMTree.Internal.RawPage"
         rawPageValueOffsets1 page @=? (34, 36)
         rawPageHasBlobSpanAt page 0 @=? 0
         rawPageOpAt page 0 @=? 0
-        rawPageKeys page @=? V.singleton (P.fromList [0x42, 0x43])
+        rawPageKeys page @=? V.singleton (SerialisedKey $ pack [0x42, 0x43])
 
-        rawPageLookup page (P.fromList [0x42, 0x43]) @=? LookupEntry (Entry.Insert (P.fromList [0x88, 0x99]))
+        rawPageLookup page (SerialisedKey $ pack [0x42, 0x43]) @=? LookupEntry (Entry.Insert (SerialisedValue $ pack [0x88, 0x99]))
 
     , testCase "single-insert-blobspan" $ do
         let bytes :: [Word16]
@@ -101,9 +100,9 @@ tests = testGroup "Database.LSMTree.Internal.RawPage"
         rawPageHasBlobSpanAt page 0 @=? 1
         rawPageBlobSpanIndex page 0 @=? BlobSpan 0xff 0xfe
         rawPageOpAt page 0 @=? 0
-        rawPageKeys page @=? V.singleton (P.fromList [0x42, 0x43])
+        rawPageKeys page @=? V.singleton (SerialisedKey $ pack [0x42, 0x43])
 
-        rawPageLookup page (P.fromList [0x42, 0x43]) @=? LookupEntry (Entry.InsertWithBlob (P.fromList [0x88, 0x99]) (BlobSpan 0xff 0xfe))
+        rawPageLookup page (SerialisedKey $ pack [0x42, 0x43]) @=? LookupEntry (Entry.InsertWithBlob (SerialisedValue $ pack [0x88, 0x99]) (BlobSpan 0xff 0xfe))
 
     , testCase "single-delete" $ do
         let bytes :: [Word16]
@@ -125,9 +124,9 @@ tests = testGroup "Database.LSMTree.Internal.RawPage"
         rawPageValueOffsets1 page @=? (34, 34)
         rawPageHasBlobSpanAt page 0 @=? 0
         rawPageOpAt page 0 @=? 2
-        rawPageKeys page @=? V.singleton (P.fromList [0x42, 0x43])
+        rawPageKeys page @=? V.singleton (SerialisedKey $ pack [0x42, 0x43])
 
-        rawPageLookup page (P.fromList [0x42, 0x43]) @=? LookupEntry Entry.Delete
+        rawPageLookup page (SerialisedKey $ pack [0x42, 0x43]) @=? LookupEntry Entry.Delete
 
     , testCase "double-mupsert" $ do
         let bytes :: [Word16]
@@ -153,11 +152,11 @@ tests = testGroup "Database.LSMTree.Internal.RawPage"
         rawPageHasBlobSpanAt page 1 @=? 0
         rawPageOpAt page 0 @=? 1
         rawPageOpAt page 1 @=? 1
-        rawPageKeys page @=? V.fromList [P.fromList [0x42, 0x43], P.fromList [0x52, 0x53]]
-        rawPageValues page @=? V.fromList [P.fromList [0x44, 0x45], P.fromList [0x54, 0x55]]
+        rawPageKeys page @=? V.fromList [SerialisedKey rb | rb <- [pack [0x42, 0x43], pack [0x52, 0x53]]]
+        rawPageValues page @=? V.fromList [SerialisedValue rb | rb <- [pack [0x44, 0x45], pack [0x54, 0x55]]]
 
-        rawPageLookup page (P.fromList [0x52, 0x53]) @=? LookupEntry (Entry.Mupdate (P.fromList [0x54,0x55]))
-        rawPageLookup page (P.fromList [0x99, 0x99]) @=? LookupEntryNotPresent
+        rawPageLookup page (SerialisedKey $ pack [0x52, 0x53]) @=? LookupEntry (Entry.Mupdate (SerialisedValue $ pack [0x54,0x55]))
+        rawPageLookup page (SerialisedKey $ pack [0x99, 0x99]) @=? LookupEntryNotPresent
 
     , testProperty "keys" prop_keys
     , testProperty "values" prop_values
@@ -183,8 +182,8 @@ prop_keys p@(PageLogical xs) =
   where
     rawpage = fst $ toRawPage p
 
-    keys :: [P.Vector Word8]
-    keys = [ P.fromList (BS.unpack bs) | (Key bs, _, _) <- xs ]
+    keys :: [SerialisedKey]
+    keys = [ SerialisedKey $ fromByteString bs | (Key bs, _, _) <- xs ]
 
 prop_values :: PageLogical -> Property
 prop_values p@(PageLogical xs) =
@@ -192,12 +191,12 @@ prop_values p@(PageLogical xs) =
   where
     rawpage = fst $ toRawPage p
 
-    values :: [P.Vector Word8]
-    values = [ extractValue op | (_, op, _) <- xs ]
+    values :: [SerialisedValue]
+    values = [ SerialisedValue $ extractValue op | (_, op, _) <- xs ]
 
-    extractValue (Insert (Value bs))  = bsToVector bs
-    extractValue (Mupsert (Value bs)) = bsToVector bs
-    extractValue Delete               = P.empty
+    extractValue (Insert (Value bs))  = fromByteString bs
+    extractValue (Mupsert (Value bs)) = fromByteString bs
+    extractValue Delete               = fromByteString BS.empty
 
 prop_blobspans :: PageLogical -> Property
 prop_blobspans p@(PageLogical xs) =
@@ -234,11 +233,11 @@ prop_ops p@(PageLogical xs) =
 prop_entries_exists :: PageLogical -> Property
 prop_entries_exists (PageLogical xs) =
     length xs > 1 ==> forAll (elements xs) \(Key k, op, blobref) ->
-    rawPageLookup rawpage (bsToVector k) === LookupEntry case op of
+    rawPageLookup rawpage (SerialisedKey $ fromByteString k) === LookupEntry case op of
         Insert (Value v)       -> case blobref of
-            Nothing            -> Entry.Insert (bsToVector v)
-            Just (BlobRef x y) -> Entry.InsertWithBlob (bsToVector v) (BlobSpan x y)
-        Mupsert (Value v)      -> Entry.Mupdate (bsToVector v)
+            Nothing            -> Entry.Insert (SerialisedValue $ fromByteString v)
+            Just (BlobRef x y) -> Entry.InsertWithBlob (SerialisedValue $ fromByteString v) (BlobSpan x y)
+        Mupsert (Value v)      -> Entry.Mupdate (SerialisedValue $ fromByteString v)
         Delete                 -> Entry.Delete
   where
     rawpage = fst $ toRawPage (PageLogical xs)
@@ -247,30 +246,30 @@ prop_entries_all :: PageLogical -> BS.ByteString -> Property
 prop_entries_all page@(PageLogical xs) bs =
     length xs /= 1 ==> rawPageLookup rawpage k === expected
   where
-    k = bsToVector bs
+    k = SerialisedKey $ fromByteString bs
     rawpage = fst $ toRawPage page
 
     lookup3 :: Eq a => a -> [(a,b,c)] -> Maybe (b, c)
     lookup3 _ []            = Nothing
     lookup3 a ((a',b,c):zs) = if a == a' then Just (b, c) else lookup3 a zs
 
-    expected :: RawPageLookup (Entry.Entry (P.Vector Word8) BlobSpan)
-    expected = case lookup3 (Key (bsFromVector k)) xs of
+    expected :: RawPageLookup (Entry.Entry SerialisedValue BlobSpan)
+    expected = case lookup3 (Key bs) xs of
         Nothing                                     -> LookupEntryNotPresent
-        Just (Insert (Value v), Nothing)            -> LookupEntry (Entry.Insert (bsToVector v))
-        Just (Insert (Value v), Just (BlobRef x y)) -> LookupEntry (Entry.InsertWithBlob (bsToVector v) (BlobSpan x y))
-        Just (Mupsert (Value v), _)                 -> LookupEntry (Entry.Mupdate (bsToVector v))
+        Just (Insert (Value v), Nothing)            -> LookupEntry (Entry.Insert (SerialisedValue $ fromByteString v))
+        Just (Insert (Value v), Just (BlobRef x y)) -> LookupEntry (Entry.InsertWithBlob (SerialisedValue $ fromByteString v) (BlobSpan x y))
+        Just (Mupsert (Value v), _)                 -> LookupEntry (Entry.Mupdate (SerialisedValue $ fromByteString v))
         Just (Delete, _)                            -> LookupEntry Entry.Delete
 
 prop_big_insert :: Key -> Maybe BlobRef -> Property
 prop_big_insert k blobref =
     rawPageLookup rawpage k' === case blobref of
-        Nothing            -> LookupEntryOverflow (Entry.Insert (bsToVector (BS.take size v))) (fromIntegral sfxSize)
-        Just (BlobRef x y) -> LookupEntryOverflow (Entry.InsertWithBlob (bsToVector (BS.take size v)) (BlobSpan x y)) (fromIntegral sfxSize)
+        Nothing            -> LookupEntryOverflow (Entry.Insert (SerialisedValue $ fromByteString (BS.take size v))) (fromIntegral sfxSize)
+        Just (BlobRef x y) -> LookupEntryOverflow (Entry.InsertWithBlob (SerialisedValue $ fromByteString (BS.take size v)) (BlobSpan x y)) (fromIntegral sfxSize)
   where
     page = PageLogical [(k, Insert (Value v), blobref)]
     (rawpage, sfx) = toRawPage page
-    k' = bsToVector (unKey k)
+    k' = SerialisedKey $ fromByteString (unKey k)
 
     -- original value
     v = BS.replicate 5000 42
@@ -285,14 +284,14 @@ prop_single_entry :: Key -> Operation -> Maybe BlobRef -> Property
 prop_single_entry k op blobref = label (show $ BS.null sfx) $
     rawPageLookup rawpage k' === mkLookupEntry case op of
         Insert (Value v)       -> case blobref of
-            Nothing            -> Entry.Insert (bsToVector (trim v))
-            Just (BlobRef x y) -> Entry.InsertWithBlob (bsToVector (trim v)) (BlobSpan x y)
-        Mupsert (Value v)      -> Entry.Mupdate (bsToVector (trim v))
+            Nothing            -> Entry.Insert (SerialisedValue $ fromByteString (trim v))
+            Just (BlobRef x y) -> Entry.InsertWithBlob (SerialisedValue $ fromByteString (trim v)) (BlobSpan x y)
+        Mupsert (Value v)      -> Entry.Mupdate (SerialisedValue $ fromByteString (trim v))
         Delete                 -> Entry.Delete
   where
     page = PageLogical [(k, op, blobref)]
     (rawpage, sfx) = toRawPage page
-    k' = bsToVector (unKey k)
+    k' = SerialisedKey $ fromByteString (unKey k)
 
     trim :: BS.ByteString -> BS.ByteString
     trim = BS.dropEnd sfxSize
@@ -303,9 +302,3 @@ prop_single_entry k op blobref = label (show $ BS.null sfx) $
     mkLookupEntry entry
       | sfxSize > 0 = LookupEntryOverflow entry (fromIntegral sfxSize)
       | otherwise   = LookupEntry         entry
-
-bsToVector :: BS.ByteString -> P.Vector Word8
-bsToVector = P.fromList . BS.unpack
-
-bsFromVector :: P.Vector Word8 -> BS.ByteString
-bsFromVector = BS.pack . P.toList

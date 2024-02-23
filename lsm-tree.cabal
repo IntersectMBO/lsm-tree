@@ -221,7 +221,6 @@ benchmark lsm-tree-micro-bench
     , primitive
     , QuickCheck
     , random
-    , vector
 
 benchmark lsm-tree-macro-bench
   import:           warnings, wno-x-partial
