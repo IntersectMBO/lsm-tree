@@ -1,12 +1,14 @@
 {-# LANGUAGE BangPatterns   #-}
+{-# LANGUAGE DeriveFunctor  #-}
 {-# LANGUAGE NamedFieldPuns #-}
 module Database.LSMTree.Internal.RawPage (
     RawPage,
     makeRawPage,
+    rawPageRawBytes,
     rawPageNumKeys,
     rawPageNumBlobs,
-    rawPageEntry,
-    rawPageValue1Prefix,
+    rawPageLookup,
+    RawPageLookup(..),
     -- * Debug
     rawPageKeyOffsets,
     rawPageValueOffsets,
@@ -19,6 +21,7 @@ module Database.LSMTree.Internal.RawPage (
 ) where
 
 import           Control.DeepSeq (NFData (rnf))
+import           Control.Exception (assert)
 import           Data.Bits (Bits, complement, popCount, unsafeShiftL,
                      unsafeShiftR, (.&.))
 import           Data.Primitive.ByteArray (ByteArray (..), indexByteArray,
@@ -28,6 +31,7 @@ import qualified Data.Vector.Primitive as P
 import           Data.Word (Word16, Word32, Word64, Word8)
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Entry (Entry (..))
+import           Database.LSMTree.Internal.Serialise.RawBytes (RawBytes (..))
 import           GHC.List (foldl')
 
 -------------------------------------------------------------------------------
@@ -56,54 +60,93 @@ makeRawPage
     -> RawPage
 makeRawPage ba off = RawPage (div2 off) ba
 
+rawPageRawBytes :: RawPage -> RawBytes
+rawPageRawBytes (RawPage off ba) =
+    RawBytes (P.Vector (mul2 off) 4096 ba)
+
 -------------------------------------------------------------------------------
 -- Lookup function
 -------------------------------------------------------------------------------
 
-rawPageEntry
+data RawPageLookup entry =
+       -- | The key is not present on the page.
+       LookupEntryNotPresent
+
+       -- | The key is present and corresponds to a normal entry that fits
+       -- fully within the page.
+     | LookupEntry !entry
+
+       -- | The key is present and corresponds to an entry where the value
+       -- may have overflowed onto subsequent pages. In this case the entry
+       -- contains the /prefix/ of the value (that did fit on the page). The
+       -- length of the suffix is returned separately.
+     | LookupEntryOverflow !entry !Word32
+  deriving (Eq, Functor, Show)
+
+rawPageLookup
     :: RawPage
     -> P.Vector Word8 -- ^ key
-    -> Maybe (Entry (P.Vector Word8) BlobSpan)
-rawPageEntry !page !key = bisect 0 (fromIntegral dirNumKeys)
+    -> RawPageLookup (Entry (P.Vector Word8) BlobSpan)
+rawPageLookup !page !key
+  | dirNumKeys == 1 = lookup1
+  | otherwise       = bisect 0 (fromIntegral dirNumKeys)
   where
     !dirNumKeys = rawPageNumKeys page
+
+    lookup1
+      | key == rawPageKeyAt page 0
+      = let !entry  = rawPageEntry1 page
+            !suffix = rawPageSingleValueSuffix page
+         in if suffix > 0
+              then LookupEntryOverflow entry suffix
+              else LookupEntry         entry
+      | otherwise
+      = LookupEntryNotPresent
 
     -- when to switch to linear scan
     -- this a tuning knob
     -- can be set to zero.
     threshold = 3
 
-    found :: Int -> Maybe (Entry (P.Vector Word8) BlobSpan)
-    found !i = Just $! case rawPageOpAt page i of
-        0 -> if rawPageHasBlobSpanAt page i == 0
-             then Insert (rawPageValueAt page i)
-             else InsertWithBlob (rawPageValueAt page i) (rawPageBlobSpanIndex page (rawPageCalculateBlobIndex page i))
-        1 -> Mupdate (rawPageValueAt page i)
-        _ -> Delete
-
-    bisect :: Int -> Int -> Maybe (Entry (P.Vector Word8) BlobSpan)
+    bisect :: Int -> Int -> RawPageLookup (Entry (P.Vector Word8) BlobSpan)
     bisect !i !j
         | j - i < threshold = linear i j
         | otherwise = case compare key (rawPageKeyAt page k) of
-            EQ -> found k
+            EQ -> LookupEntry (rawPageEntryAt page k)
             GT -> bisect (k + 1) j
             LT -> bisect i k
       where
         k = i + div2 (j - i)
 
-    linear :: Int -> Int -> Maybe (Entry (P.Vector Word8) BlobSpan)
+    linear :: Int -> Int -> RawPageLookup (Entry (P.Vector Word8) BlobSpan)
     linear !i !j
-        | i >= j                       = Nothing
-        | key == rawPageKeyAt page i   = found i
-        | otherwise                    = linear (i + 1) j
+        | i >= j                     = LookupEntryNotPresent
+        | key == rawPageKeyAt page i = LookupEntry (rawPageEntryAt page i)
+        | otherwise                  = linear (i + 1) j
 
-rawPageValue1Prefix :: RawPage -> Entry (P.Vector Word8, Word32) BlobSpan
-rawPageValue1Prefix page = case rawPageOpAt page 0 of
-  0 -> if rawPageHasBlobSpanAt page 0 == 0
-       then Insert (rawPageSingleValue page)
-       else InsertWithBlob (rawPageSingleValue page) (rawPageBlobSpanIndex page (rawPageCalculateBlobIndex page 0))
-  1 -> Mupdate (rawPageSingleValue page)
-  _ -> Delete
+-- | for non-single key page case
+rawPageEntryAt :: RawPage -> Int -> Entry (P.Vector Word8) BlobSpan
+rawPageEntryAt page i =
+    case rawPageOpAt page i of
+      0 -> if rawPageHasBlobSpanAt page i == 0
+           then Insert (rawPageValueAt page i)
+           else InsertWithBlob (rawPageValueAt page i)
+                               (rawPageBlobSpanIndex page
+                                  (rawPageCalculateBlobIndex page i))
+      1 -> Mupdate (rawPageValueAt page i)
+      _ -> Delete
+
+-- | single key page case
+rawPageEntry1 :: RawPage -> Entry (P.Vector Word8) BlobSpan
+rawPageEntry1 page =
+    case rawPageOpAt page 0 of
+      0 -> if rawPageHasBlobSpanAt page 0 == 0
+           then Insert (rawPageSingleValuePrefix page)
+           else InsertWithBlob (rawPageSingleValuePrefix page)
+                               (rawPageBlobSpanIndex page
+                                  (rawPageCalculateBlobIndex page 0))
+      1 -> Mupdate (rawPageSingleValuePrefix page)
+      _ -> Delete
 
 -------------------------------------------------------------------------------
 -- Accessors
@@ -134,6 +177,7 @@ rawPageKeyOffsets page@(RawPage off ba) =
 -- | for non-single key page case
 rawPageValueOffsets :: RawPage -> P.Vector ValueOffset
 rawPageValueOffsets page@(RawPage off ba) =
+    assert (dirNumKeys /= 1) $
     P.Vector (off + fromIntegral (div2 dirOffset) + fromIntegral dirNumKeys)
              (fromIntegral dirNumKeys + 1) ba
   where
@@ -141,8 +185,10 @@ rawPageValueOffsets page@(RawPage off ba) =
     !dirOffset  = rawPageKeysOffset page
 
 -- | single key page case
+{-# INLINE rawPageValueOffsets1 #-}
 rawPageValueOffsets1 :: RawPage -> (Word16, Word32)
 rawPageValueOffsets1 page@(RawPage off ba) =
+    assert (rawPageNumKeys page == 1) $
     ( indexByteArray ba (off + fromIntegral (div2 dirOffset) + 1)
     , indexByteArray ba (div2 (off + fromIntegral (div2 dirOffset)) + 1)
     )
@@ -209,13 +255,21 @@ rawPageValueAt page@(RawPage off ba) i = do
     start = fromIntegral (P.unsafeIndex offs i) :: Int
     end   = fromIntegral (P.unsafeIndex offs (i + 1)) :: Int
 
-rawPageSingleValue :: RawPage -> (P.Vector Word8, Word32)
-rawPageSingleValue page@(RawPage off ba) =
-    if end > 4096
-    then (P.Vector (mul2 off + fromIntegral start) (4096 - fromIntegral start) ba, end - 4096)
-    else (P.Vector (mul2 off + fromIntegral start) (fromIntegral end - fromIntegral start) ba, 0)
+rawPageSingleValuePrefix :: RawPage -> P.Vector Word8
+rawPageSingleValuePrefix page@(RawPage off ba) =
+    P.Vector (mul2 off + fromIntegral start)
+             (fromIntegral prefix_end - fromIntegral start)
+             ba
   where
     (start, end) = rawPageValueOffsets1 page
+    prefix_end   = min 4096 end
+
+rawPageSingleValueSuffix :: RawPage -> Word32
+rawPageSingleValueSuffix page
+    | end > 4096 = end - 4096
+    | otherwise  = 0
+  where
+    (_, end) = rawPageValueOffsets1 page
 
 -- we could create unboxed array.
 {-# INLINE rawPageBlobSpanIndex #-}

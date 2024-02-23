@@ -23,9 +23,9 @@ import           Test.QuickCheck.Random (mkQCGen)
 
 benchmarks :: Benchmark
 benchmarks = rawpage `deepseq` bgroup "Bench.Database.LSMTree.Internal.RawPage"
-    [ bench "missing" $ nf (rawPageEntry rawpage) missing
-    , bench "existing-head" $ nf (rawPageEntry rawpage) existingHead
-    , bench "existing-last" $ nf (rawPageEntry rawpage) existingLast
+    [ bench "missing" $ whnf (rawPageLookup rawpage) missing
+    , bench "existing-head" $ whnf (rawPageLookup rawpage) existingHead
+    , bench "existing-last" $ whnf (rawPageLookup rawpage) existingLast
     ]
   where
     page :: PageLogical

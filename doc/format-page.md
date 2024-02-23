@@ -236,7 +236,8 @@ index of the blob reference.
 
 This is an array of 16bit values. There are N entries. Entry i (indexed from 0)
 gives the offset within the page of the start of the key byte string. Entry i+1
-therefore gives the offset one past each key. This provides a span for the key.
+therefore gives the offset one past each key. This provides a span for each key:
+each one represented by an inclusive lower offset and an exclusive upper offset.
 For the final key, key N-1, we can still use N-1 and N, even though there are
 only N entries, because we arrange that the value offset array comes
 immediately after the key offset array, and the first entry of the value offset
@@ -247,11 +248,13 @@ come immediately after the key byte strings).
 
 Except for the special case of N=1, this is an array of 16bit values, with N+1
 entries. In the usual case, we can find the value byte string span from index
-i and i+1.
+i and i+1. As above, the spans are represented by an inclusive lower offset and
+an exclusive upper offset.
 
 For the special case of N=1, the representation is two offsets, but the second
 offset is 32bit rather than 16bit. This is to allow for very large values that
-take more than one page (or indeed more than 64k).
+take more than one page (or indeed more than 64k). As with all other spans, it
+uses inclusive lower and exclusive upper representation.
 
 Note that the 32bit value will still be naturally aligned, because the key
 offset array is aligned to 32bit, and for N=1, the value offset array will be

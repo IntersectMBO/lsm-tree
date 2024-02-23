@@ -33,10 +33,14 @@ import           Database.LSMTree.Internal.Entry
 import qualified Database.LSMTree.Internal.Normal as N
 import           Database.LSMTree.Internal.RawPage
 import           Database.LSMTree.Internal.Run
+import           Database.LSMTree.Internal.Run.Construction
 import           Database.LSMTree.Internal.Serialise
+import           Database.LSMTree.Internal.Serialise.RawBytes as RawBytes
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import           Database.LSMTree.Util (showPowersOf10)
+
+import           Test.Database.LSMTree.Internal.RawPage (bsToVector)
 
 type Key  = ByteString
 type Blob = ByteString
@@ -102,15 +106,37 @@ testSingleInsert sessionRoot key val mblob = do
     1 @=? rawPageNumKeys page
     let SerialisedKey' key' = serialiseKey key
     let SerialisedValue' val' = serialiseValue val
+
+    let pagesize = psSingleton (SerialisedKey' key')
+                               (Insert (SerialisedValue' val'))
+        suffix, prefix :: Int
+        suffix = max 0 (fromIntegral (pageSizeNumBytes pagesize) - 4096)
+        prefix = V.length val' - suffix
+    let expectedEntry =
+          case mblob of
+            Nothing -> Insert         (V.take prefix val')
+            Just b  -> InsertWithBlob (V.take prefix val') (serialiseBlob b)
+    let expectedResult
+          | suffix > 0 = LookupEntryOverflow expectedEntry (fromIntegral suffix)
+          | otherwise  = LookupEntry         expectedEntry
+
+    let actualEntry = fmap (readBlob bsBlobs) <$> rawPageLookup page key'
+
+    -- the lookup result is as expected, possibly with a prefix of the value
+    expectedResult @=? actualEntry
+
+    -- the value is as expected, including any overflow suffix
+    let valPrefix = V.take prefix val'
+        valSuffix = (bsToVector . BS.take suffix . BS.drop 4096) bsKops
+    val' @=? valPrefix V.++ valSuffix
+
+    -- blob sanity checks
     case mblob of
       Nothing -> do
         0 @=? rawPageNumBlobs page
         mempty @=? bsBlobs
-        Just (Insert val') @=? rawPageEntry page key'
-      Just b -> do
+      Just _ ->
         1 @=? rawPageNumBlobs page
-        let entry = fmap (readBlob bsBlobs) <$> rawPageEntry page key'
-        Just (InsertWithBlob val' (serialiseBlob b)) @=? entry
 
 -- | Runs in IO, but using a mock file system.
 --
@@ -138,26 +164,41 @@ pagesContainEntries :: ByteString -> [RawPage] ->
                        [(SerialisedKey, Entry SerialisedValue SerialisedBlob)] ->
                        Property
 pagesContainEntries _ [] es = counterexample ("k/ops left: " <> show es) (null es)
-pagesContainEntries bsBlobs (page : pages) kops = do
-    let (kopsHere, kopsRest) = splitAt (fromIntegral (rawPageNumKeys page)) kops
-
-    let pageBytes = fromIntegral (V.last (rawPageValueOffsets page))
-    let overflowPages = (pageBytes - 1) `div` 4096
-
-    classify (overflowPages > 0) "larger-than-page value" $
-          map (Just . snd) kopsHere === map (readEntry . fst) kopsHere
+pagesContainEntries bsBlobs (page : pages) kops
+      -- if there's just one key, we have to handle the special case of an overflow
+    | [(SerialisedKey' pvec, e)] <- kopsHere
+    , LookupEntryOverflow e' suffix <- rawPageLookup page pvec
+    , let appendSuffix v = SerialisedValue
+                         . RawBytes
+                         . (v V.++)
+                         . V.take (fromIntegral suffix)
+                         . (\(RawBytes x) -> x)
+                         . RawBytes.concat
+                         . map rawPageRawBytes
+                         $ pages
+          overflowPages  = (fromIntegral suffix + 4095) `div` 4096
+    = classify True "larger-than-page value" $
+          e === bimap appendSuffix (readBlob bsBlobs) e'
      .&&. pagesContainEntries bsBlobs (drop overflowPages pages) kopsRest
 
+    | otherwise
+    = classify False "larger-than-page value" $
+         [ LookupEntry e | (_k, e) <- kopsHere ]
+       === [ fmap (bimap SerialisedValue' (readBlob bsBlobs))
+                  (rawPageLookup page k)
+           | (SerialisedKey' k, _) <- kopsHere ]
+      .&&. pagesContainEntries bsBlobs pages kopsRest
   where
-    readEntry :: SerialisedKey -> Maybe (Entry SerialisedValue SerialisedBlob)
-    readEntry =
-        fmap (bimap SerialisedValue' (readBlob bsBlobs))
-      . rawPageEntry page
-      . (\(SerialisedKey' pvec) -> pvec)
+    (kopsHere, kopsRest) = splitAt (fromIntegral (rawPageNumKeys page)) kops
 
 rawPageFromByteString :: ByteString -> Int -> RawPage
-rawPageFromByteString =
-    makeRawPage . (\(SBS.SBS ba) -> BA.ByteArray ba) . SBS.toShort
+rawPageFromByteString bs off =
+    makeRawPage (toBA bs) off
+  where
+    -- ensure that the resulting RawPage has no trailing data that could
+    -- accidentally be read.
+    toBA = (\(SBS.SBS ba) -> BA.ByteArray ba) . SBS.toShort . BS.take (off+4096)
+
 
 readBlob :: ByteString -> BlobSpan -> SerialisedBlob
 readBlob bs (BlobSpan offset size) =
@@ -168,4 +209,9 @@ instance Arbitrary Val where
     frequency [ (20, arbitrary)
               , (1,  scale (*100) arbitrary)  -- trigger larger-than-page
               ]
-  shrink (Val bs) = fmap Val (shrink bs)
+  shrink (Val bs) =
+      [ Val (BS.take n bs) | n <- shrink len ]
+   ++ [ Val bs' | let bs' = BS.replicate len 0
+                , bs' /= bs ]  -- make sure not to loop
+    where
+      len = BS.length bs
