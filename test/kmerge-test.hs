@@ -1,17 +1,21 @@
-{-# LANGUAGE BangPatterns        #-}
-{-# LANGUAGE RankNTypes          #-}
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE BangPatterns               #-}
+{-# LANGUAGE DerivingStrategies         #-}
+{-# LANGUAGE GeneralisedNewtypeDeriving #-}
+{-# LANGUAGE RankNTypes                 #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
 {-# OPTIONS_GHC -fspecialize-aggressively #-}
 module Main (main) where
 
 import           Control.DeepSeq (NFData (..), force)
 import           Control.Exception (evaluate)
 import           Control.Monad.ST.Strict (ST, runST)
+import           Data.Bits (unsafeShiftR)
 import qualified Data.Heap as Heap
 import           Data.IORef
 import qualified Data.List as L
-import           Data.WideWord.Word256 (Word256 (..))
-import           Data.Word (Word64)
+import           Data.Primitive.ByteArray (compareByteArrays)
+import qualified Data.Vector.Primitive as P
+import           Data.Word (Word64, Word8)
 import           System.IO.Unsafe (unsafePerformIO)
 import qualified System.Random.SplitMix as SM
 import           Test.Tasty (TestName, TestTree, defaultMainWithIngredients,
@@ -24,14 +28,26 @@ import qualified KMerge.Heap as K.Heap
 import qualified KMerge.LoserTree as K.Tree
 
 -- tests and benchmarks for various k-way merge implementations.
--- in short: loser tree is optimal in comparision counts performed,
+-- in short: loser tree is optimal in comparison counts performed,
 -- but mutable heap implementation has lower constant factors.
 --
 -- Noteworthy, maybe not obvious observations:
--- - mutable heap does the same amount of comparisions as persistent heap
---   (from @heaps@ package),
+-- - mutable heap does a similar amount of comparisons as persistent heap
+--   (from @heaps@ package) on full trees with evenly sized input lists,
+--   but performs more comparisons when these constraints get lifted.
 -- - tree-shaped iterative two-way merge performs optimal amount of comparisons
 --   loser tree is an explicit state variant of that.
+-- - on skewed input sizes, the heap does benefit a little, as two consecutive
+--   outputs often come from the same input, which then is already at the root,
+--   only requiring two comparisons. sadly, this benefit does not translate as
+--   quite as nicely to the mutable implementation.
+-- - the loser tree with its balanced tree structure is not optimal for skewed
+--   merges, but it can be if the tree structure is managed explicitly.
+--   for a hacky proof of concept, see 'loserTreeMerge\'', where we make sure
+--   that one side of the tree only contains the large input plus dummy inputs,
+--   allowing a path to the root using a single comparison.
+-- - 'listMerge' performs very well for skewed inputs since it merges the first
+--   (i.e. long) input only once. If the last input is largest, it gets very bad.
 --
 main :: IO ()
 main = do
@@ -64,9 +80,9 @@ main = do
                     , testCount "loserTreeMerge"  2391 loserTreeMerge    input8
                     , testCount "mutHeapMerge"    3169 mutHeapMerge      input8
                     ]
-                    -- seven inputs: we have 6x100 elements with 3 comparisions
+                    -- seven inputs: we have 6x100 elements with 3 comparisons
                     -- and 1x100 elements with just 2.
-                    -- i.e. target is 2000 total comparisions.
+                    -- i.e. target is 2000 total comparisons.
                     --
                     -- The difference here and in five-input case between
                     -- treeMerge and loserTreeMerge is caused by
@@ -106,7 +122,7 @@ main = do
                     ]
                     -- five inputs: we have 3x100 elements with 2 comparisons
                     -- and 2x100 with 3 comparisons.
-                    -- i.e. target is 1200 total comparisions.
+                    -- i.e. target is 1200 total comparisons.
                 , testGroup "five"
                     [ testCount "sortConcat"      1790 (L.sort . concat) input5
                     , testCount "listMerge"       1389 listMerge         input5
@@ -114,6 +130,34 @@ main = do
                     , testCount "heapMerge"       1485 heapMerge         input5
                     , testCount "loserTreeMerge"  1191 loserTreeMerge    input5
                     , testCount "mutHeapMerge"    1592 mutHeapMerge      input5
+                    ]
+                    -- minimal skew for a levelling merge of 1000 elements.
+                    -- with a tree that gives the long input a short path:
+                    -- 1x500 elements with 1 comparison
+                    -- 4x125 elements with 3 comparisons
+                    -- i.e. target is 2000 total comparisons.
+                , testGroup "levelling-min"
+                    [ testCount "sortConcat"      3729 (L.sort . concat) inputLevellingMin
+                    , testCount "listMerge"       2112 listMerge         inputLevellingMin
+                    , testCount "treeMerge"       2730 treeMerge         inputLevellingMin
+                    , testCount "heapMerge"       2655 heapMerge         inputLevellingMin
+                    , testCount "loserTreeMerge"  2235 loserTreeMerge    inputLevellingMin
+                    , testCount "loserTreeMerge'" 1999 loserTreeMerge    inputLevellingMin'
+                    , testCount "mutHeapMerge"    3021 mutHeapMerge      inputLevellingMin
+                    ]
+                    -- maximal skew for a levelling merge of 1000 elements.
+                    -- with a tree that gives the long input a short path:
+                    -- 1x800 elements with 1 comparison
+                    -- 4x 50 elements with 3 comparisons
+                    -- i.e. target is 1400 total comparisons.
+                , testGroup "levelling-max"
+                    [ testCount "sortConcat"      3872 (L.sort . concat) inputLevellingMax
+                    , testCount "listMerge"       1440 listMerge         inputLevellingMax
+                    , testCount "treeMerge"       2873 treeMerge         inputLevellingMax
+                    , testCount "heapMerge"       1784 heapMerge         inputLevellingMax
+                    , testCount "loserTreeMerge"  2081 loserTreeMerge    inputLevellingMax
+                    , testCount "loserTreeMerge'" 1400 loserTreeMerge    inputLevellingMax'
+                    , testCount "mutHeapMerge"    2493 mutHeapMerge      inputLevellingMax
                     ]
                 ]
             ]
@@ -141,6 +185,24 @@ main = do
                 , B.bench "heapMerge"      $ B.nf heapMerge         input5
                 , B.bench "loserTreeMerge" $ B.nf loserTreeMerge    input5
                 , B.bench "mutHeapMerge"   $ B.nf mutHeapMerge      input5
+                ]
+            , testGroup "levelling-min"
+                [ B.bench "sortConcat"     $ B.nf (L.sort . concat) inputLevellingMin
+                , B.bench "listMerge"      $ B.nf listMerge         inputLevellingMin
+                , B.bench "treeMerge"      $ B.nf treeMerge         inputLevellingMin
+                , B.bench "heapMerge"      $ B.nf heapMerge         inputLevellingMin
+                , B.bench "loserTreeMerge" $ B.nf loserTreeMerge    inputLevellingMin
+                , B.bench "loserTreeMerge'"$ B.nf loserTreeMerge    inputLevellingMin'
+                , B.bench "mutHeapMerge"   $ B.nf mutHeapMerge      inputLevellingMin
+                ]
+            , testGroup "levelling-max"
+                [ B.bench "sortConcat"     $ B.nf (L.sort . concat) inputLevellingMax
+                , B.bench "listMerge"      $ B.nf listMerge         inputLevellingMax
+                , B.bench "treeMerge"      $ B.nf treeMerge         inputLevellingMax
+                , B.bench "heapMerge"      $ B.nf heapMerge         inputLevellingMax
+                , B.bench "loserTreeMerge" $ B.nf loserTreeMerge    inputLevellingMax
+                , B.bench "loserTreeMerge'"$ B.nf loserTreeMerge    inputLevellingMax'
+                , B.bench "mutHeapMerge"   $ B.nf mutHeapMerge      inputLevellingMax
                 ]
             ]
         ]
@@ -193,42 +255,102 @@ mergeProperty name f = testProperty name $ \xss ->
         rhs = f $ map L.sort (xss :: [[Word64]])
     in lhs === rhs
 
-type Element = Word256
--- type Element = (Word256, Word256, Word256, Word256)
+{-------------------------------------------------------------------------------
+  Element type
+-------------------------------------------------------------------------------}
 
--- Using Word256 to make key comparison a bit more expensive.
+-- This type corresponds to the @SerialisedKey@ type we are using (or rather the
+-- @RawBytes@ it wraps), so the cost of comparisons should be similar.
+-- We expect key lengths of 32 bytes.
+newtype Element = Element (P.Vector Word8)
+  deriving newtype (Show, NFData)
+
+instance Eq Element where
+  bs1 == bs2 = compareBytes bs1 bs2 == EQ
+
+-- | Lexicographical 'Ord' instance.
+instance Ord Element where
+  compare = compareBytes
+
+-- | Based on @Ord 'ShortByteString'@.
+compareBytes :: Element -> Element -> Ordering
+compareBytes rb1@(Element vec1) rb2@(Element vec2) =
+    let !len1 = sizeofElement rb1
+        !len2 = sizeofElement rb2
+        !len  = min len1 len2
+     in case compareByteArrays ba1 off1 ba2 off2 len of
+          EQ | len1 < len2 -> LT
+             | len1 > len2 -> GT
+          o  -> o
+  where
+    P.Vector off1 _size1 ba1 = vec1
+    P.Vector off2 _size2 ba2 = vec2
+
+sizeofElement :: Element -> Int
+sizeofElement (Element pvec) = P.length pvec
+
+genElement :: SM.SMGen -> (Element, SM.SMGen)
+genElement g0 = (Element (P.fromListN 32 bytes), g4)
+  where
+    -- we expect a shared 16 bit prefix
+    bytes = 0 : 0 : concatMap toBytes [w1, w2, w3, w4]
+    (!w1, g1) = SM.nextWord64 g0
+    (!w2, g2) = SM.nextWord64 g1
+    (!w3, g3) = SM.nextWord64 g2
+    (!w4, g4) = SM.nextWord64 g3
+    toBytes = reverse . take 8 . map fromIntegral . iterate (`unsafeShiftR` 8)
+
+minElement :: Element
+minElement = Element (P.fromListN 32 (L.repeat 0))
+
+{-------------------------------------------------------------------------------
+  Inputs
+-------------------------------------------------------------------------------}
+
 input8 :: [[Element]]
-input8 =
-    [ L.sort $ take 100 $ L.unfoldr (Just . genElement) $ SM.mkSMGen seed
-    | seed <- take 8 $ iterate (3 +) 42
-    ]
+input8 = take 8 $ inputs 100
 
 -- Seven inputs is not optimal case for "binary tree" patterns.
 input7 :: [[Element]]
-input7 = take 7 input8
+input7 = take 7 $ inputs 100
 
 -- Five inputs is bad case for "binary tree" patterns.
 input5 :: [[Element]]
-input5 = take 5 input8
+input5 = take 5 $ inputs 100
 
-genElement :: SM.SMGen -> (Element, SM.SMGen)
-genElement = genWord256
-{-
-genElement g0 =
-    let (!w1, g1) = genWord256 g0
-        (!w2, g2) = genWord256 g1
-        (!w3, g3) = genWord256 g2
-        (!w4, g4) = genWord256 g3
-    in ((w1, w2, w3, w4), g4)
--}
+-- This input corresponds to a levelling merge with minimal or maximal skew.
+-- For each, there are 500 elements total, just as 'input5'.
+inputLevellingMin, inputLevellingMax :: [[Element]]
+inputLevellingMin =
+      head (inputs (4*n))
+    : take 4 (tail (inputs n))
+  where
+    n = 1000 `div` (4+4)
+inputLevellingMax =
+      head (inputs (16*n))
+    : take 4 (tail (inputs n))
+  where
+    n = 1000 `div` (16+4)
 
-genWord256 :: SM.SMGen -> (Word256, SM.SMGen)
-genWord256 g0 =
-    let (!w1, g1) = SM.nextWord64 g0
-        (!w2, g2) = SM.nextWord64 g1
-        (!w3, g3) = SM.nextWord64 g2
-        (!w4, g4) = SM.nextWord64 g3
-    in (Word256 w1 w2 w3 w4, g4)
+inputLevellingMin', inputLevellingMax' :: [[Element]]
+inputLevellingMin' = arrangeInputForLoserTree inputLevellingMin
+inputLevellingMax' = arrangeInputForLoserTree inputLevellingMax
+
+-- A hacky way to create a degenerate loser tree where one side of the whole
+-- tournament tree effectively only consists of a single (large) input,
+-- so it can immediately "play in the final" and get chosen with just one
+-- comparison.
+arrangeInputForLoserTree :: [[Element]] -> [[Element]]
+arrangeInputForLoserTree input =
+      head input
+    : replicate 3 [minElement]  -- non-empty to be considered during tree building
+   ++ tail input
+
+inputs :: Int -> [[Element]]
+inputs n =
+    [ L.sort $ take n $ L.unfoldr (Just . genElement) $ SM.mkSMGen seed
+    | seed <- iterate (3 +) 42
+    ]
 
 {-------------------------------------------------------------------------------
   Recursive 2-way merge
