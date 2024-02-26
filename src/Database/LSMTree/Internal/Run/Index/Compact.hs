@@ -100,7 +100,7 @@ import           Database.LSMTree.Internal.Serialise
   > mkIndex1 :: Run k v -> Index1 k
   > mkIndex1 = V.fromList . fmap (\p -> (minKey p, maxKey p))
   >
-  > search1 :: k -> Index1 k -> Maybe pageNo
+  > search1 :: k -> Index1 k -> Maybe PageNo
   > search1 = -- elided
 
   We can reduce the memory size of `Index1` by half if we store only the minimum
@@ -118,7 +118,7 @@ import           Database.LSMTree.Internal.Serialise
   > mkIndex2 :: Run k v -> Index2 k
   > mkIndex2 = V.fromList . fmap minKey
   >
-  > search2 :: k -> Index k -> pageNo
+  > search2 :: k -> Index k -> PageNo
   > search2 = -- elided
 
   Now on to creating a more compact representation, which relies on a property
@@ -187,7 +187,7 @@ import           Database.LSMTree.Internal.Serialise
   > mkIndex3 :: Run k v -> Index3
   > mkIndex3 = -- elided
   >
-  > search3 :: k -> Index3 -> pageNo
+  > search3 :: k -> Index3 -> PageNo
   > search3 = -- elided
 
   Let's compare the memory size of @Index2@ with @Index3@. Say we have \(n\)
@@ -442,7 +442,7 @@ data CompactIndex = CompactIndex {
   , ciClashes              :: !(VU.Vector Bit)
     -- | \(TB\): Maps a full minimum key to the page @i@ that contains it, but
     -- only if there is a clash on page @i@.
-  , ciTieBreaker           :: !(Map SerialisedKey Int)
+  , ciTieBreaker           :: !(Map SerialisedKey PageNo)
     -- | \(LTP\): Record of larger-than-page values. Given a span of pages for
     -- the larger-than-page value, the first page will map to 'False', and the
     -- remainder of the pages will be set to 'True'. Regular pages default to
@@ -481,10 +481,6 @@ suggestRangeFinderPrecision maxPages =
 {-------------------------------------------------------------------------------
   Queries
 -------------------------------------------------------------------------------}
-
--- | A 0-based number identifying a disk page.
-newtype PageNo = PageNo Int
-  deriving stock (Show, Eq, Ord)
 
 data SearchResult =
     NoResult
@@ -538,9 +534,10 @@ search k CompactIndex{..} = -- Pre: @[0, V.length ciPrimary)@
         Just !i ->         -- Post: @[lb, i]@.
           if unBit $ ciClashes VU.! i then
             -- Post: @[lb, i]@, now in clash recovery mode.
-            let i1  = fromJust $ bitIndexFromToRev (BoundInclusive lb) (BoundInclusive i) (Bit False) ciClashes
-                i2  = maybe 0 snd $ Map.lookupLE k ciTieBreaker
-                !i3 = max i1 i2 -- Post: the intersection of @[i1, i]@ and @[i2, i].
+            let i1  = PageNo $ fromJust $
+                  bitIndexFromToRev (BoundInclusive lb) (BoundInclusive i) (Bit False) ciClashes
+                i2  = maybe (PageNo 0) snd $ Map.lookupLE k ciTieBreaker
+                PageNo !i3 = max i1 i2 -- Post: the intersection of @[i1, i]@ and @[i2, i].
                 !i4 = bitLongestPrefixFromTo (BoundExclusive i3) (BoundInclusive i) (Bit True) ciLargerThanPage
                       -- Post: [i3, i4]
             in  if i3 == i4 then SinglePage (PageNo i3) else MultiPage (PageNo i3) (PageNo i4)

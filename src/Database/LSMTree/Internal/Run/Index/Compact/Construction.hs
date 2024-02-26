@@ -6,7 +6,8 @@
 module Database.LSMTree.Internal.Run.Index.Compact.Construction (
     -- $incremental
     -- $construction
-    MCompactIndex
+    PageNo (..)
+  , MCompactIndex
   , new
   , Append (..)
   , append
@@ -64,6 +65,10 @@ import           Database.LSMTree.Internal.Serialise
   the 'FinalChunk' to construct a 'CompactIndex'.
 -}
 
+-- | A 0-based number identifying a disk page.
+newtype PageNo = PageNo Int
+  deriving stock (Show, Eq, Ord)
+
 -- | A mutable version of 'CompactIndex'. See [incremental
 -- construction](#incremental).
 data MCompactIndex s = MCompactIndex {
@@ -76,7 +81,7 @@ data MCompactIndex s = MCompactIndex {
     -- | Accumulates chunks of 'ciClashes'.
   , mciClashes              :: !(STRef s (NonEmpty (VU.MVector s Bit)))
     -- | Accumulates the 'ciTieBreaker'.
-  , mciTieBreaker           :: !(STRef s (Map SerialisedKey Int))
+  , mciTieBreaker           :: !(STRef s (Map SerialisedKey PageNo))
     -- | Accumulates chunks of 'ciLargerThanPage'.
   , mciLargerThanPage       :: !(STRef s (NonEmpty (VU.MVector s Bit)))
 
@@ -145,10 +150,10 @@ append (AppendMultiPage k n) mci        = appendMulti (k, n) mci
 -- INVARIANTS: see [construction invariants](#construction-invariants).
 appendSingle :: forall s. (SerialisedKey, SerialisedKey) -> MCompactIndex s -> ST s (Maybe Chunk)
 appendSingle (minKey, maxKey) mci@MCompactIndex{..} = do
-    pageNr <- readSTRef mciCurrentPageNumber
-    let ix = pageNr `mod` mciMaxChunkSize
-    goAppend pageNr ix
-    writeSTRef mciCurrentPageNumber $! pageNr + 1
+    pageNo <- readSTRef mciCurrentPageNumber
+    let ix = pageNo `mod` mciMaxChunkSize
+    goAppend pageNo ix
+    writeSTRef mciCurrentPageNumber $! pageNo + 1
     yield mci
   where
     minRfbits :: Word16
@@ -163,7 +168,7 @@ appendSingle (minKey, maxKey) mci@MCompactIndex{..} = do
          Int -- ^ Current /global/ page number
       -> Int -- ^ Current /local/ page number (inside the current chunk)
       -> ST s ()
-    goAppend pageNr ix = do
+    goAppend pageNo ix = do
         fillRangeFinder
         writePrimary
         writeClashesAndLTP
@@ -174,7 +179,7 @@ appendSingle (minKey, maxKey) mci@MCompactIndex{..} = do
             lastMinRfbits <- readSTRef mciLastMinRfbits
             let lb = smaybe NoBound (\i -> Bound (fromIntegral i) Exclusive) lastMinRfbits
                 ub = Bound (fromIntegral minRfbits) Inclusive
-                x  = fromIntegral pageNr
+                x  = fromIntegral pageNo
             writeRange mciRangeFinder lb ub x
             writeSTRef mciLastMinRfbits $! SJust minRfbits
 
@@ -197,7 +202,8 @@ appendSingle (minKey, maxKey) mci@MCompactIndex{..} = do
 
             readSTRef mciClashes >>= \cs -> VUM.write (NE.head cs) ix (Bit clash)
             readSTRef mciLargerThanPage >>= \cs -> VUM.write (NE.head cs) ix (Bit ltp)
-            when (clash && not ltp) $ modifySTRef' mciTieBreaker (Map.insert minKey pageNr)
+            when (clash && not ltp) $
+              modifySTRef' mciTieBreaker (Map.insert minKey (PageNo pageNo))
 
 -- | Append multiple pages to the index. The minimum keys and maximum keys for
 -- all these pages are set to the same key.
@@ -219,8 +225,8 @@ appendMulti (k, n0) mci@MCompactIndex{..} =
     overflows n
       | n <= 0 = pure []
       | otherwise = do
-          pageNr <- readSTRef mciCurrentPageNumber
-          let ix = pageNr `mod` mciMaxChunkSize -- will be 0 in recursive calls
+          pageNo <- readSTRef mciCurrentPageNumber
+          let ix = pageNo `mod` mciMaxChunkSize -- will be 0 in recursive calls
               remInChunk = min n (mciMaxChunkSize - ix)
           readSTRef mciPrimary >>= \vum ->
             writeRange vum (BoundInclusive ix) (BoundExclusive $ ix + remInChunk) minPrimbits
@@ -228,7 +234,7 @@ appendMulti (k, n0) mci@MCompactIndex{..} =
             writeRange (NE.head cs) (BoundInclusive ix) (BoundExclusive $ ix + remInChunk) (Bit True)
           readSTRef mciLargerThanPage >>= \cs ->
             writeRange (NE.head cs) (BoundInclusive ix) (BoundExclusive $ ix + remInChunk) (Bit True)
-          writeSTRef mciCurrentPageNumber $! pageNr + remInChunk
+          writeSTRef mciCurrentPageNumber $! pageNo + remInChunk
           res <- yield mci
           maybe id (:) res <$> overflows (n - remInChunk)
 
@@ -240,8 +246,8 @@ appendMulti (k, n0) mci@MCompactIndex{..} =
 -- INVARIANTS: see [construction invariants](#construction-invariants).
 yield :: MCompactIndex s -> ST s (Maybe Chunk)
 yield MCompactIndex{..} = do
-    pageNr <- readSTRef mciCurrentPageNumber
-    if pageNr `mod` mciMaxChunkSize == 0 then do -- The current chunk is full
+    pageNo <- readSTRef mciCurrentPageNumber
+    if pageNo `mod` mciMaxChunkSize == 0 then do -- The current chunk is full
       cPrimary <- VU.unsafeFreeze =<< readSTRef mciPrimary
       (writeSTRef mciPrimary $!) =<< VUM.new mciMaxChunkSize
       modifySTRef' mciClashes . NE.cons =<< VUM.new mciMaxChunkSize
@@ -258,8 +264,8 @@ yield MCompactIndex{..} = do
 -- INVARIANTS: see [construction invariants](#construction-invariants).
 unsafeEnd :: MCompactIndex s -> ST s (Maybe Chunk, FinalChunk)
 unsafeEnd mci@MCompactIndex{..} = do
-    pageNr <- readSTRef mciCurrentPageNumber
-    let ix = pageNr `mod` mciMaxChunkSize
+    pageNo <- readSTRef mciCurrentPageNumber
+    let ix = pageNo `mod` mciMaxChunkSize
 
     -- Only slice out a chunk if there are entries in the chunk
     mchunk <- if ix == 0 then pure Nothing else do
@@ -289,11 +295,11 @@ unsafeEnd mci@MCompactIndex{..} = do
 -- | Fill the remainder of the range-finder vector.
 fillRangeFinderToEnd :: MCompactIndex s -> ST s ()
 fillRangeFinderToEnd MCompactIndex{..} = do
-    pageNr <- readSTRef mciCurrentPageNumber
+    pageNo <- readSTRef mciCurrentPageNumber
     lastMinRfbits <- readSTRef mciLastMinRfbits
     let lb = smaybe NoBound (BoundExclusive . fromIntegral) lastMinRfbits
         ub = NoBound
-        x  = fromIntegral pageNr
+        x  = fromIntegral pageNo
     writeRange mciRangeFinder lb ub x
     writeSTRef mciLastMinRfbits $! SJust $ 2 ^ mciRangeFinderPrecision
 
@@ -310,7 +316,7 @@ data FinalChunk = FinalChunk {
     fcRangeFinder          :: !(VU.Vector Word32)
   , fcClashes              :: !(VU.Vector Bit)
   , fcLargerThanPage       :: !(VU.Vector Bit)
-  , fcTieBreaker           :: !(Map SerialisedKey Int)
+  , fcTieBreaker           :: !(Map SerialisedKey PageNo)
   , fcRangeFinderPrecision :: !Int
   }
   deriving stock (Show, Eq)
