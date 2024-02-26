@@ -330,7 +330,7 @@ import           Database.LSMTree.Internal.Serialise
   * \(r \in \left[0, 16\right] \) is the range-finder bit-precision
   * \(\texttt{topBits16}(r, k)\) extracts the \(r\) most significant bits from
     \(k\). We call these \(r\) bits the range-finder bits.
-  * \(\texttt{sliceBits32}(m, k)\) extracts the 32 most significant bits from \(k\)
+  * \(\texttt{sliceBits32}(r, k)\) extracts the 32 most significant bits from \(k\)
     /after/ \(r\). We call these 32 bits the primary bits.
   * \(c \in \left[32, 48\right] \) is the overall key prefix length represented
      by the compact index.
@@ -338,21 +338,21 @@ import           Database.LSMTree.Internal.Serialise
   * We choose \(r\) such that \(c = 2~log_2~n\), which keeps the expected
     number of collisions low.
   * \(i \in \left[0, n \right)\), unless stated otherwise
-  * \(j \in \left[0, 2^m\right)\), unless stated otherwise
-  * Pages must be partitioned: \(\forall p_i \in ps. \texttt{topBits16}(m, p^{min}_i) ~\texttt{==}~ \texttt{topBits16}(m,p^{max}_i) \)
+  * \(j \in \left[0, 2^r\right)\), unless stated otherwise
+  * Pages must be partitioned: \(\forall p_i \in ps. \texttt{topBits16}(r, p^{min}_i) ~\texttt{==}~ \texttt{topBits16}(r,p^{max}_i) \)
 
   \[
   \begin{align*}
     RF     :&~ \texttt{Array Word16 PageNo} \\
-    RF[j]   =&~ \min~ \{ i \mid j \leq \texttt{topBits16}(m, p^{min}_i) \}  \\
-    RF[2^m] =&~ n \\
+    RF[j]   =&~ \min~ \{ i \mid j \leq \texttt{topBits16}(r, p^{min}_i) \}  \\
+    RF[2^r] =&~ n \\
     \\
     P    :&~ \texttt{Array PageNo Word32} \\
-    P[i] =&~ \texttt{sliceBits32}(m, p^{min}_i) \\
+    P[i] =&~ \texttt{sliceBits32}(r, p^{min}_i) \\
     \\
     C    :&~ \texttt{Array PageNo Bit} \\
     C[0] =&~ \texttt{false} \\
-    C[i] =&~ \texttt{sliceBits32}(m, p^{max}_{i-1}) ~\texttt{==}~ \texttt{sliceBits32}(m, p^{min}_i) \\
+    C[i] =&~ \texttt{sliceBits32}(r, p^{max}_{i-1}) ~\texttt{==}~ \texttt{sliceBits32}(r, p^{min}_i) \\
     \\
     TB            :&~ \texttt{Map Key PageNo} \\
     TB(p^{min}_i) =&~
@@ -423,21 +423,25 @@ import           Database.LSMTree.Internal.Serialise
 --
 -- See [a semi-formal description of the compact index](#rep-descr) for more
 -- details about the representation.
+--
+-- While the semi-formal description mentions the number of pages \(n\),
+-- we do not store it, as it can be inferred from the length of 'ciPrimary'.
 data CompactIndex = CompactIndex {
-    -- | \(RF\): A vector that partitions 'ciPrimary' into sub-vectors containing elements
-    -- that all share the same range-finder bits.
+    -- | \(RF\): A vector that partitions 'ciPrimary' into sub-vectors
+    -- containing elements that all share the same range-finder bits.
     ciRangeFinder          :: !(VU.Vector Word32)
-    -- | \(m\): Determines the size of 'ciRangeFinder' as @2 ^ 'ciRangeFinderPrecision'
-    -- + 1@.
+    -- | \(m\): Determines the size of 'ciRangeFinder' as
+    -- @2 ^ 'ciRangeFinderPrecision' + 1@.
   , ciRangeFinderPrecision :: !Int
-    -- | \(P\): Maps a page @i@ to the 32-bit slice of primary bits of its minimum key.
+    -- | \(P\): Maps a page @i@ to the 32-bit slice of primary bits of its
+    -- minimum key.
   , ciPrimary              :: !(VU.Vector Word32)
-    -- | \(C\): A clash on page @i@ means that the primary bits of the minimum key on
-    -- that page aren't sufficient to decide whether a search for a key should
-    -- continue left or right of the page.
+    -- | \(C\): A clash on page @i@ means that the primary bits of the minimum
+    -- key on that page aren't sufficient to decide whether a search for a key
+    -- should continue left or right of the page.
   , ciClashes              :: !(VU.Vector Bit)
-    -- | \(TB\): Maps a full minimum key to the page @i@ that contains it, but only if
-    -- there is a clash on page @i@.
+    -- | \(TB\): Maps a full minimum key to the page @i@ that contains it, but
+    -- only if there is a clash on page @i@.
   , ciTieBreaker           :: !(Map SerialisedKey Int)
     -- | \(LTP\): Record of larger-than-page values. Given a span of pages for
     -- the larger-than-page value, the first page will map to 'False', and the
@@ -521,6 +525,10 @@ search :: SerialisedKey -> CompactIndex -> SearchResult
 search k CompactIndex{..} = -- Pre: @[0, V.length ciPrimary)@
     let !rfbits    = fromIntegral $ keyTopBits16 ciRangeFinderPrecision k
         !lb        = fromIntegral $ ciRangeFinder VU.! rfbits
+        -- The first page we don't need to look at (exclusive upper bound) is
+        -- the one from the next range finder entry.
+        -- For the case where we are in the last entry already, we rely on an
+        -- extra entry at the end, mapping to 'V.length ciPrimary'.
         !ub        = fromIntegral $ ciRangeFinder VU.! (rfbits + 1)
         -- Post: @[lb, ub)@
         !primbits  = keySliceBits32 ciRangeFinderPrecision k

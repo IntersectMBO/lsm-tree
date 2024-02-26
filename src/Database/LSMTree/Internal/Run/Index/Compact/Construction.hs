@@ -79,8 +79,8 @@ data MCompactIndex s = MCompactIndex {
   , mciTieBreaker           :: !(STRef s (Map SerialisedKey Int))
     -- | Accumulates chunks of 'ciLargerThanPage'.
   , mciLargerThanPage       :: !(STRef s (NonEmpty (VU.MVector s Bit)))
-    -- * Aux information required for incremental construction
 
+    -- * Aux information required for incremental construction
     -- | Maximum size of a chunk
   , mciMaxChunkSize         :: !Int
     -- | The number of the current disk page we are constructing the index for.
