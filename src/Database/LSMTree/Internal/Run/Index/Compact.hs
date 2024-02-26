@@ -8,8 +8,6 @@
 --
 -- TODO: add utility functions for clash probability calculations
 --
--- TODO: (de-)serialisation
---
 module Database.LSMTree.Internal.Run.Index.Compact (
     -- $compact
     CompactIndex (..)
@@ -32,20 +30,36 @@ module Database.LSMTree.Internal.Run.Index.Compact (
   , fromList
   , fromListSingles
   , fromChunks
+    -- * Serialisation
+  , chunkBuilder
+  , finalChunkBuilder
+  , fromSBS
   ) where
 
 import           Control.Exception (assert)
+import           Control.Monad (when)
 import           Control.Monad.ST
 import           Data.Bit hiding (flipBit)
+import           Data.Bits (unsafeShiftR, (.&.))
+import qualified Data.ByteString.Builder as BB
+import           Data.ByteString.Short (ShortByteString (..))
 import           Data.Foldable (toList)
 import           Data.Map.Range (Bound (..))
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (catMaybes, fromJust)
+import           Data.Primitive.ByteArray (ByteArray (..), indexByteArray,
+                     sizeofByteArray)
+import qualified Data.Primitive.PrimArray as P
 import qualified Data.Vector.Algorithms.Search as VA
 import qualified Data.Vector.Generic as VG
+import qualified Data.Vector.Primitive as VP
 import qualified Data.Vector.Unboxed as VU
+import qualified Data.Vector.Unboxed.Base as VU (Vector (V_Word32))
 import           Data.Word
+import           Database.LSMTree.Internal.BitMath
+import           Database.LSMTree.Internal.ByteString (byteArrayFromTo)
+import           Database.LSMTree.Internal.Entry (NumEntries (..))
 import           Database.LSMTree.Internal.Run.Index.Compact.Construction
 import           Database.LSMTree.Internal.Serialise
 
@@ -458,9 +472,6 @@ data CompactIndex = CompactIndex {
 rangeFinderPrecisionBounds :: (Int, Int)
 rangeFinderPrecisionBounds = (0, 16)
 
--- TODO: Turn into newtype, maybe also other types, e.g. range finder precision.
-type NumPages = Int
-
 -- | Given the number of expected pages in an index, suggest a range-finder
 -- bit-precision.
 --
@@ -599,6 +610,154 @@ fromChunks cs FinalChunk{..} = CompactIndex {
     , ciTieBreaker           = fcTieBreaker
     , ciLargerThanPage       = fcLargerThanPage
     }
+
+{-------------------------------------------------------------------------------
+  Serialisation
+-------------------------------------------------------------------------------}
+
+-- | 32 bit aligned.
+chunkBuilder :: Chunk -> BB.Builder
+chunkBuilder Chunk {..} = putVec32 cPrimary
+
+-- | Must be written after the sequence of 'chunkBuilder' of the corresponding
+-- compact index. Specifically, the written chunks must match 'fcNumPages' to
+-- get the alignment right.
+finalChunkBuilder :: NumEntries -> FinalChunk -> BB.Builder
+finalChunkBuilder (NumEntries numEntries) FinalChunk {..} =
+       putVec32 fcRangeFinder
+    <> (if odd (fcNumPages + VU.length fcRangeFinder)  -- align to 64 bit
+        then BB.word32LE 0
+        else mempty)
+    <> putBitVec fcClashes
+    <> putBitVec fcLargerThanPage
+    <> putTieBreaker fcTieBreaker
+    <> BB.word64LE (fromIntegral fcRangeFinderPrecision)
+    <> BB.word64LE (fromIntegral fcNumPages)
+    <> BB.word64LE (fromIntegral numEntries)
+
+-- | 32 bit aligned.
+--
+-- This only produces the correct output on little-endian systems.
+--
+-- TODO(optimisation): It should be possible to do this without copying the
+-- vector. If we ensure pinned allocation of the underlying byte array, we could
+-- directly construct a 'ByteString' and serialise that using 'BB.byteString'.
+putVec32 :: VU.Vector Word32 -> BB.Builder
+putVec32 (VU.V_Word32 (VP.Vector off len ba)) =
+    byteArrayFromTo (mul4 off) (mul4 (off + len)) ba
+
+-- | Padded to 64 bit.
+--
+-- Assumes that the bitvector has a byte-aligned offset.
+putBitVec :: VU.Vector Bit -> BB.Builder
+putBitVec (BitVec offsetBits lenBits ba)
+  | mod8 offsetBits /= 0 = error "putBitVec: not byte aligned"
+  | otherwise =
+       -- first only write the bytes that are fully part of the bit vec
+       byteArrayFromTo offsetBytes offsetLastByte ba
+       -- then carefully write the last byte, might be partially uninitialised
+    <> (if remainingBits /= 0 then
+         BB.word8 (indexByteArray ba offsetLastByte .&. bitmaskLastByte)
+       else
+         mempty)
+    <> putPaddingTo64 totalBytesWritten
+  where
+    offsetBytes = div8 offsetBits
+    offsetLastByte = offsetBytes + div8 lenBits
+    totalBytesWritten = ceilDiv8 lenBits
+
+    bitmaskLastByte = unsafeShiftR 0xFF (8 - remainingBits)
+    remainingBits = mod8 lenBits
+
+-- | Padded to 64 bit.
+putTieBreaker :: Map SerialisedKey PageNo -> BB.Builder
+putTieBreaker m =
+       BB.word64LE (fromIntegral (Map.size m))
+    <> foldMap putEntry (Map.assocs m)
+  where
+    putEntry :: (SerialisedKey, PageNo) -> BB.Builder
+    putEntry (k, PageNo pageNo) =
+           BB.word32LE (fromIntegral pageNo)
+        <> BB.word32LE (fromIntegral (sizeofKey k))
+        <> serialisedKey k
+        <> putPaddingTo64 (sizeofKey k)
+
+putPaddingTo64 :: Int -> BB.Builder
+putPaddingTo64 written
+  | mod8 written == 0 = mempty
+  | otherwise         = foldMap BB.word8 (replicate (8 - mod8 written) 0)
+
+{-------------------------------------------------------------------------------
+  Deserialisation
+-------------------------------------------------------------------------------}
+
+-- | The input bytestring must be 64 bit aligned and exactly contain the
+-- serialised compact index, with no leading or trailing space.
+-- It is directly used as the backing memory for the compact index.
+--
+-- Also note that the implementation assumes a little-endian system.
+--
+-- __NOTE__: Currently does not perform bounds checks. Malformed input can
+-- trigger invalid memory access!
+fromSBS :: ShortByteString -> Either String (NumEntries, CompactIndex)
+fromSBS (SBS ba') = do
+    let ba = ByteArray ba'
+    when (mod8 (sizeofByteArray ba) /= 0) $ Left "Length is not multiple of 64 bit"
+
+    let arr64 = P.PrimArray ba' :: P.PrimArray Word64
+    let len64 = P.sizeofPrimArray arr64
+
+    when (len64 < 3) $ Left "Doesn't contain size information"
+    let ciRangeFinderPrecision = fromIntegral (P.indexPrimArray arr64 (len64 - 3))
+    let numPages = fromIntegral (P.indexPrimArray arr64 (len64 - 2))
+    let numEntries = fromIntegral (P.indexPrimArray arr64 (len64 - 1))
+    let numRanges = 2 ^ ciRangeFinderPrecision + 1
+
+    -- offsets in 32 bits
+    let (offset2_32, ciPrimary) = getVec32 ba 0 numPages
+    let (offset3_32, ciRangeFinder) = getVec32 ba offset2_32 numRanges
+    -- offsets in 64 bits
+    let offset3 = ceilDiv2 offset3_32
+    let (offset4, ciClashes) = getBitVec ba offset3 numPages
+    let (offset5, ciLargerThanPage) = getBitVec ba offset4 numPages
+    let ciTieBreaker = getTieBreaker ba offset5
+
+    return (NumEntries numEntries, CompactIndex {..})
+
+type Offset32 = Int
+type Offset64 = Int
+
+getVec32 :: ByteArray -> Offset32 -> Int -> (Offset32, VU.Vector Word32)
+getVec32 ba offset32 numEntries = (offset32 + numEntries, vec)
+  where
+    vec = VU.V_Word32 (VP.Vector offset32 numEntries ba)
+
+getBitVec :: ByteArray -> Offset64 -> Int -> (Offset64, VU.Vector Bit)
+getBitVec ba offset64 numEntries = (offset64', vec)
+  where
+    vec = BitVec (mul64 offset64) numEntries ba
+    offset64' = offset64 + ceilDiv64 numEntries
+
+getTieBreaker :: ByteArray -> Offset64 -> Map SerialisedKey PageNo
+getTieBreaker ba = \offset64 ->
+    let size = fromIntegral (indexByteArray ba offset64 :: Word64)
+    in Map.fromList $ getEntries size (offset64 + 1)
+  where
+    getEntries :: Int -> Offset64 -> [(SerialisedKey, PageNo)]
+    getEntries 0 _         = []
+    getEntries !n !offset64 =
+        let offset32 = mul2 offset64
+            !pageNo = fromIntegral (indexByteArray ba offset32 :: Word32)
+            keyLen8 = fromIntegral (indexByteArray ba (offset32 + 1) :: Word32)
+            keyOffset8 = mul8 (offset64 + 1)
+            -- We avoid retaining references to the bytearray.
+            -- Probably not needed, since the bytearray will stay alive as long
+            -- as the compact index anyway, but we expect very few keys in the
+            -- tie breaker, so it is cheap to do and we don't have to worry
+            -- about the issue anymore.
+            !key = SerialisedKey' (VP.force (VP.Vector keyOffset8 keyLen8 ba))
+        in (key, PageNo pageNo)
+         : getEntries (n - 1) (offset64 + 1 + ceilDiv8 keyLen8)
 
 {-------------------------------------------------------------------------------
  Vector extras
