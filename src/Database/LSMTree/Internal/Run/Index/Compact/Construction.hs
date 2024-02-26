@@ -17,6 +17,7 @@ module Database.LSMTree.Internal.Run.Index.Compact.Construction (
     -- ** Chunks
   , Chunk (..)
   , FinalChunk (..)
+  , NumPages
   ) where
 
 import           Control.Monad (forM_, when)
@@ -66,7 +67,7 @@ import           Database.LSMTree.Internal.Serialise
 -}
 
 -- | A 0-based number identifying a disk page.
-newtype PageNr = PageNr Int
+newtype PageNr = PageNr { unPageNr :: Int }
   deriving stock (Show, Eq, Ord)
 
 -- | A mutable version of 'CompactIndex'. See [incremental
@@ -282,7 +283,9 @@ unsafeEnd mci@MCompactIndex{..} = do
     fcLargerThanPage <- fmap (VU.concat . reverse) $
       traverse VU.unsafeFreeze . sliceCurrent ix =<< readSTRef mciLargerThanPage
     fcTieBreaker <- readSTRef mciTieBreaker
+
     let fcRangeFinderPrecision = mciRangeFinderPrecision
+    let fcNumPages = pageNr
 
     pure (mchunk, FinalChunk {..})
   where
@@ -318,8 +321,12 @@ data FinalChunk = FinalChunk {
   , fcLargerThanPage       :: !(VU.Vector Bit)
   , fcTieBreaker           :: !(Map SerialisedKey PageNr)
   , fcRangeFinderPrecision :: !Int
+  , fcNumPages             :: !NumPages
   }
   deriving stock (Show, Eq)
+
+-- TODO: Turn into newtype, maybe also other types, e.g. range finder precision.
+type NumPages = Int
 
 {-------------------------------------------------------------------------------
   Strict 'Maybe'

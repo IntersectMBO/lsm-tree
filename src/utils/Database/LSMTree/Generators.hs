@@ -8,6 +8,7 @@
 {-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE MultiWayIf                 #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
+{-# LANGUAGE TypeApplications           #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 {- HLINT ignore "Use camelCase" -}
 
@@ -61,10 +62,11 @@ import qualified Data.Map as Map
 import           Data.WideWord.Word256 (Word256 (..))
 import           Data.Word
 import           Database.LSMTree.Common (Range (..))
-import           Database.LSMTree.Internal.Entry (Entry (..))
+import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..))
 import           Database.LSMTree.Internal.Run.BloomFilter (Hashable (..))
 import           Database.LSMTree.Internal.Run.Index.Compact (Append (..),
-                     rangeFinderPrecisionBounds, suggestRangeFinderPrecision)
+                     PageNr (..), rangeFinderPrecisionBounds,
+                     suggestRangeFinderPrecision)
 import           Database.LSMTree.Internal.Serialise
 import qualified Database.LSMTree.Internal.Serialise.Class as S.Class
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer (..))
@@ -279,6 +281,18 @@ instance Arbitrary RFPrecision where
 rfprecInvariant :: RFPrecision -> Bool
 rfprecInvariant (RFPrecision x) = x >= rfprecLB && x <= rfprecUB
   where (rfprecLB, rfprecUB) = rangeFinderPrecisionBounds
+
+{-------------------------------------------------------------------------------
+  Other number newtypes
+-------------------------------------------------------------------------------}
+
+instance Arbitrary PageNr where
+  arbitrary = coerce (arbitrary @(QC.NonNegative Int))
+  shrink = coerce (shrink @(QC.NonNegative Int))
+
+instance Arbitrary NumEntries where
+  arbitrary = coerce (arbitrary @(QC.NonNegative Int))
+  shrink = coerce (shrink @(QC.NonNegative Int))
 
 {-------------------------------------------------------------------------------
   True page

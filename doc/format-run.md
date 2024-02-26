@@ -212,15 +212,25 @@ read first. This helps with pre-allocating the memory needed for the
 in-memory representation of the other main components, and knowing how much
 data to read from disk for each component.
 
+The clash map is expected to be very small, so its file format is mainly
+designed to be simple, not compact. After a 64bit number of elements, each pair
+of key and page number is serialised in the following order:
+* the page number (as a 32bit value)
+* the length of the key in bytes (as a 32bit value)
+* the key
+* padding to 64bit alignment
+
 Size granularity, alignment and any trailing padding of the components:
 1. 32bit size granularity, 32bit alignment
 2. 32bit size granularity, 32bit alignment, trailing padding to 64bit alignment
 3. 64bit size granularity, 64bit alignment
 4. 64bit size granularity, 64bit alignment
-5. 8bit size granularity, 8bit alignment, trailing padding to 64bit alignment
+5. 32bit size granularity, 32bit alignment, trailing padding to 64bit alignment
 6. 64bit size granularity, 64bit alignment
 7. 64bit size granularity, 64bit alignment
 8. 64bit size granularity, 64bit alignment
+
+All numbers are serialised in little-endian format.
 
 The alignment of the components is arranged such that it would be possible (if
 desired) to mmap the whole file and access almost all of the components with

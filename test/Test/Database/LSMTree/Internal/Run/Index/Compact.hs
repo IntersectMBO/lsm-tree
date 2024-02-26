@@ -1,4 +1,6 @@
 {-# LANGUAGE LambdaCase          #-}
+{-# LANGUAGE NumericUnderscores  #-}
+{-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving  #-}
 {-# LANGUAGE TypeApplications    #-}
@@ -8,31 +10,48 @@
 module Test.Database.LSMTree.Internal.Run.Index.Compact (tests) where
 
 import           Control.Monad (foldM)
+import           Control.Monad.ST (runST)
 import           Control.Monad.State.Strict (MonadState (..), State, evalState,
                      get, put)
 import           Data.Bit (Bit (..))
 import qualified Data.Bit as BV
+import qualified Data.ByteString.Builder as BB
+import qualified Data.ByteString.Lazy as LBS
+import qualified Data.ByteString.Short as SBS
 import           Data.Coerce (coerce)
 import           Data.Foldable (Foldable (..))
+import           Data.List.Split (chunksOf)
 import qualified Data.Map.Merge.Strict as Merge
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import qualified Data.Vector.Primitive as VP
 import qualified Data.Vector.Unboxed as V
+import qualified Data.Vector.Unboxed as VU
+import           Data.Word
 import           Database.LSMTree.Generators as Gen
+import           Database.LSMTree.Internal.Entry (NumEntries (..))
 import           Database.LSMTree.Internal.Run.Index.Compact as Index
+import           Database.LSMTree.Internal.Run.Index.Compact.Construction as Cons
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Util
+import           Numeric (showHex)
 import           Prelude hiding (max, min, pi)
+import           Test.Database.LSMTree.Internal.Serialise ()
 import qualified Test.QuickCheck as QC
 import           Test.QuickCheck
 import           Test.Tasty (TestTree, adjustOption, testGroup)
+import           Test.Tasty.HUnit (assertEqual, testCase)
 import           Test.Tasty.QuickCheck (QuickCheckMaxSize (..), testProperty)
 import           Test.Util.Orphans ()
 import           Text.Printf (printf)
 
 tests :: TestTree
-tests = adjustOption (const $ QuickCheckMaxSize 5000) $
-        testGroup "Test.Database.LSMTree.Internal.Run.Index.Compact" [
+tests = testGroup "Test.Database.LSMTree.Internal.Run.Index.Compact" [
+    -- Increasing the maximum size has the effect of generating more
+    -- interesting numbers of partitioned pages. With a max size of 100, the
+    -- tests are very likely to generate only 1 partitioned page.
+    -- However, it also reduces the number of clashes.
+    adjustOption (const $ QuickCheckMaxSize 5000) $
     testGroup "Contruction, searching, chunking" [
         testGroup "prop_searchMinMaxKeysAfterConstruction" [
             testProperty "Full range of UTxOKeys" $
@@ -67,7 +86,70 @@ tests = adjustOption (const $ QuickCheckMaxSize 5000) $
               prop_distribution @(WithSerialised UTxOKey) . optimiseRFPrecision
           ]
       ]
-    ]
+  , testGroup "(De)serialisation" [
+        testGroup "test Chunks generator" [
+            testProperty "Arbitrary satisfies invariant" $
+              property . chunksInvariant
+          , testProperty "Shrinking satisfies invariant" $
+              property . all chunksInvariant . shrink @Chunks
+        ]
+      , testCase "index-2-clash" $ do
+          let k1 = SerialisedKey' (VP.replicate 16 0x00)
+          let k2 = SerialisedKey' (VP.replicate 16 0x11)
+          let k3 = SerialisedKey' (VP.replicate 15 0x11 <> VP.replicate 1 0x12)
+          let (chunks, finalChunk) = runST $ do
+                mci <- Cons.new 0 16
+                ch1 <- flip Cons.append mci $ AppendSinglePage k1 k2
+                ch2 <- flip Cons.append mci $ AppendSinglePage k3 k3
+                (mCh3, fCh) <- unsafeEnd mci
+                return (ch1 <> ch2 <> toList mCh3, fCh)
+
+          let expectedPrimary :: [Word8]
+              expectedPrimary = foldMap word32toBytesLE
+                  -- 1. primary array: two pages (32 bits LE) + padding
+                [ 0x0000_0000,  0x1111_1111
+                ]
+          let expectedRest :: [Word8]
+              expectedRest = foldMap word32toBytesLE
+                  -- 2. range finder: 2^0+1 = 2 entries 32 bit padding
+                [ 0 {- offset = 0 -}, 2 {- numPages -}
+                  -- 3. clash indicator: two pages, second one has bit
+                , 0x0000_0002, 0
+                  -- 4. larger-than-page: two pages, no bits
+                , 0 , 0
+                  -- 5. clash map: maps k3 to page 1
+                , 1, 0 {- size = 1 (64 bit LE) -}
+                , 1, 16 {- page 1, key size 16 byte -}
+                , 0x1111_1111, 0x1111_1111 {- k1 -}
+                , 0x1111_1111, 0x1211_1111
+                  -- 6. number of range finder bits (0..16) (64 bits LE)
+                , 0, 0
+                  -- 7. number of pages in the primary array (64 bits LE)
+                , 2, 0
+                  -- 8. number of keys (64bit LE)
+                , 7 , 0
+                ]
+
+          let primary = buildBytes (foldMap chunkBuilder chunks)
+          let rest = buildBytes (finalChunkBuilder (NumEntries 7) finalChunk)
+
+          let comparison msg xs ys = unlines $
+                  (msg <> ":")
+                : zipWith (\x y -> x <> "  |  " <> y)
+                    (showBytes xs <> repeat (replicate 17 '.'))
+                    (showBytes ys)
+
+          assertEqual (comparison "primary" expectedPrimary primary)
+            expectedPrimary primary
+          assertEqual (comparison "rest" expectedRest rest)
+            expectedRest rest
+
+      , testProperty "prop_roundtrip_chunks" $
+          prop_roundtrip_chunks
+      , testProperty "prop_roundtrip" $
+          prop_roundtrip @(WithSerialised UTxOKey)
+      ]
+  ]
 
 {-------------------------------------------------------------------------------
   Properties
@@ -118,8 +200,7 @@ prop_searchMinMaxKeysAfterConstruction csize ps = eqMapProp real model
 
     real = foldMap' realSearch (getPages ps)
 
-    rfprec = coerce $ getRangeFinderPrecision ps
-    ci = fromList rfprec (coerce csize) (toAppends ps)
+    ci = mkCompactIndex (coerce csize) ps
 
     realSearch :: LogicalPageSummary k -> Map k SearchResult
     realSearch = \case
@@ -138,15 +219,8 @@ prop_differentChunkSizesSameResults ::
   -> ChunkSize
   -> LogicalPageSummaries k
   -> Property
-prop_differentChunkSizesSameResults
-  (ChunkSize csize1)
-  (ChunkSize csize2)
-  ps = ci1 === ci2
-  where
-    apps = toAppends ps
-    rfprec = coerce $ getRangeFinderPrecision ps
-    ci1 = fromList rfprec csize1 apps
-    ci2 = fromList rfprec csize2 apps
+prop_differentChunkSizesSameResults csize1 csize2 ps =
+    mkCompactIndex csize1 ps === mkCompactIndex csize2 ps
 
 -- | Constructing an index using only 'appendSingle' is equivalent to using a
 -- mix of 'appendSingle' and 'appendMulti'.
@@ -170,11 +244,41 @@ prop_singlesEquivMulti csize1 csize2 ps = ci1 === ci2
 
 -- | Distribution of generated test data
 prop_distribution :: SerialiseKey k => LogicalPageSummaries k -> Property
-prop_distribution ps = labelPages ps $ labelIndex ci $ property True
+prop_distribution ps =
+    labelPages ps $ labelIndex (mkCompactIndex 100 ps) $ property True
+
+-- Generate and serialise chunks directly.
+-- This gives more direct shrinking of individual parts and has fewer invariants
+-- (covering a larger space).
+prop_roundtrip_chunks :: Chunks -> NumEntries -> Property
+prop_roundtrip_chunks (Chunks chunks finalChunk) numEntries =
+    counterexample (show (SBS.length sbs) <> " bytes") $
+    counterexample ("primary:\n" <> showBS bsPrimary) $
+    counterexample ("rest:\n" <> showBS bsRest) $
+      Right (numEntries, index) === fromSBS sbs
   where
-    apps   = toAppends ps
-    rfprec = coerce $ getRangeFinderPrecision ps
-    ci     = fromList rfprec 100 apps
+    index = fromChunks chunks finalChunk
+
+    bsPrimary = BB.toLazyByteString $ foldMap chunkBuilder chunks
+    bsRest = BB.toLazyByteString $ finalChunkBuilder numEntries finalChunk
+    sbs = SBS.toShort (LBS.toStrict (bsPrimary <> bsRest))
+
+    showBS = unlines . showBytes . LBS.unpack
+
+-- Generate the compact index from logical pages.
+prop_roundtrip :: SerialiseKey k => ChunkSize -> LogicalPageSummaries k -> NumEntries -> Property
+prop_roundtrip csize ps numEntries =
+    counterexample (show (SBS.length sbs) <> " bytes") $
+    counterexample ("primary:\n" <> showBS bsPrimary) $
+    counterexample ("rest:\n" <> showBS bsRest) $
+      Right (numEntries, index) === fromSBS sbs
+  where
+    index = mkCompactIndex csize ps
+
+    (bsPrimary, bsRest) = writeCompactIndex numEntries csize ps
+    sbs = SBS.toShort (LBS.toStrict (bsPrimary <> bsRest))
+
+    showBS = unlines . showBytes . LBS.unpack
 
 {-------------------------------------------------------------------------------
   Util
@@ -182,6 +286,24 @@ prop_distribution ps = labelPages ps $ labelIndex ci $ property True
 
 (**.) :: (a -> b -> d -> e) -> (c -> d) -> a -> b -> c -> e
 (**.) f g x1 x2 x3 = f x1 x2 (g x3)
+
+mkCompactIndex :: SerialiseKey k => ChunkSize -> LogicalPageSummaries k -> CompactIndex
+mkCompactIndex (ChunkSize csize) ps =
+    fromList rfprec csize (toAppends ps)
+  where
+    RFPrecision rfprec = getRangeFinderPrecision ps
+
+writeCompactIndex :: SerialiseKey k => NumEntries -> ChunkSize -> LogicalPageSummaries k -> (LBS.ByteString, LBS.ByteString)
+writeCompactIndex numEntries (ChunkSize csize) ps = runST $ do
+    let RFPrecision rfprec = getRangeFinderPrecision ps
+    mci <- Cons.new rfprec csize
+    cs <- mapM (`append` mci) (toAppends ps)
+    (c, fc) <- unsafeEnd mci
+    return
+      ( BB.toLazyByteString $ foldMap (foldMap chunkBuilder) cs
+                           <> foldMap chunkBuilder c
+      , BB.toLazyByteString $ finalChunkBuilder numEntries fc
+      )
 
 labelIndex :: CompactIndex -> (Property -> Property)
 labelIndex ci =
@@ -246,3 +368,66 @@ eqMapProp m1 m2 = conjoin . Map.elems $
       printf "Key-value pair only on the right, (k, y) = (%s, %s)" (show k) (show y)
     both k x y = flip counterexample (property (x == y)) $
       printf "Mismatch between x and y, (k, x, y) = (%s, %s, %s)" (show k) (show x) (show y)
+
+showBytes :: [Word8] -> [String]
+showBytes = map (unwords . map (foldMap showByte) . chunksOf 4) . chunksOf 8
+
+showByte :: Word8 -> String
+showByte b = let str = showHex b "" in replicate (2 - length str) '0' <> str
+
+buildBytes :: BB.Builder -> [Word8]
+buildBytes = LBS.unpack . BB.toLazyByteString
+
+word32toBytesLE :: Word32 -> [Word8]
+word32toBytesLE = take 4 . map fromIntegral . iterate (`div` 256)
+
+data Chunks = Chunks [Chunk] FinalChunk
+  deriving (Show)
+
+-- | The only invariants we make sure to uphold is that the length of the
+-- vectors match 'fcRangeFinderPrecision' and 'fcNumPages' respectively,
+-- as this is required for correct deserialisation.
+chunksInvariant :: Chunks -> Bool
+chunksInvariant (Chunks chunks FinalChunk {..}) =
+       rfprecInvariant (RFPrecision fcRangeFinderPrecision)
+    && sum (map (VU.length . cPrimary) chunks) == fcNumPages
+    && VU.length fcClashes == fcNumPages
+    && VU.length fcLargerThanPage == fcNumPages
+    && VU.length fcRangeFinder == 2 ^ fcRangeFinderPrecision + 1
+
+instance Arbitrary Chunks where
+  arbitrary = do
+    chunks <- map VU.fromList <$> arbitrary
+    let fcNumPages = sum (map VU.length chunks)
+
+    RFPrecision fcRangeFinderPrecision <- arbitrary
+    fcRangeFinder <- VU.fromList
+      <$> vector (2 ^ fcRangeFinderPrecision + 1)
+    fcClashes <- VU.fromList . map Bit <$> vector fcNumPages
+    fcLargerThanPage <- VU.fromList . map Bit <$> vector fcNumPages
+    fcTieBreaker <- arbitrary
+    return (Chunks (map Chunk chunks) FinalChunk {..})
+
+  shrink (Chunks chunks fc) =
+    -- shrink range finder bits
+    [ Chunks chunks fc
+        { fcRangeFinder = VU.take (2 ^ rfprec' + 1) (fcRangeFinder fc)
+        , fcRangeFinderPrecision = rfprec'
+        }
+    | RFPrecision rfprec' <- shrink (RFPrecision (fcRangeFinderPrecision fc))
+    ] ++
+    -- shrink number of pages
+    [ Chunks (map Chunk chunks') fc
+        { fcClashes = VU.slice 0 numPages' (fcClashes fc)
+        , fcLargerThanPage = VU.slice 0 numPages' (fcLargerThanPage fc)
+        , fcNumPages = numPages'
+        }
+    | chunks' <- shrink (map cPrimary chunks)
+    , let numPages' = sum (map VU.length chunks')
+    ] ++
+    -- shrink tie breaker
+    [ Chunks chunks fc
+        { fcTieBreaker = tieBreaker'
+        }
+    | tieBreaker' <- shrink (fcTieBreaker fc)
+    ]
