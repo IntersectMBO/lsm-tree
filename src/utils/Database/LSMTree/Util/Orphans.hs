@@ -19,7 +19,7 @@ import           Data.WideWord.Word256 (Word256 (..))
 import           Data.Word (Word64)
 import           Database.LSMTree.Internal.Run.BloomFilter (Hashable (..))
 import           Database.LSMTree.Internal.Run.Index.Compact (Append (..),
-                     CompactIndex (..), PageNo (..), PageSpan (..),
+                     CompactIndex (..), PageNr (..), PageSpan (..),
                      SearchResult (..))
 import           Database.LSMTree.Internal.Serialise (SerialisedBlob (..),
                      SerialisedKey (..), SerialisedValue (..))
@@ -35,7 +35,7 @@ deriving newtype instance NFData SerialisedBlob
 deriving stock instance Generic SearchResult
 deriving anyclass instance NFData SearchResult
 
-deriving newtype instance NFData PageNo
+deriving newtype instance NFData PageNr
 
 deriving stock instance Generic PageSpan
 deriving anyclass instance NFData PageSpan

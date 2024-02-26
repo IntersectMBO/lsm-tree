@@ -18,7 +18,7 @@ module Database.LSMTree.Internal.Run.Index.Compact (
   , NumPages
   , suggestRangeFinderPrecision
     -- * Queries
-  , PageNo (..)
+  , PageNr (..)
   , SearchResult (..)
   , PageSpan (..)
   , toPageSpan
@@ -87,7 +87,7 @@ import           Database.LSMTree.Internal.Serialise
   > type Page k v = -- elided
   > minKey :: Page k v -> k
   > maxKey :: Page k v - k
-  > type PageNo = Int
+  > type PageNr = Int
 
   The first implementation one may come up with is a vector containing the
   minimum key and maximum key on each page. As such, the index stores the
@@ -100,7 +100,7 @@ import           Database.LSMTree.Internal.Serialise
   > mkIndex1 :: Run k v -> Index1 k
   > mkIndex1 = V.fromList . fmap (\p -> (minKey p, maxKey p))
   >
-  > search1 :: k -> Index1 k -> Maybe pageNo
+  > search1 :: k -> Index1 k -> Maybe pageNr
   > search1 = -- elided
 
   We can reduce the memory size of `Index1` by half if we store only the minimum
@@ -118,7 +118,7 @@ import           Database.LSMTree.Internal.Serialise
   > mkIndex2 :: Run k v -> Index2 k
   > mkIndex2 = V.fromList . fmap minKey
   >
-  > search2 :: k -> Index k -> pageNo
+  > search2 :: k -> Index k -> pageNr
   > search2 = -- elided
 
   Now on to creating a more compact representation, which relies on a property
@@ -187,7 +187,7 @@ import           Database.LSMTree.Internal.Serialise
   > mkIndex3 :: Run k v -> Index3
   > mkIndex3 = -- elided
   >
-  > search3 :: k -> Index3 -> pageNo
+  > search3 :: k -> Index3 -> pageNr
   > search3 = -- elided
 
   Let's compare the memory size of @Index2@ with @Index3@. Say we have \(n\)
@@ -343,25 +343,25 @@ import           Database.LSMTree.Internal.Serialise
 
   \[
   \begin{align*}
-    RF     :&~ \texttt{Array Word16 PageNo} \\
+    RF     :&~ \texttt{Array Word16 PageNr} \\
     RF[j]   =&~ \min~ \{ i \mid j \leq \texttt{topBits16}(r, p^{min}_i) \}  \\
     RF[2^r] =&~ n \\
     \\
-    P    :&~ \texttt{Array PageNo Word32} \\
+    P    :&~ \texttt{Array PageNr Word32} \\
     P[i] =&~ \texttt{sliceBits32}(r, p^{min}_i) \\
     \\
-    C    :&~ \texttt{Array PageNo Bit} \\
+    C    :&~ \texttt{Array PageNr Bit} \\
     C[0] =&~ \texttt{false} \\
     C[i] =&~ \texttt{sliceBits32}(r, p^{max}_{i-1}) ~\texttt{==}~ \texttt{sliceBits32}(r, p^{min}_i) \\
     \\
-    TB            :&~ \texttt{Map Key PageNo} \\
+    TB            :&~ \texttt{Map Key PageNr} \\
     TB(p^{min}_i) =&~
       \begin{cases}
         p^{min}_i        &, \text{if}~ C[i] \land \neg LTP[i] \\
         \text{undefined} &, \text{otherwise} \\
       \end{cases} \\
     \\
-    LTP    :&~ \texttt{Array PageNo Bit} \\
+    LTP    :&~ \texttt{Array PageNr Bit} \\
     LTP[0] =&~ \texttt{false} \\
     LTP[i] =&~ p^{min}_{i-1} ~\texttt{==}~ p^{min}_i \\
   \end{align*}
@@ -442,7 +442,7 @@ data CompactIndex = CompactIndex {
   , ciClashes              :: !(VU.Vector Bit)
     -- | \(TB\): Maps a full minimum key to the page @i@ that contains it, but
     -- only if there is a clash on page @i@.
-  , ciTieBreaker           :: !(Map SerialisedKey Int)
+  , ciTieBreaker           :: !(Map SerialisedKey PageNr)
     -- | \(LTP\): Record of larger-than-page values. Given a span of pages for
     -- the larger-than-page value, the first page will map to 'False', and the
     -- remainder of the pages will be set to 'True'. Regular pages default to
@@ -482,22 +482,18 @@ suggestRangeFinderPrecision maxPages =
   Queries
 -------------------------------------------------------------------------------}
 
--- | A 0-based number identifying a disk page.
-newtype PageNo = PageNo Int
-  deriving stock (Show, Eq, Ord)
-
 data SearchResult =
     NoResult
-  | SinglePage PageNo
+  | SinglePage PageNr
   -- | @'Multipage' s e@: the value is larger than a page, starts on page s, and
   -- ends on page e.
-  | MultiPage PageNo PageNo
+  | MultiPage PageNr PageNr
   deriving stock (Show, Eq)
 
 -- | A span of pages, representing an inclusive interval of page numbers.
 data PageSpan = PageSpan {
-    pageSpanStart :: PageNo
-  , pageSpanEnd   :: PageNo
+    pageSpanStart :: PageNr
+  , pageSpanEnd   :: PageNr
   }
 
 toPageSpan :: SearchResult -> Maybe PageSpan
@@ -538,16 +534,17 @@ search k CompactIndex{..} = -- Pre: @[0, V.length ciPrimary)@
         Just !i ->         -- Post: @[lb, i]@.
           if unBit $ ciClashes VU.! i then
             -- Post: @[lb, i]@, now in clash recovery mode.
-            let i1  = fromJust $ bitIndexFromToRev (BoundInclusive lb) (BoundInclusive i) (Bit False) ciClashes
-                i2  = maybe 0 snd $ Map.lookupLE k ciTieBreaker
-                !i3 = max i1 i2 -- Post: the intersection of @[i1, i]@ and @[i2, i].
+            let i1  = PageNr $ fromJust $
+                  bitIndexFromToRev (BoundInclusive lb) (BoundInclusive i) (Bit False) ciClashes
+                i2  = maybe (PageNr 0) snd $ Map.lookupLE k ciTieBreaker
+                PageNr !i3 = max i1 i2 -- Post: the intersection of @[i1, i]@ and @[i2, i].
                 !i4 = bitLongestPrefixFromTo (BoundExclusive i3) (BoundInclusive i) (Bit True) ciLargerThanPage
                       -- Post: [i3, i4]
-            in  if i3 == i4 then SinglePage (PageNo i3) else MultiPage (PageNo i3) (PageNo i4)
+            in  if i3 == i4 then SinglePage (PageNr i3) else MultiPage (PageNr i3) (PageNr i4)
                 -- Post: @[i3, i4]@ if a larger-than-page value that starts at
                 -- @i3@ and ends at @i4@, @[i3, i3]@ otherwise for a "normal"
                 -- page.
-          else  SinglePage (PageNo i) -- Post: @[i, i]@
+          else  SinglePage (PageNr i) -- Post: @[i, i]@
 
 
 countClashes :: CompactIndex -> Int

@@ -62,7 +62,7 @@ test_singleKeyRun =  do
     Just (paSingleton k e, []) @=? mp
     isJust mc @? "expected a chunk"
     True @=? Bloom.elem k b
-    Index.SinglePage (Index.PageNo 0) @=? Index.search k cix
+    Index.SinglePage (Index.PageNr 0) @=? Index.search k cix
 
 {-------------------------------------------------------------------------------
   PageAcc

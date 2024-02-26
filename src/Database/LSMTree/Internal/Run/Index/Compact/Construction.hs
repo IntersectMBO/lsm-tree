@@ -6,7 +6,8 @@
 module Database.LSMTree.Internal.Run.Index.Compact.Construction (
     -- $incremental
     -- $construction
-    MCompactIndex
+    PageNr (..)
+  , MCompactIndex
   , new
   , Append (..)
   , append
@@ -64,6 +65,10 @@ import           Database.LSMTree.Internal.Serialise
   the 'FinalChunk' to construct a 'CompactIndex'.
 -}
 
+-- | A 0-based number identifying a disk page.
+newtype PageNr = PageNr Int
+  deriving stock (Show, Eq, Ord)
+
 -- | A mutable version of 'CompactIndex'. See [incremental
 -- construction](#incremental).
 data MCompactIndex s = MCompactIndex {
@@ -76,7 +81,7 @@ data MCompactIndex s = MCompactIndex {
     -- | Accumulates chunks of 'ciClashes'.
   , mciClashes              :: !(STRef s (NonEmpty (VU.MVector s Bit)))
     -- | Accumulates the 'ciTieBreaker'.
-  , mciTieBreaker           :: !(STRef s (Map SerialisedKey Int))
+  , mciTieBreaker           :: !(STRef s (Map SerialisedKey PageNr))
     -- | Accumulates chunks of 'ciLargerThanPage'.
   , mciLargerThanPage       :: !(STRef s (NonEmpty (VU.MVector s Bit)))
 
@@ -197,7 +202,8 @@ appendSingle (minKey, maxKey) mci@MCompactIndex{..} = do
 
             readSTRef mciClashes >>= \cs -> VUM.write (NE.head cs) ix (Bit clash)
             readSTRef mciLargerThanPage >>= \cs -> VUM.write (NE.head cs) ix (Bit ltp)
-            when (clash && not ltp) $ modifySTRef' mciTieBreaker (Map.insert minKey pageNr)
+            when (clash && not ltp) $
+              modifySTRef' mciTieBreaker (Map.insert minKey (PageNr pageNr))
 
 -- | Append multiple pages to the index. The minimum keys and maximum keys for
 -- all these pages are set to the same key.
@@ -310,7 +316,7 @@ data FinalChunk = FinalChunk {
     fcRangeFinder          :: !(VU.Vector Word32)
   , fcClashes              :: !(VU.Vector Bit)
   , fcLargerThanPage       :: !(VU.Vector Bit)
-  , fcTieBreaker           :: !(Map SerialisedKey Int)
+  , fcTieBreaker           :: !(Map SerialisedKey PageNr)
   , fcRangeFinderPrecision :: !Int
   }
   deriving stock (Show, Eq)
