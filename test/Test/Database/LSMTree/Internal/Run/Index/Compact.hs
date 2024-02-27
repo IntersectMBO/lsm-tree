@@ -92,7 +92,7 @@ plusCounter :: Int -> CounterM Int
 plusCounter n = get >>= \c -> put (c+n) >> pure c
 
 -- | After construction, searching for the minimum/maximum key of every page
--- @pageNr@ returns the @pageNr@.
+-- @pageNo@ returns the @pageNo@.
 prop_searchMinMaxKeysAfterConstruction ::
      forall k. (SerialiseKey k, Show k, Ord k)
   => ChunkSize

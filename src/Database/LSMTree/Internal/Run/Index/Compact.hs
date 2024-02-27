@@ -1,10 +1,8 @@
-{-# LANGUAGE BangPatterns               #-}
-{-# LANGUAGE DerivingVia                #-}
-{-# LANGUAGE GeneralisedNewtypeDeriving #-}
-{-# LANGUAGE LambdaCase                 #-}
-{-# LANGUAGE RecordWildCards            #-}
-{-# LANGUAGE ScopedTypeVariables        #-}
-{-# LANGUAGE TypeApplications           #-}
+{-# LANGUAGE BangPatterns       #-}
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE LambdaCase         #-}
+{-# LANGUAGE RecordWildCards    #-}
+{-# LANGUAGE TypeApplications   #-}
 
 -- | A compact fence-pointer index for uniformly distributed keys.
 --
@@ -33,36 +31,22 @@ module Database.LSMTree.Internal.Run.Index.Compact (
   , Append (..)
   , fromList
   , fromListSingles
-    -- ** Incremental
-    -- $incremental
-  , MCompactIndex
-  , new
-  , append
-  , unsafeEnd
-  , appendSingle
-  , appendMulti
-    -- *** Chunks
-  , Chunk (..)
-  , FinalChunk (..)
   , fromChunks
   ) where
 
 import           Control.Exception (assert)
-import           Control.Monad (forM_, when)
 import           Control.Monad.ST
 import           Data.Bit hiding (flipBit)
 import           Data.Foldable (toList)
-import           Data.Map.Range (Bound (..), Clusive (Exclusive, Inclusive))
+import           Data.Map.Range (Bound (..))
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (catMaybes, fromJust)
-import           Data.STRef.Strict
 import qualified Data.Vector.Algorithms.Search as VA
 import qualified Data.Vector.Generic as VG
-import qualified Data.Vector.Generic.Mutable as VGM
 import qualified Data.Vector.Unboxed as VU
-import qualified Data.Vector.Unboxed.Mutable as VUM
 import           Data.Word
+import           Database.LSMTree.Internal.Run.Index.Compact.Construction
 import           Database.LSMTree.Internal.Serialise
 
 {- $compact
@@ -116,7 +100,7 @@ import           Database.LSMTree.Internal.Serialise
   > mkIndex1 :: Run k v -> Index1 k
   > mkIndex1 = V.fromList . fmap (\p -> (minKey p, maxKey p))
   >
-  > search1 :: k -> Index1 k -> Maybe pageNo
+  > search1 :: k -> Index1 k -> Maybe PageNo
   > search1 = -- elided
 
   We can reduce the memory size of `Index1` by half if we store only the minimum
@@ -134,7 +118,7 @@ import           Database.LSMTree.Internal.Serialise
   > mkIndex2 :: Run k v -> Index2 k
   > mkIndex2 = V.fromList . fmap minKey
   >
-  > search2 :: k -> Index k -> pageNo
+  > search2 :: k -> Index k -> PageNo
   > search2 = -- elided
 
   Now on to creating a more compact representation, which relies on a property
@@ -203,7 +187,7 @@ import           Database.LSMTree.Internal.Serialise
   > mkIndex3 :: Run k v -> Index3
   > mkIndex3 = -- elided
   >
-  > search3 :: k -> Index3 -> pageNo
+  > search3 :: k -> Index3 -> PageNo
   > search3 = -- elided
 
   Let's compare the memory size of @Index2@ with @Index3@. Say we have \(n\)
@@ -346,7 +330,7 @@ import           Database.LSMTree.Internal.Serialise
   * \(r \in \left[0, 16\right] \) is the range-finder bit-precision
   * \(\texttt{topBits16}(r, k)\) extracts the \(r\) most significant bits from
     \(k\). We call these \(r\) bits the range-finder bits.
-  * \(\texttt{sliceBits32}(m, k)\) extracts the 32 most significant bits from \(k\)
+  * \(\texttt{sliceBits32}(r, k)\) extracts the 32 most significant bits from \(k\)
     /after/ \(r\). We call these 32 bits the primary bits.
   * \(c \in \left[32, 48\right] \) is the overall key prefix length represented
      by the compact index.
@@ -354,21 +338,21 @@ import           Database.LSMTree.Internal.Serialise
   * We choose \(r\) such that \(c = 2~log_2~n\), which keeps the expected
     number of collisions low.
   * \(i \in \left[0, n \right)\), unless stated otherwise
-  * \(j \in \left[0, 2^m\right)\), unless stated otherwise
-  * Pages must be partitioned: \(\forall p_i \in ps. \texttt{topBits16}(m, p^{min}_i) ~\texttt{==}~ \texttt{topBits16}(m,p^{max}_i) \)
+  * \(j \in \left[0, 2^r\right)\), unless stated otherwise
+  * Pages must be partitioned: \(\forall p_i \in ps. \texttt{topBits16}(r, p^{min}_i) ~\texttt{==}~ \texttt{topBits16}(r,p^{max}_i) \)
 
   \[
   \begin{align*}
     RF     :&~ \texttt{Array Word16 PageNo} \\
-    RF[j]   =&~ \min~ \{ i \mid j \leq \texttt{topBits16}(m, p^{min}_i) \}  \\
-    RF[2^m] =&~ n \\
+    RF[j]   =&~ \min~ \{ i \mid j \leq \texttt{topBits16}(r, p^{min}_i) \}  \\
+    RF[2^r] =&~ n \\
     \\
     P    :&~ \texttt{Array PageNo Word32} \\
-    P[i] =&~ \texttt{sliceBits32}(m, p^{min}_i) \\
+    P[i] =&~ \texttt{sliceBits32}(r, p^{min}_i) \\
     \\
     C    :&~ \texttt{Array PageNo Bit} \\
     C[0] =&~ \texttt{false} \\
-    C[i] =&~ \texttt{sliceBits32}(m, p^{max}_{i-1}) ~\texttt{==}~ \texttt{sliceBits32}(m, p^{min}_i) \\
+    C[i] =&~ \texttt{sliceBits32}(r, p^{max}_{i-1}) ~\texttt{==}~ \texttt{sliceBits32}(r, p^{min}_i) \\
     \\
     TB            :&~ \texttt{Map Key PageNo} \\
     TB(p^{min}_i) =&~
@@ -439,22 +423,26 @@ import           Database.LSMTree.Internal.Serialise
 --
 -- See [a semi-formal description of the compact index](#rep-descr) for more
 -- details about the representation.
+--
+-- While the semi-formal description mentions the number of pages \(n\),
+-- we do not store it, as it can be inferred from the length of 'ciPrimary'.
 data CompactIndex = CompactIndex {
-    -- | \(RF\): A vector that partitions 'ciPrimary' into sub-vectors containing elements
-    -- that all share the same range-finder bits.
+    -- | \(RF\): A vector that partitions 'ciPrimary' into sub-vectors
+    -- containing elements that all share the same range-finder bits.
     ciRangeFinder          :: !(VU.Vector Word32)
-    -- | \(m\): Determines the size of 'ciRangeFinder' as @2 ^ 'ciRangeFinderPrecision'
-    -- + 1@.
+    -- | \(m\): Determines the size of 'ciRangeFinder' as
+    -- @2 ^ 'ciRangeFinderPrecision' + 1@.
   , ciRangeFinderPrecision :: !Int
-    -- | \(P\): Maps a page @i@ to the 32-bit slice of primary bits of its minimum key.
+    -- | \(P\): Maps a page @i@ to the 32-bit slice of primary bits of its
+    -- minimum key.
   , ciPrimary              :: !(VU.Vector Word32)
-    -- | \(C\): A clash on page @i@ means that the primary bits of the minimum key on
-    -- that page aren't sufficient to decide whether a search for a key should
-    -- continue left or right of the page.
+    -- | \(C\): A clash on page @i@ means that the primary bits of the minimum
+    -- key on that page aren't sufficient to decide whether a search for a key
+    -- should continue left or right of the page.
   , ciClashes              :: !(VU.Vector Bit)
-    -- | \(TB\): Maps a full minimum key to the page @i@ that contains it, but only if
-    -- there is a clash on page @i@.
-  , ciTieBreaker           :: !(Map SerialisedKey Int)
+    -- | \(TB\): Maps a full minimum key to the page @i@ that contains it, but
+    -- only if there is a clash on page @i@.
+  , ciTieBreaker           :: !(Map SerialisedKey PageNo)
     -- | \(LTP\): Record of larger-than-page values. Given a span of pages for
     -- the larger-than-page value, the first page will map to 'False', and the
     -- remainder of the pages will be set to 'True'. Regular pages default to
@@ -493,10 +481,6 @@ suggestRangeFinderPrecision maxPages =
 {-------------------------------------------------------------------------------
   Queries
 -------------------------------------------------------------------------------}
-
--- | A 0-based number identifying a disk page.
-newtype PageNo = PageNo Int
-  deriving stock (Show, Eq, Ord)
 
 data SearchResult =
     NoResult
@@ -537,6 +521,10 @@ search :: SerialisedKey -> CompactIndex -> SearchResult
 search k CompactIndex{..} = -- Pre: @[0, V.length ciPrimary)@
     let !rfbits    = fromIntegral $ keyTopBits16 ciRangeFinderPrecision k
         !lb        = fromIntegral $ ciRangeFinder VU.! rfbits
+        -- The first page we don't need to look at (exclusive upper bound) is
+        -- the one from the next range finder entry.
+        -- For the case where we are in the last entry already, we rely on an
+        -- extra entry at the end, mapping to 'V.length ciPrimary'.
         !ub        = fromIntegral $ ciRangeFinder VU.! (rfbits + 1)
         -- Post: @[lb, ub)@
         !primbits  = keySliceBits32 ciRangeFinderPrecision k
@@ -546,9 +534,10 @@ search k CompactIndex{..} = -- Pre: @[0, V.length ciPrimary)@
         Just !i ->         -- Post: @[lb, i]@.
           if unBit $ ciClashes VU.! i then
             -- Post: @[lb, i]@, now in clash recovery mode.
-            let i1  = fromJust $ bitIndexFromToRev (BoundInclusive lb) (BoundInclusive i) (Bit False) ciClashes
-                i2  = maybe 0 snd $ Map.lookupLE k ciTieBreaker
-                !i3 = max i1 i2 -- Post: the intersection of @[i1, i]@ and @[i2, i].
+            let i1  = PageNo $ fromJust $
+                  bitIndexFromToRev (BoundInclusive lb) (BoundInclusive i) (Bit False) ciClashes
+                i2  = maybe (PageNo 0) snd $ Map.lookupLE k ciTieBreaker
+                PageNo !i3 = max i1 i2 -- Post: the intersection of @[i1, i]@ and @[i2, i].
                 !i4 = bitLongestPrefixFromTo (BoundExclusive i3) (BoundInclusive i) (Bit True) ciLargerThanPage
                       -- Post: [i3, i4]
             in  if i3 == i4 then SinglePage (PageNo i3) else MultiPage (PageNo i3) (PageNo i4)
@@ -599,292 +588,21 @@ fromListSingles rfprec maxcsize apps = runST $ do
     (c, fc) <- unsafeEnd mci
     pure (fromChunks (catMaybes cs ++ toList c) fc)
 
-{- $incremental #incremental#
-
-  Incremental construction of a compact index yields chunks incrementally. These
-  chunks can be converted to a 'CompactIndex' once incremental construction is
-  finalised.
-
-  Incremental construction is an 'ST' computation that can be started using
-  'new', returning an 'MCompactIndex' structure that accumulates internal state.
-  'append'ing new pages to the 'MCompactIndex' /might/ yield 'Chunk's.
-  Incremental construction can be finalised with 'unsafeEnd', which yields both
-  a 'Chunk' (possibly) and 'FinalChunk'. Use 'fromChunks' on the 'Chunk's and
-  the 'FinalChunk' to construct a 'CompactIndex'.
--}
-
--- | A mutable version of 'CompactIndex'. See [incremental
--- construction](#incremental).
-data MCompactIndex s = MCompactIndex {
-    -- * Core index structure
-    mciRangeFinder          :: !(VU.MVector s Word32)
-  , mciRangeFinderPrecision :: !Int
-    -- | Accumulates a chunk of 'ciPrimary'.
-  , mciPrimary              :: !(STRef s (VU.MVector s Word32))
-    -- | Accumulates a chunk of 'ciClashes'
-  , mciClashes              :: !(STRef s (VU.MVector s Bit))
-  , mciTieBreaker           :: !(STRef s (Map SerialisedKey Int))
-    -- | Accumulates a chunk of 'ciLargerThanPage'
-  , mciLargerThanPage       :: !(STRef s (VU.MVector s Bit))
-    -- * Aux information required for incremental construction
-
-    -- | Maximum size of a chunk
-  , mciMaxChunkSize         :: !Int
-    -- | The number of the current disk page we are constructing the index for.
-  , mciCurrentPageNumber    :: !(STRef s Int)
-    -- | The range-finder bits of the page-minimum key that we saw last.
-    --
-    --  This should be 'SNothing' if we haven't seen any keys/pages yet.
-  , mciLastMinRfbits        :: !(STRef s (SMaybe Word16))
-    -- | The primary bits of the page-maximum key that we saw last.
-    --
-    -- This should be 'SNothing' if we haven't seen any keys/pages yet.
-  , mciLastMaxPrimbits      :: !(STRef s (SMaybe Word32))
-    -- | The ful minimum key of the page that we saw last.
-    --
-    -- This should be 'SNothing' if we haven't seen any keys/pages yet.
-  , mciLastMinKey           :: !(STRef s (SMaybe SerialisedKey))
-  }
-
--- | @'new' rfprec maxcsize@ creates a new mutable index with a range-finder
--- bit-precision of @rfprec, and with a maximum chunk size of @maxcsize@.
---
--- PRECONDITION: maxcsize > 0
---
--- PRECONDITION: @rfprec@ should be within the bounds defined by
--- @rangeFinderPrecisionBounds@.
---
--- Note: after initialisation, both @rfprec@ and @maxcsize@ can no longer be changed.
-new :: Int -> Int -> ST s (MCompactIndex s)
-new rfprec maxcsize = MCompactIndex
-    -- Core index structure
-    <$> VUM.new (2 ^ rfprec + 1)
-    <*> pure rfprec
-    <*> (VUM.new maxcsize >>= newSTRef)
-    <*> (VUM.new maxcsize >>= newSTRef)
-    <*> newSTRef Map.empty
-    <*> (VUM.new maxcsize >>= newSTRef)
-    -- Aux information required for incremental construction
-    <*> pure maxcsize
-    <*> newSTRef 0
-    <*> newSTRef SNothing
-    <*> newSTRef SNothing
-    <*> newSTRef SNothing
-
--- | Min\/max key-info for pages
-data Append =
-    -- | One or more keys are in this page, and their values fit within a single
-    -- page.
-    AppendSinglePage SerialisedKey SerialisedKey
-    -- | There is only one key in this page, and it's value does not fit within
-    -- a single page.
-  | AppendMultiPage SerialisedKey Word32 -- ^ Number of overflow pages
-
--- | Append a new page entry to a mutable compact index.
---
--- INVARIANTS: see [construction invariants](#construction-invariants).
-append :: Append -> MCompactIndex s -> ST s [Chunk]
-append (AppendSinglePage kmin kmax) mci = toList <$> appendSingle (kmin, kmax) mci
-append (AppendMultiPage k n) mci        = appendMulti (k, n) mci
-
--- | Append a single page to a mutable compact index.
---
--- INVARIANTS: see [construction invariants](#construction-invariants).
-appendSingle :: forall s. (SerialisedKey, SerialisedKey) -> MCompactIndex s -> ST s (Maybe Chunk)
-appendSingle (minKey, maxKey) mci@MCompactIndex{..} = do
-    pageNr <- readSTRef mciCurrentPageNumber
-    let ix = pageNr `mod` mciMaxChunkSize
-    goAppend pageNr ix
-    writeSTRef mciCurrentPageNumber $! pageNr + 1
-    yield mci
-  where
-    minRfbits :: Word16
-    minRfbits = keyTopBits16 mciRangeFinderPrecision minKey
-
-    minPrimbits, maxPrimbits :: Word32
-    minPrimbits = keySliceBits32 mciRangeFinderPrecision minKey
-    maxPrimbits = keySliceBits32 mciRangeFinderPrecision maxKey
-
-    -- | Meat of the function
-    goAppend ::
-         Int -- ^ Current /global/ page number
-      -> Int -- ^ Current /local/ page number (inside the current chunk)
-      -> ST s ()
-    goAppend pageNr ix = do
-        fillRangeFinder
-        writePrimary
-        writeClashesAndLTP
-      where
-        -- | Fill range-finder vector
-        fillRangeFinder :: ST s ()
-        fillRangeFinder = do
-            lastMinRfbits <- readSTRef mciLastMinRfbits
-            let lb = smaybe NoBound (\i -> Bound (fromIntegral i) Exclusive) lastMinRfbits
-                ub = Bound (fromIntegral minRfbits) Inclusive
-                x  = fromIntegral pageNr
-            writeRange mciRangeFinder lb ub x
-            writeSTRef mciLastMinRfbits $! SJust minRfbits
-
-        -- | Set value in primary vector
-        writePrimary :: ST s ()
-        writePrimary =
-            readSTRef mciPrimary >>= \vum -> VUM.write vum ix minPrimbits
-
-        -- | Set value in clash vector, tie-breaker map and larger-than-page
-        -- vector
-        writeClashesAndLTP :: ST s ()
-        writeClashesAndLTP = do
-            lastMaxPrimbits <- readSTRef mciLastMaxPrimbits
-            let clash = lastMaxPrimbits == SJust minPrimbits
-            writeSTRef mciLastMaxPrimbits $! SJust maxPrimbits
-
-            lastMinKey <- readSTRef mciLastMinKey
-            let ltp = SJust minKey == lastMinKey
-            writeSTRef mciLastMinKey $! SJust minKey
-
-            readSTRef mciClashes >>= \vum -> VUM.write vum ix (Bit clash)
-            readSTRef mciLargerThanPage >>= \vum -> VUM.write vum ix (Bit ltp)
-            when (clash && not ltp) $ modifySTRef' mciTieBreaker (Map.insert minKey pageNr)
-
--- | Append multiple pages to the index. The minimum keys and maximum keys for
--- all these pages are set to the same key.
---
--- @appendMulti (k, n)@ is equivalent to @replicateM (n + 1) (appendSingle (k,
--- k))@, but the former should be faster faster.
---
--- INVARIANTS: see [construction invariants](#construction-invariants).
-appendMulti :: forall s. (SerialisedKey, Word32) -> MCompactIndex s -> ST s [Chunk]
-appendMulti (k, n0) mci@MCompactIndex{..} =
-    maybe id (:) <$> appendSingle (k, k) mci <*> overflows (fromIntegral n0)
-  where
-    minPrimbits :: Word32
-    minPrimbits = keySliceBits32 mciRangeFinderPrecision k
-
-    -- | Fill primary, clash and LTP vectors for a larger-than-page value. Yields
-    -- chunks if necessary
-    overflows :: NumPages -> ST s [Chunk]
-    overflows n
-      | n <= 0 = pure []
-      | otherwise = do
-          pageNr <- readSTRef mciCurrentPageNumber
-          let ix = pageNr `mod` mciMaxChunkSize -- will be 0 in recursive calls
-              remInChunk = min n (mciMaxChunkSize - ix)
-          readSTRef mciPrimary >>= \vum ->
-            writeRange vum (BoundInclusive ix) (BoundExclusive $ ix + remInChunk) minPrimbits
-          readSTRef mciClashes >>= \vum ->
-            writeRange vum (BoundInclusive ix) (BoundExclusive $ ix + remInChunk) (Bit True)
-          readSTRef mciLargerThanPage >>= \vum ->
-            writeRange vum (BoundInclusive ix) (BoundExclusive $ ix + remInChunk) (Bit True)
-          writeSTRef mciCurrentPageNumber $! pageNr + remInChunk
-          res <- yield mci
-          maybe id (:) res <$> overflows (n - remInChunk)
-
--- | Yield a chunk and start a new one if the current chunk is already full.
---
--- TODO(optimisation): yield will eagerly allocate new mutable vectors, but
--- maybe that should be done lazily.
---
--- INVARIANTS: see [construction invariants](#construction-invariants).
-yield :: MCompactIndex s -> ST s (Maybe Chunk)
-yield MCompactIndex{..} = do
-    pageNr <- readSTRef mciCurrentPageNumber
-    if pageNr `mod` mciMaxChunkSize == 0 then do -- The current chunk is full
-      cPrimary <- VU.unsafeFreeze =<< readSTRef mciPrimary
-      (writeSTRef mciPrimary $!) =<< VUM.new mciMaxChunkSize
-      cClashes <- VU.unsafeFreeze =<< readSTRef mciClashes
-      (writeSTRef mciClashes $!) =<< VUM.new mciMaxChunkSize
-      cLargerThanPage <- VU.unsafeFreeze =<< readSTRef mciLargerThanPage
-      (writeSTRef mciLargerThanPage $!) =<< VUM.new mciMaxChunkSize
-      pure $ Just (Chunk{..})
-    else -- the current chunk is not yet full
-      pure Nothing
-
--- | Finalise incremental construction, yielding final chunks.
---
--- This function is unsafe, so do /not/ modify the 'MCompactIndex' after using
--- 'unsafeEnd'.
---
--- INVARIANTS: see [construction invariants](#construction-invariants).
-unsafeEnd :: MCompactIndex s -> ST s (Maybe Chunk, FinalChunk)
-unsafeEnd mci@MCompactIndex{..} = do
-    pageNr <- readSTRef mciCurrentPageNumber
-    let ix = pageNr `mod` mciMaxChunkSize
-
-    -- Only slice out a chunk if there are entries in the chunk
-    mchunk <- if ix == 0 then pure Nothing else do
-      cPrimary        <- VU.unsafeFreeze . VUM.slice 0 ix =<< readSTRef mciPrimary
-      cClashes        <- VU.unsafeFreeze . VUM.slice 0 ix =<< readSTRef mciClashes
-      cLargerThanPage <- VU.unsafeFreeze . VUM.slice 0 ix =<< readSTRef mciLargerThanPage
-      pure $ Just Chunk{..}
-
-    -- We are not guaranteed to have seen all possible range-finder bit
-    -- combinations, so we have to fill in the remainder of the rangerfinder
-    -- vector.
-    fillRangeFinderToEnd mci
-    fcRangeFinder <- VU.unsafeFreeze mciRangeFinder
-    let fcRangeFinderPrecision = mciRangeFinderPrecision
-    fcTieBreaker <- readSTRef mciTieBreaker
-
-    pure (mchunk, FinalChunk {..})
-
--- | Fill the remainder of the range-finder vector.
-fillRangeFinderToEnd :: MCompactIndex s -> ST s ()
-fillRangeFinderToEnd MCompactIndex{..} = do
-    pageNr <- readSTRef mciCurrentPageNumber
-    lastMinRfbits <- readSTRef mciLastMinRfbits
-    let lb = smaybe NoBound (BoundExclusive . fromIntegral) lastMinRfbits
-        ub = NoBound
-        x  = fromIntegral pageNr
-    writeRange mciRangeFinder lb ub x
-    writeSTRef mciLastMinRfbits $! SJust $ 2 ^ mciRangeFinderPrecision
-
-data Chunk = Chunk {
-    cPrimary        :: !(VU.Vector Word32)
-  , cClashes        :: !(VU.Vector Bit)
-  , cLargerThanPage :: !(VU.Vector Bit)
-  }
-  deriving stock (Show, Eq)
-
-data FinalChunk = FinalChunk {
-    fcRangeFinder          :: !(VU.Vector Word32)
-  , fcRangeFinderPrecision :: !Int
-  , fcTieBreaker           :: !(Map SerialisedKey Int)
-  }
-  deriving stock (Show, Eq)
-
 -- | Feed in 'Chunk's in the same order that they were yielded from incremental
--- construction.
+-- construction using 'MCompactIndex'.
 fromChunks :: [Chunk] -> FinalChunk -> CompactIndex
 fromChunks cs FinalChunk{..} = CompactIndex {
       ciRangeFinder          = fcRangeFinder
     , ciRangeFinderPrecision = fcRangeFinderPrecision
     , ciPrimary              = VU.concat $ fmap cPrimary cs
-    , ciClashes              = VU.concat $ fmap cClashes cs
+    , ciClashes              = fcClashes
     , ciTieBreaker           = fcTieBreaker
-    , ciLargerThanPage       = VU.concat $ fmap cLargerThanPage cs
+    , ciLargerThanPage       = fcLargerThanPage
     }
-
-{-------------------------------------------------------------------------------
-  Strict 'Maybe'
--------------------------------------------------------------------------------}
-
-data SMaybe a = SNothing | SJust !a
-  deriving stock Eq
-
-smaybe :: b -> (a -> b) -> SMaybe a -> b
-smaybe snothing sjust = \case
-    SNothing -> snothing
-    SJust x  -> sjust x
 
 {-------------------------------------------------------------------------------
  Vector extras
 -------------------------------------------------------------------------------}
-
-writeRange :: VU.Unbox a => VU.MVector s a -> Bound Int -> Bound Int -> a -> ST s ()
-writeRange v lb ub x = forM_ [lb' .. ub'] $ \j -> VUM.write v j x
-  where
-    lb' = vectorLowerBound lb
-    ub' = mvectorUpperBound v ub
 
 -- | Find the largest element that is smaller or equal to to the given one
 -- within the vector interval @[lb, ub)@, and return its vector index.
@@ -943,12 +661,6 @@ vectorLowerBound :: Bound Int -> Int
 vectorLowerBound = \case
     NoBound          -> 0
     BoundExclusive i -> i + 1
-    BoundInclusive i -> i
-
-mvectorUpperBound :: VGM.MVector v a => v s a -> Bound Int -> Int
-mvectorUpperBound v = \case
-    NoBound          -> VGM.length v - 1
-    BoundExclusive i -> i - 1
     BoundInclusive i -> i
 
 vectorUpperBound :: VG.Vector v a => v a -> Bound Int -> Int
