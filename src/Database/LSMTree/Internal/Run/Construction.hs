@@ -55,6 +55,8 @@ import qualified Data.ByteString.Builder as BB
 import           Data.Foldable (Foldable (..))
 import           Data.Maybe (fromMaybe)
 import           Data.Monoid (Dual (..))
+import           Data.Primitive.PrimVar (PrimVar, modifyPrimVar, newPrimVar,
+                     readPrimVar)
 import           Data.STRef
 import           Data.Word (Word16, Word32, Word64, Word8)
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
@@ -86,6 +88,7 @@ data RunAcc s = RunAcc {
       mbloom               :: !(MBloom s SerialisedKey)
     , mindex               :: !(MCompactIndex s)
     , currentPageRef       :: !(STRef s PageAcc)
+    , entryCount           :: !(PrimVar s Int)
     , rangeFinderPrecision :: !Int
     }
 
@@ -99,6 +102,7 @@ new (NumEntries nentries) npages = do
     let rangeFinderPrecision = Index.suggestRangeFinderPrecision npages
     mindex <- Index.new rangeFinderPrecision 100 -- TODO(optimise): tune chunk size
     currentPageRef <- newSTRef paEmpty
+    entryCount <- newPrimVar 0
     pure RunAcc{..}
 
 -- | Finalise an incremental run construction. Do /not/ use a 'RunAcc' after
@@ -113,12 +117,14 @@ unsafeFinalise ::
           , Maybe Index.Chunk
           , Bloom SerialisedKey
           , CompactIndex
+          , NumEntries
           )
 unsafeFinalise racc@RunAcc {..} = do
     mpage <- yield racc
     (mchunk, index) <- Index.unsafeEnd mindex
-    bloom <- Bloom.freeze mbloom
-    pure (mpage, mchunk, bloom, index)
+    bloom <- Bloom.unsafeFreeze mbloom
+    numEntries <- NumEntries <$> readPrimVar entryCount
+    pure (mpage, mchunk, bloom, index, numEntries)
 
 -- | Add a serialised k\/op pair with an optional blob span. Use only for
 -- entries that are fully in-memory. Otherwise, use 'addChunkedKOp'.
@@ -128,6 +134,7 @@ addFullKOp ::
   -> Entry SerialisedValue BlobSpan
   -> ST s (Maybe (PageAcc, [Index.Chunk]))
 addFullKOp racc@RunAcc{..} k e = do
+    modifyPrimVar entryCount (+ 1)
     Bloom.insert mbloom k
     p <- readSTRef currentPageRef
     case paAddElem rangeFinderPrecision k e p of
@@ -157,6 +164,7 @@ addChunkedKOp ::
   -> ST s (Maybe (PageAcc, [Index.Chunk]), PageAcc, [Index.Chunk])
 addChunkedKOp racc@RunAcc{..} k e nOverflow
   | pageSizeNumBytes (psSingleton k e) == 4096 = do
+      modifyPrimVar entryCount (+ 1)
       mp <- yield racc
       Bloom.insert mbloom k
       cs' <- Index.append (Index.AppendMultiPage k nOverflow) mindex

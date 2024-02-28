@@ -416,7 +416,7 @@ data Chunks = Chunks [Chunk] CompactIndex
 chunksInvariant :: Chunks -> Bool
 chunksInvariant (Chunks chunks CompactIndex {..}) =
        rfprecInvariant (RFPrecision ciRangeFinderPrecision)
-    && ciPrimary == foldMap cPrimary chunks
+    && VU.length ciPrimary == sum (map (VU.length . cPrimary) chunks)
     && VU.length ciClashes == VU.length ciPrimary
     && VU.length ciLargerThanPage == VU.length ciPrimary
     && VU.length ciRangeFinder == 2 ^ ciRangeFinderPrecision + 1

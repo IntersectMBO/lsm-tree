@@ -22,7 +22,7 @@ import qualified System.FS.Sim.Error as FsSim
 import qualified System.FS.Sim.MockFS as FsSim
 import           System.IO.Temp
 import           Test.Tasty (TestTree, testGroup)
-import           Test.Tasty.HUnit (testCase, (@=?))
+import           Test.Tasty.HUnit (testCase, (@=?), (@?))
 import           Test.Tasty.QuickCheck
 
 import           Database.LSMTree.Generators ()
@@ -82,16 +82,18 @@ testSingleInsert sessionRoot key val mblob = do
     _ <- fromWriteBuffer fs (RunFsPaths 42) wb
     -- check all files have been written
     let activeDir = sessionRoot </> "active"
-    bsKops <- BS.readFile (activeDir </> "42.keyops")
+    bsKOps <- BS.readFile (activeDir </> "42.keyops")
     bsBlobs <- BS.readFile (activeDir </> "42.blobs")
     bsFilter <- BS.readFile (activeDir </> "42.filter")
     bsIndex <- BS.readFile (activeDir </> "42.index")
-    mempty @=? bsFilter  -- TODO: empty for now, should be written later
-    mempty @=? bsIndex   -- TODO: empty for now, should be written later
+    not (BS.null bsKOps) @? "k/ops file is empty"
+    null mblob @=? BS.null bsBlobs  -- blob file might be empty
+    not (BS.null bsFilter) @? "filter file is empty"
+    not (BS.null bsIndex) @? "index file is empty"
     -- checksums
     checksums <- CRC.readChecksumsFile fs (FS.mkFsPath ["active", "42.checksums"])
     Map.lookup (CRC.ChecksumsFileName "keyops") checksums
-      @=? Just (CRC.updateCRC32C bsKops CRC.initialCRC32C)
+      @=? Just (CRC.updateCRC32C bsKOps CRC.initialCRC32C)
     Map.lookup (CRC.ChecksumsFileName "blobs") checksums
       @=? Just (CRC.updateCRC32C bsBlobs CRC.initialCRC32C)
     Map.lookup (CRC.ChecksumsFileName "filter") checksums
@@ -99,7 +101,7 @@ testSingleInsert sessionRoot key val mblob = do
     Map.lookup (CRC.ChecksumsFileName "index") checksums
       @=? Just (CRC.updateCRC32C bsIndex CRC.initialCRC32C)
     -- check page
-    let page = rawPageFromByteString bsKops 0
+    let page = rawPageFromByteString bsKOps 0
     1 @=? rawPageNumKeys page
     let SerialisedKey key' = serialiseKey key
     let SerialisedValue val' = serialiseValue val
@@ -124,16 +126,11 @@ testSingleInsert sessionRoot key val mblob = do
 
     -- the value is as expected, including any overflow suffix
     let valPrefix = RB.take prefix val'
-        valSuffix = (RB.fromByteString . BS.take suffix . BS.drop 4096) bsKops
+        valSuffix = (RB.fromByteString . BS.take suffix . BS.drop 4096) bsKOps
     SerialisedValue val' @=? SerialisedValue (valPrefix <> valSuffix)
 
     -- blob sanity checks
-    case mblob of
-      Nothing -> do
-        0 @=? rawPageNumBlobs page
-        mempty @=? bsBlobs
-      Just _ ->
-        1 @=? rawPageNumBlobs page
+    length mblob @=? fromIntegral (rawPageNumBlobs page)
 
 -- | Runs in IO, but using a mock file system.
 --
@@ -146,8 +143,8 @@ prop_WriteAndRead wb = ioProperty $ do
     _ <- fromWriteBuffer fs fsPaths wb
     -- read pages
     bsBlobs <- getFile fs (runBlobPath fsPaths)
-    bsKops <- getFile fs (runKOpsPath fsPaths)
-    let pages = rawPageFromByteString bsKops <$> [0, 4096 .. (BS.length bsKops - 1)]
+    bsKOps <- getFile fs (runKOpsPath fsPaths)
+    let pages = rawPageFromByteString bsKOps <$> [0, 4096 .. (BS.length bsKOps - 1)]
     -- check pages
     return $ label ("Number of pages: " <> showPowersOf10 (length pages)) $ do
       let vals = concatMap (bifoldMap pure mempty . snd) (WB.content wb)
