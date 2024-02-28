@@ -37,7 +37,7 @@ module Database.LSMTree.Internal.Run (
     module FsPaths
     -- * Run
   , RefCount
-  , Run
+  , Run (..)
   , addReference
   , removeReference
   , fromWriteBuffer

@@ -12,6 +12,7 @@ import           Data.Bifunctor (Bifunctor (..))
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Short as SBS
+import           Data.IORef (readIORef)
 import qualified Data.Map.Strict as Map
 import qualified Data.Primitive.ByteArray as BA
 import           System.FilePath
@@ -22,7 +23,7 @@ import qualified System.FS.Sim.Error as FsSim
 import qualified System.FS.Sim.MockFS as FsSim
 import           System.IO.Temp
 import           Test.Tasty (TestTree, testGroup)
-import           Test.Tasty.HUnit (testCase, (@=?), (@?))
+import           Test.Tasty.HUnit (assertEqual, testCase, (@=?), (@?))
 import           Test.Tasty.QuickCheck
 
 import           Database.LSMTree.Generators ()
@@ -38,6 +39,8 @@ import qualified Database.LSMTree.Internal.Serialise.RawBytes as RB
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import           Database.LSMTree.Util (showPowersOf10)
+
+import           Test.Database.LSMTree.Internal.Run.Index.Compact ()
 
 type Key  = ByteString
 type Blob = ByteString
@@ -68,6 +71,8 @@ tests = testGroup "Database.LSMTree.Internal.Run"
               Nothing
       , testProperty "Written pages can be read again" $ \wb ->
             WB.numEntries wb > NumEntries 0 ==> prop_WriteAndRead wb
+      , testProperty "A run can be written and loaded from disk" $ \wb ->
+            WB.numEntries wb > NumEntries 0 ==> prop_WriteAndLoad wb
       ]
     ]
   where
@@ -183,6 +188,32 @@ pagesContainEntries bsBlobs (page : pages) kops
       .&&. pagesContainEntries bsBlobs pages kopsRest
   where
     (kopsHere, kopsRest) = splitAt (fromIntegral (rawPageNumKeys page)) kops
+
+-- | Runs in IO, but using a mock file system.
+--
+-- TODO: Also test file system errors.
+prop_WriteAndLoad :: WriteBuffer Key Val Blob -> Property
+prop_WriteAndLoad wb = ioProperty $ do
+    fs <- FsSim.mkSimErrorHasFS' FsSim.empty FsSim.emptyErrors
+    -- flush write buffer
+    let fsPaths = RunFsPaths 1337
+    written <- fromWriteBuffer fs fsPaths wb
+    loaded <- openFromDisk fs fsPaths
+
+    (1 @=?) =<< readIORef (lsmRunRefCount written)
+    (1 @=?) =<< readIORef (lsmRunRefCount loaded)
+
+    lsmRunNumEntries written @=? lsmRunNumEntries loaded
+    lsmRunFilter written @=? lsmRunFilter loaded
+    lsmRunIndex written @=? lsmRunIndex loaded
+
+    assertEqual "k/ops file"
+      (FS.handlePath (lsmRunKOpsFile written))
+      (FS.handlePath (lsmRunKOpsFile loaded))
+    assertEqual "blob file"
+      (FS.handlePath (lsmRunBlobFile written))
+      (FS.handlePath (lsmRunBlobFile loaded))
+
 
 rawPageFromByteString :: ByteString -> Int -> RawPage
 rawPageFromByteString bs off =
