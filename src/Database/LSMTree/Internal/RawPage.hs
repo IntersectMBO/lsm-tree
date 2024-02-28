@@ -22,13 +22,14 @@ module Database.LSMTree.Internal.RawPage (
 
 import           Control.DeepSeq (NFData (rnf))
 import           Control.Exception (assert)
-import           Data.Bits (Bits, complement, popCount, unsafeShiftL,
-                     unsafeShiftR, (.&.))
+import           Data.Bits (complement, popCount, unsafeShiftL, unsafeShiftR,
+                     (.&.))
 import           Data.Primitive.ByteArray (ByteArray (..), indexByteArray,
                      sizeofByteArray)
 import qualified Data.Vector as V
 import qualified Data.Vector.Primitive as P
 import           Data.Word (Word16, Word32, Word64)
+import           Database.LSMTree.Internal.BitMath
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Entry (Entry (..))
 import           Database.LSMTree.Internal.Serialise (SerialisedKey (..),
@@ -200,22 +201,19 @@ rawPageValueOffsets1 page@(RawPage off ba) =
 
 rawPageHasBlobSpanAt :: RawPage -> Int -> Word64
 rawPageHasBlobSpanAt _page@(RawPage off ba) i = do
-    let j = unsafeShiftR i 6 -- `div` 64
-    let k = i .&. 63         -- `mod` 64
+    let j = div64 i
+    let k = mod64 i
     let word = indexByteArray ba (div4 off + 1 + j)
     unsafeShiftR word k .&. 1
 
 rawPageOpAt :: RawPage -> Int -> Word64
 rawPageOpAt page@(RawPage off ba) i = do
-    let j = unsafeShiftR i 5 -- `div` 32
-    let k = i .&. 31         -- `mod` 32
-    let word = indexByteArray ba (div4 off + 1 + roundUpTo64 (fromIntegral dirNumKeys) + j)
+    let j = div32 i
+    let k = mod32 i
+    let word = indexByteArray ba (div4 off + 1 + ceilDiv64 (fromIntegral dirNumKeys) + j)
     unsafeShiftR word (mul2 k) .&. 3
   where
     !dirNumKeys = rawPageNumKeys page
-
-roundUpTo64 :: Int -> Int
-roundUpTo64 i = unsafeShiftR (i + 63) 6
 
 rawPageKeys :: RawPage -> V.Vector SerialisedKey
 rawPageKeys page@(RawPage off ba) = do
@@ -288,7 +286,7 @@ rawPageBlobSpanIndex page@(RawPage off ba) i = BlobSpan
     !dirNumBlobs = rawPageNumBlobs page
 
     -- offset to start of blobspan arr
-    off1 = div4 off + 1 + roundUpTo64 (fromIntegral dirNumKeys) + roundUpTo64 (fromIntegral (mul2 dirNumKeys))
+    off1 = div4 off + 1 + ceilDiv64 (fromIntegral dirNumKeys) + ceilDiv64 (fromIntegral (mul2 dirNumKeys))
     off2 = mul2 (off1 + fromIntegral dirNumBlobs)
 
 rawPageCalculateBlobIndex
@@ -302,16 +300,3 @@ rawPageCalculateBlobIndex (RawPage off ba) i = do
     let s = foldl' (+) 0 [ popCount (indexByteArray ba (div4 off + 1 + jj) :: Word64) | jj <- [0 .. j-1 ] ]
     let word = indexByteArray ba (div4 off + 1 + j) :: Word64
     s + popCount (word .&. complement (unsafeShiftL 0xffffffffffffffff k))
-
--------------------------------------------------------------------------------
--- Utils
--------------------------------------------------------------------------------
-
-div2 :: Bits a => a -> a
-div2 x = unsafeShiftR x 1
-
-mul2 :: Bits a => a -> a
-mul2 x = unsafeShiftL x 1
-
-div4 :: Bits a => a -> a
-div4 x = unsafeShiftR x 2
