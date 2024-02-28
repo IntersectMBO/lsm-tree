@@ -129,7 +129,7 @@ addFullKOp fs mrun@MRun {..} key op = do
 unsafeFinalise ::
      HasFS IO h
   -> MRun (FS.Handle h)
-  -> IO (RefCount, RunFsPaths, Bloom SerialisedKey, CompactIndex)
+  -> IO (RefCount, RunFsPaths, Bloom SerialisedKey, CompactIndex, NumEntries)
 unsafeFinalise fs mrun@MRun {..} = do
     -- write final bits
     (mAcc, mChunk, runFilter, runIndex, numEntries) <-
@@ -144,7 +144,7 @@ unsafeFinalise fs mrun@MRun {..} = do
     -- close all handles and write their checksums
     checksums <- toChecksumsFile <$> traverse (closeHandle fs) lsmMRunHandles
     CRC.writeChecksumsFile fs (runChecksumsPath lsmMRunFsPaths) checksums
-    return (lsmMRunRefCount, lsmMRunFsPaths, runFilter, runIndex)
+    return (lsmMRunRefCount, lsmMRunFsPaths, runFilter, runIndex, numEntries)
 
 -- | Increase the reference count by one.
 addMRunReference :: HasFS IO h -> MRun (FS.Handle h) -> IO ()

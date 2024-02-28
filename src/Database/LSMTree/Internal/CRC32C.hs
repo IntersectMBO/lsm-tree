@@ -18,6 +18,7 @@ module Database.LSMTree.Internal.CRC32C (
 
   -- * I\/O with checksum calculation
   hGetSomeCRC32C,
+  hGetExactlyCRC32C,
   hPutSomeCRC32C,
   hPutAllCRC32C,
   hPutAllChunksCRC32C,
@@ -66,12 +67,33 @@ updateCRC32C bs (CRC32C crc) = CRC32C (CRC.crc32c_update crc bs)
 
 hGetSomeCRC32C :: Monad m
                => HasFS m h
-               -> Handle h -> Word64
+               -> Handle h
+               -> Word64
                -> CRC32C -> m (BS.ByteString, CRC32C)
 hGetSomeCRC32C fs h n crc = do
     bs <- hGetSome fs h n
     let !crc' = updateCRC32C bs crc
     return (bs, crc')
+
+
+-- | This function ensures that exactly the requested number of bytes is read.
+-- If the file is too short, an 'FsError' of type 'FsReachedEOF' is thrown.
+--
+-- It attempts to read everything into a single strict chunk, which should
+-- almost always succeed. If it doesn't, multiple chunks are produced.
+--
+-- TODO: To reliably return a strict bytestring without additional copying,
+-- @fs-api@ needs to support directly reading into a buffer, which is currently
+-- work in progress: <https://github.com/input-output-hk/fs-sim/pull/46>
+hGetExactlyCRC32C :: MonadThrow m
+               => HasFS m h
+               -> Handle h
+               -> Word64
+               -> CRC32C -> m (BSL.ByteString, CRC32C)
+hGetExactlyCRC32C fs h n crc = do
+    lbs <- hGetExactly fs h n
+    let !crc' = BSL.foldlChunks (flip updateCRC32C) crc lbs
+    return (lbs, crc')
 
 
 hPutSomeCRC32C :: Monad m
