@@ -33,7 +33,7 @@ import qualified Database.LSMTree.Internal.Run.Construction as Cons
 import           Database.LSMTree.Internal.Run.FsPaths
 import           Database.LSMTree.Internal.Run.Index.Compact (CompactIndex,
                      NumPages)
-import qualified Database.LSMTree.Internal.Run.Index.Compact.Construction as Index
+import qualified Database.LSMTree.Internal.Run.Index.Compact as Index
 import           Database.LSMTree.Internal.Serialise
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
@@ -128,14 +128,14 @@ unsafeFinalise ::
   -> IO (RefCount, RunFsPaths, Bloom SerialisedKey, CompactIndex)
 unsafeFinalise fs mrun@MRun {..} = do
     -- write final bits
-    (mAcc, mChunk, finalChunk, runFilter, runIndex) <-
+    (mAcc, mChunk, runFilter, runIndex) <-
       ST.stToIO (Cons.unsafeFinalise lsmMRunAcc)
     for_ mAcc $ \(pageAcc, chunks) -> do
       writePageAcc fs mrun pageAcc
       writeIndexChunks fs mrun chunks
     for_ mChunk $ \chunk ->
       writeIndexChunks fs mrun [chunk]
-    writeIndexFinalChunk fs mrun finalChunk
+    writeIndexFinal fs mrun runIndex
     writeFilter fs mrun runFilter
     -- close all handles and write their checksums
     checksums <- toChecksumsFile <$> traverse (closeHandle fs) lsmMRunHandles
@@ -188,12 +188,12 @@ writeFilter :: HasFS IO h -> MRun (FS.Handle h) -> Bloom SerialisedKey -> IO ()
 writeFilter _ _ _ = return ()
 
 -- TODO: Fill in once serialisation of the index is implemented.
-writeIndexFinalChunk ::
+writeIndexFinal ::
      HasFS IO h
   -> MRun (FS.Handle h)
-  -> Index.FinalChunk
+  -> CompactIndex
   -> IO ()
-writeIndexFinalChunk _ _ _ = return ()
+writeIndexFinal _ _ _ = return ()
 
 -- TODO: Fill in once serialisation of the index is implemented.
 writeIndexChunks :: HasFS IO h -> MRun (FS.Handle h) -> [Index.Chunk] -> IO ()

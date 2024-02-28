@@ -97,12 +97,12 @@ tests = testGroup "Test.Database.LSMTree.Internal.Run.Index.Compact" [
           let k1 = SerialisedKey' (VP.replicate 16 0x00)
           let k2 = SerialisedKey' (VP.replicate 16 0x11)
           let k3 = SerialisedKey' (VP.replicate 15 0x11 <> VP.replicate 1 0x12)
-          let (chunks, finalChunk) = runST $ do
+          let (chunks, index) = runST $ do
                 mci <- Cons.new 0 16
                 ch1 <- flip Cons.append mci $ AppendSinglePage k1 k2
                 ch2 <- flip Cons.append mci $ AppendSinglePage k3 k3
-                (mCh3, fCh) <- unsafeEnd mci
-                return (ch1 <> ch2 <> toList mCh3, fCh)
+                (mCh3, idx) <- unsafeEnd mci
+                return (ch1 <> ch2 <> toList mCh3, idx)
 
           let expectedVersion :: [Word8]
               expectedVersion = word32toBytesLE 0x0000_0001
@@ -135,7 +135,7 @@ tests = testGroup "Test.Database.LSMTree.Internal.Run.Index.Compact" [
 
           let header = buildBytes headerBuilder
           let primary = buildBytes (foldMap chunkBuilder chunks)
-          let rest = buildBytes (finalChunkBuilder (NumEntries 7) finalChunk)
+          let rest = buildBytes (finalBuilder (NumEntries 7) index)
 
           let comparison msg xs ys = unlines $
                   (msg <> ":")
@@ -206,7 +206,7 @@ prop_searchMinMaxKeysAfterConstruction csize ps = eqMapProp real model
 
     real = foldMap' realSearch (getPages ps)
 
-    ci = mkCompactIndex (coerce csize) ps
+    ci = fromPageSummaries (coerce csize) ps
 
     realSearch :: LogicalPageSummary k -> Map k SearchResult
     realSearch = \case
@@ -226,7 +226,7 @@ prop_differentChunkSizesSameResults ::
   -> LogicalPageSummaries k
   -> Property
 prop_differentChunkSizesSameResults csize1 csize2 ps =
-    mkCompactIndex csize1 ps === mkCompactIndex csize2 ps
+    fromPageSummaries csize1 ps === fromPageSummaries csize2 ps
 
 -- | Constructing an index using only 'appendSingle' is equivalent to using a
 -- mix of 'appendSingle' and 'appendMulti'.
@@ -251,24 +251,22 @@ prop_singlesEquivMulti csize1 csize2 ps = ci1 === ci2
 -- | Distribution of generated test data
 prop_distribution :: SerialiseKey k => LogicalPageSummaries k -> Property
 prop_distribution ps =
-    labelPages ps $ labelIndex (mkCompactIndex 100 ps) $ property True
+    labelPages ps $ labelIndex (fromPageSummaries 100 ps) $ property True
 
 -- Generate and serialise chunks directly.
 -- This gives more direct shrinking of individual parts and has fewer invariants
 -- (covering a larger space).
 prop_roundtrip_chunks :: Chunks -> NumEntries -> Property
-prop_roundtrip_chunks (Chunks chunks finalChunk) numEntries =
+prop_roundtrip_chunks (Chunks chunks index) numEntries =
     counterexample (show (SBS.length sbs) <> " bytes") $
     counterexample ("header:\n" <> showBS bsVersion) $
     counterexample ("primary:\n" <> showBS bsPrimary) $
     counterexample ("rest:\n" <> showBS bsRest) $
       Right (numEntries, index) === fromSBS sbs
   where
-    index = fromChunks chunks finalChunk
-
     bsVersion = BB.toLazyByteString $ headerBuilder
     bsPrimary = BB.toLazyByteString $ foldMap chunkBuilder chunks
-    bsRest = BB.toLazyByteString $ finalChunkBuilder numEntries finalChunk
+    bsRest = BB.toLazyByteString $ finalBuilder numEntries index
     sbs = SBS.toShort (LBS.toStrict (bsVersion <> bsPrimary <> bsRest))
 
     showBS = unlines . showBytes . LBS.unpack
@@ -282,7 +280,7 @@ prop_roundtrip csize ps numEntries =
     counterexample ("rest:\n" <> showBS bsRest) $
       Right (numEntries, index) === fromSBS sbs
   where
-    index = mkCompactIndex csize ps
+    index = fromPageSummaries csize ps
 
     (bsVersion, bsPrimary, bsRest) = writeCompactIndex numEntries csize ps
     sbs = SBS.toShort (LBS.toStrict (bsVersion <> bsPrimary <> bsRest))
@@ -296,24 +294,39 @@ prop_roundtrip csize ps numEntries =
 (**.) :: (a -> b -> d -> e) -> (c -> d) -> a -> b -> c -> e
 (**.) f g x1 x2 x3 = f x1 x2 (g x3)
 
-mkCompactIndex :: SerialiseKey k => ChunkSize -> LogicalPageSummaries k -> CompactIndex
-mkCompactIndex (ChunkSize csize) ps =
-    fromList rfprec csize (toAppends ps)
-  where
-    RFPrecision rfprec = getRangeFinderPrecision ps
-
 writeCompactIndex :: SerialiseKey k => NumEntries -> ChunkSize -> LogicalPageSummaries k -> (LBS.ByteString, LBS.ByteString, LBS.ByteString)
 writeCompactIndex numEntries (ChunkSize csize) ps = runST $ do
     let RFPrecision rfprec = getRangeFinderPrecision ps
     mci <- Cons.new rfprec csize
     cs <- mapM (`append` mci) (toAppends ps)
-    (c, fc) <- unsafeEnd mci
+    (c, index) <- unsafeEnd mci
     return
       ( BB.toLazyByteString headerBuilder
       , BB.toLazyByteString $ foldMap (foldMap chunkBuilder) cs
                            <> foldMap chunkBuilder c
-      , BB.toLazyByteString $ finalChunkBuilder numEntries fc
+      , BB.toLazyByteString $ finalBuilder numEntries index
       )
+
+fromPageSummaries :: SerialiseKey k => ChunkSize -> LogicalPageSummaries k -> CompactIndex
+fromPageSummaries (ChunkSize csize) ps =
+    fromList rfprec csize (toAppends ps)
+  where
+    RFPrecision rfprec = getRangeFinderPrecision ps
+
+fromList :: Int -> Int -> [Append] -> CompactIndex
+fromList rfprec maxcsize apps = runST $ do
+    mci <- new rfprec maxcsize
+    mapM_ (`append` mci) apps
+    (_, index) <- unsafeEnd mci
+    pure index
+
+-- | One-shot construction using only 'appendSingle'.
+fromListSingles :: Int -> Int -> [(SerialisedKey, SerialisedKey)] -> CompactIndex
+fromListSingles rfprec maxcsize apps = runST $ do
+    mci <- new rfprec maxcsize
+    mapM_ (`appendSingle` mci) apps
+    (_, index) <- unsafeEnd mci
+    pure index
 
 labelIndex :: CompactIndex -> (Property -> Property)
 labelIndex ci =
@@ -391,55 +404,57 @@ buildBytes = LBS.unpack . BB.toLazyByteString
 word32toBytesLE :: Word32 -> [Word8]
 word32toBytesLE = take 4 . map fromIntegral . iterate (`div` 256)
 
-data Chunks = Chunks [Chunk] FinalChunk
+data Chunks = Chunks [Chunk] CompactIndex
   deriving (Show)
 
--- | The only invariants we make sure to uphold is that the length of the
--- vectors match 'fcRangeFinderPrecision' and 'fcNumPages' respectively,
--- as this is required for correct deserialisation.
--- These invariants do not guarantee that a a 'CompactIndex' built from the
--- chunks is valid.
+-- | The concatenated chunks must correspond to the primary array of the index.
+-- Apart from that, the only invariant we make sure to uphold is that the length
+-- of the vectors match each other (or 'fcRangeFinderPrecision'), as this is
+-- required for correct deserialisation.
+-- These invariants do not guarantee that the 'CompactIndex' is valid in other
+-- ways (e.g. can successfully be queried).
 chunksInvariant :: Chunks -> Bool
-chunksInvariant (Chunks chunks FinalChunk {..}) =
-       rfprecInvariant (RFPrecision fcRangeFinderPrecision)
-    && sum (map (VU.length . cPrimary) chunks) == fcNumPages
-    && VU.length fcClashes == fcNumPages
-    && VU.length fcLargerThanPage == fcNumPages
-    && VU.length fcRangeFinder == 2 ^ fcRangeFinderPrecision + 1
+chunksInvariant (Chunks chunks CompactIndex {..}) =
+       rfprecInvariant (RFPrecision ciRangeFinderPrecision)
+    && ciPrimary == foldMap cPrimary chunks
+    && VU.length ciClashes == VU.length ciPrimary
+    && VU.length ciLargerThanPage == VU.length ciPrimary
+    && VU.length ciRangeFinder == 2 ^ ciRangeFinderPrecision + 1
 
 instance Arbitrary Chunks where
   arbitrary = do
     chunks <- map VU.fromList <$> arbitrary
-    let fcNumPages = sum (map VU.length chunks)
+    let ciPrimary = mconcat chunks
+    let numPages = VU.length ciPrimary
 
-    RFPrecision fcRangeFinderPrecision <- arbitrary
-    fcRangeFinder <- VU.fromList
-      <$> vector (2 ^ fcRangeFinderPrecision + 1)
-    fcClashes <- VU.fromList . map Bit <$> vector fcNumPages
-    fcLargerThanPage <- VU.fromList . map Bit <$> vector fcNumPages
-    fcTieBreaker <- arbitrary
-    return (Chunks (map Chunk chunks) FinalChunk {..})
+    RFPrecision ciRangeFinderPrecision <- arbitrary
+    ciRangeFinder <- VU.fromList <$> vector (2 ^ ciRangeFinderPrecision + 1)
+    ciClashes <- VU.fromList . map Bit <$> vector numPages
+    ciLargerThanPage <- VU.fromList . map Bit <$> vector numPages
+    ciTieBreaker <- arbitrary
+    return (Chunks (map Chunk chunks) CompactIndex {..})
 
-  shrink (Chunks chunks fc) =
+  shrink (Chunks chunks index) =
     -- shrink range finder bits
-    [ Chunks chunks fc
-        { fcRangeFinder = VU.take (2 ^ rfprec' + 1) (fcRangeFinder fc)
-        , fcRangeFinderPrecision = rfprec'
+    [ Chunks chunks index
+        { ciRangeFinder = VU.take (2 ^ rfprec' + 1) (ciRangeFinder index)
+        , ciRangeFinderPrecision = rfprec'
         }
-    | RFPrecision rfprec' <- shrink (RFPrecision (fcRangeFinderPrecision fc))
+    | RFPrecision rfprec' <- shrink (RFPrecision (ciRangeFinderPrecision index))
     ] ++
     -- shrink number of pages
-    [ Chunks (map Chunk chunks') fc
-        { fcClashes = VU.slice 0 numPages' (fcClashes fc)
-        , fcLargerThanPage = VU.slice 0 numPages' (fcLargerThanPage fc)
-        , fcNumPages = numPages'
+    [ Chunks (map Chunk chunks') index
+        { ciPrimary = primary'
+        , ciClashes = VU.slice 0 numPages' (ciClashes index)
+        , ciLargerThanPage = VU.slice 0 numPages' (ciLargerThanPage index)
         }
     | chunks' <- shrink (map cPrimary chunks)
-    , let numPages' = sum (map VU.length chunks')
+    , let primary' = mconcat chunks'
+    , let numPages' = VU.length primary'
     ] ++
     -- shrink tie breaker
-    [ Chunks chunks fc
-        { fcTieBreaker = tieBreaker'
+    [ Chunks chunks index
+        { ciTieBreaker = tieBreaker'
         }
-    | tieBreaker' <- shrink (fcTieBreaker fc)
+    | tieBreaker' <- shrink (ciTieBreaker index)
     ]

@@ -49,7 +49,6 @@ module Database.LSMTree.Internal.Run.Construction (
   ) where
 
 import           Control.Exception (assert)
-import           Control.Monad (forM_, unless)
 import           Control.Monad.ST.Strict
 import           Data.Bits (Bits (..))
 import qualified Data.ByteString.Builder as BB
@@ -86,7 +85,6 @@ import           Database.LSMTree.Internal.Serialise (SerialisedKey,
 data RunAcc s = RunAcc {
       mbloom               :: !(MBloom s SerialisedKey)
     , mindex               :: !(MCompactIndex s)
-    , indexChunksRef       :: !(STRef s [[Index.Chunk]])
     , currentPageRef       :: !(STRef s PageAcc)
     , rangeFinderPrecision :: !Int
     }
@@ -100,7 +98,6 @@ new (NumEntries nentries) npages = do
     mbloom <- Bloom.newEasy 0.1 nentries -- TODO(optimise): tune bloom filter
     let rangeFinderPrecision = Index.suggestRangeFinderPrecision npages
     mindex <- Index.new rangeFinderPrecision 100 -- TODO(optimise): tune chunk size
-    indexChunksRef <- newSTRef []
     currentPageRef <- newSTRef paEmpty
     pure RunAcc{..}
 
@@ -114,18 +111,14 @@ unsafeFinalise ::
      RunAcc s
   -> ST s ( Maybe (PageAcc, [Index.Chunk])
           , Maybe Index.Chunk
-          , Index.FinalChunk
           , Bloom SerialisedKey
           , CompactIndex
           )
 unsafeFinalise racc@RunAcc {..} = do
     mpage <- yield racc
-    (mchunk, fchunk) <- Index.unsafeEnd mindex
-    storeChunk racc mchunk
+    (mchunk, index) <- Index.unsafeEnd mindex
     bloom <- Bloom.freeze mbloom
-    allChunks <- getAllChunks racc
-    let index = Index.fromChunks allChunks fchunk
-    pure (mpage, mchunk, fchunk, bloom, index)
+    pure (mpage, mchunk, bloom, index)
 
 -- | Add a serialised k\/op pair with an optional blob span. Use only for
 -- entries that are fully in-memory. Otherwise, use 'addChunkedKOp'.
@@ -167,7 +160,6 @@ addChunkedKOp racc@RunAcc{..} k e nOverflow
       mp <- yield racc
       Bloom.insert mbloom k
       cs' <- Index.append (Index.AppendMultiPage k nOverflow) mindex
-      storeChunks racc cs'
       let p' = paSingleton k e
       pure (mp, p', cs')
   | otherwise = error "addMultiPage: expected a page of 4096 bytes"
@@ -175,31 +167,14 @@ addChunkedKOp racc@RunAcc{..} k e nOverflow
 -- | Yield the current page if it is non-empty. New chunks are recorded in the
 -- mutable run, and the current page is set to empty.
 yield :: RunAcc s -> ST s (Maybe (PageAcc, [Index.Chunk]))
-yield racc@RunAcc{..} = do
+yield RunAcc{..} = do
     p <- readSTRef currentPageRef
     if paIsEmpty p then
       pure Nothing
     else do
       cs <- Index.append (unsafeMkAppend p) mindex
-      storeChunks racc cs
       writeSTRef currentPageRef $! paEmpty
       pure $ Just (p, cs)
-
-{-# INLINE storeChunk #-}
-storeChunk :: RunAcc s -> Maybe Index.Chunk -> ST s ()
-storeChunk RunAcc{..} mc = forM_ mc $ \c ->
-    modifySTRef indexChunksRef $ \css -> [c] : css
-
-{-# INLINE storeChunks #-}
-storeChunks :: RunAcc s -> [Index.Chunk] -> ST s ()
-storeChunks RunAcc{..} cs = unless (null cs) $
-    modifySTRef indexChunksRef $ \css -> cs : css
-
--- | Get all currently stored chunks, from oldest to newest
-getAllChunks :: RunAcc s -> ST s [Index.Chunk]
-getAllChunks RunAcc{..} = do
-    chunkss <- readSTRef indexChunksRef
-    pure $ concat (reverse chunkss)
 
 {-------------------------------------------------------------------------------
   Page builder

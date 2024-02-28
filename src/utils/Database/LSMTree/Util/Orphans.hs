@@ -19,9 +19,10 @@ import qualified Data.Primitive as P
 import qualified Data.Vector.Primitive as PV
 import           Data.WideWord.Word256 (Word256 (..))
 import           Data.Word (Word64, byteSwap64)
-import           Database.LSMTree.Internal.Run.Index.Compact (Append (..),
-                     CompactIndex (..), PageNo (..), PageSpan (..),
-                     SearchResult (..))
+import           Database.LSMTree.Internal.Run.Index.Compact (CompactIndex (..),
+                     PageNo (..), PageSpan (..), SearchResult (..))
+import           Database.LSMTree.Internal.Run.Index.Compact.Construction
+                     (Append (..))
 import           Database.LSMTree.Internal.Serialise (SerialisedBlob (..),
                      SerialisedKey (..), SerialisedValue (..))
 import           Database.LSMTree.Internal.Serialise.Class

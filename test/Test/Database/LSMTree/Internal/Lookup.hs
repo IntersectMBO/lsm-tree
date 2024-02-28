@@ -146,7 +146,7 @@ mkTestRun dat = (rawPages, b, cix)
       racc <- Run.new nentries npages
       let kops = Map.toList dat
       mps <- traverse (uncurry (addFullKOp racc)) kops
-      (mp, _ , _, bb, cixx) <- unsafeFinalise racc
+      (mp, _ , bb, cixx) <- unsafeFinalise racc
       pure (mapMaybe (fmap fst) (mps ++ [mp]), bb, cixx)
 
     -- create a mapping of page numbers to raw pages, which we can use to do

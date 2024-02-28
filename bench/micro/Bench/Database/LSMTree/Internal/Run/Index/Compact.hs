@@ -6,13 +6,16 @@ module Bench.Database.LSMTree.Internal.Run.Index.Compact (
     benchmarks
     -- * Benchmarked functions
   , searches
+  , constructCompactIndex
   ) where
 
 import           Control.DeepSeq (deepseq)
+import           Control.Monad.ST (runST)
 import           Criterion.Main
 import           Data.Foldable (Foldable (..))
 import           Database.LSMTree.Generators
 import           Database.LSMTree.Internal.Run.Index.Compact
+import           Database.LSMTree.Internal.Run.Index.Compact.Construction
 import           Database.LSMTree.Internal.Serialise (SerialisedKey,
                      serialiseKey)
 import           System.Random
@@ -71,6 +74,8 @@ constructCompactIndex ::
      ChunkSize
   -> (RFPrecision, [Append]) -- ^ Pages to add in succession
   -> CompactIndex
-constructCompactIndex (ChunkSize csize) (RFPrecision rfprec, ps) =
-    -- under the hood, 'fromList' uses the incremental construction interface
-    fromList rfprec csize ps
+constructCompactIndex (ChunkSize csize) (RFPrecision rfprec, apps) = runST $ do
+    mci <- new rfprec csize
+    mapM_ (`append` mci) apps
+    (_, index) <- unsafeEnd mci
+    pure index

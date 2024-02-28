@@ -3,21 +3,29 @@
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
+
+{- |
+  Incremental construction of a compact index yields chunks of the primary array
+  that can be serialised incrementally.
+
+  Incremental construction is an 'ST' computation that can be started using
+  'new', returning an 'MCompactIndex' structure that accumulates internal state.
+  'append'ing new pages to the 'MCompactIndex' /might/ yield 'Chunk's.
+  Incremental construction can be finalised with 'unsafeEnd', which yields both
+  a 'Chunk' (possibly) and the `CompactIndex'.
+-}
 module Database.LSMTree.Internal.Run.Index.Compact.Construction (
-    -- $incremental
-    -- $construction
-    PageNo (..)
-  , MCompactIndex
+    -- * Construction
+    -- $construction-invariants
+    MCompactIndex
+  , PageNo (..)
   , new
   , Append (..)
+  , Chunk (..)
   , append
-  , unsafeEnd
   , appendSingle
   , appendMulti
-    -- ** Chunks
-  , Chunk (..)
-  , FinalChunk (..)
-  , NumPages
+  , unsafeEnd
   ) where
 
 import           Control.Monad (forM_, when)
@@ -34,6 +42,7 @@ import qualified Data.Vector.Generic.Mutable as VGM
 import qualified Data.Vector.Unboxed as VU
 import qualified Data.Vector.Unboxed.Mutable as VUM
 import           Data.Word
+import           Database.LSMTree.Internal.Run.Index.Compact
 import           Database.LSMTree.Internal.Serialise
 
 {-------------------------------------------------------------------------------
@@ -52,24 +61,6 @@ import           Database.LSMTree.Internal.Serialise
     all keys within a page must match.
 -}
 
-{- $incremental #incremental#
-
-  Incremental construction of a compact index yields chunks incrementally. These
-  chunks can be converted to a 'CompactIndex' once incremental construction is
-  finalised.
-
-  Incremental construction is an 'ST' computation that can be started using
-  'new', returning an 'MCompactIndex' structure that accumulates internal state.
-  'append'ing new pages to the 'MCompactIndex' /might/ yield 'Chunk's.
-  Incremental construction can be finalised with 'unsafeEnd', which yields both
-  a 'Chunk' (possibly) and 'FinalChunk'. Use 'fromChunks' on the 'Chunk's and
-  the 'FinalChunk' to construct a 'CompactIndex'.
--}
-
--- | A 0-based number identifying a disk page.
-newtype PageNo = PageNo { unPageNo :: Int }
-  deriving stock (Show, Eq, Ord)
-
 -- | A mutable version of 'CompactIndex'. See [incremental
 -- construction](#incremental).
 data MCompactIndex s = MCompactIndex {
@@ -77,8 +68,8 @@ data MCompactIndex s = MCompactIndex {
     -- | Accumulates the range finder bits 'ciRangeFinder'.
     mciRangeFinder          :: !(VU.MVector s Word32)
   , mciRangeFinderPrecision :: !Int
-    -- | Accumulates a chunk of 'ciPrimary'.
-  , mciPrimary              :: !(STRef s (VU.MVector s Word32))
+    -- | Accumulates chunks of 'ciPrimary'.
+  , mciPrimary              :: !(STRef s (NonEmpty (VU.MVector s Word32)))
     -- | Accumulates chunks of 'ciClashes'.
   , mciClashes              :: !(STRef s (NonEmpty (VU.MVector s Bit)))
     -- | Accumulates the 'ciTieBreaker'.
@@ -119,7 +110,7 @@ new rfprec maxcsize = MCompactIndex
     -- Core index structure
     <$> VUM.new (2 ^ rfprec + 1)
     <*> pure rfprec
-    <*> (newSTRef =<< VUM.new maxcsize)
+    <*> (newSTRef . pure =<< VUM.new maxcsize)
     <*> (newSTRef . pure =<< VUM.new maxcsize)
     <*> newSTRef Map.empty
     <*> (newSTRef . pure =<< VUM.new maxcsize)
@@ -187,7 +178,7 @@ appendSingle (minKey, maxKey) mci@MCompactIndex{..} = do
         -- | Set value in primary vector
         writePrimary :: ST s ()
         writePrimary =
-            readSTRef mciPrimary >>= \vum -> VUM.write vum ix minPrimbits
+            readSTRef mciPrimary >>= \cs -> VUM.write (NE.head cs) ix minPrimbits
 
         -- | Set value in clash vector, tie-breaker map and larger-than-page
         -- vector
@@ -229,8 +220,8 @@ appendMulti (k, n0) mci@MCompactIndex{..} =
           pageNo <- readSTRef mciCurrentPageNumber
           let ix = pageNo `mod` mciMaxChunkSize -- will be 0 in recursive calls
               remInChunk = min n (mciMaxChunkSize - ix)
-          readSTRef mciPrimary >>= \vum ->
-            writeRange vum (BoundInclusive ix) (BoundExclusive $ ix + remInChunk) minPrimbits
+          readSTRef mciPrimary >>= \cs ->
+            writeRange (NE.head cs) (BoundInclusive ix) (BoundExclusive $ ix + remInChunk) minPrimbits
           readSTRef mciClashes >>= \cs ->
             writeRange (NE.head cs) (BoundInclusive ix) (BoundExclusive $ ix + remInChunk) (Bit True)
           readSTRef mciLargerThanPage >>= \cs ->
@@ -249,8 +240,8 @@ yield :: MCompactIndex s -> ST s (Maybe Chunk)
 yield MCompactIndex{..} = do
     pageNo <- readSTRef mciCurrentPageNumber
     if pageNo `mod` mciMaxChunkSize == 0 then do -- The current chunk is full
-      cPrimary <- VU.unsafeFreeze =<< readSTRef mciPrimary
-      (writeSTRef mciPrimary $!) =<< VUM.new mciMaxChunkSize
+      cPrimary <- VU.unsafeFreeze . NE.head =<< readSTRef mciPrimary
+      modifySTRef' mciPrimary . NE.cons =<< VUM.new mciMaxChunkSize
       modifySTRef' mciClashes . NE.cons =<< VUM.new mciMaxChunkSize
       modifySTRef' mciLargerThanPage . NE.cons =<< VUM.new mciMaxChunkSize
       pure $ Just (Chunk cPrimary)
@@ -263,31 +254,36 @@ yield MCompactIndex{..} = do
 -- 'unsafeEnd'.
 --
 -- INVARIANTS: see [construction invariants](#construction-invariants).
-unsafeEnd :: MCompactIndex s -> ST s (Maybe Chunk, FinalChunk)
+unsafeEnd :: MCompactIndex s -> ST s (Maybe Chunk, CompactIndex)
 unsafeEnd mci@MCompactIndex{..} = do
     pageNo <- readSTRef mciCurrentPageNumber
     let ix = pageNo `mod` mciMaxChunkSize
 
+    chunksPrimary <-
+      traverse VU.unsafeFreeze . sliceCurrent ix =<< readSTRef mciPrimary
+    chunksClashes <-
+      traverse VU.unsafeFreeze . sliceCurrent ix =<< readSTRef mciClashes
+    chunksLargerThanPage <-
+      traverse VU.unsafeFreeze . sliceCurrent ix =<< readSTRef mciLargerThanPage
+
     -- Only slice out a chunk if there are entries in the chunk
-    mchunk <- if ix == 0 then pure Nothing else do
-      Just . Chunk <$> (VU.unsafeFreeze . VUM.slice 0 ix =<< readSTRef mciPrimary)
+    let mchunk = if ix == 0
+          then Nothing
+          else Just (Chunk (head chunksPrimary))
 
     -- We are not guaranteed to have seen all possible range-finder bit
     -- combinations, so we have to fill in the remainder of the rangerfinder
     -- vector.
     fillRangeFinderToEnd mci
+    ciRangeFinder <- VU.unsafeFreeze mciRangeFinder
 
-    fcRangeFinder <- VU.unsafeFreeze mciRangeFinder
-    fcClashes <- fmap (VU.concat . reverse) $
-      traverse VU.unsafeFreeze . sliceCurrent ix =<< readSTRef mciClashes
-    fcLargerThanPage <- fmap (VU.concat . reverse) $
-      traverse VU.unsafeFreeze . sliceCurrent ix =<< readSTRef mciLargerThanPage
-    fcTieBreaker <- readSTRef mciTieBreaker
+    let ciRangeFinderPrecision = mciRangeFinderPrecision
+    let ciPrimary = VU.concat . reverse $ chunksPrimary
+    let ciClashes = VU.concat . reverse $ chunksClashes
+    let ciLargerThanPage = VU.concat . reverse $ chunksLargerThanPage
+    ciTieBreaker <- readSTRef mciTieBreaker
 
-    let fcRangeFinderPrecision = mciRangeFinderPrecision
-    let fcNumPages = pageNo
-
-    pure (mchunk, FinalChunk {..})
+    pure (mchunk, CompactIndex {..})
   where
     -- The current (most recent) chunk of the bitvectors is only partially
     -- constructed, so we need to only use the part that is already filled.
@@ -306,34 +302,13 @@ fillRangeFinderToEnd MCompactIndex{..} = do
     writeRange mciRangeFinder lb ub x
     writeSTRef mciLastMinRfbits $! SJust $ 2 ^ mciRangeFinderPrecision
 
-{-------------------------------------------------------------------------------
-  Chunks
--------------------------------------------------------------------------------}
-
-data Chunk = Chunk {
-    cPrimary        :: !(VU.Vector Word32)
-  }
-  deriving stock (Show, Eq)
-
-data FinalChunk = FinalChunk {
-    fcRangeFinder          :: !(VU.Vector Word32)
-  , fcClashes              :: !(VU.Vector Bit)
-  , fcLargerThanPage       :: !(VU.Vector Bit)
-  , fcTieBreaker           :: !(Map SerialisedKey PageNo)
-  , fcRangeFinderPrecision :: !Int
-  , fcNumPages             :: !NumPages
-  }
-  deriving stock (Show, Eq)
-
--- TODO: Turn into newtype, maybe also other types, e.g. range finder precision.
-type NumPages = Int
 
 {-------------------------------------------------------------------------------
   Strict 'Maybe'
 -------------------------------------------------------------------------------}
 
 data SMaybe a = SNothing | SJust !a
-  deriving stock Eq
+  deriving stock (Eq, Show)
 
 smaybe :: b -> (a -> b) -> SMaybe a -> b
 smaybe snothing sjust = \case
