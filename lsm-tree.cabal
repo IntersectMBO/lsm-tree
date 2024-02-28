@@ -41,6 +41,7 @@ library
   exposed-modules:
     Data.Map.Range
     Database.LSMTree.Common
+    Database.LSMTree.Internal.BitMath
     Database.LSMTree.Internal.BlobRef
     Database.LSMTree.Internal.BloomFilter
     Database.LSMTree.Internal.ByteString

@@ -5,7 +5,6 @@ module Database.LSMTree.Internal.BloomFilter (
 ) where
 
 import           Control.Monad (when)
-import           Data.Bits (Bits, unsafeShiftL, unsafeShiftR, (.&.))
 import qualified Data.BloomFilter as BF
 import qualified Data.BloomFilter.BitVec64 as BV64
 import qualified Data.ByteString.Builder as B
@@ -14,6 +13,7 @@ import qualified Data.Primitive as P
 import           Data.Primitive.ByteArray (ByteArray (ByteArray))
 import qualified Data.Vector.Primitive as PV
 import           Data.Word (Word32, Word64)
+import           Database.LSMTree.Internal.BitMath
 import           Database.LSMTree.Internal.ByteString (byteArrayFromTo)
 
 -- serializing
@@ -34,7 +34,7 @@ bloomFilterToBuilder bf =
     toBuilder' bf
 
 toBuilder' :: BF.Bloom a -> B.Builder
-toBuilder' (BF.B _hfN _len (BV64.BV64 (PV.Vector off len v))) = byteArrayFromTo (unsafeShiftL off 3) (unsafeShiftL off 3 + unsafeShiftL len 3) v
+toBuilder' (BF.B _hfN _len (BV64.BV64 (PV.Vector off len v))) = byteArrayFromTo (mul8 off) (mul8 off + mul8 len) v
 
 -- deserializing
 -----------------------------------------------------------
@@ -66,11 +66,3 @@ bloomFilterFromSBS (SBS ba') = do
 
     word32pa :: P.PrimArray Word32
     word32pa = P.PrimArray ba'
-
-mod64 :: (Bits a, Num a) => a -> a
-mod64 x = x .&. 63
-{-# INLINE mod64 #-}
-
-div64 :: (Bits a) => a -> a
-div64 x = unsafeShiftR x 6
-{-# INLINE div64 #-}
