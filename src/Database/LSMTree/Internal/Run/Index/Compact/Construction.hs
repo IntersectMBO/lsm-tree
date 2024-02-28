@@ -117,9 +117,9 @@ data MCompactIndex s = MCompactIndex {
 new :: Int -> Int -> ST s (MCompactIndex s)
 new rfprec maxcsize = MCompactIndex
     -- Core index structure
-    <$> VUM.new (2 ^ rfprec + 1)
+    <$> VUM.new (2 ^ rfprec + 1)  -- TODO: allocate pinned
     <*> pure rfprec
-    <*> (newSTRef =<< VUM.new maxcsize)
+    <*> (newSTRef =<< VUM.new maxcsize)  -- TODO allocate pinned
     <*> (newSTRef . pure =<< VUM.new maxcsize)
     <*> newSTRef Map.empty
     <*> (newSTRef . pure =<< VUM.new maxcsize)
@@ -250,7 +250,7 @@ yield MCompactIndex{..} = do
     pageNr <- readSTRef mciCurrentPageNumber
     if pageNr `mod` mciMaxChunkSize == 0 then do -- The current chunk is full
       cPrimary <- VU.unsafeFreeze =<< readSTRef mciPrimary
-      (writeSTRef mciPrimary $!) =<< VUM.new mciMaxChunkSize
+      (writeSTRef mciPrimary $!) =<< VUM.new mciMaxChunkSize  -- TODO: allocate pinned
       modifySTRef' mciClashes . NE.cons =<< VUM.new mciMaxChunkSize
       modifySTRef' mciLargerThanPage . NE.cons =<< VUM.new mciMaxChunkSize
       pure $ Just (Chunk cPrimary)

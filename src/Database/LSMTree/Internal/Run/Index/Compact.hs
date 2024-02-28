@@ -58,7 +58,8 @@ import qualified Data.Vector.Primitive as VP
 import qualified Data.Vector.Unboxed as VU
 import qualified Data.Vector.Unboxed.Base as VU (Vector (V_Word32))
 import           Data.Word
-import           Database.LSMTree.Internal.ByteString (byteArrayFromTo)
+import           Database.LSMTree.Internal.ByteString (byteArrayFromTo,
+                     unsafePinnedPrimVectorToByteString)
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
 import           Database.LSMTree.Internal.Run.Index.Compact.Construction
 import           Database.LSMTree.Internal.Serialise
@@ -616,15 +617,16 @@ fromChunks cs FinalChunk{..} = CompactIndex {
 -------------------------------------------------------------------------------}
 
 -- | 32 bit aligned.
+-- TODO: use byteArrayFromTo?
 chunkBuilder :: Chunk -> BB.Builder
-chunkBuilder Chunk {..} = VU.foldMap BB.word32LE cPrimary
+chunkBuilder Chunk {..} = unsafePutVec32 cPrimary
 
 -- | Must be written after the sequence of 'chunkBuilder' of the corresponding
 -- compact index. Specifically, the written chunks must match 'fcNumPages' to
 -- get the alignment right.
 finalChunkBuilder :: NumEntries -> FinalChunk -> BB.Builder
 finalChunkBuilder (NumEntries numEntries) FinalChunk {..} =
-       VU.foldMap BB.word32LE fcRangeFinder
+       unsafePutVec32 fcRangeFinder
     <> (if odd (fcNumPages + VU.length fcRangeFinder)  -- align to 64 bit
         then BB.word32LE 0
         else mempty)
@@ -634,6 +636,10 @@ finalChunkBuilder (NumEntries numEntries) FinalChunk {..} =
     <> BB.word64LE (fromIntegral fcRangeFinderPrecision)
     <> BB.word64LE (fromIntegral fcNumPages)
     <> BB.word64LE (fromIntegral numEntries)
+
+unsafePutVec32 :: VU.Vector Word32 -> BB.Builder
+unsafePutVec32 (VU.V_Word32 primVec) =
+    BB.byteString (unsafePinnedPrimVectorToByteString primVec)
 
 -- | Padded to 64 bit.
 --

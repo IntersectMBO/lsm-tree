@@ -1,17 +1,28 @@
-{-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE CPP          #-}
+{-# LANGUAGE BangPatterns        #-}
+{-# LANGUAGE CPP                 #-}
+{-# LANGUAGE MagicHash           #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications    #-}
 -- | @bytestring@ extras
 module Database.LSMTree.Internal.ByteString (
     shortByteStringFromTo,
     byteArrayFromTo,
+    unsafePinnedPrimVectorToByteString,
 ) where
 
+import           Data.ByteString.Internal (ByteString (..))
 import qualified Data.ByteString.Builder as BB
 import qualified Data.ByteString.Builder.Internal as BB
 import           Data.ByteString.Short (ShortByteString (SBS))
 import qualified Data.ByteString.Short.Internal as SBS
-import           Data.Primitive.ByteArray (ByteArray (..))
+import           Data.Primitive.ByteArray (ByteArray (..), ByteArray#,
+                    MutableByteArray#, isByteArrayPinned, sizeofByteArray)
+import qualified Data.Vector.Primitive as VP
 import           Foreign.Ptr (minusPtr, plusPtr)
+import           GHC.Exts (Int (I#), RealWorld, byteArrayContents#, plusAddr#)
+import           GHC.ForeignPtr (ForeignPtr (..), ForeignPtrContents (..))
+import           Unsafe.Coerce (unsafeCoerce#)
+import           Data.Primitive.Types (sizeOf)
 
 -- | Copy of 'SBS.shortByteString', but with bounds (unchecked).
 --
@@ -45,3 +56,30 @@ shortByteStringCopyStepFromTo !ip0 !ipe0 !sbs k =
       where
         outRemaining = ope `minusPtr` op
         inpRemaining = ipe - ip
+
+-- | Assumes vector uses the full underlying 'ByteArray', which must be pinned!
+unsafePinnedPrimVectorToByteString :: forall a. VP.Prim a => VP.Vector a -> ByteString
+unsafePinnedPrimVectorToByteString (VP.Vector offset len ba) =
+  -- | offset /= 0 =
+  --     error "unsafePinnedPrimVectorToByteString: offset"
+  -- | elemSize * len /= sizeofByteArray ba =
+  --     error $ "unsafePinnedPrimVectorToByteString: expected length "
+  --          <> show elemSize <> " * " <> show len <> " = " <> show (elemSize * len)
+  --          <> ", got " <> show (sizeofByteArray ba)
+  -- | otherwise =
+      unsafePinnedByteArrayToByteString (offset * elemSize) (len * elemSize) ba
+  where
+    elemSize = sizeOf (undefined :: a)
+
+-- | Assumes the 'ByteArray' is pinned.
+unsafePinnedByteArrayToByteString :: Int -> Int -> ByteArray -> ByteString
+unsafePinnedByteArrayToByteString _ _ ba
+  | not (isByteArrayPinned ba) = error "unsafePinnedByteArrayToByteString: not pinned"
+unsafePinnedByteArrayToByteString (I# offset#) len (ByteArray ba#) =
+    BS (ForeignPtr
+          (plusAddr# (byteArrayContents# ba#) offset#)
+          (PlainPtr (unsafeThaw ba#)))
+       len
+  where
+    unsafeThaw :: ByteArray# -> MutableByteArray# RealWorld
+    unsafeThaw = unsafeCoerce#
