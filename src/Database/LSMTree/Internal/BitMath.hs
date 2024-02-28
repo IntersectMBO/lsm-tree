@@ -73,7 +73,7 @@ div64 :: Bits a => a -> a
 div64 x = unsafeShiftR x 6
 {-# INLINE div64 #-}
 
--- | rounding up division
+-- |
 --
 -- >>> map mod64 [0 :: Word, 1, 63, 64, 65]
 -- [0,1,63,0,1]
