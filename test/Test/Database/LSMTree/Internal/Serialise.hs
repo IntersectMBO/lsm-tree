@@ -13,7 +13,7 @@ import qualified Data.ByteString.Short as SBS
 import qualified Data.Vector.Primitive as P
 import           Data.Word
 import           Database.LSMTree.Internal.Serialise
-import           Database.LSMTree.Internal.Serialise.RawBytes hiding ((++))
+import           Database.LSMTree.Internal.Serialise.RawBytes
 import           Database.LSMTree.Util (showPowersOf10)
 import           Test.Tasty
 import           Test.Tasty.HUnit
