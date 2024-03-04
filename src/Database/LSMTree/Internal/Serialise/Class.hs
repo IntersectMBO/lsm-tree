@@ -54,7 +54,7 @@ serialiseKeyMinimalSize x = sizeofRawBytes (serialiseKey x) >= 6
 -- Instances should satisfy the following:
 --
 -- [Identity] @'deserialiseValue' ('serialiseValue' x) == x@
--- [Concat distributes] @'deserialiseValueN' xs == 'deserialiseValue' ('RawBytes.concat' xs)@
+-- [Concat distributes] @'deserialiseValueN' xs == 'deserialiseValue' ('mconcat' xs)@
 class SerialiseValue v where
   serialiseValue :: v -> RawBytes
   deserialiseValue :: RawBytes -> v
@@ -67,4 +67,4 @@ serialiseValueIdentity x = deserialiseValue (serialiseValue x) == x
 
 -- | Test the __Concat distributes__ law for the 'SerialiseValue' class
 serialiseValueConcatDistributes :: forall v. (Eq v, SerialiseValue v) => Proxy v -> [RawBytes] -> Bool
-serialiseValueConcatDistributes _ xs = deserialiseValueN @v xs == deserialiseValue (RawBytes.concat xs)
+serialiseValueConcatDistributes _ xs = deserialiseValueN @v xs == deserialiseValue (mconcat xs)

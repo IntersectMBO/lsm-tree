@@ -111,8 +111,8 @@ testSingleInsert sessionRoot key val mblob = do
         prefix = RB.sizeofRawBytes val' - suffix
     let expectedEntry = first SerialisedValue $
           case mblob of
-            Nothing -> Insert         (RB.take prefix val')
-            Just b  -> InsertWithBlob (RB.take prefix val') (serialiseBlob b)
+            Nothing -> Insert         (RB.takeRawBytes prefix val')
+            Just b  -> InsertWithBlob (RB.takeRawBytes prefix val') (serialiseBlob b)
     let expectedResult
           | suffix > 0 = LookupEntryOverflow expectedEntry (fromIntegral suffix)
           | otherwise  = LookupEntry         expectedEntry
@@ -123,9 +123,9 @@ testSingleInsert sessionRoot key val mblob = do
     expectedResult @=? actualEntry
 
     -- the value is as expected, including any overflow suffix
-    let valPrefix = RB.take prefix val'
+    let valPrefix = RB.takeRawBytes prefix val'
         valSuffix = (RB.fromByteString . BS.take suffix . BS.drop 4096) bsKops
-    SerialisedValue val' @=? SerialisedValue (valPrefix RB.++ valSuffix)
+    SerialisedValue val' @=? SerialisedValue (valPrefix <> valSuffix)
 
     -- blob sanity checks
     case mblob of
@@ -167,9 +167,9 @@ pagesContainEntries bsBlobs (page : pages) kops
     , LookupEntryOverflow e' suffix <- rawPageLookup page (SerialisedKey key')
     , let appendSuffix (SerialisedValue v)=
                            SerialisedValue
-                         . (v RB.++)
-                         . RB.take (fromIntegral suffix)
-                         . RB.concat
+                         . (v <>)
+                         . RB.takeRawBytes (fromIntegral suffix)
+                         . mconcat
                          . map rawPageRawBytes
                          $ pages
           overflowPages  = (fromIntegral suffix + 4095) `div` 4096
