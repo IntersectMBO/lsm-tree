@@ -201,8 +201,6 @@ test-suite lsm-tree-test
     , transformers
     , vector
 
-  ghc-options:      -fno-ignore-asserts
-
 benchmark lsm-tree-micro-bench
   import:           warnings, wno-x-partial
   default-language: Haskell2010
@@ -308,7 +306,7 @@ library prototypes
 
   ghc-options:
     -Wno-incomplete-uni-patterns -Wno-partial-fields
-    -Wno-missing-export-lists -fno-ignore-asserts
+    -Wno-missing-export-lists
 
 test-suite lsm-prototypes-tests
   import:           warnings, wno-x-partial

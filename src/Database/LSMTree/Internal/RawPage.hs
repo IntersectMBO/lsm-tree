@@ -4,6 +4,7 @@
 module Database.LSMTree.Internal.RawPage (
     RawPage,
     makeRawPage,
+    unsafeMakeRawPage,
     rawPageRawBytes,
     rawPageNumKeys,
     rawPageNumBlobs,
@@ -24,8 +25,9 @@ import           Control.DeepSeq (NFData (rnf))
 import           Control.Exception (assert)
 import           Data.Bits (complement, popCount, unsafeShiftL, unsafeShiftR,
                      (.&.))
-import           Data.Primitive.ByteArray (ByteArray (..), indexByteArray,
-                     sizeofByteArray)
+import           Data.Primitive.ByteArray (ByteArray (..), copyByteArray,
+                     fillByteArray, indexByteArray, isByteArrayPinned,
+                     newAlignedPinnedByteArray, runByteArray, sizeofByteArray)
 import qualified Data.Vector as V
 import qualified Data.Vector.Primitive as P
 import           Data.Word (Word16, Word32, Word64)
@@ -47,6 +49,16 @@ data RawPage = RawPage
     !ByteArray
   deriving (Show)
 
+invariant :: RawPage -> Bool
+invariant (RawPage off ba) = and
+    [ off >= 0                                      -- offset is positive
+    , mod8 offsetInBytes == 0                       -- 64 bit/8 byte alignment
+    , (sizeofByteArray ba - offsetInBytes) >= 4096  -- there is always 4096 bytes
+    , isByteArrayPinned ba                          -- bytearray should be pinned
+    ]
+  where
+    offsetInBytes = mul2 off
+
 instance NFData RawPage where
   rnf (RawPage _ _) = ()
 
@@ -55,14 +67,35 @@ instance Eq RawPage where
     RawPage off1 ba1 == RawPage off2 ba2 = v1 == v2
       where
         v1, v2 :: P.Vector Word16
-        v1 = P.Vector off1 (min 2048 (div2 (sizeofByteArray ba1))) ba1
-        v2 = P.Vector off2 (min 2048 (div2 (sizeofByteArray ba2))) ba2
+        v1 = P.Vector off1 2048 ba1
+        v2 = P.Vector off2 2048 ba2
 
+-- | Create 'RawPage'.
+--
+-- This function may copy data to satisfy internal 'RawPage' invariants.
+-- Use 'unsafeMakeRawPage' if you don't want copy.
 makeRawPage
-    :: ByteArray  -- ^ bytearray
-    -> Int        -- ^ offset in bytes, must be 8byte aligned.
+    :: ByteArray  -- ^ bytearray, must contain 4096 bytes (after offset)
+    -> Int        -- ^ offset in bytes, must be 8 byte aligned.
     -> RawPage
-makeRawPage ba off = RawPage (div2 off) ba
+makeRawPage ba off
+    | invariant page = page
+    | otherwise      = RawPage 0 $ runByteArray $ do
+        mba <- newAlignedPinnedByteArray 4096 8
+        fillByteArray mba 0 4096 0
+        copyByteArray mba 0 ba off (clamp 0 4096 (sizeofByteArray ba - off))
+        return mba
+  where
+    page = RawPage (div2 off) ba
+    clamp l u x = max l (min u x)
+
+unsafeMakeRawPage
+    :: ByteArray  -- ^ bytearray, must be pinned and contain 4096 bytes (after offset)
+    -> Int        -- ^ offset in bytes, must be 8 byte aligned.
+    -> RawPage
+unsafeMakeRawPage ba off = assert (invariant page) page
+  where
+    page = RawPage (div2 off) ba
 
 rawPageRawBytes :: RawPage -> RawBytes
 rawPageRawBytes (RawPage off ba) =

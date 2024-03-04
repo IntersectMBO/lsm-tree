@@ -33,3 +33,8 @@ source-repository-package
 -- doesn't depend on Hackage bloomfilter.
 -- Luckily, bloomfilter is not commonly used package, so this is good enough.
 constraints: bloomfilter <0
+
+package lsm-tree
+  -- apply this to all components
+  -- relevant mostly only for development & testing
+  ghc-options: -fno-ignore-asserts
