@@ -193,6 +193,7 @@ test-suite lsm-tree-test
     , quickcheck-instances
     , quickcheck-lockstep
     , random
+    , split
     , stm
     , tasty
     , tasty-hunit

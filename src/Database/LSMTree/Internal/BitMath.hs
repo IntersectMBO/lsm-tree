@@ -5,16 +5,19 @@ module Database.LSMTree.Internal.BitMath (
     div2,
     mod2,
     mul2,
+    ceilDiv2,
     div4,
     mod4,
     mul4,
     div8,
     mod8,
     mul8,
+    ceilDiv8,
     div32,
     mod32,
     div64,
     mod64,
+    mul64,
     ceilDiv64,
 ) where
 
@@ -31,6 +34,10 @@ mod2 x = x .&. 1
 mul2 :: Bits a => a -> a
 mul2 x = unsafeShiftL x 1
 {-# INLINE mul2 #-}
+
+ceilDiv2 :: (Bits a, Num a) => a -> a
+ceilDiv2 i = unsafeShiftR (i + 1) 1
+{-# INLINE ceilDiv2 #-}
 
 div4 :: Bits a => a -> a
 div4 x = unsafeShiftR x 2
@@ -55,6 +62,10 @@ mod8 x = x .&. 7
 mul8 :: Bits a => a -> a
 mul8 x = unsafeShiftL x 3
 {-# INLINE mul8 #-}
+
+ceilDiv8 :: (Bits a, Num a) => a -> a
+ceilDiv8 i = unsafeShiftR (i + 7) 3
+{-# INLINE ceilDiv8 #-}
 
 div32 :: Bits a => a -> a
 div32 x = unsafeShiftR x 5
@@ -81,6 +92,10 @@ div64 x = unsafeShiftR x 6
 mod64 :: (Bits a, Num a) => a -> a
 mod64 x = x .&. 63
 {-# INLINE mod64 #-}
+
+mul64 :: Bits a => a -> a
+mul64 x = unsafeShiftL x 6
+{-# INLINE mul64 #-}
 
 -- | rounding up division
 --
