@@ -42,7 +42,8 @@ import           Database.LSMTree.Internal.Run.BloomFilter (Hashable (..))
 import           Database.LSMTree.Internal.Serialise.Class (SerialiseKey,
                      SerialiseValue)
 import qualified Database.LSMTree.Internal.Serialise.Class as Class
-import           Database.LSMTree.Internal.Serialise.RawBytes
+import           Database.LSMTree.Internal.Serialise.RawBytes (RawBytes (..))
+import qualified Database.LSMTree.Internal.Serialise.RawBytes as RB
 
 {-------------------------------------------------------------------------------
   Keys
@@ -71,7 +72,7 @@ deserialiseKey (SerialisedKey bytes) = Class.deserialiseKey bytes
 {-# INLINE sizeofKey #-}
 -- | Size of key in number of bytes.
 sizeofKey :: SerialisedKey -> Int
-sizeofKey (SerialisedKey rb) = sizeofRawBytes rb
+sizeofKey (SerialisedKey rb) = RB.size rb
 
 {-# INLINE sizeofKey16 #-}
 -- | Size of key in number of bytes.
@@ -85,17 +86,17 @@ sizeofKey64 = fromIntegral . sizeofKey
 
 {-# INLINE serialisedKey #-}
 serialisedKey :: SerialisedKey -> BB.Builder
-serialisedKey (SerialisedKey rb) = rawBytes rb
+serialisedKey (SerialisedKey rb) = RB.builder rb
 
 {-# INLINE keyTopBits16 #-}
 -- | See 'topBits16'
 keyTopBits16 :: Int -> SerialisedKey -> Word16
-keyTopBits16 n (SerialisedKey rb) = topBits16 n rb
+keyTopBits16 n (SerialisedKey rb) = RB.topBits16 n rb
 
 {-# INLINE keySliceBits32 #-}
 -- | See 'sliceBits32'
 keySliceBits32 :: Int -> SerialisedKey -> Word32
-keySliceBits32 n (SerialisedKey rb) = sliceBits32 n rb
+keySliceBits32 n (SerialisedKey rb) = RB.sliceBits32 n rb
 
 {-------------------------------------------------------------------------------
   Values
@@ -120,7 +121,7 @@ deserialiseValue (SerialisedValue bytes) = Class.deserialiseValue bytes
 
 {-# INLINE sizeofValue #-}
 sizeofValue :: SerialisedValue -> Int
-sizeofValue (SerialisedValue rb) = sizeofRawBytes rb
+sizeofValue (SerialisedValue rb) = RB.size rb
 
 {-# INLINE sizeofValue16 #-}
 -- | Size of value in number of bytes.
@@ -139,7 +140,7 @@ sizeofValue64 = fromIntegral . sizeofValue
 
 {-# LANGUAGE serialisedValue #-}
 serialisedValue :: SerialisedValue -> BB.Builder
-serialisedValue (SerialisedValue rb) = rawBytes rb
+serialisedValue (SerialisedValue rb) = RB.builder rb
 
 {-------------------------------------------------------------------------------
   Blobs
@@ -165,7 +166,7 @@ deserialiseBlob (SerialisedBlob bytes) = Class.deserialiseValue bytes
 {-# INLINE sizeofBlob #-}
 -- | Size of blob in number of bytes.
 sizeofBlob :: SerialisedBlob -> Int
-sizeofBlob (SerialisedBlob rb) = sizeofRawBytes rb
+sizeofBlob (SerialisedBlob rb) = RB.size rb
 
 {-# INLINE sizeofBlob64 #-}
 sizeofBlob64 :: SerialisedBlob -> Word64
@@ -173,4 +174,4 @@ sizeofBlob64 = fromIntegral . sizeofBlob
 
 {-# INLINE serialisedBlob #-}
 serialisedBlob :: SerialisedBlob -> BB.Builder
-serialisedBlob (SerialisedBlob rb) = rawBytes rb
+serialisedBlob (SerialisedBlob rb) = RB.builder rb

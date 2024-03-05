@@ -38,8 +38,8 @@ import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Entry (Entry (..))
 import           Database.LSMTree.Internal.Serialise (SerialisedKey (..),
                      SerialisedValue (..))
-import           Database.LSMTree.Internal.Serialise.RawBytes (RawBytes (..),
-                     mkRawBytes)
+import           Database.LSMTree.Internal.Serialise.RawBytes (RawBytes (..))
+import qualified Database.LSMTree.Internal.Serialise.RawBytes as RB
 import           GHC.List (foldl')
 
 -------------------------------------------------------------------------------
@@ -108,7 +108,7 @@ unsafeMakeRawPage ba off = assert (invariant page) page
 
 rawPageRawBytes :: RawPage -> RawBytes
 rawPageRawBytes (RawPage off ba) =
-      mkRawBytes (mul2 off) 4096 ba
+      RB.fromByteArray (mul2 off) 4096 ba
 
 -------------------------------------------------------------------------------
 -- Lookup function
@@ -261,7 +261,7 @@ rawPageKeys :: RawPage -> V.Vector SerialisedKey
 rawPageKeys page@(RawPage off ba) = do
     let offs = rawPageKeyOffsets page
     V.fromList
-        [ SerialisedKey (mkRawBytes (mul2 off + start) (end - start) ba)
+        [ SerialisedKey (RB.fromByteArray (mul2 off + start) (end - start) ba)
         | i <- [ 0 .. fromIntegral dirNumKeys -  1 ] :: [Int]
         , let start = fromIntegral (P.unsafeIndex offs i) :: Int
         , let end   = fromIntegral (P.unsafeIndex offs (i + 1)) :: Int
@@ -271,7 +271,7 @@ rawPageKeys page@(RawPage off ba) = do
 
 rawPageKeyAt :: RawPage -> Int -> SerialisedKey
 rawPageKeyAt page@(RawPage off ba) i = do
-    SerialisedKey (mkRawBytes (mul2 off + start) (end - start) ba)
+    SerialisedKey (RB.fromByteArray (mul2 off + start) (end - start) ba)
   where
     offs  = rawPageKeyOffsets page
     start = fromIntegral (P.unsafeIndex offs i) :: Int
@@ -282,7 +282,7 @@ rawPageValues :: RawPage -> V.Vector SerialisedValue
 rawPageValues page@(RawPage off ba) =
     let offs = rawPageValueOffsets page in
     V.fromList
-        [ SerialisedValue $ mkRawBytes (mul2 off + start) (end - start) ba
+        [ SerialisedValue $ RB.fromByteArray (mul2 off + start) (end - start) ba
         | i <- [ 0 .. fromIntegral dirNumKeys -  1 ] :: [Int]
         , let start = fromIntegral (P.unsafeIndex offs i) :: Int
         , let end   = fromIntegral (P.unsafeIndex offs (i + 1)) :: Int
@@ -292,7 +292,7 @@ rawPageValues page@(RawPage off ba) =
 
 rawPageValueAt :: RawPage -> Int -> SerialisedValue
 rawPageValueAt page@(RawPage off ba) i =
-    SerialisedValue (mkRawBytes (mul2 off + start) (end - start) ba)
+    SerialisedValue (RB.fromByteArray (mul2 off + start) (end - start) ba)
   where
     offs  = rawPageValueOffsets page
     start = fromIntegral (P.unsafeIndex offs i) :: Int
@@ -301,9 +301,10 @@ rawPageValueAt page@(RawPage off ba) i =
 rawPageSingleValuePrefix :: RawPage -> SerialisedValue
 rawPageSingleValuePrefix page@(RawPage off ba) =
     SerialisedValue $
-      mkRawBytes (mul2 off + fromIntegral start)
-                 (fromIntegral prefix_end - fromIntegral start)
-                 ba
+      RB.fromByteArray
+        (mul2 off + fromIntegral start)
+        (fromIntegral prefix_end - fromIntegral start)
+        ba
   where
     (start, end) = rawPageValueOffsets1 page
     prefix_end   = min 4096 end

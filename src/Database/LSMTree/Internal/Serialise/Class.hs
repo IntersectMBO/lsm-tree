@@ -14,7 +14,8 @@ module Database.LSMTree.Internal.Serialise.Class (
   ) where
 
 import           Data.Proxy (Proxy)
-import           Database.LSMTree.Internal.Serialise.RawBytes as RawBytes
+import           Database.LSMTree.Internal.Serialise.RawBytes (RawBytes (..))
+import qualified Database.LSMTree.Internal.Serialise.RawBytes as RB
 
 -- | Serialisation of keys.
 --
@@ -47,7 +48,7 @@ serialiseKeyPreservesOrdering x y = x `compare` y == serialiseKey x `compare` se
 
 -- | Test the __Minimal size__ law for the 'SerialiseKey' class.
 serialiseKeyMinimalSize :: SerialiseKey k => k -> Bool
-serialiseKeyMinimalSize x = sizeofRawBytes (serialiseKey x) >= 6
+serialiseKeyMinimalSize x = RB.size (serialiseKey x) >= 6
 
 -- | Serialisation of values and blobs.
 --

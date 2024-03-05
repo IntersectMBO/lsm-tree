@@ -10,21 +10,30 @@
 
 #include <MachDeps.h>
 
--- See Note: [Export structure]
+-- |
+--
+-- This module is intended to be imported qualified, to avoid name clashes with
+-- "Prelude" functions:
+--
+-- @
+--   import Database.LSMTree.Internal.Serialise.RawBytes (RawBytes (..))
+--   import qualified Database.LSMTree.Internal.Serialise.RawBytes as RB
+-- @
 module Database.LSMTree.Internal.Serialise.RawBytes (
+    -- See Note: [Export structure]
     -- * Raw bytes
     RawBytes (..)
-  , mkRawBytes
     -- * Accessors
     -- ** Length information
-  , sizeofRawBytes
+  , size
     -- ** Extracting subvectors (slicing)
-  , takeRawBytes
+  , take
   , topBits16
   , sliceBits32
     -- * Construction
     -- | Use 'Semigroup' and 'Monoid' operations
     -- * Conversions
+  , fromByteArray
     -- ** Lists
   , pack
   , unpack
@@ -33,7 +42,7 @@ module Database.LSMTree.Internal.Serialise.RawBytes (
   , unsafeFromByteString
   , toByteString
   , fromShortByteString
-  , rawBytes
+  , builder
   ) where
 
 import           Control.DeepSeq
@@ -49,6 +58,7 @@ import           Data.Primitive.ByteArray (ByteArray (..), compareByteArrays)
 import qualified Data.Vector.Primitive as P
 import           Database.LSMTree.Internal.ByteString (shortByteStringFromTo)
 import           Database.LSMTree.Internal.Run.BloomFilter (Hashable (..))
+import           Prelude hiding (take)
 
 import           GHC.Exts
 import           GHC.ForeignPtr as GHC
@@ -70,9 +80,6 @@ import           GHC.Word
 newtype RawBytes = RawBytes (P.Vector Word8)
   deriving newtype (Show, NFData)
 
-mkRawBytes :: Int -> Int -> ByteArray -> RawBytes
-mkRawBytes off len ba = RawBytes (P.Vector off len ba)
-
 instance Eq RawBytes where
   bs1 == bs2 = compareBytes bs1 bs2 == EQ
 
@@ -83,8 +90,8 @@ instance Ord RawBytes where
 -- | Based on @Ord 'ShortByteString'@.
 compareBytes :: RawBytes -> RawBytes -> Ordering
 compareBytes rb1@(RawBytes vec1) rb2@(RawBytes vec2) =
-    let !len1 = sizeofRawBytes rb1
-        !len2 = sizeofRawBytes rb2
+    let !len1 = size rb1
+        !len2 = size rb2
         !len  = min len1 len2
      in case compareByteArrays ba1 off1 ba2 off2 len of
           EQ | len1 < len2 -> LT
@@ -96,11 +103,11 @@ compareBytes rb1@(RawBytes vec1) rb2@(RawBytes vec2) =
 
 instance Hashable RawBytes where
   hashIO32 :: RawBytes -> Word32 -> IO Word32
-  hashIO32 = hashRawBytes
+  hashIO32 = hash
 
 -- TODO: optimisation
-hashRawBytes :: RawBytes -> Word32 -> IO Word32
-hashRawBytes (RawBytes vec) = hashList32 (P.toList vec)
+hash :: RawBytes -> Word32 -> IO Word32
+hash (RawBytes vec) = hashList32 (P.toList vec)
 
 instance IsList RawBytes where
   type Item RawBytes = Word8
@@ -115,11 +122,13 @@ instance IsList RawBytes where
   Accessors
 -------------------------------------------------------------------------------}
 
-sizeofRawBytes :: RawBytes -> Int
-sizeofRawBytes = coerce P.length
+-- | \( O(1) \)
+size :: RawBytes -> Int
+size = coerce P.length
 
-takeRawBytes :: Int -> RawBytes -> RawBytes
-takeRawBytes = coerce P.take
+-- | \( O(1) \)
+take :: Int -> RawBytes -> RawBytes
+take = coerce P.take
 
 -- | @'topBits16' n rb@ slices the first @n@ bits from the /top/ of the raw
 -- bytes @rb@. Returns the string of bits as a 'Word16'.
@@ -136,7 +145,7 @@ takeRawBytes = coerce P.take
 --
 topBits16 :: Int -> RawBytes -> Word16
 topBits16 n rb@(RawBytes (P.Vector (I# off#) _size (ByteArray k#))) =
-    assert (sizeofRawBytes rb >= 2) $ shiftR w16 (16 - n)
+    assert (size rb >= 2) $ shiftR w16 (16 - n)
   where
     w16 = toWord16 (indexWord8ArrayAsWord16# k# off#)
 
@@ -164,10 +173,10 @@ toWord16 x# = byteSwap16 (W16# x#)
 sliceBits32 :: Int -> RawBytes -> Word32
 sliceBits32 off@(I# off1#) rb@(RawBytes (P.Vector (I# off2#) _size (ByteArray ba#)))
     | 0# <- r#
-    = assert (off + 32 <= 8 * sizeofRawBytes rb) $
+    = assert (off + 32 <= 8 * size rb) $
       toWord32 (indexWord8ArrayAsWord32# ba# q#)
     | otherwise
-    = assert (off + 32 <= 8 * sizeofRawBytes rb) $
+    = assert (off + 32 <= 8 * size rb) $
         toWord32 (indexWord8ArrayAsWord32# ba# q#       ) `shiftL` r
       + w8w32#   (indexWord8Array#         ba# (q# +# 4#)) `shiftR` (8 - r)
   where
@@ -198,6 +207,10 @@ instance Monoid RawBytes where
 {-------------------------------------------------------------------------------
   Conversions
 -------------------------------------------------------------------------------}
+
+-- | \( O(1) \)
+fromByteArray :: Int -> Int -> ByteArray -> RawBytes
+fromByteArray off len ba = RawBytes (P.Vector off len ba)
 
 pack :: [Word8] -> RawBytes
 pack = coerce P.fromList
@@ -234,7 +247,7 @@ fromShortByteString :: ShortByteString -> RawBytes
 fromShortByteString sbs@(SBS ba#) =
     RawBytes (P.Vector 0 (SBS.length sbs) (ByteArray ba#))
 
-{-# INLINE rawBytes #-}
-rawBytes :: RawBytes -> BB.Builder
-rawBytes (RawBytes (P.Vector off size (ByteArray ba#))) =
-    shortByteStringFromTo off (off + size) (SBS ba#)
+{-# INLINE builder #-}
+builder :: RawBytes -> BB.Builder
+builder (RawBytes (P.Vector off sz (ByteArray ba#))) =
+    shortByteStringFromTo off (off + sz) (SBS ba#)

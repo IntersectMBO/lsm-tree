@@ -18,7 +18,7 @@ import qualified Database.LSMTree.Internal.Run.BloomFilter as Bloom
 import           Database.LSMTree.Internal.Run.Construction as Real
 import qualified Database.LSMTree.Internal.Run.Index.Compact as Index
 import           Database.LSMTree.Internal.Serialise
-import           Database.LSMTree.Internal.Serialise.RawBytes
+import qualified Database.LSMTree.Internal.Serialise.RawBytes as RB
 import qualified FormatPage as Proto
 import           Test.Tasty
 import           Test.Tasty.HUnit
@@ -140,10 +140,10 @@ fromProtoKOp (k, op, mblobref) = (fromProtoKey k, bimap fromProtoValue fromProto
               Proto.Delete -> Delete
 
 fromProtoKey :: Proto.Key -> SerialisedKey
-fromProtoKey (Proto.Key bs) = SerialisedKey . fromShortByteString $ SBS.toShort bs
+fromProtoKey (Proto.Key bs) = SerialisedKey . RB.fromShortByteString $ SBS.toShort bs
 
 fromProtoValue :: Proto.Value -> SerialisedValue
-fromProtoValue (Proto.Value bs) = SerialisedValue . fromShortByteString $ SBS.toShort bs
+fromProtoValue (Proto.Value bs) = SerialisedValue . RB.fromShortByteString $ SBS.toShort bs
 
 fromProtoBlobRef :: Proto.BlobRef -> BlobSpan
 fromProtoBlobRef (Proto.BlobRef x y) = BlobSpan x y
