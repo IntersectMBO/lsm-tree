@@ -1,4 +1,4 @@
-{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE NumericUnderscores #-}
 module Database.LSMTree.Internal.BloomFilter (
   bloomFilterToBuilder,
   bloomFilterFromSBS,
@@ -12,7 +12,7 @@ import           Data.ByteString.Short (ShortByteString (SBS))
 import qualified Data.Primitive as P
 import           Data.Primitive.ByteArray (ByteArray (ByteArray))
 import qualified Data.Vector.Primitive as PV
-import           Data.Word (Word32, Word64)
+import           Data.Word (Word32, Word64, byteSwap32)
 import           Database.LSMTree.Internal.BitMath
 import           Database.LSMTree.Internal.ByteString (byteArrayFromTo)
 
@@ -20,17 +20,13 @@ import           Database.LSMTree.Internal.ByteString (byteArrayFromTo)
 -----------------------------------------------------------
 
 bloomFilterVersion :: Word32
-bloomFilterVersion = 0
-
-bloomFilterEndianess :: Word32
-bloomFilterEndianess = 0  -- little endian
+bloomFilterVersion = 1
 
 bloomFilterToBuilder :: BF.Bloom a -> B.Builder
 bloomFilterToBuilder bf =
     B.word32LE bloomFilterVersion <>
     B.word32LE (fromIntegral (BF.hashesN bf)) <>
-    B.word32LE (fromIntegral (BF.length bf)) <>
-    B.word32LE bloomFilterEndianess <>
+    B.word64LE (fromIntegral (BF.length bf)) <>
     toBuilder' bf
 
 toBuilder' :: BF.Bloom a -> B.Builder
@@ -46,15 +42,18 @@ toBuilder' (BF.B _hfN _len (BV64.BV64 (PV.Vector off len v))) = byteArrayFromTo 
 bloomFilterFromSBS :: ShortByteString -> Either String (BF.Bloom a)
 bloomFilterFromSBS (SBS ba') = do
     when (P.sizeofByteArray ba < 16) $ Left "doesn't contain a header"
-    -- on big endian platforms we'd need to byte-swap
+
     let ver = P.indexPrimArray word32pa 0
         hsn = P.indexPrimArray word32pa 1
-        len = P.indexPrimArray word32pa 2 -- length in bits
-        end = P.indexPrimArray word32pa 3
+        len = P.indexPrimArray word64pa 1 -- length in bits
 
-    when (ver /= bloomFilterVersion) $ Left "Unsupported version"
-    when (end /= bloomFilterEndianess) $ Left "Non-matching endianess"
+    when (ver /= bloomFilterVersion) $ Left $
+      if byteSwap32 ver == bloomFilterVersion
+      then "Different byte order"
+      else "Unsupported version"
+
     when (mod64 len /= 0) $ Left "Length is not multiple of 64"
+    when (len >= 0xffff_ffff) $ Left "Too large bloomfilter"
 
     let vec64 :: PV.Vector Word64
         vec64 = PV.Vector 2 (fromIntegral $ div64 len) ba
@@ -66,3 +65,6 @@ bloomFilterFromSBS (SBS ba') = do
 
     word32pa :: P.PrimArray Word32
     word32pa = P.PrimArray ba'
+
+    word64pa :: P.PrimArray Word64
+    word64pa = P.PrimArray ba'
