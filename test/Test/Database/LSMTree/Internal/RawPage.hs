@@ -6,9 +6,8 @@ module Test.Database.LSMTree.Internal.RawPage (
 ) where
 
 import qualified Data.ByteString as BS
-import qualified Data.ByteString.Short as SBS
 import           Data.Maybe (isJust)
-import           Data.Primitive.ByteArray (ByteArray (..), byteArrayFromList)
+import           Data.Primitive.ByteArray (byteArrayFromList)
 import qualified Data.Vector as V
 import qualified Data.Vector.Primitive as P
 import           Data.Word (Word16, Word64)
@@ -17,6 +16,7 @@ import           Test.QuickCheck.Instances ()
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.HUnit (testCase, (@=?))
 import           Test.Tasty.QuickCheck
+import           Test.Util.RawPage
 
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import qualified Database.LSMTree.Internal.Entry as Entry
@@ -25,8 +25,7 @@ import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.Serialise.RawBytes (fromByteString,
                      pack)
 import           FormatPage (BlobRef (..), Key (..), Operation (..),
-                     PageLogical (..), Value (..), encodePage, serialisePage,
-                     unKey)
+                     PageLogical (..), Value (..), unKey)
 
 tests :: TestTree
 tests = testGroup "Database.LSMTree.Internal.RawPage"
@@ -64,7 +63,7 @@ tests = testGroup "Database.LSMTree.Internal.RawPage"
 
         let page = makeRawPage (byteArrayFromList bytes) 0
 
-        page @=? fst (toRawPage (PageLogical [(Key "\x42\x43", Insert (Value "\x88\x99"), Nothing)]))
+        assertEqualRawPages page $ fst (toRawPage (PageLogical [(Key "\x42\x43", Insert (Value "\x88\x99"), Nothing)]))
         rawPageNumKeys page @=? 1
         rawPageNumBlobs page @=? 0
         rawPageKeyOffsets page @=? P.fromList [32, 34]
@@ -168,13 +167,6 @@ tests = testGroup "Database.LSMTree.Internal.RawPage"
     , testProperty "big-insert" prop_big_insert
     , testProperty "entry" prop_single_entry
     ]
-
-toRawPage :: PageLogical -> (RawPage, BS.ByteString)
-toRawPage p = (page, sfx)
-  where
-    bs = serialisePage $ encodePage p
-    (pfx, sfx) = BS.splitAt 4096 bs -- hardcoded page size.
-    page = case SBS.toShort pfx of SBS.SBS ba -> makeRawPage (ByteArray ba) 0
 
 prop_keys :: PageLogical -> Property
 prop_keys p@(PageLogical xs) =

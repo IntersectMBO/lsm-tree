@@ -2,19 +2,28 @@
 --
 -- Valid for non-negative arguments.
 module Database.LSMTree.Internal.BitMath (
+    -- * Two
     div2,
     mod2,
     mul2,
     ceilDiv2,
+    -- * Four
     div4,
     mod4,
     mul4,
+    -- * Eight
     div8,
     mod8,
     mul8,
     ceilDiv8,
+    -- * Sixteen
+    div16,
+    mod16,
+    mul16,
+    -- * 32
     div32,
     mod32,
+    -- * 64
     div64,
     mod64,
     mul64,
@@ -22,6 +31,10 @@ module Database.LSMTree.Internal.BitMath (
 ) where
 
 import           Data.Bits
+
+-------------------------------------------------------------------------------
+-- 2
+-------------------------------------------------------------------------------
 
 div2 :: Bits a => a -> a
 div2 x = unsafeShiftR x 1
@@ -39,6 +52,10 @@ ceilDiv2 :: (Bits a, Num a) => a -> a
 ceilDiv2 i = unsafeShiftR (i + 1) 1
 {-# INLINE ceilDiv2 #-}
 
+-------------------------------------------------------------------------------
+-- 4
+-------------------------------------------------------------------------------
+
 div4 :: Bits a => a -> a
 div4 x = unsafeShiftR x 2
 {-# INLINE div4 #-}
@@ -50,6 +67,10 @@ mod4 x = x .&. 3
 mul4 :: Bits a => a -> a
 mul4 x = unsafeShiftL x 2
 {-# INLINE mul4 #-}
+
+-------------------------------------------------------------------------------
+-- 8
+-------------------------------------------------------------------------------
 
 div8 :: Bits a => a -> a
 div8 x = unsafeShiftR x 3
@@ -67,6 +88,26 @@ ceilDiv8 :: (Bits a, Num a) => a -> a
 ceilDiv8 i = unsafeShiftR (i + 7) 3
 {-# INLINE ceilDiv8 #-}
 
+-------------------------------------------------------------------------------
+-- 16
+-------------------------------------------------------------------------------
+
+div16 :: Bits a => a -> a
+div16 x = unsafeShiftR x 4
+{-# INLINE div16 #-}
+
+mod16 :: (Bits a, Num a) => a -> a
+mod16 x = x .&. 15
+{-# INLINE mod16 #-}
+
+mul16 :: Bits a => a -> a
+mul16 x = unsafeShiftL x 4
+{-# INLINE mul16 #-}
+
+-------------------------------------------------------------------------------
+-- 32
+-------------------------------------------------------------------------------
+
 div32 :: Bits a => a -> a
 div32 x = unsafeShiftR x 5
 {-# INLINE div32 #-}
@@ -74,6 +115,10 @@ div32 x = unsafeShiftR x 5
 mod32 :: (Bits a, Num a) => a -> a
 mod32 x = x .&. 31
 {-# INLINE mod32 #-}
+
+-------------------------------------------------------------------------------
+-- 64
+-------------------------------------------------------------------------------
 
 -- |
 --

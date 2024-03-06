@@ -167,9 +167,11 @@ test-suite lsm-tree-test
     Test.Database.LSMTree.Normal.StateMachine
     Test.Database.LSMTree.Normal.StateMachine.Op
     Test.Util.Orphans
+    Test.Util.RawPage
     Test.Util.TypeFamilyWrappers
 
   build-depends:
+    , ansi-terminal
     , base                                                          >=4.16 && <4.20
     , bitvec
     , bytestring
@@ -193,12 +195,14 @@ test-suite lsm-tree-test
     , quickcheck-instances
     , quickcheck-lockstep
     , random
+    , semialign
     , split
     , stm
     , tasty
     , tasty-hunit
     , tasty-quickcheck
     , temporary
+    , these
     , transformers
     , vector
 
