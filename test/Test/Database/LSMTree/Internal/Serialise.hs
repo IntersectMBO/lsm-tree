@@ -13,7 +13,7 @@ import qualified Data.Vector.Primitive as P
 import           Data.Word
 import           Database.LSMTree.Generators ()
 import           Database.LSMTree.Internal.Serialise
-import           Database.LSMTree.Internal.Serialise.RawBytes
+import qualified Database.LSMTree.Internal.Serialise.RawBytes as RB
 import           Test.Tasty
 import           Test.Tasty.HUnit
 import           Test.Tasty.QuickCheck
@@ -63,8 +63,8 @@ tests = testGroup "Test.Database.LSMTree.Internal.Serialise" [
     , testCase "example unsafeFromByteString and fromShortByteString" $ do
         let bb = mconcat [BB.word64LE x | x <- [0..100]]
             bs = BS.toStrict . BB.toLazyByteString $ bb
-            k1 = unsafeFromByteString bs
-            k2 = fromShortByteString (SBS.toShort bs)
+            k1 = RB.unsafeFromByteString bs
+            k2 = RB.fromShortByteString (SBS.toShort bs)
         k1 @=? k2
     ]
 

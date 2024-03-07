@@ -14,7 +14,7 @@ import qualified Data.ByteString.Short as SBS
 import           Data.Primitive.ByteArray (ByteArray (..))
 import           Database.LSMTree.Internal.RawPage
 import           Database.LSMTree.Internal.Serialise
-import           Database.LSMTree.Internal.Serialise.RawBytes
+import qualified Database.LSMTree.Internal.Serialise.RawBytes as RB
 import           Database.LSMTree.Util.Orphans ()
 import           FormatPage
 import           Test.QuickCheck
@@ -41,17 +41,17 @@ benchmarks = rawpage `deepseq` bgroup "Bench.Database.LSMTree.Internal.RawPage"
     genSmallValue = Value . BS.pack <$> vectorOf 8 arbitrary
 
     missing :: SerialisedKey
-    missing = SerialisedKey $ pack [1, 2, 3]
+    missing = SerialisedKey $ RB.pack [1, 2, 3]
 
     keys :: [Key]
     keys = case page of
         PageLogical xs -> map (\(k,_,_) -> k) xs
 
     existingHead :: SerialisedKey
-    existingHead = SerialisedKey $ fromByteString $ unKey $ head keys
+    existingHead = SerialisedKey $ RB.fromByteString $ unKey $ head keys
 
     existingLast :: SerialisedKey
-    existingLast = SerialisedKey $ fromByteString $ unKey $ last keys
+    existingLast = SerialisedKey $ RB.fromByteString $ unKey $ last keys
 
 toRawPage :: PageLogical -> (RawPage, BS.ByteString)
 toRawPage p = (page, sfx)

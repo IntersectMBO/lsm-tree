@@ -24,7 +24,7 @@ import           Database.LSMTree.Internal.Run.Index.Compact (Append (..),
 import           Database.LSMTree.Internal.Serialise (SerialisedBlob (..),
                      SerialisedKey (..), SerialisedValue (..))
 import           Database.LSMTree.Internal.Serialise.Class
-import           Database.LSMTree.Internal.Serialise.RawBytes
+import qualified Database.LSMTree.Internal.Serialise.RawBytes as RB
 import           GHC.Generics (Generic)
 import           System.Random (Uniform)
 
@@ -82,21 +82,21 @@ instance SerialiseKey Word64 where
 -- | Placeholder instance, not optimised
 instance SerialiseKey LBS.ByteString where
   serialiseKey = serialiseKey . LBS.toStrict
-  deserialiseKey = B.toLazyByteString . rawBytes
+  deserialiseKey = B.toLazyByteString . RB.builder
 
 -- | Placeholder instance, not optimised
 instance SerialiseKey BS.ByteString where
-  serialiseKey = fromShortByteString . SBS.toShort
+  serialiseKey = RB.fromShortByteString . SBS.toShort
   deserialiseKey = LBS.toStrict . deserialiseKey
 
 -- | Placeholder instance, not optimised
 instance SerialiseValue LBS.ByteString where
   serialiseValue = serialiseValue . LBS.toStrict
   deserialiseValue = deserialiseValueN . pure
-  deserialiseValueN = B.toLazyByteString . foldMap rawBytes
+  deserialiseValueN = B.toLazyByteString . foldMap RB.builder
 
 -- | Placeholder instance, not optimised
 instance SerialiseValue BS.ByteString where
-  serialiseValue = fromShortByteString . SBS.toShort
+  serialiseValue = RB.fromShortByteString . SBS.toShort
   deserialiseValue = deserialiseValueN . pure
   deserialiseValueN = LBS.toStrict . deserialiseValueN

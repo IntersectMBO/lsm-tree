@@ -35,7 +35,7 @@ import           Database.LSMTree.Internal.Run.Construction as Run
 import           Database.LSMTree.Internal.Run.Index.Compact as Index
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.Serialise.Class
-import           Database.LSMTree.Internal.Serialise.RawBytes as RB
+import qualified Database.LSMTree.Internal.Serialise.RawBytes as RB
 import           Database.LSMTree.Util
 import           GHC.Generics
 import           Test.Database.LSMTree.Generators (deepseqInvariant,
@@ -122,7 +122,7 @@ prop_inMemRunLookupAndConstruction dat =
         -- prefix we already have
         concatOverflow :: Word32 -> SerialisedValue -> SerialisedValue
         concatOverflow = coerce $ \(n :: Word32) (v :: RawBytes) ->
-            v <> RB.takeRawBytes (fromIntegral n) (mconcat $ fmap rawPageRawBytes overflowPages)
+            v <> RB.take (fromIntegral n) (mconcat $ fmap rawPageRawBytes overflowPages)
           where
             start = i + 1
             size  = j - i
@@ -225,7 +225,7 @@ genSerialisedValue = frequency [ (50, arbitrary), (1, genLongValue) ]
 shrinkSerialisedValue :: SerialisedValue -> [SerialisedValue]
 shrinkSerialisedValue v
   | sizeofValue v > 64 = -- shrink towards fewer bytes
-                          [ coerce RB.takeRawBytes n' v | n' <- shrinkIntegral n ]
+                          [ coerce RB.take n' v | n' <- shrinkIntegral n ]
                           -- shrink towards a value of all 0-bytes
                       ++ [ v' | let v' = coerce (P.fromList $ replicate n 0), v' /= v ]
   | otherwise          = shrink v -- expensive, but thorough
