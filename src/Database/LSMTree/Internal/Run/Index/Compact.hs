@@ -31,6 +31,7 @@ module Database.LSMTree.Internal.Run.Index.Compact (
   , fromListSingles
   , fromChunks
     -- * Serialisation
+  , headerBuilder
   , chunkBuilder
   , finalChunkBuilder
   , fromSBS
@@ -42,6 +43,7 @@ import           Control.Monad.ST
 import           Data.Bit hiding (flipBit)
 import           Data.Bits (unsafeShiftR, (.&.))
 import qualified Data.ByteString.Builder as BB
+import qualified Data.ByteString.Builder.Extra as BB
 import           Data.ByteString.Short (ShortByteString (..))
 import           Data.Foldable (toList)
 import           Data.Map.Range (Bound (..))
@@ -50,7 +52,6 @@ import qualified Data.Map.Strict as Map
 import           Data.Maybe (catMaybes, fromJust)
 import           Data.Primitive.ByteArray (ByteArray (..), indexByteArray,
                      sizeofByteArray)
-import qualified Data.Primitive.PrimArray as P
 import qualified Data.Vector.Algorithms.Search as VA
 import qualified Data.Vector.Generic as VG
 import qualified Data.Vector.Primitive as VP
@@ -615,6 +616,15 @@ fromChunks cs FinalChunk{..} = CompactIndex {
   Serialisation
 -------------------------------------------------------------------------------}
 
+-- | By writing out the version in host endianness, we also indicate endianness.
+-- During deserialisation, we would discover an endianness mismatch.
+indexVersion :: Word32
+indexVersion = 1
+
+-- | 32 bits, to be used before writing any other parts of the serialised file!
+headerBuilder :: BB.Builder
+headerBuilder = BB.word32Host indexVersion
+
 -- | 32 bit aligned.
 chunkBuilder :: Chunk -> BB.Builder
 chunkBuilder Chunk {..} = putVec32 cPrimary
@@ -625,15 +635,16 @@ chunkBuilder Chunk {..} = putVec32 cPrimary
 finalChunkBuilder :: NumEntries -> FinalChunk -> BB.Builder
 finalChunkBuilder (NumEntries numEntries) FinalChunk {..} =
        putVec32 fcRangeFinder
-    <> (if odd (fcNumPages + VU.length fcRangeFinder)  -- align to 64 bit
-        then BB.word32LE 0
+       -- align to 64 bit, if odd number of Word32 written before
+    <> (if odd (fcNumPages + VU.length fcRangeFinder + 1 {- version -})
+        then BB.word32Host 0
         else mempty)
     <> putBitVec fcClashes
     <> putBitVec fcLargerThanPage
     <> putTieBreaker fcTieBreaker
-    <> BB.word64LE (fromIntegral fcRangeFinderPrecision)
-    <> BB.word64LE (fromIntegral fcNumPages)
-    <> BB.word64LE (fromIntegral numEntries)
+    <> BB.word64Host (fromIntegral fcRangeFinderPrecision)
+    <> BB.word64Host (fromIntegral fcNumPages)
+    <> BB.word64Host (fromIntegral numEntries)
 
 -- | 32 bit aligned.
 --
@@ -672,13 +683,13 @@ putBitVec (BitVec offsetBits lenBits ba)
 -- | Padded to 64 bit.
 putTieBreaker :: Map SerialisedKey PageNo -> BB.Builder
 putTieBreaker m =
-       BB.word64LE (fromIntegral (Map.size m))
+       BB.word64Host (fromIntegral (Map.size m))
     <> foldMap putEntry (Map.assocs m)
   where
     putEntry :: (SerialisedKey, PageNo) -> BB.Builder
     putEntry (k, PageNo pageNo) =
-           BB.word32LE (fromIntegral pageNo)
-        <> BB.word32LE (fromIntegral (sizeofKey k))
+           BB.word32Host (fromIntegral pageNo)
+        <> BB.word32Host (fromIntegral (sizeofKey k))
         <> serialisedKey k
         <> putPaddingTo64 (sizeofKey k)
 
@@ -702,26 +713,30 @@ putPaddingTo64 written
 fromSBS :: ShortByteString -> Either String (NumEntries, CompactIndex)
 fromSBS (SBS ba') = do
     let ba = ByteArray ba'
-    when (mod8 (sizeofByteArray ba) /= 0) $ Left "Length is not multiple of 64 bit"
+    let len = sizeofByteArray ba
+    when (mod8 len /= 0) $ Left "Length is not multiple of 64 bit"
+    when (len < 36) $ Left "Too small for header and footer"
 
-    let arr64 = P.PrimArray ba' :: P.PrimArray Word64
-    let len64 = P.sizeofPrimArray arr64
+    let version = indexByteArray ba 0 :: Word32
+    when (version == byteSwap32 indexVersion) $ Left "Non-matching endianness"
+    when (version /= indexVersion) $ Left "Unsupported version"
 
-    when (len64 < 3) $ Left "Doesn't contain size information"
-    let ciRangeFinderPrecision = fromIntegral (P.indexPrimArray arr64 (len64 - 3))
-    let numPages = fromIntegral (P.indexPrimArray arr64 (len64 - 2))
-    let numEntries = fromIntegral (P.indexPrimArray arr64 (len64 - 1))
-    let numRanges = 2 ^ ciRangeFinderPrecision + 1
+    let len64 = div8 len
+    let rfprec = fromIntegral (indexByteArray ba (len64 - 3) :: Word64)
+    let numPages = fromIntegral (indexByteArray ba (len64 - 2) :: Word64)
+    let numEntries = fromIntegral (indexByteArray ba (len64 - 1) :: Word64)
 
     -- offsets in 32 bits
-    let (offset2_32, ciPrimary) = getVec32 ba 0 numPages
-    let (offset3_32, ciRangeFinder) = getVec32 ba offset2_32 numRanges
+    let offset1_32 = 1  -- after version indicator
+    let (offset2_32, ciPrimary) = getVec32 ba offset1_32 numPages
+    let (offset3_32, ciRangeFinder) = getVec32 ba offset2_32 (2 ^ rfprec + 1)
     -- offsets in 64 bits
     let offset3 = ceilDiv2 offset3_32
     let (offset4, ciClashes) = getBitVec ba offset3 numPages
     let (offset5, ciLargerThanPage) = getBitVec ba offset4 numPages
     let ciTieBreaker = getTieBreaker ba offset5
 
+    let ciRangeFinderPrecision = rfprec
     return (NumEntries numEntries, CompactIndex {..})
 
 type Offset32 = Int
