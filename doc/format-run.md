@@ -135,13 +135,14 @@ vector.
 
 The first 4 bytes (32bit) are a format identifier / format version. This
 determines the format of the rest of the header and file.
+The format identifier also acts as endianess marker.
+It (and remaining fields) are serialised in native byte order.
 
-The remainder of the header for format 0 consists of:
+The remainder of the header for format 1 consists of:
  1. The hash function count (32bit)
- 2. The bit size of the filter (32bit)
- 3. A boolean to indicate endianness, 0 little, 1 big (32bit)
+ 2. The bit size of the filter (64bit)
 
-The fields of the header are serialized in little-endian format.
+The fields of the header are serialized in native byte order.
 
 Note: due the bitsize field being 32 bit we can only serialize up to 512MB large bloom filters.
 
