@@ -8,6 +8,7 @@ import           Control.Monad (when)
 import qualified Data.BloomFilter as BF
 import qualified Data.BloomFilter.BitVec64 as BV64
 import qualified Data.ByteString.Builder as B
+import qualified Data.ByteString.Builder.Extra as B
 import           Data.ByteString.Short (ShortByteString (SBS))
 import qualified Data.Primitive as P
 import           Data.Primitive.ByteArray (ByteArray (ByteArray))
@@ -19,18 +20,21 @@ import           Database.LSMTree.Internal.ByteString (byteArrayFromTo)
 -- serializing
 -----------------------------------------------------------
 
+-- | By writing out the version in host endianness, we also indicate endianness.
+-- During deserialisation, we would discover an endianness mismatch.
 bloomFilterVersion :: Word32
 bloomFilterVersion = 1
 
 bloomFilterToBuilder :: BF.Bloom a -> B.Builder
 bloomFilterToBuilder bf =
-    B.word32LE bloomFilterVersion <>
-    B.word32LE (fromIntegral (BF.hashesN bf)) <>
-    B.word64LE (fromIntegral (BF.length bf)) <>
+    B.word32Host bloomFilterVersion <>
+    B.word32Host (fromIntegral (BF.hashesN bf)) <>
+    B.word64Host (fromIntegral (BF.length bf)) <>
     toBuilder' bf
 
 toBuilder' :: BF.Bloom a -> B.Builder
-toBuilder' (BF.B _hfN _len (BV64.BV64 (PV.Vector off len v))) = byteArrayFromTo (mul8 off) (mul8 off + mul8 len) v
+toBuilder' (BF.B _hfN _len (BV64.BV64 (PV.Vector off len v))) =
+    byteArrayFromTo (mul8 off) (mul8 off + mul8 len) v
 
 -- deserializing
 -----------------------------------------------------------
@@ -41,7 +45,7 @@ toBuilder' (BF.B _hfN _len (BV64.BV64 (PV.Vector off len v))) = byteArrayFromTo 
 --
 bloomFilterFromSBS :: ShortByteString -> Either String (BF.Bloom a)
 bloomFilterFromSBS (SBS ba') = do
-    when (P.sizeofByteArray ba < 16) $ Left "doesn't contain a header"
+    when (P.sizeofByteArray ba < 16) $ Left "Doesn't contain a header"
 
     let ver = P.indexPrimArray word32pa 0
         hsn = P.indexPrimArray word32pa 1

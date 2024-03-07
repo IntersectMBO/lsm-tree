@@ -144,7 +144,9 @@ The remainder of the header for format 1 consists of:
 
 The fields of the header are serialized in native byte order.
 
-Note: due the bitsize field being 32 bit we can only serialize up to 512MB large bloom filters.
+Note: The hash functions currently only support up to 2^32 bits, corresponding
+to a maximum bloom filter size of 512MB. In anticipation of this restriction
+being lifted, the bit size field is larger than that.
 
 The family of hash functions to use is implied by the format version.
 
