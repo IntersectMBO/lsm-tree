@@ -59,6 +59,7 @@ module Data.BloomFilter
     , elem
     , elemCheapHashes
     , notElem
+    , elemMany
 
     -- ** Modification
     , insert
@@ -78,6 +79,8 @@ import qualified Data.BloomFilter.Mutable.Internal as MB
 import Data.BloomFilter.Mutable.Internal (Hash, MBloom)
 import Data.BloomFilter.Hash (Hashable, CheapHashes, evalCheapHashes, makeCheapHashes)
 import qualified Data.BloomFilter.Hash as Hash
+import qualified Data.Vector as Vec
+import qualified Data.Vector.Unboxed as UVec
 
 import Prelude hiding (elem, length, notElem,
                        (/), (*), div, divMod, mod)
@@ -179,6 +182,15 @@ elemCheapHashes ch ub = go 0 where
                             in if V.unsafeIndex (bitArray ub) idx
                                then go (i + 1)
                                else False
+
+-- | Query several Bloom filters for membership of a single key. The result
+-- is equivalent to @map (elem k) bs@ but may be faster when used with many
+-- filters by taking advantage of shared calculations.
+--
+elemMany :: Hashable a => a -> Vec.Vector (Bloom a) -> UVec.Vector Bool
+elemMany !elt =
+    \ubs -> let !ch = makeCheapHashes elt
+             in Vec.convert (Vec.map (elemCheapHashes ch) ubs)
 
 modify :: (forall s. (MBloom s a -> ST s z))  -- ^ mutation function (result is discarded)
         -> Bloom a

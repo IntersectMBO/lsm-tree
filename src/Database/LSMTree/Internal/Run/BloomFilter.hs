@@ -39,6 +39,7 @@ module Database.LSMTree.Internal.Run.BloomFilter (
     -- * Bloom
   , Bloom
   , Bloom.elem
+  , Bloom.elemMany
     -- ** Hashes
   , Hash
   , Hash.Hashable (..)
