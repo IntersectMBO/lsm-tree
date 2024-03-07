@@ -51,6 +51,7 @@ library
     Database.LSMTree.Internal.Lookup
     Database.LSMTree.Internal.Monoidal
     Database.LSMTree.Internal.Normal
+    Database.LSMTree.Internal.PageAcc
     Database.LSMTree.Internal.RawPage
     Database.LSMTree.Internal.Run
     Database.LSMTree.Internal.Run.BloomFilter
@@ -154,6 +155,7 @@ test-suite lsm-tree-test
     Test.Database.LSMTree.Internal.CRC32C
     Test.Database.LSMTree.Internal.Entry
     Test.Database.LSMTree.Internal.Lookup
+    Test.Database.LSMTree.Internal.PageAcc
     Test.Database.LSMTree.Internal.RawPage
     Test.Database.LSMTree.Internal.Run
     Test.Database.LSMTree.Internal.Run.BloomFilter
