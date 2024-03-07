@@ -9,5 +9,11 @@
 --
 module Main (main) where
 
+import qualified Bench.Database.LSMTree.Internal.BloomFilter
+
+import           System.IO
+
 main :: IO ()
-main = putStrLn "Hello, macro-benchmarks!"
+main = do
+   hSetBuffering stdout NoBuffering
+   Bench.Database.LSMTree.Internal.BloomFilter.benchmarks
