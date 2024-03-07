@@ -8,6 +8,7 @@
 {-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE MultiWayIf                 #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
+{-# LANGUAGE StandaloneDeriving         #-}
 {-# LANGUAGE TypeApplications           #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 {- HLINT ignore "Use camelCase" -}
@@ -49,6 +50,9 @@ module Database.LSMTree.Generators (
     -- * Chunking size
   , ChunkSize (..)
   , chunkSizeInvariant
+    -- * Serialised keys/values/blobs
+  , genRawBytesN
+  , genRawBytesSized
   ) where
 
 import           Control.DeepSeq (NFData)
@@ -59,9 +63,11 @@ import           Data.Coerce (coerce)
 import           Data.Containers.ListUtils (nubOrd)
 import           Data.List (sort)
 import qualified Data.Map as Map
+import qualified Data.Vector.Primitive as P
 import           Data.WideWord.Word256 (Word256 (..))
 import           Data.Word
 import           Database.LSMTree.Common (Range (..))
+import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..))
 import           Database.LSMTree.Internal.Run.BloomFilter (Hashable (..))
 import           Database.LSMTree.Internal.Run.Index.Compact (Append (..),
@@ -69,6 +75,7 @@ import           Database.LSMTree.Internal.Run.Index.Compact (Append (..),
                      suggestRangeFinderPrecision)
 import           Database.LSMTree.Internal.Serialise
 import qualified Database.LSMTree.Internal.Serialise.Class as S.Class
+import           Database.LSMTree.Internal.Serialise.RawBytes
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer (..))
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import qualified Database.LSMTree.Monoidal as Monoidal
@@ -135,6 +142,10 @@ instance Arbitrary k => Arbitrary (Range k) where
 {-------------------------------------------------------------------------------
   Entry
 -------------------------------------------------------------------------------}
+
+instance (Arbitrary v, Arbitrary blob) => Arbitrary (Entry v blob) where
+  arbitrary = QC.arbitrary2
+  shrink = QC.shrink2
 
 instance Arbitrary2 Entry where
   liftArbitrary2 genVal genBlob = frequency
@@ -520,3 +531,53 @@ chunkSizeUB = 20
 
 chunkSizeInvariant :: ChunkSize -> Bool
 chunkSizeInvariant (ChunkSize csize) = chunkSizeLB <= csize && csize <= chunkSizeUB
+
+{-------------------------------------------------------------------------------
+  Serialised keys/values/blobs
+-------------------------------------------------------------------------------}
+
+instance Arbitrary RawBytes where
+  arbitrary = genRawBytes >>= genSlice
+  shrink rb = shrinkRawBytes rb ++ shrinkSlice rb
+
+genRawBytesN :: Int -> Gen RawBytes
+genRawBytesN n = RawBytes . P.fromList <$> QC.vectorOf n arbitrary
+
+genRawBytes :: Gen RawBytes
+genRawBytes = RawBytes . P.fromList <$> QC.listOf arbitrary
+
+genRawBytesSized :: Int -> Gen RawBytes
+genRawBytesSized n = QC.resize n genRawBytes
+
+shrinkRawBytes :: RawBytes -> [RawBytes]
+shrinkRawBytes (RawBytes pvec) = [ RawBytes (P.fromList ws)
+                                 | ws <- QC.shrink (P.toList pvec) ]
+
+genSlice :: RawBytes -> Gen RawBytes
+genSlice (RawBytes pvec) = do
+    n <- QC.chooseInt (0, P.length pvec)
+    m <- QC.chooseInt (0, P.length pvec - n)
+    pure $ RawBytes (P.slice m n pvec)
+
+shrinkSlice :: RawBytes -> [RawBytes]
+shrinkSlice (RawBytes pvec) =
+    [ RawBytes (P.slice m n pvec)
+    | n <- QC.shrink (P.length pvec)
+    , m <- QC.shrink (P.length pvec - n)
+    ]
+
+deriving newtype instance Arbitrary SerialisedKey
+
+deriving newtype instance Arbitrary SerialisedValue
+
+instance Arbitrary SerialisedBlob where
+  arbitrary = SerialisedBlob <$> genRawBytes
+  shrink (SerialisedBlob rb) = SerialisedBlob <$> shrinkRawBytes rb
+
+{-------------------------------------------------------------------------------
+  BlobRef
+-------------------------------------------------------------------------------}
+
+instance Arbitrary BlobSpan where
+  arbitrary = BlobSpan <$> arbitrary <*> arbitrary
+  shrink (BlobSpan x y) = BlobSpan <$> shrink x <*> shrink y

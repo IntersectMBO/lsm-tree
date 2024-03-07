@@ -132,6 +132,7 @@ library lsm-tree-utils
     , QuickCheck
     , quickcheck-instances
     , random
+    , vector
     , wide-word
 
 test-suite lsm-tree-test
@@ -152,6 +153,7 @@ test-suite lsm-tree-test
     Test.Database.LSMTree.Internal.BloomFilter
     Test.Database.LSMTree.Internal.CRC32C
     Test.Database.LSMTree.Internal.Entry
+    Test.Database.LSMTree.Internal.Lookup
     Test.Database.LSMTree.Internal.RawPage
     Test.Database.LSMTree.Internal.Run
     Test.Database.LSMTree.Internal.Run.BloomFilter
@@ -167,6 +169,7 @@ test-suite lsm-tree-test
     Test.Database.LSMTree.Normal.StateMachine
     Test.Database.LSMTree.Normal.StateMachine.Op
     Test.Util.Orphans
+    Test.Util.QuickCheck
     Test.Util.RawPage
     Test.Util.TypeFamilyWrappers
 
