@@ -104,6 +104,8 @@ tests = testGroup "Test.Database.LSMTree.Internal.Run.Index.Compact" [
                 (mCh3, fCh) <- unsafeEnd mci
                 return (ch1 <> ch2 <> toList mCh3, fCh)
 
+          let expectedVersion :: [Word8]
+              expectedVersion = word32toBytesLE 0x0000_0001
           let expectedPrimary :: [Word8]
               expectedPrimary = foldMap word32toBytesLE
                   -- 1. primary array: two pages (32 bits LE) + padding
@@ -113,23 +115,25 @@ tests = testGroup "Test.Database.LSMTree.Internal.Run.Index.Compact" [
               expectedRest = foldMap word32toBytesLE
                   -- 2. range finder: 2^0+1 = 2 entries 32 bit padding
                 [ 0 {- offset = 0 -}, 2 {- numPages -}
+                , 0 {- (padding to 64 bit) -}
                   -- 3. clash indicator: two pages, second one has bit
                 , 0x0000_0002, 0
                   -- 4. larger-than-page: two pages, no bits
-                , 0 , 0
+                , 0, 0
                   -- 5. clash map: maps k3 to page 1
                 , 1, 0 {- size = 1 (64 bit LE) -}
                 , 1, 16 {- page 1, key size 16 byte -}
                 , 0x1111_1111, 0x1111_1111 {- k3 -}
                 , 0x1111_1111, 0x1211_1111
-                  -- 6. number of range finder bits (0..16) (64 bits LE)
+                  -- 6.1 number of range finder bits (0..16) (64 bits LE)
                 , 0, 0
-                  -- 7. number of pages in the primary array (64 bits LE)
+                  -- 6.2 number of pages in the primary array (64 bits LE)
                 , 2, 0
-                  -- 8. number of keys (64bit LE)
-                , 7 , 0
+                  -- 6.3 number of keys (64bit LE)
+                , 7, 0
                 ]
 
+          let header = buildBytes headerBuilder
           let primary = buildBytes (foldMap chunkBuilder chunks)
           let rest = buildBytes (finalChunkBuilder (NumEntries 7) finalChunk)
 
@@ -139,6 +143,8 @@ tests = testGroup "Test.Database.LSMTree.Internal.Run.Index.Compact" [
                     (showBytes xs <> repeat (replicate 17 '.'))
                     (showBytes ys)
 
+          assertEqual (comparison "header" expectedVersion header)
+            expectedVersion header
           assertEqual (comparison "primary" expectedPrimary primary)
             expectedPrimary primary
           assertEqual (comparison "rest" expectedRest rest)
@@ -253,15 +259,17 @@ prop_distribution ps =
 prop_roundtrip_chunks :: Chunks -> NumEntries -> Property
 prop_roundtrip_chunks (Chunks chunks finalChunk) numEntries =
     counterexample (show (SBS.length sbs) <> " bytes") $
+    counterexample ("header:\n" <> showBS bsVersion) $
     counterexample ("primary:\n" <> showBS bsPrimary) $
     counterexample ("rest:\n" <> showBS bsRest) $
       Right (numEntries, index) === fromSBS sbs
   where
     index = fromChunks chunks finalChunk
 
+    bsVersion = BB.toLazyByteString $ headerBuilder
     bsPrimary = BB.toLazyByteString $ foldMap chunkBuilder chunks
     bsRest = BB.toLazyByteString $ finalChunkBuilder numEntries finalChunk
-    sbs = SBS.toShort (LBS.toStrict (bsPrimary <> bsRest))
+    sbs = SBS.toShort (LBS.toStrict (bsVersion <> bsPrimary <> bsRest))
 
     showBS = unlines . showBytes . LBS.unpack
 
@@ -269,14 +277,15 @@ prop_roundtrip_chunks (Chunks chunks finalChunk) numEntries =
 prop_roundtrip :: SerialiseKey k => ChunkSize -> LogicalPageSummaries k -> NumEntries -> Property
 prop_roundtrip csize ps numEntries =
     counterexample (show (SBS.length sbs) <> " bytes") $
+    counterexample ("header:\n" <> showBS bsVersion) $
     counterexample ("primary:\n" <> showBS bsPrimary) $
     counterexample ("rest:\n" <> showBS bsRest) $
       Right (numEntries, index) === fromSBS sbs
   where
     index = mkCompactIndex csize ps
 
-    (bsPrimary, bsRest) = writeCompactIndex numEntries csize ps
-    sbs = SBS.toShort (LBS.toStrict (bsPrimary <> bsRest))
+    (bsVersion, bsPrimary, bsRest) = writeCompactIndex numEntries csize ps
+    sbs = SBS.toShort (LBS.toStrict (bsVersion <> bsPrimary <> bsRest))
 
     showBS = unlines . showBytes . LBS.unpack
 
@@ -293,14 +302,15 @@ mkCompactIndex (ChunkSize csize) ps =
   where
     RFPrecision rfprec = getRangeFinderPrecision ps
 
-writeCompactIndex :: SerialiseKey k => NumEntries -> ChunkSize -> LogicalPageSummaries k -> (LBS.ByteString, LBS.ByteString)
+writeCompactIndex :: SerialiseKey k => NumEntries -> ChunkSize -> LogicalPageSummaries k -> (LBS.ByteString, LBS.ByteString, LBS.ByteString)
 writeCompactIndex numEntries (ChunkSize csize) ps = runST $ do
     let RFPrecision rfprec = getRangeFinderPrecision ps
     mci <- Cons.new rfprec csize
     cs <- mapM (`append` mci) (toAppends ps)
     (c, fc) <- unsafeEnd mci
     return
-      ( BB.toLazyByteString $ foldMap (foldMap chunkBuilder) cs
+      ( BB.toLazyByteString headerBuilder
+      , BB.toLazyByteString $ foldMap (foldMap chunkBuilder) cs
                            <> foldMap chunkBuilder c
       , BB.toLazyByteString $ finalChunkBuilder numEntries fc
       )

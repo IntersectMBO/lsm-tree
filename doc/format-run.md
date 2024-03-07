@@ -144,7 +144,9 @@ The remainder of the header for format 1 consists of:
 
 The fields of the header are serialized in native byte order.
 
-Note: due the bitsize field being 32 bit we can only serialize up to 512MB large bloom filters.
+Note: The hash functions currently only support up to 2^32 bits, corresponding
+to a maximum bloom filter size of 512MB. In anticipation of this restriction
+being lifted, the bit size field is larger than that.
 
 The family of hash functions to use is implied by the format version.
 
@@ -189,16 +191,23 @@ For this important special case, we can do significantly better than storing a
 whole key per page: we can typically store just 4 bytes (32bits) per page. This
 is a factor of 8 saving for 32 byte keys.
 
-The representation consists of
+Just as the bloom filter, the compact index file format starts with a 32 bit
+format identifier / format version, which determines the format and endianness
+of the rest of the file.
+
+For version 1, the representation after the version identifier consists of
 1. a primary array of 32bit words, one entry per page in the index
 2. a range finder array, of 2^n+1 entries of 32bit each (n = range finder bits)
 3. a clash indicator bit vector, one bit per page in the index
 4. a larger-than-page indicator bit vector, one bit per page in the index
 5. a clash map, mapping each page with a clash indicator to the full minimum
    key for the page
-6. the number of range finder bits (0..16) (as a 64bit value)
-7. the number of pages in the primary array (as a 64bit value)
-8. the number of keys in the corresponding key/ops file (as a 64bit value)
+6. a footer
+
+The footer consists of the last 24 bytes of the file
+1. the number of range finder bits (0..16) (64bit)
+2. the number of pages in the primary array (64bit)
+3. the number of keys in the corresponding key/ops file (64bit)
 
 The file format consists of each part, sequentially within the file. This
 format can in-part be written out incrementally as the index is constructed.
@@ -207,36 +216,38 @@ written out to disk incrementally. All the remaining parts can only be written
 upon the completion of the index. These parts must be kept in memory while the
 index is constructed and can be flushed upon completion.
 
-The rationale for the various numbers being at the end of the file is that it
+The rationale for the footer being at the end of the file is that it
 means they are at a known offset relative to the end of the file, and can be
 read first. This helps with pre-allocating the memory needed for the
 in-memory representation of the other main components, and knowing how much
 data to read from disk for each component.
 
 The clash map is expected to be very small, so its file format is mainly
-designed to be simple, not compact. After a 64bit number of elements, each pair
-of key and page number is serialised in the following order:
-* the page number (as a 32bit value)
-* the length of the key in bytes (as a 32bit value)
-* the key
-* padding to 64bit alignment
-
-Size granularity, alignment and any trailing padding of the components:
-1. 32bit size granularity, 32bit alignment
-2. 32bit size granularity, 32bit alignment, trailing padding to 64bit alignment
-3. 64bit size granularity, 64bit alignment
-4. 64bit size granularity, 64bit alignment
-5. 32bit size granularity, 32bit alignment, trailing padding to 64bit alignment
-6. 64bit size granularity, 64bit alignment
-7. 64bit size granularity, 64bit alignment
-8. 64bit size granularity, 64bit alignment
-
-All numbers are serialised in little-endian format.
+designed to be simple, not compact.
 
 The alignment of the components is arranged such that it would be possible (if
 desired) to mmap the whole file and access almost all of the components with
 natural alignment. The clash map however is not a simple flat array, so it is
 is expected to be decoded, rather than to be accessed in-place.
+
+|     |                 | elements   | size  | alignment | trailing padding to |
+|-----|-----------------|------------|-------|-----------|---------------------|
+| 0   | version         | 1          | 32bit | 32bit     |                     |
+| 1   | primary array   | n          | 32bit | 32bit     |                     |
+| 2   | range finder    | 2^r+1      | 32bit | 32bit     | 64bit (at the end)  |
+| 3   | clash indicator | ceil(n/64) | 64bit | 64bit     |                     |
+| 4   | LTP indicator   | ceil(n/64) | 64bit | 64bit     |                     |
+| 5.1 | clash map size  | 1          | 64bit | 64bit     |                     |
+| 5.2 | clash map       | s          |       | 64bit     | 64bit (each entry)  |
+| 6.1 | RF precision    | 1          | 64bit | 64bit     |                     |
+| 6.2 | number pages    | 1          | 64bit | 64bit     |                     |
+| 6.3 | number keys     | 1          | 64bit | 64bit     |                     |
+
+For the clash map, after its size s, each pair of key and page number is
+serialised in the following order:
+1. the page number (32bit)
+2. the length of the key in bytes (32bit)
+3. the key, with trailing padding to 64 bit alignment
 
 ### Ordinary index
 
