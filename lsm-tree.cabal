@@ -89,11 +89,12 @@ library bloomfilter
   hs-source-dirs:   bloomfilter
   default-language: Haskell2010
   build-depends:
-    , base        >=4.5       && <5
-    , bitvec      ^>=1.1.5.0
-    , bytestring  >=0.9
+    , base             >=4.5       && <5
+    , bitvec           ^>=1.1.5.0
+    , bytestring       >=0.9
+    , data-array-byte
     , deepseq
-    , vector      ^>=0.13.0.0
+    , vector           ^>=0.13.0.0
 
   exposed-modules:
     Data.BloomFilter

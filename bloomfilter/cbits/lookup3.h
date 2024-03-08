@@ -127,7 +127,15 @@ and these came close:
 
 uint32_t _jenkins_hashword(const uint32_t *k, size_t length, uint32_t initval);
 
+MAYBESTATIC uint32_t _jenkins_hashwordOff(const uint32_t *k, size_t off, size_t length, uint32_t initval) {
+    return _jenkins_hashword(k + off, length, initval);
+}
+
 uint32_t _jenkins_hashlittle(const void *key, size_t length, uint32_t initval);
+
+MAYBESTATIC uint32_t _jenkins_hashlittleOff(const void *key, size_t off, size_t length, uint32_t initval) {
+    return _jenkins_hashlittle(key + off, length, initval);
+}
 
 void _jenkins_hashword2(const uint32_t *key, size_t length,
 			uint32_t *pc, uint32_t *pb);

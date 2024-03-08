@@ -48,7 +48,7 @@ module Database.LSMTree.Internal.Serialise.RawBytes (
 import           Control.DeepSeq
 import           Control.Exception (assert)
 import           Data.Bits (Bits (shiftL, shiftR))
-import           Data.BloomFilter.Hash (hashList32)
+import           Data.BloomFilter.Hash (alignedHashBA)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BB
 import           Data.ByteString.Internal as BS.Internal
@@ -105,9 +105,8 @@ instance Hashable RawBytes where
   hashIO32 :: RawBytes -> Word32 -> IO Word32
   hashIO32 = hash
 
--- TODO: optimisation
 hash :: RawBytes -> Word32 -> IO Word32
-hash (RawBytes vec) = hashList32 (P.toList vec)
+hash (RawBytes (P.Vector off len ba)) = alignedHashBA ba off len
 
 instance IsList RawBytes where
   type Item RawBytes = Word8

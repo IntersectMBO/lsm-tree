@@ -1,5 +1,5 @@
 {-# LANGUAGE BangPatterns, CPP, ForeignFunctionInterface,
-    TypeOperators, RoleAnnotations #-}
+    TypeOperators, RoleAnnotations, MagicHash, UnliftedFFITypes #-}
 
 -- |
 -- Module: Data.BloomFilter.Hash
@@ -39,10 +39,13 @@ module Data.BloomFilter.Hash
     , hashOne64
     , hashList32
     , hashList64
+    , alignedHashBA
     ) where
 
 import Control.Monad (foldM)
 import Data.Bits ((.&.), (.|.), unsafeShiftL, unsafeShiftR, xor)
+import Data.Array.Byte (ByteArray (..))
+import GHC.Exts (ByteArray#)
 import Data.List (unfoldr)
 import Data.Int (Int8, Int16, Int32, Int64)
 import Data.Word (Word8, Word16, Word32, Word64)
@@ -75,11 +78,17 @@ type Hash = Word32
 foreign import ccall unsafe "lookup3.h _jenkins_hashword" hashWord
     :: Ptr Word32 -> CSize -> Word32 -> IO Word32
 
+foreign import ccall unsafe "lookup3.h _jenkins_hashwordOff" hashWordBA
+    :: ByteArray# -> CSize -> CSize -> Word32 -> IO Word32
+
 foreign import ccall unsafe "lookup3.h _jenkins_hashword2" hashWord2
     :: Ptr Word32 -> CSize -> Ptr Word32 -> Ptr Word32 -> IO ()
 
 foreign import ccall unsafe "lookup3.h _jenkins_hashlittle" hashLittle
     :: Ptr a -> CSize -> Word32 -> IO Word32
+
+foreign import ccall unsafe "lookup3.h _jenkins_hashlittleOff" hashLittleBA
+    :: ByteArray# -> CSize -> CSize -> Word32 -> IO Word32
 
 foreign import ccall unsafe "lookup3.h _jenkins_hashlittle2" hashLittle2
     :: Ptr a -> CSize -> Ptr Word32 -> Ptr Word32 -> IO ()
@@ -252,6 +261,15 @@ alignedHash ptr bytes salt
     | bytes .&. 3 == 0 = hashWord (castPtr ptr) (div4 bytes) salt'
     | otherwise        = hashLittle ptr bytes salt'
   where salt' = fromIntegral salt
+
+alignedHashBA :: ByteArray -> Int -> Int -> Word32 -> IO Word32
+alignedHashBA (ByteArray ba#) off len salt
+    | bytes .&. 3 == 0
+    , off .&. 3 == 0   = hashWordBA ba# (div4 (fromIntegral off)) (div4 (fromIntegral bytes)) salt'
+    | otherwise        = hashLittleBA ba# (fromIntegral off) (fromIntegral bytes) salt'
+  where
+    salt' = fromIntegral salt
+    bytes = len
 
 -- Inlined from Foreign.Marshal.Utils, for performance reasons.
 with :: Storable a => a -> (Ptr a -> IO b) -> IO b
