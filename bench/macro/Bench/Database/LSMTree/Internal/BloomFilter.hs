@@ -1,8 +1,5 @@
 {-# LANGUAGE BangPatterns       #-}
 {-# LANGUAGE NumericUnderscores #-}
-{-# LANGUAGE TypeApplications   #-}
-{- HLINT ignore "Use camelCase" -}
-{- HLINT ignore "Eta reduce" -}
 
 module Bench.Database.LSMTree.Internal.BloomFilter (
     benchmarks
@@ -18,8 +15,8 @@ import qualified Data.BloomFilter.Hash as Bloom
 import qualified Data.BloomFilter.Mutable as MBloom
 import           Data.List (foldl')
 import           Data.Time
-import qualified Data.Vector as Vector
 import           Data.Vector (Vector)
+import qualified Data.Vector as Vector
 import           Data.WideWord.Word256 (Word256)
 import           Database.LSMTree.Internal.Run.BloomFilter as Bloom
 import           Database.LSMTree.Internal.Serialise (SerialisedKey,
@@ -152,8 +149,6 @@ totalNumEntriesSanityCheck l1 filterSizes =
 -- * with a hit in only one filter expected, and
 -- * where the total size of the filters is too large to fully cache (though
 --   the smaller ones may fit in the caches).
---
--- Note therefore that the 
 --
 elemManyEnv :: [BloomFilterSizeInfo]
             -> StdGen

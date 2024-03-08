@@ -11,7 +11,7 @@ module Main (main) where
 
 import qualified Bench.Database.LSMTree.Internal.BloomFilter
 
-import System.IO
+import           System.IO
 
 main :: IO ()
 main = do

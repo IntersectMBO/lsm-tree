@@ -241,16 +241,14 @@ benchmark lsm-tree-macro-bench
   type:             exitcode-stdio-1.0
   hs-source-dirs:   bench/macro
   main-is:          Main.hs
-  other-modules:
-    Bench.Database.LSMTree.Internal.BloomFilter
-
+  other-modules:    Bench.Database.LSMTree.Internal.BloomFilter
   build-depends:
     , base
     , lsm-tree:{lsm-tree, bloomfilter, lsm-tree-utils}
     , random
+    , time
     , vector
     , wide-word
-    , time
 
 library kmerge
   import:           warnings, wno-x-partial
