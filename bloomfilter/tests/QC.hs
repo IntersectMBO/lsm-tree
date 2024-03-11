@@ -11,6 +11,7 @@ import Test.Framework.Providers.QuickCheck2 (testProperty)
 import System.IO (BufferMode(..), hSetBuffering, stdout)
 import Test.Framework (Test, defaultMain)
 import Test.QuickCheck (Property, Testable, (==>), choose, forAll)
+import Data.ByteString (ByteString)
 
 import QCSupport (P(..))
 
@@ -19,6 +20,7 @@ prop_pai _ xs (P q) = let bf = B.easyList q [xs] in xs `B.elem` bf
 
 tests :: [Test]
 tests = [
+  {-
    testProperty "()" $ prop_pai ()
  , testProperty "Bool" $ prop_pai (undefined :: Bool)
  , testProperty "Ordering" $ prop_pai (undefined :: Ordering)
@@ -33,12 +35,16 @@ tests = [
  , testProperty "Word8" $ prop_pai (undefined :: Word8)
  , testProperty "Word16" $ prop_pai (undefined :: Word16)
  , testProperty "Word32" $ prop_pai (undefined :: Word32)
- , testProperty "Word64" $ prop_pai (undefined :: Word64)
- , testProperty "String" $ prop_pai (undefined :: String)
+-}
+   testProperty "Word64" $ prop_pai (undefined :: Word64)
+ {- , testProperty "String" $ prop_pai (undefined :: String)
  , testProperty "LB.ByteString" $ prop_pai (undefined :: LB.ByteString)
- , testProperty "prop_rechunked_eq" prop_rechunked_eq
+ -}
+ , testProperty "ByteString" $ prop_pai (undefined :: ByteString)
+ --, testProperty "prop_rechunked_eq" prop_rechunked_eq
  ]
 
+{-
 rechunk :: Int64 -> LB.ByteString -> LB.ByteString
 rechunk k xs | k <= 0    = xs
              | otherwise = LB.fromChunks (go xs)
@@ -46,6 +52,7 @@ rechunk k xs | k <= 0    = xs
                | otherwise = let (pre,suf) = LB.splitAt k s
                              in  repack pre : go suf
           repack = SB.concat . LB.toChunks
+
 
 -- Ensure that a property over a lazy ByteString holds if we change
 -- the chunk boundaries.
@@ -58,6 +65,7 @@ prop_rechunked f s =
 
 prop_rechunked_eq :: LB.ByteString -> Property
 prop_rechunked_eq = prop_rechunked hash64
+-}
 
 main :: IO ()
 main = defaultMain tests

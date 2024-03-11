@@ -19,7 +19,6 @@ import qualified Data.Primitive as P
 import qualified Data.Vector.Primitive as PV
 import           Data.WideWord.Word256 (Word256 (..))
 import           Data.Word (Word64, byteSwap64)
-import           Database.LSMTree.Internal.Run.BloomFilter (Hashable (..))
 import           Database.LSMTree.Internal.Run.Index.Compact (Append (..),
                      CompactIndex (..), PageNo (..), PageSpan (..),
                      SearchResult (..))
@@ -53,9 +52,6 @@ deriving anyclass instance NFData CompactIndex
 -------------------------------------------------------------------------------}
 
 deriving anyclass instance Uniform Word256
-
-instance Hashable Word256 where
-  hashIO32 (Word256 a b c d) = hashIO32 (a, b, c, d)
 
 instance SerialiseKey Word256 where
   serialiseKey (Word256{word256hi, word256m1, word256m0, word256lo}) =

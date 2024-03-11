@@ -48,7 +48,7 @@ module Database.LSMTree.Internal.Serialise.RawBytes (
 import           Control.DeepSeq
 import           Control.Exception (assert)
 import           Data.Bits (Bits (shiftL, shiftR))
-import           Data.BloomFilter.Hash (alignedHashBA)
+import           Data.BloomFilter.Hash (hashByteArray)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BB
 import           Data.ByteString.Internal as BS.Internal
@@ -102,11 +102,11 @@ compareBytes rb1@(RawBytes vec1) rb2@(RawBytes vec2) =
     P.Vector off2 _size2 ba2 = vec2
 
 instance Hashable RawBytes where
-  hashIO32 :: RawBytes -> Word32 -> IO Word32
-  hashIO32 = hash
+  hashSalt64 :: Word64 -> RawBytes -> Word64
+  hashSalt64 = hash
 
-hash :: RawBytes -> Word32 -> IO Word32
-hash (RawBytes (P.Vector off len ba)) = alignedHashBA ba off len
+hash :: Word64 -> RawBytes -> Word64
+hash salt (RawBytes (P.Vector off len ba)) = hashByteArray ba off len salt
 
 instance IsList RawBytes where
   type Item RawBytes = Word8

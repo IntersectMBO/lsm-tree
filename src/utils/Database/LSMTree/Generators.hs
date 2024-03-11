@@ -69,7 +69,6 @@ import           Data.Word
 import           Database.LSMTree.Common (Range (..))
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..))
-import           Database.LSMTree.Internal.Run.BloomFilter (Hashable (..))
 import           Database.LSMTree.Internal.Run.Index.Compact (Append (..),
                      PageNo (..), rangeFinderPrecisionBounds,
                      suggestRangeFinderPrecision)
@@ -257,7 +256,7 @@ instance SerialiseKey k => SerialiseKey (WithSerialised k) where
 newtype UTxOKey = UTxOKey Word256
   deriving stock (Show, Generic)
   deriving newtype ( Eq, Ord, NFData
-                   , Hashable, SerialiseKey
+                   , SerialiseKey
                    , Num, Enum, Real, Integral
                    )
   deriving anyclass Uniform
