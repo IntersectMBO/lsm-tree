@@ -58,8 +58,12 @@ module Data.BloomFilter
     , length
     , elem
     , elemCheapHashes
+    , elemCheapHashes'
     , notElem
     , elemMany
+    , elemMany'
+    , elemMany''
+    , elemMany'''
 
     -- ** Modification
     , insert
@@ -74,6 +78,8 @@ module Data.BloomFilter
 import Control.Monad (liftM, forM_)
 import Control.Monad.ST (ST, runST)
 import Control.DeepSeq (NFData(..))
+import GHC.Conc.Sync (pseq)
+import Data.Word (Word8)
 import qualified Data.BloomFilter.Mutable as MB
 import qualified Data.BloomFilter.Mutable.Internal as MB
 import Data.BloomFilter.Mutable.Internal (Hash, MBloom)
@@ -81,11 +87,16 @@ import Data.BloomFilter.Hash (Hashable, CheapHashes, evalCheapHashes, makeCheapH
 import qualified Data.BloomFilter.Hash as Hash
 import qualified Data.Vector as Vec
 import qualified Data.Vector.Unboxed as UVec
+import qualified Data.Vector.Unboxed.Mutable as MUVec
+
+import qualified Data.Primitive.Array as P
+import qualified Data.Primitive.PrimArray as P
 
 import Prelude hiding (elem, length, notElem,
                        (/), (*), div, divMod, mod)
 
 import qualified Data.BloomFilter.BitVec64 as V
+import GHC.Base (remInt)
 
 -- | An immutable Bloom filter, suitable for querying from pure code.
 data Bloom a = B {
@@ -183,6 +194,22 @@ elemCheapHashes ch ub = go 0 where
                                then go (i + 1)
                                else False
 
+elemCheapHashes' :: CheapHashes a -> Bloom a -> Bool
+elemCheapHashes' =
+    \ch ub ->
+      let !idx0 = fromIntegral (evalCheapHashes ch 0) `remInt` size ub
+          !idx1 = fromIntegral (evalCheapHashes ch 1) `remInt` size ub
+       in go ch ub 0 idx0 idx1
+  where
+    go !ch !ub !hn idx idx' =
+      if V.unsafeIndex (bitArray ub) idx
+        then if hn+1 >= hashesN ub
+               then True
+               else let !idx'' = fromIntegral (evalCheapHashes ch (hn+2)) `remInt` size ub
+                     in go ch ub (hn+1) idx' idx''
+        else False
+      
+
 -- | Query several Bloom filters for membership of a single key. The result
 -- is equivalent to @map (elem k) bs@ but may be faster when used with many
 -- filters by taking advantage of shared calculations.
@@ -190,7 +217,218 @@ elemCheapHashes ch ub = go 0 where
 elemMany :: Hashable a => a -> Vec.Vector (Bloom a) -> UVec.Vector Bool
 elemMany !elt =
     \ubs -> let !ch = makeCheapHashes elt
-             in Vec.convert (Vec.map (elemCheapHashes ch) ubs)
+--             in Vec.convert (Vec.map (elemCheapHashes ch) ubs)
+             in prefetch ch ubs (Vec.length ubs - 1)
+         `pseq` Vec.convert (Vec.map (elemCheapHashes ch) ubs)
+  where
+    prefetch _ch _ubs 0 = ()
+    prefetch ch ubs n =
+      let ub = ubs Vec.! n
+          idx0, idx1 :: Int
+          !idx0 = fromIntegral (evalCheapHashes ch 0) `rem` size ub
+          !idx1 = fromIntegral (evalCheapHashes ch 1) `rem` size ub
+       in       V.prefetchIndex (bitArray ub) idx0
+          `seq` V.prefetchIndex (bitArray ub) idx1
+          `seq` prefetch ch ubs (n-1)
+
+elemMany' :: forall a.
+              Hashable a
+           => a
+           -> Vec.Vector (Bloom a)
+           -> UVec.Vector Bool
+elemMany' = \ !elt !bv ->
+    runST $ do
+      let n = Vec.length bv
+      biv <- MUVec.generate n id -- fill biv with [0..]
+      rs  <- MUVec.new n
+      let !ch = makeCheapHashes elt
+          !hn = hashesN (bv Vec.! 0)
+      go ch bv biv rs hn 0 n
+      UVec.unsafeFreeze rs
+  where
+    go :: forall s.
+          CheapHashes a
+       -> Vec.Vector (Bloom a)
+       -> MUVec.MVector s Int
+       -> MUVec.MVector s Bool
+       -> Int
+       -> Int
+       -> Int
+       -> ST s ()
+    go !ch !bv !biv !rs !hn !i !n
+      | i == n = if hn == 0
+                   then setRemainderTrue biv rs 0 n
+                   else go ch bv biv rs (hn-1) 0 n
+
+      | otherwise = do
+          j <- MUVec.read biv i
+          let !b     = bv Vec.! j
+              !idx   = fromIntegral (evalCheapHashes ch 0) `rem` size b
+              !probe = V.unsafeIndex (bitArray b) idx
+          if probe
+            then go ch bv biv rs hn (i+1) n
+            else do
+              -- write False to results array
+              MUVec.write rs j False
+              -- remove entry from remaining array
+              let !n' = n - 1
+              MUVec.read biv n' >>= MUVec.write biv i
+              go ch bv biv rs hn i (n-1)
+
+    setRemainderTrue ::
+          MUVec.MVector s Int
+       -> MUVec.MVector s Bool
+       -> Int
+       -> Int
+       -> ST s ()
+    setRemainderTrue !biv !rs !i !n
+      | i == n    = return ()
+      | otherwise = do
+          j <- MUVec.read biv i
+          MUVec.write rs j True
+          setRemainderTrue biv rs (i+1) n
+
+
+elemMany'' :: forall a.
+              Hashable a
+           => a
+           -> P.Array (Bloom a)
+           -> P.PrimArray Word8
+elemMany'' = \ !elt !bv ->
+    runST $ do
+      let n = P.sizeofArray bv
+      biv <- P.newPrimArray n
+      sequence_ [ P.writePrimArray biv i i | i <- [0..n-1]]
+      rs  <- P.newPrimArray n
+      let !ch = makeCheapHashes elt
+          !hn = hashesN (P.indexArray bv 0)
+      go ch bv biv rs hn 0 n
+      P.unsafeFreezePrimArray rs
+  where
+    go :: forall s.
+          CheapHashes a
+       -> P.Array (Bloom a)
+       -> P.MutablePrimArray s Int
+       -> P.MutablePrimArray s Word8
+       -> Int
+       -> Int
+       -> Int
+       -> ST s ()
+    go !ch !bv !biv !rs !hn !i !n
+      | i == n = if hn == 0
+                   then setRemainderTrue biv rs 0 n
+                   else go ch bv biv rs (hn-1) 0 n
+
+      | otherwise = do
+          j <- P.readPrimArray biv i
+          let !b     = P.indexArray bv j
+              !idx   = fromIntegral (evalCheapHashes ch 0) `rem` size b
+              !probe = V.unsafeIndex (bitArray b) idx
+          if probe
+            then go ch bv biv rs hn (i+1) n
+            else do
+              -- write False to results array
+              P.writePrimArray rs j 0
+              -- remove entry from remaining array
+              let !n' = n - 1
+              P.readPrimArray biv n' >>= P.writePrimArray biv i
+              go ch bv biv rs hn i (n-1)
+
+    setRemainderTrue ::
+          P.MutablePrimArray s Int
+       -> P.MutablePrimArray s Word8
+       -> Int
+       -> Int
+       -> ST s ()
+    setRemainderTrue !biv !rs !i !n
+      | i == n    = return ()
+      | otherwise = do
+          j <- P.readPrimArray biv i
+          P.writePrimArray rs j 1
+          setRemainderTrue biv rs (i+1) n
+      
+elemMany''' :: forall a.
+                Hashable a
+             => a
+             -> P.Array (Bloom a)
+             -> P.PrimArray Word8
+elemMany''' = \ !elt !bv ->
+    runST $ do
+      let n = P.sizeofArray bv
+      biv <- P.newPrimArray n
+      sequence_ [ P.writePrimArray biv i i | i <- [0..n-1]]
+      pp  <- P.newPrimArray n
+      rs  <- P.newPrimArray n
+      let !ch = makeCheapHashes elt
+
+      prologue        ch bv    biv pp   n  0
+      n' <- probeLoop ch bv rs biv pp 0 n  0
+      epilogue              rs biv      n' 0
+
+      P.unsafeFreezePrimArray rs
+  where
+    -- Set up biv, the current subset of filters,
+    -- and fill in the initial probe points
+    prologue ch bv biv pp n i 
+      | i == n    = return ()
+      | otherwise = do
+          let !b     = P.indexArray bv i
+              !idx   = fromIntegral (evalCheapHashes ch 0 `V.remWord32` fromIntegral (size b))
+--              !idx   = fromIntegral (evalCheapHashes ch 0) `remInt` size b
+          P.writePrimArray biv i i
+          P.writePrimArray pp  i idx
+          V.prefetchIndexST (bitArray b) idx
+          prologue ch bv biv pp n (i+1)
+
+    probeLoop :: forall s.
+          CheapHashes a
+       -> P.Array (Bloom a)          -- the actual filters, immutable
+       -> P.MutablePrimArray s Word8 -- results array
+       -> P.MutablePrimArray s Int   -- the current subset of filters
+       -> P.MutablePrimArray s Int   -- probe points for current filters
+       -> Int                        -- current hash number (increasing)
+       -> Int                        -- size of current filter subset
+       -> Int                        -- index into current filter subset
+       -> ST s Int
+    probeLoop !ch !bv !rs !biv !pp !hn !n !i
+      | i == n = if hn == hashesN (P.indexArray bv 0)
+                   then return n
+                   else probeLoop ch bv rs biv pp (hn+1) n 0
+
+      | otherwise = do
+          idx <- P.readPrimArray pp i
+          j   <- P.readPrimArray biv i
+          let !b = P.indexArray bv j
+          -- now probe the filter location (which was calculated and prefetched on the previous iteration or prologue)
+          if V.unsafeIndex (bitArray b) idx
+            then do
+              -- fill in and prefetch the next probe point for the next iteration
+              let !idx' = fromIntegral (evalCheapHashes ch (hn+1) `V.remWord32` fromIntegral (size b))
+--              let !idx' = fromIntegral (evalCheapHashes ch (hn+1)) `remInt` size b
+              V.prefetchIndexST (bitArray b) idx'
+              P.writePrimArray pp i idx'
+              probeLoop ch bv rs biv pp hn n (i+1)
+            else do
+              -- write False to results array
+              P.writePrimArray rs j 0
+              -- remove entry from remaining array
+              let !n' = n - 1
+              P.readPrimArray biv n' >>= P.writePrimArray biv i
+              probeLoop ch bv rs biv pp hn (n-1) i
+
+    -- Set any remaining results indexes to be True
+    epilogue ::
+          P.MutablePrimArray s Word8
+       -> P.MutablePrimArray s Int
+       -> Int
+       -> Int
+       -> ST s ()
+    epilogue !rs !biv !n !i
+      | i == n    = return ()
+      | otherwise = do
+          j <- P.readPrimArray biv i
+          P.writePrimArray rs j 1
+          epilogue rs biv n (i+1)
 
 modify :: (forall s. (MBloom s a -> ST s z))  -- ^ mutation function (result is discarded)
         -> Bloom a

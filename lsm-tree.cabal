@@ -94,6 +94,7 @@ library bloomfilter
     , bytestring  >=0.9
     , deepseq
     , vector      ^>=0.13.0.0
+    , primitive
 
   exposed-modules:
     Data.BloomFilter

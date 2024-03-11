@@ -31,13 +31,13 @@ import           System.Random
 
 -- | The 2^n number of entries in the smallest LSM run filters.
 benchmarkSizeBase :: SizeBase
-benchmarkSizeBase = 16
+benchmarkSizeBase = 12
 
 -- | The number of lookups to do. This has to be smaller than the total size of
 -- all the filters (otherwise we will not get true positive probes, which is
 -- part of the point of this benchmark).
 benchmarkNumLookups :: Int
-benchmarkNumLookups = 25_000_000
+benchmarkNumLookups = 1_000_000
 
 -- A value of 0.02 results in 5 hashes and just over 8 bits per key.
 benchmarkRequestedFPR :: RequestedFPR
@@ -47,6 +47,7 @@ benchmarks :: IO ()
 benchmarks = do
    let filterSizes = lsmStyleBloomFilters benchmarkSizeBase
                                           benchmarkRequestedFPR
+   --TODO assert benchmarkNumLookups < totalNumEntries filterSizes
    assert (totalNumEntriesSanityCheck benchmarkSizeBase filterSizes) (return ())
    putStrLn "Bloom filter stats:"
    putStrLn "(numEntries, sizeFactor, numBits, numHashFuncs)"
@@ -85,6 +86,15 @@ benchmarks = do
       putStrLn "(this is the simple one-by-one lookup, not bulk lookup)"
       before <- getCurrentTime
       evaluate (benchElemCheapHashes vbs rng0 benchmarkNumLookups)
+      after <- getCurrentTime
+      putStr "Finished: "
+      print (after `diffUTCTime` before)
+      putStrLn ""
+
+   do putStrLn "Benchmarking elemCheapHashes' ... "
+      putStrLn "(this is the simple one-by-one lookup, not bulk lookup)"
+      before <- getCurrentTime
+      evaluate (benchElemCheapHashes' vbs rng0 benchmarkNumLookups)
       after <- getCurrentTime
       putStr "Finished: "
       print (after `diffUTCTime` before)
@@ -206,6 +216,15 @@ benchElemCheapHashes !bs !rng !n =
         !kh =  Bloom.makeCheapHashes (serialiseKey k)
      in foldl' (\_ b -> Bloom.elemCheapHashes kh b `seq` ()) () bs
   `seq` benchElemCheapHashes bs rng' (n-1)
+
+benchElemCheapHashes' :: Vector (Bloom SerialisedKey) -> StdGen -> Int -> ()
+benchElemCheapHashes' !_  !_   0 = ()
+benchElemCheapHashes' !bs !rng !n =
+    let k :: Word256
+        (!k, !rng') = uniform rng
+        !kh =  Bloom.makeCheapHashes (serialiseKey k)
+     in foldl' (\_ b -> Bloom.elemCheapHashes' kh b `seq` ()) () bs
+  `seq` benchElemCheapHashes' bs rng' (n-1)
 
 -- | This gives us a combined cost of calculating the series of keys, and
 -- using 'Bloom.elemMany' for each one.
