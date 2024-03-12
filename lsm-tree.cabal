@@ -131,6 +131,7 @@ library lsm-tree-utils
     , containers
     , deepseq
     , lsm-tree:{lsm-tree, bloomfilter}
+    , primitive
     , QuickCheck
     , quickcheck-instances
     , random

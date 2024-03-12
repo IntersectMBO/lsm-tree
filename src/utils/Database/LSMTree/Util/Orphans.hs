@@ -15,8 +15,10 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as B
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ByteString.Short.Internal as SBS
+import qualified Data.Primitive as P
+import qualified Data.Vector.Primitive as PV
 import           Data.WideWord.Word256 (Word256 (..))
-import           Data.Word (Word64)
+import           Data.Word (Word64, byteSwap64)
 import           Database.LSMTree.Internal.Run.BloomFilter (Hashable (..))
 import           Database.LSMTree.Internal.Run.Index.Compact (Append (..),
                      CompactIndex (..), PageNo (..), PageSpan (..),
@@ -55,24 +57,29 @@ deriving anyclass instance Uniform Word256
 instance Hashable Word256 where
   hashIO32 (Word256 a b c d) = hashIO32 (a, b, c, d)
 
--- | Placeholder instance, not optimised
 instance SerialiseKey Word256 where
   serialiseKey (Word256{word256hi, word256m1, word256m0, word256lo}) =
-      serialiseKey $ B.toLazyByteString $ mconcat [
-          B.word64BE word256hi
-        , B.word64BE word256m1
-        , B.word64BE word256m0
-        , B.word64BE word256lo
-        ]
+    RB.RawBytes $ PV.Vector 0 32 $ P.runByteArray $ do
+      ba <- P.newByteArray 32
+      P.writeByteArray ba 0 $ byteSwap64 word256hi
+      P.writeByteArray ba 1 $ byteSwap64 word256m1
+      P.writeByteArray ba 2 $ byteSwap64 word256m0
+      P.writeByteArray ba 3 $ byteSwap64 word256lo
+      return ba
+
   deserialiseKey = error "deserialiseKey: Word256" -- TODO
 
 {-------------------------------------------------------------------------------
   Word64
 -------------------------------------------------------------------------------}
 
--- | Placeholder instance, not optimised
 instance SerialiseKey Word64 where
-  serialiseKey x = serialiseKey $ B.toLazyByteString $ B.word64BE x
+  serialiseKey x =
+    RB.RawBytes $ PV.Vector 0 8 $ P.runByteArray $ do
+      ba <- P.newByteArray 8
+      P.writeByteArray ba 0 $ byteSwap64 x
+      return ba
+
   deserialiseKey = error "deserialiseKey: Word64" -- TODO
 
 {-------------------------------------------------------------------------------
