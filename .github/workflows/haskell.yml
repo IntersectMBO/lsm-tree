@@ -187,17 +187,13 @@ jobs:
     - name: Cache cabal store
       uses: actions/cache@v3
       env:
-        cache-name: cache-cabal-cabal-fmt
+        cache-name: cache-cabal-cabal-fmt-11
       with:
         path: ${{ steps.setup-haskell.outputs.cabal-store }}
-        key: ${{ runner.os }}-${{ matrix.ghc }}-${{ env.cache-name }}-${{ hashFiles('**/*.cabal') }}-${{ hashFiles('**/cabal.project') }}
-        restore-keys: |
-          ${{ runner.os }}-${{ matrix.ghc }}-${{ env.cache-name }}-${{ hashFiles('**/*.cabal') }}-${{ hashFiles('**/cabal.project') }}
-          ${{ runner.os }}-${{ matrix.ghc }}-${{ env.cache-name }}-${{ hashFiles('**/*.cabal') }}-
-          ${{ runner.os }}-${{ matrix.ghc }}-${{ env.cache-name }}-
+        key: ${{ runner.os }}-${{ matrix.ghc }}-${{ env.cache-name }}
 
     - name: Install cabal-fmt
-      run: cabal install cabal-fmt --constraint 'cabal-fmt == 0.1.10'
+      run: cabal install --ignore-project cabal-fmt --constraint 'cabal-fmt == 0.1.11'
 
     - name: Record cabal-fmt version
       run: |
