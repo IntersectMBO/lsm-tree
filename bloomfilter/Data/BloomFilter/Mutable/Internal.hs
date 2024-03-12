@@ -15,6 +15,7 @@ module Data.BloomFilter.Mutable.Internal
     , hashes
     ) where
 
+import Data.Word (Word64)
 import qualified Data.BloomFilter.BitVec64 as V
 
 import qualified Data.BloomFilter.Hash as Hash
@@ -25,7 +26,7 @@ import Prelude hiding (elem, length, notElem,
 -- | A mutable Bloom filter, for use within the 'ST' monad.
 data MBloom s a = MB {
       hashesN  :: {-# UNPACK #-} !Int
-    , size     :: {-# UNPACK #-} !Int  -- ^ size is multiple of 64
+    , size     :: {-# UNPACK #-} !Word64  -- ^ size is multiple of 64
     , bitArray :: {-# UNPACK #-} !(V.MBitVec64 s)
     }
 type role MBloom nominal nominal

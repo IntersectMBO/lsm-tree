@@ -1,4 +1,4 @@
-{-# LANGUAGE BangPatterns, CPP, Rank2Types,
+{-# LANGUAGE BangPatterns, CPP, Rank2Types, NumericUnderscores,
     TypeOperators,FlexibleContexts #-}
 
 -- |
@@ -60,10 +60,9 @@ module Data.BloomFilter.Mutable
     , bitArray
     ) where
 
-#include "MachDeps.h"
-
 import Control.Monad (liftM, forM_)
 import Control.Monad.ST (ST)
+import Data.Word (Word64)
 import Data.BloomFilter.Util (ceil64)
 import Data.BloomFilter.Mutable.Internal
 import Data.BloomFilter.Hash (Hashable)
@@ -75,19 +74,12 @@ import Prelude hiding (elem, length, notElem,
 
 -- | Create a new mutable Bloom filter.
 new :: Int                    -- ^ number of hash functions to use
-    -> Int                    -- ^ number of bits in filter
+    -> Word64                 -- ^ number of bits in filter
     -> ST s (MBloom s a)
 new hash numBits = MB hash numBits' `liftM` V.new numBits'
-  where numBits' | numBits < 64 = 64
-                 | numBits > maxHash = maxHash
-                 | otherwise = ceil64 numBits
-              
-maxHash :: Int
-#if WORD_SIZE_IN_BITS == 64
-maxHash = 4294967296
-#else
-maxHash = 1073741824
-#endif
+  where numBits' | numBits < 64                = 64
+                 | numBits >= 0xffff_ffff_ffff = 0x1_0000_0000_0000
+                 | otherwise                   = ceil64 numBits
 
 -- | Insert a value into a mutable Bloom filter.  Afterwards, a
 -- membership query for the same value is guaranteed to return @True@.
@@ -95,7 +87,7 @@ insert :: Hashable a => MBloom s a -> a -> ST s ()
 insert mb elt = do
   let mu = bitArray mb
   forM_ (hashes mb elt) $ \idx' -> do
-      let !idx = fromIntegral idx' `rem` size mb :: Int
+      let !idx = idx' `rem` size mb
       V.unsafeWrite mu idx True
 
 -- | Query a mutable Bloom filter for membership.  If the value is
@@ -106,7 +98,7 @@ elem elt mb = loop (hashes mb elt)
   where mu = bitArray mb
         loop (idx':wbs) = do
           -- the index calculation works as long as sizeof(Int) >= sizeof(Hash).
-          let !idx = fromIntegral idx' `rem` size mb :: Int
+          let !idx = idx' `rem` size mb
           b <- V.unsafeRead mu idx
           case b of
               False -> return False
@@ -117,7 +109,7 @@ elem elt mb = loop (hashes mb elt)
 -- bitsInHash = sizeOf (undefined :: Hash) `shiftL` 3
 
 -- | Return the size of a mutable Bloom filter, in bits.
-length :: MBloom s a -> Int
+length :: MBloom s a -> Word64
 length = size
 
 -- $overview
