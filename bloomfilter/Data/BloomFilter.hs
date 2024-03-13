@@ -172,7 +172,7 @@ elem :: Hashable a => a -> Bloom a -> Bool
 elem elt ub = elemCheapHashes (makeCheapHashes elt) ub
 
 elemCheapHashes :: CheapHashes a -> Bloom a -> Bool
-elemCheapHashes ch ub = go 0 where
+elemCheapHashes !ch !ub = go 0 where
   go :: Int -> Bool
   go !i | i >= hashesN ub = True
         | otherwise       = let !idx = fromIntegral (evalCheapHashes ch i)`rem` size ub :: Int
