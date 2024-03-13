@@ -130,7 +130,8 @@ library lsm-tree-utils
     , bytestring
     , containers
     , deepseq
-    , lsm-tree:{lsm-tree, bloomfilter}
+    , lsm-tree
+    , lsm-tree:bloomfilter
     , primitive
     , QuickCheck
     , quickcheck-instances
@@ -179,21 +180,24 @@ test-suite lsm-tree-test
 
   build-depends:
     , ansi-terminal
-    , base                                                          >=4.16 && <4.20
+    , base                     >=4.16 && <4.20
     , bitvec
     , bytestring
     , constraints
     , containers
-    , crc32c                                                        >=0.1
+    , crc32c                   >=0.1
     , cryptohash-sha256
     , deepseq
     , directory
     , filepath
     , fs-api
-    , fs-sim                                                        >=0.2
+    , fs-sim                   >=0.2
     , io-classes
-    , io-sim                                                        >=1.2
-    , lsm-tree:{lsm-tree, bloomfilter, lsm-tree-utils, prototypes}
+    , io-sim                   >=1.2
+    , lsm-tree
+    , lsm-tree:bloomfilter
+    , lsm-tree:lsm-tree-utils
+    , lsm-tree:prototypes
     , mtl
     , primitive
     , QuickCheck
@@ -232,7 +236,10 @@ benchmark lsm-tree-micro-bench
     , criterion
     , deepseq
     , extra
-    , lsm-tree:{lsm-tree, bloomfilter, lsm-tree-utils, prototypes}
+    , lsm-tree
+    , lsm-tree:bloomfilter
+    , lsm-tree:lsm-tree-utils
+    , lsm-tree:prototypes
     , primitive
     , QuickCheck
     , random
@@ -246,7 +253,9 @@ benchmark lsm-tree-macro-bench
   other-modules:    Bench.Database.LSMTree.Internal.BloomFilter
   build-depends:
     , base
-    , lsm-tree:{lsm-tree, bloomfilter, lsm-tree-utils}
+    , lsm-tree
+    , lsm-tree:bloomfilter
+    , lsm-tree:lsm-tree-utils
     , random
     , time
     , vector
