@@ -51,17 +51,16 @@ import           Data.Bits (Bits (shiftL, shiftR))
 import           Data.BloomFilter.Hash (hashByteArray)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BB
-import           Data.ByteString.Internal as BS.Internal
 import           Data.ByteString.Short (ShortByteString (SBS))
 import qualified Data.ByteString.Short as SBS
 import           Data.Primitive.ByteArray (ByteArray (..), compareByteArrays)
 import qualified Data.Vector.Primitive as P
-import           Database.LSMTree.Internal.ByteString (shortByteStringFromTo)
+import           Database.LSMTree.Internal.ByteString (shortByteStringFromTo,
+                     tryGetByteArray)
 import           Database.LSMTree.Internal.Run.BloomFilter (Hashable (..))
 import           Prelude hiding (take)
 
 import           GHC.Exts
-import           GHC.ForeignPtr as GHC
 import           GHC.Stack
 import           GHC.Word
 
@@ -226,16 +225,15 @@ fromByteString :: BS.ByteString -> RawBytes
 fromByteString = fromShortByteString . SBS.toShort
 
 -- | \( O(1) \) conversion from a strict bytestring to raw bytes.
+--
+-- Strict bytestrings are allocated using 'mallocPlainForeignPtrBytes', so we
+-- are expecting a 'PlainPtr' (or 'FinalPtr' with length 0).
+-- For other variants, this function will fail.
 unsafeFromByteString :: HasCallStack => BS.ByteString -> RawBytes
-unsafeFromByteString (BS.Internal.BS (GHC.ForeignPtr _ contents) n) =
-    case contents of
-      -- Strict bytestrings are allocated using 'mallocPlainForeignPtrBytes', so
-      -- we are expecting a 'PlainPtr' here.
-      PlainPtr mba# -> case unsafeFreezeByteArray# mba# realWorld# of
-                   (# _, ba# #) -> RawBytes (P.Vector 0 n (ByteArray ba#))
-      FinalPtr {}        -> error ("unsafeFromByteString: expected plain pointer, got FinalPtr (length " Prelude.++ show n Prelude.++ ")")
-      MallocPtr {}       -> error ("unsafeFromByteString: expected plain pointer, got MallocPtr (length " Prelude.++ show n Prelude.++ ")")
-      PlainForeignPtr {} -> error ("unsafeFromByteString: expected plain pointer, got PlainForeignPtr (length " Prelude.++ show n Prelude.++ ")")
+unsafeFromByteString bs =
+    case tryGetByteArray bs of
+      Right (ba, n) -> RawBytes (P.Vector 0 n ba)
+      Left err      -> error $ "unsafeFromByteString: " <> err
 
 -- | \( O(n) \) conversion from raw bytes to a bytestring.
 toByteString :: RawBytes -> BS.ByteString

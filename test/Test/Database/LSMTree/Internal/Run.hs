@@ -12,6 +12,7 @@ import           Data.Bifunctor (Bifunctor (..))
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Short as SBS
+import           Data.IORef (readIORef)
 import qualified Data.Map.Strict as Map
 import qualified Data.Primitive.ByteArray as BA
 import           System.FilePath
@@ -22,7 +23,7 @@ import qualified System.FS.Sim.Error as FsSim
 import qualified System.FS.Sim.MockFS as FsSim
 import           System.IO.Temp
 import           Test.Tasty (TestTree, testGroup)
-import           Test.Tasty.HUnit (testCase, (@=?))
+import           Test.Tasty.HUnit (assertEqual, testCase, (@=?), (@?))
 import           Test.Tasty.QuickCheck
 
 import           Database.LSMTree.Generators ()
@@ -38,6 +39,8 @@ import qualified Database.LSMTree.Internal.Serialise.RawBytes as RB
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import           Database.LSMTree.Util (showPowersOf10)
+
+import           Test.Database.LSMTree.Internal.Run.Index.Compact ()
 
 type Key  = ByteString
 type Blob = ByteString
@@ -68,6 +71,8 @@ tests = testGroup "Database.LSMTree.Internal.Run"
               Nothing
       , testProperty "Written pages can be read again" $ \wb ->
             WB.numEntries wb > NumEntries 0 ==> prop_WriteAndRead wb
+      , testProperty "A run can be written and loaded from disk" $ \wb ->
+            WB.numEntries wb > NumEntries 0 ==> prop_WriteAndLoad wb
       ]
     ]
   where
@@ -82,16 +87,18 @@ testSingleInsert sessionRoot key val mblob = do
     _ <- fromWriteBuffer fs (RunFsPaths 42) wb
     -- check all files have been written
     let activeDir = sessionRoot </> "active"
-    bsKops <- BS.readFile (activeDir </> "42.keyops")
+    bsKOps <- BS.readFile (activeDir </> "42.keyops")
     bsBlobs <- BS.readFile (activeDir </> "42.blobs")
     bsFilter <- BS.readFile (activeDir </> "42.filter")
     bsIndex <- BS.readFile (activeDir </> "42.index")
-    mempty @=? bsFilter  -- TODO: empty for now, should be written later
-    mempty @=? bsIndex   -- TODO: empty for now, should be written later
+    not (BS.null bsKOps) @? "k/ops file is empty"
+    null mblob @=? BS.null bsBlobs  -- blob file might be empty
+    not (BS.null bsFilter) @? "filter file is empty"
+    not (BS.null bsIndex) @? "index file is empty"
     -- checksums
     checksums <- CRC.readChecksumsFile fs (FS.mkFsPath ["active", "42.checksums"])
     Map.lookup (CRC.ChecksumsFileName "keyops") checksums
-      @=? Just (CRC.updateCRC32C bsKops CRC.initialCRC32C)
+      @=? Just (CRC.updateCRC32C bsKOps CRC.initialCRC32C)
     Map.lookup (CRC.ChecksumsFileName "blobs") checksums
       @=? Just (CRC.updateCRC32C bsBlobs CRC.initialCRC32C)
     Map.lookup (CRC.ChecksumsFileName "filter") checksums
@@ -99,7 +106,7 @@ testSingleInsert sessionRoot key val mblob = do
     Map.lookup (CRC.ChecksumsFileName "index") checksums
       @=? Just (CRC.updateCRC32C bsIndex CRC.initialCRC32C)
     -- check page
-    let page = rawPageFromByteString bsKops 0
+    let page = rawPageFromByteString bsKOps 0
     1 @=? rawPageNumKeys page
     let SerialisedKey key' = serialiseKey key
     let SerialisedValue val' = serialiseValue val
@@ -124,16 +131,11 @@ testSingleInsert sessionRoot key val mblob = do
 
     -- the value is as expected, including any overflow suffix
     let valPrefix = RB.take prefix val'
-        valSuffix = (RB.fromByteString . BS.take suffix . BS.drop 4096) bsKops
+        valSuffix = (RB.fromByteString . BS.take suffix . BS.drop 4096) bsKOps
     SerialisedValue val' @=? SerialisedValue (valPrefix <> valSuffix)
 
     -- blob sanity checks
-    case mblob of
-      Nothing -> do
-        0 @=? rawPageNumBlobs page
-        mempty @=? bsBlobs
-      Just _ ->
-        1 @=? rawPageNumBlobs page
+    length mblob @=? fromIntegral (rawPageNumBlobs page)
 
 -- | Runs in IO, but using a mock file system.
 --
@@ -146,8 +148,8 @@ prop_WriteAndRead wb = ioProperty $ do
     _ <- fromWriteBuffer fs fsPaths wb
     -- read pages
     bsBlobs <- getFile fs (runBlobPath fsPaths)
-    bsKops <- getFile fs (runKOpsPath fsPaths)
-    let pages = rawPageFromByteString bsKops <$> [0, 4096 .. (BS.length bsKops - 1)]
+    bsKOps <- getFile fs (runKOpsPath fsPaths)
+    let pages = rawPageFromByteString bsKOps <$> [0, 4096 .. (BS.length bsKOps - 1)]
     -- check pages
     return $ label ("Number of pages: " <> showPowersOf10 (length pages)) $ do
       let vals = concatMap (bifoldMap pure mempty . snd) (WB.content wb)
@@ -186,6 +188,32 @@ pagesContainEntries bsBlobs (page : pages) kops
       .&&. pagesContainEntries bsBlobs pages kopsRest
   where
     (kopsHere, kopsRest) = splitAt (fromIntegral (rawPageNumKeys page)) kops
+
+-- | Runs in IO, but using a mock file system.
+--
+-- TODO: Also test file system errors.
+prop_WriteAndLoad :: WriteBuffer Key Val Blob -> Property
+prop_WriteAndLoad wb = ioProperty $ do
+    fs <- FsSim.mkSimErrorHasFS' FsSim.empty FsSim.emptyErrors
+    -- flush write buffer
+    let fsPaths = RunFsPaths 1337
+    written <- fromWriteBuffer fs fsPaths wb
+    loaded <- openFromDisk fs fsPaths
+
+    (1 @=?) =<< readIORef (lsmRunRefCount written)
+    (1 @=?) =<< readIORef (lsmRunRefCount loaded)
+
+    lsmRunNumEntries written @=? lsmRunNumEntries loaded
+    lsmRunFilter written @=? lsmRunFilter loaded
+    lsmRunIndex written @=? lsmRunIndex loaded
+
+    assertEqual "k/ops file"
+      (FS.handlePath (lsmRunKOpsFile written))
+      (FS.handlePath (lsmRunKOpsFile loaded))
+    assertEqual "blob file"
+      (FS.handlePath (lsmRunBlobFile written))
+      (FS.handlePath (lsmRunBlobFile loaded))
+
 
 rawPageFromByteString :: ByteString -> Int -> RawPage
 rawPageFromByteString bs off =

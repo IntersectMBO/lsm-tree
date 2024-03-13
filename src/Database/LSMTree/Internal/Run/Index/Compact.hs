@@ -11,12 +11,12 @@
 module Database.LSMTree.Internal.Run.Index.Compact (
     -- $compact
     CompactIndex (..)
+  , PageNo (..)
+  , NumPages
     -- * Invariants and bounds
   , rangeFinderPrecisionBounds
-  , NumPages
   , suggestRangeFinderPrecision
     -- * Queries
-  , PageNo (..)
   , SearchResult (..)
   , PageSpan (..)
   , toPageSpan
@@ -24,16 +24,15 @@ module Database.LSMTree.Internal.Run.Index.Compact (
   , countClashes
   , hasClashes
   , sizeInPages
-    -- * Construction
-    -- $construction-invariants
-  , Append (..)
-  , fromList
-  , fromListSingles
-  , fromChunks
-    -- * Serialisation
+    -- * Non-incremental serialisation
+  , builder
+    -- * Incremental serialisation
+    -- $incremental-serialisation
+  , Chunk (..)
   , headerBuilder
   , chunkBuilder
-  , finalChunkBuilder
+  , finalBuilder
+    -- * Deserialisation
   , fromSBS
   ) where
 
@@ -45,11 +44,10 @@ import           Data.Bits (unsafeShiftR, (.&.))
 import qualified Data.ByteString.Builder as BB
 import qualified Data.ByteString.Builder.Extra as BB
 import           Data.ByteString.Short (ShortByteString (..))
-import           Data.Foldable (toList)
 import           Data.Map.Range (Bound (..))
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (catMaybes, fromJust)
+import           Data.Maybe (fromJust)
 import           Data.Primitive.ByteArray (ByteArray (..), indexByteArray,
                      sizeofByteArray)
 import qualified Data.Vector.Algorithms.Search as VA
@@ -61,7 +59,6 @@ import           Data.Word
 import           Database.LSMTree.Internal.BitMath
 import           Database.LSMTree.Internal.ByteString (byteArrayFromTo)
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
-import           Database.LSMTree.Internal.Run.Index.Compact.Construction
 import           Database.LSMTree.Internal.Serialise
 
 {- $compact
@@ -69,10 +66,8 @@ import           Database.LSMTree.Internal.Serialise
   A fence-pointer index is a mapping of disk pages, identified by some number
   @i@, to min-max information for keys on that page.
 
-  Fence-pointer indexes can be constructed incrementally (e.g., using 'new',
-  'append', 'unsafeEnd', and 'fromChunks') or in one go (e.g., using
-  'fromList'). Regardless of the construction method however, some invariants
-  must be upheld: see [construction invariants](#construction-invariants).
+  Fence-pointer indexes can be constructed and serialised incrementally, see
+  module "Database.LSMTree.Internal.Run.Index.Compact.Construction".
 
   Given a serialised target key @k@, an index can be 'search'ed to find a disk
   page @i@ that /might/ contain @k@. Fence-pointer indices offer no guarantee of
@@ -465,6 +460,13 @@ data CompactIndex = CompactIndex {
   , ciLargerThanPage       :: !(VU.Vector Bit)
   }
 
+-- | A 0-based number identifying a disk page.
+newtype PageNo = PageNo { unPageNo :: Int }
+  deriving stock (Show, Eq, Ord)
+
+-- TODO: Turn into newtype, maybe also other types, e.g. range finder precision.
+type NumPages = Int
+
 {-------------------------------------------------------------------------------
   Invariants
 -------------------------------------------------------------------------------}
@@ -569,52 +571,28 @@ sizeInPages :: CompactIndex -> NumPages
 sizeInPages = VU.length . ciPrimary
 
 {-------------------------------------------------------------------------------
-  Construction
+  Non-incremental serialisation
 -------------------------------------------------------------------------------}
 
-{- $construction-invariants #construction-invariants#
-
-  Constructing a compact index can go wrong, unless the following conditions are
-  met:
-
-  * /Sorted/: pages must be appended in sorted order according to the keys they
-    contain.
-
-  * /Partitioned/: pages must be partitioned. That is, the range-finder bits for
-    all keys within a page must match.
--}
-
--- | One-shot construction.
-fromList :: Int -> Int -> [Append] -> CompactIndex
-fromList rfprec maxcsize apps = runST $ do
-    mci <- new rfprec maxcsize
-    cs <- mapM (`append` mci) apps
-    (c, fc) <- unsafeEnd mci
-    pure (fromChunks (concat cs ++ toList c) fc)
-
--- | One-shot construction using only 'appendSingle'.
-fromListSingles :: Int -> Int -> [(SerialisedKey, SerialisedKey)] -> CompactIndex
-fromListSingles rfprec maxcsize apps = runST $ do
-    mci <- new rfprec maxcsize
-    cs <- mapM (`appendSingle` mci) apps
-    (c, fc) <- unsafeEnd mci
-    pure (fromChunks (catMaybes cs ++ toList c) fc)
-
--- | Feed in 'Chunk's in the same order that they were yielded from incremental
--- construction using 'MCompactIndex'.
-fromChunks :: [Chunk] -> FinalChunk -> CompactIndex
-fromChunks cs FinalChunk{..} = CompactIndex {
-      ciRangeFinder          = fcRangeFinder
-    , ciRangeFinderPrecision = fcRangeFinderPrecision
-    , ciPrimary              = VU.concat $ fmap cPrimary cs
-    , ciClashes              = fcClashes
-    , ciTieBreaker           = fcTieBreaker
-    , ciLargerThanPage       = fcLargerThanPage
-    }
+-- | Serialises a compact index in one go.
+builder :: NumEntries -> CompactIndex -> BB.Builder
+builder numEntries index =
+     headerBuilder
+  <> chunkBuilder (Chunk (ciPrimary index))
+  <> finalBuilder numEntries index
 
 {-------------------------------------------------------------------------------
-  Serialisation
+  Incremental serialisation
 -------------------------------------------------------------------------------}
+
+{- $incremental-serialisation
+
+  To incrementally serialise a compact index as it is being constructed, start
+  by using 'headerBuilder'. Each yielded chunk can then be written using
+  'chunkBuilder'. Once construction is completed, 'finalBuilder' will serialise
+  the remaining parts of the compact index.
+  Also see module "Database.LSMTree.Internal.Run.Index.Compact.Construction".
+-}
 
 -- | By writing out the version in host endianness, we also indicate endianness.
 -- During deserialisation, we would discover an endianness mismatch.
@@ -625,30 +603,34 @@ indexVersion = 1
 headerBuilder :: BB.Builder
 headerBuilder = BB.word32Host indexVersion
 
+-- | A chunk of the primary array, which can be constructed incrementally.
+data Chunk = Chunk { cPrimary :: !(VU.Vector Word32) }
+  deriving stock (Show, Eq)
+
 -- | 32 bit aligned.
 chunkBuilder :: Chunk -> BB.Builder
 chunkBuilder Chunk {..} = putVec32 cPrimary
 
--- | Must be written after the sequence of 'chunkBuilder' of the corresponding
--- compact index. Specifically, the written chunks must match 'fcNumPages' to
--- get the alignment right.
-finalChunkBuilder :: NumEntries -> FinalChunk -> BB.Builder
-finalChunkBuilder (NumEntries numEntries) FinalChunk {..} =
-       putVec32 fcRangeFinder
+-- | Writes everything after the primary array, which is assumed to have already
+-- been written using 'chunkBuilder'.
+finalBuilder :: NumEntries -> CompactIndex -> BB.Builder
+finalBuilder (NumEntries numEntries) CompactIndex {..} =
+       putVec32 ciRangeFinder
        -- align to 64 bit, if odd number of Word32 written before
-    <> (if odd (fcNumPages + VU.length fcRangeFinder + 1 {- version -})
+    <> (if odd (numPages + numRanges + 1 {- version -})
         then BB.word32Host 0
         else mempty)
-    <> putBitVec fcClashes
-    <> putBitVec fcLargerThanPage
-    <> putTieBreaker fcTieBreaker
-    <> BB.word64Host (fromIntegral fcRangeFinderPrecision)
-    <> BB.word64Host (fromIntegral fcNumPages)
+    <> putBitVec ciClashes
+    <> putBitVec ciLargerThanPage
+    <> putTieBreaker ciTieBreaker
+    <> BB.word64Host (fromIntegral ciRangeFinderPrecision)
+    <> BB.word64Host (fromIntegral numPages)
     <> BB.word64Host (fromIntegral numEntries)
+  where
+    numPages = VU.length ciPrimary
+    numRanges = VU.length ciRangeFinder
 
 -- | 32 bit aligned.
---
--- This only produces the correct output on little-endian systems.
 --
 -- TODO(optimisation): It should be possible to do this without copying the
 -- vector. If we ensure pinned allocation of the underlying byte array, we could
@@ -706,7 +688,9 @@ putPaddingTo64 written
 -- serialised compact index, with no leading or trailing space.
 -- It is directly used as the backing memory for the compact index.
 --
--- Also note that the implementation assumes a little-endian system.
+-- Also note that the implementation reads values in little-endian byte order.
+-- If the file has been serialised in big-endian order, the mismatch will be
+-- detected by looking at the version indicator.
 --
 -- __NOTE__: Currently does not perform bounds checks. Malformed input can
 -- trigger invalid memory access!

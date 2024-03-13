@@ -22,6 +22,7 @@ import           Control.Applicative (Applicative (..))
 import qualified Data.ByteString.Char8 as BS
 import           Data.Foldable (toList)
 import qualified Data.Map as Map
+import           Data.Traversable (for)
 import           Prelude hiding (Applicative (..))
 import qualified System.FS.API as FS
 import           System.FS.API (FsPath)
@@ -88,8 +89,11 @@ runChecksumFileNames = fmap (CRC.ChecksumsFileName . BS.pack) runFileExts
 toChecksumsFile :: ForRunFiles CRC.CRC32C -> CRC.ChecksumsFile
 toChecksumsFile = Map.fromList . toList . liftA2 (,) runChecksumFileNames
 
-fromChecksumsFile :: CRC.ChecksumsFile -> Maybe (ForRunFiles CRC.CRC32C)
-fromChecksumsFile file = traverse (flip Map.lookup file) runChecksumFileNames
+fromChecksumsFile :: CRC.ChecksumsFile -> Either String (ForRunFiles CRC.CRC32C)
+fromChecksumsFile file = for runChecksumFileNames $ \name ->
+    case Map.lookup name file of
+      Just crc -> Right crc
+      Nothing  -> Left ("key not found: " <> show name)
 
 {-------------------------------------------------------------------------------
   ForRunFiles abstraction

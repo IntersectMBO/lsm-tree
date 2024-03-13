@@ -53,7 +53,7 @@ test_singleKeyRun =  do
     let !k = SerialisedKey' (P.fromList [37, 37, 37, 37, 37, 37])
         !e = InsertWithBlob (SerialisedValue' (P.fromList [48, 19])) (BlobSpan 55 77)
 
-    (addRes, (mp, mc, _mfc, b, cix)) <- stToIO $ do
+    (addRes, (mp, mc, b, cix, _numEntries)) <- stToIO $ do
       racc <- new (NumEntries 1) 1
       addRes <- addFullKOp racc k e
       (addRes,) <$> unsafeFinalise racc

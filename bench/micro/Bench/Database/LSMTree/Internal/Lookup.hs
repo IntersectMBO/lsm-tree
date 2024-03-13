@@ -12,7 +12,8 @@
 module Bench.Database.LSMTree.Internal.Lookup (benchmarks, analysis) where
 
 import           Bench.Database.LSMTree.Internal.Run.BloomFilter (elems)
-import           Bench.Database.LSMTree.Internal.Run.Index.Compact (searches)
+import           Bench.Database.LSMTree.Internal.Run.Index.Compact
+                     (constructCompactIndex, searches)
 import           Control.DeepSeq (NFData)
 import           Control.Monad
 import           Criterion.Main (Benchmark, bench, bgroup, env, nf, whnf)
@@ -22,13 +23,15 @@ import           Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NonEmpty
 import           Data.Maybe (fromMaybe)
 import           Data.Proxy (Proxy (..))
-import           Database.LSMTree.Generators (RFPrecision (..), UTxOKey)
+import           Database.LSMTree.Generators (ChunkSize (..), RFPrecision (..),
+                     UTxOKey)
 import           Database.LSMTree.Internal.Lookup (prepLookups)
 import           Database.LSMTree.Internal.Run.BloomFilter (Bloom)
 import qualified Database.LSMTree.Internal.Run.BloomFilter as Bloom
-import           Database.LSMTree.Internal.Run.Index.Compact (Append (..),
-                     CompactIndex)
+import           Database.LSMTree.Internal.Run.Index.Compact (CompactIndex)
 import qualified Database.LSMTree.Internal.Run.Index.Compact as Index
+import           Database.LSMTree.Internal.Run.Index.Compact.Construction
+                     (Append (..))
 import           Database.LSMTree.Internal.Serialise (SerialiseKey,
                      SerialisedKey, keyTopBits16, serialiseKey)
 import           Database.LSMTree.Util.Orphans ()
@@ -120,7 +123,7 @@ data Config = Config {
     -- | If 'Nothing', use 'suggestRangeFinderPrecision'.
   , rfprecDef    :: !(Maybe Int)
     -- | Chunk size for compact index construction
-  , csize        :: !Int
+  , csize        :: !ChunkSize
     -- | Number of pages in total
     --
     -- Note: the actual number of pages can be higher, because of the
@@ -139,7 +142,7 @@ defaultConfig :: Config
 defaultConfig = Config {
     name         = "default"
   , rfprecDef    = Nothing
-  , csize        = 100
+  , csize        = ChunkSize 100
   , npages       = 50_000
   , npageEntries = 40
   , npos         = 10_000
@@ -157,14 +160,15 @@ prepLookupsEnv ::
 prepLookupsEnv _ Config {..} = do
     (storedKeys, lookupKeys) <- lookupsEnv @k (mkStdGen 17) totalEntries npos nneg
     let b    = Bloom.fromList fpr $ fmap serialiseKey storedKeys
-        ps   = mkPages (RFPrecision rfprec) $ NonEmpty.fromList storedKeys
+        ps   = mkPages rfprec $ NonEmpty.fromList storedKeys
         ps'  = fmap serialiseKey ps
         ps'' = fromPage <$> getPages ps'
-        ci   = Index.fromList rfprec csize ps''
+        ci   = constructCompactIndex csize (rfprec, ps'')
     pure (b, ci, fmap serialiseKey lookupKeys)
   where
     totalEntries = npages * npageEntries
-    rfprec = fromMaybe (Index.suggestRangeFinderPrecision npages) rfprecDef
+    rfprec = RFPrecision $
+      fromMaybe (Index.suggestRangeFinderPrecision npages) rfprecDef
 
 -- | Generate keys to store and keys to lookup
 lookupsEnv ::

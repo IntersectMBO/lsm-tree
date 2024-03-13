@@ -24,6 +24,7 @@ import           Data.IORef
 import           Data.Traversable (for)
 import           Data.Word (Word64)
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
+import           Database.LSMTree.Internal.BloomFilter (bloomFilterToBuilder)
 import           Database.LSMTree.Internal.CRC32C (CRC32C)
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry
@@ -33,7 +34,7 @@ import qualified Database.LSMTree.Internal.Run.Construction as Cons
 import           Database.LSMTree.Internal.Run.FsPaths
 import           Database.LSMTree.Internal.Run.Index.Compact (CompactIndex,
                      NumPages)
-import qualified Database.LSMTree.Internal.Run.Index.Compact.Construction as Index
+import qualified Database.LSMTree.Internal.Run.Index.Compact as Index
 import           Database.LSMTree.Internal.Serialise
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
@@ -91,7 +92,10 @@ new fs lsmMRunFsPaths numEntries estimatedNumPages = do
 
     FS.createDirectoryIfMissing fs False activeRunsDir
     lsmMRunHandles <- traverse (makeHandle fs) (runFsPaths lsmMRunFsPaths)
-    return MRun {..}
+
+    let mrun = MRun {..}
+    writeIndexHeader fs mrun
+    return mrun
 
 -- | Add a serialised k\/op pair. Blobs will be written to disk. Use only for
 -- entries that are fully in-memory.
@@ -125,22 +129,22 @@ addFullKOp fs mrun@MRun {..} key op = do
 unsafeFinalise ::
      HasFS IO h
   -> MRun (FS.Handle h)
-  -> IO (RefCount, RunFsPaths, Bloom SerialisedKey, CompactIndex)
+  -> IO (RefCount, RunFsPaths, Bloom SerialisedKey, CompactIndex, NumEntries)
 unsafeFinalise fs mrun@MRun {..} = do
     -- write final bits
-    (mAcc, mChunk, finalChunk, runFilter, runIndex) <-
+    (mAcc, mChunk, runFilter, runIndex, numEntries) <-
       ST.stToIO (Cons.unsafeFinalise lsmMRunAcc)
     for_ mAcc $ \(pageAcc, chunks) -> do
       writePageAcc fs mrun pageAcc
       writeIndexChunks fs mrun chunks
     for_ mChunk $ \chunk ->
       writeIndexChunks fs mrun [chunk]
-    writeIndexFinalChunk fs mrun finalChunk
+    writeIndexFinal fs mrun numEntries runIndex
     writeFilter fs mrun runFilter
     -- close all handles and write their checksums
     checksums <- toChecksumsFile <$> traverse (closeHandle fs) lsmMRunHandles
     CRC.writeChecksumsFile fs (runChecksumsPath lsmMRunFsPaths) checksums
-    return (lsmMRunRefCount, lsmMRunFsPaths, runFilter, runIndex)
+    return (lsmMRunRefCount, lsmMRunFsPaths, runFilter, runIndex, numEntries)
 
 -- | Increase the reference count by one.
 addMRunReference :: HasFS IO h -> MRun (FS.Handle h) -> IO ()
@@ -183,21 +187,29 @@ writeBlob fs MRun{..} blob = do
     writeToHandle fs (forRunBlob lsmMRunHandles) (serialisedBlob blob)
     return (BlobSpan offset (fromIntegral size))
 
--- TODO: Fill in once serialisation of the filter is implemented.
 writeFilter :: HasFS IO h -> MRun (FS.Handle h) -> Bloom SerialisedKey -> IO ()
-writeFilter _ _ _ = return ()
+writeFilter fs MRun {..} bf =
+    writeToHandle fs (forRunFilter lsmMRunHandles) (bloomFilterToBuilder bf)
 
--- TODO: Fill in once serialisation of the index is implemented.
-writeIndexFinalChunk ::
+writeIndexHeader :: HasFS IO h -> MRun (FS.Handle h) -> IO ()
+writeIndexHeader fs MRun {..} =
+    writeToHandle fs (forRunIndex lsmMRunHandles) $
+      Index.headerBuilder
+
+writeIndexChunks :: HasFS IO h -> MRun (FS.Handle h) -> [Index.Chunk] -> IO ()
+writeIndexChunks fs MRun {..} chunks =
+    writeToHandle fs (forRunIndex lsmMRunHandles) $
+      foldMap Index.chunkBuilder chunks
+
+writeIndexFinal ::
      HasFS IO h
   -> MRun (FS.Handle h)
-  -> Index.FinalChunk
+  -> NumEntries
+  -> CompactIndex
   -> IO ()
-writeIndexFinalChunk _ _ _ = return ()
-
--- TODO: Fill in once serialisation of the index is implemented.
-writeIndexChunks :: HasFS IO h -> MRun (FS.Handle h) -> [Index.Chunk] -> IO ()
-writeIndexChunks _ _ _ = return ()
+writeIndexFinal fs MRun {..} numEntries index =
+    writeToHandle fs (forRunIndex lsmMRunHandles) $
+      Index.finalBuilder numEntries index
 
 {-------------------------------------------------------------------------------
   ChecksumHandle
