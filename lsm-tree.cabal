@@ -13,9 +13,6 @@ build-type:         Simple
 extra-doc-files:    CHANGELOG.md
 extra-source-files: README.md
 tested-with:        GHC ==9.2 || ==9.4 || ==9.6 || ==9.8
-extra-source-files:
-  bloomfilter/cbits/lookup3.c
-  bloomfilter/cbits/lookup3.h
 
 source-repository head
   type:     git
@@ -82,6 +79,29 @@ library
     , vector                ^>=0.13
     , vector-algorithms     ^>=0.9
 
+-- this exists due windows
+library xxhash
+  default-language: Haskell2010
+  visibility:       private
+  include-dirs:     xxhash/xxHash-0.8.2/ xxhash/include/
+  includes:
+    HsXXHash.h
+    xxhash.h
+
+  exposed-modules:  XXH3
+
+  if arch(x86_64)
+    -- Cabal doesn't pass cc-options to "ordinary" Haskell source compilation
+    -- https://github.com/haskell/cabal/issues/9801
+    ghc-options: -optc=-mavx2 -optc=-O3
+
+  other-modules:    FFI
+  hs-source-dirs:   xxhash/src
+  build-depends:
+    , base
+    , bytestring
+    , primitive   ^>=0.9
+
 -- this fork doesn't work on 32bit systems
 library bloomfilter
   import:           wno-x-partial
@@ -94,6 +114,8 @@ library bloomfilter
     , bytestring       >=0.9
     , data-array-byte
     , deepseq
+    , lsm-tree:xxhash
+    , primitive
     , vector           ^>=0.13.0.0
 
   exposed-modules:
@@ -107,11 +129,7 @@ library bloomfilter
     Data.BloomFilter.Mutable.Internal
     Data.BloomFilter.Util
 
-  c-sources:        bloomfilter/cbits/lookup3.c
   ghc-options:      -O2 -Wall
-  include-dirs:     bloomfilter/cbits
-  includes:         lookup3.h
-  install-includes: lookup3.h
 
 library lsm-tree-utils
   import:           warnings, wno-x-partial

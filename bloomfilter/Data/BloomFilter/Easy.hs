@@ -32,7 +32,6 @@ import Data.BloomFilter (Bloom)
 import Data.BloomFilter.Hash (Hashable)
 import Data.BloomFilter.Util (nextPowerOfTwo)
 import qualified Data.ByteString as SB
-import qualified Data.ByteString.Lazy as LB
 import qualified Data.BloomFilter as B
 
 -- | Create a Bloom filter with the given false positive rate and
@@ -42,8 +41,6 @@ easyList :: (Hashable a)
          => Double              -- ^ desired false positive rate (0 < /e/ < 1)
          -> [a]                 -- ^ values to populate with
          -> Bloom a
-{-# SPECIALIZE easyList :: Double -> [String] -> Bloom String #-}
-{-# SPECIALIZE easyList :: Double -> [LB.ByteString] -> Bloom LB.ByteString #-}
 {-# SPECIALIZE easyList :: Double -> [SB.ByteString] -> Bloom SB.ByteString #-}
 easyList errRate xs = B.fromList numHashes numBits xs
     where capacity = length xs
