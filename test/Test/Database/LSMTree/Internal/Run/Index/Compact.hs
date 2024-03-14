@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns        #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE NumericUnderscores  #-}
 {-# LANGUAGE RecordWildCards     #-}
@@ -9,6 +10,7 @@
 
 module Test.Database.LSMTree.Internal.Run.Index.Compact (tests) where
 
+import           Control.DeepSeq (deepseq)
 import           Control.Monad (foldM)
 import           Control.Monad.ST (runST)
 import           Control.Monad.State.Strict (MonadState (..), State, evalState,
@@ -24,11 +26,15 @@ import           Data.List.Split (chunksOf)
 import qualified Data.Map.Merge.Strict as Merge
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import           Data.Primitive.ByteArray (ByteArray (..), byteArrayFromList,
+                     sizeofByteArray)
 import qualified Data.Vector.Primitive as VP
 import qualified Data.Vector.Unboxed as V
 import qualified Data.Vector.Unboxed as VU
+import qualified Data.Vector.Unboxed.Base as VU (Vector (V_Word32))
 import           Data.Word
 import           Database.LSMTree.Generators as Gen
+import           Database.LSMTree.Internal.BitMath
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
 import           Database.LSMTree.Internal.Run.Index.Compact as Index
 import           Database.LSMTree.Internal.Run.Index.Compact.Construction as Cons
@@ -154,6 +160,10 @@ tests = testGroup "Test.Database.LSMTree.Internal.Run.Index.Compact" [
           prop_roundtrip_chunks
       , testProperty "prop_roundtrip" $
           prop_roundtrip @(WithSerialised UTxOKey)
+      , testProperty "prop_total_deserialisation" $ withMaxSuccess 10000
+          prop_total_deserialisation
+      , testProperty "prop_total_deserialisation_whitebox" $ withMaxSuccess 10000
+          prop_total_deserialisation_whitebox
       ]
   ]
 
@@ -286,6 +296,36 @@ prop_roundtrip csize ps numEntries =
     sbs = SBS.toShort (LBS.toStrict (bsVersion <> bsPrimary <> bsRest))
 
     showBS = unlines . showBytes . LBS.unpack
+
+prop_total_deserialisation :: [Word32] -> Property
+prop_total_deserialisation word32s =
+    let !(ByteArray ba) = byteArrayFromList word32s
+    in case fromSBS (SBS.SBS ba) of
+      Left err -> label err $ property True
+      Right (numEntries, ci) -> label "parsed successfully" $ property $
+        -- Just forcing the index is not enough. The underlying vectors might
+        -- point to outside of the byte array, so we check they are valid.
+        (numEntries, ci) `deepseq`
+             vec32IsValid (ciRangeFinder ci)
+          && vec32IsValid (ciPrimary ci)
+          && bitVecIsValid (ciClashes ci)
+          && bitVecIsValid (ciLargerThanPage ci)
+  where
+    vec32IsValid (VU.V_Word32 (VP.Vector off len ba)) =
+      off >= 0 && len >= 0 && mul4 (off + len) <= sizeofByteArray ba
+    bitVecIsValid (BV.BitVec off len ba) =
+      off >= 0 && len >= 0 && ceilDiv8 (off + len) <= sizeofByteArray ba
+
+prop_total_deserialisation_whitebox :: RFPrecision -> Small Word16 -> Small Word16 -> [Word32] -> Property
+prop_total_deserialisation_whitebox (RFPrecision rfprec) numEntries numPages word32s =
+    prop_total_deserialisation $
+         [1]  -- version
+      <> word32s  -- primary array, range finder, clash bits, LTP bits, clash map
+      <> [0 | even (length word32s)]  -- padding
+      <> [ fromIntegral rfprec, 0
+         , fromIntegral numPages, 0
+         , fromIntegral numEntries, 0
+         ]
 
 {-------------------------------------------------------------------------------
   Util

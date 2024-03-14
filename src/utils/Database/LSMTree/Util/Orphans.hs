@@ -19,6 +19,7 @@ import qualified Data.Primitive as P
 import qualified Data.Vector.Primitive as PV
 import           Data.WideWord.Word256 (Word256 (..))
 import           Data.Word (Word64, byteSwap64)
+import           Database.LSMTree.Internal.Entry (NumEntries (..))
 import           Database.LSMTree.Internal.Run.Index.Compact (CompactIndex (..),
                      PageNo (..), PageSpan (..), SearchResult (..))
 import           Database.LSMTree.Internal.Run.Index.Compact.Construction
@@ -33,6 +34,7 @@ import           System.Random (Uniform)
 deriving newtype instance NFData SerialisedKey
 deriving newtype instance NFData SerialisedValue
 deriving newtype instance NFData SerialisedBlob
+deriving newtype instance NFData NumEntries
 
 deriving stock instance Generic SearchResult
 deriving anyclass instance NFData SearchResult
