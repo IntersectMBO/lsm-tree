@@ -37,15 +37,13 @@ module Data.BloomFilter.Hash
 
 import Data.Array.Byte (ByteArray (..))
 import Data.Bits (unsafeShiftR)
-import Data.Word (Word32, Word64)
+import Data.Word (Word64)
 import XXH3 (xxh3_64bit_withSeed_ba, xxh3_64bit_withSeed_bs)
-
 import qualified Data.ByteString as SB
 import qualified Data.Primitive as P
 
--- | A hash value is 32 bits wide.  This limits the maximum size of a
--- filter to about four billion elements, or 512 megabytes of memory.
-type Hash = Word32
+-- | A hash value is 64 bits wide.
+type Hash = Word64
 
 class Hashable a where
     -- | Compute a 64-bit hash of a value.  The first salt value

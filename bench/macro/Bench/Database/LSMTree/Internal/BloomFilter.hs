@@ -18,6 +18,7 @@ import           Data.Time
 import           Data.Vector (Vector)
 import qualified Data.Vector as Vector
 import           Data.WideWord.Word256 (Word256)
+import           Data.Word (Word64)
 import           GHC.Stats
 import           Numeric
 import           System.Mem (performMajorGC)
@@ -133,7 +134,7 @@ benchmark name description action n (subtractTime, subtractAlloc) = do
     return (timeNet, allocNet)
 
 -- | (numEntries, sizeFactor, numBits, numHashFuncs)
-type BloomFilterSizeInfo = (Int, Int, Int, Int)
+type BloomFilterSizeInfo = (Int, Int, Word64, Int)
 type SizeBase     = Int
 type RequestedFPR = Double
 
@@ -146,7 +147,7 @@ type RequestedFPR = Double
 --
 lsmStyleBloomFilters :: SizeBase -> RequestedFPR -> [BloomFilterSizeInfo]
 lsmStyleBloomFilters l1 requestedFPR =
-    [ (numEntries, sizeFactor, numBits, numHashFuncs)
+    [ (numEntries, sizeFactor, fromIntegral numBits, numHashFuncs)
     | (numEntries, sizeFactor)
         <- replicate 8 (2^(l1+0), 1)   -- 8 runs at level 1 (tiering)
         ++ replicate 8 (2^(l1+2), 4)   -- 8 runs at level 2 (tiering)
@@ -161,7 +162,7 @@ totalNumEntries filterSizes =
     sum [ numEntries | (numEntries, _, _, _) <- filterSizes ]
 
 totalNumBytes filterSizes =
-    sum [ numBits | (_,_,numBits,_) <- filterSizes ] `div` 8
+    fromIntegral $ sum [ numBits | (_,_,numBits,_) <- filterSizes ] `div` 8
 
 totalNumEntriesSanityCheck :: SizeBase -> [BloomFilterSizeInfo] -> Bool
 totalNumEntriesSanityCheck l1 filterSizes =

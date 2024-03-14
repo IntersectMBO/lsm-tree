@@ -7,9 +7,10 @@ module Data.BloomFilter.Util
     ) where
 
 import Data.Bits ((.|.), (.&.), complement, unsafeShiftR)
+import Data.Word (Word64)
 
 -- given number.
-nextPowerOfTwo :: Int -> Int
+nextPowerOfTwo :: Word64 -> Word64
 {-# INLINE nextPowerOfTwo #-}
 nextPowerOfTwo n =
     let a = n - 1
@@ -26,5 +27,5 @@ nextPowerOfTwo n =
 -- >>> and [ ceil64 i == ceil64ref i | i <- [0..200] ]
 -- True
 --
-ceil64 :: Int -> Int
+ceil64 :: Word64 -> Word64
 ceil64 i = (i + 63) .&. complement 0x3f

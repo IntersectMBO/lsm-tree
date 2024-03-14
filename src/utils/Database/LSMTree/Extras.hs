@@ -59,7 +59,7 @@ mkBloomST requestedFPR xs = runST $ do
 --   rounding of th ebits.
 mkBloomST_Monkey :: Hashable a => Double -> BloomMaker a
 mkBloomST_Monkey requestedFPR xs = runST $ do
-    b <- Bloom.new numHashFuncs numBits
+    b <- Bloom.new numHashFuncs (fromIntegral numBits)
     mapM_ (Bloom.insert b) xs
     Bloom.freeze b
   where

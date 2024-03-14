@@ -29,7 +29,7 @@ bloomFilterToBuilder :: BF.Bloom a -> B.Builder
 bloomFilterToBuilder bf =
     B.word32Host bloomFilterVersion <>
     B.word32Host (fromIntegral (BF.hashesN bf)) <>
-    B.word64Host (fromIntegral (BF.length bf)) <>
+    B.word64Host (BF.length bf) <>
     toBuilder' bf
 
 toBuilder' :: BF.Bloom a -> B.Builder
@@ -57,12 +57,14 @@ bloomFilterFromSBS (SBS ba') = do
       else "Unsupported version"
 
     when (mod64 len /= 0) $ Left "Length is not multiple of 64"
-    when (len >= 0xffff_ffff) $ Left "Too large bloomfilter"
+
+    -- limit to 2^48 bits
+    when (len >= 0xffff_ffff_ffff) $ Left "Too large bloomfilter"
 
     let vec64 :: PV.Vector Word64
         vec64 = PV.Vector 2 (fromIntegral $ div64 len) ba
 
-    return (BF.B (fromIntegral hsn) (fromIntegral len) (BV64.BV64 vec64))
+    return (BF.B (fromIntegral hsn) len (BV64.BV64 vec64))
   where
     ba :: ByteArray
     ba = ByteArray ba'

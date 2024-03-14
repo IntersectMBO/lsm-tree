@@ -31,6 +31,7 @@ module Data.BloomFilter.Easy
 import Data.BloomFilter (Bloom)
 import Data.BloomFilter.Hash (Hashable)
 import Data.BloomFilter.Util (nextPowerOfTwo)
+import Data.Word (Word64)
 import qualified Data.ByteString as SB
 import qualified Data.BloomFilter as B
 
@@ -42,7 +43,7 @@ easyList :: (Hashable a)
          -> [a]                 -- ^ values to populate with
          -> Bloom a
 {-# SPECIALIZE easyList :: Double -> [SB.ByteString] -> Bloom SB.ByteString #-}
-easyList errRate xs = B.fromList numHashes numBits xs
+easyList errRate xs = B.fromList numHashes (fromIntegral numBits) xs
     where capacity = length xs
           (numBits, numHashes)
               | capacity > 0 = suggestSizing capacity errRate
@@ -59,7 +60,7 @@ easyList errRate xs = B.fromList numHashes numBits xs
 safeSuggestSizing
     :: Int              -- ^ expected maximum capacity
     -> Double           -- ^ desired false positive rate (0 < /e/ < 1)
-    -> Either String (Int, Int)
+    -> Either String (Word64, Int)
 safeSuggestSizing capacity errRate
     | capacity <= 0                = Left "invalid capacity"
     | errRate <= 0 || errRate >= 1 = Left "invalid error rate"
@@ -82,7 +83,7 @@ safeSuggestSizing capacity errRate
 -- invalid or out-of-range inputs.
 suggestSizing :: Int            -- ^ expected maximum capacity
               -> Double         -- ^ desired false positive rate (0 < /e/ < 1)
-              -> (Int, Int)
+              -> (Word64, Int)
 suggestSizing cap errs = either fatal id (safeSuggestSizing cap errs)
   where fatal = error . ("Data.BloomFilter.Util.suggestSizing: " ++)
 

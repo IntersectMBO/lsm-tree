@@ -73,6 +73,7 @@ module Data.BloomFilter
 import Control.Monad (liftM, forM_)
 import Control.Monad.ST (ST, runST)
 import Control.DeepSeq (NFData(..))
+import Data.Word (Word64)
 import qualified Data.BloomFilter.Mutable as MB
 import qualified Data.BloomFilter.Mutable.Internal as MB
 import Data.BloomFilter.Mutable.Internal (Hash, MBloom)
@@ -87,7 +88,7 @@ import qualified Data.BloomFilter.BitVec64 as V
 -- | An immutable Bloom filter, suitable for querying from pure code.
 data Bloom a = B {
       hashesN  :: {-# UNPACK #-} !Int
-    , size     :: {-# UNPACK #-} !Int   -- ^ Size in bits. This is a multiple of 64
+    , size     :: {-# UNPACK #-} !Word64   -- ^ Size in bits. This is a multiple of 64
     , bitArray :: {-# UNPACK #-} !V.BitVec64
     }
   deriving (Eq, Show)
@@ -116,7 +117,7 @@ instance NFData (Bloom a) where
 --
 -- Note that the result of the setup function is not used.
 create :: Int        -- ^ number of hash functions to use
-        -> Int                  -- ^ number of bits in filter
+        -> Word64                 -- ^ number of bits in filter
         -> (forall s. (MBloom s a -> ST s ()))  -- ^ setup function
         -> Bloom a
 {-# INLINE create #-}
@@ -148,7 +149,7 @@ thaw ub = MB.MB (hashesN ub) (size ub) `liftM` V.thaw (bitArray ub)
 -- This function is subject to fusion with 'insert'
 -- and 'insertList'.
 empty :: Int                    -- ^ number of hash functions to use
-       -> Int                   -- ^ number of bits in filter
+       -> Word64                   -- ^ number of bits in filter
        -> Bloom a
 {-# INLINE [1] empty #-}
 empty hash numBits = create hash numBits (\_ -> return ())
@@ -159,7 +160,7 @@ empty hash numBits = create hash numBits (\_ -> return ())
 -- and 'insertList'.
 singleton :: Hashable a
            => Int               -- ^ number of hash functions to use
-           -> Int               -- ^ number of bits in filter
+           -> Word64            -- ^ number of bits in filter
            -> a                 -- ^ element to insert
            -> Bloom a
 {-# INLINE [1] singleton #-}
@@ -175,10 +176,11 @@ elemCheapHashes :: CheapHashes a -> Bloom a -> Bool
 elemCheapHashes !ch !ub = go 0 where
   go :: Int -> Bool
   go !i | i >= hashesN ub = True
-        | otherwise       = let !idx = fromIntegral (evalCheapHashes ch i)`rem` size ub :: Int
-                            in if V.unsafeIndex (bitArray ub) idx
-                               then go (i + 1)
-                               else False
+        | otherwise       = let !idx' = evalCheapHashes ch i in
+                            let !idx = idx' `rem` size ub in
+                            if V.unsafeIndex (bitArray ub) idx
+                            then go (i + 1)
+                            else False
 
 modify :: (forall s. (MBloom s a -> ST s z))  -- ^ mutation function (result is discarded)
         -> Bloom a
@@ -243,11 +245,11 @@ insertList elts = modify $ \mb -> mapM_ (MB.insert mb) elts
 notElem :: Hashable a => a -> Bloom a -> Bool
 notElem elt ub = any test (hashes ub elt)
   where test idx' =
-          let !idx = fromIntegral idx' `rem` size ub :: Int
+          let !idx = idx' `rem` size ub
           in not (V.unsafeIndex (bitArray ub) idx)
 
 -- | Return the size of an immutable Bloom filter, in bits.
-length :: Bloom a -> Int
+length :: Bloom a -> Word64
 length = size
 
 -- | Build an immutable Bloom filter from a seed value.  The seeding
@@ -260,7 +262,7 @@ length = size
 --     @b@ is used as a new seed.
 unfold :: forall a b. Hashable a
         => Int                       -- ^ number of hash functions to use
-        -> Int                       -- ^ number of bits in filter
+        -> Word64                    -- ^ number of bits in filter
         -> (b -> Maybe (a, b))       -- ^ seeding function
         -> b                         -- ^ initial seed
         -> Bloom a
@@ -285,7 +287,7 @@ unfold hs numBits f k = create hs numBits (loop k)
 -- @
 fromList :: Hashable a
           => Int                -- ^ number of hash functions to use
-          -> Int                -- ^ number of bits in filter
+          -> Word64             -- ^ number of bits in filter
           -> [a]                -- ^ values to populate with
           -> Bloom a
 {-# INLINE [1] fromList #-}
