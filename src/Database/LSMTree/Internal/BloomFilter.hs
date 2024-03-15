@@ -7,6 +7,7 @@ module Database.LSMTree.Internal.BloomFilter (
 import           Control.Monad (when)
 import qualified Data.BloomFilter as BF
 import qualified Data.BloomFilter.BitVec64 as BV64
+import qualified Data.BloomFilter.Internal as BF
 import qualified Data.ByteString.Builder as B
 import qualified Data.ByteString.Builder.Extra as B
 import           Data.ByteString.Short (ShortByteString (SBS))
@@ -33,7 +34,7 @@ bloomFilterToBuilder bf =
     toBuilder' bf
 
 toBuilder' :: BF.Bloom a -> B.Builder
-toBuilder' (BF.B _hfN _len (BV64.BV64 (PV.Vector off len v))) =
+toBuilder' (BF.Bloom _hfN _len (BV64.BV64 (PV.Vector off len v))) =
     byteArrayFromTo (mul8 off) (mul8 off + mul8 len) v
 
 -- deserializing
@@ -56,15 +57,16 @@ bloomFilterFromSBS (SBS ba') = do
       then "Different byte order"
       else "Unsupported version"
 
-    when (mod64 len /= 0) $ Left "Length is not multiple of 64"
+    when (len <= 0) $ Left "Length is zero"
 
     -- limit to 2^48 bits
     when (len >= 0xffff_ffff_ffff) $ Left "Too large bloomfilter"
 
+    -- we need to round the size of vector up
     let vec64 :: PV.Vector Word64
-        vec64 = PV.Vector 2 (fromIntegral $ div64 len) ba
+        vec64 = PV.Vector 2 (fromIntegral $ ceilDiv64 len) ba
 
-    return (BF.B (fromIntegral hsn) len (BV64.BV64 vec64))
+    return (BF.Bloom (fromIntegral hsn) len (BV64.BV64 vec64))
   where
     ba :: ByteArray
     ba = ByteArray ba'

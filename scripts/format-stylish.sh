@@ -18,4 +18,4 @@ echo "Running stylish-haskell script with arguments: $PARGS $CARGS"
 
 export LC_ALL=C.UTF-8
 
-fdfind $PARGS -E bloomfilter -e hs -X stylish-haskell $CARGS -i
+fdfind $PARGS -e hs -X stylish-haskell $CARGS -i

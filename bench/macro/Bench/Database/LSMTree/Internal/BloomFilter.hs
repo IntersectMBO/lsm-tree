@@ -230,7 +230,7 @@ benchMakeCheapHashes !_  !_   0 = ()
 benchMakeCheapHashes !bs !rng !n =
     let k :: Word256
         (!k, !rng') = uniform rng
-        !kh = Bloom.makeCheapHashes (serialiseKey k)
+        !kh = Bloom.makeHashes (serialiseKey k) :: Bloom.CheapHashes SerialisedKey
      in kh `seq` benchMakeCheapHashes bs rng' (n-1)
 
 -- | This gives us a combined cost of calculating the series of keys, their
@@ -240,7 +240,7 @@ benchElemCheapHashes !_  !_   0  = ()
 benchElemCheapHashes !bs !rng !n =
     let k :: Word256
         (!k, !rng') = uniform rng
-        !kh =  Bloom.makeCheapHashes (serialiseKey k)
-     in foldl' (\_ b -> Bloom.elemCheapHashes kh b `seq` ()) () bs
+        !kh =  Bloom.makeHashes (serialiseKey k)
+     in foldl' (\_ b -> Bloom.elemHashes kh b `seq` ()) () bs
   `seq` benchElemCheapHashes bs rng' (n-1)
 

@@ -1,24 +1,25 @@
 {-# LANGUAGE BangPatterns #-}
+-- | Minimal bit vector implementation.
 module Data.BloomFilter.BitVec64 (
-  BitVec64 (..),
-  unsafeIndex,
-  MBitVec64 (..),
-  new,
-  unsafeWrite,
-  unsafeRead,
-  freeze,
-  unsafeFreeze,
-  thaw,
+    BitVec64 (..),
+    unsafeIndex,
+    MBitVec64 (..),
+    new,
+    unsafeWrite,
+    unsafeRead,
+    freeze,
+    unsafeFreeze,
+    thaw,
 ) where
 
-import Data.Bits
-import Data.Word (Word64)
-import Control.Monad.ST (ST)
+import           Control.Monad.ST (ST)
+import           Data.Bits
 import qualified Data.Vector.Primitive as P
 import qualified Data.Vector.Primitive.Mutable as MP
+import           Data.Word (Word64)
 
 -- | Bit vector backed up by an array of Word64
--- 
+--
 -- This vector's offset and length are multiples of 64
 newtype BitVec64 = BV64 (P.Vector Word64)
   deriving (Eq, Show)
