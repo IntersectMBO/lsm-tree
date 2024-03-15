@@ -22,7 +22,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ghc: ["9.2.8", "9.4.8", "9.6.4", "9.8.1"]
+        ghc: ["9.2.8", "9.4.8", "9.6.4", "9.8.2"]
         cabal: ["3.10.2.1"]
         os: [ubuntu-latest, windows-latest, macOS-latest]
         exclude:
@@ -30,9 +30,9 @@ jobs:
             os: windows-latest
           - ghc: "9.4.8"
             os: macOS-latest
-          - ghc: "9.8.1"
+          - ghc: "9.8.2"
             os: windows-latest
-          - ghc: "9.8.1"
+          - ghc: "9.8.2"
             os: macOS-latest
 
     steps:
@@ -131,11 +131,7 @@ jobs:
         cache-name: cache-cabal-stylish
       with:
         path: ${{ steps.setup-haskell.outputs.cabal-store }}
-        key: ${{ runner.os }}-${{ matrix.ghc }}-${{ env.cache-name }}-${{ hashFiles('**/*.cabal') }}-${{ hashFiles('**/cabal.project') }}
-        restore-keys: |
-          ${{ runner.os }}-${{ matrix.ghc }}-${{ env.cache-name }}-${{ hashFiles('**/*.cabal') }}-${{ hashFiles('**/cabal.project') }}
-          ${{ runner.os }}-${{ matrix.ghc }}-${{ env.cache-name }}-${{ hashFiles('**/*.cabal') }}-
-          ${{ runner.os }}-${{ matrix.ghc }}-${{ env.cache-name }}-
+        key: ${{ runner.os }}-${{ matrix.ghc }}-${{ env.cache-name }}
 
     - name: Install stylish-haskell
       run: cabal install --ignore-project stylish-haskell --constraint 'stylish-haskell == 0.14.6.0'
