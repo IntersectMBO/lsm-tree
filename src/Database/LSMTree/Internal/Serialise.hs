@@ -13,6 +13,7 @@ module Database.LSMTree.Internal.Serialise (
   , deserialiseKey
   , sizeofKey
   , sizeofKey16
+  , sizeofKey32
   , sizeofKey64
   , serialisedKey
   , keyTopBits16
@@ -78,6 +79,11 @@ sizeofKey (SerialisedKey rb) = RB.size rb
 -- | Size of key in number of bytes.
 sizeofKey16 :: SerialisedKey -> Word16
 sizeofKey16 = fromIntegral . sizeofKey
+
+{-# INLINE sizeofKey32 #-}
+-- | Size of key in number of bytes.
+sizeofKey32 :: SerialisedKey -> Word32
+sizeofKey32 = fromIntegral . sizeofKey
 
 {-# INLINE sizeofKey64 #-}
 -- | Size of key in number of bytes.
