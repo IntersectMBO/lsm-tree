@@ -38,3 +38,18 @@ package lsm-tree
   -- apply this to all components
   -- relevant mostly only for development & testing
   ghc-options: -fno-ignore-asserts
+
+if(os(linux))
+  source-repository-package
+    type: git
+    location: https://github.com/well-typed/blockio-uring
+    tag: bbeb81130ec3eafd8ced81564cc8bd46d24aff08
+
+-- fs-api with support for I/O using user-supplied buffers
+source-repository-package
+  type: git
+  location: https://github.com/input-output-hk/fs-sim
+  tag: 6a4a456640dd1fed434ccb4cbb553482afe8e2d4
+  subdir:
+    fs-api
+    fs-sim

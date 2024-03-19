@@ -17,3 +17,6 @@ It has a number of custom features that are primarily tailored towards performan
 ## System requirements
 
 This library only supports 64-bit, little-endian systems.
+
+Provide the -threaded flag to executables, test suites and benchmark suites if
+you use this library on Linux systems.
