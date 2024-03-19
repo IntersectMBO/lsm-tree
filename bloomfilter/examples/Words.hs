@@ -4,13 +4,13 @@
 
 module Main (main) where
 
-import Control.Monad (forM_, mapM_)
+import           Control.Monad (forM_, mapM_)
 import qualified Data.BloomFilter as BF
-import Data.BloomFilter.Hash (cheapHashes)
-import Data.BloomFilter.Easy (easyList, suggestSizing)
+import           Data.BloomFilter.Easy (easyList, suggestSizing)
+import           Data.BloomFilter.Hash (cheapHashes)
 import qualified Data.ByteString.Lazy.Char8 as B
-import Data.Time.Clock (diffUTCTime, getCurrentTime)
-import System.Environment (getArgs)
+import           Data.Time.Clock (diffUTCTime, getCurrentTime)
+import           System.Environment (getArgs)
 
 conservative, aggressive :: Double -> [B.ByteString] -> BF.Bloom B.ByteString
 conservative = easyList

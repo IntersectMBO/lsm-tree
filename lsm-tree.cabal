@@ -103,11 +103,24 @@ library xxhash
     , bytestring
     , primitive   ^>=0.9
 
+test-suite xxhash-tests
+  default-language: Haskell2010
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   xxhash/tests
+  main-is:          xxhash-tests.hs
+  build-depends:
+    , base
+    , bytestring
+    , lsm-tree:xxhash
+    , primitive
+    , tasty
+    , tasty-hunit
+    , tasty-quickcheck
+
 -- this fork doesn't work on 32bit systems
 library bloomfilter
-  import:           wno-x-partial
   visibility:       private
-  hs-source-dirs:   bloomfilter
+  hs-source-dirs:   bloomfilter/src
   default-language: Haskell2010
   build-depends:
     , base             >=4.5       && <5
@@ -122,15 +135,49 @@ library bloomfilter
   exposed-modules:
     Data.BloomFilter
     Data.BloomFilter.BitVec64
+    Data.BloomFilter.Calc
     Data.BloomFilter.Easy
     Data.BloomFilter.Hash
+    Data.BloomFilter.Internal
     Data.BloomFilter.Mutable
-
-  other-modules:
     Data.BloomFilter.Mutable.Internal
-    Data.BloomFilter.Util
 
   ghc-options:      -O2 -Wall
+
+test-suite bloomfilter-tests
+  default-language: Haskell2010
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   bloomfilter/tests
+  main-is:          bloomfilter-tests.hs
+  other-modules:    QCSupport
+  build-depends:
+    , base
+    , bytestring
+    , lsm-tree:bloomfilter
+    , QuickCheck
+    , quickcheck-instances
+    , random
+    , tasty
+    , tasty-quickcheck
+    , vector
+
+test-suite bloomfilter-primes
+  default-language: Haskell2010
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   bloomfilter/tests
+  main-is:          primes.hs
+  build-depends:
+    , base
+    , primes  ^>=0.2.1.0
+
+test-suite bloomfilter-spell
+  default-language: Haskell2010
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   bloomfilter/examples
+  main-is:          spell.hs
+  build-depends:
+    , base
+    , lsm-tree:bloomfilter
 
 library lsm-tree-utils
   import:           warnings, wno-x-partial
@@ -368,19 +415,3 @@ test-suite lsm-prototypes-tests
     , base
     , lsm-tree:prototypes
     , tasty
-
-test-suite bloomfilter-tests
-  import:           wno-x-partial
-  default-language: Haskell2010
-  type:             exitcode-stdio-1.0
-  hs-source-dirs:   bloomfilter/tests
-  main-is:          QC.hs
-  other-modules:    QCSupport
-  build-depends:
-    , base
-    , bytestring
-    , lsm-tree:bloomfilter
-    , QuickCheck
-    , random
-    , test-framework
-    , test-framework-quickcheck2

@@ -42,7 +42,6 @@ module Database.LSMTree.Internal.Run.BloomFilter (
     -- ** Hashes
   , Hash
   , Hash.Hashable (..)
-  , Hash.cheapHashes
     -- ** Construction
   , fromList
     -- ** Incremental construction
