@@ -1,8 +1,9 @@
-{-# LANGUAGE BangPatterns       #-}
-{-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE LambdaCase         #-}
-{-# LANGUAGE RecordWildCards    #-}
-{-# LANGUAGE TypeApplications   #-}
+{-# LANGUAGE BangPatterns        #-}
+{-# LANGUAGE DerivingStrategies  #-}
+{-# LANGUAGE LambdaCase          #-}
+{-# LANGUAGE RecordWildCards     #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications    #-}
 
 -- | A compact fence-pointer index for uniformly distributed keys.
 --
@@ -50,6 +51,7 @@ import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromJust)
 import           Data.Primitive.ByteArray (ByteArray (..), indexByteArray,
                      sizeofByteArray)
+import           Data.Primitive.Types (sizeOf)
 import qualified Data.Vector.Algorithms.Search as VA
 import qualified Data.Vector.Generic as VG
 import qualified Data.Vector.Primitive as VP
@@ -691,34 +693,50 @@ putPaddingTo64 written
 -- Also note that the implementation reads values in little-endian byte order.
 -- If the file has been serialised in big-endian order, the mismatch will be
 -- detected by looking at the version indicator.
---
--- __NOTE__: Currently does not perform bounds checks. Malformed input can
--- trigger invalid memory access!
 fromSBS :: ShortByteString -> Either String (NumEntries, CompactIndex)
 fromSBS (SBS ba') = do
     let ba = ByteArray ba'
-    let len = sizeofByteArray ba
-    when (mod8 len /= 0) $ Left "Length is not multiple of 64 bit"
-    when (len < 36) $ Left "Too small for header and footer"
+    let len8 = sizeofByteArray ba
+    when (mod8 len8 /= 0) $ Left "Length is not multiple of 64 bit"
+    when (len8 < 36) $ Left "Doesn't contain header and footer"
 
+    -- check version
     let version = indexByteArray ba 0 :: Word32
     when (version == byteSwap32 indexVersion) $ Left "Non-matching endianness"
     when (version /= indexVersion) $ Left "Unsupported version"
 
-    let len64 = div8 len
-    let rfprec = fromIntegral (indexByteArray ba (len64 - 3) :: Word64)
-    let numPages = fromIntegral (indexByteArray ba (len64 - 2) :: Word64)
-    let numEntries = fromIntegral (indexByteArray ba (len64 - 1) :: Word64)
+    -- read footer
+    let len64 = div8 len8
+    let getPositive off64 = do
+          let w = indexByteArray ba off64 :: Word64
+          when (w > fromIntegral (maxBound :: Int)) $
+            Left "Size information is too large for Int"
+          return (fromIntegral w)
 
+    rfprec <- getPositive (len64 - 3)
+    numPages <- getPositive (len64 - 2)
+    numEntries <- getPositive (len64 - 1)
+
+    when (rfprec > snd rangeFinderPrecisionBounds) $
+      Left "Invalid range finder precision"
+    let numRanges = 2 ^ rfprec + 1
+
+    -- read vectors
     -- offsets in 32 bits
-    let offset1_32 = 1  -- after version indicator
-    let (offset2_32, ciPrimary) = getVec32 ba offset1_32 numPages
-    let (offset3_32, ciRangeFinder) = getVec32 ba offset2_32 (2 ^ rfprec + 1)
+    let off1_32 = 1  -- after version indicator
+    (!off2_32, ciPrimary) <- getVec32 "Primary array" ba off1_32 numPages
+    (!off3_32, ciRangeFinder) <- getVec32 "Range finder" ba off2_32 numRanges
     -- offsets in 64 bits
-    let offset3 = ceilDiv2 offset3_32
-    let (offset4, ciClashes) = getBitVec ba offset3 numPages
-    let (offset5, ciLargerThanPage) = getBitVec ba offset4 numPages
-    let ciTieBreaker = getTieBreaker ba offset5
+    let !off3 = ceilDiv2 off3_32
+    (!off4, ciClashes) <- getBitVec "Clash bit vector" ba off3 numPages
+    (!off5, ciLargerThanPage) <- getBitVec "LTP bit vector" ba off4 numPages
+    (!off6, ciTieBreaker) <- getTieBreaker ba off5
+
+    let bytesUsed = mul8 (off6 + 3)
+    when (bytesUsed > sizeofByteArray ba) $
+      Left "Byte array is too small for components"
+    when (bytesUsed < sizeofByteArray ba) $
+      Left "Byte array is too large for components"
 
     let ciRangeFinderPrecision = rfprec
     return (NumEntries numEntries, CompactIndex {..})
@@ -726,37 +744,79 @@ fromSBS (SBS ba') = do
 type Offset32 = Int
 type Offset64 = Int
 
-getVec32 :: ByteArray -> Offset32 -> Int -> (Offset32, VU.Vector Word32)
-getVec32 ba offset32 numEntries = (offset32 + numEntries, vec)
-  where
-    vec = VU.V_Word32 (VP.Vector offset32 numEntries ba)
+getVec32 ::
+     String -> ByteArray -> Offset32 -> Int
+  -> Either String (Offset32, VU.Vector Word32)
+getVec32 name ba off32 numEntries =
+    case checkedPrimVec off32 numEntries ba of
+      Nothing  -> Left (name <> " is out of bounds")
+      Just vec -> Right (off32 + numEntries, VU.V_Word32 vec)
 
-getBitVec :: ByteArray -> Offset64 -> Int -> (Offset64, VU.Vector Bit)
-getBitVec ba offset64 numEntries = (offset64', vec)
-  where
-    vec = BitVec (mul64 offset64) numEntries ba
-    offset64' = offset64 + ceilDiv64 numEntries
+getBitVec ::
+     String -> ByteArray -> Offset64 -> Int
+  -> Either String (Offset64, VU.Vector Bit)
+getBitVec name ba off numEntries =
+    case checkedBitVec (mul64 off) numEntries ba of
+      Nothing  -> Left (name <> " is out of bounds")
+      Just vec -> Right (off + ceilDiv64 numEntries, vec)
 
-getTieBreaker :: ByteArray -> Offset64 -> Map SerialisedKey PageNo
-getTieBreaker ba = \offset64 ->
-    let size = fromIntegral (indexByteArray ba offset64 :: Word64)
-    in Map.fromList $ getEntries size (offset64 + 1)
+-- | Checks bounds.
+--
+-- Inefficient, but okay for a small number of entries.
+getTieBreaker ::
+     ByteArray -> Offset64
+  -> Either String (Offset64, Map SerialisedKey PageNo)
+getTieBreaker ba = \off -> do
+    when (off >= sizeofByteArray ba) $
+      Left "Tie breaker is out of bounds"
+    let size = fromIntegral (indexByteArray ba off :: Word64)
+    (off', pairs) <- go size (off + 1) []
+    return (off', Map.fromList pairs)
   where
-    getEntries :: Int -> Offset64 -> [(SerialisedKey, PageNo)]
-    getEntries 0 _         = []
-    getEntries !n !offset64 =
-        let offset32 = mul2 offset64
-            !pageNo = fromIntegral (indexByteArray ba offset32 :: Word32)
-            keyLen8 = fromIntegral (indexByteArray ba (offset32 + 1) :: Word32)
-            keyOffset8 = mul8 (offset64 + 1)
-            -- We avoid retaining references to the bytearray.
-            -- Probably not needed, since the bytearray will stay alive as long
-            -- as the compact index anyway, but we expect very few keys in the
-            -- tie breaker, so it is cheap to do and we don't have to worry
-            -- about the issue anymore.
-            !key = SerialisedKey' (VP.force (VP.Vector keyOffset8 keyLen8 ba))
-        in (key, PageNo pageNo)
-         : getEntries (n - 1) (offset64 + 1 + ceilDiv8 keyLen8)
+    go :: Int -> Offset64 -> [(SerialisedKey, PageNo)]
+       -> Either String (Offset64, [(SerialisedKey, PageNo)])
+    go 0 off pairs = return (off, pairs)
+    go n off pairs = do
+        when (mul8 off >= sizeofByteArray ba) $
+          Left "Clash map entry is out of bounds"
+        let off32 = mul2 off
+        let !pageNo = fromIntegral (indexByteArray ba off32 :: Word32)
+        let keyLen8 = fromIntegral (indexByteArray ba (off32 + 1) :: Word32)
+
+        (off', key) <- getKey (off + 1) keyLen8
+        go (n - 1) off' ((key, PageNo pageNo) : pairs)
+
+    getKey :: Offset64 -> Int -> Either String (Offset64, SerialisedKey)
+    getKey off len8 = do
+        let off8 = mul8 off
+        -- We avoid retaining references to the bytearray.
+        -- Probably not needed, since the bytearray will stay alive as long as
+        -- the compact index anyway, but we expect very few keys in the tie
+        -- breaker, so it is cheap and we don't have to worry about it any more.
+        !key <- case checkedPrimVec off8 len8 ba of
+          Nothing  -> Left ("Clash map key is out of bounds")
+          Just vec -> Right (SerialisedKey' (VP.force vec))
+        return (off + ceilDiv8 len8, key)
+
+-- | Offset and length are in number of elements.
+checkedPrimVec :: forall a.
+  VP.Prim a => Int -> Int -> ByteArray -> Maybe (VP.Vector a)
+checkedPrimVec off len ba
+  | off >= 0, sizeOf (undefined :: a) * (off + len) <= sizeofByteArray ba =
+      Just (VP.Vector off len ba)
+  | otherwise =
+      Nothing
+
+-- | Offset and length are in number of bits.
+--
+-- We can't use 'checkedPrimVec' here, since 'Bool' and 'Bit' are not 'VP.Prim'
+-- (so the bit vector type doesn't use 'VP.Vector' under the hood).
+checkedBitVec :: Int -> Int -> ByteArray -> Maybe (VU.Vector Bit)
+checkedBitVec off len ba
+  | off >= 0, off + len <= mul8 (sizeofByteArray ba) =
+      Just (BitVec off len ba)
+  | otherwise =
+      Nothing
 
 {-------------------------------------------------------------------------------
  Vector extras
