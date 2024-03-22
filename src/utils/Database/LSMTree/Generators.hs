@@ -55,9 +55,11 @@ module Database.LSMTree.Generators (
   , genRawBytesN
   , genRawBytesSized
   , packRawBytesPinnedOrUnpinned
+  , LargeRawBytes(..)
   ) where
 
 import           Control.DeepSeq (NFData)
+import           Control.Exception (assert)
 import           Data.Bifunctor (bimap)
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
@@ -588,6 +590,25 @@ deriving newtype instance Arbitrary SerialisedValue
 instance Arbitrary SerialisedBlob where
   arbitrary = SerialisedBlob <$> genRawBytes
   shrink (SerialisedBlob rb) = SerialisedBlob <$> shrinkRawBytes rb
+
+newtype LargeRawBytes = LargeRawBytes RawBytes
+  deriving Show
+
+instance Arbitrary LargeRawBytes where
+  arbitrary = genRawBytesSized (4096*3) >>= fmap LargeRawBytes . genSlice
+  shrink (LargeRawBytes rb) =
+      map LargeRawBytes (shrinkSlice rb)
+      -- After shrinking length, don't shrink content using normal list shrink
+      -- as that's too slow. We try zeroing out long suffixes of the bytes
+      -- (since for large raw bytes in page format, the interesting information
+      -- is at the start and the suffix is just the value.
+   ++ [ LargeRawBytes (RawBytes pvec')
+      | let (RawBytes pvec) = rb
+      , n <- QC.shrink (PV.length pvec)
+      , let pvec' = PV.take n pvec PV.++ PV.replicate (PV.length pvec - n) 0
+      , assert (PV.length pvec' == PV.length pvec) $
+        pvec' /= pvec
+      ]
 
 {-------------------------------------------------------------------------------
   BlobRef

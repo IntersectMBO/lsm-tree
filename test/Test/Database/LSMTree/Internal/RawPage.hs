@@ -5,13 +5,13 @@ module Test.Database.LSMTree.Internal.RawPage (
     tests,
 ) where
 
+import           Control.DeepSeq (deepseq)
 import qualified Data.ByteString as BS
 import           Data.Maybe (isJust)
 import           Data.Primitive.ByteArray (byteArrayFromList)
 import qualified Data.Vector as V
 import qualified Data.Vector.Primitive as P
 import           Data.Word (Word16, Word64)
-import           Control.DeepSeq (deepseq)
 import           GHC.Word (byteSwap16)
 import           Test.QuickCheck.Instances ()
 import           Test.Tasty (TestTree, testGroup)
