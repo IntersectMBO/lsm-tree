@@ -1,4 +1,3 @@
-{-# LANGUAGE BangPatterns        #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications    #-}
 
@@ -14,9 +13,8 @@ import           Control.Concurrent.Async
 import           Control.Exception (SomeException, try)
 import           Control.Monad
 import           Control.Monad.Primitive
-import           Data.ByteString
+import           Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
-import qualified Data.ByteString.Short.Internal as SBS
 import           Data.Maybe (catMaybes)
 import           Data.Primitive.ByteArray
 import qualified System.FS.API as FS
@@ -44,12 +42,16 @@ instance Arbitrary ByteString where
   arbitrary = BS.pack <$> arbitrary
   shrink = fmap BS.pack . shrink .  BS.unpack
 
-fromByteString :: PrimMonad m => ByteString -> m (MutableByteArray (PrimState m))
-fromByteString bs = thawByteArray (ByteArray ba) 0 (SBS.length sbs)
-  where !sbs@(SBS.SBS ba) = SBS.toShort bs
+fromByteStringPinned :: PrimMonad m => ByteString -> m (MutableByteArray (PrimState m))
+fromByteStringPinned bs = do
+  mba <- newPinnedByteArray (BS.length bs)
+  forM_ (zip [0..] (BS.unpack bs)) $ \(i, x) -> writeByteArray mba i x
+  pure mba
 
 toByteString :: PrimMonad m => Int -> MutableByteArray (PrimState m) -> m ByteString
-toByteString n mba = freezeByteArray mba 0 n >>= \(ByteArray ba) -> pure (SBS.fromShort $ SBS.SBS ba)
+toByteString n mba = do
+  w8s <- forM [0..n-1] $ \i -> readByteArray mba i
+  pure (BS.pack w8s)
 
 example_initClose :: Assertion
 example_initClose = withSystemTempDirectory "example_initClose" $ \dirPath -> do
@@ -81,7 +83,7 @@ prop_readWrite bs = ioProperty $ withSystemTempDirectory "prop_readWrite" $ \dir
     hbio <- IO.ioHasBlockIO hfs hbfs Nothing
     prop <- FS.withFile hfs (FS.mkFsPath ["temp"]) (FS.WriteMode FS.MustBeNew) $ \h -> do
       let n = BS.length bs
-      writeBuf <- fromByteString bs
+      writeBuf <- fromByteStringPinned bs
       [IOResult m] <- submitIO hbio [IOOpWrite h 0 writeBuf 0 (fromIntegral n)]
       let writeTest = n === fromIntegral m
       readBuf <- newPinnedByteArray n
