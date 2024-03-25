@@ -43,7 +43,7 @@ if(os(linux))
   source-repository-package
     type: git
     location: https://github.com/well-typed/blockio-uring
-    tag: bbeb81130ec3eafd8ced81564cc8bd46d24aff08
+    tag: 233aba90e86041657bb8b96b41917b34f49be7c8
 
 -- fs-api with support for I/O using user-supplied buffers
 source-repository-package
