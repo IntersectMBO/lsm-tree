@@ -39,6 +39,10 @@ package lsm-tree
   -- relevant mostly only for development & testing
   ghc-options: -fno-ignore-asserts
 
+  -- TODO: temporarily disable asynchronous HasBlockIO on Linux-based systems.
+  -- See lsm-tree#129.
+  flags: +serialblockio
+
 if(os(linux))
   source-repository-package
     type: git
