@@ -12,10 +12,11 @@ import qualified Data.Vector.Primitive as PV
 import           Data.Word (Word16, Word32, Word64)
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Entry (Entry (..))
+import           Database.LSMTree.Internal.RawOverflowPage
 import           Database.LSMTree.Internal.RawPage
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.Serialise.RawBytes (RawBytes (..))
-import           Database.LSMTree.Internal.Vector
+import qualified Database.LSMTree.Internal.Serialise.RawBytes as RawBytes
 
 pageSize :: Int
 pageSize = 4096
@@ -25,7 +26,7 @@ pageSize = 4096
 singletonPage
     :: SerialisedKey
     -> Entry SerialisedValue BlobSpan
-    -> (RawPage, RawBytes)
+    -> (RawPage, [RawOverflowPage])
 singletonPage k (Insert v) = runST $ do
     -- allocate bytearray
     ba <- P.newByteArray pageSize :: ST s (P.MutableByteArray s)
@@ -54,10 +55,12 @@ singletonPage k (Insert v) = runST $ do
     P.copyByteArray ba (32 + klen) vba voff vlen'
 
     ba' <- P.unsafeFreezeByteArray ba
-    return (makeRawPage ba' 0, RawBytes (mkPrimVector (voff+vlen') (vlen-vlen') vba))
+    let !page          = makeRawPage ba' 0
+        !overflowPages = rawBytesToOverflowPages (RawBytes.drop vlen' v')
+    return (page, overflowPages)
   where
-    SerialisedKey   (RawBytes (PV.Vector koff klen kba)) = k
-    SerialisedValue (RawBytes (PV.Vector voff vlen vba)) = v
+    SerialisedKey      (RawBytes (PV.Vector koff klen kba)) = k
+    SerialisedValue v'@(RawBytes (PV.Vector voff vlen vba)) = v
 
 singletonPage k (InsertWithBlob v (BlobSpan w64 w32)) = runST $ do
     -- allocate bytearray
@@ -89,10 +92,12 @@ singletonPage k (InsertWithBlob v (BlobSpan w64 w32)) = runST $ do
     P.copyByteArray ba (44 + klen) vba voff vlen'
 
     ba' <- P.unsafeFreezeByteArray ba
-    return (makeRawPage ba' 0, RawBytes (mkPrimVector (voff+vlen') (vlen-vlen') vba))
+    let !page          = makeRawPage ba' 0
+        !overflowPages = rawBytesToOverflowPages (RawBytes.drop vlen' v')
+    return (page, overflowPages)
   where
-    SerialisedKey   (RawBytes (PV.Vector koff klen kba)) = k
-    SerialisedValue (RawBytes (PV.Vector voff vlen vba)) = v
+    SerialisedKey      (RawBytes (PV.Vector koff klen kba)) = k
+    SerialisedValue v'@(RawBytes (PV.Vector voff vlen vba)) = v
 
 singletonPage k (Mupdate v) = runST $ do
     -- allocate bytearray
@@ -122,9 +127,11 @@ singletonPage k (Mupdate v) = runST $ do
     P.copyByteArray ba (32 + klen) vba voff vlen'
 
     ba' <- P.unsafeFreezeByteArray ba
-    return (makeRawPage ba' 0, RawBytes (mkPrimVector (voff+vlen') (vlen-vlen') vba))
+    let !page          = makeRawPage ba' 0
+        !overflowPages = rawBytesToOverflowPages (RawBytes.drop vlen' v')
+    return (page, overflowPages)
   where
-    SerialisedKey   (RawBytes (PV.Vector koff klen kba)) = k
-    SerialisedValue (RawBytes (PV.Vector voff vlen vba)) = v
+    SerialisedKey      (RawBytes (PV.Vector koff klen kba)) = k
+    SerialisedValue v'@(RawBytes (PV.Vector voff vlen vba)) = v
 
 singletonPage _ Delete = error "singletonPage: unexpected Delete entry"
