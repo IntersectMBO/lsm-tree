@@ -70,7 +70,7 @@ library
     , bitvec                ^>=1.1
     , bytestring            ^>=0.11.4.0
     , containers
-    , crc32c                >=0.1
+    , crc32c                ^>=0.2.0
     , deepseq
     , filepath
     , fs-api                ^>=0.2
