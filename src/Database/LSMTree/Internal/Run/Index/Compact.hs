@@ -698,7 +698,7 @@ fromSBS (SBS ba') = do
     let ba = ByteArray ba'
     let len8 = sizeofByteArray ba
     when (mod8 len8 /= 0) $ Left "Length is not multiple of 64 bit"
-    when (len8 < 36) $ Left "Doesn't contain header and footer"
+    when (len8 < 32) $ Left "Doesn't contain header and footer"
 
     -- check version
     let version = indexByteArray ba 0 :: Word32
@@ -767,7 +767,7 @@ getTieBreaker ::
      ByteArray -> Offset64
   -> Either String (Offset64, Map SerialisedKey PageNo)
 getTieBreaker ba = \off -> do
-    when (off >= sizeofByteArray ba) $
+    when (mul8 off >= sizeofByteArray ba) $
       Left "Tie breaker is out of bounds"
     let size = fromIntegral (indexByteArray ba off :: Word64)
     (off', pairs) <- go size (off + 1) []
