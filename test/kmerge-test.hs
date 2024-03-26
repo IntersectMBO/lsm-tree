@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns               #-}
+{-# LANGUAGE CPP                        #-}
 {-# LANGUAGE DerivingStrategies         #-}
 {-# LANGUAGE GeneralisedNewtypeDeriving #-}
 {-# LANGUAGE RankNTypes                 #-}
@@ -161,6 +162,7 @@ main = do
                     ]
                 ]
             ]
+#ifdef KMERGE_BENCHMARKS
         , testGroup "bench"
             [ testGroup "eight"
                 [ B.bench "sortConcat"     $ B.nf (L.sort . concat) input8
@@ -205,6 +207,7 @@ main = do
                 , B.bench "mutHeapMerge"   $ B.nf mutHeapMerge      inputLevellingMax
                 ]
             ]
+#endif
         ]
 
 {-------------------------------------------------------------------------------
