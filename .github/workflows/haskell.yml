@@ -36,6 +36,14 @@ jobs:
             os: macOS-latest
 
     steps:
+    - name: CPU info (macOS)
+      if: matrix.os == 'macOS-latest'
+      run: sysctl -a machdep.cpu
+
+    - name: CPU info (Linux)
+      if: matrix.os == 'ubuntu-latest'
+      run: cat /proc/cpuinfo
+
     - name: Checkout repository
       uses: actions/checkout@v3
 

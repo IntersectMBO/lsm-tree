@@ -91,7 +91,7 @@ library xxhash
 
   exposed-modules:  XXH3
 
-  if arch(x86_64)
+  if (arch(x86_64) && !os(osx))
     -- Cabal doesn't pass cc-options to "ordinary" Haskell source compilation
     -- https://github.com/haskell/cabal/issues/9801
     ghc-options: -optc=-mavx2 -optc=-O3
