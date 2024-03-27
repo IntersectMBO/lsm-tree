@@ -39,17 +39,17 @@ package lsm-tree
   -- relevant mostly only for development & testing
   ghc-options: -fno-ignore-asserts
 
-  -- For extra testing of low-level operations use bounds checks on bytearray
-  -- primitives.
-  ghc-options: -fcheck-prim-bounds
+-- Enable -fcheck-prim-bounds
+-- https://gitlab.haskell.org/ghc/ghc/-/issues/21054
+if impl(ghc >=9.4.6 && <9.5 || >=9.6.3)
+  package lsm-tree
+    ghc-options: -fcheck-prim-bounds
 
--- For extra testing of low-level operations use bounds checks on bytearray
--- primitives from select dependencies.
-package primitive
-  ghc-options: -fcheck-prim-bounds
+  package primitive
+    ghc-options: -fcheck-prim-bounds
 
-package vector
-  ghc-options: -fcheck-prim-bounds
+  package vector
+    ghc-options: -fcheck-prim-bounds
 
 if(os(linux))
   source-repository-package
