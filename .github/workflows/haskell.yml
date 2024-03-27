@@ -35,13 +35,15 @@ jobs:
           - ghc: "9.8.2"
             os: macOS-latest
 
+    timeout-minutes: 60
+
     steps:
     - name: CPU info (macOS)
-      if: matrix.os == 'macOS-latest'
+      if: ${{ startsWith(matrix.os, 'macOS') }}
       run: sysctl -a machdep.cpu
 
     - name: CPU info (Linux)
-      if: matrix.os == 'ubuntu-latest'
+      if: ${{ startsWith(matrix.os, 'ubuntu') }}
       run: cat /proc/cpuinfo
 
     - name: Checkout repository
@@ -57,7 +59,7 @@ jobs:
 
     - name: Install liburing (on Linux)
       id: setup-liburing
-      if: matrix.os == 'ubuntu-latest'
+      if: ${{ startsWith(matrix.os, 'ubuntu') }}
       run: |
         sudo apt-get update
         sudo apt-get -y install liburing-dev
@@ -103,8 +105,21 @@ jobs:
     - name: Build
       run: cabal build all
 
+    # https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#setting-an-environment-variable
+    - name: Set test timeout (Unix)
+      if: ${{ startsWith(matrix.os, 'ubuntu') || startsWith(matrix.os, 'macOS') }}
+      run: |
+        echo "TASTY_TIMEOUT=5m" >> "$GITHUB_ENV"
+
+    # https://github.com/actions/runner/issues/2281#issuecomment-1326748709
+    - name: Set test timeout (Windows)
+      if: ${{ startsWith(matrix.os, 'windows') }}
+      run: |
+        echo "TASTY_TIMEOUT=5m" >> "$env:GITHUB_ENV"
+
     - name: Run tests
-      run: cabal test -j1 --test-show-details=direct all
+      run: |
+        cabal test -j1 --test-show-details=direct all
 
   # Check formatting for Haskell files
   stylish-haskell:
