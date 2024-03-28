@@ -37,7 +37,7 @@ module Database.LSMTree.Internal.Serialise (
   ) where
 
 import qualified Data.ByteString.Builder as BB
-import qualified Data.Vector.Primitive as P
+import qualified Data.Vector.Primitive as PV
 import           Data.Word
 import           Database.LSMTree.Internal.Run.BloomFilter (Hashable (..))
 import           Database.LSMTree.Internal.Serialise.Class (SerialiseKey,
@@ -59,7 +59,7 @@ newtype SerialisedKey = SerialisedKey RawBytes
   deriving newtype (Eq, Ord, Hashable)
 
 {-# COMPLETE SerialisedKey' #-}
-pattern SerialisedKey' :: P.Vector Word8 -> SerialisedKey
+pattern SerialisedKey' :: PV.Vector Word8 -> SerialisedKey
 pattern SerialisedKey' pvec = SerialisedKey (RawBytes pvec)
 
 {-# INLINE serialiseKey #-}
@@ -114,7 +114,7 @@ newtype SerialisedValue = SerialisedValue RawBytes
   deriving newtype (Eq, Ord)
 
 {-# COMPLETE SerialisedValue' #-}
-pattern SerialisedValue' :: P.Vector Word8 -> SerialisedValue
+pattern SerialisedValue' :: PV.Vector Word8 -> SerialisedValue
 pattern SerialisedValue' pvec = (SerialisedValue (RawBytes pvec))
 
 {-# INLINE serialiseValue #-}
@@ -158,7 +158,7 @@ newtype SerialisedBlob = SerialisedBlob RawBytes
   deriving newtype (Eq, Ord)
 
 {-# COMPLETE SerialisedBlob' #-}
-pattern SerialisedBlob' :: P.Vector Word8 -> SerialisedBlob
+pattern SerialisedBlob' :: PV.Vector Word8 -> SerialisedBlob
 pattern SerialisedBlob' pvec = (SerialisedBlob (RawBytes pvec))
 
 {-# INLINE serialiseBlob #-}

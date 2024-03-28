@@ -14,6 +14,7 @@ import           Database.LSMTree.Internal.Entry (Entry (..))
 import           Database.LSMTree.Internal.RawPage
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.Serialise.RawBytes (RawBytes (..))
+import           Database.LSMTree.Internal.Vector
 
 pageSize :: Int
 pageSize = 4096
@@ -52,7 +53,7 @@ singletonPage k (Insert v) = runST $ do
     P.copyByteArray ba (32 + klen) vba voff vlen'
 
     ba' <- P.unsafeFreezeByteArray ba
-    return (makeRawPage ba' 0, RawBytes (PV.Vector (voff+vlen') (vlen-vlen') vba))
+    return (makeRawPage ba' 0, RawBytes (mkPrimVector (voff+vlen') (vlen-vlen') vba))
   where
     SerialisedKey   (RawBytes (PV.Vector koff klen kba)) = k
     SerialisedValue (RawBytes (PV.Vector voff vlen vba)) = v
@@ -87,7 +88,7 @@ singletonPage k (InsertWithBlob v (BlobSpan w64 w32)) = runST $ do
     P.copyByteArray ba (44 + klen) vba voff vlen'
 
     ba' <- P.unsafeFreezeByteArray ba
-    return (makeRawPage ba' 0, RawBytes (PV.Vector (voff+vlen') (vlen-vlen') vba))
+    return (makeRawPage ba' 0, RawBytes (mkPrimVector (voff+vlen') (vlen-vlen') vba))
   where
     SerialisedKey   (RawBytes (PV.Vector koff klen kba)) = k
     SerialisedValue (RawBytes (PV.Vector voff vlen vba)) = v
@@ -120,7 +121,7 @@ singletonPage k (Mupdate v) = runST $ do
     P.copyByteArray ba (32 + klen) vba voff vlen'
 
     ba' <- P.unsafeFreezeByteArray ba
-    return (makeRawPage ba' 0, RawBytes (PV.Vector (voff+vlen') (vlen-vlen') vba))
+    return (makeRawPage ba' 0, RawBytes (mkPrimVector (voff+vlen') (vlen-vlen') vba))
   where
     SerialisedKey   (RawBytes (PV.Vector koff klen kba)) = k
     SerialisedValue (RawBytes (PV.Vector voff vlen vba)) = v

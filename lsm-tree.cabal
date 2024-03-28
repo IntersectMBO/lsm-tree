@@ -38,6 +38,7 @@ library
   exposed-modules:
     Data.Map.Range
     Database.LSMTree.Common
+    Database.LSMTree.Internal.Assertions
     Database.LSMTree.Internal.BitMath
     Database.LSMTree.Internal.BlobRef
     Database.LSMTree.Internal.BloomFilter
@@ -61,6 +62,7 @@ library
     Database.LSMTree.Internal.Serialise
     Database.LSMTree.Internal.Serialise.Class
     Database.LSMTree.Internal.Serialise.RawBytes
+    Database.LSMTree.Internal.Vector
     Database.LSMTree.Internal.WriteBuffer
     Database.LSMTree.Monoidal
     Database.LSMTree.Normal

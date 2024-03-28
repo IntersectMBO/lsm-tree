@@ -8,6 +8,7 @@
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
+-- TODO: rename to Database.LSMTree.Orphans
 module Database.LSMTree.Util.Orphans () where
 
 import           Control.DeepSeq (NFData (..))
@@ -16,7 +17,6 @@ import qualified Data.ByteString.Builder as B
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ByteString.Short.Internal as SBS
 import qualified Data.Primitive as P
-import qualified Data.Vector.Primitive as PV
 import           Data.WideWord.Word256 (Word256 (..))
 import           Data.Word (Word64, byteSwap64)
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
@@ -28,6 +28,7 @@ import           Database.LSMTree.Internal.Serialise (SerialisedBlob (..),
                      SerialisedKey (..), SerialisedValue (..))
 import           Database.LSMTree.Internal.Serialise.Class
 import qualified Database.LSMTree.Internal.Serialise.RawBytes as RB
+import           Database.LSMTree.Internal.Vector
 import           GHC.Generics (Generic)
 import           System.Random (Uniform)
 
@@ -58,7 +59,7 @@ deriving anyclass instance Uniform Word256
 
 instance SerialiseKey Word256 where
   serialiseKey (Word256{word256hi, word256m1, word256m0, word256lo}) =
-    RB.RawBytes $ PV.Vector 0 32 $ P.runByteArray $ do
+    RB.RawBytes $ mkPrimVector 0 32 $ P.runByteArray $ do
       ba <- P.newByteArray 32
       P.writeByteArray ba 0 $ byteSwap64 word256hi
       P.writeByteArray ba 1 $ byteSwap64 word256m1
@@ -74,7 +75,7 @@ instance SerialiseKey Word256 where
 
 instance SerialiseKey Word64 where
   serialiseKey x =
-    RB.RawBytes $ PV.Vector 0 8 $ P.runByteArray $ do
+    RB.RawBytes $ mkPrimVector 0 8 $ P.runByteArray $ do
       ba <- P.newByteArray 8
       P.writeByteArray ba 0 $ byteSwap64 x
       return ba

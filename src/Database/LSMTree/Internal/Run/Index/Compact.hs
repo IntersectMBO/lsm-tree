@@ -54,7 +54,7 @@ import           Data.Primitive.ByteArray (ByteArray (..), indexByteArray,
 import           Data.Primitive.Types (sizeOf)
 import qualified Data.Vector.Algorithms.Search as VA
 import qualified Data.Vector.Generic as VG
-import qualified Data.Vector.Primitive as VP
+import qualified Data.Vector.Primitive as PV
 import qualified Data.Vector.Unboxed as VU
 import qualified Data.Vector.Unboxed.Base as VU (Vector (V_Word32))
 import           Data.Word
@@ -62,6 +62,7 @@ import           Database.LSMTree.Internal.BitMath
 import           Database.LSMTree.Internal.ByteString (byteArrayFromTo)
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
 import           Database.LSMTree.Internal.Serialise
+import           Database.LSMTree.Internal.Vector
 
 {- $compact
 
@@ -638,7 +639,7 @@ finalBuilder (NumEntries numEntries) CompactIndex {..} =
 -- vector. If we ensure pinned allocation of the underlying byte array, we could
 -- directly construct a 'ByteString' and serialise that using 'BB.byteString'.
 putVec32 :: VU.Vector Word32 -> BB.Builder
-putVec32 (VU.V_Word32 (VP.Vector off len ba)) =
+putVec32 (VU.V_Word32 (PV.Vector off len ba)) =
     byteArrayFromTo (mul4 off) (mul4 (off + len)) ba
 
 -- | Padded to 64 bit.
@@ -795,22 +796,22 @@ getTieBreaker ba = \off -> do
         -- breaker, so it is cheap and we don't have to worry about it any more.
         !key <- case checkedPrimVec off8 len8 ba of
           Nothing  -> Left ("Clash map key is out of bounds")
-          Just vec -> Right (SerialisedKey' (VP.force vec))
+          Just vec -> Right (SerialisedKey' (PV.force vec))
         return (off + ceilDiv8 len8, key)
 
 -- | Offset and length are in number of elements.
 checkedPrimVec :: forall a.
-  VP.Prim a => Int -> Int -> ByteArray -> Maybe (VP.Vector a)
+  PV.Prim a => Int -> Int -> ByteArray -> Maybe (PV.Vector a)
 checkedPrimVec off len ba
   | off >= 0, sizeOf (undefined :: a) * (off + len) <= sizeofByteArray ba =
-      Just (VP.Vector off len ba)
+      Just (mkPrimVector off len ba)
   | otherwise =
       Nothing
 
 -- | Offset and length are in number of bits.
 --
--- We can't use 'checkedPrimVec' here, since 'Bool' and 'Bit' are not 'VP.Prim'
--- (so the bit vector type doesn't use 'VP.Vector' under the hood).
+-- We can't use 'checkedPrimVec' here, since 'Bool' and 'Bit' are not 'PV.Prim'
+-- (so the bit vector type doesn't use 'PV.Vector' under the hood).
 checkedBitVec :: Int -> Int -> ByteArray -> Maybe (VU.Vector Bit)
 checkedBitVec off len ba
   | off >= 0, off + len <= mul8 (sizeofByteArray ba) =

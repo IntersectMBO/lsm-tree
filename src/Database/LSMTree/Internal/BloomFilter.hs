@@ -16,8 +16,9 @@ import qualified Data.Primitive as P
 import           Data.Primitive.ByteArray (ByteArray (ByteArray))
 import qualified Data.Vector.Primitive as PV
 import           Data.Word (Word32, Word64, byteSwap32)
-import           Database.LSMTree.Internal.BitMath
+import           Database.LSMTree.Internal.BitMath (ceilDiv64, mul8)
 import           Database.LSMTree.Internal.ByteString (byteArrayFromTo)
+import           Database.LSMTree.Internal.Vector
 
 -- serializing
 -----------------------------------------------------------
@@ -76,7 +77,7 @@ bloomFilterFromSBS (SBS ba') = do
       Left "Byte array is too large for components"
 
     let vec64 :: PV.Vector Word64
-        vec64 = PV.Vector 2 len64 ba
+        vec64 = mkPrimVector 2 len64 ba
 
     let bloom = BF.Bloom (fromIntegral hsn) len (BV64.BV64 vec64)
     assert (BF.bloomInvariant bloom) $ return bloom
