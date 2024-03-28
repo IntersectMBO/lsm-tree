@@ -31,7 +31,7 @@ import           Data.Primitive.ByteArray (ByteArray (..), byteArrayFromList,
                      isByteArrayPinned, newAlignedPinnedByteArray, runByteArray,
                      sizeofByteArray)
 import qualified Data.Vector as V
-import qualified Data.Vector.Primitive as P
+import qualified Data.Vector.Primitive as PV
 import           Data.Word (Word16, Word32, Word64, Word8)
 import           Database.LSMTree.Internal.BitMath
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
@@ -40,6 +40,7 @@ import           Database.LSMTree.Internal.Serialise (SerialisedKey (..),
                      SerialisedValue (..))
 import           Database.LSMTree.Internal.Serialise.RawBytes (RawBytes (..))
 import qualified Database.LSMTree.Internal.Serialise.RawBytes as RB
+import           Database.LSMTree.Internal.Vector
 import           GHC.List (foldl')
 
 -------------------------------------------------------------------------------
@@ -75,9 +76,9 @@ instance NFData RawPage where
 instance Eq RawPage where
     RawPage off1 ba1 == RawPage off2 ba2 = v1 == v2
       where
-        v1, v2 :: P.Vector Word16
-        v1 = P.Vector off1 2048 ba1
-        v2 = P.Vector off2 2048 ba2
+        v1, v2 :: PV.Vector Word16
+        v1 = mkPrimVector off1 2048 ba1
+        v2 = mkPrimVector off2 2048 ba2
 
 -- | Create 'RawPage'.
 --
@@ -212,20 +213,24 @@ rawPageKeysOffset (RawPage off ba) = indexByteArray ba (off + 2)
 type KeyOffset = Word16
 type ValueOffset = Word16
 
-rawPageKeyOffsets :: RawPage -> P.Vector KeyOffset
+rawPageKeyOffsets :: RawPage -> PV.Vector KeyOffset
 rawPageKeyOffsets page@(RawPage off ba) =
-    P.Vector (off + fromIntegral (div2 dirOffset))
-             (fromIntegral dirNumKeys + 1) ba
+    mkPrimVector
+        (off + fromIntegral (div2 dirOffset))
+        (fromIntegral dirNumKeys + 1)
+        ba
   where
     !dirNumKeys = rawPageNumKeys page
     !dirOffset  = rawPageKeysOffset page
 
 -- | for non-single key page case
-rawPageValueOffsets :: RawPage -> P.Vector ValueOffset
+rawPageValueOffsets :: RawPage -> PV.Vector ValueOffset
 rawPageValueOffsets page@(RawPage off ba) =
     assert (dirNumKeys /= 1) $
-    P.Vector (off + fromIntegral (div2 dirOffset) + fromIntegral dirNumKeys)
-             (fromIntegral dirNumKeys + 1) ba
+    mkPrimVector
+        (off + fromIntegral (div2 dirOffset) + fromIntegral dirNumKeys)
+        (fromIntegral dirNumKeys + 1)
+        ba
   where
     !dirNumKeys = rawPageNumKeys page
     !dirOffset  = rawPageKeysOffset page
@@ -263,8 +268,8 @@ rawPageKeys page@(RawPage off ba) = do
     V.fromList
         [ SerialisedKey (RB.fromByteArray (mul2 off + start) (end - start) ba)
         | i <- [ 0 .. fromIntegral dirNumKeys -  1 ] :: [Int]
-        , let start = fromIntegral (P.unsafeIndex offs i) :: Int
-        , let end   = fromIntegral (P.unsafeIndex offs (i + 1)) :: Int
+        , let start = fromIntegral (PV.unsafeIndex offs i) :: Int
+        , let end   = fromIntegral (PV.unsafeIndex offs (i + 1)) :: Int
         ]
   where
     !dirNumKeys = rawPageNumKeys page
@@ -274,8 +279,8 @@ rawPageKeyAt page@(RawPage off ba) i = do
     SerialisedKey (RB.fromByteArray (mul2 off + start) (end - start) ba)
   where
     offs  = rawPageKeyOffsets page
-    start = fromIntegral (P.unsafeIndex offs i) :: Int
-    end   = fromIntegral (P.unsafeIndex offs (i + 1)) :: Int
+    start = fromIntegral (PV.unsafeIndex offs i) :: Int
+    end   = fromIntegral (PV.unsafeIndex offs (i + 1)) :: Int
 
 -- | Non-single page case
 rawPageValues :: RawPage -> V.Vector SerialisedValue
@@ -284,8 +289,8 @@ rawPageValues page@(RawPage off ba) =
     V.fromList
         [ SerialisedValue $ RB.fromByteArray (mul2 off + start) (end - start) ba
         | i <- [ 0 .. fromIntegral dirNumKeys -  1 ] :: [Int]
-        , let start = fromIntegral (P.unsafeIndex offs i) :: Int
-        , let end   = fromIntegral (P.unsafeIndex offs (i + 1)) :: Int
+        , let start = fromIntegral (PV.unsafeIndex offs i) :: Int
+        , let end   = fromIntegral (PV.unsafeIndex offs (i + 1)) :: Int
         ]
   where
     !dirNumKeys = rawPageNumKeys page
@@ -295,8 +300,8 @@ rawPageValueAt page@(RawPage off ba) i =
     SerialisedValue (RB.fromByteArray (mul2 off + start) (end - start) ba)
   where
     offs  = rawPageValueOffsets page
-    start = fromIntegral (P.unsafeIndex offs i) :: Int
-    end   = fromIntegral (P.unsafeIndex offs (i + 1)) :: Int
+    start = fromIntegral (PV.unsafeIndex offs i) :: Int
+    end   = fromIntegral (PV.unsafeIndex offs (i + 1)) :: Int
 
 rawPageSingleValuePrefix :: RawPage -> SerialisedValue
 rawPageSingleValuePrefix page@(RawPage off ba) =

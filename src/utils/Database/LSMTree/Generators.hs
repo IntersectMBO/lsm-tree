@@ -63,7 +63,7 @@ import           Data.Coerce (coerce)
 import           Data.Containers.ListUtils (nubOrd)
 import           Data.List (sort)
 import qualified Data.Map as Map
-import qualified Data.Vector.Primitive as P
+import qualified Data.Vector.Primitive as PV
 import           Data.WideWord.Word256 (Word256 (..))
 import           Data.Word
 import           Database.LSMTree.Common (Range (..))
@@ -541,29 +541,29 @@ instance Arbitrary RawBytes where
   shrink rb = shrinkRawBytes rb ++ shrinkSlice rb
 
 genRawBytesN :: Int -> Gen RawBytes
-genRawBytesN n = RawBytes . P.fromList <$> QC.vectorOf n arbitrary
+genRawBytesN n = RawBytes . PV.fromList <$> QC.vectorOf n arbitrary
 
 genRawBytes :: Gen RawBytes
-genRawBytes = RawBytes . P.fromList <$> QC.listOf arbitrary
+genRawBytes = RawBytes . PV.fromList <$> QC.listOf arbitrary
 
 genRawBytesSized :: Int -> Gen RawBytes
 genRawBytesSized n = QC.resize n genRawBytes
 
 shrinkRawBytes :: RawBytes -> [RawBytes]
-shrinkRawBytes (RawBytes pvec) = [ RawBytes (P.fromList ws)
-                                 | ws <- QC.shrink (P.toList pvec) ]
+shrinkRawBytes (RawBytes pvec) = [ RawBytes (PV.fromList ws)
+                                 | ws <- QC.shrink (PV.toList pvec) ]
 
 genSlice :: RawBytes -> Gen RawBytes
 genSlice (RawBytes pvec) = do
-    n <- QC.chooseInt (0, P.length pvec)
-    m <- QC.chooseInt (0, P.length pvec - n)
-    pure $ RawBytes (P.slice m n pvec)
+    n <- QC.chooseInt (0, PV.length pvec)
+    m <- QC.chooseInt (0, PV.length pvec - n)
+    pure $ RawBytes (PV.slice m n pvec)
 
 shrinkSlice :: RawBytes -> [RawBytes]
 shrinkSlice (RawBytes pvec) =
-    [ RawBytes (P.slice m n pvec)
-    | n <- QC.shrink (P.length pvec)
-    , m <- QC.shrink (P.length pvec - n)
+    [ RawBytes (PV.slice m n pvec)
+    | n <- QC.shrink (PV.length pvec)
+    , m <- QC.shrink (PV.length pvec - n)
     ]
 
 deriving newtype instance Arbitrary SerialisedKey

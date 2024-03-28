@@ -19,6 +19,8 @@
 --   import Database.LSMTree.Internal.Serialise.RawBytes (RawBytes (..))
 --   import qualified Database.LSMTree.Internal.Serialise.RawBytes as RB
 -- @
+--
+-- TODO: rename to Database.LSMTree.Internal.RawBytes
 module Database.LSMTree.Internal.Serialise.RawBytes (
     -- See Note: [Export structure]
     -- * Raw bytes
@@ -54,10 +56,11 @@ import qualified Data.ByteString.Builder as BB
 import           Data.ByteString.Short (ShortByteString (SBS))
 import qualified Data.ByteString.Short as SBS
 import           Data.Primitive.ByteArray (ByteArray (..), compareByteArrays)
-import qualified Data.Vector.Primitive as P
+import qualified Data.Vector.Primitive as PV
 import           Database.LSMTree.Internal.ByteString (shortByteStringFromTo,
                      tryGetByteArray)
 import           Database.LSMTree.Internal.Run.BloomFilter (Hashable (..))
+import           Database.LSMTree.Internal.Vector
 import           Prelude hiding (take)
 
 import           GHC.Exts
@@ -76,7 +79,7 @@ import           GHC.Word
 
 -- | Raw bytes with no alignment constraint (i.e. byte aligned), and no
 -- guarantee of pinned or unpinned memory (i.e. could be either).
-newtype RawBytes = RawBytes (P.Vector Word8)
+newtype RawBytes = RawBytes (PV.Vector Word8)
   deriving newtype (Show, NFData)
 
 instance Eq RawBytes where
@@ -97,15 +100,15 @@ compareBytes rb1@(RawBytes vec1) rb2@(RawBytes vec2) =
              | len1 > len2 -> GT
           o  -> o
   where
-    P.Vector off1 _size1 ba1 = vec1
-    P.Vector off2 _size2 ba2 = vec2
+    PV.Vector off1 _size1 ba1 = vec1
+    PV.Vector off2 _size2 ba2 = vec2
 
 instance Hashable RawBytes where
   hashSalt64 :: Word64 -> RawBytes -> Word64
   hashSalt64 = hash
 
 hash :: Word64 -> RawBytes -> Word64
-hash salt (RawBytes (P.Vector off len ba)) = hashByteArray ba off len salt
+hash salt (RawBytes (PV.Vector off len ba)) = hashByteArray ba off len salt
 
 instance IsList RawBytes where
   type Item RawBytes = Word8
@@ -122,11 +125,11 @@ instance IsList RawBytes where
 
 -- | \( O(1) \)
 size :: RawBytes -> Int
-size = coerce P.length
+size = coerce PV.length
 
 -- | \( O(1) \)
 take :: Int -> RawBytes -> RawBytes
-take = coerce P.take
+take = coerce PV.take
 
 -- | @'topBits16' n rb@ slices the first @n@ bits from the /top/ of the raw
 -- bytes @rb@. Returns the string of bits as a 'Word16'.
@@ -142,7 +145,7 @@ take = coerce P.take
 -- core, find other opportunities for using primops.
 --
 topBits16 :: Int -> RawBytes -> Word16
-topBits16 n rb@(RawBytes (P.Vector (I# off#) _size (ByteArray k#))) =
+topBits16 n rb@(RawBytes (PV.Vector (I# off#) _size (ByteArray k#))) =
     assert (size rb >= 2) $ shiftR w16 (16 - n)
   where
     w16 = toWord16 (indexWord8ArrayAsWord16# k# off#)
@@ -169,7 +172,7 @@ toWord16 x# = byteSwap16 (W16# x#)
 -- core, find other opportunities for using primops.
 --
 sliceBits32 :: Int -> RawBytes -> Word32
-sliceBits32 off@(I# off1#) rb@(RawBytes (P.Vector (I# off2#) _size (ByteArray ba#)))
+sliceBits32 off@(I# off1#) rb@(RawBytes (PV.Vector (I# off2#) _size (ByteArray ba#)))
     | 0# <- r#
     = assert (off + 32 <= 8 * size rb) $
       toWord32 (indexWord8ArrayAsWord32# ba# q#)
@@ -196,11 +199,11 @@ toWord32 x# = byteSwap32 (W32# x#)
 -------------------------------------------------------------------------------}
 
 instance Semigroup RawBytes where
-    (<>) = coerce (P.++)
+    (<>) = coerce (PV.++)
 
 instance Monoid RawBytes where
-    mempty = coerce P.empty
-    mconcat = coerce P.concat
+    mempty = coerce PV.empty
+    mconcat = coerce PV.concat
 
 {-------------------------------------------------------------------------------
   Conversions
@@ -208,13 +211,13 @@ instance Monoid RawBytes where
 
 -- | \( O(1) \)
 fromByteArray :: Int -> Int -> ByteArray -> RawBytes
-fromByteArray off len ba = RawBytes (P.Vector off len ba)
+fromByteArray off len ba = RawBytes (mkPrimVector off len ba)
 
 pack :: [Word8] -> RawBytes
-pack = coerce P.fromList
+pack = coerce PV.fromList
 
 unpack :: RawBytes -> [Word8]
-unpack = coerce P.toList
+unpack = coerce PV.toList
 
 {-------------------------------------------------------------------------------
   @bytestring@ utils
@@ -232,7 +235,7 @@ fromByteString = fromShortByteString . SBS.toShort
 unsafeFromByteString :: HasCallStack => BS.ByteString -> RawBytes
 unsafeFromByteString bs =
     case tryGetByteArray bs of
-      Right (ba, n) -> RawBytes (P.Vector 0 n ba)
+      Right (ba, n) -> RawBytes (mkPrimVector 0 n ba)
       Left err      -> error $ "unsafeFromByteString: " <> err
 
 -- | \( O(n) \) conversion from raw bytes to a bytestring.
@@ -242,9 +245,9 @@ toByteString = BS.pack . toList
 -- | \( O(1) \) conversion from a short bytestring to raw bytes.
 fromShortByteString :: ShortByteString -> RawBytes
 fromShortByteString sbs@(SBS ba#) =
-    RawBytes (P.Vector 0 (SBS.length sbs) (ByteArray ba#))
+    RawBytes (mkPrimVector 0 (SBS.length sbs) (ByteArray ba#))
 
 {-# INLINE builder #-}
 builder :: RawBytes -> BB.Builder
-builder (RawBytes (P.Vector off sz (ByteArray ba#))) =
+builder (RawBytes (PV.Vector off sz (ByteArray ba#))) =
     shortByteStringFromTo off (off + sz) (SBS ba#)
