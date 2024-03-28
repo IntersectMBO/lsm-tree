@@ -5,8 +5,8 @@ synopsis:           Log-structured merge-tree
 description:        Log-structured merge-tree.
 license:            Apache-2.0
 license-file:       LICENSE
-author:             Duncan Coutts, Joris Dral, Oleg Grenrus
-maintainer:         Duncan Coutts, Joris Dral, Oleg Grenrus
+author:             Duncan Coutts, Joris Dral
+maintainer:         Duncan Coutts, Joris Dral
 copyright:          2023 Input Output Global Inc (IOG), INTERSECT 2023-2024
 category:           Database
 build-type:         Simple
