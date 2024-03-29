@@ -11,6 +11,7 @@ import           Control.DeepSeq (NFData (..), force)
 import           Control.Exception (evaluate)
 import           Control.Monad.ST.Strict (ST, runST)
 import           Data.Bits (unsafeShiftR)
+import           Data.Function (on)
 import qualified Data.Heap as Heap
 import           Data.IORef
 import qualified Data.List as L
@@ -23,7 +24,7 @@ import           Test.Tasty (TestName, TestTree, defaultMainWithIngredients,
                      testGroup)
 import qualified Test.Tasty.Bench as B
 import           Test.Tasty.HUnit (testCase, (@?=))
-import           Test.Tasty.QuickCheck (testProperty, (===))
+import           Test.Tasty.QuickCheck (expectFailure, testProperty, (===))
 
 import qualified KMerge.Heap as K.Heap
 import qualified KMerge.LoserTree as K.Tree
@@ -64,6 +65,13 @@ main = do
                 , mergeProperty "heapMerge"      heapMerge
                 , mergeProperty "loserTreeMerge" loserTreeMerge
                 , mergeProperty "mutHeapMerge"   mutHeapMerge
+                ]
+            , testGroup "mergeStable"
+                [ mergePropertyStable True  "listMerge"      listMerge
+                , mergePropertyStable True  "treeMerge"      treeMerge
+                , mergePropertyStable False "heapMerge"      heapMerge
+                , mergePropertyStable False "loserTreeMerge" loserTreeMerge
+                , mergePropertyStable False "mutHeapMerge"   mutHeapMerge
                 ]
             , testGroup "count"
                 [ testGroup "eight"
@@ -257,6 +265,36 @@ mergeProperty name f = testProperty name $ \xss ->
     let lhs = L.sort (concat xss)
         rhs = f $ map L.sort (xss :: [[Word64]])
     in lhs === rhs
+
+-- Make sure that in case of two inputs being @(==)@, they will still be
+-- produced in order of which input list they come from.
+-- TODO: we could also require it to be stable regarding each input list
+data OrdWrapper a = OrdWrapper { _source :: Int, wrapped :: a }
+
+instance Show a => Show (OrdWrapper a) where
+  show (OrdWrapper s x) = show x <> "(" <> show s <> ")"
+
+instance Eq a => Eq (OrdWrapper a) where
+  (==) = (==) `on` wrapped
+
+instance Ord a => Ord (OrdWrapper a) where
+  compare = compare `on` wrapped
+
+mergePropertyStable :: Bool -> TestName -> (forall a. Ord a => [[a]] -> [a]) -> TestTree
+mergePropertyStable expectedStable name f = testProperty name $ \xss ->
+    if expectedStable
+    then prop xss
+    else expectFailure (prop xss)
+  where
+    prop xss =
+        let wrappedInputs :: [[OrdWrapper Word64]]
+            wrappedInputs = zipWith (\n -> map (OrdWrapper n)) [0..] xss
+
+            lhs = L.sort $ map toTuple $ concat wrappedInputs
+            rhs = map toTuple $ f $ map L.sort wrappedInputs
+        in lhs === rhs
+
+    toTuple (OrdWrapper s x) = (x, s)
 
 {-------------------------------------------------------------------------------
   Element type
