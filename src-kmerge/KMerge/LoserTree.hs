@@ -18,17 +18,23 @@ import           Data.Primitive (MutablePrimArray, SmallMutableArray,
                      setPrimArray, writePrimArray, writeSmallArray)
 import           Data.Primitive.PrimVar (PrimVar, newPrimVar, readPrimVar,
                      writePrimVar)
-import           Unsafe.Coerce (unsafeCoerce)
+
+-- | Indices can point outside the range of the array.
+-- However, the parent of an index always points inside the array.
+type Idx = Int
 
 -- | Mutable Loser Tree.
+--
+-- TODO: explain property of stability under input order!
 data MutableLoserTree s a = MLT
     !(PrimVar s Int)                 -- ^ element count, i.e. size.
-    !(PrimVar s Int)                 -- ^ index of the hole (i.e. winner's initial index)
-    !(MutablePrimArray s Int)        -- ^ indices, we store the index of first match. -1 if there is no match.
+    !(PrimVar s Idx)                 -- ^ Index of the hole, i.e. winner's initial index.
+                                     -- This is a child of the initial match, which allows us to precisely keep track ...
+    !(MutablePrimArray s Idx)        -- ^ indices (child of first match, -1 if there is no match)
     !(SmallMutableArray s a)         -- ^ values
 
 placeholder :: a
-placeholder = unsafeCoerce ()
+placeholder = error "placeholder"
 
 -- | Create new 'MutableLoserTree'.
 --
@@ -58,12 +64,12 @@ newLoserTree xs0 = do
   where
     !len = length xs0
 
-    loop :: MutablePrimArray (PrimState m) Int -> SmallMutableArray (PrimState m) a -> Int -> [a] -> m (MutableLoserTree (PrimState m) a, Maybe a)
+    loop :: MutablePrimArray (PrimState m) Idx -> SmallMutableArray (PrimState m) a -> Idx -> [a] -> m (MutableLoserTree (PrimState m) a, Maybe a)
     loop !_   !_   !_   []     = error "should not happen"
     loop  ids  arr  idx (x:xs) = do
-        sift ids arr (parentOf idx) (parentOf idx) x idx xs
+        sift ids arr idx (parentOf idx) x idx xs
 
-    sift :: MutablePrimArray (PrimState m) Int -> SmallMutableArray (PrimState m) a -> Int -> Int -> a -> Int -> [a] -> m (MutableLoserTree (PrimState m) a, Maybe a)
+    sift :: MutablePrimArray (PrimState m) Idx -> SmallMutableArray (PrimState m) a -> Idx -> Idx -> a -> Idx -> [a] -> m (MutableLoserTree (PrimState m) a, Maybe a)
     sift !ids !arr !idxX !j !x !idx0 xs = do
         !idxY <- readPrimArray ids j
         y     <- readSmallArray arr j
@@ -74,7 +80,7 @@ newLoserTree xs0 = do
             loop ids arr (idx0 + 1) xs
         else if j <= 0
         then do
-                if x <= y
+                if (x, idxX) <= (y, idxY)
                 then do
                     sizeRef <- newPrimVar (len - 1)
                     holeRef <- newPrimVar idxX
@@ -86,7 +92,7 @@ newLoserTree xs0 = do
                     holeRef <- newPrimVar idxY
                     return (MLT sizeRef holeRef ids arr, Just y)
         else do
-                if x < y
+                if (x, idxX) <= (y, idxY)
                 then do
                     sift ids arr idxX (parentOf j) x idx0 xs
                 else do
@@ -119,9 +125,9 @@ remove (MLT sizeRef holeRef ids arr) = do
     else do
         writePrimVar sizeRef (size - 1)
         hole <- readPrimVar holeRef
-        siftEmpty hole
+        siftEmpty (parentOf hole)
   where
-    siftEmpty :: Int -> m (Maybe a)
+    siftEmpty :: Idx -> m (Maybe a)
     siftEmpty !j = do
         !idxY <- readPrimArray ids j
         y     <- readSmallArray arr j
@@ -149,16 +155,16 @@ replace (MLT sizeRef holeRef ids arr) val = do
     then return val
     else do
         hole <- readPrimVar holeRef
-        siftUp ids arr holeRef hole hole val
+        siftUp ids arr holeRef (parentOf hole) hole val
 
-{-# SPECIALIZE siftUp :: forall a.   Ord a => MutablePrimArray RealWorld Int -> SmallMutableArray RealWorld a -> PrimVar RealWorld Int -> Int -> Int -> a -> IO          a #-}
-{-# SPECIALIZE siftUp :: forall a s. Ord a => MutablePrimArray s Int         -> SmallMutableArray s         a -> PrimVar s         Int -> Int -> Int -> a -> Strict.ST s a #-}
-{-# SPECIALIZE siftUp :: forall a s. Ord a => MutablePrimArray s Int         -> SmallMutableArray s         a -> PrimVar s         Int -> Int -> Int -> a -> Lazy.ST s   a #-}
+{-# SPECIALIZE siftUp :: forall a.   Ord a => MutablePrimArray RealWorld Idx -> SmallMutableArray RealWorld a -> PrimVar RealWorld Idx -> Idx -> Idx -> a -> IO          a #-}
+{-# SPECIALIZE siftUp :: forall a s. Ord a => MutablePrimArray s Idx         -> SmallMutableArray s         a -> PrimVar s         Idx -> Idx -> Idx -> a -> Strict.ST s a #-}
+{-# SPECIALIZE siftUp :: forall a s. Ord a => MutablePrimArray s Idx         -> SmallMutableArray s         a -> PrimVar s         Idx -> Idx -> Idx -> a -> Lazy.ST s   a #-}
 
-siftUp :: forall a m. (PrimMonad m, Ord a) => MutablePrimArray (PrimState m) Int -> SmallMutableArray (PrimState m) a -> PrimVar (PrimState m) Int -> Int -> Int -> a -> m a
+siftUp :: forall a m. (PrimMonad m, Ord a) => MutablePrimArray (PrimState m) Idx -> SmallMutableArray (PrimState m) a -> PrimVar (PrimState m) Idx -> Idx -> Idx -> a -> m a
 siftUp ids arr holeRef = sift
   where
-    sift :: Int -> Int -> a -> m a
+    sift :: Idx -> Idx -> a -> m a
     sift !j !idxX !x = do
         !idxY <- readPrimArray ids j
         y     <- readSmallArray arr j
@@ -168,7 +174,7 @@ siftUp ids arr holeRef = sift
                 writePrimVar holeRef idxX
                 return x
             else do
-                if x <= y
+                if (x, idxX) <= (y, idxY)
                 then do
                     writePrimVar holeRef idxX
                     return x
@@ -180,7 +186,7 @@ siftUp ids arr holeRef = sift
         else if idxY < 0
             then sift (parentOf j) idxX x
             else do
-                if x <= y
+                if (x, idxX) <= (y, idxY)
                 then do
                     sift (parentOf j) idxX x
                 else do
@@ -192,10 +198,6 @@ siftUp ids arr holeRef = sift
   Helpers
 -------------------------------------------------------------------------------}
 
-halfOf :: Int -> Int
-halfOf i = unsafeShiftR i 1
-{-# INLINE halfOf #-}
-
-parentOf :: Int -> Int
-parentOf i = halfOf (i - 1)
+parentOf :: Idx -> Idx
+parentOf i = unsafeShiftR (i - 1) 1
 {-# INLINE parentOf #-}

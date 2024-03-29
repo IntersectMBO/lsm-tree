@@ -70,7 +70,7 @@ main = do
                 [ mergePropertyStable True  "listMerge"      listMerge
                 , mergePropertyStable True  "treeMerge"      treeMerge
                 , mergePropertyStable False "heapMerge"      heapMerge
-                , mergePropertyStable False "loserTreeMerge" loserTreeMerge
+                , mergePropertyStable True  "loserTreeMerge" loserTreeMerge
                 , mergePropertyStable False "mutHeapMerge"   mutHeapMerge
                 ]
             , testGroup "count"
