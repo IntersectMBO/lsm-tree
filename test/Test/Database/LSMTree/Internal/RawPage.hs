@@ -11,6 +11,7 @@ import           Data.Primitive.ByteArray (byteArrayFromList)
 import qualified Data.Vector as V
 import qualified Data.Vector.Primitive as P
 import           Data.Word (Word16, Word64)
+import           Control.DeepSeq (deepseq)
 import           GHC.Word (byteSwap16)
 import           Test.QuickCheck.Instances ()
 import           Test.Tasty (TestTree, testGroup)
@@ -156,6 +157,7 @@ tests = testGroup "Database.LSMTree.Internal.RawPage"
         rawPageLookup page (SerialisedKey $ RB.pack [0x52, 0x53]) @=? LookupEntry (Entry.Mupdate (SerialisedValue $ RB.pack [0x54,0x55]))
         rawPageLookup page (SerialisedKey $ RB.pack [0x99, 0x99]) @=? LookupEntryNotPresent
 
+    , testProperty "toRawPage" prop_toRawPage
     , testProperty "keys" prop_keys
     , testProperty "values" prop_values
     , testProperty "hasblobspans" prop_hasblobspans
@@ -166,6 +168,13 @@ tests = testGroup "Database.LSMTree.Internal.RawPage"
     , testProperty "big-insert" prop_big_insert
     , testProperty "entry" prop_single_entry
     ]
+
+prop_toRawPage :: PageLogical -> Property
+prop_toRawPage p =
+  let (_rawpage, overflowPages) = toRawPage p
+   in tabulate "toRawPage number of overflowPages"
+               [ show (length overflowPages) ] $
+      property (deepseq overflowPages True)
 
 prop_keys :: PageLogical -> Property
 prop_keys p@(PageLogical xs) =
