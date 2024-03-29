@@ -67,11 +67,13 @@ main = do
                 , mergeProperty "mutHeapMerge"   mutHeapMerge
                 ]
             , testGroup "mergeStable"
-                [ mergePropertyStable True  "listMerge"      listMerge
-                , mergePropertyStable True  "treeMerge"      treeMerge
-                , mergePropertyStable False "heapMerge"      heapMerge
-                , mergePropertyStable True  "loserTreeMerge" loserTreeMerge
-                , mergePropertyStable False "mutHeapMerge"   mutHeapMerge
+                [ mergePropertyStable True  "listMerge"          listMerge
+                , mergePropertyStable True  "treeMerge"          treeMerge
+                , mergePropertyStable False "heapMerge"          heapMerge
+                , mergePropertyStable True  "heapMergeStable"    heapMergeStable
+                , mergePropertyStable True  "loserTreeMerge"     loserTreeMerge
+                , mergePropertyStable False "mutHeapMerge"       mutHeapMerge
+                , mergePropertyStable True  "mutHeapMergeStable" mutHeapMergeStable
                 ]
             , testGroup "count"
                 [ testGroup "eight"
@@ -173,46 +175,56 @@ main = do
 #ifdef KMERGE_BENCHMARKS
         , testGroup "bench"
             [ testGroup "eight"
-                [ B.bench "sortConcat"     $ B.nf (L.sort . concat) input8
-                , B.bench "listMerge"      $ B.nf listMerge         input8
-                , B.bench "treeMerge"      $ B.nf treeMerge         input8
-                , B.bench "heapMerge"      $ B.nf heapMerge         input8
-                , B.bench "loserTreeMerge" $ B.nf loserTreeMerge    input8
-                , B.bench "mutHeapMerge"   $ B.nf mutHeapMerge      input8
+                [ B.bench "sortConcat"         $ B.nf (L.sort . concat)  input8
+                , B.bench "listMerge"          $ B.nf listMerge          input8
+                , B.bench "treeMerge"          $ B.nf treeMerge          input8
+                , B.bench "heapMerge"          $ B.nf heapMerge          input8
+                , B.bench "heapMergeStable"    $ B.nf heapMergeStable    input8
+                , B.bench "loserTreeMerge"     $ B.nf loserTreeMerge     input8
+                , B.bench "mutHeapMerge"       $ B.nf mutHeapMerge       input8
+                , B.bench "mutHeapMergeStable" $ B.nf mutHeapMergeStable input8
                 ]
             , testGroup "seven"
-                [ B.bench "sortConcat"     $ B.nf (L.sort . concat) input7
-                , B.bench "listMerge"      $ B.nf listMerge         input7
-                , B.bench "treeMerge"      $ B.nf treeMerge         input7
-                , B.bench "heapMerge"      $ B.nf heapMerge         input7
-                , B.bench "loserTreeMerge" $ B.nf loserTreeMerge    input7
-                , B.bench "mutHeapMerge"   $ B.nf mutHeapMerge      input7
+                [ B.bench "sortConcat"         $ B.nf (L.sort . concat)  input7
+                , B.bench "listMerge"          $ B.nf listMerge          input7
+                , B.bench "treeMerge"          $ B.nf treeMerge          input7
+                , B.bench "heapMerge"          $ B.nf heapMerge          input7
+                , B.bench "heapMergeStable"    $ B.nf heapMergeStable    input7
+                , B.bench "loserTreeMerge"     $ B.nf loserTreeMerge     input7
+                , B.bench "mutHeapMerge"       $ B.nf mutHeapMerge       input7
+                , B.bench "mutHeapMergeStable" $ B.nf mutHeapMergeStable input7
                 ]
             , testGroup "five"
-                [ B.bench "sortConcat"     $ B.nf (L.sort . concat) input5
-                , B.bench "listMerge"      $ B.nf listMerge         input5
-                , B.bench "treeMerge"      $ B.nf treeMerge         input5
-                , B.bench "heapMerge"      $ B.nf heapMerge         input5
-                , B.bench "loserTreeMerge" $ B.nf loserTreeMerge    input5
-                , B.bench "mutHeapMerge"   $ B.nf mutHeapMerge      input5
+                [ B.bench "sortConcat"         $ B.nf (L.sort . concat)  input5
+                , B.bench "listMerge"          $ B.nf listMerge          input5
+                , B.bench "treeMerge"          $ B.nf treeMerge          input5
+                , B.bench "heapMerge"          $ B.nf heapMerge          input5
+                , B.bench "heapMergeStable"    $ B.nf heapMergeStable    input5
+                , B.bench "loserTreeMerge"     $ B.nf loserTreeMerge     input5
+                , B.bench "mutHeapMerge"       $ B.nf mutHeapMerge       input5
+                , B.bench "mutHeapMergeStable" $ B.nf mutHeapMergeStable input5
                 ]
             , testGroup "levelling-min"
-                [ B.bench "sortConcat"     $ B.nf (L.sort . concat) inputLevellingMin
-                , B.bench "listMerge"      $ B.nf listMerge         inputLevellingMin
-                , B.bench "treeMerge"      $ B.nf treeMerge         inputLevellingMin
-                , B.bench "heapMerge"      $ B.nf heapMerge         inputLevellingMin
-                , B.bench "loserTreeMerge" $ B.nf loserTreeMerge    inputLevellingMin
-                , B.bench "loserTreeMerge'"$ B.nf loserTreeMerge    inputLevellingMin'
-                , B.bench "mutHeapMerge"   $ B.nf mutHeapMerge      inputLevellingMin
+                [ B.bench "sortConcat"         $ B.nf (L.sort . concat)  inputLevellingMin
+                , B.bench "listMerge"          $ B.nf listMerge          inputLevellingMin
+                , B.bench "treeMerge"          $ B.nf treeMerge          inputLevellingMin
+                , B.bench "heapMerge"          $ B.nf heapMerge          inputLevellingMin
+                , B.bench "heapMergeStable"    $ B.nf heapMergeStable    inputLevellingMin
+                , B.bench "loserTreeMerge"     $ B.nf loserTreeMerge     inputLevellingMin
+                , B.bench "loserTreeMerge'"    $ B.nf loserTreeMerge     inputLevellingMin'
+                , B.bench "mutHeapMerge"       $ B.nf mutHeapMerge       inputLevellingMin
+                , B.bench "mutHeapMergeStable" $ B.nf mutHeapMergeStable inputLevellingMin
                 ]
             , testGroup "levelling-max"
-                [ B.bench "sortConcat"     $ B.nf (L.sort . concat) inputLevellingMax
-                , B.bench "listMerge"      $ B.nf listMerge         inputLevellingMax
-                , B.bench "treeMerge"      $ B.nf treeMerge         inputLevellingMax
-                , B.bench "heapMerge"      $ B.nf heapMerge         inputLevellingMax
-                , B.bench "loserTreeMerge" $ B.nf loserTreeMerge    inputLevellingMax
-                , B.bench "loserTreeMerge'"$ B.nf loserTreeMerge    inputLevellingMax'
-                , B.bench "mutHeapMerge"   $ B.nf mutHeapMerge      inputLevellingMax
+                [ B.bench "sortConcat"         $ B.nf (L.sort . concat)  inputLevellingMax
+                , B.bench "listMerge"          $ B.nf listMerge          inputLevellingMax
+                , B.bench "treeMerge"          $ B.nf treeMerge          inputLevellingMax
+                , B.bench "heapMerge"          $ B.nf heapMerge          inputLevellingMax
+                , B.bench "heapMergeStable"    $ B.nf heapMergeStable    inputLevellingMax
+                , B.bench "loserTreeMerge"     $ B.nf loserTreeMerge     inputLevellingMax
+                , B.bench "loserTreeMerge'"    $ B.nf loserTreeMerge     inputLevellingMax'
+                , B.bench "mutHeapMerge"       $ B.nf mutHeapMerge       inputLevellingMax
+                , B.bench "mutHeapMergeStable" $ B.nf mutHeapMergeStable inputLevellingMax
                 ]
             ]
 #endif
@@ -442,6 +454,19 @@ heapMerge xss = go $ Heap.fromList
             []     -> go heap'
             x':xs' -> go (Heap.insert (Heap.Entry x' xs') heap')
 
+heapMergeStable :: forall a. Ord a => [[a]] -> [a]
+heapMergeStable xss = go $ Heap.fromList
+    [ Heap.Entry (x, i) xs
+    | (i, x:xs) <- zip [1..] xss
+    ]
+  where
+    go :: Heap.Heap (Heap.Entry (a, Int) [a]) -> [a]
+    go heap = case Heap.viewMin heap of
+        Nothing -> []
+        Just (Heap.Entry (x, i) xs, heap') -> x : case xs of
+            []     -> go heap'
+            x':xs' -> go (Heap.insert (Heap.Entry (x', i) xs') heap')
+
 {-------------------------------------------------------------------------------
   Direct k-way merge using LoserTree
 -------------------------------------------------------------------------------}
@@ -473,3 +498,15 @@ mutHeapMerge xss = runST $ do
     go !heap (Just (Heap.Entry x xs)) = fmap (x :) $ case xs of
         []     -> K.Heap.extract     heap                     >>= go heap
         x':xs' -> K.Heap.replaceRoot heap (Heap.Entry x' xs') >>= go heap . Just
+
+mutHeapMergeStable :: forall a. Ord a => [[a]] -> [a]
+mutHeapMergeStable xss = runST $ do
+    (heap, element) <- K.Heap.newMutableHeap
+      [ Heap.Entry (x, i) xs | (i, x:xs) <- zip [1..] xss ]
+    go heap element
+  where
+    go :: K.Heap.MutableHeap s (Heap.Entry (a, Int) [a]) -> Maybe (Heap.Entry (a, Int) [a]) -> ST s [a]
+    go !_    Nothing                       = return []
+    go !heap (Just (Heap.Entry (x, i) xs)) = fmap (x :) $ case xs of
+        []     -> K.Heap.extract     heap                          >>= go heap
+        x':xs' -> K.Heap.replaceRoot heap (Heap.Entry (x', i) xs') >>= go heap . Just
