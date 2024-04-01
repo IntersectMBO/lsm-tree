@@ -542,7 +542,7 @@ chunkSizeInvariant (ChunkSize csize) = chunkSizeLB <= csize && csize <= chunkSiz
 
 instance Arbitrary RawBytes where
   arbitrary = genRawBytes >>= genSlice
-  shrink rb = shrinkRawBytes rb ++ shrinkSlice rb
+  shrink rb = shrinkSlice rb ++ shrinkRawBytes rb
 
 genRawBytesN :: Int -> Gen RawBytes
 genRawBytesN n =
