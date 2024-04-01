@@ -21,7 +21,7 @@ import           Data.WideWord.Word256 (Word256 (..))
 import           Data.Word (Word64, byteSwap64)
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
 import           Database.LSMTree.Internal.Run.Index.Compact (CompactIndex (..),
-                     PageNo (..), PageSpan (..), SearchResult (..))
+                     PageNo (..), PageSpan (..))
 import           Database.LSMTree.Internal.Run.Index.Compact.Construction
                      (Append (..))
 import           Database.LSMTree.Internal.Serialise (SerialisedBlob (..),
@@ -36,9 +36,6 @@ deriving newtype instance NFData SerialisedKey
 deriving newtype instance NFData SerialisedValue
 deriving newtype instance NFData SerialisedBlob
 deriving newtype instance NFData NumEntries
-
-deriving stock instance Generic SearchResult
-deriving anyclass instance NFData SearchResult
 
 deriving newtype instance NFData PageNo
 

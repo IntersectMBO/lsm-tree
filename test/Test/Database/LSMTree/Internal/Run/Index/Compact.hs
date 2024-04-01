@@ -200,25 +200,25 @@ prop_searchMinMaxKeysAfterConstruction csize ps = eqMapProp real model
   where
     model = evalCounterM (foldM modelSearch Map.empty $ getPages ps) 0
 
-    modelSearch :: Map k SearchResult -> LogicalPageSummary k -> CounterM (Map k SearchResult)
+    modelSearch :: Map k PageSpan -> LogicalPageSummary k -> CounterM (Map k PageSpan)
     modelSearch m = \case
         OnePageOneKey k       -> do
           c <- incrCounter
-          pure $ Map.insert k (SinglePage (PageNo c)) m
+          pure $ Map.insert k (singlePage (PageNo c)) m
         OnePageManyKeys k1 k2 -> do
           c <- incrCounter
-          pure $ Map.insert k1 (SinglePage (PageNo c)) $ Map.insert k2 (SinglePage (PageNo c)) m
+          pure $ Map.insert k1 (singlePage (PageNo c)) $ Map.insert k2 (singlePage (PageNo c)) m
         MultiPageOneKey k n -> do
           let incr = 1 + fromIntegral n
           c <- plusCounter incr
-          pure $ if incr == 1 then Map.insert k (SinglePage (PageNo c)) m
-                              else Map.insert k (MultiPage (PageNo c) (PageNo $ c + fromIntegral n)) m
+          pure $ if incr == 1 then Map.insert k (singlePage (PageNo c)) m
+                              else Map.insert k (multiPage (PageNo c) (PageNo $ c + fromIntegral n)) m
 
     real = foldMap' realSearch (getPages ps)
 
     ci = fromPageSummaries (coerce csize) ps
 
-    realSearch :: LogicalPageSummary k -> Map k SearchResult
+    realSearch :: LogicalPageSummary k -> Map k PageSpan
     realSearch = \case
         OnePageOneKey k           -> Map.singleton k (search (serialiseKey k) ci)
         OnePageManyKeys k1 k2     -> Map.fromList [ (k1, search (serialiseKey k1) ci)

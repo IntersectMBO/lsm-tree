@@ -18,9 +18,10 @@ module Database.LSMTree.Internal.Run.Index.Compact (
   , rangeFinderPrecisionBounds
   , suggestRangeFinderPrecision
     -- * Queries
-  , SearchResult (..)
   , PageSpan (..)
-  , toPageSpan
+  , singlePage
+  , multiPage
+  , pageSpanSize
   , search
   , countClashes
   , hasClashes
@@ -37,7 +38,6 @@ module Database.LSMTree.Internal.Run.Index.Compact (
   , fromSBS
   ) where
 
-import           Control.Exception (assert)
 import           Control.Monad (when)
 import           Control.Monad.ST
 import           Data.Bit hiding (flipBit)
@@ -106,25 +106,26 @@ import           Database.LSMTree.Internal.Vector
   minimum key and maximum key on each page. As such, the index stores the
   key-interval @[minKey p, maxKey p]@ for each page @p@. @search1@ searches the
   vector for the key-interval that contains the search key, if it exists, and
-  returns the corresponding vector index as a page number.
+  returns the corresponding vector index as a page number. A design choice of
+  ours is that the search will __always__ return a page number, even if the
+  index could answer that the key is definitely not in a page (see
+  'indexSearches').
 
   > type Index1 k = V.Vector (k, k)
   >
   > mkIndex1 :: Run k v -> Index1 k
   > mkIndex1 = V.fromList . fmap (\p -> (minKey p, maxKey p))
   >
-  > search1 :: k -> Index1 k -> Maybe PageNo
+  > search1 :: k -> Index1 k -> PageNo
   > search1 = -- elided
 
   We can reduce the memory size of `Index1` by half if we store only the minimum
   keys on each page. As such, the index now stores the key-interval @[minKey p,
   minKey p')@ for each page @p@ and successor page @p'@. GUARANTEE is still
   guaranteed, because the old intervals are strictly contained in the new ones.
-  The cost of this is that @search2@ could return a @Just@ even if @search1@
-  would return a @Nothing@, but we prefer to lose some precision in order to
-  achieve the memory size reduction. @search2@ searches the vector for the
-  largest key smaller or equal to the given one, if it exists, and returns the
-  corresponding vector index as a page number.
+  @search2@ searches the vector for the largest key smaller or equal to the
+  given one, if it exists, and returns the corresponding vector index as a page
+  number.
 
   > type Index2 k = V.Vector k
   >
@@ -499,24 +500,24 @@ suggestRangeFinderPrecision maxPages =
   Queries
 -------------------------------------------------------------------------------}
 
-data SearchResult =
-    NoResult
-  | SinglePage PageNo
-  -- | @'Multipage' s e@: the value is larger than a page, starts on page s, and
-  -- ends on page e.
-  | MultiPage PageNo PageNo
-  deriving stock (Show, Eq)
-
 -- | A span of pages, representing an inclusive interval of page numbers.
 data PageSpan = PageSpan {
-    pageSpanStart :: PageNo
-  , pageSpanEnd   :: PageNo
+    pageSpanStart :: {-# UNPACK #-} !PageNo
+  , pageSpanEnd   :: {-# UNPACK #-} !PageNo
   }
+  deriving (Show, Eq)
 
-toPageSpan :: SearchResult -> Maybe PageSpan
-toPageSpan NoResult        = Nothing
-toPageSpan (SinglePage i)  = Just (PageSpan i i)
-toPageSpan (MultiPage i j) = assert (i < j) $ Just (PageSpan i j)
+{-# INLINE singlePage #-}
+singlePage :: PageNo -> PageSpan
+singlePage i = PageSpan i i
+
+{-# INLINE multiPage #-}
+multiPage :: PageNo -> PageNo -> PageSpan
+multiPage i j = PageSpan i j
+
+pageSpanSize :: PageSpan -> NumPages
+pageSpanSize pspan =
+    unPageNo (pageSpanEnd pspan) - unPageNo (pageSpanStart pspan) + 1
 
 -- | Given a search key, find the number of the disk page that /might/ contain
 -- this key.
@@ -534,7 +535,7 @@ toPageSpan (MultiPage i j) = assert (i < j) $ Just (PageSpan i j)
 -- number interval, and shrinks it to a minimal interval that contains the
 -- search key. The code below is annotated with @Pre:@ and @Post:@ comments that
 -- describe the interval at that point.
-search :: SerialisedKey -> CompactIndex -> SearchResult
+search :: SerialisedKey -> CompactIndex -> PageSpan
 search k CompactIndex{..} = -- Pre: @[0, V.length ciPrimary)@
     let !rfbits    = fromIntegral $ keyTopBits16 ciRangeFinderPrecision k
         !lb        = fromIntegral $ ciRangeFinder VU.! rfbits
@@ -547,21 +548,21 @@ search k CompactIndex{..} = -- Pre: @[0, V.length ciPrimary)@
         !primbits  = keySliceBits32 ciRangeFinderPrecision k
     in
       case unsafeSearchLEBounds primbits ciPrimary lb ub of
-        Nothing -> NoResult -- Post: @[lb, lb)@ (empty).
+        Nothing -> singlePage (PageNo 0)  -- Post: @[lb, lb)@ (empty).
         Just !i ->         -- Post: @[lb, i]@.
           if unBit $ ciClashes VU.! i then
             -- Post: @[lb, i]@, now in clash recovery mode.
-            let i1  = PageNo $ fromJust $
+            let !i1  = PageNo $ fromJust $
                   bitIndexFromToRev (BoundInclusive lb) (BoundInclusive i) (Bit False) ciClashes
-                i2  = maybe (PageNo 0) snd $ Map.lookupLE k ciTieBreaker
+                !i2  = maybe (PageNo 0) snd $ Map.lookupLE k ciTieBreaker
                 PageNo !i3 = max i1 i2 -- Post: the intersection of @[i1, i]@ and @[i2, i].
                 !i4 = bitLongestPrefixFromTo (BoundExclusive i3) (BoundInclusive i) (Bit True) ciLargerThanPage
                       -- Post: [i3, i4]
-            in  if i3 == i4 then SinglePage (PageNo i3) else MultiPage (PageNo i3) (PageNo i4)
+            in  if i3 == i4 then singlePage (PageNo i3) else multiPage (PageNo i3) (PageNo i4)
                 -- Post: @[i3, i4]@ if a larger-than-page value that starts at
                 -- @i3@ and ends at @i4@, @[i3, i3]@ otherwise for a "normal"
                 -- page.
-          else  SinglePage (PageNo i) -- Post: @[i, i]@
+          else  singlePage (PageNo i) -- Post: @[i, i]@
 
 
 countClashes :: CompactIndex -> Int
