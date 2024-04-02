@@ -735,7 +735,7 @@ runIO action lookUp = ReaderT $ \(session, handler) ->
         Deletes kdels tableVar -> catchErr handler $
           SUT.Class.deletes (unwrapTableHandle $ lookUp' tableVar) kdels
         RetrieveBlobs blobRefsVar -> catchErr handler $
-          fmap WrapBlob <$> SUT.Class.retrieveBlobs (Proxy @h) (unwrapBlobRef <$> lookUp' blobRefsVar)
+          fmap WrapBlob <$> SUT.Class.retrieveBlobs (Proxy @h) session (unwrapBlobRef <$> lookUp' blobRefsVar)
         Snapshot name tableVar -> catchErr handler $
           SUT.Class.snapshot name (unwrapTableHandle $ lookUp' tableVar)
         Open name -> catchErr handler $
@@ -779,7 +779,7 @@ runIOSim action lookUp = ReaderT $ \(session, handler) ->
         Deletes kdels tableVar -> catchErr handler $
           SUT.Class.deletes (unwrapTableHandle $ lookUp' tableVar) kdels
         RetrieveBlobs blobRefsVar -> catchErr handler $
-          fmap WrapBlob <$> SUT.Class.retrieveBlobs (Proxy @h) (unwrapBlobRef <$> lookUp' blobRefsVar)
+          fmap WrapBlob <$> SUT.Class.retrieveBlobs (Proxy @h) session (unwrapBlobRef <$> lookUp' blobRefsVar)
         Snapshot name tableVar -> catchErr handler $
           SUT.Class.snapshot name (unwrapTableHandle $ lookUp' tableVar)
         Open name -> catchErr handler $

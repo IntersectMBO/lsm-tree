@@ -1,3 +1,4 @@
+{-# LANGUAGE GADTs                    #-}
 {-# LANGUAGE StandaloneDeriving       #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TupleSections            #-}
@@ -81,9 +82,10 @@ module Database.LSMTree.Monoidal (
 
 import           Data.Bifunctor (Bifunctor (second))
 import           Data.Kind (Type)
+import           Data.Typeable (Typeable)
 import           Data.Word (Word64)
-import           Database.LSMTree.Common (IOLike, Range (..), Session,
-                     SnapshotName, SomeSerialisationConstraint,
+import           Database.LSMTree.Common (AnySession, IOLike, Range (..),
+                     Session, SnapshotName, SomeSerialisationConstraint,
                      SomeUpdateConstraint, closeSession, deleteSnapshot,
                      listSnapshots, openSession)
 import           Database.LSMTree.Internal.Monoidal
@@ -106,8 +108,8 @@ import           Database.LSMTree.Internal.Monoidal
 -- an LSM table. The multiple-handles feature allows for there to may be many
 -- such instances in use at once.
 type TableHandle :: (Type -> Type) -> Type -> Type -> Type
-data TableHandle m k v = TableHandle {
-    thSession :: !(Session m)
+data TableHandle m k v = forall h. Typeable h => TableHandle {
+    thSession :: !(AnySession m h)
   , thConfig  :: !TableConfig
   }
 

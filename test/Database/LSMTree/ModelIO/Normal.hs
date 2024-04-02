@@ -198,9 +198,10 @@ liftBlobRefs TableHandle{..} updc = fmap (fmap liftBlobRef)
 -- | Perform a batch of blob retrievals.
 retrieveBlobs ::
      forall m blob. (IOLike m, SomeSerialisationConstraint blob)
-  => [BlobRef m blob]
+  => Session m
+  -> [BlobRef m blob]
   -> m [blob]
-retrieveBlobs brefs = atomically $ Model.retrieveBlobs <$> mapM guard brefs
+retrieveBlobs _ brefs = atomically $ Model.retrieveBlobs <$> mapM guard brefs
   where
     -- Ensure that the session and table handle for each of the blob refs are
     -- still open, and that the table wasn't updated.

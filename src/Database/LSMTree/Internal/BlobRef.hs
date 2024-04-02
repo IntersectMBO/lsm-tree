@@ -38,10 +38,10 @@ import           GHC.Generics (Generic)
 --
 -- [Blob reference validity] as long as the table handle that the blob reference
 -- originated from is not updated or closed, the blob reference will be valid.
-type BlobRef :: (Type -> Type) -> Type -> Type
-data BlobRef m blob = BlobRef {
-      -- TODO: add a reference to the run that contains the actual blob
-      blobRefOffset :: !Word64
+type BlobRef :: (Type -> Type) -> Type -> Type -> Type
+data BlobRef m run blob = BlobRef {
+      blobRefRun    :: !run
+    , blobRefOffset :: !Word64
     , blobRefSize   :: !Word32
     }
 

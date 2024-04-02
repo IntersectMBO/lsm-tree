@@ -19,8 +19,7 @@ import qualified Control.Concurrent.STM as Real
 import           Control.Monad ((<=<))
 import           Control.Monad.IOSim (IOSim)
 import           Data.Kind (Type)
-import           Database.LSMTree.Common (IOLike)
-import           Database.LSMTree.Internal.BlobRef
+import           Database.LSMTree.Common (BlobRef, IOLike)
 import           Database.LSMTree.Internal.Serialise (SerialiseKey)
 import           Database.LSMTree.Normal (LookupResult, RangeLookupResult,
                      TableHandle)

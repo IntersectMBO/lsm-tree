@@ -1,3 +1,4 @@
+{-# LANGUAGE GADTs                    #-}
 {-# LANGUAGE StandaloneDeriving       #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TupleSections            #-}
@@ -78,11 +79,12 @@ module Database.LSMTree.Normal (
   ) where
 
 import           Data.Kind (Type)
+import           Data.Typeable (Typeable)
 import           Data.Word (Word64)
-import           Database.LSMTree.Common (IOLike, Range (..), Session,
-                     SnapshotName, SomeSerialisationConstraint, closeSession,
-                     deleteSnapshot, listSnapshots, openSession)
-import           Database.LSMTree.Internal.BlobRef
+import           Database.LSMTree.Common (AnySession, BlobRef, IOLike,
+                     Range (..), Session, SnapshotName,
+                     SomeSerialisationConstraint, closeSession, deleteSnapshot,
+                     listSnapshots, openSession)
 import           Database.LSMTree.Internal.Normal
 
 -- $resource-management
@@ -160,8 +162,8 @@ import           Database.LSMTree.Internal.Normal
 -- an LSM table. The multiple-handles feature allows for there to may be many
 -- such instances in use at once.
 type TableHandle :: (Type -> Type) -> Type -> Type -> Type -> Type
-data TableHandle m k v blob = TableHandle {
-    thSession :: !(Session m)
+data TableHandle m k v blob = forall h. Typeable h => TableHandle {
+    thSession :: !(AnySession m h)
   , thConfig  :: !TableConfig
   }
 
@@ -285,7 +287,8 @@ deletes = updates . fmap (,Delete)
 -- Blob lookups can be performed concurrently from multiple Haskell threads.
 retrieveBlobs ::
      (IOLike m, SomeSerialisationConstraint blob)
-  => [BlobRef m blob]
+  => Session m
+  -> [BlobRef m blob]
   -> m [blob]
 retrieveBlobs = undefined
 
