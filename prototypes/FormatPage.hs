@@ -536,7 +536,7 @@ instance Arbitrary PageLogical where
   arbitrary =
     frequency
       [ (1, (PageLogical . (:[])) <$>
-               scale (\n' -> ceiling (fromIntegral n' ** 1.8 :: Float)) arbitrary)
+               scale (\n' -> ceiling (fromIntegral n' ** 2.2 :: Float)) arbitrary)
       , (4, do n <- getSize
                scale (\n' -> ceiling (sqrt (fromIntegral n' :: Float))) $
                  go [] n pageSizeEmpty)

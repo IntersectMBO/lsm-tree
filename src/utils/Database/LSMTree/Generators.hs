@@ -50,12 +50,16 @@ module Database.LSMTree.Generators (
     -- * Chunking size
   , ChunkSize (..)
   , chunkSizeInvariant
-    -- * Serialised keys/values/blobs
+    -- * Serialised keys\/values\/blobs
+  , genRawBytes
   , genRawBytesN
   , genRawBytesSized
+  , packRawBytesPinnedOrUnpinned
+  , LargeRawBytes(..)
   ) where
 
 import           Control.DeepSeq (NFData)
+import           Control.Exception (assert)
 import           Data.Bifunctor (bimap)
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
@@ -63,6 +67,7 @@ import           Data.Coerce (coerce)
 import           Data.Containers.ListUtils (nubOrd)
 import           Data.List (sort)
 import qualified Data.Map as Map
+import qualified Data.Primitive.ByteArray as BA
 import qualified Data.Vector.Primitive as PV
 import           Data.WideWord.Word256 (Word256 (..))
 import           Data.Word
@@ -75,7 +80,8 @@ import           Database.LSMTree.Internal.Run.Index.Compact.Construction
                      (Append (..))
 import           Database.LSMTree.Internal.Serialise
 import qualified Database.LSMTree.Internal.Serialise.Class as S.Class
-import           Database.LSMTree.Internal.Serialise.RawBytes
+import           Database.LSMTree.Internal.Serialise.RawBytes as RB
+import           Database.LSMTree.Internal.Vector (mkPrimVector)
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer (..))
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import qualified Database.LSMTree.Monoidal as Monoidal
@@ -538,16 +544,27 @@ chunkSizeInvariant (ChunkSize csize) = chunkSizeLB <= csize && csize <= chunkSiz
 
 instance Arbitrary RawBytes where
   arbitrary = genRawBytes >>= genSlice
-  shrink rb = shrinkRawBytes rb ++ shrinkSlice rb
+  shrink rb = shrinkSlice rb ++ shrinkRawBytes rb
 
 genRawBytesN :: Int -> Gen RawBytes
-genRawBytesN n = RawBytes . PV.fromList <$> QC.vectorOf n arbitrary
+genRawBytesN n =
+    packRawBytesPinnedOrUnpinned <$> arbitrary <*> QC.vectorOf n arbitrary
 
 genRawBytes :: Gen RawBytes
-genRawBytes = RawBytes . PV.fromList <$> QC.listOf arbitrary
+genRawBytes =
+    packRawBytesPinnedOrUnpinned <$> arbitrary <*> QC.listOf arbitrary
 
 genRawBytesSized :: Int -> Gen RawBytes
 genRawBytesSized n = QC.resize n genRawBytes
+
+packRawBytesPinnedOrUnpinned :: Bool -> [Word8] -> RawBytes
+packRawBytesPinnedOrUnpinned False = RB.pack
+packRawBytesPinnedOrUnpinned True  = \ws ->
+    let len = length ws in
+    RB.RawBytes $ mkPrimVector 0 len $ BA.runByteArray $ do
+      mba <- BA.newPinnedByteArray len
+      sequence_ [ BA.writeByteArray mba i w | (i, w) <- zip [0..] ws ]
+      return mba
 
 shrinkRawBytes :: RawBytes -> [RawBytes]
 shrinkRawBytes (RawBytes pvec) = [ RawBytes (PV.fromList ws)
@@ -573,6 +590,25 @@ deriving newtype instance Arbitrary SerialisedValue
 instance Arbitrary SerialisedBlob where
   arbitrary = SerialisedBlob <$> genRawBytes
   shrink (SerialisedBlob rb) = SerialisedBlob <$> shrinkRawBytes rb
+
+newtype LargeRawBytes = LargeRawBytes RawBytes
+  deriving Show
+
+instance Arbitrary LargeRawBytes where
+  arbitrary = genRawBytesSized (4096*3) >>= fmap LargeRawBytes . genSlice
+  shrink (LargeRawBytes rb) =
+      map LargeRawBytes (shrinkSlice rb)
+      -- After shrinking length, don't shrink content using normal list shrink
+      -- as that's too slow. We try zeroing out long suffixes of the bytes
+      -- (since for large raw bytes in page format, the interesting information
+      -- is at the start and the suffix is just the value.
+   ++ [ LargeRawBytes (RawBytes pvec')
+      | let (RawBytes pvec) = rb
+      , n <- QC.shrink (PV.length pvec)
+      , let pvec' = PV.take n pvec PV.++ PV.replicate (PV.length pvec - n) 0
+      , assert (PV.length pvec' == PV.length pvec) $
+        pvec' /= pvec
+      ]
 
 {-------------------------------------------------------------------------------
   BlobRef
