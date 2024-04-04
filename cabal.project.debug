@@ -1,0 +1,19 @@
+package lsm-tree
+  -- apply this to all components
+  -- relevant mostly only for development & testing
+  ghc-options: -fno-ignore-asserts
+
+  -- there are no cpp-options in cabal.project files
+  ghc-options: -optP -DNO_IGNORE_ASSERTS
+
+-- Enable -fcheck-prim-bounds
+-- https://gitlab.haskell.org/ghc/ghc/-/issues/21054
+if impl(ghc >=9.4.6 && <9.5 || >=9.6.3)
+  package lsm-tree
+    ghc-options: -fcheck-prim-bounds
+
+  package primitive
+    ghc-options: -fcheck-prim-bounds
+
+  package vector
+    ghc-options: -fcheck-prim-bounds

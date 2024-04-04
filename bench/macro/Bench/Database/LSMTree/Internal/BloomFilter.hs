@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns       #-}
+{-# LANGUAGE CPP                #-}
 {-# LANGUAGE NumericUnderscores #-}
 
 module Bench.Database.LSMTree.Internal.BloomFilter (
@@ -23,6 +24,7 @@ import           GHC.Stats
 import           Numeric
 import           System.Mem (performMajorGC)
 import           System.Random
+import           Text.Printf (printf)
 
 import           Database.LSMTree.Internal.Run.BloomFilter as Bloom
 import           Database.LSMTree.Internal.Serialise (SerialisedKey,
@@ -51,6 +53,10 @@ benchmarkRequestedFPR = 0.02
 
 benchmarks :: IO ()
 benchmarks = do
+#ifdef NO_IGNORE_ASSERTS
+    putStrLn "BENCHMARKING A BUILD WITH -fno-ignore-asserts"
+#endif
+
     enabled <- getRTSStatsEnabled
     when (not enabled) $ fail "Need RTS +T statistics enabled"
     let filterSizes = lsmStyleBloomFilters benchmarkSizeBase
@@ -78,18 +84,25 @@ benchmarks = do
                 "(This is the cost of just computing the keys.)"
                 (benchBaseline vbs rng0) benchmarkNumLookups
                 (0, 0)
+#ifdef NO_IGNORE_ASSERTS
+                80  -- https://gitlab.haskell.org/ghc/ghc/-/issues/24625
+#else
+                48
+#endif
 
     hashcost <-
       benchmark "makeCheapHashes"
                 "(This includes the cost of hashing the keys, less the cost of computing the keys)"
                 (benchMakeCheapHashes vbs rng0) benchmarkNumLookups
                 baseline
+                0
 
     _ <-
       benchmark "elemCheapHashes"
                 "(this is the simple one-by-one lookup, less the cost of computing and hashing the keys)"
                 (benchElemCheapHashes vbs rng0) benchmarkNumLookups
                 (fst hashcost + fst baseline, snd hashcost + snd baseline)
+                0
 
     return ()
 
@@ -100,8 +113,9 @@ benchmark :: String
           -> (Int -> ())
           -> Int
           -> (NominalDiffTime, Alloc)
+          -> Int
           -> IO (NominalDiffTime, Alloc)
-benchmark name description action n (subtractTime, subtractAlloc) = do
+benchmark name description action n (subtractTime, subtractAlloc) expectedAlloc = do
     putStrLn $ "Benchmarking " ++ name ++ " ... "
     putStrLn description
     performMajorGC
@@ -130,6 +144,12 @@ benchmark name description action n (subtractTime, subtractAlloc) = do
     printStat "Alloc net:         " (fromIntegral allocNet) "bytes"
     printStat "Time net per key:  " timePerKey "seconds"
     printStat "Alloc net per key: " allocPerKey "bytes"
+
+    unless (truncate allocPerKey == expectedAlloc) $ do
+        printf "WARNING: expecting %d, got %d bytes allocated per key\n"
+            expectedAlloc
+            (truncate allocPerKey :: Int)
+
     putStrLn ""
     return (timeNet, allocNet)
 

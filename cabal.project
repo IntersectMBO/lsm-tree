@@ -29,22 +29,8 @@ benchmarks: True
 -- Luckily, bloomfilter is not commonly used package, so this is good enough.
 constraints: bloomfilter <0
 
-package lsm-tree
-  -- apply this to all components
-  -- relevant mostly only for development & testing
-  ghc-options: -fno-ignore-asserts
-
--- Enable -fcheck-prim-bounds
--- https://gitlab.haskell.org/ghc/ghc/-/issues/21054
-if impl(ghc >=9.4.6 && <9.5 || >=9.6.3)
-  package lsm-tree
-    ghc-options: -fcheck-prim-bounds
-
-  package primitive
-    ghc-options: -fcheck-prim-bounds
-
-  package vector
-    ghc-options: -fcheck-prim-bounds
+-- comment me if you are benchmarking
+import: cabal.project.debug
 
 if(os(linux))
   source-repository-package
