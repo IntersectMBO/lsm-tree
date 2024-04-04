@@ -159,7 +159,7 @@ mergeLastForLevel _  = MergeMidLevel
 -- | Note that the invariants rely on the fact that levelling is only used on
 -- the last level.
 --
-invariant :: forall s. HasCallStack => Levels s -> ST s Bool
+invariant :: forall s. Levels s -> ST s Bool
 invariant = go 1
   where
     go :: Int -> [Level s] -> ST s Bool
