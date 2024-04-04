@@ -14,7 +14,8 @@
 - ignore: {name: "Use newtype instead of data"} # 3 hints
 - ignore: {name: "Use uncurry"} # 1 hint
 - ignore: {name: "Use underscore"} # 2 hints
-
+- ignore: {name: "Use &&"} # 1 hint
+- ignore: {name: "Use list literal"} # 1 hint
 
 # Specify additional command line arguments
 #
