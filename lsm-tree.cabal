@@ -471,10 +471,11 @@ library fs-api-blockio
     System.FS.BlockIO.Serial
 
   build-depends:
-    , base        >=4.16 && <4.20
+    , base        >=4.16  && <4.20
     , fs-api      ^>=0.2
     , io-classes  ^>=1.3
     , primitive   ^>=0.9
+    , vector      ^>=0.13
 
   if os(linux)
     hs-source-dirs: fs-api-blockio/src-linux
@@ -512,5 +513,6 @@ test-suite fs-api-blockio-test
     , tasty-hunit
     , tasty-quickcheck
     , temporary
+    , vector
 
   ghc-options:      -threaded -fno-ignore-asserts

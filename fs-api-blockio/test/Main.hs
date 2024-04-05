@@ -17,6 +17,8 @@ import           Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import           Data.Maybe (catMaybes)
 import           Data.Primitive.ByteArray
+import qualified Data.Vector as V
+import qualified Data.Vector.Unboxed as VU
 import qualified System.FS.API as FS
 import           System.FS.API.Strict (hPutAllStrict)
 import           System.FS.BlockIO.API
@@ -84,10 +86,10 @@ prop_readWrite bs = ioProperty $ withSystemTempDirectory "prop_readWrite" $ \dir
     prop <- FS.withFile hfs (FS.mkFsPath ["temp"]) (FS.WriteMode FS.MustBeNew) $ \h -> do
       let n = BS.length bs
       writeBuf <- fromByteStringPinned bs
-      [IOResult m] <- submitIO hbio [IOOpWrite h 0 writeBuf 0 (fromIntegral n)]
+      [IOResult m] <- VU.toList <$> submitIO hbio (V.singleton (IOOpWrite h 0 writeBuf 0 (fromIntegral n)))
       let writeTest = n === fromIntegral m
       readBuf <- newPinnedByteArray n
-      [IOResult o] <- submitIO hbio [IOOpRead h 0 readBuf 0 (fromIntegral n)]
+      [IOResult o] <- VU.toList <$> submitIO hbio (V.singleton (IOOpRead h 0 readBuf 0 (fromIntegral n)))
       let readTest = o === m
       bs' <- toByteString n readBuf
       let cmpTest = bs === bs'
@@ -115,7 +117,7 @@ prop_submitToClosedCtx bs = ioProperty $ withSystemTempDirectory "prop_a" $ \dir
         else do
           readBuf <- newPinnedByteArray (BS.length bs)
           withMVar syncVar $ \b -> do
-            eith <- try @SomeException $ submitIO hbio [IOOpRead h 0 readBuf (fromIntegral i) 1]
+            eith <- try @SomeException $ submitIO hbio (V.singleton (IOOpRead h 0 readBuf (fromIntegral i) 1))
             pure $ case eith of
               Left _  -> Just $ tabulate "submitIO successful" [show False] $ counterexample "expected failure, but got success" (b === True)
               Right _ -> Just $ tabulate "submitIO successful" [show True]  $ counterexample "expected success, but got failure" (b === False)

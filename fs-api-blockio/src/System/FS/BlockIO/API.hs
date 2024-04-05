@@ -1,5 +1,10 @@
-{-# LANGUAGE GADTs      #-}
-{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE DerivingVia                #-}
+{-# LANGUAGE GeneralisedNewtypeDeriving #-}
+{-# LANGUAGE MultiParamTypeClasses      #-}
+{-# LANGUAGE RankNTypes                 #-}
+{-# LANGUAGE StandaloneDeriving         #-}
+{-# LANGUAGE TypeFamilies               #-}
+{-# LANGUAGE UnboxedTuples              #-}
 
 module System.FS.BlockIO.API (
     HasBlockIO (..)
@@ -7,6 +12,10 @@ module System.FS.BlockIO.API (
   , mkClosedError
   , IOOp (..)
   , ioopHandle
+  , ioopFileOffset
+  , ioopBuffer
+  , ioopBufferOffset
+  , ioopByteCount
   , IOResult (..)
     -- * Re-exports
   , ByteCount
@@ -15,6 +24,12 @@ module System.FS.BlockIO.API (
 
 import           Control.Monad.Primitive (PrimMonad (PrimState))
 import           Data.Primitive.ByteArray (MutableByteArray)
+import qualified Data.Vector as V
+import qualified Data.Vector.Generic as VG
+import qualified Data.Vector.Generic.Mutable as VGM
+import qualified Data.Vector.Primitive as PV
+import qualified Data.Vector.Unboxed as VU
+import qualified Data.Vector.Unboxed as VUM
 import           GHC.IO.Exception (IOErrorType (ResourceVanished))
 import           System.FS.API
 import           System.IO.Error (ioeSetErrorString, mkIOError)
@@ -31,10 +46,11 @@ data HasBlockIO m h = HasBlockIO {
     -- | Submit a batch of I\/O operations and wait for the result.
     --
     -- Results correspond to input 'IOOp's in a pair-wise manner, i.e., one can
-    -- match 'IOOp's with 'IOResult's by zipping the input and output list.
+    -- match 'IOOp's with 'IOResult's by indexing into both vectors at the same
+    -- position.
     --
     -- If any of the I\/O operations fails, an 'FsError' exception will be thrown.
-  , submitIO :: HasCallStack => [IOOp m h] -> m [IOResult]
+  , submitIO :: HasCallStack => V.Vector (IOOp m h) -> m (VU.Vector IOResult)
   }
 
 -- | Concurrency parameters for initialising a 'HasBlockIO. Can be ignored by
@@ -60,5 +76,30 @@ ioopHandle :: IOOp m h -> Handle h
 ioopHandle (IOOpRead h _ _ _ _)  = h
 ioopHandle (IOOpWrite h _ _ _ _) = h
 
+ioopFileOffset :: IOOp m h -> FileOffset
+ioopFileOffset (IOOpRead _ off _ _ _)  = off
+ioopFileOffset (IOOpWrite _ off _ _ _) = off
+
+ioopBuffer :: IOOp m h -> MutableByteArray (PrimState m)
+ioopBuffer (IOOpRead _ _ buf _ _)  = buf
+ioopBuffer (IOOpWrite _ _ buf _ _) = buf
+
+ioopBufferOffset :: IOOp m h -> BufferOffset
+ioopBufferOffset (IOOpRead _ _ _ bufOff _)  = bufOff
+ioopBufferOffset (IOOpWrite _ _ _ bufOff _) = bufOff
+
+ioopByteCount :: IOOp m h -> ByteCount
+ioopByteCount (IOOpRead _ _ _ _ c)  = c
+ioopByteCount (IOOpWrite _ _ _ _ c) = c
+
 -- | Number of read/written bytes.
 newtype IOResult = IOResult ByteCount
+  deriving newtype PV.Prim
+
+newtype instance VUM.MVector s IOResult = MV_IOResult (PV.MVector s IOResult)
+newtype instance VU.Vector     IOResult = V_IOResult  (PV.Vector    IOResult)
+
+deriving via (VU.UnboxViaPrim IOResult) instance VGM.MVector VU.MVector IOResult
+deriving via (VU.UnboxViaPrim IOResult) instance VG.Vector   VU.Vector  IOResult
+
+instance VUM.Unbox IOResult
