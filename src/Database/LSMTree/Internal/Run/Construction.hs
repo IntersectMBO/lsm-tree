@@ -1,6 +1,7 @@
 {-# LANGUAGE BangPatterns    #-}
 {-# LANGUAGE DeriveFoldable  #-}
 {-# LANGUAGE DeriveFunctor   #-}
+{-# LANGUAGE NamedFieldPuns  #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ViewPatterns    #-}
@@ -15,7 +16,6 @@ module Database.LSMTree.Internal.Run.Construction (
   , new
   , unsafeFinalise
   , addFullKOp
-  , addChunkedKOp
     -- * Pages
     -- ** Page Builder
   , pageBuilder
@@ -56,12 +56,16 @@ import           Data.Foldable (Foldable (..))
 import           Data.Maybe (fromMaybe)
 import           Data.Monoid (Dual (..))
 import           Data.Primitive.PrimVar (PrimVar, modifyPrimVar, newPrimVar,
-                     readPrimVar)
-import           Data.STRef
+                     readPrimVar, writePrimVar)
 import           Data.Word (Word16, Word32, Word64, Word8)
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..),
                      onBlobRef, onValue)
+import           Database.LSMTree.Internal.PageAcc (MPageAcc)
+import qualified Database.LSMTree.Internal.PageAcc as PageAcc
+import qualified Database.LSMTree.Internal.PageAcc1 as PageAcc
+import           Database.LSMTree.Internal.RawOverflowPage
+import           Database.LSMTree.Internal.RawPage (RawPage)
 import           Database.LSMTree.Internal.Run.BloomFilter (Bloom, MBloom)
 import qualified Database.LSMTree.Internal.Run.BloomFilter as Bloom
 import           Database.LSMTree.Internal.Run.Index.Compact (CompactIndex,
@@ -87,8 +91,9 @@ import           Database.LSMTree.Internal.Serialise (SerialisedKey,
 data RunAcc s = RunAcc {
       mbloom               :: !(MBloom s SerialisedKey)
     , mindex               :: !(MCompactIndex s)
-    , currentPageRef       :: !(STRef s PageAcc)
+    , mpageacc             :: !(MPageAcc s)
     , entryCount           :: !(PrimVar s Int)
+    , rangeFinderCurVal    :: !(PrimVar s Word16)
     , rangeFinderPrecision :: !Int
     }
 
@@ -101,8 +106,9 @@ new (NumEntries nentries) npages = do
     mbloom <- Bloom.newEasy 0.1 nentries -- TODO(optimise): tune bloom filter
     let rangeFinderPrecision = Index.suggestRangeFinderPrecision npages
     mindex <- Index.new rangeFinderPrecision 100 -- TODO(optimise): tune chunk size
-    currentPageRef <- newSTRef paEmpty
+    mpageacc <- PageAcc.newPageAcc
     entryCount <- newPrimVar 0
+    rangeFinderCurVal <- newPrimVar 0
     pure RunAcc{..}
 
 -- | Finalise an incremental run construction. Do /not/ use a 'RunAcc' after
@@ -113,18 +119,31 @@ new (NumEntries nentries) npages = do
 -- incrementally constructed compact index.
 unsafeFinalise ::
      RunAcc s
-  -> ST s ( Maybe (PageAcc, [Index.Chunk])
+  -> ST s ( Maybe RawPage
           , Maybe Index.Chunk
           , Bloom SerialisedKey
           , CompactIndex
           , NumEntries
           )
 unsafeFinalise racc@RunAcc {..} = do
-    mpage <- yield racc
-    (mchunk, index) <- Index.unsafeEnd mindex
+    mpagemchunk <- flushPageIfNonEmpty racc
+    (mchunk', index) <- Index.unsafeEnd mindex
     bloom <- Bloom.unsafeFreeze mbloom
-    numEntries <- NumEntries <$> readPrimVar entryCount
-    pure (mpage, mchunk, bloom, index, numEntries)
+    numEntries <- readPrimVar entryCount
+    let !mpage  = fst <$> mpagemchunk
+        !mchunk = selectChunk mpagemchunk mchunk'
+    pure (mpage, mchunk, bloom, index, NumEntries numEntries)
+  where
+    selectChunk :: Maybe (RawPage, Maybe Index.Chunk)
+                -> Maybe Index.Chunk
+                -> Maybe Index.Chunk
+    selectChunk (Just (_page, Just _chunk)) (Just _chunk') =
+        -- If flushing the page accumulator gives us an index chunk then
+        -- the index can't have any more chunks when we finalise the index.
+        error "unsafeFinalise: impossible double final chunk"
+    selectChunk (Just (_page, Just chunk)) _ = Just chunk
+    selectChunk _ (Just chunk)               = Just chunk
+    selectChunk _ _                          = Nothing
 
 -- | Add a serialised k\/op pair with an optional blob span. Use only for
 -- entries that are fully in-memory. Otherwise, use 'addChunkedKOp'.
@@ -132,57 +151,116 @@ addFullKOp ::
      RunAcc s
   -> SerialisedKey
   -> Entry SerialisedValue BlobSpan
-  -> ST s (Maybe (PageAcc, [Index.Chunk]))
-addFullKOp racc@RunAcc{..} k e = do
-    modifyPrimVar entryCount (+ 1)
-    Bloom.insert mbloom k
-    p <- readSTRef currentPageRef
-    case paAddElem rangeFinderPrecision k e p of
-      Nothing -> do
-        mp <- yield racc
-        writeSTRef currentPageRef $! paSingleton k e
-        pure mp
-      Just p' -> do
-        writeSTRef currentPageRef $! p'
-        pure Nothing
+  -> ST s ([RawPage], [RawOverflowPage], [Index.Chunk])
+addFullKOp racc k e
+  | PageAcc.entryWouldFitInPage k e = smallToLarge <$> addSmallKeyOp racc k e
+  | otherwise                       =                  addLargeKeyOp racc k e
+  where
+    smallToLarge :: Maybe (RawPage, Maybe Index.Chunk)
+                 -> ([RawPage], [RawOverflowPage], [Index.Chunk])
+    smallToLarge Nothing                   = ([],     [], [])
+    smallToLarge (Just (page, Nothing))    = ([page], [], [])
+    smallToLarge (Just (page, Just chunk)) = ([page], [], [chunk])
 
--- | __For multi-page values only during run merging:__ add the first chunk of a
--- serialised k\/op pair with an optional blob span. The caller of this
--- function is responsible for copying the remaining chunks to the output file.
---
--- This will throw an impure exception if the result of adding the k\/op pair is
--- not exactly the size of a disk page.
---
--- During a merge, raw values that span multiple pages may not be read into
--- memory as a whole, but in chunks. If you have access to the full bytes of a
--- raw value, use 'addFullKOp' instead.
-addChunkedKOp ::
-     RunAcc s
+addSmallKeyOp
+  :: RunAcc s
   -> SerialisedKey
   -> Entry SerialisedValue BlobSpan
-  -> Word32
-  -> ST s (Maybe (PageAcc, [Index.Chunk]), PageAcc, [Index.Chunk])
-addChunkedKOp racc@RunAcc{..} k e nOverflow
-  | pageSizeNumBytes (psSingleton k e) == 4096 = do
-      modifyPrimVar entryCount (+ 1)
-      mp <- yield racc
-      Bloom.insert mbloom k
-      cs' <- Index.append (Index.AppendMultiPage k nOverflow) mindex
-      let p' = paSingleton k e
-      pure (mp, p', cs')
-  | otherwise = error "addMultiPage: expected a page of 4096 bytes"
+  -> ST s (Maybe (RawPage, Maybe Index.Chunk))
+addSmallKeyOp racc@RunAcc{..} k e =
+  assert (PageAcc.entryWouldFitInPage k e) $ do
+    modifyPrimVar entryCount (+1)
+    Bloom.insert mbloom k
 
--- | Yield the current page if it is non-empty. New chunks are recorded in the
--- mutable run, and the current page is set to empty.
-yield :: RunAcc s -> ST s (Maybe (PageAcc, [Index.Chunk]))
-yield RunAcc{..} = do
-    p <- readSTRef currentPageRef
-    if paIsEmpty p then
-      pure Nothing
-    else do
-      cs <- Index.append (unsafeMkAppend p) mindex
-      writeSTRef currentPageRef $! paEmpty
-      pure $ Just (p, cs)
+    -- We have to force a page boundary when the range finder bits change.
+    -- This is a constraint from the compact index. To do this we remember the
+    -- range finder bits of the previously added key and compare them to the
+    -- range finder bits of the current key.
+    rfbits <- readPrimVar rangeFinderCurVal             -- previous
+    let !rfbits' = keyTopBits16 rangeFinderPrecision k  -- current
+
+    pageBoundaryNeeded <-
+      if rfbits' == rfbits
+        -- If the range finder bits didn't change, try adding the key/op to
+        -- the page accumulator to see if it fits. If it does not fit, a page
+        -- boundary is needed.
+        then not <$> PageAcc.pageAccAddElem mpageacc k e
+
+        -- If the rfbits did change we do need a page boundary.
+        else writePrimVar rangeFinderCurVal rfbits'
+          >> return True
+
+    if pageBoundaryNeeded
+      then do
+        -- We need a page boundary. If the current page is empty then we have
+        -- a boundary already, otherwise we need to flush the current page.
+        mpagemchunk <- flushPageIfNonEmpty racc
+        -- The current page is now empty, either because it was already empty
+        -- or because we just flushed it. Adding the new key/op to an empty
+        -- page must now succeed, because we know it fits in a page.
+        added <- PageAcc.pageAccAddElem mpageacc k e
+        assert added $ return mpagemchunk
+
+      else return Nothing
+
+addLargeKeyOp
+  :: RunAcc s
+  -> SerialisedKey
+  -> Entry SerialisedValue BlobSpan -- ^ the full value, not just a prefix
+  -> ST s ([RawPage], [RawOverflowPage], [Index.Chunk])
+addLargeKeyOp racc@RunAcc{..} k e =
+  assert (not (PageAcc.entryWouldFitInPage k e)) $ do
+    modifyPrimVar entryCount (+1)
+    Bloom.insert mbloom k
+
+    -- If the existing page accumulator is non-empty, we flush it, since the
+    -- new large key/op will need more than one page to itself.
+    mpagemchunkPre <- flushPageIfNonEmpty racc
+
+    -- Make the new page and overflow pages. Add the span of pages to the index.
+    let (page, overflowPages) = PageAcc.singletonPage k e
+    chunks <- Index.appendMulti (k, fromIntegral (length overflowPages)) mindex
+
+    -- Combine the results with anything we flushed before
+    let (!pages, !chunks') = selectPagesAndChunks mpagemchunkPre page chunks
+    return (pages, overflowPages, chunks')
+
+-- | Internal helper: finalise the current page, add the page to the index,
+-- reset the page accumulator and return the serialised 'RawPage' along with
+-- any index chunk.
+--
+-- Returns @Nothing@ if the page accumulator was empty.
+--
+flushPageIfNonEmpty :: RunAcc s -> ST s (Maybe (RawPage, Maybe Index.Chunk))
+flushPageIfNonEmpty RunAcc{mpageacc, mindex} = do
+    nkeys <- PageAcc.keysCountPageAcc mpageacc
+    if nkeys > 0
+      then do
+        -- Grab the min and max keys, and add the page to the index.
+        minKey <- PageAcc.indexKeyPageAcc mpageacc 0
+        maxKey <- PageAcc.indexKeyPageAcc mpageacc (nkeys-1)
+        mchunk <- Index.appendSingle (minKey, maxKey) mindex
+
+        -- Now serialise the page and reset the accumulator
+        page <- PageAcc.serializePageAcc mpageacc
+        PageAcc.resetPageAcc mpageacc
+        return (Just (page, mchunk))
+
+      else pure Nothing
+
+-- | Internal helper for 'addLargeKeyOp' and 'addLargeSerialisedKeyOp'.
+-- Combine the result of 'flushPageIfNonEmpty' with extra pages and index
+-- chunks.
+--
+selectPagesAndChunks :: Maybe (RawPage, Maybe Index.Chunk)
+                     -> RawPage
+                     -> [Index.Chunk]
+                     -> ([RawPage], [Index.Chunk])
+selectPagesAndChunks mpagemchunkPre page chunks =
+  case mpagemchunkPre of
+    Nothing                       -> (         [page],          chunks)
+    Just (pagePre, Nothing)       -> ([pagePre, page],          chunks)
+    Just (pagePre, Just chunkPre) -> ([pagePre, page], chunkPre:chunks)
 
 {-------------------------------------------------------------------------------
   Page builder
@@ -357,15 +435,6 @@ paSingleton k e = fromMaybe (error err) $
   where
     err = "Failed to add k/op pair to an empty page, but this should have \
           \worked! Are you sure the implementation of paAddElem is correct?"
-
-unsafeMkAppend :: PageAcc -> Index.Append
-unsafeMkAppend p = case unStricterList $ pageKeys p of
-    []                     -> error "mkAppend: empty list"
-    [k] | numBytes <= 4096 -> Index.AppendSinglePage k k
-        | otherwise        -> Index.AppendMultiPage  k (fromIntegral $ (numBytes - 1) `quot` 4096)
-    ks                     -> Index.AppendSinglePage (last ks) (head ks)
-  where
-    numBytes = pageSizeNumBytes $ pageSize p
 
 {-------------------------------------------------------------------------------
   PageSize

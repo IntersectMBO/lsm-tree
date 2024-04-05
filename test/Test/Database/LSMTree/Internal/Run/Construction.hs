@@ -14,6 +14,7 @@ import           Data.Maybe
 import qualified Data.Vector.Primitive as P
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Entry
+import qualified Database.LSMTree.Internal.PageAcc1 as PageAcc
 import qualified Database.LSMTree.Internal.Run.BloomFilter as Bloom
 import           Database.LSMTree.Internal.Run.Construction as Real
 import qualified Database.LSMTree.Internal.Run.Index.Compact as Index
@@ -58,8 +59,8 @@ test_singleKeyRun =  do
       addRes <- addFullKOp racc k e
       (addRes,) <$> unsafeFinalise racc
 
-    Nothing @=? addRes
-    Just (paSingleton k e, []) @=? mp
+    ([], [], []) @=? addRes
+    Just (fst (PageAcc.singletonPage k e)) @=? mp
     isJust mc @? "expected a chunk"
     True @=? Bloom.elem k b
     Index.singlePage (Index.PageNo 0) @=? Index.search k cix

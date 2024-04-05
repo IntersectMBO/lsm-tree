@@ -16,17 +16,13 @@ import           Control.DeepSeq
 import           Control.Exception
 import           Control.Monad.ST.Strict
 import           Data.Bifunctor
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Builder as BB
-import qualified Data.ByteString.Short as SBS
 import           Data.Coerce (coerce)
+import           Data.Either (rights)
 import qualified Data.Foldable as F
 import qualified Data.List as List
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe
-import           Data.Primitive.ByteArray (ByteArray (ByteArray),
-                     sizeofByteArray)
 import qualified Data.Set as Set
 import qualified Data.Vector as V
 import qualified Data.Vector.Primitive as PV
@@ -36,6 +32,7 @@ import           Database.LSMTree.Generators
 import           Database.LSMTree.Internal.BlobRef (BlobSpan)
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.Lookup
+import           Database.LSMTree.Internal.RawOverflowPage
 import           Database.LSMTree.Internal.RawPage
 import           Database.LSMTree.Internal.Run.BloomFilter as Bloom
 import           Database.LSMTree.Internal.Run.Construction as Run
@@ -209,7 +206,10 @@ prop_inMemRunLookupAndConstruction dat =
             test  = Nothing
 
     -- | Check that a key /could be/ in the given page
-    checkMaybeInRun :: (SerialisedKey, Map Int RawPage, PageSpan) -> Property
+    checkMaybeInRun :: ( SerialisedKey
+                       , Map Int (Either RawPage RawOverflowPage)
+                       , PageSpan )
+                    -> Property
     checkMaybeInRun (k, ps, PageSpan (PageNo i) (PageNo j))
       | i <= j    = tabulate "PageSpan size" [showPowersOf10 $ j - i + 1]
                   $ tabulate1Pre (classifyBin (isJust truth) True)
@@ -218,20 +218,30 @@ prop_inMemRunLookupAndConstruction dat =
       | otherwise = error "impossible: end of a page span can not come before its start"
       where
         truth = Map.lookup k runData
-        test  = case rawPageLookup (ps Map.! i) (coerce k) of
-          LookupEntryNotPresent       -> Nothing
-          LookupEntry entry           -> Just entry
-          LookupEntryOverflow entry n -> Just (first (concatOverflow n) entry)
+        test  =
+          case ps Map.! i of
+            Left rawPage ->
+              case rawPageLookup rawPage (coerce k) of
+                LookupEntryNotPresent       -> Nothing
+                LookupEntry entry           -> Just entry
+                LookupEntryOverflow entry n -> Just (first (concatOverflow n) entry)
+            Right _rawOverflowPage ->
+              error "looked up overflow page!"
 
         -- read remaining bytes for a multi-page value, and append it to the
         -- prefix we already have
         concatOverflow :: Word32 -> SerialisedValue -> SerialisedValue
         concatOverflow = coerce $ \(n :: Word32) (v :: RawBytes) ->
-            v <> RB.take (fromIntegral n) (mconcat $ fmap rawPageRawBytes overflowPages)
+            v <> RB.take (fromIntegral n)
+                         (mconcat $ map rawOverflowPageRawBytes overflowPages)
           where
             start = i + 1
             size  = j - i
-            overflowPages = Map.elems $ Map.take size (Map.drop start ps)
+            overflowPages :: [RawOverflowPage]
+            overflowPages = rights
+                          . Map.elems
+                          . Map.take size
+                          . Map.drop start $ ps
 
     tabulate1Pre :: BinaryClassification -> Property -> Property
     tabulate1Pre  x = tabulate "Lookup classification: pre intra-page lookup"  [show x]
@@ -279,7 +289,7 @@ ioopPageSpan ioop =
 runWithHandle :: RunLookupView a -> RunLookupView (Handle a)
 runWithHandle rlv = fmap (\x -> Handle x (mkFsPath ["do not use"])) rlv
 
-type TestRun = RunLookupView (Map Int RawPage)
+type TestRun = RunLookupView (Map Int (Either RawPage RawOverflowPage))
 
 mkTestRun :: Map SerialisedKey (Entry SerialisedValue BlobSpan) -> TestRun
 mkTestRun dat = RunLookupView rawPages b cix
@@ -290,20 +300,20 @@ mkTestRun dat = RunLookupView rawPages b cix
     npages   = 0
 
     -- one-shot run construction
-    (paccs, b, cix) = runST $ do
+    (pages, b, cix) = runST $ do
       racc <- Run.new nentries npages
       let kops = Map.toList dat
-      mps <- traverse (uncurry (addFullKOp racc)) kops
-      (mp, _ , bb, cixx, _) <- unsafeFinalise racc
-      pure (mapMaybe (fmap fst) (mps ++ [mp]), bb, cixx)
+      psopss <- traverse (uncurry (addFullKOp racc)) kops
+      (mp, _ , b', cix', _) <- unsafeFinalise racc
+      let pages' = [ p | (ps, ops, _) <- psopss
+                      , p <- map Left ps ++ map Right ops ]
+               ++ [ Left p | p <- maybeToList mp ]
+      pure (pages', b', cix')
 
     -- create a mapping of page numbers to raw pages, which we can use to do
     -- intra-page lookups on after first probing the bloom filter and index
-    runBuilder = foldMap pageBuilder paccs
-    runBytesS  = SBS.toShort $ BS.toStrict $ BB.toLazyByteString runBuilder
-    runBytes   = case runBytesS of SBS.SBS ba -> ByteArray ba
-    rawPages   = Map.fromList [ (i, makeRawPage runBytes (i * 4096))
-                              | i <- [0 .. sizeofByteArray runBytes `div` 4096] ]
+    rawPages :: Map Int (Either RawPage RawOverflowPage)
+    rawPages   = Map.fromList (zip [0..] pages)
 
 {-------------------------------------------------------------------------------
   Labelling
