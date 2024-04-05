@@ -63,6 +63,7 @@ library
     Database.LSMTree.Internal.Run.Mutable
     Database.LSMTree.Internal.Serialise
     Database.LSMTree.Internal.Serialise.Class
+    Database.LSMTree.Internal.Unsliced
     Database.LSMTree.Internal.Vector
     Database.LSMTree.Internal.WriteBuffer
     Database.LSMTree.Monoidal

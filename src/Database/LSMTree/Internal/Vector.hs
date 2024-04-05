@@ -3,9 +3,10 @@
 {-# LANGUAGE TypeApplications    #-}
 module Database.LSMTree.Internal.Vector (
     mkPrimVector,
+    noRetainedExtraMemory,
 ) where
 
-import           Data.Primitive.ByteArray (ByteArray)
+import           Data.Primitive.ByteArray (ByteArray, sizeofByteArray)
 import           Data.Primitive.Types (Prim (sizeOfType#))
 import           Data.Proxy (Proxy (..))
 import qualified Data.Vector.Primitive as PV
@@ -19,3 +20,9 @@ mkPrimVector off len ba =
   where
     sizeof = I# (sizeOfType# (Proxy @a))
 {-# INLINE mkPrimVector #-}
+
+noRetainedExtraMemory :: forall a. Prim a => PV.Vector a -> Bool
+noRetainedExtraMemory (PV.Vector off len ba) =
+    off == 0 && len * sizeof == sizeofByteArray ba
+   where
+    sizeof = I# (sizeOfType# (Proxy @a))

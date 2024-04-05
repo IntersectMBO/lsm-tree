@@ -4,6 +4,7 @@
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications    #-}
+{-# LANGUAGE ViewPatterns        #-}
 
 -- | A compact fence-pointer index for uniformly distributed keys.
 --
@@ -62,6 +63,7 @@ import           Database.LSMTree.Internal.BitMath
 import           Database.LSMTree.Internal.ByteString (byteArrayFromTo)
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
 import           Database.LSMTree.Internal.Serialise
+import           Database.LSMTree.Internal.Unsliced
 import           Database.LSMTree.Internal.Vector
 
 {- $compact
@@ -456,7 +458,7 @@ data CompactIndex = CompactIndex {
   , ciClashes              :: !(VU.Vector Bit)
     -- | \(TB\): Maps a full minimum key to the page @i@ that contains it, but
     -- only if there is a clash on page @i@.
-  , ciTieBreaker           :: !(Map SerialisedKey PageNo)
+  , ciTieBreaker           :: !(Map (Unsliced SerialisedKey) PageNo)
     -- | \(LTP\): Record of larger-than-page values. Given a span of pages for
     -- the larger-than-page value, the first page will map to 'False', and the
     -- remainder of the pages will be set to 'True'. Regular pages default to
@@ -554,7 +556,7 @@ search k CompactIndex{..} = -- Pre: @[0, V.length ciPrimary)@
             -- Post: @[lb, i]@, now in clash recovery mode.
             let !i1  = PageNo $ fromJust $
                   bitIndexFromToRev (BoundInclusive lb) (BoundInclusive i) (Bit False) ciClashes
-                !i2  = maybe (PageNo 0) snd $ Map.lookupLE k ciTieBreaker
+                !i2  = maybe (PageNo 0) snd $ Map.lookupLE (unsafeNoAssertMakeUnslicedKey k) ciTieBreaker
                 PageNo !i3 = max i1 i2 -- Post: the intersection of @[i1, i]@ and @[i2, i].
                 !i4 = bitLongestPrefixFromTo (BoundExclusive i3) (BoundInclusive i) (Bit True) ciLargerThanPage
                       -- Post: [i3, i4]
@@ -667,13 +669,13 @@ putBitVec (BitVec offsetBits lenBits ba)
     remainingBits = mod8 lenBits
 
 -- | Padded to 64 bit.
-putTieBreaker :: Map SerialisedKey PageNo -> BB.Builder
+putTieBreaker :: Map (Unsliced SerialisedKey) PageNo -> BB.Builder
 putTieBreaker m =
        BB.word64Host (fromIntegral (Map.size m))
     <> foldMap putEntry (Map.assocs m)
   where
-    putEntry :: (SerialisedKey, PageNo) -> BB.Builder
-    putEntry (k, PageNo pageNo) =
+    putEntry :: (Unsliced SerialisedKey, PageNo) -> BB.Builder
+    putEntry (fromUnslicedKey -> k, PageNo pageNo) =
            BB.word32Host (fromIntegral pageNo)
         <> BB.word32Host (fromIntegral (sizeofKey k))
         <> serialisedKey k
@@ -767,7 +769,7 @@ getBitVec name ba off numEntries =
 -- Inefficient, but okay for a small number of entries.
 getTieBreaker ::
      ByteArray -> Offset64
-  -> Either String (Offset64, Map SerialisedKey PageNo)
+  -> Either String (Offset64, Map (Unsliced SerialisedKey) PageNo)
 getTieBreaker ba = \off -> do
     when (mul8 off >= sizeofByteArray ba) $
       Left "Tie breaker is out of bounds"
@@ -775,8 +777,8 @@ getTieBreaker ba = \off -> do
     (off', pairs) <- go size (off + 1) []
     return (off', Map.fromList pairs)
   where
-    go :: Int -> Offset64 -> [(SerialisedKey, PageNo)]
-       -> Either String (Offset64, [(SerialisedKey, PageNo)])
+    go :: Int -> Offset64 -> [(Unsliced SerialisedKey, PageNo)]
+       -> Either String (Offset64, [(Unsliced SerialisedKey, PageNo)])
     go 0 off pairs = return (off, pairs)
     go n off pairs = do
         when (mul8 off >= sizeofByteArray ba) $
@@ -788,7 +790,7 @@ getTieBreaker ba = \off -> do
         (off', key) <- getKey (off + 1) keyLen8
         go (n - 1) off' ((key, PageNo pageNo) : pairs)
 
-    getKey :: Offset64 -> Int -> Either String (Offset64, SerialisedKey)
+    getKey :: Offset64 -> Int -> Either String (Offset64, Unsliced SerialisedKey)
     getKey off len8 = do
         let off8 = mul8 off
         -- We avoid retaining references to the bytearray.
@@ -797,8 +799,8 @@ getTieBreaker ba = \off -> do
         -- breaker, so it is cheap and we don't have to worry about it any more.
         !key <- case checkedPrimVec off8 len8 ba of
           Nothing  -> Left ("Clash map key is out of bounds")
-          Just vec -> Right (SerialisedKey' (PV.force vec))
-        return (off + ceilDiv8 len8, key)
+          Just vec -> Right (SerialisedKey' vec)
+        return (off + ceilDiv8 len8, makeUnslicedKey key)
 
 -- | Offset and length are in number of elements.
 checkedPrimVec :: forall a.

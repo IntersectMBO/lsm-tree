@@ -80,6 +80,8 @@ import           Database.LSMTree.Internal.Index.Compact.Construction
 import           Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.Serialise
 import qualified Database.LSMTree.Internal.Serialise.Class as S.Class
+import           Database.LSMTree.Internal.Unsliced (Unsliced, fromUnslicedKey,
+                     makeUnslicedKey)
 import           Database.LSMTree.Internal.Vector (mkPrimVector)
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer (..))
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
@@ -631,6 +633,14 @@ deriving newtype instance SerialiseKey KeyForCompactIndex
 
 keyForCompactIndexInvariant :: KeyForCompactIndex -> Bool
 keyForCompactIndexInvariant (KeyForCompactIndex rb) = RB.size rb >= 6
+
+{-------------------------------------------------------------------------------
+  Unsliced
+-------------------------------------------------------------------------------}
+
+instance Arbitrary (Unsliced SerialisedKey) where
+  arbitrary = makeUnslicedKey <$> arbitrary
+  shrink = fmap makeUnslicedKey .  shrink . fromUnslicedKey
 
 {-------------------------------------------------------------------------------
   BlobRef

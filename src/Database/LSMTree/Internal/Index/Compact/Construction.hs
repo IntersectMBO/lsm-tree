@@ -46,6 +46,7 @@ import qualified Data.Vector.Unboxed.Mutable as VUM
 import           Data.Word
 import           Database.LSMTree.Internal.Index.Compact
 import           Database.LSMTree.Internal.Serialise
+import           Database.LSMTree.Internal.Unsliced
 
 {-------------------------------------------------------------------------------
   Construction
@@ -75,7 +76,7 @@ data MCompactIndex s = MCompactIndex {
     -- | Accumulates chunks of 'ciClashes'.
   , mciClashes              :: !(STRef s (NonEmpty (VU.MVector s Bit)))
     -- | Accumulates the 'ciTieBreaker'.
-  , mciTieBreaker           :: !(STRef s (Map SerialisedKey PageNo))
+  , mciTieBreaker           :: !(STRef s (Map (Unsliced SerialisedKey) PageNo))
     -- | Accumulates chunks of 'ciLargerThanPage'.
   , mciLargerThanPage       :: !(STRef s (NonEmpty (VU.MVector s Bit)))
 
@@ -199,7 +200,7 @@ appendSingle (minKey, maxKey) mci@MCompactIndex{..} = do
             readSTRef mciClashes >>= \cs -> VUM.write (NE.head cs) ix (Bit clash)
             readSTRef mciLargerThanPage >>= \cs -> VUM.write (NE.head cs) ix (Bit ltp)
             when (clash && not ltp) $
-              modifySTRef' mciTieBreaker (Map.insert minKey (PageNo pageNo))
+              modifySTRef' mciTieBreaker (Map.insert (makeUnslicedKey minKey) (PageNo pageNo))
 
 -- | Append multiple pages to the index. The minimum keys and maximum keys for
 -- all these pages are set to the same key.
