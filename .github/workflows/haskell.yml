@@ -281,4 +281,4 @@ jobs:
       uses: haskell-actions/hlint-run@v2
       with:
         path: src/
-        fail-on: warning
+        fail-on: suggestion
