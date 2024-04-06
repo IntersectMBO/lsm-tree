@@ -17,7 +17,6 @@ module Database.LSMTree.Generators (
     -- * WriteBuffer
     genWriteBuffer
   , shrinkWriteBuffer
-  , writeBufferInvariant
     -- * WithSerialised
   , WithSerialised (..)
     -- * UTxO keys
@@ -55,14 +54,14 @@ module Database.LSMTree.Generators (
   , genRawBytesN
   , genRawBytesSized
   , packRawBytesPinnedOrUnpinned
-  , LargeRawBytes(..)
+  , LargeRawBytes (..)
+  , KeyForCompactIndex (..)
+  , keyForCompactIndexInvariant
   ) where
 
 import           Control.DeepSeq (NFData)
 import           Control.Exception (assert)
 import           Data.Bifunctor (bimap)
-import           Data.ByteString (ByteString)
-import qualified Data.ByteString as BS
 import           Data.Coerce (coerce)
 import           Data.Containers.ListUtils (nubOrd)
 import           Data.List (sort)
@@ -173,38 +172,34 @@ instance Arbitrary2 Entry where
   WriteBuffer
 -------------------------------------------------------------------------------}
 
-instance (Arbitrary v, Arbitrary blob, SerialiseValue v, SerialiseValue blob)
-      => Arbitrary (WriteBuffer ByteString v blob) where
-  arbitrary = genWriteBuffer arbitrary arbitrary
-  shrink = shrinkWriteBuffer shrink shrink
+instance (Arbitrary k, Arbitrary v, Arbitrary blob,
+          SerialiseKey k, SerialiseValue v, SerialiseValue blob)
+      => Arbitrary (WriteBuffer k v blob) where
+  arbitrary = genWriteBuffer arbitrary arbitrary arbitrary
+  shrink = shrinkWriteBuffer shrink shrink shrink
 
 -- | We cannot implement 'Arbitrary2' since we have constraints on the type
 -- parameters.
--- Assuming that keys are bytestrings gives us control over their length,
--- so we can ensure to always generate suitable keys for a compact index
--- (at least 6 bytes).
 genWriteBuffer ::
-     (SerialiseValue v, SerialiseValue blob)
-  => Gen v
+     (SerialiseKey k, SerialiseValue v, SerialiseValue blob)
+  => Gen k
+  -> Gen v
   -> Gen blob
-  -> Gen (WriteBuffer ByteString v blob)
-genWriteBuffer genVal genBlob = fmap fromKOps genKOps
-  where
-    -- minimum length 6 bytes
-    genKey = (<>) <$> (BS.pack <$> QC.vector 6) <*> arbitrary
-    genKOps = QC.listOf (liftArbitrary2 genKey (liftArbitrary2 genVal genBlob))
+  -> Gen (WriteBuffer k v blob)
+genWriteBuffer genKey genVal genBlob =
+    fromKOps <$> QC.listOf (liftArbitrary2 genKey (liftArbitrary2 genVal genBlob))
 
 shrinkWriteBuffer ::
-     (SerialiseValue v, SerialiseValue blob)
-  => (v -> [v]) -> (blob -> [blob])
-  -> WriteBuffer ByteString v blob
-  -> [WriteBuffer ByteString v blob]
-shrinkWriteBuffer shrinkVal shrinkBlob = map fromKOps . shrinkKOps . toKOps
-  where
-    -- minimum length 6 bytes
-    shrinkKey k = fmap (BS.take 6 k <>) (shrink (BS.drop 6 k))
-    shrinkKOps =
-      liftShrink (liftShrink2 shrinkKey (liftShrink2 shrinkVal shrinkBlob))
+     (SerialiseKey k, SerialiseValue v, SerialiseValue blob)
+  => (k -> [k])
+  -> (v -> [v])
+  -> (blob -> [blob])
+  -> WriteBuffer k v blob
+  -> [WriteBuffer k v blob]
+shrinkWriteBuffer shrinkKey shrinkVal shrinkBlob =
+      map fromKOps
+    . liftShrink (liftShrink2 shrinkKey (liftShrink2 shrinkVal shrinkBlob))
+    . toKOps
 
 fromKOps ::
      (SerialiseKey k, SerialiseValue v, SerialiseValue blob)
@@ -222,11 +217,6 @@ toKOps = map deserialiseKOp . Map.assocs . WB.unWB
   where
     deserialiseKOp =
       bimap deserialiseKey (bimap deserialiseValue deserialiseBlob)
-
-writeBufferInvariant :: WriteBuffer k v blob -> Bool
-writeBufferInvariant (WB wb) = all isValidKey (Map.keys wb)
-  where
-    isValidKey k = sizeofKey k >= 6
 
 {-------------------------------------------------------------------------------
   WithSerialised
@@ -583,13 +573,23 @@ shrinkSlice (RawBytes pvec) =
     , m <- QC.shrink (PV.length pvec - n)
     ]
 
+instance SerialiseKey RawBytes where
+  serialiseKey = id
+  deserialiseKey = id
+
+instance SerialiseValue RawBytes where
+  serialiseValue = id
+  deserialiseValue = id
+  deserialiseValueN = mconcat
+
 deriving newtype instance Arbitrary SerialisedKey
+deriving newtype instance SerialiseKey SerialisedKey
 
 deriving newtype instance Arbitrary SerialisedValue
+deriving newtype instance SerialiseValue SerialisedValue
 
-instance Arbitrary SerialisedBlob where
-  arbitrary = SerialisedBlob <$> genRawBytes
-  shrink (SerialisedBlob rb) = SerialisedBlob <$> shrinkRawBytes rb
+deriving newtype instance Arbitrary SerialisedBlob
+deriving newtype instance SerialiseValue SerialisedBlob
 
 newtype LargeRawBytes = LargeRawBytes RawBytes
   deriving Show
@@ -609,6 +609,28 @@ instance Arbitrary LargeRawBytes where
       , assert (PV.length pvec' == PV.length pvec) $
         pvec' /= pvec
       ]
+
+deriving newtype instance SerialiseValue LargeRawBytes
+
+-- | Minimum length of 6 bytes.
+newtype KeyForCompactIndex =
+    KeyForCompactIndex { getKeyForCompactIndex :: RawBytes }
+  deriving (Eq, Ord, Show)
+
+instance Arbitrary KeyForCompactIndex where
+  arbitrary =
+      fmap KeyForCompactIndex . genRawBytesN
+          =<< QC.sized (\s -> QC.chooseInt (6, s + 6))
+  shrink (KeyForCompactIndex rb) =
+      [ KeyForCompactIndex rb'
+      | rb' <- shrink rb
+      , RB.size rb' >= 6
+      ]
+
+deriving newtype instance SerialiseKey KeyForCompactIndex
+
+keyForCompactIndexInvariant :: KeyForCompactIndex -> Bool
+keyForCompactIndexInvariant (KeyForCompactIndex rb) = RB.size rb >= 6
 
 {-------------------------------------------------------------------------------
   BlobRef

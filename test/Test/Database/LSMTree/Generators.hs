@@ -9,7 +9,6 @@ module Test.Database.LSMTree.Generators (
   ) where
 
 import           Control.DeepSeq (NFData, deepseq)
-import           Data.ByteString (ByteString)
 import qualified Data.Vector.Primitive as PV
 import           Data.Word (Word64, Word8)
 
@@ -24,9 +23,7 @@ import           Test.Tasty.QuickCheck (testProperty)
 
 tests :: TestTree
 tests = testGroup "Test.Database.LSMTree.Generators" [
-      testGroup "WriteBuffer" $
-        prop_arbitraryAndShrinkPreserveInvariant (writeBufferInvariant @ByteString @ByteString @ByteString)
-    , testGroup "Range-finder bit-precision" $
+      testGroup "Range-finder bit-precision" $
         prop_arbitraryAndShrinkPreserveInvariant rfprecInvariant
     , testGroup "LogicalPageSummaries" $
         prop_arbitraryAndShrinkPreserveInvariant (pagesInvariant @Word64)
@@ -37,6 +34,8 @@ tests = testGroup "Test.Database.LSMTree.Generators" [
                       prop_packRawBytesPinnedOrUnpinned
         ]
      ++ prop_arbitraryAndShrinkPreserveInvariant (deepseqInvariant @RawBytes)
+    , testGroup "KeyForCompactIndex" $
+        prop_arbitraryAndShrinkPreserveInvariant keyForCompactIndexInvariant
     ]
 
 prop_arbitraryAndShrinkPreserveInvariant ::
