@@ -70,9 +70,9 @@ tests = testGroup "Database.LSMTree.Internal.Run"
               (Val ("test-value-" <> BS.concat (replicate 500 "0123456789")))
               Nothing
       , testProperty "Written pages can be read again" $ \wb ->
-            WB.numEntries wb > NumEntries 0 ==> prop_WriteAndRead wb
+            prop_WriteAndRead wb
       , testProperty "A run can be written and loaded from disk" $ \wb ->
-            WB.numEntries wb > NumEntries 0 ==> prop_WriteAndLoad wb
+            prop_WriteAndLoad wb
       ]
     ]
   where
