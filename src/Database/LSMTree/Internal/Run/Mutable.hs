@@ -92,7 +92,7 @@ new ::
 new fs lsmMRunFsPaths numEntries estimatedNumPages = do
     lsmMRunRefCount <- newIORef 1
 
-    lsmMRunAcc <- ST.stToIO $ Cons.new numEntries estimatedNumPages
+    lsmMRunAcc <- ST.stToIO $ Cons.new numEntries estimatedNumPages Nothing
     lsmMRunBlobOffset <- newIORef 0
 
     FS.createDirectoryIfMissing fs False activeRunsDir

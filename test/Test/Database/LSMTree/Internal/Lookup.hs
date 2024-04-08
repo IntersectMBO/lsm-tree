@@ -301,7 +301,7 @@ mkTestRun dat = RunLookupView rawPages b cix
 
     -- one-shot run construction
     (pages, b, cix) = runST $ do
-      racc <- Run.new nentries npages
+      racc <- Run.new nentries npages Nothing
       let kops = Map.toList dat
       psopss <- traverse (uncurry (addFullKOp racc)) kops
       (mp, _ , b', cix', _) <- unsafeFinalise racc

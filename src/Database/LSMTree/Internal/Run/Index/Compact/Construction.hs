@@ -28,10 +28,12 @@ module Database.LSMTree.Internal.Run.Index.Compact.Construction (
   , unsafeEnd
   ) where
 
+import           Control.Exception (assert)
 import           Control.Monad (forM_, when)
 import           Control.Monad.ST
 import           Data.Bit hiding (flipBit)
 import           Data.Foldable (toList)
+import           Data.Ix (inRange)
 import           Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
 import           Data.Map.Range (Bound (..), Clusive (Exclusive, Inclusive))
@@ -106,7 +108,9 @@ data MCompactIndex s = MCompactIndex {
 --
 -- Note: after initialisation, both @rfprec@ and @maxcsize@ can no longer be changed.
 new :: Int -> Int -> ST s (MCompactIndex s)
-new rfprec maxcsize = MCompactIndex
+new rfprec maxcsize =
+  assert (inRange rangeFinderPrecisionBounds rfprec && maxcsize > 0) $
+  MCompactIndex
     -- Core index structure
     <$> VUM.new (2 ^ rfprec + 1)
     <*> pure rfprec

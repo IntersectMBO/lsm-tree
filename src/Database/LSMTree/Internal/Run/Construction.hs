@@ -94,17 +94,26 @@ data RunAcc s = RunAcc {
     , mpageacc             :: !(MPageAcc s)
     , entryCount           :: !(PrimVar s Int)
     , rangeFinderCurVal    :: !(PrimVar s Word16)
-    , rangeFinderPrecision :: !Int
+    , rangeFinderPrecision :: !RangeFinderPrecision
     }
+
+-- TODO: make this a newtype and enforce >=0 && <= 16.
+type RangeFinderPrecision = Int
 
 -- | @'new' npages@ starts an incremental run construction.
 --
 -- @nentries@ and @npages@ should be an upper bound on the expected number of
 -- entries and pages in the output run.
-new :: NumEntries -> NumPages -> ST s (RunAcc s)
-new (NumEntries nentries) npages = do
+new :: NumEntries
+    -> NumPages
+    -> Maybe RangeFinderPrecision -- ^ For testing: override the default RFP
+                                  -- which is based on the 'NumPages'.
+    -> ST s (RunAcc s)
+new (NumEntries nentries) npages rangeFinderPrecisionOverride = do
     mbloom <- Bloom.newEasy 0.1 nentries -- TODO(optimise): tune bloom filter
-    let rangeFinderPrecision = Index.suggestRangeFinderPrecision npages
+    let rangeFinderPrecisionDefault = Index.suggestRangeFinderPrecision npages
+        rangeFinderPrecision        = fromMaybe rangeFinderPrecisionDefault
+                                                rangeFinderPrecisionOverride
     mindex <- Index.new rangeFinderPrecision 100 -- TODO(optimise): tune chunk size
     mpageacc <- PageAcc.newPageAcc
     entryCount <- newPrimVar 0
