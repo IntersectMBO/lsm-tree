@@ -85,7 +85,7 @@ testSingleInsert sessionRoot key val mblob = do
     let fs = FsIO.ioHasFS (FS.MountPoint sessionRoot)
     -- flush write buffer
     let wb = WB.addEntryNormal key (N.Insert val mblob) WB.empty
-    _ <- fromWriteBuffer fs (RunFsPaths 42) wb
+    run <- fromWriteBuffer fs (RunFsPaths 42) wb
     -- check all files have been written
     let activeDir = sessionRoot </> "active"
     bsKOps <- BS.readFile (activeDir </> "42.keyops")
@@ -140,6 +140,9 @@ testSingleInsert sessionRoot key val mblob = do
     -- blob sanity checks
     length mblob @=? fromIntegral (rawPageNumBlobs page)
 
+    -- make sure run gets closed again
+    removeReference fs run
+
 {-------------------------------------------------------------------------------
   Properties
 -------------------------------------------------------------------------------}
@@ -152,11 +155,13 @@ prop_WriteAndRead wb = ioProperty $ do
     fs <- FsSim.mkSimErrorHasFS' FsSim.empty FsSim.emptyErrors
     -- flush write buffer
     let fsPaths = RunFsPaths 42
-    _ <- fromWriteBuffer fs fsPaths wb
+    run <- fromWriteBuffer fs fsPaths wb
     -- read pages
     bsBlobs <- getFile fs (runBlobPath fsPaths)
     bsKOps <- getFile fs (runKOpsPath fsPaths)
     let pages = rawPageFromByteString bsKOps <$> [0, 4096 .. (BS.length bsKOps - 1)]
+    -- make sure run gets closed again
+    removeReference fs run
     -- check pages
     return $ label ("Number of pages: " <> showPowersOf10 (length pages)) $ do
       let vals = concatMap (bifoldMap pure mempty . snd) (WB.content wb)
@@ -207,8 +212,8 @@ prop_WriteAndLoad wb = ioProperty $ do
     written <- fromWriteBuffer fs fsPaths wb
     loaded <- openFromDisk fs fsPaths
 
-    (1 @=?) =<< readIORef (runRefCount written)
-    (1 @=?) =<< readIORef (runRefCount loaded)
+    (RefCount 1 @=?) =<< readIORef (runRefCount written)
+    (RefCount 1 @=?) =<< readIORef (runRefCount loaded)
 
     runNumEntries written @=? runNumEntries loaded
     runFilter written @=? runFilter loaded
@@ -220,6 +225,10 @@ prop_WriteAndLoad wb = ioProperty $ do
     assertEqual "blob file"
       (FS.handlePath (runBlobFile written))
       (FS.handlePath (runBlobFile loaded))
+
+    -- make sure runs get closed again
+    removeReference fs written
+    removeReference fs loaded
 
 {-------------------------------------------------------------------------------
   Utilities

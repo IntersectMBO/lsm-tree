@@ -6,18 +6,14 @@
 -- | A mutable run ('RunBuilder') that is under construction.
 --
 module Database.LSMTree.Internal.RunBuilder (
-    RefCount
-  , RunBuilder
-  , NumPages
+    RunBuilder
   , new
   , addKeyOp
   , addLargeSerialisedKeyOp
   , unsafeFinalise
-  , addReference
-  , removeReference
+  , close
   ) where
 
-import           Control.Monad (when)
 import qualified Control.Monad.ST as ST
 import           Data.BloomFilter (Bloom)
 import qualified Data.ByteString.Builder as BSB
@@ -44,9 +40,6 @@ import           Database.LSMTree.Internal.Serialise
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
 
--- | The 'Run' and 'RunBuilder' objects are reference counted.
-type RefCount = IORef Int
-
 -- | The in-memory representation of an LSM run that is under construction.
 -- (The \"M\" stands for mutable.) This is the output sink for two key
 -- algorithms: 1. writing out the write buffer, and 2. incrementally merging
@@ -59,13 +52,8 @@ type RefCount = IORef Int
 -- __Not suitable for concurrent construction from multiple threads!__
 --
 data RunBuilder fhandle = RunBuilder {
-      -- | The reference count for the LSM run. This counts the
-      -- number of references from LSM handles to this run. When
-      -- this drops to zero the open files will be closed.
-      runBuilderRefCount   :: !RefCount
-
       -- | The file system paths for all the files used by the run.
-    , runBuilderFsPaths    :: !RunFsPaths
+      runBuilderFsPaths    :: !RunFsPaths
 
       -- | The run accumulator. This is the representation used for the
       -- morally pure subset of the run cnstruction functionality. In
@@ -90,8 +78,6 @@ new ::
                  -- in the resulting run
   -> IO (RunBuilder (FS.Handle h))
 new fs runBuilderFsPaths numEntries estimatedNumPages = do
-    runBuilderRefCount <- newIORef 1
-
     runBuilderAcc <- ST.stToIO $ RunAcc.new numEntries estimatedNumPages Nothing
     runBuilderBlobOffset <- newIORef 0
 
@@ -161,7 +147,7 @@ addLargeSerialisedKeyOp fs builder@RunBuilder{runBuilderAcc} key page overflowPa
 unsafeFinalise ::
      HasFS IO h
   -> RunBuilder (FS.Handle h)
-  -> IO (RefCount, RunFsPaths, Bloom SerialisedKey, IndexCompact, NumEntries)
+  -> IO (RunFsPaths, Bloom SerialisedKey, IndexCompact, NumEntries)
 unsafeFinalise fs builder@RunBuilder {..} = do
     -- write final bits
     (mPage, mChunk, runFilter, runIndex, numEntries) <-
@@ -173,25 +159,10 @@ unsafeFinalise fs builder@RunBuilder {..} = do
     -- close all handles and write their checksums
     checksums <- toChecksumsFile <$> traverse (closeHandle fs) runBuilderHandles
     CRC.writeChecksumsFile fs (runChecksumsPath runBuilderFsPaths) checksums
-    return (runBuilderRefCount, runBuilderFsPaths, runFilter, runIndex, numEntries)
+    return (runBuilderFsPaths, runFilter, runIndex, numEntries)
 
--- | Increase the reference count by one.
-addReference :: HasFS IO h -> RunBuilder (FS.Handle h) -> IO ()
-addReference _ RunBuilder {..} =
-    modifyIORef' runBuilderRefCount (+1)
-
--- | Decrease the reference count by one.
--- After calling this operation, the run must not be used anymore.
--- If the reference count reaches zero, the run is closed, removing all its
--- associated files from disk.
-removeReference :: HasFS IO h -> RunBuilder (FS.Handle h) -> IO ()
-removeReference fs builder@RunBuilder {..} = do
-    modifyIORef' runBuilderRefCount (\n -> n-1)
-    count <- readIORef runBuilderRefCount
-    when (count <= 0) $
-      close fs builder
-
--- | Close the run, removing all files associated with it from disk.
+-- | Close a run that is being constructed (has not been finalised yet),
+-- removing all files associated with it from disk.
 -- After calling this operation, the run must not be used anymore.
 --
 -- TODO: Ensure proper cleanup even in presence of exceptions.

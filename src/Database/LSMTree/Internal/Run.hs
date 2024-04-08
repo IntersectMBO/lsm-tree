@@ -36,12 +36,15 @@ module Database.LSMTree.Internal.Run (
     -- * Paths
     module FsPaths
     -- * Run
-  , RefCount
   , Run (..)
   , addReference
   , removeReference
   , fromWriteBuffer
   , openFromDisk
+    -- ** RefCount
+  , RefCount (..)
+  , incRefCount
+  , decRefCount
   ) where
 
 import           Control.Exception (Exception, finally, throwIO)
@@ -58,7 +61,7 @@ import           Database.LSMTree.Internal.Entry (NumEntries (..))
 import           Database.LSMTree.Internal.IndexCompact (IndexCompact)
 import qualified Database.LSMTree.Internal.IndexCompact as Index
 import           Database.LSMTree.Internal.Run.FsPaths as FsPaths
-import           Database.LSMTree.Internal.RunBuilder (RefCount, RunBuilder)
+import           Database.LSMTree.Internal.RunBuilder (RunBuilder)
 import qualified Database.LSMTree.Internal.RunBuilder as Builder
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
@@ -74,7 +77,7 @@ data Run fhandle = Run {
       -- | The reference count for the LSM run. This counts the
       -- number of references from LSM handles to this run. When
       -- this drops to zero the open files will be closed.
-    , runRefCount   :: !RefCount
+    , runRefCount   :: !(IORef RefCount)
       -- | The file system paths for all the files used by the run.
     , runRunFsPaths :: !RunFsPaths
       -- | The bloom filter for the set of keys in this run.
@@ -97,7 +100,7 @@ data Run fhandle = Run {
 -- | Increase the reference count by one.
 addReference :: HasFS IO h -> Run (FS.Handle h) -> IO ()
 addReference _ Run {..} =
-    atomicModifyIORef runRefCount (\n -> (n+1, ()))
+    atomicModifyIORef' runRefCount (\c -> (incRefCount c, ()))
 
 -- | Decrease the reference count by one.
 -- After calling this operation, the run must not be used anymore.
@@ -105,8 +108,8 @@ addReference _ Run {..} =
 -- associated files from disk.
 removeReference :: HasFS IO h -> Run (FS.Handle h) -> IO ()
 removeReference fs run@Run {..} = do
-    count <- atomicModifyIORef' runRefCount (\n -> (n-1, n-1))
-    when (count <= 0) $
+    count <- atomicModifyIORef' runRefCount ((\c -> (c, c)) . decRefCount)
+    when (count <= RefCount 0) $
       close fs run
 
 -- | Close the files used in the run, but do not remove them from disk.
@@ -121,16 +124,18 @@ close fs Run {..} = do
         FS.hClose fs runBlobFile
 
 -- | Create a run by finalising a mutable run.
-fromMutable :: HasFS IO h -> RunBuilder (FS.Handle h) -> IO (Run (FS.Handle h))
-fromMutable fs builder = do
-    (runRefCount, runRunFsPaths, runFilter, runIndex, runNumEntries) <-
+fromMutable :: HasFS IO h -> RefCount -> RunBuilder (FS.Handle h) -> IO (Run (FS.Handle h))
+fromMutable fs refCount builder = do
+    (runRunFsPaths, runFilter, runIndex, runNumEntries) <-
       Builder.unsafeFinalise fs builder
+    runRefCount <- newIORef refCount
     runKOpsFile <- FS.hOpen fs (runKOpsPath runRunFsPaths) FS.ReadMode
     runBlobFile <- FS.hOpen fs (runBlobPath runRunFsPaths) FS.ReadMode
     return Run {..}
 
 
 -- | Write a write buffer to disk, including the blobs it contains.
+-- The resulting run has a reference count of 1.
 --
 -- TODO: As a possible optimisation, blobs could be written to a blob file
 -- immediately when they are added to the write buffer, avoiding the need to do
@@ -151,7 +156,7 @@ fromWriteBuffer fs fsPaths buffer = do
     builder <- Builder.new fs fsPaths (WB.numEntries buffer) 1
     for_ (WB.content buffer) $ \(k, e) ->
       Builder.addKeyOp fs builder k e
-    fromMutable fs builder
+    fromMutable fs (RefCount 1) builder
 
 data ChecksumError = ChecksumError FS.FsPath CRC.CRC32C CRC.CRC32C
   deriving Show
@@ -165,6 +170,7 @@ instance Exception FileFormatError
 
 -- | Load a previously written run from disk, checking each file's checksum
 -- against the checksum file.
+-- The resulting 'Run' has a reference count of 1.
 --
 -- Exceptions will be raised when any of the file's contents don't match their
 -- checksum ('ChecksumError') or can't be parsed ('FileFormatError').
@@ -189,7 +195,7 @@ openFromDisk fs runRunFsPaths = do
 
     runKOpsFile <- FS.hOpen fs (runKOpsPath runRunFsPaths) FS.ReadMode
     runBlobFile <- FS.hOpen fs (runBlobPath runRunFsPaths) FS.ReadMode
-    runRefCount <- newIORef 1
+    runRefCount <- newIORef (RefCount 1)
     return Run {..}
   where
     checkCRC :: CRC.CRC32C -> FS.FsPath -> IO ()
@@ -215,3 +221,12 @@ openFromDisk fs runRunFsPaths = do
 
     expectValidFile _  (Right x)  = pure x
     expectValidFile fp (Left err) = throwIO $ FileFormatError fp err
+
+
+-- | The 'Run' objects are reference counted.
+newtype RefCount = RefCount Int
+  deriving (Eq, Ord, Show)
+
+incRefCount, decRefCount :: RefCount -> RefCount
+incRefCount (RefCount n) = RefCount (n+1)
+decRefCount (RefCount n) = RefCount (n-1)
