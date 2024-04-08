@@ -173,7 +173,7 @@ jobs:
 
     - name: Run stylish-haskell
       run: |
-        ./scripts/format-stylish.sh -p . -d
+        ./scripts/format-stylish-fd.sh
         git diff --exit-code
 
   # Check formatting for cabal files
@@ -228,7 +228,7 @@ jobs:
 
     - name: Run cabal-fmt
       run: |
-        ./scripts/format-cabal.sh
+        ./scripts/format-cabal-fd.sh
         git diff --exit-code
 
   # Check cabal files
