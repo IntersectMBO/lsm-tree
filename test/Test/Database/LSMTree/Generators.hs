@@ -13,9 +13,9 @@ import qualified Data.Vector.Primitive as PV
 import           Data.Word (Word64, Word8)
 
 import           Database.LSMTree.Generators
-import           Database.LSMTree.Internal.Serialise.RawBytes (RawBytes (..))
+import           Database.LSMTree.Serialise.RawBytes (RawBytes (..))
 
-import           Test.Database.LSMTree.Internal.Run.Index.Compact ()
+import           Test.Database.LSMTree.Run.Index.Compact ()
 import           Test.QuickCheck (Arbitrary (..), Gen, Testable (..),
                      forAllShrink)
 import           Test.Tasty (TestTree, testGroup)

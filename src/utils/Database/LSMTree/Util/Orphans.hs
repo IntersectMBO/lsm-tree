@@ -19,16 +19,15 @@ import qualified Data.ByteString.Short.Internal as SBS
 import qualified Data.Primitive as P
 import           Data.WideWord.Word256 (Word256 (..))
 import           Data.Word (Word64, byteSwap64)
-import           Database.LSMTree.Internal.Entry (NumEntries (..))
-import           Database.LSMTree.Internal.Run.Index.Compact (CompactIndex (..),
+import           Database.LSMTree.Entry (NumEntries (..))
+import           Database.LSMTree.Run.Index.Compact (CompactIndex (..),
                      PageNo (..), PageSpan (..))
-import           Database.LSMTree.Internal.Run.Index.Compact.Construction
-                     (Append (..))
-import           Database.LSMTree.Internal.Serialise (SerialisedBlob (..),
+import           Database.LSMTree.Run.Index.Compact.Construction (Append (..))
+import           Database.LSMTree.Serialise (SerialisedBlob (..),
                      SerialisedKey (..), SerialisedValue (..))
-import           Database.LSMTree.Internal.Serialise.Class
-import qualified Database.LSMTree.Internal.Serialise.RawBytes as RB
-import           Database.LSMTree.Internal.Vector
+import           Database.LSMTree.Serialise.Class
+import qualified Database.LSMTree.Serialise.RawBytes as RB
+import           Database.LSMTree.Vector
 import           GHC.Generics (Generic)
 import           System.Random (Uniform)
 

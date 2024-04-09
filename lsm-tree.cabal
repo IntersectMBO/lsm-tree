@@ -33,40 +33,56 @@ common wno-x-partial
 
 library
   import:           warnings, wno-x-partial
-  hs-source-dirs:   src
+  hs-source-dirs:   src/lib
+  default-language: Haskell2010
+  exposed-modules:
+    Database.LSMTree.Common
+    Database.LSMTree.Monoidal
+    Database.LSMTree.Normal
+
+  build-depends:
+    , base                    >=4.16      && <4.20
+    , bytestring              ^>=0.11.4.0
+    , filepath
+    , fs-api                  ^>=0.2
+    , io-classes              ^>=1.3
+    , lsm-tree:lsm-tree-core
+
+library lsm-tree-core
+  import:           warnings, wno-x-partial
+  visibility:       private
+  hs-source-dirs:   src/core
   default-language: Haskell2010
   exposed-modules:
     Data.Map.Range
-    Database.LSMTree.Common
-    Database.LSMTree.Internal.Assertions
-    Database.LSMTree.Internal.BitMath
-    Database.LSMTree.Internal.BlobRef
-    Database.LSMTree.Internal.BloomFilter
-    Database.LSMTree.Internal.ByteString
-    Database.LSMTree.Internal.CRC32C
-    Database.LSMTree.Internal.Entry
-    Database.LSMTree.Internal.KMerge
-    Database.LSMTree.Internal.Lookup
-    Database.LSMTree.Internal.Monoidal
-    Database.LSMTree.Internal.Normal
-    Database.LSMTree.Internal.PageAcc
-    Database.LSMTree.Internal.PageAcc1
-    Database.LSMTree.Internal.RawOverflowPage
-    Database.LSMTree.Internal.RawPage
-    Database.LSMTree.Internal.Run
-    Database.LSMTree.Internal.Run.BloomFilter
-    Database.LSMTree.Internal.Run.Construction
-    Database.LSMTree.Internal.Run.FsPaths
-    Database.LSMTree.Internal.Run.Index.Compact
-    Database.LSMTree.Internal.Run.Index.Compact.Construction
-    Database.LSMTree.Internal.Run.Mutable
-    Database.LSMTree.Internal.Serialise
-    Database.LSMTree.Internal.Serialise.Class
-    Database.LSMTree.Internal.Serialise.RawBytes
-    Database.LSMTree.Internal.Vector
-    Database.LSMTree.Internal.WriteBuffer
-    Database.LSMTree.Monoidal
-    Database.LSMTree.Normal
+    Database.LSMTree.Assertions
+    Database.LSMTree.BitMath
+    Database.LSMTree.BlobRef
+    Database.LSMTree.BloomFilter
+    Database.LSMTree.ByteString
+    Database.LSMTree.CRC32C
+    Database.LSMTree.Entry
+    Database.LSMTree.KMerge
+    Database.LSMTree.Lookup
+    Database.LSMTree.PageAcc
+    Database.LSMTree.PageAcc1
+    Database.LSMTree.RawOverflowPage
+    Database.LSMTree.RawPage
+    Database.LSMTree.Run
+    Database.LSMTree.Run.BloomFilter
+    Database.LSMTree.Run.Construction
+    Database.LSMTree.Run.FsPaths
+    Database.LSMTree.Run.Index.Compact
+    Database.LSMTree.Run.Index.Compact.Construction
+    Database.LSMTree.Run.Mutable
+    Database.LSMTree.Serialise
+    Database.LSMTree.Serialise.Class
+    Database.LSMTree.Serialise.RawBytes
+    Database.LSMTree.Types.Common
+    Database.LSMTree.Types.Monoidal
+    Database.LSMTree.Types.Normal
+    Database.LSMTree.Vector
+    Database.LSMTree.WriteBuffer
 
   build-depends:
     , base                     >=4.16      && <4.20
@@ -75,7 +91,6 @@ library
     , containers
     , crc32c                   ^>=0.2.0
     , deepseq
-    , filepath
     , fs-api                   ^>=0.2
     , io-classes               ^>=1.3
     , lsm-tree:bloomfilter
@@ -200,8 +215,8 @@ library lsm-tree-utils
     , bytestring
     , containers
     , deepseq
-    , lsm-tree
     , lsm-tree:bloomfilter
+    , lsm-tree:lsm-tree-core
     , primitive
     , QuickCheck
     , quickcheck-instances
@@ -222,21 +237,12 @@ test-suite lsm-tree-test
     Database.LSMTree.ModelIO.Monoidal
     Database.LSMTree.ModelIO.Normal
     Database.LSMTree.ModelIO.Session
+    Test.Database.LSMTree.BloomFilter
     Test.Database.LSMTree.Common
+    Test.Database.LSMTree.CRC32C
+    Test.Database.LSMTree.Entry
     Test.Database.LSMTree.Generators
-    Test.Database.LSMTree.Internal.BloomFilter
-    Test.Database.LSMTree.Internal.CRC32C
-    Test.Database.LSMTree.Internal.Entry
-    Test.Database.LSMTree.Internal.Lookup
-    Test.Database.LSMTree.Internal.PageAcc
-    Test.Database.LSMTree.Internal.PageAcc1
-    Test.Database.LSMTree.Internal.RawOverflowPage
-    Test.Database.LSMTree.Internal.RawPage
-    Test.Database.LSMTree.Internal.Run
-    Test.Database.LSMTree.Internal.Run.BloomFilter
-    Test.Database.LSMTree.Internal.Run.Construction
-    Test.Database.LSMTree.Internal.Run.Index.Compact
-    Test.Database.LSMTree.Internal.Serialise
+    Test.Database.LSMTree.Lookup
     Test.Database.LSMTree.Model.Monoidal
     Test.Database.LSMTree.Model.Normal
     Test.Database.LSMTree.ModelIO.Class
@@ -245,6 +251,15 @@ test-suite lsm-tree-test
     Test.Database.LSMTree.ModelIO.Normal
     Test.Database.LSMTree.Normal.StateMachine
     Test.Database.LSMTree.Normal.StateMachine.Op
+    Test.Database.LSMTree.PageAcc
+    Test.Database.LSMTree.PageAcc1
+    Test.Database.LSMTree.RawOverflowPage
+    Test.Database.LSMTree.RawPage
+    Test.Database.LSMTree.Run
+    Test.Database.LSMTree.Run.BloomFilter
+    Test.Database.LSMTree.Run.Construction
+    Test.Database.LSMTree.Run.Index.Compact
+    Test.Database.LSMTree.Serialise
     Test.Util.Orphans
     Test.Util.QuickCheck
     Test.Util.RawPage
@@ -269,6 +284,7 @@ test-suite lsm-tree-test
     , lsm-tree
     , lsm-tree:bloomfilter
     , lsm-tree:fs-api-blockio
+    , lsm-tree:lsm-tree-core
     , lsm-tree:lsm-tree-utils
     , lsm-tree:prototypes
     , mtl
@@ -299,10 +315,10 @@ benchmark lsm-tree-micro-bench
   hs-source-dirs:   bench/micro
   main-is:          Main.hs
   other-modules:
-    Bench.Database.LSMTree.Internal.Lookup
-    Bench.Database.LSMTree.Internal.RawPage
-    Bench.Database.LSMTree.Internal.Run.BloomFilter
-    Bench.Database.LSMTree.Internal.Run.Index.Compact
+    Bench.Database.LSMTree.Lookup
+    Bench.Database.LSMTree.RawPage
+    Bench.Database.LSMTree.Run.BloomFilter
+    Bench.Database.LSMTree.Run.Index.Compact
 
   build-depends:
     , base
@@ -311,9 +327,9 @@ benchmark lsm-tree-micro-bench
     , criterion
     , deepseq
     , fs-api
-    , lsm-tree
     , lsm-tree:bloomfilter
     , lsm-tree:fs-api-blockio
+    , lsm-tree:lsm-tree-core
     , lsm-tree:lsm-tree-utils
     , lsm-tree:prototypes
     , primitive
@@ -329,11 +345,11 @@ benchmark lsm-tree-macro-bench
   type:             exitcode-stdio-1.0
   hs-source-dirs:   bench/macro
   main-is:          Main.hs
-  other-modules:    Bench.Database.LSMTree.Internal.BloomFilter
+  other-modules:    Bench.Database.LSMTree.BloomFilter
   build-depends:
     , base
-    , lsm-tree
     , lsm-tree:bloomfilter
+    , lsm-tree:lsm-tree-core
     , lsm-tree:lsm-tree-utils
     , random
     , time
@@ -401,10 +417,10 @@ test-suite map-range-test
   hs-source-dirs:   test
   main-is:          map-range-test.hs
   build-depends:
-    , base              >=4.16 && <4.20
+    , base                    >=4.16 && <4.20
     , bytestring
     , containers
-    , lsm-tree
+    , lsm-tree:lsm-tree-core
     , QuickCheck
     , tasty
     , tasty-hunit
@@ -412,8 +428,9 @@ test-suite map-range-test
 
 library prototypes
   import:           warnings, wno-x-partial
+  visibility:       private
   default-language: Haskell2010
-  hs-source-dirs:   prototypes
+  hs-source-dirs:   src/prototypes
   exposed-modules:
     FormatPage
     ScheduledMerges

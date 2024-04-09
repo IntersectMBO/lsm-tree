@@ -342,7 +342,7 @@ deletes ::
   -> m ()
 deletes = updates . fmap (,Model.Delete)
 
--- | For more details: 'Database.LSMTree.Internal.BlobRef' describes the
+-- | For more details: 'Database.LSMTree.BlobRef' describes the
 -- intended semantics of blob references.
 data BlobRef blob = BlobRef {
     parentTableID :: TableHandleID

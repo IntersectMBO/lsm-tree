@@ -24,8 +24,8 @@ module Database.LSMTree.Extras (
 
 import           Control.Monad.ST (runST)
 import qualified Data.BloomFilter.Easy as Bloom.Easy (easyList)
-import           Database.LSMTree.Internal.Run.BloomFilter (Bloom, Hashable)
-import qualified Database.LSMTree.Internal.Run.BloomFilter as Bloom
+import           Database.LSMTree.Run.BloomFilter (Bloom, Hashable)
+import qualified Database.LSMTree.Run.BloomFilter as Bloom
 
 {-------------------------------------------------------------------------------
   Bloom filter construction

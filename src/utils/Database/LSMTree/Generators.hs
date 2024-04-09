@@ -70,23 +70,22 @@ import qualified Data.Primitive.ByteArray as BA
 import qualified Data.Vector.Primitive as PV
 import           Data.WideWord.Word256 (Word256 (..))
 import           Data.Word
-import           Database.LSMTree.Common (Range (..))
-import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
-import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..))
-import           Database.LSMTree.Internal.Run.Index.Compact (PageNo (..),
+import           Database.LSMTree.BlobRef (BlobSpan (..))
+import           Database.LSMTree.Entry (Entry (..), NumEntries (..))
+import           Database.LSMTree.Run.Index.Compact (PageNo (..),
                      rangeFinderPrecisionBounds, suggestRangeFinderPrecision)
-import           Database.LSMTree.Internal.Run.Index.Compact.Construction
-                     (Append (..))
-import           Database.LSMTree.Internal.Serialise
-import qualified Database.LSMTree.Internal.Serialise.Class as S.Class
-import           Database.LSMTree.Internal.Serialise.RawBytes as RB
-import           Database.LSMTree.Internal.Vector (mkPrimVector)
-import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer (..))
-import qualified Database.LSMTree.Internal.WriteBuffer as WB
-import qualified Database.LSMTree.Monoidal as Monoidal
-import qualified Database.LSMTree.Normal as Normal
+import           Database.LSMTree.Run.Index.Compact.Construction (Append (..))
+import           Database.LSMTree.Serialise
+import qualified Database.LSMTree.Serialise.Class as S.Class
+import           Database.LSMTree.Serialise.RawBytes as RB
+import           Database.LSMTree.Types.Common (Range (..))
+import qualified Database.LSMTree.Types.Monoidal as Monoidal
+import qualified Database.LSMTree.Types.Normal as Normal
 import           Database.LSMTree.Util
 import           Database.LSMTree.Util.Orphans ()
+import           Database.LSMTree.Vector (mkPrimVector)
+import           Database.LSMTree.WriteBuffer (WriteBuffer (..))
+import qualified Database.LSMTree.WriteBuffer as WB
 import           GHC.Generics (Generic)
 import           System.Random (Uniform)
 import qualified Test.QuickCheck as QC
