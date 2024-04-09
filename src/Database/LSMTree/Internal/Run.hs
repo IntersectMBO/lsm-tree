@@ -149,7 +149,7 @@ fromWriteBuffer fs fsPaths buffer = do
     -- are at least 2^16 pages.
     mrun <- new fs fsPaths (WB.numEntries buffer) 1
     for_ (WB.content buffer) $ \(k, e) ->
-      addFullKOp fs mrun k e
+      addKeyOp fs mrun k e
     fromMutable fs mrun
 
 data ChecksumError = ChecksumError FS.FsPath CRC.CRC32C CRC.CRC32C

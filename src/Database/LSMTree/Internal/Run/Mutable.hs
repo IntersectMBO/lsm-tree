@@ -10,7 +10,7 @@ module Database.LSMTree.Internal.Run.Mutable (
   , MRun
   , NumPages
   , new
-  , addFullKOp
+  , addKeyOp
   , unsafeFinalise
   , addMRunReference
   , removeMRunReference
@@ -28,14 +28,19 @@ import           Database.LSMTree.Internal.BloomFilter (bloomFilterToBuilder)
 import           Database.LSMTree.Internal.CRC32C (CRC32C)
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry
+import           Database.LSMTree.Internal.RawOverflowPage (RawOverflowPage)
+import qualified Database.LSMTree.Internal.RawOverflowPage as RawOverflowPage
+import           Database.LSMTree.Internal.RawPage (RawPage)
+import qualified Database.LSMTree.Internal.RawPage as RawPage
 import           Database.LSMTree.Internal.Run.BloomFilter (Bloom)
 import           Database.LSMTree.Internal.Run.Construction (RunAcc)
-import qualified Database.LSMTree.Internal.Run.Construction as Cons
+import qualified Database.LSMTree.Internal.Run.Construction as RunAcc
 import           Database.LSMTree.Internal.Run.FsPaths
 import           Database.LSMTree.Internal.Run.Index.Compact (CompactIndex,
                      NumPages)
 import qualified Database.LSMTree.Internal.Run.Index.Compact as Index
 import           Database.LSMTree.Internal.Serialise
+import qualified Database.LSMTree.Internal.Serialise.RawBytes as RawBytes
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
 
@@ -87,7 +92,7 @@ new ::
 new fs lsmMRunFsPaths numEntries estimatedNumPages = do
     lsmMRunRefCount <- newIORef 1
 
-    lsmMRunAcc <- ST.stToIO $ Cons.new numEntries estimatedNumPages
+    lsmMRunAcc <- ST.stToIO $ RunAcc.new numEntries estimatedNumPages Nothing
     lsmMRunBlobOffset <- newIORef 0
 
     FS.createDirectoryIfMissing fs False activeRunsDir
@@ -97,7 +102,7 @@ new fs lsmMRunFsPaths numEntries estimatedNumPages = do
     writeIndexHeader fs mrun
     return mrun
 
--- | Add a serialised k\/op pair. Blobs will be written to disk. Use only for
+-- | Add a key\/op pair. Blobs will be written to disk. Use only for
 -- entries that are fully in-memory.
 -- To handle larger-than-page values in a chunked style during run merging,
 -- one could write slightly different function based on 'Cons.addChunkedKOp'.
@@ -105,20 +110,30 @@ new fs lsmMRunFsPaths numEntries estimatedNumPages = do
 -- The k\/ops and the primary array of the index get written incrementally,
 -- everything else only at the end when 'unsafeFinalise' is called.
 --
--- __Note that filter and index serialisation is not implemented yet!__
-addFullKOp ::
+addKeyOp ::
      HasFS IO h
   -> MRun (FS.Handle h)
   -> SerialisedKey
   -> Entry SerialisedValue SerialisedBlob
   -> IO ()
-addFullKOp fs mrun@MRun {..} key op = do
-    op' <- for op $ \blob ->
-      writeBlob fs mrun blob
-    mAcc <- ST.stToIO (Cons.addFullKOp lsmMRunAcc key op')
-    for_ mAcc $ \(pageAcc, chunks) -> do
-      writePageAcc fs mrun pageAcc
-      writeIndexChunks fs mrun chunks
+addKeyOp fs mrun@MRun {..} key op = do
+    op' <- for op $ writeBlob fs mrun
+    if RunAcc.entryWouldFitInPage key op'
+      then do
+        mpagemchunk <- ST.stToIO $ RunAcc.addSmallKeyOp lsmMRunAcc key op'
+        case mpagemchunk of
+          Nothing -> return ()
+          Just (page, mchunk) -> do
+            writeRawPage fs mrun page
+            for_ mchunk $ writeIndexChunk fs mrun
+
+      else do
+       (pages, overflowPages, chunks)
+         <- ST.stToIO $ RunAcc.addLargeKeyOp lsmMRunAcc key op'
+       --TODO: consider optimisation: use writev to write all pages in one go
+       for_ pages (writeRawPage fs mrun)
+       for_ overflowPages (writeRawOverflowPage fs mrun)
+       writeIndexChunks fs mrun chunks
 
 -- | Finish construction of the run.
 -- Writes the filter and index to file and leaves all written files on disk.
@@ -132,13 +147,10 @@ unsafeFinalise ::
   -> IO (RefCount, RunFsPaths, Bloom SerialisedKey, CompactIndex, NumEntries)
 unsafeFinalise fs mrun@MRun {..} = do
     -- write final bits
-    (mAcc, mChunk, runFilter, runIndex, numEntries) <-
-      ST.stToIO (Cons.unsafeFinalise lsmMRunAcc)
-    for_ mAcc $ \(pageAcc, chunks) -> do
-      writePageAcc fs mrun pageAcc
-      writeIndexChunks fs mrun chunks
-    for_ mChunk $ \chunk ->
-      writeIndexChunks fs mrun [chunk]
+    (mPage, mChunk, runFilter, runIndex, numEntries) <-
+      ST.stToIO (RunAcc.unsafeFinalise lsmMRunAcc)
+    for_ mPage $ writeRawPage fs mrun
+    for_ mChunk $ writeIndexChunk fs mrun
     writeIndexFinal fs mrun numEntries runIndex
     writeFilter fs mrun runFilter
     -- close all handles and write their checksums
@@ -175,9 +187,19 @@ closeMRun fs MRun {..} = do
   Helpers
 -------------------------------------------------------------------------------}
 
-writePageAcc :: HasFS IO h -> MRun (FS.Handle h) -> Cons.PageAcc -> IO ()
-writePageAcc fs MRun {..} =
-    writeToHandle fs (forRunKOps lsmMRunHandles) . Cons.pageBuilder
+writeRawPage :: HasFS IO h -> MRun (FS.Handle h) -> RawPage -> IO ()
+writeRawPage fs MRun {..} =
+    --TODO: avoid copying via builder and write the pinned RawPage directly
+    writeToHandle fs (forRunKOps lsmMRunHandles)
+  . RawBytes.builder
+  . RawPage.rawPageRawBytes
+
+writeRawOverflowPage :: HasFS IO h -> MRun (FS.Handle h) -> RawOverflowPage -> IO ()
+writeRawOverflowPage fs MRun {..} =
+    --TODO: avoid copying via builder and write the pinned RawPage directly
+    writeToHandle fs (forRunKOps lsmMRunHandles)
+  . RawBytes.builder
+  . RawOverflowPage.rawOverflowPageRawBytes
 
 writeBlob :: HasFS IO h -> MRun (FS.Handle h) -> SerialisedBlob -> IO BlobSpan
 writeBlob fs MRun{..} blob = do
@@ -195,6 +217,11 @@ writeIndexHeader :: HasFS IO h -> MRun (FS.Handle h) -> IO ()
 writeIndexHeader fs MRun {..} =
     writeToHandle fs (forRunIndex lsmMRunHandles) $
       Index.headerBuilder
+
+writeIndexChunk :: HasFS IO h -> MRun (FS.Handle h) -> Index.Chunk -> IO ()
+writeIndexChunk fs MRun {..} chunk =
+    writeToHandle fs (forRunIndex lsmMRunHandles) $
+      Index.chunkBuilder chunk
 
 writeIndexChunks :: HasFS IO h -> MRun (FS.Handle h) -> [Index.Chunk] -> IO ()
 writeIndexChunks fs MRun {..} chunks =

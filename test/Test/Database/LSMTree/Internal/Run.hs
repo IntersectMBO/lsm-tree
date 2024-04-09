@@ -1,5 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
+{-# OPTIONS_GHC -Wno-incomplete-uni-patterns #-}
+
 module Test.Database.LSMTree.Internal.Run (
     -- * Main test tree
     tests,
@@ -33,12 +35,13 @@ import           Database.LSMTree.Internal.Entry
 import qualified Database.LSMTree.Internal.Normal as N
 import           Database.LSMTree.Internal.RawPage
 import           Database.LSMTree.Internal.Run
-import           Database.LSMTree.Internal.Run.Construction
 import           Database.LSMTree.Internal.Serialise
 import qualified Database.LSMTree.Internal.Serialise.RawBytes as RB
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import           Database.LSMTree.Util (showPowersOf10)
+
+import qualified FormatPage as Proto
 
 import           Test.Database.LSMTree.Internal.Run.Index.Compact ()
 
@@ -107,9 +110,15 @@ testSingleInsert sessionRoot key val mblob = do
     let page = rawPageFromByteString bsKOps 0
     1 @=? rawPageNumKeys page
 
-    let pagesize = psSingleton key (Insert val)
+    let pagesize :: Int
+        Just pagesize =
+           Proto.pageSizeBytes <$> Proto.calcPageSize
+             (Proto.PageLogical
+               [ ( Proto.Key (coerce RB.toByteString key)
+                 , Proto.Insert (Proto.Value (coerce RB.toByteString val))
+                 , Nothing ) ])
         suffix, prefix :: Int
-        suffix = max 0 (fromIntegral (pageSizeNumBytes pagesize) - 4096)
+        suffix = max 0 (pagesize - 4096)
         prefix = coerce RB.size val - suffix
     let expectedEntry = case mblob of
           Nothing -> Insert         (coerce RB.take prefix val)

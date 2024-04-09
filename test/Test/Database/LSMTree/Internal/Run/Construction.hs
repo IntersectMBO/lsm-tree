@@ -3,17 +3,21 @@
 
 module Test.Database.LSMTree.Internal.Run.Construction (tests) where
 
+import           Control.Exception (assert)
 import           Control.Monad.ST
 import           Data.Bifunctor (Bifunctor (..))
 import qualified Data.ByteString as BS
-import qualified Data.ByteString.Builder as BB
-import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ByteString.Short as SBS
-import           Data.Foldable (Foldable (..))
 import           Data.Maybe
 import qualified Data.Vector.Primitive as P
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Entry
+import qualified Database.LSMTree.Internal.PageAcc as PageAcc
+import qualified Database.LSMTree.Internal.PageAcc1 as PageAcc
+import           Database.LSMTree.Internal.RawOverflowPage (RawOverflowPage)
+import qualified Database.LSMTree.Internal.RawOverflowPage as RawOverflowPage
+import           Database.LSMTree.Internal.RawPage (RawPage)
+import qualified Database.LSMTree.Internal.RawPage as RawPage
 import qualified Database.LSMTree.Internal.Run.BloomFilter as Bloom
 import           Database.LSMTree.Internal.Run.Construction as Real
 import qualified Database.LSMTree.Internal.Run.Index.Compact as Index
@@ -21,7 +25,7 @@ import           Database.LSMTree.Internal.Serialise
 import qualified Database.LSMTree.Internal.Serialise.RawBytes as RB
 import qualified FormatPage as Proto
 import           Test.Tasty
-import           Test.Tasty.HUnit
+import           Test.Tasty.HUnit hiding (assert)
 import           Test.Tasty.QuickCheck
 
 tests :: TestTree
@@ -30,16 +34,15 @@ tests = testGroup "Database.LSMTree.Internal.Run.Construction" [
           testCase "test_singleKeyRun" $ test_singleKeyRun
         ]
     , testGroup "PageAcc" [
-          testProperty "prop_BitMapMatchesPrototype"   prop_BitMapMatchesPrototype
-        , testProperty "prop_CrumbMapMatchesPrototype" prop_CrumbMapMatchesPrototype
-        , largerTestCases $
+          largerTestCases $
+          --TODO: partitioning tests need to move to RunAcc.
           testProperty "prop_paddedToDiskPageSize with trivially partitioned pages" $
             prop_paddedToDiskPageSize 0
         , largerTestCases $
           testProperty "prop_paddedToDiskPageSize with partitioned pages" $
             prop_paddedToDiskPageSize 8
         , largerTestCases $
-          testProperty "prop_pageBuilderMatchesPrototype" prop_pageBuilderMatchesPrototype
+          testProperty "prop_runAccMatchesPrototype" prop_runAccMatchesPrototype
         ]
     ]
   where largerTestCases = localOption (QuickCheckMaxSize 500) . localOption (QuickCheckTests 10000)
@@ -54,12 +57,12 @@ test_singleKeyRun =  do
         !e = InsertWithBlob (SerialisedValue' (P.fromList [48, 19])) (BlobSpan 55 77)
 
     (addRes, (mp, mc, b, cix, _numEntries)) <- stToIO $ do
-      racc <- new (NumEntries 1) 1
-      addRes <- addFullKOp racc k e
+      racc <- new (NumEntries 1) 1 Nothing
+      addRes <- addKeyOp racc k e
       (addRes,) <$> unsafeFinalise racc
 
-    Nothing @=? addRes
-    Just (paSingleton k e, []) @=? mp
+    ([], [], []) @=? addRes
+    Just (fst (PageAcc.singletonPage k e)) @=? mp
     isJust mc @? "expected a chunk"
     True @=? Bloom.elem k b
     Index.singlePage (Index.PageNo 0) @=? Index.search k cix
@@ -68,45 +71,24 @@ test_singleKeyRun =  do
   PageAcc
 -------------------------------------------------------------------------------}
 
--- Constructing a bitmap incrementally yields the same result as constructing it
--- in one go
-prop_BitMapMatchesPrototype :: [Bool] -> Property
-prop_BitMapMatchesPrototype bs = counterexample "reverse real /= model" $ reverse real === model
-  where
-    real  = unStricterList $ bmbits $ foldl' (\acc b -> appendBit (boolToBit b) acc) emptyBitMap bs
-    model = Proto.toBitmap bs
-
-    boolToBit False = 0
-    boolToBit True  = 1
-
--- Constructing a crumbmap incrementally yields the same result as constructing
--- it in one go
-prop_CrumbMapMatchesPrototype :: [(Bool, Bool)] -> Property
-prop_CrumbMapMatchesPrototype bs = counterexample "reverse real /= model" $ reverse real === model
-  where
-    real  = unStricterList $ cmbits $
-            foldl' (\acc b -> appendCrumb (boolsToCrumb b) acc) emptyCrumbMap bs
-    model = Proto.toBitmap (concatMap (\(b1, b2) -> [b1, b2]) bs)
-
-    -- assumes the booleans in the tuple are in little-endian order
-    boolsToCrumb (False, False) = 0
-    boolsToCrumb (True , False) = 1
-    boolsToCrumb (False, True ) = 2
-    boolsToCrumb (True , True ) = 3
-
+--TODO: this test no longer makes sense  on the PageAcc when used with
+-- non-default RFP values, because PageAcc doesn't use the RangeFinderPrecision,
+-- only RunAcc does. This aspect of the test should be ported to a RunAcc test.
 prop_paddedToDiskPageSize :: Int -> PageLogical' -> Property
-prop_paddedToDiskPageSize rfp page =
+prop_paddedToDiskPageSize _rfp page =
     counterexample "expected number of output bytes to be of disk page size" $
-    tabulate "page size in bytes" [show $ LBS.length bytes] $
-    LBS.length bytes `rem` 4096 === 0
+    tabulate "page size in bytes" [show $ BS.length bytes] $
+    BS.length bytes `rem` 4096 === 0
   where
-    bytes = BB.toLazyByteString . pageBuilder $ fromListPageAcc' rfp (getRealKOps page)
+    bytes = uncurry pagesToByteString $ fromListPageAcc (getRealKOps page)
 
-prop_pageBuilderMatchesPrototype :: PageLogical' -> Property
-prop_pageBuilderMatchesPrototype page = counterexample "real /= model" $ real === model
+prop_runAccMatchesPrototype :: PageLogical' -> Property
+prop_runAccMatchesPrototype page =
+    counterexample "real /= model" $
+    real === model
   where
     model = Proto.serialisePage (Proto.encodePage $ getPageLogical' page)
-    real  = trunc $ BS.toStrict . BB.toLazyByteString . pageBuilder $ fromListPageAcc (getRealKOps page)
+    real  = trunc $ uncurry pagesToByteString $ fromListPageAcc (getRealKOps page)
 
     -- truncate padding on the real page
     trunc = BS.take (BS.length model)
@@ -115,18 +97,30 @@ prop_pageBuilderMatchesPrototype page = counterexample "real /= model" $ real ==
   Util
 -------------------------------------------------------------------------------}
 
-fromListPageAcc :: [(SerialisedKey, Entry SerialisedValue BlobSpan)] -> PageAcc
-fromListPageAcc = fromListPageAcc' 0
+fromListPageAcc :: [(SerialisedKey, Entry SerialisedValue BlobSpan)]
+                -> (RawPage, [RawOverflowPage])
+fromListPageAcc ((k,e):kops)
+  | not (PageAcc.entryWouldFitInPage k e) =
+    assert (null kops) $
+    PageAcc.singletonPage k e
 
-fromListPageAcc' :: Int -> [(SerialisedKey, Entry SerialisedValue BlobSpan)] -> PageAcc
-fromListPageAcc' rfp kops = fromJust $ go paEmpty kops
-  where
-    -- Add keys until full
-    go !pacc [] = Just pacc
-    go !pacc ((k, e):kops') =
-      case paAddElem rfp k e pacc of
-        Nothing    -> Just pacc
-        Just pacc' -> go pacc' kops'
+fromListPageAcc kops =
+    runST (do
+      pacc <- PageAcc.newPageAcc
+      sequence_
+        [ do added <- PageAcc.pageAccAddElem pacc k e
+             -- we expect the kops to all fit in one page
+             assert added $ return ()
+        | (k,e) <- kops ]
+      page <- PageAcc.serializePageAcc pacc
+      return (page, []))
+
+pagesToByteString :: RawPage -> [RawOverflowPage] -> BS.ByteString
+pagesToByteString rp rops =
+    RB.toByteString
+  . mconcat
+  $ RawPage.rawPageRawBytes rp
+  : map RawOverflowPage.rawOverflowPageRawBytes rops
 
 fromProtoKOp ::
      (Proto.Key, Proto.Operation, Maybe Proto.BlobRef)

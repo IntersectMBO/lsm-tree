@@ -26,6 +26,7 @@ module FormatPage (
     PageSize (..),
     pageSizeEmpty,
     pageSizeAddElem,
+    calcPageSize,
 ) where
 
 import           Data.Bits

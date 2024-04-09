@@ -1,13 +1,20 @@
 {-# LANGUAGE BangPatterns        #-}
+{-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 -- | Page accumulator.
 module Database.LSMTree.Internal.PageAcc (
+    -- * Incrementally accumulating a single page.
     MPageAcc,
     newPageAcc,
     resetPageAcc,
     pageAccAddElem,
     serializePageAcc,
+    -- ** Inspection
+    keysCountPageAcc,
+    indexKeyPageAcc,
+    -- ** Entry sizes
+    entryWouldFitInPage,
 ) where
 
 import           Control.Monad.ST.Strict (ST)
@@ -104,17 +111,35 @@ pageSize = 4096
 
 -- | Calculate the total byte size of key, value and optional blobspan.
 --
--- To fit into single page this has to be at most 4052 (the same as the max key size),
--- if the entry is larger, the 'pageAccAddElem' would immediately return 'Nothing'.
+-- To fit into single page this has to be at most 4052 with a blobspan (the
+-- same as the max key size) or 4064 without a blobspan, if the entry is larger,
+-- the 'pageAccAddElem' will return 'Nothing'.
 --
--- In other words, if you have a large entry (i.e. Insert with big value), don't use the 'MPageAcc', but construct the single value page directly.
+-- In other words, if you have a large entry (i.e. Insert with big value),
+-- don't use the 'MPageAcc', but construct the single value page directly,
+-- using 'Database.LSMTree.Internal.PageAcc1.singletonPage'.
 --
--- Checking entry size allows us to use 'Word16' arithmetic, we don't need to worry about overflows.
+-- If it's not known from context, use 'entryWouldFitInPage' to determine if
+-- you're in the small or large case.
+--
+-- Checking entry size allows us to use 'Word16' arithmetic, we don't need to
+-- worry about overflows.
+--
 sizeofEntry :: SerialisedKey -> Entry SerialisedValue BlobSpan -> Int
 sizeofEntry k Delete               = sizeofKey k
 sizeofEntry k (Mupdate v)          = sizeofKey k + sizeofValue v
 sizeofEntry k (Insert v)           = sizeofKey k + sizeofValue v
 sizeofEntry k (InsertWithBlob v _) = sizeofKey k + sizeofValue v + 12
+
+-- | Determine if the key, value and optional blobspan would fit within a
+-- single page. If it does, then it's appropriate to use 'pageAccAddElem', but
+-- otherwise use 'Database.LSMTree.Internal.PageAcc1.singletonPage'.
+--
+-- If 'entryWouldFitInPage' is @True@ and the 'MPageAcc' is empty (i.e. using
+--'resetPageAcc') then 'pageAccAddElem' is guaranteed to succeed.
+--
+entryWouldFitInPage :: SerialisedKey -> Entry SerialisedValue BlobSpan -> Bool
+entryWouldFitInPage k e = sizeofEntry k e + 32 <= pageSize
 
 -- | Whether 'Entry' adds a blob reference
 hasBlobRef :: Entry a b -> Bool
@@ -334,6 +359,13 @@ serializePageAccN size MPageAcc {..} = do
 
     ba' <- P.unsafeFreezeByteArray ba
     return (makeRawPage ba' 0)
+
+
+keysCountPageAcc :: MPageAcc s -> ST s Int
+keysCountPageAcc MPageAcc {mpDir} = P.readPrimArray mpDir keysCountIdx
+
+indexKeyPageAcc :: MPageAcc s -> Int -> ST s SerialisedKey
+indexKeyPageAcc MPageAcc {mpKeys} ix = MV.read mpKeys ix
 
 -------------------------------------------------------------------------------
 -- Utils

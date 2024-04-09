@@ -12,6 +12,7 @@ import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck
 
 import           Database.LSMTree.Generators (LargeRawBytes (..))
+import           Database.LSMTree.Internal.BitMath
 import           Database.LSMTree.Internal.RawOverflowPage
 import           Database.LSMTree.Internal.Serialise.RawBytes (RawBytes (..))
 import qualified Database.LSMTree.Internal.Serialise.RawBytes as RawBytes
@@ -47,7 +48,8 @@ prop_rawBytesToRawOverflowPage
 --
 prop_rawBytesToRawOverflowPages :: LargeRawBytes -> Property
 prop_rawBytesToRawOverflowPages (LargeRawBytes bytes) =
-    mconcat (map rawOverflowPageRawBytes pages) === bytes <> padding
+        length pages === roundUpToPageSize (RawBytes.size bytes) `div` 4096
+   .&&. mconcat (map rawOverflowPageRawBytes pages) === bytes <> padding
   where
     pages      = rawBytesToOverflowPages bytes
     padding    = RawBytes.fromVector (PV.replicate paddinglen 0)
