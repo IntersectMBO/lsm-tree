@@ -11,6 +11,7 @@ module Database.LSMTree.Internal.RawPage (
     rawPageNumBlobs,
     rawPageLookup,
     RawPageLookup(..),
+    rawPageOverflowPages,
     -- * Debug
     rawPageKeyOffsets,
     rawPageValueOffsets,
@@ -194,6 +195,20 @@ rawPageEntry1 page =
                                   (rawPageCalculateBlobIndex page 0))
       1 -> Mupdate (rawPageSingleValuePrefix page)
       _ -> Delete
+
+-- | Calculate the number of overflow pages that are expected to follow this
+-- page.
+--
+-- This will be non-zero when the page contains a single key\/op entry that is
+-- itself too large to fit within the page.
+--
+rawPageOverflowPages :: RawPage -> Int
+rawPageOverflowPages page
+  | rawPageNumKeys page == 1
+  , let (_, end) = rawPageValueOffsets1 page
+  = roundUpToPageSize (fromIntegral end)
+
+  | otherwise = 0
 
 -------------------------------------------------------------------------------
 -- Accessors
