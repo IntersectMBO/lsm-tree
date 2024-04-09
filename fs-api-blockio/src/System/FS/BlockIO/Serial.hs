@@ -1,3 +1,5 @@
+{-# LANGUAGE BangPatterns        #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module System.FS.BlockIO.Serial (
     serialHasBlockIO
@@ -6,6 +8,10 @@ module System.FS.BlockIO.Serial (
 import           Control.Concurrent.Class.MonadMVar
 import           Control.Monad (unless)
 import           Control.Monad.Class.MonadThrow
+import           Control.Monad.Primitive (PrimMonad)
+import qualified Data.Vector as V
+import qualified Data.Vector.Unboxed as VU
+import qualified Data.Vector.Unboxed.Mutable as VUM
 import           System.FS.API
 import qualified System.FS.BlockIO.API as API
 import           System.FS.BlockIO.API (IOOp (..), IOResult (..))
@@ -13,7 +19,7 @@ import           System.FS.BlockIO.API (IOOp (..), IOResult (..))
 -- | IO instantiation of 'HasBlockIO', using an existing 'HasFS'. Thus this
 -- implementation does not take advantage of parallel I/O.
 serialHasBlockIO ::
-     (MonadThrow m, MonadMVar m, Eq h)
+     (MonadThrow m, MonadMVar m, PrimMonad m, Eq h)
   => HasFS m h
   -> HasBufFS m h
   -> m (API.HasBlockIO m h)
@@ -37,15 +43,15 @@ close :: MonadMVar m => IOCtx m -> m ()
 close ctx = modifyMVar_ (openVar ctx) $ const (pure False)
 
 submitIO ::
-     (MonadMVar m, MonadThrow m)
+     (MonadMVar m, MonadThrow m, PrimMonad m)
   => HasFS m h
   -> HasBufFS m h
   -> IOCtx m
-  -> [IOOp m h]
-  -> m [IOResult]
+  -> V.Vector (IOOp m h)
+  -> m (VU.Vector IOResult)
 submitIO hfs hbfs ctx ioops = do
-  guardIsOpen ctx
-  mapM (ioop hfs hbfs) ioops
+    guardIsOpen ctx
+    hmapM (ioop hfs hbfs) ioops
 
 -- | Perform the IOOp using synchronous I\/O.
 ioop ::
@@ -58,3 +64,26 @@ ioop hfs hbfs (IOOpRead h off buf bufOff c) =
     IOResult <$> hGetBufExactlyAt hfs hbfs h buf bufOff c (fromIntegral off)
 ioop _hfs hbfs (IOOpWrite h off buf bufOff c) =
     IOResult <$> hPutBufExactlyAt hbfs h buf bufOff c (fromIntegral off)
+
+-- | Heterogeneous blend of 'V.mapM' and 'VU.mapM'.
+--
+-- The @vector@ package does not provide functions that take distinct vector
+-- containers as arguments, so we write it by hand to prevent having to convert
+-- one vector type to the other.
+hmapM ::
+     forall m a b. (PrimMonad m, VUM.Unbox b)
+  => (a -> m b)
+  -> V.Vector a
+  -> m (VU.Vector b)
+hmapM f v = do
+    res <- VUM.unsafeNew n
+    loop res 0
+  where
+    !n = V.length v
+    loop !res !i
+      | i == n = VU.unsafeFreeze res
+      | otherwise = do
+          let !x = v `V.unsafeIndex` i
+          !z <- f x
+          VUM.unsafeWrite res i z
+          loop res (i+1)

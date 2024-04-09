@@ -1,4 +1,6 @@
-{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE BangPatterns        #-}
+{-# LANGUAGE NamedFieldPuns      #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module System.FS.BlockIO.Async (
     asyncHasBlockIO
@@ -6,7 +8,10 @@ module System.FS.BlockIO.Async (
 
 import           Control.Exception
 import qualified Control.Exception as E
-import           Control.Monad
+import           Control.Monad.Primitive
+import qualified Data.Vector as V
+import qualified Data.Vector.Unboxed as VU
+import qualified Data.Vector.Unboxed.Mutable as VUM
 import           Foreign.C.Error
 import           GHC.IO.Exception
 import           GHC.Stack
@@ -39,12 +44,12 @@ ctxParamsConv API.IOCtxParams{API.ioctxBatchSizeLimit, API.ioctxConcurrencyLimit
 submitIO ::
      HasFS IO HandleIO
   -> I.IOCtx
-  -> [IOOp IO HandleIO]
-  -> IO [IOResult]
+  -> V.Vector (IOOp IO HandleIO)
+  -> IO (VU.Vector IOResult)
 submitIO hasFS ioctx ioops = do
     ioops' <- mapM ioopConv ioops
     ress <- I.submitIO ioctx ioops' `catch` rethrowClosedError
-    zipWithM rethrowErrno ioops ress
+    hzipWithM rethrowErrno ioops ress
   where
     rethrowClosedError :: IOError -> IO a
     rethrowClosedError e@IOError{} =
@@ -97,3 +102,30 @@ ioopConv (IOOpWrite h off buf bufOff c) = handleFd h >>= \fd ->
 -- would require a change in @fs-api@. See [fs-sim#49].
 handleFd :: Handle HandleIO -> IO Fd
 handleFd h = withOpenHandle "submitIO" (handleRaw h) pure
+
+-- | Heterogeneous blend of `V.zipWithM` and `VU.zipWithM`
+--
+-- The @vector@ package does not provide functions that take distinct vector
+-- containers as arguments, so we write it by hand to prevent having to convert
+-- one vector type to the other.
+hzipWithM ::
+     forall m a b c. (PrimMonad m, VUM.Unbox b, VUM.Unbox c)
+  => (a -> b -> m c)
+  -> V.Vector a
+  -> VU.Vector b
+  -> m (VU.Vector c)
+hzipWithM f v1 v2 = do
+    res <- VUM.unsafeNew n
+    loop res 0
+  where
+    !n = min (V.length v1) (VU.length v2)
+
+    loop :: VUM.MVector (PrimState m) c -> Int -> m (VU.Vector c)
+    loop !res !i
+      | i == n = VU.unsafeFreeze res
+      | otherwise = do
+          let !x = v1 `V.unsafeIndex` i
+              !y = v2 `VU.unsafeIndex` i
+          !z <- f x y
+          VUM.write res i z
+          loop res (i+1)
