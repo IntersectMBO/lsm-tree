@@ -12,10 +12,10 @@ import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck
 
 import           Database.LSMTree.Generators (LargeRawBytes (..))
+import           Database.LSMTree.Internal.BitMath
 import           Database.LSMTree.Internal.RawOverflowPage
 import           Database.LSMTree.Internal.Serialise.RawBytes (RawBytes (..))
 import qualified Database.LSMTree.Internal.Serialise.RawBytes as RawBytes
-import           Database.LSMTree.Internal.BitMath
 
 tests :: TestTree
 tests =

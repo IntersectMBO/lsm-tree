@@ -4,7 +4,6 @@
 {-# LANGUAGE NamedFieldPuns  #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE ViewPatterns    #-}
 {- HLINT ignore "Redundant lambda" -}
 {- HLINT ignore "Use camelCase" -}
 
