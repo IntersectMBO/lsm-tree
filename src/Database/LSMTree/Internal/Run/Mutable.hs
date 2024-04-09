@@ -28,6 +28,9 @@ import           Database.LSMTree.Internal.BloomFilter (bloomFilterToBuilder)
 import           Database.LSMTree.Internal.CRC32C (CRC32C)
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry
+import           Database.LSMTree.Internal.Index.Compact (CompactIndex,
+                     NumPages)
+import qualified Database.LSMTree.Internal.Index.Compact as Index
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.RawOverflowPage (RawOverflowPage)
 import qualified Database.LSMTree.Internal.RawOverflowPage as RawOverflowPage
@@ -37,9 +40,6 @@ import           Database.LSMTree.Internal.Run.BloomFilter (Bloom)
 import           Database.LSMTree.Internal.Run.Construction (RunAcc)
 import qualified Database.LSMTree.Internal.Run.Construction as RunAcc
 import           Database.LSMTree.Internal.Run.FsPaths
-import           Database.LSMTree.Internal.Run.Index.Compact (CompactIndex,
-                     NumPages)
-import qualified Database.LSMTree.Internal.Run.Index.Compact as Index
 import           Database.LSMTree.Internal.Serialise
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)

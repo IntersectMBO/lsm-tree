@@ -14,7 +14,7 @@
   Incremental construction can be finalised with 'unsafeEnd', which yields both
   a 'Chunk' (possibly) and the `CompactIndex'.
 -}
-module Database.LSMTree.Internal.Run.Index.Compact.Construction (
+module Database.LSMTree.Internal.Index.Compact.Construction (
     -- * Construction
     -- $construction-invariants
     MCompactIndex
@@ -44,7 +44,7 @@ import qualified Data.Vector.Generic.Mutable as VGM
 import qualified Data.Vector.Unboxed as VU
 import qualified Data.Vector.Unboxed.Mutable as VUM
 import           Data.Word
-import           Database.LSMTree.Internal.Run.Index.Compact
+import           Database.LSMTree.Internal.Index.Compact
 import           Database.LSMTree.Internal.Serialise
 
 {-------------------------------------------------------------------------------

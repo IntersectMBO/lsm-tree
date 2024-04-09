@@ -43,7 +43,7 @@ import           Database.LSMTree.Util (showPowersOf10)
 
 import qualified FormatPage as Proto
 
-import           Test.Database.LSMTree.Internal.Run.Index.Compact ()
+import           Test.Database.LSMTree.Internal.Index.Compact ()
 
 tests :: TestTree
 tests = testGroup "Database.LSMTree.Internal.Run"

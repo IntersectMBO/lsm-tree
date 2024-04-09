@@ -45,6 +45,8 @@ library
     Database.LSMTree.Internal.ByteString
     Database.LSMTree.Internal.CRC32C
     Database.LSMTree.Internal.Entry
+    Database.LSMTree.Internal.Index.Compact
+    Database.LSMTree.Internal.Index.Compact.Construction
     Database.LSMTree.Internal.KMerge
     Database.LSMTree.Internal.Lookup
     Database.LSMTree.Internal.Monoidal
@@ -58,8 +60,6 @@ library
     Database.LSMTree.Internal.Run.BloomFilter
     Database.LSMTree.Internal.Run.Construction
     Database.LSMTree.Internal.Run.FsPaths
-    Database.LSMTree.Internal.Run.Index.Compact
-    Database.LSMTree.Internal.Run.Index.Compact.Construction
     Database.LSMTree.Internal.Run.Mutable
     Database.LSMTree.Internal.Serialise
     Database.LSMTree.Internal.Serialise.Class
@@ -227,6 +227,7 @@ test-suite lsm-tree-test
     Test.Database.LSMTree.Internal.BloomFilter
     Test.Database.LSMTree.Internal.CRC32C
     Test.Database.LSMTree.Internal.Entry
+    Test.Database.LSMTree.Internal.Index.Compact
     Test.Database.LSMTree.Internal.Lookup
     Test.Database.LSMTree.Internal.PageAcc
     Test.Database.LSMTree.Internal.PageAcc1
@@ -235,7 +236,6 @@ test-suite lsm-tree-test
     Test.Database.LSMTree.Internal.Run
     Test.Database.LSMTree.Internal.Run.BloomFilter
     Test.Database.LSMTree.Internal.Run.Construction
-    Test.Database.LSMTree.Internal.Run.Index.Compact
     Test.Database.LSMTree.Internal.Serialise
     Test.Database.LSMTree.Model.Monoidal
     Test.Database.LSMTree.Model.Normal
@@ -299,10 +299,10 @@ benchmark lsm-tree-micro-bench
   hs-source-dirs:   bench/micro
   main-is:          Main.hs
   other-modules:
+    Bench.Database.LSMTree.Internal.Index.Compact
     Bench.Database.LSMTree.Internal.Lookup
     Bench.Database.LSMTree.Internal.RawPage
     Bench.Database.LSMTree.Internal.Run.BloomFilter
-    Bench.Database.LSMTree.Internal.Run.Index.Compact
 
   build-depends:
     , base
