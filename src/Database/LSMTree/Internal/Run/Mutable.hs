@@ -118,11 +118,22 @@ addKeyOp ::
   -> IO ()
 addKeyOp fs mrun@MRun {..} key op = do
     op' <- for op $ writeBlob fs mrun
-    (pages, overflowPages, chunks) <- ST.stToIO (RunAcc.addKeyOp lsmMRunAcc key op')
-    --TODO: consider optimisation: use writev to write all pages in one go
-    for_ pages (writeRawPage fs mrun)
-    for_ overflowPages (writeRawOverflowPage fs mrun)
-    writeIndexChunks fs mrun chunks
+    if RunAcc.entryWouldFitInPage key op'
+      then do
+        mpagemchunk <- ST.stToIO $ RunAcc.addSmallKeyOp lsmMRunAcc key op'
+        case mpagemchunk of
+          Nothing -> return ()
+          Just (page, mchunk) -> do
+            writeRawPage fs mrun page
+            for_ mchunk $ writeIndexChunk fs mrun
+
+      else do
+       (pages, overflowPages, chunks)
+         <- ST.stToIO $ RunAcc.addLargeKeyOp lsmMRunAcc key op'
+       --TODO: consider optimisation: use writev to write all pages in one go
+       for_ pages (writeRawPage fs mrun)
+       for_ overflowPages (writeRawOverflowPage fs mrun)
+       writeIndexChunks fs mrun chunks
 
 -- | Finish construction of the run.
 -- Writes the filter and index to file and leaves all written files on disk.

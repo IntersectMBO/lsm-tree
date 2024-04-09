@@ -30,6 +30,9 @@ module Database.LSMTree.Internal.Run.Construction (
     -- constraints carefully.
     --
   , addKeyOp
+  , addSmallKeyOp
+  , addLargeKeyOp
+  , PageAcc.entryWouldFitInPage
   ) where
 
 import           Control.Exception (assert)
