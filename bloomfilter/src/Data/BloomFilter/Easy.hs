@@ -80,6 +80,11 @@ easyNew errRate capacity = MB.new numHashes numBits
 -- Also it won't suggest to use over 63 hash functions,
 -- because CheapHashes work only up to 63 functions.
 --
+-- Note that while creating bloom filters with extremely small (or
+-- even negative) capacity is allowed for convenience, it is often
+-- not very useful.
+-- This function will always suggest to use at least 61 bits.
+--
 -- >>> safeSuggestSizing 10000 0.01
 -- Right (99317,7)
 --
@@ -88,7 +93,7 @@ safeSuggestSizing
     -> Double           -- ^ desired false positive rate (0 < /e/ < 1)
     -> Either String (Word64, Int)
 safeSuggestSizing (fromIntegral -> capacity) errRate
-    | capacity <= 0                = Left "invalid capacity"
+    | capacity <= 0                = Right (61, 1)
     | errRate <= 0 || errRate >= 1 = Left "invalid error rate"
     | otherwise                    = pickSize primes
   where
