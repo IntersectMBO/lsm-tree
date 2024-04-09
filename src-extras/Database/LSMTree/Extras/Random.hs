@@ -3,14 +3,12 @@
 module Database.LSMTree.Extras.Random (
     -- * Sampling from uniform distributions
     uniformWithoutReplacement
-  , uniformWithoutReplacement'
   , uniformWithReplacement
   , sampleUniformWithoutReplacement
   , sampleUniformWithReplacement
   ) where
 
 import           Data.List (unfoldr)
-import           Data.Set (Set)
 import qualified Data.Set as Set
 import           System.Random (StdGen, Uniform, uniform, uniformR)
 import           Text.Printf (printf)
@@ -26,21 +24,6 @@ uniformWithoutReplacement rng0 n0 = take n0 $
     go !seen !rng
         | Set.member x seen =     go               seen  rng'
         | otherwise         = x : go (Set.insert x seen) rng'
-      where
-        (!x, !rng') = uniform rng
-
--- | Like 'uniformWithoutReplacement', but returns a 'Set' instead.
---
--- Note: does not benefit from laziness, since all values must be generated
--- before the result can be returned.
-uniformWithoutReplacement' :: (Ord a, Uniform a) => StdGen -> Int -> Set a
-uniformWithoutReplacement' rng0 n0 =
-    go Set.empty (0 :: Int) rng0
-  where
-    go !seen !n !rng
-        | n == n0           = seen
-        | Set.member x seen = go               seen  n     rng'
-        | otherwise         = go (Set.insert x seen) (n+1) rng'
       where
         (!x, !rng') = uniform rng
 

@@ -170,9 +170,6 @@ tests = testGroup "Test.Database.LSMTree.Internal.IndexCompact" [
   Properties
 -------------------------------------------------------------------------------}
 
-deriving instance Eq IndexCompact
-deriving instance Show IndexCompact
-
 --
 -- Search
 --
