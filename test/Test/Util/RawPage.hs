@@ -13,11 +13,11 @@ import           Data.Primitive.ByteArray (ByteArray (..))
 import           Data.These (These (..))
 import           Data.Word (Word8)
 import           Database.LSMTree.Internal.BitMath (div16, mod16)
+import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.RawOverflowPage (RawOverflowPage,
                      makeRawOverflowPage)
 import           Database.LSMTree.Internal.RawPage (RawPage, makeRawPage,
                      rawPageRawBytes)
-import qualified Database.LSMTree.Internal.Serialise.RawBytes as RB
 import           FormatPage (PageLogical, encodePage, serialisePage)
 import qualified System.Console.ANSI as ANSI
 import           Test.Tasty.HUnit (Assertion, assertFailure)

@@ -8,9 +8,9 @@ import           Data.Function (on)
 import           Data.List (nubBy, sortBy)
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Entry (Entry (..))
+import qualified Database.LSMTree.Internal.RawBytes as RawBytes
 import           Database.LSMTree.Internal.RawPage (RawPage)
 import           Database.LSMTree.Internal.Serialise
-import qualified Database.LSMTree.Internal.Serialise.RawBytes as RawBytes
 import           Test.QuickCheck
 import           Test.QuickCheck.Instances ()
 import           Test.Tasty (TestTree, testGroup)

@@ -12,11 +12,11 @@ import qualified Data.Vector.Primitive as PV
 import           Data.Word (Word16, Word32, Word64)
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Entry (Entry (..))
+import           Database.LSMTree.Internal.RawBytes (RawBytes (..))
+import qualified Database.LSMTree.Internal.RawBytes as RawBytes
 import           Database.LSMTree.Internal.RawOverflowPage
 import           Database.LSMTree.Internal.RawPage
 import           Database.LSMTree.Internal.Serialise
-import           Database.LSMTree.Internal.Serialise.RawBytes (RawBytes (..))
-import qualified Database.LSMTree.Internal.Serialise.RawBytes as RawBytes
 
 pageSize :: Int
 pageSize = 4096
