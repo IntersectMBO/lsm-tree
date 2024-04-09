@@ -28,6 +28,7 @@ import           Database.LSMTree.Internal.BloomFilter (bloomFilterToBuilder)
 import           Database.LSMTree.Internal.CRC32C (CRC32C)
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry
+import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.RawOverflowPage (RawOverflowPage)
 import qualified Database.LSMTree.Internal.RawOverflowPage as RawOverflowPage
 import           Database.LSMTree.Internal.RawPage (RawPage)
@@ -40,7 +41,6 @@ import           Database.LSMTree.Internal.Run.Index.Compact (CompactIndex,
                      NumPages)
 import qualified Database.LSMTree.Internal.Run.Index.Compact as Index
 import           Database.LSMTree.Internal.Serialise
-import qualified Database.LSMTree.Internal.Serialise.RawBytes as RawBytes
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
 
@@ -191,14 +191,14 @@ writeRawPage :: HasFS IO h -> MRun (FS.Handle h) -> RawPage -> IO ()
 writeRawPage fs MRun {..} =
     --TODO: avoid copying via builder and write the pinned RawPage directly
     writeToHandle fs (forRunKOps lsmMRunHandles)
-  . RawBytes.builder
+  . RB.builder
   . RawPage.rawPageRawBytes
 
 writeRawOverflowPage :: HasFS IO h -> MRun (FS.Handle h) -> RawOverflowPage -> IO ()
 writeRawOverflowPage fs MRun {..} =
     --TODO: avoid copying via builder and write the pinned RawPage directly
     writeToHandle fs (forRunKOps lsmMRunHandles)
-  . RawBytes.builder
+  . RB.builder
   . RawOverflowPage.rawOverflowPageRawBytes
 
 writeBlob :: HasFS IO h -> MRun (FS.Handle h) -> SerialisedBlob -> IO BlobSpan

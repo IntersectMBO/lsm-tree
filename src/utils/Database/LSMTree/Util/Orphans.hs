@@ -20,6 +20,7 @@ import qualified Data.Primitive as P
 import           Data.WideWord.Word256 (Word256 (..))
 import           Data.Word (Word64, byteSwap64)
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
+import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.Run.Index.Compact (CompactIndex (..),
                      PageNo (..), PageSpan (..))
 import           Database.LSMTree.Internal.Run.Index.Compact.Construction
@@ -27,7 +28,6 @@ import           Database.LSMTree.Internal.Run.Index.Compact.Construction
 import           Database.LSMTree.Internal.Serialise (SerialisedBlob (..),
                      SerialisedKey (..), SerialisedValue (..))
 import           Database.LSMTree.Internal.Serialise.Class
-import qualified Database.LSMTree.Internal.Serialise.RawBytes as RB
 import           Database.LSMTree.Internal.Vector
 import           GHC.Generics (Generic)
 import           System.Random (Uniform)

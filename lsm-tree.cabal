@@ -51,6 +51,7 @@ library
     Database.LSMTree.Internal.Normal
     Database.LSMTree.Internal.PageAcc
     Database.LSMTree.Internal.PageAcc1
+    Database.LSMTree.Internal.RawBytes
     Database.LSMTree.Internal.RawOverflowPage
     Database.LSMTree.Internal.RawPage
     Database.LSMTree.Internal.Run
@@ -62,7 +63,6 @@ library
     Database.LSMTree.Internal.Run.Mutable
     Database.LSMTree.Internal.Serialise
     Database.LSMTree.Internal.Serialise.Class
-    Database.LSMTree.Internal.Serialise.RawBytes
     Database.LSMTree.Internal.Vector
     Database.LSMTree.Internal.WriteBuffer
     Database.LSMTree.Monoidal

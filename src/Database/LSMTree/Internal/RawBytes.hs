@@ -16,12 +16,10 @@
 -- "Prelude" functions:
 --
 -- @
---   import Database.LSMTree.Internal.Serialise.RawBytes (RawBytes (..))
---   import qualified Database.LSMTree.Internal.Serialise.RawBytes as RB
+--   import Database.LSMTree.Internal.RawBytes (RawBytes (..))
+--   import qualified Database.LSMTree.RawBytes as RB
 -- @
---
--- TODO: rename to Database.LSMTree.Internal.RawBytes
-module Database.LSMTree.Internal.Serialise.RawBytes (
+module Database.LSMTree.Internal.RawBytes (
     -- See Note: [Export structure]
     -- * Raw bytes
     RawBytes (..)

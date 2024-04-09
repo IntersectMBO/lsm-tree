@@ -12,11 +12,11 @@ import qualified Data.Vector.Primitive as PV
 import           Data.Word (Word16, Word32, Word64)
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Entry (Entry (..))
+import           Database.LSMTree.Internal.RawBytes (RawBytes (..))
+import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.RawOverflowPage
 import           Database.LSMTree.Internal.RawPage
 import           Database.LSMTree.Internal.Serialise
-import           Database.LSMTree.Internal.Serialise.RawBytes (RawBytes (..))
-import qualified Database.LSMTree.Internal.Serialise.RawBytes as RawBytes
 
 pageSize :: Int
 pageSize = 4096
@@ -56,7 +56,7 @@ singletonPage k (Insert v) = runST $ do
 
     ba' <- P.unsafeFreezeByteArray ba
     let !page          = unsafeMakeRawPage ba' 0
-        !overflowPages = rawBytesToOverflowPages (RawBytes.drop vlen' v')
+        !overflowPages = rawBytesToOverflowPages (RB.drop vlen' v')
     return (page, overflowPages)
   where
     SerialisedKey      (RawBytes (PV.Vector koff klen kba)) = k
@@ -93,7 +93,7 @@ singletonPage k (InsertWithBlob v (BlobSpan w64 w32)) = runST $ do
 
     ba' <- P.unsafeFreezeByteArray ba
     let !page          = unsafeMakeRawPage ba' 0
-        !overflowPages = rawBytesToOverflowPages (RawBytes.drop vlen' v')
+        !overflowPages = rawBytesToOverflowPages (RB.drop vlen' v')
     return (page, overflowPages)
   where
     SerialisedKey      (RawBytes (PV.Vector koff klen kba)) = k
@@ -128,7 +128,7 @@ singletonPage k (Mupdate v) = runST $ do
 
     ba' <- P.unsafeFreezeByteArray ba
     let !page          = unsafeMakeRawPage ba' 0
-        !overflowPages = rawBytesToOverflowPages (RawBytes.drop vlen' v')
+        !overflowPages = rawBytesToOverflowPages (RB.drop vlen' v')
     return (page, overflowPages)
   where
     SerialisedKey      (RawBytes (PV.Vector koff klen kba)) = k

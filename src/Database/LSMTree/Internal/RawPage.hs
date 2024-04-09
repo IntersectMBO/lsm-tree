@@ -37,10 +37,10 @@ import           Data.Word (Word16, Word32, Word64, Word8)
 import           Database.LSMTree.Internal.BitMath
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Entry (Entry (..))
+import           Database.LSMTree.Internal.RawBytes (RawBytes (..))
+import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.Serialise (SerialisedKey (..),
                      SerialisedValue (..))
-import           Database.LSMTree.Internal.Serialise.RawBytes (RawBytes (..))
-import qualified Database.LSMTree.Internal.Serialise.RawBytes as RB
 import           Database.LSMTree.Internal.Vector
 import           GHC.List (foldl')
 

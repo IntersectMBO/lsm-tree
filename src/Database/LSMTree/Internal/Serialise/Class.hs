@@ -14,8 +14,8 @@ module Database.LSMTree.Internal.Serialise.Class (
   ) where
 
 import           Data.Proxy (Proxy)
-import           Database.LSMTree.Internal.Serialise.RawBytes (RawBytes (..))
-import qualified Database.LSMTree.Internal.Serialise.RawBytes as RB
+import           Database.LSMTree.Internal.RawBytes (RawBytes (..))
+import qualified Database.LSMTree.Internal.RawBytes as RB
 
 -- | Serialisation of keys.
 --

@@ -13,9 +13,8 @@ import           Test.Tasty.QuickCheck
 
 import           Database.LSMTree.Generators (LargeRawBytes (..))
 import           Database.LSMTree.Internal.BitMath
+import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.RawOverflowPage
-import           Database.LSMTree.Internal.Serialise.RawBytes (RawBytes (..))
-import qualified Database.LSMTree.Internal.Serialise.RawBytes as RawBytes
 
 tests :: TestTree
 tests =
@@ -31,15 +30,15 @@ tests =
 -- multiple of the page size.
 prop_rawBytesToRawOverflowPage :: LargeRawBytes -> Property
 prop_rawBytesToRawOverflowPage
-  (LargeRawBytes bytes@(RawBytes (PV.Vector off len ba))) =
-    label (if RawBytes.size bytes >= 4096 then "large" else "small") $
+  (LargeRawBytes bytes@(RB.RawBytes (PV.Vector off len ba))) =
+    label (if RB.size bytes >= 4096 then "large" else "small") $
     label (if BA.isByteArrayPinned ba then "pinned" else "unpinned") $
     label (if off == 0 then "offset 0" else "offset non-0") $
 
         rawOverflowPageRawBytes (makeRawOverflowPage ba off (min len 4096))
-    === RawBytes.take 4096 bytes <> padding
+    === RB.take 4096 bytes <> padding
   where
-    padding    = RawBytes.fromVector (PV.replicate paddinglen 0)
+    padding    = RB.fromVector (PV.replicate paddinglen 0)
     paddinglen = 4096 - (min len 4096)
 
 
@@ -48,11 +47,11 @@ prop_rawBytesToRawOverflowPage
 --
 prop_rawBytesToRawOverflowPages :: LargeRawBytes -> Property
 prop_rawBytesToRawOverflowPages (LargeRawBytes bytes) =
-        length pages === roundUpToPageSize (RawBytes.size bytes) `div` 4096
+        length pages === roundUpToPageSize (RB.size bytes) `div` 4096
    .&&. mconcat (map rawOverflowPageRawBytes pages) === bytes <> padding
   where
     pages      = rawBytesToOverflowPages bytes
-    padding    = RawBytes.fromVector (PV.replicate paddinglen 0)
-    paddinglen = let trailing = RawBytes.size bytes `mod` 4096 in
+    padding    = RB.fromVector (PV.replicate paddinglen 0)
+    paddinglen = let trailing = RB.size bytes `mod` 4096 in
                  if trailing == 0 then 0 else 4096 - trailing
 

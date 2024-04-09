@@ -12,8 +12,8 @@ import qualified Data.ByteString.Short as SBS
 import qualified Data.Vector.Primitive as P
 import           Data.Word
 import           Database.LSMTree.Generators ()
+import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.Serialise
-import qualified Database.LSMTree.Internal.Serialise.RawBytes as RB
 import           Test.Tasty
 import           Test.Tasty.HUnit
 import           Test.Tasty.QuickCheck

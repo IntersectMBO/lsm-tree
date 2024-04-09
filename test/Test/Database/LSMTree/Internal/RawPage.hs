@@ -21,10 +21,10 @@ import           Test.Util.RawPage
 
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import qualified Database.LSMTree.Internal.Entry as Entry
+import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.RawOverflowPage
 import           Database.LSMTree.Internal.RawPage
 import           Database.LSMTree.Internal.Serialise
-import qualified Database.LSMTree.Internal.Serialise.RawBytes as RB
 import           FormatPage (BlobRef (..), Key (..), Operation (..),
                      PageLogical (..), Value (..), unKey)
 

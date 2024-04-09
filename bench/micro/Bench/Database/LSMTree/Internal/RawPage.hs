@@ -12,9 +12,9 @@ import           Criterion.Main
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Short as SBS
 import           Data.Primitive.ByteArray (ByteArray (..))
+import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.RawPage
 import           Database.LSMTree.Internal.Serialise
-import qualified Database.LSMTree.Internal.Serialise.RawBytes as RB
 import           Database.LSMTree.Util.Orphans ()
 import           FormatPage
 import           Test.QuickCheck

@@ -17,8 +17,8 @@ import           Data.Primitive.ByteArray (ByteArray (..), copyByteArray,
 import qualified Data.Vector.Primitive as PV
 import           Database.LSMTree.Internal.Assertions
 import           Database.LSMTree.Internal.BitMath (roundUpToPageSize)
-import           Database.LSMTree.Internal.Serialise.RawBytes (RawBytes (..))
-import qualified Database.LSMTree.Internal.Serialise.RawBytes as RB
+import           Database.LSMTree.Internal.RawBytes (RawBytes (..))
+import qualified Database.LSMTree.Internal.RawBytes as RB
 
 -------------------------------------------------------------------------------
 -- RawOverflowPage type

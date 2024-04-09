@@ -32,6 +32,7 @@ import           Database.LSMTree.Generators
 import           Database.LSMTree.Internal.BlobRef (BlobSpan)
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.Lookup
+import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.RawOverflowPage
 import           Database.LSMTree.Internal.RawPage
 import           Database.LSMTree.Internal.Run.BloomFilter as Bloom
@@ -39,7 +40,6 @@ import qualified Database.LSMTree.Internal.Run.Construction as Run
 import           Database.LSMTree.Internal.Run.Index.Compact as Index
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.Serialise.Class
-import qualified Database.LSMTree.Internal.Serialise.RawBytes as RB
 import           Database.LSMTree.Util
 import           GHC.Generics
 import           System.FS.API.Types

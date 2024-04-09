@@ -33,6 +33,7 @@
 #
 - modules:
   - { name: "Data.Vector.Primitive", as: "PV" } # if you import Data.Vector.Primitive qualified, it must be as 'PV'
+  - { name: "Database.LSMTree.Internal.RawBytes", as: "RB"} # if you import Database.LSMTree.Internal.RawByes qualified, it must be as 'RB'
 #   - {name: Control.Arrow, within: []} # Certain modules are banned entirely
 #
 # - functions:
@@ -42,7 +43,7 @@
 #
 # Will suggest replacing "wibbleMany [myvar]" with "wibbleOne myvar"
 # - error: {lhs: "wibbleMany [x]", rhs: wibbleOne x}
-- error: 
+- error:
     name: "Use mkPrimVector"
     lhs: "Data.Vector.Primitive.Vector"
     rhs: "mkPrimVector"
