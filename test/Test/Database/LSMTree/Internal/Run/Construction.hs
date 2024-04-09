@@ -58,7 +58,7 @@ test_singleKeyRun =  do
 
     (addRes, (mp, mc, b, cix, _numEntries)) <- stToIO $ do
       racc <- new (NumEntries 1) 1 Nothing
-      addRes <- addFullKOp racc k e
+      addRes <- addKeyOp racc k e
       (addRes,) <$> unsafeFinalise racc
 
     ([], [], []) @=? addRes

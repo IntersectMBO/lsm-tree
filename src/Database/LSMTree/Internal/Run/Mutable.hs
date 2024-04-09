@@ -10,7 +10,7 @@ module Database.LSMTree.Internal.Run.Mutable (
   , MRun
   , NumPages
   , new
-  , addFullKOp
+  , addKeyOp
   , unsafeFinalise
   , addMRunReference
   , removeMRunReference
@@ -34,7 +34,7 @@ import           Database.LSMTree.Internal.RawPage (RawPage)
 import qualified Database.LSMTree.Internal.RawPage as RawPage
 import           Database.LSMTree.Internal.Run.BloomFilter (Bloom)
 import           Database.LSMTree.Internal.Run.Construction (RunAcc)
-import qualified Database.LSMTree.Internal.Run.Construction as Cons
+import qualified Database.LSMTree.Internal.Run.Construction as RunAcc
 import           Database.LSMTree.Internal.Run.FsPaths
 import           Database.LSMTree.Internal.Run.Index.Compact (CompactIndex,
                      NumPages)
@@ -92,7 +92,7 @@ new ::
 new fs lsmMRunFsPaths numEntries estimatedNumPages = do
     lsmMRunRefCount <- newIORef 1
 
-    lsmMRunAcc <- ST.stToIO $ Cons.new numEntries estimatedNumPages Nothing
+    lsmMRunAcc <- ST.stToIO $ RunAcc.new numEntries estimatedNumPages Nothing
     lsmMRunBlobOffset <- newIORef 0
 
     FS.createDirectoryIfMissing fs False activeRunsDir
@@ -111,15 +111,15 @@ new fs lsmMRunFsPaths numEntries estimatedNumPages = do
 -- everything else only at the end when 'unsafeFinalise' is called.
 --
 -- __Note that filter and index serialisation is not implemented yet!__
-addFullKOp ::
+addKeyOp ::
      HasFS IO h
   -> MRun (FS.Handle h)
   -> SerialisedKey
   -> Entry SerialisedValue SerialisedBlob
   -> IO ()
-addFullKOp fs mrun@MRun {..} key op = do
+addKeyOp fs mrun@MRun {..} key op = do
     op' <- for op $ writeBlob fs mrun
-    (pages, overflowPages, chunks) <- ST.stToIO (Cons.addFullKOp lsmMRunAcc key op')
+    (pages, overflowPages, chunks) <- ST.stToIO (RunAcc.addKeyOp lsmMRunAcc key op')
     --TODO: consider optimisation: use writev to write all pages in one go
     for_ pages (writeRawPage fs mrun)
     for_ overflowPages (writeRawOverflowPage fs mrun)
@@ -138,7 +138,7 @@ unsafeFinalise ::
 unsafeFinalise fs mrun@MRun {..} = do
     -- write final bits
     (mPage, mChunk, runFilter, runIndex, numEntries) <-
-      ST.stToIO (Cons.unsafeFinalise lsmMRunAcc)
+      ST.stToIO (RunAcc.unsafeFinalise lsmMRunAcc)
     for_ mPage $ writeRawPage fs mrun
     for_ mChunk $ writeIndexChunk fs mrun
     writeIndexFinal fs mrun numEntries runIndex

@@ -35,7 +35,7 @@ import           Database.LSMTree.Internal.Lookup
 import           Database.LSMTree.Internal.RawOverflowPage
 import           Database.LSMTree.Internal.RawPage
 import           Database.LSMTree.Internal.Run.BloomFilter as Bloom
-import           Database.LSMTree.Internal.Run.Construction as Run
+import qualified Database.LSMTree.Internal.Run.Construction as Run
 import           Database.LSMTree.Internal.Run.Index.Compact as Index
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.Serialise.Class
@@ -303,8 +303,8 @@ mkTestRun dat = RunLookupView rawPages b cix
     (pages, b, cix) = runST $ do
       racc <- Run.new nentries npages Nothing
       let kops = Map.toList dat
-      psopss <- traverse (uncurry (addFullKOp racc)) kops
-      (mp, _ , b', cix', _) <- unsafeFinalise racc
+      psopss <- traverse (uncurry (Run.addKeyOp racc)) kops
+      (mp, _ , b', cix', _) <- Run.unsafeFinalise racc
       let pages' = [ p | (ps, ops, _) <- psopss
                       , p <- map Left ps ++ map Right ops ]
                ++ [ Left p | p <- maybeToList mp ]

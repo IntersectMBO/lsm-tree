@@ -15,7 +15,7 @@ module Database.LSMTree.Internal.Run.Construction (
     RunAcc
   , new
   , unsafeFinalise
-  , addFullKOp
+  , addKeyOp
   ) where
 
 import           Control.Exception (assert)
@@ -49,7 +49,7 @@ import           Database.LSMTree.Internal.Serialise (SerialisedKey,
 -- | A mutable structure that accumulates k\/op pairs and yields pages.
 --
 -- Use 'new' to start run construction, add new key\/operation pairs to the run
--- by using 'addFullKOp' and co, and complete run construction using
+-- by using 'addKeyOp' and co, and complete run construction using
 -- 'unsafeFinalise'.
 data RunAcc s = RunAcc {
       mbloom               :: !(MBloom s SerialisedKey)
@@ -119,12 +119,12 @@ unsafeFinalise racc@RunAcc {..} = do
 
 -- | Add a serialised k\/op pair with an optional blob span. Use only for
 -- entries that are fully in-memory. Otherwise, use 'addChunkedKOp'.
-addFullKOp ::
+addKeyOp ::
      RunAcc s
   -> SerialisedKey
   -> Entry SerialisedValue BlobSpan
   -> ST s ([RawPage], [RawOverflowPage], [Index.Chunk])
-addFullKOp racc k e
+addKeyOp racc k e
   | PageAcc.entryWouldFitInPage k e = smallToLarge <$> addSmallKeyOp racc k e
   | otherwise                       =                  addLargeKeyOp racc k e
   where
