@@ -8,13 +8,27 @@
 {- HLINT ignore "Redundant lambda" -}
 {- HLINT ignore "Use camelCase" -}
 
--- | Incremental, in-memory run consruction
+-- | Incremental (in-memory portion of) run consruction
 --
 module Database.LSMTree.Internal.Run.Construction (
-    -- * Incremental, in-memory run construction
     RunAcc
   , new
   , unsafeFinalise
+    -- * Adding key\/op pairs
+    -- | There are a few variants of actions to add key\/op pairs to the run
+    -- accumulator. Which one to use depends on a couple questions:
+    --
+    -- * Is it fully in memory or is it pre-serialised and only partly in
+    --   memory?
+    -- * Is the key\/op pair known to be \"small\" or \"large\"?
+    --
+    -- If it's in memory but it's not known whether it's small or large then
+    -- use 'addKeyOp'. One can use 'entryWouldFitInPage' to find out if it's
+    -- small or large. If it's in memory and known to be small or large then
+    -- use 'addSmallKeyOp' or 'addLargeKeyOp' as appropriate. If it's large
+    -- and pre-serialised, use 'addLargeSerialisedKeyOp' but note its
+    -- constraints carefully.
+    --
   , addKeyOp
   ) where
 
@@ -46,7 +60,9 @@ import           Database.LSMTree.Internal.Serialise (SerialisedKey,
   Incremental, in-memory run construction
 -------------------------------------------------------------------------------}
 
--- | A mutable structure that accumulates k\/op pairs and yields pages.
+-- | The run accumulator is a mutable structure that accumulates key\/op pairs.
+-- It yields pages and chunks of the index incrementally, and returns the
+-- Bloom filter and complete index at the end.
 --
 -- Use 'new' to start run construction, add new key\/operation pairs to the run
 -- by using 'addKeyOp' and co, and complete run construction using
@@ -117,12 +133,19 @@ unsafeFinalise racc@RunAcc {..} = do
     selectChunk _ (Just chunk)               = Just chunk
     selectChunk _ _                          = Nothing
 
--- | Add a serialised k\/op pair with an optional blob span. Use only for
--- entries that are fully in-memory. Otherwise, use 'addChunkedKOp'.
-addKeyOp ::
-     RunAcc s
+-- | Add a key\/op pair with an optional blob span to the run accumulator.
+--
+-- Note that this version expects the full value to be in the given'Entry', not
+-- just a prefix of the value that fits into a single page.
+--
+-- If the key\/op pair is known to be \"small\" or \"large\" then you can use
+-- the special versions 'addSmallKeyOp' or 'addLargeKeyOp'. If it is
+-- pre-serialised, use 'addLargeSerialisedKeyOp'.
+--
+addKeyOp
+  :: RunAcc s
   -> SerialisedKey
-  -> Entry SerialisedValue BlobSpan
+  -> Entry SerialisedValue BlobSpan -- ^ the full value, not just a prefix
   -> ST s ([RawPage], [RawOverflowPage], [Index.Chunk])
 addKeyOp racc k e
   | PageAcc.entryWouldFitInPage k e = smallToLarge <$> addSmallKeyOp racc k e
@@ -134,6 +157,16 @@ addKeyOp racc k e
     smallToLarge (Just (page, Nothing))    = ([page], [], [])
     smallToLarge (Just (page, Just chunk)) = ([page], [], [chunk])
 
+-- | Add a \"small\" key\/op pair with an optional blob span to the run
+-- accumulator.
+--
+-- This version is /only/ for small entries that can fit within a single page.
+-- Use 'addLargeKeyOp' if the entry is bigger than a page. If this distinction
+-- is not known at the use site, use 'PageAcc.entryWouldFitInPage' to determine
+-- which case applies, or use 'addKeyOp'.
+--
+-- This is guaranteed to add the key\/op, and it may yield (at most one) page.
+--
 addSmallKeyOp
   :: RunAcc s
   -> SerialisedKey
@@ -175,6 +208,24 @@ addSmallKeyOp racc@RunAcc{..} k e =
 
       else return Nothing
 
+-- | Add a \"large\" key\/op pair with an optional blob span to the run
+-- accumulator.
+--
+-- This version is /only/ for large entries that span multiple pages. Use
+-- 'addSmallKeyOp' if the entry is smaller than a page. If this distinction
+-- is not known at the use site, use 'PageAcc.entryWouldFitInPage' to determine
+-- which case applies.
+--
+-- Note that this version expects the full large value to be in the given
+-- 'Entry', not just the prefix of the value that fits into a single page.
+-- For large multi-page values that are represented by a pre-serialised
+-- 'RawPage' (as occurs when merging runs), use 'addLargeSerialisedKeyOp'.
+--
+-- This is guaranteed to add the key\/op. It will yield one or two 'RawPage's,
+-- and one or more 'RawOverflowPage's. These pages should be written out to
+-- the run's page file in that order, the 'RawPage's followed by the
+-- 'RawOverflowPage's.
+--
 addLargeKeyOp
   :: RunAcc s
   -> SerialisedKey

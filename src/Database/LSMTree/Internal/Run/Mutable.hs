@@ -102,7 +102,7 @@ new fs lsmMRunFsPaths numEntries estimatedNumPages = do
     writeIndexHeader fs mrun
     return mrun
 
--- | Add a serialised k\/op pair. Blobs will be written to disk. Use only for
+-- | Add a key\/op pair. Blobs will be written to disk. Use only for
 -- entries that are fully in-memory.
 -- To handle larger-than-page values in a chunked style during run merging,
 -- one could write slightly different function based on 'Cons.addChunkedKOp'.
@@ -110,7 +110,6 @@ new fs lsmMRunFsPaths numEntries estimatedNumPages = do
 -- The k\/ops and the primary array of the index get written incrementally,
 -- everything else only at the end when 'unsafeFinalise' is called.
 --
--- __Note that filter and index serialisation is not implemented yet!__
 addKeyOp ::
      HasFS IO h
   -> MRun (FS.Handle h)
