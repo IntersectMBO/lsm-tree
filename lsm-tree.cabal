@@ -16,7 +16,7 @@ tested-with:        GHC ==9.2 || ==9.4 || ==9.6 || ==9.8
 
 source-repository head
   type:     git
-  location: https://github.com/input-output-hk/lsm-tree
+  location: https://github.com/IntersectMBO/lsm-tree
 
 common warnings
   ghc-options:

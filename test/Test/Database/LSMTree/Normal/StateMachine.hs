@@ -21,7 +21,7 @@
 
 {-
   TODO: improve generation and shrinking of dependencies. See
-  https://github.com/input-output-hk/lsm-tree/pull/4#discussion_r1334295154.
+  https://github.com/IntersectMBO/lsm-tree/pull/4#discussion_r1334295154.
 
   TODO: The 'RetrieveBlobs' action will currently only retrieve blob references
   that come from a single batch lookup or range lookup. It would be interesting
