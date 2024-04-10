@@ -42,6 +42,12 @@ import           Data.Primitive.PrimVar (PrimVar, modifyPrimVar, newPrimVar,
 import           Data.Word (Word16)
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..))
+import           Database.LSMTree.Internal.Index.Compact (CompactIndex,
+                     NumPages)
+import qualified Database.LSMTree.Internal.Index.Compact as Index
+import           Database.LSMTree.Internal.Index.Compact.Construction
+                     (MCompactIndex)
+import qualified Database.LSMTree.Internal.Index.Compact.Construction as Index
 import           Database.LSMTree.Internal.PageAcc (MPageAcc)
 import qualified Database.LSMTree.Internal.PageAcc as PageAcc
 import qualified Database.LSMTree.Internal.PageAcc1 as PageAcc
@@ -49,12 +55,6 @@ import           Database.LSMTree.Internal.RawOverflowPage
 import           Database.LSMTree.Internal.RawPage (RawPage)
 import           Database.LSMTree.Internal.Run.BloomFilter (Bloom, MBloom)
 import qualified Database.LSMTree.Internal.Run.BloomFilter as Bloom
-import           Database.LSMTree.Internal.Run.Index.Compact (CompactIndex,
-                     NumPages)
-import qualified Database.LSMTree.Internal.Run.Index.Compact as Index
-import           Database.LSMTree.Internal.Run.Index.Compact.Construction
-                     (MCompactIndex)
-import qualified Database.LSMTree.Internal.Run.Index.Compact.Construction as Index
 import           Database.LSMTree.Internal.Serialise (SerialisedKey,
                      SerialisedValue, keyTopBits16)
 

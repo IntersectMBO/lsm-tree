@@ -14,7 +14,7 @@
 
 module Bench.Database.LSMTree.Internal.Lookup (benchmarks) where
 
-import           Bench.Database.LSMTree.Internal.Run.Index.Compact
+import           Bench.Database.LSMTree.Internal.Index.Compact
                      (constructCompactIndex)
 import           Control.DeepSeq (NFData)
 import           Control.Monad
@@ -27,12 +27,12 @@ import           Data.Vector (Vector)
 import qualified Data.Vector as V
 import           Database.LSMTree.Generators (ChunkSize (..), RFPrecision (..),
                      UTxOKey)
+import qualified Database.LSMTree.Internal.Index.Compact as Index
+import           Database.LSMTree.Internal.Index.Compact.Construction
+                     (Append (..))
 import           Database.LSMTree.Internal.Lookup (RunLookupView (..),
                      bloomQueriesDefault, indexSearches, prepLookups)
 import qualified Database.LSMTree.Internal.Run.BloomFilter as Bloom
-import qualified Database.LSMTree.Internal.Run.Index.Compact as Index
-import           Database.LSMTree.Internal.Run.Index.Compact.Construction
-                     (Append (..))
 import           Database.LSMTree.Internal.Serialise (SerialiseKey,
                      SerialisedKey, serialiseKey)
 import           Database.LSMTree.Util.Orphans ()

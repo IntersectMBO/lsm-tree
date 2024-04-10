@@ -22,11 +22,11 @@ import qualified Data.Vector.Mutable as VM
 import qualified Data.Vector.Unboxed as VU
 import qualified Data.Vector.Unboxed.Mutable as VUM
 import           Data.Word (Word32)
+import           Database.LSMTree.Internal.Index.Compact (CompactIndex,
+                     PageSpan (..))
+import qualified Database.LSMTree.Internal.Index.Compact as Index
 import           Database.LSMTree.Internal.Run.BloomFilter (Bloom)
 import qualified Database.LSMTree.Internal.Run.BloomFilter as Bloom
-import           Database.LSMTree.Internal.Run.Index.Compact (CompactIndex,
-                     PageSpan (..))
-import qualified Database.LSMTree.Internal.Run.Index.Compact as Index
 import           Database.LSMTree.Internal.Serialise
 import           System.FS.API (Handle)
 import           System.FS.BlockIO.API

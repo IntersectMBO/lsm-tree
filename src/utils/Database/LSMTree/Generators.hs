@@ -73,11 +73,11 @@ import           Data.Word
 import           Database.LSMTree.Common (Range (..))
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..))
-import           Database.LSMTree.Internal.RawBytes as RB
-import           Database.LSMTree.Internal.Run.Index.Compact (PageNo (..),
+import           Database.LSMTree.Internal.Index.Compact (PageNo (..),
                      rangeFinderPrecisionBounds, suggestRangeFinderPrecision)
-import           Database.LSMTree.Internal.Run.Index.Compact.Construction
+import           Database.LSMTree.Internal.Index.Compact.Construction
                      (Append (..))
+import           Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.Serialise
 import qualified Database.LSMTree.Internal.Serialise.Class as S.Class
 import           Database.LSMTree.Internal.Vector (mkPrimVector)

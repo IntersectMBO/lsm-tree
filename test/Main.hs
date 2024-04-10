@@ -6,6 +6,7 @@ import qualified Test.Database.LSMTree.Common
 import qualified Test.Database.LSMTree.Generators
 import qualified Test.Database.LSMTree.Internal.BloomFilter
 import qualified Test.Database.LSMTree.Internal.Entry
+import qualified Test.Database.LSMTree.Internal.Index.Compact
 import qualified Test.Database.LSMTree.Internal.Lookup
 import qualified Test.Database.LSMTree.Internal.PageAcc
 import qualified Test.Database.LSMTree.Internal.PageAcc1
@@ -14,7 +15,6 @@ import qualified Test.Database.LSMTree.Internal.RawPage
 import qualified Test.Database.LSMTree.Internal.Run
 import qualified Test.Database.LSMTree.Internal.Run.BloomFilter
 import qualified Test.Database.LSMTree.Internal.Run.Construction
-import qualified Test.Database.LSMTree.Internal.Run.Index.Compact
 import qualified Test.Database.LSMTree.Internal.Serialise
 import qualified Test.Database.LSMTree.Model.Monoidal
 import qualified Test.Database.LSMTree.Model.Normal
@@ -37,7 +37,7 @@ main = defaultMain $ testGroup "lsm-tree"
     , Test.Database.LSMTree.Internal.Run.tests
     , Test.Database.LSMTree.Internal.Run.BloomFilter.tests
     , Test.Database.LSMTree.Internal.Run.Construction.tests
-    , Test.Database.LSMTree.Internal.Run.Index.Compact.tests
+    , Test.Database.LSMTree.Internal.Index.Compact.tests
     , Test.Database.LSMTree.Internal.Serialise.tests
     , Test.Database.LSMTree.Model.Normal.tests
     , Test.Database.LSMTree.Model.Monoidal.tests

@@ -2,7 +2,7 @@
 {-# LANGUAGE TypeApplications   #-}
 {- HLINT ignore "Eta reduce" -}
 
-module Bench.Database.LSMTree.Internal.Run.Index.Compact (
+module Bench.Database.LSMTree.Internal.Index.Compact (
     benchmarks
     -- * Benchmarked functions
   , searches
@@ -14,8 +14,8 @@ import           Control.Monad.ST (runST)
 import           Criterion.Main
 import           Data.Foldable (Foldable (..))
 import           Database.LSMTree.Generators
-import           Database.LSMTree.Internal.Run.Index.Compact
-import           Database.LSMTree.Internal.Run.Index.Compact.Construction
+import           Database.LSMTree.Internal.Index.Compact
+import           Database.LSMTree.Internal.Index.Compact.Construction
 import           Database.LSMTree.Internal.Serialise (SerialisedKey,
                      serialiseKey)
 import           System.Random
@@ -24,7 +24,7 @@ import           Test.QuickCheck (generate)
 
 -- See 'utxoNumPages'.
 benchmarks :: Benchmark
-benchmarks = bgroup "Bench.Database.LSMTree.Internal.Run.Index.Compact" [
+benchmarks = bgroup "Bench.Database.LSMTree.Internal.Index.Compact" [
       bgroup "searches" [
           env (searchEnv 0  2_500_000 1_000_000) $ \ ~(ci, ks) ->
             bench "searches with 0-bit  rfprec" $ whnf (searches ci) ks

@@ -8,7 +8,7 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 {- HLINT ignore "Eta reduce" -}
 
-module Test.Database.LSMTree.Internal.Run.Index.Compact (tests) where
+module Test.Database.LSMTree.Internal.Index.Compact (tests) where
 
 import           Control.DeepSeq (deepseq)
 import           Control.Monad (foldM)
@@ -36,8 +36,8 @@ import           Data.Word
 import           Database.LSMTree.Generators as Gen
 import           Database.LSMTree.Internal.BitMath
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
-import           Database.LSMTree.Internal.Run.Index.Compact as Index
-import           Database.LSMTree.Internal.Run.Index.Compact.Construction as Cons
+import           Database.LSMTree.Internal.Index.Compact as Index
+import           Database.LSMTree.Internal.Index.Compact.Construction as Cons
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Util
 import           Numeric (showHex)
@@ -52,7 +52,7 @@ import           Test.Util.Orphans ()
 import           Text.Printf (printf)
 
 tests :: TestTree
-tests = testGroup "Test.Database.LSMTree.Internal.Run.Index.Compact" [
+tests = testGroup "Test.Database.LSMTree.Internal.Index.Compact" [
     -- Increasing the maximum size has the effect of generating more
     -- interesting numbers of partitioned pages. With a max size of 100, the
     -- tests are very likely to generate only 1 partitioned page.
