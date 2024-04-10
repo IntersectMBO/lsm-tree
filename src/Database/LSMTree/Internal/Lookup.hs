@@ -16,6 +16,8 @@ module Database.LSMTree.Internal.Lookup (
 
 import           Control.Monad.Primitive
 import           Control.Monad.ST.Strict
+import           Data.BloomFilter (Bloom)
+import qualified Data.BloomFilter as Bloom
 import           Data.Primitive.ByteArray
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as VM
@@ -25,8 +27,6 @@ import           Data.Word (Word32)
 import           Database.LSMTree.Internal.Index.Compact (CompactIndex,
                      PageSpan (..))
 import qualified Database.LSMTree.Internal.Index.Compact as Index
-import           Database.LSMTree.Internal.Run.BloomFilter (Bloom)
-import qualified Database.LSMTree.Internal.Run.BloomFilter as Bloom
 import           Database.LSMTree.Internal.Serialise
 import           System.FS.API (Handle)
 import           System.FS.BlockIO.API

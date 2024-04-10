@@ -46,6 +46,7 @@ module Database.LSMTree.Internal.Run (
 
 import           Control.Exception (Exception, finally, throwIO)
 import           Control.Monad (when)
+import           Data.BloomFilter (Bloom)
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ByteString.Short as SBS
 import           Data.Foldable (for_)
@@ -56,7 +57,6 @@ import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
 import           Database.LSMTree.Internal.Index.Compact (CompactIndex)
 import qualified Database.LSMTree.Internal.Index.Compact as Index
-import           Database.LSMTree.Internal.Run.BloomFilter (Bloom)
 import           Database.LSMTree.Internal.Run.FsPaths as FsPaths
 import           Database.LSMTree.Internal.Run.Mutable
 import           Database.LSMTree.Internal.Serialise

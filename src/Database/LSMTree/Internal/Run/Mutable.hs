@@ -20,6 +20,7 @@ module Database.LSMTree.Internal.Run.Mutable (
 
 import           Control.Monad (when)
 import qualified Control.Monad.ST as ST
+import           Data.BloomFilter (Bloom)
 import qualified Data.ByteString.Builder as BSB
 import           Data.Foldable (for_, traverse_)
 import           Data.IORef
@@ -38,7 +39,6 @@ import           Database.LSMTree.Internal.RawOverflowPage (RawOverflowPage)
 import qualified Database.LSMTree.Internal.RawOverflowPage as RawOverflowPage
 import           Database.LSMTree.Internal.RawPage (RawPage)
 import qualified Database.LSMTree.Internal.RawPage as RawPage
-import           Database.LSMTree.Internal.Run.BloomFilter (Bloom)
 import           Database.LSMTree.Internal.Run.Construction (RunAcc)
 import qualified Database.LSMTree.Internal.Run.Construction as RunAcc
 import           Database.LSMTree.Internal.Run.FsPaths

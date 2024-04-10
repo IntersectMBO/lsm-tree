@@ -37,6 +37,10 @@ module Database.LSMTree.Internal.Run.Construction (
 
 import           Control.Exception (assert)
 import           Control.Monad.ST.Strict
+import           Data.BloomFilter (Bloom, MBloom)
+import qualified Data.BloomFilter as Bloom
+import qualified Data.BloomFilter.Easy as Bloom.Easy
+import qualified Data.BloomFilter.Mutable as MBloom
 import           Data.Maybe (fromMaybe)
 import           Data.Primitive.PrimVar (PrimVar, modifyPrimVar, newPrimVar,
                      readPrimVar, writePrimVar)
@@ -55,8 +59,6 @@ import qualified Database.LSMTree.Internal.PageAcc1 as PageAcc
 import           Database.LSMTree.Internal.RawOverflowPage
 import           Database.LSMTree.Internal.RawPage (RawPage)
 import qualified Database.LSMTree.Internal.RawPage as RawPage
-import           Database.LSMTree.Internal.Run.BloomFilter (Bloom, MBloom)
-import qualified Database.LSMTree.Internal.Run.BloomFilter as Bloom
 import           Database.LSMTree.Internal.Serialise (SerialisedKey,
                      SerialisedValue, keyTopBits16)
 
@@ -93,7 +95,7 @@ new :: NumEntries
                                   -- which is based on the 'NumPages'.
     -> ST s (RunAcc s)
 new (NumEntries nentries) npages rangeFinderPrecisionOverride = do
-    mbloom <- Bloom.newEasy 0.1 nentries -- TODO(optimise): tune bloom filter
+    mbloom <- Bloom.Easy.easyNew 0.1 nentries -- TODO(optimise): tune bloom filter
     let rangeFinderPrecisionDefault = Index.suggestRangeFinderPrecision npages
         rangeFinderPrecision        = fromMaybe rangeFinderPrecisionDefault
                                                 rangeFinderPrecisionOverride
@@ -179,7 +181,7 @@ addSmallKeyOp
 addSmallKeyOp racc@RunAcc{..} k e =
   assert (PageAcc.entryWouldFitInPage k e) $ do
     modifyPrimVar entryCount (+1)
-    Bloom.insert mbloom k
+    MBloom.insert mbloom k
 
     -- We have to force a page boundary when the range finder bits change.
     -- This is a constraint from the compact index. To do this we remember the
@@ -238,7 +240,7 @@ addLargeKeyOp
 addLargeKeyOp racc@RunAcc{..} k e =
   assert (not (PageAcc.entryWouldFitInPage k e)) $ do
     modifyPrimVar entryCount (+1)
-    Bloom.insert mbloom k
+    MBloom.insert mbloom k
 
     -- If the existing page accumulator is non-empty, we flush it, since the
     -- new large key/op will need more than one page to itself.
@@ -292,7 +294,7 @@ addLargeSerialisedKeyOp racc@RunAcc{..} k page overflowPages =
           RawPage.rawPageOverflowPages page > 0 &&
           RawPage.rawPageOverflowPages page == length overflowPages) $ do
     modifyPrimVar entryCount (+1)
-    Bloom.insert mbloom k
+    MBloom.insert mbloom k
 
     -- If the existing page accumulator is non-empty, we flush it, since the
     -- new large key/op will need more than one page to itself.

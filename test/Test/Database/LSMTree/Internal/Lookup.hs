@@ -16,6 +16,7 @@ import           Control.DeepSeq
 import           Control.Exception
 import           Control.Monad.ST.Strict
 import           Data.Bifunctor
+import qualified Data.BloomFilter as Bloom
 import           Data.Coerce (coerce)
 import           Data.Either (rights)
 import qualified Data.Foldable as F
@@ -36,7 +37,6 @@ import           Database.LSMTree.Internal.Lookup
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.RawOverflowPage
 import           Database.LSMTree.Internal.RawPage
-import           Database.LSMTree.Internal.Run.BloomFilter as Bloom
 import           Database.LSMTree.Internal.Run.Construction as Run
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.Serialise.Class

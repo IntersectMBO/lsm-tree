@@ -20,6 +20,7 @@ import           Control.DeepSeq (NFData)
 import           Control.Monad
 import           Criterion.Main (Benchmark, bench, bgroup, env, nfAppIO, whnf,
                      whnfAppIO)
+import qualified Data.BloomFilter.Easy as Bloom.Easy
 import           Data.List (sort)
 import           Data.Maybe (fromMaybe)
 import           Data.Proxy (Proxy (..))
@@ -32,7 +33,6 @@ import           Database.LSMTree.Internal.Index.Compact.Construction
                      (Append (..))
 import           Database.LSMTree.Internal.Lookup (RunLookupView (..),
                      bloomQueriesDefault, indexSearches, prepLookups)
-import qualified Database.LSMTree.Internal.Run.BloomFilter as Bloom
 import           Database.LSMTree.Internal.Serialise (SerialiseKey,
                      SerialisedKey, serialiseKey)
 import           Database.LSMTree.Util.Orphans ()
@@ -144,7 +144,7 @@ prepLookupsEnv ::
   -> IO (Vector (RunLookupView (Handle ())), Vector SerialisedKey)
 prepLookupsEnv _ Config {..} = do
     (storedKeys, lookupKeys) <- lookupsEnv @k (mkStdGen 17) totalEntries npos nneg
-    let b    = Bloom.fromList fpr $ fmap serialiseKey storedKeys
+    let b    = Bloom.Easy.easyList fpr $ fmap serialiseKey storedKeys
         -- This doesn't ensure partitioning, but it means we can keep page
         -- generation simple. The consequence is that index search can return
         -- off-by-one results, but we take that as a minor inconvience.

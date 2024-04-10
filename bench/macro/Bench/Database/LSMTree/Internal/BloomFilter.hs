@@ -11,6 +11,7 @@ import           Control.Monad
 import           Control.Monad.ST
 import           Control.Monad.ST.Unsafe
 import           Data.Bits ((.&.))
+import           Data.BloomFilter (Bloom)
 import qualified Data.BloomFilter as Bloom
 import qualified Data.BloomFilter.Hash as Bloom
 import qualified Data.BloomFilter.Mutable as MBloom
@@ -26,7 +27,7 @@ import           System.Mem (performMajorGC)
 import           System.Random
 import           Text.Printf (printf)
 
-import           Database.LSMTree.Internal.Run.BloomFilter as Bloom
+import           Database.LSMTree.Internal.Monkey as Monkey
 import           Database.LSMTree.Internal.Serialise (SerialisedKey,
                      serialiseKey)
 import           Database.LSMTree.Util.Orphans ()
@@ -173,8 +174,8 @@ lsmStyleBloomFilters l1 requestedFPR =
         ++ replicate 8 (2^(l1+2), 4)   -- 8 runs at level 2 (tiering)
         ++ replicate 8 (2^(l1+4),16)   -- 8 runs at level 3 (tiering)
         ++            [(2^(l1+8),256)] -- 1 run  at level 4 (leveling)
-    , let numBits      = Bloom.monkeyBits numEntries requestedFPR
-          numHashFuncs = Bloom.monkeyHashFuncs numBits numEntries
+    , let numBits      = Monkey.monkeyBits numEntries requestedFPR
+          numHashFuncs = Monkey.monkeyHashFuncs numBits numEntries
     ]
 
 totalNumEntries, totalNumBytes :: [BloomFilterSizeInfo] -> Int
@@ -232,7 +233,7 @@ elemManyEnv filterSizes rng0 =
            (cycle [ mb'
                   | (mb, (_, sizeFactor, _, _)) <- zip mbs filterSizes
                   , mb' <- replicate sizeFactor mb ]))
-    Vector.fromList <$> mapM unsafeFreeze mbs
+    Vector.fromList <$> mapM Bloom.unsafeFreeze mbs
 
 -- | This gives us a baseline cost of just calculating the series of keys.
 benchBaseline :: Vector (Bloom SerialisedKey) -> StdGen -> Int -> ()
