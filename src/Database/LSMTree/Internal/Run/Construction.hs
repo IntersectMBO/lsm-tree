@@ -31,6 +31,7 @@ module Database.LSMTree.Internal.Run.Construction (
   , addKeyOp
   , addSmallKeyOp
   , addLargeKeyOp
+  , addLargeSerialisedKeyOp
   , PageAcc.entryWouldFitInPage
   ) where
 
@@ -53,6 +54,7 @@ import qualified Database.LSMTree.Internal.PageAcc as PageAcc
 import qualified Database.LSMTree.Internal.PageAcc1 as PageAcc
 import           Database.LSMTree.Internal.RawOverflowPage
 import           Database.LSMTree.Internal.RawPage (RawPage)
+import qualified Database.LSMTree.Internal.RawPage as RawPage
 import           Database.LSMTree.Internal.Run.BloomFilter (Bloom, MBloom)
 import qualified Database.LSMTree.Internal.Run.BloomFilter as Bloom
 import           Database.LSMTree.Internal.Serialise (SerialisedKey,
@@ -247,6 +249,56 @@ addLargeKeyOp racc@RunAcc{..} k e =
     chunks <- Index.appendMulti (k, fromIntegral (length overflowPages)) mindex
 
     -- Combine the results with anything we flushed before
+    let (!pages, !chunks') = selectPagesAndChunks mpagemchunkPre page chunks
+    return (pages, overflowPages, chunks')
+
+-- | Add a \"large\" pre-serialised key\/op entry to the run accumulator.
+--
+-- This version is for large entries that span multiple pages and are
+-- represented by already serialised 'RawPage' and one or more
+-- 'RawOverflowPage's.
+--
+-- For this case, the caller provides the key, the raw page it is from and the
+-- overflow pages. The raw page and overflow pages are returned along with any
+-- other pages that need to be yielded (in order). The caller should write out
+-- the pages to the run's page file in order: the returned 'RawPage's followed
+-- by the 'RawOverflowPage's (the same as for 'addLargeKeyOp').
+--
+-- Note that this action is not appropriate for key\/op entries that would fit
+-- within a page ('PageAcc.entryWouldFitInPage') but just /happen/ to have
+-- ended up in a page on their own in an input to a merge. A page can end up
+-- with a single entry because a page boundary was needed rather than because
+-- the entry itself was too big. Furthermore, pre-serialised pages can only be
+-- used unaltered if the entry does /not/ use a 'BlobSpan', since the 'BlobSpan'
+-- typically needs to be modified. Thus the caller should use the following
+-- tests to decide if 'addLargeSerialisedKeyOp' should be used:
+--
+-- 1. The entry does not use a 'BlobSpan'.
+-- 2. The entry definitely overflows onto one or more overflow pages.
+--
+-- Otherwise, use 'addLargeKeyOp' or 'addSmallKeyOp' as appropriate.
+--
+addLargeSerialisedKeyOp
+  :: RunAcc s
+  -> SerialisedKey     -- ^ The key
+  -> RawPage           -- ^ The page that this key\/op is in, which must be the
+                       -- first page of a multi-page representation of a single
+                       -- key\/op /without/ a 'BlobSpan'.
+  -> [RawOverflowPage] -- ^ The overflow pages for this key\/op
+  -> ST s ([RawPage], [RawOverflowPage], [Index.Chunk])
+addLargeSerialisedKeyOp racc@RunAcc{..} k page overflowPages =
+  assert (RawPage.rawPageNumKeys page == 1 &&
+          RawPage.rawPageHasBlobSpanAt page 0 == 0 &&
+          RawPage.rawPageOverflowPages page > 0 &&
+          RawPage.rawPageOverflowPages page == length overflowPages) $ do
+    modifyPrimVar entryCount (+1)
+    Bloom.insert mbloom k
+
+    -- If the existing page accumulator is non-empty, we flush it, since the
+    -- new large key/op will need more than one page to itself.
+    mpagemchunkPre <- flushPageIfNonEmpty racc
+    let nOverflowPages = length overflowPages --TODO: consider using vector
+    chunks <- Index.appendMulti (k, fromIntegral nOverflowPages) mindex
     let (!pages, !chunks') = selectPagesAndChunks mpagemchunkPre page chunks
     return (pages, overflowPages, chunks')
 

@@ -1,3 +1,4 @@
+{-# LANGUAGE NamedFieldPuns    #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes        #-}
 {-# LANGUAGE RecordWildCards   #-}
@@ -11,6 +12,7 @@ module Database.LSMTree.Internal.Run.Mutable (
   , NumPages
   , new
   , addKeyOp
+  , addLargeSerialisedKeyOp
   , unsafeFinalise
   , addMRunReference
   , removeMRunReference
@@ -105,7 +107,7 @@ new fs lsmMRunFsPaths numEntries estimatedNumPages = do
 -- | Add a key\/op pair. Blobs will be written to disk. Use only for
 -- entries that are fully in-memory.
 -- To handle larger-than-page values in a chunked style during run merging,
--- one could write slightly different function based on 'Cons.addChunkedKOp'.
+-- use 'addLargeSerialisedKeyOp'.
 --
 -- The k\/ops and the primary array of the index get written incrementally,
 -- everything else only at the end when 'unsafeFinalise' is called.
@@ -116,7 +118,7 @@ addKeyOp ::
   -> SerialisedKey
   -> Entry SerialisedValue SerialisedBlob
   -> IO ()
-addKeyOp fs mrun@MRun {..} key op = do
+addKeyOp fs mrun@MRun{lsmMRunAcc} key op = do
     op' <- for op $ writeBlob fs mrun
     if RunAcc.entryWouldFitInPage key op'
       then do
@@ -134,6 +136,23 @@ addKeyOp fs mrun@MRun {..} key op = do
        for_ pages (writeRawPage fs mrun)
        for_ overflowPages (writeRawOverflowPage fs mrun)
        writeIndexChunks fs mrun chunks
+
+-- | See 'RunAcc.addLargeSerialisedKeyOp' for details.
+--
+addLargeSerialisedKeyOp ::
+     HasFS IO h
+  -> MRun (FS.Handle h)
+  -> SerialisedKey
+  -> RawPage
+  -> [RawOverflowPage]
+  -> IO ()
+addLargeSerialisedKeyOp fs mrun@MRun{lsmMRunAcc} key page overflowPages = do
+    (pages, overflowPages', chunks)
+      <- ST.stToIO $
+           RunAcc.addLargeSerialisedKeyOp lsmMRunAcc key page overflowPages
+    for_ pages (writeRawPage fs mrun)
+    for_ overflowPages' (writeRawOverflowPage fs mrun)
+    writeIndexChunks fs mrun chunks
 
 -- | Finish construction of the run.
 -- Writes the filter and index to file and leaves all written files on disk.
