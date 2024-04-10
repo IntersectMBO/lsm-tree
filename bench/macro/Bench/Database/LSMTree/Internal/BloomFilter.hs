@@ -30,7 +30,7 @@ import           Text.Printf (printf)
 import           Database.LSMTree.Internal.Monkey as Monkey
 import           Database.LSMTree.Internal.Serialise (SerialisedKey,
                      serialiseKey)
-import           Database.LSMTree.Util.Orphans ()
+import           Database.LSMTree.Orphans ()
 
 
 -- Benchmark parameters you can tweak. The defaults are rather small, so the

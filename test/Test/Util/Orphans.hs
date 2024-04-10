@@ -24,7 +24,7 @@ import           Database.LSMTree.Internal.BlobRef
 import           Database.LSMTree.Internal.Serialise (SerialiseKey)
 import           Database.LSMTree.Normal (LookupResult, RangeLookupResult,
                      TableHandle)
-import qualified Database.LSMTree.Util.Orphans ()
+import qualified Database.LSMTree.Orphans ()
 import           Test.QuickCheck.Modifiers (Small (..))
 import           Test.QuickCheck.StateModel (Realized)
 import           Test.QuickCheck.StateModel.Lockstep (InterpretOp)

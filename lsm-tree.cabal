@@ -190,8 +190,8 @@ library lsm-tree-utils
   default-language: Haskell2010
   exposed-modules:
     Database.LSMTree.Generators
+    Database.LSMTree.Orphans
     Database.LSMTree.Util
-    Database.LSMTree.Util.Orphans
     System.Random.Extras
 
   build-depends:

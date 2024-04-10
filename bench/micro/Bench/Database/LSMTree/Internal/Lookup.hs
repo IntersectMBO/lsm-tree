@@ -35,7 +35,7 @@ import           Database.LSMTree.Internal.Lookup (RunLookupView (..),
                      bloomQueriesDefault, indexSearches, prepLookups)
 import           Database.LSMTree.Internal.Serialise (SerialiseKey,
                      SerialisedKey, serialiseKey)
-import           Database.LSMTree.Util.Orphans ()
+import           Database.LSMTree.Orphans ()
 import           GHC.Generics (Generic)
 import           Prelude hiding (getContents)
 import           System.FS.API
