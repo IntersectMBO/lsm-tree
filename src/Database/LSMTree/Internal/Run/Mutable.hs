@@ -39,9 +39,9 @@ import           Database.LSMTree.Internal.RawOverflowPage (RawOverflowPage)
 import qualified Database.LSMTree.Internal.RawOverflowPage as RawOverflowPage
 import           Database.LSMTree.Internal.RawPage (RawPage)
 import qualified Database.LSMTree.Internal.RawPage as RawPage
-import           Database.LSMTree.Internal.Run.Construction (RunAcc)
-import qualified Database.LSMTree.Internal.Run.Construction as RunAcc
 import           Database.LSMTree.Internal.Run.FsPaths
+import           Database.LSMTree.Internal.RunAcc (RunAcc)
+import qualified Database.LSMTree.Internal.RunAcc as RunAcc
 import           Database.LSMTree.Internal.Serialise
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
