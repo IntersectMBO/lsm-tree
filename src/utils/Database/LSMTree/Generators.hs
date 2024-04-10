@@ -85,8 +85,8 @@ import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer (..))
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import qualified Database.LSMTree.Monoidal as Monoidal
 import qualified Database.LSMTree.Normal as Normal
+import           Database.LSMTree.Orphans ()
 import           Database.LSMTree.Util
-import           Database.LSMTree.Util.Orphans ()
 import           GHC.Generics (Generic)
 import           System.Random (Uniform)
 import qualified Test.QuickCheck as QC

@@ -8,8 +8,7 @@
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
--- TODO: rename to Database.LSMTree.Orphans
-module Database.LSMTree.Util.Orphans () where
+module Database.LSMTree.Orphans () where
 
 import           Control.DeepSeq (NFData (..))
 import qualified Data.ByteString as BS
