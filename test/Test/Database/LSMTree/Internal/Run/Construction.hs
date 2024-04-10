@@ -6,6 +6,7 @@ module Test.Database.LSMTree.Internal.Run.Construction (tests) where
 import           Control.Exception (assert)
 import           Control.Monad.ST
 import           Data.Bifunctor (Bifunctor (..))
+import qualified Data.BloomFilter as Bloom
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Short as SBS
 import           Data.Maybe
@@ -20,7 +21,6 @@ import           Database.LSMTree.Internal.RawOverflowPage (RawOverflowPage)
 import qualified Database.LSMTree.Internal.RawOverflowPage as RawOverflowPage
 import           Database.LSMTree.Internal.RawPage (RawPage)
 import qualified Database.LSMTree.Internal.RawPage as RawPage
-import qualified Database.LSMTree.Internal.Run.BloomFilter as Bloom
 import           Database.LSMTree.Internal.Run.Construction as Real
 import           Database.LSMTree.Internal.Serialise
 import qualified FormatPage as Proto

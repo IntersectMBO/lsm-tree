@@ -49,6 +49,7 @@ library
     Database.LSMTree.Internal.Index.Compact.Construction
     Database.LSMTree.Internal.KMerge
     Database.LSMTree.Internal.Lookup
+    Database.LSMTree.Internal.Monkey
     Database.LSMTree.Internal.Monoidal
     Database.LSMTree.Internal.Normal
     Database.LSMTree.Internal.PageAcc
@@ -57,7 +58,6 @@ library
     Database.LSMTree.Internal.RawOverflowPage
     Database.LSMTree.Internal.RawPage
     Database.LSMTree.Internal.Run
-    Database.LSMTree.Internal.Run.BloomFilter
     Database.LSMTree.Internal.Run.Construction
     Database.LSMTree.Internal.Run.FsPaths
     Database.LSMTree.Internal.Run.Mutable
@@ -189,7 +189,6 @@ library lsm-tree-utils
   hs-source-dirs:   src/utils
   default-language: Haskell2010
   exposed-modules:
-    Database.LSMTree.Extras
     Database.LSMTree.Generators
     Database.LSMTree.Util
     Database.LSMTree.Util.Orphans
@@ -201,7 +200,6 @@ library lsm-tree-utils
     , containers
     , deepseq
     , lsm-tree
-    , lsm-tree:bloomfilter
     , primitive
     , QuickCheck
     , quickcheck-instances
@@ -229,12 +227,12 @@ test-suite lsm-tree-test
     Test.Database.LSMTree.Internal.Entry
     Test.Database.LSMTree.Internal.Index.Compact
     Test.Database.LSMTree.Internal.Lookup
+    Test.Database.LSMTree.Internal.Monkey
     Test.Database.LSMTree.Internal.PageAcc
     Test.Database.LSMTree.Internal.PageAcc1
     Test.Database.LSMTree.Internal.RawOverflowPage
     Test.Database.LSMTree.Internal.RawPage
     Test.Database.LSMTree.Internal.Run
-    Test.Database.LSMTree.Internal.Run.BloomFilter
     Test.Database.LSMTree.Internal.Run.Construction
     Test.Database.LSMTree.Internal.Serialise
     Test.Database.LSMTree.Model.Monoidal
@@ -299,10 +297,10 @@ benchmark lsm-tree-micro-bench
   hs-source-dirs:   bench/micro
   main-is:          Main.hs
   other-modules:
+    Bench.Database.LSMTree.Internal.BloomFilter
     Bench.Database.LSMTree.Internal.Index.Compact
     Bench.Database.LSMTree.Internal.Lookup
     Bench.Database.LSMTree.Internal.RawPage
-    Bench.Database.LSMTree.Internal.Run.BloomFilter
 
   build-depends:
     , base

@@ -50,7 +50,7 @@ module Database.LSMTree.Internal.RawBytes (
 import           Control.DeepSeq
 import           Control.Exception (assert)
 import           Data.Bits (Bits (shiftL, shiftR))
-import           Data.BloomFilter.Hash (hashByteArray)
+import           Data.BloomFilter.Hash (Hashable (..), hashByteArray)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BB
 import           Data.ByteString.Short (ShortByteString (SBS))
@@ -59,7 +59,6 @@ import           Data.Primitive.ByteArray (ByteArray (..), compareByteArrays)
 import qualified Data.Vector.Primitive as PV
 import           Database.LSMTree.Internal.ByteString (shortByteStringFromTo,
                      tryGetByteArray)
-import           Database.LSMTree.Internal.Run.BloomFilter (Hashable (..))
 import           Database.LSMTree.Internal.Vector
 import           Prelude hiding (drop, take)
 

@@ -7,7 +7,7 @@
 {-# LANGUAGE TypeApplications           #-}
 {- HLINT ignore "Use camelCase" -}
 
-module Test.Database.LSMTree.Internal.Run.BloomFilter (
+module Test.Database.LSMTree.Internal.Monkey (
     -- * Main test tree
     tests
     -- * Bloom filter construction
@@ -24,14 +24,18 @@ module Test.Database.LSMTree.Internal.Run.BloomFilter (
   ) where
 
 import           Control.Exception (assert)
+import           Control.Monad.ST
+import           Data.BloomFilter (Bloom)
+import qualified Data.BloomFilter as Bloom
+import qualified Data.BloomFilter.Easy as Bloom.Easy
+import           Data.BloomFilter.Hash (Hashable)
+import qualified Data.BloomFilter.Mutable as MBloom
 import           Data.Foldable (Foldable (..))
 import           Data.Proxy (Proxy (..))
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Word (Word64)
-import           Database.LSMTree.Extras
-import           Database.LSMTree.Internal.Run.BloomFilter (Bloom, Hashable)
-import qualified Database.LSMTree.Internal.Run.BloomFilter as Bloom
+import qualified Database.LSMTree.Internal.Monkey as Monkey
 import           System.Random
 import           System.Random.Extras
 import           Test.QuickCheck
@@ -238,3 +242,48 @@ instance Semigroup Counts where
 instance Monoid Counts where
   mempty :: Counts
   mempty = Counts 0 0 0 0
+
+{-------------------------------------------------------------------------------
+  Bloom filter construction
+-------------------------------------------------------------------------------}
+
+type BloomMaker a = [a] -> Bloom a
+
+-- | Create a bloom filter through the 'MBloom' interface. Tunes the bloom
+-- filter using 'suggestSizing'.
+mkBloomST :: Hashable a => Double -> BloomMaker a
+mkBloomST requestedFPR xs = runST $ do
+    b <- MBloom.new numHashFuncs numBits
+    mapM_ (MBloom.insert b) xs
+    Bloom.freeze b
+  where
+    numEntries              = length xs
+    (numBits, numHashFuncs) = Bloom.Easy.suggestSizing numEntries requestedFPR
+
+-- | Create a bloom filter through the 'MBloom' interface. Tunes the bloom
+-- filter a la Monkey.
+--
+-- === TODO
+--
+-- The measured FPR exceeds the requested FPR by a number of percentages.
+-- Example: @withNewStdGen $ measureApproximateFPR (Proxy @Word64) (mkBloomST'
+-- 0.37) 1000000@. I'm unsure why, but I have a number of ideas
+--
+-- * The FPR (and bits/hash functions) calculations are approximations.
+-- * Rounding errors in the Haskell implementation of FPR calculations
+-- * The Monkey tuning is incompatible with @bloomfilter@'s /next power of 2/
+--   rounding of th ebits.
+mkBloomST_Monkey :: Hashable a => Double -> BloomMaker a
+mkBloomST_Monkey requestedFPR xs = runST $ do
+    b <- MBloom.new numHashFuncs (fromIntegral numBits)
+    mapM_ (MBloom.insert b) xs
+    Bloom.freeze b
+  where
+    numEntries   = length xs
+    numBits      = Monkey.monkeyBits numEntries requestedFPR
+    numHashFuncs = Monkey.monkeyHashFuncs numBits numEntries
+
+-- | Create a bloom filter through the "Data.BloomFilter.Easy" interface. Tunes
+-- the bloom filter using 'suggestSizing'.
+mkBloomEasy :: Hashable a => Double -> BloomMaker a
+mkBloomEasy = Bloom.Easy.easyList

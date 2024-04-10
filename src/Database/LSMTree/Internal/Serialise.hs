@@ -36,12 +36,12 @@ module Database.LSMTree.Internal.Serialise (
   , serialisedBlob
   ) where
 
+import           Data.BloomFilter.Hash (Hashable (..))
 import qualified Data.ByteString.Builder as BB
 import qualified Data.Vector.Primitive as PV
 import           Data.Word
 import           Database.LSMTree.Internal.RawBytes (RawBytes (..))
 import qualified Database.LSMTree.Internal.RawBytes as RB
-import           Database.LSMTree.Internal.Run.BloomFilter (Hashable (..))
 import           Database.LSMTree.Internal.Serialise.Class (SerialiseKey,
                      SerialiseValue)
 import qualified Database.LSMTree.Internal.Serialise.Class as Class
