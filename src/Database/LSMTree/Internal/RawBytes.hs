@@ -33,6 +33,8 @@ module Database.LSMTree.Internal.RawBytes (
   , sliceBits32
     -- * Construction
     -- | Use 'Semigroup' and 'Monoid' operations
+    -- ** Restricting memory usage
+  , copy
     -- * Conversions
   , fromVector
   , fromByteArray
@@ -47,7 +49,7 @@ module Database.LSMTree.Internal.RawBytes (
   , builder
   ) where
 
-import           Control.DeepSeq
+import           Control.DeepSeq (NFData)
 import           Control.Exception (assert)
 import           Data.Bits (Bits (shiftL, shiftR))
 import           Data.BloomFilter.Hash (Hashable (..), hashByteArray)
@@ -207,6 +209,14 @@ instance Semigroup RawBytes where
 instance Monoid RawBytes where
     mempty = coerce PV.empty
     mconcat = coerce PV.concat
+
+-- | O(n) Yield the argument, but force it not to retain any extra memory by
+-- copying it.
+--
+-- Useful when dealing with slices. Also, see
+-- "Database.LSMTree.Internal.Unsliced"
+copy :: RawBytes -> RawBytes
+copy (RawBytes pvec) = RawBytes (PV.force pvec)
 
 {-------------------------------------------------------------------------------
   Conversions

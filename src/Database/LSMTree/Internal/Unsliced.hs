@@ -1,5 +1,6 @@
 {-# LANGUAGE DeriveFunctor     #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE RoleAnnotations   #-}
 
 module Database.LSMTree.Internal.Unsliced (
     -- * Unsliced raw bytes
@@ -12,52 +13,60 @@ module Database.LSMTree.Internal.Unsliced (
   ) where
 
 import           Control.Exception (assert)
+import           Data.Primitive.ByteArray
 import qualified Data.Vector.Primitive as PV
-import           Data.Word (Word8)
-import           Database.LSMTree.Internal.Serialise (SerialisedKey (..))
 import           Database.LSMTree.Internal.RawBytes (RawBytes (..))
-import           Database.LSMTree.Internal.Vector (noRetainedExtraMemory)
+import qualified Database.LSMTree.Internal.RawBytes as RB
+import           Database.LSMTree.Internal.Serialise (SerialisedKey (..))
+import           Database.LSMTree.Internal.Vector (mkPrimVector,
+                     noRetainedExtraMemory)
 
--- | A type @a@ represented as unsliced raw bytes.
+-- | Unsliced string of bytes
+type role Unsliced nominal
 newtype Unsliced a =
-    UnsafeNoAssertUnsliced (PV.Vector Word8)
-  deriving Functor
+    Unsliced ByteArray
 
-invariant :: Unsliced a -> Bool
-invariant (UnsafeNoAssertUnsliced pvec) = noRetainedExtraMemory pvec
+getByteArray :: RawBytes -> ByteArray
+getByteArray (RawBytes (PV.Vector _ _ ba)) = ba
+
+precondition :: RawBytes -> Bool
+precondition (RawBytes pvec) = noRetainedExtraMemory pvec
 
 makeUnsliced :: RawBytes -> Unsliced RawBytes
-makeUnsliced (RawBytes pvec)
-    | invariant urb = urb
-    | otherwise     = UnsafeNoAssertUnsliced (PV.force pvec)
-    where urb = UnsafeNoAssertUnsliced pvec
+makeUnsliced bytes
+    | precondition bytes = Unsliced (getByteArray bytes)
+    | otherwise     = Unsliced (getByteArray $ RB.copy bytes)
 
 unsafeMakeUnsliced :: RawBytes -> Unsliced RawBytes
-unsafeMakeUnsliced (RawBytes pvec) = assert (invariant urb) urb
-  where urb = UnsafeNoAssertUnsliced pvec
+unsafeMakeUnsliced bytes = assert (precondition bytes) (Unsliced (getByteArray bytes))
 
 unsafeNoAssertMakeUnsliced :: RawBytes -> Unsliced RawBytes
-unsafeNoAssertMakeUnsliced (RawBytes pvec) = UnsafeNoAssertUnsliced pvec
+unsafeNoAssertMakeUnsliced bytes = Unsliced (getByteArray bytes)
 
 fromUnsliced :: Unsliced RawBytes -> RawBytes
-fromUnsliced (UnsafeNoAssertUnsliced pvec) = RawBytes pvec
+fromUnsliced (Unsliced ba) = RawBytes (mkPrimVector 0 (sizeofByteArray ba) ba)
 
 {-------------------------------------------------------------------------------
   Unsliced keys
 -------------------------------------------------------------------------------}
 
+from :: Unsliced RawBytes -> Unsliced SerialisedKey
+from (Unsliced ba) = Unsliced ba
+
+to :: Unsliced SerialisedKey -> Unsliced RawBytes
+to (Unsliced ba) = Unsliced ba
+
 makeUnslicedKey :: SerialisedKey -> Unsliced SerialisedKey
-makeUnslicedKey (SerialisedKey rb) = SerialisedKey <$> makeUnsliced rb
+makeUnslicedKey (SerialisedKey rb) = from (makeUnsliced rb)
 
 unsafeMakeUnslicedKey :: SerialisedKey -> Unsliced SerialisedKey
-unsafeMakeUnslicedKey (SerialisedKey rb) = SerialisedKey <$> unsafeMakeUnsliced rb
+unsafeMakeUnslicedKey (SerialisedKey rb) = from (unsafeMakeUnsliced rb)
 
 unsafeNoAssertMakeUnslicedKey :: SerialisedKey -> Unsliced SerialisedKey
-unsafeNoAssertMakeUnslicedKey (SerialisedKey rb) =
-    SerialisedKey <$> unsafeNoAssertMakeUnsliced rb
+unsafeNoAssertMakeUnslicedKey (SerialisedKey rb) = from (unsafeNoAssertMakeUnsliced rb)
 
 fromUnslicedKey :: Unsliced SerialisedKey -> SerialisedKey
-fromUnslicedKey x = SerialisedKey (fromUnsliced ((\(SerialisedKey y) -> y) <$> x))
+fromUnslicedKey x = SerialisedKey (fromUnsliced (to x))
 
 instance Show (Unsliced SerialisedKey) where
   show x = show (fromUnslicedKey x)
