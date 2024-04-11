@@ -3,19 +3,18 @@
 {-# LANGUAGE RankNTypes        #-}
 {-# LANGUAGE RecordWildCards   #-}
 
--- | Mutable runs ('MRun') that are under construction.
+-- | A mutable run ('RunBuilder') that is under construction.
 --
-module Database.LSMTree.Internal.Run.Mutable (
-    -- * Mutable Run
+module Database.LSMTree.Internal.RunBuilder (
     RefCount
-  , MRun
+  , RunBuilder
   , NumPages
   , new
   , addKeyOp
   , addLargeSerialisedKeyOp
   , unsafeFinalise
-  , addMRunReference
-  , removeMRunReference
+  , addReference
+  , removeReference
   ) where
 
 import           Control.Monad (when)
@@ -46,7 +45,7 @@ import           Database.LSMTree.Internal.Serialise
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
 
--- | The 'Run' and 'MRun' objects are reference counted.
+-- | The 'Run' and 'RunBuilder' objects are reference counted.
 type RefCount = IORef Int
 
 -- | The in-memory representation of an LSM run that is under construction.
@@ -60,29 +59,29 @@ type RefCount = IORef Int
 --
 -- __Not suitable for concurrent construction from multiple threads!__
 --
-data MRun fhandle = MRun {
+data RunBuilder fhandle = RunBuilder {
       -- | The reference count for the LSM run. This counts the
       -- number of references from LSM handles to this run. When
       -- this drops to zero the open files will be closed.
-      lsmMRunRefCount   :: !RefCount
+      runBuilderRefCount   :: !RefCount
 
       -- | The file system paths for all the files used by the run.
-    , lsmMRunFsPaths    :: !RunFsPaths
+    , runBuilderFsPaths    :: !RunFsPaths
 
       -- | The run accumulator. This is the representation used for the
       -- morally pure subset of the run cnstruction functionality. In
       -- particular it contains the (mutable) index, bloom filter and buffered
       -- pending output for the key\/ops file.
-    , lsmMRunAcc        :: !(RunAcc ST.RealWorld)
+    , runBuilderAcc        :: !(RunAcc ST.RealWorld)
 
       -- | The byte offset within the blob file for the next blob to be written.
-    , lsmMRunBlobOffset :: !(IORef Word64)
+    , runBuilderBlobOffset :: !(IORef Word64)
 
       -- | The (write mode) file handles.
-    , lsmMRunHandles    :: {-# UNPACK #-} !(ForRunFiles (ChecksumHandle fhandle))
+    , runBuilderHandles    :: {-# UNPACK #-} !(ForRunFiles (ChecksumHandle fhandle))
     }
 
--- | Create an 'MRun' to start building a run.
+-- | Create an 'RunBuilder' to start building a run.
 -- The result will have an initial reference count of 1.
 new ::
      HasFS IO h
@@ -90,19 +89,19 @@ new ::
   -> NumEntries  -- ^ an upper bound of the number of entries to be added
   -> NumPages    -- ^ an upper bound (or estimate) of the total number of pages
                  -- in the resulting run
-  -> IO (MRun (FS.Handle h))
-new fs lsmMRunFsPaths numEntries estimatedNumPages = do
-    lsmMRunRefCount <- newIORef 1
+  -> IO (RunBuilder (FS.Handle h))
+new fs runBuilderFsPaths numEntries estimatedNumPages = do
+    runBuilderRefCount <- newIORef 1
 
-    lsmMRunAcc <- ST.stToIO $ RunAcc.new numEntries estimatedNumPages Nothing
-    lsmMRunBlobOffset <- newIORef 0
+    runBuilderAcc <- ST.stToIO $ RunAcc.new numEntries estimatedNumPages Nothing
+    runBuilderBlobOffset <- newIORef 0
 
     FS.createDirectoryIfMissing fs False activeRunsDir
-    lsmMRunHandles <- traverse (makeHandle fs) (runFsPaths lsmMRunFsPaths)
+    runBuilderHandles <- traverse (makeHandle fs) (runFsPaths runBuilderFsPaths)
 
-    let mrun = MRun {..}
-    writeIndexHeader fs mrun
-    return mrun
+    let builder = RunBuilder {..}
+    writeIndexHeader fs builder
+    return builder
 
 -- | Add a key\/op pair. Blobs will be written to disk. Use only for
 -- entries that are fully in-memory.
@@ -114,147 +113,147 @@ new fs lsmMRunFsPaths numEntries estimatedNumPages = do
 --
 addKeyOp ::
      HasFS IO h
-  -> MRun (FS.Handle h)
+  -> RunBuilder (FS.Handle h)
   -> SerialisedKey
   -> Entry SerialisedValue SerialisedBlob
   -> IO ()
-addKeyOp fs mrun@MRun{lsmMRunAcc} key op = do
-    op' <- for op $ writeBlob fs mrun
+addKeyOp fs builder@RunBuilder{runBuilderAcc} key op = do
+    op' <- for op $ writeBlob fs builder
     if RunAcc.entryWouldFitInPage key op'
       then do
-        mpagemchunk <- ST.stToIO $ RunAcc.addSmallKeyOp lsmMRunAcc key op'
+        mpagemchunk <- ST.stToIO $ RunAcc.addSmallKeyOp runBuilderAcc key op'
         case mpagemchunk of
           Nothing -> return ()
           Just (page, mchunk) -> do
-            writeRawPage fs mrun page
-            for_ mchunk $ writeIndexChunk fs mrun
+            writeRawPage fs builder page
+            for_ mchunk $ writeIndexChunk fs builder
 
       else do
        (pages, overflowPages, chunks)
-         <- ST.stToIO $ RunAcc.addLargeKeyOp lsmMRunAcc key op'
+         <- ST.stToIO $ RunAcc.addLargeKeyOp runBuilderAcc key op'
        --TODO: consider optimisation: use writev to write all pages in one go
-       for_ pages (writeRawPage fs mrun)
-       for_ overflowPages (writeRawOverflowPage fs mrun)
-       writeIndexChunks fs mrun chunks
+       for_ pages (writeRawPage fs builder)
+       for_ overflowPages (writeRawOverflowPage fs builder)
+       writeIndexChunks fs builder chunks
 
 -- | See 'RunAcc.addLargeSerialisedKeyOp' for details.
 --
 addLargeSerialisedKeyOp ::
      HasFS IO h
-  -> MRun (FS.Handle h)
+  -> RunBuilder (FS.Handle h)
   -> SerialisedKey
   -> RawPage
   -> [RawOverflowPage]
   -> IO ()
-addLargeSerialisedKeyOp fs mrun@MRun{lsmMRunAcc} key page overflowPages = do
+addLargeSerialisedKeyOp fs builder@RunBuilder{runBuilderAcc} key page overflowPages = do
     (pages, overflowPages', chunks)
       <- ST.stToIO $
-           RunAcc.addLargeSerialisedKeyOp lsmMRunAcc key page overflowPages
-    for_ pages (writeRawPage fs mrun)
-    for_ overflowPages' (writeRawOverflowPage fs mrun)
-    writeIndexChunks fs mrun chunks
+           RunAcc.addLargeSerialisedKeyOp runBuilderAcc key page overflowPages
+    for_ pages (writeRawPage fs builder)
+    for_ overflowPages' (writeRawOverflowPage fs builder)
+    writeIndexChunks fs builder chunks
 
 -- | Finish construction of the run.
 -- Writes the filter and index to file and leaves all written files on disk.
 --
--- __Do not use the 'MRun' after calling this function!__
+-- __Do not use the 'RunBuilder' after calling this function!__
 --
 -- TODO: Ensure proper cleanup even in presence of exceptions.
 unsafeFinalise ::
      HasFS IO h
-  -> MRun (FS.Handle h)
+  -> RunBuilder (FS.Handle h)
   -> IO (RefCount, RunFsPaths, Bloom SerialisedKey, CompactIndex, NumEntries)
-unsafeFinalise fs mrun@MRun {..} = do
+unsafeFinalise fs builder@RunBuilder {..} = do
     -- write final bits
     (mPage, mChunk, runFilter, runIndex, numEntries) <-
-      ST.stToIO (RunAcc.unsafeFinalise lsmMRunAcc)
-    for_ mPage $ writeRawPage fs mrun
-    for_ mChunk $ writeIndexChunk fs mrun
-    writeIndexFinal fs mrun numEntries runIndex
-    writeFilter fs mrun runFilter
+      ST.stToIO (RunAcc.unsafeFinalise runBuilderAcc)
+    for_ mPage $ writeRawPage fs builder
+    for_ mChunk $ writeIndexChunk fs builder
+    writeIndexFinal fs builder numEntries runIndex
+    writeFilter fs builder runFilter
     -- close all handles and write their checksums
-    checksums <- toChecksumsFile <$> traverse (closeHandle fs) lsmMRunHandles
-    CRC.writeChecksumsFile fs (runChecksumsPath lsmMRunFsPaths) checksums
-    return (lsmMRunRefCount, lsmMRunFsPaths, runFilter, runIndex, numEntries)
+    checksums <- toChecksumsFile <$> traverse (closeHandle fs) runBuilderHandles
+    CRC.writeChecksumsFile fs (runChecksumsPath runBuilderFsPaths) checksums
+    return (runBuilderRefCount, runBuilderFsPaths, runFilter, runIndex, numEntries)
 
 -- | Increase the reference count by one.
-addMRunReference :: HasFS IO h -> MRun (FS.Handle h) -> IO ()
-addMRunReference _ MRun {..} =
-    modifyIORef' lsmMRunRefCount (+1)
+addReference :: HasFS IO h -> RunBuilder (FS.Handle h) -> IO ()
+addReference _ RunBuilder {..} =
+    modifyIORef' runBuilderRefCount (+1)
 
 -- | Decrease the reference count by one.
 -- After calling this operation, the run must not be used anymore.
 -- If the reference count reaches zero, the run is closed, removing all its
 -- associated files from disk.
-removeMRunReference :: HasFS IO h -> MRun (FS.Handle h) -> IO ()
-removeMRunReference fs mrun@MRun {..} = do
-    modifyIORef' lsmMRunRefCount (\n -> n-1)
-    count <- readIORef lsmMRunRefCount
+removeReference :: HasFS IO h -> RunBuilder (FS.Handle h) -> IO ()
+removeReference fs builder@RunBuilder {..} = do
+    modifyIORef' runBuilderRefCount (\n -> n-1)
+    count <- readIORef runBuilderRefCount
     when (count <= 0) $
-      closeMRun fs mrun
+      close fs builder
 
 -- | Close the run, removing all files associated with it from disk.
 -- After calling this operation, the run must not be used anymore.
 --
 -- TODO: Ensure proper cleanup even in presence of exceptions.
-closeMRun :: HasFS IO h -> MRun (FS.Handle h) -> IO ()
-closeMRun fs MRun {..} = do
-    traverse_ (closeHandle fs) lsmMRunHandles
-    traverse_ (FS.removeFile fs) (runFsPaths lsmMRunFsPaths)
+close :: HasFS IO h -> RunBuilder (FS.Handle h) -> IO ()
+close fs RunBuilder {..} = do
+    traverse_ (closeHandle fs) runBuilderHandles
+    traverse_ (FS.removeFile fs) (runFsPaths runBuilderFsPaths)
 
 {-------------------------------------------------------------------------------
   Helpers
 -------------------------------------------------------------------------------}
 
-writeRawPage :: HasFS IO h -> MRun (FS.Handle h) -> RawPage -> IO ()
-writeRawPage fs MRun {..} =
+writeRawPage :: HasFS IO h -> RunBuilder (FS.Handle h) -> RawPage -> IO ()
+writeRawPage fs RunBuilder {..} =
     --TODO: avoid copying via builder and write the pinned RawPage directly
-    writeToHandle fs (forRunKOps lsmMRunHandles)
+    writeToHandle fs (forRunKOps runBuilderHandles)
   . RB.builder
   . RawPage.rawPageRawBytes
 
-writeRawOverflowPage :: HasFS IO h -> MRun (FS.Handle h) -> RawOverflowPage -> IO ()
-writeRawOverflowPage fs MRun {..} =
+writeRawOverflowPage :: HasFS IO h -> RunBuilder (FS.Handle h) -> RawOverflowPage -> IO ()
+writeRawOverflowPage fs RunBuilder {..} =
     --TODO: avoid copying via builder and write the pinned RawPage directly
-    writeToHandle fs (forRunKOps lsmMRunHandles)
+    writeToHandle fs (forRunKOps runBuilderHandles)
   . RB.builder
   . RawOverflowPage.rawOverflowPageRawBytes
 
-writeBlob :: HasFS IO h -> MRun (FS.Handle h) -> SerialisedBlob -> IO BlobSpan
-writeBlob fs MRun{..} blob = do
+writeBlob :: HasFS IO h -> RunBuilder (FS.Handle h) -> SerialisedBlob -> IO BlobSpan
+writeBlob fs RunBuilder{..} blob = do
     let size = sizeofBlob64 blob
-    offset <- readIORef lsmMRunBlobOffset
-    modifyIORef' lsmMRunBlobOffset (+size)
-    writeToHandle fs (forRunBlob lsmMRunHandles) (serialisedBlob blob)
+    offset <- readIORef runBuilderBlobOffset
+    modifyIORef' runBuilderBlobOffset (+size)
+    writeToHandle fs (forRunBlob runBuilderHandles) (serialisedBlob blob)
     return (BlobSpan offset (fromIntegral size))
 
-writeFilter :: HasFS IO h -> MRun (FS.Handle h) -> Bloom SerialisedKey -> IO ()
-writeFilter fs MRun {..} bf =
-    writeToHandle fs (forRunFilter lsmMRunHandles) (bloomFilterToBuilder bf)
+writeFilter :: HasFS IO h -> RunBuilder (FS.Handle h) -> Bloom SerialisedKey -> IO ()
+writeFilter fs RunBuilder {..} bf =
+    writeToHandle fs (forRunFilter runBuilderHandles) (bloomFilterToBuilder bf)
 
-writeIndexHeader :: HasFS IO h -> MRun (FS.Handle h) -> IO ()
-writeIndexHeader fs MRun {..} =
-    writeToHandle fs (forRunIndex lsmMRunHandles) $
+writeIndexHeader :: HasFS IO h -> RunBuilder (FS.Handle h) -> IO ()
+writeIndexHeader fs RunBuilder {..} =
+    writeToHandle fs (forRunIndex runBuilderHandles) $
       Index.headerBuilder
 
-writeIndexChunk :: HasFS IO h -> MRun (FS.Handle h) -> Index.Chunk -> IO ()
-writeIndexChunk fs MRun {..} chunk =
-    writeToHandle fs (forRunIndex lsmMRunHandles) $
+writeIndexChunk :: HasFS IO h -> RunBuilder (FS.Handle h) -> Index.Chunk -> IO ()
+writeIndexChunk fs RunBuilder {..} chunk =
+    writeToHandle fs (forRunIndex runBuilderHandles) $
       Index.chunkBuilder chunk
 
-writeIndexChunks :: HasFS IO h -> MRun (FS.Handle h) -> [Index.Chunk] -> IO ()
-writeIndexChunks fs MRun {..} chunks =
-    writeToHandle fs (forRunIndex lsmMRunHandles) $
+writeIndexChunks :: HasFS IO h -> RunBuilder (FS.Handle h) -> [Index.Chunk] -> IO ()
+writeIndexChunks fs RunBuilder {..} chunks =
+    writeToHandle fs (forRunIndex runBuilderHandles) $
       foldMap Index.chunkBuilder chunks
 
 writeIndexFinal ::
      HasFS IO h
-  -> MRun (FS.Handle h)
+  -> RunBuilder (FS.Handle h)
   -> NumEntries
   -> CompactIndex
   -> IO ()
-writeIndexFinal fs MRun {..} numEntries index =
-    writeToHandle fs (forRunIndex lsmMRunHandles) $
+writeIndexFinal fs RunBuilder {..} numEntries index =
+    writeToHandle fs (forRunIndex runBuilderHandles) $
       Index.finalBuilder numEntries index
 
 {-------------------------------------------------------------------------------

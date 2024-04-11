@@ -21,7 +21,7 @@ import           Database.LSMTree.Internal.RawOverflowPage (RawOverflowPage)
 import qualified Database.LSMTree.Internal.RawOverflowPage as RawOverflowPage
 import           Database.LSMTree.Internal.RawPage (RawPage)
 import qualified Database.LSMTree.Internal.RawPage as RawPage
-import           Database.LSMTree.Internal.RunAcc as Real
+import           Database.LSMTree.Internal.RunAcc
 import           Database.LSMTree.Internal.Serialise
 import qualified FormatPage as Proto
 import           Test.Tasty
