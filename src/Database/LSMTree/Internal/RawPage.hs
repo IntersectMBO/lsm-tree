@@ -240,7 +240,7 @@ rawPageOverflowPages :: RawPage -> Int
 rawPageOverflowPages page
   | rawPageNumKeys page == 1
   , let (_, end) = rawPageValueOffsets1 page
-  = roundUpToPageSize (fromIntegral end)
+  = fromIntegral (ceilDivPageSize end - 1)  -- don't count the first page
 
   | otherwise = 0
 

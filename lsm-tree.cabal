@@ -47,8 +47,8 @@ library
     Database.LSMTree.Internal.Entry
     Database.LSMTree.Internal.IndexCompact
     Database.LSMTree.Internal.IndexCompactAcc
-    Database.LSMTree.Internal.KMerge
     Database.LSMTree.Internal.Lookup
+    Database.LSMTree.Internal.Merge
     Database.LSMTree.Internal.Monkey
     Database.LSMTree.Internal.Monoidal
     Database.LSMTree.Internal.Normal
@@ -83,6 +83,7 @@ library
     , io-classes               ^>=1.3
     , lsm-tree:bloomfilter
     , lsm-tree:fs-api-blockio
+    , lsm-tree:kmerge
     , primitive                ^>=0.9
     , vector                   ^>=0.13
     , vector-algorithms        ^>=0.9
@@ -210,6 +211,7 @@ test-suite lsm-tree-test
     Test.Database.LSMTree.Internal.Entry
     Test.Database.LSMTree.Internal.IndexCompact
     Test.Database.LSMTree.Internal.Lookup
+    Test.Database.LSMTree.Internal.Merge
     Test.Database.LSMTree.Internal.Monkey
     Test.Database.LSMTree.Internal.PageAcc
     Test.Database.LSMTree.Internal.PageAcc1

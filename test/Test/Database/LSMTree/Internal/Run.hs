@@ -4,6 +4,9 @@
 module Test.Database.LSMTree.Internal.Run (
     -- * Main test tree
     tests,
+    -- * Utilities
+    readKOps,
+    isLargeKOp,
 ) where
 
 import           Control.Exception (assert)

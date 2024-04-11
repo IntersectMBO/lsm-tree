@@ -38,6 +38,7 @@ module Database.LSMTree.Internal.Run (
     module FsPaths
     -- * Run
   , Run (..)
+  , sizeInPages
   , addReference
   , removeReference
   , readBlob
@@ -65,7 +66,7 @@ import           Database.LSMTree.Internal.BloomFilter (bloomFilterFromSBS)
 import           Database.LSMTree.Internal.ByteString (tryCheapToShort)
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
-import           Database.LSMTree.Internal.IndexCompact (IndexCompact)
+import           Database.LSMTree.Internal.IndexCompact (IndexCompact, NumPages)
 import qualified Database.LSMTree.Internal.IndexCompact as Index
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.Run.FsPaths as FsPaths
@@ -104,6 +105,9 @@ data Run fhandle = Run {
       -- I\/O, reading arbitrary file offset and length spans.
     , runBlobFile   :: !fhandle
     }
+
+sizeInPages :: Run fhandle -> NumPages
+sizeInPages = Index.sizeInPages . runIndex
 
 -- | Increase the reference count by one.
 addReference :: HasFS IO h -> Run (FS.Handle h) -> IO ()
