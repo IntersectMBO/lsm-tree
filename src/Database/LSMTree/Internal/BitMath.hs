@@ -29,6 +29,10 @@ module Database.LSMTree.Internal.BitMath (
     mul64,
     ceilDiv64,
     -- * 4096, page size
+    divPageSize,
+    modPageSize,
+    mulPageSize,
+    ceilDivPageSize,
     roundUpToPageSize,
 ) where
 
@@ -157,7 +161,27 @@ ceilDiv64 i = unsafeShiftR (i + 63) 6
 -- 4096
 -------------------------------------------------------------------------------
 
--- | assumes pageSize = 4096:
+-- | Assumes @pageSize = 4096@.
+divPageSize :: Bits a => a -> a
+divPageSize x = unsafeShiftR x 12
+{-# INLINE divPageSize #-}
+
+-- | Assumes @pageSize = 4096@.
+modPageSize :: (Bits a, Num a) => a -> a
+modPageSize x = x .&. 4095
+{-# INLINE modPageSize #-}
+
+-- | Assumes @pageSize = 4096@.
+mulPageSize :: Bits a => a -> a
+mulPageSize x = unsafeShiftL x 12
+{-# INLINE mulPageSize #-}
+
+-- | Assumes @pageSize = 4096@.
+ceilDivPageSize :: (Bits a, Num a) => a -> a
+ceilDivPageSize x = unsafeShiftR (x + 4095) 12
+{-# INLINE ceilDivPageSize #-}
+
+-- | Assumes @pageSize = 4096@.
 roundUpToPageSize :: (Bits a, Num a) => a -> a
-roundUpToPageSize n =
-    ((n + 0x0fff) .&. complement 0x0fff)
+roundUpToPageSize x = (x + 4095) .&. complement 4095
+{-# INLINE roundUpToPageSize #-}

@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns    #-}
 {-# LANGUAGE RecordWildCards #-}
 
 -- | Functionality related to LSM-Tree runs (sequences of LSM-Tree data).
@@ -39,6 +40,9 @@ module Database.LSMTree.Internal.Run (
   , Run (..)
   , addReference
   , removeReference
+  , readBlob
+    -- ** Run creation
+  , fromMutable
   , fromWriteBuffer
   , openFromDisk
     -- ** RefCount
@@ -54,12 +58,16 @@ import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ByteString.Short as SBS
 import           Data.Foldable (for_)
 import           Data.IORef
+import           Data.Primitive.ByteArray (newPinnedByteArray,
+                     unsafeFreezeByteArray)
+import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.BloomFilter (bloomFilterFromSBS)
 import           Database.LSMTree.Internal.ByteString (tryCheapToShort)
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
 import           Database.LSMTree.Internal.IndexCompact (IndexCompact)
 import qualified Database.LSMTree.Internal.IndexCompact as Index
+import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.Run.FsPaths as FsPaths
 import           Database.LSMTree.Internal.RunBuilder (RunBuilder)
 import qualified Database.LSMTree.Internal.RunBuilder as Builder
@@ -67,7 +75,7 @@ import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import qualified System.FS.API as FS
-import           System.FS.API (HasFS)
+import           System.FS.API (HasBufFS, HasFS)
 
 
 -- | The in-memory representation of a completed LSM run.
@@ -112,6 +120,17 @@ removeReference fs run@Run {..} = do
     when (count <= RefCount 0) $
       close fs run
 
+-- | The 'BlobSpan' to read must come from this run!
+readBlob :: HasFS IO h -> HasBufFS IO h -> Run (FS.Handle h) -> BlobSpan -> IO SerialisedBlob
+readBlob fs bfs Run {..} BlobSpan {..} = do
+    let off = fromIntegral blobSpanOffset
+    let len = fromIntegral blobSpanSize
+    mba <- newPinnedByteArray len
+    _ <- FS.hGetBufExactlyAt fs bfs runBlobFile mba 0 (fromIntegral len) off
+    ba <- unsafeFreezeByteArray mba
+    let !rb = RB.fromByteArray 0 len ba
+    return (SerialisedBlob rb)
+
 -- | Close the files used in the run, but do not remove them from disk.
 -- After calling this operation, the run must not be used anymore.
 --
@@ -140,11 +159,6 @@ fromMutable fs refCount builder = do
 -- TODO: As a possible optimisation, blobs could be written to a blob file
 -- immediately when they are added to the write buffer, avoiding the need to do
 -- it here.
---
--- TODO: To create the compact index, we need to estimate the number of pages.
--- This is currently done very crudely based on the assumption that a k\/op pair
--- requires approximately 100 bytes of disk space.
--- To do better, we would need information about key and value size.
 fromWriteBuffer ::
      HasFS IO h -> RunFsPaths -> WriteBuffer k v b
   -> IO (Run (FS.Handle h))

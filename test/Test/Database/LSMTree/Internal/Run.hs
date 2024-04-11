@@ -1,42 +1,45 @@
+{-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE OverloadedStrings #-}
-
-{-# OPTIONS_GHC -Wno-incomplete-uni-patterns #-}
 
 module Test.Database.LSMTree.Internal.Run (
     -- * Main test tree
     tests,
 ) where
 
-import           Data.Bifoldable (bifoldMap)
-import           Data.Bifunctor (Bifunctor (..))
+import           Control.Exception (assert)
+import           Data.Bifoldable (bifoldMap, bisum)
+import           Data.Bifunctor (bimap, first)
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Short as SBS
 import           Data.Coerce (coerce)
 import           Data.IORef (readIORef)
 import qualified Data.Map.Strict as Map
+import           Data.Maybe (fromJust)
 import qualified Data.Primitive.ByteArray as BA
 import           System.FilePath
 import qualified System.FS.API as FS
-import qualified System.FS.API.Lazy as FS
 import qualified System.FS.IO as FsIO
 import qualified System.FS.Sim.Error as FsSim
 import qualified System.FS.Sim.MockFS as FsSim
-import           System.IO.Temp
+import qualified System.IO.Temp as Temp
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.HUnit (assertEqual, testCase, (@=?), (@?))
 import           Test.Tasty.QuickCheck
 
 import           Database.LSMTree.Extras (showPowersOf10)
-import           Database.LSMTree.Extras.Generators (KeyForIndexCompact (..),
-                     LargeRawBytes (..))
-import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
+import           Database.LSMTree.Extras.Generators (KeyForIndexCompact (..))
+import           Database.LSMTree.Internal.BitMath
+import           Database.LSMTree.Internal.BlobRef (BlobRef (..), BlobSpan (..))
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry
 import qualified Database.LSMTree.Internal.Normal as N
 import qualified Database.LSMTree.Internal.RawBytes as RB
+import           Database.LSMTree.Internal.RawOverflowPage
+                     (rawOverflowPageRawBytes)
 import           Database.LSMTree.Internal.RawPage
 import           Database.LSMTree.Internal.Run
+import qualified Database.LSMTree.Internal.RunReader as Reader
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
@@ -66,14 +69,32 @@ tests = testGroup "Database.LSMTree.Internal.Run"
               (mkKey "test-key")
               (mkVal ("test-value-" <> BS.concat (replicate 500 "0123456789")))
               Nothing
-      , testProperty "Written pages can be read again" $ \wb ->
-            prop_WriteAndRead wb
-      , testProperty "A run can be written and loaded from disk" $ \wb ->
-            prop_WriteAndLoad wb
+      , testProperty "prop_WriteAndRead" $ \wb ->
+          ioPropertyWithRealFS $ \fs bfs ->
+            prop_WriteAndRead fs bfs wb
+      , testProperty "prop_WriteAndOpen" $ \wb ->
+          ioPropertyWithMockFS $ \fs ->
+            prop_WriteAndOpen fs wb
       ]
     ]
   where
-    withSessionDir = withTempDirectory "" "session"
+    withSessionDir = Temp.withSystemTempDirectory "session-run"
+
+    -- Currently doesn't support HasBufFS, so we still need the other version.
+    -- TODO: add support once simulation is merged:
+    -- https://github.com/input-output-hk/fs-sim/pull/48
+    -- TODO: Also test file system errors.
+    ioPropertyWithMockFS prop = ioProperty $ do
+        (res, mockFS) <-
+          FsSim.runSimErrorFS FsSim.empty FsSim.emptyErrors $ \_ fs -> prop fs
+        return $ res
+            .&&. counterexample "open handles"
+                   (FsSim.numOpenHandles mockFS === 0)
+
+    ioPropertyWithRealFS prop =
+        ioProperty $ withSessionDir $ \sessionRoot -> do
+          let mountPoint = FS.MountPoint sessionRoot
+          prop (FsIO.ioHasFS mountPoint) (FsIO.ioHasBufFS mountPoint)
 
     mkKey = SerialisedKey . RB.fromByteString
     mkVal = SerialisedValue . RB.fromByteString
@@ -111,7 +132,7 @@ testSingleInsert sessionRoot key val mblob = do
     1 @=? rawPageNumKeys page
 
     let pagesize :: Int
-        Just pagesize =
+        pagesize = fromJust $
            Proto.pageSizeBytes <$> Proto.calcPageSize
              (Proto.PageLogical
                [ ( Proto.Key (coerce RB.toByteString key)
@@ -127,7 +148,7 @@ testSingleInsert sessionRoot key val mblob = do
           | suffix > 0 = LookupEntryOverflow expectedEntry (fromIntegral suffix)
           | otherwise  = LookupEntry         expectedEntry
 
-    let actualEntry = fmap (readBlob bsBlobs) <$> rawPageLookup page key
+    let actualEntry = fmap (readBlobFromBS bsBlobs) <$> rawPageLookup page key
 
     -- the lookup result is as expected, possibly with a prefix of the value
     expectedResult @=? actualEntry
@@ -143,70 +164,60 @@ testSingleInsert sessionRoot key val mblob = do
     -- make sure run gets closed again
     removeReference fs run
 
+rawPageFromByteString :: ByteString -> Int -> RawPage
+rawPageFromByteString bs off =
+    makeRawPage (toBA bs) off
+  where
+    -- ensure that the resulting RawPage has no trailing data that could
+    -- accidentally be read.
+    toBA = (\(SBS.SBS ba) -> BA.ByteArray ba) . SBS.toShort . BS.take (off+4096)
+
+readBlobFromBS :: ByteString -> BlobSpan -> SerialisedBlob
+readBlobFromBS bs (BlobSpan offset size) =
+    serialiseBlob $ BS.take (fromIntegral size) (BS.drop (fromIntegral offset) bs)
+
 {-------------------------------------------------------------------------------
   Properties
 -------------------------------------------------------------------------------}
 
--- | Runs in IO, but using a mock file system.
+-- | Creating a run from a write buffer and reading from the run yields the
+-- original elements.
 --
--- TODO: Also test file system errors.
-prop_WriteAndRead :: WriteBuffer KeyForIndexCompact LargeRawBytes SerialisedBlob -> Property
-prop_WriteAndRead wb = ioProperty $ do
-    fs <- FsSim.mkSimErrorHasFS' FsSim.empty FsSim.emptyErrors
-    -- flush write buffer
-    let fsPaths = RunFsPaths 42
-    run <- fromWriteBuffer fs fsPaths wb
-    -- read pages
-    bsBlobs <- getFile fs (runBlobPath fsPaths)
-    bsKOps <- getFile fs (runKOpsPath fsPaths)
-    let pages = rawPageFromByteString bsKOps <$> [0, 4096 .. (BS.length bsKOps - 1)]
+-- @entries wb === readEntries (flush wb)@
+--
+-- TODO: @id === readEntries . flush . toWriteBuffer@ ?
+prop_WriteAndRead ::
+     FS.HasFS IO h -> FS.HasBufFS IO h
+  -> WriteBuffer KeyForIndexCompact SerialisedValue SerialisedBlob
+  -> IO Property
+prop_WriteAndRead fs bfs wb = do
+    run <- flush 42 wb
+    rhs <- readKOps fs bfs run
+
     -- make sure run gets closed again
     removeReference fs run
-    -- check pages
-    return $ label ("Number of pages: " <> showPowersOf10 (length pages)) $ do
-      let vals = concatMap (bifoldMap pure mempty . snd) (WB.content wb)
-      tabulate "Value size" (map (showPowersOf10 . sizeofValue) vals) $
-        pagesContainEntries bsBlobs pages (WB.content wb)
+
+    return $ stats $
+           counterexample "number of elements"
+             (WB.numEntries wb === runNumEntries run)
+      .&&. kops === rhs
   where
-    getFile fs path =
-      FS.withFile fs path FS.ReadMode (fmap BS.toStrict . FS.hGetAll fs)
+    flush n = fromWriteBuffer fs (RunFsPaths n)
 
-pagesContainEntries :: ByteString -> [RawPage] ->
-                       [(SerialisedKey, Entry SerialisedValue SerialisedBlob)] ->
-                       Property
-pagesContainEntries _ [] es = counterexample ("k/ops left: " <> show es) (null es)
-pagesContainEntries bsBlobs (page : pages) kops
-      -- if there's just one key, we have to handle the special case of an overflow
-    | [(SerialisedKey key', e)] <- kopsHere
-    , LookupEntryOverflow e' suffix <- rawPageLookup page (SerialisedKey key')
-    , let appendSuffix (SerialisedValue v)=
-                           SerialisedValue
-                         . (v <>)
-                         . RB.take (fromIntegral suffix)
-                         . mconcat
-                         . map rawPageRawBytes
-                         $ pages
-          overflowPages  = (fromIntegral suffix + 4095) `div` 4096
-    = classify True "larger-than-page value" $
-          e === bimap appendSuffix (readBlob bsBlobs) e'
-     .&&. pagesContainEntries bsBlobs (drop overflowPages pages) kopsRest
+    stats = tabulate "value size" (map (showPowersOf10 . sizeofValue) vals)
+          . label (if any isLargeKOp kops then "has large k/op" else "no large k/op")
+    kops = WB.content wb
+    vals = concatMap (bifoldMap pure mempty . snd) kops
 
-    | otherwise
-    = classify False "larger-than-page value" $
-         [ LookupEntry e | (_k, e) <- kopsHere ]
-       === [ fmap (second (readBlob bsBlobs))
-                  (rawPageLookup page (SerialisedKey k))
-           | (SerialisedKey k, _) <- kopsHere ]
-      .&&. pagesContainEntries bsBlobs pages kopsRest
-  where
-    (kopsHere, kopsRest) = splitAt (fromIntegral (rawPageNumKeys page)) kops
-
--- | Runs in IO, but using a mock file system.
+-- | Loading a run (written out from a write buffer) from disk gives the same
+-- in-memory representation as the original run.
 --
--- TODO: Also test file system errors.
-prop_WriteAndLoad :: WriteBuffer KeyForIndexCompact LargeRawBytes SerialisedBlob -> Property
-prop_WriteAndLoad wb = ioProperty $ do
-    fs <- FsSim.mkSimErrorHasFS' FsSim.empty FsSim.emptyErrors
+-- @openFromDisk . flush === flush@
+prop_WriteAndOpen ::
+     FS.HasFS IO h
+  -> WriteBuffer KeyForIndexCompact SerialisedValue SerialisedBlob
+  -> IO ()
+prop_WriteAndOpen fs wb = do
     -- flush write buffer
     let fsPaths = RunFsPaths 1337
     written <- fromWriteBuffer fs fsPaths wb
@@ -234,14 +245,35 @@ prop_WriteAndLoad wb = ioProperty $ do
   Utilities
 -------------------------------------------------------------------------------}
 
-rawPageFromByteString :: ByteString -> Int -> RawPage
-rawPageFromByteString bs off =
-    makeRawPage (toBA bs) off
-  where
-    -- ensure that the resulting RawPage has no trailing data that could
-    -- accidentally be read.
-    toBA = (\(SBS.SBS ba) -> BA.ByteArray ba) . SBS.toShort . BS.take (off+4096)
+type SerialisedEntry = Entry SerialisedValue SerialisedBlob
+type SerialisedKOp = (SerialisedKey, SerialisedEntry)
 
-readBlob :: ByteString -> BlobSpan -> SerialisedBlob
-readBlob bs (BlobSpan offset size) =
-    serialiseBlob $ BS.take (fromIntegral size) (BS.drop (fromIntegral offset) bs)
+-- | Simplification with a few false negatives.
+isLargeKOp :: SerialisedKOp -> Bool
+isLargeKOp (key, entry) = size > pageSize
+  where
+    pageSize = 4096
+    size = sizeofKey key + bisum (bimap sizeofValue sizeofBlob entry)
+
+readKOps :: FS.HasFS IO h -> FS.HasBufFS IO h -> Run (FS.Handle h) -> IO [SerialisedKOp]
+readKOps fs bfs run = do
+    reader <- Reader.new fs bfs run
+    go reader
+  where
+    go reader = do
+      Reader.next fs bfs reader >>= \case
+        Reader.Empty -> return []
+        Reader.ReadSmallEntry key entry -> do
+          entry' <- traverse resolveBlob entry
+          ((key, entry') :) <$> go reader
+        Reader.ReadLargeEntry key entry _ lenSuffix overflowPages -> do
+          entry' <- traverse resolveBlob
+                      (first (appendSuffix lenSuffix overflowPages)entry)
+          ((key, entry') :) <$> go reader
+
+    resolveBlob (BlobRef r s) = readBlob fs bfs r s
+
+    appendSuffix lenSuffix overflowPages (SerialisedValue prefix) =
+      assert (ceilDivPageSize (fromIntegral lenSuffix) == length overflowPages) $
+        SerialisedValue $ RB.take (RB.size prefix + fromIntegral lenSuffix) $
+          mconcat (prefix : map rawOverflowPageRawBytes overflowPages)

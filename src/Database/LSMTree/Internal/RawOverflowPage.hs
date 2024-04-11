@@ -7,6 +7,8 @@ module Database.LSMTree.Internal.RawOverflowPage (
     unsafeMakeRawOverflowPage,
     rawOverflowPageRawBytes,
     rawBytesToOverflowPages,
+    pinnedByteArrayToOverflowPages,
+    unpinnedByteArrayToOverflowPages,
 ) where
 
 import           Control.DeepSeq (NFData (rnf))
@@ -117,15 +119,15 @@ unsafeMakeRawOverflowPage ba off =
 rawBytesToOverflowPages :: RawBytes -> [RawOverflowPage]
 rawBytesToOverflowPages (RawBytes (PV.Vector off len ba))
   | isByteArrayPinned ba
-  = rawBytesToOverflowPagesPinned off len ba
+  = pinnedByteArrayToOverflowPages off len ba
   | otherwise
-  = rawBytesToOverflowPagesUnpinned off len ba
+  = unpinnedByteArrayToOverflowPages off len ba
 
-rawBytesToOverflowPagesPinned :: Int -> Int -> ByteArray -> [RawOverflowPage]
-rawBytesToOverflowPagesPinned !off !len !ba
+pinnedByteArrayToOverflowPages :: Int -> Int -> ByteArray -> [RawOverflowPage]
+pinnedByteArrayToOverflowPages !off !len !ba
       | len >= 4096
       , let !page = unsafeMakeRawOverflowPage ba off
-      = page : rawBytesToOverflowPagesPinned (off+4096) (len-4096) ba
+      = page : pinnedByteArrayToOverflowPages (off+4096) (len-4096) ba
 
       | len <= 0
       = []
@@ -143,15 +145,15 @@ rawBytesToOverflowPagesPinned !off !len !ba
 -- of pinned has changed. Sigh.
 -- See <https://gitlab.haskell.org/ghc/ghc/-/issues/22255>
 --
-rawBytesToOverflowPagesUnpinned :: Int -> Int -> ByteArray -> [RawOverflowPage]
-rawBytesToOverflowPagesUnpinned !off !len !ba =
+unpinnedByteArrayToOverflowPages :: Int -> Int -> ByteArray -> [RawOverflowPage]
+unpinnedByteArrayToOverflowPages !off !len !ba =
     let !lenPages = roundUpToPageSize len
         ba'       = runByteArray $ do
                       mba <- newPinnedByteArray lenPages
                       copyByteArray mba 0 ba off len
                       fillByteArray mba len (lenPages-len) 0
                       return mba
-        pages     = rawBytesToOverflowPagesPinned 0 lenPages ba'
+        pages     = pinnedByteArrayToOverflowPages 0 lenPages ba'
         -- We've arranged to do the conversion without any extra copying,
         -- so assert that we got that right:
      in assert (all (isSliceNotCopy ba') pages)

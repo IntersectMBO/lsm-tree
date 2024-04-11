@@ -62,6 +62,7 @@ library
     Database.LSMTree.Internal.Run.FsPaths
     Database.LSMTree.Internal.RunAcc
     Database.LSMTree.Internal.RunBuilder
+    Database.LSMTree.Internal.RunReader
     Database.LSMTree.Internal.Serialise
     Database.LSMTree.Internal.Serialise.Class
     Database.LSMTree.Internal.Unsliced
