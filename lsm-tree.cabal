@@ -71,7 +71,7 @@ library
   build-depends:
     , base                     >=4.16      && <4.20
     , bitvec                   ^>=1.1
-    , bytestring               ^>=0.11.4.0
+    , bytestring               ^>=0.11.4.0 || ^>=0.12.1.0
     , containers
     , crc32c                   ^>=0.2.0
     , deepseq
