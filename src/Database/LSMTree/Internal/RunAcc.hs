@@ -9,7 +9,7 @@
 
 -- | Incremental (in-memory portion of) run consruction
 --
-module Database.LSMTree.Internal.Run.Construction (
+module Database.LSMTree.Internal.RunAcc (
     RunAcc
   , new
   , unsafeFinalise

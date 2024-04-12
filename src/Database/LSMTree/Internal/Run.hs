@@ -58,7 +58,8 @@ import           Database.LSMTree.Internal.Entry (NumEntries (..))
 import           Database.LSMTree.Internal.Index.Compact (CompactIndex)
 import qualified Database.LSMTree.Internal.Index.Compact as Index
 import           Database.LSMTree.Internal.Run.FsPaths as FsPaths
-import           Database.LSMTree.Internal.Run.Mutable
+import           Database.LSMTree.Internal.RunBuilder (RefCount, RunBuilder)
+import qualified Database.LSMTree.Internal.RunBuilder as Builder
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
@@ -120,10 +121,10 @@ close fs Run {..} = do
         FS.hClose fs lsmRunBlobFile
 
 -- | Create a run by finalising a mutable run.
-fromMutable :: HasFS IO h -> MRun (FS.Handle h) -> IO (Run (FS.Handle h))
-fromMutable fs mrun = do
+fromMutable :: HasFS IO h -> RunBuilder (FS.Handle h) -> IO (Run (FS.Handle h))
+fromMutable fs builder = do
     (lsmRunRefCount, lsmRunFsPaths, lsmRunFilter, lsmRunIndex, lsmRunNumEntries) <-
-      unsafeFinalise fs mrun
+      Builder.unsafeFinalise fs builder
     lsmRunKOpsFile <- FS.hOpen fs (runKOpsPath lsmRunFsPaths) FS.ReadMode
     lsmRunBlobFile <- FS.hOpen fs (runBlobPath lsmRunFsPaths) FS.ReadMode
     return Run {..}
@@ -147,10 +148,10 @@ fromWriteBuffer fs fsPaths buffer = do
     -- expected to be small enough not to benefit from more precise tuning.
     -- More concretely, no range finder bits will be used anyways unless there
     -- are at least 2^16 pages.
-    mrun <- new fs fsPaths (WB.numEntries buffer) 1
+    builder <- Builder.new fs fsPaths (WB.numEntries buffer) 1
     for_ (WB.content buffer) $ \(k, e) ->
-      addKeyOp fs mrun k e
-    fromMutable fs mrun
+      Builder.addKeyOp fs builder k e
+    fromMutable fs builder
 
 data ChecksumError = ChecksumError FS.FsPath CRC.CRC32C CRC.CRC32C
   deriving Show

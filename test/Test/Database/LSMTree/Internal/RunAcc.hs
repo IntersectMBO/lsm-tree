@@ -1,7 +1,7 @@
 {-# LANGUAGE BangPatterns  #-}
 {-# LANGUAGE TupleSections #-}
 
-module Test.Database.LSMTree.Internal.Run.Construction (tests) where
+module Test.Database.LSMTree.Internal.RunAcc (tests) where
 
 import           Control.Exception (assert)
 import           Control.Monad.ST
@@ -21,7 +21,7 @@ import           Database.LSMTree.Internal.RawOverflowPage (RawOverflowPage)
 import qualified Database.LSMTree.Internal.RawOverflowPage as RawOverflowPage
 import           Database.LSMTree.Internal.RawPage (RawPage)
 import qualified Database.LSMTree.Internal.RawPage as RawPage
-import           Database.LSMTree.Internal.Run.Construction as Real
+import           Database.LSMTree.Internal.RunAcc
 import           Database.LSMTree.Internal.Serialise
 import qualified FormatPage as Proto
 import           Test.Tasty
@@ -29,7 +29,7 @@ import           Test.Tasty.HUnit hiding (assert)
 import           Test.Tasty.QuickCheck
 
 tests :: TestTree
-tests = testGroup "Database.LSMTree.Internal.Run.Construction" [
+tests = testGroup "Database.LSMTree.Internal.RunAcc" [
       testGroup "RunAcc" [
           testCase "test_singleKeyRun" $ test_singleKeyRun
         ]
