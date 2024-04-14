@@ -41,7 +41,7 @@ import           Database.LSMTree.Internal.Serialise
 -- >>> import FormatPage
 -- >>> let Just page0 = pageSizeAddElem (Key "", Delete, Nothing) pageSizeEmpty
 -- >>> page0
--- page0
+-- PageSize {pageSizeElems = 1, pageSizeBlobs = 0, pageSizeBytes = 32}
 --
 -- Then we can add pages with a single byte key, e.g.
 --
