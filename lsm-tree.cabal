@@ -45,8 +45,8 @@ library
     Database.LSMTree.Internal.ByteString
     Database.LSMTree.Internal.CRC32C
     Database.LSMTree.Internal.Entry
-    Database.LSMTree.Internal.Index.Compact
-    Database.LSMTree.Internal.Index.Compact.Construction
+    Database.LSMTree.Internal.IndexCompact
+    Database.LSMTree.Internal.IndexCompactAcc
     Database.LSMTree.Internal.KMerge
     Database.LSMTree.Internal.Lookup
     Database.LSMTree.Internal.Monkey
@@ -227,7 +227,7 @@ test-suite lsm-tree-test
     Test.Database.LSMTree.Internal.BloomFilter
     Test.Database.LSMTree.Internal.CRC32C
     Test.Database.LSMTree.Internal.Entry
-    Test.Database.LSMTree.Internal.Index.Compact
+    Test.Database.LSMTree.Internal.IndexCompact
     Test.Database.LSMTree.Internal.Lookup
     Test.Database.LSMTree.Internal.Monkey
     Test.Database.LSMTree.Internal.PageAcc
@@ -300,7 +300,7 @@ benchmark lsm-tree-micro-bench
   main-is:          Main.hs
   other-modules:
     Bench.Database.LSMTree.Internal.BloomFilter
-    Bench.Database.LSMTree.Internal.Index.Compact
+    Bench.Database.LSMTree.Internal.IndexCompact
     Bench.Database.LSMTree.Internal.Lookup
     Bench.Database.LSMTree.Internal.RawPage
 

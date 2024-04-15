@@ -10,9 +10,9 @@
 --
 -- TODO: add utility functions for clash probability calculations
 --
-module Database.LSMTree.Internal.Index.Compact (
+module Database.LSMTree.Internal.IndexCompact (
     -- $compact
-    CompactIndex (..)
+    IndexCompact (..)
   , PageNo (..)
   , NumPages
     -- * Invariants and bounds
@@ -72,7 +72,7 @@ import           Database.LSMTree.Internal.Vector
   @i@, to min-max information for keys on that page.
 
   Fence-pointer indexes can be constructed and serialised incrementally, see
-  module "Database.LSMTree.Internal.Index.Compact.Construction".
+  module "Database.LSMTree.Internal.IndexCompactAcc".
 
   Given a serialised target key @k@, an index can be 'search'ed to find a disk
   page @i@ that /might/ contain @k@. Fence-pointer indices offer no guarantee of
@@ -441,29 +441,29 @@ import           Database.LSMTree.Internal.Vector
 -- details about the representation.
 --
 -- While the semi-formal description mentions the number of pages \(n\),
--- we do not store it, as it can be inferred from the length of 'ciPrimary'.
-data CompactIndex = CompactIndex {
-    -- | \(RF\): A vector that partitions 'ciPrimary' into sub-vectors
+-- we do not store it, as it can be inferred from the length of 'icPrimary'.
+data IndexCompact = IndexCompact {
+    -- | \(RF\): A vector that partitions 'icPrimary' into sub-vectors
     -- containing elements that all share the same range-finder bits.
-    ciRangeFinder          :: !(VU.Vector Word32)
-    -- | \(m\): Determines the size of 'ciRangeFinder' as
-    -- @2 ^ 'ciRangeFinderPrecision' + 1@.
-  , ciRangeFinderPrecision :: !Int
+    icRangeFinder          :: !(VU.Vector Word32)
+    -- | \(m\): Determines the size of 'icRangeFinder' as
+    -- @2 ^ 'icRangeFinderPrecision' + 1@.
+  , icRangeFinderPrecision :: !Int
     -- | \(P\): Maps a page @i@ to the 32-bit slice of primary bits of its
     -- minimum key.
-  , ciPrimary              :: !(VU.Vector Word32)
+  , icPrimary              :: !(VU.Vector Word32)
     -- | \(C\): A clash on page @i@ means that the primary bits of the minimum
     -- key on that page aren't sufficient to decide whether a search for a key
     -- should continue left or right of the page.
-  , ciClashes              :: !(VU.Vector Bit)
+  , icClashes              :: !(VU.Vector Bit)
     -- | \(TB\): Maps a full minimum key to the page @i@ that contains it, but
     -- only if there is a clash on page @i@.
-  , ciTieBreaker           :: !(Map (Unsliced SerialisedKey) PageNo)
+  , icTieBreaker           :: !(Map (Unsliced SerialisedKey) PageNo)
     -- | \(LTP\): Record of larger-than-page values. Given a span of pages for
     -- the larger-than-page value, the first page will map to 'False', and the
     -- remainder of the pages will be set to 'True'. Regular pages default to
     -- 'False'.
-  , ciLargerThanPage       :: !(VU.Vector Bit)
+  , icLargerThanPage       :: !(VU.Vector Bit)
   }
 
 -- | A 0-based number identifying a disk page.
@@ -537,28 +537,28 @@ pageSpanSize pspan =
 -- number interval, and shrinks it to a minimal interval that contains the
 -- search key. The code below is annotated with @Pre:@ and @Post:@ comments that
 -- describe the interval at that point.
-search :: SerialisedKey -> CompactIndex -> PageSpan
-search k CompactIndex{..} = -- Pre: @[0, V.length ciPrimary)@
-    let !rfbits    = fromIntegral $ keyTopBits16 ciRangeFinderPrecision k
-        !lb        = fromIntegral $ ciRangeFinder VU.! rfbits
+search :: SerialisedKey -> IndexCompact -> PageSpan
+search k IndexCompact{..} = -- Pre: @[0, V.length icPrimary)@
+    let !rfbits    = fromIntegral $ keyTopBits16 icRangeFinderPrecision k
+        !lb        = fromIntegral $ icRangeFinder VU.! rfbits
         -- The first page we don't need to look at (exclusive upper bound) is
         -- the one from the next range finder entry.
         -- For the case where we are in the last entry already, we rely on an
-        -- extra entry at the end, mapping to 'V.length ciPrimary'.
-        !ub        = fromIntegral $ ciRangeFinder VU.! (rfbits + 1)
+        -- extra entry at the end, mapping to 'V.length icPrimary'.
+        !ub        = fromIntegral $ icRangeFinder VU.! (rfbits + 1)
         -- Post: @[lb, ub)@
-        !primbits  = keySliceBits32 ciRangeFinderPrecision k
+        !primbits  = keySliceBits32 icRangeFinderPrecision k
     in
-      case unsafeSearchLEBounds primbits ciPrimary lb ub of
+      case unsafeSearchLEBounds primbits icPrimary lb ub of
         Nothing -> singlePage (PageNo 0)  -- Post: @[lb, lb)@ (empty).
         Just !i ->         -- Post: @[lb, i]@.
-          if unBit $ ciClashes VU.! i then
+          if unBit $ icClashes VU.! i then
             -- Post: @[lb, i]@, now in clash recovery mode.
             let !i1  = PageNo $ fromJust $
-                  bitIndexFromToRev (BoundInclusive lb) (BoundInclusive i) (Bit False) ciClashes
-                !i2  = maybe (PageNo 0) snd $ Map.lookupLE (unsafeNoAssertMakeUnslicedKey k) ciTieBreaker
+                  bitIndexFromToRev (BoundInclusive lb) (BoundInclusive i) (Bit False) icClashes
+                !i2  = maybe (PageNo 0) snd $ Map.lookupLE (unsafeNoAssertMakeUnslicedKey k) icTieBreaker
                 PageNo !i3 = max i1 i2 -- Post: the intersection of @[i1, i]@ and @[i2, i].
-                !i4 = bitLongestPrefixFromTo (BoundExclusive i3) (BoundInclusive i) (Bit True) ciLargerThanPage
+                !i4 = bitLongestPrefixFromTo (BoundExclusive i3) (BoundInclusive i) (Bit True) icLargerThanPage
                       -- Post: [i3, i4]
             in  if i3 == i4 then singlePage (PageNo i3) else multiPage (PageNo i3) (PageNo i4)
                 -- Post: @[i3, i4]@ if a larger-than-page value that starts at
@@ -567,24 +567,24 @@ search k CompactIndex{..} = -- Pre: @[0, V.length ciPrimary)@
           else  singlePage (PageNo i) -- Post: @[i, i]@
 
 
-countClashes :: CompactIndex -> Int
-countClashes = Map.size . ciTieBreaker
+countClashes :: IndexCompact -> Int
+countClashes = Map.size . icTieBreaker
 
-hasClashes :: CompactIndex -> Bool
-hasClashes = not . Map.null . ciTieBreaker
+hasClashes :: IndexCompact -> Bool
+hasClashes = not . Map.null . icTieBreaker
 
-sizeInPages :: CompactIndex -> NumPages
-sizeInPages = VU.length . ciPrimary
+sizeInPages :: IndexCompact -> NumPages
+sizeInPages = VU.length . icPrimary
 
 {-------------------------------------------------------------------------------
   Non-incremental serialisation
 -------------------------------------------------------------------------------}
 
 -- | Serialises a compact index in one go.
-builder :: NumEntries -> CompactIndex -> BB.Builder
+builder :: NumEntries -> IndexCompact -> BB.Builder
 builder numEntries index =
      headerBuilder
-  <> chunkBuilder (Chunk (ciPrimary index))
+  <> chunkBuilder (Chunk (icPrimary index))
   <> finalBuilder numEntries index
 
 {-------------------------------------------------------------------------------
@@ -597,7 +597,7 @@ builder numEntries index =
   by using 'headerBuilder'. Each yielded chunk can then be written using
   'chunkBuilder'. Once construction is completed, 'finalBuilder' will serialise
   the remaining parts of the compact index.
-  Also see module "Database.LSMTree.Internal.Index.Compact.Construction".
+  Also see module "Database.LSMTree.Internal.IndexCompactAcc".
 -}
 
 -- | By writing out the version in host endianness, we also indicate endianness.
@@ -619,22 +619,22 @@ chunkBuilder Chunk {..} = putVec32 cPrimary
 
 -- | Writes everything after the primary array, which is assumed to have already
 -- been written using 'chunkBuilder'.
-finalBuilder :: NumEntries -> CompactIndex -> BB.Builder
-finalBuilder (NumEntries numEntries) CompactIndex {..} =
-       putVec32 ciRangeFinder
+finalBuilder :: NumEntries -> IndexCompact -> BB.Builder
+finalBuilder (NumEntries numEntries) IndexCompact {..} =
+       putVec32 icRangeFinder
        -- align to 64 bit, if odd number of Word32 written before
     <> (if odd (numPages + numRanges + 1 {- version -})
         then BB.word32Host 0
         else mempty)
-    <> putBitVec ciClashes
-    <> putBitVec ciLargerThanPage
-    <> putTieBreaker ciTieBreaker
-    <> BB.word64Host (fromIntegral ciRangeFinderPrecision)
+    <> putBitVec icClashes
+    <> putBitVec icLargerThanPage
+    <> putTieBreaker icTieBreaker
+    <> BB.word64Host (fromIntegral icRangeFinderPrecision)
     <> BB.word64Host (fromIntegral numPages)
     <> BB.word64Host (fromIntegral numEntries)
   where
-    numPages = VU.length ciPrimary
-    numRanges = VU.length ciRangeFinder
+    numPages = VU.length icPrimary
+    numRanges = VU.length icRangeFinder
 
 -- | 32 bit aligned.
 --
@@ -697,7 +697,7 @@ putPaddingTo64 written
 -- Also note that the implementation reads values in little-endian byte order.
 -- If the file has been serialised in big-endian order, the mismatch will be
 -- detected by looking at the version indicator.
-fromSBS :: ShortByteString -> Either String (NumEntries, CompactIndex)
+fromSBS :: ShortByteString -> Either String (NumEntries, IndexCompact)
 fromSBS (SBS ba') = do
     let ba = ByteArray ba'
     let len8 = sizeofByteArray ba
@@ -728,13 +728,13 @@ fromSBS (SBS ba') = do
     -- read vectors
     -- offsets in 32 bits
     let off1_32 = 1  -- after version indicator
-    (!off2_32, ciPrimary) <- getVec32 "Primary array" ba off1_32 numPages
-    (!off3_32, ciRangeFinder) <- getVec32 "Range finder" ba off2_32 numRanges
+    (!off2_32, icPrimary) <- getVec32 "Primary array" ba off1_32 numPages
+    (!off3_32, icRangeFinder) <- getVec32 "Range finder" ba off2_32 numRanges
     -- offsets in 64 bits
     let !off3 = ceilDiv2 off3_32
-    (!off4, ciClashes) <- getBitVec "Clash bit vector" ba off3 numPages
-    (!off5, ciLargerThanPage) <- getBitVec "LTP bit vector" ba off4 numPages
-    (!off6, ciTieBreaker) <- getTieBreaker ba off5
+    (!off4, icClashes) <- getBitVec "Clash bit vector" ba off3 numPages
+    (!off5, icLargerThanPage) <- getBitVec "LTP bit vector" ba off4 numPages
+    (!off6, icTieBreaker) <- getTieBreaker ba off5
 
     let bytesUsed = mul8 (off6 + 3)
     when (bytesUsed > sizeofByteArray ba) $
@@ -742,8 +742,8 @@ fromSBS (SBS ba') = do
     when (bytesUsed < sizeofByteArray ba) $
       Left "Byte array is too large for components"
 
-    let ciRangeFinderPrecision = rfprec
-    return (NumEntries numEntries, CompactIndex {..})
+    let icRangeFinderPrecision = rfprec
+    return (NumEntries numEntries, IndexCompact {..})
 
 type Offset32 = Int
 type Offset64 = Int

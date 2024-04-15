@@ -13,7 +13,7 @@ import           Data.Maybe
 import qualified Data.Vector.Primitive as P
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Entry
-import qualified Database.LSMTree.Internal.Index.Compact as Index
+import qualified Database.LSMTree.Internal.IndexCompact as Index
 import qualified Database.LSMTree.Internal.PageAcc as PageAcc
 import qualified Database.LSMTree.Internal.PageAcc1 as PageAcc
 import qualified Database.LSMTree.Internal.RawBytes as RB
@@ -56,7 +56,7 @@ test_singleKeyRun =  do
     let !k = SerialisedKey' (P.fromList [37, 37, 37, 37, 37, 37])
         !e = InsertWithBlob (SerialisedValue' (P.fromList [48, 19])) (BlobSpan 55 77)
 
-    (addRes, (mp, mc, b, cix, _numEntries)) <- stToIO $ do
+    (addRes, (mp, mc, b, ic, _numEntries)) <- stToIO $ do
       racc <- new (NumEntries 1) 1 Nothing
       addRes <- addKeyOp racc k e
       (addRes,) <$> unsafeFinalise racc
@@ -65,7 +65,7 @@ test_singleKeyRun =  do
     Just (fst (PageAcc.singletonPage k e)) @=? mp
     isJust mc @? "expected a chunk"
     True @=? Bloom.elem k b
-    Index.singlePage (Index.PageNo 0) @=? Index.search k cix
+    Index.singlePage (Index.PageNo 0) @=? Index.search k ic
 
 {-------------------------------------------------------------------------------
   PageAcc

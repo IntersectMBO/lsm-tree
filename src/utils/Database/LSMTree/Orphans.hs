@@ -19,10 +19,9 @@ import qualified Data.Primitive as P
 import           Data.WideWord.Word256 (Word256 (..))
 import           Data.Word (Word64, byteSwap64)
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
-import           Database.LSMTree.Internal.Index.Compact (CompactIndex (..),
+import           Database.LSMTree.Internal.IndexCompact (IndexCompact (..),
                      PageNo (..), PageSpan (..))
-import           Database.LSMTree.Internal.Index.Compact.Construction
-                     (Append (..))
+import           Database.LSMTree.Internal.IndexCompactAcc (Append (..))
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.Serialise (SerialisedBlob (..),
                      SerialisedKey (..), SerialisedValue (..))
@@ -45,8 +44,8 @@ deriving anyclass instance NFData PageSpan
 deriving stock instance Generic Append
 deriving anyclass instance NFData Append
 
-deriving stock instance Generic CompactIndex
-deriving anyclass instance NFData CompactIndex
+deriving stock instance Generic IndexCompact
+deriving anyclass instance NFData IndexCompact
 
 instance NFData (Unsliced a) where
   rnf x = x `seq` ()

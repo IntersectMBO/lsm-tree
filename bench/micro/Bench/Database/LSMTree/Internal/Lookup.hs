@@ -14,8 +14,8 @@
 
 module Bench.Database.LSMTree.Internal.Lookup (benchmarks) where
 
-import           Bench.Database.LSMTree.Internal.Index.Compact
-                     (constructCompactIndex)
+import           Bench.Database.LSMTree.Internal.IndexCompact
+                     (constructIndexCompact)
 import           Control.DeepSeq (NFData)
 import           Control.Monad
 import           Criterion.Main (Benchmark, bench, bgroup, env, nfAppIO, whnf,
@@ -28,9 +28,8 @@ import           Data.Vector (Vector)
 import qualified Data.Vector as V
 import           Database.LSMTree.Generators (ChunkSize (..), RFPrecision (..),
                      UTxOKey)
-import qualified Database.LSMTree.Internal.Index.Compact as Index
-import           Database.LSMTree.Internal.Index.Compact.Construction
-                     (Append (..))
+import qualified Database.LSMTree.Internal.IndexCompact as Index
+import           Database.LSMTree.Internal.IndexCompactAcc (Append (..))
 import           Database.LSMTree.Internal.Lookup (RunLookupView (..),
                      bloomQueriesDefault, indexSearches, prepLookups)
 import           Database.LSMTree.Internal.Serialise (SerialiseKey,
@@ -150,8 +149,8 @@ prepLookupsEnv _ Config {..} = do
         -- off-by-one results, but we take that as a minor inconvience.
         ps   = groupsOfN npageEntries storedKeys
         apps = mkAppend <$> fmap (fmap serialiseKey) ps
-        ci   = constructCompactIndex csize (rfprec, apps)
-    pure ( V.singleton (RunLookupView (Handle () (mkFsPath [])) b ci)
+        ic   = constructIndexCompact csize (rfprec, apps)
+    pure ( V.singleton (RunLookupView (Handle () (mkFsPath [])) b ic)
          , serialiseKey <$> V.fromList lookupKeys
          )
   where

@@ -50,7 +50,7 @@ import           Database.LSMTree.Internal.Serialise
 --
 -- TODO: Revisit this when using the write buffer from the table handle.
 -- It would be consistent with other internal APIs (e.g. for @Run@ and
--- @CompactIndex@ to remove the type parameters here and move the responsibility
+-- @IndexCompact@ to remove the type parameters here and move the responsibility
 -- for these constraints and (de)serialisation to the layer above.
 newtype WriteBuffer k v blob =
   WB { unWB :: Map SerialisedKey (Entry SerialisedValue SerialisedBlob) }

@@ -27,9 +27,9 @@ import qualified Database.LSMTree.Internal.RawBytes as RB
 -- Raw bytes are lexicographically ordered, so in particular this means that
 -- values should be serialised into big-endian formats.
 --
--- === CompactIndex constraints
+-- === IndexCompact constraints
 --
--- When using the 'CompactIndex', additional constraints apply to the
+-- When using the 'IndexCompact', additional constraints apply to the
 -- serialisation function, so in that case instances should also satisfy the
 -- following:
 --

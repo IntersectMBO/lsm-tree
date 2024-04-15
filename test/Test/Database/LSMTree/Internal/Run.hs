@@ -27,7 +27,7 @@ import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.HUnit (assertEqual, testCase, (@=?), (@?))
 import           Test.Tasty.QuickCheck
 
-import           Database.LSMTree.Generators (KeyForCompactIndex (..),
+import           Database.LSMTree.Generators (KeyForIndexCompact (..),
                      LargeRawBytes (..))
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import qualified Database.LSMTree.Internal.CRC32C as CRC
@@ -43,7 +43,7 @@ import           Database.LSMTree.Util (showPowersOf10)
 
 import qualified FormatPage as Proto
 
-import           Test.Database.LSMTree.Internal.Index.Compact ()
+import           Test.Database.LSMTree.Internal.IndexCompact ()
 
 tests :: TestTree
 tests = testGroup "Database.LSMTree.Internal.Run"
@@ -147,7 +147,7 @@ testSingleInsert sessionRoot key val mblob = do
 -- | Runs in IO, but using a mock file system.
 --
 -- TODO: Also test file system errors.
-prop_WriteAndRead :: WriteBuffer KeyForCompactIndex LargeRawBytes SerialisedBlob -> Property
+prop_WriteAndRead :: WriteBuffer KeyForIndexCompact LargeRawBytes SerialisedBlob -> Property
 prop_WriteAndRead wb = ioProperty $ do
     fs <- FsSim.mkSimErrorHasFS' FsSim.empty FsSim.emptyErrors
     -- flush write buffer
@@ -199,7 +199,7 @@ pagesContainEntries bsBlobs (page : pages) kops
 -- | Runs in IO, but using a mock file system.
 --
 -- TODO: Also test file system errors.
-prop_WriteAndLoad :: WriteBuffer KeyForCompactIndex LargeRawBytes SerialisedBlob -> Property
+prop_WriteAndLoad :: WriteBuffer KeyForIndexCompact LargeRawBytes SerialisedBlob -> Property
 prop_WriteAndLoad wb = ioProperty $ do
     fs <- FsSim.mkSimErrorHasFS' FsSim.empty FsSim.emptyErrors
     -- flush write buffer

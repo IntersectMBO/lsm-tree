@@ -30,9 +30,8 @@ import           Database.LSMTree.Internal.BloomFilter (bloomFilterToBuilder)
 import           Database.LSMTree.Internal.CRC32C (CRC32C)
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry
-import           Database.LSMTree.Internal.Index.Compact (CompactIndex,
-                     NumPages)
-import qualified Database.LSMTree.Internal.Index.Compact as Index
+import           Database.LSMTree.Internal.IndexCompact (IndexCompact, NumPages)
+import qualified Database.LSMTree.Internal.IndexCompact as Index
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.RawOverflowPage (RawOverflowPage)
 import qualified Database.LSMTree.Internal.RawOverflowPage as RawOverflowPage
@@ -162,7 +161,7 @@ addLargeSerialisedKeyOp fs builder@RunBuilder{runBuilderAcc} key page overflowPa
 unsafeFinalise ::
      HasFS IO h
   -> RunBuilder (FS.Handle h)
-  -> IO (RefCount, RunFsPaths, Bloom SerialisedKey, CompactIndex, NumEntries)
+  -> IO (RefCount, RunFsPaths, Bloom SerialisedKey, IndexCompact, NumEntries)
 unsafeFinalise fs builder@RunBuilder {..} = do
     -- write final bits
     (mPage, mChunk, runFilter, runIndex, numEntries) <-
@@ -250,7 +249,7 @@ writeIndexFinal ::
      HasFS IO h
   -> RunBuilder (FS.Handle h)
   -> NumEntries
-  -> CompactIndex
+  -> IndexCompact
   -> IO ()
 writeIndexFinal fs RunBuilder {..} numEntries index =
     writeToHandle fs (forRunIndex runBuilderHandles) $

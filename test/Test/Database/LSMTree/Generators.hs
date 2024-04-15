@@ -15,7 +15,7 @@ import           Data.Word (Word64, Word8)
 import           Database.LSMTree.Generators
 import           Database.LSMTree.Internal.RawBytes (RawBytes (..))
 
-import           Test.Database.LSMTree.Internal.Index.Compact ()
+import           Test.Database.LSMTree.Internal.IndexCompact ()
 import           Test.QuickCheck (Arbitrary (..), Gen, Testable (..),
                      forAllShrink)
 import           Test.Tasty (TestTree, testGroup)
@@ -34,8 +34,8 @@ tests = testGroup "Test.Database.LSMTree.Generators" [
                       prop_packRawBytesPinnedOrUnpinned
         ]
      ++ prop_arbitraryAndShrinkPreserveInvariant (deepseqInvariant @RawBytes)
-    , testGroup "KeyForCompactIndex" $
-        prop_arbitraryAndShrinkPreserveInvariant keyForCompactIndexInvariant
+    , testGroup "KeyForIndexCompact" $
+        prop_arbitraryAndShrinkPreserveInvariant keyForIndexCompactInvariant
     ]
 
 prop_arbitraryAndShrinkPreserveInvariant ::
