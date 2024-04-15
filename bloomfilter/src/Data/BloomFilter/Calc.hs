@@ -6,12 +6,15 @@ module Data.BloomFilter.Calc (
 
 import           Numeric (expm1)
 
+-- $setup
+-- >>> import Numeric (showFFloat)
+
 -- | Approximate probability of false positives
 -- \[
 -- {\displaystyle \varepsilon =\left(1-\left[1-{\frac {1}{m}}\right]^{kn}\right)^{k}\approx \left(1-e^{-kn/m}\right)^{k}}
 -- \]
 --
--- >>> [ showFFloat (Just 5) (approxFalsePositiveProb 10_000 100_000 k) "" | k <- [1..5] ]
+-- >>> [ showFFloat (Just 5) (falsePositiveProb 10_000 100_000 k) "" | k <- [1..5] ]
 -- ["0.09516","0.03286","0.01741","0.01181","0.00943"]
 --
 falsePositiveProb
