@@ -1,6 +1,6 @@
 {-# LANGUAGE BangPatterns #-}
 
-module System.Random.Extras (
+module Database.LSMTree.Extras.Random (
     -- * Sampling from uniform distributions
     uniformWithoutReplacement
   , uniformWithoutReplacement'

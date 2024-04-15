@@ -35,9 +35,9 @@ import           Data.Proxy (Proxy (..))
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Word (Word64)
+import           Database.LSMTree.Extras.Random
 import qualified Database.LSMTree.Internal.Monkey as Monkey
 import           System.Random
-import           System.Random.Extras
 import           Test.QuickCheck
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck (testProperty)

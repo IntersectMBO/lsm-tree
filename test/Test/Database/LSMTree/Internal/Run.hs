@@ -27,7 +27,8 @@ import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.HUnit (assertEqual, testCase, (@=?), (@?))
 import           Test.Tasty.QuickCheck
 
-import           Database.LSMTree.Generators (KeyForIndexCompact (..),
+import           Database.LSMTree.Extras (showPowersOf10)
+import           Database.LSMTree.Extras.Generators (KeyForIndexCompact (..),
                      LargeRawBytes (..))
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import qualified Database.LSMTree.Internal.CRC32C as CRC
@@ -39,7 +40,6 @@ import           Database.LSMTree.Internal.Run
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
-import           Database.LSMTree.Util (showPowersOf10)
 
 import qualified FormatPage as Proto
 

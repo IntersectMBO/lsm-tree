@@ -13,7 +13,7 @@ import           Data.Maybe (fromMaybe)
 import           Data.Proxy (Proxy (..))
 import           Data.Word (Word64)
 import           Database.LSMTree.Common (mkSnapshotName)
-import           Database.LSMTree.Generators ()
+import           Database.LSMTree.Extras.Generators ()
 import           Database.LSMTree.ModelIO.Normal (IOLike, LookupResult (..),
                      Range (..), RangeLookupResult (..),
                      SomeSerialisationConstraint, TableHandle, Update (..))

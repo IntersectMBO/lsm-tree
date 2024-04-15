@@ -33,13 +33,13 @@ import qualified Data.Vector.Unboxed as V
 import qualified Data.Vector.Unboxed as VU
 import qualified Data.Vector.Unboxed.Base as VU (Vector (V_Word32))
 import           Data.Word
-import           Database.LSMTree.Generators as Gen
+import           Database.LSMTree.Extras
+import           Database.LSMTree.Extras.Generators as Gen
 import           Database.LSMTree.Internal.BitMath
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
 import           Database.LSMTree.Internal.IndexCompact as Index
 import           Database.LSMTree.Internal.IndexCompactAcc as Cons
 import           Database.LSMTree.Internal.Serialise
-import           Database.LSMTree.Util
 import           Numeric (showHex)
 import           Prelude hiding (max, min, pi)
 import qualified Test.QuickCheck as QC

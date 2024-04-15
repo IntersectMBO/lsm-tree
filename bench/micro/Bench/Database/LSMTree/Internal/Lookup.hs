@@ -26,8 +26,10 @@ import           Data.Maybe (fromMaybe)
 import           Data.Proxy (Proxy (..))
 import           Data.Vector (Vector)
 import qualified Data.Vector as V
-import           Database.LSMTree.Generators (ChunkSize (..), RFPrecision (..),
-                     UTxOKey)
+import           Database.LSMTree.Extras.Generators (ChunkSize (..),
+                     RFPrecision (..), UTxOKey)
+import           Database.LSMTree.Extras.Random (sampleUniformWithReplacement,
+                     uniformWithoutReplacement)
 import qualified Database.LSMTree.Internal.IndexCompact as Index
 import           Database.LSMTree.Internal.IndexCompactAcc (Append (..))
 import           Database.LSMTree.Internal.Lookup (RunLookupView (..),
@@ -40,8 +42,6 @@ import           System.FS.API
 import           System.FS.BlockIO.API (IOOp (..))
 import           System.Posix.Types (COff (..))
 import           System.Random as R
-import           System.Random.Extras (sampleUniformWithReplacement,
-                     uniformWithoutReplacement)
 import           Test.QuickCheck (generate, shuffle)
 
 -- | TODO: add a separate micro-benchmark that includes multi-pages.

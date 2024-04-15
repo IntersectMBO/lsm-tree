@@ -11,7 +11,7 @@ import qualified Data.ByteString.Builder as BB
 import qualified Data.ByteString.Short as SBS
 import qualified Data.Vector.Primitive as P
 import           Data.Word
-import           Database.LSMTree.Generators ()
+import           Database.LSMTree.Extras.Generators ()
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.Serialise
 import           Test.Tasty

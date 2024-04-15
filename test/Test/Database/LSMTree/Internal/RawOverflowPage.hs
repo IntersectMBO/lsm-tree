@@ -11,7 +11,7 @@ import           Test.QuickCheck.Instances ()
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck
 
-import           Database.LSMTree.Generators (LargeRawBytes (..))
+import           Database.LSMTree.Extras.Generators (LargeRawBytes (..))
 import           Database.LSMTree.Internal.BitMath
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.RawOverflowPage

@@ -10,7 +10,7 @@ import           Data.Proxy (Proxy (..))
 import           Data.Word (Word64)
 import           Database.LSMTree.Common (SomeUpdateConstraint (..),
                      mkSnapshotName)
-import           Database.LSMTree.Generators ()
+import           Database.LSMTree.Extras.Generators ()
 import           Database.LSMTree.ModelIO.Monoidal (LookupResult (..),
                      Range (..), RangeLookupResult (..), TableHandle,
                      Update (..))

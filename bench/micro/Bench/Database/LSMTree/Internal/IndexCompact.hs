@@ -13,13 +13,13 @@ import           Control.DeepSeq (deepseq)
 import           Control.Monad.ST (runST)
 import           Criterion.Main
 import           Data.Foldable (Foldable (..))
-import           Database.LSMTree.Generators
+import           Database.LSMTree.Extras.Generators
+import           Database.LSMTree.Extras.Random
 import           Database.LSMTree.Internal.IndexCompact
 import           Database.LSMTree.Internal.IndexCompactAcc
 import           Database.LSMTree.Internal.Serialise (SerialisedKey,
                      serialiseKey)
 import           System.Random
-import           System.Random.Extras
 import           Test.QuickCheck (generate)
 
 -- See 'utxoNumPages'.
