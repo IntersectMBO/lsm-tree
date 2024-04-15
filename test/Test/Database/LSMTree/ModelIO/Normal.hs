@@ -66,9 +66,9 @@ makeNewTable h ups = do
 -- Like 'partsOf' in @lens@ this uses state monad.
 retrieveBlobsTrav ::
   (IsTableHandle h, IOLike m, SomeSerialisationConstraint blob, Traversable t)
-  => proxy h -> t (BlobRef h m blob) -> m (t blob)
-retrieveBlobsTrav hdl brefs = do
-  blobs <- retrieveBlobs hdl (toList brefs)
+  => proxy h -> Session h m -> t (BlobRef h m blob) -> m (t blob)
+retrieveBlobsTrav hdl ses brefs = do
+  blobs <- retrieveBlobs hdl ses (toList brefs)
   evalStateT (traverse (\_ -> state un) brefs) blobs
   where
     un []     = error "invalid traversal"
@@ -78,19 +78,19 @@ lookupsWithBlobs ::
     forall h m k v blob. ( IsTableHandle h, IOLike m
     , SomeSerialisationConstraint k, SomeSerialisationConstraint v, SomeSerialisationConstraint blob
     )
-  => h m k v blob -> [k] -> m [LookupResult k v blob]
-lookupsWithBlobs hdl ks = do
+  => h m k v blob -> Session h m -> [k] -> m [LookupResult k v blob]
+lookupsWithBlobs hdl ses ks = do
     res <- lookups hdl ks
-    getCompose <$> retrieveBlobsTrav (Proxy @h) (Compose res)
+    getCompose <$> retrieveBlobsTrav (Proxy @h) ses (Compose res)
 
 rangeLookupWithBlobs ::
      forall h m k v blob. ( IsTableHandle h, IOLike m
      , SomeSerialisationConstraint k, SomeSerialisationConstraint v, SomeSerialisationConstraint blob
      )
-  => h m k v blob -> Range k -> m [RangeLookupResult k v blob]
-rangeLookupWithBlobs hdl r = do
+  => h m k v blob -> Session h m -> Range k -> m [RangeLookupResult k v blob]
+rangeLookupWithBlobs hdl ses r = do
     res <- rangeLookup hdl r
-    getCompose <$> retrieveBlobsTrav (Proxy @h) (Compose res)
+    getCompose <$> retrieveBlobsTrav (Proxy @h) ses (Compose res)
 
 -------------------------------------------------------------------------------
 -- implement classic QC tests for basic k/v properties
@@ -103,11 +103,11 @@ prop_lookupInsert ::
   -> Key  -> Value -> Property
 prop_lookupInsert h ups k v = ioProperty $ do
     -- create session, table handle, and populate it with some data.
-    (_, hdl) <- makeNewTable h ups
+    (ses, hdl) <- makeNewTable h ups
 
     -- the main dish
     inserts hdl [(k, v, Nothing)]
-    res <- lookupsWithBlobs hdl [k]
+    res <- lookupsWithBlobs hdl ses [k]
 
     return $ res === [Found k v]
 
@@ -118,12 +118,12 @@ prop_lookupInsertElse ::
   -> Key  -> Value -> [Key] -> Property
 prop_lookupInsertElse h ups k v testKeys = ioProperty $ do
     -- create session, table handle, and populate it with some data.
-    (_, hdl) <- makeNewTable h ups
+    (ses, hdl) <- makeNewTable h ups
 
     let testKeys' = filter (/= k) testKeys
-    res1 <- lookupsWithBlobs hdl testKeys'
+    res1 <- lookupsWithBlobs hdl ses testKeys'
     inserts hdl [(k, v, Nothing)]
-    res2 <-  lookupsWithBlobs hdl testKeys'
+    res2 <-  lookupsWithBlobs hdl ses testKeys'
 
     return $ res1 === res2
 
@@ -133,9 +133,9 @@ prop_lookupDelete ::
   => Proxy h -> [(Key, Update Value Blob)]
   -> Key -> Property
 prop_lookupDelete h ups k = ioProperty $ do
-    (_, hdl) <- makeNewTable h ups
+    (ses, hdl) <- makeNewTable h ups
     deletes hdl [k]
-    res <- lookupsWithBlobs hdl [k]
+    res <- lookupsWithBlobs hdl ses [k]
     return $ res === [NotFound k]
 
 -- | Delete doesn't change the lookup results of other keys
@@ -145,12 +145,12 @@ prop_lookupDeleteElse ::
   -> Key  -> [Key] -> Property
 prop_lookupDeleteElse h ups k testKeys = ioProperty $ do
     -- create session, table handle, and populate it with some data.
-    (_, hdl) <- makeNewTable h ups
+    (ses, hdl) <- makeNewTable h ups
 
     let testKeys' = filter (/= k) testKeys
-    res1 <- lookupsWithBlobs hdl testKeys'
+    res1 <- lookupsWithBlobs hdl ses testKeys'
     deletes hdl [k]
-    res2 <-  lookupsWithBlobs hdl testKeys'
+    res2 <-  lookupsWithBlobs hdl ses testKeys'
 
     return $ res1 === res2
 
@@ -160,9 +160,9 @@ prop_insertInsert ::
   => Proxy h -> [(Key, Update Value Blob)]
   -> Key -> Value -> Value -> Property
 prop_insertInsert h ups k v1 v2 = ioProperty $ do
-    (_, hdl) <- makeNewTable h ups
+    (ses, hdl) <- makeNewTable h ups
     inserts hdl [(k, v1, Nothing), (k, v2, Nothing)]
-    res <- lookupsWithBlobs hdl [k]
+    res <- lookupsWithBlobs hdl ses [k]
     return $ res === [Found k v2]
 
 -- | Inserts with different keys don't interfere.
@@ -171,10 +171,10 @@ prop_insertCommutes ::
     => Proxy h -> [(Key, Update Value Blob)]
     -> Key -> Value -> Key -> Value -> Property
 prop_insertCommutes h ups k1 v1 k2 v2 = k1 /= k2 ==> ioProperty do
-    (_, hdl) <- makeNewTable h ups
+    (ses, hdl) <- makeNewTable h ups
     inserts hdl [(k1, v1, Nothing), (k2, v2, Nothing)]
 
-    res <- lookupsWithBlobs hdl [k1,k2]
+    res <- lookupsWithBlobs hdl ses [k1,k2]
     return $ res === [Found k1 v1, Found k2 v2]
 
 -------------------------------------------------------------------------------
@@ -195,13 +195,13 @@ prop_insertLookupRange ::
   => Proxy h -> [(Key, Update Value Blob)]
   -> Key -> Value -> Range Key  -> Property
 prop_insertLookupRange h ups k v r = ioProperty $ do
-    (_, hdl) <- makeNewTable h ups
+    (ses, hdl) <- makeNewTable h ups
 
-    res <- rangeLookupWithBlobs hdl r
+    res <- rangeLookupWithBlobs hdl ses r
 
     inserts hdl [(k, v, Nothing)]
 
-    res' <- rangeLookupWithBlobs hdl r
+    res' <- rangeLookupWithBlobs hdl ses r
 
     let p :: RangeLookupResult Key Value b -> Bool
         p rlr = rangeLookupResultKey rlr /= k
@@ -221,11 +221,11 @@ prop_lookupInsertBlob ::
   -> Key  -> Value -> Blob -> Property
 prop_lookupInsertBlob h ups k v blob = ioProperty $ do
     -- create session, table handle, and populate it with some data.
-    (_, hdl) <- makeNewTable h ups
+    (ses, hdl) <- makeNewTable h ups
 
     -- the main dish
     inserts hdl [(k, v, Just blob)]
-    res <- lookupsWithBlobs hdl [k]
+    res <- lookupsWithBlobs hdl ses [k]
 
     return $ res === [FoundWithBlob k v blob]
 
@@ -235,9 +235,9 @@ prop_insertInsertBlob ::
   => Proxy h -> [(Key, Update Value Blob)]
   -> Key -> Value -> Value -> Maybe Blob -> Maybe Blob -> Property
 prop_insertInsertBlob h ups k v1 v2 mblob1 mblob2 = ioProperty $ do
-    (_, hdl) <- makeNewTable h ups
+    (ses, hdl) <- makeNewTable h ups
     inserts hdl [(k, v1, mblob1), (k, v2, mblob2)]
-    res <- lookupsWithBlobs hdl [k]
+    res <- lookupsWithBlobs hdl ses [k]
     return $ res === case mblob2 of
         Nothing    -> [Found k v2]
         Just blob2 -> [FoundWithBlob k v2 blob2]
@@ -249,10 +249,10 @@ prop_insertCommutesBlob ::
     -> Key -> Value -> Maybe Blob
     -> Key -> Value -> Maybe Blob -> Property
 prop_insertCommutesBlob h ups k1 v1 mblob1 k2 v2 mblob2 = k1 /= k2 ==> ioProperty do
-    (_, hdl) <- makeNewTable h ups
+    (ses, hdl) <- makeNewTable h ups
     inserts hdl [(k1, v1, mblob1), (k2, v2, mblob2)]
 
-    res <- lookupsWithBlobs hdl [k1,k2]
+    res <- lookupsWithBlobs hdl ses [k1,k2]
     return $ res === case (mblob1, mblob2) of
         (Nothing,    Nothing)    -> [Found k1 v1,               Found k2 v2]
         (Just blob1, Nothing)    -> [FoundWithBlob k1 v1 blob1, Found k2 v2]
@@ -268,12 +268,12 @@ prop_updatesMayInvalidateBlobRefs ::
   -> Property
 prop_updatesMayInvalidateBlobRefs h ups k1 v1 blob1 ups' = monadicIO $ do
     (res, blobs, res') <- run $ do
-      (_, hdl) <- makeNewTable h ups
+      (ses, hdl) <- makeNewTable h ups
       inserts hdl [(k1, v1, Just blob1)]
       res <- lookups hdl [k1]
-      blobs <- getCompose <$> retrieveBlobsTrav h (Compose res)
+      blobs <- getCompose <$> retrieveBlobsTrav h ses (Compose res)
       updates hdl ups'
-      res' <- try @SomeException (getCompose <$> retrieveBlobsTrav h (Compose res))
+      res' <- try @SomeException (getCompose <$> retrieveBlobsTrav h ses (Compose res))
       pure (res, blobs, res')
 
     case (res, blobs) of
@@ -308,7 +308,7 @@ prop_snapshotNoChanges :: forall h.
 prop_snapshotNoChanges h ups ups' testKeys = ioProperty $ do
     (sess, hdl1) <- makeNewTable h ups
 
-    res <- lookupsWithBlobs hdl1 testKeys
+    res <- lookupsWithBlobs hdl1 sess testKeys
 
     let name = fromMaybe (error "invalid name") $ mkSnapshotName "foo"
 
@@ -317,7 +317,7 @@ prop_snapshotNoChanges h ups ups' testKeys = ioProperty $ do
 
     hdl2 <- open @h sess name
 
-    res' <- lookupsWithBlobs hdl2 testKeys
+    res' <- lookupsWithBlobs hdl2 sess testKeys
 
     return $ res == res'
 
@@ -335,9 +335,9 @@ prop_snapshotNoChanges2 h ups ups' testKeys = ioProperty $ do
     hdl1 <- open @h sess name
     hdl2 <- open @h sess name
 
-    res <- lookupsWithBlobs hdl1 testKeys
+    res <- lookupsWithBlobs hdl1 sess testKeys
     updates hdl1 ups'
-    res' <- lookupsWithBlobs hdl2 testKeys
+    res' <- lookupsWithBlobs hdl2 sess testKeys
 
     return $ res == res'
 
@@ -354,14 +354,14 @@ prop_dupInsertInsert ::
   => Proxy h -> [(Key, Update Value Blob)]
   -> Key -> Value -> Value -> [Key] -> Property
 prop_dupInsertInsert h ups k v1 v2 testKeys = ioProperty $ do
-    (_, hdl1) <- makeNewTable h ups
+    (sess, hdl1) <- makeNewTable h ups
     hdl2 <- duplicate hdl1
 
     inserts hdl1 [(k, v1, Nothing), (k, v2, Nothing)]
     inserts hdl2 [(k, v2, Nothing)]
 
-    res1 <- lookupsWithBlobs hdl1 testKeys
-    res2 <- lookupsWithBlobs hdl2 testKeys
+    res1 <- lookupsWithBlobs hdl1 sess testKeys
+    res2 <- lookupsWithBlobs hdl2 sess testKeys
     return $ res1 === res2
 
 -- | Different key inserts commute.
@@ -370,14 +370,14 @@ prop_dupInsertCommutes ::
     => Proxy h -> [(Key, Update Value Blob)]
     -> Key -> Value -> Key -> Value -> [Key] -> Property
 prop_dupInsertCommutes h ups k1 v1 k2 v2 testKeys = k1 /= k2 ==> ioProperty do
-    (_, hdl1) <- makeNewTable h ups
+    (sess, hdl1) <- makeNewTable h ups
     hdl2 <- duplicate hdl1
 
     inserts hdl1 [(k1, v1, Nothing), (k2, v2, Nothing)]
     inserts hdl2 [(k2, v2, Nothing), (k1, v1, Nothing)]
 
-    res1 <- lookupsWithBlobs hdl1 testKeys
-    res2 <- lookupsWithBlobs hdl2 testKeys
+    res1 <- lookupsWithBlobs hdl1 sess testKeys
+    res2 <- lookupsWithBlobs hdl2 sess testKeys
     return $ res1 === res2
 
 -- changes to one handle should not cause any visible changes in any others
@@ -386,14 +386,14 @@ prop_dupNoChanges ::
     => Proxy h -> [(Key, Update Value Blob)]
     -> [(Key, Update Value Blob)] -> [Key] -> Property
 prop_dupNoChanges h ups ups' testKeys = ioProperty $ do
-    (_, hdl1) <- makeNewTable h ups
+    (sess, hdl1) <- makeNewTable h ups
 
-    res <- lookupsWithBlobs hdl1 testKeys
+    res <- lookupsWithBlobs hdl1 sess testKeys
 
     hdl2 <- duplicate hdl1
     updates hdl2 ups'
 
     -- lookup hdl1 again.
-    res' <- lookupsWithBlobs hdl1 testKeys
+    res' <- lookupsWithBlobs hdl1 sess testKeys
 
     return $ res == res'

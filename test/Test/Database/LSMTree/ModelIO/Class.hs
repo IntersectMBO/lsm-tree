@@ -73,6 +73,7 @@ class (IsSession (Session h)) => IsTableHandle h where
     retrieveBlobs ::
             (IOLike m, SomeSerialisationConstraint blob)
         => proxy h
+        -> Session h m
         -> [BlobRef h m blob]
         -> m [blob]
 

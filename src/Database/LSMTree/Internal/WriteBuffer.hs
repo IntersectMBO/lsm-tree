@@ -35,10 +35,10 @@ import           Data.Bifunctor (Bifunctor (..))
 import qualified Data.Map.Range as Map.R
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Database.LSMTree.Common (Range (..))
 import           Database.LSMTree.Internal.Entry
 import qualified Database.LSMTree.Internal.Monoidal as Monoidal
 import qualified Database.LSMTree.Internal.Normal as Normal
+import           Database.LSMTree.Internal.Range (Range (..))
 import           Database.LSMTree.Internal.Serialise
 
 {-------------------------------------------------------------------------------

@@ -1,5 +1,6 @@
 {-# LANGUAGE DeriveFunctor            #-}
 {-# LANGUAGE FlexibleContexts         #-}
+{-# LANGUAGE GADTs                    #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 
 -- TODO: remove once the API is implemented.
@@ -11,19 +12,22 @@ module Database.LSMTree.Common (
     IOLike
     -- * Sessions
   , Session
+  , AnySession
   , openSession
   , closeSession
     -- * Constraints
   , SomeSerialisationConstraint (..)
   , SomeUpdateConstraint (..)
     -- * Small types
-  , Range (..)
+  , Internal.Range (..)
     -- * Snapshots
   , deleteSnapshot
   , listSnapshots
     -- ** Snapshot names
   , SnapshotName
   , mkSnapshotName
+    -- * Blob references
+  , BlobRef
   ) where
 
 import           Control.Concurrent.Class.MonadMVar (MonadMVar)
@@ -32,10 +36,15 @@ import           Control.Monad.Class.MonadThrow (MonadCatch, MonadThrow)
 import           Data.Bits (shiftR, (.&.))
 import qualified Data.ByteString as BS
 import           Data.Kind (Type)
+import           Data.Typeable (Typeable)
 import           Data.Word (Word64)
+import qualified Database.LSMTree.Internal.BlobRef as Internal
+import qualified Database.LSMTree.Internal.Range as Internal
+import qualified Database.LSMTree.Internal.Run as Internal
 import qualified System.FilePath.Posix
 import qualified System.FilePath.Windows
-import           System.FS.API (FsPath, SomeHasFS)
+import           System.FS.API (FsPath, HasBufFS, HasFS, SomeHasFS)
+import           System.FS.BlockIO.API (HasBlockIO)
 
 {-------------------------------------------------------------------------------
   IOLike
@@ -77,9 +86,15 @@ instance IOLike IO
 -- while a shared session will place all files under one directory.
 --
 type Session :: (Type -> Type) -> Type
-data Session m = Session {
-    sessionRoot  :: !FsPath
-  , sessionHasFS :: !(SomeHasFS m)
+data Session m = forall h. Typeable h => Session (AnySession m h)
+
+-- | Like 'Session', but exposing its @h@ type parameter
+type AnySession :: (Type -> Type) -> Type -> Type
+data AnySession m h = AnySession {
+    anySessionRoot       :: !FsPath
+  , anySessionHasFS      :: !(HasFS m h)
+  , anySessionHasBufFS   :: !(HasBufFS m h)
+  , anySessionHasBlockIO :: !(HasBlockIO m h)
   }
 
 -- | Create either a new empty table session or open an existing table session,
@@ -183,20 +198,6 @@ instance SomeSerialisationConstraint Word64 where
     deserialise = BS.foldl' (\acc d -> acc * 0x100 + fromIntegral d) 0
 
 {-------------------------------------------------------------------------------
-  Small auxiliary types
--------------------------------------------------------------------------------}
-
--- | A range of keys.
---
--- TODO: consider adding key prefixes to the range type.
-data Range k =
-    -- | Inclusive lower bound, exclusive upper bound
-    FromToExcluding k k
-    -- | Inclusive lower bound, inclusive upper bound
-  | FromToIncluding k k
-  deriving (Show, Eq, Functor)
-
-{-------------------------------------------------------------------------------
   Snapshots
 -------------------------------------------------------------------------------}
 
@@ -255,3 +256,9 @@ mkSnapshotName s
   where
     len = length s
     isValid c = ('a' <= c && c <= 'z') || ('0' <= c && c <= '9' ) || c `elem` "-_"
+
+{-------------------------------------------------------------------------------
+  Blob references
+-------------------------------------------------------------------------------}
+
+data BlobRef m blob = forall h. Eq h => BlobRef (Internal.BlobRef m (Internal.Run h) blob)
