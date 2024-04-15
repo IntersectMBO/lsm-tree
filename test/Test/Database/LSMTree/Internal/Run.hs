@@ -207,19 +207,19 @@ prop_WriteAndLoad wb = ioProperty $ do
     written <- fromWriteBuffer fs fsPaths wb
     loaded <- openFromDisk fs fsPaths
 
-    (1 @=?) =<< readIORef (lsmRunRefCount written)
-    (1 @=?) =<< readIORef (lsmRunRefCount loaded)
+    (1 @=?) =<< readIORef (runRefCount written)
+    (1 @=?) =<< readIORef (runRefCount loaded)
 
-    lsmRunNumEntries written @=? lsmRunNumEntries loaded
-    lsmRunFilter written @=? lsmRunFilter loaded
-    lsmRunIndex written @=? lsmRunIndex loaded
+    runNumEntries written @=? runNumEntries loaded
+    runFilter written @=? runFilter loaded
+    runIndex written @=? runIndex loaded
 
     assertEqual "k/ops file"
-      (FS.handlePath (lsmRunKOpsFile written))
-      (FS.handlePath (lsmRunKOpsFile loaded))
+      (FS.handlePath (runKOpsFile written))
+      (FS.handlePath (runKOpsFile loaded))
     assertEqual "blob file"
-      (FS.handlePath (lsmRunBlobFile written))
-      (FS.handlePath (lsmRunBlobFile loaded))
+      (FS.handlePath (runBlobFile written))
+      (FS.handlePath (runBlobFile loaded))
 
 {-------------------------------------------------------------------------------
   Utilities

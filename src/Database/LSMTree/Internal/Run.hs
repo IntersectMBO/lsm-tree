@@ -70,34 +70,34 @@ import           System.FS.API (HasFS)
 -- | The in-memory representation of a completed LSM run.
 --
 data Run fhandle = Run {
-      lsmRunNumEntries :: !NumEntries
+      runNumEntries :: !NumEntries
       -- | The reference count for the LSM run. This counts the
       -- number of references from LSM handles to this run. When
       -- this drops to zero the open files will be closed.
-    , lsmRunRefCount   :: !RefCount
+    , runRefCount   :: !RefCount
       -- | The file system paths for all the files used by the run.
-    , lsmRunFsPaths    :: !RunFsPaths
+    , runRunFsPaths :: !RunFsPaths
       -- | The bloom filter for the set of keys in this run.
-    , lsmRunFilter     :: !(Bloom SerialisedKey)
+    , runFilter     :: !(Bloom SerialisedKey)
       -- | The in-memory index mapping keys to page numbers in the
       -- Key\/Ops file. In future we may support alternative index
       -- representations.
-    , lsmRunIndex      :: !IndexCompact
+    , runIndex      :: !IndexCompact
       -- | The file handle for the Key\/Ops file. This file is opened
       -- read-only and is accessed in a page-oriented way, i.e. only
       -- reading whole pages, at page offsets. It will be opened with
       -- 'O_DIRECT' on supported platforms.
-    , lsmRunKOpsFile   :: !fhandle
+    , runKOpsFile   :: !fhandle
       -- | The file handle for the BLOBs file. This file is opened
       -- read-only and is accessed in a normal style using buffered
       -- I\/O, reading arbitrary file offset and length spans.
-    , lsmRunBlobFile   :: !fhandle
+    , runBlobFile   :: !fhandle
     }
 
 -- | Increase the reference count by one.
 addReference :: HasFS IO h -> Run (FS.Handle h) -> IO ()
 addReference _ Run {..} =
-    atomicModifyIORef lsmRunRefCount (\n -> (n+1, ()))
+    atomicModifyIORef runRefCount (\n -> (n+1, ()))
 
 -- | Decrease the reference count by one.
 -- After calling this operation, the run must not be used anymore.
@@ -105,7 +105,7 @@ addReference _ Run {..} =
 -- associated files from disk.
 removeReference :: HasFS IO h -> Run (FS.Handle h) -> IO ()
 removeReference fs run@Run {..} = do
-    count <- atomicModifyIORef' lsmRunRefCount (\n -> (n-1, n-1))
+    count <- atomicModifyIORef' runRefCount (\n -> (n-1, n-1))
     when (count <= 0) $
       close fs run
 
@@ -116,17 +116,17 @@ removeReference fs run@Run {..} = do
 -- we want to be able to re-open closed runs from disk.
 close :: HasFS IO h -> Run (FS.Handle h) -> IO ()
 close fs Run {..} = do
-    FS.hClose fs lsmRunKOpsFile
+    FS.hClose fs runKOpsFile
       `finally`
-        FS.hClose fs lsmRunBlobFile
+        FS.hClose fs runBlobFile
 
 -- | Create a run by finalising a mutable run.
 fromMutable :: HasFS IO h -> RunBuilder (FS.Handle h) -> IO (Run (FS.Handle h))
 fromMutable fs builder = do
-    (lsmRunRefCount, lsmRunFsPaths, lsmRunFilter, lsmRunIndex, lsmRunNumEntries) <-
+    (runRefCount, runRunFsPaths, runFilter, runIndex, runNumEntries) <-
       Builder.unsafeFinalise fs builder
-    lsmRunKOpsFile <- FS.hOpen fs (runKOpsPath lsmRunFsPaths) FS.ReadMode
-    lsmRunBlobFile <- FS.hOpen fs (runBlobPath lsmRunFsPaths) FS.ReadMode
+    runKOpsFile <- FS.hOpen fs (runKOpsPath runRunFsPaths) FS.ReadMode
+    runBlobFile <- FS.hOpen fs (runBlobPath runRunFsPaths) FS.ReadMode
     return Run {..}
 
 
@@ -169,27 +169,27 @@ instance Exception FileFormatError
 -- Exceptions will be raised when any of the file's contents don't match their
 -- checksum ('ChecksumError') or can't be parsed ('FileFormatError').
 openFromDisk :: HasFS IO h -> RunFsPaths -> IO (Run (FS.Handle h))
-openFromDisk fs lsmRunFsPaths = do
+openFromDisk fs runRunFsPaths = do
     expectedChecksums <-
-       expectValidFile (runChecksumsPath lsmRunFsPaths) . fromChecksumsFile
-         =<< CRC.readChecksumsFile fs (runChecksumsPath lsmRunFsPaths)
+       expectValidFile (runChecksumsPath runRunFsPaths) . fromChecksumsFile
+         =<< CRC.readChecksumsFile fs (runChecksumsPath runRunFsPaths)
 
     -- verify checksums of files we don't read yet
-    let paths = runFsPaths lsmRunFsPaths
+    let paths = runFsPaths runRunFsPaths
     checkCRC (forRunKOps expectedChecksums) (forRunKOps paths)
     checkCRC (forRunBlob expectedChecksums) (forRunBlob paths)
 
     -- read and try parsing files
-    lsmRunFilter <-
+    runFilter <-
       expectValidFile (forRunFilter paths) . bloomFilterFromSBS
         =<< readCRC (forRunFilter expectedChecksums) (forRunFilter paths)
-    (lsmRunNumEntries, lsmRunIndex) <-
+    (runNumEntries, runIndex) <-
       expectValidFile (forRunIndex paths) . Index.fromSBS
         =<< readCRC (forRunIndex expectedChecksums) (forRunIndex paths)
 
-    lsmRunKOpsFile <- FS.hOpen fs (runKOpsPath lsmRunFsPaths) FS.ReadMode
-    lsmRunBlobFile <- FS.hOpen fs (runBlobPath lsmRunFsPaths) FS.ReadMode
-    lsmRunRefCount <- newIORef 1
+    runKOpsFile <- FS.hOpen fs (runKOpsPath runRunFsPaths) FS.ReadMode
+    runBlobFile <- FS.hOpen fs (runBlobPath runRunFsPaths) FS.ReadMode
+    runRefCount <- newIORef 1
     return Run {..}
   where
     checkCRC :: CRC.CRC32C -> FS.FsPath -> IO ()
