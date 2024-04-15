@@ -27,6 +27,7 @@ import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.Serialise (SerialisedBlob (..),
                      SerialisedKey (..), SerialisedValue (..))
 import           Database.LSMTree.Internal.Serialise.Class
+import           Database.LSMTree.Internal.Unsliced (Unsliced)
 import           Database.LSMTree.Internal.Vector
 import           GHC.Generics (Generic)
 import           System.Random (Uniform)
@@ -46,6 +47,9 @@ deriving anyclass instance NFData Append
 
 deriving stock instance Generic CompactIndex
 deriving anyclass instance NFData CompactIndex
+
+instance NFData (Unsliced a) where
+  rnf x = x `seq` ()
 
 {-------------------------------------------------------------------------------
   Word256
