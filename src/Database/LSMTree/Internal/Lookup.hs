@@ -24,9 +24,9 @@ import qualified Data.Vector.Mutable as VM
 import qualified Data.Vector.Unboxed as VU
 import qualified Data.Vector.Unboxed.Mutable as VUM
 import           Data.Word (Word32)
-import           Database.LSMTree.Internal.Index.Compact (CompactIndex,
+import           Database.LSMTree.Internal.IndexCompact (IndexCompact,
                      PageSpan (..))
-import qualified Database.LSMTree.Internal.Index.Compact as Index
+import qualified Database.LSMTree.Internal.IndexCompact as Index
 import           Database.LSMTree.Internal.Serialise
 import           System.FS.API (Handle)
 import           System.FS.BlockIO.API
@@ -35,7 +35,7 @@ import           System.FS.BlockIO.API
 data RunLookupView h = RunLookupView {
     rlvKOpsHandle :: !h
   , rlvBloom      :: !(Bloom SerialisedKey)
-  , rlvIndex      :: !CompactIndex
+  , rlvIndex      :: !IndexCompact
   }
   deriving Functor
 

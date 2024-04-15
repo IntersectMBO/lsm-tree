@@ -10,7 +10,7 @@
 module Main (main) where
 
 import qualified Bench.Database.LSMTree.Internal.BloomFilter
-import qualified Bench.Database.LSMTree.Internal.Index.Compact
+import qualified Bench.Database.LSMTree.Internal.IndexCompact
 import qualified Bench.Database.LSMTree.Internal.Lookup
 import qualified Bench.Database.LSMTree.Internal.RawPage
 import           Criterion.Main (defaultMain)
@@ -19,6 +19,6 @@ main :: IO ()
 main = defaultMain [
       Bench.Database.LSMTree.Internal.Lookup.benchmarks
     , Bench.Database.LSMTree.Internal.BloomFilter.benchmarks
-    , Bench.Database.LSMTree.Internal.Index.Compact.benchmarks
+    , Bench.Database.LSMTree.Internal.IndexCompact.benchmarks
     , Bench.Database.LSMTree.Internal.RawPage.benchmarks
     ]

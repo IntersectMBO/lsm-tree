@@ -8,7 +8,7 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 {- HLINT ignore "Eta reduce" -}
 
-module Test.Database.LSMTree.Internal.Index.Compact (tests) where
+module Test.Database.LSMTree.Internal.IndexCompact (tests) where
 
 import           Control.DeepSeq (deepseq)
 import           Control.Monad (foldM)
@@ -36,8 +36,8 @@ import           Data.Word
 import           Database.LSMTree.Generators as Gen
 import           Database.LSMTree.Internal.BitMath
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
-import           Database.LSMTree.Internal.Index.Compact as Index
-import           Database.LSMTree.Internal.Index.Compact.Construction as Cons
+import           Database.LSMTree.Internal.IndexCompact as Index
+import           Database.LSMTree.Internal.IndexCompactAcc as Cons
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Util
 import           Numeric (showHex)
@@ -52,7 +52,7 @@ import           Test.Util.Orphans ()
 import           Text.Printf (printf)
 
 tests :: TestTree
-tests = testGroup "Test.Database.LSMTree.Internal.Index.Compact" [
+tests = testGroup "Test.Database.LSMTree.Internal.IndexCompact" [
     -- Increasing the maximum size has the effect of generating more
     -- interesting numbers of partitioned pages. With a max size of 100, the
     -- tests are very likely to generate only 1 partitioned page.
@@ -104,10 +104,10 @@ tests = testGroup "Test.Database.LSMTree.Internal.Index.Compact" [
           let k2 = SerialisedKey' (VP.replicate 16 0x11)
           let k3 = SerialisedKey' (VP.replicate 15 0x11 <> VP.replicate 1 0x12)
           let (chunks, index) = runST $ do
-                mci <- Cons.new 0 16
-                ch1 <- flip Cons.append mci $ AppendSinglePage k1 k2
-                ch2 <- flip Cons.append mci $ AppendSinglePage k3 k3
-                (mCh3, idx) <- unsafeEnd mci
+                ica <- Cons.new 0 16
+                ch1 <- flip Cons.append ica $ AppendSinglePage k1 k2
+                ch2 <- flip Cons.append ica $ AppendSinglePage k3 k3
+                (mCh3, idx) <- unsafeEnd ica
                 return (ch1 <> ch2 <> toList mCh3, idx)
 
           let expectedVersion :: [Word8]
@@ -171,8 +171,8 @@ tests = testGroup "Test.Database.LSMTree.Internal.Index.Compact" [
   Properties
 -------------------------------------------------------------------------------}
 
-deriving instance Eq CompactIndex
-deriving instance Show CompactIndex
+deriving instance Eq IndexCompact
+deriving instance Show IndexCompact
 
 --
 -- Search
@@ -216,14 +216,14 @@ prop_searchMinMaxKeysAfterConstruction csize ps = eqMapProp real model
 
     real = foldMap' realSearch (getPages ps)
 
-    ci = fromPageSummaries (coerce csize) ps
+    ic = fromPageSummaries (coerce csize) ps
 
     realSearch :: LogicalPageSummary k -> Map k PageSpan
     realSearch = \case
-        OnePageOneKey k           -> Map.singleton k (search (serialiseKey k) ci)
-        OnePageManyKeys k1 k2     -> Map.fromList [ (k1, search (serialiseKey k1) ci)
-                                                  , (k2, search (serialiseKey k2) ci)]
-        MultiPageOneKey k _       -> Map.singleton k (search (serialiseKey k) ci)
+        OnePageOneKey k           -> Map.singleton k (search (serialiseKey k) ic)
+        OnePageManyKeys k1 k2     -> Map.fromList [ (k1, search (serialiseKey k1) ic)
+                                                  , (k2, search (serialiseKey k2) ic)]
+        MultiPageOneKey k _       -> Map.singleton k (search (serialiseKey k) ic)
 
 --
 -- Construction
@@ -246,13 +246,13 @@ prop_singlesEquivMulti ::
   -> ChunkSize
   -> LogicalPageSummaries k
   -> Property
-prop_singlesEquivMulti csize1 csize2 ps = ci1 === ci2
+prop_singlesEquivMulti csize1 csize2 ps = ic1 === ic2
   where
     apps1 = toAppends ps
     apps2 = concatMap toSingles apps1
     rfprec = coerce $ getRangeFinderPrecision ps
-    ci1 = fromList rfprec (coerce csize1) apps1
-    ci2 = fromListSingles rfprec (coerce csize2) apps2
+    ic1 = fromList rfprec (coerce csize1) apps1
+    ic2 = fromListSingles rfprec (coerce csize2) apps2
 
     toSingles :: Append -> [(SerialisedKey, SerialisedKey)]
     toSingles (AppendSinglePage k1 k2) = [(k1, k2)]
@@ -292,7 +292,7 @@ prop_roundtrip csize ps numEntries =
   where
     index = fromPageSummaries csize ps
 
-    (bsVersion, bsPrimary, bsRest) = writeCompactIndex numEntries csize ps
+    (bsVersion, bsPrimary, bsRest) = writeIndexCompact numEntries csize ps
     sbs = SBS.toShort (LBS.toStrict (bsVersion <> bsPrimary <> bsRest))
 
     showBS = unlines . showBytes . LBS.unpack
@@ -302,14 +302,14 @@ prop_total_deserialisation word32s =
     let !(ByteArray ba) = byteArrayFromList word32s
     in case fromSBS (SBS.SBS ba) of
       Left err -> label err $ property True
-      Right (numEntries, ci) -> label "parsed successfully" $ property $
+      Right (numEntries, ic) -> label "parsed successfully" $ property $
         -- Just forcing the index is not enough. The underlying vectors might
         -- point to outside of the byte array, so we check they are valid.
-        (numEntries, ci) `deepseq`
-             vec32IsValid (ciRangeFinder ci)
-          && vec32IsValid (ciPrimary ci)
-          && bitVecIsValid (ciClashes ci)
-          && bitVecIsValid (ciLargerThanPage ci)
+        (numEntries, ic) `deepseq`
+             vec32IsValid (icRangeFinder ic)
+          && vec32IsValid (icPrimary ic)
+          && bitVecIsValid (icClashes ic)
+          && bitVecIsValid (icLargerThanPage ic)
   where
     vec32IsValid (VU.V_Word32 (VP.Vector off len ba)) =
       off >= 0 && len >= 0 && mul4 (off + len) <= sizeofByteArray ba
@@ -334,12 +334,12 @@ prop_total_deserialisation_whitebox (RFPrecision rfprec) numEntries numPages wor
 (**.) :: (a -> b -> d -> e) -> (c -> d) -> a -> b -> c -> e
 (**.) f g x1 x2 x3 = f x1 x2 (g x3)
 
-writeCompactIndex :: SerialiseKey k => NumEntries -> ChunkSize -> LogicalPageSummaries k -> (LBS.ByteString, LBS.ByteString, LBS.ByteString)
-writeCompactIndex numEntries (ChunkSize csize) ps = runST $ do
+writeIndexCompact :: SerialiseKey k => NumEntries -> ChunkSize -> LogicalPageSummaries k -> (LBS.ByteString, LBS.ByteString, LBS.ByteString)
+writeIndexCompact numEntries (ChunkSize csize) ps = runST $ do
     let RFPrecision rfprec = getRangeFinderPrecision ps
-    mci <- Cons.new rfprec csize
-    cs <- mapM (`append` mci) (toAppends ps)
-    (c, index) <- unsafeEnd mci
+    ica <- Cons.new rfprec csize
+    cs <- mapM (`append` ica) (toAppends ps)
+    (c, index) <- unsafeEnd ica
     return
       ( BB.toLazyByteString headerBuilder
       , BB.toLazyByteString $ foldMap (foldMap chunkBuilder) cs
@@ -347,40 +347,40 @@ writeCompactIndex numEntries (ChunkSize csize) ps = runST $ do
       , BB.toLazyByteString $ finalBuilder numEntries index
       )
 
-fromPageSummaries :: SerialiseKey k => ChunkSize -> LogicalPageSummaries k -> CompactIndex
+fromPageSummaries :: SerialiseKey k => ChunkSize -> LogicalPageSummaries k -> IndexCompact
 fromPageSummaries (ChunkSize csize) ps =
     fromList rfprec csize (toAppends ps)
   where
     RFPrecision rfprec = getRangeFinderPrecision ps
 
-fromList :: Int -> Int -> [Append] -> CompactIndex
+fromList :: Int -> Int -> [Append] -> IndexCompact
 fromList rfprec maxcsize apps = runST $ do
-    mci <- new rfprec maxcsize
-    mapM_ (`append` mci) apps
-    (_, index) <- unsafeEnd mci
+    ica <- new rfprec maxcsize
+    mapM_ (`append` ica) apps
+    (_, index) <- unsafeEnd ica
     pure index
 
 -- | One-shot construction using only 'appendSingle'.
-fromListSingles :: Int -> Int -> [(SerialisedKey, SerialisedKey)] -> CompactIndex
+fromListSingles :: Int -> Int -> [(SerialisedKey, SerialisedKey)] -> IndexCompact
 fromListSingles rfprec maxcsize apps = runST $ do
-    mci <- new rfprec maxcsize
-    mapM_ (`appendSingle` mci) apps
-    (_, index) <- unsafeEnd mci
+    ica <- new rfprec maxcsize
+    mapM_ (`appendSingle` ica) apps
+    (_, index) <- unsafeEnd ica
     pure index
 
-labelIndex :: CompactIndex -> (Property -> Property)
-labelIndex ci =
+labelIndex :: IndexCompact -> (Property -> Property)
+labelIndex ic =
       QC.tabulate "# Clashes" [showPowersOf10 nclashes]
     . QC.tabulate "# Contiguous clash runs" [showPowersOf10 (length nscontig)]
     . QC.tabulate "Length of contiguous clash runs" (fmap (showPowersOf10 . snd) nscontig)
     . QC.tabulate "Contiguous clashes contain multi-page values" (fmap (show . fst) nscontig)
-    . QC.classify (multiPageValuesClash ci) "Has clashing multi-page values"
-  where nclashes       = Index.countClashes ci
-        nscontig       = countContiguousClashes ci
+    . QC.classify (multiPageValuesClash ic) "Has clashing multi-page values"
+  where nclashes       = Index.countClashes ic
+        nscontig       = countContiguousClashes ic
 
-multiPageValuesClash :: CompactIndex -> Bool
-multiPageValuesClash ci
-    | V.length (ciClashes ci) < 3 = False
+multiPageValuesClash :: IndexCompact -> Bool
+multiPageValuesClash ic
+    | V.length (icClashes ic) < 3 = False
     | otherwise                   = V.any p $ V.zip4 v1 v2 v3 v4
   where
     -- note: @i = j - 1@ and @k = j + 1@. This gives us a local view of a
@@ -391,19 +391,19 @@ multiPageValuesClash ci
          unBit ltpi && not (unBit ltpj) && unBit ltpk
          -- and they clash
       && unBit cj
-    v1 = V.tail (ciClashes ci)
-    v2 = ciLargerThanPage ci
+    v1 = V.tail (icClashes ic)
+    v2 = icLargerThanPage ic
     v3 = V.tail v2
     v4 = V.tail v3
 
 -- Returns the number of entries and whether any multi-page values were in the
 -- contiguous clashes
-countContiguousClashes :: CompactIndex -> [(Bool, Int)]
-countContiguousClashes ci = actualContigClashes
+countContiguousClashes :: IndexCompact -> [(Bool, Int)]
+countContiguousClashes ic = actualContigClashes
   where
     -- filtered is a list of maximal sub-vectors that have only only contiguous
     -- clashes
-    zipped    = V.zip (ciClashes ci) (ciLargerThanPage ci)
+    zipped    = V.zip (icClashes ic) (icLargerThanPage ic)
     grouped   = V.groupBy (\x y -> fst x == fst y) zipped
     filtered  = filter (V.all (\(c, _ltp) -> c == Bit True)) grouped
     -- clashes that are part of a multi-page value shouldn't be counted towards
@@ -444,49 +444,49 @@ buildBytes = LBS.unpack . BB.toLazyByteString
 word32toBytesLE :: Word32 -> [Word8]
 word32toBytesLE = take 4 . map fromIntegral . iterate (`div` 256)
 
-data Chunks = Chunks [Chunk] CompactIndex
+data Chunks = Chunks [Chunk] IndexCompact
   deriving (Show)
 
 -- | The concatenated chunks must correspond to the primary array of the index.
 -- Apart from that, the only invariant we make sure to uphold is that the length
 -- of the vectors match each other (or 'fcRangeFinderPrecision'), as this is
 -- required for correct deserialisation.
--- These invariants do not guarantee that the 'CompactIndex' is valid in other
+-- These invariants do not guarantee that the 'IndexCompact' is valid in other
 -- ways (e.g. can successfully be queried).
 chunksInvariant :: Chunks -> Bool
-chunksInvariant (Chunks chunks CompactIndex {..}) =
-       rfprecInvariant (RFPrecision ciRangeFinderPrecision)
-    && VU.length ciPrimary == sum (map (VU.length . cPrimary) chunks)
-    && VU.length ciClashes == VU.length ciPrimary
-    && VU.length ciLargerThanPage == VU.length ciPrimary
-    && VU.length ciRangeFinder == 2 ^ ciRangeFinderPrecision + 1
+chunksInvariant (Chunks chunks IndexCompact {..}) =
+       rfprecInvariant (RFPrecision icRangeFinderPrecision)
+    && VU.length icPrimary == sum (map (VU.length . cPrimary) chunks)
+    && VU.length icClashes == VU.length icPrimary
+    && VU.length icLargerThanPage == VU.length icPrimary
+    && VU.length icRangeFinder == 2 ^ icRangeFinderPrecision + 1
 
 instance Arbitrary Chunks where
   arbitrary = do
     chunks <- map VU.fromList <$> arbitrary
-    let ciPrimary = mconcat chunks
-    let numPages = VU.length ciPrimary
+    let icPrimary = mconcat chunks
+    let numPages = VU.length icPrimary
 
-    RFPrecision ciRangeFinderPrecision <- arbitrary
-    ciRangeFinder <- VU.fromList <$> vector (2 ^ ciRangeFinderPrecision + 1)
-    ciClashes <- VU.fromList . map Bit <$> vector numPages
-    ciLargerThanPage <- VU.fromList . map Bit <$> vector numPages
-    ciTieBreaker <- arbitrary
-    return (Chunks (map Chunk chunks) CompactIndex {..})
+    RFPrecision icRangeFinderPrecision <- arbitrary
+    icRangeFinder <- VU.fromList <$> vector (2 ^ icRangeFinderPrecision + 1)
+    icClashes <- VU.fromList . map Bit <$> vector numPages
+    icLargerThanPage <- VU.fromList . map Bit <$> vector numPages
+    icTieBreaker <- arbitrary
+    return (Chunks (map Chunk chunks) IndexCompact {..})
 
   shrink (Chunks chunks index) =
     -- shrink range finder bits
     [ Chunks chunks index
-        { ciRangeFinder = VU.take (2 ^ rfprec' + 1) (ciRangeFinder index)
-        , ciRangeFinderPrecision = rfprec'
+        { icRangeFinder = VU.take (2 ^ rfprec' + 1) (icRangeFinder index)
+        , icRangeFinderPrecision = rfprec'
         }
-    | RFPrecision rfprec' <- shrink (RFPrecision (ciRangeFinderPrecision index))
+    | RFPrecision rfprec' <- shrink (RFPrecision (icRangeFinderPrecision index))
     ] ++
     -- shrink number of pages
     [ Chunks (map Chunk chunks') index
-        { ciPrimary = primary'
-        , ciClashes = VU.slice 0 numPages' (ciClashes index)
-        , ciLargerThanPage = VU.slice 0 numPages' (ciLargerThanPage index)
+        { icPrimary = primary'
+        , icClashes = VU.slice 0 numPages' (icClashes index)
+        , icLargerThanPage = VU.slice 0 numPages' (icLargerThanPage index)
         }
     | chunks' <- shrink (map cPrimary chunks)
     , let primary' = mconcat chunks'
@@ -494,7 +494,7 @@ instance Arbitrary Chunks where
     ] ++
     -- shrink tie breaker
     [ Chunks chunks index
-        { ciTieBreaker = tieBreaker'
+        { icTieBreaker = tieBreaker'
         }
-    | tieBreaker' <- shrink (ciTieBreaker index)
+    | tieBreaker' <- shrink (icTieBreaker index)
     ]

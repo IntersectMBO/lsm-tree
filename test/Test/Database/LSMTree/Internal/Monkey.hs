@@ -44,7 +44,7 @@ import           Test.Tasty.QuickCheck (testProperty)
 import           Text.Printf (printf)
 
 tests :: TestTree
-tests = testGroup "Database.LSMTree.Internal.Run.BloomFilter" [
+tests = testGroup "Database.LSMTree.Internal.Monkey" [
       testGroup "No false negatives" [
         testProperty "mkBloomEasy"      $ prop_noFalseNegatives (Proxy @Word64) mkBloomEasy
       , testProperty "mkBloomST"        $ prop_noFalseNegatives (Proxy @Word64) mkBloomST

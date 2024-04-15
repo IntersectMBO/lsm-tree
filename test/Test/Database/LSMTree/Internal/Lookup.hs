@@ -32,7 +32,7 @@ import           Data.Word
 import           Database.LSMTree.Generators
 import           Database.LSMTree.Internal.BlobRef (BlobSpan)
 import           Database.LSMTree.Internal.Entry
-import           Database.LSMTree.Internal.Index.Compact as Index
+import           Database.LSMTree.Internal.IndexCompact as Index
 import           Database.LSMTree.Internal.Lookup
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.RawOverflowPage
@@ -145,9 +145,9 @@ indexSearchesModel ::
   -> [PageSpan]
 indexSearchesModel rs ks rkixs =
     flip fmap rkixs $ \(rix, kix) ->
-      let RunLookupView{rlvIndex = cix} = rs List.!! rix
+      let RunLookupView{rlvIndex = ic} = rs List.!! rix
           k = ks List.!! kix
-      in  Index.search k cix
+      in  Index.search k ic
 
 prop_prepLookupsModel ::
      SmallList (InMemLookupData SerialisedKey SerialisedValue)
@@ -292,7 +292,7 @@ runWithHandle rlv = fmap (\x -> Handle x (mkFsPath ["do not use"])) rlv
 type TestRun = RunLookupView (Map Int (Either RawPage RawOverflowPage))
 
 mkTestRun :: Map SerialisedKey (Entry SerialisedValue BlobSpan) -> TestRun
-mkTestRun dat = RunLookupView rawPages b cix
+mkTestRun dat = RunLookupView rawPages b ic
   where
     nentries = NumEntries (Map.size dat)
     -- suggested range-finder precision is going to be @0@ anyway unless the
@@ -300,15 +300,15 @@ mkTestRun dat = RunLookupView rawPages b cix
     npages   = 0
 
     -- one-shot run construction
-    (pages, b, cix) = runST $ do
+    (pages, b, ic) = runST $ do
       racc <- Run.new nentries npages Nothing
       let kops = Map.toList dat
       psopss <- traverse (uncurry (Run.addKeyOp racc)) kops
-      (mp, _ , b', cix', _) <- Run.unsafeFinalise racc
+      (mp, _ , b', ic', _) <- Run.unsafeFinalise racc
       let pages' = [ p | (ps, ops, _) <- psopss
                       , p <- map Left ps ++ map Right ops ]
                ++ [ Left p | p <- maybeToList mp ]
-      pure (pages', b', cix')
+      pure (pages', b', ic')
 
     -- create a mapping of page numbers to raw pages, which we can use to do
     -- intra-page lookups on after first probing the bloom filter and index

@@ -47,12 +47,10 @@ import           Data.Primitive.PrimVar (PrimVar, modifyPrimVar, newPrimVar,
 import           Data.Word (Word16)
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..))
-import           Database.LSMTree.Internal.Index.Compact (CompactIndex,
-                     NumPages)
-import qualified Database.LSMTree.Internal.Index.Compact as Index
-import           Database.LSMTree.Internal.Index.Compact.Construction
-                     (MCompactIndex)
-import qualified Database.LSMTree.Internal.Index.Compact.Construction as Index
+import           Database.LSMTree.Internal.IndexCompact (IndexCompact, NumPages)
+import qualified Database.LSMTree.Internal.IndexCompact as Index
+import           Database.LSMTree.Internal.IndexCompactAcc (IndexCompactAcc)
+import qualified Database.LSMTree.Internal.IndexCompactAcc as Index
 import           Database.LSMTree.Internal.PageAcc (MPageAcc)
 import qualified Database.LSMTree.Internal.PageAcc as PageAcc
 import qualified Database.LSMTree.Internal.PageAcc1 as PageAcc
@@ -75,7 +73,7 @@ import           Database.LSMTree.Internal.Serialise (SerialisedKey,
 -- 'unsafeFinalise'.
 data RunAcc s = RunAcc {
       mbloom               :: !(MBloom s SerialisedKey)
-    , mindex               :: !(MCompactIndex s)
+    , mindex               :: !(IndexCompactAcc s)
     , mpageacc             :: !(MPageAcc s)
     , entryCount           :: !(PrimVar s Int)
     , rangeFinderCurVal    :: !(PrimVar s Word16)
@@ -116,7 +114,7 @@ unsafeFinalise ::
   -> ST s ( Maybe RawPage
           , Maybe Index.Chunk
           , Bloom SerialisedKey
-          , CompactIndex
+          , IndexCompact
           , NumEntries
           )
 unsafeFinalise racc@RunAcc {..} = do

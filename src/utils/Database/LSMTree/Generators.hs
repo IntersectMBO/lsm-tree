@@ -55,8 +55,8 @@ module Database.LSMTree.Generators (
   , genRawBytesSized
   , packRawBytesPinnedOrUnpinned
   , LargeRawBytes (..)
-  , KeyForCompactIndex (..)
-  , keyForCompactIndexInvariant
+  , KeyForIndexCompact (..)
+  , keyForIndexCompactInvariant
   ) where
 
 import           Control.DeepSeq (NFData)
@@ -73,10 +73,9 @@ import           Data.Word
 import           Database.LSMTree.Common (Range (..))
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..))
-import           Database.LSMTree.Internal.Index.Compact (PageNo (..),
+import           Database.LSMTree.Internal.IndexCompact (PageNo (..),
                      rangeFinderPrecisionBounds, suggestRangeFinderPrecision)
-import           Database.LSMTree.Internal.Index.Compact.Construction
-                     (Append (..))
+import           Database.LSMTree.Internal.IndexCompactAcc (Append (..))
 import           Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.Serialise
 import qualified Database.LSMTree.Internal.Serialise.Class as S.Class
@@ -615,24 +614,24 @@ instance Arbitrary LargeRawBytes where
 deriving newtype instance SerialiseValue LargeRawBytes
 
 -- | Minimum length of 6 bytes.
-newtype KeyForCompactIndex =
-    KeyForCompactIndex { getKeyForCompactIndex :: RawBytes }
+newtype KeyForIndexCompact =
+    KeyForIndexCompact { getKeyForIndexCompact :: RawBytes }
   deriving (Eq, Ord, Show)
 
-instance Arbitrary KeyForCompactIndex where
+instance Arbitrary KeyForIndexCompact where
   arbitrary =
-      fmap KeyForCompactIndex . genRawBytesN
+      fmap KeyForIndexCompact . genRawBytesN
           =<< QC.sized (\s -> QC.chooseInt (6, s + 6))
-  shrink (KeyForCompactIndex rb) =
-      [ KeyForCompactIndex rb'
+  shrink (KeyForIndexCompact rb) =
+      [ KeyForIndexCompact rb'
       | rb' <- shrink rb
       , RB.size rb' >= 6
       ]
 
-deriving newtype instance SerialiseKey KeyForCompactIndex
+deriving newtype instance SerialiseKey KeyForIndexCompact
 
-keyForCompactIndexInvariant :: KeyForCompactIndex -> Bool
-keyForCompactIndexInvariant (KeyForCompactIndex rb) = RB.size rb >= 6
+keyForIndexCompactInvariant :: KeyForIndexCompact -> Bool
+keyForIndexCompactInvariant (KeyForIndexCompact rb) = RB.size rb >= 6
 
 {-------------------------------------------------------------------------------
   Unsliced
