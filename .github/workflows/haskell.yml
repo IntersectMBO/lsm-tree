@@ -132,6 +132,16 @@ jobs:
         cabal: ["3.10.2.1"]
         os: [ubuntu-latest]
 
+    # Fix the index-state so we can get proper caching effects. Change this to a
+    # more recent time if you want to use a newer version of stylish-haskell, or
+    # if you want stylish-haskell to use updated dependencies.
+    #
+    # We use this environment variable in the primary key of our caches, and as
+    # an argument to cabal install. This ensures that we never rebuild
+    # dependencies because of newly uploaded packages unless we want to.
+    env:
+      hackage-index-state: "2024-04-10T14:36:07Z"
+
     steps:
     - name: Checkout repository
       uses: actions/checkout@v3
@@ -161,10 +171,12 @@ jobs:
         cache-name: cache-cabal-stylish
       with:
         path: ${{ steps.setup-haskell.outputs.cabal-store }}
-        key: ${{ runner.os }}-${{ matrix.ghc }}-${{ env.cache-name }}
+        key: ${{ runner.os }}-${{ matrix.ghc }}-${{ env.cache-name }}-${{ env.hackage-index-state }}
+        restore-keys: |
+          ${{ runner.os }}-${{ matrix.ghc }}-${{ env.cache-name }}-
 
     - name: Install stylish-haskell
-      run: cabal install --ignore-project stylish-haskell --constraint 'stylish-haskell == 0.14.6.0'
+      run: cabal install --ignore-project --index-state="${{ env.hackage-index-state }}" stylish-haskell --constraint 'stylish-haskell == 0.14.6.0'
 
     - name: Record stylish-haskell version
       run: |
@@ -186,6 +198,11 @@ jobs:
         ghc: ["9.6.4"]
         cabal: ["3.10.2.1"]
         os: [ubuntu-latest]
+
+    # See the comment on the hackage-index-state environment variable for the
+    # stylish-haskell job.
+    env:
+      hackage-index-state: "2024-04-10T14:36:07Z"
 
     steps:
     - name: Checkout repository
@@ -216,10 +233,12 @@ jobs:
         cache-name: cache-cabal-cabal-fmt-11
       with:
         path: ${{ steps.setup-haskell.outputs.cabal-store }}
-        key: ${{ runner.os }}-${{ matrix.ghc }}-${{ env.cache-name }}
+        key: ${{ runner.os }}-${{ matrix.ghc }}-${{ env.cache-name }}-${{ env.hackage-index-state }}
+        restore-keys: |
+          ${{ runner.os }}-${{ matrix.ghc }}-${{ env.cache-name }}-
 
     - name: Install cabal-fmt
-      run: cabal install --ignore-project cabal-fmt --constraint 'cabal-fmt == 0.1.11'
+      run: cabal install --ignore-project cabal-fmt --index-state="${{ env.hackage-index-state }}" --constraint 'cabal-fmt == 0.1.11'
 
     - name: Record cabal-fmt version
       run: |
