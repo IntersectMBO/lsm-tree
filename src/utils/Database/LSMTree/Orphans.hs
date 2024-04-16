@@ -18,6 +18,7 @@ import qualified Data.ByteString.Short.Internal as SBS
 import qualified Data.Primitive as P
 import           Data.WideWord.Word256 (Word256 (..))
 import           Data.Word (Word64, byteSwap64)
+import           Database.LSMTree.Internal.ByteString (byteArrayToSBS)
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
 import           Database.LSMTree.Internal.IndexCompact (IndexCompact (..),
                      PageNo (..), PageSpan (..))
@@ -106,3 +107,29 @@ instance SerialiseValue BS.ByteString where
   serialiseValue = RB.fromShortByteString . SBS.toShort
   deserialiseValue = deserialiseValueN . pure
   deserialiseValueN = LBS.toStrict . deserialiseValueN
+
+{-------------------------------------------------------------------------------
+ ShortByteString
+-------------------------------------------------------------------------------}
+
+instance SerialiseKey SBS.ShortByteString where
+  serialiseKey = RB.fromShortByteString
+  deserialiseKey = byteArrayToSBS . RB.force
+
+instance SerialiseValue SBS.ShortByteString where
+  serialiseValue = RB.fromShortByteString
+  deserialiseValue = byteArrayToSBS . RB.force
+  deserialiseValueN = byteArrayToSBS . foldMap RB.force
+
+{-------------------------------------------------------------------------------
+ ByteArray
+-------------------------------------------------------------------------------}
+
+instance SerialiseKey P.ByteArray where
+  serialiseKey ba = RB.fromByteArray 0 (P.sizeofByteArray ba) ba
+  deserialiseKey = RB.force
+
+instance SerialiseValue P.ByteArray where
+  serialiseValue ba = RB.fromByteArray 0 (P.sizeofByteArray ba) ba
+  deserialiseValue = RB.force
+  deserialiseValueN = foldMap RB.force
