@@ -8,6 +8,7 @@ module Database.LSMTree.Internal.ByteString (
     tryGetByteArray,
     shortByteStringFromTo,
     byteArrayFromTo,
+    byteArrayToSBS,
 ) where
 
 import qualified Data.ByteString as BS
@@ -94,3 +95,10 @@ shortByteStringCopyStepFromTo !ip0 !ipe0 !sbs k =
       where
         outRemaining = ope `minusPtr` op
         inpRemaining = ipe - ip
+
+byteArrayToSBS :: ByteArray -> ShortByteString
+#if MIN_VERSION_bytestring(0,12,0)
+byteArrayToSBS ba             = SBS.ShortByteString ba
+#else
+byteArrayToSBS (ByteArray ba) = SBS.SBS ba
+#endif

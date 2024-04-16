@@ -35,6 +35,7 @@ module Database.LSMTree.Internal.RawBytes (
     -- | Use 'Semigroup' and 'Monoid' operations
     -- ** Restricting memory usage
   , copy
+  , force
     -- * Conversions
   , fromVector
   , fromByteArray
@@ -58,6 +59,7 @@ import qualified Data.ByteString.Builder as BB
 import           Data.ByteString.Short (ShortByteString (SBS))
 import qualified Data.ByteString.Short as SBS
 import           Data.Primitive.ByteArray (ByteArray (..), compareByteArrays)
+import qualified Data.Primitive.ByteArray as BA
 import qualified Data.Vector.Primitive as PV
 import           Database.LSMTree.Internal.ByteString (shortByteStringFromTo,
                      tryGetByteArray)
@@ -217,6 +219,19 @@ instance Monoid RawBytes where
 -- "Database.LSMTree.Internal.Unsliced"
 copy :: RawBytes -> RawBytes
 copy (RawBytes pvec) = RawBytes (PV.force pvec)
+
+-- | Force 'RawBytes' to not retain any extra memory. This may copy the contents.
+force :: RawBytes -> ByteArray
+force (RawBytes (PV.Vector off len ba))
+    | off == 0
+    , BA.sizeofByteArray ba == len
+    = ba
+
+    | otherwise
+    = BA.runByteArray $ do
+        mba <- BA.newByteArray len
+        BA.copyByteArray mba 0 ba off len
+        return mba
 
 {-------------------------------------------------------------------------------
   Conversions
