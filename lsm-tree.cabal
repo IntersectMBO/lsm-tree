@@ -342,6 +342,27 @@ benchmark lsm-tree-macro-bench
 
   ghc-options:      -rtsopts -with-rtsopts=-T -threaded
 
+benchmark initial-lsm-bench
+  import:           warnings, wno-x-partial
+  default-language: Haskell2010
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   bench/macro test
+  main-is:          initial-lsm-bench.hs
+  build-depends:
+    , base
+    , binary
+    , bytestring
+    , clock
+    , cryptohash-sha256
+    , fs-api
+    , lsm-tree
+    , lsm-tree:lsm-tree-utils
+    , optparse-applicative
+    , primitive
+    , temporary
+
+  ghc-options:      -rtsopts -with-rtsopts=-T -threaded
+
 library kmerge
   import:           warnings, wno-x-partial
   default-language: Haskell2010
