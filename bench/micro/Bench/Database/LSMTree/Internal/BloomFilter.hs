@@ -20,7 +20,6 @@ import qualified Data.Map.Strict as Map
 import           Database.LSMTree.Generators
 import           Database.LSMTree.Internal.Serialise (SerialisedKey,
                      serialiseKey)
-import           Database.LSMTree.Orphans ()
 import           System.Random
 import           System.Random.Extras
 import           Test.QuickCheck (generate, shuffle)

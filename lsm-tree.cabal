@@ -76,7 +76,7 @@ library
     , bytestring               ^>=0.11.4.0 || ^>=0.12.1.0
     , containers
     , crc32c                   ^>=0.2.0
-    , deepseq                  ^>=1.4
+    , deepseq                  ^>=1.4      || ^>=1.5
     , filepath
     , fs-api                   ^>=0.2
     , io-classes               ^>=1.3

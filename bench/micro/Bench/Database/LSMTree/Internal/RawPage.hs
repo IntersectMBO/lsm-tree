@@ -15,7 +15,6 @@ import           Data.Primitive.ByteArray (ByteArray (..))
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.RawPage
 import           Database.LSMTree.Internal.Serialise
-import           Database.LSMTree.Orphans ()
 import           FormatPage
 import           Test.QuickCheck
 import           Test.QuickCheck.Gen (Gen (..))
