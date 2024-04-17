@@ -42,7 +42,6 @@ import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Util
 import           Numeric (showHex)
 import           Prelude hiding (max, min, pi)
-import           Test.Database.LSMTree.Internal.Serialise ()
 import qualified Test.QuickCheck as QC
 import           Test.QuickCheck
 import           Test.Tasty (TestTree, adjustOption, testGroup)

@@ -22,7 +22,6 @@ import           Test.Tasty
 import           Test.Tasty.HUnit
 import           Test.Tasty.QuickCheck (QuickCheckMaxSize (QuickCheckMaxSize),
                      QuickCheckTests (QuickCheckTests), testProperty)
-import           Test.Util.Orphans ()
 
 tests :: TestTree
 tests = adjustOption (\_ -> QuickCheckTests 10000) $

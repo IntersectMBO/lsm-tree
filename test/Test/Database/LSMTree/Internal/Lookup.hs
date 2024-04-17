@@ -50,7 +50,6 @@ import           Test.Database.LSMTree.Generators (deepseqInvariant,
 import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
-import           Test.Util.Orphans ()
 import           Test.Util.QuickCheck as Util.QC
 
 tests :: TestTree
