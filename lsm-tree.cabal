@@ -198,7 +198,6 @@ library lsm-tree-utils
 
   build-depends:
     , base
-    , bytestring
     , containers
     , deepseq
     , lsm-tree

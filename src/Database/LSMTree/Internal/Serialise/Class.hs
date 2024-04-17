@@ -1,3 +1,4 @@
+{-# LANGUAGE MagicHash           #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications    #-}
 
@@ -13,9 +14,20 @@ module Database.LSMTree.Internal.Serialise.Class (
   , RawBytes (..)
   ) where
 
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Builder as B
+import qualified Data.ByteString.Lazy as LBS
+import qualified Data.ByteString.Short.Internal as SBS
+import qualified Data.Primitive as P
 import           Data.Proxy (Proxy)
+import qualified Data.Vector.Primitive as PV
+import           Data.Word
+import           Database.LSMTree.Internal.ByteString (byteArrayToSBS)
 import           Database.LSMTree.Internal.RawBytes (RawBytes (..))
 import qualified Database.LSMTree.Internal.RawBytes as RB
+import           Database.LSMTree.Internal.Vector
+import           GHC.Exts (Int (..), indexWord8ArrayAsWord64#)
+import           GHC.Word (Word64 (..))
 
 -- | Serialisation of keys.
 --
@@ -69,3 +81,70 @@ serialiseValueIdentity x = deserialiseValue (serialiseValue x) == x
 -- | Test the __Concat distributes__ law for the 'SerialiseValue' class
 serialiseValueConcatDistributes :: forall v. (Eq v, SerialiseValue v) => Proxy v -> [RawBytes] -> Bool
 serialiseValueConcatDistributes _ xs = deserialiseValueN @v xs == deserialiseValue (mconcat xs)
+
+{-------------------------------------------------------------------------------
+  Word64
+-------------------------------------------------------------------------------}
+
+instance SerialiseKey Word64 where
+  serialiseKey x =
+    RB.RawBytes $ mkPrimVector 0 8 $ P.runByteArray $ do
+      ba <- P.newByteArray 8
+      P.writeByteArray ba 0 $ byteSwap64 x
+      return ba
+
+  deserialiseKey (RawBytes (PV.Vector (I# off#) len (P.ByteArray ba#)))
+    | len >= 8  = W64# (indexWord8ArrayAsWord64# ba# off# )
+    | otherwise = error "deserialiseKey: not enough bytes for Word64"
+
+{-------------------------------------------------------------------------------
+  ByteString
+-------------------------------------------------------------------------------}
+
+-- | Placeholder instance, not optimised
+instance SerialiseKey LBS.ByteString where
+  serialiseKey = serialiseKey . LBS.toStrict
+  deserialiseKey = B.toLazyByteString . RB.builder
+
+-- | Placeholder instance, not optimised
+instance SerialiseKey BS.ByteString where
+  serialiseKey = RB.fromShortByteString . SBS.toShort
+  deserialiseKey = LBS.toStrict . deserialiseKey
+
+-- | Placeholder instance, not optimised
+instance SerialiseValue LBS.ByteString where
+  serialiseValue = serialiseValue . LBS.toStrict
+  deserialiseValue = deserialiseValueN . pure
+  deserialiseValueN = B.toLazyByteString . foldMap RB.builder
+
+-- | Placeholder instance, not optimised
+instance SerialiseValue BS.ByteString where
+  serialiseValue = RB.fromShortByteString . SBS.toShort
+  deserialiseValue = deserialiseValueN . pure
+  deserialiseValueN = LBS.toStrict . deserialiseValueN
+
+{-------------------------------------------------------------------------------
+ ShortByteString
+-------------------------------------------------------------------------------}
+
+instance SerialiseKey SBS.ShortByteString where
+  serialiseKey = RB.fromShortByteString
+  deserialiseKey = byteArrayToSBS . RB.force
+
+instance SerialiseValue SBS.ShortByteString where
+  serialiseValue = RB.fromShortByteString
+  deserialiseValue = byteArrayToSBS . RB.force
+  deserialiseValueN = byteArrayToSBS . foldMap RB.force
+
+{-------------------------------------------------------------------------------
+ ByteArray
+-------------------------------------------------------------------------------}
+
+instance SerialiseKey P.ByteArray where
+  serialiseKey ba = RB.fromByteArray 0 (P.sizeofByteArray ba) ba
+  deserialiseKey = RB.force
+
+instance SerialiseValue P.ByteArray where
+  serialiseValue ba = RB.fromByteArray 0 (P.sizeofByteArray ba) ba
+  deserialiseValue = RB.force
+  deserialiseValueN = foldMap RB.force
