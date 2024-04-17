@@ -10,41 +10,13 @@
 
 module Database.LSMTree.Orphans () where
 
-import           Control.DeepSeq (NFData (..))
 import qualified Data.Primitive as P
 import           Data.WideWord.Word256 (Word256 (..))
 import           Data.Word (byteSwap64)
-import           Database.LSMTree.Internal.Entry (NumEntries (..))
-import           Database.LSMTree.Internal.IndexCompact (IndexCompact (..),
-                     PageNo (..), PageSpan (..))
-import           Database.LSMTree.Internal.IndexCompactAcc (Append (..))
 import qualified Database.LSMTree.Internal.RawBytes as RB
-import           Database.LSMTree.Internal.Serialise (SerialisedBlob (..),
-                     SerialisedKey (..), SerialisedValue (..))
 import           Database.LSMTree.Internal.Serialise.Class
-import           Database.LSMTree.Internal.Unsliced (Unsliced)
 import           Database.LSMTree.Internal.Vector
-import           GHC.Generics (Generic)
 import           System.Random (Uniform)
-
-deriving newtype instance NFData SerialisedKey
-deriving newtype instance NFData SerialisedValue
-deriving newtype instance NFData SerialisedBlob
-deriving newtype instance NFData NumEntries
-
-deriving newtype instance NFData PageNo
-
-deriving stock instance Generic PageSpan
-deriving anyclass instance NFData PageSpan
-
-deriving stock instance Generic Append
-deriving anyclass instance NFData Append
-
-deriving stock instance Generic IndexCompact
-deriving anyclass instance NFData IndexCompact
-
-instance NFData (Unsliced a) where
-  rnf x = x `seq` ()
 
 {-------------------------------------------------------------------------------
   Word256

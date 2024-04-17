@@ -1,6 +1,8 @@
-{-# LANGUAGE DeriveFunctor     #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE RoleAnnotations   #-}
+{-# LANGUAGE DeriveFunctor              #-}
+{-# LANGUAGE DerivingStrategies         #-}
+{-# LANGUAGE FlexibleInstances          #-}
+{-# LANGUAGE GeneralisedNewtypeDeriving #-}
+{-# LANGUAGE RoleAnnotations            #-}
 
 module Database.LSMTree.Internal.Unsliced (
     -- * Unsliced raw bytes
@@ -12,6 +14,7 @@ module Database.LSMTree.Internal.Unsliced (
   , unsafeNoAssertMakeUnslicedKey
   ) where
 
+import           Control.DeepSeq (NFData)
 import           Control.Exception (assert)
 import           Data.Primitive.ByteArray
 import qualified Data.Vector.Primitive as PV
@@ -23,8 +26,8 @@ import           Database.LSMTree.Internal.Vector (mkPrimVector,
 
 -- | Unsliced string of bytes
 type role Unsliced nominal
-newtype Unsliced a =
-    Unsliced ByteArray
+newtype Unsliced a = Unsliced ByteArray
+  deriving newtype NFData
 
 getByteArray :: RawBytes -> ByteArray
 getByteArray (RawBytes (PV.Vector _ _ ba)) = ba

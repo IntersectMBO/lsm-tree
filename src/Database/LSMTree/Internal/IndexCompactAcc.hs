@@ -28,6 +28,7 @@ module Database.LSMTree.Internal.IndexCompactAcc (
   , unsafeEnd
   ) where
 
+import           Control.DeepSeq (NFData (..))
 import           Control.Exception (assert)
 import           Control.Monad (forM_, when)
 import           Control.Monad.ST
@@ -134,6 +135,10 @@ data Append =
     -- | There is only one key in this page, and it's value does not fit within
     -- a single page.
   | AppendMultiPage SerialisedKey Word32 -- ^ Number of overflow pages
+
+instance NFData Append where
+  rnf (AppendSinglePage kmin kmax)  = rnf kmin `seq` rnf kmax
+  rnf (AppendMultiPage k nOverflow) = rnf k `seq` rnf nOverflow
 
 -- | Append a new page entry to a mutable compact index.
 --

@@ -36,6 +36,7 @@ module Database.LSMTree.Internal.Serialise (
   , serialisedBlob
   ) where
 
+import           Control.DeepSeq (NFData)
 import           Data.BloomFilter.Hash (Hashable (..))
 import qualified Data.ByteString.Builder as BB
 import qualified Data.Vector.Primitive as PV
@@ -56,7 +57,7 @@ import qualified Database.LSMTree.Internal.Serialise.Class as Class
 -- 'SerialisedKey' uses lexicographical ordering.
 newtype SerialisedKey = SerialisedKey RawBytes
   deriving stock Show
-  deriving newtype (Eq, Ord, Hashable)
+  deriving newtype (Eq, Ord, Hashable, NFData)
 
 {-# COMPLETE SerialisedKey' #-}
 pattern SerialisedKey' :: PV.Vector Word8 -> SerialisedKey
@@ -111,7 +112,7 @@ keySliceBits32 n (SerialisedKey rb) = RB.sliceBits32 n rb
 -- | Representation of a serialised value.
 newtype SerialisedValue = SerialisedValue RawBytes
   deriving stock Show
-  deriving newtype (Eq, Ord)
+  deriving newtype (Eq, Ord, NFData)
 
 {-# COMPLETE SerialisedValue' #-}
 pattern SerialisedValue' :: PV.Vector Word8 -> SerialisedValue
@@ -155,7 +156,7 @@ serialisedValue (SerialisedValue rb) = RB.builder rb
 -- | Representation of a serialised blob.
 newtype SerialisedBlob = SerialisedBlob RawBytes
   deriving stock Show
-  deriving newtype (Eq, Ord)
+  deriving newtype (Eq, Ord, NFData)
 
 {-# COMPLETE SerialisedBlob' #-}
 pattern SerialisedBlob' :: PV.Vector Word8 -> SerialisedBlob

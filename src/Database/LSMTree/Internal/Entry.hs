@@ -1,5 +1,7 @@
-{-# LANGUAGE DeriveTraversable #-}
-{-# LANGUAGE LambdaCase        #-}
+{-# LANGUAGE DeriveTraversable          #-}
+{-# LANGUAGE DerivingStrategies         #-}
+{-# LANGUAGE GeneralisedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase                 #-}
 
 module Database.LSMTree.Internal.Entry (
     Entry (..)
@@ -72,9 +74,9 @@ instance Bifoldable Entry where
       Mupdate v           -> f v
       Delete              -> mempty
 
-
 newtype NumEntries = NumEntries { unNumEntries :: Int }
   deriving (Eq, Ord, Show)
+  deriving newtype NFData
 
 {-------------------------------------------------------------------------------
   Injections/projections

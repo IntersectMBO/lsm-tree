@@ -1,10 +1,12 @@
-{-# LANGUAGE BangPatterns        #-}
-{-# LANGUAGE DerivingStrategies  #-}
-{-# LANGUAGE LambdaCase          #-}
-{-# LANGUAGE RecordWildCards     #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications    #-}
-{-# LANGUAGE ViewPatterns        #-}
+{-# LANGUAGE BangPatterns               #-}
+{-# LANGUAGE DerivingStrategies         #-}
+{-# LANGUAGE GeneralisedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase                 #-}
+{-# LANGUAGE NamedFieldPuns             #-}
+{-# LANGUAGE RecordWildCards            #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
+{-# LANGUAGE TypeApplications           #-}
+{-# LANGUAGE ViewPatterns               #-}
 
 -- | A compact fence-pointer index for uniformly distributed keys.
 --
@@ -39,6 +41,7 @@ module Database.LSMTree.Internal.IndexCompact (
   , fromSBS
   ) where
 
+import           Control.DeepSeq (NFData (..))
 import           Control.Monad (when)
 import           Control.Monad.ST
 import           Data.Bit hiding (flipBit)
@@ -466,9 +469,23 @@ data IndexCompact = IndexCompact {
   , icLargerThanPage       :: !(VU.Vector Bit)
   }
 
+instance NFData IndexCompact where
+  rnf ic =
+      rnf icRangeFinder `seq`
+      rnf icRangeFinderPrecision `seq`
+      rnf icPrimary `seq`
+      rnf icClashes `seq`
+      rnf icTieBreaker `seq`
+      rnf icLargerThanPage
+    where
+      IndexCompact {
+          icRangeFinder, icRangeFinderPrecision, icPrimary, icClashes
+        , icTieBreaker, icLargerThanPage } = ic
+
 -- | A 0-based number identifying a disk page.
 newtype PageNo = PageNo { unPageNo :: Int }
   deriving stock (Show, Eq, Ord)
+  deriving newtype NFData
 
 -- TODO: Turn into newtype, maybe also other types, e.g. range finder precision.
 type NumPages = Int
@@ -507,7 +524,10 @@ data PageSpan = PageSpan {
     pageSpanStart :: {-# UNPACK #-} !PageNo
   , pageSpanEnd   :: {-# UNPACK #-} !PageNo
   }
-  deriving (Show, Eq)
+  deriving stock (Show, Eq)
+
+instance NFData PageSpan where
+  rnf (PageSpan x y) = rnf x `seq` rnf y
 
 {-# INLINE singlePage #-}
 singlePage :: PageNo -> PageSpan
