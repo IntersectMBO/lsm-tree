@@ -1,6 +1,7 @@
 {-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE TypeApplications   #-}
 
+{-# OPTIONS_GHC -Wno-incomplete-uni-patterns #-}
 
 module Bench.Database.LSMTree.Internal.RawPage (
     benchmarks
@@ -28,7 +29,8 @@ benchmarks = rawpage `deepseq` bgroup "Bench.Database.LSMTree.Internal.RawPage"
     ]
   where
     page :: PageLogical
-    page = unGen (genFullPageLogical genSmallKey genSmallValue) (mkQCGen 42) 200
+    page = unGen (genFullPageLogical DiskPage4k genSmallKey genSmallValue)
+                 (mkQCGen 42) 200
 
     rawpage :: RawPage
     rawpage = fst $ toRawPage $ page
@@ -54,6 +56,6 @@ benchmarks = rawpage `deepseq` bgroup "Bench.Database.LSMTree.Internal.RawPage"
 toRawPage :: PageLogical -> (RawPage, BS.ByteString)
 toRawPage p = (page, sfx)
   where
-    bs = serialisePage $ encodePage p
+    Just bs = serialisePage <$> encodePage DiskPage4k p
     (pfx, sfx) = BS.splitAt 4096 bs -- hardcoded page size.
     page = case SBS.toShort pfx of SBS.SBS ba -> makeRawPage (ByteArray ba) 0

@@ -40,14 +40,14 @@ import           Database.LSMTree.Internal.Serialise
 -- A smallest page is with empty key:
 --
 -- >>> import FormatPage
--- >>> let Just page0 = pageSizeAddElem (Key "", Delete) pageSizeEmpty
+-- >>> let Just page0 = pageSizeAddElem (Key "", Delete) (pageSizeEmpty DiskPage4k)
 -- >>> page0
--- PageSize {pageSizeElems = 1, pageSizeBlobs = 0, pageSizeBytes = 32}
+-- PageSize {pageSizeElems = 1, pageSizeBlobs = 0, pageSizeBytes = 32, pageSizeDisk = DiskPage4k}
 --
 -- Then we can add pages with a single byte key, e.g.
 --
 -- >>> pageSizeAddElem (Key "a", Delete) page0
--- Just (PageSize {pageSizeElems = 2, pageSizeBlobs = 0, pageSizeBytes = 35})
+-- Just (PageSize {pageSizeElems = 2, pageSizeBlobs = 0, pageSizeBytes = 35, pageSizeDisk = DiskPage4k})
 --
 -- i.e. roughly 3-4 bytes (when we get to 32/64 elements we add more bytes for bitmaps).
 -- (key and value offset is together 4 bytes: so it's at least 4, the encoding of single element page takes more space).
