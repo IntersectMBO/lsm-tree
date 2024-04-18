@@ -50,7 +50,7 @@ data HasBlockIO m h = HasBlockIO {
     -- position.
     --
     -- If any of the I\/O operations fails, an 'FsError' exception will be thrown.
-  , submitIO :: HasCallStack => V.Vector (IOOp m h) -> m (VU.Vector IOResult)
+  , submitIO :: HasCallStack => V.Vector (IOOp (PrimState m) h) -> m (VU.Vector IOResult)
   }
 
 -- | Concurrency parameters for initialising a 'HasBlockIO. Can be ignored by
@@ -68,27 +68,27 @@ mkClosedError (SomeHasFS hasFS) loc = ioToFsError (mkFsErrorPath hasFS (mkFsPath
             ("HasBlockIO closed: " <> loc)
 
 
-data IOOp m h =
-    IOOpRead  !(Handle h) !FileOffset !(MutableByteArray (PrimState m)) !BufferOffset !ByteCount
-  | IOOpWrite !(Handle h) !FileOffset !(MutableByteArray (PrimState m)) !BufferOffset !ByteCount
+data IOOp s h =
+    IOOpRead  !(Handle h) !FileOffset !(MutableByteArray s) !BufferOffset !ByteCount
+  | IOOpWrite !(Handle h) !FileOffset !(MutableByteArray s) !BufferOffset !ByteCount
 
-ioopHandle :: IOOp m h -> Handle h
+ioopHandle :: IOOp s h -> Handle h
 ioopHandle (IOOpRead h _ _ _ _)  = h
 ioopHandle (IOOpWrite h _ _ _ _) = h
 
-ioopFileOffset :: IOOp m h -> FileOffset
+ioopFileOffset :: IOOp s h -> FileOffset
 ioopFileOffset (IOOpRead _ off _ _ _)  = off
 ioopFileOffset (IOOpWrite _ off _ _ _) = off
 
-ioopBuffer :: IOOp m h -> MutableByteArray (PrimState m)
+ioopBuffer :: IOOp s h -> MutableByteArray s
 ioopBuffer (IOOpRead _ _ buf _ _)  = buf
 ioopBuffer (IOOpWrite _ _ buf _ _) = buf
 
-ioopBufferOffset :: IOOp m h -> BufferOffset
+ioopBufferOffset :: IOOp s h -> BufferOffset
 ioopBufferOffset (IOOpRead _ _ _ bufOff _)  = bufOff
 ioopBufferOffset (IOOpWrite _ _ _ bufOff _) = bufOff
 
-ioopByteCount :: IOOp m h -> ByteCount
+ioopByteCount :: IOOp s h -> ByteCount
 ioopByteCount (IOOpRead _ _ _ _ c)  = c
 ioopByteCount (IOOpWrite _ _ _ _ c) = c
 
