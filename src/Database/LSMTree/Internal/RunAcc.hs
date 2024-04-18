@@ -319,7 +319,7 @@ flushPageIfNonEmpty RunAcc{mpageacc, mindex} = do
         mchunk <- Index.appendSingle (minKey, maxKey) mindex
 
         -- Now serialise the page and reset the accumulator
-        page <- PageAcc.serializePageAcc mpageacc
+        page <- PageAcc.serialisePageAcc mpageacc
         PageAcc.resetPageAcc mpageacc
         return (Just (page, mchunk))
 

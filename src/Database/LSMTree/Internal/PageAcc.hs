@@ -9,7 +9,7 @@ module Database.LSMTree.Internal.PageAcc (
     newPageAcc,
     resetPageAcc,
     pageAccAddElem,
-    serializePageAcc,
+    serialisePageAcc,
     -- ** Inspection
     keysCountPageAcc,
     indexKeyPageAcc,
@@ -69,7 +69,7 @@ import           Database.LSMTree.Internal.Serialise
 -- 'PageAcc' can hold up to 704 elements, but most likely 'pageAccAddElem' will make it overflow sooner.
 -- Having an upper bound allows us to allocate all memory for the accumulator in advance.
 --
--- We don't store or calculate individual key nor value offsets in 'PageAcc', as these will be naturally calculated during serialization ('serializePageAcc').
+-- We don't store or calculate individual key nor value offsets in 'PageAcc', as these will be naturally calculated during serialisation ('serialisePageAcc').
 --
 data PageAcc s = PageAcc
     { paDir         :: !(P.MutablePrimArray s Int)      -- ^ various counters (directory + extra counters). It is convenient to have counters as 'Int', as all indexing uses 'Int's.
@@ -275,16 +275,16 @@ setOperation arr i crumb = do
 --
 -- After this operation 'PageAcc' argument can be reset with 'resetPageAcc',
 -- and reused.
-serializePageAcc :: PageAcc s -> ST s RawPage
-serializePageAcc page@PageAcc {..} = do
+serialisePageAcc :: PageAcc s -> ST s RawPage
+serialisePageAcc page@PageAcc {..} = do
     size <- P.readPrimArray paDir keysCountIdx
     case size of
         0 -> return emptyRawPage
-        _ -> serializePageAccN size page
+        _ -> serialisePageAccN size page
 
--- | Serialize non-empty page.
-serializePageAccN :: forall s. Int -> PageAcc s -> ST s RawPage
-serializePageAccN size PageAcc {..} = do
+-- | Serialise non-empty page.
+serialisePageAccN :: forall s. Int -> PageAcc s -> ST s RawPage
+serialisePageAccN size PageAcc {..} = do
     b  <- P.readPrimArray paDir blobRefCountIdx
     ks <- P.readPrimArray paDir keysSizeIdx
 

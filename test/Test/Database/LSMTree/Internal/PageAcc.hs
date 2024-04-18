@@ -94,7 +94,7 @@ prototype inputs' =
     finish :: PageAcc s -> [(Proto.Key, Proto.Operation, Maybe Proto.BlobRef)] -> ST s Property
     finish acc acc2 = do
         let (lhs, _) = toRawPage $ Proto.PageLogical $ reverse acc2
-        rawpage <- serializePageAcc acc
+        rawpage <- serialisePageAcc acc
         let rhs = rawpage :: RawPage
         return $ propEqualRawPages lhs rhs
 
