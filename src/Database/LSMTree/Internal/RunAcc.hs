@@ -51,7 +51,7 @@ import           Database.LSMTree.Internal.IndexCompact (IndexCompact, NumPages)
 import qualified Database.LSMTree.Internal.IndexCompact as Index
 import           Database.LSMTree.Internal.IndexCompactAcc (IndexCompactAcc)
 import qualified Database.LSMTree.Internal.IndexCompactAcc as Index
-import           Database.LSMTree.Internal.PageAcc (MPageAcc)
+import           Database.LSMTree.Internal.PageAcc (PageAcc)
 import qualified Database.LSMTree.Internal.PageAcc as PageAcc
 import qualified Database.LSMTree.Internal.PageAcc1 as PageAcc
 import           Database.LSMTree.Internal.RawOverflowPage
@@ -74,7 +74,7 @@ import           Database.LSMTree.Internal.Serialise (SerialisedKey,
 data RunAcc s = RunAcc {
       mbloom               :: !(MBloom s SerialisedKey)
     , mindex               :: !(IndexCompactAcc s)
-    , mpageacc             :: !(MPageAcc s)
+    , mpageacc             :: !(PageAcc s)
     , entryCount           :: !(PrimVar s Int)
     , rangeFinderCurVal    :: !(PrimVar s Word16)
     , rangeFinderPrecision :: !RangeFinderPrecision

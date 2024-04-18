@@ -76,22 +76,22 @@ prototype inputs' =
 
     fstOf3 (k,_,_) = k
 
-    go :: MPageAcc s -> Proto.PageSize -> [(Proto.Key, Proto.Operation, Maybe Proto.BlobRef)] -> [(Proto.Key, Proto.Operation, Maybe Proto.BlobRef)] -> ST s Property
+    go :: PageAcc s -> Proto.PageSize -> [(Proto.Key, Proto.Operation, Maybe Proto.BlobRef)] -> [(Proto.Key, Proto.Operation, Maybe Proto.BlobRef)] -> ST s Property
     go acc _ps acc2 []                 = finish acc acc2
     go acc  ps acc2 (e@(k,op,bref):es) = case pageSizeAddElem' e ps of
         Nothing -> do
             added <- pageAccAddElem acc (convKey k) (convOp op bref)
             if added
-            then return $ counterexample "MPageAcc addition succeeded, prototype's doesn't." False
+            then return $ counterexample "PageAcc addition succeeded, prototype's doesn't." False
             else finish acc acc2
 
         Just ps' -> do
             added <- pageAccAddElem acc (convKey k) (convOp op bref)
             if added
             then go acc ps' (e:acc2) es
-            else return $ counterexample "MPageAcc addition failed, prototype's doesn't." False
+            else return $ counterexample "PageAcc addition failed, prototype's doesn't." False
 
-    finish :: MPageAcc s -> [(Proto.Key, Proto.Operation, Maybe Proto.BlobRef)] -> ST s Property
+    finish :: PageAcc s -> [(Proto.Key, Proto.Operation, Maybe Proto.BlobRef)] -> ST s Property
     finish acc acc2 = do
         let (lhs, _) = toRawPage $ Proto.PageLogical $ reverse acc2
         rawpage <- serializePageAcc acc

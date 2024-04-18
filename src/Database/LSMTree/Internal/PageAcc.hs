@@ -5,7 +5,7 @@
 -- | Page accumulator.
 module Database.LSMTree.Internal.PageAcc (
     -- * Incrementally accumulating a single page.
-    MPageAcc,
+    PageAcc,
     newPageAcc,
     resetPageAcc,
     pageAccAddElem,
@@ -66,19 +66,19 @@ import           Database.LSMTree.Internal.Serialise
 --
 -- Rounded to the next multiple of 64 is 704
 --
--- 'MPageAcc' can hold up to 704 elements, but most likely 'pageAccAddElem' will make it overflow sooner.
+-- 'PageAcc' can hold up to 704 elements, but most likely 'pageAccAddElem' will make it overflow sooner.
 -- Having an upper bound allows us to allocate all memory for the accumulator in advance.
 --
--- We don't store or calculate individual key nor value offsets in 'MPageAcc', as these will be naturally calculated during serialization ('serializePageAcc').
+-- We don't store or calculate individual key nor value offsets in 'PageAcc', as these will be naturally calculated during serialization ('serializePageAcc').
 --
-data MPageAcc s = MPageAcc
-    { mpDir         :: !(P.MutablePrimArray s Int)      -- ^ various counters (directory + extra counters). It is convenient to have counters as 'Int', as all indexing uses 'Int's.
-    , mpOpMap       :: !(P.MutablePrimArray s Word64)   -- ^ operations crumb map
-    , mpBlobRefsMap :: !(P.MutablePrimArray s Word64)   -- ^ blob reference bitmap
-    , mpBlobRefs1   :: !(P.MutablePrimArray s Word64)   -- ^ blob spans 64 bit part (offset)
-    , mpBlobRefs2   :: !(P.MutablePrimArray s Word32)   -- ^ blob spans 32 bit part (size)
-    , mpKeys        :: !(V.MVector s SerialisedKey)     -- ^ keys
-    , mpValues      :: !(V.MVector s SerialisedValue)   -- ^ values
+data PageAcc s = PageAcc
+    { paDir         :: !(P.MutablePrimArray s Int)      -- ^ various counters (directory + extra counters). It is convenient to have counters as 'Int', as all indexing uses 'Int's.
+    , paOpMap       :: !(P.MutablePrimArray s Word64)   -- ^ operations crumb map
+    , paBlobRefsMap :: !(P.MutablePrimArray s Word64)   -- ^ blob reference bitmap
+    , paBlobRefs1   :: !(P.MutablePrimArray s Word64)   -- ^ blob spans 64 bit part (offset)
+    , paBlobRefs2   :: !(P.MutablePrimArray s Word32)   -- ^ blob spans 32 bit part (size)
+    , paKeys        :: !(V.MVector s SerialisedKey)     -- ^ keys
+    , paValues      :: !(V.MVector s SerialisedValue)   -- ^ values
     }
 
 -------------------------------------------------------------------------------
@@ -116,7 +116,7 @@ pageSize = 4096
 -- the 'pageAccAddElem' will return 'Nothing'.
 --
 -- In other words, if you have a large entry (i.e. Insert with big value),
--- don't use the 'MPageAcc', but construct the single value page directly,
+-- don't use the 'PageAcc', but construct the single value page directly,
 -- using 'Database.LSMTree.Internal.PageAcc1.singletonPage'.
 --
 -- If it's not known from context, use 'entryWouldFitInPage' to determine if
@@ -135,7 +135,7 @@ sizeofEntry k (InsertWithBlob v _) = sizeofKey k + sizeofValue v + 12
 -- single page. If it does, then it's appropriate to use 'pageAccAddElem', but
 -- otherwise use 'Database.LSMTree.Internal.PageAcc1.singletonPage'.
 --
--- If 'entryWouldFitInPage' is @True@ and the 'MPageAcc' is empty (i.e. using
+-- If 'entryWouldFitInPage' is @True@ and the 'PageAcc' is empty (i.e. using
 --'resetPageAcc') then 'pageAccAddElem' is guaranteed to succeed.
 --
 entryWouldFitInPage :: SerialisedKey -> Entry SerialisedValue BlobSpan -> Bool
@@ -168,53 +168,53 @@ emptyValue = SerialisedValue (RB.pack [])
 -- PageAcc functions
 -------------------------------------------------------------------------------
 
--- | Create new 'MPageAcc'.
+-- | Create new 'PageAcc'.
 --
--- The create 'MPageAcc' will be empty.
-newPageAcc :: ST s (MPageAcc s)
+-- The create 'PageAcc' will be empty.
+newPageAcc :: ST s (PageAcc s)
 newPageAcc = do
-    mpDir          <- P.newPrimArray 4
-    mpOpMap        <- P.newPrimArray 11 -- 704 / 64
-    mpBlobRefsMap  <- P.newPrimArray 22 -- 704 / 32
-    mpBlobRefs1    <- P.newPrimArray 680
-    mpBlobRefs2    <- P.newPrimArray 680
-    mpKeys         <- MV.new 680
-    mpValues       <- MV.new 680
+    paDir          <- P.newPrimArray 4
+    paOpMap        <- P.newPrimArray 11 -- 704 / 64
+    paBlobRefsMap  <- P.newPrimArray 22 -- 704 / 32
+    paBlobRefs1    <- P.newPrimArray 680
+    paBlobRefs2    <- P.newPrimArray 680
+    paKeys         <- MV.new 680
+    paValues       <- MV.new 680
 
     -- reset the memory, as it's not initialized
-    let page = MPageAcc {..}
+    let page = PageAcc {..}
     resetPageAcc page
     return page
 
--- | Reuse 'MPageAcc' for constructing new page, the old data will be reset.
-resetPageAcc :: MPageAcc s
+-- | Reuse 'PageAcc' for constructing new page, the old data will be reset.
+resetPageAcc :: PageAcc s
     -> ST s ()
-resetPageAcc MPageAcc {..} = do
-    P.setPrimArray mpDir 0 4 0
-    P.setPrimArray mpOpMap 0 11 0
-    P.setPrimArray mpBlobRefsMap 0 22 0
+resetPageAcc PageAcc {..} = do
+    P.setPrimArray paDir 0 4 0
+    P.setPrimArray paOpMap 0 11 0
+    P.setPrimArray paBlobRefsMap 0 22 0
 
     -- we don't need to clear these, we set what we need.
-    -- P.setPrimArray mpBlobRefs1 0 680 0
-    -- P.setPrimArray mpBlobRefs1 0 680 0
+    -- P.setPrimArray paBlobRefs1 0 680 0
+    -- P.setPrimArray paBlobRefs1 0 680 0
 
     -- initial size is 8 bytes for directory and 2 bytes for last value offset.
-    P.writePrimArray mpDir byteSizeIdx 10
+    P.writePrimArray paDir byteSizeIdx 10
 
--- | Add an entry to 'MPageAcc'.
+-- | Add an entry to 'PageAcc'.
 --
 pageAccAddElem
-    :: MPageAcc s
+    :: PageAcc s
     -> SerialisedKey
     -> Entry SerialisedValue BlobSpan
     -> ST s Bool   -- ^ 'True' if value was successfully added.
-pageAccAddElem MPageAcc {..} k e
+pageAccAddElem PageAcc {..} k e
     -- quick short circuit: if the entry is bigger than page: no luck.
     | sizeofEntry k e >= pageSize = return False
     | otherwise = do
-        n <- P.readPrimArray mpDir keysCountIdx
-        b <- P.readPrimArray mpDir blobRefCountIdx
-        s <- P.readPrimArray mpDir byteSizeIdx
+        n <- P.readPrimArray paDir keysCountIdx
+        b <- P.readPrimArray paDir blobRefCountIdx
+        s <- P.readPrimArray paDir byteSizeIdx
 
         let !n' = n + 1
         let !b' = if hasBlobRef e then b + 1 else b
@@ -230,28 +230,28 @@ pageAccAddElem MPageAcc {..} k e
         then return False
         else do
             -- key sizes
-            ks <- P.readPrimArray mpDir keysSizeIdx
+            ks <- P.readPrimArray paDir keysSizeIdx
             let !ks' = ks + sizeofKey k
 
-            P.writePrimArray mpDir keysCountIdx n'
-            P.writePrimArray mpDir blobRefCountIdx b'
-            P.writePrimArray mpDir keysSizeIdx ks'
-            P.writePrimArray mpDir byteSizeIdx s'
+            P.writePrimArray paDir keysCountIdx n'
+            P.writePrimArray paDir blobRefCountIdx b'
+            P.writePrimArray paDir keysSizeIdx ks'
+            P.writePrimArray paDir byteSizeIdx s'
 
             -- blob reference
             case e of
                 InsertWithBlob _ (BlobSpan w64 w32) -> do
-                    setBlobRef mpBlobRefsMap n
-                    P.writePrimArray mpBlobRefs1 b w64
-                    P.writePrimArray mpBlobRefs2 b w32
+                    setBlobRef paBlobRefsMap n
+                    P.writePrimArray paBlobRefs1 b w64
+                    P.writePrimArray paBlobRefs2 b w32
                 _ -> return ()
 
             -- operation
-            setOperation mpOpMap n (entryCrumb e)
+            setOperation paOpMap n (entryCrumb e)
 
             -- keys and values
-            MV.write mpKeys n k
-            MV.write mpValues n (entryValue e)
+            MV.write paKeys n k
+            MV.write paValues n (entryValue e)
 
             return True
 
@@ -271,22 +271,22 @@ setOperation arr i crumb = do
     let w64' = w64 .|. unsafeShiftL crumb (mul2 k)
     P.writePrimArray arr j $! w64'
 
--- | Convert mutable 'MPageAcc' accumulator to concrete 'RawPage'.
+-- | Convert mutable 'PageAcc' accumulator to concrete 'RawPage'.
 --
--- After this operation 'MPageAcc' argument can be reset with 'resetPageAcc',
+-- After this operation 'PageAcc' argument can be reset with 'resetPageAcc',
 -- and reused.
-serializePageAcc :: MPageAcc s -> ST s RawPage
-serializePageAcc page@MPageAcc {..} = do
-    size <- P.readPrimArray mpDir keysCountIdx
+serializePageAcc :: PageAcc s -> ST s RawPage
+serializePageAcc page@PageAcc {..} = do
+    size <- P.readPrimArray paDir keysCountIdx
     case size of
         0 -> return emptyRawPage
         _ -> serializePageAccN size page
 
 -- | Serialize non-empty page.
-serializePageAccN :: forall s. Int -> MPageAcc s -> ST s RawPage
-serializePageAccN size MPageAcc {..} = do
-    b  <- P.readPrimArray mpDir blobRefCountIdx
-    ks <- P.readPrimArray mpDir keysSizeIdx
+serializePageAccN :: forall s. Int -> PageAcc s -> ST s RawPage
+serializePageAccN size PageAcc {..} = do
+    b  <- P.readPrimArray paDir blobRefCountIdx
+    ks <- P.readPrimArray paDir keysSizeIdx
 
     -- keys offsets offset
     let ko0 :: Int
@@ -321,12 +321,12 @@ serializePageAccN size MPageAcc {..} = do
 
     -- traceM $ "sizes " ++ show (blobRefMapSize, opMapSize)
 
-    P.copyMutableByteArray ba 8                    (primToByte mpBlobRefsMap) 0 blobRefMapSize
-    P.copyMutableByteArray ba (8 + blobRefMapSize) (primToByte mpOpMap)       0 opMapSize
+    P.copyMutableByteArray ba 8                    (primToByte paBlobRefsMap) 0 blobRefMapSize
+    P.copyMutableByteArray ba (8 + blobRefMapSize) (primToByte paOpMap)       0 opMapSize
 
     -- blob references
-    P.copyMutableByteArray ba (8 + blobRefMapSize + opMapSize)          (primToByte mpBlobRefs1) 0 (mul8 b)
-    P.copyMutableByteArray ba (8 + blobRefMapSize + opMapSize + mul8 b) (primToByte mpBlobRefs2) 0 (mul4 b)
+    P.copyMutableByteArray ba (8 + blobRefMapSize + opMapSize)          (primToByte paBlobRefs1) 0 (mul8 b)
+    P.copyMutableByteArray ba (8 + blobRefMapSize + opMapSize + mul8 b) (primToByte paBlobRefs2) 0 (mul4 b)
 
     -- traceM $ "preloop " ++ show (ko0, kd0, vd0)
 
@@ -342,8 +342,8 @@ serializePageAccN size MPageAcc {..} = do
             | otherwise = do
                   -- traceM $ "loop " ++ show (i, ko, kd, vo, vd)
 
-                  SerialisedKey   (RawBytes (PV.Vector koff klen kba)) <- MV.read mpKeys i
-                  SerialisedValue (RawBytes (PV.Vector voff vlen vba)) <- MV.read mpValues i
+                  SerialisedKey   (RawBytes (PV.Vector koff klen kba)) <- MV.read paKeys i
+                  SerialisedValue (RawBytes (PV.Vector voff vlen vba)) <- MV.read paValues i
 
                   -- key and value offsets
                   P.writeByteArray ba (div2 ko) (fromIntegral kd :: Word16)
@@ -361,11 +361,11 @@ serializePageAccN size MPageAcc {..} = do
     return (makeRawPage ba' 0)
 
 
-keysCountPageAcc :: MPageAcc s -> ST s Int
-keysCountPageAcc MPageAcc {mpDir} = P.readPrimArray mpDir keysCountIdx
+keysCountPageAcc :: PageAcc s -> ST s Int
+keysCountPageAcc PageAcc {paDir} = P.readPrimArray paDir keysCountIdx
 
-indexKeyPageAcc :: MPageAcc s -> Int -> ST s SerialisedKey
-indexKeyPageAcc MPageAcc {mpKeys} ix = MV.read mpKeys ix
+indexKeyPageAcc :: PageAcc s -> Int -> ST s SerialisedKey
+indexKeyPageAcc PageAcc {paKeys} ix = MV.read paKeys ix
 
 -------------------------------------------------------------------------------
 -- Utils
