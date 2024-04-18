@@ -586,7 +586,19 @@ instance SerialiseValue RawBytes where
 deriving newtype instance Arbitrary SerialisedKey
 deriving newtype instance SerialiseKey SerialisedKey
 
-deriving newtype instance Arbitrary SerialisedValue
+instance Arbitrary SerialisedValue where
+  -- good mix of sizes, including larger than two pages, also some slices
+  arbitrary = SerialisedValue <$> frequency
+      [ (16, arbitrary)
+      , ( 4, genRawBytesN =<< QC.chooseInt ( 100,  1000))
+      , ( 2, genRawBytesN =<< QC.chooseInt (1000,  4000))
+      , ( 1, genRawBytesN =<< QC.chooseInt (4000, 10000))
+      , ( 1, genSlice =<< genRawBytesN =<< QC.chooseInt (0, 10000))
+      ]
+  shrink (SerialisedValue rb)
+      | RB.size rb > 64 = coerce (shrink (LargeRawBytes rb))
+      | otherwise       = coerce (shrink rb)
+
 deriving newtype instance SerialiseValue SerialisedValue
 
 deriving newtype instance Arbitrary SerialisedBlob
@@ -619,9 +631,21 @@ newtype KeyForIndexCompact =
   deriving (Eq, Ord, Show)
 
 instance Arbitrary KeyForIndexCompact where
-  arbitrary =
-      fmap KeyForIndexCompact . genRawBytesN
-          =<< QC.sized (\s -> QC.chooseInt (6, s + 6))
+  -- we try to make collisions and close keys more likely (very crudely)
+  arbitrary = KeyForIndexCompact <$> frequency
+      [ (6, genRawBytesN =<< QC.sized (\s -> QC.chooseInt (6, s + 6)))
+      , (1, do
+          lastByte <- QC.sized $ skewedWithMax . fromIntegral
+          return (RB.pack ([1,3,3,7,0] <> [lastByte]))
+        )
+      ]
+      where
+        -- generates a value in range from 0 to ub, but skewed towards low end
+        skewedWithMax ub0 = do
+          ub1 <- QC.chooseBoundedIntegral (0, ub0)
+          ub2 <- QC.chooseBoundedIntegral (0, ub1)
+          QC.chooseBoundedIntegral (0, ub2)
+
   shrink (KeyForIndexCompact rb) =
       [ KeyForIndexCompact rb'
       | rb' <- shrink rb
