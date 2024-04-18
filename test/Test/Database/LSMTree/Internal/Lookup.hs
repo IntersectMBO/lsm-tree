@@ -262,7 +262,7 @@ instance Arbitrary a => Arbitrary (SmallList a) where
 conjoinF :: (Testable prop, Foldable f) => f prop -> Property
 conjoinF = conjoin . F.toList
 
-ioopPageSpan :: IOOp m h -> PageSpan
+ioopPageSpan :: IOOp s h -> PageSpan
 ioopPageSpan ioop =
     assert (fst x `mod` 4096 == 0) $
     assert (snd x `mod` 4096 == 0) $

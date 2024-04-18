@@ -44,7 +44,7 @@ ctxParamsConv API.IOCtxParams{API.ioctxBatchSizeLimit, API.ioctxConcurrencyLimit
 submitIO ::
      HasFS IO HandleIO
   -> I.IOCtx
-  -> V.Vector (IOOp IO HandleIO)
+  -> V.Vector (IOOp RealWorld HandleIO)
   -> IO (VU.Vector IOResult)
 submitIO hasFS ioctx ioops = do
     ioops' <- mapM ioopConv ioops
@@ -62,7 +62,7 @@ submitIO hasFS ioctx ioops = do
 
     rethrowErrno ::
          HasCallStack
-      => IOOp IO HandleIO
+      => IOOp RealWorld HandleIO
       -> I.IOResult
       -> IO IOResult
     rethrowErrno ioop res = do
@@ -86,7 +86,7 @@ submitIO hasFS ioctx ioops = do
           IOOpRead{}  -> "IOOpRead"
           IOOpWrite{} -> "IOOpWrite"
 
-ioopConv :: IOOp IO HandleIO -> IO (I.IOOp IO)
+ioopConv :: IOOp RealWorld HandleIO -> IO (I.IOOp IO)
 ioopConv (IOOpRead h off buf bufOff c) = handleFd h >>= \fd ->
     pure (I.IOOpRead  fd off buf (unBufferOffset bufOff) c)
 ioopConv (IOOpWrite h off buf bufOff c) = handleFd h >>= \fd ->

@@ -30,6 +30,7 @@ import qualified Database.LSMTree.Internal.IndexCompact as Index
 import           Database.LSMTree.Internal.Serialise
 import           System.FS.API (Handle)
 import           System.FS.BlockIO.API
+import           System.FS.IO (HandleIO)
 
 -- | View of a 'Run' with only the essentials for lookups.
 data RunLookupView h = RunLookupView {
@@ -42,11 +43,11 @@ data RunLookupView h = RunLookupView {
 {-# SPECIALIZE prepLookups ::
          V.Vector (RunLookupView (Handle h))
       -> V.Vector SerialisedKey
-      -> ST s (VU.Vector (RunIx, KeyIx), V.Vector (IOOp (ST s) h)) #-}
+      -> ST s (VU.Vector (RunIx, KeyIx), V.Vector (IOOp s h)) #-}
 {-# SPECIALIZE prepLookups ::
-         V.Vector (RunLookupView (Handle h))
+         V.Vector (RunLookupView (Handle HandleIO))
       -> V.Vector SerialisedKey
-      -> IO (VU.Vector (RunIx, KeyIx), V.Vector (IOOp IO h)) #-}
+      -> IO (VU.Vector (RunIx, KeyIx), V.Vector (IOOp RealWorld HandleIO)) #-}
 -- | Prepare disk lookups by doing bloom filter queries, index searches and
 -- creating 'IOOp's. The result is a vector of 'IOOp's and a vector of indexes,
 -- both of which are the same length. The indexes record the run and key
@@ -55,7 +56,7 @@ prepLookups ::
      PrimMonad m
   => V.Vector (RunLookupView (Handle h))
   -> V.Vector SerialisedKey
-  -> m (VU.Vector (RunIx, KeyIx), V.Vector (IOOp m h))
+  -> m (VU.Vector (RunIx, KeyIx), V.Vector (IOOp (PrimState m) h))
 prepLookups rs ks = do
   let rkixs = bloomQueriesDefault rs ks
   ioops <- indexSearches rs ks rkixs
@@ -135,12 +136,12 @@ bloomQueries !rs !ks !resN
          V.Vector (RunLookupView (Handle h))
       -> V.Vector SerialisedKey
       -> VU.Vector (RunIx, KeyIx)
-      -> ST s (V.Vector (IOOp (ST s) h)) #-}
+      -> ST s (V.Vector (IOOp s h)) #-}
 {-# SPECIALIZE indexSearches ::
-         V.Vector (RunLookupView (Handle h))
+         V.Vector (RunLookupView (Handle HandleIO))
       -> V.Vector SerialisedKey
       -> VU.Vector (RunIx, KeyIx)
-      -> IO (V.Vector (IOOp IO h)) #-}
+      -> IO (V.Vector (IOOp RealWorld HandleIO)) #-}
 -- | Perform a batch of fence pointer index searches, and create an 'IOOp' for
 -- each search result. The resulting vector has the same length as the
 -- @VU.Vector (RunIx, KeyIx)@ argument, because index searching always returns a
@@ -150,7 +151,7 @@ indexSearches ::
   => V.Vector (RunLookupView (Handle h))
   -> V.Vector SerialisedKey
   -> VU.Vector (RunIx, KeyIx) -- ^ Result of 'bloomQueries'
-  -> m (V.Vector (IOOp m h))
+  -> m (V.Vector (IOOp (PrimState m) h))
 indexSearches !rs !ks !rkixs = do
     -- The result vector has exactly the same length as @rkixs@.
     res <- VM.unsafeNew n
@@ -160,7 +161,7 @@ indexSearches !rs !ks !rkixs = do
     !n = VU.length rkixs
 
     -- Loop over all indexes in @rkixs@
-    loop :: VM.MVector (PrimState m) (IOOp m h) -> Int -> m ()
+    loop :: VM.MVector (PrimState m) (IOOp (PrimState m) h) -> Int -> m ()
     loop !res !i
       | i == n = pure ()
       | otherwise = do

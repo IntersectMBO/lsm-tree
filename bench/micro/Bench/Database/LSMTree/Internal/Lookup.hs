@@ -91,8 +91,8 @@ benchmarks = bgroup "Bench.Database.LSMTree.Internal.Lookup" [
 
 deriving newtype instance NFData BufferOffset
 deriving newtype instance NFData COff
-deriving instance Generic (IOOp m h)
-deriving instance NFData h => NFData (IOOp m h)
+deriving instance Generic (IOOp s h)
+deriving instance NFData h => NFData (IOOp s h)
 deriving anyclass instance NFData FsPath
 deriving instance NFData h => NFData (Handle h)
 deriving stock instance Generic (RunLookupView h)

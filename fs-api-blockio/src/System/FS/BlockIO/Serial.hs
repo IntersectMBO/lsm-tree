@@ -8,7 +8,7 @@ module System.FS.BlockIO.Serial (
 import           Control.Concurrent.Class.MonadMVar
 import           Control.Monad (unless)
 import           Control.Monad.Class.MonadThrow
-import           Control.Monad.Primitive (PrimMonad)
+import           Control.Monad.Primitive (PrimMonad, PrimState)
 import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as VU
 import qualified Data.Vector.Unboxed.Mutable as VUM
@@ -47,7 +47,7 @@ submitIO ::
   => HasFS m h
   -> HasBufFS m h
   -> IOCtx m
-  -> V.Vector (IOOp m h)
+  -> V.Vector (IOOp (PrimState m) h)
   -> m (VU.Vector IOResult)
 submitIO hfs hbfs ctx ioops = do
     guardIsOpen ctx
@@ -58,7 +58,7 @@ ioop ::
      MonadThrow m
   => HasFS m h
   -> HasBufFS m h
-  -> IOOp m h
+  -> IOOp (PrimState m) h
   -> m IOResult
 ioop hfs hbfs (IOOpRead h off buf bufOff c) =
     IOResult <$> hGetBufExactlyAt hfs hbfs h buf bufOff c (fromIntegral off)
