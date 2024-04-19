@@ -53,7 +53,7 @@ import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Typeable (Proxy (..), Typeable, cast)
 import           Data.Word (Word64)
-import qualified Database.LSMTree.Common as SUT (SomeSerialisationConstraint,
+import qualified Database.LSMTree.Common as SUT (SerialiseKey, SerialiseValue,
                      mkSnapshotName)
 import           Database.LSMTree.Extras.Generators ()
 import qualified Database.LSMTree.Model.Normal.Session as Model
@@ -232,14 +232,20 @@ type Var h a = ModelVar (ModelState h) a
 type Val h a = ModelValue (ModelState h) a
 type Obs h a = Observable (ModelState h) a
 
-type C_ a = (
+type K a = (
     Model.C_ a
-  , Model.SomeSerialisationConstraint a
-  , SUT.SomeSerialisationConstraint a
+  , Model.SerialiseKey a
+  , SUT.SerialiseKey a
+  )
+
+type V a = (
+    Model.C_ a
+  , Model.SerialiseValue a
+  , SUT.SerialiseValue a
   )
 
 -- | Common constraints for keys, values and blobs
-type C k v blob = (C_ k, C_ v, C_ blob)
+type C k v blob = (K k, V v, V blob)
 
 {-------------------------------------------------------------------------------
   StateModel
@@ -277,7 +283,7 @@ instance ( Show (SUT.Class.TableConfig h)
             => [k] -> Var h (WrapTableHandle h IO k v blob)
             -> Act h ()
     -- Blobs
-    RetrieveBlobs :: C_ blob
+    RetrieveBlobs :: V blob
                   => Var h [WrapBlobRef h IO blob]
                   -> Act h [WrapBlob blob]
     -- Snapshots

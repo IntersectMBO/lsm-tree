@@ -13,8 +13,9 @@
 -- | IO-based monoidal table model implementation.
 --
 module Database.LSMTree.ModelIO.Monoidal (
-    -- * Temporary placeholder types
-    SomeSerialisationConstraint
+    -- * Serialisation
+    SerialiseKey
+  , SerialiseValue
     -- * Utility types
   , IOLike
     -- * Sessions
@@ -58,8 +59,8 @@ import           Data.Dynamic (fromDynamic, toDyn)
 import           Data.Kind (Type)
 import qualified Data.Map.Strict as Map
 import           Data.Typeable (Typeable)
-import           Database.LSMTree.Common (IOLike, Range (..), SnapshotName,
-                     SomeSerialisationConstraint, SomeUpdateConstraint)
+import           Database.LSMTree.Common (IOLike, Range (..), SerialiseKey,
+                     SerialiseValue, SnapshotName, SomeUpdateConstraint)
 import qualified Database.LSMTree.Model.Monoidal as Model
 import           Database.LSMTree.ModelIO.Session
 import           Database.LSMTree.Monoidal (LookupResult (..),
@@ -110,11 +111,7 @@ close TableHandle {..} = atomically $ do
 
 -- | Perform a batch of lookups.
 lookups ::
-     ( IOLike m
-     , SomeSerialisationConstraint k
-     , SomeSerialisationConstraint v
-     , SomeUpdateConstraint v
-     )
+     (IOLike m, SerialiseKey k, SerialiseValue v, SomeUpdateConstraint v)
   => [k]
   -> TableHandle m k v
   -> m [LookupResult k v]
@@ -124,11 +121,7 @@ lookups ks TableHandle {..} = atomically $
 
 -- | Perform a range lookup.
 rangeLookup ::
-     ( IOLike m
-     , SomeSerialisationConstraint k
-     , SomeSerialisationConstraint v
-     , SomeUpdateConstraint v
-     )
+     (IOLike m, SerialiseKey k, SerialiseValue v, SomeUpdateConstraint v)
   => Range k
   -> TableHandle m k v
   -> m [RangeLookupResult k v]
@@ -138,11 +131,7 @@ rangeLookup r TableHandle {..} = atomically $
 
 -- | Perform a mixed batch of inserts, deletes and monoidal upserts.
 updates ::
-     ( IOLike m
-     , SomeSerialisationConstraint k
-     , SomeSerialisationConstraint v
-     , SomeUpdateConstraint v
-     )
+     (IOLike m, SerialiseKey k, SerialiseValue v, SomeUpdateConstraint v)
   => [(k, Update v)]
   -> TableHandle m k v
   -> m ()
@@ -152,11 +141,7 @@ updates ups TableHandle {..} = atomically $
 
 -- | Perform a batch of inserts.
 inserts ::
-     ( IOLike m
-     , SomeSerialisationConstraint k
-     , SomeSerialisationConstraint v
-     , SomeUpdateConstraint v
-     )
+     (IOLike m, SerialiseKey k, SerialiseValue v, SomeUpdateConstraint v)
   => [(k, v)]
   -> TableHandle m k v
   -> m ()
@@ -164,11 +149,7 @@ inserts = updates . fmap (second Insert)
 
 -- | Perform a batch of deletes.
 deletes ::
-     ( IOLike m
-     , SomeSerialisationConstraint k
-     , SomeSerialisationConstraint v
-     , SomeUpdateConstraint v
-     )
+     (IOLike m, SerialiseKey k, SerialiseValue v, SomeUpdateConstraint v)
   => [k]
   -> TableHandle m k v
   -> m ()
@@ -176,11 +157,7 @@ deletes = updates . fmap (,Delete)
 
 -- | Perform a batch of monoidal upserts.
 mupserts ::
-     ( IOLike m
-     , SomeSerialisationConstraint k
-     , SomeSerialisationConstraint v
-     , SomeUpdateConstraint v
-     )
+     (IOLike m, SerialiseKey k, SerialiseValue v, SomeUpdateConstraint v)
   => [(k, v)]
   -> TableHandle m k v
   -> m ()
@@ -193,8 +170,8 @@ mupserts = updates . fmap (second Mupsert)
 -- | Take a snapshot.
 snapshot ::
      ( IOLike m
-     , SomeSerialisationConstraint k
-     , SomeSerialisationConstraint v
+     , SerialiseKey k
+     , SerialiseValue v
      , Typeable k
      , Typeable v
      )
@@ -208,8 +185,8 @@ snapshot n TableHandle {..} = atomically $
 -- | Open a table through a snapshot, returning a new table handle.
 open ::
      ( IOLike m
-     , SomeSerialisationConstraint k
-     , SomeSerialisationConstraint v
+     , SerialiseKey k
+     , SerialiseValue v
      , Typeable k
      , Typeable v
      )
@@ -265,7 +242,7 @@ duplicate TableHandle {..} = atomically $
 
 -- | Merge full tables, creating a new table handle.
 merge ::
-     (IOLike m, SomeSerialisationConstraint v, SomeUpdateConstraint v)
+     (IOLike m, SerialiseValue v, SomeUpdateConstraint v)
   => TableHandle m k v
   -> TableHandle m k v
   -> m (TableHandle m k v)

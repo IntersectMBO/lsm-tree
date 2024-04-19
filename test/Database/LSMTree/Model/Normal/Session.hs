@@ -27,7 +27,8 @@ module Database.LSMTree.Model.Normal.Session (
     -- ** Constraints
   , C
   , C_
-  , Model.SomeSerialisationConstraint (..)
+  , Model.SerialiseKey (..)
+  , Model.SerialiseValue (..)
     -- ** ModelT and ModelM
   , ModelT (..)
   , runModelT
@@ -271,8 +272,8 @@ newTableWith config tbl = state $ \Model{..} ->
 lookups ::
      ( MonadState Model m
      , MonadError Err m
-     , Model.SomeSerialisationConstraint k
-     , Model.SomeSerialisationConstraint v
+     , Model.SerialiseKey k
+     , Model.SerialiseValue v
      , C k v blob
      )
   => [k]
@@ -287,8 +288,8 @@ type RangeLookupResult k v blobref = Model.RangeLookupResult k v blobref
 rangeLookup ::
      ( MonadState Model m
      , MonadError Err m
-     , Model.SomeSerialisationConstraint k
-     , Model.SomeSerialisationConstraint v
+     , Model.SerialiseKey k
+     , Model.SerialiseValue v
      , C k v blob
      )
   => Model.Range k
@@ -301,9 +302,9 @@ rangeLookup r th = do
 updates ::
      ( MonadState Model m
      , MonadError Err m
-     , Model.SomeSerialisationConstraint k
-     , Model.SomeSerialisationConstraint v
-     , Model.SomeSerialisationConstraint blob
+     , Model.SerialiseKey k
+     , Model.SerialiseValue v
+     , Model.SerialiseValue blob
      , C k v blob
      )
   => [(k, Model.Update v blob)]
@@ -319,9 +320,9 @@ updates ups th@TableHandle{..} = do
 inserts ::
      ( MonadState Model m
      , MonadError Err m
-     , Model.SomeSerialisationConstraint k
-     , Model.SomeSerialisationConstraint v
-     , Model.SomeSerialisationConstraint blob
+     , Model.SerialiseKey k
+     , Model.SerialiseValue v
+     , Model.SerialiseValue blob
      , C k v blob
      )
   => [(k, v, Maybe blob)]
@@ -332,9 +333,9 @@ inserts = updates . fmap (\(k, v, blob) -> (k, Model.Insert v blob))
 deletes ::
      ( MonadState Model m
      , MonadError Err m
-     , Model.SomeSerialisationConstraint k
-     , Model.SomeSerialisationConstraint v
-     , Model.SomeSerialisationConstraint blob
+     , Model.SerialiseKey k
+     , Model.SerialiseValue v
+     , Model.SerialiseValue blob
      , C k v blob
      )
   => [k]
@@ -355,7 +356,7 @@ deriving instance Show blob => Show (BlobRef blob)
 retrieveBlobs ::
      ( MonadState Model m
      , MonadError Err m
-     , Model.SomeSerialisationConstraint blob
+     , Model.SerialiseValue blob
      )
   => [BlobRef blob]
   -> m [blob]
