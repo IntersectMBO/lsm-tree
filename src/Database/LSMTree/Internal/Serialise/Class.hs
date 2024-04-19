@@ -97,6 +97,19 @@ instance SerialiseKey Word64 where
     | len >= 8  = byteSwap64 (W64# (indexWord8ArrayAsWord64# ba# off# ))
     | otherwise = error "deserialiseKey: not enough bytes for Word64"
 
+instance SerialiseValue Word64 where
+  serialiseValue x =
+    RB.RawBytes $ mkPrimVector 0 8 $ P.runByteArray $ do
+      ba <- P.newByteArray 8
+      P.writeByteArray ba 0 x
+      return ba
+
+  deserialiseValue (RawBytes (PV.Vector (I# off#) len (P.ByteArray ba#)))
+    | len >= 8  = W64# (indexWord8ArrayAsWord64# ba# off# )
+    | otherwise = error "deserialiseValue: not enough bytes for Word64"
+
+  deserialiseValueN = deserialiseValue . mconcat
+
 {-------------------------------------------------------------------------------
   ByteString
 -------------------------------------------------------------------------------}

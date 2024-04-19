@@ -17,6 +17,8 @@ tests :: TestTree
 tests = testGroup "Test.Database.LSMTree.Internal.Serialise.Class" [
       testProperty "prop_roundtripSerialiseKey @Word64" $
         prop_roundtripSerialiseKey @Word64
+    , testProperty "prop_roundtripSerialiseValue @Word64" $
+        prop_roundtripSerialiseValue @Word64
 
     , testProperty "prop_roundtripSerialiseKey @ByteString" $
         prop_roundtripSerialiseKey @ByteString
