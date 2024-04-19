@@ -38,6 +38,9 @@ import           GHC.Word (Word64 (..))
 --
 -- Raw bytes are lexicographically ordered, so in particular this means that
 -- values should be serialised into big-endian formats.
+-- This constraint mainly exists for range queries, where the range is specified
+-- in terms of unserialised values, but the internal implementation works on the
+-- serialised representation.
 --
 -- === IndexCompact constraints
 --
