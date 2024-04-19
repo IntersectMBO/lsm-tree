@@ -94,7 +94,7 @@ instance SerialiseKey Word64 where
       return ba
 
   deserialiseKey (RawBytes (PV.Vector (I# off#) len (P.ByteArray ba#)))
-    | len >= 8  = W64# (indexWord8ArrayAsWord64# ba# off# )
+    | len >= 8  = byteSwap64 (W64# (indexWord8ArrayAsWord64# ba# off# ))
     | otherwise = error "deserialiseKey: not enough bytes for Word64"
 
 {-------------------------------------------------------------------------------
