@@ -12,7 +12,7 @@ import           Control.DeepSeq (NFData, deepseq)
 import qualified Data.Vector.Primitive as PV
 import           Data.Word (Word64, Word8)
 
-import           Database.LSMTree.Generators
+import           Database.LSMTree.Extras.Generators
 import           Database.LSMTree.Internal.RawBytes (RawBytes (..))
 
 import           Test.QuickCheck (Arbitrary (..), Gen, Testable (..),

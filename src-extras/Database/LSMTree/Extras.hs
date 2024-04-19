@@ -1,4 +1,6 @@
-module Database.LSMTree.Util (showPowersOf10) where
+module Database.LSMTree.Extras (
+    showPowersOf10
+  ) where
 
 import           Text.Printf
 

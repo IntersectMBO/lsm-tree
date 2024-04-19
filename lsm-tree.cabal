@@ -185,36 +185,17 @@ test-suite bloomfilter-spell
     , base
     , lsm-tree:bloomfilter
 
-library lsm-tree-utils
-  import:           warnings, wno-x-partial
-  visibility:       private
-  hs-source-dirs:   src/utils
-  default-language: Haskell2010
-  exposed-modules:
-    Database.LSMTree.Generators
-    Database.LSMTree.Orphans
-    Database.LSMTree.Util
-    System.Random.Extras
-
-  build-depends:
-    , base
-    , containers
-    , deepseq
-    , lsm-tree
-    , primitive
-    , QuickCheck
-    , quickcheck-instances
-    , random
-    , vector
-    , wide-word
-
 test-suite lsm-tree-test
   import:           warnings, wno-x-partial
   default-language: Haskell2010
   type:             exitcode-stdio-1.0
-  hs-source-dirs:   test
+  hs-source-dirs:   test src-extras
   main-is:          Main.hs
   other-modules:
+    Database.LSMTree.Extras
+    Database.LSMTree.Extras.Generators
+    Database.LSMTree.Extras.Orphans
+    Database.LSMTree.Extras.Random
     Database.LSMTree.Model.Monoidal
     Database.LSMTree.Model.Normal
     Database.LSMTree.Model.Normal.Session
@@ -268,7 +249,6 @@ test-suite lsm-tree-test
     , lsm-tree
     , lsm-tree:bloomfilter
     , lsm-tree:fs-api-blockio
-    , lsm-tree:lsm-tree-utils
     , lsm-tree:prototypes
     , mtl
     , primitive
@@ -288,6 +268,7 @@ test-suite lsm-tree-test
     , these
     , transformers
     , vector
+    , wide-word
 
   ghc-options:      -fno-ignore-asserts -threaded
 
@@ -295,13 +276,17 @@ benchmark lsm-tree-micro-bench
   import:           warnings, wno-x-partial
   default-language: Haskell2010
   type:             exitcode-stdio-1.0
-  hs-source-dirs:   bench/micro
+  hs-source-dirs:   bench/micro src-extras
   main-is:          Main.hs
   other-modules:
     Bench.Database.LSMTree.Internal.BloomFilter
     Bench.Database.LSMTree.Internal.IndexCompact
     Bench.Database.LSMTree.Internal.Lookup
     Bench.Database.LSMTree.Internal.RawPage
+    Database.LSMTree.Extras
+    Database.LSMTree.Extras.Generators
+    Database.LSMTree.Extras.Orphans
+    Database.LSMTree.Extras.Random
 
   build-depends:
     , base
@@ -313,12 +298,13 @@ benchmark lsm-tree-micro-bench
     , lsm-tree
     , lsm-tree:bloomfilter
     , lsm-tree:fs-api-blockio
-    , lsm-tree:lsm-tree-utils
     , lsm-tree:prototypes
     , primitive
     , QuickCheck
+    , quickcheck-instances
     , random
     , vector
+    , wide-word
 
   ghc-options:      -rtsopts -with-rtsopts=-T -threaded
 
@@ -326,14 +312,17 @@ benchmark lsm-tree-macro-bench
   import:           warnings, wno-x-partial
   default-language: Haskell2010
   type:             exitcode-stdio-1.0
-  hs-source-dirs:   bench/macro
+  hs-source-dirs:   bench/macro src-extras
   main-is:          Main.hs
-  other-modules:    Bench.Database.LSMTree.Internal.BloomFilter
+  other-modules:
+    Bench.Database.LSMTree.Internal.BloomFilter
+    Database.LSMTree.Extras.Orphans
+
   build-depends:
     , base
     , lsm-tree
     , lsm-tree:bloomfilter
-    , lsm-tree:lsm-tree-utils
+    , primitive
     , random
     , time
     , vector

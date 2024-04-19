@@ -13,7 +13,7 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 {- HLINT ignore "Use camelCase" -}
 
-module Database.LSMTree.Generators (
+module Database.LSMTree.Extras.Generators (
     -- * WriteBuffer
     genWriteBuffer
   , shrinkWriteBuffer
@@ -71,6 +71,8 @@ import qualified Data.Vector.Primitive as PV
 import           Data.WideWord.Word256 (Word256 (..))
 import           Data.Word
 import           Database.LSMTree.Common (Range (..))
+import           Database.LSMTree.Extras
+import           Database.LSMTree.Extras.Orphans ()
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..))
 import           Database.LSMTree.Internal.IndexCompact (PageNo (..),
@@ -86,8 +88,6 @@ import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer (..))
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import qualified Database.LSMTree.Monoidal as Monoidal
 import qualified Database.LSMTree.Normal as Normal
-import           Database.LSMTree.Orphans ()
-import           Database.LSMTree.Util
 import           GHC.Generics (Generic)
 import           System.Random (Uniform)
 import qualified Test.QuickCheck as QC

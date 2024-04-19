@@ -27,10 +27,10 @@ import           System.Mem (performMajorGC)
 import           System.Random
 import           Text.Printf (printf)
 
+import           Database.LSMTree.Extras.Orphans ()
 import           Database.LSMTree.Internal.Monkey as Monkey
 import           Database.LSMTree.Internal.Serialise (SerialisedKey,
                      serialiseKey)
-import           Database.LSMTree.Orphans ()
 
 
 -- Benchmark parameters you can tweak. The defaults are rather small, so the

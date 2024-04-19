@@ -29,7 +29,8 @@ import qualified Data.Vector as V
 import qualified Data.Vector.Primitive as PV
 import qualified Data.Vector.Unboxed as VU
 import           Data.Word
-import           Database.LSMTree.Generators
+import           Database.LSMTree.Extras
+import           Database.LSMTree.Extras.Generators
 import           Database.LSMTree.Internal.BlobRef (BlobSpan)
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.IndexCompact as Index
@@ -40,7 +41,6 @@ import           Database.LSMTree.Internal.RawPage
 import           Database.LSMTree.Internal.RunAcc as Run
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.Serialise.Class
-import           Database.LSMTree.Util
 import           GHC.Generics
 import           System.FS.API.Types
 import           System.FS.BlockIO.API

@@ -11,7 +11,7 @@ import           Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
 import           Data.Proxy
 import           Data.Semigroup
-import           Database.LSMTree.Generators ()
+import           Database.LSMTree.Extras.Generators ()
 import           Database.LSMTree.Internal.BlobRef
 import           Database.LSMTree.Internal.Entry
 import qualified Database.LSMTree.Internal.Monoidal as Monoidal

@@ -55,7 +55,7 @@ import           Data.Typeable (Proxy (..), Typeable, cast)
 import           Data.Word (Word64)
 import qualified Database.LSMTree.Common as SUT (SomeSerialisationConstraint,
                      mkSnapshotName)
-import           Database.LSMTree.Generators ()
+import           Database.LSMTree.Extras.Generators ()
 import qualified Database.LSMTree.Model.Normal.Session as Model
 import qualified Database.LSMTree.ModelIO.Normal as Impl.ModelIO
 import qualified Database.LSMTree.Normal as Impl.Real

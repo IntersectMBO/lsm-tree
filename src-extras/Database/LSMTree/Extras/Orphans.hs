@@ -8,7 +8,7 @@
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module Database.LSMTree.Orphans () where
+module Database.LSMTree.Extras.Orphans () where
 
 import qualified Data.Primitive as P
 import           Data.WideWord.Word256 (Word256 (..))
