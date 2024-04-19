@@ -112,7 +112,7 @@ fromListPageAcc kops =
              -- we expect the kops to all fit in one page
              assert added $ return ()
         | (k,e) <- kops ]
-      page <- PageAcc.serializePageAcc pacc
+      page <- PageAcc.serialisePageAcc pacc
       return (page, []))
 
 pagesToByteString :: RawPage -> [RawOverflowPage] -> BS.ByteString

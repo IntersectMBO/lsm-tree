@@ -140,7 +140,7 @@ closeSession :: IOLike m => Session m -> m ()
 closeSession = undefined
 
 {-------------------------------------------------------------------------------
-  Serialization constraints
+  Serialisation constraints
 -------------------------------------------------------------------------------}
 
 -- | A placeholder class for (de)serialisation constraints.

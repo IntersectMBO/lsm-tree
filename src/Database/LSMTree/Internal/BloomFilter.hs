@@ -20,7 +20,7 @@ import           Database.LSMTree.Internal.BitMath (ceilDiv64, mul8)
 import           Database.LSMTree.Internal.ByteString (byteArrayFromTo)
 import           Database.LSMTree.Internal.Vector
 
--- serializing
+-- serialising
 -----------------------------------------------------------
 
 -- | By writing out the version in host endianness, we also indicate endianness.
@@ -39,7 +39,7 @@ toBuilder' :: BF.Bloom a -> B.Builder
 toBuilder' (BF.Bloom _hfN _len (BV64.BV64 (PV.Vector off len v))) =
     byteArrayFromTo (mul8 off) (mul8 off + mul8 len) v
 
--- deserializing
+-- deserialising
 -----------------------------------------------------------
 
 -- | Read 'BF.Bloom' from a 'ShortByteString'.

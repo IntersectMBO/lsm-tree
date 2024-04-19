@@ -49,7 +49,7 @@ decodeEncodeRoundtrip _ = testProperty "decode-encode roundtrip" prop where
 totalDeserialiseProp :: forall a.
     (NFData a, SomeSerialisationConstraint a)
     => Proxy a -> TestTree
-totalDeserialiseProp _ = testProperty "deserialize total" prop where
+totalDeserialiseProp _ = testProperty "deserialise total" prop where
     prop bs = property $ deserialise @a bs `deepseq` True
 
 -- | Serialisation MUST preserve order.
