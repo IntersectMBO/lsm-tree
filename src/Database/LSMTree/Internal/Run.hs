@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns    #-}
 {-# LANGUAGE RecordWildCards #-}
 
 -- | Functionality related to LSM-Tree runs (sequences of LSM-Tree data).
@@ -36,12 +37,19 @@ module Database.LSMTree.Internal.Run (
     -- * Paths
     module FsPaths
     -- * Run
-  , RefCount
   , Run (..)
+  , sizeInPages
   , addReference
   , removeReference
+  , readBlob
+    -- ** Run creation
+  , fromMutable
   , fromWriteBuffer
   , openFromDisk
+    -- ** RefCount
+  , RefCount (..)
+  , incRefCount
+  , decRefCount
   ) where
 
 import           Control.Exception (Exception, finally, throwIO)
@@ -51,20 +59,24 @@ import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ByteString.Short as SBS
 import           Data.Foldable (for_)
 import           Data.IORef
+import           Data.Primitive.ByteArray (newPinnedByteArray,
+                     unsafeFreezeByteArray)
+import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.BloomFilter (bloomFilterFromSBS)
 import           Database.LSMTree.Internal.ByteString (tryCheapToShort)
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
-import           Database.LSMTree.Internal.IndexCompact (IndexCompact)
+import           Database.LSMTree.Internal.IndexCompact (IndexCompact, NumPages)
 import qualified Database.LSMTree.Internal.IndexCompact as Index
+import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.Run.FsPaths as FsPaths
-import           Database.LSMTree.Internal.RunBuilder (RefCount, RunBuilder)
+import           Database.LSMTree.Internal.RunBuilder (RunBuilder)
 import qualified Database.LSMTree.Internal.RunBuilder as Builder
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import qualified System.FS.API as FS
-import           System.FS.API (HasFS)
+import           System.FS.API (HasBufFS, HasFS)
 
 
 -- | The in-memory representation of a completed LSM run.
@@ -74,7 +86,7 @@ data Run fhandle = Run {
       -- | The reference count for the LSM run. This counts the
       -- number of references from LSM handles to this run. When
       -- this drops to zero the open files will be closed.
-    , runRefCount   :: !RefCount
+    , runRefCount   :: !(IORef RefCount)
       -- | The file system paths for all the files used by the run.
     , runRunFsPaths :: !RunFsPaths
       -- | The bloom filter for the set of keys in this run.
@@ -94,10 +106,13 @@ data Run fhandle = Run {
     , runBlobFile   :: !fhandle
     }
 
+sizeInPages :: Run fhandle -> NumPages
+sizeInPages = Index.sizeInPages . runIndex
+
 -- | Increase the reference count by one.
 addReference :: HasFS IO h -> Run (FS.Handle h) -> IO ()
 addReference _ Run {..} =
-    atomicModifyIORef runRefCount (\n -> (n+1, ()))
+    atomicModifyIORef' runRefCount (\c -> (incRefCount c, ()))
 
 -- | Decrease the reference count by one.
 -- After calling this operation, the run must not be used anymore.
@@ -105,9 +120,20 @@ addReference _ Run {..} =
 -- associated files from disk.
 removeReference :: HasFS IO h -> Run (FS.Handle h) -> IO ()
 removeReference fs run@Run {..} = do
-    count <- atomicModifyIORef' runRefCount (\n -> (n-1, n-1))
-    when (count <= 0) $
+    count <- atomicModifyIORef' runRefCount ((\c -> (c, c)) . decRefCount)
+    when (count <= RefCount 0) $
       close fs run
+
+-- | The 'BlobSpan' to read must come from this run!
+readBlob :: HasFS IO h -> HasBufFS IO h -> Run (FS.Handle h) -> BlobSpan -> IO SerialisedBlob
+readBlob fs bfs Run {..} BlobSpan {..} = do
+    let off = fromIntegral blobSpanOffset
+    let len = fromIntegral blobSpanSize
+    mba <- newPinnedByteArray len
+    _ <- FS.hGetBufExactlyAt fs bfs runBlobFile mba 0 (fromIntegral len) off
+    ba <- unsafeFreezeByteArray mba
+    let !rb = RB.fromByteArray 0 len ba
+    return (SerialisedBlob rb)
 
 -- | Close the files used in the run, but do not remove them from disk.
 -- After calling this operation, the run must not be used anymore.
@@ -121,25 +147,22 @@ close fs Run {..} = do
         FS.hClose fs runBlobFile
 
 -- | Create a run by finalising a mutable run.
-fromMutable :: HasFS IO h -> RunBuilder (FS.Handle h) -> IO (Run (FS.Handle h))
-fromMutable fs builder = do
-    (runRefCount, runRunFsPaths, runFilter, runIndex, runNumEntries) <-
+fromMutable :: HasFS IO h -> RefCount -> RunBuilder (FS.Handle h) -> IO (Run (FS.Handle h))
+fromMutable fs refCount builder = do
+    (runRunFsPaths, runFilter, runIndex, runNumEntries) <-
       Builder.unsafeFinalise fs builder
+    runRefCount <- newIORef refCount
     runKOpsFile <- FS.hOpen fs (runKOpsPath runRunFsPaths) FS.ReadMode
     runBlobFile <- FS.hOpen fs (runBlobPath runRunFsPaths) FS.ReadMode
     return Run {..}
 
 
 -- | Write a write buffer to disk, including the blobs it contains.
+-- The resulting run has a reference count of 1.
 --
 -- TODO: As a possible optimisation, blobs could be written to a blob file
 -- immediately when they are added to the write buffer, avoiding the need to do
 -- it here.
---
--- TODO: To create the compact index, we need to estimate the number of pages.
--- This is currently done very crudely based on the assumption that a k\/op pair
--- requires approximately 100 bytes of disk space.
--- To do better, we would need information about key and value size.
 fromWriteBuffer ::
      HasFS IO h -> RunFsPaths -> WriteBuffer k v b
   -> IO (Run (FS.Handle h))
@@ -151,7 +174,7 @@ fromWriteBuffer fs fsPaths buffer = do
     builder <- Builder.new fs fsPaths (WB.numEntries buffer) 1
     for_ (WB.content buffer) $ \(k, e) ->
       Builder.addKeyOp fs builder k e
-    fromMutable fs builder
+    fromMutable fs (RefCount 1) builder
 
 data ChecksumError = ChecksumError FS.FsPath CRC.CRC32C CRC.CRC32C
   deriving Show
@@ -165,6 +188,7 @@ instance Exception FileFormatError
 
 -- | Load a previously written run from disk, checking each file's checksum
 -- against the checksum file.
+-- The resulting 'Run' has a reference count of 1.
 --
 -- Exceptions will be raised when any of the file's contents don't match their
 -- checksum ('ChecksumError') or can't be parsed ('FileFormatError').
@@ -189,7 +213,7 @@ openFromDisk fs runRunFsPaths = do
 
     runKOpsFile <- FS.hOpen fs (runKOpsPath runRunFsPaths) FS.ReadMode
     runBlobFile <- FS.hOpen fs (runBlobPath runRunFsPaths) FS.ReadMode
-    runRefCount <- newIORef 1
+    runRefCount <- newIORef (RefCount 1)
     return Run {..}
   where
     checkCRC :: CRC.CRC32C -> FS.FsPath -> IO ()
@@ -215,3 +239,12 @@ openFromDisk fs runRunFsPaths = do
 
     expectValidFile _  (Right x)  = pure x
     expectValidFile fp (Left err) = throwIO $ FileFormatError fp err
+
+
+-- | The 'Run' objects are reference counted.
+newtype RefCount = RefCount Int
+  deriving (Eq, Ord, Show)
+
+incRefCount, decRefCount :: RefCount -> RefCount
+incRefCount (RefCount n) = RefCount (n+1)
+decRefCount (RefCount n) = RefCount (n-1)

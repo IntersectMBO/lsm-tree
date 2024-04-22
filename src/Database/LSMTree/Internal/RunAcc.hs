@@ -287,10 +287,10 @@ addLargeSerialisedKeyOp
   -> [RawOverflowPage] -- ^ The overflow pages for this key\/op
   -> ST s ([RawPage], [RawOverflowPage], [Index.Chunk])
 addLargeSerialisedKeyOp racc@RunAcc{..} k page overflowPages =
-  assert (RawPage.rawPageNumKeys page == 1 &&
-          RawPage.rawPageHasBlobSpanAt page 0 == 0 &&
-          RawPage.rawPageOverflowPages page > 0 &&
-          RawPage.rawPageOverflowPages page == length overflowPages) $ do
+  assert (RawPage.rawPageNumKeys page == 1) $
+  assert (RawPage.rawPageHasBlobSpanAt page 0 == 0) $
+  assert (RawPage.rawPageOverflowPages page > 0) $
+  assert (RawPage.rawPageOverflowPages page == length overflowPages) $ do
     modifyPrimVar entryCount (+1)
     MBloom.insert mbloom k
 
