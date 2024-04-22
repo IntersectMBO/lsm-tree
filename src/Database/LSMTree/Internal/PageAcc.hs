@@ -15,6 +15,7 @@ module Database.LSMTree.Internal.PageAcc (
     indexKeyPageAcc,
     -- ** Entry sizes
     entryWouldFitInPage,
+    sizeofEntry,
 ) where
 
 import           Control.Monad.ST.Strict (ST)
@@ -111,9 +112,8 @@ pageSize = 4096
 
 -- | Calculate the total byte size of key, value and optional blobspan.
 --
--- To fit into single page this has to be at most 4052 with a blobspan (the
--- same as the max key size) or 4064 without a blobspan, if the entry is larger,
--- the 'pageAccAddElem' will return 'Nothing'.
+-- To fit into single page this has to be at most 4064. If the entry is larger,
+-- the 'pageAccAddElem' is guaranteed to return 'False'.
 --
 -- In other words, if you have a large entry (i.e. Insert with big value),
 -- don't use the 'PageAcc', but construct the single value page directly,
