@@ -22,7 +22,7 @@ tests = testGroup "Test.Database.LSMTree.Internal.Serialise.Class"
     , testGroup "ByteString"      (allProperties @ByteString)
     , testGroup "LazyByteString"  (allProperties @LazyByteString)
     , testGroup "ShortByteString" (allProperties @ShortByteString)
-    , testGroup "ByteArray"       (allProperties @ByteArray)
+    , testGroup "ByteArray"       (valueProperties @ByteArray)
     ]
 
 allProperties :: forall a. (Ord a, Show a, Arbitrary a, SerialiseKey a, SerialiseValue a) => [TestTree]

@@ -156,10 +156,9 @@ instance SerialiseValue SBS.ShortByteString where
  ByteArray
 -------------------------------------------------------------------------------}
 
-instance SerialiseKey P.ByteArray where
-  serialiseKey ba = RB.fromByteArray 0 (P.sizeofByteArray ba) ba
-  deserialiseKey = RB.force
-
+-- | The 'Ord' instance of 'ByteArray' is not lexicographic, so there cannot be
+-- an order-preserving instance of 'SerialiseKey'.
+-- Use 'ShortByteString' instead.
 instance SerialiseValue P.ByteArray where
   serialiseValue ba = RB.fromByteArray 0 (P.sizeofByteArray ba) ba
   deserialiseValue = RB.force
