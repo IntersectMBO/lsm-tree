@@ -35,7 +35,7 @@ import qualified Data.Vector.Mutable as VM
 import qualified Data.Vector.Unboxed as VU
 import qualified Data.Vector.Unboxed.Mutable as VUM
 import           Data.Word (Word32)
-import           Database.LSMTree.Internal.BlobRef (BlobRef (..), BlobSpan (..))
+import           Database.LSMTree.Internal.BlobRef (BlobRef (..))
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.IndexCompact (IndexCompact,
                      PageSpan (..))
@@ -237,6 +237,9 @@ indexSearches !indexes !kopsFiles !ks !rkixs = do
 
 newtype BatchSize = BatchSize { unBatchSize :: Int }
 
+-- | Value resolve function: what to do when resolving two @Mupdate@s
+type ResolveSerialisedValue = SerialisedValue -> SerialisedValue -> SerialisedValue
+
 -- | An 'IOOp' read/wrote fewer or more bytes than expected
 data ByteCountDiscrepancy = ByteCountDiscrepancy {
     expected :: ByteCount
@@ -247,11 +250,12 @@ data ByteCountDiscrepancy = ByteCountDiscrepancy {
 {-# SPECIALIZE lookupsInBatches ::
        HasBlockIO IO HandleIO
     -> BatchSize
+    -> ResolveSerialisedValue
     -> V.Vector (Run (Handle HandleIO))
     -> V.Vector (Bloom SerialisedKey)
     -> V.Vector IndexCompact
     -> V.Vector (Handle HandleIO)
-    -> V.Vector (SerialisedKey)
+    -> V.Vector SerialisedKey
     -> IO (V.Vector (Maybe (Entry SerialisedValue (BlobRef (Run (Handle HandleIO))))))
   #-}
 -- | Batched lookups.
@@ -271,17 +275,18 @@ lookupsInBatches ::
      forall m h. (MonadAsync m, PrimMonad m, MonadThrow m)
   => HasBlockIO m h
   -> BatchSize
+  -> ResolveSerialisedValue
   -> V.Vector (Run (Handle h))
   -> V.Vector (Bloom SerialisedKey)
   -> V.Vector IndexCompact
   -> V.Vector (Handle h)
   -> V.Vector SerialisedKey
   -> m (V.Vector (Maybe (Entry SerialisedValue (BlobRef (Run (Handle h))))))
-lookupsInBatches !hbio !n !rs !blooms !indexes !kopsFiles !ks = assert precondition $ do
+lookupsInBatches !hbio !n !resolveV !rs !blooms !indexes !kopsFiles !ks = assert precondition $ do
     (rkixs0, ioops0) <- prepLookups blooms indexes kopsFiles ks
     let batches = batchesOfN (unBatchSize n) ioops0
     ioress <- forConcurrently batches (submitIO hbio)
-    intraPageLookups rs ks rkixs0 ioops0 (VU.concat ioress)
+    intraPageLookups resolveV rs ks rkixs0 ioops0 (VU.concat ioress)
   where
     precondition = and [
           V.map Run.runFilter rs == blooms
@@ -290,7 +295,8 @@ lookupsInBatches !hbio !n !rs !blooms !indexes !kopsFiles !ks = assert precondit
         ]
 
 {-# SPECIALIZE intraPageLookups ::
-       V.Vector (Run (Handle HandleIO))
+       ResolveSerialisedValue
+    -> V.Vector (Run (Handle HandleIO))
     -> V.Vector SerialisedKey
     -> VU.Vector (RunIx, KeyIx)
     -> V.Vector (IOOp RealWorld HandleIO)
@@ -299,22 +305,24 @@ lookupsInBatches !hbio !n !rs !blooms !indexes !kopsFiles !ks = assert precondit
   #-}
 -- | Intra-page lookups.
 --
+-- This function assumes that @rkixs@ is ordered such that newer runs are
+-- handled first. The order matters for resolving cases where we find the same
+-- key in multiple runs.
+--
 -- TODO: optimise by reducing allocations, possibly looking at core, using
 -- unsafe vector operations.
---
--- TODO: generalised value resolution. We currently use @combineNormal@, but we
--- should be able to re-use this code for @combineMonoidal@.
 --
 -- PRECONDITION: @length rkixs == length ioops == length ioress@
 intraPageLookups ::
      forall m h. (PrimMonad m, MonadThrow m)
-  => V.Vector (Run (Handle h))
+  => ResolveSerialisedValue
+  -> V.Vector (Run (Handle h))
   -> V.Vector SerialisedKey
   -> VU.Vector (RunIx, KeyIx)
   -> V.Vector (IOOp (PrimState m) h)
   -> VU.Vector IOResult
   -> m (V.Vector (Maybe (Entry SerialisedValue (BlobRef (Run (Handle h))))))
-intraPageLookups !rs !ks !rkixs !ioops !ioress =
+intraPageLookups !resolveV !rs !ks !rkixs !ioops !ioress =
     assert precondition $ do
       res <- VM.replicate (V.length ks) Nothing
       loop res 0
@@ -347,8 +355,8 @@ intraPageLookups !rs !ks !rkixs !ioops !ioress =
             -- Laziness ensures that we only compute the forcing of the value in
             -- the entry when the result is needed.
             LookupEntry e         -> do
-                let e' = Just (bimap copySerialisedValue (mkBlobRef r) e)
-                unsafeModifyMMaybeStrict res (`combineNormal` e') kix
+                let e' = bimap copySerialisedValue (BlobRef r) e
+                unsafeInsertWithMStrict res (combine resolveV) kix e'
             -- Laziness ensures that we only compute the appending of the prefix
             -- and suffix when the result is needed. We do not use 'force' here,
             -- since appending already creates a new primary vector.
@@ -360,8 +368,8 @@ intraPageLookups !rs !ks !rkixs !ioops !ioress =
                                   (unBufferOffset (ioopBufferOffset ioop) + 4096)
                                   (fromIntegral m)
                                   buf)
-                    e' = Just $ bimap v' (mkBlobRef r) e
-                unsafeModifyMMaybeStrict res (`combineNormal` e') kix
+                    e' = bimap v' (BlobRef r) e
+                unsafeInsertWithMStrict res (combine resolveV) kix e'
           loop res (ioopix + 1)
 
     -- Check that the IOOp was performed succesfully, and that it wrote/read
@@ -379,26 +387,24 @@ intraPageLookups !rs !ks !rkixs !ioops !ioress =
     copySerialisedValue (SerialisedValue rb) =
         SerialisedValue (RB.copy rb)
 
-{-# INLINE unsafeModifyMMaybeStrict #-}
--- | Modify a 'Maybe' entry in a mutable vector, but ensure that the (new) value
--- inside the 'Maybe' is evaluated.
-unsafeModifyMMaybeStrict ::
+{-# INLINE unsafeInsertWithMStrict #-}
+-- | Insert (in a broad sense) an entry in a mutable vector at a given index,
+-- but if a @Just@ entry already exists at that index, combine the two entries
+-- using @f@.
+unsafeInsertWithMStrict ::
      PrimMonad m
   => VM.MVector (PrimState m) (Maybe a)
-  -> (Maybe a -> Maybe a)
+  -> (a -> a -> a)  -- ^ function @f@, called as @f new old@
   -> Int
+  -> a
   -> m ()
-unsafeModifyMMaybeStrict mvec f i = VM.unsafeModifyM mvec g i
-  where g x = case f x of
-                Nothing -> pure x
-                Just y  -> pure $! Just $! y
+unsafeInsertWithMStrict mvec f i y = VM.unsafeModifyM mvec g i
+  where
+    g x = pure $! Just $! maybe y (`f` y) x
 
 -- | Divide a vector into batches of size @n@. The last batch might be
 -- smaller than @n@.
-batchesOfN ::
-     Int
-  -> V.Vector (IOOp m h)
-  -> [V.Vector (IOOp m h)]
+batchesOfN :: Int -> V.Vector a -> [V.Vector a]
 batchesOfN n ioops0
   | n <= 0 = error "batchesOfN: n must be positive"
   | otherwise = go ioops0
@@ -408,9 +414,3 @@ batchesOfN n ioops0
       | otherwise =
           let (ioops1, ioops2) = V.splitAt n ioops -- O(1)
           in  ioops1 : go ioops2
-
-mkBlobRef :: Run h -> BlobSpan -> BlobRef (Run h)
-mkBlobRef run bspan = BlobRef {
-      blobRefRun = run
-    , blobRefSpan = bspan
-    }

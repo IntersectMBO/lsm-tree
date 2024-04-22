@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns               #-}
 {-# LANGUAGE DeriveAnyClass             #-}
 {-# LANGUAGE DeriveFunctor              #-}
 {-# LANGUAGE DeriveGeneric              #-}
@@ -19,6 +20,7 @@ import           Control.Monad
 import           Criterion.Main (Benchmark, bench, bgroup, env, envWithCleanup,
                      nfAppIO, whnf, whnfAppIO)
 import           Data.Bifunctor (Bifunctor (..))
+import qualified Data.ByteString as BS
 import qualified Data.List as List
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -30,7 +32,6 @@ import           Database.LSMTree.Extras.Random (sampleUniformWithReplacement,
                      uniformWithoutReplacement)
 import           Database.LSMTree.Internal.BlobRef (BlobRef (..))
 import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..))
-import qualified Database.LSMTree.Internal.IndexCompact as Index
 import           Database.LSMTree.Internal.Lookup (BatchSize (..),
                      bloomQueriesDefault, indexSearches, lookupsInBatches,
                      prepLookups)
@@ -86,12 +87,14 @@ benchLookups conf@Config{name} =
           , bench "Lookup preparation in memory" $
               whnfAppIO (\ks' -> prepLookups blooms indexes kopsFiles ks') ks
           , bench "Batched lookups in IO" $
-              nfAppIO (\ks' -> lookupsInBatches hasBlockIO bsize rs blooms indexes kopsFiles ks') ks
+              nfAppIO (\ks' -> lookupsInBatches hasBlockIO bsize resolveV rs blooms indexes kopsFiles ks') ks
           ]
   where
     withEnv = envWithCleanup
                 (lookupsInBatchesEnv conf)
                 lookupsInBatchesCleanup
+    -- TODO: pick a better value resolve function
+    resolveV = \v1 _v2 -> v1
 
 {-------------------------------------------------------------------------------
   Orphans
@@ -130,6 +133,8 @@ data Config = Config {
   , npos         :: !Int
     -- | Number of negative lookups
   , nneg         :: !Int
+    -- | Optional parameters for the io-uring context
+  , ioctxps      :: !(Maybe FS.IOCtxParams)
   }
 
 defaultConfig :: Config
@@ -138,6 +143,7 @@ defaultConfig = Config {
   , nentries     = 2_000_000
   , npos         = 256
   , nneg         = 0
+  , ioctxps      = Nothing
   }
 
 lookupsInBatchesEnv ::
@@ -155,13 +161,13 @@ lookupsInBatchesEnv Config {..} = do
     (storedKeys, lookupKeys) <- lookupsEnv (mkStdGen 17) nentries npos nneg
     let hasFS = FS.ioHasFS (FS.MountPoint benchTmpDir)
         hasBufFS = FS.ioHasBufFS (FS.MountPoint benchTmpDir)
-    hasBlockIO <- FS.ioHasBlockIO hasFS hasBufFS Nothing
+    hasBlockIO <- FS.ioHasBlockIO hasFS hasBufFS ioctxps
     let wb = WB.WB storedKeys
         fsps = Run.RunFsPaths 0
     r <- Run.fromWriteBuffer hasFS fsps wb
     let nentriesReal = unNumEntries $ Run.runNumEntries r
     assert (nentriesReal == nentries) $ pure ()
-    let npagesReal = Index.sizeInPages (Run.runIndex r)
+    let npagesReal = Run.sizeInPages r
     assert (npagesReal * 42 <= nentriesReal) $ pure ()
     assert (npagesReal * 43 >= nentriesReal) $ pure ()
     pure ( benchTmpDir
@@ -183,7 +189,7 @@ lookupsInBatchesCleanup ::
   -> IO ()
 lookupsInBatchesCleanup (tmpDir, hasFS, hasBlockIO, _, rs, _) = do
     FS.close hasBlockIO
-    forM_ rs $ Run.close hasFS
+    forM_ rs $ Run.removeReference hasFS
     removeDirectoryRecursive tmpDir
 
 -- | Generate keys to store and keys to lookup
@@ -227,15 +233,15 @@ frequency xs0 g
     | otherwise = pick (n-k) xs
   pick _ _  = error "QuickCheck.pick used with empty list"
 
+-- TODO: tweak distribution
 randomEntry :: StdGen -> (Entry UTxOValue UTxOBlob, StdGen)
 randomEntry g = frequency [
-      (10, \g' -> let (v, g'') = uniform g' in (Insert v, g''))
-      -- TODO: implement blobs once blob retrieval is implemented.
-    , (0,  \g' -> let (v, g'') = uniform g'
-                      (b, g''') = error "random blob not implemened" $ g''
+      (20, \g' -> let (!v, !g'') = uniform g' in (Insert v, g''))
+    , (1,  \g' -> let (!v, !g'') = uniform g'
+                      (!b, !g''') = genBlob g''
                   in  (InsertWithBlob v b, g'''))
-    , (1,  \g' -> let (v, g'') = uniform g' in (Mupdate v, g''))
-    , (1,  \g' -> (Delete, g'))
+    , (2,  \g' -> let (!v, !g'') = uniform g' in (Mupdate v, g''))
+    , (2,  \g' -> (Delete, g'))
     ] g
 
 {-------------------------------------------------------------------------------
@@ -278,12 +284,17 @@ instance SerialiseValue Word256 where
   deserialiseValueN = error "deserialiseValueN: unused"
 
 -- | A blob of arbitrary size
-newtype UTxOBlob = UTxOBlob SerialisedBlob
+newtype UTxOBlob = UTxOBlob BS.ByteString
   deriving stock (Show, Eq, Ord, Generic)
   deriving anyclass NFData
 
 instance SerialiseValue UTxOBlob where
-  -- TODO: implement once blob retrieval is implemented.
-  serialiseValue = error "serialiseValue: unused"
+  serialiseValue (UTxOBlob bs) = Class.serialiseValue bs
   deserialiseValue = error "deserialiseValue: unused"
   deserialiseValueN = error "deserialiseValueN: unused"
+
+genBlob :: RandomGen g => g -> (UTxOBlob, g)
+genBlob !g =
+  let (!len, !g') = uniformR (0, 0x2000) g
+      (!bs, !g'') = genByteString len g'
+  in (UTxOBlob bs, g'')

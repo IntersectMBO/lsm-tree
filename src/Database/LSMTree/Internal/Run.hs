@@ -42,7 +42,6 @@ module Database.LSMTree.Internal.Run (
   , addReference
   , removeReference
   , readBlob
-  , close
     -- ** Run creation
   , fromMutable
   , fromWriteBuffer

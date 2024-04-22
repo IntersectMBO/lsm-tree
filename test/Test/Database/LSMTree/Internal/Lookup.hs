@@ -284,17 +284,18 @@ prop_roundtripFromWriteBufferLookupIO dats =
         hasBufFS = FS.ioHasBufFS (MountPoint dir)
     hasBlockIO <- FS.ioHasBlockIO hasFS hasBufFS Nothing
     (runs, wbs) <- mkRuns hasFS
-    let wbAll = WB.WB (Map.unions (fmap WB.unWB wbs))
+    let wbAll = WB.WB (Map.unionsWith (combine resolveV) (fmap WB.unWB wbs))
     real <- lookupsInBatches
               hasBlockIO
               (BatchSize 3)
+              resolveV
               runs
               (V.map Run.runFilter runs)
               (V.map Run.runIndex runs)
               (V.map Run.runKOpsFile runs)
               (V.fromList lookupss)
     let model = WB.lookups wbAll lookupss
-    V.mapM_ (Run.close hasFS) runs
+    V.mapM_ (Run.removeReference hasFS) runs
     FS.close hasBlockIO
     -- TODO: we don't compare blobs, because we haven't implemented blob
     -- retrieval yet.
@@ -306,6 +307,7 @@ prop_roundtripFromWriteBufferLookupIO dats =
         , let wb = WB.WB (runData dat)
         ]
     lookupss = concatMap lookups dats
+    resolveV = \(SerialisedValue v1) (SerialisedValue v2) -> SerialisedValue (v1 <> v2)
 
 opaqueifyBlobs :: V.Vector (k, Maybe (Entry v b)) -> V.Vector (k, Maybe (Entry v Opaque))
 opaqueifyBlobs = fmap (fmap (fmap (fmap Opaque)))
@@ -504,7 +506,11 @@ liftShrink3InMemLookupData shrinkKey shrinkValue shrinkBlob InMemLookupData{ run
       shrinkEntry = liftShrink2 shrinkValue shrinkBlob
 
 genSerialisedKey :: Gen SerialisedKey
-genSerialisedKey = arbitrary `suchThat` (\k -> sizeofKey k >= 6)
+genSerialisedKey = frequency [
+      (9, arbitrary `suchThat` (\k -> sizeofKey k >= 6))
+    , (1, do x <- getSmall <$> arbitrary
+             pure $ SerialisedKey (RB.pack [0,0,0,0,0,0, x]))
+    ]
 
 shrinkSerialisedKey :: SerialisedKey -> [SerialisedKey]
 shrinkSerialisedKey k = [k' | k' <- shrink k, sizeofKey k' >= 6]

@@ -16,6 +16,8 @@
 - ignore: {name: "Use underscore"} # 2 hints
 - ignore: {name: "Use &&"} # 1 hint
 - ignore: {name: "Use list literal"} # 1 hint
+- ignore: {name: "Use tuple-section"}
+- ignore: {name: "Use const"}
 
 # Specify additional command line arguments
 #
