@@ -47,7 +47,7 @@ jobs:
       run: cat /proc/cpuinfo
 
     - name: Checkout repository
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     - name: Setup Haskell
       id: setup-haskell
@@ -153,7 +153,7 @@ jobs:
 
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     - name: Install system dependencies (apt-get)
       run: |
@@ -175,7 +175,7 @@ jobs:
       run: echo "$HOME/.cabal/bin" >> $GITHUB_PATH
 
     - name: Cache cabal store
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       env:
         cache-name: cache-cabal-stylish
       with:
@@ -215,7 +215,7 @@ jobs:
 
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     - name: Install system dependencies (apt-get)
       run: |
@@ -237,7 +237,7 @@ jobs:
       run: echo "$HOME/.cabal/bin" >> $GITHUB_PATH
 
     - name: Cache cabal store
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       env:
         cache-name: cache-cabal-cabal-fmt-11
       with:
@@ -272,7 +272,7 @@ jobs:
 
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     - name: Setup Haskell
       id: setup-haskell
