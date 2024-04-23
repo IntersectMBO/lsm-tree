@@ -297,6 +297,7 @@ benchmark lsm-tree-micro-bench
     , containers
     , criterion
     , deepseq
+    , directory
     , fs-api
     , lsm-tree
     , lsm-tree:bloomfilter
@@ -306,6 +307,7 @@ benchmark lsm-tree-micro-bench
     , QuickCheck
     , quickcheck-instances
     , random
+    , temporary
     , vector
     , wide-word
 

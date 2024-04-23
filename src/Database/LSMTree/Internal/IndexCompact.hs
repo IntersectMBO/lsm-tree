@@ -468,6 +468,7 @@ data IndexCompact = IndexCompact {
     -- 'False'.
   , icLargerThanPage       :: !(VU.Vector Bit)
   }
+  deriving stock (Show, Eq)
 
 instance NFData IndexCompact where
   rnf ic =
