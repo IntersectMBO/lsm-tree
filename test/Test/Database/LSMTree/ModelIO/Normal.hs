@@ -1,6 +1,8 @@
 {-# LANGUAGE BlockArguments      #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications    #-}
+{-# LANGUAGE TypeFamilies        #-}
+
 module Test.Database.LSMTree.ModelIO.Normal (tests) where
 
 import           Control.Exception (SomeException, try)
@@ -15,8 +17,8 @@ import           Data.Word (Word64)
 import           Database.LSMTree.Common (mkSnapshotName)
 import           Database.LSMTree.Extras.Generators ()
 import           Database.LSMTree.ModelIO.Normal (IOLike, LookupResult (..),
-                     Range (..), RangeLookupResult (..),
-                     SomeSerialisationConstraint, TableHandle, Update (..))
+                     Range (..), RangeLookupResult (..), SerialiseKey,
+                     SerialiseValue, TableHandle, Update (..))
 import           Test.Database.LSMTree.ModelIO.Class
 import           Test.QuickCheck.Monadic (monadicIO, monitor, run)
 import           Test.Tasty (TestTree, testGroup)
@@ -65,7 +67,7 @@ makeNewTable h ups = do
 --
 -- Like 'partsOf' in @lens@ this uses state monad.
 retrieveBlobsTrav ::
-  (IsTableHandle h, IOLike m, SomeSerialisationConstraint blob, Traversable t)
+  (IsTableHandle h, IOLike m, SerialiseValue blob, Traversable t)
   => proxy h -> Session h m -> t (BlobRef h m blob) -> m (t blob)
 retrieveBlobsTrav hdl ses brefs = do
   blobs <- retrieveBlobs hdl ses (toList brefs)
@@ -76,7 +78,7 @@ retrieveBlobsTrav hdl ses brefs = do
 
 lookupsWithBlobs ::
     forall h m k v blob. ( IsTableHandle h, IOLike m
-    , SomeSerialisationConstraint k, SomeSerialisationConstraint v, SomeSerialisationConstraint blob
+    , SerialiseKey k, SerialiseValue v, SerialiseValue blob
     )
   => h m k v blob -> Session h m -> [k] -> m [LookupResult k v blob]
 lookupsWithBlobs hdl ses ks = do
@@ -85,7 +87,7 @@ lookupsWithBlobs hdl ses ks = do
 
 rangeLookupWithBlobs ::
      forall h m k v blob. ( IsTableHandle h, IOLike m
-     , SomeSerialisationConstraint k, SomeSerialisationConstraint v, SomeSerialisationConstraint blob
+     , SerialiseKey k, SerialiseValue v, SerialiseValue blob
      )
   => h m k v blob -> Session h m -> Range k -> m [RangeLookupResult k v blob]
 rangeLookupWithBlobs hdl ses r = do

@@ -72,8 +72,10 @@ module Database.LSMTree.Normal (
     -- * Concurrency #concurrency#
     -- $concurrency
 
-    -- * Temporary placeholder types
-  , SomeSerialisationConstraint
+    -- * Serialisation
+  , SerialiseKey
+  , SerialiseValue
+
     -- * Utility types
   , IOLike
   ) where
@@ -82,9 +84,9 @@ import           Data.Kind (Type)
 import           Data.Typeable (Typeable)
 import           Data.Word (Word64)
 import           Database.LSMTree.Common (AnySession, BlobRef, IOLike,
-                     Range (..), Session, SnapshotName,
-                     SomeSerialisationConstraint, closeSession, deleteSnapshot,
-                     listSnapshots, openSession)
+                     Range (..), SerialiseKey, SerialiseValue, Session,
+                     SnapshotName, closeSession, deleteSnapshot, listSnapshots,
+                     openSession)
 import           Database.LSMTree.Internal.Normal
 
 -- $resource-management
@@ -220,7 +222,7 @@ close = undefined
 --
 -- Lookups can be performed concurrently from multiple Haskell threads.
 lookups ::
-     (IOLike m, SomeSerialisationConstraint k, SomeSerialisationConstraint v)
+     (IOLike m, SerialiseKey k, SerialiseValue v)
   => [k]
   -> TableHandle m k v blob
   -> m [LookupResult k v (BlobRef m blob)]
@@ -230,7 +232,7 @@ lookups = undefined
 --
 -- Range lookups can be performed concurrently from multiple Haskell threads.
 rangeLookup ::
-     (IOLike m, SomeSerialisationConstraint k, SomeSerialisationConstraint v)
+     (IOLike m, SerialiseKey k, SerialiseValue v)
   => Range k
   -> TableHandle m k v blob
   -> m [RangeLookupResult k v (BlobRef m blob)]
@@ -240,11 +242,7 @@ rangeLookup = undefined
 --
 -- Updates can be performed concurrently from multiple Haskell threads.
 updates ::
-     ( IOLike m
-     , SomeSerialisationConstraint k
-     , SomeSerialisationConstraint v
-     , SomeSerialisationConstraint blob
-     )
+     (IOLike m, SerialiseKey k, SerialiseValue v, SerialiseValue blob)
   => [(k, Update v blob)]
   -> TableHandle m k v blob
   -> m ()
@@ -254,11 +252,7 @@ updates = undefined
 --
 -- Inserts can be performed concurrently from multiple Haskell threads.
 inserts ::
-     ( IOLike m
-     , SomeSerialisationConstraint k
-     , SomeSerialisationConstraint v
-     , SomeSerialisationConstraint blob
-     )
+     (IOLike m, SerialiseKey k, SerialiseValue v, SerialiseValue blob)
   => [(k, v, Maybe blob)]
   -> TableHandle m k v blob
   -> m ()
@@ -268,11 +262,7 @@ inserts = updates . fmap (\(k, v, blob) -> (k, Insert v blob))
 --
 -- Deletes can be performed concurrently from multiple Haskell threads.
 deletes ::
-     ( IOLike m
-     , SomeSerialisationConstraint k
-     , SomeSerialisationConstraint v
-     , SomeSerialisationConstraint blob
-     )
+     (IOLike m, SerialiseKey k, SerialiseValue v, SerialiseValue blob)
   => [k]
   -> TableHandle m k v blob
   -> m ()
@@ -286,7 +276,7 @@ deletes = updates . fmap (,Delete)
 --
 -- Blob lookups can be performed concurrently from multiple Haskell threads.
 retrieveBlobs ::
-     (IOLike m, SomeSerialisationConstraint blob)
+     (IOLike m, SerialiseValue blob)
   => Session m
   -> [BlobRef m blob]
   -> m [blob]
@@ -319,11 +309,7 @@ retrieveBlobs = undefined
 --   the snapshot names are distinct (otherwise this would be a race).
 --
 snapshot ::
-     ( IOLike m
-     , SomeSerialisationConstraint k
-     , SomeSerialisationConstraint v
-     , SomeSerialisationConstraint blob
-     )
+     (IOLike m, SerialiseKey k, SerialiseValue v, SerialiseValue blob)
   => SnapshotName
   -> TableHandle m k v blob
   -> m ()
@@ -352,11 +338,7 @@ snapshot = undefined
 -- Instead, this function should open a table handle from files that exist in
 -- the session's directory.
 open ::
-     ( IOLike m
-     , SomeSerialisationConstraint k
-     , SomeSerialisationConstraint v
-     , SomeSerialisationConstraint blob
-     )
+     (IOLike m, SerialiseKey k, SerialiseValue v, SerialiseValue blob)
   => Session m
   -> SnapshotName
   -> m (TableHandle m k v blob)

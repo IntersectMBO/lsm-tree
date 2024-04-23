@@ -204,7 +204,6 @@ test-suite lsm-tree-test
     Database.LSMTree.ModelIO.Monoidal
     Database.LSMTree.ModelIO.Normal
     Database.LSMTree.ModelIO.Session
-    Test.Database.LSMTree.Common
     Test.Database.LSMTree.Generators
     Test.Database.LSMTree.Internal.BloomFilter
     Test.Database.LSMTree.Internal.CRC32C

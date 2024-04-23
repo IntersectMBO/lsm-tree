@@ -13,8 +13,8 @@ import           Control.Monad.Class.MonadThrow (MonadThrow (throwIO))
 import           Data.Kind (Constraint, Type)
 import           Data.Proxy (Proxy)
 import           Data.Typeable (Typeable)
-import           Database.LSMTree.Common (IOLike, Range (..), SnapshotName,
-                     SomeSerialisationConstraint)
+import           Database.LSMTree.Common (IOLike, Range (..), SerialiseKey,
+                     SerialiseValue, SnapshotName)
 import qualified Database.LSMTree.ModelIO.Normal as M
 import           Database.LSMTree.Normal (LookupResult (..),
                      RangeLookupResult (..), Update (..))
@@ -59,84 +59,62 @@ class (IsSession (Session h)) => IsTableHandle h where
         -> m ()
 
     lookups ::
-            (IOLike m, SomeSerialisationConstraint k, SomeSerialisationConstraint v)
+           (IOLike m, SerialiseKey k, SerialiseValue v)
         => h m k v blob
         -> [k]
         -> m [LookupResult k v (BlobRef h m blob)]
 
     rangeLookup ::
-            (IOLike m, SomeSerialisationConstraint k, SomeSerialisationConstraint v)
+           (IOLike m, SerialiseKey k, SerialiseValue v)
         => h m k v blob
         -> Range k
         -> m [RangeLookupResult k v (BlobRef h m blob)]
 
     retrieveBlobs ::
-            (IOLike m, SomeSerialisationConstraint blob)
+           (IOLike m, SerialiseValue blob)
         => proxy h
         -> Session h m
         -> [BlobRef h m blob]
         -> m [blob]
 
     updates ::
-        ( IOLike m
-        , SomeSerialisationConstraint k
-        , SomeSerialisationConstraint v
-        , SomeSerialisationConstraint blob
-        )
+           (IOLike m, SerialiseKey k, SerialiseValue v, SerialiseValue blob)
         => h m k v blob
         -> [(k, Update v blob)]
         -> m ()
 
     inserts ::
-        ( IOLike m
-        , SomeSerialisationConstraint k
-        , SomeSerialisationConstraint v
-        , SomeSerialisationConstraint blob
-        )
+           (IOLike m, SerialiseKey k, SerialiseValue v, SerialiseValue blob)
         => h m k v blob
         -> [(k, v, Maybe blob)]
         -> m ()
 
     deletes ::
-        ( IOLike m
-        , SomeSerialisationConstraint k
-        , SomeSerialisationConstraint v
-        , SomeSerialisationConstraint blob
-        )
+           (IOLike m, SerialiseKey k, SerialiseValue v, SerialiseValue blob)
         => h m k v blob
         -> [k]
         -> m ()
 
     snapshot ::
-        ( IOLike m
-        , SomeSerialisationConstraint k
-        , SomeSerialisationConstraint v
-        , SomeSerialisationConstraint blob
+        ( IOLike m, SerialiseKey k, SerialiseValue v , SerialiseValue blob
           -- Model-specific constraints
-        , Typeable k
-        , Typeable v
-        , Typeable blob
+        , Typeable k , Typeable v , Typeable blob
         )
         => SnapshotName
         -> h m k v blob
         -> m ()
 
     open ::
-        ( IOLike m
-        , SomeSerialisationConstraint k
-        , SomeSerialisationConstraint v
-        , SomeSerialisationConstraint blob
+        ( IOLike m, SerialiseKey k, SerialiseValue v, SerialiseValue blob
           -- Model-specific constraints
-        , Typeable k
-        , Typeable v
-        , Typeable blob
+        , Typeable k, Typeable v, Typeable blob
         )
         => Session h m
         -> SnapshotName
         -> m (h m k v blob)
 
     duplicate ::
-            IOLike m
+           IOLike m
         => h m k v blob
         -> m (h m k v blob)
 

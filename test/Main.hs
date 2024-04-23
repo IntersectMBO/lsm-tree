@@ -2,7 +2,6 @@
 --
 module Main (main) where
 
-import qualified Test.Database.LSMTree.Common
 import qualified Test.Database.LSMTree.Generators
 import qualified Test.Database.LSMTree.Internal.BloomFilter
 import qualified Test.Database.LSMTree.Internal.Entry
@@ -27,8 +26,7 @@ import           Test.Tasty
 
 main :: IO ()
 main = defaultMain $ testGroup "lsm-tree"
-    [ Test.Database.LSMTree.Common.tests
-    , Test.Database.LSMTree.Generators.tests
+    [ Test.Database.LSMTree.Generators.tests
     , Test.Database.LSMTree.Internal.BloomFilter.tests
     , Test.Database.LSMTree.Internal.Entry.tests
     , Test.Database.LSMTree.Internal.Lookup.tests

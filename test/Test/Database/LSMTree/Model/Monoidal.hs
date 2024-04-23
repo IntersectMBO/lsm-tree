@@ -59,6 +59,6 @@ prop_insertCommutes :: Key -> Value -> Key -> Value -> Tbl -> Property
 prop_insertCommutes k1 v1 k2 v2 tbl = k1 /= k2 ==>
     inserts [(k1, v1), (k2, v2)] tbl === inserts [(k2, v2), (k1, v1)] tbl
 
-instance (SomeSerialisationConstraint k, SomeSerialisationConstraint v, Arbitrary k, Arbitrary v) => Arbitrary (Table k v) where
+instance (SerialiseKey k, SerialiseValue v, Arbitrary k, Arbitrary v) => Arbitrary (Table k v) where
     arbitrary = fromList <$> arbitrary
     shrink t  = fromList <$> shrink (toList t)

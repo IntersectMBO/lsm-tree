@@ -12,8 +12,8 @@ module Test.Database.LSMTree.ModelIO.Monoidal.Class (
 import           Data.Kind (Constraint, Type)
 import           Data.Proxy (Proxy)
 import           Data.Typeable (Typeable)
-import           Database.LSMTree.Common (IOLike, Range (..), SnapshotName,
-                     SomeSerialisationConstraint, SomeUpdateConstraint)
+import           Database.LSMTree.Common (IOLike, Range (..), SerialiseKey,
+                     SerialiseValue, SnapshotName, SomeUpdateConstraint)
 import qualified Database.LSMTree.ModelIO.Monoidal as M
 import           Database.LSMTree.Monoidal (LookupResult (..),
                      RangeLookupResult (..), Update (..))
@@ -42,21 +42,21 @@ class (IsSession (Session h)) => IsTableHandle h where
         -> m ()
 
     lookups ::
-            (IOLike m, SomeSerialisationConstraint k, SomeSerialisationConstraint v, SomeUpdateConstraint v)
+            (IOLike m, SerialiseKey k, SerialiseValue v, SomeUpdateConstraint v)
         => h m k v
         -> [k]
         -> m [LookupResult k v]
 
     rangeLookup ::
-            (IOLike m, SomeSerialisationConstraint k, SomeSerialisationConstraint v, SomeUpdateConstraint v)
+            (IOLike m, SerialiseKey k, SerialiseValue v, SomeUpdateConstraint v)
         => h m k v
         -> Range k
         -> m [RangeLookupResult k v]
 
     updates ::
         ( IOLike m
-        , SomeSerialisationConstraint k
-        , SomeSerialisationConstraint v
+        , SerialiseKey k
+        , SerialiseValue v
         , SomeUpdateConstraint v
         )
         => h m k v
@@ -65,8 +65,8 @@ class (IsSession (Session h)) => IsTableHandle h where
 
     inserts ::
         ( IOLike m
-        , SomeSerialisationConstraint k
-        , SomeSerialisationConstraint v
+        , SerialiseKey k
+        , SerialiseValue v
         , SomeUpdateConstraint v
         )
         => h m k v
@@ -75,8 +75,8 @@ class (IsSession (Session h)) => IsTableHandle h where
 
     deletes ::
         ( IOLike m
-        , SomeSerialisationConstraint k
-        , SomeSerialisationConstraint v
+        , SerialiseKey k
+        , SerialiseValue v
         , SomeUpdateConstraint v
         )
         => h m k v
@@ -85,8 +85,8 @@ class (IsSession (Session h)) => IsTableHandle h where
 
     mupserts ::
         ( IOLike m
-        , SomeSerialisationConstraint k
-        , SomeSerialisationConstraint v
+        , SerialiseKey k
+        , SerialiseValue v
         , SomeUpdateConstraint v
         )
         => h m k v
@@ -95,8 +95,8 @@ class (IsSession (Session h)) => IsTableHandle h where
 
     snapshot ::
         ( IOLike m
-        , SomeSerialisationConstraint k
-        , SomeSerialisationConstraint v
+        , SerialiseKey k
+        , SerialiseValue v
           -- Model-specific constraints
         , Typeable k
         , Typeable v
@@ -107,8 +107,8 @@ class (IsSession (Session h)) => IsTableHandle h where
 
     open ::
         ( IOLike m
-        , SomeSerialisationConstraint k
-        , SomeSerialisationConstraint v
+        , SerialiseKey k
+        , SerialiseValue v
           -- Model-specific constraints
         , Typeable k
         , Typeable v
@@ -123,7 +123,7 @@ class (IsSession (Session h)) => IsTableHandle h where
         -> m (h m k v)
 
     merge ::
-        (IOLike m, SomeSerialisationConstraint v, SomeUpdateConstraint v)
+        (IOLike m, SerialiseValue v, SomeUpdateConstraint v)
         => h m k v
         -> h m k v
         -> m (h m k v)

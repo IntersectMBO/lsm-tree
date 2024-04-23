@@ -21,8 +21,9 @@
 -- * `snapshot` and `open` require `Typeable` constraints
 --
 module Database.LSMTree.ModelIO.Normal (
-    -- * Temporary placeholder types
-    Model.SomeSerialisationConstraint (..)
+    -- * Serialisation
+    SerialiseKey
+  , SerialiseValue
     -- * Utility types
   , IOLike
     -- * Sessions
@@ -65,8 +66,8 @@ import           Data.Dynamic (fromDynamic, toDyn)
 import           Data.Kind (Type)
 import qualified Data.Map.Strict as Map
 import           Data.Typeable (Typeable)
-import           Database.LSMTree.Common (IOLike, SnapshotName,
-                     SomeSerialisationConstraint)
+import           Database.LSMTree.Common (IOLike, SerialiseKey, SerialiseValue,
+                     SnapshotName)
 import qualified Database.LSMTree.Model.Normal as Model
 import           Database.LSMTree.Model.Normal.Session (UpdateCounter)
 import           Database.LSMTree.ModelIO.Session
@@ -120,7 +121,7 @@ close TableHandle {..} = atomically $ do
 
 -- | Perform a batch of lookups.
 lookups ::
-     (IOLike m, SomeSerialisationConstraint k, SomeSerialisationConstraint v)
+     (IOLike m, SerialiseKey k, SerialiseValue v)
   => [k]
   -> TableHandle m k v blob
   -> m [LookupResult k v (BlobRef m blob)]
@@ -130,7 +131,7 @@ lookups ks th@TableHandle {..} = atomically $
 
 -- | Perform a range lookup.
 rangeLookup ::
-     (IOLike m, SomeSerialisationConstraint k, SomeSerialisationConstraint v)
+     (IOLike m, SerialiseKey k, SerialiseValue v)
   => Model.Range k
   -> TableHandle m k v blob
   -> m [RangeLookupResult k v (BlobRef m blob)]
@@ -140,11 +141,7 @@ rangeLookup r th@TableHandle {..} = atomically $
 
 -- | Perform a mixed batch of inserts and deletes.
 updates ::
-     ( IOLike m
-     , SomeSerialisationConstraint k
-     , SomeSerialisationConstraint v
-     , SomeSerialisationConstraint blob
-     )
+     (IOLike m, SerialiseKey k, SerialiseValue v, SerialiseValue blob)
   => [(k, Update v blob)]
   -> TableHandle m k v blob
   -> m ()
@@ -154,11 +151,7 @@ updates ups TableHandle {..} = atomically $
 
 -- | Perform a batch of inserts.
 inserts ::
-     ( IOLike m
-     , SomeSerialisationConstraint k
-     , SomeSerialisationConstraint v
-     , SomeSerialisationConstraint blob
-     )
+     (IOLike m, SerialiseKey k, SerialiseValue v, SerialiseValue blob)
   => [(k, v, Maybe blob)]
   -> TableHandle m k v blob
   -> m ()
@@ -166,11 +159,7 @@ inserts = updates . fmap (\(k, v, blob) -> (k, Model.Insert v blob))
 
 -- | Perform a batch of deletes.
 deletes ::
-     ( IOLike m
-     , SomeSerialisationConstraint k
-     , SomeSerialisationConstraint v
-     , SomeSerialisationConstraint blob
-     )
+     (IOLike m, SerialiseKey k, SerialiseValue v, SerialiseValue blob)
   => [k]
   -> TableHandle m k v blob
   -> m ()
@@ -197,7 +186,7 @@ liftBlobRefs TableHandle{..} updc = fmap (fmap liftBlobRef)
 
 -- | Perform a batch of blob retrievals.
 retrieveBlobs ::
-     forall m blob. (IOLike m, SomeSerialisationConstraint blob)
+     forall m blob. (IOLike m, SerialiseValue blob)
   => Session m
   -> [BlobRef m blob]
   -> m [blob]
@@ -225,9 +214,9 @@ retrieveBlobs _ brefs = atomically $ Model.retrieveBlobs <$> mapM guard brefs
 -- | Take a snapshot.
 snapshot ::
      ( IOLike m
-     , SomeSerialisationConstraint k
-     , SomeSerialisationConstraint v
-     , SomeSerialisationConstraint blob
+     , SerialiseKey k
+     , SerialiseValue v
+     , SerialiseValue blob
      , Typeable k
      , Typeable v
      , Typeable blob
@@ -253,9 +242,9 @@ snapshot n TableHandle {..} = atomically $
 -- | Open a table through a snapshot, returning a new table handle.
 open ::
      ( IOLike m
-     , SomeSerialisationConstraint k
-     , SomeSerialisationConstraint v
-     , SomeSerialisationConstraint blob
+     , SerialiseKey k
+     , SerialiseValue v
+     , SerialiseValue blob
      , Typeable k
      , Typeable v
      , Typeable blob

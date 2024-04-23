@@ -6,8 +6,9 @@
 {-# LANGUAGE TypeApplications    #-}
 {-# LANGUAGE TypeFamilies        #-}
 module Database.LSMTree.Model.Normal (
-    -- * Temporary placeholder types
-    SomeSerialisationConstraint (..)
+    -- * Serialisation
+    SerialiseKey (..)
+  , SerialiseValue (..)
     -- * Tables
   , Table
   , empty
@@ -38,8 +39,9 @@ import           Data.Foldable (foldl')
 import           Data.Map (Map)
 import qualified Data.Map.Range as Map.R
 import qualified Data.Map.Strict as Map
-import           Database.LSMTree.Common (Range (..),
-                     SomeSerialisationConstraint (..))
+import           Database.LSMTree.Common (Range (..), SerialiseKey (..),
+                     SerialiseValue (..))
+import           Database.LSMTree.Internal.RawBytes (RawBytes)
 import           Database.LSMTree.Normal (LookupResult (..),
                      RangeLookupResult (..), Update (..))
 import           GHC.Exts (IsList (..))
@@ -49,7 +51,7 @@ import           GHC.Exts (IsList (..))
 -------------------------------------------------------------------------------}
 
 data Table k v blob = Table
-    { _values :: Map BS.ByteString (BS.ByteString, Maybe (BlobRef blob))
+    { _values :: Map RawBytes (RawBytes, Maybe (BlobRef blob))
     }
 
 type role Table nominal nominal nominal
@@ -60,19 +62,17 @@ empty = Table Map.empty
 
 -- | This instance is for testing and debugging only.
 instance
-    ( SomeSerialisationConstraint k
-    , SomeSerialisationConstraint v
-    , SomeSerialisationConstraint blob
-    ) => IsList (Table k v blob)
+    (SerialiseKey k, SerialiseValue v, SerialiseValue blob)
+      => IsList (Table k v blob)
   where
     type Item (Table k v blob) = (k, v, Maybe blob)
     fromList xs = Table $ Map.fromList
-        [ (serialise k, (serialise v, mkBlobRef <$> mblob))
+        [ (serialiseKey k, (serialiseValue v, mkBlobRef <$> mblob))
         | (k, v, mblob) <- xs
         ]
 
     toList (Table m) =
-        [ (deserialise k, deserialise v, getBlobFromRef <$> mbref)
+        [ (deserialiseKey k, deserialiseValue v, getBlobFromRef <$> mbref)
         | (k, (v, mbref)) <- Map.toList m
         ]
 
@@ -82,7 +82,7 @@ instance Show (Table k v blob) where
         $ showString "fromList "
         . showsPrec 11 (toList (Table @BS.ByteString @BS.ByteString @BS.ByteString tbl'))
       where
-        tbl' :: Map BS.ByteString (BS.ByteString, Maybe (BlobRef BS.ByteString))
+        tbl' :: Map RawBytes (RawBytes, Maybe (BlobRef BS.ByteString))
         tbl' = fmap (fmap (fmap coerceBlobRef)) tbl
 
 -- | This instance is for testing and debugging only.
@@ -96,15 +96,15 @@ deriving instance Eq (Table k v blob)
 --
 -- Lookups can be performed concurrently from multiple Haskell threads.
 lookups ::
-    (SomeSerialisationConstraint k, SomeSerialisationConstraint v)
+    (SerialiseKey k, SerialiseValue v)
   => [k]
   -> Table k v blob
   -> [LookupResult k v (BlobRef blob)]
 lookups ks tbl =
-    [ case Map.lookup (serialise k) (_values tbl) of
+    [ case Map.lookup (serialiseKey k) (_values tbl) of
         Nothing           -> NotFound k
-        Just (v, Nothing) -> Found k (deserialise v)
-        Just (v, Just br) -> FoundWithBlob k (deserialise v) br
+        Just (v, Nothing) -> Found k (deserialiseValue v)
+        Just (v, Just br) -> FoundWithBlob k (deserialiseValue v) br
     | k <- ks
     ]
 
@@ -112,55 +112,49 @@ lookups ks tbl =
 --
 -- Range lookups can be performed concurrently from multiple Haskell threads.
 rangeLookup :: forall k v blob.
-     (SomeSerialisationConstraint k, SomeSerialisationConstraint v)
+     (SerialiseKey k, SerialiseValue v)
   => Range k
   -> Table k v blob
   -> [RangeLookupResult k v (BlobRef blob)]
 rangeLookup r tbl =
     [ case v of
-        (v', Nothing) -> FoundInRange (deserialise k) (deserialise v')
-        (v', Just br) -> FoundInRangeWithBlob (deserialise k) (deserialise v') br
+        (v', Nothing) -> FoundInRange (deserialiseKey k) (deserialiseValue v')
+        (v', Just br) -> FoundInRangeWithBlob (deserialiseKey k) (deserialiseValue v') br
     | let (lb, ub) = convertRange r
     , (k, v) <- Map.R.rangeLookup lb ub (_values tbl)
     ]
   where
-    convertRange :: Range k -> (Map.R.Bound BS.ByteString, Map.R.Bound BS.ByteString)
+    convertRange :: Range k -> (Map.R.Bound RawBytes, Map.R.Bound RawBytes)
     convertRange (FromToExcluding lb ub) =
-        ( Map.R.Bound (serialise lb) Map.R.Inclusive
-        , Map.R.Bound (serialise ub) Map.R.Exclusive )
+        ( Map.R.Bound (serialiseKey lb) Map.R.Inclusive
+        , Map.R.Bound (serialiseKey ub) Map.R.Exclusive )
     convertRange (FromToIncluding lb ub) =
-        ( Map.R.Bound (serialise lb) Map.R.Inclusive
-        , Map.R.Bound (serialise ub) Map.R.Inclusive )
+        ( Map.R.Bound (serialiseKey lb) Map.R.Inclusive
+        , Map.R.Bound (serialiseKey ub) Map.R.Inclusive )
 
 -- | Perform a mixed batch of inserts and deletes.
 --
 -- Updates can be performed concurrently from multiple Haskell threads.
 updates :: forall k v blob.
-     ( SomeSerialisationConstraint k
-     , SomeSerialisationConstraint v
-     , SomeSerialisationConstraint blob
-     )
+     (SerialiseKey k, SerialiseValue v, SerialiseValue blob)
   => [(k, Update v blob)]
   -> Table k v blob
   -> Table k v blob
 updates ups tbl0 = foldl' update tbl0 ups where
     update :: Table k v blob -> (k, Update v blob) -> Table k v blob
     update tbl (k, Delete) = tbl
-        { _values = Map.delete (serialise k) (_values tbl) }
+        { _values = Map.delete (serialiseKey k) (_values tbl) }
     update tbl (k, Insert v Nothing) = tbl
-        { _values = Map.insert (serialise k) (serialise v, Nothing) (_values tbl) }
+        { _values = Map.insert (serialiseKey k) (serialiseValue v, Nothing) (_values tbl) }
     update tbl (k, Insert v (Just blob)) = tbl
-        { _values = Map.insert (serialise k) (serialise v, Just (mkBlobRef blob)) (_values tbl)
+        { _values = Map.insert (serialiseKey k) (serialiseValue v, Just (mkBlobRef blob)) (_values tbl)
         }
 
 -- | Perform a batch of inserts.
 --
 -- Inserts can be performed concurrently from multiple Haskell threads.
 inserts ::
-     ( SomeSerialisationConstraint k
-     , SomeSerialisationConstraint v
-     , SomeSerialisationConstraint blob
-     )
+     (SerialiseKey k, SerialiseValue v, SerialiseValue blob)
   => [(k, v, Maybe blob)]
   -> Table k v blob
   -> Table k v blob
@@ -170,10 +164,7 @@ inserts = updates . fmap (\(k, v, blob) -> (k, Insert v blob))
 --
 -- Deletes can be performed concurrently from multiple Haskell threads.
 deletes ::
-     ( SomeSerialisationConstraint k
-     , SomeSerialisationConstraint v
-     , SomeSerialisationConstraint blob
-     )
+     (SerialiseKey k, SerialiseValue v, SerialiseValue blob)
   => [k]
   -> Table k v blob
   -> Table k v blob
@@ -189,21 +180,22 @@ deletes = updates . fmap (,Delete)
 -- blob associated with each value in the table.
 data BlobRef blob = BlobRef
     !BS.ByteString  -- ^ digest
-    !BS.ByteString  -- ^ actual contents
+    !RawBytes       -- ^ actual contents
   deriving (Show)
 
 type role BlobRef nominal
 
-mkBlobRef :: SomeSerialisationConstraint blob => blob -> BlobRef blob
-mkBlobRef blob =  BlobRef (SHA256.hash bs) bs
+mkBlobRef :: SerialiseValue blob => blob -> BlobRef blob
+mkBlobRef blob =  BlobRef (SHA256.hash bs) rb
   where
-    !bs = serialise blob
+    !rb = serialiseValue blob
+    !bs = deserialiseValue rb :: BS.ByteString
 
 coerceBlobRef :: BlobRef blob -> BlobRef blob'
 coerceBlobRef (BlobRef d b) = BlobRef d b
 
-getBlobFromRef :: SomeSerialisationConstraint blob => BlobRef blob -> blob
-getBlobFromRef (BlobRef _ bs) = deserialise bs
+getBlobFromRef :: SerialiseValue blob => BlobRef blob -> blob
+getBlobFromRef (BlobRef _ rb) = deserialiseValue rb
 
 instance Eq (BlobRef blob) where
     BlobRef x _ == BlobRef y _ = x == y
@@ -216,7 +208,7 @@ instance Eq (BlobRef blob) where
 --
 -- Blob lookups can be performed concurrently from multiple Haskell threads.
 retrieveBlobs ::
-     (SomeSerialisationConstraint blob)
+     SerialiseValue blob
   => [BlobRef blob]
   -> [blob]
 retrieveBlobs refs = map getBlobFromRef refs

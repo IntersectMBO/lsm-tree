@@ -74,8 +74,10 @@ module Database.LSMTree.Monoidal (
     -- * Concurrency
     -- $concurrency
 
-    -- * Temporary placeholder types
-  , SomeSerialisationConstraint
+    -- * Serialisation
+  , SerialiseKey
+  , SerialiseValue
+
     -- * Utility types
   , IOLike
   ) where
@@ -85,7 +87,7 @@ import           Data.Kind (Type)
 import           Data.Typeable (Typeable)
 import           Data.Word (Word64)
 import           Database.LSMTree.Common (AnySession, IOLike, Range (..),
-                     Session, SnapshotName, SomeSerialisationConstraint,
+                     SerialiseKey, SerialiseValue, Session, SnapshotName,
                      SomeUpdateConstraint, closeSession, deleteSnapshot,
                      listSnapshots, openSession)
 import           Database.LSMTree.Internal.Monoidal
@@ -166,11 +168,7 @@ close = undefined
 --
 -- Lookups can be performed concurrently from multiple Haskell threads.
 lookups ::
-     ( IOLike m
-     , SomeSerialisationConstraint k
-     , SomeSerialisationConstraint v
-     , SomeUpdateConstraint v
-     )
+     (IOLike m, SerialiseKey k, SerialiseValue v, SomeUpdateConstraint v)
   => [k]
   -> TableHandle m k v
   -> m [LookupResult k v]
@@ -180,11 +178,7 @@ lookups = undefined
 --
 -- Range lookups can be performed concurrently from multiple Haskell threads.
 rangeLookup ::
-     ( IOLike m
-     , SomeSerialisationConstraint k
-     , SomeSerialisationConstraint v
-     , SomeUpdateConstraint v
-     )
+     (IOLike m, SerialiseKey k, SerialiseValue v, SomeUpdateConstraint v)
   => Range k
   -> TableHandle m k v
   -> m [RangeLookupResult k v]
@@ -194,11 +188,7 @@ rangeLookup = undefined
 --
 -- Updates can be performed concurrently from multiple Haskell threads.
 updates ::
-     ( IOLike m
-     , SomeSerialisationConstraint k
-     , SomeSerialisationConstraint v
-     , SomeUpdateConstraint v
-     )
+     (IOLike m, SerialiseKey k, SerialiseValue v, SomeUpdateConstraint v)
   => [(k, Update v)]
   -> TableHandle m k v
   -> m ()
@@ -208,11 +198,7 @@ updates = undefined
 --
 -- Inserts can be performed concurrently from multiple Haskell threads.
 inserts ::
-     ( IOLike m
-     , SomeSerialisationConstraint k
-     , SomeSerialisationConstraint v
-     , SomeUpdateConstraint v
-     )
+     (IOLike m, SerialiseKey k, SerialiseValue v, SomeUpdateConstraint v)
   => [(k, v)]
   -> TableHandle m k v
   -> m ()
@@ -222,11 +208,7 @@ inserts = updates . fmap (second Insert)
 --
 -- Deletes can be performed concurrently from multiple Haskell threads.
 deletes ::
-     ( IOLike m
-     , SomeSerialisationConstraint k
-     , SomeSerialisationConstraint v
-     , SomeUpdateConstraint v
-     )
+     (IOLike m, SerialiseKey k, SerialiseValue v, SomeUpdateConstraint v)
   => [k]
   -> TableHandle m k v
   -> m ()
@@ -236,11 +218,7 @@ deletes = updates . fmap (,Delete)
 --
 -- Monoidal upserts can be performed concurrently from multiple Haskell threads.
 mupserts ::
-     ( IOLike m
-     , SomeSerialisationConstraint k
-     , SomeSerialisationConstraint v
-     , SomeUpdateConstraint v
-     )
+     (IOLike m, SerialiseKey k, SerialiseValue v, SomeUpdateConstraint v)
   => [(k, v)]
   -> TableHandle m k v
   -> m ()
@@ -273,10 +251,7 @@ mupserts = updates . fmap (second Mupsert)
 --   the snapshot names are distinct (otherwise this would be a race).
 --
 snapshot ::
-     ( IOLike m
-     , SomeSerialisationConstraint k
-     , SomeSerialisationConstraint v
-     )
+     (IOLike m, SerialiseKey k, SerialiseValue v)
   => SnapshotName
   -> TableHandle m k v
   -> m ()
@@ -305,10 +280,7 @@ snapshot = undefined
 -- Instead, this function should open a table handle from files that exist in
 -- the session's directory.
 open ::
-     ( IOLike m
-     , SomeSerialisationConstraint k
-     , SomeSerialisationConstraint v
-     )
+     (IOLike m, SerialiseKey k, SerialiseValue v)
   => Session m
   -> SnapshotName
   -> m (TableHandle m k v)
