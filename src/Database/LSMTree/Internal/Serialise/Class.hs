@@ -51,6 +51,9 @@ import           GHC.Word (Word64 (..))
 -- [Minimal size] @'sizeofRawBytes' >= 6@
 class SerialiseKey k where
   serialiseKey :: k -> RawBytes
+  -- TODO: 'deserialiseKey' is only strictly necessary for range queries.
+  -- It might make sense to move it to a separate class, which could also
+  -- require total deserialisation (potentially using 'Either').
   deserialiseKey :: RawBytes -> k
 
 -- | Test the __Identity__ law for the 'SerialiseKey' class
@@ -75,6 +78,8 @@ class SerialiseValue v where
   serialiseValue :: v -> RawBytes
   deserialiseValue :: RawBytes -> v
   -- | Deserialisation when bytes are split into multiple chunks.
+  --
+  -- TODO: Unused so far, we might not need it.
   deserialiseValueN :: [RawBytes] -> v
 
 -- | Test the __Identity__ law for the 'SerialiseValue' class
