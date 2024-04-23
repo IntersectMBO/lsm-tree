@@ -38,6 +38,9 @@ import           GHC.Word (Word64 (..))
 --
 -- Raw bytes are lexicographically ordered, so in particular this means that
 -- values should be serialised into big-endian formats.
+-- This constraint mainly exists for range queries, where the range is specified
+-- in terms of unserialised values, but the internal implementation works on the
+-- serialised representation.
 --
 -- === IndexCompact constraints
 --
@@ -94,8 +97,21 @@ instance SerialiseKey Word64 where
       return ba
 
   deserialiseKey (RawBytes (PV.Vector (I# off#) len (P.ByteArray ba#)))
-    | len >= 8  = W64# (indexWord8ArrayAsWord64# ba# off# )
+    | len >= 8  = byteSwap64 (W64# (indexWord8ArrayAsWord64# ba# off# ))
     | otherwise = error "deserialiseKey: not enough bytes for Word64"
+
+instance SerialiseValue Word64 where
+  serialiseValue x =
+    RB.RawBytes $ mkPrimVector 0 8 $ P.runByteArray $ do
+      ba <- P.newByteArray 8
+      P.writeByteArray ba 0 x
+      return ba
+
+  deserialiseValue (RawBytes (PV.Vector (I# off#) len (P.ByteArray ba#)))
+    | len >= 8  = W64# (indexWord8ArrayAsWord64# ba# off# )
+    | otherwise = error "deserialiseValue: not enough bytes for Word64"
+
+  deserialiseValueN = deserialiseValue . mconcat
 
 {-------------------------------------------------------------------------------
   ByteString
@@ -140,10 +156,9 @@ instance SerialiseValue SBS.ShortByteString where
  ByteArray
 -------------------------------------------------------------------------------}
 
-instance SerialiseKey P.ByteArray where
-  serialiseKey ba = RB.fromByteArray 0 (P.sizeofByteArray ba) ba
-  deserialiseKey = RB.force
-
+-- | The 'Ord' instance of 'ByteArray' is not lexicographic, so there cannot be
+-- an order-preserving instance of 'SerialiseKey'.
+-- Use 'ShortByteString' instead.
 instance SerialiseValue P.ByteArray where
   serialiseValue ba = RB.fromByteArray 0 (P.sizeofByteArray ba) ba
   deserialiseValue = RB.force
