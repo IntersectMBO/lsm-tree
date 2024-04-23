@@ -22,6 +22,8 @@ import           Data.WideWord.Word128 (Word128 (..), byteSwapWord128)
 import           Data.WideWord.Word256 (Word256 (..))
 import           Database.LSMTree.Internal.Primitive (indexWord8ArrayAsWord64)
 import qualified Database.LSMTree.Internal.RawBytes as RB
+import           Database.LSMTree.Internal.Serialise (SerialisedBlob (..),
+                     SerialisedKey (..), SerialisedValue (..))
 import           Database.LSMTree.Internal.Serialise.Class
 import           Database.LSMTree.Internal.Vector
 import           GHC.Generics
@@ -137,3 +139,26 @@ deriving anyclass instance NFData FS.FsPath
 deriving instance NFData h => NFData (FS.Handle h)
 instance NFData (FS.HasFS m h) where
   rnf x = x `seq` ()
+
+{-------------------------------------------------------------------------------
+  RawBytes
+-------------------------------------------------------------------------------}
+
+instance SerialiseKey RawBytes where
+  serialiseKey = id
+  deserialiseKey = id
+
+instance SerialiseValue RawBytes where
+  serialiseValue = id
+  deserialiseValue = id
+  deserialiseValueN = mconcat
+
+{-------------------------------------------------------------------------------
+  SerialisedKey/Value/Blob
+-------------------------------------------------------------------------------}
+
+deriving newtype instance SerialiseKey SerialisedKey
+
+deriving newtype instance SerialiseValue SerialisedValue
+
+deriving newtype instance SerialiseValue SerialisedBlob
