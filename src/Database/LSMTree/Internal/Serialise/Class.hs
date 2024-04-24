@@ -21,6 +21,7 @@ import qualified Data.ByteString.Short.Internal as SBS
 import qualified Data.Primitive as P
 import           Data.Proxy (Proxy)
 import qualified Data.Vector.Primitive as PV
+import           Data.Void (Void, absurd)
 import           Data.Word
 import           Database.LSMTree.Internal.ByteString (byteArrayToSBS)
 import           Database.LSMTree.Internal.RawBytes (RawBytes (..))
@@ -168,3 +169,15 @@ instance SerialiseValue P.ByteArray where
   serialiseValue ba = RB.fromByteArray 0 (P.sizeofByteArray ba) ba
   deserialiseValue = RB.force
   deserialiseValueN = foldMap RB.force
+
+{-------------------------------------------------------------------------------
+Void
+-------------------------------------------------------------------------------}
+
+-- | The 'deserialiseValue' of this instance throws. (as does e.g. 'Word64' instance on invalid input.)
+--
+-- This instance is useful for tables without blobs.
+instance SerialiseValue Void where
+  serialiseValue = absurd
+  deserialiseValue = error "panic"
+  deserialiseValueN = error "panic"
