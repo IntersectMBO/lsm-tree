@@ -61,7 +61,7 @@ jobs:
       id: setup-liburing
       if: ${{ startsWith(matrix.os, 'ubuntu') }}
       run: |
-        sudo apt-get update
+        sudo apt-get update || true
         sudo apt-get -y install liburing-dev
 
     - name: Configure the build
@@ -157,7 +157,7 @@ jobs:
 
     - name: Install system dependencies (apt-get)
       run: |
-        sudo apt-get update
+        sudo apt-get update || true
         sudo apt-get -y install fd-find
 
     - name: Setup Haskell
@@ -219,7 +219,7 @@ jobs:
 
     - name: Install system dependencies (apt-get)
       run: |
-        sudo apt-get update
+        sudo apt-get update || true
         sudo apt-get -y install fd-find
 
     - name: Setup Haskell
