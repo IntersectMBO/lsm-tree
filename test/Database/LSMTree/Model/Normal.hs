@@ -36,6 +36,7 @@ module Database.LSMTree.Model.Normal (
 import qualified Crypto.Hash.SHA256 as SHA256
 import qualified Data.ByteString as BS
 import           Data.Foldable (foldl')
+import           Data.Kind (Type)
 import           Data.Map (Map)
 import qualified Data.Map.Range as Map.R
 import qualified Data.Map.Strict as Map
@@ -50,6 +51,7 @@ import           GHC.Exts (IsList (..))
   Tables
 -------------------------------------------------------------------------------}
 
+type Table :: Type -> Type -> Type -> Type
 data Table k v blob = Table
     { _values :: Map RawBytes (RawBytes, Maybe (BlobRef blob))
     }

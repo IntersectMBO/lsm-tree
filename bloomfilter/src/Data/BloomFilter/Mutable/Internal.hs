@@ -1,5 +1,3 @@
-{-# LANGUAGE RoleAnnotations          #-}
-{-# LANGUAGE StandaloneKindSignatures #-}
 {-# OPTIONS_HADDOCK not-home #-}
 -- | This module exports 'MBloom'' internals.
 module Data.BloomFilter.Mutable.Internal (

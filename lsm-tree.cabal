@@ -31,10 +31,16 @@ common wno-x-partial
     -- we decide to refactor code that uses partial functions.
     ghc-options: -Wno-x-partial
 
+common language
+  default-language:   GHC2021
+  default-extensions:
+    GADTs
+    RoleAnnotations
+    ViewPatterns
+
 library
-  import:           warnings, wno-x-partial
-  hs-source-dirs:   src
-  default-language: Haskell2010
+  import:          language, warnings, wno-x-partial
+  hs-source-dirs:  src
   exposed-modules:
     Data.Map.Range
     Database.LSMTree.Common
@@ -90,32 +96,32 @@ library
 
 -- this exists due windows
 library xxhash
-  default-language: Haskell2010
-  visibility:       private
-  include-dirs:     xxhash/xxHash-0.8.2/ xxhash/include/
+  import:          language
+  visibility:      private
+  include-dirs:    xxhash/xxHash-0.8.2/ xxhash/include/
   includes:
     HsXXHash.h
     xxhash.h
 
-  exposed-modules:  XXH3
+  exposed-modules: XXH3
 
   if (arch(x86_64) && !os(osx))
     -- Cabal doesn't pass cc-options to "ordinary" Haskell source compilation
     -- https://github.com/haskell/cabal/issues/9801
     ghc-options: -optc=-mavx2 -optc=-O3
 
-  other-modules:    FFI
-  hs-source-dirs:   xxhash/src
+  other-modules:   FFI
+  hs-source-dirs:  xxhash/src
   build-depends:
     , base
     , bytestring
     , primitive   ^>=0.9
 
 test-suite xxhash-tests
-  default-language: Haskell2010
-  type:             exitcode-stdio-1.0
-  hs-source-dirs:   xxhash/tests
-  main-is:          xxhash-tests.hs
+  import:         language
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: xxhash/tests
+  main-is:        xxhash-tests.hs
   build-depends:
     , base
     , bytestring
@@ -127,9 +133,9 @@ test-suite xxhash-tests
 
 -- this fork doesn't work on 32bit systems
 library bloomfilter
-  visibility:       private
-  hs-source-dirs:   bloomfilter/src
-  default-language: Haskell2010
+  import:          language
+  visibility:      private
+  hs-source-dirs:  bloomfilter/src
   build-depends:
     , base             >=4.5       && <5
     , bitvec           ^>=1.1.5.0
@@ -150,14 +156,14 @@ library bloomfilter
     Data.BloomFilter.Mutable
     Data.BloomFilter.Mutable.Internal
 
-  ghc-options:      -O2 -Wall
+  ghc-options:     -O2 -Wall
 
 test-suite bloomfilter-tests
-  default-language: Haskell2010
-  type:             exitcode-stdio-1.0
-  hs-source-dirs:   bloomfilter/tests
-  main-is:          bloomfilter-tests.hs
-  other-modules:    QCSupport
+  import:         language
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: bloomfilter/tests
+  main-is:        bloomfilter-tests.hs
+  other-modules:  QCSupport
   build-depends:
     , base
     , bytestring
@@ -170,29 +176,28 @@ test-suite bloomfilter-tests
     , vector
 
 test-suite bloomfilter-primes
-  default-language: Haskell2010
-  type:             exitcode-stdio-1.0
-  hs-source-dirs:   bloomfilter/tests
-  main-is:          primes.hs
+  import:         language
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: bloomfilter/tests
+  main-is:        primes.hs
   build-depends:
     , base
     , primes  ^>=0.2.1.0
 
 test-suite bloomfilter-spell
-  default-language: Haskell2010
-  type:             exitcode-stdio-1.0
-  hs-source-dirs:   bloomfilter/examples
-  main-is:          spell.hs
+  import:         language
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: bloomfilter/examples
+  main-is:        spell.hs
   build-depends:
     , base
     , lsm-tree:bloomfilter
 
 test-suite lsm-tree-test
-  import:           warnings, wno-x-partial
-  default-language: Haskell2010
-  type:             exitcode-stdio-1.0
-  hs-source-dirs:   test src-extras
-  main-is:          Main.hs
+  import:         language, warnings, wno-x-partial
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: test src-extras
+  main-is:        Main.hs
   other-modules:
     Database.LSMTree.Extras
     Database.LSMTree.Extras.Generators
@@ -273,14 +278,13 @@ test-suite lsm-tree-test
     , vector
     , wide-word
 
-  ghc-options:      -fno-ignore-asserts -threaded
+  ghc-options:    -fno-ignore-asserts -threaded
 
 benchmark lsm-tree-micro-bench
-  import:           warnings, wno-x-partial
-  default-language: Haskell2010
-  type:             exitcode-stdio-1.0
-  hs-source-dirs:   bench/micro src-extras
-  main-is:          Main.hs
+  import:         language, warnings, wno-x-partial
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: bench/micro src-extras
+  main-is:        Main.hs
   other-modules:
     Bench.Database.LSMTree.Internal.BloomFilter
     Bench.Database.LSMTree.Internal.IndexCompact
@@ -311,14 +315,13 @@ benchmark lsm-tree-micro-bench
     , vector
     , wide-word
 
-  ghc-options:      -rtsopts -with-rtsopts=-T -threaded
+  ghc-options:    -rtsopts -with-rtsopts=-T -threaded
 
 benchmark lsm-tree-macro-bench
-  import:           warnings, wno-x-partial
-  default-language: Haskell2010
-  type:             exitcode-stdio-1.0
-  hs-source-dirs:   bench/macro src-extras
-  main-is:          Main.hs
+  import:         language, warnings, wno-x-partial
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: bench/macro src-extras
+  main-is:        Main.hs
   other-modules:
     Bench.Database.LSMTree.Internal.BloomFilter
     Database.LSMTree.Extras.Orphans
@@ -333,12 +336,11 @@ benchmark lsm-tree-macro-bench
     , vector
     , wide-word
 
-  ghc-options:      -rtsopts -with-rtsopts=-T -threaded
+  ghc-options:    -rtsopts -with-rtsopts=-T -threaded
 
 library kmerge
-  import:           warnings, wno-x-partial
-  default-language: Haskell2010
-  hs-source-dirs:   src-kmerge
+  import:          language, warnings, wno-x-partial
+  hs-source-dirs:  src-kmerge
   exposed-modules:
     KMerge.Heap
     KMerge.LoserTree
@@ -349,11 +351,10 @@ library kmerge
     , primitive
 
 test-suite kmerge-test
-  import:           warnings, wno-x-partial
-  default-language: Haskell2010
-  type:             exitcode-stdio-1.0
-  hs-source-dirs:   test
-  main-is:          kmerge-test.hs
+  import:         language, warnings, wno-x-partial
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: test
+  main-is:        kmerge-test.hs
   build-depends:
     , base              >=4.16 && <4.20
     , deepseq
@@ -368,12 +369,11 @@ test-suite kmerge-test
     , vector
 
 benchmark kmerge-bench
-  import:           warnings, wno-x-partial
-  default-language: Haskell2010
-  type:             exitcode-stdio-1.0
-  hs-source-dirs:   test
-  main-is:          kmerge-test.hs
-  cpp-options:      -DKMERGE_BENCHMARKS
+  import:         language, warnings, wno-x-partial
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: test
+  main-is:        kmerge-test.hs
+  cpp-options:    -DKMERGE_BENCHMARKS
   build-depends:
     , base              >=4.16 && <4.20
     , deepseq
@@ -388,11 +388,10 @@ benchmark kmerge-bench
     , vector
 
 test-suite map-range-test
-  import:           warnings, wno-x-partial
-  default-language: Haskell2010
-  type:             exitcode-stdio-1.0
-  hs-source-dirs:   test
-  main-is:          map-range-test.hs
+  import:         language, warnings, wno-x-partial
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: test
+  main-is:        map-range-test.hs
   build-depends:
     , base              >=4.16 && <4.20
     , bytestring
@@ -404,9 +403,8 @@ test-suite map-range-test
     , tasty-quickcheck
 
 library prototypes
-  import:           warnings, wno-x-partial
-  default-language: Haskell2010
-  hs-source-dirs:   prototypes
+  import:          language, warnings, wno-x-partial
+  hs-source-dirs:  prototypes
   exposed-modules:
     FormatPage
     ScheduledMerges
@@ -431,11 +429,10 @@ library prototypes
     -Wno-missing-export-lists
 
 test-suite lsm-prototypes-tests
-  import:           warnings, wno-x-partial
-  default-language: Haskell2010
-  type:             exitcode-stdio-1.0
-  hs-source-dirs:   test
-  main-is:          lsm-prototypes-tests.hs
+  import:         language, warnings, wno-x-partial
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: test
+  main-is:        lsm-prototypes-tests.hs
   build-depends:
     , base
     , lsm-tree:prototypes
@@ -454,10 +451,9 @@ flag serialblockio
   manual:      True
 
 library fs-api-blockio
-  import:           warnings, wno-x-partial
-  visibility:       private
-  hs-source-dirs:   fs-api-blockio/src
-  default-language: Haskell2010
+  import:          language, warnings, wno-x-partial
+  visibility:      private
+  hs-source-dirs:  fs-api-blockio/src
   exposed-modules:
     System.FS.BlockIO.API
     System.FS.BlockIO.IO
@@ -490,11 +486,10 @@ library fs-api-blockio
     cpp-options: -DSERIALBLOCKIO
 
 test-suite fs-api-blockio-test
-  import:           warnings, wno-x-partial
-  default-language: Haskell2010
-  type:             exitcode-stdio-1.0
-  hs-source-dirs:   fs-api-blockio/test
-  main-is:          Main.hs
+  import:         language, warnings, wno-x-partial
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: fs-api-blockio/test
+  main-is:        Main.hs
   build-depends:
     , async
     , base                     >=4.16 && <4.20
@@ -508,4 +503,4 @@ test-suite fs-api-blockio-test
     , temporary
     , vector
 
-  ghc-options:      -threaded -fno-ignore-asserts
+  ghc-options:    -threaded -fno-ignore-asserts

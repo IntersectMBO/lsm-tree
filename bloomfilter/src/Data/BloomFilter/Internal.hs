@@ -1,6 +1,3 @@
-{-# LANGUAGE BangPatterns             #-}
-{-# LANGUAGE RoleAnnotations          #-}
-{-# LANGUAGE StandaloneKindSignatures #-}
 {-# OPTIONS_HADDOCK not-home #-}
 -- | This module exports 'Bloom'' definition.
 module Data.BloomFilter.Internal (

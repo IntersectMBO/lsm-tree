@@ -1,6 +1,4 @@
-{-# LANGUAGE BangPatterns        #-}
-{-# LANGUAGE MagicHash           #-}
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE MagicHash #-}
 module XXH3 (
     -- * One shot
     xxh3_64bit_withSeed_bs,

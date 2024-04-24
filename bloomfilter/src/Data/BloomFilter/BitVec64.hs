@@ -1,4 +1,3 @@
-{-# LANGUAGE BangPatterns #-}
 -- | Minimal bit vector implementation.
 module Data.BloomFilter.BitVec64 (
     BitVec64 (..),
