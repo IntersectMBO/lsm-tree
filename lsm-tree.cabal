@@ -344,6 +344,26 @@ benchmark lsm-tree-macro-bench
 
   ghc-options:    -rtsopts -with-rtsopts=-T -threaded
 
+benchmark lsm-tree-bench-wp8
+  import:         language, warnings, wno-x-partial
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: bench/macro src-extras
+  main-is:        lsm-tree-bench-wp8.hs
+  build-depends:
+    , base
+    , binary
+    , bytestring
+    , clock
+    , containers
+    , cryptohash-sha256
+    , deepseq
+    , fs-api
+    , lsm-tree
+    , optparse-applicative
+    , splitmix
+
+  ghc-options:    -rtsopts -with-rtsopts=-T -threaded
+
 library kmerge
   import:          language, warnings, wno-x-partial
   hs-source-dirs:  src-kmerge
