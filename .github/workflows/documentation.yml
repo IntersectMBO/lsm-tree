@@ -51,7 +51,7 @@ jobs:
     - name: Install liburing (on Linux)
       id: setup-liburing
       run: |
-        sudo apt-get update
+        sudo apt-get update || true
         sudo apt-get -y install pkg-config
         echo "PKG_CONFIG_PATH=$PKG_CONFIG_PATH"
         mkdir tmp
