@@ -1,5 +1,3 @@
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE ViewPatterns        #-}
 -- | An easy-to-use Bloom filter interface.
 module Data.BloomFilter.Easy (
     -- * Easy creation and querying

@@ -1,8 +1,3 @@
-{-# LANGUAGE RankNTypes          #-}
-{-# LANGUAGE RoleAnnotations     #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications    #-}
-
 -- |
 --
 -- Fast hashing of Haskell values.
