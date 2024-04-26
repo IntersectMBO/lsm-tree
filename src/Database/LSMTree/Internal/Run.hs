@@ -1,5 +1,6 @@
-{-# LANGUAGE BangPatterns    #-}
-{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE DeriveAnyClass     #-}
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE RecordWildCards    #-}
 
 -- | Functionality related to LSM-Tree runs (sequences of LSM-Tree data).
 --
@@ -52,6 +53,7 @@ module Database.LSMTree.Internal.Run (
   , decRefCount
   ) where
 
+import           Control.DeepSeq (NFData (rnf))
 import           Control.Exception (Exception, finally, throwIO)
 import           Control.Monad (when)
 import           Data.BloomFilter (Bloom)
@@ -105,6 +107,11 @@ data Run fhandle = Run {
       -- I\/O, reading arbitrary file offset and length spans.
     , runBlobFile   :: !fhandle
     }
+
+instance NFData fhandle => NFData (Run fhandle) where
+  rnf (Run a b c d e f g) =
+      rnf a `seq` rnf b `seq` rnf c `seq` rnf d `seq` rnf e `seq`
+      rnf f `seq` rnf g
 
 sizeInPages :: Run fhandle -> NumPages
 sizeInPages = Index.sizeInPages . runIndex

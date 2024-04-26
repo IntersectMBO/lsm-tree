@@ -1,6 +1,3 @@
-{-# LANGUAGE DeriveFunctor     #-}
-{-# LANGUAGE DeriveTraversable #-}
-
 module Database.LSMTree.Internal.Run.FsPaths (
     RunFsPaths (..)
   , runFsPaths
@@ -19,6 +16,7 @@ module Database.LSMTree.Internal.Run.FsPaths (
   ) where
 
 import           Control.Applicative (Applicative (..))
+import           Control.DeepSeq (NFData)
 import qualified Data.ByteString.Char8 as BS
 import           Data.Foldable (toList)
 import qualified Data.Map as Map
@@ -44,7 +42,7 @@ import qualified Database.LSMTree.Internal.CRC32C as CRC
 -- the accessor functions to get the actual names.
 --
 newtype RunFsPaths = RunFsPaths { runNumber :: Int }
-  deriving Show
+  deriving (Show, NFData)
 
 runFsPaths :: RunFsPaths -> ForRunFiles FsPath
 runFsPaths fsPaths = fmap (runFilePathWithExt fsPaths) runFileExts

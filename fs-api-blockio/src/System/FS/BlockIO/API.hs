@@ -22,6 +22,7 @@ module System.FS.BlockIO.API (
   , FileOffset
   ) where
 
+import           Control.DeepSeq
 import           Control.Monad.Primitive (PrimMonad (PrimState))
 import           Data.Primitive.ByteArray (MutableByteArray)
 import qualified Data.Vector as V
@@ -53,6 +54,9 @@ data HasBlockIO m h = HasBlockIO {
   , submitIO :: HasCallStack => V.Vector (IOOp (PrimState m) h) -> m (VU.Vector IOResult)
   }
 
+instance NFData (HasBlockIO m h) where
+  rnf HasBlockIO{close, submitIO} = close `seq` rwhnf submitIO
+
 -- | Concurrency parameters for initialising a 'HasBlockIO. Can be ignored by
 -- serial implementations.
 data IOCtxParams = IOCtxParams {
@@ -71,6 +75,9 @@ mkClosedError (SomeHasFS hasFS) loc = ioToFsError (mkFsErrorPath hasFS (mkFsPath
 data IOOp s h =
     IOOpRead  !(Handle h) !FileOffset !(MutableByteArray s) !BufferOffset !ByteCount
   | IOOpWrite !(Handle h) !FileOffset !(MutableByteArray s) !BufferOffset !ByteCount
+
+instance NFData (IOOp s h) where
+  rnf = rwhnf
 
 ioopHandle :: IOOp s h -> Handle h
 ioopHandle (IOOpRead h _ _ _ _)  = h
