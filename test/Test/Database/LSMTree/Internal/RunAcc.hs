@@ -123,15 +123,15 @@ pagesToByteString rp rops =
   : map RawOverflowPage.rawOverflowPageRawBytes rops
 
 fromProtoKOp ::
-     (Proto.Key, Proto.Operation, Maybe Proto.BlobRef)
+     (Proto.Key, Proto.Operation)
   -> (SerialisedKey, Entry SerialisedValue BlobSpan)
-fromProtoKOp (k, op, mblobref) = (fromProtoKey k, bimap fromProtoValue fromProtoBlobRef e)
+fromProtoKOp (k, op) =
+    (fromProtoKey k, bimap fromProtoValue fromProtoBlobRef e)
   where e = case op of
-              Proto.Insert v  -> case mblobref of
-                  Nothing -> Insert v
-                  Just br -> InsertWithBlob v br
-              Proto.Mupsert v -> Mupdate v
-              Proto.Delete -> Delete
+              Proto.Insert  v Nothing   -> Insert v
+              Proto.Insert  v (Just br) -> InsertWithBlob v br
+              Proto.Mupsert v           -> Mupdate v
+              Proto.Delete              -> Delete
 
 fromProtoKey :: Proto.Key -> SerialisedKey
 fromProtoKey (Proto.Key bs) = SerialisedKey . RB.fromShortByteString $ SBS.toShort bs
@@ -142,31 +142,22 @@ fromProtoValue (Proto.Value bs) = SerialisedValue . RB.fromShortByteString $ SBS
 fromProtoBlobRef :: Proto.BlobRef -> BlobSpan
 fromProtoBlobRef (Proto.BlobRef x y) = BlobSpan x y
 
--- | Wrapper around 'PageLogical' that only generates a k\/op pair with a blob
--- reference if the op is an insert.
+-- | Wrapper around 'PageLogical' that generates nearly-full pages, and
+-- keys that are always large enough (>= 6 bytes) for the compact index.
 newtype PageLogical' = PageLogical' {getPageLogical' :: Proto.PageLogical}
   deriving Show
 
 getRealKOps :: PageLogical' -> [(SerialisedKey, Entry SerialisedValue BlobSpan)]
 getRealKOps = fmap fromProtoKOp . getPrototypeKOps
 
-getPrototypeKOps :: PageLogical' -> [(Proto.Key, Proto.Operation, Maybe Proto.BlobRef)]
+getPrototypeKOps :: PageLogical' -> [(Proto.Key, Proto.Operation)]
 getPrototypeKOps (PageLogical' (Proto.PageLogical kops)) = kops
 
 instance Arbitrary PageLogical' where
-  arbitrary = PageLogical' . demoteBlobRefs <$>
+  arbitrary = PageLogical' <$>
       Proto.genFullPageLogical
         (arbitrary `suchThat` \(Proto.Key bs) -> BS.length bs >= 6)
         arbitrary
-  shrink (PageLogical' page) = [ PageLogical' (demoteBlobRefs page')
-                               | page' <- shrink page ]
+  shrink (PageLogical' page) =
+      [ PageLogical' page' | page' <- shrink page ]
 
-demoteBlobRefs :: Proto.PageLogical -> Proto.PageLogical
-demoteBlobRefs (Proto.PageLogical kops) = Proto.PageLogical (fmap demoteBlobRef kops)
-
-demoteBlobRef ::
-     (Proto.Key, Proto.Operation, Maybe Proto.BlobRef)
-  -> (Proto.Key, Proto.Operation, Maybe Proto.BlobRef)
-demoteBlobRef (k, op, mblobref) = case op of
-    Proto.Insert{} -> (k, op, mblobref)
-    _              -> (k, op, Nothing)

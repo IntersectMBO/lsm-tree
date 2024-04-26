@@ -40,13 +40,13 @@ import           Database.LSMTree.Internal.Serialise
 -- A smallest page is with empty key:
 --
 -- >>> import FormatPage
--- >>> let Just page0 = pageSizeAddElem (Key "", Delete, Nothing) pageSizeEmpty
+-- >>> let Just page0 = pageSizeAddElem (Key "", Delete) pageSizeEmpty
 -- >>> page0
 -- PageSize {pageSizeElems = 1, pageSizeBlobs = 0, pageSizeBytes = 32}
 --
 -- Then we can add pages with a single byte key, e.g.
 --
--- >>> pageSizeAddElem (Key "a", Delete, Nothing) page0
+-- >>> pageSizeAddElem (Key "a", Delete) page0
 -- Just (PageSize {pageSizeElems = 2, pageSizeBlobs = 0, pageSizeBytes = 35})
 --
 -- i.e. roughly 3-4 bytes (when we get to 32/64 elements we add more bytes for bitmaps).
@@ -54,14 +54,14 @@ import           Database.LSMTree.Internal.Serialise
 --
 -- If we write as small program, adding single byte keys to a page size:
 --
--- >>> let calc s ps = case pageSizeAddElem (Key "x", Delete, Nothing) ps of { Nothing -> s; Just ps' -> calc (s + 1) ps' }
+-- >>> let calc s ps = case pageSizeAddElem (Key "x", Delete) ps of { Nothing -> s; Just ps' -> calc (s + 1) ps' }
 -- >>> calc 1 page0
 -- 759
 --
 -- I.e. we can have a 4096 byte page with at most 759 keys, actually less,
 -- as there are only 256 single byte keys.
 --
--- >>> let calc2 s ps = case pageSizeAddElem (Key $ if s < 257 then "x" else "xx", Delete, Nothing) ps of { Nothing -> s; Just ps' -> calc2 (s + 1) ps' }
+-- >>> let calc2 s ps = case pageSizeAddElem (Key $ if s < 257 then "x" else "xx", Delete) ps of { Nothing -> s; Just ps' -> calc2 (s + 1) ps' }
 -- >>> calc2 1 page0
 -- 680
 --
