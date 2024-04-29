@@ -6,12 +6,15 @@
 module Database.LSMTree.Internal.Serialise.Class (
     SerialiseKey (..)
   , serialiseKeyIdentity
+  , serialiseKeyIdentityUpToSlicing
   , serialiseKeyPreservesOrdering
   , serialiseKeyMinimalSize
   , SerialiseValue (..)
   , serialiseValueIdentity
+  , serialiseValueIdentityUpToSlicing
   , serialiseValueConcatDistributes
   , RawBytes (..)
+  , packSlice
   ) where
 
 import qualified Data.ByteString as BS
@@ -24,6 +27,7 @@ import qualified Data.Vector.Primitive as PV
 import           Data.Void (Void, absurd)
 import           Data.Word
 import           Database.LSMTree.Internal.ByteString (byteArrayToSBS)
+import           Database.LSMTree.Internal.Primitive (indexWord8ArrayAsWord64)
 import           Database.LSMTree.Internal.RawBytes (RawBytes (..))
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.Vector
@@ -35,6 +39,7 @@ import           GHC.Word (Word64 (..))
 -- Instances should satisfy the following:
 --
 -- [Identity] @'deserialiseKey' ('serialiseKey' x) == x@
+-- [Identity up to slicing] @'deserialiseKey' ('packSlice' prefix ('serialiseKey' x) suffix) == x@
 -- [Ordering-preserving] @x \`'compare'\` y == 'serialiseKey' x \`'compare'\` 'serialiseKey' y@
 --
 -- Raw bytes are lexicographically ordered, so in particular this means that
@@ -61,6 +66,13 @@ class SerialiseKey k where
 serialiseKeyIdentity :: (Eq k, SerialiseKey k) => k -> Bool
 serialiseKeyIdentity x = deserialiseKey (serialiseKey x) == x
 
+-- | Test the __Identity up to slicing__ law for the 'SerialiseKey' class
+serialiseKeyIdentityUpToSlicing ::
+     (Eq k, SerialiseKey k)
+  => RawBytes -> k -> RawBytes -> Bool
+serialiseKeyIdentityUpToSlicing prefix x suffix =
+    deserialiseKey (packSlice prefix (serialiseKey x) suffix) == x
+
 -- | Test the __Ordering-preserving__ law for the 'SerialiseKey' class
 serialiseKeyPreservesOrdering :: (Ord k, SerialiseKey k) => k -> k -> Bool
 serialiseKeyPreservesOrdering x y = x `compare` y == serialiseKey x `compare` serialiseKey y
@@ -74,6 +86,7 @@ serialiseKeyMinimalSize x = RB.size (serialiseKey x) >= 6
 -- Instances should satisfy the following:
 --
 -- [Identity] @'deserialiseValue' ('serialiseValue' x) == x@
+-- [Identity up to slicing] @'deserialiseValue' ('packSlice' prefix ('serialiseValue' x) suffix) == x@
 -- [Concat distributes] @'deserialiseValueN' xs == 'deserialiseValue' ('mconcat' xs)@
 class SerialiseValue v where
   serialiseValue :: v -> RawBytes
@@ -87,9 +100,26 @@ class SerialiseValue v where
 serialiseValueIdentity :: (Eq v, SerialiseValue v) => v -> Bool
 serialiseValueIdentity x = deserialiseValue (serialiseValue x) == x
 
+-- | Test the __Identity up to slicing__ law for the 'SerialiseValue' class
+serialiseValueIdentityUpToSlicing ::
+     (Eq v, SerialiseValue v)
+  => RawBytes -> v -> RawBytes -> Bool
+serialiseValueIdentityUpToSlicing prefix x suffix =
+    deserialiseValue (packSlice prefix (serialiseValue x) suffix) == x
+
 -- | Test the __Concat distributes__ law for the 'SerialiseValue' class
 serialiseValueConcatDistributes :: forall v. (Eq v, SerialiseValue v) => Proxy v -> [RawBytes] -> Bool
 serialiseValueConcatDistributes _ xs = deserialiseValueN @v xs == deserialiseValue (mconcat xs)
+
+{-------------------------------------------------------------------------------
+  RawBytes
+-------------------------------------------------------------------------------}
+
+-- | @'packSlice' prefix x suffix@ makes @x@ into a slice with @prefix@ bytes on
+-- the left and @suffix@ bytes on the right.
+packSlice :: RawBytes -> RawBytes -> RawBytes -> RawBytes
+packSlice prefix x suffix =
+    RB.take (RB.size x) (RB.drop (RB.size prefix) (prefix <> x <> suffix))
 
 {-------------------------------------------------------------------------------
   Word64
@@ -113,8 +143,8 @@ instance SerialiseValue Word64 where
       P.writeByteArray ba 0 x
       return ba
 
-  deserialiseValue (RawBytes (PV.Vector (I# off#) len (P.ByteArray ba#)))
-    | len >= 8  = W64# (indexWord8ArrayAsWord64# ba# off# )
+  deserialiseValue (RawBytes (PV.Vector off len ba))
+    | len >= 8  = indexWord8ArrayAsWord64 ba off
     | otherwise = error "deserialiseValue: not enough bytes for Word64"
 
   deserialiseValueN = deserialiseValue . mconcat

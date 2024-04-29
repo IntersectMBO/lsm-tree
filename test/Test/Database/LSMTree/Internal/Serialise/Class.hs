@@ -32,6 +32,8 @@ keyProperties :: forall a. (Ord a, Show a, Arbitrary a, SerialiseKey a) => [Test
 keyProperties =
     [ testProperty "prop_roundtripSerialiseKey" $
         prop_roundtripSerialiseKey @a
+    , testProperty "prop_roundtripSerialiseKeyUpToSlicing" $
+        prop_roundtripSerialiseKeyUpToSlicing @a
     , testProperty "prop_orderPreservationSerialiseKey" $
         prop_orderPreservationSerialiseKey @a
     ]
@@ -40,6 +42,8 @@ valueProperties :: forall a. (Ord a, Show a, Arbitrary a, SerialiseValue a) => [
 valueProperties =
     [ testProperty "prop_roundtripSerialiseValue" $
         prop_roundtripSerialiseValue @a
+    , testProperty "prop_roundtripSerialiseValueUpToSlicing" $
+        prop_roundtripSerialiseValueUpToSlicing @a
     , testProperty "prop_concatDistributesSerialiseValue" $
         prop_concatDistributesSerialiseValue @a
     ]
@@ -49,6 +53,19 @@ prop_roundtripSerialiseKey k =
     counterexample ("serialised: " <> show (serialiseKey k)) $
     counterexample ("deserialised: " <> show @k (deserialiseKey (serialiseKey k))) $
       serialiseKeyIdentity k
+
+prop_roundtripSerialiseKeyUpToSlicing ::
+     forall k. (Eq k, Show k, SerialiseKey k)
+  => RawBytes -> k -> RawBytes -> Property
+prop_roundtripSerialiseKeyUpToSlicing prefix x suffix =
+    counterexample ("serialised: " <> show @RawBytes k) $
+    counterexample ("serialised and sliced: " <> show @RawBytes k') $
+    counterexample ("deserialised: " <> show @k x') $
+      serialiseKeyIdentityUpToSlicing prefix x suffix
+  where
+    k = serialiseKey x
+    k' = packSlice prefix k suffix
+    x' = deserialiseKey k'
 
 prop_orderPreservationSerialiseKey :: forall k. (Ord k, SerialiseKey k) => k -> k -> Property
 prop_orderPreservationSerialiseKey x y =
@@ -62,6 +79,19 @@ prop_roundtripSerialiseValue v =
     counterexample ("serialised: " <> show (serialiseValue v)) $
     counterexample ("deserialised: " <> show @v (deserialiseValue (serialiseValue v))) $
       serialiseValueIdentity v
+
+prop_roundtripSerialiseValueUpToSlicing ::
+     forall v. (Eq v, Show v, SerialiseValue v)
+  => RawBytes -> v -> RawBytes -> Property
+prop_roundtripSerialiseValueUpToSlicing prefix x suffix =
+    counterexample ("serialised: " <> show v) $
+    counterexample ("serialised and sliced: " <> show @RawBytes v') $
+    counterexample ("deserialised: " <> show @v x') $
+      serialiseValueIdentityUpToSlicing prefix x suffix
+  where
+    v = serialiseValue x
+    v' = packSlice prefix v suffix
+    x' = deserialiseValue v'
 
 prop_concatDistributesSerialiseValue :: forall v. (Ord v, Show v, SerialiseValue v) => v -> Property
 prop_concatDistributesSerialiseValue v =
