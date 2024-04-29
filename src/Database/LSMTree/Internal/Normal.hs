@@ -1,9 +1,10 @@
-{-# LANGUAGE DeriveTraversable #-}
 module Database.LSMTree.Internal.Normal (
     LookupResult (..),
     RangeLookupResult (..),
     Update (..),
 ) where
+
+import           Control.DeepSeq (NFData (..))
 
 -- | Result of a single point lookup.
 data LookupResult k v blobref =
@@ -26,3 +27,7 @@ data Update v blob =
     Insert !v !(Maybe blob)
   | Delete
   deriving (Show, Eq)
+
+instance (NFData v, NFData blob) => NFData (Update v blob) where
+  rnf Delete       = ()
+  rnf (Insert v b) = rnf v `seq` rnf b
