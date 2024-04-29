@@ -9,8 +9,10 @@ import           Data.ByteString.Lazy (LazyByteString)
 import           Data.ByteString.Short (ShortByteString)
 import           Data.Primitive (ByteArray)
 import           Data.Proxy (Proxy (Proxy))
+import           Data.WideWord (Word128, Word256)
 import           Data.Word
 import           Database.LSMTree.Extras.Generators ()
+import           Database.LSMTree.Extras.UTxO (UTxOKey, UTxOValue)
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.Serialise.Class
 import           Test.Tasty
@@ -23,6 +25,10 @@ tests = testGroup "Test.Database.LSMTree.Internal.Serialise.Class"
     , testGroup "LazyByteString"  (allProperties @LazyByteString)
     , testGroup "ShortByteString" (allProperties @ShortByteString)
     , testGroup "ByteArray"       (valueProperties @ByteArray)
+    , testGroup "Word128"         (allProperties @Word128)
+    , testGroup "Word256"         (allProperties @Word256)
+    , testGroup "UTxOKey"         (keyProperties @UTxOKey)
+    , testGroup "UTxOValue"       (valueProperties @UTxOValue)
     ]
 
 allProperties :: forall a. (Ord a, Show a, Arbitrary a, SerialiseKey a, SerialiseValue a) => [TestTree]

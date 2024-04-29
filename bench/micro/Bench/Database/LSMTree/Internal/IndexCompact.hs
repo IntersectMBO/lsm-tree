@@ -15,6 +15,7 @@ import           Criterion.Main
 import           Data.Foldable (Foldable (..))
 import           Database.LSMTree.Extras.Generators
 import           Database.LSMTree.Extras.Random
+import           Database.LSMTree.Extras.UTxO
 import           Database.LSMTree.Internal.IndexCompact
 import           Database.LSMTree.Internal.IndexCompactAcc
 import           Database.LSMTree.Internal.Serialise (SerialisedKey,

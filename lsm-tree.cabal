@@ -204,6 +204,7 @@ test-suite lsm-tree-test
     Database.LSMTree.Extras.Generators
     Database.LSMTree.Extras.Orphans
     Database.LSMTree.Extras.Random
+    Database.LSMTree.Extras.UTxO
     Database.LSMTree.Model.Monoidal
     Database.LSMTree.Model.Normal
     Database.LSMTree.Model.Normal.Session
@@ -295,6 +296,7 @@ benchmark lsm-tree-micro-bench
     Database.LSMTree.Extras.Generators
     Database.LSMTree.Extras.Orphans
     Database.LSMTree.Extras.Random
+    Database.LSMTree.Extras.UTxO
 
   build-depends:
     , base
@@ -334,6 +336,7 @@ benchmark lsm-tree-macro-bench
     , lsm-tree
     , lsm-tree:bloomfilter
     , primitive
+    , QuickCheck
     , random
     , time
     , vector

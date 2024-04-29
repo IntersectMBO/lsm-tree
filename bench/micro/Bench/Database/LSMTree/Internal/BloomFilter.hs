@@ -17,8 +17,8 @@ import           Data.BloomFilter.Hash (Hashable)
 import           Data.Foldable (Foldable (..))
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Database.LSMTree.Extras.Generators
 import           Database.LSMTree.Extras.Random
+import           Database.LSMTree.Extras.UTxO (UTxOKey)
 import           Database.LSMTree.Internal.Serialise (SerialisedKey,
                      serialiseKey)
 import           System.Random
