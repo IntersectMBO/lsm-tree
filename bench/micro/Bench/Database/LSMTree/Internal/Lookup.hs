@@ -30,7 +30,6 @@ import           Data.WideWord.Word256
 import           Database.LSMTree.Extras.Orphans ()
 import           Database.LSMTree.Extras.Random (sampleUniformWithReplacement,
                      uniformWithoutReplacement)
-import           Database.LSMTree.Internal.BlobRef (BlobRef (..))
 import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..))
 import           Database.LSMTree.Internal.Lookup (BatchSize (..),
                      bloomQueriesDefault, indexSearches, lookupsInBatches,
@@ -47,12 +46,9 @@ import           Prelude hiding (getContents)
 import           System.Directory (removeDirectoryRecursive)
 import qualified System.FS.API as FS
 import qualified System.FS.BlockIO.API as FS
-import           System.FS.BlockIO.API (IOOp (..))
 import qualified System.FS.BlockIO.IO as FS
 import qualified System.FS.IO as FS
-import qualified System.FS.IO.Internal.Handle as FS
 import           System.IO.Temp
-import           System.Posix.Types (COff (..))
 import           System.Random as R
 import           Test.QuickCheck (generate, shuffle)
 
@@ -95,29 +91,6 @@ benchLookups conf@Config{name} =
                 lookupsInBatchesCleanup
     -- TODO: pick a better value resolve function
     resolveV = \v1 _v2 -> v1
-
-{-------------------------------------------------------------------------------
-  Orphans
--------------------------------------------------------------------------------}
-
-deriving stock instance Generic (FS.HandleOS h)
-deriving anyclass instance NFData (FS.HandleOS h)
-deriving newtype instance NFData FS.BufferOffset
-deriving newtype instance NFData COff
-deriving instance Generic (IOOp s h)
-deriving instance NFData h => NFData (IOOp s h)
-deriving anyclass instance NFData FS.FsPath
-deriving instance NFData h => NFData (FS.Handle h)
-instance NFData (FS.HasFS m h) where
-  rnf x = x `seq` ()
-instance NFData (FS.HasBlockIO m h) where
-  rnf x = x `seq` ()
-deriving stock instance Generic (Run.Run h)
-deriving anyclass instance NFData h => NFData (Run.Run h)
-deriving newtype instance NFData Run.RunFsPaths
-deriving newtype instance NFData BatchSize
-deriving stock instance Generic (BlobRef run)
-deriving anyclass instance NFData run => NFData (BlobRef run)
 
 {-------------------------------------------------------------------------------
   Environments

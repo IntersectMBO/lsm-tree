@@ -7,9 +7,8 @@ module Database.LSMTree.Internal.BlobRef (
   , BlobSpan (..)
   ) where
 
-import           Control.DeepSeq (NFData)
+import           Control.DeepSeq (NFData (..))
 import           Data.Word (Word32, Word64)
-import           GHC.Generics (Generic)
 
 -- | A handle-like reference to an on-disk blob. The blob can be retrieved based
 -- on the reference.
@@ -20,10 +19,15 @@ data BlobRef run = BlobRef {
     , blobRefSpan :: {-# UNPACK #-} !BlobSpan
     }
 
+instance NFData run => NFData (BlobRef run) where
+  rnf (BlobRef a b) = rnf a `seq` rnf b
+
 -- | Location of a blob inside a blob file.
 data BlobSpan = BlobSpan {
     blobSpanOffset :: {-# UNPACK #-} !Word64
   , blobSpanSize   :: {-# UNPACK #-} !Word32
   }
-  deriving stock (Show, Eq, Generic)
-  deriving anyclass NFData
+  deriving stock (Show, Eq)
+
+instance NFData BlobSpan where
+  rnf (BlobSpan a b) = rnf a `seq` rnf b

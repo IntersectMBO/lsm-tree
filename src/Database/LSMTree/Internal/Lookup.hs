@@ -1,6 +1,7 @@
 {-# LANGUAGE BangPatterns        #-}
 {-# LANGUAGE DeriveAnyClass      #-}
 {-# LANGUAGE DeriveFunctor       #-}
+{-# LANGUAGE DerivingStrategies  #-}
 {-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -20,6 +21,7 @@ module Database.LSMTree.Internal.Lookup (
   , intraPageLookups
   ) where
 
+import           Control.DeepSeq (NFData)
 import           Control.Exception (Exception, assert)
 import           Control.Monad
 import           Control.Monad.Class.MonadAsync
@@ -236,6 +238,7 @@ indexSearches !indexes !kopsFiles !ks !rkixs = do
 -}
 
 newtype BatchSize = BatchSize { unBatchSize :: Int }
+  deriving newtype NFData
 
 -- | Value resolve function: what to do when resolving two @Mupdate@s
 type ResolveSerialisedValue = SerialisedValue -> SerialisedValue -> SerialisedValue

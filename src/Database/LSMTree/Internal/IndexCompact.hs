@@ -471,17 +471,8 @@ data IndexCompact = IndexCompact {
   deriving stock (Show, Eq)
 
 instance NFData IndexCompact where
-  rnf ic =
-      rnf icRangeFinder `seq`
-      rnf icRangeFinderPrecision `seq`
-      rnf icPrimary `seq`
-      rnf icClashes `seq`
-      rnf icTieBreaker `seq`
-      rnf icLargerThanPage
-    where
-      IndexCompact {
-          icRangeFinder, icRangeFinderPrecision, icPrimary, icClashes
-        , icTieBreaker, icLargerThanPage } = ic
+  rnf ic = rnf a `seq` rnf b `seq` rnf c `seq` rnf d `seq` rnf e `seq` rnf f
+    where IndexCompact a b c d e f = ic
 
 -- | A 0-based number identifying a disk page.
 newtype PageNo = PageNo { unPageNo :: Int }

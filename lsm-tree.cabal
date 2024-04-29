@@ -328,6 +328,8 @@ benchmark lsm-tree-macro-bench
 
   build-depends:
     , base
+    , deepseq
+    , fs-api
     , lsm-tree
     , lsm-tree:bloomfilter
     , primitive
@@ -461,6 +463,7 @@ library fs-api-blockio
 
   build-depends:
     , base        >=4.16  && <4.20
+    , deepseq     ^>=1.4  || ^>=1.5
     , fs-api      ^>=0.2
     , io-classes  ^>=1.3
     , primitive   ^>=0.9
