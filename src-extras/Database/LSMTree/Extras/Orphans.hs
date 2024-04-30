@@ -1,11 +1,6 @@
-{-# LANGUAGE DeriveAnyClass             #-}
-{-# LANGUAGE DeriveGeneric              #-}
-{-# LANGUAGE DerivingStrategies         #-}
-{-# LANGUAGE FlexibleInstances          #-}
-{-# LANGUAGE GeneralisedNewtypeDeriving #-}
-{-# LANGUAGE MagicHash                  #-}
-{-# LANGUAGE NamedFieldPuns             #-}
-{-# LANGUAGE StandaloneDeriving         #-}
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DerivingVia    #-}
+{-# LANGUAGE TypeFamilies   #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -17,7 +12,11 @@ module Database.LSMTree.Extras.Orphans (
 
 import           Control.DeepSeq
 import qualified Data.Primitive as P
+import qualified Data.Vector.Generic as VG
+import qualified Data.Vector.Generic.Mutable as VGM
 import qualified Data.Vector.Primitive as PV
+import qualified Data.Vector.Unboxed as VU
+import qualified Data.Vector.Unboxed.Mutable as VUM
 import           Data.WideWord.Word128 (Word128 (..), byteSwapWord128)
 import           Data.WideWord.Word256 (Word256 (..))
 import           Database.LSMTree.Internal.Primitive (indexWord8ArrayAsWord64)
@@ -84,6 +83,14 @@ indexWord8ArrayAsWord256 !ba !off =
             (indexWord8ArrayAsWord64 ba (off + 8))
             (indexWord8ArrayAsWord64 ba off)
 
+newtype instance VUM.MVector s Word256 = MV_Word256 (PV.MVector s Word256)
+newtype instance VU.Vector     Word256 = V_Word256  (PV.Vector    Word256)
+
+deriving via VU.UnboxViaPrim Word256 instance VGM.MVector VU.MVector Word256
+deriving via VU.UnboxViaPrim Word256 instance VG.Vector   VU.Vector  Word256
+
+instance VUM.Unbox Word256
+
 {-------------------------------------------------------------------------------
   Word128
 -------------------------------------------------------------------------------}
@@ -126,6 +133,14 @@ indexWord8ArrayAsWord128 :: P.ByteArray -> Int -> Word128
 indexWord8ArrayAsWord128 !ba !off =
     Word128 (indexWord8ArrayAsWord64 ba (off + 8))
             (indexWord8ArrayAsWord64 ba off)
+
+newtype instance VUM.MVector s Word128 = MV_Word128 (PV.MVector s Word128)
+newtype instance VU.Vector     Word128 = V_Word128  (PV.Vector    Word128)
+
+deriving via VU.UnboxViaPrim Word128 instance VGM.MVector VU.MVector Word128
+deriving via VU.UnboxViaPrim Word128 instance VG.Vector   VU.Vector  Word128
+
+instance VUM.Unbox Word128
 
 {-------------------------------------------------------------------------------
   NFData

@@ -1,20 +1,27 @@
 {-# LANGUAGE DeriveAnyClass             #-}
 {-# LANGUAGE DeriveGeneric              #-}
 {-# LANGUAGE DerivingStrategies         #-}
+{-# LANGUAGE DerivingVia                #-}
 {-# LANGUAGE GeneralisedNewtypeDeriving #-}
 {-# LANGUAGE NamedFieldPuns             #-}
+{-# LANGUAGE TypeFamilies               #-}
 {- HLINT ignore "Redundant <$>" -}
 
 module Database.LSMTree.Extras.UTxO (
     UTxOKey (..)
   , UTxOValue (..)
+  , zeroUTxOValue
   , UTxOBlob (..)
   ) where
 
 import           Control.DeepSeq
 import qualified Data.ByteString as BS
 import qualified Data.Primitive as P
+import qualified Data.Vector.Generic as VG
+import qualified Data.Vector.Generic.Mutable as VGM
 import qualified Data.Vector.Primitive as PV
+import qualified Data.Vector.Unboxed as VU
+import qualified Data.Vector.Unboxed.Mutable as VUM
 import           Data.WideWord.Word128
 import           Data.WideWord.Word256
 import           Data.Word
@@ -56,6 +63,20 @@ instance Arbitrary UTxOKey where
   arbitrary = UTxOKey <$> arbitrary <*> arbitrary
   shrink (UTxOKey a b) = [ UTxOKey a' b' | (a', b') <- shrink (a, b) ]
 
+newtype instance VUM.MVector s UTxOKey = MV_UTxOKey (VU.MVector s (Word256, Word16))
+newtype instance VU.Vector     UTxOKey = V_UTxOKey  (VU.Vector    (Word256, Word16))
+
+instance VU.IsoUnbox UTxOKey (Word256, Word16) where
+  toURepr (UTxOKey a b) = (a, b)
+  fromURepr (a, b) = UTxOKey a b
+  {-# INLINE toURepr #-}
+  {-# INLINE fromURepr #-}
+
+deriving via VU.As UTxOKey (Word256, Word16) instance VGM.MVector VU.MVector UTxOKey
+deriving via VU.As UTxOKey (Word256, Word16) instance VG.Vector   VU.Vector  UTxOKey
+
+instance VUM.Unbox UTxOKey
+
 {-------------------------------------------------------------------------------
   UTxO values
 -------------------------------------------------------------------------------}
@@ -91,6 +112,23 @@ instance Arbitrary UTxOValue where
   arbitrary = UTxOValue <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
   shrink (UTxOValue a b c d) = [ UTxOValue a' b' c' d'
                                | (a', b', c', d') <- shrink (a, b, c, d) ]
+
+newtype instance VUM.MVector s UTxOValue = MV_UTxOValue (VU.MVector s (Word256, Word128, Word64, Word32))
+newtype instance VU.Vector     UTxOValue = V_UTxOValue  (VU.Vector    (Word256, Word128, Word64, Word32))
+
+instance VU.IsoUnbox UTxOValue (Word256, Word128, Word64, Word32) where
+  toURepr (UTxOValue a b c d) = (a, b, c, d)
+  fromURepr (a, b, c, d) = UTxOValue a b c d
+  {-# INLINE toURepr #-}
+  {-# INLINE fromURepr #-}
+
+deriving via VU.As UTxOValue (Word256, Word128, Word64, Word32) instance VGM.MVector VU.MVector UTxOValue
+deriving via VU.As UTxOValue (Word256, Word128, Word64, Word32) instance VG.Vector   VU.Vector  UTxOValue
+
+instance VUM.Unbox UTxOValue
+
+zeroUTxOValue :: UTxOValue
+zeroUTxOValue = UTxOValue 0 0 0 0
 
 {-------------------------------------------------------------------------------
   UTxO blobs
