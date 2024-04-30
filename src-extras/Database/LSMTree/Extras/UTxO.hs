@@ -47,16 +47,14 @@ instance SerialiseKey UTxOKey where
       P.writeByteArray ba 0 $ byteSwapWord256 txId
       P.writeByteArray ba 16 $ byteSwap16 txIx
       return ba
-  deserialiseKey (RawBytes (PV.Vector off len ba))
-    | len >= 34  = UTxOKey (byteSwapWord256 $ indexWord8ArrayAsWord256 ba off)
-                           (byteSwap16      $ indexWord8ArrayAsWord16  ba (off + 32))
-    | otherwise = error "deserialiseKey: not enough bytes for UTxOKey"
+  deserialiseKey (RawBytes (PV.Vector off len ba)) =
+    requireBytesExactly "UTxOKey" 34 len $
+      UTxOKey (byteSwapWord256 $ indexWord8ArrayAsWord256 ba off)
+              (byteSwap16      $ indexWord8ArrayAsWord16  ba (off + 32))
 
 instance Arbitrary UTxOKey where
   arbitrary = UTxOKey <$> arbitrary <*> arbitrary
-  shrink UTxOKey{txId, txIx} =
-         (UTxOKey <$> shrink txId <*> pure txIx)
-      <> (UTxOKey <$> pure txId   <*> shrink txIx)
+  shrink (UTxOKey a b) = [ UTxOKey a' b' | (a', b') <- shrink (a, b) ]
 
 {-------------------------------------------------------------------------------
   UTxO values
@@ -81,21 +79,18 @@ instance SerialiseValue UTxOValue where
       P.writeByteArray ba 6 utxoValue64
       P.writeByteArray ba 14 utxoValue32
       return ba
-  deserialiseValue (RawBytes (PV.Vector off len ba))
-    | len >= 60  = UTxOValue (indexWord8ArrayAsWord256 ba off)
-                             (indexWord8ArrayAsWord128 ba (off + 32))
-                             (indexWord8ArrayAsWord64  ba (off + 48))
-                             (indexWord8ArrayAsWord32  ba (off + 56))
-    | otherwise = error "deserialiseValue: not enough bytes for UTxOValue"
+  deserialiseValue (RawBytes (PV.Vector off len ba)) =
+    requireBytesExactly "UTxOValue" 60 len $
+      UTxOValue (indexWord8ArrayAsWord256 ba off)
+                (indexWord8ArrayAsWord128 ba (off + 32))
+                (indexWord8ArrayAsWord64  ba (off + 48))
+                (indexWord8ArrayAsWord32  ba (off + 56))
   deserialiseValueN = deserialiseValue . mconcat -- TODO: optimise
 
 instance Arbitrary UTxOValue where
   arbitrary = UTxOValue <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
-  shrink (UTxOValue a b c d) =
-         (UTxOValue <$> shrink a <*> pure b   <*> pure c   <*> pure d)
-      <> (UTxOValue <$> pure a   <*> shrink b <*> pure c   <*> pure d)
-      <> (UTxOValue <$> pure a   <*> pure b   <*> shrink c <*> pure d)
-      <> (UTxOValue <$> pure a   <*> pure b   <*> pure c   <*> shrink d)
+  shrink (UTxOValue a b c d) = [ UTxOValue a' b' c' d'
+                               | (a', b', c', d') <- shrink (a, b, c, d) ]
 
 {-------------------------------------------------------------------------------
   UTxO blobs

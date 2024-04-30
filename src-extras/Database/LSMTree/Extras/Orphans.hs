@@ -20,10 +20,10 @@ import qualified Data.Primitive as P
 import qualified Data.Vector.Primitive as PV
 import           Data.WideWord.Word128 (Word128 (..), byteSwapWord128)
 import           Data.WideWord.Word256 (Word256 (..))
+import           Database.LSMTree.Internal.Primitive (indexWord8ArrayAsWord64)
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.Serialise.Class
 import           Database.LSMTree.Internal.Vector
-import           GHC.Exts
 import           GHC.Generics
 import           GHC.Word
 import qualified System.FS.API as FS
@@ -44,9 +44,9 @@ instance SerialiseKey Word256 where
       ba <- P.newByteArray 32
       P.writeByteArray ba 0 $ byteSwapWord256 w256
       return ba
-  deserialiseKey (RawBytes (PV.Vector off len ba))
-    | len >= 32  = byteSwapWord256 $ indexWord8ArrayAsWord256 ba off
-    | otherwise = error "deserialiseKey: not enough bytes for Word256"
+  deserialiseKey (RawBytes (PV.Vector off len ba)) =
+    requireBytesExactly "Word256" 32 len $
+      byteSwapWord256 $ indexWord8ArrayAsWord256 ba off
 
 instance SerialiseValue Word256 where
   serialiseValue w256 =
@@ -54,9 +54,9 @@ instance SerialiseValue Word256 where
       ba <- P.newByteArray 32
       P.writeByteArray ba 0 w256
       return ba
-  deserialiseValue (RawBytes (PV.Vector off len ba))
-    | len >= 32  = indexWord8ArrayAsWord256 ba off
-    | otherwise = error "deserialiseValue: not enough bytes for Word256"
+  deserialiseValue (RawBytes (PV.Vector off len ba)) =
+    requireBytesExactly "Word256" 32 len $
+      indexWord8ArrayAsWord256 ba off
   deserialiseValueN = deserialiseValue . mconcat -- TODO: optimise
 
 instance Arbitrary Word256 where
@@ -76,11 +76,11 @@ byteSwapWord256 (Word256 a3 a2 a1 a0) =
 
 {-# INLINE indexWord8ArrayAsWord256 #-}
 indexWord8ArrayAsWord256 :: P.ByteArray -> Int -> Word256
-indexWord8ArrayAsWord256 (P.ByteArray ba#) (I# off#) =
-    Word256 (W64# (indexWord8ArrayAsWord64# ba# (off# +# 24#)))
-            (W64# (indexWord8ArrayAsWord64# ba# (off# +# 16#)))
-            (W64# (indexWord8ArrayAsWord64# ba# (off# +# 8#)))
-            (W64# (indexWord8ArrayAsWord64# ba# off#))
+indexWord8ArrayAsWord256 !ba !off =
+    Word256 (indexWord8ArrayAsWord64 ba (off + 24))
+            (indexWord8ArrayAsWord64 ba (off + 16))
+            (indexWord8ArrayAsWord64 ba (off + 8))
+            (indexWord8ArrayAsWord64 ba off)
 
 {-------------------------------------------------------------------------------
   Word128
@@ -94,9 +94,9 @@ instance SerialiseKey Word128 where
       ba <- P.newByteArray 16
       P.writeByteArray ba 0 $ byteSwapWord128 w128
       return ba
-  deserialiseKey (RawBytes (PV.Vector off len ba))
-    | len >= 16  = byteSwapWord128 $ indexWord8ArrayAsWord128 ba off
-    | otherwise = error "deserialiseKey: not enough bytes for Word128"
+  deserialiseKey (RawBytes (PV.Vector off len ba)) =
+    requireBytesExactly "Word128" 16 len $
+      byteSwapWord128 $ indexWord8ArrayAsWord128 ba off
 
 instance SerialiseValue Word128 where
   serialiseValue w128 =
@@ -104,9 +104,9 @@ instance SerialiseValue Word128 where
       ba <- P.newByteArray 16
       P.writeByteArray ba 0 w128
       return ba
-  deserialiseValue (RawBytes (PV.Vector off len ba))
-    | len >= 16  = indexWord8ArrayAsWord128 ba off
-    | otherwise = error "deserialiseValue: not enough bytes for Word128"
+  deserialiseValue (RawBytes (PV.Vector off len ba)) =
+    requireBytesExactly "Word128" 16 len $
+      indexWord8ArrayAsWord128 ba off
   deserialiseValueN = deserialiseValue . mconcat -- TODO: optimise
 
 instance Arbitrary Word128 where
@@ -121,9 +121,9 @@ instance Arbitrary Word128 where
 
 {-# INLINE indexWord8ArrayAsWord128 #-}
 indexWord8ArrayAsWord128 :: P.ByteArray -> Int -> Word128
-indexWord8ArrayAsWord128 (P.ByteArray ba#) (I# off#) =
-    Word128 (W64# (indexWord8ArrayAsWord64# ba# (off# +# 8#)))
-            (W64# (indexWord8ArrayAsWord64# ba# off#))
+indexWord8ArrayAsWord128 !ba !off =
+    Word128 (indexWord8ArrayAsWord64 ba (off + 8))
+            (indexWord8ArrayAsWord64 ba off)
 
 {-------------------------------------------------------------------------------
   NFData

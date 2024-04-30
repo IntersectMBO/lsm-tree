@@ -1,7 +1,3 @@
-{-# LANGUAGE MagicHash           #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications    #-}
-
 -- | Public API for serialisation of keys, blobs and values
 module Database.LSMTree.Internal.Serialise.Class (
     SerialiseKey (..)
@@ -15,6 +11,8 @@ module Database.LSMTree.Internal.Serialise.Class (
   , serialiseValueConcatDistributes
   , RawBytes (..)
   , packSlice
+    -- * Errors
+  , requireBytesExactly
   ) where
 
 import qualified Data.ByteString as BS
@@ -31,8 +29,7 @@ import           Database.LSMTree.Internal.Primitive (indexWord8ArrayAsWord64)
 import           Database.LSMTree.Internal.RawBytes (RawBytes (..))
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.Vector
-import           GHC.Exts (Int (..), indexWord8ArrayAsWord64#)
-import           GHC.Word (Word64 (..))
+import           Numeric (showInt)
 
 -- | Serialisation of keys.
 --
@@ -122,6 +119,24 @@ packSlice prefix x suffix =
     RB.take (RB.size x) (RB.drop (RB.size prefix) (prefix <> x <> suffix))
 
 {-------------------------------------------------------------------------------
+  Errors
+-------------------------------------------------------------------------------}
+
+-- | @'requireBytesExactly' tyName expected actual x@
+requireBytesExactly :: String -> Int -> Int -> a -> a
+requireBytesExactly tyName expected actual x
+  | expected == actual = x
+  | otherwise          =
+        error
+      $ showString "deserialise "
+      . showString tyName
+      . showString ": expected "
+      . showInt expected
+      . showString " bytes, but got "
+      . showInt actual
+      $ ""
+
+{-------------------------------------------------------------------------------
   Word64
 -------------------------------------------------------------------------------}
 
@@ -132,9 +147,8 @@ instance SerialiseKey Word64 where
       P.writeByteArray ba 0 $ byteSwap64 x
       return ba
 
-  deserialiseKey (RawBytes (PV.Vector (I# off#) len (P.ByteArray ba#)))
-    | len >= 8  = byteSwap64 (W64# (indexWord8ArrayAsWord64# ba# off# ))
-    | otherwise = error "deserialiseKey: not enough bytes for Word64"
+  deserialiseKey (RawBytes (PV.Vector off len ba)) =
+    requireBytesExactly "Word64" 8 len $ byteSwap64 (indexWord8ArrayAsWord64 ba off)
 
 instance SerialiseValue Word64 where
   serialiseValue x =
@@ -143,10 +157,8 @@ instance SerialiseValue Word64 where
       P.writeByteArray ba 0 x
       return ba
 
-  deserialiseValue (RawBytes (PV.Vector off len ba))
-    | len >= 8  = indexWord8ArrayAsWord64 ba off
-    | otherwise = error "deserialiseValue: not enough bytes for Word64"
-
+  deserialiseValue (RawBytes (PV.Vector off len ba)) =
+    requireBytesExactly "Word64" 8 len $ indexWord8ArrayAsWord64 ba off
   deserialiseValueN = deserialiseValue . mconcat
 
 {-------------------------------------------------------------------------------
