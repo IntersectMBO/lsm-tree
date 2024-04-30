@@ -43,8 +43,7 @@ benchmarks = rawpage `deepseq` bgroup "Bench.Database.LSMTree.Internal.RawPage"
     missing = SerialisedKey $ RB.pack [1, 2, 3]
 
     keys :: [Key]
-    keys = case page of
-        PageLogical xs -> map (\(k,_,_) -> k) xs
+    keys = case page of PageLogical xs -> map fst xs
 
     existingHead :: SerialisedKey
     existingHead = SerialisedKey $ RB.fromByteString $ unKey $ head keys

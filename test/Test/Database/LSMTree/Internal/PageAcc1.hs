@@ -45,8 +45,8 @@ prototype k v br =
     .&&. counterexample "overflow pages do not match"
            (loverflow === roverflow)
   where
-    (lhs, loverflow) = toRawPage $ Proto.PageLogical [(k, Proto.Insert v, br)]
-    (rhs, roverflow) = singletonPage (convKey k) (convOp (Proto.Insert v) br)
+    (lhs, loverflow) = toRawPage $ Proto.PageLogical [(k, Proto.Insert v br)]
+    (rhs, roverflow) = singletonPage (convKey k) (convOp (Proto.Insert v br))
 
 prototypeU
     :: Proto.Key
@@ -58,8 +58,8 @@ prototypeU k v =
     .&&. counterexample "overflow pages do not match"
            (loverflow === roverflow)
   where
-    (lhs, loverflow) = toRawPage $ Proto.PageLogical [(k, Proto.Mupsert v, Nothing)]
-    (rhs, roverflow) = singletonPage (convKey k) (convOp (Proto.Mupsert v) Nothing)
+    (lhs, loverflow) = toRawPage $ Proto.PageLogical [(k, Proto.Mupsert v)]
+    (rhs, roverflow) = singletonPage (convKey k) (convOp (Proto.Mupsert v))
 
 convKey :: Proto.Key -> SerialisedKey
 convKey (Proto.Key k) = SerialisedKey $ RB.fromByteString k
@@ -70,8 +70,9 @@ convValue (Proto.Value v) = SerialisedValue $ RB.fromByteString v
 convBlobSpan :: Proto.BlobRef -> BlobSpan
 convBlobSpan (Proto.BlobRef x y) = BlobSpan x y
 
-convOp :: Proto.Operation -> Maybe Proto.BlobRef -> Entry SerialisedValue BlobSpan
-convOp Proto.Delete      _            = Delete
-convOp (Proto.Mupsert v) _            = Mupdate (convValue v)
-convOp (Proto.Insert v)  Nothing      = Insert (convValue v)
-convOp (Proto.Insert v)  (Just bspan) = InsertWithBlob (convValue v) (convBlobSpan bspan)
+convOp :: Proto.Operation -> Entry SerialisedValue BlobSpan
+convOp Proto.Delete                  = Delete
+convOp (Proto.Mupsert v)             = Mupdate (convValue v)
+convOp (Proto.Insert v  Nothing)     = Insert (convValue v)
+convOp (Proto.Insert v (Just bspan)) = InsertWithBlob (convValue v)
+                                                     (convBlobSpan bspan)

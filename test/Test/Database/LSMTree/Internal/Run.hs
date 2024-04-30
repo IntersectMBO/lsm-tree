@@ -140,7 +140,8 @@ testSingleInsert sessionRoot key val mblob = do
              (Proto.PageLogical
                [ ( Proto.Key (coerce RB.toByteString key)
                  , Proto.Insert (Proto.Value (coerce RB.toByteString val))
-                 , Nothing ) ])
+                                Nothing
+                 ) ])
         suffix, prefix :: Int
         suffix = max 0 (pagesize - 4096)
         prefix = coerce RB.size val - suffix

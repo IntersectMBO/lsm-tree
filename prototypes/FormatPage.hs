@@ -33,7 +33,7 @@ import           Data.Bits
 import           Data.Coerce (coerce)
 import           Data.Function (on)
 import           Data.List (foldl', nubBy, sortBy, unfoldr)
-import           Data.Maybe (fromJust, isJust)
+import           Data.Maybe (fromJust)
 import           Data.Word
 
 import qualified Data.Binary.Get as Bin
@@ -52,7 +52,7 @@ import           Test.Tasty.QuickCheck (testProperty)
 
 -- | Logically, a page is a sequence of key,operation pairs (with optional
 -- blobrefs), sorted by key.
-newtype PageLogical = PageLogical [(Key, Operation, Maybe BlobRef)]
+newtype PageLogical = PageLogical [(Key, Operation)]
   deriving (Eq, Show)
 
 newtype Key   = Key   ByteString deriving (Eq, Ord, Show)
@@ -61,7 +61,7 @@ newtype Value = Value ByteString deriving (Eq, Show)
 unKey :: Key -> ByteString
 unKey = coerce
 
-data Operation = Insert  Value
+data Operation = Insert  Value (Maybe BlobRef)
                | Mupsert Value
                | Delete
   deriving (Eq, Show)
@@ -145,34 +145,38 @@ data PageSize = PageSize {
 pageSizeEmpty :: PageSize
 pageSizeEmpty = PageSize 0 0 10
 
-pageSizeAddElem :: (Key, Operation, Maybe BlobRef)
+pageSizeAddElem :: (Key, Operation)
                 -> PageSize -> Maybe PageSize
-pageSizeAddElem (Key key, op, mblobref) (PageSize n b sz)
+pageSizeAddElem (Key key, op) (PageSize n b sz)
   | sz' <= 4096 || n' == 1 = Just (PageSize n' b' sz')
   | otherwise              = Nothing
   where
     n' = n+1
-    b' | isJust mblobref = b+1
+    b' | opHasBlobRef op = b+1
        | otherwise       = b
     sz' = sz
         + (if n `mod` 64 == 0 then 8 else 0)    -- blobrefs bitmap
         + (if n `mod` 32 == 0 then 8 else 0)    -- operations bitmap
-        + (if isJust mblobref then 12 else 0)   -- blobref entry
+        + (if opHasBlobRef op then 12 else 0)   -- blobref entry
         + 2                                     -- key offsets
         + (case n of { 0 -> 4; 1 -> 0; _ -> 2}) -- value offsets
         + BS.length key
         + (case op of
-             Insert  (Value v) -> BS.length v
-             Mupsert (Value v) -> BS.length v
-             Delete            -> 0)
+             Insert  (Value v) _ -> BS.length v
+             Mupsert (Value v)   -> BS.length v
+             Delete              -> 0)
+
+opHasBlobRef :: Operation -> Bool
+opHasBlobRef (Insert _ (Just _blobref)) = True
+opHasBlobRef _                          = False
 
 calcPageSize :: PageLogical -> Maybe PageSize
 calcPageSize (PageLogical kops) =
     go pageSizeEmpty kops
   where
     go !pgsz [] = Just pgsz
-    go !pgsz ((key, op, mblobref):kops') =
-      case pageSizeAddElem (key, op, mblobref) pgsz of
+    go !pgsz ((key, op):kops') =
+      case pageSizeAddElem (key, op) pgsz of
         Nothing    -> Nothing
         Just pgsz' -> go pgsz' kops'
 
@@ -182,7 +186,7 @@ encodePage (PageLogical kops) =
   where
     pageNumKeys, pageNumBlobs :: Word16
     pageNumKeys       = fromIntegral (length kops)
-    pageNumBlobs      = fromIntegral (length [ b | (_,_, Just b) <- kops ])
+    pageNumBlobs      = fromIntegral (length (filter (opHasBlobRef . snd) kops))
 
     pageSizesOffsets@PageSizesOffsets {offKeys, offValues}
                       = calcPageSizeOffsets
@@ -190,16 +194,16 @@ encodePage (PageLogical kops) =
                           (fromIntegral (BS.length pageKeys))
                           (fromIntegral (BS.length pageValues))
 
-    pageBlobRefBitmap = [ isJust mblobref | (_,_, mblobref) <- kops ]
-    pageOperations    = [ toOperationEnum op | (_,op,_) <- kops ]
-    pageBlobRefs      = [ blobref | (_,_, Just blobref) <- kops ]
+    pageBlobRefBitmap = [ opHasBlobRef op | (_,op) <- kops ]
+    pageOperations    = [ toOperationEnum op | (_,op) <- kops ]
+    pageBlobRefs      = [ blobref | (_,Insert _ (Just blobref)) <- kops ]
 
-    keys              = [ k | (k,_,_)  <- kops ]
-    values            = [ v | (_,op,_)  <- kops
+    keys              = [ k | (k,_)  <- kops ]
+    values            = [ v | (_,op)  <- kops
                         , let v = case op of
-                                    Insert  v' -> v'
-                                    Mupsert v' -> v'
-                                    Delete     -> Value (BS.empty)
+                                    Insert  v' _ -> v'
+                                    Mupsert v'   -> v'
+                                    Delete       -> Value (BS.empty)
                         ]
 
     pageKeyOffsets    = init $ scanl (\o k -> o + keyLen16 k)
@@ -313,12 +317,12 @@ decodePage :: PageIntermediate -> PageLogical
 decodePage PageIntermediate{pageSizesOffsets = PageSizesOffsets{..}, ..} =
   PageLogical
     [ let op      = case opEnum of
-                      OpInsert  -> Insert  (Value value)
+                      OpInsert  -> Insert  (Value value) mblobref
                       OpMupsert -> Mupsert (Value value)
                       OpDelete  -> Delete
           mblobref | hasBlobref = Just (pageBlobRefs !! idxBlobref)
                    | otherwise  = Nothing
-       in (Key key, op, mblobref)
+       in (Key key, op)
     | opEnum     <- pageOperations
     | hasBlobref <- pageBlobRefBitmap
     | idxBlobref <- scanl (\o b -> if b then o+1 else o) 0 pageBlobRefBitmap
@@ -363,6 +367,7 @@ tests = testGroup "FormatPage"
     , testProperty "shrink" prop_shrink_invariant
     , testProperty "to/from bitmap" prop_toFromBitmap
     , testProperty "size distribution" prop_size_distribution
+    , testProperty "maxKeySize" prop_maxKeySize
     , testProperty "size 1" prop_size1
     , testProperty "size 2" prop_size2
     , testProperty "size 3" prop_size3
@@ -386,13 +391,13 @@ prop_shrink_invariant page = case mapM_ invariant (shrink page) of
 invariant :: PageLogical -> Either (Key, Key) ()
 invariant (PageLogical xs0) = go xs0
   where
-    go :: [(Key, b, c)] -> Either (Key, Key) ()
-    go []           = Right ()
-    go ((k,_,_):xs) = go1 k xs
+    go :: [(Key, op)] -> Either (Key, Key) ()
+    go []         = Right ()
+    go ((k,_):xs) = go1 k xs
 
-    go1 :: Key -> [(Key, b, c)] -> Either (Key, Key) ()
+    go1 :: Key -> [(Key, op)] -> Either (Key, Key) ()
     go1 _  []            = Right ()
-    go1 k1 ((k2,_,_):xs) =
+    go1 k1 ((k2,_):xs) =
         if k1 < k2
         then go1 k2 xs
         else Left (k1, k2)
@@ -421,14 +426,14 @@ prop_size_distribution p@(PageLogical es) =
       tabulate "page size in bytes"
         [ showPageSizeBytes pageSizeBytes ] $
       tabulate "key size in bytes"
-        [ showKeyValueSizeBytes (BS.length k) | (Key k, _, _) <- es ] $
+        [ showKeyValueSizeBytes (BS.length k) | (Key k, _) <- es ] $
       tabulate "value size in bytes"
         [ showKeyValueSizeBytes (BS.length v)
-        | (_, op, _) <- es
+        | (_, op) <- es
         , Value v <- case op of
-                       Insert  v -> [v]
-                       Mupsert v -> [v]
-                       Delete    -> []
+                       Insert  v _ -> [v]
+                       Mupsert v   -> [v]
+                       Delete      -> []
         ] $
       cover 0.5 (pageSizeBytes > 4096) "page over 4k" $
 
@@ -436,7 +441,7 @@ prop_size_distribution p@(PageLogical es) =
                        then pageSizeBytes <= 4096
                        else True)
                 && (pageSizeElems == length [ e | e <- es ])
-                && (pageSizeBlobs == length [ b | (_,_,Just b) <- es ])
+                && (pageSizeBlobs == length [ b | (_,Insert _ (Just b)) <- es ])
   where
     showNumElems n
       | n == 0    = "0"
@@ -453,6 +458,9 @@ prop_size_distribution p@(PageLogical es) =
       | otherwise = nearest 1024 n
     nearest m n = show ((n `div` m) * m)
      ++ " <= n < " ++ show ((n `div` m) * m + m)
+
+prop_maxKeySize :: Bool
+prop_maxKeySize = maxKeySize == 4052
 
 prop_size1 :: PageLogical -> Bool
 prop_size1 p =
@@ -489,12 +497,16 @@ prop_encodeSerialiseDeserialiseDecode p =
   where
     roundTrip = decodePage . deserialisePage . serialisePage . encodePage
 
+-- | The maximum size of key that is guaranteed to always fit in an empty
+-- 4k page. So this is a worst case maximum size: this size key will fit
+-- irrespective of the corresponding operation, including the possibility
+-- that the key\/op pair has a blob reference.
 maxKeySize :: Int
-maxKeySize = 4096 - overhead  -- 4052
+maxKeySize = 4096 - overhead  -- == 4052
   where
     overhead =
       (pageSizeBytes . fromJust . calcPageSize . PageLogical)
-        [(Key BS.empty, Delete, Just (BlobRef 0 0))]
+        [(Key BS.empty, Insert (Value BS.empty) (Just (BlobRef 0 0)))]
 
 instance Arbitrary Key where
   arbitrary = do
@@ -516,13 +528,15 @@ instance Arbitrary Operation where
   arbitrary = genOperation arbitrary
 
   shrink :: Operation -> [Operation]
-  shrink Delete      = []
-  shrink (Insert v)  = Delete   : [ Insert  v' | v' <- shrink v ]
-  shrink (Mupsert v) = Insert v : [ Mupsert v' | v' <- shrink v ]
+  shrink Delete        = []
+  shrink (Insert v mb) = Delete
+                       : [ Insert  v' mb' | (v', mb') <- shrink (v, mb) ]
+  shrink (Mupsert v)   = Insert v Nothing
+                       : [ Mupsert v' | v' <- shrink v ]
 
 genOperation :: Gen Value -> Gen Operation
 genOperation gv = oneof
-      [ Insert  <$> gv
+      [ Insert  <$> gv <*> arbitrary
       , Mupsert <$> gv
       , pure Delete
       ]
@@ -556,15 +570,16 @@ instance Arbitrary PageLogical where
 genFullPageLogical :: Gen Key -> Gen Value -> Gen PageLogical
 genFullPageLogical gk gv = go [] pageSizeEmpty
   where
-    go :: [(Key, Operation, Maybe BlobRef)] -> PageSize -> Gen PageLogical
+    go :: [(Key, Operation)] -> PageSize -> Gen PageLogical
     go es sz = do
-      e <- (,,) <$> gk <*> genOperation gv <*> arbitrary
+      e <- (,) <$> gk <*> genOperation gv
       case pageSizeAddElem e sz of
         Nothing  -> return (mkPageLogical es)
         Just sz' -> go (e:es) sz'
 
 -- | Create 'PageLogical' enforcing the invariant.
-mkPageLogical :: [(Key, Operation, Maybe BlobRef)] -> PageLogical
-mkPageLogical xs = PageLogical (nubBy ((==) `on` fstOf3) (sortBy (compare `on` fstOf3) xs))
-  where
-    fstOf3 (k,_,_) = k
+mkPageLogical :: [(Key, Operation)] -> PageLogical
+mkPageLogical =
+    PageLogical
+  . nubBy ((==) `on` fst)
+  . sortBy (compare `on` fst)
