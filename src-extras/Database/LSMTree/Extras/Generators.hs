@@ -19,8 +19,6 @@ module Database.LSMTree.Extras.Generators (
   , shrinkWriteBuffer
     -- * WithSerialised
   , WithSerialised (..)
-    -- * UTxO keys
-  , UTxOKey (..)
     -- * Range-finder precision
   , RFPrecision (..)
   , rfprecInvariant
@@ -34,7 +32,6 @@ module Database.LSMTree.Extras.Generators (
   , toAppend
     -- * Sequences of (logical\/true) pages
   , Pages (..)
-  , optimiseRFPrecision
     -- ** Sequences of true pages
   , TruePageSummaries
   , flattenLogicalPageSummaries
@@ -68,7 +65,6 @@ import           Data.List (sort)
 import qualified Data.Map as Map
 import qualified Data.Primitive.ByteArray as BA
 import qualified Data.Vector.Primitive as PV
-import           Data.WideWord.Word256 (Word256 (..))
 import           Data.Word
 import           Database.LSMTree.Common (Range (..))
 import           Database.LSMTree.Extras
@@ -90,7 +86,6 @@ import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import qualified Database.LSMTree.Monoidal as Monoidal
 import qualified Database.LSMTree.Normal as Normal
 import           GHC.Generics (Generic)
-import           System.Random (Uniform)
 import qualified Test.QuickCheck as QC
 import           Test.QuickCheck (Arbitrary (..), Arbitrary1 (..),
                      Arbitrary2 (..), Gen, Property, frequency, oneof)
@@ -248,31 +243,6 @@ instance SerialiseKey k => SerialiseKey (WithSerialised k) where
   deserialiseKey bytes = TestKey (S.Class.deserialiseKey bytes) (SerialisedKey bytes)
 
 {-------------------------------------------------------------------------------
-  UTxO keys
--------------------------------------------------------------------------------}
-
--- | A model of a UTxO key (256-bit hash)
-newtype UTxOKey = UTxOKey Word256
-  deriving stock (Show, Generic)
-  deriving newtype ( Eq, Ord, NFData
-                   , SerialiseKey
-                   , Num, Enum, Real, Integral
-                   )
-  deriving anyclass Uniform
-
-instance Arbitrary UTxOKey where
-  arbitrary = UTxOKey <$>
-      (Word256 <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary)
-  shrink (UTxOKey w256) = [
-        UTxOKey w256'
-      | let i256 = toInteger w256
-      , i256' <- shrink i256
-      , toInteger (minBound :: Word256) <= i256'
-      , toInteger (maxBound :: Word256) >= i256'
-      , let w256' = fromIntegral i256'
-      ]
-
-{-------------------------------------------------------------------------------
   Range-finder precision
 -------------------------------------------------------------------------------}
 
@@ -375,11 +345,6 @@ instance TrueNumberOfPages TruePageSummary where
   trueNumberOfPages :: TruePageSummaries k -> Int
   trueNumberOfPages = length . getPages
 
-optimiseRFPrecision :: TrueNumberOfPages fp => Pages fp k -> Pages fp k
-optimiseRFPrecision ps = ps {
-      getRangeFinderPrecision = coerce $ suggestRangeFinderPrecision (trueNumberOfPages ps)
-    }
-
 {-------------------------------------------------------------------------------
   Sequences of true pages
 -------------------------------------------------------------------------------}
@@ -416,7 +381,7 @@ labelPages ps =
     nLogicalPages = length $ getPages ps
     nTruePages = trueNumberOfPages ps
     actualRfprec = getRangeFinderPrecision ps
-    suggestedRfprec = getRangeFinderPrecision $ optimiseRFPrecision ps
+    suggestedRfprec = RFPrecision $ suggestRangeFinderPrecision (trueNumberOfPages ps)
     dist = abs (suggestedRfprec - actualRfprec)
 
     (n1,n2,n3) = counts (getPages ps)

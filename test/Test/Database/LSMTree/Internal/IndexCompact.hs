@@ -44,53 +44,22 @@ import           Numeric (showHex)
 import           Prelude hiding (max, min, pi)
 import qualified Test.QuickCheck as QC
 import           Test.QuickCheck
-import           Test.Tasty (TestTree, adjustOption, testGroup)
+import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.HUnit (assertEqual, testCase)
-import           Test.Tasty.QuickCheck (QuickCheckMaxSize (..), testProperty)
+import           Test.Tasty.QuickCheck (testProperty)
 import           Test.Util.Orphans ()
 import           Text.Printf (printf)
 
 tests :: TestTree
 tests = testGroup "Test.Database.LSMTree.Internal.IndexCompact" [
-    -- Increasing the maximum size has the effect of generating more
-    -- interesting numbers of partitioned pages. With a max size of 100, the
-    -- tests are very likely to generate only 1 partitioned page.
-    -- However, it also reduces the number of clashes.
-    adjustOption (const $ QuickCheckMaxSize 5000) $
-    testGroup "Contruction, searching, chunking" [
-        testGroup "prop_searchMinMaxKeysAfterConstruction" [
-            testProperty "Full range of UTxOKeys" $
-              prop_searchMinMaxKeysAfterConstruction @(WithSerialised UTxOKey) 100
-          , testProperty "Small UTxOKeys" $ -- clashes are more likely here
-              prop_searchMinMaxKeysAfterConstruction @(WithSerialised (Small UTxOKey)) 100
-          , testProperty "Full range of UTxOKeys, optimal range-finder precision" $
-              prop_searchMinMaxKeysAfterConstruction @(WithSerialised UTxOKey) 100 . optimiseRFPrecision
-          ]
-      , testGroup "prop_differentChunkSizesSameResults" [
-            testProperty "Full range of UTxOKeys" $
-              prop_differentChunkSizesSameResults @(WithSerialised UTxOKey)
-          , testProperty "Small UTxOKeys" $
-              prop_differentChunkSizesSameResults @(WithSerialised (Small UTxOKey))
-          , testProperty "Full range of UTxOKeys, optimal range-finder precision" $
-              prop_differentChunkSizesSameResults @(WithSerialised UTxOKey) **. optimiseRFPrecision
-          ]
-      , testGroup "prop_singlesEquivMulti" [
-            testProperty "Full range of UTxOKeys" $
-              prop_singlesEquivMulti @(WithSerialised UTxOKey)
-          , testProperty "Small UTxOKeys" $
-              prop_singlesEquivMulti @(WithSerialised (Small UTxOKey))
-          , testProperty "Full range of UTxOKeys, optimal range-finder precision" $
-              prop_singlesEquivMulti @(WithSerialised UTxOKey) **. optimiseRFPrecision
-          ]
-      , testGroup "prop_distribution" [
-            testProperty "Full range of UTxOKeys" $
-              prop_distribution @(WithSerialised UTxOKey)
-          , testProperty "Small UTxOKeys" $
-              prop_distribution @(WithSerialised (Small UTxOKey))
-          , testProperty "Full range of UTxOKeys, optimal range-finder precision" $
-              prop_distribution @(WithSerialised UTxOKey) . optimiseRFPrecision
-          ]
-      ]
+    testProperty "prop_distribution @KeyForIndexCompact" $
+      prop_distribution @KeyForIndexCompact
+  , testProperty "prop_searchMinMaxKeysAfterConstruction" $
+      prop_searchMinMaxKeysAfterConstruction @KeyForIndexCompact 100
+  , testProperty "prop_differentChunkSizesSameResults" $
+      prop_differentChunkSizesSameResults @KeyForIndexCompact
+  , testProperty "prop_singlesEquivMulti" $
+      prop_singlesEquivMulti @KeyForIndexCompact
   , testGroup "(De)serialisation" [
         testGroup "test Chunks generator" [
             testProperty "Arbitrary satisfies invariant" $
@@ -158,7 +127,7 @@ tests = testGroup "Test.Database.LSMTree.Internal.IndexCompact" [
       , testProperty "prop_roundtrip_chunks" $
           prop_roundtrip_chunks
       , testProperty "prop_roundtrip" $
-          prop_roundtrip @(WithSerialised UTxOKey)
+          prop_roundtrip @KeyForIndexCompact
       , testProperty "prop_total_deserialisation" $ withMaxSuccess 10000
           prop_total_deserialisation
       , testProperty "prop_total_deserialisation_whitebox" $ withMaxSuccess 10000
@@ -326,9 +295,6 @@ prop_total_deserialisation_whitebox (RFPrecision rfprec) numEntries numPages wor
 {-------------------------------------------------------------------------------
   Util
 -------------------------------------------------------------------------------}
-
-(**.) :: (a -> b -> d -> e) -> (c -> d) -> a -> b -> c -> e
-(**.) f g x1 x2 x3 = f x1 x2 (g x3)
 
 writeIndexCompact :: SerialiseKey k => NumEntries -> ChunkSize -> LogicalPageSummaries k -> (LBS.ByteString, LBS.ByteString, LBS.ByteString)
 writeIndexCompact numEntries (ChunkSize csize) ps = runST $ do

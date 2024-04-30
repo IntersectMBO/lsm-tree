@@ -14,34 +14,27 @@
 
 module Bench.Database.LSMTree.Internal.Lookup (benchmarks) where
 
-import           Control.DeepSeq (NFData (..))
 import           Control.Exception (assert)
 import           Control.Monad
 import           Criterion.Main (Benchmark, bench, bgroup, env, envWithCleanup,
                      nfAppIO, whnf, whnfAppIO)
 import           Data.Bifunctor (Bifunctor (..))
-import qualified Data.ByteString as BS
 import qualified Data.List as List
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import qualified Data.Primitive as P
 import qualified Data.Vector as V
-import           Data.WideWord.Word256
 import           Database.LSMTree.Extras.Orphans ()
 import           Database.LSMTree.Extras.Random (sampleUniformWithReplacement,
                      uniformWithoutReplacement)
+import           Database.LSMTree.Extras.UTxO
 import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..))
 import           Database.LSMTree.Internal.Lookup (BatchSize (..),
                      bloomQueriesDefault, indexSearches, lookupsInBatches,
                      prepLookups)
-import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.Serialise
-import qualified Database.LSMTree.Internal.Serialise.Class as Class
-import           Database.LSMTree.Internal.Vector (mkPrimVector)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
-import           GHC.Generics (Generic)
 import           Prelude hiding (getContents)
 import           System.Directory (removeDirectoryRecursive)
 import qualified System.FS.API as FS
@@ -216,55 +209,6 @@ randomEntry g = frequency [
     , (2,  \g' -> let (!v, !g'') = uniform g' in (Mupdate v, g''))
     , (2,  \g' -> (Delete, g'))
     ] g
-
-{-------------------------------------------------------------------------------
-  UTxO keys, values and blobs
--------------------------------------------------------------------------------}
-
--- | A model of a UTxO key (256-bit hash)
-newtype UTxOKey = UTxOKey Word256
-  deriving stock (Show, Generic)
-  deriving newtype ( Eq, Ord, NFData
-                   , SerialiseKey
-                   , Num, Enum, Real, Integral
-                   )
-  deriving anyclass Uniform
-
-
--- | A model of a UTxO value (512-bit)
-data UTxOValue = UTxOValue {
-    utxoValueHigh :: !Word256
-  , utxoValueLow  :: !Word256
-  }
-  deriving stock (Show, Eq, Ord, Generic)
-  deriving anyclass (Uniform, NFData)
-
-instance SerialiseValue UTxOValue where
-  serialiseValue (UTxOValue hi lo) = Class.serialiseValue lo <> Class.serialiseValue hi
-  deserialiseValue = error "deserialiseValue: unused"
-  deserialiseValueN = error "deserialiseValueN: unused"
-
-instance SerialiseValue Word256 where
-  serialiseValue (Word256{word256hi, word256m1, word256m0, word256lo}) =
-    RB.RawBytes $ mkPrimVector 0 32 $ P.runByteArray $ do
-      ba <- P.newByteArray 32
-      P.writeByteArray ba 0 word256lo
-      P.writeByteArray ba 1 word256m0
-      P.writeByteArray ba 2 word256m1
-      P.writeByteArray ba 3 word256hi
-      return ba
-  deserialiseValue = error "deserialiseValue: unused"
-  deserialiseValueN = error "deserialiseValueN: unused"
-
--- | A blob of arbitrary size
-newtype UTxOBlob = UTxOBlob BS.ByteString
-  deriving stock (Show, Eq, Ord, Generic)
-  deriving anyclass NFData
-
-instance SerialiseValue UTxOBlob where
-  serialiseValue (UTxOBlob bs) = Class.serialiseValue bs
-  deserialiseValue = error "deserialiseValue: unused"
-  deserialiseValueN = error "deserialiseValueN: unused"
 
 genBlob :: RandomGen g => g -> (UTxOBlob, g)
 genBlob !g =
