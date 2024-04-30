@@ -4,6 +4,8 @@ module Database.LSMTree.Internal.Monoidal (
     Update (..),
 ) where
 
+import           Control.DeepSeq (NFData (..))
+
 -- | Result of a single point lookup.
 data LookupResult k v =
     NotFound      !k
@@ -26,3 +28,8 @@ data Update v =
     -- | TODO: should be given a more suitable name.
   | Mupsert !v
   deriving (Show, Eq)
+
+instance NFData v => NFData (Update v) where
+  rnf (Insert v)  = rnf v
+  rnf Delete      = ()
+  rnf (Mupsert v) = rnf v

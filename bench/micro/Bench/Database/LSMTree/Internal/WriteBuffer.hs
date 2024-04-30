@@ -4,20 +4,25 @@
 
 module Bench.Database.LSMTree.Internal.WriteBuffer (benchmarks) where
 
+import           Control.DeepSeq (NFData (..))
 import           Criterion.Main (Benchmark, bench, bgroup)
 import qualified Criterion.Main as Cr
 import           Data.Bifunctor (first)
 import qualified Data.ByteString as BS
 import qualified Data.List as List
+import           Data.Maybe (fromMaybe)
 import           Data.Word (Word64)
 import           Database.LSMTree.Extras.Orphans ()
 import           Database.LSMTree.Extras.UTxO
+import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
+import qualified Database.LSMTree.Monoidal as Monoidal
 import qualified Database.LSMTree.Normal as Normal
+import           GHC.Generics
 import           Prelude hiding (getContents)
 import           System.Directory (removeDirectoryRecursive)
 import qualified System.FS.API as FS
@@ -39,6 +44,12 @@ benchmarks = bgroup "Bench.Database.LSMTree.Internal.WriteBuffer" [
     , benchWriteBuffer configWord64
         { name         = "word64-blob-10k"
         , nblobinserts = 10_000
+        }
+    , benchWriteBuffer configWord64
+        { name         = "word64-mupsert-10k"
+        , nmupserts    = 10_000
+                         -- TODO: too few collisions to really measure resolution
+        , mappendVal   = Just (onDeserialisedValues ((+) @Word64))
         }
       -- different key and value sizes
     , benchWriteBuffer configWord64
@@ -129,14 +140,32 @@ benchWriteBuffer conf@Config{name} =
     cleanupPaths :: FS.HasFS IO FS.HandleIO -> IO ()
     cleanupPaths hasFS = FS.removeDirectoryRecursive hasFS Run.activeRunsDir
 
-insert :: [SerialisedKOp] -> WriteBuffer
-insert = List.foldl' (\wb (k, e) -> WB.addEntryNormal k e wb) WB.empty
+insert :: InputKOps -> WriteBuffer
+insert (NormalInputs kops) =
+    List.foldl' (\wb (k, e) -> WB.addEntryNormal k e wb) WB.empty kops
+insert (MonoidalInputs kops mappendVal) =
+    List.foldl' (\wb (k, e) -> WB.addEntryMonoidal mappendVal k e wb) WB.empty kops
 
 flush :: FS.HasFS IO FS.HandleIO -> Run.RunFsPaths -> WriteBuffer -> IO (Run (FS.Handle (FS.HandleIO)))
 flush = Run.fromWriteBuffer
 
+data InputKOps
+  = NormalInputs
+      ![(SerialisedKey, Normal.Update SerialisedValue SerialisedBlob)]
+  | MonoidalInputs
+      ![(SerialisedKey, Monoidal.Update SerialisedValue)]
+      !Mappend
+  deriving stock Generic
+  deriving anyclass NFData
+
+type Mappend = SerialisedValue -> SerialisedValue -> SerialisedValue
+
+onDeserialisedValues :: SerialiseValue v => (v -> v -> v) -> Mappend
+onDeserialisedValues f x y =
+    serialiseValue (f (deserialiseValue x) (deserialiseValue y))
+
 type SerialisedKOp = (SerialisedKey, SerialisedEntry)
-type SerialisedEntry = Normal.Update SerialisedValue SerialisedBlob
+type SerialisedEntry = Entry SerialisedValue SerialisedBlob
 
 {-------------------------------------------------------------------------------
   Environments
@@ -150,9 +179,11 @@ data Config = Config {
   , ninserts     :: !Int
   , nblobinserts :: !Int
   , ndeletes     :: !Int
+  , nmupserts    :: !Int
   , randomKey    :: Rnd SerialisedKey
   , randomValue  :: Rnd SerialisedValue
   , randomBlob   :: Rnd SerialisedBlob
+  , mappendVal   :: Maybe Mappend
   }
 
 type Rnd a = StdGen -> (a, StdGen)
@@ -163,9 +194,11 @@ defaultConfig = Config {
   , ninserts     = 0
   , nblobinserts = 0
   , ndeletes     = 0
+  , nmupserts    = 0
   , randomKey    = error "randomKey not implemented"
   , randomValue  = error "randomValue not implemented"
   , randomBlob   = error "randomBlob not implemented"
+  , mappendVal   = Nothing
   }
 
 configWord64 :: Config
@@ -185,19 +218,27 @@ writeBufferEnv ::
      Config
   -> IO ( FilePath -- ^ Temporary directory
         , FS.HasFS IO FS.HandleIO
-        , [SerialisedKOp]
+        , InputKOps
         )
 writeBufferEnv config = do
     sysTmpDir <- getCanonicalTemporaryDirectory
     benchTmpDir <- createTempDirectory sysTmpDir "writeBufferEnv"
     let kops = lookupsEnv config (mkStdGen 17)
+    let inputKOps = case mappendVal config of
+          Nothing -> NormalInputs (fmap (fmap expectNormal) kops)
+          Just f  -> MonoidalInputs (fmap (fmap expectMonoidal) kops) f
     let hasFS = FS.ioHasFS (FS.MountPoint benchTmpDir)
-    pure (benchTmpDir, hasFS, kops)
+    pure (benchTmpDir, hasFS, inputKOps)
+  where
+    expectNormal e = fromMaybe (error ("invalid normal update: " <> show e))
+                       (entryToUpdateNormal e)
+    expectMonoidal e = fromMaybe (error ("invalid monoidal update: " <> show e))
+                       (entryToUpdateMonoidal e)
 
 writeBufferEnvCleanup ::
      ( FilePath -- ^ Temporary directory
      , FS.HasFS IO FS.HandleIO
-     , [SerialisedKOp]
+     , kops
      )
   -> IO ()
 writeBufferEnvCleanup (tmpDir, _, _) = do
@@ -211,7 +252,7 @@ lookupsEnv ::
   -> [SerialisedKOp]
 lookupsEnv Config {..} = take nentries . List.unfoldr (Just . randomKOp)
   where
-    nentries = ninserts + nblobinserts + ndeletes
+    nentries = ninserts + nblobinserts + ndeletes + nmupserts
 
     randomKOp :: Rnd SerialisedKOp
     randomKOp g = let (!k, !g')  = randomKey g
@@ -222,15 +263,19 @@ lookupsEnv Config {..} = take nentries . List.unfoldr (Just . randomKOp)
     randomEntry = frequency
         [ ( ninserts
           , \g -> let (!v, !g') = randomValue g
-                  in  (Normal.Insert v Nothing, g')
+                  in  (Insert v, g')
           )
         , ( nblobinserts
           , \g -> let (!v, !g') = randomValue g
                       (!b, !g'') = randomBlob g'
-                  in  (Normal.Insert v (Just b), g'')
+                  in  (InsertWithBlob v b, g'')
           )
         , ( ndeletes
-          , \g -> (Normal.Delete, g)
+          , \g -> (Delete, g)
+          )
+        , ( nmupserts
+          , \g -> let (!v, !g') = randomValue g
+                  in  (Mupdate v, g')
           )
         ]
 
