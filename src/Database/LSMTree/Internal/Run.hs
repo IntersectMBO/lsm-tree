@@ -171,7 +171,7 @@ fromMutable fs refCount builder = do
 -- immediately when they are added to the write buffer, avoiding the need to do
 -- it here.
 fromWriteBuffer ::
-     HasFS IO h -> RunFsPaths -> WriteBuffer k v b
+     HasFS IO h -> RunFsPaths -> WriteBuffer
   -> IO (Run (FS.Handle h))
 fromWriteBuffer fs fsPaths buffer = do
     -- We just estimate the number of pages to be one, as the write buffer is

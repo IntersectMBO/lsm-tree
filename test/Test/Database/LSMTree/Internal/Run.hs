@@ -31,7 +31,8 @@ import           Test.Tasty.HUnit (assertEqual, testCase, (@=?), (@?))
 import           Test.Tasty.QuickCheck
 
 import           Database.LSMTree.Extras (showPowersOf10)
-import           Database.LSMTree.Extras.Generators (KeyForIndexCompact (..))
+import           Database.LSMTree.Extras.Generators (KeyForIndexCompact (..),
+                     TypedWriteBuffer (..))
 import           Database.LSMTree.Internal.BitMath
 import           Database.LSMTree.Internal.BlobRef (BlobRef (..), BlobSpan (..))
 import qualified Database.LSMTree.Internal.CRC32C as CRC
@@ -44,7 +45,6 @@ import           Database.LSMTree.Internal.RawPage
 import           Database.LSMTree.Internal.Run
 import qualified Database.LSMTree.Internal.RunReader as Reader
 import           Database.LSMTree.Internal.Serialise
-import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 
 import qualified FormatPage as Proto
@@ -191,9 +191,9 @@ readBlobFromBS bs (BlobSpan offset size) =
 -- TODO: @id === readEntries . flush . toWriteBuffer@ ?
 prop_WriteAndRead ::
      FS.HasFS IO h -> FS.HasBufFS IO h
-  -> WriteBuffer KeyForIndexCompact SerialisedValue SerialisedBlob
+  -> TypedWriteBuffer KeyForIndexCompact SerialisedValue SerialisedBlob
   -> IO Property
-prop_WriteAndRead fs bfs wb = do
+prop_WriteAndRead fs bfs (TypedWriteBuffer wb) = do
     run <- flush 42 wb
     rhs <- readKOps fs bfs run
 
@@ -218,9 +218,9 @@ prop_WriteAndRead fs bfs wb = do
 -- @openFromDisk . flush === flush@
 prop_WriteAndOpen ::
      FS.HasFS IO h
-  -> WriteBuffer KeyForIndexCompact SerialisedValue SerialisedBlob
+  -> TypedWriteBuffer KeyForIndexCompact SerialisedValue SerialisedBlob
   -> IO ()
-prop_WriteAndOpen fs wb = do
+prop_WriteAndOpen fs (TypedWriteBuffer wb) = do
     -- flush write buffer
     let fsPaths = RunFsPaths 1337
     written <- fromWriteBuffer fs fsPaths wb

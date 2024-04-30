@@ -31,7 +31,6 @@ module Database.LSMTree.Internal.WriteBuffer (
     rangeLookups,
 ) where
 
-import           Data.Bifunctor (Bifunctor (..))
 import qualified Data.Map.Range as Map.R
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -52,19 +51,18 @@ import           Database.LSMTree.Internal.Serialise
 -- It would be consistent with other internal APIs (e.g. for @Run@ and
 -- @IndexCompact@ to remove the type parameters here and move the responsibility
 -- for these constraints and (de)serialisation to the layer above.
-newtype WriteBuffer k v blob =
+newtype WriteBuffer =
   WB { unWB :: Map SerialisedKey (Entry SerialisedValue SerialisedBlob) }
-  deriving (Show)
-type role WriteBuffer nominal nominal nominal
+  deriving Show
 
-empty :: WriteBuffer k v blob
+empty :: WriteBuffer
 empty = WB Map.empty
 
-numEntries :: WriteBuffer k v blob -> NumEntries
+numEntries :: WriteBuffer -> NumEntries
 numEntries (WB m) = NumEntries (Map.size m)
 
 -- | \( O(n) \)
-content :: WriteBuffer k v blob ->
+content :: WriteBuffer ->
            [(SerialisedKey, Entry SerialisedValue SerialisedBlob)]
 content (WB m) = Map.assocs m
 
@@ -72,16 +70,19 @@ content (WB m) = Map.assocs m
   Updates
 -------------------------------------------------------------------------------}
 
-addEntryMonoidal :: (SerialiseKey k, SerialiseValue v)
-  => (SerialisedValue -> SerialisedValue -> SerialisedValue) -- ^ merge function
-  -> k -> Monoidal.Update v -> WriteBuffer k v blob -> WriteBuffer k v blob
+addEntryMonoidal ::
+     (SerialisedValue -> SerialisedValue -> SerialisedValue) -- ^ merge function
+  -> SerialisedKey -> Monoidal.Update SerialisedValue -> WriteBuffer -> WriteBuffer
 addEntryMonoidal f k e (WB wb) =
-    WB (Map.insertWith (combine f) (serialiseKey k) (first serialiseValue (updateToEntryMonoidal e)) wb)
+    WB (Map.insertWith (combine f) k (updateToEntryMonoidal e) wb)
 
-addEntryNormal :: (SerialiseKey k, SerialiseValue v, SerialiseValue blob)
-  => k -> Normal.Update v blob -> WriteBuffer k v blob -> WriteBuffer k v blob
+addEntryNormal ::
+     SerialisedKey
+  -> Normal.Update SerialisedValue SerialisedBlob
+  -> WriteBuffer
+  -> WriteBuffer
 addEntryNormal k e (WB wb) =
-    WB (Map.insert (serialiseKey k) (bimap serialiseValue serialiseBlob (updateToEntryNormal e)) wb)
+    WB (Map.insert k (updateToEntryNormal e) wb)
 
 {-------------------------------------------------------------------------------
   Querying
@@ -92,11 +93,11 @@ addEntryNormal k e (WB wb) =
 --
 -- Note: the entry may be 'Delete'.
 --
-lookups :: SerialiseKey k
-  => WriteBuffer k v blob
-  -> [k]
+lookups ::
+     WriteBuffer
+  -> [SerialisedKey]
   -> [(SerialisedKey, Maybe (Entry SerialisedValue SerialisedBlob))]
-lookups (WB m) = fmap (f . serialiseKey)
+lookups (WB m) = fmap f
   where
     f k = (k, Map.lookup k m)
 
@@ -109,13 +110,13 @@ lookups (WB m) = fmap (f . serialiseKey)
 --
 -- Note: 'Delete's are not filtered out.
 --
-rangeLookups :: SerialiseKey k
-  => WriteBuffer k v blob
-  -> Range k
+rangeLookups ::
+     WriteBuffer
+  -> Range SerialisedKey
   -> [(SerialisedKey, Entry SerialisedValue SerialisedBlob)]
 rangeLookups (WB m) r =
     [ (k, e)
-    | let (lb, ub) = convertRange (fmap serialiseKey r)
+    | let (lb, ub) = convertRange r
     , (k, e) <- Map.R.rangeLookup lb ub m
     ]
 

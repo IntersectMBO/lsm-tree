@@ -8,7 +8,8 @@ import           Data.Foldable (traverse_)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (isJust)
 import           Database.LSMTree.Extras
-import           Database.LSMTree.Extras.Generators (KeyForIndexCompact)
+import           Database.LSMTree.Extras.Generators (KeyForIndexCompact,
+                     TypedWriteBuffer (..))
 import qualified Database.LSMTree.Internal.Entry as Entry
 import qualified Database.LSMTree.Internal.Merge as Merge
 import qualified Database.LSMTree.Internal.Run as Run
@@ -52,9 +53,9 @@ prop_MergeDistributes ::
      FS.HasFS IO h -> FS.HasBufFS IO h ->
      Merge.Level ->
      StepSize ->
-     [WriteBuffer KeyForIndexCompact SerialisedValue SerialisedBlob] ->
+     [TypedWriteBuffer KeyForIndexCompact SerialisedValue SerialisedBlob] ->
      IO Property
-prop_MergeDistributes fs bfs level stepSize wbs = do
+prop_MergeDistributes fs bfs level stepSize (fmap unTypedWriteBuffer -> wbs) = do
     runs <- sequenceA $ zipWith flush [10..] wbs
     lhs <- mergeRuns fs bfs level 0 runs stepSize
 
@@ -94,9 +95,9 @@ prop_CloseMerge ::
      FS.HasFS IO h -> FS.HasBufFS IO h ->
      Merge.Level ->
      StepSize ->
-     [WriteBuffer KeyForIndexCompact SerialisedValue SerialisedBlob] ->
+     [TypedWriteBuffer KeyForIndexCompact SerialisedValue SerialisedBlob] ->
      IO Property
-prop_CloseMerge fs bfs level (Positive stepSize) wbs = do
+prop_CloseMerge fs bfs level (Positive stepSize) (fmap unTypedWriteBuffer -> wbs) = do
     let path0 = Run.RunFsPaths 0
     runs <- sequenceA $ zipWith flush [10..] wbs
     mergeToClose <- makeInProgressMerge path0 runs
@@ -148,7 +149,7 @@ mergeRuns fs bfs level n runs (Positive stepSize) = do
           Merge.MergeComplete run -> return run
           Merge.MergeInProgress   -> go m
 
-mergeWriteBuffers :: Merge.Level -> [WriteBuffer k v b] -> WriteBuffer k v b
+mergeWriteBuffers :: Merge.Level -> [WriteBuffer] -> WriteBuffer
 mergeWriteBuffers level =
     WB.WB
       . (if level == Merge.LastLevel then Map.filter (not . isDelete) else id)
