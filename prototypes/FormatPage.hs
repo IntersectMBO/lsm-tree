@@ -7,29 +7,40 @@
 
 -- | This accompanies the format-page.md documentation as a sanity check
 -- and a precise reference. It is intended to demonstrate that the page
--- format works.
+-- format works. It is also used as a reference implementation for tests of
+-- the real implementation.
+--
+-- Logically, a page is a sequence of key,operation pairs (with optional
+-- blobrefs), sorted by key, and its serialised form fits within a disk page.
+--
+-- The reference implementation does not rely on the keys being sorted.
 --
 module FormatPage (
-    tests,
-    PageLogical (..),
+    -- * Page types
+    Key (..), unKey,
     Operation (..),
-    Key (..),
-    unKey,
     Value (..),
     BlobRef (..),
     PageSerialised,
     PageIntermediate,
-    DiskPageSize(..),
-    encodePage,
-    serialisePage,
-    genFullPageLogical,
-    mkPageLogical,
-    toBitmap,
+
     -- * Page size
     PageSize (..),
     pageSizeEmpty,
     pageSizeAddElem,
     calcPageSize,
+
+    -- * Encoding and decoding
+    DiskPageSize(..),
+    encodePage,
+    decodePage,
+    serialisePage,
+    deserialisePage,
+
+    -- * Tests and generators
+    tests,
+    PageLogical (..),
+    genFullPageLogical,
 ) where
 
 import           Data.Bits
@@ -58,6 +69,11 @@ import           Test.Tasty.QuickCheck (testProperty)
 newtype PageLogical = PageLogical [(Key, Operation)]
   deriving (Eq, Show)
 
+
+-------------------------------------------------------------------------------
+-- Page content types
+--
+
 newtype Key   = Key   ByteString deriving (Eq, Ord, Show)
 newtype Value = Value ByteString deriving (Eq, Show)
 
@@ -72,12 +88,80 @@ data Operation = Insert  Value (Maybe BlobRef)
 data BlobRef = BlobRef Word64 Word32
   deriving (Eq, Show)
 
+opHasBlobRef :: Operation -> Bool
+opHasBlobRef (Insert _ (Just _blobref)) = True
+opHasBlobRef _                          = False
+
+
+-------------------------------------------------------------------------------
+-- Disk page size
+--
+
 -- | A serialised page fits within chunks of memory of 4k, 8k, 16k, 32k or 64k.
 --
 data DiskPageSize = DiskPage4k  | DiskPage8k
                   | DiskPage16k | DiskPage32k
                   | DiskPage64k
   deriving (Eq, Show, Enum, Bounded)
+
+diskPageSizeBytes :: DiskPageSize -> Int
+diskPageSizeBytes DiskPage4k  = 2^(12::Int)
+diskPageSizeBytes DiskPage8k  = 2^(13::Int)
+diskPageSizeBytes DiskPage16k = 2^(14::Int)
+diskPageSizeBytes DiskPage32k = 2^(15::Int)
+diskPageSizeBytes DiskPage64k = 2^(16::Int)
+
+
+-------------------------------------------------------------------------------
+-- Calculating the page size (incrementally)
+--
+
+data PageSize = PageSize {
+                  pageSizeElems :: !Int,
+                  pageSizeBlobs :: !Int,
+                  pageSizeBytes :: !Int,
+                  pageSizeDisk  :: !DiskPageSize
+                }
+  deriving (Eq, Show)
+
+pageSizeEmpty :: DiskPageSize -> PageSize
+pageSizeEmpty = PageSize 0 0 10
+
+pageSizeAddElem :: (Key, Operation) -> PageSize -> Maybe PageSize
+pageSizeAddElem (Key key, op) (PageSize n b sz dpgsz)
+  | sz' <= diskPageSizeBytes dpgsz || n' == 1
+              = Just (PageSize n' b' sz' dpgsz)
+  | otherwise = Nothing
+  where
+    n' = n+1
+    b' | opHasBlobRef op = b+1
+       | otherwise       = b
+    sz' = sz
+        + (if n `mod` 64 == 0 then 8 else 0)    -- blobrefs bitmap
+        + (if n `mod` 32 == 0 then 8 else 0)    -- operations bitmap
+        + (if opHasBlobRef op then 12 else 0)   -- blobref entry
+        + 2                                     -- key offsets
+        + (case n of { 0 -> 4; 1 -> 0; _ -> 2}) -- value offsets
+        + BS.length key
+        + (case op of
+             Insert  (Value v) _ -> BS.length v
+             Mupsert (Value v)   -> BS.length v
+             Delete              -> 0)
+
+calcPageSize :: DiskPageSize -> PageLogical -> Maybe PageSize
+calcPageSize dpgsz (PageLogical kops) =
+    go (pageSizeEmpty dpgsz) kops
+  where
+    go !pgsz [] = Just pgsz
+    go !pgsz ((key, op):kops') =
+      case pageSizeAddElem (key, op) pgsz of
+        Nothing    -> Nothing
+        Just pgsz' -> go pgsz' kops'
+
+
+-------------------------------------------------------------------------------
+-- Page encoding and serialisation types
+--
 
 -- | A serialised page consists of either a single disk page or several
 -- disk pages. The latter is a primary page followed by one or more overflow
@@ -132,12 +216,10 @@ data PageSizesOffsets =
      }
   deriving (Eq, Show)
 
-diskPageSizeBytes :: DiskPageSize -> Int
-diskPageSizeBytes DiskPage4k  = 2^(12::Int)
-diskPageSizeBytes DiskPage8k  = 2^(13::Int)
-diskPageSizeBytes DiskPage16k = 2^(14::Int)
-diskPageSizeBytes DiskPage32k = 2^(15::Int)
-diskPageSizeBytes DiskPage64k = 2^(16::Int)
+
+-------------------------------------------------------------------------------
+-- Page encoding and serialisation
+--
 
 -- | Returns @Nothing@ if the size would overflow the given disk page size.
 --
@@ -211,53 +293,6 @@ calcPageSizeOffsets dpgsz n b sizeKeys sizeValues
                           p -> diskPageSize - p
     sizePageDiskPage  = sizePageUsed + sizePagePadding
     diskPageSize      = diskPageSizeBytes dpgsz
-
-data PageSize = PageSize {
-                  pageSizeElems :: !Int,
-                  pageSizeBlobs :: !Int,
-                  pageSizeBytes :: !Int,
-                  pageSizeDisk  :: !DiskPageSize
-                }
-  deriving (Eq, Show)
-
-pageSizeEmpty :: DiskPageSize -> PageSize
-pageSizeEmpty = PageSize 0 0 10
-
-pageSizeAddElem :: (Key, Operation)
-                -> PageSize -> Maybe PageSize
-pageSizeAddElem (Key key, op) (PageSize n b sz dpgsz)
-  | sz' <= diskPageSizeBytes dpgsz || n' == 1
-              = Just (PageSize n' b' sz' dpgsz)
-  | otherwise = Nothing
-  where
-    n' = n+1
-    b' | opHasBlobRef op = b+1
-       | otherwise       = b
-    sz' = sz
-        + (if n `mod` 64 == 0 then 8 else 0)    -- blobrefs bitmap
-        + (if n `mod` 32 == 0 then 8 else 0)    -- operations bitmap
-        + (if opHasBlobRef op then 12 else 0)   -- blobref entry
-        + 2                                     -- key offsets
-        + (case n of { 0 -> 4; 1 -> 0; _ -> 2}) -- value offsets
-        + BS.length key
-        + (case op of
-             Insert  (Value v) _ -> BS.length v
-             Mupsert (Value v)   -> BS.length v
-             Delete              -> 0)
-
-opHasBlobRef :: Operation -> Bool
-opHasBlobRef (Insert _ (Just _blobref)) = True
-opHasBlobRef _                          = False
-
-calcPageSize :: DiskPageSize -> PageLogical -> Maybe PageSize
-calcPageSize dpgsz (PageLogical kops) =
-    go (pageSizeEmpty dpgsz) kops
-  where
-    go !pgsz [] = Just pgsz
-    go !pgsz ((key, op):kops') =
-      case pageSizeAddElem (key, op) pgsz of
-        Nothing    -> Nothing
-        Just pgsz' -> go pgsz' kops'
 
 encodePage :: DiskPageSize -> PageLogical -> Maybe PageIntermediate
 encodePage dpgsz (PageLogical kops) = do
@@ -436,7 +471,6 @@ decodePage PageIntermediate{pageSizesOffsets = PageSizesOffsets{..}, ..} =
   where
     spans xs = zip xs (drop 1 xs)
 
-
 toBitmap :: [Bool] -> [Word64]
 toBitmap =
     map toWord64 . group64
@@ -455,157 +489,20 @@ fromBitmap =
     fromWord64 :: Word64 -> [Bool]
     fromWord64 w = [ testBit w i | i <- [0..63] ]
 
-tests :: TestTree
-tests = testGroup "FormatPage"
-    [ testProperty "invariant" prop_invariant
-    , testProperty "shrink" prop_shrink_invariant
-    , testProperty "to/from bitmap" prop_toFromBitmap
-    , testProperty "size distribution" prop_size_distribution
-    , testProperty "maxKeySize" prop_maxKeySize
-    , testProperty "size 1" prop_size1
-    , testProperty "size 2" prop_size2
-    , testProperty "size 3" prop_size3
-    , testProperty "encode/decode" prop_encodeDecode
-    , testProperty "serialise/deserialise" prop_serialiseDeserialise
-    , testProperty "encode/serialise/deserialise/decode"
-                   prop_encodeSerialiseDeserialiseDecode
-    ]
+fromIntegralChecked :: (Integral a, Integral b) => a -> b
+fromIntegralChecked x
+  | let x' = fromIntegral x
+  , fromIntegral x' == x
+  = x'
 
--- Generated keys are unique and in increasing order
-prop_invariant :: PageLogical -> Property
-prop_invariant page = case invariant page of
-    Left ks  -> counterexample (show ks) $ property False
-    Right () -> property True
+  | otherwise
+  = error "fromIntegralChecked: conversion failed"
 
-prop_shrink_invariant :: PageLogical -> Property
-prop_shrink_invariant page = case mapM_ invariant (shrink page) of
-    Left ks  -> counterexample (show ks) $ property False
-    Right () -> property True
 
-invariant :: PageLogical -> Either (Key, Key) ()
-invariant (PageLogical xs0) = go xs0
-  where
-    go :: [(Key, op)] -> Either (Key, Key) ()
-    go []         = Right ()
-    go ((k,_):xs) = go1 k xs
+-------------------------------------------------------------------------------
+-- Test types and generators
+--
 
-    go1 :: Key -> [(Key, op)] -> Either (Key, Key) ()
-    go1 _  []            = Right ()
-    go1 k1 ((k2,_):xs) =
-        if k1 < k2
-        then go1 k2 xs
-        else Left (k1, k2)
-
-prop_toFromBitmap :: [Bool] -> Bool
-prop_toFromBitmap bits =
-    bits == take (length bits) (roundTrip bits)
-  where
-    roundTrip = fromBitmap . toBitmap
-
-prop_encodeDecode :: DiskPageSize -> PageLogical -> Property
-prop_encodeDecode dpgsz p =
-    p === decodePage p'
-  where
-    Just p' = encodePage dpgsz p
-
-prop_size_distribution :: DiskPageSize -> PageLogical -> Property
-prop_size_distribution dpgsz p@(PageLogical es) =
-  case calcPageSize dpgsz p of
-    Nothing -> property False
-    Just PageSize{pageSizeElems, pageSizeBlobs, pageSizeBytes} ->
-      tabulate "page size in elements"
-        [ showNumElems pageSizeElems ] $
-      tabulate "page number of blobs"
-        [ showNumElems pageSizeBlobs ] $
-      tabulate "page size in bytes"
-        [ showPageSizeBytes pageSizeBytes ] $
-      tabulate "key size in bytes"
-        [ showKeyValueSizeBytes (BS.length k) | (Key k, _) <- es ] $
-      tabulate "value size in bytes"
-        [ showKeyValueSizeBytes (BS.length v)
-        | (_, op) <- es
-        , Value v <- case op of
-                       Insert  v _ -> [v]
-                       Mupsert v   -> [v]
-                       Delete      -> []
-        ] $
-      cover 0.5 (pageSizeBytes > 4096) "page over 4k" $
-
-        property $ (if pageSizeElems > 1
-                       then pageSizeBytes <= 4096
-                       else True)
-                && (pageSizeElems == length [ e | e <- es ])
-                && (pageSizeBlobs == length [ b | (_,Insert _ (Just b)) <- es ])
-  where
-    showNumElems n
-      | n == 0    = "0"
-      | n == 1    = "1"
-      | n < 10    = "1 < n < 10"
-      | otherwise = nearest 10 n
-    showPageSizeBytes n
-      | n >= 4096  = show ((n `div` 4096) * 4) ++ "k <= n < "
-                  ++ show (((n `div` 4096) + 1) * 4) ++ "k"
-      | otherwise = nearest 512 n
-    showKeyValueSizeBytes n
-      | n < 16    = show n
-      | n < 1024  = "16    < n < 1024"
-      | otherwise = nearest 1024 n
-    nearest m n = show ((n `div` m) * m)
-     ++ " <= n < " ++ show ((n `div` m) * m + m)
-
-prop_size1 :: DiskPageSize -> PageLogical -> Bool
-prop_size1 dpgsz p =
-    sizePageUsed > 0
- && sizePageUsed + sizePagePadding == sizePageDiskPage
- && if pageNumKeys p' == 1
-      then fromIntegral sizePageDiskPage `mod` diskPageSizeBytes dpgsz == 0
-      else fromIntegral sizePageDiskPage == diskPageSizeBytes dpgsz
-  where
-    Just p' = encodePage dpgsz p
-    PageSizesOffsets{..} = pageSizesOffsets p'
-
-prop_size2 :: DiskPageSize -> PageLogical -> Bool
-prop_size2 dpgsz p =
-    BS.length (serialisePage p')
- == fromIntegral (sizePageDiskPage (pageSizesOffsets p'))
-  where
-    Just p' = encodePage dpgsz p
-
-prop_size3 :: DiskPageSize -> PageLogical -> Bool
-prop_size3 dpgsz p =
-  case (calcPageSize dpgsz p, encodePage dpgsz p) of
-    (Just PageSize{pageSizeBytes}, Just p') ->
-      pageSizeBytes == (fromIntegral . sizePageUsed . pageSizesOffsets) p'
-    _                  -> False
-
-prop_serialiseDeserialise :: DiskPageSize -> PageLogical -> Bool
-prop_serialiseDeserialise dpgsz p =
-    p' == roundTrip p'
-  where
-    Just p'   = encodePage dpgsz p
-    roundTrip = deserialisePage dpgsz . serialisePage
-
-prop_encodeSerialiseDeserialiseDecode :: DiskPageSize -> PageLogical -> Bool
-prop_encodeSerialiseDeserialiseDecode dpgsz p =
-    p == roundTrip p'
-  where
-    Just p'   = encodePage dpgsz p
-    roundTrip = decodePage . deserialisePage dpgsz . serialisePage
-
--- | The maximum size of key that is guaranteed to always fit in an empty
--- 4k page. So this is a worst case maximum size: this size key will fit
--- irrespective of the corresponding operation, including the possibility
--- that the key\/op pair has a blob reference.
-maxKeySize :: Int
-maxKeySize = diskPageSizeBytes dpgsz - overhead  -- == 4052
-  where
-    overhead =
-      (pageSizeBytes . fromJust . calcPageSize dpgsz . PageLogical)
-        [(Key BS.empty, Insert (Value BS.empty) (Just (BlobRef 0 0)))]
-    dpgsz = DiskPage4k
-
-prop_maxKeySize :: Bool
-prop_maxKeySize = maxKeySize == 4052
 
 instance Arbitrary Key where
   arbitrary = do
@@ -688,11 +585,161 @@ instance Arbitrary DiskPageSize where
   arbitrary = growingElements [minBound..]
   shrink    = shrinkBoundedEnum
 
-fromIntegralChecked :: (Integral a, Integral b) => a -> b
-fromIntegralChecked x
-  | let x' = fromIntegral x
-  , fromIntegral x' == x
-  = x'
 
-  | otherwise
-  = error "fromIntegralChecked: conversion failed"
+-------------------------------------------------------------------------------
+-- Tests
+--
+
+tests :: TestTree
+tests = testGroup "FormatPage"
+    [ testProperty "invariant" prop_invariant
+    , testProperty "shrink" prop_shrink_invariant
+    , testProperty "to/from bitmap" prop_toFromBitmap
+    , testProperty "size distribution" prop_size_distribution
+    , testProperty "maxKeySize" prop_maxKeySize
+    , testProperty "size 1" prop_size1
+    , testProperty "size 2" prop_size2
+    , testProperty "size 3" prop_size3
+    , testProperty "encode/decode" prop_encodeDecode
+    , testProperty "serialise/deserialise" prop_serialiseDeserialise
+    , testProperty "encode/serialise/deserialise/decode"
+                   prop_encodeSerialiseDeserialiseDecode
+    ]
+
+-- Generated keys are unique and in increasing order
+prop_invariant :: PageLogical -> Property
+prop_invariant page = case invariant page of
+    Left ks  -> counterexample (show ks) $ property False
+    Right () -> property True
+
+prop_shrink_invariant :: PageLogical -> Property
+prop_shrink_invariant page = case mapM_ invariant (shrink page) of
+    Left ks  -> counterexample (show ks) $ property False
+    Right () -> property True
+
+invariant :: PageLogical -> Either (Key, Key) ()
+invariant (PageLogical xs0) = go xs0
+  where
+    go :: [(Key, op)] -> Either (Key, Key) ()
+    go []         = Right ()
+    go ((k,_):xs) = go1 k xs
+
+    go1 :: Key -> [(Key, op)] -> Either (Key, Key) ()
+    go1 _  []            = Right ()
+    go1 k1 ((k2,_):xs) =
+        if k1 < k2
+        then go1 k2 xs
+        else Left (k1, k2)
+
+prop_toFromBitmap :: [Bool] -> Bool
+prop_toFromBitmap bits =
+    bits == take (length bits) (roundTrip bits)
+  where
+    roundTrip = fromBitmap . toBitmap
+
+prop_size_distribution :: DiskPageSize -> PageLogical -> Property
+prop_size_distribution dpgsz p@(PageLogical es) =
+  case calcPageSize dpgsz p of
+    Nothing -> property False
+    Just PageSize{pageSizeElems, pageSizeBlobs, pageSizeBytes} ->
+      tabulate "page size in elements"
+        [ showNumElems pageSizeElems ] $
+      tabulate "page number of blobs"
+        [ showNumElems pageSizeBlobs ] $
+      tabulate "page size in bytes"
+        [ showPageSizeBytes pageSizeBytes ] $
+      tabulate "key size in bytes"
+        [ showKeyValueSizeBytes (BS.length k) | (Key k, _) <- es ] $
+      tabulate "value size in bytes"
+        [ showKeyValueSizeBytes (BS.length v)
+        | (_, op) <- es
+        , Value v <- case op of
+                       Insert  v _ -> [v]
+                       Mupsert v   -> [v]
+                       Delete      -> []
+        ] $
+      cover 0.5 (pageSizeBytes > 4096) "page over 4k" $
+
+        property $ (if pageSizeElems > 1
+                       then pageSizeBytes <= 4096
+                       else True)
+                && (pageSizeElems == length [ e | e <- es ])
+                && (pageSizeBlobs == length [ b | (_,Insert _ (Just b)) <- es ])
+  where
+    showNumElems n
+      | n == 0    = "0"
+      | n == 1    = "1"
+      | n < 10    = "1 < n < 10"
+      | otherwise = nearest 10 n
+    showPageSizeBytes n
+      | n >= 4096  = show ((n `div` 4096) * 4) ++ "k <= n < "
+                  ++ show (((n `div` 4096) + 1) * 4) ++ "k"
+      | otherwise = nearest 512 n
+    showKeyValueSizeBytes n
+      | n < 16    = show n
+      | n < 1024  = "16    < n < 1024"
+      | otherwise = nearest 1024 n
+    nearest m n = show ((n `div` m) * m)
+     ++ " <= n < " ++ show ((n `div` m) * m + m)
+
+
+-- | The maximum size of key that is guaranteed to always fit in an empty
+-- 4k page. So this is a worst case maximum size: this size key will fit
+-- irrespective of the corresponding operation, including the possibility
+-- that the key\/op pair has a blob reference.
+maxKeySize :: Int
+maxKeySize = diskPageSizeBytes dpgsz - overhead  -- == 4052
+  where
+    overhead =
+      (pageSizeBytes . fromJust . calcPageSize dpgsz . PageLogical)
+        [(Key BS.empty, Insert (Value BS.empty) (Just (BlobRef 0 0)))]
+    dpgsz = DiskPage4k
+
+prop_maxKeySize :: Bool
+prop_maxKeySize = maxKeySize == 4052
+
+prop_size1 :: DiskPageSize -> PageLogical -> Bool
+prop_size1 dpgsz p =
+    sizePageUsed > 0
+ && sizePageUsed + sizePagePadding == sizePageDiskPage
+ && if pageNumKeys p' == 1
+      then fromIntegral sizePageDiskPage `mod` diskPageSizeBytes dpgsz == 0
+      else fromIntegral sizePageDiskPage == diskPageSizeBytes dpgsz
+  where
+    Just p' = encodePage dpgsz p
+    PageSizesOffsets{..} = pageSizesOffsets p'
+
+prop_size2 :: DiskPageSize -> PageLogical -> Bool
+prop_size2 dpgsz p =
+    BS.length (serialisePage p')
+ == fromIntegral (sizePageDiskPage (pageSizesOffsets p'))
+  where
+    Just p' = encodePage dpgsz p
+
+prop_size3 :: DiskPageSize -> PageLogical -> Bool
+prop_size3 dpgsz p =
+  case (calcPageSize dpgsz p, encodePage dpgsz p) of
+    (Just PageSize{pageSizeBytes}, Just p') ->
+      pageSizeBytes == (fromIntegral . sizePageUsed . pageSizesOffsets) p'
+    _                  -> False
+
+prop_encodeDecode :: DiskPageSize -> PageLogical -> Property
+prop_encodeDecode dpgsz p =
+    p === decodePage p'
+  where
+    Just p' = encodePage dpgsz p
+
+prop_serialiseDeserialise :: DiskPageSize -> PageLogical -> Bool
+prop_serialiseDeserialise dpgsz p =
+    p' == roundTrip p'
+  where
+    Just p'   = encodePage dpgsz p
+    roundTrip = deserialisePage dpgsz . serialisePage
+
+prop_encodeSerialiseDeserialiseDecode :: DiskPageSize -> PageLogical -> Bool
+prop_encodeSerialiseDeserialiseDecode dpgsz p =
+    p == roundTrip p'
+  where
+    Just p'   = encodePage dpgsz p
+    roundTrip = decodePage . deserialisePage dpgsz . serialisePage
+
