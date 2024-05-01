@@ -1,6 +1,8 @@
 {-# LANGUAGE BangPatterns  #-}
 {-# LANGUAGE TupleSections #-}
 
+{-# OPTIONS_GHC -Wno-incomplete-uni-patterns #-}
+
 module Test.Database.LSMTree.Internal.RunAcc (tests) where
 
 import           Control.Exception (assert)
@@ -87,7 +89,8 @@ prop_runAccMatchesPrototype page =
     counterexample "real /= model" $
     real === model
   where
-    model = Proto.serialisePage (Proto.encodePage $ getPageLogical' page)
+    Just model = Proto.serialisePage <$>
+                   Proto.encodePage Proto.DiskPage4k (getPageLogical' page)
     real  = trunc $ uncurry pagesToByteString $ fromListPageAcc (getRealKOps page)
 
     -- truncate padding on the real page
@@ -155,7 +158,7 @@ getPrototypeKOps (PageLogical' (Proto.PageLogical kops)) = kops
 
 instance Arbitrary PageLogical' where
   arbitrary = PageLogical' <$>
-      Proto.genFullPageLogical
+      Proto.genFullPageLogical Proto.DiskPage4k
         (arbitrary `suchThat` \(Proto.Key bs) -> BS.length bs >= 6)
         arbitrary
   shrink (PageLogical' page) =

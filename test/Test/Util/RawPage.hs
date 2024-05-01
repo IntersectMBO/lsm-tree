@@ -1,3 +1,5 @@
+{-# OPTIONS_GHC -Wno-incomplete-uni-patterns #-}
+
 module Test.Util.RawPage (
     toRawPage,
     assertEqualRawPages,
@@ -18,7 +20,8 @@ import           Database.LSMTree.Internal.RawOverflowPage (RawOverflowPage,
                      makeRawOverflowPage)
 import           Database.LSMTree.Internal.RawPage (RawPage, makeRawPage,
                      rawPageRawBytes)
-import           FormatPage (PageLogical, encodePage, serialisePage)
+import           FormatPage (DiskPageSize (..), PageLogical, encodePage,
+                     serialisePage)
 import qualified System.Console.ANSI as ANSI
 import           Test.Tasty.HUnit (Assertion, assertFailure)
 import           Test.Tasty.QuickCheck (Property, counterexample)
@@ -27,7 +30,7 @@ import           Test.Tasty.QuickCheck (Property, counterexample)
 toRawPage :: PageLogical -> (RawPage, [RawOverflowPage])
 toRawPage p = (page, overflowPages)
   where
-    bs = serialisePage $ encodePage p
+    Just bs = serialisePage <$> encodePage DiskPage4k p
     (pfx, sfx) = BS.splitAt 4096 bs -- hardcoded page size.
     page          = makeRawPageBS pfx
     overflowPages = [ makeRawOverflowPageBS sfxpg

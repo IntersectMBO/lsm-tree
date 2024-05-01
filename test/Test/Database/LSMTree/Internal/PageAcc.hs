@@ -57,7 +57,7 @@ prototype inputs' =
     case invariant inputs' of
         es -> runST $ do
             acc <- newPageAcc
-            go acc Proto.pageSizeEmpty [] es
+            go acc (Proto.pageSizeEmpty Proto.DiskPage4k) [] es
   where
     -- inputs should be ordered and unique to produce valid page.
     invariant xs =
