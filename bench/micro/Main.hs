@@ -12,6 +12,7 @@ module Main (main) where
 import qualified Bench.Database.LSMTree.Internal.BloomFilter
 import qualified Bench.Database.LSMTree.Internal.IndexCompact
 import qualified Bench.Database.LSMTree.Internal.Lookup
+import qualified Bench.Database.LSMTree.Internal.Merge
 import qualified Bench.Database.LSMTree.Internal.RawPage
 import qualified Bench.Database.LSMTree.Internal.WriteBuffer
 import           Criterion.Main (defaultMain)
@@ -21,6 +22,7 @@ main = defaultMain [
       Bench.Database.LSMTree.Internal.BloomFilter.benchmarks
     , Bench.Database.LSMTree.Internal.IndexCompact.benchmarks
     , Bench.Database.LSMTree.Internal.Lookup.benchmarks
+    , Bench.Database.LSMTree.Internal.Merge.benchmarks
     , Bench.Database.LSMTree.Internal.RawPage.benchmarks
     , Bench.Database.LSMTree.Internal.WriteBuffer.benchmarks
     ]
