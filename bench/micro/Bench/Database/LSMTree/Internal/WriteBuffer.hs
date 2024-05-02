@@ -8,11 +8,11 @@ import           Control.DeepSeq (NFData (..))
 import           Criterion.Main (Benchmark, bench, bgroup)
 import qualified Criterion.Main as Cr
 import           Data.Bifunctor (first)
-import qualified Data.ByteString as BS
 import qualified Data.List as List
 import           Data.Maybe (fromMaybe)
 import           Data.Word (Word64)
 import           Database.LSMTree.Extras.Orphans ()
+import           Database.LSMTree.Extras.Random (frequency, randomByteStringR)
 import           Database.LSMTree.Extras.UTxO
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.Run (Run)
@@ -30,8 +30,7 @@ import           System.Directory (removeDirectoryRecursive)
 import qualified System.FS.API as FS
 import qualified System.FS.IO as FS
 import           System.IO.Temp
-import qualified System.Random as R
-import           System.Random (StdGen, mkStdGen, uniform, uniformR)
+import           System.Random (StdGen, mkStdGen, uniform)
 
 benchmarks :: Benchmark
 benchmarks = bgroup "Bench.Database.LSMTree.Internal.WriteBuffer" [
@@ -280,23 +279,3 @@ lookupsEnv Config {..} = take nentries . List.unfoldr (Just . randomKOp)
                   in  (Mupdate v, g')
           )
         ]
-
-frequency :: [(Int, Rnd a)] -> Rnd a
-frequency xs0 g
-  | any ((< 0) . fst) xs0 = error "frequency: frequencies must be non-negative"
-  | tot == 0              = error "frequency: at least one frequency should be non-zero"
-  | otherwise = pick i xs0
- where
-  (i, g') = uniformR (1, tot) g
-
-  tot = sum (map fst xs0)
-
-  pick n ((k,x):xs)
-    | n <= k    = x g'
-    | otherwise = pick (n-k) xs
-  pick _ _  = error "frequency: pick used with empty list"
-
-randomByteStringR :: (Int, Int) -> Rnd BS.ByteString
-randomByteStringR range g =
-    let (!l, !g')  = uniformR range g
-    in  R.genByteString l g'

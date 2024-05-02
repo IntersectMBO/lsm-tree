@@ -25,8 +25,8 @@ import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromMaybe)
 import qualified Data.Vector as V
 import           Database.LSMTree.Extras.Orphans ()
-import           Database.LSMTree.Extras.Random (sampleUniformWithReplacement,
-                     uniformWithoutReplacement)
+import           Database.LSMTree.Extras.Random (frequency,
+                     sampleUniformWithReplacement, uniformWithoutReplacement)
 import           Database.LSMTree.Extras.UTxO
 import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..))
 import           Database.LSMTree.Internal.Lookup (BatchSize (..),
@@ -184,21 +184,6 @@ lookupsEnv g nentries npos nneg = do
     assert (Map.size entries' == nentries) $ pure ()
     assert (length lookups' == npos + nneg) $ pure ()
     pure (entries', lookups')
-
-frequency :: [(Int, StdGen -> (a, StdGen))] -> StdGen -> (a, StdGen)
-frequency xs0 g
-  | any ((< 0) . fst) xs0 = error "frequency: frequencies must be non-negative"
-  | tot == 0              = error "frequency: at least one frequency should be non-zero"
-  | otherwise = pick i xs0
- where
-  (i, g') = uniformR (1, tot) g
-
-  tot = sum (map fst xs0)
-
-  pick n ((k,x):xs)
-    | n <= k    = x g'
-    | otherwise = pick (n-k) xs
-  pick _ _  = error "QuickCheck.pick used with empty list"
 
 -- TODO: tweak distribution
 randomEntry :: StdGen -> (Entry UTxOValue UTxOBlob, StdGen)
