@@ -36,64 +36,76 @@ benchmarks :: Benchmark
 benchmarks = bgroup "Bench.Database.LSMTree.Internal.WriteBuffer" [
       benchWriteBuffer configWord64
         { name         = "word64-insert-10k"
-        , ninserts     = 10_000
+        , nentries     = 10_000
+        , finserts     = 1
         }
     , benchWriteBuffer configWord64
         { name         = "word64-delete-10k"
-        , ndeletes     = 10_000
+        , nentries     = 10_000
+        , fdeletes     = 1
         }
     , benchWriteBuffer configWord64
         { name         = "word64-blob-10k"
-        , nblobinserts = 10_000
+        , nentries     = 10_000
+        , fblobinserts = 1
         }
     , benchWriteBuffer configWord64
         { name         = "word64-mupsert-10k"
-        , nmupserts    = 10_000
+        , nentries     = 10_000
+        , fmupserts    = 1
                          -- TODO: too few collisions to really measure resolution
         , mappendVal   = Just (onDeserialisedValues ((+) @Word64))
         }
       -- different key and value sizes
     , benchWriteBuffer configWord64
-        { name         = "insert-large-keys-2k"  -- large keys
-        , ninserts     = 2_000
-        , randomKey    = first serialiseKey . randomByteStringR (0, 4000)
+        { name         = "insert-large-keys-1k"  -- large keys
+        , nentries     = 1_000
+        , finserts     = 1
+        , randomKey    = first serialiseKey . randomByteStringR (6, 4000)
         }
     , benchWriteBuffer configWord64
-        { name         = "insert-mix-2k"  -- small and large values
-        , ninserts     = 2_000
+        { name         = "insert-mixed-vals-1k"  -- small and large values
+        , nentries     = 1_000
+        , finserts     = 1
         , randomValue  = first serialiseValue . randomByteStringR (0, 8000)
         }
     , benchWriteBuffer configWord64
-        { name         = "insert-page-2k"  -- 1 page
-        , ninserts     = 2_000
+        { name         = "insert-page-1k"  -- 1 page
+        , nentries     = 1_000
+        , finserts     = 1
         , randomValue  = first serialiseValue . randomByteStringR (4056, 4056)
         }
     , benchWriteBuffer configWord64
-        { name         = "insert-page-plus-byte-2k"  -- 1 page + 1 byte
-        , ninserts     = 2_000
+        { name         = "insert-page-plus-byte-1k"  -- 1 page + 1 byte
+        , nentries     = 1_000
+        , finserts     = 1
         , randomValue  = first serialiseValue . randomByteStringR (4057, 4057)
         }
     , benchWriteBuffer configWord64
-        { name         = "insert-huge-2k"  -- 3-5 pages
-        , ninserts     = 2_000
+        { name         = "insert-huge-vals-1k"  -- 3-5 pages
+        , nentries     = 1_000
+        , finserts     = 1
         , randomValue  = first serialiseValue . randomByteStringR (10_000, 20_000)
         }
       -- UTxO workload
       -- compare different buffer sizes to see superlinear cost of map insertion
     , benchWriteBuffer configUTxO
         { name         = "utxo-2k"
-        , ninserts     = 1_000
-        , ndeletes     = 1_000
+        , nentries     = 2_000
+        , finserts     = 1
+        , fdeletes     = 1
         }
     , benchWriteBuffer configUTxO
         { name         = "utxo-10k"
-        , ninserts     = 5_000
-        , ndeletes     = 5_000
+        , nentries     = 10_000
+        , finserts     = 1
+        , fdeletes     = 1
         }
     , benchWriteBuffer configUTxO
         { name         = "utxo-50k"
-        , ninserts     = 25_000
-        , ndeletes     = 25_000
+        , nentries     = 50_000
+        , finserts     = 1
+        , fdeletes     = 1
         }
     ]
 
@@ -177,14 +189,20 @@ data Config = Config {
     -- | Name for the benchmark scenario described by this config.
     name         :: !String
     -- | Number of key\/operation pairs in the run
-  , ninserts     :: !Int
-  , nblobinserts :: !Int
-  , ndeletes     :: !Int
-  , nmupserts    :: !Int
+  , nentries     :: !Int
+    -- | Frequency of inserts within the key\/op pairs.
+  , finserts     :: !Int
+    -- | Frequency of inserts with blobs within the key\/op pairs.
+  , fblobinserts :: !Int
+    -- | Frequency of deletes within the key\/op pairs.
+  , fdeletes     :: !Int
+    -- | Frequency of mupserts within the key\/op pairs.
+  , fmupserts    :: !Int
   , randomKey    :: Rnd SerialisedKey
   , randomValue  :: Rnd SerialisedValue
   , randomBlob   :: Rnd SerialisedBlob
-  , mappendVal   :: Maybe Mappend
+    -- | Needs to be defined when generating mupserts.
+  , mappendVal   :: !(Maybe Mappend)
   }
 
 type Rnd a = StdGen -> (a, StdGen)
@@ -192,10 +210,11 @@ type Rnd a = StdGen -> (a, StdGen)
 defaultConfig :: Config
 defaultConfig = Config {
     name         = "default"
-  , ninserts     = 0
-  , nblobinserts = 0
-  , ndeletes     = 0
-  , nmupserts    = 0
+  , nentries     = 0
+  , finserts     = 0
+  , fblobinserts = 0
+  , fdeletes     = 0
+  , fmupserts    = 0
   , randomKey    = error "randomKey not implemented"
   , randomValue  = error "randomValue not implemented"
   , randomBlob   = error "randomBlob not implemented"
@@ -224,7 +243,7 @@ writeBufferEnv ::
 writeBufferEnv config = do
     sysTmpDir <- getCanonicalTemporaryDirectory
     benchTmpDir <- createTempDirectory sysTmpDir "writeBufferEnv"
-    let kops = lookupsEnv config (mkStdGen 17)
+    let kops = randomKOps config (mkStdGen 17)
     let inputKOps = case mappendVal config of
           Nothing -> NormalInputs (fmap (fmap expectNormal) kops)
           Just f  -> MonoidalInputs (fmap (fmap expectMonoidal) kops) f
@@ -247,14 +266,12 @@ writeBufferEnvCleanup (tmpDir, _, _) = do
 
 -- | Generate keys and entries to insert into the write buffer.
 -- They are already serialised to exclude the cost from the benchmark.
-lookupsEnv ::
+randomKOps ::
      Config
   -> StdGen -- ^ RNG
   -> [SerialisedKOp]
-lookupsEnv Config {..} = take nentries . List.unfoldr (Just . randomKOp)
+randomKOps Config {..} = take nentries . List.unfoldr (Just . randomKOp)
   where
-    nentries = ninserts + nblobinserts + ndeletes + nmupserts
-
     randomKOp :: Rnd SerialisedKOp
     randomKOp g = let (!k, !g')  = randomKey g
                       (!e, !g'') = randomEntry g'
@@ -262,19 +279,19 @@ lookupsEnv Config {..} = take nentries . List.unfoldr (Just . randomKOp)
 
     randomEntry :: Rnd SerialisedEntry
     randomEntry = frequency
-        [ ( ninserts
+        [ ( finserts
           , \g -> let (!v, !g') = randomValue g
                   in  (Insert v, g')
           )
-        , ( nblobinserts
+        , ( fblobinserts
           , \g -> let (!v, !g') = randomValue g
                       (!b, !g'') = randomBlob g'
                   in  (InsertWithBlob v b, g'')
           )
-        , ( ndeletes
+        , ( fdeletes
           , \g -> (Delete, g)
           )
-        , ( nmupserts
+        , ( fmupserts
           , \g -> let (!v, !g') = randomValue g
                   in  (Mupdate v, g')
           )
