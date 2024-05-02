@@ -1,4 +1,5 @@
-{-# LANGUAGE RoleAnnotations #-}
+{-# LANGUAGE DerivingStrategies         #-}
+{-# LANGUAGE GeneralisedNewtypeDeriving #-}
 
 -- | The in-memory LSM level 0.
 --
@@ -31,6 +32,7 @@ module Database.LSMTree.Internal.WriteBuffer (
     rangeLookups,
 ) where
 
+import           Control.DeepSeq (NFData (..))
 import qualified Data.Map.Range as Map.R
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -53,7 +55,8 @@ import           Database.LSMTree.Internal.Serialise
 -- for these constraints and (de)serialisation to the layer above.
 newtype WriteBuffer =
   WB { unWB :: Map SerialisedKey (Entry SerialisedValue SerialisedBlob) }
-  deriving Show
+  deriving stock Show
+  deriving newtype NFData
 
 empty :: WriteBuffer
 empty = WB Map.empty

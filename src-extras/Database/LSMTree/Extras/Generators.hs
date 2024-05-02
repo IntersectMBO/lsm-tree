@@ -559,17 +559,8 @@ shrinkSlice (RawBytes pvec) =
     , m <- QC.shrink (PV.length pvec - n)
     ]
 
-instance SerialiseKey RawBytes where
-  serialiseKey = id
-  deserialiseKey = id
-
-instance SerialiseValue RawBytes where
-  serialiseValue = id
-  deserialiseValue = id
-  deserialiseValueN = mconcat
-
+-- TODO: makes collisions very unlikely
 deriving newtype instance Arbitrary SerialisedKey
-deriving newtype instance SerialiseKey SerialisedKey
 
 instance Arbitrary SerialisedValue where
   -- good mix of sizes, including larger than two pages, also some slices
@@ -584,10 +575,7 @@ instance Arbitrary SerialisedValue where
       | RB.size rb > 64 = coerce (shrink (LargeRawBytes rb))
       | otherwise       = coerce (shrink rb)
 
-deriving newtype instance SerialiseValue SerialisedValue
-
 deriving newtype instance Arbitrary SerialisedBlob
-deriving newtype instance SerialiseValue SerialisedBlob
 
 newtype LargeRawBytes = LargeRawBytes RawBytes
   deriving Show

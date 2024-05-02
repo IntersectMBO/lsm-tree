@@ -11,6 +11,8 @@ module Database.LSMTree.Internal.Entry (
     -- * Injections/projections
   , updateToEntryNormal
   , updateToEntryMonoidal
+  , entryToUpdateNormal
+  , entryToUpdateMonoidal
     -- * Value resolution/merging
   , combine
   , combinesMonoidal
