@@ -29,7 +29,7 @@ import           Database.LSMTree.Internal.RawOverflowPage (RawOverflowPage,
 import           Database.LSMTree.Internal.RawPage
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
-import           Database.LSMTree.Internal.Run.FsPaths
+import           Database.LSMTree.Internal.RunFsPaths
 import           Database.LSMTree.Internal.Serialise
 import qualified System.FS.API as FS
 import           System.FS.API (HasBufFS, HasFS)
