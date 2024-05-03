@@ -17,3 +17,9 @@ if impl(ghc >=9.4.6 && <9.5 || >=9.6.3)
 
   package vector
     ghc-options: -fcheck-prim-bounds
+
+  package fs-api
+    ghc-options: -fcheck-prim-bounds
+
+  package fs-sim
+    ghc-options: -fcheck-prim-bounds

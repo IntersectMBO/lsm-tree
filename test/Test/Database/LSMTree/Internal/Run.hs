@@ -73,8 +73,8 @@ tests = testGroup "Database.LSMTree.Internal.Run"
               (mkVal ("test-value-" <> BS.concat (replicate 500 "0123456789")))
               Nothing
       , testProperty "prop_WriteAndRead" $ \wb ->
-          ioPropertyWithRealFS $ \fs bfs ->
-            prop_WriteAndRead fs bfs wb
+          ioPropertyWithRealFS $ \fs ->
+            prop_WriteAndRead fs wb
       , testProperty "prop_WriteAndOpen" $ \wb ->
           ioPropertyWithMockFS $ \fs ->
             prop_WriteAndOpen fs wb
@@ -83,9 +83,6 @@ tests = testGroup "Database.LSMTree.Internal.Run"
   where
     withSessionDir = Temp.withSystemTempDirectory "session-run"
 
-    -- Currently doesn't support HasBufFS, so we still need the other version.
-    -- TODO: add support once simulation is merged:
-    -- https://github.com/input-output-hk/fs-sim/pull/48
     -- TODO: Also test file system errors.
     ioPropertyWithMockFS prop = ioProperty $ do
         (res, mockFS) <-
@@ -97,7 +94,7 @@ tests = testGroup "Database.LSMTree.Internal.Run"
     ioPropertyWithRealFS prop =
         ioProperty $ withSessionDir $ \sessionRoot -> do
           let mountPoint = FS.MountPoint sessionRoot
-          prop (FsIO.ioHasFS mountPoint) (FsIO.ioHasBufFS mountPoint)
+          prop (FsIO.ioHasFS mountPoint)
 
     mkKey = SerialisedKey . RB.fromByteString
     mkVal = SerialisedValue . RB.fromByteString
@@ -191,12 +188,12 @@ readBlobFromBS bs (BlobSpan offset size) =
 --
 -- TODO: @id === readEntries . flush . toWriteBuffer@ ?
 prop_WriteAndRead ::
-     FS.HasFS IO h -> FS.HasBufFS IO h
+     FS.HasFS IO h
   -> TypedWriteBuffer KeyForIndexCompact SerialisedValue SerialisedBlob
   -> IO Property
-prop_WriteAndRead fs bfs (TypedWriteBuffer wb) = do
+prop_WriteAndRead fs (TypedWriteBuffer wb) = do
     run <- flush 42 wb
-    rhs <- readKOps fs bfs run
+    rhs <- readKOps fs run
 
     -- make sure run gets closed again
     removeReference fs run
@@ -259,23 +256,23 @@ isLargeKOp (key, entry) = size > pageSize
     pageSize = 4096
     size = sizeofKey key + bisum (bimap sizeofValue sizeofBlob entry)
 
-readKOps :: FS.HasFS IO h -> FS.HasBufFS IO h -> Run (FS.Handle h) -> IO [SerialisedKOp]
-readKOps fs bfs run = do
-    reader <- Reader.new fs bfs run
+readKOps :: FS.HasFS IO h -> Run (FS.Handle h) -> IO [SerialisedKOp]
+readKOps fs run = do
+    reader <- Reader.new fs run
     go reader
   where
     go reader = do
-      Reader.next fs bfs reader >>= \case
+      Reader.next fs reader >>= \case
         Reader.Empty -> return []
         Reader.ReadSmallEntry key entry -> do
           entry' <- traverse resolveBlob entry
           ((key, entry') :) <$> go reader
         Reader.ReadLargeEntry key entry _ lenSuffix overflowPages -> do
           entry' <- traverse resolveBlob
-                      (first (appendSuffix lenSuffix overflowPages)entry)
+                      (first (appendSuffix lenSuffix overflowPages) entry)
           ((key, entry') :) <$> go reader
 
-    resolveBlob (BlobRef r s) = readBlob fs bfs r s
+    resolveBlob (BlobRef r s) = readBlob fs r s
 
     appendSuffix lenSuffix overflowPages (SerialisedValue prefix) =
       assert (ceilDivPageSize (fromIntegral lenSuffix) == length overflowPages) $

@@ -4,7 +4,7 @@ module System.FS.BlockIO.Internal (
     ioHasBlockIO
   ) where
 
-import           System.FS.API (HasBufFS, HasFS)
+import           System.FS.API (HasFS)
 import           System.FS.BlockIO.API (HasBlockIO, IOCtxParams)
 #if SERIALBLOCKIO
 import qualified System.FS.BlockIO.Serial as Serial
@@ -15,11 +15,10 @@ import           System.FS.IO (HandleIO)
 
 ioHasBlockIO ::
      HasFS IO HandleIO
-  -> HasBufFS IO HandleIO
   -> Maybe IOCtxParams
   -> IO (HasBlockIO IO HandleIO)
 #if SERIALBLOCKIO
-ioHasBlockIO hasFS hasBufFS _ = Serial.serialHasBlockIO hasFS hasBufFS
+ioHasBlockIO hasFS _ = Serial.serialHasBlockIO hasFS
 #else
-ioHasBlockIO hfs _bhfs        = Async.asyncHasBlockIO hfs
+ioHasBlockIO hfs     = Async.asyncHasBlockIO hfs
 #endif

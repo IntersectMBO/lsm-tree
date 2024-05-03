@@ -44,7 +44,7 @@ import qualified Database.LSMTree.Internal.Run as Internal
 import           Database.LSMTree.Internal.Serialise.Class
 import qualified System.FilePath.Posix
 import qualified System.FilePath.Windows
-import           System.FS.API (FsPath, HasBufFS, HasFS, SomeHasFS)
+import           System.FS.API (FsPath, HasFS, SomeHasFS)
 import           System.FS.BlockIO.API (HasBlockIO)
 
 {-------------------------------------------------------------------------------
@@ -94,7 +94,6 @@ type AnySession :: (Type -> Type) -> Type -> Type
 data AnySession m h = AnySession {
     anySessionRoot       :: !FsPath
   , anySessionHasFS      :: !(HasFS m h)
-  , anySessionHasBufFS   :: !(HasBufFS m h)
   , anySessionHasBlockIO :: !(HasBlockIO m h)
   }
 

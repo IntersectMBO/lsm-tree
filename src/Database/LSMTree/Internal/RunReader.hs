@@ -32,7 +32,7 @@ import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.Run.FsPaths
 import           Database.LSMTree.Internal.Serialise
 import qualified System.FS.API as FS
-import           System.FS.API (HasBufFS, HasFS)
+import           System.FS.API (HasFS)
 
 -- | Allows reading the k\/ops of a run incrementally, using its own read-only
 -- file handle and in-memory cache of the current disk page.
@@ -59,15 +59,14 @@ data RunReader fhandle = RunReader {
 
 new ::
      HasFS IO h
-  -> HasBufFS IO h
   -> Run.Run (FS.Handle h)
   -> IO (RunReader (FS.Handle h))
-new fs bfs readerRun = do
+new fs readerRun = do
     readerKOpsHandle <-
       FS.hOpen fs (runKOpsPath (Run.runRunFsPaths readerRun)) FS.ReadMode
     readerCurrentEntryNo <- newPrimVar 0
     -- load first page from disk, if it exists.
-    firstPage <- fromMaybe emptyRawPage <$> readDiskPage fs bfs readerKOpsHandle
+    firstPage <- fromMaybe emptyRawPage <$> readDiskPage fs readerKOpsHandle
     readerCurrentPage <- newIORef firstPage
     return RunReader {..}
 
@@ -105,10 +104,9 @@ data Result fhandle
 -- automatically closed!
 next ::
      HasFS IO h
-  -> HasBufFS IO h
   -> RunReader (FS.Handle h)
   -> IO (Result (FS.Handle h))
-next fs bfs reader@RunReader {..} = do
+next fs reader@RunReader {..} = do
     entryNo <- readPrimVar readerCurrentEntryNo
     page <- readIORef readerCurrentPage
     go entryNo page
@@ -118,7 +116,7 @@ next fs bfs reader@RunReader {..} = do
         case rawPageIndex page entryNo of
           IndexNotPresent -> do
             -- if it is past the last one, load a new page from disk, try again
-            readDiskPage fs bfs readerKOpsHandle >>= \case
+            readDiskPage fs readerKOpsHandle >>= \case
               Nothing -> do
                 close fs reader
                 return Empty
@@ -134,7 +132,7 @@ next fs bfs reader@RunReader {..} = do
             -- TODO: we know that we need the next page, could already load?
             modifyPrimVar readerCurrentEntryNo (+1)
             let entry' = fmap (BlobRef readerRun) entry
-            overflowPages <- readOverflowPages fs bfs readerKOpsHandle lenSuffix
+            overflowPages <- readOverflowPages fs readerKOpsHandle lenSuffix
             return (ReadLargeEntry key entry' page lenSuffix overflowPages)
 
 {-------------------------------------------------------------------------------
@@ -142,11 +140,11 @@ next fs bfs reader@RunReader {..} = do
 -------------------------------------------------------------------------------}
 
 -- | Returns 'Nothing' on EOF.
-readDiskPage :: HasFS IO h -> HasBufFS IO h -> FS.Handle h -> IO (Maybe RawPage)
-readDiskPage fs bfs h = do
+readDiskPage :: HasFS IO h -> FS.Handle h -> IO (Maybe RawPage)
+readDiskPage fs h = do
     mba <- newPinnedByteArray pageSize
     handleJust (guard . FS.isFsErrorType FS.FsReachedEOF) (\_ -> pure Nothing) $ do
-      _ <- FS.hGetBufExactly fs bfs h mba 0 (fromIntegral pageSize)
+      _ <- FS.hGetBufExactly fs h mba 0 (fromIntegral pageSize)
       ba <- unsafeFreezeByteArray mba
       let !rawPage = unsafeMakeRawPage ba 0
       return (Just rawPage)
@@ -156,11 +154,11 @@ pageSize = 4096
 
 -- | Throws exception on EOF. If a suffix was expected, the file should have it.
 -- Reads full pages, despite the suffix only using part of the last page.
-readOverflowPages :: HasFS IO h -> HasBufFS IO h -> FS.Handle h -> Word32 -> IO [RawOverflowPage]
-readOverflowPages fs bfs h len = do
+readOverflowPages :: HasFS IO h -> FS.Handle h -> Word32 -> IO [RawOverflowPage]
+readOverflowPages fs h len = do
     let lenPages = fromIntegral (roundUpToPageSize len)  -- always read whole pages
     mba <- newPinnedByteArray lenPages
-    _ <- FS.hGetBufExactly fs bfs h mba 0 (fromIntegral lenPages)
+    _ <- FS.hGetBufExactly fs h mba 0 (fromIntegral lenPages)
     ba <- unsafeFreezeByteArray mba
     -- should not copy since 'ba' is pinned and its length is a multiple of 4k.
     return $ pinnedByteArrayToOverflowPages 0 lenPages ba

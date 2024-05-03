@@ -41,7 +41,7 @@ import qualified Database.LSMTree.Internal.RunReader as Reader
 import           Database.LSMTree.Internal.Serialise
 import qualified KMerge.Heap as Heap
 import qualified System.FS.API as FS
-import           System.FS.API (HasBufFS, HasFS)
+import           System.FS.API (HasFS)
 
 -- | An in-progress incremental k-way merge of 'Run's.
 --
@@ -105,14 +105,13 @@ toFullEntry (OverflowEntry e _ lenSuffix overflowPages) =
 -- The list of runs should be sorted from new to old.
 new ::
      HasFS IO h
-  -> HasBufFS IO h
   -> Level
   -> Mappend
   -> Run.RunFsPaths
   -> [Run (FS.Handle h)]
   -> IO (Maybe (Merge (FS.Handle h)))
-new fs bfs mergeLevel mergeMappend targetPaths runs = do
-    mreaders <- newReaders fs bfs runs
+new fs mergeLevel mergeMappend targetPaths runs = do
+    mreaders <- newReaders fs runs
     for mreaders $ \(mergeReaders, firstKey, firstEntry) -> do
       mergeCurrentKey <- newIORef firstKey
       mergeCurrentEntry <- newIORef firstEntry
@@ -135,11 +134,10 @@ data StepResult fhandle = MergeInProgress | MergeComplete !(Run fhandle)
 -- Do not call again after 'MergeComplete' has been returned!
 steps ::
      HasFS IO h
-  -> HasBufFS IO h
   -> Merge (FS.Handle h)
   -> Int
   -> IO (StepResult (FS.Handle h))
-steps fs bfs Merge {..} = \numSteps -> do
+steps fs Merge {..} = \numSteps -> do
     curKey <- readIORef mergeCurrentKey
     curEntry <- readIORef mergeCurrentEntry
     go curKey curEntry numSteps
@@ -150,18 +148,18 @@ steps fs bfs Merge {..} = \numSteps -> do
           writeIORef mergeCurrentEntry curEntry
           return MergeInProgress
     go !curKey !curEntry !n =
-      getFromReaders fs bfs mergeReaders >>= \case
+      getFromReaders fs mergeReaders >>= \case
         Just (newKey, newEntry) | newKey == curKey -> do
           -- still same key: don't write yet, resolve!
           let resolvedEntry = resolveEntries mergeMappend curEntry newEntry
           go curKey resolvedEntry (n-1)
         Just (newKey, newEntry) -> do
           -- new key: write old entry!
-          writeEntry fs bfs mergeLevel mergeBuilder curKey curEntry
+          writeEntry fs mergeLevel mergeBuilder curKey curEntry
           go newKey newEntry (n-1)
         Nothing -> do
           -- finished reading: write last entry!
-          writeEntry fs bfs mergeLevel mergeBuilder curKey curEntry
+          writeEntry fs mergeLevel mergeBuilder curKey curEntry
           run <- Run.fromMutable fs (Run.RefCount 1) mergeBuilder
           -- All Readers have been drained, the builder finalised.
           -- No further cleanup required.
@@ -246,26 +244,24 @@ instance Ord (ReadCtx fhandle) where
 -- This means that the list of runs should be sorted from new to old.
 newReaders ::
      HasFS IO h
-  -> HasBufFS IO h
   -> [Run (FS.Handle h)]
   -> IO (Maybe (Readers (FS.Handle h), SerialisedKey, PrefixEntry (FS.Handle h)))
-newReaders fs bfs runs = do
+newReaders fs runs = do
     readers <- zipWithM (fromRun . ReaderNumber) [1..] runs
     (readersHeap, firstReadCtx) <- Heap.newMutableHeap (catMaybes readers)
     for firstReadCtx $ \ReadCtx {..} -> do
       readersLastRead <- newIORef (readCtxReader, readCtxNumber)
       return (Readers {..}, readCtxHeadKey, readCtxHeadEntry)
   where
-    fromRun n run = nextReadCtx fs bfs n =<< Reader.new fs bfs run
+    fromRun n run = nextReadCtx fs n =<< Reader.new fs run
 
 getFromReaders ::
      HasFS IO h
-  -> HasBufFS IO h
   -> Readers (FS.Handle h)
   -> IO (Maybe (SerialisedKey, PrefixEntry (FS.Handle h)))
-getFromReaders fs bfs Readers {..} = do
+getFromReaders fs Readers {..} = do
     (reader, n) <- readIORef readersLastRead
-    mNext <- nextReadCtx fs bfs n reader >>= \case
+    mNext <- nextReadCtx fs n reader >>= \case
       Nothing  -> Heap.extract readersHeap
       Just ctx -> Just <$> Heap.replaceRoot readersHeap ctx
     for mNext $ \ReadCtx {..} -> do
@@ -274,12 +270,11 @@ getFromReaders fs bfs Readers {..} = do
 
 nextReadCtx ::
      HasFS IO h
-  -> HasBufFS IO h
   -> ReaderNumber
   -> RunReader (FS.Handle h)
   -> IO (Maybe (ReadCtx (FS.Handle h)))
-nextReadCtx fs bfs readCtxNumber readCtxReader = do
-    res <- Reader.next fs bfs readCtxReader
+nextReadCtx fs readCtxNumber readCtxReader = do
+    res <- Reader.next fs readCtxReader
     case res of
       Reader.Empty -> do
         return Nothing
@@ -322,13 +317,12 @@ closeReaders fs Readers {..} = do
 
 writeEntry ::
      HasFS IO h
-  -> HasBufFS IO h
   -> Level
   -> RunBuilder (FS.Handle h)
   -> SerialisedKey
   -> PrefixEntry (FS.Handle h)
   -> IO ()
-writeEntry fs bfs level builder key = \case
+writeEntry fs level builder key = \case
     FullEntry entry -> do
       -- simply add entry
       when (shouldWriteEntry entry) $
@@ -360,4 +354,4 @@ writeEntry fs bfs level builder key = \case
           _      -> True
 
     resolveBlobRef (BlobRef run blobSpan) =
-      Run.readBlob fs bfs run blobSpan
+      Run.readBlob fs run blobSpan

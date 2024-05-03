@@ -21,13 +21,12 @@ import           System.FS.BlockIO.API (IOOp (..), IOResult (..))
 serialHasBlockIO ::
      (MonadThrow m, MonadMVar m, PrimMonad m, Eq h)
   => HasFS m h
-  -> HasBufFS m h
   -> m (API.HasBlockIO m h)
-serialHasBlockIO hfs hbfs = do
+serialHasBlockIO hfs = do
   ctx <- initIOCtx (SomeHasFS hfs)
   pure $ API.HasBlockIO {
       API.close = close ctx
-    , API.submitIO = submitIO hfs hbfs ctx
+    , API.submitIO = submitIO hfs ctx
     }
 
 data IOCtx m = IOCtx { ctxFS :: SomeHasFS m, openVar :: MVar m Bool }
@@ -45,25 +44,23 @@ close ctx = modifyMVar_ (openVar ctx) $ const (pure False)
 submitIO ::
      (MonadMVar m, MonadThrow m, PrimMonad m)
   => HasFS m h
-  -> HasBufFS m h
   -> IOCtx m
   -> V.Vector (IOOp (PrimState m) h)
   -> m (VU.Vector IOResult)
-submitIO hfs hbfs ctx ioops = do
+submitIO hfs ctx ioops = do
     guardIsOpen ctx
-    hmapM (ioop hfs hbfs) ioops
+    hmapM (ioop hfs) ioops
 
 -- | Perform the IOOp using synchronous I\/O.
 ioop ::
      MonadThrow m
   => HasFS m h
-  -> HasBufFS m h
   -> IOOp (PrimState m) h
   -> m IOResult
-ioop hfs hbfs (IOOpRead h off buf bufOff c) =
-    IOResult <$> hGetBufExactlyAt hfs hbfs h buf bufOff c (fromIntegral off)
-ioop _hfs hbfs (IOOpWrite h off buf bufOff c) =
-    IOResult <$> hPutBufExactlyAt hbfs h buf bufOff c (fromIntegral off)
+ioop hfs (IOOpRead h off buf bufOff c) =
+    IOResult <$> hGetBufExactlyAt hfs h buf bufOff c (fromIntegral off)
+ioop hfs (IOOpWrite h off buf bufOff c) =
+    IOResult <$> hPutBufExactlyAt hfs h buf bufOff c (fromIntegral off)
 
 -- | Heterogeneous blend of 'V.mapM' and 'VU.mapM'.
 --

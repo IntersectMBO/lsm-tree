@@ -28,11 +28,11 @@ import           Test.Tasty.QuickCheck
 tests :: TestTree
 tests = testGroup "Test.Database.LSMTree.Internal.Merge"
     [ testProperty "prop_MergeDistributes" $ \level stepSize wbs ->
-        ioPropertyWithRealFS $ \fs bfs ->
-          prop_MergeDistributes fs bfs level stepSize wbs
+        ioPropertyWithRealFS $ \fs ->
+          prop_MergeDistributes fs level stepSize wbs
     , testProperty "prop_CloseMerge" $ \level stepSize wbs ->
-        ioPropertyWithRealFS $ \fs bfs ->
-          prop_CloseMerge fs bfs level stepSize wbs
+        ioPropertyWithRealFS $ \fs ->
+          prop_CloseMerge fs level stepSize wbs
     ]
   where
     withSessionDir = Temp.withSystemTempDirectory "session-merge"
@@ -43,21 +43,21 @@ tests = testGroup "Test.Database.LSMTree.Internal.Merge"
     ioPropertyWithRealFS prop =
         ioProperty $ withSessionDir $ \sessionRoot -> do
           let mountPoint = FS.MountPoint sessionRoot
-          prop (FsIO.ioHasFS mountPoint) (FsIO.ioHasBufFS mountPoint)
+          prop (FsIO.ioHasFS mountPoint)
 
 -- | Creating multiple runs from write buffers and merging them leads to the
 -- same run as merging the write buffers and creating a run.
 --
 -- @mergeRuns . map flush === flush . mergeWriteBuffers@
 prop_MergeDistributes ::
-     FS.HasFS IO h -> FS.HasBufFS IO h ->
+     FS.HasFS IO h ->
      Merge.Level ->
      StepSize ->
      [TypedWriteBuffer KeyForIndexCompact SerialisedValue SerialisedBlob] ->
      IO Property
-prop_MergeDistributes fs bfs level stepSize (fmap unTypedWriteBuffer -> wbs) = do
+prop_MergeDistributes fs level stepSize (fmap unTypedWriteBuffer -> wbs) = do
     runs <- sequenceA $ zipWith flush [10..] wbs
-    lhs <- mergeRuns fs bfs level 0 runs stepSize
+    lhs <- mergeRuns fs level 0 runs stepSize
 
     rhs <- flush 1 (mergeWriteBuffers level wbs)
 
@@ -92,12 +92,12 @@ prop_MergeDistributes fs bfs level stepSize (fmap unTypedWriteBuffer -> wbs) = d
 -- | After merging for a few steps, we can prematurely abort the merge, which
 -- should clean up properly.
 prop_CloseMerge ::
-     FS.HasFS IO h -> FS.HasBufFS IO h ->
+     FS.HasFS IO h ->
      Merge.Level ->
      StepSize ->
      [TypedWriteBuffer KeyForIndexCompact SerialisedValue SerialisedBlob] ->
      IO Property
-prop_CloseMerge fs bfs level (Positive stepSize) (fmap unTypedWriteBuffer -> wbs) = do
+prop_CloseMerge fs level (Positive stepSize) (fmap unTypedWriteBuffer -> wbs) = do
     let path0 = Run.RunFsPaths 0
     runs <- sequenceA $ zipWith flush [10..] wbs
     mergeToClose <- makeInProgressMerge path0 runs
@@ -115,11 +115,11 @@ prop_CloseMerge fs bfs level (Positive stepSize) (fmap unTypedWriteBuffer -> wbs
     flush n = Run.fromWriteBuffer fs (Run.RunFsPaths n)
 
     makeInProgressMerge path runs =
-      Merge.new fs bfs level mappendValues path runs >>= \case
+      Merge.new fs level mappendValues path runs >>= \case
         Nothing -> return Nothing  -- not in progress
         Just merge -> do
           -- just do a few steps once, ideally not completing the merge
-          Merge.steps fs bfs merge stepSize >>= \case
+          Merge.steps fs merge stepSize >>= \case
             Merge.MergeComplete run -> do
               Run.removeReference fs run  -- run not needed, close
               return Nothing  -- not in progress
@@ -133,19 +133,19 @@ prop_CloseMerge fs bfs level (Positive stepSize) (fmap unTypedWriteBuffer -> wbs
 type StepSize = Positive Int
 
 mergeRuns ::
-     FS.HasFS IO h -> FS.HasBufFS IO h ->
+     FS.HasFS IO h ->
      Merge.Level ->
      Int ->
      [Run.Run (FS.Handle h)] ->
      StepSize ->
      IO (Run.Run (FS.Handle h))
-mergeRuns fs bfs level n runs (Positive stepSize) = do
-    Merge.new fs bfs level mappendValues (Run.RunFsPaths n) runs >>= \case
+mergeRuns fs level n runs (Positive stepSize) = do
+    Merge.new fs level mappendValues (Run.RunFsPaths n) runs >>= \case
       Nothing -> Run.fromWriteBuffer fs (Run.RunFsPaths n) WB.empty
       Just m  -> go m
   where
     go m =
-        Merge.steps fs bfs m stepSize >>= \case
+        Merge.steps fs m stepSize >>= \case
           Merge.MergeComplete run -> return run
           Merge.MergeInProgress   -> go m
 
