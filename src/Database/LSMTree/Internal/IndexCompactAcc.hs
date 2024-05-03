@@ -1,8 +1,8 @@
+{-# LANGUAGE CPP                 #-}
 {-# LANGUAGE DerivingStrategies  #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-
 
 {- |
   Incremental construction of a compact index yields chunks of the primary array
@@ -31,7 +31,7 @@ module Database.LSMTree.Internal.IndexCompactAcc (
 import           Control.DeepSeq (NFData (..))
 import           Control.Exception (assert)
 import           Control.Monad (forM_, when)
-import           Control.Monad.ST
+import           Control.Monad.ST.Strict
 import           Data.Bit hiding (flipBit)
 import           Data.Foldable (toList)
 import           Data.Ix (inRange)
@@ -58,10 +58,10 @@ import           Database.LSMTree.Internal.Unsliced
   Constructing a compact index can go wrong, unless the following conditions are
   met:
 
-  * /Sorted/: pages must be appended in sorted order according to the keys they
+  [Sorted] pages must be appended in sorted order according to the keys they
     contain.
 
-  * /Partitioned/: pages must be partitioned. That is, the range-finder bits for
+  [Partitioned] pages must be partitioned. That is, the range-finder bits for
     all keys within a page must match.
 -}
 
@@ -152,6 +152,11 @@ append (AppendMultiPage k n) ica        = appendMulti (k, n) ica
 -- INVARIANTS: see [construction invariants](#construction-invariants).
 appendSingle :: forall s. (SerialisedKey, SerialisedKey) -> IndexCompactAcc s -> ST s (Maybe Chunk)
 appendSingle (minKey, maxKey) ica@IndexCompactAcc{..} = do
+#ifdef NO_IGNORE_ASSERTS
+    lastMinKey <- readSTRef icaLastMinKey
+    assert (minKey <= maxKey && smaybe True (<= minKey) lastMinKey) $ pure ()  -- sorted
+#endif
+    assert (minRfbits == keyTopBits16 icaRangeFinderPrecision maxKey) $ pure () -- partitioned
     pageNo <- readSTRef icaCurrentPageNumber
     let ix = pageNo `mod` icaMaxChunkSize
     goAppend pageNo ix
