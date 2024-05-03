@@ -66,9 +66,9 @@ library
     Database.LSMTree.Internal.RawOverflowPage
     Database.LSMTree.Internal.RawPage
     Database.LSMTree.Internal.Run
-    Database.LSMTree.Internal.Run.FsPaths
     Database.LSMTree.Internal.RunAcc
     Database.LSMTree.Internal.RunBuilder
+    Database.LSMTree.Internal.RunFsPaths
     Database.LSMTree.Internal.RunReader
     Database.LSMTree.Internal.Serialise
     Database.LSMTree.Internal.Serialise.Class
