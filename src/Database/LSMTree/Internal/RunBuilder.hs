@@ -82,7 +82,7 @@ new fs runBuilderFsPaths numEntries estimatedNumPages = do
     runBuilderBlobOffset <- newIORef 0
 
     FS.createDirectoryIfMissing fs False activeRunsDir
-    runBuilderHandles <- traverse (makeHandle fs) (runFsPaths runBuilderFsPaths)
+    runBuilderHandles <- traverse (makeHandle fs) (pathsForRunFiles runBuilderFsPaths)
 
     let builder = RunBuilder {..}
     writeIndexHeader fs builder
@@ -169,7 +169,7 @@ unsafeFinalise fs builder@RunBuilder {..} = do
 close :: HasFS IO h -> RunBuilder (FS.Handle h) -> IO ()
 close fs RunBuilder {..} = do
     traverse_ (closeHandle fs) runBuilderHandles
-    traverse_ (FS.removeFile fs) (runFsPaths runBuilderFsPaths)
+    traverse_ (FS.removeFile fs) (pathsForRunFiles runBuilderFsPaths)
 
 {-------------------------------------------------------------------------------
   Helpers

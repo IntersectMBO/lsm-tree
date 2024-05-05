@@ -1,6 +1,6 @@
 module Database.LSMTree.Internal.RunFsPaths (
     RunFsPaths (..)
-  , runFsPaths
+  , pathsForRunFiles
   , runKOpsPath
   , runBlobPath
   , runFilterPath
@@ -8,7 +8,7 @@ module Database.LSMTree.Internal.RunFsPaths (
   , runChecksumsPath
   , activeRunsDir
     -- * Checksums
-  , runChecksumFileNames
+  , checksumFileNamesForRunFiles
   , toChecksumsFile
   , fromChecksumsFile
     -- * ForRunFiles abstraction
@@ -44,20 +44,21 @@ import qualified Database.LSMTree.Internal.CRC32C as CRC
 newtype RunFsPaths = RunFsPaths { runNumber :: Int }
   deriving (Show, NFData)
 
-runFsPaths :: RunFsPaths -> ForRunFiles FsPath
-runFsPaths fsPaths = fmap (runFilePathWithExt fsPaths) runFileExts
+-- | Paths to all files associated with this run, except 'runChecksumsPath'.
+pathsForRunFiles :: RunFsPaths -> ForRunFiles FsPath
+pathsForRunFiles fsPaths = fmap (runFilePathWithExt fsPaths) runFileExts
 
 runKOpsPath :: RunFsPaths -> FsPath
-runKOpsPath = forRunKOps . runFsPaths
+runKOpsPath = forRunKOps . pathsForRunFiles
 
 runBlobPath :: RunFsPaths -> FsPath
-runBlobPath = forRunBlob . runFsPaths
+runBlobPath = forRunBlob . pathsForRunFiles
 
 runFilterPath :: RunFsPaths -> FsPath
-runFilterPath = forRunFilter . runFsPaths
+runFilterPath = forRunFilter . pathsForRunFiles
 
 runIndexPath :: RunFsPaths -> FsPath
-runIndexPath = forRunIndex . runFsPaths
+runIndexPath = forRunIndex . pathsForRunFiles
 
 runChecksumsPath :: RunFsPaths -> FsPath
 runChecksumsPath = flip runFilePathWithExt "checksums"
@@ -81,14 +82,14 @@ runFileExts = ForRunFiles {
   Checksums
 -------------------------------------------------------------------------------}
 
-runChecksumFileNames :: ForRunFiles CRC.ChecksumsFileName
-runChecksumFileNames = fmap (CRC.ChecksumsFileName . BS.pack) runFileExts
+checksumFileNamesForRunFiles :: ForRunFiles CRC.ChecksumsFileName
+checksumFileNamesForRunFiles = fmap (CRC.ChecksumsFileName . BS.pack) runFileExts
 
 toChecksumsFile :: ForRunFiles CRC.CRC32C -> CRC.ChecksumsFile
-toChecksumsFile = Map.fromList . toList . liftA2 (,) runChecksumFileNames
+toChecksumsFile = Map.fromList . toList . liftA2 (,) checksumFileNamesForRunFiles
 
 fromChecksumsFile :: CRC.ChecksumsFile -> Either String (ForRunFiles CRC.CRC32C)
-fromChecksumsFile file = for runChecksumFileNames $ \name ->
+fromChecksumsFile file = for checksumFileNamesForRunFiles $ \name ->
     case Map.lookup name file of
       Just crc -> Right crc
       Nothing  -> Left ("key not found: " <> show name)

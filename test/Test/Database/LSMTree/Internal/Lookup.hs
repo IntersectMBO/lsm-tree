@@ -44,6 +44,7 @@ import           Database.LSMTree.Internal.RawOverflowPage
 import           Database.LSMTree.Internal.RawPage
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunAcc as Run
+import           Database.LSMTree.Internal.RunFsPaths (RunFsPaths (..))
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.Serialise.Class
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
@@ -301,7 +302,7 @@ prop_roundtripFromWriteBufferLookupIO dats =
     pure $ opaqueifyBlobs (V.fromList model) === opaqueifyBlobs (V.zip (V.fromList lookupss) real)
   where
     mkRuns hasFS = first V.fromList . unzip <$> sequence [
-          (,wb) <$> Run.fromWriteBuffer hasFS (Run.RunFsPaths i) wb
+          (,wb) <$> Run.fromWriteBuffer hasFS (RunFsPaths i) wb
         | (i, dat) <- zip [0..] (getSmallList dats)
         , let wb = WB.WB (runData dat)
         ]

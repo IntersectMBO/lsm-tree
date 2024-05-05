@@ -13,6 +13,8 @@ import           Database.LSMTree.Extras.Generators (KeyForIndexCompact,
 import qualified Database.LSMTree.Internal.Entry as Entry
 import qualified Database.LSMTree.Internal.Merge as Merge
 import qualified Database.LSMTree.Internal.Run as Run
+import           Database.LSMTree.Internal.RunFsPaths (RunFsPaths (..),
+                     pathsForRunFiles)
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
@@ -81,7 +83,7 @@ prop_MergeDistributes fs level stepSize (fmap unTypedWriteBuffer -> wbs) = do
       .&&. lhsKOpsFile === rhsKOpsFile
       .&&. lhsBlobFile === rhsBlobFile
   where
-    flush n = Run.fromWriteBuffer fs (Run.RunFsPaths n)
+    flush n = Run.fromWriteBuffer fs (RunFsPaths n)
 
     stats = tabulate "value size" (map (showPowersOf10 . sizeofValue) vals)
           . label (if any isLargeKOp kops then "has large k/op" else "no large k/op")
@@ -98,12 +100,12 @@ prop_CloseMerge ::
      [TypedWriteBuffer KeyForIndexCompact SerialisedValue SerialisedBlob] ->
      IO Property
 prop_CloseMerge fs level (Positive stepSize) (fmap unTypedWriteBuffer -> wbs) = do
-    let path0 = Run.RunFsPaths 0
+    let path0 = RunFsPaths 0
     runs <- sequenceA $ zipWith flush [10..] wbs
     mergeToClose <- makeInProgressMerge path0 runs
     traverse_ (Merge.close fs) mergeToClose
 
-    filesExist <- traverse (FS.doesFileExist fs) (Run.runFsPaths path0)
+    filesExist <- traverse (FS.doesFileExist fs) (pathsForRunFiles path0)
 
     -- cleanup
     traverse_ (Run.removeReference fs) runs
@@ -112,7 +114,7 @@ prop_CloseMerge fs level (Positive stepSize) (fmap unTypedWriteBuffer -> wbs) = 
       counterexample ("run files exist: " <> show filesExist) $
         isJust mergeToClose ==> all not filesExist
   where
-    flush n = Run.fromWriteBuffer fs (Run.RunFsPaths n)
+    flush n = Run.fromWriteBuffer fs (RunFsPaths n)
 
     makeInProgressMerge path runs =
       Merge.new fs level mappendValues path runs >>= \case
@@ -140,8 +142,8 @@ mergeRuns ::
      StepSize ->
      IO (Run.Run (FS.Handle h))
 mergeRuns fs level n runs (Positive stepSize) = do
-    Merge.new fs level mappendValues (Run.RunFsPaths n) runs >>= \case
-      Nothing -> Run.fromWriteBuffer fs (Run.RunFsPaths n) WB.empty
+    Merge.new fs level mappendValues (RunFsPaths n) runs >>= \case
+      Nothing -> Run.fromWriteBuffer fs (RunFsPaths n) WB.empty
       Just m  -> go m
   where
     go m =

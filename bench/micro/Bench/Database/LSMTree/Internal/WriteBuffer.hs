@@ -17,6 +17,8 @@ import           Database.LSMTree.Extras.UTxO
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
+import           Database.LSMTree.Internal.RunFsPaths (RunFsPaths (..),
+                     activeRunsDir)
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
@@ -133,12 +135,12 @@ benchWriteBuffer conf@Config{name} =
           writeBufferEnvCleanup
 
     -- We'll remove the files on every run, so we can re-use the same run number.
-    getPaths :: IO Run.RunFsPaths
-    getPaths = pure (Run.RunFsPaths 0)
+    getPaths :: IO RunFsPaths
+    getPaths = pure (RunFsPaths 0)
 
     -- Simply remove the whole active directory.
     cleanupPaths :: FS.HasFS IO FS.HandleIO -> IO ()
-    cleanupPaths hasFS = FS.removeDirectoryRecursive hasFS Run.activeRunsDir
+    cleanupPaths hasFS = FS.removeDirectoryRecursive hasFS activeRunsDir
 
 insert :: InputKOps -> WriteBuffer
 insert (NormalInputs kops) =
@@ -146,7 +148,7 @@ insert (NormalInputs kops) =
 insert (MonoidalInputs kops mappendVal) =
     List.foldl' (\wb (k, e) -> WB.addEntryMonoidal mappendVal k e wb) WB.empty kops
 
-flush :: FS.HasFS IO FS.HandleIO -> Run.RunFsPaths -> WriteBuffer -> IO (Run (FS.Handle (FS.HandleIO)))
+flush :: FS.HasFS IO FS.HandleIO -> RunFsPaths -> WriteBuffer -> IO (Run (FS.Handle (FS.HandleIO)))
 flush = Run.fromWriteBuffer
 
 data InputKOps
