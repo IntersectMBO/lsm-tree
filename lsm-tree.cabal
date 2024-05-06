@@ -374,6 +374,47 @@ benchmark lsm-tree-bench-wp8
 
   ghc-options:    -rtsopts -with-rtsopts=-T -threaded
 
+benchmark rocksdb-bench-wp8
+  import:         language, warnings, wno-x-partial
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: bench/macro src-extras
+  main-is:        rocksdb-bench-wp8.hs
+
+  if !os(linux)
+    buildable: False
+
+  build-depends:
+    , base
+    , binary
+    , bytestring
+    , clock
+    , containers
+    , cryptohash-sha256
+    , deepseq
+    , directory
+    , lsm-tree:mcg
+    , lsm-tree:rocksdb
+    , optparse-applicative
+    , split
+
+  ghc-options:    -rtsopts -with-rtsopts=-T -threaded
+
+library rocksdb
+  import:          language, warnings
+  hs-source-dirs:  src-rocksdb
+  exposed-modules: RocksDB
+  other-modules:   RocksDB.FFI
+
+  if !os(linux)
+    buildable: False
+
+  -- Ubuntu 22.04 doesn't have pkgconfig files for rocksdb
+  extra-libraries: rocksdb
+  build-depends:
+    , base
+    , bytestring
+    , indexed-traversable
+
 library kmerge
   import:          language, warnings, wno-x-partial
   hs-source-dirs:  src-kmerge
