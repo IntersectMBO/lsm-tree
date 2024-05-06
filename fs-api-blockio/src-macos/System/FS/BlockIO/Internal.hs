@@ -2,7 +2,7 @@ module System.FS.BlockIO.Internal (
     ioHasBlockIO
   ) where
 
-import           System.FS.API (HasBufFS, HasFS)
+import           System.FS.API (HasFS)
 import           System.FS.BlockIO.API (HasBlockIO, IOCtxParams)
 import qualified System.FS.BlockIO.Serial as Serial
 import           System.FS.IO (HandleIO)
@@ -14,7 +14,6 @@ import           System.FS.IO (HandleIO)
 -- The recommended choice would be to use the POSIX AIO API.
 ioHasBlockIO ::
      HasFS IO HandleIO
-  -> HasBufFS IO HandleIO
   -> Maybe IOCtxParams
   -> IO (HasBlockIO IO HandleIO)
-ioHasBlockIO hasFS hasBufFS _ = Serial.serialHasBlockIO hasFS hasBufFS
+ioHasBlockIO hasFS _ = Serial.serialHasBlockIO hasFS

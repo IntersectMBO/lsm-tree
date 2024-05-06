@@ -281,8 +281,7 @@ prop_roundtripFromWriteBufferLookupIO ::
 prop_roundtripFromWriteBufferLookupIO dats =
     ioProperty $ withSystemTempDirectory "prop" $ \dir -> do
     let hasFS = FS.ioHasFS (MountPoint dir)
-        hasBufFS = FS.ioHasBufFS (MountPoint dir)
-    hasBlockIO <- FS.ioHasBlockIO hasFS hasBufFS Nothing
+    hasBlockIO <- FS.ioHasBlockIO hasFS Nothing
     (runs, wbs) <- mkRuns hasFS
     let wbAll = WB.WB (Map.unionsWith (combine resolveV) (fmap WB.unWB wbs))
     real <- lookupsInBatches

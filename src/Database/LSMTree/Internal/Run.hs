@@ -78,7 +78,7 @@ import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import qualified System.FS.API as FS
-import           System.FS.API (HasBufFS, HasFS)
+import           System.FS.API (HasFS)
 
 
 -- | The in-memory representation of a completed LSM run.
@@ -132,12 +132,12 @@ removeReference fs run@Run {..} = do
       close fs run
 
 -- | The 'BlobSpan' to read must come from this run!
-readBlob :: HasFS IO h -> HasBufFS IO h -> Run (FS.Handle h) -> BlobSpan -> IO SerialisedBlob
-readBlob fs bfs Run {..} BlobSpan {..} = do
+readBlob :: HasFS IO h -> Run (FS.Handle h) -> BlobSpan -> IO SerialisedBlob
+readBlob fs Run {..} BlobSpan {..} = do
     let off = fromIntegral blobSpanOffset
     let len = fromIntegral blobSpanSize
     mba <- newPinnedByteArray len
-    _ <- FS.hGetBufExactlyAt fs bfs runBlobFile mba 0 (fromIntegral len) off
+    _ <- FS.hGetBufExactlyAt fs runBlobFile mba 0 (fromIntegral len) off
     ba <- unsafeFreezeByteArray mba
     let !rb = RB.fromByteArray 0 len ba
     return (SerialisedBlob rb)

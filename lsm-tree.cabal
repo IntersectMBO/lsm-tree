@@ -87,7 +87,7 @@ library
     , deepseq                  ^>=1.4      || ^>=1.5
     , filepath
     , fs-api                   ^>=0.2
-    , io-classes               ^>=1.3
+    , io-classes               ^>=1.4
     , lsm-tree:bloomfilter
     , lsm-tree:fs-api-blockio
     , lsm-tree:kmerge
@@ -255,7 +255,7 @@ test-suite lsm-tree-test
     , fs-api
     , fs-sim                   >=0.2
     , io-classes
-    , io-sim                   >=1.2
+    , io-sim                   >=1.4
     , lsm-tree
     , lsm-tree:bloomfilter
     , lsm-tree:fs-api-blockio
@@ -490,7 +490,7 @@ library fs-api-blockio
     , base        >=4.16  && <4.20
     , deepseq     ^>=1.4  || ^>=1.5
     , fs-api      ^>=0.2
-    , io-classes  ^>=1.3
+    , io-classes  ^>=1.4
     , primitive   ^>=0.9
     , vector      ^>=0.13
 

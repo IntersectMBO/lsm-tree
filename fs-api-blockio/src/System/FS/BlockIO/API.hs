@@ -32,10 +32,10 @@ import qualified Data.Vector.Primitive as PV
 import qualified Data.Vector.Unboxed as VU
 import qualified Data.Vector.Unboxed as VUM
 import           GHC.IO.Exception (IOErrorType (ResourceVanished))
+import           GHC.Stack (HasCallStack)
 import           System.FS.API
 import           System.IO.Error (ioeSetErrorString, mkIOError)
 import           System.Posix.Types (ByteCount, FileOffset)
-import           Util.CallStack
 
 -- | Abstract interface for submitting large batches of I\/O operations.
 data HasBlockIO m h = HasBlockIO {
