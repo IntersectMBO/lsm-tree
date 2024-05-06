@@ -52,7 +52,7 @@ import           Data.ByteString.Short (ShortByteString (..))
 import           Data.Map.Range (Bound (..))
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (fromJust)
+import           Data.Maybe (fromMaybe)
 import           Data.Primitive.ByteArray (ByteArray (..), indexByteArray,
                      sizeofByteArray)
 import           Data.Primitive.Types (sizeOf)
@@ -566,7 +566,7 @@ search k IndexCompact{..} = -- Pre: @[0, V.length icPrimary)@
         Just !i ->         -- Post: @[lb, i]@.
           if unBit $ icClashes VU.! i then
             -- Post: @[lb, i]@, now in clash recovery mode.
-            let !i1  = PageNo $ fromJust $
+            let !i1  = PageNo $ fromMaybe lb $
                   bitIndexFromToRev (BoundInclusive lb) (BoundInclusive i) (Bit False) icClashes
                 !i2  = maybe (PageNo 0) snd $ Map.lookupLE (unsafeNoAssertMakeUnslicedKey k) icTieBreaker
                 PageNo !i3 = max i1 i2 -- Post: the intersection of @[i1, i]@ and @[i2, i].
