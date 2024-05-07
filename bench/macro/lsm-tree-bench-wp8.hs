@@ -53,11 +53,11 @@ import           Data.Traversable (mapAccumL)
 import           Data.Tuple (swap)
 import           Data.Void (Void)
 import           Data.Word (Word64)
+import qualified MCG
 import qualified Options.Applicative as O
 import qualified System.Clock as Clock
 import qualified System.FS.API as FS
 import qualified System.FS.IO as FsIO
-import qualified System.Random.SplitMix as SM
 import           Text.Printf (printf)
 
 -- We should be able to write this benchmark
@@ -233,7 +233,9 @@ doDryRun' gopts opts = do
         printf "Expected number of duplicates (extreme upper bound): %5f out of %f\n" q n
 
     -- TODO: open session to measure that as well.
-    let initGen = SM.mkSMGen opts.seed
+    let initGen = MCG.make
+            (fromIntegral $ gopts.initialSize + opts.batchSize * opts.batchCount)
+            opts.seed
 
     keysRef <- newIORef $
         if opts.check
@@ -283,16 +285,16 @@ We could also make it exact, but then we'll need to carry some state around
 generateBatch
     :: Int       -- ^ initial size of the collection
     -> Int       -- ^ batch size
-    -> SM.SMGen  -- ^ generator
+    -> MCG.MCG   -- ^ generator
     -> Int       -- ^ batch number
-    -> (SM.SMGen, [Word64], [Word64])
+    -> (MCG.MCG, [Word64], [Word64])
 generateBatch initialSize batchSize g b = (nextG, lookups, inserts)
   where
     maxK :: Word64
     maxK = fromIntegral $ initialSize + batchSize * b
 
     lookups :: [Word64]
-    (!nextG, lookups) = mapAccumL (\g' _ -> swap (SM.bitmaskWithRejection64 maxK g')) g [1 .. batchSize]
+    (!nextG, lookups) = mapAccumL (\g' _ -> swap (MCG.reject maxK g')) g [1 .. batchSize]
 
     inserts :: [Word64]
     inserts = [ maxK .. maxK + fromIntegral batchSize - 1 ]
@@ -335,7 +337,9 @@ doRun' gopts opts = do
     name <- maybe (fail "invalid snapshot name") return $
         LSM.mkSnapshotName "bench"
 
-    let initGen = SM.mkSMGen opts.seed
+    let initGen = MCG.make
+            (fromIntegral $ gopts.initialSize + opts.batchSize * opts.batchCount)
+            opts.seed
 
     withSession someFs (FS.mkFsPath []) $ \session -> do
         -- open snapshot

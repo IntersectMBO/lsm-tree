@@ -345,6 +345,14 @@ benchmark lsm-tree-macro-bench
 
   ghc-options:    -rtsopts -with-rtsopts=-T -threaded
 
+library mcg
+  import:          language, warnings, wno-x-partial
+  hs-source-dirs:  src-mcg
+  exposed-modules: MCG
+  build-depends:
+    , base
+    , primes
+
 benchmark lsm-tree-bench-wp8
   import:         language, warnings, wno-x-partial
   type:           exitcode-stdio-1.0
@@ -360,8 +368,8 @@ benchmark lsm-tree-bench-wp8
     , deepseq
     , fs-api
     , lsm-tree
+    , lsm-tree:mcg
     , optparse-applicative
-    , splitmix
 
   ghc-options:    -rtsopts -with-rtsopts=-T -threaded
 
