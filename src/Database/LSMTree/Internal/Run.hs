@@ -35,10 +35,9 @@
 -- not exhaustive.
 --
 module Database.LSMTree.Internal.Run (
-    -- * Paths
-    module FsPaths
     -- * Run
-  , Run (..)
+    Run (..)
+  , RunFsPaths
   , sizeInPages
   , addReference
   , removeReference
@@ -73,7 +72,7 @@ import qualified Database.LSMTree.Internal.IndexCompact as Index
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.RunBuilder (RunBuilder)
 import qualified Database.LSMTree.Internal.RunBuilder as Builder
-import           Database.LSMTree.Internal.RunFsPaths as FsPaths
+import           Database.LSMTree.Internal.RunFsPaths
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
@@ -206,7 +205,7 @@ openFromDisk fs runRunFsPaths = do
          =<< CRC.readChecksumsFile fs (runChecksumsPath runRunFsPaths)
 
     -- verify checksums of files we don't read yet
-    let paths = runFsPaths runRunFsPaths
+    let paths = pathsForRunFiles runRunFsPaths
     checkCRC (forRunKOps expectedChecksums) (forRunKOps paths)
     checkCRC (forRunBlob expectedChecksums) (forRunBlob paths)
 

@@ -43,6 +43,7 @@ import           Database.LSMTree.Internal.RawOverflowPage
                      (rawOverflowPageRawBytes)
 import           Database.LSMTree.Internal.RawPage
 import           Database.LSMTree.Internal.Run
+import           Database.LSMTree.Internal.RunFsPaths (RunFsPaths (..))
 import qualified Database.LSMTree.Internal.RunReader as Reader
 import           Database.LSMTree.Internal.Serialise
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
