@@ -329,19 +329,27 @@ benchmark lsm-tree-macro-bench
   main-is:        Main.hs
   other-modules:
     Bench.Database.LSMTree.Internal.BloomFilter
+    Bench.Database.LSMTree.Internal.Lookup
     Database.LSMTree.Extras.Orphans
+    Database.LSMTree.Extras.UTxO
 
   build-depends:
     , base
+    , bytestring
     , deepseq
+    , directory
     , fs-api
+    , io-classes
     , lsm-tree
     , lsm-tree:bloomfilter
+    , lsm-tree:fs-api-blockio
     , primitive
     , QuickCheck
     , random
+    , temporary
     , time
     , vector
+    , vector-algorithms
     , wide-word
 
   ghc-options:    -rtsopts -with-rtsopts=-T -threaded

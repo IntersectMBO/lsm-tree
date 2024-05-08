@@ -93,7 +93,7 @@ new :: NumEntries
                                   -- which is based on the 'NumPages'.
     -> ST s (RunAcc s)
 new (NumEntries nentries) npages rangeFinderPrecisionOverride = do
-    mbloom <- Bloom.Easy.easyNew 0.1 nentries -- TODO(optimise): tune bloom filter
+    mbloom <- Bloom.Easy.easyNew 0.02 nentries -- TODO(optimise): tune bloom filter
     let rangeFinderPrecisionDefault = Index.suggestRangeFinderPrecision npages
         rangeFinderPrecision        = fromMaybe rangeFinderPrecisionDefault
                                                 rangeFinderPrecisionOverride

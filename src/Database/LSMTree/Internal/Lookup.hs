@@ -17,6 +17,7 @@ module Database.LSMTree.Internal.Lookup (
   , indexSearches
     -- * Lookups in IO
   , BatchSize (..)
+  , ResolveSerialisedValue
   , lookupsInBatches
   , submitInBatches
   , intraPageLookups
