@@ -21,6 +21,7 @@ import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as VU
 import qualified System.FS.API as FS
 import           System.FS.API.Strict (hPutAllStrict)
+import qualified System.FS.BlockIO.API as FS
 import           System.FS.BlockIO.API
 import qualified System.FS.BlockIO.IO as IO
 import qualified System.FS.IO as IO
@@ -59,14 +60,14 @@ example_initClose :: Assertion
 example_initClose = withSystemTempDirectory "example_initClose" $ \dirPath -> do
     let mount = FS.MountPoint dirPath
         hfs = IO.ioHasFS mount
-    hbio <- IO.ioHasBlockIO hfs Nothing
+    hbio <- IO.ioHasBlockIO hfs FS.defaultIOCtxParams
     close hbio
 
 example_closeIsIdempotent :: Assertion
 example_closeIsIdempotent = withSystemTempDirectory "example_closeIsIdempotent" $ \dirPath -> do
     let mount = FS.MountPoint dirPath
         hfs = IO.ioHasFS mount
-    hbio <- IO.ioHasBlockIO hfs Nothing
+    hbio <- IO.ioHasBlockIO hfs FS.defaultIOCtxParams
     close hbio
     eith <- try @SomeException (close hbio)
     case eith of
@@ -79,7 +80,7 @@ prop_readWrite :: ByteString -> Property
 prop_readWrite bs = ioProperty $ withSystemTempDirectory "prop_readWrite" $ \dirPath -> do
     let mount = FS.MountPoint dirPath
         hfs = IO.ioHasFS mount
-    hbio <- IO.ioHasBlockIO hfs Nothing
+    hbio <- IO.ioHasBlockIO hfs FS.defaultIOCtxParams
     prop <- FS.withFile hfs (FS.mkFsPath ["temp"]) (FS.WriteMode FS.MustBeNew) $ \h -> do
       let n = BS.length bs
       writeBuf <- fromByteStringPinned bs
@@ -98,7 +99,7 @@ prop_submitToClosedCtx :: ByteString -> Property
 prop_submitToClosedCtx bs = ioProperty $ withSystemTempDirectory "prop_a" $ \dir -> do
     let mount = FS.MountPoint dir
         hfs = IO.ioHasFS mount
-    hbio <- IO.ioHasBlockIO hfs Nothing
+    hbio <- IO.ioHasBlockIO hfs FS.defaultIOCtxParams
 
     props <- FS.withFile hfs (FS.mkFsPath ["temp"]) (FS.WriteMode FS.MustBeNew) $ \h -> do
       void $ hPutAllStrict hfs h bs

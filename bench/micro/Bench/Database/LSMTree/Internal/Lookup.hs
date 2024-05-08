@@ -22,6 +22,7 @@ import           Data.Bifunctor (Bifunctor (..))
 import qualified Data.List as List
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import           Data.Maybe (fromMaybe)
 import qualified Data.Vector as V
 import           Database.LSMTree.Extras.Orphans ()
 import           Database.LSMTree.Extras.Random (sampleUniformWithReplacement,
@@ -127,7 +128,7 @@ lookupsInBatchesEnv Config {..} = do
     benchTmpDir <- createTempDirectory sysTmpDir "lookupsInBatchesEnv"
     (storedKeys, lookupKeys) <- lookupsEnv (mkStdGen 17) nentries npos nneg
     let hasFS = FS.ioHasFS (FS.MountPoint benchTmpDir)
-    hasBlockIO <- FS.ioHasBlockIO hasFS ioctxps
+    hasBlockIO <- FS.ioHasBlockIO hasFS (fromMaybe FS.defaultIOCtxParams ioctxps)
     let wb = WB.WB storedKeys
         fsps = RunFsPaths 0
     r <- Run.fromWriteBuffer hasFS fsps wb

@@ -9,6 +9,7 @@
 module System.FS.BlockIO.API (
     HasBlockIO (..)
   , IOCtxParams (..)
+  , defaultIOCtxParams
   , mkClosedError
   , IOOp (..)
   , ioopHandle
@@ -63,6 +64,12 @@ data IOCtxParams = IOCtxParams {
                      ioctxBatchSizeLimit   :: !Int,
                      ioctxConcurrencyLimit :: !Int
                    }
+
+defaultIOCtxParams :: IOCtxParams
+defaultIOCtxParams = IOCtxParams {
+      ioctxBatchSizeLimit   = 64,
+      ioctxConcurrencyLimit = 64 * 3
+    }
 
 mkClosedError :: HasCallStack => SomeHasFS m -> String -> FsError
 mkClosedError (SomeHasFS hasFS) loc = ioToFsError (mkFsErrorPath hasFS (mkFsPath [])) ioerr
