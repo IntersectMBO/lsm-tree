@@ -15,7 +15,7 @@ import           System.FS.IO (HandleIO)
 
 ioHasBlockIO ::
      HasFS IO HandleIO
-  -> Maybe IOCtxParams
+  -> IOCtxParams
   -> IO (HasBlockIO IO HandleIO)
 #if SERIALBLOCKIO
 ioHasBlockIO hasFS _ = Serial.serialHasBlockIO hasFS

@@ -10,6 +10,6 @@ import           System.FS.IO (HandleIO)
 -- | Platform-dependent IO instantiation of 'HasBlockIO'.
 ioHasBlockIO ::
      HasFS IO HandleIO
-  -> Maybe IOCtxParams
+  -> IOCtxParams
   -> IO (HasBlockIO IO HandleIO)
 ioHasBlockIO = I.ioHasBlockIO

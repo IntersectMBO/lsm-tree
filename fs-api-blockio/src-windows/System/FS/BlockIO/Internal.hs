@@ -14,6 +14,6 @@ import           System.FS.IO (HandleIO)
 -- The recommended choice would be to use the Win32 IOCP API.
 ioHasBlockIO ::
      HasFS IO HandleIO
-  -> Maybe IOCtxParams
+  -> IOCtxParams
   -> IO (HasBlockIO IO HandleIO)
 ioHasBlockIO hasFS _ = Serial.serialHasBlockIO hasFS
