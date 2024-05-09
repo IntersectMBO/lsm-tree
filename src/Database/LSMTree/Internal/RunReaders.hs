@@ -29,6 +29,9 @@ import           System.FS.API (HasFS)
 --
 -- Construct with 'new', then keep calling 'pop'.
 -- If aborting early, remember to call 'close'!
+--
+-- Creating a 'RunReaders' does not increase the runs' reference count, so make
+-- sure they remain open while using the 'RunReaders'.
 data Readers fhandle = Readers {
       readersHeap :: !(Heap.MutableHeap RealWorld (ReadCtx fhandle))
       -- | Since there is always one reader outside of the heap, we need to
@@ -111,6 +114,7 @@ peekKey Readers {..} = do
 
 -- | Once a function returned 'Drained', do not use the 'Readers' any more!
 data HasMore = HasMore | Drained
+  deriving stock (Eq, Show)
 
 pop ::
      HasFS IO h

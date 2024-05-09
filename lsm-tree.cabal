@@ -248,6 +248,7 @@ test-suite lsm-tree-test
     Test.Database.LSMTree.Internal.Run
     Test.Database.LSMTree.Internal.RunAcc
     Test.Database.LSMTree.Internal.RunBuilder
+    Test.Database.LSMTree.Internal.RunReaders
     Test.Database.LSMTree.Internal.Serialise
     Test.Database.LSMTree.Internal.Serialise.Class
     Test.Database.LSMTree.Model.Monoidal
