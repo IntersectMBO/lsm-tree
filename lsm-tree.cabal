@@ -291,6 +291,7 @@ benchmark lsm-tree-micro-bench
     Bench.Database.LSMTree.Internal.BloomFilter
     Bench.Database.LSMTree.Internal.IndexCompact
     Bench.Database.LSMTree.Internal.Lookup
+    Bench.Database.LSMTree.Internal.Merge
     Bench.Database.LSMTree.Internal.RawPage
     Bench.Database.LSMTree.Internal.WriteBuffer
     Database.LSMTree.Extras
