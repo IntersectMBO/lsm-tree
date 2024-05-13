@@ -72,6 +72,7 @@ library
     Database.LSMTree.Internal.RunReader
     Database.LSMTree.Internal.Serialise
     Database.LSMTree.Internal.Serialise.Class
+    Database.LSMTree.Internal.TableHandle
     Database.LSMTree.Internal.Unsliced
     Database.LSMTree.Internal.Vector
     Database.LSMTree.Internal.WriteBuffer
@@ -92,6 +93,7 @@ library
     , lsm-tree:fs-api-blockio
     , lsm-tree:kmerge
     , primitive                ^>=0.9
+    , strict-mvar              ^>=1.4
     , vector                   ^>=0.13
     , vector-algorithms        ^>=0.9
 
