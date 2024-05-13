@@ -1,9 +1,13 @@
+{-# LANGUAGE DeriveAnyClass #-}
+
 -- TODO: remove once the top-level bindings are in use
 {-# OPTIONS_GHC -Wno-unused-top-binds #-}
 
 module Database.LSMTree.Internal.TableHandle (
+    -- * Exceptions
+    LSMTreeError (..)
     -- * Session
-    Session
+  , Session (..)
     -- * Table handle
   , TableHandle
     -- * configuration
@@ -15,6 +19,7 @@ module Database.LSMTree.Internal.TableHandle (
   ) where
 
 import           Control.Concurrent.Class.MonadMVar.Strict (StrictMVar)
+import           Control.Exception (Exception)
 import           Data.BloomFilter (Bloom)
 import qualified Data.Vector as V
 import           Data.Word (Word32)
@@ -24,8 +29,18 @@ import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.Serialise (SerialisedKey,
                      SerialisedValue)
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
-import           System.FS.API (FsPath, HasFS)
+import           System.FS.API (FsErrorPath, FsPath, HasFS)
 import           System.FS.BlockIO.API (HasBlockIO)
+
+{-------------------------------------------------------------------------------
+  Exceptions
+-------------------------------------------------------------------------------}
+
+-- TODO: give this a nicer Show instance.
+data LSMTreeError =
+    SessionDirDoesNotExist FsErrorPath
+  | SessionDirLocked FsErrorPath
+  deriving (Show, Exception)
 
 {-------------------------------------------------------------------------------
   Session

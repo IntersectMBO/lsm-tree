@@ -94,6 +94,7 @@ library
     , lsm-tree:kmerge
     , primitive                ^>=0.9
     , strict-mvar              ^>=1.4
+    , text                     ^>=2.1
     , vector                   ^>=0.13
     , vector-algorithms        ^>=0.9
 
@@ -379,6 +380,7 @@ benchmark lsm-tree-bench-wp8
     , deepseq
     , fs-api
     , lsm-tree
+    , lsm-tree:fs-api-blockio
     , lsm-tree:mcg
     , optparse-applicative
 
