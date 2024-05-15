@@ -1,5 +1,3 @@
-{-# OPTIONS_GHC -Wno-incomplete-uni-patterns #-}
-
 module Test.Util.RawPage (
     toRawPage,
     assertEqualRawPages,
@@ -20,17 +18,17 @@ import           Database.LSMTree.Internal.RawOverflowPage (RawOverflowPage,
                      makeRawOverflowPage)
 import           Database.LSMTree.Internal.RawPage (RawPage, makeRawPage,
                      rawPageRawBytes)
-import           FormatPage (DiskPageSize (..), PageLogical (..), encodePage,
-                     serialisePage)
+import           FormatPage (DiskPageSize (..), encodePage, serialisePage)
 import qualified System.Console.ANSI as ANSI
+import           Test.Util.KeyOpGenerators (PageContentFits (..))
 import           Test.Tasty.HUnit (Assertion, assertFailure)
 import           Test.Tasty.QuickCheck (Property, counterexample)
 
 -- | Convert prototype 'PageLogical' to 'RawPage'.
-toRawPage :: PageLogical -> (RawPage, [RawOverflowPage])
-toRawPage (PageLogical kops) = (page, overflowPages)
+toRawPage :: PageContentFits -> (RawPage, [RawOverflowPage])
+toRawPage (PageContentFits kops) = (page, overflowPages)
   where
-    Just bs = serialisePage <$> encodePage DiskPage4k kops
+    bs = maybe overfull serialisePage (encodePage DiskPage4k kops)
     (pfx, sfx) = BS.splitAt 4096 bs -- hardcoded page size.
     page          = makeRawPageBS pfx
     overflowPages = [ makeRawOverflowPageBS sfxpg
@@ -38,6 +36,9 @@ toRawPage (PageLogical kops) = (page, overflowPages)
                                  [ BS.take 4096 (BS.drop n sfx)
                                  | n <- [0, 4096 .. ] ]
                     ]
+    overfull =
+      error $ "toRawPage: encountered overfull page, but PageContentFits is "
+           ++ "supposed to be guaranteed to fit, i.e. not to be overfull."
 
 makeRawPageBS :: BS.ByteString -> RawPage
 makeRawPageBS bs =

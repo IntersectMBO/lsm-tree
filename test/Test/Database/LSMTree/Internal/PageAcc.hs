@@ -15,6 +15,7 @@ import           Test.QuickCheck
 import           Test.QuickCheck.Instances ()
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck (testProperty)
+import           Test.Util.KeyOpGenerators
 import           Test.Util.RawPage
 
 import qualified FormatPage as Proto
@@ -86,7 +87,7 @@ prototype inputs' =
 
     finish :: PageAcc s -> [(Proto.Key, Proto.Operation)] -> ST s Property
     finish acc acc2 = do
-        let (lhs, _) = toRawPage $ Proto.PageLogical $ reverse acc2
+        let (lhs, _) = toRawPage $ PageContentFits $ reverse acc2
         rawpage <- serialisePageAcc acc
         let rhs = rawpage :: RawPage
         return $ propEqualRawPages lhs rhs

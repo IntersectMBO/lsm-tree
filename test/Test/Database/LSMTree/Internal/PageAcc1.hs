@@ -10,6 +10,7 @@ import           Test.QuickCheck
 import           Test.QuickCheck.Instances ()
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck (testProperty)
+import           Test.Util.KeyOpGenerators
 import           Test.Util.RawPage
 
 import qualified FormatPage as Proto
@@ -45,7 +46,7 @@ prototype k v br =
     .&&. counterexample "overflow pages do not match"
            (loverflow === roverflow)
   where
-    (lhs, loverflow) = toRawPage $ Proto.PageLogical [(k, Proto.Insert v br)]
+    (lhs, loverflow) = toRawPage $ PageContentFits [(k, Proto.Insert v br)]
     (rhs, roverflow) = singletonPage (convKey k) (convOp (Proto.Insert v br))
 
 prototypeU
@@ -58,7 +59,7 @@ prototypeU k v =
     .&&. counterexample "overflow pages do not match"
            (loverflow === roverflow)
   where
-    (lhs, loverflow) = toRawPage $ Proto.PageLogical [(k, Proto.Mupsert v)]
+    (lhs, loverflow) = toRawPage $ PageContentFits [(k, Proto.Mupsert v)]
     (rhs, roverflow) = singletonPage (convKey k) (convOp (Proto.Mupsert v))
 
 convKey :: Proto.Key -> SerialisedKey

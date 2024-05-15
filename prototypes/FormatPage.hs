@@ -50,9 +50,6 @@ module FormatPage (
     orderdKeyOps,
     shrinkKeyOps,
     shrinkOrderedKeyOps,
-    -- ** Old
-    PageLogical (..),
-    genFullPageLogical,
 ) where
 
 import           Data.Bits
@@ -782,48 +779,6 @@ instance Arbitrary BlobRef where
 
   shrink (BlobRef w64 w32) =
       [ BlobRef w64' w32' | (w64', w32') <- shrink (w64, w32) ]
-
--- | TODO: remove
-newtype PageLogical = PageLogical [(Key, Operation)]
-  deriving (Eq, Show)
-
-instance Arbitrary PageLogical where
-  arbitrary =
-    frequency
-      [ (1, (PageLogical . (:[])) <$>
-               scale (\n' -> ceiling (fromIntegral n' ** 2.2 :: Float)) arbitrary)
-      , (4, do n <- getSize
-               scale (\n' -> ceiling (sqrt (fromIntegral n' :: Float))) $
-                 go [] n (pageSizeEmpty DiskPage4k))
-      ]
-    where
-      go es 0 _  = return (mkPageLogical es)
-      go es i sz = do
-        e <- arbitrary
-        case pageSizeAddElem e sz of
-          Nothing  -> return (mkPageLogical es)
-          Just sz' -> go (e:es) (i-1) sz'
-
-  shrink (PageLogical p) =
-    [ mkPageLogical p' | p' <- shrink p ]
-
-genFullPageLogical :: DiskPageSize -> Gen Key -> Gen Value -> Gen PageLogical
-genFullPageLogical dpgsz gk gv =
-    go [] (pageSizeEmpty dpgsz)
-  where
-    go :: [(Key, Operation)] -> PageSize -> Gen PageLogical
-    go es sz = do
-      e <- (,) <$> gk <*> genOperation gv
-      case pageSizeAddElem e sz of
-        Nothing  -> return (mkPageLogical es)
-        Just sz' -> go (e:es) sz'
-
--- | Create 'PageLogical' enforcing the invariant.
-mkPageLogical :: [(Key, Operation)] -> PageLogical
-mkPageLogical =
-    PageLogical
-  . nubBy ((==) `on` fst)
-  . sortBy (compare `on` fst)
 
 instance Arbitrary DiskPageSize where
   arbitrary = scale (`div` 5) $ growingElements [minBound..]

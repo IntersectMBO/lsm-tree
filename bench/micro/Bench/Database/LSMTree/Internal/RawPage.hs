@@ -28,12 +28,12 @@ benchmarks = rawpage `deepseq` bgroup "Bench.Database.LSMTree.Internal.RawPage"
     , bench "existing-last" $ whnf (rawPageLookup rawpage) existingLast
     ]
   where
-    page :: PageLogical
-    page = unGen (genFullPageLogical DiskPage4k genSmallKey genSmallValue)
+    kops :: [(Key, Operation)]
+    kops = unGen (genPageContentNearFull DiskPage4k genSmallKey genSmallValue)
                  (mkQCGen 42) 200
 
     rawpage :: RawPage
-    rawpage = fst $ toRawPage $ page
+    rawpage = fst $ toRawPage kops
 
     genSmallKey :: Gen Key
     genSmallKey = Key . BS.pack <$> vectorOf 8 arbitrary
@@ -45,7 +45,7 @@ benchmarks = rawpage `deepseq` bgroup "Bench.Database.LSMTree.Internal.RawPage"
     missing = SerialisedKey $ RB.pack [1, 2, 3]
 
     keys :: [Key]
-    keys = case page of PageLogical xs -> map fst xs
+    keys = map fst kops
 
     existingHead :: SerialisedKey
     existingHead = SerialisedKey $ RB.fromByteString $ unKey $ head keys
@@ -53,8 +53,9 @@ benchmarks = rawpage `deepseq` bgroup "Bench.Database.LSMTree.Internal.RawPage"
     existingLast :: SerialisedKey
     existingLast = SerialisedKey $ RB.fromByteString $ unKey $ last keys
 
-toRawPage :: PageLogical -> (RawPage, BS.ByteString)
-toRawPage (PageLogical kops) = (page, sfx)
+--TODO: share this code with the other toRawPage in the testsuite
+toRawPage :: [(Key, Operation)] -> (RawPage, BS.ByteString)
+toRawPage kops = (page, sfx)
   where
     Just bs = serialisePage <$> encodePage DiskPage4k kops
     (pfx, sfx) = BS.splitAt 4096 bs -- hardcoded page size.
