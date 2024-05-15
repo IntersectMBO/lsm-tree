@@ -54,8 +54,8 @@ benchmarks = rawpage `deepseq` bgroup "Bench.Database.LSMTree.Internal.RawPage"
     existingLast = SerialisedKey $ RB.fromByteString $ unKey $ last keys
 
 toRawPage :: PageLogical -> (RawPage, BS.ByteString)
-toRawPage p = (page, sfx)
+toRawPage (PageLogical kops) = (page, sfx)
   where
-    Just bs = serialisePage <$> encodePage DiskPage4k p
+    Just bs = serialisePage <$> encodePage DiskPage4k kops
     (pfx, sfx) = BS.splitAt 4096 bs -- hardcoded page size.
     page = case SBS.toShort pfx of SBS.SBS ba -> makeRawPage (ByteArray ba) 0

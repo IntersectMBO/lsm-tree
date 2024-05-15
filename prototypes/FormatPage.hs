@@ -39,6 +39,18 @@ module FormatPage (
 
     -- * Tests and generators
     tests,
+    -- ** Generators and shrinkers
+    genPageContentFits,
+    genPageContentMaybeOverfull,
+    genPageContentSingle,
+    genPageContentNearFull,
+    genPageContentMedium,
+    MinKeySize(..),
+    noMinKeySize,
+    orderdKeyOps,
+    shrinkKeyOps,
+    shrinkOrderedKeyOps,
+    -- ** Old
     PageLogical (..),
     genFullPageLogical,
 ) where
@@ -62,12 +74,6 @@ import           Control.Monad
 import           Test.QuickCheck hiding ((.&.))
 import           Test.Tasty
 import           Test.Tasty.QuickCheck (testProperty)
-
-
--- | Logically, a page is a sequence of key,operation pairs (with optional
--- blobrefs), sorted by key.
-newtype PageLogical = PageLogical [(Key, Operation)]
-  deriving (Eq, Show)
 
 
 -------------------------------------------------------------------------------
@@ -148,8 +154,8 @@ pageSizeAddElem (Key key, op) (PageSize n b sz dpgsz)
              Mupsert (Value v)   -> BS.length v
              Delete              -> 0)
 
-calcPageSize :: DiskPageSize -> PageLogical -> Maybe PageSize
-calcPageSize dpgsz (PageLogical kops) =
+calcPageSize :: DiskPageSize -> [(Key, Operation)] -> Maybe PageSize
+calcPageSize dpgsz kops =
     go (pageSizeEmpty dpgsz) kops
   where
     go !pgsz [] = Just pgsz
@@ -221,7 +227,8 @@ data PageSizesOffsets =
 -- Page encoding and serialisation
 --
 
--- | Returns @Nothing@ if the size would overflow the given disk page size.
+-- | Returns @Nothing@ if the size would be over-full for the given disk page
+-- size.
 --
 calcPageSizeOffsets :: DiskPageSize  -- ^ underlying page size: 4k, 8k ... 64k
                     -> Int           -- ^ number of keys\/entries
@@ -233,13 +240,13 @@ calcPageSizeOffsets dpgsz n b sizeKeys sizeValues
   | n < 0 || b < 0 || sizeKeys < 0 || sizeValues < 0
   = Nothing
 
-  | n /= 1 --single enties can use multiple disk pages
+  | n /= 1 --single entries can use multiple disk pages
   , sizePageUsed > diskPageSize
   = Nothing
 
   | otherwise
   = Just PageSizesOffsets {
-      -- having checkes for no overflow, we can now guarantee all
+      -- having checked for not over-full, we can now guarantee all
       -- these conversions into smaller types will not overflow:
       sizeDirectory     = fromIntegralChecked sizeDirectory,
       sizeBlobRefBitmap = fromIntegralChecked sizeBlobRefBitmap,
@@ -294,8 +301,8 @@ calcPageSizeOffsets dpgsz n b sizeKeys sizeValues
     sizePageDiskPage  = sizePageUsed + sizePagePadding
     diskPageSize      = diskPageSizeBytes dpgsz
 
-encodePage :: DiskPageSize -> PageLogical -> Maybe PageIntermediate
-encodePage dpgsz (PageLogical kops) = do
+encodePage :: DiskPageSize -> [(Key, Operation)] -> Maybe PageIntermediate
+encodePage dpgsz kops = do
     let pageNumKeys       = length kops
         pageNumBlobs      = length (filter (opHasBlobRef . snd) kops)
         keys              = [ k | (k,_)  <- kops ]
@@ -442,9 +449,8 @@ deserialisePage dpgsz p =
     opBitsToEnum []                 = []
     opBitsToEnum _                  = error "opBitsToEnum"
 
-decodePage :: PageIntermediate -> PageLogical
+decodePage :: PageIntermediate -> [(Key, Operation)]
 decodePage PageIntermediate{pageSizesOffsets = PageSizesOffsets{..}, ..} =
-  PageLogical
     [ let op      = case opEnum of
                       OpInsert  -> Insert  (Value value) mblobref
                       OpMupsert -> Mupsert (Value value)
@@ -503,22 +509,263 @@ fromIntegralChecked x
 -- Test types and generators
 --
 
+data PageContentFits = PageContentFits DiskPageSize [(Key, Operation)]
+  deriving Show
+
+data PageContentMaybeOverfull = PageContentMaybeOverfull DiskPageSize
+                                                         [(Key, Operation)]
+  deriving Show
+
+data PageContentSingle = PageContentSingle DiskPageSize Key Operation
+  deriving Show
+
+instance Arbitrary PageContentFits where
+    arbitrary = do
+      dpgsz <- arbitrary
+      kops  <- genPageContentFits dpgsz noMinKeySize
+      pure (PageContentFits dpgsz kops)
+
+instance Arbitrary PageContentMaybeOverfull where
+    arbitrary = do
+      dpgsz <- arbitrary
+      kops  <- genPageContentMaybeOverfull dpgsz noMinKeySize
+      pure (PageContentMaybeOverfull dpgsz kops)
+
+instance Arbitrary PageContentSingle where
+    arbitrary = do
+      dpgsz <- arbitrary
+      (k,op) <- genPageContentSingle dpgsz noMinKeySize
+      pure (PageContentSingle dpgsz k op)
+
+-- | In some use cases it is necessary to generate 'Keys' that are at least of
+-- some minimum length. Use 'noMinKeySize' if no such constraint is need.
+newtype MinKeySize = MinKeySize Int
+  deriving Show
+
+-- | No minimum key size: @MinKeySize 0@.
+noMinKeySize :: MinKeySize
+noMinKeySize = MinKeySize 0
+
+-- | Generate a test case consisting of a key\/operation sequence that is
+-- guaranteed to fit into a given disk page size.
+--
+-- The distribution is designed to cover:
+--
+-- * small pages
+-- * medium sized pages
+-- * nearly full pages
+-- * plus single key pages (possibly using one or more overflow pages)
+-- * a corner case of a single large key\/operation pair followed by some small
+--   key op pairs.
+--
+-- The keys are /not/ ordered: use 'orderdKeyOps' to sort and de-duplicate them
+-- if that is needed (but note this will change the order of key sizes).
+--
+genPageContentFits :: DiskPageSize -> MinKeySize -> Gen [(Key, Operation)]
+genPageContentFits dpgsz minkeysz =
+    frequency
+      [ (6, genPageContentMedium           dpgsz genkey genval)
+      , (2, (:[]) <$> genPageContentSingle dpgsz minkeysz)
+      , (1, genPageContentLargeSmallFits   dpgsz minkeysz)
+      ]
+  where
+    genkey = genKeyMinSize dpgsz minkeysz
+    genval = arbitrary
+
+-- | Generate a test case consisting of a key\/operation sequence that is /not/
+-- guaranteed to fit into a given disk page size.
+--
+-- These test cases are useful for checking the boundary conditions for what
+-- can fit into a disk page. This covers a similar distribution to
+-- 'genPageContentFits' but also includes about 20% of pages that are over full,
+-- including the corner case of a large key ops pair followed by smaller key op
+-- pairs (again possibly over full).
+--
+-- The keys are /not/ ordered: use 'orderdKeyOps' to sort and de-duplicate them
+-- if that is needed.
+--
+genPageContentMaybeOverfull :: DiskPageSize
+                            -> MinKeySize -> Gen [(Key, Operation)]
+genPageContentMaybeOverfull dpgsz minkeysz =
+    frequency
+      [ (6, genPageContentMedium             dpgsz genkey genval)
+      , (1, (:[]) <$> genPageContentSingle   dpgsz minkeysz)
+      , (1, genPageContentOverfull           dpgsz genkey genval)
+      , (1, genPageContentLargeSmallOverfull dpgsz minkeysz)
+      ]
+  where
+    genkey = genKeyMinSize dpgsz minkeysz
+    genval = arbitrary
+
+-- | Generate a test case consisting of a single key\/operation pair.
+--
+genPageContentSingle :: DiskPageSize -> MinKeySize -> Gen (Key, Operation)
+genPageContentSingle dpgsz minkeysz =
+    oneof
+      [ genPageContentSingleSmall     genkey genval
+      , genPageContentSingleNearFull  dpgsz minkeysz
+      , genPageContentSingleMultiPage dpgsz minkeysz
+      ]
+  where
+    genkey = genKeyMinSize dpgsz minkeysz
+    genval = arbitrary
+
+-- | This generates a reasonable \"middle\" distribution of page sizes
+-- (relative to the given disk page size). In particular it covers:
+
+-- * small pages (~45% for 4k pages, ~15% for 64k pages)
+-- * near-maximum pages (~20% for 4k pages, ~20% for 64k pages)
+-- * some in between (~35% for 4k pages, ~60% for 64k pages)
+--
+-- The numbers above are when used with the normal 'arbitrary' 'Key' and
+-- 'Value' generators. And with these generators, it tends to use lots of
+-- small-to-medium size keys and values, rather than a few huge ones.
+--
+genPageContentMedium :: DiskPageSize
+                     -> Gen Key
+                     -> Gen Value
+                     -> Gen [(Key, Operation)]
+genPageContentMedium dpgsz genkey genval =
+  takePageContentFits dpgsz <$>
+    scale scaleForDiskPageSize
+      (listOf (genPageContentSingleSmall genkey genval))
+  where
+    scaleForDiskPageSize :: Int -> Int
+    scaleForDiskPageSize sz =
+      ceiling $
+        fromIntegral sz ** (1.0 + fromIntegral (fromEnum dpgsz) / 10 :: Float)
+
+takePageContentFits :: DiskPageSize -> [(Key, Operation)] -> [(Key, Operation)]
+takePageContentFits dpgsz = go (pageSizeEmpty dpgsz)
+  where
+    go _sz [] = []
+    go sz (kop:kops)
+      | Just sz' <- pageSizeAddElem kop sz = kop : go sz' kops
+      | otherwise                          = []
+
+-- | Generate only pages that are nearly full. This isn't the maximum possible
+-- size, but where adding one more randomly-chosen key\/op pair would not fit
+-- (but perhaps a smaller pair would still fit).
+--
+-- Consider if you really need this: the 'genPageContentMedium' also includes
+-- these cases naturally as part of its distribution. On the other hand, this
+-- can be good for generating benchmark data.
+--
+genPageContentNearFull :: DiskPageSize
+                       -> Gen Key
+                       -> Gen Value
+                       -> Gen [(Key, Operation)]
+genPageContentNearFull dpgsz genkey genval =
+    --relies on first item being the one triggering over-full:
+    drop 1 <$> genPageContentOverfull dpgsz genkey genval
+
+-- | Generate pages that are just slightly over-full. This is where the last
+-- key\/op pair takes it just over the disk page size (but this element is
+-- first in the sequence).
+--
+genPageContentOverfull :: DiskPageSize
+                       -> Gen Key
+                       -> Gen Value
+                       -> Gen [(Key, Operation)]
+genPageContentOverfull dpgsz genkey genval =
+    go [] (pageSizeEmpty dpgsz)
+  where
+    go :: [(Key, Operation)] -> PageSize -> Gen [(Key, Operation)]
+    go kops sz = do
+      kop <- genPageContentSingleSmall genkey genval
+      case pageSizeAddElem kop sz of
+         -- include as the /first/ element, the one that will make it overfull:
+        Nothing  -> return (kop:kops) -- not reversed!
+        Just sz' -> go (kop:kops) sz'
+
+genPageContentLargeSmallFits :: DiskPageSize
+                             -> MinKeySize
+                             -> Gen [(Key, Operation)]
+genPageContentLargeSmallFits dpgsz minkeysz =
+    takePageContentFits dpgsz <$>
+      genPageContentLargeSmallOverfull dpgsz minkeysz
+
+genPageContentLargeSmallOverfull :: DiskPageSize
+                                 -> MinKeySize
+                                 -> Gen [(Key, Operation)]
+genPageContentLargeSmallOverfull dpgsz (MinKeySize minkeysz) =
+    (\large small -> large : small)
+      <$> genPageContentSingleOfSize genKeyValSizes
+      <*> arbitrary
+  where
+    genKeyValSizes = do
+      let size = maxKeySize dpgsz - 100
+      split <- choose (minkeysz, size)
+      pure (split, size - split)
+
+genPageContentSingleOfSize :: Gen (Int, Int) -> Gen (Key, Operation)
+genPageContentSingleOfSize genKeyValSizes = do
+    (keySize, valSize) <- genKeyValSizes
+    key <- Key   . BS.pack <$> vectorOf keySize arbitrary
+    val <- Value . BS.pack <$> vectorOf valSize arbitrary
+    op  <- oneof  -- no delete
+             [ Insert val <$> arbitrary
+             , pure (Mupsert val) ]
+    pure (key, op)
+
+genPageContentSingleSmall :: Gen Key -> Gen Value -> Gen (Key, Operation)
+genPageContentSingleSmall genkey genval =
+    (,) <$> genkey <*> genOperation genval
+
+genPageContentSingleNearFull :: DiskPageSize
+                             -> MinKeySize
+                             -> Gen (Key, Operation)
+genPageContentSingleNearFull dpgsz (MinKeySize minkeysz) =
+    genPageContentSingleOfSize genKeyValSizes
+  where
+    genKeyValSizes = do
+      let maxsize = maxKeySize dpgsz
+      size  <- choose (maxsize - 15, maxsize)
+      split <- choose (minkeysz, size)
+      pure (split, size - split)
+
+genPageContentSingleMultiPage :: DiskPageSize
+                              -> MinKeySize
+                              -> Gen (Key, Operation)
+genPageContentSingleMultiPage dpgsz (MinKeySize minkeysz) =
+    genPageContentSingleOfSize genKeyValSizes
+  where
+    genKeyValSizes =
+      (,) <$> choose (minkeysz, maxKeySize dpgsz)
+          <*> choose (0, diskPageSizeBytes dpgsz * 3)
+
+genKeyOfSize :: Gen Int -> Gen Key
+genKeyOfSize genSize =
+    genSize >>= \n -> Key . BS.pack <$!> vectorOf n arbitrary
+
+genKeyMinSize :: DiskPageSize -> MinKeySize -> Gen Key
+genKeyMinSize dpgsz (MinKeySize minsz) =
+    genKeyOfSize
+      (getSize >>= \sz -> chooseInt (minsz, sz `min` maxKeySize dpgsz))
 
 instance Arbitrary Key where
-  arbitrary = do
-    sz <- getSize
-    n  <- chooseInt (0, sz `min` maxKeySize)
-    Key . BS.pack <$> vectorOf n arbitrary
+  arbitrary =
+    genKeyOfSize
+      (getSize >>= \sz -> chooseInt (0, sz `min` maxKeySize DiskPage4k))
 
   shrink (Key k) = [ Key (BS.pack k') | k' <- shrink (BS.unpack k) ]
 
+genValueOfSize :: Gen Int -> Gen Value
+genValueOfSize genSize =
+    genSize >>= \n -> Value . BS.pack <$!> vectorOf n arbitrary
+
 instance Arbitrary Value where
-  arbitrary = do
-    sz <- getSize
-    n  <- chooseInt (0, sz)
-    Value . BS.pack <$> vectorOf n arbitrary
+  arbitrary = genValueOfSize (getSize >>= \sz -> chooseInt (0, sz))
 
   shrink (Value v) = [ Value (BS.pack v') | v' <- shrink (BS.unpack v) ]
+
+genOperation :: Gen Value -> Gen Operation
+genOperation genval =
+    oneof
+      [ Insert  <$> genval <*> arbitrary
+      , Mupsert <$> genval
+      , pure Delete
+      ]
 
 instance Arbitrary Operation where
   arbitrary = genOperation arbitrary
@@ -530,18 +777,15 @@ instance Arbitrary Operation where
   shrink (Mupsert v)   = Insert v Nothing
                        : [ Mupsert v' | v' <- shrink v ]
 
-genOperation :: Gen Value -> Gen Operation
-genOperation gv = oneof
-      [ Insert  <$> gv <*> arbitrary
-      , Mupsert <$> gv
-      , pure Delete
-      ]
-
 instance Arbitrary BlobRef where
   arbitrary = BlobRef <$> arbitrary <*> arbitrary
 
   shrink (BlobRef w64 w32) =
       [ BlobRef w64' w32' | (w64', w32') <- shrink (w64, w32) ]
+
+-- | TODO: remove
+newtype PageLogical = PageLogical [(Key, Operation)]
+  deriving (Eq, Show)
 
 instance Arbitrary PageLogical where
   arbitrary =
@@ -582,8 +826,27 @@ mkPageLogical =
   . sortBy (compare `on` fst)
 
 instance Arbitrary DiskPageSize where
-  arbitrary = growingElements [minBound..]
+  arbitrary = scale (`div` 5) $ growingElements [minBound..]
   shrink    = shrinkBoundedEnum
+
+-- | Sort and de-duplicate a key\/operation sequence to ensure the sequence is
+-- strictly ascending by key.
+--
+-- If you need this in a QC generator, you will need 'shrinkOrderedKeyOps' in
+-- the corresponding shrinker.
+--
+orderdKeyOps :: [(Key, Operation)] -> [(Key, Operation)]
+orderdKeyOps =
+    nubBy ((==) `on` fst)
+  . sortBy (compare `on` fst)
+
+-- | Shrink a key\/operation sequence (without regard to key order).
+shrinkKeyOps :: [(Key, Operation)] -> [[(Key, Operation)]]
+shrinkKeyOps = shrink
+
+-- | Shrink a key\/operation sequence, preserving key order.
+shrinkOrderedKeyOps :: [(Key, Operation)] -> [[(Key, Operation)]]
+shrinkOrderedKeyOps = map orderdKeyOps . shrink
 
 
 -------------------------------------------------------------------------------
@@ -592,11 +855,39 @@ instance Arbitrary DiskPageSize where
 
 tests :: TestTree
 tests = testGroup "FormatPage"
-    [ testProperty "invariant" prop_invariant
-    , testProperty "shrink" prop_shrink_invariant
-    , testProperty "to/from bitmap" prop_toFromBitmap
-    , testProperty "size distribution" prop_size_distribution
+    [ testProperty "to/from bitmap" prop_toFromBitmap
     , testProperty "maxKeySize" prop_maxKeySize
+
+    , let dpgsz = DiskPage4k in
+      testGroup "size distribution"
+      [ testProperty "genPageContentFits" $
+        checkCoverage $
+        coverTable "page size in bytes"
+          [("0 <= n < 512",10)
+          ,("3k < n <= 4k", 5)] $
+        coverTable "page size in disk pages"
+          [("1 page",  50)
+          ,("2 pages",  0.5)
+          ,("3+ pages", 0.5)] $
+        forAll (genPageContentFits dpgsz noMinKeySize) $
+          prop_size_distribution dpgsz (property False)
+
+      , testProperty "genPageContentMaybeOverfull" $
+        checkCoverage $
+        forAll (genPageContentMaybeOverfull dpgsz noMinKeySize) $
+          prop_size_distribution dpgsz
+            (cover 10 True "over-full" (property True))
+
+      , testProperty "genPageContentSingle" $
+        checkCoverage $
+        coverTable "page size in disk pages"
+          [("1 page",  10)
+          ,("2 pages",  2)
+          ,("3+ pages", 2)] $
+        forAll ((:[]) <$> genPageContentSingle dpgsz noMinKeySize) $
+          prop_size_distribution dpgsz (property False)
+      ]
+    , testProperty "size 0" prop_size0
     , testProperty "size 1" prop_size1
     , testProperty "size 2" prop_size2
     , testProperty "size 3" prop_size3
@@ -606,41 +897,19 @@ tests = testGroup "FormatPage"
                    prop_encodeSerialiseDeserialiseDecode
     ]
 
--- Generated keys are unique and in increasing order
-prop_invariant :: PageLogical -> Property
-prop_invariant page = case invariant page of
-    Left ks  -> counterexample (show ks) $ property False
-    Right () -> property True
-
-prop_shrink_invariant :: PageLogical -> Property
-prop_shrink_invariant page = case mapM_ invariant (shrink page) of
-    Left ks  -> counterexample (show ks) $ property False
-    Right () -> property True
-
-invariant :: PageLogical -> Either (Key, Key) ()
-invariant (PageLogical xs0) = go xs0
-  where
-    go :: [(Key, op)] -> Either (Key, Key) ()
-    go []         = Right ()
-    go ((k,_):xs) = go1 k xs
-
-    go1 :: Key -> [(Key, op)] -> Either (Key, Key) ()
-    go1 _  []            = Right ()
-    go1 k1 ((k2,_):xs) =
-        if k1 < k2
-        then go1 k2 xs
-        else Left (k1, k2)
-
 prop_toFromBitmap :: [Bool] -> Bool
 prop_toFromBitmap bits =
     bits == take (length bits) (roundTrip bits)
   where
     roundTrip = fromBitmap . toBitmap
 
-prop_size_distribution :: DiskPageSize -> PageLogical -> Property
-prop_size_distribution dpgsz p@(PageLogical es) =
+prop_size_distribution :: DiskPageSize
+                       -> Property -- ^ over-full sub-property
+                       -> [(Key, Operation)]
+                       -> Property
+prop_size_distribution dpgsz propOverfull p =
   case calcPageSize dpgsz p of
-    Nothing -> property False
+    Nothing -> propOverfull
     Just PageSize{pageSizeElems, pageSizeBlobs, pageSizeBytes} ->
       tabulate "page size in elements"
         [ showNumElems pageSizeElems ] $
@@ -648,58 +917,103 @@ prop_size_distribution dpgsz p@(PageLogical es) =
         [ showNumElems pageSizeBlobs ] $
       tabulate "page size in bytes"
         [ showPageSizeBytes pageSizeBytes ] $
+      tabulate "page size in disk pages"
+        [ showPageSizeDiskPages pageSizeBytes ] $
       tabulate "key size in bytes"
-        [ showKeyValueSizeBytes (BS.length k) | (Key k, _) <- es ] $
+        [ showKeyValueSizeBytes (BS.length k) | (Key k, _) <- p ] $
       tabulate "value size in bytes"
         [ showKeyValueSizeBytes (BS.length v)
-        | (_, op) <- es
+        | (_, op) <- p
         , Value v <- case op of
                        Insert  v _ -> [v]
                        Mupsert v   -> [v]
                        Delete      -> []
         ] $
-      cover 0.5 (pageSizeBytes > 4096) "page over 4k" $
-
-        property $ (if pageSizeElems > 1
-                       then pageSizeBytes <= 4096
-                       else True)
-                && (pageSizeElems == length [ e | e <- es ])
-                && (pageSizeBlobs == length [ b | (_,Insert _ (Just b)) <- es ])
+      property $ (if pageSizeElems > 1
+                     then pageSizeBytes <= dpgszBytes
+                     else True)
+              && (pageSizeElems == length p)
+              && (pageSizeBlobs == length (filter (opHasBlobRef . snd) p))
   where
+    dpgszBytes = diskPageSizeBytes dpgsz
+
+    showNumElems :: Int -> String
     showNumElems n
-      | n == 0    = "0"
-      | n == 1    = "1"
+      | n <= 1    = show n
       | n < 10    = "1 < n < 10"
       | otherwise = nearest 10 n
-    showPageSizeBytes n
-      | n >= 4096  = show ((n `div` 4096) * 4) ++ "k <= n < "
-                  ++ show (((n `div` 4096) + 1) * 4) ++ "k"
-      | otherwise = nearest 512 n
-    showKeyValueSizeBytes n
-      | n < 16    = show n
-      | n < 1024  = "16    < n < 1024"
-      | otherwise = nearest 1024 n
-    nearest m n = show ((n `div` m) * m)
-     ++ " <= n < " ++ show ((n `div` m) * m + m)
 
+    showPageSizeBytes :: Int -> String
+    showPageSizeBytes n
+      | n > 4096  = nearest4k n
+      | n > 1024  = nearest1k n
+      | otherwise = nearest 512 n
+
+    showPageSizeDiskPages :: Int -> String
+    showPageSizeDiskPages n
+      | npgs == 1 = "1 page"
+      | npgs == 2 = "2 pages"
+      | otherwise = "3+ pages"
+      where
+        npgs = (n + dpgszBytes - 1) `div` dpgszBytes
+
+    showKeyValueSizeBytes :: Int -> String
+    showKeyValueSizeBytes n
+      | n < 20    = nearest 5 n
+      | n < 100   = "20 <= n < 100"
+      | n < 1024  = nearest 100 n
+      | otherwise = nearest1k n
+
+    nearest :: Int -> Int -> String
+    nearest m n = show ((n `div` m) * m) ++ " <= n < "
+               ++ show ((n `div` m) * m + m)
+
+    nearest1k, nearest4k :: Int -> String
+    nearest1k n = show ((n-1) `div` 1024) ++ "k < n <= "
+               ++ show ((n-1) `div` 1024 + 1) ++ "k"
+    nearest4k n = show (((n-1) `div` 4096) * 4) ++ "k < n <= "
+               ++ show (((n-1) `div` 4096) * 4 + 4) ++ "k"
 
 -- | The maximum size of key that is guaranteed to always fit in an empty
 -- 4k page. So this is a worst case maximum size: this size key will fit
 -- irrespective of the corresponding operation, including the possibility
 -- that the key\/op pair has a blob reference.
-maxKeySize :: Int
-maxKeySize = diskPageSizeBytes dpgsz - overhead  -- == 4052
-  where
-    overhead =
-      (pageSizeBytes . fromJust . calcPageSize dpgsz . PageLogical)
-        [(Key BS.empty, Insert (Value BS.empty) (Just (BlobRef 0 0)))]
-    dpgsz = DiskPage4k
+maxKeySize :: DiskPageSize -> Int
+maxKeySize dpgsz = diskPageSizeBytes dpgsz - pageSizeOverhead
+
+pageSizeOverhead :: Int
+pageSizeOverhead =
+    (pageSizeBytes . fromJust . calcPageSize DiskPage4k)
+      [(Key BS.empty, Insert (Value BS.empty) (Just (BlobRef 0 0)))]
+    -- the page size passed to calcPageSize here is irrelevant
 
 prop_maxKeySize :: Bool
-prop_maxKeySize = maxKeySize == 4052
+prop_maxKeySize = maxKeySize DiskPage4k == 4052
 
-prop_size1 :: DiskPageSize -> PageLogical -> Bool
-prop_size1 dpgsz p =
+-- | The 'calcPageSize' and 'calcPageSizeOffsets' (used by 'encodePage') had
+-- better agree with each other!
+--
+-- The 'calcPageSize' uses the incremental 'PageSize' API, to work out the page
+-- size, element by element, while 'calcPageSizeOffsets' is a bulk operation
+-- used by 'encodePage'. It's critical that they agree on how many elements can
+-- fit into a page.
+--
+prop_size0 :: PageContentMaybeOverfull -> Bool
+prop_size0 (PageContentMaybeOverfull dpgsz p) =
+    case (calcPageSize dpgsz p, encodePage dpgsz p) of
+        (Nothing, Nothing) -> True
+        (Nothing, Just{})  -> False -- they disagree!
+        (Just{}, Nothing)  -> False -- they disagree!
+        (Just PageSize{..},
+         Just PageIntermediate{pageSizesOffsets = PageSizesOffsets{..}, ..}) ->
+              pageSizeElems == fromIntegral pageNumKeys
+           && pageSizeBlobs == fromIntegral pageNumBlobs
+           && pageSizeBytes == fromIntegral sizePageUsed
+           && pageSizeDisk  == pageDiskPageSize
+           && pageSizeDisk  == dpgsz
+
+prop_size1 :: PageContentFits -> Bool
+prop_size1 (PageContentFits dpgsz p) =
     sizePageUsed > 0
  && sizePageUsed + sizePagePadding == sizePageDiskPage
  && if pageNumKeys p' == 1
@@ -709,35 +1023,35 @@ prop_size1 dpgsz p =
     Just p' = encodePage dpgsz p
     PageSizesOffsets{..} = pageSizesOffsets p'
 
-prop_size2 :: DiskPageSize -> PageLogical -> Bool
-prop_size2 dpgsz p =
+prop_size2 :: PageContentFits -> Bool
+prop_size2 (PageContentFits dpgsz p) =
     BS.length (serialisePage p')
  == fromIntegral (sizePageDiskPage (pageSizesOffsets p'))
   where
     Just p' = encodePage dpgsz p
 
-prop_size3 :: DiskPageSize -> PageLogical -> Bool
-prop_size3 dpgsz p =
+prop_size3 :: PageContentFits -> Bool
+prop_size3 (PageContentFits dpgsz p) =
   case (calcPageSize dpgsz p, encodePage dpgsz p) of
     (Just PageSize{pageSizeBytes}, Just p') ->
       pageSizeBytes == (fromIntegral . sizePageUsed . pageSizesOffsets) p'
-    _                  -> False
+    _ -> False
 
-prop_encodeDecode :: DiskPageSize -> PageLogical -> Property
-prop_encodeDecode dpgsz p =
+prop_encodeDecode :: PageContentFits -> Property
+prop_encodeDecode (PageContentFits dpgsz p) =
     p === decodePage p'
   where
     Just p' = encodePage dpgsz p
 
-prop_serialiseDeserialise :: DiskPageSize -> PageLogical -> Bool
-prop_serialiseDeserialise dpgsz p =
+prop_serialiseDeserialise :: PageContentFits -> Bool
+prop_serialiseDeserialise (PageContentFits dpgsz p) =
     p' == roundTrip p'
   where
     Just p'   = encodePage dpgsz p
     roundTrip = deserialisePage dpgsz . serialisePage
 
-prop_encodeSerialiseDeserialiseDecode :: DiskPageSize -> PageLogical -> Bool
-prop_encodeSerialiseDeserialiseDecode dpgsz p =
+prop_encodeSerialiseDeserialiseDecode :: PageContentFits -> Bool
+prop_encodeSerialiseDeserialiseDecode (PageContentFits dpgsz p) =
     p == roundTrip p'
   where
     Just p'   = encodePage dpgsz p

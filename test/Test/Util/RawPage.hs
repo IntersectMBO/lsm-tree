@@ -20,7 +20,7 @@ import           Database.LSMTree.Internal.RawOverflowPage (RawOverflowPage,
                      makeRawOverflowPage)
 import           Database.LSMTree.Internal.RawPage (RawPage, makeRawPage,
                      rawPageRawBytes)
-import           FormatPage (DiskPageSize (..), PageLogical, encodePage,
+import           FormatPage (DiskPageSize (..), PageLogical (..), encodePage,
                      serialisePage)
 import qualified System.Console.ANSI as ANSI
 import           Test.Tasty.HUnit (Assertion, assertFailure)
@@ -28,9 +28,9 @@ import           Test.Tasty.QuickCheck (Property, counterexample)
 
 -- | Convert prototype 'PageLogical' to 'RawPage'.
 toRawPage :: PageLogical -> (RawPage, [RawOverflowPage])
-toRawPage p = (page, overflowPages)
+toRawPage (PageLogical kops) = (page, overflowPages)
   where
-    Just bs = serialisePage <$> encodePage DiskPage4k p
+    Just bs = serialisePage <$> encodePage DiskPage4k kops
     (pfx, sfx) = BS.splitAt 4096 bs -- hardcoded page size.
     page          = makeRawPageBS pfx
     overflowPages = [ makeRawOverflowPageBS sfxpg

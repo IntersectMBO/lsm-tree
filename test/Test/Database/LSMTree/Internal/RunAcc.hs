@@ -90,7 +90,7 @@ prop_runAccMatchesPrototype page =
     real === model
   where
     Just model = Proto.serialisePage <$>
-                   Proto.encodePage Proto.DiskPage4k (getPageLogical' page)
+                   Proto.encodePage Proto.DiskPage4k (getPrototypeKOps page)
     real  = trunc $ uncurry pagesToByteString $ fromListPageAcc (getRealKOps page)
 
     -- truncate padding on the real page
