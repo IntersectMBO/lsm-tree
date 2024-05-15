@@ -18,6 +18,7 @@ module Database.LSMTree.Internal.Lookup (
     -- * Lookups in IO
   , BatchSize (..)
   , lookupsInBatches
+  , submitInBatches
   , intraPageLookups
   ) where
 
@@ -77,8 +78,8 @@ prepLookups ::
   -> V.Vector SerialisedKey
   -> m (VU.Vector (RunIx, KeyIx), V.Vector (IOOp (PrimState m) h))
 prepLookups blooms indexes kopsFiles ks = do
-  let rkixs = bloomQueriesDefault blooms ks
-  ioops <- indexSearches indexes kopsFiles ks rkixs
+  let !rkixs = bloomQueriesDefault blooms ks
+  !ioops <- indexSearches indexes kopsFiles ks rkixs
   pure (rkixs, ioops)
 
 type KeyIx = Int
@@ -286,16 +287,32 @@ lookupsInBatches ::
   -> V.Vector SerialisedKey
   -> m (V.Vector (Maybe (Entry SerialisedValue (BlobRef (Run (Handle h))))))
 lookupsInBatches !hbio !n !resolveV !rs !blooms !indexes !kopsFiles !ks = assert precondition $ do
-    (rkixs0, ioops0) <- prepLookups blooms indexes kopsFiles ks
-    let batches = batchesOfN (unBatchSize n) ioops0
-    ioress <- forConcurrently batches (submitIO hbio)
-    intraPageLookups resolveV rs ks rkixs0 ioops0 (VU.concat ioress)
+    (rkixs, ioops) <- prepLookups blooms indexes kopsFiles ks
+    ioress <- submitInBatches hbio n ioops
+    intraPageLookups resolveV rs ks rkixs ioops ioress
   where
     precondition = and [
           V.map Run.runFilter rs == blooms
         , V.map Run.runIndex rs == indexes
         , V.length rs == V.length kopsFiles
         ]
+
+{-# SPECIALIZE submitInBatches ::
+       HasBlockIO IO HandleIO
+    -> BatchSize
+    -> V.Vector (IOOp RealWorld HandleIO)
+    -> IO (VU.Vector IOResult)
+  #-}
+-- | Submit I\/O operation to the 'HasBlockIO' interface in batches.
+submitInBatches ::
+     MonadAsync m
+  => HasBlockIO m h
+  -> BatchSize
+  -> V.Vector (IOOp (PrimState m) h)
+  -> m (VU.Vector IOResult)
+submitInBatches !hbio !n !ioops = do
+    let batches = batchesOfN (unBatchSize n) ioops
+    VU.concat <$> forConcurrently batches (submitIO hbio)
 
 {-# SPECIALIZE intraPageLookups ::
        ResolveSerialisedValue
