@@ -63,6 +63,7 @@ jobs:
       run: |
         sudo apt-get update || true
         sudo apt-get -y install liburing-dev
+        sudo apt-get -y install librocksdb-dev
 
     - name: Configure the build
       run: |
