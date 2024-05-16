@@ -14,7 +14,7 @@ module Database.LSMTree.Internal.RawPage (
     rawPageOverflowPages,
     rawPageIndex,
     RawPageIndex(..),
-    -- * Debug
+    -- * Test and debug
     rawPageKeyOffsets,
     rawPageValueOffsets,
     rawPageValueOffsets1,
@@ -219,7 +219,7 @@ rawPageEntryAt page i =
       1 -> Mupdate (rawPageValueAt page i)
       _ -> Delete
 
--- | single key page case
+-- | Single key page case
 rawPageEntry1 :: RawPage -> Entry SerialisedValue BlobSpan
 rawPageEntry1 page =
     case rawPageOpAt page 0 of
@@ -345,6 +345,7 @@ rawPageValues page@(RawPage off ba) =
   where
     !dirNumKeys = rawPageNumKeys page
 
+-- | Non-single page case
 rawPageValueAt :: RawPage -> Int -> SerialisedValue
 rawPageValueAt page@(RawPage off ba) i =
     SerialisedValue (RB.fromByteArray (mul2 off + start) (end - start) ba)
@@ -353,6 +354,7 @@ rawPageValueAt page@(RawPage off ba) i =
     start = fromIntegral (PV.unsafeIndex offs i) :: Int
     end   = fromIntegral (PV.unsafeIndex offs (i + 1)) :: Int
 
+-- | Single key page case
 rawPageSingleValuePrefix :: RawPage -> SerialisedValue
 rawPageSingleValuePrefix page@(RawPage off ba) =
     SerialisedValue $
@@ -364,6 +366,7 @@ rawPageSingleValuePrefix page@(RawPage off ba) =
     (start, end) = rawPageValueOffsets1 page
     prefix_end   = min 4096 end
 
+-- | Single key page case
 rawPageSingleValueSuffix :: RawPage -> Word32
 rawPageSingleValueSuffix page
     | end > 4096 = end - 4096
