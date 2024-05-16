@@ -166,6 +166,8 @@ tests = testGroup "Database.LSMTree.Internal.RawPage"
     , testProperty "missing" prop_entries_all
     , testProperty "big-insert" prop_big_insert
     , testProperty "entry" prop_single_entry
+    , testProperty "rawPageOverflowPages" prop_rawPageOverflowPages
+    , testProperty "from/to reference impl" prop_fromToReferenceImpl
     ]
 
 prop_toRawPage :: PageContentFits -> Property
@@ -228,6 +230,17 @@ prop_ops (PageContentFits kops) =
     fromOp Insert {}  = 0
     fromOp Delete {}  = 2
     fromOp Mupsert {} = 1
+
+prop_rawPageOverflowPages :: PageContentFits -> Property
+prop_rawPageOverflowPages (PageContentFits kops) =
+    let (page, overflowPages) = toRawPage (PageContentFits kops)
+     in rawPageOverflowPages page === length overflowPages
+
+prop_fromToReferenceImpl :: PageContentFits -> Property
+prop_fromToReferenceImpl (PageContentFits kops) =
+    -- serialise using the reference impl
+    -- deserialise using the real impl and convert back to the reference types
+    PageContentFits kops === fromRawPage (toRawPage (PageContentFits kops))
 
 prop_entries_exists :: PageContentOrdered -> Property
 prop_entries_exists (PageContentOrdered kops) =
