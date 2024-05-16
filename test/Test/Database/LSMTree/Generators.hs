@@ -26,8 +26,8 @@ import           Database.LSMTree.Internal.Serialise
 
 import qualified Test.QuickCheck as QC
 import           Test.QuickCheck (Arbitrary (..), Gen, Property, Testable (..))
-import           Test.Tasty (TestTree, testGroup, localOption)
-import           Test.Tasty.QuickCheck (testProperty, QuickCheckMaxSize (..))
+import           Test.Tasty (TestTree, localOption, testGroup)
+import           Test.Tasty.QuickCheck (QuickCheckMaxSize (..), testProperty)
 
 tests :: TestTree
 tests = testGroup "Test.Database.LSMTree.Generators" [

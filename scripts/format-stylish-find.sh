@@ -20,5 +20,5 @@ export LC_ALL=C.UTF-8
 
 # shellcheck disable=SC2086
 find $PARGS -iname '*.hs' \
-  -not -path "./dist-newtyle" \
+  -not -path "./dist-newstyle" \
   -exec stylish-haskell -i -c .stylish-haskell.yaml {} +

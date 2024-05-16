@@ -17,7 +17,7 @@
 --
 module FormatPage (
     -- * Page types
-    Key (..), unKey,
+    Key (..),
     Operation (..),
     Value (..),
     BlobRef (..),
@@ -53,7 +53,6 @@ module FormatPage (
 ) where
 
 import           Data.Bits
-import           Data.Coerce (coerce)
 import           Data.Function (on)
 import           Data.List (foldl', nubBy, sortBy, unfoldr)
 import           Data.Maybe (fromJust, fromMaybe)
@@ -77,11 +76,8 @@ import           Test.Tasty.QuickCheck (testProperty)
 -- Page content types
 --
 
-newtype Key   = Key   ByteString deriving (Eq, Ord, Show)
-newtype Value = Value ByteString deriving (Eq, Show)
-
-unKey :: Key -> ByteString
-unKey = coerce
+newtype Key   = Key   { unKey   :: ByteString } deriving (Eq, Ord, Show)
+newtype Value = Value { unValue :: ByteString } deriving (Eq, Show)
 
 data Operation = Insert  Value (Maybe BlobRef)
                | Mupsert Value

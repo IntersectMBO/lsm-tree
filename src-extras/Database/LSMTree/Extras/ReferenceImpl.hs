@@ -1,8 +1,40 @@
-module Test.Util.KeyOpGenerators (
-  PageContentFits(..),
-  PageContentOrdered(..),
-  PageContentMaybeOverfull(..),
-  PageContentSingle(..),
+module Database.LSMTree.Extras.ReferenceImpl (
+    -- * Page types
+    Key (..),
+    Value (..),
+    Operation (..),
+    BlobRef (..),
+    PageSerialised,
+    PageIntermediate,
+
+    -- * Page size
+    PageSize (..),
+    pageSizeEmpty,
+    pageSizeAddElem,
+
+    -- * Encoding and decoding
+    DiskPageSize(..),
+    encodePage,
+    decodePage,
+    serialisePage,
+    deserialisePage,
+
+    -- * Test case types and generators
+    PageContentFits(..),
+    PageContentOrdered(..),
+    PageContentMaybeOverfull(..),
+    PageContentSingle(..),
+    -- ** Generators and shrinkers
+    genPageContentFits,
+    genPageContentMaybeOverfull,
+    genPageContentSingle,
+    genPageContentNearFull,
+    genPageContentMedium,
+    MinKeySize(..),
+    noMinKeySize,
+    orderdKeyOps,
+    shrinkKeyOps,
+    shrinkOrderedKeyOps,
 ) where
 
 import           FormatPage
@@ -14,7 +46,7 @@ import           Test.QuickCheck
 -- The keys /are not/ ordered.
 --
 newtype PageContentFits = PageContentFits [(Key, Operation)]
-  deriving Show
+  deriving (Eq, Show)
 
 -- | A test case consisting of a key\/operation sequence that is guaranteed to
 -- fit into a 4k disk page.
@@ -22,7 +54,7 @@ newtype PageContentFits = PageContentFits [(Key, Operation)]
 -- The keys /are/ in strictly ascending order.
 --
 newtype PageContentOrdered = PageContentOrdered [(Key, Operation)]
-  deriving Show
+  deriving (Eq, Show)
 
 -- | A test case consisting of a key\/operation sequence that is /not/
 -- guaranteed to fit into a a 4k disk page.
@@ -33,12 +65,12 @@ newtype PageContentOrdered = PageContentOrdered [(Key, Operation)]
 -- The keys /are not/ ordered.
 --
 newtype PageContentMaybeOverfull = PageContentMaybeOverfull [(Key, Operation)]
-  deriving Show
+  deriving (Eq, Show)
 
 -- | A tests case consisting of a single key\/operation pair.
 --
 data PageContentSingle = PageContentSingle Key Operation
-  deriving Show
+  deriving (Eq, Show)
 
 instance Arbitrary PageContentFits where
     arbitrary =

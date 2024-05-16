@@ -2,20 +2,22 @@
 module Test.Database.LSMTree.Internal.PageAcc1 (tests) where
 
 import qualified Data.ByteString as BS
+
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Entry (Entry (..))
+import           Database.LSMTree.Internal.PageAcc1
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.Serialise
+
+import           Database.LSMTree.Extras.RawPage (toRawPage)
+import           Database.LSMTree.Extras.ReferenceImpl hiding (Operation (..))
+import qualified Database.LSMTree.Extras.ReferenceImpl as Proto
+
 import           Test.QuickCheck
 import           Test.QuickCheck.Instances ()
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck (testProperty)
-import           Test.Util.KeyOpGenerators
 import           Test.Util.RawPage
-
-import qualified FormatPage as Proto
-
-import           Database.LSMTree.Internal.PageAcc1
 
 tests :: TestTree
 tests = testGroup "Database.LSMTree.Internal.PageAcc1"

@@ -16,17 +16,16 @@ import           Test.QuickCheck.Instances ()
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.HUnit (testCase, (@=?))
 import           Test.Tasty.QuickCheck
-import           Test.Util.KeyOpGenerators
 import           Test.Util.RawPage
 
+import           Database.LSMTree.Extras.RawPage
+import           Database.LSMTree.Extras.ReferenceImpl
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import qualified Database.LSMTree.Internal.Entry as Entry
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.RawOverflowPage
 import           Database.LSMTree.Internal.RawPage
 import           Database.LSMTree.Internal.Serialise
-import           FormatPage (BlobRef (..), Key (..), Operation (..),
-                     Value (..), unKey)
 
 tests :: TestTree
 tests = testGroup "Database.LSMTree.Internal.RawPage"

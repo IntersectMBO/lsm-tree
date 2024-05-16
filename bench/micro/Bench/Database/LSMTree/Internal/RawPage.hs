@@ -9,14 +9,15 @@ module Bench.Database.LSMTree.Internal.RawPage (
   ) where
 
 import           Control.DeepSeq (deepseq)
-import           Criterion.Main
 import qualified Data.ByteString as BS
-import qualified Data.ByteString.Short as SBS
-import           Data.Primitive.ByteArray (ByteArray (..))
+
+import           Database.LSMTree.Extras.RawPage (toRawPage)
+import           Database.LSMTree.Extras.ReferenceImpl
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.RawPage
 import           Database.LSMTree.Internal.Serialise
-import           FormatPage
+
+import           Criterion.Main
 import           Test.QuickCheck
 import           Test.QuickCheck.Gen (Gen (..))
 import           Test.QuickCheck.Random (mkQCGen)
@@ -33,7 +34,7 @@ benchmarks = rawpage `deepseq` bgroup "Bench.Database.LSMTree.Internal.RawPage"
                  (mkQCGen 42) 200
 
     rawpage :: RawPage
-    rawpage = fst $ toRawPage kops
+    rawpage = fst $ toRawPage (PageContentFits kops)
 
     genSmallKey :: Gen Key
     genSmallKey = Key . BS.pack <$> vectorOf 8 arbitrary
@@ -53,10 +54,3 @@ benchmarks = rawpage `deepseq` bgroup "Bench.Database.LSMTree.Internal.RawPage"
     existingLast :: SerialisedKey
     existingLast = SerialisedKey $ RB.fromByteString $ unKey $ last keys
 
---TODO: share this code with the other toRawPage in the testsuite
-toRawPage :: [(Key, Operation)] -> (RawPage, BS.ByteString)
-toRawPage kops = (page, sfx)
-  where
-    Just bs = serialisePage <$> encodePage DiskPage4k kops
-    (pfx, sfx) = BS.splitAt 4096 bs -- hardcoded page size.
-    page = case SBS.toShort pfx of SBS.SBS ba -> makeRawPage (ByteArray ba) 0
