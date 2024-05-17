@@ -374,13 +374,18 @@ benchmark lsm-tree-bench-wp8
 
   ghc-options:    -rtsopts -with-rtsopts=-T -threaded
 
+flag rocksdb
+  description: Build components that rely on RocksDB (only on Linux)
+  default:     True
+  manual:      False
+
 benchmark rocksdb-bench-wp8
   import:         language, warnings, wno-x-partial
   type:           exitcode-stdio-1.0
   hs-source-dirs: bench/macro src-extras
   main-is:        rocksdb-bench-wp8.hs
 
-  if !os(linux)
+  if !(os(linux) && flag(rocksdb))
     buildable: False
 
   build-depends:
@@ -405,7 +410,7 @@ library rocksdb
   exposed-modules: RocksDB
   other-modules:   RocksDB.FFI
 
-  if !os(linux)
+  if !(os(linux) && flag(rocksdb))
     buildable: False
 
   -- Ubuntu 22.04 doesn't have pkgconfig files for rocksdb
@@ -546,11 +551,11 @@ library fs-api-blockio
 
   if os(linux)
     hs-source-dirs: fs-api-blockio/src-linux
-    other-modules:
-      System.FS.BlockIO.Async
-      System.FS.BlockIO.Internal
+    other-modules:  System.FS.BlockIO.Internal
 
-    build-depends:  blockio-uring ^>=0.1
+    if !flag(serialblockio)
+      other-modules: System.FS.BlockIO.Async
+      build-depends: blockio-uring ^>=0.1
 
   elif os(osx)
     hs-source-dirs: fs-api-blockio/src-macos

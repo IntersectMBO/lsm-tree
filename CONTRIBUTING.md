@@ -1,9 +1,53 @@
 # Contributing
 
+## Installation requirements
+
+Different OS distributions have different installation requirements.
+
+### Linux:
+We recommend installing the `pkgconfig` and `liburing` systems packages, though
+they are not required. However, one would not get the performance benefits of
+performing I/O asynchronously.
+
+* Ubuntu:
+  ```
+  apt-get install pkg-config liburing-dev
+  ```
+
+If these packages are not installed, then the `serialblockio` cabal package flag
+has to be enabled, either by setting the flag in
+`cabal.project`/`cabal.project.local`, or by passing the flag to the `cabal`
+executable using `--flag=+serialblockio`.
+
+> :warning: **When enabling `serialblockio`, disable the
+> `cabal.project.blockio-uring` import in `cabal.project`!** Unforunately, this
+> line has to be removed/commented out manually (for now), or the project won't
+> build.
+
+Installing `rocksdb` is entirely optional, and only required if one wants to
+build or run the `rocksdb-bench-wp8` comparison macro-benchmark.
+
+* Ubuntu:
+  ```
+  apt-get install librocksdb-dev
+  ```
+
+If this package is not installed, then the `rocksdb` cabal package flag has to
+be disabled, either by setting the flag in
+`cabal.project`/`cabal.project.local`, or by passing the flag to the cabal
+executable using `--flag=-rocksdb`
+
+### MacOS
+
+There are no installation requirements.
+
+### Windows
+
+There are no installation requirements.
+
 ## Building
 
-The project is built using `ghc` and `cabal`, and does not require any external
-dependencies.
+The project is built using `ghc` and `cabal`.
 
 ```
 cabal update
