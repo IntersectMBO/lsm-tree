@@ -16,4 +16,4 @@ ioHasBlockIO ::
      HasFS IO HandleIO
   -> IOCtxParams
   -> IO (HasBlockIO IO HandleIO)
-ioHasBlockIO hasFS _ = Serial.serialHasBlockIO hasFS
+ioHasBlockIO = Serial.serialHasBlockIO

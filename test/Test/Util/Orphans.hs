@@ -19,7 +19,7 @@ import qualified Control.Concurrent.STM as Real
 import           Control.Monad ((<=<))
 import           Control.Monad.IOSim (IOSim)
 import           Data.Kind (Type)
-import           Database.LSMTree.Common (BlobRef, IOLike)
+import           Database.LSMTree.Common (BlobRef)
 import           Database.LSMTree.Internal.Serialise (SerialiseKey)
 import           Database.LSMTree.Normal (LookupResult, RangeLookupResult,
                      TableHandle)
@@ -35,7 +35,9 @@ import           Test.Util.TypeFamilyWrappers (WrapBlob (..), WrapBlobRef (..),
   IOSim
 -------------------------------------------------------------------------------}
 
+{- TODO: temporarily disabled until we start on I/O fault testing.
 instance IOLike (IOSim s)
+-}
 
 type instance Realized (IOSim s) a = RealizeIOSim s a
 

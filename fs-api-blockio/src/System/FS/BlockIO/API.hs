@@ -53,10 +53,13 @@ data HasBlockIO m h = HasBlockIO {
     --
     -- If any of the I\/O operations fails, an 'FsError' exception will be thrown.
   , submitIO :: HasCallStack => V.Vector (IOOp (PrimState m) h) -> m (VU.Vector IOResult)
+    -- | Retrieve the parameters that this 'HasBlockIO' was initialised with.
+  , getParams :: !IOCtxParams
   }
 
 instance NFData (HasBlockIO m h) where
-  rnf HasBlockIO{close, submitIO} = close `seq` rwhnf submitIO
+  rnf HasBlockIO{close, submitIO, getParams} =
+      rwhnf close `seq` rwhnf submitIO `seq` rnf getParams
 
 -- | Concurrency parameters for initialising a 'HasBlockIO. Can be ignored by
 -- serial implementations.
@@ -64,6 +67,9 @@ data IOCtxParams = IOCtxParams {
                      ioctxBatchSizeLimit   :: !Int,
                      ioctxConcurrencyLimit :: !Int
                    }
+
+instance NFData IOCtxParams where
+  rnf (IOCtxParams x y) = rnf x `seq` rnf y
 
 defaultIOCtxParams :: IOCtxParams
 defaultIOCtxParams = IOCtxParams {

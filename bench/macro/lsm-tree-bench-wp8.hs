@@ -57,6 +57,8 @@ import qualified MCG
 import qualified Options.Applicative as O
 import qualified System.Clock as Clock
 import qualified System.FS.API as FS
+import qualified System.FS.BlockIO.API as FS
+import qualified System.FS.BlockIO.IO as FsIO
 import qualified System.FS.IO as FsIO
 import           Text.Printf (printf)
 
@@ -181,13 +183,15 @@ doSetup gopts _opts = do
     let mountPoint :: FS.MountPoint
         mountPoint = FS.MountPoint gopts.rootDir
 
-    let someFs :: FS.SomeHasFS IO
-        someFs = FS.SomeHasFS (FsIO.ioHasFS mountPoint)
+    let hasFS :: FS.HasFS IO FsIO.HandleIO
+        hasFS = FsIO.ioHasFS mountPoint
+
+    hasBlockIO <- FsIO.ioHasBlockIO hasFS FS.defaultIOCtxParams
 
     name <- maybe (fail "invalid snapshot name") return $
         LSM.mkSnapshotName "bench"
 
-    withSession someFs (FS.mkFsPath []) $ \session -> do
+    withSession hasFS hasBlockIO (FS.mkFsPath []) $ \session -> do
         tbh <- LSM.new @IO @K @V @B session defaultTableConfig
 
         forM_ [ 0 .. gopts.initialSize ] $ \ (fromIntegral -> i) -> do
@@ -331,8 +335,10 @@ doRun' gopts opts = do
     let mountPoint :: FS.MountPoint
         mountPoint = FS.MountPoint gopts.rootDir
 
-    let someFs :: FS.SomeHasFS IO
-        someFs = FS.SomeHasFS (FsIO.ioHasFS mountPoint)
+    let hasFS :: FS.HasFS IO FsIO.HandleIO
+        hasFS = FsIO.ioHasFS mountPoint
+
+    hasBlockIO <- FsIO.ioHasBlockIO hasFS FS.defaultIOCtxParams
 
     name <- maybe (fail "invalid snapshot name") return $
         LSM.mkSnapshotName "bench"
@@ -341,7 +347,7 @@ doRun' gopts opts = do
             (fromIntegral $ gopts.initialSize + opts.batchSize * opts.batchCount)
             opts.seed
 
-    withSession someFs (FS.mkFsPath []) $ \session -> do
+    withSession hasFS hasBlockIO (FS.mkFsPath []) $ \session -> do
         -- open snapshot
         tbl <- LSM.open @IO @K @V @B session name
 
@@ -382,14 +388,21 @@ main = do
 -- utils: should this be in main lib?
 -------------------------------------------------------------------------------
 
-withSession :: FS.SomeHasFS IO -> FS.FsPath -> (LSM.Session IO -> IO r) -> IO r
-withSession fs path = bracket (LSM.openSession fs path) LSM.closeSession
+withSession ::
+     FS.HasFS IO FsIO.HandleIO
+  -> FS.HasBlockIO IO FsIO.HandleIO
+  -> FS.FsPath
+  -> (LSM.Session IO -> IO r)
+  -> IO r
+withSession hfs hbio path = bracket (LSM.openSession hfs hbio path) LSM.closeSession
 
 defaultTableConfig :: LSM.TableConfig
 defaultTableConfig =  LSM.TableConfig
-    { LSM.tcMaxBufferMemory      = 1000
-    , LSM.tcMaxBloomFilterMemory = 1000
-    , LSM.tcBitPrecision         = ()
+    { LSM.confMergePolicy      = LSM.MergePolicyLazyLevelling
+    , LSM.confSizeRatio        = LSM.Four
+    , LSM.confWriteBufferAlloc = 2 * 1024 * 1024
+    , LSM.confBloomFilterAlloc = LSM.AllocRequestFPR 0.02
+    , LSM.confResolveMupsert   = Nothing
     }
 
 -------------------------------------------------------------------------------

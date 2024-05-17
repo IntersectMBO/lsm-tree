@@ -38,7 +38,11 @@ module Database.LSMTree.Monoidal (
 
     -- * Table handles
   , TableHandle
-  , TableConfig (..)
+  , Internal.TableConfig (..)
+  , Internal.MergePolicy (..)
+  , Internal.SizeRatio (..)
+  , Internal.BloomFilterAlloc (..)
+  , Internal.ResolveMupsert (..)
   , new
   , close
     -- ** Resource management
@@ -85,12 +89,12 @@ module Database.LSMTree.Monoidal (
 import           Data.Bifunctor (Bifunctor (second))
 import           Data.Kind (Type)
 import           Data.Typeable (Typeable)
-import           Data.Word (Word64)
-import           Database.LSMTree.Common (AnySession, IOLike, Range (..),
-                     SerialiseKey, SerialiseValue, Session, SnapshotName,
+import           Database.LSMTree.Common (IOLike, Range (..), SerialiseKey,
+                     SerialiseValue, Session, SnapshotName,
                      SomeUpdateConstraint, closeSession, deleteSnapshot,
                      listSnapshots, openSession)
 import           Database.LSMTree.Internal.Monoidal
+import qualified Database.LSMTree.Internal.TableHandle as Internal
 
 -- $resource-management
 -- See "Database.LSMTree.Normal#g:resource"
@@ -110,31 +114,8 @@ import           Database.LSMTree.Internal.Monoidal
 -- an LSM table. The multiple-handles feature allows for there to may be many
 -- such instances in use at once.
 type TableHandle :: (Type -> Type) -> Type -> Type -> Type
-data TableHandle m k v = forall h. Typeable h => TableHandle {
-    thSession :: !(AnySession m h)
-  , thConfig  :: !TableConfig
-  }
-
--- | Table configuration parameters, including LSM tree tuning parameters.
---
--- Some config options are fixed (for now):
---
--- * Merge policy: Tiering
---
--- * Size ratio: 4
-data TableConfig = TableConfig {
-    -- | Total number of bytes that the write buffer can use.
-    tcMaxBufferMemory      :: Word64
-    -- | Total number of bytes that bloom filters can use collectively.
-  , tcMaxBloomFilterMemory :: Word64
-    -- | Bit precision for the compact index
-    --
-    -- TODO: fill this in with a realistic, non-unit type.
-  , tcBitPrecision         :: ()
-  }
-
-deriving instance Eq TableConfig
-deriving instance Show TableConfig
+data TableHandle m k v = forall h. Typeable h =>
+    TableHandle (Internal.TableHandle m h)
 
 -- | Create a new empty table, returning a fresh table handle.
 --
@@ -144,7 +125,7 @@ deriving instance Show TableConfig
 new ::
      IOLike m
   => Session m
-  -> TableConfig
+  -> Internal.TableConfig
   -> m (TableHandle m k v)
 new = undefined
 

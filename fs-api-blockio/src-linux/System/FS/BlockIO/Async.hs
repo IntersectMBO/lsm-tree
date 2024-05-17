@@ -32,6 +32,7 @@ asyncHasBlockIO hasFS ctxParams = do
   pure $ API.HasBlockIO {
       API.close = I.closeIOCtx ctx
     , API.submitIO = submitIO hasFS ctx
+    , API.getParams = ctxParams
     }
 
 ctxParamsConv :: API.IOCtxParams -> I.IOCtxParams

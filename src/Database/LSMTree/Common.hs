@@ -13,7 +13,6 @@ module Database.LSMTree.Common (
     IOLike
     -- * Sessions
   , Session
-  , AnySession
   , openSession
   , closeSession
     -- * Constraints
@@ -33,26 +32,40 @@ module Database.LSMTree.Common (
   ) where
 
 import           Control.Concurrent.Class.MonadMVar (MonadMVar)
+import           Control.Concurrent.Class.MonadMVar.Strict (newMVar)
 import           Control.Concurrent.Class.MonadSTM (MonadSTM, STM)
-import           Control.Monad.Class.MonadThrow (MonadCatch, MonadThrow)
+import           Control.Monad (unless, void, when)
+import           Control.Monad.Class.MonadThrow (MonadCatch, MonadThrow (..))
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Builder as BB
 import           Data.Kind (Type)
+import qualified Data.Text as Text
 import           Data.Typeable (Typeable)
 import qualified Database.LSMTree.Internal.BlobRef as Internal
 import qualified Database.LSMTree.Internal.Range as Internal
 import qualified Database.LSMTree.Internal.Run as Internal
 import           Database.LSMTree.Internal.Serialise.Class
+import qualified Database.LSMTree.Internal.TableHandle as Internal
 import qualified System.FilePath.Posix
 import qualified System.FilePath.Windows
-import           System.FS.API (FsPath, HasFS, SomeHasFS)
+import qualified System.FS.API as FS
+import           System.FS.API (FsPath, HasFS)
+import qualified System.FS.API.Strict as FS
 import           System.FS.BlockIO.API (HasBlockIO)
+import           System.FS.IO (HandleIO)
 
 {-------------------------------------------------------------------------------
   IOLike
 -------------------------------------------------------------------------------}
 
 -- | Utility class for grouping @io-classes@ constraints.
-class (MonadMVar m, MonadSTM m, MonadThrow (STM m), MonadThrow m, MonadCatch m) => IOLike m where
+class ( MonadMVar m, MonadSTM m, MonadThrow (STM m), MonadThrow m, MonadCatch m
+      , m ~ IO -- TODO: temporary constraint until we add I/O fault testing.
+               -- Don't forget to specialise your functions! @m ~ IO@ in a
+               -- function constraint will not produce to an IO-specialised
+               -- function.
+      ) => IOLike m
+
 instance IOLike IO
 
 {-------------------------------------------------------------------------------
@@ -87,15 +100,7 @@ instance IOLike IO
 -- while a shared session will place all files under one directory.
 --
 type Session :: (Type -> Type) -> Type
-data Session m = forall h. Typeable h => Session (AnySession m h)
-
--- | Like 'Session', but exposing its @h@ type parameter
-type AnySession :: (Type -> Type) -> Type -> Type
-data AnySession m h = AnySession {
-    anySessionRoot       :: !FsPath
-  , anySessionHasFS      :: !(HasFS m h)
-  , anySessionHasBlockIO :: !(HasBlockIO m h)
-  }
+data Session m = forall h. Typeable h => Session (Internal.Session m h)
 
 -- | Create either a new empty table session or open an existing table session,
 -- given the path to the session directory.
@@ -117,11 +122,42 @@ data AnySession m h = AnySession {
 -- Sessions should be closed using 'closeSession' when no longer needed.
 --
 openSession ::
-     IOLike m
-  => SomeHasFS m
+     (IOLike m, Typeable h)
+  => HasFS m h
+  -> HasBlockIO m h -- TODO: could we prevent the user from having to pass this in?
   -> FsPath -- ^ Path to the session directory
   -> m (Session m)
-openSession = undefined
+openSession hfs hbio dir = do
+    dirExists <- FS.doesDirectoryExist hfs dir
+    unless dirExists $
+      throwIO (Internal.SessionDirDoesNotExist (FS.mkFsErrorPath hfs dir))
+    lockFileExists <- FS.doesFileExist hfs lockFile
+    when lockFileExists $
+      throwIO (Internal.SessionDirLocked (FS.mkFsErrorPath hfs lockFile))
+    -- Lock in the session before checking the file layout to minimise the risk
+    -- of race conditions.
+    --
+    -- Unless there is a race with another 'openSession' in the same directory,
+    -- the following will always succeed because we've just checked that the
+    -- file does not exist
+    void $ FS.withFile hfs lockFile (FS.WriteMode FS.MustBeNew) $ \h ->
+      FS.hPutAllStrict hfs h $
+        BS.toStrict (BB.toLazyByteString (BB.string8 "locked"))
+    -- TODO: check that the file/directory layout inside the session is correct.
+    -- If not, release the lockfile and throw an exception.
+    counter <- newMVar 0
+    pure $ Session $ Internal.Session {
+          Internal.sessionRoot = dir
+        , Internal.sessionHasFS = hfs
+        , Internal.sessionHasBlockIO = hbio
+        , Internal.sessionUniqCounter = counter
+        }
+  where
+    -- TODO: add combinators like (</>) for FsPaths to fs-api. The current
+    -- conversion to and from lists of Text is not very nice.
+    lockFile = FS.fsPathFromList (FS.fsPathToList dir <> [Text.pack "lock"])
+
+{-# SPECIALISE openSession :: HasFS IO HandleIO -> HasBlockIO IO HandleIO -> FsPath -> IO (Session IO) #-}
 
 -- | Close the table session. 'closeSession' is idempotent. All subsequent
 -- operations on the session or the tables within it will throw an exception.

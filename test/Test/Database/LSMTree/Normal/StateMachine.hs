@@ -42,7 +42,6 @@ module Test.Database.LSMTree.Normal.StateMachine (tests) where
 import           Control.Monad ((<=<))
 import           Control.Monad.Class.MonadThrow (Handler (..), MonadCatch (..),
                      MonadThrow (..))
-import           Control.Monad.IOSim (IOSim)
 import           Control.Monad.Reader (ReaderT (..))
 import           Data.Bifunctor (Bifunctor (..))
 import qualified Data.ByteString as BS
@@ -56,6 +55,8 @@ import           Data.Word (Word64)
 import qualified Database.LSMTree.Common as SUT (SerialiseKey, SerialiseValue,
                      mkSnapshotName)
 import           Database.LSMTree.Extras.Generators ()
+import qualified Database.LSMTree.Internal.TableHandle as Impl.Real.Internal
+                     (ResolveMupsert (..))
 import qualified Database.LSMTree.Model.Normal.Session as Model
 import qualified Database.LSMTree.ModelIO.Normal as Impl.ModelIO
 import qualified Database.LSMTree.Normal as Impl.Real
@@ -63,10 +64,10 @@ import qualified Database.LSMTree.Normal as SUT (LookupResult (..), Range (..),
                      RangeLookupResult (..), SnapshotName, Update (..))
 import           GHC.IO.Exception (IOErrorType (..), IOException (..))
 import           System.Directory (removeDirectoryRecursive)
-import           System.FS.API (MountPoint (..), SomeHasFS (..), mkFsPath)
-import           System.FS.IO (ioHasFS)
-import qualified System.FS.Sim.MockFS as MockFS
-import           System.FS.Sim.STM (simHasFS')
+import           System.FS.API (HasFS, MountPoint (..), mkFsPath)
+import           System.FS.BlockIO.API (HasBlockIO, defaultIOCtxParams)
+import           System.FS.BlockIO.IO (ioHasBlockIO)
+import           System.FS.IO (HandleIO, ioHasFS)
 import           System.IO.Error
 import           System.IO.Temp (createTempDirectory,
                      getCanonicalTemporaryDirectory)
@@ -95,7 +96,9 @@ tests = testGroup "Normal.StateMachine" [
         QC.labelledExamples $ Lockstep.Run.tagActions (Proxy @(ModelState Impl.Real.TableHandle))
     , propLockstepIO_ModelIOImpl
     , propLockstepIO_RealImpl_RealFS
+{- TODO: temporarily disabled until we start on I/O fault testing.
     , propLockstepIO_RealImpl_MockFS
+-}
     ]
 
 propLockstepIO_ModelIOImpl :: TestTree
@@ -155,8 +158,8 @@ propLockstepIO_RealImpl_RealFS = testProperty "propLockstepIO_RealImpl_RealFS" $
   where
     acquire :: IO (FilePath, WrapSession Impl.Real.TableHandle IO)
     acquire = do
-        (tmpDir, someHasFS) <- createSystemTempDirectory "propLockstepIO_RealIO"
-        session <- Impl.Real.openSession someHasFS (mkFsPath [])
+        (tmpDir, hasFS, hasBlockIO) <- createSystemTempDirectory "propLockstepIO_RealIO"
+        session <- Impl.Real.openSession hasFS hasBlockIO (mkFsPath [])
         pure (tmpDir, WrapSession session)
 
     release :: (FilePath, WrapSession Impl.Real.TableHandle IO) -> IO ()
@@ -170,6 +173,7 @@ propLockstepIO_RealImpl_RealFS = testProperty "propLockstepIO_RealImpl_RealFS" $
         handler' :: IOError -> Maybe Model.Err
         handler' _err = Nothing
 
+{- TODO: temporarily disabled until we start on I/O fault testing.
 propLockstepIO_RealImpl_MockFS :: TestTree
 propLockstepIO_RealImpl_MockFS = testProperty "propLockstepIO_RealImpl_MockFS" $
    QC.expectFailure $ -- TODO: remove once we have a real implementation
@@ -192,25 +196,50 @@ propLockstepIO_RealImpl_MockFS = testProperty "propLockstepIO_RealImpl_MockFS" $
       where
         handler' :: IOError -> Maybe Model.Err
         handler' _err = Nothing
+-}
 
-createSystemTempDirectory ::  [Char] -> IO (FilePath, SomeHasFS IO)
+createSystemTempDirectory ::  [Char] -> IO (FilePath, HasFS IO HandleIO, HasBlockIO IO HandleIO)
 createSystemTempDirectory prefix = do
     systemTempDir <- getCanonicalTemporaryDirectory
     tempDir <- createTempDirectory systemTempDir prefix
-    pure (tempDir, SomeHasFS $ ioHasFS (MountPoint tempDir))
+    let hasFS = ioHasFS (MountPoint tempDir)
+    hasBlockIO <- ioHasBlockIO hasFS defaultIOCtxParams
+    pure (tempDir, hasFS, hasBlockIO)
 
 instance Arbitrary Impl.ModelIO.TableConfig where
   arbitrary :: Gen Impl.ModelIO.TableConfig
   arbitrary = pure Impl.ModelIO.TableConfig
 
 -- TODO: improve, more types of configs
+--
+-- This should always generate 'Nothing' for the 'Impl.Real.confResolveMupsert'
+-- field.
 instance Arbitrary Impl.Real.TableConfig where
   arbitrary :: Gen Impl.Real.TableConfig
   arbitrary = pure $  Impl.Real.TableConfig {
-        Impl.Real.tcMaxBufferMemory = 2 * 1024 * 1024
-      , Impl.Real.tcMaxBloomFilterMemory = 2 * 1024 * 1024
-      , Impl.Real.tcBitPrecision = ()
+        Impl.Real.confMergePolicy      = Impl.Real.MergePolicyLazyLevelling
+      , Impl.Real.confSizeRatio        = Impl.Real.Four
+      , Impl.Real.confWriteBufferAlloc = 2 * 1024 * 1024
+      , Impl.Real.confBloomFilterAlloc = Impl.Real.AllocRequestFPR 0.02
+      , Impl.Real.confResolveMupsert   = Nothing
       }
+
+instance Eq Impl.Real.TableConfig where
+  Impl.Real.TableConfig pol1 size1 wbAlloc1 bfAlloc1 mups1
+    == Impl.Real.TableConfig pol2 size2 wbAlloc2 bfAlloc2 mups2
+    = and [
+        pol1 == pol2
+      , size1 == size2
+      , wbAlloc1 == wbAlloc2
+      , bfAlloc1 == bfAlloc2
+      , mups1 == mups2 -- Errors if either is 'Just'. This is intended behaviour.
+      ]
+
+-- | 'Impl.Real.ResolveMupsert's are arbitrary functions, so they don't have a
+-- sensible 'Eq' instance. This (bottom) instance is only included to make
+-- @quickheck-dynamic@ happy. Do not use this instance!
+instance Eq Impl.Real.Internal.ResolveMupsert where
+  _ == _ = error "(==) on ResolveMupserts should not be used!"
 
 {-------------------------------------------------------------------------------
   Model state
@@ -587,6 +616,7 @@ instance ( Eq (SUT.Class.TableConfig h)
       ListSnapshots    -> Just Dict
       Duplicate{}      -> Nothing
 
+{- TODO: temporarily disabled until we start on I/O fault testing.
 instance ( Eq (SUT.Class.TableConfig h)
          , SUT.Class.IsTableHandle h
          , Show (SUT.Class.TableConfig h)
@@ -633,6 +663,7 @@ instance ( Eq (SUT.Class.TableConfig h)
       DeleteSnapshot{} -> Just Dict
       ListSnapshots    -> Just Dict
       Duplicate{}      -> Nothing
+-}
 
 {-------------------------------------------------------------------------------
   RunModel
@@ -648,6 +679,7 @@ instance ( Eq (SUT.Class.TableConfig h)
   postcondition = Lockstep.Defaults.postcondition
   monitoring    = Lockstep.Defaults.monitoring (Proxy @(RealMonad h IO))
 
+{- TODO: temporarily disabled until we start on I/O fault testing.
 instance ( Eq (SUT.Class.TableConfig h)
          , SUT.Class.IsTableHandle h
          , Show (SUT.Class.TableConfig h)
@@ -657,6 +689,7 @@ instance ( Eq (SUT.Class.TableConfig h)
   perform _     = runIOSim
   postcondition = Lockstep.Defaults.postcondition
   monitoring    = Lockstep.Defaults.monitoring (Proxy @(RealMonad h (IOSim s)))
+-}
 
 {-------------------------------------------------------------------------------
   Interpreter for the model
@@ -756,6 +789,7 @@ runIO action lookUp = ReaderT $ \(session, handler) ->
     lookUp' :: Var j x -> Realized IO x
     lookUp' = lookUpGVar (Proxy @(RealMonad h IO)) lookUp
 
+{- TODO: temporarily disabled until we start on I/O fault testing.
 runIOSim ::
      forall s a h. SUT.Class.IsTableHandle h
   => LockstepAction (ModelState h) a
@@ -798,6 +832,7 @@ runIOSim action lookUp = ReaderT $ \(session, handler) ->
           WrapTableHandle <$> SUT.Class.duplicate (unwrapTableHandle $ lookUp' tableVar)
     lookUp' :: Var h x -> Realized (IOSim s) x
     lookUp' = lookUpGVar (Proxy @(RealMonad h (IOSim s))) lookUp
+-}
 
 catchErr ::
      forall m a. MonadCatch m
