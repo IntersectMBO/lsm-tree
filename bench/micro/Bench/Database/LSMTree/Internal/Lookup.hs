@@ -17,7 +17,7 @@ module Bench.Database.LSMTree.Internal.Lookup (benchmarks) where
 import           Control.Exception (assert)
 import           Control.Monad
 import           Criterion.Main (Benchmark, bench, bgroup, env, envWithCleanup,
-                     nfAppIO, whnf, whnfAppIO)
+                     perRunEnv, whnf, whnfAppIO)
 import           Data.Bifunctor (Bifunctor (..))
 import qualified Data.List as List
 import           Data.Map.Strict (Map)
@@ -30,8 +30,8 @@ import           Database.LSMTree.Extras.Random (frequency,
 import           Database.LSMTree.Extras.UTxO
 import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..))
 import           Database.LSMTree.Internal.Lookup (BatchSize (..),
-                     bloomQueriesDefault, indexSearches, lookupsInBatches,
-                     prepLookups)
+                     bloomQueriesDefault, indexSearches, intraPageLookups,
+                     lookupsInBatches, prepLookups, submitInBatches)
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunFsPaths (RunFsPaths (..))
@@ -50,7 +50,20 @@ import           Test.QuickCheck (generate, shuffle)
 -- | TODO: add a separate micro-benchmark that includes multi-pages.
 benchmarks :: Benchmark
 benchmarks = bgroup "Bench.Database.LSMTree.Internal.Lookup" [
-      benchLookups defaultConfig
+      benchLookups Config {
+          name         = "2_000_000 entries, 256 positive lookups"
+        , nentries     = 2_000_000
+        , npos         = 256
+        , nneg         = 0
+        , ioctxps      = Nothing
+        }
+    , benchLookups Config {
+          name = "2_000_000 entries, 256 negative lookups"
+        , nentries = 2_000_000
+        , npos = 0
+        , nneg = 256
+        , ioctxps = Nothing
+        }
     ]
 
 benchLookups :: Config -> Benchmark
@@ -63,22 +76,47 @@ benchLookups conf@Config{name} =
           ) $ \ ~(blooms, indexes, kopsFiles) ->
         bgroup name [
             -- The bloomfilter is queried for all lookup keys. The result is an
-            -- unboxed vector, so only use whnf.
+            -- unboxed vector, so only use @whnf@.
             bench "Bloomfilter query" $
               whnf (\ks' -> bloomQueriesDefault blooms ks') ks
             -- The compact index is only searched for (true and false) positive
-            -- lookup keys. We use whnf here because the result is an unboxed
-            -- vector.
+            -- lookup keys. We use whnf here because the result is
           , env (pure $ bloomQueriesDefault blooms ks) $ \rkixs ->
               bench "Compact index search" $
                 whnfAppIO (\ks' -> indexSearches indexes kopsFiles ks' rkixs) ks
-            -- All prepped lookups are going to be used eventually so we use
-            -- @nf@ on the vector of 'IOOp's. We only evaluate the vector of
-            -- indexes to WHNF, because it is an unboxed vector.
+            -- prepLookups combines bloom filter querying and index searching.
+            -- The implementation forces the results to WHNF, so we use
+            -- whnfAppIO here instead of nfAppIO.
           , bench "Lookup preparation in memory" $
               whnfAppIO (\ks' -> prepLookups blooms indexes kopsFiles ks') ks
+            -- Submit the IOOps we get from prepLookups to HasBlockIO. We use
+            -- perRunEnv because IOOps contain mutable buffers, so we want fresh
+            -- ones for each run of the benchmark. We manually evaluate the
+            -- result to WHNF since it is unboxed vector.
+          , bench "Submit IOOps in batches" $
+              perRunEnv (prepLookups blooms indexes kopsFiles ks) $ \ ~(_rkixs, ioops) -> do
+                !_ioress <- submitInBatches hasBlockIO bsize ioops
+                pure ()
+            -- When IO result have been collected, intra-page lookups searches
+            -- through the raw bytes (representing a disk page) for the lookup
+            -- key. Again, we use perRunEnv here because IOOps contain mutable
+            -- buffers, so we want fresh ones for each run of the benchmark. The
+            -- result is a boxed vector of Maybe Entry, but since the
+            -- implementation takes care to evaluate each of the elements, we
+            -- only compute WHNF.
+          , bench "Perform intra-page lookups" $
+              perRunEnv ( prepLookups blooms indexes kopsFiles ks >>= \(rkixs, ioops) ->
+                          submitInBatches hasBlockIO bsize ioops >>= \ioress ->
+                          pure (rkixs, ioops, ioress)
+                        ) $ \ ~(rkixs, ioops, ioress) -> do
+                !_ <- intraPageLookups resolveV rs ks rkixs ioops ioress
+                pure ()
+            -- The whole shebang: lookup preparation, doing the IO in batches,
+            -- and then performing intra-page-lookups. Again, we evaluate the
+            -- result to WHNF because it is the same result that
+            -- intraPageLookups produces (see above).
           , bench "Batched lookups in IO" $
-              nfAppIO (\ks' -> lookupsInBatches hasBlockIO bsize resolveV rs blooms indexes kopsFiles ks') ks
+              whnfAppIO (\ks' -> lookupsInBatches hasBlockIO bsize resolveV rs blooms indexes kopsFiles ks') ks
           ]
   where
     withEnv = envWithCleanup
@@ -103,15 +141,6 @@ data Config = Config {
   , nneg         :: !Int
     -- | Optional parameters for the io-uring context
   , ioctxps      :: !(Maybe FS.IOCtxParams)
-  }
-
-defaultConfig :: Config
-defaultConfig = Config {
-    name         = "2_000_000 entries, 256 positive lookups"
-  , nentries     = 2_000_000
-  , npos         = 256
-  , nneg         = 0
-  , ioctxps      = Nothing
   }
 
 lookupsInBatchesEnv ::
