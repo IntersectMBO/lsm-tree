@@ -13,7 +13,8 @@
 -- Logically, a page is a sequence of key,operation pairs (with optional
 -- blobrefs), sorted by key, and its serialised form fits within a disk page.
 --
--- The reference implementation does not rely on the keys being sorted.
+-- This reference implementation covers serialisation and deserialisation
+-- (not lookups) which do not rely on (or enforce) the keys being sorted.
 --
 module FormatPage (
     -- * Page types
@@ -605,7 +606,7 @@ genPageContentSingle dpgsz minkeysz =
 
 -- | This generates a reasonable \"middle\" distribution of page sizes
 -- (relative to the given disk page size). In particular it covers:
-
+--
 -- * small pages (~45% for 4k pages, ~15% for 64k pages)
 -- * near-maximum pages (~20% for 4k pages, ~20% for 64k pages)
 -- * some in between (~35% for 4k pages, ~60% for 64k pages)

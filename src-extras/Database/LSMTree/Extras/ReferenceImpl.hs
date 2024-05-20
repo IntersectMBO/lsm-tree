@@ -41,7 +41,8 @@ import           FormatPage
 import           Test.QuickCheck
 
 -- | A test case consisting of a key\/operation sequence that is guaranteed to
--- fit into a 4k disk page.
+-- either fit into a single 4k disk page, or be a single entry that spans a
+-- one primary 4k disk page and zero or more overflow disk pages.
 --
 -- The keys /are not/ ordered.
 --
@@ -49,7 +50,8 @@ newtype PageContentFits = PageContentFits [(Key, Operation)]
   deriving (Eq, Show)
 
 -- | A test case consisting of a key\/operation sequence that is guaranteed to
--- fit into a 4k disk page.
+-- either fit into a single 4k disk page, or be a single entry that spans a
+-- one primary 4k disk page and zero or more overflow disk pages.
 --
 -- The keys /are/ in strictly ascending order.
 --
@@ -94,7 +96,7 @@ instance Arbitrary PageContentMaybeOverfull where
         genPageContentMaybeOverfull DiskPage4k noMinKeySize
 
     shrink (PageContentMaybeOverfull kops) =
-      map PageContentMaybeOverfull (shrinkOrderedKeyOps kops)
+      map PageContentMaybeOverfull (shrinkKeyOps kops)
 
 instance Arbitrary PageContentSingle where
     arbitrary =

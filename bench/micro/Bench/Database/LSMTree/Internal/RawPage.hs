@@ -30,8 +30,10 @@ benchmarks = rawpage `deepseq` bgroup "Bench.Database.LSMTree.Internal.RawPage"
     ]
   where
     kops :: [(Key, Operation)]
-    kops = unGen (genPageContentNearFull DiskPage4k genSmallKey genSmallValue)
-                 (mkQCGen 42) 200
+    kops = unGen genPage (mkQCGen 42) 200
+      where
+        genPage = orderdKeyOps <$>
+                    genPageContentNearFull DiskPage4k genSmallKey genSmallValue
 
     rawpage :: RawPage
     rawpage = fst $ toRawPage (PageContentFits kops)
