@@ -93,8 +93,8 @@ import           Database.LSMTree.Common (IOLike, Range (..), SerialiseKey,
                      SerialiseValue, Session, SnapshotName,
                      SomeUpdateConstraint, closeSession, deleteSnapshot,
                      listSnapshots, openSession)
+import qualified Database.LSMTree.Internal as Internal
 import           Database.LSMTree.Internal.Monoidal
-import qualified Database.LSMTree.Internal.TableHandle as Internal
 
 -- $resource-management
 -- See "Database.LSMTree.Normal#g:resource"

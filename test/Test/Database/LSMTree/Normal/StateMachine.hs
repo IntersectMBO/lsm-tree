@@ -55,7 +55,7 @@ import           Data.Word (Word64)
 import qualified Database.LSMTree.Common as SUT (SerialiseKey, SerialiseValue,
                      mkSnapshotName)
 import           Database.LSMTree.Extras.Generators ()
-import qualified Database.LSMTree.Internal.TableHandle as Impl.Real.Internal
+import qualified Database.LSMTree.Internal as Impl.Real.Internal
                      (ResolveMupsert (..))
 import qualified Database.LSMTree.Model.Normal.Session as Model
 import qualified Database.LSMTree.ModelIO.Normal as Impl.ModelIO

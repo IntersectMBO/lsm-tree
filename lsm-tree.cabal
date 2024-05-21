@@ -44,6 +44,7 @@ library
   exposed-modules:
     Data.Map.Range
     Database.LSMTree.Common
+    Database.LSMTree.Internal
     Database.LSMTree.Internal.Assertions
     Database.LSMTree.Internal.BitMath
     Database.LSMTree.Internal.BlobRef
@@ -72,7 +73,6 @@ library
     Database.LSMTree.Internal.RunReader
     Database.LSMTree.Internal.Serialise
     Database.LSMTree.Internal.Serialise.Class
-    Database.LSMTree.Internal.TableHandle
     Database.LSMTree.Internal.Unsliced
     Database.LSMTree.Internal.Vector
     Database.LSMTree.Internal.WriteBuffer

@@ -41,11 +41,11 @@ import qualified Data.ByteString.Builder as BB
 import           Data.Kind (Type)
 import qualified Data.Text as Text
 import           Data.Typeable (Typeable)
+import qualified Database.LSMTree.Internal as Internal
 import qualified Database.LSMTree.Internal.BlobRef as Internal
 import qualified Database.LSMTree.Internal.Range as Internal
 import qualified Database.LSMTree.Internal.Run as Internal
 import           Database.LSMTree.Internal.Serialise.Class
-import qualified Database.LSMTree.Internal.TableHandle as Internal
 import qualified System.FilePath.Posix
 import qualified System.FilePath.Windows
 import qualified System.FS.API as FS

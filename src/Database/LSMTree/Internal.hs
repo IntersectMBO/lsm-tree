@@ -3,7 +3,7 @@
 -- TODO: remove once the top-level bindings are in use
 {-# OPTIONS_GHC -Wno-unused-top-binds #-}
 
-module Database.LSMTree.Internal.TableHandle (
+module Database.LSMTree.Internal (
     -- * Exceptions
     LSMTreeError (..)
     -- * Session
