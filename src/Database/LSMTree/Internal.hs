@@ -16,7 +16,12 @@ module Database.LSMTree.Internal (
   , openSession
   , closeSession
     -- * Table handle
-  , TableHandle
+  , TableHandle (..)
+  , TableHandleState (..)
+  , TableHandleEnv (..)
+    -- ** Implementation of public API
+  , new
+  , close
     -- * configuration
   , TableConfig (..)
   , ResolveMupsert (..)
@@ -26,7 +31,7 @@ module Database.LSMTree.Internal (
   ) where
 
 import           Control.Concurrent.Class.MonadMVar.Strict
-import           Control.Concurrent.ReadWriteVar
+import           Control.Concurrent.ReadWriteVar (RWVar)
 import qualified Control.Concurrent.ReadWriteVar as RW
 import           Control.Monad (unless)
 import           Control.Monad.Class.MonadThrow
@@ -44,9 +49,10 @@ import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.Serialise (SerialisedKey,
                      SerialisedValue)
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
+import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import qualified GHC.IO.Handle as GHC
 import qualified System.FS.API as FS
-import           System.FS.API (FsErrorPath, FsPath, HasFS)
+import           System.FS.API (FsErrorPath, FsPath, Handle, HasFS)
 import           System.FS.BlockIO.API (HasBlockIO)
 import           System.FS.IO (HandleIO)
 import qualified System.IO as System
@@ -60,6 +66,10 @@ data LSMTreeError =
     SessionDirDoesNotExist FsErrorPath
   | SessionDirLocked FsErrorPath
   | SessionDirMalformed FsErrorPath
+    -- | All operations on a closed session or tables within a closed session
+    -- will thrown this exception. There is one exception (pun intended) to this
+    -- rule: the idempotent operation 'Database.LSMTree.Common.closeSession'.
+  | ErrSessionClosed
   deriving (Show, Exception)
 
 {-------------------------------------------------------------------------------
@@ -99,6 +109,16 @@ data SessionEnv m h = SessionEnv {
     -- is closed.
   , sessionKnownTables :: !(StrictMVar m (Set (TableHandle m h)))
   }
+
+{-# SPECIALISE withOpenSession :: Session IO HandleIO -> (SessionEnv IO HandleIO -> IO a) -> IO a #-}
+withOpenSession ::
+     m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+  => Session m h
+  -> (SessionEnv m h -> m a)
+  -> m a
+withOpenSession sesh action = RW.with (sessionState sesh) $ \case
+    SessionClosed -> throwIO ErrSessionClosed
+    SessionOpen seshEnv -> action seshEnv
 
 --
 -- Implementation of public API
@@ -235,18 +255,36 @@ closeSession Session{sessionState} =
 --
 -- For more information, see 'Database.LSMTree.Normal.TableHandle'.
 --
--- NOTE: a table handle is __not__ thread-safe.
-data TableHandle m h = TableHandle {
-    tableSession     :: !(Session m h)
+-- Concurrent access to a table handle is mediated by a multiple-read,
+-- single-write lock. This allows concurrent read access, but only sequential
+-- write access. TODO: more fine-grained concurrent access than a top-level
+-- read-write lock.
+newtype TableHandle m h = TableHandle {
+      -- TODO: RWVars only work in IO, not in IOSim.
+      --
+      -- TODO: how fair is an RWVar?
+      tableHandleState :: RWVar (TableHandleState m h)
+    }
+
+data TableHandleState m h =
+    TableHandleOpen {-# UNPACK #-} !(TableHandleEnv m h)
+  | TableHandleClosed
+
+data TableHandleEnv m h = TableHandleEnv {
+    -- === Inherited from Session
+    tableSessionRoot :: !FsPath
+  , tableHasFS       :: !(HasFS m h)
+  , tableHasBlockIO  :: !(HasBlockIO m h)
+    -- === Table-specific
   , tableConfig      :: !TableConfig
   , tableWriteBuffer :: !(StrictMVar m (WriteBuffer))
     -- | A hierarchy of levels. The vector indexes double as level numbers.
-  , tableLevels      :: !(StrictMVar m (V.Vector (Level h)))
+  , tableLevels      :: !(StrictMVar m (V.Vector (Level (Handle h))))
     -- | Cache of flattened 'levels'.
     --
     -- INVARIANT: when 'level's is modified, this cache should be updated as
     -- well, for example using 'mkLevelsCache'.
-  , tableLevelsCache :: !(StrictMVar m (LevelsCache h))
+  , tableCache       :: !(StrictMVar m (LevelsCache (Handle h)))
   }
 
 -- | Runs in order from newer to older
@@ -283,6 +321,47 @@ mkLevelsCache lvls = LevelsCache_ {
     , cachedKOpsFiles = V.map Run.runKOpsFile rs
     }
   where rs = V.concatMap residentRuns lvls
+
+--
+-- Implementation of public API
+--
+
+{-# SPECIALISE new :: Session IO HandleIO -> TableConfig -> IO (TableHandle IO HandleIO) #-}
+-- | See 'Database.LSMTree.Normal.new'.
+new ::
+     m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+  => Session m h
+  -> TableConfig
+  -> m (TableHandle m h)
+new sesh conf = do
+    withOpenSession sesh $ \seshEnv -> do
+      writeBufVar <- newMVar (WB.empty)
+      levelsVar <- newMVar V.empty
+      cacheVar <- newMVar (mkLevelsCache V.empty)
+      tableVar <- RW.new $ TableHandleOpen $ TableHandleEnv {
+            tableSessionRoot = sessionRoot seshEnv
+          , tableHasFS = sessionHasFS seshEnv
+          , tableHasBlockIO = sessionHasBlockIO seshEnv
+          , tableConfig = conf
+          , tableWriteBuffer = writeBufVar
+          , tableLevels = levelsVar
+          , tableCache = cacheVar
+          }
+      pure $! TableHandle tableVar
+
+{-# SPECIALISE close :: TableHandle IO HandleIO -> IO () #-}
+-- | See 'Database.LSMTree.Normal.close'.
+close ::
+     m ~ IO  -- TODO: replace by @io-classes@ constraints for IO simulation.
+  => TableHandle m h
+  -> m ()
+close th = RW.modify_ (tableHandleState th) $ \case
+    TableHandleClosed -> pure TableHandleClosed
+    TableHandleOpen thEnv -> do
+      lvls <- readMVar (tableLevels thEnv)
+      V.forM_ lvls $ \Level{residentRuns} ->
+        V.forM_ residentRuns $ Run.removeReference (tableHasFS thEnv)
+      pure TableHandleClosed
 
 {-------------------------------------------------------------------------------
   Configuration

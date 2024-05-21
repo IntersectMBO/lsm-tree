@@ -96,7 +96,7 @@ instance IOLike IO
 -- while a shared session will place all files under one directory.
 --
 type Session :: (Type -> Type) -> Type
-data Session m = forall h. Typeable h => Session {-# UNPACK #-} !(Internal.Session m h)
+data Session m = forall h. Typeable h => Session !(Internal.Session m h)
 
 {-# SPECIALISE withSession :: HasFS IO HandleIO -> HasBlockIO IO HandleIO -> FsPath -> (Session IO -> IO a) -> IO a #-}
 -- | (Asynchronous) exception-safe, bracketed opening and closing of a session.
