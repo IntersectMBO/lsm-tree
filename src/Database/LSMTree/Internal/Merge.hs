@@ -12,12 +12,8 @@ module Database.LSMTree.Internal.Merge (
   ) where
 
 import           Control.Exception (assert)
-import           Control.Monad (when, zipWithM)
-import           Control.Monad.Primitive (RealWorld)
+import           Control.Monad (when)
 import           Data.Coerce (coerce)
-import           Data.Function (on)
-import           Data.IORef
-import           Data.Maybe (catMaybes)
 import           Data.Traversable (for)
 import           Database.LSMTree.Internal.BlobRef (BlobRef (..))
 import           Database.LSMTree.Internal.Entry
@@ -25,10 +21,9 @@ import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunBuilder (RunBuilder)
 import qualified Database.LSMTree.Internal.RunBuilder as Builder
-import           Database.LSMTree.Internal.RunReader (RunReader)
 import qualified Database.LSMTree.Internal.RunReader as Reader
+import qualified Database.LSMTree.Internal.RunReaders as Readers
 import           Database.LSMTree.Internal.Serialise
-import qualified KMerge.Heap as Heap
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
 
@@ -42,7 +37,7 @@ import           System.FS.API (HasFS)
 data Merge fhandle = Merge {
       mergeLevel   :: !Level
     , mergeMappend :: !Mappend
-    , mergeReaders :: {-# UNPACK #-} !(Readers fhandle)
+    , mergeReaders :: {-# UNPACK #-} !(Readers.Readers fhandle)
     , mergeBuilder :: !(RunBuilder fhandle)
     }
 
@@ -61,7 +56,7 @@ new ::
   -> [Run (FS.Handle h)]
   -> IO (Maybe (Merge (FS.Handle h)))
 new fs mergeLevel mergeMappend targetPaths runs = do
-    mreaders <- readersNew fs runs
+    mreaders <- Readers.new fs runs
     for mreaders $ \mergeReaders -> do
       -- calculate upper bounds based on input runs
       let numEntries = coerce (sum @[] @Int) (map Run.runNumEntries runs)
@@ -80,7 +75,7 @@ close ::
   -> IO ()
 close fs Merge {..} = do
     Builder.close fs mergeBuilder
-    readersClose fs mergeReaders
+    Readers.close fs mergeReaders
 
 data StepResult fhandle = MergeInProgress | MergeComplete !(Run fhandle)
 
@@ -112,11 +107,11 @@ steps fs Merge {..} requestedSteps =
       | n >= requestedSteps =
           return (n, MergeInProgress)
       | otherwise = do
-          (key, entry, hasMore) <- readersPop fs mergeReaders
+          (key, entry, hasMore) <- Readers.pop fs mergeReaders
           case hasMore of
-            HasMore ->
+            Readers.HasMore ->
               handleEntry (n + 1) key entry
-            Drained -> do
+            Readers.Drained -> do
               -- no future entries, no previous entry to resolve, just write!
               writeReaderEntry fs mergeLevel mergeBuilder key entry
               completeMerge (n + 1)
@@ -134,20 +129,20 @@ steps fs Merge {..} requestedSteps =
 
     -- the value is from a mupsert, complete (not just a prefix)
     handleMupdate !n !key !v = do
-        nextKey <- readersPeekKey mergeReaders
+        nextKey <- Readers.peekKey mergeReaders
         if nextKey /= key
           then do
             -- resolved all entries for this key, write it
             writeSerialisedEntry fs mergeLevel mergeBuilder key (Mupdate v)
             go n
           else do
-            (_, nextEntry, hasMore) <- readersPop fs mergeReaders
+            (_, nextEntry, hasMore) <- Readers.pop fs mergeReaders
             -- for resolution, we need the full second value to be present
             let resolved = combine mergeMappend
                              (Mupdate v)
                              (Reader.toFullEntry nextEntry)
             case hasMore of
-              HasMore -> case resolved of
+              Readers.HasMore -> case resolved of
                 Mupdate v' ->
                   -- still a mupsert, keep resolving
                   handleMupdate (n + 1) key v'
@@ -155,15 +150,15 @@ steps fs Merge {..} requestedSteps =
                   -- done with this key, now the remaining entries are obsolete
                   writeSerialisedEntry fs mergeLevel mergeBuilder key resolved
                   dropRemaining (n + 1) key
-              Drained -> do
+              Readers.Drained -> do
                 writeSerialisedEntry fs mergeLevel mergeBuilder key resolved
                 completeMerge (n + 1)
 
     dropRemaining !n !key = do
-        (dropped, hasMore) <- readersDropWhileKey fs mergeReaders key
+        (dropped, hasMore) <- Readers.dropWhileKey fs mergeReaders key
         case hasMore of
-          HasMore -> go (n + dropped)
-          Drained -> completeMerge (n + dropped)
+          Readers.HasMore -> go (n + dropped)
+          Readers.Drained -> completeMerge (n + dropped)
 
     completeMerge !n = do
         -- All Readers have been drained, the builder finalised.
@@ -171,171 +166,6 @@ steps fs Merge {..} requestedSteps =
         run <- Run.fromMutable fs (Run.RefCount 1) mergeBuilder
         return (n, MergeComplete run)
 
-{-------------------------------------------------------------------------------
-  Read
--------------------------------------------------------------------------------}
-
--- | Abstraction for the collection of 'RunReader', yielding elements in order.
--- More precisely, that means first ordered by their key, then by the input
--- run they came from. This is important for resolving multiple entries with the
--- same key into one.
---
--- Construct with 'readersNew', then keep calling 'readersPop'.
--- If aborting early, remember to call 'readersClose'!
-data Readers fhandle = Readers {
-      readersHeap :: !(Heap.MutableHeap RealWorld (ReadCtx fhandle))
-      -- | Since there is always one reader outside of the heap, we need to
-      -- store it separately. This also contains the next k\/op to yield, unless
-      -- all readers are drained, i.e. both:
-      -- 1. the reader inside the 'ReadCtx' is empty
-      -- 2. the heap is empty
-    , readersNext :: !(IORef (ReadCtx fhandle))
-    }
-
-newtype ReaderNumber = ReaderNumber Int
-  deriving (Eq, Ord)
-
--- | Each heap element needs some more context than just the reader.
--- E.g. the 'Eq' instance we need to be able to access the first key to be read
--- in a pure way.
---
--- TODO(optimisation): We allocate this record for each k/op. This might be
--- avoidable, see ideas below.
-data ReadCtx fhandle = ReadCtx {
-      -- We could avoid this using a more specialised mutable heap with separate
-      -- arrays for keys and values (or even each of their components).
-      -- Using an 'STRef' could avoid reallocating the record for every entry,
-      -- but that might not be straightforward to integrate with the heap.
-      readCtxHeadKey   :: !SerialisedKey
-    , readCtxHeadEntry :: !(Reader.Entry fhandle)
-      -- We could get rid of this by making 'LoserTree' stable (for which there
-      -- is a prototype already).
-      -- Alternatively, if we decide to have an invariant that the number in
-      -- 'RunFsPaths' is always higher for newer runs, then we could use that
-      -- in the 'Ord' instance.
-    , readCtxNumber    :: !ReaderNumber
-    , readCtxReader    :: !(RunReader fhandle)
-    }
-
-instance Eq (ReadCtx fhandle) where
-  (==) = (==) `on` (\r -> (readCtxHeadKey r, readCtxNumber r))
-
--- | Makes sure we resolve entries in the right order.
-instance Ord (ReadCtx fhandle) where
-  compare = compare `on` (\r -> (readCtxHeadKey r, readCtxNumber r))
-
--- | On equal keys, elements from runs earlier in the list are yielded first.
--- This means that the list of runs should be sorted from new to old.
-readersNew ::
-     HasFS IO h
-  -> [Run (FS.Handle h)]
-  -> IO (Maybe (Readers (FS.Handle h)))
-readersNew fs runs = do
-    readers <- zipWithM (fromRun . ReaderNumber) [1..] runs
-    (readersHeap, firstReadCtx) <- Heap.newMutableHeap (catMaybes readers)
-    for firstReadCtx $ \readCtx -> do
-      readersNext <- newIORef readCtx
-      return Readers {..}
-  where
-    fromRun n run = nextReadCtx fs n =<< Reader.new fs run
-
-readersPeekKey ::
-     Readers (FS.Handle h)
-  -> IO SerialisedKey
-readersPeekKey Readers {..} = do
-    readCtxHeadKey <$> readIORef readersNext
-
--- | Once a function returned 'Drained', do not use the 'Readers' any more!
-data HasMore = HasMore | Drained
-
-readersPop ::
-     HasFS IO h
-  -> Readers (FS.Handle h)
-  -> IO (SerialisedKey, Reader.Entry (FS.Handle h), HasMore)
-readersPop fs r@Readers {..} = do
-    ReadCtx {..} <- readIORef readersNext
-    hasMore <- readersDrop fs r readCtxNumber readCtxReader
-    return (readCtxHeadKey, readCtxHeadEntry, hasMore)
-
-readersDrop ::
-     HasFS IO h
-  -> Readers (FS.Handle h)
-  -> ReaderNumber
-  -> RunReader (FS.Handle h)
-  -> IO HasMore
-readersDrop fs Readers {..} number reader = do
-    mNext <- nextReadCtx fs number reader >>= \case
-      Nothing  -> Heap.extract readersHeap
-      Just ctx -> Just <$> Heap.replaceRoot readersHeap ctx
-    case mNext of
-      Nothing ->
-        return Drained
-      Just next -> do
-        writeIORef readersNext next
-        return HasMore
-
-readersDropWhileKey ::
-     HasFS IO h
-  -> Readers (FS.Handle h)
-  -> SerialisedKey
-  -> IO (Int, HasMore)  -- ^ How many were dropped?
-readersDropWhileKey fs Readers {..} key = do
-    cur <- readIORef readersNext
-    if readCtxHeadKey cur == key
-      then go 0 cur
-      else return (0, HasMore)  -- nothing to do
-  where
-    -- invariant: @readCtxHeadKey == key@
-    go !n ReadCtx {readCtxNumber, readCtxReader} = do
-        mNext <- nextReadCtx fs readCtxNumber readCtxReader >>= \case
-          Nothing  -> Heap.extract readersHeap
-          Just ctx -> Just <$> Heap.replaceRoot readersHeap ctx
-        let !n' = n + 1
-        case mNext of
-          Nothing -> do
-            return (n', Drained)
-          Just next -> do
-            -- hasMore
-            if readCtxHeadKey next == key
-              then
-                go n' next
-              else do
-                writeIORef readersNext next
-                return (n', HasMore)
-
-nextReadCtx ::
-     HasFS IO h
-  -> ReaderNumber
-  -> RunReader (FS.Handle h)
-  -> IO (Maybe (ReadCtx (FS.Handle h)))
-nextReadCtx fs readCtxNumber readCtxReader = do
-    res <- Reader.next fs readCtxReader
-    case res of
-      Reader.Empty -> do
-        return Nothing
-      Reader.ReadEntry readCtxHeadKey readCtxHeadEntry ->
-        return (Just ReadCtx {..})
-
--- | Only call when aborting before all readers have been drained.
-readersClose ::
-     HasFS IO h
-  -> Readers (FS.Handle h)
-  -> IO ()
-readersClose fs Readers {..} = do
-    ReadCtx {readCtxReader} <- readIORef readersNext
-    Reader.close fs readCtxReader
-    closeHeap
-  where
-    closeHeap =
-        Heap.extract readersHeap >>= \case
-          Nothing -> return ()
-          Just ReadCtx {readCtxReader} -> do
-            Reader.close fs readCtxReader
-            closeHeap
-
-{-------------------------------------------------------------------------------
-  Write
--------------------------------------------------------------------------------}
 
 writeReaderEntry ::
      HasFS IO h
