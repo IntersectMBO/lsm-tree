@@ -44,6 +44,7 @@ library
   exposed-modules:
     Data.Map.Range
     Database.LSMTree.Common
+    Database.LSMTree.Internal
     Database.LSMTree.Internal.Assertions
     Database.LSMTree.Internal.BitMath
     Database.LSMTree.Internal.BlobRef
@@ -72,7 +73,6 @@ library
     Database.LSMTree.Internal.RunReader
     Database.LSMTree.Internal.Serialise
     Database.LSMTree.Internal.Serialise.Class
-    Database.LSMTree.Internal.TableHandle
     Database.LSMTree.Internal.Unsliced
     Database.LSMTree.Internal.Vector
     Database.LSMTree.Internal.WriteBuffer
@@ -83,6 +83,7 @@ library
     , base                     >=4.16      && <4.20
     , bitvec                   ^>=1.1
     , bytestring               ^>=0.11.4.0 || ^>=0.12.1.0
+    , concurrent-extra         ^>=0.7
     , containers
     , crc32c                   ^>=0.2.1
     , deepseq                  ^>=1.4      || ^>=1.5
@@ -215,6 +216,7 @@ test-suite lsm-tree-test
     Database.LSMTree.ModelIO.Normal
     Database.LSMTree.ModelIO.Session
     Test.Database.LSMTree.Generators
+    Test.Database.LSMTree.Internal
     Test.Database.LSMTree.Internal.BloomFilter
     Test.Database.LSMTree.Internal.CRC32C
     Test.Database.LSMTree.Internal.Entry
@@ -238,6 +240,7 @@ test-suite lsm-tree-test
     Test.Database.LSMTree.ModelIO.Normal
     Test.Database.LSMTree.Normal.StateMachine
     Test.Database.LSMTree.Normal.StateMachine.Op
+    Test.Util.FS
     Test.Util.Orphans
     Test.Util.QuickCheck
     Test.Util.RawPage

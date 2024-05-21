@@ -88,8 +88,8 @@ import           Data.Typeable (Typeable)
 import           Database.LSMTree.Common (BlobRef, IOLike, Range (..),
                      SerialiseKey, SerialiseValue, Session, SnapshotName,
                      closeSession, deleteSnapshot, listSnapshots, openSession)
+import qualified Database.LSMTree.Internal as Internal
 import           Database.LSMTree.Internal.Normal
-import qualified Database.LSMTree.Internal.TableHandle as Internal
 
 -- $resource-management
 -- Table handles use resources and as such need to be managed. In particular

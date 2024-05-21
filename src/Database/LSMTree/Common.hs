@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveFunctor            #-}
 {-# LANGUAGE FlexibleContexts         #-}
 {-# LANGUAGE GADTs                    #-}
+{-# LANGUAGE LambdaCase               #-}
 {-# LANGUAGE RoleAnnotations          #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 
@@ -12,7 +13,8 @@ module Database.LSMTree.Common (
     -- * IOLike
     IOLike
     -- * Sessions
-  , Session
+  , Session (..)
+  , withSession
   , openSession
   , closeSession
     -- * Constraints
@@ -31,26 +33,20 @@ module Database.LSMTree.Common (
   , BlobRef
   ) where
 
-import           Control.Concurrent.Class.MonadMVar (MonadMVar)
-import           Control.Concurrent.Class.MonadMVar.Strict (newMVar)
+import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Concurrent.Class.MonadSTM (MonadSTM, STM)
-import           Control.Monad (unless, void, when)
-import           Control.Monad.Class.MonadThrow (MonadCatch, MonadThrow (..))
+import           Control.Monad.Class.MonadThrow
 import qualified Data.ByteString as BS
-import qualified Data.ByteString.Builder as BB
 import           Data.Kind (Type)
-import qualified Data.Text as Text
 import           Data.Typeable (Typeable)
+import qualified Database.LSMTree.Internal as Internal
 import qualified Database.LSMTree.Internal.BlobRef as Internal
 import qualified Database.LSMTree.Internal.Range as Internal
 import qualified Database.LSMTree.Internal.Run as Internal
 import           Database.LSMTree.Internal.Serialise.Class
-import qualified Database.LSMTree.Internal.TableHandle as Internal
 import qualified System.FilePath.Posix
 import qualified System.FilePath.Windows
-import qualified System.FS.API as FS
 import           System.FS.API (FsPath, HasFS)
-import qualified System.FS.API.Strict as FS
 import           System.FS.BlockIO.API (HasBlockIO)
 import           System.FS.IO (HandleIO)
 
@@ -100,13 +96,31 @@ instance IOLike IO
 -- while a shared session will place all files under one directory.
 --
 type Session :: (Type -> Type) -> Type
-data Session m = forall h. Typeable h => Session (Internal.Session m h)
+data Session m = forall h. Typeable h => Session {-# UNPACK #-} !(Internal.Session m h)
 
+{-# SPECIALISE withSession :: HasFS IO HandleIO -> HasBlockIO IO HandleIO -> FsPath -> (Session IO -> IO a) -> IO a #-}
+-- | (Asynchronous) exception-safe, bracketed opening and closing of a session.
+--
+-- It is recommended to use this function instead of 'openSession' and
+-- 'closeSession'.
+withSession ::
+     (IOLike m, Typeable h)
+  => HasFS m h
+  -> HasBlockIO m h
+  -> FsPath
+  -> (Session m -> m a)
+  -> m a
+withSession hfs hbio dir action = Internal.withSession hfs hbio dir (action . Session)
+
+{-# SPECIALISE openSession :: HasFS IO HandleIO -> HasBlockIO IO HandleIO -> FsPath -> IO (Session IO) #-}
 -- | Create either a new empty table session or open an existing table session,
 -- given the path to the session directory.
 --
 -- A new empty table session is created if the given directory is entirely
 -- empty. Otherwise it is intended to open an existing table session.
+--
+-- Sessions should be closed using 'closeSession' when no longer needed.
+-- Consider using 'withSession' instead.
 --
 -- Exceptions:
 --
@@ -118,47 +132,15 @@ data Session m = forall h. Typeable h => Session (Internal.Session m h)
 --
 -- * It will throw an exception if the session is already open (in the current
 --   process or another OS process)
---
--- Sessions should be closed using 'closeSession' when no longer needed.
---
 openSession ::
-     (IOLike m, Typeable h)
+     forall m h. (IOLike m, Typeable h)
   => HasFS m h
   -> HasBlockIO m h -- TODO: could we prevent the user from having to pass this in?
   -> FsPath -- ^ Path to the session directory
   -> m (Session m)
-openSession hfs hbio dir = do
-    dirExists <- FS.doesDirectoryExist hfs dir
-    unless dirExists $
-      throwIO (Internal.SessionDirDoesNotExist (FS.mkFsErrorPath hfs dir))
-    lockFileExists <- FS.doesFileExist hfs lockFile
-    when lockFileExists $
-      throwIO (Internal.SessionDirLocked (FS.mkFsErrorPath hfs lockFile))
-    -- Lock in the session before checking the file layout to minimise the risk
-    -- of race conditions.
-    --
-    -- Unless there is a race with another 'openSession' in the same directory,
-    -- the following will always succeed because we've just checked that the
-    -- file does not exist
-    void $ FS.withFile hfs lockFile (FS.WriteMode FS.MustBeNew) $ \h ->
-      FS.hPutAllStrict hfs h $
-        BS.toStrict (BB.toLazyByteString (BB.string8 "locked"))
-    -- TODO: check that the file/directory layout inside the session is correct.
-    -- If not, release the lockfile and throw an exception.
-    counter <- newMVar 0
-    pure $ Session $ Internal.Session {
-          Internal.sessionRoot = dir
-        , Internal.sessionHasFS = hfs
-        , Internal.sessionHasBlockIO = hbio
-        , Internal.sessionUniqCounter = counter
-        }
-  where
-    -- TODO: add combinators like (</>) for FsPaths to fs-api. The current
-    -- conversion to and from lists of Text is not very nice.
-    lockFile = FS.fsPathFromList (FS.fsPathToList dir <> [Text.pack "lock"])
+openSession hfs hbio dir = Session <$> Internal.openSession hfs hbio dir
 
-{-# SPECIALISE openSession :: HasFS IO HandleIO -> HasBlockIO IO HandleIO -> FsPath -> IO (Session IO) #-}
-
+{-# SPECIALISE closeSession :: Session IO -> IO () #-}
 -- | Close the table session. 'closeSession' is idempotent. All subsequent
 -- operations on the session or the tables within it will throw an exception.
 --
@@ -172,7 +154,7 @@ openSession hfs hbio dir = do
 -- lock will be released).
 --
 closeSession :: IOLike m => Session m -> m ()
-closeSession = undefined
+closeSession (Session sesh) = Internal.closeSession sesh
 
 {-------------------------------------------------------------------------------
   Serialisation constraints
