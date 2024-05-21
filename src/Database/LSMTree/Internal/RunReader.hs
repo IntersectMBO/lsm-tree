@@ -1,4 +1,3 @@
-{-# LANGUAGE BangPatterns    #-}
 {-# LANGUAGE LambdaCase      #-}
 {-# LANGUAGE RecordWildCards #-}
 
@@ -8,24 +7,30 @@ module Database.LSMTree.Internal.RunReader (
     RunReader
   , new
   , next
-  , Result (..)
   , close
+  , Result (..)
+  , Entry (..)
+  , toFullEntry
+  , appendOverflow
   ) where
 
-import           Control.Exception (handleJust)
+import           Control.Exception (assert, handleJust)
 import           Control.Monad (guard)
 import           Control.Monad.Primitive (RealWorld)
+import           Data.Bifunctor (first)
 import           Data.IORef
 import           Data.Maybe (fromMaybe)
 import           Data.Primitive.ByteArray (newPinnedByteArray,
                      unsafeFreezeByteArray)
 import           Data.Primitive.PrimVar
 import           Data.Word (Word16, Word32)
-import           Database.LSMTree.Internal.BitMath (roundUpToPageSize)
+import           Database.LSMTree.Internal.BitMath (ceilDivPageSize,
+                     roundUpToPageSize)
 import           Database.LSMTree.Internal.BlobRef (BlobRef (..))
-import           Database.LSMTree.Internal.Entry
+import qualified Database.LSMTree.Internal.Entry as E
+import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.RawOverflowPage (RawOverflowPage,
-                     pinnedByteArrayToOverflowPages)
+                     pinnedByteArrayToOverflowPages, rawOverflowPageRawBytes)
 import           Database.LSMTree.Internal.RawPage
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
@@ -85,20 +90,54 @@ close fs RunReader {..} = do
 -- array, so if they're long-lived, consider making a copy!
 data Result fhandle
   = Empty
-  | ReadSmallEntry !SerialisedKey !(Entry SerialisedValue (BlobRef (Run fhandle)))
-    -- | For large entries, the caller might be interested in various different
+  | ReadEntry !SerialisedKey !(Entry fhandle)
+
+data Entry fhandle =
+    Entry
+      !(E.Entry SerialisedValue (BlobRef (Run fhandle)))
+  | -- | A large entry. The caller might be interested in various different
     -- (redundant) representation, so we return all of them.
-    --
-    -- TODO: Can we get rid of some?
-    -- TODO(optimise): Sometimes, reading the overflow pages is not necessary.
-    -- We could just return the page index and offer a separate function to do
-    -- the disk I/O once needed.
-  | ReadLargeEntry
-      !SerialisedKey
-      !(Entry SerialisedValue (BlobRef (Run fhandle)))  -- ^ Value is only prefix.
-      !RawPage  -- ^ First page.
-      !Word32  -- ^ Length of the overflow in bytes.
+    EntryOverflow
+      -- | The value is just a prefix, with the remainder in the overflow pages.
+      !(E.Entry SerialisedValue (BlobRef (Run fhandle)))
+      -- | A page containing the single entry (or rather its prefix).
+      !RawPage
+      -- | Non-zero length of the overflow in bytes.
+      !Word32
+      -- | The overflow pages containing the suffix of the value (so at least
+      -- the number of bytes specified above).
+      --
+      -- TODO(optimise): Sometimes, reading the overflow pages is not necessary.
+      -- We could just return the page index and offer a separate function to do
+      -- the disk I/O once needed.
       ![RawOverflowPage]
+
+mkEntryOverflow ::
+     E.Entry SerialisedValue (BlobRef (Run fhandle))
+  -> RawPage
+  -> Word32
+  -> [RawOverflowPage]
+  -> Entry fhandle
+mkEntryOverflow entryPrefix page len overflowPages =
+    assert (len > 0) $
+    assert (rawPageOverflowPages page == ceilDivPageSize (fromIntegral len)) $
+    assert (rawPageOverflowPages page == length overflowPages) $
+      EntryOverflow entryPrefix page len overflowPages
+
+{-# INLINE toFullEntry #-}
+toFullEntry :: Entry fhandle -> E.Entry SerialisedValue (BlobRef (Run fhandle))
+toFullEntry = \case
+    Entry e ->
+      e
+    EntryOverflow prefix _ len overflowPages ->
+      first (appendOverflow len overflowPages) prefix
+
+{-# INLINE appendOverflow #-}
+appendOverflow :: Word32 -> [RawOverflowPage] -> SerialisedValue -> SerialisedValue
+appendOverflow len overflowPages (SerialisedValue prefix) =
+    SerialisedValue $
+      RB.take (RB.size prefix + fromIntegral len) $
+        mconcat (prefix : map rawOverflowPageRawBytes overflowPages)
 
 -- | Stop using the 'RunReader' after getting 'Empty', because the 'Reader' is
 -- automatically closed!
@@ -127,13 +166,15 @@ next fs reader@RunReader {..} = do
           IndexEntry key entry -> do
             modifyPrimVar readerCurrentEntryNo (+1)
             let entry' = fmap (BlobRef readerRun) entry
-            return (ReadSmallEntry key entry')
+            let rawEntry = Entry entry'
+            return (ReadEntry key rawEntry)
           IndexEntryOverflow key entry lenSuffix -> do
             -- TODO: we know that we need the next page, could already load?
             modifyPrimVar readerCurrentEntryNo (+1)
             let entry' = fmap (BlobRef readerRun) entry
             overflowPages <- readOverflowPages fs readerKOpsHandle lenSuffix
-            return (ReadLargeEntry key entry' page lenSuffix overflowPages)
+            let rawEntry = mkEntryOverflow entry' page lenSuffix overflowPages
+            return (ReadEntry key rawEntry)
 
 {-------------------------------------------------------------------------------
   Utilities
