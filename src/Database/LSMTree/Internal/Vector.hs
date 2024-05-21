@@ -4,14 +4,17 @@
 module Database.LSMTree.Internal.Vector (
     mkPrimVector,
     noRetainedExtraMemory,
+    mapStrict,
 ) where
 
 import           Data.Primitive.ByteArray (ByteArray, sizeofByteArray)
 import           Data.Primitive.Types (Prim (sizeOfType#))
 import           Data.Proxy (Proxy (..))
+import qualified Data.Vector as V
 import qualified Data.Vector.Primitive as PV
 import           Database.LSMTree.Internal.Assertions
 import           GHC.Exts (Int (..))
+import           GHC.ST (runST)
 
 mkPrimVector :: forall a. Prim a => Int -> Int -> ByteArray -> PV.Vector a
 mkPrimVector off len ba =
@@ -26,3 +29,7 @@ noRetainedExtraMemory (PV.Vector off len ba) =
     off == 0 && len * sizeof == sizeofByteArray ba
    where
     sizeof = I# (sizeOfType# (Proxy @a))
+
+-- | /( O(n) /) Like 'V.map', but strict in the produced elements of type @b@.
+mapStrict :: forall a b. (a -> b) -> V.Vector a -> V.Vector b
+mapStrict f v = runST (V.mapM (\x -> pure $! f x) v)
