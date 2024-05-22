@@ -86,7 +86,7 @@ module Database.LSMTree.Normal (
 import           Data.Kind (Type)
 import           Data.Typeable (Typeable)
 import           Database.LSMTree.Common (BlobRef, IOLike, Range (..),
-                     SerialiseKey, SerialiseValue, Session, SnapshotName,
+                     SerialiseKey, SerialiseValue, Session (..), SnapshotName,
                      closeSession, deleteSnapshot, listSnapshots, openSession)
 import qualified Database.LSMTree.Internal as Internal
 import           Database.LSMTree.Internal.Normal
@@ -167,8 +167,9 @@ import           Database.LSMTree.Internal.Normal
 -- such instances in use at once.
 type TableHandle :: (Type -> Type) -> Type -> Type -> Type -> Type
 data TableHandle m k v blob = forall h. Typeable h =>
-    TableHandle (Internal.TableHandle m h)
+    TableHandle !(Internal.TableHandle m h)
 
+{-# SPECIALISE new :: Session IO -> Internal.TableConfig -> IO (TableHandle IO k v blob) #-}
 -- | Create a new empty table, returning a fresh table handle.
 --
 -- NOTE: table handles hold open resources (such as open files) and should be
@@ -179,8 +180,9 @@ new ::
   => Session m
   -> Internal.TableConfig
   -> m (TableHandle m k v blob)
-new = undefined
+new (Session sesh) conf = TableHandle <$> Internal.new sesh conf
 
+{-# SPECIALISE close :: TableHandle IO k v blob -> IO () #-}
 -- | Close a table handle. 'close' is idempotent. All operations on a closed
 -- handle will throw an exception.
 --
@@ -191,7 +193,7 @@ close ::
      IOLike m
   => TableHandle m k v blob
   -> m ()
-close = undefined
+close (TableHandle th) = Internal.close th
 
 {-------------------------------------------------------------------------------
   Table querying and updates
