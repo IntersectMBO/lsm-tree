@@ -21,9 +21,12 @@ module Database.LSMTree.Extras.ReferenceImpl (
 
     -- * Test case types and generators
     PageContentFits(..),
+    pageContentFitsInvariant,
     PageContentOrdered(..),
+    pageContentOrderedInvariant,
     PageContentMaybeOverfull(..),
     PageContentSingle(..),
+
     -- ** Generators and shrinkers
     genPageContentFits,
     genPageContentMaybeOverfull,
@@ -37,6 +40,7 @@ module Database.LSMTree.Extras.ReferenceImpl (
     shrinkOrderedKeyOps,
 ) where
 
+import           Data.Maybe (isJust)
 import           FormatPage
 import           Test.QuickCheck
 
@@ -82,6 +86,10 @@ instance Arbitrary PageContentFits where
     shrink (PageContentFits kops) =
       map PageContentFits (shrinkKeyOps kops)
 
+pageContentFitsInvariant :: PageContentFits -> Bool
+pageContentFitsInvariant (PageContentFits kops) =
+    isJust (calcPageSize DiskPage4k kops)
+
 instance Arbitrary PageContentOrdered where
     arbitrary =
       PageContentOrdered . orderdKeyOps <$>
@@ -89,6 +97,13 @@ instance Arbitrary PageContentOrdered where
 
     shrink (PageContentOrdered kops) =
       map PageContentOrdered (shrinkOrderedKeyOps kops)
+
+-- | Stricly increasing, so no duplicates.
+pageContentOrderedInvariant :: PageContentOrdered -> Bool
+pageContentOrderedInvariant (PageContentOrdered kops) =
+    pageContentFitsInvariant (PageContentFits kops)
+ && let ks = map fst kops
+     in and (zipWith (<) ks (drop 1 ks))
 
 instance Arbitrary PageContentMaybeOverfull where
     arbitrary =

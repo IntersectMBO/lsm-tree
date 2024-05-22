@@ -63,6 +63,7 @@ import qualified Data.Binary.Get as Bin
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BB
+import qualified Data.ByteString.Char8 as BSC
 import qualified Data.ByteString.Lazy as BSL
 
 import           Control.Exception (assert)
@@ -742,7 +743,7 @@ instance Arbitrary Key where
     genKeyOfSize
       (getSize >>= \sz -> chooseInt (0, sz `min` maxKeySize DiskPage4k))
 
-  shrink (Key k) = [ Key (BS.pack k') | k' <- shrink (BS.unpack k) ]
+  shrink = shrinkMapBy Key unKey shrinkOpaqueByteString
 
 genValueOfSize :: Gen Int -> Gen Value
 genValueOfSize genSize =
@@ -751,7 +752,7 @@ genValueOfSize genSize =
 instance Arbitrary Value where
   arbitrary = genValueOfSize (getSize >>= \sz -> chooseInt (0, sz))
 
-  shrink (Value v) = [ Value (BS.pack v') | v' <- shrink (BS.unpack v) ]
+  shrink = shrinkMapBy Value unValue shrinkOpaqueByteString
 
 genOperation :: Gen Value -> Gen Operation
 genOperation genval =
@@ -774,8 +775,8 @@ instance Arbitrary Operation where
 instance Arbitrary BlobRef where
   arbitrary = BlobRef <$> arbitrary <*> arbitrary
 
-  shrink (BlobRef w64 w32) =
-      [ BlobRef w64' w32' | (w64', w32') <- shrink (w64, w32) ]
+  shrink (BlobRef 0 0) = []
+  shrink (BlobRef _ _) = [BlobRef 0 0]
 
 instance Arbitrary DiskPageSize where
   arbitrary = scale (`div` 5) $ growingElements [minBound..]
@@ -795,11 +796,40 @@ orderdKeyOps =
 -- | Shrink a key\/operation sequence (without regard to key order).
 shrinkKeyOps :: [(Key, Operation)] -> [[(Key, Operation)]]
 shrinkKeyOps = shrink
+  -- It turns out that the generic list shrink is actually good enough,
+  -- but only because we've got carefully chosen shrinkers for Key and Value.
+  -- Without those special shrinkers, this one would blow up.
 
 -- | Shrink a key\/operation sequence, preserving key order.
 shrinkOrderedKeyOps :: [(Key, Operation)] -> [[(Key, Operation)]]
 shrinkOrderedKeyOps = map orderdKeyOps . shrink
 
+-- | Shrink 'ByteString's that are used as opaque blobs, where their value
+-- is generally not used, except for ordering. We minimise the number of
+-- alternative shrinks, to help minimise the number of shrinks when lots
+-- of such values are used, e.g. in key\/value containers.
+--
+-- This tries only three alternatives:
+--
+-- * take the first half
+-- * take everything but the final byte
+-- * replace the last (non-space) character by a space
+--
+-- > > shrinkOpaqueByteString "hello world!"
+-- > ["hello ","hello world", "hello world "]
+--
+-- Using space as the replacement character makes the resulting strings
+-- printable and shorter than lots of @\NUL\NUL\NUL@, which makes for test
+-- failure cases that are easier to read.
+--
+shrinkOpaqueByteString :: ByteString -> [ByteString]
+shrinkOpaqueByteString bs =
+    [ BS.take (BS.length bs `div` 2) bs | BS.length bs > 2 ]
+ ++ [ BS.init bs                        | BS.length bs > 0 ]
+ ++ case BSC.spanEnd (==' ') bs of
+      (prefix, spaces)
+        | BS.null prefix -> []
+        | otherwise      -> [ BS.init prefix <> BSC.cons ' ' spaces ]
 
 -------------------------------------------------------------------------------
 -- Tests
