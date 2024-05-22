@@ -9,14 +9,15 @@ module Bench.Database.LSMTree.Internal.RawPage (
   ) where
 
 import           Control.DeepSeq (deepseq)
-import           Criterion.Main
 import qualified Data.ByteString as BS
-import qualified Data.ByteString.Short as SBS
-import           Data.Primitive.ByteArray (ByteArray (..))
+
+import           Database.LSMTree.Extras.RawPage (toRawPage)
+import           Database.LSMTree.Extras.ReferenceImpl
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.RawPage
 import           Database.LSMTree.Internal.Serialise
-import           FormatPage
+
+import           Criterion.Main
 import           Test.QuickCheck
 import           Test.QuickCheck.Gen (Gen (..))
 import           Test.QuickCheck.Random (mkQCGen)
@@ -28,12 +29,14 @@ benchmarks = rawpage `deepseq` bgroup "Bench.Database.LSMTree.Internal.RawPage"
     , bench "existing-last" $ whnf (rawPageLookup rawpage) existingLast
     ]
   where
-    page :: PageLogical
-    page = unGen (genFullPageLogical DiskPage4k genSmallKey genSmallValue)
-                 (mkQCGen 42) 200
+    kops :: [(Key, Operation)]
+    kops = unGen genPage (mkQCGen 42) 200
+      where
+        genPage = orderdKeyOps <$>
+                    genPageContentNearFull DiskPage4k genSmallKey genSmallValue
 
     rawpage :: RawPage
-    rawpage = fst $ toRawPage $ page
+    rawpage = fst $ toRawPage (PageContentFits kops)
 
     genSmallKey :: Gen Key
     genSmallKey = Key . BS.pack <$> vectorOf 8 arbitrary
@@ -45,7 +48,7 @@ benchmarks = rawpage `deepseq` bgroup "Bench.Database.LSMTree.Internal.RawPage"
     missing = SerialisedKey $ RB.pack [1, 2, 3]
 
     keys :: [Key]
-    keys = case page of PageLogical xs -> map fst xs
+    keys = map fst kops
 
     existingHead :: SerialisedKey
     existingHead = SerialisedKey $ RB.fromByteString $ unKey $ head keys
@@ -53,9 +56,3 @@ benchmarks = rawpage `deepseq` bgroup "Bench.Database.LSMTree.Internal.RawPage"
     existingLast :: SerialisedKey
     existingLast = SerialisedKey $ RB.fromByteString $ unKey $ last keys
 
-toRawPage :: PageLogical -> (RawPage, BS.ByteString)
-toRawPage p = (page, sfx)
-  where
-    Just bs = serialisePage <$> encodePage DiskPage4k p
-    (pfx, sfx) = BS.splitAt 4096 bs -- hardcoded page size.
-    page = case SBS.toShort pfx of SBS.SBS ba -> makeRawPage (ByteArray ba) 0

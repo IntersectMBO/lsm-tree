@@ -1,53 +1,21 @@
-{-# OPTIONS_GHC -Wno-incomplete-uni-patterns #-}
-
 module Test.Util.RawPage (
-    toRawPage,
     assertEqualRawPages,
     propEqualRawPages,
 ) where
 
 import           Control.Monad (unless)
 import           Data.Align (align)
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Short as SBS
 import           Data.List.Split (chunksOf)
-import           Data.Primitive.ByteArray (ByteArray (..))
 import           Data.These (These (..))
 import           Data.Word (Word8)
+import qualified System.Console.ANSI as ANSI
+
 import           Database.LSMTree.Internal.BitMath (div16, mod16)
 import qualified Database.LSMTree.Internal.RawBytes as RB
-import           Database.LSMTree.Internal.RawOverflowPage (RawOverflowPage,
-                     makeRawOverflowPage)
-import           Database.LSMTree.Internal.RawPage (RawPage, makeRawPage,
-                     rawPageRawBytes)
-import           FormatPage (DiskPageSize (..), PageLogical, encodePage,
-                     serialisePage)
-import qualified System.Console.ANSI as ANSI
+import           Database.LSMTree.Internal.RawPage (RawPage, rawPageRawBytes)
+
 import           Test.Tasty.HUnit (Assertion, assertFailure)
 import           Test.Tasty.QuickCheck (Property, counterexample)
-
--- | Convert prototype 'PageLogical' to 'RawPage'.
-toRawPage :: PageLogical -> (RawPage, [RawOverflowPage])
-toRawPage p = (page, overflowPages)
-  where
-    Just bs = serialisePage <$> encodePage DiskPage4k p
-    (pfx, sfx) = BS.splitAt 4096 bs -- hardcoded page size.
-    page          = makeRawPageBS pfx
-    overflowPages = [ makeRawOverflowPageBS sfxpg
-                    | sfxpg <- takeWhile (not . BS.null)
-                                 [ BS.take 4096 (BS.drop n sfx)
-                                 | n <- [0, 4096 .. ] ]
-                    ]
-
-makeRawPageBS :: BS.ByteString -> RawPage
-makeRawPageBS bs =
-    case SBS.toShort bs of
-      SBS.SBS ba -> makeRawPage (ByteArray ba) 0
-
-makeRawOverflowPageBS :: BS.ByteString -> RawOverflowPage
-makeRawOverflowPageBS bs =
-    case SBS.toShort bs of
-      SBS.SBS ba -> makeRawOverflowPage (ByteArray ba) 0 (BS.length bs)
 
 assertEqualRawPages :: RawPage -> RawPage -> Assertion
 assertEqualRawPages a b = unless (a == b) $ do

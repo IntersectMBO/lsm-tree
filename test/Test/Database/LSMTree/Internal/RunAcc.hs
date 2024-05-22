@@ -90,7 +90,7 @@ prop_runAccMatchesPrototype page =
     real === model
   where
     Just model = Proto.serialisePage <$>
-                   Proto.encodePage Proto.DiskPage4k (getPageLogical' page)
+                   Proto.encodePage Proto.DiskPage4k (getPrototypeKOps page)
     real  = trunc $ uncurry pagesToByteString $ fromListPageAcc (getRealKOps page)
 
     -- truncate padding on the real page
@@ -147,20 +147,15 @@ fromProtoBlobRef (Proto.BlobRef x y) = BlobSpan x y
 
 -- | Wrapper around 'PageLogical' that generates nearly-full pages, and
 -- keys that are always large enough (>= 6 bytes) for the compact index.
-newtype PageLogical' = PageLogical' {getPageLogical' :: Proto.PageLogical}
+newtype PageLogical' = PageLogical' { getPrototypeKOps :: [(Proto.Key, Proto.Operation)] }
   deriving Show
 
 getRealKOps :: PageLogical' -> [(SerialisedKey, Entry SerialisedValue BlobSpan)]
 getRealKOps = fmap fromProtoKOp . getPrototypeKOps
 
-getPrototypeKOps :: PageLogical' -> [(Proto.Key, Proto.Operation)]
-getPrototypeKOps (PageLogical' (Proto.PageLogical kops)) = kops
-
 instance Arbitrary PageLogical' where
   arbitrary = PageLogical' <$>
-      Proto.genFullPageLogical Proto.DiskPage4k
-        (arbitrary `suchThat` \(Proto.Key bs) -> BS.length bs >= 6)
-        arbitrary
+      Proto.genPageContentFits Proto.DiskPage4k (Proto.MinKeySize 6)
   shrink (PageLogical' page) =
       [ PageLogical' page' | page' <- shrink page ]
 

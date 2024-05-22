@@ -6,20 +6,23 @@ import           Control.Monad.ST.Strict (ST, runST)
 import qualified Data.ByteString as BS
 import           Data.Function (on)
 import           Data.List (nubBy, sortBy)
+
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Entry (Entry (..))
+import           Database.LSMTree.Internal.PageAcc
 import qualified Database.LSMTree.Internal.RawBytes as RawBytes
 import           Database.LSMTree.Internal.RawPage (RawPage)
 import           Database.LSMTree.Internal.Serialise
+
+import           Database.LSMTree.Extras.RawPage (toRawPage)
+import           Database.LSMTree.Extras.ReferenceImpl hiding (Operation (..))
+import qualified Database.LSMTree.Extras.ReferenceImpl as Proto
+import           Test.Util.RawPage (propEqualRawPages)
+
 import           Test.QuickCheck
 import           Test.QuickCheck.Instances ()
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck (testProperty)
-import           Test.Util.RawPage
-
-import qualified FormatPage as Proto
-
-import           Database.LSMTree.Internal.PageAcc
 
 tests :: TestTree
 tests = testGroup "Database.LSMTree.Internal.PageAcc"
@@ -86,7 +89,7 @@ prototype inputs' =
 
     finish :: PageAcc s -> [(Proto.Key, Proto.Operation)] -> ST s Property
     finish acc acc2 = do
-        let (lhs, _) = toRawPage $ Proto.PageLogical $ reverse acc2
+        let (lhs, _) = toRawPage $ PageContentFits $ reverse acc2
         rawpage <- serialisePageAcc acc
         let rhs = rawpage :: RawPage
         return $ propEqualRawPages lhs rhs

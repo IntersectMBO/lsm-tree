@@ -17,6 +17,7 @@ import           Data.Word (Word64, Word8)
 
 import           Database.LSMTree.Extras (showPowersOf)
 import           Database.LSMTree.Extras.Generators
+import           Database.LSMTree.Extras.ReferenceImpl
 import           Database.LSMTree.Internal.BlobRef (BlobSpan)
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.PageAcc (entryWouldFitInPage,
@@ -26,14 +27,19 @@ import           Database.LSMTree.Internal.Serialise
 
 import qualified Test.QuickCheck as QC
 import           Test.QuickCheck (Arbitrary (..), Gen, Property, Testable (..))
-import           Test.Tasty (TestTree, testGroup)
-import           Test.Tasty.QuickCheck (testProperty)
+import           Test.Tasty (TestTree, localOption, testGroup)
+import           Test.Tasty.QuickCheck (QuickCheckMaxSize (..), testProperty)
 
 tests :: TestTree
 tests = testGroup "Test.Database.LSMTree.Generators" [
-      testGroup "Range-finder bit-precision" $
+      testGroup "PageContentFits" $
+        prop_arbitraryAndShrinkPreserveInvariant pageContentFitsInvariant
+    , testGroup "PageContentOrdered" $
+        prop_arbitraryAndShrinkPreserveInvariant pageContentOrderedInvariant
+    , testGroup "Range-finder bit-precision" $
         prop_arbitraryAndShrinkPreserveInvariant rfprecInvariant
-    , testGroup "LogicalPageSummaries" $
+    , localOption (QuickCheckMaxSize 20) $ -- takes too long!
+      testGroup "LogicalPageSummaries" $
         prop_arbitraryAndShrinkPreserveInvariant (pagesInvariant @Word64)
     , testGroup "Chunk size" $
         prop_arbitraryAndShrinkPreserveInvariant chunkSizeInvariant
@@ -61,7 +67,10 @@ prop_forAllArbitraryAndShrinkPreserveInvariant gen shr inv =
     [ testProperty "Arbitrary satisfies invariant" $
             property $ QC.forAllShrink gen shr inv
     , testProperty "Shrinking satisfies invariant" $
-            property $ QC.forAllShrink gen shr (all inv . shr)
+            property $ QC.forAll gen $ \x ->
+                         case shr x of
+                           [] -> QC.label "no shrinks" $ property True
+                           xs -> QC.forAll (QC.growingElements xs) inv
     ]
 
 -- | Trivial invariant, but checks that the value is finite

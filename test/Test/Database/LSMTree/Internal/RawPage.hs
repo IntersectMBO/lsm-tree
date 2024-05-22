@@ -18,14 +18,14 @@ import           Test.Tasty.HUnit (testCase, (@=?))
 import           Test.Tasty.QuickCheck
 import           Test.Util.RawPage
 
+import           Database.LSMTree.Extras.RawPage
+import           Database.LSMTree.Extras.ReferenceImpl
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import qualified Database.LSMTree.Internal.Entry as Entry
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.RawOverflowPage
 import           Database.LSMTree.Internal.RawPage
 import           Database.LSMTree.Internal.Serialise
-import           FormatPage (BlobRef (..), Key (..), Operation (..),
-                     PageLogical (..), Value (..), unKey)
 
 tests :: TestTree
 tests = testGroup "Database.LSMTree.Internal.RawPage"
@@ -43,7 +43,7 @@ tests = testGroup "Database.LSMTree.Internal.RawPage"
 
         let page = makeRawPage (byteArrayFromList bytes) 0
 
-        (page, []) @=? toRawPage (PageLogical [])
+        (page, []) @=? toRawPage (PageContentFits [])
         rawPageNumKeys page @=? 0
         rawPageNumBlobs page @=? 0
         rawPageKeyOffsets page @=? P.fromList [10]
@@ -63,7 +63,7 @@ tests = testGroup "Database.LSMTree.Internal.RawPage"
 
         let page = makeRawPage (byteArrayFromList bytes) 0
 
-        assertEqualRawPages page $ fst (toRawPage (PageLogical [(Key "\x42\x43", Insert (Value "\x88\x99") Nothing)]))
+        assertEqualRawPages page $ fst (toRawPage (PageContentFits [(Key "\x42\x43", Insert (Value "\x88\x99") Nothing)]))
         rawPageNumKeys page @=? 1
         rawPageNumBlobs page @=? 0
         rawPageKeyOffsets page @=? P.fromList [32, 34]
@@ -91,7 +91,7 @@ tests = testGroup "Database.LSMTree.Internal.RawPage"
 
         let page = makeRawPage (byteArrayFromList bytes) 0
 
-        (page, []) @=? toRawPage (PageLogical [(Key "\x42\x43", Insert (Value "\x88\x99") (Just (BlobRef 0xff 0xfe)))])
+        (page, []) @=? toRawPage (PageContentFits [(Key "\x42\x43", Insert (Value "\x88\x99") (Just (BlobRef 0xff 0xfe)))])
         rawPageNumKeys page @=? 1
         rawPageNumBlobs page @=? 1
         rawPageKeyOffsets page @=? P.fromList [44, 46]
@@ -116,7 +116,7 @@ tests = testGroup "Database.LSMTree.Internal.RawPage"
 
         let page = makeRawPage (byteArrayFromList bytes) 0
 
-        (page, []) @=? toRawPage (PageLogical [(Key "\x42\x43", Delete)])
+        (page, []) @=? toRawPage (PageContentFits [(Key "\x42\x43", Delete)])
         rawPageNumKeys page @=? 1
         rawPageNumBlobs page @=? 0
         rawPageKeyOffsets page @=? P.fromList [32, 34]
@@ -142,7 +142,7 @@ tests = testGroup "Database.LSMTree.Internal.RawPage"
 
         let page = makeRawPage (byteArrayFromList bytes) 0
 
-        (page, []) @=? toRawPage (PageLogical [(Key "\x42\x43", Mupsert (Value "\x44\x45")), (Key "\x52\x53", Mupsert (Value "\x54\x55"))])
+        (page, []) @=? toRawPage (PageContentFits [(Key "\x42\x43", Mupsert (Value "\x44\x45")), (Key "\x52\x53", Mupsert (Value "\x54\x55"))])
         rawPageNumKeys page @=? 2
         rawPageNumBlobs page @=? 0
         rawPageKeyOffsets page @=? P.fromList [34, 36, 38]
@@ -169,71 +169,71 @@ tests = testGroup "Database.LSMTree.Internal.RawPage"
     , testProperty "entry" prop_single_entry
     ]
 
-prop_toRawPage :: PageLogical -> Property
+prop_toRawPage :: PageContentFits -> Property
 prop_toRawPage p =
   let (_rawpage, overflowPages) = toRawPage p
    in tabulate "toRawPage number of overflowPages"
                [ show (length overflowPages) ] $
       property (deepseq overflowPages True)
 
-prop_keys :: PageLogical -> Property
-prop_keys p@(PageLogical xs) =
+prop_keys :: PageContentFits -> Property
+prop_keys (PageContentFits kops) =
     rawPageKeys rawpage === V.fromList keys
   where
-    rawpage = fst $ toRawPage p
+    rawpage = fst $ toRawPage (PageContentFits kops)
 
     keys :: [SerialisedKey]
-    keys = [ SerialisedKey $ RB.fromByteString bs | (Key bs, _) <- xs ]
+    keys = [ SerialisedKey $ RB.fromByteString bs | (Key bs, _) <- kops ]
 
-prop_values :: PageLogical -> Property
-prop_values p@(PageLogical xs) =
-    length xs /= 1 ==> rawPageValues rawpage === V.fromList values
+prop_values :: PageContentFits -> Property
+prop_values (PageContentFits kops) =
+    length kops /= 1 ==> rawPageValues rawpage === V.fromList values
   where
-    rawpage = fst $ toRawPage p
+    rawpage = fst $ toRawPage (PageContentFits kops)
 
     values :: [SerialisedValue]
-    values = [ SerialisedValue $ extractValue op | (_, op) <- xs ]
+    values = [ SerialisedValue $ extractValue op | (_, op) <- kops ]
 
     extractValue (Insert (Value bs) _) = RB.fromByteString bs
     extractValue (Mupsert (Value bs))  = RB.fromByteString bs
     extractValue Delete                = RB.fromByteString BS.empty
 
-prop_blobspans :: PageLogical -> Property
-prop_blobspans p@(PageLogical xs) =
+prop_blobspans :: PageContentFits -> Property
+prop_blobspans (PageContentFits kops) =
       [ rawPageBlobSpanIndex rawpage i | i <- [0 .. length blobSpans - 1] ]
   === blobSpans
   where
-    rawpage = fst $ toRawPage p
+    rawpage = fst $ toRawPage (PageContentFits kops)
 
     blobSpans :: [BlobSpan]
-    blobSpans = [ BlobSpan x y | (_, Insert _ (Just (BlobRef x y))) <- xs ]
+    blobSpans = [ BlobSpan x y | (_, Insert _ (Just (BlobRef x y))) <- kops ]
 
-prop_hasblobspans :: PageLogical -> Property
-prop_hasblobspans p@(PageLogical xs) =
-      [ rawPageHasBlobSpanAt rawpage i /= 0 | i <- [0 .. length xs - 1] ]
-  === [ opHasBlobSpan op | (_, op) <- xs ]
+prop_hasblobspans :: PageContentFits -> Property
+prop_hasblobspans (PageContentFits kops) =
+      [ rawPageHasBlobSpanAt rawpage i /= 0 | i <- [0 .. length kops - 1] ]
+  === [ opHasBlobSpan op | (_, op) <- kops ]
   where
-    rawpage = fst $ toRawPage p
+    rawpage = fst $ toRawPage (PageContentFits kops)
 
     opHasBlobSpan (Insert _ (Just _)) = True
     opHasBlobSpan _                   = False
 
-prop_ops :: PageLogical -> Property
-prop_ops p@(PageLogical xs) =
-      [ rawPageOpAt rawpage i | i <- [0 .. length xs - 1] ]
-  === [ fromOp op | (_, op) <- xs ]
+prop_ops :: PageContentFits -> Property
+prop_ops (PageContentFits kops) =
+      [ rawPageOpAt rawpage i | i <- [0 .. length kops - 1] ]
+  === [ fromOp op | (_, op) <- kops ]
   where
-    rawpage = fst $ toRawPage p
+    rawpage = fst $ toRawPage (PageContentFits kops)
 
     fromOp :: Operation -> Word64
     fromOp Insert {}  = 0
     fromOp Delete {}  = 2
     fromOp Mupsert {} = 1
 
-prop_entries_exists :: PageLogical -> Property
-prop_entries_exists (PageLogical xs) =
-    length xs > 1 ==>
-    forAll (elements xs) \(Key k, op) ->
+prop_entries_exists :: PageContentOrdered -> Property
+prop_entries_exists (PageContentOrdered kops) =
+    length kops > 1 ==>
+    forAll (elements kops) \(Key k, op) ->
       rawPageLookup rawpage (SerialisedKey $ RB.fromByteString k)
   === LookupEntry case op of
         Insert (Value v) mblobref ->
@@ -247,17 +247,17 @@ prop_entries_exists (PageLogical xs) =
                                     (SerialisedValue (RB.fromByteString v))
         Delete                 -> Entry.Delete
   where
-    rawpage = fst $ toRawPage (PageLogical xs)
+    rawpage = fst $ toRawPage (PageContentFits kops)
 
-prop_entries_all :: PageLogical -> BS.ByteString -> Property
-prop_entries_all page@(PageLogical xs) bs =
-    length xs /= 1 ==> rawPageLookup rawpage k === expected
+prop_entries_all :: PageContentOrdered -> BS.ByteString -> Property
+prop_entries_all (PageContentOrdered kops) bs =
+    length kops /= 1 ==> rawPageLookup rawpage k === expected
   where
     k = SerialisedKey $ RB.fromByteString bs
-    rawpage = fst $ toRawPage page
+    rawpage = fst $ toRawPage (PageContentFits kops)
 
     expected :: RawPageLookup (Entry.Entry SerialisedValue BlobSpan)
-    expected = case lookup (Key bs) xs of
+    expected = case lookup (Key bs) kops of
         Nothing                                    -> LookupEntryNotPresent
         Just (Insert (Value v) Nothing)            -> LookupEntry (Entry.Insert (SerialisedValue $ RB.fromByteString v))
         Just (Insert (Value v) (Just (BlobRef x y))) -> LookupEntry (Entry.InsertWithBlob (SerialisedValue $ RB.fromByteString v) (BlobSpan x y))
@@ -273,7 +273,7 @@ prop_big_insert k mblobref =
 
       other -> counterexample (show other) False
   where
-    page = PageLogical [(k, Insert v mblobref)]
+    page = PageContentFits [(k, Insert v mblobref)]
     (rawpage, overflowPages) = toRawPage page
     overflowPagesBS = overflowPagesToByteString overflowPages
     k' = SerialisedKey $ RB.fromByteString (unKey k)
@@ -295,7 +295,7 @@ prop_single_entry k op = label (show $ null overflowPages) $
         equivalentOpEntry op
                           e overflowPagesBS (fromIntegral suffixlen)
   where
-    page = PageLogical [(k, op)]
+    page = PageContentFits [(k, op)]
     (rawpage, overflowPages) = toRawPage page
     overflowPagesBS = overflowPagesToByteString overflowPages
     k' = SerialisedKey $ RB.fromByteString (unKey k)

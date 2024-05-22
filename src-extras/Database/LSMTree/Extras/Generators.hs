@@ -298,7 +298,7 @@ instance Arbitrary NumEntries where
 
 -- | A summary of min/max information for keys on a /true/ page.
 --
--- A ture page corresponds directly to a disk page. See 'LogicalPageSummary' for
+-- A true page corresponds directly to a disk page. See 'LogicalPageSummary' for
 -- contrast.
 data TruePageSummary k = TruePageSummary { tpsMinKey :: k, tpsMaxKey :: k }
 
