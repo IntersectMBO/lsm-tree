@@ -38,7 +38,8 @@ import           Control.Monad.Class.MonadThrow
 import           Data.BloomFilter (Bloom)
 import           Data.Either (fromRight)
 import           Data.Foldable
-import           Data.Set (Set)
+import           Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import qualified Data.Text as Text
 import qualified Data.Vector as V
@@ -53,6 +54,7 @@ import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import qualified GHC.IO.Handle as GHC
 import qualified System.FS.API as FS
 import           System.FS.API (FsErrorPath, FsPath, Handle, HasFS)
+import qualified System.FS.BlockIO.API as HasBlockIO
 import           System.FS.BlockIO.API (HasBlockIO)
 import           System.FS.IO (HandleIO)
 import qualified System.IO as System
@@ -67,9 +69,13 @@ data LSMTreeError =
   | SessionDirLocked FsErrorPath
   | SessionDirMalformed FsErrorPath
     -- | All operations on a closed session or tables within a closed session
-    -- will thrown this exception. There is one exception (pun intended) to this
+    -- will throw this exception. There is one exception (pun intended) to this
     -- rule: the idempotent operation 'Database.LSMTree.Common.closeSession'.
   | ErrSessionClosed
+    -- | All operations on a closed table will throw this exception. There is
+    -- one exception (pun intended) to this rule: the idempotent operation
+    -- 'Database.LSMTree.Common.close'.
+  | ErrTableClosed
   deriving (Show, Exception)
 
 {-------------------------------------------------------------------------------
@@ -79,11 +85,13 @@ data LSMTreeError =
 -- | A session provides context that is shared across multiple table handles.
 --
 -- For more information, see 'Database.LSMTree.Common.Session'.
---
--- Concurrent access to a session is mediated by a multiple-read, single-write
--- lock. This allows concurrent read access, but only sequential write access.
--- TODO: more fine-grained concurrent access than a top-level read-write lock.
 newtype Session m h = Session {
+      -- | The primary purpose of this 'RWVar' is to ensure consistent views of
+      -- the open-/closedness of a session when multiple threads require access
+      -- to the session's fields (see 'withOpenSession'). We use more
+      -- fine-grained synchronisation for various mutable parts of an open
+      -- session.
+      --
       -- TODO: RWVars only work in IO, not in IOSim.
       --
       -- TODO: how fair is an RWVar?
@@ -103,14 +111,25 @@ data SessionEnv m h = SessionEnv {
     -- TODO: add file locking to HasFS, because this one only works in IO.
   , sessionLockFile    :: !GHC.Handle
     -- | A session-wide shared, atomic counter that is used to produce unique
-    -- names for run files.
-  , sessionUniqCounter :: !(StrictMVar m Integer)
-    -- | These tables are recorded here so they can be closed once the session
-    -- is closed.
-  , sessionKnownTables :: !(StrictMVar m (Set (TableHandle m h)))
+    -- names, for example: run names, table IDs.
+  , sessionUniqCounter :: !(UniqCounter m)
+    -- | Open tables are tracked here so they can be closed once the session is
+    -- closed. Tables also become untracked when they are closed manually.
+    --
+    -- NOTE: table are assigned unique identifiers using 'sessionUniqCounter' to
+    -- ensure that modifications to the set of known tables are independent.
+    -- Each identifier is added only once in 'new', and is deleted only once in
+    -- 'close'. A table only make modifications for their own identifier. This
+    -- means that modifications can be made concurrently in any order without
+    -- further restrictions.
+  , sessionOpenTables  :: !(StrictMVar m (Map Integer (TableHandle m h)))
   }
 
-{-# SPECIALISE withOpenSession :: Session IO HandleIO -> (SessionEnv IO HandleIO -> IO a) -> IO a #-}
+-- | 'withOpenSession' ensures that the session stays open for the duration of the
+-- provided continuation.
+--
+-- NOTE: any operation except 'sessionClose' can use this function.
+{-# INLINE withOpenSession #-}
 withOpenSession ::
      m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
   => Session m h
@@ -119,6 +138,19 @@ withOpenSession ::
 withOpenSession sesh action = RW.with (sessionState sesh) $ \case
     SessionClosed -> throwIO ErrSessionClosed
     SessionOpen seshEnv -> action seshEnv
+
+-- | An atomic counter for producing unique 'Integer' values.
+newtype UniqCounter m = UniqCounter (StrictMVar m Integer)
+
+{-# INLINE newUniqCounter #-}
+newUniqCounter :: MonadMVar m => m (UniqCounter m)
+newUniqCounter = UniqCounter <$> newMVar 0
+
+{-# INLINE incrUniqCounter #-}
+-- | Return the current state of the atomic counter, and then increment the
+-- counter.
+incrUniqCounter :: MonadMVar m => UniqCounter m -> m Integer
+incrUniqCounter (UniqCounter uniqVar) = modifyMVar uniqVar (\x -> pure ((x+1), x))
 
 --
 -- Implementation of public API
@@ -185,15 +217,15 @@ openSession hfs hbio dir = do
           )
 
     mkSession lockFile = do
-        counterVar <- newMVar 0
-        knownTablesVar <- newMVar Set.empty
+        counterVar <- newUniqCounter
+        openTablesVar <- newMVar Map.empty
         sessionVar <- RW.new $ SessionOpen $ SessionEnv {
             sessionRoot = dir
           , sessionHasFS = hfs
           , sessionHasBlockIO = hbio
           , sessionLockFile = lockFile
           , sessionUniqCounter = counterVar
-          , sessionKnownTables = knownTablesVar
+          , sessionOpenTables = openTablesVar
           }
         pure $! Session sessionVar
 
@@ -235,6 +267,9 @@ openSession hfs hbio dir = do
 
 {-# SPECIALISE closeSession :: Session IO HandleIO -> IO () #-}
 -- | See 'Database.LSMTree.Common.closeSession'.
+--
+-- A session's global resources will only be released once it is sure that no
+-- tables are open anymore.
 closeSession ::
      m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
   => Session m h
@@ -242,9 +277,23 @@ closeSession ::
 closeSession Session{sessionState} =
     RW.modify_ sessionState $ \case
       SessionClosed -> pure SessionClosed
-      SessionOpen SessionEnv {sessionLockFile} -> do
-        -- TODO: close known table handles
-        System.hClose sessionLockFile
+      SessionOpen seshEnv -> do
+        -- Since we have a write lock on the session state, we know that no
+        -- tables will be added while we are closing the session, and that we
+        -- are the only thread currently closing the session.
+        --
+        -- We technically don't have to overwrite this with an empty Map, but
+        -- why not
+        tables <- modifyMVar (sessionOpenTables seshEnv) (\m -> pure (Map.empty, m))
+        -- Close tables first, so that we know none are open when we release
+        -- session-wide resources.
+        --
+        -- If any table from this set has been closed already by a different
+        -- thread, the idempotent 'close' will act like a no-op, and so we are
+        -- not in trouble.
+        mapM_ close tables
+        HasBlockIO.close (sessionHasBlockIO seshEnv)
+        System.hClose (sessionLockFile seshEnv)
         pure SessionClosed
 
 {-------------------------------------------------------------------------------
@@ -254,38 +303,61 @@ closeSession Session{sessionState} =
 -- | A handle to an on-disk key\/value table.
 --
 -- For more information, see 'Database.LSMTree.Normal.TableHandle'.
---
--- Concurrent access to a table handle is mediated by a multiple-read,
--- single-write lock. This allows concurrent read access, but only sequential
--- write access. TODO: more fine-grained concurrent access than a top-level
--- read-write lock.
 newtype TableHandle m h = TableHandle {
+      -- | The primary purpose of this 'RWVar' is to ensure consistent views of
+      -- the open-/closedness of a table when multiple threads require access to
+      -- the table's fields (see 'withOpenTable'). We use more fine-grained
+      -- synchronisation for various mutable parts of an open table.
+      --
       -- TODO: RWVars only work in IO, not in IOSim.
       --
       -- TODO: how fair is an RWVar?
       tableHandleState :: RWVar (TableHandleState m h)
     }
 
+-- | A table handle may assume that its corresponding session is still open as
+-- long as the table handle is open. A session's global resources, and therefore
+-- resources that are inherited by the table, will only be released once the
+-- session is sure that no tables are open anymore.
 data TableHandleState m h =
     TableHandleOpen {-# UNPACK #-} !(TableHandleEnv m h)
   | TableHandleClosed
 
 data TableHandleEnv m h = TableHandleEnv {
-    -- === Inherited from Session
-    tableSessionRoot :: !FsPath
-  , tableHasFS       :: !(HasFS m h)
-  , tableHasBlockIO  :: !(HasBlockIO m h)
+    -- === Session
+    tableSessionRoot         :: !FsPath
+  , tableHasFS               :: !(HasFS m h)
+  , tableHasBlockIO          :: !(HasBlockIO m h)
+    -- | Open tables are tracked in the corresponding session, so when a table
+    -- is closed it should become untracked (forgotten).
+  , tableSessionUntrackTable :: !(m ())
     -- === Table-specific
-  , tableConfig      :: !TableConfig
-  , tableWriteBuffer :: !(StrictMVar m (WriteBuffer))
+    --
+    -- TODO: more fine-grained concurrency for table-specific mutable state.
+  , tableConfig              :: !TableConfig
+  , tableWriteBuffer         :: !(StrictMVar m (WriteBuffer))
     -- | A hierarchy of levels. The vector indexes double as level numbers.
-  , tableLevels      :: !(StrictMVar m (V.Vector (Level (Handle h))))
+  , tableLevels              :: !(StrictMVar m (V.Vector (Level (Handle h))))
     -- | Cache of flattened 'levels'.
     --
     -- INVARIANT: when 'level's is modified, this cache should be updated as
     -- well, for example using 'mkLevelsCache'.
-  , tableCache       :: !(StrictMVar m (LevelsCache (Handle h)))
+  , tableCache               :: !(StrictMVar m (LevelsCache (Handle h)))
   }
+
+-- | 'withOpenTable' ensures that the table stays open for the duration of the
+-- provided continuation.
+--
+-- NOTE: any operation except 'close' can use this function.
+{-# INLINE withOpenTable #-}
+withOpenTable ::
+     m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+  => TableHandle m h
+  -> (TableHandleEnv m h -> m a)
+  -> m a
+withOpenTable th action = RW.with (tableHandleState th) $ \case
+    TableHandleClosed -> throwIO ErrTableClosed
+    TableHandleOpen thEnv -> action thEnv
 
 -- | Runs in order from newer to older
 newtype Level h = Level {
@@ -334,20 +406,31 @@ new ::
   -> TableConfig
   -> m (TableHandle m h)
 new sesh conf = do
+    -- Keep the session open until we've updated the session's set of tracked
+    -- tables. If 'closeSession' is called by another thread while this code
+    -- block is being executed, that thread will block until it reads the
+    -- /updated/ set of tracked tables.
     withOpenSession sesh $ \seshEnv -> do
       writeBufVar <- newMVar (WB.empty)
       levelsVar <- newMVar V.empty
       cacheVar <- newMVar (mkLevelsCache V.empty)
+      tableId <- incrUniqCounter (sessionUniqCounter seshEnv)
+      -- Action to untrack the current table
+      let forget = modifyMVar_ (sessionOpenTables seshEnv) $ pure . Map.delete tableId
       tableVar <- RW.new $ TableHandleOpen $ TableHandleEnv {
             tableSessionRoot = sessionRoot seshEnv
           , tableHasFS = sessionHasFS seshEnv
           , tableHasBlockIO = sessionHasBlockIO seshEnv
+          , tableSessionUntrackTable = forget
           , tableConfig = conf
           , tableWriteBuffer = writeBufVar
           , tableLevels = levelsVar
           , tableCache = cacheVar
           }
-      pure $! TableHandle tableVar
+      let !th = TableHandle tableVar
+      -- Track the current table
+      modifyMVar_ (sessionOpenTables seshEnv) $ pure . Map.insert tableId th
+      pure $! th
 
 {-# SPECIALISE close :: TableHandle IO HandleIO -> IO () #-}
 -- | See 'Database.LSMTree.Normal.close'.
@@ -358,6 +441,10 @@ close ::
 close th = RW.modify_ (tableHandleState th) $ \case
     TableHandleClosed -> pure TableHandleClosed
     TableHandleOpen thEnv -> do
+      -- Since we have a write lock on the table state, we know that we are the
+      -- only thread currently closing the table. We can safely make the session
+      -- forget about this table.
+      tableSessionUntrackTable thEnv
       lvls <- readMVar (tableLevels thEnv)
       V.forM_ lvls $ \Level{residentRuns} ->
         V.forM_ residentRuns $ Run.removeReference (tableHasFS thEnv)
