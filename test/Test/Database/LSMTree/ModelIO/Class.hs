@@ -13,6 +13,7 @@ import           Control.Monad.Class.MonadThrow (MonadThrow (throwIO))
 import           Data.Kind (Constraint, Type)
 import           Data.Proxy (Proxy)
 import           Data.Typeable (Typeable)
+import qualified Data.Vector as V
 import           Database.LSMTree.Common (IOLike, Range (..), SerialiseKey,
                      SerialiseValue, SnapshotName)
 import qualified Database.LSMTree.ModelIO.Normal as M
@@ -61,21 +62,21 @@ class (IsSession (Session h)) => IsTableHandle h where
     lookups ::
            (IOLike m, SerialiseKey k, SerialiseValue v)
         => h m k v blob
-        -> [k]
-        -> m [LookupResult k v (BlobRef h m blob)]
+        -> V.Vector k
+        -> m (V.Vector (LookupResult v (BlobRef h m blob)))
 
     rangeLookup ::
            (IOLike m, SerialiseKey k, SerialiseValue v)
         => h m k v blob
         -> Range k
-        -> m [RangeLookupResult k v (BlobRef h m blob)]
+        -> m (V.Vector (RangeLookupResult k v (BlobRef h m blob)))
 
     retrieveBlobs ::
            (IOLike m, SerialiseValue blob)
         => proxy h
         -> Session h m
-        -> [BlobRef h m blob]
-        -> m [blob]
+        -> V.Vector (BlobRef h m blob)
+        -> m (V.Vector blob)
 
     updates ::
            (IOLike m, SerialiseKey k, SerialiseValue v, SerialiseValue blob)

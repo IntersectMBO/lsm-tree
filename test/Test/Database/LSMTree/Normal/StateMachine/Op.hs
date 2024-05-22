@@ -18,7 +18,7 @@ import           Control.Monad ((<=<))
 import           Control.Monad.IOSim (IOSim)
 import           Control.Monad.Reader (ReaderT)
 import           Control.Monad.State (StateT)
-import           Data.Maybe (mapMaybe)
+import qualified Data.Vector as V
 import           Database.LSMTree.Normal as SUT (LookupResult (..),
                      RangeLookupResult (..))
 import           GHC.Show (appPrec)
@@ -40,8 +40,8 @@ data Op a b where
   OpFromLeft           :: Op (Either a b) a
   OpFromRight          :: Op (Either a b) b
   OpComp               :: Op b c -> Op a b -> Op a c
-  OpLookupResults      :: Op [LookupResult k v (WrapBlobRef h IO blobref)] [WrapBlobRef h IO blobref]
-  OpRangeLookupResults :: Op [RangeLookupResult k v (WrapBlobRef h IO blobref)] [WrapBlobRef h IO blobref]
+  OpLookupResults      :: Op (V.Vector (LookupResult v (WrapBlobRef h IO blobref))) (V.Vector (WrapBlobRef h IO blobref))
+  OpRangeLookupResults :: Op (V.Vector (RangeLookupResult k v (WrapBlobRef h IO blobref))) (V.Vector (WrapBlobRef h IO blobref))
 
 intOpId :: Op a b -> a -> Maybe b
 intOpId OpId                 = Just
@@ -52,8 +52,8 @@ intOpId OpRight              = Just . Right
 intOpId OpFromLeft           = either Just (const Nothing)
 intOpId OpFromRight          = either (const Nothing) Just
 intOpId (OpComp g f)         = intOpId g <=< intOpId f
-intOpId OpLookupResults      = Just . mapMaybe getBlobRef
-intOpId OpRangeLookupResults = Just . mapMaybe getBlobRef
+intOpId OpLookupResults      = Just . V.mapMaybe getBlobRef
+intOpId OpRangeLookupResults = Just . V.mapMaybe getBlobRef
 
 {-------------------------------------------------------------------------------
   'InterpretOp' instances
@@ -91,8 +91,8 @@ instance InterpretOp Op (Op.WrapRealized (IOSim s)) where
       OpFromLeft           -> either (Just . Op.WrapRealized) (const Nothing) . Op.unwrapRealized
       OpFromRight          -> either (const Nothing) (Just . Op.WrapRealized) . Op.unwrapRealized
       OpComp g f           -> Op.intOp g <=< Op.intOp f
-      OpLookupResults      -> Just  . Op.WrapRealized . mapMaybe getBlobRef . Op.unwrapRealized
-      OpRangeLookupResults -> Just . Op.WrapRealized . mapMaybe getBlobRef . Op.unwrapRealized
+      OpLookupResults      -> Just  . Op.WrapRealized . V.mapMaybe getBlobRef . Op.unwrapRealized
+      OpRangeLookupResults -> Just . Op.WrapRealized . V.mapMaybe getBlobRef . Op.unwrapRealized
 
 {-------------------------------------------------------------------------------
   'Show' and 'Eq' instances
@@ -157,10 +157,10 @@ instance Show (Op a b) where
 class HasBlobRef f where
   getBlobRef :: f blobref  -> Maybe blobref
 
-instance HasBlobRef (LookupResult k v) where
-  getBlobRef NotFound{}                  = Nothing
-  getBlobRef Found{}                     = Nothing
-  getBlobRef (FoundWithBlob _ _ blobref) = Just blobref
+instance HasBlobRef (LookupResult v) where
+  getBlobRef NotFound{}                = Nothing
+  getBlobRef Found{}                   = Nothing
+  getBlobRef (FoundWithBlob _ blobref) = Just blobref
 
 instance HasBlobRef (RangeLookupResult k v) where
   getBlobRef FoundInRange{}                     = Nothing

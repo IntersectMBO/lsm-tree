@@ -7,10 +7,10 @@ module Database.LSMTree.Internal.Normal (
 import           Control.DeepSeq (NFData (..))
 
 -- | Result of a single point lookup.
-data LookupResult k v blobref =
-    NotFound      !k
-  | Found         !k !v
-  | FoundWithBlob !k !v !blobref
+data LookupResult v blobref =
+    NotFound
+  | Found         !v
+  | FoundWithBlob !v !blobref
   deriving (Eq, Show, Functor, Foldable, Traversable)
 
 -- | A result for one point in a range lookup.

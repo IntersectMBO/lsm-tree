@@ -416,20 +416,20 @@ update tr (LSMHandle scr lsmr) k op = do
       else
         writeSTRef lsmr (LSMContent wb' ls)
 
-lookups :: LSM s -> [Key] -> ST s [LookupResult Key Value Blob]
-lookups lsm = mapM (lookup lsm)
+lookups :: LSM s -> [Key] -> ST s [(Key, LookupResult Value Blob)]
+lookups lsm = mapM (\k -> (k,) <$> lookup lsm k)
 
-lookup :: LSM s -> Key -> ST s (LookupResult Key Value Blob)
+lookup :: LSM s -> Key -> ST s (LookupResult Value Blob)
 lookup lsm k = do
     rss <- allLayers lsm
     return $!
       foldr (\lookures continue ->
               case lookures of
                 Nothing                  -> continue
-                Just (Insert v Nothing)  -> Found k v
-                Just (Insert v (Just b)) -> FoundWithBlob k v b
-                Just  Delete             -> NotFound k)
-            (NotFound k)
+                Just (Insert v Nothing)  -> Found v
+                Just (Insert v (Just b)) -> FoundWithBlob v b
+                Just  Delete             -> NotFound)
+            NotFound
             [ Map.lookup k r | rs <- rss, r <- rs ]
 
 bufferToRun :: Buffer -> Run

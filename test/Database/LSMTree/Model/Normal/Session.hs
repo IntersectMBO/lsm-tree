@@ -77,6 +77,7 @@ import           Data.Dynamic
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromJust)
+import qualified Data.Vector as V
 import           Data.Word
 import qualified Database.LSMTree.Model.Normal as Model
 import qualified Database.LSMTree.Normal as SUT
@@ -276,9 +277,9 @@ lookups ::
      , Model.SerialiseValue v
      , C k v blob
      )
-  => [k]
+  => V.Vector k
   -> TableHandle k v blob
-  -> m [Model.LookupResult k v (BlobRef blob)]
+  -> m (V.Vector (Model.LookupResult v (BlobRef blob)))
 lookups ks th = do
     (updc, table) <- guardTableHandleIsOpen th
     pure $ liftBlobRefs th updc $ Model.lookups ks table
@@ -294,7 +295,7 @@ rangeLookup ::
      )
   => Model.Range k
   -> TableHandle k v blob
-  -> m [RangeLookupResult k v (BlobRef blob)]
+  -> m (V.Vector (RangeLookupResult k v (BlobRef blob)))
 rangeLookup r th = do
     (updc, table) <- guardTableHandleIsOpen th
     pure $ liftBlobRefs th updc $ Model.rangeLookup r table
@@ -358,9 +359,9 @@ retrieveBlobs ::
      , MonadError Err m
      , Model.SerialiseValue blob
      )
-  => [BlobRef blob]
-  -> m [blob]
-retrieveBlobs refs = Model.retrieveBlobs <$> mapM guard refs
+  => V.Vector (BlobRef blob)
+  -> m (V.Vector blob)
+retrieveBlobs refs = Model.retrieveBlobs <$> V.mapM guard refs
   where
     -- guard that the table is still open, and the table wasn't updated
     guard BlobRef{..} = do
@@ -373,11 +374,11 @@ retrieveBlobs refs = Model.retrieveBlobs <$> mapM guard refs
 --
 
 liftBlobRefs ::
-     Functor f
+     (Functor f, Functor g)
   => TableHandle k v blob
   -> UpdateCounter
-  -> [f (Model.BlobRef blob)]
-  -> [f (BlobRef blob)]
+  -> g (f (Model.BlobRef blob))
+  -> g (f (BlobRef blob))
 liftBlobRefs th c = fmap (fmap (BlobRef (tableHandleID th) c))
 
 {-------------------------------------------------------------------------------
