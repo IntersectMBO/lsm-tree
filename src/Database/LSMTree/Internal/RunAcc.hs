@@ -1,8 +1,3 @@
-{-# LANGUAGE BangPatterns    #-}
-{-# LANGUAGE DeriveFoldable  #-}
-{-# LANGUAGE DeriveFunctor   #-}
-{-# LANGUAGE NamedFieldPuns  #-}
-{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RecordWildCards #-}
 {- HLINT ignore "Redundant lambda" -}
 {- HLINT ignore "Use camelCase" -}
@@ -97,7 +92,7 @@ new (NumEntries nentries) npages rangeFinderPrecisionOverride = do
     let rangeFinderPrecisionDefault = Index.suggestRangeFinderPrecision npages
         rangeFinderPrecision        = fromMaybe rangeFinderPrecisionDefault
                                                 rangeFinderPrecisionOverride
-    mindex <- Index.new rangeFinderPrecision 100 -- TODO(optimise): tune chunk size
+    mindex <- Index.new rangeFinderPrecision 1024 -- TODO(optimise): tune chunk size
     mpageacc <- PageAcc.newPageAcc
     entryCount <- newPrimVar 0
     rangeFinderCurVal <- newPrimVar 0

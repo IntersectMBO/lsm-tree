@@ -1,8 +1,7 @@
-{-# LANGUAGE CPP                 #-}
-{-# LANGUAGE DerivingStrategies  #-}
-{-# LANGUAGE LambdaCase          #-}
-{-# LANGUAGE RecordWildCards     #-}
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE CPP                #-}
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE LambdaCase         #-}
+{-# LANGUAGE RecordWildCards    #-}
 
 {- |
   Incremental construction of a compact index yields chunks of the primary array
@@ -40,11 +39,14 @@ import qualified Data.List.NonEmpty as NE
 import           Data.Map.Range (Bound (..), Clusive (Exclusive, Inclusive))
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import           Data.Primitive.ByteArray (newPinnedByteArray, setByteArray)
 import           Data.STRef.Strict
 import qualified Data.Vector.Generic.Mutable as VGM
+import qualified Data.Vector.Primitive.Mutable as VP
 import qualified Data.Vector.Unboxed as VU
 import qualified Data.Vector.Unboxed.Mutable as VUM
 import           Data.Word
+import           Database.LSMTree.Internal.BitMath
 import           Database.LSMTree.Internal.IndexCompact
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.Unsliced
@@ -69,10 +71,10 @@ import           Database.LSMTree.Internal.Unsliced
 -- construction](#incremental).
 data IndexCompactAcc s = IndexCompactAcc {
     -- * Core index structure
-    -- | Accumulates the range finder bits 'ciRangeFinder'.
+    -- | Accumulates the range finder bits 'ciRangeFinder'. Pinned.
     icaRangeFinder          :: !(VU.MVector s Word32)
   , icaRangeFinderPrecision :: !Int
-    -- | Accumulates chunks of 'ciPrimary'.
+    -- | Accumulates pinned chunks of 'ciPrimary'.
   , icaPrimary              :: !(STRef s (NonEmpty (VU.MVector s Word32)))
     -- | Accumulates chunks of 'ciClashes'.
   , icaClashes              :: !(STRef s (NonEmpty (VU.MVector s Bit)))
@@ -114,9 +116,9 @@ new rfprec maxcsize =
   assert (inRange rangeFinderPrecisionBounds rfprec && maxcsize > 0) $
   IndexCompactAcc
     -- Core index structure
-    <$> VUM.new (2 ^ rfprec + 1)
+    <$> newPinnedMVec (2 ^ rfprec + 1)
     <*> pure rfprec
-    <*> (newSTRef . pure =<< VUM.new maxcsize)
+    <*> (newSTRef . pure =<< newPinnedMVec maxcsize)
     <*> (newSTRef . pure =<< VUM.new maxcsize)
     <*> newSTRef Map.empty
     <*> (newSTRef . pure =<< VUM.new maxcsize)
@@ -126,6 +128,18 @@ new rfprec maxcsize =
     <*> newSTRef SNothing
     <*> newSTRef SNothing
     <*> newSTRef SNothing
+
+-- | We explictly pin the byte arrays, since that allows for more efficient
+-- serialisation, as the definition of 'isByteArrayPinned' changed in GHC 9.6,
+-- see <https://gitlab.haskell.org/ghc/ghc/-/issues/22255>.
+--
+-- TODO: remove this workaround once a solution exists, e.g. a new primop that
+-- allows checking for implicit pinning.
+newPinnedMVec :: Int -> ST s (VUM.MVector s Word32)
+newPinnedMVec lenWords = do
+    mba <- newPinnedByteArray (mul4 lenWords)
+    setByteArray mba 0 lenWords (0 :: Word32)
+    return (VUM.MV_Word32 (VP.MVector 0 lenWords mba))
 
 -- | Min\/max key-info for pages
 data Append =
@@ -255,11 +269,11 @@ yield :: IndexCompactAcc s -> ST s (Maybe Chunk)
 yield IndexCompactAcc{..} = do
     pageNo <- readSTRef icaCurrentPageNumber
     if pageNo `mod` icaMaxChunkSize == 0 then do -- The current chunk is full
-      cPrimary <- VU.unsafeFreeze . NE.head =<< readSTRef icaPrimary
-      modifySTRef' icaPrimary . NE.cons =<< VUM.new icaMaxChunkSize
+      primaryChunk <- VU.unsafeFreeze . NE.head =<< readSTRef icaPrimary
+      modifySTRef' icaPrimary . NE.cons =<< newPinnedMVec icaMaxChunkSize
       modifySTRef' icaClashes . NE.cons =<< VUM.new icaMaxChunkSize
       modifySTRef' icaLargerThanPage . NE.cons =<< VUM.new icaMaxChunkSize
-      pure $ Just (Chunk cPrimary)
+      pure $ Just (Chunk primaryChunk)
     else -- the current chunk is not yet full
       pure Nothing
 

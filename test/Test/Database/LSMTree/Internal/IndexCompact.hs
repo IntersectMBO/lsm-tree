@@ -1,10 +1,5 @@
-{-# LANGUAGE BangPatterns        #-}
-{-# LANGUAGE LambdaCase          #-}
-{-# LANGUAGE NumericUnderscores  #-}
-{-# LANGUAGE RecordWildCards     #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE StandaloneDeriving  #-}
-{-# LANGUAGE TypeApplications    #-}
+{-# LANGUAGE LambdaCase      #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 {- HLINT ignore "Eta reduce" -}
 
@@ -17,7 +12,6 @@ import           Control.Monad.State.Strict (MonadState (..), State, evalState,
                      get, put)
 import           Data.Bit (Bit (..))
 import qualified Data.Bit as BV
-import qualified Data.ByteString.Builder as BB
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ByteString.Short as SBS
 import           Data.Coerce (coerce)
@@ -107,9 +101,9 @@ tests = testGroup "Test.Database.LSMTree.Internal.IndexCompact" [
                 , 7, 0
                 ]
 
-          let header = buildBytes headerBuilder
-          let primary = buildBytes (foldMap chunkBuilder chunks)
-          let rest = buildBytes (finalBuilder (NumEntries 7) index)
+          let header = LBS.unpack headerLBS
+          let primary = LBS.unpack (LBS.fromChunks (map chunkToBS chunks))
+          let rest = LBS.unpack (finalLBS (NumEntries 7) index)
 
           let comparison msg xs ys = unlines $
                   (msg <> ":")
@@ -239,9 +233,9 @@ prop_roundtrip_chunks (Chunks chunks index) numEntries =
     counterexample ("rest:\n" <> showBS bsRest) $
       Right (numEntries, index) === fromSBS sbs
   where
-    bsVersion = BB.toLazyByteString $ headerBuilder
-    bsPrimary = BB.toLazyByteString $ foldMap chunkBuilder chunks
-    bsRest = BB.toLazyByteString $ finalBuilder numEntries index
+    bsVersion = headerLBS
+    bsPrimary = LBS.fromChunks $ map chunkToBS chunks
+    bsRest = finalLBS numEntries index
     sbs = SBS.toShort (LBS.toStrict (bsVersion <> bsPrimary <> bsRest))
 
     showBS = unlines . showBytes . LBS.unpack
@@ -303,10 +297,9 @@ writeIndexCompact numEntries (ChunkSize csize) ps = runST $ do
     cs <- mapM (`append` ica) (toAppends ps)
     (c, index) <- unsafeEnd ica
     return
-      ( BB.toLazyByteString headerBuilder
-      , BB.toLazyByteString $ foldMap (foldMap chunkBuilder) cs
-                           <> foldMap chunkBuilder c
-      , BB.toLazyByteString $ finalBuilder numEntries index
+      ( headerLBS
+      , LBS.fromChunks $ foldMap (map chunkToBS) $ cs <> pure (toList c)
+      , finalLBS numEntries index
       )
 
 fromPageSummaries :: SerialiseKey k => ChunkSize -> LogicalPageSummaries k -> IndexCompact
@@ -399,9 +392,6 @@ showBytes = map (unwords . map (foldMap showByte) . chunksOf 4) . chunksOf 8
 
 showByte :: Word8 -> String
 showByte b = let str = showHex b "" in replicate (2 - length str) '0' <> str
-
-buildBytes :: BB.Builder -> [Word8]
-buildBytes = LBS.unpack . BB.toLazyByteString
 
 word32toBytesLE :: Word32 -> [Word8]
 word32toBytesLE = take 4 . map fromIntegral . iterate (`div` 256)

@@ -1,12 +1,6 @@
-{-# LANGUAGE BangPatterns               #-}
-{-# LANGUAGE DerivingStrategies         #-}
-{-# LANGUAGE GeneralisedNewtypeDeriving #-}
-{-# LANGUAGE LambdaCase                 #-}
-{-# LANGUAGE NamedFieldPuns             #-}
-{-# LANGUAGE RecordWildCards            #-}
-{-# LANGUAGE ScopedTypeVariables        #-}
-{-# LANGUAGE TypeApplications           #-}
-{-# LANGUAGE ViewPatterns               #-}
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE LambdaCase         #-}
+{-# LANGUAGE RecordWildCards    #-}
 
 -- | A compact fence-pointer index for uniformly distributed keys.
 --
@@ -30,13 +24,13 @@ module Database.LSMTree.Internal.IndexCompact (
   , hasClashes
   , sizeInPages
     -- * Non-incremental serialisation
-  , builder
+  , toLBS
     -- * Incremental serialisation
     -- $incremental-serialisation
   , Chunk (..)
-  , headerBuilder
-  , chunkBuilder
-  , finalBuilder
+  , headerLBS
+  , chunkToBS
+  , finalLBS
     -- * Deserialisation
   , fromSBS
   ) where
@@ -46,15 +40,17 @@ import           Control.Monad (when)
 import           Control.Monad.ST
 import           Data.Bit hiding (flipBit)
 import           Data.Bits (unsafeShiftR, (.&.))
+import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BB
 import qualified Data.ByteString.Builder.Extra as BB
+import qualified Data.ByteString.Lazy as LBS
 import           Data.ByteString.Short (ShortByteString (..))
 import           Data.Map.Range (Bound (..))
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromMaybe)
 import           Data.Primitive.ByteArray (ByteArray (..), indexByteArray,
-                     sizeofByteArray)
+                     isByteArrayPinned, sizeofByteArray)
 import           Data.Primitive.Types (sizeOf)
 import qualified Data.Vector.Algorithms.Search as VA
 import qualified Data.Vector.Generic as VG
@@ -63,7 +59,8 @@ import qualified Data.Vector.Unboxed as VU
 import qualified Data.Vector.Unboxed.Base as VU (Vector (V_Word32))
 import           Data.Word
 import           Database.LSMTree.Internal.BitMath
-import           Database.LSMTree.Internal.ByteString (byteArrayFromTo)
+import           Database.LSMTree.Internal.ByteString (byteArrayFromTo,
+                     byteArrayToByteString, unsafePinnedByteArrayToByteString)
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.Unsliced
@@ -593,11 +590,11 @@ sizeInPages = VU.length . icPrimary
 -------------------------------------------------------------------------------}
 
 -- | Serialises a compact index in one go.
-builder :: NumEntries -> IndexCompact -> BB.Builder
-builder numEntries index =
-     headerBuilder
-  <> chunkBuilder (Chunk (icPrimary index))
-  <> finalBuilder numEntries index
+toLBS :: NumEntries -> IndexCompact -> LBS.ByteString
+toLBS numEntries index =
+     headerLBS
+  <> LBS.fromStrict (chunkToBS (Chunk (icPrimary index)))
+  <> finalLBS numEntries index
 
 {-------------------------------------------------------------------------------
   Incremental serialisation
@@ -606,8 +603,8 @@ builder numEntries index =
 {- $incremental-serialisation
 
   To incrementally serialise a compact index as it is being constructed, start
-  by using 'headerBuilder'. Each yielded chunk can then be written using
-  'chunkBuilder'. Once construction is completed, 'finalBuilder' will serialise
+  by using 'headerLBS'. Each yielded chunk can then be written using
+  'chunkToBS'. Once construction is completed, 'finalLBS' will serialise
   the remaining parts of the compact index.
   Also see module "Database.LSMTree.Internal.IndexCompactAcc".
 -}
@@ -618,44 +615,50 @@ indexVersion :: Word32
 indexVersion = 1
 
 -- | 32 bits, to be used before writing any other parts of the serialised file!
-headerBuilder :: BB.Builder
-headerBuilder = BB.word32Host indexVersion
+headerLBS :: LBS.ByteString
+headerLBS =
+    -- create a single 4 byte chunk
+    BB.toLazyByteStringWith (BB.safeStrategy 4 BB.smallChunkSize) mempty $
+      BB.word32Host indexVersion
 
 -- | A chunk of the primary array, which can be constructed incrementally.
 data Chunk = Chunk { cPrimary :: !(VU.Vector Word32) }
   deriving stock (Show, Eq)
 
 -- | 32 bit aligned.
-chunkBuilder :: Chunk -> BB.Builder
-chunkBuilder Chunk {..} = putVec32 cPrimary
+chunkToBS :: Chunk -> BS.ByteString
+chunkToBS (Chunk (VU.V_Word32 (PV.Vector off len ba))) =
+    byteArrayToByteString (mul4 off) (mul4 len) ba
 
 -- | Writes everything after the primary array, which is assumed to have already
--- been written using 'chunkBuilder'.
-finalBuilder :: NumEntries -> IndexCompact -> BB.Builder
-finalBuilder (NumEntries numEntries) IndexCompact {..} =
-       putVec32 icRangeFinder
-       -- align to 64 bit, if odd number of Word32 written before
-    <> (if odd (numPages + numRanges + 1 {- version -})
-        then BB.word32Host 0
-        else mempty)
-    <> putBitVec icClashes
-    <> putBitVec icLargerThanPage
-    <> putTieBreaker icTieBreaker
-    <> BB.word64Host (fromIntegral icRangeFinderPrecision)
-    <> BB.word64Host (fromIntegral numPages)
-    <> BB.word64Host (fromIntegral numEntries)
+-- been written using 'chunkToBS'.
+finalLBS :: NumEntries -> IndexCompact -> LBS.ByteString
+finalLBS (NumEntries numEntries) IndexCompact {..} =
+    -- use a builder, since it is all relatively small
+    BB.toLazyByteString $
+         putVec32 icRangeFinder
+         -- align to 64 bit, if odd number of Word32 written before
+      <> (if odd (numPages + numRanges + 1 {- version -})
+          then BB.word32Host 0
+          else mempty)
+      <> putBitVec icClashes
+      <> putBitVec icLargerThanPage
+      <> putTieBreaker icTieBreaker
+      <> BB.word64Host (fromIntegral icRangeFinderPrecision)
+      <> BB.word64Host (fromIntegral numPages)
+      <> BB.word64Host (fromIntegral numEntries)
   where
     numPages = VU.length icPrimary
     numRanges = VU.length icRangeFinder
 
--- | 32 bit aligned.
---
--- TODO(optimisation): It should be possible to do this without copying the
--- vector. If we ensure pinned allocation of the underlying byte array, we could
--- directly construct a 'ByteString' and serialise that using 'BB.byteString'.
+--- | 32 bit aligned.
 putVec32 :: VU.Vector Word32 -> BB.Builder
-putVec32 (VU.V_Word32 (PV.Vector off len ba)) =
-    byteArrayFromTo (mul4 off) (mul4 (off + len)) ba
+putVec32 (VU.V_Word32 (PV.Vector off len ba))
+  | isByteArrayPinned ba =
+      BB.byteString $ unsafePinnedByteArrayToByteString (mul4 off) (mul4 len) ba
+  | otherwise =
+      byteArrayFromTo (mul4 off) (mul4 (off + len)) ba
+
 
 -- | Padded to 64 bit.
 --

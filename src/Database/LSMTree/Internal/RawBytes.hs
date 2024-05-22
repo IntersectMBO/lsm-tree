@@ -1,11 +1,8 @@
-{-# LANGUAGE BangPatterns               #-}
-{-# LANGUAGE CPP                        #-}
-{-# LANGUAGE DerivingStrategies         #-}
-{-# LANGUAGE GeneralisedNewtypeDeriving #-}
-{-# LANGUAGE InstanceSigs               #-}
-{-# LANGUAGE MagicHash                  #-}
-{-# LANGUAGE TypeFamilies               #-}
-{-# LANGUAGE UnboxedTuples              #-}
+{-# LANGUAGE CPP                #-}
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE MagicHash          #-}
+{-# LANGUAGE TypeFamilies       #-}
+{-# LANGUAGE UnboxedTuples      #-}
 {- HLINT ignore "Redundant lambda" -}
 
 #include <MachDeps.h>
@@ -46,6 +43,7 @@ module Database.LSMTree.Internal.RawBytes (
   , fromByteString
   , unsafeFromByteString
   , toByteString
+  , unsafePinnedToByteString
   , fromShortByteString
   , builder
   ) where
@@ -61,8 +59,9 @@ import qualified Data.ByteString.Short as SBS
 import           Data.Primitive.ByteArray (ByteArray (..), compareByteArrays)
 import qualified Data.Primitive.ByteArray as BA
 import qualified Data.Vector.Primitive as PV
-import           Database.LSMTree.Internal.ByteString (shortByteStringFromTo,
-                     tryGetByteArray)
+import           Database.LSMTree.Internal.ByteString (byteArrayToByteString,
+                     shortByteStringFromTo, tryGetByteArray,
+                     unsafePinnedByteArrayToByteString)
 import           Database.LSMTree.Internal.Vector
 import           Prelude hiding (drop, take)
 
@@ -270,9 +269,17 @@ unsafeFromByteString bs =
       Right (ba, n) -> RawBytes (mkPrimVector 0 n ba)
       Left err      -> error $ "unsafeFromByteString: " <> err
 
--- | \( O(n) \) conversion from raw bytes to a bytestring.
+-- | \( O(1) \) conversion from raw bytes to a bytestring if pinned,
+-- \( O(n) \) if unpinned.
 toByteString :: RawBytes -> BS.ByteString
-toByteString = BS.pack . toList
+toByteString (RawBytes (PV.Vector off len ba)) =
+    byteArrayToByteString off len ba
+
+-- | \( O(1) \) conversion from raw bytes to a bytestring.
+-- Fails if the underlying byte array is not pinned.
+unsafePinnedToByteString :: HasCallStack => RawBytes -> BS.ByteString
+unsafePinnedToByteString (RawBytes (PV.Vector off len ba)) =
+    unsafePinnedByteArrayToByteString off len ba
 
 -- | \( O(1) \) conversion from a short bytestring to raw bytes.
 fromShortByteString :: ShortByteString -> RawBytes
