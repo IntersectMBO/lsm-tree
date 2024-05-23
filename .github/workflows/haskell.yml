@@ -23,7 +23,7 @@ jobs:
       fail-fast: false
       matrix:
         ghc: ["9.2.8", "9.4.8", "9.6.4", "9.8.2"]
-        cabal: ["3.8.1.0"]
+        cabal: ["3.10.3.0"]
         os: [ubuntu-latest, windows-latest, macOS-latest]
         exclude:
           - ghc: "9.4.8"
@@ -63,7 +63,7 @@ jobs:
 
     - name: Configure the build
       run: |
-        cabal configure --enable-tests --enable-benchmark --ghc-options="-Werror" --ghc-options="-fno-ignore-asserts"
+        cabal configure --enable-tests --enable-benchmark --ghc-options="-Werror" --ghc-options="-fno-ignore-asserts" -O0
         cat cabal.project.local
 
     - name: Record cabal dependencies
