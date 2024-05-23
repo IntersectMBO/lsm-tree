@@ -607,3 +607,21 @@ test-suite fs-api-blockio-test
     , vector
 
   ghc-options:    -threaded -fno-ignore-asserts
+
+library openat-nocache
+  import:             language, warnings
+  build-depends:      base <5
+  exposed-modules:    System.Posix.IO.NoCache
+
+  -- osx is also no-op, as there isn't O_DIRECT flag to openat,
+  -- but rather you need to fcntl on opened file descriptor.
+  --
+  -- Note: on Linux and BSD's fcntl can also change O_DIRECT.
+  if (os(windows) || os(osx))
+    hs-source-dirs: src-openat-nocache-win
+
+  else
+    hs-source-dirs: src-openat-nocache
+    build-depends:  unix
+
+  build-tool-depends: hsc2hs:hsc2hs
