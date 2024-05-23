@@ -60,7 +60,7 @@ module Database.LSMTree.Extras.ReferenceImpl (
 
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Short as SBS
-import           Data.Maybe (isJust)
+import           Data.Maybe (fromMaybe, isJust)
 import           Data.Primitive.ByteArray (ByteArray (..))
 
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
@@ -159,16 +159,12 @@ instance Arbitrary PageContentSingle where
 -- to 'RawPage' (from the real implementation).
 --
 toRawPage :: PageContentFits -> (RawPage, [RawOverflowPage])
-toRawPage (PageContentFits kops) = (page, overflowPages)
+toRawPage (PageContentFits kops) =
+    fromMaybe overfull $ do
+      serialised <- serialisePage <$> encodePage DiskPage4k kops
+      (page : overflowPages) <- pure (pageSerialisedChunks DiskPage4k serialised)
+      pure (makeRawPageBS page, map makeRawOverflowPageBS overflowPages)
   where
-    bs = maybe overfull serialisePage (encodePage DiskPage4k kops)
-    (pfx, sfx) = BS.splitAt 4096 bs -- hardcoded page size.
-    page          = makeRawPageBS pfx
-    overflowPages = [ makeRawOverflowPageBS sfxpg
-                    | sfxpg <- takeWhile (not . BS.null)
-                                 [ BS.take 4096 (BS.drop n sfx)
-                                 | n <- [0, 4096 .. ] ]
-                    ]
     overfull =
       error $ "toRawPage: encountered overfull page, but PageContentFits is "
            ++ "supposed to be guaranteed to fit, i.e. not to be overfull."
