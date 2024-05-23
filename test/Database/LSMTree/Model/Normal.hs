@@ -138,7 +138,7 @@ rangeLookup r tbl = V.fromList
 -- Updates can be performed concurrently from multiple Haskell threads.
 updates :: forall k v blob.
      (SerialiseKey k, SerialiseValue v, SerialiseValue blob)
-  => [(k, Update v blob)]
+  => V.Vector (k, Update v blob)
   -> Table k v blob
   -> Table k v blob
 updates ups tbl0 = foldl' update tbl0 ups where
@@ -156,7 +156,7 @@ updates ups tbl0 = foldl' update tbl0 ups where
 -- Inserts can be performed concurrently from multiple Haskell threads.
 inserts ::
      (SerialiseKey k, SerialiseValue v, SerialiseValue blob)
-  => [(k, v, Maybe blob)]
+  => V.Vector (k, v, Maybe blob)
   -> Table k v blob
   -> Table k v blob
 inserts = updates . fmap (\(k, v, blob) -> (k, Insert v blob))
@@ -166,7 +166,7 @@ inserts = updates . fmap (\(k, v, blob) -> (k, Insert v blob))
 -- Deletes can be performed concurrently from multiple Haskell threads.
 deletes ::
      (SerialiseKey k, SerialiseValue v, SerialiseValue blob)
-  => [k]
+  => V.Vector k
   -> Table k v blob
   -> Table k v blob
 deletes = updates . fmap (,Delete)

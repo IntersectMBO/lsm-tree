@@ -304,13 +304,13 @@ instance ( Show (SUT.Class.TableConfig h)
                 -> Act h (V.Vector (SUT.RangeLookupResult k v (WrapBlobRef h IO blob)))
     -- Updates
     Updates :: C k v blob
-            => [(k, SUT.Update v blob)] -> Var h (WrapTableHandle h IO k v blob)
+            => V.Vector (k, SUT.Update v blob) -> Var h (WrapTableHandle h IO k v blob)
             -> Act h ()
     Inserts :: C k v blob
-            => [(k, v, Maybe blob)] -> Var h (WrapTableHandle h IO k v blob)
+            => V.Vector (k, v, Maybe blob) -> Var h (WrapTableHandle h IO k v blob)
             -> Act h ()
     Deletes :: C k v blob
-            => [k] -> Var h (WrapTableHandle h IO k v blob)
+            => V.Vector k -> Var h (WrapTableHandle h IO k v blob)
             -> Act h ()
     -- Blobs
     RetrieveBlobs :: V blob
@@ -955,11 +955,11 @@ arbitraryActionWithVars _ findVars _st = QC.oneof $ concat [
             SUT.FromToIncluding{} -> ()
 
     -- TODO: improve
-    genUpdates :: Gen [(k, SUT.Update v blob)]
-    genUpdates = QC.listOf $ (,) <$> QC.arbitrary <*> QC.oneof [
+    genUpdates :: Gen (V.Vector (k, SUT.Update v blob))
+    genUpdates = V.fromList <$> QC.listOf ((,) <$> QC.arbitrary <*> QC.oneof [
           SUT.Insert <$> QC.arbitrary <*> QC.arbitrary
         , pure SUT.Delete
-        ]
+        ])
       where
         _coveredAllCases :: SUT.Update v blob -> ()
         _coveredAllCases = \case
@@ -967,12 +967,12 @@ arbitraryActionWithVars _ findVars _st = QC.oneof $ concat [
             SUT.Delete{} -> ()
 
     -- TODO: improve
-    genInserts :: Gen [(k, v, Maybe blob)]
-    genInserts = QC.arbitrary
+    genInserts :: Gen (V.Vector (k, v, Maybe blob))
+    genInserts = V.fromList <$> QC.arbitrary
 
     -- TODO: improve
-    genDeletes :: Gen [k]
-    genDeletes = QC.arbitrary
+    genDeletes :: Gen (V.Vector k)
+    genDeletes = V.fromList <$> QC.arbitrary
 
     -- TODO: improve, actual snapshot names
     genSnapshotName :: Gen SUT.SnapshotName

@@ -81,19 +81,19 @@ class (IsSession (Session h)) => IsTableHandle h where
     updates ::
            (IOLike m, SerialiseKey k, SerialiseValue v, SerialiseValue blob)
         => h m k v blob
-        -> [(k, Update v blob)]
+        -> V.Vector (k, Update v blob)
         -> m ()
 
     inserts ::
            (IOLike m, SerialiseKey k, SerialiseValue v, SerialiseValue blob)
         => h m k v blob
-        -> [(k, v, Maybe blob)]
+        -> V.Vector (k, v, Maybe blob)
         -> m ()
 
     deletes ::
            (IOLike m, SerialiseKey k, SerialiseValue v, SerialiseValue blob)
         => h m k v blob
-        -> [k]
+        -> V.Vector k
         -> m ()
 
     snapshot ::

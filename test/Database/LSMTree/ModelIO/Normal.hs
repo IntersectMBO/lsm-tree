@@ -143,7 +143,7 @@ rangeLookup r th@TableHandle {..} = atomically $
 -- | Perform a mixed batch of inserts and deletes.
 updates ::
      (IOLike m, SerialiseKey k, SerialiseValue v, SerialiseValue blob)
-  => [(k, Update v blob)]
+  => V.Vector (k, Update v blob)
   -> TableHandle m k v blob
   -> m ()
 updates ups TableHandle {..} = atomically $
@@ -153,7 +153,7 @@ updates ups TableHandle {..} = atomically $
 -- | Perform a batch of inserts.
 inserts ::
      (IOLike m, SerialiseKey k, SerialiseValue v, SerialiseValue blob)
-  => [(k, v, Maybe blob)]
+  => V.Vector (k, v, Maybe blob)
   -> TableHandle m k v blob
   -> m ()
 inserts = updates . fmap (\(k, v, blob) -> (k, Model.Insert v blob))
@@ -161,7 +161,7 @@ inserts = updates . fmap (\(k, v, blob) -> (k, Model.Insert v blob))
 -- | Perform a batch of deletes.
 deletes ::
      (IOLike m, SerialiseKey k, SerialiseValue v, SerialiseValue blob)
-  => [k]
+  => V.Vector k
   -> TableHandle m k v blob
   -> m ()
 deletes = updates . fmap (,Model.Delete)

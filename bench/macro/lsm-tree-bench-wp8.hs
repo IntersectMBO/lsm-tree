@@ -204,9 +204,8 @@ doSetup gopts _opts = do
             let v = theValue
 
             -- TODO: LSM.inserts has annoying order
-            flip LSM.inserts tbh
-                [ (k, v, Nothing)
-                ]
+            flip LSM.inserts tbh $
+              V.singleton (k, v, Nothing)
 
         LSM.snapshot name tbh
 
@@ -363,7 +362,7 @@ doRun' gopts opts = do
             _ <- LSM.lookups (V.fromList batch1) tbl -- TODO: use vectors directly, update the RocksDB benchmark
 
             -- deletes and inserts
-            LSM.updates batch2 tbl
+            LSM.updates (V.fromList batch2) tbl -- TODO: use vectors directly, update the RocksDB benchmark
 
             -- continue to the next batch
             return nextG

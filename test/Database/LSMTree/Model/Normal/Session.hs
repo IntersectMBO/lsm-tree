@@ -308,7 +308,7 @@ updates ::
      , Model.SerialiseValue blob
      , C k v blob
      )
-  => [(k, Model.Update v blob)]
+  => V.Vector (k, Model.Update v blob)
   -> TableHandle k v blob
   -> m ()
 updates ups th@TableHandle{..} = do
@@ -326,7 +326,7 @@ inserts ::
      , Model.SerialiseValue blob
      , C k v blob
      )
-  => [(k, v, Maybe blob)]
+  => V.Vector (k, v, Maybe blob)
   -> TableHandle k v blob
   -> m ()
 inserts = updates . fmap (\(k, v, blob) -> (k, Model.Insert v blob))
@@ -339,7 +339,7 @@ deletes ::
      , Model.SerialiseValue blob
      , C k v blob
      )
-  => [k]
+  => V.Vector k
   -> TableHandle k v blob
   -> m ()
 deletes = updates . fmap (,Model.Delete)
