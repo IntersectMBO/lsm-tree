@@ -48,3 +48,5 @@ source-repository-package
   subdir:
     fs-api
     fs-sim
+
+packages: crc32c-*.tar.gz
