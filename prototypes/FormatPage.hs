@@ -707,16 +707,20 @@ genPageContentSingleSmall :: Gen Key -> Gen Value -> Gen (Key, Operation)
 genPageContentSingleSmall genkey genval =
     (,) <$> genkey <*> genOperation genval
 
+-- | Generate pages around the disk page size, above and below.
+--
+-- The key is always within the min key size given and max key size for the
+-- page size.
 genPageContentSingleNearFull :: DiskPageSize
                              -> MinKeySize
                              -> Gen (Key, Operation)
-genPageContentSingleNearFull dpgsz (MinKeySize minkeysz) =
+genPageContentSingleNearFull dpgsz (MinKeySize minkeysize) =
     genPageContentSingleOfSize genKeyValSizes
   where
     genKeyValSizes = do
-      let maxsize = maxKeySize dpgsz
-      size  <- choose (maxsize - 15, maxsize)
-      split <- choose (minkeysz, size)
+      let maxkeysize = maxKeySize dpgsz
+      size  <- choose (maxkeysize - 15, maxkeysize + 15)
+      split <- choose (minkeysize, maxkeysize `min` size)
       pure (split, size - split)
 
 genPageContentSingleMultiPage :: DiskPageSize
