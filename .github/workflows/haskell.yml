@@ -120,7 +120,7 @@ jobs:
 
     - name: Run tests
       run: |
-        cabal test -j1 --test-show-details=direct all
+        cabal test --verbose -j1 --test-show-details=direct all
 
     - name: cabal-docspec
       if: ${{ startsWith(matrix.os, 'ubuntu') }}
