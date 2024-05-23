@@ -116,7 +116,7 @@ jobs:
 
     - name: Run tests
       run: |
-        cabal test --verbose -j1 --test-show-details=direct xxhash-tests bloomfilter-tests
+        cabal test --verbose -j1 --test-show-details=direct lsm-prototypes-tests
 
     - name: cabal-docspec
       if: ${{ startsWith(matrix.os, 'ubuntu') }}

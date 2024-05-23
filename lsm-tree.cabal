@@ -540,8 +540,6 @@ test-suite lsm-prototypes-tests
     , lsm-tree:prototypes
     , tasty
 
-  buildable:      False
-
 -- TODO: temporary flag that overrides the operating system dependents
 -- implementation of the HasBlockIO interface, using the serial implementation
 -- intead. This allows for fixing bugs in the blockio-uring implementation
