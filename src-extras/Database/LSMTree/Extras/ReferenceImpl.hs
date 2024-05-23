@@ -19,8 +19,15 @@ module Database.LSMTree.Extras.ReferenceImpl (
     serialisePage,
     deserialisePage,
 
-    -- * Conversions to\/from real implementation types
+    -- * Conversions to real implementation types
     toRawPage,
+    toEntry,
+    toEntryPrefix,
+    toSerialisedKey,
+    toSerialisedValue,
+    toBlobSpan,
+
+    -- * Conversions from real implementation types
     fromRawPage,
     fromEntry,
     fromEntryPrefix,
@@ -57,10 +64,10 @@ import           Data.Maybe (isJust)
 import           Data.Primitive.ByteArray (ByteArray (..))
 
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
-import qualified Database.LSMTree.Internal.Entry as Entry
 import           Database.LSMTree.Internal.Entry (Entry)
-import           Database.LSMTree.Internal.RawOverflowPage
+import qualified Database.LSMTree.Internal.Entry as Entry
 import qualified Database.LSMTree.Internal.RawBytes as RB
+import           Database.LSMTree.Internal.RawOverflowPage
 import           Database.LSMTree.Internal.RawPage
 import           Database.LSMTree.Internal.Serialise
 import           FormatPage
@@ -190,13 +197,46 @@ fromRawPage (page, overflowPages)
           )
 
         IndexNotPresent -> error "fromRawPage: 'rawPageIndex page 0' fails"
-  
+
   | otherwise
   = PageContentFits
       [ case rawPageIndex page (fromIntegral i) of
           IndexEntry k e -> (fromSerialisedKey k, fromEntry e)
-          _ -> error "fromRawPage: 'rawPageIndex page i' fails"
+          _              -> error "fromRawPage: 'rawPageIndex page i' fails"
       | i <- [0 .. fromIntegral (rawPageNumKeys page) - 1 :: Int] ]
+
+toEntry :: Operation -> Entry SerialisedValue BlobSpan
+toEntry op =
+    case op of
+      Insert v Nothing ->
+        Entry.Insert (toSerialisedValue v)
+
+      Insert v (Just b) ->
+        Entry.InsertWithBlob (toSerialisedValue v) (toBlobSpan b)
+
+      Mupsert v ->
+        Entry.Mupdate (toSerialisedValue v)
+
+      Delete ->
+        Entry.Delete
+
+toEntryPrefix :: Operation -> Int -> Entry SerialisedValue BlobSpan
+toEntryPrefix op prefixlen =
+    case op of
+      Insert v Nothing ->
+        Entry.Insert (toSerialisedValue (takeValue prefixlen v))
+
+      Insert v (Just b) ->
+        Entry.InsertWithBlob (toSerialisedValue (takeValue prefixlen v))
+                             (toBlobSpan b)
+
+      Mupsert v ->
+        Entry.Mupdate (toSerialisedValue (takeValue prefixlen v))
+
+      Delete ->
+        Entry.Delete
+  where
+    takeValue n (Value v) = Value (BS.take n v)
 
 fromEntry :: Entry SerialisedValue BlobSpan -> Operation
 fromEntry e =
@@ -232,6 +272,12 @@ fromEntryPrefix e suffix overflow =
       Entry.Delete ->
         Delete
 
+toSerialisedKey :: Key -> SerialisedKey
+toSerialisedKey (Key k) = SerialisedKey (RB.fromByteString k)
+
+toSerialisedValue :: Value -> SerialisedValue
+toSerialisedValue (Value v) = SerialisedValue (RB.fromByteString v)
+
 fromSerialisedKey :: SerialisedKey -> Key
 fromSerialisedKey (SerialisedKey k) = Key (RB.toByteString k)
 
@@ -249,6 +295,9 @@ fromRawOverflowPages =
     RB.toByteString
   . mconcat
   . map rawOverflowPageRawBytes
+
+toBlobSpan :: BlobRef -> BlobSpan
+toBlobSpan  (BlobRef x y) = BlobSpan x y
 
 fromBlobSpan :: BlobSpan -> BlobRef
 fromBlobSpan  (BlobSpan x y) = BlobRef x y
