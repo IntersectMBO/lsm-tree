@@ -27,11 +27,7 @@ jobs:
         os: [ubuntu-latest, windows-latest, macOS-latest]
         exclude:
           - ghc: "9.4.8"
-            os: windows-latest
-          - ghc: "9.4.8"
             os: macOS-latest
-          - ghc: "9.8.2"
-            os: windows-latest
           - ghc: "9.8.2"
             os: macOS-latest
 
