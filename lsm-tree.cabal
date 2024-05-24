@@ -243,6 +243,7 @@ test-suite lsm-tree-test
     Test.Database.LSMTree.ModelIO.Normal
     Test.Database.LSMTree.Normal.StateMachine
     Test.Database.LSMTree.Normal.StateMachine.Op
+    Test.System.Posix.Fcntl.NoCache
     Test.Util.FS
     Test.Util.Orphans
     Test.Util.QuickCheck
@@ -288,6 +289,9 @@ test-suite lsm-tree-test
     , transformers
     , vector
     , wide-word
+
+  if !os(windows)
+    build-depends: lsm-tree:fcntl-nocache
 
   ghc-options:    -fno-ignore-asserts -threaded
 
@@ -607,3 +611,13 @@ test-suite fs-api-blockio-test
     , vector
 
   ghc-options:    -threaded -fno-ignore-asserts
+
+library fcntl-nocache
+  import:         language, warnings
+  visibility:     private
+  hs-source-dirs: src-fcntl-nocache
+
+  if !os(windows)
+    exposed-modules:    System.Posix.Fcntl.NoCache
+    build-depends:      base <5
+    build-tool-depends: hsc2hs:hsc2hs
