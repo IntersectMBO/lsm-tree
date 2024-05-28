@@ -36,11 +36,13 @@ import           Control.DeepSeq (NFData (..))
 import qualified Data.Map.Range as Map.R
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Entry
 import qualified Database.LSMTree.Internal.Monoidal as Monoidal
 import qualified Database.LSMTree.Internal.Normal as Normal
 import           Database.LSMTree.Internal.Range (Range (..))
 import           Database.LSMTree.Internal.Serialise
+import qualified Database.LSMTree.Internal.Vector as V
 
 {-------------------------------------------------------------------------------
   Writebuffer type
@@ -98,11 +100,9 @@ addEntryNormal k e (WB wb) =
 --
 lookups ::
      WriteBuffer
-  -> [SerialisedKey]
-  -> [(SerialisedKey, Maybe (Entry SerialisedValue SerialisedBlob))]
-lookups (WB m) = fmap f
-  where
-    f k = (k, Map.lookup k m)
+  -> V.Vector SerialisedKey
+  -> V.Vector (Maybe (Entry SerialisedValue SerialisedBlob))
+lookups (WB !m) !ks = V.mapStrict (`Map.lookup` m) ks
 
 {-------------------------------------------------------------------------------
   RangeQueries

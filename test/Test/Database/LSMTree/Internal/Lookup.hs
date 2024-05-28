@@ -293,24 +293,24 @@ prop_roundtripFromWriteBufferLookupIO dats =
               (V.map Run.runFilter runs)
               (V.map Run.runIndex runs)
               (V.map Run.runKOpsFile runs)
-              (V.fromList lookupss)
+              lookupss
     let model = WB.lookups wbAll lookupss
     V.mapM_ (Run.removeReference hasFS) runs
     FS.close hasBlockIO
     -- TODO: we don't compare blobs, because we haven't implemented blob
     -- retrieval yet.
-    pure $ opaqueifyBlobs (V.fromList model) === opaqueifyBlobs (V.zip (V.fromList lookupss) real)
+    pure $ opaqueifyBlobs model === opaqueifyBlobs real
   where
     mkRuns hasFS = first V.fromList . unzip <$> sequence [
           (,wb) <$> Run.fromWriteBuffer hasFS (RunFsPaths i) wb
         | (i, dat) <- zip [0..] (getSmallList dats)
         , let wb = WB.WB (runData dat)
         ]
-    lookupss = concatMap lookups dats
+    lookupss = V.fromList $ concatMap lookups dats
     resolveV = \(SerialisedValue v1) (SerialisedValue v2) -> SerialisedValue (v1 <> v2)
 
-opaqueifyBlobs :: V.Vector (k, Maybe (Entry v b)) -> V.Vector (k, Maybe (Entry v Opaque))
-opaqueifyBlobs = fmap (fmap (fmap (fmap Opaque)))
+opaqueifyBlobs :: V.Vector (Maybe (Entry v b)) -> V.Vector (Maybe (Entry v Opaque))
+opaqueifyBlobs = fmap (fmap (fmap Opaque))
 
 {-------------------------------------------------------------------------------
   Utils
