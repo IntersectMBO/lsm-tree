@@ -1,4 +1,3 @@
-{-# LANGUAGE BangPatterns  #-}
 {-# LANGUAGE CPP           #-}
 {-# LANGUAGE MagicHash     #-}
 {-# LANGUAGE UnboxedTuples #-}
@@ -8,21 +7,28 @@ module Database.LSMTree.Internal.ByteString (
     tryGetByteArray,
     shortByteStringFromTo,
     byteArrayFromTo,
+    byteArrayToByteString,
+    unsafePinnedByteArrayToByteString,
     byteArrayToSBS,
 ) where
 
+import           Control.Exception (assert)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BB
 import qualified Data.ByteString.Builder.Internal as BB
 import qualified Data.ByteString.Internal as BS.Internal
 import           Data.ByteString.Short (ShortByteString (SBS))
 import qualified Data.ByteString.Short.Internal as SBS
-import           Data.Primitive.ByteArray (ByteArray (..), emptyByteArray,
-                     sizeofByteArray)
+import           Data.Primitive.ByteArray (ByteArray (..), copyByteArray,
+                     emptyByteArray, isByteArrayPinned, newPinnedByteArray,
+                     runByteArray, sizeofByteArray)
+import           Database.LSMTree.Internal.Assertions (isValidSlice)
 import           Foreign.Ptr (minusPtr, plusPtr)
-import           GHC.Exts (eqAddr#, mutableByteArrayContents#, realWorld#,
-                     unsafeFreezeByteArray#)
+import           GHC.Exts (Int (I#), byteArrayContents#, eqAddr#,
+                     mutableByteArrayContents#, plusAddr#, realWorld#,
+                     unsafeCoerce#, unsafeFreezeByteArray#)
 import qualified GHC.ForeignPtr as Foreign
+import           GHC.Stack (HasCallStack)
 
 -- | \( O(1) \) conversion, if possible.
 --
@@ -38,7 +44,8 @@ tryCheapToShort bs =
 
 
 -- | \( O(1) \) conversion from a strict 'BS.ByteString' to its underlying
--- pinned 'ByteArray', if possible.
+-- pinned 'ByteArray', if possible. Also returns the length (in bytes) of the
+-- byte array prefix that was used by the bytestring.
 --
 -- Strict bytestrings are allocated using 'mallocPlainForeignPtrBytes', so we
 -- are expecting a 'PlainPtr' (or 'FinalPtr' when the length is 0).
@@ -95,6 +102,33 @@ shortByteStringCopyStepFromTo !ip0 !ipe0 !sbs k =
       where
         outRemaining = ope `minusPtr` op
         inpRemaining = ipe - ip
+
+-- | \( O(1) \) conversion if the byte array is pinned, \( O(n) \) otherwise.
+-- Takes offset and length of the slice to be used.
+byteArrayToByteString :: Int -> Int -> ByteArray -> BS.ByteString
+byteArrayToByteString off len ba =
+    assert (isValidSlice off len ba) $
+      if isByteArrayPinned ba
+      then unsafePinnedByteArrayToByteString off len ba
+      else unsafePinnedByteArrayToByteString 0 len $ runByteArray $ do
+        mba <- newPinnedByteArray len
+        copyByteArray mba 0 ba off len
+        return mba
+
+-- | \( O(1) \) conversion. Takes offset and length of the slice to be used.
+-- Fails if the byte array is not pinned.
+--
+-- Based on 'SBS.fromShort'.
+unsafePinnedByteArrayToByteString :: HasCallStack => Int -> Int -> ByteArray -> BS.ByteString
+unsafePinnedByteArrayToByteString off@(I# off#) len ba@(ByteArray ba#) =
+    assert (isValidSlice off len ba) $
+      if isByteArrayPinned ba
+      then BS.Internal.BS fp len
+      else error $ "unsafePinnedByteArrayToByteString: not pinned, length "
+                <> show (sizeofByteArray ba)
+  where
+    addr# = plusAddr# (byteArrayContents# ba#) off#
+    fp = Foreign.ForeignPtr addr# (Foreign.PlainPtr (unsafeCoerce# ba#))
 
 byteArrayToSBS :: ByteArray -> ShortByteString
 #if MIN_VERSION_bytestring(0,12,0)

@@ -1,7 +1,4 @@
-{-# LANGUAGE NamedFieldPuns    #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RankNTypes        #-}
-{-# LANGUAGE RecordWildCards   #-}
+{-# LANGUAGE RecordWildCards #-}
 
 -- | A mutable run ('RunBuilder') that is under construction.
 --
@@ -16,13 +13,13 @@ module Database.LSMTree.Internal.RunBuilder (
 
 import qualified Control.Monad.ST as ST
 import           Data.BloomFilter (Bloom)
-import qualified Data.ByteString.Builder as BSB
+import qualified Data.ByteString.Lazy as BSL
 import           Data.Foldable (for_, traverse_)
 import           Data.IORef
 import           Data.Traversable (for)
 import           Data.Word (Word64)
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
-import           Database.LSMTree.Internal.BloomFilter (bloomFilterToBuilder)
+import           Database.LSMTree.Internal.BloomFilter (bloomFilterToLBS)
 import           Database.LSMTree.Internal.CRC32C (CRC32C)
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry
@@ -117,9 +114,9 @@ addKeyOp fs builder@RunBuilder{runBuilderAcc} key op = do
        (pages, overflowPages, chunks)
          <- ST.stToIO $ RunAcc.addLargeKeyOp runBuilderAcc key op'
        --TODO: consider optimisation: use writev to write all pages in one go
-       for_ pages (writeRawPage fs builder)
-       for_ overflowPages (writeRawOverflowPage fs builder)
-       writeIndexChunks fs builder chunks
+       for_ pages $ writeRawPage fs builder
+       writeRawOverflowPages fs builder overflowPages
+       for_ chunks $ writeIndexChunk fs builder
 
 -- | See 'RunAcc.addLargeSerialisedKeyOp' for details.
 --
@@ -134,9 +131,9 @@ addLargeSerialisedKeyOp fs builder@RunBuilder{runBuilderAcc} key page overflowPa
     (pages, overflowPages', chunks)
       <- ST.stToIO $
            RunAcc.addLargeSerialisedKeyOp runBuilderAcc key page overflowPages
-    for_ pages (writeRawPage fs builder)
-    for_ overflowPages' (writeRawOverflowPage fs builder)
-    writeIndexChunks fs builder chunks
+    for_ pages $ writeRawPage fs builder
+    writeRawOverflowPages fs builder overflowPages'
+    for_ chunks $ writeIndexChunk fs builder
 
 -- | Finish construction of the run.
 -- Writes the filter and index to file and leaves all written files on disk.
@@ -177,44 +174,40 @@ close fs RunBuilder {..} = do
 
 writeRawPage :: HasFS IO h -> RunBuilder (FS.Handle h) -> RawPage -> IO ()
 writeRawPage fs RunBuilder {..} =
-    --TODO: avoid copying via builder and write the pinned RawPage directly
     writeToHandle fs (forRunKOps runBuilderHandles)
-  . RB.builder
+  . BSL.fromStrict
+  . RB.unsafePinnedToByteString -- 'RawPage' is guaranteed to be pinned
   . RawPage.rawPageRawBytes
 
-writeRawOverflowPage :: HasFS IO h -> RunBuilder (FS.Handle h) -> RawOverflowPage -> IO ()
-writeRawOverflowPage fs RunBuilder {..} =
-    --TODO: avoid copying via builder and write the pinned RawPage directly
+writeRawOverflowPages :: HasFS IO h -> RunBuilder (FS.Handle h) -> [RawOverflowPage] -> IO ()
+writeRawOverflowPages fs RunBuilder {..} =
     writeToHandle fs (forRunKOps runBuilderHandles)
-  . RB.builder
-  . RawOverflowPage.rawOverflowPageRawBytes
+  . BSL.fromChunks
+  . map (RawOverflowPage.rawOverflowPageToByteString)
 
 writeBlob :: HasFS IO h -> RunBuilder (FS.Handle h) -> SerialisedBlob -> IO BlobSpan
 writeBlob fs RunBuilder{..} blob = do
     let size = sizeofBlob64 blob
     offset <- readIORef runBuilderBlobOffset
     modifyIORef' runBuilderBlobOffset (+size)
-    writeToHandle fs (forRunBlob runBuilderHandles) (serialisedBlob blob)
+    let SerialisedBlob rb = blob
+    let lbs = BSL.fromStrict $ RB.toByteString rb
+    writeToHandle fs (forRunBlob runBuilderHandles) lbs
     return (BlobSpan offset (fromIntegral size))
 
 writeFilter :: HasFS IO h -> RunBuilder (FS.Handle h) -> Bloom SerialisedKey -> IO ()
 writeFilter fs RunBuilder {..} bf =
-    writeToHandle fs (forRunFilter runBuilderHandles) (bloomFilterToBuilder bf)
+    writeToHandle fs (forRunFilter runBuilderHandles) (bloomFilterToLBS bf)
 
 writeIndexHeader :: HasFS IO h -> RunBuilder (FS.Handle h) -> IO ()
 writeIndexHeader fs RunBuilder {..} =
     writeToHandle fs (forRunIndex runBuilderHandles) $
-      Index.headerBuilder
+      Index.headerLBS
 
 writeIndexChunk :: HasFS IO h -> RunBuilder (FS.Handle h) -> Index.Chunk -> IO ()
 writeIndexChunk fs RunBuilder {..} chunk =
     writeToHandle fs (forRunIndex runBuilderHandles) $
-      Index.chunkBuilder chunk
-
-writeIndexChunks :: HasFS IO h -> RunBuilder (FS.Handle h) -> [Index.Chunk] -> IO ()
-writeIndexChunks fs RunBuilder {..} chunks =
-    writeToHandle fs (forRunIndex runBuilderHandles) $
-      foldMap Index.chunkBuilder chunks
+      BSL.fromStrict $ Index.chunkToBS chunk
 
 writeIndexFinal ::
      HasFS IO h
@@ -224,7 +217,7 @@ writeIndexFinal ::
   -> IO ()
 writeIndexFinal fs RunBuilder {..} numEntries index =
     writeToHandle fs (forRunIndex runBuilderHandles) $
-      Index.finalBuilder numEntries index
+      Index.finalLBS numEntries index
 
 {-------------------------------------------------------------------------------
   ChecksumHandle
@@ -244,11 +237,8 @@ closeHandle fs (ChecksumHandle h checksum) = do
     FS.hClose fs h
     readIORef checksum
 
--- TODO: Revisit performance once we have a suitable benchmark.
-writeToHandle ::
-     HasFS IO h
-  -> ChecksumHandle (FS.Handle h) -> BSB.Builder -> IO ()
-writeToHandle fs (ChecksumHandle h checksum) builder = do
+writeToHandle :: HasFS IO h -> ChecksumHandle (FS.Handle h) -> BSL.ByteString -> IO ()
+writeToHandle fs (ChecksumHandle h checksum) lbs = do
     crc <- readIORef checksum
-    (_, crc') <- CRC.hPutAllChunksCRC32C fs h (BSB.toLazyByteString builder) crc
+    (_, crc') <- CRC.hPutAllChunksCRC32C fs h lbs crc
     writeIORef checksum crc'

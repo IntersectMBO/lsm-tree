@@ -13,6 +13,7 @@ module Data.BloomFilter.BitVec64 (
 
 import           Control.Monad.ST (ST)
 import           Data.Bits
+import           Data.Primitive.ByteArray (newPinnedByteArray, setByteArray)
 import qualified Data.Vector.Primitive as P
 import qualified Data.Vector.Primitive.Mutable as MP
 import           Data.Word (Word64)
@@ -31,8 +32,24 @@ unsafeIndex (BV64 bv) i = testBit (P.unsafeIndex bv (w2i j)) (w2i k)
 
 newtype MBitVec64 s = MBV64 (P.MVector s Word64)
 
+-- | Will create an explicitly pinned byte array if it is larger than 1 kB.
+-- This is done because pinned byte arrays allow for more efficient
+-- serialisation, but the definition of 'isByteArrayPinned' changed in GHC 9.6,
+-- see <https://gitlab.haskell.org/ghc/ghc/-/issues/22255>.
+--
+-- TODO: remove this workaround once a solution exists, e.g. a new primop that
+-- allows checking for implicit pinning.
 new :: Word64 -> ST s (MBitVec64 s)
-new s = MBV64 <$> MP.new (w2i (roundUpTo64 s))
+new s
+  | numWords >= 128 = do
+    mba <- newPinnedByteArray numBytes
+    setByteArray mba 0 numWords (0 :: Word64)
+    return (MBV64 (P.MVector 0 numWords mba))
+  | otherwise =
+    MBV64 <$> MP.new numWords
+  where
+    !numWords = w2i (roundUpTo64 s)
+    !numBytes = unsafeShiftL numWords 3 -- * 8
 
 unsafeWrite :: MBitVec64 s -> Word64 -> Bool -> ST s ()
 unsafeWrite (MBV64 mbv) i x = do

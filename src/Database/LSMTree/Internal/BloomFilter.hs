@@ -1,6 +1,5 @@
-{-# LANGUAGE NumericUnderscores #-}
 module Database.LSMTree.Internal.BloomFilter (
-  bloomFilterToBuilder,
+  bloomFilterToLBS,
   bloomFilterFromSBS,
 ) where
 
@@ -9,15 +8,15 @@ import           Control.Monad (when)
 import qualified Data.BloomFilter as BF
 import qualified Data.BloomFilter.BitVec64 as BV64
 import qualified Data.BloomFilter.Internal as BF
-import qualified Data.ByteString.Builder as B
 import qualified Data.ByteString.Builder.Extra as B
+import qualified Data.ByteString.Lazy as LBS
 import           Data.ByteString.Short (ShortByteString (SBS))
 import qualified Data.Primitive as P
 import           Data.Primitive.ByteArray (ByteArray (ByteArray))
 import qualified Data.Vector.Primitive as PV
 import           Data.Word (Word32, Word64, byteSwap32)
 import           Database.LSMTree.Internal.BitMath (ceilDiv64, mul8)
-import           Database.LSMTree.Internal.ByteString (byteArrayFromTo)
+import           Database.LSMTree.Internal.ByteString (byteArrayToByteString)
 import           Database.LSMTree.Internal.Vector
 
 -- serialising
@@ -28,16 +27,19 @@ import           Database.LSMTree.Internal.Vector
 bloomFilterVersion :: Word32
 bloomFilterVersion = 1
 
-bloomFilterToBuilder :: BF.Bloom a -> B.Builder
-bloomFilterToBuilder bf =
-    B.word32Host bloomFilterVersion <>
-    B.word32Host (fromIntegral (BF.hashesN bf)) <>
-    B.word64Host (BF.length bf) <>
-    toBuilder' bf
+bloomFilterToLBS :: BF.Bloom a -> LBS.ByteString
+bloomFilterToLBS b@(BF.Bloom _ _ bv) =
+    header b <> LBS.fromStrict (bitVec bv)
+  where
+    header (BF.Bloom hashesN len _) =
+        -- creates a single 16 byte chunk
+        B.toLazyByteStringWith (B.safeStrategy 16 B.smallChunkSize) mempty $
+             B.word32Host bloomFilterVersion
+          <> B.word32Host (fromIntegral hashesN)
+          <> B.word64Host len
 
-toBuilder' :: BF.Bloom a -> B.Builder
-toBuilder' (BF.Bloom _hfN _len (BV64.BV64 (PV.Vector off len v))) =
-    byteArrayFromTo (mul8 off) (mul8 off + mul8 len) v
+    bitVec (BV64.BV64 (PV.Vector off len ba)) =
+        byteArrayToByteString (mul8 off) (mul8 len) ba
 
 -- deserialising
 -----------------------------------------------------------

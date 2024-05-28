@@ -1,10 +1,7 @@
-{-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE ViewPatterns #-}
 module Test.Database.LSMTree.Internal.BloomFilter (tests) where
 
 import           Control.DeepSeq (deepseq)
 import           Data.Bits (unsafeShiftL, unsafeShiftR, (.&.))
-import qualified Data.ByteString.Builder as B
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ByteString.Short as SBS
 import           Data.Primitive.ByteArray (ByteArray (..), byteArrayFromList)
@@ -35,7 +32,7 @@ roundtrip_prop (Positive (Small hfN)) (limitBits -> bits) ws =
     Right lhs === rhs
   where
     lhs = BF.fromList hfN bits ws
-    sbs = SBS.toShort (LBS.toStrict (B.toLazyByteString (bloomFilterToBuilder lhs)))
+    sbs = SBS.toShort (LBS.toStrict (bloomFilterToLBS lhs))
     rhs = bloomFilterFromSBS sbs
 
 limitBits :: Word64 -> Word64

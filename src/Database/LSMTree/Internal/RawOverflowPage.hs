@@ -6,6 +6,7 @@ module Database.LSMTree.Internal.RawOverflowPage (
     makeRawOverflowPage,
     unsafeMakeRawOverflowPage,
     rawOverflowPageRawBytes,
+    rawOverflowPageToByteString,
     rawBytesToOverflowPages,
     pinnedByteArrayToOverflowPages,
     unpinnedByteArrayToOverflowPages,
@@ -13,6 +14,7 @@ module Database.LSMTree.Internal.RawOverflowPage (
 
 import           Control.DeepSeq (NFData (rnf))
 import           Control.Monad (when)
+import           Data.ByteString (ByteString)
 import           Data.Primitive.ByteArray (ByteArray (..), copyByteArray,
                      fillByteArray, isByteArrayPinned, newPinnedByteArray,
                      runByteArray)
@@ -62,6 +64,11 @@ instance Eq RawOverflowPage where
 rawOverflowPageRawBytes :: RawOverflowPage -> RawBytes
 rawOverflowPageRawBytes (RawOverflowPage off ba) =
     RB.fromByteArray off 4096 ba
+
+-- | \( O(1) \) since we can avoid copying the pinned byte array.
+rawOverflowPageToByteString :: RawOverflowPage -> ByteString
+rawOverflowPageToByteString =
+    RB.unsafePinnedToByteString . rawOverflowPageRawBytes
 
 -- | Create a 'RawOverflowPage'.
 --
