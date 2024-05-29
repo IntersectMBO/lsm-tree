@@ -6,13 +6,15 @@
 module Test.Database.LSMTree.ModelIO.Normal (tests) where
 
 import           Control.Exception (SomeException, try)
+import           Control.Monad.ST.Strict (runST)
 import           Control.Monad.Trans.State
 import qualified Data.ByteString as BS
 import           Data.Foldable (toList)
 import           Data.Functor.Compose (Compose (..))
-import           Data.List (sortOn)
 import           Data.Maybe (fromMaybe)
 import           Data.Proxy (Proxy (..))
+import qualified Data.Vector as V
+import qualified Data.Vector.Algorithms.Merge as VA
 import           Data.Word (Word64)
 import           Database.LSMTree.Common (mkSnapshotName)
 import           Database.LSMTree.Extras.Generators ()
@@ -70,8 +72,8 @@ retrieveBlobsTrav ::
   (IsTableHandle h, IOLike m, SerialiseValue blob, Traversable t)
   => proxy h -> Session h m -> t (BlobRef h m blob) -> m (t blob)
 retrieveBlobsTrav hdl ses brefs = do
-  blobs <- retrieveBlobs hdl ses (toList brefs)
-  evalStateT (traverse (\_ -> state un) brefs) blobs
+  blobs <- retrieveBlobs hdl ses (V.fromList $ toList brefs)
+  evalStateT (traverse (\_ -> state un) brefs) (V.toList blobs)
   where
     un []     = error "invalid traversal"
     un (x:xs) = (x, xs)
@@ -80,7 +82,7 @@ lookupsWithBlobs ::
     forall h m k v blob. ( IsTableHandle h, IOLike m
     , SerialiseKey k, SerialiseValue v, SerialiseValue blob
     )
-  => h m k v blob -> Session h m -> [k] -> m [LookupResult k v blob]
+  => h m k v blob -> Session h m -> V.Vector k -> m (V.Vector (LookupResult v blob))
 lookupsWithBlobs hdl ses ks = do
     res <- lookups hdl ks
     getCompose <$> retrieveBlobsTrav (Proxy @h) ses (Compose res)
@@ -89,7 +91,7 @@ rangeLookupWithBlobs ::
      forall h m k v blob. ( IsTableHandle h, IOLike m
      , SerialiseKey k, SerialiseValue v, SerialiseValue blob
      )
-  => h m k v blob -> Session h m -> Range k -> m [RangeLookupResult k v blob]
+  => h m k v blob -> Session h m -> Range k -> m (V.Vector (RangeLookupResult k v blob))
 rangeLookupWithBlobs hdl ses r = do
     res <- rangeLookup hdl r
     getCompose <$> retrieveBlobsTrav (Proxy @h) ses (Compose res)
@@ -109,9 +111,9 @@ prop_lookupInsert h ups k v = ioProperty $ do
 
     -- the main dish
     inserts hdl [(k, v, Nothing)]
-    res <- lookupsWithBlobs hdl ses [k]
+    res <- lookupsWithBlobs hdl ses (V.singleton k)
 
-    return $ res === [Found k v]
+    return $ res === V.singleton (Found v)
 
 -- | Insert doesn't change the lookup results of other keys.
 prop_lookupInsertElse ::
@@ -122,7 +124,7 @@ prop_lookupInsertElse h ups k v testKeys = ioProperty $ do
     -- create session, table handle, and populate it with some data.
     (ses, hdl) <- makeNewTable h ups
 
-    let testKeys' = filter (/= k) testKeys
+    let testKeys' = V.fromList $ filter (/= k) testKeys
     res1 <- lookupsWithBlobs hdl ses testKeys'
     inserts hdl [(k, v, Nothing)]
     res2 <-  lookupsWithBlobs hdl ses testKeys'
@@ -137,8 +139,8 @@ prop_lookupDelete ::
 prop_lookupDelete h ups k = ioProperty $ do
     (ses, hdl) <- makeNewTable h ups
     deletes hdl [k]
-    res <- lookupsWithBlobs hdl ses [k]
-    return $ res === [NotFound k]
+    res <- lookupsWithBlobs hdl ses (V.singleton k)
+    return $ res === V.singleton NotFound
 
 -- | Delete doesn't change the lookup results of other keys
 prop_lookupDeleteElse ::
@@ -149,7 +151,7 @@ prop_lookupDeleteElse h ups k testKeys = ioProperty $ do
     -- create session, table handle, and populate it with some data.
     (ses, hdl) <- makeNewTable h ups
 
-    let testKeys' = filter (/= k) testKeys
+    let testKeys' = V.fromList $ filter (/= k) testKeys
     res1 <- lookupsWithBlobs hdl ses testKeys'
     deletes hdl [k]
     res2 <-  lookupsWithBlobs hdl ses testKeys'
@@ -164,8 +166,8 @@ prop_insertInsert ::
 prop_insertInsert h ups k v1 v2 = ioProperty $ do
     (ses, hdl) <- makeNewTable h ups
     inserts hdl [(k, v1, Nothing), (k, v2, Nothing)]
-    res <- lookupsWithBlobs hdl ses [k]
-    return $ res === [Found k v2]
+    res <- lookupsWithBlobs hdl ses (V.singleton k)
+    return $ res === V.singleton (Found v2)
 
 -- | Inserts with different keys don't interfere.
 prop_insertCommutes ::
@@ -176,8 +178,8 @@ prop_insertCommutes h ups k1 v1 k2 v2 = k1 /= k2 ==> ioProperty do
     (ses, hdl) <- makeNewTable h ups
     inserts hdl [(k1, v1, Nothing), (k2, v2, Nothing)]
 
-    res <- lookupsWithBlobs hdl ses [k1,k2]
-    return $ res === [Found k1 v1, Found k2 v2]
+    res <- lookupsWithBlobs hdl ses (V.fromList [k1,k2])
+    return $ res === V.fromList [Found v1, Found v2]
 
 -------------------------------------------------------------------------------
 -- implement classic QC tests for range lookups
@@ -209,8 +211,14 @@ prop_insertLookupRange h ups k v r = ioProperty $ do
         p rlr = rangeLookupResultKey rlr /= k
 
     if evalRange r k
-    then return $ sortOn rangeLookupResultKey (FoundInRange k v : filter p res) === res'
+    then return $ vsortOn rangeLookupResultKey (V.cons (FoundInRange k v) (V.filter p res)) === res'
     else return $ res === res'
+
+  where
+    vsortOn f vec = runST $ do
+        mvec <- V.thaw vec
+        VA.sortBy (\e1 e2 -> f e1 `compare` f e2) mvec
+        V.unsafeFreeze mvec
 
 -------------------------------------------------------------------------------
 -- implement classic QC tests for split-value BLOB retrieval
@@ -227,9 +235,9 @@ prop_lookupInsertBlob h ups k v blob = ioProperty $ do
 
     -- the main dish
     inserts hdl [(k, v, Just blob)]
-    res <- lookupsWithBlobs hdl ses [k]
+    res <- lookupsWithBlobs hdl ses (V.singleton k)
 
-    return $ res === [FoundWithBlob k v blob]
+    return $ res === V.singleton (FoundWithBlob v blob)
 
 -- | Last insert wins.
 prop_insertInsertBlob ::
@@ -239,10 +247,10 @@ prop_insertInsertBlob ::
 prop_insertInsertBlob h ups k v1 v2 mblob1 mblob2 = ioProperty $ do
     (ses, hdl) <- makeNewTable h ups
     inserts hdl [(k, v1, mblob1), (k, v2, mblob2)]
-    res <- lookupsWithBlobs hdl ses [k]
+    res <- lookupsWithBlobs hdl ses (V.singleton k)
     return $ res === case mblob2 of
-        Nothing    -> [Found k v2]
-        Just blob2 -> [FoundWithBlob k v2 blob2]
+        Nothing    -> V.singleton (Found v2)
+        Just blob2 -> V.singleton (FoundWithBlob v2 blob2)
 
 -- | Inserts with different keys don't interfere.
 prop_insertCommutesBlob ::
@@ -254,12 +262,12 @@ prop_insertCommutesBlob h ups k1 v1 mblob1 k2 v2 mblob2 = k1 /= k2 ==> ioPropert
     (ses, hdl) <- makeNewTable h ups
     inserts hdl [(k1, v1, mblob1), (k2, v2, mblob2)]
 
-    res <- lookupsWithBlobs hdl ses [k1,k2]
+    res <- lookupsWithBlobs hdl ses $ V.fromList [k1,k2]
     return $ res === case (mblob1, mblob2) of
-        (Nothing,    Nothing)    -> [Found k1 v1,               Found k2 v2]
-        (Just blob1, Nothing)    -> [FoundWithBlob k1 v1 blob1, Found k2 v2]
-        (Nothing,    Just blob2) -> [Found k1 v1,               FoundWithBlob k2 v2 blob2]
-        (Just blob1, Just blob2) -> [FoundWithBlob k1 v1 blob1, FoundWithBlob k2 v2 blob2]
+        (Nothing,    Nothing)    -> V.fromList [Found v1,               Found v2]
+        (Just blob1, Nothing)    -> V.fromList [FoundWithBlob v1 blob1, Found v2]
+        (Nothing,    Just blob2) -> V.fromList [Found v1,               FoundWithBlob v2 blob2]
+        (Just blob1, Just blob2) -> V.fromList [FoundWithBlob v1 blob1, FoundWithBlob v2 blob2]
 
 -- | A blob reference may be invalidated by an update.
 prop_updatesMayInvalidateBlobRefs ::
@@ -272,17 +280,17 @@ prop_updatesMayInvalidateBlobRefs h ups k1 v1 blob1 ups' = monadicIO $ do
     (res, blobs, res') <- run $ do
       (ses, hdl) <- makeNewTable h ups
       inserts hdl [(k1, v1, Just blob1)]
-      res <- lookups hdl [k1]
+      res <- lookups hdl (V.singleton k1)
       blobs <- getCompose <$> retrieveBlobsTrav h ses (Compose res)
       updates hdl ups'
       res' <- try @SomeException (getCompose <$> retrieveBlobsTrav h ses (Compose res))
       pure (res, blobs, res')
 
-    case (res, blobs) of
-      ([FoundWithBlob{}], [FoundWithBlob _ _ x])
+    case (V.toList res, V.toList blobs) of
+      ([FoundWithBlob{}], [FoundWithBlob _ x])
         | Left _ <- res' ->
             monitor (label "blob reference invalidated") >> pure True
-        | Right [FoundWithBlob _ _ y] <- res' ->
+        | Right (V.toList -> [FoundWithBlob _ y]) <- res' ->
             monitor (label "blob reference valid") >> pure (x == y)
       _ -> monitor (counterexample "insert before lookup failed, somehow...") >> pure False
 
@@ -310,7 +318,7 @@ prop_snapshotNoChanges :: forall h.
 prop_snapshotNoChanges h ups ups' testKeys = ioProperty $ do
     (sess, hdl1) <- makeNewTable h ups
 
-    res <- lookupsWithBlobs hdl1 sess testKeys
+    res <- lookupsWithBlobs hdl1 sess $ V.fromList testKeys
 
     let name = fromMaybe (error "invalid name") $ mkSnapshotName "foo"
 
@@ -319,7 +327,7 @@ prop_snapshotNoChanges h ups ups' testKeys = ioProperty $ do
 
     hdl2 <- open @h sess name
 
-    res' <- lookupsWithBlobs hdl2 sess testKeys
+    res' <- lookupsWithBlobs hdl2 sess $ V.fromList testKeys
 
     return $ res == res'
 
@@ -337,9 +345,9 @@ prop_snapshotNoChanges2 h ups ups' testKeys = ioProperty $ do
     hdl1 <- open @h sess name
     hdl2 <- open @h sess name
 
-    res <- lookupsWithBlobs hdl1 sess testKeys
+    res <- lookupsWithBlobs hdl1 sess $ V.fromList testKeys
     updates hdl1 ups'
-    res' <- lookupsWithBlobs hdl2 sess testKeys
+    res' <- lookupsWithBlobs hdl2 sess $ V.fromList testKeys
 
     return $ res == res'
 
@@ -362,8 +370,8 @@ prop_dupInsertInsert h ups k v1 v2 testKeys = ioProperty $ do
     inserts hdl1 [(k, v1, Nothing), (k, v2, Nothing)]
     inserts hdl2 [(k, v2, Nothing)]
 
-    res1 <- lookupsWithBlobs hdl1 sess testKeys
-    res2 <- lookupsWithBlobs hdl2 sess testKeys
+    res1 <- lookupsWithBlobs hdl1 sess $ V.fromList testKeys
+    res2 <- lookupsWithBlobs hdl2 sess $ V.fromList testKeys
     return $ res1 === res2
 
 -- | Different key inserts commute.
@@ -378,8 +386,8 @@ prop_dupInsertCommutes h ups k1 v1 k2 v2 testKeys = k1 /= k2 ==> ioProperty do
     inserts hdl1 [(k1, v1, Nothing), (k2, v2, Nothing)]
     inserts hdl2 [(k2, v2, Nothing), (k1, v1, Nothing)]
 
-    res1 <- lookupsWithBlobs hdl1 sess testKeys
-    res2 <- lookupsWithBlobs hdl2 sess testKeys
+    res1 <- lookupsWithBlobs hdl1 sess $ V.fromList testKeys
+    res2 <- lookupsWithBlobs hdl2 sess $ V.fromList testKeys
     return $ res1 === res2
 
 -- changes to one handle should not cause any visible changes in any others
@@ -390,12 +398,12 @@ prop_dupNoChanges ::
 prop_dupNoChanges h ups ups' testKeys = ioProperty $ do
     (sess, hdl1) <- makeNewTable h ups
 
-    res <- lookupsWithBlobs hdl1 sess testKeys
+    res <- lookupsWithBlobs hdl1 sess $ V.fromList testKeys
 
     hdl2 <- duplicate hdl1
     updates hdl2 ups'
 
     -- lookup hdl1 again.
-    res' <- lookupsWithBlobs hdl1 sess testKeys
+    res' <- lookupsWithBlobs hdl1 sess $ V.fromList testKeys
 
     return $ res == res'

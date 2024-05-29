@@ -40,6 +40,7 @@ import           Data.Kind (Type)
 import           Data.Map (Map)
 import qualified Data.Map.Range as Map.R
 import qualified Data.Map.Strict as Map
+import qualified Data.Vector as V
 import           Database.LSMTree.Common (Range (..), SerialiseKey (..),
                      SerialiseValue (..))
 import           Database.LSMTree.Internal.RawBytes (RawBytes)
@@ -99,16 +100,14 @@ deriving instance Eq (Table k v blob)
 -- Lookups can be performed concurrently from multiple Haskell threads.
 lookups ::
     (SerialiseKey k, SerialiseValue v)
-  => [k]
+  => V.Vector k
   -> Table k v blob
-  -> [LookupResult k v (BlobRef blob)]
-lookups ks tbl =
-    [ case Map.lookup (serialiseKey k) (_values tbl) of
-        Nothing           -> NotFound k
-        Just (v, Nothing) -> Found k (deserialiseValue v)
-        Just (v, Just br) -> FoundWithBlob k (deserialiseValue v) br
-    | k <- ks
-    ]
+  -> V.Vector (LookupResult v (BlobRef blob))
+lookups ks tbl = flip V.map ks $ \k ->
+    case Map.lookup (serialiseKey k) (_values tbl) of
+      Nothing           -> NotFound
+      Just (v, Nothing) -> Found (deserialiseValue v)
+      Just (v, Just br) -> FoundWithBlob (deserialiseValue v) br
 
 -- | Perform a range lookup.
 --
@@ -117,8 +116,8 @@ rangeLookup :: forall k v blob.
      (SerialiseKey k, SerialiseValue v)
   => Range k
   -> Table k v blob
-  -> [RangeLookupResult k v (BlobRef blob)]
-rangeLookup r tbl =
+  -> V.Vector (RangeLookupResult k v (BlobRef blob))
+rangeLookup r tbl = V.fromList
     [ case v of
         (v', Nothing) -> FoundInRange (deserialiseKey k) (deserialiseValue v')
         (v', Just br) -> FoundInRangeWithBlob (deserialiseKey k) (deserialiseValue v') br
@@ -211,9 +210,9 @@ instance Eq (BlobRef blob) where
 -- Blob lookups can be performed concurrently from multiple Haskell threads.
 retrieveBlobs ::
      SerialiseValue blob
-  => [BlobRef blob]
-  -> [blob]
-retrieveBlobs refs = map getBlobFromRef refs
+  => V.Vector (BlobRef blob)
+  -> V.Vector blob
+retrieveBlobs refs = V.map getBlobFromRef refs
 
 {-------------------------------------------------------------------------------
   Snapshots

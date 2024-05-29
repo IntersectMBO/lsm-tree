@@ -267,9 +267,9 @@ runActionIO action lookUp =
     lookUpVar :: ModelVar Model a -> a
     lookUpVar = lookUpGVar (Proxy :: Proxy IO) lookUp
 
-    lookupResultValue (NotFound _k)           = Nothing
-    lookupResultValue (Found _k v)            = Just v
-    lookupResultValue (FoundWithBlob _k v _b) = Just v
+    lookupResultValue NotFound             = Nothing
+    lookupResultValue (Found v)            = Just v
+    lookupResultValue (FoundWithBlob v _b) = Just v
 
     tr :: Tracer (ST RealWorld) Event
     tr = nullTracer

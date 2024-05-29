@@ -2,6 +2,7 @@
 module Test.Database.LSMTree.Model.Normal (tests) where
 
 import qualified Data.ByteString as BS
+import qualified Data.Vector as V
 import           Database.LSMTree.Model.Normal
 import           GHC.Exts (IsList (..))
 import           Test.QuickCheck.Instances ()
@@ -25,12 +26,12 @@ type Tbl = Table Key Value Blob
 -- | You can lookup what you inserted.
 prop_lookupInsert :: Key -> Value -> Tbl -> Property
 prop_lookupInsert k v tbl =
-    lookups [k] (inserts [(k, v, Nothing)] tbl) === [Found k v]
+    lookups (V.singleton k) (inserts [(k, v, Nothing)] tbl) === V.singleton (Found v)
 
 -- | You cannot lookup what you have deleted
 prop_lookupDelete :: Key -> Tbl -> Property
 prop_lookupDelete k tbl =
-    lookups [k] (deletes [k] tbl) === [NotFound k]
+    lookups (V.singleton k) (deletes [k] tbl) === V.singleton NotFound
 
 -- | Last insert wins.
 prop_insertInsert :: Key -> Key -> Value -> Tbl -> Property

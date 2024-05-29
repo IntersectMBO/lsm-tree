@@ -47,10 +47,11 @@ import           Data.Bifunctor (Bifunctor (..))
 import qualified Data.ByteString as BS
 import           Data.Constraint (Dict (..))
 import           Data.Kind (Type)
-import           Data.Maybe (fromJust, mapMaybe)
+import           Data.Maybe (fromJust)
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Typeable (Proxy (..), Typeable, cast)
+import qualified Data.Vector as V
 import           Data.Word (Word64)
 import qualified Database.LSMTree.Common as SUT (SerialiseKey, SerialiseValue,
                      mkSnapshotName)
@@ -296,11 +297,11 @@ instance ( Show (SUT.Class.TableConfig h)
           -> Act h ()
     -- Table queriehs
     Lookups :: C k v blob
-            => [k] -> Var h (WrapTableHandle h IO k v blob)
-            -> Act h [SUT.LookupResult k v (WrapBlobRef h IO blob)]
+            => V.Vector k -> Var h (WrapTableHandle h IO k v blob)
+            -> Act h (V.Vector (SUT.LookupResult v (WrapBlobRef h IO blob)))
     RangeLookup :: C k v blob
                 => SUT.Range k -> Var h (WrapTableHandle h IO k v blob)
-                -> Act h [SUT.RangeLookupResult k v (WrapBlobRef h IO blob)]
+                -> Act h (V.Vector (SUT.RangeLookupResult k v (WrapBlobRef h IO blob)))
     -- Updates
     Updates :: C k v blob
             => [(k, SUT.Update v blob)] -> Var h (WrapTableHandle h IO k v blob)
@@ -313,8 +314,8 @@ instance ( Show (SUT.Class.TableConfig h)
             -> Act h ()
     -- Blobs
     RetrieveBlobs :: V blob
-                  => Var h [WrapBlobRef h IO blob]
-                  -> Act h [WrapBlob blob]
+                  => Var h (V.Vector (WrapBlobRef h IO blob))
+                  -> Act h (V.Vector (WrapBlob blob))
     -- Snapshots
     Snapshot :: C k v blob
              => SUT.SnapshotName -> Var h (WrapTableHandle h IO k v blob)
@@ -359,7 +360,7 @@ instance ( Eq (SUT.Class.TableConfig h)
       go (Close var1)               (Close var2) =
           Just var1 == cast var2
       go (Lookups ks1 var1)         (Lookups ks2 var2) =
-          ks1 == ks2 && var1 == var2
+          Just ks1 == cast ks2 && Just var1 == cast var2
       go (RangeLookup range1 var1)  (RangeLookup range2 var2) =
           range1 == range2 && var1 == var2
       go (Updates ups1 var1)        (Updates ups2 var2) =
@@ -415,9 +416,9 @@ instance ( Eq (SUT.Class.TableConfig h)
     MBlobRef :: Model.C_ blob
              => Model.BlobRef blob -> Val h (WrapBlobRef h IO blob)
 
-    MLookupResult :: Model.C k v blob
-                  => Model.LookupResult k v (Val h (WrapBlobRef h IO blob))
-                  -> Val h (SUT.LookupResult k v (WrapBlobRef h IO blob))
+    MLookupResult :: (Model.C_ v, Model.C_ blob)
+                  => Model.LookupResult v (Val h (WrapBlobRef h IO blob))
+                  -> Val h (SUT.LookupResult v (WrapBlobRef h IO blob))
     MRangeLookupResult :: Model.C k v blob
                        => Model.RangeLookupResult k v (Val h (WrapBlobRef h IO blob))
                        -> Val h (SUT.RangeLookupResult k v (WrapBlobRef h IO blob))
@@ -431,6 +432,7 @@ instance ( Eq (SUT.Class.TableConfig h)
     MPair   :: (Val h a, Val h b) -> Val h (a, b)
     MEither :: Either (Val h a) (Val h b) -> Val h (Either a b)
     MList   :: [Val h a] -> Val h [a]
+    MVector :: V.Vector (Val h a) -> Val h (V.Vector a)
 
   data instance Observable (ModelState h) a where
     OTableHandle :: Obs h (WrapTableHandle h IO k v blob)
@@ -438,9 +440,9 @@ instance ( Eq (SUT.Class.TableConfig h)
 
     -- TODO: can we use OId for lookup results and range lookup results instead,
     -- or are these separate constructors necessary?
-    OLookupResult :: Model.C k v blob
-                  => Model.LookupResult k v (Obs h (WrapBlobRef h IO blob))
-                  -> Obs h (SUT.LookupResult k v (WrapBlobRef h IO blob))
+    OLookupResult :: (Model.C_ v, Model.C_ blob)
+                  => Model.LookupResult v (Obs h (WrapBlobRef h IO blob))
+                  -> Obs h (SUT.LookupResult v (WrapBlobRef h IO blob))
     ORangeLookupResult :: Model.C k v blob
                        => Model.RangeLookupResult k v (Obs h (WrapBlobRef h IO blob))
                        -> Obs h (SUT.RangeLookupResult k v (WrapBlobRef h IO blob))
@@ -452,6 +454,7 @@ instance ( Eq (SUT.Class.TableConfig h)
     OPair   :: (Obs h a, Obs h b) -> Obs h (a, b)
     OEither :: Either (Obs h a) (Obs h b) -> Obs h (Either a b)
     OList   :: [Obs h a] -> Obs h [a]
+    OVector :: V.Vector (Obs h a) -> Obs h (V.Vector a)
 
   observeModel :: Val h a -> Obs h a
   observeModel = \case
@@ -466,6 +469,7 @@ instance ( Eq (SUT.Class.TableConfig h)
       MPair x              -> OPair $ bimap observeModel observeModel x
       MEither x            -> OEither $ bimap observeModel observeModel x
       MList x              -> OList $ map observeModel x
+      MVector x            -> OVector $ V.map observeModel x
 
   modelNextState ::  forall a.
        LockstepAction (ModelState h) a
@@ -539,6 +543,7 @@ instance Eq (Obs h a) where
       (OPair x, OPair y) -> x == y
       (OEither x, OEither y) -> x == y
       (OList x, OList y) -> x == y
+      (OVector x, OVector y) -> x == y
       (_, _) -> False
     where
       _coveredAllCases :: Obs h a -> ()
@@ -552,6 +557,7 @@ instance Eq (Obs h a) where
           OPair{} -> ()
           OEither{} -> ()
           OList{} -> ()
+          OVector{} -> ()
 
 {-------------------------------------------------------------------------------
   Real monad
@@ -584,13 +590,13 @@ instance ( Eq (SUT.Class.TableConfig h)
       New{}            -> OEither $ bimap OId (const OTableHandle) result
       Close{}          -> OEither $ bimap OId OId result
       Lookups{}        -> OEither $
-          bimap OId (OList . fmap (OLookupResult . fmap (const OBlobRef))) result
+          bimap OId (OVector . fmap (OLookupResult . fmap (const OBlobRef))) result
       RangeLookup{}    -> OEither $
-          bimap OId (OList . fmap (ORangeLookupResult . fmap (const OBlobRef))) result
+          bimap OId (OVector . fmap (ORangeLookupResult . fmap (const OBlobRef))) result
       Updates{}        -> OEither $ bimap OId OId result
       Inserts{}        -> OEither $ bimap OId OId result
       Deletes{}        -> OEither $ bimap OId OId result
-      RetrieveBlobs{}  -> OEither $ bimap OId (OList . fmap OId) result
+      RetrieveBlobs{}  -> OEither $ bimap OId (OVector . fmap OId) result
       Snapshot{}       -> OEither $ bimap OId OId result
       Open{}           -> OEither $ bimap OId (const OTableHandle) result
       DeleteSnapshot{} -> OEither $ bimap OId OId result
@@ -632,13 +638,13 @@ instance ( Eq (SUT.Class.TableConfig h)
       New{}            -> OEither $ bimap OId (const OTableHandle) result
       Close{}          -> OEither $ bimap OId OId result
       Lookups{}        -> OEither $
-          bimap OId (OList . fmap (OLookupResult . fmap (const OBlobRef))) result
+          bimap OId (OVector . fmap (OLookupResult . fmap (const OBlobRef))) result
       RangeLookup{}    -> OEither $
-          bimap OId (OList . fmap (ORangeLookupResult . fmap (const OBlobRef))) result
+          bimap OId (OVector . fmap (ORangeLookupResult . fmap (const OBlobRef))) result
       Updates{}        -> OEither $ bimap OId OId result
       Inserts{}        -> OEither $ bimap OId OId result
       Deletes{}        -> OEither $ bimap OId OId result
-      RetrieveBlobs{}  -> OEither $ bimap OId (OList . fmap OId) result
+      RetrieveBlobs{}  -> OEither $ bimap OId (OVector . fmap OId) result
       Snapshot{}       -> OEither $ bimap OId OId result
       Open{}           -> OEither $ bimap OId (const OTableHandle) result
       DeleteSnapshot{} -> OEither $ bimap OId OId result
@@ -704,9 +710,9 @@ runModel lookUp = \case
       Model.runModelM (Model.new Model.TableConfig)
     Close tableVar -> wrap MUnit .
       Model.runModelM (Model.close (getTableHandle $ lookUp tableVar))
-    Lookups ks tableVar -> wrap (MList . fmap (MLookupResult . fmap MBlobRef)) .
+    Lookups ks tableVar -> wrap (MVector . fmap (MLookupResult . fmap MBlobRef)) .
       Model.runModelM (Model.lookups ks (getTableHandle $ lookUp tableVar))
-    RangeLookup range tableVar -> wrap (MList . fmap (MRangeLookupResult . fmap MBlobRef)) .
+    RangeLookup range tableVar -> wrap (MVector . fmap (MRangeLookupResult . fmap MBlobRef)) .
       Model.runModelM (Model.rangeLookup range (getTableHandle $ lookUp tableVar))
     Updates kups tableVar -> wrap MUnit .
       Model.runModelM (Model.updates kups (getTableHandle $ lookUp tableVar))
@@ -714,7 +720,7 @@ runModel lookUp = \case
       Model.runModelM (Model.inserts kins (getTableHandle $ lookUp tableVar))
     Deletes kdels tableVar -> wrap MUnit .
       Model.runModelM (Model.deletes kdels (getTableHandle $ lookUp tableVar))
-    RetrieveBlobs blobsVar -> wrap (MList . fmap (MBlob . WrapBlob)) .
+    RetrieveBlobs blobsVar -> wrap (MVector . fmap (MBlob . WrapBlob)) .
       Model.runModelM (Model.retrieveBlobs (getBlobRefs . lookUp $ blobsVar))
     Snapshot name tableVar -> wrap MUnit .
       Model.runModelM (Model.snapshot name (getTableHandle $ lookUp tableVar))
@@ -732,8 +738,8 @@ runModel lookUp = \case
       -> Model.TableHandle k v blob
     getTableHandle (MTableHandle th) = th
 
-    getBlobRefs :: ModelValue (ModelState h) [WrapBlobRef h IO blob] -> [Model.BlobRef blob]
-    getBlobRefs (MList brs) = fmap (\(MBlobRef br) -> br) brs
+    getBlobRefs :: ModelValue (ModelState h) (V.Vector (WrapBlobRef h IO blob)) -> V.Vector (Model.BlobRef blob)
+    getBlobRefs (MVector brs) = fmap (\(MBlobRef br) -> br) brs
 
 wrap ::
      (a -> Val h b)
@@ -882,20 +888,20 @@ arbitraryActionWithVars _ findVars _st = QC.oneof $ concat [
         Open{} -> ()
         Duplicate{} -> ()
 
-    findBlobRefsVars :: [Var h (Either Model.Err [WrapBlobRef h IO blob])]
+    findBlobRefsVars :: [Var h (Either Model.Err (V.Vector (WrapBlobRef h IO blob)))]
     findBlobRefsVars = fmap fromLookupResults vars1 ++ fmap fromRangeLookupResults vars2
       where
-        vars1 = findVars (Proxy @(Either Model.Err [SUT.LookupResult k v (WrapBlobRef h IO blob)]))
-        vars2 = findVars (Proxy @(Either Model.Err [SUT.RangeLookupResult k v (WrapBlobRef h IO blob)]))
+        vars1 = findVars (Proxy @(Either Model.Err (V.Vector (SUT.LookupResult v (WrapBlobRef h IO blob)))))
+        vars2 = findVars (Proxy @(Either Model.Err (V.Vector (SUT.RangeLookupResult k v (WrapBlobRef h IO blob)))))
 
         fromLookupResults ::
-             Var h (Either Model.Err [SUT.LookupResult k v (WrapBlobRef h IO blob)])
-          -> Var h (Either Model.Err [WrapBlobRef h IO blob])
+             Var h (Either Model.Err (V.Vector (SUT.LookupResult v (WrapBlobRef h IO blob))))
+          -> Var h (Either Model.Err (V.Vector (WrapBlobRef h IO blob)))
         fromLookupResults = mapGVar (\op -> OpRight `OpComp` OpLookupResults `OpComp` OpFromRight `OpComp` op)
 
         fromRangeLookupResults ::
-             Var h (Either Model.Err [SUT.RangeLookupResult k v (WrapBlobRef h IO blob)])
-          -> Var h (Either Model.Err [WrapBlobRef h IO blob])
+             Var h (Either Model.Err (V.Vector (SUT.RangeLookupResult k v (WrapBlobRef h IO blob))))
+          -> Var h (Either Model.Err (V.Vector (WrapBlobRef h IO blob)))
         fromRangeLookupResults = mapGVar (\op -> OpRight `OpComp` OpRangeLookupResults `OpComp` OpFromRight `OpComp` op)
 
     withoutVars :: [Gen (Any (LockstepAction (ModelState h)))]
@@ -921,7 +927,7 @@ arbitraryActionWithVars _ findVars _st = QC.oneof $ concat [
         ]
 
     withVars' ::
-         Gen (Var h (Either Model.Err [WrapBlobRef h IO blob]))
+         Gen (Var h (Either Model.Err (V.Vector (WrapBlobRef h IO blob))))
       -> [Gen (Any (LockstepAction (ModelState h)))]
     withVars' genBlobRefsVar = [
           fmap Some $ RetrieveBlobs <$> (fromRight <$> genBlobRefsVar)
@@ -933,7 +939,7 @@ arbitraryActionWithVars _ findVars _st = QC.oneof $ concat [
     fromRight = mapGVar (\op -> OpFromRight `OpComp` op)
 
     -- TODO: improve
-    genLookupKeys :: Gen [k]
+    genLookupKeys :: Gen (V.Vector k)
     genLookupKeys = QC.arbitrary
 
     -- TODO: improve
@@ -997,12 +1003,12 @@ instance InterpretOp Op (ModelValue (ModelState h)) where
     OpFromLeft           -> \case MEither x -> either Just (const Nothing) x
     OpFromRight          -> \case MEither x -> either (const Nothing) Just x
     OpComp g f           -> intOp g <=< intOp f
-    OpLookupResults      -> Just . MList
-                          . mapMaybe (\case MLookupResult x -> getBlobRef x)
-                          . \case MList x -> x
-    OpRangeLookupResults -> Just . MList
-                          . mapMaybe (\case MRangeLookupResult x -> getBlobRef x)
-                          . \case MList x -> x
+    OpLookupResults      -> Just . MVector
+                          . V.mapMaybe (\case MLookupResult x -> getBlobRef x)
+                          . \case MVector x -> x
+    OpRangeLookupResults -> Just . MVector
+                          . V.mapMaybe (\case MRangeLookupResult x -> getBlobRef x)
+                          . \case MVector x -> x
 
 {-------------------------------------------------------------------------------
   Statistics, labelling/tagging

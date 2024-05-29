@@ -51,6 +51,7 @@ import qualified Data.IntSet as IS
 import           Data.IORef (modifyIORef', newIORef, readIORef, writeIORef)
 import           Data.Traversable (mapAccumL)
 import           Data.Tuple (swap)
+import qualified Data.Vector as V
 import           Data.Void (Void)
 import           Data.Word (Word64)
 import qualified MCG
@@ -359,7 +360,7 @@ doRun' gopts opts = do
             let (batch1, batch2) = toOperations lookups inserts
 
             -- lookups
-            _ <- LSM.lookups batch1 tbl
+            _ <- LSM.lookups (V.fromList batch1) tbl -- TODO: use vectors directly, update the RocksDB benchmark
 
             -- deletes and inserts
             LSM.updates batch2 tbl

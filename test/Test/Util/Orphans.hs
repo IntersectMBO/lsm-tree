@@ -49,7 +49,7 @@ type family RealizeIOSim s a where
   RealizeIOSim s (Real.MVar a)  = MVar (IOSim s) a
   -- lsm-tree
   RealizeIOSim s (TableHandle IO k v blob)       = TableHandle (IOSim s) k v blob
-  RealizeIOSim s (LookupResult k v blobref)      = LookupResult k v (RealizeIOSim s blobref)
+  RealizeIOSim s (LookupResult v blobref)        = LookupResult v (RealizeIOSim s blobref)
   RealizeIOSim s (RangeLookupResult k v blobref) = RangeLookupResult k v (RealizeIOSim s blobref)
   RealizeIOSim s (BlobRef IO blob)               = BlobRef (IOSim s) blob
   -- Type family wrappers

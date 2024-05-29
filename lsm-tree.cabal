@@ -287,6 +287,7 @@ test-suite lsm-tree-test
     , these
     , transformers
     , vector
+    , vector-algorithms
     , wide-word
 
   ghc-options:    -fno-ignore-asserts -threaded
@@ -391,6 +392,7 @@ benchmark lsm-tree-bench-wp8
     , lsm-tree:fs-api-blockio
     , lsm-tree:mcg
     , optparse-applicative
+    , vector
 
   ghc-options:    -rtsopts -with-rtsopts=-T -threaded
 

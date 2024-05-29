@@ -66,6 +66,7 @@ import           Data.Dynamic (fromDynamic, toDyn)
 import           Data.Kind (Type)
 import qualified Data.Map.Strict as Map
 import           Data.Typeable (Typeable)
+import qualified Data.Vector as V
 import           Database.LSMTree.Common (IOLike, SerialiseKey, SerialiseValue,
                      SnapshotName)
 import qualified Database.LSMTree.Model.Normal as Model
@@ -122,9 +123,9 @@ close TableHandle {..} = atomically $ do
 -- | Perform a batch of lookups.
 lookups ::
      (IOLike m, SerialiseKey k, SerialiseValue v)
-  => [k]
+  => V.Vector k
   -> TableHandle m k v blob
-  -> m [LookupResult k v (BlobRef m blob)]
+  -> m (V.Vector (LookupResult v (BlobRef m blob)))
 lookups ks th@TableHandle {..} = atomically $
     withModel "lookups" thSession thRef $ \(updc, tbl) ->
         return $ liftBlobRefs th updc $ Model.lookups ks tbl
@@ -134,7 +135,7 @@ rangeLookup ::
      (IOLike m, SerialiseKey k, SerialiseValue v)
   => Model.Range k
   -> TableHandle m k v blob
-  -> m [RangeLookupResult k v (BlobRef m blob)]
+  -> m (V.Vector (RangeLookupResult k v (BlobRef m blob)))
 rangeLookup r th@TableHandle {..} = atomically $
     withModel "rangeLookup" thSession thRef $ \(updc, tbl) ->
         return $ liftBlobRefs th updc $ Model.rangeLookup r tbl
@@ -176,11 +177,11 @@ data SomeTableRef m blob where
   SomeTableRef :: !(TMVar m (UpdateCounter, Model.Table k v blob)) -> SomeTableRef m blob
 
 liftBlobRefs ::
-     forall m f k v blob. Functor f
+     forall m f g k v blob. (Functor f, Functor g)
   => TableHandle m k v blob
   -> UpdateCounter
-  -> [f (Model.BlobRef blob)]
-  -> [f (BlobRef m blob)]
+  -> g (f (Model.BlobRef blob))
+  -> g (f (BlobRef m blob))
 liftBlobRefs TableHandle{..} updc = fmap (fmap liftBlobRef)
   where liftBlobRef = BlobRef thSession (SomeTableRef thRef) updc
 
@@ -188,8 +189,8 @@ liftBlobRefs TableHandle{..} updc = fmap (fmap liftBlobRef)
 retrieveBlobs ::
      forall m blob. (IOLike m, SerialiseValue blob)
   => Session m
-  -> [BlobRef m blob]
-  -> m [blob]
+  -> V.Vector (BlobRef m blob)
+  -> m (V.Vector blob)
 retrieveBlobs _ brefs = atomically $ Model.retrieveBlobs <$> mapM guard brefs
   where
     -- Ensure that the session and table handle for each of the blob refs are

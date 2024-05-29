@@ -85,6 +85,7 @@ module Database.LSMTree.Normal (
 
 import           Data.Kind (Type)
 import           Data.Typeable (Typeable)
+import qualified Data.Vector as V
 import           Database.LSMTree.Common (BlobRef, IOLike, Range (..),
                      SerialiseKey, SerialiseValue, Session (..), SnapshotName,
                      closeSession, deleteSnapshot, listSnapshots, openSession)
@@ -204,9 +205,9 @@ close (TableHandle th) = Internal.close th
 -- Lookups can be performed concurrently from multiple Haskell threads.
 lookups ::
      (IOLike m, SerialiseKey k, SerialiseValue v)
-  => [k]
+  => V.Vector k
   -> TableHandle m k v blob
-  -> m [LookupResult k v (BlobRef m blob)]
+  -> m (V.Vector (LookupResult v (BlobRef m blob)))
 lookups = undefined
 
 -- | Perform a range lookup.
@@ -216,7 +217,7 @@ rangeLookup ::
      (IOLike m, SerialiseKey k, SerialiseValue v)
   => Range k
   -> TableHandle m k v blob
-  -> m [RangeLookupResult k v (BlobRef m blob)]
+  -> m (V.Vector (RangeLookupResult k v (BlobRef m blob)))
 rangeLookup = undefined
 
 -- | Perform a mixed batch of inserts and deletes.
@@ -259,8 +260,8 @@ deletes = updates . fmap (,Delete)
 retrieveBlobs ::
      (IOLike m, SerialiseValue blob)
   => Session m
-  -> [BlobRef m blob]
-  -> m [blob]
+  -> V.Vector (BlobRef m blob)
+  -> m (V.Vector blob)
 retrieveBlobs = undefined
 
 {-------------------------------------------------------------------------------
