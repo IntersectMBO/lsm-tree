@@ -225,7 +225,7 @@ rangeLookup = undefined
 -- Updates can be performed concurrently from multiple Haskell threads.
 updates ::
      (IOLike m, SerialiseKey k, SerialiseValue v, SerialiseValue blob)
-  => [(k, Update v blob)]
+  => V.Vector (k, Update v blob)
   -> TableHandle m k v blob
   -> m ()
 updates = undefined
@@ -235,7 +235,7 @@ updates = undefined
 -- Inserts can be performed concurrently from multiple Haskell threads.
 inserts ::
      (IOLike m, SerialiseKey k, SerialiseValue v, SerialiseValue blob)
-  => [(k, v, Maybe blob)]
+  => V.Vector (k, v, Maybe blob)
   -> TableHandle m k v blob
   -> m ()
 inserts = updates . fmap (\(k, v, blob) -> (k, Insert v blob))
@@ -245,7 +245,7 @@ inserts = updates . fmap (\(k, v, blob) -> (k, Insert v blob))
 -- Deletes can be performed concurrently from multiple Haskell threads.
 deletes ::
      (IOLike m, SerialiseKey k, SerialiseValue v, SerialiseValue blob)
-  => [k]
+  => V.Vector k
   -> TableHandle m k v blob
   -> m ()
 deletes = updates . fmap (,Delete)

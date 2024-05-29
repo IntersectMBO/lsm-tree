@@ -26,22 +26,22 @@ type Tbl = Table Key Value Blob
 -- | You can lookup what you inserted.
 prop_lookupInsert :: Key -> Value -> Tbl -> Property
 prop_lookupInsert k v tbl =
-    lookups (V.singleton k) (inserts [(k, v, Nothing)] tbl) === V.singleton (Found v)
+    lookups (V.singleton k) (inserts (V.singleton (k, v, Nothing)) tbl) === V.singleton (Found v)
 
 -- | You cannot lookup what you have deleted
 prop_lookupDelete :: Key -> Tbl -> Property
 prop_lookupDelete k tbl =
-    lookups (V.singleton k) (deletes [k] tbl) === V.singleton NotFound
+    lookups (V.singleton k) (deletes (V.singleton k) tbl) === V.singleton NotFound
 
 -- | Last insert wins.
 prop_insertInsert :: Key -> Key -> Value -> Tbl -> Property
 prop_insertInsert k v1 v2 tbl =
-    inserts [(k, v1, Nothing), (k, v2, Nothing)] tbl === inserts [(k, v2, Nothing)] tbl
+    inserts (V.fromList [(k, v1, Nothing), (k, v2, Nothing)]) tbl === inserts (V.singleton (k, v2, Nothing)) tbl
 
 -- | Different key inserts commute.
 prop_insertCommutes :: Key -> Value -> Key -> Value -> Tbl -> Property
 prop_insertCommutes k1 v1 k2 v2 tbl = k1 /= k2 ==>
-    inserts [(k1, v1, Nothing), (k2, v2, Nothing)] tbl === inserts [(k2, v2, Nothing), (k1, v1, Nothing)] tbl
+    inserts (V.fromList [(k1, v1, Nothing), (k2, v2, Nothing)]) tbl === inserts (V.fromList [(k2, v2, Nothing), (k1, v1, Nothing)]) tbl
 
 instance (SerialiseKey k, SerialiseValue v, SerialiseValue blob, Arbitrary k, Arbitrary v, Arbitrary blob) => Arbitrary (Table k v blob) where
     arbitrary = fromList <$> arbitrary
