@@ -25,7 +25,6 @@ import qualified Database.LSMTree.Internal.Entry as Entry
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.RawPage
 import           Database.LSMTree.Internal.Serialise
-import           FormatPage (pageOverflowPrefixSuffixLen)
 
 tests :: TestTree
 tests = testGroup "Database.LSMTree.Internal.RawPage"

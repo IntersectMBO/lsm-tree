@@ -19,6 +19,11 @@ module Database.LSMTree.Extras.ReferenceImpl (
     serialisePage,
     deserialisePage,
 
+    -- * Overflow pages
+    pageOverflowPrefixSuffixLen,
+    pageOverflowPages,
+    pageSerialisedChunks,
+
     -- * Conversions to real implementation types
     toRawPage,
     toEntry,
