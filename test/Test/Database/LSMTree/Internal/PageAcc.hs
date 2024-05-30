@@ -10,8 +10,7 @@ import           Database.LSMTree.Internal.PageAcc
 import           Database.LSMTree.Internal.RawPage (RawPage)
 import           Database.LSMTree.Internal.Serialise
 
-import           Database.LSMTree.Extras.ReferenceImpl hiding (Operation (..))
-import qualified Database.LSMTree.Extras.ReferenceImpl as Proto
+import qualified Database.LSMTree.Extras.ReferenceImpl as Ref
 import           Test.Util.RawPage (propEqualRawPages)
 
 import           Test.QuickCheck
@@ -20,48 +19,87 @@ import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck (testProperty)
 
 tests :: TestTree
-tests = testGroup "Database.LSMTree.Internal.PageAcc"
-    [ testProperty "prototype" (\(PageContentMaybeOverfull kops) -> prototype kops)
-
-    , testProperty "example-00" $ prototype []
-    , testProperty "example-01" $ prototype [(Proto.Key "foobar", Proto.Delete)]
-    , testProperty "example-02" $ prototype [(Proto.Key "foobar", Proto.Insert (Proto.Value "value") (Just (Proto.BlobRef 111 333)))]
-    , testProperty "example-03" $ prototype [(Proto.Key "\NUL",Proto.Delete),(Proto.Key "\SOH",Proto.Delete)]
-
-    -- entries around maximal size
-    , testProperty "example-04a" $ prototype [(Proto.Key "",Proto.Insert (Proto.Value (BS.pack (replicate 4063 120))) Nothing)]
-    , testProperty "example-04b" $ prototype [(Proto.Key "",Proto.Insert (Proto.Value (BS.pack (replicate 4064 120))) Nothing)]
-    , testProperty "example-04c" $ prototype [(Proto.Key "",Proto.Insert (Proto.Value (BS.pack (replicate 4065 120))) Nothing)]
-
-    , testProperty "example-05a" $ prototype [(Proto.Key "",Proto.Delete),(Proto.Key "k",Proto.Insert (Proto.Value (BS.pack (replicate 4060 120))) Nothing)]
-    , testProperty "example-05b" $ prototype [(Proto.Key "",Proto.Delete),(Proto.Key "k",Proto.Insert (Proto.Value (BS.pack (replicate 4061 120))) Nothing)]
-    , testProperty "example-05c" $ prototype [(Proto.Key "",Proto.Delete),(Proto.Key "k",Proto.Insert (Proto.Value (BS.pack (replicate 4062 120))) Nothing)]
-
-    , testProperty "example-06a" $ prototype [(Proto.Key "",Proto.Insert (Proto.Value (BS.pack (replicate 4051 120))) (Just (Proto.BlobRef 111 333)))]
-    , testProperty "example-06b" $ prototype [(Proto.Key "",Proto.Insert (Proto.Value (BS.pack (replicate 4052 120))) (Just (Proto.BlobRef 111 333)))]
-    , testProperty "example-06c" $ prototype [(Proto.Key "",Proto.Insert (Proto.Value (BS.pack (replicate 4053 120))) (Just (Proto.BlobRef 111 333)))]
+tests =
+  testGroup "Database.LSMTree.Internal.PageAcc" $
+    [ testProperty "vs reference impl" prop_vsReferenceImpl
+    , testProperty "maxPageKeys == 759" (maxPageKeys === 759)
     ]
 
-prototype :: [(Proto.Key, Proto.Operation)] -> Property
-prototype kops =
+ ++ [ testProperty
+        ("example-" ++ show (n :: Int) ++ [ a | length exs > 1 ])
+        (prop_vsReferenceImpl (Ref.PageContentMaybeOverfull kops))
+    | (n, exs)  <- zip [0..] examples
+    , (a, kops) <- zip ['a'..] exs
+    ]
+
+  where
+    examples = example0123 ++ [example4s, example5s, example6s, example7s]
+
+    example0123 =
+      map (:[])
+      [ []
+      , [(Ref.Key "foobar", Ref.Delete)]
+      , [(Ref.Key "foobar", Ref.Insert (Ref.Value "value")
+                                       (Just (Ref.BlobRef 111 333)))]
+      , [(Ref.Key "\NUL", Ref.Delete), (Ref.Key "\SOH", Ref.Delete)]
+      ]
+
+    example4s = [ [(Ref.Key "", Ref.Insert (Ref.Value (BS.replicate sz 120))
+                                           Nothing)]
+                | sz <- [4063..4065] ]
+
+    example5s = [ [ (Ref.Key "",Ref.Delete)
+                  , (Ref.Key "k", Ref.Insert (Ref.Value (BS.replicate sz 120))
+                                             Nothing) ]
+                | sz <- [4060..4062] ]
+
+    example6s = [ [(Ref.Key "", Ref.Insert (Ref.Value (BS.replicate sz 120))
+                                           (Just (Ref.BlobRef 111 333))) ]
+                | sz <- [4051..4053] ]
+
+    example7s = [ (replicate maxPageKeys     (Ref.Key " ",Ref.Delete))
+                , (replicate (maxPageKeys+1) (Ref.Key " ",Ref.Delete))
+                , (replicate (maxPageKeys+1) (Ref.Key "", Ref.Delete))
+                ]
+
+maxPageKeys :: Int
+maxPageKeys =
+    go 0 (Ref.pageSizeEmpty Ref.DiskPage4k)
+  where
+    go s ps =
+      case Ref.pageSizeAddElem (Ref.Key " ", Ref.Delete) ps of
+        Nothing  -> s
+        Just ps' -> go (s + 1) ps'
+
+prop_vsReferenceImpl :: Ref.PageContentMaybeOverfull -> Property
+prop_vsReferenceImpl (Ref.PageContentMaybeOverfull kops) =
     case (refImpl, realImpl) of
       (Just (lhs, _), Just rhs) -> propEqualRawPages lhs rhs
       (Nothing,       Nothing)  -> label "overflow" $
                                    property True
 
-      -- Special case: the PageAcc does not support single-key/op pairs that
-      -- overflow into multiple pages. That special case is handled by PageAcc1.
-      -- So test if we're in that special case and if so allow a test pass.
+      -- Special cases where we allow a test pass.
       (Just _,        Nothing)
+        -- The PageAcc does not support single-key/op pairs that overflow onto
+        -- multiple pages. That case is handled by PageAcc1.
         | [_]       <- kops
-        , Just page <- encodePage DiskPage4k kops
-        , pageDiskPages page > 1
+        , Just page <- Ref.encodePage Ref.DiskPage4k kops
+        , Ref.pageDiskPages page > 1
                                 -> label "PageAcc1 special case" $
                                    property True
+
+        -- PageAcc (quite reasonably) assumes that keys are not all empty
+        -- (since in practice they'll be distinct) and thus it can impose an
+        -- upper bound on the number of keys in a page. It's possible to
+        -- construct test cases with empty keys that exceed the buffer size.
+        | length kops >= maxPageKeys
+                                -> label "max number of keys reached" $
+                                   property True
+
       _                         -> property False
   where
-    refImpl  = toRawPageMaybeOverfull (PageContentMaybeOverfull kops)
-    realImpl = toRawPageViaPageAcc [ (toSerialisedKey k, toEntry op)
+    refImpl  = Ref.toRawPageMaybeOverfull (Ref.PageContentMaybeOverfull kops)
+    realImpl = toRawPageViaPageAcc [ (Ref.toSerialisedKey k, Ref.toEntry op)
                                    | (k,op) <- kops ]
 
 -- | Use a 'PageAcc' to try to make a 'RawPage' from key\/op pairs. It will
