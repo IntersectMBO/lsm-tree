@@ -21,7 +21,7 @@ import           Test.Tasty.QuickCheck (testProperty)
 
 tests :: TestTree
 tests = testGroup "Database.LSMTree.Internal.PageAcc"
-    [ testProperty "prototype" prototype
+    [ testProperty "prototype" (\(PageContentMaybeOverfull kops) -> prototype kops)
 
     , testProperty "example-00" $ prototype []
     , testProperty "example-01" $ prototype [(Proto.Key "foobar", Proto.Delete)]
