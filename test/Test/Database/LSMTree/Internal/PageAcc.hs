@@ -1,16 +1,12 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Test.Database.LSMTree.Internal.PageAcc (tests) where
 
-import           Control.Monad (guard)
-import           Control.Monad.ST.Strict (ST, runST)
+import           Control.Monad.ST.Strict (runST)
 import qualified Data.ByteString as BS
-import           Data.Function (on)
-import           Data.List (nubBy, sortBy)
 
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Entry (Entry (..))
 import           Database.LSMTree.Internal.PageAcc
-import qualified Database.LSMTree.Internal.RawBytes as RawBytes
 import           Database.LSMTree.Internal.RawPage (RawPage)
 import           Database.LSMTree.Internal.Serialise
 
@@ -46,64 +42,42 @@ tests = testGroup "Database.LSMTree.Internal.PageAcc"
     , testProperty "example-06c" $ prototype [(Proto.Key "",Proto.Insert (Proto.Value (BS.pack (replicate 4053 120))) (Just (Proto.BlobRef 111 333)))]
     ]
 
--- | Strict 'pageSizeAddElem', doesn't allow for page to overflow
-pageSizeAddElem' :: (Proto.Key, Proto.Operation)
-                 -> Proto.PageSize -> Maybe Proto.PageSize
-pageSizeAddElem' e sz = do
-    sz' <- Proto.pageSizeAddElem e sz
-    guard (Proto.pageSizeBytes sz' <= 4096)
-    return sz'
-
 prototype :: [(Proto.Key, Proto.Operation)] -> Property
-prototype inputs' =
-    case invariant inputs' of
-        es -> runST $ do
-            acc <- newPageAcc
-            go acc (Proto.pageSizeEmpty Proto.DiskPage4k) [] es
+prototype kops =
+    case (refImpl, realImpl) of
+      (Just (lhs, _), Just rhs) -> propEqualRawPages lhs rhs
+      (Nothing,       Nothing)  -> label "overflow" $
+                                   property True
+
+      -- Special case: the PageAcc does not support single-key/op pairs that
+      -- overflow into multiple pages. That special case is handled by PageAcc1.
+      -- So test if we're in that special case and if so allow a test pass.
+      (Just _,        Nothing)
+        | [_]       <- kops
+        , Just page <- encodePage DiskPage4k kops
+        , pageDiskPages page > 1
+                                -> label "PageAcc1 special case" $
+                                   property True
+      _                         -> property False
   where
-    -- inputs should be ordered and unique to produce valid page.
-    invariant xs =
-        nubBy ((==) `on` fst) $
-        sortBy (compare `on` fst) $
-        xs
+    refImpl  = toRawPageMaybeOverfull (PageContentMaybeOverfull kops)
+    realImpl = toRawPageViaPageAcc [ (toSerialisedKey k, toEntry op)
+                                   | (k,op) <- kops ]
 
-    go :: PageAcc s
-       -> Proto.PageSize
-       -> [(Proto.Key, Proto.Operation)]
-       -> [(Proto.Key, Proto.Operation)]
-       -> ST s Property
-    go acc _ps acc2 []            = finish acc acc2
-    go acc  ps acc2 (e@(k,op):es) = case pageSizeAddElem' e ps of
-        Nothing -> do
-            added <- pageAccAddElem acc (convKey k) (convOp op)
-            if added
-            then return $ counterexample "PageAcc addition succeeded, prototype's doesn't." False
-            else finish acc acc2
+-- | Use a 'PageAcc' to try to make a 'RawPage' from key\/op pairs. It will
+-- return @Nothing@ if the key\/op pairs would not all fit in a page.
+--
+toRawPageViaPageAcc :: [(SerialisedKey, Entry SerialisedValue BlobSpan)]
+                    -> Maybe RawPage
+toRawPageViaPageAcc kops0 =
+    runST $ do
+      acc <- newPageAcc
+      go acc kops0
+  where
+    go acc []            = Just <$> serialisePageAcc acc
+    go acc ((k,op):kops) = do
+      added <- pageAccAddElem acc k op
+      if added
+        then go acc kops
+        else return Nothing
 
-        Just ps' -> do
-            added <- pageAccAddElem acc (convKey k) (convOp op)
-            if added
-            then go acc ps' (e:acc2) es
-            else return $ counterexample "PageAcc addition failed, prototype's doesn't." False
-
-    finish :: PageAcc s -> [(Proto.Key, Proto.Operation)] -> ST s Property
-    finish acc acc2 = do
-        let (lhs, _) = toRawPage $ PageContentFits $ reverse acc2
-        rawpage <- serialisePageAcc acc
-        let rhs = rawpage :: RawPage
-        return $ propEqualRawPages lhs rhs
-
-    convKey :: Proto.Key -> SerialisedKey
-    convKey (Proto.Key k) = SerialisedKey $ RawBytes.fromByteString k
-
-    convValue :: Proto.Value -> SerialisedValue
-    convValue (Proto.Value v) = SerialisedValue $ RawBytes.fromByteString v
-
-    convBlobSpan :: Proto.BlobRef -> BlobSpan
-    convBlobSpan (Proto.BlobRef x y) = BlobSpan x y
-
-    convOp :: Proto.Operation -> Entry SerialisedValue BlobSpan
-    convOp Proto.Delete                  = Delete
-    convOp (Proto.Mupsert v)             = Mupdate (convValue v)
-    convOp (Proto.Insert v Nothing)      = Insert (convValue v)
-    convOp (Proto.Insert v (Just bspan)) = InsertWithBlob (convValue v) (convBlobSpan bspan)
