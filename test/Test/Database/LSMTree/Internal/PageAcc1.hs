@@ -9,7 +9,6 @@ import           Database.LSMTree.Internal.PageAcc1
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.Serialise
 
-import           Database.LSMTree.Extras.RawPage (toRawPage)
 import           Database.LSMTree.Extras.ReferenceImpl hiding (Operation (..))
 import qualified Database.LSMTree.Extras.ReferenceImpl as Proto
 

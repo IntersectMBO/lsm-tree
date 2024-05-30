@@ -11,7 +11,6 @@ module Bench.Database.LSMTree.Internal.RawPage (
 import           Control.DeepSeq (deepseq)
 import qualified Data.ByteString as BS
 
-import           Database.LSMTree.Extras.RawPage (toRawPage)
 import           Database.LSMTree.Extras.ReferenceImpl
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.RawPage

@@ -121,6 +121,10 @@ instance IsList RawBytes where
   toList :: RawBytes -> [Item RawBytes]
   toList = unpack
 
+-- | Mostly to make test cases shorter to write.
+instance IsString RawBytes where
+    fromString = pack . map (fromIntegral . fromEnum)
+
 {-------------------------------------------------------------------------------
   Accessors
 -------------------------------------------------------------------------------}

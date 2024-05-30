@@ -38,6 +38,11 @@ module FormatPage (
     serialisePage,
     deserialisePage,
 
+    -- * Overflow pages
+    pageOverflowPrefixSuffixLen,
+    pageOverflowPages,
+    pageSerialisedChunks,
+
     -- * Tests and generators
     tests,
     -- ** Generators and shrinkers
@@ -499,6 +504,39 @@ fromIntegralChecked x
   | otherwise
   = error "fromIntegralChecked: conversion failed"
 
+-- | If a page uses overflow pages, return the:
+--
+-- 1. value prefix length (within the first page)
+-- 2. value suffix length (within the overflow pages)
+--
+pageOverflowPrefixSuffixLen :: PageIntermediate -> Maybe (Int, Int)
+pageOverflowPrefixSuffixLen p =
+    case pageValueOffsets p of
+      Right (offStart, offEnd)
+        | let page1End = diskPageSizeBytes (pageDiskPageSize p)
+        , fromIntegral offEnd > page1End
+        , let prefixlen, suffixlen :: Int
+              prefixlen = page1End - fromIntegral offStart
+              suffixlen = fromIntegral offEnd - page1End
+        -> Just (prefixlen, suffixlen)
+      _ -> Nothing
+
+-- | If a page uses overflow pages, return number of overflow pages.
+--
+pageOverflowPages :: PageIntermediate -> Maybe Int
+pageOverflowPages p
+  | npages > 1 = Just npages
+  | otherwise  = Nothing
+  where
+    nbytes = fromIntegral (sizePageDiskPage (pageSizesOffsets p))
+    npages = nbytes `div` diskPageSizeBytes (pageDiskPageSize p)
+
+pageSerialisedChunks :: DiskPageSize -> PageSerialised -> [ByteString]
+pageSerialisedChunks dpgsz =
+    unfoldr (\p -> if BS.null p then Nothing
+                                else Just (BS.splitAt dpgszBytes p))
+  where
+    dpgszBytes = diskPageSizeBytes dpgsz
 
 -------------------------------------------------------------------------------
 -- Test types and generators
@@ -707,16 +745,20 @@ genPageContentSingleSmall :: Gen Key -> Gen Value -> Gen (Key, Operation)
 genPageContentSingleSmall genkey genval =
     (,) <$> genkey <*> genOperation genval
 
+-- | Generate pages around the disk page size, above and below.
+--
+-- The key is always within the min key size given and max key size for the
+-- page size.
 genPageContentSingleNearFull :: DiskPageSize
                              -> MinKeySize
                              -> Gen (Key, Operation)
-genPageContentSingleNearFull dpgsz (MinKeySize minkeysz) =
+genPageContentSingleNearFull dpgsz (MinKeySize minkeysize) =
     genPageContentSingleOfSize genKeyValSizes
   where
     genKeyValSizes = do
-      let maxsize = maxKeySize dpgsz
-      size  <- choose (maxsize - 15, maxsize)
-      split <- choose (minkeysz, size)
+      let maxkeysize = maxKeySize dpgsz
+      size  <- choose (maxkeysize - 15, maxkeysize + 15)
+      split <- choose (minkeysize, maxkeysize `min` size)
       pure (split, size - split)
 
 genPageContentSingleMultiPage :: DiskPageSize
@@ -877,6 +919,7 @@ tests = testGroup "FormatPage"
     , testProperty "serialise/deserialise" prop_serialiseDeserialise
     , testProperty "encode/serialise/deserialise/decode"
                    prop_encodeSerialiseDeserialiseDecode
+    , testProperty "overflow pages" prop_overflowPages
     ]
 
 prop_toFromBitmap :: [Bool] -> Bool
@@ -1038,4 +1081,25 @@ prop_encodeSerialiseDeserialiseDecode (PageContentFits dpgsz p) =
   where
     Just p'   = encodePage dpgsz p
     roundTrip = decodePage . deserialisePage dpgsz . serialisePage
+
+prop_overflowPages :: PageContentSingle -> Property
+prop_overflowPages (PageContentSingle dpgsz k op) =
+    label ("pages " ++ show (length ps)) $
+      all ((== diskPageSizeBytes dpgsz) . BS.length) ps
+ .&&. fromMaybe 1 (pageOverflowPages p) === length ps
+ .&&. case pageOverflowPrefixSuffixLen p of
+        Nothing -> length ps === 1
+        Just (prefixlen, suffixlen) ->
+              prefixlen + suffixlen === BS.length (unValue v)
+         .&&.     Value (BS.drop (dpgszBytes - prefixlen) (head ps)
+                      <> BS.take suffixlen (BS.concat (drop 1 ps)))
+              === v
+  where
+    Just p = encodePage dpgsz [(k, op)]
+    ps     = pageSerialisedChunks dpgsz (serialisePage p)
+    v      = case op of
+               Insert  v' _ -> v'
+               Mupsert v'   -> v'
+               Delete       -> error "unexpected"
+    dpgszBytes = diskPageSizeBytes dpgsz
 

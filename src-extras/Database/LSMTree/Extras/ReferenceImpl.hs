@@ -19,6 +19,29 @@ module Database.LSMTree.Extras.ReferenceImpl (
     serialisePage,
     deserialisePage,
 
+    -- * Overflow pages
+    pageOverflowPrefixSuffixLen,
+    pageOverflowPages,
+    pageSerialisedChunks,
+
+    -- * Conversions to real implementation types
+    toRawPage,
+    toEntry,
+    toEntryPrefix,
+    toSerialisedKey,
+    toSerialisedValue,
+    toBlobSpan,
+
+    -- * Conversions from real implementation types
+    fromRawPage,
+    fromEntry,
+    fromEntryPrefix,
+    fromSerialisedKey,
+    fromSerialisedValue,
+    fromSerialisedValuePrefix,
+    fromRawOverflowPages,
+    fromBlobSpan,
+
     -- * Test case types and generators
     PageContentFits(..),
     pageContentFitsInvariant,
@@ -40,8 +63,20 @@ module Database.LSMTree.Extras.ReferenceImpl (
     shrinkOrderedKeyOps,
 ) where
 
-import           Data.Maybe (isJust)
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Short as SBS
+import           Data.Maybe (fromMaybe, isJust)
+import           Data.Primitive.ByteArray (ByteArray (..))
+
+import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
+import           Database.LSMTree.Internal.Entry (Entry)
+import qualified Database.LSMTree.Internal.Entry as Entry
+import qualified Database.LSMTree.Internal.RawBytes as RB
+import           Database.LSMTree.Internal.RawOverflowPage
+import           Database.LSMTree.Internal.RawPage
+import           Database.LSMTree.Internal.Serialise
 import           FormatPage
+
 import           Test.QuickCheck
 
 -- | A test case consisting of a key\/operation sequence that is guaranteed to
@@ -121,3 +156,149 @@ instance Arbitrary PageContentSingle where
     shrink (PageContentSingle k op) =
       map (uncurry PageContentSingle) (shrink (k, op))
 
+-------------------------------------------------------------------------------
+-- Conversions between reference and real implementation types
+--
+
+-- | Convert from 'PageContentFits' (from the reference implementation)
+-- to 'RawPage' (from the real implementation).
+--
+toRawPage :: PageContentFits -> (RawPage, [RawOverflowPage])
+toRawPage (PageContentFits kops) =
+    fromMaybe overfull $ do
+      serialised <- serialisePage <$> encodePage DiskPage4k kops
+      (page : overflowPages) <- pure (pageSerialisedChunks DiskPage4k serialised)
+      pure (makeRawPageBS page, map makeRawOverflowPageBS overflowPages)
+  where
+    overfull =
+      error $ "toRawPage: encountered overfull page, but PageContentFits is "
+           ++ "supposed to be guaranteed to fit, i.e. not to be overfull."
+
+makeRawPageBS :: BS.ByteString -> RawPage
+makeRawPageBS bs =
+    case SBS.toShort bs of
+      SBS.SBS ba -> makeRawPage (ByteArray ba) 0
+
+makeRawOverflowPageBS :: BS.ByteString -> RawOverflowPage
+makeRawOverflowPageBS bs =
+    case SBS.toShort bs of
+      SBS.SBS ba -> makeRawOverflowPage (ByteArray ba) 0 (BS.length bs)
+
+fromRawPage :: (RawPage, [RawOverflowPage]) -> PageContentFits
+fromRawPage (page, overflowPages)
+  | rawPageNumKeys page == 1
+  = PageContentFits . (:[]) $
+      case rawPageIndex page 0 of
+        IndexEntry k e ->
+          (fromSerialisedKey k, fromEntry e)
+
+        IndexEntryOverflow k e suffixlen ->
+          ( fromSerialisedKey k
+          , fromEntryPrefix e (fromIntegral suffixlen) overflowPages
+          )
+
+        IndexNotPresent -> error "fromRawPage: 'rawPageIndex page 0' fails"
+
+  | otherwise
+  = PageContentFits
+      [ case rawPageIndex page (fromIntegral i) of
+          IndexEntry k e -> (fromSerialisedKey k, fromEntry e)
+          _              -> error "fromRawPage: 'rawPageIndex page i' fails"
+      | i <- [0 .. fromIntegral (rawPageNumKeys page) - 1 :: Int] ]
+
+toEntry :: Operation -> Entry SerialisedValue BlobSpan
+toEntry op =
+    case op of
+      Insert v Nothing ->
+        Entry.Insert (toSerialisedValue v)
+
+      Insert v (Just b) ->
+        Entry.InsertWithBlob (toSerialisedValue v) (toBlobSpan b)
+
+      Mupsert v ->
+        Entry.Mupdate (toSerialisedValue v)
+
+      Delete ->
+        Entry.Delete
+
+toEntryPrefix :: Operation -> Int -> Entry SerialisedValue BlobSpan
+toEntryPrefix op prefixlen =
+    case op of
+      Insert v Nothing ->
+        Entry.Insert (toSerialisedValue (takeValue prefixlen v))
+
+      Insert v (Just b) ->
+        Entry.InsertWithBlob (toSerialisedValue (takeValue prefixlen v))
+                             (toBlobSpan b)
+
+      Mupsert v ->
+        Entry.Mupdate (toSerialisedValue (takeValue prefixlen v))
+
+      Delete ->
+        Entry.Delete
+  where
+    takeValue n (Value v) = Value (BS.take n v)
+
+fromEntry :: Entry SerialisedValue BlobSpan -> Operation
+fromEntry e =
+    case e of
+      Entry.Insert v ->
+        Insert (fromSerialisedValue v) Nothing
+
+      Entry.InsertWithBlob v b ->
+        Insert (fromSerialisedValue v) (Just (fromBlobSpan b))
+
+      Entry.Mupdate v ->
+        Mupsert (fromSerialisedValue v)
+
+      Entry.Delete ->
+        Delete
+
+fromEntryPrefix :: Entry SerialisedValue BlobSpan
+                -> Int
+                -> [RawOverflowPage]
+                -> Operation
+fromEntryPrefix e suffix overflow =
+    case e of
+      Entry.Insert v ->
+        Insert (fromSerialisedValuePrefix v suffix overflow) Nothing
+
+      Entry.InsertWithBlob v b ->
+        Insert (fromSerialisedValuePrefix v suffix overflow)
+               (Just (fromBlobSpan b))
+
+      Entry.Mupdate v ->
+        Mupsert (fromSerialisedValuePrefix v suffix overflow)
+
+      Entry.Delete ->
+        Delete
+
+toSerialisedKey :: Key -> SerialisedKey
+toSerialisedKey (Key k) = SerialisedKey (RB.fromByteString k)
+
+toSerialisedValue :: Value -> SerialisedValue
+toSerialisedValue (Value v) = SerialisedValue (RB.fromByteString v)
+
+fromSerialisedKey :: SerialisedKey -> Key
+fromSerialisedKey (SerialisedKey k) = Key (RB.toByteString k)
+
+fromSerialisedValue :: SerialisedValue -> Value
+fromSerialisedValue (SerialisedValue v) = Value (RB.toByteString v)
+
+fromSerialisedValuePrefix :: SerialisedValue -> Int -> [RawOverflowPage]
+                          -> Value
+fromSerialisedValuePrefix (SerialisedValue v) suffixlen overflowPages =
+    Value $ RB.toByteString v
+         <> BS.take suffixlen (fromRawOverflowPages overflowPages)
+
+fromRawOverflowPages :: [RawOverflowPage] -> BS.ByteString
+fromRawOverflowPages =
+    RB.toByteString
+  . mconcat
+  . map rawOverflowPageRawBytes
+
+toBlobSpan :: BlobRef -> BlobSpan
+toBlobSpan  (BlobRef x y) = BlobSpan x y
+
+fromBlobSpan :: BlobSpan -> BlobRef
+fromBlobSpan  (BlobSpan x y) = BlobRef x y
