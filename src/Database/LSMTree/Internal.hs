@@ -41,7 +41,6 @@ import           Data.Foldable
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
-import qualified Data.Text as Text
 import qualified Data.Vector as V
 import           Data.Word (Word32)
 import           Database.LSMTree.Internal.IndexCompact (IndexCompact)
@@ -203,11 +202,9 @@ openSession hfs hbio dir = do
             if Set.null dirContents then newSession sessionFileLock
                                     else restoreSession sessionFileLock
   where
-    -- TODO: add combinators like (</>) for FsPaths to fs-api. The current
-    -- conversion to and from lists of Text is not very nice.
-    lockFilePath     = FS.fsPathFromList (FS.fsPathToList dir <> [Text.pack "lock"])
-    activeDirPath    = FS.fsPathFromList (FS.fsPathToList dir <> [Text.pack "active"])
-    snapshotsDirPath = FS.fsPathFromList (FS.fsPathToList dir <> [Text.pack "snapshots"])
+    lockFilePath     = dir FS.</> FS.mkFsPath ["lock"]
+    activeDirPath    = dir FS.</> FS.mkFsPath ["active"]
+    snapshotsDirPath = dir FS.</> FS.mkFsPath ["snapshots"]
 
     acquireLock path = fromRight Nothing <$>
         try @m @SomeException

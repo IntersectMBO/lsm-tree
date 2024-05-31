@@ -40,11 +40,11 @@ import: cabal.project.debug
 -- we could add a conditional on (+serialblockio) to remove this import automatically.
 import: cabal.project.blockio-uring
 
--- fs-api & fs-sim with support for I/O using user-supplied buffers
+-- FsPath combinators
 source-repository-package
   type: git
   location: https://github.com/input-output-hk/fs-sim
-  tag: e982dbe5bb7354386b25e81f6e7e662412310d72
+  tag: 47879aa5edfd3a3f8824d61687e85b8f1586e010
   subdir:
     fs-api
     fs-sim
