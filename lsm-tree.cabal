@@ -96,7 +96,6 @@ library
     , lsm-tree:kmerge
     , primitive                ^>=0.9
     , strict-mvar              ^>=1.4
-    , text                     ^>=2.1
     , vector                   ^>=0.13
     , vector-algorithms        ^>=0.9
 

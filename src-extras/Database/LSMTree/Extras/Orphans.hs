@@ -28,7 +28,7 @@ import           Database.LSMTree.Internal.Vector
 import           GHC.Generics
 import           GHC.Word
 import qualified System.FS.API as FS
-import qualified System.FS.IO.Internal.Handle as FS
+import qualified System.FS.IO.Handle as FS
 import           System.Posix.Types (COff (..))
 import           System.Random (Uniform)
 import           Test.QuickCheck
@@ -150,10 +150,6 @@ deriving stock instance Generic (FS.HandleOS h)
 deriving anyclass instance NFData (FS.HandleOS h)
 deriving newtype instance NFData FS.BufferOffset
 deriving newtype instance NFData COff
-deriving anyclass instance NFData FS.FsPath
-deriving instance NFData h => NFData (FS.Handle h)
-instance NFData (FS.HasFS m h) where
-  rnf x = x `seq` ()
 
 {-------------------------------------------------------------------------------
   RawBytes

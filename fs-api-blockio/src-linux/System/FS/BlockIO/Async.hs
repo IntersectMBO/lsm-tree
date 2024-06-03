@@ -20,7 +20,7 @@ import           System.FS.API (BufferOffset (..), FsErrorPath, Handle (..),
 import qualified System.FS.BlockIO.API as API
 import           System.FS.BlockIO.API (IOOp (..), IOResult (..), ioopHandle)
 import           System.FS.IO (HandleIO)
-import           System.FS.IO.Internal.Handle
+import           System.FS.IO.Handle
 import qualified System.IO.BlockIO as I
 import           System.IO.Error (ioeSetErrorString, isResourceVanishedError)
 import           System.Posix.Types

@@ -49,7 +49,7 @@ import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.Serialise.Class
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import           GHC.Generics
-import           System.FS.API.Types
+import           System.FS.API (Handle (..), MountPoint (..), mkFsPath)
 import qualified System.FS.BlockIO.API as FS
 import           System.FS.BlockIO.API
 import qualified System.FS.BlockIO.IO as FS
