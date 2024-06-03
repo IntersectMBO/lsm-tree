@@ -58,16 +58,12 @@ import           Database.LSMTree.Internal.Serialise
 -- >>> calc 1 page0
 -- 759
 --
--- I.e. we can have a 4096 byte page with at most 759 keys, actually less,
--- as there are only 256 single byte keys.
+-- I.e. we can have a 4096 byte page with at most 759 keys, assuming keys are
+-- length 1 or longer, but without assuming that there are no duplicate keys.
 --
--- >>> let calc2 s ps = case pageSizeAddElem (Key $ if s < 257 then "x" else "xx", Delete) ps of { Nothing -> s; Just ps' -> calc2 (s + 1) ps' }
--- >>> calc2 1 page0
--- 680
+-- And 759 rounded to the next multiple of 64 (for the bitmaps) is 768.
 --
--- Rounded to the next multiple of 64 is 704
---
--- 'PageAcc' can hold up to 704 elements, but most likely 'pageAccAddElem' will make it overflow sooner.
+-- 'PageAcc' can hold up to 759 elements, but most likely 'pageAccAddElem' will make it overflow sooner.
 -- Having an upper bound allows us to allocate all memory for the accumulator in advance.
 --
 -- We don't store or calculate individual key nor value offsets in 'PageAcc', as these will be naturally calculated during serialisation ('serialisePageAcc').
@@ -105,6 +101,21 @@ keysSizeIdx = 3
 pageSize :: Int
 pageSize = 4096
 {-# INLINE pageSize #-}
+
+-- | See calculation in 'PageAcc' comments.
+maxKeys :: Int
+maxKeys = 759
+{-# INLINE maxKeys #-}
+
+-- | See calculation in 'PageAcc' comments.
+maxOpMap :: Int
+maxOpMap = 24 -- 768 / 32
+{-# INLINE maxOpMap #-}
+
+-- | See calculation in 'PageAcc' comments.
+maxBlobRefsMap :: Int
+maxBlobRefsMap = 12 -- 768 / 64
+{-# INLINE maxBlobRefsMap #-}
 
 -------------------------------------------------------------------------------
 -- Entry operations
@@ -174,12 +185,12 @@ emptyValue = SerialisedValue (RB.pack [])
 newPageAcc :: ST s (PageAcc s)
 newPageAcc = do
     paDir          <- P.newPrimArray 4
-    paOpMap        <- P.newPrimArray 11 -- 704 / 64
-    paBlobRefsMap  <- P.newPrimArray 22 -- 704 / 32
-    paBlobRefs1    <- P.newPrimArray 680
-    paBlobRefs2    <- P.newPrimArray 680
-    paKeys         <- MV.new 680
-    paValues       <- MV.new 680
+    paOpMap        <- P.newPrimArray maxOpMap
+    paBlobRefsMap  <- P.newPrimArray maxBlobRefsMap
+    paBlobRefs1    <- P.newPrimArray maxKeys
+    paBlobRefs2    <- P.newPrimArray maxKeys
+    paKeys         <- MV.new maxKeys
+    paValues       <- MV.new maxKeys
 
     -- reset the memory, as it's not initialized
     let page = PageAcc {..}
@@ -191,12 +202,12 @@ resetPageAcc :: PageAcc s
     -> ST s ()
 resetPageAcc PageAcc {..} = do
     P.setPrimArray paDir 0 4 0
-    P.setPrimArray paOpMap 0 11 0
-    P.setPrimArray paBlobRefsMap 0 22 0
+    P.setPrimArray paOpMap 0 maxOpMap 0
+    P.setPrimArray paBlobRefsMap 0 maxBlobRefsMap 0
 
     -- we don't need to clear these, we set what we need.
-    -- P.setPrimArray paBlobRefs1 0 680 0
-    -- P.setPrimArray paBlobRefs1 0 680 0
+    -- P.setPrimArray paBlobRefs1 0 maxKeys 0
+    -- P.setPrimArray paBlobRefs1 0 maxKeys 0
 
     -- initial size is 8 bytes for directory and 2 bytes for last value offset.
     P.writePrimArray paDir byteSizeIdx 10
@@ -225,8 +236,8 @@ pageAccAddElem PageAcc {..} k e
                + (case n of { 0 -> 6; 1 -> 2; _ -> 4 })  -- key and value offsets
                + sizeofEntry k e
 
-        -- check for size overflow
-        if s' > pageSize
+        if s' > pageSize || -- check for size overflow
+           n >= maxKeys     -- check for buffer overflow
         then return False
         else do
             -- key sizes

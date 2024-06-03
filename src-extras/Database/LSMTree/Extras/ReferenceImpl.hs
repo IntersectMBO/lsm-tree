@@ -21,11 +21,12 @@ module Database.LSMTree.Extras.ReferenceImpl (
 
     -- * Overflow pages
     pageOverflowPrefixSuffixLen,
-    pageOverflowPages,
+    pageDiskPages,
     pageSerialisedChunks,
 
     -- * Conversions to real implementation types
     toRawPage,
+    toRawPageMaybeOverfull,
     toEntry,
     toEntryPrefix,
     toSerialisedKey,
@@ -165,14 +166,18 @@ instance Arbitrary PageContentSingle where
 --
 toRawPage :: PageContentFits -> (RawPage, [RawOverflowPage])
 toRawPage (PageContentFits kops) =
-    fromMaybe overfull $ do
-      serialised <- serialisePage <$> encodePage DiskPage4k kops
-      (page : overflowPages) <- pure (pageSerialisedChunks DiskPage4k serialised)
-      pure (makeRawPageBS page, map makeRawOverflowPageBS overflowPages)
+    fromMaybe overfull (toRawPageMaybeOverfull (PageContentMaybeOverfull kops))
   where
     overfull =
       error $ "toRawPage: encountered overfull page, but PageContentFits is "
            ++ "supposed to be guaranteed to fit, i.e. not to be overfull."
+
+toRawPageMaybeOverfull :: PageContentMaybeOverfull
+                       -> Maybe (RawPage, [RawOverflowPage])
+toRawPageMaybeOverfull (PageContentMaybeOverfull kops) = do
+    serialised <- serialisePage <$> encodePage DiskPage4k kops
+    (page : overflowPages) <- pure (pageSerialisedChunks DiskPage4k serialised)
+    pure (makeRawPageBS page, map makeRawOverflowPageBS overflowPages)
 
 makeRawPageBS :: BS.ByteString -> RawPage
 makeRawPageBS bs =

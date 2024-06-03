@@ -40,7 +40,7 @@ module FormatPage (
 
     -- * Overflow pages
     pageOverflowPrefixSuffixLen,
-    pageOverflowPages,
+    pageDiskPages,
     pageSerialisedChunks,
 
     -- * Tests and generators
@@ -521,15 +521,13 @@ pageOverflowPrefixSuffixLen p =
         -> Just (prefixlen, suffixlen)
       _ -> Nothing
 
--- | If a page uses overflow pages, return number of overflow pages.
+-- | The total number of disk pages, including any overflow pages.
 --
-pageOverflowPages :: PageIntermediate -> Maybe Int
-pageOverflowPages p
-  | npages > 1 = Just npages
-  | otherwise  = Nothing
+pageDiskPages :: PageIntermediate -> Int
+pageDiskPages p =
+    nbytes `div` diskPageSizeBytes (pageDiskPageSize p)
   where
     nbytes = fromIntegral (sizePageDiskPage (pageSizesOffsets p))
-    npages = nbytes `div` diskPageSizeBytes (pageDiskPageSize p)
 
 pageSerialisedChunks :: DiskPageSize -> PageSerialised -> [ByteString]
 pageSerialisedChunks dpgsz =
@@ -1086,7 +1084,7 @@ prop_overflowPages :: PageContentSingle -> Property
 prop_overflowPages (PageContentSingle dpgsz k op) =
     label ("pages " ++ show (length ps)) $
       all ((== diskPageSizeBytes dpgsz) . BS.length) ps
- .&&. fromMaybe 1 (pageOverflowPages p) === length ps
+ .&&. pageDiskPages p === length ps
  .&&. case pageOverflowPrefixSuffixLen p of
         Nothing -> length ps === 1
         Just (prefixlen, suffixlen) ->
