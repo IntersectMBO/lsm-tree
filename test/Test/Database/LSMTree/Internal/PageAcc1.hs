@@ -3,78 +3,47 @@ module Test.Database.LSMTree.Internal.PageAcc1 (tests) where
 
 import qualified Data.ByteString as BS
 
-import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
-import           Database.LSMTree.Internal.Entry (Entry (..))
 import           Database.LSMTree.Internal.PageAcc1
-import qualified Database.LSMTree.Internal.RawBytes as RB
-import           Database.LSMTree.Internal.Serialise
 
-import           Database.LSMTree.Extras.ReferenceImpl hiding (Operation (..))
-import qualified Database.LSMTree.Extras.ReferenceImpl as Proto
+import qualified Database.LSMTree.Extras.ReferenceImpl as Ref
 
 import           Test.QuickCheck
-import           Test.QuickCheck.Instances ()
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck (testProperty)
 import           Test.Util.RawPage
 
 tests :: TestTree
-tests = testGroup "Database.LSMTree.Internal.PageAcc1"
-    [ testProperty "prototype" prototype
-    , testProperty "prototypeU" prototypeU
+tests =
+  testGroup "Database.LSMTree.Internal.PageAcc1" $
+    [ testProperty "vs reference impl" prop_vsReferenceImpl ]
 
-    , testProperty "example-01a" $ prototype (Proto.Key "") (Proto.Value (BS.pack (replicate 4064 120))) Nothing
-    , testProperty "example-01b" $ prototype (Proto.Key "") (Proto.Value (BS.pack (replicate 4065 120))) Nothing
-    , testProperty "example-01c" $ prototype (Proto.Key "") (Proto.Value (BS.pack (replicate 4066 120))) Nothing
-
-    , testProperty "example-02a" $ prototype (Proto.Key "") (Proto.Value (BS.pack (replicate 4050 120))) (Just (Proto.BlobRef 3 5))
-    , testProperty "example-02b" $ prototype (Proto.Key "") (Proto.Value (BS.pack (replicate 4051 120))) (Just (Proto.BlobRef 3 5))
-    , testProperty "example-02c" $ prototype (Proto.Key "") (Proto.Value (BS.pack (replicate 4052 120))) (Just (Proto.BlobRef 3 5))
-
-    , testProperty "example-03a" $ prototypeU (Proto.Key "") (Proto.Value (BS.pack (replicate 4064 120)))
-    , testProperty "example-03b" $ prototypeU (Proto.Key "") (Proto.Value (BS.pack (replicate 4065 120)))
-    , testProperty "example-03c" $ prototypeU (Proto.Key "") (Proto.Value (BS.pack (replicate 4066 120)))
+ ++ [ testProperty
+        ("example-" ++ show (n :: Int) ++ [a])
+        (prop_vsReferenceImpl (Ref.PageContentSingle (Ref.Key "") op))
+    | (n,exs) <- zip [1..] examples
+    , (a, op) <- zip ['a'..] exs
     ]
+  where
+    examples :: [[Ref.Operation]]
+    examples  = [example1s, example2s, example3s]
+    example1s = [ Ref.Insert (Ref.Value (BS.replicate sz 120)) Nothing
+                | sz <- [4064..4066] ]
 
-prototype
-    :: Proto.Key
-    -> Proto.Value
-    -> Maybe Proto.BlobRef
-    -> Property
-prototype k v br =
+    example2s = [ Ref.Insert (Ref.Value (BS.replicate sz 120))
+                             (Just (Ref.BlobRef 3 5))
+                | sz <- [4050..4052] ]
+
+    example3s = [ Ref.Mupsert (Ref.Value (BS.replicate sz 120))
+                | sz <- [4064..4066] ]
+
+prop_vsReferenceImpl :: Ref.PageContentSingle -> Property
+prop_vsReferenceImpl (Ref.PageContentSingle k op) =
+    op /= Ref.Delete ==>
     label (show (length loverflow) ++ " overflow pages") $
          propEqualRawPages lhs rhs
     .&&. counterexample "overflow pages do not match"
            (loverflow === roverflow)
   where
-    (lhs, loverflow) = toRawPage $ PageContentFits [(k, Proto.Insert v br)]
-    (rhs, roverflow) = singletonPage (convKey k) (convOp (Proto.Insert v br))
+    (lhs, loverflow) = Ref.toRawPage $ Ref.PageContentFits [(k, op)]
+    (rhs, roverflow) = singletonPage (Ref.toSerialisedKey k) (Ref.toEntry op)
 
-prototypeU
-    :: Proto.Key
-    -> Proto.Value
-    -> Property
-prototypeU k v =
-    label (show (length loverflow) ++ " overflow pages") $
-         propEqualRawPages lhs rhs
-    .&&. counterexample "overflow pages do not match"
-           (loverflow === roverflow)
-  where
-    (lhs, loverflow) = toRawPage $ PageContentFits [(k, Proto.Mupsert v)]
-    (rhs, roverflow) = singletonPage (convKey k) (convOp (Proto.Mupsert v))
-
-convKey :: Proto.Key -> SerialisedKey
-convKey (Proto.Key k) = SerialisedKey $ RB.fromByteString k
-
-convValue :: Proto.Value -> SerialisedValue
-convValue (Proto.Value v) = SerialisedValue $ RB.fromByteString v
-
-convBlobSpan :: Proto.BlobRef -> BlobSpan
-convBlobSpan (Proto.BlobRef x y) = BlobSpan x y
-
-convOp :: Proto.Operation -> Entry SerialisedValue BlobSpan
-convOp Proto.Delete                  = Delete
-convOp (Proto.Mupsert v)             = Mupdate (convValue v)
-convOp (Proto.Insert v  Nothing)     = Insert (convValue v)
-convOp (Proto.Insert v (Just bspan)) = InsertWithBlob (convValue v)
-                                                     (convBlobSpan bspan)
