@@ -21,7 +21,7 @@ module Database.LSMTree.Extras.ReferenceImpl (
 
     -- * Overflow pages
     pageOverflowPrefixSuffixLen,
-    pageOverflowPages,
+    pageDiskPages,
     pageSerialisedChunks,
 
     -- * Conversions to real implementation types
