@@ -3,10 +3,12 @@ module Test.Database.LSMTree.Internal.PageAcc (tests) where
 
 import           Control.Monad.ST.Strict (runST)
 import qualified Data.ByteString as BS
+import           Data.Maybe (isJust)
 
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Entry (Entry (..))
 import           Database.LSMTree.Internal.PageAcc
+import           Database.LSMTree.Internal.PageAcc1
 import           Database.LSMTree.Internal.RawPage (RawPage)
 import           Database.LSMTree.Internal.Serialise
 
@@ -30,6 +32,9 @@ tests =
         (prop_vsReferenceImpl (Ref.PageContentMaybeOverfull kops))
     | (n, exs)  <- zip [0..] examples
     , (a, kops) <- zip ['a'..] exs
+    ]
+
+ ++ [ testProperty "+PageAcc1" prop_vsRefWithPageAcc1
     ]
 
   where
@@ -101,6 +106,46 @@ prop_vsReferenceImpl (Ref.PageContentMaybeOverfull kops) =
     refImpl  = Ref.toRawPageMaybeOverfull (Ref.PageContentMaybeOverfull kops)
     realImpl = toRawPageViaPageAcc [ (Ref.toSerialisedKey k, Ref.toEntry op)
                                    | (k,op) <- kops ]
+
+
+-- | This is like 'prop_vsReferenceImpl' bus used _both_ @PageAcc@ and
+-- @PageAcc1@ together to fill in the special cases.
+--
+prop_vsRefWithPageAcc1 :: Ref.PageContentMaybeOverfull -> Property
+prop_vsRefWithPageAcc1 (Ref.PageContentMaybeOverfull kops) =
+    case (refImpl, realImpl) of
+      (Just (lhs, loverflow),
+       Just (rhs, roverflow)) ->
+            label (show (length loverflow) ++ " overflow pages") $
+            (if isJust (pageAcc1SpecialCase kops) then label "PageAcc1" else id)
+              (propEqualRawPages lhs rhs)
+       .&&. counterexample "overflow pages do not match"
+              (loverflow === roverflow)
+
+      (Nothing, Nothing) ->
+        label "overfull" $ property True
+
+      -- Special cases are a subset of those above in 'prop_vsReferenceImpl'.
+      (Just _, Nothing) | length kops >= maxPageKeys ->
+        label "max number of keys reached" $ property True
+
+      _ -> property False
+  where
+    refImpl  = Ref.toRawPageMaybeOverfull (Ref.PageContentMaybeOverfull kops)
+
+    -- Use whichever implementation is appropriate:
+    realImpl
+      | Just (k,op) <- pageAcc1SpecialCase kops
+      = Just (singletonPage (Ref.toSerialisedKey k) (Ref.toEntry op))
+
+      | otherwise
+      = (\rp -> (rp, [])) <$>
+        toRawPageViaPageAcc [ (Ref.toSerialisedKey k, Ref.toEntry op)
+                            | (k,op) <- kops ]
+
+    pageAcc1SpecialCase [(k, op)] | op /= Ref.Delete = Just (k, op)
+    pageAcc1SpecialCase _                            = Nothing
+
 
 -- | Use a 'PageAcc' to try to make a 'RawPage' from key\/op pairs. It will
 -- return @Nothing@ if the key\/op pairs would not all fit in a page.
