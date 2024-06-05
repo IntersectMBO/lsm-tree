@@ -16,6 +16,7 @@ module Bench.Database.LSMTree.Internal.Lookup (benchmarks) where
 
 import           Control.Exception (assert)
 import           Control.Monad
+import           Control.Monad.ST.Strict (stToIO)
 import           Criterion.Main (Benchmark, bench, bgroup, env, envWithCleanup,
                      perRunEnv, whnf, whnfAppIO)
 import           Data.Bifunctor (Bifunctor (..))
@@ -83,18 +84,18 @@ benchLookups conf@Config{name} =
             -- lookup keys. We use whnf here because the result is
           , env (pure $ bloomQueriesDefault blooms ks) $ \rkixs ->
               bench "Compact index search" $
-                whnfAppIO (\ks' -> indexSearches indexes kopsFiles ks' rkixs) ks
+                whnfAppIO (\ks' -> stToIO $ indexSearches indexes kopsFiles ks' rkixs) ks
             -- prepLookups combines bloom filter querying and index searching.
             -- The implementation forces the results to WHNF, so we use
             -- whnfAppIO here instead of nfAppIO.
           , bench "Lookup preparation in memory" $
-              whnfAppIO (\ks' -> prepLookups blooms indexes kopsFiles ks') ks
+              whnfAppIO (\ks' -> stToIO $ prepLookups blooms indexes kopsFiles ks') ks
             -- Submit the IOOps we get from prepLookups to HasBlockIO. We use
             -- perRunEnv because IOOps contain mutable buffers, so we want fresh
             -- ones for each run of the benchmark. We manually evaluate the
             -- result to WHNF since it is unboxed vector.
           , bench "Submit IOOps in batches" $
-              perRunEnv (prepLookups blooms indexes kopsFiles ks) $ \ ~(_rkixs, ioops) -> do
+              perRunEnv (stToIO $ prepLookups blooms indexes kopsFiles ks) $ \ ~(_rkixs, ioops) -> do
                 !_ioress <- submitInBatches hasBlockIO bsize ioops
                 pure ()
             -- When IO result have been collected, intra-page lookups searches
@@ -105,7 +106,7 @@ benchLookups conf@Config{name} =
             -- implementation takes care to evaluate each of the elements, we
             -- only compute WHNF.
           , bench "Perform intra-page lookups" $
-              perRunEnv ( prepLookups blooms indexes kopsFiles ks >>= \(rkixs, ioops) ->
+              perRunEnv ( stToIO (prepLookups blooms indexes kopsFiles ks) >>= \(rkixs, ioops) ->
                           submitInBatches hasBlockIO bsize ioops >>= \ioress ->
                           pure (rkixs, ioops, ioress)
                         ) $ \ ~(rkixs, ioops, ioress) -> do
