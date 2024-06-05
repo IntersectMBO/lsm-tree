@@ -175,38 +175,26 @@ indexSearches ::
   -> V.Vector SerialisedKey
   -> VU.Vector (RunIx, KeyIx) -- ^ Result of 'bloomQueries'
   -> m (V.Vector (IOOp (PrimState m) h))
-indexSearches !indexes !kopsFiles !ks !rkixs = do
-    -- The result vector has exactly the same length as @rkixs@.
-    res <- VM.unsafeNew n
-    loop res 0
-    V.unsafeFreeze res
+indexSearches !indexes !kopsFiles !ks !rkixs = V.generateM n $ \i -> do
+    let (!rix, !kix) = rkixs `VU.unsafeIndex` i
+        !c           = indexes `V.unsafeIndex` rix
+        !h           = kopsFiles `V.unsafeIndex` rix
+        !k           = ks `V.unsafeIndex` kix
+        !pspan       = Index.search k c
+        !size        = Index.pageSpanSize pspan
+    -- The current allocation strategy is to allocate a new pinned
+    -- byte array for each 'IOOp'. One optimisation we are planning to
+    -- do is to use a cache of re-usable buffers, in which case we
+    -- decrease the GC load. TODO: re-usable buffers.
+    !buf <- newPinnedByteArray (size * 4096)
+    pure $! IOOpRead
+              h
+              (fromIntegral $ Index.unPageNo (pageSpanStart pspan) * 4096)
+              buf
+              0
+              (fromIntegral $ size * 4096)
   where
     !n = VU.length rkixs
-
-    -- Loop over all indexes in @rkixs@
-    loop :: VM.MVector (PrimState m) (IOOp (PrimState m) h) -> Int -> m ()
-    loop !res !i
-      | i == n = pure ()
-      | otherwise = do
-          let (!rix, !kix) = rkixs `VU.unsafeIndex` i
-              !c     = indexes `V.unsafeIndex` rix
-              !h     = kopsFiles `V.unsafeIndex` rix
-              !k     = ks `V.unsafeIndex` kix
-              !pspan = Index.search k c
-              !size  = Index.pageSpanSize pspan
-          -- The current allocation strategy is to allocate a new pinned
-          -- byte array for each 'IOOp'. One optimisation we are planning to
-          -- do is to use a cache of re-usable buffers, in which case we
-          -- decrease the GC load. TODO: re-usable buffers.
-          !buf <- newPinnedByteArray (size * 4096)
-          let !ioop = IOOpRead
-                        h
-                        (fromIntegral $ Index.unPageNo (pageSpanStart pspan) * 4096)
-                        buf
-                        0
-                        (fromIntegral $ size * 4096)
-          VM.unsafeWrite res i $! ioop
-          loop res (i+1)
 
 {-------------------------------------------------------------------------------
   Lookups in IO
