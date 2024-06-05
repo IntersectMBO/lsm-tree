@@ -5,6 +5,7 @@ module Database.LSMTree.Internal.Vector (
     mkPrimVector,
     noRetainedExtraMemory,
     mapStrict,
+    zipWithStrict,
 ) where
 
 import           Data.Primitive.ByteArray (ByteArray, sizeofByteArray)
@@ -33,3 +34,8 @@ noRetainedExtraMemory (PV.Vector off len ba) =
 -- | /( O(n) /) Like 'V.map', but strict in the produced elements of type @b@.
 mapStrict :: forall a b. (a -> b) -> V.Vector a -> V.Vector b
 mapStrict f v = runST (V.mapM (\x -> pure $! f x) v)
+
+-- | /( O(min(m,n)) /) Like 'V.zipWithM', but strict in the produced elements of
+-- type @c@.
+zipWithStrict :: forall a b c. (a -> b -> c) -> V.Vector a -> V.Vector b -> V.Vector c
+zipWithStrict f xs ys = runST (V.zipWithM (\x y -> pure $! f x y) xs ys)

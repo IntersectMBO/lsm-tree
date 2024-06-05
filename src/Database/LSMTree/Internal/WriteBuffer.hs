@@ -29,6 +29,8 @@ module Database.LSMTree.Internal.WriteBuffer (
     addEntryMonoidal,
     addEntryNormal,
     lookups,
+    lookup,
+    lookups',
     rangeLookups,
 ) where
 
@@ -37,12 +39,14 @@ import qualified Data.Map.Range as Map.R
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.Vector as V
+import           Database.LSMTree.Internal.BlobRef (BlobRef)
 import           Database.LSMTree.Internal.Entry
 import qualified Database.LSMTree.Internal.Monoidal as Monoidal
 import qualified Database.LSMTree.Internal.Normal as Normal
 import           Database.LSMTree.Internal.Range (Range (..))
 import           Database.LSMTree.Internal.Serialise
 import qualified Database.LSMTree.Internal.Vector as V
+import           Prelude hiding (lookup)
 
 {-------------------------------------------------------------------------------
   Writebuffer type
@@ -103,6 +107,27 @@ lookups ::
   -> V.Vector SerialisedKey
   -> V.Vector (Maybe (Entry SerialisedValue SerialisedBlob))
 lookups (WB !m) !ks = V.mapStrict (`Map.lookup` m) ks
+
+-- | TODO: update once blob references are implemented
+lookup :: WriteBuffer -> SerialisedKey -> Maybe (Entry SerialisedValue (BlobRef run))
+lookup (WB !m) !k = case Map.lookup k m of
+    Nothing -> Nothing
+    Just x  -> Just $! errOnBlob x
+
+-- | TODO: remove 'lookups' or 'lookups'', depending on which one we end up
+-- using, once blob references are implemented
+lookups' ::
+     WriteBuffer
+  -> V.Vector SerialisedKey
+  -> V.Vector (Maybe (Entry SerialisedValue (BlobRef run)))
+lookups' wb !ks = V.mapStrict (lookup wb) ks
+
+-- | TODO: remove once blob references are implemented
+errOnBlob :: Entry v blobref1 -> Entry v blobref2
+errOnBlob (Insert v)           = Insert v
+errOnBlob (InsertWithBlob _ _) = error "lookups: blob references not supported"
+errOnBlob (Mupdate v)          = Mupdate v
+errOnBlob Delete               = Delete
 
 {-------------------------------------------------------------------------------
   RangeQueries

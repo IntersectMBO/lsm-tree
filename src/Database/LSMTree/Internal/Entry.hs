@@ -15,6 +15,7 @@ module Database.LSMTree.Internal.Entry (
   , entryToUpdateMonoidal
     -- * Value resolution/merging
   , combine
+  , combineMaybe
   , combinesMonoidal
   , combinesNormal
   , resolveEntriesNormal
@@ -123,6 +124,11 @@ combine _   (Mupdate u)       Delete                  = Insert u
 combine f   (Mupdate u)       (Insert v)              = Insert (f u v)
 combine f   (Mupdate u)       (InsertWithBlob v blob) = InsertWithBlob (f u v) blob
 combine f   (Mupdate u)       (Mupdate v)             = Mupdate (f u v)
+
+combineMaybe :: (v -> v -> v) -> Maybe (Entry v blobref) -> Maybe (Entry v blobref) -> Maybe (Entry v blobref)
+combineMaybe _ e1 Nothing          = e1
+combineMaybe _ Nothing e2          = e2
+combineMaybe f (Just e1) (Just e2) = Just $! combine f e1 e2
 
 combinesMonoidal :: (v -> v -> v) -> NonEmpty (Entry v blob) -> Entry v blob
 combinesMonoidal f = foldr1 (combine f) -- short-circuit fold

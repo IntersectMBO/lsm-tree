@@ -83,14 +83,18 @@ module Database.LSMTree.Normal (
   , IOLike
   ) where
 
+import           Control.Monad
+import           Data.Bifunctor (Bifunctor (..))
 import           Data.Kind (Type)
 import           Data.Typeable (Typeable)
 import qualified Data.Vector as V
-import           Database.LSMTree.Common (BlobRef, IOLike, Range (..),
+import           Database.LSMTree.Common (BlobRef (BlobRef), IOLike, Range (..),
                      SerialiseKey, SerialiseValue, Session (..), SnapshotName,
                      closeSession, deleteSnapshot, listSnapshots, openSession)
 import qualified Database.LSMTree.Internal as Internal
 import           Database.LSMTree.Internal.Normal
+import qualified Database.LSMTree.Internal.Serialise as Internal
+import qualified Database.LSMTree.Internal.Vector as V
 
 -- $resource-management
 -- Table handles use resources and as such need to be managed. In particular
@@ -200,6 +204,7 @@ close (TableHandle th) = Internal.close th
   Table querying and updates
 -------------------------------------------------------------------------------}
 
+{-# SPECIALISE lookups :: (SerialiseKey k, SerialiseValue v) => V.Vector k -> TableHandle IO k v blob -> IO (V.Vector (LookupResult v (BlobRef IO blob))) #-}
 -- | Perform a batch of lookups.
 --
 -- Lookups can be performed concurrently from multiple Haskell threads.
@@ -208,7 +213,9 @@ lookups ::
   => V.Vector k
   -> TableHandle m k v blob
   -> m (V.Vector (LookupResult v (BlobRef m blob)))
-lookups = undefined
+lookups ks (TableHandle th) =
+    V.mapStrict (bimap Internal.deserialiseValue BlobRef) <$!>
+    Internal.lookups (V.map Internal.serialiseKey ks) th Internal.toNormalLookupResult
 
 -- | Perform a range lookup.
 --

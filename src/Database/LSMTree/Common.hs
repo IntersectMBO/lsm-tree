@@ -30,7 +30,7 @@ module Database.LSMTree.Common (
   , SnapshotName
   , mkSnapshotName
     -- * Blob references
-  , BlobRef
+  , BlobRef (..)
   ) where
 
 import           Control.Concurrent.Class.MonadMVar.Strict
@@ -271,4 +271,4 @@ mkSnapshotName s
 -- TODO: get rid of the @m@ parameter?
 type BlobRef :: (Type -> Type) -> Type -> Type
 type role BlobRef nominal nominal
-data BlobRef m blob = forall h. Eq h => BlobRef (Internal.BlobRef (Internal.Run h))
+data BlobRef m blob = forall h. Typeable h => BlobRef (Internal.BlobRef (Internal.Run h))

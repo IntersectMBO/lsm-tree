@@ -22,6 +22,8 @@ module Database.LSMTree.Internal (
     -- ** Implementation of public API
   , new
   , close
+  , lookups
+  , toNormalLookupResult
     -- * configuration
   , TableConfig (..)
   , ResolveMupsert (..)
@@ -43,18 +45,25 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import qualified Data.Vector as V
 import           Data.Word (Word32)
+import           Database.LSMTree.Internal.BlobRef
+import           Database.LSMTree.Internal.Entry (Entry (..), combineMaybe)
 import           Database.LSMTree.Internal.IndexCompact (IndexCompact)
+import           Database.LSMTree.Internal.Lookup (BatchSize (..),
+                     lookupsInBatches)
+import qualified Database.LSMTree.Internal.Normal as Normal
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.Serialise (SerialisedKey,
                      SerialisedValue)
+import qualified Database.LSMTree.Internal.Vector as V
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import qualified GHC.IO.Handle as GHC
 import qualified System.FS.API as FS
 import           System.FS.API (FsErrorPath, FsPath, Handle, HasFS)
+import qualified System.FS.BlockIO.API as FS
 import qualified System.FS.BlockIO.API as HasBlockIO
-import           System.FS.BlockIO.API (HasBlockIO)
+import           System.FS.BlockIO.API (HasBlockIO, IOCtxParams (..))
 import           System.FS.IO (HandleIO)
 import qualified System.IO as System
 
@@ -447,6 +456,43 @@ close th = RW.modify_ (tableHandleState th) $ \case
         V.forM_ residentRuns $ Run.removeReference (tableHasFS thEnv)
       pure TableHandleClosed
 
+{-# SPECIALISE lookups :: V.Vector SerialisedKey -> TableHandle IO h -> (Maybe (Entry SerialisedValue (BlobRef (Run (Handle h)))) -> lookupResult) -> IO (V.Vector lookupResult) #-}
+-- | See 'Database.LSMTree.Normal.lookups'.
+lookups ::
+     m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+  => V.Vector SerialisedKey
+  -> TableHandle m h
+  -> (Maybe (Entry SerialisedValue (BlobRef (Run (Handle h)))) -> lookupResult)
+     -- ^ How to map from an entry to a lookup result. Use
+     -- 'toNormalLookupResult' or 'toMonoidalLookupResult'.
+  -> m (V.Vector lookupResult)
+lookups ks th fromEntry = withOpenTable th $ \thEnv -> do
+    wb <- readMVar (tableWriteBuffer thEnv)
+    let resolve = maybe const getResolveMupsert (confResolveMupsert $ tableConfig thEnv)
+    cache <- readMVar (tableCache thEnv)
+    ioRes <-
+      lookupsInBatches
+        (tableHasBlockIO thEnv)
+        (BatchSize $ ioctxBatchSizeLimit (FS.getParams (tableHasBlockIO thEnv)))
+        resolve
+        (cachedRuns cache)
+        (cachedFilters cache)
+        (cachedIndexes cache)
+        (cachedKOpsFiles cache)
+        ks
+    pure $! V.zipWithStrict
+              (\k1 e2 -> fromEntry $ combineMaybe resolve (WB.lookup wb k1) e2)
+              ks ioRes
+
+toNormalLookupResult :: Maybe (Entry v b) -> Normal.LookupResult v b
+toNormalLookupResult = \case
+    Just e -> case e of
+      Insert v            -> Normal.Found v
+      InsertWithBlob v br -> Normal.FoundWithBlob v br
+      Mupdate _           -> error "toNormalLookupResult: Mupdate unexpected"
+      Delete              -> Normal.NotFound
+    Nothing -> Normal.NotFound
+
 {-------------------------------------------------------------------------------
   Configuration
 -------------------------------------------------------------------------------}
@@ -517,5 +563,7 @@ data BloomFilterAlloc =
  -}
   deriving (Show, Eq)
 
-newtype ResolveMupsert = ResolveMupsert (SerialisedValue -> SerialisedValue -> SerialisedValue)
+newtype ResolveMupsert = ResolveMupsert {
+    getResolveMupsert :: SerialisedValue -> SerialisedValue -> SerialisedValue
+  }
 instance Show ResolveMupsert where show _ = "ResolveMupsert function can not be printed"
