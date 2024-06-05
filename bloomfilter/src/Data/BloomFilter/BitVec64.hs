@@ -25,10 +25,14 @@ newtype BitVec64 = BV64 (P.Vector Word64)
   deriving (Eq, Show)
 
 unsafeIndex :: BitVec64 -> Word64 -> Bool
-unsafeIndex (BV64 bv) i = testBit (P.unsafeIndex bv (w2i j)) (w2i k)
+unsafeIndex (BV64 bv) i = unsafeTestBit (P.unsafeIndex bv (w2i j)) (w2i k)
   where
     !j = unsafeShiftR i 6 -- `div` 64
     !k = i .&. 63         -- `mod` 64
+
+-- like testBit but using unsafeShiftL instead of shiftL
+unsafeTestBit :: Word64 -> Int -> Bool
+unsafeTestBit w k = w .&. (1 `unsafeShiftL` k) /= 0
 
 newtype MBitVec64 s = MBV64 (P.MVector s Word64)
 
