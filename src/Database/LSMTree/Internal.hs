@@ -64,7 +64,6 @@ import           System.FS.API (FsErrorPath, FsPath, Handle, HasFS)
 import qualified System.FS.BlockIO.API as FS
 import qualified System.FS.BlockIO.API as HasBlockIO
 import           System.FS.BlockIO.API (HasBlockIO, IOCtxParams (..))
-import           System.FS.IO (HandleIO)
 import qualified System.IO as System
 
 {-------------------------------------------------------------------------------
@@ -107,7 +106,7 @@ newtype Session m h = Session {
     }
 
 data SessionState m h =
-    SessionOpen {-# UNPACK #-} !(SessionEnv m h)
+    SessionOpen !(SessionEnv m h)
   | SessionClosed
 
 data SessionEnv m h = SessionEnv {
@@ -164,7 +163,7 @@ incrUniqCounter (UniqCounter uniqVar) = modifyMVar uniqVar (\x -> pure ((x+1), x
 -- Implementation of public API
 --
 
-{-# SPECIALISE withSession :: HasFS IO HandleIO -> HasBlockIO IO HandleIO -> FsPath -> (Session IO HandleIO -> IO a) -> IO a #-}
+{-# SPECIALISE withSession :: HasFS IO h -> HasBlockIO IO h -> FsPath -> (Session IO h -> IO a) -> IO a #-}
 -- | See 'Database.LSMTree.Common.withSession'.
 withSession ::
      m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
@@ -178,7 +177,7 @@ withSession hfs hbio dir =
       (openSession hfs hbio dir)
       closeSession
 
-{-# SPECIALISE openSession :: HasFS IO HandleIO -> HasBlockIO IO HandleIO -> FsPath -> IO (Session IO HandleIO) #-}
+{-# SPECIALISE openSession :: HasFS IO h -> HasBlockIO IO h -> FsPath -> IO (Session IO h) #-}
 -- | See 'Database.LSMTree.Common.openSession'.
 openSession ::
      forall m h. m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
@@ -271,7 +270,7 @@ openSession hfs hbio dir = do
     -- session is restored.
     checkSnapshotsDirLayout = pure ()
 
-{-# SPECIALISE closeSession :: Session IO HandleIO -> IO () #-}
+{-# SPECIALISE closeSession :: Session IO h -> IO () #-}
 -- | See 'Database.LSMTree.Common.closeSession'.
 --
 -- A session's global resources will only be released once it is sure that no
@@ -326,7 +325,7 @@ newtype TableHandle m h = TableHandle {
 -- resources that are inherited by the table, will only be released once the
 -- session is sure that no tables are open anymore.
 data TableHandleState m h =
-    TableHandleOpen {-# UNPACK #-} !(TableHandleEnv m h)
+    TableHandleOpen !(TableHandleEnv m h)
   | TableHandleClosed
 
 data TableHandleEnv m h = TableHandleEnv {
@@ -404,7 +403,7 @@ mkLevelsCache lvls = LevelsCache_ {
 -- Implementation of public API
 --
 
-{-# SPECIALISE new :: Session IO HandleIO -> TableConfig -> IO (TableHandle IO HandleIO) #-}
+{-# SPECIALISE new :: Session IO h -> TableConfig -> IO (TableHandle IO h) #-}
 -- | See 'Database.LSMTree.Normal.new'.
 new ::
      m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
@@ -438,7 +437,7 @@ new sesh conf = do
       modifyMVar_ (sessionOpenTables seshEnv) $ pure . Map.insert tableId th
       pure $! th
 
-{-# SPECIALISE close :: TableHandle IO HandleIO -> IO () #-}
+{-# SPECIALISE close :: TableHandle IO h -> IO () #-}
 -- | See 'Database.LSMTree.Normal.close'.
 close ::
      m ~ IO  -- TODO: replace by @io-classes@ constraints for IO simulation.
