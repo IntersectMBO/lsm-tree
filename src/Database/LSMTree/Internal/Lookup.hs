@@ -53,7 +53,6 @@ import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.Vector (mkPrimVector)
 import           System.FS.API (BufferOffset (..), Handle)
 import           System.FS.BlockIO.API
-import           System.FS.IO (HandleIO)
 
 {-# SPECIALIZE prepLookups ::
          V.Vector (Bloom SerialisedKey)
@@ -64,9 +63,9 @@ import           System.FS.IO (HandleIO)
 {-# SPECIALIZE prepLookups ::
          V.Vector (Bloom SerialisedKey)
       -> V.Vector IndexCompact
-      -> V.Vector (Handle HandleIO)
+      -> V.Vector (Handle h)
       -> V.Vector SerialisedKey
-      -> IO (VU.Vector (RunIx, KeyIx), V.Vector (IOOp RealWorld HandleIO)) #-}
+      -> IO (VU.Vector (RunIx, KeyIx), V.Vector (IOOp RealWorld h)) #-}
 -- | Prepare disk lookups by doing bloom filter queries, index searches and
 -- creating 'IOOp's. The result is a vector of 'IOOp's and a vector of indexes,
 -- both of which are the same length. The indexes record the run and key
@@ -161,10 +160,10 @@ bloomQueries !blooms !ks !resN
       -> ST s (V.Vector (IOOp s h)) #-}
 {-# SPECIALIZE indexSearches ::
          V.Vector IndexCompact
-      -> V.Vector (Handle HandleIO)
+      -> V.Vector (Handle h)
       -> V.Vector SerialisedKey
       -> VU.Vector (RunIx, KeyIx)
-      -> IO (V.Vector (IOOp RealWorld HandleIO)) #-}
+      -> IO (V.Vector (IOOp RealWorld h)) #-}
 -- | Perform a batch of fence pointer index searches, and create an 'IOOp' for
 -- each search result. The resulting vector has the same length as the
 -- @VU.Vector (RunIx, KeyIx)@ argument, because index searching always returns a
@@ -253,15 +252,15 @@ data ByteCountDiscrepancy = ByteCountDiscrepancy {
   deriving (Show, Exception)
 
 {-# SPECIALIZE lookupsInBatches ::
-       HasBlockIO IO HandleIO
+       HasBlockIO IO h
     -> BatchSize
     -> ResolveSerialisedValue
-    -> V.Vector (Run (Handle HandleIO))
+    -> V.Vector (Run (Handle h))
     -> V.Vector (Bloom SerialisedKey)
     -> V.Vector IndexCompact
-    -> V.Vector (Handle HandleIO)
+    -> V.Vector (Handle h)
     -> V.Vector SerialisedKey
-    -> IO (V.Vector (Maybe (Entry SerialisedValue (BlobRef (Run (Handle HandleIO))))))
+    -> IO (V.Vector (Maybe (Entry SerialisedValue (BlobRef (Run (Handle h))))))
   #-}
 -- | Batched lookups.
 --
@@ -299,9 +298,9 @@ lookupsInBatches !hbio !n !resolveV !rs !blooms !indexes !kopsFiles !ks = assert
         ]
 
 {-# SPECIALIZE submitInBatches ::
-       HasBlockIO IO HandleIO
+       HasBlockIO IO h
     -> BatchSize
-    -> V.Vector (IOOp RealWorld HandleIO)
+    -> V.Vector (IOOp RealWorld h)
     -> IO (VU.Vector IOResult)
   #-}
 -- | Submit I\/O operation to the 'HasBlockIO' interface in batches.
@@ -317,12 +316,12 @@ submitInBatches !hbio !n !ioops = do
 
 {-# SPECIALIZE intraPageLookups ::
        ResolveSerialisedValue
-    -> V.Vector (Run (Handle HandleIO))
+    -> V.Vector (Run (Handle h))
     -> V.Vector SerialisedKey
     -> VU.Vector (RunIx, KeyIx)
-    -> V.Vector (IOOp RealWorld HandleIO)
+    -> V.Vector (IOOp RealWorld h)
     -> VU.Vector IOResult
-    -> IO (V.Vector (Maybe (Entry SerialisedValue (BlobRef (Run (Handle HandleIO))))))
+    -> IO (V.Vector (Maybe (Entry SerialisedValue (BlobRef (Run (Handle h))))))
   #-}
 -- | Intra-page lookups.
 --
