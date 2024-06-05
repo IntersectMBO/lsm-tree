@@ -56,6 +56,7 @@ import           Data.Word (Word64)
 import qualified Database.LSMTree.Common as SUT (SerialiseKey, SerialiseValue,
                      mkSnapshotName)
 import           Database.LSMTree.Extras.Generators ()
+import           Database.LSMTree.Internal (LSMTreeError (..))
 import qualified Database.LSMTree.Internal as Impl.Real.Internal
                      (ResolveMupsert (..))
 import qualified Database.LSMTree.Model.Normal.Session as Model
@@ -150,7 +151,6 @@ propLockstepIO_ModelIOImpl = testProperty "propLockstepIO_ModelIOImpl" $
 
 propLockstepIO_RealImpl_RealFS :: TestTree
 propLockstepIO_RealImpl_RealFS = testProperty "propLockstepIO_RealImpl_RealFS" $
-   QC.expectFailure $ -- TODO: remove once we have a real implementation
     Lockstep.Run.runActionsBracket
       (Proxy @(ModelState Impl.Real.TableHandle))
       acquire
@@ -171,8 +171,9 @@ propLockstepIO_RealImpl_RealFS = testProperty "propLockstepIO_RealImpl_RealFS" $
     handler :: Handler IO (Maybe Model.Err)
     handler = Handler $ pure . handler'
       where
-        handler' :: IOError -> Maybe Model.Err
-        handler' _err = Nothing
+        handler' :: LSMTreeError -> Maybe Model.Err
+        handler' ErrTableClosed = Just Model.ErrTableHandleClosed
+        handler' _              = Nothing
 
 {- TODO: temporarily disabled until we start on I/O fault testing.
 propLockstepIO_RealImpl_MockFS :: TestTree
@@ -907,9 +908,10 @@ arbitraryActionWithVars _ findVars _st = QC.oneof $ concat [
     withoutVars :: [Gen (Any (LockstepAction (ModelState h)))]
     withoutVars = [
           Some . New @k @v @blob <$> QC.arbitrary
-        , fmap Some $ Open @k @v @blob <$> genSnapshotName
-        , fmap Some $ DeleteSnapshot <$> genSnapshotName
-        , pure $ Some ListSnapshots
+        -- TODO: enable generators as we implement the actions for the /real/ lsm-tree
+        -- , fmap Some $ Open @k @v @blob <$> genSnapshotName
+        -- , fmap Some $ DeleteSnapshot <$> genSnapshotName
+        -- , pure $ Some ListSnapshots
         ]
 
     withVars ::
@@ -918,19 +920,21 @@ arbitraryActionWithVars _ findVars _st = QC.oneof $ concat [
     withVars genVar = [
           fmap Some $ Close <$> (fromRight <$> genVar)
         , fmap Some $ Lookups <$> genLookupKeys <*> (fromRight <$> genVar)
-        , fmap Some $ RangeLookup <$> genRange <*> (fromRight <$> genVar)
-        , fmap Some $ Updates <$> genUpdates <*> (fromRight <$> genVar)
-        , fmap Some $ Inserts <$> genInserts <*> (fromRight <$> genVar)
-        , fmap Some $ Deletes <$> genDeletes <*> (fromRight <$> genVar)
-        , fmap Some $ Snapshot <$> genSnapshotName <*> (fromRight <$> genVar)
-        , fmap Some $ Duplicate <$> (fromRight <$> genVar)
+        -- TODO: enable generators as we implement the actions for the /real/ lsm-tree
+        -- , fmap Some $ RangeLookup <$> genRange <*> (fromRight <$> genVar)
+        -- , fmap Some $ Updates <$> genUpdates <*> (fromRight <$> genVar)
+        -- , fmap Some $ Inserts <$> genInserts <*> (fromRight <$> genVar)
+        -- , fmap Some $ Deletes <$> genDeletes <*> (fromRight <$> genVar)
+        -- , fmap Some $ Snapshot <$> genSnapshotName <*> (fromRight <$> genVar)
+        -- , fmap Some $ Duplicate <$> (fromRight <$> genVar)
         ]
 
     withVars' ::
          Gen (Var h (Either Model.Err (V.Vector (WrapBlobRef h IO blob))))
       -> [Gen (Any (LockstepAction (ModelState h)))]
-    withVars' genBlobRefsVar = [
-          fmap Some $ RetrieveBlobs <$> (fromRight <$> genBlobRefsVar)
+    withVars' _genBlobRefsVar = [
+          -- TODO: enable generators as we implement the actions for the /real/ lsm-tree
+          -- fmap Some $ RetrieveBlobs <$> (fromRight <$> genBlobRefsVar)
         ]
 
     fromRight ::
@@ -943,8 +947,8 @@ arbitraryActionWithVars _ findVars _st = QC.oneof $ concat [
     genLookupKeys = QC.arbitrary
 
     -- TODO: improve
-    genRange :: Gen (SUT.Range k)
-    genRange = QC.oneof [
+    _genRange :: Gen (SUT.Range k)
+    _genRange = QC.oneof [
           SUT.FromToExcluding <$> QC.arbitrary <*> QC.arbitrary
         , SUT.FromToIncluding <$> QC.arbitrary <*> QC.arbitrary
         ]
@@ -955,11 +959,11 @@ arbitraryActionWithVars _ findVars _st = QC.oneof $ concat [
             SUT.FromToIncluding{} -> ()
 
     -- TODO: improve
-    genUpdates :: Gen (V.Vector (k, SUT.Update v blob))
-    genUpdates = V.fromList <$> QC.listOf ((,) <$> QC.arbitrary <*> QC.oneof [
+    _genUpdates :: Gen [(k, SUT.Update v blob)]
+    _genUpdates = QC.listOf $ (,) <$> QC.arbitrary <*> QC.oneof [
           SUT.Insert <$> QC.arbitrary <*> QC.arbitrary
         , pure SUT.Delete
-        ])
+        ]
       where
         _coveredAllCases :: SUT.Update v blob -> ()
         _coveredAllCases = \case
@@ -967,16 +971,16 @@ arbitraryActionWithVars _ findVars _st = QC.oneof $ concat [
             SUT.Delete{} -> ()
 
     -- TODO: improve
-    genInserts :: Gen (V.Vector (k, v, Maybe blob))
-    genInserts = V.fromList <$> QC.arbitrary
+    _genInserts :: Gen [(k, v, Maybe blob)]
+    _genInserts = QC.arbitrary
 
     -- TODO: improve
-    genDeletes :: Gen (V.Vector k)
-    genDeletes = V.fromList <$> QC.arbitrary
+    _genDeletes :: Gen [k]
+    _genDeletes = QC.arbitrary
 
     -- TODO: improve, actual snapshot names
-    genSnapshotName :: Gen SUT.SnapshotName
-    genSnapshotName = QC.elements [
+    _genSnapshotName :: Gen SUT.SnapshotName
+    _genSnapshotName = QC.elements [
         fromJust $ SUT.mkSnapshotName "snap1"
       , fromJust $ SUT.mkSnapshotName "snap2"
       , fromJust $ SUT.mkSnapshotName "snap3"
