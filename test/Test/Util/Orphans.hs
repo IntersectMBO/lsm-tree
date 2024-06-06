@@ -19,7 +19,7 @@ import qualified Control.Concurrent.STM as Real
 import           Control.Monad ((<=<))
 import           Control.Monad.IOSim (IOSim)
 import           Data.Kind (Type)
-import           Database.LSMTree.Common (BlobRef)
+import           Database.LSMTree.Common (BlobRef, SerialiseValue)
 import           Database.LSMTree.Internal.Serialise (SerialiseKey)
 import           Database.LSMTree.Normal (LookupResult, RangeLookupResult,
                      TableHandle)
@@ -80,3 +80,4 @@ instance InterpretOp SumProd.Op (Op.WrapRealized (IOSim s)) where
 -------------------------------------------------------------------------------}
 
 deriving newtype instance SerialiseKey a => SerialiseKey (Small a)
+deriving newtype instance SerialiseValue a => SerialiseValue (Small a)

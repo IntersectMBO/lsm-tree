@@ -64,8 +64,8 @@ import           Database.LSMTree.Internal.Paths (RunFsPaths (..),
 import qualified Database.LSMTree.Internal.Paths as Paths
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
-import           Database.LSMTree.Internal.Serialise (SerialisedKey,
-                     SerialisedValue)
+import           Database.LSMTree.Internal.Serialise (SerialisedBlob,
+                     SerialisedKey, SerialisedValue)
 import qualified Database.LSMTree.Internal.Vector as V
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
@@ -97,6 +97,7 @@ data LSMTreeError =
     -- one exception (pun intended) to this rule: the idempotent operation
     -- 'Database.LSMTree.Common.close'.
   | ErrTableClosed
+  | ErrExpectedNormalTable
   deriving (Show, Exception)
 
 {-------------------------------------------------------------------------------
@@ -529,13 +530,24 @@ toNormalLookupResult = \case
       Delete              -> Normal.NotFound
     Nothing -> Normal.NotFound
 
+{-# SPECIALISE updates :: V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob) -> TableHandle IO h -> IO () #-}
 -- | See 'Database.LSMTree.Normal.updates'.
+--
+-- Does not enforce that mupsert and blobs should not occur in the same table.
 updates ::
-     forall m h k v blob.
-     V.Vector (k, Entry v blob)
+     m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+  => V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob)
   -> TableHandle m h
   -> m ()
-updates = error "updates: not yet implemented" -- TODO: implement
+updates es th = withOpenTable th $ \thEnv -> do
+    -- A placeholder implementation that is sufficient to pass the tests, but
+    -- keeps all entries in memory.
+    -- TODO: flush write buffer when full
+    -- TODO: merge runs when level becomes full
+    modifyMVar_ (tableWriteBuffer thEnv) $ \wb -> do
+      return $ foldl' (flip (uncurry (WB.addEntry resolve))) wb es
+  where
+    resolve = resolveMupsert (tableConfig th)
 
 {-------------------------------------------------------------------------------
   Snapshots
@@ -634,7 +646,7 @@ data TableConfig = TableConfig {
   , confWriteBufferAlloc :: !Word32
   , confBloomFilterAlloc :: !BloomFilterAlloc
     -- | Function for resolving 'Mupsert' values. This should be 'Nothing' for
-    -- normal tables.
+    -- normal tables and 'Just' for monoidal tables.
   , confResolveMupsert   :: !(Maybe ResolveMupsert)
   }
   deriving Show
