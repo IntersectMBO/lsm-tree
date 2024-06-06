@@ -40,8 +40,13 @@ data RangeLookupResult k v blobref =
 data Update v blob =
     Insert !v !(Maybe blob)
   | Delete
-  deriving (Show, Eq)
+  deriving (Eq, Show, Functor, Foldable, Traversable)
 
 instance (NFData v, NFData blob) => NFData (Update v blob) where
   rnf Delete       = ()
   rnf (Insert v b) = rnf v `seq` rnf b
+
+instance Bifunctor Update where
+  bimap f g = \case
+      Insert v mb -> Insert (f v) (fmap g mb)
+      Delete      -> Delete

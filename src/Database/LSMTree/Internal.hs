@@ -24,7 +24,7 @@ module Database.LSMTree.Internal (
   , close
   , lookups
   , toNormalLookupResult
-  , updates
+  , updatesNormal
     -- * Snapshots
   , snapshot
   , open
@@ -40,7 +40,7 @@ module Database.LSMTree.Internal (
 import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Concurrent.ReadWriteVar (RWVar)
 import qualified Control.Concurrent.ReadWriteVar as RW
-import           Control.Monad (unless, void)
+import           Control.Monad (unless, void, when)
 import           Control.Monad.Class.MonadThrow
 import           Data.BloomFilter (Bloom)
 import qualified Data.ByteString.Char8 as BSC
@@ -48,6 +48,7 @@ import           Data.Either (fromRight)
 import           Data.Foldable
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import           Data.Maybe (isJust)
 import qualified Data.Set as Set
 import qualified Data.Vector as V
 import           Data.Word (Word32, Word64)
@@ -64,8 +65,8 @@ import           Database.LSMTree.Internal.Paths (RunFsPaths (..),
 import qualified Database.LSMTree.Internal.Paths as Paths
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
-import           Database.LSMTree.Internal.Serialise (SerialisedKey,
-                     SerialisedValue)
+import           Database.LSMTree.Internal.Serialise (SerialisedBlob,
+                     SerialisedKey, SerialisedValue)
 import qualified Database.LSMTree.Internal.Vector as V
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
@@ -97,6 +98,7 @@ data LSMTreeError =
     -- one exception (pun intended) to this rule: the idempotent operation
     -- 'Database.LSMTree.Common.close'.
   | ErrTableClosed
+  | ErrExpectedNormalTable
   deriving (Show, Exception)
 
 {-------------------------------------------------------------------------------
@@ -530,13 +532,26 @@ toNormalLookupResult = \case
       Delete              -> Normal.NotFound
     Nothing -> Normal.NotFound
 
+{-# SPECIALISE updatesNormal :: V.Vector (SerialisedKey, Normal.Update SerialisedValue SerialisedBlob) -> TableHandle IO h -> IO () #-}
 -- | See 'Database.LSMTree.Normal.updates'.
-updates ::
-     forall m h k v blob.
-     V.Vector (k, Entry v blob)
+--
+-- TODO: Should this go to Database.LSMTree.Internal.Normal? But it depends on
+-- 'TableHandle'.
+updatesNormal ::
+     m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+  => V.Vector (SerialisedKey, Normal.Update SerialisedValue SerialisedBlob)
   -> TableHandle m h
   -> m ()
-updates = error "updates: not yet implemented" -- TODO: implement
+updatesNormal es th = withOpenTable th $ \thEnv -> do
+    -- make sure not to insert any blobs into monoidal tables
+    when (isJust (confResolveMupsert (tableConfig thEnv))) $
+      throwIO ErrExpectedNormalTable
+    -- A placeholder implementation that is sufficient to pass the tests, but
+    -- keeps all entries in memory.
+    -- TODO: flush write buffer when full
+    -- TODO: merge runs when level becomes full
+    modifyMVar_ (tableWriteBuffer thEnv) $ \wb -> do
+      return $ foldl' (flip (uncurry WB.addEntryNormal)) wb es
 
 {-------------------------------------------------------------------------------
   Snapshots

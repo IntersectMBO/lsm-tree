@@ -26,6 +26,7 @@ module Database.LSMTree.Internal.WriteBuffer (
     empty,
     numEntries,
     content,
+    addEntry,
     addEntryMonoidal,
     addEntryNormal,
     lookups,
@@ -79,12 +80,23 @@ content (WB m) = Map.assocs m
   Updates
 -------------------------------------------------------------------------------}
 
+addEntry ::
+     (SerialisedValue -> SerialisedValue -> SerialisedValue) -- ^ merge function
+  -> SerialisedKey
+  -> Entry SerialisedValue SerialisedBlob
+  -> WriteBuffer
+  -> WriteBuffer
+addEntry f k e (WB wb) =
+    WB (Map.insertWith (combine f) k e wb)
+
+-- FIXME: remove?
 addEntryMonoidal ::
      (SerialisedValue -> SerialisedValue -> SerialisedValue) -- ^ merge function
   -> SerialisedKey -> Monoidal.Update SerialisedValue -> WriteBuffer -> WriteBuffer
 addEntryMonoidal f k e (WB wb) =
     WB (Map.insertWith (combine f) k (updateToEntryMonoidal e) wb)
 
+-- FIXME: remove?
 addEntryNormal ::
      SerialisedKey
   -> Normal.Update SerialisedValue SerialisedBlob

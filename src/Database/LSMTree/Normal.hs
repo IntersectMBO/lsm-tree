@@ -251,7 +251,13 @@ updates ::
   => V.Vector (k, Update v blob)
   -> TableHandle m k v blob
   -> m ()
-updates = undefined
+updates es (TableHandle th) =
+    Internal.updatesNormal (V.map serialiseEntry es) th
+  where
+    serialiseEntry =
+      bimap
+        Internal.serialiseKey
+        (bimap Internal.serialiseValue Internal.serialiseBlob)
 
 -- | Perform a batch of inserts.
 --
