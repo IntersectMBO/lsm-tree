@@ -101,8 +101,8 @@ data Session m = forall h. Typeable h => Session !(Internal.Session m h)
 {-# SPECIALISE withSession :: HasFS IO HandleIO -> HasBlockIO IO HandleIO -> FsPath -> (Session IO -> IO a) -> IO a #-}
 -- | (Asynchronous) exception-safe, bracketed opening and closing of a session.
 --
--- It is recommended to use this function instead of 'openSession' and
--- 'closeSession'.
+-- If possible, it is recommended to use this function instead of 'openSession'
+-- and 'closeSession'.
 withSession ::
      (IOLike m, Typeable h)
   => HasFS m h

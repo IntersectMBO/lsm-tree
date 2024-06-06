@@ -20,6 +20,7 @@ module Database.LSMTree.Internal (
   , TableHandleState (..)
   , TableHandleEnv (..)
     -- ** Implementation of public API
+  , withTable
   , new
   , close
   , lookups
@@ -172,10 +173,7 @@ withSession ::
   -> FsPath
   -> (Session m h -> m a)
   -> m a
-withSession hfs hbio dir =
-    bracket
-      (openSession hfs hbio dir)
-      closeSession
+withSession hfs hbio dir = bracket (openSession hfs hbio dir) closeSession
 
 {-# SPECIALISE openSession :: HasFS IO h -> HasBlockIO IO h -> FsPath -> IO (Session IO h) #-}
 -- | See 'Database.LSMTree.Common.openSession'.
@@ -402,6 +400,16 @@ mkLevelsCache lvls = LevelsCache_ {
 --
 -- Implementation of public API
 --
+
+{-# SPECIALISE withTable :: Session IO h -> TableConfig -> (TableHandle IO h -> IO a) -> IO a #-}
+-- | See 'Database.LSMTree.Normal.withTable'.
+withTable ::
+     m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+  => Session m h
+  -> TableConfig
+  -> (TableHandle m h -> m a)
+  -> m a
+withTable sesh conf = bracket (new sesh conf) close
 
 {-# SPECIALISE new :: Session IO h -> TableConfig -> IO (TableHandle IO h) #-}
 -- | See 'Database.LSMTree.Normal.new'.
