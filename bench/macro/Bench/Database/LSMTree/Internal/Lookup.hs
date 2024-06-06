@@ -7,10 +7,9 @@ module Bench.Database.LSMTree.Internal.Lookup (
 import           Control.DeepSeq
 import           Control.Exception (assert)
 import           Control.Monad
-import           Control.Monad.Class.MonadAsync (MonadAsync)
-import           Control.Monad.Class.MonadThrow (MonadThrow)
+import           Control.Monad.Class.MonadST
 import           Control.Monad.Primitive
-import           Control.Monad.ST
+import           Control.Monad.ST.Strict (ST, runST)
 import           Data.Bits ((.&.))
 import           Data.BloomFilter (Bloom)
 import qualified Data.BloomFilter as Bloom
@@ -421,43 +420,40 @@ benchBloomQueries !bs !keyRng !n
 -- | This gives us the combined cost of calculating batches of keys, performing
 -- bloom queries for each batch, and performing index searches for each batch.
 benchIndexSearches ::
-     PrimMonad m
-  => V.Vector (Bloom SerialisedKey)
+     V.Vector (Bloom SerialisedKey)
   -> V.Vector IndexCompact
   -> V.Vector (FS.Handle h)
   -> StdGen
   -> Int
-  -> m ()
+  -> IO ()
 benchIndexSearches !bs !ics !hs !keyRng !n
   | n <= 0 = pure ()
   | otherwise = do
     let (!ks, !keyRng') = genLookupBatch keyRng benchmarkGenBatchSize
         !rkixs = bloomQueriesDefault bs ks
-    !_ioops <- indexSearches ics hs ks rkixs
+    !_ioops <- stToIO $ indexSearches ics hs ks rkixs
     benchIndexSearches bs ics hs keyRng' (n-benchmarkGenBatchSize)
 
 -- | This gives us the combined cost of calculating batches of keys, and
 -- preparing lookups for each batch.
 benchPrepLookups ::
-     PrimMonad m
-  => V.Vector (Bloom SerialisedKey)
+     V.Vector (Bloom SerialisedKey)
   -> V.Vector IndexCompact
   -> V.Vector (FS.Handle h)
   -> StdGen
   -> Int
-  -> m ()
+  -> IO ()
 benchPrepLookups !bs !ics !hs !keyRng !n
   | n <= 0 = pure ()
   | otherwise = do
       let (!ks, !keyRng') = genLookupBatch keyRng benchmarkGenBatchSize
-      (!_rkixs, !_ioops) <- prepLookups bs ics hs ks
+      (!_rkixs, !_ioops) <- stToIO $ prepLookups bs ics hs ks
       benchPrepLookups bs ics hs keyRng' (n-benchmarkGenBatchSize)
 
 -- | This gives us the combined cost of calculating batches of keys, and
 -- performing disk lookups for each batch.
 benchLookupsInBatches ::
-     (PrimMonad m, MonadAsync m, MonadThrow m)
-  => FS.HasBlockIO m h
+     FS.HasBlockIO IO h
   -> BatchSize
   -> ResolveSerialisedValue
   -> V.Vector (Run (FS.Handle h))
@@ -466,7 +462,7 @@ benchLookupsInBatches ::
   -> V.Vector (FS.Handle h)
   -> StdGen
   -> Int
-  -> m ()
+  -> IO ()
 benchLookupsInBatches !hbio !batchn !resolve !rs !bs !ics !hs !keyRng !n
   | n <= 0 = pure ()
   | otherwise = do

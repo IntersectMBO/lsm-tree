@@ -27,6 +27,7 @@ import           Control.DeepSeq (NFData)
 import           Control.Exception (Exception, assert)
 import           Control.Monad
 import           Control.Monad.Class.MonadAsync
+import           Control.Monad.Class.MonadST as Class
 import           Control.Monad.Class.MonadThrow (MonadThrow (..))
 import           Control.Monad.Primitive
 import           Control.Monad.ST.Strict
@@ -54,29 +55,16 @@ import           Database.LSMTree.Internal.Vector (mkPrimVector)
 import           System.FS.API (BufferOffset (..), Handle)
 import           System.FS.BlockIO.API
 
-{-# SPECIALIZE prepLookups ::
-         V.Vector (Bloom SerialisedKey)
-      -> V.Vector IndexCompact
-      -> V.Vector (Handle h)
-      -> V.Vector SerialisedKey
-      -> ST s (VU.Vector (RunIx, KeyIx), V.Vector (IOOp s h)) #-}
-{-# SPECIALIZE prepLookups ::
-         V.Vector (Bloom SerialisedKey)
-      -> V.Vector IndexCompact
-      -> V.Vector (Handle h)
-      -> V.Vector SerialisedKey
-      -> IO (VU.Vector (RunIx, KeyIx), V.Vector (IOOp RealWorld h)) #-}
 -- | Prepare disk lookups by doing bloom filter queries, index searches and
 -- creating 'IOOp's. The result is a vector of 'IOOp's and a vector of indexes,
 -- both of which are the same length. The indexes record the run and key
 -- associated with each 'IOOp'.
 prepLookups ::
-     PrimMonad m
-  => V.Vector (Bloom SerialisedKey)
+     V.Vector (Bloom SerialisedKey)
   -> V.Vector IndexCompact
   -> V.Vector (Handle h)
   -> V.Vector SerialisedKey
-  -> m (VU.Vector (RunIx, KeyIx), V.Vector (IOOp (PrimState m) h))
+  -> ST s (VU.Vector (RunIx, KeyIx), V.Vector (IOOp s h))
 prepLookups blooms indexes kopsFiles ks = do
   let !rkixs = bloomQueriesDefault blooms ks
   !ioops <- indexSearches indexes kopsFiles ks rkixs
@@ -151,30 +139,16 @@ bloomQueries !blooms !ks !resN
               VUM.unsafeWrite res2' resix2 (rix, kix)
               loop2 res2' (resix2+1) (kix+1) b
           | otherwise = loop2 res2 resix2 (kix+1) b
-
-{-# SPECIALIZE indexSearches ::
-         V.Vector IndexCompact
-      -> V.Vector (Handle h)
-      -> V.Vector SerialisedKey
-      -> VU.Vector (RunIx, KeyIx)
-      -> ST s (V.Vector (IOOp s h)) #-}
-{-# SPECIALIZE indexSearches ::
-         V.Vector IndexCompact
-      -> V.Vector (Handle h)
-      -> V.Vector SerialisedKey
-      -> VU.Vector (RunIx, KeyIx)
-      -> IO (V.Vector (IOOp RealWorld h)) #-}
 -- | Perform a batch of fence pointer index searches, and create an 'IOOp' for
 -- each search result. The resulting vector has the same length as the
 -- @VU.Vector (RunIx, KeyIx)@ argument, because index searching always returns a
 -- positive search result.
 indexSearches ::
-     forall m h. PrimMonad m
-  => V.Vector IndexCompact
+     V.Vector IndexCompact
   -> V.Vector (Handle h)
   -> V.Vector SerialisedKey
   -> VU.Vector (RunIx, KeyIx) -- ^ Result of 'bloomQueries'
-  -> m (V.Vector (IOOp (PrimState m) h))
+  -> ST s (V.Vector (IOOp s h))
 indexSearches !indexes !kopsFiles !ks !rkixs = V.generateM n $ \i -> do
     let (!rix, !kix) = rkixs `VU.unsafeIndex` i
         !c           = indexes `V.unsafeIndex` rix
@@ -264,7 +238,7 @@ data ByteCountDiscrepancy = ByteCountDiscrepancy {
 --
 -- TODO: don't subdivide into smaller batches here, but inside @blockio-uring@.
 lookupsInBatches ::
-     forall m h. (MonadAsync m, PrimMonad m, MonadThrow m)
+     forall m h. (MonadAsync m, PrimMonad m, MonadThrow m, MonadST m)
   => HasBlockIO m h
   -> BatchSize
   -> ResolveSerialisedValue
@@ -275,7 +249,7 @@ lookupsInBatches ::
   -> V.Vector SerialisedKey
   -> m (V.Vector (Maybe (Entry SerialisedValue (BlobRef (Run (Handle h))))))
 lookupsInBatches !hbio !n !resolveV !rs !blooms !indexes !kopsFiles !ks = assert precondition $ do
-    (rkixs, ioops) <- prepLookups blooms indexes kopsFiles ks
+    (rkixs, ioops) <- Class.stToIO $ prepLookups blooms indexes kopsFiles ks
     ioress <- submitInBatches hbio n ioops
     intraPageLookups resolveV rs ks rkixs ioops ioress
   where
