@@ -15,10 +15,10 @@ import           Database.LSMTree.Extras.Orphans ()
 import           Database.LSMTree.Extras.Random (frequency, randomByteStringR)
 import           Database.LSMTree.Extras.UTxO
 import           Database.LSMTree.Internal.Entry
+import           Database.LSMTree.Internal.Paths (RunFsPaths (..),
+                     activeRunsDir)
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
-import           Database.LSMTree.Internal.RunFsPaths (RunFsPaths (..),
-                     activeRunsDir)
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB

@@ -12,9 +12,9 @@ import           Database.LSMTree.Extras.Generators (KeyForIndexCompact,
                      TypedWriteBuffer (..))
 import qualified Database.LSMTree.Internal.Entry as Entry
 import qualified Database.LSMTree.Internal.Merge as Merge
-import qualified Database.LSMTree.Internal.Run as Run
-import           Database.LSMTree.Internal.RunFsPaths (RunFsPaths (..),
+import           Database.LSMTree.Internal.Paths (RunFsPaths (..),
                      pathsForRunFiles)
+import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB

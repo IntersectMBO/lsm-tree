@@ -27,10 +27,10 @@ import           Database.LSMTree.Internal.Entry (Entry (Insert),
                      NumEntries (..))
 import           Database.LSMTree.Internal.IndexCompact (IndexCompact)
 import           Database.LSMTree.Internal.Lookup
+import           Database.LSMTree.Internal.Paths (RunFsPaths (RunFsPaths))
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
 import qualified Database.LSMTree.Internal.RunBuilder as RunBuilder
-import           Database.LSMTree.Internal.RunFsPaths (RunFsPaths (RunFsPaths))
 import           Database.LSMTree.Internal.Serialise (SerialisedKey,
                      serialiseKey, serialiseValue)
 import           Debug.Trace (traceMarkerIO)

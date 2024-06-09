@@ -61,6 +61,7 @@ library
     Database.LSMTree.Internal.Normal
     Database.LSMTree.Internal.PageAcc
     Database.LSMTree.Internal.PageAcc1
+    Database.LSMTree.Internal.Paths
     Database.LSMTree.Internal.Primitive
     Database.LSMTree.Internal.Range
     Database.LSMTree.Internal.RawBytes
@@ -69,7 +70,6 @@ library
     Database.LSMTree.Internal.Run
     Database.LSMTree.Internal.RunAcc
     Database.LSMTree.Internal.RunBuilder
-    Database.LSMTree.Internal.RunFsPaths
     Database.LSMTree.Internal.RunReader
     Database.LSMTree.Internal.RunReaders
     Database.LSMTree.Internal.Serialise

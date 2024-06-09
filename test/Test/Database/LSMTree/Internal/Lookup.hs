@@ -39,12 +39,12 @@ import           Database.LSMTree.Internal.BlobRef (BlobSpan)
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.IndexCompact as Index
 import           Database.LSMTree.Internal.Lookup
+import           Database.LSMTree.Internal.Paths (RunFsPaths (..))
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.RawOverflowPage
 import           Database.LSMTree.Internal.RawPage
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunAcc as Run
-import           Database.LSMTree.Internal.RunFsPaths (RunFsPaths (..))
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.Serialise.Class
 import qualified Database.LSMTree.Internal.WriteBuffer as WB

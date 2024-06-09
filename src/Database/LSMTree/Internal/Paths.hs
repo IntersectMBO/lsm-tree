@@ -1,4 +1,4 @@
-module Database.LSMTree.Internal.RunFsPaths (
+module Database.LSMTree.Internal.Paths (
     RunFsPaths (..)
   , pathsForRunFiles
   , runKOpsPath

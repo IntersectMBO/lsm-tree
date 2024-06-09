@@ -17,10 +17,10 @@ import qualified Database.LSMTree.Extras.Random as R
 import           Database.LSMTree.Extras.UTxO
 import           Database.LSMTree.Internal.Entry
 import qualified Database.LSMTree.Internal.Merge as Merge
+import           Database.LSMTree.Internal.Paths (RunFsPaths (..),
+                     pathsForRunFiles, runChecksumsPath)
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
-import           Database.LSMTree.Internal.RunFsPaths (RunFsPaths (..),
-                     pathsForRunFiles, runChecksumsPath)
 import           Database.LSMTree.Internal.Serialise
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import           Prelude hiding (getContents)
