@@ -16,7 +16,7 @@ import           Database.LSMTree.Extras.Random (frequency, randomByteStringR)
 import           Database.LSMTree.Extras.UTxO
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..),
-                     activeRunsDir)
+                     SessionRoot (..), activeDir)
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.Serialise
@@ -147,11 +147,11 @@ benchWriteBuffer conf@Config{name} =
 
     -- We'll remove the files on every run, so we can re-use the same run number.
     getPaths :: IO RunFsPaths
-    getPaths = pure (RunFsPaths 0)
+    getPaths = pure (RunFsPaths (FS.mkFsPath []) 0)
 
     -- Simply remove the whole active directory.
     cleanupPaths :: FS.HasFS IO FS.HandleIO -> IO ()
-    cleanupPaths hasFS = FS.removeDirectoryRecursive hasFS activeRunsDir
+    cleanupPaths hasFS = FS.removeDirectoryRecursive hasFS (activeDir (SessionRoot (FS.mkFsPath [])))
 
 insert :: InputKOps -> WriteBuffer
 insert (NormalInputs kops) =

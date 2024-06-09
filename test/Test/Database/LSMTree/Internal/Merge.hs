@@ -96,7 +96,7 @@ prop_MergeDistributes fs level stepSize (fmap unTypedWriteBuffer -> wbs) = do
       .&&. counterexample ("step counting")
            (stepsDone === stepsNeeded)
   where
-    flush n = Run.fromWriteBuffer fs (RunFsPaths n)
+    flush n = Run.fromWriteBuffer fs (RunFsPaths (FS.mkFsPath []) n)
 
     stats = tabulate "value size" (map (showPowersOf10 . sizeofValue) vals)
           . label (if any isLargeKOp kops then "has large k/op" else "no large k/op")
@@ -113,7 +113,7 @@ prop_CloseMerge ::
      [TypedWriteBuffer KeyForIndexCompact SerialisedValue SerialisedBlob] ->
      IO Property
 prop_CloseMerge fs level (Positive stepSize) (fmap unTypedWriteBuffer -> wbs) = do
-    let path0 = RunFsPaths 0
+    let path0 = RunFsPaths (FS.mkFsPath []) 0
     runs <- sequenceA $ zipWith flush [10..] wbs
     mergeToClose <- makeInProgressMerge path0 runs
     traverse_ (Merge.close fs) mergeToClose
@@ -127,7 +127,7 @@ prop_CloseMerge fs level (Positive stepSize) (fmap unTypedWriteBuffer -> wbs) = 
       counterexample ("run files exist: " <> show filesExist) $
         isJust mergeToClose ==> all not filesExist
   where
-    flush n = Run.fromWriteBuffer fs (RunFsPaths n)
+    flush n = Run.fromWriteBuffer fs (RunFsPaths (FS.mkFsPath []) n)
 
     makeInProgressMerge path runs =
       Merge.new fs level mappendValues path runs >>= \case
@@ -155,8 +155,8 @@ mergeRuns ::
      StepSize ->
      IO (Int, Run.Run (FS.Handle h))
 mergeRuns fs level runNumber runs (Positive stepSize) = do
-    Merge.new fs level mappendValues (RunFsPaths runNumber) runs >>= \case
-      Nothing -> (,) 0 <$> Run.fromWriteBuffer fs (RunFsPaths runNumber) WB.empty
+    Merge.new fs level mappendValues (RunFsPaths (FS.mkFsPath []) runNumber) runs >>= \case
+      Nothing -> (,) 0 <$> Run.fromWriteBuffer fs (RunFsPaths (FS.mkFsPath []) runNumber) WB.empty
       Just m  -> go 0 m
   where
     go !steps m =

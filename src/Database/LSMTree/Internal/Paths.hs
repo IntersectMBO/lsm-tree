@@ -15,7 +15,6 @@ module Database.LSMTree.Internal.Paths (
   , runFilterPath
   , runIndexPath
   , runChecksumsPath
-  , activeRunsDir
     -- * Checksums
   , checksumFileNamesForRunFiles
   , toChecksumsFile
@@ -25,7 +24,7 @@ module Database.LSMTree.Internal.Paths (
   ) where
 
 import           Control.Applicative (Applicative (..))
-import           Control.DeepSeq (NFData)
+import           Control.DeepSeq (NFData (..))
 import qualified Data.ByteString.Char8 as BS
 import           Data.Foldable (toList)
 import qualified Data.Map as Map
@@ -99,20 +98,26 @@ mkSnapshotName s
 
 -- | The (relative) file path locations of all the files used by the run:
 --
--- Within the session root directory, the following files exist for active runs:
+-- The following files exist for a run:
 --
--- 1. @active/${n}.keyops@: the sorted run of key\/operation pairs
--- 2. @active/${n}.blobs@:  the blob values associated with the key\/operations
--- 3. @active/${n}.filter@: a Bloom filter of all the keys in the run
--- 4. @active/${n}.index@:  an index from keys to disk page numbers
--- 5. @active/${n}.checksums@: a file listing the crc32c checksums of the other
+-- 1. @${n}.keyops@: the sorted run of key\/operation pairs
+-- 2. @${n}.blobs@:  the blob values associated with the key\/operations
+-- 3. @${n}.filter@: a Bloom filter of all the keys in the run
+-- 4. @${n}.index@:  an index from keys to disk page numbers
+-- 5. @${n}.checksums@: a file listing the crc32c checksums of the other
 --    files
 --
 -- The representation doesn't store the full, name, just the number @n@. Use
 -- the accessor functions to get the actual names.
 --
-newtype RunFsPaths = RunFsPaths { runNumber :: Int }
-  deriving (Show, NFData)
+data RunFsPaths = RunFsPaths {
+    -- | The directory that run files live in.
+    runDir    :: !FsPath
+  , runNumber :: !Int }
+  deriving Show
+
+instance NFData RunFsPaths where
+  rnf (RunFsPaths x y) = rnf x `seq` rnf y
 
 -- | Paths to all files associated with this run, except 'runChecksumsPath'.
 pathsForRunFiles :: RunFsPaths -> ForRunFiles FsPath
@@ -134,11 +139,8 @@ runChecksumsPath :: RunFsPaths -> FsPath
 runChecksumsPath = flip runFilePathWithExt "checksums"
 
 runFilePathWithExt :: RunFsPaths -> String -> FsPath
-runFilePathWithExt (RunFsPaths n) ext =
-    mkFsPath ["active", show n <> "." <> ext]
-
-activeRunsDir :: FsPath
-activeRunsDir = mkFsPath ["active"]
+runFilePathWithExt (RunFsPaths dir n) ext =
+    dir </> mkFsPath [show n] <.> ext
 
 runFileExts :: ForRunFiles String
 runFileExts = ForRunFiles {

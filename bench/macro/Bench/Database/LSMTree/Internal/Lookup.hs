@@ -341,7 +341,7 @@ lookupsEnv runSizes keyRng0 = do
     -- create the runs
     rbs <- sequence
             [ RunBuilder.new hfs
-                (RunFsPaths i)
+                (RunFsPaths (FS.mkFsPath []) i)
                 (NumEntries numEntries)
                 ((ceiling :: Double -> Int) $
                   fromIntegral numEntries / fst benchmarkEntriesPerPageBounds)

@@ -67,6 +67,8 @@ data RunBuilder fhandle = RunBuilder {
 
 -- | Create an 'RunBuilder' to start building a run.
 -- The result will have an initial reference count of 1.
+--
+-- NOTE: 'new' assumes that 'runDir' that the run is created in exists.
 new ::
      HasFS IO h
   -> RunFsPaths
@@ -78,7 +80,6 @@ new fs runBuilderFsPaths numEntries estimatedNumPages = do
     runBuilderAcc <- ST.stToIO $ RunAcc.new numEntries estimatedNumPages Nothing
     runBuilderBlobOffset <- newIORef 0
 
-    FS.createDirectoryIfMissing fs False activeRunsDir
     runBuilderHandles <- traverse (makeHandle fs) (pathsForRunFiles runBuilderFsPaths)
 
     let builder = RunBuilder {..}

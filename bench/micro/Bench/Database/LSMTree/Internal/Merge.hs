@@ -237,10 +237,10 @@ merge fs Config {..} targetPaths runs = do
           (_, Merge.MergeInProgress) -> go m
 
 outputRunPaths :: Run.RunFsPaths
-outputRunPaths = RunFsPaths 0
+outputRunPaths = RunFsPaths (FS.mkFsPath []) 0
 
 inputRunPaths :: [Run.RunFsPaths]
-inputRunPaths = RunFsPaths <$> [1..]
+inputRunPaths = RunFsPaths (FS.mkFsPath []) <$> [1..]
 
 type InputRuns = [Run (FS.Handle FS.HandleIO)]
 
