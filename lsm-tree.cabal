@@ -55,6 +55,7 @@ library
     Database.LSMTree.Internal.IndexCompact
     Database.LSMTree.Internal.IndexCompactAcc
     Database.LSMTree.Internal.Lookup
+    Database.LSMTree.Internal.Managed
     Database.LSMTree.Internal.Merge
     Database.LSMTree.Internal.Monkey
     Database.LSMTree.Internal.Monoidal
@@ -94,6 +95,7 @@ library
     , lsm-tree:bloomfilter
     , lsm-tree:fs-api-blockio
     , lsm-tree:kmerge
+    , nothunks                 ^>=0.2
     , primitive                ^>=0.9
     , strict-mvar              ^>=1.4
     , vector                   ^>=0.13

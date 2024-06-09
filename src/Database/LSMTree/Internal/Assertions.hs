@@ -4,6 +4,7 @@ module Database.LSMTree.Internal.Assertions (
     assert,
     isValidSlice,
     sameByteArray,
+    assertNoThunks,
 ) where
 
 import           Control.Exception (assert)
@@ -14,6 +15,7 @@ import           GHC.Exts (isTrue#, sameByteArray#)
 import           GHC.Exts (ByteArray#, MutableByteArray#, isTrue#,
                      sameMutableByteArray#, unsafeCoerce#)
 #endif
+import           NoThunks.Class (NoThunks, unsafeNoThunks)
 
 isValidSlice :: Int -> Int -> ByteArray -> Bool
 isValidSlice off len ba =
@@ -33,3 +35,9 @@ sameByteArray (ByteArray ba1#) (ByteArray ba2#) =
     unsafeCoerceByteArray# :: ByteArray# -> MutableByteArray# s
     unsafeCoerceByteArray# = unsafeCoerce#
 #endif
+
+assertNoThunks :: NoThunks a => a -> b -> b
+assertNoThunks x = assert p
+  where p = case unsafeNoThunks x of
+              Nothing -> True
+              Just thunkInfo -> error $ "Assertion failed: found thunk" <> show thunkInfo

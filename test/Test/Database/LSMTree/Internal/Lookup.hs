@@ -12,7 +12,13 @@
 {-# LANGUAGE TypeApplications           #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module Test.Database.LSMTree.Internal.Lookup (tests) where
+module Test.Database.LSMTree.Internal.Lookup (
+    tests
+    -- * internals
+  , InMemLookupData (..)
+  , opaqueifyBlobs
+  , SmallList (..)
+  ) where
 
 import           Control.DeepSeq
 import           Control.Exception
@@ -459,7 +465,8 @@ tabulateInMemLookupData dat run =
 data InMemLookupData k v b = InMemLookupData {
     -- | Data for constructing a run
     runData :: Map k (Entry v b)
-    -- | Lookups, with expected return values
+    -- | Keys to look up. Expected lookup results are obtained by querying
+    -- runData.
   , lookups :: [k]
   }
   deriving stock (Show, Generic)

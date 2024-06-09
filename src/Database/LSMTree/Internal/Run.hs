@@ -1,5 +1,7 @@
+{-# LANGUAGE DataKinds          #-}
 {-# LANGUAGE DeriveAnyClass     #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DerivingVia        #-}
 {-# LANGUAGE RecordWildCards    #-}
 
 -- | Functionality related to LSM-Tree runs (sequences of LSM-Tree data).
@@ -76,6 +78,7 @@ import qualified Database.LSMTree.Internal.RunBuilder as Builder
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
+import           NoThunks.Class (NoThunks, OnlyCheckWhnfNamed (..))
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
 
@@ -106,6 +109,9 @@ data Run fhandle = Run {
       -- I\/O, reading arbitrary file offset and length spans.
     , runBlobFile   :: !fhandle
     }
+
+-- TODO: provide a proper instance that checks NoThunks for each field.
+deriving via OnlyCheckWhnfNamed "Run" (Run h) instance NoThunks (Run h)
 
 instance NFData fhandle => NFData (Run fhandle) where
   rnf (Run a b c d e f g) =
