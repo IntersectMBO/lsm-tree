@@ -27,8 +27,8 @@ module Database.LSMTree.Common (
   , deleteSnapshot
   , listSnapshots
     -- ** Snapshot names
-  , SnapshotName
-  , mkSnapshotName
+  , Internal.SnapshotName
+  , Internal.mkSnapshotName
     -- * Blob references
   , BlobRef (..)
   ) where
@@ -41,11 +41,10 @@ import           Data.Kind (Type)
 import           Data.Typeable (Typeable)
 import qualified Database.LSMTree.Internal as Internal
 import qualified Database.LSMTree.Internal.BlobRef as Internal
+import qualified Database.LSMTree.Internal.Paths as Internal
 import qualified Database.LSMTree.Internal.Range as Internal
 import qualified Database.LSMTree.Internal.Run as Internal
 import           Database.LSMTree.Internal.Serialise.Class
-import qualified System.FilePath.Posix
-import qualified System.FilePath.Windows
 import           System.FS.API (FsPath, HasFS)
 import           System.FS.BlockIO.API (HasBlockIO)
 import           System.FS.IO (HandleIO)
@@ -190,53 +189,13 @@ instance SomeUpdateConstraint BS.ByteString where
 --
 -- * Deleting a snapshot that doesn't exist is an error.
 --
-deleteSnapshot :: IOLike m => Session m -> SnapshotName -> m ()
+deleteSnapshot :: IOLike m => Session m -> Internal.SnapshotName -> m ()
 deleteSnapshot = undefined
 
 -- | List snapshots by name.
 --
-listSnapshots :: IOLike m => Session m -> m [SnapshotName]
+listSnapshots :: IOLike m => Session m -> m [Internal.SnapshotName]
 listSnapshots = undefined
-
-{-------------------------------------------------------------------------------
-  Snapshot name
--------------------------------------------------------------------------------}
-
-newtype SnapshotName = MkSnapshotName FilePath
-  deriving (Eq, Ord)
-
-instance Show SnapshotName where
-  showsPrec d (MkSnapshotName p) = showsPrec d p
-
--- | Create snapshot name.
---
--- The name may consist of lowercase characters, digits, dashes @-@ and underscores @_@.
--- It must be non-empty and less than 65 characters long.
--- It may not be a special filepath name.
---
--- >>> mkSnapshotName "main"
--- Just "main"
---
--- >>> mkSnapshotName "temporary-123-test_"
--- Just "temporary-123-test_"
---
--- >>> map mkSnapshotName ["UPPER", "dir/dot.exe", "..", "\\", "com1", "", replicate 100 'a']
--- [Nothing,Nothing,Nothing,Nothing,Nothing,Nothing,Nothing]
---
-mkSnapshotName :: String -> Maybe SnapshotName
-mkSnapshotName s
-  | all isValid s
-  , len > 0
-  , len < 65
-  , System.FilePath.Posix.isValid s
-  , System.FilePath.Windows.isValid s
-  = Just (MkSnapshotName s)
-
-  | otherwise
-  = Nothing
-  where
-    len = length s
-    isValid c = ('a' <= c && c <= 'z') || ('0' <= c && c <= '9' ) || c `elem` "-_"
 
 {-------------------------------------------------------------------------------
   Blob references

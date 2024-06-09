@@ -1,5 +1,14 @@
 module Database.LSMTree.Internal.Paths (
-    RunFsPaths (..)
+    SessionRoot (..)
+  , lockFile
+  , activeDir
+  , snapshotsDir
+  , snapshot
+    -- * Snapshot name
+  , SnapshotName
+  , mkSnapshotName
+    -- * Run paths
+  , RunFsPaths (..)
   , pathsForRunFiles
   , runKOpsPath
   , runBlobPath
@@ -22,10 +31,71 @@ import           Data.Foldable (toList)
 import qualified Data.Map as Map
 import           Data.Traversable (for)
 import           Prelude hiding (Applicative (..))
-import qualified System.FS.API as FS
-import           System.FS.API (FsPath)
+import qualified System.FilePath.Posix
+import qualified System.FilePath.Windows
+import           System.FS.API
 
 import qualified Database.LSMTree.Internal.CRC32C as CRC
+
+
+
+newtype SessionRoot = SessionRoot { getSessionRoot :: FsPath }
+
+lockFile :: SessionRoot -> FsPath
+lockFile (SessionRoot dir) = dir </> mkFsPath ["lock"]
+
+activeDir :: SessionRoot -> FsPath
+activeDir (SessionRoot dir) = dir </> mkFsPath ["active"]
+
+snapshotsDir :: SessionRoot -> FsPath
+snapshotsDir (SessionRoot dir) = dir </> mkFsPath ["snapshots"]
+
+snapshot :: SessionRoot -> SnapshotName -> FsPath
+snapshot root (MkSnapshotName name) = snapshotsDir root </> mkFsPath [name]
+
+{-------------------------------------------------------------------------------
+  Snapshot name
+-------------------------------------------------------------------------------}
+
+newtype SnapshotName = MkSnapshotName FilePath
+  deriving (Eq, Ord)
+
+instance Show SnapshotName where
+  showsPrec d (MkSnapshotName p) = showsPrec d p
+
+-- | Create snapshot name.
+--
+-- The name may consist of lowercase characters, digits, dashes @-@ and underscores @_@.
+-- It must be non-empty and less than 65 characters long.
+-- It may not be a special filepath name.
+--
+-- >>> mkSnapshotName "main"
+-- Just "main"
+--
+-- >>> mkSnapshotName "temporary-123-test_"
+-- Just "temporary-123-test_"
+--
+-- >>> map mkSnapshotName ["UPPER", "dir/dot.exe", "..", "\\", "com1", "", replicate 100 'a']
+-- [Nothing,Nothing,Nothing,Nothing,Nothing,Nothing,Nothing]
+--
+mkSnapshotName :: String -> Maybe SnapshotName
+mkSnapshotName s
+  | all isValid s
+  , len > 0
+  , len < 65
+  , System.FilePath.Posix.isValid s
+  , System.FilePath.Windows.isValid s
+  = Just (MkSnapshotName s)
+
+  | otherwise
+  = Nothing
+  where
+    len = length s
+    isValid c = ('a' <= c && c <= 'z') || ('0' <= c && c <= '9' ) || c `elem` "-_"
+
+{-------------------------------------------------------------------------------
+  Run paths
+-------------------------------------------------------------------------------}
 
 -- | The (relative) file path locations of all the files used by the run:
 --
@@ -65,10 +135,10 @@ runChecksumsPath = flip runFilePathWithExt "checksums"
 
 runFilePathWithExt :: RunFsPaths -> String -> FsPath
 runFilePathWithExt (RunFsPaths n) ext =
-    FS.mkFsPath ["active", show n <> "." <> ext]
+    mkFsPath ["active", show n <> "." <> ext]
 
 activeRunsDir :: FsPath
-activeRunsDir = FS.mkFsPath ["active"]
+activeRunsDir = mkFsPath ["active"]
 
 runFileExts :: ForRunFiles String
 runFileExts = ForRunFiles {
