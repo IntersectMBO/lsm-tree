@@ -48,6 +48,7 @@ import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import qualified FormatPage as Proto
 
 import           Test.Database.LSMTree.Internal.IndexCompact ()
+import           Test.Util.FS (withTempIOHasFS)
 
 tests :: TestTree
 tests = testGroup "Database.LSMTree.Internal.Run"
@@ -89,10 +90,7 @@ tests = testGroup "Database.LSMTree.Internal.Run"
             .&&. counterexample "open handles"
                    (FsSim.numOpenHandles mockFS === 0)
 
-    ioPropertyWithRealFS prop =
-        ioProperty $ withSessionDir $ \sessionRoot -> do
-          let mountPoint = FS.MountPoint sessionRoot
-          prop (FsIO.ioHasFS mountPoint)
+    ioPropertyWithRealFS prop = ioProperty $ withTempIOHasFS "session-run" prop
 
     mkKey = SerialisedKey . RB.fromByteString
     mkVal = SerialisedValue . RB.fromByteString

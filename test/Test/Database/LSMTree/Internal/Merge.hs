@@ -20,12 +20,11 @@ import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import qualified System.FS.API as FS
 import qualified System.FS.API.Lazy as FS
-import qualified System.FS.IO as FsIO
-import qualified System.IO.Temp as Temp
 import           Test.Database.LSMTree.Internal.Run (isLargeKOp, readKOps)
 import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
+import           Test.Util.FS (withTempIOHasFS)
 
 tests :: TestTree
 tests = testGroup "Test.Database.LSMTree.Internal.Merge"
@@ -37,15 +36,10 @@ tests = testGroup "Test.Database.LSMTree.Internal.Merge"
           prop_CloseMerge fs level stepSize wbs
     ]
   where
-    withSessionDir = Temp.withSystemTempDirectory "session-merge"
-
     -- TODO: run using mock file system once simulation is merged:
     -- https://github.com/input-output-hk/fs-sim/pull/48
     -- (also check all handles closed, see Test.Database.LSMTree.Internal.Run)
-    ioPropertyWithRealFS prop =
-        ioProperty $ withSessionDir $ \sessionRoot -> do
-          let mountPoint = FS.MountPoint sessionRoot
-          prop (FsIO.ioHasFS mountPoint)
+    ioPropertyWithRealFS prop = ioProperty $ withTempIOHasFS "session-merge" prop
 
 -- | Creating multiple runs from write buffers and merging them leads to the
 -- same run as merging the write buffers and creating a run.

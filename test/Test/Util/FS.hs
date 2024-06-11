@@ -3,7 +3,7 @@ module Test.Util.FS (
   , withTempIOHasBlockIO
   ) where
 
-import           System.FS.API (HasFS, MountPoint (..))
+import           System.FS.API
 import           System.FS.BlockIO.API
 import           System.FS.BlockIO.IO
 import           System.FS.IO
@@ -15,7 +15,6 @@ withTempIOHasFS path action = withSystemTempDirectory path $ \dir -> do
     action hfs
 
 withTempIOHasBlockIO :: FilePath -> (HasFS IO HandleIO -> HasBlockIO IO HandleIO -> IO a) -> IO a
-withTempIOHasBlockIO path action = withSystemTempDirectory path $ \dir -> do
-    let hfs = ioHasFS (MountPoint dir)
-    hbio <- ioHasBlockIO hfs defaultIOCtxParams
-    action hfs hbio
+withTempIOHasBlockIO path action =
+    withTempIOHasFS path $ \hfs -> do
+      withIOHasBlockIO hfs defaultIOCtxParams (action hfs)

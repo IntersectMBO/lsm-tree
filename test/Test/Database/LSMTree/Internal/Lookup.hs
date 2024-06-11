@@ -50,18 +50,16 @@ import           Database.LSMTree.Internal.Serialise.Class
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import           GHC.Generics
 import qualified System.FS.API as FS
-import           System.FS.API (Handle (..), MountPoint (..), mkFsPath)
+import           System.FS.API (Handle (..), mkFsPath)
 import qualified System.FS.BlockIO.API as FS
 import           System.FS.BlockIO.API
-import qualified System.FS.BlockIO.IO as FS
-import qualified System.FS.IO as FS
-import           System.IO.Temp (withSystemTempDirectory)
 import           Test.Database.LSMTree.Generators (deepseqInvariant,
                      prop_arbitraryAndShrinkPreserveInvariant,
                      prop_forAllArbitraryAndShrinkPreserveInvariant)
 import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
+import           Test.Util.FS (withTempIOHasBlockIO)
 import           Test.Util.QuickCheck as Util.QC
 
 tests :: TestTree
@@ -281,9 +279,7 @@ prop_roundtripFromWriteBufferLookupIO ::
      SmallList (InMemLookupData SerialisedKey SerialisedValue SerialisedBlob)
   -> Property
 prop_roundtripFromWriteBufferLookupIO dats =
-    ioProperty $ withSystemTempDirectory "prop" $ \dir -> do
-    let hasFS = FS.ioHasFS (MountPoint dir)
-    hasBlockIO <- FS.ioHasBlockIO hasFS FS.defaultIOCtxParams
+    ioProperty $ withTempIOHasBlockIO "prop_roundtripFromWriteBufferLookupIO" $ \hasFS hasBlockIO -> do
     (runs, wbs) <- mkRuns hasFS
     let wbAll = WB.WB (Map.unionsWith (combine resolveV) (fmap WB.unWB wbs))
     real <- lookupsInBatches
