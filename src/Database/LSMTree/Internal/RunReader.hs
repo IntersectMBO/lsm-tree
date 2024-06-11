@@ -28,13 +28,13 @@ import           Database.LSMTree.Internal.BitMath (ceilDivPageSize,
                      roundUpToPageSize)
 import           Database.LSMTree.Internal.BlobRef (BlobRef (..))
 import qualified Database.LSMTree.Internal.Entry as E
+import           Database.LSMTree.Internal.Paths
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.RawOverflowPage (RawOverflowPage,
                      pinnedByteArrayToOverflowPages, rawOverflowPageRawBytes)
 import           Database.LSMTree.Internal.RawPage
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
-import           Database.LSMTree.Internal.RunFsPaths
 import           Database.LSMTree.Internal.Serialise
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)

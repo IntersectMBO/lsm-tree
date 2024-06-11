@@ -33,9 +33,9 @@ import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..))
 import           Database.LSMTree.Internal.Lookup (BatchSize (..),
                      bloomQueriesDefault, indexSearches, intraPageLookups,
                      lookupsInBatches, prepLookups, submitInBatches)
+import           Database.LSMTree.Internal.Paths (RunFsPaths (..))
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
-import           Database.LSMTree.Internal.RunFsPaths (RunFsPaths (..))
 import           Database.LSMTree.Internal.Serialise
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import           Prelude hiding (getContents)
@@ -160,7 +160,7 @@ lookupsInBatchesEnv Config {..} = do
     let hasFS = FS.ioHasFS (FS.MountPoint benchTmpDir)
     hasBlockIO <- FS.ioHasBlockIO hasFS (fromMaybe FS.defaultIOCtxParams ioctxps)
     let wb = WB.WB storedKeys
-        fsps = RunFsPaths 0
+        fsps = RunFsPaths (FS.mkFsPath []) 0
     r <- Run.fromWriteBuffer hasFS fsps wb
     let nentriesReal = unNumEntries $ Run.runNumEntries r
     assert (nentriesReal == nentries) $ pure ()

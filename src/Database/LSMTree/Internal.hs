@@ -20,6 +20,7 @@ module Database.LSMTree.Internal (
   , TableHandleState (..)
   , TableHandleEnv (..)
     -- ** Implementation of public API
+  , withTable
   , new
   , close
   , lookups
@@ -51,6 +52,8 @@ import           Database.LSMTree.Internal.IndexCompact (IndexCompact)
 import           Database.LSMTree.Internal.Lookup (BatchSize (..),
                      lookupsInBatches)
 import qualified Database.LSMTree.Internal.Normal as Normal
+import           Database.LSMTree.Internal.Paths (SessionRoot)
+import qualified Database.LSMTree.Internal.Paths as Paths
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.Serialise (SerialisedKey,
@@ -112,7 +115,7 @@ data SessionState m h =
 data SessionEnv m h = SessionEnv {
     -- | The path to the directory in which this sesion is live. This is a path
     -- relative to root of the 'HasFS' instance.
-    sessionRoot        :: !FsPath
+    sessionRoot        :: !SessionRoot
   , sessionHasFS       :: !(HasFS m h)
   , sessionHasBlockIO  :: !(HasBlockIO m h)
     -- TODO: add file locking to HasFS, because this one only works in IO.
@@ -172,10 +175,7 @@ withSession ::
   -> FsPath
   -> (Session m h -> m a)
   -> m a
-withSession hfs hbio dir =
-    bracket
-      (openSession hfs hbio dir)
-      closeSession
+withSession hfs hbio dir = bracket (openSession hfs hbio dir) closeSession
 
 {-# SPECIALISE openSession :: HasFS IO h -> HasBlockIO IO h -> FsPath -> IO (Session IO h) #-}
 -- | See 'Database.LSMTree.Common.openSession'.
@@ -210,9 +210,10 @@ openSession hfs hbio dir = do
             if Set.null dirContents then newSession sessionFileLock
                                     else restoreSession sessionFileLock
   where
-    lockFilePath     = dir FS.</> FS.mkFsPath ["lock"]
-    activeDirPath    = dir FS.</> FS.mkFsPath ["active"]
-    snapshotsDirPath = dir FS.</> FS.mkFsPath ["snapshots"]
+    root             = Paths.SessionRoot dir
+    lockFilePath     = Paths.lockFile root
+    activeDirPath    = Paths.activeDir root
+    snapshotsDirPath = Paths.snapshotsDir root
 
     acquireLock path = fromRight Nothing <$>
         try @m @SomeException
@@ -225,7 +226,7 @@ openSession hfs hbio dir = do
         counterVar <- newUniqCounter
         openTablesVar <- newMVar Map.empty
         sessionVar <- RW.new $ SessionOpen $ SessionEnv {
-            sessionRoot = dir
+            sessionRoot = root
           , sessionHasFS = hfs
           , sessionHasBlockIO = hbio
           , sessionLockFile = lockFile
@@ -330,7 +331,7 @@ data TableHandleState m h =
 
 data TableHandleEnv m h = TableHandleEnv {
     -- === Session
-    tableSessionRoot         :: !FsPath
+    tableSessionRoot         :: !SessionRoot
   , tableHasFS               :: !(HasFS m h)
   , tableHasBlockIO          :: !(HasBlockIO m h)
     -- | Open tables are tracked in the corresponding session, so when a table
@@ -402,6 +403,16 @@ mkLevelsCache lvls = LevelsCache_ {
 --
 -- Implementation of public API
 --
+
+{-# SPECIALISE withTable :: Session IO h -> TableConfig -> (TableHandle IO h -> IO a) -> IO a #-}
+-- | See 'Database.LSMTree.Normal.withTable'.
+withTable ::
+     m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+  => Session m h
+  -> TableConfig
+  -> (TableHandle m h -> m a)
+  -> m a
+withTable sesh conf = bracket (new sesh conf) close
 
 {-# SPECIALISE new :: Session IO h -> TableConfig -> IO (TableHandle IO h) #-}
 -- | See 'Database.LSMTree.Normal.new'.

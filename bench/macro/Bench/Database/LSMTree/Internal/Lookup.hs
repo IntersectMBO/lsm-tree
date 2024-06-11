@@ -27,10 +27,10 @@ import           Database.LSMTree.Internal.Entry (Entry (Insert),
                      NumEntries (..))
 import           Database.LSMTree.Internal.IndexCompact (IndexCompact)
 import           Database.LSMTree.Internal.Lookup
+import           Database.LSMTree.Internal.Paths (RunFsPaths (RunFsPaths))
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
 import qualified Database.LSMTree.Internal.RunBuilder as RunBuilder
-import           Database.LSMTree.Internal.RunFsPaths (RunFsPaths (RunFsPaths))
 import           Database.LSMTree.Internal.Serialise (SerialisedKey,
                      serialiseKey, serialiseValue)
 import           Debug.Trace (traceMarkerIO)
@@ -341,7 +341,7 @@ lookupsEnv runSizes keyRng0 = do
     -- create the runs
     rbs <- sequence
             [ RunBuilder.new hfs
-                (RunFsPaths i)
+                (RunFsPaths (FS.mkFsPath []) i)
                 (NumEntries numEntries)
                 ((ceiling :: Double -> Int) $
                   fromIntegral numEntries / fst benchmarkEntriesPerPageBounds)

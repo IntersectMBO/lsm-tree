@@ -37,10 +37,10 @@ import           Database.LSMTree.Internal.BlobRef (BlobRef (..), BlobSpan (..))
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry
 import qualified Database.LSMTree.Internal.Normal as N
+import           Database.LSMTree.Internal.Paths (RunFsPaths (..))
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.RawPage
 import           Database.LSMTree.Internal.Run
-import           Database.LSMTree.Internal.RunFsPaths (RunFsPaths (..))
 import qualified Database.LSMTree.Internal.RunReader as Reader
 import           Database.LSMTree.Internal.Serialise
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
@@ -104,9 +104,9 @@ testSingleInsert sessionRoot key val mblob = do
     let fs = FsIO.ioHasFS (FS.MountPoint sessionRoot)
     -- flush write buffer
     let wb = WB.addEntryNormal key (N.Insert val mblob) WB.empty
-    run <- fromWriteBuffer fs (RunFsPaths 42) wb
+    run <- fromWriteBuffer fs (RunFsPaths (FS.mkFsPath []) 42) wb
     -- check all files have been written
-    let activeDir = sessionRoot </> "active"
+    let activeDir = sessionRoot
     bsKOps <- BS.readFile (activeDir </> "42.keyops")
     bsBlobs <- BS.readFile (activeDir </> "42.blobs")
     bsFilter <- BS.readFile (activeDir </> "42.filter")
@@ -116,7 +116,7 @@ testSingleInsert sessionRoot key val mblob = do
     not (BS.null bsFilter) @? "filter file is empty"
     not (BS.null bsIndex) @? "index file is empty"
     -- checksums
-    checksums <- CRC.readChecksumsFile fs (FS.mkFsPath ["active", "42.checksums"])
+    checksums <- CRC.readChecksumsFile fs (FS.mkFsPath ["42.checksums"])
     Map.lookup (CRC.ChecksumsFileName "keyops") checksums
       @=? Just (CRC.updateCRC32C bsKOps CRC.initialCRC32C)
     Map.lookup (CRC.ChecksumsFileName "blobs") checksums
@@ -200,7 +200,7 @@ prop_WriteAndRead fs (TypedWriteBuffer wb) = do
              (WB.numEntries wb === runNumEntries run)
       .&&. kops === rhs
   where
-    flush n = fromWriteBuffer fs (RunFsPaths n)
+    flush n = fromWriteBuffer fs (RunFsPaths (FS.mkFsPath []) n)
 
     stats = tabulate "value size" (map (showPowersOf10 . sizeofValue) vals)
           . label (if any isLargeKOp kops then "has large k/op" else "no large k/op")
@@ -217,7 +217,7 @@ prop_WriteAndOpen ::
   -> IO ()
 prop_WriteAndOpen fs (TypedWriteBuffer wb) = do
     -- flush write buffer
-    let fsPaths = RunFsPaths 1337
+    let fsPaths = RunFsPaths (FS.mkFsPath []) 1337
     written <- fromWriteBuffer fs fsPaths wb
     loaded <- openFromDisk fs fsPaths
 

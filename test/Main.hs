@@ -16,6 +16,7 @@ import qualified Test.Database.LSMTree.Internal.RawOverflowPage
 import qualified Test.Database.LSMTree.Internal.RawPage
 import qualified Test.Database.LSMTree.Internal.Run
 import qualified Test.Database.LSMTree.Internal.RunAcc
+import qualified Test.Database.LSMTree.Internal.RunBuilder
 import qualified Test.Database.LSMTree.Internal.Serialise
 import qualified Test.Database.LSMTree.Internal.Serialise.Class
 import qualified Test.Database.LSMTree.Model.Monoidal
@@ -41,6 +42,7 @@ main = defaultMain $ testGroup "lsm-tree"
     , Test.Database.LSMTree.Internal.RawOverflowPage.tests
     , Test.Database.LSMTree.Internal.Run.tests
     , Test.Database.LSMTree.Internal.RunAcc.tests
+    , Test.Database.LSMTree.Internal.RunBuilder.tests
     , Test.Database.LSMTree.Internal.IndexCompact.tests
     , Test.Database.LSMTree.Internal.Serialise.tests
     , Test.Database.LSMTree.Internal.Serialise.Class.tests

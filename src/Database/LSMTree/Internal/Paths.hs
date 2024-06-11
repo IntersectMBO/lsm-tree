@@ -1,12 +1,21 @@
-module Database.LSMTree.Internal.RunFsPaths (
-    RunFsPaths (..)
+module Database.LSMTree.Internal.Paths (
+    SessionRoot (..)
+  , lockFile
+  , activeDir
+  , runPath
+  , snapshotsDir
+  , snapshot
+    -- * Snapshot name
+  , SnapshotName
+  , mkSnapshotName
+    -- * Run paths
+  , RunFsPaths (..)
   , pathsForRunFiles
   , runKOpsPath
   , runBlobPath
   , runFilterPath
   , runIndexPath
   , runChecksumsPath
-  , activeRunsDir
     -- * Checksums
   , checksumFileNamesForRunFiles
   , toChecksumsFile
@@ -16,33 +25,103 @@ module Database.LSMTree.Internal.RunFsPaths (
   ) where
 
 import           Control.Applicative (Applicative (..))
-import           Control.DeepSeq (NFData)
+import           Control.DeepSeq (NFData (..))
 import qualified Data.ByteString.Char8 as BS
 import           Data.Foldable (toList)
 import qualified Data.Map as Map
 import           Data.Traversable (for)
 import           Prelude hiding (Applicative (..))
-import qualified System.FS.API as FS
-import           System.FS.API (FsPath)
+import qualified System.FilePath.Posix
+import qualified System.FilePath.Windows
+import           System.FS.API
 
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 
+
+
+newtype SessionRoot = SessionRoot { getSessionRoot :: FsPath }
+
+lockFile :: SessionRoot -> FsPath
+lockFile (SessionRoot dir) = dir </> mkFsPath ["lock"]
+
+activeDir :: SessionRoot -> FsPath
+activeDir (SessionRoot dir) = dir </> mkFsPath ["active"]
+
+runPath :: SessionRoot -> Int -> RunFsPaths
+runPath root = RunFsPaths (activeDir root)
+
+snapshotsDir :: SessionRoot -> FsPath
+snapshotsDir (SessionRoot dir) = dir </> mkFsPath ["snapshots"]
+
+snapshot :: SessionRoot -> SnapshotName -> FsPath
+snapshot root (MkSnapshotName name) = snapshotsDir root </> mkFsPath [name]
+
+{-------------------------------------------------------------------------------
+  Snapshot name
+-------------------------------------------------------------------------------}
+
+newtype SnapshotName = MkSnapshotName FilePath
+  deriving (Eq, Ord)
+
+instance Show SnapshotName where
+  showsPrec d (MkSnapshotName p) = showsPrec d p
+
+-- | Create snapshot name.
+--
+-- The name may consist of lowercase characters, digits, dashes @-@ and underscores @_@.
+-- It must be non-empty and less than 65 characters long.
+-- It may not be a special filepath name.
+--
+-- >>> mkSnapshotName "main"
+-- Just "main"
+--
+-- >>> mkSnapshotName "temporary-123-test_"
+-- Just "temporary-123-test_"
+--
+-- >>> map mkSnapshotName ["UPPER", "dir/dot.exe", "..", "\\", "com1", "", replicate 100 'a']
+-- [Nothing,Nothing,Nothing,Nothing,Nothing,Nothing,Nothing]
+--
+mkSnapshotName :: String -> Maybe SnapshotName
+mkSnapshotName s
+  | all isValid s
+  , len > 0
+  , len < 65
+  , System.FilePath.Posix.isValid s
+  , System.FilePath.Windows.isValid s
+  = Just (MkSnapshotName s)
+
+  | otherwise
+  = Nothing
+  where
+    len = length s
+    isValid c = ('a' <= c && c <= 'z') || ('0' <= c && c <= '9' ) || c `elem` "-_"
+
+{-------------------------------------------------------------------------------
+  Run paths
+-------------------------------------------------------------------------------}
+
 -- | The (relative) file path locations of all the files used by the run:
 --
--- Within the session root directory, the following files exist for active runs:
+-- The following files exist for a run:
 --
--- 1. @active/${n}.keyops@: the sorted run of key\/operation pairs
--- 2. @active/${n}.blobs@:  the blob values associated with the key\/operations
--- 3. @active/${n}.filter@: a Bloom filter of all the keys in the run
--- 4. @active/${n}.index@:  an index from keys to disk page numbers
--- 5. @active/${n}.checksums@: a file listing the crc32c checksums of the other
+-- 1. @${n}.keyops@: the sorted run of key\/operation pairs
+-- 2. @${n}.blobs@:  the blob values associated with the key\/operations
+-- 3. @${n}.filter@: a Bloom filter of all the keys in the run
+-- 4. @${n}.index@:  an index from keys to disk page numbers
+-- 5. @${n}.checksums@: a file listing the crc32c checksums of the other
 --    files
 --
 -- The representation doesn't store the full, name, just the number @n@. Use
 -- the accessor functions to get the actual names.
 --
-newtype RunFsPaths = RunFsPaths { runNumber :: Int }
-  deriving (Show, NFData)
+data RunFsPaths = RunFsPaths {
+    -- | The directory that run files live in.
+    runDir    :: !FsPath
+  , runNumber :: !Int }
+  deriving Show
+
+instance NFData RunFsPaths where
+  rnf (RunFsPaths x y) = rnf x `seq` rnf y
 
 -- | Paths to all files associated with this run, except 'runChecksumsPath'.
 pathsForRunFiles :: RunFsPaths -> ForRunFiles FsPath
@@ -64,11 +143,8 @@ runChecksumsPath :: RunFsPaths -> FsPath
 runChecksumsPath = flip runFilePathWithExt "checksums"
 
 runFilePathWithExt :: RunFsPaths -> String -> FsPath
-runFilePathWithExt (RunFsPaths n) ext =
-    FS.mkFsPath ["active", show n <> "." <> ext]
-
-activeRunsDir :: FsPath
-activeRunsDir = FS.mkFsPath ["active"]
+runFilePathWithExt (RunFsPaths dir n) ext =
+    dir </> mkFsPath [show n] <.> ext
 
 runFileExts :: ForRunFiles String
 runFileExts = ForRunFiles {

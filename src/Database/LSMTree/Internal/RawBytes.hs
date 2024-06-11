@@ -14,7 +14,7 @@
 --
 -- @
 --   import Database.LSMTree.Internal.RawBytes (RawBytes (..))
---   import qualified Database.LSMTree.RawBytes as RB
+--   import qualified Database.LSMTree.Internal.RawBytes as RB
 -- @
 module Database.LSMTree.Internal.RawBytes (
     -- See Note: [Export structure]

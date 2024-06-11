@@ -32,6 +32,7 @@ module Database.LSMTree.Normal (
 
     -- * Table sessions
     Session
+  , withSession
   , openSession
   , closeSession
 
@@ -41,6 +42,7 @@ module Database.LSMTree.Normal (
   , Internal.MergePolicy (..)
   , Internal.SizeRatio (..)
   , Internal.BloomFilterAlloc (..)
+  , withTable
   , new
   , close
     -- ** Resource management #resource#
@@ -90,7 +92,8 @@ import           Data.Typeable (Typeable)
 import qualified Data.Vector as V
 import           Database.LSMTree.Common (BlobRef (BlobRef), IOLike, Range (..),
                      SerialiseKey, SerialiseValue, Session (..), SnapshotName,
-                     closeSession, deleteSnapshot, listSnapshots, openSession)
+                     closeSession, deleteSnapshot, listSnapshots, openSession,
+                     withSession)
 import qualified Database.LSMTree.Internal as Internal
 import           Database.LSMTree.Internal.Normal
 import qualified Database.LSMTree.Internal.Serialise as Internal
@@ -173,6 +176,19 @@ import qualified Database.LSMTree.Internal.Vector as V
 type TableHandle :: (Type -> Type) -> Type -> Type -> Type -> Type
 data TableHandle m k v blob = forall h. Typeable h =>
     TableHandle !(Internal.TableHandle m h)
+
+{-# SPECIALISE withTable :: Session IO -> Internal.TableConfig -> (TableHandle IO k v blob -> IO a) -> IO a #-}
+-- | (Asynchronous) exception-safe, bracketed opening and closing of a table.
+--
+-- If possible, it is recommended to use this function instead of 'new' and
+-- 'close'.
+withTable ::
+     IOLike m
+  => Session m
+  -> Internal.TableConfig
+  -> (TableHandle m k v blob -> m a)
+  -> m a
+withTable (Session sesh) conf action = Internal.withTable sesh conf (action . TableHandle)
 
 {-# SPECIALISE new :: Session IO -> Internal.TableConfig -> IO (TableHandle IO k v blob) #-}
 -- | Create a new empty table, returning a fresh table handle.
