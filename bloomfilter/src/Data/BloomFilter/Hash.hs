@@ -1,3 +1,5 @@
+{-# LANGUAGE MagicHash     #-}
+{-# LANGUAGE UnboxedTuples #-}
 -- |
 --
 -- Fast hashing of Haskell values.
@@ -30,7 +32,9 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
 import           Data.Char (ord)
 import qualified Data.Primitive.ByteArray as P
+import           Data.Primitive.Types (Prim (..))
 import           Data.Word (Word32, Word64)
+import           GHC.Exts (Int#, uncheckedIShiftL#, (+#))
 import qualified XXH3
 
 -- | A hash value is 64 bits wide.
@@ -172,6 +176,38 @@ instance Hashes CheapHashes where
     {-# INLINE makeHashes #-}
     evalHashes = evalCheapHashes
     {-# INLINE evalHashes #-}
+
+instance Prim (CheapHashes a) where
+    sizeOfType# _ = 16#
+    alignmentOfType# _ = 8#
+
+    indexByteArray# ba i = CheapHashes
+        (indexByteArray# ba (indexLo i))
+        (indexByteArray# ba (indexHi i))
+    readByteArray# ba i s1 =
+        case readByteArray# ba (indexLo i) s1 of { (# s2, lo #) ->
+        case readByteArray# ba (indexHi i) s2 of { (# s3, hi #) ->
+        (# s3, CheapHashes lo hi #)
+        }}
+    writeByteArray# ba i (CheapHashes lo hi) s =
+        writeByteArray# ba (indexHi i) hi (writeByteArray# ba (indexLo i) lo s)
+
+    indexOffAddr# ba i = CheapHashes
+        (indexOffAddr# ba (indexLo i))
+        (indexOffAddr# ba (indexHi i))
+    readOffAddr# ba i s1 =
+        case readOffAddr# ba (indexLo i) s1 of { (# s2, lo #) ->
+        case readOffAddr# ba (indexHi i) s2 of { (# s3, hi #) ->
+        (# s3, CheapHashes lo hi #)
+        }}
+    writeOffAddr# ba i (CheapHashes lo hi) s =
+        writeOffAddr# ba (indexHi i) hi (writeOffAddr# ba (indexLo i) lo s)
+
+indexLo :: Int# -> Int#
+indexLo i = uncheckedIShiftL# i 1#
+
+indexHi :: Int# -> Int#
+indexHi i = uncheckedIShiftL# i 1# +# 1#
 
 {- Note [Original CheapHashes]
 
