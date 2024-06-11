@@ -2,6 +2,7 @@ module Database.LSMTree.Internal.Paths (
     SessionRoot (..)
   , lockFile
   , activeDir
+  , runPath
   , snapshotsDir
   , snapshot
     -- * Snapshot name
@@ -45,6 +46,9 @@ lockFile (SessionRoot dir) = dir </> mkFsPath ["lock"]
 
 activeDir :: SessionRoot -> FsPath
 activeDir (SessionRoot dir) = dir </> mkFsPath ["active"]
+
+runPath :: SessionRoot -> Int -> RunFsPaths
+runPath root = RunFsPaths (activeDir root)
 
 snapshotsDir :: SessionRoot -> FsPath
 snapshotsDir (SessionRoot dir) = dir </> mkFsPath ["snapshots"]
