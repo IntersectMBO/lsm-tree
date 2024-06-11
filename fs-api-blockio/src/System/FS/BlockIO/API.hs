@@ -29,7 +29,7 @@ import           Data.Primitive.ByteArray (MutableByteArray)
 import qualified Data.Vector as V
 import qualified Data.Vector.Generic as VG
 import qualified Data.Vector.Generic.Mutable as VGM
-import qualified Data.Vector.Primitive as PV
+import qualified Data.Vector.Primitive as VP
 import qualified Data.Vector.Unboxed as VU
 import qualified Data.Vector.Unboxed as VUM
 import           GHC.IO.Exception (IOErrorType (ResourceVanished))
@@ -114,10 +114,10 @@ ioopByteCount (IOOpWrite _ _ _ _ c) = c
 
 -- | Number of read/written bytes.
 newtype IOResult = IOResult ByteCount
-  deriving newtype PV.Prim
+  deriving newtype VP.Prim
 
-newtype instance VUM.MVector s IOResult = MV_IOResult (PV.MVector s IOResult)
-newtype instance VU.Vector     IOResult = V_IOResult  (PV.Vector    IOResult)
+newtype instance VUM.MVector s IOResult = MV_IOResult (VP.MVector s IOResult)
+newtype instance VU.Vector     IOResult = V_IOResult  (VP.Vector    IOResult)
 
 deriving via (VU.UnboxViaPrim IOResult) instance VGM.MVector VU.MVector IOResult
 deriving via (VU.UnboxViaPrim IOResult) instance VG.Vector   VU.Vector  IOResult

@@ -12,7 +12,7 @@ import           Control.DeepSeq (NFData, deepseq)
 import           Data.Bifoldable (bifoldMap)
 import           Data.Coerce (coerce)
 import qualified Data.Map.Strict as Map
-import qualified Data.Vector.Primitive as PV
+import qualified Data.Vector.Primitive as VP
 import           Data.Word (Word64, Word8)
 
 import           Database.LSMTree.Extras (showPowersOf)
@@ -79,7 +79,7 @@ deepseqInvariant x = x `deepseq` True
 
 prop_packRawBytesPinnedOrUnpinned :: Bool -> [Word8] -> Bool
 prop_packRawBytesPinnedOrUnpinned pinned ws =
-    packRawBytesPinnedOrUnpinned pinned ws == RawBytes (PV.fromList ws)
+    packRawBytesPinnedOrUnpinned pinned ws == RawBytes (VP.fromList ws)
 
 type TestEntry = Entry SerialisedValue BlobSpan
 type TestKOp = (KeyForIndexCompact, TestEntry)

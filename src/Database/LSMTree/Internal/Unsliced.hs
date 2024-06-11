@@ -17,7 +17,7 @@ module Database.LSMTree.Internal.Unsliced (
 import           Control.DeepSeq (NFData)
 import           Control.Exception (assert)
 import           Data.Primitive.ByteArray
-import qualified Data.Vector.Primitive as PV
+import qualified Data.Vector.Primitive as VP
 import           Database.LSMTree.Internal.RawBytes (RawBytes (..))
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.Serialise (SerialisedKey (..))
@@ -30,7 +30,7 @@ newtype Unsliced a = Unsliced ByteArray
   deriving newtype NFData
 
 getByteArray :: RawBytes -> ByteArray
-getByteArray (RawBytes (PV.Vector _ _ ba)) = ba
+getByteArray (RawBytes (VP.Vector _ _ ba)) = ba
 
 precondition :: RawBytes -> Bool
 precondition (RawBytes pvec) = noRetainedExtraMemory pvec

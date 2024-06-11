@@ -4,7 +4,7 @@ module Test.Database.LSMTree.Internal.RawOverflowPage (
 ) where
 
 import qualified Data.Primitive.ByteArray as BA
-import qualified Data.Vector.Primitive as PV
+import qualified Data.Vector.Primitive as VP
 
 import           Test.QuickCheck
 import           Test.QuickCheck.Instances ()
@@ -30,7 +30,7 @@ tests =
 -- multiple of the page size.
 prop_rawBytesToRawOverflowPage :: LargeRawBytes -> Property
 prop_rawBytesToRawOverflowPage
-  (LargeRawBytes bytes@(RB.RawBytes (PV.Vector off len ba))) =
+  (LargeRawBytes bytes@(RB.RawBytes (VP.Vector off len ba))) =
     label (if RB.size bytes >= 4096 then "large" else "small") $
     label (if BA.isByteArrayPinned ba then "pinned" else "unpinned") $
     label (if off == 0 then "offset 0" else "offset non-0") $
@@ -38,7 +38,7 @@ prop_rawBytesToRawOverflowPage
         rawOverflowPageRawBytes (makeRawOverflowPage ba off (min len 4096))
     === RB.take 4096 bytes <> padding
   where
-    padding    = RB.fromVector (PV.replicate paddinglen 0)
+    padding    = RB.fromVector (VP.replicate paddinglen 0)
     paddinglen = 4096 - (min len 4096)
 
 
@@ -51,7 +51,7 @@ prop_rawBytesToRawOverflowPages (LargeRawBytes bytes) =
    .&&. mconcat (map rawOverflowPageRawBytes pages) === bytes <> padding
   where
     pages      = rawBytesToOverflowPages bytes
-    padding    = RB.fromVector (PV.replicate paddinglen 0)
+    padding    = RB.fromVector (VP.replicate paddinglen 0)
     paddinglen = let trailing = RB.size bytes `mod` 4096 in
                  if trailing == 0 then 0 else 4096 - trailing
 

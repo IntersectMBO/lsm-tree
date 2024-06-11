@@ -12,21 +12,21 @@ import           Data.Primitive.ByteArray (ByteArray, sizeofByteArray)
 import           Data.Primitive.Types (Prim (sizeOfType#))
 import           Data.Proxy (Proxy (..))
 import qualified Data.Vector as V
-import qualified Data.Vector.Primitive as PV
+import qualified Data.Vector.Primitive as VP
 import           Database.LSMTree.Internal.Assertions
 import           GHC.Exts (Int (..))
 import           GHC.ST (runST)
 
-mkPrimVector :: forall a. Prim a => Int -> Int -> ByteArray -> PV.Vector a
+mkPrimVector :: forall a. Prim a => Int -> Int -> ByteArray -> VP.Vector a
 mkPrimVector off len ba =
     assert (isValidSlice (off * sizeof) (len * sizeof) ba) $
-    PV.Vector off len ba
+    VP.Vector off len ba
   where
     sizeof = I# (sizeOfType# (Proxy @a))
 {-# INLINE mkPrimVector #-}
 
-noRetainedExtraMemory :: forall a. Prim a => PV.Vector a -> Bool
-noRetainedExtraMemory (PV.Vector off len ba) =
+noRetainedExtraMemory :: forall a. Prim a => VP.Vector a -> Bool
+noRetainedExtraMemory (VP.Vector off len ba) =
     off == 0 && len * sizeof == sizeofByteArray ba
    where
     sizeof = I# (sizeOfType# (Proxy @a))

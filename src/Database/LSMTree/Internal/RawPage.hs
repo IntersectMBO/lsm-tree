@@ -34,7 +34,7 @@ import           Data.Primitive.ByteArray (ByteArray (..), byteArrayFromList,
                      isByteArrayPinned, newAlignedPinnedByteArray, runByteArray,
                      sizeofByteArray)
 import qualified Data.Vector as V
-import qualified Data.Vector.Primitive as PV
+import qualified Data.Vector.Primitive as VP
 import           Data.Word (Word16, Word32, Word64, Word8)
 import           Database.LSMTree.Internal.BitMath
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
@@ -79,7 +79,7 @@ instance NFData RawPage where
 instance Eq RawPage where
     RawPage off1 ba1 == RawPage off2 ba2 = v1 == v2
       where
-        v1, v2 :: PV.Vector Word16
+        v1, v2 :: VP.Vector Word16
         v1 = mkPrimVector off1 2048 ba1
         v2 = mkPrimVector off2 2048 ba2
 
@@ -263,7 +263,7 @@ rawPageKeysOffset (RawPage off ba) = indexByteArray ba (off + 2)
 type KeyOffset = Word16
 type ValueOffset = Word16
 
-rawPageKeyOffsets :: RawPage -> PV.Vector KeyOffset
+rawPageKeyOffsets :: RawPage -> VP.Vector KeyOffset
 rawPageKeyOffsets page@(RawPage off ba) =
     mkPrimVector
         (off + fromIntegral (div2 dirOffset))
@@ -274,7 +274,7 @@ rawPageKeyOffsets page@(RawPage off ba) =
     !dirOffset  = rawPageKeysOffset page
 
 -- | for non-single key page case
-rawPageValueOffsets :: RawPage -> PV.Vector ValueOffset
+rawPageValueOffsets :: RawPage -> VP.Vector ValueOffset
 rawPageValueOffsets page@(RawPage off ba) =
     assert (dirNumKeys /= 1) $
     mkPrimVector
@@ -318,8 +318,8 @@ rawPageKeys page@(RawPage off ba) = do
     V.fromList
         [ SerialisedKey (RB.fromByteArray (mul2 off + start) (end - start) ba)
         | i <- [ 0 .. fromIntegral dirNumKeys -  1 ] :: [Int]
-        , let start = fromIntegral (PV.unsafeIndex offs i) :: Int
-        , let end   = fromIntegral (PV.unsafeIndex offs (i + 1)) :: Int
+        , let start = fromIntegral (VP.unsafeIndex offs i) :: Int
+        , let end   = fromIntegral (VP.unsafeIndex offs (i + 1)) :: Int
         ]
   where
     !dirNumKeys = rawPageNumKeys page
@@ -329,8 +329,8 @@ rawPageKeyAt page@(RawPage off ba) i = do
     SerialisedKey (RB.fromByteArray (mul2 off + start) (end - start) ba)
   where
     offs  = rawPageKeyOffsets page
-    start = fromIntegral (PV.unsafeIndex offs i) :: Int
-    end   = fromIntegral (PV.unsafeIndex offs (i + 1)) :: Int
+    start = fromIntegral (VP.unsafeIndex offs i) :: Int
+    end   = fromIntegral (VP.unsafeIndex offs (i + 1)) :: Int
 
 -- | Non-single page case
 rawPageValues :: RawPage -> V.Vector SerialisedValue
@@ -339,8 +339,8 @@ rawPageValues page@(RawPage off ba) =
     V.fromList
         [ SerialisedValue $ RB.fromByteArray (mul2 off + start) (end - start) ba
         | i <- [ 0 .. fromIntegral dirNumKeys -  1 ] :: [Int]
-        , let start = fromIntegral (PV.unsafeIndex offs i) :: Int
-        , let end   = fromIntegral (PV.unsafeIndex offs (i + 1)) :: Int
+        , let start = fromIntegral (VP.unsafeIndex offs i) :: Int
+        , let end   = fromIntegral (VP.unsafeIndex offs (i + 1)) :: Int
         ]
   where
     !dirNumKeys = rawPageNumKeys page
@@ -351,8 +351,8 @@ rawPageValueAt page@(RawPage off ba) i =
     SerialisedValue (RB.fromByteArray (mul2 off + start) (end - start) ba)
   where
     offs  = rawPageValueOffsets page
-    start = fromIntegral (PV.unsafeIndex offs i) :: Int
-    end   = fromIntegral (PV.unsafeIndex offs (i + 1)) :: Int
+    start = fromIntegral (VP.unsafeIndex offs i) :: Int
+    end   = fromIntegral (VP.unsafeIndex offs (i + 1)) :: Int
 
 -- | Single key page case
 rawPageSingleValuePrefix :: RawPage -> SerialisedValue

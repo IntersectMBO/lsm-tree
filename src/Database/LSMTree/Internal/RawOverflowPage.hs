@@ -18,7 +18,7 @@ import           Data.ByteString (ByteString)
 import           Data.Primitive.ByteArray (ByteArray (..), copyByteArray,
                      fillByteArray, isByteArrayPinned, newPinnedByteArray,
                      runByteArray)
-import qualified Data.Vector.Primitive as PV
+import qualified Data.Vector.Primitive as VP
 import           Database.LSMTree.Internal.Assertions
 import           Database.LSMTree.Internal.BitMath (roundUpToPageSize)
 import           Database.LSMTree.Internal.RawBytes (RawBytes (..))
@@ -124,7 +124,7 @@ unsafeMakeRawOverflowPage ba off =
 -- This will avoid copying where possible.
 --
 rawBytesToOverflowPages :: RawBytes -> [RawOverflowPage]
-rawBytesToOverflowPages (RawBytes (PV.Vector off len ba))
+rawBytesToOverflowPages (RawBytes (VP.Vector off len ba))
   | isByteArrayPinned ba
   = pinnedByteArrayToOverflowPages off len ba
   | otherwise

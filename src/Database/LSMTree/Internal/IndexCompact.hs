@@ -54,7 +54,7 @@ import           Data.Primitive.ByteArray (ByteArray (..), indexByteArray,
 import           Data.Primitive.Types (sizeOf)
 import qualified Data.Vector.Algorithms.Search as VA
 import qualified Data.Vector.Generic as VG
-import qualified Data.Vector.Primitive as PV
+import qualified Data.Vector.Primitive as VP
 import qualified Data.Vector.Unboxed as VU
 import qualified Data.Vector.Unboxed.Base as VU (Vector (V_Word32))
 import           Data.Word
@@ -627,7 +627,7 @@ data Chunk = Chunk { cPrimary :: !(VU.Vector Word32) }
 
 -- | 32 bit aligned.
 chunkToBS :: Chunk -> BS.ByteString
-chunkToBS (Chunk (VU.V_Word32 (PV.Vector off len ba))) =
+chunkToBS (Chunk (VU.V_Word32 (VP.Vector off len ba))) =
     byteArrayToByteString (mul4 off) (mul4 len) ba
 
 -- | Writes everything after the primary array, which is assumed to have already
@@ -653,7 +653,7 @@ finalLBS (NumEntries numEntries) IndexCompact {..} =
 
 --- | 32 bit aligned.
 putVec32 :: VU.Vector Word32 -> BB.Builder
-putVec32 (VU.V_Word32 (PV.Vector off len ba))
+putVec32 (VU.V_Word32 (VP.Vector off len ba))
   | isByteArrayPinned ba =
       BB.byteString $ unsafePinnedByteArrayToByteString (mul4 off) (mul4 len) ba
   | otherwise =
@@ -819,7 +819,7 @@ getTieBreaker ba = \off -> do
 
 -- | Offset and length are in number of elements.
 checkedPrimVec :: forall a.
-  PV.Prim a => Int -> Int -> ByteArray -> Maybe (PV.Vector a)
+  VP.Prim a => Int -> Int -> ByteArray -> Maybe (VP.Vector a)
 checkedPrimVec off len ba
   | off >= 0, sizeOf (undefined :: a) * (off + len) <= sizeofByteArray ba =
       Just (mkPrimVector off len ba)
@@ -828,8 +828,8 @@ checkedPrimVec off len ba
 
 -- | Offset and length are in number of bits.
 --
--- We can't use 'checkedPrimVec' here, since 'Bool' and 'Bit' are not 'PV.Prim'
--- (so the bit vector type doesn't use 'PV.Vector' under the hood).
+-- We can't use 'checkedPrimVec' here, since 'Bool' and 'Bit' are not 'VP.Prim'
+-- (so the bit vector type doesn't use 'VP.Vector' under the hood).
 checkedBitVec :: Int -> Int -> ByteArray -> Maybe (VU.Vector Bit)
 checkedBitVec off len ba
   | off >= 0, off + len <= mul8 (sizeofByteArray ba) =

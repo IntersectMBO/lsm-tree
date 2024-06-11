@@ -9,7 +9,7 @@ import           Data.Bits
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BB
 import qualified Data.ByteString.Short as SBS
-import qualified Data.Vector.Primitive as P
+import qualified Data.Vector.Primitive as VP
 import           Data.Word
 import           Database.LSMTree.Extras.Generators ()
 import qualified Database.LSMTree.Internal.RawBytes as RB
@@ -33,29 +33,29 @@ tests = testGroup "Test.Database.LSMTree.Internal.Serialise" [
           testProperty "Ord antisymmetry" propOrdAntiSymmetry
         ]
     , testCase "example keyTopBits16" $ do
-        let k = SerialisedKey' (P.fromList [37, 42, 204, 130])
+        let k = SerialisedKey' (VP.fromList [37, 42, 204, 130])
             expected :: Word16
             expected = 37 `shiftL` 8 + 42
         expected                   @=? keyTopBits16 16 k
         0                          @=? keyTopBits16 0  k
         expected `shiftR` (16 - 9) @=? keyTopBits16 9  k
     , testCase "example keyTopBits16 on sliced byte array" $ do
-        let pvec = P.fromList [0, 37, 42, 204, 130]
-            k = SerialisedKey' (P.slice 1 (P.length pvec - 1) pvec)
+        let pvec = VP.fromList [0, 37, 42, 204, 130]
+            k = SerialisedKey' (VP.slice 1 (VP.length pvec - 1) pvec)
             expected :: Word16
             expected = 37 `shiftL` 8 + 42
         expected                   @=? keyTopBits16 16 k
         0                          @=? keyTopBits16 0  k
         expected `shiftR` (16 - 9) @=? keyTopBits16 9  k
     , testCase "example keySliceBits32" $ do
-        let k = SerialisedKey' (P.fromList [0, 0, 255, 255, 255, 255, 0])
+        let k = SerialisedKey' (VP.fromList [0, 0, 255, 255, 255, 255, 0])
         0x0000FFFF @=? keySliceBits32 0 k
         0xFFFFFFFF @=? keySliceBits32 16 k
         0x7FFFFFFF @=? keySliceBits32 15 k
         0xFFFFFFFE @=? keySliceBits32 17 k
     , testCase "example keySliceBits32 on sliced byte array" $ do
-        let pvec = P.fromList [0, 0, 0, 255, 255, 255, 255, 0]
-            k = SerialisedKey' (P.slice 1 (P.length pvec - 1) pvec)
+        let pvec = VP.fromList [0, 0, 0, 255, 255, 255, 255, 0]
+            k = SerialisedKey' (VP.slice 1 (VP.length pvec - 1) pvec)
         0x0000FFFF @=? keySliceBits32 0 k
         0xFFFFFFFF @=? keySliceBits32 16 k
         0x7FFFFFFF @=? keySliceBits32 15 k

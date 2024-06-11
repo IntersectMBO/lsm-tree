@@ -30,7 +30,7 @@ import           Data.Maybe
 import           Data.Monoid (Endo (..))
 import qualified Data.Set as Set
 import qualified Data.Vector as V
-import qualified Data.Vector.Primitive as PV
+import qualified Data.Vector.Primitive as VP
 import qualified Data.Vector.Unboxed as VU
 import           Data.Word
 import           Database.LSMTree.Extras
@@ -527,7 +527,7 @@ shrinkSerialisedValue v
   | sizeofValue v > 64 = -- shrink towards fewer bytes
                           [ coerce RB.take n' v | n' <- shrinkIntegral n ]
                           -- shrink towards a value of all 0-bytes
-                      ++ [ v' | let v' = coerce (PV.fromList $ replicate n 0), v' /= v ]
+                      ++ [ v' | let v' = coerce (VP.fromList $ replicate n 0), v' /= v ]
   | otherwise          = shrink v -- expensive, but thorough
   where n = sizeofValue v
 

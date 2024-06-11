@@ -23,7 +23,6 @@ import qualified Data.Map.Strict as Map
 import           Data.Primitive.ByteArray (ByteArray (..), byteArrayFromList,
                      sizeofByteArray)
 import qualified Data.Vector.Primitive as VP
-import qualified Data.Vector.Unboxed as V
 import qualified Data.Vector.Unboxed as VU
 import qualified Data.Vector.Unboxed.Base as VU (Vector (V_Word32))
 import           Data.Word
@@ -335,8 +334,8 @@ labelIndex ic =
 
 multiPageValuesClash :: IndexCompact -> Bool
 multiPageValuesClash ic
-    | V.length (icClashes ic) < 3 = False
-    | otherwise                   = V.any p $ V.zip4 v1 v2 v3 v4
+    | VU.length (icClashes ic) < 3 = False
+    | otherwise                   = VU.any p $ VU.zip4 v1 v2 v3 v4
   where
     -- note: @i = j - 1@ and @k = j + 1@. This gives us a local view of a
     -- triplet of contiguous LTP bits, and a C bit corresponding to the middle
@@ -346,10 +345,10 @@ multiPageValuesClash ic
          unBit ltpi && not (unBit ltpj) && unBit ltpk
          -- and they clash
       && unBit cj
-    v1 = V.tail (icClashes ic)
+    v1 = VU.tail (icClashes ic)
     v2 = icLargerThanPage ic
-    v3 = V.tail v2
-    v4 = V.tail v3
+    v3 = VU.tail v2
+    v4 = VU.tail v3
 
 -- Returns the number of entries and whether any multi-page values were in the
 -- contiguous clashes
@@ -358,16 +357,16 @@ countContiguousClashes ic = actualContigClashes
   where
     -- filtered is a list of maximal sub-vectors that have only only contiguous
     -- clashes
-    zipped    = V.zip (icClashes ic) (icLargerThanPage ic)
-    grouped   = V.groupBy (\x y -> fst x == fst y) zipped
-    filtered  = filter (V.all (\(c, _ltp) -> c == Bit True)) grouped
+    zipped    = VU.zip (icClashes ic) (icLargerThanPage ic)
+    grouped   = VU.groupBy (\x y -> fst x == fst y) zipped
+    filtered  = filter (VU.all (\(c, _ltp) -> c == Bit True)) grouped
     -- clashes that are part of a multi-page value shouldn't be counted towards
     -- the total number of /actual/ clashes. We only care about /actual/ clashes
     -- if they total more than 1 (otherwise it's just a single clash)
     actualContigClashes = filter (\(_, n) -> n > 1) $
                           fmap (\v -> (countLTP v > 0, countC v - countLTP v)) filtered
-    countC              = V.length
-    countLTP            = BV.countBits . V.map snd
+    countC              = VU.length
+    countLTP            = BV.countBits . VU.map snd
 
 -- | Point-wise equality test for two maps, returning counterexamples for each
 -- mismatch.

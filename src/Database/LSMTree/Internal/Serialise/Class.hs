@@ -21,7 +21,7 @@ import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ByteString.Short.Internal as SBS
 import qualified Data.Primitive as P
 import           Data.Proxy (Proxy)
-import qualified Data.Vector.Primitive as PV
+import qualified Data.Vector.Primitive as VP
 import           Data.Void (Void, absurd)
 import           Data.Word
 import           Database.LSMTree.Internal.ByteString (byteArrayToSBS)
@@ -147,7 +147,7 @@ instance SerialiseKey Word64 where
       P.writeByteArray ba 0 $ byteSwap64 x
       return ba
 
-  deserialiseKey (RawBytes (PV.Vector off len ba)) =
+  deserialiseKey (RawBytes (VP.Vector off len ba)) =
     requireBytesExactly "Word64" 8 len $ byteSwap64 (indexWord8ArrayAsWord64 ba off)
 
 instance SerialiseValue Word64 where
@@ -157,7 +157,7 @@ instance SerialiseValue Word64 where
       P.writeByteArray ba 0 x
       return ba
 
-  deserialiseValue (RawBytes (PV.Vector off len ba)) =
+  deserialiseValue (RawBytes (VP.Vector off len ba)) =
     requireBytesExactly "Word64" 8 len $ indexWord8ArrayAsWord64 ba off
   deserialiseValueN = deserialiseValue . mconcat
 

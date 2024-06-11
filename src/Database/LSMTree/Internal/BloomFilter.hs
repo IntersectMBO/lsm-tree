@@ -13,7 +13,7 @@ import qualified Data.ByteString.Lazy as LBS
 import           Data.ByteString.Short (ShortByteString (SBS))
 import qualified Data.Primitive as P
 import           Data.Primitive.ByteArray (ByteArray (ByteArray))
-import qualified Data.Vector.Primitive as PV
+import qualified Data.Vector.Primitive as VP
 import           Data.Word (Word32, Word64, byteSwap32)
 import           Database.LSMTree.Internal.BitMath (ceilDiv64, mul8)
 import           Database.LSMTree.Internal.ByteString (byteArrayToByteString)
@@ -38,7 +38,7 @@ bloomFilterToLBS b@(BF.Bloom _ _ bv) =
           <> B.word32Host (fromIntegral hashesN)
           <> B.word64Host len
 
-    bitVec (BV64.BV64 (PV.Vector off len ba)) =
+    bitVec (BV64.BV64 (VP.Vector off len ba)) =
         byteArrayToByteString (mul8 off) (mul8 len) ba
 
 -- deserialising
@@ -78,7 +78,7 @@ bloomFilterFromSBS (SBS ba') = do
     when (bytesUsed < P.sizeofByteArray ba) $
       Left "Byte array is too large for components"
 
-    let vec64 :: PV.Vector Word64
+    let vec64 :: VP.Vector Word64
         vec64 = mkPrimVector 2 len64 ba
 
     let bloom = BF.Bloom (fromIntegral hsn) len (BV64.BV64 vec64)

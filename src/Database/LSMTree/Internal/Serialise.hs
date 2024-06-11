@@ -39,7 +39,7 @@ module Database.LSMTree.Internal.Serialise (
 import           Control.DeepSeq (NFData)
 import           Data.BloomFilter.Hash (Hashable (..))
 import qualified Data.ByteString.Builder as BB
-import qualified Data.Vector.Primitive as PV
+import qualified Data.Vector.Primitive as VP
 import           Data.Word
 import           Database.LSMTree.Internal.RawBytes (RawBytes (..))
 import qualified Database.LSMTree.Internal.RawBytes as RB
@@ -60,7 +60,7 @@ newtype SerialisedKey = SerialisedKey RawBytes
   deriving newtype (Eq, Ord, Hashable, NFData)
 
 {-# COMPLETE SerialisedKey' #-}
-pattern SerialisedKey' :: PV.Vector Word8 -> SerialisedKey
+pattern SerialisedKey' :: VP.Vector Word8 -> SerialisedKey
 pattern SerialisedKey' pvec = SerialisedKey (RawBytes pvec)
 
 {-# INLINE serialiseKey #-}
@@ -115,7 +115,7 @@ newtype SerialisedValue = SerialisedValue RawBytes
   deriving newtype (Eq, Ord, NFData)
 
 {-# COMPLETE SerialisedValue' #-}
-pattern SerialisedValue' :: PV.Vector Word8 -> SerialisedValue
+pattern SerialisedValue' :: VP.Vector Word8 -> SerialisedValue
 pattern SerialisedValue' pvec = (SerialisedValue (RawBytes pvec))
 
 {-# INLINE serialiseValue #-}
@@ -159,7 +159,7 @@ newtype SerialisedBlob = SerialisedBlob RawBytes
   deriving newtype (Eq, Ord, NFData)
 
 {-# COMPLETE SerialisedBlob' #-}
-pattern SerialisedBlob' :: PV.Vector Word8 -> SerialisedBlob
+pattern SerialisedBlob' :: VP.Vector Word8 -> SerialisedBlob
 pattern SerialisedBlob' pvec = (SerialisedBlob (RawBytes pvec))
 
 {-# INLINE serialiseBlob #-}
