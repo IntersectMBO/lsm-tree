@@ -22,8 +22,8 @@ import           Control.Monad.ST.Strict (ST)
 import           Data.Bits (unsafeShiftL, (.|.))
 import qualified Data.Primitive as P
 import qualified Data.Vector as V
-import qualified Data.Vector.Mutable as MV
-import qualified Data.Vector.Primitive as PV
+import qualified Data.Vector.Mutable as VM
+import qualified Data.Vector.Primitive as VP
 import           Data.Word (Word16, Word32, Word64)
 import           Database.LSMTree.Internal.BitMath
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
@@ -189,8 +189,8 @@ newPageAcc = do
     paBlobRefsMap  <- P.newPrimArray maxBlobRefsMap
     paBlobRefs1    <- P.newPrimArray maxKeys
     paBlobRefs2    <- P.newPrimArray maxKeys
-    paKeys         <- MV.new maxKeys
-    paValues       <- MV.new maxKeys
+    paKeys         <- VM.new maxKeys
+    paValues       <- VM.new maxKeys
 
     -- reset the memory, as it's not initialized
     let page = PageAcc {..}
@@ -261,8 +261,8 @@ pageAccAddElem PageAcc {..} k e
             setOperation paOpMap n (entryCrumb e)
 
             -- keys and values
-            MV.write paKeys n k
-            MV.write paValues n (entryValue e)
+            VM.write paKeys n k
+            VM.write paValues n (entryValue e)
 
             return True
 
@@ -353,8 +353,8 @@ serialisePageAccN size PageAcc {..} = do
             | otherwise = do
                   -- traceM $ "loop " ++ show (i, ko, kd, vo, vd)
 
-                  SerialisedKey   (RawBytes (PV.Vector koff klen kba)) <- MV.read paKeys i
-                  SerialisedValue (RawBytes (PV.Vector voff vlen vba)) <- MV.read paValues i
+                  SerialisedKey   (RawBytes (VP.Vector koff klen kba)) <- VM.read paKeys i
+                  SerialisedValue (RawBytes (VP.Vector voff vlen vba)) <- VM.read paValues i
 
                   -- key and value offsets
                   P.writeByteArray ba (div2 ko) (fromIntegral kd :: Word16)
@@ -376,7 +376,7 @@ keysCountPageAcc :: PageAcc s -> ST s Int
 keysCountPageAcc PageAcc {paDir} = P.readPrimArray paDir keysCountIdx
 
 indexKeyPageAcc :: PageAcc s -> Int -> ST s SerialisedKey
-indexKeyPageAcc PageAcc {paKeys} ix = MV.read paKeys ix
+indexKeyPageAcc PageAcc {paKeys} ix = VM.read paKeys ix
 
 -------------------------------------------------------------------------------
 -- Utils

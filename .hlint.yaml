@@ -18,6 +18,9 @@
 - ignore: {name: "Use list literal"} # 1 hint
 - ignore: {name: "Use tuple-section"}
 - ignore: {name: "Use const"}
+- ignore: {name: "Use :"}
+- ignore: {name: "Redundant <$>"}
+- ignore: {name: "Use zipWithM"}
 
 # Specify additional command line arguments
 #
@@ -34,7 +37,16 @@
 #   - {name: -w, within: []} # -w is allowed nowhere
 #
 - modules:
-  - { name: "Data.Vector.Primitive", as: "PV" } # if you import Data.Vector.Primitive qualified, it must be as 'PV'
+  # vector
+  - { name: "Data.Vector", as: "V" }
+  - { name: "Data.Vector.Generic", as: "VG" }
+  - { name: "Data.Vector.Generic.Mutable", as: "VGM" }
+  - { name: "Data.Vector.Mutable", as: "VM" }
+  - { name: "Data.Vector.Unboxed", as: "VU" }
+  - { name: "Data.Vector.Unboxed.Mutable", as: "VUM" }
+  - { name: "Data.Vector.Primitive", as: "VP" }
+  - { name: "Data.Vector.Primitive.Mutable", as: "VPM" }
+  # others
   - { name: "Database.LSMTree.Internal.RawBytes", as: "RB"} # if you import Database.LSMTree.Internal.RawByes qualified, it must be as 'RB'
 #   - {name: Control.Arrow, within: []} # Certain modules are banned entirely
 #

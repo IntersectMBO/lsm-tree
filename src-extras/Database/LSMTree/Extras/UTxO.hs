@@ -19,7 +19,7 @@ import qualified Data.ByteString as BS
 import qualified Data.Primitive as P
 import qualified Data.Vector.Generic as VG
 import qualified Data.Vector.Generic.Mutable as VGM
-import qualified Data.Vector.Primitive as PV
+import qualified Data.Vector.Primitive as VP
 import qualified Data.Vector.Unboxed as VU
 import qualified Data.Vector.Unboxed.Mutable as VUM
 import           Data.WideWord.Word128
@@ -54,7 +54,7 @@ instance SerialiseKey UTxOKey where
       P.writeByteArray ba 0 $ byteSwapWord256 txId
       P.writeByteArray ba 16 $ byteSwap16 txIx
       return ba
-  deserialiseKey (RawBytes (PV.Vector off len ba)) =
+  deserialiseKey (RawBytes (VP.Vector off len ba)) =
     requireBytesExactly "UTxOKey" 34 len $
       UTxOKey (byteSwapWord256 $ indexWord8ArrayAsWord256 ba off)
               (byteSwap16      $ indexWord8ArrayAsWord16  ba (off + 32))
@@ -100,7 +100,7 @@ instance SerialiseValue UTxOValue where
       P.writeByteArray ba 6 utxoValue64
       P.writeByteArray ba 14 utxoValue32
       return ba
-  deserialiseValue (RawBytes (PV.Vector off len ba)) =
+  deserialiseValue (RawBytes (VP.Vector off len ba)) =
     requireBytesExactly "UTxOValue" 60 len $
       UTxOValue (indexWord8ArrayAsWord256 ba off)
                 (indexWord8ArrayAsWord128 ba (off + 32))

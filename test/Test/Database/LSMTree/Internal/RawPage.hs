@@ -10,7 +10,7 @@ import qualified Data.ByteString as BS
 import           Data.Maybe (fromMaybe)
 import           Data.Primitive.ByteArray (byteArrayFromList)
 import qualified Data.Vector as V
-import qualified Data.Vector.Primitive as P
+import qualified Data.Vector.Primitive as VP
 import           Data.Word (Word16, Word64)
 import           GHC.Word (byteSwap16)
 import           Test.QuickCheck.Instances ()
@@ -44,8 +44,8 @@ tests = testGroup "Database.LSMTree.Internal.RawPage"
         (page, []) @=? Ref.toRawPage (Ref.PageContentFits [])
         rawPageNumKeys page @=? 0
         rawPageNumBlobs page @=? 0
-        rawPageKeyOffsets page @=? P.fromList [10]
-        rawPageValueOffsets page @=? P.fromList [10]
+        rawPageKeyOffsets page @=? VP.fromList [10]
+        rawPageValueOffsets page @=? VP.fromList [10]
 
     , testCase "single-insert" $ do
         let bytes :: [Word16]
@@ -67,7 +67,7 @@ tests = testGroup "Database.LSMTree.Internal.RawPage"
              [(Ref.Key "\x42\x43", Ref.Insert (Ref.Value "\x88\x99") Nothing)])
         rawPageNumKeys page @=? 1
         rawPageNumBlobs page @=? 0
-        rawPageKeyOffsets page @=? P.fromList [32, 34]
+        rawPageKeyOffsets page @=? VP.fromList [32, 34]
         rawPageValueOffsets1 page @=? (34, 36)
         rawPageHasBlobSpanAt page 0 @=? 0
         rawPageOpAt page 0 @=? 0
@@ -100,7 +100,7 @@ tests = testGroup "Database.LSMTree.Internal.RawPage"
                              (Just (Ref.BlobRef 0xff 0xfe)))]
         rawPageNumKeys page @=? 1
         rawPageNumBlobs page @=? 1
-        rawPageKeyOffsets page @=? P.fromList [44, 46]
+        rawPageKeyOffsets page @=? VP.fromList [44, 46]
         rawPageValueOffsets1 page @=? (46, 48)
         rawPageHasBlobSpanAt page 0 @=? 1
         rawPageBlobSpanIndex page 0 @=? BlobSpan 0xff 0xfe
@@ -129,7 +129,7 @@ tests = testGroup "Database.LSMTree.Internal.RawPage"
                 [(Ref.Key "\x42\x43", Ref.Delete)]
         rawPageNumKeys page @=? 1
         rawPageNumBlobs page @=? 0
-        rawPageKeyOffsets page @=? P.fromList [32, 34]
+        rawPageKeyOffsets page @=? VP.fromList [32, 34]
         rawPageValueOffsets1 page @=? (34, 34)
         rawPageHasBlobSpanAt page 0 @=? 0
         rawPageOpAt page 0 @=? 2
@@ -159,8 +159,8 @@ tests = testGroup "Database.LSMTree.Internal.RawPage"
                  (Ref.Key "\x52\x53", Ref.Mupsert (Ref.Value "\x54\x55"))]
         rawPageNumKeys page @=? 2
         rawPageNumBlobs page @=? 0
-        rawPageKeyOffsets page @=? P.fromList [34, 36, 38]
-        rawPageValueOffsets page @=? P.fromList [38, 40, 42]
+        rawPageKeyOffsets page @=? VP.fromList [34, 36, 38]
+        rawPageValueOffsets page @=? VP.fromList [38, 40, 42]
         rawPageHasBlobSpanAt page 0 @=? 0
         rawPageHasBlobSpanAt page 1 @=? 0
         rawPageOpAt page 0 @=? 1

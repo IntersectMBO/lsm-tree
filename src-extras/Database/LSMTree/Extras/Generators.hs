@@ -65,7 +65,7 @@ import           Data.Containers.ListUtils (nubOrd)
 import           Data.List (sort)
 import qualified Data.Map as Map
 import qualified Data.Primitive.ByteArray as BA
-import qualified Data.Vector.Primitive as PV
+import qualified Data.Vector.Primitive as VP
 import           Data.Word
 import           Database.LSMTree.Common (Range (..))
 import           Database.LSMTree.Extras
@@ -543,20 +543,20 @@ packRawBytesPinnedOrUnpinned True  = \ws ->
       return mba
 
 shrinkRawBytes :: RawBytes -> [RawBytes]
-shrinkRawBytes (RawBytes pvec) = [ RawBytes (PV.fromList ws)
-                                 | ws <- QC.shrink (PV.toList pvec) ]
+shrinkRawBytes (RawBytes pvec) = [ RawBytes (VP.fromList ws)
+                                 | ws <- QC.shrink (VP.toList pvec) ]
 
 genSlice :: RawBytes -> Gen RawBytes
 genSlice (RawBytes pvec) = do
-    n <- QC.chooseInt (0, PV.length pvec)
-    m <- QC.chooseInt (0, PV.length pvec - n)
-    pure $ RawBytes (PV.slice m n pvec)
+    n <- QC.chooseInt (0, VP.length pvec)
+    m <- QC.chooseInt (0, VP.length pvec - n)
+    pure $ RawBytes (VP.slice m n pvec)
 
 shrinkSlice :: RawBytes -> [RawBytes]
 shrinkSlice (RawBytes pvec) =
-    [ RawBytes (PV.slice m n pvec)
-    | n <- QC.shrink (PV.length pvec)
-    , m <- QC.shrink (PV.length pvec - n)
+    [ RawBytes (VP.slice m n pvec)
+    | n <- QC.shrink (VP.length pvec)
+    , m <- QC.shrink (VP.length pvec - n)
     ]
 
 -- TODO: makes collisions very unlikely
@@ -590,9 +590,9 @@ instance Arbitrary LargeRawBytes where
       -- is at the start and the suffix is just the value.
    ++ [ LargeRawBytes (RawBytes pvec')
       | let (RawBytes pvec) = rb
-      , n <- QC.shrink (PV.length pvec)
-      , let pvec' = PV.take n pvec PV.++ PV.replicate (PV.length pvec - n) 0
-      , assert (PV.length pvec' == PV.length pvec) $
+      , n <- QC.shrink (VP.length pvec)
+      , let pvec' = VP.take n pvec VP.++ VP.replicate (VP.length pvec - n) 0
+      , assert (VP.length pvec' == VP.length pvec) $
         pvec' /= pvec
       ]
 

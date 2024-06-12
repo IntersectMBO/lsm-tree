@@ -15,7 +15,7 @@ import qualified Data.Heap as Heap
 import           Data.IORef
 import qualified Data.List as L
 import           Data.Primitive.ByteArray (compareByteArrays)
-import qualified Data.Vector.Primitive as P
+import qualified Data.Vector.Primitive as VP
 import           Data.Word (Word64, Word8)
 import           System.IO.Unsafe (unsafePerformIO)
 import qualified System.Random.SplitMix as SM
@@ -265,7 +265,7 @@ mergeProperty name f = testProperty name $ \xss ->
 -- This type corresponds to the @SerialisedKey@ type we are using (or rather the
 -- @RawBytes@ it wraps), so the cost of comparisons should be similar.
 -- We expect key lengths of 32 bytes.
-newtype Element = Element (P.Vector Word8)
+newtype Element = Element (VP.Vector Word8)
   deriving newtype (Show, NFData)
 
 instance Eq Element where
@@ -286,14 +286,14 @@ compareBytes rb1@(Element vec1) rb2@(Element vec2) =
              | len1 > len2 -> GT
           o  -> o
   where
-    P.Vector off1 _size1 ba1 = vec1
-    P.Vector off2 _size2 ba2 = vec2
+    VP.Vector off1 _size1 ba1 = vec1
+    VP.Vector off2 _size2 ba2 = vec2
 
 sizeofElement :: Element -> Int
-sizeofElement (Element pvec) = P.length pvec
+sizeofElement (Element pvec) = VP.length pvec
 
 genElement :: SM.SMGen -> (Element, SM.SMGen)
-genElement g0 = (Element (P.fromListN 32 bytes), g4)
+genElement g0 = (Element (VP.fromListN 32 bytes), g4)
   where
     -- we expect a shared 16 bit prefix
     bytes = 0 : 0 : concatMap toBytes [w1, w2, w3, w4]
@@ -304,7 +304,7 @@ genElement g0 = (Element (P.fromListN 32 bytes), g4)
     toBytes = reverse . take 8 . map fromIntegral . iterate (`unsafeShiftR` 8)
 
 minElement :: Element
-minElement = Element (P.fromListN 32 (L.repeat 0))
+minElement = Element (VP.fromListN 32 (L.repeat 0))
 
 {-------------------------------------------------------------------------------
   Inputs

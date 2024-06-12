@@ -8,7 +8,7 @@ module Database.LSMTree.Internal.PageAcc1 (
 
 import           Control.Monad.ST.Strict (ST, runST)
 import qualified Data.Primitive as P
-import qualified Data.Vector.Primitive as PV
+import qualified Data.Vector.Primitive as VP
 import           Data.Word (Word16, Word32, Word64)
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Entry (Entry (..))
@@ -59,8 +59,8 @@ singletonPage k (Insert v) = runST $ do
         !overflowPages = rawBytesToOverflowPages (RB.drop vlen' v')
     return (page, overflowPages)
   where
-    SerialisedKey      (RawBytes (PV.Vector koff klen kba)) = k
-    SerialisedValue v'@(RawBytes (PV.Vector voff vlen vba)) = v
+    SerialisedKey      (RawBytes (VP.Vector koff klen kba)) = k
+    SerialisedValue v'@(RawBytes (VP.Vector voff vlen vba)) = v
 
 singletonPage k (InsertWithBlob v (BlobSpan w64 w32)) = runST $ do
     -- allocate bytearray
@@ -96,8 +96,8 @@ singletonPage k (InsertWithBlob v (BlobSpan w64 w32)) = runST $ do
         !overflowPages = rawBytesToOverflowPages (RB.drop vlen' v')
     return (page, overflowPages)
   where
-    SerialisedKey      (RawBytes (PV.Vector koff klen kba)) = k
-    SerialisedValue v'@(RawBytes (PV.Vector voff vlen vba)) = v
+    SerialisedKey      (RawBytes (VP.Vector koff klen kba)) = k
+    SerialisedValue v'@(RawBytes (VP.Vector voff vlen vba)) = v
 
 singletonPage k (Mupdate v) = runST $ do
     -- allocate bytearray
@@ -131,7 +131,7 @@ singletonPage k (Mupdate v) = runST $ do
         !overflowPages = rawBytesToOverflowPages (RB.drop vlen' v')
     return (page, overflowPages)
   where
-    SerialisedKey      (RawBytes (PV.Vector koff klen kba)) = k
-    SerialisedValue v'@(RawBytes (PV.Vector voff vlen vba)) = v
+    SerialisedKey      (RawBytes (VP.Vector koff klen kba)) = k
+    SerialisedValue v'@(RawBytes (VP.Vector voff vlen vba)) = v
 
 singletonPage _ Delete = error "singletonPage: unexpected Delete entry"

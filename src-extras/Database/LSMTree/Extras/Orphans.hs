@@ -14,7 +14,7 @@ import           Control.DeepSeq
 import qualified Data.Primitive as P
 import qualified Data.Vector.Generic as VG
 import qualified Data.Vector.Generic.Mutable as VGM
-import qualified Data.Vector.Primitive as PV
+import qualified Data.Vector.Primitive as VP
 import qualified Data.Vector.Unboxed as VU
 import qualified Data.Vector.Unboxed.Mutable as VUM
 import           Data.WideWord.Word128 (Word128 (..), byteSwapWord128)
@@ -45,7 +45,7 @@ instance SerialiseKey Word256 where
       ba <- P.newByteArray 32
       P.writeByteArray ba 0 $ byteSwapWord256 w256
       return ba
-  deserialiseKey (RawBytes (PV.Vector off len ba)) =
+  deserialiseKey (RawBytes (VP.Vector off len ba)) =
     requireBytesExactly "Word256" 32 len $
       byteSwapWord256 $ indexWord8ArrayAsWord256 ba off
 
@@ -55,7 +55,7 @@ instance SerialiseValue Word256 where
       ba <- P.newByteArray 32
       P.writeByteArray ba 0 w256
       return ba
-  deserialiseValue (RawBytes (PV.Vector off len ba)) =
+  deserialiseValue (RawBytes (VP.Vector off len ba)) =
     requireBytesExactly "Word256" 32 len $
       indexWord8ArrayAsWord256 ba off
   deserialiseValueN = deserialiseValue . mconcat -- TODO: optimise
@@ -83,8 +83,8 @@ indexWord8ArrayAsWord256 !ba !off =
             (indexWord8ArrayAsWord64 ba (off + 8))
             (indexWord8ArrayAsWord64 ba off)
 
-newtype instance VUM.MVector s Word256 = MV_Word256 (PV.MVector s Word256)
-newtype instance VU.Vector     Word256 = V_Word256  (PV.Vector    Word256)
+newtype instance VUM.MVector s Word256 = MV_Word256 (VP.MVector s Word256)
+newtype instance VU.Vector     Word256 = V_Word256  (VP.Vector    Word256)
 
 deriving via VU.UnboxViaPrim Word256 instance VGM.MVector VU.MVector Word256
 deriving via VU.UnboxViaPrim Word256 instance VG.Vector   VU.Vector  Word256
@@ -103,7 +103,7 @@ instance SerialiseKey Word128 where
       ba <- P.newByteArray 16
       P.writeByteArray ba 0 $ byteSwapWord128 w128
       return ba
-  deserialiseKey (RawBytes (PV.Vector off len ba)) =
+  deserialiseKey (RawBytes (VP.Vector off len ba)) =
     requireBytesExactly "Word128" 16 len $
       byteSwapWord128 $ indexWord8ArrayAsWord128 ba off
 
@@ -113,7 +113,7 @@ instance SerialiseValue Word128 where
       ba <- P.newByteArray 16
       P.writeByteArray ba 0 w128
       return ba
-  deserialiseValue (RawBytes (PV.Vector off len ba)) =
+  deserialiseValue (RawBytes (VP.Vector off len ba)) =
     requireBytesExactly "Word128" 16 len $
       indexWord8ArrayAsWord128 ba off
   deserialiseValueN = deserialiseValue . mconcat -- TODO: optimise
@@ -134,8 +134,8 @@ indexWord8ArrayAsWord128 !ba !off =
     Word128 (indexWord8ArrayAsWord64 ba (off + 8))
             (indexWord8ArrayAsWord64 ba off)
 
-newtype instance VUM.MVector s Word128 = MV_Word128 (PV.MVector s Word128)
-newtype instance VU.Vector     Word128 = V_Word128  (PV.Vector    Word128)
+newtype instance VUM.MVector s Word128 = MV_Word128 (VP.MVector s Word128)
+newtype instance VU.Vector     Word128 = V_Word128  (VP.Vector    Word128)
 
 deriving via VU.UnboxViaPrim Word128 instance VGM.MVector VU.MVector Word128
 deriving via VU.UnboxViaPrim Word128 instance VG.Vector   VU.Vector  Word128

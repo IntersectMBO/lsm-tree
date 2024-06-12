@@ -42,7 +42,7 @@ import qualified Data.Map.Strict as Map
 import           Data.Primitive.ByteArray (newPinnedByteArray, setByteArray)
 import           Data.STRef.Strict
 import qualified Data.Vector.Generic.Mutable as VGM
-import qualified Data.Vector.Primitive.Mutable as VP
+import qualified Data.Vector.Primitive.Mutable as VPM
 import qualified Data.Vector.Unboxed as VU
 import qualified Data.Vector.Unboxed.Mutable as VUM
 import           Data.Word
@@ -139,7 +139,7 @@ newPinnedMVec :: Int -> ST s (VUM.MVector s Word32)
 newPinnedMVec lenWords = do
     mba <- newPinnedByteArray (mul4 lenWords)
     setByteArray mba 0 lenWords (0 :: Word32)
-    return (VUM.MV_Word32 (VP.MVector 0 lenWords mba))
+    return (VUM.MV_Word32 (VPM.MVector 0 lenWords mba))
 
 -- | Min\/max key-info for pages
 data Append =

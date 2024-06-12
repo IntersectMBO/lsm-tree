@@ -12,7 +12,7 @@ import qualified Data.BloomFilter as Bloom
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Short as SBS
 import           Data.Maybe
-import qualified Data.Vector.Primitive as P
+import qualified Data.Vector.Primitive as VP
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Entry
 import qualified Database.LSMTree.Internal.IndexCompact as Index
@@ -55,8 +55,8 @@ tests = testGroup "Database.LSMTree.Internal.RunAcc" [
 
 test_singleKeyRun :: Assertion
 test_singleKeyRun =  do
-    let !k = SerialisedKey' (P.fromList [37, 37, 37, 37, 37, 37])
-        !e = InsertWithBlob (SerialisedValue' (P.fromList [48, 19])) (BlobSpan 55 77)
+    let !k = SerialisedKey' (VP.fromList [37, 37, 37, 37, 37, 37])
+        !e = InsertWithBlob (SerialisedValue' (VP.fromList [48, 19])) (BlobSpan 55 77)
 
     (addRes, (mp, mc, b, ic, _numEntries)) <- stToIO $ do
       racc <- new (NumEntries 1) 1 Nothing

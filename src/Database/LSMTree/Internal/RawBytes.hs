@@ -58,7 +58,7 @@ import           Data.ByteString.Short (ShortByteString (SBS))
 import qualified Data.ByteString.Short as SBS
 import           Data.Primitive.ByteArray (ByteArray (..), compareByteArrays)
 import qualified Data.Primitive.ByteArray as BA
-import qualified Data.Vector.Primitive as PV
+import qualified Data.Vector.Primitive as VP
 import           Database.LSMTree.Internal.ByteString (byteArrayToByteString,
                      shortByteStringFromTo, tryGetByteArray,
                      unsafePinnedByteArrayToByteString)
@@ -81,7 +81,7 @@ import           GHC.Word
 
 -- | Raw bytes with no alignment constraint (i.e. byte aligned), and no
 -- guarantee of pinned or unpinned memory (i.e. could be either).
-newtype RawBytes = RawBytes (PV.Vector Word8)
+newtype RawBytes = RawBytes (VP.Vector Word8)
   deriving newtype (Show, NFData)
 
 instance Eq RawBytes where
@@ -102,15 +102,15 @@ compareBytes rb1@(RawBytes vec1) rb2@(RawBytes vec2) =
              | len1 > len2 -> GT
           o  -> o
   where
-    PV.Vector off1 _size1 ba1 = vec1
-    PV.Vector off2 _size2 ba2 = vec2
+    VP.Vector off1 _size1 ba1 = vec1
+    VP.Vector off2 _size2 ba2 = vec2
 
 instance Hashable RawBytes where
   hashSalt64 :: Word64 -> RawBytes -> Word64
   hashSalt64 = hash
 
 hash :: Word64 -> RawBytes -> Word64
-hash salt (RawBytes (PV.Vector off len ba)) = hashByteArray ba off len salt
+hash salt (RawBytes (VP.Vector off len ba)) = hashByteArray ba off len salt
 
 instance IsList RawBytes where
   type Item RawBytes = Word8
@@ -131,15 +131,15 @@ instance IsString RawBytes where
 
 -- | \( O(1) \)
 size :: RawBytes -> Int
-size = coerce PV.length
+size = coerce VP.length
 
 -- | \( O(1) \)
 take :: Int -> RawBytes -> RawBytes
-take = coerce PV.take
+take = coerce VP.take
 
 -- | \( O(1) \)
 drop :: Int -> RawBytes -> RawBytes
-drop = coerce PV.drop
+drop = coerce VP.drop
 
 -- | @'topBits16' n rb@ slices the first @n@ bits from the /top/ of the raw
 -- bytes @rb@. Returns the string of bits as a 'Word16'.
@@ -155,7 +155,7 @@ drop = coerce PV.drop
 -- core, find other opportunities for using primops.
 --
 topBits16 :: Int -> RawBytes -> Word16
-topBits16 n rb@(RawBytes (PV.Vector (I# off#) _size (ByteArray k#))) =
+topBits16 n rb@(RawBytes (VP.Vector (I# off#) _size (ByteArray k#))) =
     assert (size rb >= 2) $ shiftR w16 (16 - n)
   where
     w16 = toWord16 (indexWord8ArrayAsWord16# k# off#)
@@ -182,7 +182,7 @@ toWord16 x# = byteSwap16 (W16# x#)
 -- core, find other opportunities for using primops.
 --
 sliceBits32 :: Int -> RawBytes -> Word32
-sliceBits32 off@(I# off1#) rb@(RawBytes (PV.Vector (I# off2#) _size (ByteArray ba#)))
+sliceBits32 off@(I# off1#) rb@(RawBytes (VP.Vector (I# off2#) _size (ByteArray ba#)))
     | 0# <- r#
     = assert (off + 32 <= 8 * size rb) $
       toWord32 (indexWord8ArrayAsWord32# ba# q#)
@@ -209,11 +209,11 @@ toWord32 x# = byteSwap32 (W32# x#)
 -------------------------------------------------------------------------------}
 
 instance Semigroup RawBytes where
-    (<>) = coerce (PV.++)
+    (<>) = coerce (VP.++)
 
 instance Monoid RawBytes where
-    mempty = coerce PV.empty
-    mconcat = coerce PV.concat
+    mempty = coerce VP.empty
+    mconcat = coerce VP.concat
 
 -- | O(n) Yield the argument, but force it not to retain any extra memory by
 -- copying it.
@@ -221,11 +221,11 @@ instance Monoid RawBytes where
 -- Useful when dealing with slices. Also, see
 -- "Database.LSMTree.Internal.Unsliced"
 copy :: RawBytes -> RawBytes
-copy (RawBytes pvec) = RawBytes (PV.force pvec)
+copy (RawBytes pvec) = RawBytes (VP.force pvec)
 
 -- | Force 'RawBytes' to not retain any extra memory. This may copy the contents.
 force :: RawBytes -> ByteArray
-force (RawBytes (PV.Vector off len ba))
+force (RawBytes (VP.Vector off len ba))
     | off == 0
     , BA.sizeofByteArray ba == len
     = ba
@@ -241,7 +241,7 @@ force (RawBytes (PV.Vector off len ba))
 -------------------------------------------------------------------------------}
 
 -- | \( O(1) \)
-fromVector :: PV.Vector Word8 -> RawBytes
+fromVector :: VP.Vector Word8 -> RawBytes
 fromVector v = RawBytes v
 
 -- | \( O(1) \)
@@ -249,10 +249,10 @@ fromByteArray :: Int -> Int -> ByteArray -> RawBytes
 fromByteArray off len ba = RawBytes (mkPrimVector off len ba)
 
 pack :: [Word8] -> RawBytes
-pack = coerce PV.fromList
+pack = coerce VP.fromList
 
 unpack :: RawBytes -> [Word8]
-unpack = coerce PV.toList
+unpack = coerce VP.toList
 
 {-------------------------------------------------------------------------------
   @bytestring@ utils
@@ -276,13 +276,13 @@ unsafeFromByteString bs =
 -- | \( O(1) \) conversion from raw bytes to a bytestring if pinned,
 -- \( O(n) \) if unpinned.
 toByteString :: RawBytes -> BS.ByteString
-toByteString (RawBytes (PV.Vector off len ba)) =
+toByteString (RawBytes (VP.Vector off len ba)) =
     byteArrayToByteString off len ba
 
 -- | \( O(1) \) conversion from raw bytes to a bytestring.
 -- Fails if the underlying byte array is not pinned.
 unsafePinnedToByteString :: HasCallStack => RawBytes -> BS.ByteString
-unsafePinnedToByteString (RawBytes (PV.Vector off len ba)) =
+unsafePinnedToByteString (RawBytes (VP.Vector off len ba)) =
     unsafePinnedByteArrayToByteString off len ba
 
 -- | \( O(1) \) conversion from a short bytestring to raw bytes.
@@ -292,5 +292,5 @@ fromShortByteString sbs@(SBS ba#) =
 
 {-# INLINE builder #-}
 builder :: RawBytes -> BB.Builder
-builder (RawBytes (PV.Vector off sz (ByteArray ba#))) =
+builder (RawBytes (VP.Vector off sz (ByteArray ba#))) =
     shortByteStringFromTo off (off + sz) (SBS ba#)
