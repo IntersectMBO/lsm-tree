@@ -28,6 +28,8 @@ module Database.LSMTree.Internal (
     -- * Snapshots
   , snapshot
   , open
+  , deleteSnapshot
+  , listSnapshots
     -- * configuration
   , TableConfig (..)
   , resolveMupsert
@@ -48,6 +50,7 @@ import           Data.Either (fromRight)
 import           Data.Foldable
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import           Data.Maybe (catMaybes)
 import qualified Data.Set as Set
 import qualified Data.Vector as V
 import           Data.Word (Word32, Word64)
@@ -96,6 +99,7 @@ data LSMTreeError =
     -- 'Database.LSMTree.Common.close'.
   | ErrTableClosed
   | ErrExpectedNormalTable
+  | ErrSnapshotNotExists SnapshotName
   deriving (Show, Exception)
 
 {-------------------------------------------------------------------------------
@@ -620,6 +624,44 @@ openLevels hfs levels =
         Managed $ bracketOnError
                     (Run.openFromDisk hfs run)
                     (Run.removeReference hfs)
+
+{-# SPECIALISE deleteSnapshot :: Session IO h -> SnapshotName -> IO () #-}
+-- |  See 'Database.LSMTree.Common.deleteSnapshot'.
+deleteSnapshot ::
+     m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+  => Session m h
+  -> SnapshotName
+  -> m ()
+deleteSnapshot sesh snap =
+    withOpenSession sesh $ \seshEnv -> do
+      let hfs = sessionHasFS seshEnv
+          snapPath = Paths.snapshot (sessionRoot seshEnv) snap
+      FS.doesFileExist hfs snapPath >>= \b ->
+        unless b $ throwIO (ErrSnapshotNotExists snap)
+      FS.removeFile hfs snapPath
+
+{-# SPECIALISE listSnapshots :: Session IO h -> IO [SnapshotName] #-}
+-- |  See 'Database.LSMTree.Common.listSnapshots'.
+listSnapshots ::
+     m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+  => Session m h
+  -> m [SnapshotName]
+listSnapshots sesh =
+    withOpenSession sesh $ \seshEnv -> do
+      let hfs = sessionHasFS seshEnv
+          root = sessionRoot seshEnv
+      contents <- FS.listDirectory hfs (Paths.snapshotsDir (sessionRoot seshEnv))
+      snaps <- mapM (checkSnapshot hfs root) $ Set.toList contents
+      pure $ catMaybes snaps
+  where
+    checkSnapshot hfs root s =
+      case Paths.mkSnapshotName s of
+        Nothing   -> pure Nothing
+        Just snap -> do
+          -- check that it is a file
+          b <- FS.doesFileExist hfs (Paths.snapshot root snap)
+          if b then pure $ Just snap
+               else pure $ Nothing
 
 {-------------------------------------------------------------------------------
   Configuration

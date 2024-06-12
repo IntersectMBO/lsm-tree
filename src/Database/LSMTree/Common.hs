@@ -181,6 +181,7 @@ instance SomeUpdateConstraint BS.ByteString where
   Snapshots
 -------------------------------------------------------------------------------}
 
+{-# SPECIALISE deleteSnapshot :: Session IO -> Internal.SnapshotName -> IO () #-}
 -- | Delete a named snapshot.
 --
 -- NOTE: has similar behaviour to 'removeDirectory'.
@@ -189,13 +190,18 @@ instance SomeUpdateConstraint BS.ByteString where
 --
 -- * Deleting a snapshot that doesn't exist is an error.
 --
+-- TODO: this function currently has a temporary implementation until we have
+-- proper snapshots.
 deleteSnapshot :: IOLike m => Session m -> Internal.SnapshotName -> m ()
-deleteSnapshot = undefined
+deleteSnapshot (Session sesh) = Internal.deleteSnapshot sesh
 
+{-# SPECIALISE listSnapshots :: Session IO -> IO [Internal.SnapshotName] #-}
 -- | List snapshots by name.
 --
+-- TODO: this function currently has a temporary implementation until we have
+-- proper snapshots.
 listSnapshots :: IOLike m => Session m -> m [Internal.SnapshotName]
-listSnapshots = undefined
+listSnapshots (Session sesh) = Internal.listSnapshots sesh
 
 {-------------------------------------------------------------------------------
   Blob references
