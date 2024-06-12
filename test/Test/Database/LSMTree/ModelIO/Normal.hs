@@ -3,6 +3,8 @@
 {-# LANGUAGE TypeApplications    #-}
 {-# LANGUAGE TypeFamilies        #-}
 
+{-# OPTIONS_GHC -Wno-orphans #-}
+
 module Test.Database.LSMTree.ModelIO.Normal (tests) where
 
 import           Control.Exception (SomeException, try)
@@ -16,7 +18,7 @@ import           Data.Proxy (Proxy (..))
 import qualified Data.Vector as V
 import qualified Data.Vector.Algorithms.Merge as VA
 import           Data.Word (Word64)
-import           Database.LSMTree.Common (mkSnapshotName)
+import           Database.LSMTree.Common (Labellable (..), mkSnapshotName)
 import           Database.LSMTree.Extras.Generators ()
 import           Database.LSMTree.ModelIO.Normal (IOLike, LookupResult (..),
                      Range (..), RangeLookupResult (..), SerialiseKey,
@@ -55,6 +57,9 @@ tests = testGroup "Database.LSMTree.ModelIO.Normal"
 type Key = Word64
 type Value = BS.ByteString
 type Blob = BS.ByteString
+
+instance Labellable (Key, Value, Blob) where
+  makeSnapshotLabel _ = "Word64 ByteString ByteString"
 
 makeNewTable :: forall h. IsTableHandle h => Proxy h
     -> [(Key, Update Value Blob)]

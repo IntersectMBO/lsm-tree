@@ -14,8 +14,8 @@ import           Data.Kind (Constraint, Type)
 import           Data.Proxy (Proxy)
 import           Data.Typeable (Typeable)
 import qualified Data.Vector as V
-import           Database.LSMTree.Common (IOLike, Range (..), SerialiseKey,
-                     SerialiseValue, SnapshotName)
+import           Database.LSMTree.Common (IOLike, Labellable (..), Range (..),
+                     SerialiseKey, SerialiseValue, SnapshotName)
 import qualified Database.LSMTree.ModelIO.Normal as M
 import           Database.LSMTree.Normal (LookupResult (..),
                      RangeLookupResult (..), Update (..))
@@ -98,6 +98,7 @@ class (IsSession (Session h)) => IsTableHandle h where
 
     snapshot ::
         ( IOLike m, SerialiseKey k, SerialiseValue v , SerialiseValue blob
+        , Labellable (k, v, blob)
           -- Model-specific constraints
         , Typeable k , Typeable v , Typeable blob
         )
@@ -107,6 +108,7 @@ class (IsSession (Session h)) => IsTableHandle h where
 
     open ::
         ( IOLike m, SerialiseKey k, SerialiseValue v, SerialiseValue blob
+        , Labellable (k, v, blob)
           -- Model-specific constraints
         , Typeable k, Typeable v, Typeable blob
         )

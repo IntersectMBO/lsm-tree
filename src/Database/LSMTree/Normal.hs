@@ -66,6 +66,8 @@ module Database.LSMTree.Normal (
 
     -- * Durability (snapshots)
   , SnapshotName
+  , Common.SnapshotLabel
+  , Common.Labellable (..)
   , snapshot
   , open
   , deleteSnapshot
@@ -85,17 +87,18 @@ module Database.LSMTree.Normal (
   , IOLike
   ) where
 
-import           Control.Exception (throwIO)
 import           Control.Monad
+import           Control.Monad.Class.MonadThrow (MonadThrow (..))
 import           Data.Bifunctor (Bifunctor (..))
 import           Data.Kind (Type)
 import           Data.Maybe (isJust)
-import           Data.Typeable (Typeable)
+import           Data.Typeable (Proxy (..), Typeable)
 import qualified Data.Vector as V
 import           Database.LSMTree.Common (BlobRef (BlobRef), IOLike, Range (..),
                      SerialiseKey, SerialiseValue, Session (..), SnapshotName,
                      closeSession, deleteSnapshot, listSnapshots, openSession,
                      withSession)
+import qualified Database.LSMTree.Common as Common
 import qualified Database.LSMTree.Internal as Internal
 import           Database.LSMTree.Internal.Entry (updateToEntryNormal)
 import           Database.LSMTree.Internal.Normal
@@ -302,7 +305,7 @@ retrieveBlobs = undefined
   Snapshots
 -------------------------------------------------------------------------------}
 
-{-# SPECIALISE snapshot :: (SerialiseKey k, SerialiseValue v, SerialiseValue blob) => SnapshotName -> TableHandle IO k v blob -> IO () #-}
+{-# SPECIALISE snapshot :: (SerialiseKey k, SerialiseValue v, SerialiseValue blob, Common.Labellable (k, v, blob)) => SnapshotName -> TableHandle IO k v blob -> IO () #-}
 -- | Make the current value of a table durable on-disk by taking a snapshot and
 -- giving the snapshot a name. This is the __only__ mechanism to make a table
 -- durable -- ordinary insert\/delete operations are otherwise not preserved.
@@ -333,13 +336,17 @@ retrieveBlobs = undefined
 -- closed. The write buffer is also persisted to disk as part of the snapshot,
 -- but the original table remains unchanged.
 snapshot ::
-     (IOLike m, SerialiseKey k, SerialiseValue v, SerialiseValue blob)
+     forall m k v blob. ( IOLike m
+     , SerialiseKey k, SerialiseValue v, SerialiseValue blob
+     , Common.Labellable (k, v , blob)
+     )
   => SnapshotName
   -> TableHandle m k v blob
   -> m ()
-snapshot snap (TableHandle th) = void $ Internal.snapshot snap th
+snapshot snap (TableHandle th) = void $ Internal.snapshot snap label th
+  where label = Common.makeSnapshotLabel (Proxy @(k, v, blob))
 
-{-# SPECIALISE open :: (SerialiseKey k, SerialiseValue v, SerialiseValue blob) => Session IO -> SnapshotName -> IO (TableHandle IO k v blob ) #-}
+{-# SPECIALISE open :: (SerialiseKey k, SerialiseValue v, SerialiseValue blob, Common.Labellable (k, v, blob)) => Session IO -> SnapshotName -> IO (TableHandle IO k v blob ) #-}
 -- | Open a table from a named snapshot, returning a new table handle.
 --
 -- NOTE: close table handles using 'close' as soon as they are
@@ -362,11 +369,15 @@ snapshot snap (TableHandle th) = void $ Internal.snapshot snap th
 -- TODO: this function currently has a temporary implementation until we have
 -- proper snapshots. See 'snapshot'.
 open ::
-     (IOLike m, SerialiseKey k, SerialiseValue v, SerialiseValue blob)
+     forall m k v blob. ( IOLike m
+     , SerialiseKey k, SerialiseValue v, SerialiseValue blob
+     , Common.Labellable (k, v, blob)
+     )
   => Session m
   -> SnapshotName
   -> m (TableHandle m k v blob)
-open (Session sesh) snap = TableHandle <$> Internal.open sesh snap
+open (Session sesh) snap = TableHandle <$> Internal.open sesh label snap
+  where label = Common.makeSnapshotLabel (Proxy @(k, v, blob))
 
 {-------------------------------------------------------------------------------
   Mutiple writable table handles

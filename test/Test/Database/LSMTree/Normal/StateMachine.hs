@@ -53,8 +53,8 @@ import qualified Data.Set as Set
 import           Data.Typeable (Proxy (..), Typeable, cast)
 import qualified Data.Vector as V
 import           Data.Word (Word64)
-import qualified Database.LSMTree.Common as SUT (SerialiseKey, SerialiseValue,
-                     mkSnapshotName)
+import qualified Database.LSMTree.Common as SUT (Labellable, SerialiseKey,
+                     SerialiseValue, mkSnapshotName)
 import           Database.LSMTree.Extras.Generators ()
 import           Database.LSMTree.Internal (LSMTreeError (..))
 import qualified Database.LSMTree.Internal as Impl.Real.Internal
@@ -244,6 +244,16 @@ instance Eq Impl.Real.Internal.ResolveMupsert where
   _ == _ = error "(==) on ResolveMupserts should not be used!"
 
 {-------------------------------------------------------------------------------
+  Key and value types
+-------------------------------------------------------------------------------}
+
+instance Impl.Real.Labellable (QC.Small Word64, QC.Small Word64, QC.Small Word64) where
+  makeSnapshotLabel _ = "Small Word64 Small Word64 Small Word64"
+
+instance Impl.Real.Labellable (BS.ByteString , BS.ByteString , BS.ByteString ) where
+  makeSnapshotLabel _ = "ByteString ByteString ByteString"
+
+{-------------------------------------------------------------------------------
   Model state
 -------------------------------------------------------------------------------}
 
@@ -318,10 +328,10 @@ instance ( Show (SUT.Class.TableConfig h)
                   => Var h (V.Vector (WrapBlobRef h IO blob))
                   -> Act h (V.Vector (WrapBlob blob))
     -- Snapshots
-    Snapshot :: C k v blob
+    Snapshot :: (C k v blob, SUT.Labellable (k, v, blob))
              => SUT.SnapshotName -> Var h (WrapTableHandle h IO k v blob)
              -> Act h ()
-    Open     :: C k v blob
+    Open     :: (C k v blob, SUT.Labellable (k, v, blob))
              => SUT.SnapshotName
              -> Act h (WrapTableHandle h IO k v blob)
     DeleteSnapshot :: SUT.SnapshotName -> Act h ()

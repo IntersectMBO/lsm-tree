@@ -94,8 +94,8 @@ prop_interimOpenTable dat = ioProperty $
         -- flush on its own.
         mapM_ (\(k,e) -> updates (V.singleton (k, e)) th) upds
         let snap = fromMaybe (error "invalid name") $ mkSnapshotName "snap"
-        numRunsSnapped <- snapshot snap th
-        th' <- open sesh snap
+        numRunsSnapped <- snapshot snap "someLabel" th
+        th' <- open sesh "someLabel" snap
         lhs <- lookups ks th id
         rhs <- lookups ks th' id
         close th

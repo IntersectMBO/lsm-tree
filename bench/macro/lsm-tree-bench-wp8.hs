@@ -3,6 +3,8 @@
 {-# LANGUAGE OverloadedRecordDot   #-}
 {-# LANGUAGE OverloadedStrings     #-}
 
+{-# OPTIONS_GHC -Wno-orphans #-}
+
 {- Benchmark requirements:
 
 A. The benchmark should use the external interface of the disk backend,
@@ -75,6 +77,9 @@ import qualified Database.LSMTree.Normal as LSM
 type K = BS.ByteString
 type V = BS.ByteString
 type B = Void
+
+instance LSM.Labellable (K, V, B) where
+  makeSnapshotLabel _ = "K V B"
 
 -- We generate keys by hashing a word64 and adding two "random" bytes.
 -- This way we can ensure that keys are distinct.
