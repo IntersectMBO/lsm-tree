@@ -36,7 +36,6 @@ import           Database.LSMTree.Internal.Serialise (SerialisedKey,
 import           Debug.Trace (traceMarkerIO)
 import           GHC.Stats
 import           Numeric
-import           System.Directory (removeDirectoryRecursive)
 import qualified System.FS.API as FS
 import qualified System.FS.BlockIO.API as FS
 import qualified System.FS.BlockIO.IO as FS
@@ -130,8 +129,8 @@ benchmarkEntriesPerPageBounds =
     , fromIntegral @Int $ floor @Double numEntriesFitInPage
     )
 
-benchmarks :: IO ()
-benchmarks = do
+benchmarks :: Maybe FilePath -> IO ()
+benchmarks dirMay = withFS dirMay $ \hfs hbio -> do
 #ifdef NO_IGNORE_ASSERTS
     putStrLn "BENCHMARKING A BUILD WITH -fno-ignore-asserts"
 #endif
@@ -158,7 +157,8 @@ benchmarks = do
     -- runs, such that the generated lookups access the runs in random places
     -- instead of sequentially.
     let keyRng0 = mkStdGen 17
-    (!runs, !blooms, !indexes, !handles, !benchTmpDir, !hfs, !hbio) <- lookupsEnv runSizes keyRng0
+
+    (!runs, !blooms, !indexes, !handles) <- lookupsEnv runSizes keyRng0 hfs
     putStrLn "<finished>"
 
     traceMarkerIO "Computing statistics for generated runs"
@@ -211,7 +211,6 @@ benchmarks = do
     traceMarkerIO "Cleaning up runs"
     putStrLn "Cleaning up runs"
     V.mapM_ (Run.removeReference hfs) runs
-    removeDirectoryRecursive benchTmpDir
 
     traceMarkerIO "Computing statistics for prepLookups results"
     putStr "<Computing statistics for prepLookups>"
@@ -298,6 +297,21 @@ totalNumEntriesSanityCheck l1 runSizes =
     ==
     sum [ 2^l1 * sizeFactor | (_, sizeFactor) <- runSizes ]
 
+withFS ::
+     Maybe FilePath
+  -> (FS.HasFS IO FS.HandleIO -> FS.HasBlockIO IO FS.HandleIO -> IO a)
+  -> IO a
+withFS dirMay action =
+    withBenchDir dirMay $ \dir -> do
+      let hfs = FS.ioHasFS (FS.MountPoint dir)
+      exists <- FS.doesDirectoryExist hfs (FS.mkFsPath [])
+      unless exists $ error ("benchmark directory does not exist: " <> dir)
+      FS.withIOHasBlockIO hfs FS.defaultIOCtxParams $ \hbio ->
+        action hfs hbio
+  where
+    withBenchDir (Just dir) action' = action' dir
+    withBenchDir Nothing    action' = withSystemTempDirectory "lookups-macro-bench" action'
+
 -- | Input environment for benchmarking lookup functions.
 --
 -- The idea here is to have a collection of runs corresponding to the sizes used
@@ -316,20 +330,13 @@ totalNumEntriesSanityCheck l1 runSizes =
 lookupsEnv ::
      [RunSizeInfo]
   -> StdGen -- ^ Key RNG
+  -> FS.HasFS IO FS.HandleIO
   -> IO ( V.Vector (Run (FS.Handle FS.HandleIO))
         , V.Vector (Bloom SerialisedKey)
         , V.Vector IndexCompact
         , V.Vector (FS.Handle FS.HandleIO)
-        , FilePath -- temporary directory that should be removed eventually
-        , FS.HasFS IO FS.HandleIO
-        , FS.HasBlockIO IO FS.HandleIO
         )
-lookupsEnv runSizes keyRng0 = do
-    sysTmpDir <- getCanonicalTemporaryDirectory
-    benchTmpDir <- createTempDirectory sysTmpDir "lookups-macro-bench"
-    let hfs = FS.ioHasFS (FS.MountPoint benchTmpDir)
-    hbio <- FS.ioHasBlockIO hfs FS.defaultIOCtxParams
-
+lookupsEnv runSizes keyRng0 hfs = do
     -- create the vector of initial keys
     (mvec :: VUM.MVector RealWorld UTxOKey) <- VUM.unsafeNew (totalNumEntries runSizes)
     !keyRng1 <- vectorOfUniforms mvec keyRng0
@@ -369,7 +376,7 @@ lookupsEnv runSizes keyRng0 = do
     let blooms = V.map Run.runFilter runs
         indexes = V.map Run.runIndex runs
         handles = V.map Run.runKOpsFile runs
-    pure $!! (runs, blooms, indexes, handles, benchTmpDir, hfs, hbio)
+    pure $!! (runs, blooms, indexes, handles)
 
 genLookupBatch :: StdGen -> Int -> (V.Vector SerialisedKey, StdGen)
 genLookupBatch !rng0 !n0

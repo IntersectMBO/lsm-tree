@@ -23,8 +23,11 @@ main = do
   case args of
     [arg] | arg == "BloomFilter" ->
       Bench.Database.LSMTree.Internal.BloomFilter.benchmarks
-          | arg == "Lookup" ->
-      Bench.Database.LSMTree.Internal.Lookup.benchmarks
+    [arg] | arg == "Lookup" ->
+      Bench.Database.LSMTree.Internal.Lookup.benchmarks Nothing
+    [arg1, arg2] | arg1 == "Lookup"
+                 , let !dir = read ("\"" <> arg2 <> "\"") ->
+      Bench.Database.LSMTree.Internal.Lookup.benchmarks (Just dir)
     _     -> do
-      putStrLn "Wrong usage, pass one of two commands: [BloomFilter|Lookup]"
+      putStrLn "Wrong usage, pass one of two commands: [BloomFilter|Lookup [optional filepath]]"
       exitFailure
