@@ -291,6 +291,7 @@ retrieveBlobs = undefined
   Snapshots
 -------------------------------------------------------------------------------}
 
+{-# SPECIALISE snapshot :: (SerialiseKey k, SerialiseValue v, SerialiseValue blob) => SnapshotName -> TableHandle IO k v blob -> IO () #-}
 -- | Make the current value of a table durable on-disk by taking a snapshot and
 -- giving the snapshot a name. This is the __only__ mechanism to make a table
 -- durable -- ordinary insert\/delete operations are otherwise not preserved.
@@ -313,13 +314,21 @@ retrieveBlobs = undefined
 -- * It is safe to concurrently make snapshots from any table, provided that
 --   the snapshot names are distinct (otherwise this would be a race).
 --
+-- TODO: this function currently has a temporary implementation until we have
+-- proper snapshots. The temporary snapshot consists of a small file in the
+-- snapshots directory that lists: (i) the runs that are used by a specific
+-- snapshot, and (ii) its table configuration. We don't have to copy run files
+-- as part of the snapshot because run files aren't (yet) deleted when runs are
+-- closed. The write buffer is also persisted to disk as part of the snapshot,
+-- but the original table remains unchanged.
 snapshot ::
      (IOLike m, SerialiseKey k, SerialiseValue v, SerialiseValue blob)
   => SnapshotName
   -> TableHandle m k v blob
   -> m ()
-snapshot = undefined
+snapshot snap (TableHandle th) = void $ Internal.snapshot snap th
 
+{-# SPECIALISE open :: (SerialiseKey k, SerialiseValue v, SerialiseValue blob) => Session IO -> SnapshotName -> IO (TableHandle IO k v blob ) #-}
 -- | Open a table from a named snapshot, returning a new table handle.
 --
 -- NOTE: close table handles using 'close' as soon as they are
@@ -339,15 +348,14 @@ snapshot = undefined
 --   'open' \@IO \@Bool \@Bool \@Bool session "intTable"
 -- @
 --
--- TOREMOVE: before snapshots are implemented, the snapshot name should be ignored.
--- Instead, this function should open a table handle from files that exist in
--- the session's directory.
+-- TODO: this function currently has a temporary implementation until we have
+-- proper snapshots. See 'snapshot'.
 open ::
      (IOLike m, SerialiseKey k, SerialiseValue v, SerialiseValue blob)
   => Session m
   -> SnapshotName
   -> m (TableHandle m k v blob)
-open = undefined
+open (Session sesh) snap = TableHandle <$> Internal.open sesh snap
 
 {-------------------------------------------------------------------------------
   Mutiple writable table handles

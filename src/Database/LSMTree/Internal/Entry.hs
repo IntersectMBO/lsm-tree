@@ -5,6 +5,7 @@
 
 module Database.LSMTree.Internal.Entry (
     Entry (..)
+  , hasBlob
   , onValue
   , onBlobRef
   , NumEntries (..)
@@ -36,6 +37,12 @@ data Entry v blobref
     | Mupdate !v
     | Delete
   deriving (Eq, Show, Functor, Foldable, Traversable)
+
+hasBlob :: Entry v blobref -> Bool
+hasBlob Insert{}         = False
+hasBlob InsertWithBlob{} = True
+hasBlob Mupdate{}        = False
+hasBlob Delete{}         = False
 
 instance (NFData v, NFData blobref) => NFData (Entry v blobref) where
     rnf (Insert v)            = rnf v

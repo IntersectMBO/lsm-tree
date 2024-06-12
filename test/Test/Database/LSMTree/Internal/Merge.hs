@@ -7,6 +7,7 @@ import qualified Data.BloomFilter as Bloom
 import           Data.Foldable (traverse_)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (isJust)
+import           Data.Word (Word64)
 import           Database.LSMTree.Extras
 import           Database.LSMTree.Extras.Generators (KeyForIndexCompact,
                      TypedWriteBuffer (..))
@@ -144,7 +145,7 @@ type StepSize = Positive Int
 mergeRuns ::
      FS.HasFS IO h ->
      Merge.Level ->
-     Int ->
+     Word64 ->
      [Run.Run (FS.Handle h)] ->
      StepSize ->
      IO (Int, Run.Run (FS.Handle h))

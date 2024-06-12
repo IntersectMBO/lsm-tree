@@ -30,6 +30,7 @@ import qualified Data.ByteString.Char8 as BS
 import           Data.Foldable (toList)
 import qualified Data.Map as Map
 import           Data.Traversable (for)
+import           Data.Word (Word64)
 import           Prelude hiding (Applicative (..))
 import qualified System.FilePath.Posix
 import qualified System.FilePath.Windows
@@ -47,7 +48,7 @@ lockFile (SessionRoot dir) = dir </> mkFsPath ["lock"]
 activeDir :: SessionRoot -> FsPath
 activeDir (SessionRoot dir) = dir </> mkFsPath ["active"]
 
-runPath :: SessionRoot -> Int -> RunFsPaths
+runPath :: SessionRoot -> Word64 -> RunFsPaths
 runPath root = RunFsPaths (activeDir root)
 
 snapshotsDir :: SessionRoot -> FsPath
@@ -117,7 +118,7 @@ mkSnapshotName s
 data RunFsPaths = RunFsPaths {
     -- | The directory that run files live in.
     runDir    :: !FsPath
-  , runNumber :: !Int }
+  , runNumber :: !Word64 }
   deriving Show
 
 instance NFData RunFsPaths where

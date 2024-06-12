@@ -1,8 +1,7 @@
-{-# LANGUAGE DeriveAnyClass #-}
-{-# LANGUAGE LambdaCase     #-}
-
--- TODO: remove once the top-level bindings are in use
-{-# OPTIONS_GHC -Wno-unused-top-binds #-}
+{-# LANGUAGE DeriveAnyClass             #-}
+{-# LANGUAGE DerivingStrategies         #-}
+{-# LANGUAGE GeneralisedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase                 #-}
 
 module Database.LSMTree.Internal (
     -- * Exceptions
@@ -25,8 +24,13 @@ module Database.LSMTree.Internal (
   , close
   , lookups
   , toNormalLookupResult
+  , updates
+    -- * Snapshots
+  , snapshot
+  , open
     -- * configuration
   , TableConfig (..)
+  , resolveMupsert
   , ResolveMupsert (..)
   , SizeRatio (..)
   , MergePolicy (..)
@@ -36,23 +40,27 @@ module Database.LSMTree.Internal (
 import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Concurrent.ReadWriteVar (RWVar)
 import qualified Control.Concurrent.ReadWriteVar as RW
-import           Control.Monad (unless)
+import           Control.Monad (unless, void)
 import           Control.Monad.Class.MonadThrow
 import           Data.BloomFilter (Bloom)
+import qualified Data.ByteString.Char8 as BSC
 import           Data.Either (fromRight)
 import           Data.Foldable
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import qualified Data.Vector as V
-import           Data.Word (Word32)
+import           Data.Word (Word32, Word64)
+import           Database.LSMTree.Internal.Assertions (assertNoThunks)
 import           Database.LSMTree.Internal.BlobRef
 import           Database.LSMTree.Internal.Entry (Entry (..), combineMaybe)
 import           Database.LSMTree.Internal.IndexCompact (IndexCompact)
 import           Database.LSMTree.Internal.Lookup (BatchSize (..),
                      lookupsInBatches)
+import           Database.LSMTree.Internal.Managed
 import qualified Database.LSMTree.Internal.Normal as Normal
-import           Database.LSMTree.Internal.Paths (SessionRoot)
+import           Database.LSMTree.Internal.Paths (RunFsPaths (..),
+                     SessionRoot (..), SnapshotName)
 import qualified Database.LSMTree.Internal.Paths as Paths
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
@@ -62,8 +70,11 @@ import qualified Database.LSMTree.Internal.Vector as V
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import qualified GHC.IO.Handle as GHC
+import           NoThunks.Class
 import qualified System.FS.API as FS
 import           System.FS.API (FsErrorPath, FsPath, Handle, HasFS)
+import qualified System.FS.API.Lazy as FS
+import qualified System.FS.API.Strict as FS
 import qualified System.FS.BlockIO.API as FS
 import qualified System.FS.BlockIO.API as HasBlockIO
 import           System.FS.BlockIO.API (HasBlockIO, IOCtxParams (..))
@@ -132,7 +143,7 @@ data SessionEnv m h = SessionEnv {
     -- 'close'. A table only make modifications for their own identifier. This
     -- means that modifications can be made concurrently in any order without
     -- further restrictions.
-  , sessionOpenTables  :: !(StrictMVar m (Map Integer (TableHandle m h)))
+  , sessionOpenTables  :: !(StrictMVar m (Map Word64 (TableHandle m h)))
   }
 
 -- | 'withOpenSession' ensures that the session stays open for the duration of the
@@ -149,8 +160,8 @@ withOpenSession sesh action = RW.with (sessionState sesh) $ \case
     SessionClosed -> throwIO ErrSessionClosed
     SessionOpen seshEnv -> action seshEnv
 
--- | An atomic counter for producing unique 'Integer' values.
-newtype UniqCounter m = UniqCounter (StrictMVar m Integer)
+-- | An atomic counter for producing unique 'Word64' values.
+newtype UniqCounter m = UniqCounter (StrictMVar m Word64)
 
 {-# INLINE newUniqCounter #-}
 newUniqCounter :: MonadMVar m => m (UniqCounter m)
@@ -159,7 +170,7 @@ newUniqCounter = UniqCounter <$> newMVar 0
 {-# INLINE incrUniqCounter #-}
 -- | Return the current state of the atomic counter, and then increment the
 -- counter.
-incrUniqCounter :: MonadMVar m => UniqCounter m -> m Integer
+incrUniqCounter :: MonadMVar m => UniqCounter m -> m Word64
 incrUniqCounter (UniqCounter uniqVar) = modifyMVar uniqVar (\x -> pure ((x+1), x))
 
 --
@@ -331,9 +342,14 @@ data TableHandleState m h =
 
 data TableHandleEnv m h = TableHandleEnv {
     -- === Session
+    -- | Inherited from session
     tableSessionRoot         :: !SessionRoot
+    -- | Inherited from session
   , tableHasFS               :: !(HasFS m h)
+    -- | Inherited from session
   , tableHasBlockIO          :: !(HasBlockIO m h)
+    -- | Inherited from session
+  , tablesSessionUniqCounter :: !(UniqCounter m)
     -- | Open tables are tracked in the corresponding session, so when a table
     -- is closed it should become untracked (forgotten).
   , tableSessionUntrackTable :: !(m ())
@@ -372,6 +388,7 @@ newtype Level h = Level {
   incomingRuns :: MergingRun
 -}
   }
+  deriving newtype NoThunks
 
 -- | Flattend cache of the runs that referenced by a table handle.
 --
@@ -421,32 +438,42 @@ new ::
   => Session m h
   -> TableConfig
   -> m (TableHandle m h)
-new sesh conf = do
-    -- Keep the session open until we've updated the session's set of tracked
+new sesh conf = withOpenSession sesh $ \seshEnv -> newWithLevels seshEnv conf V.empty
+
+{-# SPECIALISE new :: Session IO h -> TableConfig -> IO (TableHandle IO h) #-}
+newWithLevels ::
+     m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+  => SessionEnv m h
+  -> TableConfig
+  -> V.Vector (Level (Handle h))
+  -> m (TableHandle m h)
+newWithLevels seshEnv conf !levels = do
+    assertNoThunks levels $ pure ()
+    -- The session is kept open until we've updated the session's set of tracked
     -- tables. If 'closeSession' is called by another thread while this code
     -- block is being executed, that thread will block until it reads the
     -- /updated/ set of tracked tables.
-    withOpenSession sesh $ \seshEnv -> do
-      writeBufVar <- newMVar (WB.empty)
-      levelsVar <- newMVar V.empty
-      cacheVar <- newMVar (mkLevelsCache V.empty)
-      tableId <- incrUniqCounter (sessionUniqCounter seshEnv)
-      -- Action to untrack the current table
-      let forget = modifyMVar_ (sessionOpenTables seshEnv) $ pure . Map.delete tableId
-      tableVar <- RW.new $ TableHandleOpen $ TableHandleEnv {
-            tableSessionRoot = sessionRoot seshEnv
-          , tableHasFS = sessionHasFS seshEnv
-          , tableHasBlockIO = sessionHasBlockIO seshEnv
-          , tableSessionUntrackTable = forget
-          , tableConfig = conf
-          , tableWriteBuffer = writeBufVar
-          , tableLevels = levelsVar
-          , tableCache = cacheVar
-          }
-      let !th = TableHandle tableVar
-      -- Track the current table
-      modifyMVar_ (sessionOpenTables seshEnv) $ pure . Map.insert tableId th
-      pure $! th
+    writeBufVar <- newMVar (WB.empty)
+    levelsVar <- newMVar levels
+    cacheVar <- newMVar (mkLevelsCache levels)
+    tableId <- incrUniqCounter (sessionUniqCounter seshEnv)
+    -- Action to untrack the current table
+    let forget = modifyMVar_ (sessionOpenTables seshEnv) $ pure . Map.delete tableId
+    tableVar <- RW.new $ TableHandleOpen $ TableHandleEnv {
+          tableSessionRoot = sessionRoot seshEnv
+        , tableHasFS = sessionHasFS seshEnv
+        , tableHasBlockIO = sessionHasBlockIO seshEnv
+        , tablesSessionUniqCounter = sessionUniqCounter seshEnv
+        , tableSessionUntrackTable = forget
+        , tableConfig = conf
+        , tableWriteBuffer = writeBufVar
+        , tableLevels = levelsVar
+        , tableCache = cacheVar
+        }
+    let !th = TableHandle tableVar
+    -- Track the current table
+    modifyMVar_ (sessionOpenTables seshEnv) $ pure . Map.insert tableId th
+    pure $! th
 
 {-# SPECIALISE close :: TableHandle IO h -> IO () #-}
 -- | See 'Database.LSMTree.Normal.close'.
@@ -478,7 +505,7 @@ lookups ::
   -> m (V.Vector lookupResult)
 lookups ks th fromEntry = withOpenTable th $ \thEnv -> do
     wb <- readMVar (tableWriteBuffer thEnv)
-    let resolve = maybe const getResolveMupsert (confResolveMupsert $ tableConfig thEnv)
+    let resolve = resolveMupsert (tableConfig thEnv)
     cache <- readMVar (tableCache thEnv)
     ioRes <-
       lookupsInBatches
@@ -502,6 +529,89 @@ toNormalLookupResult = \case
       Mupdate _           -> error "toNormalLookupResult: Mupdate unexpected"
       Delete              -> Normal.NotFound
     Nothing -> Normal.NotFound
+
+-- | See 'Database.LSMTree.Normal.updates'.
+updates ::
+     forall m h k v blob.
+     V.Vector (k, Entry v blob)
+  -> TableHandle m h
+  -> m ()
+updates = error "updates: not yet implemented" -- TODO: implement
+
+{-------------------------------------------------------------------------------
+  Snapshots
+-------------------------------------------------------------------------------}
+
+{-# SPECIALISE snapshot :: SnapshotName -> TableHandle IO h -> IO Int #-}
+-- |  See 'Database.LSMTree.Normal.snapshot''.
+snapshot ::
+     m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+  => SnapshotName
+  -> TableHandle m h
+  -> m Int
+snapshot snap th = do
+    withOpenTable th $ \thEnv -> do
+      wb <- readMVar (tableWriteBuffer thEnv)
+      levels <- readMVar (tableLevels thEnv)
+      n <- incrUniqCounter (tablesSessionUniqCounter thEnv)
+      bracket
+        (Run.fromWriteBuffer
+          (tableHasFS thEnv)
+          (RunFsPaths (Paths.activeDir (tableSessionRoot thEnv)) n) wb)
+        (Run.removeReference (tableHasFS thEnv))
+        $ \wbRun -> do
+            let levels' = case V.uncons levels of
+                  Nothing             -> V.singleton (Level $ V.singleton wbRun)
+                  Just (Level rs, tl) -> Level (V.cons wbRun rs) `V.cons` tl
+
+            let runNumbers = V.map (V.map (runNumber . Run.runRunFsPaths) . residentRuns) levels'
+
+            FS.withFile
+              (tableHasFS thEnv)
+              (Paths.snapshot (tableSessionRoot thEnv) snap)
+              (FS.WriteMode FS.MustBeNew) $ \h ->
+                void $ FS.hPutAllStrict (tableHasFS thEnv) h
+                            (BSC.pack $ show (runNumbers, tableConfig thEnv))
+
+            pure $! V.sum (V.map V.length runNumbers)
+
+{-# SPECIALISE open :: Session IO h -> SnapshotName -> IO (TableHandle IO h) #-}
+-- |  See 'Database.LSMTree.Normal.open'.
+open ::
+     m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+  => Session m h
+  -> SnapshotName
+  -> m (TableHandle m h)
+open sesh snap = do
+    withOpenSession sesh $ \seshEnv -> do
+      let hfs = sessionHasFS seshEnv
+      bs <- FS.withFile
+              hfs
+              (Paths.snapshot (sessionRoot seshEnv) snap)
+              FS.ReadMode $ \h ->
+                FS.hGetAll (sessionHasFS seshEnv) h
+      let (runNumbers, conf) = read . BSC.unpack . BSC.toStrict $ bs
+          runPaths = V.map (V.map (RunFsPaths (Paths.activeDir $ sessionRoot seshEnv))) runNumbers
+      with (openLevels hfs runPaths) $ newWithLevels seshEnv conf
+
+{-# SPECIALISE openLevels :: HasFS IO h -> V.Vector (V.Vector RunFsPaths) -> Managed IO (V.Vector (Level (FS.Handle h))) #-}
+-- | Open multiple levels.
+--
+-- If an error occurs when opening multiple runs in sequence, then we have to
+-- make sure that all runs that have been succesfully opened already are closed
+-- again. The 'Managed' monad allows us to fold 'bracketOnError's over an @m@
+-- action.
+openLevels ::
+     m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+  => HasFS m h
+  -> V.Vector (V.Vector RunFsPaths)
+  -> Managed m (V.Vector (Level (Handle h)))
+openLevels hfs levels =
+    flip V.mapMStrict levels $ \level -> fmap Level $
+      flip V.mapMStrict level $ \run ->
+        Managed $ bracketOnError
+                    (Run.openFromDisk hfs run)
+                    (Run.removeReference hfs)
 
 {-------------------------------------------------------------------------------
   Configuration
@@ -530,6 +640,13 @@ data TableConfig = TableConfig {
   }
   deriving Show
 
+-- | TODO: this should be removed once we have proper snapshotting with proper
+-- persistence of the config to disk.
+deriving instance Read TableConfig
+
+resolveMupsert :: TableConfig -> SerialisedValue -> SerialisedValue -> SerialisedValue
+resolveMupsert conf = maybe const unResolveMupsert (confResolveMupsert conf)
+
 data MergePolicy =
     -- | Use tiering on intermediate levels, and levelling on the last level.
     -- This makes it easier for delete operations to disappear on the last
@@ -543,8 +660,16 @@ data MergePolicy =
 -}
   deriving (Show, Eq)
 
+-- | TODO: this should be removed once we have proper snapshotting with proper
+-- persistence of the config to disk.
+deriving instance Read MergePolicy
+
 data SizeRatio = Four
   deriving (Show, Eq)
+
+-- | TODO: this should be removed once we have proper snapshotting with proper
+-- persistence of the config to disk.
+deriving instance Read SizeRatio
 
 -- | Allocation method for bloom filters.
 --
@@ -573,7 +698,16 @@ data BloomFilterAlloc =
  -}
   deriving (Show, Eq)
 
+-- | TODO: this should be removed once we have proper snapshotting with proper
+-- persistence of the config to disk.
+deriving instance Read BloomFilterAlloc
+
 newtype ResolveMupsert = ResolveMupsert {
-    getResolveMupsert :: SerialisedValue -> SerialisedValue -> SerialisedValue
+    unResolveMupsert :: SerialisedValue -> SerialisedValue -> SerialisedValue
   }
+
 instance Show ResolveMupsert where show _ = "ResolveMupsert function can not be printed"
+
+-- | TODO: this should be removed once we have proper snapshotting with proper
+-- persistence of the config to disk.
+instance Read ResolveMupsert where readsPrec = error "ResolveMupsert function can not be read"
