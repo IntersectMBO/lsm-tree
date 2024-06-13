@@ -320,7 +320,8 @@ closeSession Session{sessionState} =
 -- | A handle to an on-disk key\/value table.
 --
 -- For more information, see 'Database.LSMTree.Normal.TableHandle'.
-newtype TableHandle m h = TableHandle {
+data TableHandle m h = TableHandle {
+      tableConfig      :: !TableConfig
       -- | The primary purpose of this 'RWVar' is to ensure consistent views of
       -- the open-/closedness of a table when multiple threads require access to
       -- the table's fields (see 'withOpenTable'). We use more fine-grained
@@ -329,7 +330,7 @@ newtype TableHandle m h = TableHandle {
       -- TODO: RWVars only work in IO, not in IOSim.
       --
       -- TODO: how fair is an RWVar?
-      tableHandleState :: RWVar (TableHandleState m h)
+    , tableHandleState :: RWVar (TableHandleState m h)
     }
 
 -- | A table handle may assume that its corresponding session is still open as
@@ -356,7 +357,6 @@ data TableHandleEnv m h = TableHandleEnv {
     -- === Table-specific
     --
     -- TODO: more fine-grained concurrency for table-specific mutable state.
-  , tableConfig              :: !TableConfig
   , tableWriteBuffer         :: !(StrictMVar m (WriteBuffer))
     -- | A hierarchy of levels. The vector indexes double as level numbers.
   , tableLevels              :: !(StrictMVar m (V.Vector (Level (Handle h))))
@@ -465,12 +465,11 @@ newWithLevels seshEnv conf !levels = do
         , tableHasBlockIO = sessionHasBlockIO seshEnv
         , tablesSessionUniqCounter = sessionUniqCounter seshEnv
         , tableSessionUntrackTable = forget
-        , tableConfig = conf
         , tableWriteBuffer = writeBufVar
         , tableLevels = levelsVar
         , tableCache = cacheVar
         }
-    let !th = TableHandle tableVar
+    let !th = TableHandle conf tableVar
     -- Track the current table
     modifyMVar_ (sessionOpenTables seshEnv) $ pure . Map.insert tableId th
     pure $! th
@@ -505,7 +504,7 @@ lookups ::
   -> m (V.Vector lookupResult)
 lookups ks th fromEntry = withOpenTable th $ \thEnv -> do
     wb <- readMVar (tableWriteBuffer thEnv)
-    let resolve = resolveMupsert (tableConfig thEnv)
+    let resolve = resolveMupsert (tableConfig th)
     cache <- readMVar (tableCache thEnv)
     ioRes <-
       lookupsInBatches
@@ -571,7 +570,7 @@ snapshot snap th = do
               (Paths.snapshot (tableSessionRoot thEnv) snap)
               (FS.WriteMode FS.MustBeNew) $ \h ->
                 void $ FS.hPutAllStrict (tableHasFS thEnv) h
-                            (BSC.pack $ show (runNumbers, tableConfig thEnv))
+                            (BSC.pack $ show (runNumbers, tableConfig th))
 
             pure $! V.sum (V.map V.length runNumbers)
 
