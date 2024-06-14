@@ -184,7 +184,7 @@ fromWriteBuffer fs fsPaths buffer = do
     -- More concretely, no range finder bits will be used anyways unless there
     -- are at least 2^16 pages.
     builder <- Builder.new fs fsPaths (WB.numEntries buffer) 1
-    for_ (WB.content buffer) $ \(k, e) ->
+    for_ (WB.toList buffer) $ \(k, e) ->
       Builder.addKeyOp fs builder k e
     fromMutable fs (RefCount 1) builder
 

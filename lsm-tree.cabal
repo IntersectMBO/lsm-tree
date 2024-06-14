@@ -98,6 +98,7 @@ library
     , nothunks                 ^>=0.2
     , primitive                ^>=0.9
     , strict-mvar              ^>=1.4
+    , transformers             ^>=0.6.1
     , vector                   ^>=0.13
     , vector-algorithms        ^>=0.9
 
@@ -236,6 +237,7 @@ test-suite lsm-tree-test
     Test.Database.LSMTree.Internal.RunBuilder
     Test.Database.LSMTree.Internal.Serialise
     Test.Database.LSMTree.Internal.Serialise.Class
+    Test.Database.LSMTree.Internal.WriteBuffer
     Test.Database.LSMTree.Model.Monoidal
     Test.Database.LSMTree.Model.Normal
     Test.Database.LSMTree.ModelIO.Class
