@@ -55,6 +55,9 @@ module Database.LSMTree.Extras.Generators (
   , LargeRawBytes (..)
   , KeyForIndexCompact (..)
   , keyForIndexCompactInvariant
+    -- * ResolveMupsert
+  , ExampleResolveMupsert (..)
+  , resolveMupsert
   ) where
 
 import           Control.DeepSeq (NFData)
@@ -63,7 +66,6 @@ import           Data.Bifunctor (bimap)
 import           Data.Coerce (coerce)
 import           Data.Containers.ListUtils (nubOrd)
 import           Data.List (sort)
-import qualified Data.Map as Map
 import qualified Data.Primitive.ByteArray as BA
 import qualified Data.Vector.Primitive as VP
 import           Data.Word
@@ -221,7 +223,7 @@ fromKOps ::
      (SerialiseKey k, SerialiseValue v, SerialiseValue blob)
   => [(k, Entry v blob)]
   -> TypedWriteBuffer k v blob
-fromKOps = TypedWriteBuffer . WB . Map.fromList . map serialiseKOp
+fromKOps = TypedWriteBuffer . WB.fromList const . map serialiseKOp
   where
     serialiseKOp = bimap serialiseKey (bimap serialiseValue serialiseBlob)
 
@@ -229,7 +231,7 @@ toKOps ::
      (SerialiseKey k, SerialiseValue v, SerialiseValue blob)
   => TypedWriteBuffer k v blob
   -> [(k, Entry v blob)]
-toKOps = map deserialiseKOp . Map.assocs . WB.unWB . unTypedWriteBuffer
+toKOps = map deserialiseKOp . WB.toList . unTypedWriteBuffer
   where
     deserialiseKOp =
       bimap deserialiseKey (bimap deserialiseValue deserialiseBlob)
@@ -629,6 +631,23 @@ deriving newtype instance SerialiseKey KeyForIndexCompact
 
 keyForIndexCompactInvariant :: KeyForIndexCompact -> Bool
 keyForIndexCompactInvariant (KeyForIndexCompact rb) = RB.size rb >= 6
+
+{-------------------------------------------------------------------------------
+  ResolveMupsert
+-------------------------------------------------------------------------------}
+
+data ExampleResolveMupsert = ResolveConst | ResolveFlipConst | ResolveAppend
+  deriving (Eq, Show)
+
+instance Arbitrary ExampleResolveMupsert where
+  arbitrary = QC.elements [ResolveConst, ResolveFlipConst, ResolveAppend]
+  shrink r = [ResolveConst | r /= ResolveConst]
+
+resolveMupsert :: ExampleResolveMupsert -> SerialisedValue -> SerialisedValue -> SerialisedValue
+resolveMupsert = \case
+    ResolveConst -> const
+    ResolveFlipConst -> flip const
+    ResolveAppend -> coerce ((<>) @RawBytes)
 
 {-------------------------------------------------------------------------------
   Unsliced
