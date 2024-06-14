@@ -30,9 +30,7 @@ tests = testGroup "Test.Database.LSMTree.Internal" [
     , testCase "twiceOpenSession" twiceOpenSession
     , testCase "sessionDirLayoutMismatch" sessionDirLayoutMismatch
     , testCase "sessionDirDoesNotExist" sessionDirDoesNotExist
-    , testProperty "prop_interimOpenTable" $
-        -- TODO: remove expectFailure once table updates are implemented
-        expectFailure prop_interimOpenTable
+    , testProperty "prop_interimOpenTable" prop_interimOpenTable
     ]
 
 newSession :: Assertion

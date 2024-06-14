@@ -85,9 +85,11 @@ module Database.LSMTree.Normal (
   , IOLike
   ) where
 
+import           Control.Exception (throwIO)
 import           Control.Monad
 import           Data.Bifunctor (Bifunctor (..))
 import           Data.Kind (Type)
+import           Data.Maybe (isJust)
 import           Data.Typeable (Typeable)
 import qualified Data.Vector as V
 import           Database.LSMTree.Common (BlobRef (BlobRef), IOLike, Range (..),
@@ -95,6 +97,7 @@ import           Database.LSMTree.Common (BlobRef (BlobRef), IOLike, Range (..),
                      closeSession, deleteSnapshot, listSnapshots, openSession,
                      withSession)
 import qualified Database.LSMTree.Internal as Internal
+import           Database.LSMTree.Internal.Entry (updateToEntryNormal)
 import           Database.LSMTree.Internal.Normal
 import qualified Database.LSMTree.Internal.Serialise as Internal
 import qualified Database.LSMTree.Internal.Vector as V
@@ -251,7 +254,15 @@ updates ::
   => V.Vector (k, Update v blob)
   -> TableHandle m k v blob
   -> m ()
-updates = undefined
+updates es (TableHandle th) = do
+    -- make sure not to insert any blobs into monoidal tables
+    when (isJust (Internal.confResolveMupsert (Internal.tableConfig th))) $
+      throwIO Internal.ErrExpectedNormalTable
+    Internal.updates (V.mapStrict serialiseEntry es) th
+  where
+    serialiseEntry = bimap Internal.serialiseKey serialiseOp
+    serialiseOp = bimap Internal.serialiseValue Internal.serialiseBlob
+                . updateToEntryNormal
 
 -- | Perform a batch of inserts.
 --

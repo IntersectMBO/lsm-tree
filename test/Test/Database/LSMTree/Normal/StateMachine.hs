@@ -505,7 +505,10 @@ instance ( Eq (SUT.Class.TableConfig h)
     -> ModelState h
     -> Gen (Any (LockstepAction (ModelState h)))
   arbitraryWithVars findVars st = QC.oneof [
-        arbitraryActionWithVars (Proxy @(Word64, Word64, Word64)) findVars st
+        -- TODO: tune generators to generate more interesting scenarios.
+        -- Previously, we were using just Word64, but then the probability of
+        -- generating a key twice is too low.
+        arbitraryActionWithVars (Proxy @(QC.Small Word64, QC.Small Word64, QC.Small Word64)) findVars st
       , arbitraryActionWithVars (Proxy @(BS.ByteString, BS.ByteString, BS.ByteString)) findVars st
       ]
 
@@ -922,9 +925,10 @@ arbitraryActionWithVars _ findVars _st = QC.oneof $ concat [
         , fmap Some $ Lookups <$> genLookupKeys <*> (fromRight <$> genVar)
         -- TODO: enable generators as we implement the actions for the /real/ lsm-tree
         -- , fmap Some $ RangeLookup <$> genRange <*> (fromRight <$> genVar)
-        -- , fmap Some $ Updates <$> genUpdates <*> (fromRight <$> genVar)
-        -- , fmap Some $ Inserts <$> genInserts <*> (fromRight <$> genVar)
-        -- , fmap Some $ Deletes <$> genDeletes <*> (fromRight <$> genVar)
+        , fmap Some $ Updates <$> genUpdates <*> (fromRight <$> genVar)
+        , fmap Some $ Inserts <$> genInserts <*> (fromRight <$> genVar)
+        , fmap Some $ Deletes <$> genDeletes <*> (fromRight <$> genVar)
+        -- TODO: enable generators as we implement the actions for the /real/ lsm-tree
         -- , fmap Some $ Snapshot <$> genSnapshotName <*> (fromRight <$> genVar)
         -- , fmap Some $ Duplicate <$> (fromRight <$> genVar)
         ]
@@ -959,11 +963,11 @@ arbitraryActionWithVars _ findVars _st = QC.oneof $ concat [
             SUT.FromToIncluding{} -> ()
 
     -- TODO: improve
-    _genUpdates :: Gen [(k, SUT.Update v blob)]
-    _genUpdates = QC.listOf $ (,) <$> QC.arbitrary <*> QC.oneof [
-          SUT.Insert <$> QC.arbitrary <*> QC.arbitrary
+    genUpdates :: Gen (V.Vector (k, SUT.Update v blob))
+    genUpdates = QC.liftArbitrary ((,) <$> QC.arbitrary <*> QC.oneof [
+          SUT.Insert <$> QC.arbitrary <*> genBlob
         , pure SUT.Delete
-        ]
+        ])
       where
         _coveredAllCases :: SUT.Update v blob -> ()
         _coveredAllCases = \case
@@ -971,12 +975,16 @@ arbitraryActionWithVars _ findVars _st = QC.oneof $ concat [
             SUT.Delete{} -> ()
 
     -- TODO: improve
-    _genInserts :: Gen [(k, v, Maybe blob)]
-    _genInserts = QC.arbitrary
+    genInserts :: Gen (V.Vector (k, v, Maybe blob))
+    genInserts = QC.liftArbitrary ((,,) <$> QC.arbitrary <*> QC.arbitrary <*> genBlob)
 
     -- TODO: improve
-    _genDeletes :: Gen [k]
-    _genDeletes = QC.arbitrary
+    genDeletes :: Gen (V.Vector k)
+    genDeletes = QC.arbitrary
+
+    -- TODO: generate @Just blob@ once blob references are implemented
+    genBlob :: Gen (Maybe blob)
+    genBlob = Nothing <$ QC.arbitrary @blob
 
     -- TODO: improve, actual snapshot names
     _genSnapshotName :: Gen SUT.SnapshotName
