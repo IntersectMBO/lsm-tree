@@ -545,15 +545,37 @@ updates ::
   -> m ()
 updates es th = withOpenTable th $ \thEnv -> do
     -- A placeholder implementation that is sufficient to pass the tests, but
-    -- keeps all entries in memory.
-    -- TODO: flush write buffer when full
+    -- simply writes small runs to disk without merging.
     -- TODO: merge runs when level becomes full
     modifyMVar_ (tableContent thEnv) $ \tableContent -> do
-      let wb = tableWriteBuffer tableContent
-      let wb' = foldl' (flip (uncurry (WB.addEntry resolve))) wb es
-      return $ tableContent { tableWriteBuffer = wb' }
-  where
-    resolve = resolveMupsert (tableConfig th)
+      let !wb = WB.addEntries (resolveMupsert (tableConfig th)) es $
+                  tableWriteBuffer tableContent
+      if WB.sizeInBytes wb <= fromIntegral (confWriteBufferAlloc (tableConfig th))
+        then return tableContent { tableWriteBuffer = wb }
+        else flushWriteBuffer thEnv (tableLevels tableContent) wb
+
+{-# INLINE flushWriteBuffer #-}
+flushWriteBuffer ::
+     m ~ IO
+  => TableHandleEnv m h
+  -> Levels (Handle h)
+  -> WriteBuffer
+  -> m (TableContent h)
+flushWriteBuffer thEnv levels wb = do
+    n <- incrUniqCounter (tablesSessionUniqCounter thEnv)
+    let runPaths = Paths.runPath (tableSessionRoot thEnv) n
+    run <- Run.fromWriteBuffer (tableHasFS thEnv) runPaths wb
+    let levels' = addRunToLevels run levels
+    return TableContent {
+        tableWriteBuffer = WB.empty
+      , tableLevels = levels'
+      , tableCache = mkLevelsCache levels'
+      }
+
+addRunToLevels :: Run h -> Levels h -> Levels h
+addRunToLevels r levels = case V.uncons levels of
+    Nothing               -> V.singleton $ Level $ V.singleton r
+    Just (Level runs, ls) -> V.cons (Level (V.cons r runs)) ls
 
 {-------------------------------------------------------------------------------
   Snapshots
@@ -568,30 +590,22 @@ snapshot ::
   -> m Int
 snapshot snap th = do
     withOpenTable th $ \thEnv -> do
-      tableContent <- readMVar (tableContent thEnv)
-      let wb = tableWriteBuffer tableContent
-      let levels = tableLevels tableContent
-      n <- incrUniqCounter (tablesSessionUniqCounter thEnv)
-      bracket
-        (Run.fromWriteBuffer
-          (tableHasFS thEnv)
-          (RunFsPaths (Paths.activeDir (tableSessionRoot thEnv)) n) wb)
-        (Run.removeReference (tableHasFS thEnv))
-        $ \wbRun -> do
-            let levels' = case V.uncons levels of
-                  Nothing             -> V.singleton (Level $ V.singleton wbRun)
-                  Just (Level rs, tl) -> Level (V.cons wbRun rs) `V.cons` tl
+      -- For the temporary implementation it is okay to just flush the buffer
+      -- before taking the snapshot.
+      runNumbers <- modifyMVar (tableContent thEnv) $ \tc -> do
+        tc' <- flushWriteBuffer thEnv (tableLevels tc) (tableWriteBuffer tc)
+        return $ (,) tc' $
+          V.map (V.map (runNumber . Run.runRunFsPaths) . residentRuns) $
+            tableLevels tc'
 
-            let runNumbers = V.map (V.map (runNumber . Run.runRunFsPaths) . residentRuns) levels'
+      FS.withFile
+        (tableHasFS thEnv)
+        (Paths.snapshot (tableSessionRoot thEnv) snap)
+        (FS.WriteMode FS.MustBeNew) $ \h ->
+          void $ FS.hPutAllStrict (tableHasFS thEnv) h
+                      (BSC.pack $ show (runNumbers, tableConfig th))
 
-            FS.withFile
-              (tableHasFS thEnv)
-              (Paths.snapshot (tableSessionRoot thEnv) snap)
-              (FS.WriteMode FS.MustBeNew) $ \h ->
-                void $ FS.hPutAllStrict (tableHasFS thEnv) h
-                            (BSC.pack $ show (runNumbers, tableConfig th))
-
-            pure $! V.sum (V.map V.length runNumbers)
+      pure $! V.sum (V.map V.length runNumbers)
 
 {-# SPECIALISE open :: Session IO h -> SnapshotName -> IO (TableHandle IO h) #-}
 -- |  See 'Database.LSMTree.Normal.open'.
