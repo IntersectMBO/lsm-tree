@@ -2,6 +2,7 @@
 {-# LANGUAGE DerivingStrategies         #-}
 {-# LANGUAGE GeneralisedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase                 #-}
+{-# LANGUAGE RecordWildCards            #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -62,6 +63,7 @@ import           Database.LSMTree.Internal.IndexCompact (IndexCompact)
 import           Database.LSMTree.Internal.Lookup (BatchSize (..),
                      lookupsInBatches)
 import           Database.LSMTree.Internal.Managed
+import qualified Database.LSMTree.Internal.Merge as Merge
 import qualified Database.LSMTree.Internal.Normal as Normal
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..),
                      SessionRoot (..), SnapshotName)
@@ -551,38 +553,117 @@ updates ::
   -> TableHandle m h
   -> m ()
 updates es th = withOpenTable th $ \thEnv -> do
-    -- A placeholder implementation that is sufficient to pass the tests, but
-    -- simply writes small runs to disk without merging.
-    -- TODO: merge runs when level becomes full
     modifyMVar_ (tableContent thEnv) $ \tableContent -> do
       let !wb = WB.addEntries (resolveMupsert (tableConfig th)) es $
                   tableWriteBuffer tableContent
       if WB.sizeInBytes wb <= fromIntegral (confWriteBufferAlloc (tableConfig th))
         then return tableContent { tableWriteBuffer = wb }
-        else flushWriteBuffer thEnv (tableLevels tableContent) wb
+        else flushWriteBuffer (tableConfig th) thEnv (tableLevels tableContent) wb
 
 {-# INLINE flushWriteBuffer #-}
 flushWriteBuffer ::
      m ~ IO
-  => TableHandleEnv m h
+  => TableConfig
+  -> TableHandleEnv m h
   -> Levels (Handle h)
   -> WriteBuffer
   -> m (TableContent h)
-flushWriteBuffer thEnv levels wb = do
+flushWriteBuffer config thEnv levels wb = do
     n <- incrUniqCounter (tablesSessionUniqCounter thEnv)
     let runPaths = Paths.runPath (tableSessionRoot thEnv) n
     run <- Run.fromWriteBuffer (tableHasFS thEnv) runPaths wb
-    let levels' = addRunToLevels run levels
+    levels' <- addRunToLevels config thEnv run levels
     return TableContent {
         tableWriteBuffer = WB.empty
       , tableLevels = levels'
       , tableCache = mkLevelsCache levels'
       }
 
-addRunToLevels :: Run h -> Levels h -> Levels h
-addRunToLevels r levels = case V.uncons levels of
-    Nothing               -> V.singleton $ Level $ V.singleton r
-    Just (Level runs, ls) -> V.cons (Level (V.cons r runs)) ls
+addRunToLevels ::
+     m ~ IO
+  => TableConfig
+  -> TableHandleEnv m h
+  -> Run (Handle h)
+  -> Levels (Handle h)
+  -> m (Levels (Handle h))
+addRunToLevels config@TableConfig {..} thEnv = go 1
+  where
+    go !_ run (V.uncons -> Nothing) =
+        -- Make a new level
+        return $ V.singleton $ Level $ V.singleton run
+
+    go !n run (V.uncons -> Just (Level runs, nextLevels)) = do
+        -- Add to top level. If full, merge and continue.
+        let level' = Level (V.cons run runs)
+        let policyForLevel = mergePolicyForLevel confMergePolicy n nextLevels
+
+        if levelNeedsMerging confSizeRatio policyForLevel level'
+          then do
+            let mergeLevel = if V.null nextLevels then Merge.LastLevel
+                                                  else Merge.MidLevel
+            mergedRun <- mergeRuns thEnv (resolveMupsert config) mergeLevel level'
+            -- The input runs are not used for this table any more.
+            -- We can remove the references here (potentially closing the runs)
+            -- before the new LSM structure is stored in the handle, since all
+            -- other operations are blocked until we put back the MVar.
+            -- TODO: Actually, this is problematic if merging fails, since we
+            -- then keep the old runs in the MVar, but removed the references.
+            for_ (residentRuns level') $ \r ->
+              Run.removeReference (tableHasFS thEnv) r
+            -- The run might still fit on this level due to compaction.
+            if runSize run <= maxRunSize config policyForLevel n
+              then return $ V.cons (Level (V.singleton mergedRun)) nextLevels
+              else V.cons (Level V.empty) <$> go (n + 1) mergedRun nextLevels
+          else do
+            return $ V.cons level' nextLevels
+
+data MergePolicyForLevel = LevelTiering | LevelLevelling
+
+mergePolicyForLevel :: MergePolicy -> Int -> Levels h -> MergePolicyForLevel
+mergePolicyForLevel MergePolicyLazyLevelling n nextLevels
+  | n == 1            = LevelTiering    -- always use tiering on first level
+  | V.null nextLevels = LevelLevelling  -- levelling on last level
+  | otherwise         = LevelTiering
+
+levelNeedsMerging :: SizeRatio -> MergePolicyForLevel -> Level h -> Bool
+levelNeedsMerging sizeRatio policy (Level runs) =
+    V.length runs >= numRunsToMerge
+  where
+    numRunsToMerge = case policy of
+        LevelLevelling -> 2
+        LevelTiering   -> sizeRatioInt sizeRatio
+
+maxRunSize :: TableConfig -> MergePolicyForLevel -> Int -> Int
+maxRunSize config policy levelNumber = case policy of
+    LevelLevelling -> runSizeTiering * sizeRatio
+    LevelTiering   -> runSizeTiering
+  where
+    sizeRatio = sizeRatioInt (confSizeRatio config)
+    bufferSize = fromIntegral (confWriteBufferAlloc config)
+    runSizeTiering
+      | levelNumber < 1 = error "maxRunSize: non-positive level number"
+      | otherwise = bufferSize * sizeRatio ^ (levelNumber - 1)
+
+-- TODO: pass 'confBloomFilterAlloc' down to the merge and use it to initialise
+-- bloom filters
+mergeRuns ::
+     m ~ IO
+  => TableHandleEnv m h
+  -> ResolveMupsert
+  -> Merge.Level
+  -> Level (Handle h)
+  -> m (Run (Handle h))
+mergeRuns thEnv resolve mergeLevel (Level runs) = do
+    n <- incrUniqCounter (tablesSessionUniqCounter thEnv)
+    let runPaths = Paths.runPath (tableSessionRoot thEnv) n
+    Merge.new (tableHasFS thEnv) mergeLevel resolve runPaths (toList runs) >>= \case
+      Nothing -> error "mergeRuns: no inputs"
+      Just merge -> go merge
+  where
+    go m =
+      Merge.steps (tableHasFS thEnv) m 1024 >>= \case
+        (_, Merge.MergeInProgress)   -> go m
+        (_, Merge.MergeComplete run) -> return run
 
 {-------------------------------------------------------------------------------
   Snapshots
@@ -600,7 +681,7 @@ snapshot snap th = do
       -- For the temporary implementation it is okay to just flush the buffer
       -- before taking the snapshot.
       runNumbers <- modifyMVar (tableContent thEnv) $ \tc -> do
-        tc' <- flushWriteBuffer thEnv (tableLevels tc) (tableWriteBuffer tc)
+        tc' <- flushWriteBuffer (tableConfig th) thEnv (tableLevels tc) (tableWriteBuffer tc)
         return $ (,) tc' $
           V.map (V.map (runNumber . Run.runRunFsPaths) . residentRuns) $
             tableLevels tc'
@@ -705,6 +786,16 @@ deriving instance Read MergePolicy
 
 data SizeRatio = Four
   deriving (Show, Eq)
+
+sizeRatioInt :: SizeRatio -> Int
+sizeRatioInt = \case Four -> 4
+
+-- This size calculation is different than for the write buffer:
+-- Instead of considering only keys and values themselves, there is
+-- overhead from the page format.
+-- TODO: is this a good idea?
+runSize :: Run h -> Int
+runSize run = Run.sizeInPages run * 4096  -- assumes pageSize = 4096
 
 -- | TODO: this should be removed once we have proper snapshotting with proper
 -- persistence of the config to disk.
