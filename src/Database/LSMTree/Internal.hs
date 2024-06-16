@@ -18,6 +18,7 @@ module Database.LSMTree.Internal (
   , TableHandle (..)
   , TableHandleState (..)
   , TableHandleEnv (..)
+  , TableContent (..)
     -- ** Implementation of public API
   , withTable
   , new
@@ -336,7 +337,7 @@ data TableHandle m h = TableHandle {
       -- TODO: RWVars only work in IO, not in IOSim.
       --
       -- TODO: how fair is an RWVar?
-    , tableHandleState :: RWVar (TableHandleState m h)
+    , tableHandleState :: !(RWVar (TableHandleState m h))
     }
 
 -- | A table handle may assume that its corresponding session is still open as
@@ -361,16 +362,23 @@ data TableHandleEnv m h = TableHandleEnv {
     -- is closed it should become untracked (forgotten).
   , tableSessionUntrackTable :: !(m ())
     -- === Table-specific
-    --
-    -- TODO: more fine-grained concurrency for table-specific mutable state.
-  , tableWriteBuffer         :: !(StrictMVar m (WriteBuffer))
+    -- | All of the state being in a single `StrictMVar` is a relatively simple
+    -- solution, but there could be more concurrency. For example, while inserts
+    -- are in progress, lookups could still look at the old state without
+    -- waiting for the MVar.
+    -- TODO: switch to more fine-grained synchronisation approach
+  , tableContent             :: !(StrictMVar m (TableContent h))
+  }
+
+data TableContent h = TableContent {
+    tableWriteBuffer :: !WriteBuffer
     -- | A hierarchy of levels. The vector indexes double as level numbers.
-  , tableLevels              :: !(StrictMVar m (V.Vector (Level (Handle h))))
+  , tableLevels      :: !(Levels (Handle h))
     -- | Cache of flattened 'levels'.
     --
     -- INVARIANT: when 'level's is modified, this cache should be updated as
     -- well, for example using 'mkLevelsCache'.
-  , tableCache               :: !(StrictMVar m (LevelsCache (Handle h)))
+  , tableCache       :: !(LevelsCache (Handle h))
   }
 
 -- | 'withOpenTable' ensures that the table stays open for the duration of the
@@ -386,6 +394,8 @@ withOpenTable ::
 withOpenTable th action = RW.with (tableHandleState th) $ \case
     TableHandleClosed -> throwIO ErrTableClosed
     TableHandleOpen thEnv -> action thEnv
+
+type Levels h = V.Vector (Level h)
 
 -- | Runs in order from newer to older
 newtype Level h = Level {
@@ -414,7 +424,7 @@ data LevelsCache h = LevelsCache_ {
 
 -- | Flatten the argument 'Level's into a single vector of runs, and use that to
 -- populate the 'LevelsCache'.
-mkLevelsCache :: V.Vector (Level h) -> LevelsCache h
+mkLevelsCache :: Levels h -> LevelsCache h
 mkLevelsCache lvls = LevelsCache_ {
       cachedRuns      = rs
     , cachedFilters   = V.map Run.runFilter rs
@@ -451,7 +461,7 @@ newWithLevels ::
      m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
   => SessionEnv m h
   -> TableConfig
-  -> V.Vector (Level (Handle h))
+  -> Levels (Handle h)
   -> m (TableHandle m h)
 newWithLevels seshEnv conf !levels = do
     assertNoThunks levels $ pure ()
@@ -459,9 +469,7 @@ newWithLevels seshEnv conf !levels = do
     -- tables. If 'closeSession' is called by another thread while this code
     -- block is being executed, that thread will block until it reads the
     -- /updated/ set of tracked tables.
-    writeBufVar <- newMVar (WB.empty)
-    levelsVar <- newMVar levels
-    cacheVar <- newMVar (mkLevelsCache levels)
+    contentVar <- newMVar $ TableContent WB.empty levels (mkLevelsCache levels)
     tableId <- incrUniqCounter (sessionUniqCounter seshEnv)
     -- Action to untrack the current table
     let forget = modifyMVar_ (sessionOpenTables seshEnv) $ pure . Map.delete tableId
@@ -471,9 +479,7 @@ newWithLevels seshEnv conf !levels = do
         , tableHasBlockIO = sessionHasBlockIO seshEnv
         , tablesSessionUniqCounter = sessionUniqCounter seshEnv
         , tableSessionUntrackTable = forget
-        , tableWriteBuffer = writeBufVar
-        , tableLevels = levelsVar
-        , tableCache = cacheVar
+        , tableContent = contentVar
         }
     let !th = TableHandle conf tableVar
     -- Track the current table
@@ -493,7 +499,7 @@ close th = RW.modify_ (tableHandleState th) $ \case
       -- only thread currently closing the table. We can safely make the session
       -- forget about this table.
       tableSessionUntrackTable thEnv
-      lvls <- readMVar (tableLevels thEnv)
+      lvls <- tableLevels <$> readMVar (tableContent thEnv)
       V.forM_ lvls $ \Level{residentRuns} ->
         V.forM_ residentRuns $ Run.removeReference (tableHasFS thEnv)
       pure TableHandleClosed
@@ -509,9 +515,10 @@ lookups ::
      -- 'toNormalLookupResult' or 'toMonoidalLookupResult'.
   -> m (V.Vector lookupResult)
 lookups ks th fromEntry = withOpenTable th $ \thEnv -> do
-    wb <- readMVar (tableWriteBuffer thEnv)
     let resolve = resolveMupsert (tableConfig th)
-    cache <- readMVar (tableCache thEnv)
+    tableContent <- readMVar (tableContent thEnv)
+    let !wb = tableWriteBuffer tableContent
+    let !cache = tableCache tableContent
     ioRes <-
       lookupsIO
         (tableHasBlockIO thEnv)
@@ -548,8 +555,10 @@ updates es th = withOpenTable th $ \thEnv -> do
     -- keeps all entries in memory.
     -- TODO: flush write buffer when full
     -- TODO: merge runs when level becomes full
-    modifyMVar_ (tableWriteBuffer thEnv) $ \wb -> do
-      return $ foldl' (flip (uncurry (WB.addEntry resolve))) wb es
+    modifyMVar_ (tableContent thEnv) $ \tableContent -> do
+      let wb = tableWriteBuffer tableContent
+      let wb' = foldl' (flip (uncurry (WB.addEntry resolve))) wb es
+      return $ tableContent { tableWriteBuffer = wb' }
   where
     resolve = resolveMupsert (tableConfig th)
 
@@ -569,8 +578,9 @@ snapshot ::
   -> m Int
 snapshot snap label th = do
     withOpenTable th $ \thEnv -> do
-      wb <- readMVar (tableWriteBuffer thEnv)
-      levels <- readMVar (tableLevels thEnv)
+      tableContent <- readMVar (tableContent thEnv)
+      let wb = tableWriteBuffer tableContent
+      let levels = tableLevels tableContent
       n <- incrUniqCounter (tablesSessionUniqCounter thEnv)
       bracket
         (Run.fromWriteBuffer
@@ -618,7 +628,7 @@ open sesh label snap = do
       let runPaths = V.map (V.map (RunFsPaths (Paths.activeDir $ sessionRoot seshEnv))) runNumbers
       with (openLevels hfs runPaths) (newWithLevels seshEnv conf)
 
-{-# SPECIALISE openLevels :: HasFS IO h -> V.Vector (V.Vector RunFsPaths) -> Managed IO (V.Vector (Level (FS.Handle h))) #-}
+{-# SPECIALISE openLevels :: HasFS IO h -> V.Vector (V.Vector RunFsPaths) -> Managed IO (Levels (FS.Handle h)) #-}
 -- | Open multiple levels.
 --
 -- If an error occurs when opening multiple runs in sequence, then we have to
@@ -629,7 +639,7 @@ openLevels ::
      m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
   => HasFS m h
   -> V.Vector (V.Vector RunFsPaths)
-  -> Managed m (V.Vector (Level (Handle h)))
+  -> Managed m (Levels (Handle h))
 openLevels hfs levels =
     flip V.mapMStrict levels $ \level -> fmap Level $
       flip V.mapMStrict level $ \run ->
