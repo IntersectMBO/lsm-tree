@@ -223,7 +223,7 @@ fromKOps ::
      (SerialiseKey k, SerialiseValue v, SerialiseValue blob)
   => [(k, Entry v blob)]
   -> TypedWriteBuffer k v blob
-fromKOps = TypedWriteBuffer . WB.fromList const . map serialiseKOp
+fromKOps = TypedWriteBuffer . WB.fromList resolveConst . map serialiseKOp
   where
     serialiseKOp = bimap serialiseKey (bimap serialiseValue serialiseBlob)
 
@@ -643,8 +643,8 @@ instance Arbitrary ExampleResolveMupsert where
   arbitrary = QC.elements [ResolveConst, ResolveFlipConst, ResolveAppend]
   shrink r = [ResolveConst | r /= ResolveConst]
 
-resolveMupsert :: ExampleResolveMupsert -> SerialisedValue -> SerialisedValue -> SerialisedValue
-resolveMupsert = \case
+resolveMupsert :: ExampleResolveMupsert -> ResolveMupsert
+resolveMupsert = ResolveMupsert . \case
     ResolveConst -> const
     ResolveFlipConst -> flip const
     ResolveAppend -> coerce ((<>) @RawBytes)

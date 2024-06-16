@@ -125,7 +125,7 @@ prop_CloseMerge fs level (Positive stepSize) (fmap unTypedWriteBuffer -> wbs) = 
     flush n = Run.fromWriteBuffer fs (RunFsPaths (FS.mkFsPath []) n)
 
     makeInProgressMerge path runs =
-      Merge.new fs level mappendValues path runs >>= \case
+      Merge.new fs level resolveAppend path runs >>= \case
         Nothing -> return Nothing  -- not in progress
         Just merge -> do
           -- just do a few steps once, ideally not completing the merge
@@ -150,7 +150,7 @@ mergeRuns ::
      StepSize ->
      IO (Int, Run.Run (FS.Handle h))
 mergeRuns fs level runNumber runs (Positive stepSize) = do
-    Merge.new fs level mappendValues (RunFsPaths (FS.mkFsPath []) runNumber) runs >>= \case
+    Merge.new fs level resolveAppend (RunFsPaths (FS.mkFsPath []) runNumber) runs >>= \case
       Nothing -> (,) 0 <$> Run.fromWriteBuffer fs (RunFsPaths (FS.mkFsPath []) runNumber) WB.empty
       Just m  -> go 0 m
   where
@@ -163,11 +163,12 @@ mergeWriteBuffers :: Merge.Level -> [WriteBuffer] -> WriteBuffer
 mergeWriteBuffers level =
     WB.fromMap
       . (if level == Merge.LastLevel then Map.filter (not . isDelete) else id)
-      . Map.unionsWith (Entry.combine mappendValues)
+      . Map.unionsWith (Entry.combine (unResolveMupsert resolveAppend))
       . map WB.writeBufferContent
   where
     isDelete Entry.Delete = True
     isDelete _            = False
 
-mappendValues :: SerialisedValue -> SerialisedValue -> SerialisedValue
-mappendValues (SerialisedValue x) (SerialisedValue y) = SerialisedValue (x <> y)
+resolveAppend :: ResolveMupsert
+resolveAppend = ResolveMupsert $
+    \(SerialisedValue x) (SerialisedValue y) -> SerialisedValue (x <> y)

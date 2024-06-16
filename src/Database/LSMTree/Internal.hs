@@ -3,6 +3,8 @@
 {-# LANGUAGE GeneralisedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase                 #-}
 
+{-# OPTIONS_GHC -Wno-orphans #-}
+
 module Database.LSMTree.Internal (
     -- * Exceptions
     LSMTreeError (..)
@@ -49,6 +51,7 @@ import           Data.Either (fromRight)
 import           Data.Foldable
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import           Data.Maybe (fromMaybe)
 import qualified Data.Set as Set
 import qualified Data.Vector as V
 import           Data.Word (Word32, Word64)
@@ -65,8 +68,9 @@ import           Database.LSMTree.Internal.Paths (RunFsPaths (..),
 import qualified Database.LSMTree.Internal.Paths as Paths
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
-import           Database.LSMTree.Internal.Serialise (SerialisedBlob,
-                     SerialisedKey, SerialisedValue)
+import           Database.LSMTree.Internal.Serialise (ResolveMupsert (..),
+                     SerialisedBlob, SerialisedKey, SerialisedValue,
+                     resolveConst)
 import qualified Database.LSMTree.Internal.Vector as V
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
@@ -510,7 +514,7 @@ lookups ::
      -- 'toNormalLookupResult' or 'toMonoidalLookupResult'.
   -> m (V.Vector lookupResult)
 lookups ks th fromEntry = withOpenTable th $ \thEnv -> do
-    let resolve = resolveMupsert (tableConfig th)
+    let ResolveMupsert resolve = resolveMupsert (tableConfig th)
     tableContent <- readMVar (tableContent thEnv)
     let !wb = tableWriteBuffer tableContent
     let !cache = tableCache tableContent
@@ -679,8 +683,8 @@ data TableConfig = TableConfig {
 -- persistence of the config to disk.
 deriving instance Read TableConfig
 
-resolveMupsert :: TableConfig -> SerialisedValue -> SerialisedValue -> SerialisedValue
-resolveMupsert conf = maybe const unResolveMupsert (confResolveMupsert conf)
+resolveMupsert :: TableConfig -> ResolveMupsert
+resolveMupsert conf = fromMaybe resolveConst (confResolveMupsert conf)
 
 data MergePolicy =
     -- | Use tiering on intermediate levels, and levelling on the last level.
@@ -737,12 +741,7 @@ data BloomFilterAlloc =
 -- persistence of the config to disk.
 deriving instance Read BloomFilterAlloc
 
-newtype ResolveMupsert = ResolveMupsert {
-    unResolveMupsert :: SerialisedValue -> SerialisedValue -> SerialisedValue
-  }
-
-instance Show ResolveMupsert where show _ = "ResolveMupsert function can not be printed"
-
 -- | TODO: this should be removed once we have proper snapshotting with proper
 -- persistence of the config to disk.
+instance Show ResolveMupsert where show _ = "ResolveMupsert function can not be printed"
 instance Read ResolveMupsert where readsPrec = error "ResolveMupsert function can not be read"

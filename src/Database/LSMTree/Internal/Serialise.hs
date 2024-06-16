@@ -27,6 +27,8 @@ module Database.LSMTree.Internal.Serialise (
   , sizeofValue32
   , sizeofValue64
   , serialisedValue
+  , ResolveMupsert (..)
+  , resolveConst
     -- * Blobs
   , SerialisedBlob (SerialisedBlob, SerialisedBlob')
   , serialiseBlob
@@ -148,6 +150,14 @@ sizeofValue64 = fromIntegral . sizeofValue
 {-# LANGUAGE serialisedValue #-}
 serialisedValue :: SerialisedValue -> BB.Builder
 serialisedValue (SerialisedValue rb) = RB.builder rb
+
+newtype ResolveMupsert = ResolveMupsert {
+    unResolveMupsert :: SerialisedValue -> SerialisedValue -> SerialisedValue
+  }
+  deriving newtype NFData
+
+resolveConst :: ResolveMupsert
+resolveConst = ResolveMupsert const
 
 {-------------------------------------------------------------------------------
   Blobs

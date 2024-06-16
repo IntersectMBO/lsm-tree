@@ -54,7 +54,7 @@ benchmarks = bgroup "Bench.Database.LSMTree.Internal.WriteBuffer" [
         , nentries     = 10_000
         , fmupserts    = 1
                          -- TODO: too few collisions to really measure resolution
-        , mappendVal   = Just (onDeserialisedValues ((+) @Word64))
+        , resolveMup   = Just (onDeserialisedValues ((+) @Word64))
         }
       -- different key and value sizes
     , benchWriteBuffer configWord64
@@ -156,8 +156,8 @@ benchWriteBuffer conf@Config{name} =
 insert :: InputKOps -> WriteBuffer
 insert (NormalInputs kops) =
     List.foldl' (\wb (k, e) -> WB.addEntryNormal k e wb) WB.empty kops
-insert (MonoidalInputs kops mappendVal) =
-    List.foldl' (\wb (k, e) -> WB.addEntryMonoidal mappendVal k e wb) WB.empty kops
+insert (MonoidalInputs kops resolveMup) =
+    List.foldl' (\wb (k, e) -> WB.addEntryMonoidal resolveMup k e wb) WB.empty kops
 
 flush :: FS.HasFS IO FS.HandleIO -> RunFsPaths -> WriteBuffer -> IO (Run (FS.Handle (FS.HandleIO)))
 flush = Run.fromWriteBuffer
@@ -167,14 +167,12 @@ data InputKOps
       ![(SerialisedKey, Normal.Update SerialisedValue SerialisedBlob)]
   | MonoidalInputs
       ![(SerialisedKey, Monoidal.Update SerialisedValue)]
-      !Mappend
+      !ResolveMupsert
   deriving stock Generic
   deriving anyclass NFData
 
-type Mappend = SerialisedValue -> SerialisedValue -> SerialisedValue
-
-onDeserialisedValues :: SerialiseValue v => (v -> v -> v) -> Mappend
-onDeserialisedValues f x y =
+onDeserialisedValues :: SerialiseValue v => (v -> v -> v) -> ResolveMupsert
+onDeserialisedValues f = ResolveMupsert $ \x y ->
     serialiseValue (f (deserialiseValue x) (deserialiseValue y))
 
 type SerialisedKOp = (SerialisedKey, SerialisedEntry)
@@ -202,7 +200,7 @@ data Config = Config {
   , randomValue  :: Rnd SerialisedValue
   , randomBlob   :: Rnd SerialisedBlob
     -- | Needs to be defined when generating mupserts.
-  , mappendVal   :: !(Maybe Mappend)
+  , resolveMup   :: !(Maybe ResolveMupsert)
   }
 
 type Rnd a = StdGen -> (a, StdGen)
@@ -218,7 +216,7 @@ defaultConfig = Config {
   , randomKey    = error "randomKey not implemented"
   , randomValue  = error "randomValue not implemented"
   , randomBlob   = error "randomBlob not implemented"
-  , mappendVal   = Nothing
+  , resolveMup   = Nothing
   }
 
 configWord64 :: Config
@@ -244,7 +242,7 @@ writeBufferEnv config = do
     sysTmpDir <- getCanonicalTemporaryDirectory
     benchTmpDir <- createTempDirectory sysTmpDir "writeBufferEnv"
     let kops = randomKOps config (mkStdGen 17)
-    let inputKOps = case mappendVal config of
+    let inputKOps = case resolveMup config of
           Nothing -> NormalInputs (fmap (fmap expectNormal) kops)
           Just f  -> MonoidalInputs (fmap (fmap expectMonoidal) kops) f
     let hasFS = FS.ioHasFS (FS.MountPoint benchTmpDir)

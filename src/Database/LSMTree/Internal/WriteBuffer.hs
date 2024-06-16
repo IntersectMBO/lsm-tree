@@ -97,10 +97,10 @@ fromMap m = WB m (Map.foldlWithKey' (\s k e -> s + sizeofKOp k e) 0 m)
     sizeofKOp k e = sizeofKey k + onValue 0 sizeofValue e
 
 fromList ::
-     (SerialisedValue -> SerialisedValue -> SerialisedValue) -- ^ merge function
+     ResolveMupsert
   -> [(SerialisedKey, Entry SerialisedValue SerialisedBlob)]
   -> WriteBuffer
-fromList f es = fromMap (Map.fromListWith (combine f) es)
+fromList (ResolveMupsert f) es = fromMap (Map.fromListWith (combine f) es)
 
 -- | \( O(n) \)
 toList :: WriteBuffer -> [(SerialisedKey, Entry SerialisedValue SerialisedBlob)]
@@ -114,19 +114,19 @@ toList (WB m _) = Map.assocs m
 -- 'WB' for every entry.
 addEntries ::
      Foldable f
-  => (SerialisedValue -> SerialisedValue -> SerialisedValue) -- ^ merge function
+  => ResolveMupsert
   -> f (SerialisedKey, Entry SerialisedValue SerialisedBlob)
   -> WriteBuffer
   -> WriteBuffer
 addEntries f es wb = foldl' (flip (uncurry (addEntry f))) wb (Foldable.toList es)
 
 addEntry ::
-     (SerialisedValue -> SerialisedValue -> SerialisedValue) -- ^ merge function
+     ResolveMupsert
   -> SerialisedKey
   -> Entry SerialisedValue SerialisedBlob
   -> WriteBuffer
   -> WriteBuffer
-addEntry f k e (WB wb s) =
+addEntry (ResolveMupsert f) k e (WB wb s) =
     let (!wb', !s') = runState (insert k wb) s
     in WB wb' s'
   where
@@ -143,7 +143,7 @@ addEntry f k e (WB wb s) =
     sizeofEntry = onValue 0 sizeofValue
 
 addEntryMonoidal ::
-     (SerialisedValue -> SerialisedValue -> SerialisedValue) -- ^ merge function
+     ResolveMupsert
   -> SerialisedKey
   -> Monoidal.Update SerialisedValue
   -> WriteBuffer
@@ -155,7 +155,7 @@ addEntryNormal ::
   -> Normal.Update SerialisedValue SerialisedBlob
   -> WriteBuffer
   -> WriteBuffer
-addEntryNormal k = addEntry const k . updateToEntryNormal
+addEntryNormal k = addEntry (ResolveMupsert const) k . updateToEntryNormal
 
 {-------------------------------------------------------------------------------
   Querying

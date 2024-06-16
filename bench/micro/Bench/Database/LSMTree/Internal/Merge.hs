@@ -69,7 +69,7 @@ benchmarks = bgroup "Bench.Database.LSMTree.Internal.Merge" [
         { name         = "word64-mupsert-x4"  -- basically no collisions
         , nentries     = totalEntries `splitInto` 4
         , fmupserts    = 1
-        , mergeMappend = Just (onDeserialisedValues ((+) @Word64))
+        , resolveMup   = Just (onDeserialisedValues ((+) @Word64))
         }
     , benchMerge configWord64
         { name         = "word64-mupsert-collisions-x4"
@@ -77,7 +77,7 @@ benchmarks = bgroup "Bench.Database.LSMTree.Internal.Merge" [
         , fmupserts    = 1
         , randomKey    = -- each run uses half of the possible keys
                          randomWord64OutOf (totalEntries `div` 2)
-        , mergeMappend = Just (onDeserialisedValues ((+) @Word64))
+        , resolveMup   = Just (onDeserialisedValues ((+) @Word64))
         }
     , benchMerge configWord64
         { name         = "word64-mix-x4"
@@ -85,7 +85,7 @@ benchmarks = bgroup "Bench.Database.LSMTree.Internal.Merge" [
         , finserts     = 1
         , fdeletes     = 1
         , fmupserts    = 1
-        , mergeMappend = Just (onDeserialisedValues ((+) @Word64))
+        , resolveMup   = Just (onDeserialisedValues ((+) @Word64))
         }
     , benchMerge configWord64
         { name         = "word64-mix-collisions-x4"
@@ -95,7 +95,7 @@ benchmarks = bgroup "Bench.Database.LSMTree.Internal.Merge" [
         , fmupserts    = 1
         , randomKey    = -- each run uses half of the possible keys
                          randomWord64OutOf (totalEntries `div` 2)
-        , mergeMappend = Just (onDeserialisedValues ((+) @Word64))
+        , resolveMup   = Just (onDeserialisedValues ((+) @Word64))
         }
       -- not writing anything at all
     , benchMerge configWord64
@@ -226,7 +226,7 @@ merge ::
   -> InputRuns
   -> IO (Run (FS.Handle (FS.HandleIO)))
 merge fs Config {..} targetPaths runs = do
-    let f = fromMaybe const mergeMappend
+    let f = fromMaybe resolveConst resolveMup
     m <- fromMaybe (error "empty inputs, no merge created") <$>
       Merge.new fs mergeLevel f targetPaths runs
     go m
@@ -244,10 +244,8 @@ inputRunPaths = RunFsPaths (FS.mkFsPath []) <$> [1..]
 
 type InputRuns = [Run (FS.Handle FS.HandleIO)]
 
-type Mappend = SerialisedValue -> SerialisedValue -> SerialisedValue
-
-onDeserialisedValues :: SerialiseValue v => (v -> v -> v) -> Mappend
-onDeserialisedValues f x y =
+onDeserialisedValues :: SerialiseValue v => (v -> v -> v) -> ResolveMupsert
+onDeserialisedValues f = ResolveMupsert $ \x y ->
     serialiseValue (f (deserialiseValue x) (deserialiseValue y))
 
 type SerialisedKOp = (SerialisedKey, SerialisedEntry)
@@ -276,7 +274,7 @@ data Config = Config {
   , randomBlob   :: Rnd SerialisedBlob
   , mergeLevel   :: !Merge.Level
     -- | Needs to be defined when generating mupserts.
-  , mergeMappend :: !(Maybe Mappend)
+  , resolveMup   :: !(Maybe ResolveMupsert)
     -- | Merging is done in chunks of @stepSize@ entries.
   , stepSize     :: !Int
   }
@@ -295,7 +293,7 @@ defaultConfig = Config {
   , randomValue  = error "randomValue not implemented"
   , randomBlob   = error "randomBlob not implemented"
   , mergeLevel   = Merge.MidLevel
-  , mergeMappend = Nothing
+  , resolveMup   = Nothing
   , stepSize     = maxBound  -- by default, just do in one go
   }
 
@@ -343,21 +341,21 @@ randomRuns ::
   -> StdGen
   -> IO InputRuns
 randomRuns hasFS config@Config {..} =
-      zipWithM (createRun hasFS mergeMappend) inputRunPaths
+      zipWithM (createRun hasFS resolveMup) inputRunPaths
     . zipWith (randomKOps config) nentries
     . List.unfoldr (Just . R.split)
 
 createRun ::
      FS.HasFS IO h
-  -> Maybe Mappend
+  -> Maybe ResolveMupsert
   -> Run.RunFsPaths
   -> [SerialisedKOp]
   -> IO (Run (FS.Handle h))
-createRun hasFS mMappend targetPath =
+createRun hasFS mResolve targetPath =
       Run.fromWriteBuffer hasFS targetPath
     . List.foldl insert WB.empty
   where
-    insert wb (k, e) = case mMappend of
+    insert wb (k, e) = case mResolve of
       Nothing -> WB.addEntryNormal k (expectNormal e) wb
       Just f  -> WB.addEntryMonoidal f k (expectMonoidal e) wb
 

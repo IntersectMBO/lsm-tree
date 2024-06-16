@@ -4,7 +4,6 @@
 module Database.LSMTree.Internal.Merge (
     Merge (..)
   , Level (..)
-  , Mappend
   , new
   , close
   , StepResult (..)
@@ -36,7 +35,7 @@ import           System.FS.API (HasFS)
 -- the layer above.
 data Merge fhandle = Merge {
       mergeLevel   :: !Level
-    , mergeMappend :: !Mappend
+    , mergeResolve :: !ResolveMupsert
     , mergeReaders :: {-# UNPACK #-} !(Readers.Readers fhandle)
     , mergeBuilder :: !(RunBuilder fhandle)
     }
@@ -44,18 +43,16 @@ data Merge fhandle = Merge {
 data Level = MidLevel | LastLevel
   deriving (Eq, Show)
 
-type Mappend = SerialisedValue -> SerialisedValue -> SerialisedValue
-
 -- | Returns 'Nothing' if no input 'Run' contains any entries.
 -- The list of runs should be sorted from new to old.
 new ::
      HasFS IO h
   -> Level
-  -> Mappend
+  -> ResolveMupsert
   -> Run.RunFsPaths
   -> [Run (FS.Handle h)]
   -> IO (Maybe (Merge (FS.Handle h)))
-new fs mergeLevel mergeMappend targetPaths runs = do
+new fs mergeLevel mergeResolve targetPaths runs = do
     mreaders <- Readers.new fs runs
     for mreaders $ \mergeReaders -> do
       -- calculate upper bounds based on input runs
@@ -138,7 +135,7 @@ steps fs Merge {..} requestedSteps =
           else do
             (_, nextEntry, hasMore) <- Readers.pop fs mergeReaders
             -- for resolution, we need the full second value to be present
-            let resolved = combine mergeMappend
+            let resolved = combine (unResolveMupsert mergeResolve)
                              (Mupdate v)
                              (Reader.toFullEntry nextEntry)
             case hasMore of
