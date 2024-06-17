@@ -34,9 +34,11 @@ import           Control.Monad.ST.Strict
 import           Data.Bifunctor
 import           Data.BloomFilter (Bloom)
 import qualified Data.BloomFilter as Bloom
+import qualified Data.BloomFilter.Hash as Bloom
 import           Data.Primitive.ByteArray
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as VM
+import qualified Data.Vector.Primitive as VP
 import qualified Data.Vector.Unboxed as VU
 import qualified Data.Vector.Unboxed.Mutable as VUM
 import           Data.Word (Word32)
@@ -106,6 +108,9 @@ bloomQueries !blooms !ks !resN
     !rsN = V.length blooms
     !ksN = V.length ks
 
+    hs :: VP.Vector (Bloom.CheapHashes SerialisedKey)
+    !hs  = VP.generate ksN $ \i -> Bloom.makeCheapHashes (V.unsafeIndex ks i)
+
     -- Loop over all run indexes
     loop1 ::
          VUM.MVector s (RunIx, KeyIx)
@@ -128,8 +133,8 @@ bloomQueries !blooms !ks !resN
           -> ST s (VUM.MVector s (RunIx, KeyIx), ResIx)
         loop2 !res2 !resix2 !kix !b
           | kix == ksN = pure (res2, resix2)
-          | let !k = ks `V.unsafeIndex` kix
-          , Bloom.elem k b = do
+          | let !h = hs `VP.unsafeIndex` kix
+          , Bloom.elemHashes h b = do
               -- Grows the vector if we've reached the end. TODO: tune how
               -- much much we grow the vector each time based on the
               -- expected true- and false-positives.
@@ -139,6 +144,7 @@ bloomQueries !blooms !ks !resN
               VUM.unsafeWrite res2' resix2 (rix, kix)
               loop2 res2' (resix2+1) (kix+1) b
           | otherwise = loop2 res2 resix2 (kix+1) b
+
 -- | Perform a batch of fence pointer index searches, and create an 'IOOp' for
 -- each search result. The resulting vector has the same length as the
 -- @VU.Vector (RunIx, KeyIx)@ argument, because index searching always returns a
