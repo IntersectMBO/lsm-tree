@@ -55,8 +55,7 @@ import           Database.LSMTree.Internal.Assertions (assertNoThunks)
 import           Database.LSMTree.Internal.BlobRef
 import           Database.LSMTree.Internal.Entry (Entry (..), combineMaybe)
 import           Database.LSMTree.Internal.IndexCompact (IndexCompact)
-import           Database.LSMTree.Internal.Lookup (BatchSize (..),
-                     lookupsInBatches)
+import           Database.LSMTree.Internal.Lookup (lookupsIO)
 import           Database.LSMTree.Internal.Managed
 import qualified Database.LSMTree.Internal.Normal as Normal
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..),
@@ -75,9 +74,8 @@ import qualified System.FS.API as FS
 import           System.FS.API (FsErrorPath, FsPath, Handle, HasFS)
 import qualified System.FS.API.Lazy as FS
 import qualified System.FS.API.Strict as FS
-import qualified System.FS.BlockIO.API as FS
 import qualified System.FS.BlockIO.API as HasBlockIO
-import           System.FS.BlockIO.API (HasBlockIO, IOCtxParams (..))
+import           System.FS.BlockIO.API (HasBlockIO)
 import qualified System.IO as System
 
 {-------------------------------------------------------------------------------
@@ -508,9 +506,8 @@ lookups ks th fromEntry = withOpenTable th $ \thEnv -> do
     let resolve = resolveMupsert (tableConfig th)
     cache <- readMVar (tableCache thEnv)
     ioRes <-
-      lookupsInBatches
+      lookupsIO
         (tableHasBlockIO thEnv)
-        (BatchSize $ ioctxBatchSizeLimit (FS.getParams (tableHasBlockIO thEnv)))
         resolve
         (cachedRuns cache)
         (cachedFilters cache)

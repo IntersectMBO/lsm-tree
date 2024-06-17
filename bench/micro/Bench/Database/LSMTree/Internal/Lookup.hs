@@ -30,9 +30,8 @@ import           Database.LSMTree.Extras.Random (frequency,
                      sampleUniformWithReplacement, uniformWithoutReplacement)
 import           Database.LSMTree.Extras.UTxO
 import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..))
-import           Database.LSMTree.Internal.Lookup (BatchSize (..),
-                     bloomQueriesDefault, indexSearches, intraPageLookups,
-                     lookupsInBatches, prepLookups, submitInBatches)
+import           Database.LSMTree.Internal.Lookup (bloomQueriesDefault,
+                     indexSearches, intraPageLookups, lookupsIO, prepLookups)
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..))
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
@@ -69,7 +68,7 @@ benchmarks = bgroup "Bench.Database.LSMTree.Internal.Lookup" [
 
 benchLookups :: Config -> Benchmark
 benchLookups conf@Config{name} =
-    withEnv $ \ ~(_dir, _hasFS, hasBlockIO, bsize, rs, ks) ->
+    withEnv $ \ ~(_dir, _hasFS, hasBlockIO, rs, ks) ->
       env ( pure ( V.map Run.runFilter rs
                  , V.map Run.runIndex rs
                  , V.map Run.runKOpsFile rs
@@ -94,9 +93,9 @@ benchLookups conf@Config{name} =
             -- perRunEnv because IOOps contain mutable buffers, so we want fresh
             -- ones for each run of the benchmark. We manually evaluate the
             -- result to WHNF since it is unboxed vector.
-          , bench "Submit IOOps in batches" $
+          , bench "Submit IOOps" $
               perRunEnv (stToIO $ prepLookups blooms indexes kopsFiles ks) $ \ ~(_rkixs, ioops) -> do
-                !_ioress <- submitInBatches hasBlockIO bsize ioops
+                !_ioress <- FS.submitIO hasBlockIO ioops
                 pure ()
             -- When IO result have been collected, intra-page lookups searches
             -- through the raw bytes (representing a disk page) for the lookup
@@ -107,17 +106,17 @@ benchLookups conf@Config{name} =
             -- only compute WHNF.
           , bench "Perform intra-page lookups" $
               perRunEnv ( stToIO (prepLookups blooms indexes kopsFiles ks) >>= \(rkixs, ioops) ->
-                          submitInBatches hasBlockIO bsize ioops >>= \ioress ->
+                          FS.submitIO hasBlockIO ioops >>= \ioress ->
                           pure (rkixs, ioops, ioress)
                         ) $ \ ~(rkixs, ioops, ioress) -> do
                 !_ <- intraPageLookups resolveV rs ks rkixs ioops ioress
                 pure ()
-            -- The whole shebang: lookup preparation, doing the IO in batches,
-            -- and then performing intra-page-lookups. Again, we evaluate the
-            -- result to WHNF because it is the same result that
-            -- intraPageLookups produces (see above).
-          , bench "Batched lookups in IO" $
-              whnfAppIO (\ks' -> lookupsInBatches hasBlockIO bsize resolveV rs blooms indexes kopsFiles ks') ks
+            -- The whole shebang: lookup preparation, doing the IO, and then
+            -- performing intra-page-lookups. Again, we evaluate the result to
+            -- WHNF because it is the same result that intraPageLookups produces
+            -- (see above).
+          , bench "Lookups in IO" $
+              whnfAppIO (\ks' -> lookupsIO hasBlockIO resolveV rs blooms indexes kopsFiles ks') ks
           ]
   where
     withEnv = envWithCleanup
@@ -149,7 +148,6 @@ lookupsInBatchesEnv ::
   -> IO ( FilePath -- ^ Temporary directory
         , FS.HasFS IO FS.HandleIO
         , FS.HasBlockIO IO FS.HandleIO
-        , BatchSize
         , V.Vector (Run (FS.Handle FS.HandleIO))
         , V.Vector SerialisedKey
         )
@@ -170,7 +168,6 @@ lookupsInBatchesEnv Config {..} = do
     pure ( benchTmpDir
          , hasFS
          , hasBlockIO
-         , BatchSize 64
          , V.singleton r
          , lookupKeys
          )
@@ -179,12 +176,11 @@ lookupsInBatchesCleanup ::
      ( FilePath -- ^ Temporary directory
      , FS.HasFS IO FS.HandleIO
      , FS.HasBlockIO IO FS.HandleIO
-     , BatchSize
      , V.Vector (Run (FS.Handle FS.HandleIO))
      , V.Vector SerialisedKey
      )
   -> IO ()
-lookupsInBatchesCleanup (tmpDir, hasFS, hasBlockIO, _, rs, _) = do
+lookupsInBatchesCleanup (tmpDir, hasFS, hasBlockIO, rs, _) = do
     FS.close hasBlockIO
     forM_ rs $ Run.removeReference hasFS
     removeDirectoryRecursive tmpDir
