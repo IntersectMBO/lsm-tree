@@ -7,6 +7,7 @@ module Database.LSMTree.Internal.Vector (
     mapStrict,
     mapMStrict,
     zipWithStrict,
+    binarySearchL
 ) where
 
 import           Control.Monad
@@ -14,6 +15,7 @@ import           Data.Primitive.ByteArray (ByteArray, sizeofByteArray)
 import           Data.Primitive.Types (Prim (sizeOfType#))
 import           Data.Proxy (Proxy (..))
 import qualified Data.Vector as V
+import qualified Data.Vector.Algorithms.Search as VA
 import qualified Data.Vector.Primitive as VP
 import           Database.LSMTree.Internal.Assertions
 import           GHC.Exts (Int (..))
@@ -48,3 +50,13 @@ mapMStrict f v = V.mapM (f >=> (pure $!)) v
 -- type @c@.
 zipWithStrict :: forall a b c. (a -> b -> c) -> V.Vector a -> V.Vector b -> V.Vector c
 zipWithStrict f xs ys = runST (V.zipWithM (\x y -> pure $! f x y) xs ys)
+
+{-|
+    Finds the lowest index in a given sorted vector at which the given element
+    could be inserted while maintaining the sortedness.
+
+    This is a variant of 'Data.Vector.Algorithms.Search.binarySearchL' for
+    immutable vectors.
+-}
+binarySearchL :: Ord a => V.Vector a -> a -> Int
+binarySearchL vec val = runST $ V.unsafeThaw vec >>= flip VA.binarySearchL val
