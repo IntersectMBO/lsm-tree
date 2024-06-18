@@ -1,5 +1,6 @@
 module Test.Database.LSMTree.Internal.WriteBuffer (tests) where
 
+import qualified Data.Vector as V
 import           Database.LSMTree.Extras.Generators (ExampleResolveMupsert,
                      resolveMupsert)
 import           Database.LSMTree.Internal.Entry
@@ -22,12 +23,12 @@ tests = testGroup "Test.Database.LSMTree.Internal.WriteBuffer" [
 type SerialisedKOp = (SerialisedKey, Entry SerialisedValue SerialisedBlob)
 
 prop_addEntriesPreservesInvariant ::
-     ExampleResolveMupsert -> WriteBuffer -> [SerialisedKOp] -> Property
+     ExampleResolveMupsert -> WriteBuffer -> V.Vector SerialisedKOp -> Property
 prop_addEntriesPreservesInvariant (resolveMupsert -> resolve) wb kops =
     property $ writeBufferInvariant (addEntries resolve kops wb)
 
 prop_addEntriesComposes ::
-     ExampleResolveMupsert -> WriteBuffer -> [SerialisedKOp] -> [SerialisedKOp] -> Property
+     ExampleResolveMupsert -> WriteBuffer -> V.Vector SerialisedKOp -> V.Vector SerialisedKOp -> Property
 prop_addEntriesComposes (resolveMupsert -> resolve) wb kops1 kops2 =
-        addEntries resolve (kops1 ++ kops2) wb
+        addEntries resolve (kops1 V.++ kops2) wb
     === (addEntries resolve kops2 . addEntries resolve kops1) wb

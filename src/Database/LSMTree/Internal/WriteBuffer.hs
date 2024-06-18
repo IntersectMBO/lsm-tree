@@ -23,12 +23,13 @@
 -- not exhaustive.
 --
 module Database.LSMTree.Internal.WriteBuffer (
-    WriteBuffer (..),
+    WriteBuffer,
     writeBufferInvariant,
     empty,
     numEntries,
     sizeInBytes,
     fromMap,
+    toMap,
     fromList,
     toList,
     addEntries,
@@ -42,12 +43,11 @@ module Database.LSMTree.Internal.WriteBuffer (
 ) where
 
 import           Control.DeepSeq (NFData (..))
-import           Control.Monad.Trans.State.Strict (modify', runState)
-import qualified Data.Foldable as Foldable
-import           Data.List (foldl')
+import           Control.Monad.Trans.Writer.Strict (runWriter, tell)
 import qualified Data.Map.Range as Map.R
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import           Data.Monoid (Sum (..))
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.BlobRef (BlobRef)
 import           Database.LSMTree.Internal.Entry
@@ -66,12 +66,14 @@ data WriteBuffer = WB {
     writeBufferContent   :: !(Map SerialisedKey (Entry SerialisedValue SerialisedBlob))
     -- | Keeps track of the total size of keys and values in the buffer.
     -- This means reconstructing the 'WB' constructor on every update.
+    --
+    -- TODO: maybe use a 'PrimVar'?
   , writeBufferSizeBytes :: {-# UNPACK #-} !Int
   }
   deriving stock (Eq, Show)
 
 instance NFData WriteBuffer where
-  rnf (WB m _) = rnf m
+  rnf (WB m s) = rnf m `seq` rnf s
 
 writeBufferInvariant :: WriteBuffer -> Bool
 writeBufferInvariant (WB m s) =
@@ -83,12 +85,15 @@ writeBufferInvariant (WB m s) =
 empty :: WriteBuffer
 empty = WB Map.empty 0
 
+-- | \( O(1) \)
 numEntries :: WriteBuffer -> NumEntries
 numEntries (WB m _) = NumEntries (Map.size m)
 
+-- | \( O(1) \)
 sizeInBytes :: WriteBuffer -> Int
 sizeInBytes = writeBufferSizeBytes
 
+-- | \( O(n) \)
 fromMap ::
      Map SerialisedKey (Entry SerialisedValue SerialisedBlob)
   -> WriteBuffer
@@ -96,6 +101,11 @@ fromMap m = WB m (Map.foldlWithKey' (\s k e -> s + sizeofKOp k e) 0 m)
   where
     sizeofKOp k e = sizeofKey k + onValue 0 sizeofValue e
 
+-- | \( O(1) \)
+toMap :: WriteBuffer -> Map SerialisedKey (Entry SerialisedValue SerialisedBlob)
+toMap = writeBufferContent
+
+-- | \( O(n \log n) \)
 fromList ::
      (SerialisedValue -> SerialisedValue -> SerialisedValue) -- ^ merge function
   -> [(SerialisedKey, Entry SerialisedValue SerialisedBlob)]
@@ -110,15 +120,12 @@ toList (WB m _) = Map.assocs m
   Updates
 -------------------------------------------------------------------------------}
 
--- TODO(optimisation): make sure the core looks reasonable, e.g. not allocating
--- 'WB' for every entry.
 addEntries ::
-     Foldable f
-  => (SerialisedValue -> SerialisedValue -> SerialisedValue) -- ^ merge function
-  -> f (SerialisedKey, Entry SerialisedValue SerialisedBlob)
+     (SerialisedValue -> SerialisedValue -> SerialisedValue) -- ^ merge function
+  -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob)
   -> WriteBuffer
   -> WriteBuffer
-addEntries f es wb = foldl' (flip (uncurry (addEntry f))) wb (Foldable.toList es)
+addEntries f es wb = V.foldl' (flip (uncurry (addEntry f))) wb es
 
 addEntry ::
      (SerialisedValue -> SerialisedValue -> SerialisedValue) -- ^ merge function
@@ -127,18 +134,18 @@ addEntry ::
   -> WriteBuffer
   -> WriteBuffer
 addEntry f k e (WB wb s) =
-    let (!wb', !s') = runState (insert k wb) s
-    in WB wb' s'
+    let (!wb', !s') = runWriter (insert k wb)
+    in WB wb' (getSum s')
   where
     -- TODO: this seems inelegant, but we want to avoid traversing the Map twice
     insert = Map.alterF $ (fmap Just .) $ \case
         Nothing -> do
-          modify' (+ (sizeofKey k + sizeofEntry e))
+          tell $! Sum (s + sizeofKey k + sizeofEntry e)
           return e
         Just old -> do
           let !new = combine f e old
           -- don't count key (it was already there), only count value difference
-          modify' (+ (sizeofEntry new - sizeofEntry old))
+          tell $! Sum (s + sizeofEntry new - sizeofEntry old)
           return new
     sizeofEntry = onValue 0 sizeofValue
 
@@ -170,11 +177,11 @@ lookups ::
      WriteBuffer
   -> V.Vector SerialisedKey
   -> V.Vector (Maybe (Entry SerialisedValue SerialisedBlob))
-lookups (WB m _) !ks = V.mapStrict (`Map.lookup` m) ks
+lookups (WB !m _) !ks = V.mapStrict (`Map.lookup` m) ks
 
 -- | TODO: update once blob references are implemented
 lookup :: WriteBuffer -> SerialisedKey -> Maybe (Entry SerialisedValue (BlobRef run))
-lookup (WB m _) !k = case Map.lookup k m of
+lookup (WB !m _) !k = case Map.lookup k m of
     Nothing -> Nothing
     Just x  -> Just $! errOnBlob x
 

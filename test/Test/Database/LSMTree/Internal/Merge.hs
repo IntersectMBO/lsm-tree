@@ -164,7 +164,7 @@ mergeWriteBuffers level =
     WB.fromMap
       . (if level == Merge.LastLevel then Map.filter (not . isDelete) else id)
       . Map.unionsWith (Entry.combine mappendValues)
-      . map WB.writeBufferContent
+      . map WB.toMap
   where
     isDelete Entry.Delete = True
     isDelete _            = False

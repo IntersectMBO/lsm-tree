@@ -84,7 +84,7 @@ import qualified Database.LSMTree.Internal.Serialise.Class as S.Class
 import           Database.LSMTree.Internal.Unsliced (Unsliced, fromUnslicedKey,
                      makeUnslicedKey)
 import           Database.LSMTree.Internal.Vector (mkPrimVector)
-import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer (..))
+import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import qualified Database.LSMTree.Monoidal as Monoidal
 import qualified Database.LSMTree.Normal as Normal
@@ -219,6 +219,7 @@ shrinkTypedWriteBuffer shrinkKey shrinkVal shrinkBlob =
     . liftShrink (liftShrink2 shrinkKey (liftShrink2 shrinkVal shrinkBlob))
     . toKOps
 
+-- NOTE: for duplicate keys, only the first one is picked
 fromKOps ::
      (SerialiseKey k, SerialiseValue v, SerialiseValue blob)
   => [(k, Entry v blob)]
