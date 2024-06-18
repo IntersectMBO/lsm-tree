@@ -288,9 +288,8 @@ prop_roundtripFromWriteBufferLookupIO dats =
     ioProperty $ withTempIOHasBlockIO "prop_roundtripFromWriteBufferLookupIO" $ \hasFS hasBlockIO -> do
     (runs, wbs) <- mkRuns hasFS
     let wbAll = WB.WB (Map.unionsWith (combine resolveV) (fmap WB.unWB wbs))
-    real <- lookupsInBatches
+    real <- lookupsIO
               hasBlockIO
-              (BatchSize 3)
               resolveV
               runs
               (V.map Run.runFilter runs)

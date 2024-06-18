@@ -16,17 +16,13 @@ module Database.LSMTree.Internal.Lookup (
   , bloomQueriesDefault
   , indexSearches
     -- * Lookups in IO
-  , BatchSize (..)
   , ResolveSerialisedValue
-  , lookupsInBatches
-  , submitInBatches
+  , lookupsIO
   , intraPageLookups
   ) where
 
-import           Control.DeepSeq (NFData)
 import           Control.Exception (Exception, assert)
 import           Control.Monad
-import           Control.Monad.Class.MonadAsync
 import           Control.Monad.Class.MonadST as Class
 import           Control.Monad.Class.MonadThrow (MonadThrow (..))
 import           Control.Monad.Primitive
@@ -206,9 +202,6 @@ indexSearches !indexes !kopsFiles !ks !rkixs = V.generateM n $ \i -> do
   performing lookups, and so we can skip looking at the page cache.
 -}
 
-newtype BatchSize = BatchSize { unBatchSize :: Int }
-  deriving newtype NFData
-
 -- | Value resolve function: what to do when resolving two @Mupdate@s
 type ResolveSerialisedValue = SerialisedValue -> SerialisedValue -> SerialisedValue
 
@@ -219,9 +212,8 @@ data ByteCountDiscrepancy = ByteCountDiscrepancy {
   }
   deriving (Show, Exception)
 
-{-# SPECIALIZE lookupsInBatches ::
+{-# SPECIALIZE lookupsIO ::
        HasBlockIO IO h
-    -> BatchSize
     -> ResolveSerialisedValue
     -> V.Vector (Run (Handle h))
     -> V.Vector (Bloom SerialisedKey)
@@ -230,23 +222,14 @@ data ByteCountDiscrepancy = ByteCountDiscrepancy {
     -> V.Vector SerialisedKey
     -> IO (V.Vector (Maybe (Entry SerialisedValue (BlobRef (Run (Handle h))))))
   #-}
--- | Batched lookups.
---
--- When the length of the list of lookup keys exceeds the batch size, the list
--- is subdivided into batches of at most the given batch size. Each batch is
--- submitted concurrently using async IO, which could result in a speedup if
--- this code is run with multi-threading enabled.
+-- | Batched lookups in I\/O.
 --
 -- See Note [Batched lookups, buffer strategy and restrictions]
 --
--- TODO: optimise by reducing allocations, possibly looking at core, or
--- revisiting the batching approach.
---
--- TODO: don't subdivide into smaller batches here, but inside @blockio-uring@.
-lookupsInBatches ::
-     forall m h. (MonadAsync m, PrimMonad m, MonadThrow m, MonadST m)
+-- TODO: optimise by reducing allocations, possibly looking at core.
+lookupsIO ::
+     forall m h. (PrimMonad m, MonadThrow m, MonadST m)
   => HasBlockIO m h
-  -> BatchSize
   -> ResolveSerialisedValue
   -> V.Vector (Run (Handle h))
   -> V.Vector (Bloom SerialisedKey)
@@ -254,9 +237,9 @@ lookupsInBatches ::
   -> V.Vector (Handle h)
   -> V.Vector SerialisedKey
   -> m (V.Vector (Maybe (Entry SerialisedValue (BlobRef (Run (Handle h))))))
-lookupsInBatches !hbio !n !resolveV !rs !blooms !indexes !kopsFiles !ks = assert precondition $ do
+lookupsIO !hbio !resolveV !rs !blooms !indexes !kopsFiles !ks = assert precondition $ do
     (rkixs, ioops) <- Class.stToIO $ prepLookups blooms indexes kopsFiles ks
-    ioress <- submitInBatches hbio n ioops
+    ioress <- submitIO hbio ioops
     intraPageLookups resolveV rs ks rkixs ioops ioress
   where
     precondition = and [
@@ -264,23 +247,6 @@ lookupsInBatches !hbio !n !resolveV !rs !blooms !indexes !kopsFiles !ks = assert
         , V.map Run.runIndex rs == indexes
         , V.length rs == V.length kopsFiles
         ]
-
-{-# SPECIALIZE submitInBatches ::
-       HasBlockIO IO h
-    -> BatchSize
-    -> V.Vector (IOOp RealWorld h)
-    -> IO (VU.Vector IOResult)
-  #-}
--- | Submit I\/O operation to the 'HasBlockIO' interface in batches.
-submitInBatches ::
-     MonadAsync m
-  => HasBlockIO m h
-  -> BatchSize
-  -> V.Vector (IOOp (PrimState m) h)
-  -> m (VU.Vector IOResult)
-submitInBatches !hbio !n !ioops = do
-    let batches = batchesOfN (unBatchSize n) ioops
-    VU.concat <$> forConcurrently batches (submitIO hbio)
 
 {-# SPECIALIZE intraPageLookups ::
        ResolveSerialisedValue
@@ -389,16 +355,3 @@ unsafeInsertWithMStrict ::
 unsafeInsertWithMStrict mvec f i y = VM.unsafeModifyM mvec g i
   where
     g x = pure $! Just $! maybe y (`f` y) x
-
--- | Divide a vector into batches of size @n@. The last batch might be
--- smaller than @n@.
-batchesOfN :: Int -> V.Vector a -> [V.Vector a]
-batchesOfN n ioops0
-  | n <= 0 = error "batchesOfN: n must be positive"
-  | otherwise = go ioops0
-  where
-    go !ioops
-      | V.length ioops == 0 = []
-      | otherwise =
-          let (ioops1, ioops2) = V.splitAt n ioops -- O(1)
-          in  ioops1 : go ioops2

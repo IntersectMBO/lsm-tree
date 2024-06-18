@@ -2,5 +2,5 @@ if(os(linux))
   source-repository-package
     type: git
     location: https://github.com/well-typed/blockio-uring
-    -- submitIO using vectors
-    tag: fdb1a51e94ad731b1bf114ee1f8143720481a49a
+    -- mega-batches
+    tag: 3bfff118aadb24cf9b12945ea50e37aebeaf6dca
