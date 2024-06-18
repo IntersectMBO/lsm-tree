@@ -3,6 +3,10 @@
 {-# LANGUAGE GeneralisedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase                 #-}
 
+-- | TODO: this should be removed once we have proper snapshotting with proper
+-- persistence of the config to disk.
+{-# OPTIONS_GHC -Wno-orphans #-}
+
 module Database.LSMTree.Internal (
     -- * Exceptions
     LSMTreeError (..)
@@ -38,6 +42,8 @@ module Database.LSMTree.Internal (
   , ResolveMupsert (..)
   , SizeRatio (..)
   , MergePolicy (..)
+  , WriteBufferAlloc (..)
+  , NumEntries (..)
   , BloomFilterAlloc (..)
   ) where
 
@@ -58,7 +64,8 @@ import qualified Data.Vector as V
 import           Data.Word (Word32, Word64)
 import           Database.LSMTree.Internal.Assertions (assertNoThunks)
 import           Database.LSMTree.Internal.BlobRef
-import           Database.LSMTree.Internal.Entry (Entry (..), combineMaybe)
+import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..),
+                     combineMaybe)
 import           Database.LSMTree.Internal.IndexCompact (IndexCompact)
 import           Database.LSMTree.Internal.Lookup (lookupsIO)
 import           Database.LSMTree.Internal.Managed
@@ -704,7 +711,7 @@ data TableConfig = TableConfig {
     --
     -- The maximum is 4GiB, which should be more than enough for realistic
     -- applications.
-  , confWriteBufferAlloc :: !Word32
+  , confWriteBufferAlloc :: !WriteBufferAlloc
   , confBloomFilterAlloc :: !BloomFilterAlloc
     -- | Function for resolving 'Mupsert' values. This should be 'Nothing' for
     -- normal tables and 'Just' for monoidal tables.
@@ -742,6 +749,30 @@ data SizeRatio = Four
 -- | TODO: this should be removed once we have proper snapshotting with proper
 -- persistence of the config to disk.
 deriving instance Read SizeRatio
+
+-- | Allocation method for the write buffer.
+data WriteBufferAlloc =
+    -- | Total number of key\/value pairs that can be present in the write
+    -- buffer before flushing the write buffer to disk.
+    --
+    -- NOTE: if the sizes of values vary greatly, this can lead to wonky runs on
+    -- disk, and therefore unpredictable performance.
+    AllocNumEntries !NumEntries
+{- TODO: disabled for now
+  | -- | Total number of bytes that the write buffer can use.
+    --
+    -- The maximum is 4GiB, which should be more than enough for realistic
+    -- applications.
+    AllocTotalBytes !Word32
+-}
+  deriving (Show, Eq)
+
+-- | TODO: this should be removed once we have proper snapshotting with proper
+-- persistence of the config to disk.
+deriving instance Read WriteBufferAlloc
+-- | TODO: this should be removed once we have proper snapshotting with proper
+-- persistence of the config to disk.
+deriving instance Read NumEntries
 
 -- | Allocation method for bloom filters.
 --

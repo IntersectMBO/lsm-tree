@@ -405,7 +405,10 @@ defaultTableConfig :: LSM.TableConfig
 defaultTableConfig =  LSM.TableConfig
     { LSM.confMergePolicy      = LSM.MergePolicyLazyLevelling
     , LSM.confSizeRatio        = LSM.Four
-    , LSM.confWriteBufferAlloc = 2 * 1024 * 1024
+    , LSM.confWriteBufferAlloc = LSM.AllocNumEntries $ LSM.NumEntries
+                                  -- 2MB divided by the size of a UTXO key/value
+                                  -- pair
+                               $ (2 * 1024 * 1024) `div` (34 + 60)
     , LSM.confBloomFilterAlloc = LSM.AllocRequestFPR 0.02
     , LSM.confResolveMupsert   = Nothing
     }

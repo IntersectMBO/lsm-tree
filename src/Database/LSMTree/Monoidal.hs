@@ -39,10 +39,12 @@ module Database.LSMTree.Monoidal (
     -- * Table handles
   , TableHandle
   , Internal.TableConfig (..)
-  , Internal.MergePolicy (..)
-  , Internal.SizeRatio (..)
-  , Internal.BloomFilterAlloc (..)
   , Internal.ResolveMupsert (..)
+  , Internal.SizeRatio (..)
+  , Internal.MergePolicy (..)
+  , Internal.WriteBufferAlloc (..)
+  , Internal.NumEntries (..)
+  , Internal.BloomFilterAlloc (..)
   , new
   , close
     -- ** Resource management

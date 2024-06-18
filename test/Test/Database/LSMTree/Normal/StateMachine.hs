@@ -225,7 +225,7 @@ instance Arbitrary Impl.Real.TableConfig where
   arbitrary = pure $  Impl.Real.TableConfig {
         Impl.Real.confMergePolicy      = Impl.Real.MergePolicyLazyLevelling
       , Impl.Real.confSizeRatio        = Impl.Real.Four
-      , Impl.Real.confWriteBufferAlloc = 2 * 1024 * 1024
+      , Impl.Real.confWriteBufferAlloc = Impl.Real.AllocNumEntries (Impl.Real.NumEntries 5)
       , Impl.Real.confBloomFilterAlloc = Impl.Real.AllocRequestFPR 0.02
       , Impl.Real.confResolveMupsert   = Nothing
       }

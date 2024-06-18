@@ -84,6 +84,8 @@ instance Bifoldable Entry where
       Mupdate v           -> f v
       Delete              -> mempty
 
+-- | TODO: we should change this to be a Word64, so that it is in line with the
+-- disk format.
 newtype NumEntries = NumEntries { unNumEntries :: Int }
   deriving (Eq, Ord, Show)
   deriving newtype NFData

@@ -39,8 +39,10 @@ module Database.LSMTree.Normal (
     -- * Table handles
   , TableHandle
   , Internal.TableConfig (..)
-  , Internal.MergePolicy (..)
   , Internal.SizeRatio (..)
+  , Internal.MergePolicy (..)
+  , Internal.WriteBufferAlloc (..)
+  , Internal.NumEntries (..)
   , Internal.BloomFilterAlloc (..)
   , withTable
   , new
