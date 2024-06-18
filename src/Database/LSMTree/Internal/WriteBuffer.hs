@@ -24,6 +24,7 @@
 --
 module Database.LSMTree.Internal.WriteBuffer (
     WriteBuffer,
+    SizeInBytes (..),
     writeBufferInvariant,
     empty,
     numEntries,
@@ -68,36 +69,41 @@ data WriteBuffer = WB {
     -- This means reconstructing the 'WB' constructor on every update.
     --
     -- TODO: maybe use a 'PrimVar'?
-  , writeBufferSizeBytes :: {-# UNPACK #-} !Int
+  , writeBufferSizeBytes :: {-# UNPACK #-} !SizeInBytes
   }
   deriving stock (Eq, Show)
+
+-- | TODO: should this be a Word64 instead?
+newtype SizeInBytes = SizeInBytes { unSizeInBytes :: Int }
+  deriving stock (Eq, Show)
+  deriving newtype NFData
 
 instance NFData WriteBuffer where
   rnf (WB m s) = rnf m `seq` rnf s
 
 writeBufferInvariant :: WriteBuffer -> Bool
 writeBufferInvariant (WB m s) =
-    s == sum (sizeofKey <$> keys) + sum (sizeofValue <$> values)
+    unSizeInBytes s == sum (sizeofKey <$> keys) + sum (sizeofValue <$> values)
   where
     keys = Map.keys m
     values = foldMap (onValue [] pure) m :: [SerialisedValue]
 
 empty :: WriteBuffer
-empty = WB Map.empty 0
+empty = WB Map.empty (SizeInBytes 0)
 
 -- | \( O(1) \)
 numEntries :: WriteBuffer -> NumEntries
 numEntries (WB m _) = NumEntries (Map.size m)
 
 -- | \( O(1) \)
-sizeInBytes :: WriteBuffer -> Int
+sizeInBytes :: WriteBuffer -> SizeInBytes
 sizeInBytes = writeBufferSizeBytes
 
 -- | \( O(n) \)
 fromMap ::
      Map SerialisedKey (Entry SerialisedValue SerialisedBlob)
   -> WriteBuffer
-fromMap m = WB m (Map.foldlWithKey' (\s k e -> s + sizeofKOp k e) 0 m)
+fromMap m = WB m (SizeInBytes $ Map.foldlWithKey' (\s k e -> s + sizeofKOp k e) 0 m)
   where
     sizeofKOp k e = sizeofKey k + onValue 0 sizeofValue e
 
@@ -133,9 +139,9 @@ addEntry ::
   -> Entry SerialisedValue SerialisedBlob
   -> WriteBuffer
   -> WriteBuffer
-addEntry f k e (WB wb s) =
+addEntry f k e (WB wb (SizeInBytes s)) =
     let (!wb', !s') = runWriter (insert k wb)
-    in WB wb' (getSum s')
+    in WB wb' (SizeInBytes $ getSum s')
   where
     -- TODO: this seems inelegant, but we want to avoid traversing the Map twice
     insert = Map.alterF $ (fmap Just .) $ \case

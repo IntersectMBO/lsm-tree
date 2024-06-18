@@ -550,7 +550,7 @@ updates es th = withOpenTable th $ \thEnv -> do
     modifyMVar_ (tableContent thEnv) $ \tableContent -> do
       let !wb = WB.addEntries (resolveMupsert (tableConfig th)) es $
                   tableWriteBuffer tableContent
-      if WB.sizeInBytes wb <= fromIntegral (confWriteBufferAlloc (tableConfig th))
+      if WB.unSizeInBytes (WB.sizeInBytes wb) <= fromIntegral (confWriteBufferAlloc (tableConfig th))
         then return tableContent { tableWriteBuffer = wb }
         else flushWriteBuffer thEnv (tableLevels tableContent) wb
 
