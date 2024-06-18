@@ -30,6 +30,7 @@ module Database.LSMTree.Internal.WriteBuffer (
     fromList,
     toList,
     addEntries,
+    addEntriesUpToN,
     addEntry,
     addEntryMonoidal,
     addEntryNormal,
@@ -100,6 +101,24 @@ addEntries ::
   -> WriteBuffer
   -> WriteBuffer
 addEntries f es wb = V.foldl' (flip (uncurry (addEntry f))) wb es
+
+-- | Add entries to the write buffer up until a certain write buffer size @n@.
+--
+-- NOTE: if the write buffer is larger @n@ already, this is a no-op.
+addEntriesUpToN ::
+     (SerialisedValue -> SerialisedValue -> SerialisedValue) -- ^ merge function
+  -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob)
+  -> Int
+  -> WriteBuffer
+  -> (WriteBuffer, V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob))
+addEntriesUpToN f es0 n wb0 = go es0 wb0
+  where
+    go !es acc@(WB m)
+      | Map.size m >= n = (acc, es)
+      | V.null es       = (acc, es)
+      | otherwise       =
+          let (!k, !e) = V.unsafeIndex es 0
+          in  go (V.drop 1 es) (addEntry f k e acc)
 
 addEntry ::
      (SerialisedValue -> SerialisedValue -> SerialisedValue) -- ^ merge function

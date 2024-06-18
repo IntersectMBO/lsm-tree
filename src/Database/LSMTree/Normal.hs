@@ -253,6 +253,9 @@ rangeLookup = undefined
 
 -- | Perform a mixed batch of inserts and deletes.
 --
+-- If there are duplicate keys in the same batch, then keys nearer the front of
+-- the vector take precedence.
+--
 -- Updates can be performed concurrently from multiple Haskell threads.
 updates ::
      (IOLike m, SerialiseKey k, SerialiseValue v, SerialiseValue blob)

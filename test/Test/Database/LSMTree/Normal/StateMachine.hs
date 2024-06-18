@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP                      #-}
 {-# LANGUAGE ConstraintKinds          #-}
 {-# LANGUAGE DerivingStrategies       #-}
 {-# LANGUAGE EmptyDataDeriving        #-}
@@ -15,6 +16,10 @@
 {-# LANGUAGE TypeApplications         #-}
 {-# LANGUAGE TypeFamilies             #-}
 {-# LANGUAGE UndecidableInstances     #-}
+
+#if MIN_VERSION_GLASGOW_HASKELL(9,8,1,0)
+{-# LANGUAGE TypeAbstractions         #-}
+#endif
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -222,10 +227,10 @@ instance Arbitrary Impl.ModelIO.TableConfig where
 -- field.
 instance Arbitrary Impl.Real.TableConfig where
   arbitrary :: Gen Impl.Real.TableConfig
-  arbitrary = pure $  Impl.Real.TableConfig {
+  arbitrary = pure $ Impl.Real.TableConfig {
         Impl.Real.confMergePolicy      = Impl.Real.MergePolicyLazyLevelling
       , Impl.Real.confSizeRatio        = Impl.Real.Four
-      , Impl.Real.confWriteBufferAlloc = Impl.Real.AllocNumEntries (Impl.Real.NumEntries 5)
+      , Impl.Real.confWriteBufferAlloc = Impl.Real.AllocNumEntries (Impl.Real.NumEntries 30)
       , Impl.Real.confBloomFilterAlloc = Impl.Real.AllocRequestFPR 0.02
       , Impl.Real.confResolveMupsert   = Nothing
       }
@@ -297,12 +302,14 @@ type K a = (
     Model.C_ a
   , Model.SerialiseKey a
   , SUT.SerialiseKey a
+  , Arbitrary a
   )
 
 type V a = (
     Model.C_ a
   , Model.SerialiseValue a
   , SUT.SerialiseValue a
+  , Arbitrary a
   )
 
 -- | Common constraints for keys, values and blobs
@@ -884,7 +891,7 @@ catchErr (Handler f) action = catch (Right <$> action) f'
 
 arbitraryActionWithVars ::
      forall h k v blob. (
-       C k v blob, Arbitrary k, Arbitrary v, Arbitrary blob
+       C k v blob
      , SUT.Labellable (k, v, blob)
      , Eq (SUT.Class.TableConfig h)
      , Arbitrary (SUT.Class.TableConfig h)
@@ -1022,11 +1029,20 @@ arbitraryActionWithVars _ findVars _st = QC.oneof $ concat [
       ]
 
 shrinkActionWithVars ::
-       ModelFindVariables (ModelState h)
-    -> ModelState h
-    -> LockstepAction (ModelState h) a
-    -> [Any (LockstepAction (ModelState h))]
-shrinkActionWithVars _ _ _ = []
+     forall h a. (
+       Eq (SUT.Class.TableConfig h)
+     , Arbitrary (SUT.Class.TableConfig h)
+     , Typeable h
+     )
+  => ModelFindVariables (ModelState h)
+  -> ModelState h
+  -> LockstepAction (ModelState h) a
+  -> [Any (LockstepAction (ModelState h))]
+shrinkActionWithVars _ _ = \case
+    New @k @v @blob conf -> [ Some $ New @k @v @blob conf' | conf' <- QC.shrink conf ]
+    Inserts kins tableVar -> [ Some $ Inserts kins' tableVar | kins' <- QC.shrink kins ]
+    Lookups ks tableVar -> [ Some $ Lookups ks' tableVar | ks' <- QC.shrink ks ]
+    _ -> []
 
 {-------------------------------------------------------------------------------
   Interpret 'Op' against 'ModelValue'
