@@ -202,7 +202,7 @@ prop_WriteAndRead fs (TypedWriteBuffer wb) = do
 
     stats = tabulate "value size" (map (showPowersOf10 . sizeofValue) vals)
           . label (if any isLargeKOp kops then "has large k/op" else "no large k/op")
-    kops = WB.content wb
+    kops = WB.toList wb
     vals = concatMap (bifoldMap pure mempty . snd) kops
 
 -- | Loading a run (written out from a write buffer) from disk gives the same

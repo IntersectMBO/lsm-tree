@@ -63,7 +63,6 @@ import           Data.Bifunctor (bimap)
 import           Data.Coerce (coerce)
 import           Data.Containers.ListUtils (nubOrd)
 import           Data.List (sort)
-import qualified Data.Map as Map
 import qualified Data.Primitive.ByteArray as BA
 import qualified Data.Vector.Primitive as VP
 import           Data.Word
@@ -82,7 +81,7 @@ import qualified Database.LSMTree.Internal.Serialise.Class as S.Class
 import           Database.LSMTree.Internal.Unsliced (Unsliced, fromUnslicedKey,
                      makeUnslicedKey)
 import           Database.LSMTree.Internal.Vector (mkPrimVector)
-import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer (..))
+import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import qualified Database.LSMTree.Monoidal as Monoidal
 import qualified Database.LSMTree.Normal as Normal
@@ -217,11 +216,12 @@ shrinkTypedWriteBuffer shrinkKey shrinkVal shrinkBlob =
     . liftShrink (liftShrink2 shrinkKey (liftShrink2 shrinkVal shrinkBlob))
     . toKOps
 
+-- NOTE: for duplicate keys, only the first one is picked
 fromKOps ::
      (SerialiseKey k, SerialiseValue v, SerialiseValue blob)
   => [(k, Entry v blob)]
   -> TypedWriteBuffer k v blob
-fromKOps = TypedWriteBuffer . WB . Map.fromList . map serialiseKOp
+fromKOps = TypedWriteBuffer . WB.fromList const . map serialiseKOp
   where
     serialiseKOp = bimap serialiseKey (bimap serialiseValue serialiseBlob)
 
@@ -229,7 +229,7 @@ toKOps ::
      (SerialiseKey k, SerialiseValue v, SerialiseValue blob)
   => TypedWriteBuffer k v blob
   -> [(k, Entry v blob)]
-toKOps = map deserialiseKOp . Map.assocs . WB.unWB . unTypedWriteBuffer
+toKOps = map deserialiseKOp . WB.toList . unTypedWriteBuffer
   where
     deserialiseKOp =
       bimap deserialiseKey (bimap deserialiseValue deserialiseBlob)
