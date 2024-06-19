@@ -24,6 +24,8 @@ module Database.LSMTree.Common (
     -- * Small types
   , Internal.Range (..)
     -- * Snapshots
+  , Internal.SnapshotLabel
+  , Labellable (..)
   , deleteSnapshot
   , listSnapshots
     -- ** Snapshot names
@@ -38,7 +40,7 @@ import           Control.Concurrent.Class.MonadSTM (MonadSTM, STM)
 import           Control.Monad.Class.MonadThrow
 import qualified Data.ByteString as BS
 import           Data.Kind (Type)
-import           Data.Typeable (Typeable)
+import           Data.Typeable (Proxy, Typeable)
 import qualified Database.LSMTree.Internal as Internal
 import qualified Database.LSMTree.Internal.BlobRef as Internal
 import qualified Database.LSMTree.Internal.Paths as Internal
@@ -181,6 +183,14 @@ instance SomeUpdateConstraint BS.ByteString where
   Snapshots
 -------------------------------------------------------------------------------}
 
+-- TODO: we might replace this with some other form of dynamic checking of
+-- snapshot types. For example, we could ask the user to produce a label/version
+-- directly instead, instead of deriving the label from a type using this type
+-- class.
+class Labellable a where
+  makeSnapshotLabel :: Proxy a -> Internal.SnapshotLabel
+
+{-# SPECIALISE deleteSnapshot :: Session IO -> Internal.SnapshotName -> IO () #-}
 -- | Delete a named snapshot.
 --
 -- NOTE: has similar behaviour to 'removeDirectory'.
@@ -189,13 +199,18 @@ instance SomeUpdateConstraint BS.ByteString where
 --
 -- * Deleting a snapshot that doesn't exist is an error.
 --
+-- TODO: this function currently has a temporary implementation until we have
+-- proper snapshots.
 deleteSnapshot :: IOLike m => Session m -> Internal.SnapshotName -> m ()
-deleteSnapshot = undefined
+deleteSnapshot (Session sesh) = Internal.deleteSnapshot sesh
 
+{-# SPECIALISE listSnapshots :: Session IO -> IO [Internal.SnapshotName] #-}
 -- | List snapshots by name.
 --
+-- TODO: this function currently has a temporary implementation until we have
+-- proper snapshots.
 listSnapshots :: IOLike m => Session m -> m [Internal.SnapshotName]
-listSnapshots = undefined
+listSnapshots (Session sesh) = Internal.listSnapshots sesh
 
 {-------------------------------------------------------------------------------
   Blob references

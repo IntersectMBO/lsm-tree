@@ -1,4 +1,5 @@
 {-# LANGUAGE ConstraintKinds          #-}
+{-# LANGUAGE DerivingStrategies       #-}
 {-# LANGUAGE EmptyDataDeriving        #-}
 {-# LANGUAGE FlexibleContexts         #-}
 {-# LANGUAGE FlexibleInstances        #-}
@@ -53,9 +54,9 @@ import qualified Data.Set as Set
 import           Data.Typeable (Proxy (..), Typeable, cast)
 import qualified Data.Vector as V
 import           Data.Word (Word64)
-import qualified Database.LSMTree.Common as SUT (SerialiseKey, SerialiseValue,
-                     mkSnapshotName)
-import           Database.LSMTree.Extras.Generators ()
+import qualified Database.LSMTree.Common as SUT (Labellable, SerialiseKey,
+                     SerialiseValue, mkSnapshotName)
+import           Database.LSMTree.Extras.Generators (KeyForIndexCompact)
 import           Database.LSMTree.Internal (LSMTreeError (..))
 import qualified Database.LSMTree.Internal as Impl.Real.Internal
                      (ResolveMupsert (..))
@@ -173,7 +174,10 @@ propLockstepIO_RealImpl_RealFS = testProperty "propLockstepIO_RealImpl_RealFS" $
       where
         handler' :: LSMTreeError -> Maybe Model.Err
         handler' ErrTableClosed = Just Model.ErrTableHandleClosed
-        handler' _              = Nothing
+        handler' (ErrSnapshotNotExists _snap) = Just Model.ErrSnapshotDoesNotExist
+        handler' (ErrSnapshotExists _snap) = Just Model.ErrSnapshotExists
+        handler' (ErrSnapshotWrongType _snap) = Just Model.ErrSnapshotWrongType
+        handler' _ = Nothing
 
 {- TODO: temporarily disabled until we start on I/O fault testing.
 propLockstepIO_RealImpl_MockFS :: TestTree
@@ -242,6 +246,32 @@ instance Eq Impl.Real.TableConfig where
 -- @quickheck-dynamic@ happy. Do not use this instance!
 instance Eq Impl.Real.Internal.ResolveMupsert where
   _ == _ = error "(==) on ResolveMupserts should not be used!"
+
+{-------------------------------------------------------------------------------
+  Key and value types
+-------------------------------------------------------------------------------}
+
+-- TODO: maybe use reference impl generators here?
+
+newtype Key1   = Key1   { _unKey1 :: QC.Small Word64 }
+  deriving newtype (Show, Eq, Ord, Arbitrary, Impl.Real.SerialiseKey)
+newtype Value1 = Value1 { _unValue1 :: QC.Small Word64 }
+  deriving newtype (Show, Eq, Ord, Arbitrary, Impl.Real.SerialiseValue)
+newtype Blob1  = Blob1  { _unBlob1 :: QC.Small Word64 }
+  deriving newtype (Show, Eq, Ord, Arbitrary, Impl.Real.SerialiseValue)
+
+instance Impl.Real.Labellable (Key1, Value1, Blob1) where
+  makeSnapshotLabel _ = "Key1 Value1 Blob1"
+
+newtype Key2   = Key2   { _unKey2   :: KeyForIndexCompact }
+  deriving newtype (Show, Eq, Ord, Arbitrary, Impl.Real.SerialiseKey)
+newtype Value2 = Value2 { _unValue2 :: BS.ByteString }
+  deriving newtype (Show, Eq, Ord, Arbitrary, Impl.Real.SerialiseValue)
+newtype Blob2  = Blob2  { _unBlob2  :: BS.ByteString }
+  deriving newtype (Show, Eq, Ord, Arbitrary, Impl.Real.SerialiseValue)
+
+instance Impl.Real.Labellable (Key2, Value2, Blob2) where
+  makeSnapshotLabel _ = "Key2 Value2 Blob2"
 
 {-------------------------------------------------------------------------------
   Model state
@@ -318,10 +348,10 @@ instance ( Show (SUT.Class.TableConfig h)
                   => Var h (V.Vector (WrapBlobRef h IO blob))
                   -> Act h (V.Vector (WrapBlob blob))
     -- Snapshots
-    Snapshot :: C k v blob
+    Snapshot :: (C k v blob, SUT.Labellable (k, v, blob))
              => SUT.SnapshotName -> Var h (WrapTableHandle h IO k v blob)
              -> Act h ()
-    Open     :: C k v blob
+    Open     :: (C k v blob, SUT.Labellable (k, v, blob))
              => SUT.SnapshotName
              -> Act h (WrapTableHandle h IO k v blob)
     DeleteSnapshot :: SUT.SnapshotName -> Act h ()
@@ -505,11 +535,8 @@ instance ( Eq (SUT.Class.TableConfig h)
     -> ModelState h
     -> Gen (Any (LockstepAction (ModelState h)))
   arbitraryWithVars findVars st = QC.oneof [
-        -- TODO: tune generators to generate more interesting scenarios.
-        -- Previously, we were using just Word64, but then the probability of
-        -- generating a key twice is too low.
-        arbitraryActionWithVars (Proxy @(QC.Small Word64, QC.Small Word64, QC.Small Word64)) findVars st
-      , arbitraryActionWithVars (Proxy @(BS.ByteString, BS.ByteString, BS.ByteString)) findVars st
+        arbitraryActionWithVars (Proxy @(Key1, Value1, Blob1)) findVars st
+      , arbitraryActionWithVars (Proxy @(Key2, Value2, Blob2)) findVars st
       ]
 
   shrinkWithVars ::
@@ -858,6 +885,7 @@ catchErr (Handler f) action = catch (Right <$> action) f'
 arbitraryActionWithVars ::
      forall h k v blob. (
        C k v blob, Arbitrary k, Arbitrary v, Arbitrary blob
+     , SUT.Labellable (k, v, blob)
      , Eq (SUT.Class.TableConfig h)
      , Arbitrary (SUT.Class.TableConfig h)
      , Typeable h
@@ -912,9 +940,9 @@ arbitraryActionWithVars _ findVars _st = QC.oneof $ concat [
     withoutVars = [
           Some . New @k @v @blob <$> QC.arbitrary
         -- TODO: enable generators as we implement the actions for the /real/ lsm-tree
-        -- , fmap Some $ Open @k @v @blob <$> genSnapshotName
-        -- , fmap Some $ DeleteSnapshot <$> genSnapshotName
-        -- , pure $ Some ListSnapshots
+        , fmap Some $ Open @k @v @blob <$> genSnapshotName
+        , fmap Some $ DeleteSnapshot <$> genSnapshotName
+        , pure $ Some ListSnapshots
         ]
 
     withVars ::
@@ -928,8 +956,8 @@ arbitraryActionWithVars _ findVars _st = QC.oneof $ concat [
         , fmap Some $ Updates <$> genUpdates <*> (fromRight <$> genVar)
         , fmap Some $ Inserts <$> genInserts <*> (fromRight <$> genVar)
         , fmap Some $ Deletes <$> genDeletes <*> (fromRight <$> genVar)
+        , fmap Some $ Snapshot <$> genSnapshotName <*> (fromRight <$> genVar)
         -- TODO: enable generators as we implement the actions for the /real/ lsm-tree
-        -- , fmap Some $ Snapshot <$> genSnapshotName <*> (fromRight <$> genVar)
         -- , fmap Some $ Duplicate <$> (fromRight <$> genVar)
         ]
 
@@ -986,9 +1014,8 @@ arbitraryActionWithVars _ findVars _st = QC.oneof $ concat [
     genBlob :: Gen (Maybe blob)
     genBlob = Nothing <$ QC.arbitrary @blob
 
-    -- TODO: improve, actual snapshot names
-    _genSnapshotName :: Gen SUT.SnapshotName
-    _genSnapshotName = QC.elements [
+    genSnapshotName :: Gen SUT.SnapshotName
+    genSnapshotName = QC.elements [
         fromJust $ SUT.mkSnapshotName "snap1"
       , fromJust $ SUT.mkSnapshotName "snap2"
       , fromJust $ SUT.mkSnapshotName "snap3"

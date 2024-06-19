@@ -26,8 +26,11 @@ module Database.LSMTree.Internal (
   , toNormalLookupResult
   , updates
     -- * Snapshots
+  , SnapshotLabel
   , snapshot
   , open
+  , deleteSnapshot
+  , listSnapshots
     -- * configuration
   , TableConfig (..)
   , resolveMupsert
@@ -40,7 +43,7 @@ module Database.LSMTree.Internal (
 import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Concurrent.ReadWriteVar (RWVar)
 import qualified Control.Concurrent.ReadWriteVar as RW
-import           Control.Monad (unless, void)
+import           Control.Monad (unless, void, when)
 import           Control.Monad.Class.MonadThrow
 import           Data.BloomFilter (Bloom)
 import qualified Data.ByteString.Char8 as BSC
@@ -48,6 +51,7 @@ import           Data.Either (fromRight)
 import           Data.Foldable
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import           Data.Maybe (catMaybes)
 import qualified Data.Set as Set
 import qualified Data.Vector as V
 import           Data.Word (Word32, Word64)
@@ -96,6 +100,9 @@ data LSMTreeError =
     -- 'Database.LSMTree.Common.close'.
   | ErrTableClosed
   | ErrExpectedNormalTable
+  | ErrSnapshotExists SnapshotName
+  | ErrSnapshotNotExists SnapshotName
+  | ErrSnapshotWrongType SnapshotName
   deriving (Show, Exception)
 
 {-------------------------------------------------------------------------------
@@ -550,14 +557,17 @@ updates es th = withOpenTable th $ \thEnv -> do
   Snapshots
 -------------------------------------------------------------------------------}
 
-{-# SPECIALISE snapshot :: SnapshotName -> TableHandle IO h -> IO Int #-}
+type SnapshotLabel = String
+
+{-# SPECIALISE snapshot :: SnapshotName -> String -> TableHandle IO h -> IO Int #-}
 -- |  See 'Database.LSMTree.Normal.snapshot''.
 snapshot ::
      m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
   => SnapshotName
+  -> SnapshotLabel
   -> TableHandle m h
   -> m Int
-snapshot snap th = do
+snapshot snap label th = do
     withOpenTable th $ \thEnv -> do
       wb <- readMVar (tableWriteBuffer thEnv)
       levels <- readMVar (tableLevels thEnv)
@@ -571,36 +581,42 @@ snapshot snap th = do
             let levels' = case V.uncons levels of
                   Nothing             -> V.singleton (Level $ V.singleton wbRun)
                   Just (Level rs, tl) -> Level (V.cons wbRun rs) `V.cons` tl
-
-            let runNumbers = V.map (V.map (runNumber . Run.runRunFsPaths) . residentRuns) levels'
-
+                runNumbers = V.map (V.map (runNumber . Run.runRunFsPaths) . residentRuns) levels'
+                snapPath = Paths.snapshot (tableSessionRoot thEnv) snap
+            FS.doesFileExist (tableHasFS thEnv) snapPath >>= \b ->
+              when b $ throwIO (ErrSnapshotExists snap)
             FS.withFile
               (tableHasFS thEnv)
-              (Paths.snapshot (tableSessionRoot thEnv) snap)
+              snapPath
               (FS.WriteMode FS.MustBeNew) $ \h ->
                 void $ FS.hPutAllStrict (tableHasFS thEnv) h
-                            (BSC.pack $ show (runNumbers, tableConfig th))
+                            (BSC.pack $ show (label, runNumbers, tableConfig th))
 
             pure $! V.sum (V.map V.length runNumbers)
 
-{-# SPECIALISE open :: Session IO h -> SnapshotName -> IO (TableHandle IO h) #-}
+{-# SPECIALISE open :: Session IO h -> String -> SnapshotName -> IO (TableHandle IO h) #-}
 -- |  See 'Database.LSMTree.Normal.open'.
 open ::
      m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
   => Session m h
+  -> SnapshotLabel -- ^ Expected label
   -> SnapshotName
   -> m (TableHandle m h)
-open sesh snap = do
+open sesh label snap = do
     withOpenSession sesh $ \seshEnv -> do
       let hfs = sessionHasFS seshEnv
+          snapPath = Paths.snapshot (sessionRoot seshEnv) snap
+      FS.doesFileExist hfs snapPath >>= \b ->
+        unless b $ throwIO (ErrSnapshotNotExists snap)
       bs <- FS.withFile
               hfs
-              (Paths.snapshot (sessionRoot seshEnv) snap)
+              snapPath
               FS.ReadMode $ \h ->
                 FS.hGetAll (sessionHasFS seshEnv) h
-      let (runNumbers, conf) = read . BSC.unpack . BSC.toStrict $ bs
-          runPaths = V.map (V.map (RunFsPaths (Paths.activeDir $ sessionRoot seshEnv))) runNumbers
-      with (openLevels hfs runPaths) $ newWithLevels seshEnv conf
+      let (label', runNumbers, conf) = read . BSC.unpack . BSC.toStrict $ bs
+      unless (label == label') $ throwIO (ErrSnapshotWrongType snap)
+      let runPaths = V.map (V.map (RunFsPaths (Paths.activeDir $ sessionRoot seshEnv))) runNumbers
+      with (openLevels hfs runPaths) (newWithLevels seshEnv conf)
 
 {-# SPECIALISE openLevels :: HasFS IO h -> V.Vector (V.Vector RunFsPaths) -> Managed IO (V.Vector (Level (FS.Handle h))) #-}
 -- | Open multiple levels.
@@ -620,6 +636,44 @@ openLevels hfs levels =
         Managed $ bracketOnError
                     (Run.openFromDisk hfs run)
                     (Run.removeReference hfs)
+
+{-# SPECIALISE deleteSnapshot :: Session IO h -> SnapshotName -> IO () #-}
+-- |  See 'Database.LSMTree.Common.deleteSnapshot'.
+deleteSnapshot ::
+     m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+  => Session m h
+  -> SnapshotName
+  -> m ()
+deleteSnapshot sesh snap =
+    withOpenSession sesh $ \seshEnv -> do
+      let hfs = sessionHasFS seshEnv
+          snapPath = Paths.snapshot (sessionRoot seshEnv) snap
+      FS.doesFileExist hfs snapPath >>= \b ->
+        unless b $ throwIO (ErrSnapshotNotExists snap)
+      FS.removeFile hfs snapPath
+
+{-# SPECIALISE listSnapshots :: Session IO h -> IO [SnapshotName] #-}
+-- |  See 'Database.LSMTree.Common.listSnapshots'.
+listSnapshots ::
+     m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+  => Session m h
+  -> m [SnapshotName]
+listSnapshots sesh =
+    withOpenSession sesh $ \seshEnv -> do
+      let hfs = sessionHasFS seshEnv
+          root = sessionRoot seshEnv
+      contents <- FS.listDirectory hfs (Paths.snapshotsDir (sessionRoot seshEnv))
+      snaps <- mapM (checkSnapshot hfs root) $ Set.toList contents
+      pure $ catMaybes snaps
+  where
+    checkSnapshot hfs root s =
+      case Paths.mkSnapshotName s of
+        Nothing   -> pure Nothing
+        Just snap -> do
+          -- check that it is a file
+          b <- FS.doesFileExist hfs (Paths.snapshot root snap)
+          if b then pure $ Just snap
+               else pure $ Nothing
 
 {-------------------------------------------------------------------------------
   Configuration
