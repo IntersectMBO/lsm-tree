@@ -54,6 +54,7 @@ import           Control.Concurrent.ReadWriteVar (RWVar)
 import qualified Control.Concurrent.ReadWriteVar as RW
 import           Control.Monad (unless, void, when)
 import           Control.Monad.Class.MonadThrow
+import           Data.Arena (newArenaManager)
 import           Data.BloomFilter (Bloom)
 import qualified Data.ByteString.Char8 as BSC
 import           Data.Either (fromRight)
@@ -536,9 +537,11 @@ lookups ks th fromEntry = withOpenTable th $ \thEnv -> do
     tableContent <- readMVar (tableContent thEnv)
     let !wb = tableWriteBuffer tableContent
     let !cache = tableCache tableContent
+    arenaManager <- newArenaManager -- TODO: use shared arena manager in handle (or session?)
     ioRes <-
       lookupsIO
         (tableHasBlockIO thEnv)
+        arenaManager
         resolve
         (cachedRuns cache)
         (cachedFilters cache)

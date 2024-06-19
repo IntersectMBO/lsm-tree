@@ -2,6 +2,7 @@
 --
 module Main (main) where
 
+import qualified Test.Data.Arena
 import qualified Test.Database.LSMTree.Generators
 import qualified Test.Database.LSMTree.Internal
 import qualified Test.Database.LSMTree.Internal.BloomFilter
@@ -52,4 +53,5 @@ main = defaultMain $ testGroup "lsm-tree"
     , Test.Database.LSMTree.ModelIO.Monoidal.tests
     , Test.Database.LSMTree.Normal.StateMachine.tests
     , Test.System.Posix.Fcntl.NoCache.tests
+    , Test.Data.Arena.tests
     ]

@@ -27,6 +27,7 @@ import           Control.Monad.Class.MonadST as Class
 import           Control.Monad.Class.MonadThrow (MonadThrow (..))
 import           Control.Monad.Primitive
 import           Control.Monad.ST.Strict
+import           Data.Arena (Arena, ArenaManager, allocateFromArena, withArena)
 import           Data.Bifunctor
 import           Data.BloomFilter (Bloom)
 import qualified Data.BloomFilter as Bloom
@@ -57,15 +58,16 @@ import           System.FS.BlockIO.API
 -- creating 'IOOp's. The result is a vector of 'IOOp's and a vector of indexes,
 -- both of which are the same length. The indexes record the run and key
 -- associated with each 'IOOp'.
-prepLookups ::
-     V.Vector (Bloom SerialisedKey)
+prepLookups
+  :: Arena s
+  -> V.Vector (Bloom SerialisedKey)
   -> V.Vector IndexCompact
   -> V.Vector (Handle h)
   -> V.Vector SerialisedKey
   -> ST s (VU.Vector (RunIx, KeyIx), V.Vector (IOOp s h))
-prepLookups blooms indexes kopsFiles ks = do
+prepLookups arena blooms indexes kopsFiles ks = do
   let !rkixs = bloomQueriesDefault blooms ks
-  !ioops <- indexSearches indexes kopsFiles ks rkixs
+  !ioops <- indexSearches arena indexes kopsFiles ks rkixs
   pure (rkixs, ioops)
 
 type KeyIx = Int
@@ -145,13 +147,14 @@ bloomQueries !blooms !ks !resN
 -- each search result. The resulting vector has the same length as the
 -- @VU.Vector (RunIx, KeyIx)@ argument, because index searching always returns a
 -- positive search result.
-indexSearches ::
-     V.Vector IndexCompact
+indexSearches
+  :: Arena s
+  -> V.Vector IndexCompact
   -> V.Vector (Handle h)
   -> V.Vector SerialisedKey
   -> VU.Vector (RunIx, KeyIx) -- ^ Result of 'bloomQueries'
   -> ST s (V.Vector (IOOp s h))
-indexSearches !indexes !kopsFiles !ks !rkixs = V.generateM n $ \i -> do
+indexSearches !arena !indexes !kopsFiles !ks !rkixs = V.generateM n $ \i -> do
     let (!rix, !kix) = rkixs `VU.unsafeIndex` i
         !c           = indexes `V.unsafeIndex` rix
         !h           = kopsFiles `V.unsafeIndex` rix
@@ -162,12 +165,12 @@ indexSearches !indexes !kopsFiles !ks !rkixs = V.generateM n $ \i -> do
     -- byte array for each 'IOOp'. One optimisation we are planning to
     -- do is to use a cache of re-usable buffers, in which case we
     -- decrease the GC load. TODO: re-usable buffers.
-    !buf <- newPinnedByteArray (size * 4096)
+    (!off, !buf) <- allocateFromArena arena (size * 4096) 4096
     pure $! IOOpRead
               h
               (fromIntegral $ Index.unPageNo (pageSpanStart pspan) * 4096)
               buf
-              0
+              (fromIntegral off)
               (fromIntegral $ size * 4096)
   where
     !n = VU.length rkixs
@@ -214,6 +217,7 @@ data ByteCountDiscrepancy = ByteCountDiscrepancy {
 
 {-# SPECIALIZE lookupsIO ::
        HasBlockIO IO h
+    -> ArenaManager RealWorld
     -> ResolveSerialisedValue
     -> V.Vector (Run (Handle h))
     -> V.Vector (Bloom SerialisedKey)
@@ -230,6 +234,7 @@ data ByteCountDiscrepancy = ByteCountDiscrepancy {
 lookupsIO ::
      forall m h. (PrimMonad m, MonadThrow m, MonadST m)
   => HasBlockIO m h
+  -> ArenaManager (PrimState m)
   -> ResolveSerialisedValue
   -> V.Vector (Run (Handle h))
   -> V.Vector (Bloom SerialisedKey)
@@ -237,8 +242,8 @@ lookupsIO ::
   -> V.Vector (Handle h)
   -> V.Vector SerialisedKey
   -> m (V.Vector (Maybe (Entry SerialisedValue (BlobRef (Run (Handle h))))))
-lookupsIO !hbio !resolveV !rs !blooms !indexes !kopsFiles !ks = assert precondition $ do
-    (rkixs, ioops) <- Class.stToIO $ prepLookups blooms indexes kopsFiles ks
+lookupsIO !hbio !mgr !resolveV !rs !blooms !indexes !kopsFiles !ks = assert precondition $ withArena mgr $ \arena -> do
+    (rkixs, ioops) <- Class.stToIO $ prepLookups arena blooms indexes kopsFiles ks
     ioress <- submitIO hbio ioops
     intraPageLookups resolveV rs ks rkixs ioops ioress
   where
