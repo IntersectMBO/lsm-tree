@@ -248,11 +248,39 @@ serialised in the following order:
 
 ### Ordinary index
 
-The ordinary index type is intended to cover a general use case and not have
-any special constraints on the key. The ordinary index supports variable sized
-byte string keys, and makes worst case assumptions about key distribution.
+The ordinary index type is intended to cover a general use case and not have any
+special constraints on the key. It supports serialised keys of variable length
+and makes worst case assumptions about key distribution.
 
-It is represented as a simple fence pointer index, storing the first key in
-each page.
+An ordinary index contains for each page the key stored last in this page or, if
+the page is an overflow page, the key of the corresponding key–value pair. From
+this, the following constraints on the sequence of stored keys follow:
+* The sequence must be non-empty.
+* The elements of the sequence must be non-decreasing.
 
-TODO: flesh out the representation if/when this gets implemented.
+Like a compact-index file, an ordinary-index file starts with a 32 bit number
+that states the format version and, as a side effect, also determines the
+endianness used in the file.
+
+For version 1, the file contents after the version identifier consist of the
+following:
+1. A sequence of keys, where each key is stored as a 16 bit number stating the
+   length of its serialised form followed by the serialised form itself
+2. A footer, which just consists of a 64 bit number that states the number of
+   keys in the corresponding run
+
+The sequence of keys can be written out incrementally, while the footer can only
+be written upon completion of the index.
+
+No provisions regarding alignment are made. All parts of the index are stored
+sequentially without any gaps.
+
+|   |                | elements   | size   |
+|---|----------------|------------|--------|
+| 0 | version        | 1          | 32 bit |
+| 1 | key sequence   | n          |        |
+| 2 | number of keys | 1          | 64 bit |
+
+For the key sequence, each key is represented by the following components:
+1. The length of the serialised key (16 bit)
+2. The serialised key
