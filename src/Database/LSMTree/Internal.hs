@@ -812,6 +812,12 @@ open sesh label snap = do
 -- make sure that all runs that have been succesfully opened already are closed
 -- again. The 'Managed' monad allows us to fold 'bracketOnError's over an @m@
 -- action.
+--
+-- TODO: 'Managed' is actually not properly exception-safe, because an async
+-- exception can be raised just after a 'bracketOnError's, but still inside the
+-- 'bracketOnError' surrounding it. We don't just need folding of
+-- 'bracketOnError', we need to release all runs inside the same mask! We should
+-- use something like 'TempRegistry'.
 openLevels ::
      m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
   => HasFS m h
