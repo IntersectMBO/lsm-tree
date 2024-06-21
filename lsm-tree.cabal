@@ -282,6 +282,7 @@ test-suite lsm-tree-test
     , semialign
     , split
     , stm
+    , strict-mvar
     , tasty
     , tasty-hunit
     , tasty-quickcheck

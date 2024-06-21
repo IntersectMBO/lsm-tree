@@ -23,6 +23,8 @@ module Database.LSMTree.Internal (
   , TableHandleState (..)
   , TableHandleEnv (..)
   , TableContent (..)
+  , Level (..)
+  , withOpenTable
     -- ** Implementation of public API
   , withTable
   , new
