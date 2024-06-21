@@ -36,8 +36,8 @@ tests = testGroup "Test.Database.LSMTree.Internal" [
     , testCase "twiceOpenSession" twiceOpenSession
     , testCase "sessionDirLayoutMismatch" sessionDirLayoutMismatch
     , testCase "sessionDirDoesNotExist" sessionDirDoesNotExist
-    , testProperty "prop_interimRestoreSessionUniqueRunNames" $
-        expectFailure prop_interimRestoreSessionUniqueRunNames
+    , testProperty "prop_interimRestoreSessionUniqueRunNames"
+        prop_interimRestoreSessionUniqueRunNames
     , testProperty "prop_interimOpenTable" prop_interimOpenTable
     ]
 

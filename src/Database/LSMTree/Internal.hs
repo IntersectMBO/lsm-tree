@@ -180,8 +180,8 @@ withOpenSession sesh action = RW.with (sessionState sesh) $ \case
 newtype UniqCounter m = UniqCounter (StrictMVar m Word64)
 
 {-# INLINE newUniqCounter #-}
-newUniqCounter :: MonadMVar m => m (UniqCounter m)
-newUniqCounter = UniqCounter <$> newMVar 0
+newUniqCounter :: MonadMVar m => Word64 -> m (UniqCounter m)
+newUniqCounter x = UniqCounter <$> newMVar x
 
 {-# INLINE incrUniqCounter #-}
 -- | Return the current state of the atomic counter, and then increment the
@@ -249,8 +249,8 @@ openSession hfs hbio dir = do
               pure $ if success then Just lockFile else Nothing
           )
 
-    mkSession lockFile = do
-        counterVar <- newUniqCounter
+    mkSession lockFile x = do
+        counterVar <- newUniqCounter x
         openTablesVar <- newMVar Map.empty
         sessionVar <- RW.new $ SessionOpen $ SessionEnv {
             sessionRoot = root
@@ -265,7 +265,7 @@ openSession hfs hbio dir = do
     newSession sessionFileLock = do
         FS.createDirectory hfs activeDirPath
         FS.createDirectory hfs snapshotsDirPath
-        mkSession sessionFileLock
+        mkSession sessionFileLock 0
 
     restoreSession sessionFileLock = do
         -- If the layouts are wrong, we throw an exception, and the lock file
@@ -273,7 +273,15 @@ openSession hfs hbio dir = do
         checkTopLevelDirLayout
         checkActiveDirLayout
         checkSnapshotsDirLayout
-        mkSession sessionFileLock
+        -- TODO: remove once we have proper snapshotting. Before that, we must
+        -- prevent name clashes with runs that are still present in the active
+        -- directory by starting the unique counter at a strictly higher number
+        -- than the name of any run in the active directory.
+        --
+        -- This is a crude number to start the counter at, but it should do the
+        -- trick until we have proper snapshots.
+        x <- Set.size <$> FS.listDirectory hfs activeDirPath
+        mkSession sessionFileLock (fromIntegral x)
 
     -- Check that the active directory and snapshots directory exist. We assume
     -- the lock file already exists at this point.
