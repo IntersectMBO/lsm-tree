@@ -1,25 +1,26 @@
 {-# LANGUAGE BlockArguments      #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications    #-}
-module Test.Database.LSMTree.ModelIO.Monoidal (tests) where
+
+module Test.Database.LSMTree.Class.Monoidal (tests) where
 
 import qualified Data.ByteString as BS
 import           Data.List (sortOn)
 import           Data.Maybe (fromMaybe)
 import           Data.Proxy (Proxy (..))
 import           Data.Word (Word64)
+import           Database.LSMTree.Class.Monoidal
 import           Database.LSMTree.Common (SomeUpdateConstraint (..),
                      mkSnapshotName)
 import           Database.LSMTree.Extras.Generators ()
 import           Database.LSMTree.ModelIO.Monoidal (LookupResult (..),
                      Range (..), RangeLookupResult (..), TableHandle,
                      Update (..))
-import           Test.Database.LSMTree.ModelIO.Monoidal.Class
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck
 
 tests :: TestTree
-tests = testGroup "Database.LSMTree.ModelIO.Monoidal"
+tests = testGroup "Test.Database.LSMTree.Class.Monoidal"
     [ testProperty "lookup-insert" $ prop_lookupInsert tbl
     , testProperty "lookup-insert-else" $ prop_lookupInsertElse tbl
     , testProperty "lookup-delete" $ prop_lookupDelete tbl

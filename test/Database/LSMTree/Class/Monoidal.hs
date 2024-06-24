@@ -4,7 +4,8 @@
 {-# LANGUAGE QuantifiedConstraints    #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeFamilies             #-}
-module Test.Database.LSMTree.ModelIO.Monoidal.Class (
+
+module Database.LSMTree.Class.Monoidal (
     IsSession (..)
   , IsTableHandle (..)
   ) where
@@ -12,13 +13,13 @@ module Test.Database.LSMTree.ModelIO.Monoidal.Class (
 import           Data.Kind (Constraint, Type)
 import           Data.Proxy (Proxy)
 import           Data.Typeable (Typeable)
+import           Database.LSMTree.Class.Normal (IsSession (..))
 import           Database.LSMTree.Common (IOLike, Range (..), SerialiseKey,
                      SerialiseValue, SnapshotName, SomeUpdateConstraint)
 import qualified Database.LSMTree.ModelIO.Monoidal as M
 import           Database.LSMTree.Monoidal (LookupResult (..),
                      RangeLookupResult (..), Update (..))
 import qualified Database.LSMTree.Monoidal as R
-import           Test.Database.LSMTree.ModelIO.Class (IsSession (..))
 
 
 -- | Class abstracting over table handle operations.

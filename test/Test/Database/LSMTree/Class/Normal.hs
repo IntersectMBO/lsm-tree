@@ -5,8 +5,7 @@
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module Test.Database.LSMTree.ModelIO.Normal (tests) where
-
+module Test.Database.LSMTree.Class.Normal (tests) where
 import           Control.Exception (SomeException, try)
 import           Control.Monad.ST.Strict (runST)
 import           Control.Monad.Trans.State
@@ -18,18 +17,18 @@ import           Data.Proxy (Proxy (..))
 import qualified Data.Vector as V
 import qualified Data.Vector.Algorithms.Merge as VA
 import           Data.Word (Word64)
+import           Database.LSMTree.Class.Normal
 import           Database.LSMTree.Common (Labellable (..), mkSnapshotName)
 import           Database.LSMTree.Extras.Generators ()
 import           Database.LSMTree.ModelIO.Normal (IOLike, LookupResult (..),
                      Range (..), RangeLookupResult (..), SerialiseKey,
                      SerialiseValue, TableHandle, Update (..))
-import           Test.Database.LSMTree.ModelIO.Class
 import           Test.QuickCheck.Monadic (monadicIO, monitor, run)
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck
 
 tests :: TestTree
-tests = testGroup "Database.LSMTree.ModelIO.Normal"
+tests = testGroup "Test.Database.LSMTree.Class.Normal"
     [ testProperty "lookup-insert" $ prop_lookupInsert tbl
     , testProperty "lookup-insert-else" $ prop_lookupInsertElse tbl
     , testProperty "lookup-insert-blob" $ prop_lookupInsertBlob tbl

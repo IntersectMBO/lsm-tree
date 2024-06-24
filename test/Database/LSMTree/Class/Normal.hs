@@ -4,7 +4,8 @@
 {-# LANGUAGE QuantifiedConstraints    #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeFamilies             #-}
-module Test.Database.LSMTree.ModelIO.Class (
+
+module Database.LSMTree.Class.Normal (
     IsSession (..)
   , IsTableHandle (..)
   ) where
