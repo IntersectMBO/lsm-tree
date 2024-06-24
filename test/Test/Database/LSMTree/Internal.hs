@@ -5,18 +5,24 @@
 -- add proper support for IOSim for fault testing.
 module Test.Database.LSMTree.Internal (tests) where
 
+import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Exception
 import           Control.Monad (void)
 import           Data.Bifunctor
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromMaybe)
+import           Data.Monoid (Sum (..))
 import qualified Data.Vector as V
+import           Data.Word (Word64)
+import           Database.LSMTree.Extras (showPowersOf)
 import           Database.LSMTree.Internal
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.Paths (mkSnapshotName)
 import           Database.LSMTree.Internal.Serialise
 import qualified System.FS.API as FS
 import qualified Test.Database.LSMTree.Internal.Lookup as Test
+import           Test.Database.LSMTree.Internal.Lookup
+                     (InMemLookupData (runData))
 import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.HUnit
@@ -30,6 +36,8 @@ tests = testGroup "Test.Database.LSMTree.Internal" [
     , testCase "twiceOpenSession" twiceOpenSession
     , testCase "sessionDirLayoutMismatch" sessionDirLayoutMismatch
     , testCase "sessionDirDoesNotExist" sessionDirDoesNotExist
+    , testProperty "prop_interimRestoreSessionUniqueRunNames"
+        prop_interimRestoreSessionUniqueRunNames
     , testProperty "prop_interimOpenTable" prop_interimOpenTable
     ]
 
@@ -74,6 +82,58 @@ showLeft x = \case
     Left e -> show e
     Right _ -> x
 
+-- | Runs are currently not deleted when they become unreferenced. As such, when
+-- a session is restored, there are still runs in the active directory. When we
+-- restore a session, we must ensure that we do not use names for new runs that
+-- are already used for existing runs. As such, we should set the
+-- @sessionUniqCounter@ accordingly, such that it starts at a number strictly
+-- larger then numbers of the runs in the active directory.
+--
+-- TODO: remove once we have proper snapshotting, in which case files in the
+-- active directory are deleted when a session is restored: loading snapshots is
+-- the only way to get active runs into the active directory.
+prop_interimRestoreSessionUniqueRunNames ::
+     Positive (Small Int)
+  -> NonNegative Int
+  -> Property
+prop_interimRestoreSessionUniqueRunNames (Positive (Small n)) (NonNegative m) = ioProperty $
+    withTempIOHasBlockIO "TODO" $ \hfs hbio -> do
+      prop1 <- withSession hfs hbio (FS.mkFsPath []) $ \sesh -> do
+        th <- new sesh conf
+        updates upds th
+        withOpenTable th $ \thEnv -> do
+          tc <- readMVar (tableContent thEnv)
+          let (Sum nruns) = V.foldMap
+                              (V.foldMap (const (Sum (1 :: Int))) . residentRuns)
+                              (tableLevels tc)
+          pure $ tabulate "number of runs on disk" [showPowersOf 2 nruns]
+               $ True
+
+      withSession hfs hbio (FS.mkFsPath []) $ \sesh -> do
+        th <- new sesh conf
+        eith <- try (updates upds th)
+        fmap (prop1 .&&.) $ case eith of
+          Left (e :: FS.FsError)
+            | FS.fsErrorType e == FS.FsResourceAlreadyExist
+            -> pure $ counterexample "Test failed... found an FsResourceAlreadyExist error" False
+            | otherwise
+            -> throwIO e
+          Right () -> pure $ property True
+  where
+    conf = TableConfig {
+        confMergePolicy = MergePolicyLazyLevelling
+      , confSizeRatio = Four
+        -- Write buffer size is small on purpose, so that the test actually
+        -- flushes and merges.
+      , confWriteBufferAlloc = AllocNumEntries (NumEntries n)
+      , confBloomFilterAlloc = AllocFixed 10
+      , confResolveMupsert = Nothing
+      }
+
+    upds = V.fromList [ (serialiseKey i, Insert (serialiseValue i))
+                      | (i :: Word64) <- fmap fromIntegral [1..m]
+                      ]
+
 -- | Check that opening a populated table via the interim table loading function
 -- works as expected. Roughly, we test:
 --
@@ -81,8 +141,7 @@ showLeft x = \case
 --  inserts th kvs == open' (snapshot' (inserts th kvs))
 -- @
 --
--- TODO: tables are not yet populated until we have an implementation for
--- updates to tables.
+-- TODO: remove once we have proper snapshotting
 prop_interimOpenTable ::
      Test.InMemLookupData SerialisedKey SerialisedValue SerialisedBlob
   -> Property
