@@ -39,8 +39,10 @@ module Database.LSMTree.Normal (
     -- * Table handles
   , TableHandle
   , Internal.TableConfig (..)
-  , Internal.MergePolicy (..)
   , Internal.SizeRatio (..)
+  , Internal.MergePolicy (..)
+  , Internal.WriteBufferAlloc (..)
+  , Internal.NumEntries (..)
   , Internal.BloomFilterAlloc (..)
   , withTable
   , new
@@ -250,6 +252,9 @@ rangeLookup ::
 rangeLookup = undefined
 
 -- | Perform a mixed batch of inserts and deletes.
+--
+-- If there are duplicate keys in the same batch, then keys nearer the front of
+-- the vector take precedence.
 --
 -- Updates can be performed concurrently from multiple Haskell threads.
 updates ::

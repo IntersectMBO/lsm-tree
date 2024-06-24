@@ -113,9 +113,7 @@ prop_interimOpenTable dat = ioProperty $
       , confSizeRatio = Four
         -- Write buffer size is small on purpose, so that the test actually
         -- flushes and merges.
-        --
-        -- TODO: tweak this number once we have implemented updates
-      , confWriteBufferAlloc = 64
+      , confWriteBufferAlloc = AllocNumEntries (NumEntries 3)
       , confBloomFilterAlloc = AllocFixed 10
       , confResolveMupsert = Nothing
       }

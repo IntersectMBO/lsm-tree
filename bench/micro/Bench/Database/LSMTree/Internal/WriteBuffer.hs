@@ -15,8 +15,7 @@ import           Database.LSMTree.Extras.Orphans ()
 import           Database.LSMTree.Extras.Random (frequency, randomByteStringR)
 import           Database.LSMTree.Extras.UTxO
 import           Database.LSMTree.Internal.Entry
-import           Database.LSMTree.Internal.Paths (RunFsPaths (..),
-                     SessionRoot (..), activeDir)
+import           Database.LSMTree.Internal.Paths (RunFsPaths (..))
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.Serialise
@@ -117,7 +116,7 @@ benchWriteBuffer conf@Config{name} =
             Cr.whnf (\kops' -> insert kops') kops
         , Cr.env (pure $ insert kops) $ \wb ->
             bench "flush" $
-              Cr.perRunEnvWithCleanup getPaths (const (cleanupPaths hasFS)) $ \p -> do
+              Cr.perRunEnvWithCleanup (getPaths hasFS) (const (cleanupPaths hasFS)) $ \p -> do
                 !run <- flush hasFS p wb
                 Run.removeReference hasFS run
         , bench "insert+flush" $
@@ -131,7 +130,7 @@ benchWriteBuffer conf@Config{name} =
             -- 2. It forces the result to normal form, which would traverse the
             --    whole run, so we force to WHNF ourselves and just return `()`.
             Cr.perRunEnvWithCleanup
-              ((,) kops <$> getPaths)
+              ((,) kops <$> getPaths hasFS)
               (const (cleanupPaths hasFS)) $ \(kops', p) -> do
                 !run <- flush hasFS p (insert kops')
                 -- Make sure to immediately close runs so we don't run out of
@@ -145,13 +144,17 @@ benchWriteBuffer conf@Config{name} =
           (writeBufferEnv conf)
           writeBufferEnvCleanup
 
+    runDir = FS.mkFsPath [name]
+
     -- We'll remove the files on every run, so we can re-use the same run number.
-    getPaths :: IO RunFsPaths
-    getPaths = pure (RunFsPaths (FS.mkFsPath []) 0)
+    getPaths :: FS.HasFS IO FS.HandleIO -> IO RunFsPaths
+    getPaths hasFS = do
+      FS.createDirectory hasFS runDir
+      pure (RunFsPaths runDir 0)
 
     -- Simply remove the whole active directory.
     cleanupPaths :: FS.HasFS IO FS.HandleIO -> IO ()
-    cleanupPaths hasFS = FS.removeDirectoryRecursive hasFS (activeDir (SessionRoot (FS.mkFsPath [])))
+    cleanupPaths hasFS = FS.removeDirectoryRecursive hasFS runDir
 
 insert :: InputKOps -> WriteBuffer
 insert (NormalInputs kops) =

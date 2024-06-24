@@ -287,7 +287,7 @@ prop_roundtripFromWriteBufferLookupIO ::
 prop_roundtripFromWriteBufferLookupIO dats =
     ioProperty $ withTempIOHasBlockIO "prop_roundtripFromWriteBufferLookupIO" $ \hasFS hasBlockIO -> do
     (runs, wbs) <- mkRuns hasFS
-    let wbAll = WB.WB (Map.unionsWith (combine resolveV) (fmap WB.unWB wbs))
+    let wbAll = WB.fromMap $ Map.unionsWith (combine resolveV) (fmap WB.toMap wbs)
     real <- lookupsIO
               hasBlockIO
               resolveV
@@ -306,7 +306,7 @@ prop_roundtripFromWriteBufferLookupIO dats =
     mkRuns hasFS = first V.fromList . unzip <$> sequence [
           (,wb) <$> Run.fromWriteBuffer hasFS (RunFsPaths (FS.mkFsPath []) i) wb
         | (i, dat) <- zip [0..] (getSmallList dats)
-        , let wb = WB.WB (runData dat)
+        , let wb = WB.fromMap (runData dat)
         ]
     lookupss = V.fromList $ concatMap lookups dats
     resolveV = \(SerialisedValue v1) (SerialisedValue v2) -> SerialisedValue (v1 <> v2)

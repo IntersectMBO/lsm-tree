@@ -3,6 +3,10 @@
 {-# LANGUAGE GeneralisedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase                 #-}
 
+-- | TODO: this should be removed once we have proper snapshotting with proper
+-- persistence of the config to disk.
+{-# OPTIONS_GHC -Wno-orphans #-}
+
 module Database.LSMTree.Internal (
     -- * Exceptions
     LSMTreeError (..)
@@ -18,6 +22,7 @@ module Database.LSMTree.Internal (
   , TableHandle (..)
   , TableHandleState (..)
   , TableHandleEnv (..)
+  , TableContent (..)
     -- ** Implementation of public API
   , withTable
   , new
@@ -37,6 +42,8 @@ module Database.LSMTree.Internal (
   , ResolveMupsert (..)
   , SizeRatio (..)
   , MergePolicy (..)
+  , WriteBufferAlloc (..)
+  , NumEntries (..)
   , BloomFilterAlloc (..)
   ) where
 
@@ -55,9 +62,10 @@ import           Data.Maybe (catMaybes)
 import qualified Data.Set as Set
 import qualified Data.Vector as V
 import           Data.Word (Word32, Word64)
-import           Database.LSMTree.Internal.Assertions (assertNoThunks)
+import           Database.LSMTree.Internal.Assertions (assert, assertNoThunks)
 import           Database.LSMTree.Internal.BlobRef
-import           Database.LSMTree.Internal.Entry (Entry (..), combineMaybe)
+import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..),
+                     combineMaybe)
 import           Database.LSMTree.Internal.IndexCompact (IndexCompact)
 import           Database.LSMTree.Internal.Lookup (lookupsIO)
 import           Database.LSMTree.Internal.Managed
@@ -336,7 +344,7 @@ data TableHandle m h = TableHandle {
       -- TODO: RWVars only work in IO, not in IOSim.
       --
       -- TODO: how fair is an RWVar?
-    , tableHandleState :: RWVar (TableHandleState m h)
+    , tableHandleState :: !(RWVar (TableHandleState m h))
     }
 
 -- | A table handle may assume that its corresponding session is still open as
@@ -361,16 +369,23 @@ data TableHandleEnv m h = TableHandleEnv {
     -- is closed it should become untracked (forgotten).
   , tableSessionUntrackTable :: !(m ())
     -- === Table-specific
-    --
-    -- TODO: more fine-grained concurrency for table-specific mutable state.
-  , tableWriteBuffer         :: !(StrictMVar m (WriteBuffer))
+    -- | All of the state being in a single `StrictMVar` is a relatively simple
+    -- solution, but there could be more concurrency. For example, while inserts
+    -- are in progress, lookups could still look at the old state without
+    -- waiting for the MVar.
+    -- TODO: switch to more fine-grained synchronisation approach
+  , tableContent             :: !(StrictMVar m (TableContent h))
+  }
+
+data TableContent h = TableContent {
+    tableWriteBuffer :: !WriteBuffer
     -- | A hierarchy of levels. The vector indexes double as level numbers.
-  , tableLevels              :: !(StrictMVar m (V.Vector (Level (Handle h))))
+  , tableLevels      :: !(Levels (Handle h))
     -- | Cache of flattened 'levels'.
     --
     -- INVARIANT: when 'level's is modified, this cache should be updated as
     -- well, for example using 'mkLevelsCache'.
-  , tableCache               :: !(StrictMVar m (LevelsCache (Handle h)))
+  , tableCache       :: !(LevelsCache (Handle h))
   }
 
 -- | 'withOpenTable' ensures that the table stays open for the duration of the
@@ -386,6 +401,8 @@ withOpenTable ::
 withOpenTable th action = RW.with (tableHandleState th) $ \case
     TableHandleClosed -> throwIO ErrTableClosed
     TableHandleOpen thEnv -> action thEnv
+
+type Levels h = V.Vector (Level h)
 
 -- | Runs in order from newer to older
 newtype Level h = Level {
@@ -414,7 +431,7 @@ data LevelsCache h = LevelsCache_ {
 
 -- | Flatten the argument 'Level's into a single vector of runs, and use that to
 -- populate the 'LevelsCache'.
-mkLevelsCache :: V.Vector (Level h) -> LevelsCache h
+mkLevelsCache :: Levels h -> LevelsCache h
 mkLevelsCache lvls = LevelsCache_ {
       cachedRuns      = rs
     , cachedFilters   = V.map Run.runFilter rs
@@ -451,7 +468,7 @@ newWithLevels ::
      m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
   => SessionEnv m h
   -> TableConfig
-  -> V.Vector (Level (Handle h))
+  -> Levels (Handle h)
   -> m (TableHandle m h)
 newWithLevels seshEnv conf !levels = do
     assertNoThunks levels $ pure ()
@@ -459,9 +476,7 @@ newWithLevels seshEnv conf !levels = do
     -- tables. If 'closeSession' is called by another thread while this code
     -- block is being executed, that thread will block until it reads the
     -- /updated/ set of tracked tables.
-    writeBufVar <- newMVar (WB.empty)
-    levelsVar <- newMVar levels
-    cacheVar <- newMVar (mkLevelsCache levels)
+    contentVar <- newMVar $ TableContent WB.empty levels (mkLevelsCache levels)
     tableId <- incrUniqCounter (sessionUniqCounter seshEnv)
     -- Action to untrack the current table
     let forget = modifyMVar_ (sessionOpenTables seshEnv) $ pure . Map.delete tableId
@@ -471,9 +486,7 @@ newWithLevels seshEnv conf !levels = do
         , tableHasBlockIO = sessionHasBlockIO seshEnv
         , tablesSessionUniqCounter = sessionUniqCounter seshEnv
         , tableSessionUntrackTable = forget
-        , tableWriteBuffer = writeBufVar
-        , tableLevels = levelsVar
-        , tableCache = cacheVar
+        , tableContent = contentVar
         }
     let !th = TableHandle conf tableVar
     -- Track the current table
@@ -493,7 +506,7 @@ close th = RW.modify_ (tableHandleState th) $ \case
       -- only thread currently closing the table. We can safely make the session
       -- forget about this table.
       tableSessionUntrackTable thEnv
-      lvls <- readMVar (tableLevels thEnv)
+      lvls <- tableLevels <$> readMVar (tableContent thEnv)
       V.forM_ lvls $ \Level{residentRuns} ->
         V.forM_ residentRuns $ Run.removeReference (tableHasFS thEnv)
       pure TableHandleClosed
@@ -509,9 +522,10 @@ lookups ::
      -- 'toNormalLookupResult' or 'toMonoidalLookupResult'.
   -> m (V.Vector lookupResult)
 lookups ks th fromEntry = withOpenTable th $ \thEnv -> do
-    wb <- readMVar (tableWriteBuffer thEnv)
     let resolve = resolveMupsert (tableConfig th)
-    cache <- readMVar (tableCache thEnv)
+    tableContent <- readMVar (tableContent thEnv)
+    let !wb = tableWriteBuffer tableContent
+    let !cache = tableCache tableContent
     ioRes <-
       lookupsIO
         (tableHasBlockIO thEnv)
@@ -544,14 +558,184 @@ updates ::
   -> TableHandle m h
   -> m ()
 updates es th = withOpenTable th $ \thEnv -> do
-    -- A placeholder implementation that is sufficient to pass the tests, but
-    -- keeps all entries in memory.
-    -- TODO: flush write buffer when full
-    -- TODO: merge runs when level becomes full
-    modifyMVar_ (tableWriteBuffer thEnv) $ \wb -> do
-      return $ foldl' (flip (uncurry (WB.addEntry resolve))) wb es
+    let hfs = tableHasFS thEnv
+    modifyTableContent_ hfs (tableContent thEnv) $
+      updatesWithInterleavedFlushes
+          (tableConfig th)
+          hfs
+          (tableSessionRoot thEnv)
+          (tablesSessionUniqCounter thEnv)
+          es
+
+-- | A temporary registry for resources that are bound to end up in some final
+-- state, after which they /should/ be guaranteed to be released correctly.
+--
+-- It is the responsibility of the user to guarantee that this final state is
+-- released correctly in the presence of (async) exceptions.
+--
+-- NOTE: we could use an even more proper abstraction for this /temporary
+-- registry/ pattern, because it is a pattern that is bound to show up more
+-- often. An example of such an abstraction is the @WithTempRegistry@ from
+-- @ouroboros-consensus@:
+-- https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Util/ResourceRegistry.hs
+newtype TempRegistry m a = TempRegistry (StrictMVar m (V.Vector a))
+
+{-# SPECIALISE newTempRegistry :: IO (TempRegistry IO a) #-}
+newTempRegistry :: MonadMVar m => m (TempRegistry m a)
+newTempRegistry = TempRegistry <$> newMVar V.empty
+
+{-# SPECIALISE releaseTempRegistry :: TempRegistry IO a -> (a -> IO ()) -> IO () #-}
+releaseTempRegistry :: MonadMVar m => TempRegistry m a -> (a -> m ()) -> m ()
+releaseTempRegistry (TempRegistry var) free = do
+    xs <- takeMVar var
+    V.mapM_ free xs
+
+{-# SPECIALISE allocateTemp :: TempRegistry IO a -> IO a -> IO a #-}
+allocateTemp :: (MonadMask m, MonadMVar m) => TempRegistry m a -> m a -> m a
+allocateTemp (TempRegistry var) acquire =
+    mask_ $ do
+      x <- acquire
+      modifyMVar_ var (pure . V.cons x)
+      pure x
+
+{-# SPECIALISE modifyTableContent :: HasFS IO h -> StrictMVar IO (TableContent h) -> (TempRegistry IO (Run (Handle h)) -> TableContent h -> IO (TableContent h, a)) -> IO a #-}
+-- | Exception-safe modification of table contents.
+--
+-- When we modify a table's content (variable), we might add a number of new
+-- runs to the levels. If an exception is thrown before putting the updated
+-- table contents into the variable, then all new runs should be cleaned up. We
+-- record these runs in a 'TempRegistry'.
+modifyTableContent ::
+     m ~ IO
+  => HasFS m h
+  -> StrictMVar m (TableContent h)
+  -> (TempRegistry m (Run (Handle h)) -> TableContent h -> m (TableContent h, a))
+  -> m a
+modifyTableContent hfs varContent action =
+    snd . fst <$> generalBracket acquire release (uncurry action)
   where
-    resolve = resolveMupsert (tableConfig th)
+    acquire = (,) <$> newTempRegistry <*> takeMVar varContent
+    release (reg, content) = \case
+        ExitCaseSuccess (content', _) -> putMVar varContent content'
+        ExitCaseException _ -> putBack
+        ExitCaseAbort -> putBack
+      where
+        putBack = do
+          putMVar varContent content
+          releaseTempRegistry reg (Run.removeReference hfs)
+
+{-# SPECIALISE modifyTableContent_ :: HasFS IO h -> StrictMVar IO (TableContent h) -> (TempRegistry IO (Run (Handle h)) -> TableContent h -> IO (TableContent h)) -> IO () #-}
+-- | Like 'modifyTableContent', but without a return value.
+modifyTableContent_ ::
+     m ~ IO
+  => HasFS m h
+  -> StrictMVar m (TableContent h)
+  -> (TempRegistry m (Run (Handle h)) -> TableContent h -> m (TableContent h))
+  -> m ()
+modifyTableContent_ hfs varContent action =
+    modifyTableContent hfs varContent (\reg content -> (,()) <$> action reg content)
+
+{-# SPECIALISE updatesWithInterleavedFlushes :: TableConfig -> HasFS IO h -> SessionRoot -> UniqCounter IO -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob) -> TempRegistry IO (Run (Handle h)) -> TableContent h -> IO (TableContent h) #-}
+-- | A single batch of updates can fill up the write buffer multiple times. We
+-- flush the write buffer each time it fills up before trying to fill it up
+-- again.
+--
+-- TODO: in practice the size of a batch will be much smaller than the maximum
+-- size of the write buffer, so we should optimise for the case that small
+-- batches are inserted. Ideas:
+--
+-- * we can allow a range of sizes to flush to disk rather than just the max size
+--
+-- * could do a map bulk merge rather than sequential insert, on the prefix of
+--   the batch that's guaranteed to fit
+--
+-- * or flush the existing buffer if we would expect the next batch to cause the
+--   buffer to become too large
+--
+-- TODO: we could also optimise for the case where the write buffer is small
+-- compared to the size of the batch, but it is less critical. In particular, in
+-- case the write buffer is empty, or if it fills up multiple times for a single
+-- batch of updates, we might be able to skip adding entries to the write buffer
+-- for a large part. When the write buffer is empty, we can sort and deduplicate
+-- the vector of updates directly, slice it up into properly sized sub-vectors,
+-- and write those to disk. Of course, any remainder that did not fit into a
+-- whole run should then end up in a fresh write buffer.
+updatesWithInterleavedFlushes ::
+     m ~ IO
+  => TableConfig
+  -> HasFS m h
+  -> SessionRoot
+  -> UniqCounter m
+  -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob)
+  -> TempRegistry m (Run (Handle h))
+  -> TableContent h
+  -> m (TableContent h)
+updatesWithInterleavedFlushes conf hfs root uniqC es reg tc = do
+    let wb = tableWriteBuffer tc
+        (wb', es') = WB.addEntriesUpToN resolve es maxn wb
+    -- never exceed the write buffer capacity
+    assert (unNumEntries (WB.numEntries wb') <= maxn) $ pure ()
+    let tc' = setWriteBuffer wb' tc
+    -- If the new write buffer has not reached capacity yet, then it must be the
+    -- cases that we have performed all the updates.
+    if unNumEntries (WB.numEntries wb') < maxn then do
+      assert (V.null es') $ pure ()
+      pure $! tc'
+    -- If the write buffer did reach capacity, the we flush.
+    else do
+      assert (unNumEntries (WB.numEntries wb') == maxn) $ pure ()
+      tc'' <- flushWriteBuffer hfs root uniqC reg tc'
+      -- In the fortunate case where we have already performed all the updates,
+      -- return,
+      if V.null es' then
+        pure $! tc''
+      -- otherwise, keep going
+      else
+        updatesWithInterleavedFlushes conf hfs root uniqC es' reg tc''
+  where
+    AllocNumEntries (NumEntries maxn) = confWriteBufferAlloc conf
+    resolve = resolveMupsert conf
+
+    setWriteBuffer :: WriteBuffer -> TableContent h -> TableContent h
+    setWriteBuffer wbToSet tc0 = TableContent {
+          tableWriteBuffer = wbToSet
+        , tableLevels = tableLevels tc0
+        , tableCache = tableCache tc0
+        }
+
+{-# SPECIALISE flushWriteBuffer :: HasFS IO h -> SessionRoot -> UniqCounter IO -> TempRegistry IO (Run (Handle h)) -> TableContent h -> IO (TableContent h) #-}
+-- | Flush the write buffer to disk, regardless of whether it is full or not.
+--
+-- The returned table content contains an updated set of levels, where the write
+-- buffer is inserted into level 1.
+--
+-- TODO: merge runs when level becomes full. This is currently a placeholder
+-- implementation that is sufficient to pass the tests, but simply writes small
+-- runs to disk without merging.
+flushWriteBuffer ::
+     m ~ IO
+  => HasFS m h
+  -> SessionRoot
+  -> UniqCounter m
+  -> TempRegistry m (Run (Handle h))
+  -> TableContent h
+  -> m (TableContent h)
+flushWriteBuffer hfs root uniqC reg tc = do
+    n <- incrUniqCounter uniqC
+    r <- allocateTemp reg (Run.fromWriteBuffer hfs
+                            (Paths.runPath root n)
+                            (tableWriteBuffer tc))
+    let levels' = addRunToLevels r (tableLevels tc)
+    pure $! TableContent {
+        tableWriteBuffer = WB.empty
+      , tableLevels = levels'
+      , tableCache = mkLevelsCache levels'
+      }
+  where
+    addRunToLevels :: Run h -> Levels h -> Levels h
+    addRunToLevels r levels = case V.uncons levels of
+        Nothing               -> V.singleton $ Level $ V.singleton r
+        Just (Level runs, ls) -> V.cons (Level (V.cons r runs)) ls
 
 {-------------------------------------------------------------------------------
   Snapshots
@@ -569,30 +753,33 @@ snapshot ::
   -> m Int
 snapshot snap label th = do
     withOpenTable th $ \thEnv -> do
-      wb <- readMVar (tableWriteBuffer thEnv)
-      levels <- readMVar (tableLevels thEnv)
-      n <- incrUniqCounter (tablesSessionUniqCounter thEnv)
-      bracket
-        (Run.fromWriteBuffer
-          (tableHasFS thEnv)
-          (RunFsPaths (Paths.activeDir (tableSessionRoot thEnv)) n) wb)
-        (Run.removeReference (tableHasFS thEnv))
-        $ \wbRun -> do
-            let levels' = case V.uncons levels of
-                  Nothing             -> V.singleton (Level $ V.singleton wbRun)
-                  Just (Level rs, tl) -> Level (V.cons wbRun rs) `V.cons` tl
-                runNumbers = V.map (V.map (runNumber . Run.runRunFsPaths) . residentRuns) levels'
-                snapPath = Paths.snapshot (tableSessionRoot thEnv) snap
-            FS.doesFileExist (tableHasFS thEnv) snapPath >>= \b ->
+      -- For the temporary implementation it is okay to just flush the buffer
+      -- before taking the snapshot.
+      let hfs = tableHasFS thEnv
+      content <- modifyTableContent hfs (tableContent thEnv) $ \reg content -> do
+        r <- flushWriteBuffer
+              hfs
+              (tableSessionRoot thEnv)
+              (tablesSessionUniqCounter thEnv)
+              reg
+              content
+        pure (r, r)
+      -- At this point, we've flushed the write buffer but we haven't created the
+      -- snapshot file yet. If an asynchronous exception happens beyond this
+      -- point, we'll take that loss, as the inner state of the table is still
+      -- consistent.
+      let runNumbers = V.map (V.map (runNumber . Run.runRunFsPaths) . residentRuns) $
+                          tableLevels content
+          snapPath = Paths.snapshot (tableSessionRoot thEnv) snap
+      FS.doesFileExist (tableHasFS thEnv) snapPath >>= \b ->
               when b $ throwIO (ErrSnapshotExists snap)
-            FS.withFile
-              (tableHasFS thEnv)
-              snapPath
-              (FS.WriteMode FS.MustBeNew) $ \h ->
-                void $ FS.hPutAllStrict (tableHasFS thEnv) h
-                            (BSC.pack $ show (label, runNumbers, tableConfig th))
-
-            pure $! V.sum (V.map V.length runNumbers)
+      FS.withFile
+        (tableHasFS thEnv)
+        snapPath
+        (FS.WriteMode FS.MustBeNew) $ \h ->
+          void $ FS.hPutAllStrict (tableHasFS thEnv) h
+                      (BSC.pack $ show (label, runNumbers, tableConfig th))
+      pure $! V.sum (V.map V.length runNumbers)
 
 {-# SPECIALISE open :: Session IO h -> String -> SnapshotName -> IO (TableHandle IO h) #-}
 -- |  See 'Database.LSMTree.Normal.open'.
@@ -618,18 +805,24 @@ open sesh label snap = do
       let runPaths = V.map (V.map (RunFsPaths (Paths.activeDir $ sessionRoot seshEnv))) runNumbers
       with (openLevels hfs runPaths) (newWithLevels seshEnv conf)
 
-{-# SPECIALISE openLevels :: HasFS IO h -> V.Vector (V.Vector RunFsPaths) -> Managed IO (V.Vector (Level (FS.Handle h))) #-}
+{-# SPECIALISE openLevels :: HasFS IO h -> V.Vector (V.Vector RunFsPaths) -> Managed IO (Levels (FS.Handle h)) #-}
 -- | Open multiple levels.
 --
 -- If an error occurs when opening multiple runs in sequence, then we have to
 -- make sure that all runs that have been succesfully opened already are closed
 -- again. The 'Managed' monad allows us to fold 'bracketOnError's over an @m@
 -- action.
+--
+-- TODO: 'Managed' is actually not properly exception-safe, because an async
+-- exception can be raised just after a 'bracketOnError's, but still inside the
+-- 'bracketOnError' surrounding it. We don't just need folding of
+-- 'bracketOnError', we need to release all runs inside the same mask! We should
+-- use something like 'TempRegistry'.
 openLevels ::
      m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
   => HasFS m h
   -> V.Vector (V.Vector RunFsPaths)
-  -> Managed m (V.Vector (Level (Handle h)))
+  -> Managed m (Levels (Handle h))
 openLevels hfs levels =
     flip V.mapMStrict levels $ \level -> fmap Level $
       flip V.mapMStrict level $ \run ->
@@ -694,7 +887,7 @@ data TableConfig = TableConfig {
     --
     -- The maximum is 4GiB, which should be more than enough for realistic
     -- applications.
-  , confWriteBufferAlloc :: !Word32
+  , confWriteBufferAlloc :: !WriteBufferAlloc
   , confBloomFilterAlloc :: !BloomFilterAlloc
     -- | Function for resolving 'Mupsert' values. This should be 'Nothing' for
     -- normal tables and 'Just' for monoidal tables.
@@ -732,6 +925,30 @@ data SizeRatio = Four
 -- | TODO: this should be removed once we have proper snapshotting with proper
 -- persistence of the config to disk.
 deriving instance Read SizeRatio
+
+-- | Allocation method for the write buffer.
+data WriteBufferAlloc =
+    -- | Total number of key\/value pairs that can be present in the write
+    -- buffer before flushing the write buffer to disk.
+    --
+    -- NOTE: if the sizes of values vary greatly, this can lead to wonky runs on
+    -- disk, and therefore unpredictable performance.
+    AllocNumEntries !NumEntries
+{- TODO: disabled for now
+  | -- | Total number of bytes that the write buffer can use.
+    --
+    -- The maximum is 4GiB, which should be more than enough for realistic
+    -- applications.
+    AllocTotalBytes !Word32
+-}
+  deriving (Show, Eq)
+
+-- | TODO: this should be removed once we have proper snapshotting with proper
+-- persistence of the config to disk.
+deriving instance Read WriteBufferAlloc
+-- | TODO: this should be removed once we have proper snapshotting with proper
+-- persistence of the config to disk.
+deriving instance Read NumEntries
 
 -- | Allocation method for bloom filters.
 --

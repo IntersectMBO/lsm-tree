@@ -22,10 +22,15 @@
 -- not exhaustive.
 --
 module Database.LSMTree.Internal.WriteBuffer (
-    WriteBuffer (..),
+    WriteBuffer,
     empty,
     numEntries,
-    content,
+    fromMap,
+    toMap,
+    fromList,
+    toList,
+    addEntries,
+    addEntriesUpToN,
     addEntry,
     addEntryMonoidal,
     addEntryNormal,
@@ -53,32 +58,67 @@ import           Prelude hiding (lookup)
   Writebuffer type
 -------------------------------------------------------------------------------}
 
--- | The phantom type parameters provide some safety, enforcing that the types
--- of inserted entries are consistent.
---
--- TODO: Revisit this when using the write buffer from the table handle.
--- It would be consistent with other internal APIs (e.g. for @Run@ and
--- @IndexCompact@ to remove the type parameters here and move the responsibility
--- for these constraints and (de)serialisation to the layer above.
 newtype WriteBuffer =
   WB { unWB :: Map SerialisedKey (Entry SerialisedValue SerialisedBlob) }
-  deriving stock Show
+  deriving stock (Eq, Show)
   deriving newtype NFData
 
 empty :: WriteBuffer
 empty = WB Map.empty
 
+-- | \( O(1) \)
 numEntries :: WriteBuffer -> NumEntries
 numEntries (WB m) = NumEntries (Map.size m)
 
+-- | \( O(1)) \)
+fromMap ::
+     Map SerialisedKey (Entry SerialisedValue SerialisedBlob)
+  -> WriteBuffer
+fromMap m = WB m
+
+-- | \( O(1) \)
+toMap :: WriteBuffer -> Map SerialisedKey (Entry SerialisedValue SerialisedBlob)
+toMap = unWB
+
+-- | \( O(n \log n) \)
+fromList ::
+     (SerialisedValue -> SerialisedValue -> SerialisedValue) -- ^ merge function
+  -> [(SerialisedKey, Entry SerialisedValue SerialisedBlob)]
+  -> WriteBuffer
+fromList f es = WB $ Map.fromListWith (combine f) es
+
 -- | \( O(n) \)
-content :: WriteBuffer ->
-           [(SerialisedKey, Entry SerialisedValue SerialisedBlob)]
-content (WB m) = Map.assocs m
+toList :: WriteBuffer -> [(SerialisedKey, Entry SerialisedValue SerialisedBlob)]
+toList (WB m) = Map.assocs m
 
 {-------------------------------------------------------------------------------
   Updates
 -------------------------------------------------------------------------------}
+
+addEntries ::
+     (SerialisedValue -> SerialisedValue -> SerialisedValue) -- ^ merge function
+  -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob)
+  -> WriteBuffer
+  -> WriteBuffer
+addEntries f es wb = V.foldl' (flip (uncurry (addEntry f))) wb es
+
+-- | Add entries to the write buffer up until a certain write buffer size @n@.
+--
+-- NOTE: if the write buffer is larger @n@ already, this is a no-op.
+addEntriesUpToN ::
+     (SerialisedValue -> SerialisedValue -> SerialisedValue) -- ^ merge function
+  -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob)
+  -> Int
+  -> WriteBuffer
+  -> (WriteBuffer, V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob))
+addEntriesUpToN f es0 n wb0 = go es0 wb0
+  where
+    go !es acc@(WB m)
+      | Map.size m >= n = (acc, es)
+      | V.null es       = (acc, es)
+      | otherwise       =
+          let (!k, !e) = V.unsafeIndex es 0
+          in  go (V.drop 1 es) (addEntry f k e acc)
 
 addEntry ::
      (SerialisedValue -> SerialisedValue -> SerialisedValue) -- ^ merge function
@@ -91,17 +131,18 @@ addEntry f k e (WB wb) =
 
 addEntryMonoidal ::
      (SerialisedValue -> SerialisedValue -> SerialisedValue) -- ^ merge function
-  -> SerialisedKey -> Monoidal.Update SerialisedValue -> WriteBuffer -> WriteBuffer
-addEntryMonoidal f k e (WB wb) =
-    WB (Map.insertWith (combine f) k (updateToEntryMonoidal e) wb)
+  -> SerialisedKey
+  -> Monoidal.Update SerialisedValue
+  -> WriteBuffer
+  -> WriteBuffer
+addEntryMonoidal f k = addEntry f k . updateToEntryMonoidal
 
 addEntryNormal ::
      SerialisedKey
   -> Normal.Update SerialisedValue SerialisedBlob
   -> WriteBuffer
   -> WriteBuffer
-addEntryNormal k e (WB wb) =
-    WB (Map.insert k (updateToEntryNormal e) wb)
+addEntryNormal k = addEntry const k . updateToEntryNormal
 
 {-------------------------------------------------------------------------------
   Querying

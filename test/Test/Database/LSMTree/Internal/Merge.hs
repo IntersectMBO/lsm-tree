@@ -96,7 +96,7 @@ prop_MergeDistributes fs level stepSize (fmap unTypedWriteBuffer -> wbs) = do
     stats = tabulate "value size" (map (showPowersOf10 . sizeofValue) vals)
           . label (if any isLargeKOp kops then "has large k/op" else "no large k/op")
           . label ("number of runs: " <> showPowersOf10 (length wbs))
-    kops = foldMap WB.content wbs
+    kops = foldMap WB.toList wbs
     vals = concatMap (bifoldMap pure mempty . snd) kops
 
 -- | After merging for a few steps, we can prematurely abort the merge, which
@@ -161,10 +161,10 @@ mergeRuns fs level runNumber runs (Positive stepSize) = do
 
 mergeWriteBuffers :: Merge.Level -> [WriteBuffer] -> WriteBuffer
 mergeWriteBuffers level =
-    WB.WB
+    WB.fromMap
       . (if level == Merge.LastLevel then Map.filter (not . isDelete) else id)
       . Map.unionsWith (Entry.combine mappendValues)
-      . map WB.unWB
+      . map WB.toMap
   where
     isDelete Entry.Delete = True
     isDelete _            = False
