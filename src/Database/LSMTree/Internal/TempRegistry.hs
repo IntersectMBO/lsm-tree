@@ -1,11 +1,11 @@
 module Database.LSMTree.Internal.TempRegistry (
     TempRegistry
-  , unsafeNewTempRegistry
-  , unsafeReleaseTempRegistry
   , allocateTemp
   , allocateMaybeTemp
   , allocateEitherTemp
   , freeTemp
+  , modifyWithTempRegistry
+  , modifyWithTempRegistry_
   ) where
 
 import           Control.Concurrent.Class.MonadMVar.Strict
@@ -165,3 +165,41 @@ freeTemp reg free = modifyMVarMasked_ (tempRegistryState reg) $ \st -> do
       , tempFreed = Map.insert rid (Resource free) (tempFreed st)
       , nextId = rid'
       }
+
+{-# SPECIALISE modifyWithTempRegistry :: IO st -> (st -> IO ()) -> (TempRegistry IO -> st -> IO (st, a)) -> IO a #-}
+-- | Exception-safe modification of state with a temporary registry.
+--
+-- [Example:] When we modify a table's content (stored in a mutable variable),
+-- we might add new runs to the levels, or remove old runs from the level. If an
+-- exception is thrown before putting the updated table contents into the
+-- variable, then any resources that were acquired or released in the meantime
+-- should be rolled back. The 'TempRegistry' can be used to "temporarily"
+-- allocate or free resources, the effects of which are rolled back in case of
+-- an exception, or put into the final state when no exceptions were raised.
+modifyWithTempRegistry ::
+     m ~ IO
+  => m st -- ^ Get the state
+  -> (st -> m ()) -- ^ Store a state
+  -> (TempRegistry m -> st -> m (st, a)) -- ^ Modify the state
+  -> m a
+modifyWithTempRegistry getSt putSt action =
+    snd . fst <$> generalBracket acquire release (uncurry action)
+  where
+    acquire = (,) <$> unsafeNewTempRegistry <*> getSt
+    release (reg, oldSt) ec = do
+        case ec of
+          ExitCaseSuccess (newSt, _) -> putSt newSt
+          ExitCaseException _        -> putSt oldSt
+          ExitCaseAbort              -> putSt oldSt
+        unsafeReleaseTempRegistry reg ec
+
+{-# SPECIALISE modifyWithTempRegistry_ :: IO st -> (st -> IO ()) -> (TempRegistry IO -> st -> IO st) -> IO () #-}
+-- | Like 'modifyWithTempRegistry', but without a return value.
+modifyWithTempRegistry_ ::
+     m ~ IO
+  => m st -- ^ Get the state
+  -> (st -> m ()) -- ^ Store a state
+  -> (TempRegistry m -> st -> m st)
+  -> m ()
+modifyWithTempRegistry_ getSt putSt action =
+    modifyWithTempRegistry getSt putSt (\reg content -> (,()) <$> action reg content)
