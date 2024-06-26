@@ -573,52 +573,55 @@ updates ::
   -> m ()
 updates es th = withOpenTable th $ \thEnv -> do
     let hfs = tableHasFS thEnv
-    modifyTableContent_ hfs (tableContent thEnv) $
-      updatesWithInterleavedFlushes
-          (tableConfig th)
-          hfs
-          (tableSessionRoot thEnv)
-          (tablesSessionUniqCounter thEnv)
-          es
+    modifyWithTempRegistry_
+      (takeMVar (tableContent thEnv))
+      (putMVar (tableContent thEnv)) $
+        updatesWithInterleavedFlushes
+            (tableConfig th)
+            hfs
+            (tableSessionRoot thEnv)
+            (tablesSessionUniqCounter thEnv)
+            es
 
-{-# SPECIALISE modifyTableContent :: HasFS IO h -> StrictMVar IO (TableContent h) -> (TempRegistry IO (Run (Handle h)) -> TableContent h -> IO (TableContent h, a)) -> IO a #-}
--- | Exception-safe modification of table contents.
+{-# SPECIALISE modifyWithTempRegistry :: IO st -> (st -> IO ()) -> (TempRegistry IO -> st -> IO (st, a)) -> IO a #-}
+-- | Exception-safe modification of state with a temporary registry.
 --
--- When we modify a table's content (variable), we might add a number of new
--- runs to the levels. If an exception is thrown before putting the updated
--- table contents into the variable, then all new runs should be cleaned up. We
--- record these runs in a 'TempRegistry'.
-modifyTableContent ::
+-- [Example:] When we modify a table's content (stored in a mutable variable),
+-- we might add new runs to the levels, or remove old runs from the level. If an
+-- exception is thrown before putting the updated table contents into the
+-- variable, then any resources that were acquired or released in the meantime
+-- should be rolled back. The 'TempRegistry' can be used to "temporarily"
+-- allocate or free resources, the effects of which are rolled back in case of
+-- an exception, or put into the final state when no exceptions were raised.
+modifyWithTempRegistry ::
      m ~ IO
-  => HasFS m h
-  -> StrictMVar m (TableContent h)
-  -> (TempRegistry m (Run (Handle h)) -> TableContent h -> m (TableContent h, a))
+  => m st -- ^ Get the state
+  -> (st -> m ()) -- ^ Store a state
+  -> (TempRegistry m -> st -> m (st, a)) -- ^ Modify the state
   -> m a
-modifyTableContent hfs varContent action =
+modifyWithTempRegistry getSt putSt action =
     snd . fst <$> generalBracket acquire release (uncurry action)
   where
-    acquire = (,) <$> newTempRegistry <*> takeMVar varContent
-    release (reg, content) = \case
-        ExitCaseSuccess (content', _) -> putMVar varContent content'
-        ExitCaseException _ -> putBack
-        ExitCaseAbort -> putBack
-      where
-        putBack = do
-          putMVar varContent content
-          releaseTempRegistry reg (Run.removeReference hfs)
+    acquire = (,) <$> unsafeNewTempRegistry <*> getSt
+    release (reg, oldSt) ec = do
+        case ec of
+          ExitCaseSuccess (newSt, _) -> putSt newSt
+          ExitCaseException _        -> putSt oldSt
+          ExitCaseAbort              -> putSt oldSt
+        unsafeReleaseTempRegistry reg ec
 
-{-# SPECIALISE modifyTableContent_ :: HasFS IO h -> StrictMVar IO (TableContent h) -> (TempRegistry IO (Run (Handle h)) -> TableContent h -> IO (TableContent h)) -> IO () #-}
--- | Like 'modifyTableContent', but without a return value.
-modifyTableContent_ ::
+{-# SPECIALISE modifyWithTempRegistry_ :: IO st -> (st -> IO ()) -> (TempRegistry IO -> st -> IO st) -> IO () #-}
+-- | Like 'modifyWithTempRegistry', but without a return value.
+modifyWithTempRegistry_ ::
      m ~ IO
-  => HasFS m h
-  -> StrictMVar m (TableContent h)
-  -> (TempRegistry m (Run (Handle h)) -> TableContent h -> m (TableContent h))
+  => m st -- ^ Get the state
+  -> (st -> m ()) -- ^ Store a state
+  -> (TempRegistry m -> st -> m st)
   -> m ()
-modifyTableContent_ hfs varContent action =
-    modifyTableContent hfs varContent (\reg content -> (,()) <$> action reg content)
+modifyWithTempRegistry_ getSt putSt action =
+    modifyWithTempRegistry getSt putSt (\reg content -> (,()) <$> action reg content)
 
-{-# SPECIALISE updatesWithInterleavedFlushes :: TableConfig -> HasFS IO h -> SessionRoot -> UniqCounter IO -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob) -> TempRegistry IO (Run (Handle h)) -> TableContent h -> IO (TableContent h) #-}
+{-# SPECIALISE updatesWithInterleavedFlushes :: TableConfig -> HasFS IO h -> SessionRoot -> UniqCounter IO -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob) -> TempRegistry IO -> TableContent h -> IO (TableContent h) #-}
 -- | A single batch of updates can fill up the write buffer multiple times. We
 -- flush the write buffer each time it fills up before trying to fill it up
 -- again.
@@ -650,7 +653,7 @@ updatesWithInterleavedFlushes ::
   -> SessionRoot
   -> UniqCounter m
   -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob)
-  -> TempRegistry m (Run (Handle h))
+  -> TempRegistry m
   -> TableContent h
   -> m (TableContent h)
 updatesWithInterleavedFlushes conf hfs root uniqC es reg tc = do
@@ -686,7 +689,7 @@ updatesWithInterleavedFlushes conf hfs root uniqC es reg tc = do
         , tableCache = tableCache tc0
         }
 
-{-# SPECIALISE flushWriteBuffer :: HasFS IO h -> SessionRoot -> UniqCounter IO -> TempRegistry IO (Run (Handle h)) -> TableContent h -> IO (TableContent h) #-}
+{-# SPECIALISE flushWriteBuffer :: HasFS IO h -> SessionRoot -> UniqCounter IO -> TempRegistry IO -> TableContent h -> IO (TableContent h) #-}
 -- | Flush the write buffer to disk, regardless of whether it is full or not.
 --
 -- The returned table content contains an updated set of levels, where the write
@@ -700,14 +703,16 @@ flushWriteBuffer ::
   => HasFS m h
   -> SessionRoot
   -> UniqCounter m
-  -> TempRegistry m (Run (Handle h))
+  -> TempRegistry m
   -> TableContent h
   -> m (TableContent h)
 flushWriteBuffer hfs root uniqC reg tc = do
     n <- incrUniqCounter uniqC
-    r <- allocateTemp reg (Run.fromWriteBuffer hfs
-                            (Paths.runPath root n)
-                            (tableWriteBuffer tc))
+    r <- allocateTemp reg
+            (Run.fromWriteBuffer hfs
+              (Paths.runPath root n)
+              (tableWriteBuffer tc))
+            (Run.removeReference hfs)
     let levels' = addRunToLevels r (tableLevels tc)
     pure $! TableContent {
         tableWriteBuffer = WB.empty
@@ -739,7 +744,9 @@ snapshot snap label th = do
       -- For the temporary implementation it is okay to just flush the buffer
       -- before taking the snapshot.
       let hfs = tableHasFS thEnv
-      content <- modifyTableContent hfs (tableContent thEnv) $ \reg content -> do
+      content <- modifyWithTempRegistry
+                    (takeMVar (tableContent thEnv))
+                    (putMVar (tableContent thEnv)) $ \reg content -> do
         r <- flushWriteBuffer
               hfs
               (tableSessionRoot thEnv)
