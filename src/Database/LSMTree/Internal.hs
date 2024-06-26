@@ -384,7 +384,7 @@ data TableHandleEnv m h = TableHandleEnv {
     -- | Inherited from session
   , tableHasBlockIO          :: !(HasBlockIO m h)
     -- | Inherited from session
-  , tablesSessionUniqCounter :: !(UniqCounter m)
+  , tableSessionUniqCounter  :: !(UniqCounter m)
     -- | Open tables are tracked in the corresponding session, so when a table
     -- is closed it should become untracked (forgotten).
   , tableSessionUntrackTable :: !(m ())
@@ -540,7 +540,7 @@ newWithLevels seshEnv conf !levels = do
           tableSessionRoot = sessionRoot seshEnv
         , tableHasFS = sessionHasFS seshEnv
         , tableHasBlockIO = sessionHasBlockIO seshEnv
-        , tablesSessionUniqCounter = sessionUniqCounter seshEnv
+        , tableSessionUniqCounter = sessionUniqCounter seshEnv
         , tableSessionUntrackTable = forget
         , tableContent = contentVar
         }
@@ -987,7 +987,7 @@ snapshot snap label th = do
               (tableConfig th)
               hfs
               (tableSessionRoot thEnv)
-              (tablesSessionUniqCounter thEnv)
+              (tableSessionUniqCounter thEnv)
               reg
               content
         pure (r, r)
