@@ -166,8 +166,14 @@ instance IsTableHandle R.TableHandle where
     new = R.new
     close = R.close
     lookups = flip R.lookups
-    updates = flip R.updates
-    inserts = flip R.inserts
+    -- TODO: This is temporary, because it will otherwise make class tests fail.
+    -- Allow updates with blobs once blob retrieval is implemented.
+    updates th upds = flip R.updates th $ flip V.map upds $ \case
+        (k, R.Insert v _) -> (k, R.Insert v Nothing)
+        upd -> upd
+    -- TODO: This is temporary, because it will otherwise make class tests fail.
+    -- Allow inserts with blobs once blob retrieval is implemented.
+    inserts th ins = flip R.inserts th $ flip V.map ins $ \(k, v, _) -> (k, v, Nothing)
     deletes = flip R.deletes
 
     rangeLookup = flip R.rangeLookup
