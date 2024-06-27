@@ -1,4 +1,5 @@
 {-# LANGUAGE BlockArguments      #-}
+{-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications    #-}
 
@@ -7,7 +8,6 @@ module Test.Database.LSMTree.Class.Monoidal (tests) where
 import qualified Data.ByteString as BS
 import           Data.List (sortOn)
 import           Data.Maybe (fromMaybe)
-import           Data.Proxy (Proxy (..))
 import           Data.Word (Word64)
 import           Database.LSMTree.Class.Monoidal hiding (withTableDuplicate,
                      withTableNew, withTableOpen)
@@ -16,30 +16,61 @@ import           Database.LSMTree.Common (SomeUpdateConstraint (..),
                      mkSnapshotName)
 import           Database.LSMTree.Extras.Generators ()
 import           Database.LSMTree.ModelIO.Monoidal (IOLike, LookupResult (..),
-                     Range (..), RangeLookupResult (..), TableHandle,
-                     Update (..))
+                     Range (..), RangeLookupResult (..), Update (..))
+import qualified Database.LSMTree.ModelIO.Monoidal as M
+import qualified Database.LSMTree.Monoidal as R
+import qualified System.FS.API as FS
+import           Test.Database.LSMTree.Class.Normal (testProperty')
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck
+import qualified Test.Util.FS as FS
 
 tests :: TestTree
 tests = testGroup "Test.Database.LSMTree.Class.Monoidal"
-    [ testProperty "lookup-insert" $ prop_lookupInsert tbl
-    , testProperty "lookup-insert-else" $ prop_lookupInsertElse tbl
-    , testProperty "lookup-delete" $ prop_lookupDelete tbl
-    , testProperty "lookup-delete-else" $ prop_lookupDeleteElse tbl
-    , testProperty "insert-insert" $ prop_insertInsert tbl
-    , testProperty "insert-commutes" $ prop_insertCommutes tbl
-    , testProperty "dup-insert-insert" $ prop_dupInsertInsert tbl
-    , testProperty "dup-insert-comm" $ prop_dupInsertCommutes tbl
-    , testProperty "dup-nochanges" $ prop_dupNoChanges tbl
-    , testProperty "lookupRange-insert" $ prop_insertLookupRange tbl
-    , testProperty "snapshot-nochanges" $ prop_snapshotNoChanges tbl
-    , testProperty "snapshot-nochanges2" $ prop_snapshotNoChanges2 tbl
-    , testProperty "lookup-mupsert" $ prop_lookupUpdate tbl
-    , testProperty "merge" $ prop_merge tbl
+    [ testGroup "Model" $ zipWith ($) (props tbl1) expectFailures1
+    , testGroup "Real"  $ zipWith ($) (props tbl2) expectFailures2
     ]
   where
-    tbl = Proxy :: Proxy TableHandle
+    tbl1 :: Proxy M.TableHandle
+    tbl1 = Setup {
+          testTableConfig = M.TableConfig
+        , testWithSessionArgs = \action -> action NoSessionArgs
+        }
+
+    expectFailures1 = repeat False
+
+    tbl2 :: Proxy R.TableHandle
+    tbl2 = Setup {
+          testTableConfig = R.TableConfig {
+              R.confMergePolicy = R.MergePolicyLazyLevelling
+            , R.confSizeRatio = R.Four
+            , R.confWriteBufferAlloc = R.AllocNumEntries (R.NumEntries 3)
+            , R.confBloomFilterAlloc = R.AllocFixed 10
+            , R.confResolveMupsert = Nothing
+            }
+        , testWithSessionArgs = \action ->
+            FS.withTempIOHasBlockIO "R" $ \hfs hbio ->
+              action (SessionArgs hfs hbio (FS.mkFsPath []))
+        }
+
+    expectFailures2 = repeat True
+
+    props tbl =
+      [ testProperty' "lookup-insert" $ prop_lookupInsert tbl
+      , testProperty' "lookup-insert-else" $ prop_lookupInsertElse tbl
+      , testProperty' "lookup-delete" $ prop_lookupDelete tbl
+      , testProperty' "lookup-delete-else" $ prop_lookupDeleteElse tbl
+      , testProperty' "insert-insert" $ prop_insertInsert tbl
+      , testProperty' "insert-commutes" $ prop_insertCommutes tbl
+      , testProperty' "dup-insert-insert" $ prop_dupInsertInsert tbl
+      , testProperty' "dup-insert-comm" $ prop_dupInsertCommutes tbl
+      , testProperty' "dup-nochanges" $ prop_dupNoChanges tbl
+      , testProperty' "lookupRange-insert" $ prop_insertLookupRange tbl
+      , testProperty' "snapshot-nochanges" $ prop_snapshotNoChanges tbl
+      , testProperty' "snapshot-nochanges2" $ prop_snapshotNoChanges2 tbl
+      , testProperty' "lookup-mupsert" $ prop_lookupUpdate tbl
+      , testProperty' "merge" $ prop_merge tbl
+      ]
 
 -------------------------------------------------------------------------------
 -- test setup and helpers
@@ -48,18 +79,26 @@ tests = testGroup "Test.Database.LSMTree.Class.Monoidal"
 type Key = Word64
 type Value = BS.ByteString
 
+type Proxy h = Setup h IO
+
+data Setup h m = Setup {
+    testTableConfig     :: TableConfig h
+  , testWithSessionArgs :: forall a. (SessionArgs (Session h) m -> m a) -> m a
+  }
+
 -- | create session, table handle, and populate it with some data.
 withTableNew ::
      forall h m a. (IsTableHandle h, IOLike m)
-  => Proxy h
+  => Setup h m
   -> [(Key, Update Value)]
   -> (Session h m -> h m Key Value -> m a)
   -> m a
-withTableNew h ups action =
-    withSession  $ \sesh ->
-      Class.withTableNew @h sesh (testTableConfig h) $ \table -> do
-        updates table ups
-        action sesh table
+withTableNew Setup{..} ups action =
+    testWithSessionArgs $ \args ->
+      withSession args $ \sesh ->
+        Class.withTableNew sesh testTableConfig $ \table -> do
+          updates table ups
+          action sesh table
 
 -------------------------------------------------------------------------------
 -- implement classic QC tests for basic k/v properties

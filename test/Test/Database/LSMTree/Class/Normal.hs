@@ -1,11 +1,15 @@
 {-# LANGUAGE BlockArguments      #-}
+{-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications    #-}
 {-# LANGUAGE TypeFamilies        #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module Test.Database.LSMTree.Class.Normal (tests) where
+module Test.Database.LSMTree.Class.Normal (
+    tests
+  , testProperty'
+  ) where
 import           Control.Exception (SomeException, try)
 import           Control.Monad.ST.Strict (runST)
 import           Control.Monad.Trans.State
@@ -13,7 +17,7 @@ import qualified Data.ByteString as BS
 import           Data.Foldable (toList)
 import           Data.Functor.Compose (Compose (..))
 import           Data.Maybe (fromMaybe)
-import           Data.Proxy (Proxy (..))
+import qualified Data.Proxy as Proxy
 import qualified Data.Vector as V
 import qualified Data.Vector.Algorithms.Merge as VA
 import           Data.Word (Word64)
@@ -24,32 +28,82 @@ import           Database.LSMTree.Common (Labellable (..), mkSnapshotName)
 import           Database.LSMTree.Extras.Generators ()
 import           Database.LSMTree.ModelIO.Normal (IOLike, LookupResult (..),
                      Range (..), RangeLookupResult (..), SerialiseKey,
-                     SerialiseValue, TableHandle, Update (..))
+                     SerialiseValue, Update (..))
+import qualified Database.LSMTree.ModelIO.Normal as M
+import qualified Database.LSMTree.Normal as R
+import qualified System.FS.API as FS
 import           Test.QuickCheck.Monadic (monadicIO, monitor, run)
-import           Test.Tasty (TestTree, testGroup)
+import           Test.Tasty (TestName, TestTree, testGroup)
 import           Test.Tasty.QuickCheck
+import qualified Test.Util.FS as FS
 
 tests :: TestTree
 tests = testGroup "Test.Database.LSMTree.Class.Normal"
-    [ testProperty "lookup-insert" $ prop_lookupInsert tbl
-    , testProperty "lookup-insert-else" $ prop_lookupInsertElse tbl
-    , testProperty "lookup-insert-blob" $ prop_lookupInsertBlob tbl
-    , testProperty "lookup-delete" $ prop_lookupDelete tbl
-    , testProperty "lookup-delete-else" $ prop_lookupDeleteElse tbl
-    , testProperty "insert-insert" $ prop_insertInsert tbl
-    , testProperty "insert-insert-blob" $ prop_insertInsertBlob tbl
-    , testProperty "insert-commutes" $ prop_insertCommutes tbl
-    , testProperty "insert-commutes-blob" $ prop_insertCommutesBlob tbl
-    , testProperty "invalidated-blob-references" $ prop_updatesMayInvalidateBlobRefs tbl
-    , testProperty "dup-insert-insert" $ prop_dupInsertInsert tbl
-    , testProperty "dup-insert-comm" $ prop_dupInsertCommutes tbl
-    , testProperty "dup-nochanges" $ prop_dupNoChanges tbl
-    , testProperty "lookupRange-insert" $ prop_insertLookupRange tbl
-    , testProperty "snapshot-nochanges" $ prop_snapshotNoChanges tbl
-    , testProperty "snapshot-nochanges2" $ prop_snapshotNoChanges2 tbl
+    [ testGroup "Model" $ zipWith ($) (props tbl1) expectFailures1
+    , testGroup "Real"  $ zipWith ($) (props tbl2) expectFailures2
     ]
   where
-    tbl = Proxy :: Proxy TableHandle
+    tbl1 :: Proxy M.TableHandle
+    tbl1 = Setup {
+          testTableConfig = M.TableConfig
+        , testWithSessionArgs = \action -> action NoSessionArgs
+        }
+
+    expectFailures1 = repeat False
+
+    tbl2 :: Proxy R.TableHandle
+    tbl2 = Setup {
+          testTableConfig = R.TableConfig {
+              R.confMergePolicy = R.MergePolicyLazyLevelling
+            , R.confSizeRatio = R.Four
+            , R.confWriteBufferAlloc = R.AllocNumEntries (R.NumEntries 3)
+            , R.confBloomFilterAlloc = R.AllocFixed 10
+            , R.confResolveMupsert = Nothing
+            }
+        , testWithSessionArgs = \action ->
+            FS.withTempIOHasBlockIO "R" $ \hfs hbio ->
+              action (SessionArgs hfs hbio (FS.mkFsPath []))
+        }
+
+    expectFailures2 = [
+        False
+      , False
+      , True
+      , False
+      , False
+      , False
+      , True
+      , False
+      , True
+      , True
+      , True
+      , True
+      , True
+      , True
+      ] ++ repeat False
+
+    props tbl =
+      [ testProperty' "lookup-insert" $ prop_lookupInsert tbl
+      , testProperty' "lookup-insert-else" $ prop_lookupInsertElse tbl
+      , testProperty' "lookup-insert-blob" $ prop_lookupInsertBlob tbl
+      , testProperty' "lookup-delete" $ prop_lookupDelete tbl
+      , testProperty' "lookup-delete-else" $ prop_lookupDeleteElse tbl
+      , testProperty' "insert-insert" $ prop_insertInsert tbl
+      , testProperty' "insert-insert-blob" $ prop_insertInsertBlob tbl
+      , testProperty' "insert-commutes" $ prop_insertCommutes tbl
+      , testProperty' "insert-commutes-blob" $ prop_insertCommutesBlob tbl
+      , testProperty' "invalidated-blob-references" $ prop_updatesMayInvalidateBlobRefs tbl
+      , testProperty' "dup-insert-insert" $ prop_dupInsertInsert tbl
+      , testProperty' "dup-insert-comm" $ prop_dupInsertCommutes tbl
+      , testProperty' "dup-nochanges" $ prop_dupNoChanges tbl
+      , testProperty' "lookupRange-insert" $ prop_insertLookupRange tbl
+      , testProperty' "snapshot-nochanges" $ prop_snapshotNoChanges tbl
+      , testProperty' "snapshot-nochanges2" $ prop_snapshotNoChanges2 tbl
+      ]
+
+testProperty' :: forall a. Testable a => TestName -> a -> Bool -> TestTree
+testProperty' name prop = \b ->
+  testProperty name ((if b then expectFailure else property) prop)
 
 -------------------------------------------------------------------------------
 -- test setup and helpers
@@ -62,18 +116,26 @@ type Blob = BS.ByteString
 instance Labellable (Key, Value, Blob) where
   makeSnapshotLabel _ = "Word64 ByteString ByteString"
 
+type Proxy h = Setup h IO
+
+data Setup h m = Setup {
+    testTableConfig     :: TableConfig h
+  , testWithSessionArgs :: forall a. (SessionArgs (Session h) m -> m a) -> m a
+  }
+
 -- | create session, table handle, and populate it with some data.
 withTableNew ::
      forall h m a. (IsTableHandle h, IOLike m)
-  => Proxy h
-    -> [(Key, Update Value Blob)]
+  => Setup h m
+  -> [(Key, Update Value Blob)]
   -> (Session h m -> h m Key Value Blob -> m a)
   -> m a
-withTableNew h ups action =
-    withSession $ \sesh ->
-      Class.withTableNew sesh (testTableConfig h) $ \table -> do
-        updates table (V.fromList ups)
-        action sesh table
+withTableNew Setup{..} ups action =
+    testWithSessionArgs $ \args ->
+      withSession args $ \sesh ->
+        Class.withTableNew sesh testTableConfig $ \table -> do
+          updates table (V.fromList ups)
+          action sesh table
 
 -- | Like 'retrieveBlobs' but works for any 'Traversable'.
 --
@@ -95,7 +157,7 @@ lookupsWithBlobs ::
   => h m k v blob -> Session h m -> V.Vector k -> m (V.Vector (LookupResult v blob))
 lookupsWithBlobs hdl ses ks = do
     res <- lookups hdl ks
-    getCompose <$> retrieveBlobsTrav (Proxy @h) ses (Compose res)
+    getCompose <$> retrieveBlobsTrav (Proxy.Proxy @h) ses (Compose res)
 
 rangeLookupWithBlobs ::
      forall h m k v blob. ( IsTableHandle h, IOLike m
@@ -104,7 +166,7 @@ rangeLookupWithBlobs ::
   => h m k v blob -> Session h m -> Range k -> m (V.Vector (RangeLookupResult k v blob))
 rangeLookupWithBlobs hdl ses r = do
     res <- rangeLookup hdl r
-    getCompose <$> retrieveBlobsTrav (Proxy @h) ses (Compose res)
+    getCompose <$> retrieveBlobsTrav (Proxy.Proxy @h) ses (Compose res)
 
 -------------------------------------------------------------------------------
 -- implement classic QC tests for basic k/v properties
@@ -287,9 +349,9 @@ prop_updatesMayInvalidateBlobRefs h ups k1 v1 blob1 ups' = monadicIO $ do
       withTableNew h ups $ \ses hdl -> do
         inserts hdl (V.singleton (k1, v1, Just blob1))
         res <- lookups hdl (V.singleton k1)
-        blobs <- getCompose <$> retrieveBlobsTrav (Proxy @h) ses (Compose res)
+        blobs <- getCompose <$> retrieveBlobsTrav (Proxy.Proxy @h) ses (Compose res)
         updates hdl (V.fromList ups')
-        res' <- try @SomeException (getCompose <$> retrieveBlobsTrav (Proxy @h) ses (Compose res))
+        res' <- try @SomeException (getCompose <$> retrieveBlobsTrav (Proxy.Proxy @h) ses (Compose res))
         pure (res, blobs, res')
 
     case (V.toList res, V.toList blobs) of
