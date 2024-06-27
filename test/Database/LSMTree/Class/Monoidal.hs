@@ -7,13 +7,19 @@
 
 module Database.LSMTree.Class.Monoidal (
     IsSession (..)
+  , withSession
   , IsTableHandle (..)
+  , withTableNew
+  , withTableOpen
+  , withTableDuplicate
+  , withTableMerge
   ) where
 
+import           Control.Monad.Class.MonadThrow (MonadThrow (..))
 import           Data.Kind (Constraint, Type)
 import           Data.Proxy (Proxy)
 import           Data.Typeable (Typeable)
-import           Database.LSMTree.Class.Normal (IsSession (..))
+import           Database.LSMTree.Class.Normal (IsSession (..), withSession)
 import           Database.LSMTree.Common (IOLike, Range (..), SerialiseKey,
                      SerialiseValue, SnapshotName, SomeUpdateConstraint)
 import qualified Database.LSMTree.ModelIO.Monoidal as M
@@ -129,6 +135,46 @@ class (IsSession (Session h)) => IsTableHandle h where
         -> h m k v
         -> m (h m k v)
 
+withTableNew ::
+     forall h m k v a. (IOLike m, IsTableHandle h)
+  => Session h m
+  -> TableConfig h
+  -> (h m k v -> m a)
+  -> m a
+withTableNew sesh conf = bracket (new sesh conf) close
+
+withTableOpen ::
+     forall h m k v a. ( IOLike m, IsTableHandle h
+     , SerialiseKey k, SerialiseValue v
+     , Typeable k, Typeable v
+     )
+  => Session h m
+  -> SnapshotName
+  -> (h m k v -> m a)
+  -> m a
+withTableOpen sesh snap = bracket (open sesh snap) close
+
+withTableDuplicate ::
+     forall h m k v a. (IOLike m, IsTableHandle h)
+  => h m k v
+  -> (h m k v -> m a)
+  -> m a
+withTableDuplicate table = bracket (duplicate table) close
+
+withTableMerge ::
+     forall h m k v a. (IOLike m, IsTableHandle h
+     , SerialiseValue v, SomeUpdateConstraint v
+     )
+  => h m k v
+  -> h m k v
+  -> (h m k v -> m a)
+  -> m a
+withTableMerge table1 table2 = bracket (merge table1 table2) close
+
+{-------------------------------------------------------------------------------
+  Model instance
+-------------------------------------------------------------------------------}
+
 instance IsTableHandle M.TableHandle where
     type Session M.TableHandle = M.Session
     type TableConfig M.TableHandle = M.TableConfig
@@ -150,6 +196,10 @@ instance IsTableHandle M.TableHandle where
 
     duplicate = M.duplicate
     merge = M.merge
+
+{-------------------------------------------------------------------------------
+  Real instance
+-------------------------------------------------------------------------------}
 
 instance IsTableHandle R.TableHandle where
     type Session R.TableHandle = R.Session

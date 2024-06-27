@@ -7,10 +7,14 @@
 
 module Database.LSMTree.Class.Normal (
     IsSession (..)
+  , withSession
   , IsTableHandle (..)
+  , withTableNew
+  , withTableOpen
+  , withTableDuplicate
   ) where
 
-import           Control.Monad.Class.MonadThrow (MonadThrow (throwIO))
+import           Control.Monad.Class.MonadThrow (MonadThrow (..))
 import           Data.Kind (Constraint, Type)
 import           Data.Proxy (Proxy)
 import           Data.Typeable (Typeable)
@@ -38,6 +42,9 @@ class IsSession s where
            IOLike m
         => s m
         -> m [SnapshotName]
+
+withSession :: (IOLike m, IsSession s) => (s m -> m a) -> m a
+withSession = bracket openSession closeSession
 
 -- | Class abstracting over table handle operations.
 --
@@ -122,6 +129,37 @@ class (IsSession (Session h)) => IsTableHandle h where
         => h m k v blob
         -> m (h m k v blob)
 
+withTableNew ::
+     forall h m k v blob a. (IOLike m, IsTableHandle h)
+  => Session h m
+  -> TableConfig h
+  -> (h m k v blob -> m a)
+  -> m a
+withTableNew sesh conf = bracket (new sesh conf) close
+
+withTableOpen ::
+     forall h m k v blob a. ( IOLike m, IsTableHandle h
+     , SerialiseKey k, SerialiseValue v, SerialiseValue blob
+     , Labellable (k, v, blob)
+     , Typeable k, Typeable v, Typeable blob
+     )
+  => Session h m
+  -> SnapshotName
+  -> (h m k v blob -> m a)
+  -> m a
+withTableOpen sesh snap = bracket (open sesh snap) close
+
+withTableDuplicate ::
+     forall h m k v blob a. (IOLike m, IsTableHandle h)
+  => h m k v blob
+  -> (h m k v blob -> m a)
+  -> m a
+withTableDuplicate table = bracket (duplicate table) close
+
+{-------------------------------------------------------------------------------
+  Model instance
+-------------------------------------------------------------------------------}
+
 instance IsSession M.Session where
     openSession = M.openSession
     closeSession = M.closeSession
@@ -149,6 +187,10 @@ instance IsTableHandle M.TableHandle where
     open = M.open
 
     duplicate = M.duplicate
+
+{-------------------------------------------------------------------------------
+  Real instance
+-------------------------------------------------------------------------------}
 
 instance IsSession R.Session where
     openSession = throwIO (userError "openSession unimplemented")
