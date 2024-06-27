@@ -7,6 +7,7 @@
 
 module Database.LSMTree.Class.Normal (
     IsSession (..)
+  , SessionArgs (..)
   , withSession
   , IsTableHandle (..)
   , withTableNew
@@ -16,7 +17,6 @@ module Database.LSMTree.Class.Normal (
 
 import           Control.Monad.Class.MonadThrow (MonadThrow (..))
 import           Data.Kind (Constraint, Type)
-import           Data.Proxy (Proxy)
 import           Data.Typeable (Typeable)
 import qualified Data.Vector as V
 import           Database.LSMTree.Common (IOLike, Labellable (..), Range (..),
@@ -25,10 +25,14 @@ import qualified Database.LSMTree.ModelIO.Normal as M
 import           Database.LSMTree.Normal (LookupResult (..),
                      RangeLookupResult (..), Update (..))
 import qualified Database.LSMTree.Normal as R
+import           System.FS.API (FsPath, HasFS)
+import           System.FS.BlockIO.API (HasBlockIO)
 
 type IsSession :: ((Type -> Type) -> Type) -> Constraint
 class IsSession s where
-    openSession :: IOLike m => m (s m)
+    data SessionArgs s :: (Type -> Type) -> Type
+
+    openSession :: IOLike m => SessionArgs s m -> m (s m)
 
     closeSession :: IOLike m => s m -> m ()
 
@@ -43,8 +47,8 @@ class IsSession s where
         => s m
         -> m [SnapshotName]
 
-withSession :: (IOLike m, IsSession s) => (s m -> m a) -> m a
-withSession = bracket openSession closeSession
+withSession :: (IOLike m, IsSession s) => SessionArgs s m -> (s m -> m a) -> m a
+withSession seshArgs = bracket (openSession seshArgs) closeSession
 
 -- | Class abstracting over table handle operations.
 --
@@ -53,8 +57,6 @@ class (IsSession (Session h)) => IsTableHandle h where
     type Session h :: (Type -> Type) -> Type
     type TableConfig h :: Type
     type BlobRef h :: (Type -> Type) -> Type -> Type
-
-    testTableConfig :: Proxy h -> TableConfig h
 
     new ::
            IOLike m
@@ -161,7 +163,8 @@ withTableDuplicate table = bracket (duplicate table) close
 -------------------------------------------------------------------------------}
 
 instance IsSession M.Session where
-    openSession = M.openSession
+    data SessionArgs M.Session m = NoSessionArgs
+    openSession NoSessionArgs = M.openSession
     closeSession = M.closeSession
     deleteSnapshot = M.deleteSnapshot
     listSnapshots = M.listSnapshots
@@ -170,8 +173,6 @@ instance IsTableHandle M.TableHandle where
     type Session M.TableHandle = M.Session
     type TableConfig M.TableHandle = M.TableConfig
     type BlobRef M.TableHandle = M.BlobRef
-
-    testTableConfig _ = M.TableConfig
 
     new = M.new
     close = M.close
@@ -193,7 +194,14 @@ instance IsTableHandle M.TableHandle where
 -------------------------------------------------------------------------------}
 
 instance IsSession R.Session where
-    openSession = throwIO (userError "openSession unimplemented")
+    data SessionArgs R.Session m where
+      SessionArgs ::
+           forall m h. Typeable h
+        => HasFS m h -> HasBlockIO m h -> FsPath
+        -> SessionArgs R.Session m
+
+    openSession (SessionArgs hfs hbio dir) = do
+       R.openSession hfs hbio dir
     closeSession = R.closeSession
     deleteSnapshot = R.deleteSnapshot
     listSnapshots = R.listSnapshots
@@ -202,8 +210,6 @@ instance IsTableHandle R.TableHandle where
     type Session R.TableHandle = R.Session
     type TableConfig R.TableHandle = R.TableConfig
     type BlobRef R.TableHandle = R.BlobRef
-
-    testTableConfig _ = error "TODO: test TableConfig"
 
     new = R.new
     close = R.close

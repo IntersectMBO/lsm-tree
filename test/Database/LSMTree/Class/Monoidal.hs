@@ -7,6 +7,7 @@
 
 module Database.LSMTree.Class.Monoidal (
     IsSession (..)
+  , SessionArgs (..)
   , withSession
   , IsTableHandle (..)
   , withTableNew
@@ -17,9 +18,9 @@ module Database.LSMTree.Class.Monoidal (
 
 import           Control.Monad.Class.MonadThrow (MonadThrow (..))
 import           Data.Kind (Constraint, Type)
-import           Data.Proxy (Proxy)
 import           Data.Typeable (Typeable)
-import           Database.LSMTree.Class.Normal (IsSession (..), withSession)
+import           Database.LSMTree.Class.Normal (IsSession (..),
+                     SessionArgs (..), withSession)
 import           Database.LSMTree.Common (IOLike, Range (..), SerialiseKey,
                      SerialiseValue, SnapshotName, SomeUpdateConstraint)
 import qualified Database.LSMTree.ModelIO.Monoidal as M
@@ -34,8 +35,6 @@ type IsTableHandle :: ((Type -> Type) -> Type -> Type -> Type) -> Constraint
 class (IsSession (Session h)) => IsTableHandle h where
     type Session h :: (Type -> Type) -> Type
     type TableConfig h :: Type
-
-    testTableConfig :: Proxy h -> TableConfig h
 
     new ::
            IOLike m
@@ -179,8 +178,6 @@ instance IsTableHandle M.TableHandle where
     type Session M.TableHandle = M.Session
     type TableConfig M.TableHandle = M.TableConfig
 
-    testTableConfig _ = M.TableConfig
-
     new = M.new
     close = M.close
     lookups = flip M.lookups
@@ -204,8 +201,6 @@ instance IsTableHandle M.TableHandle where
 instance IsTableHandle R.TableHandle where
     type Session R.TableHandle = R.Session
     type TableConfig R.TableHandle = R.TableConfig
-
-    testTableConfig _ = error "TODO: test TableConfig"
 
     new = R.new
     close = R.close
