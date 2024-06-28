@@ -12,6 +12,8 @@
 module Database.LSMTree.Common (
     -- * IOLike
     IOLike
+    -- * Exceptions
+  , Internal.LSMTreeError (..)
     -- * Sessions
   , Session (..)
   , withSession
