@@ -63,6 +63,7 @@ import qualified Data.Set as Set
 import           Data.Typeable (Proxy (..), Typeable, cast, typeRep)
 import qualified Data.Vector as V
 import           Data.Word (Word64)
+import           Database.LSMTree.Extras (showPowersOf)
 import           Database.LSMTree.Extras.Generators (KeyForIndexCompact)
 import           Database.LSMTree.Internal (LSMTreeError (..))
 import qualified Database.LSMTree.Internal as R.Internal
@@ -1062,11 +1063,20 @@ data Stats = Stats {
     -- === Tags
     -- | Have we executed an action before? This lets our tagging functions see
     -- whether they are currently inspecting the first action in the sequence.
-    updated       :: Bool
+    updated           :: Bool
     -- | Unique types at which tables were created
-  , newTableTypes :: Set String
+  , newTableTypes     :: Set String
     -- | Names for which snapshots exist
-  , snapshotted   :: Set R.SnapshotName
+  , snapshotted       :: Set R.SnapshotName
+    -- === Final tags
+    -- | Number of succesful lookups and their results
+  , numLookupsResults :: (Int, Int, Int) -- (NotFound, Found, FoundWithBlob)
+    -- | Number of succesful updates
+  , numUpdates        :: (Int, Int, Int) -- (Insert, InsertWithBlob, Delete)
+    -- | Actions that succeeded
+  , successActions    :: [String]
+    -- | Actions that failed with an error
+  , failActions       :: [String]
   }
   deriving Show
 
@@ -1076,10 +1086,20 @@ initStats = Stats {
       updated = False
     , newTableTypes = Set.empty
     , snapshotted = Set.empty
+      -- === Final tags
+    , numLookupsResults = (0, 0, 0)
+    , numUpdates = (0, 0, 0)
+    , successActions = []
+    , failActions = []
     }
 
 updateStats ::
-     LockstepAction (ModelState h) a
+     ( Show (Class.TableConfig h)
+     , Eq (Class.TableConfig h)
+     , Arbitrary (Class.TableConfig h)
+     , Typeable h
+     )
+  => LockstepAction (ModelState h) a
   -> Val h a
   -> Stats
   -> Stats
@@ -1088,6 +1108,11 @@ updateStats action result =
       update
     . updNewTableTypes
     . updSnapshotted
+      -- === Final tags
+    . updNumLookupsResults
+    . updNumUpdates
+    . updSuccessActions
+    . updFailActions
   where
     update stats = stats { updated = True }
 
@@ -1107,6 +1132,57 @@ updateStats action result =
           snapshotted = Set.delete name (snapshotted stats)
         }
       _ -> stats
+
+    -- === Final tags
+
+    updNumLookupsResults stats = case (action, result) of
+      (Lookups _ _, MEither (Right (MVector lrs))) -> stats {
+          numLookupsResults =
+            let count :: (Int, Int, Int)
+                      -> Val h (R.LookupResult v (WrapBlobRef h IO blob))
+                      -> (Int, Int, Int)
+                count (nf, f, fwb) (MLookupResult x) = case x of
+                  R.NotFound        -> (nf+1, f  , fwb  )
+                  R.Found{}         -> (nf  , f+1, fwb  )
+                  R.FoundWithBlob{} -> (nf  , f  , fwb+1)
+            in V.foldl' count (numLookupsResults stats) lrs
+        }
+      _ -> stats
+
+    updNumUpdates stats = case (action, result) of
+        (Updates upds _, MEither (Right (MUnit ()))) -> stats {
+            numUpdates = countAll upds
+          }
+        (Inserts ins _, MEither (Right (MUnit ()))) -> stats {
+            numUpdates = countAll $ V.map (\(k, v, b) -> (k, R.Insert v b)) ins
+          }
+        (Deletes ks _, MEither (Right (MUnit ()))) -> stats {
+            numUpdates = countAll $ V.map (\k -> (k, R.Delete)) ks
+          }
+        _ -> stats
+      where
+        countAll :: forall k v blob. V.Vector (k, R.Update v blob) -> (Int, Int, Int)
+        countAll upds =
+          let count :: (Int, Int, Int)
+                    -> (k, R.Update v blob)
+                    -> (Int, Int, Int)
+              count (i, iwb, d) (_, upd) = case upd  of
+                R.Insert _ Nothing -> (i+1, iwb  , d  )
+                R.Insert _ Just{}  -> (i  , iwb+1, d  )
+                R.Delete{}         -> (i  , iwb  , d+1)
+          in V.foldl' count (numUpdates stats) upds
+
+    updSuccessActions stats = case result of
+        MEither (Right _) -> stats {
+            successActions = actionName action : successActions stats
+          }
+        _ -> stats
+
+    updFailActions stats = case result of
+        MEither (Left _) -> stats {
+            failActions = actionName action : failActions stats
+          }
+        _ -> stats
 
 -- | Tags for every step
 data Tag =
@@ -1191,12 +1267,65 @@ tagStep' (ModelState _stateBefore statsBefore, ModelState _stateAfter statsAfter
       = Nothing
 
 -- | Tags for the final state
-data FinalTag
+data FinalTag =
+    -- | Total number of lookup results that were 'SUT.NotFound'
+    NumLookupsNotFound String
+    -- | Total number of lookup results that were 'SUT.Found'
+  | NumLookupsFound String
+    -- | Total number of lookup results that were 'SUT.FoundWithBlob'
+  | NumLookupsFoundWithBlob String
+    -- | Number of 'Class.Insert's succesfully submitted to a table handle
+    -- (this includes submissions through both 'Class.updates' and
+    -- 'Class.inserts')
+  | NumInserts String
+    -- | Number of 'Class.InsertWithBlob's succesfully submitted to a table
+    -- handle (this includes submissions through both 'Class.updates' and
+    -- 'Class.inserts')
+  | NumInsertsWithBlobs String
+    -- | Number of 'Class.Delete's succesfully submitted to a table handle
+    -- (this includes submissions through both 'Class.updates' and
+    -- 'Class.deletes')
+  | NumDeletes String
+    -- | Which actions succeded
+  | ActionSuccess String
+    -- | Which actions failed
+  | ActionFail String
+    -- | Total number of flushes
+  | NumFlushes String -- TODO: implement
+    -- | Total /logical/ size of a table
+  | TableSize String -- TODO: implement
   deriving Show
 
 -- | This is run only after completing every action
 tagFinalState' :: Lockstep (ModelState h) -> [(String, [FinalTag])]
-tagFinalState' (getModel -> ModelState _ _finalStats) = []
+tagFinalState' (getModel -> ModelState _ finalStats) = concat [
+      tagNumLookupsResults
+    , tagNumUpdates
+    , tagSuccessActions
+    , tagFailActions
+    ]
+  where
+    tagNumLookupsResults = [
+          ("Lookups not found"      , [NumLookupsNotFound      $ showPowersOf 10 nf])
+        , ("Lookups found"          , [NumLookupsFound         $ showPowersOf 10 f])
+        , ("Lookups found with blob", [NumLookupsFoundWithBlob $ showPowersOf 10 fwb])
+        ]
+      where (nf, f, fwb) = numLookupsResults finalStats
+
+    tagNumUpdates = [
+          ("Inserts"            , [NumInserts          $ showPowersOf 10 i])
+        , ("Inserts with blobs" , [NumInsertsWithBlobs $ showPowersOf 10 iwb])
+        , ("Deletes"            , [NumDeletes          $ showPowersOf 10 d])
+        ]
+      where (i, iwb, d) = numUpdates finalStats
+
+    tagSuccessActions =
+        [ ("Actions that succeeded", [ActionSuccess c])
+        | c <- successActions finalStats ]
+
+    tagFailActions =
+        [ ("Actions that failed", [ActionFail c])
+        | c <- failActions finalStats ]
 
 {-------------------------------------------------------------------------------
   Utils
