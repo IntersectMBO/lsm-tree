@@ -19,6 +19,7 @@ import           Control.Monad
 import           Control.Monad.ST.Strict (stToIO)
 import           Criterion.Main (Benchmark, bench, bgroup, env, envWithCleanup,
                      perRunEnv, whnf, whnfAppIO)
+import           Data.Arena (ArenaManager, newArenaManager, withArena)
 import           Data.Bifunctor (Bifunctor (..))
 import qualified Data.List as List
 import           Data.Map.Strict (Map)
@@ -37,6 +38,7 @@ import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.Serialise
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
+import           GHC.Exts (RealWorld)
 import           Prelude hiding (getContents)
 import           System.Directory (removeDirectoryRecursive)
 import qualified System.FS.API as FS
@@ -68,7 +70,7 @@ benchmarks = bgroup "Bench.Database.LSMTree.Internal.Lookup" [
 
 benchLookups :: Config -> Benchmark
 benchLookups conf@Config{name} =
-    withEnv $ \ ~(_dir, _hasFS, hasBlockIO, rs, ks) ->
+    withEnv $ \ ~(_dir, arenaManager, _hasFS, hasBlockIO, rs, ks) ->
       env ( pure ( V.map Run.runFilter rs
                  , V.map Run.runIndex rs
                  , V.map Run.runKOpsFile rs
@@ -83,18 +85,20 @@ benchLookups conf@Config{name} =
             -- lookup keys. We use whnf here because the result is
           , env (pure $ bloomQueriesDefault blooms ks) $ \rkixs ->
               bench "Compact index search" $
-                whnfAppIO (\ks' -> stToIO $ indexSearches indexes kopsFiles ks' rkixs) ks
+                whnfAppIO (\ks' -> withArena arenaManager $ \arena -> stToIO $ indexSearches arena indexes kopsFiles ks' rkixs) ks
             -- prepLookups combines bloom filter querying and index searching.
             -- The implementation forces the results to WHNF, so we use
             -- whnfAppIO here instead of nfAppIO.
           , bench "Lookup preparation in memory" $
-              whnfAppIO (\ks' -> stToIO $ prepLookups blooms indexes kopsFiles ks') ks
+              whnfAppIO (\ks' -> withArena arenaManager $ \arena -> stToIO $ prepLookups arena blooms indexes kopsFiles ks') ks
             -- Submit the IOOps we get from prepLookups to HasBlockIO. We use
             -- perRunEnv because IOOps contain mutable buffers, so we want fresh
             -- ones for each run of the benchmark. We manually evaluate the
             -- result to WHNF since it is unboxed vector.
           , bench "Submit IOOps" $
-              perRunEnv (stToIO $ prepLookups blooms indexes kopsFiles ks) $ \ ~(_rkixs, ioops) -> do
+              -- TODO: here arena is destroyed too soon
+              -- but it should be fine for non-debug code
+              perRunEnv (withArena arenaManager $ \arena -> stToIO $ prepLookups arena blooms indexes kopsFiles ks) $ \ ~(_rkixs, ioops) -> do
                 !_ioress <- FS.submitIO hasBlockIO ioops
                 pure ()
             -- When IO result have been collected, intra-page lookups searches
@@ -105,7 +109,9 @@ benchLookups conf@Config{name} =
             -- implementation takes care to evaluate each of the elements, we
             -- only compute WHNF.
           , bench "Perform intra-page lookups" $
-              perRunEnv ( stToIO (prepLookups blooms indexes kopsFiles ks) >>= \(rkixs, ioops) ->
+              -- TODO: here arena is destroyed too soon
+              -- but it should be fine for non-debug code
+              perRunEnv (withArena arenaManager $ \arena -> stToIO (prepLookups arena blooms indexes kopsFiles ks) >>= \(rkixs, ioops) ->
                           FS.submitIO hasBlockIO ioops >>= \ioress ->
                           pure (rkixs, ioops, ioress)
                         ) $ \ ~(rkixs, ioops, ioress) -> do
@@ -116,7 +122,7 @@ benchLookups conf@Config{name} =
             -- WHNF because it is the same result that intraPageLookups produces
             -- (see above).
           , bench "Lookups in IO" $
-              whnfAppIO (\ks' -> lookupsIO hasBlockIO resolveV rs blooms indexes kopsFiles ks') ks
+              whnfAppIO (\ks' -> lookupsIO hasBlockIO arenaManager resolveV rs blooms indexes kopsFiles ks') ks
           ]
   where
     withEnv = envWithCleanup
@@ -146,12 +152,14 @@ data Config = Config {
 lookupsInBatchesEnv ::
      Config
   -> IO ( FilePath -- ^ Temporary directory
+        , ArenaManager RealWorld
         , FS.HasFS IO FS.HandleIO
         , FS.HasBlockIO IO FS.HandleIO
         , V.Vector (Run (FS.Handle FS.HandleIO))
         , V.Vector SerialisedKey
         )
 lookupsInBatchesEnv Config {..} = do
+    arenaManager <- newArenaManager
     sysTmpDir <- getCanonicalTemporaryDirectory
     benchTmpDir <- createTempDirectory sysTmpDir "lookupsInBatchesEnv"
     (storedKeys, lookupKeys) <- lookupsEnv (mkStdGen 17) nentries npos nneg
@@ -166,6 +174,7 @@ lookupsInBatchesEnv Config {..} = do
     assert (npagesReal * 42 <= nentriesReal) $ pure ()
     assert (npagesReal * 43 >= nentriesReal) $ pure ()
     pure ( benchTmpDir
+         , arenaManager
          , hasFS
          , hasBlockIO
          , V.singleton r
@@ -174,13 +183,14 @@ lookupsInBatchesEnv Config {..} = do
 
 lookupsInBatchesCleanup ::
      ( FilePath -- ^ Temporary directory
+     , ArenaManager RealWorld
      , FS.HasFS IO FS.HandleIO
      , FS.HasBlockIO IO FS.HandleIO
      , V.Vector (Run (FS.Handle FS.HandleIO))
      , V.Vector SerialisedKey
      )
   -> IO ()
-lookupsInBatchesCleanup (tmpDir, hasFS, hasBlockIO, rs, _) = do
+lookupsInBatchesCleanup (tmpDir, _arenaManager, hasFS, hasBlockIO, rs, _) = do
     FS.close hasBlockIO
     forM_ rs $ Run.removeReference hasFS
     removeDirectoryRecursive tmpDir

@@ -42,6 +42,7 @@ library
   import:          language, warnings, wno-x-partial
   hs-source-dirs:  src
   exposed-modules:
+    Data.Arena
     Data.Map.Range
     Database.LSMTree.Common
     Database.LSMTree.Internal
@@ -218,6 +219,7 @@ test-suite lsm-tree-test
     Database.LSMTree.ModelIO.Monoidal
     Database.LSMTree.ModelIO.Normal
     Database.LSMTree.ModelIO.Session
+    Test.Data.Arena
     Test.Database.LSMTree.Generators
     Test.Database.LSMTree.Internal
     Test.Database.LSMTree.Internal.BloomFilter
