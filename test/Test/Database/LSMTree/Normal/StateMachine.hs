@@ -53,10 +53,10 @@ import           Data.Bifunctor (Bifunctor (..))
 import qualified Data.ByteString as BS
 import           Data.Constraint (Dict (..))
 import           Data.Kind (Type)
-import           Data.Maybe (fromJust)
+import           Data.Maybe (catMaybes, fromJust)
 import           Data.Set (Set)
 import qualified Data.Set as Set
-import           Data.Typeable (Proxy (..), Typeable, cast)
+import           Data.Typeable (Proxy (..), Typeable, cast, typeRep)
 import qualified Data.Vector as V
 import           Data.Word (Word64)
 import qualified Database.LSMTree.Class.Normal as Class
@@ -1052,64 +1052,127 @@ instance InterpretOp Op (ModelValue (ModelState h)) where
   Statistics, labelling/tagging
 -------------------------------------------------------------------------------}
 
-data ConstructorName =
-    CNew
-  | CClose
-  | CLookups
-  | CRangeLookup
-  | CUpdates
-  | CInserts
-  | CDeletes
-  | CRetrieveBlobs
-  | CSnapshot
-  | COpen
-  | CDeleteSnapshot
-  | CListSnapshots
-  | CDuplicate
-  deriving (Show, Eq, Ord, Enum, Bounded)
-
-toConstructorName :: LockstepAction (ModelState h) a -> ConstructorName
-toConstructorName = \case
-    New{} -> CNew
-    Close{} -> CClose
-    Lookups{} -> CLookups
-    RangeLookup{} -> CRangeLookup
-    Updates{} -> CUpdates
-    Inserts{} -> CInserts
-    Deletes{} -> CDeletes
-    RetrieveBlobs{} -> CRetrieveBlobs
-    Snapshot{} -> CSnapshot
-    Open{} -> COpen
-    DeleteSnapshot{} -> CDeleteSnapshot
-    ListSnapshots{} -> CListSnapshots
-    Duplicate{} -> CDuplicate
-
-newtype Stats = Stats {
-    seenActions :: Set ConstructorName
+data Stats = Stats {
+    -- === Tags
+    -- | Unique types at which tables were created
+    newTableTypes :: Set String
+    -- | Names for which snapshots exist
+  , snapshotted   :: Set R.SnapshotName
   }
   deriving Show
 
 initStats :: Stats
 initStats = Stats {
-      seenActions = Set.empty
+      -- === Tags
+      newTableTypes = Set.empty
+    , snapshotted = Set.empty
     }
 
-updateStats :: LockstepAction (ModelState h) a -> Val h a -> Stats -> Stats
-updateStats action _result Stats{seenActions} = Stats {
-      seenActions = Set.insert (toConstructorName action) seenActions
-    }
+updateStats ::
+     LockstepAction (ModelState h) a
+  -> Val h a
+  -> Stats
+  -> Stats
+updateStats action result =
+      -- === Tags
+      updNewTableTypes
+    . updSnapshotted
+  where
+    -- === Tags
 
+    updNewTableTypes stats = case action of
+      New @k @v @blob _ -> stats {
+          newTableTypes = Set.insert (show $ typeRep (Proxy @(k, v, blob))) (newTableTypes stats)
+        }
+      _ -> stats
+
+    updSnapshotted stats = case (action, result) of
+      (Snapshot name _, MEither (Right (MUnit ()))) -> stats {
+          snapshotted = Set.insert name (snapshotted stats)
+        }
+      (DeleteSnapshot name, MEither (Right (MUnit ()))) -> stats {
+          snapshotted = Set.delete name (snapshotted stats)
+        }
+      _ -> stats
+
+-- | Tags for every step
 data Tag =
-    -- | Trivial tag
-    Top
-    -- | All actions were seen at least once
-  | All
-  deriving Show
+    -- | (At least) two types of tables were created (i.e., 'New') in the same
+    -- session. The strings represent the representations of the types that the
+    -- tables were created at.
+    NewTwoTableTypes String String
+    -- | Snapshot with a name that already exists
+  | SnapshotTwice
+    -- | Open an existing snapshot
+  | OpenExistingSnapshot
+    -- | Open a missing snapshot
+  | OpenMissingSnapshot
+    -- | Delete an existing snapshot
+  | DeleteExistingSnapshot
+    -- | Delete a missing snapshot
+  | DeleteMissingSnapshot
+    -- | Open a snapshot with the wrong label
+  | OpenSnapshotWrongLabel -- TODO: implement
+    -- | A merge happened on level @n@
+  | MergeOnLevel Int -- TODO: implement
+    -- | A table was closed twice
+  | TableCloseTwice String -- TODO: implement
+  deriving (Show, Eq, Ord)
 
+-- | This is run for after every action
 tagStep' ::
      (ModelState h, ModelState h)
   -> LockstepAction (ModelState h) a
   -> Val h a
   -> [Tag]
-tagStep' (_before, ModelState _ statsAfter) _action _result = Top :
-    [All | seenActions statsAfter == Set.fromList [minBound .. maxBound]]
+tagStep' (ModelState _stateBefore statsBefore, ModelState _stateAfter statsAfter) action _result = catMaybes [
+      tagNewTwoTableTypes
+    , tagSnapshotTwice
+    , tagOpenExistingSnapshot
+    , tagOpenExistingSnapshot
+    , tagOpenMissingSnapshot
+    , tagDeleteExistingSnapshot
+    , tagDeleteMissingSnapshot
+    ]
+  where
+    tagNewTwoTableTypes
+      | Set.size (newTableTypes statsBefore) < 2
+      , type1 : type2 : _ <- Set.toList (newTableTypes statsAfter)
+      = Just $ NewTwoTableTypes type1 type2
+      | otherwise
+      = Nothing
+
+    tagSnapshotTwice
+      | Snapshot name _ <- action
+      , name `Set.member` snapshotted statsBefore
+      = Just SnapshotTwice
+      | otherwise
+      = Nothing
+
+    tagOpenExistingSnapshot
+      | Open name <- action
+      , name `Set.member` snapshotted statsBefore
+      = Just OpenExistingSnapshot
+      | otherwise
+      = Nothing
+
+    tagOpenMissingSnapshot
+      | Open name <- action
+      , not (name `Set.member` snapshotted statsBefore)
+      = Just OpenMissingSnapshot
+      | otherwise
+      = Nothing
+
+    tagDeleteExistingSnapshot
+      | DeleteSnapshot name <- action
+      , name `Set.member` snapshotted statsBefore
+      = Just DeleteExistingSnapshot
+      | otherwise
+      = Nothing
+
+    tagDeleteMissingSnapshot
+      | DeleteSnapshot name <- action
+      , not (name `Set.member` snapshotted statsBefore)
+      = Just DeleteMissingSnapshot
+      | otherwise
+      = Nothing
