@@ -9,6 +9,7 @@
 {-# LANGUAGE LambdaCase               #-}
 {-# LANGUAGE MultiParamTypeClasses    #-}
 {-# LANGUAGE NamedFieldPuns           #-}
+{-# LANGUAGE QuantifiedConstraints    #-}
 {-# LANGUAGE RankNTypes               #-}
 {-# LANGUAGE ScopedTypeVariables      #-}
 {-# LANGUAGE StandaloneDeriving       #-}
@@ -43,7 +44,10 @@
 
   TODO: run lockstep tests with IOSim too
 -}
-module Test.Database.LSMTree.Normal.StateMachine (tests) where
+module Test.Database.LSMTree.Normal.StateMachine (
+    tests
+  , labelledExamples
+  ) where
 
 import           Control.Monad ((<=<))
 import           Control.Monad.Class.MonadThrow (Handler (..), MonadCatch (..),
@@ -85,7 +89,6 @@ import           Test.QuickCheck.StateModel.Lockstep
 import qualified Test.QuickCheck.StateModel.Lockstep.Defaults as Lockstep.Defaults
 import qualified Test.QuickCheck.StateModel.Lockstep.Run as Lockstep.Run
 import           Test.Tasty (TestTree, testGroup)
-import           Test.Tasty.HUnit (testCase)
 import           Test.Tasty.QuickCheck (testProperty)
 import           Test.Util.TypeFamilyWrappers (WrapBlob (..), WrapBlobRef (..),
                      WrapSession (..), WrapTableHandle (..))
@@ -96,22 +99,24 @@ import           Test.Util.TypeFamilyWrappers (WrapBlob (..), WrapBlobRef (..),
 
 tests :: TestTree
 tests = testGroup "Normal.StateMachine" [
-      testCase "labelledExamples" $
-        QC.labelledExamples $ Lockstep.Run.tagActions (Proxy @(ModelState R.TableHandle))
-    , propLockstepIO_ModelIOImpl
+      propLockstepIO_ModelIOImpl
     , propLockstepIO_RealImpl_RealFS
 {- TODO: temporarily disabled until we start on I/O fault testing.
     , propLockstepIO_RealImpl_MockFS
 -}
     ]
 
+labelledExamples :: IO ()
+labelledExamples = QC.labelledExamples $ Lockstep.Run.tagActions (Proxy @(ModelState R.TableHandle))
+
 propLockstepIO_ModelIOImpl :: TestTree
 propLockstepIO_ModelIOImpl = testProperty "propLockstepIO_ModelIOImpl" $
-    Lockstep.Run.runActionsBracket
+    runActionsBracket'
       (Proxy @(ModelState M.TableHandle))
       acquire
       release
       (\r session -> runReaderT r (session, handler))
+      tagFinalState'
   where
     acquire :: IO (WrapSession M.TableHandle IO)
     acquire = WrapSession <$> M.openSession
@@ -153,11 +158,12 @@ propLockstepIO_ModelIOImpl = testProperty "propLockstepIO_ModelIOImpl" $
 
 propLockstepIO_RealImpl_RealFS :: TestTree
 propLockstepIO_RealImpl_RealFS = testProperty "propLockstepIO_RealImpl_RealFS" $
-    Lockstep.Run.runActionsBracket
+    runActionsBracket'
       (Proxy @(ModelState R.TableHandle))
       acquire
       release
       (\r (_, session) -> runReaderT r (session, handler))
+      tagFinalState'
   where
     acquire :: IO (FilePath, WrapSession R.TableHandle IO)
     acquire = do
@@ -1176,3 +1182,42 @@ tagStep' (ModelState _stateBefore statsBefore, ModelState _stateAfter statsAfter
       = Just DeleteMissingSnapshot
       | otherwise
       = Nothing
+
+-- | Tags for the final state
+data FinalTag
+  deriving Show
+
+-- | This is run only after completing every action
+tagFinalState' :: Lockstep (ModelState h) -> [(String, [FinalTag])]
+tagFinalState' (getModel -> ModelState _ _finalStats) = []
+
+{-------------------------------------------------------------------------------
+  Utils
+-------------------------------------------------------------------------------}
+
+-- | Version of 'runActionsBracket' with tagging of the final state.
+--
+-- The 'tagStep' feature tags each step (i.e., 'Action'), but there are cases
+-- where one wants to tag a /list of/ 'Action's. For example, if one wants to
+-- count how often something happens over the course of running these actions,
+-- then we would want to only tag the final state, not intermediate steps.
+runActionsBracket' ::
+     forall state st m e.  (
+        RunLockstep state m
+     , e ~ Error (Lockstep state)
+     , forall a. IsPerformResult e a
+     )
+  => Proxy state
+  -> IO st
+  -> (st -> IO ())
+  -> (m QC.Property -> st -> IO QC.Property)
+  -> (Lockstep state -> [(String, [FinalTag])])
+  -> Actions (Lockstep state) -> QC.Property
+runActionsBracket' p init cleanup runner tagFinalState actions =
+    flip (foldr (\(key, values) -> QC.tabulate key (fmap show values))) finalTags
+  $ Lockstep.Run.runActionsBracket p init cleanup runner actions
+  where
+    finalAnnState :: Annotated (Lockstep state)
+    finalAnnState = stateAfter @(Lockstep state) actions
+
+    finalTags = tagFinalState $ underlyingState finalAnnState
