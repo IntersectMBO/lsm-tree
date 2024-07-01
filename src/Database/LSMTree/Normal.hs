@@ -29,9 +29,11 @@
 -- > import qualified Database.LSMTree.Normal as LSMT
 --
 module Database.LSMTree.Normal (
+    -- * Exceptions
+    Common.LSMTreeError (..)
 
     -- * Table sessions
-    Session
+  , Session
   , withSession
   , openSession
   , closeSession
@@ -68,6 +70,7 @@ module Database.LSMTree.Normal (
 
     -- * Durability (snapshots)
   , SnapshotName
+  , Common.mkSnapshotName
   , Common.SnapshotLabel
   , Common.Labellable (..)
   , snapshot

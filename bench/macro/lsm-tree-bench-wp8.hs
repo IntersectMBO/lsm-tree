@@ -67,7 +67,6 @@ import           Text.Printf (printf)
 
 -- We should be able to write this benchmark
 -- using only use public lsm-tree interface
-import qualified Database.LSMTree.Common as LSM (mkSnapshotName)
 import qualified Database.LSMTree.Normal as LSM
 
 -------------------------------------------------------------------------------
