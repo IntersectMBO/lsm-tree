@@ -217,9 +217,7 @@ instance Arbitrary M.TableConfig where
   arbitrary :: Gen M.TableConfig
   arbitrary = pure M.TableConfig
 
--- TODO: improve, more types of configs
---
--- This should always generate 'Nothing' for the 'Impl.Real.confResolveMupsert'
+-- |  This always generates 'Nothing' for the 'R.confResolveMupsert'
 -- field.
 instance Arbitrary R.TableConfig where
   arbitrary :: Gen R.TableConfig
@@ -469,8 +467,6 @@ instance ( Eq (Class.TableConfig h)
     OTableHandle :: Obs h (WrapTableHandle h IO k v blob)
     OBlobRef :: Obs h (WrapBlobRef h IO blob)
 
-    -- TODO: can we use OId for lookup results and range lookup results instead,
-    -- or are these separate constructors necessary?
     OLookupResult :: (Model.C_ v, Model.C_ blob)
                   => Model.LookupResult v (Obs h (WrapBlobRef h IO blob))
                   -> Obs h (R.LookupResult v (WrapBlobRef h IO blob))
@@ -894,7 +890,7 @@ arbitraryActionWithVars ::
   -> ModelFindVariables (ModelState h)
   -> ModelState h
   -> Gen (Any (LockstepAction (ModelState h)))
-arbitraryActionWithVars _ findVars _st = QC.oneof $ concat [
+arbitraryActionWithVars _ findVars _st = QC.frequency $ concat [
       withoutVars
     , case findVars (Proxy @(Either Model.Err (WrapTableHandle h IO k v blob))) of
         []   -> []
@@ -936,34 +932,33 @@ arbitraryActionWithVars _ findVars _st = QC.oneof $ concat [
           -> Var h (Either Model.Err (V.Vector (WrapBlobRef h IO blob)))
         fromRangeLookupResults = mapGVar (\op -> OpRight `OpComp` OpRangeLookupResults `OpComp` OpFromRight `OpComp` op)
 
-    withoutVars :: [Gen (Any (LockstepAction (ModelState h)))]
+    withoutVars :: [(Int, Gen (Any (LockstepAction (ModelState h))))]
     withoutVars = [
-          Some . New @k @v @blob <$> QC.arbitrary
-        -- TODO: enable generators as we implement the actions for the /real/ lsm-tree
-        , fmap Some $ Open @k @v @blob <$> genSnapshotName
-        , fmap Some $ DeleteSnapshot <$> genSnapshotName
-        , pure $ Some ListSnapshots
+          (5, Some . New @k @v @blob <$> QC.arbitrary)
+        , (3, fmap Some $ Open @k @v @blob <$> genSnapshotName)
+        , (1, fmap Some $ DeleteSnapshot <$> genSnapshotName)
+        , (1, pure $ Some ListSnapshots)
         ]
 
     withVars ::
          Gen (Var h (Either Model.Err (WrapTableHandle h IO k v blob)))
-      -> [Gen (Any (LockstepAction (ModelState h)))]
+      -> [(Int, Gen (Any (LockstepAction (ModelState h))))]
     withVars genVar = [
-          fmap Some $ Close <$> (fromRight <$> genVar)
-        , fmap Some $ Lookups <$> genLookupKeys <*> (fromRight <$> genVar)
+          (2, fmap Some $ Close <$> (fromRight <$> genVar))
+        , (10, fmap Some $ Lookups <$> genLookupKeys <*> (fromRight <$> genVar))
         -- TODO: enable generators as we implement the actions for the /real/ lsm-tree
         -- , fmap Some $ RangeLookup <$> genRange <*> (fromRight <$> genVar)
-        , fmap Some $ Updates <$> genUpdates <*> (fromRight <$> genVar)
-        , fmap Some $ Inserts <$> genInserts <*> (fromRight <$> genVar)
-        , fmap Some $ Deletes <$> genDeletes <*> (fromRight <$> genVar)
-        , fmap Some $ Snapshot <$> genSnapshotName <*> (fromRight <$> genVar)
+        , (10, fmap Some $ Updates <$> genUpdates <*> (fromRight <$> genVar))
+        , (10, fmap Some $ Inserts <$> genInserts <*> (fromRight <$> genVar))
+        , (10, fmap Some $ Deletes <$> genDeletes <*> (fromRight <$> genVar))
+        , (3, fmap Some $ Snapshot <$> genSnapshotName <*> (fromRight <$> genVar))
         -- TODO: enable generators as we implement the actions for the /real/ lsm-tree
         -- , fmap Some $ Duplicate <$> (fromRight <$> genVar)
         ]
 
     withVars' ::
          Gen (Var h (Either Model.Err (V.Vector (WrapBlobRef h IO blob))))
-      -> [Gen (Any (LockstepAction (ModelState h)))]
+      -> [(Int, Gen (Any (LockstepAction (ModelState h))))]
     withVars' _genBlobRefsVar = [
           -- TODO: enable generators as we implement the actions for the /real/ lsm-tree
           -- fmap Some $ RetrieveBlobs <$> (fromRight <$> genBlobRefsVar)
@@ -974,11 +969,9 @@ arbitraryActionWithVars _ findVars _st = QC.oneof $ concat [
       -> Var h a
     fromRight = mapGVar (\op -> OpFromRight `OpComp` op)
 
-    -- TODO: improve
     genLookupKeys :: Gen (V.Vector k)
     genLookupKeys = QC.arbitrary
 
-    -- TODO: improve
     _genRange :: Gen (R.Range k)
     _genRange = QC.oneof [
           R.FromToExcluding <$> QC.arbitrary <*> QC.arbitrary
@@ -990,7 +983,6 @@ arbitraryActionWithVars _ findVars _st = QC.oneof $ concat [
             R.FromToExcluding{} -> ()
             R.FromToIncluding{} -> ()
 
-    -- TODO: improve
     genUpdates :: Gen (V.Vector (k, R.Update v blob))
     genUpdates = QC.liftArbitrary ((,) <$> QC.arbitrary <*> QC.oneof [
           R.Insert <$> QC.arbitrary <*> genBlob
@@ -1002,11 +994,9 @@ arbitraryActionWithVars _ findVars _st = QC.oneof $ concat [
             R.Insert{} -> ()
             R.Delete{} -> ()
 
-    -- TODO: improve
     genInserts :: Gen (V.Vector (k, v, Maybe blob))
     genInserts = QC.liftArbitrary ((,,) <$> QC.arbitrary <*> QC.arbitrary <*> genBlob)
 
-    -- TODO: improve
     genDeletes :: Gen (V.Vector k)
     genDeletes = QC.arbitrary
 
