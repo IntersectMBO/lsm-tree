@@ -59,6 +59,7 @@ import qualified Data.Set as Set
 import           Data.Typeable (Proxy (..), Typeable, cast)
 import qualified Data.Vector as V
 import           Data.Word (Word64)
+import qualified Database.LSMTree.Class.Normal as SUT.Class
 import qualified Database.LSMTree.Common as SUT (Labellable, SerialiseKey,
                      SerialiseValue, mkSnapshotName)
 import           Database.LSMTree.Extras.Generators (KeyForIndexCompact)
@@ -79,7 +80,6 @@ import           System.FS.IO (HandleIO, ioHasFS)
 import           System.IO.Error
 import           System.IO.Temp (createTempDirectory,
                      getCanonicalTemporaryDirectory)
-import qualified Test.Database.LSMTree.ModelIO.Class as SUT.Class
 import           Test.Database.LSMTree.Normal.StateMachine.Op
                      (HasBlobRef (getBlobRef), Op (..))
 import qualified Test.QuickCheck as QC
