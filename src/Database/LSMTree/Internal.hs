@@ -445,25 +445,20 @@ data MergingRun h =
 -- TODO: this should also represent ongoing merges once we implement scheduling.
 newtype MergingRunState h = CompletedMerge (Run h)
 
+-- | Return all runs in the levels, ordered from newest to oldest
+runsInLevels :: Levels h -> V.Vector (Run h)
+runsInLevels levels = flip V.concatMap levels $ \(Level mr rs) ->
+    case mr of
+      SingleRun r                   -> r `V.cons` rs
+      MergingRun (CompletedMerge r) -> r `V.cons` rs
+
 {-# SPECIALISE closeLevels :: HasFS IO h -> Levels (Handle h) -> IO () #-}
 closeLevels ::
-     m ~ IO
+     m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
   => HasFS m h
   -> Levels (Handle h)
   -> m ()
-closeLevels hfs levels = V.mapM_ (closeLevel hfs) levels
-
-{-# SPECIALISE closeLevel :: HasFS IO h -> Level (Handle h) -> IO () #-}
-closeLevel ::
-     m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
-  => HasFS m h
-  -> Level (Handle h)
-  -> m ()
-closeLevel hfs (Level mr rs) = do
-  case mr of
-    SingleRun r                   -> Run.removeReference hfs r
-    MergingRun (CompletedMerge r) -> Run.removeReference hfs r
-  V.mapM_ (Run.removeReference hfs) rs
+closeLevels hfs levels = V.mapM_ (Run.removeReference hfs) (runsInLevels levels)
 
 -- | Flattend cache of the runs that referenced by a table handle.
 --
@@ -491,11 +486,7 @@ mkLevelsCache lvls = LevelsCache_ {
     , cachedKOpsFiles = V.map Run.runKOpsFile rs
     }
   where
-    rs = flip V.concatMap lvls $ \(Level mr rs') ->
-      V.cons (case mr of
-                SingleRun r                   -> r
-                MergingRun (CompletedMerge r) -> r)
-             rs'
+    rs = runsInLevels lvls
 
 --
 -- Implementation of public API
