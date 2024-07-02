@@ -20,7 +20,7 @@ module Test.Util.TypeFamilyWrappers (
   ) where
 
 import           Data.Kind (Type)
-import qualified Test.Database.LSMTree.ModelIO.Class as SUT.Class
+import qualified Database.LSMTree.Class.Normal as SUT.Class
 
 type WrapSession ::
      ((Type -> Type) -> Type -> Type -> Type -> Type)
