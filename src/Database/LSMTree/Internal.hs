@@ -60,8 +60,9 @@ import           Control.Concurrent.ReadWriteVar (RWVar)
 import qualified Control.Concurrent.ReadWriteVar as RW
 import           Control.Monad (unless, void, when)
 import           Control.Monad.Class.MonadThrow
+import           Control.Monad.Primitive (PrimState (..))
 import           Control.Monad.ST.Strict (ST, runST)
-import           Data.Arena (newArenaManager)
+import           Data.Arena (ArenaManager, newArenaManager)
 import           Data.Bifunctor (Bifunctor (..))
 import           Data.BloomFilter (Bloom)
 import qualified Data.ByteString.Char8 as BSC
@@ -356,7 +357,7 @@ closeSession Session{sessionState} =
 --
 -- For more information, see 'Database.LSMTree.Normal.TableHandle'.
 data TableHandle m h = TableHandle {
-      tableConfig      :: !TableConfig
+      tableConfig             :: !TableConfig
       -- | The primary purpose of this 'RWVar' is to ensure consistent views of
       -- the open-/closedness of a table when multiple threads require access to
       -- the table's fields (see 'withOpenTable'). We use more fine-grained
@@ -365,7 +366,8 @@ data TableHandle m h = TableHandle {
       -- TODO: RWVars only work in IO, not in IOSim.
       --
       -- TODO: how fair is an RWVar?
-    , tableHandleState :: !(RWVar (TableHandleState m h))
+    , tableHandleState        :: !(RWVar (TableHandleState m h))
+    , tableHandleArenaManager :: !(ArenaManager (PrimState m))
     }
 
 -- | A table handle may assume that its corresponding session is still open as
@@ -536,7 +538,8 @@ newWithLevels seshEnv conf !levels = do
         , tableSessionUntrackTable = forget
         , tableContent = contentVar
         }
-    let !th = TableHandle conf tableVar
+    arenaManager <- newArenaManager
+    let !th = TableHandle conf tableVar arenaManager
     -- Track the current table
     modifyMVar_ (sessionOpenTables seshEnv) $ pure . Map.insert tableId th
     pure $! th
@@ -569,11 +572,11 @@ lookups ::
      -- 'toNormalLookupResult' or 'toMonoidalLookupResult'.
   -> m (V.Vector lookupResult)
 lookups ks th fromEntry = withOpenTable th $ \thEnv -> do
+    let arenaManager = tableHandleArenaManager th
     let resolve = resolveMupsert (tableConfig th)
     tableContent <- readMVar (tableContent thEnv)
     let !wb = tableWriteBuffer tableContent
     let !cache = tableCache tableContent
-    arenaManager <- newArenaManager -- TODO: use shared arena manager in handle (or session?)
     ioRes <-
       lookupsIO
         (tableHasBlockIO thEnv)

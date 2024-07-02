@@ -431,3 +431,4 @@ duplicate ::
   => TableHandle m k v blob
   -> m (TableHandle m k v blob)
 duplicate = undefined
+-- TODO: implementation note: reuse the handles' ArenaManager
