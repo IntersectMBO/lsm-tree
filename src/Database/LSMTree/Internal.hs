@@ -1,7 +1,10 @@
+{-# LANGUAGE DataKinds                  #-}
 {-# LANGUAGE DeriveAnyClass             #-}
 {-# LANGUAGE DerivingStrategies         #-}
+{-# LANGUAGE DerivingVia                #-}
 {-# LANGUAGE GeneralisedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase                 #-}
+{-# LANGUAGE RecordWildCards            #-}
 
 -- | TODO: this should be removed once we have proper snapshotting with proper
 -- persistence of the config to disk.
@@ -47,6 +50,9 @@ module Database.LSMTree.Internal (
   , WriteBufferAlloc (..)
   , NumEntries (..)
   , BloomFilterAlloc (..)
+    -- * Exported for cabal-docspec
+  , MergePolicyForLevel (..)
+  , maxRunSize
   ) where
 
 import           Control.Concurrent.Class.MonadMVar.Strict
@@ -54,7 +60,9 @@ import           Control.Concurrent.ReadWriteVar (RWVar)
 import qualified Control.Concurrent.ReadWriteVar as RW
 import           Control.Monad (unless, void, when)
 import           Control.Monad.Class.MonadThrow
+import           Control.Monad.ST.Strict (ST, runST)
 import           Data.Arena (newArenaManager)
+import           Data.Bifunctor (Bifunctor (..))
 import           Data.BloomFilter (Bloom)
 import qualified Data.ByteString.Char8 as BSC
 import           Data.Either (fromRight)
@@ -72,6 +80,7 @@ import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..),
 import           Database.LSMTree.Internal.IndexCompact (IndexCompact)
 import           Database.LSMTree.Internal.Lookup (lookupsIO)
 import           Database.LSMTree.Internal.Managed
+import qualified Database.LSMTree.Internal.Merge as Merge
 import qualified Database.LSMTree.Internal.Normal as Normal
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..),
                      SessionRoot (..), SnapshotName)
@@ -80,6 +89,7 @@ import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.Serialise (SerialisedBlob,
                      SerialisedKey, SerialisedValue)
+import           Database.LSMTree.Internal.TempRegistry
 import qualified Database.LSMTree.Internal.Vector as V
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
@@ -416,13 +426,39 @@ withOpenTable th action = RW.with (tableHandleState th) $ \case
 type Levels h = V.Vector (Level h)
 
 -- | Runs in order from newer to older
-newtype Level h = Level {
-    residentRuns :: V.Vector (Run h)
-{- TODO: this is where ongoing merges appear once we implement scheduling ,
-  incomingRuns :: MergingRun
--}
+data Level h = Level {
+    incomingRuns :: !(MergingRun h)
+  , residentRuns :: !(V.Vector (Run h))
   }
-  deriving newtype NoThunks
+
+-- TODO: proper instance
+deriving via OnlyCheckWhnfNamed "Level" (Level h) instance NoThunks (Level h)
+
+-- | A merging run is either a single run, or some ongoing merge.
+data MergingRun h =
+    MergingRun !(MergingRunState h)
+  | SingleRun !(Run h)
+
+-- | Merges are stepped to completion immediately, so there is no representation
+-- for ongoing merges (yet)
+--
+-- TODO: this should also represent ongoing merges once we implement scheduling.
+newtype MergingRunState h = CompletedMerge (Run h)
+
+-- | Return all runs in the levels, ordered from newest to oldest
+runsInLevels :: Levels h -> V.Vector (Run h)
+runsInLevels levels = flip V.concatMap levels $ \(Level mr rs) ->
+    case mr of
+      SingleRun r                   -> r `V.cons` rs
+      MergingRun (CompletedMerge r) -> r `V.cons` rs
+
+{-# SPECIALISE closeLevels :: HasFS IO h -> Levels (Handle h) -> IO () #-}
+closeLevels ::
+     m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+  => HasFS m h
+  -> Levels (Handle h)
+  -> m ()
+closeLevels hfs levels = V.mapM_ (Run.removeReference hfs) (runsInLevels levels)
 
 -- | Flattend cache of the runs that referenced by a table handle.
 --
@@ -449,7 +485,8 @@ mkLevelsCache lvls = LevelsCache_ {
     , cachedIndexes   = V.map Run.runIndex rs
     , cachedKOpsFiles = V.map Run.runKOpsFile rs
     }
-  where rs = V.concatMap residentRuns lvls
+  where
+    rs = runsInLevels lvls
 
 --
 -- Implementation of public API
@@ -474,7 +511,7 @@ new ::
   -> m (TableHandle m h)
 new sesh conf = withOpenSession sesh $ \seshEnv -> newWithLevels seshEnv conf V.empty
 
-{-# SPECIALISE new :: Session IO h -> TableConfig -> IO (TableHandle IO h) #-}
+{-# SPECIALISE newWithLevels :: SessionEnv IO h -> TableConfig -> Levels (Handle h) -> IO (TableHandle IO h) #-}
 newWithLevels ::
      m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
   => SessionEnv m h
@@ -518,8 +555,7 @@ close th = RW.modify_ (tableHandleState th) $ \case
       -- forget about this table.
       tableSessionUntrackTable thEnv
       lvls <- tableLevels <$> readMVar (tableContent thEnv)
-      V.forM_ lvls $ \Level{residentRuns} ->
-        V.forM_ residentRuns $ Run.removeReference (tableHasFS thEnv)
+      closeLevels (tableHasFS thEnv) lvls
       pure TableHandleClosed
 
 {-# SPECIALISE lookups :: V.Vector SerialisedKey -> TableHandle IO h -> (Maybe (Entry SerialisedValue (BlobRef (Run (Handle h)))) -> lookupResult) -> IO (V.Vector lookupResult) #-}
@@ -572,83 +608,20 @@ updates ::
   -> m ()
 updates es th = withOpenTable th $ \thEnv -> do
     let hfs = tableHasFS thEnv
-    modifyTableContent_ hfs (tableContent thEnv) $
-      updatesWithInterleavedFlushes
-          (tableConfig th)
-          hfs
-          (tableSessionRoot thEnv)
-          (tablesSessionUniqCounter thEnv)
-          es
+    modifyWithTempRegistry_
+      (takeMVar (tableContent thEnv))
+      (putMVar (tableContent thEnv)) $ \tc -> do
+        tc' <- updatesWithInterleavedFlushes
+                (tableConfig th)
+                hfs
+                (tableSessionRoot thEnv)
+                (tablesSessionUniqCounter thEnv)
+                es
+                tc
+        assertNoThunks tc' $ pure ()
+        pure tc'
 
--- | A temporary registry for resources that are bound to end up in some final
--- state, after which they /should/ be guaranteed to be released correctly.
---
--- It is the responsibility of the user to guarantee that this final state is
--- released correctly in the presence of (async) exceptions.
---
--- NOTE: we could use an even more proper abstraction for this /temporary
--- registry/ pattern, because it is a pattern that is bound to show up more
--- often. An example of such an abstraction is the @WithTempRegistry@ from
--- @ouroboros-consensus@:
--- https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Util/ResourceRegistry.hs
-newtype TempRegistry m a = TempRegistry (StrictMVar m (V.Vector a))
-
-{-# SPECIALISE newTempRegistry :: IO (TempRegistry IO a) #-}
-newTempRegistry :: MonadMVar m => m (TempRegistry m a)
-newTempRegistry = TempRegistry <$> newMVar V.empty
-
-{-# SPECIALISE releaseTempRegistry :: TempRegistry IO a -> (a -> IO ()) -> IO () #-}
-releaseTempRegistry :: MonadMVar m => TempRegistry m a -> (a -> m ()) -> m ()
-releaseTempRegistry (TempRegistry var) free = do
-    xs <- takeMVar var
-    V.mapM_ free xs
-
-{-# SPECIALISE allocateTemp :: TempRegistry IO a -> IO a -> IO a #-}
-allocateTemp :: (MonadMask m, MonadMVar m) => TempRegistry m a -> m a -> m a
-allocateTemp (TempRegistry var) acquire =
-    mask_ $ do
-      x <- acquire
-      modifyMVar_ var (pure . V.cons x)
-      pure x
-
-{-# SPECIALISE modifyTableContent :: HasFS IO h -> StrictMVar IO (TableContent h) -> (TempRegistry IO (Run (Handle h)) -> TableContent h -> IO (TableContent h, a)) -> IO a #-}
--- | Exception-safe modification of table contents.
---
--- When we modify a table's content (variable), we might add a number of new
--- runs to the levels. If an exception is thrown before putting the updated
--- table contents into the variable, then all new runs should be cleaned up. We
--- record these runs in a 'TempRegistry'.
-modifyTableContent ::
-     m ~ IO
-  => HasFS m h
-  -> StrictMVar m (TableContent h)
-  -> (TempRegistry m (Run (Handle h)) -> TableContent h -> m (TableContent h, a))
-  -> m a
-modifyTableContent hfs varContent action =
-    snd . fst <$> generalBracket acquire release (uncurry action)
-  where
-    acquire = (,) <$> newTempRegistry <*> takeMVar varContent
-    release (reg, content) = \case
-        ExitCaseSuccess (content', _) -> putMVar varContent content'
-        ExitCaseException _ -> putBack
-        ExitCaseAbort -> putBack
-      where
-        putBack = do
-          putMVar varContent content
-          releaseTempRegistry reg (Run.removeReference hfs)
-
-{-# SPECIALISE modifyTableContent_ :: HasFS IO h -> StrictMVar IO (TableContent h) -> (TempRegistry IO (Run (Handle h)) -> TableContent h -> IO (TableContent h)) -> IO () #-}
--- | Like 'modifyTableContent', but without a return value.
-modifyTableContent_ ::
-     m ~ IO
-  => HasFS m h
-  -> StrictMVar m (TableContent h)
-  -> (TempRegistry m (Run (Handle h)) -> TableContent h -> m (TableContent h))
-  -> m ()
-modifyTableContent_ hfs varContent action =
-    modifyTableContent hfs varContent (\reg content -> (,()) <$> action reg content)
-
-{-# SPECIALISE updatesWithInterleavedFlushes :: TableConfig -> HasFS IO h -> SessionRoot -> UniqCounter IO -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob) -> TempRegistry IO (Run (Handle h)) -> TableContent h -> IO (TableContent h) #-}
+{-# SPECIALISE updatesWithInterleavedFlushes :: TableConfig -> HasFS IO h -> SessionRoot -> UniqCounter IO -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob) -> TempRegistry IO -> TableContent h -> IO (TableContent h) #-}
 -- | A single batch of updates can fill up the write buffer multiple times. We
 -- flush the write buffer each time it fills up before trying to fill it up
 -- again.
@@ -674,13 +647,13 @@ modifyTableContent_ hfs varContent action =
 -- and write those to disk. Of course, any remainder that did not fit into a
 -- whole run should then end up in a fresh write buffer.
 updatesWithInterleavedFlushes ::
-     m ~ IO
+     m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
   => TableConfig
   -> HasFS m h
   -> SessionRoot
   -> UniqCounter m
   -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob)
-  -> TempRegistry m (Run (Handle h))
+  -> TempRegistry m
   -> TableContent h
   -> m (TableContent h)
 updatesWithInterleavedFlushes conf hfs root uniqC es reg tc = do
@@ -694,10 +667,10 @@ updatesWithInterleavedFlushes conf hfs root uniqC es reg tc = do
     if unNumEntries (WB.numEntries wb') < maxn then do
       assert (V.null es') $ pure ()
       pure $! tc'
-    -- If the write buffer did reach capacity, the we flush.
+    -- If the write buffer did reach capacity, then we flush.
     else do
       assert (unNumEntries (WB.numEntries wb') == maxn) $ pure ()
-      tc'' <- flushWriteBuffer hfs root uniqC reg tc'
+      tc'' <- flushWriteBuffer conf hfs root uniqC reg tc'
       -- In the fortunate case where we have already performed all the updates,
       -- return,
       if V.null es' then
@@ -716,7 +689,7 @@ updatesWithInterleavedFlushes conf hfs root uniqC es reg tc = do
         , tableCache = tableCache tc0
         }
 
-{-# SPECIALISE flushWriteBuffer :: HasFS IO h -> SessionRoot -> UniqCounter IO -> TempRegistry IO (Run (Handle h)) -> TableContent h -> IO (TableContent h) #-}
+{-# SPECIALISE flushWriteBuffer :: TableConfig -> HasFS IO h -> SessionRoot -> UniqCounter IO -> TempRegistry IO -> TableContent h -> IO (TableContent h) #-}
 -- | Flush the write buffer to disk, regardless of whether it is full or not.
 --
 -- The returned table content contains an updated set of levels, where the write
@@ -726,29 +699,260 @@ updatesWithInterleavedFlushes conf hfs root uniqC es reg tc = do
 -- implementation that is sufficient to pass the tests, but simply writes small
 -- runs to disk without merging.
 flushWriteBuffer ::
-     m ~ IO
-  => HasFS m h
+     m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+  => TableConfig
+  -> HasFS m h
   -> SessionRoot
   -> UniqCounter m
-  -> TempRegistry m (Run (Handle h))
+  -> TempRegistry m
   -> TableContent h
   -> m (TableContent h)
-flushWriteBuffer hfs root uniqC reg tc = do
+flushWriteBuffer conf hfs root uniqC reg tc
+  | WB.null (tableWriteBuffer tc) = pure tc
+  | otherwise = do
     n <- incrUniqCounter uniqC
-    r <- allocateTemp reg (Run.fromWriteBuffer hfs
-                            (Paths.runPath root n)
-                            (tableWriteBuffer tc))
-    let levels' = addRunToLevels r (tableLevels tc)
+    r <- allocateTemp reg
+            (Run.fromWriteBuffer hfs
+              (Paths.runPath root n)
+              (tableWriteBuffer tc))
+            (Run.removeReference hfs)
+    levels' <- addRunToLevels conf hfs root uniqC r reg (tableLevels tc)
     pure $! TableContent {
         tableWriteBuffer = WB.empty
       , tableLevels = levels'
       , tableCache = mkLevelsCache levels'
       }
+
+-- | Note that the invariants rely on the fact that levelling is only used on
+-- the last level.
+--
+levelsInvariant :: forall s h. TableConfig -> Levels h -> ST s Bool
+levelsInvariant conf levels = go 1 levels >>= \ !_ -> pure True
   where
-    addRunToLevels :: Run h -> Levels h -> Levels h
-    addRunToLevels r levels = case V.uncons levels of
-        Nothing               -> V.singleton $ Level $ V.singleton r
-        Just (Level runs, ls) -> V.cons (Level (V.cons r runs)) ls
+    sr = confSizeRatio conf
+    wba = confWriteBufferAlloc conf
+
+    go :: Int -> Levels h -> ST s ()
+    go !_ (V.uncons -> Nothing) = pure ()
+
+    go !ln (V.uncons -> Just (Level mr rs, ls)) = do
+      mrs <- case mr of
+               SingleRun r                   -> pure $ CompletedMerge r
+               MergingRun (CompletedMerge r) -> pure $ CompletedMerge r
+      assert (length rs < sizeRatioInt sr) $ pure ()
+      assert (expectedRunLengths ln rs ls) $ pure ()
+      assert (expectedMergingRunLengths ln mr mrs ls) $ pure ()
+      go (ln+1) ls
+
+    -- All runs within a level "proper" (as opposed to the incoming runs
+    -- being merged) should be of the correct size for the level.
+    expectedRunLengths ln rs ls = do
+      case mergePolicyForLevel (confMergePolicy conf) ln ls of
+        -- Levels using levelling have only one run, and that single run is
+        -- (almost) always involved in an ongoing merge. Thus there are no
+        -- other "normal" runs. The exception is when a levelling run becomes
+        -- too large and is promoted, in that case initially there's no merge,
+        -- but it is still represented as a 'MergingRun', using 'SingleRun'.
+        LevelLevelling -> assert (V.null rs) True
+        LevelTiering   -> V.all (\r -> assert (fits LevelTiering r ln) True) rs
+
+    -- Incoming runs being merged also need to be of the right size, but the
+    -- conditions are more complicated.
+    expectedMergingRunLengths ln mr mrs ls =
+      case mergePolicyForLevel (confMergePolicy conf) ln ls of
+        LevelLevelling ->
+          case (mr, mrs) of
+            -- A single incoming run (which thus didn't need merging) must be
+            -- of the expected size range already
+            (SingleRun r, CompletedMerge{}) -> assert (fits LevelLevelling r ln) True
+                        -- A completed merge for levelling can be of almost any size at all!
+            -- It can be smaller, due to deletions in the last level. But it
+            -- can't be bigger than would fit into the next level.
+            (_, CompletedMerge r) -> assert (fitsUB LevelLevelling r (ln + 1)) True
+        LevelTiering ->
+          case (mr, mrs, mergeLastForLevel ls) of
+            -- A single incoming run (which thus didn't need merging) must be
+            -- of the expected size already
+            (SingleRun r, CompletedMerge{}, _) -> assert (fits LevelTiering r ln) True
+
+            -- A completed last level run can be of almost any smaller size due
+            -- to deletions, but it can't be bigger than the next level down.
+            -- Note that tiering on the last level only occurs when there is
+            -- a single level only.
+            (_, CompletedMerge r, Merge.LastLevel) ->
+                assert (ln == 1) $
+                assert (fitsUB LevelTiering r (ln + 1)) $
+                True
+
+            -- A completed mid level run is usually of the size for the
+            -- level it is entering, but can also be one smaller (in which case
+            -- it'll be held back and merged again).
+            (_, CompletedMerge r, Merge.MidLevel) ->
+                assert (fitsUB LevelTiering r ln || fitsUB LevelTiering r (ln + 1)) True
+
+    -- Check that a run fits in the current level
+    fits policy r ln = fitsLB policy r ln && fitsUB policy r ln
+    -- Check that a run is too large for previous levels
+    fitsLB policy r ln = maxRunSize sr wba policy (ln - 1) < Run.runNumEntries r
+    -- Check that a run is too small for next levels
+    fitsUB policy r ln = Run.runNumEntries r <= maxRunSize sr wba policy ln
+
+{-# SPECIALISE addRunToLevels :: TableConfig -> HasFS IO h -> SessionRoot -> UniqCounter IO -> Run (Handle h) -> TempRegistry IO -> Levels (Handle h) -> IO (Levels (Handle h)) #-}
+addRunToLevels ::
+     forall m h. m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+  => TableConfig
+  -> HasFS m h
+  -> SessionRoot
+  -> UniqCounter m
+  -> Run (Handle h)
+  -> TempRegistry m
+  -> Levels (Handle h)
+  -> m (Levels (Handle h))
+addRunToLevels conf@TableConfig{..} hfs root uniqC r0 reg levels = do
+    ls' <- go 1 (V.singleton r0) levels
+    assert (runST $ levelsInvariant conf ls') $ return ls'
+  where
+    -- NOTE: @go@ is based on the @increment@ function from the
+    -- @ScheduledMerges@ prototype.
+    go !ln rs (V.uncons -> Nothing) = do
+        -- Make a new level
+        let policyForLevel = mergePolicyForLevel confMergePolicy ln V.empty
+        mr <- newMerge policyForLevel Merge.LastLevel rs
+        return $ V.singleton $ Level mr V.empty
+    go !ln rs' (V.uncons -> Just (Level mr rs, ls)) = do
+        -- TODO: until we have proper scheduling, the merging run is actually
+        -- always stepped to completion immediately, so we can see it is just a
+        -- single run.
+        r <- expectCompletedMerge mr
+        case mergePolicyForLevel confMergePolicy ln ls of
+          -- If r is still too small for this level then keep it and merge again
+          -- with the incoming runs.
+          LevelTiering | runSize r <= maxRunSize' conf LevelTiering (ln - 1) -> do
+            let mergelast = mergeLastForLevel ls
+            mr' <- newMerge LevelTiering mergelast (rs' `V.snoc` r)
+            pure $! Level mr' rs `V.cons` ls
+          -- This tiering level is now full. We take the completed merged run
+          -- (the previous incoming runs), plus all the other runs on this level
+          -- as a bundle and move them down to the level below. We start a merge
+          -- for the new incoming runs. This level is otherwise empty.
+          LevelTiering | levelIsFull confSizeRatio rs -> do
+            mr' <- newMerge LevelTiering Merge.MidLevel rs'
+            ls' <- go (ln+1) (r `V.cons` rs) ls
+            pure $! Level mr' V.empty `V.cons` ls'
+          -- This tiering level is not yet full. We move the completed merged run
+          -- into the level proper, and start the new merge for the incoming runs.
+          LevelTiering -> do
+            let mergelast = mergeLastForLevel ls
+            mr' <- newMerge LevelTiering mergelast rs'
+            pure $! Level mr' (r `V.cons` rs) `V.cons` ls
+          -- The final level is using levelling. If the existing completed merge
+          -- run is too large for this level, we promote the run to the next
+          -- level and start merging the incoming runs into this (otherwise
+          -- empty) level .
+          LevelLevelling | runSize r > maxRunSize' conf LevelLevelling ln -> do
+            assert (V.null rs && V.null ls) $ pure ()
+            mr' <- newMerge LevelTiering Merge.MidLevel rs'
+            ls' <- go (ln+1) (V.singleton r) V.empty
+            pure $! Level mr' V.empty `V.cons` ls'
+          -- Otherwise we start merging the incoming runs into the run.
+          LevelLevelling -> do
+            assert (V.null rs && V.null ls) $ pure ()
+            mr' <- newMerge LevelLevelling Merge.LastLevel (rs' `V.snoc` r)
+            pure $! Level mr' V.empty `V.cons` V.empty
+
+    expectCompletedMerge :: MergingRun (Handle h) -> m (Run (Handle h))
+    expectCompletedMerge (SingleRun r)                   = pure r
+    expectCompletedMerge (MergingRun (CompletedMerge r)) = pure r
+
+    -- TODO: Until we implement proper scheduling, this does not only start a
+    -- merge, but it also steps it to completion.
+    newMerge :: MergePolicyForLevel -> Merge.Level -> V.Vector (Run (Handle h)) -> m (MergingRun (Handle h))
+    newMerge mergepolicy mergelast rs
+      | Just (r, rest) <- V.uncons rs
+      , V.null rest = do
+          pure (SingleRun r)
+      | otherwise = do
+        assert (let l = V.length rs in l >= 2 && l <= 5) $ pure ()
+        r <- allocateTemp reg (mergeRuns conf hfs root uniqC mergepolicy mergelast rs) (Run.removeReference hfs)
+        V.mapM_ (freeTemp reg . Run.removeReference hfs) rs
+        pure $! MergingRun (CompletedMerge r)
+
+data MergePolicyForLevel = LevelTiering | LevelLevelling
+
+mergePolicyForLevel :: MergePolicy -> Int -> Levels h -> MergePolicyForLevel
+mergePolicyForLevel MergePolicyLazyLevelling n nextLevels
+  | n == 1
+  , V.null nextLevels
+  = LevelTiering    -- always use tiering on first level
+  | V.null nextLevels = LevelLevelling  -- levelling on last level
+  | otherwise         = LevelTiering
+
+runSize :: Run h -> NumEntries
+runSize run = Run.runNumEntries run
+
+-- | Compute the maximum size of a run for a given level.
+--
+-- The @size@ of a tiering run at each level is allowed to be
+-- @bufferSize*sizeRatio^(level-1) < size <= bufferSize*sizeRatio^level@.
+--
+-- >>> unNumEntries . maxRunSize Four (AllocNumEntries (NumEntries 2)) LevelTiering <$> [0, 1, 2, 3, 4]
+-- [0,2,8,32,128]
+--
+-- The @size@ of a levelling run at each level is allowed to be
+-- @bufferSize*sizeRatio^(level-1) < size <= bufferSize*sizeRatio^(level+1)@. A
+-- levelling run can take take up a whole level, so the maximum size of a run is
+-- @sizeRatio*@ larger than the maximum size of a tiering run on the same level.
+--
+-- >>> unNumEntries . maxRunSize Four (AllocNumEntries (NumEntries 2)) LevelLevelling <$> [0, 1, 2, 3, 4]
+-- [0,8,32,128,512]
+maxRunSize :: SizeRatio -> WriteBufferAlloc -> MergePolicyForLevel -> Int -> NumEntries
+maxRunSize (sizeRatioInt -> sizeRatio) (AllocNumEntries (NumEntries bufferSize)) policy ln =
+    NumEntries $ case policy of
+      LevelLevelling -> runSizeTiering * sizeRatio
+      LevelTiering   -> runSizeTiering
+  where
+    runSizeTiering
+      | ln < 0 = error "maxRunSize: non-positive level number"
+      | ln == 0 = 0
+      | otherwise = bufferSize * sizeRatio ^ (ln - 1)
+
+maxRunSize' :: TableConfig -> MergePolicyForLevel -> Int -> NumEntries
+maxRunSize' config policy ln =
+    maxRunSize (confSizeRatio config) (confWriteBufferAlloc config) policy ln
+
+mergeLastForLevel :: Levels s -> Merge.Level
+mergeLastForLevel levels
+ | V.null levels = Merge.LastLevel
+ | otherwise     = Merge.MidLevel
+
+levelIsFull :: SizeRatio -> V.Vector (Run h) -> Bool
+levelIsFull sr rs = V.length rs + 1 >= (sizeRatioInt sr)
+
+{-# SPECIALISE mergeRuns :: TableConfig -> HasFS IO h -> SessionRoot -> UniqCounter IO -> MergePolicyForLevel -> Merge.Level -> V.Vector (Run (Handle h)) -> IO (Run (Handle h)) #-}
+-- TODO: pass 'confBloomFilterAlloc' down to the merge and use it to initialise
+-- bloom filters
+mergeRuns ::
+     m ~ IO
+  => TableConfig
+  -> HasFS m h
+  -> SessionRoot
+  -> UniqCounter m
+  -> MergePolicyForLevel
+  -> Merge.Level
+  -> V.Vector (Run (Handle h))
+  -> m (Run (Handle h))
+mergeRuns conf hfs root uniqC _ mergeLevel runs = do
+    n <- incrUniqCounter uniqC
+    let runPaths = Paths.runPath root n
+    Merge.new hfs mergeLevel resolve runPaths (toList runs) >>= \case
+      Nothing -> error "mergeRuns: no inputs"
+      Just merge -> go merge
+  where
+    resolve = resolveMupsert conf
+    go m =
+      Merge.steps hfs m 1024 >>= \case
+        (_, Merge.MergeInProgress)   -> go m
+        (_, Merge.MergeComplete run) -> return run
 
 {-------------------------------------------------------------------------------
   Snapshots
@@ -769,8 +973,11 @@ snapshot snap label th = do
       -- For the temporary implementation it is okay to just flush the buffer
       -- before taking the snapshot.
       let hfs = tableHasFS thEnv
-      content <- modifyTableContent hfs (tableContent thEnv) $ \reg content -> do
+      content <- modifyWithTempRegistry
+                    (takeMVar (tableContent thEnv))
+                    (putMVar (tableContent thEnv)) $ \reg content -> do
         r <- flushWriteBuffer
+              (tableConfig th)
               hfs
               (tableSessionRoot thEnv)
               (tablesSessionUniqCounter thEnv)
@@ -781,7 +988,11 @@ snapshot snap label th = do
       -- snapshot file yet. If an asynchronous exception happens beyond this
       -- point, we'll take that loss, as the inner state of the table is still
       -- consistent.
-      let runNumbers = V.map (V.map (runNumber . Run.runRunFsPaths) . residentRuns) $
+      let runNumbers = V.map (\(Level mr rs) ->
+                                ( case mr of
+                                    SingleRun r -> (True, runNumber (Run.runRunFsPaths r))
+                                    MergingRun (CompletedMerge r) -> (False, runNumber (Run.runRunFsPaths r))
+                                , V.map (runNumber . Run.runRunFsPaths) rs)) $
                           tableLevels content
           snapPath = Paths.snapshot (tableSessionRoot thEnv) snap
       FS.doesFileExist (tableHasFS thEnv) snapPath >>= \b ->
@@ -792,7 +1003,7 @@ snapshot snap label th = do
         (FS.WriteMode FS.MustBeNew) $ \h ->
           void $ FS.hPutAllStrict (tableHasFS thEnv) h
                       (BSC.pack $ show (label, runNumbers, tableConfig th))
-      pure $! V.sum (V.map V.length runNumbers)
+      pure $! V.sum (V.map (\((_ :: (Bool, Word64)), rs) -> 1 + V.length rs) runNumbers)
 
 {-# SPECIALISE open :: Session IO h -> String -> SnapshotName -> IO (TableHandle IO h) #-}
 -- |  See 'Database.LSMTree.Normal.open'.
@@ -815,10 +1026,12 @@ open sesh label snap = do
                 FS.hGetAll (sessionHasFS seshEnv) h
       let (label', runNumbers, conf) = read . BSC.unpack . BSC.toStrict $ bs
       unless (label == label') $ throwIO (ErrSnapshotWrongType snap)
-      let runPaths = V.map (V.map (RunFsPaths (Paths.activeDir $ sessionRoot seshEnv))) runNumbers
+      let runPaths = V.map (bimap (second $ RunFsPaths (Paths.activeDir $ sessionRoot seshEnv))
+                                  (V.map (RunFsPaths (Paths.activeDir $ sessionRoot seshEnv))))
+                           runNumbers
       with (openLevels hfs runPaths) (newWithLevels seshEnv conf)
 
-{-# SPECIALISE openLevels :: HasFS IO h -> V.Vector (V.Vector RunFsPaths) -> Managed IO (Levels (FS.Handle h)) #-}
+{-# SPECIALISE openLevels :: HasFS IO h -> V.Vector ((Bool, RunFsPaths), V.Vector RunFsPaths) -> Managed IO (Levels (FS.Handle h)) #-}
 -- | Open multiple levels.
 --
 -- If an error occurs when opening multiple runs in sequence, then we have to
@@ -834,14 +1047,17 @@ open sesh label snap = do
 openLevels ::
      m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
   => HasFS m h
-  -> V.Vector (V.Vector RunFsPaths)
+  -> V.Vector ((Bool, RunFsPaths), V.Vector RunFsPaths)
   -> Managed m (Levels (Handle h))
 openLevels hfs levels =
-    flip V.mapMStrict levels $ \level -> fmap Level $
-      flip V.mapMStrict level $ \run ->
+    flip V.mapMStrict levels $ \(mrPath, rsPaths) -> do
+      !r <- Managed $ bracketOnError (Run.openFromDisk hfs (snd mrPath)) (Run.removeReference hfs)
+      !rs <- flip V.mapMStrict rsPaths $ \run ->
         Managed $ bracketOnError
                     (Run.openFromDisk hfs run)
                     (Run.removeReference hfs)
+      let !mr = if fst mrPath then SingleRun r else MergingRun (CompletedMerge r)
+      pure $! Level mr rs
 
 {-# SPECIALISE deleteSnapshot :: Session IO h -> SnapshotName -> IO () #-}
 -- |  See 'Database.LSMTree.Common.deleteSnapshot'.
@@ -934,6 +1150,9 @@ deriving instance Read MergePolicy
 
 data SizeRatio = Four
   deriving (Show, Eq)
+
+sizeRatioInt :: SizeRatio -> Int
+sizeRatioInt = \case Four -> 4
 
 -- | TODO: this should be removed once we have proper snapshotting with proper
 -- persistence of the config to disk.
