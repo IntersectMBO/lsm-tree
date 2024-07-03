@@ -21,14 +21,12 @@ import           System.FS.BlockIO.API (IOOp (..), IOResult (..))
 serialHasBlockIO ::
      (MonadThrow m, MonadMVar m, PrimMonad m, Eq h)
   => HasFS m h
-  -> API.IOCtxParams
   -> m (API.HasBlockIO m h)
-serialHasBlockIO hfs ctxParams = do
+serialHasBlockIO hfs = do
   ctx <- initIOCtx (SomeHasFS hfs)
   pure $ API.HasBlockIO {
       API.close = close ctx
     , API.submitIO = submitIO hfs ctx
-    , API.getParams = ctxParams
     }
 
 data IOCtx m = IOCtx { ctxFS :: SomeHasFS m, openVar :: MVar m Bool }
