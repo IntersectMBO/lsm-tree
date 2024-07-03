@@ -95,7 +95,7 @@ library
     , fs-api                   ^>=0.2
     , io-classes               ^>=1.4
     , lsm-tree:bloomfilter
-    , lsm-tree:fs-api-blockio
+    , lsm-tree:blockio-api
     , lsm-tree:kmerge
     , nothunks                 ^>=0.2
     , primitive                ^>=0.9
@@ -272,7 +272,7 @@ test-suite lsm-tree-test
     , io-sim                   >=1.4
     , lsm-tree
     , lsm-tree:bloomfilter
-    , lsm-tree:fs-api-blockio
+    , lsm-tree:blockio-api
     , lsm-tree:prototypes
     , mtl
     , primitive
@@ -330,7 +330,7 @@ benchmark lsm-tree-micro-bench
     , fs-api
     , lsm-tree
     , lsm-tree:bloomfilter
-    , lsm-tree:fs-api-blockio
+    , lsm-tree:blockio-api
     , lsm-tree:prototypes
     , primitive
     , QuickCheck
@@ -384,7 +384,7 @@ benchmark lsm-tree-bench-lookups
     , io-classes
     , lsm-tree
     , lsm-tree:bloomfilter
-    , lsm-tree:fs-api-blockio
+    , lsm-tree:blockio-api
     , primitive
     , QuickCheck
     , random
@@ -419,7 +419,7 @@ benchmark lsm-tree-bench-wp8
     , deepseq
     , fs-api
     , lsm-tree
-    , lsm-tree:fs-api-blockio
+    , lsm-tree:blockio-api
     , lsm-tree:mcg
     , optparse-applicative
     , vector
@@ -584,10 +584,10 @@ flag serialblockio
   default:     False
   manual:      True
 
-library fs-api-blockio
+library blockio-api
   import:          language, warnings, wno-x-partial
   visibility:      private
-  hs-source-dirs:  fs-api-blockio/src
+  hs-source-dirs:  blockio-api/src
   exposed-modules:
     System.FS.BlockIO.API
     System.FS.BlockIO.IO
@@ -602,7 +602,7 @@ library fs-api-blockio
     , vector      ^>=0.13
 
   if os(linux)
-    hs-source-dirs: fs-api-blockio/src-linux
+    hs-source-dirs: blockio-api/src-linux
     other-modules:  System.FS.BlockIO.Internal
 
     if !flag(serialblockio)
@@ -610,27 +610,27 @@ library fs-api-blockio
       build-depends: blockio-uring ^>=0.1
 
   elif os(osx)
-    hs-source-dirs: fs-api-blockio/src-macos
+    hs-source-dirs: blockio-api/src-macos
     other-modules:  System.FS.BlockIO.Internal
 
   elif os(windows)
-    hs-source-dirs: fs-api-blockio/src-windows
+    hs-source-dirs: blockio-api/src-windows
     other-modules:  System.FS.BlockIO.Internal
 
   if flag(serialblockio)
     cpp-options: -DSERIALBLOCKIO
 
-test-suite fs-api-blockio-test
+test-suite blockio-api-test
   import:         language, warnings, wno-x-partial
   type:           exitcode-stdio-1.0
-  hs-source-dirs: fs-api-blockio/test
+  hs-source-dirs: blockio-api/test
   main-is:        Main.hs
   build-depends:
     , async
     , base                     >=4.16 && <4.20
     , bytestring
     , fs-api
-    , lsm-tree:fs-api-blockio
+    , lsm-tree:blockio-api
     , primitive
     , tasty
     , tasty-hunit
