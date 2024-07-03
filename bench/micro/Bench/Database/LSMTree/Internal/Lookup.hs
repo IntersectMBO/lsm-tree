@@ -6,8 +6,9 @@ import           Control.Exception (assert)
 import           Control.Monad
 import           Control.Monad.ST.Strict (stToIO)
 import           Criterion.Main (Benchmark, bench, bgroup, env, envWithCleanup,
-                     perRunEnv, whnf, whnfAppIO)
-import           Data.Arena (ArenaManager, newArenaManager, withArena)
+                     perRunEnv, perRunEnvWithCleanup, whnf, whnfAppIO)
+import           Data.Arena (ArenaManager, closeArena, newArena,
+                     newArenaManager, withArena)
 import           Data.Bifunctor (Bifunctor (..))
 import qualified Data.List as List
 import           Data.Map.Strict (Map)
@@ -97,14 +98,15 @@ benchLookups conf@Config{name} =
             -- implementation takes care to evaluate each of the elements, we
             -- only compute WHNF.
           , bench "Perform intra-page lookups" $
-              -- TODO: here arena is destroyed too soon
-              -- but it should be fine for non-debug code
-              perRunEnv (withArena arenaManager $ \arena -> stToIO (prepLookups arena blooms indexes kopsFiles ks) >>= \(rkixs, ioops) ->
-                          FS.submitIO hasBlockIO ioops >>= \ioress ->
-                          pure (rkixs, ioops, ioress)
-                        ) $ \ ~(rkixs, ioops, ioress) -> do
-                !_ <- intraPageLookups resolveV rs ks rkixs ioops ioress
-                pure ()
+              perRunEnvWithCleanup
+                ( newArena arenaManager >>= \arena ->
+                  stToIO (prepLookups arena blooms indexes kopsFiles ks) >>= \(rkixs, ioops) ->
+                  FS.submitIO hasBlockIO ioops >>= \ioress ->
+                  pure (rkixs, ioops, ioress, arena)
+                )
+                (\(_, _, _, arena) -> closeArena arena) $ \ ~(rkixs, ioops, ioress, _) -> do
+                  !_ <- intraPageLookups resolveV rs ks rkixs ioops ioress
+                  pure ()
             -- The whole shebang: lookup preparation, doing the IO, and then
             -- performing intra-page-lookups. Again, we evaluate the result to
             -- WHNF because it is the same result that intraPageLookups produces
