@@ -31,6 +31,7 @@ module ScheduledMerges (
     update, updates,
     insert, inserts,
     delete, deletes,
+    supply,
     duplicate,
 
     -- * Test and trace
@@ -407,7 +408,7 @@ update tr (LSMHandle scr lsmr) k op = do
     sc <- readSTRef scr
     LSMContent wb ls <- readSTRef lsmr
     modifySTRef' scr (+1)
-    supplyCredits ls
+    supplyCredits 1 ls
     let wb' = Map.insert k op wb
     if Map.size wb' >= bufferSize
       then do
@@ -415,6 +416,14 @@ update tr (LSMHandle scr lsmr) k op = do
         writeSTRef lsmr (LSMContent Map.empty ls')
       else
         writeSTRef lsmr (LSMContent wb' ls)
+
+supply :: LSM s -> Credit -> ST s ()
+supply (LSMHandle scr lsmr) credits = do
+    LSMContent _ ls <- readSTRef lsmr
+    modifySTRef' scr (+1)
+    supplyCredits credits ls
+    ok <- invariant ls
+    assert ok $ return ()
 
 lookups :: LSM s -> [Key] -> ST s [(Key, LookupResult Value Blob)]
 lookups lsm = mapM (\k -> (k,) <$> lookup lsm k)
@@ -435,10 +444,10 @@ lookup lsm k = do
 bufferToRun :: Buffer -> Run
 bufferToRun = id
 
-supplyCredits :: Levels s -> ST s ()
-supplyCredits ls =
+supplyCredits :: Credit -> Levels s -> ST s ()
+supplyCredits n ls =
   sequence_
-    [ supplyMergeCredits (creditsForMerge mr) mr | Level mr _rs <- ls ]
+    [ supplyMergeCredits (n * creditsForMerge mr) mr | Level mr _rs <- ls ]
 
 -- | The general case (and thus worst case) of how many merge credits we need
 -- for a level. This is based on the merging policy at the level.

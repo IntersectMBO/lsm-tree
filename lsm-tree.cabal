@@ -556,6 +556,7 @@ library prototypes
     , quickcheck-dynamic
     , quickcheck-lockstep
     , tasty
+    , tasty-hunit
     , tasty-quickcheck
 
   ghc-options:

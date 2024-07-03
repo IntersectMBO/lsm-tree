@@ -16,11 +16,14 @@ import qualified Data.Map.Strict as Map
 
 import           Data.Constraint (Dict (..))
 import           Data.Proxy
+import           Data.STRef
 
+import           Control.Exception
 import           Control.Monad.ST
-import           Control.Tracer (Tracer, nullTracer)
+import           Control.Tracer (Tracer (Tracer), nullTracer)
+import qualified Control.Tracer as Tracer
 
-import           ScheduledMerges
+import           ScheduledMerges as LSM
 
 import           Test.QuickCheck
 import           Test.QuickCheck.StateModel hiding (lookUpVar)
@@ -28,6 +31,7 @@ import           Test.QuickCheck.StateModel.Lockstep hiding (ModelOp)
 import qualified Test.QuickCheck.StateModel.Lockstep.Defaults as Lockstep
 import qualified Test.QuickCheck.StateModel.Lockstep.Run as Lockstep
 import           Test.Tasty
+import           Test.Tasty.HUnit (testCase)
 import           Test.Tasty.QuickCheck (testProperty)
 
 
@@ -38,11 +42,64 @@ import           Test.Tasty.QuickCheck (testProperty)
 tests :: TestTree
 tests = testGroup "ScheduledMerges" [
       testProperty "ScheduledMerges vs model" prop_LSM
+    , testCase "regression_empty_run" test_regression_empty_run
     ]
 
 prop_LSM :: Actions (Lockstep Model) -> Property
 prop_LSM = Lockstep.runActions (Proxy :: Proxy Model)
 
+-- | Results in an empty run on level 2.
+test_regression_empty_run :: IO ()
+test_regression_empty_run =
+    runWithTracer $ \tracer -> do
+      stToIO $ do
+        lsm <- LSM.new
+        let ins k = LSM.insert tracer lsm k 0
+        let del k = LSM.delete tracer lsm k
+        -- run 1
+        ins 0
+        ins 1
+        ins 2
+        ins 3
+        -- run 2
+        ins 0
+        ins 1
+        ins 2
+        ins 3
+        -- run 3
+        ins 0
+        ins 1
+        ins 2
+        ins 3
+        -- run 4, deletes all previous elements
+        del 0
+        del 1
+        del 2
+        del 3
+        -- run 5, results in last level merge of run 1-4
+        ins 0
+        ins 1
+        ins 2
+        ins 3
+        -- finish merge
+        LSM.supply lsm 16
+
+-- | Provides a tracer and will add the log of traced events to the reported
+-- failure.
+runWithTracer :: (Tracer (ST RealWorld) Event -> IO a) -> IO a
+runWithTracer action = do
+    events <- stToIO $ newSTRef []
+    let tracer = Tracer $ Tracer.emit $ \e -> modifySTRef events (e :)
+    action tracer `catch` \e -> do
+      ev <- reverse <$> stToIO (readSTRef events)
+      throwIO (Traced e ev)
+
+data TracedException = Traced SomeException [Event]
+  deriving (Show)
+
+instance Exception TracedException where
+  displayException (Traced e ev) =
+    displayException e <> "\ntrace:\n" <> unlines (map show ev)
 
 -------------------------------------------------------------------------------
 -- QLS infrastructure
