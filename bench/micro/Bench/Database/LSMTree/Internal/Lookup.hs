@@ -47,6 +47,7 @@ benchmarks = bgroup "Bench.Database.LSMTree.Internal.Lookup" [
         , npos         = 256
         , nneg         = 0
         , ioctxps      = Nothing
+        , caching      = Run.CacheRunData
         }
     , benchLookups Config {
           name = "2_000_000 entries, 256 negative lookups"
@@ -54,6 +55,23 @@ benchmarks = bgroup "Bench.Database.LSMTree.Internal.Lookup" [
         , npos = 0
         , nneg = 256
         , ioctxps = Nothing
+        , caching      = Run.CacheRunData
+        }
+    , benchLookups Config {
+          name         = "2_000_000 entries, 256 positive lookups, NoCache"
+        , nentries     = 2_000_000
+        , npos         = 256
+        , nneg         = 0
+        , ioctxps      = Nothing
+        , caching      = Run.NoCacheRunData
+        }
+    , benchLookups Config {
+          name         = "2_000_000 entries, 256 negative lookups, NoCache"
+        , nentries     = 2_000_000
+        , npos         = 0
+        , nneg         = 256
+        , ioctxps      = Nothing
+        , caching      = Run.NoCacheRunData
         }
     ]
 
@@ -137,6 +155,8 @@ data Config = Config {
   , nneg         :: !Int
     -- | Optional parameters for the io-uring context
   , ioctxps      :: !(Maybe FS.IOCtxParams)
+    -- | Whether to use or bypass the OS page cache
+  , caching      :: !Run.RunDataCaching
   }
 
 lookupsInBatchesEnv ::
@@ -157,7 +177,7 @@ lookupsInBatchesEnv Config {..} = do
     hasBlockIO <- FS.ioHasBlockIO hasFS (fromMaybe FS.defaultIOCtxParams ioctxps)
     let wb = WB.fromMap storedKeys
         fsps = RunFsPaths (FS.mkFsPath []) 0
-    r <- Run.fromWriteBuffer hasFS hasBlockIO Run.NoCacheRunData fsps wb
+    r <- Run.fromWriteBuffer hasFS hasBlockIO caching fsps wb
     let nentriesReal = unNumEntries $ Run.runNumEntries r
     assert (nentriesReal == nentries) $ pure ()
     let npagesReal = Run.sizeInPages r
