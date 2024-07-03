@@ -137,13 +137,16 @@ levellingRunSize :: Int -> Int
 levellingRunSize n = 4^(n+1)
 
 tieringRunSizeToLevel :: Run -> Int
-tieringRunSizeToLevel r =
+tieringRunSizeToLevel r
+  | s <= bufferSize = 1  -- level numbers start at 1
+  | otherwise =
     1 + (finiteBitSize s - countLeadingZeros (s-1) - 1) `div` 2
   where
     s = Map.size r
 
 levellingRunSizeToLevel :: Run -> Int
-levellingRunSizeToLevel r = tieringRunSizeToLevel r - 1
+levellingRunSizeToLevel r =
+    max 1 (tieringRunSizeToLevel r - 1)  -- level numbers start at 1
 
 bufferSize :: Int
 bufferSize = tieringRunSize 1 -- 4
