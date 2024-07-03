@@ -47,6 +47,7 @@ module Database.LSMTree.Normal (
   , Internal.WriteBufferAlloc (..)
   , Internal.NumEntries (..)
   , Internal.BloomFilterAlloc (..)
+  , Internal.DiskCachePolicy (..)
   , withTable
   , new
   , close

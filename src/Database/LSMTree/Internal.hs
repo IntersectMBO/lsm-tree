@@ -44,6 +44,7 @@ module Database.LSMTree.Internal (
   , WriteBufferAlloc (..)
   , NumEntries (..)
   , BloomFilterAlloc (..)
+  , DiskCachePolicy (..)
     -- * Exported for cabal-docspec
   , MergePolicyForLevel (..)
   , maxRunSize
@@ -1118,6 +1119,8 @@ data TableConfig = TableConfig {
     -- | Function for resolving 'Mupsert' values. This should be 'Nothing' for
     -- normal tables and 'Just' for monoidal tables.
   , confResolveMupsert   :: !(Maybe ResolveMupsert)
+    -- | The policy for caching key\/value data from disk in memory.
+  , confDiskCachePolicy  :: !DiskCachePolicy
   }
   deriving Show
 
@@ -1140,6 +1143,7 @@ defaultTableConfig =
       , confWriteBufferAlloc = AllocNumEntries (NumEntries 20_000)
       , confBloomFilterAlloc = AllocRequestFPR 0.02
       , confResolveMupsert   = Nothing
+      , confDiskCachePolicy  = DiskCacheAll
       }
 
 resolveMupsert :: TableConfig -> SerialisedValue -> SerialisedValue -> SerialisedValue
@@ -1236,3 +1240,47 @@ instance Show ResolveMupsert where show _ = "ResolveMupsert function can not be 
 -- | TODO: this should be removed once we have proper snapshotting with proper
 -- persistence of the config to disk.
 instance Read ResolveMupsert where readsPrec = error "ResolveMupsert function can not be read"
+
+-- | The policy for caching data from disk in memory (using the OS page cache).
+--
+-- Caching data in memory can improve performance if the access pattern has
+-- good access locality or if the overall data size fits within memory. On the
+-- other hand, caching is determental to performance and wastes memory if the
+-- access pattern has poor spatial or temporal locality.
+--
+-- This implementation is designed to have good performance using a cacheless
+-- policy, where main memory is used only to cache Bloom filters and indexes,
+-- but none of the key\/value data itself. Nevertheless, some use cases will be
+-- faster if some or all of the key\/value data is also cached in memory. This
+-- implementation does not do any custom caching of key\/value data, relying
+-- simply on the OS page cache. Thus caching is done in units of 4kb disk pages
+-- (as opposed to individual key\/value pairs for example).
+--
+data DiskCachePolicy =
+
+       -- | Use the OS page cache to cache any\/all key\/value data in the
+       -- table.
+       --
+       -- Use this policy if the expected access pattern for the table
+       -- has a good spatial or temporal locality.
+       DiskCacheAll
+
+       -- | Use the OS page cache to cache data in all LSMT levels at or below
+       -- a given level number. For example, use 1 to cache the first level.
+       -- (The write buffer is considered to be level 0.)
+       --
+       -- Use this policy if the expected access pattern for the table
+       -- has good temporal locality for recently inserted keys.
+     | DiskCacheLevelsAtOrBelow Int
+
+       --TODO: Add a policy based on size in bytes rather than internal details
+       -- like levels. An easy use policy would be to say: "cache the first 10
+       -- Mb" and have everything worked out from that.
+
+       -- | Do not cache any key\/value data in any level (except the write
+       -- buffer).
+       --
+       -- Use this policy if expected access pattern for the table has poor
+       -- spatial or temporal locality, such as uniform random access.
+     | DiskCacheNone
+  deriving stock (Eq, Show, Read)
