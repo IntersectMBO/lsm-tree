@@ -122,7 +122,7 @@ benchLookups conf@Config{name} =
                   FS.submitIO hasBlockIO ioops >>= \ioress ->
                   pure (rkixs, ioops, ioress, arena)
                 )
-                (\(_, _, _, arena) -> closeArena arena) $ \ ~(rkixs, ioops, ioress, _) -> do
+                (\(_, _, _, arena) -> closeArena arenaManager arena) $ \ ~(rkixs, ioops, ioress, _) -> do
                   !_ <- intraPageLookups resolveV rs ks rkixs ioops ioress
                   pure ()
             -- The whole shebang: lookup preparation, doing the IO, and then
