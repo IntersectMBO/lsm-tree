@@ -1,7 +1,3 @@
-{-# LANGUAGE DeriveAnyClass     #-}
-{-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE RecordWildCards    #-}
-
 module Bench.Database.LSMTree.Internal.WriteBuffer (benchmarks) where
 
 import           Control.DeepSeq (NFData (..))

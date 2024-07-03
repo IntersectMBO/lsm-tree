@@ -1,7 +1,3 @@
-{-# LANGUAGE BangPatterns        #-}
-{-# LANGUAGE NamedFieldPuns      #-}
-{-# LANGUAGE RecordWildCards     #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 -- | Page accumulator.
 module Database.LSMTree.Internal.PageAcc (
     -- * Incrementally accumulating a single page.

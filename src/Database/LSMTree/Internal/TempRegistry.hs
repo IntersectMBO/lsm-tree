@@ -50,7 +50,8 @@ data TempRegistryState m = TempRegistryState {
   }
 
 newtype ResourceId = ResourceId Int
-  deriving (Eq, Ord, Num)
+  deriving stock (Eq, Ord)
+  deriving newtype (Num)
 
 newtype Resource m = Resource {
     resourceRelease :: (m ())

@@ -1,8 +1,3 @@
-{-# LANGUAGE DeriveTraversable          #-}
-{-# LANGUAGE DerivingStrategies         #-}
-{-# LANGUAGE GeneralisedNewtypeDeriving #-}
-{-# LANGUAGE LambdaCase                 #-}
-
 module Database.LSMTree.Internal.Entry (
     Entry (..)
   , hasBlob

@@ -104,7 +104,8 @@ initModel = Model {
 -- acquiring a blob reference will invalidate it. We use 'UpdateCounter' to
 -- track updates.
 newtype UpdateCounter = UpdateCounter Word64
-  deriving (Show, Eq, Ord, Num)
+  deriving stock (Show, Eq, Ord)
+  deriving newtype (Num)
 
 newtype SomeTable = SomeTable Dynamic
 

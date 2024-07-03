@@ -1,6 +1,3 @@
-{-# LANGUAGE LambdaCase      #-}
-{-# LANGUAGE RecordWildCards #-}
-
 module Bench.Database.LSMTree.Internal.Merge (benchmarks) where
 
 import           Control.Monad (when, zipWithM)

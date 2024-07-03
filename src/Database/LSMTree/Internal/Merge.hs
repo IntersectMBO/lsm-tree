@@ -1,6 +1,3 @@
-{-# LANGUAGE LambdaCase      #-}
-{-# LANGUAGE RecordWildCards #-}
-
 module Database.LSMTree.Internal.Merge (
     Merge (..)
   , Level (..)

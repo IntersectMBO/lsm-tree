@@ -1,7 +1,3 @@
-{-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE LambdaCase         #-}
-{-# LANGUAGE RecordWildCards    #-}
-
 -- | A compact fence-pointer index for uniformly distributed keys.
 --
 -- TODO: add utility functions for clash probability calculations

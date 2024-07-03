@@ -1,6 +1,3 @@
-{-# LANGUAGE LambdaCase      #-}
-{-# LANGUAGE RecordWildCards #-}
-
 -- | A run that is being read incrementally.
 --
 module Database.LSMTree.Internal.RunReader (

@@ -34,7 +34,14 @@ common wno-x-partial
 common language
   default-language:   GHC2021
   default-extensions:
+    DeriveAnyClass
+    DerivingStrategies
+    DerivingVia
+    ExplicitNamespaces
     GADTs
+    LambdaCase
+    MultiWayIf
+    RecordWildCards
     RoleAnnotations
     ViewPatterns
 

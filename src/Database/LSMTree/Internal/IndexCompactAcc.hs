@@ -1,8 +1,4 @@
-{-# LANGUAGE CPP                #-}
-{-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE LambdaCase         #-}
-{-# LANGUAGE RecordWildCards    #-}
-
+{-# LANGUAGE CPP #-}
 {- |
   Incremental construction of a compact index yields chunks of the primary array
   that can be serialised incrementally.
