@@ -607,6 +607,7 @@ library blockio-api
   if os(linux)
     hs-source-dirs: blockio-api/src-linux
     other-modules:  System.FS.BlockIO.Internal
+    build-depends:  lsm-tree:fcntl-nocache
 
     if !flag(serialblockio)
       other-modules: System.FS.BlockIO.Async
@@ -614,6 +615,7 @@ library blockio-api
 
   elif os(osx)
     hs-source-dirs: blockio-api/src-macos
+    build-depends:  lsm-tree:fcntl-nocache
     other-modules:  System.FS.BlockIO.Internal
 
   elif os(windows)

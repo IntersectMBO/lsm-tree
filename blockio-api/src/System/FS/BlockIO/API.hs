@@ -53,11 +53,18 @@ data HasBlockIO m h = HasBlockIO {
     --
     -- If any of the I\/O operations fails, an 'FsError' exception will be thrown.
   , submitIO :: HasCallStack => V.Vector (IOOp (PrimState m) h) -> m (VU.Vector IOResult)
+    -- | Set the file data caching mode for a file handle.
+    --
+    -- This has different effects on different distributions.
+    -- * [Linux]: set the @O_DIRECT@ flag.
+    -- * [MacOS]: set the @F_NOCACHE@ flag.
+    -- * [Windows]: no-op.
+  , hSetNoCache :: Handle h -> Bool -> m ()
   }
 
 instance NFData (HasBlockIO m h) where
-  rnf HasBlockIO{close, submitIO} =
-      rwhnf close `seq` rwhnf submitIO
+  rnf (HasBlockIO a b c) =
+      rwhnf a `seq` rwhnf b `seq` rwhnf c
 
 -- | Concurrency parameters for initialising a 'HasBlockIO. Can be ignored by
 -- serial implementations.
