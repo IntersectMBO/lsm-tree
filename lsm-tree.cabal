@@ -397,7 +397,6 @@ benchmark lsm-tree-bench-lookups
     , primitive
     , QuickCheck
     , random
-    , temporary
     , time
     , vector
     , vector-algorithms

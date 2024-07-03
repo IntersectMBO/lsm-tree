@@ -42,7 +42,6 @@ import qualified System.FS.BlockIO.API as FS
 import qualified System.FS.BlockIO.IO as FS
 import qualified System.FS.IO as FS
 import           System.IO
-import           System.IO.Temp
 import           System.IO.Unsafe (unsafePerformIO)
 import           System.Mem (performMajorGC)
 import           System.Random
@@ -52,12 +51,10 @@ main = do
   hSetBuffering stdout NoBuffering
   args <- getArgs
   case args of
-    [] ->
-      benchmarks Nothing
-    [arg] | let !dir = read ("\"" <> arg <> "\"") ->
-      benchmarks (Just dir)
+    [arg] | let cache = read arg ->
+      benchmarks (if cache then Run.CacheRunData else Run.NoCacheRunData)
     _     -> do
-      putStrLn "Wrong usage, pass in no arguments or an optional filepath."
+      putStrLn "Wrong usage, pass in [True] or [False] for the caching flag."
       exitFailure
 
 -- | The number of entries in the smallest LSM runs is @2^benchmarkSizeBase@.
@@ -134,8 +131,8 @@ benchmarkEntriesPerPageBounds =
     , fromIntegral @Int $ floor @Double numEntriesFitInPage
     )
 
-benchmarks :: Maybe FilePath -> IO ()
-benchmarks dirMay = withFS dirMay $ \hfs hbio -> do
+benchmarks :: Run.RunDataCaching -> IO ()
+benchmarks !caching = withFS $ \hfs hbio -> do
 #ifdef NO_IGNORE_ASSERTS
     putStrLn "BENCHMARKING A BUILD WITH -fno-ignore-asserts"
 #endif
@@ -163,7 +160,7 @@ benchmarks dirMay = withFS dirMay $ \hfs hbio -> do
     -- instead of sequentially.
     let keyRng0 = mkStdGen 17
 
-    (!runs, !blooms, !indexes, !handles) <- lookupsEnv runSizes keyRng0 hfs hbio
+    (!runs, !blooms, !indexes, !handles) <- lookupsEnv runSizes keyRng0 hfs hbio caching
     putStrLn "<finished>"
 
     traceMarkerIO "Computing statistics for generated runs"
@@ -213,8 +210,8 @@ benchmarks dirMay = withFS dirMay $ \hfs hbio -> do
                 (benchLookupsIO hbio arenaManager benchmarkResolveSerialisedValue runs blooms indexes handles keyRng0) benchmarkNumLookups
                 bgenKeyBatches
 
-    traceMarkerIO "Cleaning up runs"
-    putStrLn "Cleaning up runs"
+    traceMarkerIO "Cleaning up"
+    putStrLn "Cleaning up"
     V.mapM_ (Run.removeReference hfs) runs
 
     traceMarkerIO "Computing statistics for prepLookups results"
@@ -303,19 +300,14 @@ totalNumEntriesSanityCheck l1 runSizes =
     sum [ 2^l1 * sizeFactor | (_, sizeFactor) <- runSizes ]
 
 withFS ::
-     Maybe FilePath
-  -> (FS.HasFS IO FS.HandleIO -> FS.HasBlockIO IO FS.HandleIO -> IO a)
+     (FS.HasFS IO FS.HandleIO -> FS.HasBlockIO IO FS.HandleIO -> IO a)
   -> IO a
-withFS dirMay action =
-    withBenchDir dirMay $ \dir -> do
-      let hfs = FS.ioHasFS (FS.MountPoint dir)
-      exists <- FS.doesDirectoryExist hfs (FS.mkFsPath [])
-      unless exists $ error ("benchmark directory does not exist: " <> dir)
-      FS.withIOHasBlockIO hfs FS.defaultIOCtxParams $ \hbio ->
-        action hfs hbio
-  where
-    withBenchDir (Just dir) action' = action' dir
-    withBenchDir Nothing    action' = withSystemTempDirectory "lookups-macro-bench" action'
+withFS action = do
+    let hfs = FS.ioHasFS (FS.MountPoint "")
+    exists <- FS.doesDirectoryExist hfs (FS.mkFsPath ["_bench_lookups"])
+    unless exists $ error ("_bench_lookups directory does not exist")
+    FS.withIOHasBlockIO hfs FS.defaultIOCtxParams $ \hbio ->
+      action hfs hbio
 
 -- | Input environment for benchmarking lookup functions.
 --
@@ -337,12 +329,13 @@ lookupsEnv ::
   -> StdGen -- ^ Key RNG
   -> FS.HasFS IO FS.HandleIO
   -> FS.HasBlockIO IO FS.HandleIO
+  -> Run.RunDataCaching
   -> IO ( V.Vector (Run (FS.Handle FS.HandleIO))
         , V.Vector (Bloom SerialisedKey)
         , V.Vector IndexCompact
         , V.Vector (FS.Handle FS.HandleIO)
         )
-lookupsEnv runSizes keyRng0 hfs hbio = do
+lookupsEnv runSizes keyRng0 hfs hbio caching = do
     -- create the vector of initial keys
     (mvec :: VUM.MVector RealWorld UTxOKey) <- VUM.unsafeNew (totalNumEntries runSizes)
     !keyRng1 <- vectorOfUniforms mvec keyRng0
@@ -379,8 +372,7 @@ lookupsEnv runSizes keyRng0 hfs hbio = do
 
     -- return runs
     runs <- V.fromList <$>
-              mapM (Run.fromMutable hfs hbio Run.NoCacheRunData
-                                    (Run.RefCount 1)) rbs
+              mapM (Run.fromMutable hfs hbio caching (Run.RefCount 1)) rbs
     let blooms = V.map Run.runFilter runs
         indexes = V.map Run.runIndex runs
         handles = V.map Run.runKOpsFile runs
