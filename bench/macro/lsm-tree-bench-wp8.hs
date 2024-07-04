@@ -45,12 +45,14 @@ module Main (main) where
 import           Control.Applicative ((<**>))
 import           Control.DeepSeq (force)
 import           Control.Exception (evaluate)
-import           Control.Monad (forM_, void, when)
+import           Control.Monad (forM_, void, when, unless)
 import qualified Crypto.Hash.SHA256 as SHA256
 import qualified Data.Binary as B
 import qualified Data.ByteString.Short as BS
 import qualified Data.IntSet as IS
 import           Data.IORef (modifyIORef', newIORef, readIORef, writeIORef)
+import           Data.List (foldl')
+import qualified Data.Map.Strict as Map
 import           Data.Traversable (mapAccumL)
 import           Data.Tuple (swap)
 import qualified Data.Vector as V
@@ -58,6 +60,7 @@ import           Data.Void (Void)
 import           Data.Word (Word64)
 import qualified MCG
 import qualified Options.Applicative as O
+import           Prelude hiding (lookup)
 import qualified System.Clock as Clock
 import qualified System.FS.API as FS
 import qualified System.FS.BlockIO.API as FS
@@ -363,9 +366,26 @@ doRun' gopts opts = do
 
     LSM.withSession hasFS hasBlockIO (FS.mkFsPath []) $ \session -> do
         -- open snapshot
-        tbl <- LSM.open @IO @K @V @B session name
+        -- In checking mode we start with an empty table, since our pure
+        -- reference version starts with empty (as it's not practical or
+        -- necessary for testing to load the whole snapshot).
+        tbl <- if opts.check
+                 then LSM.new  @IO @K @V @B session LSM.defaultTableConfig
+                 else LSM.open @IO @K @V @B session name
+
+        -- In checking mode, compare each output against a pure reference.
+        checkvar <- newIORef $ pureReference
+                                 gopts.initialSize opts.batchSize
+                                 opts.batchCount opts.seed
+        let check | not opts.check = \_ _ -> return ()
+                  | otherwise = \b y -> do
+              (x:xs) <- readIORef checkvar
+              unless (x == y) $
+                fail $ "lookup result mismatch in batch " ++ show b
+              writeIORef checkvar xs
 
         sequentialIterations
+          check
           gopts.initialSize
           opts.batchSize
           opts.batchCount
@@ -377,18 +397,22 @@ doRun' gopts opts = do
 -- sequential
 -------------------------------------------------------------------------------
 
+type LookupResults = V.Vector (K, LSM.LookupResult V ())
+
 {-# INLINE sequentialIteration #-}
-sequentialIteration :: Int
+sequentialIteration :: (Int -> LookupResults -> IO ())
+                    -> Int
                     -> Int
                     -> LSM.TableHandle IO K V B
                     -> Int
                     -> MCG.MCG
                     -> IO MCG.MCG
-sequentialIteration !initialSize !batchSize !tbl !b !g = do
+sequentialIteration output !initialSize !batchSize !tbl !b !g = do
     let (!g', ls, is) = generateBatch initialSize batchSize g b
 
     -- lookups
-    _results <- LSM.lookups ls tbl
+    results <- LSM.lookups ls tbl
+    output b (V.zip ls (fmap (fmap (const ())) results))
 
     -- deletes and inserts
     LSM.updates is tbl
@@ -396,14 +420,42 @@ sequentialIteration !initialSize !batchSize !tbl !b !g = do
     -- continue to the next batch
     return g'
 
-sequentialIterations :: Int -> Int -> Int -> Word64
+sequentialIterations :: (Int -> LookupResults -> IO ())
+                     -> Int -> Int -> Int -> Word64
                      -> LSM.TableHandle IO K V B
                      -> IO ()
-sequentialIterations !initialSize !batchSize !batchCount !seed !tbl =
+sequentialIterations output !initialSize !batchSize !batchCount !seed !tbl =
     void $ forFoldM_ g0 [ 0 .. batchCount - 1 ] $ \b g ->
-      sequentialIteration initialSize batchSize tbl b g
+      sequentialIteration output initialSize batchSize tbl b g
   where
     g0 = initGen initialSize batchSize batchCount seed
+
+-------------------------------------------------------------------------------
+-- Testing
+-------------------------------------------------------------------------------
+
+pureReference :: Int -> Int -> Int -> Word64 -> [V.Vector (K, LSM.LookupResult V ())]
+pureReference !initialSize !batchSize !batchCount !seed =
+    generate g0 Map.empty 0
+  where
+    g0 = initGen initialSize batchSize batchCount seed
+
+    generate !_ !_ !b | b == batchCount = []
+    generate !g !m !b = results : generate g' m' (b+1)
+      where
+        (g', lookups, inserts) = generateBatch initialSize batchSize g b
+        !results = V.map (lookup m) lookups
+        !m'      = foldl' (flip (uncurry Map.insert)) m inserts
+
+    lookup m k =
+      case Map.lookup k m of
+        Nothing -> (,) k LSM.NotFound
+        Just u  -> (,) k $! updateToLookupResult u
+
+updateToLookupResult :: LSM.Update v blob -> LSM.LookupResult v ()
+updateToLookupResult (LSM.Insert v Nothing)  = LSM.Found v
+updateToLookupResult (LSM.Insert v (Just _)) = LSM.FoundWithBlob v ()
+updateToLookupResult  LSM.Delete             = LSM.NotFound
 
 -------------------------------------------------------------------------------
 -- main
