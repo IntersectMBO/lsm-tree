@@ -48,7 +48,7 @@ import           Control.Exception (evaluate)
 import           Control.Monad (forM_, void, when)
 import qualified Crypto.Hash.SHA256 as SHA256
 import qualified Data.Binary as B
-import qualified Data.ByteString as BS
+import qualified Data.ByteString.Short as BS
 import qualified Data.IntSet as IS
 import           Data.IORef (modifyIORef', newIORef, readIORef, writeIORef)
 import           Data.Traversable (mapAccumL)
@@ -73,8 +73,8 @@ import qualified Database.LSMTree.Normal as LSM
 -- Keys and values
 -------------------------------------------------------------------------------
 
-type K = BS.ByteString
-type V = BS.ByteString
+type K = BS.ShortByteString
+type V = BS.ShortByteString
 type B = Void
 
 instance LSM.Labellable (K, V, B) where
@@ -87,7 +87,7 @@ instance LSM.Labellable (K, V, B) where
 -- This is purely CPU bound operation, and we should be able to push IO
 -- when doing these in between.
 makeKey :: Word64 -> K
-makeKey w64 = SHA256.hashlazy (B.encode w64) <> "=="
+makeKey w64 = BS.toShort (SHA256.hashlazy (B.encode w64) <> "==")
 
 -- We use constant value. This shouldn't affect anything.
 theValue :: V
