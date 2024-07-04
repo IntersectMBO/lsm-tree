@@ -39,6 +39,7 @@ module Database.LSMTree.Monoidal (
     -- * Table handles
   , TableHandle
   , Internal.TableConfig (..)
+  , Internal.defaultTableConfig
   , Internal.ResolveMupsert (..)
   , Internal.SizeRatio (..)
   , Internal.MergePolicy (..)

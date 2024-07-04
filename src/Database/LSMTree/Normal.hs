@@ -41,6 +41,7 @@ module Database.LSMTree.Normal (
     -- * Table handles
   , TableHandle
   , Internal.TableConfig (..)
+  , Internal.defaultTableConfig
   , Internal.SizeRatio (..)
   , Internal.MergePolicy (..)
   , Internal.WriteBufferAlloc (..)
