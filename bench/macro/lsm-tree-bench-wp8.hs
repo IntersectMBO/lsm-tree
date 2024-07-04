@@ -241,9 +241,7 @@ doDryRun' gopts opts = do
         printf "Expected number of duplicates (extreme upper bound): %5f out of %f\n" q n
 
     -- TODO: open session to measure that as well.
-    let initGen = MCG.make
-            (fromIntegral $ gopts.initialSize + opts.batchSize * opts.batchCount)
-            opts.seed
+    let g0 = initGen gopts.initialSize opts.batchSize opts.batchCount opts.seed
 
     keysRef <- newIORef $
         if opts.check
@@ -251,10 +249,10 @@ doDryRun' gopts opts = do
         else IS.empty
     duplicateRef <- newIORef (0 :: Int)
 
-    void $ forFoldM_ initGen [ 0 .. opts.batchCount - 1 ] $ \b g -> do
+    void $ forFoldM_ g0 [ 0 .. opts.batchCount - 1 ] $ \b g -> do
         let lookups :: V.Vector Word64
             inserts :: V.Vector Word64
-            (!nextG, lookups, inserts) = generateBatch gopts.initialSize opts.batchSize g b
+            (!g', lookups, inserts) = generateBatch' gopts.initialSize opts.batchSize g b
 
         when opts.check $ do
             keys <- readIORef keysRef
@@ -268,15 +266,36 @@ doDryRun' gopts opts = do
         let (batch1, batch2) = toOperations lookups inserts
         _ <- evaluate $ force (batch1, batch2)
 
-        return nextG
+        return g'
 
     when opts.check $ do
         duplicates <- readIORef duplicateRef
         printf "True duplicates: %d\n" duplicates
 
 -------------------------------------------------------------------------------
+-- PRNG initialisation
+-------------------------------------------------------------------------------
+
+initGen :: Int -> Int -> Int -> Word64 -> MCG.MCG
+initGen initialSize batchSize batchCount seed =
+    let period = initialSize + batchSize * batchCount
+     in MCG.make (fromIntegral period) seed
+
+-------------------------------------------------------------------------------
 -- Batch generation
 -------------------------------------------------------------------------------
+
+generateBatch
+    :: Int       -- ^ initial size of the collection
+    -> Int       -- ^ batch size
+    -> MCG.MCG   -- ^ generator
+    -> Int       -- ^ batch number
+    -> (MCG.MCG, V.Vector K, V.Vector (K, LSM.Update V B))
+generateBatch initialSize batchSize g b =
+    (g', lookups', inserts')
+  where
+    (lookups', inserts')    = toOperations lookups inserts
+    (!g', lookups, inserts) = generateBatch' initialSize batchSize g b
 
 {- | Implement generation of unbounded sequence of insert/delete operations
 
@@ -289,19 +308,20 @@ We could also make it exact, but then we'll need to carry some state around
 (at least the difference).
 
 -}
-generateBatch
+generateBatch'
     :: Int       -- ^ initial size of the collection
     -> Int       -- ^ batch size
     -> MCG.MCG   -- ^ generator
     -> Int       -- ^ batch number
     -> (MCG.MCG, V.Vector Word64, V.Vector Word64)
-generateBatch initialSize batchSize g b = (nextG, lookups, inserts)
+generateBatch' initialSize batchSize g b = (g'', lookups, inserts)
   where
     maxK :: Word64
     maxK = fromIntegral $ initialSize + batchSize * b
 
     lookups :: V.Vector Word64
-    (!nextG, lookups) = mapAccumL (\g' _ -> swap (MCG.reject maxK g')) g (V.enumFromTo 1 batchSize)
+    (!g'', lookups) = mapAccumL (\g' _ -> swap (MCG.reject maxK g'))
+                                g (V.enumFromTo 1 batchSize)
 
     inserts :: V.Vector Word64
     inserts = V.enumFromTo maxK (maxK + fromIntegral batchSize - 1)
@@ -341,29 +361,23 @@ doRun' gopts opts = do
     name <- maybe (fail "invalid snapshot name") return $
         LSM.mkSnapshotName "bench"
 
-    let initGen = MCG.make
-            (fromIntegral $ gopts.initialSize + opts.batchSize * opts.batchCount)
-            opts.seed
+    let g0 = initGen gopts.initialSize opts.batchSize opts.batchCount opts.seed
 
     LSM.withSession hasFS hasBlockIO (FS.mkFsPath []) $ \session -> do
         -- open snapshot
         tbl <- LSM.open @IO @K @V @B session name
 
-        void $ forFoldM_ initGen [ 0 .. opts.batchCount - 1 ] $ \b g -> do
-            let lookups :: V.Vector Word64
-                inserts :: V.Vector Word64
-                (!nextG, lookups, inserts) = generateBatch gopts.initialSize opts.batchSize g b
-
-            let (batch1, batch2) = toOperations lookups inserts
+        void $ forFoldM_ g0 [ 0 .. opts.batchCount - 1 ] $ \b g -> do
+            let (!g', lookups, inserts) = generateBatch gopts.initialSize opts.batchSize g b
 
             -- lookups
-            _ <- LSM.lookups batch1 tbl
+            _ <- LSM.lookups lookups tbl
 
             -- deletes and inserts
-            LSM.updates batch2 tbl
+            LSM.updates inserts tbl
 
             -- continue to the next batch
-            return nextG
+            return g'
 
 -------------------------------------------------------------------------------
 -- main
