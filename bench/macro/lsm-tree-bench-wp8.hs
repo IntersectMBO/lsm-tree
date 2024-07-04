@@ -361,23 +361,49 @@ doRun' gopts opts = do
     name <- maybe (fail "invalid snapshot name") return $
         LSM.mkSnapshotName "bench"
 
-    let g0 = initGen gopts.initialSize opts.batchSize opts.batchCount opts.seed
-
     LSM.withSession hasFS hasBlockIO (FS.mkFsPath []) $ \session -> do
         -- open snapshot
         tbl <- LSM.open @IO @K @V @B session name
 
-        void $ forFoldM_ g0 [ 0 .. opts.batchCount - 1 ] $ \b g -> do
-            let (!g', lookups, inserts) = generateBatch gopts.initialSize opts.batchSize g b
+        sequentialIterations
+          gopts.initialSize
+          opts.batchSize
+          opts.batchCount
+          opts.seed
+          tbl
 
-            -- lookups
-            _ <- LSM.lookups lookups tbl
 
-            -- deletes and inserts
-            LSM.updates inserts tbl
+-------------------------------------------------------------------------------
+-- sequential
+-------------------------------------------------------------------------------
 
-            -- continue to the next batch
-            return g'
+{-# INLINE sequentialIteration #-}
+sequentialIteration :: Int
+                    -> Int
+                    -> LSM.TableHandle IO K V B
+                    -> Int
+                    -> MCG.MCG
+                    -> IO MCG.MCG
+sequentialIteration !initialSize !batchSize !tbl !b !g = do
+    let (!g', ls, is) = generateBatch initialSize batchSize g b
+
+    -- lookups
+    _results <- LSM.lookups ls tbl
+
+    -- deletes and inserts
+    LSM.updates is tbl
+
+    -- continue to the next batch
+    return g'
+
+sequentialIterations :: Int -> Int -> Int -> Word64
+                     -> LSM.TableHandle IO K V B
+                     -> IO ()
+sequentialIterations !initialSize !batchSize !batchCount !seed !tbl =
+    void $ forFoldM_ g0 [ 0 .. batchCount - 1 ] $ \b g ->
+      sequentialIteration initialSize batchSize tbl b g
+  where
+    g0 = initGen initialSize batchSize batchCount seed
 
 -------------------------------------------------------------------------------
 -- main
