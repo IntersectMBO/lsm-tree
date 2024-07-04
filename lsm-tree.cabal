@@ -40,7 +40,6 @@ common language
     ExplicitNamespaces
     GADTs
     LambdaCase
-    MultiWayIf
     RecordWildCards
     RoleAnnotations
     ViewPatterns
