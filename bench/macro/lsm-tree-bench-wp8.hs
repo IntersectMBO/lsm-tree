@@ -44,7 +44,7 @@ module Main (main) where
 
 import           Control.Applicative ((<**>))
 import           Control.DeepSeq (force)
-import           Control.Exception (bracket, evaluate)
+import           Control.Exception (evaluate)
 import           Control.Monad (forM_, void, when)
 import qualified Crypto.Hash.SHA256 as SHA256
 import qualified Data.Binary as B
@@ -196,8 +196,8 @@ doSetup gopts _opts = do
     name <- maybe (fail "invalid snapshot name") return $
         LSM.mkSnapshotName "bench"
 
-    withSession hasFS hasBlockIO (FS.mkFsPath []) $ \session -> do
-        tbh <- LSM.new @IO @K @V @B session defaultTableConfig
+    LSM.withSession hasFS hasBlockIO (FS.mkFsPath []) $ \session -> do
+        tbh <- LSM.new @IO @K @V @B session LSM.defaultTableConfig
 
         forM_ [ 0 .. gopts.initialSize ] $ \ (fromIntegral -> i) -> do
             -- TODO: this procedure simply inserts all the keys into initial lsm tree
@@ -351,7 +351,7 @@ doRun' gopts opts = do
             (fromIntegral $ gopts.initialSize + opts.batchSize * opts.batchCount)
             opts.seed
 
-    withSession hasFS hasBlockIO (FS.mkFsPath []) $ \session -> do
+    LSM.withSession hasFS hasBlockIO (FS.mkFsPath []) $ \session -> do
         -- open snapshot
         tbl <- LSM.open @IO @K @V @B session name
 
@@ -387,30 +387,6 @@ main = do
   where
     cliP = O.info ((,) <$> globalOptsP <*> cmdP <**> O.helper) O.fullDesc
     prefs = O.prefs $ O.showHelpOnEmpty <> O.helpShowGlobals <> O.subparserInline
-
--------------------------------------------------------------------------------
--- utils: should this be in main lib?
--------------------------------------------------------------------------------
-
-withSession ::
-     FS.HasFS IO FsIO.HandleIO
-  -> FS.HasBlockIO IO FsIO.HandleIO
-  -> FS.FsPath
-  -> (LSM.Session IO -> IO r)
-  -> IO r
-withSession hfs hbio path = bracket (LSM.openSession hfs hbio path) LSM.closeSession
-
-defaultTableConfig :: LSM.TableConfig
-defaultTableConfig =  LSM.TableConfig
-    { LSM.confMergePolicy      = LSM.MergePolicyLazyLevelling
-    , LSM.confSizeRatio        = LSM.Four
-    , LSM.confWriteBufferAlloc = LSM.AllocNumEntries $ LSM.NumEntries
-                                  -- 2MB divided by the size of a UTXO key/value
-                                  -- pair
-                               $ (2 * 1024 * 1024) `div` (34 + 60)
-    , LSM.confBloomFilterAlloc = LSM.AllocRequestFPR 0.02
-    , LSM.confResolveMupsert   = Nothing
-    }
 
 -------------------------------------------------------------------------------
 -- general utils
