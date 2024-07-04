@@ -72,12 +72,14 @@ prop_resolveMonoidalSemantics es = real === expected
 
 -- | Semigroup wrapper for 'Normal.Update'
 newtype NormalUpdateSG v blob = NormalUpdateSG (Normal.Update v blob)
-  deriving (Show, Eq, Arbitrary)
+  deriving stock (Show, Eq)
+  deriving newtype (Arbitrary)
   deriving Semigroup via First (Normal.Update v blob)
 
 -- | Semigroup wrapper for 'Monoidal.Update'
 newtype MonoidalUpdateSG v = MonoidalUpdateSG (Monoidal.Update v)
-  deriving (Show, Eq, Arbitrary)
+  deriving stock (Show, Eq)
+  deriving newtype (Arbitrary)
 
 instance Semigroup v => Semigroup (MonoidalUpdateSG v) where
   (<>) = coerce $ \upd1 upd2 -> case (upd1 :: Monoidal.Update v, upd2) of

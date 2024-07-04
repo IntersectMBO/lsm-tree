@@ -1,15 +1,3 @@
-{-# LANGUAGE DeriveAnyClass             #-}
-{-# LANGUAGE DeriveFunctor              #-}
-{-# LANGUAGE DeriveGeneric              #-}
-{-# LANGUAGE DerivingVia                #-}
-{-# LANGUAGE FlexibleInstances          #-}
-{-# LANGUAGE GeneralisedNewtypeDeriving #-}
-{-# LANGUAGE InstanceSigs               #-}
-{-# LANGUAGE LambdaCase                 #-}
-{-# LANGUAGE MultiWayIf                 #-}
-{-# LANGUAGE ScopedTypeVariables        #-}
-{-# LANGUAGE StandaloneDeriving         #-}
-{-# LANGUAGE TypeApplications           #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 {- HLINT ignore "Use camelCase" -}
 
@@ -456,16 +444,18 @@ mkPages p genN rfprec@(RFPrecision n) =
   where
     go :: [k] -> Gen [LogicalPageSummary k]
     go []          = pure []
-    go [k]         = do b <- largerThanPage
-                        if b then pure . MultiPageOneKey k <$> genN else pure [OnePageOneKey k]
-                   -- the min and max key are allowed to be the same
-    go  (k1:k2:ks) = do b <- largerThanPage
-                        if | b
-                           -> (:) <$> (MultiPageOneKey k1 <$> genN) <*> go (k2 : ks)
-                           | keyTopBits16 n (serialiseKey k1) == keyTopBits16 n (serialiseKey k2)
-                           -> (OnePageManyKeys k1 k2 :) <$> go ks
-                           | otherwise
-                           -> (OnePageOneKey k1 :) <$>  go (k2 : ks)
+    go [k]         = do
+      b <- largerThanPage
+      if b then pure . MultiPageOneKey k <$> genN
+           else pure [OnePageOneKey k]
+      -- the min and max key are allowed to be the same
+    go  (k1:k2:ks) = do
+      b <- largerThanPage
+      if b then (:) <$> (MultiPageOneKey k1 <$> genN) <*> go (k2 : ks)
+           else if keyTopBits16 n (serialiseKey k1)
+                == keyTopBits16 n (serialiseKey k2)
+                   then (OnePageManyKeys k1 k2 :) <$> go ks
+                   else (OnePageOneKey   k1 :)    <$> go (k2 : ks)
 
     largerThanPage :: Gen Bool
     largerThanPage = genDouble >>= \x -> pure (x < p)

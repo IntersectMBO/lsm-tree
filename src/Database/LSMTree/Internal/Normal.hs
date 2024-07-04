@@ -1,5 +1,3 @@
-{-# LANGUAGE LambdaCase #-}
-
 module Database.LSMTree.Internal.Normal (
     LookupResult (..),
     RangeLookupResult (..),

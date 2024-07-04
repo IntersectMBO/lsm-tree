@@ -1,11 +1,4 @@
-{-# LANGUAGE DataKinds                  #-}
-{-# LANGUAGE DeriveAnyClass             #-}
-{-# LANGUAGE DerivingStrategies         #-}
-{-# LANGUAGE DerivingVia                #-}
-{-# LANGUAGE GeneralisedNewtypeDeriving #-}
-{-# LANGUAGE LambdaCase                 #-}
-{-# LANGUAGE RecordWildCards            #-}
-
+{-# LANGUAGE DataKinds #-}
 -- | TODO: this should be removed once we have proper snapshotting with proper
 -- persistence of the config to disk.
 {-# OPTIONS_GHC -Wno-orphans #-}

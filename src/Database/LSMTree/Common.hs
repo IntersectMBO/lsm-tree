@@ -1,10 +1,3 @@
-{-# LANGUAGE DeriveFunctor            #-}
-{-# LANGUAGE FlexibleContexts         #-}
-{-# LANGUAGE GADTs                    #-}
-{-# LANGUAGE LambdaCase               #-}
-{-# LANGUAGE RoleAnnotations          #-}
-{-# LANGUAGE StandaloneKindSignatures #-}
-
 -- TODO: remove once the API is implemented.
 {-# OPTIONS_GHC -Wno-redundant-constraints #-}
 {-# OPTIONS_GHC -Wno-unused-top-binds #-}

@@ -96,7 +96,8 @@ prop_verifyFPR p mkBloom (FPR requestedFPR) (NumEntries numEntries) (Seed seed) 
 --
 
 newtype FPR = FPR { getFPR :: Double }
-  deriving (Show, Eq, Ord, Num, Fractional, Floating)
+  deriving stock (Show, Eq, Ord)
+  deriving newtype (Num, Fractional, Floating)
 
 instance Arbitrary FPR where
   arbitrary = FPR <$> arbitrary `suchThat` fprInvariant

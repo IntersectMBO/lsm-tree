@@ -1,6 +1,3 @@
-{-# LANGUAGE BangPatterns        #-}
-{-# LANGUAGE RecordWildCards     #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 -- | Create a single value page
 module Database.LSMTree.Internal.PageAcc1 (
     singletonPage,
