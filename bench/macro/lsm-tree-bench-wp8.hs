@@ -258,13 +258,12 @@ doDryRun' gopts opts = do
 
         when opts.check $ do
             keys <- readIORef keysRef
-            let new  = V.foldl' (\acc x -> IS.insert (fromIntegral x) acc) IS.empty lookups
+            let new  = intSetFromVector lookups
             let diff = IS.difference new keys
             -- when (IS.notNull diff) $ printf "missing in batch %d %s\n" b (show diff)
             modifyIORef' duplicateRef $ \n -> n + IS.size diff
-            writeIORef keysRef $! IS.union
-                (IS.difference keys new)
-                (V.foldl' (\acc x -> IS.insert (fromIntegral x) acc) IS.empty inserts)
+            writeIORef keysRef $! IS.union (IS.difference keys new)
+                                           (intSetFromVector inserts)
 
         let (batch1, batch2) = toOperations lookups inserts
         _ <- evaluate $ force (batch1, batch2)
@@ -392,6 +391,9 @@ forFoldM_ !s []     _ = return s
 forFoldM_ !s (x:xs) f = do
     !s' <- f x s
     forFoldM_ s' xs f
+
+intSetFromVector :: V.Vector Word64 -> IS.IntSet
+intSetFromVector = V.foldl' (\acc x -> IS.insert (fromIntegral x) acc) IS.empty
 
 -------------------------------------------------------------------------------
 -- unused for now
