@@ -87,7 +87,7 @@ import           Test.QuickCheck
 -- The keys /are not/ ordered.
 --
 newtype PageContentFits = PageContentFits [(Key, Operation)]
-  deriving (Eq, Show)
+  deriving stock (Eq, Show)
 
 -- | A test case consisting of a key\/operation sequence that is guaranteed to
 -- either fit into a single 4k disk page, or be a single entry that spans a
@@ -96,7 +96,7 @@ newtype PageContentFits = PageContentFits [(Key, Operation)]
 -- The keys /are/ in strictly ascending order.
 --
 newtype PageContentOrdered = PageContentOrdered [(Key, Operation)]
-  deriving (Eq, Show)
+  deriving stock (Eq, Show)
 
 -- | A test case consisting of a key\/operation sequence that is /not/
 -- guaranteed to fit into a a 4k disk page.
@@ -107,12 +107,12 @@ newtype PageContentOrdered = PageContentOrdered [(Key, Operation)]
 -- The keys /are not/ ordered.
 --
 newtype PageContentMaybeOverfull = PageContentMaybeOverfull [(Key, Operation)]
-  deriving (Eq, Show)
+  deriving stock (Eq, Show)
 
 -- | A tests case consisting of a single key\/operation pair.
 --
 data PageContentSingle = PageContentSingle Key Operation
-  deriving (Eq, Show)
+  deriving stock (Eq, Show)
 
 instance Arbitrary PageContentFits where
     arbitrary =

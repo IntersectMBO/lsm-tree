@@ -54,7 +54,7 @@ import           System.FS.API.Lazy
 
 
 newtype CRC32C = CRC32C Word32
-  deriving (Eq, Ord, Show)
+  deriving stock (Eq, Ord, Show)
 
 
 initialCRC32C :: CRC32C
@@ -180,10 +180,10 @@ type ChecksumsFile = Map ChecksumsFileName CRC32C
 -- | File names must not include characters @'('@, @')'@ or @'\n'@.
 --
 newtype ChecksumsFileName = ChecksumsFileName BSC.ByteString
-  deriving (Eq, Ord, Show)
+  deriving stock (Eq, Ord, Show)
 
 data ChecksumsFileFormatError = ChecksumsFileFormatError FsPath BSC.ByteString
-  deriving Show
+  deriving stock Show
 
 instance Exception ChecksumsFileFormatError
 

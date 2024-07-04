@@ -429,7 +429,7 @@ classifyBin truth test
 data BinaryClassification =
     TruePositive  | FalsePositive
   | FalseNegative | TrueNegative
-  deriving Show
+  deriving stock Show
 
 tabulateInMemLookupDataN ::
      forall prop. Testable prop

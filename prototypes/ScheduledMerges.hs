@@ -83,14 +83,14 @@ data Level s =
 -- orthogonal, all combinations are possible.
 --
 data MergePolicy = MergePolicyTiering | MergePolicyLevelling
-  deriving (Eq, Show)
+  deriving stock (Eq, Show)
 
 -- | A last level merge behaves differenrly from a mid-level merge: last level
 -- merges can actually remove delete operations, whereas mid-level merges must
 -- preserve them. This is orthogonal to the 'MergePolicy'.
 --
 data MergeLastLevel = MergeMidLevel | MergeLastLevel
-  deriving (Eq, Show)
+  deriving stock (Eq, Show)
 
 -- | A \"merging run\" is the representation of an ongoing incremental merge,
 -- and in mutable. It is also a unit of sharing between duplicated LSM handles.
@@ -110,7 +110,7 @@ data MergingRunState = CompletedMerge !Run
                        -- let r = merge4 r1 r2 r3 r4
                        --  in OngoingMerge 0 [r1, r2, r3, r4] r
                      | OngoingMerge !MergeDebt ![Run] Run
-  deriving Show
+  deriving stock Show
 
 type Credit = Int
 type Debt   = Int
@@ -347,7 +347,7 @@ data MergeDebt =
     MergeDebt
       Credit -- ^ Cumulative, not yet used credits.
       Debt -- ^ Leftover debt.
-  deriving Show
+  deriving stock Show
 
 newMergeDebt :: Debt -> MergeDebt
 newMergeDebt d = MergeDebt 0 d
@@ -360,7 +360,7 @@ data MergeDebtPaydown =
   | MergeDebtPaydownCredited       !MergeDebt
     -- | Enough credits were paid to reduce merge debt by performing some batches of merging work.
   | MergeDebtPaydownPerform  !Debt !MergeDebt
-  deriving Show
+  deriving stock Show
 
 -- | Pay credits to merge debt, which might trigger performing some merge work in batches. See 'MergeDebtPaydown'.
 --
@@ -471,7 +471,7 @@ data EventAt e = EventAt {
                    eventAtLevel :: Int,
                    eventDetail  :: e
                  }
-  deriving Show
+  deriving stock Show
 
 data EventDetail =
        AddLevelEvent
@@ -490,7 +490,7 @@ data EventDetail =
          mergeLast   :: MergeLastLevel,
          mergeSize   :: Int
        }
-  deriving Show
+  deriving stock Show
 
 increment :: forall s. Tracer (ST s) Event
           -> Counter -> Run -> Levels s -> ST s (Levels s)

@@ -163,7 +163,7 @@ close fs Run {..} = do
 
 -- | Should this run cache key\/ops data in memory?
 data RunDataCaching = CacheRunData | NoCacheRunData
-  deriving Eq
+  deriving stock Eq
 
 setRunDataCaching :: HasBlockIO IO h -> FS.Handle h -> RunDataCaching -> IO ()
 setRunDataCaching _ _ CacheRunData = return ()
@@ -210,14 +210,12 @@ fromWriteBuffer fs hbio caching fsPaths buffer = do
     fromMutable fs hbio caching (RefCount 1) builder
 
 data ChecksumError = ChecksumError FS.FsPath CRC.CRC32C CRC.CRC32C
-  deriving Show
-
-instance Exception ChecksumError
+  deriving stock Show
+  deriving anyclass Exception
 
 data FileFormatError = FileFormatError FS.FsPath String
-  deriving Show
-
-instance Exception FileFormatError
+  deriving stock Show
+  deriving anyclass Exception
 
 -- | Load a previously written run from disk, checking each file's checksum
 -- against the checksum file.
@@ -281,7 +279,7 @@ openFromDisk fs hbio caching runRunFsPaths = do
 
 -- | The 'Run' objects are reference counted.
 newtype RefCount = RefCount Int
-  deriving (Eq, Ord, Show)
+  deriving stock (Eq, Ord, Show)
 
 incRefCount, decRefCount :: RefCount -> RefCount
 incRefCount (RefCount n) = RefCount (n+1)

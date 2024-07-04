@@ -90,11 +90,11 @@ data TableHandle m k v blob = TableHandle {
   }
 
 data TableConfig = TableConfig
-  deriving Show
+  deriving stock Show
 
 -- | Configs should be comparable, because only tables with the same config
 -- options are __compatible__.
-deriving instance Eq TableConfig
+deriving stock instance Eq TableConfig
 
 -- | Create a new table referenced by a table handle.
 new ::

@@ -42,7 +42,7 @@ data Merge fhandle = Merge {
     }
 
 data Level = MidLevel | LastLevel
-  deriving (Eq, Show)
+  deriving stock (Eq, Show)
 
 type Mappend = SerialisedValue -> SerialisedValue -> SerialisedValue
 

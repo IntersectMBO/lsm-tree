@@ -287,7 +287,7 @@ instance R.Labellable (Key2, Value2, Blob2) where
 
 type ModelState :: ((Type -> Type) -> Type -> Type -> Type -> Type) -> Type
 data ModelState h = ModelState Model.Model Stats
-  deriving Show
+  deriving stock Show
 
 initModelState :: ModelState h
 initModelState = ModelState Model.initModel initStats
@@ -383,8 +383,8 @@ instance ( Show (Class.TableConfig h)
 --        action $ Snapshot "snap" (GVar var1 (FromRight . id))
 --        action $ Open "snap"
 --        pure ()
-deriving instance Show (Class.TableConfig h)
-               => Show (LockstepAction (ModelState h) a)
+deriving stock instance Show (Class.TableConfig h)
+                     => Show (LockstepAction (ModelState h) a)
 
 instance ( Eq (Class.TableConfig h)
          , Typeable h
@@ -558,8 +558,8 @@ instance ( Eq (Class.TableConfig h)
     -> [String]
   tagStep states action = map show . tagStep' states action
 
-deriving instance Show (Class.TableConfig h) => Show (Val h a)
-deriving instance Show (Obs h a)
+deriving stock instance Show (Class.TableConfig h) => Show (Val h a)
+deriving stock instance Show (Obs h a)
 
 instance Eq (Obs h a) where
   obsReal == obsModel = case (obsReal, obsModel) of
@@ -1077,7 +1077,7 @@ data Stats = Stats {
     -- | Actions that failed with an error
   , failActions       :: [String]
   }
-  deriving Show
+  deriving stock Show
 
 initStats :: Stats
 initStats = Stats {
@@ -1201,7 +1201,7 @@ data Tag =
   | MergeOnLevel Int -- TODO: implement
     -- | A table was closed twice
   | TableCloseTwice String -- TODO: implement
-  deriving (Show, Eq, Ord)
+  deriving stock (Show, Eq, Ord)
 
 -- | This is run for after every action
 tagStep' ::
@@ -1289,7 +1289,7 @@ data FinalTag =
   | NumFlushes String -- TODO: implement
     -- | Total /logical/ size of a table
   | TableSize String -- TODO: implement
-  deriving Show
+  deriving stock Show
 
 -- | This is run only after completing every action
 tagFinalState' :: Lockstep (ModelState h) -> [(String, [FinalTag])]

@@ -62,7 +62,7 @@ snapshot root (MkSnapshotName name) = snapshotsDir root </> mkFsPath [name]
 -------------------------------------------------------------------------------}
 
 newtype SnapshotName = MkSnapshotName FilePath
-  deriving (Eq, Ord)
+  deriving stock (Eq, Ord)
 
 instance Show SnapshotName where
   showsPrec d (MkSnapshotName p) = showsPrec d p
@@ -119,7 +119,7 @@ data RunFsPaths = RunFsPaths {
     -- | The directory that run files live in.
     runDir    :: !FsPath
   , runNumber :: !Word64 }
-  deriving Show
+  deriving stock Show
 
 instance NFData RunFsPaths where
   rnf (RunFsPaths x y) = rnf x `seq` rnf y
@@ -183,7 +183,7 @@ data ForRunFiles a = ForRunFiles {
     , forRunFilter :: !a
     , forRunIndex  :: !a
     }
-  deriving (Show, Foldable, Functor, Traversable)
+  deriving stock (Show, Foldable, Functor, Traversable)
 
 instance Applicative ForRunFiles where
   pure x = ForRunFiles x x x x

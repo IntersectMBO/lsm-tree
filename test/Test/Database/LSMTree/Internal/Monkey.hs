@@ -111,7 +111,7 @@ fprInvariant x = x >= 0.01 && x <= 0.99
 --
 
 newtype NumEntries = NumEntries { getNumEntries :: Int }
-  deriving Show
+  deriving stock Show
 
 instance Arbitrary NumEntries where
   arbitrary = NumEntries <$> chooseInt (numEntriesLB, numEntriesUB)
@@ -131,7 +131,7 @@ numEntriesInvariant x = x >= numEntriesLB && x <= numEntriesUB
 --
 
 newtype Seed = Seed { getSeed :: Int }
-  deriving Show
+  deriving stock Show
 
 instance Arbitrary Seed where
   arbitrary = Seed <$> arbitraryBoundedIntegral

@@ -89,7 +89,7 @@ instance Show (Table k v blob) where
         tbl' = fmap (fmap (fmap coerceBlobRef)) tbl
 
 -- | This instance is for testing and debugging only.
-deriving instance Eq (Table k v blob)
+deriving stock instance Eq (Table k v blob)
 
 {-------------------------------------------------------------------------------
   Table querying and updates
@@ -182,7 +182,7 @@ deletes = updates . fmap (,Delete)
 data BlobRef blob = BlobRef
     !BS.ByteString  -- ^ digest
     !RawBytes       -- ^ actual contents
-  deriving (Show)
+  deriving stock (Show)
 
 type role BlobRef nominal
 

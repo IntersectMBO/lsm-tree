@@ -231,7 +231,7 @@ toKOps = map deserialiseKOp . WB.toList . unTypedWriteBuffer
 -- Also useful for failing tests that have keys as inputs, because the printed
 -- 'WithSerialised' values will show both keys and their serialised form.
 data WithSerialised k = TestKey k SerialisedKey
-  deriving Show
+  deriving stock Show
 
 instance Eq k => Eq (WithSerialised k) where
   TestKey k1 _ == TestKey k2 _ = k1 == k2
@@ -254,9 +254,8 @@ instance SerialiseKey k => SerialiseKey (WithSerialised k) where
 -------------------------------------------------------------------------------}
 
 newtype RFPrecision = RFPrecision Int
-  deriving stock (Show, Generic)
-  deriving newtype Num
-  deriving anyclass NFData
+  deriving stock (Show)
+  deriving newtype (Num, NFData)
 
 instance Arbitrary RFPrecision where
   arbitrary = RFPrecision <$> QC.chooseInt (rfprecLB, rfprecUB)
@@ -568,7 +567,7 @@ instance Arbitrary SerialisedValue where
 deriving newtype instance Arbitrary SerialisedBlob
 
 newtype LargeRawBytes = LargeRawBytes RawBytes
-  deriving Show
+  deriving stock Show
 
 instance Arbitrary LargeRawBytes where
   arbitrary = genRawBytesSized (4096*3) >>= fmap LargeRawBytes . genSlice
@@ -591,7 +590,7 @@ deriving newtype instance SerialiseValue LargeRawBytes
 -- | Minimum length of 6 bytes.
 newtype KeyForIndexCompact =
     KeyForIndexCompact { getKeyForIndexCompact :: RawBytes }
-  deriving (Eq, Ord, Show)
+  deriving stock (Eq, Ord, Show)
 
 instance Arbitrary KeyForIndexCompact where
   -- we try to make collisions and close keys more likely (very crudely)

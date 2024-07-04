@@ -91,7 +91,7 @@ instance Semigroup v => Semigroup (MonoidalUpdateSG v) where
 
 -- | Semigroup wrapper for Entry
 newtype EntrySG v blob = EntrySG (Entry v blob)
-  deriving (Show, Eq)
+  deriving stock (Show, Eq)
 
 -- | As long as values are a semigroup, an Entry is too
 instance Semigroup v => Semigroup (EntrySG v blob) where
@@ -119,7 +119,7 @@ instance Arbitrary2 EntrySG where
     Delete             -> []
 
 newtype BlobSpanSG = BlobSpanSG BlobSpan
-  deriving (Show, Eq)
+  deriving stock (Show, Eq)
 
 instance Arbitrary BlobSpanSG where
   arbitrary = coerce (BlobSpan <$> arbitrary <*> arbitrary)

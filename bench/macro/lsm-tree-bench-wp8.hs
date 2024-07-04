@@ -108,10 +108,10 @@ data GlobalOpts = GlobalOpts
     { rootDir     :: !FilePath  -- ^ session directory.
     , initialSize :: !Int
     }
-  deriving Show
+  deriving stock Show
 
 data SetupOpts = SetupOpts
-  deriving Show
+  deriving stock Show
 
 data RunOpts = RunOpts
     { batchCount :: !Int
@@ -120,7 +120,7 @@ data RunOpts = RunOpts
     , seed       :: !Word64
     , pipelined  :: !Bool
     }
-  deriving Show
+  deriving stock Show
 
 data Cmd
     -- | Setup benchmark: generate initial LSM tree etc.
@@ -131,7 +131,7 @@ data Cmd
 
     -- | Run the actual benchmark
     | CmdRun RunOpts
-  deriving Show
+  deriving stock Show
 
 -------------------------------------------------------------------------------
 -- command line interface

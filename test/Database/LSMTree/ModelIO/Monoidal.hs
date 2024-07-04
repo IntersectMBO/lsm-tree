@@ -82,8 +82,8 @@ data TableHandle m k v = TableHandle {
 -- | Table configuration parameters, like tuning parameters.
 data TableConfig = TableConfig
 
-deriving instance Eq TableConfig
-deriving instance Show TableConfig
+deriving stock instance Eq TableConfig
+deriving stock instance Show TableConfig
 
 -- | Create a new table referenced by a table handle.
 new ::

@@ -53,7 +53,7 @@ import           GHC.List (foldl')
 data RawPage = RawPage
     !Int        -- ^ offset in Word16s.
     !ByteArray
-  deriving (Show)
+  deriving stock (Show)
 
 emptyRawPage :: RawPage
 emptyRawPage = flip makeRawPage 0 $ byteArrayFromList
@@ -131,7 +131,7 @@ data RawPageLookup entry =
        -- contains the /prefix/ of the value (that did fit on the page). The
        -- length of the suffix is returned separately.
      | LookupEntryOverflow !entry !Word32
-  deriving (Eq, Functor, Show)
+  deriving stock (Eq, Functor, Show)
 
 rawPageLookup
     :: RawPage
@@ -184,7 +184,7 @@ data RawPageIndex entry =
        -- and the length of the suffix are returned.
        -- The caller can copy the full serialised pages themselves.
      | IndexEntryOverflow !SerialisedKey !entry !Word32
-  deriving (Eq, Functor, Show)
+  deriving stock (Eq, Functor, Show)
 
 {-# INLINE rawPageIndex #-}
 rawPageIndex
