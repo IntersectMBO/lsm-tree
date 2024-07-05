@@ -37,21 +37,24 @@ I. The benchmark should be able to run in two modes, using the
    batches), or fully pipelined (in batches).
 
 TODO 2024-04-29 consider alternative methods of implementing key generation
-TODO 2024-04-29 pipelined mode is not implemented.
-
+TODO 2024-07-05 pipelined mode needs the 'duplicate' operation. It has been
+                tested for correctness with the model implementation.
 -}
 module Main (main) where
 
 import           Control.Applicative ((<**>))
+import           Control.Concurrent.Async
+import           Control.Concurrent.MVar
 import           Control.DeepSeq (force)
 import           Control.Exception (evaluate)
-import           Control.Monad (forM_, void, when, unless)
+import           Control.Monad (forM_, unless, void, when)
 import qualified Crypto.Hash.SHA256 as SHA256
 import qualified Data.Binary as B
 import qualified Data.ByteString.Short as BS
 import qualified Data.IntSet as IS
 import           Data.IORef (modifyIORef', newIORef, readIORef, writeIORef)
 import           Data.List (foldl')
+import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Traversable (mapAccumL)
 import           Data.Tuple (swap)
@@ -115,6 +118,7 @@ data RunOpts = RunOpts
     , batchSize  :: !Int
     , check      :: !Bool
     , seed       :: !Word64
+    , pipelined  :: !Bool
     }
   deriving Show
 
@@ -161,6 +165,7 @@ runOptsP = pure RunOpts
     <*> O.option O.auto (O.long "batch-size" <> O.value 256 <> O.showDefault <> O.help "Batch size")
     <*> O.switch (O.long "check" <> O.help "Check generated key distribution")
     <*> O.option O.auto (O.long "seed" <> O.value 1337 <> O.showDefault <> O.help "Random seed")
+    <*> O.switch (O.long "pipelined" <> O.help "Use pipelined mode")
 
 -------------------------------------------------------------------------------
 -- clock
@@ -275,6 +280,13 @@ doDryRun' gopts opts = do
         duplicates <- readIORef duplicateRef
         printf "True duplicates: %d\n" duplicates
 
+    -- See batchOverlaps for explanation of this check.
+    when opts.check $
+        let anyOverlap = (not . null)
+                           (batchOverlaps gopts.initialSize opts.batchSize
+                                          opts.batchCount opts.seed)
+         in putStrLn $ "Any adjacent batches with overlap: " ++ show anyOverlap
+
 -------------------------------------------------------------------------------
 -- PRNG initialisation
 -------------------------------------------------------------------------------
@@ -384,7 +396,9 @@ doRun' gopts opts = do
                 fail $ "lookup result mismatch in batch " ++ show b
               writeIORef checkvar xs
 
-        sequentialIterations
+        (if opts.pipelined
+          then pipelinedIterations
+          else sequentialIterations)
           check
           gopts.initialSize
           opts.batchSize
@@ -431,6 +445,148 @@ sequentialIterations output !initialSize !batchSize !batchCount !seed !tbl =
     g0 = initGen initialSize batchSize batchCount seed
 
 -------------------------------------------------------------------------------
+-- pipelined
+-------------------------------------------------------------------------------
+
+{- One iteration of the protocol for one thread looks like this:
+
+1. Lookups (db_n-1) tx_n+0
+2. Sync ?  (db_n+0, updates)
+3. db_n+1 <- Dup (db_n+0)
+   Updates (db_n+1) tx_n+0
+4. Sync !  (db_n+1, updates)
+
+Thus for two threads running iterations concurrently, it looks like this:
+
+1. Lookups (db_n-1) tx_n+0        3. db_n+0 <- Dup (db_n-1)
+                                     Updates (db_n+0) tx_n-1
+2. Sync ?  (db_n+0, updates)  <-  4. Sync !  (db_n+0, updates)
+3. db_n+1 <- Dup (db_n+0)         1. Lookups (db_n+0) tx_n+1
+   Updates (db_n+1) tx_n+0
+4. Sync !  (db_n+1, updates)  ->  2. Sync ?  (db_n+1, updates)
+1. Lookups (db_n+1) tx_n+2        3. db_n+2 <- Dup (db_n+1)
+                                     Updates (db_n+2) tx_n+1
+2. Sync ?  (db_n+2, updates)  <-  4. Sync !  (db_n+2, updates)
+3. db_n+3 <- Dup (db_n+2)         1. Lookups (db_n+2) tx_n+3
+   Updates (db_n+3) tx_n+2
+4. Sync !  (db_n+3, updates)  ->  2. Sync ?  (db_n+3, updates)
+1. Lookups (db_n+3) tx_n+4        3. db_n+4 <- Dup (db_n+3)
+                                     Updates (db_n+4) tx_n+3
+2. Sync ?  (db_n+4, updates)  <-  4. Sync !  (db_n+4, updates)
+3. db_n+5 <- Dup (db_n+4)         1. Lookups (db_n+4) tx_n+5
+   Updates (db_n+5) tx_n+4
+4. Sync !  (db_n+5, updates)  ->  2. Sync ?  (db_n+5, updates)
+
+And the initial setup looks like this:
+
+   db_1 <- Dup (db_0)
+   Lookups (db_0) tx_0
+   Updates (db_1, tx_0)
+   Sync !  (db_1, updates)    ->
+                                  1. Lookups (db_0) tx_1
+
+                                  2. Sync ?  (db_1, updates)
+1. Lookups (db_1) tx_2            3. db_2 <- Dup (db_1)
+                                     Updates (db_2) tx_1
+2. Sync ?  (db_2, updates)    <-  4. Sync !  (db_2, updates)
+3. db_3 <- Dup (db_2)             1. Lookups (db_2) tx_3
+   Updates (db_3) tx_2
+4. Sync !  (db_3, updates)        2. Sync ?  (db_3, updates)
+-}
+pipelinedIteration :: (Int -> LookupResults -> IO ())
+                   -> Int
+                   -> Int
+                   -> MVar (LSM.TableHandle IO K V B, Map K (LSM.Update V B))
+                   -> MVar (LSM.TableHandle IO K V B, Map K (LSM.Update V B))
+                   -> MVar MCG.MCG
+                   -> MVar MCG.MCG
+                   -> LSM.TableHandle IO K V B
+                   -> Int
+                   -> IO (LSM.TableHandle IO K V B)
+pipelinedIteration output !initialSize !batchSize
+                   !syncTblIn !syncTblOut
+                   !syncRngIn !syncRngOut
+                   !tbl_n !b = do
+    g <- takeMVar syncRngIn
+    let (!g', !ls, !is) = generateBatch initialSize batchSize g b
+
+    -- 1: perform the lookups
+    lrs <- LSM.lookups ls tbl_n
+
+    -- 2. sync: receive updates and new table handle
+    putMVar syncRngOut g'
+    (tbl_n1, delta) <- takeMVar syncTblIn
+
+    -- At this point, after syncing, our peer is guaranteed to no longer be
+    -- using tbl_n. They used it to generate tbl_n+1 (which they gave us).
+    LSM.close tbl_n
+    output b $! applyUpdates delta (V.zip ls lrs)
+
+    -- 3. perform the inserts and report outputs (in any order)
+    tbl_n2 <- LSM.duplicate tbl_n1
+    LSM.updates is tbl_n2
+
+    -- 4. sync: send the updates and new table handle
+    let delta' :: Map K (LSM.Update V B)
+        !delta' = Map.fromList (V.toList is)
+    putMVar syncTblOut (tbl_n2, delta')
+
+    return tbl_n2
+  where
+    applyUpdates :: Map K (LSM.Update V a)
+                 -> V.Vector (K, LSM.LookupResult V b)
+                 -> V.Vector (K, LSM.LookupResult V ())
+    applyUpdates m lrs =
+        flip V.map lrs $ \(k, lr) ->
+          case Map.lookup k m of
+            Nothing -> (k, fmap (const ()) lr)
+            Just u  -> (k, updateToLookupResult u)
+
+pipelinedIterations :: (Int -> LookupResults -> IO ())
+                    -> Int -> Int -> Int -> Word64
+                    -> LSM.TableHandle IO K V B
+                    -> IO ()
+pipelinedIterations output !initialSize !batchSize !batchCount !seed tbl_0 = do
+    syncTblA2B <- newEmptyMVar
+    syncTblB2A <- newEmptyMVar
+    syncRngA2B <- newEmptyMVar
+    syncRngB2A <- newEmptyMVar
+
+    let g0 = initGen initialSize batchSize batchCount seed
+
+    tbl_1 <- LSM.duplicate tbl_0
+    let prelude = do
+          let (g1, ls0, is0) = generateBatch initialSize batchSize g0 0
+          lrs0 <- LSM.lookups ls0 tbl_0
+          output 0 $! V.zip ls0 (fmap (fmap (const ())) lrs0)
+          LSM.updates is0 tbl_1
+          let !delta = Map.fromList (V.toList is0)
+          putMVar syncTblA2B (tbl_1, delta)
+          putMVar syncRngA2B g1
+
+        threadA =
+          forFoldM_ tbl_1 [ 2, 4 .. batchCount - 1 ] $ \b tbl_n ->
+            pipelinedIteration output initialSize batchSize
+                               syncTblB2A syncTblA2B -- in, out
+                               syncRngB2A syncRngA2B -- in, out
+                               tbl_n b
+
+        threadB =
+          forFoldM_ tbl_0 [ 1, 3 .. batchCount - 1 ] $ \b tbl_n ->
+            pipelinedIteration output initialSize batchSize
+                               syncTblA2B syncTblB2A -- in, out
+                               syncRngA2B syncRngB2A -- in, out
+                               tbl_n b
+
+    -- We do batch 0 as a special prelude to get the pipeline started...
+    prelude
+    -- Run the pipeline: batches 2,4,6... concurrently with batches 1,3,5...
+    -- If run with +RTS -N2 then we'll put each thread on a separate core.
+    withAsyncOn 0 threadA $ \ta ->
+      withAsyncOn 1 threadB $ \tb ->
+        waitBoth ta tb >> return ()
+
+-------------------------------------------------------------------------------
 -- Testing
 -------------------------------------------------------------------------------
 
@@ -456,6 +612,27 @@ updateToLookupResult :: LSM.Update v blob -> LSM.LookupResult v ()
 updateToLookupResult (LSM.Insert v Nothing)  = LSM.Found v
 updateToLookupResult (LSM.Insert v (Just _)) = LSM.FoundWithBlob v ()
 updateToLookupResult  LSM.Delete             = LSM.NotFound
+
+-- | Return the adjacent batches where there is overlap between one batch's
+-- inserts and the next batch's lookups. Testing the pipelined version needs
+-- some overlap to get proper coverage. So this function is used as a coverage
+-- check.
+--
+batchOverlaps :: Int -> Int -> Int -> Word64 -> [IS.IntSet]
+batchOverlaps initialSize batchSize batchCount seed =
+    let xs = generate g0 0
+
+     in filter (not . IS.null)
+      $ map (\((_, is),(ls, _)) -> IS.intersection (intSetFromVector is)
+                                                   (intSetFromVector ls))
+      $ zip xs (tail xs)
+  where
+    generate _ b | b == batchCount = []
+    generate g b = (lookups, inserts) : generate g' (b+1)
+      where
+        (g', lookups, inserts) = generateBatch' initialSize batchSize g b
+
+    g0 = initGen initialSize batchSize batchCount seed
 
 -------------------------------------------------------------------------------
 -- main

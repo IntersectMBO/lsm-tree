@@ -431,5 +431,5 @@ duplicate ::
      IOLike m
   => TableHandle m k v blob
   -> m (TableHandle m k v blob)
-duplicate = undefined
+duplicate = error "Database.LSMTree.Normal.duplicate: not yet implemented"
 -- TODO: implementation note: reuse the handles' ArenaManager
