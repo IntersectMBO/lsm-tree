@@ -358,13 +358,6 @@ toOperations lookups inserts = (batch1, batch2)
 
 doRun :: GlobalOpts -> RunOpts -> IO ()
 doRun gopts opts = do
-    time <- timed_ $ doRun' gopts opts
-    -- TODO: collect more statistic, save them in dry-run,
-    -- TODO: make the results human comprehensible.
-    printf "Proper run: %.03f sec\n" time
-
-doRun' :: GlobalOpts -> RunOpts -> IO ()
-doRun' gopts opts = do
     let mountPoint :: FS.MountPoint
         mountPoint = FS.MountPoint gopts.rootDir
 
@@ -396,15 +389,23 @@ doRun' gopts opts = do
                 fail $ "lookup result mismatch in batch " ++ show b
               writeIORef checkvar xs
 
-        (if opts.pipelined
-          then pipelinedIterations
-          else sequentialIterations)
-          check
-          gopts.initialSize
-          opts.batchSize
-          opts.batchCount
-          opts.seed
-          tbl
+        let benchmarkIterations
+              | opts.pipelined = pipelinedIterations
+              | otherwise      = sequentialIterations
+        time <- timed_ $
+          benchmarkIterations
+            check
+            gopts.initialSize
+            opts.batchSize
+            opts.batchCount
+            opts.seed
+            tbl
+
+        printf "Proper run:            %.03f sec\n" time
+        let ops = opts.batchCount * opts.batchSize
+        printf "Operations per second: %7.01f ops/sec\n" (fromIntegral ops / time)
+        -- TODO: collect more statistic, save them in dry-run,
+        -- TODO: make the results human comprehensible.
 
 
 -------------------------------------------------------------------------------
