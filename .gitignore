@@ -28,3 +28,6 @@ cabal.project.local~
 
 # Documentation
 docs/haddocks
+
+# Benchmarks
+_bench_*
