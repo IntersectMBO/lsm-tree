@@ -2,6 +2,5 @@
 
 set -euo pipefail
 
-find . -iname '*.cabal' \
-  -not -path "./dist-newstyle" \
-  -exec cabal-fmt -i {} +
+find . -path "./dist-newstyle" -prune -o \
+  -name '*.cabal' -exec cabal-fmt -i {} +

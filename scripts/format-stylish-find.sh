@@ -19,6 +19,6 @@ echo "Running stylish-haskell script with arguments: $PARGS $CARGS"
 export LC_ALL=C.UTF-8
 
 # shellcheck disable=SC2086
-find $PARGS -iname '*.hs' \
-  -not -path "./dist-newstyle" \
-  -exec stylish-haskell -i -c .stylish-haskell.yaml {} +
+find $PARGS \
+  \( -path './dist-newstyle' -o -path './.git*' -o -path './_bench_*' \) -prune \
+  -o \( -iname '*.hs' -exec stylish-haskell -i -c .stylish-haskell.yaml {} + \)
