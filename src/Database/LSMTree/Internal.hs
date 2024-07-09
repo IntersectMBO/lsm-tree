@@ -36,6 +36,7 @@ module Database.LSMTree.Internal (
   , listSnapshots
     -- * configuration
   , TableConfig (..)
+  , defaultTableConfig
   , resolveMupsert
   , ResolveMupsert (..)
   , SizeRatio (..)
@@ -1123,6 +1124,23 @@ data TableConfig = TableConfig {
 -- | TODO: this should be removed once we have proper snapshotting with proper
 -- persistence of the config to disk.
 deriving instance Read TableConfig
+
+-- | A reasonable default 'TableConfig', for normal tables.
+--
+-- For monoidal tables, override the 'confResolveMupsert' field.
+--
+-- This uses a write buffer with up to 20,000 elements and a generous amount of
+-- memory for Bloom filters (FPR of 2%).
+--
+defaultTableConfig :: TableConfig
+defaultTableConfig =
+    TableConfig
+      { confMergePolicy      = MergePolicyLazyLevelling
+      , confSizeRatio        = Four
+      , confWriteBufferAlloc = AllocNumEntries (NumEntries 20_000)
+      , confBloomFilterAlloc = AllocRequestFPR 0.02
+      , confResolveMupsert   = Nothing
+      }
 
 resolveMupsert :: TableConfig -> SerialisedValue -> SerialisedValue -> SerialisedValue
 resolveMupsert conf = maybe const unResolveMupsert (confResolveMupsert conf)

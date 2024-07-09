@@ -417,6 +417,7 @@ benchmark lsm-tree-bench-wp8
   hs-source-dirs: bench/macro src-extras
   main-is:        lsm-tree-bench-wp8.hs
   build-depends:
+    , async
     , base
     , binary
     , bytestring
