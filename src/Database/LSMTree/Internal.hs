@@ -62,6 +62,7 @@ import           Data.Arena (ArenaManager, newArenaManager)
 import           Data.Bifunctor (Bifunctor (..))
 import           Data.BloomFilter (Bloom)
 import qualified Data.ByteString.Char8 as BSC
+import           Data.Char (isNumber)
 import           Data.Either (fromRight)
 import           Data.Foldable
 import           Data.Map.Strict (Map)
@@ -285,11 +286,16 @@ openSession hfs hbio dir = do
         -- TODO: remove once we have proper snapshotting. Before that, we must
         -- prevent name clashes with runs that are still present in the active
         -- directory by starting the unique counter at a strictly higher number
-        -- than the name of any run in the active directory.
-        --
-        -- This is a crude number to start the counter at, but it should do the
-        -- trick until we have proper snapshots.
-        x <- Set.size <$> FS.listDirectory hfs activeDirPath
+        -- than the name of any run in the active directory. When we do
+        -- snapshoting properly, then we'll hard link files into the active
+        -- directory under new names/numbers, and so session counters will
+        -- always be able to start at 0.
+        files <- FS.listDirectory hfs activeDirPath
+        let (x :: Int) | Set.null files = 0
+                       -- TODO: read is not very robust, but it is only a
+                       -- temporary solution
+                       | otherwise = maximum [ read (takeWhile isNumber f)
+                                             | f <- Set.toList files ]
         mkSession sessionFileLock (fromIntegral x)
 
     -- Check that the active directory and snapshots directory exist. We assume
