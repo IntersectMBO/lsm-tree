@@ -581,15 +581,8 @@ test-suite lsm-prototypes-tests
     , lsm-tree:prototypes
     , tasty
 
--- TODO: temporary flag that overrides the operating system dependents
--- implementation of the HasBlockIO interface, using the serial implementation
--- intead. This allows for fixing bugs in the blockio-uring implementation
--- without blocking parallel development efforts that rely on HasBlockIO but not
--- on its exact implementation. One could argue for keeping this flag even after
--- blockio-uring has become stable enough, but I (Joris) would prefer to not
--- expose cabal flags to the user.
 flag serialblockio
-  description: User serial HasBlockIO regardless of the operating system
+  description: Use serial HasBlockIO regardless of the operating system
   default:     False
   manual:      True
 

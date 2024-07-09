@@ -18,7 +18,7 @@ ioHasBlockIO ::
   -> IOCtxParams
   -> IO (HasBlockIO IO HandleIO)
 #if SERIALBLOCKIO
-ioHasBlockIO = Serial.serialHasBlockIO
+ioHasBlockIO hfs _ = Serial.serialHasBlockIO hfs
 #else
 ioHasBlockIO = Async.asyncHasBlockIO
 #endif
