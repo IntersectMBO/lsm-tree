@@ -165,7 +165,7 @@ flush :: FS.HasFS IO FS.HandleIO
       -> RunFsPaths
       -> WriteBuffer
       -> IO (Run (FS.Handle (FS.HandleIO)))
-flush hfs hbio = Run.fromWriteBuffer hfs hbio
+flush hfs hbio = Run.fromWriteBuffer hfs hbio Run.CacheRunData
 
 data InputKOps
   = NormalInputs

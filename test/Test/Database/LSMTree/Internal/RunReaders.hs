@@ -307,7 +307,7 @@ runIO act lu = case act of
       traverse_ (liftIO . closeReadersCtx hfs) mCtx
       runs <-
         zipWithM
-          (\p -> liftIO . Run.fromWriteBuffer hfs hbio p)
+          (\p -> liftIO . Run.fromWriteBuffer hfs hbio Run.CacheRunData p)
           (Paths.RunFsPaths (FS.mkFsPath []) <$> [numRuns ..])
           (map unTypedWriteBuffer wbs)
       newReaders <- liftIO $ Readers.new hfs runs >>= \case

@@ -108,7 +108,7 @@ testSingleInsert sessionRoot key val mblob =
     FS.withIOHasBlockIO fs FS.defaultIOCtxParams $ \hbio -> do
     -- flush write buffer
     let wb = WB.addEntryNormal key (N.Insert val mblob) WB.empty
-    run <- fromWriteBuffer fs hbio (RunFsPaths (FS.mkFsPath []) 42) wb
+    run <- fromWriteBuffer fs hbio CacheRunData (RunFsPaths (FS.mkFsPath []) 42) wb
     -- check all files have been written
     let activeDir = sessionRoot
     bsKOps <- BS.readFile (activeDir </> "42.keyops")
@@ -205,7 +205,7 @@ prop_WriteAndRead fs hbio (TypedWriteBuffer wb) = do
              (WB.numEntries wb === runNumEntries run)
       .&&. kops === rhs
   where
-    flush n = fromWriteBuffer fs hbio (RunFsPaths (FS.mkFsPath []) n)
+    flush n = fromWriteBuffer fs hbio CacheRunData (RunFsPaths (FS.mkFsPath []) n)
 
     stats = tabulate "value size" (map (showPowersOf10 . sizeofValue) vals)
           . label (if any isLargeKOp kops then "has large k/op" else "no large k/op")
@@ -224,8 +224,8 @@ prop_WriteAndOpen ::
 prop_WriteAndOpen fs hbio (TypedWriteBuffer wb) = do
     -- flush write buffer
     let fsPaths = RunFsPaths (FS.mkFsPath []) 1337
-    written <- fromWriteBuffer fs hbio fsPaths wb
-    loaded <- openFromDisk fs hbio fsPaths
+    written <- fromWriteBuffer fs hbio CacheRunData fsPaths wb
+    loaded <- openFromDisk fs hbio CacheRunData fsPaths
 
     (RefCount 1 @=?) =<< readIORef (runRefCount written)
     (RefCount 1 @=?) =<< readIORef (runRefCount loaded)

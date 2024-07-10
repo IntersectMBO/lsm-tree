@@ -14,7 +14,7 @@ import           Data.Coerce (coerce)
 import           Data.Traversable (for)
 import           Database.LSMTree.Internal.BlobRef (BlobRef (..))
 import           Database.LSMTree.Internal.Entry
-import           Database.LSMTree.Internal.Run (Run)
+import           Database.LSMTree.Internal.Run (Run, RunDataCaching)
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunBuilder (RunBuilder)
 import qualified Database.LSMTree.Internal.RunBuilder as Builder
@@ -37,6 +37,8 @@ data Merge fhandle = Merge {
     , mergeMappend :: !Mappend
     , mergeReaders :: {-# UNPACK #-} !(Readers.Readers fhandle)
     , mergeBuilder :: !(RunBuilder fhandle)
+    , mergeCaching :: !RunDataCaching
+      -- ^ The caching policy to use for the Run in the 'MergeComplete'.
     }
 
 data Level = MidLevel | LastLevel
@@ -48,12 +50,13 @@ type Mappend = SerialisedValue -> SerialisedValue -> SerialisedValue
 -- The list of runs should be sorted from new to old.
 new ::
      HasFS IO h
+  -> RunDataCaching
   -> Level
   -> Mappend
   -> Run.RunFsPaths
   -> [Run (FS.Handle h)]
   -> IO (Maybe (Merge (FS.Handle h)))
-new fs mergeLevel mergeMappend targetPaths runs = do
+new fs mergeCaching mergeLevel mergeMappend targetPaths runs = do
     mreaders <- Readers.new fs runs
     for mreaders $ \mergeReaders -> do
       -- calculate upper bounds based on input runs
@@ -162,7 +165,8 @@ steps fs hbio Merge {..} requestedSteps =
     completeMerge !n = do
         -- All Readers have been drained, the builder finalised.
         -- No further cleanup required.
-        run <- Run.fromMutable fs hbio (Run.RefCount 1) mergeBuilder
+        run <- Run.fromMutable fs hbio mergeCaching
+                               (Run.RefCount 1) mergeBuilder
         return (n, MergeComplete run)
 
 

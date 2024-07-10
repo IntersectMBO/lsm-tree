@@ -379,7 +379,8 @@ lookupsEnv runSizes keyRng0 hfs hbio = do
 
     -- return runs
     runs <- V.fromList <$>
-              mapM (Run.fromMutable hfs hbio (Run.RefCount 1)) rbs
+              mapM (Run.fromMutable hfs hbio Run.NoCacheRunData
+                                    (Run.RefCount 1)) rbs
     let blooms = V.map Run.runFilter runs
         indexes = V.map Run.runIndex runs
         handles = V.map Run.runKOpsFile runs

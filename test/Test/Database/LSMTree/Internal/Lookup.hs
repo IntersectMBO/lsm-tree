@@ -311,7 +311,7 @@ prop_roundtripFromWriteBufferLookupIO dats =
     mkRuns hasFS hasBlockIO =
       first V.fromList . unzip <$>
       sequence
-        [ (,wb) <$> Run.fromWriteBuffer hasFS hasBlockIO
+        [ (,wb) <$> Run.fromWriteBuffer hasFS hasBlockIO Run.CacheRunData
                                         (RunFsPaths (FS.mkFsPath []) i) wb
         | (i, dat) <- zip [0..] (getSmallList dats)
         , let wb = WB.fromMap (runData dat)
