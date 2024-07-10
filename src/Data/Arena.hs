@@ -7,13 +7,15 @@ module Data.Arena (
     Offset,
     Alignment,
     withArena,
+    newArena,
+    closeArena,
 
     allocateFromArena,
     -- * Test helpers
     withUnmanagedArena,
 ) where
 
-import           Control.DeepSeq (NFData (..))
+import           Control.DeepSeq (NFData (..), rwhnf)
 import           Control.Monad.Primitive
 import           Data.Primitive.ByteArray
 import           Data.Primitive.MutVar
@@ -39,15 +41,27 @@ instance NFData (ArenaManager s) where
 -- so we can scramble them at the end.
 data Arena s = Arena (MutVar s [MutableByteArray s])
 
+instance NFData (Arena s) where
+  rnf (Arena mvar) = rwhnf mvar
+
 type Size      = Int
 type Offset    = Int
 type Alignment = Int
 
 withArena :: PrimMonad m => ArenaManager (PrimState m) -> (Arena (PrimState m) -> m a) -> m a
-withArena _ f = do
-    mvar <- newMutVar []
-    result <- f (Arena mvar)
+withArena am f = do
+  a <- newArena am
+  x <- f a
+  closeArena a
+  pure x
 
+newArena :: PrimMonad m => ArenaManager (PrimState m) -> m (Arena (PrimState m))
+newArena _ = do
+    mvar <- newMutVar []
+    pure $! (Arena mvar)
+
+closeArena :: PrimMonad m => Arena (PrimState m) -> m ()
+closeArena  (Arena mvar) = do
     -- scramble the allocated bytearrays,
     -- they shouldn't be in use anymore!
 #ifdef NO_IGNORE_ASSERTS
@@ -56,8 +70,7 @@ withArena _ f = do
         size <- getSizeofMutableByteArray mba
         setByteArray mba 0 size (0x77 :: Word8)
 #endif
-
-    return result
+    pure ()
 
 -- | Create unmanaged arena
 --
