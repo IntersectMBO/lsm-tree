@@ -612,6 +612,7 @@ updates es th = withOpenTable th $ \thEnv -> do
         tc' <- updatesWithInterleavedFlushes
                 (tableConfig th)
                 hfs
+                (tableHasBlockIO thEnv)
                 (tableSessionRoot thEnv)
                 (tablesSessionUniqCounter thEnv)
                 es
@@ -619,7 +620,7 @@ updates es th = withOpenTable th $ \thEnv -> do
         assertNoThunks tc' $ pure ()
         pure tc'
 
-{-# SPECIALISE updatesWithInterleavedFlushes :: TableConfig -> HasFS IO h -> SessionRoot -> UniqCounter IO -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob) -> TempRegistry IO -> TableContent h -> IO (TableContent h) #-}
+{-# SPECIALISE updatesWithInterleavedFlushes :: TableConfig -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob) -> TempRegistry IO -> TableContent h -> IO (TableContent h) #-}
 -- | A single batch of updates can fill up the write buffer multiple times. We
 -- flush the write buffer each time it fills up before trying to fill it up
 -- again.
@@ -648,13 +649,14 @@ updatesWithInterleavedFlushes ::
      m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
   => TableConfig
   -> HasFS m h
+  -> HasBlockIO m h
   -> SessionRoot
   -> UniqCounter m
   -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob)
   -> TempRegistry m
   -> TableContent h
   -> m (TableContent h)
-updatesWithInterleavedFlushes conf hfs root uniqC es reg tc = do
+updatesWithInterleavedFlushes conf hfs hbio root uniqC es reg tc = do
     let wb = tableWriteBuffer tc
         (wb', es') = WB.addEntriesUpToN resolve es maxn wb
     -- never exceed the write buffer capacity
@@ -668,14 +670,14 @@ updatesWithInterleavedFlushes conf hfs root uniqC es reg tc = do
     -- If the write buffer did reach capacity, then we flush.
     else do
       assert (unNumEntries (WB.numEntries wb') == maxn) $ pure ()
-      tc'' <- flushWriteBuffer conf hfs root uniqC reg tc'
+      tc'' <- flushWriteBuffer conf hfs hbio root uniqC reg tc'
       -- In the fortunate case where we have already performed all the updates,
       -- return,
       if V.null es' then
         pure $! tc''
       -- otherwise, keep going
       else
-        updatesWithInterleavedFlushes conf hfs root uniqC es' reg tc''
+        updatesWithInterleavedFlushes conf hfs hbio root uniqC es' reg tc''
   where
     AllocNumEntries (NumEntries maxn) = confWriteBufferAlloc conf
     resolve = resolveMupsert conf
@@ -687,7 +689,7 @@ updatesWithInterleavedFlushes conf hfs root uniqC es reg tc = do
         , tableCache = tableCache tc0
         }
 
-{-# SPECIALISE flushWriteBuffer :: TableConfig -> HasFS IO h -> SessionRoot -> UniqCounter IO -> TempRegistry IO -> TableContent h -> IO (TableContent h) #-}
+{-# SPECIALISE flushWriteBuffer :: TableConfig -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> TempRegistry IO -> TableContent h -> IO (TableContent h) #-}
 -- | Flush the write buffer to disk, regardless of whether it is full or not.
 --
 -- The returned table content contains an updated set of levels, where the write
@@ -700,21 +702,22 @@ flushWriteBuffer ::
      m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
   => TableConfig
   -> HasFS m h
+  -> HasBlockIO m h
   -> SessionRoot
   -> UniqCounter m
   -> TempRegistry m
   -> TableContent h
   -> m (TableContent h)
-flushWriteBuffer conf hfs root uniqC reg tc
+flushWriteBuffer conf hfs hbio root uniqC reg tc
   | WB.null (tableWriteBuffer tc) = pure tc
   | otherwise = do
     n <- incrUniqCounter uniqC
     r <- allocateTemp reg
-            (Run.fromWriteBuffer hfs
+            (Run.fromWriteBuffer hfs hbio
               (Paths.runPath root n)
               (tableWriteBuffer tc))
             (Run.removeReference hfs)
-    levels' <- addRunToLevels conf hfs root uniqC r reg (tableLevels tc)
+    levels' <- addRunToLevels conf hfs hbio root uniqC r reg (tableLevels tc)
     pure $! TableContent {
         tableWriteBuffer = WB.empty
       , tableLevels = levels'
@@ -795,18 +798,19 @@ levelsInvariant conf levels = go 1 levels >>= \ !_ -> pure True
     -- Check that a run is too small for next levels
     fitsUB policy r ln = Run.runNumEntries r <= maxRunSize sr wba policy ln
 
-{-# SPECIALISE addRunToLevels :: TableConfig -> HasFS IO h -> SessionRoot -> UniqCounter IO -> Run (Handle h) -> TempRegistry IO -> Levels (Handle h) -> IO (Levels (Handle h)) #-}
+{-# SPECIALISE addRunToLevels :: TableConfig -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> Run (Handle h) -> TempRegistry IO -> Levels (Handle h) -> IO (Levels (Handle h)) #-}
 addRunToLevels ::
      forall m h. m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
   => TableConfig
   -> HasFS m h
+  -> HasBlockIO m h
   -> SessionRoot
   -> UniqCounter m
   -> Run (Handle h)
   -> TempRegistry m
   -> Levels (Handle h)
   -> m (Levels (Handle h))
-addRunToLevels conf@TableConfig{..} hfs root uniqC r0 reg levels = do
+addRunToLevels conf@TableConfig{..} hfs hbio root uniqC r0 reg levels = do
     ls' <- go 1 (V.singleton r0) levels
     assert (runST $ levelsInvariant conf ls') $ return ls'
   where
@@ -871,7 +875,9 @@ addRunToLevels conf@TableConfig{..} hfs root uniqC r0 reg levels = do
           pure (SingleRun r)
       | otherwise = do
         assert (let l = V.length rs in l >= 2 && l <= 5) $ pure ()
-        r <- allocateTemp reg (mergeRuns conf hfs root uniqC mergepolicy mergelast rs) (Run.removeReference hfs)
+        r <- allocateTemp reg
+               (mergeRuns conf hfs hbio root uniqC mergepolicy mergelast rs)
+               (Run.removeReference hfs)
         V.mapM_ (freeTemp reg . Run.removeReference hfs) rs
         pure $! MergingRun (CompletedMerge r)
 
@@ -926,20 +932,21 @@ mergeLastForLevel levels
 levelIsFull :: SizeRatio -> V.Vector (Run h) -> Bool
 levelIsFull sr rs = V.length rs + 1 >= (sizeRatioInt sr)
 
-{-# SPECIALISE mergeRuns :: TableConfig -> HasFS IO h -> SessionRoot -> UniqCounter IO -> MergePolicyForLevel -> Merge.Level -> V.Vector (Run (Handle h)) -> IO (Run (Handle h)) #-}
+{-# SPECIALISE mergeRuns :: TableConfig -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> MergePolicyForLevel -> Merge.Level -> V.Vector (Run (Handle h)) -> IO (Run (Handle h)) #-}
 -- TODO: pass 'confBloomFilterAlloc' down to the merge and use it to initialise
 -- bloom filters
 mergeRuns ::
      m ~ IO
   => TableConfig
   -> HasFS m h
+  -> HasBlockIO m h
   -> SessionRoot
   -> UniqCounter m
   -> MergePolicyForLevel
   -> Merge.Level
   -> V.Vector (Run (Handle h))
   -> m (Run (Handle h))
-mergeRuns conf hfs root uniqC _ mergeLevel runs = do
+mergeRuns conf hfs hbio root uniqC _ mergeLevel runs = do
     n <- incrUniqCounter uniqC
     let runPaths = Paths.runPath root n
     Merge.new hfs mergeLevel resolve runPaths (toList runs) >>= \case
@@ -948,7 +955,7 @@ mergeRuns conf hfs root uniqC _ mergeLevel runs = do
   where
     resolve = resolveMupsert conf
     go m =
-      Merge.steps hfs m 1024 >>= \case
+      Merge.steps hfs hbio m 1024 >>= \case
         (_, Merge.MergeInProgress)   -> go m
         (_, Merge.MergeComplete run) -> return run
 
@@ -977,6 +984,7 @@ snapshot snap label th = do
         r <- flushWriteBuffer
               (tableConfig th)
               hfs
+              (tableHasBlockIO thEnv)
               (tableSessionRoot thEnv)
               (tablesSessionUniqCounter thEnv)
               reg
@@ -1013,7 +1021,8 @@ open ::
   -> m (TableHandle m h)
 open sesh label snap = do
     withOpenSession sesh $ \seshEnv -> do
-      let hfs = sessionHasFS seshEnv
+      let hfs      = sessionHasFS seshEnv
+          hbio     = sessionHasBlockIO seshEnv
           snapPath = Paths.snapshot (sessionRoot seshEnv) snap
       FS.doesFileExist hfs snapPath >>= \b ->
         unless b $ throwIO (ErrSnapshotNotExists snap)
@@ -1027,9 +1036,10 @@ open sesh label snap = do
       let runPaths = V.map (bimap (second $ RunFsPaths (Paths.activeDir $ sessionRoot seshEnv))
                                   (V.map (RunFsPaths (Paths.activeDir $ sessionRoot seshEnv))))
                            runNumbers
-      with (openLevels hfs runPaths) (newWithLevels seshEnv conf)
+      with (openLevels hfs hbio runPaths)
+           (newWithLevels seshEnv conf)
 
-{-# SPECIALISE openLevels :: HasFS IO h -> V.Vector ((Bool, RunFsPaths), V.Vector RunFsPaths) -> Managed IO (Levels (FS.Handle h)) #-}
+{-# SPECIALISE openLevels :: HasFS IO h -> HasBlockIO IO h -> V.Vector ((Bool, RunFsPaths), V.Vector RunFsPaths) -> Managed IO (Levels (FS.Handle h)) #-}
 -- | Open multiple levels.
 --
 -- If an error occurs when opening multiple runs in sequence, then we have to
@@ -1045,14 +1055,17 @@ open sesh label snap = do
 openLevels ::
      m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
   => HasFS m h
+  -> HasBlockIO m h
   -> V.Vector ((Bool, RunFsPaths), V.Vector RunFsPaths)
   -> Managed m (Levels (Handle h))
-openLevels hfs levels =
+openLevels hfs hbio levels =
     flip V.mapMStrict levels $ \(mrPath, rsPaths) -> do
-      !r <- Managed $ bracketOnError (Run.openFromDisk hfs (snd mrPath)) (Run.removeReference hfs)
+      !r <- Managed $ bracketOnError
+                        (Run.openFromDisk hfs hbio (snd mrPath))
+                        (Run.removeReference hfs)
       !rs <- flip V.mapMStrict rsPaths $ \run ->
         Managed $ bracketOnError
-                    (Run.openFromDisk hfs run)
+                    (Run.openFromDisk hfs hbio run)
                     (Run.removeReference hfs)
       let !mr = if fst mrPath then SingleRun r else MergingRun (CompletedMerge r)
       pure $! Level mr rs

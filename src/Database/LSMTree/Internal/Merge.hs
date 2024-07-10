@@ -23,6 +23,7 @@ import qualified Database.LSMTree.Internal.RunReaders as Readers
 import           Database.LSMTree.Internal.Serialise
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
+import           System.FS.BlockIO.API (HasBlockIO)
 
 -- | An in-progress incremental k-way merge of 'Run's.
 --
@@ -94,10 +95,11 @@ stepsInvariant requestedSteps = \case
 -- The resulting run has a reference count of 1.
 steps ::
      HasFS IO h
+  -> HasBlockIO IO h
   -> Merge (FS.Handle h)
   -> Int  -- ^ How many input entries to consume (at least)
   -> IO (Int, StepResult (FS.Handle h))
-steps fs Merge {..} requestedSteps =
+steps fs hbio Merge {..} requestedSteps =
     (\res -> assert (stepsInvariant requestedSteps res) res) <$> go 0
   where
     go !n
@@ -160,7 +162,7 @@ steps fs Merge {..} requestedSteps =
     completeMerge !n = do
         -- All Readers have been drained, the builder finalised.
         -- No further cleanup required.
-        run <- Run.fromMutable fs (Run.RefCount 1) mergeBuilder
+        run <- Run.fromMutable fs hbio (Run.RefCount 1) mergeBuilder
         return (n, MergeComplete run)
 
 

@@ -23,6 +23,8 @@ import           GHC.Generics
 import           Prelude hiding (getContents)
 import           System.Directory (removeDirectoryRecursive)
 import qualified System.FS.API as FS
+import qualified System.FS.BlockIO.API as FS
+import qualified System.FS.BlockIO.IO as FS
 import qualified System.FS.IO as FS
 import           System.IO.Temp
 import           System.Random (StdGen, mkStdGen, uniform)
@@ -106,14 +108,14 @@ benchmarks = bgroup "Bench.Database.LSMTree.Internal.WriteBuffer" [
 
 benchWriteBuffer :: Config -> Benchmark
 benchWriteBuffer conf@Config{name} =
-    withEnv $ \ ~(_dir, hasFS, kops) ->
+    withEnv $ \ ~(_dir, hasFS, hasBlockIO, kops) ->
       bgroup name [
           bench "insert" $
             Cr.whnf (\kops' -> insert kops') kops
         , Cr.env (pure $ insert kops) $ \wb ->
             bench "flush" $
               Cr.perRunEnvWithCleanup (getPaths hasFS) (const (cleanupPaths hasFS)) $ \p -> do
-                !run <- flush hasFS p wb
+                !run <- flush hasFS hasBlockIO p wb
                 Run.removeReference hasFS run
         , bench "insert+flush" $
             -- To make sure the WriteBuffer really gets recomputed on every run,
@@ -128,7 +130,7 @@ benchWriteBuffer conf@Config{name} =
             Cr.perRunEnvWithCleanup
               ((,) kops <$> getPaths hasFS)
               (const (cleanupPaths hasFS)) $ \(kops', p) -> do
-                !run <- flush hasFS p (insert kops')
+                !run <- flush hasFS hasBlockIO p (insert kops')
                 -- Make sure to immediately close runs so we don't run out of
                 -- file handles. Ideally this would not be measured, but at
                 -- least it's pretty cheap.
@@ -158,8 +160,12 @@ insert (NormalInputs kops) =
 insert (MonoidalInputs kops mappendVal) =
     List.foldl' (\wb (k, e) -> WB.addEntryMonoidal mappendVal k e wb) WB.empty kops
 
-flush :: FS.HasFS IO FS.HandleIO -> RunFsPaths -> WriteBuffer -> IO (Run (FS.Handle (FS.HandleIO)))
-flush = Run.fromWriteBuffer
+flush :: FS.HasFS IO FS.HandleIO
+      -> FS.HasBlockIO IO FS.HandleIO
+      -> RunFsPaths
+      -> WriteBuffer
+      -> IO (Run (FS.Handle (FS.HandleIO)))
+flush hfs hbio = Run.fromWriteBuffer hfs hbio
 
 data InputKOps
   = NormalInputs
@@ -237,6 +243,7 @@ writeBufferEnv ::
      Config
   -> IO ( FilePath -- ^ Temporary directory
         , FS.HasFS IO FS.HandleIO
+        , FS.HasBlockIO IO FS.HandleIO
         , InputKOps
         )
 writeBufferEnv config = do
@@ -247,7 +254,8 @@ writeBufferEnv config = do
           Nothing -> NormalInputs (fmap (fmap expectNormal) kops)
           Just f  -> MonoidalInputs (fmap (fmap expectMonoidal) kops) f
     let hasFS = FS.ioHasFS (FS.MountPoint benchTmpDir)
-    pure (benchTmpDir, hasFS, inputKOps)
+    hasBlockIO <- FS.ioHasBlockIO hasFS FS.defaultIOCtxParams
+    pure (benchTmpDir, hasFS, hasBlockIO, inputKOps)
   where
     expectNormal e = fromMaybe (error ("invalid normal update: " <> show e))
                        (entryToUpdateNormal e)
@@ -257,11 +265,13 @@ writeBufferEnv config = do
 writeBufferEnvCleanup ::
      ( FilePath -- ^ Temporary directory
      , FS.HasFS IO FS.HandleIO
+     , FS.HasBlockIO IO FS.HandleIO
      , kops
      )
   -> IO ()
-writeBufferEnvCleanup (tmpDir, _, _) = do
+writeBufferEnvCleanup (tmpDir, _, hasBlockIO, _) = do
     removeDirectoryRecursive tmpDir
+    FS.close hasBlockIO
 
 -- | Generate keys and entries to insert into the write buffer.
 -- They are already serialised to exclude the cost from the benchmark.

@@ -280,6 +280,7 @@ test-suite lsm-tree-test
     , io-sim                   >=1.4
     , lsm-tree
     , lsm-tree:blockio-api
+    , lsm-tree:blockio-sim
     , lsm-tree:bloomfilter
     , lsm-tree:prototypes
     , mtl

@@ -81,6 +81,7 @@ import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import           NoThunks.Class (NoThunks, OnlyCheckWhnfNamed (..))
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
+import           System.FS.BlockIO.API (HasBlockIO)
 
 
 -- | The in-memory representation of a completed LSM run.
@@ -159,8 +160,12 @@ close fs Run {..} = do
         FS.hClose fs runBlobFile
 
 -- | Create a run by finalising a mutable run.
-fromMutable :: HasFS IO h -> RefCount -> RunBuilder (FS.Handle h) -> IO (Run (FS.Handle h))
-fromMutable fs refCount builder = do
+fromMutable :: HasFS IO h
+            -> HasBlockIO IO h
+            -> RefCount
+            -> RunBuilder (FS.Handle h)
+            -> IO (Run (FS.Handle h))
+fromMutable fs _hbio refCount builder = do
     (runRunFsPaths, runFilter, runIndex, runNumEntries) <-
       Builder.unsafeFinalise fs builder
     runRefCount <- newIORef refCount
@@ -175,10 +180,12 @@ fromMutable fs refCount builder = do
 -- TODO: As a possible optimisation, blobs could be written to a blob file
 -- immediately when they are added to the write buffer, avoiding the need to do
 -- it here.
-fromWriteBuffer ::
-     HasFS IO h -> RunFsPaths -> WriteBuffer
-  -> IO (Run (FS.Handle h))
-fromWriteBuffer fs fsPaths buffer = do
+fromWriteBuffer :: HasFS IO h
+                -> HasBlockIO IO h
+                -> RunFsPaths
+                -> WriteBuffer
+                -> IO (Run (FS.Handle h))
+fromWriteBuffer fs hbio fsPaths buffer = do
     -- We just estimate the number of pages to be one, as the write buffer is
     -- expected to be small enough not to benefit from more precise tuning.
     -- More concretely, no range finder bits will be used anyways unless there
@@ -186,7 +193,7 @@ fromWriteBuffer fs fsPaths buffer = do
     builder <- Builder.new fs fsPaths (WB.numEntries buffer) 1
     for_ (WB.toList buffer) $ \(k, e) ->
       Builder.addKeyOp fs builder k e
-    fromMutable fs (RefCount 1) builder
+    fromMutable fs hbio (RefCount 1) builder
 
 data ChecksumError = ChecksumError FS.FsPath CRC.CRC32C CRC.CRC32C
   deriving Show
@@ -204,8 +211,11 @@ instance Exception FileFormatError
 --
 -- Exceptions will be raised when any of the file's contents don't match their
 -- checksum ('ChecksumError') or can't be parsed ('FileFormatError').
-openFromDisk :: HasFS IO h -> RunFsPaths -> IO (Run (FS.Handle h))
-openFromDisk fs runRunFsPaths = do
+openFromDisk :: HasFS IO h
+             -> HasBlockIO IO h
+             -> RunFsPaths
+             -> IO (Run (FS.Handle h))
+openFromDisk fs _hbio runRunFsPaths = do
     expectedChecksums <-
        expectValidFile (runChecksumsPath runRunFsPaths) . fromChecksumsFile
          =<< CRC.readChecksumsFile fs (runChecksumsPath runRunFsPaths)
@@ -223,9 +233,9 @@ openFromDisk fs runRunFsPaths = do
       expectValidFile (forRunIndex paths) . Index.fromSBS
         =<< readCRC (forRunIndex expectedChecksums) (forRunIndex paths)
 
+    runRefCount <- newIORef (RefCount 1)
     runKOpsFile <- FS.hOpen fs (runKOpsPath runRunFsPaths) FS.ReadMode
     runBlobFile <- FS.hOpen fs (runBlobPath runRunFsPaths) FS.ReadMode
-    runRefCount <- newIORef (RefCount 1)
     return Run {..}
   where
     checkCRC :: CRC.CRC32C -> FS.FsPath -> IO ()

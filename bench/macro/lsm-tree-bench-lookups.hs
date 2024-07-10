@@ -163,7 +163,7 @@ benchmarks dirMay = withFS dirMay $ \hfs hbio -> do
     -- instead of sequentially.
     let keyRng0 = mkStdGen 17
 
-    (!runs, !blooms, !indexes, !handles) <- lookupsEnv runSizes keyRng0 hfs
+    (!runs, !blooms, !indexes, !handles) <- lookupsEnv runSizes keyRng0 hfs hbio
     putStrLn "<finished>"
 
     traceMarkerIO "Computing statistics for generated runs"
@@ -336,12 +336,13 @@ lookupsEnv ::
      [RunSizeInfo]
   -> StdGen -- ^ Key RNG
   -> FS.HasFS IO FS.HandleIO
+  -> FS.HasBlockIO IO FS.HandleIO
   -> IO ( V.Vector (Run (FS.Handle FS.HandleIO))
         , V.Vector (Bloom SerialisedKey)
         , V.Vector IndexCompact
         , V.Vector (FS.Handle FS.HandleIO)
         )
-lookupsEnv runSizes keyRng0 hfs = do
+lookupsEnv runSizes keyRng0 hfs hbio = do
     -- create the vector of initial keys
     (mvec :: VUM.MVector RealWorld UTxOKey) <- VUM.unsafeNew (totalNumEntries runSizes)
     !keyRng1 <- vectorOfUniforms mvec keyRng0
@@ -377,7 +378,8 @@ lookupsEnv runSizes keyRng0 hfs = do
     putStr "DONE"
 
     -- return runs
-    runs <- V.fromList <$> mapM (Run.fromMutable hfs (Run.RefCount 1)) rbs
+    runs <- V.fromList <$>
+              mapM (Run.fromMutable hfs hbio (Run.RefCount 1)) rbs
     let blooms = V.map Run.runFilter runs
         indexes = V.map Run.runIndex runs
         handles = V.map Run.runKOpsFile runs
