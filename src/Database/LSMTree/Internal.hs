@@ -48,6 +48,7 @@ module Database.LSMTree.Internal (
     -- * Exported for cabal-docspec
   , MergePolicyForLevel (..)
   , maxRunSize
+  , LevelNo (..)
   ) where
 
 import           Control.Concurrent.Class.MonadMVar.Strict
@@ -431,6 +432,9 @@ data Level h = Level {
 -- TODO: proper instance
 deriving via OnlyCheckWhnfNamed "Level" (Level h) instance NoThunks (Level h)
 
+newtype LevelNo = LevelNo Int
+  deriving (Eq, Enum)
+
 -- | A merging run is either a single run, or some ongoing merge.
 data MergingRun h =
     MergingRun !(MergingRunState h)
@@ -728,12 +732,13 @@ flushWriteBuffer conf hfs hbio root uniqC reg tc
 -- the last level.
 --
 levelsInvariant :: forall s h. TableConfig -> Levels h -> ST s Bool
-levelsInvariant conf levels = go 1 levels >>= \ !_ -> pure True
+levelsInvariant conf levels =
+    go (LevelNo 1) levels >>= \ !_ -> pure True
   where
     sr = confSizeRatio conf
     wba = confWriteBufferAlloc conf
 
-    go :: Int -> Levels h -> ST s ()
+    go :: LevelNo -> Levels h -> ST s ()
     go !_ (V.uncons -> Nothing) = pure ()
 
     go !ln (V.uncons -> Just (Level mr rs, ls)) = do
@@ -743,7 +748,7 @@ levelsInvariant conf levels = go 1 levels >>= \ !_ -> pure True
       assert (length rs < sizeRatioInt sr) $ pure ()
       assert (expectedRunLengths ln rs ls) $ pure ()
       assert (expectedMergingRunLengths ln mr mrs ls) $ pure ()
-      go (ln+1) ls
+      go (succ ln) ls
 
     -- All runs within a level "proper" (as opposed to the incoming runs
     -- being merged) should be of the correct size for the level.
@@ -769,7 +774,7 @@ levelsInvariant conf levels = go 1 levels >>= \ !_ -> pure True
                         -- A completed merge for levelling can be of almost any size at all!
             -- It can be smaller, due to deletions in the last level. But it
             -- can't be bigger than would fit into the next level.
-            (_, CompletedMerge r) -> assert (fitsUB LevelLevelling r (ln + 1)) True
+            (_, CompletedMerge r) -> assert (fitsUB LevelLevelling r (succ ln)) True
         LevelTiering ->
           case (mr, mrs, mergeLastForLevel ls) of
             -- A single incoming run (which thus didn't need merging) must be
@@ -781,20 +786,20 @@ levelsInvariant conf levels = go 1 levels >>= \ !_ -> pure True
             -- Note that tiering on the last level only occurs when there is
             -- a single level only.
             (_, CompletedMerge r, Merge.LastLevel) ->
-                assert (ln == 1) $
-                assert (fitsUB LevelTiering r (ln + 1)) $
+                assert (ln == LevelNo 1) $
+                assert (fitsUB LevelTiering r (succ ln)) $
                 True
 
             -- A completed mid level run is usually of the size for the
             -- level it is entering, but can also be one smaller (in which case
             -- it'll be held back and merged again).
             (_, CompletedMerge r, Merge.MidLevel) ->
-                assert (fitsUB LevelTiering r ln || fitsUB LevelTiering r (ln + 1)) True
+                assert (fitsUB LevelTiering r ln || fitsUB LevelTiering r (succ ln)) True
 
     -- Check that a run fits in the current level
     fits policy r ln = fitsLB policy r ln && fitsUB policy r ln
     -- Check that a run is too large for previous levels
-    fitsLB policy r ln = maxRunSize sr wba policy (ln - 1) < Run.runNumEntries r
+    fitsLB policy r ln = maxRunSize sr wba policy (pred ln) < Run.runNumEntries r
     -- Check that a run is too small for next levels
     fitsUB policy r ln = Run.runNumEntries r <= maxRunSize sr wba policy ln
 
@@ -811,7 +816,7 @@ addRunToLevels ::
   -> Levels (Handle h)
   -> m (Levels (Handle h))
 addRunToLevels conf@TableConfig{..} hfs hbio root uniqC r0 reg levels = do
-    ls' <- go 1 (V.singleton r0) levels
+    ls' <- go (LevelNo 1) (V.singleton r0) levels
     assert (runST $ levelsInvariant conf ls') $ return ls'
   where
     -- NOTE: @go@ is based on the @increment@ function from the
@@ -829,7 +834,7 @@ addRunToLevels conf@TableConfig{..} hfs hbio root uniqC r0 reg levels = do
         case mergePolicyForLevel confMergePolicy ln ls of
           -- If r is still too small for this level then keep it and merge again
           -- with the incoming runs.
-          LevelTiering | runSize r <= maxRunSize' conf LevelTiering (ln - 1) -> do
+          LevelTiering | runSize r <= maxRunSize' conf LevelTiering (pred ln) -> do
             let mergelast = mergeLastForLevel ls
             mr' <- newMerge LevelTiering mergelast (rs' `V.snoc` r)
             pure $! Level mr' rs `V.cons` ls
@@ -839,7 +844,7 @@ addRunToLevels conf@TableConfig{..} hfs hbio root uniqC r0 reg levels = do
           -- for the new incoming runs. This level is otherwise empty.
           LevelTiering | levelIsFull confSizeRatio rs -> do
             mr' <- newMerge LevelTiering Merge.MidLevel rs'
-            ls' <- go (ln+1) (r `V.cons` rs) ls
+            ls' <- go (succ ln) (r `V.cons` rs) ls
             pure $! Level mr' V.empty `V.cons` ls'
           -- This tiering level is not yet full. We move the completed merged run
           -- into the level proper, and start the new merge for the incoming runs.
@@ -854,7 +859,7 @@ addRunToLevels conf@TableConfig{..} hfs hbio root uniqC r0 reg levels = do
           LevelLevelling | runSize r > maxRunSize' conf LevelLevelling ln -> do
             assert (V.null rs && V.null ls) $ pure ()
             mr' <- newMerge LevelTiering Merge.MidLevel rs'
-            ls' <- go (ln+1) (V.singleton r) V.empty
+            ls' <- go (succ ln) (V.singleton r) V.empty
             pure $! Level mr' V.empty `V.cons` ls'
           -- Otherwise we start merging the incoming runs into the run.
           LevelLevelling -> do
@@ -883,8 +888,8 @@ addRunToLevels conf@TableConfig{..} hfs hbio root uniqC r0 reg levels = do
 
 data MergePolicyForLevel = LevelTiering | LevelLevelling
 
-mergePolicyForLevel :: MergePolicy -> Int -> Levels h -> MergePolicyForLevel
-mergePolicyForLevel MergePolicyLazyLevelling n nextLevels
+mergePolicyForLevel :: MergePolicy -> LevelNo -> Levels h -> MergePolicyForLevel
+mergePolicyForLevel MergePolicyLazyLevelling (LevelNo n) nextLevels
   | n == 1
   , V.null nextLevels
   = LevelTiering    -- always use tiering on first level
@@ -899,7 +904,7 @@ runSize run = Run.runNumEntries run
 -- The @size@ of a tiering run at each level is allowed to be
 -- @bufferSize*sizeRatio^(level-1) < size <= bufferSize*sizeRatio^level@.
 --
--- >>> unNumEntries . maxRunSize Four (AllocNumEntries (NumEntries 2)) LevelTiering <$> [0, 1, 2, 3, 4]
+-- >>> unNumEntries . maxRunSize Four (AllocNumEntries (NumEntries 2)) LevelTiering . LevelNo <$> [0, 1, 2, 3, 4]
 -- [0,2,8,32,128]
 --
 -- The @size@ of a levelling run at each level is allowed to be
@@ -907,10 +912,15 @@ runSize run = Run.runNumEntries run
 -- levelling run can take take up a whole level, so the maximum size of a run is
 -- @sizeRatio*@ larger than the maximum size of a tiering run on the same level.
 --
--- >>> unNumEntries . maxRunSize Four (AllocNumEntries (NumEntries 2)) LevelLevelling <$> [0, 1, 2, 3, 4]
+-- >>> unNumEntries . maxRunSize Four (AllocNumEntries (NumEntries 2)) LevelLevelling . LevelNo <$> [0, 1, 2, 3, 4]
 -- [0,8,32,128,512]
-maxRunSize :: SizeRatio -> WriteBufferAlloc -> MergePolicyForLevel -> Int -> NumEntries
-maxRunSize (sizeRatioInt -> sizeRatio) (AllocNumEntries (NumEntries bufferSize)) policy ln =
+maxRunSize :: SizeRatio
+           -> WriteBufferAlloc
+           -> MergePolicyForLevel
+           -> LevelNo
+           -> NumEntries
+maxRunSize (sizeRatioInt -> sizeRatio) (AllocNumEntries (NumEntries bufferSize))
+           policy (LevelNo ln) =
     NumEntries $ case policy of
       LevelLevelling -> runSizeTiering * sizeRatio
       LevelTiering   -> runSizeTiering
@@ -918,9 +928,9 @@ maxRunSize (sizeRatioInt -> sizeRatio) (AllocNumEntries (NumEntries bufferSize))
     runSizeTiering
       | ln < 0 = error "maxRunSize: non-positive level number"
       | ln == 0 = 0
-      | otherwise = bufferSize * sizeRatio ^ (ln - 1)
+      | otherwise = bufferSize * sizeRatio ^ (pred ln)
 
-maxRunSize' :: TableConfig -> MergePolicyForLevel -> Int -> NumEntries
+maxRunSize' :: TableConfig -> MergePolicyForLevel -> LevelNo -> NumEntries
 maxRunSize' config policy ln =
     maxRunSize (confSizeRatio config) (confWriteBufferAlloc config) policy ln
 
