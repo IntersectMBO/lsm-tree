@@ -34,6 +34,8 @@ module Database.LSMTree.Internal (
   , open
   , deleteSnapshot
   , listSnapshots
+    -- * Mutiple writable table handles
+  , duplicate
     -- * configuration
   , TableConfig (..)
   , defaultTableConfig
@@ -57,7 +59,7 @@ import           Control.Concurrent.Class.MonadSTM.RWVar (RWVar)
 import qualified Control.Concurrent.Class.MonadSTM.RWVar as RW
 import           Control.Monad (unless, void, when)
 import           Control.Monad.Class.MonadThrow
-import           Control.Monad.Primitive (PrimState (..))
+import           Control.Monad.Primitive (PrimState (..), RealWorld)
 import           Control.Monad.ST.Strict (ST, runST)
 import           Data.Arena (ArenaManager, newArenaManager)
 import           Data.Bifunctor (Bifunctor (..))
@@ -160,12 +162,17 @@ data SessionEnv m h = SessionEnv {
     -- | Open tables are tracked here so they can be closed once the session is
     -- closed. Tables also become untracked when they are closed manually.
     --
-    -- NOTE: table are assigned unique identifiers using 'sessionUniqCounter' to
+    -- Tables are assigned unique identifiers using 'sessionUniqCounter' to
     -- ensure that modifications to the set of known tables are independent.
-    -- Each identifier is added only once in 'new', and is deleted only once in
-    -- 'close'. A table only make modifications for their own identifier. This
-    -- means that modifications can be made concurrently in any order without
-    -- further restrictions.
+    -- Each identifier is added only once in 'new', 'open' or 'duplicate', and
+    -- is deleted only once in 'close' or 'closeSession'.
+    --
+    -- * A new table may only insert its own identifier when it has acquired the
+    --   'sessionState' read-lock. This is to prevent races with 'closeSession'.
+    --
+    -- * A table 'close' may delete its own identifier from the set of open
+    --   tables without restrictions, even concurrently with 'closeSession'.
+    --   This is safe because 'close' is idempotent'.
   , sessionOpenTables  :: !(StrictMVar m (Map Word64 (TableHandle m h)))
   }
 
@@ -442,7 +449,7 @@ emptyTableContent = TableContent {
       tableWriteBuffer = WB.empty
     , tableLevels = V.empty
     , tableCache = mkLevelsCache V.empty
-  }
+    }
 
 -- | 'withOpenTable' ensures that the table stays open for the duration of the
 -- provided continuation.
@@ -548,23 +555,27 @@ new ::
   => Session m h
   -> TableConfig
   -> m (TableHandle m h)
-new sesh conf = withOpenSession sesh $ \seshEnv -> newWithLevels sesh seshEnv conf V.empty
+new sesh conf = withOpenSession sesh $ \seshEnv -> do
+    am <- newArenaManager
+    newWith sesh seshEnv conf am WB.empty V.empty
 
-{-# SPECIALISE newWithLevels :: Session IO h -> SessionEnv IO h -> TableConfig -> Levels (Handle h) -> IO (TableHandle IO h) #-}
-newWithLevels ::
+{-# SPECIALISE newWith :: Session IO h -> SessionEnv IO h -> TableConfig -> ArenaManager RealWorld -> WriteBuffer -> Levels (Handle h) -> IO (TableHandle IO h) #-}
+newWith ::
      m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
   => Session m h
   -> SessionEnv m h
   -> TableConfig
+  -> ArenaManager (PrimState m)
+  -> WriteBuffer
   -> Levels (Handle h)
   -> m (TableHandle m h)
-newWithLevels sesh seshEnv conf !levels = do
+newWith sesh seshEnv conf !am !wb !levels = do
     assertNoThunks levels $ pure ()
     -- The session is kept open until we've updated the session's set of tracked
     -- tables. If 'closeSession' is called by another thread while this code
     -- block is being executed, that thread will block until it reads the
     -- /updated/ set of tracked tables.
-    contentVar <- RW.new $ TableContent WB.empty levels (mkLevelsCache levels)
+    contentVar <- RW.new $ TableContent wb levels (mkLevelsCache levels)
     tableId <- incrUniqCounter (sessionUniqCounter seshEnv)
     tableVar <- RW.new $ TableHandleOpen $ TableHandleEnv {
           tableSession = sesh
@@ -572,8 +583,7 @@ newWithLevels sesh seshEnv conf !levels = do
         , tableId = tableId
         , tableContent = contentVar
         }
-    arenaManager <- newArenaManager
-    let !th = TableHandle conf tableVar arenaManager
+    let !th = TableHandle conf tableVar am
     -- Track the current table
     modifyMVar_ (sessionOpenTables seshEnv) $ pure . Map.insert tableId th
     pure $! th
@@ -1091,8 +1101,9 @@ open sesh label snap = do
       let runPaths = V.map (bimap (second $ RunFsPaths (Paths.activeDir $ sessionRoot seshEnv))
                                   (V.map (RunFsPaths (Paths.activeDir $ sessionRoot seshEnv))))
                            runNumbers
-      with (openLevels hfs hbio (confDiskCachePolicy conf) runPaths)
-           (newWithLevels sesh seshEnv conf)
+      with (openLevels hfs hbio (confDiskCachePolicy conf) runPaths) $ \lvls -> do
+        am <- newArenaManager
+        (newWith sesh seshEnv conf am WB.empty lvls)
 
 {-# SPECIALISE openLevels :: HasFS IO h -> HasBlockIO IO h -> DiskCachePolicy -> V.Vector ((Bool, RunFsPaths), V.Vector RunFsPaths) -> Managed IO (Levels (FS.Handle h)) #-}
 -- | Open multiple levels.
@@ -1165,6 +1176,36 @@ listSnapshots sesh =
           b <- FS.doesFileExist hfs (Paths.snapshot root snap)
           if b then pure $ Just snap
                else pure $ Nothing
+
+{-------------------------------------------------------------------------------
+  Mutiple writable table handles
+-------------------------------------------------------------------------------}
+
+-- | See 'Database.LSMTree.Normal.duplicate'.
+duplicate ::
+     m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+  => TableHandle m h
+  -> m (TableHandle m h)
+duplicate th = withOpenTable th $ \thEnv -> do
+    -- We acquire a read-lock on the session open-state to prevent races, see
+    -- 'sessionOpenTables'.
+    withOpenSession (tableSession thEnv) $ \_ -> do
+      withTempRegistry $ \reg -> do
+        -- The table contents escape the read access, but we just added references
+        -- to each run so it is safe.
+        content <- RW.withReadAccess (tableContent thEnv) $ \content -> do
+          V.forM_ (runsInLevels (tableLevels content)) $ \r -> do
+            allocateTemp reg
+              (Run.addReference (tableHasFS thEnv) r)
+              (\_ -> Run.removeReference (tableHasFS thEnv) r)
+          pure content
+        newWith
+          (tableSession thEnv)
+          (tableSessionEnv thEnv)
+          (tableConfig th)
+          (tableHandleArenaManager th)
+          (tableWriteBuffer content)
+          (tableLevels content)
 
 {-------------------------------------------------------------------------------
   Configuration

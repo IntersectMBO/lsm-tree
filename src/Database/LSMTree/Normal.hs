@@ -54,6 +54,9 @@ module Database.LSMTree.Normal (
     -- ** Resource management #resource#
     -- $resource-management
 
+    -- ** Exception safety #exception#
+    -- $exception-safety
+
     -- * Table queries and updates
     -- ** Queries
   , lookups
@@ -125,11 +128,32 @@ import qualified Database.LSMTree.Internal.Vector as V
 --
 -- In particular, certain operations create new table handles:
 --
+-- * 'openSession'
 -- * 'new'
 -- * 'open'
 -- * 'duplicate'
 --
 -- These ones must be paired with a corresponding 'close'.
+--
+
+-- $exception-safety
+--
+-- To prevent resource/memory leaks in the presence of asynchronous exceptions,
+-- it is recommended to:
+--
+-- 1. Run resource-allocating functions with asynchronous exceptions masked.
+-- 2. Pair a resource-allocating function with a masked cleanup function, for
+-- example using 'bracket'.
+--
+-- These function pairs include:
+--
+-- * 'openSession', paired with 'closeSession'
+-- * 'new', paired with 'close'
+-- * 'open', paired with 'close'
+-- * 'duplicate', paired with 'close'
+--
+-- Bracket-style @with*@ functions are also provided by the library, such as
+-- 'withTable'.
 
 -- $concurrency
 -- Table handles are mutable objects and as such applications should restrict
@@ -425,12 +449,10 @@ open (Session sesh) snap = TableHandle <$> Internal.open sesh label snap
 -- memory and disk cost will be the same as if each table were entirely
 -- independent.
 --
--- NOTE: duplication create a new table handle, which should be closed when no
+-- NOTE: duplication creates a new table handle, which should be closed when no
 -- longer needed.
---
 duplicate ::
      IOLike m
   => TableHandle m k v blob
   -> m (TableHandle m k v blob)
-duplicate = error "Database.LSMTree.Normal.duplicate: not yet implemented"
--- TODO: implementation note: reuse the handles' ArenaManager
+duplicate (TableHandle th) = TableHandle <$> Internal.duplicate th

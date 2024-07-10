@@ -77,10 +77,12 @@ tests = testGroup "Test.Database.LSMTree.Class.Normal"
       , False
       , True
       , True
+      , False
+      , False
+      , False
       , True
-      , True
-      , True
-      , True
+      , False
+      , False
       ] ++ repeat False
 
     props tbl =
