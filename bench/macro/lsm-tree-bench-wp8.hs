@@ -43,6 +43,7 @@ TODO 2024-07-05 pipelined mode needs the 'duplicate' operation. It has been
 module Main (main) where
 
 import           Control.Applicative ((<**>))
+import           Control.Concurrent (getNumCapabilities)
 import           Control.Concurrent.Async
 import           Control.Concurrent.MVar
 import           Control.DeepSeq (force)
@@ -69,6 +70,7 @@ import qualified System.FS.API as FS
 import qualified System.FS.BlockIO.API as FS
 import qualified System.FS.BlockIO.IO as FsIO
 import qualified System.FS.IO as FsIO
+import           System.IO
 import           Text.Printf (printf)
 
 -- We should be able to write this benchmark
@@ -392,15 +394,18 @@ doRun gopts opts = do
         let benchmarkIterations
               | opts.pipelined = pipelinedIterations
               | otherwise      = sequentialIterations
+            !progressInterval  = max 1 (opts.batchCount `div` 100)
+            madeProgress b     = b `mod` progressInterval == 0
         time <- timed_ $
           benchmarkIterations
-            check
+            (\b y -> check b y >> when (madeProgress b) (putChar '.'))
             gopts.initialSize
             opts.batchSize
             opts.batchCount
             opts.seed
             tbl
 
+        putStrLn ""
         printf "Proper run:            %.03f sec\n" time
         let ops = opts.batchCount * opts.batchSize
         printf "Operations per second: %7.01f ops/sec\n" (fromIntegral ops / time)
@@ -548,6 +553,9 @@ pipelinedIterations :: (Int -> LookupResults -> IO ())
                     -> LSM.TableHandle IO K V B
                     -> IO ()
 pipelinedIterations output !initialSize !batchSize !batchCount !seed tbl_0 = do
+    n <- getNumCapabilities
+    printf "INFO: the pipelined benchmark is running with %d capabilities.\n" n
+
     syncTblA2B <- newEmptyMVar
     syncTblB2A <- newEmptyMVar
     syncRngA2B <- newEmptyMVar
@@ -641,6 +649,7 @@ batchOverlaps initialSize batchSize batchCount seed =
 
 main :: IO ()
 main = do
+    hSetBuffering stdout NoBuffering
     (gopts, cmd) <- O.customExecParser prefs cliP
     print gopts
     print cmd
