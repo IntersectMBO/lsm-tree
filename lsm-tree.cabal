@@ -97,7 +97,6 @@ library
     , base                  >=4.16      && <4.20
     , bitvec                ^>=1.1
     , bytestring            ^>=0.11.4.0 || ^>=0.12.1.0
-    , concurrent-extra      ^>=0.7
     , containers
     , crc32c                ^>=0.2.1
     , deepseq               ^>=1.4      || ^>=1.5
@@ -299,7 +298,6 @@ test-suite lsm-tree-test
     , semialign
     , split
     , stm
-    , strict-mvar
     , tasty
     , tasty-hunit
     , tasty-quickcheck

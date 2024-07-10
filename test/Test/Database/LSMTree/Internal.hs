@@ -5,7 +5,7 @@
 -- add proper support for IOSim for fault testing.
 module Test.Database.LSMTree.Internal (tests) where
 
-import           Control.Concurrent.Class.MonadMVar.Strict
+import qualified Control.Concurrent.Class.MonadSTM.RWVar as RW
 import           Control.Exception
 import           Control.Monad (void)
 import           Data.Bifunctor
@@ -102,12 +102,12 @@ prop_interimRestoreSessionUniqueRunNames (Positive (Small n)) (NonNegative m) = 
         withTable sesh conf $ \th -> do
           updates upds th
           withOpenTable th $ \thEnv -> do
-            tc <- readMVar (tableContent thEnv)
-            let (Sum nruns) = V.foldMap
-                                (V.foldMap (const (Sum (1 :: Int))) . residentRuns)
-                                (tableLevels tc)
-            pure $ tabulate "number of runs on disk" [showPowersOf 2 nruns]
-                $ True
+            RW.withReadAccess (tableContent thEnv) $ \tc -> do
+              let (Sum nruns) = V.foldMap
+                                  (V.foldMap (const (Sum (1 :: Int))) . residentRuns)
+                                  (tableLevels tc)
+              pure $ tabulate "number of runs on disk" [showPowersOf 2 nruns]
+                  $ True
 
       withSession hfs hbio (FS.mkFsPath []) $ \sesh -> do
         withTable sesh conf $ \th -> do
