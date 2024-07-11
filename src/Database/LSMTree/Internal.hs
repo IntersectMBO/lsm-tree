@@ -121,7 +121,8 @@ data LSMTreeError =
   | ErrSnapshotExists SnapshotName
   | ErrSnapshotNotExists SnapshotName
   | ErrSnapshotWrongType SnapshotName
-  deriving (Show, Exception)
+  deriving stock (Show)
+  deriving anyclass (Exception)
 
 {-------------------------------------------------------------------------------
   Session
@@ -433,7 +434,8 @@ data Level h = Level {
 deriving via OnlyCheckWhnfNamed "Level" (Level h) instance NoThunks (Level h)
 
 newtype LevelNo = LevelNo Int
-  deriving (Eq, Enum)
+  deriving stock Eq
+  deriving newtype Enum
 
 -- | A merging run is either a single run, or some ongoing merge.
 data MergingRun h =
@@ -1156,11 +1158,11 @@ data TableConfig = TableConfig {
     -- | The policy for caching key\/value data from disk in memory.
   , confDiskCachePolicy  :: !DiskCachePolicy
   }
-  deriving Show
+  deriving stock Show
 
 -- | TODO: this should be removed once we have proper snapshotting with proper
 -- persistence of the config to disk.
-deriving instance Read TableConfig
+deriving stock instance Read TableConfig
 
 -- | A reasonable default 'TableConfig', for normal tables.
 --
@@ -1194,21 +1196,21 @@ data MergePolicy =
 {- TODO: disabled for now
   | MergePolicyLevelling
 -}
-  deriving (Show, Eq)
+  deriving stock (Show, Eq)
 
 -- | TODO: this should be removed once we have proper snapshotting with proper
 -- persistence of the config to disk.
-deriving instance Read MergePolicy
+deriving stock instance Read MergePolicy
 
 data SizeRatio = Four
-  deriving (Show, Eq)
+  deriving stock (Show, Eq)
 
 sizeRatioInt :: SizeRatio -> Int
 sizeRatioInt = \case Four -> 4
 
 -- | TODO: this should be removed once we have proper snapshotting with proper
 -- persistence of the config to disk.
-deriving instance Read SizeRatio
+deriving stock instance Read SizeRatio
 
 -- | Allocation method for the write buffer.
 data WriteBufferAlloc =
@@ -1225,14 +1227,15 @@ data WriteBufferAlloc =
     -- applications.
     AllocTotalBytes !Word32
 -}
-  deriving (Show, Eq)
+  deriving stock (Show, Eq)
 
 -- | TODO: this should be removed once we have proper snapshotting with proper
 -- persistence of the config to disk.
-deriving instance Read WriteBufferAlloc
+deriving stock instance Read WriteBufferAlloc
+
 -- | TODO: this should be removed once we have proper snapshotting with proper
 -- persistence of the config to disk.
-deriving instance Read NumEntries
+deriving stock instance Read NumEntries
 
 -- | Allocation method for bloom filters.
 --
@@ -1259,11 +1262,11 @@ data BloomFilterAlloc =
              -- The maximum is 4GiB, which should be more than enough for
              -- realistic applications.
  -}
-  deriving (Show, Eq)
+  deriving stock (Show, Eq)
 
 -- | TODO: this should be removed once we have proper snapshotting with proper
 -- persistence of the config to disk.
-deriving instance Read BloomFilterAlloc
+deriving stock instance Read BloomFilterAlloc
 
 newtype ResolveMupsert = ResolveMupsert {
     unResolveMupsert :: SerialisedValue -> SerialisedValue -> SerialisedValue

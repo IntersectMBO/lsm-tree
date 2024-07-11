@@ -95,7 +95,7 @@ runWithTracer action = do
       throwIO (Traced e ev)
 
 data TracedException = Traced SomeException [Event]
-  deriving (Show)
+  deriving stock (Show)
 
 instance Exception TracedException where
   displayException (Traced e ev) =
@@ -108,7 +108,7 @@ instance Exception TracedException where
 type ModelLSM = Int
 
 newtype Model = Model { mlsms :: Map ModelLSM (Map Key Value) }
-  deriving (Show)
+  deriving stock (Show)
 
 type ModelOp r = Model -> (r, Model)
 
@@ -296,13 +296,13 @@ instance RunLockstep Model IO where
   showRealResponse _ ADump{}      = Just Dict
   showRealResponse _ ADuplicate{} = Nothing
 
-deriving instance Show (Action (Lockstep Model) a)
-deriving instance Show (Observable Model a)
-deriving instance Show (ModelValue Model a)
+deriving stock instance Show (Action (Lockstep Model) a)
+deriving stock instance Show (Observable Model a)
+deriving stock instance Show (ModelValue Model a)
 
-deriving instance Eq (Action (Lockstep Model) a)
-deriving instance Eq (Observable Model a)
-deriving instance Eq (ModelValue Model a)
+deriving stock instance Eq (Action (Lockstep Model) a)
+deriving stock instance Eq (Observable Model a)
+deriving stock instance Eq (ModelValue Model a)
 
 
 runActionIO :: Action (Lockstep Model) a

@@ -148,7 +148,7 @@ fromProtoBlobRef (Proto.BlobRef x y) = BlobSpan x y
 -- | Wrapper around 'PageLogical' that generates nearly-full pages, and
 -- keys that are always large enough (>= 6 bytes) for the compact index.
 newtype PageLogical' = PageLogical' { getPrototypeKOps :: [(Proto.Key, Proto.Operation)] }
-  deriving Show
+  deriving stock Show
 
 getRealKOps :: PageLogical' -> [(SerialisedKey, Entry SerialisedValue BlobSpan)]
 getRealKOps = fmap fromProtoKOp . getPrototypeKOps

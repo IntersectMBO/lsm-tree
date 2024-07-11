@@ -96,7 +96,7 @@ instance Arbitrary ChecksumsFileName where
 -- partial read\/writes is robust.
 --
 newtype PartialIOErrors = PartialIOErrors FsSim.Errors
-  deriving Show
+  deriving stock Show
 
 instance Arbitrary PartialIOErrors where
     arbitrary = do

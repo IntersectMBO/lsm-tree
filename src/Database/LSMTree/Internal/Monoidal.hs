@@ -10,13 +10,13 @@ import           Control.DeepSeq (NFData (..))
 data LookupResult k v =
     NotFound      !k
   | Found         !k !v
-  deriving (Eq, Show)
+  deriving stock (Eq, Show)
 
 
 -- | A result for one point in a range lookup.
 data RangeLookupResult k v =
     FoundInRange         !k !v
-  deriving (Eq, Show)
+  deriving stock (Eq, Show)
 
 -- | Monoidal tables support insert, delete and monoidal upsert operations.
 --
@@ -27,7 +27,7 @@ data Update v =
   | Delete
     -- | TODO: should be given a more suitable name.
   | Mupsert !v
-  deriving (Show, Eq)
+  deriving stock (Show, Eq)
 
 instance NFData v => NFData (Update v) where
   rnf (Insert v)  = rnf v

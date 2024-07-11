@@ -43,7 +43,7 @@ data Readers fhandle = Readers {
     }
 
 newtype ReaderNumber = ReaderNumber Int
-  deriving (Eq, Ord)
+  deriving stock (Eq, Ord)
 
 -- | Each heap element needs some more context than just the reader.
 -- E.g. the 'Eq' instance we need to be able to access the first key to be read

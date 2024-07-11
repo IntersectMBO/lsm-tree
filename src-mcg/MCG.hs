@@ -18,7 +18,7 @@ import           Data.Word (Word64)
 
 -- | https://en.wikipedia.org/wiki/Lehmer_random_number_generator
 data MCG = MCG { m :: !Word64, a :: !Word64, x :: !Word64 }
-  deriving Show
+  deriving stock Show
 
 -- invariants: m is a prime
 --             a is a primitive element of Z_m

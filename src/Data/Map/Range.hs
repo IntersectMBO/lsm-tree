@@ -11,8 +11,8 @@ import           Data.Map (Map)
 import qualified Data.Map as Map
 import           Data.Map.Internal (Map (..))
 
-data Clusive = Exclusive | Inclusive deriving Show
-data Bound k = NoBound | Bound !k !Clusive deriving Show
+data Clusive = Exclusive | Inclusive deriving stock Show
+data Bound k = NoBound | Bound !k !Clusive deriving stock Show
 
 {-# COMPLETE BoundExclusive, BoundInclusive #-}
 

@@ -39,7 +39,7 @@ import qualified Database.LSMTree.Internal.RawBytes as RB
 data RawOverflowPage = RawOverflowPage
                          !Int        -- ^ offset in Word8s.
                          !ByteArray
-  deriving (Show)
+  deriving stock (Show)
 
 -- | This invariant is the same as for 'RawPage', but there is no alignment
 -- constraint. This is for two reasons: 1. we don't need alignment, because

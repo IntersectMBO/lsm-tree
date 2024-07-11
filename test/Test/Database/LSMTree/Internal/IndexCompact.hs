@@ -396,7 +396,7 @@ word32toBytesLE :: Word32 -> [Word8]
 word32toBytesLE = take 4 . map fromIntegral . iterate (`div` 256)
 
 data Chunks = Chunks [Chunk] IndexCompact
-  deriving (Show)
+  deriving stock (Show)
 
 -- | The concatenated chunks must correspond to the primary array of the index.
 -- Apart from that, the only invariant we make sure to uphold is that the length

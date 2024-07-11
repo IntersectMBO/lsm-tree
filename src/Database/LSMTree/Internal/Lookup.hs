@@ -213,7 +213,8 @@ data ByteCountDiscrepancy = ByteCountDiscrepancy {
     expected :: ByteCount
   , actual   :: ByteCount
   }
-  deriving (Show, Exception)
+  deriving stock (Show)
+  deriving anyclass (Exception)
 
 {-# SPECIALIZE lookupsIO ::
        HasBlockIO IO h

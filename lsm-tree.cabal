@@ -25,6 +25,8 @@ common warnings
     -Wredundant-constraints -Wmissing-export-lists
     -Wno-unticked-promoted-constructors -Wunused-packages
 
+  ghc-options: -Werror=missing-deriving-strategies
+
 common wno-x-partial
   if impl(ghc >=9.8)
     -- No errors for x-partial functions. We might remove this in the future if

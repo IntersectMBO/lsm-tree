@@ -91,7 +91,7 @@ instance Show (Table k v) where
         . showsPrec 11 (toList (Table @BS.ByteString @BS.ByteString tbl))
 
 -- | This instance is for testing and debugging only.
-deriving instance Eq (Table k v)
+deriving stock instance Eq (Table k v)
 
 {-------------------------------------------------------------------------------
   Table querying and updates

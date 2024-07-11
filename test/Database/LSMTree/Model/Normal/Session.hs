@@ -91,7 +91,7 @@ data Model = Model {
   , nextTableHandleID :: TableHandleID
   , snapshots         :: Map SUT.SnapshotName Snapshot
   }
-  deriving Show
+  deriving stock Show
 
 initModel :: Model
 initModel = Model {
@@ -163,7 +163,7 @@ data Err =
   | ErrSnapshotDoesNotExist
   | ErrSnapshotWrongType
   | ErrBlobRefInvalidated
-  deriving (Show, Eq)
+  deriving stock (Show, Eq)
 
 {-------------------------------------------------------------------------------
   Tables
@@ -179,10 +179,10 @@ data TableHandle k v blob = TableHandle {
     tableHandleID :: TableHandleID
   , config        :: TableConfig
   }
-  deriving Show
+  deriving stock Show
 
 data TableConfig = TableConfig
-  deriving Show
+  deriving stock Show
 
 new ::
      forall k v blob m. (MonadState Model m, C k v blob)
@@ -353,7 +353,7 @@ data BlobRef blob = BlobRef {
   , innerBlob     :: Model.BlobRef blob
   }
 
-deriving instance Show blob => Show (BlobRef blob)
+deriving stock instance Show blob => Show (BlobRef blob)
 
 retrieveBlobs ::
      ( MonadState Model m
@@ -387,7 +387,7 @@ liftBlobRefs th c = fmap (fmap (BlobRef (tableHandleID th) c))
 -------------------------------------------------------------------------------}
 
 data Snapshot = Snapshot TableConfig SomeTable
-  deriving Show
+  deriving stock Show
 
 --
 -- API

@@ -77,16 +77,16 @@ import           Test.Tasty.QuickCheck (testProperty)
 -- Page content types
 --
 
-newtype Key   = Key   { unKey   :: ByteString } deriving (Eq, Ord, Show)
-newtype Value = Value { unValue :: ByteString } deriving (Eq, Show)
+newtype Key   = Key   { unKey   :: ByteString } deriving stock (Eq, Ord, Show)
+newtype Value = Value { unValue :: ByteString } deriving stock (Eq, Show)
 
 data Operation = Insert  Value (Maybe BlobRef)
                | Mupsert Value
                | Delete
-  deriving (Eq, Show)
+  deriving stock (Eq, Show)
 
 data BlobRef = BlobRef Word64 Word32
-  deriving (Eq, Show)
+  deriving stock (Eq, Show)
 
 opHasBlobRef :: Operation -> Bool
 opHasBlobRef (Insert _ (Just _blobref)) = True
@@ -102,7 +102,7 @@ opHasBlobRef _                          = False
 data DiskPageSize = DiskPage4k  | DiskPage8k
                   | DiskPage16k | DiskPage32k
                   | DiskPage64k
-  deriving (Eq, Show, Enum, Bounded)
+  deriving stock (Eq, Show, Enum, Bounded)
 
 diskPageSizeBytes :: DiskPageSize -> Int
 diskPageSizeBytes DiskPage4k  = 2^(12::Int)
@@ -122,7 +122,7 @@ data PageSize = PageSize {
                   pageSizeBytes :: !Int,
                   pageSizeDisk  :: !DiskPageSize
                 }
-  deriving (Eq, Show)
+  deriving stock (Eq, Show)
 
 pageSizeEmpty :: DiskPageSize -> PageSize
 pageSizeEmpty = PageSize 0 0 10
@@ -185,10 +185,10 @@ data PageIntermediate =
        pagePadding       :: !ByteString, -- ^ Padding to the 'DiskPageSize'
        pageDiskPageSize  :: !DiskPageSize
      }
-  deriving (Eq, Show)
+  deriving stock (Eq, Show)
 
 data OperationEnum = OpInsert | OpMupsert | OpDelete
-  deriving (Eq, Show)
+  deriving stock (Eq, Show)
 
 data PageSizesOffsets =
      PageSizesOffsets {
@@ -214,7 +214,7 @@ data PageSizesOffsets =
        sizePageDiskPage  :: !Word32  -- ^ The size in bytes rounded up to a
                                      -- multiple of the disk page size.
      }
-  deriving (Eq, Show)
+  deriving stock (Eq, Show)
 
 
 -------------------------------------------------------------------------------
@@ -535,14 +535,14 @@ pageSerialisedChunks dpgsz =
 --
 
 data PageContentFits = PageContentFits DiskPageSize [(Key, Operation)]
-  deriving Show
+  deriving stock Show
 
 data PageContentMaybeOverfull = PageContentMaybeOverfull DiskPageSize
                                                          [(Key, Operation)]
-  deriving Show
+  deriving stock Show
 
 data PageContentSingle = PageContentSingle DiskPageSize Key Operation
-  deriving Show
+  deriving stock Show
 
 instance Arbitrary PageContentFits where
     arbitrary = do
@@ -565,7 +565,7 @@ instance Arbitrary PageContentSingle where
 -- | In some use cases it is necessary to generate 'Keys' that are at least of
 -- some minimum length. Use 'noMinKeySize' if no such constraint is need.
 newtype MinKeySize = MinKeySize Int
-  deriving Show
+  deriving stock Show
 
 -- | No minimum key size: @MinKeySize 0@.
 noMinKeySize :: MinKeySize

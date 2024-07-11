@@ -12,7 +12,7 @@ data LookupResult v blobref =
     NotFound
   | Found         !v
   | FoundWithBlob !v !blobref
-  deriving (Eq, Show, Functor, Foldable, Traversable)
+  deriving stock (Eq, Show, Functor, Foldable, Traversable)
 
 instance Bifunctor LookupResult where
   first f = \case
@@ -29,7 +29,7 @@ instance Bifunctor LookupResult where
 data RangeLookupResult k v blobref =
     FoundInRange         !k !v
   | FoundInRangeWithBlob !k !v !blobref
-  deriving (Eq, Show, Functor, Foldable, Traversable)
+  deriving stock (Eq, Show, Functor, Foldable, Traversable)
 
 -- | Normal tables support insert and delete operations.
 --
@@ -38,7 +38,7 @@ data RangeLookupResult k v blobref =
 data Update v blob =
     Insert !v !(Maybe blob)
   | Delete
-  deriving (Show, Eq)
+  deriving stock (Show, Eq)
 
 instance (NFData v, NFData blob) => NFData (Update v blob) where
   rnf Delete       = ()
