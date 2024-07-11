@@ -61,16 +61,17 @@ newArena _ = do
     pure $! (Arena mvar)
 
 closeArena :: PrimMonad m => Arena (PrimState m) -> m ()
-closeArena  (Arena mvar) = do
+#ifdef NO_IGNORE_ASSERTS
+closeArena (Arena mvar) = do
     -- scramble the allocated bytearrays,
     -- they shouldn't be in use anymore!
-#ifdef NO_IGNORE_ASSERTS
     mbas <- readMutVar mvar
     forM_ mbas $ \mba -> do
         size <- getSizeofMutableByteArray mba
         setByteArray mba 0 size (0x77 :: Word8)
+#else
+closeArena _ = pure ()
 #endif
-    pure ()
 
 -- | Create unmanaged arena
 --
