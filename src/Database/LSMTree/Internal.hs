@@ -77,7 +77,8 @@ import           Database.LSMTree.Internal.BlobRef
 import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..),
                      combineMaybe)
 import           Database.LSMTree.Internal.IndexCompact (IndexCompact)
-import           Database.LSMTree.Internal.Lookup (lookupsIO)
+import           Database.LSMTree.Internal.Lookup (ByteCountDiscrepancy,
+                     lookupsIO)
 import           Database.LSMTree.Internal.Managed
 import qualified Database.LSMTree.Internal.Merge as Merge
 import qualified Database.LSMTree.Internal.Normal as Normal
@@ -123,6 +124,8 @@ data LSMTreeError =
   | ErrSnapshotExists SnapshotName
   | ErrSnapshotNotExists SnapshotName
   | ErrSnapshotWrongType SnapshotName
+    -- | Something went wrong during batch lookups.
+  | ErrLookup ByteCountDiscrepancy
   deriving stock (Show)
   deriving anyclass (Exception)
 
