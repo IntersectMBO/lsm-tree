@@ -27,6 +27,8 @@ import qualified Database.LSMTree.Internal.RunReaders as Readers
 import           Database.LSMTree.Internal.Serialise
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import qualified System.FS.API as FS
+import qualified System.FS.BlockIO.API as FS
+import qualified System.FS.BlockIO.Sim as FsSim
 import qualified System.FS.Sim.MockFS as MockFS
 import qualified System.FS.Sim.STM as FsSim
 import qualified Test.QuickCheck as QC
@@ -45,7 +47,9 @@ tests = testGroup "Database.LSMTree.Internal.RunReaders"
         Lockstep.runActionsBracket (Proxy @ReadersState)
           mempty mempty $ \act () -> do
           (prop, mockFS) <- FsSim.runSimFS MockFS.empty $ \hfs -> do
-            (prop, RealState _ mCtx) <- runRealMonad hfs (RealState 0 Nothing) act
+            hbio <- FsSim.fromHasFS hfs
+            (prop, RealState _ mCtx) <- runRealMonad hfs hbio
+                                                     (RealState 0 Nothing) act
             traverse_ (closeReadersCtx hfs) mCtx  -- close current readers
             return prop
 
@@ -259,10 +263,16 @@ runMock _ = \case
 trimap :: (a -> a') -> (b -> b') -> (c -> c') -> (a, b, c) -> (a', b', c')
 trimap f g h (a, b, c) = (f a, g b, h c)
 
-type RealMonad = ReaderT (FS.HasFS IO MockFS.HandleMock) (StateT RealState IO)
+type RealMonad = ReaderT (FS.HasFS IO MockFS.HandleMock,
+                          FS.HasBlockIO IO MockFS.HandleMock)
+                         (StateT RealState IO)
 
-runRealMonad :: FS.HasFS IO MockFS.HandleMock -> RealState -> RealMonad a -> IO (a, RealState)
-runRealMonad hfs st = (`runStateT` st) . (`runReaderT` hfs)
+runRealMonad :: FS.HasFS IO MockFS.HandleMock
+             -> FS.HasBlockIO IO MockFS.HandleMock
+             -> RealState
+             -> RealMonad a
+             -> IO (a, RealState)
+runRealMonad hfs hbio st = (`runStateT` st) . (`runReaderT` (hfs, hbio))
 
 data RealState =
     RealState
@@ -291,13 +301,13 @@ instance RunLockstep ReadersState RealMonad where
 
 runIO :: LockstepAction ReadersState a -> LookUp RealMonad -> RealMonad (Realized RealMonad a)
 runIO act lu = case act of
-    New wbs -> ReaderT $ \hfs -> do
+    New wbs -> ReaderT $ \(hfs, hbio) -> do
       RealState numRuns mCtx <- get
       -- if runs are still being read, they need to be cleaned up
       traverse_ (liftIO . closeReadersCtx hfs) mCtx
       runs <-
         zipWithM
-          (\p -> liftIO . Run.fromWriteBuffer hfs p)
+          (\p -> liftIO . Run.fromWriteBuffer hfs hbio Run.CacheRunData p)
           (Paths.RunFsPaths (FS.mkFsPath []) <$> [numRuns ..])
           (map unTypedWriteBuffer wbs)
       newReaders <- liftIO $ Readers.new hfs runs >>= \case
@@ -329,7 +339,7 @@ runIO act lu = case act of
          (FS.HasFS IO MockFS.HandleMock -> Readers Handle -> IO (HasMore, a))
       -> RealMonad (Either () a)
     expectReaders f =
-        ReaderT $ \hfs -> do
+        ReaderT $ \(hfs, _hbio) -> do
           get >>= \case
             RealState _ Nothing -> return (Left ())
             RealState n (Just (runs, readers)) -> do

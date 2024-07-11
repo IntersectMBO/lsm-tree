@@ -46,6 +46,7 @@ module Database.LSMTree.Monoidal (
   , Internal.WriteBufferAlloc (..)
   , Internal.NumEntries (..)
   , Internal.BloomFilterAlloc (..)
+  , Internal.DiskCachePolicy (..)
   , new
   , close
     -- ** Resource management

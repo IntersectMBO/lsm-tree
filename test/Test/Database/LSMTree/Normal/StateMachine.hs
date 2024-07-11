@@ -234,17 +234,19 @@ instance Arbitrary R.TableConfig where
       , R.confWriteBufferAlloc = R.AllocNumEntries (R.NumEntries 30)
       , R.confBloomFilterAlloc = R.AllocRequestFPR 0.02
       , R.confResolveMupsert   = Nothing
+      , R.confDiskCachePolicy  = R.DiskCacheNone
       }
 
 instance Eq R.TableConfig where
-  R.TableConfig pol1 size1 wbAlloc1 bfAlloc1 mups1
-    == R.TableConfig pol2 size2 wbAlloc2 bfAlloc2 mups2
+  R.TableConfig pol1 size1 wbAlloc1 bfAlloc1 mups1 cache1
+    == R.TableConfig pol2 size2 wbAlloc2 bfAlloc2 mups2 cache2
     = and [
         pol1 == pol2
       , size1 == size2
       , wbAlloc1 == wbAlloc2
       , bfAlloc1 == bfAlloc2
       , mups1 == mups2 -- Errors if either is 'Just'. This is intended behaviour.
+      , cache1 == cache2
       ]
 
 -- | 'R.ResolveMupsert's are arbitrary functions, so they don't have a

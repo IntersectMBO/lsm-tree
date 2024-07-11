@@ -21,7 +21,9 @@ fromHasFS ::
      (MonadThrow m, MonadMVar m, PrimMonad m)
   => HasFS m HandleMock
   -> m (HasBlockIO m HandleMock)
-fromHasFS = serialHasBlockIO
+fromHasFS = serialHasBlockIO hSetNoCache
+  where
+    hSetNoCache _h _b = pure ()
 
 simHasBlockIO ::
      (MonadThrow m, MonadMVar m, PrimMonad m, MonadSTM m)

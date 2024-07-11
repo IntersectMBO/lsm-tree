@@ -22,6 +22,7 @@
 - ignore: {name: "Redundant <$>"}
 - ignore: {name: "Use zipWithM"}
 - ignore: {name: "Redundant return"}
+- ignore: {name: "Use section"}
 
 # Specify additional command line arguments
 #

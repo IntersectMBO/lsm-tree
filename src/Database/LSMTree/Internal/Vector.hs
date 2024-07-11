@@ -6,6 +6,7 @@ module Database.LSMTree.Internal.Vector (
     noRetainedExtraMemory,
     mapStrict,
     mapMStrict,
+    imapMStrict,
     zipWithStrict,
     binarySearchL
 ) where
@@ -44,6 +45,11 @@ mapStrict f v = runST (V.mapM (\x -> pure $! f x) v)
 -- | /( O(n) /) Like 'V.mapM', but strict in the produced elements of type @b@.
 mapMStrict :: Monad m => (a -> m b) -> V.Vector a -> m (V.Vector b)
 mapMStrict f v = V.mapM (f >=> (pure $!)) v
+
+{-# INLINE imapMStrict #-}
+-- | /( O(n) /) Like 'V.imapM', but strict in the produced elements of type @b@.
+imapMStrict :: Monad m => (Int -> a -> m b) -> V.Vector a -> m (V.Vector b)
+imapMStrict f v = V.imapM (\i -> f i >=> (pure $!)) v
 
 {-# INLINE zipWithStrict #-}
 -- | /( O(min(m,n)) /) Like 'V.zipWithM', but strict in the produced elements of

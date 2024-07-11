@@ -44,9 +44,11 @@ module Database.LSMTree.Internal (
   , WriteBufferAlloc (..)
   , NumEntries (..)
   , BloomFilterAlloc (..)
+  , DiskCachePolicy (..)
     -- * Exported for cabal-docspec
   , MergePolicyForLevel (..)
   , maxRunSize
+  , LevelNo (..)
   ) where
 
 import           Control.Concurrent.Class.MonadMVar.Strict
@@ -80,7 +82,7 @@ import qualified Database.LSMTree.Internal.Normal as Normal
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..),
                      SessionRoot (..), SnapshotName)
 import qualified Database.LSMTree.Internal.Paths as Paths
-import           Database.LSMTree.Internal.Run (Run)
+import           Database.LSMTree.Internal.Run (Run, RunDataCaching (..))
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.Serialise (SerialisedBlob,
                      SerialisedKey, SerialisedValue)
@@ -430,6 +432,9 @@ data Level h = Level {
 -- TODO: proper instance
 deriving via OnlyCheckWhnfNamed "Level" (Level h) instance NoThunks (Level h)
 
+newtype LevelNo = LevelNo Int
+  deriving (Eq, Enum)
+
 -- | A merging run is either a single run, or some ongoing merge.
 data MergingRun h =
     MergingRun !(MergingRunState h)
@@ -611,6 +616,7 @@ updates es th = withOpenTable th $ \thEnv -> do
         tc' <- updatesWithInterleavedFlushes
                 (tableConfig th)
                 hfs
+                (tableHasBlockIO thEnv)
                 (tableSessionRoot thEnv)
                 (tablesSessionUniqCounter thEnv)
                 es
@@ -618,7 +624,7 @@ updates es th = withOpenTable th $ \thEnv -> do
         assertNoThunks tc' $ pure ()
         pure tc'
 
-{-# SPECIALISE updatesWithInterleavedFlushes :: TableConfig -> HasFS IO h -> SessionRoot -> UniqCounter IO -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob) -> TempRegistry IO -> TableContent h -> IO (TableContent h) #-}
+{-# SPECIALISE updatesWithInterleavedFlushes :: TableConfig -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob) -> TempRegistry IO -> TableContent h -> IO (TableContent h) #-}
 -- | A single batch of updates can fill up the write buffer multiple times. We
 -- flush the write buffer each time it fills up before trying to fill it up
 -- again.
@@ -647,13 +653,14 @@ updatesWithInterleavedFlushes ::
      m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
   => TableConfig
   -> HasFS m h
+  -> HasBlockIO m h
   -> SessionRoot
   -> UniqCounter m
   -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob)
   -> TempRegistry m
   -> TableContent h
   -> m (TableContent h)
-updatesWithInterleavedFlushes conf hfs root uniqC es reg tc = do
+updatesWithInterleavedFlushes conf hfs hbio root uniqC es reg tc = do
     let wb = tableWriteBuffer tc
         (wb', es') = WB.addEntriesUpToN resolve es maxn wb
     -- never exceed the write buffer capacity
@@ -667,14 +674,14 @@ updatesWithInterleavedFlushes conf hfs root uniqC es reg tc = do
     -- If the write buffer did reach capacity, then we flush.
     else do
       assert (unNumEntries (WB.numEntries wb') == maxn) $ pure ()
-      tc'' <- flushWriteBuffer conf hfs root uniqC reg tc'
+      tc'' <- flushWriteBuffer conf hfs hbio root uniqC reg tc'
       -- In the fortunate case where we have already performed all the updates,
       -- return,
       if V.null es' then
         pure $! tc''
       -- otherwise, keep going
       else
-        updatesWithInterleavedFlushes conf hfs root uniqC es' reg tc''
+        updatesWithInterleavedFlushes conf hfs hbio root uniqC es' reg tc''
   where
     AllocNumEntries (NumEntries maxn) = confWriteBufferAlloc conf
     resolve = resolveMupsert conf
@@ -686,7 +693,7 @@ updatesWithInterleavedFlushes conf hfs root uniqC es reg tc = do
         , tableCache = tableCache tc0
         }
 
-{-# SPECIALISE flushWriteBuffer :: TableConfig -> HasFS IO h -> SessionRoot -> UniqCounter IO -> TempRegistry IO -> TableContent h -> IO (TableContent h) #-}
+{-# SPECIALISE flushWriteBuffer :: TableConfig -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> TempRegistry IO -> TableContent h -> IO (TableContent h) #-}
 -- | Flush the write buffer to disk, regardless of whether it is full or not.
 --
 -- The returned table content contains an updated set of levels, where the write
@@ -699,21 +706,24 @@ flushWriteBuffer ::
      m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
   => TableConfig
   -> HasFS m h
+  -> HasBlockIO m h
   -> SessionRoot
   -> UniqCounter m
   -> TempRegistry m
   -> TableContent h
   -> m (TableContent h)
-flushWriteBuffer conf hfs root uniqC reg tc
+flushWriteBuffer conf@TableConfig{confDiskCachePolicy}
+                 hfs hbio root uniqC reg tc
   | WB.null (tableWriteBuffer tc) = pure tc
   | otherwise = do
     n <- incrUniqCounter uniqC
     r <- allocateTemp reg
-            (Run.fromWriteBuffer hfs
+            (Run.fromWriteBuffer hfs hbio
+              (diskCachePolicyForLevel confDiskCachePolicy (LevelNo 1))
               (Paths.runPath root n)
               (tableWriteBuffer tc))
             (Run.removeReference hfs)
-    levels' <- addRunToLevels conf hfs root uniqC r reg (tableLevels tc)
+    levels' <- addRunToLevels conf hfs hbio root uniqC r reg (tableLevels tc)
     pure $! TableContent {
         tableWriteBuffer = WB.empty
       , tableLevels = levels'
@@ -724,12 +734,13 @@ flushWriteBuffer conf hfs root uniqC reg tc
 -- the last level.
 --
 levelsInvariant :: forall s h. TableConfig -> Levels h -> ST s Bool
-levelsInvariant conf levels = go 1 levels >>= \ !_ -> pure True
+levelsInvariant conf levels =
+    go (LevelNo 1) levels >>= \ !_ -> pure True
   where
     sr = confSizeRatio conf
     wba = confWriteBufferAlloc conf
 
-    go :: Int -> Levels h -> ST s ()
+    go :: LevelNo -> Levels h -> ST s ()
     go !_ (V.uncons -> Nothing) = pure ()
 
     go !ln (V.uncons -> Just (Level mr rs, ls)) = do
@@ -739,7 +750,7 @@ levelsInvariant conf levels = go 1 levels >>= \ !_ -> pure True
       assert (length rs < sizeRatioInt sr) $ pure ()
       assert (expectedRunLengths ln rs ls) $ pure ()
       assert (expectedMergingRunLengths ln mr mrs ls) $ pure ()
-      go (ln+1) ls
+      go (succ ln) ls
 
     -- All runs within a level "proper" (as opposed to the incoming runs
     -- being merged) should be of the correct size for the level.
@@ -765,7 +776,7 @@ levelsInvariant conf levels = go 1 levels >>= \ !_ -> pure True
                         -- A completed merge for levelling can be of almost any size at all!
             -- It can be smaller, due to deletions in the last level. But it
             -- can't be bigger than would fit into the next level.
-            (_, CompletedMerge r) -> assert (fitsUB LevelLevelling r (ln + 1)) True
+            (_, CompletedMerge r) -> assert (fitsUB LevelLevelling r (succ ln)) True
         LevelTiering ->
           case (mr, mrs, mergeLastForLevel ls) of
             -- A single incoming run (which thus didn't need merging) must be
@@ -777,36 +788,37 @@ levelsInvariant conf levels = go 1 levels >>= \ !_ -> pure True
             -- Note that tiering on the last level only occurs when there is
             -- a single level only.
             (_, CompletedMerge r, Merge.LastLevel) ->
-                assert (ln == 1) $
-                assert (fitsUB LevelTiering r (ln + 1)) $
+                assert (ln == LevelNo 1) $
+                assert (fitsUB LevelTiering r (succ ln)) $
                 True
 
             -- A completed mid level run is usually of the size for the
             -- level it is entering, but can also be one smaller (in which case
             -- it'll be held back and merged again).
             (_, CompletedMerge r, Merge.MidLevel) ->
-                assert (fitsUB LevelTiering r ln || fitsUB LevelTiering r (ln + 1)) True
+                assert (fitsUB LevelTiering r ln || fitsUB LevelTiering r (succ ln)) True
 
     -- Check that a run fits in the current level
     fits policy r ln = fitsLB policy r ln && fitsUB policy r ln
     -- Check that a run is too large for previous levels
-    fitsLB policy r ln = maxRunSize sr wba policy (ln - 1) < Run.runNumEntries r
+    fitsLB policy r ln = maxRunSize sr wba policy (pred ln) < Run.runNumEntries r
     -- Check that a run is too small for next levels
     fitsUB policy r ln = Run.runNumEntries r <= maxRunSize sr wba policy ln
 
-{-# SPECIALISE addRunToLevels :: TableConfig -> HasFS IO h -> SessionRoot -> UniqCounter IO -> Run (Handle h) -> TempRegistry IO -> Levels (Handle h) -> IO (Levels (Handle h)) #-}
+{-# SPECIALISE addRunToLevels :: TableConfig -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> Run (Handle h) -> TempRegistry IO -> Levels (Handle h) -> IO (Levels (Handle h)) #-}
 addRunToLevels ::
      forall m h. m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
   => TableConfig
   -> HasFS m h
+  -> HasBlockIO m h
   -> SessionRoot
   -> UniqCounter m
   -> Run (Handle h)
   -> TempRegistry m
   -> Levels (Handle h)
   -> m (Levels (Handle h))
-addRunToLevels conf@TableConfig{..} hfs root uniqC r0 reg levels = do
-    ls' <- go 1 (V.singleton r0) levels
+addRunToLevels conf@TableConfig{..} hfs hbio root uniqC r0 reg levels = do
+    ls' <- go (LevelNo 1) (V.singleton r0) levels
     assert (runST $ levelsInvariant conf ls') $ return ls'
   where
     -- NOTE: @go@ is based on the @increment@ function from the
@@ -814,7 +826,7 @@ addRunToLevels conf@TableConfig{..} hfs root uniqC r0 reg levels = do
     go !ln rs (V.uncons -> Nothing) = do
         -- Make a new level
         let policyForLevel = mergePolicyForLevel confMergePolicy ln V.empty
-        mr <- newMerge policyForLevel Merge.LastLevel rs
+        mr <- newMerge policyForLevel Merge.LastLevel ln rs
         return $ V.singleton $ Level mr V.empty
     go !ln rs' (V.uncons -> Just (Level mr rs, ls)) = do
         -- TODO: until we have proper scheduling, the merging run is actually
@@ -824,23 +836,23 @@ addRunToLevels conf@TableConfig{..} hfs root uniqC r0 reg levels = do
         case mergePolicyForLevel confMergePolicy ln ls of
           -- If r is still too small for this level then keep it and merge again
           -- with the incoming runs.
-          LevelTiering | runSize r <= maxRunSize' conf LevelTiering (ln - 1) -> do
+          LevelTiering | runSize r <= maxRunSize' conf LevelTiering (pred ln) -> do
             let mergelast = mergeLastForLevel ls
-            mr' <- newMerge LevelTiering mergelast (rs' `V.snoc` r)
+            mr' <- newMerge LevelTiering mergelast ln (rs' `V.snoc` r)
             pure $! Level mr' rs `V.cons` ls
           -- This tiering level is now full. We take the completed merged run
           -- (the previous incoming runs), plus all the other runs on this level
           -- as a bundle and move them down to the level below. We start a merge
           -- for the new incoming runs. This level is otherwise empty.
           LevelTiering | levelIsFull confSizeRatio rs -> do
-            mr' <- newMerge LevelTiering Merge.MidLevel rs'
-            ls' <- go (ln+1) (r `V.cons` rs) ls
+            mr' <- newMerge LevelTiering Merge.MidLevel ln rs'
+            ls' <- go (succ ln) (r `V.cons` rs) ls
             pure $! Level mr' V.empty `V.cons` ls'
           -- This tiering level is not yet full. We move the completed merged run
           -- into the level proper, and start the new merge for the incoming runs.
           LevelTiering -> do
             let mergelast = mergeLastForLevel ls
-            mr' <- newMerge LevelTiering mergelast rs'
+            mr' <- newMerge LevelTiering mergelast ln rs'
             pure $! Level mr' (r `V.cons` rs) `V.cons` ls
           -- The final level is using levelling. If the existing completed merge
           -- run is too large for this level, we promote the run to the next
@@ -848,13 +860,13 @@ addRunToLevels conf@TableConfig{..} hfs root uniqC r0 reg levels = do
           -- empty) level .
           LevelLevelling | runSize r > maxRunSize' conf LevelLevelling ln -> do
             assert (V.null rs && V.null ls) $ pure ()
-            mr' <- newMerge LevelTiering Merge.MidLevel rs'
-            ls' <- go (ln+1) (V.singleton r) V.empty
+            mr' <- newMerge LevelTiering Merge.MidLevel ln rs'
+            ls' <- go (succ ln) (V.singleton r) V.empty
             pure $! Level mr' V.empty `V.cons` ls'
           -- Otherwise we start merging the incoming runs into the run.
           LevelLevelling -> do
             assert (V.null rs && V.null ls) $ pure ()
-            mr' <- newMerge LevelLevelling Merge.LastLevel (rs' `V.snoc` r)
+            mr' <- newMerge LevelLevelling Merge.LastLevel ln (rs' `V.snoc` r)
             pure $! Level mr' V.empty `V.cons` V.empty
 
     expectCompletedMerge :: MergingRun (Handle h) -> m (Run (Handle h))
@@ -863,21 +875,28 @@ addRunToLevels conf@TableConfig{..} hfs root uniqC r0 reg levels = do
 
     -- TODO: Until we implement proper scheduling, this does not only start a
     -- merge, but it also steps it to completion.
-    newMerge :: MergePolicyForLevel -> Merge.Level -> V.Vector (Run (Handle h)) -> m (MergingRun (Handle h))
-    newMerge mergepolicy mergelast rs
+    newMerge :: MergePolicyForLevel
+             -> Merge.Level
+             -> LevelNo
+             -> V.Vector (Run (Handle h))
+             -> m (MergingRun (Handle h))
+    newMerge mergepolicy mergelast ln rs
       | Just (r, rest) <- V.uncons rs
       , V.null rest = do
           pure (SingleRun r)
       | otherwise = do
         assert (let l = V.length rs in l >= 2 && l <= 5) $ pure ()
-        r <- allocateTemp reg (mergeRuns conf hfs root uniqC mergepolicy mergelast rs) (Run.removeReference hfs)
+        let caching = diskCachePolicyForLevel confDiskCachePolicy ln
+        r <- allocateTemp reg
+               (mergeRuns conf hfs hbio root uniqC caching mergepolicy mergelast rs)
+               (Run.removeReference hfs)
         V.mapM_ (freeTemp reg . Run.removeReference hfs) rs
         pure $! MergingRun (CompletedMerge r)
 
 data MergePolicyForLevel = LevelTiering | LevelLevelling
 
-mergePolicyForLevel :: MergePolicy -> Int -> Levels h -> MergePolicyForLevel
-mergePolicyForLevel MergePolicyLazyLevelling n nextLevels
+mergePolicyForLevel :: MergePolicy -> LevelNo -> Levels h -> MergePolicyForLevel
+mergePolicyForLevel MergePolicyLazyLevelling (LevelNo n) nextLevels
   | n == 1
   , V.null nextLevels
   = LevelTiering    -- always use tiering on first level
@@ -892,7 +911,7 @@ runSize run = Run.runNumEntries run
 -- The @size@ of a tiering run at each level is allowed to be
 -- @bufferSize*sizeRatio^(level-1) < size <= bufferSize*sizeRatio^level@.
 --
--- >>> unNumEntries . maxRunSize Four (AllocNumEntries (NumEntries 2)) LevelTiering <$> [0, 1, 2, 3, 4]
+-- >>> unNumEntries . maxRunSize Four (AllocNumEntries (NumEntries 2)) LevelTiering . LevelNo <$> [0, 1, 2, 3, 4]
 -- [0,2,8,32,128]
 --
 -- The @size@ of a levelling run at each level is allowed to be
@@ -900,10 +919,15 @@ runSize run = Run.runNumEntries run
 -- levelling run can take take up a whole level, so the maximum size of a run is
 -- @sizeRatio*@ larger than the maximum size of a tiering run on the same level.
 --
--- >>> unNumEntries . maxRunSize Four (AllocNumEntries (NumEntries 2)) LevelLevelling <$> [0, 1, 2, 3, 4]
+-- >>> unNumEntries . maxRunSize Four (AllocNumEntries (NumEntries 2)) LevelLevelling . LevelNo <$> [0, 1, 2, 3, 4]
 -- [0,8,32,128,512]
-maxRunSize :: SizeRatio -> WriteBufferAlloc -> MergePolicyForLevel -> Int -> NumEntries
-maxRunSize (sizeRatioInt -> sizeRatio) (AllocNumEntries (NumEntries bufferSize)) policy ln =
+maxRunSize :: SizeRatio
+           -> WriteBufferAlloc
+           -> MergePolicyForLevel
+           -> LevelNo
+           -> NumEntries
+maxRunSize (sizeRatioInt -> sizeRatio) (AllocNumEntries (NumEntries bufferSize))
+           policy (LevelNo ln) =
     NumEntries $ case policy of
       LevelLevelling -> runSizeTiering * sizeRatio
       LevelTiering   -> runSizeTiering
@@ -911,9 +935,9 @@ maxRunSize (sizeRatioInt -> sizeRatio) (AllocNumEntries (NumEntries bufferSize))
     runSizeTiering
       | ln < 0 = error "maxRunSize: non-positive level number"
       | ln == 0 = 0
-      | otherwise = bufferSize * sizeRatio ^ (ln - 1)
+      | otherwise = bufferSize * sizeRatio ^ (pred ln)
 
-maxRunSize' :: TableConfig -> MergePolicyForLevel -> Int -> NumEntries
+maxRunSize' :: TableConfig -> MergePolicyForLevel -> LevelNo -> NumEntries
 maxRunSize' config policy ln =
     maxRunSize (confSizeRatio config) (confWriteBufferAlloc config) policy ln
 
@@ -925,29 +949,31 @@ mergeLastForLevel levels
 levelIsFull :: SizeRatio -> V.Vector (Run h) -> Bool
 levelIsFull sr rs = V.length rs + 1 >= (sizeRatioInt sr)
 
-{-# SPECIALISE mergeRuns :: TableConfig -> HasFS IO h -> SessionRoot -> UniqCounter IO -> MergePolicyForLevel -> Merge.Level -> V.Vector (Run (Handle h)) -> IO (Run (Handle h)) #-}
+{-# SPECIALISE mergeRuns :: TableConfig -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> RunDataCaching -> MergePolicyForLevel -> Merge.Level -> V.Vector (Run (Handle h)) -> IO (Run (Handle h)) #-}
 -- TODO: pass 'confBloomFilterAlloc' down to the merge and use it to initialise
 -- bloom filters
 mergeRuns ::
      m ~ IO
   => TableConfig
   -> HasFS m h
+  -> HasBlockIO m h
   -> SessionRoot
   -> UniqCounter m
+  -> RunDataCaching
   -> MergePolicyForLevel
   -> Merge.Level
   -> V.Vector (Run (Handle h))
   -> m (Run (Handle h))
-mergeRuns conf hfs root uniqC _ mergeLevel runs = do
+mergeRuns conf hfs hbio root uniqC caching _ mergeLevel runs = do
     n <- incrUniqCounter uniqC
     let runPaths = Paths.runPath root n
-    Merge.new hfs mergeLevel resolve runPaths (toList runs) >>= \case
+    Merge.new hfs caching mergeLevel resolve runPaths (toList runs) >>= \case
       Nothing -> error "mergeRuns: no inputs"
       Just merge -> go merge
   where
     resolve = resolveMupsert conf
     go m =
-      Merge.steps hfs m 1024 >>= \case
+      Merge.steps hfs hbio m 1024 >>= \case
         (_, Merge.MergeInProgress)   -> go m
         (_, Merge.MergeComplete run) -> return run
 
@@ -976,6 +1002,7 @@ snapshot snap label th = do
         r <- flushWriteBuffer
               (tableConfig th)
               hfs
+              (tableHasBlockIO thEnv)
               (tableSessionRoot thEnv)
               (tablesSessionUniqCounter thEnv)
               reg
@@ -1012,7 +1039,8 @@ open ::
   -> m (TableHandle m h)
 open sesh label snap = do
     withOpenSession sesh $ \seshEnv -> do
-      let hfs = sessionHasFS seshEnv
+      let hfs      = sessionHasFS seshEnv
+          hbio     = sessionHasBlockIO seshEnv
           snapPath = Paths.snapshot (sessionRoot seshEnv) snap
       FS.doesFileExist hfs snapPath >>= \b ->
         unless b $ throwIO (ErrSnapshotNotExists snap)
@@ -1026,9 +1054,10 @@ open sesh label snap = do
       let runPaths = V.map (bimap (second $ RunFsPaths (Paths.activeDir $ sessionRoot seshEnv))
                                   (V.map (RunFsPaths (Paths.activeDir $ sessionRoot seshEnv))))
                            runNumbers
-      with (openLevels hfs runPaths) (newWithLevels seshEnv conf)
+      with (openLevels hfs hbio (confDiskCachePolicy conf) runPaths)
+           (newWithLevels seshEnv conf)
 
-{-# SPECIALISE openLevels :: HasFS IO h -> V.Vector ((Bool, RunFsPaths), V.Vector RunFsPaths) -> Managed IO (Levels (FS.Handle h)) #-}
+{-# SPECIALISE openLevels :: HasFS IO h -> HasBlockIO IO h -> DiskCachePolicy -> V.Vector ((Bool, RunFsPaths), V.Vector RunFsPaths) -> Managed IO (Levels (FS.Handle h)) #-}
 -- | Open multiple levels.
 --
 -- If an error occurs when opening multiple runs in sequence, then we have to
@@ -1044,14 +1073,20 @@ open sesh label snap = do
 openLevels ::
      m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
   => HasFS m h
+  -> HasBlockIO m h
+  -> DiskCachePolicy
   -> V.Vector ((Bool, RunFsPaths), V.Vector RunFsPaths)
   -> Managed m (Levels (Handle h))
-openLevels hfs levels =
-    flip V.mapMStrict levels $ \(mrPath, rsPaths) -> do
-      !r <- Managed $ bracketOnError (Run.openFromDisk hfs (snd mrPath)) (Run.removeReference hfs)
+openLevels hfs hbio diskCachePolicy levels =
+    flip V.imapMStrict levels $ \i (mrPath, rsPaths) -> do
+      let ln      = LevelNo (i+1) -- level 0 is the write buffer
+          caching = diskCachePolicyForLevel diskCachePolicy ln
+      !r <- Managed $ bracketOnError
+                        (Run.openFromDisk hfs hbio caching (snd mrPath))
+                        (Run.removeReference hfs)
       !rs <- flip V.mapMStrict rsPaths $ \run ->
         Managed $ bracketOnError
-                    (Run.openFromDisk hfs run)
+                    (Run.openFromDisk hfs hbio caching run)
                     (Run.removeReference hfs)
       let !mr = if fst mrPath then SingleRun r else MergingRun (CompletedMerge r)
       pure $! Level mr rs
@@ -1118,6 +1153,8 @@ data TableConfig = TableConfig {
     -- | Function for resolving 'Mupsert' values. This should be 'Nothing' for
     -- normal tables and 'Just' for monoidal tables.
   , confResolveMupsert   :: !(Maybe ResolveMupsert)
+    -- | The policy for caching key\/value data from disk in memory.
+  , confDiskCachePolicy  :: !DiskCachePolicy
   }
   deriving Show
 
@@ -1140,6 +1177,7 @@ defaultTableConfig =
       , confWriteBufferAlloc = AllocNumEntries (NumEntries 20_000)
       , confBloomFilterAlloc = AllocRequestFPR 0.02
       , confResolveMupsert   = Nothing
+      , confDiskCachePolicy  = DiskCacheAll
       }
 
 resolveMupsert :: TableConfig -> SerialisedValue -> SerialisedValue -> SerialisedValue
@@ -1236,3 +1274,59 @@ instance Show ResolveMupsert where show _ = "ResolveMupsert function can not be 
 -- | TODO: this should be removed once we have proper snapshotting with proper
 -- persistence of the config to disk.
 instance Read ResolveMupsert where readsPrec = error "ResolveMupsert function can not be read"
+
+-- | The policy for caching data from disk in memory (using the OS page cache).
+--
+-- Caching data in memory can improve performance if the access pattern has
+-- good access locality or if the overall data size fits within memory. On the
+-- other hand, caching is determental to performance and wastes memory if the
+-- access pattern has poor spatial or temporal locality.
+--
+-- This implementation is designed to have good performance using a cacheless
+-- policy, where main memory is used only to cache Bloom filters and indexes,
+-- but none of the key\/value data itself. Nevertheless, some use cases will be
+-- faster if some or all of the key\/value data is also cached in memory. This
+-- implementation does not do any custom caching of key\/value data, relying
+-- simply on the OS page cache. Thus caching is done in units of 4kb disk pages
+-- (as opposed to individual key\/value pairs for example).
+--
+data DiskCachePolicy =
+
+       -- | Use the OS page cache to cache any\/all key\/value data in the
+       -- table.
+       --
+       -- Use this policy if the expected access pattern for the table
+       -- has a good spatial or temporal locality.
+       DiskCacheAll
+
+       -- | Use the OS page cache to cache data in all LSMT levels at or below
+       -- a given level number. For example, use 1 to cache the first level.
+       -- (The write buffer is considered to be level 0.)
+       --
+       -- Use this policy if the expected access pattern for the table
+       -- has good temporal locality for recently inserted keys.
+     | DiskCacheLevelsAtOrBelow Int
+
+       --TODO: Add a policy based on size in bytes rather than internal details
+       -- like levels. An easy use policy would be to say: "cache the first 10
+       -- Mb" and have everything worked out from that.
+
+       -- | Do not cache any key\/value data in any level (except the write
+       -- buffer).
+       --
+       -- Use this policy if expected access pattern for the table has poor
+       -- spatial or temporal locality, such as uniform random access.
+     | DiskCacheNone
+  deriving stock (Eq, Show, Read)
+
+-- | Interpret the 'DiskCachePolicy' for a level: should we cache data in runs
+-- at this level.
+--
+diskCachePolicyForLevel :: DiskCachePolicy -> LevelNo -> RunDataCaching
+diskCachePolicyForLevel policy (LevelNo ln) =
+  case policy of
+    DiskCacheAll               -> CacheRunData
+    DiskCacheNone              -> NoCacheRunData
+    DiskCacheLevelsAtOrBelow n
+      | ln <= n                -> CacheRunData
+      | otherwise              -> NoCacheRunData

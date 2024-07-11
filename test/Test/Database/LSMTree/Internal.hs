@@ -128,6 +128,7 @@ prop_interimRestoreSessionUniqueRunNames (Positive (Small n)) (NonNegative m) = 
       , confWriteBufferAlloc = AllocNumEntries (NumEntries n)
       , confBloomFilterAlloc = AllocFixed 10
       , confResolveMupsert = Nothing
+      , confDiskCachePolicy = DiskCacheNone
       }
 
     upds = V.fromList [ (serialiseKey i, Insert (serialiseValue i))
@@ -173,6 +174,7 @@ prop_interimOpenTable dat = ioProperty $
       , confWriteBufferAlloc = AllocNumEntries (NumEntries 3)
       , confBloomFilterAlloc = AllocFixed 10
       , confResolveMupsert = Nothing
+      , confDiskCachePolicy = DiskCacheNone
       }
 
     Test.InMemLookupData { runData, lookups = keysToLookup } = dat

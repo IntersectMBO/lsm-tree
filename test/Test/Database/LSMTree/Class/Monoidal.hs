@@ -47,6 +47,7 @@ tests = testGroup "Test.Database.LSMTree.Class.Monoidal"
             , R.confWriteBufferAlloc = R.AllocNumEntries (R.NumEntries 3)
             , R.confBloomFilterAlloc = R.AllocFixed 10
             , R.confResolveMupsert = Nothing
+            , R.confDiskCachePolicy = R.DiskCacheNone
             }
         , testWithSessionArgs = \action ->
             FS.withTempIOHasBlockIO "R" $ \hfs hbio ->
