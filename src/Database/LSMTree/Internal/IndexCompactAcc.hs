@@ -23,6 +23,8 @@ module Database.LSMTree.Internal.IndexCompactAcc (
   , unsafeEnd
     -- * Internal: exported for testing and benchmarking
   , unsafeWriteRange
+  , vectorLowerBound
+  , mvectorUpperBound
   ) where
 
 import           Control.DeepSeq (NFData (..))
@@ -353,12 +355,14 @@ unsafeWriteRange !v !lb !ub !x = VUM.set (VUM.unsafeSlice lb' len v) x
     !ub' = mvectorUpperBound v ub
     !len = ub' - lb' + 1
 
+-- | Map a 'Bound' to the equivalent inclusive lower bound.
 vectorLowerBound :: Bound Int -> Int
 vectorLowerBound = \case
     NoBound          -> 0
     BoundExclusive i -> i + 1
     BoundInclusive i -> i
 
+-- | Map a 'Bound' to the equivalent inclusive upper bound.
 mvectorUpperBound :: VGM.MVector v a => v s a -> Bound Int -> Int
 mvectorUpperBound v = \case
     NoBound          -> VGM.length v - 1
