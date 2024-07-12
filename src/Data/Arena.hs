@@ -139,7 +139,7 @@ withUnmanagedArena k = do
 allocateFromArena :: PrimMonad m => Arena (PrimState m)-> Size -> Alignment -> m (Offset, MutableByteArray (PrimState m))
 allocateFromArena !arena !size !alignment =
     assert (popCount alignment == 1) $ -- powers of 2
-    assert (size <= blockSize) $ -- not to large allocations
+    assert (size <= blockSize) $ -- not too large allocations
     allocateFromArena' arena size alignment
 
 -- TODO!? this is not async exception safe
