@@ -62,6 +62,7 @@ import           Data.Arena (ArenaManager, newArenaManager)
 import           Data.Bifunctor (Bifunctor (..))
 import           Data.BloomFilter (Bloom)
 import qualified Data.ByteString.Char8 as BSC
+import           Data.Char (isNumber)
 import           Data.Either (fromRight)
 import           Data.Foldable
 import           Data.Map.Strict (Map)
@@ -285,11 +286,16 @@ openSession hfs hbio dir = do
         -- TODO: remove once we have proper snapshotting. Before that, we must
         -- prevent name clashes with runs that are still present in the active
         -- directory by starting the unique counter at a strictly higher number
-        -- than the name of any run in the active directory.
-        --
-        -- This is a crude number to start the counter at, but it should do the
-        -- trick until we have proper snapshots.
-        x <- Set.size <$> FS.listDirectory hfs activeDirPath
+        -- than the name of any run in the active directory. When we do
+        -- snapshoting properly, then we'll hard link files into the active
+        -- directory under new names/numbers, and so session counters will
+        -- always be able to start at 0.
+        files <- FS.listDirectory hfs activeDirPath
+        let (x :: Int) | Set.null files = 0
+                       -- TODO: read is not very robust, but it is only a
+                       -- temporary solution
+                       | otherwise = maximum [ read (takeWhile isNumber f)
+                                             | f <- Set.toList files ]
         mkSession sessionFileLock (fromIntegral x)
 
     -- Check that the active directory and snapshots directory exist. We assume
@@ -376,26 +382,56 @@ data TableHandleState m h =
   | TableHandleClosed
 
 data TableHandleEnv m h = TableHandleEnv {
-    -- === Session
-    -- | Inherited from session
-    tableSessionRoot         :: !SessionRoot
-    -- | Inherited from session
-  , tableHasFS               :: !(HasFS m h)
-    -- | Inherited from session
-  , tableHasBlockIO          :: !(HasBlockIO m h)
-    -- | Inherited from session
-  , tablesSessionUniqCounter :: !(UniqCounter m)
-    -- | Open tables are tracked in the corresponding session, so when a table
-    -- is closed it should become untracked (forgotten).
-  , tableSessionUntrackTable :: !(m ())
+    -- === Session-inherited
+
+    -- | The session that this table belongs to.
+    --
+    -- NOTE: Consider using the 'tableSessionEnv' field and helper functions
+    -- like 'tableHasFS' instead of acquiring the session lock.
+    tableSession    :: !(Session m h)
+    -- | Use this instead of 'tableSession' for easy access. An open table may
+    -- assume that its session is open.
+  , tableSessionEnv :: !(SessionEnv m h)
+
     -- === Table-specific
-    -- | All of the state being in a single `StrictMVar` is a relatively simple
+
+    -- | Session-unique identifier for this table.
+  , tableId         :: !Word64
+    -- | All of the state being in a single 'StrictMVar' is a relatively simple
     -- solution, but there could be more concurrency. For example, while inserts
     -- are in progress, lookups could still look at the old state without
     -- waiting for the MVar.
+    --
     -- TODO: switch to more fine-grained synchronisation approach
-  , tableContent             :: !(StrictMVar m (TableContent h))
+  , tableContent    :: !(StrictMVar m (TableContent h))
   }
+
+{-# INLINE tableSessionRoot #-}
+ -- | Inherited from session for ease of access.
+tableSessionRoot :: TableHandleEnv m h -> SessionRoot
+tableSessionRoot = sessionRoot . tableSessionEnv
+
+{-# INLINE tableHasFS #-}
+-- | Inherited from session for ease of access.
+tableHasFS :: TableHandleEnv m h -> HasFS m h
+tableHasFS = sessionHasFS . tableSessionEnv
+
+{-# INLINE tableHasBlockIO #-}
+-- | Inherited from session for ease of access.
+tableHasBlockIO :: TableHandleEnv m h -> HasBlockIO m h
+tableHasBlockIO = sessionHasBlockIO . tableSessionEnv
+
+{-# INLINE tableSessionUniqCounter #-}
+-- | Inherited from session for ease of access.
+tableSessionUniqCounter :: TableHandleEnv m h -> UniqCounter m
+tableSessionUniqCounter = sessionUniqCounter . tableSessionEnv
+
+{-# INLINE tableSessionUntrackTable #-}
+-- | Open tables are tracked in the corresponding session, so when a table is
+-- closed it should become untracked (forgotten).
+tableSessionUntrackTable :: MonadMVar m => TableHandleEnv m h -> m ()
+tableSessionUntrackTable thEnv =
+    modifyMVar_ (sessionOpenTables (tableSessionEnv thEnv)) $ pure . Map.delete (tableId thEnv)
 
 data TableContent h = TableContent {
     tableWriteBuffer :: !WriteBuffer
@@ -512,16 +548,17 @@ new ::
   => Session m h
   -> TableConfig
   -> m (TableHandle m h)
-new sesh conf = withOpenSession sesh $ \seshEnv -> newWithLevels seshEnv conf V.empty
+new sesh conf = withOpenSession sesh $ \seshEnv -> newWithLevels sesh seshEnv conf V.empty
 
-{-# SPECIALISE newWithLevels :: SessionEnv IO h -> TableConfig -> Levels (Handle h) -> IO (TableHandle IO h) #-}
+{-# SPECIALISE newWithLevels :: Session IO h -> SessionEnv IO h -> TableConfig -> Levels (Handle h) -> IO (TableHandle IO h) #-}
 newWithLevels ::
      m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
-  => SessionEnv m h
+  => Session m h
+  -> SessionEnv m h
   -> TableConfig
   -> Levels (Handle h)
   -> m (TableHandle m h)
-newWithLevels seshEnv conf !levels = do
+newWithLevels sesh seshEnv conf !levels = do
     assertNoThunks levels $ pure ()
     -- The session is kept open until we've updated the session's set of tracked
     -- tables. If 'closeSession' is called by another thread while this code
@@ -529,14 +566,10 @@ newWithLevels seshEnv conf !levels = do
     -- /updated/ set of tracked tables.
     contentVar <- newMVar $ TableContent WB.empty levels (mkLevelsCache levels)
     tableId <- incrUniqCounter (sessionUniqCounter seshEnv)
-    -- Action to untrack the current table
-    let forget = modifyMVar_ (sessionOpenTables seshEnv) $ pure . Map.delete tableId
     tableVar <- RW.new $ TableHandleOpen $ TableHandleEnv {
-          tableSessionRoot = sessionRoot seshEnv
-        , tableHasFS = sessionHasFS seshEnv
-        , tableHasBlockIO = sessionHasBlockIO seshEnv
-        , tablesSessionUniqCounter = sessionUniqCounter seshEnv
-        , tableSessionUntrackTable = forget
+          tableSession = sesh
+        , tableSessionEnv = seshEnv
+        , tableId = tableId
         , tableContent = contentVar
         }
     arenaManager <- newArenaManager
@@ -620,7 +653,7 @@ updates es th = withOpenTable th $ \thEnv -> do
                 hfs
                 (tableHasBlockIO thEnv)
                 (tableSessionRoot thEnv)
-                (tablesSessionUniqCounter thEnv)
+                (tableSessionUniqCounter thEnv)
                 es
                 tc
         assertNoThunks tc' $ pure ()
@@ -1006,7 +1039,7 @@ snapshot snap label th = do
               hfs
               (tableHasBlockIO thEnv)
               (tableSessionRoot thEnv)
-              (tablesSessionUniqCounter thEnv)
+              (tableSessionUniqCounter thEnv)
               reg
               content
         pure (r, r)
@@ -1057,7 +1090,7 @@ open sesh label snap = do
                                   (V.map (RunFsPaths (Paths.activeDir $ sessionRoot seshEnv))))
                            runNumbers
       with (openLevels hfs hbio (confDiskCachePolicy conf) runPaths)
-           (newWithLevels seshEnv conf)
+           (newWithLevels sesh seshEnv conf)
 
 {-# SPECIALISE openLevels :: HasFS IO h -> HasBlockIO IO h -> DiskCachePolicy -> V.Vector ((Bool, RunFsPaths), V.Vector RunFsPaths) -> Managed IO (Levels (FS.Handle h)) #-}
 -- | Open multiple levels.
