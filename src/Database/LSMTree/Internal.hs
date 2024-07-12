@@ -52,8 +52,9 @@ module Database.LSMTree.Internal (
   ) where
 
 import           Control.Concurrent.Class.MonadMVar.Strict
-import           Control.Concurrent.ReadWriteVar (RWVar)
-import qualified Control.Concurrent.ReadWriteVar as RW
+import           Control.Concurrent.Class.MonadSTM (MonadSTM (..))
+import           Control.Concurrent.Class.MonadSTM.RWVar (RWVar)
+import qualified Control.Concurrent.Class.MonadSTM.RWVar as RW
 import           Control.Monad (unless, void, when)
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Primitive (PrimState (..))
@@ -138,11 +139,7 @@ newtype Session m h = Session {
       -- to the session's fields (see 'withOpenSession'). We use more
       -- fine-grained synchronisation for various mutable parts of an open
       -- session.
-      --
-      -- TODO: RWVars only work in IO, not in IOSim.
-      --
-      -- TODO: how fair is an RWVar?
-      sessionState :: RWVar (SessionState m h)
+      sessionState :: RWVar m (SessionState m h)
     }
 
 data SessionState m h =
@@ -182,7 +179,7 @@ withOpenSession ::
   => Session m h
   -> (SessionEnv m h -> m a)
   -> m a
-withOpenSession sesh action = RW.with (sessionState sesh) $ \case
+withOpenSession sesh action = RW.withReadAccess (sessionState sesh) $ \case
     SessionClosed -> throwIO ErrSessionClosed
     SessionOpen seshEnv -> action seshEnv
 
@@ -331,7 +328,7 @@ closeSession ::
   => Session m h
   -> m ()
 closeSession Session{sessionState} =
-    RW.modify_ sessionState $ \case
+    RW.withWriteAccess_ sessionState $ \case
       SessionClosed -> pure SessionClosed
       SessionOpen seshEnv -> do
         -- Since we have a write lock on the session state, we know that no
@@ -365,11 +362,7 @@ data TableHandle m h = TableHandle {
       -- the open-/closedness of a table when multiple threads require access to
       -- the table's fields (see 'withOpenTable'). We use more fine-grained
       -- synchronisation for various mutable parts of an open table.
-      --
-      -- TODO: RWVars only work in IO, not in IOSim.
-      --
-      -- TODO: how fair is an RWVar?
-    , tableHandleState        :: !(RWVar (TableHandleState m h))
+    , tableHandleState        :: !(RWVar m (TableHandleState m h))
     , tableHandleArenaManager :: !(ArenaManager (PrimState m))
     }
 
@@ -403,7 +396,7 @@ data TableHandleEnv m h = TableHandleEnv {
     -- waiting for the MVar.
     --
     -- TODO: switch to more fine-grained synchronisation approach
-  , tableContent    :: !(StrictMVar m (TableContent h))
+  , tableContent    :: !(RWVar m (TableContent h))
   }
 
 {-# INLINE tableSessionRoot #-}
@@ -444,6 +437,13 @@ data TableContent h = TableContent {
   , tableCache       :: !(LevelsCache (Handle h))
   }
 
+emptyTableContent :: TableContent h
+emptyTableContent = TableContent {
+      tableWriteBuffer = WB.empty
+    , tableLevels = V.empty
+    , tableCache = mkLevelsCache V.empty
+  }
+
 -- | 'withOpenTable' ensures that the table stays open for the duration of the
 -- provided continuation.
 --
@@ -454,7 +454,7 @@ withOpenTable ::
   => TableHandle m h
   -> (TableHandleEnv m h -> m a)
   -> m a
-withOpenTable th action = RW.with (tableHandleState th) $ \case
+withOpenTable th action = RW.withReadAccess (tableHandleState th) $ \case
     TableHandleClosed -> throwIO ErrTableClosed
     TableHandleOpen thEnv -> action thEnv
 
@@ -564,7 +564,7 @@ newWithLevels sesh seshEnv conf !levels = do
     -- tables. If 'closeSession' is called by another thread while this code
     -- block is being executed, that thread will block until it reads the
     -- /updated/ set of tracked tables.
-    contentVar <- newMVar $ TableContent WB.empty levels (mkLevelsCache levels)
+    contentVar <- RW.new $ TableContent WB.empty levels (mkLevelsCache levels)
     tableId <- incrUniqCounter (sessionUniqCounter seshEnv)
     tableVar <- RW.new $ TableHandleOpen $ TableHandleEnv {
           tableSession = sesh
@@ -584,15 +584,16 @@ close ::
      m ~ IO  -- TODO: replace by @io-classes@ constraints for IO simulation.
   => TableHandle m h
   -> m ()
-close th = RW.modify_ (tableHandleState th) $ \case
+close th = RW.withWriteAccess_ (tableHandleState th) $ \case
     TableHandleClosed -> pure TableHandleClosed
     TableHandleOpen thEnv -> do
       -- Since we have a write lock on the table state, we know that we are the
       -- only thread currently closing the table. We can safely make the session
       -- forget about this table.
       tableSessionUntrackTable thEnv
-      lvls <- tableLevels <$> readMVar (tableContent thEnv)
-      closeLevels (tableHasFS thEnv) lvls
+      RW.withWriteAccess_ (tableContent thEnv) $ \lvls -> do
+        closeLevels (tableHasFS thEnv) (tableLevels lvls)
+        pure emptyTableContent
       pure TableHandleClosed
 
 {-# SPECIALISE lookups :: V.Vector SerialisedKey -> TableHandle IO h -> (Maybe (Entry SerialisedValue (BlobRef (Run (Handle h)))) -> lookupResult) -> IO (V.Vector lookupResult) #-}
@@ -608,22 +609,22 @@ lookups ::
 lookups ks th fromEntry = withOpenTable th $ \thEnv -> do
     let arenaManager = tableHandleArenaManager th
     let resolve = resolveMupsert (tableConfig th)
-    tableContent <- readMVar (tableContent thEnv)
-    let !wb = tableWriteBuffer tableContent
-    let !cache = tableCache tableContent
-    ioRes <-
-      lookupsIO
-        (tableHasBlockIO thEnv)
-        arenaManager
-        resolve
-        (cachedRuns cache)
-        (cachedFilters cache)
-        (cachedIndexes cache)
-        (cachedKOpsFiles cache)
-        ks
-    pure $! V.zipWithStrict
-              (\k1 e2 -> fromEntry $ combineMaybe resolve (WB.lookup wb k1) e2)
-              ks ioRes
+    RW.withReadAccess (tableContent thEnv) $ \tableContent -> do
+      let !wb = tableWriteBuffer tableContent
+      let !cache = tableCache tableContent
+      ioRes <-
+        lookupsIO
+          (tableHasBlockIO thEnv)
+          arenaManager
+          resolve
+          (cachedRuns cache)
+          (cachedFilters cache)
+          (cachedIndexes cache)
+          (cachedKOpsFiles cache)
+          ks
+      pure $! V.zipWithStrict
+                (\k1 e2 -> fromEntry $ combineMaybe resolve (WB.lookup wb k1) e2)
+                ks ioRes
 
 toNormalLookupResult :: Maybe (Entry v b) -> Normal.LookupResult v b
 toNormalLookupResult = \case
@@ -646,8 +647,8 @@ updates ::
 updates es th = withOpenTable th $ \thEnv -> do
     let hfs = tableHasFS thEnv
     modifyWithTempRegistry_
-      (takeMVar (tableContent thEnv))
-      (putMVar (tableContent thEnv)) $ \tc -> do
+      (atomically $ RW.unsafeAcquireWriteAccess (tableContent thEnv))
+      (atomically . RW.unsafeReleaseWriteAccess (tableContent thEnv)) $ \tc -> do
         tc' <- updatesWithInterleavedFlushes
                 (tableConfig th)
                 hfs
@@ -1032,8 +1033,9 @@ snapshot snap label th = do
       -- before taking the snapshot.
       let hfs = tableHasFS thEnv
       content <- modifyWithTempRegistry
-                    (takeMVar (tableContent thEnv))
-                    (putMVar (tableContent thEnv)) $ \reg content -> do
+                    (atomically $ RW.unsafeAcquireWriteAccess (tableContent thEnv))
+                    (atomically . RW.unsafeReleaseWriteAccess (tableContent thEnv))
+                    $ \reg content -> do
         r <- flushWriteBuffer
               (tableConfig th)
               hfs

@@ -50,6 +50,7 @@ library
   import:          language, warnings, wno-x-partial
   hs-source-dirs:  src
   exposed-modules:
+    Control.Concurrent.Class.MonadSTM.RWVar
     Data.Arena
     Data.Map.Range
     Database.LSMTree.Common
@@ -96,7 +97,6 @@ library
     , base                  >=4.16      && <4.20
     , bitvec                ^>=1.1
     , bytestring            ^>=0.11.4.0 || ^>=0.12.1.0
-    , concurrent-extra      ^>=0.7
     , containers
     , crc32c                ^>=0.2.1
     , deepseq               ^>=1.4      || ^>=1.5
@@ -109,6 +109,7 @@ library
     , nothunks              ^>=0.2
     , primitive             ^>=0.9
     , strict-mvar           ^>=1.4
+    , strict-stm            ^>=1.4
     , vector                ^>=0.13
     , vector-algorithms     ^>=0.9
 
@@ -231,6 +232,7 @@ test-suite lsm-tree-test
     Database.LSMTree.ModelIO.Monoidal
     Database.LSMTree.ModelIO.Normal
     Database.LSMTree.ModelIO.Session
+    Test.Control.Concurrent.Class.MonadSTM.RWVar
     Test.Data.Arena
     Test.Database.LSMTree.Class.Monoidal
     Test.Database.LSMTree.Class.Normal
@@ -296,7 +298,6 @@ test-suite lsm-tree-test
     , semialign
     , split
     , stm
-    , strict-mvar
     , tasty
     , tasty-hunit
     , tasty-quickcheck
