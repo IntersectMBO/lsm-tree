@@ -611,7 +611,9 @@ library blockio-api
   if os(linux)
     hs-source-dirs: blockio-api/src-linux
     other-modules:  System.FS.BlockIO.Internal
-    build-depends:  lsm-tree:fcntl-nocache
+    build-depends:
+      , lsm-tree:fcntl-nocache
+      , unix                    ^>=2.8
 
     if !flag(serialblockio)
       other-modules: System.FS.BlockIO.Async

@@ -28,15 +28,19 @@ import           System.Posix.Types
 -- | IO instantiation of 'HasBlockIO', using @blockio-uring@.
 asyncHasBlockIO ::
      (Handle HandleIO -> Bool -> IO ())
+  -> (Handle HandleIO -> FileOffset -> FileOffset -> API.Advice -> IO ())
+  -> (Handle HandleIO -> FileOffset -> FileOffset -> IO ())
   -> HasFS IO HandleIO
   -> API.IOCtxParams
   -> IO (API.HasBlockIO IO HandleIO)
-asyncHasBlockIO hSetNoCache hasFS ctxParams = do
+asyncHasBlockIO hSetNoCache hAdvise hAllocate hasFS ctxParams = do
   ctx <- I.initIOCtx (ctxParamsConv ctxParams)
   pure $ API.HasBlockIO {
       API.close = I.closeIOCtx ctx
     , API.submitIO = submitIO hasFS ctx
     , API.hSetNoCache
+    , API.hAdvise
+    , API.hAllocate
     }
 
 ctxParamsConv :: API.IOCtxParams -> I.IOCtxParams

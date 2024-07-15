@@ -18,6 +18,7 @@ module System.FS.BlockIO.API (
   , ioopBufferOffset
   , ioopByteCount
   , IOResult (..)
+  , Advice (..)
     -- * Re-exports
   , ByteCount
   , FileOffset
@@ -31,7 +32,7 @@ import qualified Data.Vector.Generic as VG
 import qualified Data.Vector.Generic.Mutable as VGM
 import qualified Data.Vector.Primitive as VP
 import qualified Data.Vector.Unboxed as VU
-import qualified Data.Vector.Unboxed as VUM
+import qualified Data.Vector.Unboxed.Mutable as VUM
 import           GHC.IO.Exception (IOErrorType (ResourceVanished))
 import           GHC.Stack (HasCallStack)
 import           System.FS.API
@@ -59,12 +60,30 @@ data HasBlockIO m h = HasBlockIO {
     -- * [Linux]: set the @O_DIRECT@ flag.
     -- * [MacOS]: set the @F_NOCACHE@ flag.
     -- * [Windows]: no-op.
+    --
+    -- TODO: subsequent reads/writes with misaligned byte arrays should fail
+    -- both in simulation and real implementation.
   , hSetNoCache :: Handle h -> Bool -> m ()
+    -- | Predeclare an access pattern for file data.
+    --
+    -- This has different effects on different distributions.
+    -- * [Linux]: perform @posix_fadvise(2).
+    -- * [MacOS]: no-op.
+    -- * [Windows]: no-op.
+  , hAdvise :: Handle h -> FileOffset -> FileOffset -> Advice -> m ()
+    -- | Allocate file space.
+    --
+    -- This has different effects on different distributions.
+    -- * [Linux]: perform @posix_fallocate(2).
+    -- * [MacOS]: no-op.
+    -- * [Windows]: no-op.
+  , hAllocate :: Handle h -> FileOffset -> FileOffset -> m ()
   }
 
 instance NFData (HasBlockIO m h) where
-  rnf (HasBlockIO a b c) =
-      rwhnf a `seq` rwhnf b `seq` rwhnf c
+  rnf (HasBlockIO a b c d e) =
+      rwhnf a `seq` rwhnf b `seq` rnf c `seq`
+      rwhnf d `seq` rwhnf e
 
 -- | Concurrency parameters for initialising a 'HasBlockIO. Can be ignored by
 -- serial implementations.
@@ -128,3 +147,13 @@ deriving via (VU.UnboxViaPrim IOResult) instance VGM.MVector VU.MVector IOResult
 deriving via (VU.UnboxViaPrim IOResult) instance VG.Vector   VU.Vector  IOResult
 
 instance VUM.Unbox IOResult
+
+-- | Basically "System.Posix.Fcntl.Advice" from the @unix@ package
+data Advice =
+    AdviceNormal
+  | AdviceRandom
+  | AdviceSequential
+  | AdviceWillNeed
+  | AdviceDontNeed
+  | AdviceNoReuse
+  deriving stock (Show, Eq)

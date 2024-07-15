@@ -21,14 +21,18 @@ import           System.FS.BlockIO.API (IOOp (..), IOResult (..))
 serialHasBlockIO ::
      (MonadThrow m, MonadMVar m, PrimMonad m, Eq h)
   => (Handle h -> Bool -> m ())
+  -> (Handle h -> API.FileOffset -> API.FileOffset -> API.Advice -> m ())
+  -> (Handle h -> API.FileOffset -> API.FileOffset -> m ())
   -> HasFS m h
   -> m (API.HasBlockIO m h)
-serialHasBlockIO hSetNoCache hfs = do
+serialHasBlockIO hSetNoCache hAdvise hAllocate hfs = do
   ctx <- initIOCtx (SomeHasFS hfs)
   pure $ API.HasBlockIO {
       API.close = close ctx
     , API.submitIO = submitIO hfs ctx
     , API.hSetNoCache
+    , API.hAdvise
+    , API.hAllocate
     }
 
 data IOCtx m = IOCtx { ctxFS :: SomeHasFS m, openVar :: MVar m Bool }
