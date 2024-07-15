@@ -60,6 +60,7 @@ library
     Database.LSMTree.Internal.BlobRef
     Database.LSMTree.Internal.BloomFilter
     Database.LSMTree.Internal.ByteString
+    Database.LSMTree.Internal.Chunk
     Database.LSMTree.Internal.CRC32C
     Database.LSMTree.Internal.Entry
     Database.LSMTree.Internal.IndexCompact
