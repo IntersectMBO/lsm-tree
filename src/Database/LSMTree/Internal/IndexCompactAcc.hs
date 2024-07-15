@@ -21,11 +21,15 @@ module Database.LSMTree.Internal.IndexCompactAcc (
   , appendSingle
   , appendMulti
   , unsafeEnd
+    -- * Internal: exported for testing and benchmarking
+  , unsafeWriteRange
+  , vectorLowerBound
+  , mvectorUpperBound
   ) where
 
 import           Control.DeepSeq (NFData (..))
 import           Control.Exception (assert)
-import           Control.Monad (forM_, when)
+import           Control.Monad (when)
 import           Control.Monad.ST.Strict
 import           Data.Bit hiding (flipBit)
 import           Data.Foldable (toList)
@@ -197,7 +201,7 @@ appendSingle (minKey, maxKey) ica@IndexCompactAcc{..} = do
             let lb = smaybe NoBound (\i -> Bound (fromIntegral i) Exclusive) lastMinRfbits
                 ub = Bound (fromIntegral minRfbits) Inclusive
                 x  = fromIntegral pageNo
-            writeRange icaRangeFinder lb ub x
+            unsafeWriteRange icaRangeFinder lb ub x
             writeSTRef icaLastMinRfbits $! SJust minRfbits
 
         -- | Set value in primary vector
@@ -246,11 +250,11 @@ appendMulti (k, n0) ica@IndexCompactAcc{..} =
           let ix = pageNo `mod` icaMaxChunkSize -- will be 0 in recursive calls
               remInChunk = min n (icaMaxChunkSize - ix)
           readSTRef icaPrimary >>= \cs ->
-            writeRange (NE.head cs) (BoundInclusive ix) (BoundExclusive $ ix + remInChunk) minPrimbits
+            unsafeWriteRange (NE.head cs) (BoundInclusive ix) (BoundExclusive $ ix + remInChunk) minPrimbits
           readSTRef icaClashes >>= \cs ->
-            writeRange (NE.head cs) (BoundInclusive ix) (BoundExclusive $ ix + remInChunk) (Bit True)
+            unsafeWriteRange (NE.head cs) (BoundInclusive ix) (BoundExclusive $ ix + remInChunk) (Bit True)
           readSTRef icaLargerThanPage >>= \cs ->
-            writeRange (NE.head cs) (BoundInclusive ix) (BoundExclusive $ ix + remInChunk) (Bit True)
+            unsafeWriteRange (NE.head cs) (BoundInclusive ix) (BoundExclusive $ ix + remInChunk) (Bit True)
           writeSTRef icaCurrentPageNumber $! pageNo + remInChunk
           res <- yield ica
           maybe id (:) res <$> overflows (n - remInChunk)
@@ -324,7 +328,7 @@ fillRangeFinderToEnd IndexCompactAcc{..} = do
     let lb = smaybe NoBound (BoundExclusive . fromIntegral) lastMinRfbits
         ub = NoBound
         x  = fromIntegral pageNo
-    writeRange icaRangeFinder lb ub x
+    unsafeWriteRange icaRangeFinder lb ub x
     writeSTRef icaLastMinRfbits $! SJust $ 2 ^ icaRangeFinderPrecision
 
 
@@ -344,18 +348,21 @@ smaybe snothing sjust = \case
  Vector extras
 -------------------------------------------------------------------------------}
 
-writeRange :: VU.Unbox a => VU.MVector s a -> Bound Int -> Bound Int -> a -> ST s ()
-writeRange v lb ub x = forM_ [lb' .. ub'] $ \j -> VUM.write v j x
+unsafeWriteRange :: VU.Unbox a => VU.MVector s a -> Bound Int -> Bound Int -> a -> ST s ()
+unsafeWriteRange !v !lb !ub !x = VUM.set (VUM.unsafeSlice lb' len v) x
   where
-    lb' = vectorLowerBound lb
-    ub' = mvectorUpperBound v ub
+    !lb' = vectorLowerBound lb
+    !ub' = mvectorUpperBound v ub
+    !len = ub' - lb' + 1
 
+-- | Map a 'Bound' to the equivalent inclusive lower bound.
 vectorLowerBound :: Bound Int -> Int
 vectorLowerBound = \case
     NoBound          -> 0
     BoundExclusive i -> i + 1
     BoundInclusive i -> i
 
+-- | Map a 'Bound' to the equivalent inclusive upper bound.
 mvectorUpperBound :: VGM.MVector v a => v s a -> Bound Int -> Int
 mvectorUpperBound v = \case
     NoBound          -> VGM.length v - 1

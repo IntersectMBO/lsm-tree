@@ -10,9 +10,12 @@ module Bench.Database.LSMTree.Internal.IndexCompact (
   ) where
 
 import           Control.DeepSeq (deepseq)
-import           Control.Monad.ST (runST)
+import           Control.Monad.ST.Strict
 import           Criterion.Main
 import           Data.Foldable (Foldable (..))
+import           Data.Map.Range
+import qualified Data.Vector.Unboxed.Mutable as VUM
+import           Data.Word
 import           Database.LSMTree.Extras.Generators
 import           Database.LSMTree.Extras.Random
 import           Database.LSMTree.Extras.UTxO
@@ -27,16 +30,22 @@ import           Test.QuickCheck (generate)
 benchmarks :: Benchmark
 benchmarks = bgroup "Bench.Database.LSMTree.Internal.IndexCompact" [
       bgroup "searches" [
-          env (searchEnv 0  2_500_000 1_000_000) $ \ ~(ic, ks) ->
+          env (searchEnv 0  10000 1000) $ \ ~(ic, ks) ->
             bench "searches with 0-bit  rfprec" $ whnf (searches ic) ks
-        , env (searchEnv 16 2_500_000 1_000_000) $ \ ~(ic, ks) ->
+        , env (searchEnv 16 10000 1000) $ \ ~(ic, ks) ->
             bench "searches with 16-bit rfprec" $ whnf (searches ic) ks
         ]
     , bgroup "construction" [
-          env (constructionEnv 0  2_500_000) $ \ pages ->
+          env (constructionEnv 0  1000) $ \ pages ->
             bench "construction with 0-bit  rfprec and chunk size 100" $ whnf (constructIndexCompact 100) pages
-        , env (constructionEnv 16 2_500_000) $ \ pages ->
+        , env (constructionEnv 16 1000) $ \ pages ->
             bench "construction with 16-bit rfprec and chunk size 100" $ whnf (constructIndexCompact 100) pages
+        , env (VUM.replicate 3000 (7 :: Word32)) $ \ mv ->
+            bench "unsafeWriteRange-1k" $
+              whnfAppIO (\x -> stToIO (unsafeWriteRange mv (BoundInclusive 1000) (BoundInclusive 2000) x)) 17
+        , env (VUM.replicate 30000 (7 :: Word32)) $ \ mv ->
+            bench "unsafeWriteRange-10k" $
+              whnfAppIO (\x -> stToIO (unsafeWriteRange mv (BoundInclusive 10000) (BoundInclusive 20000) x)) 17
         ]
     ]
 
@@ -48,7 +57,7 @@ searchEnv ::
   -> IO (IndexCompact, [SerialisedKey])
 searchEnv rfprec npages nsearches = do
     ic <- constructIndexCompact 100 <$> constructionEnv rfprec npages
-    stdgen  <- newStdGen
+    let stdgen = mkStdGen 17
     let ks = serialiseKey <$> uniformWithReplacement @UTxOKey stdgen nsearches
     pure (ic, ks)
 
@@ -65,7 +74,7 @@ constructionEnv ::
   -> Int         -- ^ Number of pages
   -> IO (RFPrecision, [Append])
 constructionEnv rfprec n = do
-    stdgen <- newStdGen
+    let stdgen = mkStdGen 17
     let ks = uniformWithoutReplacement @UTxOKey stdgen (2 * n)
     ps <- generate (mkPages 0 (error "unused in constructionEnv") rfprec ks)
     pure (rfprec, toAppends ps)
