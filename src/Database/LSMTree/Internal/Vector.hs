@@ -8,15 +8,18 @@ module Database.LSMTree.Internal.Vector (
     mapMStrict,
     imapMStrict,
     zipWithStrict,
-    binarySearchL
+    binarySearchL,
+    unsafeInsertWithMStrict,
 ) where
 
 import           Control.Monad
+import           Control.Monad.Primitive (PrimMonad, PrimState)
 import           Data.Primitive.ByteArray (ByteArray, sizeofByteArray)
 import           Data.Primitive.Types (Prim (sizeOfType#))
 import           Data.Proxy (Proxy (..))
 import qualified Data.Vector as V
 import qualified Data.Vector.Algorithms.Search as VA
+import qualified Data.Vector.Mutable as VM
 import qualified Data.Vector.Primitive as VP
 import           Database.LSMTree.Internal.Assertions
 import           GHC.Exts (Int (..))
@@ -66,3 +69,18 @@ zipWithStrict f xs ys = runST (V.zipWithM (\x y -> pure $! f x y) xs ys)
 -}
 binarySearchL :: Ord a => V.Vector a -> a -> Int
 binarySearchL vec val = runST $ V.unsafeThaw vec >>= flip VA.binarySearchL val
+
+{-# INLINE unsafeInsertWithMStrict #-}
+-- | Insert (in a broad sense) an entry in a mutable vector at a given index,
+-- but if a @Just@ entry already exists at that index, combine the two entries
+-- using @f@.
+unsafeInsertWithMStrict ::
+     PrimMonad m
+  => VM.MVector (PrimState m) (Maybe a)
+  -> (a -> a -> a)  -- ^ function @f@, called as @f new old@
+  -> Int
+  -> a
+  -> m ()
+unsafeInsertWithMStrict mvec f i y = VM.unsafeModifyM mvec g i
+  where
+    g x = pure $! Just $! maybe y (`f` y) x
