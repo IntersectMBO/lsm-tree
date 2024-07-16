@@ -17,6 +17,7 @@ module Database.LSMTree.Internal.Serialise (
   , sizeofKey64
   , serialisedKey
   , keyTopBits16
+  , keyBotBits16
   , keySliceBits32
     -- * Values
   , SerialisedValue (SerialisedValue, SerialisedValue')
@@ -96,12 +97,17 @@ serialisedKey :: SerialisedKey -> BB.Builder
 serialisedKey (SerialisedKey rb) = RB.builder rb
 
 {-# INLINE keyTopBits16 #-}
--- | See 'topBits16'
+-- | See 'RB.topBits16'
 keyTopBits16 :: Int -> SerialisedKey -> Word16
 keyTopBits16 n (SerialisedKey rb) = RB.topBits16 n rb
 
+{-# INLINE keyBotBits16 #-}
+-- | See 'RB.botBits16'.
+keyBotBits16 :: SerialisedKey -> Word16
+keyBotBits16 (SerialisedKey rb) = RB.botBits16 rb
+
 {-# INLINE keySliceBits32 #-}
--- | See 'sliceBits32'
+-- | See 'RB.sliceBits32'.
 keySliceBits32 :: Int -> SerialisedKey -> Word32
 keySliceBits32 n (SerialisedKey rb) = RB.sliceBits32 n rb
 

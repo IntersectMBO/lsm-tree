@@ -24,7 +24,7 @@ import           Data.Primitive.ByteArray (ByteArray (..), byteArrayFromList,
                      sizeofByteArray)
 import qualified Data.Vector.Primitive as VP
 import qualified Data.Vector.Unboxed as VU
-import qualified Data.Vector.Unboxed.Base as VU (Vector (V_Word32))
+import qualified Data.Vector.Unboxed.Base as VU
 import           Data.Word
 import           Database.LSMTree.Extras
 import           Database.LSMTree.Extras.Generators as Gen
@@ -265,12 +265,16 @@ prop_total_deserialisation word32s =
         -- point to outside of the byte array, so we check they are valid.
         (numEntries, ic) `deepseq`
              vec32IsValid (icRangeFinder ic)
-          && vec32IsValid (icPrimary ic)
+          && vec32IsValid2 (icPrimary ic)
           && bitVecIsValid (icClashes ic)
           && bitVecIsValid (icLargerThanPage ic)
   where
     vec32IsValid (VU.V_Word32 (VP.Vector off len ba)) =
       off >= 0 && len >= 0 && mul4 (off + len) <= sizeofByteArray ba
+    vec32IsValid2 (VU.V_2 len0 v1@(VU.V_Word32 (VP.Vector off len ba)) v2@(VU.V_Word16 (VP.Vector off2 len2 ba2))) =
+      off >= 0 && len >= 0 && mul4 (off + len) <= sizeofByteArray ba &&
+      off2 >= 0 && len2 >= 0 && mul2 (off + len) <= sizeofByteArray ba2 &&
+      len0 == VU.length v1 && len0 == VU.length v2
     bitVecIsValid (BV.BitVec off len ba) =
       off >= 0 && len >= 0 && ceilDiv8 (off + len) <= sizeofByteArray ba
 

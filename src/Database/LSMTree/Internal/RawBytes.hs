@@ -27,6 +27,7 @@ module Database.LSMTree.Internal.RawBytes (
   , take
   , drop
   , topBits16
+  , botBits16
   , sliceBits32
     -- * Construction
     -- | Use 'Semigroup' and 'Monoid' operations
@@ -151,14 +152,38 @@ drop = coerce VP.drop
 --
 -- PRECONDITION: The byte-size of the raw bytes should be at least 2 bytes.
 --
+-- >>> let x = fromList [0,1] in zipWith topBits16 [0..16] (repeat x)
+-- [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1]
+--
+-- >>> let x = fromList [0,2] in zipWith topBits16 [0..16] (repeat x)
+-- [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,2]
+--
+-- >>> let x = fromList [0,3] in zipWith topBits16 [0..16] (repeat x)
+-- [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,3]
+--
 -- TODO: optimisation ideas: use unsafe shift/byteswap primops, look at GHC
 -- core, find other opportunities for using primops.
 --
 topBits16 :: Int -> RawBytes -> Word16
-topBits16 n rb@(RawBytes (VP.Vector (I# off#) _size (ByteArray k#))) =
-    assert (size rb >= 2) $ shiftR w16 (16 - n)
+topBits16 !n rb@(RawBytes (VP.Vector (I# off#) _size (ByteArray k#))) =
+    assert (size rb >= 2) $
+    assert (0 <= n && n <= 16)
+    shiftR w16 (16 - n)
   where
     w16 = toWord16 (indexWord8ArrayAsWord16# k# off#)
+
+-- | @'botBits16' rb@ slices the last @16@ bits from the /bottom/ of the raw
+-- bytes @rb@. Returns the string of bits as a 'Word16'. The /bottom/
+-- corresponds to the least significant bit (big-endian).
+--
+-- PRECONDITION: The byte-size of the raw bytes should be at least 2 bytes.
+--
+-- >>> (botBits16 (fromList [0,0,0,1]), botBits16 (fromList [0,17,0,42]))
+-- (1,42)
+--
+botBits16 :: RawBytes -> Word16
+botBits16 (RawBytes (VP.Vector (I# off#) (I# size#) (ByteArray k#))) =
+    toWord16 (indexWord8ArrayAsWord16# k# (off# +# size# -# 2#))
 
 toWord16 :: Word16# -> Word16
 #if WORDS_BIGENDIAN

@@ -52,7 +52,7 @@ import qualified Data.Vector.Algorithms.Search as VA
 import qualified Data.Vector.Generic as VG
 import qualified Data.Vector.Primitive as VP
 import qualified Data.Vector.Unboxed as VU
-import qualified Data.Vector.Unboxed.Base as VU (Vector (V_Word32))
+import qualified Data.Vector.Unboxed.Base as VU
 import           Data.Word
 import           Database.LSMTree.Internal.BitMath
 import           Database.LSMTree.Internal.ByteString (byteArrayFromTo,
@@ -447,7 +447,7 @@ data IndexCompact = IndexCompact {
   , icRangeFinderPrecision :: !Int
     -- | \(P\): Maps a page @i@ to the 32-bit slice of primary bits of its
     -- minimum key.
-  , icPrimary              :: !(VU.Vector Word32)
+  , icPrimary              :: !(VU.Vector (Word32, Word16))
     -- | \(C\): A clash on page @i@ means that the primary bits of the minimum
     -- key on that page aren't sufficient to decide whether a search for a key
     -- should continue left or right of the page.
@@ -552,7 +552,7 @@ search k IndexCompact{..} = -- Pre: @[0, V.length icPrimary)@
         -- extra entry at the end, mapping to 'V.length icPrimary'.
         !ub        = fromIntegral $ icRangeFinder VU.! (rfbits + 1)
         -- Post: @[lb, ub)@
-        !primbits  = keySliceBits32 icRangeFinderPrecision k
+        primbits@(!_, !_) = (keySliceBits32 icRangeFinderPrecision k, keyBotBits16 k)
     in
       case unsafeSearchLEBounds primbits icPrimary lb ub of
         Nothing -> singlePage (PageNo 0)  -- Post: @[lb, lb)@ (empty).
@@ -618,12 +618,12 @@ headerLBS =
       BB.word32Host indexVersion
 
 -- | A chunk of the primary array, which can be constructed incrementally.
-data Chunk = Chunk { cPrimary :: !(VU.Vector Word32) }
+data Chunk = Chunk { cPrimary :: !(VU.Vector (Word32, Word16)) }
   deriving stock (Show, Eq)
 
 -- | 32 bit aligned.
 chunkToBS :: Chunk -> BS.ByteString
-chunkToBS (Chunk (VU.V_Word32 (VP.Vector off len ba))) =
+chunkToBS (Chunk (VU.V_2 _ (VU.V_Word32 (VP.Vector off len ba)) (VU.V_Word16 _))) =
     byteArrayToByteString (mul4 off) (mul4 len) ba
 
 -- | Writes everything after the primary array, which is assumed to have already
@@ -738,8 +738,8 @@ fromSBS (SBS ba') = do
 
     -- read vectors
     -- offsets in 32 bits
-    let off1_32 = 1  -- after version indicator
-    (!off2_32, icPrimary) <- getVec32 "Primary array" ba off1_32 numPages
+    -- TODO: let off1_32 = 1  -- after version indicator
+    (!off2_32, icPrimary) <- undefined -- TODO: getVec32 "Primary array" ba off1_32 numPages
     (!off3_32, icRangeFinder) <- getVec32 "Range finder" ba off2_32 numRanges
     -- offsets in 64 bits
     let !off3 = ceilDiv2 off3_32
