@@ -10,9 +10,13 @@ module Bench.Database.LSMTree.Internal.IndexCompact (
   ) where
 
 import           Control.DeepSeq (deepseq)
+import           Control.Exception (assert)
 import           Control.Monad.ST.Strict
 import           Criterion.Main
 import           Data.Foldable (Foldable (..))
+import qualified Data.List as List
+import           Data.List.NonEmpty (NonEmpty (..))
+import qualified Data.List.NonEmpty as NE
 import           Data.Map.Range
 import qualified Data.Vector.Unboxed.Mutable as VUM
 import           Data.Word
@@ -47,6 +51,7 @@ benchmarks = bgroup "Bench.Database.LSMTree.Internal.IndexCompact" [
             bench "unsafeWriteRange-10k" $
               whnfAppIO (\x -> stToIO (unsafeWriteRange mv (BoundInclusive 10000) (BoundInclusive 20000) x)) 17
         ]
+    , benchNonUniform
     ]
 
 -- | Input environment for benchmarking 'searches'.
@@ -89,3 +94,74 @@ constructIndexCompact (ChunkSize csize) (RFPrecision rfprec, apps) = runST $ do
     mapM_ (`append` ica) apps
     (_, index) <- unsafeEnd ica
     pure index
+
+{-------------------------------------------------------------------------------
+  Benchmarks for UTxO keys that are /almost/ uniformly distributed
+-------------------------------------------------------------------------------}
+
+-- | UTXO keys are not truly uniformly distrbuted. The 'txId' is a uniformly
+-- distributed hash, but the same 'txId' can appear in multiple UTXO keys, but
+-- with a different 'txIx'. In the worst case, this means that we have a clash
+-- in the compact index for /every page/. The following benchmarks show
+benchNonUniform :: Benchmark
+benchNonUniform =
+    bgroup "non-uniformity" [
+        -- construction
+        env (pure $ (0, appsWithNearDups (mkStdGen 17) 1000)) $ \as ->
+          bench ("construct appsWithNearDups") $ whnf (constructIndexCompact 1000) as
+      , env (pure $ (0, appsWithoutNearDups (mkStdGen 17) 1000)) $ \as ->
+          bench ("construct appsWithoutNearDups") $ whnf (constructIndexCompact 1000) as
+        -- search
+      , env ( let ic = constructIndexCompact 100 (0, appsWithNearDups (mkStdGen 17) 1000)
+                  g  = mkStdGen 42
+                  ks = serialiseKey <$> uniformWithReplacement @UTxOKey g 1000
+              in  pure (ic, ks) ) $ \ ~(ic, ks) ->
+          bench "search appsWithNearDups" $ whnf (searches ic) ks
+      , env ( let ic = constructIndexCompact 100 (0, appsWithoutNearDups (mkStdGen 17) 1000)
+                  g  = mkStdGen 42
+                  ks = serialiseKey <$> uniformWithReplacement @UTxOKey g 1000
+              in  pure (ic, ks) ) $ \ ~(ic, ks) ->
+          bench "search appsWithoutNearDups" $ whnf (searches ic) ks
+      ]
+
+-- | 'Append's with truly uniformly distributed UTXO keys.
+appsWithoutNearDups ::
+     StdGen
+  -> Int -- ^ Number of pages
+  -> [Append]
+appsWithoutNearDups g n = assert (suggestRangeFinderPrecision n == 0) $
+    let ks  = uniformWithoutReplacement @UTxOKey g n
+        ks' = List.sort ks
+        -- append a dummy UTXO key because appsWithNearDups does so too.
+        ps  = groupsOfN 2 (UTxOKey 0 0 : ks')
+    in  fmap fromNE ps
+
+-- | 'Append's with worst-case near-duplicates. Each page boundary splits UTXO
+-- keys with the same 'txId' but different a 'txIx'.
+appsWithNearDups ::
+     StdGen
+  -> Int -- ^ Number of pages
+  -> [Append]
+appsWithNearDups g n = assert (suggestRangeFinderPrecision n == 0) $
+    let ks  = uniformWithoutReplacement @UTxOKey g n
+        ks' = flip concatMap (List.sort ks) $ \k -> [k {txIx = 0}, k {txIx = 1}]
+        -- append a dummy UTXO key so that each pair of near-duplicate keys is
+        -- split between pages. That is, the left element of the pair is the
+        -- maximum key in a page, and the right element of the pair is the
+        -- minimum key on the next page.
+        ps  = groupsOfN 2 (UTxOKey 0 0 : ks')
+    in  fmap fromNE ps
+
+fromNE :: NonEmpty UTxOKey -> Append
+fromNE xs =
+    assert (NE.sort xs == xs) $
+    assert (NE.nub xs == xs) $
+    AppendSinglePage (serialiseKey $ NE.head xs) (serialiseKey $ NE.last xs)
+
+-- | Make groups of @n@ elements from a list @xs@
+groupsOfN :: Int -> [a] -> [NonEmpty a]
+groupsOfN n
+  | n < 0 = error "groupsOfN: n <= 0"
+  | otherwise = List.unfoldr f
+  where f xs = let (ys, zs) = List.splitAt n xs
+               in  (,zs) <$> NE.nonEmpty ys
