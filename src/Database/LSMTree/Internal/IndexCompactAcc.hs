@@ -199,12 +199,12 @@ appendSingle (minKey, maxKey) ica@IndexCompactAcc{..} = do
       -> Int -- ^ Current /local/ page number (inside the current chunk)
       -> ST s ()
     goAppend pageNo ix = do
-        fillRangeFinder
+        x <- fillRangeFinder
         writePrimary
-        writeClashesAndLTP
+        writeClashesAndLTP x
       where
         -- | Fill range-finder vector
-        fillRangeFinder :: ST s ()
+        fillRangeFinder :: ST s (SMaybe Word16)
         fillRangeFinder = do
             lastMinRfbits <- readSTRef icaLastMinRfbits
             let lb = smaybe NoBound (\i -> Bound (fromIntegral i) Exclusive) lastMinRfbits
@@ -212,6 +212,7 @@ appendSingle (minKey, maxKey) ica@IndexCompactAcc{..} = do
                 x  = fromIntegral pageNo
             unsafeWriteRange icaRangeFinder lb ub x
             writeSTRef icaLastMinRfbits $! SJust minRfbits
+            pure lastMinRfbits
 
         -- | Set value in primary vector
         writePrimary :: ST s ()
@@ -220,10 +221,10 @@ appendSingle (minKey, maxKey) ica@IndexCompactAcc{..} = do
 
         -- | Set value in clash vector, tie-breaker map and larger-than-page
         -- vector
-        writeClashesAndLTP :: ST s ()
-        writeClashesAndLTP = do
+        writeClashesAndLTP :: SMaybe Word16 -> ST s ()
+        writeClashesAndLTP x = do
             lastMaxPrimbits <- readSTRef icaLastMaxPrimbits
-            let clash = lastMaxPrimbits == SJust minPrimbits
+            let clash = lastMaxPrimbits == SJust minPrimbits && x == SJust minRfbits
             writeSTRef icaLastMaxPrimbits $! SJust maxPrimbits
 
             lastMinKey <- readSTRef icaLastMinKey
