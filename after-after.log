@@ -1,0 +1,94 @@
+benchmarking Bench.Database.LSMTree.Internal.IndexCompact/searches/searches with 0-bit  rfprec
+time                 57.29 μs   (56.49 μs .. 57.78 μs)
+                     0.999 R²   (0.999 R² .. 0.999 R²)
+mean                 55.76 μs   (55.38 μs .. 56.26 μs)
+std dev              1.445 μs   (1.196 μs .. 1.705 μs)
+allocated:           0.998 R²   (0.996 R² .. 0.998 R²)
+  iters              32.077     (31.782 .. 32.393)
+  y                  3024.159   (2705.202 .. 3374.661)
+variance introduced by outliers: 24% (moderately inflated)
+
+benchmarking Bench.Database.LSMTree.Internal.IndexCompact/searches/searches with 16-bit rfprec
+time                 16.56 μs   (16.49 μs .. 16.63 μs)
+                     1.000 R²   (0.999 R² .. 1.000 R²)
+mean                 16.60 μs   (16.51 μs .. 16.78 μs)
+std dev              409.1 ns   (225.8 ns .. 718.4 ns)
+allocated:           1.000 R²   (1.000 R² .. 1.000 R²)
+  iters              32.013     (31.934 .. 32.097)
+  y                  3050.781   (2762.089 .. 3357.516)
+variance introduced by outliers: 25% (moderately inflated)
+
+benchmarking Bench.Database.LSMTree.Internal.IndexCompact/construction/construction with 0-bit  rfprec and chunk size 100
+time                 42.69 μs   (42.59 μs .. 42.82 μs)
+                     1.000 R²   (1.000 R² .. 1.000 R²)
+mean                 42.69 μs   (42.62 μs .. 42.82 μs)
+std dev              302.8 ns   (209.2 ns .. 486.7 ns)
+allocated:           1.000 R²   (1.000 R² .. 1.000 R²)
+  iters              335761.322 (335761.135 .. 335761.503)
+  y                  3484.565   (3162.279 .. 3792.319)
+
+benchmarking Bench.Database.LSMTree.Internal.IndexCompact/construction/construction with 16-bit rfprec and chunk size 100
+time                 114.8 μs   (114.0 μs .. 115.7 μs)
+                     1.000 R²   (1.000 R² .. 1.000 R²)
+mean                 114.5 μs   (114.1 μs .. 115.1 μs)
+std dev              1.577 μs   (998.2 ns .. 2.316 μs)
+allocated:           1.000 R²   (1.000 R² .. 1.000 R²)
+  iters              921189.329 (921188.616 .. 921190.014)
+  y                  3464.954   (3093.541 .. 3857.706)
+
+benchmarking Bench.Database.LSMTree.Internal.IndexCompact/construction/unsafeWriteRange-1k
+time                 94.44 ns   (94.22 ns .. 94.67 ns)
+                     1.000 R²   (1.000 R² .. 1.000 R²)
+mean                 94.47 ns   (94.25 ns .. 94.82 ns)
+std dev              933.1 ps   (646.1 ps .. 1.402 ns)
+allocated:           1.000 R²   (1.000 R² .. 1.000 R²)
+  iters              144.000    (144.000 .. 144.000)
+  y                  3070.804   (2850.295 .. 3282.420)
+
+benchmarking Bench.Database.LSMTree.Internal.IndexCompact/construction/unsafeWriteRange-10k
+time                 582.2 ns   (580.1 ns .. 584.4 ns)
+                     1.000 R²   (1.000 R² .. 1.000 R²)
+mean                 580.9 ns   (579.6 ns .. 583.2 ns)
+std dev              5.545 ns   (3.934 ns .. 7.628 ns)
+allocated:           1.000 R²   (1.000 R² .. 1.000 R²)
+  iters              144.001    (143.998 .. 144.004)
+  y                  3057.628   (2827.038 .. 3301.095)
+
+benchmarking Bench.Database.LSMTree.Internal.IndexCompact/non-uniformity/construct appsWithNearDups
+time                 44.18 μs   (44.00 μs .. 44.41 μs)
+                     1.000 R²   (1.000 R² .. 1.000 R²)
+mean                 44.08 μs   (44.00 μs .. 44.21 μs)
+std dev              342.8 ns   (251.9 ns .. 455.8 ns)
+allocated:           1.000 R²   (1.000 R² .. 1.000 R²)
+  iters              349723.776 (349721.941 .. 349725.564)
+  y                  3602.303   (2724.377 .. 4358.583)
+
+benchmarking Bench.Database.LSMTree.Internal.IndexCompact/non-uniformity/construct appsWithoutNearDups
+time                 20.84 μs   (20.74 μs .. 20.96 μs)
+                     1.000 R²   (1.000 R² .. 1.000 R²)
+mean                 20.80 μs   (20.73 μs .. 20.88 μs)
+std dev              241.7 ns   (174.6 ns .. 326.1 ns)
+allocated:           1.000 R²   (1.000 R² .. 1.000 R²)
+  iters              167387.990 (167387.899 .. 167388.090)
+  y                  3483.016   (3224.158 .. 3735.575)
+
+benchmarking Bench.Database.LSMTree.Internal.IndexCompact/non-uniformity/search appsWithNearDups
+time                 41.98 μs   (41.58 μs .. 42.33 μs)
+                     0.999 R²   (0.999 R² .. 1.000 R²)
+mean                 41.76 μs   (41.49 μs .. 42.04 μs)
+std dev              916.8 ns   (707.5 ns .. 1.225 μs)
+allocated:           0.999 R²   (0.998 R² .. 0.999 R²)
+  iters              31.975     (31.807 .. 32.200)
+  y                  3062.478   (2743.924 .. 3368.551)
+variance introduced by outliers: 19% (moderately inflated)
+
+benchmarking Bench.Database.LSMTree.Internal.IndexCompact/non-uniformity/search appsWithoutNearDups
+time                 37.88 μs   (37.50 μs .. 38.36 μs)
+                     0.998 R²   (0.996 R² .. 1.000 R²)
+mean                 37.59 μs   (37.18 μs .. 38.29 μs)
+std dev              1.664 μs   (1.074 μs .. 2.842 μs)
+allocated:           0.999 R²   (0.998 R² .. 0.999 R²)
+  iters              32.025     (31.854 .. 32.224)
+  y                  3035.105   (2714.894 .. 3341.617)
+variance introduced by outliers: 50% (moderately inflated)
+
