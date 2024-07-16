@@ -1,0 +1,143 @@
+Resolving dependencies...
+Build profile: -w ghc-9.6.5 -O1
+In order, the following will be built (use -v for more details):
+ - lsm-tree-0.1.0.0 (lib) (file src/Database/LSMTree/Internal/Serialise.hs changed)
+ - lsm-tree-0.1.0.0 (lib:prototypes) (dependency rebuilt)
+ - lsm-tree-0.1.0.0 (bench:lsm-tree-micro-bench) (dependency rebuilt)
+Preprocessing library for lsm-tree-0.1.0.0...
+Building library for lsm-tree-0.1.0.0...
+[19 of 42] Compiling Database.LSMTree.Internal.RawBytes ( src/Database/LSMTree/Internal/RawBytes.hs, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/build/Database/LSMTree/Internal/RawBytes.o, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/build/Database/LSMTree/Internal/RawBytes.dyn_o ) [Source file changed]
+[20 of 42] Compiling Database.LSMTree.Internal.Serialise.Class ( src/Database/LSMTree/Internal/Serialise/Class.hs, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/build/Database/LSMTree/Internal/Serialise/Class.o, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/build/Database/LSMTree/Internal/Serialise/Class.dyn_o ) [Database.LSMTree.Internal.RawBytes changed]
+[21 of 42] Compiling Database.LSMTree.Internal.Serialise ( src/Database/LSMTree/Internal/Serialise.hs, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/build/Database/LSMTree/Internal/Serialise.o, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/build/Database/LSMTree/Internal/Serialise.dyn_o ) [Source file changed]
+[22 of 42] Compiling Database.LSMTree.Internal.Unsliced ( src/Database/LSMTree/Internal/Unsliced.hs, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/build/Database/LSMTree/Internal/Unsliced.o, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/build/Database/LSMTree/Internal/Unsliced.dyn_o ) [Database.LSMTree.Internal.RawBytes changed]
+[23 of 42] Compiling Database.LSMTree.Internal.RawPage ( src/Database/LSMTree/Internal/RawPage.hs, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/build/Database/LSMTree/Internal/RawPage.o, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/build/Database/LSMTree/Internal/RawPage.dyn_o ) [Database.LSMTree.Internal.RawBytes changed]
+[24 of 42] Compiling Database.LSMTree.Internal.RawOverflowPage ( src/Database/LSMTree/Internal/RawOverflowPage.hs, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/build/Database/LSMTree/Internal/RawOverflowPage.o, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/build/Database/LSMTree/Internal/RawOverflowPage.dyn_o ) [Database.LSMTree.Internal.RawBytes changed]
+[25 of 42] Compiling Database.LSMTree.Internal.PageAcc1 ( src/Database/LSMTree/Internal/PageAcc1.hs, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/build/Database/LSMTree/Internal/PageAcc1.o, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/build/Database/LSMTree/Internal/PageAcc1.dyn_o ) [Database.LSMTree.Internal.RawBytes changed]
+[26 of 42] Compiling Database.LSMTree.Internal.PageAcc ( src/Database/LSMTree/Internal/PageAcc.hs, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/build/Database/LSMTree/Internal/PageAcc.o, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/build/Database/LSMTree/Internal/PageAcc.dyn_o ) [Database.LSMTree.Internal.RawBytes changed]
+[27 of 42] Compiling Database.LSMTree.Internal.IndexCompact ( src/Database/LSMTree/Internal/IndexCompact.hs, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/build/Database/LSMTree/Internal/IndexCompact.o, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/build/Database/LSMTree/Internal/IndexCompact.dyn_o ) [Source file changed]
+[28 of 42] Compiling Database.LSMTree.Internal.IndexOrdinary ( src/Database/LSMTree/Internal/IndexOrdinary.hs, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/build/Database/LSMTree/Internal/IndexOrdinary.o, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/build/Database/LSMTree/Internal/IndexOrdinary.dyn_o ) [Database.LSMTree.Internal.IndexCompact changed]
+[29 of 42] Compiling Database.LSMTree.Internal.IndexCompactAcc ( src/Database/LSMTree/Internal/IndexCompactAcc.hs, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/build/Database/LSMTree/Internal/IndexCompactAcc.o, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/build/Database/LSMTree/Internal/IndexCompactAcc.dyn_o ) [Source file changed]
+[30 of 42] Compiling Database.LSMTree.Internal.RunAcc ( src/Database/LSMTree/Internal/RunAcc.hs, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/build/Database/LSMTree/Internal/RunAcc.o, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/build/Database/LSMTree/Internal/RunAcc.dyn_o ) [Database.LSMTree.Internal.IndexCompact changed]
+[32 of 42] Compiling Database.LSMTree.Internal.RunBuilder ( src/Database/LSMTree/Internal/RunBuilder.hs, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/build/Database/LSMTree/Internal/RunBuilder.o, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/build/Database/LSMTree/Internal/RunBuilder.dyn_o ) [Database.LSMTree.Internal.IndexCompact changed]
+[33 of 42] Compiling Database.LSMTree.Internal.WriteBuffer ( src/Database/LSMTree/Internal/WriteBuffer.hs, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/build/Database/LSMTree/Internal/WriteBuffer.o, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/build/Database/LSMTree/Internal/WriteBuffer.dyn_o ) [Database.LSMTree.Internal.Serialise changed]
+[34 of 42] Compiling Database.LSMTree.Internal.Run ( src/Database/LSMTree/Internal/Run.hs, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/build/Database/LSMTree/Internal/Run.o, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/build/Database/LSMTree/Internal/Run.dyn_o ) [Database.LSMTree.Internal.IndexCompact changed]
+[35 of 42] Compiling Database.LSMTree.Internal.RunReader ( src/Database/LSMTree/Internal/RunReader.hs, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/build/Database/LSMTree/Internal/RunReader.o, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/build/Database/LSMTree/Internal/RunReader.dyn_o ) [Database.LSMTree.Internal.RawBytes changed]
+[36 of 42] Compiling Database.LSMTree.Internal.RunReaders ( src/Database/LSMTree/Internal/RunReaders.hs, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/build/Database/LSMTree/Internal/RunReaders.o, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/build/Database/LSMTree/Internal/RunReaders.dyn_o ) [Database.LSMTree.Internal.Run changed]
+[37 of 42] Compiling Database.LSMTree.Internal.Merge ( src/Database/LSMTree/Internal/Merge.hs, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/build/Database/LSMTree/Internal/Merge.o, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/build/Database/LSMTree/Internal/Merge.dyn_o ) [Database.LSMTree.Internal.Run changed]
+[38 of 42] Compiling Database.LSMTree.Internal.Lookup ( src/Database/LSMTree/Internal/Lookup.hs, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/build/Database/LSMTree/Internal/Lookup.o, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/build/Database/LSMTree/Internal/Lookup.dyn_o ) [Database.LSMTree.Internal.IndexCompact changed]
+[39 of 42] Compiling Database.LSMTree.Internal ( src/Database/LSMTree/Internal.hs, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/build/Database/LSMTree/Internal.o, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/build/Database/LSMTree/Internal.dyn_o ) [Database.LSMTree.Internal.IndexCompact changed]
+[40 of 42] Compiling Database.LSMTree.Common ( src/Database/LSMTree/Common.hs, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/build/Database/LSMTree/Common.o, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/build/Database/LSMTree/Common.dyn_o ) [Database.LSMTree.Internal changed]
+[41 of 42] Compiling Database.LSMTree.Monoidal ( src/Database/LSMTree/Monoidal.hs, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/build/Database/LSMTree/Monoidal.o, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/build/Database/LSMTree/Monoidal.dyn_o ) [Database.LSMTree.Common changed]
+[42 of 42] Compiling Database.LSMTree.Normal ( src/Database/LSMTree/Normal.hs, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/build/Database/LSMTree/Normal.o, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/build/Database/LSMTree/Normal.dyn_o ) [Database.LSMTree.Common changed]
+Preprocessing library 'prototypes' for lsm-tree-0.1.0.0...
+Building library 'prototypes' for lsm-tree-0.1.0.0...
+[2 of 3] Compiling ScheduledMerges  ( prototypes/ScheduledMerges.hs, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/l/prototypes/build/prototypes/ScheduledMerges.o, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/l/prototypes/build/prototypes/ScheduledMerges.dyn_o ) [Database.LSMTree.Normal changed]
+[3 of 3] Compiling ScheduledMergesTestQLS ( prototypes/ScheduledMergesTestQLS.hs, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/l/prototypes/build/prototypes/ScheduledMergesTestQLS.o, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/l/prototypes/build/prototypes/ScheduledMergesTestQLS.dyn_o ) [ScheduledMerges changed]
+Preprocessing benchmark 'lsm-tree-micro-bench' for lsm-tree-0.1.0.0...
+Building benchmark 'lsm-tree-micro-bench' for lsm-tree-0.1.0.0...
+[ 2 of 13] Compiling Database.LSMTree.Extras.Orphans ( src-extras/Database/LSMTree/Extras/Orphans.hs, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/b/lsm-tree-micro-bench/build/lsm-tree-micro-bench/lsm-tree-micro-bench-tmp/Database/LSMTree/Extras/Orphans.o ) [Database.LSMTree.Internal.RawBytes changed]
+[ 3 of 13] Compiling Database.LSMTree.Extras.Generators ( src-extras/Database/LSMTree/Extras/Generators.hs, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/b/lsm-tree-micro-bench/build/lsm-tree-micro-bench/lsm-tree-micro-bench-tmp/Database/LSMTree/Extras/Generators.o ) [Database.LSMTree.Common changed]
+[ 5 of 13] Compiling Database.LSMTree.Extras.ReferenceImpl ( src-extras/Database/LSMTree/Extras/ReferenceImpl.hs, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/b/lsm-tree-micro-bench/build/lsm-tree-micro-bench/lsm-tree-micro-bench-tmp/Database/LSMTree/Extras/ReferenceImpl.o ) [Database.LSMTree.Internal.RawBytes changed]
+[ 6 of 13] Compiling Bench.Database.LSMTree.Internal.RawPage ( bench/micro/Bench/Database/LSMTree/Internal/RawPage.hs, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/b/lsm-tree-micro-bench/build/lsm-tree-micro-bench/lsm-tree-micro-bench-tmp/Bench/Database/LSMTree/Internal/RawPage.o ) [Database.LSMTree.Internal.RawBytes changed]
+[ 7 of 13] Compiling Database.LSMTree.Extras.UTxO ( src-extras/Database/LSMTree/Extras/UTxO.hs, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/b/lsm-tree-micro-bench/build/lsm-tree-micro-bench/lsm-tree-micro-bench-tmp/Database/LSMTree/Extras/UTxO.o ) [Database.LSMTree.Internal.RawBytes changed]
+[ 8 of 13] Compiling Bench.Database.LSMTree.Internal.WriteBuffer ( bench/micro/Bench/Database/LSMTree/Internal/WriteBuffer.hs, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/b/lsm-tree-micro-bench/build/lsm-tree-micro-bench/lsm-tree-micro-bench-tmp/Bench/Database/LSMTree/Internal/WriteBuffer.o ) [Database.LSMTree.Internal.Run changed]
+[ 9 of 13] Compiling Bench.Database.LSMTree.Internal.Merge ( bench/micro/Bench/Database/LSMTree/Internal/Merge.hs, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/b/lsm-tree-micro-bench/build/lsm-tree-micro-bench/lsm-tree-micro-bench-tmp/Bench/Database/LSMTree/Internal/Merge.o ) [Database.LSMTree.Internal.Merge changed]
+[10 of 13] Compiling Bench.Database.LSMTree.Internal.Lookup ( bench/micro/Bench/Database/LSMTree/Internal/Lookup.hs, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/b/lsm-tree-micro-bench/build/lsm-tree-micro-bench/lsm-tree-micro-bench-tmp/Bench/Database/LSMTree/Internal/Lookup.o ) [Database.LSMTree.Internal.Lookup changed]
+[11 of 13] Compiling Bench.Database.LSMTree.Internal.IndexCompact ( bench/micro/Bench/Database/LSMTree/Internal/IndexCompact.hs, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/b/lsm-tree-micro-bench/build/lsm-tree-micro-bench/lsm-tree-micro-bench-tmp/Bench/Database/LSMTree/Internal/IndexCompact.o ) [Database.LSMTree.Internal.IndexCompact changed]
+[12 of 13] Compiling Bench.Database.LSMTree.Internal.BloomFilter ( bench/micro/Bench/Database/LSMTree/Internal/BloomFilter.hs, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/b/lsm-tree-micro-bench/build/lsm-tree-micro-bench/lsm-tree-micro-bench-tmp/Bench/Database/LSMTree/Internal/BloomFilter.o ) [Database.LSMTree.Internal.Serialise changed]
+[13 of 13] Compiling Main             ( bench/micro/Main.hs, /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/b/lsm-tree-micro-bench/build/lsm-tree-micro-bench/lsm-tree-micro-bench-tmp/Main.o ) [Bench.Database.LSMTree.Internal.IndexCompact changed]
+[14 of 14] Linking /home/joris/repos/lsm/lsm-tree/wt-index/dist-newstyle/build/x86_64-linux/ghc-9.6.5/lsm-tree-0.1.0.0/b/lsm-tree-micro-bench/build/lsm-tree-micro-bench/lsm-tree-micro-bench [Objects changed]
+benchmarking Bench.Database.LSMTree.Internal.IndexCompact/searches/searches with 0-bit  rfprec
+time                 54.97 μs   (54.37 μs .. 55.59 μs)
+                     0.999 R²   (0.999 R² .. 1.000 R²)
+mean                 54.72 μs   (54.43 μs .. 55.18 μs)
+std dev              1.230 μs   (832.2 ns .. 2.065 μs)
+allocated:           0.998 R²   (0.996 R² .. 0.998 R²)
+  iters              32.077     (31.768 .. 32.381)
+  y                  3024.159   (2704.514 .. 3367.328)
+variance introduced by outliers: 19% (moderately inflated)
+
+benchmarking Bench.Database.LSMTree.Internal.IndexCompact/searches/searches with 16-bit rfprec
+time                 16.53 μs   (16.46 μs .. 16.62 μs)
+                     1.000 R²   (1.000 R² .. 1.000 R²)
+mean                 16.50 μs   (16.47 μs .. 16.54 μs)
+std dev              129.3 ns   (104.3 ns .. 176.9 ns)
+allocated:           1.000 R²   (1.000 R² .. 1.000 R²)
+  iters              32.013     (31.930 .. 32.106)
+  y                  3050.781   (2765.999 .. 3340.645)
+
+benchmarking Bench.Database.LSMTree.Internal.IndexCompact/construction/construction with 0-bit  rfprec and chunk size 100
+time                 42.85 μs   (42.63 μs .. 43.09 μs)
+                     1.000 R²   (1.000 R² .. 1.000 R²)
+mean                 42.72 μs   (42.60 μs .. 42.89 μs)
+std dev              467.0 ns   (337.7 ns .. 656.1 ns)
+allocated:           1.000 R²   (1.000 R² .. 1.000 R²)
+  iters              335761.323 (335761.130 .. 335761.512)
+  y                  3483.278   (3143.661 .. 3808.953)
+
+benchmarking Bench.Database.LSMTree.Internal.IndexCompact/construction/construction with 16-bit rfprec and chunk size 100
+time                 115.6 μs   (115.0 μs .. 116.3 μs)
+                     1.000 R²   (1.000 R² .. 1.000 R²)
+mean                 115.1 μs   (114.7 μs .. 115.6 μs)
+std dev              1.559 μs   (1.193 μs .. 2.142 μs)
+allocated:           1.000 R²   (1.000 R² .. 1.000 R²)
+  iters              921189.330 (921188.647 .. 921189.983)
+  y                  3463.546   (3067.657 .. 3857.061)
+
+benchmarking Bench.Database.LSMTree.Internal.IndexCompact/construction/unsafeWriteRange-1k
+time                 94.23 ns   (93.86 ns .. 94.74 ns)
+                     1.000 R²   (1.000 R² .. 1.000 R²)
+mean                 94.28 ns   (94.06 ns .. 94.61 ns)
+std dev              897.3 ps   (639.9 ps .. 1.192 ns)
+allocated:           1.000 R²   (1.000 R² .. 1.000 R²)
+  iters              144.000    (144.000 .. 144.000)
+  y                  3070.804   (2858.779 .. 3309.281)
+
+benchmarking Bench.Database.LSMTree.Internal.IndexCompact/construction/unsafeWriteRange-10k
+time                 581.2 ns   (579.5 ns .. 583.3 ns)
+                     1.000 R²   (1.000 R² .. 1.000 R²)
+mean                 580.5 ns   (579.5 ns .. 582.1 ns)
+std dev              3.906 ns   (2.604 ns .. 5.864 ns)
+allocated:           1.000 R²   (1.000 R² .. 1.000 R²)
+  iters              144.001    (143.998 .. 144.004)
+  y                  3057.453   (2821.839 .. 3287.844)
+
+benchmarking Bench.Database.LSMTree.Internal.IndexCompact/non-uniformity/construct appsWithNearDups
+time                 44.60 μs   (44.29 μs .. 44.93 μs)
+                     1.000 R²   (0.999 R² .. 1.000 R²)
+mean                 44.53 μs   (44.36 μs .. 44.84 μs)
+std dev              789.0 ns   (515.6 ns .. 1.210 μs)
+allocated:           1.000 R²   (1.000 R² .. 1.000 R²)
+  iters              349724.205 (349722.425 .. 349725.941)
+  y                  3395.364   (2692.706 .. 4168.330)
+variance introduced by outliers: 14% (moderately inflated)
+
+benchmarking Bench.Database.LSMTree.Internal.IndexCompact/non-uniformity/construct appsWithoutNearDups
+time                 21.98 μs   (21.87 μs .. 22.12 μs)
+                     1.000 R²   (1.000 R² .. 1.000 R²)
+mean                 21.97 μs   (21.91 μs .. 22.06 μs)
+std dev              270.7 ns   (196.5 ns .. 355.2 ns)
+allocated:           1.000 R²   (1.000 R² .. 1.000 R²)
+  iters              167388.008 (167387.913 .. 167388.101)
+  y                  3480.336   (3206.537 .. 3742.149)
+
+benchmarking Bench.Database.LSMTree.Internal.IndexCompact/non-uniformity/search appsWithNearDups
+time                 43.80 μs   (43.53 μs .. 44.06 μs)
+                     1.000 R²   (1.000 R² .. 1.000 R²)
+mean                 43.70 μs   (43.49 μs .. 44.04 μs)
+std dev              911.0 ns   (633.9 ns .. 1.586 μs)
+allocated:           0.998 R²   (0.998 R² .. 0.999 R²)
+  iters              31.953     (31.761 .. 32.157)
+  y                  3087.121   (2767.654 .. 3437.382)
+variance introduced by outliers: 18% (moderately inflated)
+
+benchmarking Bench.Database.LSMTree.Internal.IndexCompact/non-uniformity/search appsWithoutNearDups
+time                 38.68 μs   (38.25 μs .. 39.15 μs)
+                     0.999 R²   (0.999 R² .. 1.000 R²)
+mean                 38.22 μs   (37.89 μs .. 38.55 μs)
+std dev              1.111 μs   (904.4 ns .. 1.320 μs)
+allocated:           0.999 R²   (0.998 R² .. 0.999 R²)
+  iters              32.007     (31.831 .. 32.199)
+  y                  3053.252   (2734.976 .. 3384.240)
+variance introduced by outliers: 30% (moderately inflated)
+
