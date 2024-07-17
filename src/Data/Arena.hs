@@ -1,4 +1,6 @@
-{-# LANGUAGE CPP #-}
+{-# LANGUAGE CPP             #-}
+{-# LANGUAGE LambdaCase      #-}
+{-# LANGUAGE RecordWildCards #-}
 module Data.Arena (
     ArenaManager,
     newArenaManager,
@@ -15,65 +17,117 @@ module Data.Arena (
     withUnmanagedArena,
 ) where
 
-import           Control.DeepSeq (NFData (..), rwhnf)
+import           Control.DeepSeq (NFData (..))
+import           Control.Exception (assert)
 import           Control.Monad.Primitive
+import           Data.Bits (complement, popCount, (.&.))
 import           Data.Primitive.ByteArray
 import           Data.Primitive.MutVar
+import           Data.Primitive.MVar
+import           Data.Primitive.PrimVar
 
 #ifdef NO_IGNORE_ASSERTS
-import           Control.Monad (forM_)
 import           Data.Word (Word8)
 #endif
 
-data ArenaManager s = ArenaManager
+data ArenaManager s = ArenaManager (MutVar s [Arena s])
 
 newArenaManager :: PrimMonad m => m (ArenaManager (PrimState m))
 newArenaManager = do
-    _toUseTheConstraint <- newMutVar 'x'
-    return ArenaManager
+    m <- newMutVar []
+    return $ ArenaManager m
 
 -- | For use in bencmark environments
 instance NFData (ArenaManager s) where
-    rnf _ = ()
+    rnf (ArenaManager !_) = ()
 
--- TODO: this is debug implementation
--- we retain all the allocated arrays,
--- so we can scramble them at the end.
-data Arena s = Arena (MutVar s [MutableByteArray s])
+data Arena s = Arena
+    { curr :: !(MVar s (Block s))   -- current block, also acts as a lock
+    , free :: !(MutVar s [Block s])
+    , full :: !(MutVar s [Block s])
+    }
+
+data Block s = Block !(PrimVar s Int) !(MutableByteArray s)
 
 instance NFData (Arena s) where
-  rnf (Arena mvar) = rwhnf mvar
+  rnf (Arena !_ !_ !_) = ()
 
 type Size      = Int
 type Offset    = Int
 type Alignment = Int
 
+blockSize :: Int
+blockSize = 0x100000
+
+newBlock :: PrimMonad m => m (Block (PrimState m))
+newBlock = do
+    off <- newPrimVar 0
+    mba <- newAlignedPinnedByteArray blockSize 4096
+    return (Block off mba)
+
 withArena :: PrimMonad m => ArenaManager (PrimState m) -> (Arena (PrimState m) -> m a) -> m a
 withArena am f = do
-  a <- newArena am
-  x <- f a
-  closeArena a
-  pure x
+    a <- newArena am
+    x <- f a
+    closeArena am a
+    pure x
 
 newArena :: PrimMonad m => ArenaManager (PrimState m) -> m (Arena (PrimState m))
-newArena _ = do
-    mvar <- newMutVar []
-    pure $! (Arena mvar)
+newArena (ArenaManager arenas) = do
+    marena <- atomicModifyMutVar' arenas $ \case
+        []     -> ([], Nothing)
+        (x:xs) -> (xs, Just x)
 
-closeArena :: PrimMonad m => Arena (PrimState m) -> m ()
-#ifdef NO_IGNORE_ASSERTS
-closeArena (Arena mvar) = do
-    -- scramble the allocated bytearrays,
-    -- they shouldn't be in use anymore!
-    mbas <- readMutVar mvar
-    forM_ mbas $ \mba -> do
-        size <- getSizeofMutableByteArray mba
-        setByteArray mba 0 size (0x77 :: Word8)
+    case marena of
+        Just arena -> return arena
+        Nothing -> do
+            curr <- newBlock >>= newMVar
+            free <- newMutVar []
+            full <- newMutVar []
+            return Arena {..}
+
+closeArena :: PrimMonad m => ArenaManager (PrimState m) -> Arena (PrimState m) -> m ()
+closeArena (ArenaManager arenas) arena = do
+    scrambleArena arena
+
+    -- reset the arena to clear state
+    resetArena arena
+
+    atomicModifyMutVar' arenas $ \xs -> (arena : xs, ())
+
+
+
+scrambleArena :: PrimMonad m => Arena (PrimState m) -> m ()
+#ifndef NO_IGNORE_ASSERTS
+scrambleArena _ = return ()
 #else
-closeArena _ = pure ()
+scrambleArena Arena {..} = do
+    readMVar curr >>= scrambleBlock
+    readMutVar full >>= mapM_ scrambleBlock
+    readMutVar free >>= mapM_ scrambleBlock
+
+scrambleBlock :: PrimMonad m => Block (PrimState m) -> m ()
+scrambleBlock (Block _ mba) = do
+    size <- getSizeofMutableByteArray mba
+    setByteArray mba 0 size (0x77 :: Word8)
 #endif
 
--- | Create unmanaged arena
+-- | Reset arena, i.e. return used blocks to free list.
+resetArena :: PrimMonad m => Arena (PrimState m) -> m ()
+resetArena Arena {..} = do
+    Block off mba <- takeMVar curr
+
+    -- reset current block
+    writePrimVar off 0
+
+    -- move full block to free blocks.
+    -- block's offset will be reset in 'newBlockWithFree'
+    full' <- atomicModifyMutVar' full $ \xs -> ([], xs)
+    atomicModifyMutVar' free $ \xs -> (full' <> xs, ())
+
+    putMVar curr $! Block off mba
+
+-- | Create unmanaged arena.
 --
 -- Never use this in non-tests code.
 withUnmanagedArena :: PrimMonad m => (Arena (PrimState m) -> m a) -> m a
@@ -81,8 +135,51 @@ withUnmanagedArena k = do
     mgr <- newArenaManager
     withArena mgr k
 
+-- | Allocate a slice of mutable byte array from the arena.
 allocateFromArena :: PrimMonad m => Arena (PrimState m)-> Size -> Alignment -> m (Offset, MutableByteArray (PrimState m))
-allocateFromArena (Arena mvar) !size !alignment = do
-    mba <- newAlignedPinnedByteArray size alignment
-    atomicModifyMutVar' mvar $ \mbas -> (mba : mbas, ())
-    return (0, mba)
+allocateFromArena !arena !size !alignment =
+    assert (popCount alignment == 1) $ -- powers of 2
+    assert (size <= blockSize) $ -- not too large allocations
+    allocateFromArena' arena size alignment
+
+-- TODO!? this is not async exception safe
+allocateFromArena' :: PrimMonad m => Arena (PrimState m)-> Size -> Alignment -> m (Offset, MutableByteArray (PrimState m))
+allocateFromArena' arena@Arena { .. } !size !alignment = do
+    -- take current block, lock the arena
+    curr'@(Block off mba) <- takeMVar curr
+
+    off' <- readPrimVar off
+    let !ali = alignment - 1
+    let !off'' = (off' + ali) .&. complement ali -- ceil towards next alignment
+    let !end  = off'' + size
+    if end <= blockSize
+    then do
+        -- fits into current block:
+        -- * update offset
+        writePrimVar off end
+        -- * release lock
+        putMVar curr curr'
+        -- * return data
+        return (off'', mba)
+
+    else do
+        -- doesn't fit into current block:
+        -- * move current block into full
+        atomicModifyMutVar' full (\xs -> (curr' : xs, ()))
+        -- * allocate new block
+        new <- newBlockWithFree free
+        -- * set new block as current, release the lock
+        putMVar curr new
+        -- * go again
+        allocateFromArena' arena size alignment
+
+-- | Allocate new block, possibly taking it from a free list
+newBlockWithFree :: PrimMonad m => MutVar (PrimState m) [Block (PrimState m)] -> m (Block (PrimState m))
+newBlockWithFree free = do
+    free' <- readMutVar free
+    case free' of
+        []   -> newBlock
+        x@(Block off _):xs -> do
+            writePrimVar off 0
+            writeMutVar free xs
+            return x
