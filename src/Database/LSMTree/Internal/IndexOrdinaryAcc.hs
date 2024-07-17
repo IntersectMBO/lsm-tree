@@ -18,7 +18,7 @@ import           Data.List (genericReplicate)
 import           Data.Primitive.ByteArray (byteArrayFromListN)
 import           Data.STRef.Strict (STRef, modifySTRef, newSTRef, readSTRef)
 import           Data.Vector (fromList)
-import qualified Data.Vector.Primitive as Primitive (Vector (Vector), length)
+import qualified Data.Vector.Primitive as Primitive (Vector, length)
 import           Data.Word (Word16, Word8)
 import           Database.LSMTree.Internal.Chunk (Baler, Chunk, createBaler,
                      feedBaler, readBalerRemnant)
@@ -28,6 +28,7 @@ import           Database.LSMTree.Internal.IndexOrdinary
                      (IndexOrdinary (IndexOrdinary))
 import           Database.LSMTree.Internal.Serialise
                      (SerialisedKey (SerialisedKey'))
+import           Database.LSMTree.Internal.Vector (mkPrimVector)
 
 {-|
     A general-purpose fence pointer index under incremental construction.
@@ -72,7 +73,7 @@ appendKey lastKey@(SerialisedKey' lastKeyBytes)
             = error "Serialised key too large"
 
     lastKeySizeBytes :: Primitive.Vector Word8
-    lastKeySizeBytes = Primitive.Vector 0 2 $
+    lastKeySizeBytes = mkPrimVector 0 2 $
                        byteArrayFromListN 1 [lastKeySizeAsWord16]
 
 {-|
