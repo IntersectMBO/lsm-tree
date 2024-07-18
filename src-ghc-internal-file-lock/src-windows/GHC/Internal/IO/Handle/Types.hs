@@ -7,5 +7,5 @@ import           System.Win32.Types
 
 type Handle = HANDLE
 
-handleToHANDLE :: Handle -> HANDLE
-handleToHANDLE = id
+handleToHANDLE :: Handle -> IO HANDLE
+handleToHANDLE = pure

@@ -20,20 +20,12 @@ import GHC.Base () -- Make implicit dependency known to build system
 
 import Data.Bits
 import Data.Function
-import GHC.IO.Handle.Windows (handleToHANDLE)
-import Foreign.C.Error
-import Foreign.C.Types
-import Foreign.Marshal.Alloc
-import Foreign.Marshal.Utils
 import GHC.Base
-import qualified GHC.Internal.Event.Windows as Mgr
+import qualified GHC.Event.Windows as Mgr
 import GHC.Event.Windows (LPOVERLAPPED, withOverlapped)
-import GHC.IO.FD
-import GHC.IO.Handle.FD
-import GHC.IO.SubSystem
 import GHC.Windows
 
-import GHC.Internal.IO.Handle.Types (Handle, handleToFd)
+import GHC.Internal.IO.Handle.Types (Handle, handleToHANDLE)
 import GHC.Internal.IO.Handle.Lock.Common (LockMode(..))
 
 lockImpl :: Handle -> String -> LockMode -> Bool -> IO Bool

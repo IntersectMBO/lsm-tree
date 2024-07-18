@@ -23,6 +23,9 @@ module System.FS.BlockIO.API (
   , Advice (..)
   , hAdviseAll
   , hDropCacheAll
+    -- * File locks
+  , LockMode (..)
+  , FileLockingNotSupported (..)
     -- * Re-exports
   , ByteCount
   , FileOffset
@@ -37,6 +40,7 @@ import qualified Data.Vector.Generic.Mutable as VGM
 import qualified Data.Vector.Primitive as VP
 import qualified Data.Vector.Unboxed as VU
 import qualified Data.Vector.Unboxed.Mutable as VUM
+import           GHC.Internal.IO.Handle.Lock.Common
 import           GHC.IO.Exception (IOErrorType (ResourceVanished))
 import           GHC.Stack (HasCallStack)
 import           System.FS.API
@@ -82,12 +86,22 @@ data HasBlockIO m h = HasBlockIO {
     -- * [MacOS]: no-op.
     -- * [Windows]: no-op.
   , hAllocate :: Handle h -> FileOffset -> FileOffset -> m ()
+    -- | Try to acquire a file lock without blocking.
+    --
+    -- This uses different locking methods on different distributions.
+    -- * [Linux]: Open file descriptor (OFD)
+    -- * [MacOS]: @flock@
+    -- * [Windows]: @LockFileEx@
+  , hTryLock :: Handle h -> LockMode -> m Bool
+    -- | Release a file lock acquired using 'hTryLock'.
+  , hUnlock :: Handle h -> m ()
   }
 
 instance NFData (HasBlockIO m h) where
-  rnf (HasBlockIO a b c d e) =
+  rnf (HasBlockIO a b c d e f g) =
       rwhnf a `seq` rwhnf b `seq` rnf c `seq`
-      rwhnf d `seq` rwhnf e
+      rwhnf d `seq` rwhnf e `seq` rwhnf f `seq`
+      rwhnf g
 
 -- | Concurrency parameters for initialising a 'HasBlockIO. Can be ignored by
 -- serial implementations.
