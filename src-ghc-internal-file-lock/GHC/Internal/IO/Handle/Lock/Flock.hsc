@@ -4,31 +4,32 @@
 {-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 
+{-# OPTIONS_GHC -Wno-missing-export-lists #-}
+
 -- | File locking via POSIX @flock@.
 module GHC.Internal.IO.Handle.Lock.Flock where
 
 #include "HsBaseConfig.h"
 
 #if !HAVE_FLOCK
-import GHC.Internal.Base () -- Make implicit dependency known to build system
+import GHC.Base () -- Make implicit dependency known to build system
 #else
 
 #include <sys/file.h>
 
-import GHC.Internal.Data.Bits
-import GHC.Internal.Data.Function
-import GHC.Internal.Foreign.C.Error
-import GHC.Internal.Foreign.C.Types
-import GHC.Internal.Base
-import GHC.Internal.IO.Exception
-import GHC.Internal.IO.FD
-import GHC.Internal.IO.Handle.FD
+import Data.Bits
+import Data.Function
+import Foreign.C.Error
+import Foreign.C.Types
+import GHC.Base
+import GHC.IO.Exception
+
 import GHC.Internal.IO.Handle.Lock.Common
-import GHC.Internal.IO.Handle.Types (Handle)
+import GHC.Internal.IO.Handle.Types (Handle, handleToFd)
 
 lockImpl :: Handle -> String -> LockMode -> Bool -> IO Bool
 lockImpl h ctx mode block = do
-  FD{fdFD = fd} <- handleToFd h
+  fd <- handleToFd h
   let flags = cmode .|. (if block then 0 else #{const LOCK_NB})
   fix $ \retry -> c_flock fd flags >>= \case
     0 -> return True
@@ -36,7 +37,7 @@ lockImpl h ctx mode block = do
       | not block
       , errno == eAGAIN || errno == eACCES -> return False
       | errno == eINTR -> retry
-      | otherwise -> ioException $ errnoToIOError ctx errno (Just h) Nothing
+      | otherwise -> ioException $ errnoToIOError ctx errno Nothing Nothing
   where
     cmode = case mode of
       SharedLock    -> #{const LOCK_SH}
@@ -44,7 +45,7 @@ lockImpl h ctx mode block = do
 
 unlockImpl :: Handle -> IO ()
 unlockImpl h = do
-  FD{fdFD = fd} <- handleToFd h
+  fd <- handleToFd h
   throwErrnoIfMinus1_ "flock" $ c_flock fd #{const LOCK_UN}
 
 foreign import ccall interruptible "flock"

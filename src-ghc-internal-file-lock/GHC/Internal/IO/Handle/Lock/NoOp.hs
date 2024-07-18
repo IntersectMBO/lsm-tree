@@ -1,9 +1,13 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 
-module GHC.Internal.IO.Handle.Lock.NoOp where
+module GHC.Internal.IO.Handle.Lock.NoOp (
+    lockImpl
+  , unlockImpl
+  ) where
 
-import           GHC.Internal.Base
-import           GHC.Internal.IO (throwIO)
+import           GHC.Base
+import           GHC.IO (throwIO)
+
 import           GHC.Internal.IO.Handle.Lock.Common
 import           GHC.Internal.IO.Handle.Types (Handle)
 

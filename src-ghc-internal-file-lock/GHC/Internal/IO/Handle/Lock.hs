@@ -2,6 +2,8 @@
 {-# LANGUAGE InterruptibleFFI  #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 
+-- | Based on "GHC.Internal.IO.Handle.Lock" from @ghc-internal@. See license
+-- file, commit 6d779c0fab30c39475aef50d39064ed67ce839d7
 module GHC.Internal.IO.Handle.Lock (
     FileLockingNotSupported(..)
   , LockMode(..)
@@ -13,20 +15,20 @@ module GHC.Internal.IO.Handle.Lock (
 
 #include "HsBaseConfig.h"
 
-import           GHC.Internal.Base
-import           GHC.Internal.Data.Functor (void)
+import           Data.Functor (void)
+import           GHC.Base
 import           GHC.Internal.IO.Handle.Lock.Common
                      (FileLockingNotSupported (..), LockMode (..))
 import           GHC.Internal.IO.Handle.Types (Handle)
 
 #if defined(mingw32_HOST_OS)
-import           GHC.Internal.IO.Handle.Lock.Windows
+import           GHC.Internal.IO.Handle.Lock.Windows (lockImpl, unlockImpl)
 #elif HAVE_OFD_LOCKING
-import           GHC.Internal.IO.Handle.Lock.LinuxOFD
+import           GHC.Internal.IO.Handle.Lock.LinuxOFD (lockImpl, unlockImpl)
 #elif HAVE_FLOCK
-import           GHC.Internal.IO.Handle.Lock.Flock
+import           GHC.Internal.IO.Handle.Lock.Flock (lockImpl, unlockImpl)
 #else
-import           GHC.Internal.IO.Handle.Lock.NoOp
+import           GHC.Internal.IO.Handle.Lock.NoOp (lockImpl, unlockImpl)
 #endif
 
 -- | If a 'Handle' references a file descriptor, attempt to lock contents of the

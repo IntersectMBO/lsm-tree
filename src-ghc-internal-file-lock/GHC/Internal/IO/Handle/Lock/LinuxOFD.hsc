@@ -4,13 +4,15 @@
 {-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 
+{-# OPTIONS_GHC -Wno-missing-export-lists #-}
+
 -- | File locking via the Linux open-fd locking mechanism.
 module GHC.Internal.IO.Handle.Lock.LinuxOFD where
 
 #include "HsBaseConfig.h"
 
 #if !HAVE_OFD_LOCKING
-import GHC.Internal.Base () -- Make implicit dependency known to build system
+import GHC.Base () -- Make implicit dependency known to build system
 #else
 
 -- Not only is this a good idea but it also works around #17950.
@@ -19,20 +21,19 @@ import GHC.Internal.Base () -- Make implicit dependency known to build system
 #include <unistd.h>
 #include <fcntl.h>
 
-import GHC.Internal.Data.Function
-import GHC.Internal.Data.Functor
-import GHC.Internal.Foreign.C.Error
-import GHC.Internal.Foreign.C.Types
-import GHC.Internal.Foreign.Marshal.Utils
-import GHC.Internal.Foreign.Storable
-import GHC.Internal.Base
-import GHC.Internal.IO.Exception
-import GHC.Internal.IO.FD
-import GHC.Internal.IO.Handle.FD
+import Data.Function
+import Data.Functor
+import Foreign.C.Error
+import Foreign.C.Types
+import Foreign.Marshal.Utils
+import Foreign.Storable
+import GHC.Base
+import GHC.IO.Exception
+import GHC.Ptr
+import System.Posix.Types (COff, CPid)
+
 import GHC.Internal.IO.Handle.Lock.Common
-import GHC.Internal.IO.Handle.Types (Handle)
-import GHC.Internal.Ptr
-import GHC.Internal.System.Posix.Types (COff, CPid)
+import GHC.Internal.IO.Handle.Types (Handle, handleToFd)
 
 -- Linux open file descriptor locking.
 --
@@ -70,7 +71,7 @@ instance Storable FLock where
 
 lockImpl :: Handle -> String -> LockMode -> Bool -> IO Bool
 lockImpl h ctx mode block = do
-  FD{fdFD = fd} <- handleToFd h
+  fd <- handleToFd h
   with flock $ \flock_ptr -> fix $ \retry -> do
       ret <- c_fcntl fd mode' flock_ptr
       case ret of
@@ -78,7 +79,7 @@ lockImpl h ctx mode block = do
         _ -> getErrno >>= \errno -> if
           | not block && errno == eWOULDBLOCK -> return False
           | errno == eINTR -> retry
-          | otherwise -> ioException $ errnoToIOError ctx errno (Just h) Nothing
+          | otherwise -> ioException $ errnoToIOError ctx errno Nothing Nothing
   where
     flock = FLock { l_type = case mode of
                                SharedLock -> #{const F_RDLCK}
@@ -94,7 +95,7 @@ lockImpl h ctx mode block = do
 
 unlockImpl :: Handle -> IO ()
 unlockImpl h = do
-  FD{fdFD = fd} <- handleToFd h
+  fd <- handleToFd h
   let flock = FLock { l_type = #{const F_UNLCK}
                     , l_whence = #{const SEEK_SET}
                     , l_start = 0

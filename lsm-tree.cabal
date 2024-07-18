@@ -742,3 +742,27 @@ library fcntl-nocache
     exposed-modules:    System.Posix.Fcntl.NoCache
     build-depends:      base <5
     build-tool-depends: hsc2hs:hsc2hs
+
+library ghc-internal-file-lock
+  import:             language, warnings
+  visibility:         private
+  hs-source-dirs:     src-ghc-internal-file-lock
+  exposed-modules:
+    GHC.Internal.IO.Handle.Lock
+    GHC.Internal.IO.Handle.Lock.Common
+    GHC.Internal.IO.Handle.Lock.Flock
+    GHC.Internal.IO.Handle.Lock.LinuxOFD
+    GHC.Internal.IO.Handle.Lock.NoOp
+    GHC.Internal.IO.Handle.Lock.Windows
+    GHC.Internal.IO.Handle.Types
+
+  build-depends:      base <5
+  build-tool-depends: hsc2hs:hsc2hs
+
+  if os(windows)
+    hs-source-dirs: src-ghc-internal-file-lock/src-windows
+    build-depends:  Win32
+
+  -- every other distribution is handled like it is Unix-based
+  else
+    hs-source-dirs: src-ghc-internal-file-lock/src-unix
