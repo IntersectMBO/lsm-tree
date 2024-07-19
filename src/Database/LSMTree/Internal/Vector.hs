@@ -4,6 +4,7 @@
 module Database.LSMTree.Internal.Vector (
     mkPrimVector,
     noRetainedExtraMemory,
+    generateStrict,
     mapStrict,
     mapMStrict,
     imapMStrict,
@@ -38,6 +39,10 @@ noRetainedExtraMemory (VP.Vector off len ba) =
     off == 0 && len * sizeof == sizeofByteArray ba
    where
     sizeof = I# (sizeOfType# (Proxy @a))
+
+{-# INLINE generateStrict #-}
+generateStrict :: Int -> (Int -> a) -> V.Vector a
+generateStrict n f = runST (V.generateM n (\i -> pure $! f i))
 
 {-# INLINE mapStrict #-}
 -- | /( O(n) /) Like 'V.map', but strict in the produced elements of type @b@.

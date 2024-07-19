@@ -14,20 +14,22 @@ module Database.LSMTree.Internal.Lookup (
     -- * Internal: exposed for tests and benchmarks
   , RunIx
   , KeyIx
-  , prepLookups
+  , withPreparedLookups
+  , unmanagedPreparedLookups
+  , cleanupPreparedLookups
   , bloomQueries
   , bloomQueriesDefault
   , indexSearches
+  , withPagesForIndexSearches
+  , unmanagedAllocatePagesForIndexSearches
   , intraPageLookups
   ) where
 
 import           Control.Exception (Exception, assert)
 import           Control.Monad
-import           Control.Monad.Class.MonadST as Class
 import           Control.Monad.Class.MonadThrow (MonadThrow (..))
 import           Control.Monad.Primitive
 import           Control.Monad.ST.Strict
-import           Data.Arena (Arena, ArenaManager, allocateFromArena, withArena)
 import           Data.Bifunctor
 import           Data.BloomFilter (Bloom)
 import qualified Data.BloomFilter as Bloom
@@ -44,6 +46,7 @@ import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.IndexCompact (IndexCompact,
                      PageSpan (..))
 import qualified Database.LSMTree.Internal.IndexCompact as Index
+import           Database.LSMTree.Internal.PageAlloc
 import           Database.LSMTree.Internal.RawBytes (RawBytes (..))
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.RawPage
@@ -53,21 +56,65 @@ import qualified Database.LSMTree.Internal.Vector as V
 import           System.FS.API (BufferOffset (..), Handle)
 import           System.FS.BlockIO.API
 
+
+{-# INLINE withPreparedLookups #-}
 -- | Prepare disk lookups by doing bloom filter queries, index searches and
--- creating 'IOOp's. The result is a vector of 'IOOp's and a vector of indexes,
--- both of which are the same length. The indexes record the run and key
--- associated with each 'IOOp'.
-prepLookups ::
-     Arena s
+-- creating 'IOOp's. The inner action receives a vector of 'IOOp's and a vector
+-- of indexes, both of which are the same length. The indexes record the run
+-- and key associated with each 'IOOp'.
+--
+-- The \"with resource\" style is used because interally it needs to use
+-- resources from the 'PageAlloc'. If the \"with\" style cannot be used, use
+-- the direct style with the combination of 'unmanagedPreparedLookups' and
+-- 'cleanupPreparedLookups'.
+withPreparedLookups
+  :: PrimMonad m
+  => PageAlloc (PrimState m)
   -> V.Vector (Bloom SerialisedKey)
   -> V.Vector IndexCompact
   -> V.Vector (Handle h)
   -> V.Vector SerialisedKey
-  -> ST s (VU.Vector (RunIx, KeyIx), V.Vector (IOOp s h))
-prepLookups arena blooms indexes kopsFiles ks = do
-  let !rkixs = bloomQueriesDefault blooms ks
-  !ioops <- indexSearches arena indexes kopsFiles ks rkixs
-  pure (rkixs, ioops)
+  -> (VU.Vector (RunIx, KeyIx) -> V.Vector (IOOp (PrimState m) h) -> m a)
+  -> m a
+withPreparedLookups pagealloc blooms indexes kopsFiles ks f =
+    let !rkixs = bloomQueriesDefault blooms ks in
+    withPagesForIndexSearches pagealloc rkixs $ \pages ->
+      let !ioops = indexSearches indexes kopsFiles ks pages rkixs
+       in f rkixs ioops
+
+-- | Like 'withPreparedLookups', but in a direct style which requires matching
+-- resource cleanup using 'cleanupPreparedLookups'.
+--
+-- Use 'withPreparedLookups' instead if possible. This direct style is sometimes
+-- required in tests and benchmarks.
+unmanagedPreparedLookups
+  :: PrimMonad m
+  => PageAlloc (PrimState m)
+  -> V.Vector (Bloom SerialisedKey)
+  -> V.Vector IndexCompact
+  -> V.Vector (Handle h)
+  -> V.Vector SerialisedKey
+  -> m ( VU.Vector (RunIx, KeyIx)
+       , V.Vector (IOOp (PrimState m) h)
+       , Pages (PrimState m)
+       )
+unmanagedPreparedLookups pagealloc blooms indexes kopsFiles ks = do
+    let !rkixs = bloomQueriesDefault blooms ks
+    pages <- unmanagedAllocatePages pagealloc (VU.length rkixs)
+    let !ioops = indexSearches indexes kopsFiles ks pages rkixs
+    return (rkixs, ioops, pages)
+
+-- | The matching resource cleanup for 'unmanagedPreparedLookups'.
+cleanupPreparedLookups
+  :: PrimMonad m
+  => PageAlloc (PrimState m)
+  -> ( VU.Vector (RunIx, KeyIx)
+     , V.Vector (IOOp (PrimState m) h)
+     , Pages (PrimState m)
+     )
+  -> m ()
+cleanupPreparedLookups pagealloc (_rkixs, _ioops, pages) =
+    freePages pagealloc pages
 
 type KeyIx = Int
 type RunIx = Int
@@ -148,32 +195,49 @@ bloomQueries !blooms !ks !resN
 -- @VU.Vector (RunIx, KeyIx)@ argument, because index searching always returns a
 -- positive search result.
 indexSearches
-  :: Arena s
-  -> V.Vector IndexCompact
+  :: V.Vector IndexCompact
   -> V.Vector (Handle h)
   -> V.Vector SerialisedKey
+  -> Pages s                  -- ^ See 'allocatePagesForIndexSearches'
   -> VU.Vector (RunIx, KeyIx) -- ^ Result of 'bloomQueries'
-  -> ST s (V.Vector (IOOp s h))
-indexSearches !arena !indexes !kopsFiles !ks !rkixs = V.generateM n $ \i -> do
-    let (!rix, !kix) = rkixs `VU.unsafeIndex` i
-        !c           = indexes `V.unsafeIndex` rix
-        !h           = kopsFiles `V.unsafeIndex` rix
-        !k           = ks `V.unsafeIndex` kix
-        !pspan       = Index.search k c
-        !size        = Index.pageSpanSize pspan
-    -- The current allocation strategy is to allocate a new pinned
-    -- byte array for each 'IOOp'. One optimisation we are planning to
-    -- do is to use a cache of re-usable buffers, in which case we
-    -- decrease the GC load. TODO: re-usable buffers.
-    (!off, !buf) <- allocateFromArena arena (size * 4096) 4096
-    pure $! IOOpRead
-              h
-              (fromIntegral $ Index.unPageNo (pageSpanStart pspan) * 4096)
-              buf
-              (fromIntegral off)
-              (fromIntegral $ size * 4096)
-  where
-    !n = VU.length rkixs
+  -> V.Vector (IOOp s h)
+indexSearches !indexes !kopsFiles !ks !pages !rkixs =
+    V.generateStrict (VU.length rkixs) $ \i ->
+      let (!rix,!kix)  = rkixs `VU.unsafeIndex` i
+          !c           = indexes `V.unsafeIndex` rix
+          !h           = kopsFiles `V.unsafeIndex` rix
+          !k           = ks `V.unsafeIndex` kix
+          !pspan       = Index.search k c
+          !size        = Index.pageSpanSize pspan
+          (!buf,!off)  = unsafeIndexPages pages i
+       in IOOpRead
+            h
+            (fromIntegral $ Index.unPageNo (pageSpanStart pspan) * 4096)
+            buf
+            (fromIntegral off)
+            (fromIntegral $ size * 4096)
+
+
+-- | Helper for 'indexSearches' to allocatePages the required 'Pages'.
+withPagesForIndexSearches
+  :: PrimMonad m
+  => PageAlloc (PrimState m)
+  -> VU.Vector (RunIx, KeyIx) -- ^ Result of 'bloomQueries'
+  -> (Pages (PrimState m) -> m a)
+  -> m a
+withPagesForIndexSearches pagealloc rkixs f =
+    withPages pagealloc (VU.length rkixs) f
+{-# INLINE withPagesForIndexSearches #-}
+
+-- | Helper for 'indexSearches' to allocatePages the required 'Pages'.
+unmanagedAllocatePagesForIndexSearches
+  :: PrimMonad m
+  => PageAlloc (PrimState m)
+  -> VU.Vector (RunIx, KeyIx) -- ^ Result of 'bloomQueries'
+  -> m (Pages (PrimState m))
+unmanagedAllocatePagesForIndexSearches pagealloc rkixs =
+    unmanagedAllocatePages pagealloc (VU.length rkixs)
+{-# INLINE unmanagedAllocatePagesForIndexSearches #-}
 
 {-
   Note [Batched lookups, buffer strategy and restrictions]
@@ -214,7 +278,7 @@ data ByteCountDiscrepancy = ByteCountDiscrepancy {
 
 {-# SPECIALIZE lookupsIO ::
        HasBlockIO IO h
-    -> ArenaManager RealWorld
+    -> PageAlloc RealWorld
     -> ResolveSerialisedValue
     -> V.Vector (Run (Handle h))
     -> V.Vector (Bloom SerialisedKey)
@@ -230,9 +294,9 @@ data ByteCountDiscrepancy = ByteCountDiscrepancy {
 -- PRECONDITION: the vectors of bloom filters, indexes and file handles
 -- should pointwise match with the vectors of runs.
 lookupsIO ::
-     forall m h. (PrimMonad m, MonadThrow m, MonadST m)
+     forall m h. (PrimMonad m, MonadThrow m)
   => HasBlockIO m h
-  -> ArenaManager (PrimState m)
+  -> PageAlloc (PrimState m)
   -> ResolveSerialisedValue
   -> V.Vector (Run (Handle h)) -- ^ Runs @rs@
   -> V.Vector (Bloom SerialisedKey) -- ^ The bloom filters inside @rs@
@@ -240,10 +304,11 @@ lookupsIO ::
   -> V.Vector (Handle h) -- ^ The file handles to the key\/value files inside @rs@
   -> V.Vector SerialisedKey
   -> m (V.Vector (Maybe (Entry SerialisedValue (BlobRef (Run (Handle h))))))
-lookupsIO !hbio !mgr !resolveV !rs !blooms !indexes !kopsFiles !ks = assert precondition $ withArena mgr $ \arena -> do
-    (rkixs, ioops) <- Class.stToIO $ prepLookups arena blooms indexes kopsFiles ks
-    ioress <- submitIO hbio ioops
-    intraPageLookups resolveV rs ks rkixs ioops ioress
+lookupsIO !hbio !pagealloc !resolveV !rs !blooms !indexes !kopsFiles !ks =
+    assert precondition $
+    withPreparedLookups pagealloc blooms indexes kopsFiles ks $ \rkixs ioops -> do
+      ioress <- submitIO hbio ioops
+      intraPageLookups resolveV rs ks rkixs ioops ioress
   where
     -- we check only that the lengths match, because checking the contents is
     -- too expensive.
