@@ -485,6 +485,14 @@ library rocksdb
     , bytestring
     , indexed-traversable
 
+library monkey
+  import:          language, warnings, wno-x-partial
+  hs-source-dirs:  src-monkey
+  exposed-modules: Monkey
+  build-depends:
+    , ad    ^>=4.5.6
+    , base
+
 library kmerge
   import:          language, warnings, wno-x-partial
   hs-source-dirs:  src-kmerge
