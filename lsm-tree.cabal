@@ -51,7 +51,6 @@ library
   hs-source-dirs:  src
   exposed-modules:
     Control.Concurrent.Class.MonadSTM.RWVar
-    Data.Arena
     Data.Map.Range
     Database.LSMTree.Common
     Database.LSMTree.Internal
@@ -73,6 +72,7 @@ library
     Database.LSMTree.Internal.Normal
     Database.LSMTree.Internal.PageAcc
     Database.LSMTree.Internal.PageAcc1
+    Database.LSMTree.Internal.PageAlloc
     Database.LSMTree.Internal.Paths
     Database.LSMTree.Internal.Primitive
     Database.LSMTree.Internal.Range
@@ -233,7 +233,6 @@ test-suite lsm-tree-test
     Database.LSMTree.ModelIO.Normal
     Database.LSMTree.ModelIO.Session
     Test.Control.Concurrent.Class.MonadSTM.RWVar
-    Test.Data.Arena
     Test.Database.LSMTree.Class.Monoidal
     Test.Database.LSMTree.Class.Normal
     Test.Database.LSMTree.Generators
@@ -247,6 +246,7 @@ test-suite lsm-tree-test
     Test.Database.LSMTree.Internal.Monkey
     Test.Database.LSMTree.Internal.PageAcc
     Test.Database.LSMTree.Internal.PageAcc1
+    Test.Database.LSMTree.Internal.PageAlloc
     Test.Database.LSMTree.Internal.RawOverflowPage
     Test.Database.LSMTree.Internal.RawPage
     Test.Database.LSMTree.Internal.Run
@@ -394,7 +394,6 @@ benchmark lsm-tree-bench-lookups
     , bytestring
     , deepseq
     , fs-api
-    , io-classes
     , lsm-tree
     , lsm-tree:blockio-api
     , lsm-tree:bloomfilter

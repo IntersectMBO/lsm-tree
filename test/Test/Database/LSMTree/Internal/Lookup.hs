@@ -23,7 +23,6 @@ module Test.Database.LSMTree.Internal.Lookup (
 import           Control.DeepSeq
 import           Control.Exception
 import           Control.Monad.ST.Strict
-import           Data.Arena (newArenaManager, withUnmanagedArena)
 import           Data.Bifunctor
 import           Data.BloomFilter (Bloom)
 import qualified Data.BloomFilter as Bloom
@@ -46,6 +45,7 @@ import           Database.LSMTree.Internal.BlobRef (BlobSpan)
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.IndexCompact as Index
 import           Database.LSMTree.Internal.Lookup
+import           Database.LSMTree.Internal.PageAlloc
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..))
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.RawOverflowPage
@@ -148,10 +148,12 @@ prop_indexSearchesModel dats =
 
     runs = getSmallList $ fmap (mkTestRun . runData) dats
     lookupss = concatMap lookups $ getSmallList dats
-    real rkixs = runST $ withUnmanagedArena $ \arena -> do
+    real rkixs = runST $ do
       let rs = V.fromList (fmap runWithHandle runs)
           ks = V.fromList lookupss
-      res <- indexSearches arena (V.map thrd3 rs) (V.map fst3 rs) ks rkixs
+      pagealloc <- newPageAlloc
+      pages <- unmanagedAllocatePagesForIndexSearches pagealloc rkixs
+      let res = indexSearches (V.map thrd3 rs) (V.map fst3 rs) ks pages rkixs
       pure $ V.map ioopPageSpan res
     model rkixs = V.fromList $ indexSearchesModel (fmap thrd3 runs) lookupss $ rkixs
 
@@ -173,14 +175,17 @@ prop_prepLookupsModel dats = real === model
   where
     runs = getSmallList $ fmap (mkTestRun . runData) dats
     lookupss = concatMap lookups $ getSmallList dats
-    real = runST $ withUnmanagedArena $ \arena -> do
+    real, model :: (VU.Vector (RunIx, KeyIx), V.Vector PageSpan)
+    real = runST $ do
+      pagealloc <- newPageAlloc
       let rs = V.fromList (fmap runWithHandle runs)
           ks = V.fromList lookupss
-      (kixs, ioops) <- prepLookups
-                         arena
-                         (V.map snd3 rs)
-                         (V.map thrd3 rs)
-                         (V.map fst3 rs) ks
+      (kixs, ioops, _pages) <-
+        unmanagedPreparedLookups
+          pagealloc
+          (V.map snd3 rs)
+          (V.map thrd3 rs)
+          (V.map fst3 rs) ks
       pure $ (kixs, V.map ioopPageSpan ioops)
     model = bimap VU.fromList V.fromList $
             prepLookupsModel (fmap (\x -> (snd3 x, thrd3 x)) runs) lookupss
@@ -214,14 +219,16 @@ prop_inMemRunLookupAndConstruction dat =
     run = mkTestRun runData
     keys = V.fromList lookups
     -- prepLookups says that a key /could be/ in the given page
-    keysMaybeInRun = runST $ withUnmanagedArena $ \arena -> do
-      (kixs, ioops) <- let r = V.singleton (runWithHandle run)
-                       in  prepLookups
-                             arena
-                             (V.map snd3 r)
-                             (V.map thrd3 r)
-                             (V.map fst3 r)
-                             keys
+    keysMaybeInRun = runST $ do
+      pagealloc <- newPageAlloc
+      (kixs, ioops, _pages) <-
+        let r = V.singleton (runWithHandle run) in
+        unmanagedPreparedLookups
+          pagealloc
+          (V.map snd3 r)
+          (V.map thrd3 r)
+          (V.map fst3 r)
+          keys
       let ks = V.map (V.fromList lookups V.!) (V.convert $ snd $ VU.unzip kixs)
           pss = V.map (handleRaw . ioopHandle) ioops
           pspans = V.map (ioopPageSpan) ioops
@@ -291,10 +298,10 @@ prop_roundtripFromWriteBufferLookupIO dats =
     ioProperty $ withTempIOHasBlockIO "prop_roundtripFromWriteBufferLookupIO" $ \hasFS hasBlockIO -> do
     (runs, wbs) <- mkRuns hasFS hasBlockIO
     let wbAll = WB.fromMap $ Map.unionsWith (combine resolveV) (fmap WB.toMap wbs)
-    arenaManager <- newArenaManager
+    pagealloc <- newPageAlloc
     real <- lookupsIO
               hasBlockIO
-              arenaManager
+              pagealloc
               resolveV
               runs
               (V.map Run.runFilter runs)

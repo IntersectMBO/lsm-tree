@@ -3,7 +3,6 @@
 module Main (main) where
 
 import qualified Test.Control.Concurrent.Class.MonadSTM.RWVar
-import qualified Test.Data.Arena
 import qualified Test.Database.LSMTree.Class.Monoidal
 import qualified Test.Database.LSMTree.Class.Normal
 import qualified Test.Database.LSMTree.Generators
@@ -16,6 +15,7 @@ import qualified Test.Database.LSMTree.Internal.Merge
 import qualified Test.Database.LSMTree.Internal.Monkey
 import qualified Test.Database.LSMTree.Internal.PageAcc
 import qualified Test.Database.LSMTree.Internal.PageAcc1
+import qualified Test.Database.LSMTree.Internal.PageAlloc
 import qualified Test.Database.LSMTree.Internal.RawOverflowPage
 import qualified Test.Database.LSMTree.Internal.RawPage
 import qualified Test.Database.LSMTree.Internal.Run
@@ -45,6 +45,7 @@ main = defaultMain $ testGroup "lsm-tree"
     , Test.Database.LSMTree.Internal.Monkey.tests
     , Test.Database.LSMTree.Internal.PageAcc.tests
     , Test.Database.LSMTree.Internal.PageAcc1.tests
+    , Test.Database.LSMTree.Internal.PageAlloc.tests
     , Test.Database.LSMTree.Internal.RawPage.tests
     , Test.Database.LSMTree.Internal.RawOverflowPage.tests
     , Test.Database.LSMTree.Internal.Run.tests
@@ -59,5 +60,4 @@ main = defaultMain $ testGroup "lsm-tree"
     , Test.Database.LSMTree.Model.Monoidal.tests
     , Test.Database.LSMTree.Normal.StateMachine.tests
     , Test.System.Posix.Fcntl.NoCache.tests
-    , Test.Data.Arena.tests
     ]

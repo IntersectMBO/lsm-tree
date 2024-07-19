@@ -3,12 +3,10 @@
 module Main ( main ) where
 
 import           Control.DeepSeq
-import           Control.Exception (assert)
+import           Control.Exception (assert, evaluate)
 import           Control.Monad
-import           Control.Monad.Class.MonadST
 import           Control.Monad.Primitive
 import           Control.Monad.ST.Strict (ST, runST)
-import           Data.Arena (ArenaManager, newArenaManager, withArena)
 import           Data.Bits ((.&.))
 import           Data.BloomFilter (Bloom)
 import qualified Data.BloomFilter as Bloom
@@ -26,6 +24,7 @@ import           Database.LSMTree.Internal.Entry (Entry (Insert),
                      NumEntries (..))
 import           Database.LSMTree.Internal.IndexCompact (IndexCompact)
 import           Database.LSMTree.Internal.Lookup
+import           Database.LSMTree.Internal.PageAlloc
 import           Database.LSMTree.Internal.Paths (RunFsPaths (RunFsPaths))
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
@@ -136,7 +135,7 @@ benchmarks !caching = withFS $ \hfs hbio -> do
 #ifdef NO_IGNORE_ASSERTS
     putStrLn "BENCHMARKING A BUILD WITH -fno-ignore-asserts"
 #endif
-    arenaManager <- newArenaManager
+    pagealloc <- newPageAlloc
     enabled <- getRTSStatsEnabled
     when (not enabled) $ fail "Need RTS +T statistics enabled"
     let runSizes = lsmStyleRuns benchmarkSizeBase
@@ -197,17 +196,17 @@ benchmarks !caching = withFS $ \hfs hbio -> do
     _bindexSearches <-
       benchmark "benchIndexSearches"
                 "Calculate batches of keys, perform bloom queries for each batch, and perform index searches for positively queried keys in each batch. Net time/allocation is the result of subtracting the cost of benchGenKeyBatches and benchBloomQueries."
-                (benchIndexSearches arenaManager blooms indexes handles keyRng0) benchmarkNumLookups
+                (benchIndexSearches pagealloc blooms indexes handles keyRng0) benchmarkNumLookups
                 (x1 + x2, y1 + y2)
     _bprepLookups <-
       benchmark "benchPrepLookups"
                 "Calculate batches of keys, and prepare lookups for each batch. This is roughly doing the same amount of work as benchIndexSearches. Net time/allocation is the result of subtracting the cost of benchGenKeyBatches."
-                (benchPrepLookups arenaManager blooms indexes handles keyRng0) benchmarkNumLookups
+                (benchPrepLookups pagealloc blooms indexes handles keyRng0) benchmarkNumLookups
                 bgenKeyBatches
     _blookupsIO <-
       benchmark "benchLookupsIO"
                 "Calculate batches of keys, and perform disk lookups for each batch. This is roughly doing the same as benchPrepLookups, but also performing the disk I/O and resolving values. Net time/allocation is the result of subtracting the cost of benchGenKeyBatches."
-                (benchLookupsIO hbio arenaManager benchmarkResolveSerialisedValue runs blooms indexes handles keyRng0) benchmarkNumLookups
+                (benchLookupsIO hbio pagealloc benchmarkResolveSerialisedValue runs blooms indexes handles keyRng0) benchmarkNumLookups
                 bgenKeyBatches
 
     traceMarkerIO "Cleaning up"
@@ -303,8 +302,8 @@ withFS ::
      (FS.HasFS IO FS.HandleIO -> FS.HasBlockIO IO FS.HandleIO -> IO a)
   -> IO a
 withFS action = do
-    let hfs = FS.ioHasFS (FS.MountPoint "")
-    exists <- FS.doesDirectoryExist hfs (FS.mkFsPath ["_bench_lookups"])
+    let hfs = FS.ioHasFS (FS.MountPoint "_bench_lookups")
+    exists <- FS.doesDirectoryExist hfs (FS.mkFsPath [""])
     unless exists $ error ("_bench_lookups directory does not exist")
     FS.withIOHasBlockIO hfs FS.defaultIOCtxParams $ \hbio ->
       action hfs hbio
@@ -427,43 +426,46 @@ benchBloomQueries !bs !keyRng !n
 -- | This gives us the combined cost of calculating batches of keys, performing
 -- bloom queries for each batch, and performing index searches for each batch.
 benchIndexSearches
-  :: ArenaManager RealWorld
+  :: PageAlloc RealWorld
   -> V.Vector (Bloom SerialisedKey)
   -> V.Vector IndexCompact
   -> V.Vector (FS.Handle h)
   -> StdGen
   -> Int
   -> IO ()
-benchIndexSearches !arenaManager !bs !ics !hs !keyRng !n
+benchIndexSearches !pagealloc !bs !ics !hs !keyRng !n
   | n <= 0 = pure ()
   | otherwise = do
     let (!ks, !keyRng') = genLookupBatch keyRng benchmarkGenBatchSize
         !rkixs = bloomQueriesDefault bs ks
-    !_ioops <- withArena arenaManager $ \arena -> stToIO $ indexSearches arena ics hs ks rkixs
-    benchIndexSearches arenaManager bs ics hs keyRng' (n-benchmarkGenBatchSize)
+    withPages pagealloc (VU.length rkixs) $ \pages -> do
+       _ <- evaluate (indexSearches ics hs ks pages rkixs)
+       return ()
+    benchIndexSearches pagealloc bs ics hs keyRng' (n-benchmarkGenBatchSize)
 
 -- | This gives us the combined cost of calculating batches of keys, and
 -- preparing lookups for each batch.
 benchPrepLookups
-  :: ArenaManager RealWorld
+  :: PageAlloc RealWorld
   -> V.Vector (Bloom SerialisedKey)
   -> V.Vector IndexCompact
   -> V.Vector (FS.Handle h)
   -> StdGen
   -> Int
   -> IO ()
-benchPrepLookups !arenaManager !bs !ics !hs !keyRng !n
+benchPrepLookups !pagealloc !bs !ics !hs !keyRng !n
   | n <= 0 = pure ()
   | otherwise = do
       let (!ks, !keyRng') = genLookupBatch keyRng benchmarkGenBatchSize
-      (!_rkixs, !_ioops) <- withArena arenaManager $ \arena -> stToIO $ prepLookups arena bs ics hs ks
-      benchPrepLookups arenaManager bs ics hs keyRng' (n-benchmarkGenBatchSize)
+      withPreparedLookups pagealloc bs ics hs ks $ \rkixs ioops ->
+        void $ evaluate rkixs >> evaluate ioops
+      benchPrepLookups pagealloc bs ics hs keyRng' (n-benchmarkGenBatchSize)
 
 -- | This gives us the combined cost of calculating batches of keys, and
 -- performing disk lookups for each batch.
 benchLookupsIO ::
      FS.HasBlockIO IO h
-  -> ArenaManager RealWorld
+  -> PageAlloc RealWorld
   -> ResolveSerialisedValue
   -> V.Vector (Run (FS.Handle h))
   -> V.Vector (Bloom SerialisedKey)
@@ -472,12 +474,12 @@ benchLookupsIO ::
   -> StdGen
   -> Int
   -> IO ()
-benchLookupsIO !hbio !arenaManager !resolve !rs !bs !ics !hs !keyRng !n
+benchLookupsIO !hbio !pagealloc !resolve !rs !bs !ics !hs !keyRng !n
   | n <= 0 = pure ()
   | otherwise = do
       let (!ks, !keyRng') = genLookupBatch keyRng benchmarkGenBatchSize
-      !_ <- lookupsIO hbio arenaManager resolve rs bs ics hs ks
-      benchLookupsIO hbio arenaManager resolve rs bs ics hs keyRng' (n-benchmarkGenBatchSize)
+      !_ <- lookupsIO hbio pagealloc resolve rs bs ics hs ks
+      benchLookupsIO hbio pagealloc resolve rs bs ics hs keyRng' (n-benchmarkGenBatchSize)
 
 {-------------------------------------------------------------------------------
   Utilities

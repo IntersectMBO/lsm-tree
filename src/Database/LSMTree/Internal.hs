@@ -59,7 +59,6 @@ import           Control.Monad (unless, void, when)
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Primitive (PrimState (..))
 import           Control.Monad.ST.Strict (ST, runST)
-import           Data.Arena (ArenaManager, newArenaManager)
 import           Data.Bifunctor (Bifunctor (..))
 import           Data.BloomFilter (Bloom)
 import qualified Data.ByteString.Char8 as BSC
@@ -82,6 +81,7 @@ import           Database.LSMTree.Internal.Lookup (ByteCountDiscrepancy,
 import           Database.LSMTree.Internal.Managed
 import qualified Database.LSMTree.Internal.Merge as Merge
 import qualified Database.LSMTree.Internal.Normal as Normal
+import           Database.LSMTree.Internal.PageAlloc (PageAlloc, newPageAlloc)
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..),
                      SessionRoot (..), SnapshotName)
 import qualified Database.LSMTree.Internal.Paths as Paths
@@ -360,13 +360,13 @@ closeSession Session{sessionState} =
 --
 -- For more information, see 'Database.LSMTree.Normal.TableHandle'.
 data TableHandle m h = TableHandle {
-      tableConfig             :: !TableConfig
+      tableConfig          :: !TableConfig
       -- | The primary purpose of this 'RWVar' is to ensure consistent views of
       -- the open-/closedness of a table when multiple threads require access to
       -- the table's fields (see 'withOpenTable'). We use more fine-grained
       -- synchronisation for various mutable parts of an open table.
-    , tableHandleState        :: !(RWVar m (TableHandleState m h))
-    , tableHandleArenaManager :: !(ArenaManager (PrimState m))
+    , tableHandleState     :: !(RWVar m (TableHandleState m h))
+    , tableHandlePageAlloc :: !(PageAlloc (PrimState m))
     }
 
 -- | A table handle may assume that its corresponding session is still open as
@@ -575,8 +575,8 @@ newWithLevels sesh seshEnv conf !levels = do
         , tableId = tableId
         , tableContent = contentVar
         }
-    arenaManager <- newArenaManager
-    let !th = TableHandle conf tableVar arenaManager
+    pagealloc <- newPageAlloc
+    let !th = TableHandle conf tableVar pagealloc
     -- Track the current table
     modifyMVar_ (sessionOpenTables seshEnv) $ pure . Map.insert tableId th
     pure $! th
@@ -610,7 +610,6 @@ lookups ::
      -- 'toNormalLookupResult' or 'toMonoidalLookupResult'.
   -> m (V.Vector lookupResult)
 lookups ks th fromEntry = withOpenTable th $ \thEnv -> do
-    let arenaManager = tableHandleArenaManager th
     let resolve = resolveMupsert (tableConfig th)
     RW.withReadAccess (tableContent thEnv) $ \tableContent -> do
       let !wb = tableWriteBuffer tableContent
@@ -618,7 +617,7 @@ lookups ks th fromEntry = withOpenTable th $ \thEnv -> do
       ioRes <-
         lookupsIO
           (tableHasBlockIO thEnv)
-          arenaManager
+          (tableHandlePageAlloc th)
           resolve
           (cachedRuns cache)
           (cachedFilters cache)
