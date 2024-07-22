@@ -1,5 +1,6 @@
 module Database.LSMTree.Internal.TempRegistry (
     TempRegistry
+  , withTempRegistry
   , allocateTemp
   , allocateMaybeTemp
   , allocateEitherTemp
@@ -56,6 +57,16 @@ newtype ResourceId = ResourceId Int
 newtype Resource m = Resource {
     resourceRelease :: (m ())
   }
+
+{-# SPECIALISE withTempRegistry :: (TempRegistry IO -> IO a) -> IO a #-}
+withTempRegistry ::
+     (MonadMVar m, MonadCatch m)
+  => (TempRegistry m -> m a)
+  -> m a
+withTempRegistry k = fst <$> generalBracket acquire release k
+  where
+    acquire = unsafeNewTempRegistry
+    release reg ec = unsafeReleaseTempRegistry reg ec
 
 {-# SPECIALISE unsafeNewTempRegistry :: IO (TempRegistry IO) #-}
 -- | This is considered unsafe, because one should properly 'bracket' this
@@ -178,7 +189,7 @@ freeTemp reg free = modifyMVarMasked_ (tempRegistryState reg) $ \st -> do
 -- allocate or free resources, the effects of which are rolled back in case of
 -- an exception, or put into the final state when no exceptions were raised.
 modifyWithTempRegistry ::
-     m ~ IO
+     (MonadMVar m, MonadCatch m)
   => m st -- ^ Get the state
   -> (st -> m ()) -- ^ Store a state
   -> (TempRegistry m -> st -> m (st, a)) -- ^ Modify the state
@@ -197,7 +208,7 @@ modifyWithTempRegistry getSt putSt action =
 {-# SPECIALISE modifyWithTempRegistry_ :: IO st -> (st -> IO ()) -> (TempRegistry IO -> st -> IO st) -> IO () #-}
 -- | Like 'modifyWithTempRegistry', but without a return value.
 modifyWithTempRegistry_ ::
-     m ~ IO
+     (MonadMVar m, MonadCatch m)
   => m st -- ^ Get the state
   -> (st -> m ()) -- ^ Store a state
   -> (TempRegistry m -> st -> m st)

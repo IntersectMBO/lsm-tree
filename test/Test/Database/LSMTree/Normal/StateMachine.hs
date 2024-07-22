@@ -961,8 +961,7 @@ arbitraryActionWithVars _ findVars _st = QC.frequency $ concat [
         , (10, fmap Some $ Inserts <$> genInserts <*> (fromRight <$> genVar))
         , (10, fmap Some $ Deletes <$> genDeletes <*> (fromRight <$> genVar))
         , (3, fmap Some $ Snapshot <$> genSnapshotName <*> (fromRight <$> genVar))
-        -- TODO: enable generators as we implement the actions for the /real/ lsm-tree
-        -- , fmap Some $ Duplicate <$> (fromRight <$> genVar)
+        , (3, fmap Some $ Duplicate <$> (fromRight <$> genVar))
         ]
 
     withVars' ::
