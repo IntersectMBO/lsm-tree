@@ -673,3 +673,26 @@ library fcntl-nocache
     exposed-modules:    System.Posix.Fcntl.NoCache
     build-depends:      base <5
     build-tool-depends: hsc2hs:hsc2hs
+
+library experiments
+  import:          language, warnings, wno-x-partial
+  visibility:      private
+  hs-source-dirs:  src-experiments
+  exposed-modules: ClashProbability
+  build-depends:
+    , base                  >=4.16 && <4.20
+    , containers
+    , random
+    , lsm-tree:extras
+
+executable clash-probability
+  import:         language, warnings, wno-x-partial
+  hs-source-dirs: src-experiments
+  main-is:        ClashProbability.hs
+  build-depends:
+    , base        >=4.16 && <4.20
+    , containers ^>=0.7
+    , random
+    , lsm-tree:extras
+
+  ghc-options:    -main-is ClashProbability -rtsopts -with-rtsopts=-T

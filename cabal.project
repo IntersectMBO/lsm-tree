@@ -40,11 +40,14 @@ import: cabal.project.debug
 -- we could add a conditional on (+serialblockio) to remove this import automatically.
 import: cabal.project.blockio-uring
 
--- FsPath combinators
+-- containers < 0.8
 source-repository-package
   type: git
   location: https://github.com/input-output-hk/fs-sim
-  tag: 47879aa5edfd3a3f8824d61687e85b8f1586e010
+  tag: 45df0656cf2672019174aae8f970f85c0170e3ee
   subdir:
     fs-api
     fs-sim
+
+-- TODO: revision in quickcheck-lockstep
+allow-newer: quickcheck-lockstep:containers
