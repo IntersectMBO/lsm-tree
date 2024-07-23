@@ -303,8 +303,8 @@ withFS ::
      (FS.HasFS IO FS.HandleIO -> FS.HasBlockIO IO FS.HandleIO -> IO a)
   -> IO a
 withFS action = do
-    let hfs = FS.ioHasFS (FS.MountPoint "")
-    exists <- FS.doesDirectoryExist hfs (FS.mkFsPath ["_bench_lookups"])
+    let hfs = FS.ioHasFS (FS.MountPoint "_bench_lookups")
+    exists <- FS.doesDirectoryExist hfs (FS.mkFsPath [""])
     unless exists $ error ("_bench_lookups directory does not exist")
     FS.withIOHasBlockIO hfs FS.defaultIOCtxParams $ \hbio ->
       action hfs hbio
