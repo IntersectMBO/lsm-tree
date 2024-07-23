@@ -296,19 +296,21 @@ newMerge tr level mergepolicy mergelast rs = do
                    mergeRunsSize = map runSize rs
                  }
     assert (length rs `elem` [4, 5]) $
-      MergingRun mergepolicy mergelast <$> newSTRef (OngoingMerge debt rs r)
+      assert (mergeDebtLeft debt >= cost) $
+        MergingRun mergepolicy mergelast <$> newSTRef (OngoingMerge debt rs r)
   where
     cost = sum (map runSize rs)
     -- How much we need to discharge before the merge can be guaranteed
     -- complete. More precisely, this is the maximum amount a merge at this
-    -- level could need. This overestimation means that merges will only
-    -- complete at the last possible moment.
+    -- level could need. While the real @cost@ of a merge would lead to merges
+    -- finishing early, the overestimation @debt@ means that in this prototype
+    -- merges will only complete at the last possible moment.
     -- Note that for levelling this is includes the single run in the current
     -- level.
     debt = newMergeDebt $ case mergepolicy of
              MergePolicyLevelling -> 4 * tieringRunSize (level-1)
                                        + levellingRunSize level
-             MergePolicyTiering   -> 4 * tieringRunSize (level-1)
+             MergePolicyTiering   -> length rs * tieringRunSize (level-1)
     -- deliberately lazy:
     r    = case mergelast of
              MergeMidLevel  ->                (mergek rs)
@@ -372,6 +374,10 @@ data MergeDebt =
 
 newMergeDebt :: Debt -> MergeDebt
 newMergeDebt d = MergeDebt 0 d
+
+mergeDebtLeft :: MergeDebt -> Int
+mergeDebtLeft (MergeDebt c d) =
+    assert (c < d) $ d - c
 
 -- | As credits are paid, debt is reduced in batches when sufficient credits have accumulated.
 data MergeDebtPaydown =
