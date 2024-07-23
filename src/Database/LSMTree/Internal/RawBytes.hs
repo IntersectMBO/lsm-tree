@@ -27,7 +27,7 @@ module Database.LSMTree.Internal.RawBytes (
   , take
   , drop
   , topBits16
-  , sliceBits32
+  , sliceBits64
     -- * Construction
     -- | Use 'Semigroup' and 'Monoid' operations
     -- ** Restricting memory usage
@@ -167,41 +167,60 @@ toWord16 = W16#
 toWord16 x# = byteSwap16 (W16# x#)
 #endif
 
--- | @'sliceBits32' off rb@ slices from the raw bytes @rb@ a string of @32@
+-- | @'sliceBits64' off rb@ slices from the raw bytes @rb@ a string of @64@
 -- bits, starting at the @0@-based offset @off@. Returns the string of bits as a
--- 'Word32'.
+-- 'Word64'.
 --
 -- Offsets are counted in bits from the /top/: offset @0@ corresponds to the
 -- most significant bit (big-endian).
 --
--- PRECONDITION: The raw bytes should be large enough that we can slice out 4
+-- PRECONDITION: The raw bytes should be large enough that we can slice out 8
 -- bytes after the bit-offset @off@, since we can only slice out bits that are
 -- within the bounds of the byte array.
 --
 -- TODO: optimisation ideas: use unsafe shift/byteswap primops, look at GHC
 -- core, find other opportunities for using primops.
 --
-sliceBits32 :: Int -> RawBytes -> Word32
-sliceBits32 off@(I# off1#) rb@(RawBytes (VP.Vector (I# off2#) _size (ByteArray ba#)))
+sliceBits64 :: Int -> RawBytes -> Word64
+sliceBits64 off@(I# off1#) rb@(RawBytes (VP.Vector (I# off2#) _size (ByteArray ba#)))
     | 0# <- r#
-    = assert (off + 32 <= 8 * size rb) $
-      toWord32 (indexWord8ArrayAsWord32# ba# q#)
+    = assert (off + 64 <= 8 * size rb) $
+      toWord64 (indexWord8ArrayAsWord64# ba# q#)
     | otherwise
-    = assert (off + 32 <= 8 * size rb) $
-        toWord32 (indexWord8ArrayAsWord32# ba# q#       ) `shiftL` r
-      + w8w32#   (indexWord8Array#         ba# (q# +# 4#)) `shiftR` (8 - r)
+    = assert (off + 64 <= 8 * size rb) $
+        toWord64 (indexWord8ArrayAsWord64# ba# q#        ) `shiftL` r
+      + ww64#    (indexWord8Array#         ba# (q# +# 8#)) `shiftR` (8 - r)
   where
     !(# q0#, r# #) = quotRemInt# off1# 8#
     !q#            = q0# +# off2#
     r              = I# r#
-    -- No need for byteswapping here
-    w8w32# x#     = W32# (wordToWord32# (word8ToWord# x#))
 
-toWord32 :: Word32# -> Word32
+#if (MIN_VERSION_GLASGOW_HASKELL(9, 4, 0, 0))
+
+toWord64 :: Word64# -> Word64
 #if WORDS_BIGENDIAN
-toWord32 = W32#
+toWord64 = W64#
 #else
-toWord32 x# = byteSwap32 (W32# x#)
+toWord64 x# = byteSwap64 (W64# x#)
+#endif
+
+-- No need for byteswapping here
+ww64# :: Word8# -> Word64
+ww64# x#     = W64# (wordToWord64# (word8ToWord# x#))
+
+#else
+
+toWord64 :: Word# -> Word64
+#if WORDS_BIGENDIAN
+toWord64 = W64#
+#else
+toWord64 x# = byteSwap64 (W64# x#)
+#endif
+
+-- No need for byteswapping here
+ww64# :: Word8# -> Word64
+ww64# x# = W64# (word8ToWord# x#)
+
 #endif
 
 {-------------------------------------------------------------------------------

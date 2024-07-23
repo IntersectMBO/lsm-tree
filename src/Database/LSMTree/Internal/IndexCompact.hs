@@ -52,7 +52,7 @@ import qualified Data.Vector.Algorithms.Search as VA
 import qualified Data.Vector.Generic as VG
 import qualified Data.Vector.Primitive as VP
 import qualified Data.Vector.Unboxed as VU
-import qualified Data.Vector.Unboxed.Base as VU (Vector (V_Word32))
+import qualified Data.Vector.Unboxed.Base as VU
 import           Data.Word
 import           Database.LSMTree.Internal.BitMath
 import           Database.LSMTree.Internal.ByteString (byteArrayFromTo,
@@ -445,9 +445,9 @@ data IndexCompact = IndexCompact {
     -- | \(m\): Determines the size of 'icRangeFinder' as
     -- @2 ^ 'icRangeFinderPrecision' + 1@.
   , icRangeFinderPrecision :: !Int
-    -- | \(P\): Maps a page @i@ to the 32-bit slice of primary bits of its
+    -- | \(P\): Maps a page @i@ to the 64-bit slice of primary bits of its
     -- minimum key.
-  , icPrimary              :: !(VU.Vector Word32)
+  , icPrimary              :: !(VU.Vector Word64)
     -- | \(C\): A clash on page @i@ means that the primary bits of the minimum
     -- key on that page aren't sufficient to decide whether a search for a key
     -- should continue left or right of the page.
@@ -487,6 +487,12 @@ rangeFinderPrecisionBounds = (0, 16)
 -- bit-precision.
 --
 -- https://en.wikipedia.org/wiki/Birthday_problem#Probability_of_a_shared_birthday_(collision)
+--
+-- >>> suggestRangeFinderPrecision 4_000_000_000
+-- 0
+--
+-- >>> suggestRangeFinderPrecision 5_000_000_000
+-- 1
 suggestRangeFinderPrecision :: NumPages -> Int
 suggestRangeFinderPrecision maxPages =
     -- The calculation (before clamping) gives us the /total/ number of bits we
@@ -494,11 +500,10 @@ suggestRangeFinderPrecision maxPages =
     clamp $ ceiling @Double $ 2 * logBase 2 (fromIntegral maxPages)
   where
     (lb, ub)              = rangeFinderPrecisionBounds
-    -- Clamp ensures that we use only bits above @32@ as range finder bits. That
-    -- is, we clamp @x@ to the range @[32 .. 48]@.
-    clamp x | x < (lb+32) = lb
-            | x > (ub+32) = ub
-            | otherwise   = x - 32
+    -- Clamp ensures that we use only bits above @64@ as range finder bits.
+    clamp x | x < (lb+64) = lb
+            | x > (ub+64) = ub
+            | otherwise   = x - 64
 
 {-------------------------------------------------------------------------------
   Queries
@@ -552,7 +557,7 @@ search k IndexCompact{..} = -- Pre: @[0, V.length icPrimary)@
         -- extra entry at the end, mapping to 'V.length icPrimary'.
         !ub        = fromIntegral $ icRangeFinder VU.! (rfbits + 1)
         -- Post: @[lb, ub)@
-        !primbits  = keySliceBits32 icRangeFinderPrecision k
+        !primbits = keySliceBits64 icRangeFinderPrecision k
     in
       case unsafeSearchLEBounds primbits icPrimary lb ub of
         Nothing -> singlePage (PageNo 0)  -- Post: @[lb, lb)@ (empty).
@@ -610,21 +615,21 @@ toLBS numEntries index =
 indexVersion :: Word32
 indexVersion = 1
 
--- | 32 bits, to be used before writing any other parts of the serialised file!
+-- | 64 bits, to be used before writing any other parts of the serialised file!
 headerLBS :: LBS.ByteString
 headerLBS =
     -- create a single 4 byte chunk
     BB.toLazyByteStringWith (BB.safeStrategy 4 BB.smallChunkSize) mempty $
-      BB.word32Host indexVersion
+      BB.word32Host indexVersion <> BB.word32Host 0
 
 -- | A chunk of the primary array, which can be constructed incrementally.
-data Chunk = Chunk { cPrimary :: !(VU.Vector Word32) }
+data Chunk = Chunk { cPrimary :: !(VU.Vector Word64) }
   deriving stock (Show, Eq)
 
--- | 32 bit aligned.
+-- | 64 bit aligned.
 chunkToBS :: Chunk -> BS.ByteString
-chunkToBS (Chunk (VU.V_Word32 (VP.Vector off len ba))) =
-    byteArrayToByteString (mul4 off) (mul4 len) ba
+chunkToBS (Chunk (VU.V_Word64 (VP.Vector off len ba))) =
+    byteArrayToByteString (mul8 off) (mul8 len) ba
 
 -- | Writes everything after the primary array, which is assumed to have already
 -- been written using 'chunkToBS'.
@@ -634,7 +639,7 @@ finalLBS (NumEntries numEntries) IndexCompact {..} =
     BB.toLazyByteString $
          putVec32 icRangeFinder
          -- align to 64 bit, if odd number of Word32 written before
-      <> (if odd (numPages + numRanges + 1 {- version -})
+      <> (if odd numRanges
           then BB.word32Host 0
           else mempty)
       <> putBitVec icClashes
@@ -737,10 +742,10 @@ fromSBS (SBS ba') = do
     let numRanges = 2 ^ rfprec + 1
 
     -- read vectors
-    -- offsets in 32 bits
-    let off1_32 = 1  -- after version indicator
-    (!off2_32, icPrimary) <- getVec32 "Primary array" ba off1_32 numPages
-    (!off3_32, icRangeFinder) <- getVec32 "Range finder" ba off2_32 numRanges
+    -- offsets in 64 bits
+    let off1_64 = 1  -- after version indicator
+    (!off2_64, icPrimary) <- getVec64 "Primary array" ba off1_64 numPages
+    (!off3_32, icRangeFinder) <- getVec32 "Range finder" ba (mul2 off2_64) numRanges
     -- offsets in 64 bits
     let !off3 = ceilDiv2 off3_32
     (!off4, icClashes) <- getBitVec "Clash bit vector" ba off3 numPages
@@ -766,6 +771,14 @@ getVec32 name ba off32 numEntries =
     case checkedPrimVec off32 numEntries ba of
       Nothing  -> Left (name <> " is out of bounds")
       Just vec -> Right (off32 + numEntries, VU.V_Word32 vec)
+
+getVec64 ::
+     String -> ByteArray -> Offset32 -> Int
+  -> Either String (Offset64, VU.Vector Word64)
+getVec64 name ba off64 numEntries =
+    case checkedPrimVec off64 numEntries ba of
+      Nothing  -> Left (name <> " is out of bounds")
+      Just vec -> Right (off64 + numEntries, VU.V_Word64 vec)
 
 getBitVec ::
      String -> ByteArray -> Offset64 -> Int

@@ -595,10 +595,10 @@ newtype KeyForIndexCompact =
 instance Arbitrary KeyForIndexCompact where
   -- we try to make collisions and close keys more likely (very crudely)
   arbitrary = KeyForIndexCompact <$> frequency
-      [ (6, genRawBytesN =<< QC.sized (\s -> QC.chooseInt (6, s + 6)))
+      [ (6, genRawBytesN =<< QC.sized (\s -> QC.chooseInt (10, s + 10)))
       , (1, do
           lastByte <- QC.sized $ skewedWithMax . fromIntegral
-          return (RB.pack ([1,3,3,7,0] <> [lastByte]))
+          return (RB.pack ([1,3,3,7,0,1,7,1,7] <> [lastByte]))
         )
       ]
       where
@@ -609,15 +609,16 @@ instance Arbitrary KeyForIndexCompact where
           QC.chooseBoundedIntegral (0, ub2)
 
   shrink (KeyForIndexCompact rb) =
-      [ KeyForIndexCompact rb'
+      [ k'
       | rb' <- shrink rb
-      , RB.size rb' >= 6
+      , let k' = KeyForIndexCompact rb'
+      , keyForIndexCompactInvariant k'
       ]
 
 deriving newtype instance SerialiseKey KeyForIndexCompact
 
 keyForIndexCompactInvariant :: KeyForIndexCompact -> Bool
-keyForIndexCompactInvariant (KeyForIndexCompact rb) = RB.size rb >= 6
+keyForIndexCompactInvariant (KeyForIndexCompact rb) = RB.size rb >= 10
 
 {-------------------------------------------------------------------------------
   Unsliced

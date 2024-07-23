@@ -75,7 +75,7 @@ data IndexCompactAcc s = IndexCompactAcc {
     icaRangeFinder          :: !(VU.MVector s Word32)
   , icaRangeFinderPrecision :: !Int
     -- | Accumulates pinned chunks of 'ciPrimary'.
-  , icaPrimary              :: !(STRef s (NonEmpty (VU.MVector s Word32)))
+  , icaPrimary              :: !(STRef s (NonEmpty (VU.MVector s Word64)))
     -- | Accumulates chunks of 'ciClashes'.
   , icaClashes              :: !(STRef s (NonEmpty (VU.MVector s Bit)))
     -- | Accumulates the 'ciTieBreaker'.
@@ -95,7 +95,7 @@ data IndexCompactAcc s = IndexCompactAcc {
     -- | The primary bits of the page-maximum key that we saw last.
     --
     -- This should be 'SNothing' if we haven't seen any keys/pages yet.
-  , icaLastMaxPrimbits      :: !(STRef s (SMaybe Word32))
+  , icaLastMaxPrimbits      :: !(STRef s (SMaybe Word64))
     -- | The ful minimum key of the page that we saw last.
     --
     -- This should be 'SNothing' if we haven't seen any keys/pages yet.
@@ -116,9 +116,9 @@ new rfprec maxcsize =
   assert (inRange rangeFinderPrecisionBounds rfprec && maxcsize > 0) $
   IndexCompactAcc
     -- Core index structure
-    <$> newPinnedMVec (2 ^ rfprec + 1)
+    <$> newPinnedMVec32 (2 ^ rfprec + 1)
     <*> pure rfprec
-    <*> (newSTRef . pure =<< newPinnedMVec maxcsize)
+    <*> (newSTRef . pure =<< newPinnedMVec64 maxcsize)
     <*> (newSTRef . pure =<< VUM.new maxcsize)
     <*> newSTRef Map.empty
     <*> (newSTRef . pure =<< VUM.new maxcsize)
@@ -135,11 +135,17 @@ new rfprec maxcsize =
 --
 -- TODO: remove this workaround once a solution exists, e.g. a new primop that
 -- allows checking for implicit pinning.
-newPinnedMVec :: Int -> ST s (VUM.MVector s Word32)
-newPinnedMVec lenWords = do
+newPinnedMVec32 :: Int -> ST s (VUM.MVector s Word32)
+newPinnedMVec32 lenWords = do
     mba <- newPinnedByteArray (mul4 lenWords)
     setByteArray mba 0 lenWords (0 :: Word32)
     return (VUM.MV_Word32 (VPM.MVector 0 lenWords mba))
+
+newPinnedMVec64 :: Int -> ST s (VUM.MVector s Word64)
+newPinnedMVec64 lenWords = do
+    mba <- newPinnedByteArray (mul8 lenWords)
+    setByteArray mba 0 lenWords (0 :: Word64)
+    return (VUM.MV_Word64 (VPM.MVector 0 lenWords mba))
 
 -- | Min\/max key-info for pages
 data Append =
@@ -180,9 +186,9 @@ appendSingle (minKey, maxKey) ica@IndexCompactAcc{..} = do
     minRfbits :: Word16
     minRfbits = keyTopBits16 icaRangeFinderPrecision minKey
 
-    minPrimbits, maxPrimbits :: Word32
-    minPrimbits = keySliceBits32 icaRangeFinderPrecision minKey
-    maxPrimbits = keySliceBits32 icaRangeFinderPrecision maxKey
+    minPrimbits, maxPrimbits :: Word64
+    minPrimbits = keySliceBits64 icaRangeFinderPrecision minKey
+    maxPrimbits = keySliceBits64 icaRangeFinderPrecision maxKey
 
     -- | Meat of the function
     goAppend ::
@@ -237,8 +243,8 @@ appendMulti :: forall s. (SerialisedKey, Word32) -> IndexCompactAcc s -> ST s [C
 appendMulti (k, n0) ica@IndexCompactAcc{..} =
     maybe id (:) <$> appendSingle (k, k) ica <*> overflows (fromIntegral n0)
   where
-    minPrimbits :: Word32
-    minPrimbits = keySliceBits32 icaRangeFinderPrecision k
+    minPrimbits :: Word64
+    minPrimbits = keySliceBits64 icaRangeFinderPrecision k
 
     -- | Fill primary, clash and LTP vectors for a larger-than-page value. Yields
     -- chunks if necessary
@@ -270,7 +276,7 @@ yield IndexCompactAcc{..} = do
     pageNo <- readSTRef icaCurrentPageNumber
     if pageNo `mod` icaMaxChunkSize == 0 then do -- The current chunk is full
       primaryChunk <- VU.unsafeFreeze . NE.head =<< readSTRef icaPrimary
-      modifySTRef' icaPrimary . NE.cons =<< newPinnedMVec icaMaxChunkSize
+      modifySTRef' icaPrimary . NE.cons =<< newPinnedMVec64 icaMaxChunkSize
       modifySTRef' icaClashes . NE.cons =<< VUM.new icaMaxChunkSize
       modifySTRef' icaLargerThanPage . NE.cons =<< VUM.new icaMaxChunkSize
       pure $ Just (Chunk primaryChunk)
