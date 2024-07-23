@@ -1,17 +1,22 @@
+{-# LANGUAGE PatternSynonyms #-}
+
 {-# OPTIONS_GHC -Wno-missing-export-lists #-}
 
 module ClashProbability where
 
-import System.Random
-import Data.Bits
-import Data.Word
-import Data.IntSet (IntSet)
+import           Control.Exception
+import           Data.Bits
+import           Data.IntSet (IntSet)
 import qualified Data.IntSet as IntSet
-import Database.LSMTree.Extras.Random
-import Control.Exception
-import Text.Printf
-import System.Environment (getArgs)
-import System.Exit (exitFailure, exitSuccess)
+import           Data.Word
+import           Database.LSMTree.Extras.Random
+import           System.Environment (getArgs)
+import           System.Exit (exitFailure, exitSuccess)
+import           System.Random
+import           Text.Printf
+
+-- $setup
+-- >>> import Numeric
 
 newtype NumEntries = NumEntries Word64
   deriving stock Show
@@ -19,98 +24,116 @@ newtype NumEntries = NumEntries Word64
 newtype IndexBitsPerEntry = IndexBitsPerEntry Int
   deriving stock Show
 
-data GeneratorMode =
-    Uniform
-    -- | Each element in the list is a frequency, describing the distribution of
-    -- the number of outputs per transaction.
-    --
-    -- * The 1st element in the list describes the frequency of UTxOs with 1 output
-    -- * The 2nd element in the list describes the frequency of UTxOs with 2 outputs
-    -- * And so on ...
-  | Custom [Int]
+-- | A distribution where each transaction has 1 output.
+pattern DistribUniform :: Distrib
+pattern DistribUniform = Distrib [1]
+
+-- | Each element in the list is a frequency, describing the distribution of
+-- the number of outputs per transaction.
+--
+-- * The 1st element in the list describes the frequency of transactions with 1 output
+-- * The 2nd element in the list describes the frequency of transactions with 2 outputs
+-- * And so on ...
+newtype Distrib = Distrib [Int]
+  deriving stock (Show, Read)
+
+data SerialiseMode =
+    Standard
+  | XOR
+  | Reorder
   deriving stock (Show, Read)
 
 main :: IO ()
 main = do
     args <- getArgs
     case args of
-      [a1, a2, a3] -> do
+      [a1, a2, a3, a4] -> do
         let !n = NumEntries (read a1)
             !b = IndexBitsPerEntry (read a2)
-            !m = read a3
-        putStrLn $ printf "Running with args: (%s) (%s) (%s)" (show n) (show b) (show m)
-        printf "%.10f" $ clashProbability m (NumEntries $ read a1) (IndexBitsPerEntry $ read a2)
+            !d = read a3
+            !sm = read a4
+        putStrLn $ printf "Running with args: (%s) (%s) (%s) (%s)"
+                      (show n) (show b) (show d) (show sm)
+        printf "%.10f" $ clashProbability d sm n b
         exitSuccess
       _ -> do
-        putStrLn "Wrong usage, pass arguments of the type: Word64 Int GeneratorMode"
+        putStrLn "Wrong usage, pass arguments of the type: Word64 Int Distrib SerialiseMode"
         exitFailure
 
 -- | Compute the probability of clashing values
 --
 -- >>> let ns = NumEntries <$> repeat 100
--- >>> let bs = IndexBitsPerEntry <$> [0..10]
--- >>> zipWith (clashProbability Uniform) ns bs
--- [0.99,0.98,0.96,0.92,0.84,0.69,0.5,0.26,0.15,9.0e-2,3.0e-2]
+-- >>> let bs = IndexBitsPerEntry <$> [0..16]
+-- >>> zipWith (clashProbability DistribUniform Standard) ns bs
+-- [0.99,0.98,0.96,0.92,0.84,0.69,0.5,0.26,0.15,9.0e-2,3.0e-2,1.0e-2,1.0e-2,0.0,0.0,0.0,0.0]
 --
--- >>> let ns = NumEntries <$> repeat 100
--- >>> let bs = IndexBitsPerEntry <$> [0..15]
--- >>> zipWith (clashProbability (Custom [0, 1])) ns bs
--- [0.99,0.98,0.96,0.92,0.84,0.74,0.68,0.59,0.54,0.52,0.5,0.5,0.5,0.5,0.5,0.5]
+-- >>> zipWith (clashProbability DistribUniform XOR) ns bs
+-- [0.99,0.98,0.96,0.92,0.84,0.69,0.5,0.26,0.15,9.0e-2,3.0e-2,1.0e-2,1.0e-2,0.0,0.0,0.0,0.0]
 --
--- >>> let ns = NumEntries <$> repeat 100
--- >>> let bs = IndexBitsPerEntry <$> [0..15]
--- >>> zipWith (clashProbability (Custom [0, 0, 1])) ns bs
--- [0.99,0.98,0.96,0.92,0.85,0.79,0.75,0.7,0.67,0.66,0.66,0.66,0.66,0.66,0.66,0.66]
+-- >>> zipWith (clashProbability (Distrib [0, 1]) Standard) ns bs
+-- [0.99,0.98,0.96,0.92,0.84,0.74,0.68,0.59,0.54,0.52,0.5,0.5,0.5,0.5,0.5,0.5,0.5]
 --
--- >>> let ns = NumEntries <$> repeat 100
--- >>> let bs = IndexBitsPerEntry <$> [0..15]
--- >>> zipWith (clashProbability (Custom [0, 10, 5, 3, 2, 1])) ns bs
--- [0.99,0.98,0.96,0.92,0.86,0.79,0.75,0.71,0.69,0.68,0.68,0.68,0.68,0.68,0.68,0.68]
+-- >>> zipWith (clashProbability (Distrib [0, 1]) XOR) ns bs
+-- [0.99,0.98,0.96,0.92,0.84,0.74,0.68,0.59,0.54,0.52,0.5,0.5,0.5,0.5,0.5,0.5,0.0]
+--
+-- >>> zipWith (clashProbability (Distrib [0, 0, 1]) Standard) ns bs
+-- [0.99,0.98,0.96,0.92,0.85,0.79,0.75,0.7,0.67,0.66,0.66,0.66,0.66,0.66,0.66,0.66,0.66]
+--
+-- >>> zipWith (clashProbability (Distrib [0, 0, 1]) XOR) ns bs
+-- [0.99,0.98,0.96,0.92,0.85,0.79,0.75,0.7,0.67,0.66,0.66,0.66,0.66,0.66,0.66,0.32,-2.0e-2]
+--
+-- >>> zipWith (clashProbability (Distrib [2, 10, 5, 3, 2, 1]) Standard) ns bs
+-- [0.99,0.98,0.96,0.92,0.86,0.76,0.71,0.67,0.66,0.65,0.65,0.65,0.65,0.65,0.65,0.65,0.65]
+--
+-- >>> zipWith (clashProbability (Distrib [2, 10, 5, 3, 2, 1]) XOR) ns bs
+-- [0.99,0.98,0.96,0.92,0.86,0.76,0.71,0.67,0.66,0.65,0.65,0.65,0.65,0.65,0.6,0.43,0.0]
+--
+-- >>> let bs = IndexBitsPerEntry <$> [0..16]
+-- >>> zipWith (clashProbability (Distrib [2, 10, 5, 3, 2, 1]) Reorder) ns bs
+-- [0.99,0.99,0.99,0.99,0.99,0.99,0.99,0.99,0.99,0.99,0.99,0.99,0.99,0.99,0.98,0.97,0.95]
+--
+-- >>> let bs = IndexBitsPerEntry <$> [17..32]
+-- >>> zipWith (clashProbability (Distrib [2, 10, 5, 3, 2, 1]) Reorder) ns bs
+-- [0.91,0.82,0.68,0.48,0.3,0.19,6.0e-2,2.0e-2,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0]
 clashProbability ::
-      GeneratorMode
-   -> NumEntries
-   -> IndexBitsPerEntry
-   -> Double
-clashProbability mode (NumEntries !n0) (IndexBitsPerEntry !b) =
-    let go = case mode of
-                Uniform -> go1
-                Custom _ -> go2
-    in  go IntSet.empty (checkedFromIntegral n0) (mkStdGen 17)
+     Distrib
+  -> SerialiseMode
+  -> NumEntries
+  -> IndexBitsPerEntry
+  -> Double
+clashProbability d sm (NumEntries !n0) (IndexBitsPerEntry !b) =
+    go IntSet.empty (checkedFromIntegral n0) (mkStdGen 17)
   where
-    -- Uniform distribution
-    go1 :: IntSet -> Int -> StdGen -> Double
-    go1 !xs  0  _ = fromIntegral (checkedFromIntegral n0 - IntSet.size xs) / fromIntegral n0
-    go1 !xs !n !g =
-        let (!x, !g') = uniform g
-            !y = topBits b x
-        in  go1 (IntSet.insert (checkedFromIntegral y) xs) (n-1) g'
-
-    -- Custom distribution
-    go2 :: IntSet -> Int -> StdGen -> Double
-    go2 !xs !n !g
+    go :: IntSet -> Int -> StdGen -> Double
+    go !xs !n !g
       | n <= 0
       = fromIntegral (checkedFromIntegral n0 - IntSet.size xs) / fromIntegral n0
       | otherwise
       = let (!x, !g') = uniform g
             (!i, !g'') = frequency freqs g'
-            !y = topBits b x
-        in  go2 (IntSet.insert (checkedFromIntegral y) xs) (n - checkedFromIntegral i) g''
+            !ys = serialiseToIntSet x i
+        in  go (xs `IntSet.union` ys) (n - checkedFromIntegral i - 1) g''
 
-    -- Custom distribution, XOR transaction index
-    go3 :: IntSet -> Int -> StdGen -> Double
-    go3 !xs !n !g
-      | n <= 0
-      = fromIntegral (checkedFromIntegral n0 - IntSet.size xs) / fromIntegral n0
-      | otherwise
-      = let (!x, !g') = uniform g
-            (!i, !g'') = frequency freqs g'
-            !y = topBits b x
-        in  go2 (IntSet.insert (checkedFromIntegral y) xs) (n - checkedFromIntegral i) g''
 
     freqs :: [(Int, StdGen -> (Word8, StdGen))]
-    freqs = case mode of
-      Uniform   -> [(1, \g -> (1, g))]
-      Custom fs -> [(f, \g -> (i, g)) | (f, i) <- zip fs [1..] ]
+    freqs = case d of
+        Distrib fs -> [(f, \g -> (i, g)) | (f, i) <- zip fs [0..] ]
+
+    serialiseToIntSet :: Word64 -> Word8 -> IntSet
+    !serialiseToIntSet = case sm of
+        Standard -> \x _ -> IntSet.singleton (checkedFromIntegral $ topBits b x)
+        XOR      -> \x i -> IntSet.fromList [
+            checkedFromIntegral $
+            topBits b $
+            xorTop2Bytes x (checkedFromIntegral i')
+          | i' <- [0..i]
+          ]
+        Reorder -> \x i -> IntSet.fromList [
+            checkedFromIntegral $
+            topBits b $
+            replaceTop2Bytes x (checkedFromIntegral i')
+          | i' <- [0..i]
+          ]
 
 checkedFromIntegral :: (Integral a, Integral b) => a -> b
 checkedFromIntegral x = assert p $ x'
@@ -124,10 +147,22 @@ topBits !n !x
   | n > 64    = error "topBits: n > 64"
   | otherwise = x .>>. (64 - n)
 
--- | Replace the last byte in a 'Word64' by a given 'Word8'.
+-- |
 --
--- >>> import Numeric
--- >>> showHex (replaceLastByte 0x93ae_f8a4 0x07) ""
--- "93aef807"
-replaceLastByte :: Word64 -> Word8 -> Word64
-replaceLastByte !x !y = x .&. (oneBits .<<. 8) .|. fromIntegral y
+-- >>> showHex (replaceTop2Bytes 0x0 0x1111) ""
+-- "1111000000000000"
+--
+-- >>> showHex (replaceTop2Bytes 0x0123_4567_89ab_cdef 0x1111) ""
+-- "1111456789abcdef"
+replaceTop2Bytes :: Word64 -> Word16 -> Word64
+replaceTop2Bytes !x !y = x .&. (oneBits .>>. 16) .|. (fromIntegral y .<<. 48)
+
+-- |
+--
+-- >>> showHex (xorTop2Bytes 0x0 0x1111) ""
+-- "1111000000000000"
+--
+-- >>> showHex (xorTop2Bytes 0x0101_0000_0000_0000 0x1111) ""
+-- "1010000000000000"
+xorTop2Bytes :: Word64 -> Word16 -> Word64
+xorTop2Bytes !x !y = x `xor` (fromIntegral y .<<. 48)

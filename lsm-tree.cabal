@@ -680,19 +680,19 @@ library experiments
   hs-source-dirs:  src-experiments
   exposed-modules: ClashProbability
   build-depends:
-    , base                  >=4.16 && <4.20
+    , base             >=4.16 && <4.20
     , containers
-    , random
     , lsm-tree:extras
+    , random
 
 executable clash-probability
   import:         language, warnings, wno-x-partial
   hs-source-dirs: src-experiments
   main-is:        ClashProbability.hs
   build-depends:
-    , base        >=4.16 && <4.20
-    , containers ^>=0.7
-    , random
+    , base             >=4.16 && <4.20
+    , containers       ^>=0.7
     , lsm-tree:extras
+    , random
 
   ghc-options:    -main-is ClashProbability -rtsopts -with-rtsopts=-T
