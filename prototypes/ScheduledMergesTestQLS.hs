@@ -1,11 +1,4 @@
-{-# LANGUAGE FlexibleInstances     #-}
-{-# LANGUAGE GADTs                 #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE NamedFieldPuns        #-}
-{-# LANGUAGE RankNTypes            #-}
-{-# LANGUAGE ScopedTypeVariables   #-}
-{-# LANGUAGE StandaloneDeriving    #-}
-{-# LANGUAGE TypeFamilies          #-}
+{-# LANGUAGE TypeFamilies #-}
 
 module ScheduledMergesTestQLS (tests) where
 
@@ -15,10 +8,12 @@ import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 
 import           Data.Constraint (Dict (..))
+import           Data.Foldable (traverse_)
 import           Data.Proxy
 import           Data.STRef
 
 import           Control.Exception
+import           Control.Monad (replicateM_)
 import           Control.Monad.ST
 import           Control.Tracer (Tracer (Tracer), nullTracer)
 import qualified Control.Tracer as Tracer
@@ -43,6 +38,8 @@ tests :: TestTree
 tests = testGroup "ScheduledMerges" [
       testProperty "ScheduledMerges vs model" prop_LSM
     , testCase "regression_empty_run" test_regression_empty_run
+    , testCase "merge_again_with_incoming" test_merge_again_with_incoming
+    , testCase "merge_again_with_incoming'" test_merge_again_with_incoming'
     ]
 
 prop_LSM :: Actions (Lockstep Model) -> Property
@@ -83,6 +80,48 @@ test_regression_empty_run =
         ins 3
         -- finish merge
         LSM.supply lsm 16
+
+-- | Covers the case where a run ends up too small for a level, so it gets
+-- merged again with the next incoming runs.
+-- That merge gets completed by supplying credits.
+test_merge_again_with_incoming :: IO ()
+test_merge_again_with_incoming =
+    runWithTracer $ \tracer -> do
+      stToIO $ do
+        lsm <- LSM.new
+        let ins k = LSM.insert tracer lsm k 0
+        -- get something to 3rd level (so 2nd level is not levelling)
+        -- (needs 5 runs to go to level 2 so the resulting run becomes too big)
+        traverse_ ins [101..100+(5*16)]
+        -- get a very small run (4 elements) to 2nd level
+        replicateM_ 4 $
+          traverse_ ins [201..200+4]
+        -- get another run to 2nd level, which the small run can be merged with
+        traverse_ ins [301..300+16]
+        -- complete the merge
+        LSM.supply lsm 32
+
+-- | Covers the case where a run ends up too small for a level, so it gets
+-- merged again with the next incoming runs.
+-- That merge gets completed and becomes part of another merge.
+test_merge_again_with_incoming' :: IO ()
+test_merge_again_with_incoming' =
+    runWithTracer $ \tracer -> do
+      stToIO $ do
+        lsm <- LSM.new
+        let ins k = LSM.insert tracer lsm k 0
+        -- get something to 3rd level (so 2nd level is not levelling)
+        -- (needs 5 runs to go to level 2 so the resulting run becomes too big)
+        traverse_ ins [101..100+(5*16)]
+        -- get a very small run (4 elements) to 2nd level
+        replicateM_ 4 $
+          traverse_ ins [201..200+4]
+        -- get another run to 2nd level, which the small run can be merged with
+        traverse_ ins [301..300+16]
+        -- get 3 more to 2nd level, so the merge above is expected to complete
+        -- (actually more, as runs only move once a fifth run arrives...)
+        traverse_ ins [401..400+(6*16)]
+
 
 -- | Provides a tracer and will add the log of traced events to the reported
 -- failure.
