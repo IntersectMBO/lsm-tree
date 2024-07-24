@@ -1,12 +1,4 @@
 -- | Micro-benchmarks for the @lsm-tree@ library.
---
--- === TODO
---
--- This is temporary module header documentation. The module will be
--- fleshed out more as we implement bits of it.
---
--- Related work packages: 5, 6
---
 module Main (main) where
 
 import qualified Bench.Database.LSMTree.Internal.BloomFilter
@@ -14,6 +6,7 @@ import qualified Bench.Database.LSMTree.Internal.IndexCompact
 import qualified Bench.Database.LSMTree.Internal.Lookup
 import qualified Bench.Database.LSMTree.Internal.Merge
 import qualified Bench.Database.LSMTree.Internal.RawPage
+import qualified Bench.Database.LSMTree.Internal.Serialise
 import qualified Bench.Database.LSMTree.Internal.WriteBuffer
 import           Criterion.Main (defaultMain)
 
@@ -24,5 +17,6 @@ main = defaultMain [
     , Bench.Database.LSMTree.Internal.Lookup.benchmarks
     , Bench.Database.LSMTree.Internal.Merge.benchmarks
     , Bench.Database.LSMTree.Internal.RawPage.benchmarks
+    , Bench.Database.LSMTree.Internal.Serialise.benchmarks
     , Bench.Database.LSMTree.Internal.WriteBuffer.benchmarks
     ]
