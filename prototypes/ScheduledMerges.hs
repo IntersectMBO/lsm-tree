@@ -192,7 +192,9 @@ invariant = go 1
         -- too large and is promoted, in that case initially there's no merge,
         -- but it is still represented as a 'MergingRun', using 'SingleRun'.
         MergePolicyLevelling -> assertST $ null rs
-        MergePolicyTiering   -> assertST $ all (\r -> tieringRunSizeToLevel r == ln) rs
+        -- Runs in tiering levels usually fit that size, but they can be one
+        -- larger, if a run has been held back (creating a 5-way merge).
+        MergePolicyTiering   -> assertST $ all (\r -> tieringRunSizeToLevel r `elem` [ln, ln+1]) rs
 
     -- Incoming runs being merged also need to be of the right size, but the
     -- conditions are more complicated.
@@ -214,13 +216,14 @@ invariant = go 1
               assertST $ levellingRunSizeToLevel r <= ln+1
 
             -- An ongoing merge for levelling should have 4 incoming runs of
-            -- the right size for the level below, and 1 run from this level,
+            -- the right size for the level below (or slightly larger due to
+            -- holding back underfull runs), and 1 run from this level,
             -- but the run from this level can be of almost any size for the
             -- same reasons as above. Although if this is the first merge for
             -- a new level, it'll have only 4 runs.
             (_, OngoingMerge _ rs _) -> do
               assertST $ length rs == 4 || length rs == 5
-              assertST $ all (\r -> tieringRunSizeToLevel r == ln-1) (take 4 rs)
+              assertST $ all (\r -> tieringRunSizeToLevel r `elem` [ln-1, ln]) (take 4 rs)
               assertST $ all (\r -> levellingRunSizeToLevel r <= ln+1) (drop 4 rs)
 
         MergePolicyTiering ->
@@ -240,9 +243,10 @@ invariant = go 1
 
             -- A completed mid level run is usually of the size for the
             -- level it is entering, but can also be one smaller (in which case
-            -- it'll be held back and merged again).
+            -- it'll be held back and merged again) or one larger (because it
+            -- includes a run that has been held back before).
             (_, CompletedMerge r, MergeMidLevel) ->
-              assertST $ tieringRunSizeToLevel r `elem` [ln, ln+1]
+              assertST $ tieringRunSizeToLevel r `elem` [ln-1, ln, ln+1]
 
             -- An ongoing merge for tiering should have 4 incoming runs of
             -- the right size for the level below, and at most 1 run held back
