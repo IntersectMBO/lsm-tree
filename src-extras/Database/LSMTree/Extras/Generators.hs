@@ -8,9 +8,6 @@ module Database.LSMTree.Extras.Generators (
   , shrinkTypedWriteBuffer
     -- * WithSerialised
   , WithSerialised (..)
-    -- * Range-finder precision
-  , RFPrecision (..)
-  , rfprecInvariant
     -- * A (logical\/true) page
     -- ** A true page
   , TruePageSummary (..)
@@ -59,8 +56,7 @@ import           Database.LSMTree.Extras
 import           Database.LSMTree.Extras.Orphans ()
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..))
-import           Database.LSMTree.Internal.IndexCompact (PageNo (..),
-                     rangeFinderPrecisionBounds, suggestRangeFinderPrecision)
+import           Database.LSMTree.Internal.IndexCompact (PageNo (..))
 import           Database.LSMTree.Internal.IndexCompactAcc (Append (..))
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.RawBytes as RB
@@ -250,24 +246,6 @@ instance SerialiseKey k => SerialiseKey (WithSerialised k) where
   deserialiseKey bytes = TestKey (S.Class.deserialiseKey bytes) (SerialisedKey bytes)
 
 {-------------------------------------------------------------------------------
-  Range-finder precision
--------------------------------------------------------------------------------}
-
-newtype RFPrecision = RFPrecision Int
-  deriving stock (Show)
-  deriving newtype (Num, NFData)
-
-instance Arbitrary RFPrecision where
-  arbitrary = RFPrecision <$> QC.chooseInt (rfprecLB, rfprecUB)
-    where (rfprecLB, rfprecUB) = rangeFinderPrecisionBounds
-  shrink (RFPrecision x) =
-      [RFPrecision x' | x' <- shrink x , rfprecInvariant (RFPrecision x')]
-
-rfprecInvariant :: RFPrecision -> Bool
-rfprecInvariant (RFPrecision x) = x >= rfprecLB && x <= rfprecUB
-  where (rfprecLB, rfprecUB) = rangeFinderPrecisionBounds
-
-{-------------------------------------------------------------------------------
   Other number newtypes
 -------------------------------------------------------------------------------}
 
@@ -331,12 +309,8 @@ shrinkLogicalPageSummary = \case
 -- | Sequences of (logical\/true) pages
 --
 -- INVARIANT: The sequence consists of multiple pages in sorted order (keys are
--- sorted within a page and across pages). Pages are partitioned, meaning all
--- keys inside a page have the same range-finder bits.
-data Pages fp k = Pages {
-    getRangeFinderPrecision :: RFPrecision
-  , getPages                :: [fp k]
-  }
+-- sorted within a page and across pages).
+newtype Pages fp k = Pages { getPages :: [fp k] }
   deriving stock (Show, Generic, Functor)
   deriving anyclass NFData
 
@@ -358,7 +332,7 @@ instance TrueNumberOfPages TruePageSummary where
 type TruePageSummaries    k = Pages TruePageSummary k
 
 flattenLogicalPageSummaries :: LogicalPageSummaries k -> TruePageSummaries k
-flattenLogicalPageSummaries (Pages f ps) = Pages f (concatMap flattenLogicalPageSummary ps)
+flattenLogicalPageSummaries (Pages ps) = Pages (concatMap flattenLogicalPageSummary ps)
 
 {-------------------------------------------------------------------------------
   Sequences of logical pages
@@ -367,7 +341,7 @@ flattenLogicalPageSummaries (Pages f ps) = Pages f (concatMap flattenLogicalPage
 type LogicalPageSummaries k = Pages LogicalPageSummary k
 
 toAppends :: SerialiseKey k => LogicalPageSummaries k -> [Append]
-toAppends (Pages _ ps) = fmap (toAppend . fmap serialiseKey) ps
+toAppends (Pages ps) = fmap (toAppend . fmap serialiseKey) ps
 
 --
 -- Labelling
@@ -375,10 +349,7 @@ toAppends (Pages _ ps) = fmap (toAppend . fmap serialiseKey) ps
 
 labelPages :: LogicalPageSummaries k -> (Property -> Property)
 labelPages ps =
-      QC.tabulate "RFPrecision: optimal" [show suggestedRfprec]
-    . QC.tabulate "RFPrecision: actual" [show actualRfprec]
-    . QC.tabulate "RFPrecision: |optimal-actual|" [show dist]
-    . QC.tabulate "# True pages" [showPowersOf10 nTruePages]
+      QC.tabulate "# True pages" [showPowersOf10 nTruePages]
     . QC.tabulate "# Logical pages" [showPowersOf10 nLogicalPages]
     . QC.tabulate "# OnePageOneKey logical pages" [showPowersOf10 n1]
     . QC.tabulate "# OnePageManyKeys logical pages" [showPowersOf10 n2]
@@ -386,9 +357,6 @@ labelPages ps =
   where
     nLogicalPages = length $ getPages ps
     nTruePages = trueNumberOfPages ps
-    actualRfprec = getRangeFinderPrecision ps
-    suggestedRfprec = RFPrecision $ suggestRangeFinderPrecision (trueNumberOfPages ps)
-    dist = abs (suggestedRfprec - actualRfprec)
 
     (n1,n2,n3) = counts (getPages ps)
 
@@ -404,42 +372,41 @@ labelPages ps =
 -- Generation and shrinking
 --
 
-instance (Arbitrary k, Ord k, SerialiseKey k)
+instance (Arbitrary k, Ord k)
       => Arbitrary (LogicalPageSummaries k) where
-  arbitrary = genPages 0.03 (QC.choose (0, 16))
+  arbitrary = genPages 0.03 (QC.choose (0, 16)) 0.01
   shrink = shrinkPages
 
 shrinkPages ::
-     (Arbitrary k, Ord k, SerialiseKey k)
+     (Arbitrary k, Ord k)
   => LogicalPageSummaries k
   -> [LogicalPageSummaries k]
-shrinkPages (Pages rfprec ps) = [
-      Pages rfprec ps'
-    | ps' <- QC.shrinkList shrinkLogicalPageSummary ps, pagesInvariant (Pages rfprec ps')
-    ] <> [
-      Pages rfprec' ps
-    | rfprec' <- shrink rfprec, pagesInvariant (Pages rfprec' ps)
+shrinkPages (Pages ps) = [
+      Pages ps'
+    | ps' <- QC.shrinkList shrinkLogicalPageSummary ps, pagesInvariant (Pages ps')
     ]
 
 genPages ::
-     (Arbitrary k, Ord k, SerialiseKey k)
+     (Arbitrary k, Ord k)
   => Double -- ^ Probability of a value being larger-than-page
   -> Gen Word32 -- ^ Number of overflow pages for a larger-than-page value
+  -> Double -- ^ Probability of generating a page with only one key and value,
+            --   which does /not/ span multiple pages.
   -> Gen (LogicalPageSummaries k)
-genPages p genN = do
-    rfprec <- arbitrary
+genPages p genN p' = do
     ks <- arbitrary
-    mkPages p genN rfprec ks
+    mkPages p genN p' ks
 
 mkPages ::
-     forall k. (Ord k, SerialiseKey k)
+     forall k. Ord k
   => Double -- ^ Probability of a value being larger-than-page
   -> Gen Word32 -- ^ Number of overflow pages for a larger-than-page value
-  -> RFPrecision
+  -> Double -- ^ Probability of generating a page with only one key and value,
+            --   which does /not/ span multiple pages.
   -> [k]
   -> Gen (LogicalPageSummaries k)
-mkPages p genN rfprec@(RFPrecision n) =
-    fmap (Pages rfprec) . go . nubOrd . sort
+mkPages p genN p' =
+    fmap Pages . go . nubOrd . sort
   where
     go :: [k] -> Gen [LogicalPageSummary k]
     go []          = pure []
@@ -450,27 +417,23 @@ mkPages p genN rfprec@(RFPrecision n) =
       -- the min and max key are allowed to be the same
     go  (k1:k2:ks) = do
       b <- largerThanPage
+      b' <- onePageOneKey
       if b then (:) <$> (MultiPageOneKey k1 <$> genN) <*> go (k2 : ks)
-           else if keyTopBits16 n (serialiseKey k1)
-                == keyTopBits16 n (serialiseKey k2)
-                   then (OnePageManyKeys k1 k2 :) <$> go ks
-                   else (OnePageOneKey   k1 :)    <$> go (k2 : ks)
+           else if b' then (OnePageOneKey   k1 :)    <$> go (k2 : ks)
+                      else (OnePageManyKeys k1 k2 :) <$> go ks
 
     largerThanPage :: Gen Bool
     largerThanPage = genDouble >>= \x -> pure (x < p)
 
-pagesInvariant :: (Ord k, SerialiseKey k) => LogicalPageSummaries k -> Bool
-pagesInvariant (Pages (RFPrecision rfprec) ps0) =
+    onePageOneKey :: Gen Bool
+    onePageOneKey = genDouble >>= \x -> pure (x < p')
+
+pagesInvariant :: Ord k => LogicalPageSummaries k -> Bool
+pagesInvariant (Pages ps0) =
        sort ks   == ks
     && nubOrd ks == ks
-    && all partitioned ps0
   where
     ks = flatten ps0
-    partitioned = \case
-      OnePageOneKey _       -> True
-      OnePageManyKeys k1 k2 -> keyTopBits16 rfprec (serialiseKey k1)
-                               == keyTopBits16 rfprec (serialiseKey k2)
-      MultiPageOneKey _ _   -> True
 
     flatten :: Eq k => [LogicalPageSummary k] -> [k]
     flatten []            = []

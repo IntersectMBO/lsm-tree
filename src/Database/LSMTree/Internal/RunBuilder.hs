@@ -75,7 +75,7 @@ new ::
                  -- in the resulting run
   -> IO (RunBuilder (FS.Handle h))
 new fs runBuilderFsPaths numEntries estimatedNumPages = do
-    runBuilderAcc <- ST.stToIO $ RunAcc.new numEntries estimatedNumPages Nothing
+    runBuilderAcc <- ST.stToIO $ RunAcc.new numEntries estimatedNumPages
     runBuilderBlobOffset <- newIORef 0
 
     runBuilderHandles <- traverse (makeHandle fs) (pathsForRunFiles runBuilderFsPaths)

@@ -36,8 +36,6 @@ tests = testGroup "Test.Database.LSMTree.Generators" [
         prop_arbitraryAndShrinkPreserveInvariant pageContentFitsInvariant
     , testGroup "PageContentOrdered" $
         prop_arbitraryAndShrinkPreserveInvariant pageContentOrderedInvariant
-    , testGroup "Range-finder bit-precision" $
-        prop_arbitraryAndShrinkPreserveInvariant rfprecInvariant
     , localOption (QuickCheckMaxSize 20) $ -- takes too long!
       testGroup "LogicalPageSummaries" $
         prop_arbitraryAndShrinkPreserveInvariant (pagesInvariant @Word64)

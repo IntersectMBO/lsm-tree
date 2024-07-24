@@ -399,7 +399,7 @@ mkTestRun dat = (rawPages, b, ic)
 
     -- one-shot run construction
     (pages, b, ic) = runST $ do
-      racc <- Run.new nentries npages Nothing
+      racc <- Run.new nentries npages
       let kops = Map.toList dat
       psopss <- traverse (uncurry (Run.addKeyOp racc)) kops
       (mp, _ , b', ic', _) <- Run.unsafeFinalise racc

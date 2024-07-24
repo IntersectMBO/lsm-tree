@@ -7,9 +7,6 @@ module Database.LSMTree.Internal.IndexCompact (
     IndexCompact (..)
   , PageNo (..)
   , NumPages
-    -- * Invariants and bounds
-  , rangeFinderPrecisionBounds
-  , suggestRangeFinderPrecision
     -- * Queries
   , PageSpan (..)
   , singlePage
@@ -46,7 +43,7 @@ import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromMaybe)
 import           Data.Primitive.ByteArray (ByteArray (..), indexByteArray,
-                     isByteArrayPinned, sizeofByteArray)
+                     sizeofByteArray)
 import           Data.Primitive.Types (sizeOf)
 import qualified Data.Vector.Algorithms.Search as VA
 import qualified Data.Vector.Generic as VG
@@ -56,7 +53,7 @@ import qualified Data.Vector.Unboxed.Base as VU
 import           Data.Word
 import           Database.LSMTree.Internal.BitMath
 import           Database.LSMTree.Internal.ByteString (byteArrayFromTo,
-                     byteArrayToByteString, unsafePinnedByteArrayToByteString)
+                     byteArrayToByteString)
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.Unsliced
@@ -439,71 +436,35 @@ import           Database.LSMTree.Internal.Vector
 -- While the semi-formal description mentions the number of pages \(n\),
 -- we do not store it, as it can be inferred from the length of 'icPrimary'.
 data IndexCompact = IndexCompact {
-    -- | \(RF\): A vector that partitions 'icPrimary' into sub-vectors
-    -- containing elements that all share the same range-finder bits.
-    icRangeFinder          :: !(VU.Vector Word32)
-    -- | \(m\): Determines the size of 'icRangeFinder' as
-    -- @2 ^ 'icRangeFinderPrecision' + 1@.
-  , icRangeFinderPrecision :: !Int
     -- | \(P\): Maps a page @i@ to the 64-bit slice of primary bits of its
     -- minimum key.
-  , icPrimary              :: !(VU.Vector Word64)
+    icPrimary        :: !(VU.Vector Word64)
     -- | \(C\): A clash on page @i@ means that the primary bits of the minimum
     -- key on that page aren't sufficient to decide whether a search for a key
     -- should continue left or right of the page.
-  , icClashes              :: !(VU.Vector Bit)
+  , icClashes        :: !(VU.Vector Bit)
     -- | \(TB\): Maps a full minimum key to the page @i@ that contains it, but
     -- only if there is a clash on page @i@.
-  , icTieBreaker           :: !(Map (Unsliced SerialisedKey) PageNo)
+  , icTieBreaker     :: !(Map (Unsliced SerialisedKey) PageNo)
     -- | \(LTP\): Record of larger-than-page values. Given a span of pages for
     -- the larger-than-page value, the first page will map to 'False', and the
     -- remainder of the pages will be set to 'True'. Regular pages default to
     -- 'False'.
-  , icLargerThanPage       :: !(VU.Vector Bit)
+  , icLargerThanPage :: !(VU.Vector Bit)
   }
   deriving stock (Show, Eq)
 
 instance NFData IndexCompact where
-  rnf ic = rnf a `seq` rnf b `seq` rnf c `seq` rnf d `seq` rnf e `seq` rnf f
-    where IndexCompact a b c d e f = ic
+  rnf ic = rnf a `seq` rnf b `seq` rnf c `seq` rnf d
+    where IndexCompact a b c d = ic
 
 -- | A 0-based number identifying a disk page.
 newtype PageNo = PageNo { unPageNo :: Int }
   deriving stock (Show, Eq, Ord)
   deriving newtype NFData
 
--- TODO: Turn into newtype, maybe also other types, e.g. range finder precision.
+-- TODO: Turn into newtype
 type NumPages = Int
-
-{-------------------------------------------------------------------------------
-  Invariants
--------------------------------------------------------------------------------}
-
--- | Inclusive bounds for range-finder bit-precision.
-rangeFinderPrecisionBounds :: (Int, Int)
-rangeFinderPrecisionBounds = (0, 16)
-
--- | Given the number of expected pages in an index, suggest a range-finder
--- bit-precision.
---
--- https://en.wikipedia.org/wiki/Birthday_problem#Probability_of_a_shared_birthday_(collision)
---
--- >>> suggestRangeFinderPrecision 4_000_000_000
--- 0
---
--- >>> suggestRangeFinderPrecision 5_000_000_000
--- 1
-suggestRangeFinderPrecision :: NumPages -> Int
-suggestRangeFinderPrecision maxPages =
-    -- The calculation (before clamping) gives us the /total/ number of bits we
-    -- expect to use for prefixes
-    clamp $ ceiling @Double $ 2 * logBase 2 (fromIntegral maxPages)
-  where
-    (lb, ub)              = rangeFinderPrecisionBounds
-    -- Clamp ensures that we use only bits above @64@ as range finder bits.
-    clamp x | x < (lb+64) = lb
-            | x > (ub+64) = ub
-            | otherwise   = x - 64
 
 {-------------------------------------------------------------------------------
   Queries
@@ -548,24 +509,16 @@ pageSpanSize pspan =
 -- search key. The code below is annotated with @Pre:@ and @Post:@ comments that
 -- describe the interval at that point.
 search :: SerialisedKey -> IndexCompact -> PageSpan
-search k IndexCompact{..} = -- Pre: @[0, V.length icPrimary)@
-    let !rfbits    = fromIntegral $ keyTopBits16 icRangeFinderPrecision k
-        !lb        = fromIntegral $ icRangeFinder VU.! rfbits
-        -- The first page we don't need to look at (exclusive upper bound) is
-        -- the one from the next range finder entry.
-        -- For the case where we are in the last entry already, we rely on an
-        -- extra entry at the end, mapping to 'V.length icPrimary'.
-        !ub        = fromIntegral $ icRangeFinder VU.! (rfbits + 1)
-        -- Post: @[lb, ub)@
-        !primbits = keySliceBits64 icRangeFinderPrecision k
+search k IndexCompact{..} =
+    let !primbits = keySliceBits64 0 k
     in
-      case unsafeSearchLEBounds primbits icPrimary lb ub of
+      case unsafeSearchLE primbits icPrimary of
         Nothing -> singlePage (PageNo 0)  -- Post: @[lb, lb)@ (empty).
         Just !i ->         -- Post: @[lb, i]@.
           if unBit $ icClashes VU.! i then
             -- Post: @[lb, i]@, now in clash recovery mode.
-            let !i1  = PageNo $ fromMaybe lb $
-                  bitIndexFromToRev (BoundInclusive lb) (BoundInclusive i) (Bit False) icClashes
+            let !i1  = PageNo $ fromMaybe 0 $
+                  bitIndexFromToRev (BoundInclusive 0) (BoundInclusive i) (Bit False) icClashes
                 !i2  = maybe (PageNo 0) snd $ Map.lookupLE (unsafeNoAssertMakeUnslicedKey k) icTieBreaker
                 PageNo !i3 = max i1 i2 -- Post: the intersection of @[i1, i]@ and @[i2, i].
                 !i4 = bitLongestPrefixFromTo (BoundExclusive i3) (BoundInclusive i) (Bit True) icLargerThanPage
@@ -637,29 +590,13 @@ finalLBS :: NumEntries -> IndexCompact -> LBS.ByteString
 finalLBS (NumEntries numEntries) IndexCompact {..} =
     -- use a builder, since it is all relatively small
     BB.toLazyByteString $
-         putVec32 icRangeFinder
-         -- align to 64 bit, if odd number of Word32 written before
-      <> (if odd numRanges
-          then BB.word32Host 0
-          else mempty)
-      <> putBitVec icClashes
+         putBitVec icClashes
       <> putBitVec icLargerThanPage
       <> putTieBreaker icTieBreaker
-      <> BB.word64Host (fromIntegral icRangeFinderPrecision)
       <> BB.word64Host (fromIntegral numPages)
       <> BB.word64Host (fromIntegral numEntries)
   where
     numPages = VU.length icPrimary
-    numRanges = VU.length icRangeFinder
-
---- | 32 bit aligned.
-putVec32 :: VU.Vector Word32 -> BB.Builder
-putVec32 (VU.V_Word32 (VP.Vector off len ba))
-  | isByteArrayPinned ba =
-      BB.byteString $ unsafePinnedByteArrayToByteString (mul4 off) (mul4 len) ba
-  | otherwise =
-      byteArrayFromTo (mul4 off) (mul4 (off + len)) ba
-
 
 -- | Padded to 64 bit.
 --
@@ -718,7 +655,7 @@ fromSBS (SBS ba') = do
     let ba = ByteArray ba'
     let len8 = sizeofByteArray ba
     when (mod8 len8 /= 0) $ Left "Length is not multiple of 64 bit"
-    when (len8 < 32) $ Left "Doesn't contain header and footer"
+    when (len8 < 24) $ Left "Doesn't contain header and footer"
 
     -- check version
     let version = indexByteArray ba 0 :: Word32
@@ -733,44 +670,29 @@ fromSBS (SBS ba') = do
             Left "Size information is too large for Int"
           return (fromIntegral w)
 
-    rfprec <- getPositive (len64 - 3)
     numPages <- getPositive (len64 - 2)
     numEntries <- getPositive (len64 - 1)
-
-    when (rfprec > snd rangeFinderPrecisionBounds) $
-      Left "Invalid range finder precision"
-    let numRanges = 2 ^ rfprec + 1
 
     -- read vectors
     -- offsets in 64 bits
     let off1_64 = 1  -- after version indicator
     (!off2_64, icPrimary) <- getVec64 "Primary array" ba off1_64 numPages
-    (!off3_32, icRangeFinder) <- getVec32 "Range finder" ba (mul2 off2_64) numRanges
     -- offsets in 64 bits
-    let !off3 = ceilDiv2 off3_32
+    let !off3 = off2_64
     (!off4, icClashes) <- getBitVec "Clash bit vector" ba off3 numPages
     (!off5, icLargerThanPage) <- getBitVec "LTP bit vector" ba off4 numPages
     (!off6, icTieBreaker) <- getTieBreaker ba off5
 
-    let bytesUsed = mul8 (off6 + 3)
+    let bytesUsed = mul8 (off6 + 2)
     when (bytesUsed > sizeofByteArray ba) $
       Left "Byte array is too small for components"
     when (bytesUsed < sizeofByteArray ba) $
       Left "Byte array is too large for components"
 
-    let icRangeFinderPrecision = rfprec
     return (NumEntries numEntries, IndexCompact {..})
 
 type Offset32 = Int
 type Offset64 = Int
-
-getVec32 ::
-     String -> ByteArray -> Offset32 -> Int
-  -> Either String (Offset32, VU.Vector Word32)
-getVec32 name ba off32 numEntries =
-    case checkedPrimVec off32 numEntries ba of
-      Nothing  -> Left (name <> " is out of bounds")
-      Just vec -> Right (off32 + numEntries, VU.V_Word32 vec)
 
 getVec64 ::
      String -> ByteArray -> Offset32 -> Int
@@ -850,27 +772,26 @@ checkedBitVec off len ba
  Vector extras
 -------------------------------------------------------------------------------}
 
--- | Find the largest element that is smaller or equal to to the given one
--- within the vector interval @[lb, ub)@, and return its vector index.
+-- | Find the largest vector element that is smaller or equal to to the given
+-- one, and return its vector index.
 --
 -- Note: this function uses 'unsafeThaw', so all considerations for using
--- 'unsafeThaw' apply to using 'unsafeSearchLEBounds' too.
+-- 'unsafeThaw' apply to using 'unsafeSearchLE' too.
 --
--- PRECONDITION: the vector is sorted in ascending order within the interval
--- @[lb, ub)@.
-unsafeSearchLEBounds ::
+-- PRECONDITION: the vector is sorted in ascending order.
+unsafeSearchLE ::
      (VG.Vector v e, Ord e)
-  => e -> v e -> Int -> Int -> Maybe Int -- TODO: return -1?
-unsafeSearchLEBounds e vec lb ub = runST $ do
+  => e -> v e ->  Maybe Int -- TODO: return -1?
+unsafeSearchLE e vec = runST $ do
     -- Vector search algorithms work on mutable vectors only.
     vec' <- VG.unsafeThaw vec
     -- @i@ is the first index where @e@ is strictly smaller than the element at
     -- @i@.
-    i <- VA.gallopingSearchLeftPBounds (> e) vec' lb ub
+    i <- VA.gallopingSearchLeftP (> e) vec'
     -- The last (and therefore largest) element that is lesser-equal @e@ is
     -- @i-1@. However, if @i==lb@, then the interval @[lb, ub)@ doesn't contain
     -- any elements that are lesser-equal @e@.
-    pure $ if i == lb then Nothing else Just (i - 1)
+    pure $ if i == 0 then Nothing else Just (i - 1)
 
 -- | Return the index of the last bit in the vector with the specified value, if
 -- any.

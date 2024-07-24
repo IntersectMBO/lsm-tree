@@ -36,10 +36,8 @@ import           Data.BloomFilter (Bloom, MBloom)
 import qualified Data.BloomFilter as Bloom
 import qualified Data.BloomFilter.Easy as Bloom.Easy
 import qualified Data.BloomFilter.Mutable as MBloom
-import           Data.Maybe (fromMaybe)
 import           Data.Primitive.PrimVar (PrimVar, modifyPrimVar, newPrimVar,
-                     readPrimVar, writePrimVar)
-import           Data.Word (Word16)
+                     readPrimVar)
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..))
 import           Database.LSMTree.Internal.IndexCompact (IndexCompact, NumPages)
@@ -53,7 +51,7 @@ import           Database.LSMTree.Internal.RawOverflowPage
 import           Database.LSMTree.Internal.RawPage (RawPage)
 import qualified Database.LSMTree.Internal.RawPage as RawPage
 import           Database.LSMTree.Internal.Serialise (SerialisedKey,
-                     SerialisedValue, keyTopBits16)
+                     SerialisedValue)
 
 {-------------------------------------------------------------------------------
   Incremental, in-memory run construction
@@ -67,35 +65,24 @@ import           Database.LSMTree.Internal.Serialise (SerialisedKey,
 -- by using 'addKeyOp' and co, and complete run construction using
 -- 'unsafeFinalise'.
 data RunAcc s = RunAcc {
-      mbloom               :: !(MBloom s SerialisedKey)
-    , mindex               :: !(IndexCompactAcc s)
-    , mpageacc             :: !(PageAcc s)
-    , entryCount           :: !(PrimVar s Int)
-    , rangeFinderCurVal    :: !(PrimVar s Word16)
-    , rangeFinderPrecision :: !RangeFinderPrecision
+      mbloom     :: !(MBloom s SerialisedKey)
+    , mindex     :: !(IndexCompactAcc s)
+    , mpageacc   :: !(PageAcc s)
+    , entryCount :: !(PrimVar s Int)
     }
 
--- TODO: make this a newtype and enforce >=0 && <= 16.
-type RangeFinderPrecision = Int
-
--- | @'new' npages@ starts an incremental run construction.
+-- | @'new' nentries npages@ starts an incremental run construction.
 --
 -- @nentries@ and @npages@ should be an upper bound on the expected number of
 -- entries and pages in the output run.
 new :: NumEntries
     -> NumPages
-    -> Maybe RangeFinderPrecision -- ^ For testing: override the default RFP
-                                  -- which is based on the 'NumPages'.
     -> ST s (RunAcc s)
-new (NumEntries nentries) npages rangeFinderPrecisionOverride = do
+new (NumEntries nentries) _npages = do
     mbloom <- Bloom.Easy.easyNew 0.02 nentries -- TODO(optimise): tune bloom filter
-    let rangeFinderPrecisionDefault = Index.suggestRangeFinderPrecision npages
-        rangeFinderPrecision        = fromMaybe rangeFinderPrecisionDefault
-                                                rangeFinderPrecisionOverride
-    mindex <- Index.new rangeFinderPrecision 1024 -- TODO(optimise): tune chunk size
+    mindex <- Index.new 1024 -- TODO(optimise): tune chunk size
     mpageacc <- PageAcc.newPageAcc
     entryCount <- newPrimVar 0
-    rangeFinderCurVal <- newPrimVar 0
     pure RunAcc{..}
 
 -- | Finalise an incremental run construction. Do /not/ use a 'RunAcc' after
@@ -176,23 +163,10 @@ addSmallKeyOp racc@RunAcc{..} k e =
     modifyPrimVar entryCount (+1)
     MBloom.insert mbloom k
 
-    -- We have to force a page boundary when the range finder bits change.
-    -- This is a constraint from the compact index. To do this we remember the
-    -- range finder bits of the previously added key and compare them to the
-    -- range finder bits of the current key.
-    rfbits <- readPrimVar rangeFinderCurVal             -- previous
-    let !rfbits' = keyTopBits16 rangeFinderPrecision k  -- current
-
     pageBoundaryNeeded <-
-      if rfbits' == rfbits
-        -- If the range finder bits didn't change, try adding the key/op to
-        -- the page accumulator to see if it fits. If it does not fit, a page
-        -- boundary is needed.
-        then not <$> PageAcc.pageAccAddElem mpageacc k e
-
-        -- If the rfbits did change we do need a page boundary.
-        else writePrimVar rangeFinderCurVal rfbits'
-          >> return True
+        -- Try adding the key/op to the page accumulator to see if it fits. If
+        -- it does not fit, a page boundary is needed.
+        not <$> PageAcc.pageAccAddElem mpageacc k e
 
     if pageBoundaryNeeded
       then do

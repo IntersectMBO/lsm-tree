@@ -37,12 +37,8 @@ tests = testGroup "Database.LSMTree.Internal.RunAcc" [
         ]
     , testGroup "PageAcc" [
           largerTestCases $
-          --TODO: partitioning tests need to move to RunAcc.
-          testProperty "prop_paddedToDiskPageSize with trivially partitioned pages" $
-            prop_paddedToDiskPageSize 0
-        , largerTestCases $
-          testProperty "prop_paddedToDiskPageSize with partitioned pages" $
-            prop_paddedToDiskPageSize 8
+          testProperty "prop_paddedToDiskPageSize" $
+            prop_paddedToDiskPageSize
         , largerTestCases $
           testProperty "prop_runAccMatchesPrototype" prop_runAccMatchesPrototype
         ]
@@ -55,11 +51,11 @@ tests = testGroup "Database.LSMTree.Internal.RunAcc" [
 
 test_singleKeyRun :: Assertion
 test_singleKeyRun =  do
-    let !k = SerialisedKey' (VP.fromList [37, 37, 37, 37, 37, 37, 37, 37, 37, 37])
+    let !k = SerialisedKey' (VP.fromList [37, 37, 37, 37, 37, 37, 37, 37])
         !e = InsertWithBlob (SerialisedValue' (VP.fromList [48, 19])) (BlobSpan 55 77)
 
     (addRes, (mp, mc, b, ic, _numEntries)) <- stToIO $ do
-      racc <- new (NumEntries 1) 1 Nothing
+      racc <- new (NumEntries 1) 1
       addRes <- addKeyOp racc k e
       (addRes,) <$> unsafeFinalise racc
 
@@ -73,11 +69,8 @@ test_singleKeyRun =  do
   PageAcc
 -------------------------------------------------------------------------------}
 
---TODO: this test no longer makes sense  on the PageAcc when used with
--- non-default RFP values, because PageAcc doesn't use the RangeFinderPrecision,
--- only RunAcc does. This aspect of the test should be ported to a RunAcc test.
-prop_paddedToDiskPageSize :: Int -> PageLogical' -> Property
-prop_paddedToDiskPageSize _rfp page =
+prop_paddedToDiskPageSize :: PageLogical' -> Property
+prop_paddedToDiskPageSize page =
     counterexample "expected number of output bytes to be of disk page size" $
     tabulate "page size in bytes" [show $ BS.length bytes] $
     BS.length bytes `rem` 4096 === 0

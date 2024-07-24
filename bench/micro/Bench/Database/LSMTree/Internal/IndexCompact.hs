@@ -32,10 +32,10 @@ import           Test.QuickCheck (generate)
 
 benchmarks :: Benchmark
 benchmarks = bgroup "Bench.Database.LSMTree.Internal.IndexCompact" [
-      env (searchEnv 0 10000 1000) $ \ ~(ic, ks) ->
+      env (searchEnv 10000 1000) $ \ ~(ic, ks) ->
         bench "searches-10-1k" $ whnf (searches ic) ks
     , bgroup "construction" [
-          env (constructionEnv 0 1000) $ \ pages ->
+          env (constructionEnv 1000) $ \ pages ->
             bench "construction-1k-100" $ whnf (constructIndexCompact 100) pages
         , env (VUM.replicate 3000 (7 :: Word32)) $ \ mv ->
             bench "unsafeWriteRange-1k" $
@@ -49,12 +49,11 @@ benchmarks = bgroup "Bench.Database.LSMTree.Internal.IndexCompact" [
 
 -- | Input environment for benchmarking 'searches'.
 searchEnv ::
-     RFPrecision -- ^ Range-finder bit-precision
-  -> Int         -- ^ Number of pages
+     Int         -- ^ Number of pages
   -> Int         -- ^ Number of searches
   -> IO (IndexCompact, [SerialisedKey])
-searchEnv rfprec npages nsearches = do
-    ic <- constructIndexCompact 100 <$> constructionEnv rfprec npages
+searchEnv npages nsearches = do
+    ic <- constructIndexCompact 100 <$> constructionEnv npages
     let stdgen = mkStdGen 17
     let ks = serialiseKey <$> uniformWithReplacement @UTxOKey stdgen nsearches
     pure (ic, ks)
@@ -68,22 +67,21 @@ searches ic ks = foldl' (\acc k -> search k ic `deepseq` acc) () ks
 
 -- | Input environment for benchmarking 'constructIndexCompact'.
 constructionEnv ::
-     RFPrecision -- ^ Range-finder bit-precision
-  -> Int         -- ^ Number of pages
-  -> IO (RFPrecision, [Append])
-constructionEnv rfprec n = do
+     Int         -- ^ Number of pages
+  -> IO [Append]
+constructionEnv n = do
     let stdgen = mkStdGen 17
     let ks = uniformWithoutReplacement @UTxOKey stdgen (2 * n)
-    ps <- generate (mkPages 0 (error "unused in constructionEnv") rfprec ks)
-    pure (rfprec, toAppends ps)
+    ps <- generate (mkPages 0 (error "unused in constructionEnv") 0 ks)
+    pure (toAppends ps)
 
 -- | Used for benchmarking the incremental construction of a 'IndexCompact'.
 constructIndexCompact ::
      ChunkSize
-  -> (RFPrecision, [Append]) -- ^ Pages to add in succession
+  -> [Append] -- ^ Pages to add in succession
   -> IndexCompact
-constructIndexCompact (ChunkSize csize) (RFPrecision rfprec, apps) = runST $ do
-    ica <- new rfprec csize
+constructIndexCompact (ChunkSize csize) apps = runST $ do
+    ica <- new csize
     mapM_ (`append` ica) apps
     (_, index) <- unsafeEnd ica
     pure index
@@ -100,17 +98,17 @@ benchNonUniform :: Benchmark
 benchNonUniform =
     bgroup "non-uniformity" [
         -- construction
-        env (pure $ (0, appsWithNearDups (mkStdGen 17) 1000)) $ \as ->
+        env (pure $ (appsWithNearDups (mkStdGen 17) 1000)) $ \as ->
           bench ("construct appsWithNearDups") $ whnf (constructIndexCompact 1000) as
-      , env (pure $ (0, appsWithoutNearDups (mkStdGen 17) 1000)) $ \as ->
+      , env (pure $ (appsWithoutNearDups (mkStdGen 17) 1000)) $ \as ->
           bench ("construct appsWithoutNearDups") $ whnf (constructIndexCompact 1000) as
         -- search
-      , env ( let ic = constructIndexCompact 100 (0, appsWithNearDups (mkStdGen 17) 1000)
+      , env ( let ic = constructIndexCompact 100 (appsWithNearDups (mkStdGen 17) 1000)
                   g  = mkStdGen 42
                   ks = serialiseKey <$> uniformWithReplacement @UTxOKey g 1000
               in  pure (ic, ks) ) $ \ ~(ic, ks) ->
           bench "search appsWithNearDups" $ whnf (searches ic) ks
-      , env ( let ic = constructIndexCompact 100 (0, appsWithoutNearDups (mkStdGen 17) 1000)
+      , env ( let ic = constructIndexCompact 100 (appsWithoutNearDups (mkStdGen 17) 1000)
                   g  = mkStdGen 42
                   ks = serialiseKey <$> uniformWithReplacement @UTxOKey g 1000
               in  pure (ic, ks) ) $ \ ~(ic, ks) ->
@@ -122,7 +120,7 @@ appsWithoutNearDups ::
      StdGen
   -> Int -- ^ Number of pages
   -> [Append]
-appsWithoutNearDups g n = assert (suggestRangeFinderPrecision n == 0) $
+appsWithoutNearDups g n =
     let ks  = uniformWithoutReplacement @UTxOKey g (n * 2)
         ks' = List.sort ks
         -- append a dummy UTXO key because appsWithNearDups does so too.
@@ -136,7 +134,7 @@ appsWithNearDups ::
      StdGen
   -> Int -- ^ Number of pages
   -> [Append]
-appsWithNearDups g n = assert (suggestRangeFinderPrecision n == 0) $
+appsWithNearDups g n =
     let ks  = uniformWithoutReplacement @UTxOKey g n
         ks' = flip concatMap (List.sort ks) $ \k -> [k {txIx = 0}, k {txIx = 1}]
         -- append a dummy UTXO key so that each pair of near-duplicate keys is
