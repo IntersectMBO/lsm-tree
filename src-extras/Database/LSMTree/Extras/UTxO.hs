@@ -15,6 +15,7 @@ module Database.LSMTree.Extras.UTxO (
   ) where
 
 import           Control.DeepSeq
+import           Data.Bits
 import qualified Data.ByteString as BS
 import qualified Data.Primitive as P
 import qualified Data.Vector.Generic as VG
@@ -33,7 +34,7 @@ import           Database.LSMTree.Internal.Serialise.Class as Class
 import           Database.LSMTree.Internal.Vector
 import           GHC.Generics
 import           System.Random
-import           Test.QuickCheck
+import           Test.QuickCheck hiding ((.&.))
 
 {-------------------------------------------------------------------------------
   UTxO keys
@@ -47,17 +48,24 @@ data UTxOKey = UTxOKey {
   deriving stock (Show, Eq, Ord, Generic)
   deriving anyclass (Uniform, NFData)
 
+-- TODO: reduce number of allocations, optimise (by using unsafe functions)
 instance SerialiseKey UTxOKey where
   serialiseKey UTxOKey{txId, txIx} =
     RB.RawBytes $ mkPrimVector 0 34 $ P.runByteArray $ do
       ba <- P.newByteArray 34
-      P.writeByteArray ba 0 $ byteSwapWord256 txId
-      P.writeByteArray ba 16 $ byteSwap16 txIx
+      let !cut = fromIntegral ((txId .&. (fromIntegral (0xffff :: Word16) `unsafeShiftL` 192)) `unsafeShiftR` 192)
+      P.writeByteArray ba 0  $ byteSwapWord256 txId
+      P.writeByteArray ba 3  $ byteSwap16 txIx
+      P.writeByteArray ba 16 $ byteSwap16 cut
       return ba
   deserialiseKey (RawBytes (VP.Vector off len ba)) =
     requireBytesExactly "UTxOKey" 34 len $
-      UTxOKey (byteSwapWord256 $ indexWord8ArrayAsWord256 ba off)
-              (byteSwap16      $ indexWord8ArrayAsWord16  ba (off + 32))
+      let !cut   = byteSwap16      $ indexWord8ArrayAsWord16  ba (off + 32)
+          !txIx  = byteSwap16      $ indexWord8ArrayAsWord16  ba (off + 6)
+          !txId_ = byteSwapWord256 $ indexWord8ArrayAsWord256 ba off
+          !txId  = (txId_ .&. (complement (fromIntegral (0xffff :: Word16) `unsafeShiftL` 192)))
+                      .|. (fromIntegral cut `unsafeShiftL` 192)
+      in UTxOKey{txId, txIx}
 
 instance Arbitrary UTxOKey where
   arbitrary = UTxOKey <$> arbitrary <*> arbitrary

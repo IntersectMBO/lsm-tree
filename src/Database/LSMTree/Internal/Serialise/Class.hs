@@ -37,6 +37,9 @@ import           Numeric (showInt)
 --
 -- [Identity] @'deserialiseKey' ('serialiseKey' x) == x@
 -- [Identity up to slicing] @'deserialiseKey' ('packSlice' prefix ('serialiseKey' x) suffix) == x@
+--
+-- Instances /may/ satisfy the following:
+--
 -- [Ordering-preserving] @x \`'compare'\` y == 'serialiseKey' x \`'compare'\` 'serialiseKey' y@
 --
 -- Raw bytes are lexicographically ordered, so in particular this means that
