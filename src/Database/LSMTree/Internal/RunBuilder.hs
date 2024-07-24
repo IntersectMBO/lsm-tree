@@ -21,7 +21,7 @@ import           Database.LSMTree.Internal.BloomFilter (bloomFilterToLBS)
 import           Database.LSMTree.Internal.CRC32C (CRC32C)
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry
-import           Database.LSMTree.Internal.IndexCompact (IndexCompact, NumPages)
+import           Database.LSMTree.Internal.IndexCompact (IndexCompact)
 import qualified Database.LSMTree.Internal.IndexCompact as Index
 import           Database.LSMTree.Internal.Paths
 import qualified Database.LSMTree.Internal.RawBytes as RB
@@ -71,11 +71,9 @@ new ::
      HasFS IO h
   -> RunFsPaths
   -> NumEntries  -- ^ an upper bound of the number of entries to be added
-  -> NumPages    -- ^ an upper bound (or estimate) of the total number of pages
-                 -- in the resulting run
   -> IO (RunBuilder (FS.Handle h))
-new fs runBuilderFsPaths numEntries estimatedNumPages = do
-    runBuilderAcc <- ST.stToIO $ RunAcc.new numEntries estimatedNumPages
+new fs runBuilderFsPaths numEntries = do
+    runBuilderAcc <- ST.stToIO $ RunAcc.new numEntries
     runBuilderBlobOffset <- newIORef 0
 
     runBuilderHandles <- traverse (makeHandle fs) (pathsForRunFiles runBuilderFsPaths)

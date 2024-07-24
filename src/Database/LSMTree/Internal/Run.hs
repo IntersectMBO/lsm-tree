@@ -200,11 +200,7 @@ fromWriteBuffer :: HasFS IO h
                 -> WriteBuffer
                 -> IO (Run (FS.Handle h))
 fromWriteBuffer fs hbio caching fsPaths buffer = do
-    -- We just estimate the number of pages to be one, as the write buffer is
-    -- expected to be small enough not to benefit from more precise tuning.
-    -- More concretely, no range finder bits will be used anyways unless there
-    -- are at least 2^16 pages.
-    builder <- Builder.new fs fsPaths (WB.numEntries buffer) 1
+    builder <- Builder.new fs fsPaths (WB.numEntries buffer)
     for_ (WB.toList buffer) $ \(k, e) ->
       Builder.addKeyOp fs builder k e
     fromMutable fs hbio caching (RefCount 1) builder

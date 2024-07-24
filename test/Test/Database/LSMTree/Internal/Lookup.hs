@@ -393,13 +393,10 @@ mkTestRun :: Map SerialisedKey (Entry SerialisedValue BlobSpan) -> TestRun
 mkTestRun dat = (rawPages, b, ic)
   where
     nentries = NumEntries (Map.size dat)
-    -- suggested range-finder precision is going to be @0@ anyway unless the
-    -- input data is very big
-    npages   = 0
 
     -- one-shot run construction
     (pages, b, ic) = runST $ do
-      racc <- Run.new nentries npages
+      racc <- Run.new nentries
       let kops = Map.toList dat
       psopss <- traverse (uncurry (Run.addKeyOp racc)) kops
       (mp, _ , b', ic', _) <- Run.unsafeFinalise racc

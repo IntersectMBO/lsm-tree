@@ -55,7 +55,7 @@ test_singleKeyRun =  do
         !e = InsertWithBlob (SerialisedValue' (VP.fromList [48, 19])) (BlobSpan 55 77)
 
     (addRes, (mp, mc, b, ic, _numEntries)) <- stToIO $ do
-      racc <- new (NumEntries 1) 1
+      racc <- new (NumEntries 1)
       addRes <- addKeyOp racc k e
       (addRes,) <$> unsafeFinalise racc
 

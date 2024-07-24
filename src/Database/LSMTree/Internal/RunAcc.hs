@@ -40,7 +40,7 @@ import           Data.Primitive.PrimVar (PrimVar, modifyPrimVar, newPrimVar,
                      readPrimVar)
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..))
-import           Database.LSMTree.Internal.IndexCompact (IndexCompact, NumPages)
+import           Database.LSMTree.Internal.IndexCompact (IndexCompact)
 import qualified Database.LSMTree.Internal.IndexCompact as Index
 import           Database.LSMTree.Internal.IndexCompactAcc (IndexCompactAcc)
 import qualified Database.LSMTree.Internal.IndexCompactAcc as Index
@@ -71,14 +71,12 @@ data RunAcc s = RunAcc {
     , entryCount :: !(PrimVar s Int)
     }
 
--- | @'new' nentries npages@ starts an incremental run construction.
+-- | @'new' nentries@ starts an incremental run construction.
 --
--- @nentries@ and @npages@ should be an upper bound on the expected number of
--- entries and pages in the output run.
-new :: NumEntries
-    -> NumPages
-    -> ST s (RunAcc s)
-new (NumEntries nentries) _npages = do
+-- @nentries@ should be an upper bound on the expected number of entries in the
+-- output run.
+new :: NumEntries -> ST s (RunAcc s)
+new (NumEntries nentries) = do
     mbloom <- Bloom.Easy.easyNew 0.02 nentries -- TODO(optimise): tune bloom filter
     mindex <- Index.new 1024 -- TODO(optimise): tune chunk size
     mpageacc <- PageAcc.newPageAcc
