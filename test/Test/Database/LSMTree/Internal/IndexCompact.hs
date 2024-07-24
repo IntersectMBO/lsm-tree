@@ -392,10 +392,9 @@ data Chunks = Chunks [Chunk] IndexCompact
 
 -- | The concatenated chunks must correspond to the primary array of the index.
 -- Apart from that, the only invariant we make sure to uphold is that the length
--- of the vectors match each other (or 'fcRangeFinderPrecision'), as this is
--- required for correct deserialisation.
--- These invariants do not guarantee that the 'IndexCompact' is valid in other
--- ways (e.g. can successfully be queried).
+-- of the vectors match each other, as this is required for correct
+-- deserialisation. These invariants do not guarantee that the 'IndexCompact' is
+-- valid in other ways (e.g. can successfully be queried).
 chunksInvariant :: Chunks -> Bool
 chunksInvariant (Chunks chunks IndexCompact {..}) =
        VU.length icPrimary == sum (map (VU.length . cPrimary) chunks)

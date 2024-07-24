@@ -178,20 +178,20 @@ import           Database.LSMTree.Internal.Vector
 
   The solution in these cases is to: (i) record that a clash occurred between
   pages @pi@ and @pj@, and (ii) store the full key @maxKey pi@ separately. The
-  record of clashes can be implemented as simply as a single bit per page: with
+  record of clashes can be implemented simply as a single bit per page: with
   a @True@ bit meaning a clash with the previous page. Note therefore that the
   first page's bit is always going to be @False@. We store the full keys using
   a 'Map'. It is ok that this is not a compact representation, because we
   expect to store full keys for only a very small number of pages.
 
   The example below shows a simplified view of the compact index implementation
-  so far. As an example, we store the @32@ most significant bits of each minimum
+  so far. As an example, we store the @64@ most significant bits of each minimum
   key in the @primary@ index, the record of clashes is called @clashes@, and the
   @IntMap@ is named the @tieBreaker@ map. @search3@ can at any point during the
   search, consult @clashes@ and @tieBreaker@ to /break ties/.
 
   > --              (primary         , clashes      , tieBreaker)
-  > type Index3 k = (VU.Vector Word32, VU.Vector Bit, IntMap k  )
+  > type Index3 k = (VU.Vector Word64, VU.Vector Bit, IntMap k  )
   >
   > mkIndex3 :: Run k v -> Index3
   > mkIndex3 = -- elided
@@ -213,69 +213,9 @@ import           Database.LSMTree.Internal.Vector
   complexity alone. However, /in practice/ @Index3@ is an improvement over
   @Index2@ if we can pick an \(c\) that is (i) much smaller than \(k\) and (ii)
   keeps \( \text{E}\left[\text{collision}~n~c\right] \) small (e.g. close to 1).
-  For example, storing the first 48 bits of 2.5 million SHA256 hashes reduces
-  memory size from \(256 n\) bits to \(48 n + n\) bits, because the expected
+  For example, storing the first 64 bits of 100 million SHA256 hashes reduces
+  memory size from \(256 n\) bits to \(64 n + n\) bits, because the expected
   number of collisions is smaller than 1.
-
-  ==== Range-finder
-
-  We extend this scheme by noting that the first few most significant bits of
-  the keys are repeated many times in adjacent keys. For example, out of a
-  sequence of sorted uniformly distributed keys, approximately a quarter will
-  start with bits 00, a quarter with 01, et cetera. In principle these bits
-  could be shared and not repeated.
-
-  This is the same principle exploited by a (bitwise) trie. While a trie uses
-  this idea recursively, we use a simple single level approach, with one top
-  level \"range finder\" array. The idea is that we choose to share the first
-  \(r\) bits in a dense array of size \(2^r\). Each index \(i\) in this array
-  corresponds to a \(r\)-bit prefix of keys with value \(i\). Each entry
-  specifies the interval of the primary index that contains keys that share the
-  bit prefix \(i\). Thus we can take a search key, extract its first \(r\) bits
-  and use this to index into the range finder array, yielding the interval of
-  the primary index that we then need to search.
-
-  This idea can thus reduce the range of the primary index that must be
-  searched, improving search performance, but more interestingly some versions
-  of this idea can extend the number of key prefix bits that can be stored, at
-  the cost of a very modest increase in memory use.
-
-  There are several plausible variation on this idea. The one we use is to
-  ensure that entries in the primary array are perfectly partitioned in their
-  first \(r\) bits, thus ensuring that the intervals mentioned above have no
-  overlap (and no gaps). Ensuring this requires that the keys in each page all
-  share the same \(r\)-bit key prefix. This must be guaranteed during page
-  construction, and could come at the cost of some underfull pages. The
-  advantage of this choice is that the range finder array can be represented
-  with a single integer for each entry. Each one represents the offset in the
-  primary index of the beginning of the span of key (prefixes) that share the
-  same \(r\)-bit prefix. Pairs of entries thus give the interval in the primary
-  index (as an inclusive lower bound and exclusive upper bound). Consequently,
-  the array is of size \(2^r + 1\), with a final entry for the end of the last
-  interval.
-
-  Furthermore, this allows the primary index to omit those first \(r\) bits and
-  instead store the 32 bits of the key after dropping the initial \(r\) bits.
-  This allows representing several more bits, at a relatively low additional
-  memory cost. For example, storing an additional 8 bits costs \(4 \times 2^8 =
-  1024\) bytes. Of course this scales poorly so we do not allow more than 16
-  bits, for a maximum memory cost of 256Kb. This representation therefore can
-  store between 32 and 48 bit key prefixes, which is good for up to around 16M
-  pages. At 40 entries per page this would be over 650M keys. To go any bigger
-  one would need to move to 64bit entries in the primary index, which doubles
-  the memory cost, but that would allow 64--80 bit key prefixes.
-
-  Note that dropping the initial \(r\) bits from the entries in the primary
-  index means that the index overall is not monotone, it is only monotone
-  within each interval. This is ok of course because the binary search must
-  always be performed within these intervals.
-
-  Note also that it is not always better to use more range finder bits, since
-  more bits means smaller sequences that share the same bit prefix. Shorter
-  runs increases the relative wastage due to underfull pages. Using the
-  number of bits needed to get the expected number of collisions to be 1 also
-  happens to give sensible partition sizes -- as well as keeping the tie
-  breaker map small -- so this is what we use in 'suggestRangeFinderPrecision'.
 
   === Representing clashes and larger-than-page entries
 
@@ -336,32 +276,18 @@ import           Database.LSMTree.Internal.Vector
   * \(ps = \{p_i \mid 0 \leq i < n \}\) is a sorted set of pages
   * \(p^{min}_i\) is the full minimum key on a page \(p_i \in ps\).
   * \(p^{max}_i\) is the full maximum key on a page \(p_i \in ps\).
-  * \(r \in \left[0, 16\right] \) is the range-finder bit-precision
-  * \(\texttt{topBits16}(r, k)\) extracts the \(r\) most significant bits from
-    \(k\). We call these \(r\) bits the range-finder bits.
-  * \(\texttt{sliceBits32}(r, k)\) extracts the 32 most significant bits from \(k\)
-    /after/ \(r\). We call these 32 bits the primary bits.
-  * \(c \in \left[32, 48\right] \) is the overall key prefix length represented
-     by the compact index.
-  * Since we always use 32 primary bits then \(c = r+32\).
-  * We choose \(r\) such that \(c = 2~log_2~n\), which keeps the expected
-    number of collisions low.
+  * \(\texttt{topBits64}(k)\) extracts the \(64\) most significant bits from
+    \(k\). We call these \(64\) bits the primary bits.
   * \(i \in \left[0, n \right)\), unless stated otherwise
-  * \(j \in \left[0, 2^r\right)\), unless stated otherwise
-  * Pages must be partitioned: \(\forall p_i \in ps. \texttt{topBits16}(r, p^{min}_i) ~\texttt{==}~ \texttt{topBits16}(r,p^{max}_i) \)
 
   \[
   \begin{align*}
-    RF     :&~ \texttt{Array Word16 PageNo} \\
-    RF[j]   =&~ \min~ \{ i \mid j \leq \texttt{topBits16}(r, p^{min}_i) \}  \\
-    RF[2^r] =&~ n \\
-    \\
-    P    :&~ \texttt{Array PageNo Word32} \\
-    P[i] =&~ \texttt{sliceBits32}(r, p^{min}_i) \\
+    P    :&~ \texttt{Array PageNo Word64} \\
+    P[i] =&~ \texttt{topBits64}(p^{min}_i) \\
     \\
     C    :&~ \texttt{Array PageNo Bit} \\
     C[0] =&~ \texttt{false} \\
-    C[i] =&~ \texttt{sliceBits32}(r, p^{max}_{i-1}) ~\texttt{==}~ \texttt{sliceBits32}(r, p^{min}_i) \\
+    C[i] =&~ \texttt{topBits64}(p^{max}_{i-1}) ~\texttt{==}~ \texttt{topBits64}(p^{min}_i) \\
     \\
     TB            :&~ \texttt{Map Key PageNo} \\
     TB(p^{min}_i) =&~
@@ -383,10 +309,6 @@ import           Database.LSMTree.Internal.Vector
   contains only a single page (or in case of a larger-than-page value, multiple
   pages that have the same minimum key). Assume @k@ is our search key.
 
-  * Use the range-finder bits of our @k@ to index into \(RF\), which should
-    provide us with the bounds for a sub-vector of \(P\) to search. In
-    particular, all pages in this sub-vector have minimum\/maximum keys that
-    start with the same range-finder bits as @k@.
   * Search \(P\) for the vector index @i@ that maps to the largest prim-bits
     value that is smaller or equal to the primary bits of @k@.
   * Check \(C\) if the page corresponding to @i@ is part of a
