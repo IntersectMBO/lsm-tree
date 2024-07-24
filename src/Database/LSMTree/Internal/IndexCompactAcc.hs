@@ -161,8 +161,8 @@ appendSingle (minKey, maxKey) ica@IndexCompactAcc{..} = do
     yield ica
   where
     minPrimbits, maxPrimbits :: Word64
-    minPrimbits = keySliceBits64 0 minKey
-    maxPrimbits = keySliceBits64 0 maxKey
+    minPrimbits = keyTopBits64 minKey
+    maxPrimbits = keyTopBits64 maxKey
 
     -- | Meat of the function
     goAppend ::
@@ -207,7 +207,7 @@ appendMulti (k, n0) ica@IndexCompactAcc{..} =
     maybe id (:) <$> appendSingle (k, k) ica <*> overflows (fromIntegral n0)
   where
     minPrimbits :: Word64
-    minPrimbits = keySliceBits64 0 k
+    minPrimbits = keyTopBits64 k
 
     -- | Fill primary, clash and LTP vectors for a larger-than-page value. Yields
     -- chunks if necessary

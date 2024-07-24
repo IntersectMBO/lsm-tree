@@ -510,7 +510,7 @@ pageSpanSize pspan =
 -- describe the interval at that point.
 search :: SerialisedKey -> IndexCompact -> PageSpan
 search k IndexCompact{..} =
-    let !primbits = keySliceBits64 0 k
+    let !primbits = keyTopBits64 k
     in
       case unsafeSearchLE primbits icPrimary of
         Nothing -> singlePage (PageNo 0)  -- Post: @[lb, lb)@ (empty).
