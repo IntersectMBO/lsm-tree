@@ -132,7 +132,7 @@ constantBits m_max n t l =
 --
 -- >>> let ex' :: Floating a => [(a,a)]; ex' = map (bimap fromInteger fromInteger) ex
 --
--- The false positive rates are constant across all levels:
+-- The false positive rates are not constant across all levels:
 --
 -- >>> let ps = map (uncurry (falsePositiveRate @RDouble)) ex'
 -- >>> ps
