@@ -49,7 +49,7 @@ import           Data.STRef
 import           Control.Exception (assert)
 import           Control.Monad.ST
 import           Control.Tracer (Tracer, contramap, traceWith)
-import           GHC.Stack (HasCallStack)
+import           GHC.Stack (HasCallStack, callStack)
 
 import           Database.LSMTree.Normal (LookupResult (..), Update (..))
 
@@ -165,11 +165,11 @@ mergeLastForLevel _  = MergeMidLevel
 -- | Note that the invariants rely on the fact that levelling is only used on
 -- the last level.
 --
-invariant :: forall s. Levels s -> ST s Bool
+invariant :: forall s. Levels s -> ST s ()
 invariant = go 1
   where
-    go :: Int -> [Level s] -> ST s Bool
-    go !_ []     = return True
+    go :: Int -> [Level s] -> ST s ()
+    go !_ [] = return ()
 
     go !ln (Level mr rs : ls) = do
 
@@ -177,20 +177,19 @@ invariant = go 1
                SingleRun r        -> return (CompletedMerge r)
                MergingRun _ _ ref -> readSTRef ref
 
-      assert (case mr of
-                SingleRun{} -> True
-                MergingRun mp ml _ -> mergePolicyForLevel ln ls == mp
-                                   && mergeLastForLevel ls == ml)
-        assert (length rs <= 3) $
-        assert (expectedRunLengths ln rs ls) $
-        assert (expectedMergingRunLengths ln mr mrs ls) $
-        return ()
+      assertST $ case mr of
+        SingleRun{}        -> True
+        MergingRun mp ml _ -> mergePolicyForLevel ln ls == mp
+                           && mergeLastForLevel ls == ml
+      assertST $ length rs <= 3
+      expectedRunLengths ln rs ls
+      expectedMergingRunLengths ln mr mrs ls
 
       go (ln+1) ls
 
     -- All runs within a level "proper" (as opposed to the incoming runs
     -- being merged) should be of the correct size for the level.
-    expectedRunLengths :: Int -> [Run] -> [Level s] -> Bool
+    expectedRunLengths :: Int -> [Run] -> [Level s] -> ST s ()
     expectedRunLengths ln rs ls =
       case mergePolicyForLevel ln ls of
         -- Levels using levelling have only one run, and that single run is
@@ -198,13 +197,13 @@ invariant = go 1
         -- other "normal" runs. The exception is when a levelling run becomes
         -- too large and is promoted, in that case initially there's no merge,
         -- but it is still represented as a 'MergingRun', using 'SingleRun'.
-        MergePolicyLevelling -> null rs
-        MergePolicyTiering   -> all (\r -> tieringRunSizeToLevel r == ln) rs
+        MergePolicyLevelling -> assertST $ null rs
+        MergePolicyTiering   -> assertST $ all (\r -> tieringRunSizeToLevel r == ln) rs
 
     -- Incoming runs being merged also need to be of the right size, but the
     -- conditions are more complicated.
     expectedMergingRunLengths :: Int -> MergingRun s -> MergingRunState
-                              -> [Level s] -> Bool
+                              -> [Level s] -> ST s ()
     expectedMergingRunLengths ln mr mrs ls =
       case mergePolicyForLevel ln ls of
         MergePolicyLevelling ->
@@ -212,54 +211,57 @@ invariant = go 1
             -- A single incoming run (which thus didn't need merging) must be
             -- of the expected size range already
             (SingleRun r, CompletedMerge{}) ->
-              assert (levellingRunSizeToLevel r == ln) True
+              assertST $ levellingRunSizeToLevel r == ln
 
             -- A completed merge for levelling can be of almost any size at all!
             -- It can be smaller, due to deletions in the last level. But it
             -- can't be bigger than would fit into the next level.
             (_, CompletedMerge r) ->
-              assert (levellingRunSizeToLevel r <= ln+1) True
+              assertST $ levellingRunSizeToLevel r <= ln+1
 
             -- An ongoing merge for levelling should have 4 incoming runs of
             -- the right size for the level below, and 1 run from this level,
             -- but the run from this level can be of almost any size for the
             -- same reasons as above. Although if this is the first merge for
             -- a new level, it'll have only 4 runs.
-            (_, OngoingMerge _ rs _) ->
-                assert (length rs == 4 || length rs == 5) True
-             && assert (all (\r -> tieringRunSizeToLevel r == ln-1) (take 4 rs)) True
-             && assert (all (\r -> levellingRunSizeToLevel r <= ln+1) (drop 4 rs)) True
+            (_, OngoingMerge _ rs _) -> do
+              assertST $ length rs == 4 || length rs == 5
+              assertST $ all (\r -> tieringRunSizeToLevel r == ln-1) (take 4 rs)
+              assertST $ all (\r -> levellingRunSizeToLevel r <= ln+1) (drop 4 rs)
 
         MergePolicyTiering ->
           case (mr, mrs, mergeLastForLevel ls) of
             -- A single incoming run (which thus didn't need merging) must be
             -- of the expected size already
             (SingleRun r, CompletedMerge{}, _) ->
-              tieringRunSizeToLevel r == ln
+              assertST $ tieringRunSizeToLevel r == ln
 
             -- A completed last level run can be of almost any smaller size due
             -- to deletions, but it can't be bigger than the next level down.
             -- Note that tiering on the last level only occurs when there is
             -- a single level only.
-            (_, CompletedMerge r, MergeLastLevel) ->
-                ln == 1
-             && tieringRunSizeToLevel r <= ln+1
+            (_, CompletedMerge r, MergeLastLevel) -> do
+              assertST $ ln == 1
+              assertST $ tieringRunSizeToLevel r <= ln+1
 
             -- A completed mid level run is usually of the size for the
             -- level it is entering, but can also be one smaller (in which case
             -- it'll be held back and merged again).
             (_, CompletedMerge r, MergeMidLevel) ->
-                rln == ln || rln == ln+1
-              where
-                rln = tieringRunSizeToLevel r
+              assertST $ tieringRunSizeToLevel r `elem` [ln, ln+1]
 
             -- An ongoing merge for tiering should have 4 incoming runs of
             -- the right size for the level below, and at most 1 run held back
             -- due to being too small (which would thus also be of the size of
             -- the level below).
-            (_, OngoingMerge _ rs _, _) ->
-                (length rs == 4 || length rs == 5)
-             && all (\r -> tieringRunSizeToLevel r == ln-1) rs
+            (_, OngoingMerge _ rs _, _) -> do
+              assertST $ length rs == 4 || length rs == 5
+              assertST $ all (\r -> tieringRunSizeToLevel r == ln-1) rs
+
+-- 'callStack' just ensures that the 'HasCallStack' constraint is not redundant
+-- when compiling with debug assertions disabled.
+assertST :: HasCallStack => Bool -> ST s ()
+assertST p = assert p $ return (const () callStack)
 
 
 -------------------------------------------------------------------------------
@@ -429,8 +431,7 @@ supply (LSMHandle scr lsmr) credits = do
     LSMContent _ ls <- readSTRef lsmr
     modifySTRef' scr (+1)
     supplyCredits credits ls
-    ok <- invariant ls
-    assert ok $ return ()
+    invariant ls
 
 lookups :: LSM s -> [Key] -> ST s [(Key, LookupResult Value Blob)]
 lookups lsm = mapM (\k -> (k,) <$> lookup lsm k)
@@ -500,8 +501,8 @@ increment :: forall s. Tracer (ST s) Event
           -> Counter -> Run -> Levels s -> ST s (Levels s)
 increment tr sc = \r ls -> do
     ls' <- go 1 [r] ls
-    ok  <- invariant ls'
-    assert ok (return ls')
+    invariant ls'
+    return ls'
   where
     go :: Int -> [Run] -> Levels s -> ST s (Levels s)
     go !ln incoming [] = do
