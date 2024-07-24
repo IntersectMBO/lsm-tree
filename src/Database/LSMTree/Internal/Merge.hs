@@ -51,6 +51,7 @@ type Mappend = SerialisedValue -> SerialisedValue -> SerialisedValue
 -- The list of runs should be sorted from new to old.
 new ::
      HasFS IO h
+  -> HasBlockIO IO h
   -> RunDataCaching
   -> RunBloomFilterAlloc
   -> Level
@@ -58,8 +59,8 @@ new ::
   -> Run.RunFsPaths
   -> [Run (FS.Handle h)]
   -> IO (Maybe (Merge (FS.Handle h)))
-new fs mergeCaching alloc mergeLevel mergeMappend targetPaths runs = do
-    mreaders <- Readers.new fs runs
+new fs hbio mergeCaching alloc mergeLevel mergeMappend targetPaths runs = do
+    mreaders <- Readers.new fs hbio runs
     for mreaders $ \mergeReaders -> do
       -- calculate upper bounds based on input runs
       let numEntries = coerce (sum @[] @Int) (map Run.runNumEntries runs)
@@ -73,11 +74,12 @@ new fs mergeCaching alloc mergeLevel mergeMappend targetPaths runs = do
 -- Once it has been called, do not use the 'Merge' any more!
 close ::
      HasFS IO h
+  -> HasBlockIO IO h
   -> Merge (FS.Handle h)
   -> IO ()
-close fs Merge {..} = do
+close fs hbio Merge {..} = do
     Builder.close fs mergeBuilder
-    Readers.close fs mergeReaders
+    Readers.close fs hbio mergeReaders
 
 data StepResult fhandle = MergeInProgress | MergeComplete !(Run fhandle)
 
@@ -110,7 +112,7 @@ steps fs hbio Merge {..} requestedSteps =
       | n >= requestedSteps =
           return (n, MergeInProgress)
       | otherwise = do
-          (key, entry, hasMore) <- Readers.pop fs mergeReaders
+          (key, entry, hasMore) <- Readers.pop fs hbio mergeReaders
           case hasMore of
             Readers.HasMore ->
               handleEntry (n + 1) key entry
@@ -139,7 +141,7 @@ steps fs hbio Merge {..} requestedSteps =
             writeSerialisedEntry fs mergeLevel mergeBuilder key (Mupdate v)
             go n
           else do
-            (_, nextEntry, hasMore) <- Readers.pop fs mergeReaders
+            (_, nextEntry, hasMore) <- Readers.pop fs hbio mergeReaders
             -- for resolution, we need the full second value to be present
             let resolved = combine mergeMappend
                              (Mupdate v)
@@ -158,7 +160,7 @@ steps fs hbio Merge {..} requestedSteps =
                 completeMerge (n + 1)
 
     dropRemaining !n !key = do
-        (dropped, hasMore) <- Readers.dropWhileKey fs mergeReaders key
+        (dropped, hasMore) <- Readers.dropWhileKey fs hbio mergeReaders key
         case hasMore of
           Readers.HasMore -> go (n + dropped)
           Readers.Drained -> completeMerge (n + dropped)

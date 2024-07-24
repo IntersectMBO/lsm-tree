@@ -502,13 +502,14 @@ runsInLevels levels = flip V.concatMap levels $ \(Level mr rs) ->
       SingleRun r                   -> r `V.cons` rs
       MergingRun (CompletedMerge r) -> r `V.cons` rs
 
-{-# SPECIALISE closeLevels :: HasFS IO h -> Levels (Handle h) -> IO () #-}
+{-# SPECIALISE closeLevels :: HasFS IO h -> HasBlockIO IO h -> Levels (Handle h) -> IO () #-}
 closeLevels ::
      m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
   => HasFS m h
+  -> HasBlockIO m h
   -> Levels (Handle h)
   -> m ()
-closeLevels hfs levels = V.mapM_ (Run.removeReference hfs) (runsInLevels levels)
+closeLevels hfs hbio levels = V.mapM_ (Run.removeReference hfs hbio) (runsInLevels levels)
 
 -- | Flattend cache of the runs that referenced by a table handle.
 --
@@ -606,7 +607,7 @@ close th = RW.withWriteAccess_ (tableHandleState th) $ \case
       -- forget about this table.
       tableSessionUntrackTable thEnv
       RW.withWriteAccess_ (tableContent thEnv) $ \lvls -> do
-        closeLevels (tableHasFS thEnv) (tableLevels lvls)
+        closeLevels (tableHasFS thEnv) (tableHasBlockIO thEnv) (tableLevels lvls)
         pure emptyTableContent
       pure TableHandleClosed
 
@@ -769,7 +770,7 @@ flushWriteBuffer conf@TableConfig{confDiskCachePolicy, confBloomFilterAlloc}
               (bloomFilterAllocForLevel confBloomFilterAlloc (LevelNo 1))
               (Paths.runPath root n)
               (tableWriteBuffer tc))
-            (Run.removeReference hfs)
+            (Run.removeReference hfs hbio)
     levels' <- addRunToLevels conf hfs hbio root uniqC r reg (tableLevels tc)
     pure $! TableContent {
         tableWriteBuffer = WB.empty
@@ -937,8 +938,8 @@ addRunToLevels conf@TableConfig{..} hfs hbio root uniqC r0 reg levels = do
             alloc = bloomFilterAllocForLevel confBloomFilterAlloc ln
         r <- allocateTemp reg
                (mergeRuns conf hfs hbio root uniqC caching alloc mergepolicy mergelast rs)
-               (Run.removeReference hfs)
-        V.mapM_ (freeTemp reg . Run.removeReference hfs) rs
+               (Run.removeReference hfs hbio)
+        V.mapM_ (freeTemp reg . Run.removeReference hfs hbio) rs
         pure $! MergingRun (CompletedMerge r)
 
 data MergePolicyForLevel = LevelTiering | LevelLevelling
@@ -1014,7 +1015,7 @@ mergeRuns ::
 mergeRuns conf hfs hbio root uniqC caching alloc _ mergeLevel runs = do
     n <- incrUniqCounter uniqC
     let runPaths = Paths.runPath root n
-    Merge.new hfs caching alloc mergeLevel resolve runPaths (toList runs) >>= \case
+    Merge.new hfs hbio caching alloc mergeLevel resolve runPaths (toList runs) >>= \case
       Nothing -> error "mergeRuns: no inputs"
       Just merge -> go merge
   where
@@ -1132,11 +1133,11 @@ openLevels hfs hbio diskCachePolicy levels =
           caching = diskCachePolicyForLevel diskCachePolicy ln
       !r <- Managed $ bracketOnError
                         (Run.openFromDisk hfs hbio caching (snd mrPath))
-                        (Run.removeReference hfs)
+                        (Run.removeReference hfs hbio)
       !rs <- flip V.mapMStrict rsPaths $ \run ->
         Managed $ bracketOnError
                     (Run.openFromDisk hfs hbio caching run)
-                    (Run.removeReference hfs)
+                    (Run.removeReference hfs hbio)
       let !mr = if fst mrPath then SingleRun r else MergingRun (CompletedMerge r)
       pure $! Level mr rs
 
@@ -1198,7 +1199,7 @@ duplicate th = withOpenTable th $ \thEnv -> do
           V.forM_ (runsInLevels (tableLevels content)) $ \r -> do
             allocateTemp reg
               (Run.addReference (tableHasFS thEnv) r)
-              (\_ -> Run.removeReference (tableHasFS thEnv) r)
+              (\_ -> Run.removeReference (tableHasFS thEnv) (tableHasBlockIO thEnv) r)
           pure content
         newWith
           (tableSession thEnv)

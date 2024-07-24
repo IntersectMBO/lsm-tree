@@ -203,7 +203,7 @@ lookupsInBatchesCleanup ::
   -> IO ()
 lookupsInBatchesCleanup (tmpDir, _arenaManager, hasFS, hasBlockIO, rs, _) = do
     FS.close hasBlockIO
-    forM_ rs $ Run.removeReference hasFS
+    forM_ rs $ Run.removeReference hasFS hasBlockIO
     removeDirectoryRecursive tmpDir
 
 -- | Generate keys to store and keys to lookup

@@ -165,7 +165,7 @@ testSingleInsert sessionRoot key val mblob =
     length mblob @=? fromIntegral (rawPageNumBlobs page)
 
     -- make sure run gets closed again
-    removeReference fs run
+    removeReference fs hbio run
 
 rawPageFromByteString :: ByteString -> Int -> RawPage
 rawPageFromByteString bs off =
@@ -196,10 +196,10 @@ prop_WriteAndRead ::
   -> IO Property
 prop_WriteAndRead fs hbio (TypedWriteBuffer wb) = do
     run <- flush 42 wb
-    rhs <- readKOps fs run
+    rhs <- readKOps fs hbio run
 
     -- make sure run gets closed again
-    removeReference fs run
+    removeReference fs hbio run
 
     return $ stats $
            counterexample "number of elements"
@@ -243,8 +243,8 @@ prop_WriteAndOpen fs hbio (TypedWriteBuffer wb) = do
       (FS.handlePath (runBlobFile loaded))
 
     -- make sure runs get closed again
-    removeReference fs written
-    removeReference fs loaded
+    removeReference fs hbio written
+    removeReference fs hbio loaded
 
 {-------------------------------------------------------------------------------
   Utilities
@@ -260,13 +260,13 @@ isLargeKOp (key, entry) = size > pageSize
     pageSize = 4096
     size = sizeofKey key + bisum (bimap sizeofValue sizeofBlob entry)
 
-readKOps :: FS.HasFS IO h -> Run (FS.Handle h) -> IO [SerialisedKOp]
-readKOps fs run = do
-    reader <- Reader.new fs run
+readKOps :: FS.HasFS IO h -> FS.HasBlockIO IO h -> Run (FS.Handle h) -> IO [SerialisedKOp]
+readKOps fs hbio run = do
+    reader <- Reader.new fs hbio run
     go reader
   where
     go reader = do
-      Reader.next fs reader >>= \case
+      Reader.next fs hbio reader >>= \case
         Reader.Empty -> return []
         Reader.ReadEntry key e -> do
           e' <- traverse resolveBlob $ Reader.toFullEntry e

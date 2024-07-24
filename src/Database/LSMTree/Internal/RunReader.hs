@@ -35,6 +35,7 @@ import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.Serialise
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
+import           System.FS.BlockIO.API (HasBlockIO)
 
 -- | Allows reading the k\/ops of a run incrementally, using its own read-only
 -- file handle and in-memory cache of the current disk page.
@@ -61,9 +62,10 @@ data RunReader fhandle = RunReader {
 
 new ::
      HasFS IO h
+  -> HasBlockIO IO h
   -> Run.Run (FS.Handle h)
   -> IO (RunReader (FS.Handle h))
-new fs readerRun = do
+new fs _hbio readerRun = do
     readerKOpsHandle <-
       FS.hOpen fs (runKOpsPath (Run.runRunFsPaths readerRun)) FS.ReadMode
     readerCurrentEntryNo <- newPrimVar 0
@@ -77,9 +79,10 @@ new fs readerRun = do
 -- Once it has been called, do not use the reader any more!
 close ::
      HasFS IO h
+  -> HasBlockIO IO h
   -> RunReader (FS.Handle h)
   -> IO ()
-close fs RunReader {..} = do
+close fs _hbio RunReader {..} = do
     FS.hClose fs readerKOpsHandle
 
 -- | The 'SerialisedKey' and 'SerialisedValue' point into the in-memory disk
@@ -140,9 +143,10 @@ appendOverflow len overflowPages (SerialisedValue prefix) =
 -- automatically closed!
 next ::
      HasFS IO h
+  -> HasBlockIO IO h
   -> RunReader (FS.Handle h)
   -> IO (Result (FS.Handle h))
-next fs reader@RunReader {..} = do
+next fs hbio reader@RunReader {..} = do
     entryNo <- readPrimVar readerCurrentEntryNo
     page <- readIORef readerCurrentPage
     go entryNo page
@@ -154,7 +158,7 @@ next fs reader@RunReader {..} = do
             -- if it is past the last one, load a new page from disk, try again
             readDiskPage fs readerKOpsHandle >>= \case
               Nothing -> do
-                close fs reader
+                close fs hbio reader
                 return Empty
               Just newPage -> do
                 writeIORef readerCurrentPage newPage

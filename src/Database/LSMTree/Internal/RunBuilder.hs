@@ -34,6 +34,7 @@ import qualified Database.LSMTree.Internal.RunAcc as RunAcc
 import           Database.LSMTree.Internal.Serialise
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
+import           System.FS.BlockIO.API (HasBlockIO)
 
 -- | The in-memory representation of an LSM run that is under construction.
 -- (The \"M\" stands for mutable.) This is the output sink for two key
@@ -141,9 +142,10 @@ addLargeSerialisedKeyOp fs builder@RunBuilder{runBuilderAcc} key page overflowPa
 -- TODO: Ensure proper cleanup even in presence of exceptions.
 unsafeFinalise ::
      HasFS IO h
+  -> HasBlockIO IO h
   -> RunBuilder (FS.Handle h)
   -> IO (RunFsPaths, Bloom SerialisedKey, IndexCompact, NumEntries)
-unsafeFinalise fs builder@RunBuilder {..} = do
+unsafeFinalise fs _ builder@RunBuilder {..} = do
     -- write final bits
     (mPage, mChunk, runFilter, runIndex, numEntries) <-
       ST.stToIO (RunAcc.unsafeFinalise runBuilderAcc)

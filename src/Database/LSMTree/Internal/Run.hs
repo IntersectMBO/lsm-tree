@@ -134,11 +134,11 @@ addReference _ Run {..} =
 -- After calling this operation, the run must not be used anymore.
 -- If the reference count reaches zero, the run is closed, removing all its
 -- associated files from disk.
-removeReference :: HasFS IO h -> Run (FS.Handle h) -> IO ()
-removeReference fs run@Run {..} = do
+removeReference :: HasFS IO h -> HasBlockIO IO h -> Run (FS.Handle h) -> IO ()
+removeReference fs hbio run@Run {..} = do
     count <- atomicModifyIORef' runRefCount ((\c -> (c, c)) . decRefCount)
     when (count <= RefCount 0) $
-      close fs run
+      close fs hbio run
 
 -- | The 'BlobSpan' to read must come from this run!
 readBlob :: HasFS IO h -> Run (FS.Handle h) -> BlobSpan -> IO SerialisedBlob
@@ -156,8 +156,8 @@ readBlob fs Run {..} BlobSpan {..} = do
 --
 -- TODO: Once snapshots are implemented, files should get removed, but for now
 -- we want to be able to re-open closed runs from disk.
-close :: HasFS IO h -> Run (FS.Handle h) -> IO ()
-close fs Run {..} = do
+close :: HasFS IO h -> HasBlockIO IO h -> Run (FS.Handle h) -> IO ()
+close fs _hbio Run {..} = do
     FS.hClose fs runKOpsFile
       `finally`
         FS.hClose fs runBlobFile
@@ -180,7 +180,7 @@ fromMutable :: HasFS IO h
             -> IO (Run (FS.Handle h))
 fromMutable fs hbio caching refCount builder = do
     (runRunFsPaths, runFilter, runIndex, runNumEntries) <-
-      Builder.unsafeFinalise fs builder
+      Builder.unsafeFinalise fs hbio builder
     runRefCount <- newIORef refCount
     runKOpsFile <- FS.hOpen fs (runKOpsPath runRunFsPaths) FS.ReadMode
     runBlobFile <- FS.hOpen fs (runBlobPath runRunFsPaths) FS.ReadMode

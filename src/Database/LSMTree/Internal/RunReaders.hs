@@ -21,6 +21,7 @@ import           Database.LSMTree.Internal.Serialise
 import qualified KMerge.Heap as Heap
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
+import           System.FS.BlockIO.API (HasBlockIO)
 
 -- | Abstraction for the collection of 'RunReader', yielding elements in order.
 -- More precisely, that means first ordered by their key, then by the input
@@ -78,32 +79,34 @@ instance Ord (ReadCtx fhandle) where
 -- This means that the list of runs should be sorted from new to old.
 new ::
      HasFS IO h
+  -> HasBlockIO IO h
   -> [Run (FS.Handle h)]
   -> IO (Maybe (Readers (FS.Handle h)))
-new fs runs = do
+new fs hbio runs = do
     readers <- zipWithM (fromRun . ReaderNumber) [1..] runs
     (readersHeap, firstReadCtx) <- Heap.newMutableHeap (catMaybes readers)
     for firstReadCtx $ \readCtx -> do
       readersNext <- newIORef readCtx
       return Readers {..}
   where
-    fromRun n run = nextReadCtx fs n =<< Reader.new fs run
+    fromRun n run = nextReadCtx fs hbio n =<< Reader.new fs hbio run
 
 -- | Only call when aborting before all readers have been drained.
 close ::
      HasFS IO h
+  -> HasBlockIO IO h
   -> Readers (FS.Handle h)
   -> IO ()
-close fs Readers {..} = do
+close fs hbio Readers {..} = do
     ReadCtx {readCtxReader} <- readIORef readersNext
-    Reader.close fs readCtxReader
+    Reader.close fs hbio readCtxReader
     closeHeap
   where
     closeHeap =
         Heap.extract readersHeap >>= \case
           Nothing -> return ()
           Just ReadCtx {readCtxReader} -> do
-            Reader.close fs readCtxReader
+            Reader.close fs hbio readCtxReader
             closeHeap
 
 peekKey ::
@@ -118,19 +121,21 @@ data HasMore = HasMore | Drained
 
 pop ::
      HasFS IO h
+  -> HasBlockIO IO h
   -> Readers (FS.Handle h)
   -> IO (SerialisedKey, Reader.Entry (FS.Handle h), HasMore)
-pop fs r@Readers {..} = do
+pop fs hbio r@Readers {..} = do
     ReadCtx {..} <- readIORef readersNext
-    hasMore <- dropOne fs r readCtxNumber readCtxReader
+    hasMore <- dropOne fs hbio r readCtxNumber readCtxReader
     return (readCtxHeadKey, readCtxHeadEntry, hasMore)
 
 dropWhileKey ::
      HasFS IO h
+  -> HasBlockIO IO h
   -> Readers (FS.Handle h)
   -> SerialisedKey
   -> IO (Int, HasMore)  -- ^ How many were dropped?
-dropWhileKey fs Readers {..} key = do
+dropWhileKey fs hbio Readers {..} key = do
     cur <- readIORef readersNext
     if readCtxHeadKey cur == key
       then go 0 cur
@@ -138,7 +143,7 @@ dropWhileKey fs Readers {..} key = do
   where
     -- invariant: @readCtxHeadKey == key@
     go !n ReadCtx {readCtxNumber, readCtxReader} = do
-        mNext <- nextReadCtx fs readCtxNumber readCtxReader >>= \case
+        mNext <- nextReadCtx fs hbio readCtxNumber readCtxReader >>= \case
           Nothing  -> Heap.extract readersHeap
           Just ctx -> Just <$> Heap.replaceRoot readersHeap ctx
         let !n' = n + 1
@@ -157,12 +162,13 @@ dropWhileKey fs Readers {..} key = do
 
 dropOne ::
      HasFS IO h
+  -> HasBlockIO IO h
   -> Readers (FS.Handle h)
   -> ReaderNumber
   -> RunReader (FS.Handle h)
   -> IO HasMore
-dropOne fs Readers {..} number reader = do
-    mNext <- nextReadCtx fs number reader >>= \case
+dropOne fs hbio Readers {..} number reader = do
+    mNext <- nextReadCtx fs hbio number reader >>= \case
       Nothing  -> Heap.extract readersHeap
       Just ctx -> Just <$> Heap.replaceRoot readersHeap ctx
     case mNext of
@@ -174,11 +180,12 @@ dropOne fs Readers {..} number reader = do
 
 nextReadCtx ::
      HasFS IO h
+  -> HasBlockIO IO h
   -> ReaderNumber
   -> RunReader (FS.Handle h)
   -> IO (Maybe (ReadCtx (FS.Handle h)))
-nextReadCtx fs readCtxNumber readCtxReader = do
-    res <- Reader.next fs readCtxReader
+nextReadCtx fs hbio readCtxNumber readCtxReader = do
+    res <- Reader.next fs hbio readCtxReader
     case res of
       Reader.Empty -> do
         return Nothing

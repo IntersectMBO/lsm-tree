@@ -203,7 +203,7 @@ benchMerge conf@Config{name} =
                 -- Make sure to immediately close resulting runs so we don't run
                 -- out of file handles. Ideally this would not be measured, but at
                 -- least it's pretty cheap.
-                Run.removeReference hasFS run
+                Run.removeReference hasFS hasBlockIO run
         ]
   where
     withEnv =
@@ -229,7 +229,7 @@ merge ::
 merge fs hbio Config {..} targetPaths runs = do
     let f = fromMaybe const mergeMappend
     m <- fromMaybe (error "empty inputs, no merge created") <$>
-      Merge.new fs Run.CacheRunData (RunAllocFixed 10) mergeLevel f targetPaths runs
+      Merge.new fs hbio Run.CacheRunData (RunAllocFixed 10) mergeLevel f targetPaths runs
     go m
   where
     go m =
@@ -336,7 +336,7 @@ mergeEnvCleanup ::
      )
   -> IO ()
 mergeEnvCleanup (tmpDir, hasFS, hasBlockIO, runs) = do
-    traverse_ (Run.removeReference hasFS) runs
+    traverse_ (Run.removeReference hasFS hasBlockIO) runs
     removeDirectoryRecursive tmpDir
     FS.close hasBlockIO
 
