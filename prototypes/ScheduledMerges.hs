@@ -42,6 +42,7 @@ module ScheduledMerges (
 import           Prelude hiding (lookup)
 
 import           Data.Bits
+import           Data.Foldable (traverse_)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.STRef
@@ -474,22 +475,31 @@ bufferToRun :: Buffer -> Run
 bufferToRun = id
 
 supplyCredits :: Credit -> Levels s -> ST s ()
-supplyCredits n ls =
-  sequence_
-    [ supplyMergeCredits (n * creditsForMerge mr) mr | Level mr _rs <- ls ]
+supplyCredits n =
+  traverse_ $ \(Level mr _rs) -> do
+    cr <- creditsForMerge mr
+    supplyMergeCredits (ceiling (fromIntegral n * cr)) mr
 
 -- | The general case (and thus worst case) of how many merge credits we need
 -- for a level. This is based on the merging policy at the level.
 --
-creditsForMerge :: MergingRun s -> Credit
-creditsForMerge SingleRun{}                           = 0
+creditsForMerge :: MergingRun s -> ST s Rational
+creditsForMerge SingleRun{} = return 0
 
--- A levelling merge is 5x the cost of a tiering merge.
--- That's because for levelling one of the runs as an input to the merge
--- is the one levelling run which is (up to) 4x bigger than the others put
--- together, so it's 1 + 4.
-creditsForMerge (MergingRun MergePolicyLevelling _ _) = 5
-creditsForMerge (MergingRun MergePolicyTiering   _ _) = 1
+-- A levelling merge has 1 input run and one resident run, which is (up to) 4x
+-- bigger than the others.
+-- It needs to be completed before another run comes in.
+creditsForMerge (MergingRun MergePolicyLevelling _ _) = return $ (1 + 4) / 1
+
+-- A tiering merge has 5 runs at most (once could be held back to merged again)
+-- and must be completed before the level is full (once 4 more runs come in).
+creditsForMerge (MergingRun MergePolicyTiering _ ref) = do
+    readSTRef ref >>= \case
+      CompletedMerge _ -> return 0
+      OngoingMerge _ rs _ -> do
+        let numRuns = length rs
+        assertST $ numRuns `elem` [4, 5]
+        return $ fromIntegral numRuns / 4
 
 type Event = EventAt EventDetail
 data EventAt e = EventAt {
