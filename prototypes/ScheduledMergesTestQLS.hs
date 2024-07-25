@@ -36,7 +36,7 @@ import           Test.Tasty.QuickCheck (testProperty)
 
 tests :: TestTree
 tests = testGroup "ScheduledMerges" [
-      testProperty "ScheduledMerges vs model" prop_LSM
+      testProperty "ScheduledMerges vs model" $ mapSize (*10) prop_LSM  -- still <10s
     , testCase "regression_empty_run" test_regression_empty_run
     , testCase "merge_again_with_incoming" test_merge_again_with_incoming
     , testCase "merge_again_with_incoming'" test_merge_again_with_incoming'
