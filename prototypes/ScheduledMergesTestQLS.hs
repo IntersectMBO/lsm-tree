@@ -209,6 +209,13 @@ instance StateModel (Lockstep Model) where
     ADuplicate :: ModelVar Model (LSM RealWorld)
                -> Action (Lockstep Model) (LSM RealWorld)
 
+    -- | Without this, the prototype only completes tiering merges when the next
+    -- merging run on this level is created, so a level would never contain a
+    -- completed merge.
+    ASupply :: ModelVar Model (LSM RealWorld)
+            -> Int
+            -> Action (Lockstep Model) ()
+
     ADump   :: ModelVar Model (LSM RealWorld)
             -> Action (Lockstep Model) (Map Key Value)
 
@@ -249,6 +256,7 @@ instance InLockstep Model where
   usedVars (ALookup v evk)   = SomeGVar v
                              : case evk of Left vk -> [SomeGVar vk]; _ -> []
   usedVars (ADuplicate v)    = [SomeGVar v]
+  usedVars (ASupply v _)     = [SomeGVar v]
   usedVars (ADump v)         = [SomeGVar v]
 
   modelNextState = runModel
@@ -297,10 +305,13 @@ instance InLockstep Model where
           , not (null kvars)
           ]
        ++ [ (1, fmap Some $
-                  ADump <$> elements vars)
+                  ADuplicate <$> elements vars)
           ]
        ++ [ (1, fmap Some $
-                  ADuplicate <$> elements vars)
+                  ASupply <$> elements vars <*> (getSmall . getPositive <$> arbitrary))
+          ]
+       ++ [ (1, fmap Some $
+                  ADump <$> elements vars)
           ]
 
   shrinkWithVars _findVars _model (AInsert var (Right k) v) =
@@ -325,15 +336,17 @@ instance RunLockstep Model IO where
       (AInsert{},    x) -> OId x
       (ADelete{},    x) -> OId x
       (ALookup{},    x) -> OId x
-      (ADump{},      x) -> OId x
       (ADuplicate{}, _) -> ORef
+      (ASupply{},    x) -> OId x
+      (ADump{},      x) -> OId x
 
   showRealResponse _ ANew         = Nothing
   showRealResponse _ AInsert{}    = Just Dict
   showRealResponse _ ADelete{}    = Just Dict
   showRealResponse _ ALookup{}    = Just Dict
-  showRealResponse _ ADump{}      = Just Dict
   showRealResponse _ ADuplicate{} = Nothing
+  showRealResponse _ ASupply{}    = Nothing
+  showRealResponse _ ADump{}      = Just Dict
 
 deriving stock instance Show (Action (Lockstep Model) a)
 deriving stock instance Show (Observable Model a)
@@ -358,6 +371,7 @@ runActionIO action lookUp =
     ALookup var evk   -> lookupResultValue <$> lookup (lookUpVar var) k
       where k = either lookUpVar id evk
     ADuplicate var    -> duplicate (lookUpVar var)
+    ASupply    var n  -> supply (lookUpVar var) n
     ADump      var    -> logicalValue (lookUpVar var)
   where
     lookUpVar :: ModelVar Model a -> a
@@ -392,6 +406,8 @@ runModel action lookUp m =
 
     ADuplicate var -> (MLSM mlsm', m')
       where (mlsm', m') = modelDuplicate (lookUpLsMVar var) m
+
+    ASupply _ _ -> (MUnit (), m)  -- noop
 
     ADump var -> (MDump mapping, m)
       where (mapping, _) = modelDump (lookUpLsMVar var) m
