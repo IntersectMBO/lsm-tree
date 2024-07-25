@@ -18,7 +18,10 @@ module System.FS.BlockIO.API (
   , ioopBufferOffset
   , ioopByteCount
   , IOResult (..)
+    -- * Advice
   , Advice (..)
+  , hAdviseAll
+  , hDropCacheAll
     -- * Re-exports
   , ByteCount
   , FileOffset
@@ -157,3 +160,12 @@ data Advice =
   | AdviceDontNeed
   | AdviceNoReuse
   deriving stock (Show, Eq)
+
+-- | Apply 'Advice' to all bytes of a file, which is referenced by a 'Handle'.
+hAdviseAll :: HasBlockIO m h -> Handle h -> Advice -> m ()
+hAdviseAll hbio h advice = hAdvise hbio h 0 0 advice -- len=0 implies until the end of file
+
+-- | Drop the full file referenced by a 'Handle' from the OS page cache, if
+-- present.
+hDropCacheAll :: HasBlockIO m h -> Handle h -> m ()
+hDropCacheAll hbio h = hAdviseAll hbio h AdviceDontNeed
