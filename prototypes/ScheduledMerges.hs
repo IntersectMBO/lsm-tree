@@ -203,10 +203,13 @@ invariant = go 1
     expectedMergingRunLengths ln mr mrs ls =
       case mergePolicyForLevel ln ls of
         MergePolicyLevelling ->
+          assert (mergeLastForLevel ls == MergeLastLevel) $
           case (mr, mrs) of
             -- A single incoming run (which thus didn't need merging) must be
             -- of the expected size range already
-            (SingleRun r, CompletedMerge{}) ->
+            (SingleRun r, m) -> do
+              assertST $ case m of CompletedMerge{} -> True
+                                   OngoingMerge{}   -> False
               assertST $ levellingRunSizeToLevel r == ln
 
             -- A completed merge for levelling can be of almost any size at all!
@@ -222,15 +225,20 @@ invariant = go 1
             -- same reasons as above. Although if this is the first merge for
             -- a new level, it'll have only 4 runs.
             (_, OngoingMerge _ rs _) -> do
-              assertST $ length rs == 4 || length rs == 5
-              assertST $ all (\r -> tieringRunSizeToLevel r `elem` [ln-1, ln]) (take 4 rs)
-              assertST $ all (\r -> levellingRunSizeToLevel r <= ln+1) (drop 4 rs)
+              let incoming = take 4 rs
+              let resident = drop 4 rs
+              assertST $ length incoming == 4
+              assertST $ length resident <= 1
+              assertST $ all (\r -> tieringRunSizeToLevel r `elem` [ln-1, ln]) incoming
+              assertST $ all (\r -> levellingRunSizeToLevel r <= ln+1) resident
 
         MergePolicyTiering ->
           case (mr, mrs, mergeLastForLevel ls) of
             -- A single incoming run (which thus didn't need merging) must be
             -- of the expected size already
-            (SingleRun r, CompletedMerge{}, _) ->
+            (SingleRun r, m, _) -> do
+              assertST $ case m of CompletedMerge{} -> True
+                                   OngoingMerge{}   -> False
               assertST $ tieringRunSizeToLevel r == ln
 
             -- A completed last level run can be of almost any smaller size due
@@ -278,7 +286,7 @@ newMerge tr level mergepolicy mergelast rs = do
                    mergeCost     = cost,
                    mergeRunsSize = map Map.size rs
                  }
-    assert (let l = length rs in l >= 2 && l <= 5) $
+    assert (length rs `elem` [4, 5]) $
       MergingRun mergepolicy mergelast <$> newSTRef (OngoingMerge debt rs r)
   where
     cost = sum (map Map.size rs)
