@@ -1,7 +1,3 @@
-{-# LANGUAGE BangPatterns        #-}
-{-# LANGUAGE EmptyCase           #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-
 -- | A prototype of an LSM with explicitly scheduled incremental merges.
 --
 -- The scheduled incremental merges is about ensuring that the merging
@@ -118,6 +114,12 @@ type Debt   = Int
 type Run    = Map Key Op
 type Buffer = Map Key Op
 
+runSize :: Run -> Int
+runSize = Map.size
+
+bufferSize :: Buffer -> Int
+bufferSize = Map.size
+
 type Op     = Update Value Blob
 
 type Key    = Int
@@ -138,18 +140,18 @@ levellingRunSize n = 4^(n+1)
 
 tieringRunSizeToLevel :: Run -> Int
 tieringRunSizeToLevel r
-  | s <= bufferSize = 1  -- level numbers start at 1
+  | s <= maxBufferSize = 1  -- level numbers start at 1
   | otherwise =
     1 + (finiteBitSize s - countLeadingZeros (s-1) - 1) `div` 2
   where
-    s = Map.size r
+    s = runSize r
 
 levellingRunSizeToLevel :: Run -> Int
 levellingRunSizeToLevel r =
     max 1 (tieringRunSizeToLevel r - 1)  -- level numbers start at 1
 
-bufferSize :: Int
-bufferSize = tieringRunSize 1 -- 4
+maxBufferSize :: Int
+maxBufferSize = tieringRunSize 1 -- 4
 
 mergePolicyForLevel :: Int -> [Level s] -> MergePolicy
 mergePolicyForLevel 1 [] = MergePolicyTiering
@@ -274,20 +276,22 @@ newMerge tr level mergepolicy mergelast rs = do
                    mergeLast     = mergelast,
                    mergeDebt     = debt,
                    mergeCost     = cost,
-                   mergeRunsSize = map Map.size rs
+                   mergeRunsSize = map runSize rs
                  }
     assert (let l = length rs in l >= 2 && l <= 5) $
       MergingRun mergepolicy mergelast <$> newSTRef (OngoingMerge debt rs r)
   where
-    cost = sum (map Map.size rs)
+    cost = sum (map runSize rs)
     -- How much we need to discharge before the merge can be guaranteed
-    -- complete.
+    -- complete. More precisely, this is the maximum amount a merge at this
+    -- level could need. This overestimation means that merges will only
+    -- complete at the last possible moment.
     -- Note that for levelling this is includes the single run in the current
     -- level.
-    debt = case mergepolicy of
-             MergePolicyLevelling -> newMergeDebt (4 * tieringRunSize (level-1)
-                                                 +     levellingRunSize level)
-             MergePolicyTiering   -> newMergeDebt (4 * tieringRunSize (level-1))
+    debt = newMergeDebt $ case mergepolicy of
+             MergePolicyLevelling -> 4 * tieringRunSize (level-1)
+                                       + levellingRunSize level
+             MergePolicyTiering   -> 4 * tieringRunSize (level-1)
     -- deliberately lazy:
     r    = case mergelast of
              MergeMidLevel  ->                (mergek rs)
@@ -313,7 +317,7 @@ expectCompletedMerge tr (MergingRun mergepolicy mergelast ref) = do
         traceWith tr MergeCompletedEvent {
             mergePolicy  = mergepolicy,
             mergeLast    = mergelast,
-            mergeSize    = Map.size r
+            mergeSize    = runSize r
           }
         return r
       OngoingMerge d _ _ ->
@@ -413,7 +417,7 @@ update tr (LSMHandle scr lsmr) k op = do
     modifySTRef' scr (+1)
     supplyCredits 1 ls
     let wb' = Map.insert k op wb
-    if Map.size wb' >= bufferSize
+    if bufferSize wb' >= maxBufferSize
       then do
         ls' <- increment tr sc (bufferToRun wb') ls
         writeSTRef lsmr (LSMContent Map.empty ls')
@@ -500,49 +504,50 @@ increment tr sc = \r ls -> do
     assert ok (return ls')
   where
     go :: Int -> [Run] -> Levels s -> ST s (Levels s)
-    go !ln rs [] = do
+    go !ln incoming [] = do
         let mergepolicy = mergePolicyForLevel ln []
         traceWith tr' AddLevelEvent
-        mr <- newMerge tr' ln mergepolicy MergeLastLevel rs
+        mr <- newMerge tr' ln mergepolicy MergeLastLevel incoming
         return (Level mr [] : [])
       where
         tr' = contramap (EventAt sc ln) tr
 
-    go !ln rs' (Level mr rs : ls) = do
+    go !ln incoming (Level mr rs : ls) = do
       r <- expectCompletedMerge tr' mr
+      let resident = r:rs
       case mergePolicyForLevel ln ls of
 
         -- If r is still too small for this level then keep it and merge again
         -- with the incoming runs.
         MergePolicyTiering | tieringRunSizeToLevel r < ln -> do
           let mergelast = mergeLastForLevel ls
-          mr' <- newMerge tr' ln MergePolicyTiering mergelast (rs' ++ [r])
+          mr' <- newMerge tr' ln MergePolicyTiering mergelast (incoming ++ [r])
           return (Level mr' rs : ls)
 
         -- This tiering level is now full. We take the completed merged run
         -- (the previous incoming runs), plus all the other runs on this level
         -- as a bundle and move them down to the level below. We start a merge
         -- for the new incoming runs. This level is otherwise empty.
-        MergePolicyTiering | levelIsFull rs -> do
-          mr' <- newMerge tr' ln MergePolicyTiering MergeMidLevel rs'
-          ls' <- go (ln+1) (r:rs) ls
+        MergePolicyTiering | tieringLevelIsFull ln incoming resident -> do
+          mr' <- newMerge tr' ln MergePolicyTiering MergeMidLevel incoming
+          ls' <- go (ln+1) resident ls
           return (Level mr' [] : ls')
 
         -- This tiering level is not yet full. We move the completed merged run
         -- into the level proper, and start the new merge for the incoming runs.
         MergePolicyTiering -> do
           let mergelast = mergeLastForLevel ls
-          mr' <- newMerge tr' ln MergePolicyTiering mergelast rs'
-          traceWith tr' (AddRunEvent (length (r:rs)))
-          return (Level mr' (r:rs) : ls)
+          mr' <- newMerge tr' ln MergePolicyTiering mergelast incoming
+          traceWith tr' (AddRunEvent (length resident))
+          return (Level mr' resident : ls)
 
         -- The final level is using levelling. If the existing completed merge
         -- run is too large for this level, we promote the run to the next
         -- level and start merging the incoming runs into this (otherwise
         -- empty) level .
-        MergePolicyLevelling | levellingRunSizeToLevel r > ln -> do
+        MergePolicyLevelling | levellingLevelIsFull ln incoming r -> do
           assert (null rs && null ls) $ return ()
-          mr' <- newMerge tr' ln MergePolicyTiering MergeMidLevel rs'
+          mr' <- newMerge tr' ln MergePolicyTiering MergeMidLevel incoming
           ls' <- go (ln+1) [r] []
           return (Level mr' [] : ls')
 
@@ -550,14 +555,20 @@ increment tr sc = \r ls -> do
         MergePolicyLevelling -> do
           assert (null rs && null ls) $ return ()
           mr' <- newMerge tr' ln MergePolicyLevelling MergeLastLevel
-                          (rs' ++ [r])
+                          (incoming ++ [r])
           return (Level mr' [] : [])
 
       where
         tr' = contramap (EventAt sc ln) tr
 
-levelIsFull :: [Run] -> Bool
-levelIsFull rs = length rs + 1 >= 4
+-- | Only based on run count, not their sizes.
+tieringLevelIsFull :: Int -> [Run] -> [Run] -> Bool
+tieringLevelIsFull _ln _incoming resident = length resident >= 4
+
+-- | The level is only considered full once the resident run is /too large/ for
+-- the level.
+levellingLevelIsFull :: Int -> [Run] -> Run -> Bool
+levellingLevelIsFull ln _incoming resident = levellingRunSizeToLevel resident > ln
 
 duplicate :: LSM s -> ST s (LSM s)
 duplicate (LSMHandle _scr lsmr) = do
@@ -619,7 +630,7 @@ representationShape =
       ( fmap (\(mp, ml, mrs) -> (mp, ml, summaryMRS mrs)) mmr
       , map summaryRun rs)
   where
-    summaryRun = Map.size
+    summaryRun = runSize
     summaryMRS (CompletedMerge r)    = Left (summaryRun r)
     summaryMRS (OngoingMerge _ rs _) = Right (map summaryRun rs)
 
