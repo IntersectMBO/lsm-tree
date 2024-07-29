@@ -32,34 +32,17 @@ tests = testGroup "Test.Database.LSMTree.Internal.Serialise" [
         , localOption (QuickCheckMaxRatio 1000) $
           testProperty "Ord antisymmetry" propOrdAntiSymmetry
         ]
-    , testCase "example keyTopBits16" $ do
-        let k = SerialisedKey' (VP.fromList [37, 42, 204, 130])
-            expected :: Word16
-            expected = 37 `shiftL` 8 + 42
-        expected                   @=? keyTopBits16 16 k
-        0                          @=? keyTopBits16 0  k
-        expected `shiftR` (16 - 9) @=? keyTopBits16 9  k
-    , testCase "example keyTopBits16 on sliced byte array" $ do
-        let pvec = VP.fromList [0, 37, 42, 204, 130]
+    , testCase "example keyTopBits64" $ do
+        let k = SerialisedKey' (VP.fromList [0, 0, 0, 0, 37, 42, 204, 130])
+            expected :: Word64
+            expected = 37 `shiftL` 24 + 42 `shiftL` 16 + 204 `shiftL` 8 + 130
+        expected                   @=? keyTopBits64 k
+    , testCase "example keyTopBits64 on sliced byte array" $ do
+        let pvec = VP.fromList [0, 0, 0, 0, 0, 37, 42, 204, 130]
             k = SerialisedKey' (VP.slice 1 (VP.length pvec - 1) pvec)
-            expected :: Word16
-            expected = 37 `shiftL` 8 + 42
-        expected                   @=? keyTopBits16 16 k
-        0                          @=? keyTopBits16 0  k
-        expected `shiftR` (16 - 9) @=? keyTopBits16 9  k
-    , testCase "example keySliceBits64" $ do
-        let k = SerialisedKey' (VP.fromList [0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 0])
-        0x0000_FFFF_FFFF_FFFF @=? keySliceBits64 0 k
-        0xFFFF_FFFF_FFFF_FFFF @=? keySliceBits64 16 k
-        0x7FFF_FFFF_FFFF_FFFF @=? keySliceBits64 15 k
-        0xFFFF_FFFF_FFFF_FFFE @=? keySliceBits64 17 k
-    , testCase "example keySliceBits64 on sliced byte array" $ do
-        let pvec = VP.fromList [0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 0]
-            k = SerialisedKey' (VP.slice 1 (VP.length pvec - 1) pvec)
-        0x0000_FFFF_FFFF_FFFF @=? keySliceBits64 0 k
-        0xFFFF_FFFF_FFFF_FFFF @=? keySliceBits64 16 k
-        0x7FFF_FFFF_FFFF_FFFF @=? keySliceBits64 15 k
-        0xFFFF_FFFF_FFFF_FFFE @=? keySliceBits64 17 k
+            expected :: Word64
+            expected = 37 `shiftL` 24 + 42 `shiftL` 16 + 204 `shiftL` 8 + 130
+        expected                   @=? keyTopBits64 k
     , testCase "example unsafeFromByteString and fromShortByteString" $ do
         let bb = mconcat [BB.word64LE x | x <- [0..100]]
             bs = BS.toStrict . BB.toLazyByteString $ bb

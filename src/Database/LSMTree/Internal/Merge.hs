@@ -61,8 +61,7 @@ new fs mergeCaching mergeLevel mergeMappend targetPaths runs = do
     for mreaders $ \mergeReaders -> do
       -- calculate upper bounds based on input runs
       let numEntries = coerce (sum @[] @Int) (map Run.runNumEntries runs)
-      let numPages = sum (map Run.sizeInPages runs)
-      mergeBuilder <- Builder.new fs targetPaths numEntries numPages
+      mergeBuilder <- Builder.new fs targetPaths numEntries
       return Merge {..}
 
 -- | This function should be called when discarding a 'Merge' before it

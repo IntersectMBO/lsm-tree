@@ -26,8 +26,7 @@ module Database.LSMTree.Internal.RawBytes (
     -- ** Extracting subvectors (slicing)
   , take
   , drop
-  , topBits16
-  , sliceBits64
+  , topBits64
     -- * Construction
     -- | Use 'Semigroup' and 'Monoid' operations
     -- ** Restricting memory usage
@@ -50,7 +49,6 @@ module Database.LSMTree.Internal.RawBytes (
 
 import           Control.DeepSeq (NFData)
 import           Control.Exception (assert)
-import           Data.Bits (Bits (shiftL, shiftR))
 import           Data.BloomFilter.Hash (Hashable (..), hashByteArray)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BB
@@ -141,86 +139,29 @@ take = coerce VP.take
 drop :: Int -> RawBytes -> RawBytes
 drop = coerce VP.drop
 
--- | @'topBits16' n rb@ slices the first @n@ bits from the /top/ of the raw
--- bytes @rb@. Returns the string of bits as a 'Word16'.
+-- | @'topBits64' rb@ slices the first @64@ bits from the /top/ of the raw bytes
+-- @rb@. Returns the string of bits as a 'Word64'.
 --
 -- The /top/ corresponds to the most significant bit (big-endian).
 --
--- PRECONDITION: @n >= 0 && n <= 16. We can slice out at most 16 bits,
--- all bits beyond that are truncated.
---
--- PRECONDITION: The byte-size of the raw bytes should be at least 2 bytes.
+-- PRECONDITION: The byte-size of the raw bytes should be at least 8 bytes.
 --
 -- TODO: optimisation ideas: use unsafe shift/byteswap primops, look at GHC
 -- core, find other opportunities for using primops.
 --
-topBits16 :: Int -> RawBytes -> Word16
-topBits16 n rb@(RawBytes (VP.Vector (I# off#) _size (ByteArray k#))) =
-    assert (size rb >= 2) $ shiftR w16 (16 - n)
-  where
-    w16 = toWord16 (indexWord8ArrayAsWord16# k# off#)
-
-toWord16 :: Word16# -> Word16
-#if WORDS_BIGENDIAN
-toWord16 = W16#
-#else
-toWord16 x# = byteSwap16 (W16# x#)
-#endif
-
--- | @'sliceBits64' off rb@ slices from the raw bytes @rb@ a string of @64@
--- bits, starting at the @0@-based offset @off@. Returns the string of bits as a
--- 'Word64'.
---
--- Offsets are counted in bits from the /top/: offset @0@ corresponds to the
--- most significant bit (big-endian).
---
--- PRECONDITION: The raw bytes should be large enough that we can slice out 8
--- bytes after the bit-offset @off@, since we can only slice out bits that are
--- within the bounds of the byte array.
---
--- TODO: optimisation ideas: use unsafe shift/byteswap primops, look at GHC
--- core, find other opportunities for using primops.
---
-sliceBits64 :: Int -> RawBytes -> Word64
-sliceBits64 off@(I# off1#) rb@(RawBytes (VP.Vector (I# off2#) _size (ByteArray ba#)))
-    | 0# <- r#
-    = assert (off + 64 <= 8 * size rb) $
-      toWord64 (indexWord8ArrayAsWord64# ba# q#)
-    | otherwise
-    = assert (off + 64 <= 8 * size rb) $
-        toWord64 (indexWord8ArrayAsWord64# ba# q#        ) `shiftL` r
-      + ww64#    (indexWord8Array#         ba# (q# +# 8#)) `shiftR` (8 - r)
-  where
-    !(# q0#, r# #) = quotRemInt# off1# 8#
-    !q#            = q0# +# off2#
-    r              = I# r#
+topBits64 :: RawBytes -> Word64
+topBits64 rb@(RawBytes (VP.Vector (I# off#) _size (ByteArray k#))) =
+    assert (size rb >= 8) $ toWord64 (indexWord8ArrayAsWord64# k# off#)
 
 #if (MIN_VERSION_GLASGOW_HASKELL(9, 4, 0, 0))
-
 toWord64 :: Word64# -> Word64
-#if WORDS_BIGENDIAN
-toWord64 = W64#
 #else
-toWord64 x# = byteSwap64 (W64# x#)
-#endif
-
--- No need for byteswapping here
-ww64# :: Word8# -> Word64
-ww64# x#     = W64# (wordToWord64# (word8ToWord# x#))
-
-#else
-
 toWord64 :: Word# -> Word64
+#endif
 #if WORDS_BIGENDIAN
 toWord64 = W64#
 #else
 toWord64 x# = byteSwap64 (W64# x#)
-#endif
-
--- No need for byteswapping here
-ww64# :: Word8# -> Word64
-ww64# x# = W64# (word8ToWord# x#)
-
 #endif
 
 {-------------------------------------------------------------------------------

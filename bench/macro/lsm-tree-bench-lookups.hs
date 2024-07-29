@@ -3,7 +3,6 @@
 module Main ( main ) where
 
 import           Control.DeepSeq
-import           Control.Exception (assert)
 import           Control.Monad
 import           Control.Monad.Class.MonadST
 import           Control.Monad.Primitive
@@ -119,18 +118,6 @@ entryBitsWithOverhead = entryBits -- key and value size
 numEntriesFitInPage :: Fractional a => a
 numEntriesFitInPage = fromIntegral unusedPageBits / fromIntegral entryBitsWithOverhead
 
--- | A page with UTXO-like keys and values can hold hold precisely 41 entries.
--- However, the last page in a run might be slightly underfull, which means the
--- /average/ number of entries per page in a run is slightly under 41.
---
--- >>> benchmarkEntriesPerPageBounds
--- (40,41)
-benchmarkEntriesPerPageBounds :: (Num a) => (a, a)
-benchmarkEntriesPerPageBounds =
-    ( fromIntegral @Int $ floor @Double numEntriesFitInPage - 1
-    , fromIntegral @Int $ floor @Double numEntriesFitInPage
-    )
-
 benchmarks :: Run.RunDataCaching -> IO ()
 benchmarks !caching = withFS $ \hfs hbio -> do
 #ifdef NO_IGNORE_ASSERTS
@@ -172,10 +159,6 @@ benchmarks !caching = withFS $ \hfs hbio -> do
                          blooms
                          numEntries
         stats = V.zip4 numEntries numPages nhashes bitsPerEntry
-        numPagesSanityCheck (NumEntries n) m =
-          let (lb, ub) = benchmarkEntriesPerPageBounds
-          in  m * lb <= n && n <= m * ub
-    assert (V.and (V.zipWith numPagesSanityCheck numEntries numPages)) $ pure ()
     putStrLn "Actual stats for generated runs:"
     putStrLn "(numEntries, numPages, hashesN, bits per entry)"
     mapM_ print stats
@@ -349,8 +332,6 @@ lookupsEnv runSizes keyRng0 hfs hbio caching = do
             [ RunBuilder.new hfs
                 (RunFsPaths (FS.mkFsPath []) i)
                 (NumEntries numEntries)
-                ((ceiling :: Double -> Int) $
-                  fromIntegral numEntries / fst benchmarkEntriesPerPageBounds)
             | ((numEntries, _), i) <- zip runSizes [0..] ]
 
     -- fill the runs

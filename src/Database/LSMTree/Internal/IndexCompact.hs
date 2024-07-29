@@ -7,9 +7,6 @@ module Database.LSMTree.Internal.IndexCompact (
     IndexCompact (..)
   , PageNo (..)
   , NumPages
-    -- * Invariants and bounds
-  , rangeFinderPrecisionBounds
-  , suggestRangeFinderPrecision
     -- * Queries
   , PageSpan (..)
   , singlePage
@@ -46,7 +43,7 @@ import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromMaybe)
 import           Data.Primitive.ByteArray (ByteArray (..), indexByteArray,
-                     isByteArrayPinned, sizeofByteArray)
+                     sizeofByteArray)
 import           Data.Primitive.Types (sizeOf)
 import qualified Data.Vector.Algorithms.Search as VA
 import qualified Data.Vector.Generic as VG
@@ -56,7 +53,7 @@ import qualified Data.Vector.Unboxed.Base as VU
 import           Data.Word
 import           Database.LSMTree.Internal.BitMath
 import           Database.LSMTree.Internal.ByteString (byteArrayFromTo,
-                     byteArrayToByteString, unsafePinnedByteArrayToByteString)
+                     byteArrayToByteString)
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.Unsliced
@@ -181,20 +178,20 @@ import           Database.LSMTree.Internal.Vector
 
   The solution in these cases is to: (i) record that a clash occurred between
   pages @pi@ and @pj@, and (ii) store the full key @maxKey pi@ separately. The
-  record of clashes can be implemented as simply as a single bit per page: with
+  record of clashes can be implemented simply as a single bit per page: with
   a @True@ bit meaning a clash with the previous page. Note therefore that the
   first page's bit is always going to be @False@. We store the full keys using
   a 'Map'. It is ok that this is not a compact representation, because we
   expect to store full keys for only a very small number of pages.
 
   The example below shows a simplified view of the compact index implementation
-  so far. As an example, we store the @32@ most significant bits of each minimum
+  so far. As an example, we store the @64@ most significant bits of each minimum
   key in the @primary@ index, the record of clashes is called @clashes@, and the
   @IntMap@ is named the @tieBreaker@ map. @search3@ can at any point during the
   search, consult @clashes@ and @tieBreaker@ to /break ties/.
 
   > --              (primary         , clashes      , tieBreaker)
-  > type Index3 k = (VU.Vector Word32, VU.Vector Bit, IntMap k  )
+  > type Index3 k = (VU.Vector Word64, VU.Vector Bit, IntMap k  )
   >
   > mkIndex3 :: Run k v -> Index3
   > mkIndex3 = -- elided
@@ -216,69 +213,9 @@ import           Database.LSMTree.Internal.Vector
   complexity alone. However, /in practice/ @Index3@ is an improvement over
   @Index2@ if we can pick an \(c\) that is (i) much smaller than \(k\) and (ii)
   keeps \( \text{E}\left[\text{collision}~n~c\right] \) small (e.g. close to 1).
-  For example, storing the first 48 bits of 2.5 million SHA256 hashes reduces
-  memory size from \(256 n\) bits to \(48 n + n\) bits, because the expected
+  For example, storing the first 64 bits of 100 million SHA256 hashes reduces
+  memory size from \(256 n\) bits to \(64 n + n\) bits, because the expected
   number of collisions is smaller than 1.
-
-  ==== Range-finder
-
-  We extend this scheme by noting that the first few most significant bits of
-  the keys are repeated many times in adjacent keys. For example, out of a
-  sequence of sorted uniformly distributed keys, approximately a quarter will
-  start with bits 00, a quarter with 01, et cetera. In principle these bits
-  could be shared and not repeated.
-
-  This is the same principle exploited by a (bitwise) trie. While a trie uses
-  this idea recursively, we use a simple single level approach, with one top
-  level \"range finder\" array. The idea is that we choose to share the first
-  \(r\) bits in a dense array of size \(2^r\). Each index \(i\) in this array
-  corresponds to a \(r\)-bit prefix of keys with value \(i\). Each entry
-  specifies the interval of the primary index that contains keys that share the
-  bit prefix \(i\). Thus we can take a search key, extract its first \(r\) bits
-  and use this to index into the range finder array, yielding the interval of
-  the primary index that we then need to search.
-
-  This idea can thus reduce the range of the primary index that must be
-  searched, improving search performance, but more interestingly some versions
-  of this idea can extend the number of key prefix bits that can be stored, at
-  the cost of a very modest increase in memory use.
-
-  There are several plausible variation on this idea. The one we use is to
-  ensure that entries in the primary array are perfectly partitioned in their
-  first \(r\) bits, thus ensuring that the intervals mentioned above have no
-  overlap (and no gaps). Ensuring this requires that the keys in each page all
-  share the same \(r\)-bit key prefix. This must be guaranteed during page
-  construction, and could come at the cost of some underfull pages. The
-  advantage of this choice is that the range finder array can be represented
-  with a single integer for each entry. Each one represents the offset in the
-  primary index of the beginning of the span of key (prefixes) that share the
-  same \(r\)-bit prefix. Pairs of entries thus give the interval in the primary
-  index (as an inclusive lower bound and exclusive upper bound). Consequently,
-  the array is of size \(2^r + 1\), with a final entry for the end of the last
-  interval.
-
-  Furthermore, this allows the primary index to omit those first \(r\) bits and
-  instead store the 32 bits of the key after dropping the initial \(r\) bits.
-  This allows representing several more bits, at a relatively low additional
-  memory cost. For example, storing an additional 8 bits costs \(4 \times 2^8 =
-  1024\) bytes. Of course this scales poorly so we do not allow more than 16
-  bits, for a maximum memory cost of 256Kb. This representation therefore can
-  store between 32 and 48 bit key prefixes, which is good for up to around 16M
-  pages. At 40 entries per page this would be over 650M keys. To go any bigger
-  one would need to move to 64bit entries in the primary index, which doubles
-  the memory cost, but that would allow 64--80 bit key prefixes.
-
-  Note that dropping the initial \(r\) bits from the entries in the primary
-  index means that the index overall is not monotone, it is only monotone
-  within each interval. This is ok of course because the binary search must
-  always be performed within these intervals.
-
-  Note also that it is not always better to use more range finder bits, since
-  more bits means smaller sequences that share the same bit prefix. Shorter
-  runs increases the relative wastage due to underfull pages. Using the
-  number of bits needed to get the expected number of collisions to be 1 also
-  happens to give sensible partition sizes -- as well as keeping the tie
-  breaker map small -- so this is what we use in 'suggestRangeFinderPrecision'.
 
   === Representing clashes and larger-than-page entries
 
@@ -339,32 +276,18 @@ import           Database.LSMTree.Internal.Vector
   * \(ps = \{p_i \mid 0 \leq i < n \}\) is a sorted set of pages
   * \(p^{min}_i\) is the full minimum key on a page \(p_i \in ps\).
   * \(p^{max}_i\) is the full maximum key on a page \(p_i \in ps\).
-  * \(r \in \left[0, 16\right] \) is the range-finder bit-precision
-  * \(\texttt{topBits16}(r, k)\) extracts the \(r\) most significant bits from
-    \(k\). We call these \(r\) bits the range-finder bits.
-  * \(\texttt{sliceBits32}(r, k)\) extracts the 32 most significant bits from \(k\)
-    /after/ \(r\). We call these 32 bits the primary bits.
-  * \(c \in \left[32, 48\right] \) is the overall key prefix length represented
-     by the compact index.
-  * Since we always use 32 primary bits then \(c = r+32\).
-  * We choose \(r\) such that \(c = 2~log_2~n\), which keeps the expected
-    number of collisions low.
+  * \(\texttt{topBits64}(k)\) extracts the \(64\) most significant bits from
+    \(k\). We call these \(64\) bits the primary bits.
   * \(i \in \left[0, n \right)\), unless stated otherwise
-  * \(j \in \left[0, 2^r\right)\), unless stated otherwise
-  * Pages must be partitioned: \(\forall p_i \in ps. \texttt{topBits16}(r, p^{min}_i) ~\texttt{==}~ \texttt{topBits16}(r,p^{max}_i) \)
 
   \[
   \begin{align*}
-    RF     :&~ \texttt{Array Word16 PageNo} \\
-    RF[j]   =&~ \min~ \{ i \mid j \leq \texttt{topBits16}(r, p^{min}_i) \}  \\
-    RF[2^r] =&~ n \\
-    \\
-    P    :&~ \texttt{Array PageNo Word32} \\
-    P[i] =&~ \texttt{sliceBits32}(r, p^{min}_i) \\
+    P    :&~ \texttt{Array PageNo Word64} \\
+    P[i] =&~ \texttt{topBits64}(p^{min}_i) \\
     \\
     C    :&~ \texttt{Array PageNo Bit} \\
     C[0] =&~ \texttt{false} \\
-    C[i] =&~ \texttt{sliceBits32}(r, p^{max}_{i-1}) ~\texttt{==}~ \texttt{sliceBits32}(r, p^{min}_i) \\
+    C[i] =&~ \texttt{topBits64}(p^{max}_{i-1}) ~\texttt{==}~ \texttt{topBits64}(p^{min}_i) \\
     \\
     TB            :&~ \texttt{Map Key PageNo} \\
     TB(p^{min}_i) =&~
@@ -386,10 +309,6 @@ import           Database.LSMTree.Internal.Vector
   contains only a single page (or in case of a larger-than-page value, multiple
   pages that have the same minimum key). Assume @k@ is our search key.
 
-  * Use the range-finder bits of our @k@ to index into \(RF\), which should
-    provide us with the bounds for a sub-vector of \(P\) to search. In
-    particular, all pages in this sub-vector have minimum\/maximum keys that
-    start with the same range-finder bits as @k@.
   * Search \(P\) for the vector index @i@ that maps to the largest prim-bits
     value that is smaller or equal to the primary bits of @k@.
   * Check \(C\) if the page corresponding to @i@ is part of a
@@ -439,71 +358,35 @@ import           Database.LSMTree.Internal.Vector
 -- While the semi-formal description mentions the number of pages \(n\),
 -- we do not store it, as it can be inferred from the length of 'icPrimary'.
 data IndexCompact = IndexCompact {
-    -- | \(RF\): A vector that partitions 'icPrimary' into sub-vectors
-    -- containing elements that all share the same range-finder bits.
-    icRangeFinder          :: !(VU.Vector Word32)
-    -- | \(m\): Determines the size of 'icRangeFinder' as
-    -- @2 ^ 'icRangeFinderPrecision' + 1@.
-  , icRangeFinderPrecision :: !Int
     -- | \(P\): Maps a page @i@ to the 64-bit slice of primary bits of its
     -- minimum key.
-  , icPrimary              :: !(VU.Vector Word64)
+    icPrimary        :: !(VU.Vector Word64)
     -- | \(C\): A clash on page @i@ means that the primary bits of the minimum
     -- key on that page aren't sufficient to decide whether a search for a key
     -- should continue left or right of the page.
-  , icClashes              :: !(VU.Vector Bit)
+  , icClashes        :: !(VU.Vector Bit)
     -- | \(TB\): Maps a full minimum key to the page @i@ that contains it, but
     -- only if there is a clash on page @i@.
-  , icTieBreaker           :: !(Map (Unsliced SerialisedKey) PageNo)
+  , icTieBreaker     :: !(Map (Unsliced SerialisedKey) PageNo)
     -- | \(LTP\): Record of larger-than-page values. Given a span of pages for
     -- the larger-than-page value, the first page will map to 'False', and the
     -- remainder of the pages will be set to 'True'. Regular pages default to
     -- 'False'.
-  , icLargerThanPage       :: !(VU.Vector Bit)
+  , icLargerThanPage :: !(VU.Vector Bit)
   }
   deriving stock (Show, Eq)
 
 instance NFData IndexCompact where
-  rnf ic = rnf a `seq` rnf b `seq` rnf c `seq` rnf d `seq` rnf e `seq` rnf f
-    where IndexCompact a b c d e f = ic
+  rnf ic = rnf a `seq` rnf b `seq` rnf c `seq` rnf d
+    where IndexCompact a b c d = ic
 
 -- | A 0-based number identifying a disk page.
 newtype PageNo = PageNo { unPageNo :: Int }
   deriving stock (Show, Eq, Ord)
   deriving newtype NFData
 
--- TODO: Turn into newtype, maybe also other types, e.g. range finder precision.
+-- TODO: Turn into newtype
 type NumPages = Int
-
-{-------------------------------------------------------------------------------
-  Invariants
--------------------------------------------------------------------------------}
-
--- | Inclusive bounds for range-finder bit-precision.
-rangeFinderPrecisionBounds :: (Int, Int)
-rangeFinderPrecisionBounds = (0, 16)
-
--- | Given the number of expected pages in an index, suggest a range-finder
--- bit-precision.
---
--- https://en.wikipedia.org/wiki/Birthday_problem#Probability_of_a_shared_birthday_(collision)
---
--- >>> suggestRangeFinderPrecision 4_000_000_000
--- 0
---
--- >>> suggestRangeFinderPrecision 5_000_000_000
--- 1
-suggestRangeFinderPrecision :: NumPages -> Int
-suggestRangeFinderPrecision maxPages =
-    -- The calculation (before clamping) gives us the /total/ number of bits we
-    -- expect to use for prefixes
-    clamp $ ceiling @Double $ 2 * logBase 2 (fromIntegral maxPages)
-  where
-    (lb, ub)              = rangeFinderPrecisionBounds
-    -- Clamp ensures that we use only bits above @64@ as range finder bits.
-    clamp x | x < (lb+64) = lb
-            | x > (ub+64) = ub
-            | otherwise   = x - 64
 
 {-------------------------------------------------------------------------------
   Queries
@@ -548,24 +431,16 @@ pageSpanSize pspan =
 -- search key. The code below is annotated with @Pre:@ and @Post:@ comments that
 -- describe the interval at that point.
 search :: SerialisedKey -> IndexCompact -> PageSpan
-search k IndexCompact{..} = -- Pre: @[0, V.length icPrimary)@
-    let !rfbits    = fromIntegral $ keyTopBits16 icRangeFinderPrecision k
-        !lb        = fromIntegral $ icRangeFinder VU.! rfbits
-        -- The first page we don't need to look at (exclusive upper bound) is
-        -- the one from the next range finder entry.
-        -- For the case where we are in the last entry already, we rely on an
-        -- extra entry at the end, mapping to 'V.length icPrimary'.
-        !ub        = fromIntegral $ icRangeFinder VU.! (rfbits + 1)
-        -- Post: @[lb, ub)@
-        !primbits = keySliceBits64 icRangeFinderPrecision k
+search k IndexCompact{..} =
+    let !primbits = keyTopBits64 k
     in
-      case unsafeSearchLEBounds primbits icPrimary lb ub of
+      case unsafeSearchLE primbits icPrimary of
         Nothing -> singlePage (PageNo 0)  -- Post: @[lb, lb)@ (empty).
         Just !i ->         -- Post: @[lb, i]@.
           if unBit $ icClashes VU.! i then
             -- Post: @[lb, i]@, now in clash recovery mode.
-            let !i1  = PageNo $ fromMaybe lb $
-                  bitIndexFromToRev (BoundInclusive lb) (BoundInclusive i) (Bit False) icClashes
+            let !i1  = PageNo $ fromMaybe 0 $
+                  bitIndexFromToRev (BoundInclusive 0) (BoundInclusive i) (Bit False) icClashes
                 !i2  = maybe (PageNo 0) snd $ Map.lookupLE (unsafeNoAssertMakeUnslicedKey k) icTieBreaker
                 PageNo !i3 = max i1 i2 -- Post: the intersection of @[i1, i]@ and @[i2, i].
                 !i4 = bitLongestPrefixFromTo (BoundExclusive i3) (BoundInclusive i) (Bit True) icLargerThanPage
@@ -637,29 +512,13 @@ finalLBS :: NumEntries -> IndexCompact -> LBS.ByteString
 finalLBS (NumEntries numEntries) IndexCompact {..} =
     -- use a builder, since it is all relatively small
     BB.toLazyByteString $
-         putVec32 icRangeFinder
-         -- align to 64 bit, if odd number of Word32 written before
-      <> (if odd numRanges
-          then BB.word32Host 0
-          else mempty)
-      <> putBitVec icClashes
+         putBitVec icClashes
       <> putBitVec icLargerThanPage
       <> putTieBreaker icTieBreaker
-      <> BB.word64Host (fromIntegral icRangeFinderPrecision)
       <> BB.word64Host (fromIntegral numPages)
       <> BB.word64Host (fromIntegral numEntries)
   where
     numPages = VU.length icPrimary
-    numRanges = VU.length icRangeFinder
-
---- | 32 bit aligned.
-putVec32 :: VU.Vector Word32 -> BB.Builder
-putVec32 (VU.V_Word32 (VP.Vector off len ba))
-  | isByteArrayPinned ba =
-      BB.byteString $ unsafePinnedByteArrayToByteString (mul4 off) (mul4 len) ba
-  | otherwise =
-      byteArrayFromTo (mul4 off) (mul4 (off + len)) ba
-
 
 -- | Padded to 64 bit.
 --
@@ -718,7 +577,7 @@ fromSBS (SBS ba') = do
     let ba = ByteArray ba'
     let len8 = sizeofByteArray ba
     when (mod8 len8 /= 0) $ Left "Length is not multiple of 64 bit"
-    when (len8 < 32) $ Left "Doesn't contain header and footer"
+    when (len8 < 24) $ Left "Doesn't contain header and footer"
 
     -- check version
     let version = indexByteArray ba 0 :: Word32
@@ -733,44 +592,29 @@ fromSBS (SBS ba') = do
             Left "Size information is too large for Int"
           return (fromIntegral w)
 
-    rfprec <- getPositive (len64 - 3)
     numPages <- getPositive (len64 - 2)
     numEntries <- getPositive (len64 - 1)
-
-    when (rfprec > snd rangeFinderPrecisionBounds) $
-      Left "Invalid range finder precision"
-    let numRanges = 2 ^ rfprec + 1
 
     -- read vectors
     -- offsets in 64 bits
     let off1_64 = 1  -- after version indicator
     (!off2_64, icPrimary) <- getVec64 "Primary array" ba off1_64 numPages
-    (!off3_32, icRangeFinder) <- getVec32 "Range finder" ba (mul2 off2_64) numRanges
     -- offsets in 64 bits
-    let !off3 = ceilDiv2 off3_32
+    let !off3 = off2_64
     (!off4, icClashes) <- getBitVec "Clash bit vector" ba off3 numPages
     (!off5, icLargerThanPage) <- getBitVec "LTP bit vector" ba off4 numPages
     (!off6, icTieBreaker) <- getTieBreaker ba off5
 
-    let bytesUsed = mul8 (off6 + 3)
+    let bytesUsed = mul8 (off6 + 2)
     when (bytesUsed > sizeofByteArray ba) $
       Left "Byte array is too small for components"
     when (bytesUsed < sizeofByteArray ba) $
       Left "Byte array is too large for components"
 
-    let icRangeFinderPrecision = rfprec
     return (NumEntries numEntries, IndexCompact {..})
 
 type Offset32 = Int
 type Offset64 = Int
-
-getVec32 ::
-     String -> ByteArray -> Offset32 -> Int
-  -> Either String (Offset32, VU.Vector Word32)
-getVec32 name ba off32 numEntries =
-    case checkedPrimVec off32 numEntries ba of
-      Nothing  -> Left (name <> " is out of bounds")
-      Just vec -> Right (off32 + numEntries, VU.V_Word32 vec)
 
 getVec64 ::
      String -> ByteArray -> Offset32 -> Int
@@ -850,27 +694,26 @@ checkedBitVec off len ba
  Vector extras
 -------------------------------------------------------------------------------}
 
--- | Find the largest element that is smaller or equal to to the given one
--- within the vector interval @[lb, ub)@, and return its vector index.
+-- | Find the largest vector element that is smaller or equal to to the given
+-- one, and return its vector index.
 --
 -- Note: this function uses 'unsafeThaw', so all considerations for using
--- 'unsafeThaw' apply to using 'unsafeSearchLEBounds' too.
+-- 'unsafeThaw' apply to using 'unsafeSearchLE' too.
 --
--- PRECONDITION: the vector is sorted in ascending order within the interval
--- @[lb, ub)@.
-unsafeSearchLEBounds ::
+-- PRECONDITION: the vector is sorted in ascending order.
+unsafeSearchLE ::
      (VG.Vector v e, Ord e)
-  => e -> v e -> Int -> Int -> Maybe Int -- TODO: return -1?
-unsafeSearchLEBounds e vec lb ub = runST $ do
+  => e -> v e ->  Maybe Int -- TODO: return -1?
+unsafeSearchLE e vec = runST $ do
     -- Vector search algorithms work on mutable vectors only.
     vec' <- VG.unsafeThaw vec
     -- @i@ is the first index where @e@ is strictly smaller than the element at
     -- @i@.
-    i <- VA.gallopingSearchLeftPBounds (> e) vec' lb ub
+    i <- VA.gallopingSearchLeftP (> e) vec'
     -- The last (and therefore largest) element that is lesser-equal @e@ is
     -- @i-1@. However, if @i==lb@, then the interval @[lb, ub)@ doesn't contain
     -- any elements that are lesser-equal @e@.
-    pure $ if i == lb then Nothing else Just (i - 1)
+    pure $ if i == 0 then Nothing else Just (i - 1)
 
 -- | Return the index of the last bit in the vector with the specified value, if
 -- any.

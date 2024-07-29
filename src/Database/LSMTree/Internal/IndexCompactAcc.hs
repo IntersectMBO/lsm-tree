@@ -27,16 +27,18 @@ module Database.LSMTree.Internal.IndexCompactAcc (
   , mvectorUpperBound
   ) where
 
-import           Control.DeepSeq (NFData (..))
+#ifdef NO_IGNORE_ASSERTS
 import           Control.Exception (assert)
+#endif
+
+import           Control.DeepSeq (NFData (..))
 import           Control.Monad (when)
 import           Control.Monad.ST.Strict
 import           Data.Bit hiding (flipBit)
 import           Data.Foldable (toList)
-import           Data.Ix (inRange)
 import           Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
-import           Data.Map.Range (Bound (..), Clusive (Exclusive, Inclusive))
+import           Data.Map.Range (Bound (..))
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Primitive.ByteArray (newPinnedByteArray, setByteArray)
@@ -62,70 +64,52 @@ import           Database.LSMTree.Internal.Unsliced
 
   [Sorted] pages must be appended in sorted order according to the keys they
     contain.
-
-  [Partitioned] pages must be partitioned. That is, the range-finder bits for
-    all keys within a page must match.
 -}
 
 -- | A mutable version of 'IndexCompact'. See [incremental
 -- construction](#incremental).
 data IndexCompactAcc s = IndexCompactAcc {
     -- * Core index structure
-    -- | Accumulates the range finder bits 'ciRangeFinder'. Pinned.
-    icaRangeFinder          :: !(VU.MVector s Word32)
-  , icaRangeFinderPrecision :: !Int
     -- | Accumulates pinned chunks of 'ciPrimary'.
-  , icaPrimary              :: !(STRef s (NonEmpty (VU.MVector s Word64)))
+    icaPrimary           :: !(STRef s (NonEmpty (VU.MVector s Word64)))
     -- | Accumulates chunks of 'ciClashes'.
-  , icaClashes              :: !(STRef s (NonEmpty (VU.MVector s Bit)))
+  , icaClashes           :: !(STRef s (NonEmpty (VU.MVector s Bit)))
     -- | Accumulates the 'ciTieBreaker'.
-  , icaTieBreaker           :: !(STRef s (Map (Unsliced SerialisedKey) PageNo))
+  , icaTieBreaker        :: !(STRef s (Map (Unsliced SerialisedKey) PageNo))
     -- | Accumulates chunks of 'ciLargerThanPage'.
-  , icaLargerThanPage       :: !(STRef s (NonEmpty (VU.MVector s Bit)))
+  , icaLargerThanPage    :: !(STRef s (NonEmpty (VU.MVector s Bit)))
 
     -- * Aux information required for incremental construction
     -- | Maximum size of a chunk
-  , icaMaxChunkSize         :: !Int
+  , icaMaxChunkSize      :: !Int
     -- | The number of the current disk page we are constructing the index for.
-  , icaCurrentPageNumber    :: !(STRef s Int)
-    -- | The range-finder bits of the page-minimum key that we saw last.
-    --
-    --  This should be 'SNothing' if we haven't seen any keys/pages yet.
-  , icaLastMinRfbits        :: !(STRef s (SMaybe Word16))
+  , icaCurrentPageNumber :: !(STRef s Int)
     -- | The primary bits of the page-maximum key that we saw last.
     --
     -- This should be 'SNothing' if we haven't seen any keys/pages yet.
-  , icaLastMaxPrimbits      :: !(STRef s (SMaybe Word64))
+  , icaLastMaxPrimbits   :: !(STRef s (SMaybe Word64))
     -- | The ful minimum key of the page that we saw last.
     --
     -- This should be 'SNothing' if we haven't seen any keys/pages yet.
-  , icaLastMinKey           :: !(STRef s (SMaybe SerialisedKey))
+  , icaLastMinKey        :: !(STRef s (SMaybe SerialisedKey))
   }
 
--- | @'new' rfprec maxcsize@ creates a new mutable index with a range-finder
--- bit-precision of @rfprec, and with a maximum chunk size of @maxcsize@.
+-- | @'new' maxcsize@ creates a new mutable index with a maximum chunk size of
+-- @maxcsize@.
 --
 -- PRECONDITION: maxcsize > 0
 --
--- PRECONDITION: @rfprec@ should be within the bounds defined by
--- @rangeFinderPrecisionBounds@.
---
--- Note: after initialisation, both @rfprec@ and @maxcsize@ can no longer be changed.
-new :: Int -> Int -> ST s (IndexCompactAcc s)
-new rfprec maxcsize =
-  assert (inRange rangeFinderPrecisionBounds rfprec && maxcsize > 0) $
-  IndexCompactAcc
+-- Note: after initialisation, @maxcsize@ can no longer be changed.
+new ::Int -> ST s (IndexCompactAcc s)
+new maxcsize = IndexCompactAcc
     -- Core index structure
-    <$> newPinnedMVec32 (2 ^ rfprec + 1)
-    <*> pure rfprec
-    <*> (newSTRef . pure =<< newPinnedMVec64 maxcsize)
+    <$> (newSTRef . pure =<< newPinnedMVec64 maxcsize)
     <*> (newSTRef . pure =<< VUM.new maxcsize)
     <*> newSTRef Map.empty
     <*> (newSTRef . pure =<< VUM.new maxcsize)
     -- Aux information required for incremental construction
     <*> pure maxcsize
     <*> newSTRef 0
-    <*> newSTRef SNothing
     <*> newSTRef SNothing
     <*> newSTRef SNothing
 
@@ -135,12 +119,6 @@ new rfprec maxcsize =
 --
 -- TODO: remove this workaround once a solution exists, e.g. a new primop that
 -- allows checking for implicit pinning.
-newPinnedMVec32 :: Int -> ST s (VUM.MVector s Word32)
-newPinnedMVec32 lenWords = do
-    mba <- newPinnedByteArray (mul4 lenWords)
-    setByteArray mba 0 lenWords (0 :: Word32)
-    return (VUM.MV_Word32 (VPM.MVector 0 lenWords mba))
-
 newPinnedMVec64 :: Int -> ST s (VUM.MVector s Word64)
 newPinnedMVec64 lenWords = do
     mba <- newPinnedByteArray (mul8 lenWords)
@@ -176,19 +154,15 @@ appendSingle (minKey, maxKey) ica@IndexCompactAcc{..} = do
     lastMinKey <- readSTRef icaLastMinKey
     assert (minKey <= maxKey && smaybe True (<= minKey) lastMinKey) $ pure ()  -- sorted
 #endif
-    assert (minRfbits == keyTopBits16 icaRangeFinderPrecision maxKey) $ pure () -- partitioned
     pageNo <- readSTRef icaCurrentPageNumber
     let ix = pageNo `mod` icaMaxChunkSize
     goAppend pageNo ix
     writeSTRef icaCurrentPageNumber $! pageNo + 1
     yield ica
   where
-    minRfbits :: Word16
-    minRfbits = keyTopBits16 icaRangeFinderPrecision minKey
-
     minPrimbits, maxPrimbits :: Word64
-    minPrimbits = keySliceBits64 icaRangeFinderPrecision minKey
-    maxPrimbits = keySliceBits64 icaRangeFinderPrecision maxKey
+    minPrimbits = keyTopBits64 minKey
+    maxPrimbits = keyTopBits64 maxKey
 
     -- | Meat of the function
     goAppend ::
@@ -196,20 +170,9 @@ appendSingle (minKey, maxKey) ica@IndexCompactAcc{..} = do
       -> Int -- ^ Current /local/ page number (inside the current chunk)
       -> ST s ()
     goAppend pageNo ix = do
-        fillRangeFinder
         writePrimary
         writeClashesAndLTP
       where
-        -- | Fill range-finder vector
-        fillRangeFinder :: ST s ()
-        fillRangeFinder = do
-            lastMinRfbits <- readSTRef icaLastMinRfbits
-            let lb = smaybe NoBound (\i -> Bound (fromIntegral i) Exclusive) lastMinRfbits
-                ub = Bound (fromIntegral minRfbits) Inclusive
-                x  = fromIntegral pageNo
-            unsafeWriteRange icaRangeFinder lb ub x
-            writeSTRef icaLastMinRfbits $! SJust minRfbits
-
         -- | Set value in primary vector
         writePrimary :: ST s ()
         writePrimary =
@@ -244,7 +207,7 @@ appendMulti (k, n0) ica@IndexCompactAcc{..} =
     maybe id (:) <$> appendSingle (k, k) ica <*> overflows (fromIntegral n0)
   where
     minPrimbits :: Word64
-    minPrimbits = keySliceBits64 icaRangeFinderPrecision k
+    minPrimbits = keyTopBits64 k
 
     -- | Fill primary, clash and LTP vectors for a larger-than-page value. Yields
     -- chunks if necessary
@@ -290,7 +253,7 @@ yield IndexCompactAcc{..} = do
 --
 -- INVARIANTS: see [construction invariants](#construction-invariants).
 unsafeEnd :: IndexCompactAcc s -> ST s (Maybe Chunk, IndexCompact)
-unsafeEnd ica@IndexCompactAcc{..} = do
+unsafeEnd IndexCompactAcc{..} = do
     pageNo <- readSTRef icaCurrentPageNumber
     let ix = pageNo `mod` icaMaxChunkSize
 
@@ -306,13 +269,6 @@ unsafeEnd ica@IndexCompactAcc{..} = do
           then Nothing
           else Just (Chunk (head chunksPrimary))
 
-    -- We are not guaranteed to have seen all possible range-finder bit
-    -- combinations, so we have to fill in the remainder of the rangerfinder
-    -- vector.
-    fillRangeFinderToEnd ica
-    icRangeFinder <- VU.unsafeFreeze icaRangeFinder
-
-    let icRangeFinderPrecision = icaRangeFinderPrecision
     let icPrimary = VU.concat . reverse $ chunksPrimary
     let icClashes = VU.concat . reverse $ chunksClashes
     let icLargerThanPage = VU.concat . reverse $ chunksLargerThanPage
@@ -326,18 +282,6 @@ unsafeEnd ica@IndexCompactAcc{..} = do
       | ix == 0 = cs  -- current chunk is completely empty, just ignore it
       | otherwise = VUM.slice 0 ix c : cs
 
--- | Fill the remainder of the range-finder vector.
-fillRangeFinderToEnd :: IndexCompactAcc s -> ST s ()
-fillRangeFinderToEnd IndexCompactAcc{..} = do
-    pageNo <- readSTRef icaCurrentPageNumber
-    lastMinRfbits <- readSTRef icaLastMinRfbits
-    let lb = smaybe NoBound (BoundExclusive . fromIntegral) lastMinRfbits
-        ub = NoBound
-        x  = fromIntegral pageNo
-    unsafeWriteRange icaRangeFinder lb ub x
-    writeSTRef icaLastMinRfbits $! SJust $ 2 ^ icaRangeFinderPrecision
-
-
 {-------------------------------------------------------------------------------
   Strict 'Maybe'
 -------------------------------------------------------------------------------}
@@ -345,10 +289,12 @@ fillRangeFinderToEnd IndexCompactAcc{..} = do
 data SMaybe a = SNothing | SJust !a
   deriving stock (Eq, Show)
 
+#ifdef NO_IGNORE_ASSERTS
 smaybe :: b -> (a -> b) -> SMaybe a -> b
 smaybe snothing sjust = \case
     SNothing -> snothing
     SJust x  -> sjust x
+#endif
 
 {-------------------------------------------------------------------------------
  Vector extras

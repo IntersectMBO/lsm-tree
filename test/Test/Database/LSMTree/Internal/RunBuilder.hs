@@ -30,7 +30,7 @@ prop_newInExistingDir :: HasFS IO HandleIO -> IO Property
 prop_newInExistingDir hfs = do
     let runDir = FS.mkFsPath ["a", "b", "c"]
     FS.createDirectoryIfMissing hfs True runDir
-    try (RunBuilder.new hfs (RunFsPaths runDir 17) (NumEntries 0) 0) <&> \case
+    try (RunBuilder.new hfs (RunFsPaths runDir 17) (NumEntries 0)) <&> \case
       Left e@FS.FsError{} ->
         counterexample ("expected a success, but got: " <> show e) $ property False
       Right _ -> property True
@@ -39,7 +39,7 @@ prop_newInExistingDir hfs = do
 prop_newInNonExistingDir :: HasFS IO HandleIO -> IO Property
 prop_newInNonExistingDir hfs = do
     let runDir = FS.mkFsPath ["a", "b", "c"]
-    try (RunBuilder.new hfs (RunFsPaths runDir 17) (NumEntries 0) 0) <&> \case
+    try (RunBuilder.new hfs (RunFsPaths runDir 17) (NumEntries 0)) <&> \case
       Left FS.FsError{} -> property True
       Right _  ->
         counterexample ("expected an FsError, but got a RunBuilder") $ property False
@@ -51,8 +51,8 @@ prop_newInNonExistingDir hfs = do
 prop_newTwice :: HasFS IO HandleIO -> IO Property
 prop_newTwice hfs = do
     let runDir = FS.mkFsPath []
-    void $ RunBuilder.new hfs (RunFsPaths runDir 17) (NumEntries 0) 0
-    try (RunBuilder.new hfs (RunFsPaths runDir 17) (NumEntries 0) 0) <&> \case
+    void $ RunBuilder.new hfs (RunFsPaths runDir 17) (NumEntries 0)
+    try (RunBuilder.new hfs (RunFsPaths runDir 17) (NumEntries 0)) <&> \case
       Left FS.FsError{} -> property True
       Right _  ->
         counterexample ("expected an FsError, but got a RunBuilder") $ property False

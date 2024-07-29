@@ -393,13 +393,10 @@ mkTestRun :: Map SerialisedKey (Entry SerialisedValue BlobSpan) -> TestRun
 mkTestRun dat = (rawPages, b, ic)
   where
     nentries = NumEntries (Map.size dat)
-    -- suggested range-finder precision is going to be @0@ anyway unless the
-    -- input data is very big
-    npages   = 0
 
     -- one-shot run construction
     (pages, b, ic) = runST $ do
-      racc <- Run.new nentries npages Nothing
+      racc <- Run.new nentries
       let kops = Map.toList dat
       psopss <- traverse (uncurry (Run.addKeyOp racc)) kops
       (mp, _ , b', ic', _) <- Run.unsafeFinalise racc
@@ -518,13 +515,13 @@ liftShrink3InMemLookupData shrinkKey shrinkValue shrinkBlob InMemLookupData{ run
 
 genSerialisedKey :: Gen SerialisedKey
 genSerialisedKey = frequency [
-      (9, arbitrary `suchThat` (\k -> sizeofKey k >= 10))
+      (9, arbitrary `suchThat` (\k -> sizeofKey k >= 8))
     , (1, do x <- getSmall <$> arbitrary
-             pure $ SerialisedKey (RB.pack [0,0,0,0,0,0,0,0,0, x]))
+             pure $ SerialisedKey (RB.pack [0,0,0,0,0,0,0, x]))
     ]
 
 shrinkSerialisedKey :: SerialisedKey -> [SerialisedKey]
-shrinkSerialisedKey k = [k' | k' <- shrink k, sizeofKey k' >= 10]
+shrinkSerialisedKey k = [k' | k' <- shrink k, sizeofKey k' >= 8]
 
 genSerialisedValue :: Gen SerialisedValue
 genSerialisedValue = frequency [ (50, arbitrary), (1, genLongValue) ]

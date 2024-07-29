@@ -52,8 +52,7 @@ interpreting or creating the LSM run files:
 * Index type: in principle we could support multiple index representations,
   to suit different kinds and properties of key (e.g. fixed size, uniformly
   distributed). Initially we will support a compact index type suited to
-  uniformly distributed keys of variable size but with at least 80bits.
-* The compact index "range finder" bits (if a compact index is used).
+  uniformly distributed keys of variable size but with at least 64bits.
 
 ## Key/operations file
 
@@ -182,7 +181,7 @@ The compact index type is designed to work with keys that are large
 cryptographic hashes, e.g. 32 bytes. In particular it requires:
 
 * keys must be uniformly distributed
-* keys must be at least 10 bytes (80bits), but can otherwise be variable length
+* keys must be at least 8 bytes (64bits), but can otherwise be variable length
 
 For this important special case, we can do significantly better than storing a
 whole key per page: we can typically store just 8 bytes (64bits) per page. This
@@ -194,17 +193,15 @@ of the rest of the file. This field is padded to 64 bits.
 
 For version 1, the representation after the version identifier consists of
 1. a primary array of 64bit words, one entry per page in the index
-2. a range finder array, of 2^n+1 entries of 32bit each (n = range finder bits)
-3. a clash indicator bit vector, one bit per page in the index
-4. a larger-than-page indicator bit vector, one bit per page in the index
-5. a clash map, mapping each page with a clash indicator to the full minimum
+2. a clash indicator bit vector, one bit per page in the index
+3. a larger-than-page indicator bit vector, one bit per page in the index
+4. a clash map, mapping each page with a clash indicator to the full minimum
    key for the page
-6. a footer
+5. a footer
 
-The footer consists of the last 24 bytes of the file
-1. the number of range finder bits (0..16) (64bit)
-2. the number of pages in the primary array (64bit)
-3. the number of keys in the corresponding key/ops file (64bit)
+The footer consists of the last 16 bytes of the file
+1. the number of pages in the primary array (64bit)
+2. the number of keys in the corresponding key/ops file (64bit)
 
 The file format consists of each part, sequentially within the file. This
 format can in-part be written out incrementally as the index is constructed.
@@ -231,14 +228,12 @@ is expected to be decoded, rather than to be accessed in-place.
 |-----|-----------------|------------|-------|-----------|---------------------|
 | 0   | version         | 1          | 32bit | 32bit     | 64bit (at the end)  |
 | 1   | primary array   | n          | 64bit | 64bit     |                     |
-| 2   | range finder    | 2^r+1      | 32bit | 32bit     | 64bit (at the end)  |
-| 3   | clash indicator | ceil(n/64) | 64bit | 64bit     |                     |
-| 4   | LTP indicator   | ceil(n/64) | 64bit | 64bit     |                     |
-| 5.1 | clash map size  | 1          | 64bit | 64bit     |                     |
-| 5.2 | clash map       | s          |       | 64bit     | 64bit (each entry)  |
-| 6.1 | RF precision    | 1          | 64bit | 64bit     |                     |
-| 6.2 | number pages    | 1          | 64bit | 64bit     |                     |
-| 6.3 | number keys     | 1          | 64bit | 64bit     |                     |
+| 2   | clash indicator | ceil(n/64) | 64bit | 64bit     |                     |
+| 3   | LTP indicator   | ceil(n/64) | 64bit | 64bit     |                     |
+| 4.1 | clash map size  | 1          | 64bit | 64bit     |                     |
+| 4.2 | clash map       | s          |       | 64bit     | 64bit (each entry)  |
+| 5.1 | number pages    | 1          | 64bit | 64bit     |                     |
+| 5.2 | number keys     | 1          | 64bit | 64bit     |                     |
 
 For the clash map, after its size s, each pair of key and page number is
 serialised in the following order:
