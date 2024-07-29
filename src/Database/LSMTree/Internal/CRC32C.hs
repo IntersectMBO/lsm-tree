@@ -36,6 +36,7 @@ module Database.LSMTree.Internal.CRC32C (
   ChecksumsFileName(..),
   readChecksumsFile,
   writeChecksumsFile,
+  writeChecksumsFile',
   ) where
 
 import           Control.Monad
@@ -274,6 +275,10 @@ writeChecksumsFile fs path checksums =
     withFile fs path (WriteMode MustBeNew) $ \h -> do
       _ <- hPutAll fs h (formatChecksumsFile checksums)
       return ()
+
+writeChecksumsFile' :: MonadThrow m
+                    => HasFS m h -> Handle h -> ChecksumsFile -> m ()
+writeChecksumsFile' fs h checksums = void $ hPutAll fs h (formatChecksumsFile checksums)
 
 parseChecksumsFile :: BSC.ByteString -> Either BSC.ByteString ChecksumsFile
 parseChecksumsFile content =

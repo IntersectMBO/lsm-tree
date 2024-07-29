@@ -12,7 +12,7 @@ module Database.LSMTree.Internal.RunReader (
   ) where
 
 import           Control.Exception (assert, handleJust)
-import           Control.Monad (guard)
+import           Control.Monad (guard, when)
 import           Control.Monad.Primitive (RealWorld)
 import           Data.Bifunctor (first)
 import           Data.IORef
@@ -35,6 +35,7 @@ import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.Serialise
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
+import qualified System.FS.BlockIO.API as FS
 import           System.FS.BlockIO.API (HasBlockIO)
 
 -- | Allows reading the k\/ops of a run incrementally, using its own read-only
@@ -65,9 +66,11 @@ new ::
   -> HasBlockIO IO h
   -> Run.Run (FS.Handle h)
   -> IO (RunReader (FS.Handle h))
-new fs _hbio readerRun = do
+new fs hbio readerRun = do
     readerKOpsHandle <-
       FS.hOpen fs (runKOpsPath (Run.runRunFsPaths readerRun)) FS.ReadMode
+    -- double the file readahead window (only applies to this file descriptor)
+    FS.hAdviseAll hbio readerKOpsHandle FS.AdviceSequential
     readerCurrentEntryNo <- newPrimVar 0
     -- load first page from disk, if it exists.
     firstPage <- fromMaybe emptyRawPage <$> readDiskPage fs readerKOpsHandle
@@ -82,7 +85,10 @@ close ::
   -> HasBlockIO IO h
   -> RunReader (FS.Handle h)
   -> IO ()
-close fs _hbio RunReader {..} = do
+close fs hbio RunReader {..} = do
+    when (Run.runRunDataCaching readerRun == Run.NoCacheRunData) $
+      -- drop the file from the OS page cache
+      FS.hDropCacheAll hbio readerKOpsHandle
     FS.hClose fs readerKOpsHandle
 
 -- | The 'SerialisedKey' and 'SerialisedValue' point into the in-memory disk
