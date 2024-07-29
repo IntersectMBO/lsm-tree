@@ -30,20 +30,13 @@ import           Database.LSMTree.Internal.Serialise (SerialisedKey,
 import           System.Random
 import           Test.QuickCheck (generate)
 
--- See 'utxoNumPages'.
 benchmarks :: Benchmark
 benchmarks = bgroup "Bench.Database.LSMTree.Internal.IndexCompact" [
-      bgroup "searches" [
-          env (searchEnv 0  10000 1000) $ \ ~(ic, ks) ->
-            bench "searches with 0-bit  rfprec" $ whnf (searches ic) ks
-        , env (searchEnv 16 10000 1000) $ \ ~(ic, ks) ->
-            bench "searches with 16-bit rfprec" $ whnf (searches ic) ks
-        ]
+      env (searchEnv 0 10000 1000) $ \ ~(ic, ks) ->
+        bench "searches-10-1k" $ whnf (searches ic) ks
     , bgroup "construction" [
-          env (constructionEnv 0  1000) $ \ pages ->
-            bench "construction with 0-bit  rfprec and chunk size 100" $ whnf (constructIndexCompact 100) pages
-        , env (constructionEnv 16 1000) $ \ pages ->
-            bench "construction with 16-bit rfprec and chunk size 100" $ whnf (constructIndexCompact 100) pages
+          env (constructionEnv 0 1000) $ \ pages ->
+            bench "construction-1k-100" $ whnf (constructIndexCompact 100) pages
         , env (VUM.replicate 3000 (7 :: Word32)) $ \ mv ->
             bench "unsafeWriteRange-1k" $
               whnfAppIO (\x -> stToIO (unsafeWriteRange mv (BoundInclusive 1000) (BoundInclusive 2000) x)) 17

@@ -52,7 +52,7 @@ interpreting or creating the LSM run files:
 * Index type: in principle we could support multiple index representations,
   to suit different kinds and properties of key (e.g. fixed size, uniformly
   distributed). Initially we will support a compact index type suited to
-  uniformly distributed keys of variable size but with at least 48bits.
+  uniformly distributed keys of variable size but with at least 80bits.
 * The compact index "range finder" bits (if a compact index is used).
 
 ## Key/operations file
@@ -76,7 +76,7 @@ The key/operations are organised into pages in the following way:
   index is in use. For code uniformity, if a compact index is not used then
   this is equivalent to using 0 range finder bits. This restriction is needed
   to support the compact index representation.
-  
+
   When packing key/operations into pages linearly, the initial key bits can be
   tracked and when they change from one key to the next, then a page boundary
   must be used, at the expense of wasting any remaining space in the page. The
@@ -182,18 +182,18 @@ The compact index type is designed to work with keys that are large
 cryptographic hashes, e.g. 32 bytes. In particular it requires:
 
 * keys must be uniformly distributed
-* keys must be at least 6 bytes (48bits), but can otherwise be variable length
+* keys must be at least 10 bytes (80bits), but can otherwise be variable length
 
 For this important special case, we can do significantly better than storing a
-whole key per page: we can typically store just 4 bytes (32bits) per page. This
-is a factor of 8 saving for 32 byte keys.
+whole key per page: we can typically store just 8 bytes (64bits) per page. This
+is a factor of 4 saving for 32 byte keys.
 
 Just as the bloom filter, the compact index file format starts with a 32 bit
 format identifier / format version, which determines the format and endianness
-of the rest of the file.
+of the rest of the file. This field is padded to 64 bits.
 
 For version 1, the representation after the version identifier consists of
-1. a primary array of 32bit words, one entry per page in the index
+1. a primary array of 64bit words, one entry per page in the index
 2. a range finder array, of 2^n+1 entries of 32bit each (n = range finder bits)
 3. a clash indicator bit vector, one bit per page in the index
 4. a larger-than-page indicator bit vector, one bit per page in the index
@@ -229,8 +229,8 @@ is expected to be decoded, rather than to be accessed in-place.
 
 |     |                 | elements   | size  | alignment | trailing padding to |
 |-----|-----------------|------------|-------|-----------|---------------------|
-| 0   | version         | 1          | 32bit | 32bit     |                     |
-| 1   | primary array   | n          | 32bit | 32bit     |                     |
+| 0   | version         | 1          | 32bit | 32bit     | 64bit (at the end)  |
+| 1   | primary array   | n          | 64bit | 64bit     |                     |
 | 2   | range finder    | 2^r+1      | 32bit | 32bit     | 64bit (at the end)  |
 | 3   | clash indicator | ceil(n/64) | 64bit | 64bit     |                     |
 | 4   | LTP indicator   | ceil(n/64) | 64bit | 64bit     |                     |

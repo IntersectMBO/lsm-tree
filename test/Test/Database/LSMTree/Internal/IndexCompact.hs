@@ -24,7 +24,7 @@ import           Data.Primitive.ByteArray (ByteArray (..), byteArrayFromList,
                      sizeofByteArray)
 import qualified Data.Vector.Primitive as VP
 import qualified Data.Vector.Unboxed as VU
-import qualified Data.Vector.Unboxed.Base as VU (Vector (V_Word32))
+import qualified Data.Vector.Unboxed.Base as VU
 import           Data.Word
 import           Database.LSMTree.Extras
 import           Database.LSMTree.Extras.Generators as Gen
@@ -72,17 +72,16 @@ tests = testGroup "Test.Database.LSMTree.Internal.IndexCompact" [
                 return (ch1 <> ch2 <> toList mCh3, idx)
 
           let expectedVersion :: [Word8]
-              expectedVersion = word32toBytesLE 0x0000_0001
+              expectedVersion = word32toBytesLE 0x0000_0001 <> word32toBytesLE 0x0000_0000
           let expectedPrimary :: [Word8]
-              expectedPrimary = foldMap word32toBytesLE
-                  -- 1. primary array: two pages (32 bits LE) + padding
-                [ 0x0000_0000,  0x1111_1111
+              expectedPrimary = foldMap word64toBytesLE
+                  -- 1. primary array: two pages (64 bits LE)
+                [ 0x0000_0000_0000_0000,  0x1111_1111_1111_1111
                 ]
           let expectedRest :: [Word8]
               expectedRest = foldMap word32toBytesLE
                   -- 2. range finder: 2^0+1 = 2 entries 32 bit padding
                 [ 0 {- offset = 0 -}, 2 {- numPages -}
-                , 0 {- (padding to 64 bit) -}
                   -- 3. clash indicator: two pages, second one has bit
                 , 0x0000_0002, 0
                   -- 4. larger-than-page: two pages, no bits
@@ -265,12 +264,14 @@ prop_total_deserialisation word32s =
         -- point to outside of the byte array, so we check they are valid.
         (numEntries, ic) `deepseq`
              vec32IsValid (icRangeFinder ic)
-          && vec32IsValid (icPrimary ic)
+          && vec64IsValid (icPrimary ic)
           && bitVecIsValid (icClashes ic)
           && bitVecIsValid (icLargerThanPage ic)
   where
     vec32IsValid (VU.V_Word32 (VP.Vector off len ba)) =
       off >= 0 && len >= 0 && mul4 (off + len) <= sizeofByteArray ba
+    vec64IsValid (VU.V_Word64 (VP.Vector off len ba)) =
+      off >= 0 && len >= 0 && mul8 (off + len) <= sizeofByteArray ba
     bitVecIsValid (BV.BitVec off len ba) =
       off >= 0 && len >= 0 && ceilDiv8 (off + len) <= sizeofByteArray ba
 
@@ -394,6 +395,9 @@ showByte b = let str = showHex b "" in replicate (2 - length str) '0' <> str
 
 word32toBytesLE :: Word32 -> [Word8]
 word32toBytesLE = take 4 . map fromIntegral . iterate (`div` 256)
+
+word64toBytesLE :: Word64 -> [Word8]
+word64toBytesLE = take 8 . map fromIntegral . iterate (`div` 256)
 
 data Chunks = Chunks [Chunk] IndexCompact
   deriving stock (Show)
