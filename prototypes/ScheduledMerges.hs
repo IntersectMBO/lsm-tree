@@ -42,6 +42,7 @@ module ScheduledMerges (
 import           Prelude hiding (lookup)
 
 import           Data.Bits
+import           Data.Foldable (for_, toList)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.STRef
@@ -132,17 +133,20 @@ tieringRunSize n = 4^n
 levellingRunSize :: Int -> Int
 levellingRunSize n = 4^(n+1)
 
-tieringRunSizeToLevel :: Run -> Int
-tieringRunSizeToLevel r
+tieringLevel :: Int -> Int
+tieringLevel s
   | s <= bufferSize = 1  -- level numbers start at 1
   | otherwise =
     1 + (finiteBitSize s - countLeadingZeros (s-1) - 1) `div` 2
-  where
-    s = Map.size r
+
+levellingLevel :: Int -> Int
+levellingLevel s = max 1 (tieringLevel s - 1)  -- level numbers start at 1
+
+tieringRunSizeToLevel :: Run -> Int
+tieringRunSizeToLevel = tieringLevel . Map.size
 
 levellingRunSizeToLevel :: Run -> Int
-levellingRunSizeToLevel r =
-    max 1 (tieringRunSizeToLevel r - 1)  -- level numbers start at 1
+levellingRunSizeToLevel = levellingLevel . Map.size
 
 bufferSize :: Int
 bufferSize = tieringRunSize 1 -- 4
@@ -192,9 +196,8 @@ invariant = go 1
         -- too large and is promoted, in that case initially there's no merge,
         -- but it is still represented as a 'MergingRun', using 'SingleRun'.
         MergePolicyLevelling -> assertST $ null rs
-        -- Runs in tiering levels usually fit that size, but they can be one
-        -- larger, if a run has been held back (creating a 5-way merge).
-        MergePolicyTiering   -> assertST $ all (\r -> tieringRunSizeToLevel r `elem` [ln, ln+1]) rs
+        -- Runs in tiering levels fit that size.
+        MergePolicyTiering   -> assertST $ all (\r -> tieringRunSizeToLevel r == ln) rs
 
     -- Incoming runs being merged also need to be of the right size, but the
     -- conditions are more complicated.
@@ -219,17 +222,17 @@ invariant = go 1
               assertST $ levellingRunSizeToLevel r <= ln+1
 
             -- An ongoing merge for levelling should have 4 incoming runs of
-            -- the right size for the level below (or slightly larger due to
-            -- holding back underfull runs), and 1 run from this level,
-            -- but the run from this level can be of almost any size for the
-            -- same reasons as above. Although if this is the first merge for
-            -- a new level, it'll have only 4 runs.
+            -- the right size for the level below (or slightly smaller),
+            -- and 1 run from this level, but the run from this level can be of
+            -- almost any size for the same reasons as above.
+            -- Although if this is the first merge for a new level, it'll have
+            -- only 4 runs.
             (_, OngoingMerge _ rs _) -> do
               let incoming = take 4 rs
               let resident = drop 4 rs
               assertST $ length incoming == 4
               assertST $ length resident <= 1
-              assertST $ all (\r -> tieringRunSizeToLevel r `elem` [ln-1, ln]) incoming
+              assertST $ all (\r -> tieringRunSizeToLevel r == ln-1) incoming
               assertST $ all (\r -> levellingRunSizeToLevel r <= ln+1) resident
 
         MergePolicyTiering ->
@@ -247,14 +250,13 @@ invariant = go 1
             -- a single level only.
             (_, CompletedMerge r, MergeLastLevel) -> do
               assertST $ ln == 1
-              assertST $ tieringRunSizeToLevel r <= ln+1
+              assertST $ tieringRunSizeToLevel r <= ln
 
             -- A completed mid level run is usually of the size for the
             -- level it is entering, but can also be one smaller (in which case
-            -- it'll be held back and merged again) or one larger (because it
-            -- includes a run that has been held back before).
+            -- it'll be held back and merged again).
             (_, CompletedMerge r, MergeMidLevel) ->
-              assertST $ tieringRunSizeToLevel r `elem` [ln-1, ln, ln+1]
+              assertST $ tieringRunSizeToLevel r `elem` [ln-1, ln]
 
             -- An ongoing merge for tiering should have 4 incoming runs of
             -- the right size for the level below, and at most 1 run held back
@@ -300,7 +302,7 @@ newMerge tr level mergepolicy mergelast rs = do
     debt = newMergeDebt $ case mergepolicy of
              MergePolicyLevelling -> 4 * tieringRunSize (level-1)
                                        + levellingRunSize level
-             MergePolicyTiering   -> length rs * tieringRunSize (level-1)
+             MergePolicyTiering   -> 4 * tieringRunSize (level-1)
     -- deliberately lazy:
     r    = case mergelast of
              MergeMidLevel  ->                (mergek rs)
@@ -481,9 +483,12 @@ creditsForMerge SingleRun{}                           = 0
 -- It needs to be completed before another run comes in.
 creditsForMerge (MergingRun MergePolicyLevelling _ _) = (1 + 4) / 1
 
--- A tiering merge has 5 runs at most (once could be held back to merged again)
--- and must be completed before the level is full (once 4 more runs come in).
-creditsForMerge (MergingRun MergePolicyTiering   _ _) = 5 / 4
+-- A tiering merge has 4 runs at most (once could be held back to merged again)
+-- and must be completed before the level is full (once 3 more runs come in,
+-- as it could have started out with an additional refused run).
+-- TODO: We could only increase the merging speed for the merges where this
+-- applies, which should be rare.
+creditsForMerge (MergingRun MergePolicyTiering   _ _) = 4 / 3
 
 type Event = EventAt EventDetail
 data EventAt e = EventAt {
@@ -515,30 +520,53 @@ data EventDetail =
 increment :: forall s. Tracer (ST s) Event
           -> Counter -> Run -> Levels s -> ST s (Levels s)
 increment tr sc = \r ls -> do
-    ls' <- go 1 [r] ls
+    (ls', refused) <- go 1 [r] ls
+    assertST $ null refused
     invariant ls'
     return ls'
   where
-    go :: Int -> [Run] -> Levels s -> ST s (Levels s)
-    go !ln incoming [] = do
+    go, go' :: Int -> [Run] -> Levels s -> ST s (Levels s, Maybe Run)
+    go !ln incoming ls = do
+        case incoming of
+          [r] -> do
+            assertST $ tieringRunSizeToLevel r `elem` [ln, ln+1]  -- +1 from levelling
+          _ -> do
+            assertST $ length incoming == 4
+            assertST $ all (\r -> tieringRunSizeToLevel r == ln-1) incoming
+            assertST $ tieringLevel (sum (map Map.size incoming)) == ln
+        (ls', refused) <- go' ln incoming ls
+        for_ refused $ assertST . (== head incoming)
+        return (ls', refused)
+
+    go' !ln incoming [] = do
         let mergepolicy = mergePolicyForLevel ln []
         traceWith tr' AddLevelEvent
         mr <- newMerge tr' ln mergepolicy MergeLastLevel incoming
-        return (Level mr [] : [])
+        return (Level mr [] : [], Nothing)
       where
         tr' = contramap (EventAt sc ln) tr
 
-    go !ln incoming (Level mr rs : ls) = do
+    go' !ln incoming (Level mr rs : ls) = do
       r <- expectCompletedMerge tr' mr
       let resident = r:rs
       case mergePolicyForLevel ln ls of
 
         -- If r is still too small for this level then keep it and merge again
-        -- with the incoming runs.
-        MergePolicyTiering | tieringRunSizeToLevel r < ln -> do
-          let mergelast = mergeLastForLevel ls
-          mr' <- newMerge tr' ln MergePolicyTiering mergelast (incoming ++ [r])
-          return (Level mr' rs : ls)
+        -- with the incoming runs, but only if the resulting run is guaranteed
+        -- not to be too large for this level.
+        -- If it might become too large, only create a 4-way merge and refuse
+        -- the most recent of the incoming runs.
+        MergePolicyTiering | tieringRunSizeToLevel r < ln ->
+          if sum (map Map.size (r : incoming)) <= tieringRunSize ln
+          then do
+            let mergelast = mergeLastForLevel ls
+            mr' <- newMerge tr' ln MergePolicyTiering mergelast (incoming ++ [r])
+            return (Level mr' rs : ls, Nothing)
+          else do
+            -- TODO: comment
+            let mergelast = mergeLastForLevel ls
+            mr' <- newMerge tr' ln MergePolicyTiering mergelast (tail incoming ++ [r])
+            return (Level mr' rs : ls, Just (head incoming))
 
         -- This tiering level is now full. We take the completed merged run
         -- (the previous incoming runs), plus all the other runs on this level
@@ -546,8 +574,8 @@ increment tr sc = \r ls -> do
         -- for the new incoming runs. This level is otherwise empty.
         MergePolicyTiering | tieringLevelIsFull ln incoming resident -> do
           mr' <- newMerge tr' ln MergePolicyTiering MergeMidLevel incoming
-          ls' <- go (ln+1) resident ls
-          return (Level mr' [] : ls')
+          (ls', refused) <- go (ln+1) resident ls
+          return (Level mr' (toList refused) : ls', Nothing)
 
         -- This tiering level is not yet full. We move the completed merged run
         -- into the level proper, and start the new merge for the incoming runs.
@@ -555,7 +583,7 @@ increment tr sc = \r ls -> do
           let mergelast = mergeLastForLevel ls
           mr' <- newMerge tr' ln MergePolicyTiering mergelast incoming
           traceWith tr' (AddRunEvent (length resident))
-          return (Level mr' resident : ls)
+          return (Level mr' resident : ls, Nothing)
 
         -- The final level is using levelling. If the existing completed merge
         -- run is too large for this level, we promote the run to the next
@@ -564,15 +592,15 @@ increment tr sc = \r ls -> do
         MergePolicyLevelling | levellingLevelIsFull ln incoming r -> do
           assert (null rs && null ls) $ return ()
           mr' <- newMerge tr' ln MergePolicyTiering MergeMidLevel incoming
-          ls' <- go (ln+1) [r] []
-          return (Level mr' [] : ls')
+          (ls', refused) <- go (ln+1) [r] []
+          return (Level mr' (toList refused) : ls', Nothing)
 
         -- Otherwise we start merging the incoming runs into the run.
         MergePolicyLevelling -> do
           assert (null rs && null ls) $ return ()
           mr' <- newMerge tr' ln MergePolicyLevelling MergeLastLevel
                           (incoming ++ [r])
-          return (Level mr' [] : [])
+          return (Level mr' [] : [], Nothing)
 
       where
         tr' = contramap (EventAt sc ln) tr
