@@ -212,11 +212,10 @@ invariant = go 1
                                    OngoingMerge{}   -> False
               assertST $ levellingRunSizeToLevel r == ln
 
-            -- A completed merge for levelling can be of almost any size at all!
-            -- It can be smaller, due to deletions in the last level. But it
-            -- can't be bigger than would fit into the next level.
+            -- A completed merge for levelling can be arbitrarily small, due to
+            -- deletions in the last level.
             (_, CompletedMerge r) ->
-              assertST $ levellingRunSizeToLevel r <= ln+1
+              assertST $ levellingRunSizeToLevel r <= ln
 
             -- An ongoing merge for levelling should have 4 incoming runs of
             -- the right size for the level below (or slightly larger due to
@@ -230,7 +229,7 @@ invariant = go 1
               assertST $ length incoming == 4
               assertST $ length resident <= 1
               assertST $ all (\r -> tieringRunSizeToLevel r `elem` [ln-1, ln]) incoming
-              assertST $ all (\r -> levellingRunSizeToLevel r <= ln+1) resident
+              assertST $ all (\r -> levellingRunSizeToLevel r <= ln) resident
 
         MergePolicyTiering ->
           case (mr, mrs, mergeLastForLevel ls) of
@@ -298,8 +297,7 @@ newMerge tr level mergepolicy mergelast rs = do
     -- Note that for levelling this is includes the single run in the current
     -- level.
     debt = newMergeDebt $ case mergepolicy of
-             MergePolicyLevelling -> 4 * tieringRunSize (level-1)
-                                       + levellingRunSize level
+             MergePolicyLevelling -> levellingRunSize level
              MergePolicyTiering   -> length rs * tieringRunSize (level-1)
     -- deliberately lazy:
     r    = case mergelast of
@@ -476,10 +474,10 @@ supplyCredits n ls =
 creditsForMerge :: MergingRun s -> Float
 creditsForMerge SingleRun{}                           = 0
 
--- A levelling merge has 1 input run and one resident run, which is (up to) 4x
--- bigger than the others.
+-- A levelling merge has 1 input run and one resident run, which are together
+-- (up to) 4x larger than an input run.
 -- It needs to be completed before another run comes in.
-creditsForMerge (MergingRun MergePolicyLevelling _ _) = (1 + 4) / 1
+creditsForMerge (MergingRun MergePolicyLevelling _ _) = 4 / 1
 
 -- A tiering merge has 5 runs at most (once could be held back to merged again)
 -- and must be completed before the level is full (once 4 more runs come in).
@@ -557,15 +555,16 @@ increment tr sc = \r ls -> do
           traceWith tr' (AddRunEvent (length resident))
           return (Level mr' resident : ls)
 
-        -- The final level is using levelling. If the existing completed merge
-        -- run is too large for this level, we promote the run to the next
-        -- level and start merging the incoming runs into this (otherwise
-        -- empty) level .
+        -- The final level is using levelling. If creating a merge could lead
+        -- to a run that is too large for this level, we promote the resident
+        -- run to the next level and start merging the incoming runs into this
+        -- (otherwise empty) level.
+        -- TODO: we should also promote the incoming runs, but we can't have a
+        -- totally empty level with the current representation!
         MergePolicyLevelling | levellingLevelIsFull ln incoming r -> do
           assert (null rs && null ls) $ return ()
-          mr' <- newMerge tr' ln MergePolicyTiering MergeMidLevel incoming
-          ls' <- go (ln+1) [r] []
-          return (Level mr' [] : ls')
+          ls' <- go (ln+1) (incoming ++ [r]) []
+          return (Level (SingleRun mempty) [] : ls')
 
         -- Otherwise we start merging the incoming runs into the run.
         MergePolicyLevelling -> do
@@ -581,10 +580,10 @@ increment tr sc = \r ls -> do
 tieringLevelIsFull :: Int -> [Run] -> [Run] -> Bool
 tieringLevelIsFull _ln _incoming resident = length resident >= 4
 
--- | The level is only considered full once the resident run is /too large/ for
--- the level.
+-- | The level is considered full once a merge /might/ end up too large for it.
 levellingLevelIsFull :: Int -> [Run] -> Run -> Bool
-levellingLevelIsFull ln _incoming resident = levellingRunSizeToLevel resident > ln
+levellingLevelIsFull ln incoming resident =
+    sum (map Map.size (resident : incoming)) > levellingRunSize ln
 
 duplicate :: LSM s -> ST s (LSM s)
 duplicate (LSMHandle _scr lsmr) = do
