@@ -132,17 +132,20 @@ tieringRunSize n = 4^n
 levellingRunSize :: Int -> Int
 levellingRunSize n = 4^(n+1)
 
-tieringRunSizeToLevel :: Run -> Int
-tieringRunSizeToLevel r
+tieringLevel :: Int -> Int
+tieringLevel s
   | s <= bufferSize = 1  -- level numbers start at 1
   | otherwise =
     1 + (finiteBitSize s - countLeadingZeros (s-1) - 1) `div` 2
-  where
-    s = Map.size r
+
+levellingLevel :: Int -> Int
+levellingLevel s = max 1 (tieringLevel s - 1)  -- level numbers start at 1
+
+tieringRunSizeToLevel :: Run -> Int
+tieringRunSizeToLevel = tieringLevel . Map.size
 
 levellingRunSizeToLevel :: Run -> Int
-levellingRunSizeToLevel r =
-    max 1 (tieringRunSizeToLevel r - 1)  -- level numbers start at 1
+levellingRunSizeToLevel = levellingLevel . Map.size
 
 bufferSize :: Int
 bufferSize = tieringRunSize 1 -- 4
@@ -519,8 +522,19 @@ increment tr sc = \r ls -> do
     invariant ls'
     return ls'
   where
-    go :: Int -> [Run] -> Levels s -> ST s (Levels s)
-    go !ln incoming [] = do
+    go, go' :: Int -> [Run] -> Levels s -> ST s (Levels s)
+    go !ln incoming ls = do
+        case incoming of
+          [r] -> do
+            assertST $ tieringRunSizeToLevel r `elem` [ln, ln+1]  -- +1 from levelling
+          _ -> do
+            assertST $ length incoming == 4
+            -- because of overfull runs due to holding back
+            assertST $ all (\r -> tieringRunSizeToLevel r `elem` [ln-1, ln]) incoming
+            assertST $ tieringLevel (sum (map Map.size incoming)) `elem` [ln, ln+1]
+        go' ln incoming ls
+
+    go' !ln incoming [] = do
         let mergepolicy = mergePolicyForLevel ln []
         traceWith tr' AddLevelEvent
         mr <- newMerge tr' ln mergepolicy MergeLastLevel incoming
@@ -528,7 +542,7 @@ increment tr sc = \r ls -> do
       where
         tr' = contramap (EventAt sc ln) tr
 
-    go !ln incoming (Level mr rs : ls) = do
+    go' !ln incoming (Level mr rs : ls) = do
       r <- expectCompletedMerge tr' mr
       let resident = r:rs
       case mergePolicyForLevel ln ls of
