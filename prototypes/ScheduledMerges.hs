@@ -288,7 +288,7 @@ newMerge tr level mergepolicy mergelast rs = do
                    mergeCost     = cost,
                    mergeRunsSize = map Map.size rs
                  }
-    assert (length rs `elem` [4, 5]) $
+    assert (length rs >= 4) $
       assert (mergeDebtLeft debt >= cost) $
         MergingRun mergepolicy mergelast <$> newSTRef (OngoingMerge debt rs r)
   where
@@ -605,9 +605,13 @@ increment tr sc = \r ls -> do
       where
         tr' = contramap (EventAt sc ln) tr
 
--- | Only based on run count, not their sizes.
+-- | The level is considered full if adding the incoming runs could result in a
+-- merge that's too large for the next level.
+-- For perfectly full runs, this is exactly when there are 4 resident runs.
 tieringLevelIsFull :: Int -> [Run] -> [Run] -> Bool
-tieringLevelIsFull _ln _incoming resident = length resident >= 4
+tieringLevelIsFull ln incoming resident =
+    -- (the same as @levellingRunSize ln@)
+    sum (map Map.size (incoming ++ resident)) > tieringRunSize (ln+1)
 
 -- | The level is only considered full once the resident run is /too large/ for
 -- the level.
