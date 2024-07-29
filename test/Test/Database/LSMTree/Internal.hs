@@ -153,7 +153,7 @@ prop_interimOpenTable dat = ioProperty $
           updates upds th
           let snap = fromMaybe (error "invalid name") $ mkSnapshotName "snap"
           numRunsSnapped <- snapshot snap "someLabel" th
-          th' <- open sesh "someLabel" snap
+          th' <- open sesh "someLabel" configNoOverride snap
           lhs <- lookups ks th id
           rhs <- lookups ks th' id
           close th

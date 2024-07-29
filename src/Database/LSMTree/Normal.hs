@@ -80,6 +80,9 @@ module Database.LSMTree.Normal (
   , Common.Labellable (..)
   , snapshot
   , open
+  , Internal.TableConfigOverride
+  , Internal.configNoOverride
+  , Internal.configOverrideDiskCachePolicy
   , deleteSnapshot
   , listSnapshots
 
@@ -384,7 +387,7 @@ snapshot ::
 snapshot snap (TableHandle th) = void $ Internal.snapshot snap label th
   where label = Common.makeSnapshotLabel (Proxy @(k, v, blob))
 
-{-# SPECIALISE open :: (SerialiseKey k, SerialiseValue v, SerialiseValue blob, Common.Labellable (k, v, blob)) => Session IO -> SnapshotName -> IO (TableHandle IO k v blob ) #-}
+{-# SPECIALISE open :: (SerialiseKey k, SerialiseValue v, SerialiseValue blob, Common.Labellable (k, v, blob)) => Session IO -> Internal.TableConfigOverride -> SnapshotName -> IO (TableHandle IO k v blob ) #-}
 -- | Open a table from a named snapshot, returning a new table handle.
 --
 -- NOTE: close table handles using 'close' as soon as they are
@@ -412,9 +415,10 @@ open ::
      , Common.Labellable (k, v, blob)
      )
   => Session m
+  -> Internal.TableConfigOverride -- ^ Optional config override
   -> SnapshotName
   -> m (TableHandle m k v blob)
-open (Session sesh) snap = TableHandle <$> Internal.open sesh label snap
+open (Session sesh) override snap = TableHandle <$> Internal.open sesh label override snap
   where label = Common.makeSnapshotLabel (Proxy @(k, v, blob))
 
 {-------------------------------------------------------------------------------
