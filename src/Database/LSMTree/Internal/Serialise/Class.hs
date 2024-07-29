@@ -51,7 +51,7 @@ import           Numeric (showInt)
 -- serialisation function, so in that case instances should also satisfy the
 -- following:
 --
--- [Minimal size] @'sizeofRawBytes' >= 10@
+-- [Minimal size] @'sizeofRawBytes' >= 8@
 class SerialiseKey k where
   serialiseKey :: k -> RawBytes
   -- TODO: 'deserialiseKey' is only strictly necessary for range queries.
@@ -76,7 +76,7 @@ serialiseKeyPreservesOrdering x y = x `compare` y == serialiseKey x `compare` se
 
 -- | Test the __Minimal size__ law for the 'SerialiseKey' class.
 serialiseKeyMinimalSize :: SerialiseKey k => k -> Bool
-serialiseKeyMinimalSize x = RB.size (serialiseKey x) >= 10
+serialiseKeyMinimalSize x = RB.size (serialiseKey x) >= 8
 
 -- | Serialisation of values and blobs.
 --

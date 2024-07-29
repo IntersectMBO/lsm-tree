@@ -515,13 +515,13 @@ liftShrink3InMemLookupData shrinkKey shrinkValue shrinkBlob InMemLookupData{ run
 
 genSerialisedKey :: Gen SerialisedKey
 genSerialisedKey = frequency [
-      (9, arbitrary `suchThat` (\k -> sizeofKey k >= 10))
+      (9, arbitrary `suchThat` (\k -> sizeofKey k >= 8))
     , (1, do x <- getSmall <$> arbitrary
-             pure $ SerialisedKey (RB.pack [0,0,0,0,0,0,0,0,0, x]))
+             pure $ SerialisedKey (RB.pack [0,0,0,0,0,0,0, x]))
     ]
 
 shrinkSerialisedKey :: SerialisedKey -> [SerialisedKey]
-shrinkSerialisedKey k = [k' | k' <- shrink k, sizeofKey k' >= 10]
+shrinkSerialisedKey k = [k' | k' <- shrink k, sizeofKey k' >= 8]
 
 genSerialisedValue :: Gen SerialisedValue
 genSerialisedValue = frequency [ (50, arbitrary), (1, genLongValue) ]

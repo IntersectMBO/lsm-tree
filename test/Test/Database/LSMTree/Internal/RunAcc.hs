@@ -139,7 +139,7 @@ fromProtoBlobRef :: Proto.BlobRef -> BlobSpan
 fromProtoBlobRef (Proto.BlobRef x y) = BlobSpan x y
 
 -- | Wrapper around 'PageLogical' that generates nearly-full pages, and
--- keys that are always large enough (>= 10 bytes) for the compact index.
+-- keys that are always large enough (>= 8 bytes) for the compact index.
 newtype PageLogical' = PageLogical' { getPrototypeKOps :: [(Proto.Key, Proto.Operation)] }
   deriving stock Show
 
@@ -148,7 +148,7 @@ getRealKOps = fmap fromProtoKOp . getPrototypeKOps
 
 instance Arbitrary PageLogical' where
   arbitrary = PageLogical' <$>
-      Proto.genPageContentFits Proto.DiskPage4k (Proto.MinKeySize 10)
+      Proto.genPageContentFits Proto.DiskPage4k (Proto.MinKeySize 8)
   shrink (PageLogical' page) =
       [ PageLogical' page' | page' <- shrink page ]
 
