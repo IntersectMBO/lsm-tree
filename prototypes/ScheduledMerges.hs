@@ -42,6 +42,7 @@ module ScheduledMerges (
 import           Prelude hiding (lookup)
 
 import           Data.Bits
+import           Data.Foldable (for_, toList)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.STRef
@@ -518,11 +519,12 @@ data EventDetail =
 increment :: forall s. Tracer (ST s) Event
           -> Counter -> Run -> Levels s -> ST s (Levels s)
 increment tr sc = \r ls -> do
-    ls' <- go 1 [r] ls
+    (ls', refused) <- go 1 [r] ls
+    assertST $ null refused
     invariant ls'
     return ls'
   where
-    go, go' :: Int -> [Run] -> Levels s -> ST s (Levels s)
+    go, go' :: Int -> [Run] -> Levels s -> ST s (Levels s, Maybe Run)
     go !ln incoming ls = do
         case incoming of
           [r] -> do
@@ -532,13 +534,15 @@ increment tr sc = \r ls -> do
             -- because of underfull runs
             assertST $ all (\r -> tieringRunSizeToLevel r `elem` [ln-2, ln-1]) incoming
             assertST $ tieringLevel (sum (map Map.size incoming)) `elem` [ln-1, ln]
-        go' ln incoming ls
+        (ls', refused) <- go' ln incoming ls
+        for_ refused $ assertST . (== head incoming)
+        return (ls', refused)
 
     go' !ln incoming [] = do
         let mergepolicy = mergePolicyForLevel ln []
         traceWith tr' AddLevelEvent
         mr <- newMerge tr' ln mergepolicy MergeLastLevel incoming
-        return (Level mr [] : [])
+        return (Level mr [] : [], Nothing)
       where
         tr' = contramap (EventAt sc ln) tr
 
@@ -555,7 +559,7 @@ increment tr sc = \r ls -> do
           , sum (map Map.size (r : incoming)) <= tieringRunSize ln -> do
           let mergelast = mergeLastForLevel ls
           mr' <- newMerge tr' ln MergePolicyTiering mergelast (incoming ++ [r])
-          return (Level mr' rs : ls)
+          return (Level mr' rs : ls, Nothing)
 
         -- This tiering level is now full. We take the completed merged run
         -- (the previous incoming runs), plus all the other runs on this level
@@ -563,8 +567,8 @@ increment tr sc = \r ls -> do
         -- for the new incoming runs. This level is otherwise empty.
         MergePolicyTiering | tieringLevelIsFull ln incoming resident -> do
           mr' <- newMerge tr' ln MergePolicyTiering MergeMidLevel incoming
-          ls' <- go (ln+1) resident ls
-          return (Level mr' [] : ls')
+          (ls', refused) <- go (ln+1) resident ls
+          return (Level mr' (toList refused) : ls', Nothing)
 
         -- This tiering level is not yet full. We move the completed merged run
         -- into the level proper, and start the new merge for the incoming runs.
@@ -572,7 +576,7 @@ increment tr sc = \r ls -> do
           let mergelast = mergeLastForLevel ls
           mr' <- newMerge tr' ln MergePolicyTiering mergelast incoming
           traceWith tr' (AddRunEvent (length resident))
-          return (Level mr' resident : ls)
+          return (Level mr' resident : ls, Nothing)
 
         -- The final level is using levelling. If the existing completed merge
         -- run is too large for this level, we promote the run to the next
@@ -581,15 +585,15 @@ increment tr sc = \r ls -> do
         MergePolicyLevelling | levellingLevelIsFull ln incoming r -> do
           assert (null rs && null ls) $ return ()
           mr' <- newMerge tr' ln MergePolicyTiering MergeMidLevel incoming
-          ls' <- go (ln+1) [r] []
-          return (Level mr' [] : ls')
+          (ls', refused) <- go (ln+1) [r] []
+          return (Level mr' (toList refused) : ls', Nothing)
 
         -- Otherwise we start merging the incoming runs into the run.
         MergePolicyLevelling -> do
           assert (null rs && null ls) $ return ()
           mr' <- newMerge tr' ln MergePolicyLevelling MergeLastLevel
                           (incoming ++ [r])
-          return (Level mr' [] : [])
+          return (Level mr' [] : [], Nothing)
 
       where
         tr' = contramap (EventAt sc ln) tr
