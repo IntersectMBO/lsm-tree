@@ -148,6 +148,7 @@ type TableHandle :: (Type -> Type) -> Type -> Type -> Type
 data TableHandle m k v = forall h. Typeable h =>
     TableHandle !(Internal.TableHandle m h)
 
+{-# SPECIALISE withTable :: Session IO -> Internal.TableConfig -> (TableHandle IO k v -> IO a) -> IO a #-}
 -- | (Asynchronous) exception-safe, bracketed opening and closing of a table.
 --
 -- If possible, it is recommended to use this function instead of 'new' and
@@ -162,6 +163,7 @@ withTable (Session sesh) conf action =
     Internal.withTable sesh conf $
       action . TableHandle
 
+{-# SPECIALISE new :: Session IO -> Internal.TableConfig -> IO (TableHandle IO k v) #-}
 -- | Create a new empty table, returning a fresh table handle.
 --
 -- NOTE: table handles hold open resources (such as open files) and should be
@@ -174,6 +176,7 @@ new ::
   -> m (TableHandle m k v)
 new (Session sesh) conf = TableHandle <$> Internal.new sesh conf
 
+{-# SPECIALISE close :: TableHandle IO k v -> IO () #-}
 -- | Close a table handle. 'close' is idempotent. All operations on a closed
 -- handle will throw an exception.
 --
@@ -190,6 +193,7 @@ close (TableHandle th) = Internal.close th
   Table querying and updates
 -------------------------------------------------------------------------------}
 
+{-# SPECIALISE lookups :: (SerialiseKey k, SerialiseValue v, ResolveValue v) => V.Vector k -> TableHandle IO k v -> IO (V.Vector (LookupResult v)) #-}
 -- | Perform a batch of lookups.
 --
 -- Lookups can be performed concurrently from multiple Haskell threads.
@@ -215,6 +219,7 @@ toMonoidalLookupResult = \case
       Entry.Delete             -> NotFound
     Nothing -> NotFound
 
+{-# SPECIALISE rangeLookup :: (SerialiseKey k, SerialiseValue v, ResolveValue v) => Range k -> TableHandle IO k v -> IO (V.Vector (RangeLookupResult k v)) #-}
 -- | Perform a range lookup.
 --
 -- Range lookups can be performed concurrently from multiple Haskell threads.
@@ -225,6 +230,7 @@ rangeLookup ::
   -> m (V.Vector (RangeLookupResult k v))
 rangeLookup = undefined
 
+{-# SPECIALISE updates :: (SerialiseKey k, SerialiseValue v, ResolveValue v) => V.Vector (k, Update v) -> TableHandle IO k v -> IO () #-}
 -- | Perform a mixed batch of inserts, deletes and monoidal upserts.
 --
 -- If there are duplicate keys in the same batch, then keys nearer to the front
@@ -245,6 +251,7 @@ updates es (TableHandle th) = do
     serialiseEntry = bimap Internal.serialiseKey serialiseOp
     serialiseOp = first Internal.serialiseValue . Entry.updateToEntryMonoidal
 
+{-# SPECIALISE inserts :: (SerialiseKey k, SerialiseValue v, ResolveValue v) => V.Vector (k, v) -> TableHandle IO k v -> IO () #-}
 -- | Perform a batch of inserts.
 --
 -- Inserts can be performed concurrently from multiple Haskell threads.
@@ -255,6 +262,7 @@ inserts ::
   -> m ()
 inserts = updates . fmap (second Insert)
 
+{-# SPECIALISE deletes :: (SerialiseKey k, SerialiseValue v, ResolveValue v) => V.Vector k -> TableHandle IO k v -> IO () #-}
 -- | Perform a batch of deletes.
 --
 -- Deletes can be performed concurrently from multiple Haskell threads.
@@ -265,6 +273,7 @@ deletes ::
   -> m ()
 deletes = updates . fmap (,Delete)
 
+{-# SPECIALISE mupserts :: (SerialiseKey k, SerialiseValue v, ResolveValue v) => V.Vector (k, v) -> TableHandle IO k v -> IO () #-}
 -- | Perform a batch of monoidal upserts.
 --
 -- Monoidal upserts can be performed concurrently from multiple Haskell threads.
@@ -279,6 +288,7 @@ mupserts = updates . fmap (second Mupsert)
   Snapshots
 -------------------------------------------------------------------------------}
 
+{-# SPECIALISE snapshot :: (SerialiseKey k, SerialiseValue v, ResolveValue v, Common.Labellable (k, v)) => SnapshotName -> TableHandle IO k v -> IO () #-}
 -- | Make the current value of a table durable on-disk by taking a snapshot and
 -- giving the snapshot a name. This is the __only__ mechanism to make a table
 -- durable -- ordinary insert\/delete operations are otherwise not preserved.
@@ -315,6 +325,7 @@ snapshot snap (TableHandle th) =
     -- to ensure we don't open a monoidal table as normal later
     label = Common.makeSnapshotLabel (Proxy @(k, v)) <> " (monoidal)"
 
+{-# SPECIALISE open :: (SerialiseKey k, SerialiseValue v, Common.Labellable (k, v)) => Session IO -> Internal.TableConfigOverride -> SnapshotName -> IO (TableHandle IO k v) #-}
 -- | Open a table from a named snapshot, returning a new table handle.
 --
 -- NOTE: close table handles using 'close' as soon as they are
@@ -356,6 +367,7 @@ open (Session sesh) override snap =
   Mutiple writable table handles
 -------------------------------------------------------------------------------}
 
+{-# SPECIALISE duplicate :: TableHandle IO k v -> IO (TableHandle IO k v) #-}
 -- | Create a logically independent duplicate of a table handle. This returns a
 -- new table handle.
 --
@@ -397,6 +409,7 @@ duplicate (TableHandle th) = TableHandle <$> Internal.duplicate th
   Merging tables
 -------------------------------------------------------------------------------}
 
+{-# SPECIALISE merge :: ResolveValue v => TableHandle IO k v -> TableHandle IO k v -> IO (TableHandle IO k v) #-}
 -- | Merge full tables, creating a new table handle.
 --
 -- Multiple tables of the same type but with different configuration parameters
