@@ -1,9 +1,4 @@
-{-# LANGUAGE FlexibleContexts         #-}
-{-# LANGUAGE KindSignatures           #-}
-{-# LANGUAGE LambdaCase               #-}
-{-# LANGUAGE QuantifiedConstraints    #-}
-{-# LANGUAGE StandaloneKindSignatures #-}
-{-# LANGUAGE TypeFamilies             #-}
+{-# LANGUAGE TypeFamilies #-}
 
 module Database.LSMTree.Class.Monoidal (
     IsSession (..)

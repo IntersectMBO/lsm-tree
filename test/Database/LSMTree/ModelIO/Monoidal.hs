@@ -1,12 +1,3 @@
-{-# LANGUAGE ConstraintKinds          #-}
-{-# LANGUAGE GADTs                    #-}
-{-# LANGUAGE RecordWildCards          #-}
-{-# LANGUAGE ScopedTypeVariables      #-}
-{-# LANGUAGE StandaloneDeriving       #-}
-{-# LANGUAGE StandaloneKindSignatures #-}
-{-# LANGUAGE TupleSections            #-}
-{-# LANGUAGE TypeApplications         #-}
-
 -- Model's 'open' and 'snapshot' have redundant constraints.
 {-# OPTIONS_GHC -Wno-redundant-constraints #-}
 

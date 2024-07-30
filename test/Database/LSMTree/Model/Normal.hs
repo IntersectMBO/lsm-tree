@@ -1,10 +1,5 @@
-{-# LANGUAGE BangPatterns        #-}
-{-# LANGUAGE RoleAnnotations     #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE StandaloneDeriving  #-}
-{-# LANGUAGE TupleSections       #-}
-{-# LANGUAGE TypeApplications    #-}
-{-# LANGUAGE TypeFamilies        #-}
+{-# LANGUAGE TypeFamilies #-}
+
 module Database.LSMTree.Model.Normal (
     -- * Serialisation
     SerialiseKey (..)

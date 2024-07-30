@@ -1,10 +1,4 @@
-{-# LANGUAGE RoleAnnotations          #-}
-{-# LANGUAGE ScopedTypeVariables      #-}
-{-# LANGUAGE StandaloneDeriving       #-}
-{-# LANGUAGE StandaloneKindSignatures #-}
-{-# LANGUAGE TupleSections            #-}
-{-# LANGUAGE TypeApplications         #-}
-{-# LANGUAGE TypeFamilies             #-}
+{-# LANGUAGE TypeFamilies #-}
 
 -- lookup has redundant update constraint.
 {-# OPTIONS_GHC -Wno-redundant-constraints #-}

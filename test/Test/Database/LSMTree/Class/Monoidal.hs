@@ -1,7 +1,4 @@
-{-# LANGUAGE BlockArguments      #-}
-{-# LANGUAGE RecordWildCards     #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications    #-}
+{-# LANGUAGE BlockArguments #-}
 
 module Test.Database.LSMTree.Class.Monoidal (tests) where
 

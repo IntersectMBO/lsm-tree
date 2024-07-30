@@ -1,8 +1,4 @@
-{-# LANGUAGE BlockArguments      #-}
-{-# LANGUAGE RecordWildCards     #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications    #-}
-{-# LANGUAGE TypeFamilies        #-}
+{-# LANGUAGE BlockArguments #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
