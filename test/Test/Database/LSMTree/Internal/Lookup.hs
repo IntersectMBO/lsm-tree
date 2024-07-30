@@ -312,6 +312,7 @@ prop_roundtripFromWriteBufferLookupIO dats =
       first V.fromList . unzip <$>
       sequence
         [ (,wb) <$> Run.fromWriteBuffer hasFS hasBlockIO Run.CacheRunData
+                                        (RunAllocFixed 10)
                                         (RunFsPaths (FS.mkFsPath []) i) wb
         | (i, dat) <- zip [0..] (getSmallList dats)
         , let wb = WB.fromMap (runData dat)
@@ -396,7 +397,7 @@ mkTestRun dat = (rawPages, b, ic)
 
     -- one-shot run construction
     (pages, b, ic) = runST $ do
-      racc <- Run.new nentries
+      racc <- Run.new nentries (RunAllocFixed 10)
       let kops = Map.toList dat
       psopss <- traverse (uncurry (Run.addKeyOp racc)) kops
       (mp, _ , b', ic', _) <- Run.unsafeFinalise racc

@@ -232,7 +232,7 @@ instance Arbitrary R.TableConfig where
         R.confMergePolicy      = R.MergePolicyLazyLevelling
       , R.confSizeRatio        = R.Four
       , R.confWriteBufferAlloc = R.AllocNumEntries (R.NumEntries 30)
-      , R.confBloomFilterAlloc = R.AllocRequestFPR 0.02
+      , R.confBloomFilterAlloc = R.AllocFixed 10
       , R.confResolveMupsert   = Nothing
       , R.confDiskCachePolicy  = R.DiskCacheNone
       }

@@ -16,6 +16,7 @@ import           Database.LSMTree.Internal.BlobRef (BlobRef (..))
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.Run (Run, RunDataCaching)
 import qualified Database.LSMTree.Internal.Run as Run
+import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..))
 import           Database.LSMTree.Internal.RunBuilder (RunBuilder)
 import qualified Database.LSMTree.Internal.RunBuilder as Builder
 import qualified Database.LSMTree.Internal.RunReader as Reader
@@ -51,17 +52,18 @@ type Mappend = SerialisedValue -> SerialisedValue -> SerialisedValue
 new ::
      HasFS IO h
   -> RunDataCaching
+  -> RunBloomFilterAlloc
   -> Level
   -> Mappend
   -> Run.RunFsPaths
   -> [Run (FS.Handle h)]
   -> IO (Maybe (Merge (FS.Handle h)))
-new fs mergeCaching mergeLevel mergeMappend targetPaths runs = do
+new fs mergeCaching alloc mergeLevel mergeMappend targetPaths runs = do
     mreaders <- Readers.new fs runs
     for mreaders $ \mergeReaders -> do
       -- calculate upper bounds based on input runs
       let numEntries = coerce (sum @[] @Int) (map Run.runNumEntries runs)
-      mergeBuilder <- Builder.new fs targetPaths numEntries
+      mergeBuilder <- Builder.new fs targetPaths numEntries alloc
       return Merge {..}
 
 -- | This function should be called when discarding a 'Merge' before it

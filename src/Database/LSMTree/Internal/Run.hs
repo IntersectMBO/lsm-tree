@@ -74,6 +74,7 @@ import           Database.LSMTree.Internal.IndexCompact (IndexCompact, NumPages)
 import qualified Database.LSMTree.Internal.IndexCompact as Index
 import           Database.LSMTree.Internal.Paths
 import qualified Database.LSMTree.Internal.RawBytes as RB
+import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc)
 import           Database.LSMTree.Internal.RunBuilder (RunBuilder)
 import qualified Database.LSMTree.Internal.RunBuilder as Builder
 import           Database.LSMTree.Internal.Serialise
@@ -196,11 +197,12 @@ fromMutable fs hbio caching refCount builder = do
 fromWriteBuffer :: HasFS IO h
                 -> HasBlockIO IO h
                 -> RunDataCaching
+                -> RunBloomFilterAlloc
                 -> RunFsPaths
                 -> WriteBuffer
                 -> IO (Run (FS.Handle h))
-fromWriteBuffer fs hbio caching fsPaths buffer = do
-    builder <- Builder.new fs fsPaths (WB.numEntries buffer)
+fromWriteBuffer fs hbio caching alloc fsPaths buffer = do
+    builder <- Builder.new fs fsPaths (WB.numEntries buffer) alloc
     for_ (WB.toList buffer) $ \(k, e) ->
       Builder.addKeyOp fs builder k e
     fromMutable fs hbio caching (RefCount 1) builder

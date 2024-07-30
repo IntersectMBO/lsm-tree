@@ -29,7 +29,7 @@ import           Database.LSMTree.Internal.RawOverflowPage (RawOverflowPage)
 import qualified Database.LSMTree.Internal.RawOverflowPage as RawOverflowPage
 import           Database.LSMTree.Internal.RawPage (RawPage)
 import qualified Database.LSMTree.Internal.RawPage as RawPage
-import           Database.LSMTree.Internal.RunAcc (RunAcc)
+import           Database.LSMTree.Internal.RunAcc (RunAcc, RunBloomFilterAlloc)
 import qualified Database.LSMTree.Internal.RunAcc as RunAcc
 import           Database.LSMTree.Internal.Serialise
 import qualified System.FS.API as FS
@@ -71,9 +71,10 @@ new ::
      HasFS IO h
   -> RunFsPaths
   -> NumEntries  -- ^ an upper bound of the number of entries to be added
+  -> RunBloomFilterAlloc
   -> IO (RunBuilder (FS.Handle h))
-new fs runBuilderFsPaths numEntries = do
-    runBuilderAcc <- ST.stToIO $ RunAcc.new numEntries
+new fs runBuilderFsPaths numEntries alloc = do
+    runBuilderAcc <- ST.stToIO $ RunAcc.new numEntries alloc
     runBuilderBlobOffset <- newIORef 0
 
     runBuilderHandles <- traverse (makeHandle fs) (pathsForRunFiles runBuilderFsPaths)
