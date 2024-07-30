@@ -100,6 +100,7 @@ import           Control.DeepSeq (NFData, deepseq)
 import           Data.Bifunctor (Bifunctor (second))
 import           Data.Kind (Type)
 import           Data.Typeable (Proxy (Proxy), Typeable)
+import qualified Data.Vector as V
 import           Data.Word (Word64)
 import           Database.LSMTree.Common (IOLike, Range (..), SerialiseKey,
                      SerialiseValue (..), Session (..), SnapshotName,
@@ -163,9 +164,9 @@ close = undefined
 -- Lookups can be performed concurrently from multiple Haskell threads.
 lookups ::
      (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
-  => [k]
+  => V.Vector k
   -> TableHandle m k v
-  -> m [LookupResult k v]
+  -> m (V.Vector (LookupResult v))
 lookups = undefined
 
 -- | Perform a range lookup.
@@ -175,7 +176,7 @@ rangeLookup ::
      (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
   => Range k
   -> TableHandle m k v
-  -> m [RangeLookupResult k v]
+  -> m (V.Vector (RangeLookupResult k v))
 rangeLookup = undefined
 
 -- | Perform a mixed batch of inserts, deletes and monoidal upserts.
@@ -183,7 +184,7 @@ rangeLookup = undefined
 -- Updates can be performed concurrently from multiple Haskell threads.
 updates ::
      (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
-  => [(k, Update v)]
+  => V.Vector (k, Update v)
   -> TableHandle m k v
   -> m ()
 updates = undefined
@@ -193,7 +194,7 @@ updates = undefined
 -- Inserts can be performed concurrently from multiple Haskell threads.
 inserts ::
      (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
-  => [(k, v)]
+  => V.Vector (k, v)
   -> TableHandle m k v
   -> m ()
 inserts = updates . fmap (second Insert)
@@ -203,7 +204,7 @@ inserts = updates . fmap (second Insert)
 -- Deletes can be performed concurrently from multiple Haskell threads.
 deletes ::
      (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
-  => [k]
+  => V.Vector k
   -> TableHandle m k v
   -> m ()
 deletes = updates . fmap (,Delete)
@@ -213,7 +214,7 @@ deletes = updates . fmap (,Delete)
 -- Monoidal upserts can be performed concurrently from multiple Haskell threads.
 mupserts ::
      (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
-  => [(k, v)]
+  => V.Vector (k, v)
   -> TableHandle m k v
   -> m ()
 mupserts = updates . fmap (second Mupsert)

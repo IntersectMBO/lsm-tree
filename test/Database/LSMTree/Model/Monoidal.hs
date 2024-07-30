@@ -43,6 +43,7 @@ import           Data.Map (Map)
 import qualified Data.Map.Range as Map.R
 import qualified Data.Map.Strict as Map
 import           Data.Proxy (Proxy (Proxy))
+import qualified Data.Vector as V
 import           Database.LSMTree.Common (Range (..), SerialiseKey (..),
                      SerialiseValue (..))
 import           Database.LSMTree.Internal.RawBytes (RawBytes)
@@ -96,15 +97,13 @@ deriving stock instance Eq (Table k v)
 -- Lookups can be performed concurrently from multiple Haskell threads.
 lookups ::
      (SerialiseKey k, SerialiseValue v)
-  => [k]
+  => V.Vector k
   -> Table k v
-  -> [LookupResult k v]
-lookups ks tbl =
-    [ case Map.lookup (serialiseKey k) (_values tbl) of
-        Nothing -> NotFound k
-        Just v  -> Found k (deserialiseValue v)
-    | k <- ks
-    ]
+  -> V.Vector (LookupResult v)
+lookups ks tbl = flip V.map ks $ \k ->
+    case Map.lookup (serialiseKey k) (_values tbl) of
+      Nothing -> NotFound
+      Just v  -> Found (deserialiseValue v)
 
 -- | Perform a range lookup.
 --
@@ -113,8 +112,8 @@ rangeLookup :: forall k v.
      (SerialiseKey k, SerialiseValue v)
   => Range k
   -> Table k v
-  -> [RangeLookupResult k v]
-rangeLookup r tbl =
+  -> V.Vector (RangeLookupResult k v)
+rangeLookup r tbl = V.fromList
     [ FoundInRange (deserialiseKey k) (deserialiseValue v)
     | let (lb, ub) = convertRange r
     , (k, v) <- Map.R.rangeLookup lb ub (_values tbl)
@@ -133,7 +132,7 @@ rangeLookup r tbl =
 -- Updates can be performed concurrently from multiple Haskell threads.
 updates :: forall k v.
      (SerialiseKey k, SerialiseValue v, ResolveValue v)
-  => [(k, Update v)]
+  => V.Vector (k, Update v)
   -> Table k v
   -> Table k v
 updates ups tbl0 = foldl' update tbl0 ups where
@@ -157,7 +156,7 @@ mapUpsert k v f = Map.alter (Just . g) k where
 -- Inserts can be performed concurrently from multiple Haskell threads.
 inserts ::
      (SerialiseKey k, SerialiseValue v, ResolveValue v)
-  => [(k, v)]
+  => V.Vector (k, v)
   -> Table k v
   -> Table k v
 inserts = updates . fmap (second Insert)
@@ -167,7 +166,7 @@ inserts = updates . fmap (second Insert)
 -- Deletes can be performed concurrently from multiple Haskell threads.
 deletes ::
      (SerialiseKey k, SerialiseValue v, ResolveValue v)
-  => [k]
+  => V.Vector k
   -> Table k v
   -> Table k v
 deletes = updates . fmap (,Delete)
@@ -177,7 +176,7 @@ deletes = updates . fmap (,Delete)
 -- Monoidal upserts can be performed concurrently from multiple Haskell threads.
 mupserts ::
      (SerialiseKey k, SerialiseValue v, ResolveValue v)
-  => [(k, v)]
+  => V.Vector (k, v)
   -> Table k v
   -> Table k v
 mupserts = updates . fmap (second Mupsert)

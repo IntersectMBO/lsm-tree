@@ -47,6 +47,7 @@ import           Data.Dynamic (fromDynamic, toDyn)
 import           Data.Kind (Type)
 import qualified Data.Map.Strict as Map
 import           Data.Typeable (Typeable)
+import qualified Data.Vector as V
 import           Database.LSMTree.Common (IOLike, Range (..), SerialiseKey,
                      SerialiseValue, SnapshotName)
 import           Database.LSMTree.Model.Monoidal (ResolveValue)
@@ -101,9 +102,9 @@ close TableHandle {..} = atomically $ do
 -- | Perform a batch of lookups.
 lookups ::
      (IOLike m, SerialiseKey k, SerialiseValue v)
-  => [k]
+  => V.Vector k
   -> TableHandle m k v
-  -> m [LookupResult k v]
+  -> m (V.Vector (LookupResult v))
 lookups ks TableHandle {..} = atomically $
     withModel "lookups" thSession thRef $ \tbl ->
         return $ Model.lookups ks tbl
@@ -113,7 +114,7 @@ rangeLookup ::
      (IOLike m, SerialiseKey k, SerialiseValue v)
   => Range k
   -> TableHandle m k v
-  -> m [RangeLookupResult k v]
+  -> m (V.Vector (RangeLookupResult k v))
 rangeLookup r TableHandle {..} = atomically $
     withModel "rangeLookup" thSession thRef $ \tbl ->
         return $ Model.rangeLookup r tbl
@@ -121,7 +122,7 @@ rangeLookup r TableHandle {..} = atomically $
 -- | Perform a mixed batch of inserts, deletes and monoidal upserts.
 updates ::
      (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
-  => [(k, Update v)]
+  => V.Vector (k, Update v)
   -> TableHandle m k v
   -> m ()
 updates ups TableHandle {..} = atomically $
@@ -131,7 +132,7 @@ updates ups TableHandle {..} = atomically $
 -- | Perform a batch of inserts.
 inserts ::
      (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
-  => [(k, v)]
+  => V.Vector (k, v)
   -> TableHandle m k v
   -> m ()
 inserts = updates . fmap (second Insert)
@@ -139,7 +140,7 @@ inserts = updates . fmap (second Insert)
 -- | Perform a batch of deletes.
 deletes ::
      (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
-  => [k]
+  => V.Vector k
   -> TableHandle m k v
   -> m ()
 deletes = updates . fmap (,Delete)
@@ -147,7 +148,7 @@ deletes = updates . fmap (,Delete)
 -- | Perform a batch of monoidal upserts.
 mupserts ::
      (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
-  => [(k, v)]
+  => V.Vector (k, v)
   -> TableHandle m k v
   -> m ()
 mupserts = updates . fmap (second Mupsert)

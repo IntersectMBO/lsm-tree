@@ -14,6 +14,7 @@ module Database.LSMTree.Class.Monoidal (
 import           Control.Monad.Class.MonadThrow (MonadThrow (..))
 import           Data.Kind (Constraint, Type)
 import           Data.Typeable (Typeable)
+import qualified Data.Vector as V
 import           Database.LSMTree.Class.Normal (IsSession (..),
                      SessionArgs (..), withSession)
 import           Database.LSMTree.Common (IOLike, Range (..), SerialiseKey,
@@ -45,14 +46,14 @@ class (IsSession (Session h)) => IsTableHandle h where
     lookups ::
             (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
         => h m k v
-        -> [k]
-        -> m [LookupResult k v]
+        -> V.Vector k
+        -> m (V.Vector (LookupResult v))
 
     rangeLookup ::
             (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
         => h m k v
         -> Range k
-        -> m [RangeLookupResult k v]
+        -> m (V.Vector (RangeLookupResult k v))
 
     updates ::
         ( IOLike m
@@ -61,7 +62,7 @@ class (IsSession (Session h)) => IsTableHandle h where
         , ResolveValue v
         )
         => h m k v
-        -> [(k, Update v)]
+        -> V.Vector (k, Update v)
         -> m ()
 
     inserts ::
@@ -71,7 +72,7 @@ class (IsSession (Session h)) => IsTableHandle h where
         , ResolveValue v
         )
         => h m k v
-        -> [(k, v)]
+        -> V.Vector (k, v)
         -> m ()
 
     deletes ::
@@ -81,7 +82,7 @@ class (IsSession (Session h)) => IsTableHandle h where
         , ResolveValue v
         )
         => h m k v
-        -> [k]
+        -> V.Vector k
         -> m ()
 
     mupserts ::
@@ -91,7 +92,7 @@ class (IsSession (Session h)) => IsTableHandle h where
         , ResolveValue v
         )
         => h m k v
-        -> [(k, v)]
+        -> V.Vector (k, v)
         -> m ()
 
     snapshot ::
