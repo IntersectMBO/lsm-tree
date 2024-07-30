@@ -22,10 +22,10 @@ import           Data.Typeable (Typeable)
 import           Database.LSMTree.Class.Normal (IsSession (..),
                      SessionArgs (..), withSession)
 import           Database.LSMTree.Common (IOLike, Range (..), SerialiseKey,
-                     SerialiseValue, SnapshotName, SomeUpdateConstraint)
+                     SerialiseValue, SnapshotName)
 import qualified Database.LSMTree.ModelIO.Monoidal as M
 import           Database.LSMTree.Monoidal (LookupResult (..),
-                     RangeLookupResult (..), Update (..))
+                     RangeLookupResult (..), ResolveValue, Update (..))
 import qualified Database.LSMTree.Monoidal as R
 
 
@@ -48,13 +48,13 @@ class (IsSession (Session h)) => IsTableHandle h where
         -> m ()
 
     lookups ::
-            (IOLike m, SerialiseKey k, SerialiseValue v, SomeUpdateConstraint v)
+            (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
         => h m k v
         -> [k]
         -> m [LookupResult k v]
 
     rangeLookup ::
-            (IOLike m, SerialiseKey k, SerialiseValue v, SomeUpdateConstraint v)
+            (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
         => h m k v
         -> Range k
         -> m [RangeLookupResult k v]
@@ -63,7 +63,7 @@ class (IsSession (Session h)) => IsTableHandle h where
         ( IOLike m
         , SerialiseKey k
         , SerialiseValue v
-        , SomeUpdateConstraint v
+        , ResolveValue v
         )
         => h m k v
         -> [(k, Update v)]
@@ -73,7 +73,7 @@ class (IsSession (Session h)) => IsTableHandle h where
         ( IOLike m
         , SerialiseKey k
         , SerialiseValue v
-        , SomeUpdateConstraint v
+        , ResolveValue v
         )
         => h m k v
         -> [(k, v)]
@@ -83,7 +83,7 @@ class (IsSession (Session h)) => IsTableHandle h where
         ( IOLike m
         , SerialiseKey k
         , SerialiseValue v
-        , SomeUpdateConstraint v
+        , ResolveValue v
         )
         => h m k v
         -> [k]
@@ -93,7 +93,7 @@ class (IsSession (Session h)) => IsTableHandle h where
         ( IOLike m
         , SerialiseKey k
         , SerialiseValue v
-        , SomeUpdateConstraint v
+        , ResolveValue v
         )
         => h m k v
         -> [(k, v)]
@@ -129,7 +129,7 @@ class (IsSession (Session h)) => IsTableHandle h where
         -> m (h m k v)
 
     merge ::
-        (IOLike m, SerialiseValue v, SomeUpdateConstraint v)
+        (IOLike m, SerialiseValue v, ResolveValue v)
         => h m k v
         -> h m k v
         -> m (h m k v)
@@ -162,7 +162,7 @@ withTableDuplicate table = bracket (duplicate table) close
 
 withTableMerge ::
      forall h m k v a. (IOLike m, IsTableHandle h
-     , SerialiseValue v, SomeUpdateConstraint v
+     , SerialiseValue v, ResolveValue v
      )
   => h m k v
   -> h m k v

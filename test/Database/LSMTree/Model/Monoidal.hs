@@ -18,8 +18,9 @@ module Database.LSMTree.Model.Monoidal (
     -- * Serialisation
     SerialiseKey (..)
   , SerialiseValue (..)
-    -- * Temporary placeholder types
-  , SomeUpdateConstraint (..)
+    -- * Monoidal value resolution
+  , ResolveValue (..)
+  , resolveDeserialised
     -- * Tables
   , Table
   , empty
@@ -50,11 +51,13 @@ import           Data.Foldable (foldl')
 import           Data.Map (Map)
 import qualified Data.Map.Range as Map.R
 import qualified Data.Map.Strict as Map
+import           Data.Proxy (Proxy (Proxy))
 import           Database.LSMTree.Common (Range (..), SerialiseKey (..),
-                     SerialiseValue (..), SomeUpdateConstraint (..))
+                     SerialiseValue (..))
 import           Database.LSMTree.Internal.RawBytes (RawBytes)
 import           Database.LSMTree.Monoidal (LookupResult (..),
-                     RangeLookupResult (..), Update (..))
+                     RangeLookupResult (..), ResolveValue (..), Update (..),
+                     resolveDeserialised)
 import           GHC.Exts (IsList (..))
 
 {-------------------------------------------------------------------------------
@@ -101,7 +104,7 @@ deriving stock instance Eq (Table k v)
 --
 -- Lookups can be performed concurrently from multiple Haskell threads.
 lookups ::
-     (SerialiseKey k, SerialiseValue v, SomeUpdateConstraint v)
+     (SerialiseKey k, SerialiseValue v, ResolveValue v)
   => [k]
   -> Table k v
   -> [LookupResult k v]
@@ -116,7 +119,7 @@ lookups ks tbl =
 --
 -- Range lookups can be performed concurrently from multiple Haskell threads.
 rangeLookup :: forall k v.
-     (SerialiseKey k, SerialiseValue v, SomeUpdateConstraint v)
+     (SerialiseKey k, SerialiseValue v, ResolveValue v)
   => Range k
   -> Table k v
   -> [RangeLookupResult k v]
@@ -138,7 +141,7 @@ rangeLookup r tbl =
 --
 -- Updates can be performed concurrently from multiple Haskell threads.
 updates :: forall k v.
-     (SerialiseKey k, SerialiseValue v, SomeUpdateConstraint v)
+     (SerialiseKey k, SerialiseValue v, ResolveValue v)
   => [(k, Update v)]
   -> Table k v
   -> Table k v
@@ -151,7 +154,7 @@ updates ups tbl0 = foldl' update tbl0 ups where
     update tbl (k, Mupsert v) = tbl
         { _values = mapUpsert (serialiseKey k) (serialiseValue v) f (_values tbl) }
       where
-        f old = serialiseValue (mergeU v (deserialiseValue old))
+        f = resolveValue (Proxy @v) (serialiseValue v)
 
 mapUpsert :: Ord k => k -> v -> (v -> v) -> Map k v -> Map k v
 mapUpsert k v f = Map.alter (Just . g) k where
@@ -162,7 +165,7 @@ mapUpsert k v f = Map.alter (Just . g) k where
 --
 -- Inserts can be performed concurrently from multiple Haskell threads.
 inserts ::
-     (SerialiseKey k, SerialiseValue v, SomeUpdateConstraint v)
+     (SerialiseKey k, SerialiseValue v, ResolveValue v)
   => [(k, v)]
   -> Table k v
   -> Table k v
@@ -172,7 +175,7 @@ inserts = updates . fmap (second Insert)
 --
 -- Deletes can be performed concurrently from multiple Haskell threads.
 deletes ::
-     (SerialiseKey k, SerialiseValue v, SomeUpdateConstraint v)
+     (SerialiseKey k, SerialiseValue v, ResolveValue v)
   => [k]
   -> Table k v
   -> Table k v
@@ -182,7 +185,7 @@ deletes = updates . fmap (,Delete)
 --
 -- Monoidal upserts can be performed concurrently from multiple Haskell threads.
 mupserts ::
-     (SerialiseKey k, SerialiseValue v, SomeUpdateConstraint v)
+     (SerialiseKey k, SerialiseValue v, ResolveValue v)
   => [(k, v)]
   -> Table k v
   -> Table k v
@@ -218,11 +221,9 @@ duplicate = id
 -- Multiple tables of the same type but with different configuration parameters
 -- can live in the same session. However, some operations, like
 merge :: forall k v.
-     (SerialiseValue v, SomeUpdateConstraint v)
+     (SerialiseValue v, ResolveValue v)
   => Table k v
   -> Table k v
   -> Table k v
 merge (Table xs) (Table ys) =
-    Table (Map.unionWith f xs ys)
-  where
-    f x y = serialiseValue (mergeU @v (deserialiseValue x) (deserialiseValue y))
+    Table (Map.unionWith (resolveValue (Proxy @v)) xs ys)

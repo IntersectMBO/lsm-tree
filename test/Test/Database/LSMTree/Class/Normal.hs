@@ -113,8 +113,11 @@ testProperty' name prop = \b ->
 -------------------------------------------------------------------------------
 
 type Key = Word64
-type Value = BS.ByteString
 type Blob = BS.ByteString
+
+newtype Value = Value BS.ByteString
+  deriving stock (Eq, Show)
+  deriving newtype (Arbitrary, R.SerialiseValue)
 
 instance Labellable (Key, Value, Blob) where
   makeSnapshotLabel _ = "Word64 ByteString ByteString"

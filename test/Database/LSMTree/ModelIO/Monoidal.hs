@@ -60,7 +60,8 @@ import           Data.Kind (Type)
 import qualified Data.Map.Strict as Map
 import           Data.Typeable (Typeable)
 import           Database.LSMTree.Common (IOLike, Range (..), SerialiseKey,
-                     SerialiseValue, SnapshotName, SomeUpdateConstraint)
+                     SerialiseValue, SnapshotName)
+import           Database.LSMTree.Model.Monoidal (ResolveValue)
 import qualified Database.LSMTree.Model.Monoidal as Model
 import           Database.LSMTree.ModelIO.Session
 import           Database.LSMTree.Monoidal (LookupResult (..),
@@ -111,7 +112,7 @@ close TableHandle {..} = atomically $ do
 
 -- | Perform a batch of lookups.
 lookups ::
-     (IOLike m, SerialiseKey k, SerialiseValue v, SomeUpdateConstraint v)
+     (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
   => [k]
   -> TableHandle m k v
   -> m [LookupResult k v]
@@ -121,7 +122,7 @@ lookups ks TableHandle {..} = atomically $
 
 -- | Perform a range lookup.
 rangeLookup ::
-     (IOLike m, SerialiseKey k, SerialiseValue v, SomeUpdateConstraint v)
+     (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
   => Range k
   -> TableHandle m k v
   -> m [RangeLookupResult k v]
@@ -131,7 +132,7 @@ rangeLookup r TableHandle {..} = atomically $
 
 -- | Perform a mixed batch of inserts, deletes and monoidal upserts.
 updates ::
-     (IOLike m, SerialiseKey k, SerialiseValue v, SomeUpdateConstraint v)
+     (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
   => [(k, Update v)]
   -> TableHandle m k v
   -> m ()
@@ -141,7 +142,7 @@ updates ups TableHandle {..} = atomically $
 
 -- | Perform a batch of inserts.
 inserts ::
-     (IOLike m, SerialiseKey k, SerialiseValue v, SomeUpdateConstraint v)
+     (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
   => [(k, v)]
   -> TableHandle m k v
   -> m ()
@@ -149,7 +150,7 @@ inserts = updates . fmap (second Insert)
 
 -- | Perform a batch of deletes.
 deletes ::
-     (IOLike m, SerialiseKey k, SerialiseValue v, SomeUpdateConstraint v)
+     (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
   => [k]
   -> TableHandle m k v
   -> m ()
@@ -157,7 +158,7 @@ deletes = updates . fmap (,Delete)
 
 -- | Perform a batch of monoidal upserts.
 mupserts ::
-     (IOLike m, SerialiseKey k, SerialiseValue v, SomeUpdateConstraint v)
+     (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
   => [(k, v)]
   -> TableHandle m k v
   -> m ()
@@ -242,7 +243,7 @@ duplicate TableHandle {..} = atomically $
 
 -- | Merge full tables, creating a new table handle.
 merge ::
-     (IOLike m, SerialiseValue v, SomeUpdateConstraint v)
+     (IOLike m, SerialiseValue v, ResolveValue v)
   => TableHandle m k v
   -> TableHandle m k v
   -> m (TableHandle m k v)

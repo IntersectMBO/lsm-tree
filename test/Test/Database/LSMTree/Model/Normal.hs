@@ -18,7 +18,11 @@ tests = testGroup "Database.LSMTree.Model.Normal"
     ]
 
 type Key = BS.ByteString
-type Value = BS.ByteString
+
+newtype Value = Value BS.ByteString
+  deriving stock (Eq, Show)
+  deriving newtype (Arbitrary, SerialiseValue)
+
 type Blob = BS.ByteString
 
 type Tbl = Table Key Value Blob
@@ -34,7 +38,7 @@ prop_lookupDelete k tbl =
     lookups (V.singleton k) (deletes (V.singleton k) tbl) === V.singleton NotFound
 
 -- | Last insert wins.
-prop_insertInsert :: Key -> Key -> Value -> Tbl -> Property
+prop_insertInsert :: Key -> Value -> Value -> Tbl -> Property
 prop_insertInsert k v1 v2 tbl =
     inserts (V.fromList [(k, v1, Nothing), (k, v2, Nothing)]) tbl === inserts (V.singleton (k, v2, Nothing)) tbl
 

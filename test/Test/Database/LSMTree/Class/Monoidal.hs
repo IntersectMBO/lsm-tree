@@ -12,12 +12,12 @@ import           Data.Word (Word64)
 import           Database.LSMTree.Class.Monoidal hiding (withTableDuplicate,
                      withTableNew, withTableOpen)
 import qualified Database.LSMTree.Class.Monoidal as Class
-import           Database.LSMTree.Common (SomeUpdateConstraint (..),
-                     mkSnapshotName)
 import           Database.LSMTree.Extras.Generators ()
 import           Database.LSMTree.ModelIO.Monoidal (IOLike, LookupResult (..),
                      Range (..), RangeLookupResult (..), Update (..))
 import qualified Database.LSMTree.ModelIO.Monoidal as M
+import           Database.LSMTree.Monoidal (ResolveValue (..), mkSnapshotName,
+                     resolveDeserialised)
 import qualified Database.LSMTree.Monoidal as R
 import qualified System.FS.API as FS
 import           Test.Database.LSMTree.Class.Normal (testProperty')
@@ -78,7 +78,16 @@ tests = testGroup "Test.Database.LSMTree.Class.Monoidal"
 -------------------------------------------------------------------------------
 
 type Key = Word64
-type Value = BS.ByteString
+
+newtype Value = Value BS.ByteString
+  deriving stock (Eq, Show)
+  deriving newtype (Arbitrary, R.SerialiseValue)
+
+instance ResolveValue Value where
+    resolveValue = resolveDeserialised resolve
+
+resolve :: Value -> Value -> Value
+resolve (Value x) (Value y) = Value (x <> y)
 
 type Proxy h = Setup h IO
 
@@ -238,7 +247,7 @@ prop_lookupUpdate h ups k v1 v2 = ioProperty $ do
       res <- lookups hdl [k]
 
       -- notice the order.
-      return $ res === [Found k $ mergeU v2 v1]
+      return $ res === [Found k $ resolve v2 v1]
 
 -------------------------------------------------------------------------------
 -- implement classic QC tests for monoidal table merges
@@ -265,7 +274,7 @@ prop_merge h ups1 ups2 testKeys = ioProperty $ do
               mergeResult r@(NotFound _)   (NotFound _) = r
               mergeResult   (NotFound _) r@(Found _ _)  = r
               mergeResult r@(Found _ _)    (NotFound _) = r
-              mergeResult   (Found k v1)   (Found _ v2) = Found k (mergeU v1 v2)
+              mergeResult   (Found k v1)   (Found _ v2) = Found k (resolve v1 v2)
 
           return $ zipWith mergeResult res1 res2  == res3
 
