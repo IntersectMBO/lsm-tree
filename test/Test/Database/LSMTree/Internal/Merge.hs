@@ -16,6 +16,7 @@ import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..),
                      pathsForRunFiles)
 import qualified Database.LSMTree.Internal.Run as Run
+import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..))
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
@@ -93,7 +94,7 @@ prop_MergeDistributes fs hbio level stepSize (fmap unTypedWriteBuffer -> wbs) = 
       .&&. counterexample ("step counting")
            (stepsDone === stepsNeeded)
   where
-    flush n = Run.fromWriteBuffer fs hbio Run.CacheRunData
+    flush n = Run.fromWriteBuffer fs hbio Run.CacheRunData (RunAllocFixed 10)
                                   (RunFsPaths (FS.mkFsPath []) n)
 
     stats = tabulate "value size" (map (showPowersOf10 . sizeofValue) vals)
@@ -126,11 +127,11 @@ prop_CloseMerge fs hbio level (Positive stepSize) (fmap unTypedWriteBuffer -> wb
       counterexample ("run files exist: " <> show filesExist) $
         isJust mergeToClose ==> all not filesExist
   where
-    flush n = Run.fromWriteBuffer fs hbio Run.CacheRunData
+    flush n = Run.fromWriteBuffer fs hbio Run.CacheRunData (RunAllocFixed 10)
                                   (RunFsPaths (FS.mkFsPath []) n)
 
     makeInProgressMerge path runs =
-      Merge.new fs Run.CacheRunData level mappendValues path runs >>= \case
+      Merge.new fs Run.CacheRunData (RunAllocFixed 10) level mappendValues path runs >>= \case
         Nothing -> return Nothing  -- not in progress
         Just merge -> do
           -- just do a few steps once, ideally not completing the merge
@@ -156,9 +157,9 @@ mergeRuns ::
      StepSize ->
      IO (Int, Run.Run (FS.Handle h))
 mergeRuns fs hbio level runNumber runs (Positive stepSize) = do
-    Merge.new fs Run.CacheRunData level mappendValues
+    Merge.new fs Run.CacheRunData (RunAllocFixed 10) level mappendValues
               (RunFsPaths (FS.mkFsPath []) runNumber) runs >>= \case
-      Nothing -> (,) 0 <$> Run.fromWriteBuffer fs hbio Run.CacheRunData
+      Nothing -> (,) 0 <$> Run.fromWriteBuffer fs hbio Run.CacheRunData (RunAllocFixed 10)
                             (RunFsPaths (FS.mkFsPath []) runNumber) WB.empty
       Just m  -> go 0 m
   where

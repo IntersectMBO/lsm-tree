@@ -18,6 +18,7 @@ import           Database.LSMTree.Internal.Paths (RunFsPaths (..),
                      pathsForRunFiles, runChecksumsPath)
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
+import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..))
 import           Database.LSMTree.Internal.Serialise
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import           Prelude hiding (getContents)
@@ -228,7 +229,7 @@ merge ::
 merge fs hbio Config {..} targetPaths runs = do
     let f = fromMaybe const mergeMappend
     m <- fromMaybe (error "empty inputs, no merge created") <$>
-      Merge.new fs Run.CacheRunData mergeLevel f targetPaths runs
+      Merge.new fs Run.CacheRunData (RunAllocFixed 10) mergeLevel f targetPaths runs
     go m
   where
     go m =
@@ -360,7 +361,7 @@ createRun ::
   -> [SerialisedKOp]
   -> IO (Run (FS.Handle h))
 createRun hasFS hasBlockIO mMappend targetPath =
-      Run.fromWriteBuffer hasFS  hasBlockIO Run.CacheRunData targetPath
+      Run.fromWriteBuffer hasFS  hasBlockIO Run.CacheRunData (RunAllocFixed 10) targetPath
     . List.foldl insert WB.empty
   where
     insert wb (k, e) = case mMappend of

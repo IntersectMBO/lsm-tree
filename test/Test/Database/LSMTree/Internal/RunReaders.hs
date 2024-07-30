@@ -20,6 +20,7 @@ import           Database.LSMTree.Internal.BlobRef
 import           Database.LSMTree.Internal.Entry
 import qualified Database.LSMTree.Internal.Paths as Paths
 import qualified Database.LSMTree.Internal.Run as Run
+import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..))
 import qualified Database.LSMTree.Internal.RunReader as Reader
 import           Database.LSMTree.Internal.RunReaders
                      (HasMore (Drained, HasMore), Readers)
@@ -307,7 +308,7 @@ runIO act lu = case act of
       traverse_ (liftIO . closeReadersCtx hfs) mCtx
       runs <-
         zipWithM
-          (\p -> liftIO . Run.fromWriteBuffer hfs hbio Run.CacheRunData p)
+          (\p -> liftIO . Run.fromWriteBuffer hfs hbio Run.CacheRunData (RunAllocFixed 10) p)
           (Paths.RunFsPaths (FS.mkFsPath []) <$> [numRuns ..])
           (map unTypedWriteBuffer wbs)
       newReaders <- liftIO $ Readers.new hfs runs >>= \case

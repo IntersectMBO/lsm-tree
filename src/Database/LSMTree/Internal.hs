@@ -73,7 +73,7 @@ import qualified Data.Map.Strict as Map
 import           Data.Maybe (catMaybes)
 import qualified Data.Set as Set
 import qualified Data.Vector as V
-import           Data.Word (Word32, Word64)
+import           Data.Word (Word64)
 import           Database.LSMTree.Internal.Assertions (assert, assertNoThunks)
 import           Database.LSMTree.Internal.BlobRef
 import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..),
@@ -89,6 +89,7 @@ import           Database.LSMTree.Internal.Paths (RunFsPaths (..),
 import qualified Database.LSMTree.Internal.Paths as Paths
 import           Database.LSMTree.Internal.Run (Run, RunDataCaching (..))
 import qualified Database.LSMTree.Internal.Run as Run
+import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..))
 import           Database.LSMTree.Internal.Serialise (SerialisedBlob,
                      SerialisedKey, SerialisedValue)
 import           Database.LSMTree.Internal.TempRegistry
@@ -747,10 +748,6 @@ updatesWithInterleavedFlushes conf hfs hbio root uniqC es reg tc = do
 --
 -- The returned table content contains an updated set of levels, where the write
 -- buffer is inserted into level 1.
---
--- TODO: merge runs when level becomes full. This is currently a placeholder
--- implementation that is sufficient to pass the tests, but simply writes small
--- runs to disk without merging.
 flushWriteBuffer ::
      m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
   => TableConfig
@@ -761,7 +758,7 @@ flushWriteBuffer ::
   -> TempRegistry m
   -> TableContent h
   -> m (TableContent h)
-flushWriteBuffer conf@TableConfig{confDiskCachePolicy}
+flushWriteBuffer conf@TableConfig{confDiskCachePolicy, confBloomFilterAlloc}
                  hfs hbio root uniqC reg tc
   | WB.null (tableWriteBuffer tc) = pure tc
   | otherwise = do
@@ -769,6 +766,7 @@ flushWriteBuffer conf@TableConfig{confDiskCachePolicy}
     r <- allocateTemp reg
             (Run.fromWriteBuffer hfs hbio
               (diskCachePolicyForLevel confDiskCachePolicy (LevelNo 1))
+              (bloomFilterAllocForLevel confBloomFilterAlloc (LevelNo 1))
               (Paths.runPath root n)
               (tableWriteBuffer tc))
             (Run.removeReference hfs)
@@ -936,8 +934,9 @@ addRunToLevels conf@TableConfig{..} hfs hbio root uniqC r0 reg levels = do
       | otherwise = do
         assert (let l = V.length rs in l >= 2 && l <= 5) $ pure ()
         let caching = diskCachePolicyForLevel confDiskCachePolicy ln
+            alloc = bloomFilterAllocForLevel confBloomFilterAlloc ln
         r <- allocateTemp reg
-               (mergeRuns conf hfs hbio root uniqC caching mergepolicy mergelast rs)
+               (mergeRuns conf hfs hbio root uniqC caching alloc mergepolicy mergelast rs)
                (Run.removeReference hfs)
         V.mapM_ (freeTemp reg . Run.removeReference hfs) rs
         pure $! MergingRun (CompletedMerge r)
@@ -998,9 +997,7 @@ mergeLastForLevel levels
 levelIsFull :: SizeRatio -> V.Vector (Run h) -> Bool
 levelIsFull sr rs = V.length rs + 1 >= (sizeRatioInt sr)
 
-{-# SPECIALISE mergeRuns :: TableConfig -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> RunDataCaching -> MergePolicyForLevel -> Merge.Level -> V.Vector (Run (Handle h)) -> IO (Run (Handle h)) #-}
--- TODO: pass 'confBloomFilterAlloc' down to the merge and use it to initialise
--- bloom filters
+{-# SPECIALISE mergeRuns :: TableConfig -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> RunDataCaching -> RunBloomFilterAlloc -> MergePolicyForLevel -> Merge.Level -> V.Vector (Run (Handle h)) -> IO (Run (Handle h)) #-}
 mergeRuns ::
      m ~ IO
   => TableConfig
@@ -1009,14 +1006,15 @@ mergeRuns ::
   -> SessionRoot
   -> UniqCounter m
   -> RunDataCaching
+  -> RunBloomFilterAlloc
   -> MergePolicyForLevel
   -> Merge.Level
   -> V.Vector (Run (Handle h))
   -> m (Run (Handle h))
-mergeRuns conf hfs hbio root uniqC caching _ mergeLevel runs = do
+mergeRuns conf hfs hbio root uniqC caching alloc _ mergeLevel runs = do
     n <- incrUniqCounter uniqC
     let runPaths = Paths.runPath root n
-    Merge.new hfs caching mergeLevel resolve runPaths (toList runs) >>= \case
+    Merge.new hfs caching alloc mergeLevel resolve runPaths (toList runs) >>= \case
       Nothing -> error "mergeRuns: no inputs"
       Just merge -> go merge
   where
@@ -1256,7 +1254,7 @@ defaultTableConfig =
       { confMergePolicy      = MergePolicyLazyLevelling
       , confSizeRatio        = Four
       , confWriteBufferAlloc = AllocNumEntries (NumEntries 20_000)
-      , confBloomFilterAlloc = AllocRequestFPR 0.02
+      , confBloomFilterAlloc = AllocFixed 10
       , confResolveMupsert   = Nothing
       , confDiskCachePolicy  = DiskCacheAll
       }
@@ -1325,7 +1323,7 @@ data BloomFilterAlloc =
     -- | Allocate a fixed number of bits per physical entry in each bloom
     -- filter.
     AllocFixed
-      Word32 -- ^ Bits per physical entry.
+      Word64 -- ^ Bits per physical entry.
   | -- | Allocate as many bits as required per physical entry to get the requested
     -- false-positive rate. Do this for each bloom filter.
     AllocRequestFPR
@@ -1346,6 +1344,10 @@ data BloomFilterAlloc =
 -- | TODO: this should be removed once we have proper snapshotting with proper
 -- persistence of the config to disk.
 deriving stock instance Read BloomFilterAlloc
+
+bloomFilterAllocForLevel :: BloomFilterAlloc -> LevelNo -> RunBloomFilterAlloc
+bloomFilterAllocForLevel (AllocFixed n) _        = RunAllocFixed n
+bloomFilterAllocForLevel (AllocRequestFPR fpr) _ = RunAllocRequestFPR fpr
 
 newtype ResolveMupsert = ResolveMupsert {
     unResolveMupsert :: SerialisedValue -> SerialisedValue -> SerialisedValue

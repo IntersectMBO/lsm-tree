@@ -14,6 +14,7 @@ import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..))
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
+import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..))
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
@@ -165,7 +166,7 @@ flush :: FS.HasFS IO FS.HandleIO
       -> RunFsPaths
       -> WriteBuffer
       -> IO (Run (FS.Handle (FS.HandleIO)))
-flush hfs hbio = Run.fromWriteBuffer hfs hbio Run.CacheRunData
+flush hfs hbio = Run.fromWriteBuffer hfs hbio Run.CacheRunData (RunAllocFixed 10)
 
 data InputKOps
   = NormalInputs

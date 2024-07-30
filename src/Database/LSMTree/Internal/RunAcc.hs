@@ -6,6 +6,7 @@
 --
 module Database.LSMTree.Internal.RunAcc (
     RunAcc
+  , RunBloomFilterAlloc (..)
   , new
   , unsafeFinalise
     -- * Adding key\/op pairs
@@ -38,12 +39,14 @@ import qualified Data.BloomFilter.Easy as Bloom.Easy
 import qualified Data.BloomFilter.Mutable as MBloom
 import           Data.Primitive.PrimVar (PrimVar, modifyPrimVar, newPrimVar,
                      readPrimVar)
+import           Data.Word (Word64)
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..))
 import           Database.LSMTree.Internal.IndexCompact (IndexCompact)
 import qualified Database.LSMTree.Internal.IndexCompact as Index
 import           Database.LSMTree.Internal.IndexCompactAcc (IndexCompactAcc)
 import qualified Database.LSMTree.Internal.IndexCompactAcc as Index
+import           Database.LSMTree.Internal.Monkey (monkeyHashFuncs)
 import           Database.LSMTree.Internal.PageAcc (PageAcc)
 import qualified Database.LSMTree.Internal.PageAcc as PageAcc
 import qualified Database.LSMTree.Internal.PageAcc1 as PageAcc
@@ -71,13 +74,24 @@ data RunAcc s = RunAcc {
     , entryCount :: !(PrimVar s Int)
     }
 
+-- | See 'Database.LSMTree.Internal.BloomFilterAlloc'
+data RunBloomFilterAlloc =
+    RunAllocFixed Word64
+  | RunAllocRequestFPR Double
+  deriving stock (Show, Eq)
+
 -- | @'new' nentries@ starts an incremental run construction.
 --
 -- @nentries@ should be an upper bound on the expected number of entries in the
 -- output run.
-new :: NumEntries -> ST s (RunAcc s)
-new (NumEntries nentries) = do
-    mbloom <- Bloom.Easy.easyNew 0.02 nentries -- TODO(optimise): tune bloom filter
+new :: NumEntries -> RunBloomFilterAlloc -> ST s (RunAcc s)
+new (NumEntries nentries) alloc = do
+    mbloom <- case alloc of
+      RunAllocFixed bitsPerEntry    ->
+        let !nbits = bitsPerEntry * fromIntegral nentries
+        in  MBloom.new (monkeyHashFuncs nbits nentries) nbits
+      RunAllocRequestFPR fpr ->
+        Bloom.Easy.easyNew fpr nentries
     mindex <- Index.new 1024 -- TODO(optimise): tune chunk size
     mpageacc <- PageAcc.newPageAcc
     entryCount <- newPrimVar 0

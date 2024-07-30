@@ -51,9 +51,8 @@ benchmarkSizeBase = 16
 benchmarkNumLookups :: Int
 benchmarkNumLookups = 25_000_000
 
--- A value of 0.02 results in 5 hashes and just over 8 bits per key.
-benchmarkRequestedFPR :: RequestedFPR
-benchmarkRequestedFPR = 0.02
+benchmarkNumBitsPerEntry :: Word64
+benchmarkNumBitsPerEntry = 10
 
 benchmarks :: IO ()
 benchmarks = do
@@ -64,7 +63,7 @@ benchmarks = do
     enabled <- getRTSStatsEnabled
     when (not enabled) $ fail "Need RTS +T statistics enabled"
     let filterSizes = lsmStyleBloomFilters benchmarkSizeBase
-                                          benchmarkRequestedFPR
+                                          benchmarkNumBitsPerEntry
     putStrLn "Bloom filter stats:"
     putStrLn "(numEntries, sizeFactor, numBits, numHashFuncs)"
     mapM_ print filterSizes
@@ -160,7 +159,7 @@ benchmark name description action n (subtractTime, subtractAlloc) expectedAlloc 
 -- | (numEntries, sizeFactor, numBits, numHashFuncs)
 type BloomFilterSizeInfo = (Int, Int, Word64, Int)
 type SizeBase     = Int
-type RequestedFPR = Double
+type RequestedBitsPerEntry = Word64
 
 -- | Calculate the sizes of a realistic LSM style set of Bloom filters, one
 -- for each LSM run. This uses base 4, with 4 disk levels, using tiering
@@ -169,15 +168,15 @@ type RequestedFPR = Double
 -- Due to the incremental merging, each level actually has (in the worst case)
 -- 2x the number of runs, hence 8 per level for tiering levels.
 --
-lsmStyleBloomFilters :: SizeBase -> RequestedFPR -> [BloomFilterSizeInfo]
-lsmStyleBloomFilters l1 requestedFPR =
-    [ (numEntries, sizeFactor, fromIntegral numBits, numHashFuncs)
+lsmStyleBloomFilters :: SizeBase -> RequestedBitsPerEntry -> [BloomFilterSizeInfo]
+lsmStyleBloomFilters l1 requestedBitsPerEntry =
+    [ (numEntries, sizeFactor, numBits, numHashFuncs)
     | (numEntries, sizeFactor)
         <- replicate 8 (2^(l1+0), 1)   -- 8 runs at level 1 (tiering)
         ++ replicate 8 (2^(l1+2), 4)   -- 8 runs at level 2 (tiering)
         ++ replicate 8 (2^(l1+4),16)   -- 8 runs at level 3 (tiering)
         ++            [(2^(l1+8),256)] -- 1 run  at level 4 (leveling)
-    , let numBits      = Monkey.monkeyBits numEntries requestedFPR
+    , let numBits      = fromIntegral numEntries * requestedBitsPerEntry
           numHashFuncs = Monkey.monkeyHashFuncs numBits numEntries
     ]
 
