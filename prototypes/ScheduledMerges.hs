@@ -440,10 +440,12 @@ update tr (LSMHandle scr lsmr) k op = do
     LSMContent wb ls <- readSTRef lsmr
     modifySTRef' scr (+1)
     supplyCredits 1 ls
+    invariant ls
     let wb' = Map.insert k op wb
     if bufferSize wb' >= maxBufferSize
       then do
         ls' <- increment tr sc (bufferToRun wb') ls
+        invariant ls'
         writeSTRef lsmr (LSMContent Map.empty ls')
       else
         writeSTRef lsmr (LSMContent wb' ls)
@@ -531,9 +533,7 @@ data EventDetail =
 increment :: forall s. Tracer (ST s) Event
           -> Counter -> Run -> Levels s -> ST s (Levels s)
 increment tr sc = \r ls -> do
-    ls' <- go 1 [r] ls
-    invariant ls'
-    return ls'
+    go 1 [r] ls
   where
     go :: Int -> [Run] -> Levels s -> ST s (Levels s)
     go !ln incoming [] = do
