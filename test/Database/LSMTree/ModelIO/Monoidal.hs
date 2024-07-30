@@ -1,6 +1,3 @@
--- Model's 'open' and 'snapshot' have redundant constraints.
-{-# OPTIONS_GHC -Wno-redundant-constraints #-}
-
 -- | IO-based monoidal table model implementation.
 --
 module Database.LSMTree.ModelIO.Monoidal (
@@ -103,7 +100,7 @@ close TableHandle {..} = atomically $ do
 
 -- | Perform a batch of lookups.
 lookups ::
-     (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
+     (IOLike m, SerialiseKey k, SerialiseValue v)
   => [k]
   -> TableHandle m k v
   -> m [LookupResult k v]
@@ -113,7 +110,7 @@ lookups ks TableHandle {..} = atomically $
 
 -- | Perform a range lookup.
 rangeLookup ::
-     (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
+     (IOLike m, SerialiseKey k, SerialiseValue v)
   => Range k
   -> TableHandle m k v
   -> m [RangeLookupResult k v]
@@ -162,8 +159,6 @@ mupserts = updates . fmap (second Mupsert)
 -- | Take a snapshot.
 snapshot ::
      ( IOLike m
-     , SerialiseKey k
-     , SerialiseValue v
      , Typeable k
      , Typeable v
      )
@@ -177,8 +172,6 @@ snapshot n TableHandle {..} = atomically $
 -- | Open a table through a snapshot, returning a new table handle.
 open ::
      ( IOLike m
-     , SerialiseKey k
-     , SerialiseValue v
      , Typeable k
      , Typeable v
      )
@@ -234,7 +227,7 @@ duplicate TableHandle {..} = atomically $
 
 -- | Merge full tables, creating a new table handle.
 merge ::
-     (IOLike m, SerialiseValue v, ResolveValue v)
+     (IOLike m, ResolveValue v)
   => TableHandle m k v
   -> TableHandle m k v
   -> m (TableHandle m k v)

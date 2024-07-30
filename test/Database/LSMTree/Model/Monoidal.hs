@@ -1,8 +1,5 @@
 {-# LANGUAGE TypeFamilies #-}
 
--- lookup has redundant update constraint.
-{-# OPTIONS_GHC -Wno-redundant-constraints #-}
-
 -- |
 --
 -- This module is intended to be imported qualified.
@@ -98,7 +95,7 @@ deriving stock instance Eq (Table k v)
 --
 -- Lookups can be performed concurrently from multiple Haskell threads.
 lookups ::
-     (SerialiseKey k, SerialiseValue v, ResolveValue v)
+     (SerialiseKey k, SerialiseValue v)
   => [k]
   -> Table k v
   -> [LookupResult k v]
@@ -113,7 +110,7 @@ lookups ks tbl =
 --
 -- Range lookups can be performed concurrently from multiple Haskell threads.
 rangeLookup :: forall k v.
-     (SerialiseKey k, SerialiseValue v, ResolveValue v)
+     (SerialiseKey k, SerialiseValue v)
   => Range k
   -> Table k v
   -> [RangeLookupResult k v]
@@ -215,7 +212,7 @@ duplicate = id
 -- Multiple tables of the same type but with different configuration parameters
 -- can live in the same session. However, some operations, like
 merge :: forall k v.
-     (SerialiseValue v, ResolveValue v)
+     (ResolveValue v)
   => Table k v
   -> Table k v
   -> Table k v

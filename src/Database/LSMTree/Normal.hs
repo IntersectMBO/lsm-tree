@@ -1,6 +1,5 @@
 -- TODO: remove once the API is implemented.
 {-# OPTIONS_GHC -Wno-redundant-constraints #-}
-{-# OPTIONS_GHC -Wno-unused-top-binds #-}
 
 -- | On disk key-value tables, implemented as Log Structured Merge (LSM) trees.
 --

@@ -1,6 +1,3 @@
--- Model's 'open' and 'snapshot' have redundant constraints.
-{-# OPTIONS_GHC -Wno-redundant-constraints #-}
-
 -- | IO-based model implementation.
 --
 -- Differences from the (current) real API:
@@ -204,9 +201,6 @@ retrieveBlobs _ brefs = atomically $ Model.retrieveBlobs <$> mapM guard brefs
 -- | Take a snapshot.
 snapshot ::
      ( IOLike m
-     , SerialiseKey k
-     , SerialiseValue v
-     , SerialiseValue blob
      , Typeable k
      , Typeable v
      , Typeable blob
@@ -232,9 +226,6 @@ snapshot n TableHandle {..} = atomically $
 -- | Open a table through a snapshot, returning a new table handle.
 open ::
      ( IOLike m
-     , SerialiseKey k
-     , SerialiseValue v
-     , SerialiseValue blob
      , Typeable k
      , Typeable v
      , Typeable blob

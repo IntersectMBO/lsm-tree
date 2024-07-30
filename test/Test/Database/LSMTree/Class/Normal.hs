@@ -1,7 +1,5 @@
 {-# LANGUAGE BlockArguments #-}
 
-{-# OPTIONS_GHC -Wno-orphans #-}
-
 module Test.Database.LSMTree.Class.Normal (
     tests
   , testProperty'

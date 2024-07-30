@@ -1,7 +1,3 @@
--- TODO: remove once the API is implemented.
-{-# OPTIONS_GHC -Wno-redundant-constraints #-}
-{-# OPTIONS_GHC -Wno-unused-top-binds #-}
-
 module Database.LSMTree.Common (
     -- * IOLike
     IOLike
