@@ -270,6 +270,7 @@ lookups ks (TableHandle th) =
     V.mapStrict (bimap Internal.deserialiseValue BlobRef) <$!>
     Internal.lookups (V.map Internal.serialiseKey ks) th Internal.toNormalLookupResult
 
+{-# SPECIALISE rangeLookup :: (SerialiseKey k, SerialiseValue v) => Range k -> TableHandle IO k v blob -> IO (V.Vector (RangeLookupResult k v (BlobRef IO blob))) #-}
 -- | Perform a range lookup.
 --
 -- Range lookups can be performed concurrently from multiple Haskell threads.
@@ -280,6 +281,7 @@ rangeLookup ::
   -> m (V.Vector (RangeLookupResult k v (BlobRef m blob)))
 rangeLookup = undefined
 
+{-# SPECIALISE updates :: (SerialiseKey k, SerialiseValue v, SerialiseValue blob) => V.Vector (k, Update v blob) -> TableHandle IO k v blob -> IO () #-}
 -- | Perform a mixed batch of inserts and deletes.
 --
 -- If there are duplicate keys in the same batch, then keys nearer the front of
@@ -301,6 +303,7 @@ updates es (TableHandle th) = do
     serialiseOp = bimap Internal.serialiseValue Internal.serialiseBlob
                 . updateToEntryNormal
 
+{-# SPECIALISE inserts :: (SerialiseKey k, SerialiseValue v, SerialiseValue blob) => V.Vector (k, v, Maybe blob) -> TableHandle IO k v blob -> IO () #-}
 -- | Perform a batch of inserts.
 --
 -- Inserts can be performed concurrently from multiple Haskell threads.
@@ -311,6 +314,7 @@ inserts ::
   -> m ()
 inserts = updates . fmap (\(k, v, blob) -> (k, Insert v blob))
 
+{-# SPECIALISE deletes :: (SerialiseKey k, SerialiseValue v, SerialiseValue blob) => V.Vector k -> TableHandle IO k v blob -> IO () #-}
 -- | Perform a batch of deletes.
 --
 -- Deletes can be performed concurrently from multiple Haskell threads.
@@ -321,6 +325,7 @@ deletes ::
   -> m ()
 deletes = updates . fmap (,Delete)
 
+{-# SPECIALISE retrieveBlobs :: SerialiseValue blob => Session IO -> V.Vector (BlobRef IO blob) -> IO (V.Vector blob) #-}
 -- | Perform a batch of blob retrievals.
 --
 -- This is a separate step from 'lookups' and 'rangeLookups'. The result of a
@@ -421,6 +426,7 @@ open (Session sesh) snap = TableHandle <$> Internal.open sesh label snap
   Mutiple writable table handles
 -------------------------------------------------------------------------------}
 
+{-# SPECIALISE duplicate :: TableHandle IO k v blob -> IO (TableHandle IO k v blob) #-}
 -- | Create a logically independent duplicate of a table handle. This returns a
 -- new table handle.
 --
