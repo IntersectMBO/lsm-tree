@@ -105,6 +105,7 @@ import           Control.DeepSeq (NFData, deepseq)
 import           Data.Bifunctor (Bifunctor (second))
 import           Data.Kind (Type)
 import           Data.Typeable (Proxy (Proxy), Typeable)
+import           Data.Word (Word64)
 import           Database.LSMTree.Common (IOLike, Range (..), SerialiseKey,
                      SerialiseValue (..), Session (..), SnapshotName,
                      closeSession, deleteSnapshot, listSnapshots, openSession)
@@ -429,3 +430,7 @@ resolveDeserialised ::
   => (v -> v -> v) -> Proxy v -> RawBytes -> RawBytes -> RawBytes
 resolveDeserialised f _ x y =
     serialiseValue (f (deserialiseValue x) (deserialiseValue y))
+
+-- | Mostly to give an example instance (plus the property tests for it).
+instance ResolveValue Word64 where
+  resolveValue = resolveDeserialised (+)
