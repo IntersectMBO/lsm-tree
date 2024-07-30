@@ -281,8 +281,8 @@ rangeLookup = undefined
 {-# SPECIALISE updates :: (SerialiseKey k, SerialiseValue v, SerialiseValue blob) => V.Vector (k, Update v blob) -> TableHandle IO k v blob -> IO () #-}
 -- | Perform a mixed batch of inserts and deletes.
 --
--- If there are duplicate keys in the same batch, then keys nearer the front of
--- the vector take precedence.
+-- If there are duplicate keys in the same batch, then keys nearer to the front
+-- of the vector take precedence.
 --
 -- Updates can be performed concurrently from multiple Haskell threads.
 updates ::
@@ -378,7 +378,7 @@ retrieveBlobs _ brs
 snapshot ::
      forall m k v blob. ( IOLike m
      , SerialiseKey k, SerialiseValue v, SerialiseValue blob
-     , Common.Labellable (k, v , blob)
+     , Common.Labellable (k, v, blob)
      )
   => SnapshotName
   -> TableHandle m k v blob

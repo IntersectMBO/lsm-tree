@@ -11,11 +11,12 @@ import           Data.Word (Word64)
 import           Database.LSMTree.Class.Monoidal hiding (withTableDuplicate,
                      withTableNew, withTableOpen)
 import qualified Database.LSMTree.Class.Monoidal as Class
+import           Database.LSMTree.Common (Labellable (..), mkSnapshotName)
 import           Database.LSMTree.Extras.Generators ()
 import           Database.LSMTree.ModelIO.Monoidal (IOLike, LookupResult (..),
                      Range (..), RangeLookupResult (..), Update (..))
 import qualified Database.LSMTree.ModelIO.Monoidal as M
-import           Database.LSMTree.Monoidal (ResolveValue (..), mkSnapshotName,
+import           Database.LSMTree.Monoidal (ResolveValue (..),
                      resolveDeserialised)
 import qualified Database.LSMTree.Monoidal as R
 import qualified System.FS.API as FS
@@ -82,11 +83,16 @@ newtype Value = Value BS.ByteString
   deriving stock (Eq, Show)
   deriving newtype (Arbitrary, R.SerialiseValue)
 
+-- TODO: this is currently not used at all, only the value from the config
+-- is taken into account!
 instance ResolveValue Value where
     resolveValue = resolveDeserialised resolve
 
 resolve :: Value -> Value -> Value
 resolve (Value x) (Value y) = Value (x <> y)
+
+instance Labellable (Key, Value) where
+  makeSnapshotLabel _ = "Word64 ByteString"
 
 type Proxy h = Setup h IO
 

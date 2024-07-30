@@ -1,6 +1,5 @@
 -- TODO: remove once the API is implemented.
 {-# OPTIONS_GHC -Wno-redundant-constraints #-}
-{-# OPTIONS_GHC -Wno-unused-top-binds #-}
 
 -- | On disk key-value tables, implemented as Log Structured Merge (LSM) trees.
 --
@@ -25,9 +24,12 @@
 -- > import qualified Database.LSMTree.Monoidal as LSMT
 --
 module Database.LSMTree.Monoidal (
+    -- * Exceptions
+    Common.LSMTreeError (..)
 
     -- * Table sessions
-    Session
+  , Session
+  , withSession
   , openSession
   , closeSession
 
@@ -42,10 +44,14 @@ module Database.LSMTree.Monoidal (
   , Internal.NumEntries (..)
   , Internal.BloomFilterAlloc (..)
   , Internal.DiskCachePolicy (..)
+  , withTable
   , new
   , close
     -- ** Resource management
     -- $resource-management
+
+    -- ** Exception safety
+    -- $exception-safety
 
     -- * Table queries and updates
     -- ** Queries
@@ -68,6 +74,9 @@ module Database.LSMTree.Monoidal (
   , Common.Labellable (..)
   , snapshot
   , open
+  , Internal.TableConfigOverride
+  , Internal.configNoOverride
+  , Internal.configOverrideDiskCachePolicy
   , deleteSnapshot
   , listSnapshots
 
@@ -97,21 +106,31 @@ module Database.LSMTree.Monoidal (
   ) where
 
 import           Control.DeepSeq (NFData, deepseq)
-import           Data.Bifunctor (Bifunctor (second))
+import           Control.Monad (unless, void, (<$!>))
+import           Control.Monad.Class.MonadThrow (MonadThrow (..))
+import           Data.Bifunctor (Bifunctor (..))
 import           Data.Kind (Type)
+import           Data.Maybe (isJust)
 import           Data.Typeable (Proxy (Proxy), Typeable)
 import qualified Data.Vector as V
 import           Data.Word (Word64)
 import           Database.LSMTree.Common (IOLike, Range (..), SerialiseKey,
                      SerialiseValue (..), Session (..), SnapshotName,
-                     closeSession, deleteSnapshot, listSnapshots, openSession)
+                     closeSession, deleteSnapshot, listSnapshots, openSession,
+                     withSession)
 import qualified Database.LSMTree.Common as Common
 import qualified Database.LSMTree.Internal as Internal
+import           Database.LSMTree.Internal.Entry (updateToEntryMonoidal)
 import           Database.LSMTree.Internal.Monoidal
 import           Database.LSMTree.Internal.RawBytes (RawBytes)
+import qualified Database.LSMTree.Internal.Serialise as Internal
+import qualified Database.LSMTree.Internal.Vector as V
 
 -- $resource-management
 -- See "Database.LSMTree.Normal#g:resource"
+
+-- $exception-safety
+-- See "Database.LSMTree.Normal#g:exception"
 
 -- $concurrency
 -- See "Database.LSMTree.Normal#g:concurrency"
@@ -129,7 +148,19 @@ import           Database.LSMTree.Internal.RawBytes (RawBytes)
 -- such instances in use at once.
 type TableHandle :: (Type -> Type) -> Type -> Type -> Type
 data TableHandle m k v = forall h. Typeable h =>
-    TableHandle (Internal.TableHandle m h)
+    TableHandle !(Internal.TableHandle m h)
+
+-- | (Asynchronous) exception-safe, bracketed opening and closing of a table.
+--
+-- If possible, it is recommended to use this function instead of 'new' and
+-- 'close'.
+withTable ::
+     IOLike m
+  => Session m
+  -> Internal.TableConfig
+  -> (TableHandle m k v -> m a)
+  -> m a
+withTable (Session sesh) conf action = Internal.withTable sesh conf (action . TableHandle)
 
 -- | Create a new empty table, returning a fresh table handle.
 --
@@ -141,7 +172,7 @@ new ::
   => Session m
   -> Internal.TableConfig
   -> m (TableHandle m k v)
-new = undefined
+new (Session sesh) conf = TableHandle <$> Internal.new sesh conf
 
 -- | Close a table handle. 'close' is idempotent. All operations on a closed
 -- handle will throw an exception.
@@ -153,7 +184,7 @@ close ::
      IOLike m
   => TableHandle m k v
   -> m ()
-close = undefined
+close (TableHandle th) = Internal.close th
 
 {-------------------------------------------------------------------------------
   Table querying and updates
@@ -167,7 +198,9 @@ lookups ::
   => V.Vector k
   -> TableHandle m k v
   -> m (V.Vector (LookupResult v))
-lookups = undefined
+lookups ks (TableHandle th) =
+    V.mapStrict (fmap Internal.deserialiseValue) <$!>
+    Internal.lookups (V.map Internal.serialiseKey ks) th Internal.toMonoidalLookupResult
 
 -- | Perform a range lookup.
 --
@@ -181,13 +214,23 @@ rangeLookup = undefined
 
 -- | Perform a mixed batch of inserts, deletes and monoidal upserts.
 --
+-- If there are duplicate keys in the same batch, then keys nearer to the front
+-- of the vector take precedence.
+--
 -- Updates can be performed concurrently from multiple Haskell threads.
 updates ::
      (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
   => V.Vector (k, Update v)
   -> TableHandle m k v
   -> m ()
-updates = undefined
+updates es (TableHandle th) = do
+    -- make sure not to insert any mupserts into normal tables
+    unless (isJust (Internal.confResolveMupsert (Internal.tableConfig th))) $
+      throwIO Internal.ErrExpectedMonoidalTable
+    Internal.updates (V.mapStrict serialiseEntry es) th
+  where
+    serialiseEntry = bimap Internal.serialiseKey serialiseOp
+    serialiseOp = first Internal.serialiseValue . updateToEntryMonoidal
 
 -- | Perform a batch of inserts.
 --
@@ -246,11 +289,15 @@ mupserts = updates . fmap (second Mupsert)
 --   the snapshot names are distinct (otherwise this would be a race).
 --
 snapshot ::
-     (IOLike m, SerialiseKey k, SerialiseValue v)
+     forall m k v. ( IOLike m
+     , SerialiseKey k, SerialiseValue v
+     , Common.Labellable (k, v)
+     )
   => SnapshotName
   -> TableHandle m k v
   -> m ()
-snapshot = undefined
+snapshot snap (TableHandle th) = void $ Internal.snapshot snap label th
+  where label = Common.makeSnapshotLabel (Proxy @(k, v))
 
 -- | Open a table from a named snapshot, returning a new table handle.
 --
@@ -275,11 +322,17 @@ snapshot = undefined
 -- Instead, this function should open a table handle from files that exist in
 -- the session's directory.
 open ::
-     (IOLike m, SerialiseKey k, SerialiseValue v)
+     forall m k v. ( IOLike m
+     , SerialiseKey k, SerialiseValue v
+     , Common.Labellable (k, v)
+     )
   => Session m
+  -> Internal.TableConfigOverride -- ^ Optional config override
   -> SnapshotName
   -> m (TableHandle m k v)
-open = undefined
+open (Session sesh) override snap =
+    TableHandle <$> Internal.open sesh label override snap
+  where label = Common.makeSnapshotLabel (Proxy @(k, v))
 
 {-------------------------------------------------------------------------------
   Mutiple writable table handles
@@ -320,7 +373,7 @@ duplicate ::
      IOLike m
   => TableHandle m k v
   -> m (TableHandle m k v)
-duplicate = undefined
+duplicate (TableHandle th) = TableHandle <$> Internal.duplicate th
 
 {-------------------------------------------------------------------------------
   Merging tables

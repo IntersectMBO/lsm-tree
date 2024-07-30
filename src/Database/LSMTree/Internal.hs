@@ -27,6 +27,7 @@ module Database.LSMTree.Internal (
   , close
   , lookups
   , toNormalLookupResult
+  , toMonoidalLookupResult
   , updates
     -- * Snapshots
   , SnapshotLabel
@@ -87,6 +88,7 @@ import           Database.LSMTree.Internal.Lookup (ByteCountDiscrepancy,
                      lookupsIO)
 import           Database.LSMTree.Internal.Managed
 import qualified Database.LSMTree.Internal.Merge as Merge
+import qualified Database.LSMTree.Internal.Monoidal as Monoidal
 import qualified Database.LSMTree.Internal.Normal as Normal
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..),
                      SessionRoot (..), SnapshotName)
@@ -128,6 +130,7 @@ data LSMTreeError =
     -- 'Database.LSMTree.Common.close'.
   | ErrTableClosed
   | ErrExpectedNormalTable
+  | ErrExpectedMonoidalTable
   | ErrSnapshotExists SnapshotName
   | ErrSnapshotNotExists SnapshotName
   | ErrSnapshotWrongType SnapshotName
@@ -653,6 +656,15 @@ toNormalLookupResult = \case
       Mupdate _           -> error "toNormalLookupResult: Mupdate unexpected"
       Delete              -> Normal.NotFound
     Nothing -> Normal.NotFound
+
+toMonoidalLookupResult :: Maybe (Entry v b) -> Monoidal.LookupResult v
+toMonoidalLookupResult = \case
+    Just e -> case e of
+      Insert v           -> Monoidal.Found v
+      InsertWithBlob _ _ -> error "toMonoidalLookupResult: InsertWithBlob unexpected"
+      Mupdate v          -> Monoidal.Found v
+      Delete             -> Monoidal.NotFound
+    Nothing -> Monoidal.NotFound
 
 {-# SPECIALISE updates :: V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob) -> TableHandle IO h -> IO () #-}
 -- | See 'Database.LSMTree.Normal.updates'.

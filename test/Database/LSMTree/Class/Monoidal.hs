@@ -17,8 +17,8 @@ import           Data.Typeable (Typeable)
 import qualified Data.Vector as V
 import           Database.LSMTree.Class.Normal (IsSession (..),
                      SessionArgs (..), withSession)
-import           Database.LSMTree.Common (IOLike, Range (..), SerialiseKey,
-                     SerialiseValue, SnapshotName)
+import           Database.LSMTree.Common (IOLike, Labellable (..), Range (..),
+                     SerialiseKey, SerialiseValue, SnapshotName)
 import qualified Database.LSMTree.ModelIO.Monoidal as M
 import           Database.LSMTree.Monoidal (LookupResult (..),
                      RangeLookupResult (..), ResolveValue, Update (..))
@@ -96,24 +96,20 @@ class (IsSession (Session h)) => IsTableHandle h where
         -> m ()
 
     snapshot ::
-        ( IOLike m
-        , SerialiseKey k
-        , SerialiseValue v
+        ( IOLike m, SerialiseKey k, SerialiseValue v
+        , Labellable (k, v)
           -- Model-specific constraints
-        , Typeable k
-        , Typeable v
+        , Typeable k, Typeable v
         )
         => SnapshotName
         -> h m k v
         -> m ()
 
     open ::
-        ( IOLike m
-        , SerialiseKey k
-        , SerialiseValue v
+        ( IOLike m, SerialiseKey k, SerialiseValue v
+        , Labellable (k, v)
           -- Model-specific constraints
-        , Typeable k
-        , Typeable v
+        , Typeable k, Typeable v
         )
         => Session h m
         -> SnapshotName
@@ -141,6 +137,7 @@ withTableNew sesh conf = bracket (new sesh conf) close
 withTableOpen ::
      forall h m k v a. ( IOLike m, IsTableHandle h
      , SerialiseKey k, SerialiseValue v
+     , Labellable (k, v)
      , Typeable k, Typeable v
      )
   => Session h m
@@ -209,7 +206,7 @@ instance IsTableHandle R.TableHandle where
     rangeLookup = flip R.rangeLookup
 
     snapshot = R.snapshot
-    open = R.open
+    open sesh snap = R.open sesh R.configNoOverride snap
 
     duplicate = R.duplicate
     merge = R.merge
