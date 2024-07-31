@@ -96,7 +96,7 @@ class (IsSession (Session h)) => IsTableHandle h where
         -> m ()
 
     snapshot ::
-        ( IOLike m, SerialiseKey k, SerialiseValue v
+        ( IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v
         , Labellable (k, v)
           -- Model-specific constraints
         , Typeable k, Typeable v

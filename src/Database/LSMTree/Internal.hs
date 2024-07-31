@@ -22,12 +22,11 @@ module Database.LSMTree.Internal (
   , Level (..)
   , withOpenTable
     -- ** Implementation of public API
+  , ResolveSerialisedValue
   , withTable
   , new
   , close
   , lookups
-  , toNormalLookupResult
-  , toMonoidalLookupResult
   , updates
     -- * Snapshots
   , SnapshotLabel
@@ -43,10 +42,8 @@ module Database.LSMTree.Internal (
     -- * configuration
   , TableConfig (..)
   , defaultTableConfig
-  , resolveMupsert
-  , ResolveMupsert (..)
-  , SizeRatio (..)
   , MergePolicy (..)
+  , SizeRatio (..)
   , WriteBufferAlloc (..)
   , NumEntries (..)
   , BloomFilterAlloc (..)
@@ -85,11 +82,9 @@ import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..),
                      combineMaybe)
 import           Database.LSMTree.Internal.IndexCompact (IndexCompact)
 import           Database.LSMTree.Internal.Lookup (ByteCountDiscrepancy,
-                     lookupsIO)
+                     ResolveSerialisedValue, lookupsIO)
 import           Database.LSMTree.Internal.Managed
 import qualified Database.LSMTree.Internal.Merge as Merge
-import qualified Database.LSMTree.Internal.Monoidal as Monoidal
-import qualified Database.LSMTree.Internal.Normal as Normal
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..),
                      SessionRoot (..), SnapshotName)
 import qualified Database.LSMTree.Internal.Paths as Paths
@@ -129,8 +124,6 @@ data LSMTreeError =
     -- one exception (pun intended) to this rule: the idempotent operation
     -- 'Database.LSMTree.Common.close'.
   | ErrTableClosed
-  | ErrExpectedNormalTable
-  | ErrExpectedMonoidalTable
   | ErrSnapshotExists SnapshotName
   | ErrSnapshotNotExists SnapshotName
   | ErrSnapshotWrongType SnapshotName
@@ -618,19 +611,18 @@ close th = RW.withWriteAccess_ (tableHandleState th) $ \case
         pure emptyTableContent
       pure TableHandleClosed
 
-{-# SPECIALISE lookups :: V.Vector SerialisedKey -> TableHandle IO h -> (Maybe (Entry SerialisedValue (BlobRef (Run (Handle h)))) -> lookupResult) -> IO (V.Vector lookupResult) #-}
+{-# SPECIALISE lookups :: ResolveSerialisedValue -> V.Vector SerialisedKey -> TableHandle IO h -> (Maybe (Entry SerialisedValue (BlobRef (Run (Handle h)))) -> lookupResult) -> IO (V.Vector lookupResult) #-}
 -- | See 'Database.LSMTree.Normal.lookups'.
 lookups ::
      m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
-  => V.Vector SerialisedKey
+  => ResolveSerialisedValue
+  -> V.Vector SerialisedKey
   -> TableHandle m h
   -> (Maybe (Entry SerialisedValue (BlobRef (Run (Handle h)))) -> lookupResult)
-     -- ^ How to map from an entry to a lookup result. Use
-     -- 'toNormalLookupResult' or 'toMonoidalLookupResult'.
+     -- ^ How to map from an entry to a lookup result.
   -> m (V.Vector lookupResult)
-lookups ks th fromEntry = withOpenTable th $ \thEnv -> do
+lookups resolve ks th fromEntry = withOpenTable th $ \thEnv -> do
     let arenaManager = tableHandleArenaManager th
-    let resolve = resolveMupsert (tableConfig th)
     RW.withReadAccess (tableContent thEnv) $ \tableContent -> do
       let !wb = tableWriteBuffer tableContent
       let !cache = tableCache tableContent
@@ -648,50 +640,36 @@ lookups ks th fromEntry = withOpenTable th $ \thEnv -> do
                 (\k1 e2 -> fromEntry $ combineMaybe resolve (WB.lookup wb k1) e2)
                 ks ioRes
 
-toNormalLookupResult :: Maybe (Entry v b) -> Normal.LookupResult v b
-toNormalLookupResult = \case
-    Just e -> case e of
-      Insert v            -> Normal.Found v
-      InsertWithBlob v br -> Normal.FoundWithBlob v br
-      Mupdate _           -> error "toNormalLookupResult: Mupdate unexpected"
-      Delete              -> Normal.NotFound
-    Nothing -> Normal.NotFound
-
-toMonoidalLookupResult :: Maybe (Entry v b) -> Monoidal.LookupResult v
-toMonoidalLookupResult = \case
-    Just e -> case e of
-      Insert v           -> Monoidal.Found v
-      InsertWithBlob _ _ -> error "toMonoidalLookupResult: InsertWithBlob unexpected"
-      Mupdate v          -> Monoidal.Found v
-      Delete             -> Monoidal.NotFound
-    Nothing -> Monoidal.NotFound
-
-{-# SPECIALISE updates :: V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob) -> TableHandle IO h -> IO () #-}
+{-# SPECIALISE updates :: ResolveSerialisedValue -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob) -> TableHandle IO h -> IO () #-}
 -- | See 'Database.LSMTree.Normal.updates'.
 --
 -- Does not enforce that mupsert and blobs should not occur in the same table.
 updates ::
      m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
-  => V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob)
+  => ResolveSerialisedValue
+  -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob)
   -> TableHandle m h
   -> m ()
-updates es th = withOpenTable th $ \thEnv -> do
-    let hfs = tableHasFS thEnv
-    modifyWithTempRegistry_
-      (atomically $ RW.unsafeAcquireWriteAccess (tableContent thEnv))
-      (atomically . RW.unsafeReleaseWriteAccess (tableContent thEnv)) $ \tc -> do
-        tc' <- updatesWithInterleavedFlushes
-                (tableConfig th)
-                hfs
-                (tableHasBlockIO thEnv)
-                (tableSessionRoot thEnv)
-                (tableSessionUniqCounter thEnv)
-                es
-                tc
-        assertNoThunks tc' $ pure ()
-        pure tc'
+updates resolve es th = do
+    let conf = tableConfig th
+    withOpenTable th $ \thEnv -> do
+      let hfs = tableHasFS thEnv
+      modifyWithTempRegistry_
+        (atomically $ RW.unsafeAcquireWriteAccess (tableContent thEnv))
+        (atomically . RW.unsafeReleaseWriteAccess (tableContent thEnv)) $ \tc -> do
+          tc' <- updatesWithInterleavedFlushes
+                  conf
+                  resolve
+                  hfs
+                  (tableHasBlockIO thEnv)
+                  (tableSessionRoot thEnv)
+                  (tableSessionUniqCounter thEnv)
+                  es
+                  tc
+          assertNoThunks tc' $ pure ()
+          pure tc'
 
-{-# SPECIALISE updatesWithInterleavedFlushes :: TableConfig -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob) -> TempRegistry IO -> TableContent h -> IO (TableContent h) #-}
+{-# SPECIALISE updatesWithInterleavedFlushes :: TableConfig -> ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob) -> TempRegistry IO -> TableContent h -> IO (TableContent h) #-}
 -- | A single batch of updates can fill up the write buffer multiple times. We
 -- flush the write buffer each time it fills up before trying to fill it up
 -- again.
@@ -719,6 +697,7 @@ updates es th = withOpenTable th $ \thEnv -> do
 updatesWithInterleavedFlushes ::
      m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
   => TableConfig
+  -> ResolveSerialisedValue
   -> HasFS m h
   -> HasBlockIO m h
   -> SessionRoot
@@ -727,7 +706,7 @@ updatesWithInterleavedFlushes ::
   -> TempRegistry m
   -> TableContent h
   -> m (TableContent h)
-updatesWithInterleavedFlushes conf hfs hbio root uniqC es reg tc = do
+updatesWithInterleavedFlushes conf resolve hfs hbio root uniqC es reg tc = do
     let wb = tableWriteBuffer tc
         (wb', es') = WB.addEntriesUpToN resolve es maxn wb
     -- never exceed the write buffer capacity
@@ -741,18 +720,16 @@ updatesWithInterleavedFlushes conf hfs hbio root uniqC es reg tc = do
     -- If the write buffer did reach capacity, then we flush.
     else do
       assert (unNumEntries (WB.numEntries wb') == maxn) $ pure ()
-      tc'' <- flushWriteBuffer conf hfs hbio root uniqC reg tc'
+      tc'' <- flushWriteBuffer conf resolve hfs hbio root uniqC reg tc'
       -- In the fortunate case where we have already performed all the updates,
       -- return,
       if V.null es' then
         pure $! tc''
       -- otherwise, keep going
       else
-        updatesWithInterleavedFlushes conf hfs hbio root uniqC es' reg tc''
+        updatesWithInterleavedFlushes conf resolve hfs hbio root uniqC es' reg tc''
   where
     AllocNumEntries (NumEntries maxn) = confWriteBufferAlloc conf
-    resolve = resolveMupsert conf
-
     setWriteBuffer :: WriteBuffer -> TableContent h -> TableContent h
     setWriteBuffer wbToSet tc0 = TableContent {
           tableWriteBuffer = wbToSet
@@ -760,7 +737,7 @@ updatesWithInterleavedFlushes conf hfs hbio root uniqC es reg tc = do
         , tableCache = tableCache tc0
         }
 
-{-# SPECIALISE flushWriteBuffer :: TableConfig -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> TempRegistry IO -> TableContent h -> IO (TableContent h) #-}
+{-# SPECIALISE flushWriteBuffer :: TableConfig -> ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> TempRegistry IO -> TableContent h -> IO (TableContent h) #-}
 -- | Flush the write buffer to disk, regardless of whether it is full or not.
 --
 -- The returned table content contains an updated set of levels, where the write
@@ -768,6 +745,7 @@ updatesWithInterleavedFlushes conf hfs hbio root uniqC es reg tc = do
 flushWriteBuffer ::
      m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
   => TableConfig
+  -> ResolveSerialisedValue
   -> HasFS m h
   -> HasBlockIO m h
   -> SessionRoot
@@ -776,7 +754,7 @@ flushWriteBuffer ::
   -> TableContent h
   -> m (TableContent h)
 flushWriteBuffer conf@TableConfig{confDiskCachePolicy, confBloomFilterAlloc}
-                 hfs hbio root uniqC reg tc
+                 resolve hfs hbio root uniqC reg tc
   | WB.null (tableWriteBuffer tc) = pure tc
   | otherwise = do
     n <- incrUniqCounter uniqC
@@ -787,7 +765,7 @@ flushWriteBuffer conf@TableConfig{confDiskCachePolicy, confBloomFilterAlloc}
               (Paths.runPath root n)
               (tableWriteBuffer tc))
             (Run.removeReference hfs hbio)
-    levels' <- addRunToLevels conf hfs hbio root uniqC r reg (tableLevels tc)
+    levels' <- addRunToLevels conf resolve hfs hbio root uniqC r reg (tableLevels tc)
     pure $! TableContent {
         tableWriteBuffer = WB.empty
       , tableLevels = levels'
@@ -869,10 +847,11 @@ levelsInvariant conf levels =
     -- Check that a run is too small for next levels
     fitsUB policy r ln = Run.runNumEntries r <= maxRunSize sr wba policy ln
 
-{-# SPECIALISE addRunToLevels :: TableConfig -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> Run (Handle h) -> TempRegistry IO -> Levels (Handle h) -> IO (Levels (Handle h)) #-}
+{-# SPECIALISE addRunToLevels :: TableConfig -> ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> Run (Handle h) -> TempRegistry IO -> Levels (Handle h) -> IO (Levels (Handle h)) #-}
 addRunToLevels ::
      forall m h. m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
   => TableConfig
+  -> ResolveSerialisedValue
   -> HasFS m h
   -> HasBlockIO m h
   -> SessionRoot
@@ -881,7 +860,7 @@ addRunToLevels ::
   -> TempRegistry m
   -> Levels (Handle h)
   -> m (Levels (Handle h))
-addRunToLevels conf@TableConfig{..} hfs hbio root uniqC r0 reg levels = do
+addRunToLevels conf@TableConfig{..} resolve hfs hbio root uniqC r0 reg levels = do
     ls' <- go (LevelNo 1) (V.singleton r0) levels
     assert (runST $ levelsInvariant conf ls') $ return ls'
   where
@@ -953,7 +932,7 @@ addRunToLevels conf@TableConfig{..} hfs hbio root uniqC r0 reg levels = do
         let caching = diskCachePolicyForLevel confDiskCachePolicy ln
             alloc = bloomFilterAllocForLevel confBloomFilterAlloc ln
         r <- allocateTemp reg
-               (mergeRuns conf hfs hbio root uniqC caching alloc mergepolicy mergelast rs)
+               (mergeRuns resolve hfs hbio root uniqC caching alloc mergepolicy mergelast rs)
                (Run.removeReference hfs hbio)
         V.mapM_ (freeTemp reg . Run.removeReference hfs hbio) rs
         pure $! MergingRun (CompletedMerge r)
@@ -1014,10 +993,10 @@ mergeLastForLevel levels
 levelIsFull :: SizeRatio -> V.Vector (Run h) -> Bool
 levelIsFull sr rs = V.length rs + 1 >= (sizeRatioInt sr)
 
-{-# SPECIALISE mergeRuns :: TableConfig -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> RunDataCaching -> RunBloomFilterAlloc -> MergePolicyForLevel -> Merge.Level -> V.Vector (Run (Handle h)) -> IO (Run (Handle h)) #-}
+{-# SPECIALISE mergeRuns :: ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> RunDataCaching -> RunBloomFilterAlloc -> MergePolicyForLevel -> Merge.Level -> V.Vector (Run (Handle h)) -> IO (Run (Handle h)) #-}
 mergeRuns ::
      m ~ IO
-  => TableConfig
+  => ResolveSerialisedValue
   -> HasFS m h
   -> HasBlockIO m h
   -> SessionRoot
@@ -1028,14 +1007,13 @@ mergeRuns ::
   -> Merge.Level
   -> V.Vector (Run (Handle h))
   -> m (Run (Handle h))
-mergeRuns conf hfs hbio root uniqC caching alloc _ mergeLevel runs = do
+mergeRuns resolve hfs hbio root uniqC caching alloc _ mergeLevel runs = do
     n <- incrUniqCounter uniqC
     let runPaths = Paths.runPath root n
     Merge.new hfs hbio caching alloc mergeLevel resolve runPaths (toList runs) >>= \case
       Nothing -> error "mergeRuns: no inputs"
       Just merge -> go merge
   where
-    resolve = resolveMupsert conf
     go m =
       Merge.steps hfs hbio m 1024 >>= \case
         (_, Merge.MergeInProgress)   -> go m
@@ -1047,15 +1025,17 @@ mergeRuns conf hfs hbio root uniqC caching alloc _ mergeLevel runs = do
 
 type SnapshotLabel = String
 
-{-# SPECIALISE snapshot :: SnapshotName -> String -> TableHandle IO h -> IO Int #-}
+{-# SPECIALISE snapshot :: ResolveSerialisedValue -> SnapshotName -> String -> TableHandle IO h -> IO Int #-}
 -- |  See 'Database.LSMTree.Normal.snapshot''.
 snapshot ::
      m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
-  => SnapshotName
+  => ResolveSerialisedValue
+  -> SnapshotName
   -> SnapshotLabel
   -> TableHandle m h
   -> m Int
-snapshot snap label th = do
+snapshot resolve snap label th = do
+    let conf = tableConfig th
     withOpenTable th $ \thEnv -> do
       -- For the temporary implementation it is okay to just flush the buffer
       -- before taking the snapshot.
@@ -1065,7 +1045,8 @@ snapshot snap label th = do
                     (atomically . RW.unsafeReleaseWriteAccess (tableContent thEnv))
                     $ \reg content -> do
         r <- flushWriteBuffer
-              (tableConfig th)
+              conf
+              resolve
               hfs
               (tableHasBlockIO thEnv)
               (tableSessionRoot thEnv)
@@ -1291,9 +1272,6 @@ data TableConfig = TableConfig {
     -- applications.
   , confWriteBufferAlloc :: !WriteBufferAlloc
   , confBloomFilterAlloc :: !BloomFilterAlloc
-    -- | Function for resolving 'Mupsert' values. This should be 'Nothing' for
-    -- normal tables and 'Just' for monoidal tables.
-  , confResolveMupsert   :: !(Maybe ResolveMupsert)
     -- | The policy for caching key\/value data from disk in memory.
   , confDiskCachePolicy  :: !DiskCachePolicy
   }
@@ -1303,9 +1281,7 @@ data TableConfig = TableConfig {
 -- persistence of the config to disk.
 deriving stock instance Read TableConfig
 
--- | A reasonable default 'TableConfig', for normal tables.
---
--- For monoidal tables, override the 'confResolveMupsert' field.
+-- | A reasonable default 'TableConfig'.
 --
 -- This uses a write buffer with up to 20,000 elements and a generous amount of
 -- memory for Bloom filters (FPR of 2%).
@@ -1317,12 +1293,8 @@ defaultTableConfig =
       , confSizeRatio        = Four
       , confWriteBufferAlloc = AllocNumEntries (NumEntries 20_000)
       , confBloomFilterAlloc = AllocFixed 10
-      , confResolveMupsert   = Nothing
       , confDiskCachePolicy  = DiskCacheAll
       }
-
-resolveMupsert :: TableConfig -> SerialisedValue -> SerialisedValue -> SerialisedValue
-resolveMupsert conf = maybe const unResolveMupsert (confResolveMupsert conf)
 
 data MergePolicy =
     -- | Use tiering on intermediate levels, and levelling on the last level.
@@ -1410,16 +1382,6 @@ deriving stock instance Read BloomFilterAlloc
 bloomFilterAllocForLevel :: BloomFilterAlloc -> LevelNo -> RunBloomFilterAlloc
 bloomFilterAllocForLevel (AllocFixed n) _        = RunAllocFixed n
 bloomFilterAllocForLevel (AllocRequestFPR fpr) _ = RunAllocRequestFPR fpr
-
-newtype ResolveMupsert = ResolveMupsert {
-    unResolveMupsert :: SerialisedValue -> SerialisedValue -> SerialisedValue
-  }
-
-instance Show ResolveMupsert where show _ = "ResolveMupsert function can not be printed"
-
--- | TODO: this should be removed once we have proper snapshotting with proper
--- persistence of the config to disk.
-instance Read ResolveMupsert where readsPrec = error "ResolveMupsert function can not be read"
 
 -- | The policy for caching data from disk in memory (using the OS page cache).
 --

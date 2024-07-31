@@ -46,7 +46,6 @@ tests = testGroup "Test.Database.LSMTree.Class.Monoidal"
             , R.confSizeRatio = R.Four
             , R.confWriteBufferAlloc = R.AllocNumEntries (R.NumEntries 3)
             , R.confBloomFilterAlloc = R.AllocFixed 10
-            , R.confResolveMupsert = Nothing
             , R.confDiskCachePolicy = R.DiskCacheNone
             }
         , testWithSessionArgs = \action ->
@@ -54,7 +53,22 @@ tests = testGroup "Test.Database.LSMTree.Class.Monoidal"
               action (SessionArgs hfs hbio (FS.mkFsPath []))
         }
 
-    expectFailures2 = repeat True
+    expectFailures2 = [
+        False
+      , False
+      , False
+      , False
+      , False
+      , False
+      , False
+      , False
+      , False
+      , True  -- lookupRange-insert
+      , False
+      , False
+      , False
+      , True  -- merge
+      ] ++ repeat False
 
     props tbl =
       [ testProperty' "lookup-insert" $ prop_lookupInsert tbl
@@ -83,8 +97,6 @@ newtype Value = Value BS.ByteString
   deriving stock (Eq, Show)
   deriving newtype (Arbitrary, R.SerialiseValue)
 
--- TODO: this is currently not used at all, only the value from the config
--- is taken into account!
 instance ResolveValue Value where
     resolveValue = resolveDeserialised resolve
 

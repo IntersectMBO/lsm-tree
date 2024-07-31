@@ -37,7 +37,6 @@ module Database.LSMTree.Monoidal (
   , TableHandle
   , Internal.TableConfig (..)
   , Internal.defaultTableConfig
-  , Internal.ResolveMupsert (..)
   , Internal.SizeRatio (..)
   , Internal.MergePolicy (..)
   , Internal.WriteBufferAlloc (..)
@@ -106,11 +105,10 @@ module Database.LSMTree.Monoidal (
   ) where
 
 import           Control.DeepSeq (NFData, deepseq)
-import           Control.Monad (unless, void, (<$!>))
-import           Control.Monad.Class.MonadThrow (MonadThrow (..))
+import           Control.Monad (void, (<$!>))
 import           Data.Bifunctor (Bifunctor (..))
+import           Data.Coerce (coerce)
 import           Data.Kind (Type)
-import           Data.Maybe (isJust)
 import           Data.Typeable (Proxy (Proxy), Typeable)
 import qualified Data.Vector as V
 import           Data.Word (Word64)
@@ -120,7 +118,7 @@ import           Database.LSMTree.Common (IOLike, Range (..), SerialiseKey,
                      withSession)
 import qualified Database.LSMTree.Common as Common
 import qualified Database.LSMTree.Internal as Internal
-import           Database.LSMTree.Internal.Entry (updateToEntryMonoidal)
+import qualified Database.LSMTree.Internal.Entry as Entry
 import           Database.LSMTree.Internal.Monoidal
 import           Database.LSMTree.Internal.RawBytes (RawBytes)
 import qualified Database.LSMTree.Internal.Serialise as Internal
@@ -160,7 +158,9 @@ withTable ::
   -> Internal.TableConfig
   -> (TableHandle m k v -> m a)
   -> m a
-withTable (Session sesh) conf action = Internal.withTable sesh conf (action . TableHandle)
+withTable (Session sesh) conf action =
+    Internal.withTable sesh conf $
+      action . TableHandle
 
 -- | Create a new empty table, returning a fresh table handle.
 --
@@ -194,13 +194,26 @@ close (TableHandle th) = Internal.close th
 --
 -- Lookups can be performed concurrently from multiple Haskell threads.
 lookups ::
-     (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
+     forall m k v. (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
   => V.Vector k
   -> TableHandle m k v
   -> m (V.Vector (LookupResult v))
 lookups ks (TableHandle th) =
     V.mapStrict (fmap Internal.deserialiseValue) <$!>
-    Internal.lookups (V.map Internal.serialiseKey ks) th Internal.toMonoidalLookupResult
+    Internal.lookups
+      (resolve @v Proxy)
+      (V.map Internal.serialiseKey ks)
+      th
+      toMonoidalLookupResult
+
+toMonoidalLookupResult :: Maybe (Entry.Entry v b) -> LookupResult v
+toMonoidalLookupResult = \case
+    Just e -> case e of
+      Entry.Insert v           -> Found v
+      Entry.InsertWithBlob _ _ -> error "toMonoidalLookupResult: InsertWithBlob unexpected"
+      Entry.Mupdate v          -> Found v
+      Entry.Delete             -> NotFound
+    Nothing -> NotFound
 
 -- | Perform a range lookup.
 --
@@ -219,18 +232,18 @@ rangeLookup = undefined
 --
 -- Updates can be performed concurrently from multiple Haskell threads.
 updates ::
-     (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
+     forall m k v. (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
   => V.Vector (k, Update v)
   -> TableHandle m k v
   -> m ()
 updates es (TableHandle th) = do
-    -- make sure not to insert any mupserts into normal tables
-    unless (isJust (Internal.confResolveMupsert (Internal.tableConfig th))) $
-      throwIO Internal.ErrExpectedMonoidalTable
-    Internal.updates (V.mapStrict serialiseEntry es) th
+    Internal.updates
+      (resolve @v Proxy)
+      (V.mapStrict serialiseEntry es)
+      th
   where
     serialiseEntry = bimap Internal.serialiseKey serialiseOp
-    serialiseOp = first Internal.serialiseValue . updateToEntryMonoidal
+    serialiseOp = first Internal.serialiseValue . Entry.updateToEntryMonoidal
 
 -- | Perform a batch of inserts.
 --
@@ -290,14 +303,17 @@ mupserts = updates . fmap (second Mupsert)
 --
 snapshot ::
      forall m k v. ( IOLike m
-     , SerialiseKey k, SerialiseValue v
+     , SerialiseKey k, SerialiseValue v, ResolveValue v
      , Common.Labellable (k, v)
      )
   => SnapshotName
   -> TableHandle m k v
   -> m ()
-snapshot snap (TableHandle th) = void $ Internal.snapshot snap label th
-  where label = Common.makeSnapshotLabel (Proxy @(k, v))
+snapshot snap (TableHandle th) =
+    void $ Internal.snapshot (resolve @v Proxy) snap label th
+  where
+    -- to ensure we don't open a monoidal table as normal later
+    label = Common.makeSnapshotLabel (Proxy @(k, v)) <> " (monoidal)"
 
 -- | Open a table from a named snapshot, returning a new table handle.
 --
@@ -332,7 +348,9 @@ open ::
   -> m (TableHandle m k v)
 open (Session sesh) override snap =
     TableHandle <$> Internal.open sesh label override snap
-  where label = Common.makeSnapshotLabel (Proxy @(k, v))
+  where
+    -- to ensure that the table is really a monoidal table
+    label = Common.makeSnapshotLabel (Proxy @(k, v)) <> " (monoidal)"
 
 {-------------------------------------------------------------------------------
   Mutiple writable table handles
@@ -479,6 +497,9 @@ resolveDeserialised ::
   => (v -> v -> v) -> Proxy v -> RawBytes -> RawBytes -> RawBytes
 resolveDeserialised f _ x y =
     serialiseValue (f (deserialiseValue x) (deserialiseValue y))
+
+resolve :: ResolveValue v => Proxy v -> Internal.ResolveSerialisedValue
+resolve = coerce . resolveValue
 
 -- | Mostly to give an example instance (plus the property tests for it).
 instance ResolveValue Word64 where
