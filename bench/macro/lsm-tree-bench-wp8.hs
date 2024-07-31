@@ -107,8 +107,12 @@ theValue = BS.replicate 60 120 -- 'x'
 -------------------------------------------------------------------------------
 
 data GlobalOpts = GlobalOpts
-    { rootDir     :: !FilePath  -- ^ session directory.
-    , initialSize :: !Int
+    { rootDir         :: !FilePath  -- ^ session directory.
+    , initialSize     :: !Int
+    -- | The cache policy for the LSM table. This configuration option is used
+    -- both during setup, and during a run (where it is used to override the
+    -- config option of the snapshot).
+    , diskCachePolicy :: !LSM.DiskCachePolicy
     }
   deriving stock Show
 
@@ -135,14 +139,24 @@ data Cmd
     | CmdRun RunOpts
   deriving stock Show
 
+mkTableConfig :: GlobalOpts -> LSM.TableConfig -> LSM.TableConfig
+mkTableConfig GlobalOpts{diskCachePolicy} conf = conf {
+      LSM.confDiskCachePolicy = diskCachePolicy
+    }
+
+mkTableConfigOverride :: GlobalOpts -> LSM.TableConfigOverride
+mkTableConfigOverride GlobalOpts{diskCachePolicy} =
+    LSM.configOverrideDiskCachePolicy diskCachePolicy
+
 -------------------------------------------------------------------------------
 -- command line interface
 -------------------------------------------------------------------------------
 
 globalOptsP :: O.Parser GlobalOpts
 globalOptsP = pure GlobalOpts
-    <*> pure "_bench_session"
+    <*> O.option O.str (O.long "bench-dir" <> O.value "_bench_wp8" <> O.showDefault <> O.help "Benchmark directory to put files in")
     <*> O.option O.auto (O.long "initial-size" <> O.value 100_000_000 <> O.showDefault <> O.help "Initial LSM tree size")
+    <*> O.option O.auto (O.long "disk-cache-policy" <> O.value LSM.DiskCacheAll <> O.showDefault <> O.help "Disk cache policy [DiskCacheAll | DiskCacheLevelsAtOrBelow Int | DiskCacheNone]")
 
 cmdP :: O.Parser Cmd
 cmdP = O.subparser $ mconcat
@@ -207,7 +221,7 @@ doSetup gopts _opts = do
         LSM.mkSnapshotName "bench"
 
     LSM.withSession hasFS hasBlockIO (FS.mkFsPath []) $ \session -> do
-        tbh <- LSM.new @IO @K @V @B session LSM.defaultTableConfig
+        tbh <- LSM.new @IO @K @V @B session (mkTableConfig gopts LSM.defaultTableConfig)
 
         forM_ [ 0 .. gopts.initialSize ] $ \ (fromIntegral -> i) -> do
             -- TODO: this procedure simply inserts all the keys into initial lsm tree
@@ -377,8 +391,8 @@ doRun gopts opts = do
         -- reference version starts with empty (as it's not practical or
         -- necessary for testing to load the whole snapshot).
         tbl <- if opts.check
-                 then LSM.new  @IO @K @V @B session LSM.defaultTableConfig
-                 else LSM.open @IO @K @V @B session name
+                 then LSM.new  @IO @K @V @B session (mkTableConfig gopts LSM.defaultTableConfig)
+                 else LSM.open @IO @K @V @B session (mkTableConfigOverride gopts) name
 
         -- In checking mode, compare each output against a pure reference.
         checkvar <- newIORef $ pureReference

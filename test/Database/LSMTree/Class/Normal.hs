@@ -228,6 +228,6 @@ instance IsTableHandle R.TableHandle where
     retrieveBlobs _ = R.retrieveBlobs
 
     snapshot = R.snapshot
-    open = R.open
+    open sesh snap = R.open sesh R.configNoOverride snap
 
     duplicate = R.duplicate

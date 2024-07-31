@@ -32,6 +32,9 @@ module Database.LSMTree.Internal (
   , SnapshotLabel
   , snapshot
   , open
+  , TableConfigOverride
+  , configNoOverride
+  , configOverrideDiskCachePolicy
   , deleteSnapshot
   , listSnapshots
     -- * Mutiple writable table handles
@@ -70,7 +73,8 @@ import           Data.Either (fromRight)
 import           Data.Foldable
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (catMaybes)
+import           Data.Maybe (catMaybes, fromMaybe)
+import           Data.Monoid (Last (..))
 import qualified Data.Set as Set
 import qualified Data.Vector as V
 import           Data.Word (Word64)
@@ -1077,15 +1081,16 @@ snapshot snap label th = do
                       (BSC.pack $ show (label, runNumbers, tableConfig th))
       pure $! V.sum (V.map (\((_ :: (Bool, Word64)), rs) -> 1 + V.length rs) runNumbers)
 
-{-# SPECIALISE open :: Session IO h -> String -> SnapshotName -> IO (TableHandle IO h) #-}
+{-# SPECIALISE open :: Session IO h -> SnapshotLabel -> TableConfigOverride -> SnapshotName -> IO (TableHandle IO h) #-}
 -- |  See 'Database.LSMTree.Normal.open'.
 open ::
      m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
   => Session m h
   -> SnapshotLabel -- ^ Expected label
+  -> TableConfigOverride -- ^ Optional config override
   -> SnapshotName
   -> m (TableHandle m h)
-open sesh label snap = do
+open sesh label override snap = do
     withOpenSession sesh $ \seshEnv -> do
       let hfs      = sessionHasFS seshEnv
           hbio     = sessionHasBlockIO seshEnv
@@ -1098,13 +1103,57 @@ open sesh label snap = do
               FS.ReadMode $ \h ->
                 FS.hGetAll (sessionHasFS seshEnv) h
       let (label', runNumbers, conf) = read . BSC.unpack . BSC.toStrict $ bs
+      let conf' = applyOverride override conf
       unless (label == label') $ throwIO (ErrSnapshotWrongType snap)
       let runPaths = V.map (bimap (second $ RunFsPaths (Paths.activeDir $ sessionRoot seshEnv))
                                   (V.map (RunFsPaths (Paths.activeDir $ sessionRoot seshEnv))))
                            runNumbers
-      with (openLevels hfs hbio (confDiskCachePolicy conf) runPaths) $ \lvls -> do
+      with (openLevels hfs hbio (confDiskCachePolicy conf') runPaths) $ \lvls -> do
         am <- newArenaManager
-        (newWith sesh seshEnv conf am WB.empty lvls)
+        (newWith sesh seshEnv conf' am WB.empty lvls)
+
+-- | Override configuration options in 'TableConfig' that can be changed dynamically.
+--
+-- Some parts of the 'TableConfig' are considered fixed after a table is
+-- created. That is, these options should (i) should stay the same over the
+-- lifetime of a table, and (ii) these options should not be changed when a
+-- snapshot is created or loaded. Other options can be changed dynamically
+-- without sacrificing correctness.
+--
+-- This type has 'Semigroup' and 'Monoid' instances for composing override
+-- options.
+data TableConfigOverride = TableConfigOverride {
+      -- | Override for 'confDiskCachePolicy'
+      confOverrideDiskCachePolicy  :: Last DiskCachePolicy
+    }
+
+-- | Behaves like a point-wise 'Last' instance
+instance Semigroup TableConfigOverride where
+  override1 <> override2 = TableConfigOverride {
+        confOverrideDiskCachePolicy =
+          confOverrideDiskCachePolicy override1 <>
+          confOverrideDiskCachePolicy override2
+      }
+
+-- | Behaves like a point-wise 'Last' instance
+instance Monoid TableConfigOverride where
+  mempty = configNoOverride
+
+applyOverride :: TableConfigOverride -> TableConfig -> TableConfig
+applyOverride TableConfigOverride{..} conf = conf {
+      confDiskCachePolicy =
+        fromMaybe (confDiskCachePolicy conf) (getLast confOverrideDiskCachePolicy)
+    }
+
+configNoOverride :: TableConfigOverride
+configNoOverride = TableConfigOverride {
+      confOverrideDiskCachePolicy = Last Nothing
+    }
+
+configOverrideDiskCachePolicy :: DiskCachePolicy -> TableConfigOverride
+configOverrideDiskCachePolicy pol = TableConfigOverride {
+      confOverrideDiskCachePolicy = Last (Just pol)
+    }
 
 {-# SPECIALISE openLevels :: HasFS IO h -> HasBlockIO IO h -> DiskCachePolicy -> V.Vector ((Bool, RunFsPaths), V.Vector RunFsPaths) -> Managed IO (Levels (FS.Handle h)) #-}
 -- | Open multiple levels.
