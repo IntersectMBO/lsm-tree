@@ -7,10 +7,10 @@ module Database.LSMTree.Internal.Monoidal (
 import           Control.DeepSeq (NFData (..))
 
 -- | Result of a single point lookup.
-data LookupResult k v =
-    NotFound      !k
-  | Found         !k !v
-  deriving stock (Eq, Show)
+data LookupResult v =
+    NotFound
+  | Found !v
+  deriving stock (Eq, Show, Functor, Foldable, Traversable)
 
 
 -- | A result for one point in a range lookup.

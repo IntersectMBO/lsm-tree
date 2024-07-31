@@ -1,23 +1,22 @@
-{-# LANGUAGE BlockArguments      #-}
-{-# LANGUAGE RecordWildCards     #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications    #-}
+{-# LANGUAGE BlockArguments #-}
 
 module Test.Database.LSMTree.Class.Monoidal (tests) where
 
+import           Control.Monad.ST.Strict (runST)
 import qualified Data.ByteString as BS
-import           Data.List (sortOn)
 import           Data.Maybe (fromMaybe)
+import qualified Data.Vector as V
+import qualified Data.Vector.Algorithms.Merge as VA
 import           Data.Word (Word64)
 import           Database.LSMTree.Class.Monoidal hiding (withTableDuplicate,
                      withTableNew, withTableOpen)
 import qualified Database.LSMTree.Class.Monoidal as Class
-import           Database.LSMTree.Common (SomeUpdateConstraint (..),
-                     mkSnapshotName)
 import           Database.LSMTree.Extras.Generators ()
 import           Database.LSMTree.ModelIO.Monoidal (IOLike, LookupResult (..),
                      Range (..), RangeLookupResult (..), Update (..))
 import qualified Database.LSMTree.ModelIO.Monoidal as M
+import           Database.LSMTree.Monoidal (ResolveValue (..), mkSnapshotName,
+                     resolveDeserialised)
 import qualified Database.LSMTree.Monoidal as R
 import qualified System.FS.API as FS
 import           Test.Database.LSMTree.Class.Normal (testProperty')
@@ -78,7 +77,16 @@ tests = testGroup "Test.Database.LSMTree.Class.Monoidal"
 -------------------------------------------------------------------------------
 
 type Key = Word64
-type Value = BS.ByteString
+
+newtype Value = Value BS.ByteString
+  deriving stock (Eq, Show)
+  deriving newtype (Arbitrary, R.SerialiseValue)
+
+instance ResolveValue Value where
+    resolveValue = resolveDeserialised resolve
+
+resolve :: Value -> Value -> Value
+resolve (Value x) (Value y) = Value (x <> y)
 
 type Proxy h = Setup h IO
 
@@ -98,7 +106,7 @@ withTableNew Setup{..} ups action =
     testWithSessionArgs $ \args ->
       withSession args $ \sesh ->
         Class.withTableNew sesh testTableConfig $ \table -> do
-          updates table ups
+          updates table (V.fromList ups)
           action sesh table
 
 -------------------------------------------------------------------------------
@@ -113,10 +121,10 @@ prop_lookupInsert ::
 prop_lookupInsert h ups k v = ioProperty $ do
     withTableNew h ups $ \_ hdl -> do
       -- the main dish
-      inserts hdl [(k, v)]
-      res <- lookups hdl [k]
+      inserts hdl (V.singleton (k, v))
+      res <- lookups hdl (V.singleton k)
 
-      return $ res === [Found k v]
+      return $ res === V.singleton (Found v)
 
 -- | Insert doesn't change the lookup results of other keys.
 prop_lookupInsertElse ::
@@ -126,9 +134,9 @@ prop_lookupInsertElse ::
 prop_lookupInsertElse h ups k v testKeys = ioProperty $ do
     withTableNew h ups $ \_ hdl -> do
 
-      let testKeys' = filter (/= k) testKeys
+      let testKeys' = V.fromList $ filter (/= k) testKeys
       res1 <- lookups hdl testKeys'
-      inserts hdl [(k, v)]
+      inserts hdl (V.singleton (k, v))
       res2 <-  lookups hdl testKeys'
 
       return $ res1 === res2
@@ -140,9 +148,9 @@ prop_lookupDelete ::
   -> Key -> Property
 prop_lookupDelete h ups k = ioProperty $ do
     withTableNew h ups $ \_ hdl -> do
-      deletes hdl [k]
-      res <- lookups hdl [k]
-      return $ res === [NotFound k]
+      deletes hdl (V.singleton k)
+      res <- lookups hdl (V.singleton k)
+      return $ res === V.singleton NotFound
 
 -- | Delete doesn't change the lookup results of other keys
 prop_lookupDeleteElse ::
@@ -152,9 +160,9 @@ prop_lookupDeleteElse ::
 prop_lookupDeleteElse h ups k testKeys = ioProperty $ do
     withTableNew h ups $ \_ hdl -> do
 
-      let testKeys' = filter (/= k) testKeys
+      let testKeys' = V.fromList $ filter (/= k) testKeys
       res1 <- lookups hdl testKeys'
-      deletes hdl [k]
+      deletes hdl (V.singleton k)
       res2 <-  lookups hdl testKeys'
 
       return $ res1 === res2
@@ -166,9 +174,9 @@ prop_insertInsert ::
   -> Key -> Value -> Value -> Property
 prop_insertInsert h ups k v1 v2 = ioProperty $ do
     withTableNew h ups $ \_ hdl -> do
-      inserts hdl [(k, v1), (k, v2)]
-      res <- lookups hdl [k]
-      return $ res === [Found k v2]
+      inserts hdl (V.fromList [(k, v1), (k, v2)])
+      res <- lookups hdl (V.singleton k)
+      return $ res === V.singleton (Found v2)
 
 -- | Inserts with different keys don't interfere.
 prop_insertCommutes ::
@@ -177,10 +185,10 @@ prop_insertCommutes ::
     -> Key -> Value -> Key -> Value -> Property
 prop_insertCommutes h ups k1 v1 k2 v2 = k1 /= k2 ==> ioProperty do
     withTableNew h ups $ \_ hdl -> do
-      inserts hdl [(k1, v1), (k2, v2)]
+      inserts hdl (V.fromList [(k1, v1), (k2, v2)])
 
-      res <- lookups hdl [k1,k2]
-      return $ res === [Found k1 v1, Found k2 v2]
+      res <- lookups hdl (V.fromList [k1, k2])
+      return $ res === V.fromList [Found v1, Found v2]
 
 -------------------------------------------------------------------------------
 -- implement classic QC tests for range lookups
@@ -203,7 +211,7 @@ prop_insertLookupRange h ups k v r = ioProperty $ do
 
       res <- rangeLookup hdl r
 
-      inserts hdl [(k, v)]
+      inserts hdl (V.singleton (k, v))
 
       res' <- rangeLookup hdl r
 
@@ -211,8 +219,14 @@ prop_insertLookupRange h ups k v r = ioProperty $ do
           p rlr = rangeLookupResultKey rlr /= k
 
       if evalRange r k
-      then return $ sortOn rangeLookupResultKey (FoundInRange k v : filter p res) === res'
+      then return $ vsortOn rangeLookupResultKey (V.cons (FoundInRange k v) (V.filter p res)) === res'
       else return $ res === res'
+
+  where
+    vsortOn f vec = runST $ do
+        mvec <- V.thaw vec
+        VA.sortBy (\e1 e2 -> f e1 `compare` f e2) mvec
+        V.unsafeFreeze mvec
 
 -------------------------------------------------------------------------------
 -- implement classic QC tests for split-value BLOB retrieval
@@ -233,12 +247,12 @@ prop_lookupUpdate h ups k v1 v2 = ioProperty $ do
     withTableNew h ups $ \_ hdl -> do
 
       -- the main dish
-      inserts hdl [(k, v1)]
-      mupserts hdl [(k, v2)]
-      res <- lookups hdl [k]
+      inserts hdl (V.singleton (k, v1))
+      mupserts hdl (V.singleton (k, v2))
+      res <- lookups hdl (V.singleton k)
 
       -- notice the order.
-      return $ res === [Found k $ mergeU v2 v1]
+      return $ res === V.singleton (Found (resolve v2 v1))
 
 -------------------------------------------------------------------------------
 -- implement classic QC tests for monoidal table merges
@@ -248,10 +262,10 @@ prop_merge :: forall h.
      IsTableHandle h
   => Proxy h -> [(Key, Update Value)] -> [(Key, Update Value)]
   -> [Key] -> Property
-prop_merge h ups1 ups2 testKeys = ioProperty $ do
+prop_merge h ups1 ups2 (V.fromList -> testKeys) = ioProperty $ do
     withTableNew h ups1 $ \s hdl1 -> do
       Class.withTableNew  s (testTableConfig h) $ \hdl2 -> do
-        updates hdl2 ups2
+        updates hdl2 $ V.fromList ups2
 
         -- merge them.
         Class.withTableMerge hdl1 hdl2 $ \hdl3 -> do
@@ -261,13 +275,13 @@ prop_merge h ups1 ups2 testKeys = ioProperty $ do
           res2 <- lookups hdl2 testKeys
           res3 <- lookups hdl3 testKeys
 
-          let mergeResult :: LookupResult Key Value -> LookupResult Key Value -> LookupResult Key Value
-              mergeResult r@(NotFound _)   (NotFound _) = r
-              mergeResult   (NotFound _) r@(Found _ _)  = r
-              mergeResult r@(Found _ _)    (NotFound _) = r
-              mergeResult   (Found k v1)   (Found _ v2) = Found k (mergeU v1 v2)
+          let mergeResult :: LookupResult Value -> LookupResult Value -> LookupResult Value
+              mergeResult r@NotFound   NotFound     = r
+              mergeResult   NotFound   r@(Found _)  = r
+              mergeResult r@(Found _)    NotFound   = r
+              mergeResult   (Found v1)   (Found v2) = Found (resolve v1 v2)
 
-          return $ zipWith mergeResult res1 res2  == res3
+          return $ V.zipWith mergeResult res1 res2  == res3
 
 -------------------------------------------------------------------------------
 -- implement classic QC tests for snapshots
@@ -278,7 +292,7 @@ prop_snapshotNoChanges :: forall h.
      IsTableHandle h
     => Proxy h -> [(Key, Update Value)]
     -> [(Key, Update Value)] -> [Key] -> Property
-prop_snapshotNoChanges h ups ups' testKeys = ioProperty $ do
+prop_snapshotNoChanges h ups ups' (V.fromList -> testKeys) = ioProperty $ do
     withTableNew h ups $ \sess hdl1 -> do
 
       res <- lookups hdl1 testKeys
@@ -286,7 +300,7 @@ prop_snapshotNoChanges h ups ups' testKeys = ioProperty $ do
       let name = fromMaybe (error "invalid name") $ mkSnapshotName "foo"
 
       snapshot name hdl1
-      updates hdl1 ups'
+      updates hdl1 $ V.fromList ups'
 
       Class.withTableOpen @h sess name $ \hdl2 -> do
 
@@ -300,7 +314,7 @@ prop_snapshotNoChanges2 :: forall h.
      IsTableHandle h
     => Proxy h -> [(Key, Update Value)]
     -> [(Key, Update Value)] -> [Key] -> Property
-prop_snapshotNoChanges2 h ups ups' testKeys = ioProperty $ do
+prop_snapshotNoChanges2 h ups ups' (V.fromList -> testKeys) = ioProperty $ do
     withTableNew h ups $ \sess hdl0 -> do
       let name = fromMaybe (error "invalid name") $ mkSnapshotName "foo"
       snapshot name hdl0
@@ -309,7 +323,7 @@ prop_snapshotNoChanges2 h ups ups' testKeys = ioProperty $ do
         Class.withTableOpen @h sess name $ \hdl2 -> do
 
           res <- lookups hdl1 testKeys
-          updates hdl1 ups'
+          updates hdl1 $ V.fromList ups'
           res' <- lookups hdl2 testKeys
 
           return $ res == res'
@@ -326,12 +340,12 @@ prop_dupInsertInsert ::
      IsTableHandle h
   => Proxy h -> [(Key, Update Value)]
   -> Key -> Value -> Value -> [Key] -> Property
-prop_dupInsertInsert h ups k v1 v2 testKeys = ioProperty $ do
+prop_dupInsertInsert h ups k v1 v2 (V.fromList -> testKeys) = ioProperty $ do
     withTableNew h ups $ \_ hdl1 -> do
       Class.withTableDuplicate hdl1 $ \hdl2 -> do
 
-        inserts hdl1 [(k, v1), (k, v2)]
-        inserts hdl2 [(k, v2)]
+        inserts hdl1 $ V.fromList [(k, v1), (k, v2)]
+        inserts hdl2 $ V.singleton (k, v2)
 
         res1 <- lookups hdl1 testKeys
         res2 <- lookups hdl2 testKeys
@@ -342,12 +356,12 @@ prop_dupInsertCommutes ::
      IsTableHandle h
     => Proxy h -> [(Key, Update Value)]
     -> Key -> Value -> Key -> Value -> [Key] -> Property
-prop_dupInsertCommutes h ups k1 v1 k2 v2 testKeys = k1 /= k2 ==> ioProperty do
+prop_dupInsertCommutes h ups k1 v1 k2 v2 (V.fromList -> testKeys) = k1 /= k2 ==> ioProperty do
     withTableNew h ups $ \_ hdl1 -> do
       Class.withTableDuplicate hdl1 $ \hdl2 -> do
 
-        inserts hdl1 [(k1, v1), (k2, v2)]
-        inserts hdl2 [(k2, v2), (k1, v1)]
+        inserts hdl1 $ V.fromList [(k1, v1), (k2, v2)]
+        inserts hdl2 $ V.fromList [(k2, v2), (k1, v1)]
 
         res1 <- lookups hdl1 testKeys
         res2 <- lookups hdl2 testKeys
@@ -358,13 +372,13 @@ prop_dupNoChanges ::
      IsTableHandle h
     => Proxy h -> [(Key, Update Value)]
     -> [(Key, Update Value)] -> [Key] -> Property
-prop_dupNoChanges h ups ups' testKeys = ioProperty $ do
+prop_dupNoChanges h ups ups' (V.fromList -> testKeys) = ioProperty $ do
     withTableNew h ups $ \_ hdl1 -> do
 
       res <- lookups hdl1 testKeys
 
       Class.withTableDuplicate hdl1 $ \hdl2 -> do
-        updates hdl2 ups'
+        updates hdl2 $ V.fromList ups'
 
         -- lookup hdl1 again.
         res' <- lookups hdl1 testKeys

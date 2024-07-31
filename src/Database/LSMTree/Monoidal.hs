@@ -1,8 +1,3 @@
-{-# LANGUAGE GADTs                    #-}
-{-# LANGUAGE StandaloneDeriving       #-}
-{-# LANGUAGE StandaloneKindSignatures #-}
-{-# LANGUAGE TupleSections            #-}
-
 -- TODO: remove once the API is implemented.
 {-# OPTIONS_GHC -Wno-redundant-constraints #-}
 {-# OPTIONS_GHC -Wno-unused-top-binds #-}
@@ -68,6 +63,9 @@ module Database.LSMTree.Monoidal (
 
     -- * Durability (snapshots)
   , SnapshotName
+  , Common.mkSnapshotName
+  , Common.SnapshotLabel
+  , Common.Labellable (..)
   , snapshot
   , open
   , deleteSnapshot
@@ -86,19 +84,31 @@ module Database.LSMTree.Monoidal (
   , SerialiseKey
   , SerialiseValue
 
+    -- * Monoidal value resolution
+  , ResolveValue (..)
+  , resolveDeserialised
+    -- ** Properties
+  , resolveValueValidOutput
+  , resolveValueTotality
+  , resolveValueAssociativity
+
     -- * Utility types
   , IOLike
   ) where
 
+import           Control.DeepSeq (NFData, deepseq)
 import           Data.Bifunctor (Bifunctor (second))
 import           Data.Kind (Type)
-import           Data.Typeable (Typeable)
+import           Data.Typeable (Proxy (Proxy), Typeable)
+import qualified Data.Vector as V
+import           Data.Word (Word64)
 import           Database.LSMTree.Common (IOLike, Range (..), SerialiseKey,
-                     SerialiseValue, Session, SnapshotName,
-                     SomeUpdateConstraint, closeSession, deleteSnapshot,
-                     listSnapshots, openSession)
+                     SerialiseValue (..), Session (..), SnapshotName,
+                     closeSession, deleteSnapshot, listSnapshots, openSession)
+import qualified Database.LSMTree.Common as Common
 import qualified Database.LSMTree.Internal as Internal
 import           Database.LSMTree.Internal.Monoidal
+import           Database.LSMTree.Internal.RawBytes (RawBytes)
 
 -- $resource-management
 -- See "Database.LSMTree.Normal#g:resource"
@@ -153,28 +163,28 @@ close = undefined
 --
 -- Lookups can be performed concurrently from multiple Haskell threads.
 lookups ::
-     (IOLike m, SerialiseKey k, SerialiseValue v, SomeUpdateConstraint v)
-  => [k]
+     (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
+  => V.Vector k
   -> TableHandle m k v
-  -> m [LookupResult k v]
+  -> m (V.Vector (LookupResult v))
 lookups = undefined
 
 -- | Perform a range lookup.
 --
 -- Range lookups can be performed concurrently from multiple Haskell threads.
 rangeLookup ::
-     (IOLike m, SerialiseKey k, SerialiseValue v, SomeUpdateConstraint v)
+     (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
   => Range k
   -> TableHandle m k v
-  -> m [RangeLookupResult k v]
+  -> m (V.Vector (RangeLookupResult k v))
 rangeLookup = undefined
 
 -- | Perform a mixed batch of inserts, deletes and monoidal upserts.
 --
 -- Updates can be performed concurrently from multiple Haskell threads.
 updates ::
-     (IOLike m, SerialiseKey k, SerialiseValue v, SomeUpdateConstraint v)
-  => [(k, Update v)]
+     (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
+  => V.Vector (k, Update v)
   -> TableHandle m k v
   -> m ()
 updates = undefined
@@ -183,8 +193,8 @@ updates = undefined
 --
 -- Inserts can be performed concurrently from multiple Haskell threads.
 inserts ::
-     (IOLike m, SerialiseKey k, SerialiseValue v, SomeUpdateConstraint v)
-  => [(k, v)]
+     (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
+  => V.Vector (k, v)
   -> TableHandle m k v
   -> m ()
 inserts = updates . fmap (second Insert)
@@ -193,8 +203,8 @@ inserts = updates . fmap (second Insert)
 --
 -- Deletes can be performed concurrently from multiple Haskell threads.
 deletes ::
-     (IOLike m, SerialiseKey k, SerialiseValue v, SomeUpdateConstraint v)
-  => [k]
+     (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
+  => V.Vector k
   -> TableHandle m k v
   -> m ()
 deletes = updates . fmap (,Delete)
@@ -203,8 +213,8 @@ deletes = updates . fmap (,Delete)
 --
 -- Monoidal upserts can be performed concurrently from multiple Haskell threads.
 mupserts ::
-     (IOLike m, SerialiseKey k, SerialiseValue v, SomeUpdateConstraint v)
-  => [(k, v)]
+     (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
+  => V.Vector (k, v)
   -> TableHandle m k v
   -> m ()
 mupserts = updates . fmap (second Mupsert)
@@ -325,8 +335,98 @@ duplicate = undefined
 -- NOTE: merging table handles creates a new table handle, but does not close
 -- the table handles that were used as inputs.
 merge ::
-     (IOLike m, SomeUpdateConstraint v)
+     (IOLike m, ResolveValue v)
   => TableHandle m k v
   -> TableHandle m k v
   -> m (TableHandle m k v)
 merge = undefined
+
+{-------------------------------------------------------------------------------
+  Monoidal value resolution
+-------------------------------------------------------------------------------}
+
+-- | A class to specify how to resolve/merge values when using monoidal updates
+-- (mupserts). This is required for merging entries during compaction and also
+-- for doing lookups, to resolve multiple entries of the same key on the fly.
+-- The class has some laws, which should be tested (e.g. with QuickCheck).
+--
+-- Prerequisites:
+--
+-- * [Valid Output] The result of resolution should always be deserialisable.
+--   See 'resolveValueValidOutput'.
+-- * [Associativity] Resolving values should be associative.
+--   See 'resolveValueAssociativity'.
+-- * [Totality] For any input 'RawBytes', resolution should successfully provide
+--   a result. This is a pretty strong requirement. Usually it is sufficient to
+--   handle input produced by 'serialiseValue' and 'resolveValue' (which are
+--   are required to be deserialisable by 'deserialiseValue'),
+--   but this makes sure no error occurs in the middle of compaction, which
+--   could lead to corruption.
+--   See 'resolveValueTotality'.
+--
+-- TODO: Revisit Totality. How are errors handled during run merging?
+--
+-- Future opportunities for optimisations:
+--
+-- * Include a function that determines whether it is safe to remove an 'Update'
+--   from the last level of an LSM tree.
+--
+-- * Include a function @v -> RawBytes -> RawBytes@, which can then be used when
+--   inserting into the write buffer. Currently, using 'resolveDeserialised'
+--   means that the inserted value is serialised and (if there is another value
+--   with the same key in the write buffer) immediately deserialised again.
+--
+-- TODO: Should this go into @Internal.Monoidal@ or @Internal.ResolveValue@?
+-- TODO: The laws depend on 'SerialiseValue', should we make it a superclass?
+class ResolveValue v where
+  resolveValue :: Proxy v -> RawBytes -> RawBytes -> RawBytes
+
+-- | Test the __Valid Output__ law for the 'ResolveValue' class
+resolveValueValidOutput ::
+     forall v. (SerialiseValue v, ResolveValue v, NFData v)
+  => v -> v -> Bool
+resolveValueValidOutput (serialiseValue -> x) (serialiseValue -> y) =
+    (deserialiseValue (resolveValue (Proxy @v) x y) :: v) `deepseq` True
+
+-- | Test the __Associativity__ law for the 'ResolveValue' class
+resolveValueAssociativity ::
+     forall v. (SerialiseValue v, ResolveValue v)
+  => v -> v -> v -> Bool
+resolveValueAssociativity (serialiseValue -> x) (serialiseValue -> y) (serialiseValue -> z) =
+    x <+> (y <+> z) == (x <+> y) <+> z
+  where
+    (<+>) = resolveValue (Proxy @v)
+
+-- | Test the __Totality__ law for the 'ResolveValue' class
+resolveValueTotality ::
+     forall v. ResolveValue v
+  => Proxy v -> RawBytes -> RawBytes -> Bool
+resolveValueTotality _ x y =
+    resolveValue (Proxy @v) x y `deepseq` True
+
+-- | A helper function to implement 'resolveValue' by operating on the
+-- deserialised representation. Note that especially for simple types it
+-- should be possible to provide a more efficient implementation by directly
+-- operating on the 'RawBytes'.
+--
+-- This function could potentially be used to provide a default implementation
+-- for 'resolveValue', but it's probably best to be explicit about instances.
+--
+-- To satisfy the prerequisites of 'ResolveValue', the function provided to
+-- 'resolveDeserialised' should itself satisfy some properties.
+--
+-- Prerequisites:
+--
+-- * [Associativity] The provided function should be associative.
+-- * [Total Resolution] The provided function should be total.
+-- * [Total Deserialisation] 'deserialiseValue' for @v@ should handle any input
+--   'RawBytes'.
+resolveDeserialised ::
+     SerialiseValue v
+  => (v -> v -> v) -> Proxy v -> RawBytes -> RawBytes -> RawBytes
+resolveDeserialised f _ x y =
+    serialiseValue (f (deserialiseValue x) (deserialiseValue y))
+
+-- | Mostly to give an example instance (plus the property tests for it).
+instance ResolveValue Word64 where
+  resolveValue = resolveDeserialised (+)

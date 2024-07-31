@@ -1,9 +1,4 @@
-{-# LANGUAGE FlexibleContexts         #-}
-{-# LANGUAGE KindSignatures           #-}
-{-# LANGUAGE LambdaCase               #-}
-{-# LANGUAGE QuantifiedConstraints    #-}
-{-# LANGUAGE StandaloneKindSignatures #-}
-{-# LANGUAGE TypeFamilies             #-}
+{-# LANGUAGE TypeFamilies #-}
 
 module Database.LSMTree.Class.Monoidal (
     IsSession (..)
@@ -19,13 +14,14 @@ module Database.LSMTree.Class.Monoidal (
 import           Control.Monad.Class.MonadThrow (MonadThrow (..))
 import           Data.Kind (Constraint, Type)
 import           Data.Typeable (Typeable)
+import qualified Data.Vector as V
 import           Database.LSMTree.Class.Normal (IsSession (..),
                      SessionArgs (..), withSession)
 import           Database.LSMTree.Common (IOLike, Range (..), SerialiseKey,
-                     SerialiseValue, SnapshotName, SomeUpdateConstraint)
+                     SerialiseValue, SnapshotName)
 import qualified Database.LSMTree.ModelIO.Monoidal as M
 import           Database.LSMTree.Monoidal (LookupResult (..),
-                     RangeLookupResult (..), Update (..))
+                     RangeLookupResult (..), ResolveValue, Update (..))
 import qualified Database.LSMTree.Monoidal as R
 
 
@@ -48,55 +44,55 @@ class (IsSession (Session h)) => IsTableHandle h where
         -> m ()
 
     lookups ::
-            (IOLike m, SerialiseKey k, SerialiseValue v, SomeUpdateConstraint v)
+            (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
         => h m k v
-        -> [k]
-        -> m [LookupResult k v]
+        -> V.Vector k
+        -> m (V.Vector (LookupResult v))
 
     rangeLookup ::
-            (IOLike m, SerialiseKey k, SerialiseValue v, SomeUpdateConstraint v)
+            (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
         => h m k v
         -> Range k
-        -> m [RangeLookupResult k v]
+        -> m (V.Vector (RangeLookupResult k v))
 
     updates ::
         ( IOLike m
         , SerialiseKey k
         , SerialiseValue v
-        , SomeUpdateConstraint v
+        , ResolveValue v
         )
         => h m k v
-        -> [(k, Update v)]
+        -> V.Vector (k, Update v)
         -> m ()
 
     inserts ::
         ( IOLike m
         , SerialiseKey k
         , SerialiseValue v
-        , SomeUpdateConstraint v
+        , ResolveValue v
         )
         => h m k v
-        -> [(k, v)]
+        -> V.Vector (k, v)
         -> m ()
 
     deletes ::
         ( IOLike m
         , SerialiseKey k
         , SerialiseValue v
-        , SomeUpdateConstraint v
+        , ResolveValue v
         )
         => h m k v
-        -> [k]
+        -> V.Vector k
         -> m ()
 
     mupserts ::
         ( IOLike m
         , SerialiseKey k
         , SerialiseValue v
-        , SomeUpdateConstraint v
+        , ResolveValue v
         )
         => h m k v
-        -> [(k, v)]
+        -> V.Vector (k, v)
         -> m ()
 
     snapshot ::
@@ -129,7 +125,7 @@ class (IsSession (Session h)) => IsTableHandle h where
         -> m (h m k v)
 
     merge ::
-        (IOLike m, SerialiseValue v, SomeUpdateConstraint v)
+        (IOLike m, SerialiseValue v, ResolveValue v)
         => h m k v
         -> h m k v
         -> m (h m k v)
@@ -162,7 +158,7 @@ withTableDuplicate table = bracket (duplicate table) close
 
 withTableMerge ::
      forall h m k v a. (IOLike m, IsTableHandle h
-     , SerialiseValue v, SomeUpdateConstraint v
+     , SerialiseValue v, ResolveValue v
      )
   => h m k v
   -> h m k v

@@ -2,6 +2,7 @@
 module Test.Database.LSMTree.Model.Monoidal (tests) where
 
 import qualified Data.ByteString as BS
+import qualified Data.Vector as V
 import           Database.LSMTree.Model.Monoidal
 import           GHC.Exts (IsList (..))
 import           Test.QuickCheck.Instances ()
@@ -19,45 +20,59 @@ tests = testGroup "Database.LSMTree.Model.Monoidal"
     ]
 
 type Key = BS.ByteString
-type Value = BS.ByteString
+
+newtype Value = Value BS.ByteString
+  deriving stock (Eq, Show)
+  deriving newtype (Arbitrary, SerialiseValue)
+
+instance ResolveValue Value where
+    resolveValue = resolveDeserialised resolve
+
+resolve :: Value -> Value -> Value
+resolve (Value x) (Value y) = Value (x <> y)
 
 type Tbl = Table Key Value
 
 -- | You can lookup what you inserted.
 prop_lookupInsert :: Key -> Value -> Tbl -> Property
 prop_lookupInsert k v tbl =
-    lookups [k] (inserts [(k, v)] tbl) === [Found k v]
+    lookups (V.singleton k) (inserts (V.singleton (k, v)) tbl)
+      === V.singleton (Found v)
 
 -- | You cannot lookup what you have deleted
 prop_lookupDelete :: Key -> Tbl -> Property
 prop_lookupDelete k tbl =
-    lookups [k] (deletes [k] tbl) === [NotFound k]
+    lookups (V.singleton k) (deletes (V.singleton k) tbl)
+      === V.singleton NotFound
 
 -- | Last insert wins.
-prop_insertInsert :: Key -> Key -> Value -> Tbl -> Property
+prop_insertInsert :: Key -> Value -> Value -> Tbl -> Property
 prop_insertInsert k v1 v2 tbl =
-    inserts [(k, v1), (k, v2)] tbl === inserts [(k, v2)] tbl
+    inserts (V.fromList [(k, v1), (k, v2)]) tbl
+      === inserts (V.singleton (k, v2)) tbl
 
 -- | Updating after insert is the same as inserting merged value.
 --
 -- Note: the order of merge.
-prop_upsertInsert :: Key -> Key -> Value -> Tbl -> Property
+prop_upsertInsert :: Key -> Value -> Value -> Tbl -> Property
 prop_upsertInsert k v1 v2 tbl =
-    updates [(k, Insert v1), (k, Mupsert v2)] tbl === inserts [(k, mergeU v2 v1)] tbl
+    updates (V.fromList [(k, Insert v1), (k, Mupsert v2)]) tbl
+      === inserts (V.singleton (k, resolve v2 v1)) tbl
 
 -- | Upsert is the same as lookup followed by an insert.
 prop_upsertDef :: Key -> Value -> Tbl -> Property
 prop_upsertDef k v tbl =
-    tbl' === mupserts [(k, v)] tbl
+    tbl' === mupserts (V.singleton (k, v)) tbl
   where
-    tbl' = case lookups [k] tbl of
-        [Found _ v'] -> inserts [(k, mergeU v v')] tbl
-        _            -> inserts [(k, v)] tbl
+    tbl' = case toList (lookups (V.singleton k) tbl) of
+        [Found v'] -> inserts (V.singleton (k, resolve v v')) tbl
+        _          -> inserts (V.singleton (k, v)) tbl
 
 -- | Different key inserts commute.
 prop_insertCommutes :: Key -> Value -> Key -> Value -> Tbl -> Property
 prop_insertCommutes k1 v1 k2 v2 tbl = k1 /= k2 ==>
-    inserts [(k1, v1), (k2, v2)] tbl === inserts [(k2, v2), (k1, v1)] tbl
+    inserts (V.fromList [(k1, v1), (k2, v2)]) tbl
+      === inserts (V.fromList [(k2, v2), (k1, v1)]) tbl
 
 instance (SerialiseKey k, SerialiseValue v, Arbitrary k, Arbitrary v) => Arbitrary (Table k v) where
     arbitrary = fromList <$> arbitrary

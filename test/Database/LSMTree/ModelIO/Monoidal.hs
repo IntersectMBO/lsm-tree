@@ -1,15 +1,3 @@
-{-# LANGUAGE ConstraintKinds          #-}
-{-# LANGUAGE GADTs                    #-}
-{-# LANGUAGE RecordWildCards          #-}
-{-# LANGUAGE ScopedTypeVariables      #-}
-{-# LANGUAGE StandaloneDeriving       #-}
-{-# LANGUAGE StandaloneKindSignatures #-}
-{-# LANGUAGE TupleSections            #-}
-{-# LANGUAGE TypeApplications         #-}
-
--- Model's 'open' and 'snapshot' have redundant constraints.
-{-# OPTIONS_GHC -Wno-redundant-constraints #-}
-
 -- | IO-based monoidal table model implementation.
 --
 module Database.LSMTree.ModelIO.Monoidal (
@@ -59,8 +47,10 @@ import           Data.Dynamic (fromDynamic, toDyn)
 import           Data.Kind (Type)
 import qualified Data.Map.Strict as Map
 import           Data.Typeable (Typeable)
+import qualified Data.Vector as V
 import           Database.LSMTree.Common (IOLike, Range (..), SerialiseKey,
-                     SerialiseValue, SnapshotName, SomeUpdateConstraint)
+                     SerialiseValue, SnapshotName)
+import           Database.LSMTree.Model.Monoidal (ResolveValue)
 import qualified Database.LSMTree.Model.Monoidal as Model
 import           Database.LSMTree.ModelIO.Session
 import           Database.LSMTree.Monoidal (LookupResult (..),
@@ -111,28 +101,28 @@ close TableHandle {..} = atomically $ do
 
 -- | Perform a batch of lookups.
 lookups ::
-     (IOLike m, SerialiseKey k, SerialiseValue v, SomeUpdateConstraint v)
-  => [k]
+     (IOLike m, SerialiseKey k, SerialiseValue v)
+  => V.Vector k
   -> TableHandle m k v
-  -> m [LookupResult k v]
+  -> m (V.Vector (LookupResult v))
 lookups ks TableHandle {..} = atomically $
     withModel "lookups" thSession thRef $ \tbl ->
         return $ Model.lookups ks tbl
 
 -- | Perform a range lookup.
 rangeLookup ::
-     (IOLike m, SerialiseKey k, SerialiseValue v, SomeUpdateConstraint v)
+     (IOLike m, SerialiseKey k, SerialiseValue v)
   => Range k
   -> TableHandle m k v
-  -> m [RangeLookupResult k v]
+  -> m (V.Vector (RangeLookupResult k v))
 rangeLookup r TableHandle {..} = atomically $
     withModel "rangeLookup" thSession thRef $ \tbl ->
         return $ Model.rangeLookup r tbl
 
 -- | Perform a mixed batch of inserts, deletes and monoidal upserts.
 updates ::
-     (IOLike m, SerialiseKey k, SerialiseValue v, SomeUpdateConstraint v)
-  => [(k, Update v)]
+     (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
+  => V.Vector (k, Update v)
   -> TableHandle m k v
   -> m ()
 updates ups TableHandle {..} = atomically $
@@ -141,24 +131,24 @@ updates ups TableHandle {..} = atomically $
 
 -- | Perform a batch of inserts.
 inserts ::
-     (IOLike m, SerialiseKey k, SerialiseValue v, SomeUpdateConstraint v)
-  => [(k, v)]
+     (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
+  => V.Vector (k, v)
   -> TableHandle m k v
   -> m ()
 inserts = updates . fmap (second Insert)
 
 -- | Perform a batch of deletes.
 deletes ::
-     (IOLike m, SerialiseKey k, SerialiseValue v, SomeUpdateConstraint v)
-  => [k]
+     (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
+  => V.Vector k
   -> TableHandle m k v
   -> m ()
 deletes = updates . fmap (,Delete)
 
 -- | Perform a batch of monoidal upserts.
 mupserts ::
-     (IOLike m, SerialiseKey k, SerialiseValue v, SomeUpdateConstraint v)
-  => [(k, v)]
+     (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
+  => V.Vector (k, v)
   -> TableHandle m k v
   -> m ()
 mupserts = updates . fmap (second Mupsert)
@@ -170,8 +160,6 @@ mupserts = updates . fmap (second Mupsert)
 -- | Take a snapshot.
 snapshot ::
      ( IOLike m
-     , SerialiseKey k
-     , SerialiseValue v
      , Typeable k
      , Typeable v
      )
@@ -185,8 +173,6 @@ snapshot n TableHandle {..} = atomically $
 -- | Open a table through a snapshot, returning a new table handle.
 open ::
      ( IOLike m
-     , SerialiseKey k
-     , SerialiseValue v
      , Typeable k
      , Typeable v
      )
@@ -242,7 +228,7 @@ duplicate TableHandle {..} = atomically $
 
 -- | Merge full tables, creating a new table handle.
 merge ::
-     (IOLike m, SerialiseValue v, SomeUpdateConstraint v)
+     (IOLike m, ResolveValue v)
   => TableHandle m k v
   -> TableHandle m k v
   -> m (TableHandle m k v)

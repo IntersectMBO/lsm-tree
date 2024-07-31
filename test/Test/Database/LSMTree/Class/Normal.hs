@@ -1,10 +1,4 @@
-{-# LANGUAGE BlockArguments      #-}
-{-# LANGUAGE RecordWildCards     #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications    #-}
-{-# LANGUAGE TypeFamilies        #-}
-
-{-# OPTIONS_GHC -Wno-orphans #-}
+{-# LANGUAGE BlockArguments #-}
 
 module Test.Database.LSMTree.Class.Normal (
     tests
@@ -113,8 +107,11 @@ testProperty' name prop = \b ->
 -------------------------------------------------------------------------------
 
 type Key = Word64
-type Value = BS.ByteString
 type Blob = BS.ByteString
+
+newtype Value = Value BS.ByteString
+  deriving stock (Eq, Show)
+  deriving newtype (Arbitrary, R.SerialiseValue)
 
 instance Labellable (Key, Value, Blob) where
   makeSnapshotLabel _ = "Word64 ByteString ByteString"

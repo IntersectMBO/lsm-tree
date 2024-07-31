@@ -1,7 +1,3 @@
--- TODO: remove once the API is implemented.
-{-# OPTIONS_GHC -Wno-redundant-constraints #-}
-{-# OPTIONS_GHC -Wno-unused-top-binds #-}
-
 module Database.LSMTree.Common (
     -- * IOLike
     IOLike
@@ -12,10 +8,9 @@ module Database.LSMTree.Common (
   , withSession
   , openSession
   , closeSession
-    -- * Constraints
+    -- * Serialisation constraints
   , SerialiseKey (..)
   , SerialiseValue (..)
-  , SomeUpdateConstraint (..)
     -- * Small types
   , Internal.Range (..)
     -- * Snapshots
@@ -33,7 +28,6 @@ module Database.LSMTree.Common (
 import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Concurrent.Class.MonadSTM (MonadSTM, STM)
 import           Control.Monad.Class.MonadThrow
-import qualified Data.ByteString as BS
 import           Data.Kind (Type)
 import           Data.Typeable (Proxy, Typeable)
 import qualified Database.LSMTree.Internal as Internal
@@ -151,28 +145,6 @@ openSession hfs hbio dir = Session <$> Internal.openSession hfs hbio dir
 --
 closeSession :: IOLike m => Session m -> m ()
 closeSession (Session sesh) = Internal.closeSession sesh
-
-{-------------------------------------------------------------------------------
-  Serialisation constraints
--------------------------------------------------------------------------------}
-
--- | A placeholder class for constraints on 'Update's.
---
--- === TODO
---
--- This class should be replaced by the actual constraints we want to use. Some
--- prerequisites:
---
--- * Combining\/merging\/resolving 'Update's should be associative.
---
--- * Should include a function that determines whether it is safe to remove an
---   'Update' from the last level of an LSM tree.
---
-class SomeUpdateConstraint a where
-    mergeU :: a -> a -> a
-
-instance SomeUpdateConstraint BS.ByteString where
-    mergeU = (<>)
 
 {-------------------------------------------------------------------------------
   Snapshots
