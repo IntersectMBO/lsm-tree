@@ -1,4 +1,6 @@
+{-# LANGUAGE CPP       #-}
 {-# LANGUAGE MagicHash #-}
+
 module XXH3 (
     -- * One shot
     xxh3_64bit_withSeed_bs,
@@ -25,10 +27,19 @@ import           Data.Coerce (coerce)
 import qualified Data.Primitive as P
 import           Data.Primitive.ByteArray (ByteArray (..))
 import           Data.Word (Word32, Word64)
+import           Foreign.ForeignPtr
 import           GHC.Exts (MutableByteArray#)
-import           GHC.ForeignPtr (unsafeWithForeignPtr)
+import           GHC.ForeignPtr
 
 import           FFI
+
+{-# INLINE withFP #-}
+withFP :: ForeignPtr a -> (P.Ptr a -> IO b) -> IO b
+#if MIN_VERSION_GLASGOW_HASKELL(9,0,0,0)
+withFP = unsafeWithForeignPtr
+#else
+withFP = withForeignPtr
+#endif
 
 -------------------------------------------------------------------------------
 -- OneShot
@@ -37,7 +48,7 @@ import           FFI
 -- | Hash 'ByteString'.
 xxh3_64bit_withSeed_bs :: ByteString -> Word64 -> Word64
 xxh3_64bit_withSeed_bs (BS fptr len) !salt = accursedUnutterablePerformIO $
-    unsafeWithForeignPtr fptr $ \ptr ->
+    withFP fptr $ \ptr ->
     unsafe_xxh3_64bit_withSeed_ptr ptr (fromIntegral len) salt
 
 -- | Hash (part of) 'ByteArray'.
@@ -86,7 +97,7 @@ xxh3_64bit_digest (XXH3 s) =
 -- | Update 'XXH3_State' with 'ByteString'.
 xxh3_64bit_update_bs :: XXH3_State s -> ByteString -> ST s ()
 xxh3_64bit_update_bs (XXH3 s) (BS fptr len) = unsafeIOToST $
-    unsafeWithForeignPtr fptr $ \ptr ->
+    withFP fptr $ \ptr ->
     unsafe_xxh3_64bit_update_ptr s ptr (fromIntegral len)
 
 -- | Update 'XXH3_State' with (part of) 'ByteArray'

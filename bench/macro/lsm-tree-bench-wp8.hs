@@ -1,6 +1,4 @@
 {-# LANGUAGE DuplicateRecordFields #-}
-{-# LANGUAGE NoFieldSelectors      #-}
-{-# LANGUAGE OverloadedRecordDot   #-}
 {-# LANGUAGE OverloadedStrings     #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -210,7 +208,7 @@ timed_ action = do
 doSetup :: GlobalOpts -> SetupOpts -> IO ()
 doSetup gopts _opts = do
     let mountPoint :: FS.MountPoint
-        mountPoint = FS.MountPoint gopts.rootDir
+        mountPoint = FS.MountPoint (rootDir gopts)
 
     let hasFS :: FS.HasFS IO FsIO.HandleIO
         hasFS = FsIO.ioHasFS mountPoint
@@ -223,7 +221,7 @@ doSetup gopts _opts = do
     LSM.withSession hasFS hasBlockIO (FS.mkFsPath []) $ \session -> do
         tbh <- LSM.new @IO @K @V @B session (mkTableConfig gopts LSM.defaultTableConfig)
 
-        forM_ [ 0 .. gopts.initialSize ] $ \ (fromIntegral -> i) -> do
+        forM_ [ 0 .. initialSize gopts ] $ \ (fromIntegral -> i) -> do
             -- TODO: this procedure simply inserts all the keys into initial lsm tree
             -- We might want to do deletes, so there would be delete-insert pairs
             -- Let's do that when we can actually test that benchmark works.
@@ -252,8 +250,8 @@ doDryRun' gopts opts = do
     id $ do
         -- we generate n random numbers in range of [ 1 .. d ]
         -- what is the chance they are all distinct
-        let n = fromIntegral (opts.batchCount * opts.batchSize) :: Double
-        let d = fromIntegral gopts.initialSize :: Double
+        let n = fromIntegral (batchCount opts * batchSize opts) :: Double
+        let d = fromIntegral (initialSize gopts) :: Double
         -- this is birthday problem.
         let p = 1 - exp (negate $  (n * (n - 1)) / (2 * d))
 
@@ -265,20 +263,20 @@ doDryRun' gopts opts = do
         printf "Expected number of duplicates (extreme upper bound): %5f out of %f\n" q n
 
     -- TODO: open session to measure that as well.
-    let g0 = initGen gopts.initialSize opts.batchSize opts.batchCount opts.seed
+    let g0 = initGen (initialSize gopts) (batchSize opts) (batchCount opts) (seed opts)
 
     keysRef <- newIORef $
-        if opts.check
-        then IS.fromList [ 0 .. gopts.initialSize - 1 ]
+        if check opts
+        then IS.fromList [ 0 .. (initialSize gopts) - 1 ]
         else IS.empty
     duplicateRef <- newIORef (0 :: Int)
 
-    void $ forFoldM_ g0 [ 0 .. opts.batchCount - 1 ] $ \b g -> do
+    void $ forFoldM_ g0 [ 0 .. batchCount opts - 1 ] $ \b g -> do
         let lookups :: V.Vector Word64
             inserts :: V.Vector Word64
-            (!g', lookups, inserts) = generateBatch' gopts.initialSize opts.batchSize g b
+            (!g', lookups, inserts) = generateBatch' (initialSize gopts) (batchSize opts) g b
 
-        when opts.check $ do
+        when (check opts) $ do
             keys <- readIORef keysRef
             let new  = intSetFromVector lookups
             let diff = IS.difference new keys
@@ -292,15 +290,15 @@ doDryRun' gopts opts = do
 
         return g'
 
-    when opts.check $ do
+    when (check opts) $ do
         duplicates <- readIORef duplicateRef
         printf "True duplicates: %d\n" duplicates
 
     -- See batchOverlaps for explanation of this check.
-    when opts.check $
+    when (check opts) $
         let anyOverlap = (not . null)
-                           (batchOverlaps gopts.initialSize opts.batchSize
-                                          opts.batchCount opts.seed)
+                           (batchOverlaps (initialSize gopts) (batchSize opts)
+                                          (batchCount opts) (seed opts))
          in putStrLn $ "Any adjacent batches with overlap: " ++ show anyOverlap
 
 -------------------------------------------------------------------------------
@@ -375,7 +373,7 @@ toOperations lookups inserts = (batch1, batch2)
 doRun :: GlobalOpts -> RunOpts -> IO ()
 doRun gopts opts = do
     let mountPoint :: FS.MountPoint
-        mountPoint = FS.MountPoint gopts.rootDir
+        mountPoint = FS.MountPoint (rootDir gopts)
 
     let hasFS :: FS.HasFS IO FsIO.HandleIO
         hasFS = FsIO.ioHasFS mountPoint
@@ -390,15 +388,15 @@ doRun gopts opts = do
         -- In checking mode we start with an empty table, since our pure
         -- reference version starts with empty (as it's not practical or
         -- necessary for testing to load the whole snapshot).
-        tbl <- if opts.check
+        tbl <- if check opts
                  then LSM.new  @IO @K @V @B session (mkTableConfig gopts LSM.defaultTableConfig)
                  else LSM.open @IO @K @V @B session (mkTableConfigOverride gopts) name
 
         -- In checking mode, compare each output against a pure reference.
         checkvar <- newIORef $ pureReference
-                                 gopts.initialSize opts.batchSize
-                                 opts.batchCount opts.seed
-        let check | not opts.check = \_ _ -> return ()
+                                 (initialSize gopts) (batchSize opts)
+                                 (batchCount opts) (seed opts)
+        let fcheck | not (check opts) = \_ _ -> return ()
                   | otherwise = \b y -> do
               (x:xs) <- readIORef checkvar
               unless (x == y) $
@@ -406,22 +404,22 @@ doRun gopts opts = do
               writeIORef checkvar xs
 
         let benchmarkIterations
-              | opts.pipelined = pipelinedIterations
+              | pipelined opts = pipelinedIterations
               | otherwise      = sequentialIterations
-            !progressInterval  = max 1 (opts.batchCount `div` 100)
+            !progressInterval  = max 1 ((batchCount opts) `div` 100)
             madeProgress b     = b `mod` progressInterval == 0
         time <- timed_ $
           benchmarkIterations
-            (\b y -> check b y >> when (madeProgress b) (putChar '.'))
-            gopts.initialSize
-            opts.batchSize
-            opts.batchCount
-            opts.seed
+            (\b y -> fcheck b y >> when (madeProgress b) (putChar '.'))
+            (initialSize gopts)
+            (batchSize opts)
+            (batchCount opts)
+            (seed opts)
             tbl
 
         putStrLn ""
         printf "Proper run:            %.03f sec\n" time
-        let ops = opts.batchCount * opts.batchSize
+        let ops = batchCount opts * batchSize opts
         printf "Operations per second: %7.01f ops/sec\n" (fromIntegral ops / time)
         -- TODO: collect more statistic, save them in dry-run,
         -- TODO: make the results human comprehensible.
