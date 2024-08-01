@@ -1,12 +1,10 @@
 module Database.LSMTree.Extras (
     showPowersOf10
   , showPowersOf
-  , groupsOfN
   , vgroupsOfN
   ) where
 
 import           Data.List (find)
-import qualified Data.List as List
 import           Data.Maybe (fromJust)
 import qualified Data.Vector as V
 import           Text.Printf
@@ -23,15 +21,6 @@ showPowersOf factor n
   where
     ub = fromJust (find (n <) (iterate (* factor) factor))
     lb = ub `div` factor
-
--- | Make groups of @n@ elements from a list @xs@
-groupsOfN :: Int -> [a] -> [[a]]
-groupsOfN n
-  | n <= 0 = error "groupsOfN: n <= 0"
-  | otherwise = List.unfoldr f
-  where
-    f [] = Nothing
-    f xs = Just $ List.splitAt n xs
 
 -- | Make groups of @n@ elements from a vector @xs@
 vgroupsOfN :: Int -> V.Vector a -> V.Vector (V.Vector a)
