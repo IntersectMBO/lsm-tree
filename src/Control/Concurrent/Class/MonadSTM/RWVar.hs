@@ -19,11 +19,16 @@ module Control.Concurrent.Class.MonadSTM.RWVar (
   ) where
 
 import           Control.Concurrent.Class.MonadSTM.Strict
+import           Control.DeepSeq
 import           Control.Monad.Class.MonadThrow
 import           Data.Word
 
 -- | A read-write-locked mutable variable with a bias towards write-locks.
 newtype RWVar m a = RWVar (StrictTVar m (RWState a))
+
+-- | __NOTE__: Only strict in the reference and not the referenced value.
+instance NFData (RWVar m a) where
+  rnf = rwhnf
 
 data RWState a =
     -- | @n@ concurrent readers and no writer.

@@ -27,6 +27,7 @@ module Database.LSMTree.Common (
 
 import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Concurrent.Class.MonadSTM (MonadSTM, STM)
+import           Control.DeepSeq
 import           Control.Monad.Class.MonadThrow
 import           Data.Kind (Type)
 import           Data.Typeable (Proxy, Typeable)
@@ -87,6 +88,9 @@ instance IOLike IO
 --
 type Session :: (Type -> Type) -> Type
 data Session m = forall h. Typeable h => Session !(Internal.Session m h)
+
+instance NFData (Session m) where
+  rnf (Session s) = rnf s
 
 {-# SPECIALISE withSession :: HasFS IO HandleIO -> HasBlockIO IO HandleIO -> FsPath -> (Session IO -> IO a) -> IO a #-}
 -- | (Asynchronous) exception-safe, bracketed opening and closing of a session.
