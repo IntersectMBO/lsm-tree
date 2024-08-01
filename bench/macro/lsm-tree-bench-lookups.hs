@@ -200,7 +200,7 @@ benchmarks !caching = withFS $ \hfs hbio -> do
 
     traceMarkerIO "Cleaning up"
     putStrLn "Cleaning up"
-    V.mapM_ (Run.removeReference hfs) runs
+    V.mapM_ (Run.removeReference hfs hbio) runs
 
     traceMarkerIO "Computing statistics for prepLookups results"
     putStr "<Computing statistics for prepLookups>"

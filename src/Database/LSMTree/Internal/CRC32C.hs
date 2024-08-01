@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns        #-}
+{-# LANGUAGE MagicHash           #-}
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -24,33 +25,42 @@ module Database.LSMTree.Internal.CRC32C (
   hPutAllChunksCRC32C,
   readFileCRC32C,
 
+  ChunkSize (..),
+  defaultChunkSize,
+  hGetExactlyCRC32C_SBS,
+  hGetAllCRC32C',
+
   -- * Checksum files
   -- $checksum-files
   ChecksumsFile,
   ChecksumsFileName(..),
   readChecksumsFile,
   writeChecksumsFile,
+  writeChecksumsFile',
   ) where
-
-import           Data.Digest.CRC32C as CRC
-
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Builder as BS
-import qualified Data.ByteString.Char8 as BSC
-import qualified Data.ByteString.Lazy as BSL
-import           Data.Either (partitionEithers)
-import           Data.Map.Strict (Map)
-import qualified Data.Map.Strict as Map
-
-import           Data.Bits
-import           Data.Char (ord)
-import           Data.Word
 
 import           Control.Monad
 import           Control.Monad.Class.MonadThrow
-
+import           Control.Monad.Primitive
+import           Data.Bits
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Builder as BS
+import qualified Data.ByteString.Char8 as BSC
+import qualified Data.ByteString.Internal as BS.Internal
+import qualified Data.ByteString.Lazy as BSL
+import qualified Data.ByteString.Short as SBS
+import           Data.Char (ord)
+import           Data.Digest.CRC32C as CRC
+import           Data.Either (partitionEithers)
+import           Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
+import           Data.Primitive
+import           Data.Word
+import           GHC.Exts
+import qualified GHC.ForeignPtr as Foreign
 import           System.FS.API
 import           System.FS.API.Lazy
+import           System.FS.BlockIO.API (ByteCount)
 
 
 newtype CRC32C = CRC32C Word32
@@ -151,6 +161,70 @@ readFileCRC32C fs file =
         then return crc
         else go h (updateCRC32C bs crc)
 
+newtype ChunkSize = ChunkSize ByteCount
+
+defaultChunkSize :: ChunkSize
+defaultChunkSize = ChunkSize 65504 -- 2^16 - 4 words overhead
+
+{-# SPECIALISE hGetExactlyCRC32C_SBS :: HasFS IO h -> Handle h -> ByteCount -> CRC32C -> IO (SBS.ShortByteString, CRC32C) #-}
+-- | Reads exactly as many bytes as requested, returning a 'ShortByteString' and
+-- updating a given 'CRC32C' value.
+--
+-- If EOF is found before the requested number of bytes is read, an FsError
+-- exception is thrown.
+--
+-- The returned 'ShortByteString' is backed by pinned memory.
+hGetExactlyCRC32C_SBS ::
+     forall m h. (MonadThrow m, PrimMonad m)
+  => HasFS m h
+  -> Handle h
+  -> ByteCount -- ^ Number of bytes to read
+  -> CRC32C
+  -> m (SBS.ShortByteString, CRC32C)
+hGetExactlyCRC32C_SBS hfs h !c !crc = do
+    buf@(MutableByteArray !mba#) <- newPinnedByteArray (fromIntegral c)
+    void $ hGetBufExactly hfs h buf 0 c
+    (ByteArray !ba#) <- unsafeFreezeByteArray buf
+    let fp = Foreign.ForeignPtr (byteArrayContents# ba#) (Foreign.PlainPtr (unsafeCoerce# mba#))
+        !bs = BS.Internal.BS fp (fromIntegral c)
+        !crc' = updateCRC32C bs crc
+    pure (SBS.SBS ba#, crc')
+
+{-# SPECIALISE hGetAllCRC32C' :: HasFS IO h -> Handle h -> ChunkSize -> CRC32C -> IO CRC32C #-}
+-- | Reads all bytes, updating a given 'CRC32C' value without returning the
+-- bytes.
+hGetAllCRC32C' ::
+     forall m h. PrimMonad m
+  => HasFS m h
+  -> Handle h
+  -> ChunkSize -- ^ Chunk size, must be larger than 0
+  -> CRC32C
+  -> m CRC32C
+hGetAllCRC32C' hfs h (ChunkSize !chunkSize) !crc0
+  | chunkSize <= 0
+  = error "hGetAllCRC32C_SBS: chunkSize must be >0"
+  | otherwise
+  = do
+      buf@(MutableByteArray !mba#) <- newPinnedByteArray (fromIntegral chunkSize)
+      (ByteArray !ba#) <- unsafeFreezeByteArray buf
+      let fp = Foreign.ForeignPtr (byteArrayContents# ba#) (Foreign.PlainPtr (unsafeCoerce# mba#))
+          !bs = BS.Internal.BS fp (fromIntegral chunkSize)
+      go bs buf crc0
+  where
+    -- In particular, note that the "immutable" bs :: BS.ByteString aliases the
+    -- mutable buf :: MutableByteArray. This is a bit hairy but we need to do
+    -- something like this because the CRC code only works with ByteString.
+    -- We thus have to be very careful about when bs is used.
+    go :: BS.ByteString -> MutableByteArray (PrimState m) -> CRC32C -> m CRC32C
+    go !bs buf !crc = do
+      !n <- hGetBufSome hfs h buf 0 chunkSize
+      if n == 0
+        then return crc
+        else do
+          -- compute the update CRC value before reading the next bytes
+          let !crc' = updateCRC32C (BS.take (fromIntegral n) bs) crc
+          go bs buf crc'
+
 
 {- | $checksum-files
 We use @.checksum@ files to help verify the integrity of on disk snapshots.
@@ -201,6 +275,10 @@ writeChecksumsFile fs path checksums =
     withFile fs path (WriteMode MustBeNew) $ \h -> do
       _ <- hPutAll fs h (formatChecksumsFile checksums)
       return ()
+
+writeChecksumsFile' :: MonadThrow m
+                    => HasFS m h -> Handle h -> ChecksumsFile -> m ()
+writeChecksumsFile' fs h checksums = void $ hPutAll fs h (formatChecksumsFile checksums)
 
 parseChecksumsFile :: BSC.ByteString -> Either BSC.ByteString ChecksumsFile
 parseChecksumsFile content =

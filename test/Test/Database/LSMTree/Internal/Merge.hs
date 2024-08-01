@@ -67,13 +67,13 @@ prop_MergeDistributes fs hbio level stepSize (fmap unTypedWriteBuffer -> wbs) = 
     rhsKOpsFile <- FS.hGetAll fs (Run.runKOpsFile rhs)
     rhsBlobFile <- FS.hGetAll fs (Run.runBlobFile rhs)
 
-    lhsKOps <- readKOps fs lhs
-    rhsKOps <- readKOps fs rhs
+    lhsKOps <- readKOps fs hbio lhs
+    rhsKOps <- readKOps fs hbio rhs
 
     -- cleanup
-    traverse_ (Run.removeReference fs) runs
-    Run.removeReference fs lhs
-    Run.removeReference fs rhs
+    traverse_ (Run.removeReference fs hbio) runs
+    Run.removeReference fs hbio lhs
+    Run.removeReference fs hbio rhs
 
     return $ stats $
            counterexample "numEntries"
@@ -116,12 +116,12 @@ prop_CloseMerge fs hbio level (Positive stepSize) (fmap unTypedWriteBuffer -> wb
     let path0 = RunFsPaths (FS.mkFsPath []) 0
     runs <- sequenceA $ zipWith flush [10..] wbs
     mergeToClose <- makeInProgressMerge path0 runs
-    traverse_ (Merge.close fs) mergeToClose
+    traverse_ (Merge.close fs hbio) mergeToClose
 
     filesExist <- traverse (FS.doesFileExist fs) (pathsForRunFiles path0)
 
     -- cleanup
-    traverse_ (Run.removeReference fs) runs
+    traverse_ (Run.removeReference fs hbio) runs
 
     return $
       counterexample ("run files exist: " <> show filesExist) $
@@ -131,13 +131,13 @@ prop_CloseMerge fs hbio level (Positive stepSize) (fmap unTypedWriteBuffer -> wb
                                   (RunFsPaths (FS.mkFsPath []) n)
 
     makeInProgressMerge path runs =
-      Merge.new fs Run.CacheRunData (RunAllocFixed 10) level mappendValues path runs >>= \case
+      Merge.new fs hbio Run.CacheRunData (RunAllocFixed 10) level mappendValues path runs >>= \case
         Nothing -> return Nothing  -- not in progress
         Just merge -> do
           -- just do a few steps once, ideally not completing the merge
           Merge.steps fs hbio merge stepSize >>= \case
             (_, Merge.MergeComplete run) -> do
-              Run.removeReference fs run  -- run not needed, close
+              Run.removeReference fs hbio run  -- run not needed, close
               return Nothing  -- not in progress
             (_, Merge.MergeInProgress) ->
               return (Just merge)
@@ -157,7 +157,7 @@ mergeRuns ::
      StepSize ->
      IO (Int, Run.Run (FS.Handle h))
 mergeRuns fs hbio level runNumber runs (Positive stepSize) = do
-    Merge.new fs Run.CacheRunData (RunAllocFixed 10) level mappendValues
+    Merge.new fs hbio Run.CacheRunData (RunAllocFixed 10) level mappendValues
               (RunFsPaths (FS.mkFsPath []) runNumber) runs >>= \case
       Nothing -> (,) 0 <$> Run.fromWriteBuffer fs hbio Run.CacheRunData (RunAllocFixed 10)
                             (RunFsPaths (FS.mkFsPath []) runNumber) WB.empty

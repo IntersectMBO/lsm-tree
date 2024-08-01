@@ -117,7 +117,7 @@ benchWriteBuffer conf@Config{name} =
             bench "flush" $
               Cr.perRunEnvWithCleanup (getPaths hasFS) (const (cleanupPaths hasFS)) $ \p -> do
                 !run <- flush hasFS hasBlockIO p wb
-                Run.removeReference hasFS run
+                Run.removeReference hasFS hasBlockIO run
         , bench "insert+flush" $
             -- To make sure the WriteBuffer really gets recomputed on every run,
             -- we'd like to do: `whnfAppIO (kops' -> ...) kops`.
@@ -135,7 +135,7 @@ benchWriteBuffer conf@Config{name} =
                 -- Make sure to immediately close runs so we don't run out of
                 -- file handles. Ideally this would not be measured, but at
                 -- least it's pretty cheap.
-                Run.removeReference hasFS run
+                Run.removeReference hasFS hasBlockIO run
         ]
   where
     withEnv =

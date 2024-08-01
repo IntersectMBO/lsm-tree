@@ -9,6 +9,7 @@ module Database.LSMTree.Internal.RunBuilder (
   , close
   ) where
 
+import           Control.Monad (when)
 import qualified Control.Monad.ST as ST
 import           Data.BloomFilter (Bloom)
 import qualified Data.ByteString.Lazy as BSL
@@ -34,6 +35,8 @@ import qualified Database.LSMTree.Internal.RunAcc as RunAcc
 import           Database.LSMTree.Internal.Serialise
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
+import qualified System.FS.BlockIO.API as FS
+import           System.FS.BlockIO.API (HasBlockIO)
 
 -- | The in-memory representation of an LSM run that is under construction.
 -- (The \"M\" stands for mutable.) This is the output sink for two key
@@ -141,9 +144,11 @@ addLargeSerialisedKeyOp fs builder@RunBuilder{runBuilderAcc} key page overflowPa
 -- TODO: Ensure proper cleanup even in presence of exceptions.
 unsafeFinalise ::
      HasFS IO h
+  -> HasBlockIO IO h
+  -> Bool -- ^ drop caches
   -> RunBuilder (FS.Handle h)
   -> IO (RunFsPaths, Bloom SerialisedKey, IndexCompact, NumEntries)
-unsafeFinalise fs builder@RunBuilder {..} = do
+unsafeFinalise fs hbio dropCaches builder@RunBuilder {..} = do
     -- write final bits
     (mPage, mChunk, runFilter, runIndex, numEntries) <-
       ST.stToIO (RunAcc.unsafeFinalise runBuilderAcc)
@@ -151,9 +156,20 @@ unsafeFinalise fs builder@RunBuilder {..} = do
     for_ mChunk $ writeIndexChunk fs builder
     writeIndexFinal fs builder numEntries runIndex
     writeFilter fs builder runFilter
-    -- close all handles and write their checksums
-    checksums <- toChecksumsFile <$> traverse (closeHandle fs) runBuilderHandles
-    CRC.writeChecksumsFile fs (runChecksumsPath runBuilderFsPaths) checksums
+    -- write checksums
+    checksums <- toChecksumsFile <$> traverse readChecksum runBuilderHandles
+    FS.withFile fs (runChecksumsPath runBuilderFsPaths) (FS.WriteMode FS.MustBeNew) $ \h -> do
+      CRC.writeChecksumsFile' fs h checksums
+      -- always drop the checksum file from the cache
+      FS.hDropCacheAll hbio h
+    -- always drop filter and index files from the cache
+    dropCache hbio (forRunFilter runBuilderHandles)
+    dropCache hbio (forRunIndex runBuilderHandles)
+    -- drop the KOps and blobs files from the cache if asked for
+    when dropCaches $ do
+      dropCache hbio (forRunKOps runBuilderHandles)
+      dropCache hbio (forRunBlob runBuilderHandles)
+    mapM_ (closeHandle fs) runBuilderHandles
     return (runBuilderFsPaths, runFilter, runIndex, numEntries)
 
 -- | Close a run that is being constructed (has not been finalised yet),
@@ -230,10 +246,14 @@ makeHandle fs path =
       <$> FS.hOpen fs path (FS.WriteMode FS.MustBeNew)
       <*> newIORef CRC.initialCRC32C
 
-closeHandle :: HasFS IO h -> ChecksumHandle (FS.Handle h) -> IO CRC32C
-closeHandle fs (ChecksumHandle h checksum) = do
-    FS.hClose fs h
-    readIORef checksum
+readChecksum :: ChecksumHandle (FS.Handle h) -> IO CRC32C
+readChecksum (ChecksumHandle _h checksum) = readIORef checksum
+
+dropCache :: HasBlockIO IO h -> ChecksumHandle (FS.Handle h) -> IO ()
+dropCache hbio (ChecksumHandle h _) = FS.hDropCacheAll hbio h
+
+closeHandle :: HasFS IO h -> ChecksumHandle (FS.Handle h) -> IO ()
+closeHandle fs (ChecksumHandle h _checksum) = FS.hClose fs h
 
 writeToHandle :: HasFS IO h -> ChecksumHandle (FS.Handle h) -> BSL.ByteString -> IO ()
 writeToHandle fs (ChecksumHandle h checksum) lbs = do

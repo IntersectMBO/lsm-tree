@@ -12,7 +12,7 @@ module Database.LSMTree.Internal.RunReader (
   ) where
 
 import           Control.Exception (assert, handleJust)
-import           Control.Monad (guard)
+import           Control.Monad (guard, when)
 import           Control.Monad.Primitive (RealWorld)
 import           Data.Bifunctor (first)
 import           Data.IORef
@@ -35,6 +35,8 @@ import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.Serialise
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
+import qualified System.FS.BlockIO.API as FS
+import           System.FS.BlockIO.API (HasBlockIO)
 
 -- | Allows reading the k\/ops of a run incrementally, using its own read-only
 -- file handle and in-memory cache of the current disk page.
@@ -61,11 +63,14 @@ data RunReader fhandle = RunReader {
 
 new ::
      HasFS IO h
+  -> HasBlockIO IO h
   -> Run.Run (FS.Handle h)
   -> IO (RunReader (FS.Handle h))
-new fs readerRun = do
+new fs hbio readerRun = do
     readerKOpsHandle <-
       FS.hOpen fs (runKOpsPath (Run.runRunFsPaths readerRun)) FS.ReadMode
+    -- double the file readahead window (only applies to this file descriptor)
+    FS.hAdviseAll hbio readerKOpsHandle FS.AdviceSequential
     readerCurrentEntryNo <- newPrimVar 0
     -- load first page from disk, if it exists.
     firstPage <- fromMaybe emptyRawPage <$> readDiskPage fs readerKOpsHandle
@@ -77,9 +82,13 @@ new fs readerRun = do
 -- Once it has been called, do not use the reader any more!
 close ::
      HasFS IO h
+  -> HasBlockIO IO h
   -> RunReader (FS.Handle h)
   -> IO ()
-close fs RunReader {..} = do
+close fs hbio RunReader {..} = do
+    when (Run.runRunDataCaching readerRun == Run.NoCacheRunData) $
+      -- drop the file from the OS page cache
+      FS.hDropCacheAll hbio readerKOpsHandle
     FS.hClose fs readerKOpsHandle
 
 -- | The 'SerialisedKey' and 'SerialisedValue' point into the in-memory disk
@@ -140,9 +149,10 @@ appendOverflow len overflowPages (SerialisedValue prefix) =
 -- automatically closed!
 next ::
      HasFS IO h
+  -> HasBlockIO IO h
   -> RunReader (FS.Handle h)
   -> IO (Result (FS.Handle h))
-next fs reader@RunReader {..} = do
+next fs hbio reader@RunReader {..} = do
     entryNo <- readPrimVar readerCurrentEntryNo
     page <- readIORef readerCurrentPage
     go entryNo page
@@ -154,7 +164,7 @@ next fs reader@RunReader {..} = do
             -- if it is past the last one, load a new page from disk, try again
             readDiskPage fs readerKOpsHandle >>= \case
               Nothing -> do
-                close fs reader
+                close fs hbio reader
                 return Empty
               Just newPage -> do
                 writeIORef readerCurrentPage newPage

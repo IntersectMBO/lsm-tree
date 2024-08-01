@@ -59,7 +59,6 @@ import           Control.DeepSeq (NFData (rnf))
 import           Control.Exception (Exception, finally, throwIO)
 import           Control.Monad (when)
 import           Data.BloomFilter (Bloom)
-import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ByteString.Short as SBS
 import           Data.Foldable (for_)
 import           Data.IORef
@@ -67,7 +66,6 @@ import           Data.Primitive.ByteArray (newPinnedByteArray,
                      unsafeFreezeByteArray)
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.BloomFilter (bloomFilterFromSBS)
-import           Database.LSMTree.Internal.ByteString (tryCheapToShort)
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
 import           Database.LSMTree.Internal.IndexCompact (IndexCompact, NumPages)
@@ -90,37 +88,38 @@ import           System.FS.BlockIO.API (HasBlockIO)
 -- | The in-memory representation of a completed LSM run.
 --
 data Run fhandle = Run {
-      runNumEntries :: !NumEntries
+      runNumEntries     :: !NumEntries
       -- | The reference count for the LSM run. This counts the
       -- number of references from LSM handles to this run. When
       -- this drops to zero the open files will be closed.
-    , runRefCount   :: !(IORef RefCount)
+    , runRefCount       :: !(IORef RefCount)
       -- | The file system paths for all the files used by the run.
-    , runRunFsPaths :: !RunFsPaths
+    , runRunFsPaths     :: !RunFsPaths
       -- | The bloom filter for the set of keys in this run.
-    , runFilter     :: !(Bloom SerialisedKey)
+    , runFilter         :: !(Bloom SerialisedKey)
       -- | The in-memory index mapping keys to page numbers in the
       -- Key\/Ops file. In future we may support alternative index
       -- representations.
-    , runIndex      :: !IndexCompact
+    , runIndex          :: !IndexCompact
       -- | The file handle for the Key\/Ops file. This file is opened
       -- read-only and is accessed in a page-oriented way, i.e. only
       -- reading whole pages, at page offsets. It will be opened with
       -- 'O_DIRECT' on supported platforms.
-    , runKOpsFile   :: !fhandle
+    , runKOpsFile       :: !fhandle
       -- | The file handle for the BLOBs file. This file is opened
       -- read-only and is accessed in a normal style using buffered
       -- I\/O, reading arbitrary file offset and length spans.
-    , runBlobFile   :: !fhandle
+    , runBlobFile       :: !fhandle
+    , runRunDataCaching :: !RunDataCaching
     }
 
 -- TODO: provide a proper instance that checks NoThunks for each field.
 deriving via OnlyCheckWhnfNamed "Run" (Run h) instance NoThunks (Run h)
 
 instance NFData fhandle => NFData (Run fhandle) where
-  rnf (Run a b c d e f g) =
+  rnf (Run a b c d e f g h) =
       rnf a `seq` rnf b `seq` rnf c `seq` rnf d `seq` rnf e `seq`
-      rnf f `seq` rnf g
+      rnf f `seq` rnf g `seq` rnf h
 
 sizeInPages :: Run fhandle -> NumPages
 sizeInPages = Index.sizeInPages . runIndex
@@ -134,11 +133,11 @@ addReference _ Run {..} =
 -- After calling this operation, the run must not be used anymore.
 -- If the reference count reaches zero, the run is closed, removing all its
 -- associated files from disk.
-removeReference :: HasFS IO h -> Run (FS.Handle h) -> IO ()
-removeReference fs run@Run {..} = do
+removeReference :: HasFS IO h -> HasBlockIO IO h -> Run (FS.Handle h) -> IO ()
+removeReference fs hbio run@Run {..} = do
     count <- atomicModifyIORef' runRefCount ((\c -> (c, c)) . decRefCount)
     when (count <= RefCount 0) $
-      close fs run
+      close fs hbio run
 
 -- | The 'BlobSpan' to read must come from this run!
 readBlob :: HasFS IO h -> Run (FS.Handle h) -> BlobSpan -> IO SerialisedBlob
@@ -156,8 +155,15 @@ readBlob fs Run {..} BlobSpan {..} = do
 --
 -- TODO: Once snapshots are implemented, files should get removed, but for now
 -- we want to be able to re-open closed runs from disk.
-close :: HasFS IO h -> Run (FS.Handle h) -> IO ()
-close fs Run {..} = do
+close :: HasFS IO h -> HasBlockIO IO h -> Run (FS.Handle h) -> IO ()
+close fs hbio Run {..} = do
+    -- TODO: removing files should drop them from the page cache, but until we
+    -- have proper snapshotting we are keeping the files around. Because of
+    -- this, we instruct the OS to drop all run-related files from the page
+    -- cache
+    FS.hDropCacheAll hbio runKOpsFile
+    FS.hDropCacheAll hbio runBlobFile
+
     FS.hClose fs runKOpsFile
       `finally`
         FS.hClose fs runBlobFile
@@ -166,9 +172,18 @@ close fs Run {..} = do
 data RunDataCaching = CacheRunData | NoCacheRunData
   deriving stock Eq
 
+instance NFData RunDataCaching where
+  rnf CacheRunData   = ()
+  rnf NoCacheRunData = ()
+
 setRunDataCaching :: HasBlockIO IO h -> FS.Handle h -> RunDataCaching -> IO ()
-setRunDataCaching _ _ CacheRunData = return ()
-setRunDataCaching hbio runKOpsFile NoCacheRunData =
+setRunDataCaching hbio runKOpsFile CacheRunData = do
+    -- disable file readahead (only applies to this file descriptor)
+    FS.hAdviseAll hbio runKOpsFile FS.AdviceRandom
+    -- use the page cache for disk I/O reads
+    FS.hSetNoCache hbio runKOpsFile False
+setRunDataCaching hbio runKOpsFile NoCacheRunData = do
+    -- do not use the page cache for disk I/O reads
     FS.hSetNoCache hbio runKOpsFile True
 
 -- | Create a run by finalising a mutable run.
@@ -178,13 +193,13 @@ fromMutable :: HasFS IO h
             -> RefCount
             -> RunBuilder (FS.Handle h)
             -> IO (Run (FS.Handle h))
-fromMutable fs hbio caching refCount builder = do
+fromMutable fs hbio runRunDataCaching refCount builder = do
     (runRunFsPaths, runFilter, runIndex, runNumEntries) <-
-      Builder.unsafeFinalise fs builder
+      Builder.unsafeFinalise fs hbio (runRunDataCaching == NoCacheRunData) builder
     runRefCount <- newIORef refCount
     runKOpsFile <- FS.hOpen fs (runKOpsPath runRunFsPaths) FS.ReadMode
     runBlobFile <- FS.hOpen fs (runBlobPath runRunFsPaths) FS.ReadMode
-    setRunDataCaching hbio runKOpsFile caching
+    setRunDataCaching hbio runKOpsFile runRunDataCaching
     return Run {..}
 
 
@@ -226,15 +241,15 @@ openFromDisk :: HasFS IO h
              -> RunDataCaching
              -> RunFsPaths
              -> IO (Run (FS.Handle h))
-openFromDisk fs hbio caching runRunFsPaths = do
+openFromDisk fs hbio runRunDataCaching runRunFsPaths = do
     expectedChecksums <-
        expectValidFile (runChecksumsPath runRunFsPaths) . fromChecksumsFile
          =<< CRC.readChecksumsFile fs (runChecksumsPath runRunFsPaths)
 
     -- verify checksums of files we don't read yet
     let paths = pathsForRunFiles runRunFsPaths
-    checkCRC (forRunKOps expectedChecksums) (forRunKOps paths)
-    checkCRC (forRunBlob expectedChecksums) (forRunBlob paths)
+    checkCRC runRunDataCaching (forRunKOps expectedChecksums) (forRunKOps paths)
+    checkCRC runRunDataCaching (forRunBlob expectedChecksums) (forRunBlob paths)
 
     -- read and try parsing files
     runFilter <-
@@ -247,25 +262,32 @@ openFromDisk fs hbio caching runRunFsPaths = do
     runRefCount <- newIORef (RefCount 1)
     runKOpsFile <- FS.hOpen fs (runKOpsPath runRunFsPaths) FS.ReadMode
     runBlobFile <- FS.hOpen fs (runBlobPath runRunFsPaths) FS.ReadMode
-    setRunDataCaching hbio runKOpsFile caching
+    setRunDataCaching hbio runKOpsFile runRunDataCaching
     return Run {..}
   where
-    checkCRC :: CRC.CRC32C -> FS.FsPath -> IO ()
-    checkCRC expected fp = do
-        checksum <- CRC.readFileCRC32C fs fp
+    -- Note: all file data for this path is evicted from the page cache /if/ the
+    -- caching argument is 'NoCacheRunData'.
+    checkCRC :: RunDataCaching -> CRC.CRC32C -> FS.FsPath -> IO ()
+    checkCRC cache expected fp = FS.withFile fs fp FS.ReadMode $ \h -> do
+        -- double the file readahead window (only applies to this file descriptor)
+        FS.hAdviseAll hbio h FS.AdviceSequential
+        !checksum <- CRC.hGetAllCRC32C' fs h CRC.defaultChunkSize CRC.initialCRC32C
+        when (cache == NoCacheRunData) $
+          -- drop the file from the OS page cache
+          FS.hDropCacheAll hbio h
         expectChecksum fp expected checksum
 
+    -- Note: all file data for this path is evicted from the page cache
     readCRC :: CRC.CRC32C -> FS.FsPath -> IO SBS.ShortByteString
     readCRC expected fp = FS.withFile fs fp FS.ReadMode $ \h -> do
-        -- Read the whole file, which should usually return a single chunk.
-        -- In this case, 'toStrict' is O(1).
-        size <- FS.hGetSize fs h
-        (lbs, crc) <- CRC.hGetExactlyCRC32C fs h size CRC.initialCRC32C
-        expectChecksum fp expected crc
-        let bs = LBS.toStrict lbs
-        return $ case tryCheapToShort bs of
-          Right sbs -> sbs
-          Left _err -> SBS.toShort bs  -- Should not happen, but just in case
+        n <- FS.hGetSize fs h
+        -- double the file readahead window (only applies to this file descriptor)
+        FS.hAdviseAll hbio h FS.AdviceSequential
+        (sbs, !checksum) <- CRC.hGetExactlyCRC32C_SBS fs h (fromIntegral n) CRC.initialCRC32C
+        -- drop the file from the OS page cache
+        FS.hAdviseAll hbio h FS.AdviceDontNeed
+        expectChecksum fp expected checksum
+        return sbs
 
     expectChecksum fp expected checksum =
         when (expected /= checksum) $

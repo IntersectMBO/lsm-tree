@@ -51,7 +51,7 @@ tests = testGroup "Database.LSMTree.Internal.RunReaders"
             hbio <- FsSim.fromHasFS hfs
             (prop, RealState _ mCtx) <- runRealMonad hfs hbio
                                                      (RealState 0 Nothing) act
-            traverse_ (closeReadersCtx hfs) mCtx  -- close current readers
+            traverse_ (closeReadersCtx hfs hbio) mCtx  -- close current readers
             return prop
 
           -- ensure that all handles have been closed
@@ -283,10 +283,10 @@ data RealState =
 -- | Readers, together with the runs being read, so they can be cleaned up at the end
 type ReadersCtx = ([Run.Run Handle], Readers Handle)
 
-closeReadersCtx :: FS.HasFS IO MockFS.HandleMock -> ReadersCtx -> IO ()
-closeReadersCtx hfs (runs, readers) = do
-    Readers.close hfs readers
-    traverse_ (Run.removeReference hfs) runs
+closeReadersCtx :: FS.HasFS IO MockFS.HandleMock -> FS.HasBlockIO IO MockFS.HandleMock -> ReadersCtx -> IO ()
+closeReadersCtx hfs hbio (runs, readers) = do
+    Readers.close hfs hbio readers
+    traverse_ (Run.removeReference hfs hbio) runs
 
 instance RunModel (Lockstep ReadersState) RealMonad where
   perform       = \_st -> runIO
@@ -305,21 +305,21 @@ runIO act lu = case act of
     New wbs -> ReaderT $ \(hfs, hbio) -> do
       RealState numRuns mCtx <- get
       -- if runs are still being read, they need to be cleaned up
-      traverse_ (liftIO . closeReadersCtx hfs) mCtx
+      traverse_ (liftIO . closeReadersCtx hfs hbio) mCtx
       runs <-
         zipWithM
           (\p -> liftIO . Run.fromWriteBuffer hfs hbio Run.CacheRunData (RunAllocFixed 10) p)
           (Paths.RunFsPaths (FS.mkFsPath []) <$> [numRuns ..])
           (map unTypedWriteBuffer wbs)
-      newReaders <- liftIO $ Readers.new hfs runs >>= \case
+      newReaders <- liftIO $ Readers.new hfs hbio runs >>= \case
         Nothing -> do
-          traverse_ (Run.removeReference hfs) runs
+          traverse_ (Run.removeReference hfs hbio) runs
           return Nothing
         Just readers ->
           return $ Just (runs, readers)
       put (RealState (numRuns + fromIntegral (length wbs)) newReaders)
       return (Right ())
-    PeekKey -> expectReaders $ \_ r -> do
+    PeekKey -> expectReaders $ \_ _ r -> do
       (,) HasMore <$> Readers.peekKey r
     Pop n | n <= 1 -> pop
     Pop n -> pop >>= \case
@@ -327,30 +327,30 @@ runIO act lu = case act of
       Right (_, _, hasMore) -> do
         assert (hasMore == HasMore) $ pure ()
         runIO (Pop (n-1)) lu
-    DropWhileKey k -> expectReaders $ \hfs r -> do
-      (n, hasMore) <- Readers.dropWhileKey hfs r k
+    DropWhileKey k -> expectReaders $ \hfs hbio r -> do
+      (n, hasMore) <- Readers.dropWhileKey hfs hbio r k
       return (hasMore, (n, hasMore))
   where
-    pop = expectReaders $ \hfs r -> do
-      (key, e, hasMore) <- Readers.pop hfs r
+    pop = expectReaders $ \hfs hbio r -> do
+      (key, e, hasMore) <- Readers.pop hfs hbio r
       fullEntry <- toMockEntry hfs e
       return (hasMore, (key, fullEntry, hasMore))
 
     expectReaders ::
-         (FS.HasFS IO MockFS.HandleMock -> Readers Handle -> IO (HasMore, a))
+         (FS.HasFS IO MockFS.HandleMock -> FS.HasBlockIO IO MockFS.HandleMock -> Readers Handle -> IO (HasMore, a))
       -> RealMonad (Either () a)
     expectReaders f =
-        ReaderT $ \(hfs, _hbio) -> do
+        ReaderT $ \(hfs, hbio) -> do
           get >>= \case
             RealState _ Nothing -> return (Left ())
             RealState n (Just (runs, readers)) -> do
-              (hasMore, x) <- liftIO $ f hfs readers
+              (hasMore, x) <- liftIO $ f hfs hbio readers
               case hasMore of
                 HasMore ->
                   return (Right x)
                 Drained -> do
                   -- Readers is drained, clean up the runs
-                  liftIO $ traverse_ (Run.removeReference hfs) runs
+                  liftIO $ traverse_ (Run.removeReference hfs hbio) runs
                   put (RealState n Nothing)
                   return (Right x)
 
