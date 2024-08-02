@@ -64,18 +64,18 @@ appendKey lastKey@(SerialisedKey' lastKeyBytes)
     where
 
     lastKeySize :: Int
-    lastKeySize = Primitive.length lastKeyBytes
+    !lastKeySize = Primitive.length lastKeyBytes
 
     lastKeySizeAsWord16 :: Word16
-    lastKeySizeAsWord16
+    !lastKeySizeAsWord16
         | lastKeySize <= fromIntegral (maxBound :: Word16)
             = fromIntegral lastKeySize
         | otherwise
             = error "Serialised key too large"
 
     lastKeySizeBytes :: Primitive.Vector Word8
-    lastKeySizeBytes = mkPrimVector 0 2 $
-                       byteArrayFromListN 1 [lastKeySizeAsWord16]
+    !lastKeySizeBytes = mkPrimVector 0 2 $
+                        byteArrayFromListN 1 [lastKeySizeAsWord16]
 
 {-|
     Appends keys to the key list of an index and outputs newly available chunks
