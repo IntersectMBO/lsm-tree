@@ -135,10 +135,10 @@ instance (Arbitrary v, Arbitrary blob) => Arbitrary (Entry v blob) where
 
 instance Arbitrary2 Entry where
   liftArbitrary2 genVal genBlob = frequency
-    [ (10, Insert <$> genVal)
-    , (1,  InsertWithBlob <$> genVal <*> genBlob)
-    , (1,  Mupdate <$> genVal)
-    , (1,  pure Delete)
+    [ (5, Insert <$> genVal)
+    , (1, InsertWithBlob <$> genVal <*> genBlob)
+    , (1, Mupdate <$> genVal)
+    , (1, pure Delete)
     ]
 
   liftShrink2 shrinkVal shrinkBlob = \case

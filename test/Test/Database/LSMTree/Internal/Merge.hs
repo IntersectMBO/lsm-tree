@@ -98,6 +98,7 @@ prop_MergeDistributes fs hbio level stepSize (fmap unTypedWriteBuffer -> wbs) = 
                                   (RunFsPaths (FS.mkFsPath []) n)
 
     stats = tabulate "value size" (map (showPowersOf10 . sizeofValue) vals)
+          . tabulate "entry type" (map (takeWhile (/= ' ') . show . snd) kops)
           . label (if any isLargeKOp kops then "has large k/op" else "no large k/op")
           . label ("number of runs: " <> showPowersOf10 (length wbs))
     kops = foldMap WB.toList wbs
