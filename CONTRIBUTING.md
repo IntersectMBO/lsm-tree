@@ -76,6 +76,23 @@ format `*.cabal` files. We also use `cabal check` to sanity check our cabal
 files. See the helpful scripts in the [scripts folder](./scripts/), and the
 [`stylish-haskell` configuration file](./.stylish-haskell.yaml).
 
+To perform a pre-commit code formatting pass, run one of the following:
+
+  *  If you prefer `fd` and have it installed on your system:
+     ```
+     ./format-stylish-fd.sh
+     ./format-cabal-fd.sh
+     ./check-cabal.sh
+     ./haddocks.sh
+     ```
+
+  *  Otherwise you `find`:
+     ```
+     ./format-stylish-find.sh
+     ./format-cabal-find.sh
+     ./check-cabal.sh
+     ./haddocks.sh
+
 ## Pull requests
 
 The following are requirements for merging a PR into `main`:
