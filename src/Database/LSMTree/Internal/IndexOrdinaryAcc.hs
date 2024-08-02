@@ -14,10 +14,11 @@ module Database.LSMTree.Internal.IndexOrdinaryAcc
 where
 
 import           Control.Exception (assert)
-import           Control.Monad.ST.Strict (ST)
+import           Control.Monad.ST.Strict (ST, runST)
 import           Data.List (genericReplicate)
 import           Data.Maybe (catMaybes)
-import           Data.Primitive.ByteArray (byteArrayFromListN)
+import           Data.Primitive.ByteArray (newByteArray, unsafeFreezeByteArray,
+                     writeByteArray)
 import           Data.STRef.Strict (STRef, modifySTRef', newSTRef, readSTRef)
 import           Data.Vector (fromList)
 import qualified Data.Vector.Primitive as Primitive (Vector, length)
@@ -74,7 +75,11 @@ appendKey lastKey@(SerialisedKey' lastKeyBytes)
 
     lastKeySizeBytes :: Primitive.Vector Word8
     !lastKeySizeBytes = mkPrimVector 0 2 $
-                        byteArrayFromListN 1 [lastKeySizeAsWord16]
+                        runST $
+                        do
+                            rep <- newByteArray 2
+                            writeByteArray rep 0 lastKeySizeAsWord16
+                            unsafeFreezeByteArray rep
 
 {-|
     Appends keys to the key list of an index and outputs newly available chunks
