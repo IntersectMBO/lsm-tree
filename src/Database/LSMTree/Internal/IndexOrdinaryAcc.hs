@@ -13,6 +13,7 @@ module Database.LSMTree.Internal.IndexOrdinaryAcc
 )
 where
 
+import           Control.Exception (assert)
 import           Control.Monad.ST.Strict (ST)
 import           Data.List (genericReplicate)
 import           Data.Maybe (catMaybes)
@@ -68,10 +69,8 @@ appendKey lastKey@(SerialisedKey' lastKeyBytes)
 
     lastKeySizeAsWord16 :: Word16
     !lastKeySizeAsWord16
-        | lastKeySize <= fromIntegral (maxBound :: Word16)
-            = fromIntegral lastKeySize
-        | otherwise
-            = error "Serialised key too large"
+        = assert (lastKeySize <= fromIntegral (maxBound :: Word16)) $
+          fromIntegral lastKeySize
 
     lastKeySizeBytes :: Primitive.Vector Word8
     !lastKeySizeBytes = mkPrimVector 0 2 $
@@ -80,6 +79,9 @@ appendKey lastKey@(SerialisedKey' lastKeyBytes)
 {-|
     Appends keys to the key list of an index and outputs newly available chunks
     of the serialised key list.
+
+    __Warning:__ Appending keys whose length cannot be represented by a 16-bit
+    word may result in a corrupted serialised key list.
 -}
 append :: Append -> IndexOrdinaryAcc s -> ST s [Chunk]
 append (AppendSinglePage _ lastKey)    index = appendKey lastKey index
