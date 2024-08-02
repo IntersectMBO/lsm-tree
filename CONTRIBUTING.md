@@ -86,7 +86,7 @@ To perform a pre-commit code formatting pass, run one of the following:
      ./haddocks.sh
      ```
 
-  *  Otherwise you `find`:
+  *  Otherwise using Unix `find`:
      ```
      ./format-stylish-find.sh
      ./format-cabal-find.sh
