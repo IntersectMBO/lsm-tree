@@ -104,7 +104,7 @@ module Database.LSMTree.Monoidal (
   , IOLike
   ) where
 
-import           Control.DeepSeq (NFData, deepseq)
+import           Control.DeepSeq
 import           Control.Monad (void, (<$!>))
 import           Data.Bifunctor (Bifunctor (..))
 import           Data.Coerce (coerce)
@@ -147,6 +147,9 @@ import qualified Database.LSMTree.Internal.Vector as V
 type TableHandle :: (Type -> Type) -> Type -> Type -> Type
 data TableHandle m k v = forall h. Typeable h =>
     TableHandle !(Internal.TableHandle m h)
+
+instance NFData (TableHandle m k v) where
+  rnf (TableHandle th) = rnf th
 
 {-# SPECIALISE withTable :: Session IO -> Internal.TableConfig -> (TableHandle IO k v -> IO a) -> IO a #-}
 -- | (Asynchronous) exception-safe, bracketed opening and closing of a table.

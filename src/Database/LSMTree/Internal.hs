@@ -58,6 +58,7 @@ import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Concurrent.Class.MonadSTM (MonadSTM (..))
 import           Control.Concurrent.Class.MonadSTM.RWVar (RWVar)
 import qualified Control.Concurrent.Class.MonadSTM.RWVar as RW
+import           Control.DeepSeq
 import           Control.Monad (unless, void, when)
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Primitive (PrimState (..), RealWorld)
@@ -147,6 +148,9 @@ newtype Session m h = Session {
       -- session.
       sessionState :: RWVar m (SessionState m h)
     }
+
+instance NFData (Session m h) where
+  rnf (Session a) = rnf a
 
 data SessionState m h =
     SessionOpen !(SessionEnv m h)
@@ -376,6 +380,10 @@ data TableHandle m h = TableHandle {
     , tableHandleState        :: !(RWVar m (TableHandleState m h))
     , tableHandleArenaManager :: !(ArenaManager (PrimState m))
     }
+
+instance NFData (TableHandle m h) where
+  rnf (TableHandle a b c) =
+    rnf a `seq` rnf b `seq` rnf c
 
 -- | A table handle may assume that its corresponding session is still open as
 -- long as the table handle is open. A session's global resources, and therefore
@@ -1277,6 +1285,9 @@ data TableConfig = TableConfig {
   }
   deriving stock Show
 
+instance NFData TableConfig where
+  rnf (TableConfig a b c d e) = rnf a `seq` rnf b `seq` rnf c `seq` rnf d `seq` rnf e
+
 -- | TODO: this should be removed once we have proper snapshotting with proper
 -- persistence of the config to disk.
 deriving stock instance Read TableConfig
@@ -1309,12 +1320,18 @@ data MergePolicy =
 -}
   deriving stock (Show, Eq)
 
+instance NFData MergePolicy where
+  rnf MergePolicyLazyLevelling = ()
+
 -- | TODO: this should be removed once we have proper snapshotting with proper
 -- persistence of the config to disk.
 deriving stock instance Read MergePolicy
 
 data SizeRatio = Four
   deriving stock (Show, Eq)
+
+instance NFData SizeRatio where
+  rnf Four = ()
 
 sizeRatioInt :: SizeRatio -> Int
 sizeRatioInt = \case Four -> 4
@@ -1339,6 +1356,9 @@ data WriteBufferAlloc =
     AllocTotalBytes !Word32
 -}
   deriving stock (Show, Eq)
+
+instance NFData WriteBufferAlloc where
+  rnf (AllocNumEntries n) = rnf n
 
 -- | TODO: this should be removed once we have proper snapshotting with proper
 -- persistence of the config to disk.
@@ -1374,6 +1394,10 @@ data BloomFilterAlloc =
              -- realistic applications.
  -}
   deriving stock (Show, Eq)
+
+instance NFData BloomFilterAlloc where
+  rnf (AllocFixed n)        = rnf n
+  rnf (AllocRequestFPR fpr) = rnf fpr
 
 -- | TODO: this should be removed once we have proper snapshotting with proper
 -- persistence of the config to disk.
@@ -1426,6 +1450,11 @@ data DiskCachePolicy =
        -- spatial or temporal locality, such as uniform random access.
      | DiskCacheNone
   deriving stock (Eq, Show, Read)
+
+instance NFData DiskCachePolicy where
+  rnf DiskCacheAll                 = ()
+  rnf (DiskCacheLevelsAtOrBelow l) = rnf l
+  rnf DiskCacheNone                = ()
 
 -- | Interpret the 'DiskCachePolicy' for a level: should we cache data in runs
 -- at this level.

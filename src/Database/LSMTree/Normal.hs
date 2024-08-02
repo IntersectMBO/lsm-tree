@@ -94,6 +94,7 @@ module Database.LSMTree.Normal (
   , IOLike
   ) where
 
+import           Control.DeepSeq (NFData (..))
 import           Control.Monad
 import           Data.Bifunctor (Bifunctor (..))
 import           Data.Kind (Type)
@@ -208,6 +209,9 @@ import qualified Database.LSMTree.Internal.Vector as V
 type TableHandle :: (Type -> Type) -> Type -> Type -> Type -> Type
 data TableHandle m k v blob = forall h. Typeable h =>
     TableHandle !(Internal.TableHandle m h)
+
+instance NFData (TableHandle m k v blob) where
+  rnf (TableHandle th) = rnf th
 
 {-# SPECIALISE withTable :: Session IO -> Internal.TableConfig -> (TableHandle IO k v blob -> IO a) -> IO a #-}
 -- | (Asynchronous) exception-safe, bracketed opening and closing of a table.
