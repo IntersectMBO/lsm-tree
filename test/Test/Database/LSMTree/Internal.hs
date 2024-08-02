@@ -100,7 +100,7 @@ prop_interimRestoreSessionUniqueRunNames (Positive (Small n)) (NonNegative m) = 
     withTempIOHasBlockIO "TODO" $ \hfs hbio -> do
       prop1 <- withSession hfs hbio (FS.mkFsPath []) $ \sesh -> do
         withTable sesh conf $ \th -> do
-          updates upds th
+          updates const upds th
           withOpenTable th $ \thEnv -> do
             RW.withReadAccess (tableContent thEnv) $ \tc -> do
               let (Sum nruns) = V.foldMap
@@ -111,7 +111,7 @@ prop_interimRestoreSessionUniqueRunNames (Positive (Small n)) (NonNegative m) = 
 
       withSession hfs hbio (FS.mkFsPath []) $ \sesh -> do
         withTable sesh conf $ \th -> do
-          eith <- try (updates upds th)
+          eith <- try (updates const upds th)
           fmap (prop1 .&&.) $ case eith of
             Left (e :: FS.FsError)
               | FS.fsErrorType e == FS.FsResourceAlreadyExist
@@ -127,7 +127,6 @@ prop_interimRestoreSessionUniqueRunNames (Positive (Small n)) (NonNegative m) = 
         -- flushes and merges.
       , confWriteBufferAlloc = AllocNumEntries (NumEntries n)
       , confBloomFilterAlloc = AllocFixed 10
-      , confResolveMupsert = Nothing
       , confDiskCachePolicy = DiskCacheNone
       }
 
@@ -150,12 +149,12 @@ prop_interimOpenTable dat = ioProperty $
     withTempIOHasBlockIO "prop_interimOpenTable" $ \hfs hbio -> do
       withSession hfs hbio (FS.mkFsPath []) $ \sesh -> do
         withTable sesh conf $ \th -> do
-          updates upds th
+          updates const upds th
           let snap = fromMaybe (error "invalid name") $ mkSnapshotName "snap"
-          numRunsSnapped <- snapshot snap "someLabel" th
+          numRunsSnapped <- snapshot const snap "someLabel" th
           th' <- open sesh "someLabel" configNoOverride snap
-          lhs <- lookups ks th id
-          rhs <- lookups ks th' id
+          lhs <- lookups const ks th id
+          rhs <- lookups const ks th' id
           close th
           close th'
           -- TODO: checking lookups is a simple check, but we could have stronger
@@ -173,7 +172,6 @@ prop_interimOpenTable dat = ioProperty $
         -- flushes and merges.
       , confWriteBufferAlloc = AllocNumEntries (NumEntries 3)
       , confBloomFilterAlloc = AllocFixed 10
-      , confResolveMupsert = Nothing
       , confDiskCachePolicy = DiskCacheNone
       }
 

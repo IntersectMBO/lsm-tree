@@ -11,11 +11,12 @@ import           Data.Word (Word64)
 import           Database.LSMTree.Class.Monoidal hiding (withTableDuplicate,
                      withTableNew, withTableOpen)
 import qualified Database.LSMTree.Class.Monoidal as Class
+import           Database.LSMTree.Common (Labellable (..), mkSnapshotName)
 import           Database.LSMTree.Extras.Generators ()
 import           Database.LSMTree.ModelIO.Monoidal (IOLike, LookupResult (..),
                      Range (..), RangeLookupResult (..), Update (..))
 import qualified Database.LSMTree.ModelIO.Monoidal as M
-import           Database.LSMTree.Monoidal (ResolveValue (..), mkSnapshotName,
+import           Database.LSMTree.Monoidal (ResolveValue (..),
                      resolveDeserialised)
 import qualified Database.LSMTree.Monoidal as R
 import qualified System.FS.API as FS
@@ -45,7 +46,6 @@ tests = testGroup "Test.Database.LSMTree.Class.Monoidal"
             , R.confSizeRatio = R.Four
             , R.confWriteBufferAlloc = R.AllocNumEntries (R.NumEntries 3)
             , R.confBloomFilterAlloc = R.AllocFixed 10
-            , R.confResolveMupsert = Nothing
             , R.confDiskCachePolicy = R.DiskCacheNone
             }
         , testWithSessionArgs = \action ->
@@ -53,7 +53,22 @@ tests = testGroup "Test.Database.LSMTree.Class.Monoidal"
               action (SessionArgs hfs hbio (FS.mkFsPath []))
         }
 
-    expectFailures2 = repeat True
+    expectFailures2 = [
+        False
+      , False
+      , False
+      , False
+      , False
+      , False
+      , False
+      , False
+      , False
+      , True  -- lookupRange-insert
+      , False
+      , False
+      , False
+      , True  -- merge
+      ] ++ repeat False
 
     props tbl =
       [ testProperty' "lookup-insert" $ prop_lookupInsert tbl
@@ -87,6 +102,9 @@ instance ResolveValue Value where
 
 resolve :: Value -> Value -> Value
 resolve (Value x) (Value y) = Value (x <> y)
+
+instance Labellable (Key, Value) where
+  makeSnapshotLabel _ = "Word64 ByteString"
 
 type Proxy h = Setup h IO
 

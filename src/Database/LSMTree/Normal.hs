@@ -95,10 +95,8 @@ module Database.LSMTree.Normal (
   ) where
 
 import           Control.Monad
-import           Control.Monad.Class.MonadThrow (MonadThrow (..))
 import           Data.Bifunctor (Bifunctor (..))
 import           Data.Kind (Type)
-import           Data.Maybe (isJust)
 import           Data.Typeable (Proxy (..), Typeable)
 import qualified Data.Vector as V
 import           Database.LSMTree.Common (BlobRef (BlobRef), IOLike, Range (..),
@@ -107,7 +105,7 @@ import           Database.LSMTree.Common (BlobRef (BlobRef), IOLike, Range (..),
                      withSession)
 import qualified Database.LSMTree.Common as Common
 import qualified Database.LSMTree.Internal as Internal
-import           Database.LSMTree.Internal.Entry (updateToEntryNormal)
+import qualified Database.LSMTree.Internal.Entry as Entry
 import           Database.LSMTree.Internal.Normal
 import qualified Database.LSMTree.Internal.Serialise as Internal
 import qualified Database.LSMTree.Internal.Vector as V
@@ -222,7 +220,8 @@ withTable ::
   -> Internal.TableConfig
   -> (TableHandle m k v blob -> m a)
   -> m a
-withTable (Session sesh) conf action = Internal.withTable sesh conf (action . TableHandle)
+withTable (Session sesh) conf action =
+    Internal.withTable sesh conf (action . TableHandle)
 
 {-# SPECIALISE new :: Session IO -> Internal.TableConfig -> IO (TableHandle IO k v blob) #-}
 -- | Create a new empty table, returning a fresh table handle.
@@ -265,7 +264,16 @@ lookups ::
   -> m (V.Vector (LookupResult v (BlobRef m blob)))
 lookups ks (TableHandle th) =
     V.mapStrict (bimap Internal.deserialiseValue BlobRef) <$!>
-    Internal.lookups (V.map Internal.serialiseKey ks) th Internal.toNormalLookupResult
+    Internal.lookups const (V.map Internal.serialiseKey ks) th toNormalLookupResult
+
+toNormalLookupResult :: Maybe (Entry.Entry v b) -> LookupResult v b
+toNormalLookupResult = \case
+    Just e -> case e of
+      Entry.Insert v            -> Found v
+      Entry.InsertWithBlob v br -> FoundWithBlob v br
+      Entry.Mupdate _           -> error "toNormalLookupResult: Mupdate unexpected"
+      Entry.Delete              -> NotFound
+    Nothing -> NotFound
 
 {-# SPECIALISE rangeLookup :: (SerialiseKey k, SerialiseValue v) => Range k -> TableHandle IO k v blob -> IO (V.Vector (RangeLookupResult k v (BlobRef IO blob))) #-}
 -- | Perform a range lookup.
@@ -281,8 +289,8 @@ rangeLookup = undefined
 {-# SPECIALISE updates :: (SerialiseKey k, SerialiseValue v, SerialiseValue blob) => V.Vector (k, Update v blob) -> TableHandle IO k v blob -> IO () #-}
 -- | Perform a mixed batch of inserts and deletes.
 --
--- If there are duplicate keys in the same batch, then keys nearer the front of
--- the vector take precedence.
+-- If there are duplicate keys in the same batch, then keys nearer to the front
+-- of the vector take precedence.
 --
 -- Updates can be performed concurrently from multiple Haskell threads.
 updates ::
@@ -291,14 +299,11 @@ updates ::
   -> TableHandle m k v blob
   -> m ()
 updates es (TableHandle th) = do
-    -- make sure not to insert any blobs into monoidal tables
-    when (isJust (Internal.confResolveMupsert (Internal.tableConfig th))) $
-      throwIO Internal.ErrExpectedNormalTable
-    Internal.updates (V.mapStrict serialiseEntry es) th
+    Internal.updates const (V.mapStrict serialiseEntry es) th
   where
     serialiseEntry = bimap Internal.serialiseKey serialiseOp
     serialiseOp = bimap Internal.serialiseValue Internal.serialiseBlob
-                . updateToEntryNormal
+                . Entry.updateToEntryNormal
 
 {-# SPECIALISE inserts :: (SerialiseKey k, SerialiseValue v, SerialiseValue blob) => V.Vector (k, v, Maybe blob) -> TableHandle IO k v blob -> IO () #-}
 -- | Perform a batch of inserts.
@@ -378,13 +383,15 @@ retrieveBlobs _ brs
 snapshot ::
      forall m k v blob. ( IOLike m
      , SerialiseKey k, SerialiseValue v, SerialiseValue blob
-     , Common.Labellable (k, v , blob)
+     , Common.Labellable (k, v, blob)
      )
   => SnapshotName
   -> TableHandle m k v blob
   -> m ()
-snapshot snap (TableHandle th) = void $ Internal.snapshot snap label th
-  where label = Common.makeSnapshotLabel (Proxy @(k, v, blob))
+snapshot snap (TableHandle th) = void $ Internal.snapshot const snap label th
+  where
+    -- to ensure we don't open a normal table as monoidal later
+    label = Common.makeSnapshotLabel (Proxy @(k, v, blob)) <> " (normal)"
 
 {-# SPECIALISE open :: (SerialiseKey k, SerialiseValue v, SerialiseValue blob, Common.Labellable (k, v, blob)) => Session IO -> Internal.TableConfigOverride -> SnapshotName -> IO (TableHandle IO k v blob ) #-}
 -- | Open a table from a named snapshot, returning a new table handle.
@@ -417,8 +424,11 @@ open ::
   -> Internal.TableConfigOverride -- ^ Optional config override
   -> SnapshotName
   -> m (TableHandle m k v blob)
-open (Session sesh) override snap = TableHandle <$> Internal.open sesh label override snap
-  where label = Common.makeSnapshotLabel (Proxy @(k, v, blob))
+open (Session sesh) override snap =
+    TableHandle <$> Internal.open sesh label override snap
+  where
+    -- to ensure that the table is really a normal table
+    label = Common.makeSnapshotLabel (Proxy @(k, v, blob)) <> " (normal)"
 
 {-------------------------------------------------------------------------------
   Mutiple writable table handles

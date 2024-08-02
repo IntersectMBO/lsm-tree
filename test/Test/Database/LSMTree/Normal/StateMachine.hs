@@ -67,7 +67,6 @@ import qualified Database.LSMTree.Class.Normal as Class
 import           Database.LSMTree.Extras (showPowersOf)
 import           Database.LSMTree.Extras.Generators (KeyForIndexCompact)
 import           Database.LSMTree.Internal (LSMTreeError (..))
-import qualified Database.LSMTree.Internal as R.Internal
 import qualified Database.LSMTree.Model.Normal.Session as Model
 import qualified Database.LSMTree.ModelIO.Normal as M
 import qualified Database.LSMTree.Normal as R
@@ -224,8 +223,6 @@ instance Arbitrary M.TableConfig where
   arbitrary :: Gen M.TableConfig
   arbitrary = pure M.TableConfig
 
--- |  This always generates 'Nothing' for the 'R.confResolveMupsert'
--- field.
 instance Arbitrary R.TableConfig where
   arbitrary :: Gen R.TableConfig
   arbitrary = pure $ R.TableConfig {
@@ -233,27 +230,19 @@ instance Arbitrary R.TableConfig where
       , R.confSizeRatio        = R.Four
       , R.confWriteBufferAlloc = R.AllocNumEntries (R.NumEntries 30)
       , R.confBloomFilterAlloc = R.AllocFixed 10
-      , R.confResolveMupsert   = Nothing
       , R.confDiskCachePolicy  = R.DiskCacheNone
       }
 
 instance Eq R.TableConfig where
-  R.TableConfig pol1 size1 wbAlloc1 bfAlloc1 mups1 cache1
-    == R.TableConfig pol2 size2 wbAlloc2 bfAlloc2 mups2 cache2
+  R.TableConfig pol1 size1 wbAlloc1 bfAlloc1 cache1
+    == R.TableConfig pol2 size2 wbAlloc2 bfAlloc2 cache2
     = and [
         pol1 == pol2
       , size1 == size2
       , wbAlloc1 == wbAlloc2
       , bfAlloc1 == bfAlloc2
-      , mups1 == mups2 -- Errors if either is 'Just'. This is intended behaviour.
       , cache1 == cache2
       ]
-
--- | 'R.ResolveMupsert's are arbitrary functions, so they don't have a
--- sensible 'Eq' instance. This (bottom) instance is only included to make
--- @quickheck-dynamic@ happy. Do not use this instance!
-instance Eq R.Internal.ResolveMupsert where
-  _ == _ = error "(==) on ResolveMupserts should not be used!"
 
 {-------------------------------------------------------------------------------
   Key and value types
