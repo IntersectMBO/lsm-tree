@@ -17,7 +17,7 @@ import           Control.Monad.ST.Strict (ST)
 import           Data.List (genericReplicate)
 import           Data.Maybe (catMaybes)
 import           Data.Primitive.ByteArray (byteArrayFromListN)
-import           Data.STRef.Strict (STRef, modifySTRef, newSTRef, readSTRef)
+import           Data.STRef.Strict (STRef, modifySTRef', newSTRef, readSTRef)
 import           Data.Vector (fromList)
 import qualified Data.Vector.Primitive as Primitive (Vector, length)
 import           Data.Word (Word16, Word8)
@@ -57,7 +57,7 @@ appendKey :: SerialisedKey -> IndexOrdinaryAcc s -> ST s [Chunk]
 appendKey lastKey@(SerialisedKey' lastKeyBytes)
           (IndexOrdinaryAcc lastKeysRevRef baler)
     = do
-          modifySTRef lastKeysRevRef (lastKey :)
+          modifySTRef' lastKeysRevRef (lastKey :)
           maybeChunkIntoLastKeySize <- feedBaler lastKeySizeBytes baler
           maybeChunkIntoLastKey <- feedBaler lastKeyBytes baler
           return $ catMaybes [maybeChunkIntoLastKeySize, maybeChunkIntoLastKey]
