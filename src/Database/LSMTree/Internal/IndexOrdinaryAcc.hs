@@ -9,19 +9,20 @@ module Database.LSMTree.Internal.IndexOrdinaryAcc
     IndexOrdinaryAcc,
     new,
     append,
-    end
+    unsafeEnd
 )
 where
 
 import           Control.Monad.ST.Strict (ST)
 import           Data.List (genericReplicate)
+import           Data.Maybe (catMaybes)
 import           Data.Primitive.ByteArray (byteArrayFromListN)
 import           Data.STRef.Strict (STRef, modifySTRef, newSTRef, readSTRef)
 import           Data.Vector (fromList)
 import qualified Data.Vector.Primitive as Primitive (Vector, length)
 import           Data.Word (Word16, Word8)
 import           Database.LSMTree.Internal.Chunk (Baler, Chunk, createBaler,
-                     feedBaler, readBalerRemnant)
+                     feedBaler, unsafeEndBaler)
 import           Database.LSMTree.Internal.IndexCompactAcc
                      (Append (AppendMultiPage, AppendSinglePage))
 import           Database.LSMTree.Internal.IndexOrdinary
@@ -57,9 +58,9 @@ appendKey lastKey@(SerialisedKey' lastKeyBytes)
           (IndexOrdinaryAcc lastKeysRevRef baler)
     = do
           modifySTRef lastKeysRevRef (lastKey :)
-          chunksIntoLastKeySize <- feedBaler lastKeySizeBytes baler
-          chunksIntoLastKey <- feedBaler lastKeyBytes baler
-          return (chunksIntoLastKeySize ++ chunksIntoLastKey)
+          maybeChunkIntoLastKeySize <- feedBaler lastKeySizeBytes baler
+          maybeChunkIntoLastKey <- feedBaler lastKeyBytes baler
+          return $ catMaybes [maybeChunkIntoLastKeySize, maybeChunkIntoLastKey]
     where
 
     lastKeySize :: Int
@@ -88,13 +89,13 @@ append (AppendMultiPage key pageCount) index = fmap concat                $
                                                appendKey key index
 
 {-|
-    End an incremental construction of an index.
-
-    This returns the constructed index, along with a final chunk in case the
-    serialised key list has not been fully output yet.
+    Returns the constructed index, along with a final chunk in case the
+    serialised key list has not been fully output yet, thereby invalidating the
+    index under construction. Executing @unsafeEnd index@ is only safe when
+    @index@ is not used afterwards.
 -}
-end :: IndexOrdinaryAcc s -> ST s (Maybe Chunk, IndexOrdinary)
-end (IndexOrdinaryAcc lastKeysRevRef baler) = do
+unsafeEnd :: IndexOrdinaryAcc s -> ST s (Maybe Chunk, IndexOrdinary)
+unsafeEnd (IndexOrdinaryAcc lastKeysRevRef baler) = do
     lastKeysRev <- readSTRef lastKeysRevRef
-    remnant <- readBalerRemnant baler
+    remnant <- unsafeEndBaler baler
     return (remnant, IndexOrdinary (fromList (reverse lastKeysRev)))
