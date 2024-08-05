@@ -187,6 +187,8 @@ tests = testGroup "Database.LSMTree.Internal.RawPage"
     , testProperty "entry" prop_single_entry
     , testProperty "rawPageOverflowPages" prop_rawPageOverflowPages
     , testProperty "from/to reference impl" prop_fromToReferenceImpl
+    , testProperty "∀ key page. maybe True (key <=) (getRawPageIndexKey . rawPageIndex page .  id  =<< rawPageFindKey page key)" prop_findKey_index_law_GT
+    , testProperty "∀ key page. maybe True (key > ) (getRawPageIndexKey . rawPageIndex page . pred =<< rawPageFindKey page key)" prop_findKey_index_law_LT
     ]
 
 prop_toRawPage :: Ref.PageContentFits -> Property
@@ -294,7 +296,7 @@ prop_big_insert k mblobref =
   where
     v       = Ref.Value (BS.replicate 5000 42)
     op      = Ref.Insert v mblobref
-    kops    = [(k, op)]
+    kops    = [ (k, op)]
     rawpage = fst $ Ref.toRawPage (Ref.PageContentFits kops)
 
 prop_single_entry :: Ref.PageContentSingle -> Property
@@ -314,3 +316,41 @@ prop_single_entry (Ref.PageContentSingle k op) =
   where
     (rawpage, overflowPages) = Ref.toRawPage (Ref.PageContentFits [(k, op)])
 
+prop_findKey_index_law_GT :: Ref.Key -> Ref.PageContentOrdered -> Property
+prop_findKey_index_law_GT k (Ref.PageContentOrdered kops) =
+    findKeyIndexCounterExample key rawpage $ maybe
+      (property Discard)
+      (property . (key <=))
+      (getRawPageIndexKey . rawPageIndex rawpage =<< rawPageFindKey rawpage key)
+  where
+    key = Ref.toSerialisedKey k
+    rawpage = fst $ Ref.toRawPage (Ref.PageContentFits kops)
+
+prop_findKey_index_law_LT :: Ref.Key -> Ref.PageContentOrdered -> Property
+prop_findKey_index_law_LT k (Ref.PageContentOrdered kops) =
+    findKeyIndexCounterExample key rawpage $ maybe
+      (property Discard)
+      (property . (key >))
+      (getRawPageIndexKey . rawPageIndex rawpage =<< pred' =<< rawPageFindKey rawpage key)
+  where
+    key = Ref.toSerialisedKey k
+    rawpage = fst $ Ref.toRawPage (Ref.PageContentFits kops)
+    pred' n
+      | n <= 0 = Nothing
+      | otherwise = Just $ n - 1
+
+findKeyIndexCounterExample :: Testable prop => SerialisedKey -> RawPage -> prop -> Property
+findKeyIndexCounterExample key rawpage = counterexample msg
+  where
+    msg = case rawPageFindKey rawpage key of
+      Nothing -> "No key found"
+      Just loc -> unwords
+        [ "At entry№"
+        , show loc
+        , "found next {"
+        , show key
+        , "} > {"
+        , show $ rawPageIndex rawpage loc
+        , "} of page index "
+        , show loc
+        ]

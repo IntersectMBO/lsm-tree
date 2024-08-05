@@ -262,7 +262,7 @@ isLargeKOp (key, entry) = size > pageSize
 
 readKOps :: FS.HasFS IO h -> FS.HasBlockIO IO h -> Run IO (FS.Handle h) -> IO [SerialisedKOp]
 readKOps fs hbio run = do
-    reader <- Reader.new fs hbio run
+    reader <- Reader.new fs hbio Nothing run
     go reader
   where
     go reader = do

@@ -22,9 +22,10 @@ import           Data.Primitive.ByteArray (newPinnedByteArray,
 import           Data.Primitive.PrimVar
 import           Data.Word (Word16, Word32)
 import           Database.LSMTree.Internal.BitMath (ceilDivPageSize,
-                     roundUpToPageSize)
+                     mulPageSize, roundUpToPageSize)
 import           Database.LSMTree.Internal.BlobRef (BlobRef (..))
 import qualified Database.LSMTree.Internal.Entry as E
+import qualified Database.LSMTree.Internal.IndexCompact as Index
 import           Database.LSMTree.Internal.Paths
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.RawOverflowPage (RawOverflowPage,
@@ -63,18 +64,39 @@ data RunReader m fhandle = RunReader {
 new ::
      HasFS IO h
   -> HasBlockIO IO h
+  -> Maybe SerialisedKey  -- ^ offset
   -> Run.Run IO (FS.Handle h)
   -> IO (RunReader IO (FS.Handle h))
-new fs hbio readerRun = do
+new fs hbio mOffset readerRun = do
     readerKOpsHandle <-
       FS.hOpen fs (runKOpsPath (Run.runRunFsPaths readerRun)) FS.ReadMode
     -- double the file readahead window (only applies to this file descriptor)
     FS.hAdviseAll hbio readerKOpsHandle FS.AdviceSequential
-    readerCurrentEntryNo <- newPrimVar 0
-    -- load first page from disk, if it exists.
-    firstPage <- fromMaybe emptyRawPage <$> readDiskPage fs readerKOpsHandle
-    readerCurrentPage <- newIORef firstPage
+
+    (page, entryNo) <- case mOffset of
+      Nothing -> do
+        -- load first page from disk, if it exists.
+        firstPage <- fromMaybe emptyRawPage <$> readDiskPage fs readerKOpsHandle
+        return (firstPage, 0)
+
+      Just offset -> do
+        let pageNo = Index.pageSpanStart (Index.search offset index)
+        -- load first page from disk, if it exists.
+        firstPage <- fromMaybe emptyRawPage <$> readDiskPageAt fs pageNo readerKOpsHandle
+
+        case rawPageFindKey firstPage offset of
+          Just n ->
+            return (firstPage, n)
+          Nothing -> do
+            -- actually, it's the next page
+            nextPage <- fromMaybe emptyRawPage <$> readDiskPageAt fs pageNo readerKOpsHandle
+            return (nextPage, 0)
+
+    readerCurrentEntryNo <- newPrimVar entryNo
+    readerCurrentPage <- newIORef page
     return RunReader {..}
+  where
+    index = Run.runIndex readerRun
 
 -- | This function should be called when discarding a 'RunReader' before it
 -- was done (i.e. returned 'Empty'). This avoids leaking file handles.
@@ -187,9 +209,27 @@ next fs hbio reader@RunReader {..} = do
 -------------------------------------------------------------------------------}
 
 -- | Returns 'Nothing' on EOF.
+readDiskPageAt :: HasFS IO h -> Index.PageNo -> FS.Handle h -> IO (Maybe RawPage)
+readDiskPageAt fs pageNo h = do
+    mba <- newPinnedByteArray pageSize
+    -- TODO: make sure no other exception type can be thrown
+    handleJust (guard . FS.isFsErrorType FS.FsReachedEOF) (\_ -> pure Nothing) $ do
+      let byteOffset = pageNoToAbsOffset pageNo
+      _ <- FS.hGetBufExactlyAt fs h mba 0 (fromIntegral pageSize) byteOffset
+      ba <- unsafeFreezeByteArray mba
+      let !rawPage = unsafeMakeRawPage ba 0
+      return (Just rawPage)
+
+pageNoToAbsOffset :: Index.PageNo -> FS.AbsOffset
+pageNoToAbsOffset (Index.PageNo n) =
+    assert (n >= 0) $
+      FS.AbsOffset (mulPageSize (fromIntegral n))
+
+-- | Returns 'Nothing' on EOF.
 readDiskPage :: HasFS IO h -> FS.Handle h -> IO (Maybe RawPage)
 readDiskPage fs h = do
     mba <- newPinnedByteArray pageSize
+    -- TODO: make sure no other exception type can be thrown
     handleJust (guard . FS.isFsErrorType FS.FsReachedEOF) (\_ -> pure Nothing) $ do
       _ <- FS.hGetBufExactly fs h mba 0 (fromIntegral pageSize)
       ba <- unsafeFreezeByteArray mba
