@@ -47,6 +47,7 @@ module Database.LSMTree.Internal (
   , WriteBufferAlloc (..)
   , NumEntries (..)
   , BloomFilterAlloc (..)
+  , defaultBloomFilterAlloc
   , DiskCachePolicy (..)
     -- * Exported for cabal-docspec
   , MergePolicyForLevel (..)
@@ -1303,9 +1304,11 @@ defaultTableConfig =
       { confMergePolicy      = MergePolicyLazyLevelling
       , confSizeRatio        = Four
       , confWriteBufferAlloc = AllocNumEntries (NumEntries 20_000)
-      , confBloomFilterAlloc = AllocFixed 10
+      , confBloomFilterAlloc = defaultBloomFilterAlloc
       , confDiskCachePolicy  = DiskCacheAll
       }
+
+
 
 data MergePolicy =
     -- | Use tiering on intermediate levels, and levelling on the last level.
@@ -1402,6 +1405,9 @@ instance NFData BloomFilterAlloc where
 -- | TODO: this should be removed once we have proper snapshotting with proper
 -- persistence of the config to disk.
 deriving stock instance Read BloomFilterAlloc
+
+defaultBloomFilterAlloc :: BloomFilterAlloc
+defaultBloomFilterAlloc = AllocFixed 10
 
 bloomFilterAllocForLevel :: BloomFilterAlloc -> LevelNo -> RunBloomFilterAlloc
 bloomFilterAllocForLevel (AllocFixed n) _        = RunAllocFixed n
