@@ -340,6 +340,7 @@ test-suite lsm-tree-test
     Test.Database.LSMTree.Internal.Run
     Test.Database.LSMTree.Internal.RunAcc
     Test.Database.LSMTree.Internal.RunBuilder
+    Test.Database.LSMTree.Internal.RunReader
     Test.Database.LSMTree.Internal.RunReaders
     Test.Database.LSMTree.Internal.Serialise
     Test.Database.LSMTree.Internal.Serialise.Class
@@ -371,9 +372,9 @@ test-suite lsm-tree-test
     , directory
     , filepath
     , fs-api
-    , fs-sim
-    , io-classes
-    , io-sim
+    , fs-sim                   ^>=0.3
+    , io-classes               ^>=1.5
+    , io-sim                   ^>=1.5
     , lsm-tree
     , lsm-tree:blockio-api
     , lsm-tree:blockio-sim

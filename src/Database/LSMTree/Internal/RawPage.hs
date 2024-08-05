@@ -1,6 +1,7 @@
 {-# LANGUAGE BangPatterns   #-}
 {-# LANGUAGE DeriveFunctor  #-}
 {-# LANGUAGE NamedFieldPuns #-}
+
 module Database.LSMTree.Internal.RawPage (
     RawPage (..),
     emptyRawPage,
@@ -12,8 +13,10 @@ module Database.LSMTree.Internal.RawPage (
     rawPageLookup,
     RawPageLookup(..),
     rawPageOverflowPages,
+    rawPageFindKey,
     rawPageIndex,
     RawPageIndex(..),
+    getRawPageIndexKey,
     -- * Test and debug
     rawPageKeyOffsets,
     rawPageValueOffsets,
@@ -133,13 +136,21 @@ data RawPageLookup entry =
      | LookupEntryOverflow !entry !Word32
   deriving stock (Eq, Functor, Show)
 
+-- |
+-- __Time:__ \( \mathcal{O}\left( \log_2 n \right) \)
+-- where \( n \) is the number of entries in the 'RawPage'.
+--
+-- Return the 'Entry' corresponding to the supplied 'SerialisedKey' if it exists
+-- within the 'RawPage'.
 rawPageLookup
     :: RawPage
     -> SerialisedKey
     -> RawPageLookup (Entry SerialisedValue BlobSpan)
 rawPageLookup !page !key
   | dirNumKeys == 1 = lookup1
-  | otherwise       = bisect 0 (fromIntegral dirNumKeys)
+  | otherwise       = case bisectPageToKey (fromIntegral dirNumKeys) page key of
+    KeyWasFoundAt i -> LookupEntry $ rawPageEntryAt page i
+    _               -> LookupEntryNotPresent
   where
     !dirNumKeys = rawPageNumKeys page
 
@@ -153,26 +164,71 @@ rawPageLookup !page !key
       | otherwise
       = LookupEntryNotPresent
 
-    -- when to switch to linear scan
-    -- this a tuning knob
-    -- can be set to zero.
-    threshold = 3
+-- |
+-- __Time:__ \( \mathcal{O}\left( \log_2 n \right) \)
+-- where \( n \) is the number of entries in the 'RawPage'.
+--
+-- Return the least entry number in the 'RawPage' (if it exists)
+-- which is greater than or equal to the supplied 'SerialisedKey'.
+--
+-- The following law always holds \( \forall \mathtt{key} \mathtt{page} \):
+--
+--   * maybe True (key <=) (getRawPageIndexKey . rawPageIndex page . id   =<< rawPageFindKey page key)
+--
+--   * maybe True (key > ) (getRawPageIndexKey . rawPageIndex page . pred =<< rawPageFindKey page key)
+--
+--   * maybe (maximum (rawPageKeys page) < key) (rawPageFindKey page key)
+rawPageFindKey
+    :: RawPage
+    -> SerialisedKey
+    -> Maybe Word16  -- ^ entry number of first entry greater or equal to the key
+rawPageFindKey !page !key
+  | dirNumKeys == 1 = lookup1
+  | otherwise       = case bisectPageToKey (fromIntegral dirNumKeys) page key of
+    KeyNotFoundExceedsPage   -> Nothing
+    KeyNotFoundNearestIsAt i -> Just $ fromIntegral i
+    KeyWasFoundAt          i -> Just $ fromIntegral i
 
-    bisect :: Int -> Int -> RawPageLookup (Entry SerialisedValue BlobSpan)
-    bisect !i !j
-        | j - i < threshold = linear i j
-        | otherwise = case compare key (rawPageKeyAt page k) of
-            EQ -> LookupEntry (rawPageEntryAt page k)
-            GT -> bisect (k + 1) j
-            LT -> bisect i k
-      where
-        k = i + div2 (j - i)
+  where
+    !dirNumKeys = rawPageNumKeys page
 
-    linear :: Int -> Int -> RawPageLookup (Entry SerialisedValue BlobSpan)
-    linear !i !j
-        | i >= j                     = LookupEntryNotPresent
-        | key == rawPageKeyAt page i = LookupEntry (rawPageEntryAt page i)
-        | otherwise                  = linear (i + 1) j
+    lookup1
+      | key <= rawPageKeyAt page 0 = Just 0
+      | otherwise                  = Nothing
+
+-- | This data-type facilitates the code reuse of 'bisectPageToKey' between the
+-- and 'rawPageLookup' and 'rawPageFindKey'.
+data BinarySearchResult
+  = KeyNotFoundExceedsPage
+  | KeyNotFoundNearestIsAt {-# UNPACK #-} !Int
+  | KeyWasFoundAt {-# UNPACK #-} !Int
+
+-- | Binary search procedure shared between 'rawPageLookup' and 'rawPageFindKey'.
+{-# INLINE bisectPageToKey #-}
+bisectPageToKey
+  :: Int
+  -> RawPage
+  -> SerialisedKey
+  -> BinarySearchResult
+bisectPageToKey !numKeys !page !key = go 0 numKeys
+  where
+    -- Binary search for within the range [i, j)
+    -- for the index k corresponding to key.
+    --
+    -- If k > key, search [ k + 1, j )
+    -- If k < key, search [     i, j )
+    go :: Int -> Int -> BinarySearchResult
+    go !i !j
+      | i >= j =
+        if i == numKeys
+        then KeyNotFoundExceedsPage
+        else KeyNotFoundNearestIsAt j
+      | otherwise =
+        let !k = i + div2 (j - i)
+        in  case key `compare` rawPageKeyAt page k of
+          GT -> go (k + 1) j
+          EQ -> KeyWasFoundAt k
+          LT -> go i k
 
 data RawPageIndex entry =
        IndexNotPresent
@@ -185,6 +241,18 @@ data RawPageIndex entry =
        -- The caller can copy the full serialised pages themselves.
      | IndexEntryOverflow !SerialisedKey !entry !Word32
   deriving stock (Eq, Functor, Show)
+
+-- |
+-- __Time:__ \( \mathcal{O}\left( 1 \right) \)
+--
+-- Conveniently access the 'SerialisedKey' of a 'RawPageIndex'.
+{-# INLINE getRawPageIndexKey #-}
+getRawPageIndexKey :: RawPageIndex e -> Maybe SerialisedKey
+getRawPageIndexKey = \case
+  IndexEntry k _ -> Just k
+  IndexEntryOverflow k _ _ -> Just k
+  IndexNotPresent -> Nothing
+
 
 {-# INLINE rawPageIndex #-}
 rawPageIndex
@@ -210,6 +278,8 @@ rawPageIndex !page !ix
 -- | for non-single key page case
 rawPageEntryAt :: RawPage -> Int -> Entry SerialisedValue BlobSpan
 rawPageEntryAt page i =
+    assert (i < fromIntegral (rawPageNumKeys page)) $
+    assert (rawPageNumKeys page > 1) $
     case rawPageOpAt page i of
       0 -> if rawPageHasBlobSpanAt page i == 0
            then Insert (rawPageValueAt page i)

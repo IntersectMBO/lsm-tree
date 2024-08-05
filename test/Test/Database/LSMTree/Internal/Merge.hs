@@ -12,6 +12,7 @@ import           Database.LSMTree.Extras.Generators (KeyForIndexCompact,
                      TypedWriteBuffer (..))
 import qualified Database.LSMTree.Internal.Entry as Entry
 import qualified Database.LSMTree.Internal.Merge as Merge
+import           Database.LSMTree.Internal.PageAcc (entryWouldFitInPage)
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..),
                      pathsForRunFiles)
 import qualified Database.LSMTree.Internal.Run as Run
@@ -26,11 +27,10 @@ import qualified System.FS.BlockIO.API as FS
 import qualified System.FS.BlockIO.Sim as FsSim
 import qualified System.FS.Sim.Error as FsSim
 import qualified System.FS.Sim.MockFS as FsSim
-import           Test.Database.LSMTree.Internal.Run (isLargeKOp, readKOps)
+import           Test.Database.LSMTree.Internal.RunReader (readKOps)
 import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
-
 
 tests :: TestTree
 tests = testGroup "Test.Database.LSMTree.Internal.Merge"
@@ -78,8 +78,8 @@ prop_MergeDistributes fs hbio level stepSize (fmap unTypedWriteBuffer -> SmallLi
     rhsKOpsFile <- FS.hGetAll fs (Run.runKOpsFile rhs)
     rhsBlobFile <- FS.hGetAll fs (Run.runBlobFile rhs)
 
-    lhsKOps <- readKOps fs hbio lhs
-    rhsKOps <- readKOps fs hbio rhs
+    lhsKOps <- readKOps fs hbio Nothing lhs
+    rhsKOps <- readKOps fs hbio Nothing rhs
 
     -- cleanup
     traverse_ Run.removeReference runs
@@ -110,10 +110,11 @@ prop_MergeDistributes fs hbio level stepSize (fmap unTypedWriteBuffer -> SmallLi
 
     stats = tabulate "value size" (map (showPowersOf10 . sizeofValue) vals)
           . tabulate "entry type" (map (takeWhile (/= ' ') . show . snd) kops)
-          . label (if any isLargeKOp kops then "has large k/op" else "no large k/op")
+          . label (if any isLarge kops then "has large k/op" else "no large k/op")
           . label ("number of runs: " <> showPowersOf 2 (length wbs))
     kops = foldMap WB.toList wbs
     vals = concatMap (bifoldMap pure mempty . snd) kops
+    isLarge = uncurry entryWouldFitInPage
 
 -- | After merging for a few steps, we can prematurely abort the merge, which
 -- should clean up properly.

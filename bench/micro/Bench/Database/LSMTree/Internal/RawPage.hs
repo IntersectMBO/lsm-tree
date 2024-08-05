@@ -23,11 +23,22 @@ import           Test.QuickCheck.Random (mkQCGen)
 
 benchmarks :: Benchmark
 benchmarks = rawpage `deepseq` bgroup "Bench.Database.LSMTree.Internal.RawPage"
-    [ bench "missing" $ whnf (rawPageLookup rawpage) missing
-    , bench "existing-head" $ whnf (rawPageLookup rawpage) existingHead
-    , bench "existing-last" $ whnf (rawPageLookup rawpage) existingLast
+    [ bRawPageFindKey
+    , bRawPageLookup
     ]
   where
+    bRawPageFindKey = bgroup "rawPageFindKey"
+      [ bench "missing"       $ whnf (rawPageFindKey rawpage) missing
+      , bench "existing-head" $ whnf (rawPageFindKey rawpage) existingHead
+      , bench "existing-last" $ whnf (rawPageFindKey rawpage) existingLast
+      ]
+
+    bRawPageLookup = bgroup "rawPageLookup"
+      [ bench "missing"       $ whnf (rawPageLookup rawpage) missing
+      , bench "existing-head" $ whnf (rawPageLookup rawpage) existingHead
+      , bench "existing-last" $ whnf (rawPageLookup rawpage) existingLast
+      ]
+
     kops :: [(Key, Operation)]
     kops = unGen genPage (mkQCGen 42) 200
       where
