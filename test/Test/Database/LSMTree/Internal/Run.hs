@@ -51,9 +51,6 @@ import qualified Database.LSMTree.Internal.WriteBuffer as WB
 
 import qualified FormatPage as Proto
 
-import           Test.Database.LSMTree.Internal.IndexCompact ()
-import           Test.Util.FS (withTempIOHasBlockIO)
-
 tests :: TestTree
 tests = testGroup "Database.LSMTree.Internal.Run"
     [ testGroup "Write buffer to disk"
@@ -76,7 +73,7 @@ tests = testGroup "Database.LSMTree.Internal.Run"
               (mkVal ("test-value-" <> BS.concat (replicate 500 "0123456789")))
               Nothing
       , testProperty "prop_WriteAndRead" $ \wb ->
-          ioPropertyWithRealFS $ \hfs hbio ->
+          ioPropertyWithMockFS $ \hfs hbio ->
             prop_WriteAndRead hfs hbio wb
       , testProperty "prop_WriteAndOpen" $ \wb ->
           ioPropertyWithMockFS $ \hfs hbio ->
@@ -86,7 +83,10 @@ tests = testGroup "Database.LSMTree.Internal.Run"
   where
     withSessionDir = Temp.withSystemTempDirectory "session-run"
 
-    -- TODO: Also test file system errors.
+    ioPropertyWithMockFS ::
+         Testable p
+      => (FS.HasFS IO FsSim.HandleMock -> FS.HasBlockIO IO FsSim.HandleMock -> IO p)
+      -> Property
     ioPropertyWithMockFS prop = ioProperty $ do
         (res, mockFS) <-
           FsSim.runSimErrorFS FsSim.empty FsSim.emptyErrors $ \_ fs -> do
@@ -95,8 +95,6 @@ tests = testGroup "Database.LSMTree.Internal.Run"
         return $ res
             .&&. counterexample "open handles"
                    (FsSim.numOpenHandles mockFS === 0)
-
-    ioPropertyWithRealFS = ioProperty . withTempIOHasBlockIO "session-run"
 
     mkKey = SerialisedKey . RB.fromByteString
     mkVal = SerialisedValue . RB.fromByteString

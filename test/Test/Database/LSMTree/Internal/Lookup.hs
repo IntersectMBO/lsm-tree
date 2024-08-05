@@ -73,11 +73,11 @@ tests :: TestTree
 tests = testGroup "Test.Database.LSMTree.Internal.Lookup" [
       testGroup "models" [
           testProperty "prop_bloomQueriesModel" $
-            forAllShrink arbitrary shrink prop_bloomQueriesModel
+            prop_bloomQueriesModel
         , testProperty "prop_indexSearchesModel" $
-            forAllShrink arbitrary shrink prop_indexSearchesModel
+            prop_indexSearchesModel
         , testProperty "prop_prepLookupsModel" $
-            forAllShrink arbitrary shrink prop_prepLookupsModel
+            prop_prepLookupsModel
         , testProperty "input distribution" $ \dats ->
             tabulateInMemLookupDataN (getSmallList dats) True
         ]
@@ -306,6 +306,7 @@ prop_roundtripFromWriteBufferLookupIO dats =
     FS.close hasBlockIO
     -- TODO: we don't compare blobs, because we haven't implemented blob
     -- retrieval yet.
+
     pure $ opaqueifyBlobs model === opaqueifyBlobs real
   where
     mkRuns hasFS hasBlockIO =
@@ -451,6 +452,7 @@ tabulateInMemLookupData dat run =
       . tabulateNumKeyEntryPairs
       . tabulateNumPages
       . tabulateNumLookups
+      . tabulateEntryType
   where
     InMemLookupData{runData, lookups} = dat
     tabulateKeySizes = tabulate "Size of key in run" [showPowersOf10 $ sizeofKey k | k <- Map.keys runData ]
@@ -458,6 +460,7 @@ tabulateInMemLookupData dat run =
     tabulateNumKeyEntryPairs = tabulate "Number of key-entry pairs" [showPowersOf10 (Map.size runData) ]
     tabulateNumPages = tabulate "Number of pages" [showPowersOf10 (Map.size ps) | let (ps,_,_) = run]
     tabulateNumLookups = tabulate "Number of lookups" [showPowersOf10 (length lookups)]
+    tabulateEntryType = tabulate "Entry type" (map (takeWhile (/= ' ') . show) (Map.elems runData))
 
 {-------------------------------------------------------------------------------
   Arbitrary

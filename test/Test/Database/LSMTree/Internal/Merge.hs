@@ -23,26 +23,36 @@ import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import qualified System.FS.API as FS
 import qualified System.FS.API.Lazy as FS
 import qualified System.FS.BlockIO.API as FS
+import qualified System.FS.BlockIO.Sim as FsSim
+import qualified System.FS.Sim.Error as FsSim
+import qualified System.FS.Sim.MockFS as FsSim
 import           Test.Database.LSMTree.Internal.Run (isLargeKOp, readKOps)
 import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
-import           Test.Util.FS (withTempIOHasBlockIO)
 
 tests :: TestTree
 tests = testGroup "Test.Database.LSMTree.Internal.Merge"
     [ testProperty "prop_MergeDistributes" $ \level stepSize wbs ->
-        ioPropertyWithRealFS $ \fs hbio ->
+        ioPropertyWithMockFS $ \fs hbio ->
           prop_MergeDistributes fs hbio level stepSize wbs
     , testProperty "prop_CloseMerge" $ \level stepSize wbs ->
-        ioPropertyWithRealFS $ \fs hbio ->
+        ioPropertyWithMockFS $ \fs hbio ->
           prop_CloseMerge fs hbio level stepSize wbs
     ]
   where
-    -- TODO: run using mock file system once simulation is merged:
-    -- https://github.com/input-output-hk/fs-sim/pull/48
-    -- (also check all handles closed, see Test.Database.LSMTree.Internal.Run)
-    ioPropertyWithRealFS = ioProperty . withTempIOHasBlockIO "session-merge"
+    ioPropertyWithMockFS ::
+         Testable p
+      => (FS.HasFS IO FsSim.HandleMock -> FS.HasBlockIO IO FsSim.HandleMock -> IO p)
+      -> Property
+    ioPropertyWithMockFS prop = ioProperty $ do
+        (res, mockFS) <-
+          FsSim.runSimErrorFS FsSim.empty FsSim.emptyErrors $ \_ fs -> do
+            hbio <- FsSim.fromHasFS fs
+            prop fs hbio
+        return $ res
+            .&&. counterexample "open handles"
+                   (FsSim.numOpenHandles mockFS === 0)
 
 -- | Creating multiple runs from write buffers and merging them leads to the
 -- same run as merging the write buffers and creating a run.
@@ -53,9 +63,9 @@ prop_MergeDistributes ::
      FS.HasBlockIO IO h ->
      Merge.Level ->
      StepSize ->
-     [TypedWriteBuffer KeyForIndexCompact SerialisedValue SerialisedBlob] ->
+     SmallList (TypedWriteBuffer KeyForIndexCompact SerialisedValue SerialisedBlob) ->
      IO Property
-prop_MergeDistributes fs hbio level stepSize (fmap unTypedWriteBuffer -> wbs) = do
+prop_MergeDistributes fs hbio level stepSize (fmap unTypedWriteBuffer -> SmallList wbs) = do
     runs <- sequenceA $ zipWith flush [10..] wbs
     let stepsNeeded = sum (map (Entry.unNumEntries . WB.numEntries) wbs)
     (stepsDone, lhs) <- mergeRuns fs hbio level 0 runs stepSize
@@ -98,8 +108,9 @@ prop_MergeDistributes fs hbio level stepSize (fmap unTypedWriteBuffer -> wbs) = 
                                   (RunFsPaths (FS.mkFsPath []) n)
 
     stats = tabulate "value size" (map (showPowersOf10 . sizeofValue) vals)
+          . tabulate "entry type" (map (takeWhile (/= ' ') . show . snd) kops)
           . label (if any isLargeKOp kops then "has large k/op" else "no large k/op")
-          . label ("number of runs: " <> showPowersOf10 (length wbs))
+          . label ("number of runs: " <> showPowersOf 2 (length wbs))
     kops = foldMap WB.toList wbs
     vals = concatMap (bifoldMap pure mempty . snd) kops
 
@@ -110,9 +121,9 @@ prop_CloseMerge ::
      FS.HasBlockIO IO h ->
      Merge.Level ->
      StepSize ->
-     [TypedWriteBuffer KeyForIndexCompact SerialisedValue SerialisedBlob] ->
+     SmallList (TypedWriteBuffer KeyForIndexCompact SerialisedValue SerialisedBlob) ->
      IO Property
-prop_CloseMerge fs hbio level (Positive stepSize) (fmap unTypedWriteBuffer -> wbs) = do
+prop_CloseMerge fs hbio level (Positive stepSize) (fmap unTypedWriteBuffer -> SmallList wbs) = do
     let path0 = RunFsPaths (FS.mkFsPath []) 0
     runs <- sequenceA $ zipWith flush [10..] wbs
     mergeToClose <- makeInProgressMerge path0 runs
@@ -180,3 +191,16 @@ mergeWriteBuffers level =
 
 mappendValues :: SerialisedValue -> SerialisedValue -> SerialisedValue
 mappendValues (SerialisedValue x) (SerialisedValue y) = SerialisedValue (x <> y)
+
+newtype SmallList a = SmallList { getSmallList :: [a] }
+  deriving stock (Show, Eq)
+  deriving newtype (Functor, Foldable)
+
+-- | Skewed towards short lists, but still generates longer ones.
+instance Arbitrary a => Arbitrary (SmallList a) where
+  arbitrary = do
+      ub <- sized $ \s -> chooseInt (5, s `div` 3)
+      n <- chooseInt (1, ub)
+      SmallList <$> vectorOf n arbitrary
+
+  shrink = fmap SmallList . shrink . getSmallList
