@@ -47,9 +47,9 @@ import           Database.LSMTree.Internal.Vector (mkPrimVector)
 data IndexOrdinaryAcc s = IndexOrdinaryAcc !(STRef s [SerialisedKey]) !(Baler s)
 
 -- | Creates a new, initially empty, index.
-new :: Int                       -- ^ Maximum chunk size in bytes
+new :: Int                       -- ^ Minimum chunk size in bytes
     -> ST s (IndexOrdinaryAcc s) -- ^ Construction of the index
-new maxChunkSize = IndexOrdinaryAcc <$> newSTRef [] <*> createBaler maxChunkSize
+new minChunkSize = IndexOrdinaryAcc <$> newSTRef [] <*> createBaler minChunkSize
 
 {-
     Appends a single key to the key list of an index and outputs newly available
