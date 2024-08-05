@@ -114,7 +114,9 @@ data GlobalOpts = GlobalOpts
     }
   deriving stock Show
 
-data SetupOpts = SetupOpts
+data SetupOpts = SetupOpts {
+    bloomFilterAlloc :: !LSM.BloomFilterAlloc
+  }
   deriving stock Show
 
 data RunOpts = RunOpts
@@ -137,8 +139,14 @@ data Cmd
     | CmdRun RunOpts
   deriving stock Show
 
-mkTableConfig :: GlobalOpts -> LSM.TableConfig -> LSM.TableConfig
-mkTableConfig GlobalOpts{diskCachePolicy} conf = conf {
+mkTableConfigSetup :: GlobalOpts -> SetupOpts -> LSM.TableConfig -> LSM.TableConfig
+mkTableConfigSetup GlobalOpts{diskCachePolicy} SetupOpts{bloomFilterAlloc} conf = conf {
+      LSM.confDiskCachePolicy = diskCachePolicy
+    , LSM.confBloomFilterAlloc = bloomFilterAlloc
+    }
+
+mkTableConfigRun :: GlobalOpts -> LSM.TableConfig -> LSM.TableConfig
+mkTableConfigRun GlobalOpts{diskCachePolicy} conf = conf {
       LSM.confDiskCachePolicy = diskCachePolicy
     }
 
@@ -172,6 +180,7 @@ cmdP = O.subparser $ mconcat
 
 setupOptsP :: O.Parser SetupOpts
 setupOptsP = pure SetupOpts
+    <*> O.option O.auto (O.long "bloom-filter-alloc" <> O.value LSM.defaultBloomFilterAlloc <> O.showDefault <> O.help "Bloom filter allocation method [AllocFixed n | AllocRequestFPR d]")
 
 runOptsP :: O.Parser RunOpts
 runOptsP = pure RunOpts
@@ -206,7 +215,7 @@ timed_ action = do
 
 -- https://input-output-hk.github.io/fs-sim
 doSetup :: GlobalOpts -> SetupOpts -> IO ()
-doSetup gopts _opts = do
+doSetup gopts opts = do
     let mountPoint :: FS.MountPoint
         mountPoint = FS.MountPoint (rootDir gopts)
 
@@ -219,7 +228,7 @@ doSetup gopts _opts = do
         LSM.mkSnapshotName "bench"
 
     LSM.withSession hasFS hasBlockIO (FS.mkFsPath []) $ \session -> do
-        tbh <- LSM.new @IO @K @V @B session (mkTableConfig gopts LSM.defaultTableConfig)
+        tbh <- LSM.new @IO @K @V @B session (mkTableConfigSetup gopts opts LSM.defaultTableConfig)
 
         forM_ [ 0 .. initialSize gopts ] $ \ (fromIntegral -> i) -> do
             -- TODO: this procedure simply inserts all the keys into initial lsm tree
@@ -389,7 +398,7 @@ doRun gopts opts = do
         -- reference version starts with empty (as it's not practical or
         -- necessary for testing to load the whole snapshot).
         tbl <- if check opts
-                 then LSM.new  @IO @K @V @B session (mkTableConfig gopts LSM.defaultTableConfig)
+                 then LSM.new  @IO @K @V @B session (mkTableConfigRun gopts LSM.defaultTableConfig)
                  else LSM.open @IO @K @V @B session (mkTableConfigOverride gopts) name
 
         -- In checking mode, compare each output against a pure reference.

@@ -42,6 +42,7 @@ module Database.LSMTree.Monoidal (
   , Internal.WriteBufferAlloc (..)
   , Internal.NumEntries (..)
   , Internal.BloomFilterAlloc (..)
+  , Internal.defaultBloomFilterAlloc
   , Internal.DiskCachePolicy (..)
   , withTable
   , new
