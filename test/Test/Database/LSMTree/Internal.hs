@@ -127,6 +127,7 @@ prop_interimRestoreSessionUniqueRunNames (Positive (Small n)) (NonNegative m) = 
         -- flushes and merges.
       , confWriteBufferAlloc = AllocNumEntries (NumEntries n)
       , confBloomFilterAlloc = AllocFixed 10
+      , confFencePointerIndex = CompactIndex
       , confDiskCachePolicy = DiskCacheNone
       }
 
@@ -172,6 +173,7 @@ prop_interimOpenTable dat = ioProperty $
         -- flushes and merges.
       , confWriteBufferAlloc = AllocNumEntries (NumEntries 3)
       , confBloomFilterAlloc = AllocFixed 10
+      , confFencePointerIndex = CompactIndex
       , confDiskCachePolicy = DiskCacheNone
       }
 

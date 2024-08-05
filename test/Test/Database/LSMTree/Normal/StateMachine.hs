@@ -227,23 +227,13 @@ instance Arbitrary M.TableConfig where
 instance Arbitrary R.TableConfig where
   arbitrary :: Gen R.TableConfig
   arbitrary = pure $ R.TableConfig {
-        R.confMergePolicy      = R.MergePolicyLazyLevelling
-      , R.confSizeRatio        = R.Four
-      , R.confWriteBufferAlloc = R.AllocNumEntries (R.NumEntries 30)
-      , R.confBloomFilterAlloc = R.AllocFixed 10
-      , R.confDiskCachePolicy  = R.DiskCacheNone
+        R.confMergePolicy       = R.MergePolicyLazyLevelling
+      , R.confSizeRatio         = R.Four
+      , R.confWriteBufferAlloc  = R.AllocNumEntries (R.NumEntries 30)
+      , R.confBloomFilterAlloc  = R.AllocFixed 10
+      , R.confFencePointerIndex = R.CompactIndex
+      , R.confDiskCachePolicy   = R.DiskCacheNone
       }
-
-instance Eq R.TableConfig where
-  R.TableConfig pol1 size1 wbAlloc1 bfAlloc1 cache1
-    == R.TableConfig pol2 size2 wbAlloc2 bfAlloc2 cache2
-    = and [
-        pol1 == pol2
-      , size1 == size2
-      , wbAlloc1 == wbAlloc2
-      , bfAlloc1 == bfAlloc2
-      , cache1 == cache2
-      ]
 
 {-------------------------------------------------------------------------------
   Key and value types

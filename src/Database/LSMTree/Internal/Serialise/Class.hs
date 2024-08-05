@@ -43,18 +43,10 @@ import           Numeric (showInt)
 -- [Ordering-preserving] @x \`'compare'\` y == 'serialiseKey' x \`'compare'\` 'serialiseKey' y@
 --
 -- Raw bytes are lexicographically ordered, so in particular this means that
--- values should be serialised into big-endian formats.
--- This constraint mainly exists for range queries, where the range is specified
--- in terms of unserialised values, but the internal implementation works on the
--- serialised representation.
---
--- === IndexCompact constraints
---
--- When using the 'IndexCompact', additional constraints apply to the
--- serialisation function, so in that case instances should also satisfy the
--- following:
---
--- [Minimal size] @'sizeofRawBytes' >= 8@
+-- values should be serialised into big-endian formats. This constraint mainly
+-- exists for range queries, where the range is specified in terms of
+-- unserialised values, but the internal implementation works on the serialised
+-- representation.
 class SerialiseKey k where
   serialiseKey :: k -> RawBytes
   -- TODO: 'deserialiseKey' is only strictly necessary for range queries.
