@@ -63,9 +63,9 @@ prop_MergeDistributes ::
      FS.HasBlockIO IO h ->
      Merge.Level ->
      StepSize ->
-     [TypedWriteBuffer KeyForIndexCompact SerialisedValue SerialisedBlob] ->
+     SmallList (TypedWriteBuffer KeyForIndexCompact SerialisedValue SerialisedBlob) ->
      IO Property
-prop_MergeDistributes fs hbio level stepSize (fmap unTypedWriteBuffer -> wbs) = do
+prop_MergeDistributes fs hbio level stepSize (fmap unTypedWriteBuffer -> SmallList wbs) = do
     runs <- sequenceA $ zipWith flush [10..] wbs
     let stepsNeeded = sum (map (Entry.unNumEntries . WB.numEntries) wbs)
     (stepsDone, lhs) <- mergeRuns fs hbio level 0 runs stepSize
@@ -110,7 +110,7 @@ prop_MergeDistributes fs hbio level stepSize (fmap unTypedWriteBuffer -> wbs) = 
     stats = tabulate "value size" (map (showPowersOf10 . sizeofValue) vals)
           . tabulate "entry type" (map (takeWhile (/= ' ') . show . snd) kops)
           . label (if any isLargeKOp kops then "has large k/op" else "no large k/op")
-          . label ("number of runs: " <> showPowersOf10 (length wbs))
+          . label ("number of runs: " <> showPowersOf 2 (length wbs))
     kops = foldMap WB.toList wbs
     vals = concatMap (bifoldMap pure mempty . snd) kops
 
@@ -121,9 +121,9 @@ prop_CloseMerge ::
      FS.HasBlockIO IO h ->
      Merge.Level ->
      StepSize ->
-     [TypedWriteBuffer KeyForIndexCompact SerialisedValue SerialisedBlob] ->
+     SmallList (TypedWriteBuffer KeyForIndexCompact SerialisedValue SerialisedBlob) ->
      IO Property
-prop_CloseMerge fs hbio level (Positive stepSize) (fmap unTypedWriteBuffer -> wbs) = do
+prop_CloseMerge fs hbio level (Positive stepSize) (fmap unTypedWriteBuffer -> SmallList wbs) = do
     let path0 = RunFsPaths (FS.mkFsPath []) 0
     runs <- sequenceA $ zipWith flush [10..] wbs
     mergeToClose <- makeInProgressMerge path0 runs
@@ -191,3 +191,16 @@ mergeWriteBuffers level =
 
 mappendValues :: SerialisedValue -> SerialisedValue -> SerialisedValue
 mappendValues (SerialisedValue x) (SerialisedValue y) = SerialisedValue (x <> y)
+
+newtype SmallList a = SmallList { getSmallList :: [a] }
+  deriving stock (Show, Eq)
+  deriving newtype (Functor, Foldable)
+
+-- | Skewed towards short lists, but still generates longer ones.
+instance Arbitrary a => Arbitrary (SmallList a) where
+  arbitrary = do
+      ub <- sized $ \s -> chooseInt (5, s `div` 3)
+      n <- chooseInt (1, ub)
+      SmallList <$> vectorOf n arbitrary
+
+  shrink = fmap SmallList . shrink . getSmallList
