@@ -1,6 +1,7 @@
 module Database.LSMTree.Internal.RunReaders (
     Readers (..)
   , new
+  , newAtOffset
   , close
   , peekKey
   , HasMore (..)
@@ -89,7 +90,25 @@ new fs hbio runs = do
       readersNext <- newIORef readCtx
       return Readers {..}
   where
-    fromRun n run = nextReadCtx fs hbio n =<< Reader.new fs hbio run
+    fromRun n run = nextReadCtx fs hbio n =<< Reader.new fs hbio Nothing run
+
+-- | On equal keys, elements from runs earlier in the list are yielded first.
+-- This means that the list of runs should be sorted from new to old.
+-- TODO: merge with 'new'?
+newAtOffset ::
+     HasFS IO h
+  -> HasBlockIO IO h
+  -> SerialisedKey  -- ^ offset
+  -> [Run (FS.Handle h)]
+  -> IO (Maybe (Readers (FS.Handle h)))
+newAtOffset fs hbio offset runs = do
+    readers <- zipWithM (fromRun . ReaderNumber) [1..] runs
+    (readersHeap, firstReadCtx) <- Heap.newMutableHeap (catMaybes readers)
+    for firstReadCtx $ \readCtx -> do
+      readersNext <- newIORef readCtx
+      return Readers {..}
+  where
+    fromRun n run = nextReadCtx fs hbio n =<< Reader.new fs hbio (Just offset) run
 
 -- | Only call when aborting before all readers have been drained.
 close ::

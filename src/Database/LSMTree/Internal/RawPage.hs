@@ -12,6 +12,7 @@ module Database.LSMTree.Internal.RawPage (
     rawPageLookup,
     RawPageLookup(..),
     rawPageOverflowPages,
+    rawPageFindKey,
     rawPageIndex,
     RawPageIndex(..),
     -- * Test and debug
@@ -173,6 +174,45 @@ rawPageLookup !page !key
         | i >= j                     = LookupEntryNotPresent
         | key == rawPageKeyAt page i = LookupEntry (rawPageEntryAt page i)
         | otherwise                  = linear (i + 1) j
+
+rawPageFindKey
+    :: RawPage
+    -> SerialisedKey
+    -> Maybe Word16  -- ^ entry number of first entry greater or equal to the key
+rawPageFindKey !page !key
+  | dirNumKeys == 1 = lookup1
+  | otherwise       = bisect 0 (fromIntegral dirNumKeys)
+  where
+    !dirNumKeys = rawPageNumKeys page
+
+    lookup1
+      | key >= rawPageKeyAt page 0 = Just 0
+      | otherwise                  = Nothing
+
+    -- when to switch to linear scan
+    -- this a tuning knob
+    -- can be set to zero.
+    threshold = 3
+
+    bisect :: Int -> Int -> Maybe Word16
+    bisect !i !j
+        | j - i < threshold = linear i j
+        | otherwise = case compare key (rawPageKeyAt page k) of
+            GT -> bisect (k + 1) j
+            EQ -> Just (fromIntegral k)
+            LT -> bisect i k
+      where
+        k = i + div2 (j - i)
+
+    -- k in [i, j)
+    -- k >= key
+    -- k-1 < key
+    linear :: Int -> Int -> Maybe Word16
+    linear !i !j
+        | i >= j                     = Nothing
+        | key <= rawPageKeyAt page i = Just (fromIntegral i)
+        | otherwise                  = linear (i + 1) j
+
 
 data RawPageIndex entry =
        IndexNotPresent
