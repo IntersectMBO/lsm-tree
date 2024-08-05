@@ -15,6 +15,7 @@ module Database.LSMTree.Internal.RawPage (
     rawPageFindKey,
     rawPageIndex,
     RawPageIndex(..),
+    getRawPageIndexKey,
     -- * Test and debug
     rawPageKeyOffsets,
     rawPageValueOffsets,
@@ -175,6 +176,16 @@ rawPageLookup !page !key
         | key == rawPageKeyAt page i = LookupEntry (rawPageEntryAt page i)
         | otherwise                  = linear (i + 1) j
 
+{- |
+__Time:__ \( \mathcal{O}\left( \log_2 n \right) \)
+where \( n \) is the number of entries in the 'RawPage'.
+
+Return the least entry number in the 'RawPage' (if it exists)
+which is greater than or equal to the suppled 'SerialisedKey'.
+
+The following law always holds \( \forall \mathtt{key} \mathtt{page} \):
+>>> maybe True (key <=) (getRawPageIndexKey . rawPageIndex page =<< rawPageFindKey page key)
+-}
 rawPageFindKey
     :: RawPage
     -> SerialisedKey
@@ -186,7 +197,7 @@ rawPageFindKey !page !key
     !dirNumKeys = rawPageNumKeys page
 
     lookup1
-      | key >= rawPageKeyAt page 0 = Just 0
+      | key <= rawPageKeyAt page 0 = Just 0
       | otherwise                  = Nothing
 
     -- when to switch to linear scan
@@ -225,6 +236,18 @@ data RawPageIndex entry =
        -- The caller can copy the full serialised pages themselves.
      | IndexEntryOverflow !SerialisedKey !entry !Word32
   deriving stock (Eq, Functor, Show)
+
+
+{- |
+Conveniently access the the 'SerialisedKey' of a 'RawPageIndex'.
+-}
+{-# INLINE getRawPageIndexKey #-}
+getRawPageIndexKey :: RawPageIndex e -> Maybe SerialisedKey
+getRawPageIndexKey = \case
+  IndexEntry k _ -> Just k
+  IndexEntryOverflow k _ _ -> Just k
+  IndexNotPresent -> Nothing
+
 
 {-# INLINE rawPageIndex #-}
 rawPageIndex

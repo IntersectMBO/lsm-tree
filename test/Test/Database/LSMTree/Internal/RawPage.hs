@@ -187,6 +187,7 @@ tests = testGroup "Database.LSMTree.Internal.RawPage"
     , testProperty "entry" prop_single_entry
     , testProperty "rawPageOverflowPages" prop_rawPageOverflowPages
     , testProperty "from/to reference impl" prop_fromToReferenceImpl
+    , testProperty "∀ key page. maybe True (key <=) (getRawPageIndexKey . rawPageIndex page =<< rawPageFindKey page key)" prop_findKey_index_law
     ]
 
 prop_toRawPage :: Ref.PageContentFits -> Property
@@ -294,7 +295,7 @@ prop_big_insert k mblobref =
   where
     v       = Ref.Value (BS.replicate 5000 42)
     op      = Ref.Insert v mblobref
-    kops    = [(k, op)]
+    kops    = [ (k, op)]
     rawpage = fst $ Ref.toRawPage (Ref.PageContentFits kops)
 
 prop_single_entry :: Ref.PageContentSingle -> Property
@@ -314,3 +315,26 @@ prop_single_entry (Ref.PageContentSingle k op) =
   where
     (rawpage, overflowPages) = Ref.toRawPage (Ref.PageContentFits [(k, op)])
 
+prop_findKey_index_law :: Ref.Key -> Ref.PageContentOrdered -> Property
+prop_findKey_index_law k (Ref.PageContentOrdered kops) =
+    let found = rawPageFindKey rawpage key
+    in  case found of
+          Nothing -> property Discard
+          Just loc ->
+            let val = rawPageIndex rawpage loc
+                res = Just key <= getRawPageIndexKey val
+                msg = unwords
+                  [ "At entry№"
+                  , show loc
+                  , "found next {"
+                  , show key
+                  , "} > {"
+                  , show val
+                  , "} of page index "
+                  , show loc
+                  ]
+            in  counterexample msg res
+
+  where
+    key = Ref.toSerialisedKey k
+    rawpage = fst $ Ref.toRawPage (Ref.PageContentFits kops)
