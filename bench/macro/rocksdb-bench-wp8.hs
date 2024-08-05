@@ -1,7 +1,6 @@
-{-# LANGUAGE DuplicateRecordFields #-}
-{-# LANGUAGE NoFieldSelectors      #-}
-{-# LANGUAGE OverloadedRecordDot   #-}
-{-# LANGUAGE OverloadedStrings     #-}
+{-# LANGUAGE DuplicateRecordFields    #-}
+{-# LANGUAGE NondecreasingIndentation #-}
+{-# LANGUAGE OverloadedStrings        #-}
 
 {- Benchmark requirements:
 
@@ -217,13 +216,13 @@ doSetup gopts opts = do
 doSetup' :: GlobalOpts -> SetupOpts -> IO ()
 doSetup' gopts _opts =
     rocksDbWithOptions $ \options ->
-    RocksDB.withRocksDB options gopts.rootDir $ \db ->
+    RocksDB.withRocksDB options (rootDir gopts) $ \db ->
     rocksDbWithWriteOptions $ \wopts ->
-    forM_ (chunksOf 256 [ 0 .. gopts.initialSize ]) $ \chunk ->
+    forM_ (chunksOf 256 [ 0 .. initialSize gopts ]) $ \chunk ->
     RocksDB.withWriteBatch $ \batch -> do
         forM_ chunk $ \ (fromIntegral -> i) -> do
-            when (mod i (fromIntegral (div gopts.initialSize 50)) == 0) $ do
-                printf "%3.0f%%\n" (100 * fromIntegral i / fromIntegral gopts.initialSize :: Double)
+            when (mod i (fromIntegral (div (initialSize gopts) 50)) == 0) $ do
+                printf "%3.0f%%\n" (100 * fromIntegral i / fromIntegral (initialSize gopts) :: Double)
             let k = makeKey i
             let v = makeValue k
             RocksDB.writeBatchPut batch k v
@@ -242,17 +241,17 @@ doDryRun gopts opts = do
 doDryRun' :: GlobalOpts -> RunOpts -> IO ()
 doDryRun' gopts opts = do
     keysRef <- newIORef $
-        if opts.check
-        then IS.fromList [ 0 .. gopts.initialSize - 1 ]
+        if (check opts)
+        then IS.fromList [ 0 .. initialSize gopts - 1 ]
         else IS.empty
     duplicateRef <- newIORef (0 :: Int)
 
-    void $ forFoldM_ initGen [ 0 .. opts.batchCount - 1 ] $ \b g -> do
+    void $ forFoldM_ initGen [ 0 .. batchCount opts - 1 ] $ \b g -> do
         let lookups :: [Word64]
             inserts :: [Word64]
-            (!nextG, lookups, inserts) = generateBatch gopts.initialSize opts.batchSize g b
+            (!nextG, lookups, inserts) = generateBatch (initialSize gopts) (batchSize opts) g b
 
-        when opts.check $ do
+        when (check opts) $ do
             keys <- readIORef keysRef
             let new  = IS.fromList $ map fromIntegral lookups
             let diff = IS.difference new keys
@@ -272,13 +271,13 @@ doDryRun' gopts opts = do
 
         return nextG
 
-    when opts.check $ do
+    when (check opts) $ do
         duplicates <- readIORef duplicateRef
         printf "True duplicates: %d\n" duplicates
   where
     initGen = MCG.make
-        (fromIntegral $ gopts.initialSize + opts.batchSize * opts.batchCount)
-        opts.seed
+        (fromIntegral $ initialSize gopts + batchSize opts * batchCount opts)
+        (seed opts)
 
 -------------------------------------------------------------------------------
 -- Batch generation
@@ -318,32 +317,32 @@ generateBatch initialSize batchSize g b = (nextG, lookups, inserts)
 
 doRun :: GlobalOpts -> RunOpts -> IO ()
 doRun gopts opts = do
-    removePathForcibly $ gopts.rootDir ++ "_cp"
+    removePathForcibly $ rootDir gopts ++ "_cp"
     makeCheckpoint gopts
 
-    time <- timed_ $ doRun' gopts { rootDir = gopts.rootDir ++ "_cp" } opts
+    time <- timed_ $ doRun' gopts { rootDir = rootDir gopts ++ "_cp" } opts
     -- TODO: collect more statistic, save them in dry-run,
     -- TODO: make the results human comprehensible.
     printf "Proper run:            %7.03f sec\n" time
-    let ops = opts.batchCount * opts.batchSize
+    let ops = batchCount opts * batchSize opts
     printf "Operations per second: %7.01f ops/sec\n" (fromIntegral ops / time)
 
 makeCheckpoint :: GlobalOpts -> IO ()
 makeCheckpoint gopts =
     rocksDbWithOptions $ \options ->
-    RocksDB.withRocksDB options gopts.rootDir $ \db ->
-    RocksDB.checkpoint db $ gopts.rootDir ++ "_cp"
+    RocksDB.withRocksDB options (rootDir gopts) $ \db ->
+    RocksDB.checkpoint db $ rootDir gopts ++ "_cp"
 
 doRun' :: GlobalOpts -> RunOpts -> IO ()
 doRun' gopts opts =
     rocksDbWithOptions $ \options ->
-    RocksDB.withRocksDB options gopts.rootDir $ \db ->
+    RocksDB.withRocksDB options (rootDir gopts) $ \db ->
     rocksDbWithWriteOptions $ \wopts ->
     RocksDB.withReadOptions $ \ropts ->
-        void $ forFoldM_ initGen [ 0 .. opts.batchCount - 1 ] $ \b g -> do
+        void $ forFoldM_ initGen [ 0 .. batchCount opts - 1 ] $ \b g -> do
             let lookups :: [Word64]
                 inserts :: [Word64]
-                (!nextG, lookups, inserts) = generateBatch gopts.initialSize opts.batchSize g b
+                (!nextG, lookups, inserts) = generateBatch (initialSize gopts) (batchSize opts) g b
 
             -- lookups
             let ks = makeKey <$> lookups
@@ -357,7 +356,7 @@ doRun' gopts opts =
             vs <- evaluate (force vs')
 
             -- check that we get values we expect
-            when opts.check $ do
+            when (check opts) $ do
                 let expected = map (Just . makeValue) ks
                 when (vs /= expected) $ do
                     printf "Value mismatch in batch %d\n" b
@@ -379,8 +378,8 @@ doRun' gopts opts =
             return nextG
   where
     initGen = MCG.make
-        (fromIntegral $ gopts.initialSize + opts.batchSize * opts.batchCount)
-        opts.seed
+        (fromIntegral $ initialSize gopts + batchSize opts * batchCount opts)
+        (seed opts)
 
 -------------------------------------------------------------------------------
 -- main

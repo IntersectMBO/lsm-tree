@@ -19,14 +19,10 @@ import qualified Data.ByteString.Builder.Internal as BB
 import qualified Data.ByteString.Internal as BS.Internal
 import           Data.ByteString.Short (ShortByteString (SBS))
 import qualified Data.ByteString.Short.Internal as SBS
-import           Data.Primitive.ByteArray (ByteArray (..), copyByteArray,
-                     emptyByteArray, isByteArrayPinned, newPinnedByteArray,
-                     runByteArray, sizeofByteArray)
+import           Data.Primitive.ByteArray
 import           Database.LSMTree.Internal.Assertions (isValidSlice)
 import           Foreign.Ptr (minusPtr, plusPtr)
-import           GHC.Exts (Int (I#), byteArrayContents#, eqAddr#,
-                     mutableByteArrayContents#, plusAddr#, realWorld#,
-                     unsafeCoerce#, unsafeFreezeByteArray#)
+import           GHC.Exts
 import qualified GHC.ForeignPtr as Foreign
 import           GHC.Stack (HasCallStack)
 
@@ -55,20 +51,32 @@ tryGetByteArray :: BS.ByteString -> Either String (ByteArray, Int)
 tryGetByteArray (BS.Internal.BS (Foreign.ForeignPtr addr# contents) n) =
     case contents of
       Foreign.PlainPtr mba# ->
-        case mutableByteArrayContents# mba# `eqAddr#` addr# of
+        case mutableByteArrayContentsShim# mba# `eqAddr#` addr# of
           0# -> Left "non-zero offset into ByteArray"
           _  -> -- safe, ByteString's content is considered immutable
                 Right $ case unsafeFreezeByteArray# mba# realWorld# of
                   (# _, ba# #) -> (ByteArray ba#, n)
+      Foreign.MallocPtr {} ->
+        Left ("unsupported MallocPtr (length " <> show n <> ")")
+      Foreign.PlainForeignPtr {} ->
+        Left ("unsupported PlainForeignPtr (length " <> show n <> ")")
+#if __GLASGOW_HASKELL__ >= 902
       Foreign.FinalPtr | n == 0 ->
         -- We can also handle empty bytestrings ('BS.empty' uses 'FinalPtr').
         Right (emptyByteArray, 0)
       Foreign.FinalPtr ->
         Left ("unsupported FinalPtr (length "  <> show n <> ")")
-      Foreign.MallocPtr {} ->
-        Left ("unsupported MallocPtr (length " <> show n <> ")")
-      Foreign.PlainForeignPtr {} ->
-        Left ("unsupported PlainForeignPtr (length " <> show n <> ")")
+#endif
+
+-- | Copied from the @primitive@ package
+mutableByteArrayContentsShim# :: MutableByteArray# s -> Addr#
+{-# INLINE mutableByteArrayContentsShim# #-}
+mutableByteArrayContentsShim# x =
+#if __GLASGOW_HASKELL__ >= 902
+  mutableByteArrayContents# x
+#else
+  byteArrayContents# (unsafeCoerce# x)
+#endif
 
 -- | Copy of 'SBS.shortByteString', but with bounds (unchecked).
 --

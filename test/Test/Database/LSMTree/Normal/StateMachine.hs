@@ -60,7 +60,8 @@ import           Data.Kind (Type)
 import           Data.Maybe (catMaybes, fromJust)
 import           Data.Set (Set)
 import qualified Data.Set as Set
-import           Data.Typeable (Proxy (..), Typeable, cast, typeRep)
+import           Data.Typeable (Proxy (..), Typeable, cast, eqT,
+                     type (:~:) (Refl), typeRep)
 import qualified Data.Vector as V
 import           Data.Word (Word64)
 import qualified Database.LSMTree.Class.Normal as Class
@@ -317,7 +318,8 @@ instance ( Show (Class.TableConfig h)
   data instance Action (Lockstep (ModelState h)) a where
     -- Tables
     New :: C k v blob
-        => Class.TableConfig h
+        => {-# UNPACK #-} !(Proxy (k, v, blob))
+        -> Class.TableConfig h
         -> Act h (WrapTableHandle h IO k v blob)
     Close :: C k v blob
           => Var h (WrapTableHandle h IO k v blob)
@@ -382,8 +384,8 @@ instance ( Eq (Class.TableConfig h)
   x == y = go x y
     where
       go :: LockstepAction (ModelState h) a -> LockstepAction (ModelState h) a -> Bool
-      go (New conf1)                (New conf2) =
-          conf1 == conf2
+      go (New (Proxy :: Proxy kvb1) conf1) (New (Proxy :: Proxy kvb2) conf2) =
+          eqT @kvb1 @kvb2 == Just Refl && conf1 == conf2
       go (Close var1)               (Close var2) =
           Just var1 == cast var2
       go (Lookups ks1 var1)         (Lookups ks2 var2) =
@@ -510,7 +512,7 @@ instance ( Eq (Class.TableConfig h)
 
   usedVars :: LockstepAction (ModelState h) a -> [AnyGVar (ModelOp (ModelState h))]
   usedVars = \case
-      New _                           -> []
+      New _ _                         -> []
       Close tableVar                  -> [SomeGVar tableVar]
       Lookups _ tableVar              -> [SomeGVar tableVar]
       RangeLookup _ tableVar          -> [SomeGVar tableVar]
@@ -731,7 +733,7 @@ runModel ::
   -> LockstepAction (ModelState h) a
   -> Model.Model -> (Val h a, Model.Model)
 runModel lookUp = \case
-    New _cfg -> wrap MTableHandle .
+    New _ _cfg -> wrap MTableHandle .
       Model.runModelM (Model.new Model.TableConfig)
     Close tableVar -> wrap MUnit .
       Model.runModelM (Model.close (getTableHandle $ lookUp tableVar))
@@ -790,7 +792,7 @@ runIO action lookUp = ReaderT $ \(session, handler) ->
       -> LockstepAction (ModelState h) a
       -> IO (Realized IO a)
     aux session handler = \case
-        New cfg -> catchErr handler $
+        New _ cfg -> catchErr handler $
           WrapTableHandle <$> Class.new session cfg
         Close tableVar -> catchErr handler $
           Class.close (unwrapTableHandle $ lookUp' tableVar)
@@ -932,7 +934,7 @@ arbitraryActionWithVars _ findVars _st = QC.frequency $ concat [
 
     withoutVars :: [(Int, Gen (Any (LockstepAction (ModelState h))))]
     withoutVars = [
-          (5, Some . New @k @v @blob <$> QC.arbitrary)
+          (5, Some . New (Proxy :: Proxy (k, v, blob)) <$> QC.arbitrary)
         , (3, fmap Some $ Open @k @v @blob <$> genSnapshotName)
         , (1, fmap Some $ DeleteSnapshot <$> genSnapshotName)
         , (1, pure $ Some ListSnapshots)
@@ -1019,7 +1021,7 @@ shrinkActionWithVars ::
   -> LockstepAction (ModelState h) a
   -> [Any (LockstepAction (ModelState h))]
 shrinkActionWithVars _ _ = \case
-    New @k @v @blob conf -> [ Some $ New @k @v @blob conf' | conf' <- QC.shrink conf ]
+    New p conf -> [ Some $ New p conf' | conf' <- QC.shrink conf ]
     Inserts kins tableVar -> [ Some $ Inserts kins' tableVar | kins' <- QC.shrink kins ]
     Lookups ks tableVar -> [ Some $ Lookups ks' tableVar | ks' <- QC.shrink ks ]
     _ -> []
@@ -1080,7 +1082,7 @@ initStats = Stats {
     }
 
 updateStats ::
-     ( Show (Class.TableConfig h)
+     forall h a. ( Show (Class.TableConfig h)
      , Eq (Class.TableConfig h)
      , Arbitrary (Class.TableConfig h)
      , Typeable h
@@ -1102,7 +1104,7 @@ updateStats action result =
     -- === Tags
 
     updNewTableTypes stats = case action of
-      New @k @v @blob _ -> stats {
+      New (Proxy :: Proxy (k, v, blob)) _ -> stats {
           newTableTypes = Set.insert (show $ typeRep (Proxy @(k, v, blob))) (newTableTypes stats)
         }
       _ -> stats

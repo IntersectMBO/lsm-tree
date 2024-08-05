@@ -1,5 +1,3 @@
-{-# LANGUAGE NoFieldSelectors    #-}
-{-# LANGUAGE OverloadedRecordDot #-}
 module MCG (
     MCG,
     make,

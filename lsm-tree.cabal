@@ -12,7 +12,7 @@ category:           Database
 build-type:         Simple
 extra-doc-files:    CHANGELOG.md
 extra-source-files: README.md
-tested-with:        GHC ==9.2 || ==9.4 || ==9.6 || ==9.8
+tested-with:        GHC ==8.10 || ==9.2 || ==9.4 || ==9.6 || ==9.8
 
 source-repository head
   type:     git
@@ -34,7 +34,60 @@ common wno-x-partial
     ghc-options: -Wno-x-partial
 
 common language
-  default-language:   GHC2021
+  if impl(ghc >=9.2.1)
+    default-language: GHC2021
+
+  else
+    -- NOTE: FieldSelectors is not supported on ghc-8.10.7, so it is the only
+    -- language extension that is missing compared to GHC2021
+    default-extensions:
+      BangPatterns
+      BinaryLiterals
+      ConstrainedClassMethods
+      ConstraintKinds
+      DeriveDataTypeable
+      DeriveFoldable
+      DeriveFunctor
+      DeriveGeneric
+      DeriveLift
+      DeriveTraversable
+      DoAndIfThenElse
+      EmptyCase
+      EmptyDataDecls
+      EmptyDataDeriving
+      ExistentialQuantification
+      ExplicitForAll
+      FlexibleContexts
+      FlexibleInstances
+      ForeignFunctionInterface
+      GADTSyntax
+      GeneralisedNewtypeDeriving
+      HexFloatLiterals
+      ImplicitPrelude
+      ImportQualifiedPost
+      InstanceSigs
+      KindSignatures
+      MonomorphismRestriction
+      MultiParamTypeClasses
+      NamedFieldPuns
+      NamedWildCards
+      NoExplicitNamespaces
+      NumericUnderscores
+      PatternGuards
+      PolyKinds
+      PostfixOperators
+      RankNTypes
+      RelaxedPolyRec
+      ScopedTypeVariables
+      StandaloneDeriving
+      StandaloneKindSignatures
+      StarIsType
+      TraditionalRecordSyntax
+      TupleSections
+      TypeApplications
+      TypeOperators
+      TypeSynonymInstances
+
   default-extensions:
     DeriveAnyClass
     DerivingStrategies
@@ -94,7 +147,7 @@ library
     Database.LSMTree.Normal
 
   build-depends:
-    , base                  >=4.16      && <4.20
+    , base                  >=4.14      && <4.20
     , bitvec                ^>=1.1
     , bytestring            ^>=0.11.4.0 || ^>=0.12.1.0
     , containers
@@ -453,7 +506,7 @@ benchmark rocksdb-bench-wp8
   hs-source-dirs: bench/macro src-extras
   main-is:        rocksdb-bench-wp8.hs
 
-  if !(os(linux) && flag(rocksdb))
+  if !((os(linux) && flag(rocksdb)) && impl(ghc >=9.2.0))
     buildable: False
 
   build-depends:
@@ -478,7 +531,7 @@ library rocksdb
   exposed-modules: RocksDB
   other-modules:   RocksDB.FFI
 
-  if !(os(linux) && flag(rocksdb))
+  if !((os(linux) && flag(rocksdb)) && impl(ghc >=9.2.0))
     buildable: False
 
   -- Ubuntu 22.04 doesn't have pkgconfig files for rocksdb
@@ -514,7 +567,7 @@ test-suite kmerge-test
   hs-source-dirs: test
   main-is:        kmerge-test.hs
   build-depends:
-    , base              >=4.16 && <4.20
+    , base              >=4.14 && <4.20
     , deepseq
     , heaps
     , lsm-tree:kmerge
@@ -533,7 +586,7 @@ benchmark kmerge-bench
   main-is:        kmerge-test.hs
   cpp-options:    -DKMERGE_BENCHMARKS
   build-depends:
-    , base              >=4.16 && <4.20
+    , base              >=4.14 && <4.20
     , deepseq
     , heaps
     , lsm-tree:kmerge
@@ -551,7 +604,7 @@ test-suite map-range-test
   hs-source-dirs: test
   main-is:        map-range-test.hs
   build-depends:
-    , base              >=4.16 && <4.20
+    , base              >=4.14 && <4.20
     , bytestring
     , containers
     , lsm-tree
@@ -612,7 +665,7 @@ library blockio-api
     System.FS.BlockIO.Serial
 
   build-depends:
-    , base        >=4.16  && <4.20
+    , base        >=4.14  && <4.20
     , deepseq     ^>=1.4  || ^>=1.5
     , fs-api      ^>=0.2
     , io-classes  ^>=1.4
@@ -649,7 +702,7 @@ test-suite blockio-api-test
   main-is:        Main.hs
   build-depends:
     , async
-    , base                  >=4.16 && <4.20
+    , base                  >=4.14 && <4.20
     , bytestring
     , fs-api
     , lsm-tree:blockio-api
@@ -668,7 +721,7 @@ library blockio-sim
   hs-source-dirs:  blockio-sim/src
   exposed-modules: System.FS.BlockIO.Sim
   build-depends:
-    , base                  >=4.16 && <4.20
+    , base                  >=4.14 && <4.20
     , fs-api                ^>=0.2
     , fs-sim                ^>=0.2
     , io-classes            ^>=1.4
