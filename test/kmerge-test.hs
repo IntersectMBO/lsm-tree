@@ -14,6 +14,7 @@ import           Data.Bits (unsafeShiftR)
 import qualified Data.Heap as Heap
 import           Data.IORef
 import qualified Data.List as L
+import           Data.List.NonEmpty (NonEmpty (..))
 import           Data.Primitive.ByteArray (compareByteArrays)
 import qualified Data.Vector.Primitive as VP
 import           Data.Word (Word64, Word8)
@@ -425,11 +426,18 @@ loserTreeMerge xss = runST $ do
 -------------------------------------------------------------------------------}
 
 mutHeapMerge :: forall a. Ord a => [[a]] -> [a]
-mutHeapMerge xss = runST $ do
-    -- we reuse Heap.Entry structure here.
-    (heap, element) <- K.Heap.newMutableHeap [ Heap.Entry x xs | x:xs <- xss ]
-    go heap element
+mutHeapMerge xss = case [ Heap.Entry x xs | x :| xs <- foldMap cull xss ] of
+    [] -> []
+    e : es -> runST $ do
+      -- we reuse Heap.Entry structure here.
+      (heap, element) <- K.Heap.newMutableHeap $ e :| es
+      go heap $ Just element
   where
+    cull :: [a] -> [NonEmpty a]
+    cull = \case
+      []    -> []
+      x:xs -> [x :| xs]
+
     go :: K.Heap.MutableHeap s (Heap.Entry a [a]) -> Maybe (Heap.Entry a [a]) -> ST s [a]
     go !_    Nothing                  = return []
     go !heap (Just (Heap.Entry x xs)) = fmap (x :) $ case xs of

@@ -23,6 +23,7 @@ import qualified Control.Monad.ST as Lazy
 import qualified Control.Monad.ST as Strict
 import           Data.Bits (unsafeShiftL, unsafeShiftR)
 import           Data.Foldable.WithIndex (ifor_)
+import           Data.List.NonEmpty (NonEmpty (..))
 import           Data.Primitive (SmallMutableArray, newSmallArray,
                      readSmallArray, writeSmallArray)
 import           Data.Primitive.PrimVar (PrimVar, newPrimVar, readPrimVar,
@@ -39,7 +40,7 @@ placeholder :: a
 placeholder = unsafeCoerce ()
 
 -- | Create new heap, and immediately extract its minimum value.
-newMutableHeap :: forall a m. (PrimMonad m, Ord a) => [a] -> m (MutableHeap (PrimState m) a, Maybe a)
+newMutableHeap :: forall a m. (PrimMonad m, Ord a) => NonEmpty a -> m (MutableHeap (PrimState m) a, a)
 newMutableHeap xs = do
     let !size = length xs
 
@@ -50,12 +51,11 @@ newMutableHeap xs = do
 
     sizeRef <- newPrimVar size
 
-    if size <= 0
-    then return $! (MH sizeRef arr, Nothing)
-    else do
-        x <- readSmallArray arr 0
-        writeSmallArray arr 0 placeholder
-        return $! (MH sizeRef arr, Just x)
+    -- This indexing is safe!
+    -- Due to the required NonEmpty input type, there must be at least one element to read.
+    x <- readSmallArray arr 0
+    writeSmallArray arr 0 placeholder
+    return $! (MH sizeRef arr, x)
 
 -- | Replace the minimum-value, and immediately extract the new minimum value.
 replaceRoot :: forall a m. (PrimMonad m, Ord a) => MutableHeap (PrimState m) a -> a -> m a
