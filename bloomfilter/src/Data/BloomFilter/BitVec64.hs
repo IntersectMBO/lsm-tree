@@ -62,7 +62,7 @@ new :: Word64 -> ST s (MBitVec64 s)
 new s
   | numWords >= 128 = do
     mba <- newPinnedByteArray numBytes
-    setByteArray mba 0 numWords (0 :: Word64)
+    setByteArray mba 0 numBytes (0 :: Word8)
     return (MBV64 (P.MVector 0 numWords mba))
   | otherwise =
     MBV64 <$> MP.new numWords
