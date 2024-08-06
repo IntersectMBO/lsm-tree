@@ -143,12 +143,18 @@ elem elt ub = elemHashes (makeHashes elt) ub
 elemHashes :: Hashes h => h a -> Bloom' h a -> Bool
 elemHashes !ch !ub = go 0 where
     go :: Int -> Bool
-    go !i | i >= hashesN ub = True
-          | otherwise       = let !idx' = evalHashes ch i in
-                              let !idx = idx' `rem` size ub in
-                              if V.unsafeIndex (bitArray ub) idx
-                              then go (i + 1)
-                              else False
+    go !i | i >= hashesN ub
+          = True
+    go !i = let idx' :: Word64
+                !idx' = evalHashes ch i in
+            let idx :: Int
+                !idx = fromIntegral (idx' `V.unsafeRemWord64` size ub) in
+            -- While the idx' can cover the full Word64 range,
+            -- after taking the remainder, it now must fit in
+            -- and Int because it's less than the filter size.
+            if V.unsafeIndex (bitArray ub) idx
+              then go (i + 1)
+              else False
 {-# SPECIALIZE elemHashes :: CheapHashes a -> Bloom a -> Bool #-}
 
 -- | Query an immutable Bloom filter for non-membership.  If the value
