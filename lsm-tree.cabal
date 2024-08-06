@@ -100,8 +100,17 @@ common language
     RoleAnnotations
     ViewPatterns
 
+flag bloom-query-fast
+  description: Use an optimised Bloom filter query implementation
+  default:     True
+  manual:      True
+
+common bloom-query-fast
+  if (flag(bloom-query-fast) && impl(ghc >=9.4))
+    cpp-options: -DBLOOM_QUERY_FAST
+
 library
-  import:          language, warnings, wno-x-partial
+  import:          language, warnings, wno-x-partial, bloom-query-fast
   hs-source-dirs:  src
   exposed-modules:
     Data.Arena
@@ -171,6 +180,14 @@ library
     , strict-mvar           ^>=1.5
     , vector                ^>=0.13
     , vector-algorithms     ^>=0.9
+
+  if (flag(bloom-query-fast) && impl(ghc >=9.4))
+    -- The bulk bloom filter query uses some fancy stuff
+    exposed-modules:
+      Database.LSMTree.Internal.BloomFilterQuery2
+      Database.LSMTree.Internal.StrictArray
+
+    build-depends:   data-elevator ^>=0.1.0.2
 
 -- this exists due windows
 library xxhash
@@ -310,7 +327,7 @@ library extras
     , wide-word
 
 test-suite lsm-tree-test
-  import:         language, warnings, wno-x-partial
+  import:         language, warnings, wno-x-partial, bloom-query-fast
   type:           exitcode-stdio-1.0
   hs-source-dirs: test
   main-is:        Main.hs
@@ -450,7 +467,7 @@ benchmark lsm-tree-micro-bench
   ghc-options:    -rtsopts -with-rtsopts=-T -threaded
 
 benchmark lsm-tree-bench-bloomfilter
-  import:         language, warnings, wno-x-partial
+  import:         language, warnings, wno-x-partial, bloom-query-fast
   type:           exitcode-stdio-1.0
   hs-source-dirs: bench/macro
   main-is:        lsm-tree-bench-bloomfilter.hs
