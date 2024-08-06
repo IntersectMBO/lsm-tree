@@ -33,6 +33,10 @@ import           Database.LSMTree.Internal.Serialise (SerialisedKey,
                      serialiseKey)
 import qualified Monkey
 
+#ifdef BLOOM_QUERY_FAST
+import qualified Database.LSMTree.Internal.BloomFilterQuery2 as Bloom2
+#endif
+
 main :: IO ()
 main = do
   hSetBuffering stdout NoBuffering
@@ -114,6 +118,17 @@ benchmarks = do
                 (fromIntegralChecked benchmarkNumLookups)
                 hashcost
                 0
+
+#ifdef BLOOM_QUERY_FAST
+    _ <-
+      benchmark "bloomQueries2"
+                "(this is the optimised batch lookup, less the cost of computing and hashing the keys)"
+                (benchInBatches benchmarkBatchSize rng0
+                  (benchBloomQueries2 vbs))
+                (fromIntegralChecked benchmarkNumLookups)
+                hashcost
+                0
+#endif
 
     return ()
 
@@ -287,4 +302,11 @@ benchBloomQueries :: Vector (Bloom SerialisedKey) -> V.Vector SerialisedKey
                   -> VU.Vector (Bloom1.RunIx, Bloom1.KeyIx)
 benchBloomQueries !bs !ks =
     Bloom1.bloomQueriesDefault bs ks
+
+#ifdef BLOOM_QUERY_FAST
+benchBloomQueries2 :: V.Vector (Bloom SerialisedKey) -> V.Vector SerialisedKey
+                   -> VP.Vector Bloom2.RunIxKeyIx
+benchBloomQueries2 !bs !ks =
+    Bloom2.bloomQueriesDefault bs ks
+#endif
 

@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 module Test.Database.LSMTree.Internal.BloomFilter (tests) where
 
 import           Control.DeepSeq (deepseq)
@@ -21,6 +22,11 @@ import qualified Database.LSMTree.Internal.BloomFilterQuery1 as Bloom1
 import           Database.LSMTree.Internal.Serialise (SerialisedKey,
                      serialiseKey)
 
+#ifdef BLOOM_QUERY_FAST
+import qualified Data.Vector.Primitive as VP
+import qualified Database.LSMTree.Internal.BloomFilterQuery2 as Bloom2
+#endif
+
 tests :: TestTree
 tests = testGroup "Database.LSMTree.Internal.BloomFilter"
     [ testProperty "roundtrip" roundtrip_prop
@@ -32,6 +38,10 @@ tests = testGroup "Database.LSMTree.Internal.BloomFilter"
         prop_total_deserialisation_whitebox
     , testProperty "bloomQueries (bulk)" $
         prop_bloomQueries1
+#ifdef BLOOM_QUERY_FAST
+    , testProperty "bloomQueries (bulk, prefetching)" $
+        prop_bloomQueries2
+#endif
     ]
 
 roundtrip_prop :: Positive (Small Int) -> Word64 ->  [Word64] -> Property
@@ -89,3 +99,25 @@ prop_bloomQueries1 filters keys =
        ===
         VU.toList (Bloom1.bloomQueriesDefault (V.fromList filters')
                                               (V.fromList keys'))
+
+#ifdef BLOOM_QUERY_FAST
+prop_bloomQueries2 :: [[Small Word64]]
+                   -> [Small Word64]
+                   -> Property
+prop_bloomQueries2 filters keys =
+    let filters' :: [BF.Bloom SerialisedKey]
+        filters' = map (BF.easyList 0.1 . map (\(Small k) -> serialiseKey k)) filters
+
+        keys' :: [SerialisedKey]
+        keys' = map (\(Small k) -> serialiseKey k) keys
+
+     in [ (f_i, k_i)
+        | (f, f_i) <- zip filters' [0..]
+        , (k, k_i) <- zip keys' [0..]
+        , BF.elem k f
+        ]
+       ===
+        map (\(Bloom2.RunIxKeyIx rix kix) -> (rix, kix))
+            (VP.toList (Bloom2.bloomQueriesDefault (V.fromList filters')
+                                                   (V.fromList keys')))
+#endif

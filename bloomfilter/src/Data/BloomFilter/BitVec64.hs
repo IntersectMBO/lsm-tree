@@ -1,9 +1,11 @@
-{-# LANGUAGE CPP       #-}
-{-# LANGUAGE MagicHash #-}
+{-# LANGUAGE CPP           #-}
+{-# LANGUAGE MagicHash     #-}
+{-# LANGUAGE UnboxedTuples #-}
 -- | Minimal bit vector implementation.
 module Data.BloomFilter.BitVec64 (
     BitVec64 (..),
     unsafeIndex,
+    prefetchIndex,
     MBitVec64 (..),
     new,
     unsafeWrite,
@@ -16,19 +18,22 @@ module Data.BloomFilter.BitVec64 (
 
 import           Control.Monad.ST (ST)
 import           Data.Bits
-import           Data.Primitive.ByteArray (newPinnedByteArray, setByteArray)
+import           Data.Primitive.ByteArray (ByteArray (ByteArray),
+                     newPinnedByteArray, setByteArray)
 import qualified Data.Vector.Primitive as P
 import qualified Data.Vector.Primitive.Mutable as MP
-import           Data.Word (Word64)
+import           Data.Word (Word64, Word8)
 
 import           GHC.Exts (Int (I#), prefetchByteArray0#, uncheckedIShiftRL#,
                      (+#))
+import           GHC.ST (ST (ST))
+import           GHC.Word (Word64 (W64#))
+
 #if MIN_VERSION_base(4,17,0)
 import           GHC.Exts (remWord64#)
 #else
 import           GHC.Exts (remWord#)
 #endif
-import           GHC.Word (Word64 (W64#))
 
 -- | Bit vector backed up by an array of Word64
 --
@@ -48,6 +53,13 @@ unsafeIndex (BV64 bv) i =
 -- like testBit but using unsafeShiftL instead of shiftL
 unsafeTestBit :: Word64 -> Int -> Bool
 unsafeTestBit w k = w .&. (1 `unsafeShiftL` k) /= 0
+
+{-# INLINE prefetchIndex #-}
+prefetchIndex :: BitVec64 -> Int -> ST s ()
+prefetchIndex (BV64 (P.Vector (I# off#) _ (ByteArray ba#))) (I# i#) =
+    --TODO: explain the shiftR 3 here, vs the shiftR 6 above
+    ST (\s -> case prefetchByteArray0# ba# (off# +# uncheckedIShiftRL# i# 3#) s of
+                s' -> (# s', () #))
 
 newtype MBitVec64 s = MBV64 (P.MVector s Word64)
 
