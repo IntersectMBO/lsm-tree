@@ -5,6 +5,8 @@ import           Data.Bits (unsafeShiftL, unsafeShiftR, (.&.))
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ByteString.Short as SBS
 import           Data.Primitive.ByteArray (ByteArray (..), byteArrayFromList)
+import qualified Data.Vector as V
+import qualified Data.Vector.Unboxed as VU
 import           Data.Word (Word32, Word64)
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck (Positive (..), Property, Small (..),
@@ -12,8 +14,12 @@ import           Test.Tasty.QuickCheck (Positive (..), Property, Small (..),
                      vector, withMaxSuccess, (===))
 
 import qualified Data.BloomFilter as BF
+import qualified Data.BloomFilter.Easy as BF
 import qualified Data.BloomFilter.Internal as BF (bloomInvariant)
 import           Database.LSMTree.Internal.BloomFilter
+import qualified Database.LSMTree.Internal.BloomFilterQuery1 as Bloom1
+import           Database.LSMTree.Internal.Serialise (SerialisedKey,
+                     serialiseKey)
 
 tests :: TestTree
 tests = testGroup "Database.LSMTree.Internal.BloomFilter"
@@ -24,6 +30,8 @@ tests = testGroup "Database.LSMTree.Internal.BloomFilter"
         prop_total_deserialisation
     , testProperty "total-deserialisation-whitebox" $ withMaxSuccess 10000 $
         prop_total_deserialisation_whitebox
+    , testProperty "bloomQueries (bulk)" $
+        prop_bloomQueries1
     ]
 
 roundtrip_prop :: Positive (Small Int) -> Word64 ->  [Word64] -> Property
@@ -62,3 +70,22 @@ prop_total_deserialisation_whitebox hsn (Small len64) =
       , unsafeShiftL len64 6         -- len64 * 64 (lower 32 bits)
       , unsafeShiftR len64 (32 - 6)  -- len64 * 64 (upper 32 bits)
       ]
+
+prop_bloomQueries1 :: [[Small Word64]]
+                   -> [Small Word64]
+                   -> Property
+prop_bloomQueries1 filters keys =
+    let filters' :: [BF.Bloom SerialisedKey]
+        filters' = map (BF.easyList 0.1 . map (\(Small k) -> serialiseKey k)) filters
+
+        keys' :: [SerialisedKey]
+        keys' = map (\(Small k) -> serialiseKey k) keys
+
+     in [ (f_i, k_i)
+        | (f, f_i) <- zip filters' [0..]
+        , (k, k_i) <- zip keys' [0..]
+        , BF.elem k f
+        ]
+       ===
+        VU.toList (Bloom1.bloomQueriesDefault (V.fromList filters')
+                                              (V.fromList keys'))
