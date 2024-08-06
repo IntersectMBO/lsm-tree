@@ -1,3 +1,5 @@
+{-# LANGUAGE CPP       #-}
+{-# LANGUAGE MagicHash #-}
 -- | Minimal bit vector implementation.
 module Data.BloomFilter.BitVec64 (
     BitVec64 (..),
@@ -9,6 +11,7 @@ module Data.BloomFilter.BitVec64 (
     freeze,
     unsafeFreeze,
     thaw,
+    unsafeRemWord64,
 ) where
 
 import           Control.Monad.ST (ST)
@@ -18,18 +21,28 @@ import qualified Data.Vector.Primitive as P
 import qualified Data.Vector.Primitive.Mutable as MP
 import           Data.Word (Word64)
 
+#if MIN_VERSION_base(4,17,0)
+import           GHC.Exts (remWord64#)
+#else
+import           GHC.Exts (remWord#)
+#endif
+import           GHC.Word (Word64 (W64#))
+
 -- | Bit vector backed up by an array of Word64
 --
 -- This vector's offset and length are multiples of 64
 newtype BitVec64 = BV64 (P.Vector Word64)
   deriving (Eq, Show)
 
-unsafeIndex :: BitVec64 -> Word64 -> Bool
-unsafeIndex (BV64 bv) i = unsafeTestBit (P.unsafeIndex bv (w2i j)) (w2i k)
+{-# INLINE unsafeIndex #-}
+unsafeIndex :: BitVec64 -> Int -> Bool
+unsafeIndex (BV64 bv) i =
+    unsafeTestBit (P.unsafeIndex bv j) k
   where
     !j = unsafeShiftR i 6 -- `div` 64
     !k = i .&. 63         -- `mod` 64
 
+{-# INLINE unsafeTestBit #-}
 -- like testBit but using unsafeShiftL instead of shiftL
 unsafeTestBit :: Word64 -> Int -> Bool
 unsafeTestBit w k = w .&. (1 `unsafeShiftL` k) /= 0
@@ -82,6 +95,14 @@ thaw (BV64 bv) = MBV64 <$> P.thaw bv
 -- this may overflow, but so be it (1^64 bits is a lot)
 roundUpTo64 :: Word64 -> Word64
 roundUpTo64 i = unsafeShiftR (i + 63) 6
+
+-- | Like 'rem' but does not check for division by 0.
+unsafeRemWord64 :: Word64 -> Word64 -> Word64
+#if MIN_VERSION_base(4,17,0)
+unsafeRemWord64 (W64# x#) (W64# y#) = W64# (x# `remWord64#` y#)
+#else
+unsafeRemWord64 (W64# x#) (W64# y#) = W64# (x# `remWord#` y#)
+#endif
 
 w2i :: Word64 -> Int
 w2i = fromIntegral
