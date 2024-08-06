@@ -112,6 +112,7 @@ library
     Database.LSMTree.Internal.BitMath
     Database.LSMTree.Internal.BlobRef
     Database.LSMTree.Internal.BloomFilter
+    Database.LSMTree.Internal.BloomFilterQuery1
     Database.LSMTree.Internal.ByteString
     Database.LSMTree.Internal.Chunk
     Database.LSMTree.Internal.Config
