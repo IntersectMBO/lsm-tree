@@ -5,6 +5,7 @@ module Database.LSMTree.Internal.Vector (
     mkPrimVector,
     byteVectorFromPrim,
     noRetainedExtraMemory,
+    primArrayToPrimVector,
     mapStrict,
     mapMStrict,
     imapMStrict,
@@ -16,6 +17,7 @@ module Database.LSMTree.Internal.Vector (
 
 import           Control.Monad
 import           Control.Monad.Primitive (PrimMonad, PrimState)
+import qualified Data.Primitive as P
 import           Data.Primitive.ByteArray (ByteArray, newByteArray,
                      runByteArray, sizeofByteArray, writeByteArray)
 import           Data.Primitive.Types (Prim (sizeOfType#), sizeOfType)
@@ -50,6 +52,11 @@ noRetainedExtraMemory (VP.Vector off len ba) =
     off == 0 && len * sizeof == sizeofByteArray ba
    where
     sizeof = I# (sizeOfType# (Proxy @a))
+
+{-# INLINE primArrayToPrimVector #-}
+primArrayToPrimVector :: Prim a => P.PrimArray a -> VP.Vector a
+primArrayToPrimVector pa@(P.PrimArray ba) =
+    VP.Vector 0 (P.sizeofPrimArray pa) (P.ByteArray ba)
 
 {-# INLINE mapStrict #-}
 -- | /( O(n) /) Like 'V.map', but strict in the produced elements of type @b@.
