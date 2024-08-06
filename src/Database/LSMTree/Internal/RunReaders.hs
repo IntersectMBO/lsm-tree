@@ -13,8 +13,8 @@ import           Control.Monad (zipWithM)
 import           Control.Monad.Primitive (RealWorld)
 import           Data.Function (on)
 import           Data.IORef
+import           Data.List.NonEmpty (NonEmpty (..))
 import           Data.Maybe (catMaybes)
-import           Data.Traversable (for)
 import           Database.LSMTree.Internal.Run (Run)
 import           Database.LSMTree.Internal.RunReader (RunReader)
 import qualified Database.LSMTree.Internal.RunReader as Reader
@@ -85,10 +85,12 @@ new ::
   -> IO (Maybe (Readers (FS.Handle h)))
 new fs hbio runs = do
     readers <- zipWithM (fromRun . ReaderNumber) [1..] runs
-    (readersHeap, firstReadCtx) <- Heap.newMutableHeap (catMaybes readers)
-    for firstReadCtx $ \readCtx -> do
-      readersNext <- newIORef readCtx
-      return Readers {..}
+    case catMaybes readers of
+      [] -> pure Nothing
+      x : xs -> do
+        (readersHeap, readCtx) <- Heap.newMutableHeap $ x :| xs
+        readersNext <- newIORef readCtx
+        return . Just $ Readers {..}
   where
     fromRun n run = nextReadCtx fs hbio n =<< Reader.new fs hbio Nothing run
 
@@ -103,10 +105,12 @@ newAtOffset ::
   -> IO (Maybe (Readers (FS.Handle h)))
 newAtOffset fs hbio offset runs = do
     readers <- zipWithM (fromRun . ReaderNumber) [1..] runs
-    (readersHeap, firstReadCtx) <- Heap.newMutableHeap (catMaybes readers)
-    for firstReadCtx $ \readCtx -> do
-      readersNext <- newIORef readCtx
-      return Readers {..}
+    case catMaybes readers of
+      [] -> pure Nothing
+      x : xs -> do
+        (readersHeap, readCtx) <- Heap.newMutableHeap $ x :| xs
+        readersNext <- newIORef readCtx
+        return . Just $ Readers {..}
   where
     fromRun n run = nextReadCtx fs hbio n =<< Reader.new fs hbio (Just offset) run
 
