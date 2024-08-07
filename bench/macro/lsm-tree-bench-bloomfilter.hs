@@ -17,7 +17,6 @@ import           Data.Time
 import           Data.Vector (Vector)
 import qualified Data.Vector as V
 import qualified Data.Vector.Primitive as VP
-import qualified Data.Vector.Unboxed as VU
 import           Data.WideWord.Word256 (Word256)
 import           GHC.Stats
 import           Numeric
@@ -299,7 +298,7 @@ benchElemCheapHashes !bs !ks =
           () bs
 
 benchBloomQueries :: Vector (Bloom SerialisedKey) -> V.Vector SerialisedKey
-                  -> VU.Vector (Bloom1.RunIx, Bloom1.KeyIx)
+                  -> VP.Vector Bloom1.RunIxKeyIx
 benchBloomQueries !bs !ks =
     Bloom1.bloomQueriesDefault bs ks
 

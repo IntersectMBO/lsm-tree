@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns        #-}
+{-# LANGUAGE CPP                 #-}
 {-# LANGUAGE DeriveAnyClass      #-}
 {-# LANGUAGE DeriveFunctor       #-}
 {-# LANGUAGE DerivingStrategies  #-}
@@ -14,8 +15,8 @@ module Database.LSMTree.Internal.Lookup (
     -- * Internal: exposed for tests and benchmarks
   , RunIx
   , KeyIx
+  , RunIxKeyIx(..)
   , prepLookups
-  , bloomQueries
   , bloomQueriesDefault
   , indexSearches
   , intraPageLookups
@@ -27,6 +28,7 @@ import           Data.BloomFilter (Bloom)
 import           Data.Primitive.ByteArray
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as VM
+import qualified Data.Vector.Primitive as VP
 import qualified Data.Vector.Unboxed as VU
 
 import           Control.Exception (Exception, assert)
@@ -40,8 +42,6 @@ import           System.FS.API (BufferOffset (..), Handle)
 import           System.FS.BlockIO.API
 
 import           Database.LSMTree.Internal.BlobRef (BlobRef (..))
-import           Database.LSMTree.Internal.BloomFilterQuery1 (bloomQueries,
-                     bloomQueriesDefault)
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.IndexCompact (IndexCompact,
                      PageSpan (..))
@@ -53,6 +53,16 @@ import           Database.LSMTree.Internal.Run (Run)
 import           Database.LSMTree.Internal.Serialise
 import qualified Database.LSMTree.Internal.Vector as V
 
+import           Database.LSMTree.Internal.BloomFilterQuery1
+                     (RunIxKeyIx (..))
+#ifdef BLOOM_QUERY_FAST
+import           Database.LSMTree.Internal.BloomFilterQuery2
+                     (bloomQueriesDefault)
+#else
+import           Database.LSMTree.Internal.BloomFilterQuery1
+                     (bloomQueriesDefault)
+#endif
+
 -- | Prepare disk lookups by doing bloom filter queries, index searches and
 -- creating 'IOOp's. The result is a vector of 'IOOp's and a vector of indexes,
 -- both of which are the same length. The indexes record the run and key
@@ -63,7 +73,7 @@ prepLookups ::
   -> V.Vector IndexCompact
   -> V.Vector (Handle h)
   -> V.Vector SerialisedKey
-  -> ST s (VU.Vector (RunIx, KeyIx), V.Vector (IOOp s h))
+  -> ST s (VP.Vector RunIxKeyIx, V.Vector (IOOp s h))
 prepLookups arena blooms indexes kopsFiles ks = do
   let !rkixs = bloomQueriesDefault blooms ks
   !ioops <- indexSearches arena indexes kopsFiles ks rkixs
@@ -74,17 +84,18 @@ type RunIx = Int
 
 -- | Perform a batch of fence pointer index searches, and create an 'IOOp' for
 -- each search result. The resulting vector has the same length as the
--- @VU.Vector (RunIx, KeyIx)@ argument, because index searching always returns a
+-- @VP.Vector RunIxKeyIx@ argument, because index searching always returns a
 -- positive search result.
 indexSearches
   :: Arena s
   -> V.Vector IndexCompact
   -> V.Vector (Handle h)
   -> V.Vector SerialisedKey
-  -> VU.Vector (RunIx, KeyIx) -- ^ Result of 'bloomQueries'
+  -> VP.Vector RunIxKeyIx -- ^ Result of 'bloomQueries'
   -> ST s (V.Vector (IOOp s h))
 indexSearches !arena !indexes !kopsFiles !ks !rkixs = V.generateM n $ \i -> do
-    let (!rix, !kix) = rkixs `VU.unsafeIndex` i
+    let (RunIxKeyIx !rix !kix)
+                     = rkixs `VP.unsafeIndex` i
         !c           = indexes `V.unsafeIndex` rix
         !h           = kopsFiles `V.unsafeIndex` rix
         !k           = ks `V.unsafeIndex` kix
@@ -102,7 +113,7 @@ indexSearches !arena !indexes !kopsFiles !ks !rkixs = V.generateM n $ \i -> do
               (fromIntegral off)
               (fromIntegral $ size * 4096)
   where
-    !n = VU.length rkixs
+    !n = VP.length rkixs
 
 {-
   Note [Batched lookups, buffer strategy and restrictions]
@@ -186,7 +197,7 @@ lookupsIO !hbio !mgr !resolveV !rs !blooms !indexes !kopsFiles !ks = assert prec
        ResolveSerialisedValue
     -> V.Vector (Run (Handle h))
     -> V.Vector SerialisedKey
-    -> VU.Vector (RunIx, KeyIx)
+    -> VP.Vector RunIxKeyIx
     -> V.Vector (IOOp RealWorld h)
     -> VU.Vector IOResult
     -> IO (V.Vector (Maybe (Entry SerialisedValue (BlobRef (Run (Handle h))))))
@@ -201,7 +212,7 @@ intraPageLookups ::
   => ResolveSerialisedValue
   -> V.Vector (Run (Handle h))
   -> V.Vector SerialisedKey
-  -> VU.Vector (RunIx, KeyIx)
+  -> VP.Vector RunIxKeyIx
   -> V.Vector (IOOp (PrimState m) h)
   -> VU.Vector IOResult
   -> m (V.Vector (Maybe (Entry SerialisedValue (BlobRef (Run (Handle h))))))
@@ -222,7 +233,7 @@ intraPageLookups !resolveV !rs !ks !rkixs !ioops !ioress = do
           let ioop = ioops `V.unsafeIndex` ioopix
               iores = ioress `VU.unsafeIndex` ioopix
           checkIOResult ioop iores
-          let (rix, kix) = rkixs `VU.unsafeIndex` ioopix
+          let (RunIxKeyIx !rix !kix) = rkixs `VP.unsafeIndex` ioopix
               r = rs `V.unsafeIndex` rix
               k = ks `V.unsafeIndex` kix
           buf <- unsafeFreezeByteArray (ioopBuffer ioop)
