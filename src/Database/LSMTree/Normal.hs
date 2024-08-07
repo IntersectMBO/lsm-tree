@@ -26,6 +26,11 @@ module Database.LSMTree.Normal (
     -- * Exceptions
     Common.LSMTreeError (..)
 
+    -- * Tracing
+  , Common.LSMTreeTrace (..)
+  , Common.TableTrace (..)
+  , Common.MergeTrace (..)
+
     -- * Table sessions
   , Session
   , withSession

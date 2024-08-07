@@ -73,6 +73,7 @@ import           Text.Show.Pretty
 
 -- We should be able to write this benchmark
 -- using only use public lsm-tree interface
+import           Control.Tracer (nullTracer)
 import qualified Database.LSMTree.Normal as LSM
 
 -------------------------------------------------------------------------------
@@ -363,7 +364,7 @@ doSetup' gopts opts = do
     name <- maybe (fail "invalid snapshot name") return $
         LSM.mkSnapshotName "bench"
 
-    LSM.withSession hasFS hasBlockIO (FS.mkFsPath []) $ \session -> do
+    LSM.withSession nullTracer hasFS hasBlockIO (FS.mkFsPath []) $ \session -> do
         tbh <- LSM.new @IO @K @V @B session (mkTableConfigSetup gopts opts LSM.defaultTableConfig)
 
         forM_ [ 0 .. initialSize gopts ] $ \ (fromIntegral -> i) -> do
@@ -527,7 +528,7 @@ doRun gopts opts = do
     name <- maybe (fail "invalid snapshot name") return $
         LSM.mkSnapshotName "bench"
 
-    LSM.withSession hasFS hasBlockIO (FS.mkFsPath []) $ \session -> do
+    LSM.withSession nullTracer hasFS hasBlockIO (FS.mkFsPath []) $ \session -> do
         -- open snapshot
         -- In checking mode we start with an empty table, since our pure
         -- reference version starts with empty (as it's not practical or

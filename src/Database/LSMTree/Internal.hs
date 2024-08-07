@@ -7,6 +7,10 @@
 module Database.LSMTree.Internal (
     -- * Exceptions
     LSMTreeError (..)
+    -- * Tracing
+  , LSMTreeTrace (..)
+  , TableTrace (..)
+  , MergeTrace (..)
     -- * Session
   , Session (..)
   , SessionState (..)
@@ -64,8 +68,9 @@ import qualified Control.Concurrent.Class.MonadSTM.RWVar as RW
 import           Control.DeepSeq
 import           Control.Monad (unless, void, when)
 import           Control.Monad.Class.MonadThrow
-import           Control.Monad.Primitive (PrimState)
-import           Control.Monad.ST.Strict
+import           Control.Monad.Primitive (PrimState, RealWorld)
+import           Control.Monad.ST.Strict (ST, stToIO)
+import           Control.Tracer
 import           Data.Arena (ArenaManager, newArenaManager)
 import           Data.Bifunctor (Bifunctor (..))
 import           Data.BloomFilter (Bloom)
@@ -141,23 +146,34 @@ data LSMTreeError =
   deriving anyclass (Exception)
 
 {-------------------------------------------------------------------------------
+  Traces
+-------------------------------------------------------------------------------}
+
+data LSMTreeTrace = LSMTreeTrace
+
+data TableTrace = TableTrace
+
+data MergeTrace = MergeTrace
+
+{-------------------------------------------------------------------------------
   Session
 -------------------------------------------------------------------------------}
 
 -- | A session provides context that is shared across multiple table handles.
 --
 -- For more information, see 'Database.LSMTree.Common.Session'.
-newtype Session m h = Session {
+data Session m h = Session {
       -- | The primary purpose of this 'RWVar' is to ensure consistent views of
       -- the open-/closedness of a session when multiple threads require access
       -- to the session's fields (see 'withOpenSession'). We use more
       -- fine-grained synchronisation for various mutable parts of an open
       -- session.
-      sessionState :: RWVar m (SessionState m h)
+      sessionState  :: !(RWVar m (SessionState m h))
+    , sessionTracer :: !(Tracer m LSMTreeTrace)
     }
 
 instance NFData (Session m h) where
-  rnf (Session a) = rnf a
+  rnf (Session a b) = rnf a `seq` rwhnf b
 
 data SessionState m h =
     SessionOpen !(SessionEnv m h)
@@ -221,26 +237,28 @@ incrUniqCounter (UniqCounter uniqVar) = modifyMVar uniqVar (\x -> pure ((x+1), x
 -- Implementation of public API
 --
 
-{-# SPECIALISE withSession :: HasFS IO h -> HasBlockIO IO h -> FsPath -> (Session IO h -> IO a) -> IO a #-}
+{-# SPECIALISE withSession :: Tracer IO LSMTreeTrace -> HasFS IO h -> HasBlockIO IO h -> FsPath -> (Session IO h -> IO a) -> IO a #-}
 -- | See 'Database.LSMTree.Common.withSession'.
 withSession ::
      m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
-  => HasFS m h
+  => Tracer IO LSMTreeTrace
+  -> HasFS m h
   -> HasBlockIO m h
   -> FsPath
   -> (Session m h -> m a)
   -> m a
-withSession hfs hbio dir = bracket (openSession hfs hbio dir) closeSession
+withSession tr hfs hbio dir = bracket (openSession tr hfs hbio dir) closeSession
 
-{-# SPECIALISE openSession :: HasFS IO h -> HasBlockIO IO h -> FsPath -> IO (Session IO h) #-}
+{-# SPECIALISE openSession :: Tracer IO LSMTreeTrace -> HasFS IO h -> HasBlockIO IO h -> FsPath -> IO (Session IO h) #-}
 -- | See 'Database.LSMTree.Common.openSession'.
 openSession ::
      forall m h. m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
-  => HasFS m h
+  => Tracer m LSMTreeTrace
+  -> HasFS m h
   -> HasBlockIO m h -- TODO: could we prevent the user from having to pass this in?
   -> FsPath -- ^ Path to the session directory
   -> m (Session m h)
-openSession hfs hbio dir = do
+openSession tr hfs hbio dir = do
     dirExists <- FS.doesDirectoryExist hfs dir
     unless dirExists $
       throwIO (SessionDirDoesNotExist (FS.mkFsErrorPath hfs dir))
@@ -287,7 +305,7 @@ openSession hfs hbio dir = do
           , sessionUniqCounter = counterVar
           , sessionOpenTables = openTablesVar
           }
-        pure $! Session sessionVar
+        pure $! Session sessionVar tr
 
     newSession sessionFileLock = do
         FS.createDirectory hfs activeDirPath
@@ -384,11 +402,12 @@ data TableHandle m h = TableHandle {
       -- synchronisation for various mutable parts of an open table.
     , tableHandleState        :: !(RWVar m (TableHandleState m h))
     , tableHandleArenaManager :: !(ArenaManager (PrimState m))
+    , tableTracer             :: !(Tracer m TableTrace)
     }
 
 instance NFData (TableHandle m h) where
-  rnf (TableHandle a b c) =
-    rnf a `seq` rnf b `seq` rnf c
+  rnf (TableHandle a b c d) =
+    rnf a `seq` rnf b `seq` rnf c `seq` rwhnf d
 
 -- | A table handle may assume that its corresponding session is still open as
 -- long as the table handle is open. A session's global resources, and therefore
@@ -588,6 +607,7 @@ newWith ::
   -> Levels (PrimState m) (Handle h)
   -> m (TableHandle m h)
 newWith sesh seshEnv conf !am !wb !levels = do
+    let tr = const LSMTreeTrace `contramap` sessionTracer sesh
     assertNoThunks levels $ pure ()
     -- The session is kept open until we've updated the session's set of tracked
     -- tables. If 'closeSession' is called by another thread while this code
@@ -601,7 +621,7 @@ newWith sesh seshEnv conf !am !wb !levels = do
         , tableId = tableId
         , tableContent = contentVar
         }
-    let !th = TableHandle conf tableVar am
+    let !th = TableHandle conf tableVar am tr
     -- Track the current table
     modifyMVar_ (sessionOpenTables seshEnv) $ pure . Map.insert tableId th
     pure $! th
@@ -671,6 +691,7 @@ updates resolve es th = do
         (atomically $ RW.unsafeAcquireWriteAccess (tableContent thEnv))
         (atomically . RW.unsafeReleaseWriteAccess (tableContent thEnv)) $ \tc -> do
           tc' <- updatesWithInterleavedFlushes
+                  (tableTracer th)
                   conf
                   resolve
                   hfs
@@ -682,7 +703,7 @@ updates resolve es th = do
           assertNoThunks tc' $ pure ()
           pure tc'
 
-{-# SPECIALISE updatesWithInterleavedFlushes :: TableConfig -> ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob) -> TempRegistry IO -> TableContent RealWorld h -> IO (TableContent RealWorld h) #-}
+{-# SPECIALISE updatesWithInterleavedFlushes :: Tracer IO TableTrace -> TableConfig -> ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob) -> TempRegistry IO -> TableContent RealWorld h -> IO (TableContent RealWorld h) #-}
 -- | A single batch of updates can fill up the write buffer multiple times. We
 -- flush the write buffer each time it fills up before trying to fill it up
 -- again.
@@ -709,7 +730,8 @@ updates resolve es th = do
 -- whole run should then end up in a fresh write buffer.
 updatesWithInterleavedFlushes ::
      forall m h. m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
-  => TableConfig
+  => Tracer m TableTrace
+  -> TableConfig
   -> ResolveSerialisedValue
   -> HasFS m h
   -> HasBlockIO m h
@@ -719,7 +741,7 @@ updatesWithInterleavedFlushes ::
   -> TempRegistry m
   -> TableContent (PrimState m) h
   -> m (TableContent (PrimState m) h)
-updatesWithInterleavedFlushes conf resolve hfs hbio root uniqC es reg tc = do
+updatesWithInterleavedFlushes tr conf resolve hfs hbio root uniqC es reg tc = do
     let wb = tableWriteBuffer tc
         (wb', es') = WB.addEntriesUpToN resolve es maxn wb
     -- never exceed the write buffer capacity
@@ -733,14 +755,14 @@ updatesWithInterleavedFlushes conf resolve hfs hbio root uniqC es reg tc = do
     -- If the write buffer did reach capacity, then we flush.
     else do
       assert (unNumEntries (WB.numEntries wb') == maxn) $ pure ()
-      tc'' <- flushWriteBuffer conf resolve hfs hbio root uniqC reg tc'
+      tc'' <- flushWriteBuffer (const TableTrace `contramap` tr) conf resolve hfs hbio root uniqC reg tc'
       -- In the fortunate case where we have already performed all the updates,
       -- return,
       if V.null es' then
         pure $! tc''
       -- otherwise, keep going
       else
-        updatesWithInterleavedFlushes conf resolve hfs hbio root uniqC es' reg tc''
+        updatesWithInterleavedFlushes tr conf resolve hfs hbio root uniqC es' reg tc''
   where
     AllocNumEntries (NumEntries maxn) = confWriteBufferAlloc conf
     setWriteBuffer :: WriteBuffer -> TableContent (PrimState m) h -> TableContent (PrimState m) h
@@ -750,14 +772,15 @@ updatesWithInterleavedFlushes conf resolve hfs hbio root uniqC es reg tc = do
         , tableCache = tableCache tc0
         }
 
-{-# SPECIALISE flushWriteBuffer :: TableConfig -> ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> TempRegistry IO -> TableContent RealWorld h -> IO (TableContent RealWorld h) #-}
+{-# SPECIALISE flushWriteBuffer :: Tracer IO MergeTrace -> TableConfig -> ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> TempRegistry IO -> TableContent RealWorld h -> IO (TableContent RealWorld h) #-}
 -- | Flush the write buffer to disk, regardless of whether it is full or not.
 --
 -- The returned table content contains an updated set of levels, where the write
 -- buffer is inserted into level 1.
 flushWriteBuffer ::
      m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
-  => TableConfig
+  => Tracer m MergeTrace
+  -> TableConfig
   -> ResolveSerialisedValue
   -> HasFS m h
   -> HasBlockIO m h
@@ -766,7 +789,7 @@ flushWriteBuffer ::
   -> TempRegistry m
   -> TableContent (PrimState m) h
   -> m (TableContent (PrimState m) h)
-flushWriteBuffer conf@TableConfig{confDiskCachePolicy}
+flushWriteBuffer tr conf@TableConfig{confDiskCachePolicy}
                  resolve hfs hbio root uniqC reg tc
   | WB.null (tableWriteBuffer tc) = pure tc
   | otherwise = do
@@ -778,7 +801,7 @@ flushWriteBuffer conf@TableConfig{confDiskCachePolicy}
               (Paths.runPath root n)
               (tableWriteBuffer tc))
             (Run.removeReference hfs hbio)
-    levels' <- addRunToLevels conf resolve hfs hbio root uniqC r reg (tableLevels tc)
+    levels' <- addRunToLevels tr conf resolve hfs hbio root uniqC r reg (tableLevels tc)
     pure $! TableContent {
         tableWriteBuffer = WB.empty
       , tableLevels = levels'
@@ -860,10 +883,11 @@ _levelsInvariant conf levels =
     -- Check that a run is too small for next levels
     fitsUB policy r ln = Run.runNumEntries r <= maxRunSize sr wba policy ln
 
-{-# SPECIALISE addRunToLevels :: TableConfig -> ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> Run RealWorld (Handle h) -> TempRegistry IO -> Levels RealWorld (Handle h) -> IO (Levels RealWorld (Handle h)) #-}
+{-# SPECIALISE addRunToLevels :: Tracer IO MergeTrace -> TableConfig -> ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> Run RealWorld (Handle h) -> TempRegistry IO -> Levels RealWorld (Handle h) -> IO (Levels RealWorld (Handle h)) #-}
 addRunToLevels ::
      forall m h. m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
-  => TableConfig
+  => Tracer m MergeTrace
+  -> TableConfig
   -> ResolveSerialisedValue
   -> HasFS m h
   -> HasBlockIO m h
@@ -873,7 +897,7 @@ addRunToLevels ::
   -> TempRegistry m
   -> Levels (PrimState m) (Handle h)
   -> m (Levels (PrimState m) (Handle h))
-addRunToLevels conf@TableConfig{..} resolve hfs hbio root uniqC r0 reg levels = do
+addRunToLevels _tr conf@TableConfig{..} resolve hfs hbio root uniqC r0 reg levels = do
     ls' <- go (LevelNo 1) (V.singleton r0) levels
 #ifdef NO_IGNORE_ASSERTS
     void $ stToIO $ _levelsInvariant conf ls'
@@ -1064,6 +1088,7 @@ snapshot resolve snap label th = do
                     (atomically . RW.unsafeReleaseWriteAccess (tableContent thEnv))
                     $ \reg content -> do
         r <- flushWriteBuffer
+              (const TableTrace `contramap` tableTracer th)
               conf
               resolve
               hfs

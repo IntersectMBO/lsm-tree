@@ -3,6 +3,10 @@ module Database.LSMTree.Common (
     IOLike
     -- * Exceptions
   , Internal.LSMTreeError (..)
+    -- * Tracing
+  , Internal.LSMTreeTrace (..)
+  , Internal.TableTrace (..)
+  , Internal.MergeTrace (..)
     -- * Sessions
   , Session (..)
   , withSession
@@ -30,6 +34,7 @@ import           Control.Concurrent.Class.MonadSTM (MonadSTM, STM)
 import           Control.DeepSeq
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Primitive (PrimMonad (..))
+import           Control.Tracer (Tracer)
 import           Data.Kind (Type)
 import           Data.Typeable (Proxy, Typeable)
 import qualified Database.LSMTree.Internal as Internal
@@ -93,21 +98,22 @@ data Session m = forall h. Typeable h => Session !(Internal.Session m h)
 instance NFData (Session m) where
   rnf (Session s) = rnf s
 
-{-# SPECIALISE withSession :: HasFS IO HandleIO -> HasBlockIO IO HandleIO -> FsPath -> (Session IO -> IO a) -> IO a #-}
+{-# SPECIALISE withSession :: Tracer IO Internal.LSMTreeTrace -> HasFS IO HandleIO -> HasBlockIO IO HandleIO -> FsPath -> (Session IO -> IO a) -> IO a #-}
 -- | (Asynchronous) exception-safe, bracketed opening and closing of a session.
 --
 -- If possible, it is recommended to use this function instead of 'openSession'
 -- and 'closeSession'.
 withSession ::
      (IOLike m, Typeable h)
-  => HasFS m h
+  => Tracer m Internal.LSMTreeTrace
+  -> HasFS m h
   -> HasBlockIO m h
   -> FsPath
   -> (Session m -> m a)
   -> m a
-withSession hfs hbio dir action = Internal.withSession hfs hbio dir (action . Session)
+withSession tr hfs hbio dir action = Internal.withSession tr hfs hbio dir (action . Session)
 
-{-# SPECIALISE openSession :: HasFS IO HandleIO -> HasBlockIO IO HandleIO -> FsPath -> IO (Session IO) #-}
+{-# SPECIALISE openSession :: Tracer IO Internal.LSMTreeTrace -> HasFS IO HandleIO -> HasBlockIO IO HandleIO -> FsPath -> IO (Session IO) #-}
 -- | Create either a new empty table session or open an existing table session,
 -- given the path to the session directory.
 --
@@ -129,11 +135,12 @@ withSession hfs hbio dir action = Internal.withSession hfs hbio dir (action . Se
 --   process or another OS process)
 openSession ::
      forall m h. (IOLike m, Typeable h)
-  => HasFS m h
+  => Tracer m Internal.LSMTreeTrace
+  -> HasFS m h
   -> HasBlockIO m h -- TODO: could we prevent the user from having to pass this in?
   -> FsPath -- ^ Path to the session directory
   -> m (Session m)
-openSession hfs hbio dir = Session <$> Internal.openSession hfs hbio dir
+openSession tr hfs hbio dir = Session <$> Internal.openSession tr hfs hbio dir
 
 {-# SPECIALISE closeSession :: Session IO -> IO () #-}
 -- | Close the table session. 'closeSession' is idempotent. All subsequent
