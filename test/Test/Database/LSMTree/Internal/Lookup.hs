@@ -123,7 +123,7 @@ prop_bloomQueriesModel dats =
     blooms = fmap snd3 runs
     lookupss = concatMap lookups $ getSmallList dats
     real  = map (\(RunIxKeyIx rix kix) -> (rix,kix)) $ VP.toList $
-            bloomQueriesDefault (V.fromList blooms) (V.fromList lookupss)
+            bloomQueries (V.fromList blooms) (V.fromList lookupss)
     model = bloomQueriesModel blooms lookupss
 
 bloomQueriesModel :: [Bloom SerialisedKey] -> [SerialisedKey] -> [(RunIx, KeyIx)]

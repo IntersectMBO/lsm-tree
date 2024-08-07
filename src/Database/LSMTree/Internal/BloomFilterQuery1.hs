@@ -4,7 +4,6 @@
 {-# LANGUAGE UnboxedTuples   #-}
 module Database.LSMTree.Internal.BloomFilterQuery1 (
   bloomQueries,
-  bloomQueriesDefault,
   RunIxKeyIx(RunIxKeyIx),
   RunIx, KeyIx,
 ) where
@@ -96,36 +95,22 @@ instance Show RunIxKeyIx where
     showString "RunIxKeyIx " . showsPrec 11 r
               . showChar ' ' . showsPrec 11 k
 
--- | 'bloomQueries' with a default result vector size of @V.length ks * 2@.
---
--- TODO: tune the starting estimate based on the expected true- and
--- false-positives.
-bloomQueriesDefault ::
-     V.Vector (Bloom SerialisedKey)
-  -> V.Vector SerialisedKey
-  -> VP.Vector RunIxKeyIx
-bloomQueriesDefault blooms ks =
-    bloomQueries blooms ks (fromIntegral $ V.length ks * 2)
-
 type ResIx = Int -- Result index
 
 -- | Perform a batch of bloom queries. The result is a tuple of indexes into the
 -- vector of runs and vector of keys respectively.
 --
--- The result vector can be of variable length. An estimate should be provided,
--- and the vector is grown if needed.
+-- The result vector can be of variable length. The initial estimate is 2x the
+-- number of keys but this is grown if needed (using a doubling strategy).
 --
--- TODO: we consider it likely that we could implement a optimised, batched
--- version of bloom filter queries, which would largely replace this function.
 bloomQueries ::
      V.Vector (Bloom SerialisedKey)
   -> V.Vector SerialisedKey
-  -> Word32
   -> VP.Vector RunIxKeyIx
-bloomQueries !blooms !ks !resN
+bloomQueries !blooms !ks
   | rsN == 0 || ksN == 0 = VP.empty
   | otherwise            = VP.create $ do
-      res <- VPM.unsafeNew (fromIntegral resN)
+      res <- VPM.unsafeNew (V.length ks * 2)
       loop1 res 0 0
   where
     !rsN = V.length blooms
@@ -158,12 +143,10 @@ bloomQueries !blooms !ks !resN
           | kix == ksN = pure (res2, resix2)
           | let !h = hs `VP.unsafeIndex` kix
           , Bloom.elemHashes h b = do
-              -- Grows the vector if we've reached the end.
-              --
-              -- TODO: tune how much much we grow the vector each time based on
-              -- the expected true- and false-positives.
+              -- Double the vector if we've reached the end.
+              -- Note unsafeGrow takes the number to grow by, not the new size.
               res2' <- if resix2 == VPM.length res2
-                        then VPM.unsafeGrow res2 ksN
+                        then VPM.unsafeGrow res2 (VPM.length res2)
                         else pure res2
               VPM.unsafeWrite res2' resix2 (RunIxKeyIx rix kix)
               loop2 res2' (resix2+1) (kix+1) b

@@ -113,7 +113,7 @@ benchmarks = do
       benchmark "bloomQueries1"
                 "(this is the batch lookup, less the cost of computing and hashing the keys)"
                 (benchInBatches benchmarkBatchSize rng0
-                  (\ks -> Bloom1.bloomQueriesDefault vbs ks `seq` ()))
+                  (\ks -> Bloom1.bloomQueries vbs ks `seq` ()))
                 (fromIntegralChecked benchmarkNumLookups)
                 hashcost
                 0
@@ -123,7 +123,7 @@ benchmarks = do
       benchmark "bloomQueries2"
                 "(this is the optimised batch lookup, less the cost of computing and hashing the keys)"
                 (benchInBatches benchmarkBatchSize rng0
-                  (\ks -> Bloom2.bloomQueriesDefault vbs ks  `seq` ()))
+                  (\ks -> Bloom2.bloomQueries vbs ks `seq` ()))
                 (fromIntegralChecked benchmarkNumLookups)
                 hashcost
                 0
