@@ -51,6 +51,7 @@ import qualified Data.ByteString.Short as BS
 import qualified Data.Foldable as Fold
 import qualified Data.IntSet as IS
 import           Data.IORef (modifyIORef', newIORef, readIORef, writeIORef)
+import qualified Data.List.NonEmpty as NE
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Traversable (mapAccumL)
@@ -71,6 +72,8 @@ import           System.IO
 import           System.Mem (performMajorGC)
 import           Text.Printf (printf)
 import           Text.Show.Pretty
+
+import           Database.LSMTree.Extras
 
 -- We should be able to write this benchmark
 -- using only use public lsm-tree interface
@@ -108,9 +111,9 @@ theValue = BS.replicate 60 120 -- 'x'
 data GlobalOpts = GlobalOpts
     { rootDir         :: !FilePath  -- ^ session directory.
     , initialSize     :: !Int
-    -- | The cache policy for the LSM table. This configuration option is used
-    -- both during setup, and during a run (where it is used to override the
-    -- config option of the snapshot).
+      -- | The cache policy for the LSM table. This configuration option is used
+      -- both during setup, and during a run (where it is used to override the
+      -- config option of the snapshot).
     , diskCachePolicy :: !LSM.DiskCachePolicy
       -- | Enable trace output
     , trace           :: !Bool
@@ -382,17 +385,16 @@ doSetup' gopts opts = do
     LSM.withSession (mkTracer gopts) hasFS hasBlockIO (FS.mkFsPath []) $ \session -> do
         tbh <- LSM.new @IO @K @V @B session (mkTableConfigSetup gopts opts LSM.defaultTableConfig)
 
-        forM_ [ 0 .. initialSize gopts ] $ \ (fromIntegral -> i) -> do
+        forM_ (groupsOfN 256 [ 0 .. initialSize gopts ]) $ \batch -> do
             -- TODO: this procedure simply inserts all the keys into initial lsm tree
             -- We might want to do deletes, so there would be delete-insert pairs
             -- Let's do that when we can actually test that benchmark works.
-
-            let k = makeKey i
-            let v = theValue
-
+            --
             -- TODO: LSM.inserts has annoying order
-            flip LSM.inserts tbh $
-              V.singleton (k, v, Nothing)
+            flip LSM.inserts tbh $ V.fromList [
+                  (makeKey (fromIntegral i), theValue, Nothing)
+                | i <- NE.toList batch
+                ]
 
         LSM.snapshot name tbh
 

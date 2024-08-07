@@ -20,6 +20,7 @@ import qualified Data.List.NonEmpty as NE
 import           Data.Map.Range
 import qualified Data.Vector.Unboxed.Mutable as VUM
 import           Data.Word
+import           Database.LSMTree.Extras
 import           Database.LSMTree.Extras.Generators
 import           Database.LSMTree.Extras.Random
 import           Database.LSMTree.Extras.UTxO
@@ -151,11 +152,3 @@ fromNE xs =
     assert (NE.sort xs == xs) $
     assert (NE.nub xs == xs) $
     AppendSinglePage (serialiseKey $ NE.head xs) (serialiseKey $ NE.last xs)
-
--- | Make groups of @n@ elements from a list @xs@
-groupsOfN :: Int -> [a] -> [NonEmpty a]
-groupsOfN n
-  | n <= 0 = error "groupsOfN: n <= 0"
-  | otherwise = List.unfoldr f
-  where f xs = let (ys, zs) = List.splitAt n xs
-               in  (,zs) <$> NE.nonEmpty ys

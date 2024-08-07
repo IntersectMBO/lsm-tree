@@ -486,6 +486,7 @@ benchmark lsm-tree-bench-wp8
   type:           exitcode-stdio-1.0
   hs-source-dirs: bench/macro src-extras
   main-is:        lsm-tree-bench-wp8.hs
+  other-modules:  Database.LSMTree.Extras
   build-depends:
     , async
     , base
