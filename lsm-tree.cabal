@@ -122,7 +122,6 @@ library
     Database.LSMTree.Internal.Lookup
     Database.LSMTree.Internal.Managed
     Database.LSMTree.Internal.Merge
-    Database.LSMTree.Internal.Monkey
     Database.LSMTree.Internal.Monoidal
     Database.LSMTree.Internal.Normal
     Database.LSMTree.Internal.PageAcc
@@ -160,6 +159,7 @@ library
     , lsm-tree:blockio-api
     , lsm-tree:bloomfilter
     , lsm-tree:kmerge
+    , lsm-tree:monkey
     , nothunks              ^>=0.2
     , primitive             ^>=0.9
     , strict-mvar           ^>=1.4
@@ -342,6 +342,7 @@ test-suite lsm-tree-test
     , lsm-tree:blockio-api
     , lsm-tree:blockio-sim
     , lsm-tree:bloomfilter
+    , lsm-tree:monkey
     , lsm-tree:prototypes
     , mtl
     , primitive
@@ -428,6 +429,7 @@ benchmark lsm-tree-bench-bloomfilter
     , fs-api
     , lsm-tree
     , lsm-tree:bloomfilter
+    , lsm-tree:monkey
     , primitive
     , QuickCheck
     , random

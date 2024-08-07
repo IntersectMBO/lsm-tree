@@ -19,7 +19,7 @@ import           Database.LSMTree.Extras.Orphans ()
 import           Database.LSMTree.Extras.Random (frequency,
                      sampleUniformWithReplacement, uniformWithoutReplacement)
 import           Database.LSMTree.Extras.UTxO
-import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..))
+import           Database.LSMTree.Internal.Entry (Entry (..), unNumEntries)
 import           Database.LSMTree.Internal.Lookup (bloomQueriesDefault,
                      indexSearches, intraPageLookups, lookupsIO, prepLookups)
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..))

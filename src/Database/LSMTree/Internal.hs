@@ -81,7 +81,7 @@ import           Data.Word (Word64)
 import           Database.LSMTree.Internal.Assertions (assert, assertNoThunks)
 import           Database.LSMTree.Internal.BlobRef
 import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..),
-                     combineMaybe)
+                     combineMaybe, unNumEntries)
 import           Database.LSMTree.Internal.IndexCompact (IndexCompact)
 import           Database.LSMTree.Internal.Lookup (ByteCountDiscrepancy,
                      ResolveSerialisedValue, lookupsIO)

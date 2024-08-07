@@ -40,13 +40,13 @@ import qualified Data.BloomFilter.Mutable as MBloom
 import           Data.Primitive.PrimVar (PrimVar, modifyPrimVar, newPrimVar,
                      readPrimVar)
 import           Data.Word (Word64)
+import           Database.LSMTree.Internal.Assertions (fromIntegralChecked)
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..))
 import           Database.LSMTree.Internal.IndexCompact (IndexCompact)
 import qualified Database.LSMTree.Internal.IndexCompact as Index
 import           Database.LSMTree.Internal.IndexCompactAcc (IndexCompactAcc)
 import qualified Database.LSMTree.Internal.IndexCompactAcc as Index
-import           Database.LSMTree.Internal.Monkey (monkeyHashFuncs)
 import           Database.LSMTree.Internal.PageAcc (PageAcc)
 import qualified Database.LSMTree.Internal.PageAcc as PageAcc
 import qualified Database.LSMTree.Internal.PageAcc1 as PageAcc
@@ -55,6 +55,7 @@ import           Database.LSMTree.Internal.RawPage (RawPage)
 import qualified Database.LSMTree.Internal.RawPage as RawPage
 import           Database.LSMTree.Internal.Serialise (SerialisedKey,
                      SerialisedValue)
+import qualified Monkey
 
 {-------------------------------------------------------------------------------
   Incremental, in-memory run construction
@@ -87,10 +88,12 @@ data RunBloomFilterAlloc =
 new :: NumEntries -> RunBloomFilterAlloc -> ST s (RunAcc s)
 new (NumEntries nentries) alloc = do
     mbloom <- case alloc of
-      RunAllocFixed bitsPerEntry    ->
-        let !nbits = bitsPerEntry * fromIntegral nentries
-        in  MBloom.new (monkeyHashFuncs nbits nentries) nbits
-      RunAllocRequestFPR fpr ->
+      RunAllocFixed !bitsPerEntry    ->
+        let !nbits = fromIntegral bitsPerEntry * fromIntegral nentries
+        in  MBloom.new
+              (fromIntegralChecked $ Monkey.numHashFunctions nbits (fromIntegralChecked nentries))
+              (fromIntegralChecked nbits)
+      RunAllocRequestFPR !fpr ->
         Bloom.Easy.easyNew fpr nentries
     mindex <- Index.new 1024 -- TODO(optimise): tune chunk size
     mpageacc <- PageAcc.newPageAcc
