@@ -36,7 +36,8 @@ import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Word (Word64)
 import           Database.LSMTree.Extras.Random
-import qualified Database.LSMTree.Internal.Monkey as Monkey
+import           Database.LSMTree.Internal.Assertions (fromIntegralChecked)
+import qualified Monkey
 import           System.Random
 import           Test.QuickCheck
 import           Test.Tasty (TestTree, testGroup)
@@ -276,13 +277,13 @@ mkBloomST requestedFPR xs = runST $ do
 --   rounding of th ebits.
 mkBloomST_Monkey :: Hashable a => Double -> BloomMaker a
 mkBloomST_Monkey requestedFPR xs = runST $ do
-    b <- MBloom.new numHashFuncs numBits
+    b <- MBloom.new (fromIntegralChecked nhashes) (fromIntegralChecked nbits)
     mapM_ (MBloom.insert b) xs
     Bloom.freeze b
   where
-    numEntries   = length xs
-    numBits      = Monkey.monkeyBits numEntries requestedFPR
-    numHashFuncs = Monkey.monkeyHashFuncs numBits numEntries
+    nentries = fromIntegral $ length xs
+    nbits    = Monkey.numBits nentries requestedFPR
+    nhashes  = Monkey.numHashFunctions nbits nentries
 
 -- | Create a bloom filter through the "Data.BloomFilter.Easy" interface. Tunes
 -- the bloom filter using 'suggestSizing'.

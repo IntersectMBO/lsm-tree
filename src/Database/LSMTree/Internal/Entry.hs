@@ -4,6 +4,7 @@ module Database.LSMTree.Internal.Entry (
   , onValue
   , onBlobRef
   , NumEntries (..)
+  , unNumEntries
     -- * Injections/projections
   , updateToEntryNormal
   , updateToEntryMonoidal
@@ -81,9 +82,12 @@ instance Bifoldable Entry where
 
 -- | TODO: we should change this to be a Word64, so that it is in line with the
 -- disk format.
-newtype NumEntries = NumEntries { unNumEntries :: Int }
+newtype NumEntries = NumEntries Int
   deriving stock (Eq, Ord, Show)
   deriving newtype NFData
+
+unNumEntries :: NumEntries -> Int
+unNumEntries (NumEntries x) = x
 
 {-------------------------------------------------------------------------------
   Injections/projections

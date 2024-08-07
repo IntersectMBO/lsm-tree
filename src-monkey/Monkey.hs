@@ -17,11 +17,14 @@ module Monkey (
     monkeyBits,
     -- * Utilities
     runsMultiplies,
+    numLevels,
     falsePositiveRate,
+    numBits,
+    numHashFunctions,
     totalMemory,
     zeroResultCost,
     nonZeroResultCost,
-) where
+  ) where
 
 import           Data.Bifunctor (bimap)
 import           Numeric.AD (Mode, Scalar, auto, conjugateGradientDescent)
@@ -202,7 +205,40 @@ runsMultiplies
     -> Integer
 runsMultiplies t l = t ^ l -1
 
+-- | Total number of levels
+--
+-- Note that this is a lower bound on the number of levels. The function assumes
+-- perfect residency across levels, which means that runs are not underfull or
+-- overfull.
+--
+-- Equation 1, corrections by Wolfgang Jeltsch
+--
+-- The value of \(T\) can be set anywhere between 2 and \( T_{lim} = \frac{n}{M_{buf}} \).
+--
+-- >>> numLevels 10_000 100 2 -- T = 2
+-- 6
+-- >>> numLevels 10_000 100 4
+-- 4
+-- >>> numLevels 10_000 100 (10_000 `div` 100) -- T = T_lim
+-- 1
+numLevels ::
+     Integer -- ^ \(N\): number of physical entries in the database
+  -> Integer -- ^ \(M_{buf}\): maximum number of entries in the write buffer
+  -> Integer -- ^ \(T\): size ratio
+  -> Integer -- ^ \(L\): level count
+numLevels n m t
+  | n <= 0 = error "numLevels: n <= 0"
+  | m <= 0 = error "numLevels: m <= 0"
+  | t <  2 = error "numLevels: t < 2"
+  | otherwise = ceiling @Double (logBase t' ((n' / m') * ((t' - 1) / t') + (1 / t')))
+  where
+    n' = fromIntegral n
+    m' = fromIntegral m
+    t' = fromIntegral t
+
 -- | False positive rate
+--
+-- Assumes that the bloom filter uses 'numHashFunctions' hash functions.
 --
 -- Equation 2.
 falsePositiveRate
@@ -211,6 +247,35 @@ falsePositiveRate
     -> a  -- ^ bits
     -> a
 falsePositiveRate entries bits = exp ((-(bits / entries)) * sq (log 2))
+
+-- | Compute the number of bits in a bloom filter.
+--
+-- Assumes that the bloom filter uses 'numHashFunctions' hash functions.
+--
+-- Equation 2, rewritten in terms of @bits@ on page 11.
+--
+-- >>> (numBits 100 0.02, numBits 100 17)
+-- (815,1)
+numBits ::
+     Integer -- ^ Number of entries inserted into the bloom filter.
+  -> Double  -- ^ False positive rate.
+  -> Integer
+numBits numEntries fpr = ceiling $ max 1 $
+  (- fromIntegral numEntries) * (log fpr / (sq (log 2)))
+
+-- | Computes the optimal number of hash functions that minimses the false
+-- positive rate for a bloom filter.
+--
+-- Footnote 2, page 6.
+--
+-- >>> (numHashFunctions 815 100, numHashFunctions 1 100, numHashFunctions 0 100)
+-- (5,1,1)
+numHashFunctions ::
+     Integer -- ^ Number of bits assigned to the bloom filter.
+  -> Integer -- ^ Number of entries inserted into the bloom filter.
+  -> Integer
+numHashFunctions nbits nentries = truncate @Double $ max 1 $
+    (fromIntegral nbits / fromIntegral nentries) * log 2
 
 -- | Worst-Case Zero-result Lookup Cost (equation 3).
 zeroResultCost

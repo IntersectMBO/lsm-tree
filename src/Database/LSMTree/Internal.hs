@@ -78,10 +78,11 @@ import           Data.Monoid (Last (..))
 import qualified Data.Set as Set
 import qualified Data.Vector as V
 import           Data.Word (Word64)
-import           Database.LSMTree.Internal.Assertions (assert, assertNoThunks)
+import           Database.LSMTree.Internal.Assertions (assert, assertNoThunks,
+                     fromIntegralChecked)
 import           Database.LSMTree.Internal.BlobRef
 import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..),
-                     combineMaybe)
+                     combineMaybe, unNumEntries)
 import           Database.LSMTree.Internal.IndexCompact (IndexCompact)
 import           Database.LSMTree.Internal.Lookup (ByteCountDiscrepancy,
                      ResolveSerialisedValue, lookupsIO)
@@ -100,6 +101,7 @@ import qualified Database.LSMTree.Internal.Vector as V
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import qualified GHC.IO.Handle as GHC
+import qualified Monkey
 import           NoThunks.Class
 import qualified System.FS.API as FS
 import           System.FS.API (FsErrorPath, FsPath, Handle, HasFS)
@@ -762,7 +764,7 @@ flushWriteBuffer ::
   -> TempRegistry m
   -> TableContent h
   -> m (TableContent h)
-flushWriteBuffer conf@TableConfig{confDiskCachePolicy, confBloomFilterAlloc}
+flushWriteBuffer conf@TableConfig{confDiskCachePolicy}
                  resolve hfs hbio root uniqC reg tc
   | WB.null (tableWriteBuffer tc) = pure tc
   | otherwise = do
@@ -770,7 +772,7 @@ flushWriteBuffer conf@TableConfig{confDiskCachePolicy, confBloomFilterAlloc}
     r <- allocateTemp reg
             (Run.fromWriteBuffer hfs hbio
               (diskCachePolicyForLevel confDiskCachePolicy (LevelNo 1))
-              (bloomFilterAllocForLevel confBloomFilterAlloc (LevelNo 1))
+              (bloomFilterAllocForLevel conf (LevelNo 1))
               (Paths.runPath root n)
               (tableWriteBuffer tc))
             (Run.removeReference hfs hbio)
@@ -939,7 +941,7 @@ addRunToLevels conf@TableConfig{..} resolve hfs hbio root uniqC r0 reg levels = 
       | otherwise = do
         assert (let l = V.length rs in l >= 2 && l <= 5) $ pure ()
         let caching = diskCachePolicyForLevel confDiskCachePolicy ln
-            alloc = bloomFilterAllocForLevel confBloomFilterAlloc ln
+            alloc = bloomFilterAllocForLevel conf ln
         r <- allocateTemp reg
                (mergeRuns resolve hfs hbio root uniqC caching alloc mergepolicy mergelast rs)
                (Run.removeReference hfs hbio)
@@ -958,6 +960,9 @@ mergePolicyForLevel MergePolicyLazyLevelling (LevelNo n) nextLevels
 
 runSize :: Run h -> NumEntries
 runSize run = Run.runNumEntries run
+
+-- $setup
+-- >>> import Database.LSMTree.Internal.Entry
 
 -- | Compute the maximum size of a run for a given level.
 --
@@ -1385,22 +1390,28 @@ data BloomFilterAlloc =
     -- false-positive rate. Do this for each bloom filter.
     AllocRequestFPR
       Double -- ^ Requested FPR.
-{- TODO: disabled for now
   | -- | Allocate bits amongst all bloom filters according to the Monkey algorithm.
     --
-    -- TODO: add more configuration paramters that the Monkey algorithm might
-    -- need once we implement it.
+    -- The allocation algorithm will never go over the memory budget. If more
+    -- levels are added that the algorithm did not account for, then bloom
+    -- filters on those levels will be empty. This can happen for a number of
+    -- reasons:
+    --
+    -- * The number of budgeted physical entries is exceeded
+    -- * Underfull runs causes levels to be underfull, which causes entries to
+    --   reside in larger levels
+    --
+    -- To combat this, make sure to budget for a generous number of physical
+    -- entries.
     AllocMonkey
-      Word32 -- ^ Total number of bytes that bloom filters can use collectively.
-             --
-             -- The maximum is 4GiB, which should be more than enough for
-             -- realistic applications.
- -}
+      Word64 -- ^ Total number of bytes that bloom filters can use collectively.
+      NumEntries -- ^ Total number of /physical/ entries expected to be in the database.
   deriving stock (Show, Eq)
 
 instance NFData BloomFilterAlloc where
   rnf (AllocFixed n)        = rnf n
   rnf (AllocRequestFPR fpr) = rnf fpr
+  rnf (AllocMonkey a b)     = rnf a `seq` rnf b
 
 -- | TODO: this should be removed once we have proper snapshotting with proper
 -- persistence of the config to disk.
@@ -1409,9 +1420,36 @@ deriving stock instance Read BloomFilterAlloc
 defaultBloomFilterAlloc :: BloomFilterAlloc
 defaultBloomFilterAlloc = AllocFixed 10
 
-bloomFilterAllocForLevel :: BloomFilterAlloc -> LevelNo -> RunBloomFilterAlloc
-bloomFilterAllocForLevel (AllocFixed n) _        = RunAllocFixed n
-bloomFilterAllocForLevel (AllocRequestFPR fpr) _ = RunAllocRequestFPR fpr
+bloomFilterAllocForLevel :: TableConfig -> LevelNo -> RunBloomFilterAlloc
+bloomFilterAllocForLevel conf (LevelNo l) =
+    assert (l > 0) $
+    case confBloomFilterAlloc conf of
+      AllocFixed n -> RunAllocFixed n
+      AllocRequestFPR fpr -> RunAllocRequestFPR fpr
+      AllocMonkey totalBits (NumEntries n) ->
+        let !sr = sizeRatioInt (confSizeRatio conf)
+            !m = case confWriteBufferAlloc conf of
+                    AllocNumEntries (NumEntries x) -> x
+            !levelCount = Monkey.numLevels (fromIntegral n) (fromIntegral m) (fromIntegral sr)
+            !allocPerLevel = Monkey.monkeyBits
+                                (fromIntegralChecked totalBits)
+                                (fromIntegralChecked n)
+                                (fromIntegralChecked sr)
+                                levelCount
+        in  case allocPerLevel !? (l - 1) of
+              -- Default to an empty bloom filter in case the level wasn't
+              -- accounted for. See 'AllocMonkey'.
+              Nothing     -> RunAllocMonkey 0
+              Just (_, x) -> RunAllocMonkey (fromIntegralChecked x)
+  where
+    -- Copied from "Data.List"
+    {-# INLINABLE (!?) #-}
+    (!?) :: [a] -> Int -> Maybe a
+    xs !? n
+      | n < 0     = Nothing
+      | otherwise = foldr (\x r k -> case k of
+                                      0 -> Just x
+                                      _ -> r (k-1)) (const Nothing) xs n
 
 -- | The policy for caching data from disk in memory (using the OS page cache).
 --

@@ -18,7 +18,6 @@ import           Data.Time
 import           Data.Vector (Vector)
 import qualified Data.Vector as Vector
 import           Data.WideWord.Word256 (Word256)
-import           Data.Word (Word64)
 import           GHC.Stats
 import           Numeric
 import           System.IO
@@ -27,9 +26,10 @@ import           System.Random
 import           Text.Printf (printf)
 
 import           Database.LSMTree.Extras.Orphans ()
-import           Database.LSMTree.Internal.Monkey as Monkey
+import           Database.LSMTree.Internal.Assertions (fromIntegralChecked)
 import           Database.LSMTree.Internal.Serialise (SerialisedKey,
                      serialiseKey)
+import qualified Monkey
 
 main :: IO ()
 main = do
@@ -48,10 +48,10 @@ benchmarkSizeBase = 16
 -- | The number of lookups to do. This has to be smaller than the total size of
 -- all the filters (otherwise we will not get true positive probes, which is
 -- part of the point of this benchmark).
-benchmarkNumLookups :: Int
+benchmarkNumLookups :: Integer
 benchmarkNumLookups = 25_000_000
 
-benchmarkNumBitsPerEntry :: Word64
+benchmarkNumBitsPerEntry :: Integer
 benchmarkNumBitsPerEntry = 10
 
 benchmarks :: IO ()
@@ -63,7 +63,7 @@ benchmarks = do
     enabled <- getRTSStatsEnabled
     when (not enabled) $ fail "Need RTS +T statistics enabled"
     let filterSizes = lsmStyleBloomFilters benchmarkSizeBase
-                                          benchmarkNumBitsPerEntry
+                                           benchmarkNumBitsPerEntry
     putStrLn "Bloom filter stats:"
     putStrLn "(numEntries, sizeFactor, numBits, numHashFuncs)"
     mapM_ print filterSizes
@@ -113,8 +113,8 @@ type Alloc = Int
 
 benchmark :: String
           -> String
-          -> (Int -> ())
-          -> Int
+          -> (Integer -> ())
+          -> Integer
           -> (NominalDiffTime, Alloc)
           -> Int
           -> IO (NominalDiffTime, Alloc)
@@ -157,9 +157,9 @@ benchmark name description action n (subtractTime, subtractAlloc) expectedAlloc 
     return (timeNet, allocNet)
 
 -- | (numEntries, sizeFactor, numBits, numHashFuncs)
-type BloomFilterSizeInfo = (Int, Int, Word64, Int)
+type BloomFilterSizeInfo = (Integer, Integer, Integer, Integer)
 type SizeBase     = Int
-type RequestedBitsPerEntry = Word64
+type RequestedBitsPerEntry = Integer
 
 -- | Calculate the sizes of a realistic LSM style set of Bloom filters, one
 -- for each LSM run. This uses base 4, with 4 disk levels, using tiering
@@ -170,22 +170,22 @@ type RequestedBitsPerEntry = Word64
 --
 lsmStyleBloomFilters :: SizeBase -> RequestedBitsPerEntry -> [BloomFilterSizeInfo]
 lsmStyleBloomFilters l1 requestedBitsPerEntry =
-    [ (numEntries, sizeFactor, numBits, numHashFuncs)
+    [ (numEntries, sizeFactor, nbits, nhashes)
     | (numEntries, sizeFactor)
         <- replicate 8 (2^(l1+0), 1)   -- 8 runs at level 1 (tiering)
         ++ replicate 8 (2^(l1+2), 4)   -- 8 runs at level 2 (tiering)
         ++ replicate 8 (2^(l1+4),16)   -- 8 runs at level 3 (tiering)
         ++            [(2^(l1+8),256)] -- 1 run  at level 4 (leveling)
-    , let numBits      = fromIntegral numEntries * requestedBitsPerEntry
-          numHashFuncs = Monkey.monkeyHashFuncs numBits numEntries
+    , let nbits   = numEntries * requestedBitsPerEntry
+          nhashes = Monkey.numHashFunctions nbits numEntries
     ]
 
-totalNumEntries, totalNumBytes :: [BloomFilterSizeInfo] -> Int
+totalNumEntries, totalNumBytes :: [BloomFilterSizeInfo] -> Integer
 totalNumEntries filterSizes =
     sum [ numEntries | (numEntries, _, _, _) <- filterSizes ]
 
 totalNumBytes filterSizes =
-    fromIntegral $ sum [ numBits | (_,_,numBits,_) <- filterSizes ] `div` 8
+    sum [ nbits | (_,_,nbits,_) <- filterSizes ] `div` 8
 
 totalNumEntriesSanityCheck :: SizeBase -> [BloomFilterSizeInfo] -> Bool
 totalNumEntriesSanityCheck l1 filterSizes =
@@ -217,7 +217,7 @@ elemManyEnv filterSizes rng0 =
   stToIO $ do
     -- create the filters
     mbs <- sequence
-             [ MBloom.new numHashFuncs numBits
+             [ MBloom.new (fromIntegralChecked numHashFuncs) (fromIntegralChecked numBits)
              | (_, _, numBits, numHashFuncs) <- filterSizes ]
     -- add elements
     foldM_
@@ -234,11 +234,11 @@ elemManyEnv filterSizes rng0 =
       (zip [0 .. totalNumEntries filterSizes - 1]
            (cycle [ mb'
                   | (mb, (_, sizeFactor, _, _)) <- zip mbs filterSizes
-                  , mb' <- replicate sizeFactor mb ]))
+                  , mb' <- replicate (fromIntegralChecked sizeFactor) mb ]))
     Vector.fromList <$> mapM Bloom.unsafeFreeze mbs
 
 -- | This gives us a baseline cost of just calculating the series of keys.
-benchBaseline :: Vector (Bloom SerialisedKey) -> StdGen -> Int -> ()
+benchBaseline :: Vector (Bloom SerialisedKey) -> StdGen -> Integer -> ()
 benchBaseline !_  !_   0 = ()
 benchBaseline !bs !rng !n =
     let k :: Word256
@@ -248,7 +248,7 @@ benchBaseline !bs !rng !n =
 
 -- | This gives us a combined cost of calculating the series of keys and their
 -- hashes.
-benchMakeCheapHashes :: Vector (Bloom SerialisedKey) -> StdGen -> Int -> ()
+benchMakeCheapHashes :: Vector (Bloom SerialisedKey) -> StdGen -> Integer -> ()
 benchMakeCheapHashes !_  !_   0 = ()
 benchMakeCheapHashes !bs !rng !n =
     let k :: Word256
@@ -258,7 +258,7 @@ benchMakeCheapHashes !bs !rng !n =
 
 -- | This gives us a combined cost of calculating the series of keys, their
 -- hashes, and then using 'Bloom.elemCheapHashes' with each filter.
-benchElemCheapHashes :: Vector (Bloom SerialisedKey) -> StdGen -> Int -> ()
+benchElemCheapHashes :: Vector (Bloom SerialisedKey) -> StdGen -> Integer -> ()
 benchElemCheapHashes !_  !_   0  = ()
 benchElemCheapHashes !bs !rng !n =
     let k :: Word256
