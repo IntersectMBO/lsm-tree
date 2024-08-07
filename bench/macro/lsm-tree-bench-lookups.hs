@@ -419,7 +419,7 @@ benchBloomQueries !bs !keyRng !n
   | n <= 0 = ()
   | otherwise =
       let (!ks, !keyRng') = genLookupBatch keyRng benchmarkGenBatchSize
-      in  bloomQueriesDefault bs ks `seq`
+      in  bloomQueries bs ks `seq`
           benchBloomQueries bs keyRng' (n-benchmarkGenBatchSize)
 
 -- | This gives us the combined cost of calculating batches of keys, performing
@@ -436,7 +436,7 @@ benchIndexSearches !arenaManager !bs !ics !hs !keyRng !n
   | n <= 0 = pure ()
   | otherwise = do
     let (!ks, !keyRng') = genLookupBatch keyRng benchmarkGenBatchSize
-        !rkixs = bloomQueriesDefault bs ks
+        !rkixs = bloomQueries bs ks
     !_ioops <- withArena arenaManager $ \arena -> stToIO $ indexSearches arena ics hs ks rkixs
     benchIndexSearches arenaManager bs ics hs keyRng' (n-benchmarkGenBatchSize)
 
@@ -514,7 +514,7 @@ classifyLookups !bs !keyRng0 !n0 =
       | otherwise =
           unsafePerformIO (putStr ".") `seq`
           let (!ks, !keyRng') = genLookupBatch keyRng benchmarkGenBatchSize
-              !rkixs = bloomQueriesDefault bs ks
+              !rkixs = bloomQueries bs ks
           in  loop (positives + VP.length rkixs) keyRng' (n-benchmarkGenBatchSize)
 
 -- | Fill a mutable vector with uniformly random values.

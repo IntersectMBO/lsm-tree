@@ -22,8 +22,8 @@ import           Database.LSMTree.Extras.UTxO
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Entry (Entry (..), unNumEntries)
 import           Database.LSMTree.Internal.IndexCompact (getNumPages)
-import           Database.LSMTree.Internal.Lookup (bloomQueriesDefault,
-                     indexSearches, intraPageLookups, lookupsIO, prepLookups)
+import           Database.LSMTree.Internal.Lookup (bloomQueries, indexSearches,
+                     intraPageLookups, lookupsIO, prepLookups)
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..))
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
@@ -92,10 +92,10 @@ benchLookups conf@Config{name} =
             -- The bloomfilter is queried for all lookup keys. The result is an
             -- unboxed vector, so only use @whnf@.
             bench "Bloomfilter query" $
-              whnf (\ks' -> bloomQueriesDefault blooms ks') ks
+              whnf (\ks' -> bloomQueries blooms ks') ks
             -- The compact index is only searched for (true and false) positive
             -- lookup keys. We use whnf here because the result is
-          , env (pure $ bloomQueriesDefault blooms ks) $ \rkixs ->
+          , env (pure $ bloomQueries blooms ks) $ \rkixs ->
               bench "Compact index search" $
                 whnfAppIO (\ks' -> withArena arenaManager $ \arena -> stToIO $ indexSearches arena indexes kopsFiles ks' rkixs) ks
             -- prepLookups combines bloom filter querying and index searching.

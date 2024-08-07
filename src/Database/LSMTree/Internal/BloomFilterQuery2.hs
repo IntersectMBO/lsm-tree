@@ -11,7 +11,7 @@
 -- | An implementation of batched bloom filter query, optimised for memory
 -- prefetch.
 module Database.LSMTree.Internal.BloomFilterQuery2 (
-  bloomQueriesDefault,
+  bloomQueries,
   RunIxKeyIx(RunIxKeyIx),
   RunIx, KeyIx,
   -- $algorithm
@@ -184,13 +184,13 @@ instance Show CandidateProbe where
 
 
 
-bloomQueriesDefault ::
+bloomQueries ::
      V.Vector (Bloom SerialisedKey)
   -> V.Vector SerialisedKey
   -> VP.Vector RunIxKeyIx
-bloomQueriesDefault filters keys | V.null filters || V.null keys
-                                 = VP.empty
-bloomQueriesDefault filters keys =
+bloomQueries filters keys | V.null filters || V.null keys
+                          = VP.empty
+bloomQueries filters keys =
   assert (all BF.bloomInvariant filters) $
   -- in particular the bloomInvariant checks the size is > 0
   runST $ do
