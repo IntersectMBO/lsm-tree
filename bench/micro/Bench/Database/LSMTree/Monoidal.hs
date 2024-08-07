@@ -110,7 +110,7 @@ benchLookupsInsertsVsMupserts :: Benchmark
 benchLookupsInsertsVsMupserts =
     env (pure $ snd $ randomEntriesGrouped 800_000 250) $ \ess -> bgroup "lookups-inserts-vs-mupserts" [
         env (pure $ V.map mkMonoidalInserts ess) $ \inss -> bench "lookups-inserts" $
-          withNormalTable inss $ \(_, _, _, _, t) ->
+          withMonoidalTable inss $ \(_, _, _, _, t) ->
             -- Insert the same keys again, but we sum the existing values in
             -- the table with the values we are going to insert: first lookup
             -- the existing values, sum those with the insert values, then
@@ -131,24 +131,10 @@ benchLookupsInsertsVsMupserts =
       Monoidal.NotFound -> (k, v)
       Monoidal.Found v' -> (k, v `resolve` v')
 
-    withNormalTable inss =
-        perRunEnvWithCleanup
+    withMonoidalTable inss = perRunEnvWithCleanup
           -- Make a monoidal table and fill it up
           (do (tmpDir, hfs, hbio) <- mkFiles
               (s, t) <- mkMonoidalTable hfs hbio benchConfig
-              V.mapM_ (flip Monoidal.inserts t) inss
-              pure (tmpDir, hfs, hbio, s, t)
-          )
-          (\(tmpDir, hfs, hbio, s, t) -> do
-              cleanupMonoidalTable (s, t)
-              cleanupFiles (tmpDir, hfs, hbio)
-          )
-
-    withMonoidalTable mupss = perRunEnvWithCleanup
-          -- Make a monoidal table and fill it up
-          (do (tmpDir, hfs, hbio) <- mkFiles
-              (s, t) <- mkMonoidalTable hfs hbio benchConfig
-              let inss = mupss -- conventiently, inserts and mupserts have the same format
               V.mapM_ (flip Monoidal.inserts t) inss
               pure (tmpDir, hfs, hbio, s, t)
           )
