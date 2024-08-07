@@ -77,8 +77,11 @@ data RunAcc s = RunAcc {
 
 -- | See 'Database.LSMTree.Internal.BloomFilterAlloc'
 data RunBloomFilterAlloc =
+    -- | Bits per element in a filter
     RunAllocFixed Word64
   | RunAllocRequestFPR Double
+    -- | Total number of bits for a filter
+  | RunAllocMonkey Word64
   deriving stock (Show, Eq)
 
 -- | @'new' nentries@ starts an incremental run construction.
@@ -95,6 +98,10 @@ new (NumEntries nentries) alloc = do
               (fromIntegralChecked nbits)
       RunAllocRequestFPR !fpr ->
         Bloom.Easy.easyNew fpr nentries
+      RunAllocMonkey !nbits ->
+        MBloom.new
+          (fromIntegralChecked $ Monkey.numHashFunctions (fromIntegral nbits) (fromIntegral nentries))
+          nbits
     mindex <- Index.new 1024 -- TODO(optimise): tune chunk size
     mpageacc <- PageAcc.newPageAcc
     entryCount <- newPrimVar 0
