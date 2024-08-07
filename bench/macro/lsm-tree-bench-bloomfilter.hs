@@ -113,7 +113,7 @@ benchmarks = do
       benchmark "bloomQueries1"
                 "(this is the batch lookup, less the cost of computing and hashing the keys)"
                 (benchInBatches benchmarkBatchSize rng0
-                  (benchBloomQueries vbs))
+                  (Bloom1.bloomQueries vbs))
                 (fromIntegralChecked benchmarkNumLookups)
                 hashcost
                 0
@@ -123,7 +123,7 @@ benchmarks = do
       benchmark "bloomQueries2"
                 "(this is the optimised batch lookup, less the cost of computing and hashing the keys)"
                 (benchInBatches benchmarkBatchSize rng0
-                  (benchBloomQueries2 vbs))
+                  (Bloom2.bloomQueries vbs))
                 (fromIntegralChecked benchmarkNumLookups)
                 hashcost
                 0
@@ -296,16 +296,4 @@ benchElemCheapHashes !bs !ks =
                      (\_ kh -> Bloom.elemHashes kh b `seq` ())
                      () khs)
           () bs
-
-benchBloomQueries :: Vector (Bloom SerialisedKey) -> V.Vector SerialisedKey
-                  -> VP.Vector Bloom1.RunIxKeyIx
-benchBloomQueries !bs !ks =
-    Bloom1.bloomQueriesDefault bs ks
-
-#ifdef BLOOM_QUERY_FAST
-benchBloomQueries2 :: V.Vector (Bloom SerialisedKey) -> V.Vector SerialisedKey
-                   -> VP.Vector Bloom2.RunIxKeyIx
-benchBloomQueries2 !bs !ks =
-    Bloom2.bloomQueriesDefault bs ks
-#endif
 

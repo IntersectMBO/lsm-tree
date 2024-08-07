@@ -17,7 +17,7 @@ module Database.LSMTree.Internal.Lookup (
   , KeyIx
   , RunIxKeyIx(..)
   , prepLookups
-  , bloomQueriesDefault
+  , bloomQueries
   , indexSearches
   , intraPageLookups
   ) where
@@ -53,14 +53,12 @@ import           Database.LSMTree.Internal.Run (Run)
 import           Database.LSMTree.Internal.Serialise
 import qualified Database.LSMTree.Internal.Vector as V
 
-import           Database.LSMTree.Internal.BloomFilterQuery1
-                     (RunIxKeyIx (..))
 #ifdef BLOOM_QUERY_FAST
-import           Database.LSMTree.Internal.BloomFilterQuery2
-                     (bloomQueriesDefault)
+import           Database.LSMTree.Internal.BloomFilterQuery2 (RunIxKeyIx (..),
+                     bloomQueries)
 #else
-import           Database.LSMTree.Internal.BloomFilterQuery1
-                     (bloomQueriesDefault)
+import           Database.LSMTree.Internal.BloomFilterQuery1 (RunIxKeyIx (..),
+                     bloomQueries)
 #endif
 
 -- | Prepare disk lookups by doing bloom filter queries, index searches and
@@ -75,7 +73,7 @@ prepLookups ::
   -> V.Vector SerialisedKey
   -> ST s (VP.Vector RunIxKeyIx, V.Vector (IOOp s h))
 prepLookups arena blooms indexes kopsFiles ks = do
-  let !rkixs = bloomQueriesDefault blooms ks
+  let !rkixs = bloomQueries blooms ks
   !ioops <- indexSearches arena indexes kopsFiles ks rkixs
   pure (rkixs, ioops)
 

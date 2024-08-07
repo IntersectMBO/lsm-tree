@@ -9,7 +9,7 @@
 -- There's just 6 stack reads in the loop now, no writes.
 
 module Database.LSMTree.Internal.BloomFilterQuery2 (
-  bloomQueriesDefault,
+  bloomQueries,
   RunIxKeyIx(RunIxKeyIx),
   RunIx, KeyIx,
 ) where
@@ -36,7 +36,6 @@ import           Database.LSMTree.Internal.BloomFilterQuery1 (RunIxKeyIx (..))
 import           Database.LSMTree.Internal.Serialise (SerialisedKey)
 import qualified Database.LSMTree.Internal.StrictArray as P
 import qualified Database.LSMTree.Internal.Vector as P
-import           Database.LSMTree.Internal.BloomFilterQuery1 (RunIxKeyIx(..))
 
 -- Bulk query
 -----------------------------------------------------------
@@ -182,13 +181,13 @@ instance Show CandidateProbe where
 
 
 
-bloomQueriesDefault ::
+bloomQueries ::
      V.Vector (Bloom SerialisedKey)
   -> V.Vector SerialisedKey
   -> VP.Vector RunIxKeyIx
-bloomQueriesDefault filters keys | V.null filters || V.null keys
-                                 = VP.empty
-bloomQueriesDefault filters keys =
+bloomQueries filters keys | V.null filters || V.null keys
+                          = VP.empty
+bloomQueries filters keys =
   runST $ do
     let !keyhashes = prepKeyHashes keys
         !filters'  = P.vectorToStrictArray filters

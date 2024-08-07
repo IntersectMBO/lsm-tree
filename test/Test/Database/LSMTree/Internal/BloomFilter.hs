@@ -97,7 +97,7 @@ prop_bloomQueries1 filters keys =
         ]
        ===
         map (\(Bloom1.RunIxKeyIx rix kix) -> (rix, kix))
-            (VP.toList (Bloom1.bloomQueriesDefault (V.fromList filters')
+            (VP.toList (Bloom1.bloomQueries (V.fromList filters')
                                                    (V.fromList keys')))
 
 #ifdef BLOOM_QUERY_FAST
@@ -118,6 +118,6 @@ prop_bloomQueries2 filters keys =
         ]
        ===
         map (\(Bloom2.RunIxKeyIx rix kix) -> (rix, kix))
-            (VP.toList (Bloom2.bloomQueriesDefault (V.fromList filters')
-                                                   (V.fromList keys')))
+            (VP.toList (Bloom2.bloomQueries (V.fromList filters')
+                                            (V.fromList keys')))
 #endif
