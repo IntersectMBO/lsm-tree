@@ -8,6 +8,7 @@ module Test.Database.LSMTree.Internal (tests) where
 import qualified Control.Concurrent.Class.MonadSTM.RWVar as RW
 import           Control.Exception
 import           Control.Monad (void)
+import           Control.Tracer
 import           Data.Bifunctor
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromMaybe)
@@ -43,18 +44,18 @@ tests = testGroup "Test.Database.LSMTree.Internal" [
 
 newSession :: Assertion
 newSession = withTempIOHasBlockIO "newSession" $ \hfs hbio ->
-    void $ openSession hfs hbio (FS.mkFsPath [])
+    void $ openSession nullTracer hfs hbio (FS.mkFsPath [])
 
 restoreSession :: Assertion
 restoreSession = withTempIOHasBlockIO "restoreSession" $ \hfs hbio -> do
-    session1 <- openSession hfs hbio (FS.mkFsPath [])
+    session1 <- openSession nullTracer hfs hbio (FS.mkFsPath [])
     closeSession session1
-    void $ openSession hfs hbio (FS.mkFsPath [])
+    void $ openSession nullTracer hfs hbio (FS.mkFsPath [])
 
 twiceOpenSession :: Assertion
 twiceOpenSession = withTempIOHasBlockIO "twiceOpenSession" $ \hfs hbio -> do
-    void $ openSession hfs hbio (FS.mkFsPath [])
-    try @LSMTreeError (openSession hfs hbio (FS.mkFsPath [])) >>= \case
+    void $ openSession nullTracer hfs hbio (FS.mkFsPath [])
+    try @LSMTreeError (openSession nullTracer hfs hbio (FS.mkFsPath [])) >>= \case
       Left (SessionDirLocked _) -> pure ()
       x -> assertFailure $ "Opening a session twice in the same directory \
                            \should fail with an SessionDirLocked error, but \
@@ -63,7 +64,7 @@ twiceOpenSession = withTempIOHasBlockIO "twiceOpenSession" $ \hfs hbio -> do
 sessionDirLayoutMismatch :: Assertion
 sessionDirLayoutMismatch = withTempIOHasBlockIO "sessionDirLayoutMismatch" $ \hfs hbio -> do
     FS.createDirectory hfs (FS.mkFsPath ["unexpected-directory"])
-    try @LSMTreeError (openSession hfs hbio (FS.mkFsPath [])) >>= \case
+    try @LSMTreeError (openSession nullTracer hfs hbio (FS.mkFsPath [])) >>= \case
       Left (SessionDirMalformed _) -> pure ()
       x -> assertFailure $ "Restoring a session in a directory with a wrong \
                            \layout should fail with a SessionDirMalformed, but \
@@ -71,7 +72,7 @@ sessionDirLayoutMismatch = withTempIOHasBlockIO "sessionDirLayoutMismatch" $ \hf
 
 sessionDirDoesNotExist :: Assertion
 sessionDirDoesNotExist = withTempIOHasBlockIO "sessionDirDoesNotExist" $ \hfs hbio -> do
-    try @LSMTreeError (openSession hfs hbio (FS.mkFsPath ["missing-dir"])) >>= \case
+    try @LSMTreeError (openSession nullTracer hfs hbio (FS.mkFsPath ["missing-dir"])) >>= \case
       Left (SessionDirDoesNotExist _) -> pure ()
       x -> assertFailure $ "Opening a session in a non-existent directory should \
                            \fail with a SessionDirDoesNotExist error, but it \
@@ -98,7 +99,7 @@ prop_interimRestoreSessionUniqueRunNames ::
   -> Property
 prop_interimRestoreSessionUniqueRunNames (Positive (Small n)) (NonNegative m) = ioProperty $
     withTempIOHasBlockIO "TODO" $ \hfs hbio -> do
-      prop1 <- withSession hfs hbio (FS.mkFsPath []) $ \sesh -> do
+      prop1 <- withSession nullTracer hfs hbio (FS.mkFsPath []) $ \sesh -> do
         withTable sesh conf $ \th -> do
           updates const upds th
           withOpenTable th $ \thEnv -> do
@@ -109,7 +110,7 @@ prop_interimRestoreSessionUniqueRunNames (Positive (Small n)) (NonNegative m) = 
               pure $ tabulate "number of runs on disk" [showPowersOf 2 nruns]
                   $ True
 
-      withSession hfs hbio (FS.mkFsPath []) $ \sesh -> do
+      withSession nullTracer hfs hbio (FS.mkFsPath []) $ \sesh -> do
         withTable sesh conf $ \th -> do
           eith <- try (updates const upds th)
           fmap (prop1 .&&.) $ case eith of
@@ -147,7 +148,7 @@ prop_interimOpenTable ::
   -> Property
 prop_interimOpenTable dat = ioProperty $
     withTempIOHasBlockIO "prop_interimOpenTable" $ \hfs hbio -> do
-      withSession hfs hbio (FS.mkFsPath []) $ \sesh -> do
+      withSession nullTracer hfs hbio (FS.mkFsPath []) $ \sesh -> do
         withTable sesh conf $ \th -> do
           updates const upds th
           let snap = fromMaybe (error "invalid name") $ mkSnapshotName "snap"

@@ -27,6 +27,11 @@ module Database.LSMTree.Monoidal (
     -- * Exceptions
     Common.LSMTreeError (..)
 
+    -- * Tracing
+  , Common.LSMTreeTrace (..)
+  , Common.TableTrace (..)
+  , Common.MergeTrace (..)
+
     -- * Table sessions
   , Session
   , withSession
