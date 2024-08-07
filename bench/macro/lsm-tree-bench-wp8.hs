@@ -44,6 +44,7 @@ import           Control.Concurrent.MVar
 import           Control.DeepSeq (force)
 import           Control.Exception (evaluate)
 import           Control.Monad (forM_, unless, void, when)
+import           Control.Tracer
 import qualified Crypto.Hash.SHA256 as SHA256
 import qualified Data.Binary as B
 import qualified Data.ByteString.Short as BS
@@ -73,7 +74,6 @@ import           Text.Show.Pretty
 
 -- We should be able to write this benchmark
 -- using only use public lsm-tree interface
-import           Control.Tracer (nullTracer)
 import qualified Database.LSMTree.Normal as LSM
 
 -------------------------------------------------------------------------------
@@ -112,6 +112,8 @@ data GlobalOpts = GlobalOpts
     -- both during setup, and during a run (where it is used to override the
     -- config option of the snapshot).
     , diskCachePolicy :: !LSM.DiskCachePolicy
+      -- | Enable trace output
+    , trace           :: !Bool
     }
   deriving stock Show
 
@@ -155,6 +157,18 @@ mkTableConfigOverride :: GlobalOpts -> LSM.TableConfigOverride
 mkTableConfigOverride GlobalOpts{diskCachePolicy} =
     LSM.configOverrideDiskCachePolicy diskCachePolicy
 
+mkTracer :: GlobalOpts -> Tracer IO LSM.LSMTreeTrace
+mkTracer gopts
+  | trace gopts =
+      -- Don't trace update/lookup messages, because they are too noisy
+      squelchUnless
+        (\case
+          LSM.TraceTable _ LSM.TraceUpdates{} -> False
+          LSM.TraceTable _ LSM.TraceLookups{} -> False
+          _                                   -> True )
+        (show `contramap` stdoutTracer)
+  | otherwise   = nullTracer
+
 -------------------------------------------------------------------------------
 -- command line interface
 -------------------------------------------------------------------------------
@@ -164,6 +178,7 @@ globalOptsP = pure GlobalOpts
     <*> O.option O.str (O.long "bench-dir" <> O.value "_bench_wp8" <> O.showDefault <> O.help "Benchmark directory to put files in")
     <*> O.option O.auto (O.long "initial-size" <> O.value 100_000_000 <> O.showDefault <> O.help "Initial LSM tree size")
     <*> O.option O.auto (O.long "disk-cache-policy" <> O.value LSM.DiskCacheAll <> O.showDefault <> O.help "Disk cache policy [DiskCacheAll | DiskCacheLevelsAtOrBelow Int | DiskCacheNone]")
+    <*> O.flag False True (O.long "trace" <> O.help "Enable trace messages (disabled by default)")
 
 cmdP :: O.Parser Cmd
 cmdP = O.subparser $ mconcat
@@ -364,7 +379,7 @@ doSetup' gopts opts = do
     name <- maybe (fail "invalid snapshot name") return $
         LSM.mkSnapshotName "bench"
 
-    LSM.withSession nullTracer hasFS hasBlockIO (FS.mkFsPath []) $ \session -> do
+    LSM.withSession (mkTracer gopts) hasFS hasBlockIO (FS.mkFsPath []) $ \session -> do
         tbh <- LSM.new @IO @K @V @B session (mkTableConfigSetup gopts opts LSM.defaultTableConfig)
 
         forM_ [ 0 .. initialSize gopts ] $ \ (fromIntegral -> i) -> do
@@ -528,7 +543,7 @@ doRun gopts opts = do
     name <- maybe (fail "invalid snapshot name") return $
         LSM.mkSnapshotName "bench"
 
-    LSM.withSession nullTracer hasFS hasBlockIO (FS.mkFsPath []) $ \session -> do
+    LSM.withSession (mkTracer gopts) hasFS hasBlockIO (FS.mkFsPath []) $ \session -> do
         -- open snapshot
         -- In checking mode we start with an empty table, since our pure
         -- reference version starts with empty (as it's not practical or
