@@ -25,7 +25,7 @@ import           Data.Bits
 import qualified Data.Primitive as P
 import qualified Data.Vector as V
 import qualified Data.Vector.Primitive as VP
-import           Data.Word (Word32, Word64)
+import           Data.Word (Word64)
 
 import           Control.Exception (assert)
 import           Control.Monad.ST (ST, runST)
@@ -37,6 +37,7 @@ import qualified Data.BloomFilter as Bloom
 import qualified Data.BloomFilter.BitVec64 as BV64
 import qualified Data.BloomFilter.Hash as Bloom
 import qualified Data.BloomFilter.Internal as BF
+import           Database.LSMTree.Internal.BloomFilterQuery1 (RunIxKeyIx (..))
 import           Database.LSMTree.Internal.Serialise (SerialisedKey)
 import qualified Database.LSMTree.Internal.StrictArray as P
 import qualified Database.LSMTree.Internal.Vector as P
@@ -80,46 +81,6 @@ type RunIx = Int
 -- inner loop, which causes all registered to be spilled to and restored from
 --the stack.
 --
-
--- | A 'RunIxKeyIx' is a (compact) pair of a 'RunIx' and a 'KeyIx'.
---
--- We represent it as a 32bit word, using:
---
--- * 16 bits for the run\/filter index (MSB)
--- * 16 bits for the key index (LSB)
---
-newtype RunIxKeyIx = MkRunIxKeyIx Word32
-  deriving stock Eq
-  deriving newtype P.Prim
-
-pattern RunIxKeyIx :: RunIx -> KeyIx -> RunIxKeyIx
-pattern RunIxKeyIx r k <- (unpackRunIxKeyIx -> (r, k))
-  where
-    RunIxKeyIx r k = packRunIxKeyIx r k
-{-# INLINE RunIxKeyIx #-}
-{-# COMPLETE RunIxKeyIx #-}
-
-packRunIxKeyIx :: Int -> Int -> RunIxKeyIx
-packRunIxKeyIx r k =
-    assert (r >= 0 && r <= 0xffff
-         && k >= 0 && k <= 0xffff) $
-    MkRunIxKeyIx $
-      (fromIntegral :: Word -> Word32) $
-        (fromIntegral r `unsafeShiftL` 16)
-     .|. fromIntegral k
-{-# INLINE packRunIxKeyIx #-}
-
-unpackRunIxKeyIx :: RunIxKeyIx -> (Int, Int)
-unpackRunIxKeyIx (MkRunIxKeyIx c) =
-    ( fromIntegral (c `unsafeShiftR` 16)
-    , fromIntegral (c .&. 0xfff)
-    )
-{-# INLINE unpackRunIxKeyIx #-}
-
-instance Show RunIxKeyIx where
-  showsPrec _ (RunIxKeyIx r k) =
-    showString "RunIxKeyIx " . showsPrec 11 r
-              . showChar ' ' . showsPrec 11 k
 
 type Candidate = RunIxKeyIx
 

@@ -8,7 +8,7 @@ import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ByteString.Short as SBS
 import           Data.Primitive.ByteArray (ByteArray (..), byteArrayFromList)
 import qualified Data.Vector as V
-import qualified Data.Vector.Unboxed as VU
+import qualified Data.Vector.Primitive as VP
 import           Data.Word (Word32, Word64)
 
 import           Test.Tasty (TestTree, testGroup)
@@ -23,7 +23,6 @@ import           Database.LSMTree.Internal.Serialise (SerialisedKey,
                      serialiseKey)
 
 #ifdef BLOOM_QUERY_FAST
-import qualified Data.Vector.Primitive as VP
 import qualified Database.LSMTree.Internal.BloomFilterQuery2 as Bloom2
 import           Test.QuickCheck.Classes (primLaws)
 import           Test.Util.QC
@@ -100,8 +99,9 @@ prop_bloomQueries1 filters keys =
         , BF.elem k f
         ]
        ===
-        VU.toList (Bloom1.bloomQueriesDefault (V.fromList filters')
-                                              (V.fromList keys'))
+        map (\(Bloom1.RunIxKeyIx rix kix) -> (rix, kix))
+            (VP.toList (Bloom1.bloomQueriesDefault (V.fromList filters')
+                                                   (V.fromList keys')))
 
 #ifdef BLOOM_QUERY_FAST
 prop_bloomQueries2 :: [[Small Word64]]
