@@ -18,7 +18,7 @@ import qualified Data.Vector as V
 import           Data.Vector.Algorithms.Merge as Merge
 import qualified Data.Vector.Generic.Mutable as VGM
 import qualified Data.Vector.Mutable as VM
-import qualified Data.Vector.Unboxed as VU
+import qualified Data.Vector.Primitive as VP
 import qualified Data.Vector.Unboxed.Mutable as VUM
 import           Data.Word (Word64)
 import           Database.LSMTree.Extras.Orphans ()
@@ -515,7 +515,7 @@ classifyLookups !bs !keyRng0 !n0 =
           unsafePerformIO (putStr ".") `seq`
           let (!ks, !keyRng') = genLookupBatch keyRng benchmarkGenBatchSize
               !rkixs = bloomQueriesDefault bs ks
-          in  loop (positives + VU.length rkixs) keyRng' (n-benchmarkGenBatchSize)
+          in  loop (positives + VP.length rkixs) keyRng' (n-benchmarkGenBatchSize)
 
 -- | Fill a mutable vector with uniformly random values.
 vectorOfUniforms ::

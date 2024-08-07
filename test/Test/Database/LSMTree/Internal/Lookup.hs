@@ -117,14 +117,14 @@ prop_bloomQueriesModel ::
      SmallList (InMemLookupData SerialisedKey SerialisedValue BlobSpan)
   -> Property
 prop_bloomQueriesModel dats =
-    realDefault === model .&&. realNonDefault === model
+    real === model
   where
     runs = getSmallList $ fmap (mkTestRun . runData) dats
     blooms = fmap snd3 runs
     lookupss = concatMap lookups $ getSmallList dats
-    realDefault = bloomQueriesDefault (V.fromList blooms) (V.fromList lookupss)
-    realNonDefault = bloomQueries (V.fromList blooms) (V.fromList lookupss) 10
-    model = VU.fromList $ bloomQueriesModel blooms lookupss
+    real  = map (\(RunIxKeyIx rix kix) -> (rix,kix)) $ VP.toList $
+            bloomQueriesDefault (V.fromList blooms) (V.fromList lookupss)
+    model = bloomQueriesModel blooms lookupss
 
 bloomQueriesModel :: [Bloom SerialisedKey] -> [SerialisedKey] -> [(RunIx, KeyIx)]
 bloomQueriesModel blooms ks = [
@@ -155,7 +155,8 @@ prop_indexSearchesModel dats =
     real rkixs = runST $ withUnmanagedArena $ \arena -> do
       let rs = V.fromList (fmap runWithHandle runs)
           ks = V.fromList lookupss
-      res <- indexSearches arena (V.map thrd3 rs) (V.map fst3 rs) ks rkixs
+      res <- indexSearches arena (V.map thrd3 rs) (V.map fst3 rs) ks
+               ((V.convert . V.map (uncurry RunIxKeyIx) . V.convert) rkixs)
       pure $ V.map ioopPageSpan res
     model rkixs = V.fromList $ indexSearchesModel (fmap thrd3 runs) lookupss $ rkixs
 
@@ -185,9 +186,10 @@ prop_prepLookupsModel dats = real === model
                          (V.map snd3 rs)
                          (V.map thrd3 rs)
                          (V.map fst3 rs) ks
-      pure $ (kixs, V.map ioopPageSpan ioops)
-    model = bimap VU.fromList V.fromList $
-            prepLookupsModel (fmap (\x -> (snd3 x, thrd3 x)) runs) lookupss
+      pure ( map (\(RunIxKeyIx r k) -> (r,k)) (VP.toList kixs)
+           , map ioopPageSpan (V.toList ioops)
+           )
+    model = prepLookupsModel (fmap (\x -> (snd3 x, thrd3 x)) runs) lookupss
 
 prepLookupsModel ::
      [(Bloom SerialisedKey, IndexCompact)]
@@ -226,7 +228,8 @@ prop_inMemRunLookupAndConstruction dat =
                              (V.map thrd3 r)
                              (V.map fst3 r)
                              keys
-      let ks = V.map (V.fromList lookups V.!) (V.convert $ snd $ VU.unzip kixs)
+      let ks = V.map (V.fromList lookups V.!)
+                     (V.convert (VP.map (\(RunIxKeyIx _r k) -> k) kixs))
           pss = V.map (handleRaw . ioopHandle) ioops
           pspans = V.map (ioopPageSpan) ioops
       pure $ zip3 (V.toList ks) (V.toList pss) (V.toList pspans)
