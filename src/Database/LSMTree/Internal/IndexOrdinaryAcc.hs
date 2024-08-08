@@ -18,7 +18,6 @@ import           Prelude hiding (take)
 import           Control.Exception (assert)
 import           Control.Monad.ST.Strict (ST, runST)
 import           Data.List (genericReplicate)
-import           Data.Maybe (maybeToList)
 import           Data.Primitive.ByteArray (newByteArray, unsafeFreezeByteArray,
                      writeByteArray)
 import           Data.STRef.Strict (STRef, newSTRef, readSTRef, writeSTRef)
@@ -64,34 +63,6 @@ new maxKeyCount minChunkSize = assert (maxKeyCount >= 0)      $
                                newSTRef 0                    <*>
                                createBaler minChunkSize
 
-{-
-    Appends a single key to the key list of an index and outputs newly available
-    chunks of the serialised key list.
--}
-appendKey :: SerialisedKey -> IndexOrdinaryAcc s -> ST s [Chunk]
-appendKey key@(SerialisedKey' keyBytes)
-          (IndexOrdinaryAcc buffer keyCountRef baler)
-    = do
-          keyCount <- readSTRef keyCountRef
-          Mutable.write buffer keyCount key
-          writeSTRef keyCountRef $! succ keyCount
-          maybeToList <$> feedBaler [keySizeBytes, keyBytes] baler
-    where
-
-    keySize :: Int
-    !keySize = Primitive.length keyBytes
-
-    keySizeAsWord16 :: Word16
-    !keySizeAsWord16 = assert (keySize <= fromIntegral (maxBound :: Word16)) $
-                       fromIntegral keySize
-
-    keySizeBytes :: Primitive.Vector Word8
-    !keySizeBytes = mkPrimVector 0 2 $
-                    runST $ do
-                        rep <- newByteArray 2
-                        writeByteArray rep 0 keySizeAsWord16
-                        unsafeFreezeByteArray rep
-
 {-|
     Appends keys to the key list of an index and outputs newly available chunks
     of the serialised key list.
@@ -99,12 +70,44 @@ appendKey key@(SerialisedKey' keyBytes)
     __Warning:__ Appending keys whose length cannot be represented by a 16-bit
     word may result in a corrupted serialised key list.
 -}
-append :: Append -> IndexOrdinaryAcc s -> ST s [Chunk]
-append (AppendSinglePage _ key)        index = appendKey key index
-append (AppendMultiPage key pageCount) index = fmap concat                $
-                                               sequence                   $
-                                               genericReplicate pageCount $
-                                               appendKey key index
+append :: Append -> IndexOrdinaryAcc s -> ST s (Maybe Chunk)
+append instruction (IndexOrdinaryAcc buffer keyCountRef baler)
+    = case instruction of
+          AppendSinglePage _ key -> do
+              keyCount <- readSTRef keyCountRef
+              Mutable.write buffer keyCount key
+              writeSTRef keyCountRef $! succ keyCount
+              feedBaler (keyListElem key) baler
+          AppendMultiPage key pageCount -> do
+              keyCount <- readSTRef keyCountRef
+              let
+
+                  keyCount' :: Int
+                  !keyCount' = keyCount + fromIntegral pageCount
+
+              mapM_ (flip (Mutable.write buffer) key)
+                    [keyCount .. pred keyCount']
+              writeSTRef keyCountRef $! keyCount'
+              feedBaler (concat (genericReplicate pageCount (keyListElem key)))
+                        baler
+    where
+
+    keyListElem :: SerialisedKey -> [Primitive.Vector Word8]
+    keyListElem (SerialisedKey' keyBytes) = [keySizeBytes, keyBytes] where
+
+        keySize :: Int
+        !keySize = Primitive.length keyBytes
+
+        keySizeAsWord16 :: Word16
+        !keySizeAsWord16 = assert (keySize <= fromIntegral (maxBound :: Word16)) $
+                           fromIntegral keySize
+
+        keySizeBytes :: Primitive.Vector Word8
+        !keySizeBytes = mkPrimVector 0 2 $
+                        runST $ do
+                            rep <- newByteArray 2
+                            writeByteArray rep 0 keySizeAsWord16
+                            unsafeFreezeByteArray rep
 
 {-|
     Returns the constructed index, along with a final chunk in case the
