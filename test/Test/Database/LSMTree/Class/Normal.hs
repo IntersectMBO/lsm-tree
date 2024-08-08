@@ -52,6 +52,7 @@ tests = testGroup "Test.Database.LSMTree.Class.Normal"
             , R.confSizeRatio = R.Four
             , R.confWriteBufferAlloc = R.AllocNumEntries (R.NumEntries 3)
             , R.confBloomFilterAlloc = R.AllocFixed 10
+            , R.confFencePointerIndex = R.CompactIndex
             , R.confDiskCachePolicy = R.DiskCacheNone
             }
         , testWithSessionArgs = \action ->

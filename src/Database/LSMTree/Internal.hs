@@ -39,7 +39,7 @@ module Database.LSMTree.Internal (
   , listSnapshots
     -- * Mutiple writable table handles
   , duplicate
-    -- * configuration
+    -- * Configuration
   , TableConfig (..)
   , defaultTableConfig
   , MergePolicy (..)
@@ -48,6 +48,7 @@ module Database.LSMTree.Internal (
   , NumEntries (..)
   , BloomFilterAlloc (..)
   , defaultBloomFilterAlloc
+  , FencePointerIndex (..)
   , DiskCachePolicy (..)
     -- * Exported for cabal-docspec
   , MergePolicyForLevel (..)
@@ -1277,22 +1278,24 @@ duplicate th = withOpenTable th $ \thEnv -> do
 --
 -- * Size ratio: 4
 data TableConfig = TableConfig {
-    confMergePolicy      :: !MergePolicy
+    confMergePolicy       :: !MergePolicy
     -- Size ratio between the capacities of adjacent levels.
-  , confSizeRatio        :: !SizeRatio
+  , confSizeRatio         :: !SizeRatio
     -- | Total number of bytes that the write buffer can use.
     --
     -- The maximum is 4GiB, which should be more than enough for realistic
     -- applications.
-  , confWriteBufferAlloc :: !WriteBufferAlloc
-  , confBloomFilterAlloc :: !BloomFilterAlloc
+  , confWriteBufferAlloc  :: !WriteBufferAlloc
+  , confBloomFilterAlloc  :: !BloomFilterAlloc
+  , confFencePointerIndex :: !FencePointerIndex
     -- | The policy for caching key\/value data from disk in memory.
-  , confDiskCachePolicy  :: !DiskCachePolicy
+  , confDiskCachePolicy   :: !DiskCachePolicy
   }
-  deriving stock Show
+  deriving stock (Show, Eq)
 
 instance NFData TableConfig where
-  rnf (TableConfig a b c d e) = rnf a `seq` rnf b `seq` rnf c `seq` rnf d `seq` rnf e
+  rnf (TableConfig a b c d e f) =
+      rnf a `seq` rnf b `seq` rnf c `seq` rnf d `seq` rnf e `seq` rnf f
 
 -- | TODO: this should be removed once we have proper snapshotting with proper
 -- persistence of the config to disk.
@@ -1310,6 +1313,7 @@ defaultTableConfig =
       , confSizeRatio        = Four
       , confWriteBufferAlloc = AllocNumEntries (NumEntries 20_000)
       , confBloomFilterAlloc = defaultBloomFilterAlloc
+      , confFencePointerIndex = CompactIndex
       , confDiskCachePolicy  = DiskCacheAll
       }
 
@@ -1450,6 +1454,39 @@ bloomFilterAllocForLevel conf (LevelNo l) =
       | otherwise = foldr (\x r k -> case k of
                                       0 -> Just x
                                       _ -> r (k-1)) (const Nothing) xs n
+
+-- | Configure the type of fence pointer index.
+--
+-- TODO: this configuration option currently has no effect: 'CompactIndex' is
+-- always used.
+data FencePointerIndex =
+    -- | Use a compact fence pointer index.
+    --
+    -- The compact index type is designed to work with keys that are large
+    -- cryptographic hashes, e.g. 32 bytes.
+    --
+    -- When using the 'IndexCompact', additional constraints apply to the
+    -- 'Database.LSMTree.Internal.Serialise.Class.serialiseKey' function. The
+    -- __Minimal size__ law should be satisfied:
+    --
+    -- [Minimal size] @'Database.LSMTree.Internal.RawBytes.size'
+    --   ('Database.LSMTree.Internal.Serialise.Class.serialiseKey' x) >= 8@
+    --
+    -- Use 'Database.LSMTree.Internal.Serialise.Class.serialiseKeyMinimalSize'
+    -- to test this law.
+    CompactIndex
+    -- | Use an ordinary fence pointer index, without any constraints on
+    -- serialised keys.
+  | OrdinaryIndex
+  deriving stock (Show, Eq)
+
+instance NFData FencePointerIndex where
+  rnf CompactIndex  = ()
+  rnf OrdinaryIndex = ()
+
+-- | TODO: this should be removed once we have proper snapshotting with proper
+-- persistence of the config to disk.
+deriving stock instance Read FencePointerIndex
 
 -- | The policy for caching data from disk in memory (using the OS page cache).
 --

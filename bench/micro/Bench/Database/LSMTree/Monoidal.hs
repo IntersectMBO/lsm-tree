@@ -57,6 +57,7 @@ benchConfig = Normal.TableConfig {
     , confSizeRatio = Normal.Four
     , confWriteBufferAlloc = Normal.AllocNumEntries (Normal.NumEntries 20000)
     , confBloomFilterAlloc = Normal.AllocFixed 10
+    , confFencePointerIndex = Normal.CompactIndex
     , confDiskCachePolicy = Normal.DiskCacheAll
     }
 

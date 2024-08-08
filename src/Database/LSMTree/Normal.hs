@@ -42,6 +42,7 @@ module Database.LSMTree.Normal (
   , Internal.NumEntries (..)
   , Internal.BloomFilterAlloc (..)
   , Internal.defaultBloomFilterAlloc
+  , Internal.FencePointerIndex (..)
   , Internal.DiskCachePolicy (..)
   , withTable
   , new
