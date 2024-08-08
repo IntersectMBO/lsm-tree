@@ -16,7 +16,7 @@ where
 import           Control.Exception (assert)
 import           Control.Monad.ST.Strict (ST, runST)
 import           Data.List (genericReplicate)
-import           Data.Maybe (catMaybes)
+import           Data.Maybe (maybeToList)
 import           Data.Primitive.ByteArray (newByteArray, unsafeFreezeByteArray,
                      writeByteArray)
 import           Data.STRef.Strict (STRef, modifySTRef', newSTRef, readSTRef)
@@ -60,9 +60,7 @@ appendKey lastKey@(SerialisedKey' lastKeyBytes)
           (IndexOrdinaryAcc lastKeysRevRef baler)
     = do
           modifySTRef' lastKeysRevRef (lastKey :)
-          maybeChunkIntoLastKeySize <- feedBaler lastKeySizeBytes baler
-          maybeChunkIntoLastKey <- feedBaler lastKeyBytes baler
-          return $ catMaybes [maybeChunkIntoLastKeySize, maybeChunkIntoLastKey]
+          maybeToList <$> feedBaler [lastKeySizeBytes, lastKeyBytes] baler
     where
 
     lastKeySize :: Int
