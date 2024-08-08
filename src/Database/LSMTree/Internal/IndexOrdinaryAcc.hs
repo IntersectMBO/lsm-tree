@@ -19,8 +19,10 @@ import           Data.List (genericReplicate)
 import           Data.Maybe (maybeToList)
 import           Data.Primitive.ByteArray (newByteArray, unsafeFreezeByteArray,
                      writeByteArray)
-import           Data.STRef.Strict (STRef, modifySTRef', newSTRef, readSTRef)
-import           Data.Vector (fromList)
+import           Data.STRef.Strict (STRef, newSTRef, readSTRef, writeSTRef)
+import           Data.Vector (unsafeFreeze)
+import           Data.Vector.Mutable (MVector)
+import qualified Data.Vector.Mutable as Mutable (take, unsafeNew, write)
 import qualified Data.Vector.Primitive as Primitive (Vector, length)
 import           Data.Word (Word16, Word8)
 import           Database.LSMTree.Internal.Chunk (Baler, Chunk, createBaler,
@@ -36,48 +38,57 @@ import           Database.LSMTree.Internal.Vector (mkPrimVector)
 {-|
     A general-purpose fence pointer index under incremental construction.
 
-    A value @IndexOrdinaryAcc lastKeysRevRef baler@ denotes a partially
+    A value @IndexOrdinaryAcc buffer keyCountRef baler@ denotes a partially
     constructed index with the following properties:
 
-      * The keys pointed to by @lastKeysRevRef@ are the keys that the index
-        assigns to pages, but in reverse order.
+      * The keys that the index assigns to pages are stored as a prefix of the
+        mutable vector @buffer@.
+      * The reference @keyCountRef@ points to the number of those keys.
       * The @baler@ object is used by the index for incremental output of the
         serialised key list.
 -}
-data IndexOrdinaryAcc s = IndexOrdinaryAcc !(STRef s [SerialisedKey]) !(Baler s)
+data IndexOrdinaryAcc s = IndexOrdinaryAcc
+                              !(MVector s SerialisedKey)
+                              !(STRef s Int)
+                              !(Baler s)
 
 -- | Creates a new, initially empty, index.
-new :: Int                       -- ^ Minimum chunk size in bytes
+new :: Int                       -- ^ Maximum number of keys
+    -> Int                       -- ^ Minimum chunk size in bytes
     -> ST s (IndexOrdinaryAcc s) -- ^ Construction of the index
-new minChunkSize = IndexOrdinaryAcc <$> newSTRef [] <*> createBaler minChunkSize
+new maxKeyCount minChunkSize = assert (maxKeyCount >= 0)      $
+                               IndexOrdinaryAcc              <$>
+                               Mutable.unsafeNew maxKeyCount <*>
+                               newSTRef 0                    <*>
+                               createBaler minChunkSize
 
 {-
     Appends a single key to the key list of an index and outputs newly available
     chunks of the serialised key list.
 -}
 appendKey :: SerialisedKey -> IndexOrdinaryAcc s -> ST s [Chunk]
-appendKey lastKey@(SerialisedKey' lastKeyBytes)
-          (IndexOrdinaryAcc lastKeysRevRef baler)
+appendKey key@(SerialisedKey' keyBytes)
+          (IndexOrdinaryAcc buffer keyCountRef baler)
     = do
-          modifySTRef' lastKeysRevRef (lastKey :)
-          maybeToList <$> feedBaler [lastKeySizeBytes, lastKeyBytes] baler
+          keyCount <- readSTRef keyCountRef
+          Mutable.write buffer keyCount key
+          writeSTRef keyCountRef $! succ keyCount
+          maybeToList <$> feedBaler [keySizeBytes, keyBytes] baler
     where
 
-    lastKeySize :: Int
-    !lastKeySize = Primitive.length lastKeyBytes
+    keySize :: Int
+    !keySize = Primitive.length keyBytes
 
-    lastKeySizeAsWord16 :: Word16
-    !lastKeySizeAsWord16
-        = assert (lastKeySize <= fromIntegral (maxBound :: Word16)) $
-          fromIntegral lastKeySize
+    keySizeAsWord16 :: Word16
+    !keySizeAsWord16 = assert (keySize <= fromIntegral (maxBound :: Word16)) $
+                       fromIntegral keySize
 
-    lastKeySizeBytes :: Primitive.Vector Word8
-    !lastKeySizeBytes = mkPrimVector 0 2 $
-                        runST $
-                        do
-                            rep <- newByteArray 2
-                            writeByteArray rep 0 lastKeySizeAsWord16
-                            unsafeFreezeByteArray rep
+    keySizeBytes :: Primitive.Vector Word8
+    !keySizeBytes = mkPrimVector 0 2 $
+                    runST $ do
+                        rep <- newByteArray 2
+                        writeByteArray rep 0 keySizeAsWord16
+                        unsafeFreezeByteArray rep
 
 {-|
     Appends keys to the key list of an index and outputs newly available chunks
@@ -87,7 +98,7 @@ appendKey lastKey@(SerialisedKey' lastKeyBytes)
     word may result in a corrupted serialised key list.
 -}
 append :: Append -> IndexOrdinaryAcc s -> ST s [Chunk]
-append (AppendSinglePage _ lastKey)    index = appendKey lastKey index
+append (AppendSinglePage _ key)        index = appendKey key index
 append (AppendMultiPage key pageCount) index = fmap concat                $
                                                sequence                   $
                                                genericReplicate pageCount $
@@ -100,7 +111,8 @@ append (AppendMultiPage key pageCount) index = fmap concat                $
     @index@ is not used afterwards.
 -}
 unsafeEnd :: IndexOrdinaryAcc s -> ST s (Maybe Chunk, IndexOrdinary)
-unsafeEnd (IndexOrdinaryAcc lastKeysRevRef baler) = do
-    lastKeysRev <- readSTRef lastKeysRevRef
+unsafeEnd (IndexOrdinaryAcc buffer keyCountRef baler) = do
+    keyCount <- readSTRef keyCountRef
+    keys <- unsafeFreeze (Mutable.take keyCount buffer)
     remnant <- unsafeEndBaler baler
-    return (remnant, IndexOrdinary (fromList (reverse lastKeysRev)))
+    return (remnant, IndexOrdinary keys)
