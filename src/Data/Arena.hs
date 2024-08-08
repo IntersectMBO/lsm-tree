@@ -20,6 +20,7 @@ module Data.Arena (
 import           Control.DeepSeq (NFData (..))
 import           Control.Exception (assert)
 import           Control.Monad.Primitive
+import           Control.Monad.ST (ST)
 import           Data.Bits (complement, popCount, (.&.))
 import           Data.Primitive.ByteArray
 import           Data.Primitive.MutVar
@@ -59,12 +60,19 @@ type Alignment = Int
 blockSize :: Int
 blockSize = 0x100000
 
+{-# SPECIALIZE
+    newBlock :: ST s (Block s)
+  #-}
+{-# SPECIALIZE
+    newBlock :: IO (Block RealWorld)
+  #-}
 newBlock :: PrimMonad m => m (Block (PrimState m))
 newBlock = do
     off <- newPrimVar 0
     mba <- newAlignedPinnedByteArray blockSize 4096
     return (Block off mba)
 
+{-# INLINE withArena #-}
 withArena :: PrimMonad m => ArenaManager (PrimState m) -> (Arena (PrimState m) -> m a) -> m a
 withArena am f = do
     a <- newArena am
@@ -72,6 +80,12 @@ withArena am f = do
     closeArena am a
     pure x
 
+{-# SPECIALIZE
+    newArena :: ArenaManager s -> ST s (Arena s)
+  #-}
+{-# SPECIALIZE
+    newArena :: ArenaManager RealWorld -> IO (Arena RealWorld)
+  #-}
 newArena :: PrimMonad m => ArenaManager (PrimState m) -> m (Arena (PrimState m))
 newArena (ArenaManager arenas) = do
     marena <- atomicModifyMutVar' arenas $ \case
@@ -86,6 +100,12 @@ newArena (ArenaManager arenas) = do
             full <- newMutVar []
             return Arena {..}
 
+{-# SPECIALIZE
+    closeArena :: ArenaManager s -> Arena s -> ST s ()
+  #-}
+{-# SPECIALIZE
+    closeArena :: ArenaManager RealWorld -> Arena RealWorld -> IO ()
+  #-}
 closeArena :: PrimMonad m => ArenaManager (PrimState m) -> Arena (PrimState m) -> m ()
 closeArena (ArenaManager arenas) arena = do
     scrambleArena arena
@@ -112,6 +132,12 @@ scrambleBlock (Block _ mba) = do
     setByteArray mba 0 size (0x77 :: Word8)
 #endif
 
+{-# SPECIALIZE
+    resetArena :: Arena s -> ST s ()
+  #-}
+{-# SPECIALIZE
+    resetArena :: Arena RealWorld -> IO ()
+  #-}
 -- | Reset arena, i.e. return used blocks to free list.
 resetArena :: PrimMonad m => Arena (PrimState m) -> m ()
 resetArena Arena {..} = do
@@ -135,6 +161,9 @@ withUnmanagedArena k = do
     mgr <- newArenaManager
     withArena mgr k
 
+{-# SPECIALIZE
+    allocateFromArena :: Arena s -> Size -> Alignment -> ST s (Offset, MutableByteArray s)
+  #-}
 -- | Allocate a slice of mutable byte array from the arena.
 allocateFromArena :: PrimMonad m => Arena (PrimState m)-> Size -> Alignment -> m (Offset, MutableByteArray (PrimState m))
 allocateFromArena !arena !size !alignment =
@@ -142,6 +171,9 @@ allocateFromArena !arena !size !alignment =
     assert (size <= blockSize) $ -- not too large allocations
     allocateFromArena' arena size alignment
 
+{-# SPECIALIZE
+    allocateFromArena' :: Arena s -> Size -> Alignment -> ST s (Offset, MutableByteArray s)
+  #-}
 -- TODO!? this is not async exception safe
 allocateFromArena' :: PrimMonad m => Arena (PrimState m)-> Size -> Alignment -> m (Offset, MutableByteArray (PrimState m))
 allocateFromArena' arena@Arena { .. } !size !alignment = do
@@ -173,6 +205,7 @@ allocateFromArena' arena@Arena { .. } !size !alignment = do
         -- * go again
         allocateFromArena' arena size alignment
 
+{-# SPECIALIZE newBlockWithFree :: MutVar s [Block s] -> ST s (Block s) #-}
 -- | Allocate new block, possibly taking it from a free list
 newBlockWithFree :: PrimMonad m => MutVar (PrimState m) [Block (PrimState m)] -> m (Block (PrimState m))
 newBlockWithFree free = do
