@@ -494,6 +494,7 @@ benchmark lsm-tree-bench-wp8
     , lsm-tree:blockio-api
     , lsm-tree:mcg
     , optparse-applicative
+    , pretty-show
     , vector
 
   ghc-options:    -rtsopts -with-rtsopts=-T -threaded

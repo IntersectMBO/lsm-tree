@@ -35,8 +35,6 @@ I. The benchmark should be able to run in two modes, using the
    batches), or fully pipelined (in batches).
 
 TODO 2024-04-29 consider alternative methods of implementing key generation
-TODO 2024-07-05 pipelined mode needs the 'duplicate' operation. It has been
-                tested for correctness with the model implementation.
 -}
 module Main (main) where
 
@@ -59,7 +57,8 @@ import           Data.Traversable (mapAccumL)
 import           Data.Tuple (swap)
 import qualified Data.Vector as V
 import           Data.Void (Void)
-import           Data.Word (Word64)
+import           Data.Word (Word32, Word64)
+import qualified GHC.Stats as GHC
 import qualified MCG
 import qualified Options.Applicative as O
 import           Prelude hiding (lookup)
@@ -69,7 +68,9 @@ import qualified System.FS.BlockIO.API as FS
 import qualified System.FS.BlockIO.IO as FsIO
 import qualified System.FS.IO as FsIO
 import           System.IO
+import           System.Mem (performMajorGC)
 import           Text.Printf (printf)
+import           Text.Show.Pretty
 
 -- We should be able to write this benchmark
 -- using only use public lsm-tree interface
@@ -191,31 +192,167 @@ runOptsP = pure RunOpts
     <*> O.switch (O.long "pipelined" <> O.help "Use pipelined mode")
 
 -------------------------------------------------------------------------------
--- clock
+-- measurements
 -------------------------------------------------------------------------------
 
-timed :: IO a -> IO (a, Double)
+timed :: IO a -> IO (a, Double, RTSStatsDiff Triple, ProcIODiff)
 timed action = do
+    !p1 <- getProcIO
+    performMajorGC
+    s1 <- GHC.getRTSStats
     t1 <- Clock.getTime Clock.Monotonic
     x  <- action
     t2 <- Clock.getTime Clock.Monotonic
+    performMajorGC
+    s2 <- GHC.getRTSStats
+    !p2 <- getProcIO
     let !t = fromIntegral (Clock.toNanoSecs (Clock.diffTimeSpec t2 t1)) * 1e-9
-    return (x, t)
+        !s = s2 `diffRTSStats` s1
+        !p = p2 `diffProcIO` p1
+    printf "Running time:  %.03f sec\n" t
+    printf "/proc/self/io after vs. before: %s\n" (ppShow p)
+    printf "RTSStats after vs. before: %s\n" (ppShow s)
+    return (x, t, s, p)
 
-timed_ :: IO () -> IO Double
+timed_ :: IO () -> IO (Double, RTSStatsDiff Triple, ProcIODiff)
 timed_ action = do
-    t1 <- Clock.getTime Clock.Monotonic
-    action
-    t2 <- Clock.getTime Clock.Monotonic
-    return $! fromIntegral (Clock.toNanoSecs (Clock.diffTimeSpec t2 t1)) * 1e-9
+    ((), t, sdiff, pdiff) <- timed action
+    pure (t, sdiff, pdiff)
+
+-- | This /should/ include the statistics of any child processes.
+getProcIO :: IO ProcIO
+getProcIO = do
+    s <- readFile "/proc/self/io"
+    let ss = concatMap words $ lines s
+    pure $ parse ss
+  where
+    parse [
+        "rchar:", rcharS
+      , "wchar:", wcharS
+      , "syscr:", syscrS
+      , "syscw:", syscwS
+      , "read_bytes:", read_bytesS
+      , "write_bytes:", write_bytesS
+      , "cancelled_write_bytes:", cancellled_write_bytesS
+      ] = ProcIO {
+          rchar = read rcharS
+        , wchar = read wcharS
+        , syscr = read syscrS
+        , syscw = read syscwS
+        , read_bytes = read read_bytesS
+        , write_bytes = read write_bytesS
+        , cancelled_write_bytes = read cancellled_write_bytesS
+        }
+    parse s = error $ "getProcIO: parse of /proc/self/io failed. Input is " <> show s
+
+diffProcIO :: ProcIO -> ProcIO -> ProcIODiff
+diffProcIO after before = ProcIODiff ProcIO {
+      rchar = subtractOn rchar
+    , wchar = subtractOn wchar
+    , syscr = subtractOn syscr
+    , syscw = subtractOn syscw
+    , read_bytes = subtractOn read_bytes
+    , write_bytes = subtractOn write_bytes
+    , cancelled_write_bytes = subtractOn cancelled_write_bytes
+    }
+  where
+    subtractOn f = f after - f before
+
+newtype ProcIODiff = ProcIODiff ProcIO
+  deriving stock Show
+
+-- | See the @/proc/[pid]/io@ section in @man proc@
+data ProcIO = ProcIO {
+    rchar                 :: !Integer
+  , wchar                 :: !Integer
+  , syscr                 :: !Integer
+  , syscw                 :: !Integer
+  , read_bytes            :: !Integer
+  , write_bytes           :: !Integer
+  , cancelled_write_bytes :: !Integer
+  }
+  deriving stock Show
+
+-- | 'diffRTSStats a b = b - a'
+diffRTSStats :: GHC.RTSStats -> GHC.RTSStats -> RTSStatsDiff Triple
+diffRTSStats after before = RTSStatsDiff {
+      gcs = subtractOn GHC.gcs
+    , major_gcs = subtractOn GHC.major_gcs
+    , allocated_bytes = subtractOn GHC.allocated_bytes
+    , max_live_bytes = subtractOn GHC.max_live_bytes
+    , max_large_objects_bytes = subtractOn GHC.max_large_objects_bytes
+    , max_compact_bytes = subtractOn GHC.max_compact_bytes
+    , max_slop_bytes = subtractOn GHC.max_slop_bytes
+    , max_mem_in_use_bytes = subtractOn GHC.max_mem_in_use_bytes
+    , cumulative_live_bytes = subtractOn GHC.cumulative_live_bytes
+    , copied_bytes = subtractOn GHC.copied_bytes
+    , par_copied_bytes = subtractOn GHC.par_copied_bytes
+    , cumulative_par_balanced_copied_bytes = subtractOn GHC.cumulative_par_balanced_copied_bytes
+    , init_cpu_ns = subtractOn GHC.init_cpu_ns
+    , init_elapsed_ns = subtractOn GHC.init_elapsed_ns
+    , mutator_cpu_ns = subtractOn GHC.mutator_cpu_ns
+    , mutator_elapsed_ns = subtractOn GHC.mutator_elapsed_ns
+    , gc_cpu_ns = subtractOn GHC.gc_cpu_ns
+    , gc_elapsed_ns = subtractOn GHC.gc_elapsed_ns
+    , cpu_ns = subtractOn GHC.cpu_ns
+    , elapsed_ns = subtractOn GHC.elapsed_ns
+    }
+  where
+    subtractOn :: Num a => (GHC.RTSStats -> a) -> Triple a
+    subtractOn f = Triple {before = x, after = y, difference = y - x}
+      where x = f before
+            y = f after
+
+-- | A difference datatype for 'GHC.RTSStats'.
+--
+-- Most fields, like 'GHC.gcs' or 'GHC.cpu_ns', are an aggregate sum, and so a
+-- diff can be computed by pointwise subtraction.
+--
+-- Others fields, like 'GHC.max_live_bytes' only record the maximum value thus
+-- far seen. We report a triplet containing the maximum before and after, and
+-- their difference.
+data RTSStatsDiff f = RTSStatsDiff {
+    gcs                                  :: !(f Word32)
+  , major_gcs                            :: !(f Word32)
+  , allocated_bytes                      :: !(f Word64)
+  , max_live_bytes                       :: !(f Word64)
+  , max_large_objects_bytes              :: !(f Word64)
+  , max_compact_bytes                    :: !(f Word64)
+  , max_slop_bytes                       :: !(f Word64)
+  , max_mem_in_use_bytes                 :: !(f Word64)
+  , cumulative_live_bytes                :: !(f Word64)
+  , copied_bytes                         :: !(f Word64)
+  , par_copied_bytes                     :: !(f Word64)
+  , cumulative_par_balanced_copied_bytes :: !(f Word64)
+  , init_cpu_ns                          :: !(f GHC.RtsTime)
+  , init_elapsed_ns                      :: !(f GHC.RtsTime)
+  , mutator_cpu_ns                       :: !(f GHC.RtsTime)
+  , mutator_elapsed_ns                   :: !(f GHC.RtsTime)
+  , gc_cpu_ns                            :: !(f GHC.RtsTime)
+  , gc_elapsed_ns                        :: !(f GHC.RtsTime)
+  , cpu_ns                               :: !(f GHC.RtsTime)
+  , elapsed_ns                           :: !(f GHC.RtsTime)
+  }
+
+deriving stock instance Show (RTSStatsDiff Triple)
+
+data Triple a = Triple {
+    before     :: !a
+  , after      :: !a
+  , difference :: !a
+  }
+  deriving stock Show
 
 -------------------------------------------------------------------------------
 -- setup
 -------------------------------------------------------------------------------
 
--- https://input-output-hk.github.io/fs-sim
 doSetup :: GlobalOpts -> SetupOpts -> IO ()
 doSetup gopts opts = do
+    void $ timed_ $ doSetup' gopts opts
+
+doSetup' :: GlobalOpts -> SetupOpts -> IO ()
+doSetup' gopts opts = do
     let mountPoint :: FS.MountPoint
         mountPoint = FS.MountPoint (rootDir gopts)
 
@@ -250,8 +387,7 @@ doSetup gopts opts = do
 
 doDryRun :: GlobalOpts -> RunOpts -> IO ()
 doDryRun gopts opts = do
-    time <- timed_ $ doDryRun' gopts opts
-    printf "Batch generation: %.03f sec\n" time
+    void $ timed_ $ doDryRun' gopts opts
 
 doDryRun' :: GlobalOpts -> RunOpts -> IO ()
 doDryRun' gopts opts = do
@@ -271,7 +407,6 @@ doDryRun' gopts opts = do
         printf "Probability of a duplicate:                          %5f\n" p
         printf "Expected number of duplicates (extreme upper bound): %5f out of %f\n" q n
 
-    -- TODO: open session to measure that as well.
     let g0 = initGen (initialSize gopts) (batchSize opts) (batchCount opts) (seed opts)
 
     keysRef <- newIORef $
@@ -417,7 +552,7 @@ doRun gopts opts = do
               | otherwise      = sequentialIterations
             !progressInterval  = max 1 ((batchCount opts) `div` 100)
             madeProgress b     = b `mod` progressInterval == 0
-        time <- timed_ $
+        (time, _, _) <- timed_ $ do
           benchmarkIterations
             (\b y -> fcheck b y >> when (madeProgress b) (putChar '.'))
             (initialSize gopts)
@@ -425,14 +560,10 @@ doRun gopts opts = do
             (batchCount opts)
             (seed opts)
             tbl
+          putStrLn ""
 
-        putStrLn ""
-        printf "Proper run:            %.03f sec\n" time
         let ops = batchCount opts * batchSize opts
         printf "Operations per second: %7.01f ops/sec\n" (fromIntegral ops / time)
-        -- TODO: collect more statistic, save them in dry-run,
-        -- TODO: make the results human comprehensible.
-
 
 -------------------------------------------------------------------------------
 -- sequential
