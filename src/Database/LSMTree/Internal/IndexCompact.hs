@@ -360,11 +360,11 @@ import           Database.LSMTree.Internal.Vector
 data IndexCompact = IndexCompact {
     -- | \(P\): Maps a page @i@ to the 64-bit slice of primary bits of its
     -- minimum key.
-    icPrimary        :: !(VU.Vector Word64)
+    icPrimary        :: {-# UNPACK #-} !(VU.Vector Word64)
     -- | \(C\): A clash on page @i@ means that the primary bits of the minimum
     -- key on that page aren't sufficient to decide whether a search for a key
     -- should continue left or right of the page.
-  , icClashes        :: !(VU.Vector Bit)
+  , icClashes        :: {-# UNPACK #-} !(VU.Vector Bit)
     -- | \(TB\): Maps a full minimum key to the page @i@ that contains it, but
     -- only if there is a clash on page @i@.
   , icTieBreaker     :: !(Map (Unsliced SerialisedKey) PageNo)
@@ -372,7 +372,7 @@ data IndexCompact = IndexCompact {
     -- the larger-than-page value, the first page will map to 'False', and the
     -- remainder of the pages will be set to 'True'. Regular pages default to
     -- 'False'.
-  , icLargerThanPage :: !(VU.Vector Bit)
+  , icLargerThanPage :: {-# UNPACK #-} !(VU.Vector Bit)
   }
   deriving stock (Show, Eq)
 
