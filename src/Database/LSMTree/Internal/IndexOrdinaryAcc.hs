@@ -13,6 +13,8 @@ module Database.LSMTree.Internal.IndexOrdinaryAcc
 )
 where
 
+import           Prelude hiding (take)
+
 import           Control.Exception (assert)
 import           Control.Monad.ST.Strict (ST, runST)
 import           Data.List (genericReplicate)
@@ -20,9 +22,9 @@ import           Data.Maybe (maybeToList)
 import           Data.Primitive.ByteArray (newByteArray, unsafeFreezeByteArray,
                      writeByteArray)
 import           Data.STRef.Strict (STRef, newSTRef, readSTRef, writeSTRef)
-import           Data.Vector (unsafeFreeze)
+import           Data.Vector (force, take, unsafeFreeze)
 import           Data.Vector.Mutable (MVector)
-import qualified Data.Vector.Mutable as Mutable (take, unsafeNew, write)
+import qualified Data.Vector.Mutable as Mutable (unsafeNew, write)
 import qualified Data.Vector.Primitive as Primitive (Vector, length)
 import           Data.Word (Word16, Word8)
 import           Database.LSMTree.Internal.Chunk (Baler, Chunk, createBaler,
@@ -113,6 +115,6 @@ append (AppendMultiPage key pageCount) index = fmap concat                $
 unsafeEnd :: IndexOrdinaryAcc s -> ST s (Maybe Chunk, IndexOrdinary)
 unsafeEnd (IndexOrdinaryAcc buffer keyCountRef baler) = do
     keyCount <- readSTRef keyCountRef
-    keys <- unsafeFreeze (Mutable.take keyCount buffer)
+    keys <- force <$> take keyCount <$> unsafeFreeze buffer
     remnant <- unsafeEndBaler baler
     return (remnant, IndexOrdinary keys)
