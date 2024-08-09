@@ -54,7 +54,7 @@ module FormatPage (
 
 import           Data.Bits
 import           Data.Function (on)
-import           Data.List (foldl', nubBy, sortBy, unfoldr)
+import qualified Data.List as List
 import           Data.Maybe (fromJust, fromMaybe)
 import           Data.Word
 
@@ -476,9 +476,9 @@ toBitmap =
     map toWord64 . group64
   where
     toWord64 :: [Bool] -> Word64
-    toWord64 = foldl' (\w (n,b) -> if b then setBit w n else w) 0
+    toWord64 = List.foldl' (\w (n,b) -> if b then setBit w n else w) 0
              . zip [0 :: Int ..]
-    group64  = unfoldr (\xs -> if null xs
+    group64  = List.unfoldr (\xs -> if null xs
                                  then Nothing
                                  else Just (splitAt 64 xs))
 
@@ -525,7 +525,7 @@ pageDiskPages p =
 
 pageSerialisedChunks :: DiskPageSize -> PageSerialised -> [ByteString]
 pageSerialisedChunks dpgsz =
-    unfoldr (\p -> if BS.null p then Nothing
+    List.unfoldr (\p -> if BS.null p then Nothing
                                 else Just (BS.splitAt dpgszBytes p))
   where
     dpgszBytes = diskPageSizeBytes dpgsz
@@ -824,8 +824,8 @@ instance Arbitrary DiskPageSize where
 --
 orderdKeyOps :: [(Key, Operation)] -> [(Key, Operation)]
 orderdKeyOps =
-    nubBy ((==) `on` fst)
-  . sortBy (compare `on` fst)
+    List.nubBy ((==) `on` fst)
+  . List.sortBy (compare `on` fst)
 
 -- | Shrink a key\/operation sequence (without regard to key order).
 shrinkKeyOps :: [(Key, Operation)] -> [[(Key, Operation)]]

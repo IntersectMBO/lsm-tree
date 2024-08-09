@@ -63,7 +63,7 @@ import qualified Control.Concurrent.Class.MonadSTM.RWVar as RW
 import           Control.DeepSeq
 import           Control.Monad (unless, void, when)
 import           Control.Monad.Class.MonadThrow
-import           Control.Monad.Primitive (PrimState (..), RealWorld)
+import           Control.Monad.Primitive (PrimState, RealWorld)
 import           Control.Monad.ST.Strict (ST, runST)
 import           Data.Arena (ArenaManager, newArenaManager)
 import           Data.Bifunctor (Bifunctor (..))

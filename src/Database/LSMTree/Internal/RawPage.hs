@@ -44,7 +44,7 @@ import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.Serialise (SerialisedKey (..),
                      SerialisedValue (..))
 import           Database.LSMTree.Internal.Vector
-import           GHC.List (foldl')
+import qualified GHC.List as List
 
 -------------------------------------------------------------------------------
 -- RawPage type
@@ -398,6 +398,6 @@ rawPageCalculateBlobIndex (RawPage off ba) i = do
     let j = unsafeShiftR i 6 -- `div` 64
     let k = i .&. 63         -- `mod` 64
     -- generic sum isn't too great
-    let s = foldl' (+) 0 [ popCount (indexByteArray ba (div4 off + 1 + jj) :: Word64) | jj <- [0 .. j-1 ] ]
+    let s = List.foldl' (+) 0 [ popCount (indexByteArray ba (div4 off + 1 + jj) :: Word64) | jj <- [0 .. j-1 ] ]
     let word = indexByteArray ba (div4 off + 1 + j) :: Word64
     s + popCount (word .&. complement (unsafeShiftL 0xffffffffffffffff k))

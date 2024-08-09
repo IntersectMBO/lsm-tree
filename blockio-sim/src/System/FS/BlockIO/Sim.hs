@@ -56,7 +56,7 @@ simErrorHasBlockIO ::
   -> StrictTVar m Errors
   -> m (HasFS m HandleMock, HasBlockIO m HandleMock)
 simErrorHasBlockIO fsVar errorsVar = do
-    let hfs = mkSimErrorHasFS fsVar errorsVar
+    let hfs = simErrorHasFS fsVar errorsVar
     hbio <- fromHasFS hfs
     pure (hfs, hbio)
 
@@ -66,6 +66,6 @@ simErrorHasBlockIO' ::
   -> Errors
   -> m (HasFS m HandleMock, HasBlockIO m HandleMock)
 simErrorHasBlockIO' mockFS errs = do
-    hfs <- mkSimErrorHasFS' mockFS errs
+    hfs <- simErrorHasFS' mockFS errs
     hbio <- fromHasFS hfs
     pure (hfs, hbio)

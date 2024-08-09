@@ -4,6 +4,7 @@ import           Control.DeepSeq (NFData (..))
 import           Criterion.Main (Benchmark, bench, bgroup)
 import qualified Criterion.Main as Cr
 import           Data.Bifunctor (first)
+import qualified Data.Foldable as Fold
 import qualified Data.List as List
 import           Data.Maybe (fromMaybe)
 import           Data.Word (Word64)
@@ -157,9 +158,9 @@ benchWriteBuffer conf@Config{name} =
 
 insert :: InputKOps -> WriteBuffer
 insert (NormalInputs kops) =
-    List.foldl' (\wb (k, e) -> WB.addEntryNormal k e wb) WB.empty kops
+    Fold.foldl' (\wb (k, e) -> WB.addEntryNormal k e wb) WB.empty kops
 insert (MonoidalInputs kops mappendVal) =
-    List.foldl' (\wb (k, e) -> WB.addEntryMonoidal mappendVal k e wb) WB.empty kops
+    Fold.foldl' (\wb (k, e) -> WB.addEntryMonoidal mappendVal k e wb) WB.empty kops
 
 flush :: FS.HasFS IO FS.HandleIO
       -> FS.HasBlockIO IO FS.HandleIO

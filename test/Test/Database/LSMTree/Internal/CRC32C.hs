@@ -13,7 +13,7 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.ByteString.Short as SBS
 import qualified Data.Digest.CRC32C
-import           Data.List (foldl')
+import qualified Data.Foldable as Fold
 import           Database.LSMTree.Extras (showPowersOf)
 import           Database.LSMTree.Internal.CRC32C
 import           System.FS.API
@@ -46,7 +46,7 @@ tests = testGroup "Database.LSMTree.Internal.CRC32C" [
 
 prop_incremental :: [BS.ByteString] -> Bool
 prop_incremental bss =
-    foldl' (flip updateCRC32C) initialCRC32C bss
+    Fold.foldl' (flip updateCRC32C) initialCRC32C bss
  == CRC32C (Data.Digest.CRC32C.crc32c (BS.concat bss))
 
 prop_splits :: BS.ByteString -> Bool

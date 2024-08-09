@@ -295,6 +295,3 @@ withModel fun s ref kont = do
         Just m' -> do
             check_session_open fun s
             kont m'
-
-writeTMVar :: MonadSTM m => TMVar m a -> a -> STM m ()
-writeTMVar t n = tryTakeTMVar t >> putTMVar t n
