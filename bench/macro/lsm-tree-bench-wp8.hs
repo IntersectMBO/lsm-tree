@@ -1,6 +1,5 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE OverloadedStrings     #-}
-
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 {- Benchmark requirements:
@@ -392,20 +391,21 @@ doDryRun gopts opts = do
 doDryRun' :: GlobalOpts -> RunOpts -> IO ()
 doDryRun' gopts opts = do
     -- calculated some expected statistics for generated batches
-    id $ do
-        -- we generate n random numbers in range of [ 1 .. d ]
-        -- what is the chance they are all distinct
-        let n = fromIntegral (batchCount opts * batchSize opts) :: Double
-        let d = fromIntegral (initialSize gopts) :: Double
-        -- this is birthday problem.
-        let p = 1 - exp (negate $  (n * (n - 1)) / (2 * d))
+    -- using nested do block to limit scope of intermediate bindings n, d, p, and q
+    do
+       -- we generate n random numbers in range of [ 1 .. d ]
+       -- what is the chance they are all distinct
+       let n = fromIntegral (batchCount opts * batchSize opts) :: Double
+       let d = fromIntegral (initialSize gopts) :: Double
+       -- this is birthday problem.
+       let p = 1 - exp (negate $  (n * (n - 1)) / (2 * d))
 
-        -- number of people with a shared birthday
-        -- https://en.wikipedia.org/wiki/Birthday_problem#Number_of_people_with_a_shared_birthday
-        let q = n * (1 - ((d - 1) / d) ** (n - 1))
+       -- number of people with a shared birthday
+       -- https://en.wikipedia.org/wiki/Birthday_problem#Number_of_people_with_a_shared_birthday
+       let q = n * (1 - ((d - 1) / d) ** (n - 1))
 
-        printf "Probability of a duplicate:                          %5f\n" p
-        printf "Expected number of duplicates (extreme upper bound): %5f out of %f\n" q n
+       printf "Probability of a duplicate:                          %5f\n" p
+       printf "Expected number of duplicates (extreme upper bound): %5f out of %f\n" q n
 
     let g0 = initGen (initialSize gopts) (batchSize opts) (batchCount opts) (seed opts)
 

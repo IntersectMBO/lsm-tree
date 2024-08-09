@@ -5,7 +5,10 @@
 {-# LANGUAGE UnboxedTuples      #-}
 {- HLINT ignore "Redundant lambda" -}
 
+#ifndef __HLINT__
+-- HLint would fail to find this file and emit a warning
 #include <MachDeps.h>
+#endif
 
 -- |
 --
