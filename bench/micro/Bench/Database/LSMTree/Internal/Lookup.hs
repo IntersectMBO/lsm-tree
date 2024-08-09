@@ -20,6 +20,7 @@ import           Database.LSMTree.Extras.Random (frequency,
                      sampleUniformWithReplacement, uniformWithoutReplacement)
 import           Database.LSMTree.Extras.UTxO
 import           Database.LSMTree.Internal.Entry (Entry (..), unNumEntries)
+import           Database.LSMTree.Internal.IndexCompact (getNumPages)
 import           Database.LSMTree.Internal.Lookup (bloomQueriesDefault,
                      indexSearches, intraPageLookups, lookupsIO, prepLookups)
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..))
@@ -182,8 +183,8 @@ lookupsInBatchesEnv Config {..} = do
     let nentriesReal = unNumEntries $ Run.runNumEntries r
     assert (nentriesReal == nentries) $ pure ()
     let npagesReal = Run.sizeInPages r
-    assert (npagesReal * 42 <= nentriesReal) $ pure ()
-    assert (npagesReal * 43 >= nentriesReal) $ pure ()
+    assert (getNumPages npagesReal * 42 <= nentriesReal) $ pure ()
+    assert (getNumPages npagesReal * 43 >= nentriesReal) $ pure ()
     pure ( benchTmpDir
          , arenaManager
          , hasFS

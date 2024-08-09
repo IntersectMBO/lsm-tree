@@ -7,6 +7,7 @@ module Database.LSMTree.Internal.IndexCompact (
     IndexCompact (..)
   , PageNo (..)
   , NumPages
+  , getNumPages
     -- * Queries
   , PageSpan (..)
   , singlePage
@@ -69,7 +70,7 @@ import           Database.LSMTree.Internal.Vector
 
   Given a serialised target key @k@, an index can be 'search'ed to find a disk
   page @i@ that /might/ contain @k@. Fence-pointer indices offer no guarantee of
-  whether the page contains the key, but the indices do guarentee that no page
+  whether the page contains the key, but the indices do guarantee that no page
   other than page @i@ could store @k@.
 
   === Intro
@@ -143,7 +144,7 @@ import           Database.LSMTree.Internal.Vector
 
   The intuition behind the compact index is this: often, we don't need to look
   at full bit-strings to compare independently generated hashes against
-  eachother. The probability of the @n@ most significant bits of two
+  each other. The probability of the @n@ most significant bits of two
   independently generated hashes matching is @(1/(2^n))@, and if we pick @n@
   large enough then we can expect a very small number of collisions. More
   generally, the expected number of @n@-bit hashes that have to be generated
@@ -151,7 +152,7 @@ import           Database.LSMTree.Internal.Vector
   problem](https://en.wikipedia.org/wiki/Birthday_problem#Probability_of_a_shared_birthday_(collision).
   Or, phrased differently, if we store only the @n@ most significant bits of
   independently generated hashes in our index, then we can store up to @2^(n/2)@
-  of thoses hashes before the expected number of collisions becomes one. Still,
+  of those hashes before the expected number of collisions becomes one. Still,
   we need a way to break ties if there are collisions, because the probability
   of collisions is non-zero.
 
@@ -385,8 +386,19 @@ newtype PageNo = PageNo { unPageNo :: Int }
   deriving stock (Show, Eq, Ord)
   deriving newtype NFData
 
--- TODO: Turn into newtype
-type NumPages = Int
+-- | The number of pages contained by an index or other paging data-structure.
+--
+-- Note: This is a 0-based number; take care to ensure arithmetic underflow
+-- does not occur during subtraction operations!
+newtype NumPages = NumPages Word
+  deriving stock (Eq, Ord, Show)
+  deriving newtype (NFData)
+
+-- | A type-safe "unwrapper" for 'NumPages'. Use this accessor whenever you want
+-- to convert 'NumPages' to a more versitile number type.
+{-# INLINE getNumPages #-}
+getNumPages :: Integral i => NumPages -> i
+getNumPages (NumPages w) = fromIntegral w
 
 {-------------------------------------------------------------------------------
   Queries
@@ -411,7 +423,7 @@ multiPage :: PageNo -> PageNo -> PageSpan
 multiPage i j = PageSpan i j
 
 pageSpanSize :: PageSpan -> NumPages
-pageSpanSize pspan =
+pageSpanSize pspan = NumPages . toEnum $
     unPageNo (pageSpanEnd pspan) - unPageNo (pageSpanStart pspan) + 1
 
 -- | Given a search key, find the number of the disk page that /might/ contain
@@ -459,7 +471,7 @@ hasClashes :: IndexCompact -> Bool
 hasClashes = not . Map.null . icTieBreaker
 
 sizeInPages :: IndexCompact -> NumPages
-sizeInPages = VU.length . icPrimary
+sizeInPages = NumPages . toEnum . VU.length . icPrimary
 
 {-------------------------------------------------------------------------------
   Non-incremental serialisation
