@@ -38,7 +38,6 @@ module Database.LSMTree.Model.Monoidal (
 
 import           Data.Bifunctor (second)
 import qualified Data.ByteString as BS
-import           Data.Foldable (foldl')
 import           Data.Map (Map)
 import qualified Data.Map.Range as Map.R
 import qualified Data.Map.Strict as Map
@@ -135,7 +134,7 @@ updates :: forall k v.
   => V.Vector (k, Update v)
   -> Table k v
   -> Table k v
-updates ups tbl0 = foldl' update tbl0 ups where
+updates ups tbl0 = V.foldl' update tbl0 ups where
     update :: Table k v -> (k, Update v) -> Table k v
     update tbl (k, Delete) = tbl
         { _values = Map.delete (serialiseKey k) (_values tbl) }

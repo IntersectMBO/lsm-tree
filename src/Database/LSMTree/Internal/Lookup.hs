@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns        #-}
+{-# LANGUAGE CPP                 #-}
 {-# LANGUAGE DeriveAnyClass      #-}
 {-# LANGUAGE DeriveFunctor       #-}
 {-# LANGUAGE DerivingStrategies  #-}
@@ -230,7 +231,7 @@ data ByteCountDiscrepancy = ByteCountDiscrepancy {
 -- PRECONDITION: the vectors of bloom filters, indexes and file handles
 -- should pointwise match with the vectors of runs.
 lookupsIO ::
-     forall m h. (PrimMonad m, MonadThrow m, MonadST m)
+     forall m h. (MonadThrow m, MonadST m)
   => HasBlockIO m h
   -> ArenaManager (PrimState m)
   -> ResolveSerialisedValue

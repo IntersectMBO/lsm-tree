@@ -48,9 +48,9 @@ import           Control.Monad (forM_, unless, void, when)
 import qualified Crypto.Hash.SHA256 as SHA256
 import qualified Data.Binary as B
 import qualified Data.ByteString.Short as BS
+import qualified Data.Foldable as Fold
 import qualified Data.IntSet as IS
 import           Data.IORef (modifyIORef', newIORef, readIORef, writeIORef)
-import           Data.List (foldl')
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Traversable (mapAccumL)
@@ -762,7 +762,7 @@ pureReference !initialSize !batchSize !batchCount !seed =
       where
         (g', lookups, inserts) = generateBatch initialSize batchSize g b
         !results = V.map (lookup m) lookups
-        !m'      = foldl' (flip (uncurry Map.insert)) m inserts
+        !m'      = Fold.foldl' (flip (uncurry Map.insert)) m inserts
 
     lookup m k =
       case Map.lookup k m of

@@ -13,7 +13,7 @@ import           Control.DeepSeq (deepseq)
 import           Control.Exception (assert)
 import           Control.Monad.ST.Strict
 import           Criterion.Main
-import           Data.Foldable (Foldable (..))
+import qualified Data.Foldable as Fold
 import qualified Data.List as List
 import           Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
@@ -63,7 +63,7 @@ searches ::
      IndexCompact
   -> [SerialisedKey]            -- ^ Keys to search for
   -> ()
-searches ic ks = foldl' (\acc k -> search k ic `deepseq` acc) () ks
+searches ic ks = Fold.foldl' (\acc k -> search k ic `deepseq` acc) () ks
 
 -- | Input environment for benchmarking 'constructIndexCompact'.
 constructionEnv ::
