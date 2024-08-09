@@ -70,8 +70,8 @@ import           Data.Bifunctor (Bifunctor (..))
 import           Data.BloomFilter (Bloom)
 import qualified Data.ByteString.Char8 as BSC
 import           Data.Char (isNumber)
-import           Data.Either (fromRight)
 import           Data.Foldable
+import           Data.Functor.Compose (Compose (..))
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (catMaybes, fromMaybe)
@@ -101,16 +101,14 @@ import           Database.LSMTree.Internal.TempRegistry
 import qualified Database.LSMTree.Internal.Vector as V
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
-import qualified GHC.IO.Handle as GHC
 import qualified Monkey
 import           NoThunks.Class
 import qualified System.FS.API as FS
 import           System.FS.API (FsErrorPath, FsPath, Handle, HasFS)
 import qualified System.FS.API.Lazy as FS
 import qualified System.FS.API.Strict as FS
-import qualified System.FS.BlockIO.API as HasBlockIO
+import qualified System.FS.BlockIO.API as FS
 import           System.FS.BlockIO.API (HasBlockIO)
-import qualified System.IO as System
 
 {-------------------------------------------------------------------------------
   Exceptions
@@ -166,8 +164,7 @@ data SessionEnv m h = SessionEnv {
     sessionRoot        :: !SessionRoot
   , sessionHasFS       :: !(HasFS m h)
   , sessionHasBlockIO  :: !(HasBlockIO m h)
-    -- TODO: add file locking to HasFS, because this one only works in IO.
-  , sessionLockFile    :: !GHC.Handle
+  , sessionLockFile    :: !(FS.Handle h)
     -- | A session-wide shared, atomic counter that is used to produce unique
     -- names, for example: run names, table IDs.
   , sessionUniqCounter :: !(UniqCounter m)
@@ -245,21 +242,18 @@ openSession hfs hbio dir = do
     -- List directory contents /before/ trying to acquire a file lock, so that
     -- that the lock file does not show up in the listed contents.
     dirContents <- FS.listDirectory hfs dir
-    -- TODO: unsafeToFilePath will error if not in IO. Once we enable running
-    -- this code in IOSim, we should also make sure we have added file locking
-    -- to the HasFS API.
-    lf <- FS.unsafeToFilePath hfs lockFilePath
     -- Try to acquire the session file lock as soon as possible to reduce the
     -- risk of race conditions.
     --
     -- The lock is only released when an exception is raised, otherwise the lock
     -- is included in the returned Session.
     bracketOnError
-      (acquireLock lf)
-      (traverse_ System.hClose) -- also releases the lock
+      acquireLock
+      releaseLock
       $ \case
-          Nothing -> throwIO (SessionDirLocked (FS.mkFsErrorPath hfs lockFilePath))
-          Just sessionFileLock ->
+          Left _e       -> throwIO (SessionDirLocked (FS.mkFsErrorPath hfs lockFilePath))
+          Right Nothing -> throwIO (SessionDirLocked (FS.mkFsErrorPath hfs lockFilePath))
+          Right (Just sessionFileLock) ->
             if Set.null dirContents then newSession sessionFileLock
                                     else restoreSession sessionFileLock
   where
@@ -268,12 +262,17 @@ openSession hfs hbio dir = do
     activeDirPath    = Paths.activeDir root
     snapshotsDirPath = Paths.snapshotsDir root
 
-    acquireLock path = fromRight Nothing <$>
-        try @m @SomeException
-          (do lockFile <- System.openFile path System.WriteMode
-              success <- GHC.hTryLock lockFile GHC.ExclusiveLock
+    acquireLock = try @m @SomeException $ do
+      bracketOnError
+        (FS.hOpen hfs lockFilePath (FS.ReadWriteMode FS.AllowExisting))
+        (FS.hClose hfs) $ \lockFile ->
+          bracketOnError
+            (FS.hTryLock hbio lockFile FS.ExclusiveLock)
+            (\_ -> FS.hUnlock hbio lockFile) $ \success ->
               pure $ if success then Just lockFile else Nothing
-          )
+
+    releaseLock lockFile = forM_ (Compose lockFile) $ \lockFile' ->
+        FS.hUnlock hbio lockFile' `finally` FS.hClose hfs lockFile'
 
     mkSession lockFile x = do
         counterVar <- newUniqCounter x
@@ -364,8 +363,9 @@ closeSession Session{sessionState} =
         -- thread, the idempotent 'close' will act like a no-op, and so we are
         -- not in trouble.
         mapM_ close tables
-        HasBlockIO.close (sessionHasBlockIO seshEnv)
-        System.hClose (sessionLockFile seshEnv)
+        FS.close (sessionHasBlockIO seshEnv)
+        FS.hUnlock (sessionHasBlockIO seshEnv) (sessionLockFile seshEnv)
+        FS.hClose (sessionHasFS seshEnv) (sessionLockFile seshEnv)
         pure SessionClosed
 
 {-------------------------------------------------------------------------------

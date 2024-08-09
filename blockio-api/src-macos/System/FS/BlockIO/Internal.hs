@@ -2,9 +2,10 @@ module System.FS.BlockIO.Internal (
     ioHasBlockIO
   ) where
 
+import qualified GHC.Internal.IO.Handle.Lock as GHC
 import           System.FS.API (Handle (handleRaw), HasFS)
 import           System.FS.BlockIO.API (Advice (..), FileOffset, HasBlockIO,
-                     IOCtxParams)
+                     IOCtxParams, LockMode)
 import qualified System.FS.BlockIO.Serial as Serial
 import           System.FS.IO (HandleIO)
 import           System.FS.IO.Handle (withOpenHandle)
@@ -19,7 +20,7 @@ ioHasBlockIO ::
      HasFS IO HandleIO
   -> IOCtxParams
   -> IO (HasBlockIO IO HandleIO)
-ioHasBlockIO hfs _params = Serial.serialHasBlockIO hSetNoCache hAdvise hAllocate hfs
+ioHasBlockIO hfs _params = Serial.serialHasBlockIO hSetNoCache hAdvise hAllocate hTryLock hUnlock hfs
 
 hSetNoCache :: Handle HandleIO -> Bool -> IO ()
 hSetNoCache h b =
@@ -33,3 +34,11 @@ hAdvise _h _off _len _advice = pure ()
 
 hAllocate :: Handle HandleIO -> FileOffset -> FileOffset -> IO ()
 hAllocate _h _off _len = pure ()
+
+hTryLock :: Handle HandleIO -> LockMode -> IO Bool
+hTryLock h mode = withOpenHandle "hTryLock" (handleRaw h) $ \fd -> do
+    GHC.hTryLock fd mode
+
+hUnlock :: Handle HandleIO -> IO ()
+hUnlock h = withOpenHandle "hUnlock" (handleRaw h) $ \fd -> do
+    GHC.hUnlock fd

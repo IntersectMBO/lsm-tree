@@ -18,7 +18,8 @@ import           GHC.Stack
 import           System.FS.API (BufferOffset (..), FsErrorPath, Handle (..),
                      HasFS (..), SomeHasFS (..), ioToFsError)
 import qualified System.FS.BlockIO.API as API
-import           System.FS.BlockIO.API (IOOp (..), IOResult (..), ioopHandle)
+import           System.FS.BlockIO.API (IOOp (..), IOResult (..), LockMode,
+                     ioopHandle)
 import           System.FS.IO (HandleIO)
 import           System.FS.IO.Handle
 import qualified System.IO.BlockIO as I
@@ -30,10 +31,12 @@ asyncHasBlockIO ::
      (Handle HandleIO -> Bool -> IO ())
   -> (Handle HandleIO -> FileOffset -> FileOffset -> API.Advice -> IO ())
   -> (Handle HandleIO -> FileOffset -> FileOffset -> IO ())
+  -> (Handle HandleIO -> LockMode -> IO Bool)
+  -> (Handle HandleIO -> IO ())
   -> HasFS IO HandleIO
   -> API.IOCtxParams
   -> IO (API.HasBlockIO IO HandleIO)
-asyncHasBlockIO hSetNoCache hAdvise hAllocate hasFS ctxParams = do
+asyncHasBlockIO hSetNoCache hAdvise hAllocate hTryLock hUnlock hasFS ctxParams = do
   ctx <- I.initIOCtx (ctxParamsConv ctxParams)
   pure $ API.HasBlockIO {
       API.close = I.closeIOCtx ctx
@@ -41,6 +44,8 @@ asyncHasBlockIO hSetNoCache hAdvise hAllocate hasFS ctxParams = do
     , API.hSetNoCache
     , API.hAdvise
     , API.hAllocate
+    , API.hTryLock
+    , API.hUnlock
     }
 
 ctxParamsConv :: API.IOCtxParams -> I.IOCtxParams
