@@ -11,6 +11,7 @@ module Database.LSMTree.Class.Normal (
   ) where
 
 import           Control.Monad.Class.MonadThrow (MonadThrow (..))
+import           Control.Tracer (nullTracer)
 import           Data.Kind (Constraint, Type)
 import           Data.Typeable (Typeable)
 import qualified Data.Vector as V
@@ -196,7 +197,7 @@ instance IsSession R.Session where
         -> SessionArgs R.Session m
 
     openSession (SessionArgs hfs hbio dir) = do
-       R.openSession hfs hbio dir
+       R.openSession nullTracer hfs hbio dir
     closeSession = R.closeSession
     deleteSnapshot = R.deleteSnapshot
     listSnapshots = R.listSnapshots

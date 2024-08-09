@@ -170,7 +170,7 @@ close fs hbio Run {..} = do
 
 -- | Should this run cache key\/ops data in memory?
 data RunDataCaching = CacheRunData | NoCacheRunData
-  deriving stock Eq
+  deriving stock (Show, Eq)
 
 instance NFData RunDataCaching where
   rnf CacheRunData   = ()
