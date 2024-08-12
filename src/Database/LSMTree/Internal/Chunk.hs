@@ -18,6 +18,7 @@ import           Prelude hiding (length)
 
 import           Control.Exception (assert)
 import           Control.Monad.ST.Strict (ST)
+import           Data.List (scanl')
 import           Data.STRef.Strict (STRef, newSTRef, readSTRef, writeSTRef)
 import           Data.Vector.Primitive (Vector, length, unsafeCopy,
                      unsafeFreeze)
@@ -54,34 +55,51 @@ createBaler minChunkSize = assert (minChunkSize > 0)              $
                            newSTRef 0
 
 {-|
-    Feeds a baler a block of bytes.
+    Feeds a baler blocks of bytes.
 
     Bytes received by a baler are generally queued for later output, but if
     feeding new bytes makes the accumulated content exceed the minimum chunk
     size then a chunk containing all the accumulated content is output.
 -}
-feedBaler :: Vector Word8 -> Baler s -> ST s (Maybe Chunk)
-feedBaler block (Baler buffer remnantSizeRef) = do
+feedBaler :: forall s . [Vector Word8] -> Baler s -> ST s (Maybe Chunk)
+feedBaler blocks (Baler buffer remnantSizeRef) = do
     remnantSize <- readSTRef remnantSizeRef
     let
 
+        inputSize :: Int
+        !inputSize = sum (map length blocks)
+
         totalSize :: Int
-        !totalSize = remnantSize + length block
+        !totalSize = remnantSize + inputSize
 
     if totalSize <= Mutable.length buffer
         then do
-                 unsafeCopy (Mutable.slice remnantSize (length block) buffer)
-                            block
+                 unsafeCopyBlocks (Mutable.drop remnantSize buffer)
                  writeSTRef remnantSizeRef totalSize
                  return Nothing
         else do
                  protoChunk <- Mutable.unsafeNew totalSize
                  Mutable.unsafeCopy (Mutable.take remnantSize protoChunk)
                                     (Mutable.take remnantSize buffer)
-                 unsafeCopy (Mutable.drop remnantSize protoChunk) block
+                 unsafeCopyBlocks (Mutable.drop remnantSize protoChunk)
                  writeSTRef remnantSizeRef 0
                  chunk <- Chunk <$> unsafeFreeze protoChunk
                  return (Just chunk)
+    where
+
+    unsafeCopyBlocks :: MVector s Word8 -> ST s ()
+    unsafeCopyBlocks vec
+        = sequence_ $
+          zipWith3 (\ start size block -> unsafeCopy
+                                              (Mutable.slice start size vec)
+                                              block)
+                   (scanl' (+) 0 blockSizes)
+                   blockSizes
+                   blocks
+        where
+
+        blockSizes :: [Int]
+        blockSizes = map length blocks
 
 {-|
     Returns the bytes still queued in a baler, if any, thereby invalidating the
