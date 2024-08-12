@@ -14,7 +14,7 @@ import           Data.BloomFilter (Bloom)
 import qualified Data.BloomFilter as Bloom
 import qualified Data.BloomFilter.Easy as Bloom.Easy
 import           Data.BloomFilter.Hash (Hashable)
-import           Data.Foldable (Foldable (..))
+import qualified Data.Foldable as Fold
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Database.LSMTree.Extras.Random
@@ -62,7 +62,7 @@ elemEnv fpr nbloom nelemsPositive nelemsNegative = do
 
 -- | Used for benchmarking 'Bloom.elem'.
 elems :: Hashable a => Bloom a -> [a] -> ()
-elems b xs = foldl' (\acc x -> Bloom.elem x b `seq` acc) () xs
+elems b xs = Fold.foldl' (\acc x -> Bloom.elem x b `seq` acc) () xs
 
 -- | Input environment for benchmarking 'constructBloom'.
 constructionEnv :: Int -> IO (Map SerialisedKey SerialisedKey)

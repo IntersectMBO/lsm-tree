@@ -6,6 +6,7 @@ import qualified Criterion.Main as Cr
 import           Data.Bifunctor (first)
 import qualified Data.BloomFilter.Hash as Hash
 import           Data.Foldable (traverse_)
+import qualified Data.Foldable as Fold
 import qualified Data.List as List
 import           Data.Maybe (fromMaybe)
 import           Data.Word (Word64)
@@ -362,7 +363,7 @@ createRun ::
   -> IO (Run (FS.Handle h))
 createRun hasFS hasBlockIO mMappend targetPath =
       Run.fromWriteBuffer hasFS  hasBlockIO Run.CacheRunData (RunAllocFixed 10) targetPath
-    . List.foldl insert WB.empty
+    . Fold.foldl insert WB.empty
   where
     insert wb (k, e) = case mMappend of
       Nothing -> WB.addEntryNormal k (expectNormal e) wb

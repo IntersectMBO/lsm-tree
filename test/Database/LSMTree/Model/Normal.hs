@@ -30,7 +30,6 @@ module Database.LSMTree.Model.Normal (
 
 import qualified Crypto.Hash.SHA256 as SHA256
 import qualified Data.ByteString as BS
-import           Data.Foldable (foldl')
 import           Data.Kind (Type)
 import           Data.Map (Map)
 import qualified Data.Map.Range as Map.R
@@ -136,7 +135,7 @@ updates :: forall k v blob.
   => V.Vector (k, Update v blob)
   -> Table k v blob
   -> Table k v blob
-updates ups tbl0 = foldl' update tbl0 ups where
+updates ups tbl0 = V.foldl' update tbl0 ups where
     update :: Table k v blob -> (k, Update v blob) -> Table k v blob
     update tbl (k, Delete) = tbl
         { _values = Map.delete (serialiseKey k) (_values tbl) }

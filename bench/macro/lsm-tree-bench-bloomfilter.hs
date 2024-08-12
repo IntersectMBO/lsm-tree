@@ -13,7 +13,7 @@ import           Data.BloomFilter (Bloom)
 import qualified Data.BloomFilter as Bloom
 import qualified Data.BloomFilter.Hash as Bloom
 import qualified Data.BloomFilter.Mutable as MBloom
-import           Data.List (foldl')
+import qualified Data.Foldable as Fold
 import           Data.Time
 import           Data.Vector (Vector)
 import qualified Data.Vector as Vector
@@ -264,6 +264,6 @@ benchElemCheapHashes !bs !rng !n =
     let k :: Word256
         (!k, !rng') = uniform rng
         !kh =  Bloom.makeHashes (serialiseKey k)
-     in foldl' (\_ b -> Bloom.elemHashes kh b `seq` ()) () bs
+     in Fold.foldl' (\_ b -> Bloom.elemHashes kh b `seq` ()) () bs
   `seq` benchElemCheapHashes bs rng' (n-1)
 
