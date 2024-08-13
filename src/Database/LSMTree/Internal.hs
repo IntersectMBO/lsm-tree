@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP       #-}
 {-# LANGUAGE DataKinds #-}
 -- | TODO: this should be removed once we have proper snapshotting with proper
 -- persistence of the config to disk.
@@ -63,8 +64,8 @@ import qualified Control.Concurrent.Class.MonadSTM.RWVar as RW
 import           Control.DeepSeq
 import           Control.Monad (unless, void, when)
 import           Control.Monad.Class.MonadThrow
-import           Control.Monad.Primitive (PrimState, RealWorld)
-import           Control.Monad.ST.Strict (ST, runST)
+import           Control.Monad.Primitive (PrimState)
+import           Control.Monad.ST.Strict
 import           Data.Arena (ArenaManager, newArenaManager)
 import           Data.Bifunctor (Bifunctor (..))
 import           Data.BloomFilter (Bloom)
@@ -419,7 +420,7 @@ data TableHandleEnv m h = TableHandleEnv {
     -- waiting for the MVar.
     --
     -- TODO: switch to more fine-grained synchronisation approach
-  , tableContent    :: !(RWVar m (TableContent h))
+  , tableContent    :: !(RWVar m (TableContent (PrimState m) h))
   }
 
 {-# INLINE tableSessionRoot #-}
@@ -449,18 +450,18 @@ tableSessionUntrackTable :: MonadMVar m => TableHandleEnv m h -> m ()
 tableSessionUntrackTable thEnv =
     modifyMVar_ (sessionOpenTables (tableSessionEnv thEnv)) $ pure . Map.delete (tableId thEnv)
 
-data TableContent h = TableContent {
+data TableContent s h = TableContent {
     tableWriteBuffer :: !WriteBuffer
     -- | A hierarchy of levels. The vector indexes double as level numbers.
-  , tableLevels      :: !(Levels (Handle h))
+  , tableLevels      :: !(Levels s (Handle h))
     -- | Cache of flattened 'levels'.
     --
     -- INVARIANT: when 'level's is modified, this cache should be updated as
     -- well, for example using 'mkLevelsCache'.
-  , tableCache       :: !(LevelsCache (Handle h))
+  , tableCache       :: !(LevelsCache s (Handle h))
   }
 
-emptyTableContent :: TableContent h
+emptyTableContent :: TableContent s h
 emptyTableContent = TableContent {
       tableWriteBuffer = WB.empty
     , tableLevels = V.empty
@@ -481,45 +482,45 @@ withOpenTable th action = RW.withReadAccess (tableHandleState th) $ \case
     TableHandleClosed -> throwIO ErrTableClosed
     TableHandleOpen thEnv -> action thEnv
 
-type Levels h = V.Vector (Level h)
+type Levels s h = V.Vector (Level s h)
 
 -- | Runs in order from newer to older
-data Level h = Level {
-    incomingRuns :: !(MergingRun h)
-  , residentRuns :: !(V.Vector (Run h))
+data Level s h = Level {
+    incomingRuns :: !(MergingRun s h)
+  , residentRuns :: !(V.Vector (Run s h))
   }
 
 -- TODO: proper instance
-deriving via OnlyCheckWhnfNamed "Level" (Level h) instance NoThunks (Level h)
+deriving via OnlyCheckWhnfNamed "Level" (Level s h) instance NoThunks (Level s h)
 
 newtype LevelNo = LevelNo Int
   deriving stock Eq
   deriving newtype Enum
 
 -- | A merging run is either a single run, or some ongoing merge.
-data MergingRun h =
-    MergingRun !(MergingRunState h)
-  | SingleRun !(Run h)
+data MergingRun s h =
+    MergingRun !(MergingRunState s h)
+  | SingleRun !(Run s h)
 
 -- | Merges are stepped to completion immediately, so there is no representation
 -- for ongoing merges (yet)
 --
 -- TODO: this should also represent ongoing merges once we implement scheduling.
-newtype MergingRunState h = CompletedMerge (Run h)
+newtype MergingRunState s h = CompletedMerge (Run s h)
 
 -- | Return all runs in the levels, ordered from newest to oldest
-runsInLevels :: Levels h -> V.Vector (Run h)
+runsInLevels :: Levels s h -> V.Vector (Run s h)
 runsInLevels levels = flip V.concatMap levels $ \(Level mr rs) ->
     case mr of
       SingleRun r                   -> r `V.cons` rs
       MergingRun (CompletedMerge r) -> r `V.cons` rs
 
-{-# SPECIALISE closeLevels :: HasFS IO h -> HasBlockIO IO h -> Levels (Handle h) -> IO () #-}
+{-# SPECIALISE closeLevels :: HasFS IO h -> HasBlockIO IO h -> Levels RealWorld (Handle h) -> IO () #-}
 closeLevels ::
      m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
   => HasFS m h
   -> HasBlockIO m h
-  -> Levels (Handle h)
+  -> Levels (PrimState m) (Handle h)
   -> m ()
 closeLevels hfs hbio levels = V.mapM_ (Run.removeReference hfs hbio) (runsInLevels levels)
 
@@ -532,8 +533,8 @@ closeLevels hfs hbio levels = V.mapM_ (Run.removeReference hfs hbio) (runsInLeve
 --
 -- Use 'mkLevelsCache' to ensure that there are no mismatches between the vector
 -- of runs and the vectors of run components.
-data LevelsCache h = LevelsCache_ {
-    cachedRuns      :: !(V.Vector (Run h))
+data LevelsCache s h = LevelsCache_ {
+    cachedRuns      :: !(V.Vector (Run s h))
   , cachedFilters   :: !(V.Vector (Bloom SerialisedKey))
   , cachedIndexes   :: !(V.Vector IndexCompact)
   , cachedKOpsFiles :: !(V.Vector h)
@@ -541,7 +542,7 @@ data LevelsCache h = LevelsCache_ {
 
 -- | Flatten the argument 'Level's into a single vector of runs, and use that to
 -- populate the 'LevelsCache'.
-mkLevelsCache :: Levels h -> LevelsCache h
+mkLevelsCache :: Levels s h -> LevelsCache s h
 mkLevelsCache lvls = LevelsCache_ {
       cachedRuns      = rs
     , cachedFilters   = V.map Run.runFilter rs
@@ -576,7 +577,7 @@ new sesh conf = withOpenSession sesh $ \seshEnv -> do
     am <- newArenaManager
     newWith sesh seshEnv conf am WB.empty V.empty
 
-{-# SPECIALISE newWith :: Session IO h -> SessionEnv IO h -> TableConfig -> ArenaManager RealWorld -> WriteBuffer -> Levels (Handle h) -> IO (TableHandle IO h) #-}
+{-# SPECIALISE newWith :: Session IO h -> SessionEnv IO h -> TableConfig -> ArenaManager RealWorld -> WriteBuffer -> Levels RealWorld (Handle h) -> IO (TableHandle IO h) #-}
 newWith ::
      m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
   => Session m h
@@ -584,7 +585,7 @@ newWith ::
   -> TableConfig
   -> ArenaManager (PrimState m)
   -> WriteBuffer
-  -> Levels (Handle h)
+  -> Levels (PrimState m) (Handle h)
   -> m (TableHandle m h)
 newWith sesh seshEnv conf !am !wb !levels = do
     assertNoThunks levels $ pure ()
@@ -623,14 +624,14 @@ close th = RW.withWriteAccess_ (tableHandleState th) $ \case
         pure emptyTableContent
       pure TableHandleClosed
 
-{-# SPECIALISE lookups :: ResolveSerialisedValue -> V.Vector SerialisedKey -> TableHandle IO h -> (Maybe (Entry SerialisedValue (BlobRef (Run (Handle h)))) -> lookupResult) -> IO (V.Vector lookupResult) #-}
+{-# SPECIALISE lookups :: ResolveSerialisedValue -> V.Vector SerialisedKey -> TableHandle IO h -> (Maybe (Entry SerialisedValue (BlobRef (Run RealWorld (Handle h)))) -> lookupResult) -> IO (V.Vector lookupResult) #-}
 -- | See 'Database.LSMTree.Normal.lookups'.
 lookups ::
      m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
   => ResolveSerialisedValue
   -> V.Vector SerialisedKey
   -> TableHandle m h
-  -> (Maybe (Entry SerialisedValue (BlobRef (Run (Handle h)))) -> lookupResult)
+  -> (Maybe (Entry SerialisedValue (BlobRef (Run (PrimState m) (Handle h)))) -> lookupResult)
      -- ^ How to map from an entry to a lookup result.
   -> m (V.Vector lookupResult)
 lookups resolve ks th fromEntry = withOpenTable th $ \thEnv -> do
@@ -681,7 +682,7 @@ updates resolve es th = do
           assertNoThunks tc' $ pure ()
           pure tc'
 
-{-# SPECIALISE updatesWithInterleavedFlushes :: TableConfig -> ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob) -> TempRegistry IO -> TableContent h -> IO (TableContent h) #-}
+{-# SPECIALISE updatesWithInterleavedFlushes :: TableConfig -> ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob) -> TempRegistry IO -> TableContent RealWorld h -> IO (TableContent RealWorld h) #-}
 -- | A single batch of updates can fill up the write buffer multiple times. We
 -- flush the write buffer each time it fills up before trying to fill it up
 -- again.
@@ -707,7 +708,7 @@ updates resolve es th = do
 -- and write those to disk. Of course, any remainder that did not fit into a
 -- whole run should then end up in a fresh write buffer.
 updatesWithInterleavedFlushes ::
-     m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+     forall m h. m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
   => TableConfig
   -> ResolveSerialisedValue
   -> HasFS m h
@@ -716,8 +717,8 @@ updatesWithInterleavedFlushes ::
   -> UniqCounter m
   -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob)
   -> TempRegistry m
-  -> TableContent h
-  -> m (TableContent h)
+  -> TableContent (PrimState m) h
+  -> m (TableContent (PrimState m) h)
 updatesWithInterleavedFlushes conf resolve hfs hbio root uniqC es reg tc = do
     let wb = tableWriteBuffer tc
         (wb', es') = WB.addEntriesUpToN resolve es maxn wb
@@ -742,14 +743,14 @@ updatesWithInterleavedFlushes conf resolve hfs hbio root uniqC es reg tc = do
         updatesWithInterleavedFlushes conf resolve hfs hbio root uniqC es' reg tc''
   where
     AllocNumEntries (NumEntries maxn) = confWriteBufferAlloc conf
-    setWriteBuffer :: WriteBuffer -> TableContent h -> TableContent h
+    setWriteBuffer :: WriteBuffer -> TableContent (PrimState m) h -> TableContent (PrimState m) h
     setWriteBuffer wbToSet tc0 = TableContent {
           tableWriteBuffer = wbToSet
         , tableLevels = tableLevels tc0
         , tableCache = tableCache tc0
         }
 
-{-# SPECIALISE flushWriteBuffer :: TableConfig -> ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> TempRegistry IO -> TableContent h -> IO (TableContent h) #-}
+{-# SPECIALISE flushWriteBuffer :: TableConfig -> ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> TempRegistry IO -> TableContent RealWorld h -> IO (TableContent RealWorld h) #-}
 -- | Flush the write buffer to disk, regardless of whether it is full or not.
 --
 -- The returned table content contains an updated set of levels, where the write
@@ -763,8 +764,8 @@ flushWriteBuffer ::
   -> SessionRoot
   -> UniqCounter m
   -> TempRegistry m
-  -> TableContent h
-  -> m (TableContent h)
+  -> TableContent (PrimState m) h
+  -> m (TableContent (PrimState m) h)
 flushWriteBuffer conf@TableConfig{confDiskCachePolicy}
                  resolve hfs hbio root uniqC reg tc
   | WB.null (tableWriteBuffer tc) = pure tc
@@ -787,14 +788,14 @@ flushWriteBuffer conf@TableConfig{confDiskCachePolicy}
 -- | Note that the invariants rely on the fact that levelling is only used on
 -- the last level.
 --
-levelsInvariant :: forall s h. TableConfig -> Levels h -> ST s Bool
-levelsInvariant conf levels =
+_levelsInvariant :: forall s h. TableConfig -> Levels s h -> ST s Bool
+_levelsInvariant conf levels =
     go (LevelNo 1) levels >>= \ !_ -> pure True
   where
     sr = confSizeRatio conf
     wba = confWriteBufferAlloc conf
 
-    go :: LevelNo -> Levels h -> ST s ()
+    go :: LevelNo -> Levels s h -> ST s ()
     go !_ (V.uncons -> Nothing) = pure ()
 
     go !ln (V.uncons -> Just (Level mr rs, ls)) = do
@@ -859,7 +860,7 @@ levelsInvariant conf levels =
     -- Check that a run is too small for next levels
     fitsUB policy r ln = Run.runNumEntries r <= maxRunSize sr wba policy ln
 
-{-# SPECIALISE addRunToLevels :: TableConfig -> ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> Run (Handle h) -> TempRegistry IO -> Levels (Handle h) -> IO (Levels (Handle h)) #-}
+{-# SPECIALISE addRunToLevels :: TableConfig -> ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> Run RealWorld (Handle h) -> TempRegistry IO -> Levels RealWorld (Handle h) -> IO (Levels RealWorld (Handle h)) #-}
 addRunToLevels ::
      forall m h. m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
   => TableConfig
@@ -868,13 +869,16 @@ addRunToLevels ::
   -> HasBlockIO m h
   -> SessionRoot
   -> UniqCounter m
-  -> Run (Handle h)
+  -> Run (PrimState m) (Handle h)
   -> TempRegistry m
-  -> Levels (Handle h)
-  -> m (Levels (Handle h))
+  -> Levels (PrimState m) (Handle h)
+  -> m (Levels (PrimState m) (Handle h))
 addRunToLevels conf@TableConfig{..} resolve hfs hbio root uniqC r0 reg levels = do
     ls' <- go (LevelNo 1) (V.singleton r0) levels
-    assert (runST $ levelsInvariant conf ls') $ return ls'
+#ifdef NO_IGNORE_ASSERTS
+    void $ stToIO $ _levelsInvariant conf ls'
+#endif
+    return ls'
   where
     -- NOTE: @go@ is based on the @increment@ function from the
     -- @ScheduledMerges@ prototype.
@@ -924,7 +928,7 @@ addRunToLevels conf@TableConfig{..} resolve hfs hbio root uniqC r0 reg levels = 
             mr' <- newMerge LevelLevelling Merge.LastLevel ln (rs' `V.snoc` r)
             pure $! Level mr' V.empty `V.cons` V.empty
 
-    expectCompletedMerge :: MergingRun (Handle h) -> m (Run (Handle h))
+    expectCompletedMerge :: MergingRun (PrimState m) (Handle h) -> m (Run (PrimState m) (Handle h))
     expectCompletedMerge (SingleRun r)                   = pure r
     expectCompletedMerge (MergingRun (CompletedMerge r)) = pure r
 
@@ -933,8 +937,8 @@ addRunToLevels conf@TableConfig{..} resolve hfs hbio root uniqC r0 reg levels = 
     newMerge :: MergePolicyForLevel
              -> Merge.Level
              -> LevelNo
-             -> V.Vector (Run (Handle h))
-             -> m (MergingRun (Handle h))
+             -> V.Vector (Run (PrimState m) (Handle h))
+             -> m (MergingRun (PrimState m) (Handle h))
     newMerge mergepolicy mergelast ln rs
       | Just (r, rest) <- V.uncons rs
       , V.null rest = do
@@ -951,7 +955,7 @@ addRunToLevels conf@TableConfig{..} resolve hfs hbio root uniqC r0 reg levels = 
 
 data MergePolicyForLevel = LevelTiering | LevelLevelling
 
-mergePolicyForLevel :: MergePolicy -> LevelNo -> Levels h -> MergePolicyForLevel
+mergePolicyForLevel :: MergePolicy -> LevelNo -> Levels s h -> MergePolicyForLevel
 mergePolicyForLevel MergePolicyLazyLevelling (LevelNo n) nextLevels
   | n == 1
   , V.null nextLevels
@@ -959,7 +963,7 @@ mergePolicyForLevel MergePolicyLazyLevelling (LevelNo n) nextLevels
   | V.null nextLevels = LevelLevelling  -- levelling on last level
   | otherwise         = LevelTiering
 
-runSize :: Run h -> NumEntries
+runSize :: Run s h -> NumEntries
 runSize run = Run.runNumEntries run
 
 -- $setup
@@ -1000,15 +1004,15 @@ maxRunSize' :: TableConfig -> MergePolicyForLevel -> LevelNo -> NumEntries
 maxRunSize' config policy ln =
     maxRunSize (confSizeRatio config) (confWriteBufferAlloc config) policy ln
 
-mergeLastForLevel :: Levels s -> Merge.Level
+mergeLastForLevel :: Levels s h -> Merge.Level
 mergeLastForLevel levels
  | V.null levels = Merge.LastLevel
  | otherwise     = Merge.MidLevel
 
-levelIsFull :: SizeRatio -> V.Vector (Run h) -> Bool
+levelIsFull :: SizeRatio -> V.Vector (Run s h) -> Bool
 levelIsFull sr rs = V.length rs + 1 >= (sizeRatioInt sr)
 
-{-# SPECIALISE mergeRuns :: ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> RunDataCaching -> RunBloomFilterAlloc -> MergePolicyForLevel -> Merge.Level -> V.Vector (Run (Handle h)) -> IO (Run (Handle h)) #-}
+{-# SPECIALISE mergeRuns :: ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> RunDataCaching -> RunBloomFilterAlloc -> MergePolicyForLevel -> Merge.Level -> V.Vector (Run RealWorld (Handle h)) -> IO (Run RealWorld (Handle h)) #-}
 mergeRuns ::
      m ~ IO
   => ResolveSerialisedValue
@@ -1020,8 +1024,8 @@ mergeRuns ::
   -> RunBloomFilterAlloc
   -> MergePolicyForLevel
   -> Merge.Level
-  -> V.Vector (Run (Handle h))
-  -> m (Run (Handle h))
+  -> V.Vector (Run (PrimState m) (Handle h))
+  -> m (Run (PrimState m) (Handle h))
 mergeRuns resolve hfs hbio root uniqC caching alloc _ mergeLevel runs = do
     n <- incrUniqCounter uniqC
     let runPaths = Paths.runPath root n
@@ -1164,7 +1168,7 @@ configOverrideDiskCachePolicy pol = TableConfigOverride {
       confOverrideDiskCachePolicy = Last (Just pol)
     }
 
-{-# SPECIALISE openLevels :: HasFS IO h -> HasBlockIO IO h -> DiskCachePolicy -> V.Vector ((Bool, RunFsPaths), V.Vector RunFsPaths) -> Managed IO (Levels (FS.Handle h)) #-}
+{-# SPECIALISE openLevels :: HasFS IO h -> HasBlockIO IO h -> DiskCachePolicy -> V.Vector ((Bool, RunFsPaths), V.Vector RunFsPaths) -> Managed IO (Levels RealWorld (FS.Handle h)) #-}
 -- | Open multiple levels.
 --
 -- If an error occurs when opening multiple runs in sequence, then we have to
@@ -1183,7 +1187,7 @@ openLevels ::
   -> HasBlockIO m h
   -> DiskCachePolicy
   -> V.Vector ((Bool, RunFsPaths), V.Vector RunFsPaths)
-  -> Managed m (Levels (Handle h))
+  -> Managed m (Levels (PrimState m) (Handle h))
 openLevels hfs hbio diskCachePolicy levels =
     flip V.imapMStrict levels $ \i (mrPath, rsPaths) -> do
       let ln      = LevelNo (i+1) -- level 0 is the write buffer

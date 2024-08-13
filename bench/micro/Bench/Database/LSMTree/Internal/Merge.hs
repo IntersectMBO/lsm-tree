@@ -1,6 +1,7 @@
 module Bench.Database.LSMTree.Internal.Merge (benchmarks) where
 
 import           Control.Monad (when, zipWithM)
+import           Control.Monad.Primitive
 import           Criterion.Main (Benchmark, bench, bgroup)
 import qualified Criterion.Main as Cr
 import           Data.Bifunctor (first)
@@ -226,7 +227,7 @@ merge ::
   -> Config
   -> Run.RunFsPaths
   -> InputRuns
-  -> IO (Run (FS.Handle (FS.HandleIO)))
+  -> IO (Run RealWorld (FS.Handle (FS.HandleIO)))
 merge fs hbio Config {..} targetPaths runs = do
     let f = fromMaybe const mergeMappend
     m <- fromMaybe (error "empty inputs, no merge created") <$>
@@ -244,7 +245,7 @@ outputRunPaths = RunFsPaths (FS.mkFsPath []) 0
 inputRunPaths :: [Run.RunFsPaths]
 inputRunPaths = RunFsPaths (FS.mkFsPath []) <$> [1..]
 
-type InputRuns = [Run (FS.Handle FS.HandleIO)]
+type InputRuns = [Run RealWorld (FS.Handle FS.HandleIO)]
 
 type Mappend = SerialisedValue -> SerialisedValue -> SerialisedValue
 
@@ -360,7 +361,7 @@ createRun ::
   -> Maybe Mappend
   -> Run.RunFsPaths
   -> [SerialisedKOp]
-  -> IO (Run (FS.Handle h))
+  -> IO (Run RealWorld (FS.Handle h))
 createRun hasFS hasBlockIO mMappend targetPath =
       Run.fromWriteBuffer hasFS  hasBlockIO Run.CacheRunData (RunAllocFixed 10) targetPath
     . Fold.foldl insert WB.empty

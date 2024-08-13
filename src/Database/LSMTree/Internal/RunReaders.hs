@@ -9,10 +9,10 @@ module Database.LSMTree.Internal.RunReaders (
   ) where
 
 import           Control.Monad (zipWithM)
-import           Control.Monad.Primitive (RealWorld)
+import           Control.Monad.Primitive
 import           Data.Function (on)
-import           Data.IORef
 import           Data.Maybe (catMaybes)
+import           Data.Primitive.MutVar
 import           Data.Traversable (for)
 import           Database.LSMTree.Internal.Run (Run)
 import           Database.LSMTree.Internal.RunReader (RunReader)
@@ -33,14 +33,14 @@ import           System.FS.BlockIO.API (HasBlockIO)
 --
 -- Creating a 'RunReaders' does not increase the runs' reference count, so make
 -- sure they remain open while using the 'RunReaders'.
-data Readers fhandle = Readers {
-      readersHeap :: !(Heap.MutableHeap RealWorld (ReadCtx fhandle))
+data Readers s fhandle = Readers {
+      readersHeap :: !(Heap.MutableHeap s (ReadCtx fhandle))
       -- | Since there is always one reader outside of the heap, we need to
       -- store it separately. This also contains the next k\/op to yield, unless
       -- all readers are drained, i.e. both:
       -- 1. the reader inside the 'ReadCtx' is empty
       -- 2. the heap is empty
-    , readersNext :: !(IORef (ReadCtx fhandle))
+    , readersNext :: !(MutVar s (ReadCtx fhandle))
     }
 
 newtype ReaderNumber = ReaderNumber Int
@@ -58,14 +58,14 @@ data ReadCtx fhandle = ReadCtx {
       -- Using an 'STRef' could avoid reallocating the record for every entry,
       -- but that might not be straightforward to integrate with the heap.
       readCtxHeadKey   :: !SerialisedKey
-    , readCtxHeadEntry :: !(Reader.Entry fhandle)
+    , readCtxHeadEntry :: !(Reader.Entry RealWorld fhandle)
       -- We could get rid of this by making 'LoserTree' stable (for which there
       -- is a prototype already).
       -- Alternatively, if we decide to have an invariant that the number in
       -- 'RunFsPaths' is always higher for newer runs, then we could use that
       -- in the 'Ord' instance.
     , readCtxNumber    :: !ReaderNumber
-    , readCtxReader    :: !(RunReader fhandle)
+    , readCtxReader    :: !(RunReader RealWorld fhandle)
     }
 
 instance Eq (ReadCtx fhandle) where
@@ -80,13 +80,13 @@ instance Ord (ReadCtx fhandle) where
 new ::
      HasFS IO h
   -> HasBlockIO IO h
-  -> [Run (FS.Handle h)]
-  -> IO (Maybe (Readers (FS.Handle h)))
+  -> [Run RealWorld (FS.Handle h)]
+  -> IO (Maybe (Readers RealWorld (FS.Handle h)))
 new fs hbio runs = do
     readers <- zipWithM (fromRun . ReaderNumber) [1..] runs
     (readersHeap, firstReadCtx) <- Heap.newMutableHeap (catMaybes readers)
     for firstReadCtx $ \readCtx -> do
-      readersNext <- newIORef readCtx
+      readersNext <- newMutVar readCtx
       return Readers {..}
   where
     fromRun n run = nextReadCtx fs hbio n =<< Reader.new fs hbio run
@@ -95,10 +95,10 @@ new fs hbio runs = do
 close ::
      HasFS IO h
   -> HasBlockIO IO h
-  -> Readers (FS.Handle h)
+  -> Readers RealWorld (FS.Handle h)
   -> IO ()
 close fs hbio Readers {..} = do
-    ReadCtx {readCtxReader} <- readIORef readersNext
+    ReadCtx {readCtxReader} <- readMutVar readersNext
     Reader.close fs hbio readCtxReader
     closeHeap
   where
@@ -110,10 +110,10 @@ close fs hbio Readers {..} = do
             closeHeap
 
 peekKey ::
-     Readers (FS.Handle h)
+     Readers RealWorld (FS.Handle h)
   -> IO SerialisedKey
 peekKey Readers {..} = do
-    readCtxHeadKey <$> readIORef readersNext
+    readCtxHeadKey <$> readMutVar readersNext
 
 -- | Once a function returned 'Drained', do not use the 'Readers' any more!
 data HasMore = HasMore | Drained
@@ -122,21 +122,21 @@ data HasMore = HasMore | Drained
 pop ::
      HasFS IO h
   -> HasBlockIO IO h
-  -> Readers (FS.Handle h)
-  -> IO (SerialisedKey, Reader.Entry (FS.Handle h), HasMore)
+  -> Readers RealWorld (FS.Handle h)
+  -> IO (SerialisedKey, Reader.Entry RealWorld (FS.Handle h), HasMore)
 pop fs hbio r@Readers {..} = do
-    ReadCtx {..} <- readIORef readersNext
+    ReadCtx {..} <- readMutVar readersNext
     hasMore <- dropOne fs hbio r readCtxNumber readCtxReader
     return (readCtxHeadKey, readCtxHeadEntry, hasMore)
 
 dropWhileKey ::
      HasFS IO h
   -> HasBlockIO IO h
-  -> Readers (FS.Handle h)
+  -> Readers RealWorld (FS.Handle h)
   -> SerialisedKey
   -> IO (Int, HasMore)  -- ^ How many were dropped?
 dropWhileKey fs hbio Readers {..} key = do
-    cur <- readIORef readersNext
+    cur <- readMutVar readersNext
     if readCtxHeadKey cur == key
       then go 0 cur
       else return (0, HasMore)  -- nothing to do
@@ -156,16 +156,16 @@ dropWhileKey fs hbio Readers {..} key = do
               then
                 go n' next
               else do
-                writeIORef readersNext next
+                writeMutVar readersNext next
                 return (n', HasMore)
 
 
 dropOne ::
      HasFS IO h
   -> HasBlockIO IO h
-  -> Readers (FS.Handle h)
+  -> Readers RealWorld (FS.Handle h)
   -> ReaderNumber
-  -> RunReader (FS.Handle h)
+  -> RunReader RealWorld (FS.Handle h)
   -> IO HasMore
 dropOne fs hbio Readers {..} number reader = do
     mNext <- nextReadCtx fs hbio number reader >>= \case
@@ -175,14 +175,14 @@ dropOne fs hbio Readers {..} number reader = do
       Nothing ->
         return Drained
       Just next -> do
-        writeIORef readersNext next
+        writeMutVar readersNext next
         return HasMore
 
 nextReadCtx ::
      HasFS IO h
   -> HasBlockIO IO h
   -> ReaderNumber
-  -> RunReader (FS.Handle h)
+  -> RunReader RealWorld (FS.Handle h)
   -> IO (Maybe (ReadCtx (FS.Handle h)))
 nextReadCtx fs hbio readCtxNumber readCtxReader = do
     res <- Reader.next fs hbio readCtxReader
