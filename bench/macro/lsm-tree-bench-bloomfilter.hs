@@ -16,7 +16,7 @@ import qualified Data.BloomFilter.Mutable as MBloom
 import qualified Data.Foldable as Fold
 import           Data.Time
 import           Data.Vector (Vector)
-import qualified Data.Vector as Vector
+import qualified Data.Vector as V
 import           Data.WideWord.Word256 (Word256)
 import           GHC.Stats
 import           Numeric
@@ -61,7 +61,7 @@ benchmarks = do
 #endif
 
     enabled <- getRTSStatsEnabled
-    when (not enabled) $ fail "Need RTS +T statistics enabled"
+    unless enabled $ fail "Need RTS +T statistics enabled"
     let filterSizes = lsmStyleBloomFilters benchmarkSizeBase
                                            benchmarkNumBitsPerEntry
     putStrLn "Bloom filter stats:"
@@ -235,7 +235,7 @@ elemManyEnv filterSizes rng0 =
            (cycle [ mb'
                   | (mb, (_, sizeFactor, _, _)) <- zip mbs filterSizes
                   , mb' <- replicate (fromIntegralChecked sizeFactor) mb ]))
-    Vector.fromList <$> mapM Bloom.unsafeFreeze mbs
+    V.fromList <$> mapM Bloom.unsafeFreeze mbs
 
 -- | This gives us a baseline cost of just calculating the series of keys.
 benchBaseline :: Vector (Bloom SerialisedKey) -> StdGen -> Integer -> ()

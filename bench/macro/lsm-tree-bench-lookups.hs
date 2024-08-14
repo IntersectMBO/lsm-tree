@@ -130,7 +130,7 @@ benchmarks !caching = withFS $ \hfs hbio -> do
 #endif
     arenaManager <- newArenaManager
     enabled <- getRTSStatsEnabled
-    when (not enabled) $ fail "Need RTS +T statistics enabled"
+    unless enabled $ fail "Need RTS +T statistics enabled"
     let runSizes = lsmStyleRuns benchmarkSizeBase
     putStrLn "Precomputed run stats:"
     putStrLn "(numEntries, sizeFactor)"

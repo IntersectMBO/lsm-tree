@@ -2,6 +2,7 @@
 {-# LANGUAGE CPP                 #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# OPTIONS_GHC -fexpose-all-unfoldings #-}
+
 module KMerge.LoserTree (
     MutableLoserTree,
     newLoserTree,

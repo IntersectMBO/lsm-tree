@@ -2,6 +2,7 @@
 {-# LANGUAGE CPP                 #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# OPTIONS_GHC -fexpose-all-unfoldings #-}
+
 -- | Mutable heap for k-merge algorithm.
 --
 -- This data-structure represents a min-heap with the root node *removed*.
@@ -18,6 +19,7 @@ module KMerge.Heap (
     extract,
 ) where
 
+import           Control.Monad (when)
 import           Control.Monad.Primitive (PrimMonad (PrimState), RealWorld)
 import qualified Control.Monad.ST as Lazy
 import qualified Control.Monad.ST as Strict
@@ -106,12 +108,10 @@ siftUp !arr !x = loop where
         = do
             let !parent = halfOf (idx - 1)
             p <- readSmallArray arr parent
-            if x < p
-            then do
-                writeSmallArray arr parent x
-                writeSmallArray arr idx    p
-                loop parent
-            else return ()
+            when (x < p) $ do
+              writeSmallArray arr parent x
+              writeSmallArray arr idx    p
+              loop parent
 
 {-# SPECIALIZE siftUp :: forall a.   Ord a => SmallMutableArray RealWorld a -> a -> Int -> IO          () #-}
 {-# SPECIALIZE siftUp :: forall a s. Ord a => SmallMutableArray s         a -> a -> Int -> Strict.ST s () #-}
