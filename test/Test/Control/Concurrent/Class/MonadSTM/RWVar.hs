@@ -11,7 +11,7 @@ import           Test.Tasty.QuickCheck
 
 tests :: TestTree
 tests = testGroup "Test.Control.Concurrent.Class.MonadSTM.RWVar" [
-      testProperty "temp" prop_noRace
+      testProperty "prop_noRace" prop_noRace
     ]
 
 data Action a = Read a | Incr a

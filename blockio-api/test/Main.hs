@@ -10,25 +10,32 @@ module Main (main) where
 import           Control.Concurrent (modifyMVar_, newMVar, threadDelay,
                      withMVar)
 import           Control.Concurrent.Async
-import           Control.Exception (SomeException, try)
+import           Control.Exception (SomeException (SomeException), bracket, try)
 import           Control.Monad
 import           Control.Monad.Primitive
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
+import           Data.Foldable (traverse_)
+import           Data.Functor.Compose (Compose (Compose))
 import           Data.Maybe (catMaybes)
 import           Data.Primitive.ByteArray
+import           Data.Typeable
 import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as VU
 import qualified System.FS.API as FS
+import           System.FS.API
 import           System.FS.API.Strict (hPutAllStrict)
 import qualified System.FS.BlockIO.API as FS
 import           System.FS.BlockIO.API
 import qualified System.FS.BlockIO.IO as IO
+import           System.FS.BlockIO.IO
 import qualified System.FS.IO as IO
+import           System.FS.IO
 import           System.IO.Temp
+import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.HUnit
-import           Test.Tasty.QuickCheck
+import           Test.Tasty.QuickCheck (testProperty)
 
 main :: IO ()
 main = defaultMain tests
@@ -39,6 +46,7 @@ tests = testGroup "fs-api-blockio" [
     , testCase "example_closeIsIdempotent" example_closeIsIdempotent
     , testProperty "prop_readWrite" prop_readWrite
     , testProperty "prop_submitToClosedCtx" prop_submitToClosedCtx
+    , testProperty "prop_tryLockFileExclusiveTwice" prop_tryLockFileExclusiveTwice
     ]
 
 instance Arbitrary ByteString where
@@ -119,3 +127,40 @@ prop_submitToClosedCtx bs = ioProperty $ withSystemTempDirectory "prop_a" $ \dir
               Left _  -> Just $ tabulate "submitIO successful" [show False] $ counterexample "expected failure, but got success" (b === True)
               Right _ -> Just $ tabulate "submitIO successful" [show True]  $ counterexample "expected success, but got failure" (b === False)
     pure $ conjoin (catMaybes props)
+
+
+{-------------------------------------------------------------------------------
+  File locks
+-------------------------------------------------------------------------------}
+
+withTempIOHasFS :: FilePath -> (HasFS IO HandleIO -> IO a) -> IO a
+withTempIOHasFS path action = withSystemTempDirectory path $ \dir -> do
+    let hfs = ioHasFS (MountPoint dir)
+    action hfs
+
+withTempIOHasBlockIO :: FilePath -> (HasFS IO HandleIO -> HasBlockIO IO HandleIO -> IO a) -> IO a
+withTempIOHasBlockIO path action =
+    withTempIOHasFS path $ \hfs -> do
+      withIOHasBlockIO hfs defaultIOCtxParams (action hfs)
+
+showLeft :: Show a => String -> Either a b -> String
+showLeft x = \case
+    Left e -> show e
+    Right _ -> x
+
+prop_tryLockFileExclusiveTwice :: Property
+prop_tryLockFileExclusiveTwice = ioProperty $
+    withTempIOHasBlockIO "prop_tryLockFileExclusiveTwice" $ \_hfs hbio -> do
+      bracket (tryLockFile hbio fsp ExclusiveLock)
+              (traverse_ hUnlock) $ \_ ->
+        bracket (try @SomeException (tryLockFile hbio fsp ExclusiveLock))
+                (traverse_ hUnlock . Compose) $ \case
+          Left (SomeException e)
+            | Just (e' :: FsError) <- cast e -> pure $ label (show $ fsErrorType e') $ True
+          x -> pure $ counterexample
+                ( "Opening a session twice in the same directory \
+                  \should fail with an FsError, but it returned \
+                  \the following instead: " <> showLeft "LockFileHandle" x )
+                False
+  where
+    fsp = FS.mkFsPath ["lockfile"]
