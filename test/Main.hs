@@ -9,6 +9,7 @@ import qualified Test.Database.LSMTree.Class.Normal
 import qualified Test.Database.LSMTree.Generators
 import qualified Test.Database.LSMTree.Internal
 import qualified Test.Database.LSMTree.Internal.BloomFilter
+import qualified Test.Database.LSMTree.Internal.Chunk
 import qualified Test.Database.LSMTree.Internal.CRC32C
 import qualified Test.Database.LSMTree.Internal.Entry
 import qualified Test.Database.LSMTree.Internal.IndexCompact
@@ -41,6 +42,7 @@ main = defaultMain $ testGroup "lsm-tree"
     , Test.Database.LSMTree.Generators.tests
     , Test.Database.LSMTree.Internal.tests
     , Test.Database.LSMTree.Internal.BloomFilter.tests
+    , Test.Database.LSMTree.Internal.Chunk.tests
     , Test.Database.LSMTree.Internal.CRC32C.tests
     , Test.Database.LSMTree.Internal.Entry.tests
     , Test.Database.LSMTree.Internal.Lookup.tests

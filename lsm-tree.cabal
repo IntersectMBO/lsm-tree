@@ -295,6 +295,7 @@ test-suite lsm-tree-test
     Test.Database.LSMTree.Generators
     Test.Database.LSMTree.Internal
     Test.Database.LSMTree.Internal.BloomFilter
+    Test.Database.LSMTree.Internal.Chunk
     Test.Database.LSMTree.Internal.CRC32C
     Test.Database.LSMTree.Internal.Entry
     Test.Database.LSMTree.Internal.IndexCompact
