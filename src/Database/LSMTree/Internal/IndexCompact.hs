@@ -395,7 +395,7 @@ newtype NumPages = NumPages Word
   deriving newtype (NFData)
 
 -- | A type-safe "unwrapper" for 'NumPages'. Use this accessor whenever you want
--- to convert 'NumPages' to a more versitile number type.
+-- to convert 'NumPages' to a more versatile number type.
 {-# INLINE getNumPages #-}
 getNumPages :: Integral i => NumPages -> i
 getNumPages (NumPages w) = fromIntegral w
