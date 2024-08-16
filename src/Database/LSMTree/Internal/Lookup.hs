@@ -166,13 +166,13 @@ indexSearches !arena !indexes !kopsFiles !ks !rkixs = V.generateM n $ \i -> do
     -- byte array for each 'IOOp'. One optimisation we are planning to
     -- do is to use a cache of re-usable buffers, in which case we
     -- decrease the GC load. TODO: re-usable buffers.
-    (!off, !buf) <- allocateFromArena arena (size * 4096) 4096
+    (!off, !buf) <- allocateFromArena arena (Index.getNumPages size * 4096) 4096
     pure $! IOOpRead
               h
               (fromIntegral $ Index.unPageNo (pageSpanStart pspan) * 4096)
               buf
               (fromIntegral off)
-              (fromIntegral $ size * 4096)
+              (Index.getNumPages size * 4096)
   where
     !n = VU.length rkixs
 
