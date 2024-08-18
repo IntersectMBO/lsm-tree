@@ -19,7 +19,8 @@ import           Control.Exception (assert)
 import           Control.Monad.ST.Strict (ST, runST)
 import           Data.Primitive.ByteArray (newByteArray, unsafeFreezeByteArray,
                      writeByteArray)
-import           Data.STRef.Strict (STRef, newSTRef, readSTRef, writeSTRef)
+import           Data.Primitive.PrimVar (PrimVar, newPrimVar, readPrimVar,
+                     writePrimVar)
 import           Data.Vector (force, take, unsafeFreeze)
 import           Data.Vector.Mutable (MVector)
 import qualified Data.Vector.Mutable as Mutable (unsafeNew, write)
@@ -49,7 +50,7 @@ import           Database.LSMTree.Internal.Vector (mkPrimVector)
 -}
 data IndexOrdinaryAcc s = IndexOrdinaryAcc
                               !(MVector s SerialisedKey)
-                              !(STRef s Int)
+                              !(PrimVar s Int)
                               !(Baler s)
 
 -- | Creates a new, initially empty, index.
@@ -59,7 +60,7 @@ new :: Int                       -- ^ Maximum number of keys
 new maxKeyCount minChunkSize = assert (maxKeyCount >= 0)      $
                                IndexOrdinaryAcc              <$>
                                Mutable.unsafeNew maxKeyCount <*>
-                               newSTRef 0                    <*>
+                               newPrimVar 0                  <*>
                                createBaler minChunkSize
 
 {-|
@@ -73,12 +74,12 @@ append :: Append -> IndexOrdinaryAcc s -> ST s (Maybe Chunk)
 append instruction (IndexOrdinaryAcc buffer keyCountRef baler)
     = case instruction of
           AppendSinglePage _ key -> do
-              keyCount <- readSTRef keyCountRef
+              keyCount <- readPrimVar keyCountRef
               Mutable.write buffer keyCount key
-              writeSTRef keyCountRef $! succ keyCount
+              writePrimVar keyCountRef (succ keyCount)
               feedBaler (keyListElem key) baler
           AppendMultiPage key overflowPageCount -> do
-              keyCount <- readSTRef keyCountRef
+              keyCount <- readPrimVar keyCountRef
               let
 
                   pageCount :: Int
@@ -89,7 +90,7 @@ append instruction (IndexOrdinaryAcc buffer keyCountRef baler)
 
               mapM_ (flip (Mutable.write buffer) key)
                     [keyCount .. pred keyCount']
-              writeSTRef keyCountRef $! keyCount'
+              writePrimVar keyCountRef keyCount'
               feedBaler (concat (replicate pageCount (keyListElem key))) baler
     where
 
@@ -118,7 +119,7 @@ append instruction (IndexOrdinaryAcc buffer keyCountRef baler)
 -}
 unsafeEnd :: IndexOrdinaryAcc s -> ST s (Maybe Chunk, IndexOrdinary)
 unsafeEnd (IndexOrdinaryAcc buffer keyCountRef baler) = do
-    keyCount <- readSTRef keyCountRef
+    keyCount <- readPrimVar keyCountRef
     keys <- force <$> take keyCount <$> unsafeFreeze buffer
     remnant <- unsafeEndBaler baler
     return (remnant, IndexOrdinary keys)

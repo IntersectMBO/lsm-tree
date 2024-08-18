@@ -19,7 +19,8 @@ import           Prelude hiding (length)
 import           Control.Exception (assert)
 import           Control.Monad.ST.Strict (ST)
 import           Data.List (scanl')
-import           Data.STRef.Strict (STRef, newSTRef, readSTRef, writeSTRef)
+import           Data.Primitive.PrimVar (PrimVar, newPrimVar, readPrimVar,
+                     writePrimVar)
 import           Data.Vector.Primitive (Vector, length, unsafeCopy,
                      unsafeFreeze)
 import           Data.Vector.Primitive.Mutable (MVector)
@@ -44,7 +45,7 @@ fromChunk (Chunk content) = content
 -}
 data Baler s = Baler
                    !(MVector s Word8) -- Buffer storing queued bytes
-                   !(STRef s Int)     -- Reference to the number of queued bytes
+                   !(PrimVar s Int)   -- Reference to the number of queued bytes
 
 -- | Creates a new baler.
 createBaler :: Int            -- ^ Minimum chunk size in bytes
@@ -52,7 +53,7 @@ createBaler :: Int            -- ^ Minimum chunk size in bytes
 createBaler minChunkSize = assert (minChunkSize > 0)              $
                            Baler                                 <$>
                            Mutable.unsafeNew (pred minChunkSize) <*>
-                           newSTRef 0
+                           newPrimVar 0
 
 {-|
     Feeds a baler blocks of bytes.
@@ -63,7 +64,7 @@ createBaler minChunkSize = assert (minChunkSize > 0)              $
 -}
 feedBaler :: forall s . [Vector Word8] -> Baler s -> ST s (Maybe Chunk)
 feedBaler blocks (Baler buffer remnantSizeRef) = do
-    remnantSize <- readSTRef remnantSizeRef
+    remnantSize <- readPrimVar remnantSizeRef
     let
 
         inputSize :: Int
@@ -75,14 +76,14 @@ feedBaler blocks (Baler buffer remnantSizeRef) = do
     if totalSize <= Mutable.length buffer
         then do
                  unsafeCopyBlocks (Mutable.drop remnantSize buffer)
-                 writeSTRef remnantSizeRef totalSize
+                 writePrimVar remnantSizeRef totalSize
                  return Nothing
         else do
                  protoChunk <- Mutable.unsafeNew totalSize
                  Mutable.unsafeCopy (Mutable.take remnantSize protoChunk)
                                     (Mutable.take remnantSize buffer)
                  unsafeCopyBlocks (Mutable.drop remnantSize protoChunk)
-                 writeSTRef remnantSizeRef 0
+                 writePrimVar remnantSizeRef 0
                  chunk <- Chunk <$> unsafeFreeze protoChunk
                  return (Just chunk)
     where
@@ -108,7 +109,7 @@ feedBaler blocks (Baler buffer remnantSizeRef) = do
 -}
 unsafeEndBaler :: forall s . Baler s -> ST s (Maybe Chunk)
 unsafeEndBaler (Baler buffer remnantSizeRef) = do
-    remnantSize <- readSTRef remnantSizeRef
+    remnantSize <- readPrimVar remnantSizeRef
     if remnantSize == 0
         then return Nothing
         else do
