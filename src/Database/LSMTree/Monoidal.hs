@@ -99,7 +99,6 @@ module Database.LSMTree.Monoidal (
   , resolveDeserialised
     -- ** Properties
   , resolveValueValidOutput
-  , resolveValueTotality
   , resolveValueAssociativity
 
     -- * Utility types
@@ -111,9 +110,9 @@ import           Control.Monad (void, (<$!>))
 import           Data.Bifunctor (Bifunctor (..))
 import           Data.Coerce (coerce)
 import           Data.Kind (Type)
+import           Data.Monoid (Sum (..))
 import           Data.Typeable (Proxy (Proxy), Typeable)
 import qualified Data.Vector as V
-import           Data.Word (Word64)
 import           Database.LSMTree.Common (IOLike, Range (..), SerialiseKey,
                      SerialiseValue (..), Session (..), SnapshotName,
                      closeSession, deleteSnapshot, listSnapshots, openSession,
@@ -369,7 +368,7 @@ open (Session sesh) override snap =
     label = Common.makeSnapshotLabel (Proxy @(k, v)) <> " (monoidal)"
 
 {-------------------------------------------------------------------------------
-  Mutiple writable table handles
+  Multiple writable table handles
 -------------------------------------------------------------------------------}
 
 {-# SPECIALISE duplicate :: TableHandle IO k v -> IO (TableHandle IO k v) #-}
@@ -435,9 +434,13 @@ merge = undefined
 -------------------------------------------------------------------------------}
 
 -- | A class to specify how to resolve/merge values when using monoidal updates
--- (mupserts). This is required for merging entries during compaction and also
--- for doing lookups, to resolve multiple entries of the same key on the fly.
+-- ('Mupsert'). This is required for merging entries during compaction and also
+-- for doing lookups, resolving multiple entries of the same key on the fly.
 -- The class has some laws, which should be tested (e.g. with QuickCheck).
+--
+-- It is okay to assume that the input bytes can be deserialised using
+-- 'deserialiseValue', as they are produced by either 'serialiseValue' or
+-- 'resolveValue' itself, which are required to produce deserialisable output.
 --
 -- Prerequisites:
 --
@@ -445,15 +448,6 @@ merge = undefined
 --   See 'resolveValueValidOutput'.
 -- * [Associativity] Resolving values should be associative.
 --   See 'resolveValueAssociativity'.
--- * [Totality] For any input 'RawBytes', resolution should successfully provide
---   a result. This is a pretty strong requirement. Usually it is sufficient to
---   handle input produced by 'serialiseValue' and 'resolveValue' (which are
---   are required to be deserialisable by 'deserialiseValue'),
---   but this makes sure no error occurs in the middle of compaction, which
---   could lead to corruption.
---   See 'resolveValueTotality'.
---
--- TODO: Revisit Totality. How are errors handled during run merging?
 --
 -- Future opportunities for optimisations:
 --
@@ -465,8 +459,10 @@ merge = undefined
 --   means that the inserted value is serialised and (if there is another value
 --   with the same key in the write buffer) immediately deserialised again.
 --
--- TODO: Should this go into @Internal.Monoidal@ or @Internal.ResolveValue@?
 -- TODO: The laws depend on 'SerialiseValue', should we make it a superclass?
+-- TODO: should we additionally require Totality (for any input 'RawBytes',
+--       resolution should successfully provide a result)? This could reduce the
+--       risk of encountering errors during a run merge.
 class ResolveValue v where
   resolveValue :: Proxy v -> RawBytes -> RawBytes -> RawBytes
 
@@ -486,13 +482,6 @@ resolveValueAssociativity (serialiseValue -> x) (serialiseValue -> y) (serialise
   where
     (<+>) = resolveValue (Proxy @v)
 
--- | Test the __Totality__ law for the 'ResolveValue' class
-resolveValueTotality ::
-     forall v. ResolveValue v
-  => Proxy v -> RawBytes -> RawBytes -> Bool
-resolveValueTotality _ x y =
-    resolveValue (Proxy @v) x y `deepseq` True
-
 -- | A helper function to implement 'resolveValue' by operating on the
 -- deserialised representation. Note that especially for simple types it
 -- should be possible to provide a more efficient implementation by directly
@@ -502,14 +491,10 @@ resolveValueTotality _ x y =
 -- for 'resolveValue', but it's probably best to be explicit about instances.
 --
 -- To satisfy the prerequisites of 'ResolveValue', the function provided to
--- 'resolveDeserialised' should itself satisfy some properties.
---
--- Prerequisites:
+-- 'resolveDeserialised' should itself satisfy some properties:
 --
 -- * [Associativity] The provided function should be associative.
--- * [Total Resolution] The provided function should be total.
--- * [Total Deserialisation] 'deserialiseValue' for @v@ should handle any input
---   'RawBytes'.
+-- * [Totality] The provided function should be total.
 resolveDeserialised ::
      SerialiseValue v
   => (v -> v -> v) -> Proxy v -> RawBytes -> RawBytes -> RawBytes
@@ -520,5 +505,7 @@ resolve :: ResolveValue v => Proxy v -> Internal.ResolveSerialisedValue
 resolve = coerce . resolveValue
 
 -- | Mostly to give an example instance (plus the property tests for it).
-instance ResolveValue Word64 where
+-- Additionally, this instance for 'Sum' provides a nice monoidal, numerical
+-- aggregator.
+instance (Num a, SerialiseValue a) => ResolveValue (Sum a) where
   resolveValue = resolveDeserialised (+)

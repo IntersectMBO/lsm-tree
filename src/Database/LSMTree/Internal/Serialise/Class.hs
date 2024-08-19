@@ -19,6 +19,7 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as B
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ByteString.Short.Internal as SBS
+import           Data.Monoid (Sum (..))
 import qualified Data.Primitive as P
 import           Data.Proxy (Proxy)
 import qualified Data.Vector.Primitive as VP
@@ -87,6 +88,18 @@ class SerialiseValue v where
   --
   -- TODO: Unused so far, we might not need it.
   deserialiseValueN :: [RawBytes] -> v
+
+
+-- | An instance for 'Sum' which is transparent to the serialisation of @a@.
+--
+-- Note: If you want to serialize @Sum a@ differently than @a@, then you should
+-- create another @newtype@ over 'Sum' and define your alternative serialization.
+instance SerialiseValue a => SerialiseValue (Sum a) where
+  serialiseValue (Sum v) = serialiseValue v
+
+  deserialiseValue = Sum . deserialiseValue
+
+  deserialiseValueN = Sum . deserialiseValueN
 
 -- | Test the __Identity__ law for the 'SerialiseValue' class
 serialiseValueIdentity :: (Eq v, SerialiseValue v) => v -> Bool
