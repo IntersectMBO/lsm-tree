@@ -66,6 +66,12 @@ module Database.LSMTree.Monoidal (
   , rangeLookup
   , Range (..)
   , QueryResult (..)
+    -- ** Cursor
+  , Cursor
+  , withCursor
+  , newCursor
+  , closeCursor
+  , readCursor
     -- ** Updates
   , inserts
   , deletes
@@ -199,7 +205,7 @@ close ::
 close (TableHandle th) = Internal.close th
 
 {-------------------------------------------------------------------------------
-  Table querying and updates
+  Table queries
 -------------------------------------------------------------------------------}
 
 {-# SPECIALISE lookups :: (SerialiseKey k, SerialiseValue v, ResolveValue v) => V.Vector k -> TableHandle IO k v -> IO (V.Vector (LookupResult v)) #-}
@@ -238,6 +244,77 @@ rangeLookup ::
   -> TableHandle m k v
   -> m (V.Vector (QueryResult k v))
 rangeLookup = undefined
+
+{-------------------------------------------------------------------------------
+  Cursor
+-------------------------------------------------------------------------------}
+
+-- | A read-only view into a table.
+--
+-- A cursor allows reading from a table sequentially (according to serialised
+-- key ordering) in an incremental fashion. For example, this allows doing a
+-- table scan in small chunks.
+-- Once a cursor has been created, updates to the referenced table don't affect
+-- the cursor.
+type Cursor :: (Type -> Type) -> Type -> Type -> Type
+data Cursor m k v
+
+{-# SPECIALISE withCursor :: TableHandle IO k v -> (Cursor IO k v -> IO a) -> IO a #-}
+-- | (Asynchronous) exception-safe, bracketed opening and closing of a cursor.
+--
+-- If possible, it is recommended to use this function instead of 'newCursor'
+-- and 'closeCursor'.
+withCursor ::
+     IOLike m
+  => TableHandle m k v
+  -> (Cursor m k v -> m a)
+  -> m a
+withCursor = undefined
+
+{-# SPECIALISE newCursor :: TableHandle IO k v -> IO (Cursor IO k v) #-}
+-- | Create a new cursor to read from a given table. Future updates to the table
+-- will not be reflected in the cursor. The cursor starts at the beginning, i.e.
+-- the minimum key of the table.
+--
+-- Consider using 'withCursor' instead.
+--
+-- NOTE: cursors hold open resources (such as open files) and should be closed
+-- using 'close' as soon as they are no longer used.
+newCursor ::
+     IOLike m
+  => TableHandle m k v
+  -> m (Cursor m k v)
+newCursor = undefined
+
+{-# SPECIALISE closeCursor :: Cursor IO k v -> IO () #-}
+-- | Close a cursor. 'closeCursor' is idempotent. All operations on a closed
+-- cursor will throw an exception.
+closeCursor ::
+     IOLike m
+  => Cursor m k v
+  -> m ()
+closeCursor = undefined
+
+{-# SPECIALISE readCursor :: (SerialiseKey k, SerialiseValue v, ResolveValue v) => Int -> Cursor IO k v -> IO (V.Vector (QueryResult k v)) #-}
+-- | Read the next @n@ entries from the cursor. The resulting vector is shorter
+-- than @n@ if the end of the table has been reached. The cursor state is
+-- updated, so the next read will continue where this one ended.
+--
+-- The cursor gets locked for the duration of the call, preventing concurrent
+-- reads.
+--
+-- NOTE: entries are returned in order of the serialised keys, which might not
+-- agree with @Ord k@. See 'SerialiseKey' for more information.
+readCursor ::
+     (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
+  => Int
+  -> Cursor m k v
+  -> m (V.Vector (QueryResult k v))
+readCursor = undefined
+
+{-------------------------------------------------------------------------------
+  Table updates
+-------------------------------------------------------------------------------}
 
 {-# SPECIALISE updates :: (SerialiseKey k, SerialiseValue v, ResolveValue v) => V.Vector (k, Update v) -> TableHandle IO k v -> IO () #-}
 -- | Perform a mixed batch of inserts, deletes and monoidal upserts.

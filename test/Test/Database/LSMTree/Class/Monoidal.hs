@@ -217,8 +217,8 @@ evalRange :: Ord k => Range k -> k -> Bool
 evalRange (FromToExcluding lo hi) x = lo <= x && x < hi
 evalRange (FromToIncluding lo hi) x = lo <= x && x <= hi
 
-rangeLookupResultKey :: QueryResult k v -> k
-rangeLookupResultKey (FoundInQuery k _) = k
+queryResultKey :: QueryResult k v -> k
+queryResultKey (FoundInQuery k _) = k
 
 -- | Last insert wins.
 prop_insertLookupRange ::
@@ -235,10 +235,10 @@ prop_insertLookupRange h ups k v r = ioProperty $ do
       res' <- rangeLookup hdl r
 
       let p :: QueryResult Key Value -> Bool
-          p rlr = rangeLookupResultKey rlr /= k
+          p rlr = queryResultKey rlr /= k
 
       if evalRange r k
-      then return $ vsortOn rangeLookupResultKey (V.cons (FoundInQuery k v) (V.filter p res)) === res'
+      then return $ vsortOn queryResultKey (V.cons (FoundInQuery k v) (V.filter p res)) === res'
       else return $ res === res'
 
   where
