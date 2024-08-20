@@ -655,14 +655,18 @@ dumpLevel (Level (MergingRun mp ml mr) rs) = do
     mrs <- readSTRef mr
     return (Just (mp, ml, mrs), rs)
 
+-- For each level:
+-- 1. the runs involved in an ongoing merge
+-- 2. the other runs (including completed merge)
 representationShape :: [(Maybe (MergePolicy, MergeLastLevel, MergingRunState), [Run])]
-                    -> [(Maybe (MergePolicy, MergeLastLevel, Either Int [Int]), [Int])]
+                    -> [([Int], [Int])]
 representationShape =
     map $ \(mmr, rs) ->
-      ( fmap (\(mp, ml, mrs) -> (mp, ml, summaryMRS mrs)) mmr
-      , map summaryRun rs)
+      let (ongoing, complete) = summaryMR mmr
+      in (ongoing, complete <> map summaryRun rs)
   where
     summaryRun = runSize
-    summaryMRS (CompletedMerge r)    = Left (summaryRun r)
-    summaryMRS (OngoingMerge _ rs _) = Right (map summaryRun rs)
-
+    summaryMR = \case
+      Nothing                          -> ([], [])
+      Just (_, _, CompletedMerge r)    -> ([], [summaryRun r])
+      Just (_, _, OngoingMerge _ rs _) -> (map summaryRun rs, [])
