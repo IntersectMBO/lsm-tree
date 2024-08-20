@@ -27,6 +27,21 @@ module Database.LSMTree.Common (
   , Internal.mkSnapshotName
     -- * Blob references
   , BlobRef (..)
+    -- * Table configuration
+  , Internal.TableConfig (..)
+  , Internal.defaultTableConfig
+  , Internal.SizeRatio (..)
+  , Internal.MergePolicy (..)
+  , Internal.WriteBufferAlloc (..)
+  , Internal.NumEntries (..)
+  , Internal.BloomFilterAlloc (..)
+  , Internal.defaultBloomFilterAlloc
+  , Internal.FencePointerIndex (..)
+  , Internal.DiskCachePolicy (..)
+    -- * Table configuration override
+  , Internal.TableConfigOverride
+  , Internal.configNoOverride
+  , Internal.configOverrideDiskCachePolicy
   ) where
 
 import           Control.Concurrent.Class.MonadMVar.Strict
@@ -39,6 +54,8 @@ import           Data.Kind (Type)
 import           Data.Typeable (Proxy, Typeable)
 import qualified Database.LSMTree.Internal as Internal
 import qualified Database.LSMTree.Internal.BlobRef as Internal
+import qualified Database.LSMTree.Internal.Config as Internal
+import qualified Database.LSMTree.Internal.Entry as Internal
 import qualified Database.LSMTree.Internal.Paths as Internal
 import qualified Database.LSMTree.Internal.Range as Internal
 import qualified Database.LSMTree.Internal.Run as Internal

@@ -40,16 +40,16 @@ module Database.LSMTree.Monoidal (
 
     -- * Table handles
   , TableHandle
-  , Internal.TableConfig (..)
-  , Internal.defaultTableConfig
-  , Internal.SizeRatio (..)
-  , Internal.MergePolicy (..)
-  , Internal.WriteBufferAlloc (..)
-  , Internal.NumEntries (..)
-  , Internal.BloomFilterAlloc (..)
-  , Internal.defaultBloomFilterAlloc
-  , Internal.FencePointerIndex (..)
-  , Internal.DiskCachePolicy (..)
+  , Common.TableConfig (..)
+  , Common.defaultTableConfig
+  , Common.SizeRatio (..)
+  , Common.MergePolicy (..)
+  , Common.WriteBufferAlloc (..)
+  , Common.NumEntries (..)
+  , Common.BloomFilterAlloc (..)
+  , Common.defaultBloomFilterAlloc
+  , Common.FencePointerIndex (..)
+  , Common.DiskCachePolicy (..)
   , withTable
   , new
   , close
@@ -80,9 +80,9 @@ module Database.LSMTree.Monoidal (
   , Common.Labellable (..)
   , snapshot
   , open
-  , Internal.TableConfigOverride
-  , Internal.configNoOverride
-  , Internal.configOverrideDiskCachePolicy
+  , Common.TableConfigOverride
+  , Common.configNoOverride
+  , Common.configOverrideDiskCachePolicy
   , deleteSnapshot
   , listSnapshots
 
@@ -157,7 +157,7 @@ data TableHandle m k v = forall h. Typeable h =>
 instance NFData (TableHandle m k v) where
   rnf (TableHandle th) = rnf th
 
-{-# SPECIALISE withTable :: Session IO -> Internal.TableConfig -> (TableHandle IO k v -> IO a) -> IO a #-}
+{-# SPECIALISE withTable :: Session IO -> Common.TableConfig -> (TableHandle IO k v -> IO a) -> IO a #-}
 -- | (Asynchronous) exception-safe, bracketed opening and closing of a table.
 --
 -- If possible, it is recommended to use this function instead of 'new' and
@@ -165,14 +165,14 @@ instance NFData (TableHandle m k v) where
 withTable ::
      IOLike m
   => Session m
-  -> Internal.TableConfig
+  -> Common.TableConfig
   -> (TableHandle m k v -> m a)
   -> m a
 withTable (Session sesh) conf action =
     Internal.withTable sesh conf $
       action . TableHandle
 
-{-# SPECIALISE new :: Session IO -> Internal.TableConfig -> IO (TableHandle IO k v) #-}
+{-# SPECIALISE new :: Session IO -> Common.TableConfig -> IO (TableHandle IO k v) #-}
 -- | Create a new empty table, returning a fresh table handle.
 --
 -- NOTE: table handles hold open resources (such as open files) and should be
@@ -181,7 +181,7 @@ withTable (Session sesh) conf action =
 new ::
      IOLike m
   => Session m
-  -> Internal.TableConfig
+  -> Common.TableConfig
   -> m (TableHandle m k v)
 new (Session sesh) conf = TableHandle <$> Internal.new sesh conf
 
@@ -334,7 +334,7 @@ snapshot snap (TableHandle th) =
     -- to ensure we don't open a monoidal table as normal later
     label = Common.makeSnapshotLabel (Proxy @(k, v)) <> " (monoidal)"
 
-{-# SPECIALISE open :: (SerialiseKey k, SerialiseValue v, Common.Labellable (k, v)) => Session IO -> Internal.TableConfigOverride -> SnapshotName -> IO (TableHandle IO k v) #-}
+{-# SPECIALISE open :: (SerialiseKey k, SerialiseValue v, Common.Labellable (k, v)) => Session IO -> Common.TableConfigOverride -> SnapshotName -> IO (TableHandle IO k v) #-}
 -- | Open a table from a named snapshot, returning a new table handle.
 --
 -- NOTE: close table handles using 'close' as soon as they are
@@ -363,7 +363,7 @@ open ::
      , Common.Labellable (k, v)
      )
   => Session m
-  -> Internal.TableConfigOverride -- ^ Optional config override
+  -> Common.TableConfigOverride -- ^ Optional config override
   -> SnapshotName
   -> m (TableHandle m k v)
 open (Session sesh) override snap =
