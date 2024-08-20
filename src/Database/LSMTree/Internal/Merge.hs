@@ -10,6 +10,7 @@ module Database.LSMTree.Internal.Merge (
 
 import           Control.Exception (assert)
 import           Control.Monad (when)
+import           Control.Monad.Primitive (RealWorld)
 import           Data.Coerce (coerce)
 import           Data.Traversable (for)
 import           Database.LSMTree.Internal.BlobRef (BlobRef (..))
@@ -33,11 +34,11 @@ import           System.FS.BlockIO.API (HasBlockIO)
 --
 -- TODO: Reference counting will have to be done somewhere, either here or in
 -- the layer above.
-data Merge fhandle = Merge {
+data Merge s fhandle = Merge {
       mergeLevel   :: !Level
     , mergeMappend :: !Mappend
-    , mergeReaders :: {-# UNPACK #-} !(Readers.Readers fhandle)
-    , mergeBuilder :: !(RunBuilder fhandle)
+    , mergeReaders :: {-# UNPACK #-} !(Readers.Readers s fhandle)
+    , mergeBuilder :: !(RunBuilder s fhandle)
     , mergeCaching :: !RunDataCaching
       -- ^ The caching policy to use for the Run in the 'MergeComplete'.
     }
@@ -57,8 +58,8 @@ new ::
   -> Level
   -> Mappend
   -> Run.RunFsPaths
-  -> [Run (FS.Handle h)]
-  -> IO (Maybe (Merge (FS.Handle h)))
+  -> [Run RealWorld (FS.Handle h)]
+  -> IO (Maybe (Merge RealWorld (FS.Handle h)))
 new fs hbio mergeCaching alloc mergeLevel mergeMappend targetPaths runs = do
     mreaders <- Readers.new fs hbio runs
     for mreaders $ \mergeReaders -> do
@@ -75,15 +76,15 @@ new fs hbio mergeCaching alloc mergeLevel mergeMappend targetPaths runs = do
 close ::
      HasFS IO h
   -> HasBlockIO IO h
-  -> Merge (FS.Handle h)
+  -> Merge RealWorld (FS.Handle h)
   -> IO ()
 close fs hbio Merge {..} = do
     Builder.close fs mergeBuilder
     Readers.close fs hbio mergeReaders
 
-data StepResult fhandle = MergeInProgress | MergeComplete !(Run fhandle)
+data StepResult s fhandle = MergeInProgress | MergeComplete !(Run s fhandle)
 
-stepsInvariant :: Int -> (Int, StepResult a) -> Bool
+stepsInvariant :: Int -> (Int, StepResult RealWorld a) -> Bool
 stepsInvariant requestedSteps = \case
     (n, MergeInProgress) -> n >= requestedSteps
     _                    -> True
@@ -102,9 +103,9 @@ stepsInvariant requestedSteps = \case
 steps ::
      HasFS IO h
   -> HasBlockIO IO h
-  -> Merge (FS.Handle h)
+  -> Merge RealWorld (FS.Handle h)
   -> Int  -- ^ How many input entries to consume (at least)
-  -> IO (Int, StepResult (FS.Handle h))
+  -> IO (Int, StepResult RealWorld (FS.Handle h))
 steps fs hbio Merge {..} requestedSteps =
     (\res -> assert (stepsInvariant requestedSteps res) res) <$> go 0
   where
@@ -176,9 +177,9 @@ steps fs hbio Merge {..} requestedSteps =
 writeReaderEntry ::
      HasFS IO h
   -> Level
-  -> RunBuilder (FS.Handle h)
+  -> RunBuilder RealWorld (FS.Handle h)
   -> SerialisedKey
-  -> Reader.Entry (FS.Handle h)
+  -> Reader.Entry RealWorld (FS.Handle h)
   -> IO ()
 writeReaderEntry fs level builder key (Reader.Entry entryFull) =
       -- Small entry.
@@ -214,9 +215,9 @@ writeReaderEntry fs level builder key entry@(Reader.EntryOverflow prefix page _ 
 writeSerialisedEntry ::
      HasFS IO h
   -> Level
-  -> RunBuilder (FS.Handle h)
+  -> RunBuilder RealWorld (FS.Handle h)
   -> SerialisedKey
-  -> Entry SerialisedValue (BlobRef (Run (FS.Handle h)))
+  -> Entry SerialisedValue (BlobRef (Run RealWorld (FS.Handle h)))
   -> IO ()
 writeSerialisedEntry fs level builder key entry =
     when (shouldWriteEntry level entry) $

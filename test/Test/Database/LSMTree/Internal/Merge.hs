@@ -2,6 +2,7 @@
 
 module Test.Database.LSMTree.Internal.Merge (tests) where
 
+import           Control.Monad.Primitive
 import           Data.Bifoldable (bifoldMap)
 import qualified Data.BloomFilter as Bloom
 import           Data.Foldable (traverse_)
@@ -30,6 +31,7 @@ import           Test.Database.LSMTree.Internal.Run (isLargeKOp, readKOps)
 import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
+
 
 tests :: TestTree
 tests = testGroup "Test.Database.LSMTree.Internal.Merge"
@@ -164,9 +166,9 @@ mergeRuns ::
      FS.HasBlockIO IO h ->
      Merge.Level ->
      Word64 ->
-     [Run.Run (FS.Handle h)] ->
+     [Run.Run RealWorld (FS.Handle h)] ->
      StepSize ->
-     IO (Int, Run.Run (FS.Handle h))
+     IO (Int, Run.Run RealWorld (FS.Handle h))
 mergeRuns fs hbio level runNumber runs (Positive stepSize) = do
     Merge.new fs hbio Run.CacheRunData (RunAllocFixed 10) level mappendValues
               (RunFsPaths (FS.mkFsPath []) runNumber) runs >>= \case

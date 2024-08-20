@@ -10,15 +10,16 @@ module Test.Database.LSMTree.Internal.Run (
     isLargeKOp,
 ) where
 
+import           Control.Monad.Primitive
 import           Data.Bifoldable (bifoldMap, bisum)
 import           Data.Bifunctor (bimap)
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Short as SBS
 import           Data.Coerce (coerce)
-import           Data.IORef (readIORef)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromJust)
+import           Data.Primitive
 import qualified Data.Primitive.ByteArray as BA
 import           System.FilePath
 import qualified System.FS.API as FS
@@ -50,6 +51,7 @@ import           Database.LSMTree.Internal.Serialise
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 
 import qualified FormatPage as Proto
+
 
 tests :: TestTree
 tests = testGroup "Database.LSMTree.Internal.Run"
@@ -226,8 +228,8 @@ prop_WriteAndOpen fs hbio (TypedWriteBuffer wb) = do
     written <- fromWriteBuffer fs hbio CacheRunData (RunAllocFixed 10) fsPaths wb
     loaded <- openFromDisk fs hbio CacheRunData fsPaths
 
-    (RefCount 1 @=?) =<< readIORef (runRefCount written)
-    (RefCount 1 @=?) =<< readIORef (runRefCount loaded)
+    (RefCount 1 @=?) =<< readMutVar (runRefCount written)
+    (RefCount 1 @=?) =<< readMutVar (runRefCount loaded)
 
     runNumEntries written @=? runNumEntries loaded
     runFilter written @=? runFilter loaded
@@ -258,7 +260,7 @@ isLargeKOp (key, entry) = size > pageSize
     pageSize = 4096
     size = sizeofKey key + bisum (bimap sizeofValue sizeofBlob entry)
 
-readKOps :: FS.HasFS IO h -> FS.HasBlockIO IO h -> Run (FS.Handle h) -> IO [SerialisedKOp]
+readKOps :: FS.HasFS IO h -> FS.HasBlockIO IO h -> Run RealWorld (FS.Handle h) -> IO [SerialisedKOp]
 readKOps fs hbio run = do
     reader <- Reader.new fs hbio run
     go reader

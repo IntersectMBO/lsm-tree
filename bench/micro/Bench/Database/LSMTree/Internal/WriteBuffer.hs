@@ -1,6 +1,7 @@
 module Bench.Database.LSMTree.Internal.WriteBuffer (benchmarks) where
 
 import           Control.DeepSeq (NFData (..))
+import           Control.Monad.Primitive
 import           Criterion.Main (Benchmark, bench, bgroup)
 import qualified Criterion.Main as Cr
 import           Data.Bifunctor (first)
@@ -166,7 +167,7 @@ flush :: FS.HasFS IO FS.HandleIO
       -> FS.HasBlockIO IO FS.HandleIO
       -> RunFsPaths
       -> WriteBuffer
-      -> IO (Run (FS.Handle (FS.HandleIO)))
+      -> IO (Run RealWorld (FS.Handle (FS.HandleIO)))
 flush hfs hbio = Run.fromWriteBuffer hfs hbio Run.CacheRunData (RunAllocFixed 10)
 
 data InputKOps

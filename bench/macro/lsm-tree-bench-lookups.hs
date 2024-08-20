@@ -318,7 +318,7 @@ lookupsEnv ::
   -> FS.HasFS IO FS.HandleIO
   -> FS.HasBlockIO IO FS.HandleIO
   -> Run.RunDataCaching
-  -> IO ( V.Vector (Run (FS.Handle FS.HandleIO))
+  -> IO ( V.Vector (Run RealWorld (FS.Handle FS.HandleIO))
         , V.Vector (Bloom SerialisedKey)
         , V.Vector IndexCompact
         , V.Vector (FS.Handle FS.HandleIO)
@@ -452,7 +452,7 @@ benchLookupsIO ::
      FS.HasBlockIO IO h
   -> ArenaManager RealWorld
   -> ResolveSerialisedValue
-  -> V.Vector (Run (FS.Handle h))
+  -> V.Vector (Run RealWorld (FS.Handle h))
   -> V.Vector (Bloom SerialisedKey)
   -> V.Vector IndexCompact
   -> V.Vector (FS.Handle h)
