@@ -14,7 +14,7 @@ import qualified Database.LSMTree.Class.Monoidal as Class
 import           Database.LSMTree.Common (Labellable (..), mkSnapshotName)
 import           Database.LSMTree.Extras.Generators ()
 import           Database.LSMTree.ModelIO.Monoidal (IOLike, LookupResult (..),
-                     Range (..), RangeLookupResult (..), Update (..))
+                     QueryResult (..), Range (..), Update (..))
 import qualified Database.LSMTree.ModelIO.Monoidal as M
 import           Database.LSMTree.Monoidal (ResolveValue (..),
                      resolveDeserialised)
@@ -217,8 +217,8 @@ evalRange :: Ord k => Range k -> k -> Bool
 evalRange (FromToExcluding lo hi) x = lo <= x && x < hi
 evalRange (FromToIncluding lo hi) x = lo <= x && x <= hi
 
-rangeLookupResultKey :: RangeLookupResult k v -> k
-rangeLookupResultKey (FoundInRange k _)             = k
+rangeLookupResultKey :: QueryResult k v -> k
+rangeLookupResultKey (FoundInQuery k _) = k
 
 -- | Last insert wins.
 prop_insertLookupRange ::
@@ -234,11 +234,11 @@ prop_insertLookupRange h ups k v r = ioProperty $ do
 
       res' <- rangeLookup hdl r
 
-      let p :: RangeLookupResult Key Value -> Bool
+      let p :: QueryResult Key Value -> Bool
           p rlr = rangeLookupResultKey rlr /= k
 
       if evalRange r k
-      then return $ vsortOn rangeLookupResultKey (V.cons (FoundInRange k v) (V.filter p res)) === res'
+      then return $ vsortOn rangeLookupResultKey (V.cons (FoundInQuery k v) (V.filter p res)) === res'
       else return $ res === res'
 
   where

@@ -26,7 +26,7 @@ module Database.LSMTree.ModelIO.Normal (
   , Model.Range (..)
   , Model.LookupResult (..)
   , lookups
-  , Model.RangeLookupResult (..)
+  , Model.QueryResult (..)
   , rangeLookup
     -- ** Updates
   , Model.Update (..)
@@ -58,8 +58,8 @@ import           Database.LSMTree.Common (IOLike, SerialiseKey, SerialiseValue,
 import qualified Database.LSMTree.Model.Normal as Model
 import           Database.LSMTree.Model.Normal.Session (UpdateCounter)
 import           Database.LSMTree.ModelIO.Session
-import           Database.LSMTree.Normal (LookupResult (..),
-                     RangeLookupResult (..), Update (..))
+import           Database.LSMTree.Normal (LookupResult (..), QueryResult (..),
+                     Update (..))
 import           GHC.IO.Exception (IOErrorType (..), IOException (..))
 import           System.IO.Error (alreadyExistsErrorType)
 
@@ -121,7 +121,7 @@ rangeLookup ::
      (IOLike m, SerialiseKey k, SerialiseValue v)
   => Model.Range k
   -> TableHandle m k v blob
-  -> m (V.Vector (RangeLookupResult k v (BlobRef m blob)))
+  -> m (V.Vector (QueryResult k v (BlobRef m blob)))
 rangeLookup r th@TableHandle {..} = atomically $
     withModel "rangeLookup" thSession thRef $ \(updc, tbl) ->
         return $ liftBlobRefs th updc $ Model.rangeLookup r tbl

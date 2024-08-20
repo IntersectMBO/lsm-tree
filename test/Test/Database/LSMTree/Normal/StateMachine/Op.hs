@@ -20,7 +20,7 @@ import           Control.Monad.Reader (ReaderT)
 import           Control.Monad.State (StateT)
 import qualified Data.Vector as V
 import           Database.LSMTree.Normal as SUT (LookupResult (..),
-                     RangeLookupResult (..))
+                     QueryResult (..))
 import           GHC.Show (appPrec)
 import           Test.QuickCheck.StateModel.Lockstep (InterpretOp, Operation)
 import qualified Test.QuickCheck.StateModel.Lockstep.Op as Op
@@ -41,19 +41,19 @@ data Op a b where
   OpFromRight          :: Op (Either a b) b
   OpComp               :: Op b c -> Op a b -> Op a c
   OpLookupResults      :: Op (V.Vector (LookupResult v (WrapBlobRef h IO blobref))) (V.Vector (WrapBlobRef h IO blobref))
-  OpRangeLookupResults :: Op (V.Vector (RangeLookupResult k v (WrapBlobRef h IO blobref))) (V.Vector (WrapBlobRef h IO blobref))
+  OpQueryResults       :: Op (V.Vector (QueryResult k v (WrapBlobRef h IO blobref))) (V.Vector (WrapBlobRef h IO blobref))
 
 intOpId :: Op a b -> a -> Maybe b
-intOpId OpId                 = Just
-intOpId OpFst                = Just . fst
-intOpId OpSnd                = Just . snd
-intOpId OpLeft               = Just . Left
-intOpId OpRight              = Just . Right
-intOpId OpFromLeft           = either Just (const Nothing)
-intOpId OpFromRight          = either (const Nothing) Just
-intOpId (OpComp g f)         = intOpId g <=< intOpId f
-intOpId OpLookupResults      = Just . V.mapMaybe getBlobRef
-intOpId OpRangeLookupResults = Just . V.mapMaybe getBlobRef
+intOpId OpId            = Just
+intOpId OpFst           = Just . fst
+intOpId OpSnd           = Just . snd
+intOpId OpLeft          = Just . Left
+intOpId OpRight         = Just . Right
+intOpId OpFromLeft      = either Just (const Nothing)
+intOpId OpFromRight     = either (const Nothing) Just
+intOpId (OpComp g f)    = intOpId g <=< intOpId f
+intOpId OpLookupResults = Just . V.mapMaybe getBlobRef
+intOpId OpQueryResults  = Just . V.mapMaybe getBlobRef
 
 {-------------------------------------------------------------------------------
   'InterpretOp' instances
@@ -92,7 +92,7 @@ instance InterpretOp Op (Op.WrapRealized (IOSim s)) where
       OpFromRight          -> either (const Nothing) (Just . Op.WrapRealized) . Op.unwrapRealized
       OpComp g f           -> Op.intOp g <=< Op.intOp f
       OpLookupResults      -> Just  . Op.WrapRealized . V.mapMaybe getBlobRef . Op.unwrapRealized
-      OpRangeLookupResults -> Just . Op.WrapRealized . V.mapMaybe getBlobRef . Op.unwrapRealized
+      OpQueryResults       -> Just . Op.WrapRealized . V.mapMaybe getBlobRef . Op.unwrapRealized
 
 {-------------------------------------------------------------------------------
   'Show' and 'Eq' instances
@@ -102,17 +102,17 @@ sameOp :: Op a b -> Op c d -> Bool
 sameOp = go
   where
     go :: Op a b -> Op c d -> Bool
-    go OpId                 OpId                 = True
-    go OpFst                OpFst                = True
-    go OpSnd                OpSnd                = True
-    go OpLeft               OpLeft               = True
-    go OpRight              OpRight              = True
-    go OpFromLeft           OpFromLeft           = True
-    go OpFromRight          OpFromRight          = True
-    go (OpComp g f)         (OpComp g' f')       = go g g' && go f f'
-    go OpLookupResults      OpLookupResults      = True
-    go OpRangeLookupResults OpRangeLookupResults = True
-    go _                    _                    = False
+    go OpId                 OpId            = True
+    go OpFst                OpFst           = True
+    go OpSnd                OpSnd           = True
+    go OpLeft               OpLeft          = True
+    go OpRight              OpRight         = True
+    go OpFromLeft           OpFromLeft      = True
+    go OpFromRight          OpFromRight     = True
+    go (OpComp g f)         (OpComp g' f')  = go g g' && go f f'
+    go OpLookupResults      OpLookupResults = True
+    go OpQueryResults       OpQueryResults  = True
+    go _                    _               = False
 
     _coveredAllCases :: Op a b -> ()
     _coveredAllCases = \case
@@ -125,7 +125,7 @@ sameOp = go
         OpFromRight            -> ()
         OpComp{}               -> ()
         OpLookupResults{}      -> ()
-        OpRangeLookupResults{} -> ()
+        OpQueryResults{}       -> ()
 
 
 instance Eq (Op a b)  where
@@ -139,16 +139,16 @@ instance Show (Op a b) where
       _        -> go op
     where
       go :: Op x y -> String -> String
-      go OpId                 = showString "id"
-      go OpFst                = showString "fst"
-      go OpSnd                = showString "snd"
-      go OpLeft               = showString "Left"
-      go OpRight              = showString "Right"
-      go OpFromLeft           = showString "FromLeft"
-      go OpFromRight          = showString "FromRight"
-      go (OpComp g f)         = go g . showString " . " . go f
-      go OpLookupResults      = showString "mapMaybe getBlobRef"
-      go OpRangeLookupResults = showString "mapMaybe getBlobRef"
+      go OpId            = showString "id"
+      go OpFst           = showString "fst"
+      go OpSnd           = showString "snd"
+      go OpLeft          = showString "Left"
+      go OpRight         = showString "Right"
+      go OpFromLeft      = showString "FromLeft"
+      go OpFromRight     = showString "FromRight"
+      go (OpComp g f)    = go g . showString " . " . go f
+      go OpLookupResults = showString "mapMaybe getBlobRef"
+      go OpQueryResults  = showString "mapMaybe getBlobRef"
 
 {-------------------------------------------------------------------------------
   'HasBlobRef' class
@@ -162,6 +162,6 @@ instance HasBlobRef (LookupResult v) where
   getBlobRef Found{}                   = Nothing
   getBlobRef (FoundWithBlob _ blobref) = Just blobref
 
-instance HasBlobRef (RangeLookupResult k v) where
-  getBlobRef FoundInRange{}                     = Nothing
-  getBlobRef (FoundInRangeWithBlob _ _ blobref) = Just blobref
+instance HasBlobRef (QueryResult k v) where
+  getBlobRef FoundInQuery{}                     = Nothing
+  getBlobRef (FoundInQueryWithBlob _ _ blobref) = Just blobref

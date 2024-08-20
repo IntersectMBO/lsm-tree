@@ -46,7 +46,7 @@ module Database.LSMTree.Model.Normal.Session (
   , Model.Range (..)
   , Model.LookupResult (..)
   , lookups
-  , Model.RangeLookupResult (..)
+  , Model.QueryResult (..)
   , rangeLookup
     -- ** Updates
   , Model.Update (..)
@@ -285,7 +285,7 @@ lookups ks th = do
     (updc, table) <- guardTableHandleIsOpen th
     pure $ liftBlobRefs th updc $ Model.lookups ks table
 
-type RangeLookupResult k v blobref = Model.RangeLookupResult k v blobref
+type QueryResult k v blobref = Model.QueryResult k v blobref
 
 rangeLookup ::
      ( MonadState Model m
@@ -296,7 +296,7 @@ rangeLookup ::
      )
   => Model.Range k
   -> TableHandle k v blob
-  -> m (V.Vector (RangeLookupResult k v (BlobRef blob)))
+  -> m (V.Vector (QueryResult k v (BlobRef blob)))
 rangeLookup r th = do
     (updc, table) <- guardTableHandleIsOpen th
     pure $ liftBlobRefs th updc $ Model.rangeLookup r table

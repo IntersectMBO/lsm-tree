@@ -65,7 +65,7 @@ module Database.LSMTree.Monoidal (
   , LookupResult (..)
   , rangeLookup
   , Range (..)
-  , RangeLookupResult (..)
+  , QueryResult (..)
     -- ** Updates
   , inserts
   , deletes
@@ -228,7 +228,7 @@ toMonoidalLookupResult = \case
       Entry.Delete             -> NotFound
     Nothing -> NotFound
 
-{-# SPECIALISE rangeLookup :: (SerialiseKey k, SerialiseValue v, ResolveValue v) => Range k -> TableHandle IO k v -> IO (V.Vector (RangeLookupResult k v)) #-}
+{-# SPECIALISE rangeLookup :: (SerialiseKey k, SerialiseValue v, ResolveValue v) => Range k -> TableHandle IO k v -> IO (V.Vector (QueryResult k v)) #-}
 -- | Perform a range lookup.
 --
 -- Range lookups can be performed concurrently from multiple Haskell threads.
@@ -236,7 +236,7 @@ rangeLookup ::
      (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
   => Range k
   -> TableHandle m k v
-  -> m (V.Vector (RangeLookupResult k v))
+  -> m (V.Vector (QueryResult k v))
 rangeLookup = undefined
 
 {-# SPECIALISE updates :: (SerialiseKey k, SerialiseValue v, ResolveValue v) => V.Vector (k, Update v) -> TableHandle IO k v -> IO () #-}

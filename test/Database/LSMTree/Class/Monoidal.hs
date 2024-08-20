@@ -20,8 +20,8 @@ import           Database.LSMTree.Class.Normal (IsSession (..),
 import           Database.LSMTree.Common (IOLike, Labellable (..), Range (..),
                      SerialiseKey, SerialiseValue, SnapshotName)
 import qualified Database.LSMTree.ModelIO.Monoidal as M
-import           Database.LSMTree.Monoidal (LookupResult (..),
-                     RangeLookupResult (..), ResolveValue, Update (..))
+import           Database.LSMTree.Monoidal (LookupResult (..), QueryResult (..),
+                     ResolveValue, Update (..))
 import qualified Database.LSMTree.Monoidal as R
 
 
@@ -53,7 +53,7 @@ class (IsSession (Session h)) => IsTableHandle h where
             (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
         => h m k v
         -> Range k
-        -> m (V.Vector (RangeLookupResult k v))
+        -> m (V.Vector (QueryResult k v))
 
     updates ::
         ( IOLike m

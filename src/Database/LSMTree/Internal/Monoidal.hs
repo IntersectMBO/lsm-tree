@@ -1,6 +1,6 @@
 module Database.LSMTree.Internal.Monoidal (
     LookupResult (..),
-    RangeLookupResult (..),
+    QueryResult (..),
     Update (..),
 ) where
 
@@ -12,11 +12,10 @@ data LookupResult v =
   | Found !v
   deriving stock (Eq, Show, Functor, Foldable, Traversable)
 
-
--- | A result for one point in a range lookup.
-data RangeLookupResult k v =
-    FoundInRange         !k !v
-  deriving stock (Eq, Show)
+-- | A result for one point in a cursor read or range query.
+data QueryResult k v =
+    FoundInQuery !k !v
+  deriving stock (Eq, Show, Functor, Foldable, Traversable)
 
 -- | Monoidal tables support insert, delete and monoidal upsert operations.
 --

@@ -18,8 +18,8 @@ import qualified Data.Vector as V
 import           Database.LSMTree.Common (IOLike, Labellable (..), Range (..),
                      SerialiseKey, SerialiseValue, SnapshotName)
 import qualified Database.LSMTree.ModelIO.Normal as M
-import           Database.LSMTree.Normal (LookupResult (..),
-                     RangeLookupResult (..), Update (..))
+import           Database.LSMTree.Normal (LookupResult (..), QueryResult (..),
+                     Update (..))
 import qualified Database.LSMTree.Normal as R
 import           System.FS.API (FsPath, HasFS)
 import           System.FS.BlockIO.API (HasBlockIO)
@@ -75,7 +75,7 @@ class (IsSession (Session h)) => IsTableHandle h where
            (IOLike m, SerialiseKey k, SerialiseValue v)
         => h m k v blob
         -> Range k
-        -> m (V.Vector (RangeLookupResult k v (BlobRef h m blob)))
+        -> m (V.Vector (QueryResult k v (BlobRef h m blob)))
 
     retrieveBlobs ::
            (IOLike m, SerialiseValue blob)

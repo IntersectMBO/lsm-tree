@@ -321,7 +321,7 @@ instance ( Show (Class.TableConfig h)
             -> Act h (V.Vector (R.LookupResult v (WrapBlobRef h IO blob)))
     RangeLookup :: C k v blob
                 => R.Range k -> Var h (WrapTableHandle h IO k v blob)
-                -> Act h (V.Vector (R.RangeLookupResult k v (WrapBlobRef h IO blob)))
+                -> Act h (V.Vector (R.QueryResult k v (WrapBlobRef h IO blob)))
     -- Updates
     Updates :: C k v blob
             => V.Vector (k, R.Update v blob) -> Var h (WrapTableHandle h IO k v blob)
@@ -439,9 +439,9 @@ instance ( Eq (Class.TableConfig h)
     MLookupResult :: (Model.C_ v, Model.C_ blob)
                   => Model.LookupResult v (Val h (WrapBlobRef h IO blob))
                   -> Val h (R.LookupResult v (WrapBlobRef h IO blob))
-    MRangeLookupResult :: Model.C k v blob
-                       => Model.RangeLookupResult k v (Val h (WrapBlobRef h IO blob))
-                       -> Val h (R.RangeLookupResult k v (WrapBlobRef h IO blob))
+    MQueryResult :: Model.C k v blob
+                 => Model.QueryResult k v (Val h (WrapBlobRef h IO blob))
+                 -> Val h (R.QueryResult k v (WrapBlobRef h IO blob))
 
     MBlob :: (Show blob, Typeable blob, Eq blob)
           => WrapBlob blob -> Val h (WrapBlob blob)
@@ -461,9 +461,9 @@ instance ( Eq (Class.TableConfig h)
     OLookupResult :: (Model.C_ v, Model.C_ blob)
                   => Model.LookupResult v (Obs h (WrapBlobRef h IO blob))
                   -> Obs h (R.LookupResult v (WrapBlobRef h IO blob))
-    ORangeLookupResult :: Model.C k v blob
-                       => Model.RangeLookupResult k v (Obs h (WrapBlobRef h IO blob))
-                       -> Obs h (R.RangeLookupResult k v (WrapBlobRef h IO blob))
+    OQueryResult :: Model.C k v blob
+                 => Model.QueryResult k v (Obs h (WrapBlobRef h IO blob))
+                 -> Obs h (R.QueryResult k v (WrapBlobRef h IO blob))
     OBlob :: (Show blob, Typeable blob, Eq blob)
           => WrapBlob blob -> Obs h (WrapBlob blob)
 
@@ -479,7 +479,7 @@ instance ( Eq (Class.TableConfig h)
       MTableHandle _       -> OTableHandle
       MBlobRef _           -> OBlobRef
       MLookupResult x      -> OLookupResult $ fmap observeModel x
-      MRangeLookupResult x -> ORangeLookupResult $ fmap observeModel x
+      MQueryResult x       -> OQueryResult $ fmap observeModel x
       MSnapshotName x      -> OId x
       MBlob x              -> OId x
       MErr x               -> OId x
@@ -555,7 +555,7 @@ instance Eq (Obs h a) where
       (OTableHandle, OTableHandle) -> True
       (OBlobRef, OBlobRef) -> True
       (OLookupResult x, OLookupResult y) -> x == y
-      (ORangeLookupResult x, ORangeLookupResult y) -> x == y
+      (OQueryResult x, OQueryResult y) -> x == y
       (OBlob x, OBlob y) -> x == y
       (OId x, OId y) -> x == y
       (OPair x, OPair y) -> x == y
@@ -569,7 +569,7 @@ instance Eq (Obs h a) where
           OTableHandle{} -> ()
           OBlobRef{} -> ()
           OLookupResult{} -> ()
-          ORangeLookupResult{} -> ()
+          OQueryResult{} -> ()
           OBlob{} -> ()
           OId{} -> ()
           OPair{} -> ()
@@ -610,7 +610,7 @@ instance ( Eq (Class.TableConfig h)
       Lookups{}        -> OEither $
           bimap OId (OVector . fmap (OLookupResult . fmap (const OBlobRef))) result
       RangeLookup{}    -> OEither $
-          bimap OId (OVector . fmap (ORangeLookupResult . fmap (const OBlobRef))) result
+          bimap OId (OVector . fmap (OQueryResult . fmap (const OBlobRef))) result
       Updates{}        -> OEither $ bimap OId OId result
       Inserts{}        -> OEither $ bimap OId OId result
       Deletes{}        -> OEither $ bimap OId OId result
@@ -658,7 +658,7 @@ instance ( Eq (Class.TableConfig h)
       Lookups{}        -> OEither $
           bimap OId (OVector . fmap (OLookupResult . fmap (const OBlobRef))) result
       RangeLookup{}    -> OEither $
-          bimap OId (OVector . fmap (ORangeLookupResult . fmap (const OBlobRef))) result
+          bimap OId (OVector . fmap (OQueryResult . fmap (const OBlobRef))) result
       Updates{}        -> OEither $ bimap OId OId result
       Inserts{}        -> OEither $ bimap OId OId result
       Deletes{}        -> OEither $ bimap OId OId result
@@ -730,7 +730,7 @@ runModel lookUp = \case
       Model.runModelM (Model.close (getTableHandle $ lookUp tableVar))
     Lookups ks tableVar -> wrap (MVector . fmap (MLookupResult . fmap MBlobRef)) .
       Model.runModelM (Model.lookups ks (getTableHandle $ lookUp tableVar))
-    RangeLookup range tableVar -> wrap (MVector . fmap (MRangeLookupResult . fmap MBlobRef)) .
+    RangeLookup range tableVar -> wrap (MVector . fmap (MQueryResult . fmap MBlobRef)) .
       Model.runModelM (Model.rangeLookup range (getTableHandle $ lookUp tableVar))
     Updates kups tableVar -> wrap MUnit .
       Model.runModelM (Model.updates kups (getTableHandle $ lookUp tableVar))
@@ -908,20 +908,20 @@ arbitraryActionWithVars _ findVars _st = QC.frequency $ concat [
         Duplicate{} -> ()
 
     findBlobRefsVars :: [Var h (Either Model.Err (V.Vector (WrapBlobRef h IO blob)))]
-    findBlobRefsVars = fmap fromLookupResults vars1 ++ fmap fromRangeLookupResults vars2
+    findBlobRefsVars = fmap fromLookupResults vars1 ++ fmap fromQueryResults vars2
       where
         vars1 = findVars (Proxy @(Either Model.Err (V.Vector (R.LookupResult v (WrapBlobRef h IO blob)))))
-        vars2 = findVars (Proxy @(Either Model.Err (V.Vector (R.RangeLookupResult k v (WrapBlobRef h IO blob)))))
+        vars2 = findVars (Proxy @(Either Model.Err (V.Vector (R.QueryResult k v (WrapBlobRef h IO blob)))))
 
         fromLookupResults ::
              Var h (Either Model.Err (V.Vector (R.LookupResult v (WrapBlobRef h IO blob))))
           -> Var h (Either Model.Err (V.Vector (WrapBlobRef h IO blob)))
         fromLookupResults = mapGVar (\op -> OpRight `OpComp` OpLookupResults `OpComp` OpFromRight `OpComp` op)
 
-        fromRangeLookupResults ::
-             Var h (Either Model.Err (V.Vector (R.RangeLookupResult k v (WrapBlobRef h IO blob))))
+        fromQueryResults ::
+             Var h (Either Model.Err (V.Vector (R.QueryResult k v (WrapBlobRef h IO blob))))
           -> Var h (Either Model.Err (V.Vector (WrapBlobRef h IO blob)))
-        fromRangeLookupResults = mapGVar (\op -> OpRight `OpComp` OpRangeLookupResults `OpComp` OpFromRight `OpComp` op)
+        fromQueryResults = mapGVar (\op -> OpRight `OpComp` OpQueryResults `OpComp` OpFromRight `OpComp` op)
 
     withoutVars :: [(Int, Gen (Any (LockstepAction (ModelState h))))]
     withoutVars = [
@@ -1034,8 +1034,8 @@ instance InterpretOp Op (ModelValue (ModelState h)) where
     OpLookupResults      -> Just . MVector
                           . V.mapMaybe (\case MLookupResult x -> getBlobRef x)
                           . \case MVector x -> x
-    OpRangeLookupResults -> Just . MVector
-                          . V.mapMaybe (\case MRangeLookupResult x -> getBlobRef x)
+    OpQueryResults       -> Just . MVector
+                          . V.mapMaybe (\case MQueryResult x -> getBlobRef x)
                           . \case MVector x -> x
 
 {-------------------------------------------------------------------------------

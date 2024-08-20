@@ -64,7 +64,7 @@ module Database.LSMTree.Normal (
   , LookupResult (..)
   , rangeLookup
   , Range (..)
-  , RangeLookupResult (..)
+  , QueryResult (..)
     -- ** Updates
   , inserts
   , deletes
@@ -261,7 +261,7 @@ close ::
 close (TableHandle th) = Internal.close th
 
 {-------------------------------------------------------------------------------
-  Table querying and updates
+  Table queries and updates
 -------------------------------------------------------------------------------}
 
 {-# SPECIALISE lookups :: (SerialiseKey k, SerialiseValue v) => V.Vector k -> TableHandle IO k v blob -> IO (V.Vector (LookupResult v (BlobRef IO blob))) #-}
@@ -286,7 +286,7 @@ toNormalLookupResult = \case
       Entry.Delete              -> NotFound
     Nothing -> NotFound
 
-{-# SPECIALISE rangeLookup :: (SerialiseKey k, SerialiseValue v) => Range k -> TableHandle IO k v blob -> IO (V.Vector (RangeLookupResult k v (BlobRef IO blob))) #-}
+{-# SPECIALISE rangeLookup :: (SerialiseKey k, SerialiseValue v) => Range k -> TableHandle IO k v blob -> IO (V.Vector (QueryResult k v (BlobRef IO blob))) #-}
 -- | Perform a range lookup.
 --
 -- Range lookups can be performed concurrently from multiple Haskell threads.
@@ -294,7 +294,7 @@ rangeLookup ::
      (IOLike m, SerialiseKey k, SerialiseValue v)
   => Range k
   -> TableHandle m k v blob
-  -> m (V.Vector (RangeLookupResult k v (BlobRef m blob)))
+  -> m (V.Vector (QueryResult k v (BlobRef m blob)))
 rangeLookup = undefined
 
 {-# SPECIALISE updates :: (SerialiseKey k, SerialiseValue v, SerialiseValue blob) => V.Vector (k, Update v blob) -> TableHandle IO k v blob -> IO () #-}

@@ -188,7 +188,7 @@ errOnBlob Delete               = Delete
   RangeQueries
 -------------------------------------------------------------------------------}
 
--- | We return 'Entry' instead of either @RangeLookupResult@,
+-- | We return 'Entry' instead of either @QueryResult@,
 -- so we can properly combine lookup results.
 --
 -- Note: 'Delete's are not filtered out.
