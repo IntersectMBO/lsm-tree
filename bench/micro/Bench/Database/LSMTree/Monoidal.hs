@@ -3,6 +3,7 @@
 module Bench.Database.LSMTree.Monoidal (benchmarks) where
 
 import           Control.DeepSeq
+import           Control.Tracer
 import           Criterion.Main
 import qualified Data.Vector as V
 import           Data.Void
@@ -246,7 +247,7 @@ mkNormalTable ::
         , Normal.TableHandle IO K V B
         )
 mkNormalTable hfs hbio conf = do
-    sesh <- Normal.openSession hfs hbio (FS.mkFsPath [])
+    sesh <- Normal.openSession nullTracer hfs hbio (FS.mkFsPath [])
     th <- Normal.new sesh conf
     pure (sesh, th)
 
@@ -267,7 +268,7 @@ mkMonoidalTable ::
         , Monoidal.TableHandle IO K V
         )
 mkMonoidalTable hfs hbio conf = do
-    sesh <- Monoidal.openSession hfs hbio (FS.mkFsPath [])
+    sesh <- Monoidal.openSession nullTracer hfs hbio (FS.mkFsPath [])
     th <- Monoidal.new sesh conf
     pure (sesh, th)
 

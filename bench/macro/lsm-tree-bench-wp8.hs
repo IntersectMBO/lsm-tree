@@ -44,12 +44,14 @@ import           Control.Concurrent.MVar
 import           Control.DeepSeq (force)
 import           Control.Exception (evaluate)
 import           Control.Monad (forM_, unless, void, when)
+import           Control.Tracer
 import qualified Crypto.Hash.SHA256 as SHA256
 import qualified Data.Binary as B
 import qualified Data.ByteString.Short as BS
 import qualified Data.Foldable as Fold
 import qualified Data.IntSet as IS
 import           Data.IORef (modifyIORef', newIORef, readIORef, writeIORef)
+import qualified Data.List.NonEmpty as NE
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Traversable (mapAccumL)
@@ -70,6 +72,8 @@ import           System.IO
 import           System.Mem (performMajorGC)
 import           Text.Printf (printf)
 import           Text.Show.Pretty
+
+import           Database.LSMTree.Extras
 
 -- We should be able to write this benchmark
 -- using only use public lsm-tree interface
@@ -107,10 +111,12 @@ theValue = BS.replicate 60 120 -- 'x'
 data GlobalOpts = GlobalOpts
     { rootDir         :: !FilePath  -- ^ session directory.
     , initialSize     :: !Int
-    -- | The cache policy for the LSM table. This configuration option is used
-    -- both during setup, and during a run (where it is used to override the
-    -- config option of the snapshot).
+      -- | The cache policy for the LSM table. This configuration option is used
+      -- both during setup, and during a run (where it is used to override the
+      -- config option of the snapshot).
     , diskCachePolicy :: !LSM.DiskCachePolicy
+      -- | Enable trace output
+    , trace           :: !Bool
     }
   deriving stock Show
 
@@ -154,6 +160,18 @@ mkTableConfigOverride :: GlobalOpts -> LSM.TableConfigOverride
 mkTableConfigOverride GlobalOpts{diskCachePolicy} =
     LSM.configOverrideDiskCachePolicy diskCachePolicy
 
+mkTracer :: GlobalOpts -> Tracer IO LSM.LSMTreeTrace
+mkTracer gopts
+  | trace gopts =
+      -- Don't trace update/lookup messages, because they are too noisy
+      squelchUnless
+        (\case
+          LSM.TraceTable _ LSM.TraceUpdates{} -> False
+          LSM.TraceTable _ LSM.TraceLookups{} -> False
+          _                                   -> True )
+        (show `contramap` stdoutTracer)
+  | otherwise   = nullTracer
+
 -------------------------------------------------------------------------------
 -- command line interface
 -------------------------------------------------------------------------------
@@ -163,6 +181,7 @@ globalOptsP = pure GlobalOpts
     <*> O.option O.str (O.long "bench-dir" <> O.value "_bench_wp8" <> O.showDefault <> O.help "Benchmark directory to put files in")
     <*> O.option O.auto (O.long "initial-size" <> O.value 100_000_000 <> O.showDefault <> O.help "Initial LSM tree size")
     <*> O.option O.auto (O.long "disk-cache-policy" <> O.value LSM.DiskCacheAll <> O.showDefault <> O.help "Disk cache policy [DiskCacheAll | DiskCacheLevelsAtOrBelow Int | DiskCacheNone]")
+    <*> O.flag False True (O.long "trace" <> O.help "Enable trace messages (disabled by default)")
 
 cmdP :: O.Parser Cmd
 cmdP = O.subparser $ mconcat
@@ -363,20 +382,19 @@ doSetup' gopts opts = do
     name <- maybe (fail "invalid snapshot name") return $
         LSM.mkSnapshotName "bench"
 
-    LSM.withSession hasFS hasBlockIO (FS.mkFsPath []) $ \session -> do
+    LSM.withSession (mkTracer gopts) hasFS hasBlockIO (FS.mkFsPath []) $ \session -> do
         tbh <- LSM.new @IO @K @V @B session (mkTableConfigSetup gopts opts LSM.defaultTableConfig)
 
-        forM_ [ 0 .. initialSize gopts ] $ \ (fromIntegral -> i) -> do
+        forM_ (groupsOfN 256 [ 0 .. initialSize gopts ]) $ \batch -> do
             -- TODO: this procedure simply inserts all the keys into initial lsm tree
             -- We might want to do deletes, so there would be delete-insert pairs
             -- Let's do that when we can actually test that benchmark works.
-
-            let k = makeKey i
-            let v = theValue
-
+            --
             -- TODO: LSM.inserts has annoying order
-            flip LSM.inserts tbh $
-              V.singleton (k, v, Nothing)
+            flip LSM.inserts tbh $ V.fromList [
+                  (makeKey (fromIntegral i), theValue, Nothing)
+                | i <- NE.toList batch
+                ]
 
         LSM.snapshot name tbh
 
@@ -527,7 +545,7 @@ doRun gopts opts = do
     name <- maybe (fail "invalid snapshot name") return $
         LSM.mkSnapshotName "bench"
 
-    LSM.withSession hasFS hasBlockIO (FS.mkFsPath []) $ \session -> do
+    LSM.withSession (mkTracer gopts) hasFS hasBlockIO (FS.mkFsPath []) $ \session -> do
         -- open snapshot
         -- In checking mode we start with an empty table, since our pure
         -- reference version starts with empty (as it's not practical or

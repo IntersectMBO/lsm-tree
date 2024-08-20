@@ -53,6 +53,7 @@ import           Control.Monad ((<=<))
 import           Control.Monad.Class.MonadThrow (Handler (..), MonadCatch (..),
                      MonadThrow (..))
 import           Control.Monad.Reader (ReaderT (..))
+import           Control.Tracer (nullTracer)
 import           Data.Bifunctor (Bifunctor (..))
 import qualified Data.ByteString as BS
 import           Data.Constraint (Dict (..))
@@ -169,7 +170,7 @@ propLockstepIO_RealImpl_RealFS = testProperty "propLockstepIO_RealImpl_RealFS" $
     acquire :: IO (FilePath, WrapSession R.TableHandle IO)
     acquire = do
         (tmpDir, hasFS, hasBlockIO) <- createSystemTempDirectory "propLockstepIO_RealIO"
-        session <- R.openSession hasFS hasBlockIO (mkFsPath [])
+        session <- R.openSession nullTracer hasFS hasBlockIO (mkFsPath [])
         pure (tmpDir, WrapSession session)
 
     release :: (FilePath, WrapSession R.TableHandle IO) -> IO ()
