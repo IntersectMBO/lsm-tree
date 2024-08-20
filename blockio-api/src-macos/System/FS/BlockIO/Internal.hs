@@ -2,12 +2,13 @@ module System.FS.BlockIO.Internal (
     ioHasBlockIO
   ) where
 
-import           System.FS.API (Handle (handleRaw), HasFS)
+import           System.FS.API (Handle (..), HasFS)
+import qualified System.FS.BlockIO.API as FS
 import           System.FS.BlockIO.API (Advice (..), FileOffset, HasBlockIO,
                      IOCtxParams)
 import qualified System.FS.BlockIO.Serial as Serial
 import           System.FS.IO (HandleIO)
-import           System.FS.IO.Handle (withOpenHandle)
+import qualified System.FS.IO.Handle as FS
 import qualified System.Posix.Fcntl.NoCache as Unix
 
 -- | For now we use the portable serial implementation of HasBlockIO. If you
@@ -19,11 +20,11 @@ ioHasBlockIO ::
      HasFS IO HandleIO
   -> IOCtxParams
   -> IO (HasBlockIO IO HandleIO)
-ioHasBlockIO hfs _params = Serial.serialHasBlockIO hSetNoCache hAdvise hAllocate hfs
+ioHasBlockIO hfs _params = Serial.serialHasBlockIO hSetNoCache hAdvise hAllocate (FS.tryLockFileIO hfs) hfs
 
 hSetNoCache :: Handle HandleIO -> Bool -> IO ()
 hSetNoCache h b =
-  withOpenHandle "hSetNoCache" (handleRaw h) (flip Unix.writeFcntlNoCache b)
+  FS.withOpenHandle "hSetNoCache" (handleRaw h) (flip Unix.writeFcntlNoCache b)
 
 -- TODO: it is unclear if MacOS supports @posix_fadvise(2)@, and it's hard to
 -- check because there are no manual pages online. For now, it's just hardcoded

@@ -709,11 +709,12 @@ test-suite blockio-api-test
   main-is:        Main.hs
   build-depends:
     , async
-    , base                  >=4.14 && <4.21
+    , base                  >=4.14      && <4.21
     , bytestring
     , fs-api
     , lsm-tree:blockio-api
     , primitive
+    , QuickCheck            ^>=2.15.0.1
     , tasty
     , tasty-hunit
     , tasty-quickcheck

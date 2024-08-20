@@ -2,7 +2,8 @@ module System.FS.BlockIO.Internal (
     ioHasBlockIO
   ) where
 
-import           System.FS.API (Handle, HasFS)
+import           System.FS.API (Handle (..), HasFS)
+import qualified System.FS.BlockIO.API as FS
 import           System.FS.BlockIO.API (Advice (..), FileOffset, HasBlockIO,
                      IOCtxParams)
 import qualified System.FS.BlockIO.Serial as Serial
@@ -17,7 +18,7 @@ ioHasBlockIO ::
      HasFS IO HandleIO
   -> IOCtxParams
   -> IO (HasBlockIO IO HandleIO)
-ioHasBlockIO hfs _params = Serial.serialHasBlockIO hSetNoCache hAdvise hAllocate hfs
+ioHasBlockIO hfs _params = Serial.serialHasBlockIO hSetNoCache hAdvise hAllocate (FS.tryLockFileIO hfs) hfs
 
 hSetNoCache :: Handle HandleIO -> Bool -> IO ()
 hSetNoCache _h _b = pure ()

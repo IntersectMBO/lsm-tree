@@ -14,7 +14,7 @@ import qualified Data.Vector.Unboxed as VU
 import qualified Data.Vector.Unboxed.Mutable as VUM
 import           System.FS.API
 import qualified System.FS.BlockIO.API as API
-import           System.FS.BlockIO.API (IOOp (..), IOResult (..))
+import           System.FS.BlockIO.API (IOOp (..), IOResult (..), LockMode (..))
 
 -- | IO instantiation of 'HasBlockIO', using an existing 'HasFS'. Thus this
 -- implementation does not take advantage of parallel I/O.
@@ -23,9 +23,10 @@ serialHasBlockIO ::
   => (Handle h -> Bool -> m ())
   -> (Handle h -> API.FileOffset -> API.FileOffset -> API.Advice -> m ())
   -> (Handle h -> API.FileOffset -> API.FileOffset -> m ())
+  -> (FsPath -> LockMode -> m (Maybe (API.LockFileHandle m)))
   -> HasFS m h
   -> m (API.HasBlockIO m h)
-serialHasBlockIO hSetNoCache hAdvise hAllocate hfs = do
+serialHasBlockIO hSetNoCache hAdvise hAllocate tryLockFile hfs = do
   ctx <- initIOCtx (SomeHasFS hfs)
   pure $ API.HasBlockIO {
       API.close = close ctx
@@ -33,6 +34,7 @@ serialHasBlockIO hSetNoCache hAdvise hAllocate hfs = do
     , API.hSetNoCache
     , API.hAdvise
     , API.hAllocate
+    , API.tryLockFile
     }
 
 data IOCtx m = IOCtx { ctxFS :: SomeHasFS m, openVar :: MVar m Bool }

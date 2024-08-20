@@ -21,16 +21,17 @@ fromHasFS ::
      (MonadThrow m, MonadMVar m, PrimMonad m)
   => HasFS m HandleMock
   -> m (HasBlockIO m HandleMock)
-fromHasFS = serialHasBlockIO hSetNoCache hAdvise hAllocate
+fromHasFS = serialHasBlockIO hSetNoCache hAdvise hAllocate tryLockFile
   where
     -- TODO: It should be possible for the implementations and simulation to
     -- throw an FsError when doing file I/O with misaligned byte arrays after
-    -- hSetNoCache. Maybe they should? However, to do that we'd have to be able
-    -- to move hSetNoCache into fs-api and fs-sim because we'd need access to
-    -- the internals.
+    -- hSetNoCache. Maybe they should? It might be nicest to move hSetNoCache
+    -- into fs-api and fs-sim because we'd need access to the internals.
     hSetNoCache _h _b = pure ()
     hAdvise _ _ _ _ = pure ()
     hAllocate _ _ _ = pure ()
+    -- TODO: implement simulated locks.
+    tryLockFile _ _ = pure Nothing
 
 simHasBlockIO ::
      (MonadThrow m, MonadMVar m, PrimMonad m, MonadSTM m)

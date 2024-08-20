@@ -9,6 +9,7 @@ import qualified Control.Concurrent.Class.MonadSTM.RWVar as RW
 import           Control.Exception
 import           Control.Monad (void)
 import           Data.Bifunctor
+import           Data.Foldable (traverse_)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromMaybe)
 import           Data.Monoid (Sum (..))
@@ -33,7 +34,7 @@ tests :: TestTree
 tests = testGroup "Test.Database.LSMTree.Internal" [
       testCase "newSession" newSession
     , testCase "restoreSession" restoreSession
-    , testCase "twiceOpenSession" twiceOpenSession
+    , testProperty "twiceOpenSession" twiceOpenSession
     , testCase "sessionDirLayoutMismatch" sessionDirLayoutMismatch
     , testCase "sessionDirDoesNotExist" sessionDirDoesNotExist
     , testProperty "prop_interimRestoreSessionUniqueRunNames"
@@ -51,14 +52,17 @@ restoreSession = withTempIOHasBlockIO "restoreSession" $ \hfs hbio -> do
     closeSession session1
     void $ openSession hfs hbio (FS.mkFsPath [])
 
-twiceOpenSession :: Assertion
-twiceOpenSession = withTempIOHasBlockIO "twiceOpenSession" $ \hfs hbio -> do
-    void $ openSession hfs hbio (FS.mkFsPath [])
-    try @LSMTreeError (openSession hfs hbio (FS.mkFsPath [])) >>= \case
-      Left (SessionDirLocked _) -> pure ()
-      x -> assertFailure $ "Opening a session twice in the same directory \
-                           \should fail with an SessionDirLocked error, but \
-                           \it returned this instead: " <> showLeft "Session" x
+twiceOpenSession :: Property
+twiceOpenSession = ioProperty $
+    withTempIOHasBlockIO "twiceOpenSession" $ \hfs hbio -> do
+      bracket (openSession hfs hbio (FS.mkFsPath []))
+              closeSession $ \_ ->
+        bracket (try @LSMTreeError (openSession hfs hbio (FS.mkFsPath [])))
+                (traverse_ closeSession) $ \case
+          Left (SessionDirLocked _) -> pure ()
+          x -> assertFailure $ "Opening a session twice in the same directory \
+                              \should fail with an SessionDirLocked error, but \
+                              \it returned this instead: " <> showLeft "Session" x
 
 sessionDirLayoutMismatch :: Assertion
 sessionDirLayoutMismatch = withTempIOHasBlockIO "sessionDirLayoutMismatch" $ \hfs hbio -> do

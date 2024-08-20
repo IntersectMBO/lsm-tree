@@ -23,12 +23,19 @@ module System.FS.BlockIO.API (
   , Advice (..)
   , hAdviseAll
   , hDropCacheAll
+    -- * File locks
+  , GHC.LockMode (..)
+  , GHC.FileLockingNotSupported (..)
+  , LockFileHandle (..)
+  , tryLockFileIO
     -- * Re-exports
   , ByteCount
   , FileOffset
   ) where
 
 import           Control.DeepSeq
+import           Control.Monad.Class.MonadThrow (MonadCatch (bracketOnError),
+                     MonadThrow (..), bracketOnError, try)
 import           Control.Monad.Primitive (PrimMonad (PrimState))
 import           Data.Primitive.ByteArray (MutableByteArray)
 import qualified Data.Vector as V
@@ -38,8 +45,13 @@ import qualified Data.Vector.Primitive as VP
 import qualified Data.Vector.Unboxed as VU
 import qualified Data.Vector.Unboxed.Mutable as VUM
 import           GHC.IO.Exception (IOErrorType (ResourceVanished))
+import qualified GHC.IO.Handle.Lock as GHC
 import           GHC.Stack (HasCallStack)
-import           System.FS.API
+import qualified System.FS.API as FS
+import           System.FS.API (BufferOffset, FsError (..), FsPath, Handle (..),
+                     HasFS, SomeHasFS (..))
+import           System.FS.IO (HandleIO)
+import qualified System.IO as GHC
 import           System.IO.Error (ioeSetErrorString, mkIOError)
 import           System.Posix.Types (ByteCount, FileOffset)
 
@@ -82,12 +94,43 @@ data HasBlockIO m h = HasBlockIO {
     -- * [MacOS]: no-op.
     -- * [Windows]: no-op.
   , hAllocate :: Handle h -> FileOffset -> FileOffset -> m ()
+    -- | Try to acquire a file lock without blocking.
+    --
+    -- This uses different locking methods on different distributions.
+    -- * [Linux]: Open file descriptor (OFD)
+    -- * [MacOS]: @flock@
+    -- * [Windows]: @LockFileEx@
+    --
+    -- This function can throw 'GHC.FileLockingNotSupported' when file locking
+    -- is not supported.
+    --
+    -- NOTE: though it would have been nicer to allow locking /file handles/
+    -- instead of /file paths/, it would make the implementation of this
+    -- function in 'IO' much more complex. In particular, if we want to reuse
+    -- "GHC.IO.Handle.Lock" functionality, then we have to either ...
+    --
+    -- 1. Convert there and back between OS-specific file desciptors and
+    --   'GHC.Handle's, which is not possible on Windows without creating new
+    --   file descriptors, or ...
+    -- 2. Vendor all of the "GHC.IO.Handle.Lock" code and its dependencies
+    --    (i.e., modules), which is a prohibitively large body of code for GHC
+    --    versions before @9.0@.
+    --
+    -- The current interface is therefore limited, but should be sufficient for
+    -- use cases where a lock file is used to guard against concurrent access by
+    -- different processes. e.g., a database lock file.
+    --
+    -- TODO: it is /probably/ possible to provide a 'onLockFileHandle' function
+    -- that allows you to use 'LockFileHandle' as a 'Handle', but only within a
+    -- limited scope. That is, it has to fit the style of @withHandleToHANDLE ::
+    -- Handle -> (HANDLE -> IO a) -> IO a@ from the @Win32@ package.
+  , tryLockFile :: FsPath -> GHC.LockMode -> m (Maybe (LockFileHandle m))
   }
 
 instance NFData (HasBlockIO m h) where
-  rnf (HasBlockIO a b c d e) =
+  rnf (HasBlockIO a b c d e f) =
       rwhnf a `seq` rwhnf b `seq` rnf c `seq`
-      rwhnf d `seq` rwhnf e
+      rwhnf d `seq` rwhnf e `seq` rwhnf f
 
 -- | Concurrency parameters for initialising a 'HasBlockIO. Can be ignored by
 -- serial implementations.
@@ -106,7 +149,7 @@ defaultIOCtxParams = IOCtxParams {
     }
 
 mkClosedError :: HasCallStack => SomeHasFS m -> String -> FsError
-mkClosedError (SomeHasFS hasFS) loc = ioToFsError (mkFsErrorPath hasFS (mkFsPath [])) ioerr
+mkClosedError (SomeHasFS hasFS) loc = FS.ioToFsError (FS.mkFsErrorPath hasFS (FS.mkFsPath [])) ioerr
   where ioerr =
           ioeSetErrorString
             (mkIOError ResourceVanished loc Nothing Nothing)
@@ -170,3 +213,39 @@ hAdviseAll hbio h advice = hAdvise hbio h 0 0 advice -- len=0 implies until the 
 -- present.
 hDropCacheAll :: HasBlockIO m h -> Handle h -> m ()
 hDropCacheAll hbio h = hAdviseAll hbio h AdviceDontNeed
+
+{-------------------------------------------------------------------------------
+  File locks
+-------------------------------------------------------------------------------}
+
+-- | A handle to a file locked using 'tryLockFile'.
+newtype LockFileHandle m = LockFileHandle {
+    -- | Release a file lock acquired using 'tryLockFile'.
+    hUnlock :: m ()
+  }
+
+tryLockFileIO :: HasFS IO HandleIO -> FsPath -> GHC.LockMode -> IO (Maybe (LockFileHandle IO))
+tryLockFileIO hfs fsp mode = do
+    fp <- FS.unsafeToFilePath hfs fsp -- shouldn't fail because we are in IO
+    rethrowFsErrorIO hfs fsp $
+      bracketOnError (GHC.openFile fp GHC.WriteMode) GHC.hClose $ \h -> do
+        bracketOnError (GHC.hTryLock h mode) (\_ -> GHC.hUnlock h) $ \b -> do
+          if b then
+            pure $ Just LockFileHandle { hUnlock = rethrowFsErrorIO hfs fsp $ do
+                  GHC.hUnlock h
+                    `finally` GHC.hClose h
+                }
+          else
+            pure $ Nothing
+
+-- This is copied/adapted from System.FS.IO
+rethrowFsErrorIO :: HasCallStack => HasFS IO HandleIO -> FsPath -> IO a -> IO a
+rethrowFsErrorIO hfs fp action = do
+    res <- try action
+    case res of
+      Left err -> handleError err
+      Right a  -> return a
+  where
+    handleError :: HasCallStack => IOError -> IO a
+    handleError ioErr =
+      throwIO $ FS.ioToFsError (FS.mkFsErrorPath hfs fp) ioErr

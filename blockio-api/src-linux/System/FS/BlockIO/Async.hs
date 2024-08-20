@@ -15,10 +15,11 @@ import qualified Data.Vector.Unboxed.Mutable as VUM
 import           Foreign.C.Error
 import           GHC.IO.Exception
 import           GHC.Stack
-import           System.FS.API (BufferOffset (..), FsErrorPath, Handle (..),
-                     HasFS (..), SomeHasFS (..), ioToFsError)
+import           System.FS.API (BufferOffset (..), FsErrorPath, FsPath,
+                     Handle (..), HasFS (..), SomeHasFS (..), ioToFsError)
 import qualified System.FS.BlockIO.API as API
-import           System.FS.BlockIO.API (IOOp (..), IOResult (..), ioopHandle)
+import           System.FS.BlockIO.API (IOOp (..), IOResult (..), LockMode,
+                     ioopHandle)
 import           System.FS.IO (HandleIO)
 import           System.FS.IO.Handle
 import qualified System.IO.BlockIO as I
@@ -30,10 +31,11 @@ asyncHasBlockIO ::
      (Handle HandleIO -> Bool -> IO ())
   -> (Handle HandleIO -> FileOffset -> FileOffset -> API.Advice -> IO ())
   -> (Handle HandleIO -> FileOffset -> FileOffset -> IO ())
+  -> (FsPath -> LockMode -> IO (Maybe (API.LockFileHandle IO)))
   -> HasFS IO HandleIO
   -> API.IOCtxParams
   -> IO (API.HasBlockIO IO HandleIO)
-asyncHasBlockIO hSetNoCache hAdvise hAllocate hasFS ctxParams = do
+asyncHasBlockIO hSetNoCache hAdvise hAllocate tryLockFile hasFS ctxParams = do
   ctx <- I.initIOCtx (ctxParamsConv ctxParams)
   pure $ API.HasBlockIO {
       API.close = I.closeIOCtx ctx
@@ -41,6 +43,7 @@ asyncHasBlockIO hSetNoCache hAdvise hAllocate hasFS ctxParams = do
     , API.hSetNoCache
     , API.hAdvise
     , API.hAllocate
+    , API.tryLockFile
     }
 
 ctxParamsConv :: API.IOCtxParams -> I.IOCtxParams

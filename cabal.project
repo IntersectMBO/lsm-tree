@@ -54,3 +54,7 @@ source-repository-package
 if impl(ghc >=9.10)
   allow-newer:
     quickcheck-lockstep:base,
+
+-- TODO: relax bounds in quickcheck-lockstep
+allow-newer:
+  quickcheck-lockstep:QuickCheck
