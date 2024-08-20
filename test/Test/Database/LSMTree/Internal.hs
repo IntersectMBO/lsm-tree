@@ -20,6 +20,7 @@ import           Database.LSMTree.Extras (showPowersOf)
 import           Database.LSMTree.Internal
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.Entry
+import           Database.LSMTree.Internal.MergeSchedule
 import           Database.LSMTree.Internal.Paths (mkSnapshotName)
 import           Database.LSMTree.Internal.Serialise
 import qualified System.FS.API as FS
