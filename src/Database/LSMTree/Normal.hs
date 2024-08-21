@@ -326,7 +326,8 @@ rangeLookup = undefined
 -- Once a cursor has been created, updates to the referenced table don't affect
 -- the cursor.
 type Cursor :: (Type -> Type) -> Type -> Type -> Type -> Type
-data Cursor m k v blob
+data Cursor m k v blob = forall h. Typeable h =>
+    Cursor !(Internal.Cursor m h)
 
 {-# SPECIALISE withCursor :: TableHandle IO k v blob -> (Cursor IO k v blob -> IO a) -> IO a #-}
 -- | (Asynchronous) exception-safe, bracketed opening and closing of a cursor.
@@ -338,7 +339,7 @@ withCursor ::
   => TableHandle m k v blob
   -> (Cursor m k v blob -> m a)
   -> m a
-withCursor = undefined
+withCursor (TableHandle th) action = Internal.withCursor th (action . Cursor)
 
 {-# SPECIALISE newCursor :: TableHandle IO k v blob -> IO (Cursor IO k v blob) #-}
 -- | Create a new cursor to read from a given table. Future updates to the table
@@ -353,7 +354,7 @@ newCursor ::
      IOLike m
   => TableHandle m k v blob
   -> m (Cursor m k v blob)
-newCursor = undefined
+newCursor (TableHandle th) = Cursor <$> Internal.newCursor th
 
 {-# SPECIALISE closeCursor :: Cursor IO k v blob -> IO () #-}
 -- | Close a cursor. 'closeCursor' is idempotent. All operations on a closed
@@ -362,7 +363,7 @@ closeCursor ::
      IOLike m
   => Cursor m k v blob
   -> m ()
-closeCursor = undefined
+closeCursor (Cursor c) = Internal.closeCursor c
 
 {-# SPECIALISE readCursor :: (SerialiseKey k, SerialiseValue v) => Int -> Cursor IO k v blob -> IO (V.Vector (QueryResult k v (BlobRef IO blob))) #-}
 -- | Read the next @n@ entries from the cursor. The resulting vector is shorter

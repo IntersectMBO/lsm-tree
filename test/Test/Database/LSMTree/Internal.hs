@@ -10,6 +10,7 @@ import           Control.Exception
 import           Control.Monad (void)
 import           Control.Tracer
 import           Data.Bifunctor
+import           Data.Coerce (coerce)
 import           Data.Foldable (traverse_)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromMaybe)
@@ -17,6 +18,7 @@ import           Data.Monoid (Sum (..))
 import qualified Data.Vector as V
 import           Data.Word (Word64)
 import           Database.LSMTree.Extras (showPowersOf)
+import           Database.LSMTree.Extras.Generators (KeyForIndexCompact (..))
 import           Database.LSMTree.Internal
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.Entry
@@ -35,15 +37,35 @@ import           Test.Util.FS
 
 tests :: TestTree
 tests = testGroup "Test.Database.LSMTree.Internal" [
-      testCase "newSession" newSession
-    , testCase "restoreSession" restoreSession
-    , testProperty "twiceOpenSession" twiceOpenSession
-    , testCase "sessionDirLayoutMismatch" sessionDirLayoutMismatch
-    , testCase "sessionDirDoesNotExist" sessionDirDoesNotExist
-    , testProperty "prop_interimRestoreSessionUniqueRunNames"
-        prop_interimRestoreSessionUniqueRunNames
-    , testProperty "prop_interimOpenTable" prop_interimOpenTable
+      testGroup "Session" [
+          testCase "newSession" newSession
+        , testCase "restoreSession" restoreSession
+        , testProperty "twiceOpenSession" twiceOpenSession
+        , testCase "sessionDirLayoutMismatch" sessionDirLayoutMismatch
+        , testCase "sessionDirDoesNotExist" sessionDirDoesNotExist
+        , testProperty "prop_interimRestoreSessionUniqueRunNames"
+            prop_interimRestoreSessionUniqueRunNames
+        ]
+    , testGroup "Table" [
+          testProperty "prop_interimOpenTable" prop_interimOpenTable
+        ]
+    , testGroup "Cursor" [
+          testProperty "prop_roundtripCursor" prop_roundtripCursor
+        ]
     ]
+
+testTableConfig :: TableConfig
+testTableConfig =
+    TableConfig {
+        confMergePolicy = MergePolicyLazyLevelling
+      , confSizeRatio = Four
+        -- Write buffer size is small on purpose, so that the test actually
+        -- flushes and merges.
+      , confWriteBufferAlloc = AllocNumEntries (NumEntries 3)
+      , confBloomFilterAlloc = AllocFixed 10
+      , confFencePointerIndex = CompactIndex
+      , confDiskCachePolicy = DiskCacheNone
+      }
 
 newSession :: Assertion
 newSession = withTempIOHasBlockIO "newSession" $ \hfs hbio ->
@@ -127,15 +149,8 @@ prop_interimRestoreSessionUniqueRunNames (Positive (Small n)) (NonNegative m) = 
               -> throwIO e
             Right () -> pure $ property True
   where
-    conf = TableConfig {
-        confMergePolicy = MergePolicyLazyLevelling
-      , confSizeRatio = Four
-        -- Write buffer size is small on purpose, so that the test actually
-        -- flushes and merges.
-      , confWriteBufferAlloc = AllocNumEntries (NumEntries n)
-      , confBloomFilterAlloc = AllocFixed 10
-      , confFencePointerIndex = CompactIndex
-      , confDiskCachePolicy = DiskCacheNone
+    conf = testTableConfig {
+        confWriteBufferAlloc = AllocNumEntries (NumEntries n)
       }
 
     upds = V.fromList [ (serialiseKey i, Insert (serialiseValue i))
@@ -173,16 +188,7 @@ prop_interimOpenTable dat = ioProperty $
           pure $ tabulate "Number of runs snapshotted" [show numRunsSnapped]
               $ (Test.opaqueifyBlobs lhs === Test.opaqueifyBlobs rhs)
   where
-    conf = TableConfig {
-        confMergePolicy = MergePolicyLazyLevelling
-      , confSizeRatio = Four
-        -- Write buffer size is small on purpose, so that the test actually
-        -- flushes and merges.
-      , confWriteBufferAlloc = AllocNumEntries (NumEntries 3)
-      , confBloomFilterAlloc = AllocFixed 10
-      , confFencePointerIndex = CompactIndex
-      , confDiskCachePolicy = DiskCacheNone
-      }
+    conf = testTableConfig
 
     Test.InMemLookupData { runData, lookups = keysToLookup } = dat
     -- TODO: include inserts with blobs once blob retrieval is implemented
@@ -192,3 +198,27 @@ prop_interimOpenTable dat = ioProperty $
     ks = V.map serialiseKey (V.fromList keysToLookup)
     upds = V.fromList $ fmap (bimap serialiseKey (bimap serialiseValue serialiseBlob))
                       $ Map.toList runDataWithoutblobs
+
+-- | Check that reading from a cursor returns exactly the entries that have
+-- been inserted into the table. Roughly:
+--
+-- @
+--  readCursor . openCursor . inserts == id
+-- @
+prop_roundtripCursor ::
+     V.Vector (KeyForIndexCompact, Entry SerialisedValue SerialisedBlob)
+  -> Property
+prop_roundtripCursor kops = ioProperty $
+    withTempIOHasBlockIO "prop_roundtripCursor" $ \hfs hbio -> do
+      withSession nullTracer hfs hbio (FS.mkFsPath []) $ \sesh -> do
+        withTable sesh conf $ \th -> do
+          updates appendSerialisedValue (coerce kops) th
+          withCursor th $ \_cursor ->
+            -- TODO: read from cursor once implemented!
+            return ()
+  where
+    conf = testTableConfig
+
+appendSerialisedValue :: ResolveSerialisedValue
+appendSerialisedValue (SerialisedValue x) (SerialisedValue y) =
+    SerialisedValue (x <> y)
