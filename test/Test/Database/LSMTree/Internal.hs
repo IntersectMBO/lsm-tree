@@ -18,6 +18,7 @@ import qualified Data.Vector as V
 import           Data.Word (Word64)
 import           Database.LSMTree.Extras (showPowersOf)
 import           Database.LSMTree.Internal
+import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.Paths (mkSnapshotName)
 import           Database.LSMTree.Internal.Serialise
