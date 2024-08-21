@@ -21,7 +21,7 @@ import           Data.Maybe (catMaybes)
 import           Data.Primitive.MutVar
 import           Data.Traversable (for)
 import           Database.LSMTree.Internal.BlobRef (BlobRef)
-import qualified Database.LSMTree.Internal.Entry as Entry
+import           Database.LSMTree.Internal.Entry (Entry (..))
 import           Database.LSMTree.Internal.Run (Run)
 import           Database.LSMTree.Internal.RunReader (RunReader)
 import qualified Database.LSMTree.Internal.RunReader as Reader
@@ -102,7 +102,7 @@ data Reader m fhandle =
     -- TODO: more efficient representation? benchmark!
   | ReadBuffer !(MutVar (PrimState m) [KOp m fhandle])
 
-type KOp m fhandle = (SerialisedKey, Entry.Entry SerialisedValue (BlobRef m fhandle))
+type KOp m fhandle = (SerialisedKey, Entry SerialisedValue (BlobRef m fhandle))
 
 -- | On equal keys, elements from runs earlier in the list are yielded first.
 -- This means that the list of runs should be sorted from new to old.
@@ -123,15 +123,18 @@ new fs hbio wbs runs = do
   where
     fromWB :: WB.WriteBuffer -> IO (Maybe (ReadCtx (FS.Handle h)))
     fromWB wb = do
-        -- TODO: Remove once the write buffer returns BlobRefs.
-        -- Also remember to enable write buffer in RunReaders QLS tests.
-        let toBlobRef :: SerialisedBlob -> BlobRef IO (FS.Handle h)
-            toBlobRef = error "toBlobRef: can't make BlobRef from blob in write buffer"
-        kops <- newMutVar $ map (fmap (fmap toBlobRef)) $ WB.toList wb
+        kops <- newMutVar $ map (fmap errOnBlob) $ WB.toList wb
         nextReadCtx fs hbio (ReaderNumber 0) (ReadBuffer kops)
 
     fromRun :: ReaderNumber -> Run IO (FS.Handle h) -> IO (Maybe (ReadCtx (FS.Handle h)))
     fromRun n run = nextReadCtx fs hbio n . ReadRun =<< Reader.new fs hbio run
+
+-- | TODO: remove once blob references are implemented
+errOnBlob :: Entry SerialisedValue SerialisedBlob -> Entry SerialisedValue (BlobRef m h)
+errOnBlob (Insert v)           = Insert v
+errOnBlob (InsertWithBlob _ b) = error $ "RunReaders: blob references not supported: " ++ show b
+errOnBlob (Mupdate v)          = Mupdate v
+errOnBlob Delete               = Delete
 
 -- | Only call when aborting before all readers have been drained.
 close ::
