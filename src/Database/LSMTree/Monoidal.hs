@@ -119,6 +119,7 @@ module Database.LSMTree.Monoidal (
   ) where
 
 import           Control.DeepSeq
+import           Control.Exception (assert)
 import           Control.Monad (void, (<$!>))
 import           Data.Bifunctor (Bifunctor (..))
 import           Data.Coerce (coerce)
@@ -302,11 +303,14 @@ closeCursor (Internal.MonoidalCursor c) = Internal.closeCursor c
 -- NOTE: entries are returned in order of the serialised keys, which might not
 -- agree with @Ord k@. See 'SerialiseKey' for more information.
 readCursor ::
-     (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
+     forall m k v. (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
   => Int
   -> Cursor m k v
   -> m (V.Vector (QueryResult k v))
-readCursor = undefined
+readCursor n (Internal.MonoidalCursor c) =
+    Internal.readCursor (resolve @v Proxy) n c $ \k v mblob ->
+      assert (null mblob) $
+        FoundInQuery (Internal.deserialiseKey k) (Internal.deserialiseValue v)
 
 {-------------------------------------------------------------------------------
   Table updates

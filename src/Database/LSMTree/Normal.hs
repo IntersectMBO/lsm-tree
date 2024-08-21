@@ -376,7 +376,17 @@ readCursor ::
   => Int
   -> Cursor m k v blob
   -> m (V.Vector (QueryResult k v (BlobRef m blob)))
-readCursor = undefined
+readCursor n (Internal.NormalCursor c) =
+    Internal.readCursor const n c $ \k v mblob ->
+      toNormalQueryResult
+        (Internal.deserialiseKey k)
+        (Internal.deserialiseValue v)
+        (BlobRef <$> mblob)
+
+toNormalQueryResult :: k -> v -> Maybe b -> QueryResult k v b
+toNormalQueryResult k v = \case
+    Nothing    -> FoundInQuery k v
+    Just blob  -> FoundInQueryWithBlob k v blob
 
 {-------------------------------------------------------------------------------
   Table updates
