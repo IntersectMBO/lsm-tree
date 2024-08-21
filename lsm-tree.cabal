@@ -125,6 +125,7 @@ library
     Database.LSMTree.Internal.Lookup
     Database.LSMTree.Internal.Managed
     Database.LSMTree.Internal.Merge
+    Database.LSMTree.Internal.MergeSchedule
     Database.LSMTree.Internal.Monoidal
     Database.LSMTree.Internal.Normal
     Database.LSMTree.Internal.PageAcc
