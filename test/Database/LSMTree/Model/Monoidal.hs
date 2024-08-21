@@ -20,7 +20,7 @@ module Database.LSMTree.Model.Monoidal (
   , Range
   , LookupResult (..)
   , lookups
-  , RangeLookupResult (..)
+  , QueryResult (..)
   , rangeLookup
     -- ** Updates
   , Update (..)
@@ -46,9 +46,8 @@ import qualified Data.Vector as V
 import           Database.LSMTree.Common (Range (..), SerialiseKey (..),
                      SerialiseValue (..))
 import           Database.LSMTree.Internal.RawBytes (RawBytes)
-import           Database.LSMTree.Monoidal (LookupResult (..),
-                     RangeLookupResult (..), ResolveValue (..), Update (..),
-                     resolveDeserialised)
+import           Database.LSMTree.Monoidal (LookupResult (..), QueryResult (..),
+                     ResolveValue (..), Update (..), resolveDeserialised)
 import           GHC.Exts (IsList (..))
 
 {-------------------------------------------------------------------------------
@@ -111,9 +110,9 @@ rangeLookup :: forall k v.
      (SerialiseKey k, SerialiseValue v)
   => Range k
   -> Table k v
-  -> V.Vector (RangeLookupResult k v)
+  -> V.Vector (QueryResult k v)
 rangeLookup r tbl = V.fromList
-    [ FoundInRange (deserialiseKey k) (deserialiseValue v)
+    [ FoundInQuery (deserialiseKey k) (deserialiseValue v)
     | let (lb, ub) = convertRange r
     , (k, v) <- Map.R.rangeLookup lb ub (_values tbl)
     ]

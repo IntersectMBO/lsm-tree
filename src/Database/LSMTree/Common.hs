@@ -146,9 +146,9 @@ openSession tr hfs hbio dir = Session <$> Internal.openSession tr hfs hbio dir
 -- | Close the table session. 'closeSession' is idempotent. All subsequent
 -- operations on the session or the tables within it will throw an exception.
 --
--- This also closes any open table handles in the session. It would typically
--- be good practice however to close all table handles first rather than
--- relying on this for cleanup.
+-- This also closes any open table handles and cursors in the session. It would
+-- typically be good practice however to close all table handles first rather
+-- than relying on this for cleanup.
 --
 -- Closing a table session allows the session to be opened again elsewhere, for
 -- example in a different process. Note that the session will be closed

@@ -21,8 +21,8 @@ import qualified Database.LSMTree.Class.Normal as Class
 import           Database.LSMTree.Common (Labellable (..), mkSnapshotName)
 import           Database.LSMTree.Extras.Generators ()
 import           Database.LSMTree.ModelIO.Normal (IOLike, LookupResult (..),
-                     Range (..), RangeLookupResult (..), SerialiseKey,
-                     SerialiseValue, Update (..))
+                     QueryResult (..), Range (..), SerialiseKey, SerialiseValue,
+                     Update (..))
 import qualified Database.LSMTree.ModelIO.Normal as M
 import qualified Database.LSMTree.Normal as R
 import qualified System.FS.API as FS
@@ -163,7 +163,7 @@ rangeLookupWithBlobs ::
      forall h m k v blob. ( IsTableHandle h, IOLike m
      , SerialiseKey k, SerialiseValue v, SerialiseValue blob
      )
-  => h m k v blob -> Session h m -> Range k -> m (V.Vector (RangeLookupResult k v blob))
+  => h m k v blob -> Session h m -> Range k -> m (V.Vector (QueryResult k v blob))
 rangeLookupWithBlobs hdl ses r = do
     res <- rangeLookup hdl r
     getCompose <$> retrieveBlobsTrav (Proxy.Proxy @h) ses (Compose res)
@@ -258,9 +258,9 @@ evalRange :: Ord k => Range k -> k -> Bool
 evalRange (FromToExcluding lo hi) x = lo <= x && x < hi
 evalRange (FromToIncluding lo hi) x = lo <= x && x <= hi
 
-rangeLookupResultKey :: RangeLookupResult k v b -> k
-rangeLookupResultKey (FoundInRange k _)             = k
-rangeLookupResultKey (FoundInRangeWithBlob k _ _  ) = k
+queryResultKey :: QueryResult k v b -> k
+queryResultKey (FoundInQuery k _)             = k
+queryResultKey (FoundInQueryWithBlob k _ _  ) = k
 
 -- | Last insert wins.
 prop_insertLookupRange ::
@@ -276,11 +276,11 @@ prop_insertLookupRange h ups k v r = ioProperty $ do
 
       res' <- rangeLookupWithBlobs hdl ses r
 
-      let p :: RangeLookupResult Key Value b -> Bool
-          p rlr = rangeLookupResultKey rlr /= k
+      let p :: QueryResult Key Value b -> Bool
+          p rlr = queryResultKey rlr /= k
 
       if evalRange r k
-      then return $ vsortOn rangeLookupResultKey (V.cons (FoundInRange k v) (V.filter p res)) === res'
+      then return $ vsortOn queryResultKey (V.cons (FoundInQuery k v) (V.filter p res)) === res'
       else return $ res === res'
 
   where

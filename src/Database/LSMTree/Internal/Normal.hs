@@ -1,6 +1,6 @@
 module Database.LSMTree.Internal.Normal (
     LookupResult (..),
-    RangeLookupResult (..),
+    QueryResult (..),
     Update (..),
 ) where
 
@@ -25,11 +25,16 @@ instance Bifunctor LookupResult where
       Found v           -> Found v
       FoundWithBlob v b -> FoundWithBlob v (g b)
 
--- | A result for one point in a range lookup.
-data RangeLookupResult k v blobref =
-    FoundInRange         !k !v
-  | FoundInRangeWithBlob !k !v !blobref
+-- | A result for one point in a cursor read or range lookup.
+data QueryResult k v blobref =
+    FoundInQuery         !k !v
+  | FoundInQueryWithBlob !k !v !blobref
   deriving stock (Eq, Show, Functor, Foldable, Traversable)
+
+instance Bifunctor (QueryResult k) where
+  bimap f g = \case
+      FoundInQuery k v           -> FoundInQuery k (f v)
+      FoundInQueryWithBlob k v b -> FoundInQueryWithBlob k (f v) (g b)
 
 -- | Normal tables support insert and delete operations.
 --

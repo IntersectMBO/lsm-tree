@@ -20,7 +20,7 @@ module Database.LSMTree.ModelIO.Monoidal (
   , Range (..)
   , LookupResult (..)
   , lookups
-  , RangeLookupResult (..)
+  , QueryResult (..)
   , rangeLookup
     -- ** Updates
   , Update (..)
@@ -53,8 +53,8 @@ import           Database.LSMTree.Common (IOLike, Range (..), SerialiseKey,
 import           Database.LSMTree.Model.Monoidal (ResolveValue)
 import qualified Database.LSMTree.Model.Monoidal as Model
 import           Database.LSMTree.ModelIO.Session
-import           Database.LSMTree.Monoidal (LookupResult (..),
-                     RangeLookupResult (..), Update (..))
+import           Database.LSMTree.Monoidal (LookupResult (..), QueryResult (..),
+                     Update (..))
 import           GHC.IO.Exception (IOErrorType (..), IOException (..))
 
 {-------------------------------------------------------------------------------
@@ -114,7 +114,7 @@ rangeLookup ::
      (IOLike m, SerialiseKey k, SerialiseValue v)
   => Range k
   -> TableHandle m k v
-  -> m (V.Vector (RangeLookupResult k v))
+  -> m (V.Vector (QueryResult k v))
 rangeLookup r TableHandle {..} = atomically $
     withModel "rangeLookup" thSession thRef $ \tbl ->
         return $ Model.rangeLookup r tbl

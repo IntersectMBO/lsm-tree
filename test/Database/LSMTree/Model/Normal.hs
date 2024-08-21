@@ -12,7 +12,7 @@ module Database.LSMTree.Model.Normal (
   , Range (..)
   , LookupResult (..)
   , lookups
-  , RangeLookupResult (..)
+  , QueryResult (..)
   , rangeLookup
     -- ** Updates
   , Update (..)
@@ -38,8 +38,8 @@ import qualified Data.Vector as V
 import           Database.LSMTree.Common (Range (..), SerialiseKey (..),
                      SerialiseValue (..))
 import           Database.LSMTree.Internal.RawBytes (RawBytes)
-import           Database.LSMTree.Normal (LookupResult (..),
-                     RangeLookupResult (..), Update (..))
+import           Database.LSMTree.Normal (LookupResult (..), QueryResult (..),
+                     Update (..))
 import           GHC.Exts (IsList (..))
 
 {-------------------------------------------------------------------------------
@@ -110,11 +110,11 @@ rangeLookup :: forall k v blob.
      (SerialiseKey k, SerialiseValue v)
   => Range k
   -> Table k v blob
-  -> V.Vector (RangeLookupResult k v (BlobRef blob))
+  -> V.Vector (QueryResult k v (BlobRef blob))
 rangeLookup r tbl = V.fromList
     [ case v of
-        (v', Nothing) -> FoundInRange (deserialiseKey k) (deserialiseValue v')
-        (v', Just br) -> FoundInRangeWithBlob (deserialiseKey k) (deserialiseValue v') br
+        (v', Nothing) -> FoundInQuery (deserialiseKey k) (deserialiseValue v')
+        (v', Just br) -> FoundInQueryWithBlob (deserialiseKey k) (deserialiseValue v') br
     | let (lb, ub) = convertRange r
     , (k, v) <- Map.R.rangeLookup lb ub (_values tbl)
     ]
