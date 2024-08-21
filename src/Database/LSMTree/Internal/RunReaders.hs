@@ -11,6 +11,7 @@ module Database.LSMTree.Internal.RunReaders (
 import           Control.Monad (zipWithM)
 import           Control.Monad.Primitive
 import           Data.Function (on)
+import           Data.List.NonEmpty (nonEmpty)
 import           Data.Maybe (catMaybes)
 import           Data.Primitive.MutVar
 import           Data.Traversable (for)
@@ -77,18 +78,19 @@ instance Ord (ReadCtx fhandle) where
 
 -- | On equal keys, elements from runs earlier in the list are yielded first.
 -- This means that the list of runs should be sorted from new to old.
-new ::
+new :: forall h .
      HasFS IO h
   -> HasBlockIO IO h
   -> [Run RealWorld (FS.Handle h)]
   -> IO (Maybe (Readers RealWorld (FS.Handle h)))
 new fs hbio runs = do
     readers <- zipWithM (fromRun . ReaderNumber) [1..] runs
-    (readersHeap, firstReadCtx) <- Heap.newMutableHeap (catMaybes readers)
-    for firstReadCtx $ \readCtx -> do
+    for (nonEmpty (catMaybes readers)) $ \xs -> do
+      (readersHeap, readCtx) <- Heap.newMutableHeap xs
       readersNext <- newMutVar readCtx
       return Readers {..}
   where
+    fromRun :: ReaderNumber -> Run RealWorld (FS.Handle h) -> IO (Maybe (ReadCtx (FS.Handle h)))
     fromRun n run = nextReadCtx fs hbio n =<< Reader.new fs hbio run
 
 -- | Only call when aborting before all readers have been drained.

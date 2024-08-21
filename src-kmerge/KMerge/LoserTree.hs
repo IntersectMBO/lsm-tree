@@ -14,6 +14,7 @@ import           Control.Monad.Primitive (PrimMonad (PrimState), RealWorld)
 import qualified Control.Monad.ST as Lazy
 import qualified Control.Monad.ST as Strict
 import           Data.Bits (unsafeShiftR)
+import           Data.List.NonEmpty (NonEmpty (..))
 import           Data.Primitive (MutablePrimArray, SmallMutableArray,
                      newPrimArray, newSmallArray, readPrimArray, readSmallArray,
                      setPrimArray, writePrimArray, writeSmallArray)
@@ -35,69 +36,72 @@ placeholder = unsafeCoerce ()
 --
 -- The second half of a pair is the winner value (only losers are stored in the tree).
 --
-newLoserTree :: forall a m. (PrimMonad m, Ord a) => [a] -> m (MutableLoserTree (PrimState m) a, Maybe a)
-newLoserTree [] = do
-    ids <- newPrimArray 0
-    arr <- newSmallArray 0 placeholder
-    sizeRef <- newPrimVar 0
-    holeRef <- newPrimVar 0
-    return $! (MLT sizeRef holeRef ids arr, Nothing)
-newLoserTree [x] = do
-    ids <- newPrimArray 0
-    arr <- newSmallArray 0 placeholder
-    sizeRef <- newPrimVar 0
-    holeRef <- newPrimVar 0
-    return $! (MLT sizeRef holeRef ids arr, Just x)
-newLoserTree xs0 = do
+newLoserTree :: forall a m. (PrimMonad m, Ord a) => NonEmpty a -> m (MutableLoserTree (PrimState m) a, a)
+newLoserTree (x0 :| xs0) = do
     -- allocate array, we need one less than there are elements.
     -- one of the elements will be the winner.
-    ids <- newPrimArray  (len - 1)
-    setPrimArray ids 0 (len - 1) (-1)
-    arr <- newSmallArray (len - 1) placeholder
-
-    loop ids arr (len - 1) xs0
+    ids <- newPrimArray  len
+    arr <- newSmallArray len placeholder
+    case xs0 of
+      [] -> do
+        sizeRef <- newPrimVar 0
+        holeRef <- newPrimVar 0
+        return $! (MLT sizeRef holeRef ids arr, x0)
+      _ -> do
+        setPrimArray ids 0 len (-1)
+        loop ids arr len $ x0 :| xs0
   where
     !len = length xs0
 
-    loop :: MutablePrimArray (PrimState m) Int -> SmallMutableArray (PrimState m) a -> Int -> [a] -> m (MutableLoserTree (PrimState m) a, Maybe a)
-    loop !_   !_   !_   []     = error "should not happen"
-    loop  ids  arr  idx (x:xs) = do
+    loop :: MutablePrimArray (PrimState m) Int -> SmallMutableArray (PrimState m) a -> Int -> NonEmpty a -> m (MutableLoserTree (PrimState m) a, a)
+    loop  ids  arr  idx (x :| xs) = do
         sift ids arr (parentOf idx) (parentOf idx) x idx xs
 
-    sift :: MutablePrimArray (PrimState m) Int -> SmallMutableArray (PrimState m) a -> Int -> Int -> a -> Int -> [a] -> m (MutableLoserTree (PrimState m) a, Maybe a)
+    sift :: MutablePrimArray (PrimState m) Int -> SmallMutableArray (PrimState m) a -> Int -> Int -> a -> Int -> [a] -> m (MutableLoserTree (PrimState m) a, a)
     sift !ids !arr !idxX !j !x !idx0 xs = do
         !idxY <- readPrimArray ids j
         y     <- readSmallArray arr j
+        -- NOTE: The length of xs is equal to number of uninitialised entries
+        -- from this we can deduce that an entry at j is uninitialised implies
+        -- that xs cannot be empty.
+        -- We check this invariant here and throw an exception
+        -- with a descriptive error message if it is violated.
         if idxY < 0
-        then do
+        then case xs of
+          [] -> error $ unlines
+            [ "Error in KMerge.LoserTree.newLoserTree"
+            , unwords [ "Invariant violated at entry # j =", show j, "with xs = [] and idxY =", show idxY ]
+            ]
+          e:es -> do
             writePrimArray  ids j idxX
             writeSmallArray arr j x
-            loop ids arr (idx0 + 1) xs
-        else if j <= 0
-        then do
-                if x <= y
-                then do
-                    sizeRef <- newPrimVar (len - 1)
-                    holeRef <- newPrimVar idxX
-                    return (MLT sizeRef holeRef ids arr, Just x)
-                else do
-                    writePrimArray  ids j idxX
-                    writeSmallArray arr j x
-                    sizeRef <- newPrimVar (len - 1)
-                    holeRef <- newPrimVar idxY
-                    return (MLT sizeRef holeRef ids arr, Just y)
-        else do
-                if x < y
-                then do
-                    sift ids arr idxX (parentOf j) x idx0 xs
-                else do
-                    writePrimArray  ids j idxX
-                    writeSmallArray arr j x
-                    sift ids arr idxY (parentOf j) y idx0 xs
+            loop ids arr (idx0 + 1) $ e :| es
+        else
+            if j <= 0
+            then do
+                    if x <= y
+                    then do
+                        sizeRef <- newPrimVar len
+                        holeRef <- newPrimVar idxX
+                        return (MLT sizeRef holeRef ids arr, x)
+                    else do
+                        writePrimArray  ids j idxX
+                        writeSmallArray arr j x
+                        sizeRef <- newPrimVar len
+                        holeRef <- newPrimVar idxY
+                        return (MLT sizeRef holeRef ids arr, y)
+            else do
+                    if x < y
+                    then do
+                        sift ids arr idxX (parentOf j) x idx0 xs
+                    else do
+                        writePrimArray  ids j idxX
+                        writeSmallArray arr j x
+                        sift ids arr idxY (parentOf j) y idx0 xs
 
-{-# SPECIALIZE newLoserTree :: forall a.   Ord a => [a] -> IO          (MutableLoserTree RealWorld a, Maybe a) #-}
-{-# SPECIALIZE newLoserTree :: forall a s. Ord a => [a] -> Strict.ST s (MutableLoserTree s         a, Maybe a) #-}
-{-# SPECIALIZE newLoserTree :: forall a s. Ord a => [a] -> Lazy.ST   s (MutableLoserTree s         a, Maybe a) #-}
+{-# SPECIALIZE newLoserTree :: forall a.   Ord a => NonEmpty a -> IO          (MutableLoserTree RealWorld a, a) #-}
+{-# SPECIALIZE newLoserTree :: forall a s. Ord a => NonEmpty a -> Strict.ST s (MutableLoserTree s         a, a) #-}
+{-# SPECIALIZE newLoserTree :: forall a s. Ord a => NonEmpty a -> Lazy.ST   s (MutableLoserTree s         a, a) #-}
 
 {-------------------------------------------------------------------------------
   Updates
