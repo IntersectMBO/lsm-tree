@@ -296,7 +296,7 @@ prop_big_insert k mblobref =
   where
     v       = Ref.Value (BS.replicate 5000 42)
     op      = Ref.Insert v mblobref
-    kops    = [ (k, op)]
+    kops    = [(k, op)]
     rawpage = fst $ Ref.toRawPage (Ref.PageContentFits kops)
 
 prop_single_entry :: Ref.PageContentSingle -> Property
