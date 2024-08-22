@@ -8,7 +8,6 @@ import qualified Data.BloomFilter as Bloom
 import           Data.Foldable (traverse_)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (isJust)
-import           Data.Word (Word64)
 import           Database.LSMTree.Extras
 import           Database.LSMTree.Extras.Generators (KeyForIndexCompact,
                      TypedWriteBuffer (..))
@@ -18,6 +17,7 @@ import           Database.LSMTree.Internal.Paths (RunFsPaths (..),
                      pathsForRunFiles)
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..))
+import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
@@ -68,11 +68,11 @@ prop_MergeDistributes ::
      SmallList (TypedWriteBuffer KeyForIndexCompact SerialisedValue SerialisedBlob) ->
      IO Property
 prop_MergeDistributes fs hbio level stepSize (fmap unTypedWriteBuffer -> SmallList wbs) = do
-    runs <- sequenceA $ zipWith flush [10..] wbs
+    runs <- sequenceA $ zipWith (flush . RunNumber) [10..] wbs
     let stepsNeeded = sum (map (Entry.unNumEntries . WB.numEntries) wbs)
-    (stepsDone, lhs) <- mergeRuns fs hbio level 0 runs stepSize
+    (stepsDone, lhs) <- mergeRuns fs hbio level (RunNumber 0) runs stepSize
 
-    rhs <- flush 1 (mergeWriteBuffers level wbs)
+    rhs <- flush (RunNumber 1) (mergeWriteBuffers level wbs)
 
     lhsKOpsFile <- FS.hGetAll fs (Run.runKOpsFile lhs)
     lhsBlobFile <- FS.hGetAll fs (Run.runBlobFile lhs)
@@ -126,8 +126,8 @@ prop_CloseMerge ::
      SmallList (TypedWriteBuffer KeyForIndexCompact SerialisedValue SerialisedBlob) ->
      IO Property
 prop_CloseMerge fs hbio level (Positive stepSize) (fmap unTypedWriteBuffer -> SmallList wbs) = do
-    let path0 = RunFsPaths (FS.mkFsPath []) 0
-    runs <- sequenceA $ zipWith flush [10..] wbs
+    let path0 = RunFsPaths (FS.mkFsPath []) (RunNumber 0)
+    runs <- sequenceA $ zipWith (flush . RunNumber) [10..] wbs
     mergeToClose <- makeInProgressMerge path0 runs
     traverse_ (Merge.close fs hbio) mergeToClose
 
@@ -165,7 +165,7 @@ mergeRuns ::
      FS.HasFS IO h ->
      FS.HasBlockIO IO h ->
      Merge.Level ->
-     Word64 ->
+     RunNumber ->
      [Run.Run RealWorld (FS.Handle h)] ->
      StepSize ->
      IO (Int, Run.Run RealWorld (FS.Handle h))

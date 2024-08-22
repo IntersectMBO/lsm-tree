@@ -31,6 +31,7 @@ import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..))
 import qualified Database.LSMTree.Internal.RunBuilder as RunBuilder
+import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.Serialise (SerialisedKey,
                      serialiseKey, serialiseValue)
 import           Debug.Trace (traceMarkerIO)
@@ -335,7 +336,7 @@ lookupsEnv runSizes keyRng0 hfs hbio caching = do
     -- create the runs
     rbs <- sequence
             [ RunBuilder.new hfs
-                (RunFsPaths (FS.mkFsPath []) i)
+                (RunFsPaths (FS.mkFsPath []) (RunNumber i))
                 (NumEntries numEntries)
                 (RunAllocFixed benchmarkNumBitsPerEntry)
             | ((numEntries, _), i) <- zip runSizes [0..] ]

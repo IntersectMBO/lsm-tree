@@ -52,6 +52,7 @@ import           Database.LSMTree.Internal.RawOverflowPage
 import           Database.LSMTree.Internal.RawPage
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunAcc as Run
+import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.Serialise.Class
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
@@ -314,7 +315,7 @@ prop_roundtripFromWriteBufferLookupIO dats =
       sequence
         [ (,wb) <$> Run.fromWriteBuffer hasFS hasBlockIO Run.CacheRunData
                                         (RunAllocFixed 10)
-                                        (RunFsPaths (FS.mkFsPath []) i) wb
+                                        (RunFsPaths (FS.mkFsPath []) (RunNumber i)) wb
         | (i, dat) <- zip [0..] (getSmallList dats)
         , let wb = WB.fromMap (runData dat)
         ]

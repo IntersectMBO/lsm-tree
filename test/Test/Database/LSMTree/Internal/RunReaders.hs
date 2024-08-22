@@ -21,6 +21,7 @@ import           Database.LSMTree.Internal.Entry
 import qualified Database.LSMTree.Internal.Paths as Paths
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..))
+import           Database.LSMTree.Internal.RunNumber
 import qualified Database.LSMTree.Internal.RunReader as Reader
 import           Database.LSMTree.Internal.RunReaders
                      (HasMore (Drained, HasMore), Readers)
@@ -72,9 +73,6 @@ type Handle = FS.Handle MockFS.HandleMock
 newtype MockReaders = MockReaders
     { mockEntries :: [((SerialisedKey, RunNumber), SerialisedEntry)] }
   deriving stock Show
-
-newtype RunNumber = RunNumber Int
-  deriving stock (Eq, Ord, Show)
 
 isEmpty :: MockReaders -> Bool
 isEmpty (MockReaders xs) = null xs
@@ -310,7 +308,7 @@ runIO act lu = case act of
       runs <-
         zipWithM
           (\p -> liftIO . Run.fromWriteBuffer hfs hbio Run.CacheRunData (RunAllocFixed 10) p)
-          (Paths.RunFsPaths (FS.mkFsPath []) <$> [numRuns ..])
+          (Paths.RunFsPaths (FS.mkFsPath []) . RunNumber <$> [numRuns ..])
           (map unTypedWriteBuffer wbs)
       newReaders <- liftIO $ Readers.new hfs hbio runs >>= \case
         Nothing -> do
