@@ -1,4 +1,3 @@
-{-# LANGUAGE CPP       #-}
 {-# LANGUAGE DataKinds #-}
 
 module Database.LSMTree.Internal.MergeSchedule (
@@ -26,12 +25,7 @@ module Database.LSMTree.Internal.MergeSchedule (
   , maxRunSize
   ) where
 
-#ifdef NO_IGNORE_ASSERTS
-import           Control.Monad
-#endif
-
 import           Control.Monad.Primitive
-import           Control.Monad.ST.Strict
 import           Control.Tracer
 import           Data.BloomFilter (Bloom)
 import           Data.Foldable
@@ -307,82 +301,14 @@ flushWriteBuffer tr conf@TableConfig{confDiskCachePolicy}
       , tableCache = mkLevelsCache levels'
       }
 
--- | Note that the invariants rely on the fact that levelling is only used on
--- the last level.
---
-_levelsInvariant :: forall s h. TableConfig -> Levels s h -> ST s Bool
-_levelsInvariant conf levels =
-    go (LevelNo 1) levels >>= \ !_ -> pure True
-  where
-    sr = confSizeRatio conf
-    wba = confWriteBufferAlloc conf
-
-    go :: LevelNo -> Levels s h -> ST s ()
-    go !_ (V.uncons -> Nothing) = pure ()
-
-    go !ln (V.uncons -> Just (Level mr rs, ls)) = do
-      mrs <- case mr of
-               SingleRun r                   -> pure $ CompletedMerge r
-               MergingRun (CompletedMerge r) -> pure $ CompletedMerge r
-      assert (length rs < sizeRatioInt sr) $ pure ()
-      assert (expectedRunLengths ln rs ls) $ pure ()
-      assert (expectedMergingRunLengths ln mr mrs ls) $ pure ()
-      go (succ ln) ls
-
-    -- All runs within a level "proper" (as opposed to the incoming runs
-    -- being merged) should be of the correct size for the level.
-    expectedRunLengths ln rs ls = do
-      case mergePolicyForLevel (confMergePolicy conf) ln ls of
-        -- Levels using levelling have only one run, and that single run is
-        -- (almost) always involved in an ongoing merge. Thus there are no
-        -- other "normal" runs. The exception is when a levelling run becomes
-        -- too large and is promoted, in that case initially there's no merge,
-        -- but it is still represented as a 'MergingRun', using 'SingleRun'.
-        LevelLevelling -> assert (V.null rs) True
-        LevelTiering   -> V.all (\r -> assert (fits LevelTiering r ln) True) rs
-
-    -- Incoming runs being merged also need to be of the right size, but the
-    -- conditions are more complicated.
-    expectedMergingRunLengths ln mr mrs ls =
-      case mergePolicyForLevel (confMergePolicy conf) ln ls of
-        LevelLevelling ->
-          case (mr, mrs) of
-            -- A single incoming run (which thus didn't need merging) must be
-            -- of the expected size range already
-            (SingleRun r, CompletedMerge{}) -> assert (fits LevelLevelling r ln) True
-                        -- A completed merge for levelling can be of almost any size at all!
-            -- It can be smaller, due to deletions in the last level. But it
-            -- can't be bigger than would fit into the next level.
-            (_, CompletedMerge r) -> assert (fitsUB LevelLevelling r (succ ln)) True
-        LevelTiering ->
-          case (mr, mrs, mergeLastForLevel ls) of
-            -- A single incoming run (which thus didn't need merging) must be
-            -- of the expected size already
-            (SingleRun r, CompletedMerge{}, _) -> assert (fits LevelTiering r ln) True
-
-            -- A completed last level run can be of almost any smaller size due
-            -- to deletions, but it can't be bigger than the next level down.
-            -- Note that tiering on the last level only occurs when there is
-            -- a single level only.
-            (_, CompletedMerge r, Merge.LastLevel) ->
-                assert (ln == LevelNo 1) $
-                assert (fitsUB LevelTiering r (succ ln)) $
-                True
-
-            -- A completed mid level run is usually of the size for the
-            -- level it is entering, but can also be one smaller (in which case
-            -- it'll be held back and merged again).
-            (_, CompletedMerge r, Merge.MidLevel) ->
-                assert (fitsUB LevelTiering r ln || fitsUB LevelTiering r (succ ln)) True
-
-    -- Check that a run fits in the current level
-    fits policy r ln = fitsLB policy r ln && fitsUB policy r ln
-    -- Check that a run is too large for previous levels
-    fitsLB policy r ln = maxRunSize sr wba policy (pred ln) < Run.runNumEntries r
-    -- Check that a run is too small for next levels
-    fitsUB policy r ln = Run.runNumEntries r <= maxRunSize sr wba policy ln
-
 {-# SPECIALISE addRunToLevels :: Tracer IO (AtLevel MergeTrace) -> TableConfig -> ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> Run RealWorld (Handle h) -> TempRegistry IO -> Levels RealWorld (Handle h) -> IO (Levels RealWorld (Handle h)) #-}
+-- TODO: in the past, we checked invariants on the Levels structure as a
+-- separate traversal after performing updates to the runs/merges/levels. This
+-- was removed because it complicates concurrency in the presence of properly
+-- scheduled merges. Instead, we can either (i) add inline invariant assertions
+-- to this function, or (ii) trust that the ScheduledMerges prototype tests
+-- invariants well enough that we don't have to include invariant assertions
+-- here as well.
 addRunToLevels ::
      forall m h. m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
   => Tracer m (AtLevel MergeTrace)
@@ -398,9 +324,6 @@ addRunToLevels ::
   -> m (Levels (PrimState m) (Handle h))
 addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = do
     ls' <- go (LevelNo 1) (V.singleton r0) levels
-#ifdef NO_IGNORE_ASSERTS
-    void $ stToIO $ _levelsInvariant conf ls'
-#endif
     return ls'
   where
     -- NOTE: @go@ is based on the @increment@ function from the
