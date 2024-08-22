@@ -249,7 +249,7 @@ data RawPageIndex entry =
 -- |
 -- __Time:__ \( \mathcal{O}\left( 1 \right) \)
 --
--- Conveniently access the the 'SerialisedKey' of a 'RawPageIndex'.
+-- Conveniently access the 'SerialisedKey' of a 'RawPageIndex'.
 {-# INLINE getRawPageIndexKey #-}
 getRawPageIndexKey :: RawPageIndex e -> Maybe SerialisedKey
 getRawPageIndexKey = \case
