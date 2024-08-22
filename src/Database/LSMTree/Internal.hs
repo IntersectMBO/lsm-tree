@@ -606,7 +606,7 @@ updates resolve es th = do
                   hfs
                   (tableHasBlockIO thEnv)
                   (tableSessionRoot thEnv)
-                  (incrUniqCounter $ tableSessionUniqCounter thEnv)
+                  (tableSessionUniqCounter thEnv)
                   es
                   tc
           assertNoThunks tc' $ pure ()
@@ -645,7 +645,7 @@ snapshot resolve snap label th = do
               hfs
               (tableHasBlockIO thEnv)
               (tableSessionRoot thEnv)
-              (incrUniqCounter $ tableSessionUniqCounter thEnv)
+              (tableSessionUniqCounter thEnv)
               reg
               content
         pure (r, r)

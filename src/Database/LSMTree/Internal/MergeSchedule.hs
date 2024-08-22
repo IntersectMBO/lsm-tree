@@ -196,7 +196,7 @@ closeLevels hfs hbio levels = V.mapM_ (Run.removeReference hfs hbio) (runsInLeve
   Flushes and scheduled merges
 -------------------------------------------------------------------------------}
 
-{-# SPECIALISE updatesWithInterleavedFlushes :: Tracer IO (AtLevel MergeTrace) -> TableConfig -> ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> GetUniq IO -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob) -> TempRegistry IO -> TableContent RealWorld h -> IO (TableContent RealWorld h) #-}
+{-# SPECIALISE updatesWithInterleavedFlushes :: Tracer IO (AtLevel MergeTrace) -> TableConfig -> ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob) -> TempRegistry IO -> TableContent RealWorld h -> IO (TableContent RealWorld h) #-}
 -- | A single batch of updates can fill up the write buffer multiple times. We
 -- flush the write buffer each time it fills up before trying to fill it up
 -- again.
@@ -229,12 +229,12 @@ updatesWithInterleavedFlushes ::
   -> HasFS m h
   -> HasBlockIO m h
   -> SessionRoot
-  -> GetUniq m
+  -> UniqCounter m
   -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob)
   -> TempRegistry m
   -> TableContent (PrimState m) h
   -> m (TableContent (PrimState m) h)
-updatesWithInterleavedFlushes tr conf resolve hfs hbio root getUniq es reg tc = do
+updatesWithInterleavedFlushes tr conf resolve hfs hbio root uc es reg tc = do
     let wb = tableWriteBuffer tc
         (wb', es') = WB.addEntriesUpToN resolve es maxn wb
     -- never exceed the write buffer capacity
@@ -248,14 +248,14 @@ updatesWithInterleavedFlushes tr conf resolve hfs hbio root getUniq es reg tc = 
     -- If the write buffer did reach capacity, then we flush.
     else do
       assert (unNumEntries (WB.numEntries wb') == maxn) $ pure ()
-      tc'' <- flushWriteBuffer tr conf resolve hfs hbio root getUniq reg tc'
+      tc'' <- flushWriteBuffer tr conf resolve hfs hbio root uc reg tc'
       -- In the fortunate case where we have already performed all the updates,
       -- return,
       if V.null es' then
         pure $! tc''
       -- otherwise, keep going
       else
-        updatesWithInterleavedFlushes tr conf resolve hfs hbio root getUniq es' reg tc''
+        updatesWithInterleavedFlushes tr conf resolve hfs hbio root uc es' reg tc''
   where
     AllocNumEntries (NumEntries maxn) = confWriteBufferAlloc conf
     setWriteBuffer :: WriteBuffer -> TableContent (PrimState m) h -> TableContent (PrimState m) h
@@ -265,9 +265,7 @@ updatesWithInterleavedFlushes tr conf resolve hfs hbio root getUniq es reg tc = 
         , tableCache = tableCache tc0
         }
 
-type GetUniq m = m Unique
-
-{-# SPECIALISE flushWriteBuffer :: Tracer IO (AtLevel MergeTrace) -> TableConfig -> ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> GetUniq IO -> TempRegistry IO -> TableContent RealWorld h -> IO (TableContent RealWorld h) #-}
+{-# SPECIALISE flushWriteBuffer :: Tracer IO (AtLevel MergeTrace) -> TableConfig -> ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> TempRegistry IO -> TableContent RealWorld h -> IO (TableContent RealWorld h) #-}
 -- | Flush the write buffer to disk, regardless of whether it is full or not.
 --
 -- The returned table content contains an updated set of levels, where the write
@@ -280,15 +278,15 @@ flushWriteBuffer ::
   -> HasFS m h
   -> HasBlockIO m h
   -> SessionRoot
-  -> GetUniq m
+  -> UniqCounter m
   -> TempRegistry m
   -> TableContent (PrimState m) h
   -> m (TableContent (PrimState m) h)
 flushWriteBuffer tr conf@TableConfig{confDiskCachePolicy}
-                 resolve hfs hbio root getUniq reg tc
+                 resolve hfs hbio root uc reg tc
   | WB.null (tableWriteBuffer tc) = pure tc
   | otherwise = do
-    !n <- getUniq
+    !n <- incrUniqCounter uc
     let !size  = WB.numEntries (tableWriteBuffer tc)
         !l     = LevelNo 1
         !cache = diskCachePolicyForLevel confDiskCachePolicy l
@@ -302,7 +300,7 @@ flushWriteBuffer tr conf@TableConfig{confDiskCachePolicy}
               path
               (tableWriteBuffer tc))
             (Run.removeReference hfs hbio)
-    levels' <- addRunToLevels tr conf resolve hfs hbio root getUniq r reg (tableLevels tc)
+    levels' <- addRunToLevels tr conf resolve hfs hbio root uc r reg (tableLevels tc)
     pure $! TableContent {
         tableWriteBuffer = WB.empty
       , tableLevels = levels'
@@ -384,7 +382,7 @@ _levelsInvariant conf levels =
     -- Check that a run is too small for next levels
     fitsUB policy r ln = Run.runNumEntries r <= maxRunSize sr wba policy ln
 
-{-# SPECIALISE addRunToLevels :: Tracer IO (AtLevel MergeTrace) -> TableConfig -> ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> GetUniq IO -> Run RealWorld (Handle h) -> TempRegistry IO -> Levels RealWorld (Handle h) -> IO (Levels RealWorld (Handle h)) #-}
+{-# SPECIALISE addRunToLevels :: Tracer IO (AtLevel MergeTrace) -> TableConfig -> ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> Run RealWorld (Handle h) -> TempRegistry IO -> Levels RealWorld (Handle h) -> IO (Levels RealWorld (Handle h)) #-}
 addRunToLevels ::
      forall m h. m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
   => Tracer m (AtLevel MergeTrace)
@@ -393,12 +391,12 @@ addRunToLevels ::
   -> HasFS m h
   -> HasBlockIO m h
   -> SessionRoot
-  -> GetUniq m
+  -> UniqCounter m
   -> Run (PrimState m) (Handle h)
   -> TempRegistry m
   -> Levels (PrimState m) (Handle h)
   -> m (Levels (PrimState m) (Handle h))
-addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root getUniq r0 reg levels = do
+addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = do
     ls' <- go (LevelNo 1) (V.singleton r0) levels
 #ifdef NO_IGNORE_ASSERTS
     void $ stToIO $ _levelsInvariant conf ls'
@@ -480,7 +478,7 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root getUniq r0 reg leve
           pure (SingleRun r)
       | otherwise = do
         assert (let l = V.length rs in l >= 2 && l <= 5) $ pure ()
-        !n <- getUniq
+        !n <- incrUniqCounter uc
         let !caching = diskCachePolicyForLevel confDiskCachePolicy ln
             !alloc = bloomFilterAllocForLevel conf ln
             !runPaths = Paths.runPath root (uniqueToRunNumber n)
