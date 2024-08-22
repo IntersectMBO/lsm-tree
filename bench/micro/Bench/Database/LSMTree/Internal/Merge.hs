@@ -21,6 +21,7 @@ import           Database.LSMTree.Internal.Paths (RunFsPaths (..),
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..))
+import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.Serialise
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import           Prelude hiding (getContents)
@@ -240,10 +241,10 @@ merge fs hbio Config {..} targetPaths runs = do
           (_, Merge.MergeInProgress) -> go m
 
 outputRunPaths :: Run.RunFsPaths
-outputRunPaths = RunFsPaths (FS.mkFsPath []) 0
+outputRunPaths = RunFsPaths (FS.mkFsPath []) (RunNumber 0)
 
 inputRunPaths :: [Run.RunFsPaths]
-inputRunPaths = RunFsPaths (FS.mkFsPath []) <$> [1..]
+inputRunPaths = RunFsPaths (FS.mkFsPath []) . RunNumber <$> [1..]
 
 type InputRuns = [Run RealWorld (FS.Handle FS.HandleIO)]
 

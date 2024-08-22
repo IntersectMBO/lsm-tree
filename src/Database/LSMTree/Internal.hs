@@ -71,9 +71,11 @@ import           Database.LSMTree.Internal.Paths (RunFsPaths (..),
 import qualified Database.LSMTree.Internal.Paths as Paths
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
+import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.Serialise (SerialisedBlob,
                      SerialisedKey, SerialisedValue)
 import           Database.LSMTree.Internal.TempRegistry
+import           Database.LSMTree.Internal.UniqCounter
 import qualified Database.LSMTree.Internal.Vector as V
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
@@ -215,19 +217,6 @@ withOpenSession ::
 withOpenSession sesh action = RW.withReadAccess (sessionState sesh) $ \case
     SessionClosed -> throwIO ErrSessionClosed
     SessionOpen seshEnv -> action seshEnv
-
--- | An atomic counter for producing unique 'Word64' values.
-newtype UniqCounter m = UniqCounter (StrictMVar m Word64)
-
-{-# INLINE newUniqCounter #-}
-newUniqCounter :: MonadMVar m => Word64 -> m (UniqCounter m)
-newUniqCounter x = UniqCounter <$> newMVar x
-
-{-# INLINE incrUniqCounter #-}
--- | Return the current state of the atomic counter, and then increment the
--- counter.
-incrUniqCounter :: MonadMVar m => UniqCounter m -> m Word64
-incrUniqCounter (UniqCounter uniqVar) = modifyMVar uniqVar (\x -> pure ((x+1), x))
 
 --
 -- Implementation of public API
@@ -522,7 +511,7 @@ newWith ::
   -> m (TableHandle m h)
 newWith sesh seshEnv conf !am !wb !levels = do
     tableId <- incrUniqCounter (sessionUniqCounter seshEnv)
-    let tr = TraceTable tableId `contramap` sessionTracer sesh
+    let tr = TraceTable (uniqueToWord64 tableId) `contramap` sessionTracer sesh
     traceWith tr $ TraceCreateTableHandle conf
     assertNoThunks levels $ pure ()
     -- The session is kept open until we've updated the session's set of tracked
@@ -533,12 +522,12 @@ newWith sesh seshEnv conf !am !wb !levels = do
     tableVar <- RW.new $ TableHandleOpen $ TableHandleEnv {
           tableSession = sesh
         , tableSessionEnv = seshEnv
-        , tableId = tableId
+        , tableId = uniqueToWord64 tableId
         , tableContent = contentVar
         }
     let !th = TableHandle conf tableVar am tr
     -- Track the current table
-    modifyMVar_ (sessionOpenTables seshEnv) $ pure . Map.insert tableId th
+    modifyMVar_ (sessionOpenTables seshEnv) $ pure . Map.insert (uniqueToWord64 tableId) th
     pure $! th
 
 {-# SPECIALISE close :: TableHandle IO h -> IO () #-}
@@ -679,7 +668,7 @@ snapshot resolve snap label th = do
         (FS.WriteMode FS.MustBeNew) $ \h ->
           void $ FS.hPutAllStrict (tableHasFS thEnv) h
                       (BSC.pack $ show (label, runNumbers, tableConfig th))
-      pure $! V.sum (V.map (\((_ :: (Bool, Word64)), rs) -> 1 + V.length rs) runNumbers)
+      pure $! V.sum (V.map (\((_ :: (Bool, RunNumber)), rs) -> 1 + V.length rs) runNumbers)
 
 {-# SPECIALISE open :: Session IO h -> SnapshotLabel -> TableConfigOverride -> SnapshotName -> IO (TableHandle IO h) #-}
 -- |  See 'Database.LSMTree.Normal.open'.
@@ -703,7 +692,12 @@ open sesh label override snap = do
               snapPath
               FS.ReadMode $ \h ->
                 FS.hGetAll (sessionHasFS seshEnv) h
-      let (label', runNumbers, conf) = read . BSC.unpack . BSC.toStrict $ bs
+      let (label', runNumbers, conf) =
+              -- why we are using read for this?
+              -- apparently this is a temporary solution, to be done properly in WP15
+              read @(SnapshotLabel, V.Vector ((Bool, RunNumber), V.Vector RunNumber), TableConfig) $
+              BSC.unpack $ BSC.toStrict $ bs
+
       let conf' = applyOverride override conf
       unless (label == label') $ throwIO (ErrSnapshotWrongType snap)
       let runPaths = V.map (bimap (second $ RunFsPaths (Paths.activeDir $ sessionRoot seshEnv))

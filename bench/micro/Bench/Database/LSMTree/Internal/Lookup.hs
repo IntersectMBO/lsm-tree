@@ -27,6 +27,7 @@ import           Database.LSMTree.Internal.Paths (RunFsPaths (..))
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..))
+import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.Serialise
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import           GHC.Exts (RealWorld)
@@ -178,7 +179,7 @@ lookupsInBatchesEnv Config {..} = do
     let hasFS = FS.ioHasFS (FS.MountPoint benchTmpDir)
     hasBlockIO <- FS.ioHasBlockIO hasFS (fromMaybe FS.defaultIOCtxParams ioctxps)
     let wb = WB.fromMap storedKeys
-        fsps = RunFsPaths (FS.mkFsPath []) 0
+        fsps = RunFsPaths (FS.mkFsPath []) (RunNumber 0)
     r <- Run.fromWriteBuffer hasFS hasBlockIO caching (RunAllocFixed 10) fsps wb
     let nentriesReal = unNumEntries $ Run.runNumEntries r
     assert (nentriesReal == nentries) $ pure ()

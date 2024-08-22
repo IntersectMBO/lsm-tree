@@ -36,7 +36,6 @@ import           Control.Tracer
 import           Data.BloomFilter (Bloom)
 import           Data.Foldable
 import qualified Data.Vector as V
-import           Data.Word (Word64)
 import           Database.LSMTree.Internal.Assertions (assert)
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.Entry (Entry, NumEntries (..),
@@ -50,9 +49,11 @@ import qualified Database.LSMTree.Internal.Paths as Paths
 import           Database.LSMTree.Internal.Run (Run, RunDataCaching (..))
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..))
+import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.Serialise (SerialisedBlob,
                      SerialisedKey, SerialisedValue)
 import           Database.LSMTree.Internal.TempRegistry
+import           Database.LSMTree.Internal.UniqCounter
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import           NoThunks.Class
@@ -94,12 +95,6 @@ data MergeTrace =
   | TraceExpectCompletedMergeSingleRun
       RunNumber
   deriving stock Show
-
-newtype RunNumber = RunNumber Word64
-  deriving stock Show
-
-runFsPathsRunNumber :: RunFsPaths -> RunNumber
-runFsPathsRunNumber rfsp = RunNumber (runNumber rfsp)
 
 {-------------------------------------------------------------------------------
   Table content
@@ -270,7 +265,7 @@ updatesWithInterleavedFlushes tr conf resolve hfs hbio root getUniq es reg tc = 
         , tableCache = tableCache tc0
         }
 
-type GetUniq m = m Word64
+type GetUniq m = m Unique
 
 {-# SPECIALISE flushWriteBuffer :: Tracer IO (AtLevel MergeTrace) -> TableConfig -> ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> GetUniq IO -> TempRegistry IO -> TableContent RealWorld h -> IO (TableContent RealWorld h) #-}
 -- | Flush the write buffer to disk, regardless of whether it is full or not.
@@ -298,8 +293,8 @@ flushWriteBuffer tr conf@TableConfig{confDiskCachePolicy}
         !l     = LevelNo 1
         !cache = diskCachePolicyForLevel confDiskCachePolicy l
         !alloc = bloomFilterAllocForLevel conf l
-        !path  = Paths.runPath root n
-    traceWith tr $ AtLevel l $ TraceFlushWriteBuffer size (runFsPathsRunNumber path) cache alloc
+        !path  = Paths.runPath root (uniqueToRunNumber n)
+    traceWith tr $ AtLevel l $ TraceFlushWriteBuffer size (runNumber path) cache alloc
     r <- allocateTemp reg
             (Run.fromWriteBuffer hfs hbio
               cache
@@ -445,8 +440,8 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root getUniq r0 reg leve
             mr' <- newMerge LevelTiering mergelast ln rs'
             traceWith tr $ AtLevel ln
                          $ TraceAddRun
-                            (runFsPathsRunNumber $ Run.runRunFsPaths r)
-                            (V.map (runFsPathsRunNumber . Run.runRunFsPaths) rs)
+                            (runNumber $ Run.runRunFsPaths r)
+                            (V.map (runNumber . Run.runRunFsPaths) rs)
             pure $! Level mr' (r `V.cons` rs) `V.cons` ls
           -- The final level is using levelling. If the existing completed merge
           -- run is too large for this level, we promote the run to the next
@@ -465,10 +460,10 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root getUniq r0 reg leve
 
     expectCompletedMerge :: LevelNo -> MergingRun (PrimState m) (Handle h) -> m (Run (PrimState m) (Handle h))
     expectCompletedMerge ln (SingleRun r)                   = do
-      traceWith tr $ AtLevel ln $ TraceExpectCompletedMergeSingleRun (runFsPathsRunNumber $ Run.runRunFsPaths r)
+      traceWith tr $ AtLevel ln $ TraceExpectCompletedMergeSingleRun (runNumber $ Run.runRunFsPaths r)
       pure r
     expectCompletedMerge ln (MergingRun (CompletedMerge r)) = do
-      traceWith tr $ AtLevel ln $ TraceExpectCompletedMerge (runFsPathsRunNumber $ Run.runRunFsPaths r)
+      traceWith tr $ AtLevel ln $ TraceExpectCompletedMerge (runNumber $ Run.runRunFsPaths r)
       pure r
 
     -- TODO: Until we implement proper scheduling, this does not only start a
@@ -481,19 +476,19 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root getUniq r0 reg leve
     newMerge mergepolicy mergelast ln rs
       | Just (r, rest) <- V.uncons rs
       , V.null rest = do
-          traceWith tr $ AtLevel ln $ TraceNewMergeSingleRun (Run.runNumEntries r) (runFsPathsRunNumber $ Run.runRunFsPaths r)
+          traceWith tr $ AtLevel ln $ TraceNewMergeSingleRun (Run.runNumEntries r) (runNumber $ Run.runRunFsPaths r)
           pure (SingleRun r)
       | otherwise = do
         assert (let l = V.length rs in l >= 2 && l <= 5) $ pure ()
         !n <- getUniq
         let !caching = diskCachePolicyForLevel confDiskCachePolicy ln
             !alloc = bloomFilterAllocForLevel conf ln
-            !runPaths = Paths.runPath root n
-        traceWith tr $ AtLevel ln $ TraceNewMerge (V.map Run.runNumEntries rs) (runFsPathsRunNumber runPaths) caching alloc mergepolicy mergelast
+            !runPaths = Paths.runPath root (uniqueToRunNumber n)
+        traceWith tr $ AtLevel ln $ TraceNewMerge (V.map Run.runNumEntries rs) (runNumber runPaths) caching alloc mergepolicy mergelast
         r <- allocateTemp reg
                (mergeRuns resolve hfs hbio caching alloc runPaths mergelast rs)
                (Run.removeReference hfs hbio)
-        traceWith tr $ AtLevel ln $ TraceCompletedMerge (Run.runNumEntries r) (runFsPathsRunNumber $ Run.runRunFsPaths r)
+        traceWith tr $ AtLevel ln $ TraceCompletedMerge (Run.runNumEntries r) (runNumber $ Run.runRunFsPaths r)
         V.mapM_ (freeTemp reg . Run.removeReference hfs hbio) rs
         pure $! MergingRun (CompletedMerge r)
 
