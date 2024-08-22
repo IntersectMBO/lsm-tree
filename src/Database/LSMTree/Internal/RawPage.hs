@@ -170,7 +170,7 @@ rawPageLookup !page !key
 -- where \( n \) is the number of entries in the 'RawPage'.
 --
 -- Return the least entry number in the 'RawPage' (if it exists)
--- which is greater than or equal to the suppled 'SerialisedKey'.
+-- which is greater than or equal to the supplied 'SerialisedKey'.
 --
 -- The following law always holds \( \forall \mathtt{key} \mathtt{page} \):
 -- >>> maybe True (key <=) (getRawPageIndexKey . rawPageIndex page . id   =<< rawPageFindKey page key)
