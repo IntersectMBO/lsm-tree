@@ -122,7 +122,7 @@ import           Data.Bifunctor (Bifunctor (..))
 import           Data.Coerce (coerce)
 import           Data.Kind (Type)
 import           Data.Monoid (Sum (..))
-import           Data.Typeable (Proxy (Proxy), Typeable)
+import           Data.Proxy (Proxy (Proxy))
 import qualified Data.Vector as V
 import           Database.LSMTree.Common (IOLike, Range (..), SerialiseKey,
                      SerialiseValue (..), Session (..), SnapshotName,
@@ -157,8 +157,7 @@ import qualified Database.LSMTree.Internal.Vector as V
 -- an LSM table. The multiple-handles feature allows for there to may be many
 -- such instances in use at once.
 type TableHandle :: (Type -> Type) -> Type -> Type -> Type
-data TableHandle m k v = forall h. Typeable h =>
-    TableHandle !(Internal.TableHandle m h)
+data TableHandle m k v = forall h. TableHandle !(Internal.TableHandle m h)
 
 instance NFData (TableHandle m k v) where
   rnf (TableHandle th) = rnf th
@@ -257,7 +256,7 @@ rangeLookup = undefined
 -- Once a cursor has been created, updates to the referenced table don't affect
 -- the cursor.
 type Cursor :: (Type -> Type) -> Type -> Type -> Type
-data Cursor m k v
+data Cursor m k v = forall h. Cursor !(Internal.Cursor m h)
 
 {-# SPECIALISE withCursor :: TableHandle IO k v -> (Cursor IO k v -> IO a) -> IO a #-}
 -- | (Asynchronous) exception-safe, bracketed opening and closing of a cursor.
@@ -284,7 +283,7 @@ newCursor ::
      IOLike m
   => TableHandle m k v
   -> m (Cursor m k v)
-newCursor = undefined
+newCursor (TableHandle th) = Cursor <$> Internal.newCursor th
 
 {-# SPECIALISE closeCursor :: Cursor IO k v -> IO () #-}
 -- | Close a cursor. 'closeCursor' is idempotent. All operations on a closed
@@ -293,7 +292,7 @@ closeCursor ::
      IOLike m
   => Cursor m k v
   -> m ()
-closeCursor = undefined
+closeCursor (Cursor c) = Internal.closeCursor c
 
 {-# SPECIALISE readCursor :: (SerialiseKey k, SerialiseValue v, ResolveValue v) => Int -> Cursor IO k v -> IO (V.Vector (QueryResult k v)) #-}
 -- | Read the next @n@ entries from the cursor. The resulting vector is shorter

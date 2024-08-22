@@ -27,6 +27,11 @@ module Database.LSMTree.Internal (
   , close
   , lookups
   , updates
+    -- ** Cursor API
+  , Cursor (..)
+  , withCursor
+  , newCursor
+  , closeCursor
     -- * Snapshots
   , SnapshotLabel
   , snapshot
@@ -72,6 +77,7 @@ import qualified Database.LSMTree.Internal.Paths as Paths
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunNumber
+import qualified Database.LSMTree.Internal.RunReaders as Readers
 import           Database.LSMTree.Internal.Serialise (SerialisedBlob,
                      SerialisedKey, SerialisedValue)
 import           Database.LSMTree.Internal.TempRegistry
@@ -99,14 +105,17 @@ data LSMTreeError =
     -- | The session directory is malformed: the layout of the session directory
     -- contains unexpected files and/or directories.
   | SessionDirMalformed FsErrorPath
-    -- | All operations on a closed session or tables within a closed session
-    -- will throw this exception. There is one exception (pun intended) to this
-    -- rule: the idempotent operation 'Database.LSMTree.Common.closeSession'.
+    -- | All operations on a closed session as well as tables or cursors within
+    -- a closed session will throw this exception. There is one exception (pun
+    -- intended) to this rule: the idempotent operation
+    -- 'Database.LSMTree.Common.closeSession'.
   | ErrSessionClosed
-    -- | All operations on a closed table will throw this exception. There is
-    -- one exception (pun intended) to this rule: the idempotent operation
-    -- 'Database.LSMTree.Common.close'.
+    -- | All operations on a closed table will throw this exception, except for
+    -- the idempotent operation 'Database.LSMTree.Common.close'.
   | ErrTableClosed
+    -- | All operations on a closed cursor will throw this exception, except for
+    -- the idempotent operation 'Database.LSMTree.Common.closeCursor'.
+  | ErrCursorClosed
   | ErrSnapshotExists SnapshotName
   | ErrSnapshotNotExists SnapshotName
   | ErrSnapshotWrongType SnapshotName
@@ -202,6 +211,9 @@ data SessionEnv m h = SessionEnv {
     --   tables without restrictions, even concurrently with 'closeSession'.
     --   This is safe because 'close' is idempotent'.
   , sessionOpenTables  :: !(StrictMVar m (Map Word64 (TableHandle m h)))
+    -- | Similarly to tables, open cursors are tracked so they can be closed
+    -- once the session is closed. See 'sessionOpenTables'.
+  , sessionOpenCursors :: !(StrictMVar m (Map Word64 (Cursor m h)))
   }
 
 -- | 'withOpenSession' ensures that the session stays open for the duration of the
@@ -283,6 +295,7 @@ openSession tr hfs hbio dir = do
     mkSession lockFile x = do
         counterVar <- newUniqCounter x
         openTablesVar <- newMVar Map.empty
+        openCursorsVar <- newMVar Map.empty
         sessionVar <- RW.new $ SessionOpen $ SessionEnv {
             sessionRoot = root
           , sessionHasFS = hfs
@@ -290,6 +303,7 @@ openSession tr hfs hbio dir = do
           , sessionLockFile = lockFile
           , sessionUniqCounter = counterVar
           , sessionOpenTables = openTablesVar
+          , sessionOpenCursors = openCursorsVar
           }
         pure $! Session sessionVar tr
 
@@ -358,19 +372,23 @@ closeSession Session{sessionState, sessionTracer} = do
     RW.withWriteAccess_ sessionState $ \case
       SessionClosed -> pure SessionClosed
       SessionOpen seshEnv -> do
+        -- Close tables and cursors first, so that we know none are open when we
+        -- release session-wide resources.
+        --
+        -- If any has been closed already by a different thread, the idempotent
+        -- 'close' will act like a no-op, and so we are not in trouble.
+        --
         -- Since we have a write lock on the session state, we know that no
         -- tables will be added while we are closing the session, and that we
         -- are the only thread currently closing the session.
         --
         -- We technically don't have to overwrite this with an empty Map, but
-        -- why not
-        tables <- modifyMVar (sessionOpenTables seshEnv) (\m -> pure (Map.empty, m))
-        -- Close tables first, so that we know none are open when we release
-        -- session-wide resources.
+        -- why not.
         --
-        -- If any table from this set has been closed already by a different
-        -- thread, the idempotent 'close' will act like a no-op, and so we are
-        -- not in trouble.
+        -- TODO: use TempRegistry
+        cursors <- modifyMVar (sessionOpenCursors seshEnv) (\m -> pure (Map.empty, m))
+        mapM_ closeCursor cursors
+        tables <- modifyMVar (sessionOpenTables seshEnv) (\m -> pure (Map.empty, m))
         mapM_ close tables
         FS.close (sessionHasBlockIO seshEnv)
         FS.hUnlock (sessionLockFile seshEnv)
@@ -544,6 +562,7 @@ close th = do
         -- Since we have a write lock on the table state, we know that we are the
         -- only thread currently closing the table. We can safely make the session
         -- forget about this table.
+        -- TODO: use TempRegistry
         tableSessionUntrackTable thEnv
         RW.withWriteAccess_ (tableContent thEnv) $ \lvls -> do
           closeLevels (tableHasFS thEnv) (tableHasBlockIO thEnv) (tableLevels lvls)
@@ -611,6 +630,135 @@ updates resolve es th = do
                   tc
           assertNoThunks tc' $ pure ()
           pure tc'
+
+{-------------------------------------------------------------------------------
+  Cursors
+-------------------------------------------------------------------------------}
+
+-- | A read-only view into the table state at the time of cursor creation.
+--
+-- For more information, see 'Database.LSMTree.Normal.Cursor'.
+--
+-- The representation of a cursor is similar to that of a 'TableHandle', but
+-- simpler, as it is read-only.
+data Cursor m h = Cursor {
+      -- | Mutual exclusion, only a single thread can read from a cursor at a
+      -- given time.
+      cursorState :: !(StrictMVar m (CursorState m h))
+    }
+
+data CursorState m h =
+    CursorOpen !(CursorEnv m h)
+  | CursorClosed  -- ^ Calls to a closed cursor raise an exception.
+
+data CursorEnv m h = CursorEnv {
+    -- === Session-inherited
+
+    -- | The session that this cursor belongs to.
+    --
+    -- NOTE: Consider using the 'cursorSessionEnv' field instead of acquiring
+    -- the session lock.
+    cursorSession     :: !(Session m h)
+    -- | Use this instead of 'cursorSession' for easy access. An open cursor may
+    -- assume that its session is open. A session's global resources, and
+    -- therefore resources that are inherited by the cursor, will only be
+    -- released once the session is sure that no cursors are open anymore.
+  , cursorSessionEnv  :: !(SessionEnv m h)
+
+    -- === Cursor-specific
+
+    -- | Session-unique identifier for this cursor.
+  , cursorId          :: !Word64
+  , cursorWriteBuffer :: !WriteBuffer
+    -- | Readers are immediately discarded once they are 'Readers.Drained'.
+    -- However, the reference counts to the runs only get removed when calling
+    -- 'closeCursor', as there might still be 'BlobRef's that need the
+    -- corresponding run to stay alive.
+  , cursorReaders     :: !(Maybe (Readers.Readers (PrimState m) (Handle h)))
+    -- | The runs held open by the cursor. We must remove a reference when the
+    -- cursor gets closed.
+  , cursorRuns        :: !(V.Vector (Run (PrimState m) (Handle h)))
+  }
+
+{-# SPECIALISE withCursor :: TableHandle IO h -> (Cursor IO h -> IO a) -> IO a #-}
+-- | See 'Database.LSMTree.Normal.withCursor'.
+withCursor ::
+     m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+  => TableHandle m h
+  -> (Cursor m h -> m a)
+  -> m a
+withCursor th = bracket (newCursor th) closeCursor
+
+{-# SPECIALISE newCursor :: TableHandle IO h -> IO (Cursor IO h) #-}
+-- | See 'Database.LSMTree.Normal.newCursor'.
+newCursor ::
+     m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+  => TableHandle m h
+  -> m (Cursor m h)
+newCursor th = withOpenTable th $ \thEnv -> do
+    let cursorSession = tableSession thEnv
+    let cursorSessionEnv = tableSessionEnv thEnv
+    let hfs = tableHasFS thEnv
+    let hbio = tableHasBlockIO thEnv
+    -- We acquire a read-lock on the session open-state to prevent races, see
+    -- 'sessionOpenTables'.
+    withOpenSession cursorSession $ \_ -> do
+      withTempRegistry $ \reg -> do
+        (cursorWriteBuffer, cursorRuns) <-
+          allocTableContent hfs hbio reg (tableContent thEnv)
+        cursorReaders <-
+          allocateMaybeTemp reg
+            (Readers.new hfs hbio (V.toList cursorRuns))
+            (Readers.close hfs hbio)
+        cursorId0 <- incrUniqCounter (sessionUniqCounter cursorSessionEnv)
+        let cursorId = uniqueToWord64 cursorId0
+        cursor <- Cursor <$> newMVar (CursorOpen CursorEnv {..})
+        -- Track cursor, but careful: If now an exception is raised, all
+        -- resources get freed by the registry, so if the session still
+        -- tracks 'cursor' (which is 'CursorOpen'), it later double frees.
+        -- Therefore, we only track the cursor if 'withTempRegistry' exits
+        -- successfully, i.e. using 'freeTemp'.
+        freeTemp reg $
+          modifyMVar_ (sessionOpenCursors cursorSessionEnv) $
+            pure . Map.insert cursorId cursor
+        pure $! cursor
+  where
+    -- The table contents escape the read access, but we just added
+    -- references to each run, so it is safe.
+    allocTableContent hfs hbio reg contentVar = do
+        RW.withReadAccess contentVar $ \content -> do
+          let runs = cachedRuns (tableCache content)
+          V.forM_ runs $ \r -> do
+            allocateTemp reg
+              (Run.addReference hfs r)
+              (\_ -> Run.removeReference hfs hbio r)
+          pure (tableWriteBuffer content, runs)
+
+{-# SPECIALISE closeCursor :: Cursor IO h -> IO () #-}
+-- | See 'Database.LSMTree.Normal.closeCursor'.
+closeCursor ::
+     m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+  => Cursor m h
+  -> m ()
+closeCursor Cursor {..} = do
+    modifyWithTempRegistry_ (takeMVar cursorState) (putMVar cursorState) $ \reg -> \case
+      CursorClosed -> return CursorClosed
+      CursorOpen CursorEnv {..} -> do
+        let hfs = sessionHasFS cursorSessionEnv
+        let hbio = sessionHasBlockIO cursorSessionEnv
+
+        -- This should be safe-ish, but it's still not ideal, because it doesn't
+        -- rule out sync exceptions in the cleanup operations.
+        -- In that case, the cursor ends up closed, but resources might not have
+        -- been freed. Probably better than the other way around, though.
+        freeTemp reg $
+          modifyMVar_ (sessionOpenCursors cursorSessionEnv) $
+            pure . Map.delete cursorId
+
+        forM_ cursorReaders $ freeTemp reg . Readers.close hfs hbio
+        V.forM_ cursorRuns $ freeTemp reg . Run.removeReference hfs hbio
+        return CursorClosed
+
 
 {-------------------------------------------------------------------------------
   Snapshots
@@ -805,6 +953,10 @@ duplicate th = do
                 (Run.addReference (tableHasFS thEnv) r)
                 (\_ -> Run.removeReference (tableHasFS thEnv) (tableHasBlockIO thEnv) r)
             pure content
+          -- TODO: Fix possible double-free! See 'newCursor'.
+          -- In `newWith`, the table handle (in the open state) gets added to
+          -- `sessionOpenTables', even if later an async exception occurs and
+          -- the temp registry rolls back all allocations.
           newWith
             (tableSession thEnv)
             (tableSessionEnv thEnv)
