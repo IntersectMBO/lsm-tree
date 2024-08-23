@@ -38,6 +38,8 @@ module Database.LSMTree.Common (
   , Internal.defaultBloomFilterAlloc
   , Internal.FencePointerIndex (..)
   , Internal.DiskCachePolicy (..)
+  , Internal.MergeSchedule (..)
+  , Internal.defaultMergeSchedule
     -- * Table configuration override
   , Internal.TableConfigOverride
   , Internal.configNoOverride

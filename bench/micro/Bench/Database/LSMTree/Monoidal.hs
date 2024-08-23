@@ -8,6 +8,7 @@ import           Criterion.Main
 import qualified Data.Vector as V
 import           Data.Void
 import           Data.Word
+import qualified Database.LSMTree.Common as Common
 import           Database.LSMTree.Extras
 import           Database.LSMTree.Extras.Orphans ()
 import           Database.LSMTree.Internal.Serialise
@@ -52,14 +53,9 @@ resolve = (+)
 instance Monoidal.ResolveValue V where
   resolveValue = resolveDeserialised resolve
 
-benchConfig :: Normal.TableConfig -- or, equivalently, Monoidal.TableConfig
-benchConfig = Normal.TableConfig {
-      confMergePolicy = Normal.MergePolicyLazyLevelling
-    , confSizeRatio = Normal.Four
-    , confWriteBufferAlloc = Normal.AllocNumEntries (Normal.NumEntries 20000)
-    , confBloomFilterAlloc = Normal.AllocFixed 10
-    , confFencePointerIndex = Normal.CompactIndex
-    , confDiskCachePolicy = Normal.DiskCacheAll
+benchConfig :: Common.TableConfig
+benchConfig = Common.defaultTableConfig {
+      Common.confWriteBufferAlloc = Common.AllocNumEntries (Common.NumEntries 20000)
     }
 
 {-------------------------------------------------------------------------------

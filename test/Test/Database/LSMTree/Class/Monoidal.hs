@@ -41,13 +41,8 @@ tests = testGroup "Test.Database.LSMTree.Class.Monoidal"
 
     tbl2 :: Proxy R.TableHandle
     tbl2 = Setup {
-          testTableConfig = R.TableConfig {
-              R.confMergePolicy = R.MergePolicyLazyLevelling
-            , R.confSizeRatio = R.Four
-            , R.confWriteBufferAlloc = R.AllocNumEntries (R.NumEntries 3)
-            , R.confBloomFilterAlloc = R.AllocFixed 10
-            , R.confFencePointerIndex = R.CompactIndex
-            , R.confDiskCachePolicy = R.DiskCacheNone
+          testTableConfig = R.defaultTableConfig {
+              R.confWriteBufferAlloc = R.AllocNumEntries (R.NumEntries 3)
             }
         , testWithSessionArgs = \action ->
             FS.withTempIOHasBlockIO "R" $ \hfs hbio ->

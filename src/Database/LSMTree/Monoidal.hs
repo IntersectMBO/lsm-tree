@@ -50,6 +50,8 @@ module Database.LSMTree.Monoidal (
   , Common.defaultBloomFilterAlloc
   , Common.FencePointerIndex (..)
   , Common.DiskCachePolicy (..)
+  , Common.MergeSchedule (..)
+  , Common.defaultMergeSchedule
   , withTable
   , new
   , close
