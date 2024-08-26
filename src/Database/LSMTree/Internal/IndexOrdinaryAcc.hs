@@ -16,9 +16,7 @@ where
 import           Prelude hiding (take)
 
 import           Control.Exception (assert)
-import           Control.Monad.ST.Strict (ST, runST)
-import           Data.Primitive.ByteArray (newByteArray, unsafeFreezeByteArray,
-                     writeByteArray)
+import           Control.Monad.ST.Strict (ST)
 import           Data.Primitive.PrimVar (PrimVar, newPrimVar, readPrimVar,
                      writePrimVar)
 import           Data.Vector (force, take, unsafeFreeze)
@@ -34,7 +32,7 @@ import           Database.LSMTree.Internal.IndexOrdinary
                      (IndexOrdinary (IndexOrdinary))
 import           Database.LSMTree.Internal.Serialise
                      (SerialisedKey (SerialisedKey'))
-import           Database.LSMTree.Internal.Vector (mkPrimVector)
+import           Database.LSMTree.Internal.Vector (byteVectorFromPrim)
 
 {-|
     A general-purpose fence pointer index under incremental construction.
@@ -105,11 +103,7 @@ append instruction (IndexOrdinaryAcc buffer keyCountRef baler)
                            fromIntegral keySize
 
         keySizeBytes :: Primitive.Vector Word8
-        !keySizeBytes = mkPrimVector 0 2 $
-                        runST $ do
-                            rep <- newByteArray 2
-                            writeByteArray rep 0 keySizeAsWord16
-                            unsafeFreezeByteArray rep
+        !keySizeBytes = byteVectorFromPrim keySizeAsWord16
 
 {-|
     Returns the constructed index, along with a final chunk in case the

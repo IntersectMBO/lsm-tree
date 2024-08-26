@@ -3,6 +3,7 @@
 {-# LANGUAGE TypeApplications    #-}
 module Database.LSMTree.Internal.Vector (
     mkPrimVector,
+    byteVectorFromPrim,
     noRetainedExtraMemory,
     mapStrict,
     mapMStrict,
@@ -14,13 +15,15 @@ module Database.LSMTree.Internal.Vector (
 
 import           Control.Monad
 import           Control.Monad.Primitive (PrimMonad, PrimState)
-import           Data.Primitive.ByteArray (ByteArray, sizeofByteArray)
-import           Data.Primitive.Types (Prim (sizeOfType#))
+import           Data.Primitive.ByteArray (ByteArray, newByteArray,
+                     runByteArray, sizeofByteArray, writeByteArray)
+import           Data.Primitive.Types (Prim (sizeOfType#), sizeOfType)
 import           Data.Proxy (Proxy (..))
 import qualified Data.Vector as V
 import qualified Data.Vector.Algorithms.Search as VA
 import qualified Data.Vector.Mutable as VM
 import qualified Data.Vector.Primitive as VP
+import           Data.Word (Word8)
 import           Database.LSMTree.Internal.Assertions
 import           GHC.Exts (Int (..))
 import           GHC.ST (runST)
@@ -32,6 +35,14 @@ mkPrimVector off len ba =
   where
     sizeof = I# (sizeOfType# (Proxy @a))
 {-# INLINE mkPrimVector #-}
+
+byteVectorFromPrim :: forall a. Prim a => a -> VP.Vector Word8
+byteVectorFromPrim prim = mkPrimVector 0 (sizeOfType @a) $
+                          runByteArray $ do
+                              rep <- newByteArray (sizeOfType @a)
+                              writeByteArray rep 0 prim
+                              return rep
+{-# INLINE byteVectorFromPrim #-}
 
 noRetainedExtraMemory :: forall a. Prim a => VP.Vector a -> Bool
 noRetainedExtraMemory (VP.Vector off len ba) =

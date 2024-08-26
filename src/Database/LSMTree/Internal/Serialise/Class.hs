@@ -149,21 +149,13 @@ requireBytesExactly tyName expected actual x
 -------------------------------------------------------------------------------}
 
 instance SerialiseKey Word64 where
-  serialiseKey x =
-    RB.RawBytes $ mkPrimVector 0 8 $ P.runByteArray $ do
-      ba <- P.newByteArray 8
-      P.writeByteArray ba 0 $ byteSwap64 x
-      return ba
+  serialiseKey x = RB.RawBytes $ byteVectorFromPrim $ byteSwap64 x
 
   deserialiseKey (RawBytes (VP.Vector off len ba)) =
     requireBytesExactly "Word64" 8 len $ byteSwap64 (indexWord8ArrayAsWord64 ba off)
 
 instance SerialiseValue Word64 where
-  serialiseValue x =
-    RB.RawBytes $ mkPrimVector 0 8 $ P.runByteArray $ do
-      ba <- P.newByteArray 8
-      P.writeByteArray ba 0 x
-      return ba
+  serialiseValue x = RB.RawBytes $ byteVectorFromPrim $ x
 
   deserialiseValue (RawBytes (VP.Vector off len ba)) =
     requireBytesExactly "Word64" 8 len $ indexWord8ArrayAsWord64 ba off
