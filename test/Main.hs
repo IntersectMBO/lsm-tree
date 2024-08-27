@@ -2,7 +2,6 @@
 --
 module Main (main) where
 
-import qualified Test.Control.Concurrent.Class.MonadSTM.RWVar
 import qualified Test.Data.Arena
 import qualified Test.Database.LSMTree.Class.Monoidal
 import qualified Test.Database.LSMTree.Class.Normal
@@ -36,8 +35,7 @@ import           Test.Tasty
 
 main :: IO ()
 main = defaultMain $ testGroup "lsm-tree"
-    [ Test.Control.Concurrent.Class.MonadSTM.RWVar.tests
-    , Test.Database.LSMTree.Class.Normal.tests
+    [ Test.Database.LSMTree.Class.Normal.tests
     , Test.Database.LSMTree.Class.Monoidal.tests
     , Test.Database.LSMTree.Generators.tests
     , Test.Database.LSMTree.Internal.tests

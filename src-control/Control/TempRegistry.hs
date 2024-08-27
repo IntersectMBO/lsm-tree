@@ -1,4 +1,10 @@
-module Database.LSMTree.Internal.TempRegistry (
+-- TODO: we are starting to use the TempRegistry for more than just resource
+-- allocation/release, we are more generally using it for /actions that can be
+-- rolled back/ and /actions that are delayed/. Maybe we should reframe the use
+-- cases for the 'TempRegistry', and do some renaming:
+-- * Rename @'allocateTemp'*@ to @'withRollback'*@
+-- * Rename @'freeTemp'@ to @'delayUntilEnd'@
+module Control.TempRegistry (
     TempRegistry
   , withTempRegistry
   , allocateTemp
