@@ -28,6 +28,9 @@ module Database.LSMTree.Internal.Config (
     -- * Disk cache policy
   , DiskCachePolicy (..)
   , diskCachePolicyForLevel
+    -- * Merge schedule
+  , MergeSchedule (..)
+  , defaultMergeSchedule
   ) where
 
 import           Control.DeepSeq (NFData (..))
@@ -69,12 +72,13 @@ data TableConfig = TableConfig {
   , confFencePointerIndex :: !FencePointerIndex
     -- | The policy for caching key\/value data from disk in memory.
   , confDiskCachePolicy   :: !DiskCachePolicy
+  , confMergeSchedule     :: !MergeSchedule
   }
   deriving stock (Show, Eq)
 
 instance NFData TableConfig where
-  rnf (TableConfig a b c d e f) =
-      rnf a `seq` rnf b `seq` rnf c `seq` rnf d `seq` rnf e `seq` rnf f
+  rnf (TableConfig a b c d e f g) =
+      rnf a `seq` rnf b `seq` rnf c `seq` rnf d `seq` rnf e `seq` rnf f `seq` rnf g
 
 -- | TODO: this should be removed once we have proper snapshotting with proper
 -- persistence of the config to disk.
@@ -88,12 +92,13 @@ deriving stock instance Read TableConfig
 defaultTableConfig :: TableConfig
 defaultTableConfig =
     TableConfig
-      { confMergePolicy      = MergePolicyLazyLevelling
-      , confSizeRatio        = Four
-      , confWriteBufferAlloc = AllocNumEntries (NumEntries 20_000)
-      , confBloomFilterAlloc = defaultBloomFilterAlloc
+      { confMergePolicy       = MergePolicyLazyLevelling
+      , confSizeRatio         = Four
+      , confWriteBufferAlloc  = AllocNumEntries (NumEntries 20_000)
+      , confBloomFilterAlloc  = defaultBloomFilterAlloc
       , confFencePointerIndex = CompactIndex
-      , confDiskCachePolicy  = DiskCacheAll
+      , confDiskCachePolicy   = DiskCacheAll
+      , confMergeSchedule     = defaultMergeSchedule
       }
 
 {-------------------------------------------------------------------------------
@@ -397,3 +402,43 @@ diskCachePolicyForLevel policy (LevelNo ln) =
     DiskCacheLevelsAtOrBelow n
       | ln <= n                -> CacheRunData
       | otherwise              -> NoCacheRunData
+
+
+{-------------------------------------------------------------------------------
+  Merge schedule
+-------------------------------------------------------------------------------}
+
+-- | A configuration option that determines how merges are stepped to
+-- completion. This does not affect the amount of work that is done by merges,
+-- only how the work is spread out over time.
+data MergeSchedule =
+    -- | Complete merges immediately when started.
+    --
+    -- The 'OneShot' option will make the merging algorithm perform /big/ batches
+    -- of work in one go, so intermittent slow-downs can be expected. For use
+    -- cases where unresponsiveness is unacceptable, e.g. in real-time systems,
+    -- use 'Incremental' instead.
+    OneShot
+    -- | Schedule merges for incremental construction, and step the merge when
+    -- updates are performed on a table.
+    --
+    -- The 'Incremental' option spreads out merging work over time. More
+    -- specifically, updates to a table can cause a /small/ batch of merge work
+    -- to be performed. The scheduling of these batches is designed such that
+    -- merges are fully completed in time for when new merges are started on the
+    -- same level.
+  | Incremental
+  deriving stock (Eq, Show, Read)
+
+instance NFData MergeSchedule where
+  rnf OneShot     = ()
+  rnf Incremental = ()
+
+-- | The default 'MergeSchedule'.
+--
+-- >>> defaultMergeSchedule
+-- OneShot
+--
+-- TODO: replace by 'Incremental'
+defaultMergeSchedule :: MergeSchedule
+defaultMergeSchedule = OneShot

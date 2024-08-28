@@ -55,17 +55,11 @@ tests = testGroup "Test.Database.LSMTree.Internal" [
     ]
 
 testTableConfig :: TableConfig
-testTableConfig =
-    TableConfig {
-        confMergePolicy = MergePolicyLazyLevelling
-      , confSizeRatio = Four
-        -- Write buffer size is small on purpose, so that the test actually
-        -- flushes and merges.
-      , confWriteBufferAlloc = AllocNumEntries (NumEntries 3)
-      , confBloomFilterAlloc = AllocFixed 10
-      , confFencePointerIndex = CompactIndex
-      , confDiskCachePolicy = DiskCacheNone
-      }
+testTableConfig = defaultTableConfig {
+      -- Write buffer size is small on purpose, so that the test actually
+      -- flushes and merges.
+      confWriteBufferAlloc = AllocNumEntries (NumEntries 3)
+    }
 
 newSession :: Assertion
 newSession = withTempIOHasBlockIO "newSession" $ \hfs hbio ->
