@@ -134,6 +134,7 @@ library
     Database.LSMTree.Internal.RawBytes
     Database.LSMTree.Internal.RawOverflowPage
     Database.LSMTree.Internal.RawPage
+    Database.LSMTree.Internal.RefCount
     Database.LSMTree.Internal.Run
     Database.LSMTree.Internal.RunAcc
     Database.LSMTree.Internal.RunBuilder
@@ -307,6 +308,7 @@ test-suite lsm-tree-test
     Test.Database.LSMTree.Internal.PageAcc1
     Test.Database.LSMTree.Internal.RawOverflowPage
     Test.Database.LSMTree.Internal.RawPage
+    Test.Database.LSMTree.Internal.RefCount
     Test.Database.LSMTree.Internal.Run
     Test.Database.LSMTree.Internal.RunAcc
     Test.Database.LSMTree.Internal.RunBuilder
