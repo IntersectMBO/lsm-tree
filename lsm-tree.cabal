@@ -160,7 +160,7 @@ library
     , crc32c                ^>=0.2.1
     , deepseq               ^>=1.4      || ^>=1.5
     , filepath
-    , fs-api                ^>=0.2
+    , fs-api                ^>=0.3
     , io-classes            ^>=1.5
     , lsm-tree:blockio-api
     , lsm-tree:bloomfilter
@@ -343,7 +343,7 @@ test-suite lsm-tree-test
     , directory
     , filepath
     , fs-api
-    , fs-sim                   >=0.2
+    , fs-sim
     , io-classes               >=1.5
     , io-sim                   >=1.5
     , lsm-tree
@@ -682,7 +682,7 @@ library blockio-api
   build-depends:
     , base        >=4.14  && <4.21
     , deepseq     ^>=1.4  || ^>=1.5
-    , fs-api      ^>=0.2
+    , fs-api      ^>=0.3
     , io-classes  ^>=1.5
     , primitive   ^>=0.9
     , vector      ^>=0.13
@@ -738,8 +738,8 @@ library blockio-sim
   exposed-modules: System.FS.BlockIO.Sim
   build-depends:
     , base                  >=4.14 && <4.21
-    , fs-api                ^>=0.2
-    , fs-sim                ^>=0.2
+    , fs-api                ^>=0.3
+    , fs-sim                ^>=0.3
     , io-classes            ^>=1.5
     , lsm-tree:blockio-api
     , primitive             ^>=0.9
