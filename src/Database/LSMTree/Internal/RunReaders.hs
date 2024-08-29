@@ -59,14 +59,14 @@ data ReadCtx fhandle = ReadCtx {
       -- Using an 'STRef' could avoid reallocating the record for every entry,
       -- but that might not be straightforward to integrate with the heap.
       readCtxHeadKey   :: !SerialisedKey
-    , readCtxHeadEntry :: !(Reader.Entry RealWorld fhandle)
+    , readCtxHeadEntry :: !(Reader.Entry IO fhandle)
       -- We could get rid of this by making 'LoserTree' stable (for which there
       -- is a prototype already).
       -- Alternatively, if we decide to have an invariant that the number in
       -- 'RunFsPaths' is always higher for newer runs, then we could use that
       -- in the 'Ord' instance.
     , readCtxNumber    :: !ReaderNumber
-    , readCtxReader    :: !(RunReader RealWorld fhandle)
+    , readCtxReader    :: !(RunReader IO fhandle)
     }
 
 instance Eq (ReadCtx fhandle) where
@@ -81,7 +81,7 @@ instance Ord (ReadCtx fhandle) where
 new :: forall h .
      HasFS IO h
   -> HasBlockIO IO h
-  -> [Run RealWorld (FS.Handle h)]
+  -> [Run IO (FS.Handle h)]
   -> IO (Maybe (Readers RealWorld (FS.Handle h)))
 new fs hbio runs = do
     readers <- zipWithM (fromRun . ReaderNumber) [1..] runs
@@ -90,7 +90,7 @@ new fs hbio runs = do
       readersNext <- newMutVar readCtx
       return Readers {..}
   where
-    fromRun :: ReaderNumber -> Run RealWorld (FS.Handle h) -> IO (Maybe (ReadCtx (FS.Handle h)))
+    fromRun :: ReaderNumber -> Run IO (FS.Handle h) -> IO (Maybe (ReadCtx (FS.Handle h)))
     fromRun n run = nextReadCtx fs hbio n =<< Reader.new fs hbio run
 
 -- | Only call when aborting before all readers have been drained.
@@ -125,7 +125,7 @@ pop ::
      HasFS IO h
   -> HasBlockIO IO h
   -> Readers RealWorld (FS.Handle h)
-  -> IO (SerialisedKey, Reader.Entry RealWorld (FS.Handle h), HasMore)
+  -> IO (SerialisedKey, Reader.Entry IO (FS.Handle h), HasMore)
 pop fs hbio r@Readers {..} = do
     ReadCtx {..} <- readMutVar readersNext
     hasMore <- dropOne fs hbio r readCtxNumber readCtxReader
@@ -167,7 +167,7 @@ dropOne ::
   -> HasBlockIO IO h
   -> Readers RealWorld (FS.Handle h)
   -> ReaderNumber
-  -> RunReader RealWorld (FS.Handle h)
+  -> RunReader IO (FS.Handle h)
   -> IO HasMore
 dropOne fs hbio Readers {..} number reader = do
     mNext <- nextReadCtx fs hbio number reader >>= \case
@@ -184,7 +184,7 @@ nextReadCtx ::
      HasFS IO h
   -> HasBlockIO IO h
   -> ReaderNumber
-  -> RunReader RealWorld (FS.Handle h)
+  -> RunReader IO (FS.Handle h)
   -> IO (Maybe (ReadCtx (FS.Handle h)))
 nextReadCtx fs hbio readCtxNumber readCtxReader = do
     res <- Reader.next fs hbio readCtxReader

@@ -10,7 +10,6 @@ module Test.Database.LSMTree.Internal.Run (
     isLargeKOp,
 ) where
 
-import           Control.Monad.Primitive
 import           Data.Bifoldable (bifoldMap, bisum)
 import           Data.Bifunctor (bimap)
 import           Data.ByteString (ByteString)
@@ -19,7 +18,6 @@ import qualified Data.ByteString.Short as SBS
 import           Data.Coerce (coerce)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromJust)
-import           Data.Primitive
 import qualified Data.Primitive.ByteArray as BA
 import           System.FilePath
 import qualified System.FS.API as FS
@@ -34,6 +32,7 @@ import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.HUnit (assertEqual, testCase, (@=?), (@?))
 import           Test.Tasty.QuickCheck
 
+import           Control.RefCount (RefCount (..), readRefCount)
 import           Database.LSMTree.Extras (showPowersOf10)
 import           Database.LSMTree.Extras.Generators (KeyForIndexCompact (..),
                      TypedWriteBuffer (..))
@@ -166,7 +165,7 @@ testSingleInsert sessionRoot key val mblob =
     length mblob @=? fromIntegral (rawPageNumBlobs page)
 
     -- make sure run gets closed again
-    removeReference fs hbio run
+    removeReference run
 
 rawPageFromByteString :: ByteString -> Int -> RawPage
 rawPageFromByteString bs off =
@@ -200,7 +199,7 @@ prop_WriteAndRead fs hbio (TypedWriteBuffer wb) = do
     rhs <- readKOps fs hbio run
 
     -- make sure run gets closed again
-    removeReference fs hbio run
+    removeReference run
 
     return $ stats $
            counterexample "number of elements"
@@ -229,8 +228,8 @@ prop_WriteAndOpen fs hbio (TypedWriteBuffer wb) = do
     written <- fromWriteBuffer fs hbio CacheRunData (RunAllocFixed 10) fsPaths wb
     loaded <- openFromDisk fs hbio CacheRunData fsPaths
 
-    (RefCount 1 @=?) =<< readMutVar (runRefCount written)
-    (RefCount 1 @=?) =<< readMutVar (runRefCount loaded)
+    (RefCount 1 @=?) =<< readRefCount (runRefCounter written)
+    (RefCount 1 @=?) =<< readRefCount (runRefCounter loaded)
 
     runNumEntries written @=? runNumEntries loaded
     runFilter written @=? runFilter loaded
@@ -244,8 +243,8 @@ prop_WriteAndOpen fs hbio (TypedWriteBuffer wb) = do
       (FS.handlePath (runBlobFile loaded))
 
     -- make sure runs get closed again
-    removeReference fs hbio written
-    removeReference fs hbio loaded
+    removeReference written
+    removeReference loaded
 
 {-------------------------------------------------------------------------------
   Utilities
@@ -261,7 +260,7 @@ isLargeKOp (key, entry) = size > pageSize
     pageSize = 4096
     size = sizeofKey key + bisum (bimap sizeofValue sizeofBlob entry)
 
-readKOps :: FS.HasFS IO h -> FS.HasBlockIO IO h -> Run RealWorld (FS.Handle h) -> IO [SerialisedKOp]
+readKOps :: FS.HasFS IO h -> FS.HasBlockIO IO h -> Run IO (FS.Handle h) -> IO [SerialisedKOp]
 readKOps fs hbio run = do
     reader <- Reader.new fs hbio run
     go reader

@@ -445,7 +445,7 @@ data TableHandleEnv m h = TableHandleEnv {
     -- waiting for the MVar.
     --
     -- TODO: switch to more fine-grained synchronisation approach
-  , tableContent    :: !(RWVar m (TableContent (PrimState m) h))
+  , tableContent    :: !(RWVar m (TableContent m h))
   }
 
 {-# INLINE tableSessionRoot #-}
@@ -516,7 +516,7 @@ new sesh conf = do
       am <- newArenaManager
       newWith sesh seshEnv conf am WB.empty V.empty
 
-{-# SPECIALISE newWith :: Session IO h -> SessionEnv IO h -> TableConfig -> ArenaManager RealWorld -> WriteBuffer -> Levels RealWorld (Handle h) -> IO (TableHandle IO h) #-}
+{-# SPECIALISE newWith :: Session IO h -> SessionEnv IO h -> TableConfig -> ArenaManager RealWorld -> WriteBuffer -> Levels IO (Handle h) -> IO (TableHandle IO h) #-}
 newWith ::
      m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
   => Session m h
@@ -524,7 +524,7 @@ newWith ::
   -> TableConfig
   -> ArenaManager (PrimState m)
   -> WriteBuffer
-  -> Levels (PrimState m) (Handle h)
+  -> Levels m (Handle h)
   -> m (TableHandle m h)
 newWith sesh seshEnv conf !am !wb !levels = do
     tableId <- incrUniqCounter (sessionUniqCounter seshEnv)
@@ -564,18 +564,18 @@ close th = do
         -- TODO: use TempRegistry
         tableSessionUntrackTable thEnv
         RW.withWriteAccess_ (tableContent thEnv) $ \lvls -> do
-          closeLevels (tableHasFS thEnv) (tableHasBlockIO thEnv) (tableLevels lvls)
+          closeLevels (tableLevels lvls)
           pure emptyTableContent
         pure TableHandleClosed
 
-{-# SPECIALISE lookups :: ResolveSerialisedValue -> V.Vector SerialisedKey -> TableHandle IO h -> (Maybe (Entry SerialisedValue (BlobRef (Run RealWorld (Handle h)))) -> lookupResult) -> IO (V.Vector lookupResult) #-}
+{-# SPECIALISE lookups :: ResolveSerialisedValue -> V.Vector SerialisedKey -> TableHandle IO h -> (Maybe (Entry SerialisedValue (BlobRef (Run IO (Handle h)))) -> lookupResult) -> IO (V.Vector lookupResult) #-}
 -- | See 'Database.LSMTree.Normal.lookups'.
 lookups ::
      m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
   => ResolveSerialisedValue
   -> V.Vector SerialisedKey
   -> TableHandle m h
-  -> (Maybe (Entry SerialisedValue (BlobRef (Run (PrimState m) (Handle h)))) -> lookupResult)
+  -> (Maybe (Entry SerialisedValue (BlobRef (Run m (Handle h)))) -> lookupResult)
      -- ^ How to map from an entry to a lookup result.
   -> m (V.Vector lookupResult)
 lookups resolve ks th fromEntry = do
@@ -676,7 +676,7 @@ data CursorEnv m h = CursorEnv {
   , cursorReaders     :: !(Maybe (Readers.Readers (PrimState m) (Handle h)))
     -- | The runs held open by the cursor. We must remove a reference when the
     -- cursor gets closed.
-  , cursorRuns        :: !(V.Vector (Run (PrimState m) (Handle h)))
+  , cursorRuns        :: !(V.Vector (Run m (Handle h)))
   }
 
 {-# SPECIALISE withCursor :: TableHandle IO h -> (Cursor IO h -> IO a) -> IO a #-}
@@ -704,7 +704,7 @@ newCursor th = withOpenTable th $ \thEnv -> do
     withOpenSession cursorSession $ \_ -> do
       withTempRegistry $ \reg -> do
         (cursorWriteBuffer, cursorRuns) <-
-          allocTableContent hfs hbio reg (tableContent thEnv)
+          allocTableContent reg (tableContent thEnv)
         cursorReaders <-
           allocateMaybeTemp reg
             (Readers.new hfs hbio (V.toList cursorRuns))
@@ -724,13 +724,13 @@ newCursor th = withOpenTable th $ \thEnv -> do
   where
     -- The table contents escape the read access, but we just added
     -- references to each run, so it is safe.
-    allocTableContent hfs hbio reg contentVar = do
+    allocTableContent reg contentVar = do
         RW.withReadAccess contentVar $ \content -> do
           let runs = cachedRuns (tableCache content)
           V.forM_ runs $ \r -> do
             allocateTemp reg
-              (Run.addReference hfs r)
-              (\_ -> Run.removeReference hfs hbio r)
+              (Run.addReference r)
+              (\_ -> Run.removeReference r)
           pure (tableWriteBuffer content, runs)
 
 {-# SPECIALISE closeCursor :: Cursor IO h -> IO () #-}
@@ -755,7 +755,7 @@ closeCursor Cursor {..} = do
             pure . Map.delete cursorId
 
         forM_ cursorReaders $ freeTemp reg . Readers.close hfs hbio
-        V.forM_ cursorRuns $ freeTemp reg . Run.removeReference hfs hbio
+        V.forM_ cursorRuns $ freeTemp reg . Run.removeReference
         return CursorClosed
 
 
@@ -855,7 +855,7 @@ open sesh label override snap = do
         am <- newArenaManager
         newWith sesh seshEnv conf' am WB.empty lvls
 
-{-# SPECIALISE openLevels :: TempRegistry IO -> HasFS IO h -> HasBlockIO IO h -> DiskCachePolicy -> V.Vector ((Bool, RunFsPaths), V.Vector RunFsPaths) -> IO (Levels RealWorld (FS.Handle h)) #-}
+{-# SPECIALISE openLevels :: TempRegistry IO -> HasFS IO h -> HasBlockIO IO h -> DiskCachePolicy -> V.Vector ((Bool, RunFsPaths), V.Vector RunFsPaths) -> IO (Levels IO (FS.Handle h)) #-}
 -- | Open multiple levels.
 openLevels ::
      m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
@@ -864,18 +864,18 @@ openLevels ::
   -> HasBlockIO m h
   -> DiskCachePolicy
   -> V.Vector ((Bool, RunFsPaths), V.Vector RunFsPaths)
-  -> m (Levels (PrimState m) (Handle h))
+  -> m (Levels m (Handle h))
 openLevels reg hfs hbio diskCachePolicy levels =
     flip V.imapMStrict levels $ \i (mrPath, rsPaths) -> do
       let ln      = LevelNo (i+1) -- level 0 is the write buffer
           caching = diskCachePolicyForLevel diskCachePolicy ln
       !r <- allocateTemp reg
               (Run.openFromDisk hfs hbio caching (snd mrPath))
-              (Run.removeReference hfs hbio)
+              Run.removeReference
       !rs <- flip V.mapMStrict rsPaths $ \run ->
         allocateTemp reg
           (Run.openFromDisk hfs hbio caching run)
-          (Run.removeReference hfs hbio)
+          Run.removeReference
       let !mr = if fst mrPath then SingleRun r else MergingRun (CompletedMerge r)
       pure $! Level mr rs
 
@@ -940,8 +940,8 @@ duplicate th = do
           content <- RW.withReadAccess (tableContent thEnv) $ \content -> do
             V.forM_ (runsInLevels (tableLevels content)) $ \r -> do
               allocateTemp reg
-                (Run.addReference (tableHasFS thEnv) r)
-                (\_ -> Run.removeReference (tableHasFS thEnv) (tableHasBlockIO thEnv) r)
+                (Run.addReference r)
+                (\_ -> Run.removeReference r)
             pure content
           -- TODO: Fix possible double-free! See 'newCursor'.
           -- In `newWith`, the table handle (in the open state) gets added to

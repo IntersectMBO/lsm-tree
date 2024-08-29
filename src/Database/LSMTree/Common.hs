@@ -50,7 +50,6 @@ import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Concurrent.Class.MonadSTM (MonadSTM, STM)
 import           Control.DeepSeq
 import           Control.Monad.Class.MonadThrow
-import           Control.Monad.Primitive (PrimMonad (..))
 import           Control.Tracer (Tracer)
 import           Data.Kind (Type)
 import           Data.Typeable (Proxy, Typeable)
@@ -244,4 +243,4 @@ listSnapshots (Session sesh) = Internal.listSnapshots sesh
 -- TODO: get rid of the @m@ parameter?
 type BlobRef :: (Type -> Type) -> Type -> Type
 type role BlobRef nominal nominal
-data BlobRef m blob = forall h. Typeable h => BlobRef (Internal.BlobRef (Internal.Run (PrimState m) h))
+data BlobRef m blob = forall h. Typeable h => BlobRef (Internal.BlobRef (Internal.Run m h))

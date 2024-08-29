@@ -100,18 +100,18 @@ data MergeTrace =
   Table content
 -------------------------------------------------------------------------------}
 
-data TableContent s h = TableContent {
+data TableContent m h = TableContent {
     tableWriteBuffer :: !WriteBuffer
     -- | A hierarchy of levels. The vector indexes double as level numbers.
-  , tableLevels      :: !(Levels s (Handle h))
+  , tableLevels      :: !(Levels m (Handle h))
     -- | Cache of flattened 'levels'.
     --
     -- INVARIANT: when 'level's is modified, this cache should be updated as
     -- well, for example using 'mkLevelsCache'.
-  , tableCache       :: !(LevelsCache s (Handle h))
+  , tableCache       :: !(LevelsCache m (Handle h))
   }
 
-emptyTableContent :: TableContent s h
+emptyTableContent :: TableContent m h
 emptyTableContent = TableContent {
       tableWriteBuffer = WB.empty
     , tableLevels = V.empty
@@ -131,8 +131,8 @@ emptyTableContent = TableContent {
 --
 -- Use 'mkLevelsCache' to ensure that there are no mismatches between the vector
 -- of runs and the vectors of run components.
-data LevelsCache s h = LevelsCache_ {
-    cachedRuns      :: !(V.Vector (Run s h))
+data LevelsCache m h = LevelsCache_ {
+    cachedRuns      :: !(V.Vector (Run m h))
   , cachedFilters   :: !(V.Vector (Bloom SerialisedKey))
   , cachedIndexes   :: !(V.Vector IndexCompact)
   , cachedKOpsFiles :: !(V.Vector h)
@@ -140,7 +140,7 @@ data LevelsCache s h = LevelsCache_ {
 
 -- | Flatten the argument 'Level's into a single vector of runs, and use that to
 -- populate the 'LevelsCache'.
-mkLevelsCache :: Levels s h -> LevelsCache s h
+mkLevelsCache :: Levels m h -> LevelsCache m h
 mkLevelsCache lvls = LevelsCache_ {
       cachedRuns      = rs
     , cachedFilters   = V.map Run.runFilter rs
@@ -154,49 +154,47 @@ mkLevelsCache lvls = LevelsCache_ {
   Levels, runs and ongoing merges
 -------------------------------------------------------------------------------}
 
-type Levels s h = V.Vector (Level s h)
+type Levels m h = V.Vector (Level m h)
 
 -- | Runs in order from newer to older
-data Level s h = Level {
-    incomingRuns :: !(MergingRun s h)
-  , residentRuns :: !(V.Vector (Run s h))
+data Level m h = Level {
+    incomingRuns :: !(MergingRun m h)
+  , residentRuns :: !(V.Vector (Run m h))
   }
 
 -- TODO: proper instance
-deriving via OnlyCheckWhnfNamed "Level" (Level s h) instance NoThunks (Level s h)
+deriving via OnlyCheckWhnfNamed "Level" (Level m h) instance NoThunks (Level m h)
 
 -- | A merging run is either a single run, or some ongoing merge.
-data MergingRun s h =
-    MergingRun !(MergingRunState s h)
-  | SingleRun !(Run s h)
+data MergingRun m h =
+    MergingRun !(MergingRunState m h)
+  | SingleRun !(Run m h)
 
 -- | Merges are stepped to completion immediately, so there is no representation
 -- for ongoing merges (yet)
 --
 -- TODO: this should also represent ongoing merges once we implement scheduling.
-newtype MergingRunState s h = CompletedMerge (Run s h)
+newtype MergingRunState m h = CompletedMerge (Run m h)
 
 -- | Return all runs in the levels, ordered from newest to oldest
-runsInLevels :: Levels s h -> V.Vector (Run s h)
+runsInLevels :: Levels m h -> V.Vector (Run m h)
 runsInLevels levels = flip V.concatMap levels $ \(Level mr rs) ->
     case mr of
       SingleRun r                   -> r `V.cons` rs
       MergingRun (CompletedMerge r) -> r `V.cons` rs
 
-{-# SPECIALISE closeLevels :: HasFS IO h -> HasBlockIO IO h -> Levels RealWorld (Handle h) -> IO () #-}
+{-# SPECIALISE closeLevels :: Levels IO (Handle h) -> IO () #-}
 closeLevels ::
      m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
-  => HasFS m h
-  -> HasBlockIO m h
-  -> Levels (PrimState m) (Handle h)
+  => Levels m (Handle h)
   -> m ()
-closeLevels hfs hbio levels = V.mapM_ (Run.removeReference hfs hbio) (runsInLevels levels)
+closeLevels levels = V.mapM_ Run.removeReference (runsInLevels levels)
 
 {-------------------------------------------------------------------------------
   Flushes and scheduled merges
 -------------------------------------------------------------------------------}
 
-{-# SPECIALISE updatesWithInterleavedFlushes :: Tracer IO (AtLevel MergeTrace) -> TableConfig -> ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob) -> TempRegistry IO -> TableContent RealWorld h -> IO (TableContent RealWorld h) #-}
+{-# SPECIALISE updatesWithInterleavedFlushes :: Tracer IO (AtLevel MergeTrace) -> TableConfig -> ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob) -> TempRegistry IO -> TableContent IO h -> IO (TableContent IO h) #-}
 -- | A single batch of updates can fill up the write buffer multiple times. We
 -- flush the write buffer each time it fills up before trying to fill it up
 -- again.
@@ -232,8 +230,8 @@ updatesWithInterleavedFlushes ::
   -> UniqCounter m
   -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob)
   -> TempRegistry m
-  -> TableContent (PrimState m) h
-  -> m (TableContent (PrimState m) h)
+  -> TableContent m h
+  -> m (TableContent m h)
 updatesWithInterleavedFlushes tr conf resolve hfs hbio root uc es reg tc = do
     let wb = tableWriteBuffer tc
         (wb', es') = WB.addEntriesUpToN resolve es maxn wb
@@ -258,14 +256,14 @@ updatesWithInterleavedFlushes tr conf resolve hfs hbio root uc es reg tc = do
         updatesWithInterleavedFlushes tr conf resolve hfs hbio root uc es' reg tc''
   where
     AllocNumEntries (NumEntries maxn) = confWriteBufferAlloc conf
-    setWriteBuffer :: WriteBuffer -> TableContent (PrimState m) h -> TableContent (PrimState m) h
+    setWriteBuffer :: WriteBuffer -> TableContent m h -> TableContent m h
     setWriteBuffer wbToSet tc0 = TableContent {
           tableWriteBuffer = wbToSet
         , tableLevels = tableLevels tc0
         , tableCache = tableCache tc0
         }
 
-{-# SPECIALISE flushWriteBuffer :: Tracer IO (AtLevel MergeTrace) -> TableConfig -> ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> TempRegistry IO -> TableContent RealWorld h -> IO (TableContent RealWorld h) #-}
+{-# SPECIALISE flushWriteBuffer :: Tracer IO (AtLevel MergeTrace) -> TableConfig -> ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> TempRegistry IO -> TableContent IO h -> IO (TableContent IO h) #-}
 -- | Flush the write buffer to disk, regardless of whether it is full or not.
 --
 -- The returned table content contains an updated set of levels, where the write
@@ -280,8 +278,8 @@ flushWriteBuffer ::
   -> SessionRoot
   -> UniqCounter m
   -> TempRegistry m
-  -> TableContent (PrimState m) h
-  -> m (TableContent (PrimState m) h)
+  -> TableContent m h
+  -> m (TableContent m h)
 flushWriteBuffer tr conf@TableConfig{confDiskCachePolicy}
                  resolve hfs hbio root uc reg tc
   | WB.null (tableWriteBuffer tc) = pure tc
@@ -299,7 +297,7 @@ flushWriteBuffer tr conf@TableConfig{confDiskCachePolicy}
               alloc
               path
               (tableWriteBuffer tc))
-            (Run.removeReference hfs hbio)
+            Run.removeReference
     levels' <- addRunToLevels tr conf resolve hfs hbio root uc r reg (tableLevels tc)
     pure $! TableContent {
         tableWriteBuffer = WB.empty
@@ -310,14 +308,14 @@ flushWriteBuffer tr conf@TableConfig{confDiskCachePolicy}
 -- | Note that the invariants rely on the fact that levelling is only used on
 -- the last level.
 --
-_levelsInvariant :: forall s h. TableConfig -> Levels s h -> ST s Bool
+_levelsInvariant :: forall m h. TableConfig -> Levels m h -> ST (PrimState m) Bool
 _levelsInvariant conf levels =
     go (LevelNo 1) levels >>= \ !_ -> pure True
   where
     sr = confSizeRatio conf
     wba = confWriteBufferAlloc conf
 
-    go :: LevelNo -> Levels s h -> ST s ()
+    go :: LevelNo -> Levels m h -> ST (PrimState m) ()
     go !_ (V.uncons -> Nothing) = pure ()
 
     go !ln (V.uncons -> Just (Level mr rs, ls)) = do
@@ -382,7 +380,7 @@ _levelsInvariant conf levels =
     -- Check that a run is too small for next levels
     fitsUB policy r ln = Run.runNumEntries r <= maxRunSize sr wba policy ln
 
-{-# SPECIALISE addRunToLevels :: Tracer IO (AtLevel MergeTrace) -> TableConfig -> ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> Run RealWorld (Handle h) -> TempRegistry IO -> Levels RealWorld (Handle h) -> IO (Levels RealWorld (Handle h)) #-}
+{-# SPECIALISE addRunToLevels :: Tracer IO (AtLevel MergeTrace) -> TableConfig -> ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> Run IO (Handle h) -> TempRegistry IO -> Levels IO (Handle h) -> IO (Levels IO (Handle h)) #-}
 addRunToLevels ::
      forall m h. m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
   => Tracer m (AtLevel MergeTrace)
@@ -392,10 +390,10 @@ addRunToLevels ::
   -> HasBlockIO m h
   -> SessionRoot
   -> UniqCounter m
-  -> Run (PrimState m) (Handle h)
+  -> Run m (Handle h)
   -> TempRegistry m
-  -> Levels (PrimState m) (Handle h)
-  -> m (Levels (PrimState m) (Handle h))
+  -> Levels m (Handle h)
+  -> m (Levels m (Handle h))
 addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = do
     ls' <- go (LevelNo 1) (V.singleton r0) levels
 #ifdef NO_IGNORE_ASSERTS
@@ -456,7 +454,7 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
             mr' <- newMerge LevelLevelling Merge.LastLevel ln (rs' `V.snoc` r)
             pure $! Level mr' V.empty `V.cons` V.empty
 
-    expectCompletedMerge :: LevelNo -> MergingRun (PrimState m) (Handle h) -> m (Run (PrimState m) (Handle h))
+    expectCompletedMerge :: LevelNo -> MergingRun m (Handle h) -> m (Run m (Handle h))
     expectCompletedMerge ln (SingleRun r)                   = do
       traceWith tr $ AtLevel ln $ TraceExpectCompletedMergeSingleRun (runNumber $ Run.runRunFsPaths r)
       pure r
@@ -469,8 +467,8 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
     newMerge :: MergePolicyForLevel
              -> Merge.Level
              -> LevelNo
-             -> V.Vector (Run (PrimState m) (Handle h))
-             -> m (MergingRun (PrimState m) (Handle h))
+             -> V.Vector (Run m (Handle h))
+             -> m (MergingRun m (Handle h))
     newMerge mergepolicy mergelast ln rs
       | Just (r, rest) <- V.uncons rs
       , V.null rest = do
@@ -485,15 +483,15 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
         traceWith tr $ AtLevel ln $ TraceNewMerge (V.map Run.runNumEntries rs) (runNumber runPaths) caching alloc mergepolicy mergelast
         r <- allocateTemp reg
                (mergeRuns resolve hfs hbio caching alloc runPaths mergelast rs)
-               (Run.removeReference hfs hbio)
+               Run.removeReference
         traceWith tr $ AtLevel ln $ TraceCompletedMerge (Run.runNumEntries r) (runNumber $ Run.runRunFsPaths r)
-        V.mapM_ (freeTemp reg . Run.removeReference hfs hbio) rs
+        V.mapM_ (freeTemp reg . Run.removeReference) rs
         pure $! MergingRun (CompletedMerge r)
 
 data MergePolicyForLevel = LevelTiering | LevelLevelling
   deriving stock Show
 
-mergePolicyForLevel :: MergePolicy -> LevelNo -> Levels s h -> MergePolicyForLevel
+mergePolicyForLevel :: MergePolicy -> LevelNo -> Levels m h -> MergePolicyForLevel
 mergePolicyForLevel MergePolicyLazyLevelling (LevelNo n) nextLevels
   | n == 1
   , V.null nextLevels
@@ -501,7 +499,7 @@ mergePolicyForLevel MergePolicyLazyLevelling (LevelNo n) nextLevels
   | V.null nextLevels = LevelLevelling  -- levelling on last level
   | otherwise         = LevelTiering
 
-runSize :: Run s h -> NumEntries
+runSize :: Run m h -> NumEntries
 runSize run = Run.runNumEntries run
 
 -- $setup
@@ -543,15 +541,15 @@ maxRunSize' :: TableConfig -> MergePolicyForLevel -> LevelNo -> NumEntries
 maxRunSize' config policy ln =
     maxRunSize (confSizeRatio config) (confWriteBufferAlloc config) policy ln
 
-mergeLastForLevel :: Levels s h -> Merge.Level
+mergeLastForLevel :: Levels m h -> Merge.Level
 mergeLastForLevel levels
  | V.null levels = Merge.LastLevel
  | otherwise     = Merge.MidLevel
 
-levelIsFull :: SizeRatio -> V.Vector (Run s h) -> Bool
+levelIsFull :: SizeRatio -> V.Vector (Run m h) -> Bool
 levelIsFull sr rs = V.length rs + 1 >= (sizeRatioInt sr)
 
-{-# SPECIALISE mergeRuns :: ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> RunDataCaching -> RunBloomFilterAlloc -> RunFsPaths -> Merge.Level -> V.Vector (Run RealWorld (Handle h)) -> IO (Run RealWorld (Handle h)) #-}
+{-# SPECIALISE mergeRuns :: ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> RunDataCaching -> RunBloomFilterAlloc -> RunFsPaths -> Merge.Level -> V.Vector (Run IO (Handle h)) -> IO (Run IO (Handle h)) #-}
 mergeRuns ::
      m ~ IO
   => ResolveSerialisedValue
@@ -561,8 +559,8 @@ mergeRuns ::
   -> RunBloomFilterAlloc
   -> RunFsPaths
   -> Merge.Level
-  -> V.Vector (Run (PrimState m) (Handle h))
-  -> m (Run (PrimState m) (Handle h))
+  -> V.Vector (Run m (Handle h))
+  -> m (Run m (Handle h))
 mergeRuns resolve hfs hbio caching alloc runPaths mergeLevel runs = do
     Merge.new hfs hbio caching alloc mergeLevel resolve runPaths (toList runs) >>= \case
       Nothing -> error "mergeRuns: no inputs"

@@ -168,7 +168,7 @@ lookupsInBatchesEnv ::
         , ArenaManager RealWorld
         , FS.HasFS IO FS.HandleIO
         , FS.HasBlockIO IO FS.HandleIO
-        , V.Vector (Run RealWorld (FS.Handle FS.HandleIO))
+        , V.Vector (Run IO (FS.Handle FS.HandleIO))
         , V.Vector SerialisedKey
         )
 lookupsInBatchesEnv Config {..} = do
@@ -199,13 +199,13 @@ lookupsInBatchesCleanup ::
      , ArenaManager RealWorld
      , FS.HasFS IO FS.HandleIO
      , FS.HasBlockIO IO FS.HandleIO
-     , V.Vector (Run RealWorld (FS.Handle FS.HandleIO))
+     , V.Vector (Run IO (FS.Handle FS.HandleIO))
      , V.Vector SerialisedKey
      )
   -> IO ()
-lookupsInBatchesCleanup (tmpDir, _arenaManager, hasFS, hasBlockIO, rs, _) = do
+lookupsInBatchesCleanup (tmpDir, _arenaManager, _hasFS, hasBlockIO, rs, _) = do
     FS.close hasBlockIO
-    forM_ rs $ Run.removeReference hasFS hasBlockIO
+    forM_ rs Run.removeReference
     removeDirectoryRecursive tmpDir
 
 -- | Generate keys to store and keys to lookup
