@@ -1,17 +1,17 @@
 {-# LANGUAGE CPP #-}
 
-module Test.Database.LSMTree.Internal.RefCount (tests) where
+module Test.Control.RefCount (tests) where
 
 import           Control.Concurrent.Class.MonadMVar
 import           Control.Exception (AssertionFailed (..))
 import           Control.Monad
 import           Control.Monad.Class.MonadThrow
-import           Database.LSMTree.Internal.RefCount
+import           Control.RefCount
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck
 
 tests :: TestTree
-tests = testGroup "Database.LSMTree.Internal.RefCount" [
+tests = testGroup "Control.RefCount" [
       testProperty "prop_refCount" prop_refCount
     ]
 

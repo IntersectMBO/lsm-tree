@@ -1,6 +1,6 @@
 {-# LANGUAGE MagicHash #-}
 
-module Database.LSMTree.Internal.RefCount (
+module Control.RefCount (
     RefCounter
   , RefCount (..)
   , unsafeMkRefCounterN
