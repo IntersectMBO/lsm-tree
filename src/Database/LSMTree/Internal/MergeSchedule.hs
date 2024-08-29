@@ -53,6 +53,7 @@ import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.Serialise (SerialisedBlob,
                      SerialisedKey, SerialisedValue)
 import           Database.LSMTree.Internal.UniqCounter
+import           Database.LSMTree.Internal.Vector (mapStrict)
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import           System.FS.API (Handle, HasFS)
@@ -134,9 +135,9 @@ data LevelsCache m h = LevelsCache_ {
 mkLevelsCache :: Levels m h -> LevelsCache m h
 mkLevelsCache lvls = LevelsCache_ {
       cachedRuns      = rs
-    , cachedFilters   = V.map Run.runFilter rs
-    , cachedIndexes   = V.map Run.runIndex rs
-    , cachedKOpsFiles = V.map Run.runKOpsFile rs
+    , cachedFilters   = mapStrict Run.runFilter rs
+    , cachedIndexes   = mapStrict Run.runIndex rs
+    , cachedKOpsFiles = mapStrict Run.runKOpsFile rs
     }
   where
     rs = runsInLevels lvls

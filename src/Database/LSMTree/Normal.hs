@@ -356,7 +356,7 @@ newCursor ::
      IOLike m
   => TableHandle m k v blob
   -> m (Cursor m k v blob)
-newCursor (TableHandle th) = Cursor <$> Internal.newCursor th
+newCursor (TableHandle th) = Cursor <$!> Internal.newCursor th
 
 {-# SPECIALISE closeCursor :: Cursor IO k v blob -> IO () #-}
 -- | Close a cursor. 'closeCursor' is idempotent. All operations on a closed
@@ -527,7 +527,7 @@ open ::
   -> SnapshotName
   -> m (TableHandle m k v blob)
 open (Session sesh) override snap =
-    TableHandle <$> Internal.open sesh label override snap
+    TableHandle <$!> Internal.open sesh label override snap
   where
     -- to ensure that the table is really a normal table
     label = Common.makeSnapshotLabel (Proxy @(k, v, blob)) <> " (normal)"
@@ -571,4 +571,4 @@ duplicate ::
      IOLike m
   => TableHandle m k v blob
   -> m (TableHandle m k v blob)
-duplicate (TableHandle th) = TableHandle <$> Internal.duplicate th
+duplicate (TableHandle th) = TableHandle <$!> Internal.duplicate th
