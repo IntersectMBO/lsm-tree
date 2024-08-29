@@ -55,7 +55,6 @@ import           Database.LSMTree.Internal.Serialise (SerialisedBlob,
 import           Database.LSMTree.Internal.UniqCounter
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
-import           NoThunks.Class
 import           System.FS.API (Handle, HasFS)
 import           System.FS.BlockIO.API (HasBlockIO)
 
@@ -153,9 +152,6 @@ data Level m h = Level {
     incomingRuns :: !(MergingRun m h)
   , residentRuns :: !(V.Vector (Run m h))
   }
-
--- TODO: proper instance
-deriving via OnlyCheckWhnfNamed "Level" (Level m h) instance NoThunks (Level m h)
 
 -- | A merging run is either a single run, or some ongoing merge.
 data MergingRun m h =

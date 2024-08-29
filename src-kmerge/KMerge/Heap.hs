@@ -13,7 +13,7 @@
 -- However, as the 'MutableHeap' always represents a heap with its root (minimum value)
 -- extracted, *extract-min* is "fused" to other operations.
 module KMerge.Heap (
-    MutableHeap,
+    MutableHeap (..),
     newMutableHeap,
     replaceRoot,
     extract,

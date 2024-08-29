@@ -1,7 +1,7 @@
 {-# LANGUAGE MagicHash #-}
 
 module Control.RefCount (
-    RefCounter
+    RefCounter (..)
   , RefCount (..)
   , unsafeMkRefCounterN
   , mkRefCounterN

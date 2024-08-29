@@ -77,7 +77,6 @@ import qualified Database.LSMTree.Internal.RunBuilder as Builder
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
-import           NoThunks.Class (NoThunks, OnlyCheckWhnfNamed (..))
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
 import qualified System.FS.BlockIO.API as FS
@@ -110,9 +109,6 @@ data Run m fhandle = Run {
     , runBlobFile       :: !fhandle
     , runRunDataCaching :: !RunDataCaching
     }
-
--- TODO: provide a proper instance that checks NoThunks for each field.
-deriving via OnlyCheckWhnfNamed "Run" (Run m h) instance NoThunks (Run m h)
 
 instance NFData fhandle => NFData (Run m fhandle) where
   rnf (Run a b c d e f g h) =

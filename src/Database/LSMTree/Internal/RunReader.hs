@@ -1,7 +1,7 @@
 -- | A run that is being read incrementally.
 --
 module Database.LSMTree.Internal.RunReader (
-    RunReader
+    RunReader (..)
   , new
   , next
   , close

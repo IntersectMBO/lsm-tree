@@ -29,6 +29,8 @@ module Database.LSMTree.Internal (
   , updates
     -- ** Cursor API
   , Cursor (..)
+  , CursorState (..)
+  , CursorEnv (..)
   , withCursor
   , newCursor
   , closeCursor
@@ -64,7 +66,6 @@ import           Data.Maybe (catMaybes)
 import qualified Data.Set as Set
 import qualified Data.Vector as V
 import           Data.Word (Word64)
-import           Database.LSMTree.Internal.Assertions (assertNoThunks)
 import           Database.LSMTree.Internal.BlobRef
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.Entry (Entry, combineMaybe)
@@ -530,7 +531,6 @@ newWith sesh seshEnv conf !am !wb !levels = do
     tableId <- incrUniqCounter (sessionUniqCounter seshEnv)
     let tr = TraceTable (uniqueToWord64 tableId) `contramap` sessionTracer sesh
     traceWith tr $ TraceCreateTableHandle conf
-    assertNoThunks levels $ pure ()
     -- The session is kept open until we've updated the session's set of tracked
     -- tables. If 'closeSession' is called by another thread while this code
     -- block is being executed, that thread will block until it reads the
@@ -617,18 +617,16 @@ updates resolve es th = do
       modifyWithTempRegistry_
         (atomically $ RW.unsafeAcquireWriteAccess (tableContent thEnv))
         (atomically . RW.unsafeReleaseWriteAccess (tableContent thEnv)) $ \tc -> do
-          tc' <- updatesWithInterleavedFlushes
-                  (TraceMerge `contramap` tableTracer th)
-                  conf
-                  resolve
-                  hfs
-                  (tableHasBlockIO thEnv)
-                  (tableSessionRoot thEnv)
-                  (tableSessionUniqCounter thEnv)
-                  es
-                  tc
-          assertNoThunks tc' $ pure ()
-          pure tc'
+          updatesWithInterleavedFlushes
+            (TraceMerge `contramap` tableTracer th)
+            conf
+            resolve
+            hfs
+            (tableHasBlockIO thEnv)
+            (tableSessionRoot thEnv)
+            (tableSessionUniqCounter thEnv)
+            es
+            tc
 
 {-------------------------------------------------------------------------------
   Cursors
@@ -923,6 +921,7 @@ listSnapshots sesh = do
   Mutiple writable table handles
 -------------------------------------------------------------------------------}
 
+{-# SPECIALISE duplicate :: TableHandle IO h -> IO (TableHandle IO h) #-}
 -- | See 'Database.LSMTree.Normal.duplicate'.
 duplicate ::
      m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.

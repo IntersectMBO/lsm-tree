@@ -32,13 +32,13 @@ module Database.LSMTree.Normal (
   , Common.MergeTrace (..)
 
     -- * Table sessions
-  , Session
+  , Session (..)
   , withSession
   , openSession
   , closeSession
 
     -- * Table handles
-  , TableHandle
+  , TableHandle (..)
   , Common.TableConfig (..)
   , Common.defaultTableConfig
   , Common.SizeRatio (..)

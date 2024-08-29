@@ -2,7 +2,7 @@
 {-# LANGUAGE DeriveFunctor  #-}
 {-# LANGUAGE NamedFieldPuns #-}
 module Database.LSMTree.Internal.RawOverflowPage (
-    RawOverflowPage,
+    RawOverflowPage (..),
     makeRawOverflowPage,
     unsafeMakeRawOverflowPage,
     rawOverflowPageRawBytes,
