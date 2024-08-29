@@ -217,12 +217,12 @@ data ByteCountDiscrepancy = ByteCountDiscrepancy {
        HasBlockIO IO h
     -> ArenaManager RealWorld
     -> ResolveSerialisedValue
-    -> V.Vector (Run RealWorld (Handle h))
+    -> V.Vector (Run IO (Handle h))
     -> V.Vector (Bloom SerialisedKey)
     -> V.Vector IndexCompact
     -> V.Vector (Handle h)
     -> V.Vector SerialisedKey
-    -> IO (V.Vector (Maybe (Entry SerialisedValue (BlobRef (Run RealWorld (Handle h))))))
+    -> IO (V.Vector (Maybe (Entry SerialisedValue (BlobRef (Run IO (Handle h))))))
   #-}
 -- | Batched lookups in I\/O.
 --
@@ -235,12 +235,12 @@ lookupsIO ::
   => HasBlockIO m h
   -> ArenaManager (PrimState m)
   -> ResolveSerialisedValue
-  -> V.Vector (Run (PrimState m) (Handle h)) -- ^ Runs @rs@
+  -> V.Vector (Run m (Handle h)) -- ^ Runs @rs@
   -> V.Vector (Bloom SerialisedKey) -- ^ The bloom filters inside @rs@
   -> V.Vector IndexCompact -- ^ The indexes inside @rs@
   -> V.Vector (Handle h) -- ^ The file handles to the key\/value files inside @rs@
   -> V.Vector SerialisedKey
-  -> m (V.Vector (Maybe (Entry SerialisedValue (BlobRef (Run (PrimState m) (Handle h))))))
+  -> m (V.Vector (Maybe (Entry SerialisedValue (BlobRef (Run m (Handle h))))))
 lookupsIO !hbio !mgr !resolveV !rs !blooms !indexes !kopsFiles !ks = assert precondition $ withArena mgr $ \arena -> do
     (rkixs, ioops) <- Class.stToIO $ prepLookups arena blooms indexes kopsFiles ks
     ioress <- submitIO hbio ioops
@@ -256,12 +256,12 @@ lookupsIO !hbio !mgr !resolveV !rs !blooms !indexes !kopsFiles !ks = assert prec
 
 {-# SPECIALIZE intraPageLookups ::
        ResolveSerialisedValue
-    -> V.Vector (Run RealWorld (Handle h))
+    -> V.Vector (Run IO (Handle h))
     -> V.Vector SerialisedKey
     -> VU.Vector (RunIx, KeyIx)
     -> V.Vector (IOOp RealWorld h)
     -> VU.Vector IOResult
-    -> IO (V.Vector (Maybe (Entry SerialisedValue (BlobRef (Run RealWorld (Handle h))))))
+    -> IO (V.Vector (Maybe (Entry SerialisedValue (BlobRef (Run IO (Handle h))))))
   #-}
 -- | Intra-page lookups.
 --
@@ -271,12 +271,12 @@ lookupsIO !hbio !mgr !resolveV !rs !blooms !indexes !kopsFiles !ks = assert prec
 intraPageLookups ::
      forall m h. (PrimMonad m, MonadThrow m)
   => ResolveSerialisedValue
-  -> V.Vector (Run (PrimState m) (Handle h))
+  -> V.Vector (Run m (Handle h))
   -> V.Vector SerialisedKey
   -> VU.Vector (RunIx, KeyIx)
   -> V.Vector (IOOp (PrimState m) h)
   -> VU.Vector IOResult
-  -> m (V.Vector (Maybe (Entry SerialisedValue (BlobRef (Run (PrimState m) (Handle h))))))
+  -> m (V.Vector (Maybe (Entry SerialisedValue (BlobRef (Run m (Handle h))))))
 intraPageLookups !resolveV !rs !ks !rkixs !ioops !ioress = do
     res <- VM.replicate (V.length ks) Nothing
     loop res 0
@@ -285,7 +285,7 @@ intraPageLookups !resolveV !rs !ks !rkixs !ioops !ioress = do
     !n = V.length ioops
 
     loop ::
-         VM.MVector (PrimState m) (Maybe (Entry SerialisedValue (BlobRef (Run (PrimState m) (Handle h)))))
+         VM.MVector (PrimState m) (Maybe (Entry SerialisedValue (BlobRef (Run m (Handle h)))))
       -> Int
       -> m ()
     loop !res !ioopix

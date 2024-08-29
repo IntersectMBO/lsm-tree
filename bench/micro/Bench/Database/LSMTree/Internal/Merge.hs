@@ -1,7 +1,6 @@
 module Bench.Database.LSMTree.Internal.Merge (benchmarks) where
 
 import           Control.Monad (when, zipWithM)
-import           Control.Monad.Primitive
 import           Criterion.Main (Benchmark, bench, bgroup)
 import qualified Criterion.Main as Cr
 import           Data.Bifunctor (first)
@@ -206,7 +205,7 @@ benchMerge conf@Config{name} =
                 -- Make sure to immediately close resulting runs so we don't run
                 -- out of file handles. Ideally this would not be measured, but at
                 -- least it's pretty cheap.
-                Run.removeReference hasFS hasBlockIO run
+                Run.removeReference run
         ]
   where
     withEnv =
@@ -228,7 +227,7 @@ merge ::
   -> Config
   -> Run.RunFsPaths
   -> InputRuns
-  -> IO (Run RealWorld (FS.Handle (FS.HandleIO)))
+  -> IO (Run IO (FS.Handle (FS.HandleIO)))
 merge fs hbio Config {..} targetPaths runs = do
     let f = fromMaybe const mergeMappend
     m <- fromMaybe (error "empty inputs, no merge created") <$>
@@ -246,7 +245,7 @@ outputRunPaths = RunFsPaths (FS.mkFsPath []) (RunNumber 0)
 inputRunPaths :: [Run.RunFsPaths]
 inputRunPaths = RunFsPaths (FS.mkFsPath []) . RunNumber <$> [1..]
 
-type InputRuns = [Run RealWorld (FS.Handle FS.HandleIO)]
+type InputRuns = [Run IO (FS.Handle FS.HandleIO)]
 
 type Mappend = SerialisedValue -> SerialisedValue -> SerialisedValue
 
@@ -338,8 +337,8 @@ mergeEnvCleanup ::
      , InputRuns
      )
   -> IO ()
-mergeEnvCleanup (tmpDir, hasFS, hasBlockIO, runs) = do
-    traverse_ (Run.removeReference hasFS hasBlockIO) runs
+mergeEnvCleanup (tmpDir, _hasFS, hasBlockIO, runs) = do
+    traverse_ Run.removeReference runs
     removeDirectoryRecursive tmpDir
     FS.close hasBlockIO
 
@@ -362,7 +361,7 @@ createRun ::
   -> Maybe Mappend
   -> Run.RunFsPaths
   -> [SerialisedKOp]
-  -> IO (Run RealWorld (FS.Handle h))
+  -> IO (Run IO (FS.Handle h))
 createRun hasFS hasBlockIO mMappend targetPath =
       Run.fromWriteBuffer hasFS  hasBlockIO Run.CacheRunData (RunAllocFixed 10) targetPath
     . Fold.foldl insert WB.empty

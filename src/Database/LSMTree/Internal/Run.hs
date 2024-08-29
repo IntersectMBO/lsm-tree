@@ -3,6 +3,7 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DerivingVia        #-}
 {-# LANGUAGE RecordWildCards    #-}
+{-# LANGUAGE RecursiveDo        #-}
 
 -- | Functionality related to LSM-Tree runs (sequences of LSM-Tree data).
 --
@@ -49,22 +50,19 @@ module Database.LSMTree.Internal.Run (
   , fromWriteBuffer
   , openFromDisk
   , RunDataCaching (..)
-    -- ** RefCount
-  , RefCount (..)
-  , incRefCount
-  , decRefCount
   ) where
 
 import           Control.DeepSeq (NFData (..), rwhnf)
 import           Control.Monad (when)
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Primitive
+import           Control.RefCount (RefCount (..), RefCounter)
+import qualified Control.RefCount as RC
 import           Data.BloomFilter (Bloom)
 import qualified Data.ByteString.Short as SBS
 import           Data.Foldable (for_)
 import           Data.Primitive.ByteArray (newPinnedByteArray,
                      unsafeFreezeByteArray)
-import           Data.Primitive.MutVar
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.BloomFilter (bloomFilterFromSBS)
 import qualified Database.LSMTree.Internal.CRC32C as CRC
@@ -87,12 +85,12 @@ import           System.FS.BlockIO.API (HasBlockIO)
 
 -- | The in-memory representation of a completed LSM run.
 --
-data Run s fhandle = Run {
+data Run m fhandle = Run {
       runNumEntries     :: !NumEntries
       -- | The reference count for the LSM run. This counts the
       -- number of references from LSM handles to this run. When
       -- this drops to zero the open files will be closed.
-    , runRefCount       :: !(MutVar s RefCount)
+    , runRefCounter     :: !(RefCounter m)
       -- | The file system paths for all the files used by the run.
     , runRunFsPaths     :: !RunFsPaths
       -- | The bloom filter for the set of keys in this run.
@@ -114,33 +112,26 @@ data Run s fhandle = Run {
     }
 
 -- TODO: provide a proper instance that checks NoThunks for each field.
-deriving via OnlyCheckWhnfNamed "Run" (Run s h) instance NoThunks (Run s h)
+deriving via OnlyCheckWhnfNamed "Run" (Run m h) instance NoThunks (Run m h)
 
-instance NFData fhandle => NFData (Run s fhandle) where
+instance NFData fhandle => NFData (Run m fhandle) where
   rnf (Run a b c d e f g h) =
       rnf a `seq` rwhnf b `seq` rnf c `seq` rnf d `seq` rnf e `seq`
       rnf f `seq` rnf g `seq` rnf h
 
-sizeInPages :: Run s fhandle -> NumPages
+sizeInPages :: Run m fhandle -> NumPages
 sizeInPages = Index.sizeInPages . runIndex
 
--- | Increase the reference count by one.
-addReference :: HasFS IO h -> Run RealWorld (FS.Handle h) -> IO ()
-addReference _ Run {..} =
-    atomicModifyMutVar' runRefCount (\c -> (incRefCount c, ()))
+{-# SPECIALISE addReference :: Run IO h -> IO () #-}
+addReference :: PrimMonad m => Run m h -> m ()
+addReference r = RC.addReference (runRefCounter r)
 
--- | Decrease the reference count by one.
--- After calling this operation, the run must not be used anymore.
--- If the reference count reaches zero, the run is closed, removing all its
--- associated files from disk.
-removeReference :: HasFS IO h -> HasBlockIO IO h -> Run RealWorld (FS.Handle h) -> IO ()
-removeReference fs hbio run@Run {..} = do
-    count <- atomicModifyMutVar' runRefCount ((\c -> (c, c)) . decRefCount)
-    when (count <= RefCount 0) $
-      close fs hbio run
+{-# SPECIALISE removeReference :: Run IO h -> IO () #-}
+removeReference :: (PrimMonad m, MonadMask m) => Run m h -> m ()
+removeReference r = RC.removeReference (runRefCounter r)
 
 -- | The 'BlobSpan' to read must come from this run!
-readBlob :: HasFS IO h -> Run RealWorld (FS.Handle h) -> BlobSpan -> IO SerialisedBlob
+readBlob :: HasFS IO h -> Run IO (FS.Handle h) -> BlobSpan -> IO SerialisedBlob
 readBlob fs Run {..} BlobSpan {..} = do
     let off = fromIntegral blobSpanOffset
     let len = fromIntegral blobSpanSize
@@ -155,7 +146,7 @@ readBlob fs Run {..} BlobSpan {..} = do
 --
 -- TODO: Once snapshots are implemented, files should get removed, but for now
 -- we want to be able to re-open closed runs from disk.
-close :: HasFS IO h -> HasBlockIO IO h -> Run RealWorld (FS.Handle h) -> IO ()
+close :: HasFS IO h -> HasBlockIO IO h -> Run IO (FS.Handle h) -> IO ()
 close fs hbio Run {..} = do
     -- TODO: removing files should drop them from the page cache, but until we
     -- have proper snapshotting we are keeping the files around. Because of
@@ -192,15 +183,16 @@ fromMutable :: HasFS IO h
             -> RunDataCaching
             -> RefCount
             -> RunBuilder RealWorld (FS.Handle h)
-            -> IO (Run RealWorld (FS.Handle h))
+            -> IO (Run IO (FS.Handle h))
 fromMutable fs hbio runRunDataCaching refCount builder = do
     (runRunFsPaths, runFilter, runIndex, runNumEntries) <-
       Builder.unsafeFinalise fs hbio (runRunDataCaching == NoCacheRunData) builder
-    runRefCount <- newMutVar refCount
     runKOpsFile <- FS.hOpen fs (runKOpsPath runRunFsPaths) FS.ReadMode
     runBlobFile <- FS.hOpen fs (runBlobPath runRunFsPaths) FS.ReadMode
     setRunDataCaching hbio runKOpsFile runRunDataCaching
-    return Run {..}
+    rec runRefCounter <- RC.unsafeMkRefCounterN refCount (Just $ close fs hbio r)
+        let !r = Run{..}
+    pure r
 
 
 -- | Write a write buffer to disk, including the blobs it contains.
@@ -215,7 +207,7 @@ fromWriteBuffer :: HasFS IO h
                 -> RunBloomFilterAlloc
                 -> RunFsPaths
                 -> WriteBuffer
-                -> IO (Run RealWorld (FS.Handle h))
+                -> IO (Run IO (FS.Handle h))
 fromWriteBuffer fs hbio caching alloc fsPaths buffer = do
     builder <- Builder.new fs fsPaths (WB.numEntries buffer) alloc
     for_ (WB.toList buffer) $ \(k, e) ->
@@ -240,7 +232,7 @@ openFromDisk :: HasFS IO h
              -> HasBlockIO IO h
              -> RunDataCaching
              -> RunFsPaths
-             -> IO (Run RealWorld (FS.Handle h))
+             -> IO (Run IO (FS.Handle h))
 openFromDisk fs hbio runRunDataCaching runRunFsPaths = do
     expectedChecksums <-
        expectValidFile (runChecksumsPath runRunFsPaths) . fromChecksumsFile
@@ -259,11 +251,12 @@ openFromDisk fs hbio runRunDataCaching runRunFsPaths = do
       expectValidFile (forRunIndex paths) . Index.fromSBS
         =<< readCRC (forRunIndex expectedChecksums) (forRunIndex paths)
 
-    runRefCount <- newMutVar (RefCount 1)
     runKOpsFile <- FS.hOpen fs (runKOpsPath runRunFsPaths) FS.ReadMode
     runBlobFile <- FS.hOpen fs (runBlobPath runRunFsPaths) FS.ReadMode
     setRunDataCaching hbio runKOpsFile runRunDataCaching
-    return Run {..}
+    rec runRefCounter <- RC.unsafeMkRefCounterN (RefCount 1) (Just $ close fs hbio r)
+        let !r = Run{..}
+    pure r
   where
     -- Note: all file data for this path is evicted from the page cache /if/ the
     -- caching argument is 'NoCacheRunData'.
@@ -295,12 +288,3 @@ openFromDisk fs hbio runRunDataCaching runRunFsPaths = do
 
     expectValidFile _  (Right x)  = pure x
     expectValidFile fp (Left err) = throwIO $ FileFormatError fp err
-
-
--- | The 'Run' objects are reference counted.
-newtype RefCount = RefCount Int
-  deriving stock (Eq, Ord, Show)
-
-incRefCount, decRefCount :: RefCount -> RefCount
-incRefCount (RefCount n) = RefCount (n+1)
-decRefCount (RefCount n) = RefCount (n-1)

@@ -7,6 +7,7 @@ import           Control.Monad
 import           Control.Monad.Class.MonadST
 import           Control.Monad.Primitive
 import           Control.Monad.ST.Strict (ST, runST)
+import           Control.RefCount (RefCount (..))
 import           Data.Arena (ArenaManager, newArenaManager, withArena)
 import           Data.Bits ((.&.))
 import           Data.BloomFilter (Bloom)
@@ -201,7 +202,7 @@ benchmarks !caching = withFS $ \hfs hbio -> do
 
     traceMarkerIO "Cleaning up"
     putStrLn "Cleaning up"
-    V.mapM_ (Run.removeReference hfs hbio) runs
+    V.mapM_ Run.removeReference runs
 
     traceMarkerIO "Computing statistics for prepLookups results"
     putStr "<Computing statistics for prepLookups>"
@@ -319,7 +320,7 @@ lookupsEnv ::
   -> FS.HasFS IO FS.HandleIO
   -> FS.HasBlockIO IO FS.HandleIO
   -> Run.RunDataCaching
-  -> IO ( V.Vector (Run RealWorld (FS.Handle FS.HandleIO))
+  -> IO ( V.Vector (Run IO (FS.Handle FS.HandleIO))
         , V.Vector (Bloom SerialisedKey)
         , V.Vector IndexCompact
         , V.Vector (FS.Handle FS.HandleIO)
@@ -360,7 +361,7 @@ lookupsEnv runSizes keyRng0 hfs hbio caching = do
 
     -- return runs
     runs <- V.fromList <$>
-              mapM (Run.fromMutable hfs hbio caching (Run.RefCount 1)) rbs
+              mapM (Run.fromMutable hfs hbio caching (RefCount 1)) rbs
     let blooms = V.map Run.runFilter runs
         indexes = V.map Run.runIndex runs
         handles = V.map Run.runKOpsFile runs
@@ -453,7 +454,7 @@ benchLookupsIO ::
      FS.HasBlockIO IO h
   -> ArenaManager RealWorld
   -> ResolveSerialisedValue
-  -> V.Vector (Run RealWorld (FS.Handle h))
+  -> V.Vector (Run IO (FS.Handle h))
   -> V.Vector (Bloom SerialisedKey)
   -> V.Vector IndexCompact
   -> V.Vector (FS.Handle h)

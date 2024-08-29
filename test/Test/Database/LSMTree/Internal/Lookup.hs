@@ -303,7 +303,7 @@ prop_roundtripFromWriteBufferLookupIO dats =
               (V.map Run.runKOpsFile runs)
               lookupss
     let model = WB.lookups wbAll lookupss
-    V.mapM_ (Run.removeReference hasFS hasBlockIO) runs
+    V.mapM_ Run.removeReference runs
     FS.close hasBlockIO
     -- TODO: we don't compare blobs, because we haven't implemented blob
     -- retrieval yet.

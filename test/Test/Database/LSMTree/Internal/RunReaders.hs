@@ -280,12 +280,12 @@ data RealState =
       !(Maybe ReadersCtx)
 
 -- | Readers, together with the runs being read, so they can be cleaned up at the end
-type ReadersCtx = ([Run.Run RealWorld Handle], Readers RealWorld Handle)
+type ReadersCtx = ([Run.Run IO Handle], Readers RealWorld Handle)
 
 closeReadersCtx :: FS.HasFS IO MockFS.HandleMock -> FS.HasBlockIO IO MockFS.HandleMock -> ReadersCtx -> IO ()
 closeReadersCtx hfs hbio (runs, readers) = do
     Readers.close hfs hbio readers
-    traverse_ (Run.removeReference hfs hbio) runs
+    traverse_ Run.removeReference runs
 
 instance RunModel (Lockstep ReadersState) RealMonad where
   perform       = \_st -> runIO
@@ -312,7 +312,7 @@ runIO act lu = case act of
           (map unTypedWriteBuffer wbs)
       newReaders <- liftIO $ Readers.new hfs hbio runs >>= \case
         Nothing -> do
-          traverse_ (Run.removeReference hfs hbio) runs
+          traverse_ Run.removeReference runs
           return Nothing
         Just readers ->
           return $ Just (runs, readers)
@@ -349,13 +349,13 @@ runIO act lu = case act of
                   return (Right x)
                 Drained -> do
                   -- Readers is drained, clean up the runs
-                  liftIO $ traverse_ (Run.removeReference hfs hbio) runs
+                  liftIO $ traverse_ Run.removeReference runs
                   put (RealState n Nothing)
                   return (Right x)
 
-    toMockEntry :: FS.HasFS IO MockFS.HandleMock -> Reader.Entry RealWorld Handle -> IO SerialisedEntry
+    toMockEntry :: FS.HasFS IO MockFS.HandleMock -> Reader.Entry IO Handle -> IO SerialisedEntry
     toMockEntry hfs =
         traverse loadBlob . Reader.toFullEntry
       where
-        loadBlob :: BlobRef (Run.Run RealWorld Handle) -> IO SerialisedBlob
+        loadBlob :: BlobRef (Run.Run IO Handle) -> IO SerialisedBlob
         loadBlob (BlobRef run sp) = Run.readBlob hfs run sp
