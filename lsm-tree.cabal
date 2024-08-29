@@ -123,7 +123,6 @@ library
     Database.LSMTree.Internal.IndexOrdinary
     Database.LSMTree.Internal.IndexOrdinaryAcc
     Database.LSMTree.Internal.Lookup
-    Database.LSMTree.Internal.Managed
     Database.LSMTree.Internal.Merge
     Database.LSMTree.Internal.MergeSchedule
     Database.LSMTree.Internal.Monoidal

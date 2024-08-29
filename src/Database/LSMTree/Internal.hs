@@ -69,7 +69,6 @@ import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.Entry (Entry, combineMaybe)
 import           Database.LSMTree.Internal.Lookup (ByteCountDiscrepancy,
                      ResolveSerialisedValue, lookupsIO)
-import           Database.LSMTree.Internal.Managed
 import           Database.LSMTree.Internal.MergeSchedule
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..),
                      SessionRoot (..), SnapshotName)
@@ -830,62 +829,53 @@ open ::
 open sesh label override snap = do
     traceWith (sessionTracer sesh) $ TraceOpenSnapshot snap override
     withOpenSession sesh $ \seshEnv -> do
-      let hfs      = sessionHasFS seshEnv
-          hbio     = sessionHasBlockIO seshEnv
-          snapPath = Paths.snapshot (sessionRoot seshEnv) snap
-      FS.doesFileExist hfs snapPath >>= \b ->
-        unless b $ throwIO (ErrSnapshotNotExists snap)
-      bs <- FS.withFile
-              hfs
-              snapPath
-              FS.ReadMode $ \h ->
-                FS.hGetAll (sessionHasFS seshEnv) h
-      let (label', runNumbers, conf) =
-              -- why we are using read for this?
-              -- apparently this is a temporary solution, to be done properly in WP15
-              read @(SnapshotLabel, V.Vector ((Bool, RunNumber), V.Vector RunNumber), TableConfig) $
-              BSC.unpack $ BSC.toStrict $ bs
+      withTempRegistry $ \reg -> do
+        let hfs      = sessionHasFS seshEnv
+            hbio     = sessionHasBlockIO seshEnv
+            snapPath = Paths.snapshot (sessionRoot seshEnv) snap
+        FS.doesFileExist hfs snapPath >>= \b ->
+          unless b $ throwIO (ErrSnapshotNotExists snap)
+        bs <- FS.withFile
+                hfs
+                snapPath
+                FS.ReadMode $ \h ->
+                  FS.hGetAll (sessionHasFS seshEnv) h
+        let (label', runNumbers, conf) =
+                -- why we are using read for this?
+                -- apparently this is a temporary solution, to be done properly in WP15
+                read @(SnapshotLabel, V.Vector ((Bool, RunNumber), V.Vector RunNumber), TableConfig) $
+                BSC.unpack $ BSC.toStrict $ bs
 
-      let conf' = applyOverride override conf
-      unless (label == label') $ throwIO (ErrSnapshotWrongType snap)
-      let runPaths = V.map (bimap (second $ RunFsPaths (Paths.activeDir $ sessionRoot seshEnv))
-                                  (V.map (RunFsPaths (Paths.activeDir $ sessionRoot seshEnv))))
-                           runNumbers
-      with (openLevels hfs hbio (confDiskCachePolicy conf') runPaths) $ \lvls -> do
+        let conf' = applyOverride override conf
+        unless (label == label') $ throwIO (ErrSnapshotWrongType snap)
+        let runPaths = V.map (bimap (second $ RunFsPaths (Paths.activeDir $ sessionRoot seshEnv))
+                                    (V.map (RunFsPaths (Paths.activeDir $ sessionRoot seshEnv))))
+                            runNumbers
+        lvls <- openLevels reg hfs hbio (confDiskCachePolicy conf') runPaths
         am <- newArenaManager
-        (newWith sesh seshEnv conf' am WB.empty lvls)
+        newWith sesh seshEnv conf' am WB.empty lvls
 
-{-# SPECIALISE openLevels :: HasFS IO h -> HasBlockIO IO h -> DiskCachePolicy -> V.Vector ((Bool, RunFsPaths), V.Vector RunFsPaths) -> Managed IO (Levels RealWorld (FS.Handle h)) #-}
+{-# SPECIALISE openLevels :: TempRegistry IO -> HasFS IO h -> HasBlockIO IO h -> DiskCachePolicy -> V.Vector ((Bool, RunFsPaths), V.Vector RunFsPaths) -> IO (Levels RealWorld (FS.Handle h)) #-}
 -- | Open multiple levels.
---
--- If an error occurs when opening multiple runs in sequence, then we have to
--- make sure that all runs that have been succesfully opened already are closed
--- again. The 'Managed' monad allows us to fold 'bracketOnError's over an @m@
--- action.
---
--- TODO: 'Managed' is actually not properly exception-safe, because an async
--- exception can be raised just after a 'bracketOnError's, but still inside the
--- 'bracketOnError' surrounding it. We don't just need folding of
--- 'bracketOnError', we need to release all runs inside the same mask! We should
--- use something like 'TempRegistry'.
 openLevels ::
      m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
-  => HasFS m h
+  => TempRegistry m
+  -> HasFS m h
   -> HasBlockIO m h
   -> DiskCachePolicy
   -> V.Vector ((Bool, RunFsPaths), V.Vector RunFsPaths)
-  -> Managed m (Levels (PrimState m) (Handle h))
-openLevels hfs hbio diskCachePolicy levels =
+  -> m (Levels (PrimState m) (Handle h))
+openLevels reg hfs hbio diskCachePolicy levels =
     flip V.imapMStrict levels $ \i (mrPath, rsPaths) -> do
       let ln      = LevelNo (i+1) -- level 0 is the write buffer
           caching = diskCachePolicyForLevel diskCachePolicy ln
-      !r <- Managed $ bracketOnError
-                        (Run.openFromDisk hfs hbio caching (snd mrPath))
-                        (Run.removeReference hfs hbio)
+      !r <- allocateTemp reg
+              (Run.openFromDisk hfs hbio caching (snd mrPath))
+              (Run.removeReference hfs hbio)
       !rs <- flip V.mapMStrict rsPaths $ \run ->
-        Managed $ bracketOnError
-                    (Run.openFromDisk hfs hbio caching run)
-                    (Run.removeReference hfs hbio)
+        allocateTemp reg
+          (Run.openFromDisk hfs hbio caching run)
+          (Run.removeReference hfs hbio)
       let !mr = if fst mrPath then SingleRun r else MergingRun (CompletedMerge r)
       pure $! Level mr rs
 
