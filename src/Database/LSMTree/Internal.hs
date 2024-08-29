@@ -50,6 +50,7 @@ import           Control.DeepSeq
 import           Control.Monad (unless, void, when)
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Primitive
+import           Control.TempRegistry
 import           Control.Tracer
 import           Data.Arena (ArenaManager, newArenaManager)
 import           Data.Bifunctor (Bifunctor (..))
@@ -79,7 +80,6 @@ import           Database.LSMTree.Internal.RunNumber
 import qualified Database.LSMTree.Internal.RunReaders as Readers
 import           Database.LSMTree.Internal.Serialise (SerialisedBlob,
                      SerialisedKey, SerialisedValue)
-import           Database.LSMTree.Internal.TempRegistry
 import           Database.LSMTree.Internal.UniqCounter
 import qualified Database.LSMTree.Internal.Vector as V
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)

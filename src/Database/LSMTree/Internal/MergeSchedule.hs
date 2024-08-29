@@ -32,6 +32,7 @@ import           Control.Monad
 
 import           Control.Monad.Primitive
 import           Control.Monad.ST.Strict
+import           Control.TempRegistry
 import           Control.Tracer
 import           Data.BloomFilter (Bloom)
 import           Data.Foldable
@@ -52,7 +53,6 @@ import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..))
 import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.Serialise (SerialisedBlob,
                      SerialisedKey, SerialisedValue)
-import           Database.LSMTree.Internal.TempRegistry
 import           Database.LSMTree.Internal.UniqCounter
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB

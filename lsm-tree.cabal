@@ -104,7 +104,6 @@ library
   import:          language, warnings, wno-x-partial
   hs-source-dirs:  src
   exposed-modules:
-    Control.Concurrent.Class.MonadSTM.RWVar
     Data.Arena
     Data.Map.Range
     Database.LSMTree.Common
@@ -143,7 +142,6 @@ library
     Database.LSMTree.Internal.RunReaders
     Database.LSMTree.Internal.Serialise
     Database.LSMTree.Internal.Serialise.Class
-    Database.LSMTree.Internal.TempRegistry
     Database.LSMTree.Internal.UniqCounter
     Database.LSMTree.Internal.Unsliced
     Database.LSMTree.Internal.Vector
@@ -164,12 +162,12 @@ library
     , io-classes            ^>=1.5
     , lsm-tree:blockio-api
     , lsm-tree:bloomfilter
+    , lsm-tree:control
     , lsm-tree:kmerge
     , lsm-tree:monkey
     , nothunks              ^>=0.2
     , primitive             ^>=0.9
     , strict-mvar           ^>=1.5
-    , strict-stm            ^>=1.5
     , vector                ^>=0.13
     , vector-algorithms     ^>=0.9
 
@@ -292,7 +290,6 @@ test-suite lsm-tree-test
     Database.LSMTree.ModelIO.Monoidal
     Database.LSMTree.ModelIO.Normal
     Database.LSMTree.ModelIO.Session
-    Test.Control.Concurrent.Class.MonadSTM.RWVar
     Test.Data.Arena
     Test.Database.LSMTree.Class.Monoidal
     Test.Database.LSMTree.Class.Normal
@@ -350,6 +347,7 @@ test-suite lsm-tree-test
     , lsm-tree:blockio-api
     , lsm-tree:blockio-sim
     , lsm-tree:bloomfilter
+    , lsm-tree:control
     , lsm-tree:monkey
     , lsm-tree:prototypes
     , mtl
@@ -754,3 +752,35 @@ library fcntl-nocache
     exposed-modules:    System.Posix.Fcntl.NoCache
     build-depends:      base <5
     build-tool-depends: hsc2hs:hsc2hs
+
+library control
+  import:          language, warnings
+  hs-source-dirs:  src-control
+  exposed-modules:
+    Control.Concurrent.Class.MonadSTM.RWVar
+    Control.TempRegistry
+
+  build-depends:
+    , base         >=4.14 && <4.21
+    , containers   ^>=0.6 || ^>=0.7
+    , deepseq      ^>=1.4 || ^>=1.5
+    , io-classes   ^>=1.5
+    , strict-mvar  ^>=1.5
+    , strict-stm   ^>=1.5
+
+test-suite control-test
+  import:         language, warnings
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: test-control
+  main-is:        Main.hs
+  other-modules:  Test.Control.Concurrent.Class.MonadSTM.RWVar
+  build-depends:
+    , base
+    , io-classes
+    , io-sim
+    , lsm-tree:control
+    , QuickCheck
+    , tasty
+    , tasty-quickcheck
+
+  ghc-options:    -fno-ignore-asserts
