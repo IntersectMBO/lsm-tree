@@ -528,6 +528,7 @@ newWith ::
   -> m (TableHandle m h)
 newWith sesh seshEnv conf !am !wb !levels = do
     tableId <- incrUniqCounter (sessionUniqCounter seshEnv)
+    n <- incrUniqCounter (sessionUniqCounter seshEnv)
     let tr = TraceTable (uniqueToWord64 tableId) `contramap` sessionTracer sesh
     traceWith tr $ TraceCreateTableHandle conf
     assertNoThunks levels $ pure ()
@@ -535,7 +536,12 @@ newWith sesh seshEnv conf !am !wb !levels = do
     -- tables. If 'closeSession' is called by another thread while this code
     -- block is being executed, that thread will block until it reads the
     -- /updated/ set of tracked tables.
-    contentVar <- RW.new $ TableContent wb levels (mkLevelsCache levels)
+    contentVar <- RW.new $ TableContent
+        { tableWriteBuffer = wb
+        , tableWriteBufferRN = uniqueToRunNumber n
+        , tableLevels = levels
+        , tableCache = mkLevelsCache levels
+        }
     tableVar <- RW.new $ TableHandleOpen $ TableHandleEnv {
           tableSession = sesh
         , tableSessionEnv = seshEnv
