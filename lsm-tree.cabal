@@ -758,6 +758,7 @@ library control
   hs-source-dirs:  src-control
   exposed-modules:
     Control.Concurrent.Class.MonadSTM.RWVar
+    Control.RefCount
     Control.TempRegistry
 
   build-depends:
@@ -765,6 +766,7 @@ library control
     , containers   ^>=0.6 || ^>=0.7
     , deepseq      ^>=1.4 || ^>=1.5
     , io-classes   ^>=1.5
+    , primitive    ^>=0.9
     , strict-mvar  ^>=1.5
     , strict-stm   ^>=1.5
 
@@ -773,7 +775,10 @@ test-suite control-test
   type:           exitcode-stdio-1.0
   hs-source-dirs: test-control
   main-is:        Main.hs
-  other-modules:  Test.Control.Concurrent.Class.MonadSTM.RWVar
+  other-modules:
+    Test.Control.Concurrent.Class.MonadSTM.RWVar
+    Test.Control.RefCount
+
   build-depends:
     , base
     , io-classes
