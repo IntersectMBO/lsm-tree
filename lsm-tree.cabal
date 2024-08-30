@@ -332,6 +332,7 @@ test-suite lsm-tree-test
     Test.Database.LSMTree.Internal.CRC32C
     Test.Database.LSMTree.Internal.Entry
     Test.Database.LSMTree.Internal.IndexCompact
+    Test.Database.LSMTree.Internal.IndexOrdinary
     Test.Database.LSMTree.Internal.Lookup
     Test.Database.LSMTree.Internal.Merge
     Test.Database.LSMTree.Internal.Monkey
