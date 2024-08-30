@@ -13,7 +13,7 @@ module Database.LSMTree.Internal.RunReader (
 
 import           Control.Exception (assert, handleJust)
 import           Control.Monad (guard, when)
-import           Control.Monad.Primitive (RealWorld)
+import           Control.Monad.Primitive (PrimMonad (..))
 import           Data.Bifunctor (first)
 import           Data.IORef
 import           Data.Maybe (fromMaybe)
@@ -48,24 +48,24 @@ import           System.FS.BlockIO.API (HasBlockIO)
 --
 -- TODO(optimise): Reuse page buffers using some kind of allocator. However,
 -- deciding how long a page needs to stay around is not trivial.
-data RunReader s fhandle = RunReader {
+data RunReader m fhandle = RunReader {
       readerCurrentPage    :: !(IORef RawPage)
       -- | The index of the entry to be returned by the next call to 'next'.
-    , readerCurrentEntryNo :: !(PrimVar s Word16)
+    , readerCurrentEntryNo :: !(PrimVar (PrimState m) Word16)
       -- | Read mode file handle into the run's k\/ops file. We rely on it to
       -- track the position of the next disk page to read, instead of keeping
       -- a counter ourselves. Also, the run's handle is supposed to be opened
       -- with @O_DIRECT@, which is counterproductive here.
     , readerKOpsHandle     :: !fhandle
       -- | The run this reader is reading from.
-    , readerRun            :: !(Run.Run s fhandle)
+    , readerRun            :: !(Run.Run m fhandle)
     }
 
 new ::
      HasFS IO h
   -> HasBlockIO IO h
-  -> Run.Run RealWorld (FS.Handle h)
-  -> IO (RunReader RealWorld (FS.Handle h))
+  -> Run.Run IO (FS.Handle h)
+  -> IO (RunReader IO (FS.Handle h))
 new fs hbio readerRun = do
     readerKOpsHandle <-
       FS.hOpen fs (runKOpsPath (Run.runRunFsPaths readerRun)) FS.ReadMode
@@ -83,7 +83,7 @@ new fs hbio readerRun = do
 close ::
      HasFS IO h
   -> HasBlockIO IO h
-  -> RunReader s (FS.Handle h)
+  -> RunReader m (FS.Handle h)
   -> IO ()
 close fs hbio RunReader {..} = do
     when (Run.runRunDataCaching readerRun == Run.NoCacheRunData) $
@@ -94,18 +94,18 @@ close fs hbio RunReader {..} = do
 -- | The 'SerialisedKey' and 'SerialisedValue' point into the in-memory disk
 -- page. Keeping them alive will also prevent garbage collection of the 4k byte
 -- array, so if they're long-lived, consider making a copy!
-data Result s fhandle
+data Result m fhandle
   = Empty
-  | ReadEntry !SerialisedKey !(Entry s fhandle)
+  | ReadEntry !SerialisedKey !(Entry m fhandle)
 
-data Entry s fhandle =
+data Entry m fhandle =
     Entry
-      !(E.Entry SerialisedValue (BlobRef (Run s fhandle)))
+      !(E.Entry SerialisedValue (BlobRef (Run m fhandle)))
   | -- | A large entry. The caller might be interested in various different
     -- (redundant) representation, so we return all of them.
     EntryOverflow
       -- | The value is just a prefix, with the remainder in the overflow pages.
-      !(E.Entry SerialisedValue (BlobRef (Run s fhandle)))
+      !(E.Entry SerialisedValue (BlobRef (Run m fhandle)))
       -- | A page containing the single entry (or rather its prefix).
       !RawPage
       -- | Non-zero length of the overflow in bytes.
@@ -119,11 +119,11 @@ data Entry s fhandle =
       ![RawOverflowPage]
 
 mkEntryOverflow ::
-     E.Entry SerialisedValue (BlobRef (Run s fhandle))
+     E.Entry SerialisedValue (BlobRef (Run m fhandle))
   -> RawPage
   -> Word32
   -> [RawOverflowPage]
-  -> Entry s fhandle
+  -> Entry m fhandle
 mkEntryOverflow entryPrefix page len overflowPages =
     assert (len > 0) $
     assert (rawPageOverflowPages page == ceilDivPageSize (fromIntegral len)) $
@@ -131,7 +131,7 @@ mkEntryOverflow entryPrefix page len overflowPages =
       EntryOverflow entryPrefix page len overflowPages
 
 {-# INLINE toFullEntry #-}
-toFullEntry :: Entry s fhandle -> E.Entry SerialisedValue (BlobRef (Run s fhandle))
+toFullEntry :: Entry m fhandle -> E.Entry SerialisedValue (BlobRef (Run m fhandle))
 toFullEntry = \case
     Entry e ->
       e
@@ -150,8 +150,8 @@ appendOverflow len overflowPages (SerialisedValue prefix) =
 next ::
      HasFS IO h
   -> HasBlockIO IO h
-  -> RunReader RealWorld (FS.Handle h)
-  -> IO (Result RealWorld (FS.Handle h))
+  -> RunReader IO (FS.Handle h)
+  -> IO (Result IO (FS.Handle h))
 next fs hbio reader@RunReader {..} = do
     entryNo <- readPrimVar readerCurrentEntryNo
     page <- readIORef readerCurrentPage

@@ -11,6 +11,7 @@ module Database.LSMTree.Internal.Merge (
 import           Control.Exception (assert)
 import           Control.Monad (when)
 import           Control.Monad.Primitive (RealWorld)
+import           Control.RefCount (RefCount (..))
 import           Data.Coerce (coerce)
 import           Data.Traversable (for)
 import           Database.LSMTree.Internal.BlobRef (BlobRef (..))
@@ -58,7 +59,7 @@ new ::
   -> Level
   -> Mappend
   -> Run.RunFsPaths
-  -> [Run RealWorld (FS.Handle h)]
+  -> [Run IO (FS.Handle h)]
   -> IO (Maybe (Merge RealWorld (FS.Handle h)))
 new fs hbio mergeCaching alloc mergeLevel mergeMappend targetPaths runs = do
     mreaders <- Readers.new fs hbio runs
@@ -82,9 +83,9 @@ close fs hbio Merge {..} = do
     Builder.close fs mergeBuilder
     Readers.close fs hbio mergeReaders
 
-data StepResult s fhandle = MergeInProgress | MergeComplete !(Run s fhandle)
+data StepResult m fhandle = MergeInProgress | MergeComplete !(Run m fhandle)
 
-stepsInvariant :: Int -> (Int, StepResult RealWorld a) -> Bool
+stepsInvariant :: Int -> (Int, StepResult IO a) -> Bool
 stepsInvariant requestedSteps = \case
     (n, MergeInProgress) -> n >= requestedSteps
     _                    -> True
@@ -105,7 +106,7 @@ steps ::
   -> HasBlockIO IO h
   -> Merge RealWorld (FS.Handle h)
   -> Int  -- ^ How many input entries to consume (at least)
-  -> IO (Int, StepResult RealWorld (FS.Handle h))
+  -> IO (Int, StepResult IO (FS.Handle h))
 steps fs hbio Merge {..} requestedSteps =
     (\res -> assert (stepsInvariant requestedSteps res) res) <$> go 0
   where
@@ -170,7 +171,7 @@ steps fs hbio Merge {..} requestedSteps =
         -- All Readers have been drained, the builder finalised.
         -- No further cleanup required.
         run <- Run.fromMutable fs hbio mergeCaching
-                               (Run.RefCount 1) mergeBuilder
+                               (RefCount 1) mergeBuilder
         return (n, MergeComplete run)
 
 
@@ -179,7 +180,7 @@ writeReaderEntry ::
   -> Level
   -> RunBuilder RealWorld (FS.Handle h)
   -> SerialisedKey
-  -> Reader.Entry RealWorld (FS.Handle h)
+  -> Reader.Entry IO (FS.Handle h)
   -> IO ()
 writeReaderEntry fs level builder key (Reader.Entry entryFull) =
       -- Small entry.
@@ -217,7 +218,7 @@ writeSerialisedEntry ::
   -> Level
   -> RunBuilder RealWorld (FS.Handle h)
   -> SerialisedKey
-  -> Entry SerialisedValue (BlobRef (Run RealWorld (FS.Handle h)))
+  -> Entry SerialisedValue (BlobRef (Run IO (FS.Handle h)))
   -> IO ()
 writeSerialisedEntry fs level builder key entry =
     when (shouldWriteEntry level entry) $

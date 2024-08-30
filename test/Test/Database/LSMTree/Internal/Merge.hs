@@ -2,7 +2,6 @@
 
 module Test.Database.LSMTree.Internal.Merge (tests) where
 
-import           Control.Monad.Primitive
 import           Data.Bifoldable (bifoldMap)
 import qualified Data.BloomFilter as Bloom
 import           Data.Foldable (traverse_)
@@ -83,9 +82,9 @@ prop_MergeDistributes fs hbio level stepSize (fmap unTypedWriteBuffer -> SmallLi
     rhsKOps <- readKOps fs hbio rhs
 
     -- cleanup
-    traverse_ (Run.removeReference fs hbio) runs
-    Run.removeReference fs hbio lhs
-    Run.removeReference fs hbio rhs
+    traverse_ Run.removeReference runs
+    Run.removeReference lhs
+    Run.removeReference rhs
 
     return $ stats $
            counterexample "numEntries"
@@ -134,7 +133,7 @@ prop_CloseMerge fs hbio level (Positive stepSize) (fmap unTypedWriteBuffer -> Sm
     filesExist <- traverse (FS.doesFileExist fs) (pathsForRunFiles path0)
 
     -- cleanup
-    traverse_ (Run.removeReference fs hbio) runs
+    traverse_ Run.removeReference runs
 
     return $
       counterexample ("run files exist: " <> show filesExist) $
@@ -150,7 +149,7 @@ prop_CloseMerge fs hbio level (Positive stepSize) (fmap unTypedWriteBuffer -> Sm
           -- just do a few steps once, ideally not completing the merge
           Merge.steps fs hbio merge stepSize >>= \case
             (_, Merge.MergeComplete run) -> do
-              Run.removeReference fs hbio run  -- run not needed, close
+              Run.removeReference run  -- run not needed, close
               return Nothing  -- not in progress
             (_, Merge.MergeInProgress) ->
               return (Just merge)
@@ -166,9 +165,9 @@ mergeRuns ::
      FS.HasBlockIO IO h ->
      Merge.Level ->
      RunNumber ->
-     [Run.Run RealWorld (FS.Handle h)] ->
+     [Run.Run IO (FS.Handle h)] ->
      StepSize ->
-     IO (Int, Run.Run RealWorld (FS.Handle h))
+     IO (Int, Run.Run IO (FS.Handle h))
 mergeRuns fs hbio level runNumber runs (Positive stepSize) = do
     Merge.new fs hbio Run.CacheRunData (RunAllocFixed 10) level mappendValues
               (RunFsPaths (FS.mkFsPath []) runNumber) runs >>= \case
