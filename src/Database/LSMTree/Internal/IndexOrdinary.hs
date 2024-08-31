@@ -106,7 +106,7 @@ fromSBS shortByteString@(SBS unliftedByteArray)
     | version /= supportedVersion
         = Left "Unsupported version"
     | otherwise
-        = (,) <$> entriesCount <*> index
+        = (,) <$> entryCount <*> index
     where
 
     fullSize :: Int
@@ -124,12 +124,12 @@ fromSBS shortByteString@(SBS unliftedByteArray)
     postVersionBytes :: Primitive.Vector Word8
     postVersionBytes = Primitive.drop 4 fullBytes
 
-    lastKeysBytes, entriesCountBytes :: Primitive.Vector Word8
-    (lastKeysBytes, entriesCountBytes)
+    lastKeysBytes, entryCountBytes :: Primitive.Vector Word8
+    (lastKeysBytes, entryCountBytes)
         = Primitive.splitAt (fullSize - 12) postVersionBytes
 
-    entriesCount :: Either String NumEntries
-    entriesCount
+    entryCount :: Either String NumEntries
+    entryCount
         | (fromIntegral asWord64 :: Integer) > fromIntegral (maxBound :: Int)
             = Left "Number of entries not representable as Int"
         | otherwise
@@ -137,10 +137,10 @@ fromSBS shortByteString@(SBS unliftedByteArray)
         where
 
         asWord64 :: Word64
-        asWord64 = indexByteArray entriesCountRep 0
+        asWord64 = indexByteArray entryCountRep 0
 
-        entriesCountRep :: ByteArray
-        Primitive.Vector _ _ entriesCountRep = Primitive.force entriesCountBytes
+        entryCountRep :: ByteArray
+        Primitive.Vector _ _ entryCountRep = Primitive.force entryCountBytes
 
     index :: Either String IndexOrdinary
     index = IndexOrdinary <$> fromList <$> lastKeys lastKeysBytes
