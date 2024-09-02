@@ -109,10 +109,11 @@ module Database.LSMTree.Normal (
   , IOLike
   ) where
 
+import           Control.Exception (throw)
 import           Control.Monad
 import           Data.Bifunctor (Bifunctor (..))
 import           Data.Kind (Type)
-import           Data.Typeable (Proxy (..))
+import           Data.Typeable (Proxy (..), cast)
 import qualified Data.Vector as V
 import           Database.LSMTree.Common (BlobRef (BlobRef), IOLike, Range (..),
                      SerialiseKey, SerialiseValue, Session, SnapshotName,
@@ -435,11 +436,12 @@ retrieveBlobs ::
   => Session m
   -> V.Vector (BlobRef m blob)
   -> m (V.Vector blob)
-retrieveBlobs _ brs
-  -- TODO: this is a temporary short-circuit. This might have to check that the
-  -- session is open before trying to retrieve blobs.
-  | V.null brs = pure V.empty
-  | otherwise = undefined
+retrieveBlobs (Internal.Session' sesh) refs =
+    V.map Internal.deserialiseBlob <$>
+      Internal.retrieveBlobs sesh (V.map checkBlobRefType refs)
+  where
+    checkBlobRefType (BlobRef ref) | Just ref' <- cast ref = ref'
+    checkBlobRefType _ = throw Internal.ErrBlobRefInvalid
 
 {-------------------------------------------------------------------------------
   Snapshots

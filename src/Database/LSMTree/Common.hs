@@ -61,7 +61,7 @@ import qualified Database.LSMTree.Internal.Paths as Internal
 import qualified Database.LSMTree.Internal.Range as Internal
 import qualified Database.LSMTree.Internal.Run as Internal
 import           Database.LSMTree.Internal.Serialise.Class
-import           System.FS.API (FsPath, HasFS)
+import           System.FS.API (FsPath, HasFS, Handle)
 import           System.FS.BlockIO.API (HasBlockIO)
 import           System.FS.IO (HandleIO)
 
@@ -239,4 +239,4 @@ listSnapshots (Internal.Session' sesh) = Internal.listSnapshots sesh
 -- TODO: get rid of the @m@ parameter?
 type BlobRef :: (Type -> Type) -> Type -> Type
 type role BlobRef nominal nominal
-data BlobRef m blob = forall h. Typeable h => BlobRef (Internal.BlobRef (Internal.Run m h))
+data BlobRef m blob = forall h. Typeable h => BlobRef (Internal.BlobRef (Internal.Run m (Handle h)))
