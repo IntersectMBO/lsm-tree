@@ -6,6 +6,7 @@ module Database.LSMTree.Internal.IndexCompact (
     -- $compact
     IndexCompact (..)
   , PageNo (..)
+  , nextPageNo
   , NumPages
   , getNumPages
     -- * Queries
@@ -385,6 +386,13 @@ instance NFData IndexCompact where
 newtype PageNo = PageNo { unPageNo :: Int }
   deriving stock (Show, Eq, Ord)
   deriving newtype NFData
+
+-- | Increment the page number.
+--
+-- Note: This does not encure that the incremented page number exists within a given page span.
+{-# INLINE nextPageNo #-}
+nextPageNo :: PageNo -> PageNo
+nextPageNo = PageNo . succ . unPageNo
 
 -- | The number of pages contained by an index or other paging data-structure.
 --

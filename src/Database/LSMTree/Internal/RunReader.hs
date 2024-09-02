@@ -70,26 +70,38 @@ new ::
 new fs hbio mOffset readerRun = do
     readerKOpsHandle <-
       FS.hOpen fs (runKOpsPath (Run.runRunFsPaths readerRun)) FS.ReadMode
-    -- double the file readahead window (only applies to this file descriptor)
+    -- Double the file readahead window (only applies to this file descriptor)
     FS.hAdviseAll hbio readerKOpsHandle FS.AdviceSequential
 
     (page, entryNo) <- case mOffset of
       Nothing -> do
-        -- load first page from disk, if it exists.
+        -- Load first page from disk, if it exists.
         firstPage <- fromMaybe emptyRawPage <$> readDiskPage fs readerKOpsHandle
         return (firstPage, 0)
-
       Just offset -> do
-        let pageNo = Index.pageSpanStart (Index.search offset index)
-        -- load first page from disk, if it exists.
-        firstPage <- fromMaybe emptyRawPage <$> readDiskPageAt fs pageNo readerKOpsHandle
-
-        case rawPageFindKey firstPage offset of
+        -- Use the index to find the page number for the key (if it exists).
+        let Index.PageSpan pageNo pageEnd = Index.search offset index
+        foundPage <- fromMaybe emptyRawPage <$> readDiskPageAt fs pageNo readerKOpsHandle
+        case rawPageFindKey foundPage offset of
           Just n ->
-            return (firstPage, n)
-          Nothing -> do
-            -- actually, it's the next page
-            nextPage <- fromMaybe emptyRawPage <$> readDiskPageAt fs pageNo readerKOpsHandle
+            -- Found an appropriate index within the index's page.
+            return (foundPage, n)
+
+          -- The index said that the key, if it were to exist, would live on pageNo,
+          -- but then rawPageFindKey tells us that in fact
+          -- there is no key greater than or equal to the given offset on this page.
+          -- So what can we conclude from the given information?
+          -- The information tells us that the key does not exist, but that if it were to exist,
+          -- it would be between the last key in this page and the first key in the next page.
+          -- Thus the reader should be initialised to return keys starting from the next page.
+          Nothing | pageNo == pageEnd -> do
+            -- If already at the last page, there is no page of content to return.
+            -- Hence, no need to call readDiskPageAt.
+            return (emptyRawPage, 0)
+
+          _ -> do
+            -- Otherwise, we return the beginning of the next page.
+            nextPage <- fromMaybe emptyRawPage <$> readDiskPageAt fs (Index.nextPageNo pageNo) readerKOpsHandle
             return (nextPage, 0)
 
     readerCurrentEntryNo <- newPrimVar entryNo
@@ -212,7 +224,6 @@ next fs hbio reader@RunReader {..} = do
 readDiskPageAt :: HasFS IO h -> Index.PageNo -> FS.Handle h -> IO (Maybe RawPage)
 readDiskPageAt fs pageNo h = do
     mba <- newPinnedByteArray pageSize
-    -- TODO: make sure no other exception type can be thrown
     handleJust (guard . FS.isFsErrorType FS.FsReachedEOF) (\_ -> pure Nothing) $ do
       let byteOffset = pageNoToAbsOffset pageNo
       _ <- FS.hGetBufExactlyAt fs h mba 0 (fromIntegral pageSize) byteOffset

@@ -86,15 +86,7 @@ new :: forall h .
   -> HasBlockIO IO h
   -> [Run IO (FS.Handle h)]
   -> IO (Maybe (Readers RealWorld (FS.Handle h)))
-new fs hbio runs = do
-    readers <- zipWithM (fromRun . ReaderNumber) [1..] runs
-    for (nonEmpty (catMaybes readers)) $ \xs -> do
-      (readersHeap, readCtx) <- Heap.newMutableHeap xs
-      readersNext <- newMutVar readCtx
-      return Readers {..}
-  where
-    fromRun :: ReaderNumber -> Run IO (FS.Handle h) -> IO (Maybe (ReadCtx (FS.Handle h)))
-    fromRun n run = nextReadCtx fs hbio n =<< Reader.new fs hbio Nothing run
+new = newAtOffsetMaybe Nothing
 
 -- | On equal keys, elements from runs earlier in the list are yielded first.
 -- This means that the list of runs should be sorted from new to old.
@@ -105,7 +97,15 @@ newAtOffset :: forall h .
   -> SerialisedKey  -- ^ offset
   -> [Run IO (FS.Handle h)]
   -> IO (Maybe (Readers RealWorld (FS.Handle h)))
-newAtOffset fs hbio offset runs = do
+newAtOffset fs hbio offset = newAtOffsetMaybe (Just offset) fs hbio
+
+newAtOffsetMaybe :: forall h .
+     Maybe SerialisedKey  -- ^ offset
+  -> HasFS IO h
+  -> HasBlockIO IO h
+  -> [Run IO (FS.Handle h)]
+  -> IO (Maybe (Readers RealWorld (FS.Handle h)))
+newAtOffsetMaybe  offsetMay fs hbio runs = do
     readers <- zipWithM (fromRun . ReaderNumber) [1..] runs
     for (nonEmpty (catMaybes readers)) $ \xs -> do
       (readersHeap, readCtx) <- Heap.newMutableHeap xs
@@ -113,7 +113,7 @@ newAtOffset fs hbio offset runs = do
       return Readers {..}
   where
     fromRun :: ReaderNumber -> Run IO (FS.Handle h) -> IO (Maybe (ReadCtx (FS.Handle h)))
-    fromRun n run = nextReadCtx fs hbio n =<< Reader.new fs hbio (Just offset) run
+    fromRun n run = nextReadCtx fs hbio n =<< Reader.new fs hbio offsetMay run
 
 -- | Only call when aborting before all readers have been drained.
 close ::

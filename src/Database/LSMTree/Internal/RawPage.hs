@@ -1,7 +1,6 @@
 {-# LANGUAGE BangPatterns   #-}
 {-# LANGUAGE DeriveFunctor  #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE UnboxedSums    #-}
 
 module Database.LSMTree.Internal.RawPage (
     RawPage (..),
@@ -150,7 +149,7 @@ rawPageLookup
 rawPageLookup !page !key
   | dirNumKeys == 1 = lookup1
   | otherwise       = case bisectPageToKey page key of
-    KeyFoundAt EQ i -> LookupEntry $ rawPageEntryAt page i
+    KeyWasFoundAt i -> LookupEntry $ rawPageEntryAt page i
     _               -> LookupEntryNotPresent
   where
     !dirNumKeys = rawPageNumKeys page
@@ -173,8 +172,12 @@ rawPageLookup !page !key
 -- which is greater than or equal to the supplied 'SerialisedKey'.
 --
 -- The following law always holds \( \forall \mathtt{key} \mathtt{page} \):
--- >>> maybe True (key <=) (getRawPageIndexKey . rawPageIndex page . id   =<< rawPageFindKey page key)
--- >>> maybe True (key > ) (getRawPageIndexKey . rawPageIndex page . pred =<< rawPageFindKey page key)
+--
+--   * maybe True (key <=) (getRawPageIndexKey . rawPageIndex page . id   =<< rawPageFindKey page key)
+--
+--   * maybe True (key > ) (getRawPageIndexKey . rawPageIndex page . pred =<< rawPageFindKey page key)
+--
+--   * maybe (maximum (rawPageKeys page) < key) (rawPageFindKey page key)
 rawPageFindKey
     :: RawPage
     -> SerialisedKey
@@ -182,8 +185,9 @@ rawPageFindKey
 rawPageFindKey !page !key
   | dirNumKeys == 1 = lookup1
   | otherwise       = case bisectPageToKey page key of
-    KeyNotInPage   -> Nothing
-    KeyFoundAt _ i -> Just $ fromIntegral i
+    KeyNotFoundExceedsPage   -> Nothing
+    KeyNotFoundNearestIsAt i -> Just $ fromIntegral i
+    KeyWasFoundAt          i -> Just $ fromIntegral i
 
   where
     !dirNumKeys = rawPageNumKeys page
@@ -194,11 +198,10 @@ rawPageFindKey !page !key
 
 -- | This data-type facilitates the code reuse of 'bisectPageToKey' between the
 -- and 'rawPageLookup' and 'rawPageFindKey'.
---
--- NOTE: Be sure to enable UnboxedSums to improve efficiency of this data-type.
 data BinarySearchResult
-  = KeyNotInPage
-  | KeyFoundAt {-# UNPACK #-} !Ordering  {-# UNPACK #-} !Int
+  = KeyNotFoundExceedsPage
+  | KeyNotFoundNearestIsAt {-# UNPACK #-} !Int
+  | KeyWasFoundAt {-# UNPACK #-} !Int
 
 -- | Binary search procedure shared between 'rawPageLookup' and 'rawPageFindKey'.
 {-# INLINE bisectPageToKey #-}
@@ -206,8 +209,14 @@ bisectPageToKey
   :: RawPage
   -> SerialisedKey
   -> BinarySearchResult
-bisectPageToKey !page !key = go 0 . fromIntegral $ rawPageNumKeys page
+bisectPageToKey !page !key = go 0 quantity
   where
+    quantity = fromIntegral $ rawPageNumKeys page
+    -- Binary search for within the range [i, j)
+    -- for the index k corresponding to key.
+    --
+    -- If k > key, search [ k + 1, j )
+    -- If k < key, search [     i, j )
     go :: Int -> Int -> BinarySearchResult
     go !i !j
       | j - i < threshold = linear i j
@@ -215,7 +224,7 @@ bisectPageToKey !page !key = go 0 . fromIntegral $ rawPageNumKeys page
         let !k = i + div2 (j - i)
         in  case key `compare` rawPageKeyAt page k of
           GT -> go (k + 1) j
-          EQ -> KeyFoundAt EQ k
+          EQ -> KeyWasFoundAt k
           LT -> go i k
 
     -- when to switch to linear scan
@@ -223,16 +232,24 @@ bisectPageToKey !page !key = go 0 . fromIntegral $ rawPageNumKeys page
     -- can be set to zero.
     threshold = 3
 
-    -- k in [i, j)
-    -- k >= key
-    -- k-1 < key
+    -- Search for an index k satisfying:
+    --   * k   in [i, j)
+    --   * k   >= key
+    --   * k-1 <  key
+    --
+    -- Note that when ending the linear scan, we must be careful to test the boundary!
+    -- If the end of the linear scan is the last key, then we are done and the key is not found.
+    -- If there is another key after the linear scan area,
+    -- then we must perform a final comparison to ensure that the key of boundary index is not
+    -- the smallest key which is greater than the search key.
     {-# INLINE linear #-}
     linear :: Int -> Int -> BinarySearchResult
     linear !i !j
-      | i >= j = KeyNotInPage
+      | i > j || (i == j && i == quantity) = KeyNotFoundExceedsPage
       | otherwise = case key `compare` rawPageKeyAt page i of
         GT -> linear (i + 1) j
-        ov -> KeyFoundAt ov i
+        EQ -> KeyWasFoundAt  i
+        LT -> KeyNotFoundNearestIsAt i
 
 data RawPageIndex entry =
        IndexNotPresent

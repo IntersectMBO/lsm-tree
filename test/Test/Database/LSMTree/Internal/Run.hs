@@ -16,9 +16,12 @@ import           Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Short as SBS
 import           Data.Coerce (coerce)
+import           Data.List.NonEmpty (NonEmpty (..))
+import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromJust)
 import qualified Data.Primitive.ByteArray as BA
+import           Data.Word (Word64)
 import           System.FilePath
 import qualified System.FS.API as FS
 import qualified System.FS.BlockIO.API as FS
@@ -41,6 +44,7 @@ import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry
 import qualified Database.LSMTree.Internal.Normal as N
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..))
+import           Database.LSMTree.Internal.Range (Range (..))
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.RawPage
 import           Database.LSMTree.Internal.Run
@@ -74,26 +78,41 @@ tests = testGroup "Database.LSMTree.Internal.Run"
               (mkKey "test-key")
               (mkVal ("test-value-" <> BS.concat (replicate 500 "0123456789")))
               Nothing
-      , testProperty "prop_WriteAndRead" $ \wb ->
-          ioPropertyWithMockFS $ \hfs hbio ->
-            prop_WriteAndRead hfs hbio wb
       , testProperty "prop_WriteAndOpen" $ \wb ->
-          ioPropertyWithMockFS $ \hfs hbio ->
+          ioPropertyWithMockFS' $ \hfs hbio ->
             prop_WriteAndOpen hfs hbio wb
+      , testProperty "prop_WriteAndRead" $ \wb ->
+          ioPropertyWithMockFS' $ \hfs hbio ->
+            prop_WriteAndRead hfs hbio wb
+      , testProperty "prop_WriteAndReadAtOffset" $ \wb ->
+          ioPropertyWithMockFS $ \hfs hbio ->
+            prop_WriteAndReadAtOffset hfs hbio wb
       ]
     ]
   where
     withSessionDir = Temp.withSystemTempDirectory "session-run"
 
-    ioPropertyWithMockFS ::
+    -- Specialized with no additional parameters
+    ioPropertyWithMockFS' ::
+         forall p.
          Testable p
       => (FS.HasFS IO FsSim.HandleMock -> FS.HasBlockIO IO FsSim.HandleMock -> IO p)
       -> Property
-    ioPropertyWithMockFS prop = ioProperty $ do
+    ioPropertyWithMockFS' prop = ioPropertyWithMockFS $ \a b () -> prop a b
+
+    -- Generalized to accept parameters
+    ioPropertyWithMockFS ::
+      ( Arbitrary params
+      , Show params
+      , Testable p
+      )
+      => (FS.HasFS IO FsSim.HandleMock -> FS.HasBlockIO IO FsSim.HandleMock -> params -> IO p)
+      -> Property
+    ioPropertyWithMockFS prop = property $ \params -> ioProperty $ do
         (res, mockFS) <-
           FsSim.runSimErrorFS FsSim.empty FsSim.emptyErrors $ \_ fs -> do
             hbio <- FsSim.fromHasFS fs
-            prop fs hbio
+            prop fs hbio params
         return $ res
             .&&. counterexample "open handles"
                    (FsSim.numOpenHandles mockFS === 0)
@@ -207,11 +226,59 @@ prop_WriteAndRead fs hbio (TypedWriteBuffer wb) = do
       .&&. kops === rhs
   where
     flush n = fromWriteBuffer fs hbio CacheRunData (RunAllocFixed 10) (RunFsPaths (FS.mkFsPath []) n)
-
     stats = tabulate "value size" (map (showPowersOf10 . sizeofValue) vals)
           . label (if any isLargeKOp kops then "has large k/op" else "no large k/op")
     kops = WB.toList wb
     vals = concatMap (bifoldMap pure mempty . snd) kops
+
+-- | Creating a run from a write buffer and reading from the run yields the
+-- original elements.
+--
+-- @dropWhile (< key) (WB.toList wb === readEntriesAtOffset key (flush wb)@
+prop_WriteAndReadAtOffset ::
+     FS.HasFS IO h
+  -> FS.HasBlockIO IO h
+  -> TypedWriteBuffer KeyForIndexCompact SerialisedValue SerialisedBlob
+  -> Int
+  -> IO Property
+prop_WriteAndReadAtOffset fs hbio (TypedWriteBuffer wb) index = do
+    run <- flush (RunNumber 42) wb
+    rhs <- readKOpsAtOffset fs hbio offsetKey run
+
+    -- make sure run gets closed again
+    removeReference run
+
+    let messageRHS = unlines
+          [ "wb:\t" <> show wb
+          , "rhs:\t" <> show rhs
+          , "kops:\t" <> show kops
+          , "kops':\t" <> show kops'
+          , "offset:\t" <> show offsetKey
+          , "ending:\t" <> show endingKey
+          ]
+
+    return $ stats $ null kops .||.
+      ( counterexample "number of elements"
+          ((NumEntries . length . dropWhile ((< offsetKey) . fst) . WB.toList) wb === runNumEntries run)
+        .&&. counterexample messageRHS
+          (kops' === rhs)
+      )
+  where
+    flush n = fromWriteBuffer fs hbio CacheRunData (RunAllocFixed 10) (RunFsPaths (FS.mkFsPath []) n)
+    stats = tabulate "value size" (map (showPowersOf10 . sizeofValue) vals)
+          . label (if any isLargeKOp kops then "has large k/op" else "no large k/op")
+    kops = WB.toList wb
+    kops' = WB.rangeLookups wb $ FromToIncluding offsetKey endingKey
+    vals = concatMap (bifoldMap pure mempty . snd) kops
+    -- this key is selected from the given 'kops' list at 'index' *modulo* the length of 'kops'
+    offsetKey = case length kops of
+      -- unless 'kops' is empty, thenconstruct an arbitrary serialized key
+      0 -> serialiseKey (0 :: Word64)
+      n -> fst $ kops !! (index `mod` n)
+    endingKey = case kops of
+      -- unless 'kops' is empty, thenconstruct an arbitrary serialized key
+      []   -> serialiseKey (maxBound :: Word64)
+      x:xs -> fst . NE.last $ x :| xs
 
 -- | Loading a run (written out from a write buffer) from disk gives the same
 -- in-memory representation as the original run.
@@ -263,6 +330,18 @@ isLargeKOp (key, entry) = size > pageSize
 readKOps :: FS.HasFS IO h -> FS.HasBlockIO IO h -> Run IO (FS.Handle h) -> IO [SerialisedKOp]
 readKOps fs hbio run = do
     reader <- Reader.new fs hbio Nothing run
+    go reader
+  where
+    go reader = do
+      Reader.next fs hbio reader >>= \case
+        Reader.Empty -> return []
+        Reader.ReadEntry key e -> do
+          e' <- traverse (readBlob fs) $ Reader.toFullEntry e
+          ((key, e') :) <$> go reader
+
+readKOpsAtOffset :: FS.HasFS IO h -> FS.HasBlockIO IO h -> SerialisedKey -> Run IO (FS.Handle h) -> IO [SerialisedKOp]
+readKOpsAtOffset fs hbio offset run = do
+    reader <- Reader.new fs hbio (Just offset) run
     go reader
   where
     go reader = do

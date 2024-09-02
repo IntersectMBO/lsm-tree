@@ -187,8 +187,9 @@ tests = testGroup "Database.LSMTree.Internal.RawPage"
     , testProperty "entry" prop_single_entry
     , testProperty "rawPageOverflowPages" prop_rawPageOverflowPages
     , testProperty "from/to reference impl" prop_fromToReferenceImpl
-    , testProperty "∀ key page. maybe True (key <=) (getRawPageIndexKey . rawPageIndex page .  id  =<< rawPageFindKey page key)" prop_findKey_index_law_GT
-    , testProperty "∀ key page. maybe True (key > ) (getRawPageIndexKey . rawPageIndex page . pred =<< rawPageFindKey page key)" prop_findKey_index_law_LT
+    , testProperty "rawPageFindKey >"  prop_findKey_index_law_GT
+    , testProperty "rawPageFindKey <=" prop_findKey_index_law_LT
+    , testProperty "rawPageFindKey missing" prop_findKey_index_law_Missing
     ]
 
 prop_toRawPage :: Ref.PageContentFits -> Property
@@ -318,20 +319,28 @@ prop_single_entry (Ref.PageContentSingle k op) =
 
 prop_findKey_index_law_GT :: Ref.Key -> Ref.PageContentOrdered -> Property
 prop_findKey_index_law_GT k (Ref.PageContentOrdered kops) =
-    findKeyIndexCounterExample key rawpage $ maybe
-      (property Discard)
-      (property . (key <=))
-      (getRawPageIndexKey . rawPageIndex rawpage =<< rawPageFindKey rawpage key)
+    findKeyIndexCounterExample
+      key
+      rawpage
+        "∀ key page. maybe True (key > ) (getRawPageIndexKey . rawPageIndex page . pred =<< rawPageFindKey page key)" $
+        maybe
+        (property Discard)
+        (property . (key <=))
+        (getRawPageIndexKey . rawPageIndex rawpage =<< rawPageFindKey rawpage key)
   where
     key = Ref.toSerialisedKey k
     rawpage = fst $ Ref.toRawPage (Ref.PageContentFits kops)
 
 prop_findKey_index_law_LT :: Ref.Key -> Ref.PageContentOrdered -> Property
 prop_findKey_index_law_LT k (Ref.PageContentOrdered kops) =
-    findKeyIndexCounterExample key rawpage $ maybe
-      (property Discard)
-      (property . (key >))
-      (getRawPageIndexKey . rawPageIndex rawpage =<< pred' =<< rawPageFindKey rawpage key)
+    findKeyIndexCounterExample
+      key
+      rawpage
+      "∀ key page. maybe True (key <=) (getRawPageIndexKey . rawPageIndex page .  id  =<< rawPageFindKey page key)" $
+        maybe
+        (property Discard)
+        (property . (key >))
+        (getRawPageIndexKey . rawPageIndex rawpage =<< pred' =<< rawPageFindKey rawpage key)
   where
     key = Ref.toSerialisedKey k
     rawpage = fst $ Ref.toRawPage (Ref.PageContentFits kops)
@@ -339,18 +348,59 @@ prop_findKey_index_law_LT k (Ref.PageContentOrdered kops) =
       | n <= 0 = Nothing
       | otherwise = Just $ n - 1
 
-findKeyIndexCounterExample :: Testable prop => SerialisedKey -> RawPage -> prop -> Property
-findKeyIndexCounterExample key rawpage = counterexample msg
+prop_findKey_index_law_Missing :: Ref.Key -> Ref.PageContentOrdered -> Property
+prop_findKey_index_law_Missing k (Ref.PageContentOrdered kops) =
+    findKeyIndexCounterExample
+      key
+      rawpage
+      "∀ key page. maybe (maximum (rawPageKeys page) < key) (rawPageFindKey page key)" $
+        maybe
+        (property $ rawPageKeys rawpage `maximumIsLessThan` key)
+        (const $ property Discard)
+        (rawPageFindKey rawpage key)
   where
+    key = Ref.toSerialisedKey k
+    rawpage = fst $ Ref.toRawPage (Ref.PageContentFits kops)
+    maximumIsLessThan iVec obj
+      | null iVec = True -- When there are no elements, the test passes
+      | otherwise = maximum iVec < obj
+
+findKeyIndexCounterExample :: Testable prop => SerialisedKey -> RawPage -> String -> prop -> Property
+findKeyIndexCounterExample key rawpage lawStr = counterexample msg
+  where
+    pKeys = rawPageKeys rawpage
     msg = case rawPageFindKey rawpage key of
-      Nothing -> "No key found"
-      Just loc -> unwords
-        [ "At entry№"
-        , show loc
-        , "found next {"
+      Nothing -> unlines
+        [ "No key found"
+        , show $ pKeys
+        , if null pKeys
+          then "<NONE>"
+          else show $ maximum pKeys
         , show key
-        , "} > {"
-        , show $ rawPageIndex rawpage loc
-        , "} of page index "
-        , show loc
+        , if null pKeys
+          then "<NONE>"
+          else  show $ maximum pKeys < key
+        ]
+      Just loc -> concat
+        [ "Relational law violated:\n  "
+        , lawStr
+        , "\n"
+        , unwords
+            [ "At entry№"
+            , show loc
+            , "found next {"
+            , show key
+            , "} > {"
+            , show $ rawPageIndex rawpage loc
+            , "} of page index "
+            , show loc
+            ]
+        , show $ pKeys
+        , if null pKeys
+          then "<NONE>"
+          else show $ maximum pKeys
+        , show key
+        , if null pKeys
+          then "<NONE>"
+          else  show $ maximum pKeys < key
         ]
