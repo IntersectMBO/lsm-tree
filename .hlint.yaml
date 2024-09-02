@@ -24,6 +24,7 @@
 - ignore: {name: "Redundant return"}
 - ignore: {name: "Use section"}
 - ignore: {name: "Redundant $!"}
+- ignore: {name: "Evaluate"}
 
 # Specify additional command line arguments
 #

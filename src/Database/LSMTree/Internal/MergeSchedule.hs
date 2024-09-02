@@ -16,8 +16,8 @@ module Database.LSMTree.Internal.MergeSchedule (
   , Level (..)
   , MergingRun (..)
   , MergingRunState (..)
-  , runsInLevels
-  , closeLevels
+  , forRunM
+  , forRunM_
     -- * Flushes and scheduled merges
   , updatesWithInterleavedFlushes
   , flushWriteBuffer
@@ -26,6 +26,8 @@ module Database.LSMTree.Internal.MergeSchedule (
   , maxRunSize
   ) where
 
+import           Control.Concurrent.Class.MonadMVar.Strict
+import           Control.Monad.Primitive
 import           Control.TempRegistry
 import           Control.Tracer
 import           Data.BloomFilter (Bloom)
@@ -38,6 +40,7 @@ import           Database.LSMTree.Internal.Entry (Entry, NumEntries (..),
                      unNumEntries)
 import           Database.LSMTree.Internal.IndexCompact (IndexCompact)
 import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
+import           Database.LSMTree.Internal.Merge (Merge)
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..),
                      SessionRoot (..))
@@ -51,6 +54,7 @@ import           Database.LSMTree.Internal.Serialise (SerialisedBlob,
 import           Database.LSMTree.Internal.UniqCounter
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
+import           GHC.Stack
 import           NoThunks.Class
 import           System.FS.API (Handle, HasFS)
 import           System.FS.BlockIO.API (HasBlockIO)
@@ -110,7 +114,7 @@ emptyTableContent :: TableContent m h
 emptyTableContent = TableContent {
       tableWriteBuffer = WB.empty
     , tableLevels = V.empty
-    , tableCache = mkLevelsCache V.empty
+    , tableCache = emptyLevelsCache
     }
 
 {-------------------------------------------------------------------------------
@@ -133,17 +137,26 @@ data LevelsCache m h = LevelsCache_ {
   , cachedKOpsFiles :: !(V.Vector h)
   }
 
+emptyLevelsCache :: LevelsCache m h
+emptyLevelsCache = LevelsCache_ {
+      cachedRuns = V.empty
+    , cachedFilters = V.empty
+    , cachedIndexes = V.empty
+    , cachedKOpsFiles = V.empty
+    }
+
+{-# SPECIALISE mkLevelsCache :: Levels IO h -> IO (LevelsCache IO h) #-}
 -- | Flatten the argument 'Level's into a single vector of runs, and use that to
 -- populate the 'LevelsCache'.
-mkLevelsCache :: Levels m h -> LevelsCache m h
-mkLevelsCache lvls = LevelsCache_ {
+mkLevelsCache :: MonadMVar m => Levels m h -> m (LevelsCache m h)
+mkLevelsCache lvls = do
+  rs <- forRunM lvls pure
+  pure $! LevelsCache_ {
       cachedRuns      = rs
     , cachedFilters   = V.map Run.runFilter rs
     , cachedIndexes   = V.map Run.runIndex rs
     , cachedKOpsFiles = V.map Run.runKOpsFile rs
     }
-  where
-    rs = runsInLevels lvls
 
 {-------------------------------------------------------------------------------
   Levels, runs and ongoing merges
@@ -162,28 +175,40 @@ deriving via OnlyCheckWhnfNamed "Level" (Level m h) instance NoThunks (Level m h
 
 -- | A merging run is either a single run, or some ongoing merge.
 data MergingRun m h =
-    MergingRun !(MergingRunState m h)
+    -- if threshold, reset credits, then take tmvar and do some work
+    --
+    -- subtract credits after merging work?
+    --
+    -- subtract credits, do merge work, put credits back on exception
+    --
+    -- desynchronise when threads have to do merging works on different levels (co-prime?)
+    MergingRun !(PrimVar m Credits) !(StrictTVar (V.Vector (Run m h))) !(StrictTMVar m (MergingRunState m h))
   | SingleRun !(Run m h)
 
--- | Merges are stepped to completion immediately, so there is no representation
--- for ongoing merges (yet)
---
--- TODO: this should also represent ongoing merges once we implement scheduling.
-newtype MergingRunState m h = CompletedMerge (Run m h)
+data MergingRunState m h =
+    CompletedMerge !(Run m h)
+  | OngoingMerge !(Merge (PrimState m) h)
 
--- | Return all runs in the levels, ordered from newest to oldest
-runsInLevels :: Levels m h -> V.Vector (Run m h)
-runsInLevels levels = flip V.concatMap levels $ \(Level mr rs) ->
+{-# SPECIALISE forRunM_ :: Levels IO h -> (Run IO h -> IO ()) -> IO () #-}
+forRunM_ :: MonadMVar m => Levels m h -> (Run m h -> m ()) -> m ()
+forRunM_ lvls k = V.forM_ lvls $ \(Level mr rs) -> do
     case mr of
-      SingleRun r                   -> r `V.cons` rs
-      MergingRun (CompletedMerge r) -> r `V.cons` rs
+      SingleRun r    -> k r
+      MergingRun var -> readMVar var >>= \case
+        CompletedMerge r -> k r
+        OngoingMerge irs _m -> V.mapM_ k irs
+    V.mapM_ k rs
 
-{-# SPECIALISE closeLevels :: Levels IO (Handle h) -> IO () #-}
-closeLevels ::
-     m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
-  => Levels m (Handle h)
-  -> m ()
-closeLevels levels = V.mapM_ Run.removeReference (runsInLevels levels)
+{-# SPECIALISE forRunM :: Levels IO h -> (Run IO h -> IO a) -> IO (V.Vector a) #-}
+forRunM :: MonadMVar m => Levels m h -> (Run m h -> m a) -> m (V.Vector a)
+forRunM lvls k = do
+    rss <- V.forM lvls $ \(Level mr rs) ->
+      case mr of
+        SingleRun r    -> V.cons <$> k r <*> V.mapM k rs
+        MergingRun var -> readMVar var >>= \case
+          CompletedMerge r -> V.singleton <$> k r
+          OngoingMerge irs _m -> (V.++) <$> V.mapM k irs <*> V.mapM k rs
+    pure $ V.concatMap id rss
 
 {-------------------------------------------------------------------------------
   Flushes and scheduled merges
@@ -294,80 +319,95 @@ flushWriteBuffer tr conf@TableConfig{confDiskCachePolicy}
               (tableWriteBuffer tc))
             Run.removeReference
     levels' <- addRunToLevels tr conf resolve hfs hbio root uc r reg (tableLevels tc)
+    cache' <- mkLevelsCache levels'
     pure $! TableContent {
         tableWriteBuffer = WB.empty
       , tableLevels = levels'
-      , tableCache = mkLevelsCache levels'
+      , tableCache = cache'
       }
 
-{-
 -- | Note that the invariants rely on the fact that levelling is only used on
 -- the last level.
 --
-_levelsInvariant :: forall m h. TableConfig -> Levels m h -> ST (PrimState m) Bool
+-- Based on @ScheduledMerges.invariant@, which provides documentation for the
+-- assertions in this function.
+_levelsInvariant :: forall m h. MonadMVar m => TableConfig -> Levels m h -> m ()
 _levelsInvariant conf levels =
-    go (LevelNo 1) levels >>= \ !_ -> pure True
+    go (LevelNo 1) levels
   where
     sr = confSizeRatio conf
     wba = confWriteBufferAlloc conf
 
-    go :: LevelNo -> Levels m h -> ST (PrimState m) ()
+    go :: LevelNo -> Levels m h -> m ()
     go !_ (V.uncons -> Nothing) = pure ()
 
     go !ln (V.uncons -> Just (Level mr rs, ls)) = do
+
       mrs <- case mr of
-               SingleRun r                   -> pure $ CompletedMerge r
-               MergingRun (CompletedMerge r) -> pure $ CompletedMerge r
-      assert (length rs < sizeRatioInt sr) $ pure ()
-      assert (expectedRunLengths ln rs ls) $ pure ()
-      assert (expectedMergingRunLengths ln mr mrs ls) $ pure ()
+               SingleRun r    -> pure $ CompletedMerge r
+               MergingRun ref -> readMVar ref
+
+      assertM $ length rs < sizeRatioInt sr
+      expectedRunLengths ln rs ls
+      expectedMergingRunLengths ln mr mrs ls
+
       go (succ ln) ls
 
-    -- All runs within a level "proper" (as opposed to the incoming runs
-    -- being merged) should be of the correct size for the level.
+    expectedRunLengths :: LevelNo -> V.Vector (Run m h) -> Levels m h -> m ()
     expectedRunLengths ln rs ls = do
       case mergePolicyForLevel (confMergePolicy conf) ln ls of
-        -- Levels using levelling have only one run, and that single run is
-        -- (almost) always involved in an ongoing merge. Thus there are no
-        -- other "normal" runs. The exception is when a levelling run becomes
-        -- too large and is promoted, in that case initially there's no merge,
-        -- but it is still represented as a 'MergingRun', using 'SingleRun'.
-        LevelLevelling -> assert (V.null rs) True
-        LevelTiering   -> V.all (\r -> assert (fits LevelTiering r ln) True) rs
-
-    -- Incoming runs being merged also need to be of the right size, but the
-    -- conditions are more complicated.
+        Levelling -> assertM $ V.null rs
+        Tiering   ->
+          assertM $ V.all (\r -> fitsLB Tiering r ln &&
+                                 fitsUB Tiering r (succ ln))
+                          rs
+    expectedMergingRunLengths ::
+         LevelNo
+      -> MergingRun m h
+      -> MergingRunState m h
+      -> Levels m h
+      -> m ()
     expectedMergingRunLengths ln mr mrs ls =
       case mergePolicyForLevel (confMergePolicy conf) ln ls of
-        LevelLevelling ->
+        Levelling -> do
+          assertM $ mergeLastForLevel ls == Merge.LastLevel
           case (mr, mrs) of
-            -- A single incoming run (which thus didn't need merging) must be
-            -- of the expected size range already
-            (SingleRun r, CompletedMerge{}) -> assert (fits LevelLevelling r ln) True
-                        -- A completed merge for levelling can be of almost any size at all!
-            -- It can be smaller, due to deletions in the last level. But it
-            -- can't be bigger than would fit into the next level.
-            (_, CompletedMerge r) -> assert (fitsUB LevelLevelling r (succ ln)) True
-        LevelTiering ->
+            (SingleRun r, m) -> do
+              assertM $ case m of CompletedMerge{} -> True
+                                  OngoingMerge{}   -> False
+              assertM $ fits Levelling r ln
+
+            (_, CompletedMerge r) ->
+              assertM $ fitsUB Levelling r (succ ln)
+
+            (_, OngoingMerge rs _ ) -> do
+              assertM $ V.length rs `elem` [4, 5]
+              let incoming = V.take 4 rs
+              let resident = V.drop 4 rs
+              assertM $ V.all (\r -> fitsLB Tiering r (pred ln) &&
+                                     fitsUB Tiering r ln)
+                              incoming
+              assertM $ V.all (\r -> fitsUB Levelling r (succ ln))
+                              resident
+        Tiering ->
           case (mr, mrs, mergeLastForLevel ls) of
-            -- A single incoming run (which thus didn't need merging) must be
-            -- of the expected size already
-            (SingleRun r, CompletedMerge{}, _) -> assert (fits LevelTiering r ln) True
+            (SingleRun r, m, _) -> do
+              assertM $ case m of CompletedMerge{} -> True
+                                  OngoingMerge{}   -> False
+              assertM $ fits Tiering r ln
 
-            -- A completed last level run can be of almost any smaller size due
-            -- to deletions, but it can't be bigger than the next level down.
-            -- Note that tiering on the last level only occurs when there is
-            -- a single level only.
-            (_, CompletedMerge r, Merge.LastLevel) ->
-                assert (ln == LevelNo 1) $
-                assert (fitsUB LevelTiering r (succ ln)) $
-                True
+            (_, CompletedMerge r, Merge.LastLevel) -> do
+                assertM $ ln == LevelNo 1
+                assertM $ fitsUB Tiering r (succ ln)
 
-            -- A completed mid level run is usually of the size for the
-            -- level it is entering, but can also be one smaller (in which case
-            -- it'll be held back and merged again).
             (_, CompletedMerge r, Merge.MidLevel) ->
-                assert (fitsUB LevelTiering r ln || fitsUB LevelTiering r (succ ln)) True
+                assertM $ fitsLB Tiering r (pred ln) &&
+                          fitsUB Tiering r (succ ln)
+
+            (_, OngoingMerge rs _, _) -> do
+              assertM $ V.length rs == 4 || V.length rs == 5
+              assertM $ V.all (\r -> fits Tiering r (pred ln))
+                              rs
 
     -- Check that a run fits in the current level
     fits policy r ln = fitsLB policy r ln && fitsUB policy r ln
@@ -375,9 +415,17 @@ _levelsInvariant conf levels =
     fitsLB policy r ln = maxRunSize sr wba policy (pred ln) < Run.runNumEntries r
     -- Check that a run is too small for next levels
     fitsUB policy r ln = Run.runNumEntries r <= maxRunSize sr wba policy ln
--}
+
+    -- 'callStack' just ensures that the 'HasCallStack' constraint is not redundant
+    -- when compiling with debug assertions disabled.
+    assertM :: HasCallStack => Bool -> m ()
+    assertM p = assert p $ return (const () callStack)
 
 {-# SPECIALISE addRunToLevels :: Tracer IO (AtLevel MergeTrace) -> TableConfig -> ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> Run IO (Handle h) -> TempRegistry IO -> Levels IO (Handle h) -> IO (Levels IO (Handle h)) #-}
+-- | Add a run to the levels, and propagate merges.
+--
+-- NOTE: @go@ is based on the @ScheduledMerges.increment@ prototype. See @go@
+-- for documentation about the merge algorithm.
 addRunToLevels ::
      forall m h. m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
   => Tracer m (AtLevel MergeTrace)
@@ -394,43 +442,38 @@ addRunToLevels ::
 addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = do
     ls' <- go (LevelNo 1) (V.singleton r0) levels
 #ifdef NO_IGNORE_ASSERTS
-    -- void $ stToIO $ _levelsInvariant conf ls'
+    _levelsInvariant conf ls'
 #endif
     return ls'
   where
-    -- NOTE: @go@ is based on the @increment@ function from the
-    -- @ScheduledMerges@ prototype.
-    go !ln rs (V.uncons -> Nothing) = do
+
+    go !ln incoming (V.uncons -> Nothing) = do
         traceWith tr $ AtLevel ln TraceAddLevel
-        -- Make a new level
-        let policyForLevel = mergePolicyForLevel confMergePolicy ln V.empty
-        mr <- newMerge policyForLevel Merge.LastLevel ln rs
+        let mergePolicy = mergePolicyForLevel confMergePolicy ln V.empty
+        mr <- newMerge mergePolicy Merge.LastLevel ln incoming
         return $ V.singleton $ Level mr V.empty
-    go !ln rs' (V.uncons -> Just (Level mr rs, ls)) = do
-        -- TODO: until we have proper scheduling, the merging run is actually
-        -- always stepped to completion immediately, so we can see it is just a
-        -- single run.
+
+    go !ln incoming (V.uncons -> Just (Level mr rs, ls)) = do
+        let tr' = contramap (AtLevel ln) tr
         r <- expectCompletedMerge ln mr
+        let resident = r `V.cons` rs
         case mergePolicyForLevel confMergePolicy ln ls of
-          -- If r is still too small for this level then keep it and merge again
-          -- with the incoming runs.
+
           Tiering | runSize r <= maxRunSize' conf Tiering (pred ln) -> do
             let mergelast = mergeLastForLevel ls
-            mr' <- newMerge Tiering mergelast ln (rs' `V.snoc` r)
+            mr' <- newMerge Tiering mergelast ln (incoming `V.snoc` r)
             pure $! Level mr' rs `V.cons` ls
-          -- This tiering level is now full. We take the completed merged run
-          -- (the previous incoming runs), plus all the other runs on this level
-          -- as a bundle and move them down to the level below. We start a merge
-          -- for the new incoming runs. This level is otherwise empty.
-          Tiering | levelIsFull confSizeRatio rs -> do
-            mr' <- newMerge Tiering Merge.MidLevel ln rs'
+
+          Tiering | levelIsFull Tiering confSizeRatio rs -> do
+            mr' <- newMerge Tiering Merge.MidLevel ln incoming
             ls' <- go (succ ln) (r `V.cons` rs) ls
             pure $! Level mr' V.empty `V.cons` ls'
+
           -- This tiering level is not yet full. We move the completed merged run
           -- into the level proper, and start the new merge for the incoming runs.
           Tiering -> do
             let mergelast = mergeLastForLevel ls
-            mr' <- newMerge Tiering mergelast ln rs'
+            mr' <- newMerge Tiering mergelast ln incoming
             traceWith tr $ AtLevel ln
                          $ TraceAddRun
                             (runNumber $ Run.runRunFsPaths r)
@@ -442,22 +485,25 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
           -- empty) level .
           Levelling | runSize r > maxRunSize' conf Levelling ln -> do
             assert (V.null rs && V.null ls) $ pure ()
-            mr' <- newMerge Levelling Merge.MidLevel ln rs'
+            mr' <- newMerge Levelling Merge.MidLevel ln incoming
             ls' <- go (succ ln) (V.singleton r) V.empty
             pure $! Level mr' V.empty `V.cons` ls'
           -- Otherwise we start merging the incoming runs into the run.
           Levelling -> do
             assert (V.null rs && V.null ls) $ pure ()
-            mr' <- newMerge Levelling Merge.LastLevel ln (rs' `V.snoc` r)
+            mr' <- newMerge Levelling Merge.LastLevel ln (incoming `V.snoc` r)
             pure $! Level mr' V.empty `V.cons` V.empty
 
     expectCompletedMerge :: LevelNo -> MergingRun m (Handle h) -> m (Run m (Handle h))
-    expectCompletedMerge ln (SingleRun r)                   = do
+    expectCompletedMerge ln (SingleRun r) = do
       traceWith tr $ AtLevel ln $ TraceExpectCompletedMergeSingleRun (runNumber $ Run.runRunFsPaths r)
       pure r
-    expectCompletedMerge ln (MergingRun (CompletedMerge r)) = do
-      traceWith tr $ AtLevel ln $ TraceExpectCompletedMerge (runNumber $ Run.runRunFsPaths r)
-      pure r
+    expectCompletedMerge ln (MergingRun var) = do
+      readMVar var >>= \case
+        CompletedMerge r -> do
+          traceWith tr $ AtLevel ln $ TraceExpectCompletedMerge (runNumber $ Run.runRunFsPaths r)
+          pure r
+        OngoingMerge _rs _m -> undefined
 
     -- TODO: Until we implement proper scheduling, this does not only start a
     -- merge, but it also steps it to completion.
@@ -483,7 +529,8 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
                Run.removeReference
         traceWith tr $ AtLevel ln $ TraceCompletedMerge (Run.runNumEntries r) (runNumber $ Run.runRunFsPaths r)
         V.mapM_ (freeTemp reg . Run.removeReference) rs
-        pure $! MergingRun (CompletedMerge r)
+        var <- newMVar (CompletedMerge r)
+        pure $! MergingRun var
 
 -- | Merge policy for a single level
 data MergePolicy = Tiering | Levelling
@@ -544,8 +591,9 @@ mergeLastForLevel levels
  | V.null levels = Merge.LastLevel
  | otherwise     = Merge.MidLevel
 
-levelIsFull :: SizeRatio -> V.Vector (Run m h) -> Bool
-levelIsFull sr rs = V.length rs + 1 >= (sizeRatioInt sr)
+levelIsFull :: MergePolicy -> SizeRatio -> V.Vector (Run m h) -> Bool
+levelIsFull Tiering sr resident = V.length resident+ 1 >= sizeRatioInt sr
+levelIsFull Levelling sr resident = error "levelIsFull" -- TODO
 
 {-# SPECIALISE mergeRuns :: ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> RunDataCaching -> RunBloomFilterAlloc -> RunFsPaths -> Merge.Level -> V.Vector (Run IO (Handle h)) -> IO (Run IO (Handle h)) #-}
 mergeRuns ::

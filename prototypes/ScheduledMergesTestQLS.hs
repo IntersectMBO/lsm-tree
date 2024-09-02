@@ -21,6 +21,7 @@ import qualified Control.Tracer as Tracer
 import           ScheduledMerges as LSM
 
 import           Test.QuickCheck
+import Test.QuickCheck.DynamicLogic
 import           Test.QuickCheck.StateModel hiding (lookUpVar)
 import           Test.QuickCheck.StateModel.Lockstep hiding (ModelOp)
 import qualified Test.QuickCheck.StateModel.Lockstep.Defaults as Lockstep
@@ -28,6 +29,7 @@ import qualified Test.QuickCheck.StateModel.Lockstep.Run as Lockstep
 import           Test.Tasty
 import           Test.Tasty.HUnit (HasCallStack, testCase)
 import           Test.Tasty.QuickCheck (testProperty)
+import Test.QuickCheck.StateModel.Lockstep.Op.Identity (Op(OpId))
 
 
 -------------------------------------------------------------------------------
@@ -36,10 +38,39 @@ import           Test.Tasty.QuickCheck (testProperty)
 
 tests :: TestTree
 tests = testGroup "ScheduledMerges" [
-      testProperty "ScheduledMerges vs model" $ mapSize (*10) prop_LSM  -- still <10s
+      testProperty "temp" $ once $ noShrinking $ temp
+    , testProperty "ScheduledMerges vs model" $ mapSize (*10) prop_LSM  -- still <10s
     , testCase "regression_empty_run" test_regression_empty_run
     , testCase "merge_again_with_incoming" test_merge_again_with_incoming
     ]
+
+temp :: Property
+temp = flip forAllDL prop_LSM $ do
+    var1 <- action $ ANew
+    action $ ADelete (unsafeMkGVar var1 OpId) (Right 0)
+    action $ AInsert (unsafeMkGVar var1 OpId) (Right 3) 0
+    action $ AInsert (unsafeMkGVar var1 OpId) (Right 1) 0
+    action $ ADelete (unsafeMkGVar var1 OpId) (Right 2)
+    action $ ADelete (unsafeMkGVar var1 OpId) (Right 0)
+    action $ ADelete (unsafeMkGVar var1 OpId) (Right 1)
+    action $ AInsert (unsafeMkGVar var1 OpId) (Right 2) 0
+    action $ AInsert (unsafeMkGVar var1 OpId) (Right 3) 0
+    action $ AInsert (unsafeMkGVar var1 OpId) (Right 0) 0
+    action $ AInsert (unsafeMkGVar var1 OpId) (Right 1) 0
+    action $ ADelete (unsafeMkGVar var1 OpId) (Right 2)
+    action $ ADelete (unsafeMkGVar var1 OpId) (Right 3)
+    action $ AInsert (unsafeMkGVar var1 OpId) (Right 0) 0
+    action $ AInsert (unsafeMkGVar var1 OpId) (Right 1) 0
+    action $ ADelete (unsafeMkGVar var1 OpId) (Right 2)
+    var30 <- action $ ADuplicate (unsafeMkGVar var1 OpId)
+    action $ AInsert (unsafeMkGVar var30 OpId) (Right 3) 0
+    action $ AInsert (unsafeMkGVar var30 OpId) (Right 1) 0
+    action $ AInsert (unsafeMkGVar var30 OpId) (Right 2) 0
+    action $ AInsert (unsafeMkGVar var30 OpId) (Right 0) 0
+    action $ AInsert (unsafeMkGVar var30 OpId) (Right 3) 0
+    pure ()
+
+instance DynLogicModel (Lockstep Model)
 
 prop_LSM :: Actions (Lockstep Model) -> Property
 prop_LSM = Lockstep.runActions (Proxy :: Proxy Model)
@@ -421,6 +452,7 @@ runActionIO action lookUp =
 
     tr :: Tracer (ST RealWorld) Event
     tr = nullTracer
+    -- tr = show `Tracer.contramap` Tracer.debugTracer
 
 runModel :: Action (Lockstep Model) a
          -> ModelLookUp Model

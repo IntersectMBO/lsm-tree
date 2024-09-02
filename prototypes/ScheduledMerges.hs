@@ -147,6 +147,9 @@ tieringRunSizeToLevel r
   where
     s = runSize r
 
+levellingRunSizeToLevel' :: Int -> Int
+levellingRunSizeToLevel' n = levellingRunSizeToLevel (Map.fromList [(i, Insert i Nothing) | i <- [1..n]])
+
 levellingRunSizeToLevel :: Run -> Int
 levellingRunSizeToLevel r =
     max 1 (tieringRunSizeToLevel r - 1)  -- level numbers start at 1
@@ -551,7 +554,7 @@ increment tr sc = \r ls -> do
 
         -- If r is still too small for this level then keep it and merge again
         -- with the incoming runs.
-        MergePolicyTiering | tieringRunSizeToLevel r < ln -> do
+        MergePolicyTiering | not (tieringLevelIsFull (pred ln) incoming resident) -> do
           let mergelast = mergeLastForLevel ls
           mr' <- newMerge tr' ln MergePolicyTiering mergelast (incoming ++ [r])
           return (Level mr' rs : ls)
@@ -560,7 +563,7 @@ increment tr sc = \r ls -> do
         -- (the previous incoming runs), plus all the other runs on this level
         -- as a bundle and move them down to the level below. We start a merge
         -- for the new incoming runs. This level is otherwise empty.
-        MergePolicyTiering | tieringLevelIsFull ln incoming resident -> do
+        MergePolicyTiering | length resident >= 4 -> do
           mr' <- newMerge tr' ln MergePolicyTiering MergeMidLevel incoming
           ls' <- go (ln+1) resident ls
           return (Level mr' [] : ls')
@@ -568,6 +571,7 @@ increment tr sc = \r ls -> do
         -- This tiering level is not yet full. We move the completed merged run
         -- into the level proper, and start the new merge for the incoming runs.
         MergePolicyTiering -> do
+          assert (tieringLevelIsFull (pred ln) incoming resident) $ pure ()
           let mergelast = mergeLastForLevel ls
           mr' <- newMerge tr' ln MergePolicyTiering mergelast incoming
           traceWith tr' (AddRunEvent (length resident))
@@ -595,7 +599,7 @@ increment tr sc = \r ls -> do
 
 -- | Only based on run count, not their sizes.
 tieringLevelIsFull :: Int -> [Run] -> [Run] -> Bool
-tieringLevelIsFull _ln _incoming resident = length resident >= 4
+tieringLevelIsFull ln _incoming resident = levellingRunSizeToLevel' (sum (map Map.size resident)) > ln
 
 -- | The level is only considered full once the resident run is /too large/ for
 -- the level.
