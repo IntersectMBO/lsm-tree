@@ -503,13 +503,16 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
             !alloc = bloomFilterAllocForLevel conf ln
             !runPaths = Paths.runPath root (uniqueToRunNumber n)
         traceWith tr $ AtLevel ln $ TraceNewMerge (V.map Run.runNumEntries rs) (runNumber runPaths) caching alloc mergepolicy mergelast
-        r <- allocateTemp reg
-               (mergeRuns resolve hfs hbio caching alloc runPaths mergelast rs)
-               Run.removeReference
-        traceWith tr $ AtLevel ln $ TraceCompletedMerge (Run.runNumEntries r) (runNumber $ Run.runRunFsPaths r)
-        V.mapM_ (freeTemp reg . Run.removeReference) rs
-        var <- newMutVar (CompletedMerge r)
-        pure $! MergingRun var
+        case confMergeSchedule of
+          OneShot -> do
+            r <- allocateTemp reg
+                  (mergeRuns resolve hfs hbio caching alloc runPaths mergelast rs)
+                  Run.removeReference
+            traceWith tr $ AtLevel ln $ TraceCompletedMerge (Run.runNumEntries r) (runNumber $ Run.runRunFsPaths r)
+            V.mapM_ (freeTemp reg . Run.removeReference) rs
+            var <- newMutVar (CompletedMerge r)
+            pure $! MergingRun var
+          Incremental -> error "newMerge: Incremental is not yet supported" -- TODO: implement
 
 data MergePolicyForLevel = LevelTiering | LevelLevelling
   deriving stock Show
