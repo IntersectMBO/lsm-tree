@@ -100,14 +100,17 @@ data MergeTrace =
 -------------------------------------------------------------------------------}
 
 data TableContent m h = TableContent {
-    tableWriteBuffer :: !WriteBuffer
+    tableWriteBuffer   :: !WriteBuffer
     -- | A hierarchy of levels. The vector indexes double as level numbers.
-  , tableLevels      :: !(Levels m (Handle h))
+    -- | Write buffer is already allocated a run number.
+    --   TODO: later we'll add a field tracking (lazily) open blob file.
+  , tableWriteBufferRN :: !RunNumber
+  , tableLevels        :: !(Levels m (Handle h))
     -- | Cache of flattened 'levels'.
     --
     -- INVARIANT: when 'level's is modified, this cache should be updated as
     -- well, for example using 'mkLevelsCache'.
-  , tableCache       :: !(LevelsCache m (Handle h))
+  , tableCache         :: !(LevelsCache m (Handle h))
   }
 
 {-------------------------------------------------------------------------------
@@ -248,6 +251,7 @@ updatesWithInterleavedFlushes tr conf resolve hfs hbio root uc es reg tc = do
     setWriteBuffer :: WriteBuffer -> TableContent m h -> TableContent m h
     setWriteBuffer wbToSet tc0 = TableContent {
           tableWriteBuffer = wbToSet
+        , tableWriteBufferRN = tableWriteBufferRN tc0
         , tableLevels = tableLevels tc0
         , tableCache = tableCache tc0
         }
@@ -273,12 +277,12 @@ flushWriteBuffer tr conf@TableConfig{confDiskCachePolicy}
                  resolve hfs hbio root uc reg tc
   | WB.null (tableWriteBuffer tc) = pure tc
   | otherwise = do
-    !n <- incrUniqCounter uc
     let !size  = WB.numEntries (tableWriteBuffer tc)
+        !n     = tableWriteBufferRN tc
         !l     = LevelNo 1
         !cache = diskCachePolicyForLevel confDiskCachePolicy l
         !alloc = bloomFilterAllocForLevel conf l
-        !path  = Paths.runPath root (uniqueToRunNumber n)
+        !path  = Paths.runPath root n
     traceWith tr $ AtLevel l $ TraceFlushWriteBuffer size (runNumber path) cache alloc
     r <- allocateTemp reg
             (Run.fromWriteBuffer hfs hbio
@@ -288,8 +292,10 @@ flushWriteBuffer tr conf@TableConfig{confDiskCachePolicy}
               (tableWriteBuffer tc))
             Run.removeReference
     levels' <- addRunToLevels tr conf resolve hfs hbio root uc r reg (tableLevels tc)
+    n' <- uniqueToRunNumber <$> incrUniqCounter uc
     pure $! TableContent {
         tableWriteBuffer = WB.empty
+      , tableWriteBufferRN = n'
       , tableLevels = levels'
       , tableCache = mkLevelsCache levels'
       }
