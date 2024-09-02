@@ -8,7 +8,7 @@ module Database.LSMTree.Common (
   , Internal.TableTrace (..)
   , Internal.MergeTrace (..)
     -- * Sessions
-  , Session (..)
+  , Session
   , withSession
   , openSession
   , closeSession
@@ -48,7 +48,6 @@ module Database.LSMTree.Common (
 
 import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Concurrent.Class.MonadSTM (MonadSTM, STM)
-import           Control.DeepSeq
 import           Control.Monad.Class.MonadThrow
 import           Control.Tracer (Tracer)
 import           Data.Kind (Type)
@@ -112,10 +111,7 @@ instance IOLike IO
 -- while a shared session will place all files under one directory.
 --
 type Session :: (Type -> Type) -> Type
-data Session m = forall h. Typeable h => Session !(Internal.Session m h)
-
-instance NFData (Session m) where
-  rnf (Session s) = rnf s
+type Session = Internal.Session'
 
 {-# SPECIALISE withSession :: Tracer IO Internal.LSMTreeTrace -> HasFS IO HandleIO -> HasBlockIO IO HandleIO -> FsPath -> (Session IO -> IO a) -> IO a #-}
 -- | (Asynchronous) exception-safe, bracketed opening and closing of a session.
@@ -130,7 +126,7 @@ withSession ::
   -> FsPath
   -> (Session m -> m a)
   -> m a
-withSession tr hfs hbio dir action = Internal.withSession tr hfs hbio dir (action . Session)
+withSession tr hfs hbio dir action = Internal.withSession tr hfs hbio dir (action . Internal.Session')
 
 {-# SPECIALISE openSession :: Tracer IO Internal.LSMTreeTrace -> HasFS IO HandleIO -> HasBlockIO IO HandleIO -> FsPath -> IO (Session IO) #-}
 -- | Create either a new empty table session or open an existing table session,
@@ -159,7 +155,7 @@ openSession ::
   -> HasBlockIO m h -- TODO: could we prevent the user from having to pass this in?
   -> FsPath -- ^ Path to the session directory
   -> m (Session m)
-openSession tr hfs hbio dir = Session <$> Internal.openSession tr hfs hbio dir
+openSession tr hfs hbio dir = Internal.Session' <$> Internal.openSession tr hfs hbio dir
 
 {-# SPECIALISE closeSession :: Session IO -> IO () #-}
 -- | Close the table session. 'closeSession' is idempotent. All subsequent
@@ -175,7 +171,7 @@ openSession tr hfs hbio dir = Session <$> Internal.openSession tr hfs hbio dir
 -- lock will be released).
 --
 closeSession :: IOLike m => Session m -> m ()
-closeSession (Session sesh) = Internal.closeSession sesh
+closeSession (Internal.Session' sesh) = Internal.closeSession sesh
 
 {-------------------------------------------------------------------------------
   Snapshots
@@ -200,7 +196,7 @@ class Labellable a where
 -- TODO: this function currently has a temporary implementation until we have
 -- proper snapshots.
 deleteSnapshot :: IOLike m => Session m -> Internal.SnapshotName -> m ()
-deleteSnapshot (Session sesh) = Internal.deleteSnapshot sesh
+deleteSnapshot (Internal.Session' sesh) = Internal.deleteSnapshot sesh
 
 {-# SPECIALISE listSnapshots :: Session IO -> IO [Internal.SnapshotName] #-}
 -- | List snapshots by name.
@@ -208,7 +204,7 @@ deleteSnapshot (Session sesh) = Internal.deleteSnapshot sesh
 -- TODO: this function currently has a temporary implementation until we have
 -- proper snapshots.
 listSnapshots :: IOLike m => Session m -> m [Internal.SnapshotName]
-listSnapshots (Session sesh) = Internal.listSnapshots sesh
+listSnapshots (Internal.Session' sesh) = Internal.listSnapshots sesh
 
 {-------------------------------------------------------------------------------
   Blob references

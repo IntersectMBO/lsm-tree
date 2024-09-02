@@ -27,9 +27,9 @@ import           Data.Proxy
 import           Data.Typeable
 import qualified Data.Vector.Primitive as VP
 import           Data.Word
-import           Database.LSMTree.Common as Common hiding (BlobRef)
 import           Database.LSMTree.Internal as Internal
 import           Database.LSMTree.Internal.BlobRef
+import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.IndexCompact
 import           Database.LSMTree.Internal.MergeSchedule
@@ -46,7 +46,6 @@ import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.UniqCounter
 import           Database.LSMTree.Internal.Unsliced
 import           Database.LSMTree.Internal.WriteBuffer
-import qualified Database.LSMTree.Normal as Normal
 import           GHC.Generics
 import           KMerge.Heap
 import           NoThunks.Class
@@ -67,16 +66,16 @@ assertNoThunks x = assert p
 -- | Also checks 'NoThunks' for the 'Normal.TableHandle's that are known to be
 -- open in the 'Common.Session'.
 instance (NoThunksIOLike m, Typeable m)
-      => NoThunks (Common.Session m ) where
-  showTypeOf (_ :: Proxy (Common.Session m)) = "Common.Session"
-  wNoThunks ctx (Common.Session s) = wNoThunks ctx s
+      => NoThunks (Session' m ) where
+  showTypeOf (_ :: Proxy (Session' m)) = "Session'"
+  wNoThunks ctx (Session' s) = wNoThunks ctx s
 
 -- | Does not check 'NoThunks' for the 'Common.Session' that this
 -- 'Normal.TableHandle' belongs to.
 instance (NoThunksIOLike m, Typeable m)
-      => NoThunks (Normal.TableHandle m k v blob) where
-  showTypeOf (_ :: Proxy (Normal.TableHandle m k v blob)) = "Normal.TableHandle"
-  wNoThunks ctx (Normal.TableHandle th) = wNoThunks ctx th
+      => NoThunks (NormalTable m k v blob) where
+  showTypeOf (_ :: Proxy (NormalTable m k v blob)) = "NormalTable"
+  wNoThunks ctx (NormalTable th) = wNoThunks ctx th
 
 {-------------------------------------------------------------------------------
   Internal
