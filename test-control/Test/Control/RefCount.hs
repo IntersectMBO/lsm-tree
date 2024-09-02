@@ -28,6 +28,11 @@ prop_refCount = once $ ioProperty $ do
     n2 <- readRefCount ref -- 1
     b2 <- readMVar obj -- False
 
+    e2w <- upgradeWeakReference ref -- ok, True
+    n2w <- readRefCount ref -- 2
+    b2w <- readMVar obj -- False
+    removeReference ref
+
     removeReference ref
     n3 <- readRefCount ref -- 0
     b3 <- readMVar obj -- True, finaliser ran
@@ -40,12 +45,20 @@ prop_refCount = once $ ioProperty $ do
     n5 <- readRefCount ref -- 0
     b5 <- readMVar obj -- True, finaliser did not run again
 
+    e6 <- upgradeWeakReference ref
+    n6 <- readRefCount ref -- 0
+    b6 <- readMVar obj -- True, finaliser did not run again
+
     pure $
         counterexample "n1" (n1 == RefCount 2) .&&.
         counterexample "b1" (not b1) .&&.
 
         counterexample "n2" (n2 == RefCount 1) .&&.
         counterexample "b2" (not b2) .&&.
+
+        counterexample "e2w" (e2w == True) .&&.
+        counterexample "n2w" (n2w == RefCount 2) .&&.
+        counterexample "b2w" (not b2w) .&&.
 
         counterexample "n3" (n3 == RefCount 0) .&&.
         counterexample "b3" b3 .&&.
@@ -56,7 +69,11 @@ prop_refCount = once $ ioProperty $ do
 
         counterexample "e5" (check e5) .&&.
         counterexample "n5" (n5 == RefCount 0) .&&.
-        counterexample "b5" b5
+        counterexample "b5" b5 .&&.
+
+        counterexample "e6" (e6 == False) .&&.
+        counterexample "n6" (n6 == RefCount 0) .&&.
+        counterexample "b6" b6
   where
 #ifdef NO_IGNORE_ASSERTS
     check = \case Left (AssertionFailed _) -> True; Right () -> False
