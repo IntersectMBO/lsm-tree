@@ -16,7 +16,6 @@ import           Data.Word (Word64)
 import           Database.LSMTree.Extras (showPowersOf)
 import           Database.LSMTree.Extras.Generators (KeyForIndexCompact,
                      TypedWriteBuffer (..))
-import           Database.LSMTree.Internal.BlobRef
 import           Database.LSMTree.Internal.Entry
 import qualified Database.LSMTree.Internal.Paths as Paths
 import qualified Database.LSMTree.Internal.Run as Run
@@ -354,8 +353,4 @@ runIO act lu = case act of
                   return (Right x)
 
     toMockEntry :: FS.HasFS IO MockFS.HandleMock -> Reader.Entry IO Handle -> IO SerialisedEntry
-    toMockEntry hfs =
-        traverse loadBlob . Reader.toFullEntry
-      where
-        loadBlob :: BlobRef (Run.Run IO Handle) -> IO SerialisedBlob
-        loadBlob (BlobRef run sp) = Run.readBlob hfs run sp
+    toMockEntry hfs = traverse (Run.readBlob hfs) . Reader.toFullEntry

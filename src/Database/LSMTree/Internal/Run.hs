@@ -62,9 +62,9 @@ import qualified Control.RefCount as RC
 import           Data.BloomFilter (Bloom)
 import qualified Data.ByteString.Short as SBS
 import           Data.Foldable (for_)
-import           Data.Primitive.ByteArray (newPinnedByteArray,
+import qualified Data.Primitive.ByteArray as P (newPinnedByteArray,
                      unsafeFreezeByteArray)
-import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
+import           Database.LSMTree.Internal.BlobRef (BlobRef(..), BlobSpan(..))
 import           Database.LSMTree.Internal.BloomFilter (bloomFilterFromSBS)
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
@@ -132,13 +132,18 @@ removeReference :: (PrimMonad m, MonadMask m) => Run m h -> m ()
 removeReference r = RC.removeReference (runRefCounter r)
 
 -- | The 'BlobSpan' to read must come from this run!
-readBlob :: HasFS IO h -> Run IO (FS.Handle h) -> BlobSpan -> IO SerialisedBlob
-readBlob fs Run {..} BlobSpan {..} = do
-    let off = fromIntegral blobSpanOffset
-    let len = fromIntegral blobSpanSize
-    mba <- newPinnedByteArray len
-    _ <- FS.hGetBufExactlyAt fs runBlobFile mba 0 (fromIntegral len) off
-    ba <- unsafeFreezeByteArray mba
+readBlob :: HasFS IO h -> BlobRef (Run m (FS.Handle h)) -> IO SerialisedBlob
+readBlob fs BlobRef {
+              blobRefRun  = Run {runBlobFile},
+              blobRefSpan = BlobSpan {blobSpanOffset, blobSpanSize}
+            } = do
+    let off = FS.AbsOffset blobSpanOffset
+        len :: Int
+        len = fromIntegral blobSpanSize
+    mba <- P.newPinnedByteArray len
+    _ <- FS.hGetBufExactlyAt fs runBlobFile mba 0
+                             (fromIntegral len :: FS.ByteCount) off
+    ba <- P.unsafeFreezeByteArray mba
     let !rb = RB.fromByteArray 0 len ba
     return (SerialisedBlob rb)
 
