@@ -2,7 +2,7 @@
 {-# LANGUAGE DeriveFunctor  #-}
 {-# LANGUAGE NamedFieldPuns #-}
 module Database.LSMTree.Internal.RawPage (
-    RawPage,
+    RawPage (..),
     emptyRawPage,
     makeRawPage,
     unsafeMakeRawPage,

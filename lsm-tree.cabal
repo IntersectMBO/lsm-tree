@@ -165,7 +165,6 @@ library
     , lsm-tree:control
     , lsm-tree:kmerge
     , lsm-tree:monkey
-    , nothunks              ^>=0.2
     , primitive             ^>=0.9
     , strict-mvar           ^>=1.5
     , vector                ^>=0.13
@@ -280,6 +279,7 @@ test-suite lsm-tree-test
     Database.LSMTree.Class.Normal
     Database.LSMTree.Extras
     Database.LSMTree.Extras.Generators
+    Database.LSMTree.Extras.NoThunks
     Database.LSMTree.Extras.Orphans
     Database.LSMTree.Extras.Random
     Database.LSMTree.Extras.ReferenceImpl
@@ -341,16 +341,18 @@ test-suite lsm-tree-test
     , filepath
     , fs-api
     , fs-sim
-    , io-classes               >=1.5
-    , io-sim                   >=1.5
+    , io-classes
+    , io-sim
     , lsm-tree
     , lsm-tree:blockio-api
     , lsm-tree:blockio-sim
     , lsm-tree:bloomfilter
     , lsm-tree:control
+    , lsm-tree:kmerge
     , lsm-tree:monkey
     , lsm-tree:prototypes
     , mtl
+    , nothunks
     , primitive
     , QuickCheck
     , quickcheck-classes-base
@@ -361,6 +363,7 @@ test-suite lsm-tree-test
     , semialign
     , split
     , stm
+    , strict-mvar
     , strict-stm
     , tasty
     , tasty-hunit

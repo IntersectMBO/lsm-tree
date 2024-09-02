@@ -1,5 +1,7 @@
 module Database.LSMTree.Internal.RunReaders (
     Readers (..)
+  , ReaderNumber (..)
+  , ReadCtx (..)
   , new
   , close
   , peekKey

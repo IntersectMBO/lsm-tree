@@ -7,7 +7,8 @@
 --   import qualified Control.Concurrent.Class.MonadSTM.RWVar as RW
 -- @
 module Control.Concurrent.Class.MonadSTM.RWVar (
-    RWVar
+    RWVar (..)
+  , RWState (..)
   , new
   , unsafeAcquireReadAccess
   , unsafeReleaseReadAccess

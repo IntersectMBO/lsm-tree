@@ -1,5 +1,6 @@
 {-# LANGUAGE CPP                      #-}
 {-# LANGUAGE ConstraintKinds          #-}
+{-# LANGUAGE DataKinds                #-}
 {-# LANGUAGE DerivingStrategies       #-}
 {-# LANGUAGE EmptyDataDeriving        #-}
 {-# LANGUAGE FlexibleContexts         #-}
@@ -68,11 +69,13 @@ import           Data.Word (Word64)
 import qualified Database.LSMTree.Class.Normal as Class
 import           Database.LSMTree.Extras (showPowersOf)
 import           Database.LSMTree.Extras.Generators (KeyForIndexCompact)
+import           Database.LSMTree.Extras.NoThunks (assertNoThunks)
 import           Database.LSMTree.Internal (LSMTreeError (..))
 import qualified Database.LSMTree.Model.Normal.Session as Model
 import qualified Database.LSMTree.ModelIO.Normal as M
 import qualified Database.LSMTree.Normal as R
 import           GHC.IO.Exception (IOErrorType (..), IOException (..))
+import           NoThunks.Class
 import           Prelude hiding (init)
 import           System.Directory (removeDirectoryRecursive)
 import           System.FS.API (HasFS, MountPoint (..), mkFsPath)
@@ -157,6 +160,9 @@ propLockstepIO_ModelIOImpl = testProperty "propLockstepIO_ModelIOImpl" $
 
           | otherwise
           = Nothing
+
+deriving via AllowThunk (M.Session IO)
+    instance NoThunks (M.Session IO)
 
 propLockstepIO_RealImpl_RealFS :: TestTree
 propLockstepIO_RealImpl_RealFS = testProperty "propLockstepIO_RealImpl_RealFS" $
@@ -599,6 +605,7 @@ instance ( Eq (Class.TableConfig h)
          , Show (Class.TableConfig h)
          , Arbitrary (Class.TableConfig h)
          , Typeable h
+         , NoThunks (Class.Session h IO)
          ) => RunLockstep (ModelState h) (RealMonad h IO) where
   observeReal ::
        Proxy (RealMonad h IO)
@@ -699,6 +706,7 @@ instance ( Eq (Class.TableConfig h)
          , Show (Class.TableConfig h)
          , Arbitrary (Class.TableConfig h)
          , Typeable h
+         , NoThunks (Class.Session h IO)
          ) => RunModel (Lockstep (ModelState h)) (RealMonad h IO) where
   perform _     = runIO
   postcondition = Lockstep.Defaults.postcondition
@@ -771,12 +779,15 @@ wrap f = first (MEither . bimap MErr f)
 -------------------------------------------------------------------------------}
 
 runIO ::
-     forall a h. Class.IsTableHandle h
+     forall a h. (Class.IsTableHandle h, NoThunks (Class.Session h IO))
   => LockstepAction (ModelState h) a
   -> LookUp (RealMonad h IO)
   -> RealMonad h IO (Realized (RealMonad h IO) a)
-runIO action lookUp = ReaderT $ \(session, handler) ->
-    aux (unwrapSession session) handler action
+runIO action lookUp = ReaderT $ \(session, handler) -> do
+    x <- aux (unwrapSession session) handler action
+    case session of
+      WrapSession sesh -> assertNoThunks sesh $ pure ()
+    pure x
   where
     aux ::
          Class.Session h IO

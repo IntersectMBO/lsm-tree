@@ -4,7 +4,6 @@ module Database.LSMTree.Internal.Assertions (
     assert,
     isValidSlice,
     sameByteArray,
-    assertNoThunks,
     fromIntegralChecked,
 ) where
 
@@ -18,7 +17,6 @@ import           GHC.Exts (ByteArray#, MutableByteArray#, isTrue#,
 import           Control.Exception (assert)
 import           Data.Primitive.ByteArray (ByteArray (..), sizeofByteArray)
 import           GHC.Stack (HasCallStack)
-import           NoThunks.Class (NoThunks, unsafeNoThunks)
 import           Text.Printf
 
 isValidSlice :: Int -> Int -> ByteArray -> Bool
@@ -39,12 +37,6 @@ sameByteArray (ByteArray ba1#) (ByteArray ba2#) =
     unsafeCoerceByteArray# :: ByteArray# -> MutableByteArray# s
     unsafeCoerceByteArray# = unsafeCoerce#
 #endif
-
-assertNoThunks :: NoThunks a => a -> b -> b
-assertNoThunks x = assert p
-  where p = case unsafeNoThunks x of
-              Nothing -> True
-              Just thunkInfo -> error $ "Assertion failed: found thunk" <> show thunkInfo
 
 {-# INLINABLE fromIntegralChecked #-}
 -- | Like 'fromIntegral', but throws an error when @(x :: a) /= fromIntegral

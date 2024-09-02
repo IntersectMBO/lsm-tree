@@ -109,14 +109,13 @@ module Database.LSMTree.Normal (
   , IOLike
   ) where
 
-import           Control.DeepSeq (NFData (..))
 import           Control.Monad
 import           Data.Bifunctor (Bifunctor (..))
 import           Data.Kind (Type)
-import           Data.Typeable (Proxy (..), Typeable)
+import           Data.Typeable (Proxy (..))
 import qualified Data.Vector as V
 import           Database.LSMTree.Common (BlobRef (BlobRef), IOLike, Range (..),
-                     SerialiseKey, SerialiseValue, Session (..), SnapshotName,
+                     SerialiseKey, SerialiseValue, Session, SnapshotName,
                      closeSession, deleteSnapshot, listSnapshots, openSession,
                      withSession)
 import qualified Database.LSMTree.Common as Common
@@ -231,12 +230,7 @@ import qualified Database.LSMTree.Internal.Vector as V
 -- will be operated upon. In this API it identifies a single mutable instance of
 -- an LSM table. The multiple-handles feature allows for there to may be many
 -- such instances in use at once.
-type TableHandle :: (Type -> Type) -> Type -> Type -> Type -> Type
-data TableHandle m k v blob = forall h. Typeable h =>
-    TableHandle !(Internal.TableHandle m h)
-
-instance NFData (TableHandle m k v blob) where
-  rnf (TableHandle th) = rnf th
+type TableHandle = Internal.NormalTable
 
 {-# SPECIALISE withTable :: Session IO -> Common.TableConfig -> (TableHandle IO k v blob -> IO a) -> IO a #-}
 -- | (Asynchronous) exception-safe, bracketed opening and closing of a table.
@@ -249,8 +243,8 @@ withTable ::
   -> Common.TableConfig
   -> (TableHandle m k v blob -> m a)
   -> m a
-withTable (Session sesh) conf action =
-    Internal.withTable sesh conf (action . TableHandle)
+withTable (Internal.Session' sesh) conf action =
+    Internal.withTable sesh conf (action . Internal.NormalTable)
 
 {-# SPECIALISE new :: Session IO -> Common.TableConfig -> IO (TableHandle IO k v blob) #-}
 -- | Create a new empty table, returning a fresh table handle.
@@ -263,7 +257,7 @@ new ::
   => Session m
   -> Common.TableConfig
   -> m (TableHandle m k v blob)
-new (Session sesh) conf = TableHandle <$> Internal.new sesh conf
+new (Internal.Session' sesh) conf = Internal.NormalTable <$> Internal.new sesh conf
 
 {-# SPECIALISE close :: TableHandle IO k v blob -> IO () #-}
 -- | Close a table handle. 'close' is idempotent. All operations on a closed
@@ -276,7 +270,7 @@ close ::
      IOLike m
   => TableHandle m k v blob
   -> m ()
-close (TableHandle th) = Internal.close th
+close (Internal.NormalTable th) = Internal.close th
 
 {-------------------------------------------------------------------------------
   Table queries
@@ -291,7 +285,7 @@ lookups ::
   => V.Vector k
   -> TableHandle m k v blob
   -> m (V.Vector (LookupResult v (BlobRef m blob)))
-lookups ks (TableHandle th) =
+lookups ks (Internal.NormalTable th) =
     V.mapStrict (bimap Internal.deserialiseValue BlobRef) <$!>
     Internal.lookups const (V.map Internal.serialiseKey ks) th toNormalLookupResult
 
@@ -328,8 +322,7 @@ rangeLookup = undefined
 -- Once a cursor has been created, updates to the referenced table don't affect
 -- the cursor.
 type Cursor :: (Type -> Type) -> Type -> Type -> Type -> Type
-data Cursor m k v blob = forall h. Typeable h =>
-    Cursor !(Internal.Cursor m h)
+type Cursor = Internal.NormalCursor
 
 {-# SPECIALISE withCursor :: TableHandle IO k v blob -> (Cursor IO k v blob -> IO a) -> IO a #-}
 -- | (Asynchronous) exception-safe, bracketed opening and closing of a cursor.
@@ -341,7 +334,7 @@ withCursor ::
   => TableHandle m k v blob
   -> (Cursor m k v blob -> m a)
   -> m a
-withCursor (TableHandle th) action = Internal.withCursor th (action . Cursor)
+withCursor (Internal.NormalTable th) action = Internal.withCursor th (action . Internal.NormalCursor)
 
 {-# SPECIALISE newCursor :: TableHandle IO k v blob -> IO (Cursor IO k v blob) #-}
 -- | Create a new cursor to read from a given table. Future updates to the table
@@ -356,7 +349,7 @@ newCursor ::
      IOLike m
   => TableHandle m k v blob
   -> m (Cursor m k v blob)
-newCursor (TableHandle th) = Cursor <$> Internal.newCursor th
+newCursor (Internal.NormalTable th) = Internal.NormalCursor <$!> Internal.newCursor th
 
 {-# SPECIALISE closeCursor :: Cursor IO k v blob -> IO () #-}
 -- | Close a cursor. 'closeCursor' is idempotent. All operations on a closed
@@ -365,7 +358,7 @@ closeCursor ::
      IOLike m
   => Cursor m k v blob
   -> m ()
-closeCursor (Cursor c) = Internal.closeCursor c
+closeCursor (Internal.NormalCursor c) = Internal.closeCursor c
 
 {-# SPECIALISE readCursor :: (SerialiseKey k, SerialiseValue v) => Int -> Cursor IO k v blob -> IO (V.Vector (QueryResult k v (BlobRef IO blob))) #-}
 -- | Read the next @n@ entries from the cursor. The resulting vector is shorter
@@ -400,7 +393,7 @@ updates ::
   => V.Vector (k, Update v blob)
   -> TableHandle m k v blob
   -> m ()
-updates es (TableHandle th) = do
+updates es (Internal.NormalTable th) = do
     Internal.updates const (V.mapStrict serialiseEntry es) th
   where
     serialiseEntry = bimap Internal.serialiseKey serialiseOp
@@ -490,7 +483,7 @@ snapshot ::
   => SnapshotName
   -> TableHandle m k v blob
   -> m ()
-snapshot snap (TableHandle th) = void $ Internal.snapshot const snap label th
+snapshot snap (Internal.NormalTable th) = void $ Internal.snapshot const snap label th
   where
     -- to ensure we don't open a normal table as monoidal later
     label = Common.makeSnapshotLabel (Proxy @(k, v, blob)) <> " (normal)"
@@ -526,8 +519,8 @@ open ::
   -> Common.TableConfigOverride -- ^ Optional config override
   -> SnapshotName
   -> m (TableHandle m k v blob)
-open (Session sesh) override snap =
-    TableHandle <$> Internal.open sesh label override snap
+open (Internal.Session' sesh) override snap =
+    Internal.NormalTable <$!> Internal.open sesh label override snap
   where
     -- to ensure that the table is really a normal table
     label = Common.makeSnapshotLabel (Proxy @(k, v, blob)) <> " (normal)"
@@ -571,4 +564,4 @@ duplicate ::
      IOLike m
   => TableHandle m k v blob
   -> m (TableHandle m k v blob)
-duplicate (TableHandle th) = TableHandle <$> Internal.duplicate th
+duplicate (Internal.NormalTable th) = Internal.NormalTable <$!> Internal.duplicate th

@@ -1,5 +1,5 @@
 module Database.LSMTree.Internal.UniqCounter (
-  UniqCounter,
+  UniqCounter (..),
   newUniqCounter,
   incrUniqCounter,
   Unique,

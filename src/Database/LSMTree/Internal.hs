@@ -2,8 +2,14 @@
 {-# LANGUAGE DataKinds #-}
 
 module Database.LSMTree.Internal (
+    -- * Existentials
+    Session' (..)
+  , NormalTable (..)
+  , NormalCursor (..)
+  , MonoidalTable (..)
+  , MonoidalCursor (..)
     -- * Exceptions
-    LSMTreeError (..)
+  , LSMTreeError (..)
     -- * Tracing
   , LSMTreeTrace (..)
   , TableTrace (..)
@@ -29,6 +35,8 @@ module Database.LSMTree.Internal (
   , updates
     -- ** Cursor API
   , Cursor (..)
+  , CursorState (..)
+  , CursorEnv (..)
   , withCursor
   , newCursor
   , closeCursor
@@ -58,13 +66,14 @@ import qualified Data.ByteString.Char8 as BSC
 import           Data.Char (isNumber)
 import           Data.Foldable
 import           Data.Functor.Compose (Compose (..))
+import           Data.Kind
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (catMaybes)
 import qualified Data.Set as Set
+import           Data.Typeable
 import qualified Data.Vector as V
 import           Data.Word (Word64)
-import           Database.LSMTree.Internal.Assertions (assertNoThunks)
 import           Database.LSMTree.Internal.BlobRef
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.Entry (Entry, combineMaybe)
@@ -91,6 +100,44 @@ import qualified System.FS.API.Lazy as FS
 import qualified System.FS.API.Strict as FS
 import qualified System.FS.BlockIO.API as FS
 import           System.FS.BlockIO.API (HasBlockIO)
+
+{-------------------------------------------------------------------------------
+  Existentials
+-------------------------------------------------------------------------------}
+
+type Session' :: (Type -> Type) -> Type
+data Session' m = forall h. Typeable h => Session' !(Session m h)
+
+instance NFData (Session' m) where
+  rnf (Session' s) = rnf s
+
+type NormalTable :: (Type -> Type) -> Type -> Type -> Type -> Type
+data NormalTable m k v b = forall h. Typeable h =>
+    NormalTable !(TableHandle m h)
+
+instance NFData (NormalTable m k v b) where
+  rnf (NormalTable th) = rnf th
+
+type NormalCursor :: (Type -> Type) -> Type -> Type -> Type -> Type
+data NormalCursor m k v blob = forall h. Typeable h =>
+    NormalCursor !(Cursor m h)
+
+instance NFData (NormalCursor m k v b) where
+  rnf (NormalCursor c) = rnf c
+
+type MonoidalTable :: (Type -> Type) -> Type -> Type -> Type
+data MonoidalTable m k v = forall h. Typeable h =>
+    MonoidalTable !(TableHandle m h)
+
+instance NFData (MonoidalTable m k v) where
+  rnf (MonoidalTable th) = rnf th
+
+type MonoidalCursor :: (Type -> Type) -> Type -> Type -> Type
+data MonoidalCursor m k v = forall h. Typeable h =>
+    MonoidalCursor !(Cursor m h)
+
+instance NFData (MonoidalCursor m k v) where
+  rnf (MonoidalCursor c) = rnf c
 
 {-------------------------------------------------------------------------------
   Exceptions
@@ -530,7 +577,6 @@ newWith sesh seshEnv conf !am !wb !levels = do
     tableId <- incrUniqCounter (sessionUniqCounter seshEnv)
     let tr = TraceTable (uniqueToWord64 tableId) `contramap` sessionTracer sesh
     traceWith tr $ TraceCreateTableHandle conf
-    assertNoThunks levels $ pure ()
     -- The session is kept open until we've updated the session's set of tracked
     -- tables. If 'closeSession' is called by another thread while this code
     -- block is being executed, that thread will block until it reads the
@@ -617,18 +663,16 @@ updates resolve es th = do
       modifyWithTempRegistry_
         (atomically $ RW.unsafeAcquireWriteAccess (tableContent thEnv))
         (atomically . RW.unsafeReleaseWriteAccess (tableContent thEnv)) $ \tc -> do
-          tc' <- updatesWithInterleavedFlushes
-                  (TraceMerge `contramap` tableTracer th)
-                  conf
-                  resolve
-                  hfs
-                  (tableHasBlockIO thEnv)
-                  (tableSessionRoot thEnv)
-                  (tableSessionUniqCounter thEnv)
-                  es
-                  tc
-          assertNoThunks tc' $ pure ()
-          pure tc'
+          updatesWithInterleavedFlushes
+            (TraceMerge `contramap` tableTracer th)
+            conf
+            resolve
+            hfs
+            (tableHasBlockIO thEnv)
+            (tableSessionRoot thEnv)
+            (tableSessionUniqCounter thEnv)
+            es
+            tc
 
 {-------------------------------------------------------------------------------
   Cursors
@@ -645,6 +689,9 @@ data Cursor m h = Cursor {
       -- given time.
       cursorState :: !(StrictMVar m (CursorState m h))
     }
+
+instance NFData (Cursor m h) where
+  rnf (Cursor a) = rwhnf a
 
 data CursorState m h =
     CursorOpen !(CursorEnv m h)
@@ -923,6 +970,7 @@ listSnapshots sesh = do
   Mutiple writable table handles
 -------------------------------------------------------------------------------}
 
+{-# SPECIALISE duplicate :: TableHandle IO h -> IO (TableHandle IO h) #-}
 -- | See 'Database.LSMTree.Normal.duplicate'.
 duplicate ::
      m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.

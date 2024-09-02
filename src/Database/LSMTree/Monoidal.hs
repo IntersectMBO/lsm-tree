@@ -127,9 +127,8 @@ import           Data.Monoid (Sum (..))
 import           Data.Proxy (Proxy (Proxy))
 import qualified Data.Vector as V
 import           Database.LSMTree.Common (IOLike, Range (..), SerialiseKey,
-                     SerialiseValue (..), Session (..), SnapshotName,
-                     closeSession, deleteSnapshot, listSnapshots, openSession,
-                     withSession)
+                     SerialiseValue (..), Session, SnapshotName, closeSession,
+                     deleteSnapshot, listSnapshots, openSession, withSession)
 import qualified Database.LSMTree.Common as Common
 import qualified Database.LSMTree.Internal as Internal
 import qualified Database.LSMTree.Internal.Entry as Entry
@@ -158,11 +157,7 @@ import qualified Database.LSMTree.Internal.Vector as V
 -- will be operated upon. In this API it identifies a single mutable instance of
 -- an LSM table. The multiple-handles feature allows for there to may be many
 -- such instances in use at once.
-type TableHandle :: (Type -> Type) -> Type -> Type -> Type
-data TableHandle m k v = forall h. TableHandle !(Internal.TableHandle m h)
-
-instance NFData (TableHandle m k v) where
-  rnf (TableHandle th) = rnf th
+type TableHandle = Internal.MonoidalTable
 
 {-# SPECIALISE withTable :: Session IO -> Common.TableConfig -> (TableHandle IO k v -> IO a) -> IO a #-}
 -- | (Asynchronous) exception-safe, bracketed opening and closing of a table.
@@ -175,9 +170,9 @@ withTable ::
   -> Common.TableConfig
   -> (TableHandle m k v -> m a)
   -> m a
-withTable (Session sesh) conf action =
+withTable (Internal.Session' sesh) conf action =
     Internal.withTable sesh conf $
-      action . TableHandle
+      action . Internal.MonoidalTable
 
 {-# SPECIALISE new :: Session IO -> Common.TableConfig -> IO (TableHandle IO k v) #-}
 -- | Create a new empty table, returning a fresh table handle.
@@ -190,7 +185,7 @@ new ::
   => Session m
   -> Common.TableConfig
   -> m (TableHandle m k v)
-new (Session sesh) conf = TableHandle <$> Internal.new sesh conf
+new (Internal.Session' sesh) conf = Internal.MonoidalTable <$> Internal.new sesh conf
 
 {-# SPECIALISE close :: TableHandle IO k v -> IO () #-}
 -- | Close a table handle. 'close' is idempotent. All operations on a closed
@@ -203,7 +198,7 @@ close ::
      IOLike m
   => TableHandle m k v
   -> m ()
-close (TableHandle th) = Internal.close th
+close (Internal.MonoidalTable th) = Internal.close th
 
 {-------------------------------------------------------------------------------
   Table queries
@@ -218,7 +213,7 @@ lookups ::
   => V.Vector k
   -> TableHandle m k v
   -> m (V.Vector (LookupResult v))
-lookups ks (TableHandle th) =
+lookups ks (Internal.MonoidalTable th) =
     V.mapStrict (fmap Internal.deserialiseValue) <$!>
     Internal.lookups
       (resolve @v Proxy)
@@ -258,7 +253,7 @@ rangeLookup = undefined
 -- Once a cursor has been created, updates to the referenced table don't affect
 -- the cursor.
 type Cursor :: (Type -> Type) -> Type -> Type -> Type
-data Cursor m k v = forall h. Cursor !(Internal.Cursor m h)
+type Cursor = Internal.MonoidalCursor
 
 {-# SPECIALISE withCursor :: TableHandle IO k v -> (Cursor IO k v -> IO a) -> IO a #-}
 -- | (Asynchronous) exception-safe, bracketed opening and closing of a cursor.
@@ -285,7 +280,7 @@ newCursor ::
      IOLike m
   => TableHandle m k v
   -> m (Cursor m k v)
-newCursor (TableHandle th) = Cursor <$> Internal.newCursor th
+newCursor (Internal.MonoidalTable th) = Internal.MonoidalCursor <$> Internal.newCursor th
 
 {-# SPECIALISE closeCursor :: Cursor IO k v -> IO () #-}
 -- | Close a cursor. 'closeCursor' is idempotent. All operations on a closed
@@ -294,7 +289,7 @@ closeCursor ::
      IOLike m
   => Cursor m k v
   -> m ()
-closeCursor (Cursor c) = Internal.closeCursor c
+closeCursor (Internal.MonoidalCursor c) = Internal.closeCursor c
 
 {-# SPECIALISE readCursor :: (SerialiseKey k, SerialiseValue v, ResolveValue v) => Int -> Cursor IO k v -> IO (V.Vector (QueryResult k v)) #-}
 -- | Read the next @n@ entries from the cursor. The resulting vector is shorter
@@ -329,7 +324,7 @@ updates ::
   => V.Vector (k, Update v)
   -> TableHandle m k v
   -> m ()
-updates es (TableHandle th) = do
+updates es (Internal.MonoidalTable th) = do
     Internal.updates
       (resolve @v Proxy)
       (V.mapStrict serialiseEntry es)
@@ -406,7 +401,7 @@ snapshot ::
   => SnapshotName
   -> TableHandle m k v
   -> m ()
-snapshot snap (TableHandle th) =
+snapshot snap (Internal.MonoidalTable th) =
     void $ Internal.snapshot (resolve @v Proxy) snap label th
   where
     -- to ensure we don't open a monoidal table as normal later
@@ -444,8 +439,8 @@ open ::
   -> Common.TableConfigOverride -- ^ Optional config override
   -> SnapshotName
   -> m (TableHandle m k v)
-open (Session sesh) override snap =
-    TableHandle <$> Internal.open sesh label override snap
+open (Internal.Session' sesh) override snap =
+    Internal.MonoidalTable <$> Internal.open sesh label override snap
   where
     -- to ensure that the table is really a monoidal table
     label = Common.makeSnapshotLabel (Proxy @(k, v)) <> " (monoidal)"
@@ -490,7 +485,7 @@ duplicate ::
      IOLike m
   => TableHandle m k v
   -> m (TableHandle m k v)
-duplicate (TableHandle th) = TableHandle <$> Internal.duplicate th
+duplicate (Internal.MonoidalTable th) = Internal.MonoidalTable <$> Internal.duplicate th
 
 {-------------------------------------------------------------------------------
   Merging tables

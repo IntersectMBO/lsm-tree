@@ -235,11 +235,11 @@ data BloomFilterAlloc =
     -- | Allocate a fixed number of bits per physical entry in each bloom
     -- filter.
     AllocFixed
-      Word64 -- ^ Bits per physical entry.
+      !Word64 -- ^ Bits per physical entry.
   | -- | Allocate as many bits as required per physical entry to get the requested
     -- false-positive rate. Do this for each bloom filter.
     AllocRequestFPR
-      Double -- ^ Requested FPR.
+      !Double -- ^ Requested FPR.
   | -- | Allocate bits amongst all bloom filters according to the Monkey algorithm.
     --
     -- The allocation algorithm will never go over the memory budget. If more
@@ -254,8 +254,8 @@ data BloomFilterAlloc =
     -- To combat this, make sure to budget for a generous number of physical
     -- entries.
     AllocMonkey
-      Word64 -- ^ Total number of bytes that bloom filters can use collectively.
-      NumEntries -- ^ Total number of /physical/ entries expected to be in the database.
+      !Word64 -- ^ Total number of bytes that bloom filters can use collectively.
+      !NumEntries -- ^ Total number of /physical/ entries expected to be in the database.
   deriving stock (Show, Eq)
 
 instance NFData BloomFilterAlloc where
@@ -372,7 +372,7 @@ data DiskCachePolicy =
        --
        -- Use this policy if the expected access pattern for the table
        -- has good temporal locality for recently inserted keys.
-     | DiskCacheLevelsAtOrBelow Int
+     | DiskCacheLevelsAtOrBelow !Int
 
        --TODO: Add a policy based on size in bytes rather than internal details
        -- like levels. An easy use policy would be to say: "cache the first 10
