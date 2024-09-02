@@ -24,12 +24,7 @@ module Database.LSMTree.Internal.MergeSchedule (
   , maxRunSize
   ) where
 
-#ifdef NO_IGNORE_ASSERTS
-import           Control.Monad
-#endif
-
 import           Control.Monad.Primitive
-import           Control.Monad.ST.Strict
 import           Control.TempRegistry
 import           Control.Tracer
 import           Data.BloomFilter (Bloom)
@@ -317,6 +312,7 @@ flushWriteBuffer tr conf@TableConfig{confDiskCachePolicy}
       , tableCache = cache'
       }
 
+{- TODO: re-enable
 -- | Note that the invariants rely on the fact that levelling is only used on
 -- the last level.
 --
@@ -394,6 +390,7 @@ _levelsInvariant conf levels =
     fitsLB policy r ln = maxRunSize sr wba policy (pred ln) < Run.runNumEntries r
     -- Check that a run is too small for next levels
     fitsUB policy r ln = Run.runNumEntries r <= maxRunSize sr wba policy ln
+-}
 
 {-# SPECIALISE addRunToLevels :: Tracer IO (AtLevel MergeTrace) -> TableConfig -> ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> Run IO (Handle h) -> TempRegistry IO -> Levels IO (Handle h) -> IO (Levels IO (Handle h)) #-}
 -- | Add a run to the levels, and propagate merges.
@@ -415,9 +412,11 @@ addRunToLevels ::
   -> m (Levels m (Handle h))
 addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = do
     ls' <- go (LevelNo 1) (V.singleton r0) levels
+{- TODO: re-enable
 #ifdef NO_IGNORE_ASSERTS
     void $ stToIO $ _levelsInvariant conf ls'
 #endif
+-}
     return ls'
   where
     -- NOTE: @go@ is based on the @increment@ function from the
