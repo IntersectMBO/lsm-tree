@@ -919,6 +919,7 @@ snapshot resolve snap label th = do
             MergingRun var -> do
               readMutVar var >>= \case
                 CompletedMerge r -> pure (False, runNumber (Run.runRunFsPaths r))
+                OngoingMerge{}   -> error "snapshot: OngoingMerge not yet supported" -- TODO: implement
       let snapPath = Paths.snapshot (tableSessionRoot thEnv) snap
       FS.doesFileExist (tableHasFS thEnv) snapPath >>= \b ->
               when b $ throwIO (ErrSnapshotExists snap)

@@ -37,6 +37,7 @@ import           Database.LSMTree.Internal.Entry (Entry, NumEntries (..),
                      unNumEntries)
 import           Database.LSMTree.Internal.IndexCompact (IndexCompact)
 import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
+import           Database.LSMTree.Internal.Merge (Merge)
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..),
                      SessionRoot (..))
@@ -160,11 +161,9 @@ data MergingRun m h =
     MergingRun !(MutVar (PrimState m) (MergingRunState m h))
   | SingleRun !(Run m h)
 
--- | Merges are stepped to completion immediately, so there is no representation
--- for ongoing merges (yet)
---
--- TODO: this should also represent ongoing merges once we implement scheduling.
-newtype MergingRunState m h = CompletedMerge (Run m h)
+data MergingRunState m h =
+    CompletedMerge !(Run m h)
+  | OngoingMerge !(V.Vector (Run m h)) !(Merge (PrimState m) h)
 
 {-# SPECIALISE forRunM_ :: Levels IO h -> (Run IO h -> IO ()) -> IO () #-}
 forRunM_ :: PrimMonad m => Levels m h -> (Run m h -> m ()) -> m ()
@@ -173,6 +172,7 @@ forRunM_ lvls k = V.forM_ lvls $ \(Level mr rs) -> do
       SingleRun r    -> k r
       MergingRun var -> readMutVar var >>= \case
         CompletedMerge r -> k r
+        OngoingMerge irs _m -> V.mapM_ k irs
     V.mapM_ k rs
 
 
@@ -183,6 +183,7 @@ foldRunM f x lvls = flip (flip V.foldM x) lvls $ \y (Level mr rs) -> do
       SingleRun r -> f y r
       MergingRun var -> readMutVar var >>= \case
         CompletedMerge r -> f y r
+        OngoingMerge irs _m -> V.foldM f y irs
     V.foldM f z rs
 
 {-# SPECIALISE forRunM :: Levels IO h -> (Run IO h -> IO a) -> IO (V.Vector a) #-}
@@ -481,6 +482,7 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
         CompletedMerge r -> do
           traceWith tr $ AtLevel ln $ TraceExpectCompletedMerge (runNumber $ Run.runRunFsPaths r)
           pure r
+        OngoingMerge _rs _m -> error "expectCompletedMerge: OngoingMerge not yet supported" -- TODO: implement.
 
     -- TODO: Until we implement proper scheduling, this does not only start a
     -- merge, but it also steps it to completion.
