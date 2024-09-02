@@ -44,6 +44,7 @@ module Database.LSMTree.Internal.Run (
   , sizeInPages
   , addReference
   , removeReference
+  , upgradeWeakReference
   , readBlob
     -- ** Run creation
   , fromMutable
@@ -121,6 +122,10 @@ sizeInPages = Index.sizeInPages . runIndex
 {-# SPECIALISE addReference :: Run IO h -> IO () #-}
 addReference :: PrimMonad m => Run m h -> m ()
 addReference r = RC.addReference (runRefCounter r)
+
+{-# SPECIALISE upgradeWeakReference :: Run IO h -> IO Bool #-}
+upgradeWeakReference :: PrimMonad m => Run m h -> m Bool
+upgradeWeakReference r = RC.upgradeWeakReference (runRefCounter r)
 
 {-# SPECIALISE removeReference :: Run IO h -> IO () #-}
 removeReference :: (PrimMonad m, MonadMask m) => Run m h -> m ()
