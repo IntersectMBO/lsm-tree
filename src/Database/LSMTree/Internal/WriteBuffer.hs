@@ -178,9 +178,9 @@ lookups' ::
 lookups' wb !ks = V.mapStrict (lookup wb) ks
 
 -- | TODO: remove once blob references are implemented
-errOnBlob :: Entry v blobref1 -> Entry v blobref2
+errOnBlob :: Entry SerialisedValue SerialisedBlob -> Entry SerialisedValue (BlobRef m h)
 errOnBlob (Insert v)           = Insert v
-errOnBlob (InsertWithBlob _ _) = error "lookups: blob references not supported"
+errOnBlob (InsertWithBlob _ b) = error $ "lookups: blob references not supported: " ++ show b
 errOnBlob (Mupdate v)          = Mupdate v
 errOnBlob Delete               = Delete
 
