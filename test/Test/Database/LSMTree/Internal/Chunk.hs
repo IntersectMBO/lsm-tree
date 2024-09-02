@@ -4,7 +4,7 @@ module Test.Database.LSMTree.Internal.Chunk (tests) where
 
 import           Prelude hiding (concat, drop, length)
 
-import           Control.Arrow ((>>>))
+import           Control.Category ((>>>))
 import           Control.Monad.ST.Strict (runST)
 import qualified Data.List as List (concat, drop, length)
 import           Data.Maybe (catMaybes, fromJust, isJust, isNothing)
