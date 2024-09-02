@@ -46,6 +46,7 @@ module Database.LSMTree.Internal.Run (
   , removeReference
   , upgradeWeakReference
   , readBlob
+  , readBlobIOOp
     -- ** Run creation
   , fromMutable
   , fromWriteBuffer
@@ -62,7 +63,7 @@ import qualified Control.RefCount as RC
 import           Data.BloomFilter (Bloom)
 import qualified Data.ByteString.Short as SBS
 import           Data.Foldable (for_)
-import qualified Data.Primitive.ByteArray as P (newPinnedByteArray,
+import qualified Data.Primitive.ByteArray as P (MutableByteArray, newPinnedByteArray,
                      unsafeFreezeByteArray)
 import           Database.LSMTree.Internal.BlobRef (BlobRef(..), BlobSpan(..))
 import           Database.LSMTree.Internal.BloomFilter (bloomFilterFromSBS)
@@ -146,6 +147,20 @@ readBlob fs BlobRef {
     ba <- P.unsafeFreezeByteArray mba
     let !rb = RB.fromByteArray 0 len ba
     return (SerialisedBlob rb)
+
+readBlobIOOp :: P.MutableByteArray s -> Int
+             -> BlobRef (Run m (FS.Handle h))
+             -> FS.IOOp s h
+readBlobIOOp buf bufoff
+             BlobRef {
+               blobRefRun  = Run {runBlobFile},
+               blobRefSpan = BlobSpan {blobSpanOffset, blobSpanSize}
+             } =
+    FS.IOOpRead
+      runBlobFile
+      (fromIntegral blobSpanOffset :: FS.FileOffset)
+      buf (FS.BufferOffset bufoff)
+      (fromIntegral blobSpanSize :: FS.ByteCount)
 
 -- | Close the files used in the run, but do not remove them from disk.
 -- After calling this operation, the run must not be used anymore.
