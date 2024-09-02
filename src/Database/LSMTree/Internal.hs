@@ -565,7 +565,7 @@ close th = do
         tableSessionUntrackTable thEnv
         RW.withWriteAccess_ (tableContent thEnv) $ \lvls -> do
           closeLevels (tableLevels lvls)
-          pure emptyTableContent
+          pure lvls
         pure TableHandleClosed
 
 {-# SPECIALISE lookups :: ResolveSerialisedValue -> V.Vector SerialisedKey -> TableHandle IO h -> (Maybe (Entry SerialisedValue (BlobRef (Run IO (Handle h)))) -> lookupResult) -> IO (V.Vector lookupResult) #-}

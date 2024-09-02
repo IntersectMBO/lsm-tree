@@ -7,7 +7,6 @@ module Database.LSMTree.Internal.MergeSchedule (
   , MergeTrace (..)
     -- * Table content
   , TableContent (..)
-  , emptyTableContent
     -- * Levels cache
   , LevelsCache (..)
   , mkLevelsCache
@@ -110,13 +109,6 @@ data TableContent m h = TableContent {
     -- well, for example using 'mkLevelsCache'.
   , tableCache       :: !(LevelsCache m (Handle h))
   }
-
-emptyTableContent :: TableContent m h
-emptyTableContent = TableContent {
-      tableWriteBuffer = WB.empty
-    , tableLevels = V.empty
-    , tableCache = mkLevelsCache V.empty
-    }
 
 {-------------------------------------------------------------------------------
   Levels cache
