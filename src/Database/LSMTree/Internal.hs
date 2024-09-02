@@ -33,6 +33,7 @@ module Database.LSMTree.Internal (
   , close
   , lookups
   , updates
+  , retrieveBlobs
     -- ** Cursor API
   , Cursor (..)
   , CursorState (..)
@@ -70,6 +71,7 @@ import           Data.Kind
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (catMaybes)
+import qualified Data.Primitive.ByteArray as P
 import qualified Data.Set as Set
 import           Data.Typeable
 import qualified Data.Vector as V
@@ -83,11 +85,12 @@ import           Database.LSMTree.Internal.MergeSchedule
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..),
                      SessionRoot (..), SnapshotName)
 import qualified Database.LSMTree.Internal.Paths as Paths
+import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunNumber
 import qualified Database.LSMTree.Internal.RunReaders as Readers
-import           Database.LSMTree.Internal.Serialise (SerialisedBlob,
+import           Database.LSMTree.Internal.Serialise (SerialisedBlob(..),
                      SerialisedKey, SerialisedValue)
 import           Database.LSMTree.Internal.UniqCounter
 import qualified Database.LSMTree.Internal.Vector as V
@@ -167,6 +170,7 @@ data LSMTreeError =
   | ErrSnapshotWrongType SnapshotName
     -- | Something went wrong during batch lookups.
   | ErrLookup ByteCountDiscrepancy
+  | ErrBlobRefInvalid
   deriving stock (Show)
   deriving anyclass (Exception)
 
@@ -679,6 +683,65 @@ updates resolve es th = do
             (tableSessionUniqCounter thEnv)
             es
             tc
+
+{-------------------------------------------------------------------------------
+  Blobs
+-------------------------------------------------------------------------------}
+
+retrieveBlobs ::
+     m ~ IO  -- TODO: replace by @io-classes@ constraints for IO simulation.
+  => Session m h
+  -> V.Vector (BlobRef (Run m (FS.Handle h)))
+  -> m (V.Vector SerialisedBlob)
+retrieveBlobs sesh refs =
+    withOpenSession sesh $ \seshEnv ->
+      bracket_ upgradeWeakReferences removeReferences $ do
+
+        -- Prepare the IOOps:
+        -- We use a single large memory buffer, with appropriate offsets within
+        -- the buffer.
+        let bufSize :: Int
+            !bufSize = V.sum (V.map blobRefSpanSize refs)
+
+            {-# INLINE bufOffs #-}
+            bufOffs :: V.Vector Int
+            bufOffs = V.scanl (+) 0 (V.map blobRefSpanSize refs)
+        buf <- P.newPinnedByteArray bufSize
+        let ioops = V.zipWith (Run.readBlobIOOp buf) bufOffs refs
+            hbio  = sessionHasBlockIO seshEnv
+
+        -- Submit the IOOps all in one go:
+        _ <- FS.submitIO hbio ioops
+        -- We do not need to inspect the results because IO errors are
+        -- thrown as exceptions, and the result is just the read length
+        -- which is already known. Short reads can't happen here.
+
+        -- Construct the SerialisedBlobs results:
+        -- This is just the different offsets within the shared buffer.
+        ba <- P.unsafeFreezeByteArray buf
+        pure $! V.zipWith
+                  (\off len -> SerialisedBlob (RB.fromByteArray off len ba))
+                  bufOffs
+                  (V.map blobRefSpanSize refs)
+  where
+    blobRefSpanSize :: BlobRef r -> Int
+    blobRefSpanSize = fromIntegral . blobSpanSize . blobRefSpan
+
+    -- The BlobRef is a weak reference to the Run. It does not keep the run
+    -- open using a reference count. So we have to upgrade our weak
+    -- reference to a (normal) strong reference while we read the blob, to
+    -- ensure it is not closed under our feet.
+    upgradeWeakReferences =
+      V.imapM_ (\i ref -> do
+                  ok <- Run.upgradeWeakReference (blobRefRun ref)
+                  when (not ok) $ do
+                    -- drop refs on the previous ones taken successfully so far
+                    V.mapM_ (Run.removeReference . blobRefRun) (V.take i refs)
+                    throwIO ErrBlobRefInvalid
+               ) refs
+
+    removeReferences =
+      V.mapM_ (Run.removeReference . blobRefRun) refs
 
 {-------------------------------------------------------------------------------
   Cursors
