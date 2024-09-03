@@ -78,7 +78,8 @@ import qualified Data.Set as Set
 import           Data.Typeable
 import qualified Data.Vector as V
 import           Data.Word (Word64)
-import           Database.LSMTree.Internal.BlobRef
+import           Database.LSMTree.Internal.BlobRef (BlobRef (..), BlobSpan (..))
+import qualified Database.LSMTree.Internal.BlobRef as BlobRef
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.Entry (Entry, combineMaybe)
 import           Database.LSMTree.Internal.Lookup (ByteCountDiscrepancy,
@@ -720,7 +721,7 @@ retrieveBlobs sesh refs =
             bufOffs :: V.Vector Int
             bufOffs = V.scanl (+) 0 (V.map blobRefSpanSize refs)
         buf <- P.newPinnedByteArray bufSize
-        let ioops = V.zipWith (Run.readBlobIOOp buf) bufOffs refs
+        let ioops = V.zipWith (BlobRef.readBlobIOOp buf) bufOffs refs
             hbio  = sessionHasBlockIO seshEnv
 
         -- Submit the IOOps all in one go:
