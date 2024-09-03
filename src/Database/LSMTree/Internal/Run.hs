@@ -45,6 +45,7 @@ module Database.LSMTree.Internal.Run (
   , addReference
   , removeReference
   , upgradeWeakReference
+  , mkBlobRefForRun
   , readBlob
   , readBlobIOOp
     -- ** Run creation
@@ -132,32 +133,41 @@ upgradeWeakReference r = RC.upgradeWeakReference (runRefCounter r)
 removeReference :: (PrimMonad m, MonadMask m) => Run m h -> m ()
 removeReference r = RC.removeReference (runRefCounter r)
 
+-- | Helper function to make a 'BlobRef' that points into a 'Run'.
+mkBlobRefForRun :: Run m h -> BlobSpan -> BlobRef m h
+mkBlobRefForRun Run{runBlobFile, runRefCounter} blobRefSpan =
+    BlobRef {
+      blobRefFile  = runBlobFile,
+      blobRefCount = runRefCounter,
+      blobRefSpan
+    }
+
 -- | The 'BlobSpan' to read must come from this run!
-readBlob :: HasFS IO h -> BlobRef (Run m (FS.Handle h)) -> IO SerialisedBlob
+readBlob :: HasFS IO h -> BlobRef m (FS.Handle h) -> IO SerialisedBlob
 readBlob fs BlobRef {
-              blobRefRun  = Run {runBlobFile},
+              blobRefFile,
               blobRefSpan = BlobSpan {blobSpanOffset, blobSpanSize}
             } = do
     let off = FS.AbsOffset blobSpanOffset
         len :: Int
         len = fromIntegral blobSpanSize
     mba <- P.newPinnedByteArray len
-    _ <- FS.hGetBufExactlyAt fs runBlobFile mba 0
+    _ <- FS.hGetBufExactlyAt fs blobRefFile mba 0
                              (fromIntegral len :: FS.ByteCount) off
     ba <- P.unsafeFreezeByteArray mba
     let !rb = RB.fromByteArray 0 len ba
     return (SerialisedBlob rb)
 
 readBlobIOOp :: P.MutableByteArray s -> Int
-             -> BlobRef (Run m (FS.Handle h))
+             -> BlobRef m (FS.Handle h)
              -> FS.IOOp s h
 readBlobIOOp buf bufoff
              BlobRef {
-               blobRefRun  = Run {runBlobFile},
+               blobRefFile,
                blobRefSpan = BlobSpan {blobSpanOffset, blobSpanSize}
              } =
     FS.IOOpRead
-      runBlobFile
+      blobRefFile
       (fromIntegral blobSpanOffset :: FS.FileOffset)
       buf (FS.BufferOffset bufoff)
       (fromIntegral blobSpanSize :: FS.ByteCount)

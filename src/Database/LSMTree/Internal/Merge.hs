@@ -215,7 +215,7 @@ writeSerialisedEntry ::
   -> Level
   -> RunBuilder RealWorld (FS.Handle h)
   -> SerialisedKey
-  -> Entry SerialisedValue (BlobRef (Run IO (FS.Handle h)))
+  -> Entry SerialisedValue (BlobRef IO (FS.Handle h))
   -> IO ()
 writeSerialisedEntry fs level builder key entry =
     when (shouldWriteEntry level entry) $

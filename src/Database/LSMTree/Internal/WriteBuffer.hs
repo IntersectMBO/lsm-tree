@@ -164,7 +164,7 @@ lookups ::
 lookups (WB !m) !ks = V.mapStrict (`Map.lookup` m) ks
 
 -- | TODO: update once blob references are implemented
-lookup :: WriteBuffer -> SerialisedKey -> Maybe (Entry SerialisedValue (BlobRef run))
+lookup :: WriteBuffer -> SerialisedKey -> Maybe (Entry SerialisedValue (BlobRef m h))
 lookup (WB !m) !k = case Map.lookup k m of
     Nothing -> Nothing
     Just x  -> Just $! errOnBlob x
@@ -174,7 +174,7 @@ lookup (WB !m) !k = case Map.lookup k m of
 lookups' ::
      WriteBuffer
   -> V.Vector SerialisedKey
-  -> V.Vector (Maybe (Entry SerialisedValue (BlobRef run)))
+  -> V.Vector (Maybe (Entry SerialisedValue (BlobRef m h)))
 lookups' wb !ks = V.mapStrict (lookup wb) ks
 
 -- | TODO: remove once blob references are implemented
