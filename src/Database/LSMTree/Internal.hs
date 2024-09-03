@@ -170,7 +170,18 @@ data LSMTreeError =
   | ErrSnapshotWrongType SnapshotName
     -- | Something went wrong during batch lookups.
   | ErrLookup ByteCountDiscrepancy
-  | ErrBlobRefInvalid
+    -- | A 'BlobRef' used with 'retrieveBlobs' was invalid.
+    --
+    -- 'BlobRef's are obtained from lookups in a 'TableHandle', but they may be
+    -- invalidated by subsequent changes in that 'TableHandle'. In general the
+    -- reliable way to retrieve blobs is not to change the 'TableHandle' before
+    -- retrieving the blobs. To allow later retrievals, duplicate the table
+    -- handle before making modifications and keep the table handle open until
+    -- all blob retrievals are complete.
+    --
+    -- The 'Int' index indicates which 'BlobRef' was invalid. Many may be
+    -- invalid but only the first is reported.
+  | ErrBlobRefInvalid Int
   deriving stock (Show)
   deriving anyclass (Exception)
 
@@ -737,7 +748,7 @@ retrieveBlobs sesh refs =
                   when (not ok) $ do
                     -- drop refs on the previous ones taken successfully so far
                     V.mapM_ (Run.removeReference . blobRefRun) (V.take i refs)
-                    throwIO ErrBlobRefInvalid
+                    throwIO (ErrBlobRefInvalid i)
                ) refs
 
     removeReferences =

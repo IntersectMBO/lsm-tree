@@ -438,10 +438,10 @@ retrieveBlobs ::
   -> m (V.Vector blob)
 retrieveBlobs (Internal.Session' sesh) refs =
     V.map Internal.deserialiseBlob <$>
-      Internal.retrieveBlobs sesh (V.map checkBlobRefType refs)
+      Internal.retrieveBlobs sesh (V.imap checkBlobRefType refs)
   where
-    checkBlobRefType (BlobRef ref) | Just ref' <- cast ref = ref'
-    checkBlobRefType _ = throw Internal.ErrBlobRefInvalid
+    checkBlobRefType _ (BlobRef ref) | Just ref' <- cast ref = ref'
+    checkBlobRefType i _ = throw (Internal.ErrBlobRefInvalid i)
 
 {-------------------------------------------------------------------------------
   Snapshots
