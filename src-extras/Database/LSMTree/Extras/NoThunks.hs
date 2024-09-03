@@ -521,7 +521,7 @@ instance NoThunks a => NoThunks (MutVar s a) where
   showTypeOf (_ :: Proxy (MutVar s a)) = "MutVar"
   wNoThunks ctx var = do
       x <- unsafeSTToIO $ readMutVar var
-      noThunks ctx (AllowThunk x) -- TODO: atomicModifyMutVar' is not strict enough
+      noThunks ctx x
 
 -- TODO: https://github.com/input-output-hk/nothunks/issues/56
 deriving via OnlyCheckWhnf (PrimVar s a)
