@@ -19,25 +19,36 @@ import           Control.Monad.ST.Unsafe (unsafeSTToIO)
 import           Control.RefCount
 import           Control.Tracer
 import           Data.Arena
+import           Data.Bit
 import           Data.BloomFilter
 import           Data.Map.Strict
 import           Data.Primitive
 import           Data.Primitive.PrimVar
 import           Data.Proxy
+import           Data.STRef
 import           Data.Typeable
+import qualified Data.Vector.Mutable as VM
 import qualified Data.Vector.Primitive as VP
+import qualified Data.Vector.Unboxed.Mutable as VUM
 import           Data.Word
 import           Database.LSMTree.Internal as Internal
 import           Database.LSMTree.Internal.BlobRef
 import           Database.LSMTree.Internal.Config
+import           Database.LSMTree.Internal.CRC32C
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.IndexCompact
+import           Database.LSMTree.Internal.IndexCompactAcc
+import           Database.LSMTree.Internal.Merge hiding (Level)
+import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.MergeSchedule
+import           Database.LSMTree.Internal.PageAcc
 import           Database.LSMTree.Internal.Paths
 import           Database.LSMTree.Internal.RawBytes
 import           Database.LSMTree.Internal.RawOverflowPage
 import           Database.LSMTree.Internal.RawPage
 import           Database.LSMTree.Internal.Run
+import           Database.LSMTree.Internal.RunAcc
+import           Database.LSMTree.Internal.RunBuilder
 import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.RunReader hiding (Entry)
 import qualified Database.LSMTree.Internal.RunReader as Reader
@@ -72,7 +83,7 @@ instance (NoThunksIOLike m, Typeable m, Typeable (PrimState m))
 
 -- | Does not check 'NoThunks' for the 'Common.Session' that this
 -- 'Normal.TableHandle' belongs to.
-instance (NoThunksIOLike m, Typeable m)
+instance (NoThunksIOLike m, Typeable m, Typeable (PrimState m))
       => NoThunks (NormalTable m k v blob) where
   showTypeOf (_ :: Proxy (NormalTable m k v blob)) = "NormalTable"
   wNoThunks ctx (NormalTable th) = wNoThunks ctx th
@@ -98,16 +109,17 @@ deriving anyclass instance (NoThunksIOLike m, Typeable m, Typeable h, Typeable (
 deriving stock instance Generic (Internal.TableHandle m h)
 -- | Does not check 'NoThunks' for the 'Internal.Session' that this
 -- 'Internal.TableHandle' belongs to.
-deriving anyclass instance (NoThunksIOLike m, Typeable m, Typeable h)
+deriving anyclass instance (NoThunksIOLike m, Typeable m, Typeable h, Typeable (PrimState m))
                         => NoThunks (Internal.TableHandle m h)
 
 deriving stock instance Generic (TableHandleState m h)
-deriving anyclass instance (NoThunksIOLike m, Typeable m, Typeable h)
+deriving anyclass instance (NoThunksIOLike m, Typeable m, Typeable h, Typeable (PrimState m))
                         => NoThunks (TableHandleState m h)
 
 deriving stock instance Generic (TableHandleEnv m h)
 deriving via AllowThunksIn ["tableSession", "tableSessionEnv"] (TableHandleEnv m h)
-    instance (NoThunksIOLike m, Typeable m, Typeable h) => NoThunks (TableHandleEnv m h)
+    instance (NoThunksIOLike m, Typeable m, Typeable h, Typeable (PrimState m))
+          => NoThunks (TableHandleEnv m h)
 
 -- | Does not check 'NoThunks' for the 'Internal.Session' that this
 -- 'Internal.Cursor' belongs to.
@@ -163,7 +175,8 @@ instance NoThunks (Unsliced a) where
 -------------------------------------------------------------------------------}
 
 deriving stock instance Generic (Run m (Handle h))
-deriving anyclass instance NoThunks (Run m (Handle h))
+deriving anyclass instance (Typeable (PrimState m), Typeable h)
+                        => NoThunks (Run m (Handle h))
 
 deriving stock instance Generic RunDataCaching
 deriving anyclass instance NoThunks RunDataCaching
@@ -180,6 +193,16 @@ deriving anyclass instance NoThunks SessionRoot
 
 deriving stock instance Generic RunFsPaths
 deriving anyclass instance NoThunks RunFsPaths
+
+deriving stock instance Generic (ForRunFiles a)
+deriving anyclass instance NoThunks a => NoThunks (ForRunFiles a)
+
+{-------------------------------------------------------------------------------
+  CRC32C
+-------------------------------------------------------------------------------}
+
+deriving stock instance Generic CRC32C
+deriving anyclass instance NoThunks CRC32C
 
 {-------------------------------------------------------------------------------
   WriteBuffer
@@ -210,19 +233,24 @@ deriving anyclass instance NoThunks PageNo
 -------------------------------------------------------------------------------}
 
 deriving stock instance Generic (TableContent m h)
-deriving anyclass instance NoThunks (TableContent m h)
+deriving anyclass instance (Typeable (PrimState m), Typeable h)
+                        => NoThunks (TableContent m h)
 
 deriving stock instance Generic (LevelsCache m (Handle h))
-deriving anyclass instance NoThunks (LevelsCache m (Handle h))
+deriving anyclass instance (Typeable (PrimState m), Typeable h)
+                        => NoThunks (LevelsCache m (Handle h))
 
 deriving stock instance Generic (Level m (Handle h))
-deriving anyclass instance NoThunks (Level m (Handle h))
+deriving anyclass instance (Typeable (PrimState m), Typeable h)
+                        => NoThunks (Level m (Handle h))
 
 deriving stock instance Generic (MergingRun m (Handle h))
-deriving anyclass instance NoThunks (MergingRun m (Handle h))
+deriving anyclass instance (Typeable (PrimState m), Typeable h)
+                        => NoThunks (MergingRun m (Handle h))
 
 deriving stock instance Generic (MergingRunState m (Handle h))
-deriving anyclass instance NoThunks (MergingRunState m (Handle h))
+deriving anyclass instance (Typeable (PrimState m), Typeable h)
+                        => NoThunks (MergingRunState m (Handle h))
 
 {-------------------------------------------------------------------------------
   Entry
@@ -236,6 +264,56 @@ deriving stock instance Generic NumEntries
 deriving anyclass instance NoThunks NumEntries
 
 {-------------------------------------------------------------------------------
+  RunBuilder
+-------------------------------------------------------------------------------}
+
+deriving stock instance Generic (RunBuilder s (Handle h))
+deriving anyclass instance (Typeable s, Typeable h)
+                        => NoThunks (RunBuilder s (Handle h))
+
+deriving stock instance Generic (ChecksumHandle s (Handle h))
+deriving anyclass instance (Typeable s, Typeable h)
+                        => NoThunks (ChecksumHandle s (Handle h))
+
+{-------------------------------------------------------------------------------
+  RunAcc
+-------------------------------------------------------------------------------}
+
+deriving stock instance Generic (RunAcc s)
+deriving anyclass instance Typeable s
+                        => NoThunks (RunAcc s)
+
+{-------------------------------------------------------------------------------
+  IndexCompactAcc
+-------------------------------------------------------------------------------}
+
+deriving stock instance Generic (IndexCompactAcc s)
+deriving anyclass instance Typeable s
+                        => NoThunks (IndexCompactAcc s)
+
+deriving stock instance Generic (SMaybe a)
+deriving anyclass instance NoThunks a => NoThunks (SMaybe a)
+
+{-------------------------------------------------------------------------------
+  PageAcc
+-------------------------------------------------------------------------------}
+
+deriving stock instance Generic (PageAcc s)
+deriving anyclass instance Typeable s
+                        => NoThunks (PageAcc s)
+
+{-------------------------------------------------------------------------------
+  Merge
+-------------------------------------------------------------------------------}
+
+deriving stock instance Generic (Merge s (Handle h))
+deriving anyclass instance (Typeable s, Typeable h)
+                        => NoThunks (Merge s (Handle h))
+
+deriving stock instance Generic Merge.Level
+deriving anyclass instance NoThunks Merge.Level
+
+{-------------------------------------------------------------------------------
   Readers
 -------------------------------------------------------------------------------}
 
@@ -247,17 +325,19 @@ deriving stock instance Generic ReaderNumber
 deriving anyclass instance NoThunks ReaderNumber
 
 deriving stock instance Generic (ReadCtx (Handle h))
-deriving anyclass instance NoThunks (ReadCtx (Handle h))
+deriving anyclass instance Typeable h => NoThunks (ReadCtx (Handle h))
 
 {-------------------------------------------------------------------------------
   Reader
 -------------------------------------------------------------------------------}
 
 deriving stock instance Generic (RunReader m (Handle h))
-deriving anyclass instance NoThunks (RunReader m (Handle h))
+deriving anyclass instance (Typeable (PrimState m), Typeable h)
+                        => NoThunks (RunReader m (Handle h))
 
 deriving stock instance Generic (Reader.Entry m (Handle h))
-deriving anyclass instance NoThunks (Reader.Entry m (Handle h))
+deriving anyclass instance (Typeable (PrimState m), Typeable h)
+                        => NoThunks (Reader.Entry m (Handle h))
 
 {-------------------------------------------------------------------------------
   RawPage
@@ -278,7 +358,8 @@ deriving anyclass instance NoThunks RawOverflowPage
 -------------------------------------------------------------------------------}
 
 deriving stock instance Generic (BlobRef m h)
-deriving anyclass instance NoThunks h => NoThunks (BlobRef m h)
+deriving anyclass instance (NoThunks h, Typeable (PrimState m))
+                        => NoThunks (BlobRef m h)
 
 deriving stock instance Generic BlobSpan
 deriving anyclass instance NoThunks BlobSpan
@@ -288,8 +369,8 @@ deriving anyclass instance NoThunks BlobSpan
 -------------------------------------------------------------------------------}
 
 -- TODO: proper instance
-deriving via OnlyCheckWhnfNamed "ArenaManager" (ArenaManager m)
-    instance NoThunks (ArenaManager m)
+deriving via OnlyCheckWhnf (ArenaManager m)
+    instance Typeable m => NoThunks (ArenaManager m)
 
 {-------------------------------------------------------------------------------
   Config
@@ -333,7 +414,7 @@ deriving anyclass instance NoThunks a => NoThunks (RWState a)
   RefCount
 -------------------------------------------------------------------------------}
 
-instance NoThunks (RefCounter m) where
+instance Typeable (PrimState m) => NoThunks (RefCounter m) where
   showTypeOf (_ :: Proxy (RefCounter m)) = "RefCounter"
   wNoThunks ctx
     (RefCounter (a :: PrimVar (PrimState m) Int) (b :: Maybe (m ())))
@@ -399,9 +480,37 @@ instance NoThunks a => NoThunks (StrictMVar IO a) where
   vector
 -------------------------------------------------------------------------------}
 
+-- TODO: upstream to @nothunks@
+instance (NoThunks a, Typeable s, Typeable a) => NoThunks (VM.MVector s a) where
+    showTypeOf (_) = show $ typeRep (Proxy @a)
+    wNoThunks ctx v =
+      allNoThunks [
+          unsafeSTToIO (VM.read v i) >>= \x -> noThunks ctx x
+        | i <- [0.. VM.length v-1]
+        ]
+
 -- TODO: https://github.com/input-output-hk/nothunks/issues/57
-deriving via OnlyCheckWhnfNamed "Primitive.Vector" (VP.Vector a)
-    instance NoThunks (VP.Vector a)
+deriving via OnlyCheckWhnf (VP.Vector a)
+    instance Typeable a => NoThunks (VP.Vector a)
+
+-- TODO: upstream to @nothunks@
+deriving via OnlyCheckWhnf (VUM.MVector s Word64)
+    instance Typeable s => NoThunks (VUM.MVector s Word64)
+
+-- TODO: upstream to @nothunks@
+deriving via OnlyCheckWhnf (VUM.MVector s Bit)
+    instance Typeable s => NoThunks (VUM.MVector s Bit)
+
+{-------------------------------------------------------------------------------
+  ST
+-------------------------------------------------------------------------------}
+
+-- TODO: upstream to @nothunks@
+instance NoThunks a => NoThunks (STRef s a) where
+  showTypeOf (_ :: Proxy (STRef s a)) = "STRef"
+  wNoThunks ctx ref = do
+    x <- unsafeSTToIO $ readSTRef ref
+    noThunks ctx x
 
 {-------------------------------------------------------------------------------
   primitive
@@ -415,11 +524,8 @@ instance NoThunks a => NoThunks (MutVar s a) where
       noThunks ctx (AllowThunk x) -- TODO: atomicModifyMutVar' is not strict enough
 
 -- TODO: https://github.com/input-output-hk/nothunks/issues/56
-instance (NoThunks a, Prim a) => NoThunks (PrimVar s a) where
-  showTypeOf (_ :: Proxy (PrimVar s a)) = "PrimVar"
-  wNoThunks ctx var = do
-      x <- unsafeSTToIO $ readPrimVar var
-      noThunks ctx x
+deriving via OnlyCheckWhnf (PrimVar s a)
+    instance (Typeable s, Typeable a) => NoThunks (PrimVar s a)
 
 -- TODO: https://github.com/input-output-hk/nothunks/issues/56
 instance NoThunks a => NoThunks (SmallMutableArray s a) where
@@ -432,7 +538,11 @@ instance NoThunks a => NoThunks (SmallMutableArray s a) where
         ]
 
 -- TODO: https://github.com/input-output-hk/nothunks/issues/56
-deriving via OnlyCheckWhnfNamed "ByteArray" ByteArray
+deriving via OnlyCheckWhnf (MutablePrimArray s a)
+    instance (Typeable s, Typeable a) => NoThunks (MutablePrimArray s a)
+
+-- TODO: https://github.com/input-output-hk/nothunks/issues/56
+deriving via OnlyCheckWhnf ByteArray
     instance NoThunks ByteArray
 
 {-------------------------------------------------------------------------------
@@ -440,23 +550,27 @@ deriving via OnlyCheckWhnfNamed "ByteArray" ByteArray
 -------------------------------------------------------------------------------}
 
 -- TODO: check heap?
-deriving via OnlyCheckWhnfNamed "Bloom" (Bloom a)
-    instance NoThunks (Bloom a)
+deriving via OnlyCheckWhnf (Bloom a)
+    instance Typeable a => NoThunks (Bloom a)
+
+-- TODO: check heap?
+deriving via OnlyCheckWhnf (MBloom s a)
+    instance (Typeable s, Typeable a) => NoThunks (MBloom s a)
 
 {-------------------------------------------------------------------------------
   fs-api and fs-sim
 -------------------------------------------------------------------------------}
 
 -- TODO: check heap?
-deriving via OnlyCheckWhnfNamed "HasFS" (HasFS m h)
-    instance NoThunks (HasFS m h)
+deriving via OnlyCheckWhnf (HasFS m h)
+    instance (Typeable m, Typeable h) => NoThunks (HasFS m h)
 
 -- TODO: check heap?
-deriving via OnlyCheckWhnfNamed "Handle" (Handle h)
-    instance NoThunks (Handle h)
+deriving via OnlyCheckWhnf (Handle h)
+    instance Typeable h => NoThunks (Handle h)
 
 -- TODO: check heap?
-deriving via OnlyCheckWhnfNamed "FsPath" FsPath
+deriving via OnlyCheckWhnf FsPath
     instance NoThunks FsPath
 
 {-------------------------------------------------------------------------------
@@ -464,17 +578,17 @@ deriving via OnlyCheckWhnfNamed "FsPath" FsPath
 -------------------------------------------------------------------------------}
 
 -- TODO: check heap?
-deriving via OnlyCheckWhnfNamed "HasBlockIO" (HasBlockIO m h)
-    instance NoThunks (HasBlockIO m h)
+deriving via OnlyCheckWhnf (HasBlockIO m h)
+    instance (Typeable m, Typeable h) => NoThunks (HasBlockIO m h)
 
 -- TODO: check heap?
-deriving via OnlyCheckWhnfNamed "LockFileHandle" (LockFileHandle m)
-    instance NoThunks (LockFileHandle m)
+deriving via OnlyCheckWhnf (LockFileHandle m)
+    instance Typeable m => NoThunks (LockFileHandle m)
 
 {-------------------------------------------------------------------------------
   contra-tracer
 -------------------------------------------------------------------------------}
 
 -- TODO: check heap?
-deriving via OnlyCheckWhnfNamed "Tracer" (Tracer m a)
-    instance NoThunks (Tracer m a)
+deriving via OnlyCheckWhnf (Tracer m a)
+    instance (Typeable m, Typeable a) => NoThunks (Tracer m a)
