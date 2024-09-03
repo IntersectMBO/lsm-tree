@@ -5,6 +5,7 @@
 module Database.LSMTree.Internal.BlobRef (
     BlobRef (..)
   , BlobSpan (..)
+  , blobRefSpanSize
   , readBlob
   , readBlobIOOp
   ) where
@@ -43,6 +44,9 @@ data BlobSpan = BlobSpan {
 
 instance NFData BlobSpan where
   rnf (BlobSpan a b) = rnf a `seq` rnf b
+
+blobRefSpanSize :: BlobRef m h -> Int
+blobRefSpanSize = fromIntegral . blobSpanSize . blobRefSpan
 
 -- | The 'BlobSpan' to read must come from this run!
 readBlob :: HasFS IO h -> BlobRef m (FS.Handle h) -> IO SerialisedBlob

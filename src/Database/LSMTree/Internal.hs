@@ -78,7 +78,7 @@ import qualified Data.Set as Set
 import           Data.Typeable
 import qualified Data.Vector as V
 import           Data.Word (Word64)
-import           Database.LSMTree.Internal.BlobRef (BlobRef (..), BlobSpan (..))
+import           Database.LSMTree.Internal.BlobRef (BlobRef (..))
 import qualified Database.LSMTree.Internal.BlobRef as BlobRef
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.Entry (Entry, combineMaybe)
@@ -715,11 +715,11 @@ retrieveBlobs sesh refs =
         -- We use a single large memory buffer, with appropriate offsets within
         -- the buffer.
         let bufSize :: Int
-            !bufSize = V.sum (V.map blobRefSpanSize refs)
+            !bufSize = V.sum (V.map BlobRef.blobRefSpanSize refs)
 
             {-# INLINE bufOffs #-}
             bufOffs :: V.Vector Int
-            bufOffs = V.scanl (+) 0 (V.map blobRefSpanSize refs)
+            bufOffs = V.scanl (+) 0 (V.map BlobRef.blobRefSpanSize refs)
         buf <- P.newPinnedByteArray bufSize
         let ioops = V.zipWith (BlobRef.readBlobIOOp buf) bufOffs refs
             hbio  = sessionHasBlockIO seshEnv
@@ -736,13 +736,10 @@ retrieveBlobs sesh refs =
         pure $! V.zipWith
                   (\off len -> SerialisedBlob (RB.fromByteArray off len ba))
                   bufOffs
-                  (V.map blobRefSpanSize refs)
+                  (V.map BlobRef.blobRefSpanSize refs)
   where
-    blobRefSpanSize :: BlobRef m h -> Int
-    blobRefSpanSize = fromIntegral . blobSpanSize . blobRefSpan
-
-    -- The BlobRef is a weak reference to the Run. It does not keep the run
-    -- open using a reference count. So we have to upgrade our weak
+    -- The BlobRef is a weak reference to a blob file. It does not keep the
+    -- file open using a reference count. So we have to upgrade our weak
     -- reference to a (normal) strong reference while we read the blob, to
     -- ensure it is not closed under our feet.
     upgradeWeakReferences =
