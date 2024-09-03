@@ -63,9 +63,9 @@ import qualified Control.RefCount as RC
 import           Data.BloomFilter (Bloom)
 import qualified Data.ByteString.Short as SBS
 import           Data.Foldable (for_)
-import qualified Data.Primitive.ByteArray as P (MutableByteArray, newPinnedByteArray,
-                     unsafeFreezeByteArray)
-import           Database.LSMTree.Internal.BlobRef (BlobRef(..), BlobSpan(..))
+import qualified Data.Primitive.ByteArray as P (MutableByteArray,
+                     newPinnedByteArray, unsafeFreezeByteArray)
+import           Database.LSMTree.Internal.BlobRef (BlobRef (..), BlobSpan (..))
 import           Database.LSMTree.Internal.BloomFilter (bloomFilterFromSBS)
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry (NumEntries (..))

@@ -1,5 +1,6 @@
 {-# LANGUAGE CPP       #-}
 {-# LANGUAGE DataKinds #-}
+{- HLINT ignore "Use unless" -}
 
 module Database.LSMTree.Internal (
     -- * Existentials
@@ -90,7 +91,7 @@ import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunNumber
 import qualified Database.LSMTree.Internal.RunReaders as Readers
-import           Database.LSMTree.Internal.Serialise (SerialisedBlob(..),
+import           Database.LSMTree.Internal.Serialise (SerialisedBlob (..),
                      SerialisedKey, SerialisedValue)
 import           Database.LSMTree.Internal.UniqCounter
 import qualified Database.LSMTree.Internal.Vector as V
