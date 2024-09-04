@@ -53,6 +53,7 @@ class (IsSession (Session h)) => IsTableHandle h where
     type Session h :: (Type -> Type) -> Type
     type TableConfig h :: Type
     type BlobRef h :: (Type -> Type) -> Type -> Type
+    type Cursor h :: (Type -> Type) -> Type -> Type -> Type -> Type
 
     new ::
            IOLike m
@@ -75,6 +76,24 @@ class (IsSession (Session h)) => IsTableHandle h where
            (IOLike m, SerialiseKey k, SerialiseValue v)
         => h m k v blob
         -> Range k
+        -> m (V.Vector (QueryResult k v (BlobRef h m blob)))
+
+    newCursor ::
+           IOLike m
+        => h m k v blob
+        -> m (Cursor h m k v blob)
+
+    closeCursor ::
+           IOLike m
+        => proxy h
+        -> Cursor h m k v blob
+        -> m ()
+
+    readCursor ::
+           (IOLike m, SerialiseKey k, SerialiseValue v)
+        => proxy h
+        -> Int
+        -> Cursor h m k v blob
         -> m (V.Vector (QueryResult k v (BlobRef h m blob)))
 
     retrieveBlobs ::
@@ -169,6 +188,7 @@ instance IsTableHandle M.TableHandle where
     type Session M.TableHandle = M.Session
     type TableConfig M.TableHandle = M.TableConfig
     type BlobRef M.TableHandle = M.BlobRef
+    type Cursor M.TableHandle = M.Cursor
 
     new = M.new
     close = M.close
@@ -179,6 +199,10 @@ instance IsTableHandle M.TableHandle where
 
     rangeLookup = flip M.rangeLookup
     retrieveBlobs _ = M.retrieveBlobs
+
+    newCursor = M.newCursor
+    closeCursor _ = M.closeCursor
+    readCursor _ = M.readCursor
 
     snapshot = M.snapshot
     open = M.open
@@ -206,6 +230,7 @@ instance IsTableHandle R.TableHandle where
     type Session R.TableHandle = R.Session
     type TableConfig R.TableHandle = R.TableConfig
     type BlobRef R.TableHandle = R.BlobRef
+    type Cursor R.TableHandle = R.Cursor
 
     new = R.new
     close = R.close
@@ -222,6 +247,10 @@ instance IsTableHandle R.TableHandle where
 
     rangeLookup = flip R.rangeLookup
     retrieveBlobs _ = R.retrieveBlobs
+
+    newCursor = R.newCursor
+    closeCursor _ = R.closeCursor
+    readCursor _ = R.readCursor
 
     snapshot = R.snapshot
     open sesh snap = R.open sesh R.configNoOverride snap

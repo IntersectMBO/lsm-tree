@@ -48,6 +48,11 @@ module Database.LSMTree.Model.Normal.Session (
   , lookups
   , Model.QueryResult (..)
   , rangeLookup
+    -- ** Cursor
+  , Cursor
+  , newCursor
+  , closeCursor
+  , readCursor
     -- ** Updates
   , Model.Update (..)
   , updates
@@ -87,16 +92,18 @@ import qualified Database.LSMTree.Normal as SUT
 -------------------------------------------------------------------------------}
 
 data Model = Model {
-    tableHandles      :: Map TableHandleID (UpdateCounter, SomeTable)
-  , nextTableHandleID :: TableHandleID
-  , snapshots         :: Map SUT.SnapshotName Snapshot
+    tableHandles :: Map TableHandleID (UpdateCounter, SomeTable)
+  , cursors      :: Map CursorID SomeCursor
+  , nextID       :: Int
+  , snapshots    :: Map SUT.SnapshotName Snapshot
   }
   deriving stock Show
 
 initModel :: Model
 initModel = Model {
       tableHandles = Map.empty
-    , nextTableHandleID = 0
+    , cursors = Map.empty
+    , nextID = 0
     , snapshots = Map.empty
     }
 
@@ -123,6 +130,24 @@ fromSomeTable ::
   => SomeTable
   -> Maybe (Model.Table k v blob)
 fromSomeTable (SomeTable tbl) = fromDynamic tbl
+
+newtype SomeCursor = SomeCursor Dynamic
+
+instance Show SomeCursor where
+  show (SomeCursor c) = show c
+
+toSomeCursor ::
+     (Typeable k, Typeable v, Typeable blob)
+  => Model.Cursor k v blob
+  -> SomeCursor
+toSomeCursor = SomeCursor . toDyn
+
+fromSomeCursor ::
+     (Typeable k, Typeable v, Typeable blob)
+  => SomeCursor
+  -> Maybe (Model.Cursor k v blob)
+fromSomeCursor (SomeCursor c) = fromDynamic c
+
 
 --
 -- Constraints
@@ -163,6 +188,7 @@ data Err =
   | ErrSnapshotDoesNotExist
   | ErrSnapshotWrongType
   | ErrBlobRefInvalidated
+  | ErrCursorClosed
   deriving stock (Show, Eq)
 
 {-------------------------------------------------------------------------------
@@ -190,15 +216,15 @@ new ::
   -> m (TableHandle k v blob)
 new config = state $ \Model{..} ->
     let tableHandle = TableHandle {
-            tableHandleID = nextTableHandleID
+            tableHandleID = nextID
           , ..
           }
         someTable = toSomeTable $ Model.empty @k @v @blob
-        tableHandles' = Map.insert nextTableHandleID (0, someTable) tableHandles
-        nextTableHandleID' = nextTableHandleID + 1
+        tableHandles' = Map.insert nextID (0, someTable) tableHandles
+        nextID' = nextID + 1
         model' = Model {
             tableHandles = tableHandles'
-          , nextTableHandleID = nextTableHandleID'
+          , nextID = nextID'
           , ..
           }
     in  (tableHandle, model')
@@ -240,15 +266,15 @@ newTableWith ::
   -> m (TableHandle k v blob)
 newTableWith config tbl = state $ \Model{..} ->
   let tableHandle = TableHandle {
-          tableHandleID = nextTableHandleID
+          tableHandleID = nextID
         , config
         }
       someTable = toSomeTable tbl
-      tableHandles' = Map.insert nextTableHandleID (0, someTable) tableHandles
-      nextTableHandleID' = nextTableHandleID + 1
+      tableHandles' = Map.insert nextID (0, someTable) tableHandles
+      nextID' = nextID + 1
       model' = Model {
           tableHandles = tableHandles'
-        , nextTableHandleID = nextTableHandleID'
+        , nextID = nextID'
         , ..
         }
   in  (tableHandle, model')
@@ -356,9 +382,9 @@ retrieveBlobs refs = Model.retrieveBlobs <$> V.mapM guard refs
     guard BlobRef{..} = do
         m <- get
         -- In the real implementation, a blob reference /could/ be invalidated
-        -- every time you modify a table. This model takes the most
+        -- every time you modify a table or cursor. This model takes the most
         -- conservative approach: a blob reference is immediately invalidated
-        -- every time a table is modified.
+        -- every time a table/cursor is modified.
         case handleRef of
           SomeTableID createdAt tableID ->
             case Map.lookup tableID (tableHandles m) of
@@ -368,7 +394,12 @@ retrieveBlobs refs = Model.retrieveBlobs <$> V.mapM guard refs
               -- to see if any modifications were made.
               Just (updc, _) -> do
                 when (updc /= createdAt) $ errInvalid
-        pure innerBlob
+                pure innerBlob
+          SomeCursorID cursorID ->
+            -- The only modification to a cursor is that it can be closed.
+            case Map.lookup cursorID (cursors m) of
+              Nothing -> errInvalid
+              Just _  -> pure innerBlob
 
     errInvalid :: m a
     errInvalid = throwError ErrBlobRefInvalidated
@@ -379,6 +410,7 @@ retrieveBlobs refs = Model.retrieveBlobs <$> V.mapM guard refs
 
 data SomeHandleID blob where
   SomeTableID  :: !UpdateCounter -> !TableHandleID -> SomeHandleID blob
+  SomeCursorID :: !CursorID -> SomeHandleID blob
   deriving stock Show
 
 liftBlobRefs ::
@@ -473,3 +505,76 @@ duplicate ::
 duplicate th@TableHandle{..} = do
     table <- snd <$> guardTableHandleIsOpen th
     newTableWith config $ Model.duplicate table
+
+{-------------------------------------------------------------------------------
+  Cursor
+-------------------------------------------------------------------------------}
+
+type CursorID = Int
+
+data Cursor k v blob = Cursor {
+    cursorID :: !CursorID
+  }
+  deriving stock Show
+
+newCursor ::
+     forall k v blob m. (
+       MonadState Model m, MonadError Err m
+     , C k v blob
+     )
+  => TableHandle k v blob
+  -> m (Cursor k v blob)
+newCursor th = do
+  table <- snd <$> guardTableHandleIsOpen th
+  state $ \Model{..} ->
+    let cursor = Cursor { cursorID = nextID }
+        someCursor = toSomeCursor $ Model.newCursor table
+        cursors' = Map.insert nextID someCursor cursors
+        nextID' = nextID + 1
+        model' = Model {
+            cursors = cursors'
+          , nextID = nextID'
+          , ..
+          }
+    in  (cursor, model')
+
+closeCursor :: MonadState Model m => Cursor k v blob -> m ()
+closeCursor Cursor {..} = state $ \Model{..} ->
+    let cursors' = Map.delete cursorID cursors
+        model' = Model {
+            cursors = cursors'
+          , ..
+          }
+    in ((), model')
+
+readCursor ::
+     ( MonadState Model m
+     , MonadError Err m
+     , Model.SerialiseKey k
+     , Model.SerialiseValue v
+     , C k v blob
+     )
+  => Int
+  -> Cursor k v blob
+  -> m (V.Vector (QueryResult k v (BlobRef blob)))
+readCursor n c = do
+    cursor <- guardCursorIsOpen c
+    let (qrs, cursor') = Model.readCursor n cursor
+    modify (\m -> m {
+        cursors = Map.insert (cursorID c) (toSomeCursor cursor') (cursors m)
+      })
+    pure $ liftBlobRefs (SomeCursorID (cursorID c)) $ qrs
+
+guardCursorIsOpen ::
+     forall k v blob m. (
+       MonadState Model m, MonadError Err m
+     , Typeable k, Typeable v, Typeable blob
+     )
+  => Cursor k v blob
+  -> m (Model.Cursor k v blob)
+guardCursorIsOpen Cursor{..} =
+    gets (Map.lookup cursorID . cursors) >>= \case
+      Nothing ->
+        throwError ErrCursorClosed
+      Just c ->
+        pure (fromJust $ fromSomeCursor c)

@@ -28,6 +28,11 @@ module Database.LSMTree.ModelIO.Normal (
   , lookups
   , Model.QueryResult (..)
   , rangeLookup
+    -- ** Cursor
+  , Cursor
+  , newCursor
+  , closeCursor
+  , readCursor
     -- ** Updates
   , Model.Update (..)
   , updates
@@ -113,7 +118,7 @@ lookups ::
   -> TableHandle m k v blob
   -> m (V.Vector (LookupResult v (BlobRef m blob)))
 lookups ks TableHandle {..} = atomically $
-    withModel "lookups" thSession thRef $ \(updc, tbl) ->
+    withModel "lookups" "table handle" thSession thRef $ \(updc, tbl) ->
       return $ liftBlobRefs thSession (SomeTableRef updc thRef) $ Model.lookups ks tbl
 
 -- | Perform a range lookup.
@@ -123,7 +128,7 @@ rangeLookup ::
   -> TableHandle m k v blob
   -> m (V.Vector (QueryResult k v (BlobRef m blob)))
 rangeLookup r TableHandle {..} = atomically $
-    withModel "rangeLookup" thSession thRef $ \(updc, tbl) ->
+    withModel "rangeLookup" "table handle" thSession thRef $ \(updc, tbl) ->
       return $ liftBlobRefs thSession (SomeTableRef updc thRef) $ Model.rangeLookup r tbl
 
 -- | Perform a mixed batch of inserts and deletes.
@@ -133,7 +138,7 @@ updates ::
   -> TableHandle m k v blob
   -> m ()
 updates ups TableHandle {..} = atomically $
-    withModel "updates" thSession thRef $ \(updc, tbl) ->
+    withModel "updates" "table handle" thSession thRef $ \(updc, tbl) ->
         writeTMVar thRef (updc + 1, Model.updates ups tbl)
 
 -- | Perform a batch of inserts.
@@ -160,6 +165,7 @@ data BlobRef m blob = BlobRef {
 
 data SomeHandleRef m blob where
   SomeTableRef  :: !UpdateCounter -> !(TMVar m (UpdateCounter, Model.Table k v blob)) -> SomeHandleRef m blob
+  SomeCursorRef :: !(TMVar m (Model.Cursor k v blob)) -> SomeHandleRef m blob
 
 liftBlobRefs ::
      forall m f g blob. (Functor f, Functor g)
@@ -182,9 +188,9 @@ retrieveBlobs _ brefs = atomically $ Model.retrieveBlobs <$> mapM guard brefs
     guard BlobRef{..} = do
       check_session_open "retrieveBlobs" brSession
       -- In the real implementation, a blob reference /could/ be invalidated
-      -- every time you modify a table. This model takes the most
+      -- every time you modify a table or cursor. This model takes the most
       -- conservative approach: a blob reference is immediately invalidated
-      -- every time a table is modified.
+      -- every time a table/cursor is modified.
       case brHandleRef of
         SomeTableRef createdAt tableRef ->
           tryReadTMVar tableRef >>= \case
@@ -195,16 +201,21 @@ retrieveBlobs _ brefs = atomically $ Model.retrieveBlobs <$> mapM guard brefs
             Just (updc, _) -> do
               when (updc /= createdAt) $ errInvalid
               pure brBlob
+        SomeCursorRef cursorRef ->
+          -- The only modification to a cursor is that it can be closed.
+          tryReadTMVar cursorRef >>= \case
+            Nothing -> errInvalid
+            Just _  -> pure brBlob
 
     errInvalid :: STM m a
     errInvalid = throwSTM IOError
-            { ioe_handle      = Nothing
-            , ioe_type        = IllegalOperation
-            , ioe_location    = "retrieveBlobs"
-            , ioe_description = "blob reference invalidated"
-            , ioe_errno       = Nothing
-            , ioe_filename    = Nothing
-            }
+        { ioe_handle      = Nothing
+        , ioe_type        = IllegalOperation
+        , ioe_location    = "retrieveBlobs"
+        , ioe_description = "blob reference invalidated"
+        , ioe_errno       = Nothing
+        , ioe_filename    = Nothing
+        }
 
 {-------------------------------------------------------------------------------
   Snapshots
@@ -221,7 +232,7 @@ snapshot ::
   -> TableHandle m k v blob
   -> m ()
 snapshot n TableHandle {..} = atomically $
-    withModel "snapshot" thSession thRef $ \tbl -> do
+    withModel "snapshot" "table handle" thSession thRef $ \tbl -> do
         snaps <- readTVar $ snapshots thSession
         if Map.member n snaps then
           throwSTM IOError
@@ -283,24 +294,68 @@ duplicate ::
   => TableHandle m k v blob
   -> m (TableHandle m k v blob)
 duplicate TableHandle {..} = atomically $
-    withModel "duplicate" thSession thRef $ \tbl -> do
+    withModel "duplicate" "table handle" thSession thRef $ \tbl -> do
         thRef' <- newTMVar tbl
         i <- new_handle thSession thRef'
         return TableHandle { thRef = thRef', thId = i, thSession = thSession }
 
 {-------------------------------------------------------------------------------
+  Cursor
+-------------------------------------------------------------------------------}
+
+type Cursor :: (Type -> Type) -> Type -> Type -> Type -> Type
+data Cursor m k v blob = Cursor {
+      cSession :: !(Session m)
+    , cId      :: !Int
+    , cRef     :: !(TMVar m (Model.Cursor k v blob))
+    }
+
+newCursor ::
+     IOLike m
+  => TableHandle m k v blob
+  -> m (Cursor m k v blob)
+newCursor TableHandle{..} = atomically $
+    withModel "newCursor" "table handle" thSession thRef $ \(_updc, tbl) -> do
+      cRef <- newTMVar (Model.newCursor tbl)
+      i <- new_handle thSession cRef
+      pure Cursor {
+          cSession = thSession
+        , cId = i
+        , cRef
+        }
+
+closeCursor ::
+     IOLike m
+  => Cursor m k v blob
+  -> m ()
+closeCursor Cursor {..} = atomically $ do
+    close_handle cSession cId
+    void $ tryTakeTMVar cRef
+
+readCursor ::
+     (IOLike m, SerialiseKey k, SerialiseValue v)
+  => Int
+  -> Cursor m k v blob
+  -> m (V.Vector (QueryResult k v (BlobRef m blob)))
+readCursor n Cursor{..} = atomically $
+    withModel "readCursor" "cursor" cSession cRef $ \c -> do
+      let (qss, c') = Model.readCursor n c
+      writeTMVar cRef c'
+      return $ liftBlobRefs cSession (SomeCursorRef cRef) qss
+
+{-------------------------------------------------------------------------------
   Internal helpers
 -------------------------------------------------------------------------------}
 
-withModel :: IOLike m => String -> Session m -> TMVar m a -> (a -> STM m r) -> STM m r
-withModel fun s ref kont = do
+withModel :: IOLike m => String -> String -> Session m -> TMVar m a -> (a -> STM m r) -> STM m r
+withModel fun hdl s ref kont = do
     m <- tryReadTMVar ref
     case m of
         Nothing -> throwSTM IOError
             { ioe_handle      = Nothing
             , ioe_type        = IllegalOperation
             , ioe_location    = fun
-            , ioe_description = "table handle closed"
+            , ioe_description = hdl <> " closed"
             , ioe_errno       = Nothing
             , ioe_filename    = Nothing
             }
