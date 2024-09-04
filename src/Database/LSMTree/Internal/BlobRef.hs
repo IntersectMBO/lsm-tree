@@ -1,19 +1,33 @@
 {-# LANGUAGE DeriveAnyClass     #-}
 {-# LANGUAGE DeriveGeneric      #-}
 {-# LANGUAGE DerivingStrategies #-}
+{- HLINT ignore "Use unless" -}
 
 module Database.LSMTree.Internal.BlobRef (
     BlobRef (..)
   , BlobSpan (..)
   , blobRefSpanSize
+  , WeakBlobRef (..)
+  , withWeakBlobRef
+  , withWeakBlobRefs
+  , deRefWeakBlobRef
+  , deRefWeakBlobRefs
+  , WeakBlobRefInvalid (..)
+  , removeReference
+  , removeReferences
   , readBlob
   , readBlobIOOp
   ) where
 
 import           Control.DeepSeq (NFData (..))
+import           Control.Monad (when)
+import           Control.Monad.Class.MonadThrow (Exception, bracket, throwIO)
 import           Control.RefCount (RefCounter)
+import qualified Control.RefCount as RC
+import           Data.Coerce (coerce)
 import qualified Data.Primitive.ByteArray as P (MutableByteArray,
                      newPinnedByteArray, unsafeFreezeByteArray)
+import qualified Data.Vector as V
 import           Data.Word (Word32, Word64)
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.Serialise (SerialisedBlob (..))
@@ -48,7 +62,67 @@ instance NFData BlobSpan where
 blobRefSpanSize :: BlobRef m h -> Int
 blobRefSpanSize = fromIntegral . blobSpanSize . blobRefSpan
 
--- | The 'BlobSpan' to read must come from this run!
+-- | A 'WeakBlobRef' is a weak reference to a blob file. These are the ones we
+-- can return in the public API and can outlive their parent table. They do not
+-- keep the file open using a reference count. So when we want to use our weak
+-- reference we have to dereference them to obtain a normal strong reference
+-- while we do the I\/O to read the blob. This ensures the file is not closed
+-- under our feet.
+--
+newtype WeakBlobRef m h = WeakBlobRef (BlobRef m h)
+  deriving newtype (Eq, Show, NFData)
+
+-- | The 'WeakBlobRef' now points to a blob that is no longer available.
+newtype WeakBlobRefInvalid = WeakBlobRefInvalid Int
+  deriving stock (Show)
+  deriving anyclass (Exception)
+
+-- | 'WeakBlobRef's are weak references. They do not keep the blob file open.
+-- Dereference a 'WeakBlobRef' to a strong 'BlobRef' to allow I\/O using
+-- 'readBlob' or 'readBlobIOOp'. Use 'removeReference' when the 'BlobRef' is
+-- no longer needed.
+--
+-- Throws 'WeakBlobRefInvalid' if the weak reference has become invalid.
+--
+withWeakBlobRef :: m ~ IO
+                => WeakBlobRef m h
+                -> (BlobRef m h -> m a) -> m a
+withWeakBlobRef wref = bracket (deRefWeakBlobRef wref) removeReference
+
+-- | The same as 'withWeakBlobRef' but for many references in one go.
+--
+withWeakBlobRefs :: m ~ IO
+                 => V.Vector (WeakBlobRef m h)
+                 -> (V.Vector (BlobRef m h) -> m a) -> m a
+withWeakBlobRefs wrefs = bracket (deRefWeakBlobRefs wrefs) removeReferences
+
+deRefWeakBlobRef :: m ~ IO => WeakBlobRef m h -> m (BlobRef m h)
+deRefWeakBlobRef (WeakBlobRef ref) = do
+    ok <- RC.upgradeWeakReference (blobRefCount ref)
+    when (not ok) $ throwIO (WeakBlobRefInvalid 0)
+    pure ref
+
+deRefWeakBlobRefs :: forall m h.
+                     m ~ IO
+                  => V.Vector (WeakBlobRef m h)
+                  -> m (V.Vector (BlobRef m h))
+deRefWeakBlobRefs wrefs = do
+    let refs :: V.Vector (BlobRef m h)
+        refs = coerce wrefs -- safely coerce away the newtype wrappers
+    V.iforM_ wrefs $ \i (WeakBlobRef ref) -> do
+      ok <- RC.upgradeWeakReference (blobRefCount ref)
+      when (not ok) $ do
+        -- drop refs on the previous ones taken successfully so far
+        V.mapM_ removeReference (V.take i refs)
+        throwIO (WeakBlobRefInvalid i)
+    pure refs
+
+removeReference :: m ~ IO => BlobRef m h -> m ()
+removeReference = RC.removeReference . blobRefCount
+
+removeReferences :: m ~ IO => V.Vector (BlobRef m h) -> m ()
+removeReferences = V.mapM_ removeReference
+
 readBlob :: HasFS IO h -> BlobRef m (FS.Handle h) -> IO SerialisedBlob
 readBlob fs BlobRef {
               blobRefFile,
