@@ -107,6 +107,10 @@ data Run m fhandle = Run {
     , runRunDataCaching :: !RunDataCaching
     }
 
+-- | Shows only the 'runRunFsPaths' field.
+instance Show (Run m fhandle) where
+  showsPrec _ run = showString "Run { runRunFsPaths = " . showsPrec 0 (runRunFsPaths run) .  showString " }"
+
 instance NFData fhandle => NFData (Run m fhandle) where
   rnf (Run a b c d e f g h) =
       rnf a `seq` rwhnf b `seq` rnf c `seq` rnf d `seq` rnf e `seq`
