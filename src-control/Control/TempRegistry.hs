@@ -16,6 +16,7 @@ module Control.TempRegistry (
   ) where
 
 import           Control.Concurrent.Class.MonadMVar.Strict
+import           Control.Monad
 import           Control.Monad.Class.MonadThrow
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -127,7 +128,7 @@ allocateMaybeTemp ::
   -> m (Maybe a)
   -> (a -> m ())
   -> m (Maybe a)
-allocateMaybeTemp reg acquire free = fromEither <$> allocateEitherTemp reg (toEither <$> acquire) free
+allocateMaybeTemp reg acquire free = fromEither <$!> allocateEitherTemp reg (toEither <$> acquire) free
   where
     toEither :: Maybe a -> Either () a
     toEither Nothing  = Left ()
@@ -135,7 +136,7 @@ allocateMaybeTemp reg acquire free = fromEither <$> allocateEitherTemp reg (toEi
 
     fromEither :: Either () a -> Maybe a
     fromEither (Left ()) = Nothing
-    fromEither (Right x) = Just x
+    fromEither (Right x) = Just $! x
 
 {-# SPECIALISE allocateEitherTemp :: TempRegistry IO -> IO (Either e a) -> (a -> IO ()) -> IO (Either e a) #-}
 -- | Like 'allocateTemp', but for resources that might fail to be acquired.

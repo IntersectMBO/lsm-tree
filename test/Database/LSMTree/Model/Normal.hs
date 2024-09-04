@@ -14,6 +14,10 @@ module Database.LSMTree.Model.Normal (
   , lookups
   , QueryResult (..)
   , rangeLookup
+    -- ** Cursor
+  , Cursor
+  , newCursor
+  , readCursor
     -- ** Updates
   , Update (..)
   , updates
@@ -225,3 +229,37 @@ duplicate ::
      Table k v blob
   -> Table k v blob
 duplicate = id
+
+{-------------------------------------------------------------------------------
+  Cursor
+-------------------------------------------------------------------------------}
+
+type Cursor :: Type -> Type -> Type -> Type
+data Cursor k v blob = Cursor
+    { -- | these entries are already resolved, they do not contain duplicate keys.
+      _cursorValues :: [(RawBytes, (RawBytes, Maybe (BlobRef blob)))]
+    }
+
+type role Cursor nominal nominal nominal
+
+newCursor ::
+     Table k v blob
+  -> Cursor k v blob
+newCursor tbl = Cursor (Map.toList $ _values tbl)
+
+readCursor ::
+     (SerialiseKey k, SerialiseValue v)
+  => Int
+  -> Cursor k v blob
+  -> ( V.Vector (QueryResult k v (BlobRef blob))
+     , Cursor k v blob
+     )
+readCursor n c =
+    ( V.fromList
+        [ case v of
+            (v', Nothing) -> FoundInQuery (deserialiseKey k) (deserialiseValue v')
+            (v', Just br) -> FoundInQueryWithBlob (deserialiseKey k) (deserialiseValue v') br
+        | (k, v) <- take n (_cursorValues c)
+        ]
+    , Cursor $ drop n (_cursorValues c)
+    )

@@ -15,6 +15,7 @@
 module Test.Util.TypeFamilyWrappers (
     WrapSession (..)
   , WrapTableHandle (..)
+  , WrapCursor (..)
   , WrapBlobRef (..)
   , WrapBlob (..)
   ) where
@@ -36,6 +37,13 @@ newtype WrapTableHandle h m k v blob = WrapTableHandle {
     unwrapTableHandle :: h m k v blob
   }
   deriving stock (Show, Eq)
+
+type WrapCursor ::
+     ((Type -> Type) -> Type -> Type -> Type -> Type)
+  -> (Type -> Type) -> Type -> Type -> Type -> Type
+newtype WrapCursor h m k v blob = WrapCursor {
+    unwrapCursor :: SUT.Class.Cursor h m k v blob
+  }
 
 type WrapBlobRef ::
      ((Type -> Type) -> Type -> Type -> Type -> Type)
