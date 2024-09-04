@@ -46,7 +46,7 @@ import qualified Data.Map.Range as Map.R
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.Vector as V
-import           Database.LSMTree.Internal.BlobRef (BlobRef)
+import           Database.LSMTree.Internal.BlobRef (WeakBlobRef)
 import           Database.LSMTree.Internal.Entry
 import qualified Database.LSMTree.Internal.Monoidal as Monoidal
 import qualified Database.LSMTree.Internal.Normal as Normal
@@ -164,7 +164,10 @@ lookups ::
 lookups (WB !m) !ks = V.mapStrict (`Map.lookup` m) ks
 
 -- | TODO: update once blob references are implemented
-lookup :: WriteBuffer -> SerialisedKey -> Maybe (Entry SerialisedValue (BlobRef m h))
+lookup ::
+     WriteBuffer
+  -> SerialisedKey
+  -> Maybe (Entry SerialisedValue (WeakBlobRef m h))
 lookup (WB !m) !k = case Map.lookup k m of
     Nothing -> Nothing
     Just x  -> Just $! errOnBlob x
@@ -174,11 +177,11 @@ lookup (WB !m) !k = case Map.lookup k m of
 lookups' ::
      WriteBuffer
   -> V.Vector SerialisedKey
-  -> V.Vector (Maybe (Entry SerialisedValue (BlobRef m h)))
+  -> V.Vector (Maybe (Entry SerialisedValue (WeakBlobRef m h)))
 lookups' wb !ks = V.mapStrict (lookup wb) ks
 
 -- | TODO: remove once blob references are implemented
-errOnBlob :: Entry SerialisedValue SerialisedBlob -> Entry SerialisedValue (BlobRef m h)
+errOnBlob :: Entry SerialisedValue SerialisedBlob -> Entry SerialisedValue (WeakBlobRef m h)
 errOnBlob (Insert v)           = Insert v
 errOnBlob (InsertWithBlob _ b) = error $ "lookups: blob references not supported: " ++ show b
 errOnBlob (Mupdate v)          = Mupdate v

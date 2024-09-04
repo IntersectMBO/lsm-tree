@@ -1,6 +1,5 @@
 {-# LANGUAGE CPP       #-}
 {-# LANGUAGE DataKinds #-}
-{- HLINT ignore "Use unless" -}
 
 module Database.LSMTree.Internal (
     -- * Existentials
@@ -60,7 +59,6 @@ import           Control.DeepSeq
 import           Control.Monad (unless, void, when)
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Primitive
-import qualified Control.RefCount as RC
 import           Control.TempRegistry
 import           Control.Tracer
 import           Data.Arena (ArenaManager, newArenaManager)
@@ -78,7 +76,7 @@ import qualified Data.Set as Set
 import           Data.Typeable
 import qualified Data.Vector as V
 import           Data.Word (Word64)
-import           Database.LSMTree.Internal.BlobRef (BlobRef (..))
+import           Database.LSMTree.Internal.BlobRef (WeakBlobRef)
 import qualified Database.LSMTree.Internal.BlobRef as BlobRef
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.Entry (Entry, combineMaybe)
@@ -638,14 +636,14 @@ close th = do
           pure lvls
         pure TableHandleClosed
 
-{-# SPECIALISE lookups :: ResolveSerialisedValue -> V.Vector SerialisedKey -> TableHandle IO h -> (Maybe (Entry SerialisedValue (BlobRef IO (Handle h))) -> lookupResult) -> IO (V.Vector lookupResult) #-}
+{-# SPECIALISE lookups :: ResolveSerialisedValue -> V.Vector SerialisedKey -> TableHandle IO h -> (Maybe (Entry SerialisedValue (WeakBlobRef IO (Handle h))) -> lookupResult) -> IO (V.Vector lookupResult) #-}
 -- | See 'Database.LSMTree.Normal.lookups'.
 lookups ::
      m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
   => ResolveSerialisedValue
   -> V.Vector SerialisedKey
   -> TableHandle m h
-  -> (Maybe (Entry SerialisedValue (BlobRef m (Handle h))) -> lookupResult)
+  -> (Maybe (Entry SerialisedValue (WeakBlobRef m (Handle h))) -> lookupResult)
      -- ^ How to map from an entry to a lookup result.
   -> m (V.Vector lookupResult)
 lookups resolve ks th fromEntry = do
@@ -705,11 +703,12 @@ updates resolve es th = do
 retrieveBlobs ::
      m ~ IO  -- TODO: replace by @io-classes@ constraints for IO simulation.
   => Session m h
-  -> V.Vector (BlobRef m (FS.Handle h))
+  -> V.Vector (WeakBlobRef m (FS.Handle h))
   -> m (V.Vector SerialisedBlob)
-retrieveBlobs sesh refs =
+retrieveBlobs sesh wrefs =
     withOpenSession sesh $ \seshEnv ->
-      bracket_ upgradeWeakReferences removeReferences $ do
+      handle (\(BlobRef.WeakBlobRefInvalid i) -> throwIO (ErrBlobRefInvalid i)) $
+      BlobRef.withWeakBlobRefs wrefs $ \refs -> do
 
         -- Prepare the IOOps:
         -- We use a single large memory buffer, with appropriate offsets within
@@ -737,22 +736,6 @@ retrieveBlobs sesh refs =
                   (\off len -> SerialisedBlob (RB.fromByteArray off len ba))
                   bufOffs
                   (V.map BlobRef.blobRefSpanSize refs)
-  where
-    -- The BlobRef is a weak reference to a blob file. It does not keep the
-    -- file open using a reference count. So we have to upgrade our weak
-    -- reference to a (normal) strong reference while we read the blob, to
-    -- ensure it is not closed under our feet.
-    upgradeWeakReferences =
-      V.imapM_ (\i ref -> do
-                  ok <- RC.upgradeWeakReference (blobRefCount ref)
-                  when (not ok) $ do
-                    -- drop refs on the previous ones taken successfully so far
-                    V.mapM_ (RC.removeReference . blobRefCount) (V.take i refs)
-                    throwIO (ErrBlobRefInvalid i)
-               ) refs
-
-    removeReferences =
-      V.mapM_ (RC.removeReference . blobRefCount) refs
 
 {-------------------------------------------------------------------------------
   Cursors

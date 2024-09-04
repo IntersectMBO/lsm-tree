@@ -241,7 +241,9 @@ listSnapshots (Internal.Session' sesh) = Internal.listSnapshots sesh
 type BlobRef :: (Type -> Type) -> Type -> Type
 type role BlobRef nominal nominal
 data BlobRef m blob where
-    BlobRef :: Typeable h => Internal.BlobRef m (Handle h) -> BlobRef m blob
+    BlobRef :: Typeable h
+            => Internal.WeakBlobRef m (Handle h)
+            -> BlobRef m blob
 
 instance Show (BlobRef m blob) where
     showsPrec d (BlobRef b) = showsPrec d b
