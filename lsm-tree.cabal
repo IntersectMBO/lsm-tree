@@ -378,7 +378,7 @@ test-suite lsm-tree-test
   if !os(windows)
     build-depends: lsm-tree:fcntl-nocache
 
-  ghc-options:    -fno-ignore-asserts -threaded
+  ghc-options:    -threaded
 
 benchmark lsm-tree-micro-bench
   import:         language, warnings, wno-x-partial
@@ -732,7 +732,7 @@ test-suite blockio-api-test
     , temporary
     , vector
 
-  ghc-options:    -threaded -fno-ignore-asserts
+  ghc-options:    -threaded
 
 library blockio-sim
   import:          language, warnings, wno-x-partial
@@ -792,5 +792,3 @@ test-suite control-test
     , QuickCheck
     , tasty
     , tasty-quickcheck
-
-  ghc-options:    -fno-ignore-asserts
