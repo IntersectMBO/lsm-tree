@@ -65,7 +65,7 @@ assertNoThunks x = assert p
 
 -- | Also checks 'NoThunks' for the 'Normal.TableHandle's that are known to be
 -- open in the 'Common.Session'.
-instance (NoThunksIOLike m, Typeable m)
+instance (NoThunksIOLike m, Typeable m, Typeable (PrimState m))
       => NoThunks (Session' m ) where
   showTypeOf (_ :: Proxy (Session' m)) = "Session'"
   wNoThunks ctx (Session' s) = wNoThunks ctx s
@@ -84,15 +84,15 @@ instance (NoThunksIOLike m, Typeable m)
 deriving stock instance Generic (Internal.Session m h)
 -- | Also checks 'NoThunks' for the 'Internal.TableHandle's that are known to be
 -- open in the 'Internal.Session'.
-deriving anyclass instance (NoThunksIOLike m, Typeable m, Typeable h)
+deriving anyclass instance (NoThunksIOLike m, Typeable m, Typeable h, Typeable (PrimState m))
                         => NoThunks (Internal.Session m h)
 
 deriving stock instance Generic (SessionState m h)
-deriving anyclass instance (NoThunksIOLike m, Typeable m, Typeable h)
+deriving anyclass instance (NoThunksIOLike m, Typeable m, Typeable h, Typeable (PrimState m))
                         => NoThunks (SessionState m h)
 
 deriving stock instance Generic (SessionEnv m h)
-deriving anyclass instance (NoThunksIOLike m, Typeable m, Typeable h)
+deriving anyclass instance (NoThunksIOLike m, Typeable m, Typeable h, Typeable (PrimState m))
                         => NoThunks (SessionEnv m h)
 
 deriving stock instance Generic (Internal.TableHandle m h)
@@ -112,16 +112,17 @@ deriving via AllowThunksIn ["tableSession", "tableSessionEnv"] (TableHandleEnv m
 -- | Does not check 'NoThunks' for the 'Internal.Session' that this
 -- 'Internal.Cursor' belongs to.
 deriving stock instance Generic (Internal.Cursor m h)
-deriving anyclass instance (NoThunksIOLike m, Typeable m, Typeable h)
+deriving anyclass instance (NoThunksIOLike m, Typeable m, Typeable h, Typeable (PrimState m))
                         => NoThunks (Internal.Cursor m h)
 
 deriving stock instance Generic (CursorState m h)
-deriving anyclass instance (NoThunksIOLike m, Typeable m, Typeable h)
+deriving anyclass instance (NoThunksIOLike m, Typeable m, Typeable h, Typeable (PrimState m))
                         => NoThunks (CursorState m h)
 
 deriving stock instance Generic (CursorEnv m h)
 deriving via AllowThunksIn ["cursorSession", "cursorSessionEnv"] (CursorEnv m h)
-    instance (Typeable m, Typeable h) => NoThunks (CursorEnv m h)
+    instance (Typeable m, Typeable h, Typeable (PrimState m))
+          => NoThunks (CursorEnv m h)
 
 {-------------------------------------------------------------------------------
   UniqCounter
@@ -239,7 +240,8 @@ deriving anyclass instance NoThunks NumEntries
 -------------------------------------------------------------------------------}
 
 deriving stock instance Generic (Readers s (Handle h))
-deriving anyclass instance NoThunks (Readers s (Handle h))
+deriving anyclass instance (Typeable s, Typeable h)
+                        => NoThunks (Readers s (Handle h))
 
 deriving stock instance Generic ReaderNumber
 deriving anyclass instance NoThunks ReaderNumber
@@ -348,8 +350,21 @@ deriving anyclass instance NoThunks RefCount
   kmerge
 -------------------------------------------------------------------------------}
 
-deriving stock instance Generic (MutableHeap s a)
-deriving anyclass instance NoThunks a => NoThunks (MutableHeap s a)
+instance (NoThunks a, Typeable s, Typeable a) => NoThunks (MutableHeap s a) where
+  showTypeOf (p :: Proxy (MutableHeap s a)) = show $ typeRep p
+  wNoThunks ctx
+    (MH (a :: PrimVar s Int) (b :: SmallMutableArray s a))
+    = allNoThunks [
+          noThunks ctx a
+          -- the small array may contain bogus/undefined placeholder values
+          -- after the first @n@ elements in the heap
+        , noThunks ctx $! do
+            n <- unsafeSTToIO (readPrimVar a)
+            allNoThunks [
+                unsafeSTToIO (readSmallArray b i) >>= \x -> noThunks ctx x
+              | i <- [0..n-1]
+              ]
+        ]
 
 {-------------------------------------------------------------------------------
   IOLike
