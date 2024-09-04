@@ -36,7 +36,7 @@ import           Control.RefCount (RefCount (..), readRefCount)
 import           Database.LSMTree.Extras (showPowersOf10)
 import           Database.LSMTree.Extras.Generators (KeyForIndexCompact (..),
                      TypedWriteBuffer (..))
-import           Database.LSMTree.Internal.BlobRef (BlobRef (..), BlobSpan (..))
+import           Database.LSMTree.Internal.BlobRef (BlobSpan (..), readBlob)
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry
 import qualified Database.LSMTree.Internal.Normal as N
@@ -269,7 +269,5 @@ readKOps fs hbio run = do
       Reader.next fs hbio reader >>= \case
         Reader.Empty -> return []
         Reader.ReadEntry key e -> do
-          e' <- traverse resolveBlob $ Reader.toFullEntry e
+          e' <- traverse (readBlob fs) $ Reader.toFullEntry e
           ((key, e') :) <$> go reader
-
-    resolveBlob (BlobRef r s) = readBlob fs r s

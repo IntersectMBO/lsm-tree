@@ -44,7 +44,7 @@ module Database.LSMTree.Internal.Run (
   , sizeInPages
   , addReference
   , removeReference
-  , readBlob
+  , mkBlobRefForRun
     -- ** Run creation
   , fromMutable
   , fromWriteBuffer
@@ -61,16 +61,13 @@ import qualified Control.RefCount as RC
 import           Data.BloomFilter (Bloom)
 import qualified Data.ByteString.Short as SBS
 import           Data.Foldable (for_)
-import           Data.Primitive.ByteArray (newPinnedByteArray,
-                     unsafeFreezeByteArray)
-import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
+import           Database.LSMTree.Internal.BlobRef (BlobRef (..), BlobSpan (..))
 import           Database.LSMTree.Internal.BloomFilter (bloomFilterFromSBS)
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
 import           Database.LSMTree.Internal.IndexCompact (IndexCompact, NumPages)
 import qualified Database.LSMTree.Internal.IndexCompact as Index
 import           Database.LSMTree.Internal.Paths
-import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc)
 import           Database.LSMTree.Internal.RunBuilder (RunBuilder)
 import qualified Database.LSMTree.Internal.RunBuilder as Builder
@@ -126,16 +123,14 @@ addReference r = RC.addReference (runRefCounter r)
 removeReference :: (PrimMonad m, MonadMask m) => Run m h -> m ()
 removeReference r = RC.removeReference (runRefCounter r)
 
--- | The 'BlobSpan' to read must come from this run!
-readBlob :: HasFS IO h -> Run IO (FS.Handle h) -> BlobSpan -> IO SerialisedBlob
-readBlob fs Run {..} BlobSpan {..} = do
-    let off = fromIntegral blobSpanOffset
-    let len = fromIntegral blobSpanSize
-    mba <- newPinnedByteArray len
-    _ <- FS.hGetBufExactlyAt fs runBlobFile mba 0 (fromIntegral len) off
-    ba <- unsafeFreezeByteArray mba
-    let !rb = RB.fromByteArray 0 len ba
-    return (SerialisedBlob rb)
+-- | Helper function to make a 'BlobRef' that points into a 'Run'.
+mkBlobRefForRun :: Run m h -> BlobSpan -> BlobRef m h
+mkBlobRefForRun Run{runBlobFile, runRefCounter} blobRefSpan =
+    BlobRef {
+      blobRefFile  = runBlobFile,
+      blobRefCount = runRefCounter,
+      blobRefSpan
+    }
 
 -- | Close the files used in the run, but do not remove them from disk.
 -- After calling this operation, the run must not be used anymore.

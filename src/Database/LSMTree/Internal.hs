@@ -1,5 +1,6 @@
 {-# LANGUAGE CPP       #-}
 {-# LANGUAGE DataKinds #-}
+{- HLINT ignore "Use unless" -}
 
 module Database.LSMTree.Internal (
     -- * Existentials
@@ -33,6 +34,7 @@ module Database.LSMTree.Internal (
   , close
   , lookups
   , updates
+  , retrieveBlobs
     -- ** Cursor API
   , Cursor (..)
   , CursorState (..)
@@ -58,6 +60,7 @@ import           Control.DeepSeq
 import           Control.Monad (unless, void, when)
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Primitive
+import qualified Control.RefCount as RC
 import           Control.TempRegistry
 import           Control.Tracer
 import           Data.Arena (ArenaManager, newArenaManager)
@@ -70,11 +73,13 @@ import           Data.Kind
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (catMaybes)
+import qualified Data.Primitive.ByteArray as P
 import qualified Data.Set as Set
 import           Data.Typeable
 import qualified Data.Vector as V
 import           Data.Word (Word64)
-import           Database.LSMTree.Internal.BlobRef
+import           Database.LSMTree.Internal.BlobRef (BlobRef (..))
+import qualified Database.LSMTree.Internal.BlobRef as BlobRef
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.Entry (Entry, combineMaybe)
 import           Database.LSMTree.Internal.Lookup (ByteCountDiscrepancy,
@@ -83,11 +88,12 @@ import           Database.LSMTree.Internal.MergeSchedule
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..),
                      SessionRoot (..), SnapshotName)
 import qualified Database.LSMTree.Internal.Paths as Paths
+import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunNumber
 import qualified Database.LSMTree.Internal.RunReaders as Readers
-import           Database.LSMTree.Internal.Serialise (SerialisedBlob,
+import           Database.LSMTree.Internal.Serialise (SerialisedBlob (..),
                      SerialisedKey, SerialisedValue)
 import           Database.LSMTree.Internal.UniqCounter
 import qualified Database.LSMTree.Internal.Vector as V
@@ -167,6 +173,18 @@ data LSMTreeError =
   | ErrSnapshotWrongType SnapshotName
     -- | Something went wrong during batch lookups.
   | ErrLookup ByteCountDiscrepancy
+    -- | A 'BlobRef' used with 'retrieveBlobs' was invalid.
+    --
+    -- 'BlobRef's are obtained from lookups in a 'TableHandle', but they may be
+    -- invalidated by subsequent changes in that 'TableHandle'. In general the
+    -- reliable way to retrieve blobs is not to change the 'TableHandle' before
+    -- retrieving the blobs. To allow later retrievals, duplicate the table
+    -- handle before making modifications and keep the table handle open until
+    -- all blob retrievals are complete.
+    --
+    -- The 'Int' index indicates which 'BlobRef' was invalid. Many may be
+    -- invalid but only the first is reported.
+  | ErrBlobRefInvalid Int
   deriving stock (Show)
   deriving anyclass (Exception)
 
@@ -620,14 +638,14 @@ close th = do
           pure lvls
         pure TableHandleClosed
 
-{-# SPECIALISE lookups :: ResolveSerialisedValue -> V.Vector SerialisedKey -> TableHandle IO h -> (Maybe (Entry SerialisedValue (BlobRef (Run IO (Handle h)))) -> lookupResult) -> IO (V.Vector lookupResult) #-}
+{-# SPECIALISE lookups :: ResolveSerialisedValue -> V.Vector SerialisedKey -> TableHandle IO h -> (Maybe (Entry SerialisedValue (BlobRef IO (Handle h))) -> lookupResult) -> IO (V.Vector lookupResult) #-}
 -- | See 'Database.LSMTree.Normal.lookups'.
 lookups ::
      m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
   => ResolveSerialisedValue
   -> V.Vector SerialisedKey
   -> TableHandle m h
-  -> (Maybe (Entry SerialisedValue (BlobRef (Run m (Handle h)))) -> lookupResult)
+  -> (Maybe (Entry SerialisedValue (BlobRef m (Handle h))) -> lookupResult)
      -- ^ How to map from an entry to a lookup result.
   -> m (V.Vector lookupResult)
 lookups resolve ks th fromEntry = do
@@ -679,6 +697,62 @@ updates resolve es th = do
             (tableSessionUniqCounter thEnv)
             es
             tc
+
+{-------------------------------------------------------------------------------
+  Blobs
+-------------------------------------------------------------------------------}
+
+retrieveBlobs ::
+     m ~ IO  -- TODO: replace by @io-classes@ constraints for IO simulation.
+  => Session m h
+  -> V.Vector (BlobRef m (FS.Handle h))
+  -> m (V.Vector SerialisedBlob)
+retrieveBlobs sesh refs =
+    withOpenSession sesh $ \seshEnv ->
+      bracket_ upgradeWeakReferences removeReferences $ do
+
+        -- Prepare the IOOps:
+        -- We use a single large memory buffer, with appropriate offsets within
+        -- the buffer.
+        let bufSize :: Int
+            !bufSize = V.sum (V.map BlobRef.blobRefSpanSize refs)
+
+            {-# INLINE bufOffs #-}
+            bufOffs :: V.Vector Int
+            bufOffs = V.scanl (+) 0 (V.map BlobRef.blobRefSpanSize refs)
+        buf <- P.newPinnedByteArray bufSize
+        let ioops = V.zipWith (BlobRef.readBlobIOOp buf) bufOffs refs
+            hbio  = sessionHasBlockIO seshEnv
+
+        -- Submit the IOOps all in one go:
+        _ <- FS.submitIO hbio ioops
+        -- We do not need to inspect the results because IO errors are
+        -- thrown as exceptions, and the result is just the read length
+        -- which is already known. Short reads can't happen here.
+
+        -- Construct the SerialisedBlobs results:
+        -- This is just the different offsets within the shared buffer.
+        ba <- P.unsafeFreezeByteArray buf
+        pure $! V.zipWith
+                  (\off len -> SerialisedBlob (RB.fromByteArray off len ba))
+                  bufOffs
+                  (V.map BlobRef.blobRefSpanSize refs)
+  where
+    -- The BlobRef is a weak reference to a blob file. It does not keep the
+    -- file open using a reference count. So we have to upgrade our weak
+    -- reference to a (normal) strong reference while we read the blob, to
+    -- ensure it is not closed under our feet.
+    upgradeWeakReferences =
+      V.imapM_ (\i ref -> do
+                  ok <- RC.upgradeWeakReference (blobRefCount ref)
+                  when (not ok) $ do
+                    -- drop refs on the previous ones taken successfully so far
+                    V.mapM_ (RC.removeReference . blobRefCount) (V.take i refs)
+                    throwIO (ErrBlobRefInvalid i)
+               ) refs
+
+    removeReferences =
+      V.mapM_ (RC.removeReference . blobRefCount) refs
 
 {-------------------------------------------------------------------------------
   Cursors

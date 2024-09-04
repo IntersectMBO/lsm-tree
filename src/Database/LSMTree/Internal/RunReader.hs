@@ -30,7 +30,6 @@ import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.RawOverflowPage (RawOverflowPage,
                      pinnedByteArrayToOverflowPages, rawOverflowPageRawBytes)
 import           Database.LSMTree.Internal.RawPage
-import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.Serialise
 import qualified System.FS.API as FS
@@ -100,12 +99,12 @@ data Result m fhandle
 
 data Entry m fhandle =
     Entry
-      !(E.Entry SerialisedValue (BlobRef (Run m fhandle)))
+      !(E.Entry SerialisedValue (BlobRef m fhandle))
   | -- | A large entry. The caller might be interested in various different
     -- (redundant) representation, so we return all of them.
     EntryOverflow
       -- | The value is just a prefix, with the remainder in the overflow pages.
-      !(E.Entry SerialisedValue (BlobRef (Run m fhandle)))
+      !(E.Entry SerialisedValue (BlobRef m fhandle))
       -- | A page containing the single entry (or rather its prefix).
       !RawPage
       -- | Non-zero length of the overflow in bytes.
@@ -119,7 +118,7 @@ data Entry m fhandle =
       ![RawOverflowPage]
 
 mkEntryOverflow ::
-     E.Entry SerialisedValue (BlobRef (Run m fhandle))
+     E.Entry SerialisedValue (BlobRef m fhandle)
   -> RawPage
   -> Word32
   -> [RawOverflowPage]
@@ -131,7 +130,7 @@ mkEntryOverflow entryPrefix page len overflowPages =
       EntryOverflow entryPrefix page len overflowPages
 
 {-# INLINE toFullEntry #-}
-toFullEntry :: Entry m fhandle -> E.Entry SerialisedValue (BlobRef (Run m fhandle))
+toFullEntry :: Entry m fhandle -> E.Entry SerialisedValue (BlobRef m fhandle)
 toFullEntry = \case
     Entry e ->
       e
@@ -172,13 +171,13 @@ next fs hbio reader@RunReader {..} = do
                 go 0 newPage  -- try again on the new page
           IndexEntry key entry -> do
             modifyPrimVar readerCurrentEntryNo (+1)
-            let entry' = fmap (BlobRef readerRun) entry
+            let entry' = fmap (Run.mkBlobRefForRun readerRun) entry
             let rawEntry = Entry entry'
             return (ReadEntry key rawEntry)
           IndexEntryOverflow key entry lenSuffix -> do
             -- TODO: we know that we need the next page, could already load?
             modifyPrimVar readerCurrentEntryNo (+1)
-            let entry' = fmap (BlobRef readerRun) entry
+            let entry' = fmap (Run.mkBlobRefForRun readerRun) entry
             overflowPages <- readOverflowPages fs readerKOpsHandle lenSuffix
             let rawEntry = mkEntryOverflow entry' page lenSuffix overflowPages
             return (ReadEntry key rawEntry)
