@@ -275,8 +275,8 @@ deriving anyclass instance NoThunks RawOverflowPage
   BlobRef
 -------------------------------------------------------------------------------}
 
-deriving stock instance Generic (BlobRef r)
-deriving anyclass instance NoThunks r => NoThunks (BlobRef r)
+deriving stock instance Generic (BlobRef m h)
+deriving anyclass instance NoThunks h => NoThunks (BlobRef m h)
 
 deriving stock instance Generic BlobSpan
 deriving anyclass instance NoThunks BlobSpan

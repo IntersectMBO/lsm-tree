@@ -60,6 +60,7 @@ import           Control.DeepSeq
 import           Control.Monad (unless, void, when)
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Primitive
+import qualified Control.RefCount as RC
 import           Control.TempRegistry
 import           Control.Tracer
 import           Data.Arena (ArenaManager, newArenaManager)
@@ -77,7 +78,8 @@ import qualified Data.Set as Set
 import           Data.Typeable
 import qualified Data.Vector as V
 import           Data.Word (Word64)
-import           Database.LSMTree.Internal.BlobRef
+import           Database.LSMTree.Internal.BlobRef (BlobRef (..))
+import qualified Database.LSMTree.Internal.BlobRef as BlobRef
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.Entry (Entry, combineMaybe)
 import           Database.LSMTree.Internal.Lookup (ByteCountDiscrepancy,
@@ -636,14 +638,14 @@ close th = do
           pure lvls
         pure TableHandleClosed
 
-{-# SPECIALISE lookups :: ResolveSerialisedValue -> V.Vector SerialisedKey -> TableHandle IO h -> (Maybe (Entry SerialisedValue (BlobRef (Run IO (Handle h)))) -> lookupResult) -> IO (V.Vector lookupResult) #-}
+{-# SPECIALISE lookups :: ResolveSerialisedValue -> V.Vector SerialisedKey -> TableHandle IO h -> (Maybe (Entry SerialisedValue (BlobRef IO (Handle h))) -> lookupResult) -> IO (V.Vector lookupResult) #-}
 -- | See 'Database.LSMTree.Normal.lookups'.
 lookups ::
      m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
   => ResolveSerialisedValue
   -> V.Vector SerialisedKey
   -> TableHandle m h
-  -> (Maybe (Entry SerialisedValue (BlobRef (Run m (Handle h)))) -> lookupResult)
+  -> (Maybe (Entry SerialisedValue (BlobRef m (Handle h))) -> lookupResult)
      -- ^ How to map from an entry to a lookup result.
   -> m (V.Vector lookupResult)
 lookups resolve ks th fromEntry = do
@@ -703,7 +705,7 @@ updates resolve es th = do
 retrieveBlobs ::
      m ~ IO  -- TODO: replace by @io-classes@ constraints for IO simulation.
   => Session m h
-  -> V.Vector (BlobRef (Run m (FS.Handle h)))
+  -> V.Vector (BlobRef m (FS.Handle h))
   -> m (V.Vector SerialisedBlob)
 retrieveBlobs sesh refs =
     withOpenSession sesh $ \seshEnv ->
@@ -713,13 +715,13 @@ retrieveBlobs sesh refs =
         -- We use a single large memory buffer, with appropriate offsets within
         -- the buffer.
         let bufSize :: Int
-            !bufSize = V.sum (V.map blobRefSpanSize refs)
+            !bufSize = V.sum (V.map BlobRef.blobRefSpanSize refs)
 
             {-# INLINE bufOffs #-}
             bufOffs :: V.Vector Int
-            bufOffs = V.scanl (+) 0 (V.map blobRefSpanSize refs)
+            bufOffs = V.scanl (+) 0 (V.map BlobRef.blobRefSpanSize refs)
         buf <- P.newPinnedByteArray bufSize
-        let ioops = V.zipWith (Run.readBlobIOOp buf) bufOffs refs
+        let ioops = V.zipWith (BlobRef.readBlobIOOp buf) bufOffs refs
             hbio  = sessionHasBlockIO seshEnv
 
         -- Submit the IOOps all in one go:
@@ -734,26 +736,23 @@ retrieveBlobs sesh refs =
         pure $! V.zipWith
                   (\off len -> SerialisedBlob (RB.fromByteArray off len ba))
                   bufOffs
-                  (V.map blobRefSpanSize refs)
+                  (V.map BlobRef.blobRefSpanSize refs)
   where
-    blobRefSpanSize :: BlobRef r -> Int
-    blobRefSpanSize = fromIntegral . blobSpanSize . blobRefSpan
-
-    -- The BlobRef is a weak reference to the Run. It does not keep the run
-    -- open using a reference count. So we have to upgrade our weak
+    -- The BlobRef is a weak reference to a blob file. It does not keep the
+    -- file open using a reference count. So we have to upgrade our weak
     -- reference to a (normal) strong reference while we read the blob, to
     -- ensure it is not closed under our feet.
     upgradeWeakReferences =
       V.imapM_ (\i ref -> do
-                  ok <- Run.upgradeWeakReference (blobRefRun ref)
+                  ok <- RC.upgradeWeakReference (blobRefCount ref)
                   when (not ok) $ do
                     -- drop refs on the previous ones taken successfully so far
-                    V.mapM_ (Run.removeReference . blobRefRun) (V.take i refs)
+                    V.mapM_ (RC.removeReference . blobRefCount) (V.take i refs)
                     throwIO (ErrBlobRefInvalid i)
                ) refs
 
     removeReferences =
-      V.mapM_ (Run.removeReference . blobRefRun) refs
+      V.mapM_ (RC.removeReference . blobRefCount) refs
 
 {-------------------------------------------------------------------------------
   Cursors

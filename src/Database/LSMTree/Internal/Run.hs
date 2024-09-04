@@ -44,9 +44,7 @@ module Database.LSMTree.Internal.Run (
   , sizeInPages
   , addReference
   , removeReference
-  , upgradeWeakReference
-  , readBlob
-  , readBlobIOOp
+  , mkBlobRefForRun
     -- ** Run creation
   , fromMutable
   , fromWriteBuffer
@@ -63,8 +61,6 @@ import qualified Control.RefCount as RC
 import           Data.BloomFilter (Bloom)
 import qualified Data.ByteString.Short as SBS
 import           Data.Foldable (for_)
-import qualified Data.Primitive.ByteArray as P (MutableByteArray,
-                     newPinnedByteArray, unsafeFreezeByteArray)
 import           Database.LSMTree.Internal.BlobRef (BlobRef (..), BlobSpan (..))
 import           Database.LSMTree.Internal.BloomFilter (bloomFilterFromSBS)
 import qualified Database.LSMTree.Internal.CRC32C as CRC
@@ -72,7 +68,6 @@ import           Database.LSMTree.Internal.Entry (NumEntries (..))
 import           Database.LSMTree.Internal.IndexCompact (IndexCompact, NumPages)
 import qualified Database.LSMTree.Internal.IndexCompact as Index
 import           Database.LSMTree.Internal.Paths
-import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc)
 import           Database.LSMTree.Internal.RunBuilder (RunBuilder)
 import qualified Database.LSMTree.Internal.RunBuilder as Builder
@@ -124,43 +119,18 @@ sizeInPages = Index.sizeInPages . runIndex
 addReference :: PrimMonad m => Run m h -> m ()
 addReference r = RC.addReference (runRefCounter r)
 
-{-# SPECIALISE upgradeWeakReference :: Run IO h -> IO Bool #-}
-upgradeWeakReference :: PrimMonad m => Run m h -> m Bool
-upgradeWeakReference r = RC.upgradeWeakReference (runRefCounter r)
-
 {-# SPECIALISE removeReference :: Run IO h -> IO () #-}
 removeReference :: (PrimMonad m, MonadMask m) => Run m h -> m ()
 removeReference r = RC.removeReference (runRefCounter r)
 
--- | The 'BlobSpan' to read must come from this run!
-readBlob :: HasFS IO h -> BlobRef (Run m (FS.Handle h)) -> IO SerialisedBlob
-readBlob fs BlobRef {
-              blobRefRun  = Run {runBlobFile},
-              blobRefSpan = BlobSpan {blobSpanOffset, blobSpanSize}
-            } = do
-    let off = FS.AbsOffset blobSpanOffset
-        len :: Int
-        len = fromIntegral blobSpanSize
-    mba <- P.newPinnedByteArray len
-    _ <- FS.hGetBufExactlyAt fs runBlobFile mba 0
-                             (fromIntegral len :: FS.ByteCount) off
-    ba <- P.unsafeFreezeByteArray mba
-    let !rb = RB.fromByteArray 0 len ba
-    return (SerialisedBlob rb)
-
-readBlobIOOp :: P.MutableByteArray s -> Int
-             -> BlobRef (Run m (FS.Handle h))
-             -> FS.IOOp s h
-readBlobIOOp buf bufoff
-             BlobRef {
-               blobRefRun  = Run {runBlobFile},
-               blobRefSpan = BlobSpan {blobSpanOffset, blobSpanSize}
-             } =
-    FS.IOOpRead
-      runBlobFile
-      (fromIntegral blobSpanOffset :: FS.FileOffset)
-      buf (FS.BufferOffset bufoff)
-      (fromIntegral blobSpanSize :: FS.ByteCount)
+-- | Helper function to make a 'BlobRef' that points into a 'Run'.
+mkBlobRefForRun :: Run m h -> BlobSpan -> BlobRef m h
+mkBlobRefForRun Run{runBlobFile, runRefCounter} blobRefSpan =
+    BlobRef {
+      blobRefFile  = runBlobFile,
+      blobRefCount = runRefCounter,
+      blobRefSpan
+    }
 
 -- | Close the files used in the run, but do not remove them from disk.
 -- After calling this operation, the run must not be used anymore.

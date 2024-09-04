@@ -36,7 +36,7 @@ import           Control.RefCount (RefCount (..), readRefCount)
 import           Database.LSMTree.Extras (showPowersOf10)
 import           Database.LSMTree.Extras.Generators (KeyForIndexCompact (..),
                      TypedWriteBuffer (..))
-import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
+import           Database.LSMTree.Internal.BlobRef (BlobSpan (..), readBlob)
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry
 import qualified Database.LSMTree.Internal.Normal as N

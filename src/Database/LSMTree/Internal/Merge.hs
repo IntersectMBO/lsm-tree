@@ -14,7 +14,8 @@ import           Control.Monad.Primitive (RealWorld)
 import           Control.RefCount (RefCount (..))
 import           Data.Coerce (coerce)
 import           Data.Traversable (for)
-import           Database.LSMTree.Internal.BlobRef (BlobRef (..))
+import           Database.LSMTree.Internal.BlobRef (BlobRef)
+import qualified Database.LSMTree.Internal.BlobRef as BlobRef
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.Run (Run, RunDataCaching)
 import qualified Database.LSMTree.Internal.Run as Run
@@ -199,7 +200,7 @@ writeReaderEntry fs level builder key entry@(Reader.EntryOverflow prefix page _ 
         -- has blob, we can't just copy the first page, fall back
         -- we simply append the overflow pages to the value
         Builder.addKeyOp fs builder key
-          =<< traverse (Run.readBlob fs) (Reader.toFullEntry entry)
+          =<< traverse (BlobRef.readBlob fs) (Reader.toFullEntry entry)
         -- TODO(optimise): This copies the overflow pages unnecessarily.
         -- We could extend the RunBuilder API to allow to either:
         -- 1. write an Entry (containing the value prefix) + [RawOverflowPage]
@@ -215,11 +216,11 @@ writeSerialisedEntry ::
   -> Level
   -> RunBuilder RealWorld (FS.Handle h)
   -> SerialisedKey
-  -> Entry SerialisedValue (BlobRef (Run IO (FS.Handle h)))
+  -> Entry SerialisedValue (BlobRef IO (FS.Handle h))
   -> IO ()
 writeSerialisedEntry fs level builder key entry =
     when (shouldWriteEntry level entry) $
-      Builder.addKeyOp fs builder key =<< traverse (Run.readBlob fs) entry
+      Builder.addKeyOp fs builder key =<< traverse (BlobRef.readBlob fs) entry
 
 -- One the last level we could also turn Mupdate into Insert,
 -- but no need to complicate things.

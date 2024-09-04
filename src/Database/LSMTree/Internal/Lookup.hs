@@ -48,7 +48,7 @@ import qualified Database.LSMTree.Internal.IndexCompact as Index
 import           Database.LSMTree.Internal.RawBytes (RawBytes (..))
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.RawPage
-import           Database.LSMTree.Internal.Run (Run)
+import           Database.LSMTree.Internal.Run (Run, mkBlobRefForRun)
 import           Database.LSMTree.Internal.Serialise
 import qualified Database.LSMTree.Internal.Vector as V
 import           System.FS.API (BufferOffset (..), Handle)
@@ -222,7 +222,7 @@ data ByteCountDiscrepancy = ByteCountDiscrepancy {
     -> V.Vector IndexCompact
     -> V.Vector (Handle h)
     -> V.Vector SerialisedKey
-    -> IO (V.Vector (Maybe (Entry SerialisedValue (BlobRef (Run IO (Handle h))))))
+    -> IO (V.Vector (Maybe (Entry SerialisedValue (BlobRef IO (Handle h)))))
   #-}
 -- | Batched lookups in I\/O.
 --
@@ -240,7 +240,7 @@ lookupsIO ::
   -> V.Vector IndexCompact -- ^ The indexes inside @rs@
   -> V.Vector (Handle h) -- ^ The file handles to the key\/value files inside @rs@
   -> V.Vector SerialisedKey
-  -> m (V.Vector (Maybe (Entry SerialisedValue (BlobRef (Run m (Handle h))))))
+  -> m (V.Vector (Maybe (Entry SerialisedValue (BlobRef m (Handle h)))))
 lookupsIO !hbio !mgr !resolveV !rs !blooms !indexes !kopsFiles !ks = assert precondition $ withArena mgr $ \arena -> do
     (rkixs, ioops) <- Class.stToIO $ prepLookups arena blooms indexes kopsFiles ks
     ioress <- submitIO hbio ioops
@@ -261,7 +261,7 @@ lookupsIO !hbio !mgr !resolveV !rs !blooms !indexes !kopsFiles !ks = assert prec
     -> VU.Vector (RunIx, KeyIx)
     -> V.Vector (IOOp RealWorld h)
     -> VU.Vector IOResult
-    -> IO (V.Vector (Maybe (Entry SerialisedValue (BlobRef (Run IO (Handle h))))))
+    -> IO (V.Vector (Maybe (Entry SerialisedValue (BlobRef IO (Handle h)))))
   #-}
 -- | Intra-page lookups.
 --
@@ -276,7 +276,7 @@ intraPageLookups ::
   -> VU.Vector (RunIx, KeyIx)
   -> V.Vector (IOOp (PrimState m) h)
   -> VU.Vector IOResult
-  -> m (V.Vector (Maybe (Entry SerialisedValue (BlobRef (Run m (Handle h))))))
+  -> m (V.Vector (Maybe (Entry SerialisedValue (BlobRef m (Handle h)))))
 intraPageLookups !resolveV !rs !ks !rkixs !ioops !ioress = do
     res <- VM.replicate (V.length ks) Nothing
     loop res 0
@@ -285,7 +285,7 @@ intraPageLookups !resolveV !rs !ks !rkixs !ioops !ioress = do
     !n = V.length ioops
 
     loop ::
-         VM.MVector (PrimState m) (Maybe (Entry SerialisedValue (BlobRef (Run m (Handle h)))))
+         VM.MVector (PrimState m) (Maybe (Entry SerialisedValue (BlobRef m (Handle h))))
       -> Int
       -> m ()
     loop !res !ioopix
@@ -304,7 +304,7 @@ intraPageLookups !resolveV !rs !ks !rkixs !ioops !ioress = do
             -- Laziness ensures that we only compute the forcing of the value in
             -- the entry when the result is needed.
             LookupEntry e         -> do
-                let e' = bimap copySerialisedValue (BlobRef r) e
+                let e' = bimap copySerialisedValue (mkBlobRefForRun r) e
                 V.unsafeInsertWithMStrict res (combine resolveV) kix e'
             -- Laziness ensures that we only compute the appending of the prefix
             -- and suffix when the result is needed. We do not use 'force' here,
@@ -315,7 +315,7 @@ intraPageLookups !resolveV !rs !ks !rkixs !ioops !ioress = do
                                   (unBufferOffset (ioopBufferOffset ioop) + 4096)
                                   (fromIntegral m)
                                   buf)
-                    e' = bimap v' (BlobRef r) e
+                    e' = bimap v' (mkBlobRefForRun r) e
                 V.unsafeInsertWithMStrict res (combine resolveV) kix e'
           loop res (ioopix + 1)
 
