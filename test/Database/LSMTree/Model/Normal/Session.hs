@@ -211,7 +211,6 @@ close TableHandle{..} = state $ \Model{..} ->
     let tableHandles' = Map.delete tableHandleID tableHandles
         model' = Model {
             tableHandles = tableHandles'
-          , nextTableHandleID
           , ..
           }
     in ((), model')
@@ -233,15 +232,6 @@ guardTableHandleIsOpen TableHandle{..} =
         throwError ErrTableHandleClosed
       Just (updc, tbl) ->
         pure (updc, fromJust $ fromSomeTable tbl)
-
-guardTableHandleIsOpen' ::
-     forall m. (MonadState Model m, MonadError Err m)
-  => TableHandleID
-  -> m UpdateCounter
-guardTableHandleIsOpen' thid =
-    gets (Map.lookup thid . tableHandles) >>= \case
-      Nothing   -> throwError ErrTableHandleClosed
-      Just (updc, _) -> pure updc
 
 newTableWith ::
      (MonadState Model m, C k v blob)
@@ -283,7 +273,7 @@ lookups ::
   -> m (V.Vector (Model.LookupResult v (BlobRef blob)))
 lookups ks th = do
     (updc, table) <- guardTableHandleIsOpen th
-    pure $ liftBlobRefs th updc $ Model.lookups ks table
+    pure $ liftBlobRefs (SomeTableID updc (tableHandleID th)) $ Model.lookups ks table
 
 type QueryResult k v blobref = Model.QueryResult k v blobref
 
@@ -299,7 +289,7 @@ rangeLookup ::
   -> m (V.Vector (QueryResult k v (BlobRef blob)))
 rangeLookup r th = do
     (updc, table) <- guardTableHandleIsOpen th
-    pure $ liftBlobRefs th updc $ Model.rangeLookup r table
+    pure $ liftBlobRefs (SomeTableID updc (tableHandleID th)) $ Model.rangeLookup r table
 
 updates ::
      ( MonadState Model m
@@ -348,15 +338,14 @@ deletes = updates . fmap (,Model.Delete)
 -- | For more details: 'Database.LSMTree.Internal.BlobRef' describes the
 -- intended semantics of blob references.
 data BlobRef blob = BlobRef {
-    parentTableID :: TableHandleID
-  , createdAt     :: UpdateCounter
-  , innerBlob     :: Model.BlobRef blob
+    handleRef :: !(SomeHandleID blob)
+  , innerBlob :: !(Model.BlobRef blob)
   }
 
 deriving stock instance Show blob => Show (BlobRef blob)
 
 retrieveBlobs ::
-     ( MonadState Model m
+     forall m blob. ( MonadState Model m
      , MonadError Err m
      , Model.SerialiseValue blob
      )
@@ -364,23 +353,40 @@ retrieveBlobs ::
   -> m (V.Vector blob)
 retrieveBlobs refs = Model.retrieveBlobs <$> V.mapM guard refs
   where
-    -- guard that the table is still open, and the table wasn't updated
     guard BlobRef{..} = do
-        updc <- guardTableHandleIsOpen' parentTableID
-        when (updc /= createdAt) $ throwError ErrBlobRefInvalidated
+        m <- get
+        -- In the real implementation, a blob reference /could/ be invalidated
+        -- every time you modify a table. This model takes the most
+        -- conservative approach: a blob reference is immediately invalidated
+        -- every time a table is modified.
+        case handleRef of
+          SomeTableID createdAt tableID ->
+            case Map.lookup tableID (tableHandles m) of
+              -- If the table is now closed, it means the table has been modified.
+              Nothing -> errInvalid
+              -- If the table is open, we check timestamps (i.e., UpdateCounter)
+              -- to see if any modifications were made.
+              Just (updc, _) -> do
+                when (updc /= createdAt) $ errInvalid
         pure innerBlob
+
+    errInvalid :: m a
+    errInvalid = throwError ErrBlobRefInvalidated
 
 --
 -- Utility
 --
 
+data SomeHandleID blob where
+  SomeTableID  :: !UpdateCounter -> !TableHandleID -> SomeHandleID blob
+  deriving stock Show
+
 liftBlobRefs ::
      (Functor f, Functor g)
-  => TableHandle k v blob
-  -> UpdateCounter
+  => SomeHandleID blob
   -> g (f (Model.BlobRef blob))
   -> g (f (BlobRef blob))
-liftBlobRefs th c = fmap (fmap (BlobRef (tableHandleID th) c))
+liftBlobRefs hid = fmap (fmap (BlobRef hid))
 
 {-------------------------------------------------------------------------------
   Snapshots

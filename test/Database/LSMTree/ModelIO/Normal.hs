@@ -112,9 +112,9 @@ lookups ::
   => V.Vector k
   -> TableHandle m k v blob
   -> m (V.Vector (LookupResult v (BlobRef m blob)))
-lookups ks th@TableHandle {..} = atomically $
+lookups ks TableHandle {..} = atomically $
     withModel "lookups" thSession thRef $ \(updc, tbl) ->
-        return $ liftBlobRefs th updc $ Model.lookups ks tbl
+      return $ liftBlobRefs thSession (SomeTableRef updc thRef) $ Model.lookups ks tbl
 
 -- | Perform a range lookup.
 rangeLookup ::
@@ -122,9 +122,9 @@ rangeLookup ::
   => Model.Range k
   -> TableHandle m k v blob
   -> m (V.Vector (QueryResult k v (BlobRef m blob)))
-rangeLookup r th@TableHandle {..} = atomically $
+rangeLookup r TableHandle {..} = atomically $
     withModel "rangeLookup" thSession thRef $ \(updc, tbl) ->
-        return $ liftBlobRefs th updc $ Model.rangeLookup r tbl
+      return $ liftBlobRefs thSession (SomeTableRef updc thRef) $ Model.rangeLookup r tbl
 
 -- | Perform a mixed batch of inserts and deletes.
 updates ::
@@ -154,22 +154,21 @@ deletes = updates . fmap (,Model.Delete)
 
 data BlobRef m blob = BlobRef {
     brSession   :: !(Session m)
-  , brRef       :: !(SomeTableRef m blob)
-  , brCreatedAt :: !UpdateCounter
+  , brHandleRef :: !(SomeHandleRef m blob)
   , brBlob      :: !(Model.BlobRef blob)
   }
 
-data SomeTableRef m blob where
-  SomeTableRef :: !(TMVar m (UpdateCounter, Model.Table k v blob)) -> SomeTableRef m blob
+data SomeHandleRef m blob where
+  SomeTableRef  :: !UpdateCounter -> !(TMVar m (UpdateCounter, Model.Table k v blob)) -> SomeHandleRef m blob
 
 liftBlobRefs ::
-     forall m f g k v blob. (Functor f, Functor g)
-  => TableHandle m k v blob
-  -> UpdateCounter
+     forall m f g blob. (Functor f, Functor g)
+  => Session m
+  -> SomeHandleRef m blob
   -> g (f (Model.BlobRef blob))
   -> g (f (BlobRef m blob))
-liftBlobRefs TableHandle{..} updc = fmap (fmap liftBlobRef)
-  where liftBlobRef = BlobRef thSession (SomeTableRef thRef) updc
+liftBlobRefs s href = fmap (fmap liftBlobRef)
+  where liftBlobRef = BlobRef s href
 
 -- | Perform a batch of blob retrievals.
 retrieveBlobs ::
@@ -179,12 +178,26 @@ retrieveBlobs ::
   -> m (V.Vector blob)
 retrieveBlobs _ brefs = atomically $ Model.retrieveBlobs <$> mapM guard brefs
   where
-    -- Ensure that the session and table handle for each of the blob refs are
-    -- still open, and that the table wasn't updated.
     guard :: BlobRef m blob -> STM m (Model.BlobRef blob)
-    guard BlobRef{brRef = SomeTableRef ref, ..} =
-      withModel "retrieveBlobs" brSession ref $ \(updc, _tbl) -> do
-        when (updc /= brCreatedAt) $ throwSTM IOError
+    guard BlobRef{..} = do
+      check_session_open "retrieveBlobs" brSession
+      -- In the real implementation, a blob reference /could/ be invalidated
+      -- every time you modify a table. This model takes the most
+      -- conservative approach: a blob reference is immediately invalidated
+      -- every time a table is modified.
+      case brHandleRef of
+        SomeTableRef createdAt tableRef ->
+          tryReadTMVar tableRef >>= \case
+            -- If the table is now closed, it means the table has been modified.
+            Nothing -> errInvalid
+            -- If the table is open, we check timestamps (i.e., UpdateCounter)
+            -- to see if any modifications were made.
+            Just (updc, _) -> do
+              when (updc /= createdAt) $ errInvalid
+              pure brBlob
+
+    errInvalid :: STM m a
+    errInvalid = throwSTM IOError
             { ioe_handle      = Nothing
             , ioe_type        = IllegalOperation
             , ioe_location    = "retrieveBlobs"
@@ -192,7 +205,6 @@ retrieveBlobs _ brefs = atomically $ Model.retrieveBlobs <$> mapM guard brefs
             , ioe_errno       = Nothing
             , ioe_filename    = Nothing
             }
-        pure brBlob
 
 {-------------------------------------------------------------------------------
   Snapshots
