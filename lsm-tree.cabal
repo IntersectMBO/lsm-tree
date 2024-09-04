@@ -394,6 +394,7 @@ benchmark lsm-tree-micro-bench
     Bench.Database.LSMTree.Internal.Serialise
     Bench.Database.LSMTree.Internal.WriteBuffer
     Bench.Database.LSMTree.Monoidal
+    Bench.Database.LSMTree.Normal
     Database.LSMTree.Extras
     Database.LSMTree.Extras.Generators
     Database.LSMTree.Extras.Orphans

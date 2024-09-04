@@ -11,6 +11,7 @@ import qualified Bench.Database.LSMTree.Internal.RawPage
 import qualified Bench.Database.LSMTree.Internal.Serialise
 import qualified Bench.Database.LSMTree.Internal.WriteBuffer
 import qualified Bench.Database.LSMTree.Monoidal
+import qualified Bench.Database.LSMTree.Normal
 import           Criterion.Main (defaultMain)
 
 main :: IO ()
@@ -27,4 +28,5 @@ main = do
       , Bench.Database.LSMTree.Internal.Serialise.benchmarks
       , Bench.Database.LSMTree.Internal.WriteBuffer.benchmarks
       , Bench.Database.LSMTree.Monoidal.benchmarks
+      , Bench.Database.LSMTree.Normal.benchmarks
       ]
