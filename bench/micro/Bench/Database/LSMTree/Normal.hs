@@ -7,10 +7,8 @@ import           Control.Tracer
 import           Criterion.Main
 import           Data.ByteString.Short (ShortByteString)
 import qualified Data.ByteString.Short as SBS
-{- TODO: enable
 import           Data.Foldable
 import           Data.Functor.Compose
--}
 import qualified Data.Vector as V
 import           Data.Void
 import           Data.Word
@@ -69,41 +67,55 @@ benchConfig = Common.defaultTableConfig {
     }
 
 {-------------------------------------------------------------------------------
-  Benchmarks
+  Large Value vs. Small Value Blob
 -------------------------------------------------------------------------------}
 
 benchLargeValueVsSmallValueBlob :: Benchmark
 benchLargeValueVsSmallValueBlob =
     env mkEntries $ \es -> bgroup "large-value-vs-small-value-blob" [
         env (mkGrouped (mkV1 es)) $ \ ~(ess, kss) -> bgroup "V1" [
-            bench "lookups-large-value" $ withEnv ess $ \(_, _, _, _, t) -> do
+            withEnv ess $ \ ~(_, _, _, _, t :: Normal.TableHandle IO K V1 B1) -> do
+              bench "lookups-large-value" $ whnfIO $
                 V.mapM_ (flip Normal.lookups t) kss
           ]
       , env (mkGrouped (mkV2 es)) $ \ ~(ess, kss) -> bgroup "V2" [
-            bench "lookups-small-value" $ withEnv ess $ \(_, _, _, _, t) -> do
+            withEnv ess $ \ ~(_, _, _, _, t :: Normal.TableHandle IO K V2 B2) -> do
+              bench "lookups-small-value" $ whnfIO $
                 V.mapM_ (flip Normal.lookups t) kss
-            -- TODO: enable
-            -- TODO: should lookups return a spare vector containing blob references?
-{-           , bench "lookups-small-value-blob" $ withEnv ess $ \(_, _, _, s, t) -> do
+           , withEnv ess $ \ ~(_, _, _, s, t :: Normal.TableHandle IO K V2 B2) -> do
+              bench "lookups-small-value-blob" $ whnfIO $ do
                 V.forM_ kss $ \ks -> do
                   lrs <- Normal.lookups ks t
-                  Normal.retrieveBlobs s (V.fromList $ toList $ Compose lrs) -}
+                  Normal.retrieveBlobs s (V.fromList $ toList $ Compose lrs)
           ]
       ]
     where
-      initialSize = 80_000
-      batchSize = 250
+      !initialSize = 80_000
+      !batchSize = 250
+
+      randomEntries :: Int -> V.Vector (K, Word64, ShortByteString)
+      randomEntries n = V.unfoldrExactN n f (mkStdGen 17)
+        where f !g = let (!k, !g') = uniform g
+                    in  ((k, v, b), g')
+              -- The exact value does not matter much, so we pick an arbitrary
+              -- hardcoded one.
+              !v = 138
+              -- TODO: tweak size of blob
+              !b = SBS.pack [0 | _ <- [1 :: Int .. 1500]]
 
       mkEntries :: IO (V.Vector (K, Word64, ShortByteString))
       mkEntries = pure $ randomEntries initialSize
 
-      mkGrouped :: V.Vector (k, v, b) -> IO (V.Vector (V.Vector (k, v, b)), V.Vector (V.Vector k))
+      mkGrouped ::
+           V.Vector (k, v, b)
+        -> IO ( V.Vector (V.Vector (k, v, b))
+              , V.Vector (V.Vector k) )
       mkGrouped es = pure $
           let ess = vgroupsOfN batchSize es
               kss = V.map (V.map fst3) ess
           in  (ess, kss)
 
-      withEnv inss = perRunEnvWithCleanup (initialise inss) cleanup
+      withEnv inss = envWithCleanup (initialise inss) cleanup
 
       initialise inss = do
           (tmpDir, hfs, hbio) <- mkFiles
@@ -117,28 +129,18 @@ benchLargeValueVsSmallValueBlob =
           Normal.closeSession s
           cleanupFiles (tmpDir, hfs, hbio)
 
+      mkV1 :: V.Vector (K, Word64, ShortByteString) -> V.Vector (K, V1, Maybe B1)
+      mkV1 = V.map (\(k, v, b) -> (k, V1 v b, Nothing))
+
+      mkV2 :: V.Vector (K, Word64, ShortByteString) -> V.Vector (K, V2, Maybe B2)
+      mkV2 = V.map (\(k, v, b) -> (k, V2 v, Just $ B2 b))
+
 fst3 :: (a, b, c) -> a
 fst3 (x, _, _) = x
 
 {-------------------------------------------------------------------------------
   Setup
 -------------------------------------------------------------------------------}
-
-randomEntries :: Int -> V.Vector (K, Word64, ShortByteString)
-randomEntries n = V.unfoldrExactN n f (mkStdGen 17)
-  where f !g = let (!k, !g') = uniform g
-               in  ((k, v, b), g')
-        -- The exact value does not matter much, so we pick an arbitrary
-        -- hardcoded one.
-        !v = 138
-        -- TODO: tweak size of blob
-        !b = SBS.pack [0 | _ <- [1 :: Int .. 1500]]
-
-mkV1 :: V.Vector (K, Word64, ShortByteString) -> V.Vector (K, V1, Maybe B1)
-mkV1 = V.map (\(k, v, b) -> (k, V1 v b, Nothing))
-
-mkV2 :: V.Vector (K, Word64, ShortByteString) -> V.Vector (K, V2, Maybe B2)
-mkV2 = V.map (\(k, v, b) -> (k, V2 v, Just $ B2 b))
 
 mkFiles ::
      IO ( FilePath -- ^ Temporary directory
