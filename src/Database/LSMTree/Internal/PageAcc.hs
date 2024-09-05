@@ -1,7 +1,7 @@
 -- | Page accumulator.
 module Database.LSMTree.Internal.PageAcc (
     -- * Incrementally accumulating a single page.
-    PageAcc,
+    PageAcc (..),
     newPageAcc,
     resetPageAcc,
     pageAccAddElem,

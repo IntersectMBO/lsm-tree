@@ -5,7 +5,7 @@
 -- | Incremental (in-memory portion of) run consruction
 --
 module Database.LSMTree.Internal.RunAcc (
-    RunAcc
+    RunAcc (..)
   , RunBloomFilterAlloc (..)
   , new
   , unsafeFinalise

@@ -12,7 +12,7 @@
 module Database.LSMTree.Internal.IndexCompactAcc (
     -- * Construction
     -- $construction-invariants
-    IndexCompactAcc
+    IndexCompactAcc (..)
   , PageNo (..)
   , new
   , Append (..)
@@ -22,6 +22,7 @@ module Database.LSMTree.Internal.IndexCompactAcc (
   , appendMulti
   , unsafeEnd
     -- * Internal: exported for testing and benchmarking
+  , SMaybe (..)
   , unsafeWriteRange
   , vectorLowerBound
   , mvectorUpperBound

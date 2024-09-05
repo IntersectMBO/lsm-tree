@@ -1,12 +1,14 @@
 -- | A mutable run ('RunBuilder') that is under construction.
 --
 module Database.LSMTree.Internal.RunBuilder (
-    RunBuilder
+    RunBuilder (..)
   , new
   , addKeyOp
   , addLargeSerialisedKeyOp
   , unsafeFinalise
   , close
+    -- Internal: exposed for testing
+  , ChecksumHandle (..)
   ) where
 
 import           Control.Monad (when)

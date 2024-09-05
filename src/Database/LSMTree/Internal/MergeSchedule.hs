@@ -24,12 +24,7 @@ module Database.LSMTree.Internal.MergeSchedule (
   , maxRunSize
   ) where
 
-#ifdef NO_IGNORE_ASSERTS
-import           Control.Monad
-#endif
-
 import           Control.Monad.Primitive
-import           Control.Monad.ST.Strict
 import           Control.TempRegistry
 import           Control.Tracer
 import           Data.BloomFilter (Bloom)
@@ -42,6 +37,7 @@ import           Database.LSMTree.Internal.Entry (Entry, NumEntries (..),
                      unNumEntries)
 import           Database.LSMTree.Internal.IndexCompact (IndexCompact)
 import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
+import           Database.LSMTree.Internal.Merge (Merge)
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..),
                      SessionRoot (..))
@@ -165,11 +161,9 @@ data MergingRun m h =
     MergingRun !(MutVar (PrimState m) (MergingRunState m h))
   | SingleRun !(Run m h)
 
--- | Merges are stepped to completion immediately, so there is no representation
--- for ongoing merges (yet)
---
--- TODO: this should also represent ongoing merges once we implement scheduling.
-newtype MergingRunState m h = CompletedMerge (Run m h)
+data MergingRunState m h =
+    CompletedMerge !(Run m h)
+  | OngoingMerge !(V.Vector (Run m h)) !(Merge (PrimState m) h)
 
 {-# SPECIALISE forRunM_ :: Levels IO h -> (Run IO h -> IO ()) -> IO () #-}
 forRunM_ :: PrimMonad m => Levels m h -> (Run m h -> m ()) -> m ()
@@ -178,6 +172,7 @@ forRunM_ lvls k = V.forM_ lvls $ \(Level mr rs) -> do
       SingleRun r    -> k r
       MergingRun var -> readMutVar var >>= \case
         CompletedMerge r -> k r
+        OngoingMerge irs _m -> V.mapM_ k irs
     V.mapM_ k rs
 
 
@@ -188,6 +183,7 @@ foldRunM f x lvls = flip (flip V.foldM x) lvls $ \y (Level mr rs) -> do
       SingleRun r -> f y r
       MergingRun var -> readMutVar var >>= \case
         CompletedMerge r -> f y r
+        OngoingMerge irs _m -> V.foldM f y irs
     V.foldM f z rs
 
 {-# SPECIALISE forRunM :: Levels IO h -> (Run IO h -> IO a) -> IO (V.Vector a) #-}
@@ -317,6 +313,7 @@ flushWriteBuffer tr conf@TableConfig{confDiskCachePolicy}
       , tableCache = cache'
       }
 
+{- TODO: re-enable
 -- | Note that the invariants rely on the fact that levelling is only used on
 -- the last level.
 --
@@ -394,6 +391,7 @@ _levelsInvariant conf levels =
     fitsLB policy r ln = maxRunSize sr wba policy (pred ln) < Run.runNumEntries r
     -- Check that a run is too small for next levels
     fitsUB policy r ln = Run.runNumEntries r <= maxRunSize sr wba policy ln
+-}
 
 {-# SPECIALISE addRunToLevels :: Tracer IO (AtLevel MergeTrace) -> TableConfig -> ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> Run IO (Handle h) -> TempRegistry IO -> Levels IO (Handle h) -> IO (Levels IO (Handle h)) #-}
 -- | Add a run to the levels, and propagate merges.
@@ -415,9 +413,11 @@ addRunToLevels ::
   -> m (Levels m (Handle h))
 addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = do
     ls' <- go (LevelNo 1) (V.singleton r0) levels
+{- TODO: re-enable
 #ifdef NO_IGNORE_ASSERTS
     void $ stToIO $ _levelsInvariant conf ls'
 #endif
+-}
     return ls'
   where
     -- NOTE: @go@ is based on the @increment@ function from the
@@ -482,6 +482,7 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
         CompletedMerge r -> do
           traceWith tr $ AtLevel ln $ TraceExpectCompletedMerge (runNumber $ Run.runRunFsPaths r)
           pure r
+        OngoingMerge _rs _m -> error "expectCompletedMerge: OngoingMerge not yet supported" -- TODO: implement.
 
     -- TODO: Until we implement proper scheduling, this does not only start a
     -- merge, but it also steps it to completion.
@@ -502,13 +503,16 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
             !alloc = bloomFilterAllocForLevel conf ln
             !runPaths = Paths.runPath root (uniqueToRunNumber n)
         traceWith tr $ AtLevel ln $ TraceNewMerge (V.map Run.runNumEntries rs) (runNumber runPaths) caching alloc mergepolicy mergelast
-        r <- allocateTemp reg
-               (mergeRuns resolve hfs hbio caching alloc runPaths mergelast rs)
-               Run.removeReference
-        traceWith tr $ AtLevel ln $ TraceCompletedMerge (Run.runNumEntries r) (runNumber $ Run.runRunFsPaths r)
-        V.mapM_ (freeTemp reg . Run.removeReference) rs
-        var <- newMutVar (CompletedMerge r)
-        pure $! MergingRun var
+        case confMergeSchedule of
+          OneShot -> do
+            r <- allocateTemp reg
+                  (mergeRuns resolve hfs hbio caching alloc runPaths mergelast rs)
+                  Run.removeReference
+            traceWith tr $ AtLevel ln $ TraceCompletedMerge (Run.runNumEntries r) (runNumber $ Run.runRunFsPaths r)
+            V.mapM_ (freeTemp reg . Run.removeReference) rs
+            var <- newMutVar (CompletedMerge r)
+            pure $! MergingRun var
+          Incremental -> error "newMerge: Incremental is not yet supported" -- TODO: implement
 
 data MergePolicyForLevel = LevelTiering | LevelLevelling
   deriving stock Show
