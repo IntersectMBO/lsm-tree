@@ -9,12 +9,13 @@ import           Control.Monad.IO.Class (liftIO)
 import           Control.Monad.Trans.Reader (ReaderT (..))
 import           Control.Monad.Trans.State (StateT (..), get, put)
 import           Data.Bifunctor (bimap, first)
+import           Data.Coerce (coerce)
 import           Data.Foldable (traverse_)
 import qualified Data.Map.Strict as Map
 import           Data.Proxy (Proxy (..))
 import           Data.Word (Word64)
 import           Database.LSMTree.Extras (showPowersOf)
-import           Database.LSMTree.Extras.Generators (KeyForIndexCompact,
+import           Database.LSMTree.Extras.Generators (KeyForIndexCompact (..),
                      TypedWriteBuffer (..))
 import           Database.LSMTree.Internal.BlobRef (readBlob)
 import           Database.LSMTree.Internal.Entry
@@ -80,10 +81,13 @@ isEmpty (MockReaders xs) = null xs
 size :: MockReaders -> Int
 size (MockReaders xs) = length xs
 
-newMock :: [WB.WriteBuffer] -> MockReaders
-newMock =
+newMock :: Maybe SerialisedKey -> [WB.WriteBuffer] -> MockReaders
+newMock offset =
       MockReaders . Map.assocs . Map.unions
-    . zipWith (\i -> Map.mapKeysMonotonic (\k -> (k, RunNumber i)) . WB.toMap) [0..]
+    . zipWith (\i -> Map.mapKeysMonotonic (\k -> (k, RunNumber i))) [0..]
+    . map (skip . WB.toMap)
+  where
+    skip = maybe id (\k -> Map.dropWhileAntitone (< k)) offset
 
 peekKeyMock :: MockReaders -> Either () SerialisedKey
 peekKeyMock (MockReaders xs) = case xs of
@@ -114,7 +118,7 @@ data ReadersState = ReadersState MockReaders
   deriving stock Show
 
 initReadersState :: ReadersState
-initReadersState = ReadersState (newMock [])
+initReadersState = ReadersState (newMock Nothing [])
 
 --------------------------------------------------------------------------------
 
@@ -125,7 +129,8 @@ deriving stock instance Eq   (Action (Lockstep ReadersState) a)
 
 instance StateModel (Lockstep ReadersState) where
   data Action (Lockstep ReadersState) a where
-    New          :: [TypedWriteBuffer KeyForIndexCompact SerialisedValue SerialisedBlob]
+    New          :: Maybe KeyForIndexCompact  -- ^ optional offset
+                 -> [TypedWriteBuffer KeyForIndexCompact SerialisedValue SerialisedBlob]
                  -> ReadersAct ()
     PeekKey      :: ReadersAct SerialisedKey
     Pop          :: Int  -- allow popping many at once to drain faster
@@ -193,7 +198,8 @@ instance InLockstep ReadersState where
     | isEmpty mock =
         -- It's not allowed to keep using a drained RunReaders,
         -- we can only create a new one.
-        Some . New <$> (vector =<< chooseInt (1, 10))
+        -- TODO: make sure to sometimes have offset outside of range of keys in inputs
+        Some <$> (New <$> arbitrary <*> (vector =<< chooseInt (1, 10)))
     | otherwise =
         QC.frequency $
           [ (5, pure (Some PeekKey))
@@ -212,9 +218,9 @@ instance InLockstep ReadersState where
     -> LockstepAction ReadersState a
     -> [Any (LockstepAction ReadersState)]
   shrinkWithVars _ _ = \case
-      New wbs -> Some . New <$> shrink wbs
-      Pop n   -> Some . Pop <$> shrink n
-      _       -> []
+      New k wbs         -> Some . uncurry New <$> shrink (k, wbs)
+      Pop n             -> Some . Pop <$> shrink n
+      _                 -> []
 
   tagStep ::
        (ReadersState, ReadersState)
@@ -224,11 +230,11 @@ instance InLockstep ReadersState where
   tagStep (ReadersState before, ReadersState after) action _result = concat
     -- Directly using strings, since there is only a small number of tags.
     [ [ "NewEntries " <> showPowersOf 10 numEntries
-      | New wbs <- [action]
+      | New _ wbs <- [action]
       , let numEntries = sum (map (unNumEntries . WB.numEntries . unTypedWriteBuffer) wbs)
       ]
     , [ "NewEntriesKeyDuplicates " <> showPowersOf 2 keyCount
-      | New wbs <- [action]
+      | New _ wbs <- [action]
       , let keyCounts = Map.unionsWith (+) (map (Map.map (const 1) . WB.toMap . unTypedWriteBuffer) wbs)
       , keyCount <- Map.elems keyCounts
       , keyCount > 1
@@ -248,7 +254,7 @@ runMock ::
   -> MockReaders
   -> (ReadersVal a, MockReaders)
 runMock _ = \case
-    New wbs        -> const $ wrap MUnit (Right (), newMock (map unTypedWriteBuffer wbs))
+    New k wbs      -> const $ wrap MUnit (Right (), newMock (coerce k) (map unTypedWriteBuffer wbs))
     PeekKey        -> \m -> wrap MKey (peekKeyMock m, m)
     Pop n          -> wrap wrapPop . popMock n
     DropWhileKey k -> wrap wrapDrop . dropWhileKeyMock k
@@ -301,7 +307,7 @@ instance RunLockstep ReadersState RealMonad where
 
 runIO :: LockstepAction ReadersState a -> LookUp RealMonad -> RealMonad (Realized RealMonad a)
 runIO act lu = case act of
-    New wbs -> ReaderT $ \(hfs, hbio) -> do
+    New offset wbs -> ReaderT $ \(hfs, hbio) -> do
       RealState numRuns mCtx <- get
       -- if runs are still being read, they need to be cleaned up
       traverse_ (liftIO . closeReadersCtx hfs hbio) mCtx
@@ -310,7 +316,7 @@ runIO act lu = case act of
           (\p -> liftIO . Run.fromWriteBuffer hfs hbio Run.CacheRunData (RunAllocFixed 10) p)
           (Paths.RunFsPaths (FS.mkFsPath []) . RunNumber <$> [numRuns ..])
           (map unTypedWriteBuffer wbs)
-      newReaders <- liftIO $ Readers.new hfs hbio runs >>= \case
+      newReaders <- liftIO $ Readers.newAtOffsetMaybe hfs hbio (coerce offset) runs >>= \case
         Nothing -> do
           traverse_ Run.removeReference runs
           return Nothing

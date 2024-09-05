@@ -299,6 +299,8 @@ rawPageIndex !page !ix
 -- | for non-single key page case
 rawPageEntryAt :: RawPage -> Int -> Entry SerialisedValue BlobSpan
 rawPageEntryAt page i =
+    assert (i < fromIntegral (rawPageNumKeys page)) $
+    assert (rawPageNumKeys page > 1) $
     case rawPageOpAt page i of
       0 -> if rawPageHasBlobSpanAt page i == 0
            then Insert (rawPageValueAt page i)

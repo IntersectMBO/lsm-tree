@@ -4,6 +4,7 @@ module Database.LSMTree.Internal.RunReaders (
   , ReadCtx (..)
   , new
   , newAtOffset
+  , newAtOffsetMaybe
   , close
   , peekKey
   , HasMore (..)
@@ -86,7 +87,7 @@ new :: forall h .
   -> HasBlockIO IO h
   -> [Run IO (FS.Handle h)]
   -> IO (Maybe (Readers RealWorld (FS.Handle h)))
-new = newAtOffsetMaybe Nothing
+new fs hbio = newAtOffsetMaybe fs hbio Nothing
 
 -- | On equal keys, elements from runs earlier in the list are yielded first.
 -- This means that the list of runs should be sorted from new to old.
@@ -97,15 +98,15 @@ newAtOffset :: forall h .
   -> SerialisedKey  -- ^ offset
   -> [Run IO (FS.Handle h)]
   -> IO (Maybe (Readers RealWorld (FS.Handle h)))
-newAtOffset fs hbio offset = newAtOffsetMaybe (Just offset) fs hbio
+newAtOffset fs hbio offset = newAtOffsetMaybe fs hbio (Just offset)
 
 newAtOffsetMaybe :: forall h .
-     Maybe SerialisedKey  -- ^ offset
-  -> HasFS IO h
+     HasFS IO h
   -> HasBlockIO IO h
+  -> Maybe SerialisedKey  -- ^ offset
   -> [Run IO (FS.Handle h)]
   -> IO (Maybe (Readers RealWorld (FS.Handle h)))
-newAtOffsetMaybe  offsetMay fs hbio runs = do
+newAtOffsetMaybe fs hbio offsetMay runs = do
     readers <- zipWithM (fromRun . ReaderNumber) [1..] runs
     for (nonEmpty (catMaybes readers)) $ \xs -> do
       (readersHeap, readCtx) <- Heap.newMutableHeap xs
