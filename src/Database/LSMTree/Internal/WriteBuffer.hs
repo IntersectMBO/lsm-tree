@@ -46,7 +46,7 @@ import qualified Data.Map.Range as Map.R
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.Vector as V
-import           Database.LSMTree.Internal.BlobRef (WeakBlobRef)
+import           Database.LSMTree.Internal.BlobRef (BlobSpan, WeakBlobRef)
 import           Database.LSMTree.Internal.Entry
 import qualified Database.LSMTree.Internal.Monoidal as Monoidal
 import qualified Database.LSMTree.Internal.Normal as Normal
@@ -60,7 +60,7 @@ import           Prelude hiding (lookup, null)
 -------------------------------------------------------------------------------}
 
 newtype WriteBuffer =
-  WB { unWB :: Map SerialisedKey (Entry SerialisedValue SerialisedBlob) }
+  WB { unWB :: Map SerialisedKey (Entry SerialisedValue BlobSpan) }
   deriving stock (Eq, Show)
   deriving newtype NFData
 
@@ -73,23 +73,23 @@ numEntries (WB m) = NumEntries (Map.size m)
 
 -- | \( O(1)) \)
 fromMap ::
-     Map SerialisedKey (Entry SerialisedValue SerialisedBlob)
+     Map SerialisedKey (Entry SerialisedValue BlobSpan)
   -> WriteBuffer
 fromMap m = WB m
 
 -- | \( O(1) \)
-toMap :: WriteBuffer -> Map SerialisedKey (Entry SerialisedValue SerialisedBlob)
+toMap :: WriteBuffer -> Map SerialisedKey (Entry SerialisedValue BlobSpan)
 toMap = unWB
 
 -- | \( O(n \log n) \)
 fromList ::
      (SerialisedValue -> SerialisedValue -> SerialisedValue) -- ^ merge function
-  -> [(SerialisedKey, Entry SerialisedValue SerialisedBlob)]
+  -> [(SerialisedKey, Entry SerialisedValue BlobSpan)]
   -> WriteBuffer
 fromList f es = WB $ Map.fromListWith (combine f) es
 
 -- | \( O(n) \)
-toList :: WriteBuffer -> [(SerialisedKey, Entry SerialisedValue SerialisedBlob)]
+toList :: WriteBuffer -> [(SerialisedKey, Entry SerialisedValue BlobSpan)]
 toList (WB m) = Map.assocs m
 
 {-------------------------------------------------------------------------------
@@ -98,7 +98,7 @@ toList (WB m) = Map.assocs m
 
 addEntries ::
      (SerialisedValue -> SerialisedValue -> SerialisedValue) -- ^ merge function
-  -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob)
+  -> V.Vector (SerialisedKey, Entry SerialisedValue BlobSpan)
   -> WriteBuffer
   -> WriteBuffer
 addEntries f es wb = V.foldl' (flip (uncurry (addEntry f))) wb es
@@ -108,10 +108,10 @@ addEntries f es wb = V.foldl' (flip (uncurry (addEntry f))) wb es
 -- NOTE: if the write buffer is larger @n@ already, this is a no-op.
 addEntriesUpToN ::
      (SerialisedValue -> SerialisedValue -> SerialisedValue) -- ^ merge function
-  -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob)
+  -> V.Vector (SerialisedKey, Entry SerialisedValue BlobSpan)
   -> Int
   -> WriteBuffer
-  -> (WriteBuffer, V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob))
+  -> (WriteBuffer, V.Vector (SerialisedKey, Entry SerialisedValue BlobSpan))
 addEntriesUpToN f es0 n wb0 = go es0 wb0
   where
     go !es acc@(WB m)
@@ -124,7 +124,7 @@ addEntriesUpToN f es0 n wb0 = go es0 wb0
 addEntry ::
      (SerialisedValue -> SerialisedValue -> SerialisedValue) -- ^ merge function
   -> SerialisedKey
-  -> Entry SerialisedValue SerialisedBlob
+  -> Entry SerialisedValue BlobSpan
   -> WriteBuffer
   -> WriteBuffer
 addEntry f k e (WB wb) =
@@ -140,7 +140,7 @@ addEntryMonoidal f k = addEntry f k . updateToEntryMonoidal
 
 addEntryNormal ::
      SerialisedKey
-  -> Normal.Update SerialisedValue SerialisedBlob
+  -> Normal.Update SerialisedValue BlobSpan
   -> WriteBuffer
   -> WriteBuffer
 addEntryNormal k = addEntry const k . updateToEntryNormal
@@ -160,7 +160,7 @@ null (WB m) = Map.null m
 lookups ::
      WriteBuffer
   -> V.Vector SerialisedKey
-  -> V.Vector (Maybe (Entry SerialisedValue SerialisedBlob))
+  -> V.Vector (Maybe (Entry SerialisedValue BlobSpan))
 lookups (WB !m) !ks = V.mapStrict (`Map.lookup` m) ks
 
 -- | TODO: update once blob references are implemented
@@ -181,7 +181,7 @@ lookups' ::
 lookups' wb !ks = V.mapStrict (lookup wb) ks
 
 -- | TODO: remove once blob references are implemented
-errOnBlob :: Entry SerialisedValue SerialisedBlob -> Entry SerialisedValue (WeakBlobRef m h)
+errOnBlob :: Entry SerialisedValue BlobSpan -> Entry SerialisedValue (WeakBlobRef m h)
 errOnBlob (Insert v)           = Insert v
 errOnBlob (InsertWithBlob _ b) = error $ "lookups: blob references not supported: " ++ show b
 errOnBlob (Mupdate v)          = Mupdate v
@@ -199,7 +199,7 @@ errOnBlob Delete               = Delete
 rangeLookups ::
      WriteBuffer
   -> Range SerialisedKey
-  -> [(SerialisedKey, Entry SerialisedValue SerialisedBlob)]
+  -> [(SerialisedKey, Entry SerialisedValue BlobSpan)]
 rangeLookups (WB m) r =
     [ (k, e)
     | let (lb, ub) = convertRange r

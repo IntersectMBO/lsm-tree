@@ -7,6 +7,8 @@ module Database.LSMTree.Internal.RunBuilder (
   , addLargeSerialisedKeyOp
   , unsafeFinalise
   , close
+    -- Internalish
+  , writeBlob
     -- Internal: exposed for testing
   , ChecksumHandle (..)
   ) where
@@ -18,7 +20,6 @@ import           Data.BloomFilter (Bloom)
 import qualified Data.ByteString.Lazy as BSL
 import           Data.Foldable (for_, traverse_)
 import           Data.Primitive
-import           Data.Traversable (for)
 import           Data.Word (Word64)
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.BloomFilter (bloomFilterToLBS)
@@ -101,13 +102,12 @@ addKeyOp ::
      HasFS IO h
   -> RunBuilder RealWorld (FS.Handle h)
   -> SerialisedKey
-  -> Entry SerialisedValue SerialisedBlob
+  -> Entry SerialisedValue BlobSpan
   -> IO ()
 addKeyOp fs builder@RunBuilder{runBuilderAcc} key op = do
-    op' <- for op $ writeBlob fs builder
-    if RunAcc.entryWouldFitInPage key op'
+    if RunAcc.entryWouldFitInPage key op
       then do
-        mpagemchunk <- ST.stToIO $ RunAcc.addSmallKeyOp runBuilderAcc key op'
+        mpagemchunk <- ST.stToIO $ RunAcc.addSmallKeyOp runBuilderAcc key op
         case mpagemchunk of
           Nothing -> return ()
           Just (page, mchunk) -> do
@@ -116,7 +116,7 @@ addKeyOp fs builder@RunBuilder{runBuilderAcc} key op = do
 
       else do
        (pages, overflowPages, chunks)
-         <- ST.stToIO $ RunAcc.addLargeKeyOp runBuilderAcc key op'
+         <- ST.stToIO $ RunAcc.addLargeKeyOp runBuilderAcc key op
        --TODO: consider optimisation: use writev to write all pages in one go
        for_ pages $ writeRawPage fs builder
        writeRawOverflowPages fs builder overflowPages

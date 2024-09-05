@@ -176,7 +176,7 @@ steps fs hbio Merge {..} requestedSteps =
         return (n, MergeComplete run)
 
 
-writeReaderEntry ::
+writeReaderEntry :: forall h.
      HasFS IO h
   -> Level
   -> RunBuilder RealWorld (FS.Handle h)
@@ -196,11 +196,18 @@ writeReaderEntry fs level builder key (Reader.Entry entryFull) =
       writeSerialisedEntry fs level builder key entryFull
 writeReaderEntry fs level builder key entry@(Reader.EntryOverflow prefix page _ overflowPages)
   | InsertWithBlob {} <- prefix =
-      assert (shouldWriteEntry level prefix) $  -- large, can't be delete
+      assert (shouldWriteEntry level prefix) $ do -- large, can't be delete
         -- has blob, we can't just copy the first page, fall back
         -- we simply append the overflow pages to the value
-        Builder.addKeyOp fs builder key
-          =<< traverse (BlobRef.readBlob fs) (Reader.toFullEntry entry)
+        let fullEntry :: Entry SerialisedValue (BlobRef IO (FS.Handle h))
+            fullEntry = Reader.toFullEntry entry
+
+        -- copy blob
+        fullEntry' <- for fullEntry $ \bref -> do
+          blob <- BlobRef.readBlob fs bref
+          Builder.writeBlob fs builder blob
+
+        Builder.addKeyOp fs builder key fullEntry'
         -- TODO(optimise): This copies the overflow pages unnecessarily.
         -- We could extend the RunBuilder API to allow to either:
         -- 1. write an Entry (containing the value prefix) + [RawOverflowPage]
@@ -219,8 +226,13 @@ writeSerialisedEntry ::
   -> Entry SerialisedValue (BlobRef IO (FS.Handle h))
   -> IO ()
 writeSerialisedEntry fs level builder key entry =
-    when (shouldWriteEntry level entry) $
-      Builder.addKeyOp fs builder key =<< traverse (BlobRef.readBlob fs) entry
+    when (shouldWriteEntry level entry) $ do
+      -- copy blob
+      entry' <- for entry $ \bref -> do
+        blob <- BlobRef.readBlob fs bref
+        Builder.writeBlob fs builder blob
+
+      Builder.addKeyOp fs builder key entry'
 
 -- One the last level we could also turn Mupdate into Insert,
 -- but no need to complicate things.

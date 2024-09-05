@@ -32,6 +32,7 @@ import           Data.Foldable
 import           Data.Primitive.MutVar
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Assertions (assert)
+import           Database.LSMTree.Internal.BlobRef (BlobSpan)
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.Entry (Entry, NumEntries (..),
                      unNumEntries)
@@ -199,6 +200,8 @@ forRunM lvls k = do
 -------------------------------------------------------------------------------}
 
 {-# SPECIALISE updatesWithInterleavedFlushes :: Tracer IO (AtLevel MergeTrace) -> TableConfig -> ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob) -> TempRegistry IO -> TableContent IO h -> IO (TableContent IO h) #-}
+{-# SPECIALISE updatesWithInterleavedFlushes' :: Tracer IO (AtLevel MergeTrace) -> TableConfig -> ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> V.Vector (SerialisedKey, Entry SerialisedValue BlobSpan) -> TempRegistry IO -> TableContent IO h -> IO (TableContent IO h) #-}
+
 -- | A single batch of updates can fill up the write buffer multiple times. We
 -- flush the write buffer each time it fills up before trying to fill it up
 -- again.
@@ -237,8 +240,31 @@ updatesWithInterleavedFlushes ::
   -> TableContent m h
   -> m (TableContent m h)
 updatesWithInterleavedFlushes tr conf resolve hfs hbio root uc es reg tc = do
+    -- we need to write blobs out first, so then we can write entries possibly flushing.
+    esBS <- flip (traverse . traverse . traverse) es $ \_bref -> do
+        error "write blob to the temporary file" :: IO BlobSpan
+
+    updatesWithInterleavedFlushes' tr conf resolve hfs hbio root uc esBS reg tc
+
+-- TODO: See internal comment. This is probably wrong.
+updatesWithInterleavedFlushes' ::
+     forall m h. m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+  => Tracer m (AtLevel MergeTrace)
+  -> TableConfig
+  -> ResolveSerialisedValue
+  -> HasFS m h
+  -> HasBlockIO m h
+  -> SessionRoot
+  -> UniqCounter m
+  -> V.Vector (SerialisedKey, Entry SerialisedValue BlobSpan)
+  -> TempRegistry m
+  -> TableContent m h
+  -> m (TableContent m h)
+
+updatesWithInterleavedFlushes' tr conf resolve hfs hbio root uc es reg tc = do
     let wb = tableWriteBuffer tc
         (wb', es') = WB.addEntriesUpToN resolve es maxn wb
+
     -- never exceed the write buffer capacity
     assert (unNumEntries (WB.numEntries wb') <= maxn) $ pure ()
     let tc' = setWriteBuffer wb' tc
@@ -250,6 +276,16 @@ updatesWithInterleavedFlushes tr conf resolve hfs hbio root uc es reg tc = do
     -- If the write buffer did reach capacity, then we flush.
     else do
       assert (unNumEntries (WB.numEntries wb') == maxn) $ pure ()
+
+      -- TODO: does this go wrong?
+      --  - When the writebuffer is flushed, the new one is created, with new blob file
+      --  - this provided blobspans are now invalid.
+      --
+      -- We need to write blobs to get blobspans
+      -- but we'd rather first add entries to writebuffer to know which blobspans to write
+      --
+      -- Maybe addEntriesUpToN should take a callback (SerialisedBlob -> m BlobSpan) to write out blobs as it accumulates entries?
+      --
       tc'' <- flushWriteBuffer tr conf resolve hfs hbio root uc reg tc'
       -- In the fortunate case where we have already performed all the updates,
       -- return,
@@ -257,7 +293,7 @@ updatesWithInterleavedFlushes tr conf resolve hfs hbio root uc es reg tc = do
         pure $! tc''
       -- otherwise, keep going
       else
-        updatesWithInterleavedFlushes tr conf resolve hfs hbio root uc es' reg tc''
+        updatesWithInterleavedFlushes' tr conf resolve hfs hbio root uc es' reg tc''
   where
     AllocNumEntries (NumEntries maxn) = confWriteBufferAlloc conf
     setWriteBuffer :: WriteBuffer -> TableContent m h -> TableContent m h
