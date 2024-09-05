@@ -30,8 +30,10 @@ import           GHC.ST (runST)
 
 mkPrimVector :: forall a. Prim a => Int -> Int -> ByteArray -> VP.Vector a
 mkPrimVector off len ba =
-    assert (isValidSlice (off * sizeof) (len * sizeof) ba) $
-    VP.Vector off len ba
+    assertWith
+      (unwords ["mkPrimVector", show off, show len, show ba])
+      (isValidSlice (off * sizeof) (len * sizeof) ba) $
+      VP.Vector off len ba
   where
     sizeof = I# (sizeOfType# (Proxy @a))
 {-# INLINE mkPrimVector #-}

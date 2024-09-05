@@ -2,6 +2,7 @@
 {-# LANGUAGE MagicHash #-}
 module Database.LSMTree.Internal.Assertions (
     assert,
+    assertWith,
     isValidSlice,
     sameByteArray,
     fromIntegralChecked,
@@ -14,10 +15,20 @@ import           GHC.Exts (ByteArray#, MutableByteArray#, isTrue#,
                      sameMutableByteArray#, unsafeCoerce#)
 #endif
 
-import           Control.Exception (assert)
+import           Control.Exception
 import           Data.Primitive.ByteArray (ByteArray (..), sizeofByteArray)
 import           GHC.Stack (HasCallStack)
 import           Text.Printf
+import           System.IO.Unsafe (unsafePerformIO) -- for 'assertWith'
+
+-- | Like 'assert' but appends a customized message to the assertion exception's
+-- location  information. Intended to be used to add salient contextual information
+-- regarding the assertion failure.
+assertWith :: String -> Bool -> a -> a
+assertWith msg cond v = unsafePerformIO . catch (evaluate (assert cond v)) $
+    \x -> throwIO (addMessage x)
+  where
+    addMessage (AssertionFailed locInfo) = AssertionFailed $ locInfo <> "\nAttached Message:\n" <> msg
 
 isValidSlice :: Int -> Int -> ByteArray -> Bool
 isValidSlice off len ba =
