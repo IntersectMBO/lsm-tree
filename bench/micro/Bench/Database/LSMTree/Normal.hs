@@ -1,8 +1,7 @@
-{-# LANGUAGE OverloadedLists #-}
-
 module Bench.Database.LSMTree.Normal (benchmarks) where
 
 import           Control.DeepSeq
+import           Control.Exception
 import           Control.Tracer
 import           Criterion.Main
 import           Data.ByteString.Short (ShortByteString)
@@ -14,6 +13,7 @@ import           Data.Void
 import           Data.Word
 import qualified Database.LSMTree.Common as Common
 import           Database.LSMTree.Extras
+import           Database.LSMTree.Internal.Assertions (fromIntegralChecked)
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.Serialise.Class
 import qualified Database.LSMTree.Normal as Normal
@@ -30,6 +30,7 @@ import           System.Random
 benchmarks :: Benchmark
 benchmarks = bgroup "Bench.Database.LSMTree.Normal" [
       benchLargeValueVsSmallValueBlob
+    , benchCursorScanVsRangeLookupScan
     ]
 
 {-------------------------------------------------------------------------------
@@ -137,6 +138,77 @@ benchLargeValueVsSmallValueBlob =
 
 fst3 :: (a, b, c) -> a
 fst3 (x, _, _) = x
+
+{-------------------------------------------------------------------------------
+  Cursor Scan vs. Range Lookup Scan
+-------------------------------------------------------------------------------}
+
+benchCursorScanVsRangeLookupScan :: Benchmark
+benchCursorScanVsRangeLookupScan =
+    env mkEntries $ \es ->
+      env (mkGrouped es) $ \ ess ->
+        withEnv ess $ \ ~(_, _, _, _, t :: Normal.TableHandle IO K V2 B2) ->
+          bgroup "cursor-scan-vs-range-lookup-scan" [
+              bench "cursor-scan" $ whnfIO $ do
+                Normal.withCursor t $ \c -> do
+                  forM_ [1 .. numChunks] $ \(_ :: Int) -> do
+                    Normal.readCursor readSize c
+            , bench "lookup-scan" $ nfIO $ do
+                forM_ ranges $ \r -> do
+                  Normal.rangeLookup r t
+            ]
+    where
+      initialSize, batchSize, numChunks :: Int
+      !initialSize = 80_000
+      !batchSize = 250
+      !numChunks = 100
+
+      readSize :: Int
+      !readSize = check $ initialSize `div` numChunks
+        where
+          check x = assert (x * numChunks == initialSize) $ x
+
+      ranges :: [Normal.Range K]
+      !ranges = check $ force $ [
+            Normal.FromToExcluding (K $ c * i) (K $ c * (i + 1))
+          | i <- [0 .. fromIntegralChecked numChunks - 2]
+          ] <> [
+            Normal.FromToIncluding (K $ c * (fromIntegralChecked numChunks - 1)) (K maxBound)
+          ]
+        where
+          c = fromIntegralChecked (maxBound `div` numChunks)
+          check rs = assert (length rs == numChunks) rs
+
+
+      randomEntries :: Int -> V.Vector (K, V2, Maybe B2)
+      randomEntries n = V.unfoldrExactN n f (mkStdGen 17)
+        where f !g = let (!k, !g') = uniform g
+                    in  ((k, v, Nothing), g')
+              -- The exact value does not matter much, so we pick an arbitrary
+              -- hardcoded one.
+              !v = V2 138
+
+      mkEntries :: IO (V.Vector (K, V2, Maybe B2))
+      mkEntries = pure $ randomEntries initialSize
+
+      mkGrouped ::
+           V.Vector (k, v, b)
+        -> IO (V.Vector (V.Vector (k, v, b)))
+      mkGrouped es = pure $ vgroupsOfN batchSize es
+
+      withEnv inss = envWithCleanup (initialise inss) cleanup
+
+      initialise inss = do
+          (tmpDir, hfs, hbio) <- mkFiles
+          s <- Normal.openSession nullTracer hfs hbio (FS.mkFsPath [])
+          t <- Normal.new s benchConfig
+          V.mapM_ (flip Normal.inserts t) inss
+          pure (tmpDir, hfs, hbio, s, t)
+
+      cleanup (tmpDir, hfs, hbio, s, t) = do
+          Normal.close t
+          Normal.closeSession s
+          cleanupFiles (tmpDir, hfs, hbio)
 
 {-------------------------------------------------------------------------------
   Setup
