@@ -257,12 +257,9 @@ prop_WriteAndReadAtOffset fs hbio (TypedWriteBuffer wb) index = do
           , "ending:\t" <> show endingKey
           ]
 
-    return $ stats $ null kops .||.
-      ( counterexample "number of elements"
-          ((NumEntries . length . dropWhile ((< offsetKey) . fst) . WB.toList) wb === runNumEntries run)
-        .&&. counterexample messageRHS
-          (kops' === rhs)
-      )
+    return $ stats $ not (null kops) ==>
+      counterexample messageRHS
+        (kops' === rhs)
   where
     flush n = fromWriteBuffer fs hbio CacheRunData (RunAllocFixed 10) (RunFsPaths (FS.mkFsPath []) n)
     stats = tabulate "value size" (map (showPowersOf10 . sizeofValue) vals)

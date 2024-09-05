@@ -81,27 +81,21 @@ new fs hbio mOffset readerRun = do
       Just offset -> do
         -- Use the index to find the page number for the key (if it exists).
         let Index.PageSpan pageNo pageEnd = Index.search offset index
-        foundPage <- fromMaybe emptyRawPage <$> readDiskPageAt fs pageNo readerKOpsHandle
+        foundPage <- readPageAt pageNo readerKOpsHandle
         case rawPageFindKey foundPage offset of
           Just n ->
             -- Found an appropriate index within the index's page.
             return (foundPage, n)
 
-          -- The index said that the key, if it were to exist, would live on pageNo,
-          -- but then rawPageFindKey tells us that in fact
-          -- there is no key greater than or equal to the given offset on this page.
-          -- So what can we conclude from the given information?
-          -- The information tells us that the key does not exist, but that if it were to exist,
-          -- it would be between the last key in this page and the first key in the next page.
-          -- Thus the reader should be initialised to return keys starting from the next page.
-          Nothing | pageNo == pageEnd -> do
-            -- If already at the last page, there is no page of content to return.
-            -- Hence, no need to call readDiskPageAt.
-            return (emptyRawPage, 0)
-
           _ -> do
-            -- Otherwise, we return the beginning of the next page.
-            nextPage <- fromMaybe emptyRawPage <$> readDiskPageAt fs (Index.nextPageNo pageNo) readerKOpsHandle
+            -- The index said that the key, if it were to exist, would live on
+            -- pageNo, but then rawPageFindKey tells us that in fact there is no
+            -- key greater than or equal to the given offset on this page.
+            -- This tells us that the key does not exist, but that if it were to
+            -- exist, it would be between the last key in this page and the
+            -- first key in the next (non-overflow) page. Thus the reader should
+            -- be initialised to return keys starting from the next page.
+            nextPage <- readPageAt (Index.nextPageNo pageEnd) readerKOpsHandle
             return (nextPage, 0)
 
     readerCurrentEntryNo <- newPrimVar entryNo
@@ -109,6 +103,14 @@ new fs hbio mOffset readerRun = do
     return RunReader {..}
   where
     index = Run.runIndex readerRun
+
+    readPageAt pageNo handle
+      | pageNoValid pageNo index = readDiskPageAt fs pageNo handle
+      | otherwise                = pure emptyRawPage
+
+pageNoValid :: Index.PageNo -> Index.IndexCompact -> Bool
+pageNoValid (Index.PageNo n) index =
+    n < Index.getNumPages (Index.sizeInPages index)
 
 -- | This function should be called when discarding a 'RunReader' before it
 -- was done (i.e. returned 'Empty'). This avoids leaking file handles.
@@ -220,21 +222,17 @@ next fs hbio reader@RunReader {..} = do
   Utilities
 -------------------------------------------------------------------------------}
 
--- | Returns 'Nothing' on EOF.
-readDiskPageAt :: HasFS IO h -> Index.PageNo -> FS.Handle h -> IO (Maybe RawPage)
+readDiskPageAt :: HasFS IO h -> Index.PageNo -> FS.Handle h -> IO RawPage
 readDiskPageAt fs pageNo h = do
     mba <- newPinnedByteArray pageSize
-    handleJust (guard . FS.isFsErrorType FS.FsReachedEOF) (\_ -> pure Nothing) $ do
-      let byteOffset = pageNoToAbsOffset pageNo
-      _ <- FS.hGetBufExactlyAt fs h mba 0 (fromIntegral pageSize) byteOffset
-      ba <- unsafeFreezeByteArray mba
-      let !rawPage = unsafeMakeRawPage ba 0
-      return (Just rawPage)
-
-pageNoToAbsOffset :: Index.PageNo -> FS.AbsOffset
-pageNoToAbsOffset (Index.PageNo n) =
-    assert (n >= 0) $
-      FS.AbsOffset (mulPageSize (fromIntegral n))
+    FS.hSeek fs h FS.AbsoluteSeek (pageNoToByteOffset pageNo)
+    _ <- FS.hGetBufExactly fs h mba 0 (fromIntegral pageSize)
+    ba <- unsafeFreezeByteArray mba
+    return $! unsafeMakeRawPage ba 0
+  where
+    pageNoToByteOffset (Index.PageNo n) =
+        assert (n >= 0) $
+          mulPageSize (fromIntegral n)
 
 -- | Returns 'Nothing' on EOF.
 readDiskPage :: HasFS IO h -> FS.Handle h -> IO (Maybe RawPage)
