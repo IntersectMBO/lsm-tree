@@ -72,6 +72,7 @@ import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (catMaybes)
 import qualified Data.Primitive.ByteArray as P
+import           Data.Primitive.MutVar
 import qualified Data.Set as Set
 import           Data.Typeable
 import qualified Data.Vector as V
@@ -594,6 +595,7 @@ newWith sesh seshEnv conf !am !wb !levels = do
     n <- incrUniqCounter (sessionUniqCounter seshEnv)
     let tr = TraceTable (uniqueToWord64 tableId) `contramap` sessionTracer sesh
     traceWith tr $ TraceCreateTableHandle conf
+    cache <- mkLevelsCache levels
     -- The session is kept open until we've updated the session's set of tracked
     -- tables. If 'closeSession' is called by another thread while this code
     -- block is being executed, that thread will block until it reads the
@@ -602,7 +604,7 @@ newWith sesh seshEnv conf !am !wb !levels = do
         { tableWriteBuffer = wb
         , tableWriteBufferRN = uniqueToRunNumber n
         , tableLevels = levels
-        , tableCache = mkLevelsCache levels
+        , tableCache = cache
         }
     tableVar <- RW.new $ TableHandleOpen $ TableHandleEnv {
           tableSession = sesh
@@ -632,7 +634,7 @@ close th = do
         -- TODO: use TempRegistry
         tableSessionUntrackTable thEnv
         RW.withWriteAccess_ (tableContent thEnv) $ \lvls -> do
-          closeLevels (tableLevels lvls)
+          forRunM_ (tableLevels lvls) Run.removeReference
           pure lvls
         pure TableHandleClosed
 
@@ -684,7 +686,7 @@ updates resolve es th = do
       let hfs = tableHasFS thEnv
       modifyWithTempRegistry_
         (atomically $ RW.unsafeAcquireWriteAccess (tableContent thEnv))
-        (atomically . RW.unsafeReleaseWriteAccess (tableContent thEnv)) $ \tc -> do
+        (atomically . RW.unsafeReleaseWriteAccess (tableContent thEnv)) $ \reg -> do
           updatesWithInterleavedFlushes
             (TraceMerge `contramap` tableTracer th)
             conf
@@ -694,7 +696,7 @@ updates resolve es th = do
             (tableSessionRoot thEnv)
             (tableSessionUniqCounter thEnv)
             es
-            tc
+            reg
 
 {-------------------------------------------------------------------------------
   Blobs
@@ -910,13 +912,14 @@ snapshot resolve snap label th = do
       -- snapshot file yet. If an asynchronous exception happens beyond this
       -- point, we'll take that loss, as the inner state of the table is still
       -- consistent.
-      let runNumbers = V.map (\(Level mr rs) ->
-                                ( case mr of
-                                    SingleRun r -> (True, runNumber (Run.runRunFsPaths r))
-                                    MergingRun (CompletedMerge r) -> (False, runNumber (Run.runRunFsPaths r))
-                                , V.map (runNumber . Run.runRunFsPaths) rs)) $
-                          tableLevels content
-          snapPath = Paths.snapshot (tableSessionRoot thEnv) snap
+      runNumbers <- V.forM (tableLevels content) $ \(Level mr rs) -> do
+        (,V.map (runNumber . Run.runRunFsPaths) rs) <$>
+          case mr of
+            SingleRun r -> pure (True, runNumber (Run.runRunFsPaths r))
+            MergingRun var -> do
+              readMutVar var >>= \case
+                CompletedMerge r -> pure (False, runNumber (Run.runRunFsPaths r))
+      let snapPath = Paths.snapshot (tableSessionRoot thEnv) snap
       FS.doesFileExist (tableHasFS thEnv) snapPath >>= \b ->
               when b $ throwIO (ErrSnapshotExists snap)
       FS.withFile
@@ -986,7 +989,8 @@ openLevels reg hfs hbio diskCachePolicy levels =
         allocateTemp reg
           (Run.openFromDisk hfs hbio caching run)
           Run.removeReference
-      let !mr = if fst mrPath then SingleRun r else MergingRun (CompletedMerge r)
+      var <- newMutVar (CompletedMerge r)
+      let !mr = if fst mrPath then SingleRun r else MergingRun var
       pure $! Level mr rs
 
 {-# SPECIALISE deleteSnapshot :: Session IO h -> SnapshotName -> IO () #-}
@@ -1049,7 +1053,7 @@ duplicate th = do
           -- The table contents escape the read access, but we just added references
           -- to each run so it is safe.
           content <- RW.withReadAccess (tableContent thEnv) $ \content -> do
-            V.forM_ (runsInLevels (tableLevels content)) $ \r -> do
+            forRunM_ (tableLevels content) $ \r -> do
               allocateTemp reg
                 (Run.addReference r)
                 (\_ -> Run.removeReference r)

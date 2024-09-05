@@ -15,8 +15,7 @@ module Database.LSMTree.Internal.MergeSchedule (
   , Level (..)
   , MergingRun (..)
   , MergingRunState (..)
-  , runsInLevels
-  , closeLevels
+  , forRunM_
     -- * Flushes and scheduled merges
   , updatesWithInterleavedFlushes
   , flushWriteBuffer
@@ -35,6 +34,7 @@ import           Control.TempRegistry
 import           Control.Tracer
 import           Data.BloomFilter (Bloom)
 import           Data.Foldable
+import           Data.Primitive.MutVar
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Assertions (assert)
 import           Database.LSMTree.Internal.Config
@@ -133,17 +133,18 @@ data LevelsCache m h = LevelsCache_ {
   , cachedKOpsFiles :: !(V.Vector h)
   }
 
+{-# SPECIALISE mkLevelsCache :: Levels IO h -> IO (LevelsCache IO h) #-}
 -- | Flatten the argument 'Level's into a single vector of runs, and use that to
 -- populate the 'LevelsCache'.
-mkLevelsCache :: Levels m h -> LevelsCache m h
-mkLevelsCache lvls = LevelsCache_ {
+mkLevelsCache :: PrimMonad m => Levels m h -> m (LevelsCache m h)
+mkLevelsCache lvls = do
+  rs <- forRunM lvls pure
+  pure $! LevelsCache_ {
       cachedRuns      = rs
     , cachedFilters   = mapStrict Run.runFilter rs
     , cachedIndexes   = mapStrict Run.runIndex rs
     , cachedKOpsFiles = mapStrict Run.runKOpsFile rs
     }
-  where
-    rs = runsInLevels lvls
 
 {-------------------------------------------------------------------------------
   Levels, runs and ongoing merges
@@ -159,7 +160,9 @@ data Level m h = Level {
 
 -- | A merging run is either a single run, or some ongoing merge.
 data MergingRun m h =
-    MergingRun !(MergingRunState m h)
+    -- TODO: replace the MutVar by a different type of mutable location when
+    -- implementing scheduled merges
+    MergingRun !(MutVar (PrimState m) (MergingRunState m h))
   | SingleRun !(Run m h)
 
 -- | Merges are stepped to completion immediately, so there is no representation
@@ -168,19 +171,32 @@ data MergingRun m h =
 -- TODO: this should also represent ongoing merges once we implement scheduling.
 newtype MergingRunState m h = CompletedMerge (Run m h)
 
--- | Return all runs in the levels, ordered from newest to oldest
-runsInLevels :: Levels m h -> V.Vector (Run m h)
-runsInLevels levels = flip V.concatMap levels $ \(Level mr rs) ->
+{-# SPECIALISE forRunM_ :: Levels IO h -> (Run IO h -> IO ()) -> IO () #-}
+forRunM_ :: PrimMonad m => Levels m h -> (Run m h -> m ()) -> m ()
+forRunM_ lvls k = V.forM_ lvls $ \(Level mr rs) -> do
     case mr of
-      SingleRun r                   -> r `V.cons` rs
-      MergingRun (CompletedMerge r) -> r `V.cons` rs
+      SingleRun r    -> k r
+      MergingRun var -> readMutVar var >>= \case
+        CompletedMerge r -> k r
+    V.mapM_ k rs
 
-{-# SPECIALISE closeLevels :: Levels IO (Handle h) -> IO () #-}
-closeLevels ::
-     m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
-  => Levels m (Handle h)
-  -> m ()
-closeLevels levels = V.mapM_ Run.removeReference (runsInLevels levels)
+
+{-# SPECIALISE foldRunM :: (b -> Run IO h -> IO b) -> b -> Levels IO h -> IO b #-}
+foldRunM :: PrimMonad m => (b -> Run m h -> m b) -> b -> Levels m h -> m b
+foldRunM f x lvls = flip (flip V.foldM x) lvls $ \y (Level mr rs) -> do
+    z <- case mr of
+      SingleRun r -> f y r
+      MergingRun var -> readMutVar var >>= \case
+        CompletedMerge r -> f y r
+    V.foldM f z rs
+
+{-# SPECIALISE forRunM :: Levels IO h -> (Run IO h -> IO a) -> IO (V.Vector a) #-}
+-- TODO: this is not terribly performant, but it is also not sure if we are
+-- going to need this in the end. We might get rid of the LevelsCache, and we
+-- currently only use forRunM in mkLevelsCache.
+forRunM :: PrimMonad m => Levels m h -> (Run m h -> m a) -> m (V.Vector a)
+forRunM lvls k = do
+    V.reverse . V.fromList <$> foldRunM (\acc r -> k r >>= \x -> pure (x : acc)) [] lvls
 
 {-------------------------------------------------------------------------------
   Flushes and scheduled merges
@@ -293,16 +309,20 @@ flushWriteBuffer tr conf@TableConfig{confDiskCachePolicy}
             Run.removeReference
     levels' <- addRunToLevels tr conf resolve hfs hbio root uc r reg (tableLevels tc)
     n' <- uniqueToRunNumber <$> incrUniqCounter uc
+    cache' <- mkLevelsCache levels'
     pure $! TableContent {
         tableWriteBuffer = WB.empty
       , tableWriteBufferRN = n'
       , tableLevels = levels'
-      , tableCache = mkLevelsCache levels'
+      , tableCache = cache'
       }
 
 -- | Note that the invariants rely on the fact that levelling is only used on
 -- the last level.
 --
+-- NOTE: @_levelsInvariant@ is based on the @ScheduledMerges.invariant@
+-- prototype. See @ScheduledMerges.invariant@ for documentation about the merge
+-- algorithm.
 _levelsInvariant :: forall m h. TableConfig -> Levels m h -> ST (PrimState m) Bool
 _levelsInvariant conf levels =
     go (LevelNo 1) levels >>= \ !_ -> pure True
@@ -315,8 +335,8 @@ _levelsInvariant conf levels =
 
     go !ln (V.uncons -> Just (Level mr rs, ls)) = do
       mrs <- case mr of
-               SingleRun r                   -> pure $ CompletedMerge r
-               MergingRun (CompletedMerge r) -> pure $ CompletedMerge r
+               SingleRun r    -> pure $ CompletedMerge r
+               MergingRun var -> readMutVar var
       assert (length rs < sizeRatioInt sr) $ pure ()
       assert (expectedRunLengths ln rs ls) $ pure ()
       assert (expectedMergingRunLengths ln mr mrs ls) $ pure ()
@@ -376,6 +396,10 @@ _levelsInvariant conf levels =
     fitsUB policy r ln = Run.runNumEntries r <= maxRunSize sr wba policy ln
 
 {-# SPECIALISE addRunToLevels :: Tracer IO (AtLevel MergeTrace) -> TableConfig -> ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> Run IO (Handle h) -> TempRegistry IO -> Levels IO (Handle h) -> IO (Levels IO (Handle h)) #-}
+-- | Add a run to the levels, and propagate merges.
+--
+-- NOTE: @go@ is based on the @ScheduledMerges.increment@ prototype. See @ScheduledMerges.increment@
+-- for documentation about the merge algorithm.
 addRunToLevels ::
      forall m h. m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
   => Tracer m (AtLevel MergeTrace)
@@ -450,12 +474,14 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
             pure $! Level mr' V.empty `V.cons` V.empty
 
     expectCompletedMerge :: LevelNo -> MergingRun m (Handle h) -> m (Run m (Handle h))
-    expectCompletedMerge ln (SingleRun r)                   = do
+    expectCompletedMerge ln (SingleRun r) = do
       traceWith tr $ AtLevel ln $ TraceExpectCompletedMergeSingleRun (runNumber $ Run.runRunFsPaths r)
       pure r
-    expectCompletedMerge ln (MergingRun (CompletedMerge r)) = do
-      traceWith tr $ AtLevel ln $ TraceExpectCompletedMerge (runNumber $ Run.runRunFsPaths r)
-      pure r
+    expectCompletedMerge ln (MergingRun var) = do
+      readMutVar var >>= \case
+        CompletedMerge r -> do
+          traceWith tr $ AtLevel ln $ TraceExpectCompletedMerge (runNumber $ Run.runRunFsPaths r)
+          pure r
 
     -- TODO: Until we implement proper scheduling, this does not only start a
     -- merge, but it also steps it to completion.
@@ -481,7 +507,8 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
                Run.removeReference
         traceWith tr $ AtLevel ln $ TraceCompletedMerge (Run.runNumEntries r) (runNumber $ Run.runRunFsPaths r)
         V.mapM_ (freeTemp reg . Run.removeReference) rs
-        pure $! MergingRun (CompletedMerge r)
+        var <- newMutVar (CompletedMerge r)
+        pure $! MergingRun var
 
 data MergePolicyForLevel = LevelTiering | LevelLevelling
   deriving stock Show
