@@ -321,6 +321,14 @@ deriving stock instance Generic (Readers s (Handle h))
 deriving anyclass instance (Typeable s, Typeable h)
                         => NoThunks (Readers s (Handle h))
 
+deriving stock instance Generic (Reader m (Handle h))
+instance (Typeable m, Typeable (PrimState m), Typeable h)
+      => NoThunks (Reader m (Handle h)) where
+  showTypeOf (_ :: Proxy (Reader m (Handle h))) = "Reader"
+  wNoThunks ctx = \case
+    ReadRun r      -> noThunks ctx r
+    ReadBuffer var -> noThunks ctx (OnlyCheckWhnf var) -- contents intentionally lazy
+
 deriving stock instance Generic ReaderNumber
 deriving anyclass instance NoThunks ReaderNumber
 

@@ -125,6 +125,7 @@ deriving stock instance Eq   (Action (Lockstep ReadersState) a)
 
 instance StateModel (Lockstep ReadersState) where
   data Action (Lockstep ReadersState) a where
+    -- TODO: also allow an optional write buffer (which is not turned into a run)
     New          :: [TypedWriteBuffer KeyForIndexCompact SerialisedValue SerialisedBlob]
                  -> ReadersAct ()
     PeekKey      :: ReadersAct SerialisedKey
@@ -310,7 +311,7 @@ runIO act lu = case act of
           (\p -> liftIO . Run.fromWriteBuffer hfs hbio Run.CacheRunData (RunAllocFixed 10) p)
           (Paths.RunFsPaths (FS.mkFsPath []) . RunNumber <$> [numRuns ..])
           (map unTypedWriteBuffer wbs)
-      newReaders <- liftIO $ Readers.new hfs hbio runs >>= \case
+      newReaders <- liftIO $ Readers.new hfs hbio Nothing runs >>= \case
         Nothing -> do
           traverse_ Run.removeReference runs
           return Nothing

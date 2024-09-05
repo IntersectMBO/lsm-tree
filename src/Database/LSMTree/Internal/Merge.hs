@@ -63,7 +63,7 @@ new ::
   -> [Run IO (FS.Handle h)]
   -> IO (Maybe (Merge RealWorld (FS.Handle h)))
 new fs hbio mergeCaching alloc mergeLevel mergeMappend targetPaths runs = do
-    mreaders <- Readers.new fs hbio runs
+    mreaders <- Readers.new fs hbio Nothing runs
     for mreaders $ \mergeReaders -> do
       -- calculate upper bounds based on input runs
       let numEntries = coerce (sum @[] @Int) (map Run.runNumEntries runs)

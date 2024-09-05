@@ -769,26 +769,25 @@ data CursorEnv m h = CursorEnv {
     --
     -- NOTE: Consider using the 'cursorSessionEnv' field instead of acquiring
     -- the session lock.
-    cursorSession     :: !(Session m h)
+    cursorSession    :: !(Session m h)
     -- | Use this instead of 'cursorSession' for easy access. An open cursor may
     -- assume that its session is open. A session's global resources, and
     -- therefore resources that are inherited by the cursor, will only be
     -- released once the session is sure that no cursors are open anymore.
-  , cursorSessionEnv  :: !(SessionEnv m h)
+  , cursorSessionEnv :: !(SessionEnv m h)
 
     -- === Cursor-specific
 
     -- | Session-unique identifier for this cursor.
-  , cursorId          :: !Word64
-  , cursorWriteBuffer :: !WriteBuffer
+  , cursorId         :: !Word64
     -- | Readers are immediately discarded once they are 'Readers.Drained'.
     -- However, the reference counts to the runs only get removed when calling
     -- 'closeCursor', as there might still be 'BlobRef's that need the
     -- corresponding run to stay alive.
-  , cursorReaders     :: !(Maybe (Readers.Readers (PrimState m) (Handle h)))
+  , cursorReaders    :: !(Maybe (Readers.Readers (PrimState m) (Handle h)))
     -- | The runs held open by the cursor. We must remove a reference when the
     -- cursor gets closed.
-  , cursorRuns        :: !(V.Vector (Run m (Handle h)))
+  , cursorRuns       :: !(V.Vector (Run m (Handle h)))
   }
 
 {-# SPECIALISE withCursor :: TableHandle IO h -> (Cursor IO h -> IO a) -> IO a #-}
@@ -815,11 +814,11 @@ newCursor th = withOpenTable th $ \thEnv -> do
     -- 'sessionOpenTables'.
     withOpenSession cursorSession $ \_ -> do
       withTempRegistry $ \reg -> do
-        (cursorWriteBuffer, cursorRuns) <-
+        (writeBuffer, cursorRuns) <-
           allocTableContent reg (tableContent thEnv)
         cursorReaders <-
           allocateMaybeTemp reg
-            (Readers.new hfs hbio (V.toList cursorRuns))
+            (Readers.new hfs hbio (Just writeBuffer) (V.toList cursorRuns))
             (Readers.close hfs hbio)
         cursorId0 <- incrUniqCounter (sessionUniqCounter cursorSessionEnv)
         let cursorId = uniqueToWord64 cursorId0
