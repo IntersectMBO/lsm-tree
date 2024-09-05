@@ -233,7 +233,7 @@ deriving anyclass instance NoThunks PageNo
 -------------------------------------------------------------------------------}
 
 deriving stock instance Generic (TableContent m h)
-deriving anyclass instance (Typeable (PrimState m), Typeable h)
+deriving anyclass instance (Typeable m, Typeable (PrimState m), Typeable h)
                         => NoThunks (TableContent m h)
 
 deriving stock instance Generic (LevelsCache m (Handle h))
@@ -241,15 +241,15 @@ deriving anyclass instance (Typeable (PrimState m), Typeable h)
                         => NoThunks (LevelsCache m (Handle h))
 
 deriving stock instance Generic (Level m (Handle h))
-deriving anyclass instance (Typeable (PrimState m), Typeable h)
+deriving anyclass instance (Typeable m, Typeable (PrimState m), Typeable h)
                         => NoThunks (Level m (Handle h))
 
 deriving stock instance Generic (MergingRun m (Handle h))
-deriving anyclass instance (Typeable (PrimState m), Typeable h)
+deriving anyclass instance (Typeable m, Typeable (PrimState m), Typeable h)
                         => NoThunks (MergingRun m (Handle h))
 
 deriving stock instance Generic (MergingRunState m (Handle h))
-deriving anyclass instance (Typeable (PrimState m), Typeable h)
+deriving anyclass instance (Typeable m, Typeable (PrimState m), Typeable h)
                         => NoThunks (MergingRunState m (Handle h))
 
 {-------------------------------------------------------------------------------
@@ -306,9 +306,9 @@ deriving anyclass instance Typeable s
   Merge
 -------------------------------------------------------------------------------}
 
-deriving stock instance Generic (Merge s (Handle h))
-deriving anyclass instance (Typeable s, Typeable h)
-                        => NoThunks (Merge s (Handle h))
+deriving stock instance Generic (Merge m (Handle h))
+deriving anyclass instance (Typeable m, Typeable (PrimState m), Typeable h)
+                        => NoThunks (Merge m (Handle h))
 
 deriving stock instance Generic Merge.Level
 deriving anyclass instance NoThunks Merge.Level
@@ -317,9 +317,9 @@ deriving anyclass instance NoThunks Merge.Level
   Readers
 -------------------------------------------------------------------------------}
 
-deriving stock instance Generic (Readers s (Handle h))
-deriving anyclass instance (Typeable s, Typeable h)
-                        => NoThunks (Readers s (Handle h))
+deriving stock instance Generic (Readers m (Handle h))
+deriving anyclass instance (Typeable m, Typeable (PrimState m), Typeable h)
+                        => NoThunks (Readers m (Handle h))
 
 deriving stock instance Generic (Reader m (Handle h))
 instance (Typeable m, Typeable (PrimState m), Typeable h)
@@ -332,8 +332,9 @@ instance (Typeable m, Typeable (PrimState m), Typeable h)
 deriving stock instance Generic ReaderNumber
 deriving anyclass instance NoThunks ReaderNumber
 
-deriving stock instance Generic (ReadCtx (Handle h))
-deriving anyclass instance Typeable h => NoThunks (ReadCtx (Handle h))
+deriving stock instance Generic (ReadCtx m (Handle h))
+deriving anyclass instance (Typeable m, Typeable (PrimState m), Typeable h)
+                        => NoThunks (ReadCtx m (Handle h))
 
 {-------------------------------------------------------------------------------
   Reader

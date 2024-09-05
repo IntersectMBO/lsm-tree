@@ -163,7 +163,7 @@ data MergingRun m h =
 
 data MergingRunState m h =
     CompletedMerge !(Run m h)
-  | OngoingMerge !(V.Vector (Run m h)) !(Merge (PrimState m) h)
+  | OngoingMerge !(V.Vector (Run m h)) !(Merge m h)
 
 {-# SPECIALISE forRunM_ :: Levels IO h -> (Run IO h -> IO ()) -> IO () #-}
 forRunM_ :: PrimMonad m => Levels m h -> (Run m h -> m ()) -> m ()
