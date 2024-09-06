@@ -595,7 +595,6 @@ newWith sesh seshEnv conf !am !wb !levels = do
     n <- incrUniqCounter (sessionUniqCounter seshEnv)
     let tr = TraceTable (uniqueToWord64 tableId) `contramap` sessionTracer sesh
     traceWith tr $ TraceCreateTableHandle conf
-    cache <- mkLevelsCache levels
     -- The session is kept open until we've updated the session's set of tracked
     -- tables. If 'closeSession' is called by another thread while this code
     -- block is being executed, that thread will block until it reads the
@@ -604,7 +603,6 @@ newWith sesh seshEnv conf !am !wb !levels = do
         { tableWriteBuffer = wb
         , tableWriteBufferRN = uniqueToRunNumber n
         , tableLevels = levels
-        , tableCache = cache
         }
     tableVar <- RW.new $ TableHandleOpen $ TableHandleEnv {
           tableSession = sesh
@@ -654,20 +652,20 @@ lookups resolve ks th fromEntry = do
       let arenaManager = tableHandleArenaManager th
       RW.withReadAccess (tableContent thEnv) $ \tableContent -> do
         let !wb = tableWriteBuffer tableContent
-        let !cache = tableCache tableContent
-        ioRes <-
-          lookupsIO
-            (tableHasBlockIO thEnv)
-            arenaManager
-            resolve
-            (cachedRuns cache)
-            (cachedFilters cache)
-            (cachedIndexes cache)
-            (cachedKOpsFiles cache)
-            ks
-        pure $! V.zipWithStrict
-                  (\k1 e2 -> fromEntry $ combineMaybe resolve (WB.lookup wb k1) e2)
-                  ks ioRes
+        bracket (mkLevelsCache (tableLevels tableContent)) releaseLevelsCache $ \ !cache -> do
+          ioRes <-
+            lookupsIO
+              (tableHasBlockIO thEnv)
+              arenaManager
+              resolve
+              (cachedRuns cache)
+              (cachedFilters cache)
+              (cachedIndexes cache)
+              (cachedKOpsFiles cache)
+              ks
+          pure $! V.zipWithStrict
+                    (\k1 e2 -> fromEntry $ combineMaybe resolve (WB.lookup wb k1) e2)
+                    ks ioRes
 
 {-# SPECIALISE updates :: ResolveSerialisedValue -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob) -> TableHandle IO h -> IO () #-}
 -- | See 'Database.LSMTree.Normal.updates'.
@@ -838,11 +836,11 @@ newCursor th = withOpenTable th $ \thEnv -> do
     -- references to each run, so it is safe.
     allocTableContent reg contentVar = do
         RW.withReadAccess contentVar $ \content -> do
-          let runs = cachedRuns (tableCache content)
-          V.forM_ runs $ \r -> do
+          runs <- forRunM (tableLevels content) $ \r -> do
             allocateTemp reg
               (Run.addReference r)
               (\_ -> Run.removeReference r)
+            pure r
           pure (tableWriteBuffer content, runs)
 
 {-# SPECIALISE closeCursor :: Cursor IO h -> IO () #-}

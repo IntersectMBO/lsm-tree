@@ -10,12 +10,14 @@ module Database.LSMTree.Internal.MergeSchedule (
     -- * Levels cache
   , LevelsCache (..)
   , mkLevelsCache
+  , releaseLevelsCache
     -- * Levels, runs and ongoing merges
   , Levels
   , Level (..)
   , MergingRun (..)
   , MergingRunState (..)
   , forRunM_
+  , forRunM
     -- * Flushes and scheduled merges
   , updatesWithInterleavedFlushes
   , flushWriteBuffer
@@ -102,11 +104,6 @@ data TableContent m h = TableContent {
     --   TODO: later we'll add a field tracking (lazily) open blob file.
   , tableWriteBufferRN :: !RunNumber
   , tableLevels        :: !(Levels m (Handle h))
-    -- | Cache of flattened 'levels'.
-    --
-    -- INVARIANT: when 'level's is modified, this cache should be updated as
-    -- well, for example using 'mkLevelsCache'.
-  , tableCache         :: !(LevelsCache m (Handle h))
   }
 
 {-------------------------------------------------------------------------------
@@ -134,13 +131,17 @@ data LevelsCache m h = LevelsCache_ {
 -- populate the 'LevelsCache'.
 mkLevelsCache :: PrimMonad m => Levels m h -> m (LevelsCache m h)
 mkLevelsCache lvls = do
-  rs <- forRunM lvls pure
+  rs <- forRunM lvls pure -- (\r -> Run.addReference r >> pure r)
   pure $! LevelsCache_ {
       cachedRuns      = rs
     , cachedFilters   = mapStrict Run.runFilter rs
     , cachedIndexes   = mapStrict Run.runIndex rs
     , cachedKOpsFiles = mapStrict Run.runKOpsFile rs
     }
+
+{-# SPECIALISE releaseLevelsCache :: LevelsCache IO h -> IO () #-}
+releaseLevelsCache :: PrimMonad m => LevelsCache m h -> m ()
+releaseLevelsCache _ = pure () --  V.mapM_ Run.removeReference . cachedRuns
 
 {-------------------------------------------------------------------------------
   Levels, runs and ongoing merges
@@ -265,7 +266,6 @@ updatesWithInterleavedFlushes tr conf resolve hfs hbio root uc es reg tc = do
           tableWriteBuffer = wbToSet
         , tableWriteBufferRN = tableWriteBufferRN tc0
         , tableLevels = tableLevels tc0
-        , tableCache = tableCache tc0
         }
 
 {-# SPECIALISE flushWriteBuffer :: Tracer IO (AtLevel MergeTrace) -> TableConfig -> ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> TempRegistry IO -> TableContent IO h -> IO (TableContent IO h) #-}
@@ -305,12 +305,10 @@ flushWriteBuffer tr conf@TableConfig{confDiskCachePolicy}
             Run.removeReference
     levels' <- addRunToLevels tr conf resolve hfs hbio root uc r reg (tableLevels tc)
     n' <- uniqueToRunNumber <$> incrUniqCounter uc
-    cache' <- mkLevelsCache levels'
     pure $! TableContent {
         tableWriteBuffer = WB.empty
       , tableWriteBufferRN = n'
       , tableLevels = levels'
-      , tableCache = cache'
       }
 
 {- TODO: re-enable
