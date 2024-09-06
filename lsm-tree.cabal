@@ -309,18 +309,11 @@ library extras
 test-suite lsm-tree-test
   import:         language, warnings, wno-x-partial
   type:           exitcode-stdio-1.0
-  hs-source-dirs: test src-extras
+  hs-source-dirs: test
   main-is:        Main.hs
   other-modules:
     Database.LSMTree.Class.Monoidal
     Database.LSMTree.Class.Normal
-    Database.LSMTree.Extras
-    Database.LSMTree.Extras.Generators
-    Database.LSMTree.Extras.NoThunks
-    Database.LSMTree.Extras.Orphans
-    Database.LSMTree.Extras.Random
-    Database.LSMTree.Extras.ReferenceImpl
-    Database.LSMTree.Extras.UTxO
     Database.LSMTree.Model.Monoidal
     Database.LSMTree.Model.Normal
     Database.LSMTree.Model.Normal.Session
@@ -386,7 +379,7 @@ test-suite lsm-tree-test
     , lsm-tree:blockio-sim
     , lsm-tree:bloomfilter
     , lsm-tree:control
-    , lsm-tree:kmerge
+    , lsm-tree:extras
     , lsm-tree:monkey
     , lsm-tree:prototypes
     , mtl
@@ -401,7 +394,6 @@ test-suite lsm-tree-test
     , semialign
     , split
     , stm
-    , strict-mvar
     , strict-stm
     , tasty
     , tasty-hunit
@@ -421,7 +413,7 @@ test-suite lsm-tree-test
 benchmark lsm-tree-micro-bench
   import:         language, warnings, wno-x-partial
   type:           exitcode-stdio-1.0
-  hs-source-dirs: bench/micro src-extras
+  hs-source-dirs: bench/micro
   main-is:        Main.hs
   other-modules:
     Bench.Database.LSMTree.Internal.BloomFilter
@@ -433,12 +425,6 @@ benchmark lsm-tree-micro-bench
     Bench.Database.LSMTree.Internal.WriteBuffer
     Bench.Database.LSMTree.Monoidal
     Bench.Database.LSMTree.Normal
-    Database.LSMTree.Extras
-    Database.LSMTree.Extras.Generators
-    Database.LSMTree.Extras.Orphans
-    Database.LSMTree.Extras.Random
-    Database.LSMTree.Extras.ReferenceImpl
-    Database.LSMTree.Extras.UTxO
 
   build-depends:
     , base
@@ -452,36 +438,25 @@ benchmark lsm-tree-micro-bench
     , lsm-tree
     , lsm-tree:blockio-api
     , lsm-tree:bloomfilter
-    , lsm-tree:prototypes
-    , primitive
+    , lsm-tree:extras
     , QuickCheck
-    , quickcheck-instances
     , random
     , temporary
     , vector
-    , wide-word
 
   ghc-options:    -rtsopts -with-rtsopts=-T -threaded
 
 benchmark lsm-tree-bench-bloomfilter
   import:         language, warnings, wno-x-partial
   type:           exitcode-stdio-1.0
-  hs-source-dirs: bench/macro src-extras
+  hs-source-dirs: bench/macro
   main-is:        lsm-tree-bench-bloomfilter.hs
-  other-modules:
-    Database.LSMTree.Extras.Orphans
-    Database.LSMTree.Extras.UTxO
-
   build-depends:
     , base
-    , bytestring
-    , deepseq
-    , fs-api
     , lsm-tree
     , lsm-tree:bloomfilter
+    , lsm-tree:extras
     , lsm-tree:monkey
-    , primitive
-    , QuickCheck
     , random
     , time
     , vector
@@ -492,15 +467,10 @@ benchmark lsm-tree-bench-bloomfilter
 benchmark lsm-tree-bench-lookups
   import:         language, warnings, wno-x-partial
   type:           exitcode-stdio-1.0
-  hs-source-dirs: bench/macro src-extras
+  hs-source-dirs: bench/macro
   main-is:        lsm-tree-bench-lookups.hs
-  other-modules:
-    Database.LSMTree.Extras.Orphans
-    Database.LSMTree.Extras.UTxO
-
   build-depends:
     , base
-    , bytestring
     , deepseq
     , fs-api
     , io-classes            >=1.5
@@ -508,13 +478,12 @@ benchmark lsm-tree-bench-lookups
     , lsm-tree:blockio-api
     , lsm-tree:bloomfilter
     , lsm-tree:control
+    , lsm-tree:extras
     , primitive
-    , QuickCheck
     , random
     , time
     , vector
     , vector-algorithms
-    , wide-word
 
   ghc-options:    -rtsopts -with-rtsopts=-T -threaded
 
@@ -529,9 +498,8 @@ library mcg
 benchmark lsm-tree-bench-wp8
   import:         language, warnings, wno-x-partial
   type:           exitcode-stdio-1.0
-  hs-source-dirs: bench/macro src-extras
+  hs-source-dirs: bench/macro
   main-is:        lsm-tree-bench-wp8.hs
-  other-modules:  Database.LSMTree.Extras
   build-depends:
     , async
     , base
@@ -545,6 +513,7 @@ benchmark lsm-tree-bench-wp8
     , fs-api
     , lsm-tree
     , lsm-tree:blockio-api
+    , lsm-tree:extras
     , lsm-tree:mcg
     , optparse-applicative
     , pretty-show
@@ -560,7 +529,7 @@ flag rocksdb
 benchmark rocksdb-bench-wp8
   import:         language, warnings, wno-x-partial
   type:           exitcode-stdio-1.0
-  hs-source-dirs: bench/macro src-extras
+  hs-source-dirs: bench/macro
   main-is:        rocksdb-bench-wp8.hs
 
   if !((os(linux) && flag(rocksdb)) && impl(ghc >=9.2.0))
