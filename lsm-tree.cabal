@@ -269,6 +269,43 @@ test-suite bloomfilter-spell
     , base
     , lsm-tree:bloomfilter
 
+library extras
+  import:          language, warnings
+  visibility:      private
+  hs-source-dirs:  src-extras
+  exposed-modules:
+    Database.LSMTree.Extras
+    Database.LSMTree.Extras.Generators
+    Database.LSMTree.Extras.NoThunks
+    Database.LSMTree.Extras.Orphans
+    Database.LSMTree.Extras.Random
+    Database.LSMTree.Extras.ReferenceImpl
+    Database.LSMTree.Extras.UTxO
+
+  build-depends:
+    , base                  >=4.14 && <4.21
+    , bitvec
+    , bytestring
+    , containers
+    , contra-tracer
+    , deepseq
+    , fs-api
+    , lsm-tree
+    , lsm-tree:blockio-api
+    , lsm-tree:bloomfilter
+    , lsm-tree:control
+    , lsm-tree:kmerge
+    , lsm-tree:prototypes
+    , nothunks
+    , primitive
+    , QuickCheck
+    , quickcheck-instances
+    , random
+    , strict-mvar
+    , strict-stm
+    , vector
+    , wide-word
+
 test-suite lsm-tree-test
   import:         language, warnings, wno-x-partial
   type:           exitcode-stdio-1.0
