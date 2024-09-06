@@ -26,6 +26,7 @@ module Database.LSMTree.Internal.MergeSchedule (
   , maxRunSize
   ) where
 
+import           Control.Monad.Class.MonadThrow (MonadMask)
 import           Control.Monad.Primitive
 import           Control.TempRegistry
 import           Control.Tracer
@@ -131,7 +132,7 @@ data LevelsCache m h = LevelsCache_ {
 -- populate the 'LevelsCache'.
 mkLevelsCache :: PrimMonad m => Levels m h -> m (LevelsCache m h)
 mkLevelsCache lvls = do
-  rs <- forRunM lvls pure -- (\r -> Run.addReference r >> pure r)
+  rs <- forRunM lvls (\r -> Run.addReference r >> pure r)
   pure $! LevelsCache_ {
       cachedRuns      = rs
     , cachedFilters   = mapStrict Run.runFilter rs
@@ -140,8 +141,8 @@ mkLevelsCache lvls = do
     }
 
 {-# SPECIALISE releaseLevelsCache :: LevelsCache IO h -> IO () #-}
-releaseLevelsCache :: PrimMonad m => LevelsCache m h -> m ()
-releaseLevelsCache _ = pure () --  V.mapM_ Run.removeReference . cachedRuns
+releaseLevelsCache :: (PrimMonad m, MonadMask m) => LevelsCache m h -> m ()
+releaseLevelsCache = V.mapM_ Run.removeReference . cachedRuns
 
 {-------------------------------------------------------------------------------
   Levels, runs and ongoing merges
