@@ -1,35 +1,41 @@
 module Database.LSMTree.Internal.RunReaders (
     Readers (..)
-  , ReaderNumber (..)
-  , ReadCtx (..)
   , new
   , close
   , peekKey
   , HasMore (..)
   , pop
   , dropWhileKey
+    -- * Internals
+  , Reader (..)
+  , ReaderNumber (..)
+  , ReadCtx (..)
   ) where
 
 import           Control.Monad (zipWithM)
 import           Control.Monad.Primitive
 import           Data.Function (on)
+import           Data.Functor ((<&>))
 import           Data.List.NonEmpty (nonEmpty)
 import           Data.Maybe (catMaybes)
 import           Data.Primitive.MutVar
 import           Data.Traversable (for)
+import           Database.LSMTree.Internal.BlobRef (BlobRef)
+import qualified Database.LSMTree.Internal.Entry as Entry
 import           Database.LSMTree.Internal.Run (Run)
 import           Database.LSMTree.Internal.RunReader (RunReader)
 import qualified Database.LSMTree.Internal.RunReader as Reader
 import           Database.LSMTree.Internal.Serialise
+import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import qualified KMerge.Heap as Heap
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
 import           System.FS.BlockIO.API (HasBlockIO)
 
--- | Abstraction for the collection of 'RunReader', yielding elements in order.
--- More precisely, that means first ordered by their key, then by the input
--- run they came from. This is important for resolving multiple entries with the
--- same key into one.
+-- | A collection of runs and write buffers being read from, yielding elements
+-- in order. More precisely, that means first ordered by their key, then by the
+-- input run they came from. This is important for resolving multiple entries
+-- with the same key into one.
 --
 -- Construct with 'new', then keep calling 'pop'.
 -- If aborting early, remember to call 'close'!
@@ -55,6 +61,9 @@ newtype ReaderNumber = ReaderNumber Int
 --
 -- TODO(optimisation): We allocate this record for each k/op. This might be
 -- avoidable, see ideas below.
+-- TODO: This should be parametrised over a monad m instead of using IO.
+-- Alternatively, we could remove all type parameters on types in this module,
+-- as they are only used with IO in any case.
 data ReadCtx fhandle = ReadCtx {
       -- We could avoid this using a more specialised mutable heap with separate
       -- arrays for keys and values (or even each of their components).
@@ -68,7 +77,7 @@ data ReadCtx fhandle = ReadCtx {
       -- 'RunFsPaths' is always higher for newer runs, then we could use that
       -- in the 'Ord' instance.
     , readCtxNumber    :: !ReaderNumber
-    , readCtxReader    :: !(RunReader IO fhandle)
+    , readCtxReader    :: !(Reader IO fhandle)
     }
 
 instance Eq (ReadCtx fhandle) where
@@ -78,22 +87,51 @@ instance Eq (ReadCtx fhandle) where
 instance Ord (ReadCtx fhandle) where
   compare = compare `on` (\r -> (readCtxHeadKey r, readCtxNumber r))
 
+-- TODO: This is slightly inelegant. This module could work generally for
+-- anything that can produce elements, but currently is very specific to having
+-- write buffer and run readers. Also, for run merging, no write buffer is
+-- involved, but we still need to branch on this sum type.
+-- A more general version is possible, but despite SPECIALISE-ing everything
+-- showed ~100 bytes of extra allocations per entry that is read (which might be
+-- avoidable with some tinkering).
+data Reader m fhandle =
+    ReadRun    !(RunReader m fhandle)
+    -- The list allows to incrementally read from the write buffer without
+    -- having to find the next entry in the Map again (requiring key
+    -- comparisons) or having to copy out all entries.
+    -- TODO: more efficient representation? benchmark!
+  | ReadBuffer !(MutVar (PrimState m) [KOp m fhandle])
+
+type KOp m fhandle = (SerialisedKey, Entry.Entry SerialisedValue (BlobRef m fhandle))
+
 -- | On equal keys, elements from runs earlier in the list are yielded first.
 -- This means that the list of runs should be sorted from new to old.
 new :: forall h .
      HasFS IO h
   -> HasBlockIO IO h
+  -> Maybe WB.WriteBuffer
   -> [Run IO (FS.Handle h)]
   -> IO (Maybe (Readers RealWorld (FS.Handle h)))
-new fs hbio runs = do
-    readers <- zipWithM (fromRun . ReaderNumber) [1..] runs
-    for (nonEmpty (catMaybes readers)) $ \xs -> do
+new fs hbio wbs runs = do
+    wbCtx <- maybe (pure Nothing) fromWB wbs
+    runCtxs <- zipWithM (fromRun . ReaderNumber) [1..] runs
+    let ctxs = catMaybes (wbCtx : runCtxs)
+    for (nonEmpty ctxs) $ \xs -> do
       (readersHeap, readCtx) <- Heap.newMutableHeap xs
       readersNext <- newMutVar readCtx
       return Readers {..}
   where
+    fromWB :: WB.WriteBuffer -> IO (Maybe (ReadCtx (FS.Handle h)))
+    fromWB wb = do
+        -- TODO: Remove once the write buffer returns BlobRefs.
+        -- Also remember to enable write buffer in RunReaders QLS tests.
+        let toBlobRef :: SerialisedBlob -> BlobRef IO (FS.Handle h)
+            toBlobRef = error "toBlobRef: can't make BlobRef from blob in write buffer"
+        kops <- newMutVar $ map (fmap (fmap toBlobRef)) $ WB.toList wb
+        nextReadCtx fs hbio (ReaderNumber 0) (ReadBuffer kops)
+
     fromRun :: ReaderNumber -> Run IO (FS.Handle h) -> IO (Maybe (ReadCtx (FS.Handle h)))
-    fromRun n run = nextReadCtx fs hbio n =<< Reader.new fs hbio run
+    fromRun n run = nextReadCtx fs hbio n . ReadRun =<< Reader.new fs hbio run
 
 -- | Only call when aborting before all readers have been drained.
 close ::
@@ -103,14 +141,17 @@ close ::
   -> IO ()
 close fs hbio Readers {..} = do
     ReadCtx {readCtxReader} <- readMutVar readersNext
-    Reader.close fs hbio readCtxReader
+    closeReader readCtxReader
     closeHeap
   where
+    closeReader = \case
+        ReadRun r    -> Reader.close fs hbio r
+        ReadBuffer _ -> pure ()
     closeHeap =
         Heap.extract readersHeap >>= \case
           Nothing -> return ()
           Just ReadCtx {readCtxReader} -> do
-            Reader.close fs hbio readCtxReader
+            closeReader readCtxReader
             closeHeap
 
 peekKey ::
@@ -169,7 +210,7 @@ dropOne ::
   -> HasBlockIO IO h
   -> Readers RealWorld (FS.Handle h)
   -> ReaderNumber
-  -> RunReader IO (FS.Handle h)
+  -> Reader IO (FS.Handle h)
   -> IO HasMore
 dropOne fs hbio Readers {..} number reader = do
     mNext <- nextReadCtx fs hbio number reader >>= \case
@@ -186,12 +227,18 @@ nextReadCtx ::
      HasFS IO h
   -> HasBlockIO IO h
   -> ReaderNumber
-  -> RunReader IO (FS.Handle h)
+  -> Reader IO (FS.Handle h)
   -> IO (Maybe (ReadCtx (FS.Handle h)))
-nextReadCtx fs hbio readCtxNumber readCtxReader = do
-    res <- Reader.next fs hbio readCtxReader
-    case res of
-      Reader.Empty -> do
-        return Nothing
-      Reader.ReadEntry readCtxHeadKey readCtxHeadEntry ->
-        return (Just ReadCtx {..})
+nextReadCtx fs hbio readCtxNumber readCtxReader =
+    case readCtxReader of
+      ReadRun r -> Reader.next fs hbio r <&> \case
+        Reader.Empty ->
+          Nothing
+        Reader.ReadEntry readCtxHeadKey readCtxHeadEntry ->
+          Just ReadCtx {..}
+      ReadBuffer r -> atomicModifyMutVar r $ \case
+        [] ->
+          ([], Nothing)
+        ((readCtxHeadKey, e) : rest) ->
+          let readCtxHeadEntry = Reader.Entry e
+          in (rest, Just ReadCtx {..})
