@@ -31,6 +31,7 @@ benchmarks :: Benchmark
 benchmarks = bgroup "Bench.Database.LSMTree.Normal" [
       benchLargeValueVsSmallValueBlob
     , benchCursorScanVsRangeLookupScan
+    , benchLookups
     ]
 
 {-------------------------------------------------------------------------------
@@ -209,6 +210,60 @@ benchCursorScanVsRangeLookupScan =
           Normal.close t
           Normal.closeSession s
           cleanupFiles (tmpDir, hfs, hbio)
+
+{-------------------------------------------------------------------------------
+  Lookups
+-------------------------------------------------------------------------------}
+
+benchLookups :: Benchmark
+benchLookups =
+    envWithCleanup initialise cleanup $ \ ~(_, _, _, _, t) ->
+      bench "lookups" $ whnfIO $ do
+        forM_ kss $ \batch -> Normal.lookups batch t
+  where
+    benchConfig' :: Common.TableConfig
+    benchConfig' = Common.defaultTableConfig {
+          Common.confWriteBufferAlloc = Common.AllocNumEntries (Common.NumEntries 20000)
+        }
+
+    initialSize, batchSize :: Int
+    !initialSize = 800_000
+    !batchSize = 250
+
+    randomEntries :: Int -> V.Vector (K, V2, Maybe B2)
+    randomEntries n = V.unfoldrExactN n f (mkStdGen 17)
+      where f !g = let (!k, !g') = uniform g
+                  in  ((k, v, Nothing), g')
+            -- The exact value does not matter much, so we pick an arbitrary
+            -- hardcoded one.
+            !v = V2 138
+
+    ins :: V.Vector (K, V2, Maybe B2)
+    !ins = force $ randomEntries initialSize
+
+    inss :: V.Vector (V.Vector (K, V2, Maybe B2))
+    !inss = force $ vgroupsOfN batchSize ins
+
+    ks :: V.Vector K
+    !ks = force $ V.create $ do
+        mv <- V.thaw (V.map fst3 ins)
+        _ <- vshuffle mv (mkStdGen 72)
+        pure mv
+
+    kss :: V.Vector (V.Vector K)
+    !kss = force $ vgroupsOfN batchSize ks
+
+    initialise = do
+        (tmpDir, hfs, hbio) <- mkFiles
+        s <- Normal.openSession nullTracer hfs hbio (FS.mkFsPath [])
+        t <- Normal.new s benchConfig'
+        V.mapM_ (flip Normal.inserts t) inss
+        pure (tmpDir, hfs, hbio, s, t)
+
+    cleanup (tmpDir, hfs, hbio, s, t) = do
+        Normal.close t
+        Normal.closeSession s
+        cleanupFiles (tmpDir, hfs, hbio)
 
 {-------------------------------------------------------------------------------
   Setup
