@@ -1,12 +1,18 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Test.Database.LSMTree.Internal.Run (tests) where
+module Test.Database.LSMTree.Internal.Run (
+    -- * Main test tree
+    tests,
+    -- * Utilities
+    mkRunFromSerialisedKOps,
+) where
 
 import           Data.Bifoldable (bifoldMap)
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Short as SBS
 import           Data.Coerce (coerce)
+import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromJust)
 import qualified Data.Primitive.ByteArray as BA
@@ -32,7 +38,7 @@ import           Database.LSMTree.Internal.PageAcc (entryWouldFitInPage)
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..))
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.RawPage
-import           Database.LSMTree.Internal.Run
+import           Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..))
 import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.Serialise
@@ -84,8 +90,9 @@ testSingleInsert sessionRoot key val mblob =
     let fs = FsIO.ioHasFS (FS.MountPoint sessionRoot) in
     FS.withIOHasBlockIO fs FS.defaultIOCtxParams $ \hbio -> do
     -- flush write buffer
-    let wb = WB.addEntryNormal key (N.Insert val mblob) WB.empty
-    run <- fromWriteBuffer fs hbio CacheRunData (RunAllocFixed 10) (RunFsPaths (FS.mkFsPath []) (RunNumber 42)) wb
+    let fsPaths = RunFsPaths (FS.mkFsPath []) (RunNumber 42)
+        wb = Map.singleton key (updateToEntryNormal (N.Insert val mblob))
+    run <- mkRunFromSerialisedKOps fs hbio fsPaths wb
     -- check all files have been written
     let activeDir = sessionRoot
     bsKOps <- BS.readFile (activeDir </> "42.keyops")
@@ -177,11 +184,10 @@ prop_WriteNumEntries fs hbio (TypedWriteBuffer wb) = do
     removeReference run
 
     return . genStats kops $
-       WB.numEntries wb === runSize
+       NumEntries (Map.size wb) === runSize
   where
-    kops = WB.toList wb
-
-    flush n = fromWriteBuffer fs hbio CacheRunData (RunAllocFixed 10) (RunFsPaths (FS.mkFsPath []) n)
+    kops = Map.toList wb
+    flush n = mkRunFromSerialisedKOps fs hbio (RunFsPaths (FS.mkFsPath []) n)
 
 -- | Loading a run (written out from a write buffer) from disk gives the same
 -- in-memory representation as the original run.
@@ -195,7 +201,7 @@ prop_WriteAndOpen ::
 prop_WriteAndOpen fs hbio (TypedWriteBuffer wb) = do
     -- flush write buffer
     let fsPaths = RunFsPaths (FS.mkFsPath []) (RunNumber 1337)
-    written <- fromWriteBuffer fs hbio CacheRunData (RunAllocFixed 10) fsPaths wb
+    written <- mkRunFromSerialisedKOps fs hbio fsPaths wb
     loaded <- openFromDisk fs hbio CacheRunData fsPaths
 
     (RefCount 1 @=?) =<< readRefCount (runRefCounter written)
@@ -231,3 +237,14 @@ genStats kops = tabulate "value size" size . label note
     note
       | any (uncurry entryWouldFitInPage) kops = "has large k/op"
       | otherwise = "no large k/op"
+
+mkRunFromSerialisedKOps ::
+     FS.HasFS IO h
+  -> FS.HasBlockIO IO h
+  -> RunFsPaths
+  -> Map SerialisedKey (Entry SerialisedValue SerialisedBlob)
+  -> IO (Run IO (FS.Handle h))
+mkRunFromSerialisedKOps fs hbio fsPaths kops =
+    Run.fromWriteBuffer fs hbio CacheRunData (RunAllocFixed 10)
+                        fsPaths (WB.fromMap kops)
+

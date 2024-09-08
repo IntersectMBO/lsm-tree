@@ -21,7 +21,6 @@ import           Database.LSMTree.Internal.BlobRef (readBlob)
 import           Database.LSMTree.Internal.Entry
 import qualified Database.LSMTree.Internal.Paths as Paths
 import qualified Database.LSMTree.Internal.Run as Run
-import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..))
 import           Database.LSMTree.Internal.RunNumber
 import qualified Database.LSMTree.Internal.RunReader as Reader
 import           Database.LSMTree.Internal.RunReaders
@@ -39,6 +38,7 @@ import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans ()
 
+import           Test.Database.LSMTree.Internal.Run (mkRunFromSerialisedKOps)
 import           Test.QuickCheck.StateModel
 import           Test.QuickCheck.StateModel.Lockstep
 import qualified Test.QuickCheck.StateModel.Lockstep.Defaults as Lockstep
@@ -80,11 +80,13 @@ isEmpty (MockReaders xs) = null xs
 size :: MockReaders -> Int
 size (MockReaders xs) = length xs
 
-newMock :: Maybe SerialisedKey -> [WB.WriteBuffer] -> MockReaders
+newMock :: Maybe SerialisedKey
+        -> [TypedWriteBuffer KeyForIndexCompact SerialisedValue SerialisedBlob]
+        -> MockReaders
 newMock offset =
       MockReaders . Map.assocs . Map.unions
     . zipWith (\i -> Map.mapKeysMonotonic (\k -> (k, RunNumber i))) [0..]
-    . map (skip . WB.toMap)
+    . map (skip . unTypedWriteBuffer)
   where
     skip = maybe id (\k -> Map.dropWhileAntitone (< k)) offset
 
@@ -203,12 +205,12 @@ instance InLockstep ReadersState where
             withoutBlobs ::
                  TypedWriteBuffer KeyForIndexCompact SerialisedValue SerialisedBlob
               -> TypedWriteBuffer KeyForIndexCompact SerialisedValue SerialisedBlob
-            withoutBlobs = TypedWriteBuffer . WB.fromMap
+            withoutBlobs = TypedWriteBuffer
                          . Map.filter (not . hasBlob)
-                         . WB.toMap . unTypedWriteBuffer
+                         . unTypedWriteBuffer
         wb <- fmap withoutBlobs <$> arbitrary
         wbs <- vector =<< chooseInt (1, 10)
-        let keys = map fst $ concatMap (WB.toList . unTypedWriteBuffer) $ toList wb <> wbs
+        let keys = map fst $ concatMap (Map.toList . unTypedWriteBuffer) $ toList wb <> wbs
         offset <-
           if null keys
           then pure Nothing
@@ -250,11 +252,11 @@ instance InLockstep ReadersState where
     -- Directly using strings, since there is only a small number of tags.
     [ [ "NewEntries " <> showPowersOf 10 numEntries
       | New _ wb wbs <- [action]
-      , let numEntries = sum (map (unNumEntries . WB.numEntries . unTypedWriteBuffer) (toList wb <> wbs))
+      , let numEntries = sum (map (Map.size . unTypedWriteBuffer) (toList wb <> wbs))
       ]
     , [ "NewEntriesKeyDuplicates " <> showPowersOf 2 keyCount
       | New _ wb wbs <- [action]
-      , let keyCounts = Map.unionsWith (+) (map (Map.map (const 1) . WB.toMap . unTypedWriteBuffer) (toList wb <> wbs))
+      , let keyCounts = Map.unionsWith (+) (map (Map.map (const 1) . unTypedWriteBuffer) (toList wb <> wbs))
       , keyCount <- Map.elems keyCounts
       , keyCount > 1
       ]
@@ -273,7 +275,7 @@ runMock ::
   -> MockReaders
   -> (ReadersVal a, MockReaders)
 runMock _ = \case
-    New k wb wbs   -> const $ wrap MUnit (Right (), newMock (coerce k) . map unTypedWriteBuffer $ toList wb <> wbs)
+    New k wb wbs   -> const $ wrap MUnit (Right (), newMock (coerce k) (toList wb <> wbs))
     PeekKey        -> \m -> wrap MKey (peekKeyMock m, m)
     Pop n          -> wrap wrapPop . popMock n
     DropWhileKey k -> wrap wrapDrop . dropWhileKeyMock k
@@ -332,15 +334,21 @@ runIO act lu = case act of
       traverse_ (liftIO . closeReadersCtx hfs hbio) mCtx
       runs <-
         zipWithM
-          (\p -> liftIO . Run.fromWriteBuffer hfs hbio Run.CacheRunData (RunAllocFixed 10) p)
+          (\p -> liftIO . mkRunFromSerialisedKOps hfs hbio p)
           (Paths.RunFsPaths (FS.mkFsPath []) . RunNumber <$> [numRuns ..])
           (map unTypedWriteBuffer wbs)
-      newReaders <- liftIO $ Readers.newAtOffsetMaybe hfs hbio (coerce offset) (unTypedWriteBuffer <$> wb) runs >>= \case
-        Nothing -> do
-          traverse_ Run.removeReference runs
-          return Nothing
-        Just readers ->
-          return $ Just (runs, readers)
+      newReaders <- do
+        mreaders <-
+          liftIO $ Readers.newAtOffsetMaybe
+                     hfs hbio (coerce offset)
+                     (WB.fromMap . unTypedWriteBuffer <$> wb)
+                     runs
+        case mreaders of
+          Nothing -> do
+            liftIO $ traverse_ Run.removeReference runs
+            return Nothing
+          Just readers ->
+            return $ Just (runs, readers)
       put (RealState (numRuns + fromIntegral (length wbs)) newReaders)
       return (Right ())
     PeekKey -> expectReaders $ \_ _ r -> do
