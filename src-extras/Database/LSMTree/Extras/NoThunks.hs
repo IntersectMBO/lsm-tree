@@ -57,6 +57,7 @@ import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.UniqCounter
 import           Database.LSMTree.Internal.Unsliced
 import           Database.LSMTree.Internal.WriteBuffer
+import           Database.LSMTree.Internal.WriteBufferBlobs
 import           GHC.Generics
 import           KMerge.Heap
 import           NoThunks.Class
@@ -217,6 +218,22 @@ instance NoThunks WriteBuffer where
       -- WHNF.
       y :: Map SerialisedKey (Entry SerialisedValue SerialisedBlob)
       !y = toMap x
+
+{-------------------------------------------------------------------------------
+  BlobFile
+-------------------------------------------------------------------------------}
+
+deriving stock instance Generic (WriteBufferBlobs m h)
+deriving anyclass instance (Typeable (PrimState m), Typeable h)
+                        => NoThunks (WriteBufferBlobs m h)
+
+deriving stock instance Generic (BlobFileState m h)
+deriving anyclass instance (Typeable (PrimState m), Typeable h)
+                        => NoThunks (BlobFileState m h)
+
+deriving stock instance Generic (FilePointer m)
+deriving anyclass instance Typeable (PrimState m)
+                        => NoThunks (FilePointer m)
 
 {-------------------------------------------------------------------------------
   IndexCompact

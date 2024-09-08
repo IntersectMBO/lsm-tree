@@ -146,6 +146,7 @@ library
     Database.LSMTree.Internal.Unsliced
     Database.LSMTree.Internal.Vector
     Database.LSMTree.Internal.WriteBuffer
+    Database.LSMTree.Internal.WriteBufferBlobs
     Database.LSMTree.Monoidal
     Database.LSMTree.Normal
 
