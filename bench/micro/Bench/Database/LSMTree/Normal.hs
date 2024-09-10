@@ -149,11 +149,16 @@ benchCursorScanVsRangeLookupScan =
       env (mkGrouped es) $ \ ess ->
         withEnv ess $ \ ~(_, _, _, _, t :: Normal.TableHandle IO K V2 B2) ->
           bgroup "cursor-scan-vs-range-lookup-scan" [
-              bench "cursor-scan" $ whnfIO $ do
+              bench "cursor-scan-single" $ whnfIO $ do
+                Normal.withCursor t $ \c -> do
+                  Normal.readCursor initialSize c
+            , bench "cursor-scan-chunked" $ whnfIO $ do
                 Normal.withCursor t $ \c -> do
                   forM_ [1 .. numChunks] $ \(_ :: Int) -> do
                     Normal.readCursor readSize c
-            , bench "lookup-scan" $ nfIO $ do
+            , bench "lookup-scan-single" $ whnfIO $ do
+                Normal.rangeLookup (Normal.FromToIncluding (K minBound) (K maxBound)) t
+            , bench "lookup-scan-chunked" $ whnfIO $ do
                 forM_ ranges $ \r -> do
                   Normal.rangeLookup r t
             ]
