@@ -607,7 +607,6 @@ newWith ::
   -> m (TableHandle m h)
 newWith sesh seshEnv conf !am !wb !levels = do
     tableId <- incrUniqCounter (sessionUniqCounter seshEnv)
-    n <- incrUniqCounter (sessionUniqCounter seshEnv)
     let tr = TraceTable (uniqueToWord64 tableId) `contramap` sessionTracer sesh
     traceWith tr $ TraceCreateTableHandle conf
     cache <- mkLevelsCache levels
@@ -617,7 +616,6 @@ newWith sesh seshEnv conf !am !wb !levels = do
     -- /updated/ set of tracked tables.
     contentVar <- RW.new $ TableContent
         { tableWriteBuffer = wb
-        , tableWriteBufferRN = uniqueToRunNumber n
         , tableLevels = levels
         , tableCache = cache
         }
