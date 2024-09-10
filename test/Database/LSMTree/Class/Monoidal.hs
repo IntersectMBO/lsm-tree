@@ -31,6 +31,7 @@ type IsTableHandle :: ((Type -> Type) -> Type -> Type -> Type) -> Constraint
 class (IsSession (Session h)) => IsTableHandle h where
     type Session h :: (Type -> Type) -> Type
     type TableConfig h :: Type
+    type Cursor h :: (Type -> Type) -> Type -> Type -> Type
 
     new ::
            IOLike m
@@ -53,6 +54,24 @@ class (IsSession (Session h)) => IsTableHandle h where
             (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
         => h m k v
         -> Range k
+        -> m (V.Vector (QueryResult k v))
+
+    newCursor ::
+           IOLike m
+        => h m k v
+        -> m (Cursor h m k v)
+
+    closeCursor ::
+           IOLike m
+        => proxy h
+        -> Cursor h m k v
+        -> m ()
+
+    readCursor ::
+           (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
+        => proxy h
+        -> Int
+        -> Cursor h m k v
         -> m (V.Vector (QueryResult k v))
 
     updates ::
@@ -170,6 +189,7 @@ withTableMerge table1 table2 = bracket (merge table1 table2) close
 instance IsTableHandle M.TableHandle where
     type Session M.TableHandle = M.Session
     type TableConfig M.TableHandle = M.TableConfig
+    type Cursor M.TableHandle = M.Cursor
 
     new = M.new
     close = M.close
@@ -180,6 +200,10 @@ instance IsTableHandle M.TableHandle where
     mupserts = flip M.mupserts
 
     rangeLookup = flip M.rangeLookup
+
+    newCursor = M.newCursor
+    closeCursor _ = M.closeCursor
+    readCursor _ = M.readCursor
 
     snapshot = M.snapshot
     open = M.open
@@ -194,6 +218,7 @@ instance IsTableHandle M.TableHandle where
 instance IsTableHandle R.TableHandle where
     type Session R.TableHandle = R.Session
     type TableConfig R.TableHandle = R.TableConfig
+    type Cursor R.TableHandle = R.Cursor
 
     new = R.new
     close = R.close
@@ -204,6 +229,10 @@ instance IsTableHandle R.TableHandle where
     mupserts = flip R.mupserts
 
     rangeLookup = flip R.rangeLookup
+
+    newCursor = R.newCursor
+    closeCursor _ = R.closeCursor
+    readCursor _ = R.readCursor
 
     snapshot = R.snapshot
     open sesh snap = R.open sesh R.configNoOverride snap
