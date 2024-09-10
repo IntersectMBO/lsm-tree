@@ -4,7 +4,9 @@ module Test.Database.LSMTree.Class.Monoidal (tests) where
 
 import           Control.Monad.ST.Strict (runST)
 import qualified Data.ByteString as BS
+import qualified Data.List as List
 import           Data.Maybe (fromMaybe)
+import qualified Data.Proxy as Proxy
 import qualified Data.Vector as V
 import qualified Data.Vector.Algorithms.Merge as VA
 import           Data.Word (Word64)
@@ -14,7 +16,8 @@ import qualified Database.LSMTree.Class.Monoidal as Class
 import           Database.LSMTree.Common (Labellable (..), mkSnapshotName)
 import           Database.LSMTree.Extras.Generators ()
 import           Database.LSMTree.ModelIO.Monoidal (IOLike, LookupResult (..),
-                     QueryResult (..), Range (..), Update (..))
+                     QueryResult (..), Range (..), SerialiseKey, SerialiseValue,
+                     Update (..))
 import qualified Database.LSMTree.ModelIO.Monoidal as M
 import           Database.LSMTree.Monoidal (ResolveValue (..),
                      resolveDeserialised)
@@ -63,6 +66,12 @@ tests = testGroup "Test.Database.LSMTree.Class.Monoidal"
       , False
       , False
       , False
+      , False
+      , False
+      , False
+      , False
+      , False
+      , False
       , True  -- merge
       ] ++ repeat False
 
@@ -77,6 +86,12 @@ tests = testGroup "Test.Database.LSMTree.Class.Monoidal"
       , testProperty' "dup-insert-comm" $ prop_dupInsertCommutes tbl
       , testProperty' "dup-nochanges" $ prop_dupNoChanges tbl
       , testProperty' "lookupRange-insert" $ prop_insertLookupRange tbl
+      , testProperty' "readCursor-sorted" $ prop_readCursorSorted tbl
+      , testProperty' "readCursor-num-results" $ prop_readCursorNumResults tbl
+      , testProperty' "readCursor-insert" $ prop_readCursorInsert tbl
+      , testProperty' "readCursor-delete" $ prop_readCursorDelete tbl
+      , testProperty' "readCursor-delete-else" $ prop_readCursorDeleteElse tbl
+      , testProperty' "readCursor-stable-view" $ prop_readCursorStableView tbl
       , testProperty' "snapshot-nochanges" $ prop_snapshotNoChanges tbl
       , testProperty' "snapshot-nochanges2" $ prop_snapshotNoChanges2 tbl
       , testProperty' "lookup-mupsert" $ prop_lookupUpdate tbl
@@ -122,6 +137,25 @@ withTableNew Setup{..} ups action =
         Class.withTableNew sesh testTableConfig $ \table -> do
           updates table (V.fromList ups)
           action sesh table
+
+readCursorAll ::
+     forall h m k v proxy. ( IsTableHandle h, IOLike m
+     , SerialiseKey k, SerialiseValue v, ResolveValue v
+     )
+  => proxy h -> Cursor h m k v -> CursorReadSchedule -> m [V.Vector (QueryResult k v)]
+readCursorAll hdl cursor = go . getCursorReadSchedule
+  where
+    go [] = error "readCursorAll: finite infinite list"
+    go (n : ns) = do
+      res <- readCursor hdl n cursor
+      if V.null res
+        then return [res]
+        else (res :) <$> go ns
+
+type CursorReadSchedule = InfiniteList (Positive Int)
+
+getCursorReadSchedule :: CursorReadSchedule -> [Int]
+getCursorReadSchedule = map getPositive . getInfiniteList
 
 -------------------------------------------------------------------------------
 -- implement classic QC tests for basic k/v properties
@@ -203,6 +237,98 @@ prop_insertCommutes h ups k1 v1 k2 v2 = k1 /= k2 ==> ioProperty do
 
       res <- lookups hdl (V.fromList [k1, k2])
       return $ res === V.fromList [Found v1, Found v2]
+
+-------------------------------------------------------------------------------
+-- implement classic QC tests for cursors
+-------------------------------------------------------------------------------
+
+-- | Cursor read results are sorted by key.
+prop_readCursorSorted ::
+     forall h. IsTableHandle h
+  => Proxy h -> [(Key, Update Value)]
+  -> CursorReadSchedule
+  -> Property
+prop_readCursorSorted h ups ns = ioProperty $ do
+    withTableNew h ups $ \_ hdl -> do
+      res <- withCursor hdl $ \cursor -> do
+        V.concat <$> readCursorAll (Proxy.Proxy @h) cursor ns
+      let keys = map queryResultKey (V.toList res)
+      return $ keys === List.sort keys
+
+-- | Cursor reads return the requested number of results, until the end.
+prop_readCursorNumResults ::
+     forall h. IsTableHandle h
+  => Proxy h -> [(Key, Update Value)]
+  -> CursorReadSchedule
+  -> Property
+prop_readCursorNumResults h ups ns = ioProperty $ do
+    withTableNew h ups $ \_ hdl -> do
+      res <- withCursor hdl $ \cursor -> do
+        readCursorAll (Proxy.Proxy @h) cursor ns
+      let elemsRead = map V.length res
+      let numFullReads = length res - 2
+      return $ last elemsRead === 0
+          .&&. take numFullReads elemsRead
+           === take numFullReads (getCursorReadSchedule ns)
+
+-- | You can read what you inserted.
+prop_readCursorInsert ::
+     forall h. IsTableHandle h
+  => Proxy h -> [(Key, Update Value)]
+  -> CursorReadSchedule
+  -> Key -> Value -> Property
+prop_readCursorInsert h ups ns k v = ioProperty $ do
+    withTableNew h ups $ \_ hdl -> do
+      inserts hdl (V.singleton (k, v))
+      res <- withCursor hdl $ \cursor ->
+        V.concat <$> readCursorAll (Proxy.Proxy @h) cursor ns
+      return $ V.find (\r -> queryResultKey r == k) res
+           === Just (FoundInQuery k v)
+
+-- | You can't read what you deleted.
+prop_readCursorDelete ::
+     forall h. IsTableHandle h
+  => Proxy h -> [(Key, Update Value)]
+  -> CursorReadSchedule
+  -> Key -> Property
+prop_readCursorDelete h ups ns k = ioProperty $ do
+    withTableNew h ups $ \_ hdl -> do
+      deletes hdl (V.singleton k)
+      res <- withCursor hdl $ \cursor -> do
+        V.concat <$> readCursorAll (Proxy.Proxy @h) cursor ns
+      return $ V.find (\r -> queryResultKey r == k) res === Nothing
+
+-- | Updates don't change the cursor read results of other keys.
+prop_readCursorDeleteElse ::
+     forall h. IsTableHandle h
+  => Proxy h -> [(Key, Update Value)]
+  -> CursorReadSchedule
+  -> [(Key, Update Value)] -> Property
+prop_readCursorDeleteElse h ups ns ups2 = ioProperty $ do
+    withTableNew h ups $ \_ hdl -> do
+      res1 <- withCursor hdl $ \cursor -> do
+        V.concat <$> readCursorAll (Proxy.Proxy @h) cursor ns
+      updates hdl (V.fromList ups2)
+      res2 <- withCursor hdl $ \cursor -> do
+        V.concat <$> readCursorAll (Proxy.Proxy @h) cursor ns
+      let updatedKeys = map fst ups2
+      return $ V.filter (\r -> queryResultKey r `notElem` updatedKeys) res1
+           === V.filter (\r -> queryResultKey r `notElem` updatedKeys) res2
+
+-- | Updates don't affect previously created cursors.
+prop_readCursorStableView ::
+     forall h. IsTableHandle h
+  => Proxy h -> [(Key, Update Value)]
+  -> CursorReadSchedule
+  -> [(Key, Update Value)] -> Property
+prop_readCursorStableView h ups ns ups2 = ioProperty $ do
+    withTableNew h ups $ \_ hdl -> do
+      res1 <- withCursor hdl $ \cursor -> do
+        readCursorAll (Proxy.Proxy @h) cursor ns
+      res2 <- withCursor hdl $ \cursor -> do
+        updates hdl (V.fromList ups2)
+        readCursorAll (Proxy.Proxy @h) cursor ns
+      return $ res1 === res2
 
 -------------------------------------------------------------------------------
 -- implement classic QC tests for range lookups

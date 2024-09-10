@@ -10,6 +10,7 @@ import           Control.Monad.Trans.State
 import qualified Data.ByteString as BS
 import           Data.Foldable (toList)
 import           Data.Functor.Compose (Compose (..))
+import qualified Data.List as List
 import           Data.Maybe (fromMaybe)
 import qualified Data.Proxy as Proxy
 import qualified Data.Vector as V
@@ -72,6 +73,12 @@ tests = testGroup "Test.Database.LSMTree.Class.Normal"
       , True
       , False
       , False
+      , False
+      , False
+      , False
+      , False
+      , False
+      , False
       ] ++ repeat False
 
     props tbl =
@@ -89,6 +96,12 @@ tests = testGroup "Test.Database.LSMTree.Class.Normal"
       , testProperty' "dup-insert-comm" $ prop_dupInsertCommutes tbl
       , testProperty' "dup-nochanges" $ prop_dupNoChanges tbl
       , testProperty' "lookupRange-insert" $ prop_insertLookupRange tbl
+      , testProperty' "readCursor-sorted" $ prop_readCursorSorted tbl
+      , testProperty' "readCursor-num-results" $ prop_readCursorNumResults tbl
+      , testProperty' "readCursor-insert" $ prop_readCursorInsert tbl
+      , testProperty' "readCursor-delete" $ prop_readCursorDelete tbl
+      , testProperty' "readCursor-delete-else" $ prop_readCursorDeleteElse tbl
+      , testProperty' "readCursor-stable-view" $ prop_readCursorStableView tbl
       , testProperty' "snapshot-nochanges" $ prop_snapshotNoChanges tbl
       , testProperty' "snapshot-nochanges2" $ prop_snapshotNoChanges2 tbl
       ]
@@ -162,6 +175,34 @@ rangeLookupWithBlobs ::
 rangeLookupWithBlobs hdl ses r = do
     res <- rangeLookup hdl r
     getCompose <$> retrieveBlobsTrav (Proxy.Proxy @h) ses (Compose res)
+
+readCursorWithBlobs ::
+     forall h m k v blob proxy. ( IsTableHandle h, IOLike m
+     , SerialiseKey k, SerialiseValue v, SerialiseValue blob
+     )
+  => proxy h -> Session h m -> Cursor h m k v blob -> Int -> m (V.Vector (QueryResult k v blob))
+readCursorWithBlobs hdl ses cursor n = do
+    res <- readCursor hdl n cursor
+    getCompose <$> retrieveBlobsTrav hdl ses (Compose res)
+
+readCursorAllWithBlobs ::
+     forall h m k v blob proxy. ( IsTableHandle h, IOLike m
+     , SerialiseKey k, SerialiseValue v, SerialiseValue blob
+     )
+  => proxy h -> Session h m -> Cursor h m k v blob -> CursorReadSchedule -> m [V.Vector (QueryResult k v blob)]
+readCursorAllWithBlobs hdl ses cursor = go . getCursorReadSchedule
+  where
+    go [] = error "readCursorAllWithBlobs: finite infinite list"
+    go (n : ns) = do
+      res <- readCursorWithBlobs hdl ses cursor n
+      if V.null res
+        then return [res]
+        else (res :) <$> go ns
+
+type CursorReadSchedule = InfiniteList (Positive Int)
+
+getCursorReadSchedule :: CursorReadSchedule -> [Int]
+getCursorReadSchedule = map getPositive . getInfiniteList
 
 -------------------------------------------------------------------------------
 -- implement classic QC tests for basic k/v properties
@@ -244,6 +285,98 @@ prop_insertCommutes h ups k1 v1 k2 v2 = k1 /= k2 ==> ioProperty do
 
       res <- lookupsWithBlobs hdl ses (V.fromList [k1,k2])
       return $ res === V.fromList [Found v1, Found v2]
+
+-------------------------------------------------------------------------------
+-- implement classic QC tests for cursors
+-------------------------------------------------------------------------------
+
+-- | Cursor read results are sorted by key.
+prop_readCursorSorted ::
+     forall h. IsTableHandle h
+  => Proxy h -> [(Key, Update Value Blob)]
+  -> CursorReadSchedule
+  -> Property
+prop_readCursorSorted h ups ns = ioProperty $ do
+    withTableNew h ups $ \ses hdl -> do
+      res <- withCursor hdl $ \cursor -> do
+        V.concat <$> readCursorAllWithBlobs (Proxy.Proxy @h) ses cursor ns
+      let keys = map queryResultKey (V.toList res)
+      return $ keys === List.sort keys
+
+-- | Cursor reads return the requested number of results, until the end.
+prop_readCursorNumResults ::
+     forall h. IsTableHandle h
+  => Proxy h -> [(Key, Update Value Blob)]
+  -> CursorReadSchedule
+  -> Property
+prop_readCursorNumResults h ups ns = ioProperty $ do
+    withTableNew h ups $ \ses hdl -> do
+      res <- withCursor hdl $ \cursor -> do
+        readCursorAllWithBlobs (Proxy.Proxy @h) ses cursor ns
+      let elemsRead = map V.length res
+      let numFullReads = length res - 2
+      return $ last elemsRead === 0
+          .&&. take numFullReads elemsRead
+           === take numFullReads (getCursorReadSchedule ns)
+
+-- | You can read what you inserted.
+prop_readCursorInsert ::
+     forall h. IsTableHandle h
+  => Proxy h -> [(Key, Update Value Blob)]
+  -> CursorReadSchedule
+  -> Key -> Value -> Property
+prop_readCursorInsert h ups ns k v = ioProperty $ do
+    withTableNew h ups $ \ses hdl -> do
+      inserts hdl (V.singleton (k, v, Nothing))
+      res <- withCursor hdl $ \cursor ->
+        V.concat <$> readCursorAllWithBlobs (Proxy.Proxy @h) ses cursor ns
+      return $ V.find (\r -> queryResultKey r == k) res
+           === Just (FoundInQuery k v)
+
+-- | You can't read what you deleted.
+prop_readCursorDelete ::
+     forall h. IsTableHandle h
+  => Proxy h -> [(Key, Update Value Blob)]
+  -> CursorReadSchedule
+  -> Key -> Property
+prop_readCursorDelete h ups ns k = ioProperty $ do
+    withTableNew h ups $ \ses hdl -> do
+      deletes hdl (V.singleton k)
+      res <- withCursor hdl $ \cursor -> do
+        V.concat <$> readCursorAllWithBlobs (Proxy.Proxy @h) ses cursor ns
+      return $ V.find (\r -> queryResultKey r == k) res === Nothing
+
+-- | Updates don't change the cursor read results of other keys.
+prop_readCursorDeleteElse ::
+     forall h. IsTableHandle h
+  => Proxy h -> [(Key, Update Value Blob)]
+  -> CursorReadSchedule
+  -> [(Key, Update Value Blob)] -> Property
+prop_readCursorDeleteElse h ups ns ups2 = ioProperty $ do
+    withTableNew h ups $ \ses hdl -> do
+      res1 <- withCursor hdl $ \cursor -> do
+        V.concat <$> readCursorAllWithBlobs (Proxy.Proxy @h) ses cursor ns
+      updates hdl (V.fromList ups2)
+      res2 <- withCursor hdl $ \cursor -> do
+        V.concat <$> readCursorAllWithBlobs (Proxy.Proxy @h) ses cursor ns
+      let updatedKeys = map fst ups2
+      return $ V.filter (\r -> queryResultKey r `notElem` updatedKeys) res1
+           === V.filter (\r -> queryResultKey r `notElem` updatedKeys) res2
+
+-- | Updates don't affect previously created cursors.
+prop_readCursorStableView ::
+     forall h. IsTableHandle h
+  => Proxy h -> [(Key, Update Value Blob)]
+  -> CursorReadSchedule
+  -> [(Key, Update Value Blob)] -> Property
+prop_readCursorStableView h ups ns ups2 = ioProperty $ do
+    withTableNew h ups $ \ses hdl -> do
+      res1 <- withCursor hdl $ \cursor -> do
+        readCursorAllWithBlobs (Proxy.Proxy @h) ses cursor ns
+      res2 <- withCursor hdl $ \cursor -> do
+        updates hdl (V.fromList ups2)
+        readCursorAllWithBlobs (Proxy.Proxy @h) ses cursor ns
+      return $ res1 === res2
 
 -------------------------------------------------------------------------------
 -- implement classic QC tests for range lookups
