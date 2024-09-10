@@ -102,6 +102,8 @@ import           Database.LSMTree.Internal.UniqCounter
 import qualified Database.LSMTree.Internal.Vector as V
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
+import           Database.LSMTree.Internal.WriteBufferBlobs (WriteBufferBlobs)
+import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
 import qualified System.FS.API as FS
 import           System.FS.API (FsError, FsErrorPath (..), FsPath, Handle,
                      HasFS)
@@ -593,9 +595,12 @@ new sesh conf = do
     traceWith (sessionTracer sesh) TraceNewTable
     withOpenSession sesh $ \seshEnv -> do
       am <- newArenaManager
-      newWith sesh seshEnv conf am WB.empty V.empty
+      blobpath <- Paths.tableBlobPath (sessionRoot seshEnv) <$>
+                    incrUniqCounter (sessionUniqCounter seshEnv)
+      wbblobs  <- WBB.new (sessionHasFS seshEnv) blobpath
+      newWith sesh seshEnv conf am WB.empty wbblobs V.empty
 
-{-# SPECIALISE newWith :: Session IO h -> SessionEnv IO h -> TableConfig -> ArenaManager RealWorld -> WriteBuffer -> Levels IO (Handle h) -> IO (TableHandle IO h) #-}
+{-# SPECIALISE newWith :: Session IO h -> SessionEnv IO h -> TableConfig -> ArenaManager RealWorld -> WriteBuffer -> WriteBufferBlobs IO h -> Levels IO (Handle h) -> IO (TableHandle IO h) #-}
 newWith ::
      m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
   => Session m h
@@ -603,9 +608,10 @@ newWith ::
   -> TableConfig
   -> ArenaManager (PrimState m)
   -> WriteBuffer
+  -> WriteBufferBlobs m h
   -> Levels m (Handle h)
   -> m (TableHandle m h)
-newWith sesh seshEnv conf !am !wb !levels = do
+newWith sesh seshEnv conf !am !wb !wbblobs !levels = do
     tableId <- incrUniqCounter (sessionUniqCounter seshEnv)
     let tr = TraceTable (uniqueToWord64 tableId) `contramap` sessionTracer sesh
     traceWith tr $ TraceCreateTableHandle conf
@@ -616,6 +622,7 @@ newWith sesh seshEnv conf !am !wb !levels = do
     -- /updated/ set of tracked tables.
     contentVar <- RW.new $ TableContent
         { tableWriteBuffer = wb
+        , tableWriteBufferBlobs = wbblobs
         , tableLevels = levels
         , tableCache = cache
         }
@@ -646,9 +653,10 @@ close th = do
         -- forget about this table.
         -- TODO: use TempRegistry
         tableSessionUntrackTable thEnv
-        RW.withWriteAccess_ (tableContent thEnv) $ \lvls -> do
-          forRunM_ (tableLevels lvls) Run.removeReference
-          pure lvls
+        RW.withWriteAccess_ (tableContent thEnv) $ \tc -> do
+          forRunM_ (tableLevels tc) Run.removeReference
+          WBB.removeReference (tableWriteBufferBlobs tc)
+          pure tc
         pure TableHandleClosed
 
 {-# SPECIALISE lookups :: ResolveSerialisedValue -> V.Vector SerialisedKey -> TableHandle IO h -> (Maybe (Entry SerialisedValue (WeakBlobRef IO (Handle h))) -> lookupResult) -> IO (V.Vector lookupResult) #-}
@@ -1116,7 +1124,10 @@ open sesh label override snap = do
                             runNumbers
         lvls <- openLevels reg hfs hbio (confDiskCachePolicy conf') runPaths
         am <- newArenaManager
-        newWith sesh seshEnv conf' am WB.empty lvls
+        blobpath <- Paths.tableBlobPath (sessionRoot seshEnv) <$>
+                      incrUniqCounter (sessionUniqCounter seshEnv)
+        wbblobs  <- WBB.new hfs blobpath
+        newWith sesh seshEnv conf' am WB.empty wbblobs lvls
 
 {-# SPECIALISE openLevels :: TempRegistry IO -> HasFS IO h -> HasBlockIO IO h -> DiskCachePolicy -> V.Vector ((Bool, RunFsPaths), V.Vector RunFsPaths) -> IO (Levels IO (FS.Handle h)) #-}
 -- | Open multiple levels.
@@ -1208,6 +1219,7 @@ duplicate th = do
                 (Run.addReference r)
                 (\_ -> Run.removeReference r)
             pure content
+          WBB.addReference (tableWriteBufferBlobs content)
           -- TODO: Fix possible double-free! See 'newCursor'.
           -- In `newWith`, the table handle (in the open state) gets added to
           -- `sessionOpenTables', even if later an async exception occurs and
@@ -1218,4 +1230,5 @@ duplicate th = do
             (tableConfig th)
             (tableHandleArenaManager th)
             (tableWriteBuffer content)
+            (tableWriteBufferBlobs content)
             (tableLevels content)

@@ -216,7 +216,7 @@ instance NoThunks WriteBuffer where
       -- toMap simply unwraps the WriteBuffer newtype wrapper. The bang pattern
       -- will only evaluate the coercion, because the inner Map is already in
       -- WHNF.
-      y :: Map SerialisedKey (Entry SerialisedValue SerialisedBlob)
+      y :: Map SerialisedKey (Entry SerialisedValue BlobSpan)
       !y = toMap x
 
 {-------------------------------------------------------------------------------

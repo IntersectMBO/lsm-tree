@@ -16,13 +16,14 @@ import           Database.LSMTree.Extras.UTxO
 import           Database.LSMTree.Internal.Entry
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..),
-                     pathsForRunFiles, runChecksumsPath)
+                     pathsForRunFiles, runBlobPath, runChecksumsPath)
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..))
 import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.Serialise
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
+import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
 import           Prelude hiding (getContents)
 import           System.Directory (removeDirectoryRecursive)
 import qualified System.FS.API as FS
@@ -362,9 +363,15 @@ createRun ::
   -> Run.RunFsPaths
   -> [SerialisedKOp]
   -> IO (Run IO (FS.Handle h))
-createRun hasFS hasBlockIO mMappend targetPath =
-      Run.fromWriteBuffer hasFS  hasBlockIO Run.CacheRunData (RunAllocFixed 10) targetPath
-    . Fold.foldl insert WB.empty
+createRun hasFS hasBlockIO mMappend targetPath kops = do
+    let blobpath = FS.addExtension (runBlobPath targetPath) ".wb"
+    wbblobs <- WBB.new hasFS blobpath
+    kops' <- traverse (traverse (traverse (WBB.addBlob hasFS wbblobs))) kops
+    let wb = Fold.foldl insert WB.empty kops'
+    run <- Run.fromWriteBuffer hasFS hasBlockIO Run.CacheRunData (RunAllocFixed 10)
+                               targetPath wb wbblobs
+    WBB.removeReference wbblobs
+    return run
   where
     insert wb (k, e) = case mMappend of
       Nothing -> WB.addEntryNormal k (expectNormal e) wb

@@ -11,6 +11,7 @@ import           Data.Word (Word64)
 import           Database.LSMTree.Extras.Orphans ()
 import           Database.LSMTree.Extras.Random (frequency, randomByteStringR)
 import           Database.LSMTree.Extras.UTxO
+import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
@@ -116,7 +117,7 @@ insert (MonoidalInputs kops mappendVal) =
 
 data InputKOps
   = NormalInputs
-      ![(SerialisedKey, Normal.Update SerialisedValue SerialisedBlob)]
+      ![(SerialisedKey, Normal.Update SerialisedValue BlobSpan)]
   | MonoidalInputs
       ![(SerialisedKey, Monoidal.Update SerialisedValue)]
       !Mappend
@@ -130,7 +131,7 @@ onDeserialisedValues f x y =
     serialiseValue (f (deserialiseValue x) (deserialiseValue y))
 
 type SerialisedKOp = (SerialisedKey, SerialisedEntry)
-type SerialisedEntry = Entry SerialisedValue SerialisedBlob
+type SerialisedEntry = Entry SerialisedValue BlobSpan
 
 {-------------------------------------------------------------------------------
   Environments
@@ -152,7 +153,6 @@ data Config = Config {
   , fmupserts    :: !Int
   , randomKey    :: Rnd SerialisedKey
   , randomValue  :: Rnd SerialisedValue
-  , randomBlob   :: Rnd SerialisedBlob
     -- | Needs to be defined when generating mupserts.
   , mappendVal   :: !(Maybe Mappend)
   }
@@ -169,7 +169,6 @@ defaultConfig = Config {
   , fmupserts    = 0
   , randomKey    = error "randomKey not implemented"
   , randomValue  = error "randomValue not implemented"
-  , randomBlob   = error "randomBlob not implemented"
   , mappendVal   = Nothing
   }
 
@@ -177,7 +176,6 @@ configWord64 :: Config
 configWord64 = defaultConfig {
     randomKey    = first serialiseKey . uniform @_ @Word64
   , randomValue  = first serialiseValue . uniform @_ @Word64
-  , randomBlob   = first serialiseBlob . randomByteStringR (0, 0x2000)  -- up to 8 kB
   }
 
 configUTxO :: Config
@@ -219,7 +217,7 @@ randomKOps Config {..} = take nentries . List.unfoldr (Just . randomKOp)
           )
         , ( fblobinserts
           , \g -> let (!v, !g') = randomValue g
-                      (!b, !g'') = randomBlob g'
+                      (!b, !g'') = randomBlobSpan g'
                   in  (InsertWithBlob v b, g'')
           )
         , ( fdeletes
@@ -230,3 +228,9 @@ randomKOps Config {..} = take nentries . List.unfoldr (Just . randomKOp)
                   in  (Mupdate v, g')
           )
         ]
+
+randomBlobSpan :: Rnd BlobSpan
+randomBlobSpan !g =
+  let (off, !g')  = uniform g
+      (len, !g'') = uniform g'
+  in (BlobSpan off len, g'')

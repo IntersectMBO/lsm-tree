@@ -35,7 +35,7 @@ import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry
 import qualified Database.LSMTree.Internal.Normal as N
 import           Database.LSMTree.Internal.PageAcc (entryWouldFitInPage)
-import           Database.LSMTree.Internal.Paths (RunFsPaths (..))
+import           Database.LSMTree.Internal.Paths (RunFsPaths (..), runBlobPath)
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.RawPage
 import           Database.LSMTree.Internal.Run as Run
@@ -43,6 +43,7 @@ import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..))
 import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.Serialise
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
+import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
 import           Test.Util.FS (noOpenHandles, withSimHasBlockIO)
 
 import qualified FormatPage as Proto
@@ -244,7 +245,11 @@ mkRunFromSerialisedKOps ::
   -> RunFsPaths
   -> Map SerialisedKey (Entry SerialisedValue SerialisedBlob)
   -> IO (Run IO (FS.Handle h))
-mkRunFromSerialisedKOps fs hbio fsPaths kops =
-    Run.fromWriteBuffer fs hbio CacheRunData (RunAllocFixed 10)
-                        fsPaths (WB.fromMap kops)
-
+mkRunFromSerialisedKOps fs hbio fsPaths kops = do
+    let blobpath = FS.addExtension (runBlobPath fsPaths) ".wb"
+    wbblobs <- WBB.new fs blobpath
+    wb <- WB.fromMap <$> traverse (traverse (WBB.addBlob fs wbblobs)) kops
+    run <- Run.fromWriteBuffer fs hbio CacheRunData (RunAllocFixed 10)
+                               fsPaths wb wbblobs
+    WBB.removeReference wbblobs
+    return run

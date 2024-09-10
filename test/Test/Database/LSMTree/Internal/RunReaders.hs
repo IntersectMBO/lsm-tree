@@ -28,6 +28,7 @@ import           Database.LSMTree.Internal.RunReaders
 import qualified Database.LSMTree.Internal.RunReaders as Readers
 import           Database.LSMTree.Internal.Serialise
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
+import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
 import qualified System.FS.API as FS
 import qualified System.FS.BlockIO.API as FS
 import qualified System.FS.BlockIO.Sim as FsSim
@@ -337,15 +338,17 @@ runIO act lu = case act of
           (\p -> liftIO . mkRunFromSerialisedKOps hfs hbio p)
           (Paths.RunFsPaths (FS.mkFsPath []) . RunNumber <$> [numRuns ..])
           (map unTypedWriteBuffer wbs)
-      newReaders <- do
-        mreaders <-
-          liftIO $ Readers.newAtOffsetMaybe
-                     hfs hbio (coerce offset)
-                     (WB.fromMap . unTypedWriteBuffer <$> wb)
-                     runs
+      newReaders <- liftIO $ do
+        wbblobs <- WBB.new hfs (FS.mkFsPath ["wb.blobs"])
+        wb' <- traverse (fmap WB.fromMap .
+                         traverse (traverse (WBB.addBlob hfs wbblobs)) .
+                         unTypedWriteBuffer)
+                        wb
+        mreaders <- Readers.newAtOffsetMaybe hfs hbio (coerce offset) wb' runs
         case mreaders of
           Nothing -> do
-            liftIO $ traverse_ Run.removeReference runs
+            traverse_ Run.removeReference runs
+            WBB.removeReference wbblobs
             return Nothing
           Just readers ->
             return $ Just (runs, readers)

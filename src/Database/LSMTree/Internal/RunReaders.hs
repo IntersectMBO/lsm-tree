@@ -23,7 +23,7 @@ import qualified Data.Map.Strict as Map
 import           Data.Maybe (catMaybes)
 import           Data.Primitive.MutVar
 import           Data.Traversable (for)
-import           Database.LSMTree.Internal.BlobRef (BlobRef)
+import           Database.LSMTree.Internal.BlobRef (BlobRef, BlobSpan)
 import           Database.LSMTree.Internal.Entry (Entry (..))
 import           Database.LSMTree.Internal.Run (Run)
 import           Database.LSMTree.Internal.RunReader (RunReader)
@@ -153,7 +153,7 @@ newAtOffsetMaybe fs hbio mOffset wbs runs = do
     fromRun n run = nextReadCtx fs hbio n . ReadRun =<< Reader.new fs hbio mOffset run
 
 -- | TODO: remove once blob references are implemented
-errOnBlob :: Entry SerialisedValue SerialisedBlob -> Entry SerialisedValue (BlobRef m h)
+errOnBlob :: Entry SerialisedValue BlobSpan -> Entry SerialisedValue (BlobRef m h)
 errOnBlob (Insert v)           = Insert v
 errOnBlob (InsertWithBlob _ b) = error $ "RunReaders: blob references not supported: " ++ show b
 errOnBlob (Mupdate v)          = Mupdate v
