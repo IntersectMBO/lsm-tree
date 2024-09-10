@@ -12,24 +12,12 @@ import           Database.LSMTree.Extras.Orphans ()
 import           Database.LSMTree.Extras.Random (frequency, randomByteStringR)
 import           Database.LSMTree.Extras.UTxO
 import           Database.LSMTree.Internal.Entry
-import           Database.LSMTree.Internal.Paths (RunFsPaths (..))
-import           Database.LSMTree.Internal.Run (Run)
-import qualified Database.LSMTree.Internal.Run as Run
-import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..))
-import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import qualified Database.LSMTree.Monoidal as Monoidal
 import qualified Database.LSMTree.Normal as Normal
 import           GHC.Generics
-import           Prelude hiding (getContents)
-import           System.Directory (removeDirectoryRecursive)
-import qualified System.FS.API as FS
-import qualified System.FS.BlockIO.API as FS
-import qualified System.FS.BlockIO.IO as FS
-import qualified System.FS.IO as FS
-import           System.IO.Temp
 import           System.Random (StdGen, mkStdGen, uniform)
 
 benchmarks :: Benchmark
@@ -111,64 +99,20 @@ benchmarks = bgroup "Bench.Database.LSMTree.Internal.WriteBuffer" [
 
 benchWriteBuffer :: Config -> Benchmark
 benchWriteBuffer conf@Config{name} =
-    withEnv $ \ ~(_dir, hasFS, hasBlockIO, kops) ->
+    Cr.env (pure (envInputKOps conf)) $ \ kops ->
       bgroup name [
           bench "insert" $
             Cr.whnf (\kops' -> insert kops') kops
-        , Cr.env (pure $ insert kops) $ \wb ->
-            bench "flush" $
-              Cr.perRunEnvWithCleanup (getPaths hasFS) (const (cleanupPaths hasFS)) $ \p -> do
-                !run <- flush hasFS hasBlockIO p wb
-                Run.removeReference run
-        , bench "insert+flush" $
-            -- To make sure the WriteBuffer really gets recomputed on every run,
-            -- we'd like to do: `whnfAppIO (kops' -> ...) kops`.
-            -- However, we also need per-run cleanup to avoid running out of
-            -- disk space. We use `perRunEnvWithCleanup`, which has two issues:
-            -- 1. Just as `whnfAppIO` etc., it takes an IO action and returns
-            --    `Benchmarkable`, which does not compose. As a workaround, we
-            --    thread `kops` through the environment, too.
-            -- 2. It forces the result to normal form, which would traverse the
-            --    whole run, so we force to WHNF ourselves and just return `()`.
-            Cr.perRunEnvWithCleanup
-              ((,) kops <$> getPaths hasFS)
-              (const (cleanupPaths hasFS)) $ \(kops', p) -> do
-                !run <- flush hasFS hasBlockIO p (insert kops')
-                -- Make sure to immediately close runs so we don't run out of
-                -- file handles. Ideally this would not be measured, but at
-                -- least it's pretty cheap.
-                Run.removeReference run
+          --TODO: re-add I/O tests here:
+          -- * writing out blobs during insert
+          -- * flushing write buffer to run
         ]
-  where
-    withEnv =
-        Cr.envWithCleanup
-          (writeBufferEnv conf)
-          writeBufferEnvCleanup
-
-    runDir = FS.mkFsPath [name]
-
-    -- We'll remove the files on every run, so we can re-use the same run number.
-    getPaths :: FS.HasFS IO FS.HandleIO -> IO RunFsPaths
-    getPaths hasFS = do
-      FS.createDirectory hasFS runDir
-      pure (RunFsPaths runDir (RunNumber 0))
-
-    -- Simply remove the whole active directory.
-    cleanupPaths :: FS.HasFS IO FS.HandleIO -> IO ()
-    cleanupPaths hasFS = FS.removeDirectoryRecursive hasFS runDir
 
 insert :: InputKOps -> WriteBuffer
 insert (NormalInputs kops) =
     Fold.foldl' (\wb (k, e) -> WB.addEntryNormal k e wb) WB.empty kops
 insert (MonoidalInputs kops mappendVal) =
     Fold.foldl' (\wb (k, e) -> WB.addEntryMonoidal mappendVal k e wb) WB.empty kops
-
-flush :: FS.HasFS IO FS.HandleIO
-      -> FS.HasBlockIO IO FS.HandleIO
-      -> RunFsPaths
-      -> WriteBuffer
-      -> IO (Run IO (FS.Handle (FS.HandleIO)))
-flush hfs hbio = Run.fromWriteBuffer hfs hbio Run.CacheRunData (RunAllocFixed 10)
 
 data InputKOps
   = NormalInputs
@@ -242,39 +186,17 @@ configUTxO = defaultConfig {
   , randomValue  = first serialiseValue . uniform @_ @UTxOValue
   }
 
-writeBufferEnv ::
-     Config
-  -> IO ( FilePath -- ^ Temporary directory
-        , FS.HasFS IO FS.HandleIO
-        , FS.HasBlockIO IO FS.HandleIO
-        , InputKOps
-        )
-writeBufferEnv config = do
-    sysTmpDir <- getCanonicalTemporaryDirectory
-    benchTmpDir <- createTempDirectory sysTmpDir "writeBufferEnv"
+envInputKOps :: Config -> InputKOps
+envInputKOps config = do
     let kops = randomKOps config (mkStdGen 17)
-    let inputKOps = case mappendVal config of
+     in case mappendVal config of
           Nothing -> NormalInputs (fmap (fmap expectNormal) kops)
           Just f  -> MonoidalInputs (fmap (fmap expectMonoidal) kops) f
-    let hasFS = FS.ioHasFS (FS.MountPoint benchTmpDir)
-    hasBlockIO <- FS.ioHasBlockIO hasFS FS.defaultIOCtxParams
-    pure (benchTmpDir, hasFS, hasBlockIO, inputKOps)
   where
     expectNormal e = fromMaybe (error ("invalid normal update: " <> show e))
                        (entryToUpdateNormal e)
     expectMonoidal e = fromMaybe (error ("invalid monoidal update: " <> show e))
                        (entryToUpdateMonoidal e)
-
-writeBufferEnvCleanup ::
-     ( FilePath -- ^ Temporary directory
-     , FS.HasFS IO FS.HandleIO
-     , FS.HasBlockIO IO FS.HandleIO
-     , kops
-     )
-  -> IO ()
-writeBufferEnvCleanup (tmpDir, _, hasBlockIO, _) = do
-    removeDirectoryRecursive tmpDir
-    FS.close hasBlockIO
 
 -- | Generate keys and entries to insert into the write buffer.
 -- They are already serialised to exclude the cost from the benchmark.
