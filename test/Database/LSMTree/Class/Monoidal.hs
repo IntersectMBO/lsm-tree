@@ -9,11 +9,12 @@ module Database.LSMTree.Class.Monoidal (
   , withTableOpen
   , withTableDuplicate
   , withTableMerge
+  , withCursor
   ) where
 
 import           Control.Monad.Class.MonadThrow (MonadThrow (..))
 import           Data.Kind (Constraint, Type)
-import           Data.Typeable (Typeable)
+import           Data.Typeable (Proxy (Proxy), Typeable)
 import qualified Data.Vector as V
 import           Database.LSMTree.Class.Normal (IsSession (..),
                      SessionArgs (..), withSession)
@@ -181,6 +182,13 @@ withTableMerge ::
   -> (h m k v -> m a)
   -> m a
 withTableMerge table1 table2 = bracket (merge table1 table2) close
+
+withCursor ::
+     forall h m k v a. (IOLike m, IsTableHandle h)
+  => h m k v
+  -> (Cursor h m k v -> m a)
+  -> m a
+withCursor hdl = bracket (newCursor hdl) (closeCursor (Proxy @h))
 
 {-------------------------------------------------------------------------------
   Model instance
