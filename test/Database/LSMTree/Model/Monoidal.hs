@@ -22,6 +22,10 @@ module Database.LSMTree.Model.Monoidal (
   , lookups
   , QueryResult (..)
   , rangeLookup
+    -- ** Cursor
+  , Cursor
+  , newCursor
+  , readCursor
     -- ** Updates
   , Update (..)
   , updates
@@ -38,6 +42,7 @@ module Database.LSMTree.Model.Monoidal (
 
 import           Data.Bifunctor (second)
 import qualified Data.ByteString as BS
+import           Data.Kind (Type)
 import           Data.Map (Map)
 import qualified Data.Map.Range as Map.R
 import qualified Data.Map.Strict as Map
@@ -54,6 +59,7 @@ import           GHC.Exts (IsList (..))
   Tables
 -------------------------------------------------------------------------------}
 
+type Table :: Type -> Type -> Type
 data Table k v = Table
     { _values :: Map RawBytes RawBytes
     }
@@ -196,6 +202,36 @@ duplicate ::
      Table k v
   -> Table k v
 duplicate = id
+
+{-------------------------------------------------------------------------------
+  Cursor
+-------------------------------------------------------------------------------}
+
+type Cursor :: Type -> Type -> Type
+data Cursor k v = Cursor
+    { -- | these entries are already resolved, they do not contain duplicate keys.
+      _cursorValues :: [(RawBytes, RawBytes)]
+    }
+
+type role Cursor nominal nominal
+
+newCursor ::
+     Table k v
+  -> Cursor k v
+newCursor tbl = Cursor (Map.toList $ _values tbl)
+
+readCursor ::
+     (SerialiseKey k, SerialiseValue v)
+  => Int
+  -> Cursor k v
+  -> (V.Vector (QueryResult k v), Cursor k v)
+readCursor n c =
+    ( V.fromList
+        [ FoundInQuery (deserialiseKey k) (deserialiseValue v)
+        | (k, v) <- take n (_cursorValues c)
+        ]
+    , Cursor $ drop n (_cursorValues c)
+    )
 
 {-------------------------------------------------------------------------------
   Merging tables
