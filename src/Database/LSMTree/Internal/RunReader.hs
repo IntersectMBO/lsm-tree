@@ -2,6 +2,7 @@
 --
 module Database.LSMTree.Internal.RunReader (
     RunReader (..)
+  , OffsetKey (..)
   , new
   , next
   , close
@@ -63,13 +64,15 @@ data RunReader m fhandle = RunReader {
     , readerRun            :: !(Run.Run m fhandle)
     }
 
+data OffsetKey = NoOffsetKey | OffsetKey !SerialisedKey
+
 new ::
      HasFS IO h
   -> HasBlockIO IO h
-  -> Maybe SerialisedKey  -- ^ offset
+  -> OffsetKey
   -> Run.Run IO (FS.Handle h)
   -> IO (RunReader IO (FS.Handle h))
-new fs hbio mOffset readerRun = do
+new fs hbio !offsetKey readerRun = do
     readerKOpsHandle <-
       FS.hOpen fs (runKOpsPath (Run.runRunFsPaths readerRun)) FS.ReadMode >>= \h -> do
         fileSize <- FS.hGetSize fs h
@@ -92,12 +95,12 @@ new fs hbio mOffset readerRun = do
     index = Run.runIndex readerRun
 
     seekFirstEntry readerKOpsHandle =
-        case mOffset of
-          Nothing -> do
+        case offsetKey of
+          NoOffsetKey -> do
             -- Load first page from disk, if it exists.
             firstPage <- readDiskPage fs readerKOpsHandle
             return (firstPage, 0)
-          Just offset -> do
+          OffsetKey offset -> do
             -- Use the index to find the page number for the key (if it exists).
             let Index.PageSpan pageNo _pageEnd = Index.search offset index
             seekToDiskPage fs pageNo readerKOpsHandle

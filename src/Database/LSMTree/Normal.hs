@@ -330,12 +330,15 @@ type Cursor = Internal.NormalCursor
 --
 -- If possible, it is recommended to use this function instead of 'newCursor'
 -- and 'closeCursor'.
+--
+-- TODO: Also provide `withCursorAtOffset` variant?
 withCursor ::
      IOLike m
   => TableHandle m k v blob
   -> (Cursor m k v blob -> m a)
   -> m a
-withCursor (Internal.NormalTable th) action = Internal.withCursor th (action . Internal.NormalCursor)
+withCursor (Internal.NormalTable th) action =
+    Internal.withCursor Internal.NoOffsetKey th (action . Internal.NormalCursor)
 
 {-# SPECIALISE newCursor :: TableHandle IO k v blob -> IO (Cursor IO k v blob) #-}
 -- | Create a new cursor to read from a given table. Future updates to the table
@@ -346,11 +349,14 @@ withCursor (Internal.NormalTable th) action = Internal.withCursor th (action . I
 --
 -- NOTE: cursors hold open resources (such as open files) and should be closed
 -- using 'close' as soon as they are no longer used.
+--
+-- TODO: Also provide `newCursorAtOffset` variant?
 newCursor ::
      IOLike m
   => TableHandle m k v blob
   -> m (Cursor m k v blob)
-newCursor (Internal.NormalTable th) = Internal.NormalCursor <$!> Internal.newCursor th
+newCursor (Internal.NormalTable th) =
+    Internal.NormalCursor <$!> Internal.newCursor Internal.NoOffsetKey th
 
 {-# SPECIALISE closeCursor :: Cursor IO k v blob -> IO () #-}
 -- | Close a cursor. 'closeCursor' is idempotent. All operations on a closed

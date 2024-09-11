@@ -38,6 +38,7 @@ module Database.LSMTree.Internal (
   , Cursor (..)
   , CursorState (..)
   , CursorEnv (..)
+  , OffsetKey (..)
   , withCursor
   , newCursor
   , closeCursor
@@ -95,6 +96,7 @@ import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunNumber
 import qualified Database.LSMTree.Internal.RunReader as Reader
+import           Database.LSMTree.Internal.RunReaders (OffsetKey (..))
 import qualified Database.LSMTree.Internal.RunReaders as Readers
 import           Database.LSMTree.Internal.Serialise (SerialisedBlob (..),
                      SerialisedKey, SerialisedValue)
@@ -816,22 +818,24 @@ data CursorEnv m h = CursorEnv {
   , cursorRuns       :: !(V.Vector (Run m (Handle h)))
   }
 
-{-# SPECIALISE withCursor :: TableHandle IO h -> (Cursor IO h -> IO a) -> IO a #-}
+{-# SPECIALISE withCursor :: OffsetKey -> TableHandle IO h -> (Cursor IO h -> IO a) -> IO a #-}
 -- | See 'Database.LSMTree.Normal.withCursor'.
 withCursor ::
      m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
-  => TableHandle m h
+  => OffsetKey
+  -> TableHandle m h
   -> (Cursor m h -> m a)
   -> m a
-withCursor th = bracket (newCursor th) closeCursor
+withCursor offsetKey th = bracket (newCursor offsetKey th) closeCursor
 
-{-# SPECIALISE newCursor :: TableHandle IO h -> IO (Cursor IO h) #-}
+{-# SPECIALISE newCursor :: OffsetKey -> TableHandle IO h -> IO (Cursor IO h) #-}
 -- | See 'Database.LSMTree.Normal.newCursor'.
 newCursor ::
      m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
-  => TableHandle m h
+  => OffsetKey
+  -> TableHandle m h
   -> m (Cursor m h)
-newCursor th = withOpenTable th $ \thEnv -> do
+newCursor !offsetKey th = withOpenTable th $ \thEnv -> do
     let cursorSession = tableSession thEnv
     let cursorSessionEnv = tableSessionEnv thEnv
     cursorId <- uniqueToWord64 <$>
@@ -850,7 +854,8 @@ newCursor th = withOpenTable th $ \thEnv -> do
           allocTableContent reg (tableContent thEnv)
         cursorReaders <-
           allocateMaybeTemp reg
-            (Readers.new hfs hbio Nothing (Just writeBuffer) (V.toList cursorRuns))
+            (Readers.new hfs hbio
+               offsetKey (Just writeBuffer) (V.toList cursorRuns))
             (Readers.close hfs hbio)
         cursorState <- newMVar (CursorOpen CursorEnv {..})
         let !cursor = Cursor {cursorState, cursorTracer}

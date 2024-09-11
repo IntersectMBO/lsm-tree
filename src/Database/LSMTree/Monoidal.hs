@@ -261,12 +261,15 @@ type Cursor = Internal.MonoidalCursor
 --
 -- If possible, it is recommended to use this function instead of 'newCursor'
 -- and 'closeCursor'.
+--
+-- TODO: Also provide `withCursorAtOffset` variant?
 withCursor ::
      IOLike m
   => TableHandle m k v
   -> (Cursor m k v -> m a)
   -> m a
-withCursor = undefined
+withCursor (Internal.MonoidalTable th) action =
+    Internal.withCursor Internal.NoOffsetKey th (action . Internal.MonoidalCursor)
 
 {-# SPECIALISE newCursor :: TableHandle IO k v -> IO (Cursor IO k v) #-}
 -- | Create a new cursor to read from a given table. Future updates to the table
@@ -277,11 +280,14 @@ withCursor = undefined
 --
 -- NOTE: cursors hold open resources (such as open files) and should be closed
 -- using 'close' as soon as they are no longer used.
+--
+-- TODO: Also provide `newCursorAtOffset` variant?
 newCursor ::
      IOLike m
   => TableHandle m k v
   -> m (Cursor m k v)
-newCursor (Internal.MonoidalTable th) = Internal.MonoidalCursor <$> Internal.newCursor th
+newCursor (Internal.MonoidalTable th) =
+    Internal.MonoidalCursor <$> Internal.newCursor Internal.NoOffsetKey th
 
 {-# SPECIALISE closeCursor :: Cursor IO k v -> IO () #-}
 -- | Close a cursor. 'closeCursor' is idempotent. All operations on a closed

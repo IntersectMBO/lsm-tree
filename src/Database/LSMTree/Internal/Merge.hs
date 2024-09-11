@@ -63,7 +63,7 @@ new ::
   -> IO (Maybe (Merge IO (FS.Handle h)))
 new fs hbio mergeCaching alloc mergeLevel mergeMappend targetPaths runs = do
     -- no offset, no write buffer
-    mreaders <- Readers.new fs hbio Nothing Nothing runs
+    mreaders <- Readers.new fs hbio Readers.NoOffsetKey Nothing runs
     for mreaders $ \mergeReaders -> do
       -- calculate upper bounds based on input runs
       let numEntries = coerce (sum @[] @Int) (map Run.runNumEntries runs)
