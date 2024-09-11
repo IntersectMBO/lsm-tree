@@ -310,7 +310,12 @@ rangeLookup ::
   => Range k
   -> TableHandle m k v blob
   -> m (V.Vector (QueryResult k v (BlobRef m blob)))
-rangeLookup = undefined
+rangeLookup range (Internal.NormalTable th) =
+    Internal.rangeLookup const (Internal.serialiseKey <$> range) th $ \k v mblob ->
+      toNormalQueryResult
+        (Internal.deserialiseKey k)
+        (Internal.deserialiseValue v)
+        (BlobRef <$> mblob)
 
 {-------------------------------------------------------------------------------
   Cursor
@@ -475,7 +480,7 @@ deletes = updates . fmap (,Delete)
 {-# SPECIALISE retrieveBlobs :: SerialiseValue blob => Session IO -> V.Vector (BlobRef IO blob) -> IO (V.Vector blob) #-}
 -- | Perform a batch of blob retrievals.
 --
--- This is a separate step from 'lookups' and 'rangeLookups'. The result of a
+-- This is a separate step from 'lookups' and 'rangeLookup'. The result of a
 -- lookup can include a 'BlobRef', which can be used to retrieve the actual
 -- 'Blob'.
 --

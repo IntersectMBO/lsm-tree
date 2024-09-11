@@ -949,6 +949,7 @@ catchErr (Handler f) action = catch (Right <$> action) f'
 arbitraryActionWithVars ::
      forall h k v blob. (
        C k v blob
+     , Ord k
      , R.Labellable (k, v, blob)
      , Eq (Class.TableConfig h)
      , Arbitrary (Class.TableConfig h)
@@ -1022,8 +1023,7 @@ arbitraryActionWithVars _ findVars _st = QC.frequency $ concat [
     withVars genVar = [
           (2, fmap Some $ Close <$> (fromRight <$> genVar))
         , (10, fmap Some $ Lookups <$> genLookupKeys <*> (fromRight <$> genVar))
-        -- TODO: enable generators as we implement the actions for the /real/ lsm-tree
-        -- , fmap Some $ RangeLookup <$> genRange <*> (fromRight <$> genVar)
+        , (5, fmap Some $ RangeLookup <$> genRange <*> (fromRight <$> genVar))
         , (5, fmap Some $ NewCursor <$> QC.arbitrary <*> (fromRight <$> genVar))
         , (10, fmap Some $ Updates <$> genUpdates <*> (fromRight <$> genVar))
         , (10, fmap Some $ Inserts <$> genInserts <*> (fromRight <$> genVar))
@@ -1055,16 +1055,8 @@ arbitraryActionWithVars _ findVars _st = QC.frequency $ concat [
     genLookupKeys :: Gen (V.Vector k)
     genLookupKeys = QC.arbitrary
 
-    _genRange :: Gen (R.Range k)
-    _genRange = QC.oneof [
-          R.FromToExcluding <$> QC.arbitrary <*> QC.arbitrary
-        , R.FromToIncluding <$> QC.arbitrary <*> QC.arbitrary
-        ]
-      where
-        _coveredAllCases :: R.Range k -> ()
-        _coveredAllCases = \case
-            R.FromToExcluding{} -> ()
-            R.FromToIncluding{} -> ()
+    genRange :: Gen (R.Range k)
+    genRange = QC.arbitrary
 
     genUpdates :: Gen (V.Vector (k, R.Update v blob))
     genUpdates = QC.liftArbitrary ((,) <$> QC.arbitrary <*> QC.oneof [

@@ -32,6 +32,7 @@ module Database.LSMTree.Internal (
   , new
   , close
   , lookups
+  , rangeLookup
   , updates
   , retrieveBlobs
     -- ** Cursor API
@@ -91,6 +92,7 @@ import           Database.LSMTree.Internal.MergeSchedule
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..),
                      SessionRoot (..), SnapshotName)
 import qualified Database.LSMTree.Internal.Paths as Paths
+import           Database.LSMTree.Internal.Range (Range (..))
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
@@ -228,6 +230,7 @@ data TableTrace =
   | TraceCloseTable
     -- Lookups
   | TraceLookups Int
+  | TraceRangeLookup (Range SerialisedKey)
     -- Updates
   | TraceUpdates Int
   | TraceMerge (AtLevel MergeTrace)
@@ -701,6 +704,41 @@ lookups resolve ks th fromEntry = do
           V.zipWithStrict
             (\k1 e2 -> fromEntry $ Entry.combineMaybe resolve (wbLookup k1) e2)
             ks ioRes
+
+{-# SPECIALISE rangeLookup :: ResolveSerialisedValue -> Range SerialisedKey -> TableHandle IO h -> (SerialisedKey -> SerialisedValue -> Maybe (WeakBlobRef IO (Handle h)) -> res) -> IO (V.Vector res) #-}
+-- | See 'Database.LSMTree.Normal.rangeLookup'.
+rangeLookup ::
+     m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+  => ResolveSerialisedValue
+  -> Range SerialisedKey
+  -> TableHandle m h
+  -> (SerialisedKey -> SerialisedValue -> Maybe (WeakBlobRef m (Handle h)) -> res)
+     -- ^ How to map to a query result, different for normal/monoidal
+  -> m (V.Vector res)
+rangeLookup resolve range th fromEntry = do
+    traceWith (tableTracer th) $ TraceRangeLookup range
+    case range of
+      FromToExcluding lb ub ->
+        withCursor (OffsetKey lb) th $ \cursor ->
+          go cursor (< ub) []
+      FromToIncluding lb ub ->
+        withCursor (OffsetKey lb) th $ \cursor ->
+          go cursor (<= ub) []
+  where
+    -- TODO: tune!
+    -- Also, such a high number means that many tests never cover the case
+    -- of having multiple chunks. Expose through the public API as config?
+    chunkSize = 500
+
+    go cursor isInUpperBound !chunks = do
+      chunk <- readCursorWhile resolve isInUpperBound chunkSize cursor fromEntry
+      let !n = V.length chunk
+      if n >= chunkSize
+        then go cursor isInUpperBound (chunk : chunks)
+             -- This requires an extra copy. If we had a size hint, we could
+             -- directly write everything into the result vector.
+             -- TODO(optimise): revisit
+        else return (V.concat (reverse (V.slice 0 n chunk : chunks)))
 
 {-# SPECIALISE updates :: ResolveSerialisedValue -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob) -> TableHandle IO h -> IO () #-}
 -- | See 'Database.LSMTree.Normal.updates'.

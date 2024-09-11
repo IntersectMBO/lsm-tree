@@ -11,6 +11,7 @@ import qualified Data.ByteString as BS
 import           Data.Foldable (toList)
 import           Data.Functor.Compose (Compose (..))
 import qualified Data.List as List
+import qualified Data.List.NonEmpty as NE
 import           Data.Maybe (fromMaybe)
 import qualified Data.Proxy as Proxy
 import qualified Data.Vector as V
@@ -56,31 +57,7 @@ tests = testGroup "Test.Database.LSMTree.Class.Normal"
               action (SessionArgs hfs hbio (FS.mkFsPath []))
         }
 
-    expectFailures2 = [
-        False
-      , False
-      , False
-      , False
-      , False
-      , False
-      , False
-      , False
-      , False
-      , False
-      , False
-      , False
-      , False
-      , True
-      , False
-      , False
-      , False
-      , False
-      , False
-      , False
-      , False
-      , False
-      , False
-      ] ++ repeat False
+    expectFailures2 = repeat False
 
     props tbl =
       [ testProperty' "lookup-insert" $ prop_lookupInsert tbl
@@ -96,6 +73,7 @@ tests = testGroup "Test.Database.LSMTree.Class.Normal"
       , testProperty' "dup-insert-insert" $ prop_dupInsertInsert tbl
       , testProperty' "dup-insert-comm" $ prop_dupInsertCommutes tbl
       , testProperty' "dup-nochanges" $ prop_dupNoChanges tbl
+      , testProperty' "lookupRange-like-lookups" $ prop_lookupRangeLikeLookups tbl
       , testProperty' "lookupRange-insert" $ prop_insertLookupRange tbl
       , testProperty' "readCursor-sorted" $ prop_readCursorSorted tbl
       , testProperty' "readCursor-num-results" $ prop_readCursorNumResults tbl
@@ -410,6 +388,31 @@ evalRange (FromToIncluding lo hi) x = lo <= x && x <= hi
 queryResultKey :: QueryResult k v b -> k
 queryResultKey (FoundInQuery k _)             = k
 queryResultKey (FoundInQueryWithBlob k _ _  ) = k
+
+queryResultFromLookup :: k -> LookupResult v b -> Maybe (QueryResult k v b)
+queryResultFromLookup k = \case
+   NotFound -> Nothing
+   Found v -> Just (FoundInQuery k v)
+   FoundWithBlob v b -> Just (FoundInQueryWithBlob k v b)
+
+-- | A range lookup behaves like many point lookups.
+prop_lookupRangeLikeLookups ::
+     IsTableHandle h
+  => Proxy h -> [(Key, Update Value Blob)]
+  -> Range Key
+  -> Property
+prop_lookupRangeLikeLookups h ups r = ioProperty $ do
+    withTableNew h ups $ \ses hdl -> do
+      res1 <- rangeLookupWithBlobs hdl ses r
+
+      let testKeys = V.fromList $ nubSort $ filter (evalRange r) $ map fst ups
+      res2 <- fmap (V.catMaybes . V.zipWith queryResultFromLookup testKeys) $
+        lookupsWithBlobs hdl ses testKeys
+
+      return $ res1 === res2
+
+  where
+    nubSort = map NE.head . NE.group . List.sort
 
 -- | Last insert wins.
 prop_insertLookupRange ::
