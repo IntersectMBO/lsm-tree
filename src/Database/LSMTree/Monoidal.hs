@@ -71,7 +71,9 @@ module Database.LSMTree.Monoidal (
     -- ** Cursor
   , Cursor
   , withCursor
+  , withCursorAtOffset
   , newCursor
+  , newCursorAtOffset
   , closeCursor
   , readCursor
     -- ** Updates
@@ -261,8 +263,6 @@ type Cursor = Internal.MonoidalCursor
 --
 -- If possible, it is recommended to use this function instead of 'newCursor'
 -- and 'closeCursor'.
---
--- TODO: Also provide `withCursorAtOffset` variant?
 withCursor ::
      IOLike m
   => TableHandle m k v
@@ -270,6 +270,24 @@ withCursor ::
   -> m a
 withCursor (Internal.MonoidalTable th) action =
     Internal.withCursor Internal.NoOffsetKey th (action . Internal.MonoidalCursor)
+
+{-# SPECIALISE withCursorAtOffset :: SerialiseKey k => k -> TableHandle IO k v -> (Cursor IO k v -> IO a) -> IO a #-}
+-- | A variant of 'withCursor' that allows initialising the cursor at an offset
+-- within the table such that the first entry the cursor returns will be the
+-- one with the lowest key that is greater than or equal to the given key.
+-- In other words, it uses an inclusive lower bound.
+--
+-- NOTE: The ordering of the serialised keys will be used, which can lead to
+-- unexpected results if the 'SerialiseKey' instance is not order-preserving!
+withCursorAtOffset ::
+     (IOLike m, SerialiseKey k)
+  => k
+  -> TableHandle m k v
+  -> (Cursor m k v -> m a)
+  -> m a
+withCursorAtOffset offset (Internal.MonoidalTable th) action =
+    Internal.withCursor (Internal.OffsetKey (Internal.serialiseKey offset)) th $
+      action . Internal.MonoidalCursor
 
 {-# SPECIALISE newCursor :: TableHandle IO k v -> IO (Cursor IO k v) #-}
 -- | Create a new cursor to read from a given table. Future updates to the table
@@ -280,14 +298,29 @@ withCursor (Internal.MonoidalTable th) action =
 --
 -- NOTE: cursors hold open resources (such as open files) and should be closed
 -- using 'close' as soon as they are no longer used.
---
--- TODO: Also provide `newCursorAtOffset` variant?
 newCursor ::
      IOLike m
   => TableHandle m k v
   -> m (Cursor m k v)
 newCursor (Internal.MonoidalTable th) =
-    Internal.MonoidalCursor <$> Internal.newCursor Internal.NoOffsetKey th
+    Internal.MonoidalCursor <$!> Internal.newCursor Internal.NoOffsetKey th
+
+{-# SPECIALISE newCursorAtOffset :: SerialiseKey k => k -> TableHandle IO k v -> IO (Cursor IO k v) #-}
+-- | A variant of 'newCursor' that allows initialising the cursor at an offset
+-- within the table such that the first entry the cursor returns will be the
+-- one with the lowest key that is greater than or equal to the given key.
+-- In other words, it uses an inclusive lower bound.
+--
+-- NOTE: The ordering of the serialised keys will be used, which can lead to
+-- unexpected results if the 'SerialiseKey' instance is not order-preserving!
+newCursorAtOffset ::
+     (IOLike m, SerialiseKey k)
+  => k
+  -> TableHandle m k v
+  -> m (Cursor m k v)
+newCursorAtOffset offset (Internal.MonoidalTable th) =
+    Internal.MonoidalCursor <$!>
+      Internal.newCursor (Internal.OffsetKey (Internal.serialiseKey offset)) th
 
 {-# SPECIALISE closeCursor :: Cursor IO k v -> IO () #-}
 -- | Close a cursor. 'closeCursor' is idempotent. All operations on a closed

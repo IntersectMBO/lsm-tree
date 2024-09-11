@@ -79,6 +79,7 @@ tests = testGroup "Test.Database.LSMTree.Class.Normal"
       , False
       , False
       , False
+      , False
       ] ++ repeat False
 
     props tbl =
@@ -102,6 +103,7 @@ tests = testGroup "Test.Database.LSMTree.Class.Normal"
       , testProperty' "readCursor-delete" $ prop_readCursorDelete tbl
       , testProperty' "readCursor-delete-else" $ prop_readCursorDeleteElse tbl
       , testProperty' "readCursor-stable-view" $ prop_readCursorStableView tbl
+      , testProperty' "readCursor-offset" $ prop_readCursorOffset tbl
       , testProperty' "snapshot-nochanges" $ prop_snapshotNoChanges tbl
       , testProperty' "snapshot-nochanges2" $ prop_snapshotNoChanges2 tbl
       ]
@@ -294,11 +296,12 @@ prop_insertCommutes h ups k1 v1 k2 v2 = k1 /= k2 ==> ioProperty do
 prop_readCursorSorted ::
      forall h. IsTableHandle h
   => Proxy h -> [(Key, Update Value Blob)]
+  -> Maybe Key
   -> CursorReadSchedule
   -> Property
-prop_readCursorSorted h ups ns = ioProperty $ do
+prop_readCursorSorted h ups offset ns = ioProperty $ do
     withTableNew h ups $ \ses hdl -> do
-      res <- withCursor hdl $ \cursor -> do
+      res <- withCursor offset hdl $ \cursor -> do
         V.concat <$> readCursorAllWithBlobs (Proxy.Proxy @h) ses cursor ns
       let keys = map queryResultKey (V.toList res)
       return $ keys === List.sort keys
@@ -307,11 +310,12 @@ prop_readCursorSorted h ups ns = ioProperty $ do
 prop_readCursorNumResults ::
      forall h. IsTableHandle h
   => Proxy h -> [(Key, Update Value Blob)]
+  -> Maybe Key
   -> CursorReadSchedule
   -> Property
-prop_readCursorNumResults h ups ns = ioProperty $ do
+prop_readCursorNumResults h ups offset ns = ioProperty $ do
     withTableNew h ups $ \ses hdl -> do
-      res <- withCursor hdl $ \cursor -> do
+      res <- withCursor offset hdl $ \cursor -> do
         readCursorAllWithBlobs (Proxy.Proxy @h) ses cursor ns
       let elemsRead = map V.length res
       let numFullReads = length res - 2
@@ -328,7 +332,7 @@ prop_readCursorInsert ::
 prop_readCursorInsert h ups ns k v = ioProperty $ do
     withTableNew h ups $ \ses hdl -> do
       inserts hdl (V.singleton (k, v, Nothing))
-      res <- withCursor hdl $ \cursor ->
+      res <- withCursor Nothing hdl $ \cursor ->
         V.concat <$> readCursorAllWithBlobs (Proxy.Proxy @h) ses cursor ns
       return $ V.find (\r -> queryResultKey r == k) res
            === Just (FoundInQuery k v)
@@ -342,7 +346,7 @@ prop_readCursorDelete ::
 prop_readCursorDelete h ups ns k = ioProperty $ do
     withTableNew h ups $ \ses hdl -> do
       deletes hdl (V.singleton k)
-      res <- withCursor hdl $ \cursor -> do
+      res <- withCursor Nothing hdl $ \cursor -> do
         V.concat <$> readCursorAllWithBlobs (Proxy.Proxy @h) ses cursor ns
       return $ V.find (\r -> queryResultKey r == k) res === Nothing
 
@@ -350,14 +354,15 @@ prop_readCursorDelete h ups ns k = ioProperty $ do
 prop_readCursorDeleteElse ::
      forall h. IsTableHandle h
   => Proxy h -> [(Key, Update Value Blob)]
+  -> Maybe Key
   -> CursorReadSchedule
   -> [(Key, Update Value Blob)] -> Property
-prop_readCursorDeleteElse h ups ns ups2 = ioProperty $ do
+prop_readCursorDeleteElse h ups offset ns ups2 = ioProperty $ do
     withTableNew h ups $ \ses hdl -> do
-      res1 <- withCursor hdl $ \cursor -> do
+      res1 <- withCursor offset hdl $ \cursor -> do
         V.concat <$> readCursorAllWithBlobs (Proxy.Proxy @h) ses cursor ns
       updates hdl (V.fromList ups2)
-      res2 <- withCursor hdl $ \cursor -> do
+      res2 <- withCursor offset hdl $ \cursor -> do
         V.concat <$> readCursorAllWithBlobs (Proxy.Proxy @h) ses cursor ns
       let updatedKeys = map fst ups2
       return $ V.filter (\r -> queryResultKey r `notElem` updatedKeys) res1
@@ -367,16 +372,32 @@ prop_readCursorDeleteElse h ups ns ups2 = ioProperty $ do
 prop_readCursorStableView ::
      forall h. IsTableHandle h
   => Proxy h -> [(Key, Update Value Blob)]
+  -> Maybe Key
   -> CursorReadSchedule
   -> [(Key, Update Value Blob)] -> Property
-prop_readCursorStableView h ups ns ups2 = ioProperty $ do
+prop_readCursorStableView h ups offset ns ups2 = ioProperty $ do
     withTableNew h ups $ \ses hdl -> do
-      res1 <- withCursor hdl $ \cursor -> do
+      res1 <- withCursor offset hdl $ \cursor -> do
         readCursorAllWithBlobs (Proxy.Proxy @h) ses cursor ns
-      res2 <- withCursor hdl $ \cursor -> do
+      res2 <- withCursor offset hdl $ \cursor -> do
         updates hdl (V.fromList ups2)
         readCursorAllWithBlobs (Proxy.Proxy @h) ses cursor ns
       return $ res1 === res2
+
+-- | Creating a cursor at an offset simply skips a prefix.
+prop_readCursorOffset ::
+     forall h. IsTableHandle h
+  => Proxy h -> [(Key, Update Value Blob)]
+  -> Key
+  -> CursorReadSchedule
+  -> Property
+prop_readCursorOffset h ups offset ns = ioProperty $ do
+    withTableNew h ups $ \ses hdl -> do
+      res1 <- withCursor (Just offset) hdl $ \cursor -> do
+        V.concat <$> readCursorAllWithBlobs (Proxy.Proxy @h) ses cursor ns
+      res2 <- withCursor Nothing hdl $ \cursor -> do
+        V.concat <$> readCursorAllWithBlobs (Proxy.Proxy @h) ses cursor ns
+      return $ res1 === V.dropWhile ((< offset) . queryResultKey) res2
 
 -------------------------------------------------------------------------------
 -- implement classic QC tests for range lookups

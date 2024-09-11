@@ -243,9 +243,15 @@ data Cursor k v blob = Cursor
 type role Cursor nominal nominal nominal
 
 newCursor ::
-     Table k v blob
+     SerialiseKey k
+  => Maybe k
+  -> Table k v blob
   -> Cursor k v blob
-newCursor tbl = Cursor (Map.toList $ _values tbl)
+newCursor offset tbl = Cursor (skip $ Map.toList $ _values tbl)
+  where
+    skip = case offset of
+      Nothing -> id
+      Just k  -> dropWhile ((< serialiseKey k) . fst)
 
 readCursor ::
      (SerialiseKey k, SerialiseValue v)

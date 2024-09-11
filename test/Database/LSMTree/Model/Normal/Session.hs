@@ -520,15 +520,17 @@ data Cursor k v blob = Cursor {
 newCursor ::
      forall k v blob m. (
        MonadState Model m, MonadError Err m
+     , Model.SerialiseKey k
      , C k v blob
      )
-  => TableHandle k v blob
+  => Maybe k
+  -> TableHandle k v blob
   -> m (Cursor k v blob)
-newCursor th = do
+newCursor offset th = do
   table <- snd <$> guardTableHandleIsOpen th
   state $ \Model{..} ->
     let cursor = Cursor { cursorID = nextID }
-        someCursor = toSomeCursor $ Model.newCursor table
+        someCursor = toSomeCursor $ Model.newCursor offset table
         cursors' = Map.insert nextID someCursor cursors
         nextID' = nextID + 1
         model' = Model {
