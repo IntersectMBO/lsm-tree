@@ -209,6 +209,10 @@ data LSMTreeTrace =
       TableTrace
   | TraceDeleteSnapshot SnapshotName
   | TraceListSnapshots
+    -- Cursor
+  | TraceCursor
+      Word64 -- ^ Cursor identifier
+      CursorTrace
   deriving stock Show
 
 data TableTrace =
@@ -227,6 +231,13 @@ data TableTrace =
   | TraceSnapshot SnapshotName
     -- Duplicate
   | TraceDuplicate
+  deriving stock Show
+
+data CursorTrace =
+    TraceCreateCursor
+      Word64 -- ^ Table identifier
+  | TraceCloseCursor
+  | TraceReadCursor Int
   deriving stock Show
 
 {-------------------------------------------------------------------------------
@@ -759,11 +770,12 @@ retrieveBlobs sesh wrefs =
 data Cursor m h = Cursor {
       -- | Mutual exclusion, only a single thread can read from a cursor at a
       -- given time.
-      cursorState :: !(StrictMVar m (CursorState m h))
+      cursorState  :: !(StrictMVar m (CursorState m h))
+    , cursorTracer :: !(Tracer m CursorTrace)
     }
 
 instance NFData (Cursor m h) where
-  rnf (Cursor a) = rwhnf a
+  rnf (Cursor a b) = rwhnf a `seq` rwhnf b
 
 data CursorState m h =
     CursorOpen !(CursorEnv m h)
@@ -816,8 +828,14 @@ newCursor ::
 newCursor th = withOpenTable th $ \thEnv -> do
     let cursorSession = tableSession thEnv
     let cursorSessionEnv = tableSessionEnv thEnv
+    cursorId <- uniqueToWord64 <$>
+      incrUniqCounter (sessionUniqCounter cursorSessionEnv)
+    let cursorTracer = TraceCursor cursorId `contramap` sessionTracer cursorSession
+    traceWith cursorTracer $ TraceCreateCursor (tableId thEnv)
+
     let hfs = tableHasFS thEnv
     let hbio = tableHasBlockIO thEnv
+
     -- We acquire a read-lock on the session open-state to prevent races, see
     -- 'sessionOpenTables'.
     withOpenSession cursorSession $ \_ -> do
@@ -828,9 +846,8 @@ newCursor th = withOpenTable th $ \thEnv -> do
           allocateMaybeTemp reg
             (Readers.new hfs hbio (Just writeBuffer) (V.toList cursorRuns))
             (Readers.close hfs hbio)
-        cursorId0 <- incrUniqCounter (sessionUniqCounter cursorSessionEnv)
-        let cursorId = uniqueToWord64 cursorId0
-        cursor <- Cursor <$> newMVar (CursorOpen CursorEnv {..})
+        cursorState <- newMVar (CursorOpen CursorEnv {..})
+        let !cursor = Cursor {cursorState, cursorTracer}
         -- Track cursor, but careful: If now an exception is raised, all
         -- resources get freed by the registry, so if the session still
         -- tracks 'cursor' (which is 'CursorOpen'), it later double frees.
@@ -859,6 +876,7 @@ closeCursor ::
   => Cursor m h
   -> m ()
 closeCursor Cursor {..} = do
+    traceWith cursorTracer $ TraceCloseCursor
     modifyWithTempRegistry_ (takeMVar cursorState) (putMVar cursorState) $ \reg -> \case
       CursorClosed -> return CursorClosed
       CursorOpen CursorEnv {..} -> do
@@ -888,6 +906,7 @@ readCursor ::
      -- ^ How to map to a query result, different for normal/monoidal
   -> m (V.Vector res)
 readCursor resolve n Cursor {..} fromEntry = do
+    traceWith cursorTracer $ TraceReadCursor n
     modifyMVar cursorState $ \case
       CursorClosed -> throwIO ErrCursorClosed
       state@(CursorOpen cursorEnv) -> do
