@@ -41,6 +41,7 @@ module Database.LSMTree.Internal (
   , withCursor
   , newCursor
   , closeCursor
+  , readCursor
     -- * Snapshots
   , SnapshotLabel
   , snapshot
@@ -66,6 +67,7 @@ import           Data.Bifunctor (Bifunctor (..))
 import qualified Data.ByteString.Char8 as BSC
 import           Data.Char (isNumber)
 import           Data.Foldable
+import           Data.Functor ((<&>))
 import           Data.Functor.Compose (Compose (..))
 import           Data.Kind
 import           Data.Map.Strict (Map)
@@ -77,10 +79,11 @@ import qualified Data.Set as Set
 import           Data.Typeable
 import qualified Data.Vector as V
 import           Data.Word (Word64)
-import           Database.LSMTree.Internal.BlobRef (WeakBlobRef)
+import           Database.LSMTree.Internal.BlobRef (WeakBlobRef (..))
 import qualified Database.LSMTree.Internal.BlobRef as BlobRef
 import           Database.LSMTree.Internal.Config
-import           Database.LSMTree.Internal.Entry (Entry, combineMaybe)
+import           Database.LSMTree.Internal.Entry (Entry)
+import qualified Database.LSMTree.Internal.Entry as Entry
 import           Database.LSMTree.Internal.Lookup (ByteCountDiscrepancy,
                      ResolveSerialisedValue, lookupsIO)
 import           Database.LSMTree.Internal.MergeSchedule
@@ -91,6 +94,7 @@ import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunNumber
+import qualified Database.LSMTree.Internal.RunReader as Reader
 import qualified Database.LSMTree.Internal.RunReaders as Readers
 import           Database.LSMTree.Internal.Serialise (SerialisedBlob (..),
                      SerialisedKey, SerialisedValue)
@@ -205,6 +209,10 @@ data LSMTreeTrace =
       TableTrace
   | TraceDeleteSnapshot SnapshotName
   | TraceListSnapshots
+    -- Cursor
+  | TraceCursor
+      Word64 -- ^ Cursor identifier
+      CursorTrace
   deriving stock Show
 
 data TableTrace =
@@ -223,6 +231,13 @@ data TableTrace =
   | TraceSnapshot SnapshotName
     -- Duplicate
   | TraceDuplicate
+  deriving stock Show
+
+data CursorTrace =
+    TraceCreateCursor
+      Word64 -- ^ Table identifier
+  | TraceCloseCursor
+  | TraceReadCursor Int
   deriving stock Show
 
 {-------------------------------------------------------------------------------
@@ -665,9 +680,10 @@ lookups resolve ks th fromEntry = do
             (cachedIndexes cache)
             (cachedKOpsFiles cache)
             ks
-        pure $! V.zipWithStrict
-                  (\k1 e2 -> fromEntry $ combineMaybe resolve (WB.lookup wb k1) e2)
-                  ks ioRes
+        pure $!
+          V.zipWithStrict
+            (\k1 e2 -> fromEntry $ Entry.combineMaybe resolve (WB.lookup wb k1) e2)
+            ks ioRes
 
 {-# SPECIALISE updates :: ResolveSerialisedValue -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob) -> TableHandle IO h -> IO () #-}
 -- | See 'Database.LSMTree.Normal.updates'.
@@ -743,6 +759,8 @@ retrieveBlobs sesh wrefs =
   Cursors
 -------------------------------------------------------------------------------}
 
+-- TODO: Move to a separate Cursors module
+
 -- | A read-only view into the table state at the time of cursor creation.
 --
 -- For more information, see 'Database.LSMTree.Normal.Cursor'.
@@ -752,11 +770,12 @@ retrieveBlobs sesh wrefs =
 data Cursor m h = Cursor {
       -- | Mutual exclusion, only a single thread can read from a cursor at a
       -- given time.
-      cursorState :: !(StrictMVar m (CursorState m h))
+      cursorState  :: !(StrictMVar m (CursorState m h))
+    , cursorTracer :: !(Tracer m CursorTrace)
     }
 
 instance NFData (Cursor m h) where
-  rnf (Cursor a) = rwhnf a
+  rnf (Cursor a b) = rwhnf a `seq` rwhnf b
 
 data CursorState m h =
     CursorOpen !(CursorEnv m h)
@@ -780,7 +799,8 @@ data CursorEnv m h = CursorEnv {
 
     -- | Session-unique identifier for this cursor.
   , cursorId         :: !Word64
-    -- | Readers are immediately discarded once they are 'Readers.Drained'.
+    -- | Readers are immediately discarded once they are 'Readers.Drained',
+    -- so if there is a 'Just', we can assume that it has further entries.
     -- However, the reference counts to the runs only get removed when calling
     -- 'closeCursor', as there might still be 'BlobRef's that need the
     -- corresponding run to stay alive.
@@ -808,8 +828,14 @@ newCursor ::
 newCursor th = withOpenTable th $ \thEnv -> do
     let cursorSession = tableSession thEnv
     let cursorSessionEnv = tableSessionEnv thEnv
+    cursorId <- uniqueToWord64 <$>
+      incrUniqCounter (sessionUniqCounter cursorSessionEnv)
+    let cursorTracer = TraceCursor cursorId `contramap` sessionTracer cursorSession
+    traceWith cursorTracer $ TraceCreateCursor (tableId thEnv)
+
     let hfs = tableHasFS thEnv
     let hbio = tableHasBlockIO thEnv
+
     -- We acquire a read-lock on the session open-state to prevent races, see
     -- 'sessionOpenTables'.
     withOpenSession cursorSession $ \_ -> do
@@ -820,9 +846,8 @@ newCursor th = withOpenTable th $ \thEnv -> do
           allocateMaybeTemp reg
             (Readers.new hfs hbio (Just writeBuffer) (V.toList cursorRuns))
             (Readers.close hfs hbio)
-        cursorId0 <- incrUniqCounter (sessionUniqCounter cursorSessionEnv)
-        let cursorId = uniqueToWord64 cursorId0
-        cursor <- Cursor <$> newMVar (CursorOpen CursorEnv {..})
+        cursorState <- newMVar (CursorOpen CursorEnv {..})
+        let !cursor = Cursor {cursorState, cursorTracer}
         -- Track cursor, but careful: If now an exception is raised, all
         -- resources get freed by the registry, so if the session still
         -- tracks 'cursor' (which is 'CursorOpen'), it later double frees.
@@ -851,6 +876,7 @@ closeCursor ::
   => Cursor m h
   -> m ()
 closeCursor Cursor {..} = do
+    traceWith cursorTracer $ TraceCloseCursor
     modifyWithTempRegistry_ (takeMVar cursorState) (putMVar cursorState) $ \reg -> \case
       CursorClosed -> return CursorClosed
       CursorOpen CursorEnv {..} -> do
@@ -869,6 +895,132 @@ closeCursor Cursor {..} = do
         V.forM_ cursorRuns $ freeTemp reg . Run.removeReference
         return CursorClosed
 
+{-# SPECIALISE readCursor :: ResolveSerialisedValue -> Int -> Cursor IO h -> (SerialisedKey -> SerialisedValue -> Maybe (WeakBlobRef IO (Handle h)) -> res) -> IO (V.Vector res) #-}
+-- | See 'Database.LSMTree.Normal.readCursor'.
+readCursor ::
+     forall m h res. m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+  => ResolveSerialisedValue
+  -> Int  -- ^ Number of entries to read
+  -> Cursor m h
+  -> (SerialisedKey -> SerialisedValue -> Maybe (WeakBlobRef m (Handle h)) -> res)
+     -- ^ How to map to a query result, different for normal/monoidal
+  -> m (V.Vector res)
+readCursor resolve n Cursor {..} fromEntry = do
+    traceWith cursorTracer $ TraceReadCursor n
+    modifyMVar cursorState $ \case
+      CursorClosed -> throwIO ErrCursorClosed
+      state@(CursorOpen cursorEnv) -> do
+        case cursorReaders cursorEnv of
+          Nothing ->
+            -- a drained cursor will just return an empty vector
+            return (state, V.empty)
+          Just readers -> do
+            let hfs = sessionHasFS (cursorSessionEnv cursorEnv)
+            let hbio = sessionHasBlockIO (cursorSessionEnv cursorEnv)
+            (vec, hasMore) <- readCursorEntries hfs hbio resolve fromEntry readers n
+            -- if we drained the readers, remove them from the state
+            let !state' = case hasMore of
+                  Readers.HasMore -> state
+                  Readers.Drained -> CursorOpen (cursorEnv {cursorReaders = Nothing})
+            return (state', vec)
+
+-- General notes on the code below:
+-- * it is quite similar to the one in Internal.Merge, but different enough
+--   that it's probably easier to keep them separate
+-- * any function that doesn't take a 'hasMore' argument assumes that the
+--   readers have not been drained yet, so we must check before calling them
+-- * there is probably opportunity for optimisations
+readCursorEntries ::
+     forall m h res. m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+  => HasFS m h
+  -> HasBlockIO m h
+  -> (SerialisedValue -> SerialisedValue -> SerialisedValue)
+  -> (SerialisedKey -> SerialisedValue -> Maybe (WeakBlobRef m (Handle h)) -> res)
+  -> Readers.Readers RealWorld (Handle h)
+  -> Int
+  -> m (V.Vector res, Readers.HasMore)
+readCursorEntries hfs hbio resolve fromEntry readers n =
+    flip (V.unfoldrNM' n) Readers.HasMore $ \case
+      Readers.Drained -> return (Nothing, Readers.Drained)
+      Readers.HasMore -> readEntry <&> \case
+        Just (res, hasMore) -> (Just res, hasMore)
+        Nothing             -> (Nothing, Readers.Drained)
+  where
+    -- Produces a result unless the readers have been drained.
+    readEntry :: IO (Maybe (res, Readers.HasMore))
+    readEntry = do
+        (key, readerEntry, hasMore) <- Readers.pop hfs hbio readers
+        let !entry = Reader.toFullEntry readerEntry
+        case hasMore of
+          Readers.Drained -> do
+            handleResolved key entry Readers.Drained
+          Readers.HasMore -> do
+            case entry of
+              Entry.Mupdate v ->
+                handleMupdate key v
+              _ -> do
+                -- Anything but Mupdate supersedes all previous entries of
+                -- the same key, so we can simply drop them and are done.
+                hasMore' <- dropRemaining key
+                handleResolved key entry hasMore'
+
+    dropRemaining :: SerialisedKey -> IO Readers.HasMore
+    dropRemaining key = do
+        (_, hasMore) <- Readers.dropWhileKey hfs hbio readers key
+        return hasMore
+
+    -- Resolve a 'Mupsert' value with the other entries of the same key.
+    handleMupdate :: SerialisedKey
+                  -> SerialisedValue
+                  -> IO (Maybe (res, Readers.HasMore))
+    handleMupdate key v = do
+        nextKey <- Readers.peekKey readers
+        if nextKey /= key
+          then
+            -- No more entries for same key, done.
+            handleResolved key (Entry.Mupdate v) Readers.HasMore
+          else do
+            (_, nextEntry, hasMore) <- Readers.pop hfs hbio readers
+            let resolved = Entry.combine resolve (Entry.Mupdate v)
+                             (Reader.toFullEntry nextEntry)
+            case hasMore of
+              Readers.HasMore -> case resolved of
+                Entry.Mupdate v' ->
+                  -- Still a mupsert, keep resolving!
+                  handleMupdate key v'
+                _ -> do
+                  -- Done with this key, remaining entries are obsolete.
+                  hasMore' <- dropRemaining key
+                  handleResolved key resolved hasMore'
+              Readers.Drained -> do
+                handleResolved key resolved Readers.Drained
+
+    -- Once we have a resolved entry, we still have to make sure it's not
+    -- a 'Delete', since we only want to write values to the result vector.
+    handleResolved :: SerialisedKey
+                   -> Entry SerialisedValue (BlobRef.BlobRef IO (Handle h))
+                   -> Readers.HasMore
+                   -> IO (Maybe (res, Readers.HasMore))
+    handleResolved key entry hasMore =
+        case toResult key entry of
+          Just !res ->
+            -- Found one resolved value, done.
+            return (Just (res, hasMore))
+          Nothing ->
+            -- Resolved value was a Delete, which we don't want to include.
+            -- So look for another one (unless there are no more entries!).
+            case hasMore of
+              Readers.HasMore -> readEntry
+              Readers.Drained -> return Nothing
+
+    toResult :: SerialisedKey
+             -> Entry SerialisedValue (BlobRef.BlobRef IO (Handle h))
+             -> Maybe res
+    toResult key = \case
+        Entry.Insert v -> Just $ fromEntry key v Nothing
+        Entry.InsertWithBlob v b -> Just $ fromEntry key v (Just (WeakBlobRef b))
+        Entry.Mupdate v -> Just $ fromEntry key v Nothing
+        Entry.Delete -> Nothing
 
 {-------------------------------------------------------------------------------
   Snapshots

@@ -8,12 +8,13 @@ module Database.LSMTree.Class.Normal (
   , withTableNew
   , withTableOpen
   , withTableDuplicate
+  , withCursor
   ) where
 
 import           Control.Monad.Class.MonadThrow (MonadThrow (..))
 import           Control.Tracer (nullTracer)
 import           Data.Kind (Constraint, Type)
-import           Data.Typeable (Typeable)
+import           Data.Typeable (Proxy (Proxy), Typeable)
 import qualified Data.Vector as V
 import           Database.LSMTree.Common (IOLike, Labellable (..), Range (..),
                      SerialiseKey, SerialiseValue, SnapshotName)
@@ -172,6 +173,13 @@ withTableDuplicate ::
   -> (h m k v blob -> m a)
   -> m a
 withTableDuplicate table = bracket (duplicate table) close
+
+withCursor ::
+     forall h m k v blob a. (IOLike m, IsTableHandle h)
+  => h m k v blob
+  -> (Cursor h m k v blob -> m a)
+  -> m a
+withCursor hdl = bracket (newCursor hdl) (closeCursor (Proxy @h))
 
 {-------------------------------------------------------------------------------
   Model instance

@@ -13,7 +13,7 @@ import           Data.Bifunctor
 import           Data.Coerce (coerce)
 import           Data.Foldable (traverse_)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (fromMaybe)
+import           Data.Maybe (fromMaybe, mapMaybe)
 import           Data.Monoid (Sum (..))
 import qualified Data.Vector as V
 import           Data.Word (Word64)
@@ -50,8 +50,7 @@ tests = testGroup "Test.Database.LSMTree.Internal" [
           testProperty "prop_interimOpenTable" prop_interimOpenTable
         ]
     , testGroup "Cursor" [
-          -- TODO: enable once write buffer returns BlobRefs
-          testProperty "prop_roundtripCursor" $ expectFailure prop_roundtripCursor
+          testProperty "prop_roundtripCursor" prop_roundtripCursor
         ]
     ]
 
@@ -207,12 +206,51 @@ prop_roundtripCursor kops = ioProperty $
     withTempIOHasBlockIO "prop_roundtripCursor" $ \hfs hbio -> do
       withSession nullTracer hfs hbio (FS.mkFsPath []) $ \sesh -> do
         withTable sesh conf $ \th -> do
-          updates appendSerialisedValue (coerce kops) th
-          withCursor th $ \_cursor ->
-            -- TODO: read from cursor once implemented!
-            return ()
+          updates appendSerialisedValue (coerce kopsWithoutblobs) th
+          fromCursor <- withCursor th $ readWholeCursor appendSerialisedValue
+          return $ tabulate "duplicates" (show <$> Map.elems duplicates) $
+            expected === fromCursor
   where
     conf = testTableConfig
+
+    -- TODO: include inserts with blobs once write buffer returns BlobRefs
+    kopsWithoutblobs = V.map (fmap f) kops
+      where f (InsertWithBlob v _) = Insert v
+            f x                    = x
+
+    expected =
+      V.fromList . mapMaybe (traverse entryToValue) $
+          Map.assocs . Map.fromListWith (combine appendSerialisedValue) $
+            V.toList kopsWithoutblobs
+
+    entryToValue :: Entry v b -> Maybe (v, Maybe b)
+    entryToValue = \case
+      Insert v           -> Just (v, Nothing)
+      InsertWithBlob v b -> Just (v, Just b)
+      Mupdate v          -> Just (v, Nothing)
+      Delete             -> Nothing
+
+    duplicates :: Map.Map KeyForIndexCompact Int
+    duplicates =
+      Map.filter (> 1) $
+        Map.fromListWith (+) . map (\(k, _) -> (k, 1)) $
+          V.toList kops
+
+readWholeCursor ::
+     ResolveSerialisedValue
+  -> Cursor IO h
+  -> IO (V.Vector (KeyForIndexCompact, (SerialisedValue, Maybe b)))
+readWholeCursor resolve cursor = go V.empty
+  where
+    chunkSize = 50
+    toResult k v b = (coerce k, (v, fmap toBlob b))
+
+    go !acc = do
+      res <- readCursor resolve chunkSize cursor toResult
+      if V.length res < chunkSize then return (acc <> res)
+                                  else go (acc <> res)
+
+    toBlob = error "blobs not supported yet"
 
 appendSerialisedValue :: ResolveSerialisedValue
 appendSerialisedValue (SerialisedValue x) (SerialisedValue y) =

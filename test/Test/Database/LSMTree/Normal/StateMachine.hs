@@ -193,6 +193,7 @@ propLockstepIO_RealImpl_RealFS = testProperty "propLockstepIO_RealImpl_RealFS" $
       where
         handler' :: LSMTreeError -> Maybe Model.Err
         handler' ErrTableClosed = Just Model.ErrTableHandleClosed
+        handler' ErrCursorClosed = Just Model.ErrCursorClosed
         handler' (ErrSnapshotNotExists _snap) = Just Model.ErrSnapshotDoesNotExist
         handler' (ErrSnapshotExists _snap) = Just Model.ErrSnapshotExists
         handler' (ErrSnapshotWrongType _snap) = Just Model.ErrSnapshotWrongType
@@ -244,7 +245,7 @@ instance Arbitrary R.TableConfig where
       , R.confBloomFilterAlloc  = R.AllocFixed 10
       , R.confFencePointerIndex = R.CompactIndex
       , R.confDiskCachePolicy   = R.DiskCacheNone
-      , R.confMergeSchedule       = R.OneShot
+      , R.confMergeSchedule     = R.OneShot
       }
 
 {-------------------------------------------------------------------------------
@@ -1033,8 +1034,7 @@ arbitraryActionWithVars _ findVars _st = QC.frequency $ concat [
       -> [(Int, Gen (Any (LockstepAction (ModelState h))))]
     withVars' genVar = [
           (2, fmap Some $ CloseCursor <$> (fromRight <$> genVar))
-          -- TODO: enable generators as we implement the actions for the /real/ lsm-tree
-        -- , (10, fmap Some $ ReadCursor <$> (QC.getNonNegative <$> QC.arbitrary) <*> (fromRight <$> genVar))
+        , (10, fmap Some $ ReadCursor <$> (QC.getNonNegative <$> QC.arbitrary) <*> (fromRight <$> genVar))
         ]
 
     withVars'' ::

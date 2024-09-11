@@ -22,6 +22,11 @@ module Database.LSMTree.ModelIO.Monoidal (
   , lookups
   , QueryResult (..)
   , rangeLookup
+    -- ** Cursor
+  , Cursor
+  , newCursor
+  , closeCursor
+  , readCursor
     -- ** Updates
   , Update (..)
   , updates
@@ -106,7 +111,7 @@ lookups ::
   -> TableHandle m k v
   -> m (V.Vector (LookupResult v))
 lookups ks TableHandle {..} = atomically $
-    withModel "lookups" thSession thRef $ \tbl ->
+    withModel "lookups" "table handle" thSession thRef $ \tbl ->
         return $ Model.lookups ks tbl
 
 -- | Perform a range lookup.
@@ -116,7 +121,7 @@ rangeLookup ::
   -> TableHandle m k v
   -> m (V.Vector (QueryResult k v))
 rangeLookup r TableHandle {..} = atomically $
-    withModel "rangeLookup" thSession thRef $ \tbl ->
+    withModel "rangeLookup" "table handle" thSession thRef $ \tbl ->
         return $ Model.rangeLookup r tbl
 
 -- | Perform a mixed batch of inserts, deletes and monoidal upserts.
@@ -126,7 +131,7 @@ updates ::
   -> TableHandle m k v
   -> m ()
 updates ups TableHandle {..} = atomically $
-    withModel "updates" thSession thRef $ \tbl ->
+    withModel "updates" "table handle" thSession thRef $ \tbl ->
         writeTMVar thRef $ Model.updates ups tbl
 
 -- | Perform a batch of inserts.
@@ -167,7 +172,7 @@ snapshot ::
   -> TableHandle m k v
   -> m ()
 snapshot n TableHandle {..} = atomically $
-    withModel "snapshot" thSession thRef $ \tbl ->
+    withModel "snapshot" "table handle" thSession thRef $ \tbl ->
         modifyTVar' (snapshots thSession) (Map.insert n (toDyn tbl))
 
 -- | Open a table through a snapshot, returning a new table handle.
@@ -217,10 +222,54 @@ duplicate ::
   => TableHandle m k v
   -> m (TableHandle m k v)
 duplicate TableHandle {..} = atomically $
-    withModel "duplicate" thSession thRef $ \tbl -> do
+    withModel "duplicate" "table handle" thSession thRef $ \tbl -> do
         thRef' <- newTMVar tbl
         i <- new_handle thSession thRef'
         return TableHandle { thRef = thRef', thId = i, thSession = thSession }
+
+{-------------------------------------------------------------------------------
+  Cursor
+-------------------------------------------------------------------------------}
+
+type Cursor :: (Type -> Type) -> Type -> Type -> Type
+data Cursor m k v = Cursor {
+      cSession :: !(Session m)
+    , cId      :: !Int
+    , cRef     :: !(TMVar m (Model.Cursor k v))
+    }
+
+newCursor ::
+     IOLike m
+  => TableHandle m k v
+  -> m (Cursor m k v)
+newCursor TableHandle{..} = atomically $
+    withModel "newCursor" "table handle" thSession thRef $ \(tbl) -> do
+      cRef <- newTMVar (Model.newCursor tbl)
+      i <- new_handle thSession cRef
+      pure Cursor {
+          cSession = thSession
+        , cId = i
+        , cRef
+        }
+
+closeCursor ::
+     IOLike m
+  => Cursor m k v
+  -> m ()
+closeCursor Cursor {..} = atomically $ do
+    close_handle cSession cId
+    void $ tryTakeTMVar cRef
+
+readCursor ::
+     (IOLike m, SerialiseKey k, SerialiseValue v)
+  => Int
+  -> Cursor m k v
+  -> m (V.Vector (QueryResult k v))
+readCursor n Cursor{..} = atomically $
+    withModel "readCursor" "cursor" cSession cRef $ \c -> do
+      let (qss, c') = Model.readCursor n c
+      writeTMVar cRef c'
+      return qss
 
 {-------------------------------------------------------------------------------
   Merging tables
@@ -247,8 +296,8 @@ merge hdl1 hdl2
 -}
 
     | otherwise = atomically $
-    withModel "merge" (thSession hdl1) (thRef hdl1) $ \tbl1 ->
-    withModel "merge" (thSession hdl2) (thRef hdl2) $ \tbl2 -> do
+    withModel "merge" "table handle" (thSession hdl1) (thRef hdl1) $ \tbl1 ->
+    withModel "merge" "table handle" (thSession hdl2) (thRef hdl2) $ \tbl2 -> do
         let tbl = Model.merge tbl1 tbl2
         thRef' <- newTMVar tbl
         i <- new_handle (thSession hdl1) thRef'
@@ -258,15 +307,15 @@ merge hdl1 hdl2
   Internal helpers
 -------------------------------------------------------------------------------}
 
-withModel :: IOLike m => String -> Session m -> TMVar m a -> (a -> STM m r) -> STM m r
-withModel fun s ref kont = do
+withModel :: IOLike m => String -> String -> Session m -> TMVar m a -> (a -> STM m r) -> STM m r
+withModel fun hdl s ref kont = do
     m <- tryReadTMVar ref
     case m of
         Nothing -> throwSTM IOError
             { ioe_handle      = Nothing
             , ioe_type        = IllegalOperation
             , ioe_location    = fun
-            , ioe_description = "table handle closed"
+            , ioe_description = hdl <> " closed"
             , ioe_errno       = Nothing
             , ioe_filename    = Nothing
             }

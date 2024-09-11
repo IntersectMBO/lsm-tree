@@ -11,6 +11,7 @@ module Database.LSMTree.Internal.Vector (
     zipWithStrict,
     binarySearchL,
     unsafeInsertWithMStrict,
+    unfoldrNM',
 ) where
 
 import           Control.Monad
@@ -95,3 +96,27 @@ unsafeInsertWithMStrict ::
 unsafeInsertWithMStrict mvec f i y = VM.unsafeModifyM mvec g i
   where
     g x = pure $! Just $! maybe y (`f` y) x
+
+{-# INLINE unfoldrNM' #-}
+-- | A version of 'V.unfoldrNM' that also returns the final state.
+--
+-- /O(n)/ Construct a vector by repeatedly applying the monadic generator
+-- function to a seed. The generator function also yields 'Just' the next
+-- element or 'Nothing' if there are no more elements.
+--
+-- The state as well as all elements of the result vector are forced to weak
+-- head normal form.
+unfoldrNM' :: PrimMonad m => Int -> (b -> m (Maybe a, b)) -> b -> m (V.Vector a, b)
+unfoldrNM' len f = \b0 -> do
+    vec <- VM.unsafeNew len
+    go vec 0 b0
+  where
+    go !vec !n !b
+      | n >= len = (, b) <$!> V.unsafeFreeze vec
+      | otherwise =
+          f b >>= \case
+            (Nothing, !b') ->
+              (, b') <$!> V.unsafeFreeze (VM.slice 0 n vec)
+            (Just !a,  !b') -> do
+              VM.unsafeWrite vec n a
+              go vec (n+1) b'
