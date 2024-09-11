@@ -898,94 +898,110 @@ readCursor resolve n Cursor {..} fromEntry = do
           Just readers -> do
             let hfs = sessionHasFS (cursorSessionEnv cursorEnv)
             let hbio = sessionHasBlockIO (cursorSessionEnv cursorEnv)
-            (vec, hasMore) <- readEntries hfs hbio readers
+            (vec, hasMore) <- readCursorEntries hfs hbio resolve fromEntry readers n
             -- if we drained the readers, remove them from the state
             let !state' = case hasMore of
                   Readers.HasMore -> state
                   Readers.Drained -> CursorOpen (cursorEnv {cursorReaders = Nothing})
             return (state', vec)
+
+-- General notes on the code below:
+-- * it is quite similar to the one in Internal.Merge, but different enough
+--   that it's probably easier to keep them separate
+-- * any function that doesn't take a 'hasMore' argument assumes that the
+--   readers have not been drained yet, so we must check before calling them
+-- * there is probably opportunity for optimisations
+readCursorEntries ::
+     forall m h res. m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+  => HasFS m h
+  -> HasBlockIO m h
+  -> (SerialisedValue -> SerialisedValue -> SerialisedValue)
+  -> (SerialisedKey -> SerialisedValue -> Maybe (WeakBlobRef m (Handle h)) -> res)
+  -> Readers.Readers RealWorld (Handle h)
+  -> Int
+  -> m (V.Vector res, Readers.HasMore)
+readCursorEntries hfs hbio resolve fromEntry readers n =
+    flip (V.unfoldrNM' n) Readers.HasMore $ \case
+      Readers.Drained -> return (Nothing, Readers.Drained)
+      Readers.HasMore -> readEntry <&> \case
+        Just (res, hasMore) -> (Just res, hasMore)
+        Nothing             -> (Nothing, Readers.Drained)
   where
-    -- General notes on the code below:
-    -- * it is quite similar to the one in Internal.Merge, but different enough
-    --   that it's probably easier to keep them separate
-    -- * any function that doesn't take a 'hasMore' argument assumes that the
-    --   readers have not been drained yet, so we must check before calling them
-    -- * there is probably opportunity for optimisations
-    readEntries hfs hbio readers =
-        flip (V.unfoldrNM' n) Readers.HasMore $ \case
-          Readers.Drained -> return (Nothing, Readers.Drained)
-          Readers.HasMore -> readEntry <&> \case
-            Just (res, hasMore) -> (Just res, hasMore)
-            Nothing             -> (Nothing, Readers.Drained)
-      where
-        -- Produces a result unless the readers have been drained.
-        readEntry :: IO (Maybe (res, Readers.HasMore))
-        readEntry = do
-            (key, readerEntry, hasMore) <- Readers.pop hfs hbio readers
-            let !entry = Reader.toFullEntry readerEntry
+    -- Produces a result unless the readers have been drained.
+    readEntry :: IO (Maybe (res, Readers.HasMore))
+    readEntry = do
+        (key, readerEntry, hasMore) <- Readers.pop hfs hbio readers
+        let !entry = Reader.toFullEntry readerEntry
+        case hasMore of
+          Readers.Drained -> do
+            handleResolved key entry Readers.Drained
+          Readers.HasMore -> do
+            case entry of
+              Entry.Mupdate v ->
+                handleMupdate key v
+              _ -> do
+                -- Anything but Mupdate supersedes all previous entries of
+                -- the same key, so we can simply drop them and are done.
+                hasMore' <- dropRemaining key
+                handleResolved key entry hasMore'
+
+    dropRemaining :: SerialisedKey -> IO Readers.HasMore
+    dropRemaining key = do
+        (_, hasMore) <- Readers.dropWhileKey hfs hbio readers key
+        return hasMore
+
+    -- Resolve a 'Mupsert' value with the other entries of the same key.
+    handleMupdate :: SerialisedKey
+                  -> SerialisedValue
+                  -> IO (Maybe (res, Readers.HasMore))
+    handleMupdate key v = do
+        nextKey <- Readers.peekKey readers
+        if nextKey /= key
+          then
+            -- No more entries for same key, done.
+            handleResolved key (Entry.Mupdate v) Readers.HasMore
+          else do
+            (_, nextEntry, hasMore) <- Readers.pop hfs hbio readers
+            let resolved = Entry.combine resolve (Entry.Mupdate v)
+                             (Reader.toFullEntry nextEntry)
             case hasMore of
+              Readers.HasMore -> case resolved of
+                Entry.Mupdate v' ->
+                  -- Still a mupsert, keep resolving!
+                  handleMupdate key v'
+                _ -> do
+                  -- Done with this key, remaining entries are obsolete.
+                  hasMore' <- dropRemaining key
+                  handleResolved key resolved hasMore'
               Readers.Drained -> do
-                handleResolved key entry Readers.Drained
-              Readers.HasMore -> do
-                case entry of
-                  Entry.Mupdate v ->
-                    handleMupdate key v
-                  _ -> do
-                    -- Anything but Mupdate supersedes all previous entries of
-                    -- the same key, so we can simply drop them and are done.
-                    hasMore' <- dropRemaining key
-                    handleResolved key entry hasMore'
+                handleResolved key resolved Readers.Drained
 
-        dropRemaining :: SerialisedKey -> IO Readers.HasMore
-        dropRemaining key = do
-            (_, hasMore) <- Readers.dropWhileKey hfs hbio readers key
-            return hasMore
+    -- Once we have a resolved entry, we still have to make sure it's not
+    -- a 'Delete', since we only want to write values to the result vector.
+    handleResolved :: SerialisedKey
+                   -> Entry SerialisedValue (BlobRef.BlobRef IO (Handle h))
+                   -> Readers.HasMore
+                   -> IO (Maybe (res, Readers.HasMore))
+    handleResolved key entry hasMore =
+        case toResult key entry of
+          Just !res ->
+            -- Found one resolved value, done.
+            return (Just (res, hasMore))
+          Nothing ->
+            -- Resolved value was a Delete, which we don't want to include.
+            -- So look for another one (unless there are no more entries!).
+            case hasMore of
+              Readers.HasMore -> readEntry
+              Readers.Drained -> return Nothing
 
-        -- Resolve a 'Mupsert' value with the other entries of the same key.
-        handleMupdate :: SerialisedKey -> SerialisedValue -> IO (Maybe (res, Readers.HasMore))
-        handleMupdate key v = do
-            nextKey <- Readers.peekKey readers
-            if nextKey /= key
-              then
-                -- No more entries for same key, done.
-                handleResolved key (Entry.Mupdate v) Readers.HasMore
-              else do
-                (_, nextEntry, hasMore) <- Readers.pop hfs hbio readers
-                let resolved = Entry.combine resolve (Entry.Mupdate v)
-                                 (Reader.toFullEntry nextEntry)
-                case hasMore of
-                  Readers.HasMore -> case resolved of
-                    Entry.Mupdate v' ->
-                      -- Still a mupsert, keep resolving!
-                      handleMupdate key v'
-                    _ -> do
-                      -- Done with this key, remaining entries are obsolete.
-                      hasMore' <- dropRemaining key
-                      handleResolved key resolved hasMore'
-                  Readers.Drained -> do
-                    handleResolved key resolved Readers.Drained
-
-        -- Once we have a resolved entry, we still have to make sure it's not
-        -- a 'Delete', since we only want to write values to the result vector.
-        handleResolved :: SerialisedKey -> Entry SerialisedValue (BlobRef.BlobRef IO (Handle h)) -> Readers.HasMore -> IO (Maybe (res, Readers.HasMore))
-        handleResolved key entry hasMore =
-            case toResult key entry of
-              Just !res ->
-                -- Found one resolved value, done.
-                return (Just (res, hasMore))
-              Nothing ->
-                -- Resolved value was a Delete, which we don't want to include.
-                -- So look for another one (unless there are no more entries!).
-                case hasMore of
-                  Readers.HasMore -> readEntry
-                  Readers.Drained -> return Nothing
-
-        toResult :: SerialisedKey -> Entry SerialisedValue (BlobRef.BlobRef IO (Handle h)) -> Maybe res
-        toResult key = \case
-            Entry.Insert v -> Just $ fromEntry key v Nothing
-            Entry.InsertWithBlob v b -> Just $ fromEntry key v (Just (WeakBlobRef b))
-            Entry.Mupdate v -> Just $ fromEntry key v Nothing
-            Entry.Delete -> Nothing
+    toResult :: SerialisedKey
+             -> Entry SerialisedValue (BlobRef.BlobRef IO (Handle h))
+             -> Maybe res
+    toResult key = \case
+        Entry.Insert v -> Just $ fromEntry key v Nothing
+        Entry.InsertWithBlob v b -> Just $ fromEntry key v (Just (WeakBlobRef b))
+        Entry.Mupdate v -> Just $ fromEntry key v Nothing
+        Entry.Delete -> Nothing
 
 {-------------------------------------------------------------------------------
   Snapshots
