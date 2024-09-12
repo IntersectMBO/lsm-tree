@@ -43,6 +43,7 @@ module Database.LSMTree.Internal (
   , newCursor
   , closeCursor
   , readCursor
+  , readCursorWhile
     -- * Snapshots
   , SnapshotLabel
   , snapshot
@@ -68,7 +69,6 @@ import           Data.Bifunctor (Bifunctor (..))
 import qualified Data.ByteString.Char8 as BSC
 import           Data.Char (isNumber)
 import           Data.Foldable
-import           Data.Functor ((<&>))
 import           Data.Functor.Compose (Compose (..))
 import           Data.Kind
 import           Data.Map.Strict (Map)
@@ -931,12 +931,33 @@ closeCursor Cursor {..} = do
 readCursor ::
      forall m h res. m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
   => ResolveSerialisedValue
-  -> Int  -- ^ Number of entries to read
+  -> Int  -- ^ Maximum number of entries to read
   -> Cursor m h
   -> (SerialisedKey -> SerialisedValue -> Maybe (WeakBlobRef m (Handle h)) -> res)
      -- ^ How to map to a query result, different for normal/monoidal
   -> m (V.Vector res)
-readCursor resolve n Cursor {..} fromEntry = do
+readCursor resolve n cursor fromEntry =
+    readCursorWhile resolve (const True) n cursor fromEntry
+
+{-# SPECIALISE readCursorWhile :: ResolveSerialisedValue -> (SerialisedKey -> Bool) -> Int -> Cursor IO h -> (SerialisedKey -> SerialisedValue -> Maybe (WeakBlobRef IO (Handle h)) -> res) -> IO (V.Vector res) #-}
+-- | @readCursorWhile _ p n cursor _@ reads elements until either:
+--
+--    * @n@ elements have been read already
+--    * @p@ returns @False@ for the key of an entry to be read
+--    * the cursor is drained
+--
+-- Consequently, once a call returned fewer than @n@ elements, any subsequent
+-- calls with the same predicate @p@ will return an empty vector.
+readCursorWhile ::
+     forall m h res. m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+  => ResolveSerialisedValue
+  -> (SerialisedKey -> Bool)  -- ^ Only read as long as this predicate holds
+  -> Int  -- ^ Maximum number of entries to read
+  -> Cursor m h
+  -> (SerialisedKey -> SerialisedValue -> Maybe (WeakBlobRef m (Handle h)) -> res)
+     -- ^ How to map to a query result, different for normal/monoidal
+  -> m (V.Vector res)
+readCursorWhile resolve keyIsWanted n Cursor {..} fromEntry = do
     traceWith cursorTracer $ TraceReadCursor n
     modifyMVar cursorState $ \case
       CursorClosed -> throwIO ErrCursorClosed
@@ -948,37 +969,44 @@ readCursor resolve n Cursor {..} fromEntry = do
           Just readers -> do
             let hfs = sessionHasFS (cursorSessionEnv cursorEnv)
             let hbio = sessionHasBlockIO (cursorSessionEnv cursorEnv)
-            (vec, hasMore) <- readCursorEntries hfs hbio resolve fromEntry readers n
+            (vec, hasMore) <- readCursorEntriesWhile hfs hbio resolve keyIsWanted fromEntry readers n
             -- if we drained the readers, remove them from the state
             let !state' = case hasMore of
                   Readers.HasMore -> state
                   Readers.Drained -> CursorOpen (cursorEnv {cursorReaders = Nothing})
             return (state', vec)
 
+{-# INLINE readCursorEntriesWhile #-}
 -- General notes on the code below:
 -- * it is quite similar to the one in Internal.Merge, but different enough
 --   that it's probably easier to keep them separate
 -- * any function that doesn't take a 'hasMore' argument assumes that the
 --   readers have not been drained yet, so we must check before calling them
 -- * there is probably opportunity for optimisations
-readCursorEntries ::
+readCursorEntriesWhile ::
      forall m h res. m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
   => HasFS m h
   -> HasBlockIO m h
-  -> (SerialisedValue -> SerialisedValue -> SerialisedValue)
+  -> ResolveSerialisedValue
+  -> (SerialisedKey -> Bool)
   -> (SerialisedKey -> SerialisedValue -> Maybe (WeakBlobRef m (Handle h)) -> res)
   -> Readers.Readers IO (Handle h)
   -> Int
   -> m (V.Vector res, Readers.HasMore)
-readCursorEntries hfs hbio resolve fromEntry readers n =
+readCursorEntriesWhile hfs hbio resolve keyIsWanted fromEntry readers n =
     flip (V.unfoldrNM' n) Readers.HasMore $ \case
       Readers.Drained -> return (Nothing, Readers.Drained)
-      Readers.HasMore -> readEntry <&> \case
-        Just (res, hasMore) -> (Just res, hasMore)
-        Nothing             -> (Nothing, Readers.Drained)
+      Readers.HasMore -> readEntryIfWanted
   where
-    -- Produces a result unless the readers have been drained.
-    readEntry :: IO (Maybe (res, Readers.HasMore))
+    -- Produces a result unless the readers have been drained or 'keyIsWanted'
+    -- returned False.
+    readEntryIfWanted :: IO (Maybe res, Readers.HasMore)
+    readEntryIfWanted = do
+        key <- Readers.peekKey readers
+        if keyIsWanted key then readEntry
+                           else return (Nothing, Readers.HasMore)
+
+    readEntry :: IO (Maybe res, Readers.HasMore)
     readEntry = do
         (key, readerEntry, hasMore) <- Readers.pop hfs hbio readers
         let !entry = Reader.toFullEntry readerEntry
@@ -1003,7 +1031,7 @@ readCursorEntries hfs hbio resolve fromEntry readers n =
     -- Resolve a 'Mupsert' value with the other entries of the same key.
     handleMupdate :: SerialisedKey
                   -> SerialisedValue
-                  -> IO (Maybe (res, Readers.HasMore))
+                  -> IO (Maybe res, Readers.HasMore)
     handleMupdate key v = do
         nextKey <- Readers.peekKey readers
         if nextKey /= key
@@ -1031,18 +1059,18 @@ readCursorEntries hfs hbio resolve fromEntry readers n =
     handleResolved :: SerialisedKey
                    -> Entry SerialisedValue (BlobRef.BlobRef IO (Handle h))
                    -> Readers.HasMore
-                   -> IO (Maybe (res, Readers.HasMore))
+                   -> IO (Maybe res, Readers.HasMore)
     handleResolved key entry hasMore =
         case toResult key entry of
           Just !res ->
             -- Found one resolved value, done.
-            return (Just (res, hasMore))
+            return (Just res, hasMore)
           Nothing ->
             -- Resolved value was a Delete, which we don't want to include.
             -- So look for another one (unless there are no more entries!).
             case hasMore of
-              Readers.HasMore -> readEntry
-              Readers.Drained -> return Nothing
+              Readers.HasMore -> readEntryIfWanted
+              Readers.Drained -> return (Nothing, Readers.Drained)
 
     toResult :: SerialisedKey
              -> Entry SerialisedValue (BlobRef.BlobRef IO (Handle h))
