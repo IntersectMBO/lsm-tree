@@ -1,8 +1,6 @@
 module Database.LSMTree.Internal.RunReaders (
     Readers (..)
   , new
-  , newAtOffset
-  , newAtOffsetMaybe
   , close
   , peekKey
   , HasMore (..)
@@ -104,35 +102,14 @@ data Reader m fhandle =
 
 type KOp m fhandle = (SerialisedKey, Entry SerialisedValue (BlobRef m fhandle))
 
--- | On equal keys, elements from runs earlier in the list are yielded first.
--- This means that the list of runs should be sorted from new to old.
 new :: forall h .
-     HasFS IO h
-  -> HasBlockIO IO h
-  -> Maybe WB.WriteBuffer
-  -> [Run IO (FS.Handle h)]
-  -> IO (Maybe (Readers IO (FS.Handle h)))
-new fs hbio = newAtOffsetMaybe fs hbio Nothing
-
--- | On equal keys, elements from runs earlier in the list are yielded first.
--- This means that the list of runs should be sorted from new to old.
-newAtOffset :: forall h .
-     HasFS IO h
-  -> HasBlockIO IO h
-  -> SerialisedKey  -- ^ offset
-  -> Maybe WB.WriteBuffer
-  -> [Run IO (FS.Handle h)]
-  -> IO (Maybe (Readers IO (FS.Handle h)))
-newAtOffset fs hbio offset = newAtOffsetMaybe fs hbio (Just offset)
-
-newAtOffsetMaybe :: forall h .
      HasFS IO h
   -> HasBlockIO IO h
   -> Maybe SerialisedKey  -- ^ offset
   -> Maybe WB.WriteBuffer
   -> [Run IO (FS.Handle h)]
   -> IO (Maybe (Readers IO (FS.Handle h)))
-newAtOffsetMaybe fs hbio mOffset wbs runs = do
+new fs hbio mOffset wbs runs = do
     wBuffer <- maybe (pure Nothing) fromWB wbs
     readers <- zipWithM (fromRun . ReaderNumber) [1..] runs
     let contexts = nonEmpty . catMaybes $ wBuffer : readers

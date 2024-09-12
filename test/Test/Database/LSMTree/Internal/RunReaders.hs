@@ -344,7 +344,7 @@ runIO act lu = case act of
                          traverse (traverse (WBB.addBlob hfs wbblobs)) .
                          unTypedWriteBuffer)
                         wb
-        mreaders <- Readers.newAtOffsetMaybe hfs hbio (coerce offset) wb' runs
+        mreaders <- Readers.new hfs hbio (coerce offset) wb' runs
         case mreaders of
           Nothing -> do
             traverse_ Run.removeReference runs

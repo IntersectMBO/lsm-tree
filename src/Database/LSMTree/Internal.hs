@@ -850,7 +850,7 @@ newCursor th = withOpenTable th $ \thEnv -> do
           allocTableContent reg (tableContent thEnv)
         cursorReaders <-
           allocateMaybeTemp reg
-            (Readers.new hfs hbio (Just writeBuffer) (V.toList cursorRuns))
+            (Readers.new hfs hbio Nothing (Just writeBuffer) (V.toList cursorRuns))
             (Readers.close hfs hbio)
         cursorState <- newMVar (CursorOpen CursorEnv {..})
         let !cursor = Cursor {cursorState, cursorTracer}
