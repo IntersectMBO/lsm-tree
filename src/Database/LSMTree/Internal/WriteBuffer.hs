@@ -36,7 +36,6 @@ module Database.LSMTree.Internal.WriteBuffer (
     null,
     lookups,
     lookup,
-    lookups',
     rangeLookups,
 ) where
 
@@ -152,14 +151,6 @@ lookup ::
 lookup (WB !m) !k = case Map.lookup k m of
     Nothing -> Nothing
     Just x  -> Just $! errOnBlob x
-
--- | TODO: remove 'lookups' or 'lookups'', depending on which one we end up
--- using, once blob references are implemented
-lookups' ::
-     WriteBuffer
-  -> V.Vector SerialisedKey
-  -> V.Vector (Maybe (Entry SerialisedValue (WeakBlobRef m h)))
-lookups' wb !ks = V.mapStrict (lookup wb) ks
 
 -- | TODO: remove once blob references are implemented
 errOnBlob :: Entry SerialisedValue BlobSpan -> Entry SerialisedValue (WeakBlobRef m h)
