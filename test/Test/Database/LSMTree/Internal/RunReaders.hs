@@ -38,7 +38,6 @@ import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans ()
 
-import           Control.Monad.Primitive (RealWorld)
 import           Test.QuickCheck.StateModel
 import           Test.QuickCheck.StateModel.Lockstep
 import qualified Test.QuickCheck.StateModel.Lockstep.Defaults as Lockstep
@@ -281,7 +280,7 @@ data RealState =
       !(Maybe ReadersCtx)
 
 -- | Readers, together with the runs being read, so they can be cleaned up at the end
-type ReadersCtx = ([Run.Run IO Handle], Readers RealWorld Handle)
+type ReadersCtx = ([Run.Run IO Handle], Readers IO Handle)
 
 closeReadersCtx :: FS.HasFS IO MockFS.HandleMock -> FS.HasBlockIO IO MockFS.HandleMock -> ReadersCtx -> IO ()
 closeReadersCtx hfs hbio (runs, readers) = do
@@ -337,7 +336,7 @@ runIO act lu = case act of
       return (hasMore, (key, fullEntry, hasMore))
 
     expectReaders ::
-         (FS.HasFS IO MockFS.HandleMock -> FS.HasBlockIO IO MockFS.HandleMock -> Readers RealWorld Handle -> IO (HasMore, a))
+         (FS.HasFS IO MockFS.HandleMock -> FS.HasBlockIO IO MockFS.HandleMock -> Readers IO Handle -> IO (HasMore, a))
       -> RealMonad (Either () a)
     expectReaders f =
         ReaderT $ \(hfs, hbio) -> do

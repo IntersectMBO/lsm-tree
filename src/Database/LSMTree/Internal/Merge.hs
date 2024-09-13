@@ -10,7 +10,7 @@ module Database.LSMTree.Internal.Merge (
 
 import           Control.Exception (assert)
 import           Control.Monad (when)
-import           Control.Monad.Primitive (RealWorld)
+import           Control.Monad.Primitive (PrimState, RealWorld)
 import           Control.RefCount (RefCount (..))
 import           Data.Coerce (coerce)
 import           Data.Traversable (for)
@@ -36,11 +36,11 @@ import           System.FS.BlockIO.API (HasBlockIO)
 --
 -- TODO: Reference counting will have to be done somewhere, either here or in
 -- the layer above.
-data Merge s fhandle = Merge {
+data Merge m fhandle = Merge {
       mergeLevel   :: !Level
     , mergeMappend :: !Mappend
-    , mergeReaders :: {-# UNPACK #-} !(Readers.Readers s fhandle)
-    , mergeBuilder :: !(RunBuilder s fhandle)
+    , mergeReaders :: {-# UNPACK #-} !(Readers.Readers m fhandle)
+    , mergeBuilder :: !(RunBuilder (PrimState m) fhandle)
     , mergeCaching :: !RunDataCaching
       -- ^ The caching policy to use for the Run in the 'MergeComplete'.
     }
@@ -61,7 +61,7 @@ new ::
   -> Mappend
   -> Run.RunFsPaths
   -> [Run IO (FS.Handle h)]
-  -> IO (Maybe (Merge RealWorld (FS.Handle h)))
+  -> IO (Maybe (Merge IO (FS.Handle h)))
 new fs hbio mergeCaching alloc mergeLevel mergeMappend targetPaths runs = do
     mreaders <- Readers.new fs hbio Nothing runs
     for mreaders $ \mergeReaders -> do
@@ -78,7 +78,7 @@ new fs hbio mergeCaching alloc mergeLevel mergeMappend targetPaths runs = do
 close ::
      HasFS IO h
   -> HasBlockIO IO h
-  -> Merge RealWorld (FS.Handle h)
+  -> Merge IO (FS.Handle h)
   -> IO ()
 close fs hbio Merge {..} = do
     Builder.close fs mergeBuilder
@@ -105,7 +105,7 @@ stepsInvariant requestedSteps = \case
 steps ::
      HasFS IO h
   -> HasBlockIO IO h
-  -> Merge RealWorld (FS.Handle h)
+  -> Merge IO (FS.Handle h)
   -> Int  -- ^ How many input entries to consume (at least)
   -> IO (Int, StepResult IO (FS.Handle h))
 steps fs hbio Merge {..} requestedSteps =

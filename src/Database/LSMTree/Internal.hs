@@ -804,7 +804,7 @@ data CursorEnv m h = CursorEnv {
     -- However, the reference counts to the runs only get removed when calling
     -- 'closeCursor', as there might still be 'BlobRef's that need the
     -- corresponding run to stay alive.
-  , cursorReaders    :: !(Maybe (Readers.Readers (PrimState m) (Handle h)))
+  , cursorReaders    :: !(Maybe (Readers.Readers m (Handle h)))
     -- | The runs held open by the cursor. We must remove a reference when the
     -- cursor gets closed.
   , cursorRuns       :: !(V.Vector (Run m (Handle h)))
@@ -936,7 +936,7 @@ readCursorEntries ::
   -> HasBlockIO m h
   -> (SerialisedValue -> SerialisedValue -> SerialisedValue)
   -> (SerialisedKey -> SerialisedValue -> Maybe (WeakBlobRef m (Handle h)) -> res)
-  -> Readers.Readers RealWorld (Handle h)
+  -> Readers.Readers IO (Handle h)
   -> Int
   -> m (V.Vector res, Readers.HasMore)
 readCursorEntries hfs hbio resolve fromEntry readers n =
