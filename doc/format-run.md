@@ -204,7 +204,7 @@ whole key per page: we can typically store just 8 bytes (64bits) per page. This
 is a factor of 4 saving for 32 byte keys.
 
 The type of compact indexes is denoted by the number 0. The type–version
-indicater in a serialised compact index is padded to 64 bits.
+indicator in a serialised compact index is padded to 64 bits.
 
 For version 1, the representation after the type–version indicator consists of
 1. a primary array of 64bit words, one entry per page in the index
@@ -269,7 +269,7 @@ this, the following constraints on the sequence of stored keys follow:
 * The elements of the sequence must be non-decreasing.
 
 The type of compact indexes is denoted by the number 1. The type–version
-indicater in a serialised ordinary index is not padded.
+indicator in a serialised ordinary index is not padded.
 
 For version 1, the file contents after the type–version indicator consist of the
 following:
