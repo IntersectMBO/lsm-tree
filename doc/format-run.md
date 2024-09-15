@@ -185,11 +185,11 @@ bit numbers refer to significance:
 * Bits 16–31 are zero.
 
 As a result, a type–version indicator can be written in hexadecimal with only
-4-digits of which the first two denote the type and the last two constitute the
-version number. Version numbers are assigned independently for each particular
-type. They must not be zero, which ensures that from the way the type–version
-indicator is stored one can determine whether the concrete serialised index
-stores numbers in little-endian or big-endian.
+4-digits of which the two most significant denote the type and the two least
+significant constitute the version number. Version numbers are assigned
+independently for each particular type. They must not be zero, which ensures
+that from the way the type–version indicator is stored one can determine whether
+the concrete serialised index stores numbers in little-endian or big-endian.
 
 ### Compact index
 
