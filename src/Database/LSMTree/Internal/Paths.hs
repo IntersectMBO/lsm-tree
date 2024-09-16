@@ -5,6 +5,8 @@ module Database.LSMTree.Internal.Paths (
   , runPath
   , snapshotsDir
   , snapshot
+    -- * Table paths
+  , tableBlobPath
     -- * Snapshot name
   , SnapshotName
   , mkSnapshotName
@@ -31,6 +33,7 @@ import           Data.Foldable (toList)
 import qualified Data.Map as Map
 import           Data.Traversable (for)
 import           Database.LSMTree.Internal.RunNumber
+import           Database.LSMTree.Internal.UniqCounter
 import           Prelude hiding (Applicative (..))
 import qualified System.FilePath.Posix
 import qualified System.FilePath.Windows
@@ -96,6 +99,15 @@ mkSnapshotName s
   where
     len = length s
     isValid c = ('a' <= c && c <= 'z') || ('0' <= c && c <= '9' ) || c `elem` "-_"
+
+{-------------------------------------------------------------------------------
+  Table paths
+-------------------------------------------------------------------------------}
+
+-- | The file name for a table's write buffer blob file
+tableBlobPath :: SessionRoot -> Unique -> FsPath
+tableBlobPath session n =
+    activeDir session </> mkFsPath [show (uniqueToWord64 n)] <.> "wbblobs"
 
 {-------------------------------------------------------------------------------
   Run paths

@@ -5,6 +5,7 @@ module Test.Database.LSMTree.Internal.Merge (tests) where
 import           Data.Bifoldable (bifoldMap)
 import qualified Data.BloomFilter as Bloom
 import           Data.Foldable (traverse_)
+import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (isJust)
 import           Database.LSMTree.Extras
@@ -19,14 +20,13 @@ import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..))
 import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.Serialise
-import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
-import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import qualified System.FS.API as FS
 import qualified System.FS.API.Lazy as FS
 import qualified System.FS.BlockIO.API as FS
 import qualified System.FS.BlockIO.Sim as FsSim
 import qualified System.FS.Sim.Error as FsSim
 import qualified System.FS.Sim.MockFS as FsSim
+import           Test.Database.LSMTree.Internal.Run (mkRunFromSerialisedKOps)
 import           Test.Database.LSMTree.Internal.RunReader (readKOps)
 import           Test.QuickCheck
 import           Test.Tasty
@@ -68,7 +68,7 @@ prop_MergeDistributes ::
      IO Property
 prop_MergeDistributes fs hbio level stepSize (fmap unTypedWriteBuffer -> SmallList wbs) = do
     runs <- sequenceA $ zipWith (flush . RunNumber) [10..] wbs
-    let stepsNeeded = sum (map (Entry.unNumEntries . WB.numEntries) wbs)
+    let stepsNeeded = sum (map Map.size wbs)
     (stepsDone, lhs) <- mergeRuns fs hbio level (RunNumber 0) runs stepSize
 
     rhs <- flush (RunNumber 1) (mergeWriteBuffers level wbs)
@@ -105,14 +105,13 @@ prop_MergeDistributes fs hbio level stepSize (fmap unTypedWriteBuffer -> SmallLi
       .&&. counterexample ("step counting")
            (stepsDone === stepsNeeded)
   where
-    flush n = Run.fromWriteBuffer fs hbio Run.CacheRunData (RunAllocFixed 10)
-                                  (RunFsPaths (FS.mkFsPath []) n)
+    flush n = mkRunFromSerialisedKOps fs hbio (RunFsPaths (FS.mkFsPath []) n)
 
     stats = tabulate "value size" (map (showPowersOf10 . sizeofValue) vals)
           . tabulate "entry type" (map (takeWhile (/= ' ') . show . snd) kops)
           . label (if any isLarge kops then "has large k/op" else "no large k/op")
           . label ("number of runs: " <> showPowersOf 2 (length wbs))
-    kops = foldMap WB.toList wbs
+    kops = foldMap Map.toList wbs
     vals = concatMap (bifoldMap pure mempty . snd) kops
     isLarge = uncurry entryWouldFitInPage
 
@@ -140,8 +139,7 @@ prop_CloseMerge fs hbio level (Positive stepSize) (fmap unTypedWriteBuffer -> Sm
       counterexample ("run files exist: " <> show filesExist) $
         isJust mergeToClose ==> all not filesExist
   where
-    flush n = Run.fromWriteBuffer fs hbio Run.CacheRunData (RunAllocFixed 10)
-                                  (RunFsPaths (FS.mkFsPath []) n)
+    flush n = mkRunFromSerialisedKOps fs hbio (RunFsPaths (FS.mkFsPath []) n)
 
     makeInProgressMerge path runs =
       Merge.new fs hbio Run.CacheRunData (RunAllocFixed 10) level mappendValues path runs >>= \case
@@ -172,8 +170,8 @@ mergeRuns ::
 mergeRuns fs hbio level runNumber runs (Positive stepSize) = do
     Merge.new fs hbio Run.CacheRunData (RunAllocFixed 10) level mappendValues
               (RunFsPaths (FS.mkFsPath []) runNumber) runs >>= \case
-      Nothing -> (,) 0 <$> Run.fromWriteBuffer fs hbio Run.CacheRunData (RunAllocFixed 10)
-                            (RunFsPaths (FS.mkFsPath []) runNumber) WB.empty
+      Nothing -> (,) 0 <$> mkRunFromSerialisedKOps fs hbio
+                             (RunFsPaths (FS.mkFsPath []) runNumber) Map.empty
       Just m  -> go 0 m
   where
     go !steps m =
@@ -181,12 +179,15 @@ mergeRuns fs hbio level runNumber runs (Positive stepSize) = do
           (n, Merge.MergeComplete run) -> return (steps + n, run)
           (n, Merge.MergeInProgress)   -> go (steps + n) m
 
-mergeWriteBuffers :: Merge.Level -> [WriteBuffer] -> WriteBuffer
+
+type SerialisedEntry = Entry.Entry SerialisedValue SerialisedBlob
+
+mergeWriteBuffers :: Merge.Level
+                  -> [Map SerialisedKey SerialisedEntry]
+                  ->  Map SerialisedKey SerialisedEntry
 mergeWriteBuffers level =
-    WB.fromMap
-      . (if level == Merge.LastLevel then Map.filter (not . isDelete) else id)
+        (if level == Merge.LastLevel then Map.filter (not . isDelete) else id)
       . Map.unionsWith (Entry.combine mappendValues)
-      . map WB.toMap
   where
     isDelete Entry.Delete = True
     isDelete _            = False

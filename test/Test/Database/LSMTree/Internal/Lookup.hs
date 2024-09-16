@@ -55,7 +55,6 @@ import           Database.LSMTree.Internal.RunAcc as Run
 import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.Serialise.Class
-import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import           GHC.Generics
 import qualified System.FS.API as FS
 import           System.FS.API (Handle (..), mkFsPath)
@@ -64,6 +63,7 @@ import           System.FS.BlockIO.API
 import           Test.Database.LSMTree.Generators (deepseqInvariant,
                      prop_arbitraryAndShrinkPreserveInvariant,
                      prop_forAllArbitraryAndShrinkPreserveInvariant)
+import           Test.Database.LSMTree.Internal.Run (mkRunFromSerialisedKOps)
 import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
@@ -291,7 +291,7 @@ prop_roundtripFromWriteBufferLookupIO ::
 prop_roundtripFromWriteBufferLookupIO dats =
     ioProperty $ withTempIOHasBlockIO "prop_roundtripFromWriteBufferLookupIO" $ \hasFS hasBlockIO -> do
     (runs, wbs) <- mkRuns hasFS hasBlockIO
-    let wbAll = WB.fromMap $ Map.unionsWith (combine resolveV) (fmap WB.toMap wbs)
+    let wbAll = Map.unionsWith (combine resolveV) wbs
     arenaManager <- newArenaManager
     real <- lookupsIO
               hasBlockIO
@@ -302,7 +302,7 @@ prop_roundtripFromWriteBufferLookupIO dats =
               (V.map Run.runIndex runs)
               (V.map Run.runKOpsFile runs)
               lookupss
-    let model = WB.lookups wbAll lookupss
+    let model = V.map (\k -> Map.lookup k wbAll) lookupss
     V.mapM_ Run.removeReference runs
     FS.close hasBlockIO
     -- TODO: we don't compare blobs, because we haven't implemented blob
@@ -313,11 +313,10 @@ prop_roundtripFromWriteBufferLookupIO dats =
     mkRuns hasFS hasBlockIO =
       first V.fromList . unzip <$>
       sequence
-        [ (,wb) <$> Run.fromWriteBuffer hasFS hasBlockIO Run.CacheRunData
-                                        (RunAllocFixed 10)
-                                        (RunFsPaths (FS.mkFsPath []) (RunNumber i)) wb
+        [ (,wb) <$> mkRunFromSerialisedKOps hasFS hasBlockIO fsPaths wb
         | (i, dat) <- zip [0..] (getSmallList dats)
-        , let wb = WB.fromMap (runData dat)
+        , let wb = runData dat
+              fsPaths = RunFsPaths (FS.mkFsPath []) (RunNumber i)
         ]
     lookupss = V.fromList $ concatMap lookups dats
     resolveV = \(SerialisedValue v1) (SerialisedValue v2) -> SerialisedValue (v1 <> v2)

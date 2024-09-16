@@ -19,6 +19,7 @@ import           Database.LSMTree.Extras.Orphans ()
 import           Database.LSMTree.Extras.Random (frequency,
                      sampleUniformWithReplacement, uniformWithoutReplacement)
 import           Database.LSMTree.Extras.UTxO
+import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Entry (Entry (..), unNumEntries)
 import           Database.LSMTree.Internal.IndexCompact (getNumPages)
 import           Database.LSMTree.Internal.Lookup (bloomQueriesDefault,
@@ -30,6 +31,7 @@ import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..))
 import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.Serialise
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
+import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
 import           GHC.Exts (RealWorld)
 import           Prelude hiding (getContents)
 import           System.Directory (removeDirectoryRecursive)
@@ -180,7 +182,8 @@ lookupsInBatchesEnv Config {..} = do
     hasBlockIO <- FS.ioHasBlockIO hasFS (fromMaybe FS.defaultIOCtxParams ioctxps)
     let wb = WB.fromMap storedKeys
         fsps = RunFsPaths (FS.mkFsPath []) (RunNumber 0)
-    r <- Run.fromWriteBuffer hasFS hasBlockIO caching (RunAllocFixed 10) fsps wb
+    wbblobs <- WBB.new hasFS (FS.mkFsPath [])
+    r <- Run.fromWriteBuffer hasFS hasBlockIO caching (RunAllocFixed 10) fsps wb wbblobs
     let nentriesReal = unNumEntries $ Run.runNumEntries r
     assert (nentriesReal == nentries) $ pure ()
     let npagesReal = Run.sizeInPages r
@@ -214,7 +217,7 @@ lookupsEnv ::
   -> Int -- ^ Number of stored key\/operation pairs
   -> Int -- ^ Number of positive lookups
   -> Int -- ^ Number of negative lookups
-  -> IO ( Map SerialisedKey (Entry SerialisedValue SerialisedBlob)
+  -> IO ( Map SerialisedKey (Entry SerialisedValue BlobSpan)
         , V.Vector (SerialisedKey)
         )
 lookupsEnv g nentries npos nneg = do
@@ -228,25 +231,25 @@ lookupsEnv g nentries npos nneg = do
     lookups <- generate $ shuffle (negLookups ++ posLookups)
 
     let entries' = Map.mapKeys serialiseKey
-              $ Map.map (bimap serialiseValue serialiseBlob) entries
+              $ Map.map (bimap serialiseValue id) entries
         lookups' = V.fromList $ fmap serialiseKey lookups
     assert (Map.size entries' == nentries) $ pure ()
     assert (length lookups' == npos + nneg) $ pure ()
     pure (entries', lookups')
 
 -- TODO: tweak distribution
-randomEntry :: StdGen -> (Entry UTxOValue UTxOBlob, StdGen)
+randomEntry :: StdGen -> (Entry UTxOValue BlobSpan, StdGen)
 randomEntry g = frequency [
       (20, \g' -> let (!v, !g'') = uniform g' in (Insert v, g''))
     , (1,  \g' -> let (!v, !g'') = uniform g'
-                      (!b, !g''') = genBlob g''
+                      (!b, !g''') = genBlobSpan g''
                   in  (InsertWithBlob v b, g'''))
     , (2,  \g' -> let (!v, !g'') = uniform g' in (Mupdate v, g''))
     , (2,  \g' -> (Delete, g'))
     ] g
 
-genBlob :: RandomGen g => g -> (UTxOBlob, g)
-genBlob !g =
-  let (!len, !g') = uniformR (0, 0x2000) g
-      (!bs, !g'') = genByteString len g'
-  in (UTxOBlob bs, g'')
+genBlobSpan :: RandomGen g => g -> (BlobSpan, g)
+genBlobSpan !g =
+  let (off, !g')  = uniform g
+      (len, !g'') = uniform g'
+  in (BlobSpan off len, g'')

@@ -74,6 +74,8 @@ import qualified Database.LSMTree.Internal.RunBuilder as Builder
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
+import           Database.LSMTree.Internal.WriteBufferBlobs (WriteBufferBlobs)
+import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
 import qualified System.FS.BlockIO.API as FS
@@ -202,12 +204,24 @@ fromWriteBuffer :: HasFS IO h
                 -> RunBloomFilterAlloc
                 -> RunFsPaths
                 -> WriteBuffer
+                -> WriteBufferBlobs IO h
                 -> IO (Run IO (FS.Handle h))
-fromWriteBuffer fs hbio caching alloc fsPaths buffer = do
+fromWriteBuffer fs hbio caching alloc fsPaths buffer blobs = do
     builder <- Builder.new fs fsPaths (WB.numEntries buffer) alloc
-    for_ (WB.toList buffer) $ \(k, e) ->
-      Builder.addKeyOp fs builder k e
+    for_ (WB.toList buffer) $ \(k, e) -> do
+      e' <- traverse (copyWriteBufferBlob fs builder blobs) e
+      Builder.addKeyOp fs builder k e'
     fromMutable fs hbio caching (RefCount 1) builder
+
+copyWriteBufferBlob :: HasFS IO h
+                    -> RunBuilder RealWorld (FS.Handle h)
+                    -> WriteBufferBlobs IO h
+                    -> BlobSpan
+                    -> IO BlobSpan
+copyWriteBufferBlob fs builder blobs blobspan = do
+    blob <- WBB.readBlob fs blobs blobspan
+    Builder.writeBlob fs builder blob
+
 
 data ChecksumError = ChecksumError FS.FsPath CRC.CRC32C CRC.CRC32C
   deriving stock Show

@@ -4,6 +4,8 @@ module Database.LSMTree.Internal.RunBuilder (
     RunBuilder (..)
   , new
   , addKeyOp
+  , writeBlob
+  , copyBlob
   , addLargeSerialisedKeyOp
   , unsafeFinalise
   , close
@@ -18,9 +20,9 @@ import           Data.BloomFilter (Bloom)
 import qualified Data.ByteString.Lazy as BSL
 import           Data.Foldable (for_, traverse_)
 import           Data.Primitive
-import           Data.Traversable (for)
 import           Data.Word (Word64)
-import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
+import           Database.LSMTree.Internal.BlobRef (BlobRef, BlobSpan (..))
+import qualified Database.LSMTree.Internal.BlobRef as BlobRef
 import           Database.LSMTree.Internal.BloomFilter (bloomFilterToLBS)
 import           Database.LSMTree.Internal.CRC32C (CRC32C)
 import qualified Database.LSMTree.Internal.CRC32C as CRC
@@ -101,13 +103,12 @@ addKeyOp ::
      HasFS IO h
   -> RunBuilder RealWorld (FS.Handle h)
   -> SerialisedKey
-  -> Entry SerialisedValue SerialisedBlob
+  -> Entry SerialisedValue BlobSpan
   -> IO ()
 addKeyOp fs builder@RunBuilder{runBuilderAcc} key op = do
-    op' <- for op $ writeBlob fs builder
-    if RunAcc.entryWouldFitInPage key op'
+    if RunAcc.entryWouldFitInPage key op
       then do
-        mpagemchunk <- ST.stToIO $ RunAcc.addSmallKeyOp runBuilderAcc key op'
+        mpagemchunk <- ST.stToIO $ RunAcc.addSmallKeyOp runBuilderAcc key op
         case mpagemchunk of
           Nothing -> return ()
           Just (page, mchunk) -> do
@@ -116,7 +117,7 @@ addKeyOp fs builder@RunBuilder{runBuilderAcc} key op = do
 
       else do
        (pages, overflowPages, chunks)
-         <- ST.stToIO $ RunAcc.addLargeKeyOp runBuilderAcc key op'
+         <- ST.stToIO $ RunAcc.addLargeKeyOp runBuilderAcc key op
        --TODO: consider optimisation: use writev to write all pages in one go
        for_ pages $ writeRawPage fs builder
        writeRawOverflowPages fs builder overflowPages
@@ -211,6 +212,11 @@ writeBlob fs RunBuilder{..} blob = do
     let lbs = BSL.fromStrict $ RB.toByteString rb
     writeToHandle fs (forRunBlob runBuilderHandles) lbs
     return (BlobSpan offset (fromIntegral size))
+
+copyBlob :: HasFS IO h -> RunBuilder RealWorld (FS.Handle h) -> BlobRef m (FS.Handle h) -> IO BlobRef.BlobSpan
+copyBlob fs builder blobref = do
+    blob <- BlobRef.readBlob fs blobref
+    writeBlob fs builder blob
 
 writeFilter :: HasFS IO h -> RunBuilder RealWorld (FS.Handle h) -> Bloom SerialisedKey -> IO ()
 writeFilter fs RunBuilder {..} bf =

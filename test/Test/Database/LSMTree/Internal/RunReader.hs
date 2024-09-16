@@ -7,6 +7,7 @@ module Test.Database.LSMTree.Internal.RunReader (
 
 import           Data.Bifoldable (bifoldMap)
 import           Data.Coerce (coerce)
+import qualified Data.Map as Map
 import           Database.LSMTree.Extras (showPowersOf10)
 import           Database.LSMTree.Extras.Generators (KeyForIndexCompact (..),
                      TypedWriteBuffer (..))
@@ -16,13 +17,12 @@ import           Database.LSMTree.Internal.PageAcc (entryWouldFitInPage)
 import qualified Database.LSMTree.Internal.Paths as Paths
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
-import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..))
 import           Database.LSMTree.Internal.RunNumber
 import qualified Database.LSMTree.Internal.RunReader as Reader
 import           Database.LSMTree.Internal.Serialise
-import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import qualified System.FS.API as FS
 import qualified System.FS.BlockIO.API as FS
+import           Test.Database.LSMTree.Internal.Run (mkRunFromSerialisedKOps)
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck
 import           Test.Util.FS (noOpenHandles, withSimHasBlockIO,
@@ -94,14 +94,13 @@ prop_readAtOffset fs hbio (TypedWriteBuffer wb) offsetKey = do
       counterexample ("entries found: " <> show (length rhs)) $
         lhs === rhs
   where
-    kops = WB.toList wb
+    kops = Map.toList wb
     lhs = case offsetKey of
         Nothing -> kops
         Just k  -> dropWhile ((< coerce k) . fst) kops
 
-    flush n =
-        Run.fromWriteBuffer fs hbio Run.CacheRunData (RunAllocFixed 10)
-          (Paths.RunFsPaths (FS.mkFsPath []) n)
+    flush n = mkRunFromSerialisedKOps fs hbio
+                (Paths.RunFsPaths (FS.mkFsPath []) n)
 
 -- | A version of 'prop_readAtOffset' where the offset key is always one
 -- of the keys that exist in the run.
@@ -118,7 +117,7 @@ prop_readAtOffsetExisting fs hbio wb (NonNegative index)
   where
     keys :: [KeyForIndexCompact]
     keys = coerce (fst <$> kops)
-    kops = WB.toList (unTypedWriteBuffer wb)
+    kops = Map.toList (unTypedWriteBuffer wb)
 
 -- | Idempotence of 'readAtOffset'.
 -- Reading at an offset should not perform any stateful effects which alter
@@ -145,10 +144,9 @@ prop_readAtOffsetIdempotence fs hbio (TypedWriteBuffer wb) offsetKey = do
       counterexample ("entries found: " <> show (length rhs)) $
         lhs === rhs
   where
-    kops = WB.toList wb
-    flush n =
-        Run.fromWriteBuffer fs hbio Run.CacheRunData (RunAllocFixed 10)
-          (Paths.RunFsPaths (FS.mkFsPath []) n)
+    kops = Map.toList wb
+    flush n = mkRunFromSerialisedKOps fs hbio
+                (Paths.RunFsPaths (FS.mkFsPath []) n)
 
 -- | Head of 'read' equals 'readAtOffset' of head of 'read'.
 -- Reading the first key from the run initialized without an offset
@@ -177,10 +175,9 @@ prop_readAtOffsetReadHead fs hbio (TypedWriteBuffer wb) = do
       counterexample ("entries found: " <> show (length rhs)) $
         lhs === rhs
   where
-    kops = WB.toList wb
-    flush n =
-        Run.fromWriteBuffer fs hbio Run.CacheRunData (RunAllocFixed 10)
-          (Paths.RunFsPaths (FS.mkFsPath []) n)
+    kops = Map.toList wb
+    flush n = mkRunFromSerialisedKOps fs hbio
+                (Paths.RunFsPaths (FS.mkFsPath []) n)
 
 {-------------------------------------------------------------------------------
   Utilities

@@ -33,8 +33,7 @@ import           Data.Primitive.MutVar
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Assertions (assert)
 import           Database.LSMTree.Internal.Config
-import           Database.LSMTree.Internal.Entry (Entry, NumEntries (..),
-                     unNumEntries)
+import           Database.LSMTree.Internal.Entry (Entry, NumEntries (..))
 import           Database.LSMTree.Internal.IndexCompact (IndexCompact)
 import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
 import           Database.LSMTree.Internal.Merge (Merge)
@@ -52,6 +51,8 @@ import           Database.LSMTree.Internal.UniqCounter
 import           Database.LSMTree.Internal.Vector (mapStrict)
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
+import           Database.LSMTree.Internal.WriteBufferBlobs (WriteBufferBlobs)
+import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
 import           System.FS.API (Handle, HasFS)
 import           System.FS.BlockIO.API (HasBlockIO)
 
@@ -96,17 +97,17 @@ data MergeTrace =
 -------------------------------------------------------------------------------}
 
 data TableContent m h = TableContent {
-    tableWriteBuffer   :: !WriteBuffer
+    --TODO: probably less allocation to make this a MutVar
+    tableWriteBuffer      :: !WriteBuffer
+    -- | The blob storage for entries in the write buffer
+  , tableWriteBufferBlobs :: !(WriteBufferBlobs m h)
     -- | A hierarchy of levels. The vector indexes double as level numbers.
-    -- | Write buffer is already allocated a run number.
-    --   TODO: later we'll add a field tracking (lazily) open blob file.
-  , tableWriteBufferRN :: !RunNumber
-  , tableLevels        :: !(Levels m (Handle h))
+  , tableLevels           :: !(Levels m (Handle h))
     -- | Cache of flattened 'levels'.
     --
     -- INVARIANT: when 'level's is modified, this cache should be updated as
     -- well, for example using 'mkLevelsCache'.
-  , tableCache         :: !(LevelsCache m (Handle h))
+  , tableCache            :: !(LevelsCache m (Handle h))
   }
 
 {-------------------------------------------------------------------------------
@@ -238,18 +239,13 @@ updatesWithInterleavedFlushes ::
   -> m (TableContent m h)
 updatesWithInterleavedFlushes tr conf resolve hfs hbio root uc es reg tc = do
     let wb = tableWriteBuffer tc
-        (wb', es') = WB.addEntriesUpToN resolve es maxn wb
-    -- never exceed the write buffer capacity
-    assert (unNumEntries (WB.numEntries wb') <= maxn) $ pure ()
-    let tc' = setWriteBuffer wb' tc
-    -- If the new write buffer has not reached capacity yet, then it must be the
-    -- cases that we have performed all the updates.
-    if unNumEntries (WB.numEntries wb') < maxn then do
-      assert (V.null es') $ pure ()
+        wbblobs = tableWriteBufferBlobs tc
+    (wb', es') <- addWriteBufferEntries hfs resolve wbblobs maxn wb es
+    let tc' = tc { tableWriteBuffer = wb' }
+    if WB.numEntries wb' < maxn then do
       pure $! tc'
     -- If the write buffer did reach capacity, then we flush.
     else do
-      assert (unNumEntries (WB.numEntries wb') == maxn) $ pure ()
       tc'' <- flushWriteBuffer tr conf resolve hfs hbio root uc reg tc'
       -- In the fortunate case where we have already performed all the updates,
       -- return,
@@ -259,14 +255,41 @@ updatesWithInterleavedFlushes tr conf resolve hfs hbio root uc es reg tc = do
       else
         updatesWithInterleavedFlushes tr conf resolve hfs hbio root uc es' reg tc''
   where
-    AllocNumEntries (NumEntries maxn) = confWriteBufferAlloc conf
-    setWriteBuffer :: WriteBuffer -> TableContent m h -> TableContent m h
-    setWriteBuffer wbToSet tc0 = TableContent {
-          tableWriteBuffer = wbToSet
-        , tableWriteBufferRN = tableWriteBufferRN tc0
-        , tableLevels = tableLevels tc0
-        , tableCache = tableCache tc0
-        }
+    AllocNumEntries maxn = confWriteBufferAlloc conf
+
+-- | Add entries to the write buffer up until a certain write buffer size @n@.
+--
+-- NOTE: if the write buffer is larger @n@ already, this is a no-op.
+addWriteBufferEntries ::
+     HasFS IO h
+  -> ResolveSerialisedValue
+  -> WriteBufferBlobs IO h
+  -> NumEntries
+  -> WriteBuffer
+  -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob)
+  -> IO (WriteBuffer, V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob))
+addWriteBufferEntries hfs f wbblobs maxn =
+    \wb es ->
+      (\ r@(wb', es') ->
+          -- never exceed the write buffer capacity
+          assert (WB.numEntries wb' <= maxn) $
+          -- If the new write buffer has not reached capacity yet, then it must
+          -- be the case that we have performed all the updates.
+          assert ((WB.numEntries wb'  < maxn && V.null es')
+               || (WB.numEntries wb' == maxn)) $
+          r)
+      <$> go wb es
+  where
+    --TODO: exception safety for async exceptions or I/O errors from writing blobs
+    go !wb !es
+      | WB.numEntries wb >= maxn = pure (wb, es)
+
+      | Just ((k, e), es') <- V.uncons es = do
+          e' <- traverse (WBB.addBlob hfs wbblobs) e
+          go (WB.addEntry f k e' wb) es'
+
+      | otherwise = pure (wb, es)
+
 
 {-# SPECIALISE flushWriteBuffer :: Tracer IO (AtLevel MergeTrace) -> TableConfig -> ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> TempRegistry IO -> TableContent IO h -> IO (TableContent IO h) #-}
 -- | Flush the write buffer to disk, regardless of whether it is full or not.
@@ -289,26 +312,28 @@ flushWriteBuffer tr conf@TableConfig{confDiskCachePolicy}
                  resolve hfs hbio root uc reg tc
   | WB.null (tableWriteBuffer tc) = pure tc
   | otherwise = do
+    !n <- incrUniqCounter uc
     let !size  = WB.numEntries (tableWriteBuffer tc)
-        !n     = tableWriteBufferRN tc
         !l     = LevelNo 1
         !cache = diskCachePolicyForLevel confDiskCachePolicy l
         !alloc = bloomFilterAllocForLevel conf l
-        !path  = Paths.runPath root n
+        !path  = Paths.runPath root (uniqueToRunNumber n)
     traceWith tr $ AtLevel l $ TraceFlushWriteBuffer size (runNumber path) cache alloc
     r <- allocateTemp reg
             (Run.fromWriteBuffer hfs hbio
               cache
               alloc
               path
-              (tableWriteBuffer tc))
+              (tableWriteBuffer tc)
+              (tableWriteBufferBlobs tc))
             Run.removeReference
+    WBB.removeReference (tableWriteBufferBlobs tc)
+    wbblobs' <- WBB.new hfs (Paths.tableBlobPath root n)
     levels' <- addRunToLevels tr conf resolve hfs hbio root uc r reg (tableLevels tc)
-    n' <- uniqueToRunNumber <$> incrUniqCounter uc
     cache' <- mkLevelsCache levels'
     pure $! TableContent {
         tableWriteBuffer = WB.empty
-      , tableWriteBufferRN = n'
+      , tableWriteBufferBlobs = wbblobs'
       , tableLevels = levels'
       , tableCache = cache'
       }
