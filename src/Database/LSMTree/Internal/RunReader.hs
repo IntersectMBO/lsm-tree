@@ -16,15 +16,16 @@ import           Control.Monad (guard, when)
 import           Control.Monad.Primitive (PrimMonad (..))
 import           Data.Bifunctor (first)
 import           Data.IORef
-import           Data.Maybe (fromMaybe)
+import           Data.Maybe (isNothing)
 import           Data.Primitive.ByteArray (newPinnedByteArray,
                      unsafeFreezeByteArray)
 import           Data.Primitive.PrimVar
 import           Data.Word (Word16, Word32)
 import           Database.LSMTree.Internal.BitMath (ceilDivPageSize,
-                     roundUpToPageSize)
+                     mulPageSize, roundUpToPageSize)
 import           Database.LSMTree.Internal.BlobRef (BlobRef (..))
 import qualified Database.LSMTree.Internal.Entry as E
+import qualified Database.LSMTree.Internal.IndexCompact as Index
 import           Database.LSMTree.Internal.Paths
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.RawOverflowPage (RawOverflowPage,
@@ -48,7 +49,9 @@ import           System.FS.BlockIO.API (HasBlockIO)
 -- TODO(optimise): Reuse page buffers using some kind of allocator. However,
 -- deciding how long a page needs to stay around is not trivial.
 data RunReader m fhandle = RunReader {
-      readerCurrentPage    :: !(IORef RawPage)
+      -- | The disk page currently being read. If it is 'Nothing', the reader
+      -- is considered closed.
+      readerCurrentPage    :: !(IORef (Maybe RawPage))
       -- | The index of the entry to be returned by the next call to 'next'.
     , readerCurrentEntryNo :: !(PrimVar (PrimState m) Word16)
       -- | Read mode file handle into the run's k\/ops file. We rely on it to
@@ -63,18 +66,68 @@ data RunReader m fhandle = RunReader {
 new ::
      HasFS IO h
   -> HasBlockIO IO h
+  -> Maybe SerialisedKey  -- ^ offset
   -> Run.Run IO (FS.Handle h)
   -> IO (RunReader IO (FS.Handle h))
-new fs hbio readerRun = do
+new fs hbio mOffset readerRun = do
     readerKOpsHandle <-
-      FS.hOpen fs (runKOpsPath (Run.runRunFsPaths readerRun)) FS.ReadMode
-    -- double the file readahead window (only applies to this file descriptor)
+      FS.hOpen fs (runKOpsPath (Run.runRunFsPaths readerRun)) FS.ReadMode >>= \h -> do
+        fileSize <- FS.hGetSize fs h
+        let fileSizeInPages = fileSize `div` toEnum pageSize
+        let indexedPages = Index.getNumPages $ Run.sizeInPages readerRun
+        assert (indexedPages == fileSizeInPages) $ pure h
+    -- Double the file readahead window (only applies to this file descriptor)
     FS.hAdviseAll hbio readerKOpsHandle FS.AdviceSequential
-    readerCurrentEntryNo <- newPrimVar 0
-    -- load first page from disk, if it exists.
-    firstPage <- fromMaybe emptyRawPage <$> readDiskPage fs readerKOpsHandle
-    readerCurrentPage <- newIORef firstPage
-    return RunReader {..}
+
+    (page, entryNo) <- seekFirstEntry readerKOpsHandle
+
+    readerCurrentEntryNo <- newPrimVar entryNo
+    readerCurrentPage <- newIORef page
+    let reader = RunReader {..}
+
+    when (isNothing page) $
+      close fs hbio reader
+    return reader
+  where
+    index = Run.runIndex readerRun
+
+    seekFirstEntry readerKOpsHandle =
+        case mOffset of
+          Nothing -> do
+            -- Load first page from disk, if it exists.
+            firstPage <- readDiskPage fs readerKOpsHandle
+            return (firstPage, 0)
+          Just offset -> do
+            -- Use the index to find the page number for the key (if it exists).
+            let Index.PageSpan pageNo _pageEnd = Index.search offset index
+            seekToDiskPage fs pageNo readerKOpsHandle
+            readDiskPage fs readerKOpsHandle >>= \case
+              Nothing ->
+                return (Nothing, 0)
+              Just foundPage -> do
+                case rawPageFindKey foundPage offset of
+                  Just n ->
+                    -- Found an appropriate index within the index's page.
+                    return (Just foundPage, n)
+
+                  _ -> do
+                    -- The index said that the key, if it were to exist, would
+                    -- live on pageNo, but then rawPageFindKey tells us that in
+                    -- fact there is no key greater than or equal to the given
+                    -- offset on this page.
+                    -- This tells us that the key does not exist, but that if it
+                    -- were to exist, it would be between the last key in this
+                    -- page and the first key in the next page.
+                    -- Thus the reader should be initialised to return keys
+                    -- starting from the next (non-overflow) page.
+                    --
+                    -- We should just be able to use pageEnd from @Index.search@,
+                    -- but in some cases it differs from how we calculate it here.
+                    -- TODO: Fix end of range returned from index search
+                    let pageEnd = Index.PageNo (Index.unPageNo pageNo + rawPageOverflowPages foundPage)
+                    seekToDiskPage fs (Index.nextPageNo pageEnd) readerKOpsHandle
+                    nextPage <- readDiskPage fs readerKOpsHandle
+                    return (nextPage, 0)
 
 -- | This function should be called when discarding a 'RunReader' before it
 -- was done (i.e. returned 'Empty'). This avoids leaking file handles.
@@ -152,23 +205,27 @@ next ::
   -> RunReader IO (FS.Handle h)
   -> IO (Result IO (FS.Handle h))
 next fs hbio reader@RunReader {..} = do
-    entryNo <- readPrimVar readerCurrentEntryNo
-    page <- readIORef readerCurrentPage
-    go entryNo page
+    readIORef readerCurrentPage >>= \case
+      Nothing ->
+        return Empty
+      Just page -> do
+        entryNo <- readPrimVar readerCurrentEntryNo
+        go entryNo page
   where
     go !entryNo !page =
         -- take entry from current page (resolve blob if necessary)
         case rawPageIndex page entryNo of
           IndexNotPresent -> do
             -- if it is past the last one, load a new page from disk, try again
-            readDiskPage fs readerKOpsHandle >>= \case
+            newPage <- readDiskPage fs readerKOpsHandle
+            writeIORef readerCurrentPage newPage
+            case newPage of
               Nothing -> do
                 close fs hbio reader
                 return Empty
-              Just newPage -> do
-                writeIORef readerCurrentPage newPage
+              Just p -> do
                 writePrimVar readerCurrentEntryNo 0
-                go 0 newPage  -- try again on the new page
+                go 0 p  -- try again on the new page
           IndexEntry key entry -> do
             modifyPrimVar readerCurrentEntryNo (+1)
             let entry' = fmap (Run.mkBlobRefForRun readerRun) entry
@@ -186,12 +243,22 @@ next fs hbio reader@RunReader {..} = do
   Utilities
 -------------------------------------------------------------------------------}
 
+seekToDiskPage :: HasFS IO h -> Index.PageNo -> FS.Handle h -> IO ()
+seekToDiskPage fs pageNo h = do
+    FS.hSeek fs h FS.AbsoluteSeek (pageNoToByteOffset pageNo)
+  where
+    pageNoToByteOffset (Index.PageNo n) =
+        assert (n >= 0) $
+          mulPageSize (fromIntegral n)
+
 -- | Returns 'Nothing' on EOF.
 readDiskPage :: HasFS IO h -> FS.Handle h -> IO (Maybe RawPage)
 readDiskPage fs h = do
     mba <- newPinnedByteArray pageSize
+    -- TODO: make sure no other exception type can be thrown
     handleJust (guard . FS.isFsErrorType FS.FsReachedEOF) (\_ -> pure Nothing) $ do
-      _ <- FS.hGetBufExactly fs h mba 0 (fromIntegral pageSize)
+      bytesRead <- FS.hGetBufExactly fs h mba 0 (fromIntegral pageSize)
+      assert (fromIntegral bytesRead == pageSize) $ pure ()
       ba <- unsafeFreezeByteArray mba
       let !rawPage = unsafeMakeRawPage ba 0
       return (Just rawPage)

@@ -2,15 +2,18 @@ module Test.Util.FS (
     withTempIOHasFS
   , withTempIOHasBlockIO
   , withSimHasFS
+  , withSimHasBlockIO
   , noOpenHandles
   ) where
 
+import           Control.Concurrent.Class.MonadMVar
 import           Control.Concurrent.Class.MonadSTM.Strict
 import           Control.Monad.Class.MonadThrow (MonadThrow)
 import           Control.Monad.Primitive (PrimMonad)
 import           System.FS.API
 import           System.FS.BlockIO.API
 import           System.FS.BlockIO.IO
+import           System.FS.BlockIO.Sim (fromHasFS)
 import           System.FS.IO
 import qualified System.FS.Sim.MockFS as MockFS
 import           System.FS.Sim.MockFS
@@ -35,7 +38,14 @@ withSimHasFS post k = do
     let hfs = simHasFS var
     x <- k hfs
     fs <- atomically $ readTMVar var
-    pure (post fs .&&. x)
+    pure (x .&&. post fs)
+
+{-# INLINABLE withSimHasBlockIO #-}
+withSimHasBlockIO :: (MonadMVar m, MonadSTM m, MonadThrow m, PrimMonad m) => (MockFS -> Property) -> (HasFS m HandleMock -> HasBlockIO m HandleMock -> m Property) -> m Property
+withSimHasBlockIO post k = do
+    withSimHasFS post $ \hfs -> do
+      hbio <- fromHasFS hfs
+      k hfs hbio
 
 {-# INLINABLE noOpenHandles #-}
 noOpenHandles :: MockFS -> Property

@@ -6,15 +6,18 @@ module Test.Database.LSMTree.Internal.RawPage (
 ) where
 
 import           Control.DeepSeq (deepseq)
+import           Control.Monad (when)
+import           Control.Monad.State (MonadState (..), StateT, evalStateT, lift)
 import qualified Data.ByteString as BS
+import           Data.Functor ((<&>))
 import           Data.Maybe (fromMaybe)
 import           Data.Primitive.ByteArray (byteArrayFromList)
 import qualified Data.Vector as V
 import qualified Data.Vector.Primitive as VP
-import           Data.Word (Word16, Word64)
+import           Data.Word (Word16, Word64, Word8)
 import           GHC.Word (byteSwap16)
 import           Test.QuickCheck.Instances ()
-import           Test.Tasty (TestTree, testGroup)
+import           Test.Tasty (TestName, TestTree, localOption, testGroup)
 import           Test.Tasty.HUnit (testCase, (@=?))
 import           Test.Tasty.QuickCheck
 import           Test.Util.RawPage
@@ -22,6 +25,7 @@ import           Test.Util.RawPage
 import qualified Database.LSMTree.Extras.ReferenceImpl as Ref
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import qualified Database.LSMTree.Internal.Entry as Entry
+import           Database.LSMTree.Internal.RawBytes (RawBytes (..))
 import           Database.LSMTree.Internal.RawPage
 import           Database.LSMTree.Internal.Serialise
 
@@ -187,7 +191,13 @@ tests = testGroup "Database.LSMTree.Internal.RawPage"
     , testProperty "entry" prop_single_entry
     , testProperty "rawPageOverflowPages" prop_rawPageOverflowPages
     , testProperty "from/to reference impl" prop_fromToReferenceImpl
+    , testPropertyExtraCoverage "rawPageFindKey >"  prop_findKey_index_law_GT
+    , testPropertyExtraCoverage "rawPageFindKey <=" prop_findKey_index_law_LT
+    , testPropertyExtraCoverage "rawPageFindKey missing" prop_findKey_index_law_missing
     ]
+
+testPropertyExtraCoverage :: Testable prop => TestName -> prop -> TestTree
+testPropertyExtraCoverage tName = localOption (QuickCheckTests 1024) . testProperty tName
 
 prop_toRawPage :: Ref.PageContentFits -> Property
 prop_toRawPage p =
@@ -314,3 +324,214 @@ prop_single_entry (Ref.PageContentSingle k op) =
   where
     (rawpage, overflowPages) = Ref.toRawPage (Ref.PageContentFits [(k, op)])
 
+prop_findKey_index_law_GT :: RawPageAndOffset -> Property
+prop_findKey_index_law_GT (RawPageAndOffset rawpage key locInfo) =
+    recordOffsetLocation locInfo $
+    findKeyIndexCounterExample
+      key
+      rawpage
+        "∀ key page. maybe True (key > ) (getRawPageIndexKey . rawPageIndex page . pred =<< rawPageFindKey page key)" $
+        maybe
+        (discard)
+        (property . (key <=))
+        (getRawPageIndexKey . rawPageIndex rawpage =<< rawPageFindKey rawpage key)
+
+prop_findKey_index_law_LT :: RawPageAndOffset -> Property
+prop_findKey_index_law_LT (RawPageAndOffset rawpage key locInfo) =
+    recordOffsetLocation locInfo $
+    findKeyIndexCounterExample
+      key
+      rawpage
+      "∀ key page. maybe True (key <=) (getRawPageIndexKey . rawPageIndex page .  id  =<< rawPageFindKey page key)" $
+        maybe
+        (discard)
+        (property . (key >))
+        (getRawPageIndexKey . rawPageIndex rawpage =<< pred' =<< rawPageFindKey rawpage key)
+  where
+    pred' n
+      | n <= 0 = Nothing
+      | otherwise = Just $ n - 1
+
+prop_findKey_index_law_missing :: RawPageAndOffset -> Property
+prop_findKey_index_law_missing (RawPageAndOffset rawpage key locInfo) =
+    recordOffsetLocation locInfo $
+    findKeyIndexCounterExample
+      key
+      rawpage
+      "∀ key page. maybe (maximum (rawPageKeys page) < key) (rawPageFindKey page key)" $
+        maybe
+        (property $ rawPageKeys rawpage `maximumIsLessThan` key)
+        (const discard)
+        (rawPageFindKey rawpage key)
+  where
+    maximumIsLessThan iVec obj
+      | null iVec = True -- When there are no elements, the test passes
+      | otherwise = maximum iVec < obj
+
+findKeyIndexCounterExample :: Testable prop => SerialisedKey -> RawPage -> String -> prop -> Property
+findKeyIndexCounterExample key rawpage lawStr = counterexample msg
+  where
+    pKeys = rawPageKeys rawpage
+    msg = case rawPageFindKey rawpage key of
+      Nothing -> unlines
+        [ "No key found"
+        , show $ pKeys
+        , if null pKeys
+          then "<NONE>"
+          else show $ maximum pKeys
+        , show key
+        , if null pKeys
+          then "<NONE>"
+          else  show $ maximum pKeys < key
+        ]
+      Just loc -> concat
+        [ "Relational law violated:\n  "
+        , lawStr
+        , "\n"
+        , unwords
+            [ "At entry№"
+            , show loc
+            , "found next {"
+            , show key
+            , "} > {"
+            , show $ rawPageIndex rawpage loc
+            , "} of page index "
+            , show loc
+            ]
+        , show $ pKeys
+        , if null pKeys
+          then "<NONE>"
+          else show $ maximum pKeys
+        , show key
+        , if null pKeys
+          then "<NONE>"
+          else  show $ maximum pKeys < key
+        ]
+
+recordOffsetLocation :: Testable prop => OffsetRelativeToRawPage -> prop -> Property
+recordOffsetLocation = label <$> \case
+  BeforePage    -> "Key was before page"
+  BehindPage    -> "Key was behind page"
+  PresentInPage -> "Key was within page"
+  MissingInPage -> "Key not within page"
+
+
+-- |
+-- Helper data-type for generating arbitrary pages and offset keys
+-- with a useful distribution of hit and misses for testing purposes.
+data RawPageAndOffset = RawPageAndOffset RawPage SerialisedKey OffsetRelativeToRawPage
+  deriving stock (Eq, Show)
+
+-- | Exists for test-case reporting purposes.
+data OffsetRelativeToRawPage
+  = BeforePage
+  | BehindPage
+  | MissingInPage
+  | PresentInPage
+  deriving stock (Eq, Show)
+
+instance Arbitrary RawPageAndOffset where
+
+  arbitrary = do
+    Ref.PageContentOrdered kops <- arbitrary
+    let rawpage = fst . Ref.toRawPage $ Ref.PageContentFits kops
+    (offsetKey, locInfo) <- case kops of
+      -- If there are no k/ops, then generate any offset key.
+      [] -> arbitrary <&> \x -> (Ref.toSerialisedKey x, BehindPage)
+      -- Otherwise, if at least one k/op exists then generate the offset key according to
+      -- the following probability distribution which is conditional on kOps:
+      --   * (1/2): Offset Key exists within the page
+      --   * (1/6): Offset Key goes before the page
+      --   * (1/6): Offset Key goes after the page
+      --   * (1/6): Offset Key missing within the page
+      --            (Assuming that there are two or more keys)
+      xs ->
+        let keys = fst <$> xs
+            keySmall = Ref.toSerialisedKey $ minimum keys
+            keyLarge = Ref.toSerialisedKey $ maximum keys
+            arbitrarySerialisedKeyExisting :: Gen (SerialisedKey, OffsetRelativeToRawPage)
+            arbitrarySerialisedKeyExisting =
+                elements keys <&> \x -> (Ref.toSerialisedKey x, PresentInPage)
+            missingWithinRange :: [(Int, Gen (SerialisedKey, OffsetRelativeToRawPage))]
+            missingWithinRange
+              | keySmall == keyLarge = []
+              | otherwise =
+                let missingKey = do
+                      afterIndex <- chooseInt (0, length keys - 2)
+                      let loKey = Ref.toSerialisedKey $ keys !! afterIndex
+                          hiKey = Ref.toSerialisedKey $ keys !! (afterIndex + 1)
+                      arbitrarySerialisedKeyBetween loKey hiKey
+                in  [ (1, missingKey) ]
+        in  frequency $
+              [ (3, arbitrarySerialisedKeyExisting)
+              , (1, arbitrarySerialisedKeyLessThan keySmall)
+              , (1, arbitrarySerialisedKeyMoreThan keyLarge)
+              ] <> missingWithinRange
+
+    return $ RawPageAndOffset rawpage offsetKey locInfo
+
+-- |
+-- Generate an arbitrary 'SerialisedKey' between the given two keys.
+--
+-- The first key is assumed to be the "smaller" of the pair.
+--
+-- NOTE: Under pathological input conditions, there is an infinitesimally small chance
+-- that this will generate /the same/ key as the larger value. This will not effect the
+-- validity of 'Arbitrary' instances which depend on this function.
+arbitrarySerialisedKeyBetween :: SerialisedKey -> SerialisedKey -> Gen (SerialisedKey, OffsetRelativeToRawPage)
+arbitrarySerialisedKeyBetween (SerialisedKey (RawBytes loBytes)) (SerialisedKey (RawBytes hiBytes)) =
+    finalizer <$> VP.zipWithM withinBytes loBytes hiBytes `evalStateT` (True, True)
+  where
+    finalizer x = (SerialisedKey $ RawBytes x, MissingInPage)
+    withinBytes :: Word8 -> Word8 -> StateT (Bool, Bool) Gen Word8
+    withinBytes !lhs !rhs = do
+      (!loMatch, !hiMatch) <- get
+      let loBound
+            | loMatch = min lhs rhs
+            | otherwise = minBound
+          hiBound
+            | hiMatch = max lhs rhs
+            | otherwise = maxBound
+      resultByte <- lift $ chooseEnum (loBound, hiBound)
+      put (loMatch && resultByte == lhs, hiMatch && resultByte == rhs)
+      pure resultByte
+
+-- |
+-- Generate an arbitrary 'SerialisedKey' less than the given key.
+--
+-- NOTE: Under pathological input conditions, there is an infinitesimally small chance
+-- that this will generate /the same/ key as the input. This will not effect the
+-- validity of 'Arbitrary' instances which depend on this function.
+arbitrarySerialisedKeyLessThan :: SerialisedKey -> Gen (SerialisedKey, OffsetRelativeToRawPage)
+arbitrarySerialisedKeyLessThan (SerialisedKey (RawBytes bytes)) =
+    finalizer <$> VP.mapM lesserByte bytes `evalStateT` True
+  where
+    finalizer x = (SerialisedKey $ RawBytes x, BeforePage)
+    lesserByte byte = do
+      samePrefix <- get
+      let loBound
+            | samePrefix = byte
+            | otherwise = minBound
+      resultByte <- lift $ chooseEnum (loBound, maxBound)
+      when samePrefix . put $ resultByte == byte
+      pure resultByte
+
+-- |
+-- Generate an arbitrary 'SerialisedKey' greater than the given key.
+--
+-- NOTE: Under pathological input conditions, there is an infinitesimally small chance
+-- that this will generate /the same/ key as the input. This will not effect the
+-- validity of 'Arbitrary' instances which depend on this function.
+arbitrarySerialisedKeyMoreThan :: SerialisedKey -> Gen (SerialisedKey, OffsetRelativeToRawPage)
+arbitrarySerialisedKeyMoreThan (SerialisedKey (RawBytes bytes)) =
+    finalizer <$> VP.mapM greaterByte bytes `evalStateT` True
+  where
+    finalizer x = (SerialisedKey $ RawBytes x, BehindPage)
+    greaterByte byte = do
+      samePrefix <- get
+      let hiBound
+            | samePrefix = byte
+            | otherwise = maxBound
+      resultByte <- lift $ chooseEnum (maxBound, hiBound)
+      when samePrefix . put $ resultByte == byte
+      pure resultByte

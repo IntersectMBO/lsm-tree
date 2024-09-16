@@ -1,17 +1,8 @@
-{-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards   #-}
 
-module Test.Database.LSMTree.Internal.Run (
-    -- * Main test tree
-    tests,
-    -- * Utilities
-    readKOps,
-    isLargeKOp,
-) where
+module Test.Database.LSMTree.Internal.Run (tests) where
 
-import           Data.Bifoldable (bifoldMap, bisum)
-import           Data.Bifunctor (bimap)
+import           Data.Bifoldable (bifoldMap)
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Short as SBS
@@ -23,10 +14,7 @@ import           System.FilePath
 import qualified System.FS.API as FS
 import qualified System.FS.BlockIO.API as FS
 import qualified System.FS.BlockIO.IO as FS
-import qualified System.FS.BlockIO.Sim as FsSim
 import qualified System.FS.IO as FsIO
-import qualified System.FS.Sim.Error as FsSim
-import qualified System.FS.Sim.MockFS as FsSim
 import qualified System.IO.Temp as Temp
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.HUnit (assertEqual, testCase, (@=?), (@?))
@@ -36,19 +24,20 @@ import           Control.RefCount (RefCount (..), readRefCount)
 import           Database.LSMTree.Extras (showPowersOf10)
 import           Database.LSMTree.Extras.Generators (KeyForIndexCompact (..),
                      TypedWriteBuffer (..))
-import           Database.LSMTree.Internal.BlobRef (BlobSpan (..), readBlob)
+import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry
 import qualified Database.LSMTree.Internal.Normal as N
+import           Database.LSMTree.Internal.PageAcc (entryWouldFitInPage)
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..))
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.RawPage
 import           Database.LSMTree.Internal.Run
 import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..))
 import           Database.LSMTree.Internal.RunNumber
-import qualified Database.LSMTree.Internal.RunReader as Reader
 import           Database.LSMTree.Internal.Serialise
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
+import           Test.Util.FS (noOpenHandles, withSimHasBlockIO)
 
 import qualified FormatPage as Proto
 
@@ -74,29 +63,16 @@ tests = testGroup "Database.LSMTree.Internal.Run"
               (mkKey "test-key")
               (mkVal ("test-value-" <> BS.concat (replicate 500 "0123456789")))
               Nothing
-      , testProperty "prop_WriteAndRead" $ \wb ->
-          ioPropertyWithMockFS $ \hfs hbio ->
-            prop_WriteAndRead hfs hbio wb
       , testProperty "prop_WriteAndOpen" $ \wb ->
-          ioPropertyWithMockFS $ \hfs hbio ->
+          ioProperty $ withSimHasBlockIO noOpenHandles $ \hfs hbio ->
             prop_WriteAndOpen hfs hbio wb
+      , testProperty "prop_WriteNumEntries" $ \wb ->
+          ioProperty $ withSimHasBlockIO noOpenHandles $ \hfs hbio ->
+            prop_WriteNumEntries hfs hbio wb
       ]
     ]
   where
     withSessionDir = Temp.withSystemTempDirectory "session-run"
-
-    ioPropertyWithMockFS ::
-         Testable p
-      => (FS.HasFS IO FsSim.HandleMock -> FS.HasBlockIO IO FsSim.HandleMock -> IO p)
-      -> Property
-    ioPropertyWithMockFS prop = ioProperty $ do
-        (res, mockFS) <-
-          FsSim.runSimErrorFS FsSim.empty FsSim.emptyErrors $ \_ fs -> do
-            hbio <- FsSim.fromHasFS fs
-            prop fs hbio
-        return $ res
-            .&&. counterexample "open handles"
-                   (FsSim.numOpenHandles mockFS === 0)
 
     mkKey = SerialisedKey . RB.fromByteString
     mkVal = SerialisedValue . RB.fromByteString
@@ -183,35 +159,29 @@ readBlobFromBS bs (BlobSpan offset size) =
   Properties
 -------------------------------------------------------------------------------}
 
--- | Creating a run from a write buffer and reading from the run yields the
--- original elements.
+-- | Flushing a write buffer results in a run with the desired elements.
 --
--- @entries wb === readEntries (flush wb)@
+-- To assert that the run really contains the right entries, there are
+-- additional tests in "Test.Database.LSMTree.Internal.RunReader".
 --
--- TODO: @id === readEntries . flush . toWriteBuffer@ ?
-prop_WriteAndRead ::
+prop_WriteNumEntries ::
      FS.HasFS IO h
   -> FS.HasBlockIO IO h
   -> TypedWriteBuffer KeyForIndexCompact SerialisedValue SerialisedBlob
   -> IO Property
-prop_WriteAndRead fs hbio (TypedWriteBuffer wb) = do
+prop_WriteNumEntries fs hbio (TypedWriteBuffer wb) = do
     run <- flush (RunNumber 42) wb
-    rhs <- readKOps fs hbio run
+    let !runSize = runNumEntries run
 
     -- make sure run gets closed again
     removeReference run
 
-    return $ stats $
-           counterexample "number of elements"
-             (WB.numEntries wb === runNumEntries run)
-      .&&. kops === rhs
+    return . genStats kops $
+       WB.numEntries wb === runSize
   where
-    flush n = fromWriteBuffer fs hbio CacheRunData (RunAllocFixed 10) (RunFsPaths (FS.mkFsPath []) n)
-
-    stats = tabulate "value size" (map (showPowersOf10 . sizeofValue) vals)
-          . label (if any isLargeKOp kops then "has large k/op" else "no large k/op")
     kops = WB.toList wb
-    vals = concatMap (bifoldMap pure mempty . snd) kops
+
+    flush n = fromWriteBuffer fs hbio CacheRunData (RunAllocFixed 10) (RunFsPaths (FS.mkFsPath []) n)
 
 -- | Loading a run (written out from a write buffer) from disk gives the same
 -- in-memory representation as the original run.
@@ -221,7 +191,7 @@ prop_WriteAndOpen ::
      FS.HasFS IO h
   -> FS.HasBlockIO IO h
   -> TypedWriteBuffer KeyForIndexCompact SerialisedValue SerialisedBlob
-  -> IO ()
+  -> IO Property
 prop_WriteAndOpen fs hbio (TypedWriteBuffer wb) = do
     -- flush write buffer
     let fsPaths = RunFsPaths (FS.mkFsPath []) (RunNumber 1337)
@@ -246,28 +216,18 @@ prop_WriteAndOpen fs hbio (TypedWriteBuffer wb) = do
     removeReference written
     removeReference loaded
 
+    -- TODO: return a proper Property instead of using assertEqual etc.
+    return (property True)
+
 {-------------------------------------------------------------------------------
   Utilities
 -------------------------------------------------------------------------------}
 
-type SerialisedEntry = Entry SerialisedValue SerialisedBlob
-type SerialisedKOp = (SerialisedKey, SerialisedEntry)
-
--- | Simplification with a few false negatives.
-isLargeKOp :: SerialisedKOp -> Bool
-isLargeKOp (key, entry) = size > pageSize
+genStats :: (Testable a, Foldable t) => t (SerialisedKey, Entry SerialisedValue SerialisedBlob) -> a -> Property
+genStats kops = tabulate "value size" size . label note
   where
-    pageSize = 4096
-    size = sizeofKey key + bisum (bimap sizeofValue sizeofBlob entry)
-
-readKOps :: FS.HasFS IO h -> FS.HasBlockIO IO h -> Run IO (FS.Handle h) -> IO [SerialisedKOp]
-readKOps fs hbio run = do
-    reader <- Reader.new fs hbio run
-    go reader
-  where
-    go reader = do
-      Reader.next fs hbio reader >>= \case
-        Reader.Empty -> return []
-        Reader.ReadEntry key e -> do
-          e' <- traverse (readBlob fs) $ Reader.toFullEntry e
-          ((key, e') :) <$> go reader
+    size = map (showPowersOf10 . sizeofValue) vals
+    vals = concatMap (bifoldMap pure mempty . snd) kops
+    note
+      | any (uncurry entryWouldFitInPage) kops = "has large k/op"
+      | otherwise = "no large k/op"

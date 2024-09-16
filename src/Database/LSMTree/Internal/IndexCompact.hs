@@ -6,6 +6,7 @@ module Database.LSMTree.Internal.IndexCompact (
     -- $compact
     IndexCompact (..)
   , PageNo (..)
+  , nextPageNo
   , NumPages
   , getNumPages
     -- * Queries
@@ -386,6 +387,13 @@ newtype PageNo = PageNo { unPageNo :: Int }
   deriving stock (Show, Eq, Ord)
   deriving newtype NFData
 
+-- | Increment the page number.
+--
+-- Note: This does not encure that the incremented page number exists within a given page span.
+{-# INLINE nextPageNo #-}
+nextPageNo :: PageNo -> PageNo
+nextPageNo = PageNo . succ . unPageNo
+
 -- | The number of pages contained by an index or other paging data-structure.
 --
 -- Note: This is a 0-based number; take care to ensure arithmetic underflow
@@ -405,6 +413,8 @@ getNumPages (NumPages w) = fromIntegral w
 -------------------------------------------------------------------------------}
 
 -- | A span of pages, representing an inclusive interval of page numbers.
+--
+-- Typlically used to denote the contiguous page span for a database entry.
 data PageSpan = PageSpan {
     pageSpanStart :: {-# UNPACK #-} !PageNo
   , pageSpanEnd   :: {-# UNPACK #-} !PageNo
@@ -470,6 +480,7 @@ countClashes = Map.size . icTieBreaker
 hasClashes :: IndexCompact -> Bool
 hasClashes = not . Map.null . icTieBreaker
 
+-- | The number of pages within the index.
 sizeInPages :: IndexCompact -> NumPages
 sizeInPages = NumPages . toEnum . VU.length . icPrimary
 
