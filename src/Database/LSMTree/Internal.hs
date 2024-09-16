@@ -661,46 +661,30 @@ close th = do
           pure tc
         pure TableHandleClosed
 
-{-# SPECIALISE lookups :: ResolveSerialisedValue -> V.Vector SerialisedKey -> TableHandle IO h -> (Maybe (Entry SerialisedValue (WeakBlobRef IO (Handle h))) -> lookupResult) -> IO (V.Vector lookupResult) #-}
+{-# SPECIALISE lookups :: ResolveSerialisedValue -> V.Vector SerialisedKey -> TableHandle IO h -> IO (V.Vector (Maybe (Entry SerialisedValue (WeakBlobRef IO (Handle h))))) #-}
 -- | See 'Database.LSMTree.Normal.lookups'.
 lookups ::
      m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
   => ResolveSerialisedValue
   -> V.Vector SerialisedKey
   -> TableHandle m h
-  -> (Maybe (Entry SerialisedValue (WeakBlobRef m (Handle h))) -> lookupResult)
-     -- ^ How to map from an entry to a lookup result.
-  -> m (V.Vector lookupResult)
-lookups resolve ks th fromEntry = do
+  -> m (V.Vector (Maybe (Entry SerialisedValue (WeakBlobRef m (Handle h)))))
+lookups resolve ks th = do
     traceWith (tableTracer th) $ TraceLookups (V.length ks)
-    withOpenTable th $ \thEnv -> do
-      let arenaManager = tableHandleArenaManager th
-      RW.withReadAccess (tableContent thEnv) $ \tableContent -> do
-        let !cache = tableCache tableContent
-        ioRes <-
-          lookupsIO
-            (tableHasBlockIO thEnv)
-            arenaManager
-            resolve
-            (cachedRuns cache)
-            (cachedFilters cache)
-            (cachedIndexes cache)
-            (cachedKOpsFiles cache)
-            ks
-        --TODO: this bit is all a bit of a mess, not well factored
-        --TODO: incorporate write buffer lookups into the lookupsIO
-        --TODO: reduce allocations involved with converting BlobSpan to BlobRef
-        -- and Entry to the lookup result. Try one single conversion rather
-        -- than multiple steps that each allocate.
-        let !wb = tableWriteBuffer tableContent
-            !wbblobs = tableWriteBufferBlobs tableContent
-        toBlobRef <- WBB.mkBlobRef wbblobs
-        let wbLookup = fmap (fmap (WeakBlobRef . toBlobRef))
-                     . WB.lookup wb
-        pure $!
-          V.zipWithStrict
-            (\k1 e2 -> fromEntry $ Entry.combineMaybe resolve (wbLookup k1) e2)
-            ks ioRes
+    withOpenTable th $ \thEnv ->
+      RW.withReadAccess (tableContent thEnv) $ \tableContent ->
+        let !cache = tableCache tableContent in
+        lookupsIO
+          (tableHasBlockIO thEnv)
+          (tableHandleArenaManager th)
+          resolve
+          (tableWriteBuffer tableContent)
+          (tableWriteBufferBlobs tableContent)
+          (cachedRuns cache)
+          (cachedFilters cache)
+          (cachedIndexes cache)
+          (cachedKOpsFiles cache)
+          ks
 
 {-# SPECIALISE updates :: ResolveSerialisedValue -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob) -> TableHandle IO h -> IO () #-}
 -- | See 'Database.LSMTree.Normal.updates'.

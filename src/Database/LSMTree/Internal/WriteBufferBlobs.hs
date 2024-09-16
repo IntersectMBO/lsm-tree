@@ -33,6 +33,7 @@ module Database.LSMTree.Internal.WriteBufferBlobs (
     FilePointer (..)
   ) where
 
+import           Control.DeepSeq (NFData (..))
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Primitive (PrimMonad, PrimState)
 import qualified Control.RefCount as RC
@@ -122,6 +123,9 @@ data BlobFileState m h =
        -- | The manually tracked file pointer.
      , blobFilePointer :: !(FilePointer m)
      }
+
+instance NFData (WriteBufferBlobs m h) where
+  rnf (WriteBufferBlobs _ _ _) = ()
 
 new :: PrimMonad m
     => HasFS m h

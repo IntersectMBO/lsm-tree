@@ -82,7 +82,7 @@ benchmarks = bgroup "Bench.Database.LSMTree.Internal.Lookup" [
 
 benchLookups :: Config -> Benchmark
 benchLookups conf@Config{name} =
-    withEnv $ \ ~(_dir, arenaManager, _hasFS, hasBlockIO, rs, ks) ->
+    withEnv $ \ ~(_dir, arenaManager, hasFS, hasBlockIO, rs, ks) ->
       env ( pure ( V.map Run.runFilter rs
                  , V.map Run.runIndex rs
                  , V.map Run.runKOpsFile rs
@@ -122,20 +122,29 @@ benchLookups conf@Config{name} =
             -- only compute WHNF.
           , bench "Perform intra-page lookups" $
               perRunEnvWithCleanup
-                ( newArena arenaManager >>= \arena ->
-                  stToIO (prepLookups arena blooms indexes kopsFiles ks) >>= \(rkixs, ioops) ->
-                  FS.submitIO hasBlockIO ioops >>= \ioress ->
-                  pure (rkixs, ioops, ioress, arena)
+                ( do arena <- newArena arenaManager
+                     (rkixs, ioops) <- stToIO (prepLookups arena blooms indexes kopsFiles ks)
+                     ioress <- FS.submitIO hasBlockIO ioops
+                     wbblobs <- WBB.new hasFS (FS.mkFsPath [])
+                     pure (rkixs, ioops, ioress, arena, wbblobs)
                 )
-                (\(_, _, _, arena) -> closeArena arenaManager arena) $ \ ~(rkixs, ioops, ioress, _) -> do
-                  !_ <- intraPageLookups resolveV rs ks rkixs ioops ioress
-                  pure ()
+                (\(_, _, _, arena, wbblobs) -> do
+                    closeArena arenaManager arena
+                    WBB.removeReference wbblobs)
+                (\ ~(rkixs, ioops, ioress, _, wbblobs_unused) -> do
+                  !_ <- intraPageLookups resolveV WB.empty wbblobs_unused
+                                         rs ks rkixs ioops ioress
+                  pure ())
             -- The whole shebang: lookup preparation, doing the IO, and then
             -- performing intra-page-lookups. Again, we evaluate the result to
             -- WHNF because it is the same result that intraPageLookups produces
             -- (see above).
-          , bench "Lookups in IO" $
-              whnfAppIO (\ks' -> lookupsIO hasBlockIO arenaManager resolveV rs blooms indexes kopsFiles ks') ks
+          , let wb_unused = WB.empty in
+            env (WBB.new hasFS (FS.mkFsPath [])) $ \wbblobs_unused ->
+            bench "Lookups in IO" $
+              whnfAppIO (\ks' -> lookupsIO hasBlockIO arenaManager resolveV
+                                           wb_unused wbblobs_unused
+                                           rs blooms indexes kopsFiles ks') ks
           ]
   where
     withEnv = envWithCleanup

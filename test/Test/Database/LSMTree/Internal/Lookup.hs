@@ -43,7 +43,7 @@ import           Data.Word
 import           Database.LSMTree.Extras
 import           Database.LSMTree.Extras.Generators
 import           Database.LSMTree.Internal.BlobRef (BlobSpan)
-import           Database.LSMTree.Internal.Entry
+import           Database.LSMTree.Internal.Entry as Entry
 import           Database.LSMTree.Internal.IndexCompact as Index
 import           Database.LSMTree.Internal.Lookup
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..))
@@ -55,6 +55,8 @@ import           Database.LSMTree.Internal.RunAcc as Run
 import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.Serialise.Class
+import qualified Database.LSMTree.Internal.WriteBuffer as WB
+import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
 import           GHC.Generics
 import qualified System.FS.API as FS
 import           System.FS.API (Handle (..), mkFsPath)
@@ -288,38 +290,65 @@ prop_inMemRunLookupAndConstruction dat =
 prop_roundtripFromWriteBufferLookupIO ::
      SmallList (InMemLookupData SerialisedKey SerialisedValue SerialisedBlob)
   -> Property
-prop_roundtripFromWriteBufferLookupIO dats =
-    ioProperty $ withTempIOHasBlockIO "prop_roundtripFromWriteBufferLookupIO" $ \hasFS hasBlockIO -> do
-    (runs, wbs) <- mkRuns hasFS hasBlockIO
-    let wbAll = Map.unionsWith (combine resolveV) wbs
+prop_roundtripFromWriteBufferLookupIO (SmallList dats) =
+    ioProperty $
+    withTempIOHasBlockIO "prop_roundtripFromWriteBufferLookupIO" $ \hfs hbio ->
+    withRuns hfs hbio dats $ \wb wbblobs runs -> do
+    let model :: Map SerialisedKey (Entry SerialisedValue SerialisedBlob)
+        model = Map.unionsWith (Entry.combine resolveV) (map runData dats)
+        keys  = V.fromList [ k | InMemLookupData{lookups} <- dats
+                               , k <- lookups ]
+        modelres = V.map (\k -> Map.lookup k model) keys
     arenaManager <- newArenaManager
-    real <- lookupsIO
-              hasBlockIO
-              arenaManager
-              resolveV
-              runs
-              (V.map Run.runFilter runs)
-              (V.map Run.runIndex runs)
-              (V.map Run.runKOpsFile runs)
-              lookupss
-    let model = V.map (\k -> Map.lookup k wbAll) lookupss
-    V.mapM_ Run.removeReference runs
-    FS.close hasBlockIO
-    -- TODO: we don't compare blobs, because we haven't implemented blob
-    -- retrieval yet.
-
-    pure $ opaqueifyBlobs model === opaqueifyBlobs real
+    realres <-
+      lookupsIO
+        hbio
+        arenaManager
+        resolveV
+        wb wbblobs
+        runs
+        (V.map Run.runFilter runs)
+        (V.map Run.runIndex runs)
+        (V.map Run.runKOpsFile runs)
+        keys 
+    -- TODO: compare blobs: we can do this now we implemented blob retrieval.
+    pure $ opaqueifyBlobs modelres === opaqueifyBlobs realres
   where
-    mkRuns hasFS hasBlockIO =
-      first V.fromList . unzip <$>
-      sequence
-        [ (,wb) <$> mkRunFromSerialisedKOps hasFS hasBlockIO fsPaths wb
-        | (i, dat) <- zip [0..] (getSmallList dats)
-        , let wb = runData dat
-              fsPaths = RunFsPaths (FS.mkFsPath []) (RunNumber i)
-        ]
-    lookupss = V.fromList $ concatMap lookups dats
     resolveV = \(SerialisedValue v1) (SerialisedValue v2) -> SerialisedValue (v1 <> v2)
+
+-- | Given a bunch of 'InMemLookupData', prepare the data into the form needed
+-- for 'lookupsIO': a write buffer (and blobs) and a vector of on-disk runs.
+-- Asl passes the model and the keys to look up to the inner action.
+--
+withRuns :: FS.HasFS IO h
+         -> FS.HasBlockIO IO h
+         -> [InMemLookupData SerialisedKey SerialisedValue SerialisedBlob]
+         -> (   WB.WriteBuffer
+             -> WBB.WriteBufferBlobs IO h
+             -> V.Vector (Run.Run IO (Handle h))
+             -> IO a)
+         -> IO a
+withRuns hfs _ [] action = do
+    wbblobs <- WBB.new hfs (FS.mkFsPath ["wbblobs"])
+    r <- action WB.empty wbblobs V.empty
+    WBB.removeReference wbblobs
+    return r
+    
+withRuns hfs hbio (wbdat:rundats) action = do
+    wbblobs <- WBB.new hfs (FS.mkFsPath ["wbblobs"])
+    wbkops <- traverse (traverse (WBB.addBlob hfs wbblobs)) (runData wbdat)
+    let wb = WB.fromMap wbkops
+    runs <-
+      V.fromList <$>
+      sequence
+        [ mkRunFromSerialisedKOps hfs hbio fsPaths runData
+        | (i, InMemLookupData{runData}) <- zip [1..] rundats
+        , let fsPaths = RunFsPaths (FS.mkFsPath []) (RunNumber i)
+        ]
+    r <- action wb wbblobs runs
+    V.mapM_ Run.removeReference runs
+    WBB.removeReference wbblobs
+    return r
 
 opaqueifyBlobs :: V.Vector (Maybe (Entry v b)) -> V.Vector (Maybe (Entry v Opaque))
 opaqueifyBlobs = fmap (fmap (fmap Opaque))
