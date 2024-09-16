@@ -676,7 +676,6 @@ lookups resolve ks th fromEntry = do
     withOpenTable th $ \thEnv -> do
       let arenaManager = tableHandleArenaManager th
       RW.withReadAccess (tableContent thEnv) $ \tableContent -> do
-        let !wb = tableWriteBuffer tableContent
         let !cache = tableCache tableContent
         ioRes <-
           lookupsIO
@@ -688,9 +687,19 @@ lookups resolve ks th fromEntry = do
             (cachedIndexes cache)
             (cachedKOpsFiles cache)
             ks
+        --TODO: this bit is all a bit of a mess, not well factored
+        --TODO: incorporate write buffer lookups into the lookupsIO
+        --TODO: reduce allocations involved with converting BlobSpan to BlobRef
+        -- and Entry to the lookup result. Try one single conversion rather
+        -- than multiple steps that each allocate.
+        let !wb = tableWriteBuffer tableContent
+            !wbblobs = tableWriteBufferBlobs tableContent
+        toBlobRef <- WBB.mkBlobRef wbblobs
+        let wbLookup = fmap (fmap (WeakBlobRef . toBlobRef))
+                     . WB.lookup wb
         pure $!
           V.zipWithStrict
-            (\k1 e2 -> fromEntry $ Entry.combineMaybe resolve (WB.lookup wb k1) e2)
+            (\k1 e2 -> fromEntry $ Entry.combineMaybe resolve (wbLookup k1) e2)
             ks ioRes
 
 {-# SPECIALISE updates :: ResolveSerialisedValue -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob) -> TableHandle IO h -> IO () #-}

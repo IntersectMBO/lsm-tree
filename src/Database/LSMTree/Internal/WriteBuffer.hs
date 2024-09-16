@@ -44,7 +44,7 @@ import qualified Data.Map.Range as Map.R
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.Vector as V
-import           Database.LSMTree.Internal.BlobRef (BlobSpan, WeakBlobRef)
+import           Database.LSMTree.Internal.BlobRef (BlobSpan)
 import           Database.LSMTree.Internal.Entry
 import qualified Database.LSMTree.Internal.Monoidal as Monoidal
 import qualified Database.LSMTree.Internal.Normal as Normal
@@ -147,17 +147,8 @@ lookups (WB !m) !ks = V.mapStrict (`Map.lookup` m) ks
 lookup ::
      WriteBuffer
   -> SerialisedKey
-  -> Maybe (Entry SerialisedValue (WeakBlobRef m h))
-lookup (WB !m) !k = case Map.lookup k m of
-    Nothing -> Nothing
-    Just x  -> Just $! errOnBlob x
-
--- | TODO: remove once blob references are implemented
-errOnBlob :: Entry SerialisedValue BlobSpan -> Entry SerialisedValue (WeakBlobRef m h)
-errOnBlob (Insert v)           = Insert v
-errOnBlob (InsertWithBlob _ b) = error $ "lookups: blob references not supported: " ++ show b
-errOnBlob (Mupdate v)          = Mupdate v
-errOnBlob Delete               = Delete
+  -> Maybe (Entry SerialisedValue BlobSpan)
+lookup (WB !m) !k = Map.lookup k m
 
 {-------------------------------------------------------------------------------
   RangeQueries
