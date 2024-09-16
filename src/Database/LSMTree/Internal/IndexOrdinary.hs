@@ -72,15 +72,19 @@ search key (IndexOrdinary lastKeys)
 
     start :: Int
     start | protoStart < pageCount = protoStart
-          | otherwise              = maybe 0 succ $
+          | otherwise              = maybe 0 succ                              $
                                      findIndexR (/= lastKeys ! pred pageCount) $
                                      lastKeys
 
     end :: Int
-    end | protoStart < pageCount
-            = start + length (takeWhile (== key) (drop (succ start) lastKeys))
-        | otherwise
-            = pred pageCount
+    end | protoStart < pageCount = start + overflowPageCount
+        | otherwise              = pred pageCount
+        where
+
+        overflowPageCount :: Int
+        overflowPageCount = length                          $
+                            takeWhile (== lastKeys ! start) $
+                            drop (succ start) lastKeys
 
     protoStart :: Int
     protoStart = binarySearchL lastKeys key
