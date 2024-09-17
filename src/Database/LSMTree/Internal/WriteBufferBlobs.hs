@@ -170,7 +170,7 @@ addBlob fs WriteBufferBlobs {blobFileName, blobFileState} blob = do
         -- we can also be asked to retrieve blobs at any time.
         blobFileHandle <- FS.hOpen fs blobFileName (FS.ReadWriteMode FS.MustBeNew)
         blobFilePointer <- newFilePointer
-        P.writeMutVar blobFileState OpenBlobFile {
+        P.writeMutVar blobFileState $! OpenBlobFile {
           blobFileHandle,
           blobFilePointer
         }

@@ -59,24 +59,25 @@ tests = testGroup "Test.Database.LSMTree.Class.Normal"
     expectFailures2 = [
         False
       , False
+      , False
+      , False
+      , False
+      , False
+      , False
+      , False
+      , False
+      , False
+      , False
+      , False
+      , False
       , True
-      , False
-      , False
-      , False
-      , True
-      , False
+        --TODO: Blobs are now enabled but cursors do not yet support them
       , True
       , True
-      , False
-      , False
-      , False
       , True
-      , False
-      , False
-      , False
-      , False
-      , False
-      , False
+      , True
+      , True
+      , True
       , False
       , False
       , False

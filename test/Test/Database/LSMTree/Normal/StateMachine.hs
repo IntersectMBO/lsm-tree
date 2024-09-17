@@ -197,6 +197,7 @@ propLockstepIO_RealImpl_RealFS = testProperty "propLockstepIO_RealImpl_RealFS" $
         handler' (ErrSnapshotNotExists _snap) = Just Model.ErrSnapshotDoesNotExist
         handler' (ErrSnapshotExists _snap) = Just Model.ErrSnapshotExists
         handler' (ErrSnapshotWrongType _snap) = Just Model.ErrSnapshotWrongType
+        handler' (ErrBlobRefInvalid _) = Just Model.ErrBlobRefInvalidated
         handler' _ = Nothing
 
 {- TODO: temporarily disabled until we start on I/O fault testing.
@@ -520,7 +521,7 @@ instance ( Eq (Class.TableConfig h)
       MLookupResult x      -> OLookupResult $ fmap observeModel x
       MQueryResult x       -> OQueryResult $ fmap observeModel x
       MSnapshotName x      -> OId x
-      MBlob x              -> OId x
+      MBlob x              -> OBlob x
       MErr x               -> OId x
       MUnit x              -> OId x
       MPair x              -> OPair $ bimap observeModel observeModel x
@@ -591,8 +592,9 @@ instance Eq (Obs h a) where
       -- blob reference immediately after an update to the table, and if the SUT
       -- returns a blob, then that's okay. If both return a blob or both return
       -- an error, then those must match exactly.
-      (OEither (Right (OBlob (WrapBlob _))), OEither (Left (OId y)))
-        | Just Model.ErrBlobRefInvalidated <- cast y -> True
+      (OEither (Right (OVector vec)), OEither (Left (OId y)))
+        | Just (OBlob (WrapBlob _), _) <- V.uncons vec
+        , Just Model.ErrBlobRefInvalidated <- cast y -> True
       -- default equalities
       (OTableHandle, OTableHandle) -> True
       (OCursor, OCursor) -> True
@@ -664,7 +666,7 @@ instance ( Eq (Class.TableConfig h)
       Updates{}        -> OEither $ bimap OId OId result
       Inserts{}        -> OEither $ bimap OId OId result
       Deletes{}        -> OEither $ bimap OId OId result
-      RetrieveBlobs{}  -> OEither $ bimap OId (OVector . fmap OId) result
+      RetrieveBlobs{}  -> OEither $ bimap OId (OVector . fmap OBlob) result
       Snapshot{}       -> OEither $ bimap OId OId result
       Open{}           -> OEither $ bimap OId (const OTableHandle) result
       DeleteSnapshot{} -> OEither $ bimap OId OId result
@@ -1041,9 +1043,8 @@ arbitraryActionWithVars _ findVars _st = QC.frequency $ concat [
     withVars'' ::
          Gen (Var h (Either Model.Err (V.Vector (WrapBlobRef h IO blob))))
       -> [(Int, Gen (Any (LockstepAction (ModelState h))))]
-    withVars'' _genBlobRefsVar = [
-          -- TODO: enable generators as we implement the actions for the /real/ lsm-tree
-          -- fmap Some $ RetrieveBlobs <$> (fromRight <$> genBlobRefsVar)
+    withVars'' genBlobRefsVar = [
+          (5, fmap Some $ RetrieveBlobs <$> (fromRight <$> genBlobRefsVar))
         ]
 
     fromRight ::
@@ -1082,9 +1083,8 @@ arbitraryActionWithVars _ findVars _st = QC.frequency $ concat [
     genDeletes :: Gen (V.Vector k)
     genDeletes = QC.arbitrary
 
-    -- TODO: generate @Just blob@ once blob references are implemented
     genBlob :: Gen (Maybe blob)
-    genBlob = Nothing <$ QC.arbitrary @blob
+    genBlob = QC.arbitrary
 
     genSnapshotName :: Gen R.SnapshotName
     genSnapshotName = QC.elements [
