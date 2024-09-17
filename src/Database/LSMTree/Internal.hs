@@ -863,13 +863,14 @@ newCursor !offsetKey th = withOpenTable th $ \thEnv -> do
     -- 'sessionOpenTables'.
     withOpenSession cursorSession $ \_ -> do
       withTempRegistry $ \reg -> do
-        (writeBuffer, writeBufferBlobs, cursorRuns) <-
+        (wb, wbblobs, cursorRuns) <-
           allocTableContent reg (tableContent thEnv)
         cursorReaders <-
           allocateMaybeTemp reg
-            (Readers.new hfs hbio offsetKey (Just writeBuffer) cursorRuns)
+            (Readers.new hfs hbio
+               offsetKey (Just (wb, wbblobs)) cursorRuns)
             (Readers.close hfs hbio)
-        let cursorWBB = writeBufferBlobs
+        let cursorWBB = wbblobs
         cursorState <- newMVar (CursorOpen CursorEnv {..})
         let !cursor = Cursor {cursorState, cursorTracer}
         -- Track cursor, but careful: If now an exception is raised, all

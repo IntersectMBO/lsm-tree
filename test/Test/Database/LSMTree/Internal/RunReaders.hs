@@ -341,7 +341,7 @@ runIO act lu = case act of
           (map unTypedWriteBuffer wbs)
       newReaders <- liftIO $ do
         wbblobs <- WBB.new hfs (FS.mkFsPath ["wb.blobs"])
-        wb' <- traverse (fmap WB.fromMap .
+        wb' <- traverse (fmap (flip (,) wbblobs . WB.fromMap) .
                          traverse (traverse (WBB.addBlob hfs wbblobs)) .
                          unTypedWriteBuffer)
                         wb

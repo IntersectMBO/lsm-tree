@@ -23,13 +23,14 @@ import           Data.Maybe (catMaybes)
 import           Data.Primitive.MutVar
 import           Data.Traversable (for)
 import qualified Data.Vector as V
-import           Database.LSMTree.Internal.BlobRef (BlobRef, BlobSpan)
+import           Database.LSMTree.Internal.BlobRef (BlobRef)
 import           Database.LSMTree.Internal.Entry (Entry (..))
 import           Database.LSMTree.Internal.Run (Run)
 import           Database.LSMTree.Internal.RunReader (OffsetKey (..), RunReader)
 import qualified Database.LSMTree.Internal.RunReader as Reader
 import           Database.LSMTree.Internal.Serialise
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
+import qualified Database.LSMTree.Internal.WriteBufferBlobs as WB
 import qualified KMerge.Heap as Heap
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
@@ -108,11 +109,11 @@ new :: forall h .
      HasFS IO h
   -> HasBlockIO IO h
   -> OffsetKey
-  -> Maybe WB.WriteBuffer
+  -> Maybe (WB.WriteBuffer, WB.WriteBufferBlobs IO h)
   -> V.Vector (Run IO (FS.Handle h))
   -> IO (Maybe (Readers IO (FS.Handle h)))
 new fs hbio !offsetKey wbs runs = do
-    wBuffer <- maybe (pure Nothing) fromWB wbs
+    wBuffer <- maybe (pure Nothing) (uncurry fromWB) wbs
     readers <- zipWithM (fromRun . ReaderNumber) [1..] (V.toList runs)
     let contexts = nonEmpty . catMaybes $ wBuffer : readers
     for contexts $ \xs -> do
@@ -120,10 +121,15 @@ new fs hbio !offsetKey wbs runs = do
       readersNext <- newMutVar readCtx
       return Readers {..}
   where
-    fromWB :: WB.WriteBuffer -> IO (Maybe (ReadCtx IO (FS.Handle h)))
-    fromWB wb = do
+    fromWB :: WB.WriteBuffer
+           -> WB.WriteBufferBlobs IO h
+           -> IO (Maybe (ReadCtx IO (FS.Handle h)))
+    fromWB wb wbblobs = do
+        --TODO: this BlobSpan to BlobRef conversion is ugly
+        -- and it involves quite a lot of allocation
+        toBlobRef <- WB.mkBlobRef wbblobs
         kops <-
-          newMutVar $ map (fmap errOnBlob) $ Map.toList $
+          newMutVar $ map (fmap (fmap toBlobRef)) $ Map.toList $
             filterWB $ WB.toMap wb
         nextReadCtx fs hbio (ReaderNumber 0) (ReadBuffer kops)
       where
@@ -135,13 +141,6 @@ new fs hbio !offsetKey wbs runs = do
     fromRun n run = do
         reader <- Reader.new fs hbio offsetKey run
         nextReadCtx fs hbio n (ReadRun reader)
-
--- | TODO: remove once blob references are implemented
-errOnBlob :: Entry SerialisedValue BlobSpan -> Entry SerialisedValue (BlobRef m h)
-errOnBlob (Insert v)           = Insert v
-errOnBlob (InsertWithBlob _ b) = error $ "RunReaders: blob references not supported: " ++ show b
-errOnBlob (Mupdate v)          = Mupdate v
-errOnBlob Delete               = Delete
 
 -- | Only call when aborting before all readers have been drained.
 close ::

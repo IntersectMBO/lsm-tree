@@ -71,13 +71,12 @@ tests = testGroup "Test.Database.LSMTree.Class.Normal"
       , False
       , False
       , True
-        --TODO: Blobs are now enabled but cursors do not yet support them
-      , True
-      , True
-      , True
-      , True
-      , True
-      , True
+      , False
+      , False
+      , False
+      , False
+      , False
+      , False
       , False
       , False
       , False
