@@ -192,9 +192,11 @@ readKOps ::
   -> Run IO (FS.Handle h)
   -> IO [SerialisedKOp]
 readKOps fs hbio offset run = do
-    reader <- Reader.new fs hbio offset run
+    reader <- Reader.new fs hbio offsetKey run
     go reader
   where
+    offsetKey = maybe Reader.NoOffsetKey (Reader.OffsetKey . coerce) offset
+
     go reader = do
       Reader.next fs hbio reader >>= \case
         Reader.Empty -> return []

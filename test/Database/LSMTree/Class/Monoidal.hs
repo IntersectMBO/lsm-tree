@@ -58,8 +58,9 @@ class (IsSession (Session h)) => IsTableHandle h where
         -> m (V.Vector (QueryResult k v))
 
     newCursor ::
-           IOLike m
-        => h m k v
+           (IOLike m, SerialiseKey k)
+        => Maybe k
+        -> h m k v
         -> m (Cursor h m k v)
 
     closeCursor ::
@@ -184,11 +185,12 @@ withTableMerge ::
 withTableMerge table1 table2 = bracket (merge table1 table2) close
 
 withCursor ::
-     forall h m k v a. (IOLike m, IsTableHandle h)
-  => h m k v
+     forall h m k v a. (IOLike m, IsTableHandle h, SerialiseKey k)
+  => Maybe k
+  -> h m k v
   -> (Cursor h m k v -> m a)
   -> m a
-withCursor hdl = bracket (newCursor hdl) (closeCursor (Proxy @h))
+withCursor offset hdl = bracket (newCursor offset hdl) (closeCursor (Proxy @h))
 
 {-------------------------------------------------------------------------------
   Model instance
@@ -238,7 +240,7 @@ instance IsTableHandle R.TableHandle where
 
     rangeLookup = flip R.rangeLookup
 
-    newCursor = R.newCursor
+    newCursor = maybe R.newCursor R.newCursorAtOffset
     closeCursor _ = R.closeCursor
     readCursor _ = R.readCursor
 

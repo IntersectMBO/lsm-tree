@@ -311,12 +311,13 @@ data Cursor m k v blob = Cursor {
     }
 
 newCursor ::
-     IOLike m
-  => TableHandle m k v blob
+     (IOLike m, SerialiseKey k)
+  => Maybe k
+  -> TableHandle m k v blob
   -> m (Cursor m k v blob)
-newCursor TableHandle{..} = atomically $
+newCursor offset TableHandle{..} = atomically $
     withModel "newCursor" "table handle" thSession thRef $ \(_updc, tbl) -> do
-      cRef <- newTMVar (Model.newCursor tbl)
+      cRef <- newTMVar (Model.newCursor offset tbl)
       i <- new_handle thSession cRef
       pure Cursor {
           cSession = thSession

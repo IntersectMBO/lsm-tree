@@ -1,8 +1,7 @@
 module Database.LSMTree.Internal.RunReaders (
     Readers (..)
+  , OffsetKey (..)
   , new
-  , newAtOffset
-  , newAtOffsetMaybe
   , close
   , peekKey
   , HasMore (..)
@@ -26,7 +25,7 @@ import           Data.Traversable (for)
 import           Database.LSMTree.Internal.BlobRef (BlobRef, BlobSpan)
 import           Database.LSMTree.Internal.Entry (Entry (..))
 import           Database.LSMTree.Internal.Run (Run)
-import           Database.LSMTree.Internal.RunReader (RunReader)
+import           Database.LSMTree.Internal.RunReader (OffsetKey (..), RunReader)
 import qualified Database.LSMTree.Internal.RunReader as Reader
 import           Database.LSMTree.Internal.Serialise
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
@@ -104,35 +103,15 @@ data Reader m fhandle =
 
 type KOp m fhandle = (SerialisedKey, Entry SerialisedValue (BlobRef m fhandle))
 
--- | On equal keys, elements from runs earlier in the list are yielded first.
--- This means that the list of runs should be sorted from new to old.
+-- TODO: take a vector of runs instead of a list to avoid conversions
 new :: forall h .
      HasFS IO h
   -> HasBlockIO IO h
+  -> OffsetKey
   -> Maybe WB.WriteBuffer
   -> [Run IO (FS.Handle h)]
   -> IO (Maybe (Readers IO (FS.Handle h)))
-new fs hbio = newAtOffsetMaybe fs hbio Nothing
-
--- | On equal keys, elements from runs earlier in the list are yielded first.
--- This means that the list of runs should be sorted from new to old.
-newAtOffset :: forall h .
-     HasFS IO h
-  -> HasBlockIO IO h
-  -> SerialisedKey  -- ^ offset
-  -> Maybe WB.WriteBuffer
-  -> [Run IO (FS.Handle h)]
-  -> IO (Maybe (Readers IO (FS.Handle h)))
-newAtOffset fs hbio offset = newAtOffsetMaybe fs hbio (Just offset)
-
-newAtOffsetMaybe :: forall h .
-     HasFS IO h
-  -> HasBlockIO IO h
-  -> Maybe SerialisedKey  -- ^ offset
-  -> Maybe WB.WriteBuffer
-  -> [Run IO (FS.Handle h)]
-  -> IO (Maybe (Readers IO (FS.Handle h)))
-newAtOffsetMaybe fs hbio mOffset wbs runs = do
+new fs hbio !offsetKey wbs runs = do
     wBuffer <- maybe (pure Nothing) fromWB wbs
     readers <- zipWithM (fromRun . ReaderNumber) [1..] runs
     let contexts = nonEmpty . catMaybes $ wBuffer : readers
@@ -145,12 +124,17 @@ newAtOffsetMaybe fs hbio mOffset wbs runs = do
     fromWB wb = do
         kops <-
           newMutVar $ map (fmap errOnBlob) $ Map.toList $
-            maybe id (\o -> Map.dropWhileAntitone (< o)) mOffset $
-              WB.toMap wb
+            filterWB $ WB.toMap wb
         nextReadCtx fs hbio (ReaderNumber 0) (ReadBuffer kops)
+      where
+        filterWB = case offsetKey of
+            NoOffsetKey -> id
+            OffsetKey k -> Map.dropWhileAntitone (< k)
 
     fromRun :: ReaderNumber -> Run IO (FS.Handle h) -> IO (Maybe (ReadCtx IO (FS.Handle h)))
-    fromRun n run = nextReadCtx fs hbio n . ReadRun =<< Reader.new fs hbio mOffset run
+    fromRun n run = do
+        reader <- Reader.new fs hbio offsetKey run
+        nextReadCtx fs hbio n (ReadRun reader)
 
 -- | TODO: remove once blob references are implemented
 errOnBlob :: Entry SerialisedValue BlobSpan -> Entry SerialisedValue (BlobRef m h)

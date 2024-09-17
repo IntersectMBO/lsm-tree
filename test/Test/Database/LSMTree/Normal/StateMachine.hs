@@ -337,7 +337,8 @@ instance ( Show (Class.TableConfig h)
                 -> Act h (V.Vector (R.QueryResult k v (WrapBlobRef h IO blob)))
     -- Cursor
     NewCursor :: C k v blob
-              => Var h (WrapTableHandle h IO k v blob)
+              => Maybe k
+              -> Var h (WrapTableHandle h IO k v blob)
               -> Act h (WrapCursor h IO k v blob)
     CloseCursor :: C k v blob
                 => Var h (WrapCursor h IO k v blob)
@@ -408,8 +409,8 @@ instance ( Eq (Class.TableConfig h)
           Just ks1 == cast ks2 && Just var1 == cast var2
       go (RangeLookup range1 var1)  (RangeLookup range2 var2) =
           range1 == range2 && var1 == var2
-      go (NewCursor var1) (NewCursor var2) =
-          var1 == var2
+      go (NewCursor k1 var1) (NewCursor k2 var2) =
+          k1 == k2 && var1 == var2
       go (CloseCursor var1) (CloseCursor var2) =
           Just var1 == cast var2
       go (ReadCursor n1 var1) (ReadCursor n2 var2) =
@@ -545,7 +546,7 @@ instance ( Eq (Class.TableConfig h)
       Close tableVar                  -> [SomeGVar tableVar]
       Lookups _ tableVar              -> [SomeGVar tableVar]
       RangeLookup _ tableVar          -> [SomeGVar tableVar]
-      NewCursor tableVar              -> [SomeGVar tableVar]
+      NewCursor _ tableVar            -> [SomeGVar tableVar]
       CloseCursor cursorVar           -> [SomeGVar cursorVar]
       ReadCursor _ cursorVar          -> [SomeGVar cursorVar]
       Updates _ tableVar              -> [SomeGVar tableVar]
@@ -786,8 +787,8 @@ runModel lookUp = \case
       Model.runModelM (Model.lookups ks (getTableHandle $ lookUp tableVar))
     RangeLookup range tableVar -> wrap (MVector . fmap (MQueryResult . fmap MBlobRef)) .
       Model.runModelM (Model.rangeLookup range (getTableHandle $ lookUp tableVar))
-    NewCursor tableVar -> wrap MCursor .
-      Model.runModelM (Model.newCursor (getTableHandle $ lookUp tableVar))
+    NewCursor offset tableVar -> wrap MCursor .
+      Model.runModelM (Model.newCursor offset (getTableHandle $ lookUp tableVar))
     CloseCursor cursorVar -> wrap MUnit .
       Model.runModelM (Model.closeCursor (getCursor $ lookUp cursorVar))
     ReadCursor n cursorVar -> wrap (MVector . fmap (MQueryResult . fmap MBlobRef)) .
@@ -859,8 +860,8 @@ runIO action lookUp = ReaderT $ \(session, handler) -> do
           fmap (fmap WrapBlobRef) <$> Class.lookups (unwrapTableHandle $ lookUp' tableVar) ks
         RangeLookup range tableVar -> catchErr handler $
           fmap (fmap WrapBlobRef) <$> Class.rangeLookup (unwrapTableHandle $ lookUp' tableVar) range
-        NewCursor tableVar -> catchErr handler $
-          WrapCursor <$> Class.newCursor (unwrapTableHandle $ lookUp' tableVar)
+        NewCursor offset tableVar -> catchErr handler $
+          WrapCursor <$> Class.newCursor offset (unwrapTableHandle $ lookUp' tableVar)
         CloseCursor cursorVar -> catchErr handler $
           Class.closeCursor (Proxy @h) (unwrapCursor $ lookUp' cursorVar)
         ReadCursor n cursorVar -> catchErr handler $
@@ -1021,7 +1022,7 @@ arbitraryActionWithVars _ findVars _st = QC.frequency $ concat [
         , (10, fmap Some $ Lookups <$> genLookupKeys <*> (fromRight <$> genVar))
         -- TODO: enable generators as we implement the actions for the /real/ lsm-tree
         -- , fmap Some $ RangeLookup <$> genRange <*> (fromRight <$> genVar)
-        , (5, fmap Some $ NewCursor <$> (fromRight <$> genVar))
+        , (5, fmap Some $ NewCursor <$> QC.arbitrary <*> (fromRight <$> genVar))
         , (10, fmap Some $ Updates <$> genUpdates <*> (fromRight <$> genVar))
         , (10, fmap Some $ Inserts <$> genInserts <*> (fromRight <$> genVar))
         , (10, fmap Some $ Deletes <$> genDeletes <*> (fromRight <$> genVar))

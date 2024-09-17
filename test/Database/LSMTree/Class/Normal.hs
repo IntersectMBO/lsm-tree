@@ -80,8 +80,9 @@ class (IsSession (Session h)) => IsTableHandle h where
         -> m (V.Vector (QueryResult k v (BlobRef h m blob)))
 
     newCursor ::
-           IOLike m
-        => h m k v blob
+           (IOLike m, SerialiseKey k)
+        => Maybe k
+        -> h m k v blob
         -> m (Cursor h m k v blob)
 
     closeCursor ::
@@ -175,11 +176,12 @@ withTableDuplicate ::
 withTableDuplicate table = bracket (duplicate table) close
 
 withCursor ::
-     forall h m k v blob a. (IOLike m, IsTableHandle h)
-  => h m k v blob
+     forall h m k v blob a. (IOLike m, IsTableHandle h, SerialiseKey k)
+  => Maybe k
+  -> h m k v blob
   -> (Cursor h m k v blob -> m a)
   -> m a
-withCursor hdl = bracket (newCursor hdl) (closeCursor (Proxy @h))
+withCursor offset hdl = bracket (newCursor offset hdl) (closeCursor (Proxy @h))
 
 {-------------------------------------------------------------------------------
   Model instance
@@ -256,7 +258,7 @@ instance IsTableHandle R.TableHandle where
     rangeLookup = flip R.rangeLookup
     retrieveBlobs _ = R.retrieveBlobs
 
-    newCursor = R.newCursor
+    newCursor = maybe R.newCursor R.newCursorAtOffset
     closeCursor _ = R.closeCursor
     readCursor _ = R.readCursor
 

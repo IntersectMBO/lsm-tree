@@ -70,7 +70,9 @@ module Database.LSMTree.Normal (
     -- ** Cursor
   , Cursor
   , withCursor
+  , withCursorAtOffset
   , newCursor
+  , newCursorAtOffset
   , closeCursor
   , readCursor
     -- ** Updates
@@ -335,7 +337,26 @@ withCursor ::
   => TableHandle m k v blob
   -> (Cursor m k v blob -> m a)
   -> m a
-withCursor (Internal.NormalTable th) action = Internal.withCursor th (action . Internal.NormalCursor)
+withCursor (Internal.NormalTable th) action =
+    Internal.withCursor Internal.NoOffsetKey th (action . Internal.NormalCursor)
+
+{-# SPECIALISE withCursorAtOffset :: SerialiseKey k => k -> TableHandle IO k v blob -> (Cursor IO k v blob -> IO a) -> IO a #-}
+-- | A variant of 'withCursor' that allows initialising the cursor at an offset
+-- within the table such that the first entry the cursor returns will be the
+-- one with the lowest key that is greater than or equal to the given key.
+-- In other words, it uses an inclusive lower bound.
+--
+-- NOTE: The ordering of the serialised keys will be used, which can lead to
+-- unexpected results if the 'SerialiseKey' instance is not order-preserving!
+withCursorAtOffset ::
+     (IOLike m, SerialiseKey k)
+  => k
+  -> TableHandle m k v blob
+  -> (Cursor m k v blob -> m a)
+  -> m a
+withCursorAtOffset offset (Internal.NormalTable th) action =
+    Internal.withCursor (Internal.OffsetKey (Internal.serialiseKey offset)) th $
+      action . Internal.NormalCursor
 
 {-# SPECIALISE newCursor :: TableHandle IO k v blob -> IO (Cursor IO k v blob) #-}
 -- | Create a new cursor to read from a given table. Future updates to the table
@@ -350,7 +371,25 @@ newCursor ::
      IOLike m
   => TableHandle m k v blob
   -> m (Cursor m k v blob)
-newCursor (Internal.NormalTable th) = Internal.NormalCursor <$!> Internal.newCursor th
+newCursor (Internal.NormalTable th) =
+    Internal.NormalCursor <$!> Internal.newCursor Internal.NoOffsetKey th
+
+{-# SPECIALISE newCursorAtOffset :: SerialiseKey k => k -> TableHandle IO k v blob -> IO (Cursor IO k v blob) #-}
+-- | A variant of 'newCursor' that allows initialising the cursor at an offset
+-- within the table such that the first entry the cursor returns will be the
+-- one with the lowest key that is greater than or equal to the given key.
+-- In other words, it uses an inclusive lower bound.
+--
+-- NOTE: The ordering of the serialised keys will be used, which can lead to
+-- unexpected results if the 'SerialiseKey' instance is not order-preserving!
+newCursorAtOffset ::
+     (IOLike m, SerialiseKey k)
+  => k
+  -> TableHandle m k v blob
+  -> m (Cursor m k v blob)
+newCursorAtOffset offset (Internal.NormalTable th) =
+    Internal.NormalCursor <$!>
+      Internal.newCursor (Internal.OffsetKey (Internal.serialiseKey offset)) th
 
 {-# SPECIALISE closeCursor :: Cursor IO k v blob -> IO () #-}
 -- | Close a cursor. 'closeCursor' is idempotent. All operations on a closed

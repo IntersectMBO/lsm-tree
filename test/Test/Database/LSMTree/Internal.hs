@@ -50,7 +50,10 @@ tests = testGroup "Test.Database.LSMTree.Internal" [
           testProperty "prop_interimOpenTable" prop_interimOpenTable
         ]
     , testGroup "Cursor" [
-          testProperty "prop_roundtripCursor" prop_roundtripCursor
+          testProperty "prop_roundtripCursor" $
+            prop_roundtripCursor Nothing
+        , testProperty "prop_roundtripCursor at offset" $
+            prop_roundtripCursor . Just
         ]
     ]
 
@@ -197,17 +200,25 @@ prop_interimOpenTable dat = ioProperty $
 -- been inserted into the table. Roughly:
 --
 -- @
---  readCursor . openCursor . inserts == id
+--  readCursor . newCursor . inserts == id
+-- @
+--
+-- If an offset is provided:
+--
+-- @
+--  readCursor . newCursorAt offset . inserts == dropWhile ((< offset) . key)
 -- @
 prop_roundtripCursor ::
-     V.Vector (KeyForIndexCompact, Entry SerialisedValue SerialisedBlob)
+     Maybe KeyForIndexCompact
+  -> V.Vector (KeyForIndexCompact, Entry SerialisedValue SerialisedBlob)
   -> Property
-prop_roundtripCursor kops = ioProperty $
+prop_roundtripCursor offset kops = ioProperty $
     withTempIOHasBlockIO "prop_roundtripCursor" $ \hfs hbio -> do
       withSession nullTracer hfs hbio (FS.mkFsPath []) $ \sesh -> do
         withTable sesh conf $ \th -> do
           updates appendSerialisedValue (coerce kopsWithoutblobs) th
-          fromCursor <- withCursor th $ readWholeCursor appendSerialisedValue
+          fromCursor <- withCursor offsetKey th $
+            readWholeCursor appendSerialisedValue
           return $ tabulate "duplicates" (show <$> Map.elems duplicates) $
             expected === fromCursor
   where
@@ -218,8 +229,11 @@ prop_roundtripCursor kops = ioProperty $
       where f (InsertWithBlob v _) = Insert v
             f x                    = x
 
+    offsetKey = maybe NoOffsetKey (OffsetKey . coerce) offset
+
     expected =
       V.fromList . mapMaybe (traverse entryToValue) $
+        maybe id (\k -> dropWhile ((< k) . fst)) offset $
           Map.assocs . Map.fromListWith (combine appendSerialisedValue) $
             V.toList kopsWithoutblobs
 
