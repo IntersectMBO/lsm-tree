@@ -605,7 +605,7 @@ sequentialIteration output !initialSize !batchSize !tbl !b !g = do
     output b (V.zip ls (fmap (fmap (const ())) results))
 
     -- deletes and inserts
-    LSM.updates is tbl
+    --LSM.updates is tbl
 
     -- continue to the next batch
     return g'
