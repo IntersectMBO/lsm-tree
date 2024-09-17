@@ -479,6 +479,9 @@ deletes = updates . fmap (,Delete)
 -- lookup can include a 'BlobRef', which can be used to retrieve the actual
 -- 'Blob'.
 --
+-- Note that 'BlobRef's can become invalid if the table is modified. See
+-- 'BlobRef' for the exact rules on blob reference validity.
+--
 -- Blob lookups can be performed concurrently from multiple Haskell threads.
 retrieveBlobs ::
      (IOLike m, SerialiseValue blob)

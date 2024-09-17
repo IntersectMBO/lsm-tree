@@ -237,6 +237,9 @@ listSnapshots (Internal.Session' sesh) = Internal.listSnapshots sesh
 -- reference originated from is not updated or closed, the blob reference will
 -- be valid.
 --
+-- Exception: currently the 'snapshot' operation /also/ invalidates 'BlobRef's,
+-- but it should not do. See <https://github.com/IntersectMBO/lsm-tree/issues/392>
+--
 -- TODO: get rid of the @m@ parameter?
 type BlobRef :: (Type -> Type) -> Type -> Type
 type role BlobRef nominal nominal
