@@ -13,6 +13,7 @@ import           Data.Coerce (coerce)
 import           Data.Foldable (toList, traverse_)
 import qualified Data.Map.Strict as Map
 import           Data.Proxy (Proxy (..))
+import qualified Data.Vector as V
 import           Data.Word (Word64)
 import           Database.LSMTree.Extras (showPowersOf)
 import           Database.LSMTree.Extras.Generators (KeyForIndexCompact (..),
@@ -345,7 +346,7 @@ runIO act lu = case act of
                          unTypedWriteBuffer)
                         wb
         let offsetKey = maybe Readers.NoOffsetKey (Readers.OffsetKey . coerce) offset
-        mreaders <- Readers.new hfs hbio offsetKey wb' runs
+        mreaders <- Readers.new hfs hbio offsetKey wb' (V.fromList runs)
         case mreaders of
           Nothing -> do
             traverse_ Run.removeReference runs

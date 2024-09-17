@@ -8,6 +8,7 @@ import           Data.Foldable (traverse_)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (isJust)
+import qualified Data.Vector as V
 import           Database.LSMTree.Extras
 import           Database.LSMTree.Extras.Generators (KeyForIndexCompact,
                      TypedWriteBuffer (..))
@@ -67,7 +68,7 @@ prop_MergeDistributes ::
      SmallList (TypedWriteBuffer KeyForIndexCompact SerialisedValue SerialisedBlob) ->
      IO Property
 prop_MergeDistributes fs hbio level stepSize (fmap unTypedWriteBuffer -> SmallList wbs) = do
-    runs <- sequenceA $ zipWith (flush . RunNumber) [10..] wbs
+    runs <- fmap V.fromList $ sequenceA $ zipWith (flush . RunNumber) [10..] wbs
     let stepsNeeded = sum (map Map.size wbs)
     (stepsDone, lhs) <- mergeRuns fs hbio level (RunNumber 0) runs stepSize
 
@@ -126,7 +127,7 @@ prop_CloseMerge ::
      IO Property
 prop_CloseMerge fs hbio level (Positive stepSize) (fmap unTypedWriteBuffer -> SmallList wbs) = do
     let path0 = RunFsPaths (FS.mkFsPath []) (RunNumber 0)
-    runs <- sequenceA $ zipWith (flush . RunNumber) [10..] wbs
+    runs <- fmap V.fromList $ sequenceA $ zipWith (flush . RunNumber) [10..] wbs
     mergeToClose <- makeInProgressMerge path0 runs
     traverse_ (Merge.close fs hbio) mergeToClose
 
@@ -164,7 +165,7 @@ mergeRuns ::
      FS.HasBlockIO IO h ->
      Merge.Level ->
      RunNumber ->
-     [Run.Run IO (FS.Handle h)] ->
+     V.Vector (Run.Run IO (FS.Handle h)) ->
      StepSize ->
      IO (Int, Run.Run IO (FS.Handle h))
 mergeRuns fs hbio level runNumber runs (Positive stepSize) = do

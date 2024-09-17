@@ -854,8 +854,7 @@ newCursor !offsetKey th = withOpenTable th $ \thEnv -> do
           allocTableContent reg (tableContent thEnv)
         cursorReaders <-
           allocateMaybeTemp reg
-            (Readers.new hfs hbio
-               offsetKey (Just writeBuffer) (V.toList cursorRuns))
+            (Readers.new hfs hbio offsetKey (Just writeBuffer) cursorRuns)
             (Readers.close hfs hbio)
         cursorState <- newMVar (CursorOpen CursorEnv {..})
         let !cursor = Cursor {cursorState, cursorTracer}
