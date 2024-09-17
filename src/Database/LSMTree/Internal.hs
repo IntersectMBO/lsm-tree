@@ -825,6 +825,10 @@ data CursorEnv m h = CursorEnv {
     -- | The runs held open by the cursor. We must remove a reference when the
     -- cursor gets closed.
   , cursorRuns       :: !(V.Vector (Run m (Handle h)))
+
+    -- | The write buffer blobs, which like the runs, we have to keep open
+    -- untile the cursor is closed.
+  , cursorWBB        :: WBB.WriteBufferBlobs m h
   }
 
 {-# SPECIALISE withCursor :: OffsetKey -> TableHandle IO h -> (Cursor IO h -> IO a) -> IO a #-}
@@ -859,12 +863,13 @@ newCursor !offsetKey th = withOpenTable th $ \thEnv -> do
     -- 'sessionOpenTables'.
     withOpenSession cursorSession $ \_ -> do
       withTempRegistry $ \reg -> do
-        (writeBuffer, cursorRuns) <-
+        (writeBuffer, writeBufferBlobs, cursorRuns) <-
           allocTableContent reg (tableContent thEnv)
         cursorReaders <-
           allocateMaybeTemp reg
             (Readers.new hfs hbio offsetKey (Just writeBuffer) cursorRuns)
             (Readers.close hfs hbio)
+        let cursorWBB = writeBufferBlobs
         cursorState <- newMVar (CursorOpen CursorEnv {..})
         let !cursor = Cursor {cursorState, cursorTracer}
         -- Track cursor, but careful: If now an exception is raised, all
@@ -881,12 +886,17 @@ newCursor !offsetKey th = withOpenTable th $ \thEnv -> do
     -- references to each run, so it is safe.
     allocTableContent reg contentVar = do
         RW.withReadAccess contentVar $ \content -> do
+          let wb      = tableWriteBuffer content
+              wbblobs = tableWriteBufferBlobs content
+          allocateTemp reg
+            (WBB.addReference wbblobs)
+            (\_ -> WBB.removeReference wbblobs)
           let runs = cachedRuns (tableCache content)
           V.forM_ runs $ \r -> do
             allocateTemp reg
               (Run.addReference r)
               (\_ -> Run.removeReference r)
-          pure (tableWriteBuffer content, runs)
+          pure (wb, wbblobs, runs)
 
 {-# SPECIALISE closeCursor :: Cursor IO h -> IO () #-}
 -- | See 'Database.LSMTree.Normal.closeCursor'.
@@ -912,6 +922,7 @@ closeCursor Cursor {..} = do
 
         forM_ cursorReaders $ freeTemp reg . Readers.close hfs hbio
         V.forM_ cursorRuns $ freeTemp reg . Run.removeReference
+        freeTemp reg (WBB.removeReference cursorWBB)
         return CursorClosed
 
 {-# SPECIALISE readCursor :: ResolveSerialisedValue -> Int -> Cursor IO h -> (SerialisedKey -> SerialisedValue -> Maybe (WeakBlobRef IO (Handle h)) -> res) -> IO (V.Vector res) #-}
