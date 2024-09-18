@@ -170,7 +170,7 @@ addBlob fs WriteBufferBlobs {blobFileName, blobFileState} blob = do
         -- we can also be asked to retrieve blobs at any time.
         blobFileHandle <- FS.hOpen fs blobFileName (FS.ReadWriteMode FS.MustBeNew)
         blobFilePointer <- newFilePointer
-        P.writeMutVar blobFileState OpenBlobFile {
+        P.writeMutVar blobFileState $! OpenBlobFile {
           blobFileHandle,
           blobFilePointer
         }
@@ -226,17 +226,18 @@ readBlob fs WriteBufferBlobs {blobFileState} BlobSpan {blobSpanOffset, blobSpanS
         error "BlobFile.mkBlobRef: no such blob refs, no blob file open"
 
 -- | Helper function to make a 'BlobRef' that points into a 'WriteBufferBlobs'.
+-- TODO: this two stage function design isn't terribly nice, and allocates
+-- more than necessary (a closure every call).
 mkBlobRef :: PrimMonad m
           => WriteBufferBlobs m h
-          -> BlobSpan
-          -> m (BlobRef m (FS.Handle h))
-mkBlobRef WriteBufferBlobs {blobFileState, blobFileRefCounter} blobRefSpan = do
+          -> m (BlobSpan -> BlobRef m (FS.Handle h))
+mkBlobRef WriteBufferBlobs {blobFileState, blobFileRefCounter} = do
     bfs <- P.readMutVar blobFileState
     case bfs of
       --TODO: for assertion checking we could check the span exists within
       -- the file.
       OpenBlobFile {blobFileHandle} ->
-        pure BlobRef {
+        pure $ \blobRefSpan -> BlobRef {
           blobRefFile  = blobFileHandle,
           blobRefCount = blobFileRefCounter,
           blobRefSpan
@@ -244,7 +245,8 @@ mkBlobRef WriteBufferBlobs {blobFileState, blobFileRefCounter} blobRefSpan = do
       -- We must not be handing out references to blobs if no blobs have been
       -- written. That would be an internal error.
       NoBlobFileYet{} ->
-        error "BlobFile.mkBlobRef: no such blob refs, no blob file open"
+        pure $ \_blobRefSpan ->
+          error "BlobFile.mkBlobRef: no such blob refs, no blob file open"
 
 
 -- | A mutable file offset, suitable to share between threads.

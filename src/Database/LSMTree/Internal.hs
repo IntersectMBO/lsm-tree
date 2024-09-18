@@ -676,7 +676,6 @@ lookups resolve ks th fromEntry = do
     withOpenTable th $ \thEnv -> do
       let arenaManager = tableHandleArenaManager th
       RW.withReadAccess (tableContent thEnv) $ \tableContent -> do
-        let !wb = tableWriteBuffer tableContent
         let !cache = tableCache tableContent
         ioRes <-
           lookupsIO
@@ -688,9 +687,19 @@ lookups resolve ks th fromEntry = do
             (cachedIndexes cache)
             (cachedKOpsFiles cache)
             ks
+        --TODO: this bit is all a bit of a mess, not well factored
+        --TODO: incorporate write buffer lookups into the lookupsIO
+        --TODO: reduce allocations involved with converting BlobSpan to BlobRef
+        -- and Entry to the lookup result. Try one single conversion rather
+        -- than multiple steps that each allocate.
+        let !wb = tableWriteBuffer tableContent
+            !wbblobs = tableWriteBufferBlobs tableContent
+        toBlobRef <- WBB.mkBlobRef wbblobs
+        let wbLookup = fmap (fmap (WeakBlobRef . toBlobRef))
+                     . WB.lookup wb
         pure $!
           V.zipWithStrict
-            (\k1 e2 -> fromEntry $ Entry.combineMaybe resolve (WB.lookup wb k1) e2)
+            (\k1 e2 -> fromEntry $ Entry.combineMaybe resolve (wbLookup k1) e2)
             ks ioRes
 
 {-# SPECIALISE updates :: ResolveSerialisedValue -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob) -> TableHandle IO h -> IO () #-}
@@ -816,6 +825,10 @@ data CursorEnv m h = CursorEnv {
     -- | The runs held open by the cursor. We must remove a reference when the
     -- cursor gets closed.
   , cursorRuns       :: !(V.Vector (Run m (Handle h)))
+
+    -- | The write buffer blobs, which like the runs, we have to keep open
+    -- untile the cursor is closed.
+  , cursorWBB        :: WBB.WriteBufferBlobs m h
   }
 
 {-# SPECIALISE withCursor :: OffsetKey -> TableHandle IO h -> (Cursor IO h -> IO a) -> IO a #-}
@@ -850,12 +863,14 @@ newCursor !offsetKey th = withOpenTable th $ \thEnv -> do
     -- 'sessionOpenTables'.
     withOpenSession cursorSession $ \_ -> do
       withTempRegistry $ \reg -> do
-        (writeBuffer, cursorRuns) <-
+        (wb, wbblobs, cursorRuns) <-
           allocTableContent reg (tableContent thEnv)
         cursorReaders <-
           allocateMaybeTemp reg
-            (Readers.new hfs hbio offsetKey (Just writeBuffer) cursorRuns)
+            (Readers.new hfs hbio
+               offsetKey (Just (wb, wbblobs)) cursorRuns)
             (Readers.close hfs hbio)
+        let cursorWBB = wbblobs
         cursorState <- newMVar (CursorOpen CursorEnv {..})
         let !cursor = Cursor {cursorState, cursorTracer}
         -- Track cursor, but careful: If now an exception is raised, all
@@ -872,12 +887,17 @@ newCursor !offsetKey th = withOpenTable th $ \thEnv -> do
     -- references to each run, so it is safe.
     allocTableContent reg contentVar = do
         RW.withReadAccess contentVar $ \content -> do
+          let wb      = tableWriteBuffer content
+              wbblobs = tableWriteBufferBlobs content
+          allocateTemp reg
+            (WBB.addReference wbblobs)
+            (\_ -> WBB.removeReference wbblobs)
           let runs = cachedRuns (tableCache content)
           V.forM_ runs $ \r -> do
             allocateTemp reg
               (Run.addReference r)
               (\_ -> Run.removeReference r)
-          pure (tableWriteBuffer content, runs)
+          pure (wb, wbblobs, runs)
 
 {-# SPECIALISE closeCursor :: Cursor IO h -> IO () #-}
 -- | See 'Database.LSMTree.Normal.closeCursor'.
@@ -903,6 +923,7 @@ closeCursor Cursor {..} = do
 
         forM_ cursorReaders $ freeTemp reg . Readers.close hfs hbio
         V.forM_ cursorRuns $ freeTemp reg . Run.removeReference
+        freeTemp reg (WBB.removeReference cursorWBB)
         return CursorClosed
 
 {-# SPECIALISE readCursor :: ResolveSerialisedValue -> Int -> Cursor IO h -> (SerialisedKey -> SerialisedValue -> Maybe (WeakBlobRef IO (Handle h)) -> res) -> IO (V.Vector res) #-}

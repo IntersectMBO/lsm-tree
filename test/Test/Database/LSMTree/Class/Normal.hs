@@ -59,14 +59,14 @@ tests = testGroup "Test.Database.LSMTree.Class.Normal"
     expectFailures2 = [
         False
       , False
-      , True
       , False
       , False
       , False
-      , True
       , False
-      , True
-      , True
+      , False
+      , False
+      , False
+      , False
       , False
       , False
       , False
