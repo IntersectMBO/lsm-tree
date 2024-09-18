@@ -6,6 +6,7 @@ module System.FS.BlockIO.Async (
     asyncHasBlockIO
   ) where
 
+import           Control.Concurrent.MVar
 import           Control.Exception
 import qualified Control.Exception as E
 import           Control.Monad.Primitive
@@ -23,6 +24,7 @@ import           System.FS.BlockIO.API (IOOp (..), IOResult (..), LockMode,
 import           System.FS.IO (HandleIO)
 import           System.FS.IO.Handle
 import qualified System.IO.BlockIO as I
+import           System.IO.Error as IO
 import           System.IO.Error (ioeSetErrorString, isResourceVanishedError)
 import           System.Posix.Types
 
@@ -53,6 +55,7 @@ ctxParamsConv API.IOCtxParams{API.ioctxBatchSizeLimit, API.ioctxConcurrencyLimit
       , I.ioctxConcurrencyLimit = ioctxConcurrencyLimit
       }
 
+{-# NOINLINE submitIO #-}
 submitIO ::
      HasFS IO HandleIO
   -> I.IOCtx
@@ -98,6 +101,7 @@ submitIO hasFS ioctx ioops = do
           IOOpRead{}  -> "IOOpRead"
           IOOpWrite{} -> "IOOpWrite"
 
+{-# INLINE ioopConv #-}
 ioopConv :: IOOp RealWorld HandleIO -> IO (I.IOOp IO)
 ioopConv (IOOpRead h off buf bufOff c) = handleFd h >>= \fd ->
     pure (I.IOOpRead  fd off buf (unBufferOffset bufOff) c)
@@ -112,8 +116,24 @@ ioopConv (IOOpWrite h off buf bufOff c) = handleFd h >>= \fd ->
 -- reader lock in 'submitIO'. However, the current implementation of 'Handle'
 -- only allows mutally exclusive access to the underlying file descriptor, so it
 -- would require a change in @fs-api@. See [fs-sim#49].
+{-# INLINE handleFd #-}
 handleFd :: Handle HandleIO -> IO Fd
-handleFd h = withOpenHandle "submitIO" (handleRaw h) pure
+handleFd Handle {
+           handleRaw = HandleOS { handle, filePath }
+         } = do
+    mfd <- readMVar handle
+    case mfd of
+      Nothing -> throwHandleClosedException filePath
+      Just fd -> return fd
+
+{-# NOINLINE throwHandleClosedException #-}
+throwHandleClosedException :: FilePath -> IO a
+throwHandleClosedException filePath =
+    throwIO $
+      flip IO.ioeSetErrorType IO.illegalOperationErrorType
+    $ flip IO.ioeSetFileName filePath
+    $ userError ("HasBlockIO.submitIO: file handle closed")
+
 
 -- | Heterogeneous blend of `V.zipWithM` and `VU.zipWithM`
 --
