@@ -13,7 +13,7 @@ module Database.LSMTree.Internal.IndexOrdinary
 )
 where
 
-import           Prelude hiding (drop, length, takeWhile)
+import           Prelude hiding (drop, last, length)
 
 import           Control.Exception (assert)
 import           Control.Monad (when)
@@ -21,8 +21,8 @@ import           Data.ByteString.Short (ShortByteString (SBS))
 import qualified Data.ByteString.Short as ShortByteString (length)
 import           Data.Primitive.ByteArray (ByteArray (ByteArray),
                      indexByteArray)
-import           Data.Vector (Vector, drop, findIndexR, fromList, length,
-                     takeWhile, (!))
+import           Data.Vector (Vector, drop, findIndex, findIndexR, fromList,
+                     last, length, (!))
 import qualified Data.Vector.Primitive as Primitive (Vector (Vector), drop,
                      force, length, null, splitAt, take)
 import           Data.Word (Word16, Word32, Word64, Word8, byteSwap32)
@@ -66,31 +66,35 @@ newtype IndexOrdinary = IndexOrdinary (Vector SerialisedKey)
     if there is no such pair, the result is an arbitrary but valid page span.
 -}
 search :: SerialisedKey -> IndexOrdinary -> PageSpan
-search key (IndexOrdinary lastKeys)
-    = assert (length lastKeys > 0) $ PageSpan (PageNo start) (PageNo end)
-    where
-
-    start :: Int
-    start | protoStart < pageCount = protoStart
-          | otherwise              = maybe 0 succ                              $
-                                     findIndexR (/= lastKeys ! pred pageCount) $
-                                     lastKeys
-
-    end :: Int
-    end | protoStart < pageCount = start + overflowPageCount
-        | otherwise              = pred pageCount
-        where
-
-        overflowPageCount :: Int
-        overflowPageCount = length                          $
-                            takeWhile (== lastKeys ! start) $
-                            drop (succ start) lastKeys
+search key (IndexOrdinary lastKeys) = assert (length lastKeys > 0) result where
 
     protoStart :: Int
-    protoStart = binarySearchL lastKeys key
+    !protoStart = binarySearchL lastKeys key
 
     pageCount :: Int
-    pageCount = length lastKeys
+    !pageCount = length lastKeys
+
+    result :: PageSpan
+    !result | protoStart < pageCount
+                = let
+
+                      end :: Int
+                      !end = maybe (pred pageCount) (+ protoStart) $
+                             findIndex (/= lastKeys ! protoStart)  $
+                             drop (succ protoStart) lastKeys
+
+                  in PageSpan (PageNo $ protoStart)
+                              (PageNo $ end)
+            | otherwise
+                = let
+
+                      start :: Int
+                      !start = maybe 0 succ $
+                               findIndexR (/= last lastKeys) $
+                               lastKeys
+
+                  in PageSpan (PageNo $ start)
+                              (PageNo $ pred pageCount)
 
 -- * Deserialisation
 
