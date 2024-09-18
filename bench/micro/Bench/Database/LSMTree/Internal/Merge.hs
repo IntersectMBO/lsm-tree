@@ -9,6 +9,7 @@ import           Data.Foldable (traverse_)
 import qualified Data.Foldable as Fold
 import qualified Data.List as List
 import           Data.Maybe (fromMaybe)
+import qualified Data.Vector as V
 import           Data.Word (Word64)
 import           Database.LSMTree.Extras.Orphans ()
 import qualified Database.LSMTree.Extras.Random as R
@@ -246,7 +247,7 @@ outputRunPaths = RunFsPaths (FS.mkFsPath []) (RunNumber 0)
 inputRunPaths :: [Run.RunFsPaths]
 inputRunPaths = RunFsPaths (FS.mkFsPath []) . RunNumber <$> [1..]
 
-type InputRuns = [Run IO (FS.Handle FS.HandleIO)]
+type InputRuns = V.Vector (Run IO (FS.Handle FS.HandleIO))
 
 type Mappend = SerialisedValue -> SerialisedValue -> SerialisedValue
 
@@ -352,7 +353,8 @@ randomRuns ::
   -> StdGen
   -> IO InputRuns
 randomRuns hasFS hasBlockIO config@Config {..} =
-      zipWithM (createRun hasFS hasBlockIO mergeMappend) inputRunPaths
+      fmap V.fromList
+    . zipWithM (createRun hasFS hasBlockIO mergeMappend) inputRunPaths
     . zipWith (randomKOps config) nentries
     . List.unfoldr (Just . R.split)
 

@@ -28,7 +28,6 @@ import           Control.Monad.Primitive
 import           Control.TempRegistry
 import           Control.Tracer
 import           Data.BloomFilter (Bloom)
-import           Data.Foldable
 import           Data.Primitive.MutVar
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Assertions (assert)
@@ -613,7 +612,7 @@ mergeRuns ::
   -> V.Vector (Run m (Handle h))
   -> m (Run m (Handle h))
 mergeRuns resolve hfs hbio caching alloc runPaths mergeLevel runs = do
-    Merge.new hfs hbio caching alloc mergeLevel resolve runPaths (toList runs) >>= \case
+    Merge.new hfs hbio caching alloc mergeLevel resolve runPaths runs >>= \case
       Nothing -> error "mergeRuns: no inputs"
       Just merge -> go merge
   where

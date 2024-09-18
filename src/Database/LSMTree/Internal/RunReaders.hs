@@ -22,6 +22,7 @@ import qualified Data.Map.Strict as Map
 import           Data.Maybe (catMaybes)
 import           Data.Primitive.MutVar
 import           Data.Traversable (for)
+import qualified Data.Vector as V
 import           Database.LSMTree.Internal.BlobRef (BlobRef, BlobSpan)
 import           Database.LSMTree.Internal.Entry (Entry (..))
 import           Database.LSMTree.Internal.Run (Run)
@@ -103,17 +104,16 @@ data Reader m fhandle =
 
 type KOp m fhandle = (SerialisedKey, Entry SerialisedValue (BlobRef m fhandle))
 
--- TODO: take a vector of runs instead of a list to avoid conversions
 new :: forall h .
      HasFS IO h
   -> HasBlockIO IO h
   -> OffsetKey
   -> Maybe WB.WriteBuffer
-  -> [Run IO (FS.Handle h)]
+  -> V.Vector (Run IO (FS.Handle h))
   -> IO (Maybe (Readers IO (FS.Handle h)))
 new fs hbio !offsetKey wbs runs = do
     wBuffer <- maybe (pure Nothing) fromWB wbs
-    readers <- zipWithM (fromRun . ReaderNumber) [1..] runs
+    readers <- zipWithM (fromRun . ReaderNumber) [1..] (V.toList runs)
     let contexts = nonEmpty . catMaybes $ wBuffer : readers
     for contexts $ \xs -> do
       (readersHeap, readCtx) <- Heap.newMutableHeap xs

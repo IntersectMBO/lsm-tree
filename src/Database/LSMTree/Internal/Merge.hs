@@ -14,6 +14,7 @@ import           Control.Monad.Primitive (PrimState, RealWorld)
 import           Control.RefCount (RefCount (..))
 import           Data.Coerce (coerce)
 import           Data.Traversable (for)
+import qualified Data.Vector as V
 import           Database.LSMTree.Internal.BlobRef (BlobRef)
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.Run (Run, RunDataCaching)
@@ -59,14 +60,14 @@ new ::
   -> Level
   -> Mappend
   -> Run.RunFsPaths
-  -> [Run IO (FS.Handle h)]
+  -> V.Vector (Run IO (FS.Handle h))
   -> IO (Maybe (Merge IO (FS.Handle h)))
 new fs hbio mergeCaching alloc mergeLevel mergeMappend targetPaths runs = do
     -- no offset, no write buffer
     mreaders <- Readers.new fs hbio Readers.NoOffsetKey Nothing runs
     for mreaders $ \mergeReaders -> do
       -- calculate upper bounds based on input runs
-      let numEntries = coerce (sum @[] @Int) (map Run.runNumEntries runs)
+      let numEntries = coerce (sum @V.Vector @Int) (fmap Run.runNumEntries runs)
       mergeBuilder <- Builder.new fs targetPaths numEntries alloc
       return Merge {..}
 
