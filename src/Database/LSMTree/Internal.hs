@@ -1,4 +1,3 @@
-{-# LANGUAGE CPP       #-}
 {-# LANGUAGE DataKinds #-}
 
 module Database.LSMTree.Internal (
@@ -61,7 +60,9 @@ import           Control.Concurrent.Class.MonadSTM.RWVar (RWVar)
 import qualified Control.Concurrent.Class.MonadSTM.RWVar as RW
 import           Control.DeepSeq
 import           Control.Monad (unless, void, when)
+import           Control.Monad.Class.MonadST (MonadST (..))
 import           Control.Monad.Class.MonadThrow
+import           Control.Monad.Fix (MonadFix)
 import           Control.Monad.Primitive
 import           Control.TempRegistry
 import           Control.Tracer
@@ -301,13 +302,17 @@ data SessionEnv m h = SessionEnv {
   , sessionOpenCursors :: !(StrictMVar m (Map Word64 (Cursor m h)))
   }
 
+{-# INLINE withOpenSession #-}
+{-# SPECIALISE withOpenSession ::
+     Session IO h
+  -> (SessionEnv IO h -> IO a)
+  -> IO a #-}
 -- | 'withOpenSession' ensures that the session stays open for the duration of the
 -- provided continuation.
 --
 -- NOTE: any operation except 'sessionClose' can use this function.
-{-# INLINE withOpenSession #-}
 withOpenSession ::
-     m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+     (MonadSTM m, MonadThrow m)
   => Session m h
   -> (SessionEnv m h -> m a)
   -> m a
@@ -319,11 +324,17 @@ withOpenSession sesh action = RW.withReadAccess (sessionState sesh) $ \case
 -- Implementation of public API
 --
 
-{-# SPECIALISE withSession :: Tracer IO LSMTreeTrace -> HasFS IO h -> HasBlockIO IO h -> FsPath -> (Session IO h -> IO a) -> IO a #-}
+{-# SPECIALISE withSession ::
+     Tracer IO LSMTreeTrace
+  -> HasFS IO h
+  -> HasBlockIO IO h
+  -> FsPath
+  -> (Session IO h -> IO a)
+  -> IO a #-}
 -- | See 'Database.LSMTree.Common.withSession'.
 withSession ::
-     m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
-  => Tracer IO LSMTreeTrace
+     (MonadMask m, MonadSTM m, MonadMVar m, PrimMonad m)
+  => Tracer m LSMTreeTrace
   -> HasFS m h
   -> HasBlockIO m h
   -> FsPath
@@ -331,10 +342,16 @@ withSession ::
   -> m a
 withSession tr hfs hbio dir = bracket (openSession tr hfs hbio dir) closeSession
 
-{-# SPECIALISE openSession :: Tracer IO LSMTreeTrace -> HasFS IO h -> HasBlockIO IO h -> FsPath -> IO (Session IO h) #-}
+{-# SPECIALISE openSession ::
+     Tracer IO LSMTreeTrace
+  -> HasFS IO h
+  -> HasBlockIO IO h
+  -> FsPath
+  -> IO (Session IO h) #-}
 -- | See 'Database.LSMTree.Common.openSession'.
 openSession ::
-     forall m h. m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+     forall m h.
+     (MonadCatch m, MonadSTM m, MonadMVar m)
   => Tracer m LSMTreeTrace
   -> HasFS m h
   -> HasBlockIO m h -- TODO: could we prevent the user from having to pass this in?
@@ -449,7 +466,7 @@ openSession tr hfs hbio dir = do
 -- A session's global resources will only be released once it is sure that no
 -- tables are open anymore.
 closeSession ::
-     m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+     (MonadMask m, MonadSTM m, MonadMVar m, PrimMonad m)
   => Session m h
   -> m ()
 closeSession Session{sessionState, sessionTracer} = do
@@ -555,6 +572,7 @@ tableSessionUniqCounter :: TableHandleEnv m h -> UniqCounter m
 tableSessionUniqCounter = sessionUniqCounter . tableSessionEnv
 
 {-# INLINE tableSessionUntrackTable #-}
+{-# SPECIALISE tableSessionUntrackTable :: TableHandleEnv IO h -> IO () #-}
 -- | Open tables are tracked in the corresponding session, so when a table is
 -- closed it should become untracked (forgotten).
 tableSessionUntrackTable :: MonadMVar m => TableHandleEnv m h -> m ()
@@ -566,8 +584,12 @@ tableSessionUntrackTable thEnv =
 --
 -- NOTE: any operation except 'close' can use this function.
 {-# INLINE withOpenTable #-}
+{-# SPECIALISE withOpenTable ::
+     TableHandle IO h
+  -> (TableHandleEnv IO h -> IO a)
+  -> IO a #-}
 withOpenTable ::
-     m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+     (MonadSTM m, MonadThrow m)
   => TableHandle m h
   -> (TableHandleEnv m h -> m a)
   -> m a
@@ -579,20 +601,27 @@ withOpenTable th action = RW.withReadAccess (tableHandleState th) $ \case
 -- Implementation of public API
 --
 
-{-# SPECIALISE withTable :: Session IO h -> TableConfig -> (TableHandle IO h -> IO a) -> IO a #-}
+{-# SPECIALISE withTable ::
+     Session IO h
+  -> TableConfig
+  -> (TableHandle IO h -> IO a)
+  -> IO a #-}
 -- | See 'Database.LSMTree.Normal.withTable'.
 withTable ::
-     m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+     (MonadMask m, MonadSTM m, MonadMVar m, PrimMonad m)
   => Session m h
   -> TableConfig
   -> (TableHandle m h -> m a)
   -> m a
 withTable sesh conf = bracket (new sesh conf) close
 
-{-# SPECIALISE new :: Session IO h -> TableConfig -> IO (TableHandle IO h) #-}
+{-# SPECIALISE new ::
+     Session IO h
+  -> TableConfig
+  -> IO (TableHandle IO h) #-}
 -- | See 'Database.LSMTree.Normal.new'.
 new ::
-     m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+     (MonadSTM m, MonadThrow m, MonadMVar m, PrimMonad m)
   => Session m h
   -> TableConfig
   -> m (TableHandle m h)
@@ -605,9 +634,17 @@ new sesh conf = do
       wbblobs  <- WBB.new (sessionHasFS seshEnv) blobpath
       newWith sesh seshEnv conf am WB.empty wbblobs V.empty
 
-{-# SPECIALISE newWith :: Session IO h -> SessionEnv IO h -> TableConfig -> ArenaManager RealWorld -> WriteBuffer -> WriteBufferBlobs IO h -> Levels IO (Handle h) -> IO (TableHandle IO h) #-}
+{-# SPECIALISE newWith ::
+     Session IO h
+  -> SessionEnv IO h
+  -> TableConfig
+  -> ArenaManager RealWorld
+  -> WriteBuffer
+  -> WriteBufferBlobs IO h
+  -> Levels IO (Handle h)
+  -> IO (TableHandle IO h) #-}
 newWith ::
-     m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+     (MonadSTM m, MonadMVar m, PrimMonad m)
   => Session m h
   -> SessionEnv m h
   -> TableConfig
@@ -645,7 +682,7 @@ newWith sesh seshEnv conf !am !wb !wbblobs !levels = do
 {-# SPECIALISE close :: TableHandle IO h -> IO () #-}
 -- | See 'Database.LSMTree.Normal.close'.
 close ::
-     m ~ IO  -- TODO: replace by @io-classes@ constraints for IO simulation.
+     (MonadMask m, MonadSTM m, MonadMVar m, PrimMonad m)
   => TableHandle m h
   -> m ()
 close th = do
@@ -664,10 +701,14 @@ close th = do
           pure tc
         pure TableHandleClosed
 
-{-# SPECIALISE lookups :: ResolveSerialisedValue -> V.Vector SerialisedKey -> TableHandle IO h -> IO (V.Vector (Maybe (Entry SerialisedValue (WeakBlobRef IO (Handle h))))) #-}
+{-# SPECIALISE lookups ::
+     ResolveSerialisedValue
+  -> V.Vector SerialisedKey
+  -> TableHandle IO h
+  -> IO (V.Vector (Maybe (Entry SerialisedValue (WeakBlobRef IO (Handle h))))) #-}
 -- | See 'Database.LSMTree.Normal.lookups'.
 lookups ::
-     m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+     (MonadST m, MonadSTM m, MonadThrow m)
   => ResolveSerialisedValue
   -> V.Vector SerialisedKey
   -> TableHandle m h
@@ -689,10 +730,15 @@ lookups resolve ks th = do
           (cachedKOpsFiles cache)
           ks
 
-{-# SPECIALISE rangeLookup :: ResolveSerialisedValue -> Range SerialisedKey -> TableHandle IO h -> (SerialisedKey -> SerialisedValue -> Maybe (WeakBlobRef IO (Handle h)) -> res) -> IO (V.Vector res) #-}
+{-# SPECIALISE rangeLookup ::
+     ResolveSerialisedValue
+  -> Range SerialisedKey
+  -> TableHandle IO h
+  -> (SerialisedKey -> SerialisedValue -> Maybe (WeakBlobRef IO (Handle h)) -> res)
+  -> IO (V.Vector res) #-}
 -- | See 'Database.LSMTree.Normal.rangeLookup'.
 rangeLookup ::
-     m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+     (MonadFix m, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => ResolveSerialisedValue
   -> Range SerialisedKey
   -> TableHandle m h
@@ -724,12 +770,16 @@ rangeLookup resolve range th fromEntry = do
              -- TODO(optimise): revisit
         else return (V.concat (reverse (V.slice 0 n chunk : chunks)))
 
-{-# SPECIALISE updates :: ResolveSerialisedValue -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob) -> TableHandle IO h -> IO () #-}
+{-# SPECIALISE updates ::
+     ResolveSerialisedValue
+  -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob)
+  -> TableHandle IO h
+  -> IO () #-}
 -- | See 'Database.LSMTree.Normal.updates'.
 --
 -- Does not enforce that mupsert and blobs should not occur in the same table.
 updates ::
-     m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+     (MonadFix m, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => ResolveSerialisedValue
   -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob)
   -> TableHandle m h
@@ -757,8 +807,12 @@ updates resolve es th = do
   Blobs
 -------------------------------------------------------------------------------}
 
+{-# SPECIALISE retrieveBlobs ::
+     Session IO h
+  -> V.Vector (WeakBlobRef IO (FS.Handle h))
+  -> IO (V.Vector SerialisedBlob) #-}
 retrieveBlobs ::
-     m ~ IO  -- TODO: replace by @io-classes@ constraints for IO simulation.
+     (MonadFix m, MonadMask m, MonadST m, MonadSTM m)
   => Session m h
   -> V.Vector (WeakBlobRef m (FS.Handle h))
   -> m (V.Vector SerialisedBlob)
@@ -853,20 +907,27 @@ data CursorEnv m h = CursorEnv {
   , cursorWBB        :: WBB.WriteBufferBlobs m h
   }
 
-{-# SPECIALISE withCursor :: OffsetKey -> TableHandle IO h -> (Cursor IO h -> IO a) -> IO a #-}
+{-# SPECIALISE withCursor ::
+     OffsetKey
+  -> TableHandle IO h
+  -> (Cursor IO h -> IO a)
+  -> IO a #-}
 -- | See 'Database.LSMTree.Normal.withCursor'.
 withCursor ::
-     m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+     (MonadFix m, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => OffsetKey
   -> TableHandle m h
   -> (Cursor m h -> m a)
   -> m a
 withCursor offsetKey th = bracket (newCursor offsetKey th) closeCursor
 
-{-# SPECIALISE newCursor :: OffsetKey -> TableHandle IO h -> IO (Cursor IO h) #-}
+{-# SPECIALISE newCursor ::
+     OffsetKey
+  -> TableHandle IO h
+  -> IO (Cursor IO h) #-}
 -- | See 'Database.LSMTree.Normal.newCursor'.
 newCursor ::
-     m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+     (MonadFix m, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => OffsetKey
   -> TableHandle m h
   -> m (Cursor m h)
@@ -924,7 +985,7 @@ newCursor !offsetKey th = withOpenTable th $ \thEnv -> do
 {-# SPECIALISE closeCursor :: Cursor IO h -> IO () #-}
 -- | See 'Database.LSMTree.Normal.closeCursor'.
 closeCursor ::
-     m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+     (MonadMask m, MonadMVar m, MonadSTM m, PrimMonad m)
   => Cursor m h
   -> m ()
 closeCursor Cursor {..} = do
@@ -948,10 +1009,16 @@ closeCursor Cursor {..} = do
         freeTemp reg (WBB.removeReference cursorWBB)
         return CursorClosed
 
-{-# SPECIALISE readCursor :: ResolveSerialisedValue -> Int -> Cursor IO h -> (SerialisedKey -> SerialisedValue -> Maybe (WeakBlobRef IO (Handle h)) -> res) -> IO (V.Vector res) #-}
+{-# SPECIALISE readCursor ::
+     ResolveSerialisedValue
+  -> Int
+  -> Cursor IO h
+  -> (SerialisedKey -> SerialisedValue -> Maybe (WeakBlobRef IO (Handle h)) -> res)
+  -> IO (V.Vector res) #-}
 -- | See 'Database.LSMTree.Normal.readCursor'.
 readCursor ::
-     forall m h res. m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+     forall m h res.
+     (MonadFix m, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => ResolveSerialisedValue
   -> Int  -- ^ Maximum number of entries to read
   -> Cursor m h
@@ -961,7 +1028,13 @@ readCursor ::
 readCursor resolve n cursor fromEntry =
     readCursorWhile resolve (const True) n cursor fromEntry
 
-{-# SPECIALISE readCursorWhile :: ResolveSerialisedValue -> (SerialisedKey -> Bool) -> Int -> Cursor IO h -> (SerialisedKey -> SerialisedValue -> Maybe (WeakBlobRef IO (Handle h)) -> res) -> IO (V.Vector res) #-}
+{-# SPECIALISE readCursorWhile ::
+     ResolveSerialisedValue
+  -> (SerialisedKey -> Bool)
+  -> Int
+  -> Cursor IO h
+  -> (SerialisedKey -> SerialisedValue -> Maybe (WeakBlobRef IO (Handle h)) -> res)
+  -> IO (V.Vector res) #-}
 -- | @readCursorWhile _ p n cursor _@ reads elements until either:
 --
 --    * @n@ elements have been read already
@@ -971,7 +1044,8 @@ readCursor resolve n cursor fromEntry =
 -- Consequently, once a call returned fewer than @n@ elements, any subsequent
 -- calls with the same predicate @p@ will return an empty vector.
 readCursorWhile ::
-     forall m h res. m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+     forall m h res.
+     (MonadFix m, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => ResolveSerialisedValue
   -> (SerialisedKey -> Bool)  -- ^ Only read as long as this predicate holds
   -> Int  -- ^ Maximum number of entries to read
@@ -999,20 +1073,29 @@ readCursorWhile resolve keyIsWanted n Cursor {..} fromEntry = do
             return (state', vec)
 
 {-# INLINE readCursorEntriesWhile #-}
--- General notes on the code below:
+{-# SPECIALISE readCursorEntriesWhile :: forall h res.
+     HasFS IO h
+  -> HasBlockIO IO h
+  -> ResolveSerialisedValue
+  -> (SerialisedKey -> Bool)
+  -> (SerialisedKey -> SerialisedValue -> Maybe (WeakBlobRef IO (Handle h)) -> res)
+  -> Readers.Readers IO (Handle h)
+  -> Int
+  -> IO (V.Vector res, Readers.HasMore) #-}
+-- | General notes on the code below:
 -- * it is quite similar to the one in Internal.Merge, but different enough
 --   that it's probably easier to keep them separate
 -- * any function that doesn't take a 'hasMore' argument assumes that the
 --   readers have not been drained yet, so we must check before calling them
 -- * there is probably opportunity for optimisations
-readCursorEntriesWhile ::
-     forall m h res. m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+readCursorEntriesWhile :: forall h m res.
+     (MonadFix m, MonadMask m, MonadST m, MonadSTM m)
   => HasFS m h
   -> HasBlockIO m h
   -> ResolveSerialisedValue
   -> (SerialisedKey -> Bool)
   -> (SerialisedKey -> SerialisedValue -> Maybe (WeakBlobRef m (Handle h)) -> res)
-  -> Readers.Readers IO (Handle h)
+  -> Readers.Readers m (Handle h)
   -> Int
   -> m (V.Vector res, Readers.HasMore)
 readCursorEntriesWhile hfs hbio resolve keyIsWanted fromEntry readers n =
@@ -1022,13 +1105,13 @@ readCursorEntriesWhile hfs hbio resolve keyIsWanted fromEntry readers n =
   where
     -- Produces a result unless the readers have been drained or 'keyIsWanted'
     -- returned False.
-    readEntryIfWanted :: IO (Maybe res, Readers.HasMore)
+    readEntryIfWanted :: m (Maybe res, Readers.HasMore)
     readEntryIfWanted = do
         key <- Readers.peekKey readers
         if keyIsWanted key then readEntry
                            else return (Nothing, Readers.HasMore)
 
-    readEntry :: IO (Maybe res, Readers.HasMore)
+    readEntry :: m (Maybe res, Readers.HasMore)
     readEntry = do
         (key, readerEntry, hasMore) <- Readers.pop hfs hbio readers
         let !entry = Reader.toFullEntry readerEntry
@@ -1045,7 +1128,7 @@ readCursorEntriesWhile hfs hbio resolve keyIsWanted fromEntry readers n =
                 hasMore' <- dropRemaining key
                 handleResolved key entry hasMore'
 
-    dropRemaining :: SerialisedKey -> IO Readers.HasMore
+    dropRemaining :: SerialisedKey -> m Readers.HasMore
     dropRemaining key = do
         (_, hasMore) <- Readers.dropWhileKey hfs hbio readers key
         return hasMore
@@ -1053,7 +1136,7 @@ readCursorEntriesWhile hfs hbio resolve keyIsWanted fromEntry readers n =
     -- Resolve a 'Mupsert' value with the other entries of the same key.
     handleMupdate :: SerialisedKey
                   -> SerialisedValue
-                  -> IO (Maybe res, Readers.HasMore)
+                  -> m (Maybe res, Readers.HasMore)
     handleMupdate key v = do
         nextKey <- Readers.peekKey readers
         if nextKey /= key
@@ -1079,9 +1162,9 @@ readCursorEntriesWhile hfs hbio resolve keyIsWanted fromEntry readers n =
     -- Once we have a resolved entry, we still have to make sure it's not
     -- a 'Delete', since we only want to write values to the result vector.
     handleResolved :: SerialisedKey
-                   -> Entry SerialisedValue (BlobRef.BlobRef IO (Handle h))
+                   -> Entry SerialisedValue (BlobRef.BlobRef m (Handle h))
                    -> Readers.HasMore
-                   -> IO (Maybe res, Readers.HasMore)
+                   -> m (Maybe res, Readers.HasMore)
     handleResolved key entry hasMore =
         case toResult key entry of
           Just !res ->
@@ -1095,7 +1178,7 @@ readCursorEntriesWhile hfs hbio resolve keyIsWanted fromEntry readers n =
               Readers.Drained -> return (Nothing, Readers.Drained)
 
     toResult :: SerialisedKey
-             -> Entry SerialisedValue (BlobRef.BlobRef IO (Handle h))
+             -> Entry SerialisedValue (BlobRef.BlobRef m (Handle h))
              -> Maybe res
     toResult key = \case
         Entry.Insert v -> Just $ fromEntry key v Nothing
@@ -1109,10 +1192,15 @@ readCursorEntriesWhile hfs hbio resolve keyIsWanted fromEntry readers n =
 
 type SnapshotLabel = String
 
-{-# SPECIALISE snapshot :: ResolveSerialisedValue -> SnapshotName -> String -> TableHandle IO h -> IO Int #-}
+{-# SPECIALISE snapshot ::
+     ResolveSerialisedValue
+  -> SnapshotName
+  -> String
+  -> TableHandle IO h
+  -> IO Int #-}
 -- |  See 'Database.LSMTree.Normal.snapshot''.
 snapshot ::
-     m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+     (MonadFix m, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => ResolveSerialisedValue
   -> SnapshotName
   -> SnapshotLabel
@@ -1163,10 +1251,15 @@ snapshot resolve snap label th = do
                       (BSC.pack $ show (label, runNumbers, tableConfig th))
       pure $! V.sum (V.map (\((_ :: (Bool, RunNumber)), rs) -> 1 + V.length rs) runNumbers)
 
-{-# SPECIALISE open :: Session IO h -> SnapshotLabel -> TableConfigOverride -> SnapshotName -> IO (TableHandle IO h) #-}
+{-# SPECIALISE open ::
+     Session IO h
+  -> SnapshotLabel
+  -> TableConfigOverride
+  -> SnapshotName
+  -> IO (TableHandle IO h) #-}
 -- |  See 'Database.LSMTree.Normal.open'.
 open ::
-     m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+     (MonadFix m, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => Session m h
   -> SnapshotLabel -- ^ Expected label
   -> TableConfigOverride -- ^ Optional config override
@@ -1204,10 +1297,16 @@ open sesh label override snap = do
         wbblobs  <- WBB.new hfs blobpath
         newWith sesh seshEnv conf' am WB.empty wbblobs lvls
 
-{-# SPECIALISE openLevels :: TempRegistry IO -> HasFS IO h -> HasBlockIO IO h -> DiskCachePolicy -> V.Vector ((Bool, RunFsPaths), V.Vector RunFsPaths) -> IO (Levels IO (FS.Handle h)) #-}
+{-# SPECIALISE openLevels ::
+     TempRegistry IO
+  -> HasFS IO h
+  -> HasBlockIO IO h
+  -> DiskCachePolicy
+  -> V.Vector ((Bool, RunFsPaths), V.Vector RunFsPaths)
+  -> IO (Levels IO (FS.Handle h)) #-}
 -- | Open multiple levels.
 openLevels ::
-     m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+     (MonadFix m, MonadMask m, MonadMVar m, MonadSTM m, PrimMonad m)
   => TempRegistry m
   -> HasFS m h
   -> HasBlockIO m h
@@ -1229,10 +1328,13 @@ openLevels reg hfs hbio diskCachePolicy levels =
       let !mr = if fst mrPath then SingleRun r else MergingRun var
       pure $! Level mr rs
 
-{-# SPECIALISE deleteSnapshot :: Session IO h -> SnapshotName -> IO () #-}
+{-# SPECIALISE deleteSnapshot ::
+     Session IO h
+  -> SnapshotName
+  -> IO () #-}
 -- |  See 'Database.LSMTree.Common.deleteSnapshot'.
 deleteSnapshot ::
-     m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+     (MonadFix m, MonadMask m, MonadSTM m)
   => Session m h
   -> SnapshotName
   -> m ()
@@ -1248,7 +1350,7 @@ deleteSnapshot sesh snap = do
 {-# SPECIALISE listSnapshots :: Session IO h -> IO [SnapshotName] #-}
 -- |  See 'Database.LSMTree.Common.listSnapshots'.
 listSnapshots ::
-     m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+     (MonadFix m, MonadMask m, MonadSTM m)
   => Session m h
   -> m [SnapshotName]
 listSnapshots sesh = do
@@ -1276,7 +1378,7 @@ listSnapshots sesh = do
 {-# SPECIALISE duplicate :: TableHandle IO h -> IO (TableHandle IO h) #-}
 -- | See 'Database.LSMTree.Normal.duplicate'.
 duplicate ::
-     m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+     (MonadFix m, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => TableHandle m h
   -> m (TableHandle m h)
 duplicate th = do

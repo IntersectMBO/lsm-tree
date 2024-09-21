@@ -16,6 +16,10 @@ module Database.LSMTree.Internal.Merge (
 
 import           Control.Exception (assert)
 import           Control.Monad (when)
+import           Control.Monad.Class.MonadST (MonadST)
+import           Control.Monad.Class.MonadSTM (MonadSTM (..))
+import           Control.Monad.Class.MonadThrow (MonadCatch, MonadThrow (..))
+import           Control.Monad.Fix (MonadFix)
 import           Control.Monad.Primitive (PrimState, RealWorld)
 import           Control.RefCount (RefCount (..))
 import           Data.Coerce (coerce)
@@ -63,9 +67,7 @@ data Level = MidLevel | LastLevel
 
 type Mappend = SerialisedValue -> SerialisedValue -> SerialisedValue
 
--- | Returns 'Nothing' if no input 'Run' contains any entries.
--- The list of runs should be sorted from new to old.
-new ::
+{-# SPECIALISE new ::
      HasFS IO h
   -> HasBlockIO IO h
   -> RunDataCaching
@@ -74,7 +76,20 @@ new ::
   -> Mappend
   -> Run.RunFsPaths
   -> V.Vector (Run IO (FS.Handle h))
-  -> IO (Maybe (Merge IO h))
+  -> IO (Maybe (Merge IO h)) #-}
+-- | Returns 'Nothing' if no input 'Run' contains any entries.
+-- The list of runs should be sorted from new to old.
+new ::
+     (MonadCatch m, MonadSTM m, MonadST m)
+  => HasFS m h
+  -> HasBlockIO m h
+  -> RunDataCaching
+  -> RunBloomFilterAlloc
+  -> Level
+  -> Mappend
+  -> Run.RunFsPaths
+  -> V.Vector (Run m (FS.Handle h))
+  -> m (Maybe (Merge m h))
 new fs hbio mergeCaching alloc mergeLevel mergeMappend targetPaths runs = do
     -- no offset, no write buffer
     mreaders <- Readers.new fs hbio Readers.NoOffsetKey Nothing runs
@@ -89,17 +104,20 @@ new fs hbio mergeCaching alloc mergeLevel mergeMappend targetPaths runs = do
         , ..
         }
 
-
+{-# SPECIALISE close :: Merge IO (FS.Handle h) -> IO () #-}
 -- | This function should be called when discarding a 'Merge' before it
 -- was done (i.e. returned 'MergeComplete'). This removes the incomplete files
 -- created for the new run so far and avoids leaking file handles.
 --
 -- Once it has been called, do not use the 'Merge' any more!
-close :: Merge IO h -> IO ()
+close :: (MonadFix m, MonadSTM m, MonadST m) => Merge m h -> m ()
 close Merge {..} = do
     Builder.close mergeHasFS mergeBuilder
     Readers.close mergeHasFS mergeHasBlockIO mergeReaders
 
+{-# SPECIALISE complete ::
+     Merge IO h
+  -> IO (Run IO (FS.Handle h)) #-}
 -- | Complete a 'Merge', returning a new 'Run' as the result of merging the
 -- input runs. This function will /not/ do any merging work if there is any
 -- remaining. That is, if not enough 'steps' were performed to exhaust the input
@@ -108,7 +126,10 @@ close Merge {..} = do
 -- Note: this function creates new 'Run' resources, so it is recommended to run
 -- this function with async exceptions masked. Otherwise, these resources can
 -- leak.
-complete :: Merge IO h -> IO (Run IO (FS.Handle h))
+complete ::
+     (MonadFix m, MonadSTM m, MonadST m, MonadThrow m)
+  => Merge m h
+  -> m (Run m (FS.Handle h))
 complete Merge{..} = do
     readMutVar mergeLastStepResult >>= \case
       MergeInProgress -> error "complete: Merge is not yet completed!"
@@ -116,10 +137,18 @@ complete Merge{..} = do
         Run.fromMutable mergeHasFS mergeHasBlockIO mergeCaching
                         (RefCount 1) mergeBuilder
 
+{-# SPECIALISE stepsToCompletion ::
+     Merge IO h
+  -> Int
+  -> IO (Run IO (FS.Handle h)) #-}
 -- | Like 'steps', but calling 'complete' once the merge is finished.
 --
 -- Note: run with async exceptions masked. See 'complete'.
-stepsToCompletion :: Merge IO h -> Int -> IO (Run IO (FS.Handle h))
+stepsToCompletion ::
+      (MonadCatch m, MonadFix m, MonadSTM m, MonadST m)
+   => Merge m h
+   -> Int
+   -> m (Run m (FS.Handle h))
 stepsToCompletion m stepBatchSize = go
   where
     go = do
@@ -127,10 +156,18 @@ stepsToCompletion m stepBatchSize = go
         (_, MergeInProgress) -> go
         (_, MergeComplete)   -> complete m
 
+{-# SPECIALISE stepsToCompletionCounted ::
+     Merge IO h
+  -> Int
+  -> IO (Int, Run IO (FS.Handle h)) #-}
 -- | Like 'steps', but calling 'complete' once the merge is finished.
 --
 -- Note: run with async exceptions masked. See 'complete'.
-stepsToCompletionCounted :: Merge IO h -> Int -> IO (Int, Run IO (FS.Handle h))
+stepsToCompletionCounted ::
+     (MonadCatch m, MonadFix m, MonadSTM m, MonadST m)
+  => Merge m h
+  -> Int
+  -> m (Int, Run m (FS.Handle h))
 stepsToCompletionCounted m stepBatchSize = go 0
   where
     go !stepsSum = do
@@ -146,6 +183,10 @@ stepsInvariant requestedSteps = \case
     (n, MergeInProgress) -> n >= requestedSteps
     _                    -> True
 
+{-# SPECIALISE steps ::
+     Merge IO h
+  -> Int
+  -> IO (Int, StepResult) #-}
 -- | Do at least a given number of steps of merging. Each step reads a single
 -- entry, then either resolves the previous entry with the new one or writes it
 -- out to the run being created. Since we always finish resolving a key we
@@ -154,9 +195,11 @@ stepsInvariant requestedSteps = \case
 -- Returns the number of input entries read, which is guaranteed to be at least
 -- as many as requested (unless the merge is complete).
 steps ::
-     Merge IO h
+     forall h m.
+     (MonadCatch m, MonadSTM m, MonadST m)
+  => Merge m h
   -> Int  -- ^ How many input entries to consume (at least)
-  -> IO (Int, StepResult)
+  -> m (Int, StepResult)
 steps Merge {..} requestedSteps = assertStepsInvariant <$> do
     -- TODO: ideally, we would not check whether the merge was already done on
     -- every call to @steps@. It is important for correctness, however, that we
@@ -173,6 +216,7 @@ steps Merge {..} requestedSteps = assertStepsInvariant <$> do
     fs = mergeHasFS
     hbio = mergeHasBlockIO
 
+    go :: Int -> m (Int, StepResult)
     go !n
       | n >= requestedSteps =
           return (n, MergeInProgress)
@@ -234,14 +278,21 @@ steps Merge {..} requestedSteps = assertStepsInvariant <$> do
             writeMutVar mergeLastStepResult $! MergeComplete
             pure (n + dropped, MergeComplete)
 
-
-writeReaderEntry ::
+{-# SPECIALISE writeReaderEntry ::
      HasFS IO h
   -> Level
   -> RunBuilder RealWorld (FS.Handle h)
   -> SerialisedKey
   -> Reader.Entry IO (FS.Handle h)
-  -> IO ()
+  -> IO () #-}
+writeReaderEntry ::
+     (MonadSTM m, MonadST m, MonadThrow m)
+  => HasFS m h
+  -> Level
+  -> RunBuilder (PrimState m) (FS.Handle h)
+  -> SerialisedKey
+  -> Reader.Entry m (FS.Handle h)
+  -> m ()
 writeReaderEntry fs level builder key (Reader.Entry entryFull) =
       -- Small entry.
       -- Note that this small entry could be the only one on the page. We only
@@ -269,13 +320,21 @@ writeReaderEntry fs level builder key entry@(Reader.EntryOverflow prefix page _ 
         -- no blob, directly copy all pages as they are
         Builder.addLargeSerialisedKeyOp fs builder key page overflowPages
 
-writeSerialisedEntry ::
+{-# SPECIALISE writeSerialisedEntry ::
      HasFS IO h
   -> Level
   -> RunBuilder RealWorld (FS.Handle h)
   -> SerialisedKey
   -> Entry SerialisedValue (BlobRef IO (FS.Handle h))
-  -> IO ()
+  -> IO () #-}
+writeSerialisedEntry ::
+     (MonadSTM m, MonadST m, MonadThrow m)
+  => HasFS m h
+  -> Level
+  -> RunBuilder (PrimState m) (FS.Handle h)
+  -> SerialisedKey
+  -> Entry SerialisedValue (BlobRef m (FS.Handle h))
+  -> m ()
 writeSerialisedEntry fs level builder key entry =
     when (shouldWriteEntry level entry) $
       Builder.addKeyOp fs builder key entry
