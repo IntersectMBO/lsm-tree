@@ -24,6 +24,12 @@ module Database.LSMTree.Internal.MergeSchedule (
   , maxRunSize
   ) where
 
+import           Control.Concurrent.Class.MonadMVar (MonadMVar)
+import           Control.Monad.Class.MonadST (MonadST)
+import           Control.Monad.Class.MonadSTM (MonadSTM (..))
+import           Control.Monad.Class.MonadThrow (MonadCatch, MonadMask,
+                     MonadThrow (..))
+import           Control.Monad.Fix (MonadFix)
 import           Control.Monad.Primitive
 import           Control.TempRegistry
 import           Control.Tracer
@@ -165,8 +171,15 @@ data MergingRunState m h =
     CompletedMerge !(Run m h)
   | OngoingMerge !(V.Vector (Run m h)) !(Merge m h)
 
-{-# SPECIALISE forRunM_ :: Levels IO h -> (Run IO h -> IO ()) -> IO () #-}
-forRunM_ :: PrimMonad m => Levels m h -> (Run m h -> m ()) -> m ()
+{-# SPECIALISE forRunM_ ::
+     Levels IO h
+  -> (Run IO h -> IO ())
+  -> IO () #-}
+forRunM_ ::
+     PrimMonad m
+  => Levels m h
+  -> (Run m h -> m ())
+  -> m ()
 forRunM_ lvls k = V.forM_ lvls $ \(Level mr rs) -> do
     case mr of
       SingleRun r    -> k r
@@ -176,8 +189,17 @@ forRunM_ lvls k = V.forM_ lvls $ \(Level mr rs) -> do
     V.mapM_ k rs
 
 
-{-# SPECIALISE foldRunM :: (b -> Run IO h -> IO b) -> b -> Levels IO h -> IO b #-}
-foldRunM :: PrimMonad m => (b -> Run m h -> m b) -> b -> Levels m h -> m b
+{-# SPECIALISE foldRunM ::
+     (b -> Run IO h -> IO b)
+  -> b
+  -> Levels IO h
+  -> IO b #-}
+foldRunM ::
+     PrimMonad m
+  => (b -> Run m h -> m b)
+  -> b
+  -> Levels m h
+  -> m b
 foldRunM f x lvls = flip (flip V.foldM x) lvls $ \y (Level mr rs) -> do
     z <- case mr of
       SingleRun r -> f y r
@@ -186,11 +208,18 @@ foldRunM f x lvls = flip (flip V.foldM x) lvls $ \y (Level mr rs) -> do
         OngoingMerge irs _m -> V.foldM f y irs
     V.foldM f z rs
 
-{-# SPECIALISE forRunM :: Levels IO h -> (Run IO h -> IO a) -> IO (V.Vector a) #-}
+{-# SPECIALISE forRunM ::
+     Levels IO h
+  -> (Run IO h -> IO a)
+  -> IO (V.Vector a) #-}
 -- TODO: this is not terribly performant, but it is also not sure if we are
 -- going to need this in the end. We might get rid of the LevelsCache, and we
 -- currently only use forRunM in mkLevelsCache.
-forRunM :: PrimMonad m => Levels m h -> (Run m h -> m a) -> m (V.Vector a)
+forRunM ::
+     PrimMonad m
+  => Levels m h
+  -> (Run m h -> m a)
+  -> m (V.Vector a)
 forRunM lvls k = do
     V.reverse . V.fromList <$> foldRunM (\acc r -> k r >>= \x -> pure (x : acc)) [] lvls
 
@@ -198,7 +227,18 @@ forRunM lvls k = do
   Flushes and scheduled merges
 -------------------------------------------------------------------------------}
 
-{-# SPECIALISE updatesWithInterleavedFlushes :: Tracer IO (AtLevel MergeTrace) -> TableConfig -> ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob) -> TempRegistry IO -> TableContent IO h -> IO (TableContent IO h) #-}
+{-# SPECIALISE updatesWithInterleavedFlushes ::
+     Tracer IO (AtLevel MergeTrace)
+  -> TableConfig
+  -> ResolveSerialisedValue
+  -> HasFS IO h
+  -> HasBlockIO IO h
+  -> SessionRoot
+  -> UniqCounter IO
+  -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob)
+  -> TempRegistry IO
+  -> TableContent IO h
+  -> IO (TableContent IO h) #-}
 -- | A single batch of updates can fill up the write buffer multiple times. We
 -- flush the write buffer each time it fills up before trying to fill it up
 -- again.
@@ -224,7 +264,8 @@ forRunM lvls k = do
 -- and write those to disk. Of course, any remainder that did not fit into a
 -- whole run should then end up in a fresh write buffer.
 updatesWithInterleavedFlushes ::
-     forall m h. m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+     forall m h.
+     (MonadFix m, MonadMask m, MonadMVar m, MonadSTM m, MonadST m)
   => Tracer m (AtLevel MergeTrace)
   -> TableConfig
   -> ResolveSerialisedValue
@@ -256,17 +297,26 @@ updatesWithInterleavedFlushes tr conf resolve hfs hbio root uc es reg tc = do
   where
     AllocNumEntries maxn = confWriteBufferAlloc conf
 
--- | Add entries to the write buffer up until a certain write buffer size @n@.
---
--- NOTE: if the write buffer is larger @n@ already, this is a no-op.
-addWriteBufferEntries ::
+{-# SPECIALISE addWriteBufferEntries ::
      HasFS IO h
   -> ResolveSerialisedValue
   -> WriteBufferBlobs IO h
   -> NumEntries
   -> WriteBuffer
   -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob)
-  -> IO (WriteBuffer, V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob))
+  -> IO (WriteBuffer, V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob)) #-}
+-- | Add entries to the write buffer up until a certain write buffer size @n@.
+--
+-- NOTE: if the write buffer is larger @n@ already, this is a no-op.
+addWriteBufferEntries ::
+     (MonadSTM m, MonadThrow m, PrimMonad m)
+  => HasFS m h
+  -> ResolveSerialisedValue
+  -> WriteBufferBlobs m h
+  -> NumEntries
+  -> WriteBuffer
+  -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob)
+  -> m (WriteBuffer, V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob))
 addWriteBufferEntries hfs f wbblobs maxn =
     \wb es ->
       (\ r@(wb', es') ->
@@ -290,13 +340,23 @@ addWriteBufferEntries hfs f wbblobs maxn =
       | otherwise = pure (wb, es)
 
 
-{-# SPECIALISE flushWriteBuffer :: Tracer IO (AtLevel MergeTrace) -> TableConfig -> ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> TempRegistry IO -> TableContent IO h -> IO (TableContent IO h) #-}
+{-# SPECIALISE flushWriteBuffer ::
+     Tracer IO (AtLevel MergeTrace)
+  -> TableConfig
+  -> ResolveSerialisedValue
+  -> HasFS IO h
+  -> HasBlockIO IO h
+  -> SessionRoot
+  -> UniqCounter IO
+  -> TempRegistry IO
+  -> TableContent IO h
+  -> IO (TableContent IO h) #-}
 -- | Flush the write buffer to disk, regardless of whether it is full or not.
 --
 -- The returned table content contains an updated set of levels, where the write
 -- buffer is inserted into level 1.
 flushWriteBuffer ::
-     m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+     (MonadFix m, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => Tracer m (AtLevel MergeTrace)
   -> TableConfig
   -> ResolveSerialisedValue
@@ -417,13 +477,25 @@ _levelsInvariant conf levels =
     fitsUB policy r ln = Run.runNumEntries r <= maxRunSize sr wba policy ln
 -}
 
-{-# SPECIALISE addRunToLevels :: Tracer IO (AtLevel MergeTrace) -> TableConfig -> ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> SessionRoot -> UniqCounter IO -> Run IO (Handle h) -> TempRegistry IO -> Levels IO (Handle h) -> IO (Levels IO (Handle h)) #-}
+{-# SPECIALISE addRunToLevels ::
+     Tracer IO (AtLevel MergeTrace)
+  -> TableConfig
+  -> ResolveSerialisedValue
+  -> HasFS IO h
+  -> HasBlockIO IO h
+  -> SessionRoot
+  -> UniqCounter IO
+  -> Run IO (Handle h)
+  -> TempRegistry IO
+  -> Levels IO (Handle h)
+  -> IO (Levels IO (Handle h)) #-}
 -- | Add a run to the levels, and propagate merges.
 --
 -- NOTE: @go@ is based on the @ScheduledMerges.increment@ prototype. See @ScheduledMerges.increment@
 -- for documentation about the merge algorithm.
 addRunToLevels ::
-     forall m h. m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+     forall m h.
+     (MonadFix m, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => Tracer m (AtLevel MergeTrace)
   -> TableConfig
   -> ResolveSerialisedValue
@@ -571,11 +643,12 @@ runSize run = Run.runNumEntries run
 --
 -- >>> unNumEntries . maxRunSize Four (AllocNumEntries (NumEntries 2)) LevelLevelling . LevelNo <$> [0, 1, 2, 3, 4]
 -- [0,8,32,128,512]
-maxRunSize :: SizeRatio
-           -> WriteBufferAlloc
-           -> MergePolicyForLevel
-           -> LevelNo
-           -> NumEntries
+maxRunSize ::
+     SizeRatio
+  -> WriteBufferAlloc
+  -> MergePolicyForLevel
+  -> LevelNo
+  -> NumEntries
 maxRunSize (sizeRatioInt -> sizeRatio) (AllocNumEntries (NumEntries bufferSize))
            policy (LevelNo ln) =
     NumEntries $ case policy of
@@ -601,7 +674,7 @@ levelIsFull sr rs = V.length rs + 1 >= (sizeRatioInt sr)
 
 {-# SPECIALISE mergeRuns :: ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> RunDataCaching -> RunBloomFilterAlloc -> RunFsPaths -> Merge.Level -> V.Vector (Run IO (Handle h)) -> IO (Run IO (Handle h)) #-}
 mergeRuns ::
-     m ~ IO
+     (MonadCatch m, MonadFix m, MonadST m, MonadSTM m)
   => ResolveSerialisedValue
   -> HasFS m h
   -> HasBlockIO m h

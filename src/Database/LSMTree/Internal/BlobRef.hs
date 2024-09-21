@@ -21,7 +21,9 @@ module Database.LSMTree.Internal.BlobRef (
 
 import           Control.DeepSeq (NFData (..))
 import           Control.Monad (when)
-import           Control.Monad.Class.MonadThrow (Exception, bracket, throwIO)
+import           Control.Monad.Class.MonadThrow (Exception, MonadMask,
+                     MonadThrow (..), bracket, throwIO)
+import           Control.Monad.Primitive
 import           Control.RefCount (RefCounter)
 import qualified Control.RefCount as RC
 import           Data.Coerce (coerce)
@@ -77,6 +79,10 @@ newtype WeakBlobRefInvalid = WeakBlobRefInvalid Int
   deriving stock (Show)
   deriving anyclass (Exception)
 
+{-# SPECIALISE withWeakBlobRef ::
+     WeakBlobRef IO h
+  -> (BlobRef IO h -> IO a)
+  -> IO a #-}
 -- | 'WeakBlobRef's are weak references. They do not keep the blob file open.
 -- Dereference a 'WeakBlobRef' to a strong 'BlobRef' to allow I\/O using
 -- 'readBlob' or 'readBlobIOOp'. Use 'removeReference' when the 'BlobRef' is
@@ -84,28 +90,46 @@ newtype WeakBlobRefInvalid = WeakBlobRefInvalid Int
 --
 -- Throws 'WeakBlobRefInvalid' if the weak reference has become invalid.
 --
-withWeakBlobRef :: m ~ IO
-                => WeakBlobRef m h
-                -> (BlobRef m h -> m a) -> m a
+withWeakBlobRef ::
+     (MonadMask m, PrimMonad m)
+  => WeakBlobRef m h
+  -> (BlobRef m h -> m a)
+  -> m a
 withWeakBlobRef wref = bracket (deRefWeakBlobRef wref) removeReference
 
+{-# SPECIALISE withWeakBlobRefs ::
+     V.Vector (WeakBlobRef IO h)
+  -> (V.Vector (BlobRef IO h) -> IO a)
+  -> IO a #-}
 -- | The same as 'withWeakBlobRef' but for many references in one go.
 --
-withWeakBlobRefs :: m ~ IO
-                 => V.Vector (WeakBlobRef m h)
-                 -> (V.Vector (BlobRef m h) -> m a) -> m a
+withWeakBlobRefs ::
+     (MonadMask m, PrimMonad m)
+  => V.Vector (WeakBlobRef m h)
+  -> (V.Vector (BlobRef m h) -> m a)
+  -> m a
 withWeakBlobRefs wrefs = bracket (deRefWeakBlobRefs wrefs) removeReferences
 
-deRefWeakBlobRef :: m ~ IO => WeakBlobRef m h -> m (BlobRef m h)
+{-# SPECIALISE deRefWeakBlobRef ::
+     WeakBlobRef IO h
+  -> IO (BlobRef IO h) #-}
+deRefWeakBlobRef ::
+     (MonadThrow m, PrimMonad m)
+  => WeakBlobRef m h
+  -> m (BlobRef m h)
 deRefWeakBlobRef (WeakBlobRef ref) = do
     ok <- RC.upgradeWeakReference (blobRefCount ref)
     when (not ok) $ throwIO (WeakBlobRefInvalid 0)
     pure ref
 
-deRefWeakBlobRefs :: forall m h.
-                     m ~ IO
-                  => V.Vector (WeakBlobRef m h)
-                  -> m (V.Vector (BlobRef m h))
+{-# SPECIALISE deRefWeakBlobRefs ::
+     V.Vector (WeakBlobRef IO h)
+  -> IO (V.Vector (BlobRef IO h)) #-}
+deRefWeakBlobRefs ::
+    forall m h.
+     (MonadMask m, PrimMonad m)
+  => V.Vector (WeakBlobRef m h)
+  -> m (V.Vector (BlobRef m h))
 deRefWeakBlobRefs wrefs = do
     let refs :: V.Vector (BlobRef m h)
         refs = coerce wrefs -- safely coerce away the newtype wrappers
@@ -117,13 +141,23 @@ deRefWeakBlobRefs wrefs = do
         throwIO (WeakBlobRefInvalid i)
     pure refs
 
-removeReference :: m ~ IO => BlobRef m h -> m ()
+{-# SPECIALISE removeReference :: BlobRef IO h -> IO () #-}
+removeReference :: (MonadMask m, PrimMonad m) => BlobRef m h -> m ()
 removeReference = RC.removeReference . blobRefCount
 
-removeReferences :: m ~ IO => V.Vector (BlobRef m h) -> m ()
+{-# SPECIALISE removeReferences :: V.Vector (BlobRef IO h) -> IO () #-}
+removeReferences :: (MonadMask m, PrimMonad m) => V.Vector (BlobRef m h) -> m ()
 removeReferences = V.mapM_ removeReference
 
-readBlob :: HasFS IO h -> BlobRef m (FS.Handle h) -> IO SerialisedBlob
+{-# SPECIALISE readBlob ::
+     HasFS IO h
+  -> BlobRef IO (FS.Handle h)
+  -> IO SerialisedBlob #-}
+readBlob ::
+     (MonadThrow m, PrimMonad m)
+  => HasFS m h
+  -> BlobRef m (FS.Handle h)
+  -> m SerialisedBlob
 readBlob fs BlobRef {
               blobRefFile,
               blobRefSpan = BlobSpan {blobSpanOffset, blobSpanSize}
@@ -138,9 +172,10 @@ readBlob fs BlobRef {
     let !rb = RB.fromByteArray 0 len ba
     return (SerialisedBlob rb)
 
-readBlobIOOp :: P.MutableByteArray s -> Int
-             -> BlobRef m (FS.Handle h)
-             -> FS.IOOp s h
+readBlobIOOp ::
+     P.MutableByteArray s -> Int
+  -> BlobRef m (FS.Handle h)
+  -> FS.IOOp s h
 readBlobIOOp buf bufoff
              BlobRef {
                blobRefFile,
@@ -151,4 +186,3 @@ readBlobIOOp buf bufoff
       (fromIntegral blobSpanOffset :: FS.FileOffset)
       buf (FS.BufferOffset bufoff)
       (fromIntegral blobSpanSize :: FS.ByteCount)
-

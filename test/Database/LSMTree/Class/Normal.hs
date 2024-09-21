@@ -11,7 +11,9 @@ module Database.LSMTree.Class.Normal (
   , withCursor
   ) where
 
-import           Control.Monad.Class.MonadThrow (MonadThrow (..))
+import           Control.Monad.Class.MonadST (MonadST)
+import           Control.Monad.Class.MonadThrow (MonadMask, MonadThrow (..))
+import           Control.Monad.Fix (MonadFix)
 import           Control.Tracer (nullTracer)
 import           Data.Kind (Constraint, Type)
 import           Data.Typeable (Proxy (Proxy), Typeable)
@@ -29,9 +31,15 @@ type IsSession :: ((Type -> Type) -> Type) -> Constraint
 class IsSession s where
     data SessionArgs s :: (Type -> Type) -> Type
 
-    openSession :: IOLike m => SessionArgs s m -> m (s m)
+    openSession ::
+           IOLike m
+        => SessionArgs s m
+        -> m (s m)
 
-    closeSession :: IOLike m => s m -> m ()
+    closeSession ::
+           IOLike m
+        => s m
+        -> m ()
 
     deleteSnapshot ::
            IOLike m
@@ -68,19 +76,27 @@ class (IsSession (Session h)) => IsTableHandle h where
         -> m ()
 
     lookups ::
-           (IOLike m, SerialiseKey k, SerialiseValue v)
+           ( IOLike m
+           , SerialiseKey k
+           , SerialiseValue v
+           )
         => h m k v blob
         -> V.Vector k
         -> m (V.Vector (LookupResult v (BlobRef h m blob)))
 
     rangeLookup ::
-           (IOLike m, SerialiseKey k, SerialiseValue v)
+           ( IOLike m
+           , SerialiseKey k
+           , SerialiseValue v
+           )
         => h m k v blob
         -> Range k
         -> m (V.Vector (QueryResult k v (BlobRef h m blob)))
 
     newCursor ::
-           (IOLike m, SerialiseKey k)
+           ( IOLike m
+           , SerialiseKey k
+           )
         => Maybe k
         -> h m k v blob
         -> m (Cursor h m k v blob)
@@ -92,53 +108,82 @@ class (IsSession (Session h)) => IsTableHandle h where
         -> m ()
 
     readCursor ::
-           (IOLike m, SerialiseKey k, SerialiseValue v)
+           ( IOLike m
+           , SerialiseKey k
+           , SerialiseValue v
+           )
         => proxy h
         -> Int
         -> Cursor h m k v blob
         -> m (V.Vector (QueryResult k v (BlobRef h m blob)))
 
     retrieveBlobs ::
-           (IOLike m, SerialiseValue blob)
+           ( IOLike m
+           , SerialiseValue blob
+             -- Model-specific constraints
+           , Typeable m
+           )
         => proxy h
         -> Session h m
         -> V.Vector (BlobRef h m blob)
         -> m (V.Vector blob)
 
     updates ::
-           (IOLike m, SerialiseKey k, SerialiseValue v, SerialiseValue blob)
+           ( IOLike m
+           , SerialiseKey k
+           , SerialiseValue v
+           , SerialiseValue blob
+           )
         => h m k v blob
         -> V.Vector (k, Update v blob)
         -> m ()
 
     inserts ::
-           (IOLike m, SerialiseKey k, SerialiseValue v, SerialiseValue blob)
+           ( IOLike m
+           , SerialiseKey k
+           , SerialiseValue v
+           , SerialiseValue blob
+           )
         => h m k v blob
         -> V.Vector (k, v, Maybe blob)
         -> m ()
 
     deletes ::
-           (IOLike m, SerialiseKey k, SerialiseValue v, SerialiseValue blob)
+           ( IOLike m
+           , SerialiseKey k
+           , SerialiseValue v
+           , SerialiseValue blob
+           )
         => h m k v blob
         -> V.Vector k
         -> m ()
 
     snapshot ::
-        ( IOLike m, SerialiseKey k, SerialiseValue v, SerialiseValue blob
-        , Labellable (k, v, blob)
-          -- Model-specific constraints
-        , Typeable k, Typeable v, Typeable blob
-        )
+           ( IOLike m
+           , Labellable (k, v, blob)
+           , SerialiseKey k
+           , SerialiseValue v
+           , SerialiseValue blob
+             -- Model-specific constraints
+           , Typeable k
+           , Typeable v
+           , Typeable blob
+           )
         => SnapshotName
         -> h m k v blob
         -> m ()
 
     open ::
-        ( IOLike m, SerialiseKey k, SerialiseValue v, SerialiseValue blob
-        , Labellable (k, v, blob)
-          -- Model-specific constraints
-        , Typeable k, Typeable v, Typeable blob
-        )
+           ( IOLike m
+           , Labellable (k, v, blob)
+           , SerialiseKey k
+           , SerialiseValue v
+           , SerialiseValue blob
+             -- Model-specific constraints
+           , Typeable k
+           , Typeable v
+           , Typeable blob
+           )
         => Session h m
         -> SnapshotName
         -> m (h m k v blob)
@@ -148,18 +193,19 @@ class (IsSession (Session h)) => IsTableHandle h where
         => h m k v blob
         -> m (h m k v blob)
 
-withTableNew ::
-     forall h m k v blob a. (IOLike m, IsTableHandle h)
+withTableNew :: forall h m k v blob a.
+    ( IOLike m
+    , IsTableHandle h
+    )
   => Session h m
   -> TableConfig h
   -> (h m k v blob -> m a)
   -> m a
 withTableNew sesh conf = bracket (new sesh conf) close
 
-withTableOpen ::
-     forall h m k v blob a. ( IOLike m, IsTableHandle h
+withTableOpen :: forall h m k v blob a.
+     ( IOLike m, IsTableHandle h, Labellable (k, v, blob)
      , SerialiseKey k, SerialiseValue v, SerialiseValue blob
-     , Labellable (k, v, blob)
      , Typeable k, Typeable v, Typeable blob
      )
   => Session h m
@@ -168,15 +214,20 @@ withTableOpen ::
   -> m a
 withTableOpen sesh snap = bracket (open sesh snap) close
 
-withTableDuplicate ::
-     forall h m k v blob a. (IOLike m, IsTableHandle h)
+withTableDuplicate :: forall h m k v blob a.
+     ( IOLike m
+     , IsTableHandle h
+     )
   => h m k v blob
   -> (h m k v blob -> m a)
   -> m a
 withTableDuplicate table = bracket (duplicate table) close
 
-withCursor ::
-     forall h m k v blob a. (IOLike m, IsTableHandle h, SerialiseKey k)
+withCursor :: forall h m k v blob a.
+     ( IOLike m
+     , IsTableHandle h
+     , SerialiseKey k
+     )
   => Maybe k
   -> h m k v blob
   -> (Cursor h m k v blob -> m a)
@@ -226,7 +277,7 @@ instance IsTableHandle M.TableHandle where
 instance IsSession R.Session where
     data SessionArgs R.Session m where
       SessionArgs ::
-           forall m h. Typeable h
+           forall m h. (MonadFix m, MonadMask m, MonadST m, Typeable h)
         => HasFS m h -> HasBlockIO m h -> FsPath
         -> SessionArgs R.Session m
 

@@ -162,12 +162,16 @@ import qualified Database.LSMTree.Internal.Vector as V
 -- such instances in use at once.
 type TableHandle = Internal.MonoidalTable
 
-{-# SPECIALISE withTable :: Session IO -> Common.TableConfig -> (TableHandle IO k v -> IO a) -> IO a #-}
+{-# SPECIALISE withTable ::
+     Session IO
+  -> Common.TableConfig
+  -> (TableHandle IO k v -> IO a)
+  -> IO a #-}
 -- | (Asynchronous) exception-safe, bracketed opening and closing of a table.
 --
 -- If possible, it is recommended to use this function instead of 'new' and
 -- 'close'.
-withTable ::
+withTable :: forall m k v a.
      IOLike m
   => Session m
   -> Common.TableConfig
@@ -177,27 +181,32 @@ withTable (Internal.Session' sesh) conf action =
     Internal.withTable sesh conf $
       action . Internal.MonoidalTable
 
-{-# SPECIALISE new :: Session IO -> Common.TableConfig -> IO (TableHandle IO k v) #-}
+{-# SPECIALISE new ::
+     Session IO
+  -> Common.TableConfig
+  -> IO (TableHandle IO k v) #-}
 -- | Create a new empty table, returning a fresh table handle.
 --
 -- NOTE: table handles hold open resources (such as open files) and should be
 -- closed using 'close' as soon as they are no longer used.
 --
-new ::
+new :: forall m k v.
      IOLike m
   => Session m
   -> Common.TableConfig
   -> m (TableHandle m k v)
 new (Internal.Session' sesh) conf = Internal.MonoidalTable <$> Internal.new sesh conf
 
-{-# SPECIALISE close :: TableHandle IO k v -> IO () #-}
+{-# SPECIALISE close ::
+     TableHandle IO k v
+  -> IO () #-}
 -- | Close a table handle. 'close' is idempotent. All operations on a closed
 -- handle will throw an exception.
 --
 -- Any on-disk files and in-memory data that are no longer referenced after
 -- closing the table handle are lost forever. Use 'Snapshot's to ensure data is
 -- not lost.
-close ::
+close :: forall m k v.
      IOLike m
   => TableHandle m k v
   -> m ()
@@ -207,13 +216,17 @@ close (Internal.MonoidalTable th) = Internal.close th
   Table queries
 -------------------------------------------------------------------------------}
 
-{-# SPECIALISE lookups :: (SerialiseKey k, SerialiseValue v, ResolveValue v) => V.Vector k -> TableHandle IO k v -> IO (V.Vector (LookupResult v)) #-}
+{-# SPECIALISE lookups ::
+     (SerialiseKey k, SerialiseValue v, ResolveValue v)
+  => V.Vector k
+  -> TableHandle IO k v
+  -> IO (V.Vector (LookupResult v)) #-}
 {-# INLINEABLE lookups #-}
 -- | Perform a batch of lookups.
 --
 -- Lookups can be performed concurrently from multiple Haskell threads.
-lookups ::
-     forall m k v. (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
+lookups :: forall m k v.
+     (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
   => V.Vector k
   -> TableHandle m k v
   -> m (V.Vector (LookupResult v))
@@ -231,12 +244,16 @@ lookups ks (Internal.MonoidalTable th) =
       Entry.Delete             -> NotFound
     toLookupResult Nothing = NotFound
 
-{-# SPECIALISE rangeLookup :: (SerialiseKey k, SerialiseValue v, ResolveValue v) => Range k -> TableHandle IO k v -> IO (V.Vector (QueryResult k v)) #-}
+{-# SPECIALISE rangeLookup ::
+     (SerialiseKey k, SerialiseValue v, ResolveValue v)
+  => Range k
+  -> TableHandle IO k v
+  -> IO (V.Vector (QueryResult k v)) #-}
 -- | Perform a range lookup.
 --
 -- Range lookups can be performed concurrently from multiple Haskell threads.
-rangeLookup ::
-     forall m k v. (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
+rangeLookup :: forall m k v.
+     (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
   => Range k
   -> TableHandle m k v
   -> m (V.Vector (QueryResult k v))
@@ -259,12 +276,15 @@ rangeLookup range (Internal.MonoidalTable th) =
 type Cursor :: (Type -> Type) -> Type -> Type -> Type
 type Cursor = Internal.MonoidalCursor
 
-{-# SPECIALISE withCursor :: TableHandle IO k v -> (Cursor IO k v -> IO a) -> IO a #-}
+{-# SPECIALISE withCursor ::
+     TableHandle IO k v
+  -> (Cursor IO k v -> IO a)
+  -> IO a #-}
 -- | (Asynchronous) exception-safe, bracketed opening and closing of a cursor.
 --
 -- If possible, it is recommended to use this function instead of 'newCursor'
 -- and 'closeCursor'.
-withCursor ::
+withCursor :: forall m k v a.
      IOLike m
   => TableHandle m k v
   -> (Cursor m k v -> m a)
@@ -272,7 +292,12 @@ withCursor ::
 withCursor (Internal.MonoidalTable th) action =
     Internal.withCursor Internal.NoOffsetKey th (action . Internal.MonoidalCursor)
 
-{-# SPECIALISE withCursorAtOffset :: SerialiseKey k => k -> TableHandle IO k v -> (Cursor IO k v -> IO a) -> IO a #-}
+{-# SPECIALISE withCursorAtOffset ::
+     SerialiseKey k
+  => k
+  -> TableHandle IO k v
+  -> (Cursor IO k v -> IO a)
+  -> IO a #-}
 -- | A variant of 'withCursor' that allows initialising the cursor at an offset
 -- within the table such that the first entry the cursor returns will be the
 -- one with the lowest key that is greater than or equal to the given key.
@@ -280,7 +305,7 @@ withCursor (Internal.MonoidalTable th) action =
 --
 -- NOTE: The ordering of the serialised keys will be used, which can lead to
 -- unexpected results if the 'SerialiseKey' instance is not order-preserving!
-withCursorAtOffset ::
+withCursorAtOffset :: forall m k v a.
      (IOLike m, SerialiseKey k)
   => k
   -> TableHandle m k v
@@ -290,7 +315,9 @@ withCursorAtOffset offset (Internal.MonoidalTable th) action =
     Internal.withCursor (Internal.OffsetKey (Internal.serialiseKey offset)) th $
       action . Internal.MonoidalCursor
 
-{-# SPECIALISE newCursor :: TableHandle IO k v -> IO (Cursor IO k v) #-}
+{-# SPECIALISE newCursor ::
+     TableHandle IO k v
+  -> IO (Cursor IO k v) #-}
 -- | Create a new cursor to read from a given table. Future updates to the table
 -- will not be reflected in the cursor. The cursor starts at the beginning, i.e.
 -- the minimum key of the table.
@@ -299,14 +326,18 @@ withCursorAtOffset offset (Internal.MonoidalTable th) action =
 --
 -- NOTE: cursors hold open resources (such as open files) and should be closed
 -- using 'close' as soon as they are no longer used.
-newCursor ::
+newCursor :: forall m k v.
      IOLike m
   => TableHandle m k v
   -> m (Cursor m k v)
 newCursor (Internal.MonoidalTable th) =
     Internal.MonoidalCursor <$!> Internal.newCursor Internal.NoOffsetKey th
 
-{-# SPECIALISE newCursorAtOffset :: SerialiseKey k => k -> TableHandle IO k v -> IO (Cursor IO k v) #-}
+{-# SPECIALISE newCursorAtOffset ::
+     SerialiseKey k
+  => k
+  -> TableHandle IO k v
+  -> IO (Cursor IO k v) #-}
 -- | A variant of 'newCursor' that allows initialising the cursor at an offset
 -- within the table such that the first entry the cursor returns will be the
 -- one with the lowest key that is greater than or equal to the given key.
@@ -314,7 +345,7 @@ newCursor (Internal.MonoidalTable th) =
 --
 -- NOTE: The ordering of the serialised keys will be used, which can lead to
 -- unexpected results if the 'SerialiseKey' instance is not order-preserving!
-newCursorAtOffset ::
+newCursorAtOffset :: forall m k v.
      (IOLike m, SerialiseKey k)
   => k
   -> TableHandle m k v
@@ -323,16 +354,22 @@ newCursorAtOffset offset (Internal.MonoidalTable th) =
     Internal.MonoidalCursor <$!>
       Internal.newCursor (Internal.OffsetKey (Internal.serialiseKey offset)) th
 
-{-# SPECIALISE closeCursor :: Cursor IO k v -> IO () #-}
+{-# SPECIALISE closeCursor ::
+     Cursor IO k v
+  -> IO () #-}
 -- | Close a cursor. 'closeCursor' is idempotent. All operations on a closed
 -- cursor will throw an exception.
-closeCursor ::
+closeCursor :: forall m k v.
      IOLike m
   => Cursor m k v
   -> m ()
 closeCursor (Internal.MonoidalCursor c) = Internal.closeCursor c
 
-{-# SPECIALISE readCursor :: (SerialiseKey k, SerialiseValue v, ResolveValue v) => Int -> Cursor IO k v -> IO (V.Vector (QueryResult k v)) #-}
+{-# SPECIALISE readCursor ::
+     (SerialiseKey k, SerialiseValue v, ResolveValue v)
+  => Int
+  -> Cursor IO k v
+  -> IO (V.Vector (QueryResult k v)) #-}
 -- | Read the next @n@ entries from the cursor. The resulting vector is shorter
 -- than @n@ if the end of the table has been reached. The cursor state is
 -- updated, so the next read will continue where this one ended.
@@ -342,8 +379,12 @@ closeCursor (Internal.MonoidalCursor c) = Internal.closeCursor c
 --
 -- NOTE: entries are returned in order of the serialised keys, which might not
 -- agree with @Ord k@. See 'SerialiseKey' for more information.
-readCursor ::
-     forall m k v. (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
+readCursor :: forall m k v.
+     ( IOLike m
+     , SerialiseKey k
+     , SerialiseValue v
+     , ResolveValue v
+     )
   => Int
   -> Cursor m k v
   -> m (V.Vector (QueryResult k v))
@@ -356,15 +397,23 @@ readCursor n (Internal.MonoidalCursor c) =
   Table updates
 -------------------------------------------------------------------------------}
 
-{-# SPECIALISE updates :: (SerialiseKey k, SerialiseValue v, ResolveValue v) => V.Vector (k, Update v) -> TableHandle IO k v -> IO () #-}
+{-# SPECIALISE updates ::
+     (SerialiseKey k, SerialiseValue v, ResolveValue v)
+  => V.Vector (k, Update v)
+  -> TableHandle IO k v
+  -> IO () #-}
 -- | Perform a mixed batch of inserts, deletes and monoidal upserts.
 --
 -- If there are duplicate keys in the same batch, then keys nearer to the front
 -- of the vector take precedence.
 --
 -- Updates can be performed concurrently from multiple Haskell threads.
-updates ::
-     forall m k v. (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
+updates :: forall m k v.
+     ( IOLike m
+     , SerialiseKey k
+     , SerialiseValue v
+     , ResolveValue v
+     )
   => V.Vector (k, Update v)
   -> TableHandle m k v
   -> m ()
@@ -377,34 +426,58 @@ updates es (Internal.MonoidalTable th) = do
     serialiseEntry = bimap Internal.serialiseKey serialiseOp
     serialiseOp = first Internal.serialiseValue . Entry.updateToEntryMonoidal
 
-{-# SPECIALISE inserts :: (SerialiseKey k, SerialiseValue v, ResolveValue v) => V.Vector (k, v) -> TableHandle IO k v -> IO () #-}
+{-# SPECIALISE inserts ::
+     (SerialiseKey k, SerialiseValue v, ResolveValue v)
+  => V.Vector (k, v)
+  -> TableHandle IO k v
+  -> IO () #-}
 -- | Perform a batch of inserts.
 --
 -- Inserts can be performed concurrently from multiple Haskell threads.
-inserts ::
-     (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
+inserts :: forall m k v.
+     ( IOLike m
+     , SerialiseKey k
+     , SerialiseValue v
+     , ResolveValue v
+     )
   => V.Vector (k, v)
   -> TableHandle m k v
   -> m ()
 inserts = updates . fmap (second Insert)
 
-{-# SPECIALISE deletes :: (SerialiseKey k, SerialiseValue v, ResolveValue v) => V.Vector k -> TableHandle IO k v -> IO () #-}
+{-# SPECIALISE deletes ::
+     (SerialiseKey k, SerialiseValue v, ResolveValue v)
+  => V.Vector k
+  -> TableHandle IO k v
+  -> IO () #-}
 -- | Perform a batch of deletes.
 --
 -- Deletes can be performed concurrently from multiple Haskell threads.
-deletes ::
-     (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
+deletes :: forall m k v.
+     ( IOLike m
+     , SerialiseKey k
+     , SerialiseValue v
+     , ResolveValue v
+     )
   => V.Vector k
   -> TableHandle m k v
   -> m ()
 deletes = updates . fmap (,Delete)
 
-{-# SPECIALISE mupserts :: (SerialiseKey k, SerialiseValue v, ResolveValue v) => V.Vector (k, v) -> TableHandle IO k v -> IO () #-}
+{-# SPECIALISE mupserts ::
+     (SerialiseKey k, SerialiseValue v, ResolveValue v)
+  => V.Vector (k, v)
+  -> TableHandle IO k v
+  -> IO () #-}
 -- | Perform a batch of monoidal upserts.
 --
 -- Monoidal upserts can be performed concurrently from multiple Haskell threads.
-mupserts ::
-     (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
+mupserts :: forall m k v.
+     ( IOLike m
+     , SerialiseKey k
+     , SerialiseValue v
+     , ResolveValue v
+     )
   => V.Vector (k, v)
   -> TableHandle m k v
   -> m ()
@@ -414,7 +487,11 @@ mupserts = updates . fmap (second Mupsert)
   Snapshots
 -------------------------------------------------------------------------------}
 
-{-# SPECIALISE snapshot :: (SerialiseKey k, SerialiseValue v, ResolveValue v, Common.Labellable (k, v)) => SnapshotName -> TableHandle IO k v -> IO () #-}
+{-# SPECIALISE snapshot ::
+     (SerialiseKey k, SerialiseValue v, ResolveValue v, Common.Labellable (k, v))
+  => SnapshotName
+  -> TableHandle IO k v
+  -> IO () #-}
 -- | Make the current value of a table durable on-disk by taking a snapshot and
 -- giving the snapshot a name. This is the __only__ mechanism to make a table
 -- durable -- ordinary insert\/delete operations are otherwise not preserved.
@@ -437,9 +514,11 @@ mupserts = updates . fmap (second Mupsert)
 -- * It is safe to concurrently make snapshots from any table, provided that
 --   the snapshot names are distinct (otherwise this would be a race).
 --
-snapshot ::
-     forall m k v. ( IOLike m
-     , SerialiseKey k, SerialiseValue v, ResolveValue v
+snapshot :: forall m k v.
+     ( IOLike m
+     , SerialiseKey k
+     , SerialiseValue v
+     , ResolveValue v
      , Common.Labellable (k, v)
      )
   => SnapshotName
@@ -451,7 +530,12 @@ snapshot snap (Internal.MonoidalTable th) =
     -- to ensure we don't open a monoidal table as normal later
     label = Common.makeSnapshotLabel (Proxy @(k, v)) <> " (monoidal)"
 
-{-# SPECIALISE open :: (SerialiseKey k, SerialiseValue v, Common.Labellable (k, v)) => Session IO -> Common.TableConfigOverride -> SnapshotName -> IO (TableHandle IO k v) #-}
+{-# SPECIALISE open ::
+     (SerialiseKey k, SerialiseValue v, Common.Labellable (k, v))
+  => Session IO
+  -> Common.TableConfigOverride
+  -> SnapshotName
+  -> IO (TableHandle IO k v) #-}
 -- | Open a table from a named snapshot, returning a new table handle.
 --
 -- NOTE: close table handles using 'close' as soon as they are
@@ -474,9 +558,10 @@ snapshot snap (Internal.MonoidalTable th) =
 -- TOREMOVE: before snapshots are implemented, the snapshot name should be ignored.
 -- Instead, this function should open a table handle from files that exist in
 -- the session's directory.
-open ::
-     forall m k v. ( IOLike m
-     , SerialiseKey k, SerialiseValue v
+open :: forall m k v.
+     ( IOLike m
+     , SerialiseKey k
+     , SerialiseValue v
      , Common.Labellable (k, v)
      )
   => Session m
@@ -493,7 +578,9 @@ open (Internal.Session' sesh) override snap =
   Multiple writable table handles
 -------------------------------------------------------------------------------}
 
-{-# SPECIALISE duplicate :: TableHandle IO k v -> IO (TableHandle IO k v) #-}
+{-# SPECIALISE duplicate ::
+     TableHandle IO k v
+  -> IO (TableHandle IO k v) #-}
 -- | Create a logically independent duplicate of a table handle. This returns a
 -- new table handle.
 --
@@ -525,7 +612,7 @@ open (Internal.Session' sesh) override snap =
 -- NOTE: duplication create a new table handle, which should be closed when no
 -- longer needed.
 --
-duplicate ::
+duplicate :: forall m k v.
      IOLike m
   => TableHandle m k v
   -> m (TableHandle m k v)
@@ -535,7 +622,11 @@ duplicate (Internal.MonoidalTable th) = Internal.MonoidalTable <$> Internal.dupl
   Merging tables
 -------------------------------------------------------------------------------}
 
-{-# SPECIALISE merge :: ResolveValue v => TableHandle IO k v -> TableHandle IO k v -> IO (TableHandle IO k v) #-}
+{-# SPECIALISE merge ::
+     ResolveValue v
+  => TableHandle IO k v
+  -> TableHandle IO k v
+  -> IO (TableHandle IO k v) #-}
 -- | Merge full tables, creating a new table handle.
 --
 -- Multiple tables of the same type but with different configuration parameters
@@ -544,8 +635,10 @@ duplicate (Internal.MonoidalTable th) = Internal.MonoidalTable <$> Internal.dupl
 --
 -- NOTE: merging table handles creates a new table handle, but does not close
 -- the table handles that were used as inputs.
-merge ::
-     (IOLike m, ResolveValue v)
+merge :: forall m k v.
+     ( IOLike m
+     , ResolveValue v
+     )
   => TableHandle m k v
   -> TableHandle m k v
   -> m (TableHandle m k v)
@@ -589,15 +682,15 @@ class ResolveValue v where
   resolveValue :: Proxy v -> RawBytes -> RawBytes -> RawBytes
 
 -- | Test the __Valid Output__ law for the 'ResolveValue' class
-resolveValueValidOutput ::
-     forall v. (SerialiseValue v, ResolveValue v, NFData v)
+resolveValueValidOutput :: forall v.
+     (SerialiseValue v, ResolveValue v, NFData v)
   => v -> v -> Bool
 resolveValueValidOutput (serialiseValue -> x) (serialiseValue -> y) =
     (deserialiseValue (resolveValue (Proxy @v) x y) :: v) `deepseq` True
 
 -- | Test the __Associativity__ law for the 'ResolveValue' class
-resolveValueAssociativity ::
-     forall v. (SerialiseValue v, ResolveValue v)
+resolveValueAssociativity :: forall v.
+     (SerialiseValue v, ResolveValue v)
   => v -> v -> v -> Bool
 resolveValueAssociativity (serialiseValue -> x) (serialiseValue -> y) (serialiseValue -> z) =
     x <+> (y <+> z) == (x <+> y) <+> z
@@ -617,13 +710,13 @@ resolveValueAssociativity (serialiseValue -> x) (serialiseValue -> y) (serialise
 --
 -- * [Associativity] The provided function should be associative.
 -- * [Totality] The provided function should be total.
-resolveDeserialised ::
+resolveDeserialised :: forall v.
      SerialiseValue v
   => (v -> v -> v) -> Proxy v -> RawBytes -> RawBytes -> RawBytes
 resolveDeserialised f _ x y =
     serialiseValue (f (deserialiseValue x) (deserialiseValue y))
 
-resolve :: ResolveValue v => Proxy v -> Internal.ResolveSerialisedValue
+resolve ::  forall v. ResolveValue v => Proxy v -> Internal.ResolveSerialisedValue
 resolve = coerce . resolveValue
 
 -- | Mostly to give an example instance (plus the property tests for it).
