@@ -508,17 +508,18 @@ toLBS numEntries index =
   Also see module "Database.LSMTree.Internal.IndexCompactAcc".
 -}
 
--- | By writing out the version in host endianness, we also indicate endianness.
--- During deserialisation, we would discover an endianness mismatch.
-indexVersion :: Word32
-indexVersion = 1
+-- | By writing out the type–version indicator in host endianness, we also
+-- indicate endianness. During deserialisation, we would discover an endianness
+-- mismatch.
+supportedTypeAndVersion :: Word32
+supportedTypeAndVersion = 0x0001
 
 -- | 64 bits, to be used before writing any other parts of the serialised file!
 headerLBS :: LBS.ByteString
 headerLBS =
     -- create a single 4 byte chunk
     BB.toLazyByteStringWith (BB.safeStrategy 4 BB.smallChunkSize) mempty $
-      BB.word32Host indexVersion <> BB.word32Host 0
+      BB.word32Host supportedTypeAndVersion <> BB.word32Host 0
 
 -- | A chunk of the primary array, which can be constructed incrementally.
 data Chunk = Chunk { cPrimary :: !(VU.Vector Word64) }
@@ -594,7 +595,7 @@ putPaddingTo64 written
 --
 -- Also note that the implementation reads values in little-endian byte order.
 -- If the file has been serialised in big-endian order, the mismatch will be
--- detected by looking at the version indicator.
+-- detected by looking at the type–version indicator.
 fromSBS :: ShortByteString -> Either String (NumEntries, IndexCompact)
 fromSBS (SBS ba') = do
     let ba = ByteArray ba'
@@ -602,10 +603,12 @@ fromSBS (SBS ba') = do
     when (mod8 len8 /= 0) $ Left "Length is not multiple of 64 bit"
     when (len8 < 24) $ Left "Doesn't contain header and footer"
 
-    -- check version
-    let version = indexByteArray ba 0 :: Word32
-    when (version == byteSwap32 indexVersion) $ Left "Non-matching endianness"
-    when (version /= indexVersion) $ Left "Unsupported version"
+    -- check type and version
+    let typeAndVersion = indexByteArray ba 0 :: Word32
+    when (typeAndVersion == byteSwap32 supportedTypeAndVersion)
+         (Left "Non-matching endianness")
+    when (typeAndVersion /= supportedTypeAndVersion)
+         (Left "Unsupported type or version")
 
     -- read footer
     let len64 = div8 len8
@@ -620,7 +623,7 @@ fromSBS (SBS ba') = do
 
     -- read vectors
     -- offsets in 64 bits
-    let off1_64 = 1  -- after version indicator
+    let off1_64 = 1  -- after type–version indicator
     (!off2_64, icPrimary) <- getVec64 "Primary array" ba off1_64 numPages
     -- offsets in 64 bits
     let !off3 = off2_64

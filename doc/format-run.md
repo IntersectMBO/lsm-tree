@@ -175,6 +175,23 @@ ordinary index type.
 The type of index in use is metadata that must be known for the whole LSM table
 handle. It does not vary per run.
 
+Independently of the concrete index serialization format, the type and the
+version of the format are stored at the beginning as a 32-bit number called the
+type–version indicator. A type–version indicator has the following shape, where
+bit numbers refer to significance:
+
+* Bits 0–7 contain the version number.
+* Bits 8–15 contain a number denoting the type of the index.
+* Bits 16–31 are zero.
+
+As a result, a type–version indicator can be written in hexadecimal with only
+4-digits of which the two most significant denote the type and the two least
+significant constitute the version number. Version numbers are assigned
+independently for each particular type. A version number must not be zero, which
+ensures that from the way the type–version indicator is stored one can determine
+whether the concrete serialised index stores numbers in little-endian or
+big-endian.
+
 ### Compact index
 
 The compact index type is designed to work with keys that are large
@@ -187,11 +204,10 @@ For this important special case, we can do significantly better than storing a
 whole key per page: we can typically store just 8 bytes (64bits) per page. This
 is a factor of 4 saving for 32 byte keys.
 
-Just as the bloom filter, the compact index file format starts with a 32 bit
-format identifier / format version, which determines the format and endianness
-of the rest of the file. This field is padded to 64 bits.
+The type of compact indexes is denoted by the number 0. The type–version
+indicator in a serialised compact index is padded to 64 bits.
 
-For version 1, the representation after the version identifier consists of
+For version 1, the representation after the type–version indicator consists of
 1. a primary array of 64bit words, one entry per page in the index
 2. a clash indicator bit vector, one bit per page in the index
 3. a larger-than-page indicator bit vector, one bit per page in the index
@@ -226,7 +242,7 @@ is expected to be decoded, rather than to be accessed in-place.
 
 |     |                 | elements   | size  | alignment | trailing padding to |
 |-----|-----------------|------------|-------|-----------|---------------------|
-| 0   | version         | 1          | 32bit | 32bit     | 64bit (at the end)  |
+| 0   | type, version   | 1          | 32bit | 32bit     | 64bit (at the end)  |
 | 1   | primary array   | n          | 64bit | 64bit     |                     |
 | 2   | clash indicator | ceil(n/64) | 64bit | 64bit     |                     |
 | 3   | LTP indicator   | ceil(n/64) | 64bit | 64bit     |                     |
@@ -253,11 +269,10 @@ this, the following constraints on the sequence of stored keys follow:
 * The sequence must be non-empty.
 * The elements of the sequence must be non-decreasing.
 
-Like a compact-index file, an ordinary-index file starts with a 32 bit number
-that states the format version and, as a side effect, also determines the
-endianness used in the file.
+The type of compact indexes is denoted by the number 1. The type–version
+indicator in a serialised ordinary index is not padded.
 
-For version 1, the file contents after the version identifier consist of the
+For version 1, the file contents after the type–version indicator consist of the
 following:
 1. A sequence of keys, where each key is stored as a 16 bit number stating the
    length of its serialised form followed by the serialised form itself
@@ -272,7 +287,7 @@ sequentially without any gaps.
 
 |   |                | elements   | size   |
 |---|----------------|------------|--------|
-| 0 | version        | 1          | 32 bit |
+| 0 | type, version  | 1          | 32 bit |
 | 1 | key sequence   | n          |        |
 | 2 | number of keys | 1          | 64 bit |
 

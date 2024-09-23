@@ -34,11 +34,11 @@ import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.Vector (binarySearchL, mkPrimVector)
 
 {-|
-    The version of the index and its serialisation format that is supported by
-    this module.
+    The type–version indicator for the ordinary index and its serialisation
+    format as supported by this module.
 -}
-supportedVersion :: Word32
-supportedVersion = 1
+supportedTypeAndVersion :: Word32
+supportedTypeAndVersion = 0x0101
 
 {-|
     A general-purpose fence pointer index.
@@ -109,10 +109,10 @@ fromSBS :: ShortByteString -> Either String (NumEntries, IndexOrdinary)
 fromSBS shortByteString@(SBS unliftedByteArray)
     | fullSize < 12
         = Left "Doesn't contain header and footer"
-    | version == byteSwap32 supportedVersion
+    | typeAndVersion == byteSwap32 supportedTypeAndVersion
         = Left "Non-matching endianness"
-    | version /= supportedVersion
-        = Left "Unsupported version"
+    | typeAndVersion /= supportedTypeAndVersion
+        = Left "Unsupported type or version"
     | otherwise
         = (,) <$> entryCount <*> index
     where
@@ -126,8 +126,8 @@ fromSBS shortByteString@(SBS unliftedByteArray)
     fullBytes :: Primitive.Vector Word8
     fullBytes = mkPrimVector 0 fullSize byteArray
 
-    version :: Word32
-    version = indexByteArray byteArray 0
+    typeAndVersion :: Word32
+    typeAndVersion = indexByteArray byteArray 0
 
     postVersionBytes :: Primitive.Vector Word8
     postVersionBytes = Primitive.drop 4 fullBytes
