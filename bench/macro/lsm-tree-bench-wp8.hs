@@ -42,11 +42,11 @@ import           Control.Concurrent (getNumCapabilities)
 import           Control.Concurrent.Async
 import           Control.Concurrent.MVar
 import           Control.DeepSeq (force)
-import           Control.Exception (evaluate)
+import           Control.Exception (evaluate, assert)
 import           Control.Monad (forM_, unless, void, when)
+import           Control.Monad.Trans.State.Strict (runState, state)
+import           Control.Monad.ST (ST, RealWorld, stToIO)
 import           Control.Tracer
-import qualified Crypto.Hash.SHA256 as SHA256
-import qualified Data.Binary as B
 import qualified Data.ByteString.Short as BS
 import qualified Data.Foldable as Fold
 import qualified Data.IntSet as IS
@@ -54,13 +54,14 @@ import           Data.IORef (modifyIORef', newIORef, readIORef, writeIORef)
 import qualified Data.List.NonEmpty as NE
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Traversable (mapAccumL)
-import           Data.Tuple (swap)
+import qualified Data.Primitive as P
 import qualified Data.Vector as V
+import qualified Data.Vector.Unboxed as VU
+import qualified Data.Vector.Primitive as VP
+import qualified Data.Vector.Primitive.Mutable as VPM
 import           Data.Void (Void)
 import           Data.Word (Word32, Word64)
 import qualified GHC.Stats as GHC
-import qualified MCG
 import qualified Options.Applicative as O
 import           Prelude hiding (lookup)
 import qualified System.Clock as Clock
@@ -70,6 +71,8 @@ import qualified System.FS.BlockIO.IO as FsIO
 import qualified System.FS.IO as FsIO
 import           System.IO
 import           System.Mem (performMajorGC)
+import           System.Random as Random
+import           System.Random.SplitMix as Random.SM
 import           Text.Printf (printf)
 import           Text.Show.Pretty
 
@@ -78,12 +81,14 @@ import           Database.LSMTree.Extras
 -- We should be able to write this benchmark
 -- using only use public lsm-tree interface
 import qualified Database.LSMTree.Normal as LSM
+import qualified Database.LSMTree.Internal.RawBytes as RB
+import           Database.LSMTree.Extras.Orphans ()
 
 -------------------------------------------------------------------------------
 -- Keys and values
 -------------------------------------------------------------------------------
 
-type K = BS.ShortByteString
+type K = RB.RawBytes
 type V = BS.ShortByteString
 type B = Void
 
@@ -96,8 +101,28 @@ instance LSM.Labellable (K, V, B) where
 -- I think this approach of generating keys should match UTxO quite well.
 -- This is purely CPU bound operation, and we should be able to push IO
 -- when doing these in between.
+makeKey :: Int -> K
+makeKey seed =
+    case P.runPrimArray $ do
+           v <- P.newPrimArray 4
+           let g0 = mkStdGen seed
+           let (!w0, !g1) = Random.genWord64 g0
+           P.writePrimArray v 0 w0
+           let (!w1, !g2) = Random.genWord64 g1
+           P.writePrimArray v 1 w1
+           let (!w2, !g3) = Random.genWord64 g2
+           P.writePrimArray v 2 w2
+           let (!w3, _g4) = Random.genWord64 g3
+           P.writePrimArray v 3 w3
+           return v
+ 
+      of (P.PrimArray ba :: P.PrimArray Word64) ->
+           RB.RawBytes (VP.Vector 0 32 (P.ByteArray ba))
+
+{-
 makeKey :: Word64 -> K
 makeKey w64 = BS.toShort (SHA256.hashlazy (B.encode w64) <> "==")
+-}
 
 -- We use constant value. This shouldn't affect anything.
 theValue :: V
@@ -129,7 +154,7 @@ data RunOpts = RunOpts
     { batchCount :: !Int
     , batchSize  :: !Int
     , check      :: !Bool
-    , seed       :: !Word64
+    , seed       :: !Int
     , pipelined  :: !Bool
     }
   deriving stock Show
@@ -392,7 +417,7 @@ doSetup' gopts opts = do
             --
             -- TODO: LSM.inserts has annoying order
             flip LSM.inserts tbh $ V.fromList [
-                  (makeKey (fromIntegral i), theValue, Nothing)
+                  (makeKey i, theValue, Nothing)
                 | i <- NE.toList batch
                 ]
 
@@ -425,7 +450,7 @@ doDryRun' gopts opts = do
        printf "Probability of a duplicate:                          %5f\n" p
        printf "Expected number of duplicates (extreme upper bound): %5f out of %f\n" q n
 
-    let g0 = initGen (initialSize gopts) (batchSize opts) (batchCount opts) (seed opts)
+    let g0 = Random.mkStdGen (seed opts)
 
     keysRef <- newIORef $
         if check opts
@@ -434,8 +459,8 @@ doDryRun' gopts opts = do
     duplicateRef <- newIORef (0 :: Int)
 
     void $ forFoldM_ g0 [ 0 .. batchCount opts - 1 ] $ \b g -> do
-        let lookups :: V.Vector Word64
-            inserts :: V.Vector Word64
+        let lookups :: VU.Vector Int
+            inserts :: VU.Vector Int
             (!g', lookups, inserts) = generateBatch' (initialSize gopts) (batchSize opts) g b
 
         when (check opts) $ do
@@ -460,17 +485,8 @@ doDryRun' gopts opts = do
     when (check opts) $
         let anyOverlap = (not . null)
                            (batchOverlaps (initialSize gopts) (batchSize opts)
-                                          (batchCount opts) (seed opts))
+                                          (batchCount opts) (mkStdGen (seed opts)))
          in putStrLn $ "Any adjacent batches with overlap: " ++ show anyOverlap
-
--------------------------------------------------------------------------------
--- PRNG initialisation
--------------------------------------------------------------------------------
-
-initGen :: Int -> Int -> Int -> Word64 -> MCG.MCG
-initGen initialSize batchSize batchCount seed =
-    let period = initialSize + batchSize * batchCount
-     in MCG.make (fromIntegral period) seed
 
 -------------------------------------------------------------------------------
 -- Batch generation
@@ -479,16 +495,16 @@ initGen initialSize batchSize batchCount seed =
 generateBatch
     :: Int       -- ^ initial size of the collection
     -> Int       -- ^ batch size
-    -> MCG.MCG   -- ^ generator
+    -> StdGen   -- ^ generator
     -> Int       -- ^ batch number
-    -> (MCG.MCG, V.Vector K, V.Vector (K, LSM.Update V B))
+    -> (StdGen, V.Vector K, V.Vector (K, LSM.Update V B))
 generateBatch initialSize batchSize g b =
     (g', lookups', inserts')
   where
     (lookups', inserts')    = toOperations lookups inserts
     (!g', lookups, inserts) = generateBatch' initialSize batchSize g b
 
-{- | Implement generation of unbounded sequence of insert/delete operations
+{- | Implement generation of unbounded sequence of insert\/delete operations
 
 matching UTxO style from spec: interleaved batches insert and lookup
 configurable batch sizes
@@ -499,34 +515,115 @@ We could also make it exact, but then we'll need to carry some state around
 (at least the difference).
 
 -}
+{-# INLINE generateBatch' #-}
 generateBatch'
     :: Int       -- ^ initial size of the collection
     -> Int       -- ^ batch size
-    -> MCG.MCG   -- ^ generator
+    -> StdGen    -- ^ generator
     -> Int       -- ^ batch number
-    -> (MCG.MCG, V.Vector Word64, V.Vector Word64)
+    -> (StdGen, VU.Vector Int, VU.Vector Int)
 generateBatch' initialSize batchSize g b = (g'', lookups, inserts)
   where
-    maxK :: Word64
-    maxK = fromIntegral $ initialSize + batchSize * b
+    maxK :: Int
+    maxK = initialSize + batchSize * b
 
-    lookups :: V.Vector Word64
-    (!g'', lookups) = mapAccumL (\g' _ -> swap (MCG.reject maxK g'))
-                                g (V.enumFromTo 1 batchSize)
+    lookups :: VU.Vector Int
+    (lookups, !g'') =
+       runState (VU.replicateM batchSize (state (Random.uniformR (0, maxK)))) g
 
-    inserts :: V.Vector Word64
-    inserts = V.enumFromTo maxK (maxK + fromIntegral batchSize - 1)
+    inserts :: VU.Vector Int
+    inserts = VU.enumFromTo maxK (maxK + batchSize - 1)
 
 -- | Generate operation inputs
-toOperations :: V.Vector Word64 -> V.Vector Word64 -> (V.Vector K, V.Vector (K, LSM.Update V B))
+--TODO: 82% of benchmark allocations are from this function (makeKey)
+{-# INLINE toOperations #-}
+toOperations :: VU.Vector Int -> VU.Vector Int -> (V.Vector K, V.Vector (K, LSM.Update V B))
 toOperations lookups inserts = (batch1, batch2)
   where
     batch1 :: V.Vector K
-    batch1 = V.map makeKey lookups
+    batch1 = V.map makeKey (V.convert lookups)
 
     batch2 :: V.Vector (K, LSM.Update V B)
-    batch2 = V.map (\k -> (k, LSM.Delete)) batch1 V.++
-             V.map (\k -> (makeKey k, LSM.Insert theValue Nothing)) inserts
+    batch2 = V.map (\k -> (k, LSM.Delete)) batch1
+        V.++ V.map (\k -> (makeKey k, LSM.Insert theValue Nothing))
+                          (V.convert inserts)
+
+-- | Manage creation of batches of LSM operations for the benchmark.
+--
+-- The 'withKeyBatch' has a special rule which is that the vectors passed to
+-- the action /must not escape/ the body of the action.
+--
+-- The implementation is not kosher. We construct mutable string buffers
+-- ('kbLookupKeyData' and 'kbInsertKeyData'), we arrange for the pure vectors
+-- of operations to use the mutable strings. Then we mutate the strings for
+-- each batch, and then hand out the modified vectors of operations.
+data MOpBatches = MOpBatches {
+                    kbInitialSize   :: !Int,
+                    kbBatchSize     :: !Int,
+                    kbLookupKeyData :: !(VP.MVector RealWorld Word64),
+                    kbInsertKeyData :: !(VP.MVector RealWorld Word64),
+                    kbLookupKeys    :: !(V.Vector K),
+                    kbUpdateOps     :: !(V.Vector (K, LSM.Update V B))
+                  }
+
+initOpBatches :: Int -> Int -> IO MOpBatches
+initOpBatches = \kbInitialSize kbBatchSize -> do
+    kbLookupKeyData <- VPM.new (4 * kbBatchSize)
+    kbInsertKeyData <- VPM.new (4 * kbBatchSize)
+    VP.Vector _ _ lba <- VP.unsafeFreeze kbLookupKeyData
+    let !kbLookupKeys = V.generate kbBatchSize $ \i ->
+                          RB.RawBytes (VP.Vector (i*32) 32 lba)
+    VP.Vector _ _ iba <- VP.unsafeFreeze kbInsertKeyData
+    let !kbInsertKeys = V.generate kbBatchSize $ \i ->
+                          RB.RawBytes (VP.Vector (i*32) 32 iba)
+        !kbUpdateOps  = V.map (\k -> (k, LSM.Delete)) kbLookupKeys
+                   V.++ V.map (\k -> (k, insertTheValue)) kbInsertKeys
+
+
+    return $! MOpBatches{..}
+  where
+    insertTheValue = LSM.Insert theValue Nothing
+
+{-# INLINE withOpBatch #-}
+withOpBatch :: MOpBatches
+            -> StdGen    -- ^ generator
+            -> Int       -- ^ batch number
+            -> (StdGen -> V.Vector K
+                       -> V.Vector (K, LSM.Update V B)
+                       -> IO a)
+            -> IO a
+withOpBatch MOpBatches{..} g0 b action = do
+    gn <- genLookups 0 g0
+    genInserts 0 maxK
+    action gn kbLookupKeys kbUpdateOps
+  where
+    maxK :: Int
+    !maxK = kbInitialSize + kbBatchSize * b
+
+    genLookups !i !g | i == kbBatchSize = return g
+    genLookups !i !g = do
+      let (!ki, !g') = Random.uniformR (0, maxK) g
+      stToIO $ makeKeyM ki (VPM.slice (4 * i) 4 kbLookupKeyData)
+      genLookups (i+1) g'
+
+    genInserts !i !_  | i == kbBatchSize = return ()
+    genInserts !i !ki = do
+      stToIO $ makeKeyM ki (VPM.slice (4 * i) 4 kbInsertKeyData)
+      genInserts (i+1) (ki+1)
+
+{-# NOINLINE makeKeyM #-} 
+makeKeyM :: Int -> VP.MVector s Word64 -> ST s ()
+makeKeyM !seed !v = assert (VPM.length v == 4) $ do
+      let !g0 = Random.SM.mkSMGen (fromIntegral seed)
+      let (!w0, !g1) = Random.SM.nextWord64 g0
+      VPM.write v 0 w0
+      let (!w1, !g2) = Random.SM.nextWord64 g1
+      VPM.write v 1 w1
+      let (!w2, !g3) = Random.SM.nextWord64 g2
+      VPM.write v 2 w2
+      let (!w3, _g4) = Random.SM.nextWord64 g3
+      VPM.write v 3 w3
+      return ()
 
 -------------------------------------------------------------------------------
 -- run
@@ -557,7 +654,7 @@ doRun gopts opts = do
         -- In checking mode, compare each output against a pure reference.
         checkvar <- newIORef $ pureReference
                                  (initialSize gopts) (batchSize opts)
-                                 (batchCount opts) (seed opts)
+                                 (batchCount opts) (mkStdGen (seed opts))
         let fcheck | not (check opts) = \_ _ -> return ()
                   | otherwise = \b y -> do
               (x:xs) <- readIORef checkvar
@@ -576,7 +673,7 @@ doRun gopts opts = do
             (initialSize gopts)
             (batchSize opts)
             (batchCount opts)
-            (seed opts)
+            (mkStdGen (seed opts))
             tbl
           putStrLn ""
 
@@ -591,14 +688,13 @@ type LookupResults = V.Vector (K, LSM.LookupResult V ())
 
 {-# INLINE sequentialIteration #-}
 sequentialIteration :: (Int -> LookupResults -> IO ())
-                    -> Int
-                    -> Int
+                    -> MOpBatches
                     -> LSM.TableHandle IO K V B
                     -> Int
-                    -> MCG.MCG
-                    -> IO MCG.MCG
-sequentialIteration output !initialSize !batchSize !tbl !b !g = do
-    let (!g', ls, is) = generateBatch initialSize batchSize g b
+                    -> StdGen
+                    -> IO StdGen
+sequentialIteration output keybatches !tbl !b !g =
+  withOpBatch keybatches g b $ \g' ls is -> do
 
     -- lookups
     results <- LSM.lookups ls tbl
@@ -606,19 +702,18 @@ sequentialIteration output !initialSize !batchSize !tbl !b !g = do
 
     -- deletes and inserts
     --LSM.updates is tbl
-
-    -- continue to the next batch
+    
+    -- continue to next batch
     return g'
 
 sequentialIterations :: (Int -> LookupResults -> IO ())
-                     -> Int -> Int -> Int -> Word64
+                     -> Int -> Int -> Int -> StdGen
                      -> LSM.TableHandle IO K V B
                      -> IO ()
-sequentialIterations output !initialSize !batchSize !batchCount !seed !tbl =
+sequentialIterations output !initialSize !batchSize !batchCount !g0 !tbl = do
+    keybatches <- initOpBatches initialSize batchSize
     void $ forFoldM_ g0 [ 0 .. batchCount - 1 ] $ \b g ->
-      sequentialIteration output initialSize batchSize tbl b g
-  where
-    g0 = initGen initialSize batchSize batchCount seed
+      sequentialIteration output keybatches tbl b g
 
 -------------------------------------------------------------------------------
 -- pipelined
@@ -670,21 +765,20 @@ And the initial setup looks like this:
 4. Sync !  (db_3, updates)        2. Sync ?  (db_3, updates)
 -}
 pipelinedIteration :: (Int -> LookupResults -> IO ())
-                   -> Int
-                   -> Int
+                   -> MOpBatches
                    -> MVar (LSM.TableHandle IO K V B, Map K (LSM.Update V B))
                    -> MVar (LSM.TableHandle IO K V B, Map K (LSM.Update V B))
-                   -> MVar MCG.MCG
-                   -> MVar MCG.MCG
+                   -> MVar StdGen
+                   -> MVar StdGen
                    -> LSM.TableHandle IO K V B
                    -> Int
                    -> IO (LSM.TableHandle IO K V B)
-pipelinedIteration output !initialSize !batchSize
+pipelinedIteration output opbatches
                    !syncTblIn !syncTblOut
                    !syncRngIn !syncRngOut
                    !tbl_n !b = do
-    g <- takeMVar syncRngIn
-    let (!g', !ls, !is) = generateBatch initialSize batchSize g b
+  g <- takeMVar syncRngIn
+  withOpBatch opbatches g b $ \ !g' !ls !is -> do
 
     -- 1: perform the lookups
     lrs <- LSM.lookups ls tbl_n
@@ -719,40 +813,40 @@ pipelinedIteration output !initialSize !batchSize
             Just u  -> (k, updateToLookupResult u)
 
 pipelinedIterations :: (Int -> LookupResults -> IO ())
-                    -> Int -> Int -> Int -> Word64
+                    -> Int -> Int -> Int -> StdGen
                     -> LSM.TableHandle IO K V B
                     -> IO ()
-pipelinedIterations output !initialSize !batchSize !batchCount !seed tbl_0 = do
+pipelinedIterations output !initialSize !batchSize !batchCount !g0 tbl_0 = do
     n <- getNumCapabilities
     printf "INFO: the pipelined benchmark is running with %d capabilities.\n" n
+
+    opbatches <- initOpBatches initialSize batchSize
 
     syncTblA2B <- newEmptyMVar
     syncTblB2A <- newEmptyMVar
     syncRngA2B <- newEmptyMVar
     syncRngB2A <- newEmptyMVar
 
-    let g0 = initGen initialSize batchSize batchCount seed
-
     tbl_1 <- LSM.duplicate tbl_0
-    let prelude = do
-          let (g1, ls0, is0) = generateBatch initialSize batchSize g0 0
-          lrs0 <- LSM.lookups ls0 tbl_0
-          output 0 $! V.zip ls0 (fmap (fmap (const ())) lrs0)
-          LSM.updates is0 tbl_1
-          let !delta = Map.fromList (V.toList is0)
-          putMVar syncTblA2B (tbl_1, delta)
-          putMVar syncRngA2B g1
+    let prelude =
+          withOpBatch opbatches g0 0 $ \ !g1 !ls0 !is0 -> do
+            lrs0 <- LSM.lookups ls0 tbl_0
+            output 0 $! V.zip ls0 (fmap (fmap (const ())) lrs0)
+            LSM.updates is0 tbl_1
+            let !delta = Map.fromList (V.toList is0)
+            putMVar syncTblA2B (tbl_1, delta)
+            putMVar syncRngA2B g1
 
         threadA =
           forFoldM_ tbl_1 [ 2, 4 .. batchCount - 1 ] $ \b tbl_n ->
-            pipelinedIteration output initialSize batchSize
+            pipelinedIteration output opbatches
                                syncTblB2A syncTblA2B -- in, out
                                syncRngB2A syncRngA2B -- in, out
                                tbl_n b
 
         threadB =
           forFoldM_ tbl_0 [ 1, 3 .. batchCount - 1 ] $ \b tbl_n ->
-            pipelinedIteration output initialSize batchSize
+            pipelinedIteration output opbatches
                                syncTblA2B syncTblB2A -- in, out
                                syncRngA2B syncRngB2A -- in, out
                                tbl_n b
@@ -769,12 +863,10 @@ pipelinedIterations output !initialSize !batchSize !batchCount !seed tbl_0 = do
 -- Testing
 -------------------------------------------------------------------------------
 
-pureReference :: Int -> Int -> Int -> Word64 -> [V.Vector (K, LSM.LookupResult V ())]
-pureReference !initialSize !batchSize !batchCount !seed =
+pureReference :: Int -> Int -> Int -> StdGen -> [V.Vector (K, LSM.LookupResult V ())]
+pureReference !initialSize !batchSize !batchCount !g0 =
     generate g0 Map.empty 0
   where
-    g0 = initGen initialSize batchSize batchCount seed
-
     generate !_ !_ !b | b == batchCount = []
     generate !g !m !b = results : generate g' m' (b+1)
       where
@@ -797,8 +889,8 @@ updateToLookupResult  LSM.Delete             = LSM.NotFound
 -- some overlap to get proper coverage. So this function is used as a coverage
 -- check.
 --
-batchOverlaps :: Int -> Int -> Int -> Word64 -> [IS.IntSet]
-batchOverlaps initialSize batchSize batchCount seed =
+batchOverlaps :: Int -> Int -> Int -> StdGen -> [IS.IntSet]
+batchOverlaps initialSize batchSize batchCount g0 =
     let xs = generate g0 0
 
      in filter (not . IS.null)
@@ -810,8 +902,6 @@ batchOverlaps initialSize batchSize batchCount seed =
     generate g b = (lookups, inserts) : generate g' (b+1)
       where
         (g', lookups, inserts) = generateBatch' initialSize batchSize g b
-
-    g0 = initGen initialSize batchSize batchCount seed
 
 -------------------------------------------------------------------------------
 -- main
@@ -836,13 +926,15 @@ main = do
 -------------------------------------------------------------------------------
 
 forFoldM_ :: Monad m => s -> [a] -> (a -> s -> m s) -> m s
-forFoldM_ !s []     _ = return s
-forFoldM_ !s (x:xs) f = do
-    !s' <- f x s
-    forFoldM_ s' xs f
+forFoldM_ !s0 xs0 f = go s0 xs0
+  where
+    go !s []     = return s
+    go !s (x:xs) = do
+      !s' <- f x s
+      go s' xs
 
-intSetFromVector :: V.Vector Word64 -> IS.IntSet
-intSetFromVector = V.foldl' (\acc x -> IS.insert (fromIntegral x) acc) IS.empty
+intSetFromVector :: VU.Vector Int -> IS.IntSet
+intSetFromVector = VU.foldl' (\acc x -> IS.insert x acc) IS.empty
 
 -------------------------------------------------------------------------------
 -- unused for now

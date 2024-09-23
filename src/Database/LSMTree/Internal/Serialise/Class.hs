@@ -84,8 +84,6 @@ serialiseKeyMinimalSize x = RB.size (serialiseKey x) >= 8
 class SerialiseValue v where
   serialiseValue :: v -> RawBytes
   deserialiseValue :: RawBytes -> v
-  -- | Deserialisation when bytes are split into multiple chunks.
-  --
   -- TODO: Unused so far, we might not need it.
   deserialiseValueN :: [RawBytes] -> v
 
@@ -212,6 +210,20 @@ instance SerialiseValue P.ByteArray where
   deserialiseValue = RB.force
   deserialiseValueN = foldMap RB.force
 
+{-
+{-------------------------------------------------------------------------------
+ ByteArray
+-------------------------------------------------------------------------------}
+
+instance SerialiseKey RawBytes where
+  serialiseKey x = x
+  deserialiseKey x = x
+
+instance SerialiseValue RawBytes where
+  serialiseValue x = x
+  deserialiseValue x = x
+  deserialiseValueN = mconcat
+-}
 {-------------------------------------------------------------------------------
 Void
 -------------------------------------------------------------------------------}

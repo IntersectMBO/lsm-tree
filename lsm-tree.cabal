@@ -505,20 +505,21 @@ benchmark lsm-tree-bench-wp8
   build-depends:
     , async
     , base
-    , binary
     , bytestring
     , clock
     , containers
     , contra-tracer
-    , cryptohash-sha256
     , deepseq
     , fs-api
     , lsm-tree
     , lsm-tree:blockio-api
     , lsm-tree:extras
-    , lsm-tree:mcg
     , optparse-applicative
     , pretty-show
+    , primitive
+    , random
+    , splitmix
+    , transformers
     , vector
 
   ghc-options:    -rtsopts -with-rtsopts=-T -threaded
