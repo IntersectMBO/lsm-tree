@@ -208,6 +208,7 @@ close (Internal.MonoidalTable th) = Internal.close th
 -------------------------------------------------------------------------------}
 
 {-# SPECIALISE lookups :: (SerialiseKey k, SerialiseValue v, ResolveValue v) => V.Vector k -> TableHandle IO k v -> IO (V.Vector (LookupResult v)) #-}
+{-# INLINEABLE lookups #-}
 -- | Perform a batch of lookups.
 --
 -- Lookups can be performed concurrently from multiple Haskell threads.
@@ -217,21 +218,18 @@ lookups ::
   -> TableHandle m k v
   -> m (V.Vector (LookupResult v))
 lookups ks (Internal.MonoidalTable th) =
-    V.mapStrict (fmap Internal.deserialiseValue) <$!>
+    V.map toLookupResult <$>
     Internal.lookups
       (resolve @v Proxy)
       (V.map Internal.serialiseKey ks)
       th
-      toMonoidalLookupResult
-
-toMonoidalLookupResult :: Maybe (Entry.Entry v b) -> LookupResult v
-toMonoidalLookupResult = \case
-    Just e -> case e of
-      Entry.Insert v           -> Found v
-      Entry.InsertWithBlob _ _ -> error "toMonoidalLookupResult: InsertWithBlob unexpected"
-      Entry.Mupdate v          -> Found v
+  where
+    toLookupResult (Just e) = case e of
+      Entry.Insert v           -> Found (Internal.deserialiseValue v)
+      Entry.InsertWithBlob _ _ -> error "Monoidal.lookups: unexpected InsertWithBlob"
+      Entry.Mupdate v          -> Found (Internal.deserialiseValue v)
       Entry.Delete             -> NotFound
-    Nothing -> NotFound
+    toLookupResult Nothing = NotFound
 
 {-# SPECIALISE rangeLookup :: (SerialiseKey k, SerialiseValue v, ResolveValue v) => Range k -> TableHandle IO k v -> IO (V.Vector (QueryResult k v)) #-}
 -- | Perform a range lookup.
