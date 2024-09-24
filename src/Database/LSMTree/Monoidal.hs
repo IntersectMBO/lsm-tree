@@ -238,11 +238,14 @@ toMonoidalLookupResult = \case
 --
 -- Range lookups can be performed concurrently from multiple Haskell threads.
 rangeLookup ::
-     (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
+     forall m k v. (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
   => Range k
   -> TableHandle m k v
   -> m (V.Vector (QueryResult k v))
-rangeLookup = undefined
+rangeLookup range (Internal.MonoidalTable th) =
+    Internal.rangeLookup (resolve @v Proxy)(Internal.serialiseKey <$> range) th $ \k v mblob ->
+      assert (null mblob) $
+        FoundInQuery (Internal.deserialiseKey k) (Internal.deserialiseValue v)
 
 {-------------------------------------------------------------------------------
   Cursor

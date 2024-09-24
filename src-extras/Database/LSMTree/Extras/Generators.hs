@@ -74,7 +74,7 @@ import qualified Database.LSMTree.Normal as Normal
 import           GHC.Generics (Generic)
 import qualified Test.QuickCheck as QC
 import           Test.QuickCheck (Arbitrary (..), Arbitrary1 (..),
-                     Arbitrary2 (..), Gen, Property, frequency, oneof)
+                     Arbitrary2 (..), Gen, Property, elements, frequency)
 import           Test.QuickCheck.Gen (genDouble)
 import           Test.QuickCheck.Instances ()
 
@@ -116,11 +116,19 @@ instance Arbitrary1 Monoidal.Update where
     Monoidal.Mupsert v -> Monoidal.Insert v : map Monoidal.Mupsert (shrinkVal v)
     Monoidal.Delete    -> []
 
-instance Arbitrary k => Arbitrary (Range k) where
-  arbitrary = oneof
-    [ FromToExcluding <$> arbitrary <*> arbitrary
-    , FromToIncluding <$> arbitrary <*> arbitrary
-    ]
+instance (Arbitrary k, Ord k) => Arbitrary (Range k) where
+  arbitrary = do
+    key1 <- arbitrary
+    key2 <- arbitrary `QC.suchThat` (/= key1)
+    (lb, ub) <- frequency
+      [ (1, pure (key1, key1))                    -- lb == ub
+      , (1, pure (max key1 key2, min key1 key2))  -- lb > ub
+      , (8, pure (min key1 key2, max key1 key2))  -- lb < ub
+      ]
+    elements
+      [ FromToExcluding lb ub
+      , FromToIncluding lb ub
+      ]
 
   shrink (FromToExcluding f t) =
     uncurry FromToExcluding <$> shrink (f, t)

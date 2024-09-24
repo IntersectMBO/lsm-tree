@@ -50,10 +50,8 @@ tests = testGroup "Test.Database.LSMTree.Internal" [
           testProperty "prop_interimOpenTable" prop_interimOpenTable
         ]
     , testGroup "Cursor" [
-          testProperty "prop_roundtripCursor" $
-            prop_roundtripCursor Nothing
-        , testProperty "prop_roundtripCursor at offset" $
-            prop_roundtripCursor . Just
+          testProperty "prop_roundtripCursor" $ withMaxSuccess 500 $
+            prop_roundtripCursor
         ]
     ]
 
@@ -203,22 +201,24 @@ prop_interimOpenTable dat = ioProperty $
 --  readCursor . newCursor . inserts == id
 -- @
 --
--- If an offset is provided:
+-- If lower and upper bound are provided:
 --
 -- @
---  readCursor . newCursorAt offset . inserts == dropWhile ((< offset) . key)
+--  readCursorWhile (<= ub) . newCursorAt lb . inserts
+--    == takeWhile ((<= ub) . key) . dropWhile ((< lb) . key)
 -- @
 prop_roundtripCursor ::
-     Maybe KeyForIndexCompact
+     Maybe KeyForIndexCompact  -- ^ Inclusive lower bound
+  -> Maybe KeyForIndexCompact  -- ^ Inclusive upper bound
   -> V.Vector (KeyForIndexCompact, Entry SerialisedValue SerialisedBlob)
   -> Property
-prop_roundtripCursor offset kops = ioProperty $
+prop_roundtripCursor lb ub kops = ioProperty $
     withTempIOHasBlockIO "prop_roundtripCursor" $ \hfs hbio -> do
       withSession nullTracer hfs hbio (FS.mkFsPath []) $ \sesh -> do
         withTable sesh conf $ \th -> do
           updates appendSerialisedValue (coerce kopsWithoutblobs) th
-          fromCursor <- withCursor offsetKey th $
-            readWholeCursor appendSerialisedValue
+          fromCursor <- withCursor (toOffsetKey lb) th $
+            readCursorUntil appendSerialisedValue ub
           return $ tabulate "duplicates" (show <$> Map.elems duplicates) $
             expected === fromCursor
   where
@@ -229,13 +229,14 @@ prop_roundtripCursor offset kops = ioProperty $
       where f (InsertWithBlob v _) = Insert v
             f x                    = x
 
-    offsetKey = maybe NoOffsetKey (OffsetKey . coerce) offset
+    toOffsetKey = maybe NoOffsetKey (OffsetKey . coerce)
 
     expected =
       V.fromList . mapMaybe (traverse entryToValue) $
-        maybe id (\k -> dropWhile ((< k) . fst)) offset $
-          Map.assocs . Map.fromListWith (combine appendSerialisedValue) $
-            V.toList kopsWithoutblobs
+        maybe id (\k -> takeWhile ((<= k) . fst)) ub $
+          maybe id (\k -> dropWhile ((< k) . fst)) lb $
+            Map.assocs . Map.fromListWith (combine appendSerialisedValue) $
+              V.toList kopsWithoutblobs
 
     entryToValue :: Entry v b -> Maybe (v, Maybe b)
     entryToValue = \case
@@ -250,17 +251,20 @@ prop_roundtripCursor offset kops = ioProperty $
         Map.fromListWith (+) . map (\(k, _) -> (k, 1)) $
           V.toList kops
 
-readWholeCursor ::
+readCursorUntil ::
      ResolveSerialisedValue
+  -> Maybe KeyForIndexCompact  -- Inclusive upper bound
   -> Cursor IO h
   -> IO (V.Vector (KeyForIndexCompact, (SerialisedValue, Maybe b)))
-readWholeCursor resolve cursor = go V.empty
+readCursorUntil resolve ub cursor = go V.empty
   where
     chunkSize = 50
     toResult k v b = (coerce k, (v, fmap toBlob b))
 
     go !acc = do
-      res <- readCursor resolve chunkSize cursor toResult
+      res <- case ub of
+        Nothing -> readCursor resolve chunkSize cursor toResult
+        Just k  -> readCursorWhile resolve (<= coerce k) chunkSize cursor toResult
       if V.length res < chunkSize then return (acc <> res)
                                   else go (acc <> res)
 
