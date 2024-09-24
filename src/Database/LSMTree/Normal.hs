@@ -280,6 +280,7 @@ close (Internal.NormalTable th) = Internal.close th
 -------------------------------------------------------------------------------}
 
 {-# SPECIALISE lookups :: (SerialiseKey k, SerialiseValue v) => V.Vector k -> TableHandle IO k v blob -> IO (V.Vector (LookupResult v (BlobRef IO blob))) #-}
+{-# INLINEABLE lookups #-}
 -- | Perform a batch of lookups.
 --
 -- Lookups can be performed concurrently from multiple Haskell threads.
@@ -289,17 +290,16 @@ lookups ::
   -> TableHandle m k v blob
   -> m (V.Vector (LookupResult v (BlobRef m blob)))
 lookups ks (Internal.NormalTable th) =
-    V.mapStrict (bimap Internal.deserialiseValue BlobRef) <$!>
-    Internal.lookups const (V.map Internal.serialiseKey ks) th toNormalLookupResult
-
-toNormalLookupResult :: Maybe (Entry.Entry v b) -> LookupResult v b
-toNormalLookupResult = \case
-    Just e -> case e of
-      Entry.Insert v            -> Found v
-      Entry.InsertWithBlob v br -> FoundWithBlob v br
-      Entry.Mupdate _           -> error "toNormalLookupResult: Mupdate unexpected"
+    V.map toLookupResult <$>
+    Internal.lookups const (V.map Internal.serialiseKey ks) th
+  where
+    toLookupResult (Just e) = case e of
+      Entry.Insert v            -> Found (Internal.deserialiseValue v)
+      Entry.InsertWithBlob v br -> FoundWithBlob (Internal.deserialiseValue v)
+                                                 (BlobRef br)
+      Entry.Mupdate _           -> error "Normal.lookups: unexpected Mupdate"
       Entry.Delete              -> NotFound
-    Nothing -> NotFound
+    toLookupResult Nothing = NotFound
 
 {-# SPECIALISE rangeLookup :: (SerialiseKey k, SerialiseValue v) => Range k -> TableHandle IO k v blob -> IO (V.Vector (QueryResult k v (BlobRef IO blob))) #-}
 -- | Perform a range lookup.
