@@ -295,10 +295,10 @@ data SessionEnv m h = SessionEnv {
     -- * A table 'close' may delete its own identifier from the set of open
     --   tables without restrictions, even concurrently with 'closeSession'.
     --   This is safe because 'close' is idempotent'.
-  , sessionOpenTables  :: !(StrictMVar m (Map Word64 (TableHandle m h)))
+  , sessionOpenTables  :: !(StrictMVar m (Map Word64 (IO ())))
     -- | Similarly to tables, open cursors are tracked so they can be closed
     -- once the session is closed. See 'sessionOpenTables'.
-  , sessionOpenCursors :: !(StrictMVar m (Map Word64 (Cursor m h)))
+  , sessionOpenCursors :: !(StrictMVar m (Map Word64 (IO ())))
   }
 
 -- | 'withOpenSession' ensures that the session stays open for the duration of the
@@ -472,9 +472,9 @@ closeSession Session{sessionState, sessionTracer} = do
         --
         -- TODO: use TempRegistry
         cursors <- modifyMVar (sessionOpenCursors seshEnv) (\m -> pure (Map.empty, m))
-        mapM_ closeCursor cursors
+        sequenceA_ cursors
         tables <- modifyMVar (sessionOpenTables seshEnv) (\m -> pure (Map.empty, m))
-        mapM_ close tables
+        sequenceA_ tables
         FS.close (sessionHasBlockIO seshEnv)
         FS.hUnlock (sessionLockFile seshEnv)
         pure SessionClosed
@@ -639,7 +639,8 @@ newWith sesh seshEnv conf !am !wb !wbblobs !levels = do
         }
     let !th = TableHandle conf tableVar am tr
     -- Track the current table
-    modifyMVar_ (sessionOpenTables seshEnv) $ pure . Map.insert (uniqueToWord64 tableId) th
+    modifyMVar_ (sessionOpenTables seshEnv) $
+      pure . Map.insert (uniqueToWord64 tableId) (close th)
     pure $! th
 
 {-# SPECIALISE close :: TableHandle IO h -> IO () #-}
@@ -918,7 +919,7 @@ newCursor !offsetKey th = withOpenTable th $ \thEnv -> do
         -- successfully, i.e. using 'freeTemp'.
         freeTemp reg $
           modifyMVar_ (sessionOpenCursors cursorSessionEnv) $
-            pure . Map.insert cursorId cursor
+            pure . Map.insert cursorId (closeCursor cursor)
         pure $! cursor
   where
     -- The table contents escape the read access, but we just added
