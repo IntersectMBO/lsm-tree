@@ -1,3 +1,3 @@
 # Security
 
-See the [security file in the Cardano engineering handbook](https://github.com/input-output-hk/cardano-engineering-handbook/blob/main/SECURITY.md).
+See https://github.com/IntersectMBO/Open-Source-Office/blob/main/SECURITY.md
