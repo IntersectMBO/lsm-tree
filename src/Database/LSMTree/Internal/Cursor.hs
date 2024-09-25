@@ -1,11 +1,6 @@
-{-# LANGUAGE CPP       #-}
-{-# LANGUAGE DataKinds #-}
-
 module Database.LSMTree.Internal.Cursor (
     -- TODO: right place?
     ResolveSerialisedValue
-    -- * Tracing
-  , CursorTrace (..)
     -- ** Cursor API
   , Cursor (..)
   , CursorState (..)
@@ -65,6 +60,8 @@ import           Database.LSMTree.Internal.RunReaders (OffsetKey (..))
 import qualified Database.LSMTree.Internal.RunReaders as Readers
 import           Database.LSMTree.Internal.Serialise (SerialisedBlob (..),
                      SerialisedKey, SerialisedValue)
+import           Database.LSMTree.Internal.Session
+import           Database.LSMTree.Internal.TableHandle
 import           Database.LSMTree.Internal.UniqCounter
 import qualified Database.LSMTree.Internal.Vector as V
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
@@ -78,29 +75,6 @@ import qualified System.FS.API.Lazy as FS
 import qualified System.FS.API.Strict as FS
 import qualified System.FS.BlockIO.API as FS
 import           System.FS.BlockIO.API (HasBlockIO)
-
-{-------------------------------------------------------------------------------
-  Exceptions
--------------------------------------------------------------------------------}
-
--- TODO: integrate with LSMTreeError
-data CursorError =
-    -- | All operations on a closed cursor will throw this exception, except for
-    -- the idempotent operation 'Database.LSMTree.Common.closeCursor'.
-    ErrCursorClosed
-  deriving stock (Show)
-  deriving anyclass (Exception)
-
-{-------------------------------------------------------------------------------
-  Traces
--------------------------------------------------------------------------------}
-
-data CursorTrace =
-    TraceCreateCursor
-      Word64 -- ^ Table identifier
-  | TraceCloseCursor
-  | TraceReadCursor Int
-  deriving stock Show
 
 {-------------------------------------------------------------------------------
   Cursors
@@ -208,7 +182,7 @@ newCursor !offsetKey th = withOpenTable th $ \thEnv -> do
         -- successfully, i.e. using 'freeTemp'.
         freeTemp reg $
           modifyMVar_ (sessionOpenCursors cursorSessionEnv) $
-            pure . Map.insert cursorId cursor
+            pure . Map.insert cursorId (closeCursor cursor)
         pure $! cursor
   where
     -- The table contents escape the read access, but we just added
