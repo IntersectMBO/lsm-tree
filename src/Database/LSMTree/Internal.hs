@@ -16,6 +16,7 @@ module Database.LSMTree.Internal (
   , Session (..)
   , SessionState (..)
   , SessionEnv (..)
+  , Resource (..)
   , withOpenSession
     -- ** Implementation of public API
   , withSession
@@ -293,10 +294,10 @@ data SessionEnv m h = SessionEnv {
     -- * A table 'close' may delete its own identifier from the set of open
     --   tables without restrictions, even concurrently with 'closeSession'.
     --   This is safe because 'close' is idempotent'.
-  , sessionOpenTables  :: !(StrictMVar m (Map Word64 (TableHandle m h)))
+  , sessionOpenTables  :: !(StrictMVar m (Map Word64 (Resource m)))
     -- | Similarly to tables, open cursors are tracked so they can be closed
     -- once the session is closed. See 'sessionOpenTables'.
-  , sessionOpenCursors :: !(StrictMVar m (Map Word64 (Cursor m h)))
+  , sessionOpenCursors :: !(StrictMVar m (Map Word64 (Resource m)))
   }
 
 {-# INLINE withOpenSession #-}
@@ -330,7 +331,7 @@ withOpenSession sesh action = RW.withReadAccess (sessionState sesh) $ \case
   -> IO a #-}
 -- | See 'Database.LSMTree.Common.withSession'.
 withSession ::
-     (MonadMask m, MonadSTM m, MonadMVar m, PrimMonad m)
+     (MonadMask m, MonadSTM m, MonadMVar m)
   => Tracer m LSMTreeTrace
   -> HasFS m h
   -> HasBlockIO m h
@@ -463,7 +464,7 @@ openSession tr hfs hbio dir = do
 -- A session's global resources will only be released once it is sure that no
 -- tables are open anymore.
 closeSession ::
-     (MonadMask m, MonadSTM m, MonadMVar m, PrimMonad m)
+     (MonadMask m, MonadSTM m, MonadMVar m)
   => Session m h
   -> m ()
 closeSession Session{sessionState, sessionTracer} = do
@@ -486,9 +487,9 @@ closeSession Session{sessionState, sessionTracer} = do
         --
         -- TODO: use TempRegistry
         cursors <- modifyMVar (sessionOpenCursors seshEnv) (\m -> pure (Map.empty, m))
-        mapM_ closeCursor cursors
+        traverse_ resourceRelease cursors
         tables <- modifyMVar (sessionOpenTables seshEnv) (\m -> pure (Map.empty, m))
-        mapM_ close tables
+        traverse_ resourceRelease tables
         FS.close (sessionHasBlockIO seshEnv)
         FS.hUnlock (sessionLockFile seshEnv)
         pure SessionClosed
@@ -653,7 +654,7 @@ new sesh conf = do
   -> TableContent IO h
   -> IO (TableHandle IO h) #-}
 newWith ::
-     (MonadSTM m, MonadMVar m)
+     (MonadMask m, MonadSTM m, MonadMVar m, PrimMonad m)
   => TempRegistry m
   -> Session m h
   -> SessionEnv m h
@@ -679,7 +680,7 @@ newWith reg sesh seshEnv conf !am !tc = do
     let !th = TableHandle conf tableVar am tr
     -- Track the current table
     freeTemp reg $ modifyMVar_ (sessionOpenTables seshEnv)
-                 $ pure . Map.insert (uniqueToWord64 tableId) th
+                 $ pure . Map.insert (uniqueToWord64 tableId) (Resource (close th))
     pure $! th
 
 {-# SPECIALISE close :: TableHandle IO h -> IO () #-}
@@ -962,7 +963,7 @@ newCursor !offsetKey th = withOpenTable th $ \thEnv -> do
         -- successfully, i.e. using 'freeTemp'.
         freeTemp reg $
           modifyMVar_ (sessionOpenCursors cursorSessionEnv) $
-            pure . Map.insert cursorId cursor
+            pure . Map.insert cursorId (Resource (closeCursor cursor))
         pure $! cursor
   where
     -- The table contents escape the read access, but we just added
