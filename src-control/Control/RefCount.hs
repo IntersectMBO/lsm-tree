@@ -57,10 +57,6 @@ mkRefCounterN :: PrimMonad m => RefCount -> Maybe (m ()) -> m (Maybe (RefCounter
 mkRefCounterN (RefCount !n) finaliser
   | n < 1 = pure Nothing
   | otherwise = do
-    -- evaluate the finaliser a little bit before we store it
-    let !() = case finaliser of
-                Nothing       -> ()
-                Just !_action -> ()
     countVar <- newPrimVar $! n
     pure $! Just $! RefCounter{countVar, finaliser}
 

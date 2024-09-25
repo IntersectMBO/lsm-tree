@@ -446,8 +446,7 @@ instance Typeable (PrimState m) => NoThunks (RefCounter m) where
     (RefCounter (a :: PrimVar (PrimState m) Int) (b :: Maybe (m ())))
     = allNoThunks [
           noThunks ctx a
-          -- it is okay to use @$!@ because @b :: Maybe _@ was already in WHNF
-        , noThunks ctx $! (OnlyCheckWhnfNamed <$> b :: Maybe (OnlyCheckWhnfNamed "finaliser" (m ())))
+        , noThunks ctx $ (OnlyCheckWhnfNamed b :: OnlyCheckWhnfNamed "finaliser" (Maybe (m ())))
         ]
 
 deriving stock instance Generic RefCount
