@@ -14,6 +14,8 @@ module Database.LSMTree.Internal.TableHandle (
   , new
   , newWith
   , close
+    -- * Mutiple writable table handles
+  , duplicate
   ) where
 
 import           Control.Concurrent.Class.MonadMVar.Strict
@@ -263,3 +265,42 @@ close th = do
           WBB.removeReference (tableWriteBufferBlobs tc)
           pure tc
         pure TableHandleClosed
+
+{-------------------------------------------------------------------------------
+  Mutiple writable table handles
+-------------------------------------------------------------------------------}
+
+{-# SPECIALISE duplicate :: TableHandle IO h -> IO (TableHandle IO h) #-}
+-- | See 'Database.LSMTree.Normal.duplicate'.
+duplicate ::
+     m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
+  => TableHandle m h
+  -> m (TableHandle m h)
+duplicate th = do
+    traceWith (tableTracer th) TraceDuplicate
+    withOpenTable th $ \thEnv -> do
+      -- We acquire a read-lock on the session open-state to prevent races, see
+      -- 'sessionOpenTables'.
+      withOpenSession (tableSession thEnv) $ \_ -> do
+        withTempRegistry $ \reg -> do
+          -- The table contents escape the read access, but we just added references
+          -- to each run so it is safe.
+          content <- RW.withReadAccess (tableContent thEnv) $ \content -> do
+            forRunM_ (tableLevels content) $ \r -> do
+              allocateTemp reg
+                (Run.addReference r)
+                (\_ -> Run.removeReference r)
+            pure content
+          WBB.addReference (tableWriteBufferBlobs content)
+          -- TODO: Fix possible double-free! See 'newCursor'.
+          -- In `newWith`, the table handle (in the open state) gets added to
+          -- `sessionOpenTables', even if later an async exception occurs and
+          -- the temp registry rolls back all allocations.
+          newWith
+            (tableSession thEnv)
+            (tableSessionEnv thEnv)
+            (tableConfig th)
+            (tableHandleArenaManager th)
+            (tableWriteBuffer content)
+            (tableWriteBufferBlobs content)
+            (tableLevels content)

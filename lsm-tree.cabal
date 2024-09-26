@@ -144,6 +144,7 @@ library
     Database.LSMTree.Internal.Serialise
     Database.LSMTree.Internal.Serialise.Class
     Database.LSMTree.Internal.Session
+    Database.LSMTree.Internal.Snapshot
     Database.LSMTree.Internal.TableHandle
     Database.LSMTree.Internal.UniqCounter
     Database.LSMTree.Internal.Unsliced
