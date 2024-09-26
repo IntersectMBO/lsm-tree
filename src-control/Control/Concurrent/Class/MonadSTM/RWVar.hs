@@ -34,8 +34,8 @@ instance NFData (RWVar m a) where
 data RWState a =
     -- | @n@ concurrent readers and no writer.
     Reading !Word64 !a
-    -- | @n@ concurrent readers, and a single writer that is waiting for the
-    -- readers to finish.
+    -- | @n@ concurrent readers and no writer, but no new readers can get
+    -- access.
   | WaitingToWrite !Word64 !a
     -- | A single writer and no concurrent readers.
   | Writing
@@ -74,25 +74,46 @@ withReadAccess rwvar k =
       (\_ -> atomically $ unsafeReleaseReadAccess rwvar)
       k
 
-{-# SPECIALISE unsafeAcquireWriteAccess :: RWVar IO a -> STM IO a #-}
-unsafeAcquireWriteAccess :: MonadSTM m => RWVar m a -> STM m a
-unsafeAcquireWriteAccess (RWVar !var) = do
-    readTVar var >>= \case
+{-# SPECIALISE unsafeAcquireWriteAccess :: RWVar IO a -> IO a #-}
+unsafeAcquireWriteAccess :: MonadSTM m => RWVar m a -> m a
+unsafeAcquireWriteAccess rw@(RWVar !var) = do
+    may <- atomically $ readTVar var >>= \case
       Reading n x
         | n == 0 -> do
             writeTVar var Writing
-            pure x
+            pure (Just x)
         | otherwise -> do
             writeTVar var (WaitingToWrite n x)
-            retry
+            pure Nothing
       WaitingToWrite n x
         | n == 0 -> do
             writeTVar var Writing
-            pure x
+            pure (Just x)
         | otherwise -> retry
-      -- One thread might be trying to acquire a write lock when another thread
-      -- already has a write lock, so we retry.
+      -- If we see this, someone else has already acquired a write lock, so we retry.
       Writing -> retry
+    -- When the previous STM transaction returns Nothing, it signals that we set
+    -- the RWState to WaitingToWrite. All that remains is to try acquiring write
+    -- access again.
+    --
+    -- If multiple threads try to acquire write access concurrently, then they
+    -- will race for access. Even if a thread has set RWState to WaitingToWrite,
+    -- there is no guarantee that the same thread will acquire write access
+    -- first when all readers have finished. However, if the writer has
+    -- finished, then all other waiting threads will try to get write again
+    -- until they succeed.
+    --
+    -- TODO: unsafeReleaseWriteAccess will set RWState to Reading 0. In case we
+    -- have readers *and* writers waiting for a writer to finish, once the
+    -- writer is finished there will be a race. In this race, readers and
+    -- writers are just as likely to acquire access first. However, if we wanted
+    -- to make RWVar even more biased towards writers, then we could ensure that
+    -- all waiting writers get access before the readers get a chance. This
+    -- would probably require us to change RWState to represent the case where
+    -- writers are waiting for a writer to finish.
+    case may of
+      Nothing -> unsafeAcquireWriteAccess rw
+      Just x  -> pure x
 
 {-# SPECIALISE unsafeReleaseWriteAccess :: RWVar IO a -> a -> STM IO () #-}
 unsafeReleaseWriteAccess :: MonadSTM m => RWVar m a -> a -> STM m ()
@@ -106,7 +127,7 @@ unsafeReleaseWriteAccess (RWVar !var) x = do
 withWriteAccess :: (MonadSTM m, MonadCatch m) => RWVar m a -> (a -> m (a, b)) -> m b
 withWriteAccess rwvar k = snd . fst <$>
     generalBracket
-      (atomically $ unsafeAcquireWriteAccess rwvar)
+      (unsafeAcquireWriteAccess rwvar)
       (\x ec -> do
         atomically $ case ec of
             ExitCaseSuccess (x', _) -> unsafeReleaseWriteAccess rwvar x'
