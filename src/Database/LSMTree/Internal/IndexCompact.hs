@@ -436,42 +436,63 @@ pageSpanSize :: PageSpan -> NumPages
 pageSpanSize pspan = NumPages . toEnum $
     unPageNo (pageSpanEnd pspan) - unPageNo (pageSpanStart pspan) + 1
 
--- | Given a search key, find the number of the disk page that /might/ contain
--- this key.
+-- |  Searches for a page span that contains a key–value pair with the given key.
 --
--- Note: there is no guarantee that the disk page contains the key. However, it
--- is guaranteed that /no other/ disk page contain the key.
+-- If there is indeed such a pair, the result is the corresponding page span; if
+-- there is no such pair, the result is an arbitrary but valid page span.
 --
 -- See [an informal description of the search algorithm](#search-descr) for more
 -- details about the search algorithm.
---
--- TODO: optimisation ideas: we should be able to get it all unboxed,
--- non-allocating and without unnecessary bounds checking.
---
+search :: SerialisedKey -> IndexCompact -> PageSpan
 -- One way to think of the search algorithm is that it starts with the full page
 -- number interval, and shrinks it to a minimal interval that contains the
--- search key. The code below is annotated with @Pre:@ and @Post:@ comments that
--- describe the interval at that point.
-search :: SerialisedKey -> IndexCompact -> PageSpan
+-- search key. The code below is annotated with [x,y] or [x, y) comments that
+-- describe the known page number interval at that point in the search
+-- algorithm.
 search k IndexCompact{..} =
-    let !primbits = keyTopBits64 k
-    in
-      case unsafeSearchLE primbits icPrimary of
-        Nothing -> singlePage (PageNo 0)  -- Post: @[lb, lb)@ (empty).
-        Just !i ->         -- Post: @[lb, i]@.
-          if unBit $ icClashes VU.! i then
-            -- Post: @[lb, i]@, now in clash recovery mode.
-            let !i1  = PageNo $ fromMaybe 0 $
-                  bitIndexFromToRev (BoundInclusive 0) (BoundInclusive i) (Bit False) icClashes
-                !i2  = maybe (PageNo 0) snd $ Map.lookupLE (unsafeNoAssertMakeUnslicedKey k) icTieBreaker
-                PageNo !i3 = max i1 i2 -- Post: the intersection of @[i1, i]@ and @[i2, i].
-                !i4 = bitLongestPrefixFromTo (BoundExclusive i3) (BoundInclusive i) (Bit True) icLargerThanPage
-                      -- Post: [i3, i4]
-            in  if i3 == i4 then singlePage (PageNo i3) else multiPage (PageNo i3) (PageNo i4)
-                -- Post: @[i3, i4]@ if a larger-than-page value that starts at
-                -- @i3@ and ends at @i4@, @[i3, i3]@ otherwise for a "normal"
-                -- page.
-          else  singlePage (PageNo i) -- Post: @[i, i]@
+    let !primbits = keyTopBits64 k in
+    -- [0, n), where n is the length of the P array
+    case unsafeSearchLE primbits icPrimary of
+      Nothing ->
+        -- TODO: if the P array is indeed empty, then this violates the
+        -- guarantee that we return a valid page span! We should specify that a
+        -- compact index should be non-empty.
+        if VU.length icLargerThanPage == 0 then singlePage (PageNo 0) else
+        -- [0, n), our page span definitely starts at 0, but we still have to
+        -- consult the LTP array to check whether the value on page 0 overflows
+        -- into subsequent pages.
+        let !i = bitLongestPrefixFromTo (BoundExclusive 0) NoBound (Bit True) icLargerThanPage
+        -- [0, i]
+        in  multiPage (PageNo 0) (PageNo i)
+      Just !i ->
+        -- [0, i]
+        if unBit $ icClashes VU.! i then
+          -- [0, i], now in clash recovery mode.
+          let -- i is the *last* index in a range of contiguous pages that all
+              -- clash. Since i is the end of the range, we search backwards
+              -- through the C array to find the start of this range.
+              !i1 = PageNo $ fromMaybe 0 $
+                bitIndexFromToRev (BoundInclusive 0) (BoundInclusive i) (Bit False) icClashes
+              -- The TB map is consulted to find the closest key smaller than k.
+              !i2 = maybe (PageNo 0) snd $
+                Map.lookupLE (unsafeNoAssertMakeUnslicedKey k) icTieBreaker
+              -- If i2 < i1, then it means the clashing pages were all just part
+              -- of the same larger-than-page value. Entries are only included
+              -- in the TB map if the clash was a *proper* clash.
+              --
+              -- If i1 <= i2, then there was a proper clash in [i1, i] that
+              -- required a comparison with a tiebreaker key.
+              PageNo !i3 = max i1 i2
+              -- [max i1 i2, i], this is equivalent to taking the intersection
+              -- of [i1, i] and [i2, i]
+              !i4 = bitLongestPrefixFromTo (BoundExclusive i3) (BoundInclusive i) (Bit True) icLargerThanPage
+          in  multiPage (PageNo i3) (PageNo i4)
+              -- [i3, i4], we consulted the LTP array to check whether the value
+              -- on page i3 overflows into subsequent pages
+        else
+          -- [i, i], there is no clash with the previous page and so this page
+          -- is also not part of a large value that spans multiple pages.
+          singlePage (PageNo i)
 
 
 countClashes :: IndexCompact -> Int
