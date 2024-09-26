@@ -10,19 +10,19 @@ import           Data.Maybe (fromMaybe)
 import qualified Data.Proxy as Proxy
 import qualified Data.Vector as V
 import qualified Data.Vector.Algorithms.Merge as VA
+import           Data.Void (Void)
 import           Data.Word (Word64)
 import           Database.LSMTree.Class.Monoidal hiding (withTableDuplicate,
                      withTableNew, withTableOpen)
 import qualified Database.LSMTree.Class.Monoidal as Class
 import           Database.LSMTree.Common (Labellable (..), mkSnapshotName)
 import           Database.LSMTree.Extras.Generators ()
-import           Database.LSMTree.ModelIO.Monoidal (IOLike, LookupResult (..),
-                     QueryResult (..), Range (..), SerialiseKey, SerialiseValue,
-                     Update (..))
-import qualified Database.LSMTree.ModelIO.Monoidal as M
-import           Database.LSMTree.Monoidal (ResolveValue (..),
+import           Database.LSMTree.Monoidal (IOLike, LookupResult (..),
+                     QueryResult (..), Range (..), ResolveValue (..),
+                     SerialiseKey, SerialiseValue, Update (..),
                      resolveDeserialised)
 import qualified Database.LSMTree.Monoidal as R
+import qualified Database.LSMTree.SessionModel as M2
 import qualified System.FS.API as FS
 import           Test.Database.LSMTree.Class.Normal (testProperty')
 import           Test.Tasty (TestTree, testGroup)
@@ -35,10 +35,10 @@ tests = testGroup "Test.Database.LSMTree.Class.Monoidal"
     , testGroup "Real"  $ zipWith ($) (props tbl2) expectFailures2
     ]
   where
-    tbl1 :: Proxy M.TableHandle
+    tbl1 :: Proxy MTableHandle
     tbl1 = Setup {
-          testTableConfig = M.TableConfig
-        , testWithSessionArgs = \action -> action NoSessionArgs
+          testTableConfig = M2.TableConfig
+        , testWithSessionArgs = \action -> action NoMSessionArgs
         }
 
     expectFailures1 = repeat False
@@ -151,6 +151,7 @@ readCursorAll :: forall h m k v proxy.
      , SerialiseKey k
      , SerialiseValue v
      , ResolveValue v
+     , M2.C k v Void
      )
   => proxy h
   -> Cursor h m k v

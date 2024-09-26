@@ -1,72 +1,88 @@
 {-# LANGUAGE TypeFamilies #-}
 
-module Database.LSMTree.Model.Normal (
-    -- * Serialisation
-    SerialiseKey (..)
-  , SerialiseValue (..)
-    -- * Tables
-  , Table (..)
-  , empty
-    -- * Table querying and updates
-    -- ** Queries
-  , Range (..)
-  , LookupResult (..)
-  , lookups
-  , QueryResult (..)
-  , rangeLookup
-    -- ** Cursor
-  , Cursor
-  , newCursor
-  , readCursor
-    -- ** Updates
-  , Update (..)
-  , updates
-  , inserts
-  , deletes
-    -- ** Blobs
-  , BlobRef
-  , retrieveBlobs
-    -- * Snapshots
-  , snapshot
-    -- * Multiple writable table handles
-  , duplicate
-  ) where
+{-# OPTIONS_GHC -Wno-missing-export-lists #-}
+
+module Database.LSMTree.TableModel where
 
 import qualified Crypto.Hash.SHA256 as SHA256
+import           Data.Bifunctor
 import qualified Data.ByteString as BS
 import           Data.Kind (Type)
 import           Data.Map (Map)
 import qualified Data.Map.Range as Map.R
 import qualified Data.Map.Strict as Map
+import           Data.Monoid (First (..))
+import           Data.Proxy (Proxy (Proxy))
 import qualified Data.Vector as V
 import           Database.LSMTree.Common (Range (..), SerialiseKey (..),
                      SerialiseValue (..))
 import           Database.LSMTree.Internal.RawBytes (RawBytes)
-import           Database.LSMTree.Normal (LookupResult (..), QueryResult (..),
-                     Update (..))
+import           Database.LSMTree.Monoidal (ResolveValue (..))
 import           GHC.Exts (IsList (..))
+
+data LookupResult v b =
+    NotFound
+  | Found         !v
+  | FoundWithBlob !v !b
+  deriving stock (Eq, Show, Functor, Foldable, Traversable)
+
+instance Bifunctor LookupResult where
+  first f = \case
+      NotFound          -> NotFound
+      Found v           -> Found (f v)
+      FoundWithBlob v b -> FoundWithBlob (f v) b
+
+  second g = \case
+      NotFound          -> NotFound
+      Found v           -> Found v
+      FoundWithBlob v b -> FoundWithBlob v (g b)
+
+data QueryResult k v b =
+    FoundInQuery         !k !v
+  | FoundInQueryWithBlob !k !v !b
+  deriving stock (Eq, Show, Functor, Foldable, Traversable)
+
+instance Bifunctor (QueryResult k) where
+  bimap f g = \case
+      FoundInQuery k v           -> FoundInQuery k (f v)
+      FoundInQueryWithBlob k v b -> FoundInQueryWithBlob k (f v) (g b)
+
+data Update v b =
+    Insert !v !(Maybe b)
+  | Delete
+  | Mupsert !v
+  deriving stock (Show, Eq)
+
+resolveValueAndBlob ::
+     forall v b. ResolveValue v
+  => Proxy v
+  -> (RawBytes, Maybe b)
+  -> (RawBytes, Maybe b)
+  -> (RawBytes, Maybe b)
+resolveValueAndBlob p (v1, bMay1) (v2, bMay2) =
+      (resolveValue p v1 v2, getFirst (First bMay1 <> First bMay2))
 
 {-------------------------------------------------------------------------------
   Tables
 -------------------------------------------------------------------------------}
 
 type Table :: Type -> Type -> Type -> Type
-data Table k v blob = Table
-    { values :: Map RawBytes (RawBytes, Maybe (BlobRef blob))
+data Table k v b = Table
+    { values :: Map RawBytes (RawBytes, Maybe (BlobRef b))
     }
 
 type role Table nominal nominal nominal
 
 -- | An empty table.
-empty :: Table k v blob
+empty :: Table k v b
 empty = Table Map.empty
 
 -- | This instance is for testing and debugging only.
 instance
-    (SerialiseKey k, SerialiseValue v, SerialiseValue blob)
-      => IsList (Table k v blob)
+    (SerialiseKey k, SerialiseValue v, SerialiseValue b)
+      => IsList (Table k v b)
   where
-    type Item (Table k v blob) = (k, v, Maybe blob)
+    type Item (Table k v b) = (k, v, Maybe b)
     fromList xs = Table $ Map.fromList
         [ (serialiseKey k, (serialiseValue v, mkBlobRef <$> mblob))
         | (k, v, mblob) <- xs
@@ -78,7 +94,7 @@ instance
         ]
 
 -- | This instance is for testing and debugging only.
-instance Show (Table k v blob) where
+instance Show (Table k v b) where
     showsPrec d (Table tbl) = showParen (d > 10)
         $ showString "fromList "
         . showsPrec 11 (toList (Table @BS.ByteString @BS.ByteString @BS.ByteString tbl'))
@@ -87,34 +103,28 @@ instance Show (Table k v blob) where
         tbl' = fmap (fmap (fmap coerceBlobRef)) tbl
 
 -- | This instance is for testing and debugging only.
-deriving stock instance Eq (Table k v blob)
+deriving stock instance Eq (Table k v b)
 
 {-------------------------------------------------------------------------------
-  Table querying and updates
+  Lookups
 -------------------------------------------------------------------------------}
 
--- | Perform a batch of lookups.
---
--- Lookups can be performed concurrently from multiple Haskell threads.
 lookups ::
-    (SerialiseKey k, SerialiseValue v)
+     (SerialiseKey k, SerialiseValue v)
   => V.Vector k
-  -> Table k v blob
-  -> V.Vector (LookupResult v (BlobRef blob))
+  -> Table k v b
+  -> V.Vector (LookupResult v (BlobRef b))
 lookups ks tbl = flip V.map ks $ \k ->
     case Map.lookup (serialiseKey k) (values tbl) of
       Nothing           -> NotFound
       Just (v, Nothing) -> Found (deserialiseValue v)
       Just (v, Just br) -> FoundWithBlob (deserialiseValue v) br
 
--- | Perform a range lookup.
---
--- Range lookups can be performed concurrently from multiple Haskell threads.
-rangeLookup :: forall k v blob.
+rangeLookup :: forall k v b.
      (SerialiseKey k, SerialiseValue v)
   => Range k
-  -> Table k v blob
-  -> V.Vector (QueryResult k v (BlobRef blob))
+  -> Table k v b
+  -> V.Vector (QueryResult k v (BlobRef b))
 rangeLookup r tbl = V.fromList
     [ case v of
         (v', Nothing) -> FoundInQuery (deserialiseKey k) (deserialiseValue v')
@@ -131,16 +141,17 @@ rangeLookup r tbl = V.fromList
         ( Map.R.Bound (serialiseKey lb) Map.R.Inclusive
         , Map.R.Bound (serialiseKey ub) Map.R.Inclusive )
 
--- | Perform a mixed batch of inserts and deletes.
---
--- Updates can be performed concurrently from multiple Haskell threads.
-updates :: forall k v blob.
-     (SerialiseKey k, SerialiseValue v, SerialiseValue blob)
-  => V.Vector (k, Update v blob)
-  -> Table k v blob
-  -> Table k v blob
+{-------------------------------------------------------------------------------
+  Updates
+-------------------------------------------------------------------------------}
+
+updates :: forall k v b.
+     (SerialiseKey k, SerialiseValue v, SerialiseValue b, ResolveValue v)
+  => V.Vector (k, Update v b)
+  -> Table k v b
+  -> Table k v b
 updates ups tbl0 = V.foldl' update tbl0 ups where
-    update :: Table k v blob -> (k, Update v blob) -> Table k v blob
+    update :: Table k v b -> (k, Update v b) -> Table k v b
     update tbl (k, Delete) = tbl
         { values = Map.delete (serialiseKey k) (values tbl) }
     update tbl (k, Insert v Nothing) = tbl
@@ -148,35 +159,48 @@ updates ups tbl0 = V.foldl' update tbl0 ups where
     update tbl (k, Insert v (Just blob)) = tbl
         { values = Map.insert (serialiseKey k) (serialiseValue v, Just (mkBlobRef blob)) (values tbl)
         }
+    update tbl (k, Mupsert v) = tbl
+        { values = mapUpsert (serialiseKey k) e f (values tbl) }
+      where
+        e = (serialiseValue v, Nothing)
+        f = resolveValueAndBlob (Proxy @v) e
 
--- | Perform a batch of inserts.
---
--- Inserts can be performed concurrently from multiple Haskell threads.
+mapUpsert :: Ord k => k -> v -> (v -> v) -> Map k v -> Map k v
+mapUpsert k v f = Map.alter (Just . g) k where
+    g Nothing   = v
+    g (Just v') = f v'
+
 inserts ::
-     (SerialiseKey k, SerialiseValue v, SerialiseValue blob)
-  => V.Vector (k, v, Maybe blob)
-  -> Table k v blob
-  -> Table k v blob
+     (SerialiseKey k, SerialiseValue v, ResolveValue v, SerialiseValue b)
+  => V.Vector (k, v, Maybe b)
+  -> Table k v b
+  -> Table k v b
 inserts = updates . fmap (\(k, v, blob) -> (k, Insert v blob))
 
--- | Perform a batch of deletes.
---
--- Deletes can be performed concurrently from multiple Haskell threads.
 deletes ::
-     (SerialiseKey k, SerialiseValue v, SerialiseValue blob)
+     (SerialiseKey k, SerialiseValue v, ResolveValue v, SerialiseValue b)
   => V.Vector k
-  -> Table k v blob
-  -> Table k v blob
+  -> Table k v b
+  -> Table k v b
 deletes = updates . fmap (,Delete)
 
--- | A reference to an on-disk blob.
---
--- The blob can be retrieved based on the reference.
---
--- Blob comes from the acronym __Binary Large OBject (BLOB)__ and in many
--- database implementations refers to binary data that is larger than usual
--- values and is handled specially. In our context we will allow optionally a
--- blob associated with each value in the table.
+mupserts ::
+     (SerialiseKey k, SerialiseValue v, ResolveValue v, SerialiseValue b)
+  => V.Vector (k, v)
+  -> Table k v b
+  -> Table k v b
+mupserts = updates . fmap (second Mupsert)
+
+{-------------------------------------------------------------------------------
+  Blobs
+-------------------------------------------------------------------------------}
+
+retrieveBlobs ::
+     SerialiseValue blob
+  => V.Vector (BlobRef blob)
+  -> V.Vector blob
+retrieveBlobs refs = V.map getBlobFromRef refs
+
 data BlobRef blob = BlobRef
     !BS.ByteString  -- ^ digest
     !RawBytes       -- ^ actual contents
@@ -199,26 +223,13 @@ getBlobFromRef (BlobRef _ rb) = deserialiseValue rb
 instance Eq (BlobRef blob) where
     BlobRef x _ == BlobRef y _ = x == y
 
--- | Perform a batch of blob retrievals.
---
--- This is a separate step from 'lookups' and 'rangeLookups. The result of a
--- lookup can include a 'BlobRef', which can be used to retrieve the actual
--- 'Blob'.
---
--- Blob lookups can be performed concurrently from multiple Haskell threads.
-retrieveBlobs ::
-     SerialiseValue blob
-  => V.Vector (BlobRef blob)
-  -> V.Vector blob
-retrieveBlobs refs = V.map getBlobFromRef refs
-
 {-------------------------------------------------------------------------------
   Snapshots
 -------------------------------------------------------------------------------}
 
 snapshot ::
-     Table k v blob
-  -> Table k v blob
+     Table k v b
+  -> Table k v b
 snapshot = id
 
 {-------------------------------------------------------------------------------
@@ -226,18 +237,18 @@ snapshot = id
 -------------------------------------------------------------------------------}
 
 duplicate ::
-     Table k v blob
-  -> Table k v blob
+     Table k v b
+  -> Table k v b
 duplicate = id
 
 {-------------------------------------------------------------------------------
-  Cursor
+  Cursors
 -------------------------------------------------------------------------------}
 
 type Cursor :: Type -> Type -> Type -> Type
-data Cursor k v blob = Cursor
+data Cursor k v b = Cursor
     { -- | these entries are already resolved, they do not contain duplicate keys.
-      _cursorValues :: [(RawBytes, (RawBytes, Maybe (BlobRef blob)))]
+      _cursorValues :: [(RawBytes, (RawBytes, Maybe (BlobRef b)))]
     }
 
 type role Cursor nominal nominal nominal
@@ -245,8 +256,8 @@ type role Cursor nominal nominal nominal
 newCursor ::
      SerialiseKey k
   => Maybe k
-  -> Table k v blob
-  -> Cursor k v blob
+  -> Table k v b
+  -> Cursor k v b
 newCursor offset tbl = Cursor (skip $ Map.toList $ values tbl)
   where
     skip = case offset of
@@ -256,10 +267,8 @@ newCursor offset tbl = Cursor (skip $ Map.toList $ values tbl)
 readCursor ::
      (SerialiseKey k, SerialiseValue v)
   => Int
-  -> Cursor k v blob
-  -> ( V.Vector (QueryResult k v (BlobRef blob))
-     , Cursor k v blob
-     )
+  -> Cursor k v b
+  -> (V.Vector (QueryResult k v (BlobRef b)), Cursor k v b)
 readCursor n c =
     ( V.fromList
         [ case v of
@@ -269,3 +278,26 @@ readCursor n c =
         ]
     , Cursor $ drop n (_cursorValues c)
     )
+
+{-------------------------------------------------------------------------------
+  Merging tables
+-------------------------------------------------------------------------------}
+
+-- | Merge full tables, creating a new table handle.
+--
+-- NOTE: close table handles using 'close' as soon as they are
+-- unused.
+--
+-- Multiple tables of the same type but with different configuration parameters
+-- can live in the same session. However, some operations, like
+merge :: forall k v b.
+     ResolveValue v
+  => Table k v b
+  -> Table k v b
+  -> Table k v b
+merge (Table xs) (Table ys) =
+    Table (Map.unionWith f xs ys)
+  where
+    f (v1, bMay1) (v2, bMay2) =
+      (resolveValue (Proxy @v) v1 v2, getFirst (First bMay1 <> First bMay2))
+

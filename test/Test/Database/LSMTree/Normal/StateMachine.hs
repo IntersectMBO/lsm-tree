@@ -77,6 +77,7 @@ import           Data.Constraint (Dict (..))
 import           Data.Kind (Type)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (catMaybes, fromJust)
+import           Data.Semigroup (Sum (..))
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Typeable (Proxy (..), Typeable, cast, eqT,
@@ -89,10 +90,13 @@ import           Database.LSMTree.Extras.Generators (KeyForIndexCompact)
 import           Database.LSMTree.Extras.NoThunks (assertNoThunks)
 import           Database.LSMTree.Internal (LSMTreeError (..))
 import qualified Database.LSMTree.Internal as R.Internal
-import qualified Database.LSMTree.Model.Normal.Session as Model
-import qualified Database.LSMTree.ModelIO.Normal as M
+import           Database.LSMTree.Monoidal (ResolveValue (resolveValue),
+                     resolveDeserialised)
 import qualified Database.LSMTree.Normal as R
-import           GHC.IO.Exception (IOErrorType (..), IOException (..))
+import qualified Database.LSMTree.SessionModel as M2
+import qualified Database.LSMTree.SessionModel as Model
+import qualified Database.LSMTree.TableModel as Model (LookupResult (..),
+                     QueryResult)
 import           NoThunks.Class
 import           Prelude hiding (init)
 import           System.Directory (removeDirectoryRecursive)
@@ -103,7 +107,6 @@ import           System.FS.BlockIO.Sim (simHasBlockIO)
 import           System.FS.IO (HandleIO, ioHasFS)
 import qualified System.FS.Sim.MockFS as MockFS
 import           System.FS.Sim.MockFS (MockFS)
-import           System.IO.Error
 import           System.IO.Temp (createTempDirectory,
                      getCanonicalTemporaryDirectory)
 import           Test.Database.LSMTree.Normal.StateMachine.Op
@@ -147,65 +150,32 @@ tests = testGroup "Normal.StateMachine" [
 labelledExamples :: IO ()
 labelledExamples = QC.labelledExamples $ Lockstep.Run.tagActions (Proxy @(ModelState R.TableHandle))
 
-instance Arbitrary M.TableConfig where
-  arbitrary :: Gen M.TableConfig
-  arbitrary = pure M.TableConfig
-
-deriving via AllowThunk (M.Session IO)
-    instance NoThunks (M.Session IO)
+instance Arbitrary M2.TableConfig where
+  arbitrary :: Gen M2.TableConfig
+  arbitrary = pure M2.TableConfig
 
 propLockstep_ModelIOImpl ::
-     Actions (Lockstep (ModelState M.TableHandle))
+     Actions (Lockstep (ModelState Class.MTableHandle))
   -> QC.Property
 propLockstep_ModelIOImpl =
     runActionsBracket'
-      (Proxy @(ModelState M.TableHandle))
+      (Proxy @(ModelState Class.MTableHandle))
       acquire
       release
       (\r session -> runReaderT r (session, handler))
       tagFinalState'
   where
-    acquire :: IO (WrapSession M.TableHandle IO)
-    acquire = WrapSession <$> M.openSession
+    acquire :: IO (WrapSession Class.MTableHandle IO)
+    acquire = WrapSession <$> Class.openSession Class.NoMSessionArgs
 
-    release :: WrapSession M.TableHandle IO -> IO ()
-    release (WrapSession session) = M.closeSession session
+    release :: WrapSession Class.MTableHandle IO -> IO ()
+    release (WrapSession session) = Class.closeSession session
 
     handler :: Handler IO (Maybe Model.Err)
     handler = Handler $ pure . handler'
       where
-        handler' :: IOError -> Maybe Model.Err
-        handler' err
-          | isDoesNotExistError err
-          , ioeGetLocation err == "open"
-          = Just Model.ErrSnapshotDoesNotExist
-
-          | isIllegalOperation err
-          , ioe_description err == "table handle closed"
-          = Just Model.ErrTableHandleClosed
-
-          | isIllegalOperation err
-          , ioe_description err == "cursor closed"
-          = Just Model.ErrCursorClosed
-
-          | isAlreadyExistsError err
-          , ioe_location err == "snapshot"
-          = Just Model.ErrSnapshotExists
-
-          | ioeGetErrorType err == InappropriateType
-          , ioe_location err == "open"
-          = Just Model.ErrSnapshotWrongType
-
-          | isDoesNotExistError err
-          , ioe_location err == "deleteSnapshot"
-          = Just Model.ErrSnapshotDoesNotExist
-
-          | isIllegalOperation err
-          , ioe_description err == "blob reference invalidated"
-          = Just Model.ErrBlobRefInvalidated
-
-          | otherwise
-          = Nothing
+        handler' :: Class.MErr -> Maybe Model.Err
+        handler' (Class.MErr err) = Just err
 
 instance Arbitrary R.TableConfig where
   arbitrary = do
@@ -259,6 +229,9 @@ instance Arbitrary R.WriteBufferAlloc where
       [ R.AllocNumEntries (R.NumEntries x')
       | QC.Positive x' <- QC.shrink (QC.Positive x)
       ]
+
+deriving via AllowThunk (Class.MSession IO)
+    instance NoThunks (Class.MSession IO)
 
 propLockstep_RealImpl_RealFS_IO ::
      Tracer IO R.LSMTreeTrace
@@ -387,9 +360,9 @@ newtype Key1   = Key1   { _unKey1 :: QC.Small Word64 }
   deriving stock (Show, Eq, Ord)
   deriving newtype (Arbitrary, R.SerialiseKey)
 newtype Value1 = Value1 { _unValue1 :: QC.Small Word64 }
-
   deriving stock (Show, Eq, Ord)
   deriving newtype (Arbitrary, R.SerialiseValue)
+  deriving Semigroup via Sum Word64
 newtype Blob1  = Blob1  { _unBlob1 :: QC.Small Word64 }
 
   deriving stock (Show, Eq, Ord)
@@ -398,20 +371,25 @@ newtype Blob1  = Blob1  { _unBlob1 :: QC.Small Word64 }
 instance R.Labellable (Key1, Value1, Blob1) where
   makeSnapshotLabel _ = "Key1 Value1 Blob1"
 
+instance ResolveValue Value1 where
+  resolveValue = resolveDeserialised (<>)
+
 newtype Key2   = Key2   { _unKey2   :: KeyForIndexCompact }
   deriving stock (Show, Eq, Ord)
   deriving newtype (Arbitrary, R.SerialiseKey)
 
 newtype Value2 = Value2 { _unValue2 :: BS.ByteString }
   deriving stock (Show, Eq, Ord)
-  deriving newtype (Arbitrary, R.SerialiseValue)
-
+  deriving newtype (Semigroup, Arbitrary, R.SerialiseValue)
 newtype Blob2  = Blob2  { _unBlob2  :: BS.ByteString }
   deriving stock (Show, Eq, Ord)
   deriving newtype (Arbitrary, R.SerialiseValue)
 
 instance R.Labellable (Key2, Value2, Blob2) where
   makeSnapshotLabel _ = "Key2 Value2 Blob2"
+
+instance ResolveValue Value2 where
+  resolveValue = resolveDeserialised (<>)
 
 {-------------------------------------------------------------------------------
   Model state
@@ -487,13 +465,13 @@ instance ( Show (Class.TableConfig h)
                -> Var h (WrapCursor h IO k v blob)
                -> Act h (V.Vector (R.QueryResult k v (WrapBlobRef h IO blob)))
     -- Updates
-    Updates :: C k v blob
+    Updates :: (C k v blob, ResolveValue v)
             => V.Vector (k, R.Update v blob) -> Var h (WrapTableHandle h IO k v blob)
             -> Act h ()
-    Inserts :: C k v blob
+    Inserts :: (C k v blob, ResolveValue v)
             => V.Vector (k, v, Maybe blob) -> Var h (WrapTableHandle h IO k v blob)
             -> Act h ()
-    Deletes :: C k v blob
+    Deletes :: (C k v blob, ResolveValue v)
             => V.Vector k -> Var h (WrapTableHandle h IO k v blob)
             -> Act h ()
     -- Blobs
@@ -794,13 +772,13 @@ instance ( Eq (Class.TableConfig h)
       New{}            -> OEither $ bimap OId (const OTableHandle) result
       Close{}          -> OEither $ bimap OId OId result
       Lookups{}        -> OEither $
-          bimap OId (OVector . fmap (OLookupResult . fmap (const OBlobRef))) result
+          bimap OId (OVector . fmap (OLookupResult . Class.convLookupResult' . fmap (const OBlobRef))) result
       RangeLookup{}    -> OEither $
-          bimap OId (OVector . fmap (OQueryResult . fmap (const OBlobRef))) result
+          bimap OId (OVector . fmap (OQueryResult . Class.convQueryResult' . fmap (const OBlobRef))) result
       NewCursor{}      -> OEither $ bimap OId (const OCursor) result
       CloseCursor{}    -> OEither $ bimap OId OId result
       ReadCursor{}     -> OEither $
-          bimap OId (OVector . fmap (OQueryResult . fmap (const OBlobRef))) result
+          bimap OId (OVector . fmap (OQueryResult . Class.convQueryResult' .  fmap (const OBlobRef))) result
       Updates{}        -> OEither $ bimap OId OId result
       Inserts{}        -> OEither $ bimap OId OId result
       Deletes{}        -> OEither $ bimap OId OId result
@@ -849,13 +827,13 @@ instance ( Eq (Class.TableConfig h)
       New{}            -> OEither $ bimap OId (const OTableHandle) result
       Close{}          -> OEither $ bimap OId OId result
       Lookups{}        -> OEither $
-          bimap OId (OVector . fmap (OLookupResult . fmap (const OBlobRef))) result
+          bimap OId (OVector . fmap (OLookupResult . Class.convLookupResult' .fmap (const OBlobRef))) result
       RangeLookup{}    -> OEither $
-          bimap OId (OVector . fmap (OQueryResult . fmap (const OBlobRef))) result
+          bimap OId (OVector . fmap (OQueryResult . Class.convQueryResult' . fmap (const OBlobRef))) result
       NewCursor{}      -> OEither $ bimap OId (const OCursor) result
       CloseCursor{}    -> OEither $ bimap OId OId result
       ReadCursor{}     -> OEither $
-          bimap OId (OVector . fmap (OQueryResult . fmap (const OBlobRef))) result
+          bimap OId (OVector . fmap (OQueryResult . Class.convQueryResult' . fmap (const OBlobRef))) result
       Updates{}        -> OEither $ bimap OId OId result
       Inserts{}        -> OEither $ bimap OId OId result
       Deletes{}        -> OEither $ bimap OId OId result
@@ -939,7 +917,7 @@ runModel lookUp = \case
     ReadCursor n cursorVar -> wrap (MVector . fmap (MQueryResult . fmap MBlobRef)) .
       Model.runModelM (Model.readCursor n (getCursor $ lookUp cursorVar))
     Updates kups tableVar -> wrap MUnit .
-      Model.runModelM (Model.updates kups (getTableHandle $ lookUp tableVar))
+      Model.runModelM (Model.updates (fmap (fmap Class.convUpdate) kups) (getTableHandle $ lookUp tableVar))
     Inserts kins tableVar -> wrap MUnit .
       Model.runModelM (Model.inserts kins (getTableHandle $ lookUp tableVar))
     Deletes kdels tableVar -> wrap MUnit .
@@ -1097,6 +1075,7 @@ catchErr (Handler f) action = catch (Right <$> action) f'
 arbitraryActionWithVars ::
      forall h k v blob. (
        C k v blob
+     , ResolveValue v
      , Ord k
      , R.Labellable (k, v, blob)
      , Eq (Class.TableConfig h)
@@ -1373,9 +1352,9 @@ updateStats action result =
                       -> Val h (R.LookupResult v (WrapBlobRef h IO blob))
                       -> (Int, Int, Int)
                 count (nf, f, fwb) (MLookupResult x) = case x of
-                  R.NotFound        -> (nf+1, f  , fwb  )
-                  R.Found{}         -> (nf  , f+1, fwb  )
-                  R.FoundWithBlob{} -> (nf  , f  , fwb+1)
+                  Model.NotFound        -> (nf+1, f  , fwb  )
+                  Model.Found{}         -> (nf  , f+1, fwb  )
+                  Model.FoundWithBlob{} -> (nf  , f  , fwb+1)
             in V.foldl' count (numLookupsResults stats) lrs
         }
       _ -> stats
