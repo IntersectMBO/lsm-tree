@@ -756,7 +756,7 @@ updates resolve es th = do
     withOpenTable th $ \thEnv -> do
       let hfs = tableHasFS thEnv
       modifyWithTempRegistry_
-        (atomically $ RW.unsafeAcquireWriteAccess (tableContent thEnv))
+        (RW.unsafeAcquireWriteAccess (tableContent thEnv))
         (atomically . RW.unsafeReleaseWriteAccess (tableContent thEnv)) $ \reg -> do
           updatesWithInterleavedFlushes
             (TraceMerge `contramap` tableTracer th)
@@ -1142,7 +1142,7 @@ snapshot resolve snap label th = do
       -- before taking the snapshot.
       let hfs = tableHasFS thEnv
       content <- modifyWithTempRegistry
-                    (atomically $ RW.unsafeAcquireWriteAccess (tableContent thEnv))
+                    (RW.unsafeAcquireWriteAccess (tableContent thEnv))
                     (atomically . RW.unsafeReleaseWriteAccess (tableContent thEnv))
                     $ \reg content -> do
         r <- flushWriteBuffer
