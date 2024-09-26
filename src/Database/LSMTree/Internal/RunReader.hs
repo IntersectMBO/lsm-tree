@@ -102,7 +102,7 @@ new fs hbio !offsetKey readerRun = do
             return (firstPage, 0)
           OffsetKey offset -> do
             -- Use the index to find the page number for the key (if it exists).
-            let Index.PageSpan pageNo _pageEnd = Index.search offset index
+            let Index.PageSpan pageNo pageEnd = Index.search offset index
             seekToDiskPage fs pageNo readerKOpsHandle
             readDiskPage fs readerKOpsHandle >>= \case
               Nothing ->
@@ -123,11 +123,6 @@ new fs hbio !offsetKey readerRun = do
                     -- page and the first key in the next page.
                     -- Thus the reader should be initialised to return keys
                     -- starting from the next (non-overflow) page.
-                    --
-                    -- We should just be able to use pageEnd from @Index.search@,
-                    -- but in some cases it differs from how we calculate it here.
-                    -- TODO: Fix end of range returned from index search
-                    let pageEnd = Index.PageNo (Index.unPageNo pageNo + rawPageOverflowPages foundPage)
                     seekToDiskPage fs (Index.nextPageNo pageEnd) readerKOpsHandle
                     nextPage <- readDiskPage fs readerKOpsHandle
                     return (nextPage, 0)
