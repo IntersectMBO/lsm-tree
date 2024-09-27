@@ -131,6 +131,7 @@ data RunOpts = RunOpts
     , check      :: !Bool
     , seed       :: !Word64
     , pipelined  :: !Bool
+    , lookuponly :: !Bool
     }
   deriving stock Show
 
@@ -208,6 +209,7 @@ runOptsP = pure RunOpts
     <*> O.switch (O.long "check" <> O.help "Check generated key distribution")
     <*> O.option O.auto (O.long "seed" <> O.value 1337 <> O.showDefault <> O.help "Random seed")
     <*> O.switch (O.long "pipelined" <> O.help "Use pipelined mode")
+    <*> O.switch (O.long "lookup-only" <> O.help "Use lookup only mode")
 
 -------------------------------------------------------------------------------
 -- measurements
@@ -567,6 +569,7 @@ doRun gopts opts = do
 
         let benchmarkIterations
               | pipelined opts = pipelinedIterations
+              | lookuponly opts= sequentialIterationsLO
               | otherwise      = sequentialIterations
             !progressInterval  = max 1 ((batchCount opts) `div` 100)
             madeProgress b     = b `mod` progressInterval == 0
@@ -617,6 +620,34 @@ sequentialIterations :: (Int -> LookupResults -> IO ())
 sequentialIterations output !initialSize !batchSize !batchCount !seed !tbl =
     void $ forFoldM_ g0 [ 0 .. batchCount - 1 ] $ \b g ->
       sequentialIteration output initialSize batchSize tbl b g
+  where
+    g0 = initGen initialSize batchSize batchCount seed
+
+{-# INLINE sequentialIterationLO #-}
+sequentialIterationLO :: (Int -> LookupResults -> IO ())
+                      -> Int
+                      -> Int
+                      -> LSM.TableHandle IO K V B
+                      -> Int
+                      -> MCG.MCG
+                      -> IO MCG.MCG
+sequentialIterationLO output !initialSize !batchSize !tbl !b !g = do
+    let (!g', ls, _is) = generateBatch initialSize batchSize g b
+
+    -- lookups
+    results <- LSM.lookups ls tbl
+    output b (V.zip ls (fmap (fmap (const ())) results))
+
+    -- continue to the next batch
+    return g'
+
+sequentialIterationsLO :: (Int -> LookupResults -> IO ())
+                       -> Int -> Int -> Int -> Word64
+                       -> LSM.TableHandle IO K V B
+                       -> IO ()
+sequentialIterationsLO output !initialSize !batchSize !batchCount !seed !tbl =
+    void $ forFoldM_ g0 [ 0 .. batchCount - 1 ] $ \b g ->
+      sequentialIterationLO output initialSize batchSize tbl b g
   where
     g0 = initGen initialSize batchSize batchCount seed
 
