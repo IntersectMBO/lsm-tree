@@ -617,6 +617,6 @@ mergeRuns resolve hfs hbio caching alloc runPaths mergeLevel runs = do
       Just merge -> go merge
   where
     go m =
-      Merge.steps hfs hbio m 1024 >>= \case
+      Merge.steps m 1024 >>= \case
         (_, Merge.MergeInProgress)   -> go m
         (_, Merge.MergeComplete run) -> return run
