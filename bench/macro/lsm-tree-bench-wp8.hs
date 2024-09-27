@@ -42,6 +42,7 @@ import           Control.Concurrent.MVar
 import           Control.DeepSeq (force)
 import           Control.Exception (evaluate)
 import           Control.Monad (forM_, unless, void, when)
+import           Control.Monad.Trans.State.Strict (runState, state)
 import           Control.Tracer
 import qualified Data.ByteString.Short as BS
 import qualified Data.Foldable as Fold
@@ -51,8 +52,6 @@ import qualified Data.List.NonEmpty as NE
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.Primitive as P
-import           Data.Traversable (mapAccumL)
-import           Data.Tuple (swap)
 import qualified Data.Vector as V
 import           Data.Void (Void)
 import           Data.Word (Word32, Word64)
@@ -507,7 +506,7 @@ generateBatch initialSize batchSize g b =
     (lookups', inserts')    = toOperations lookups inserts
     (!g', lookups, inserts) = generateBatch' initialSize batchSize g b
 
-{- | Implement generation of unbounded sequence of insert/delete operations
+{- | Implement generation of unbounded sequence of insert\/delete operations
 
 matching UTxO style from spec: interleaved batches insert and lookup
 configurable batch sizes
@@ -518,6 +517,7 @@ We could also make it exact, but then we'll need to carry some state around
 (at least the difference).
 
 -}
+{-# INLINE generateBatch' #-}
 generateBatch'
     :: Int       -- ^ initial size of the collection
     -> Int       -- ^ batch size
@@ -530,13 +530,14 @@ generateBatch' initialSize batchSize g b = (g'', lookups, inserts)
     maxK = fromIntegral $ initialSize + batchSize * b
 
     lookups :: V.Vector Word64
-    (!g'', lookups) = mapAccumL (\g' _ -> swap (MCG.reject maxK g'))
-                                g (V.enumFromTo 1 batchSize)
+    (lookups, !g'') =
+       runState (V.replicateM batchSize (state (MCG.reject maxK))) g
 
     inserts :: V.Vector Word64
     inserts = V.enumFromTo maxK (maxK + fromIntegral batchSize - 1)
 
 -- | Generate operation inputs
+{-# INLINE toOperations #-}
 toOperations :: V.Vector Word64 -> V.Vector Word64 -> (V.Vector K, V.Vector (K, LSM.Update V B))
 toOperations lookups inserts = (batch1, batch2)
   where
@@ -884,10 +885,12 @@ main = do
 -------------------------------------------------------------------------------
 
 forFoldM_ :: Monad m => s -> [a] -> (a -> s -> m s) -> m s
-forFoldM_ !s []     _ = return s
-forFoldM_ !s (x:xs) f = do
-    !s' <- f x s
-    forFoldM_ s' xs f
+forFoldM_ !s0 xs0 f = go s0 xs0
+  where
+    go !s []     = return s
+    go !s (x:xs) = do
+      !s' <- f x s
+      go s' xs
 
 intSetFromVector :: V.Vector Word64 -> IS.IntSet
 intSetFromVector = V.foldl' (\acc x -> IS.insert (fromIntegral x) acc) IS.empty

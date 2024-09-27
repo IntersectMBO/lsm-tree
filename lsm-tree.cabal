@@ -519,6 +519,7 @@ benchmark lsm-tree-bench-wp8
     , pretty-show
     , primitive
     , random
+    , transformers
     , vector
 
   ghc-options:    -rtsopts -with-rtsopts=-T -threaded
