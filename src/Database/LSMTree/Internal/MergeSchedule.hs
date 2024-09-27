@@ -614,9 +614,4 @@ mergeRuns ::
 mergeRuns resolve hfs hbio caching alloc runPaths mergeLevel runs = do
     Merge.new hfs hbio caching alloc mergeLevel resolve runPaths runs >>= \case
       Nothing -> error "mergeRuns: no inputs"
-      Just merge -> go merge
-  where
-    go m =
-      Merge.steps m 1024 >>= \case
-        (_, Merge.MergeInProgress)   -> go m
-        (_, Merge.MergeComplete run) -> return run
+      Just m -> Merge.stepsToCompletion m 1024

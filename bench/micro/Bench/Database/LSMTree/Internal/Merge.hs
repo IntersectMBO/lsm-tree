@@ -234,12 +234,7 @@ merge fs hbio Config {..} targetPaths runs = do
     let f = fromMaybe const mergeMappend
     m <- fromMaybe (error "empty inputs, no merge created") <$>
       Merge.new fs hbio Run.CacheRunData (RunAllocFixed 10) mergeLevel f targetPaths runs
-    go m
-  where
-    go m =
-        Merge.steps m stepSize >>= \case
-          (_, Merge.MergeComplete run) -> return run
-          (_, Merge.MergeInProgress) -> go m
+    Merge.stepsToCompletion m stepSize
 
 outputRunPaths :: Run.RunFsPaths
 outputRunPaths = RunFsPaths (FS.mkFsPath []) (RunNumber 0)

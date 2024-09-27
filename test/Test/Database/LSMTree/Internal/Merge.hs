@@ -148,8 +148,8 @@ prop_CloseMerge fs hbio level (Positive stepSize) (fmap unTypedWriteBuffer -> Sm
         Just merge -> do
           -- just do a few steps once, ideally not completing the merge
           Merge.steps merge stepSize >>= \case
-            (_, Merge.MergeComplete run) -> do
-              Run.removeReference run  -- run not needed, close
+            (_, Merge.MergeComplete) -> do
+              Merge.close merge  -- run not needed, close
               return Nothing  -- not in progress
             (_, Merge.MergeInProgress) ->
               return (Just merge)
@@ -173,13 +173,7 @@ mergeRuns fs hbio level runNumber runs (Positive stepSize) = do
               (RunFsPaths (FS.mkFsPath []) runNumber) runs >>= \case
       Nothing -> (,) 0 <$> mkRunFromSerialisedKOps fs hbio
                              (RunFsPaths (FS.mkFsPath []) runNumber) Map.empty
-      Just m  -> go 0 m
-  where
-    go !steps m =
-        Merge.steps m stepSize >>= \case
-          (n, Merge.MergeComplete run) -> return (steps + n, run)
-          (n, Merge.MergeInProgress)   -> go (steps + n) m
-
+      Just m  -> Merge.stepsToCompletionCounted m stepSize
 
 type SerialisedEntry = Entry.Entry SerialisedValue SerialisedBlob
 
