@@ -129,7 +129,7 @@ prop_CloseMerge fs hbio level (Positive stepSize) (fmap unTypedWriteBuffer -> Sm
     let path0 = RunFsPaths (FS.mkFsPath []) (RunNumber 0)
     runs <- fmap V.fromList $ sequenceA $ zipWith (flush . RunNumber) [10..] wbs
     mergeToClose <- makeInProgressMerge path0 runs
-    traverse_ (Merge.close fs hbio) mergeToClose
+    traverse_ Merge.close mergeToClose
 
     filesExist <- traverse (FS.doesFileExist fs) (pathsForRunFiles path0)
 
@@ -147,7 +147,7 @@ prop_CloseMerge fs hbio level (Positive stepSize) (fmap unTypedWriteBuffer -> Sm
         Nothing -> return Nothing  -- not in progress
         Just merge -> do
           -- just do a few steps once, ideally not completing the merge
-          Merge.steps fs hbio merge stepSize >>= \case
+          Merge.steps merge stepSize >>= \case
             (_, Merge.MergeComplete run) -> do
               Run.removeReference run  -- run not needed, close
               return Nothing  -- not in progress
@@ -176,7 +176,7 @@ mergeRuns fs hbio level runNumber runs (Positive stepSize) = do
       Just m  -> go 0 m
   where
     go !steps m =
-        Merge.steps fs hbio m stepSize >>= \case
+        Merge.steps m stepSize >>= \case
           (n, Merge.MergeComplete run) -> return (steps + n, run)
           (n, Merge.MergeInProgress)   -> go (steps + n) m
 

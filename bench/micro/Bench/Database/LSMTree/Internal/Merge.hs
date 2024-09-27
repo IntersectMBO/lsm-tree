@@ -237,7 +237,7 @@ merge fs hbio Config {..} targetPaths runs = do
     go m
   where
     go m =
-        Merge.steps fs hbio m stepSize >>= \case
+        Merge.steps m stepSize >>= \case
           (_, Merge.MergeComplete run) -> return run
           (_, Merge.MergeInProgress) -> go m
 

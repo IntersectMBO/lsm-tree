@@ -36,13 +36,15 @@ import           System.FS.BlockIO.API (HasBlockIO)
 --
 -- TODO: Reference counting will have to be done somewhere, either here or in
 -- the layer above.
-data Merge m fhandle = Merge {
-      mergeLevel   :: !Level
-    , mergeMappend :: !Mappend
-    , mergeReaders :: {-# UNPACK #-} !(Readers.Readers m fhandle)
-    , mergeBuilder :: !(RunBuilder (PrimState m) fhandle)
-    , mergeCaching :: !RunDataCaching
+data Merge m h = Merge {
+      mergeLevel      :: !Level
+    , mergeMappend    :: !Mappend
+    , mergeReaders    :: {-# UNPACK #-} !(Readers.Readers m (FS.Handle h))
+    , mergeBuilder    :: !(RunBuilder (PrimState m) (FS.Handle h))
+    , mergeCaching    :: !RunDataCaching
       -- ^ The caching policy to use for the Run in the 'MergeComplete'.
+    , mergeHasFS      :: !(HasFS m h)
+    , mergeHasBlockIO :: !(HasBlockIO m h)
     }
 
 data Level = MidLevel | LastLevel
@@ -61,7 +63,7 @@ new ::
   -> Mappend
   -> Run.RunFsPaths
   -> V.Vector (Run IO (FS.Handle h))
-  -> IO (Maybe (Merge IO (FS.Handle h)))
+  -> IO (Maybe (Merge IO h))
 new fs hbio mergeCaching alloc mergeLevel mergeMappend targetPaths runs = do
     -- no offset, no write buffer
     mreaders <- Readers.new fs hbio Readers.NoOffsetKey Nothing runs
@@ -69,21 +71,22 @@ new fs hbio mergeCaching alloc mergeLevel mergeMappend targetPaths runs = do
       -- calculate upper bounds based on input runs
       let numEntries = coerce (sum @V.Vector @Int) (fmap Run.runNumEntries runs)
       mergeBuilder <- Builder.new fs targetPaths numEntries alloc
-      return Merge {..}
+      return Merge {
+          mergeHasFS = fs
+        , mergeHasBlockIO = hbio
+        , ..
+        }
+
 
 -- | This function should be called when discarding a 'Merge' before it
 -- was done (i.e. returned 'MergeComplete'). This removes the incomplete files
 -- created for the new run so far and avoids leaking file handles.
 --
 -- Once it has been called, do not use the 'Merge' any more!
-close ::
-     HasFS IO h
-  -> HasBlockIO IO h
-  -> Merge IO (FS.Handle h)
-  -> IO ()
-close fs hbio Merge {..} = do
-    Builder.close fs mergeBuilder
-    Readers.close fs hbio mergeReaders
+close :: Merge IO h -> IO ()
+close Merge {..} = do
+    Builder.close mergeHasFS mergeBuilder
+    Readers.close mergeHasFS mergeHasBlockIO mergeReaders
 
 data StepResult m fhandle = MergeInProgress | MergeComplete !(Run m fhandle)
 
@@ -104,14 +107,15 @@ stepsInvariant requestedSteps = \case
 --
 -- The resulting run has a reference count of 1.
 steps ::
-     HasFS IO h
-  -> HasBlockIO IO h
-  -> Merge IO (FS.Handle h)
+     Merge IO h
   -> Int  -- ^ How many input entries to consume (at least)
   -> IO (Int, StepResult IO (FS.Handle h))
-steps fs hbio Merge {..} requestedSteps =
+steps Merge {..} requestedSteps =
     (\res -> assert (stepsInvariant requestedSteps res) res) <$> go 0
   where
+    fs = mergeHasFS
+    hbio = mergeHasBlockIO
+
     go !n
       | n >= requestedSteps =
           return (n, MergeInProgress)
