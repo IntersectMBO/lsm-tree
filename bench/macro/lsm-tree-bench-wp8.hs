@@ -32,8 +32,6 @@ H. The benchmark should use the external interface of the disk backend
 I. The benchmark should be able to run in two modes, using the
    external interface of the disk backend in two ways: serially (in
    batches), or fully pipelined (in batches).
-
-TODO 2024-04-29 consider alternative methods of implementing key generation
 -}
 module Main (main) where
 
@@ -45,8 +43,6 @@ import           Control.DeepSeq (force)
 import           Control.Exception (evaluate)
 import           Control.Monad (forM_, unless, void, when)
 import           Control.Tracer
-import qualified Crypto.Hash.SHA256 as SHA256
-import qualified Data.Binary as B
 import qualified Data.ByteString.Short as BS
 import qualified Data.Foldable as Fold
 import qualified Data.IntSet as IS
@@ -54,6 +50,7 @@ import           Data.IORef (modifyIORef', newIORef, readIORef, writeIORef)
 import qualified Data.List.NonEmpty as NE
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import qualified Data.Primitive as P
 import           Data.Traversable (mapAccumL)
 import           Data.Tuple (swap)
 import qualified Data.Vector as V
@@ -70,10 +67,12 @@ import qualified System.FS.BlockIO.IO as FsIO
 import qualified System.FS.IO as FsIO
 import           System.IO
 import           System.Mem (performMajorGC)
+import qualified System.Random as Random
 import           Text.Printf (printf)
 import           Text.Show.Pretty
 
-import           Database.LSMTree.Extras
+import           Database.LSMTree.Extras (groupsOfN)
+import           Database.LSMTree.Internal.ByteString (byteArrayToSBS)
 
 -- We should be able to write this benchmark
 -- using only use public lsm-tree interface
@@ -90,14 +89,32 @@ type B = Void
 instance LSM.Labellable (K, V, B) where
   makeSnapshotLabel _ = "K V B"
 
--- We generate keys by hashing a word64 and adding two "random" bytes.
--- This way we can ensure that keys are distinct.
+-- | We generate 34 byte keys by using a PRNG to extend a word64 to 32 bytes
+-- and then appending two constant bytes. This corresponds relatively closely
+-- to UTxO keys, which are 32 byte cryptographic hashes, followed by two bytes
+-- which are typically the 16bit value 0 or 1 (a transaction output index).
 --
--- I think this approach of generating keys should match UTxO quite well.
--- This is purely CPU bound operation, and we should be able to push IO
--- when doing these in between.
 makeKey :: Word64 -> K
-makeKey w64 = BS.toShort (SHA256.hashlazy (B.encode w64) <> "==")
+makeKey seed =
+    case P.runPrimArray $ do
+           v <- P.newPrimArray 5
+           let g0 = Random.mkStdGen (fromIntegral seed)
+           let (!w0, !g1) = Random.uniform g0
+           P.writePrimArray v 0 w0
+           let (!w1, !g2) = Random.uniform g1
+           P.writePrimArray v 1 w1
+           let (!w2, !g3) = Random.uniform g2
+           P.writePrimArray v 2 w2
+           let (!w3, _g4) = Random.uniform g3
+           P.writePrimArray v 3 w3
+           P.writePrimArray v 4 0x3d3d3d3d3d3d3d3d -- ========
+           case v of
+             P.MutablePrimArray mba -> do
+               _ <- P.resizeMutableByteArray (P.MutableByteArray mba) 34
+               return v
+
+      of (P.PrimArray ba :: P.PrimArray Word64) ->
+           byteArrayToSBS (P.ByteArray ba)
 
 -- We use constant value. This shouldn't affect anything.
 theValue :: V
