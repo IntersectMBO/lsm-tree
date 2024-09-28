@@ -1,5 +1,3 @@
-{-# OPTIONS_GHC -Wno-orphans #-}
-
 module Test.Database.LSMTree.Internal.Chunk (tests) where
 
 import           Prelude hiding (concat, drop, length)
