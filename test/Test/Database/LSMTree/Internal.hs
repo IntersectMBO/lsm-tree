@@ -1,6 +1,8 @@
 {-# LANGUAGE LambdaCase      #-}
 {-# LANGUAGE RecordWildCards #-}
 
+{- HLINT ignore "Use <=<" -}
+
 -- TODO: generalise tests in this module for IOSim, not just IO. Do this once we
 -- add proper support for IOSim for fault testing.
 module Test.Database.LSMTree.Internal (tests) where
@@ -13,13 +15,14 @@ import           Data.Bifunctor
 import           Data.Coerce (coerce)
 import           Data.Foldable (traverse_)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (fromMaybe, mapMaybe)
+import           Data.Maybe (fromMaybe, isJust, mapMaybe)
 import           Data.Monoid (Sum (..))
 import qualified Data.Vector as V
 import           Data.Word (Word64)
 import           Database.LSMTree.Extras (showPowersOf)
 import           Database.LSMTree.Extras.Generators (KeyForIndexCompact (..))
 import           Database.LSMTree.Internal
+import           Database.LSMTree.Internal.BlobRef
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.MergeSchedule
@@ -216,18 +219,20 @@ prop_roundtripCursor lb ub kops = ioProperty $
     withTempIOHasBlockIO "prop_roundtripCursor" $ \hfs hbio -> do
       withSession nullTracer hfs hbio (FS.mkFsPath []) $ \sesh -> do
         withTable sesh conf $ \th -> do
-          updates appendSerialisedValue (coerce kopsWithoutblobs) th
-          fromCursor <- withCursor (toOffsetKey lb) th $
-            readCursorUntil appendSerialisedValue ub
-          return $ tabulate "duplicates" (show <$> Map.elems duplicates) $
+          updates appendSerialisedValue (coerce kops) th
+          fromCursor <- withCursor (toOffsetKey lb) th $ \c ->
+            fetchBlobs hfs =<< readCursorUntil appendSerialisedValue ub c
+          return $
+            tabulate "duplicates" (show <$> Map.elems duplicates) $
+            tabulate "any blobs" [show (any (isJust . snd . snd) fromCursor)] $
             expected === fromCursor
   where
     conf = testTableConfig
 
-    -- TODO: include inserts with blobs once write buffer returns BlobRefs
-    kopsWithoutblobs = V.map (fmap f) kops
-      where f (InsertWithBlob v _) = Insert v
-            f x                    = x
+    fetchBlobs :: FS.HasFS IO h
+             ->     V.Vector (k, (v, Maybe (WeakBlobRef IO (FS.Handle h))))
+             -> IO (V.Vector (k, (v, Maybe SerialisedBlob)))
+    fetchBlobs hfs = traverse (traverse (traverse (traverse (fetchBlob hfs))))
 
     toOffsetKey = maybe NoOffsetKey (OffsetKey . coerce)
 
@@ -236,7 +241,7 @@ prop_roundtripCursor lb ub kops = ioProperty $
         maybe id (\k -> takeWhile ((<= k) . fst)) ub $
           maybe id (\k -> dropWhile ((< k) . fst)) lb $
             Map.assocs . Map.fromListWith (combine appendSerialisedValue) $
-              V.toList kopsWithoutblobs
+              V.toList kops
 
     entryToValue :: Entry v b -> Maybe (v, Maybe b)
     entryToValue = \case
@@ -255,11 +260,13 @@ readCursorUntil ::
      ResolveSerialisedValue
   -> Maybe KeyForIndexCompact  -- Inclusive upper bound
   -> Cursor IO h
-  -> IO (V.Vector (KeyForIndexCompact, (SerialisedValue, Maybe b)))
+  -> IO (V.Vector (KeyForIndexCompact,
+                   (SerialisedValue,
+                    Maybe (WeakBlobRef IO (FS.Handle h)))))
 readCursorUntil resolve ub cursor = go V.empty
   where
     chunkSize = 50
-    toResult k v b = (coerce k, (v, fmap toBlob b))
+    toResult k v b = (coerce k, (v, b))
 
     go !acc = do
       res <- case ub of
@@ -268,8 +275,9 @@ readCursorUntil resolve ub cursor = go V.empty
       if V.length res < chunkSize then return (acc <> res)
                                   else go (acc <> res)
 
-    toBlob = error "blobs not supported yet"
-
 appendSerialisedValue :: ResolveSerialisedValue
 appendSerialisedValue (SerialisedValue x) (SerialisedValue y) =
     SerialisedValue (x <> y)
+
+fetchBlob :: FS.HasFS IO h -> WeakBlobRef IO (FS.Handle h) -> IO SerialisedBlob
+fetchBlob hfs bref = withWeakBlobRef bref (readBlob hfs)
