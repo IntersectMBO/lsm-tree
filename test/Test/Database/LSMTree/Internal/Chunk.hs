@@ -1,5 +1,3 @@
-{-# OPTIONS_GHC -Wno-orphans #-}
-
 module Test.Database.LSMTree.Internal.Chunk (tests) where
 
 import           Prelude hiding (concat, drop, length)
@@ -8,9 +6,10 @@ import           Control.Category ((>>>))
 import           Control.Monad.ST.Strict (runST)
 import qualified Data.List as List (concat, drop, length)
 import           Data.Maybe (catMaybes, fromJust, isJust, isNothing)
-import           Data.Vector.Primitive (Vector, concat, fromList, length,
-                     toList)
+import           Data.Vector.Primitive (Vector, concat, length)
 import           Data.Word (Word8)
+import           Database.LSMTree.Extras.Generators ()
+                     -- for @Arbitrary@ instantiation of @Vector@
 import           Database.LSMTree.Internal.Chunk (Chunk, createBaler, feedBaler,
                      fromChunk, unsafeEndBaler)
 import           Test.QuickCheck (Arbitrary (arbitrary, shrink),
@@ -125,12 +124,6 @@ prop_remnantChunkIsSmall (MinChunkSize minChunkSize)
     = remnantChunkSizeIs (< minChunkSize) minChunkSize
 
 -- * Test case generation and shrinking
-
-instance Arbitrary (Vector Word8) where
-
-    arbitrary = fromList <$> arbitrary
-
-    shrink = shrinkMap fromList toList
 
 {-
     The type of minimum chunk sizes.
