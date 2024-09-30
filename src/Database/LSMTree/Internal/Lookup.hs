@@ -51,6 +51,8 @@ import           Database.LSMTree.Internal.RawPage
 import           Database.LSMTree.Internal.Run (Run, mkBlobRefForRun)
 import           Database.LSMTree.Internal.Serialise
 import qualified Database.LSMTree.Internal.Vector as V
+import qualified Database.LSMTree.Internal.WriteBuffer as WB
+import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
 import           System.FS.API (BufferOffset (..), Handle)
 import           System.FS.BlockIO.API
 
@@ -217,6 +219,8 @@ data ByteCountDiscrepancy = ByteCountDiscrepancy {
        HasBlockIO IO h
     -> ArenaManager RealWorld
     -> ResolveSerialisedValue
+    -> WB.WriteBuffer
+    -> WBB.WriteBufferBlobs IO h
     -> V.Vector (Run IO (Handle h))
     -> V.Vector (Bloom SerialisedKey)
     -> V.Vector IndexCompact
@@ -235,16 +239,20 @@ lookupsIO ::
   => HasBlockIO m h
   -> ArenaManager (PrimState m)
   -> ResolveSerialisedValue
+  -> WB.WriteBuffer
+  -> WBB.WriteBufferBlobs m h
   -> V.Vector (Run m (Handle h)) -- ^ Runs @rs@
   -> V.Vector (Bloom SerialisedKey) -- ^ The bloom filters inside @rs@
   -> V.Vector IndexCompact -- ^ The indexes inside @rs@
   -> V.Vector (Handle h) -- ^ The file handles to the key\/value files inside @rs@
   -> V.Vector SerialisedKey
   -> m (V.Vector (Maybe (Entry SerialisedValue (WeakBlobRef m (Handle h)))))
-lookupsIO !hbio !mgr !resolveV !rs !blooms !indexes !kopsFiles !ks = assert precondition $ withArena mgr $ \arena -> do
-    (rkixs, ioops) <- Class.stToIO $ prepLookups arena blooms indexes kopsFiles ks
-    ioress <- submitIO hbio ioops
-    intraPageLookups resolveV rs ks rkixs ioops ioress
+lookupsIO !hbio !mgr !resolveV !wb !wbblobs !rs !blooms !indexes !kopsFiles !ks =
+    assert precondition $
+    withArena mgr $ \arena -> do
+      (rkixs, ioops) <- Class.stToIO $ prepLookups arena blooms indexes kopsFiles ks
+      ioress <- submitIO hbio ioops
+      intraPageLookups resolveV wb wbblobs rs ks rkixs ioops ioress
   where
     -- we check only that the lengths match, because checking the contents is
     -- too expensive.
@@ -256,6 +264,8 @@ lookupsIO !hbio !mgr !resolveV !rs !blooms !indexes !kopsFiles !ks = assert prec
 
 {-# SPECIALIZE intraPageLookups ::
        ResolveSerialisedValue
+    -> WB.WriteBuffer
+    -> WBB.WriteBufferBlobs IO h
     -> V.Vector (Run IO (Handle h))
     -> V.Vector SerialisedKey
     -> VU.Vector (RunIx, KeyIx)
@@ -263,22 +273,45 @@ lookupsIO !hbio !mgr !resolveV !rs !blooms !indexes !kopsFiles !ks = assert prec
     -> VU.Vector IOResult
     -> IO (V.Vector (Maybe (Entry SerialisedValue (WeakBlobRef IO (Handle h)))))
   #-}
--- | Intra-page lookups.
+-- | Intra-page lookups, and combining lookup results from multiple runs and
+-- the write buffer.
 --
 -- This function assumes that @rkixs@ is ordered such that newer runs are
 -- handled first. The order matters for resolving cases where we find the same
 -- key in multiple runs.
+--
 intraPageLookups ::
      forall m h. (PrimMonad m, MonadThrow m)
   => ResolveSerialisedValue
+  -> WB.WriteBuffer
+  -> WBB.WriteBufferBlobs m h
   -> V.Vector (Run m (Handle h))
   -> V.Vector SerialisedKey
   -> VU.Vector (RunIx, KeyIx)
   -> V.Vector (IOOp (PrimState m) h)
   -> VU.Vector IOResult
   -> m (V.Vector (Maybe (Entry SerialisedValue (WeakBlobRef m (Handle h)))))
-intraPageLookups !resolveV !rs !ks !rkixs !ioops !ioress = do
-    res <- VM.replicate (V.length ks) Nothing
+intraPageLookups !resolveV !wb !wbblobs !rs !ks !rkixs !ioops !ioress = do
+    -- We accumulate results into the 'res' vector. When there are several
+    -- lookup hits for the same key then we combine the results. The combining
+    -- operator is associative but not commutative, so we must do this in the
+    -- right order. We start with the write buffer lookup results and then go
+    -- through the run lookup results in rkixs, which must be ordered by run.
+    --
+    -- TODO: reassess the representation of the result vector to try to reduce
+    -- intermediate allocations. For example use a less convenient
+    -- representation with several vectors (e.g. separate blob info) and
+    -- convert to the final convenient representation in a single pass near
+    -- the surface API so that all the conversions can be done in one pass
+    -- without intermediate allocations.
+    --
+    toBlobRef <- WBB.mkBlobRef wbblobs
+    res <- VM.generateM (V.length ks) $ \ki ->
+             case WB.lookup wb (V.unsafeIndex ks ki) of
+               Nothing -> pure Nothing
+               Just e  -> pure $! Just $! fmap (WeakBlobRef . toBlobRef) e
+                -- TODO:  ^^ we should be able to avoid this allocation by
+                -- combining the conversion with other later conversions.
     loop res 0
     V.unsafeFreeze res
   where
@@ -307,6 +340,8 @@ intraPageLookups !resolveV !rs !ks !rkixs !ioops !ioress = do
             LookupEntry e         -> do
                 let e' = bimap copySerialisedValue
                                (WeakBlobRef . mkBlobRefForRun r) e
+                -- TODO: ^^ we should be able to avoid this allocation by
+                -- combining the conversion with other later conversions.
                 V.unsafeInsertWithMStrict res (combine resolveV) kix e'
             -- Laziness ensures that we only compute the appending of the prefix
             -- and suffix when the result is needed. We do not use 'force' here,

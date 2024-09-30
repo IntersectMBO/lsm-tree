@@ -35,6 +35,8 @@ import qualified Database.LSMTree.Internal.RunBuilder as RunBuilder
 import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.Serialise (SerialisedKey,
                      serialiseKey, serialiseValue)
+import qualified Database.LSMTree.Internal.WriteBuffer as WB
+import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
 import           Debug.Trace (traceMarkerIO)
 import           GHC.Stats
 import           Numeric
@@ -197,8 +199,15 @@ benchmarks !caching = withFS $ \hfs hbio -> do
     _blookupsIO <-
       benchmark "benchLookupsIO"
                 "Calculate batches of keys, and perform disk lookups for each batch. This is roughly doing the same as benchPrepLookups, but also performing the disk I/O and resolving values. Net time/allocation is the result of subtracting the cost of benchGenKeyBatches."
-                (benchLookupsIO hbio arenaManager benchmarkResolveSerialisedValue runs blooms indexes handles keyRng0) benchmarkNumLookups
+                (\n -> do
+                    let wb_unused = WB.empty
+                    wbblobs_unused <- WBB.new hfs (FS.mkFsPath [])
+                    benchLookupsIO hbio arenaManager benchmarkResolveSerialisedValue
+                                   wb_unused wbblobs_unused runs blooms indexes handles
+                                   keyRng0 n)
+                benchmarkNumLookups
                 bgenKeyBatches
+    --TODO: consider adding benchmarks that also use the write buffer
 
     traceMarkerIO "Cleaning up"
     putStrLn "Cleaning up"
@@ -454,6 +463,8 @@ benchLookupsIO ::
      FS.HasBlockIO IO h
   -> ArenaManager RealWorld
   -> ResolveSerialisedValue
+  -> WB.WriteBuffer
+  -> WBB.WriteBufferBlobs IO h
   -> V.Vector (Run IO (FS.Handle h))
   -> V.Vector (Bloom SerialisedKey)
   -> V.Vector IndexCompact
@@ -461,12 +472,15 @@ benchLookupsIO ::
   -> StdGen
   -> Int
   -> IO ()
-benchLookupsIO !hbio !arenaManager !resolve !rs !bs !ics !hs !keyRng !n
-  | n <= 0 = pure ()
-  | otherwise = do
-      let (!ks, !keyRng') = genLookupBatch keyRng benchmarkGenBatchSize
-      !_ <- lookupsIO hbio arenaManager resolve rs bs ics hs ks
-      benchLookupsIO hbio arenaManager resolve rs bs ics hs keyRng' (n-benchmarkGenBatchSize)
+benchLookupsIO !hbio !arenaManager !resolve !wb !wbblobs !rs !bs !ics !hs =
+    go
+  where
+    go !keyRng !n
+      | n <= 0    = pure ()
+      | otherwise = do
+          let (!ks, !keyRng') = genLookupBatch keyRng benchmarkGenBatchSize
+          !_ <- lookupsIO hbio arenaManager resolve wb wbblobs rs bs ics hs ks
+          go keyRng' (n-benchmarkGenBatchSize)
 
 {-------------------------------------------------------------------------------
   Utilities

@@ -171,8 +171,8 @@ prop_interimOpenTable dat = ioProperty $
           let snap = fromMaybe (error "invalid name") $ mkSnapshotName "snap"
           numRunsSnapped <- snapshot const snap "someLabel" th
           th' <- open sesh "someLabel" configNoOverride snap
-          lhs <- lookups const ks th id
-          rhs <- lookups const ks th' id
+          lhs <- lookups const ks th
+          rhs <- lookups const ks th'
           close th
           close th'
           -- TODO: checking lookups is a simple check, but we could have stronger
