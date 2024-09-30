@@ -32,8 +32,6 @@ H. The benchmark should use the external interface of the disk backend
 I. The benchmark should be able to run in two modes, using the
    external interface of the disk backend in two ways: serially (in
    batches), or fully pipelined (in batches).
-
-TODO 2024-04-29 consider alternative methods of implementing key generation
 -}
 module Main (main) where
 
@@ -44,9 +42,8 @@ import           Control.Concurrent.MVar
 import           Control.DeepSeq (force)
 import           Control.Exception (evaluate)
 import           Control.Monad (forM_, unless, void, when)
+import           Control.Monad.Trans.State.Strict (runState, state)
 import           Control.Tracer
-import qualified Crypto.Hash.SHA256 as SHA256
-import qualified Data.Binary as B
 import qualified Data.ByteString.Short as BS
 import qualified Data.Foldable as Fold
 import qualified Data.IntSet as IS
@@ -54,8 +51,7 @@ import           Data.IORef (modifyIORef', newIORef, readIORef, writeIORef)
 import qualified Data.List.NonEmpty as NE
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Traversable (mapAccumL)
-import           Data.Tuple (swap)
+import qualified Data.Primitive as P
 import qualified Data.Vector as V
 import           Data.Void (Void)
 import           Data.Word (Word32, Word64)
@@ -70,10 +66,12 @@ import qualified System.FS.BlockIO.IO as FsIO
 import qualified System.FS.IO as FsIO
 import           System.IO
 import           System.Mem (performMajorGC)
+import qualified System.Random as Random
 import           Text.Printf (printf)
 import           Text.Show.Pretty
 
-import           Database.LSMTree.Extras
+import           Database.LSMTree.Extras (groupsOfN)
+import           Database.LSMTree.Internal.ByteString (byteArrayToSBS)
 
 -- We should be able to write this benchmark
 -- using only use public lsm-tree interface
@@ -90,14 +88,32 @@ type B = Void
 instance LSM.Labellable (K, V, B) where
   makeSnapshotLabel _ = "K V B"
 
--- We generate keys by hashing a word64 and adding two "random" bytes.
--- This way we can ensure that keys are distinct.
+-- | We generate 34 byte keys by using a PRNG to extend a word64 to 32 bytes
+-- and then appending two constant bytes. This corresponds relatively closely
+-- to UTxO keys, which are 32 byte cryptographic hashes, followed by two bytes
+-- which are typically the 16bit value 0 or 1 (a transaction output index).
 --
--- I think this approach of generating keys should match UTxO quite well.
--- This is purely CPU bound operation, and we should be able to push IO
--- when doing these in between.
 makeKey :: Word64 -> K
-makeKey w64 = BS.toShort (SHA256.hashlazy (B.encode w64) <> "==")
+makeKey seed =
+    case P.runPrimArray $ do
+           v <- P.newPrimArray 5
+           let g0 = Random.mkStdGen (fromIntegral seed)
+           let (!w0, !g1) = Random.uniform g0
+           P.writePrimArray v 0 w0
+           let (!w1, !g2) = Random.uniform g1
+           P.writePrimArray v 1 w1
+           let (!w2, !g3) = Random.uniform g2
+           P.writePrimArray v 2 w2
+           let (!w3, _g4) = Random.uniform g3
+           P.writePrimArray v 3 w3
+           P.writePrimArray v 4 0x3d3d3d3d3d3d3d3d -- ========
+           case v of
+             P.MutablePrimArray mba -> do
+               _ <- P.resizeMutableByteArray (P.MutableByteArray mba) 34
+               return v
+
+      of (P.PrimArray ba :: P.PrimArray Word64) ->
+           byteArrayToSBS (P.ByteArray ba)
 
 -- We use constant value. This shouldn't affect anything.
 theValue :: V
@@ -131,6 +147,7 @@ data RunOpts = RunOpts
     , check      :: !Bool
     , seed       :: !Word64
     , pipelined  :: !Bool
+    , lookuponly :: !Bool
     }
   deriving stock Show
 
@@ -208,6 +225,7 @@ runOptsP = pure RunOpts
     <*> O.switch (O.long "check" <> O.help "Check generated key distribution")
     <*> O.option O.auto (O.long "seed" <> O.value 1337 <> O.showDefault <> O.help "Random seed")
     <*> O.switch (O.long "pipelined" <> O.help "Use pipelined mode")
+    <*> O.switch (O.long "lookup-only" <> O.help "Use lookup only mode")
 
 -------------------------------------------------------------------------------
 -- measurements
@@ -488,7 +506,7 @@ generateBatch initialSize batchSize g b =
     (lookups', inserts')    = toOperations lookups inserts
     (!g', lookups, inserts) = generateBatch' initialSize batchSize g b
 
-{- | Implement generation of unbounded sequence of insert/delete operations
+{- | Implement generation of unbounded sequence of insert\/delete operations
 
 matching UTxO style from spec: interleaved batches insert and lookup
 configurable batch sizes
@@ -499,6 +517,7 @@ We could also make it exact, but then we'll need to carry some state around
 (at least the difference).
 
 -}
+{-# INLINE generateBatch' #-}
 generateBatch'
     :: Int       -- ^ initial size of the collection
     -> Int       -- ^ batch size
@@ -511,13 +530,14 @@ generateBatch' initialSize batchSize g b = (g'', lookups, inserts)
     maxK = fromIntegral $ initialSize + batchSize * b
 
     lookups :: V.Vector Word64
-    (!g'', lookups) = mapAccumL (\g' _ -> swap (MCG.reject maxK g'))
-                                g (V.enumFromTo 1 batchSize)
+    (lookups, !g'') =
+       runState (V.replicateM batchSize (state (MCG.reject maxK))) g
 
     inserts :: V.Vector Word64
     inserts = V.enumFromTo maxK (maxK + fromIntegral batchSize - 1)
 
 -- | Generate operation inputs
+{-# INLINE toOperations #-}
 toOperations :: V.Vector Word64 -> V.Vector Word64 -> (V.Vector K, V.Vector (K, LSM.Update V B))
 toOperations lookups inserts = (batch1, batch2)
   where
@@ -567,6 +587,7 @@ doRun gopts opts = do
 
         let benchmarkIterations
               | pipelined opts = pipelinedIterations
+              | lookuponly opts= sequentialIterationsLO
               | otherwise      = sequentialIterations
             !progressInterval  = max 1 ((batchCount opts) `div` 100)
             madeProgress b     = b `mod` progressInterval == 0
@@ -617,6 +638,34 @@ sequentialIterations :: (Int -> LookupResults -> IO ())
 sequentialIterations output !initialSize !batchSize !batchCount !seed !tbl =
     void $ forFoldM_ g0 [ 0 .. batchCount - 1 ] $ \b g ->
       sequentialIteration output initialSize batchSize tbl b g
+  where
+    g0 = initGen initialSize batchSize batchCount seed
+
+{-# INLINE sequentialIterationLO #-}
+sequentialIterationLO :: (Int -> LookupResults -> IO ())
+                      -> Int
+                      -> Int
+                      -> LSM.TableHandle IO K V B
+                      -> Int
+                      -> MCG.MCG
+                      -> IO MCG.MCG
+sequentialIterationLO output !initialSize !batchSize !tbl !b !g = do
+    let (!g', ls, _is) = generateBatch initialSize batchSize g b
+
+    -- lookups
+    results <- LSM.lookups ls tbl
+    output b (V.zip ls (fmap (fmap (const ())) results))
+
+    -- continue to the next batch
+    return g'
+
+sequentialIterationsLO :: (Int -> LookupResults -> IO ())
+                       -> Int -> Int -> Int -> Word64
+                       -> LSM.TableHandle IO K V B
+                       -> IO ()
+sequentialIterationsLO output !initialSize !batchSize !batchCount !seed !tbl =
+    void $ forFoldM_ g0 [ 0 .. batchCount - 1 ] $ \b g ->
+      sequentialIterationLO output initialSize batchSize tbl b g
   where
     g0 = initGen initialSize batchSize batchCount seed
 
@@ -836,10 +885,12 @@ main = do
 -------------------------------------------------------------------------------
 
 forFoldM_ :: Monad m => s -> [a] -> (a -> s -> m s) -> m s
-forFoldM_ !s []     _ = return s
-forFoldM_ !s (x:xs) f = do
-    !s' <- f x s
-    forFoldM_ s' xs f
+forFoldM_ !s0 xs0 f = go s0 xs0
+  where
+    go !s []     = return s
+    go !s (x:xs) = do
+      !s' <- f x s
+      go s' xs
 
 intSetFromVector :: V.Vector Word64 -> IS.IntSet
 intSetFromVector = V.foldl' (\acc x -> IS.insert (fromIntegral x) acc) IS.empty
