@@ -174,28 +174,29 @@ prop_interimOpenTable dat = ioProperty $
           let snap = fromMaybe (error "invalid name") $ mkSnapshotName "snap"
           numRunsSnapped <- snapshot const snap "someLabel" th
           th' <- open sesh "someLabel" configNoOverride snap
-          lhs <- lookups const ks th
-          rhs <- lookups const ks th'
+          lhs <- fetchBlobs hfs =<< lookups const ks th
+          rhs <- fetchBlobs hfs =<< lookups const ks th'
+          -- We must fetch blobs because comparing blob references is meaningless
           close th
           close th'
           -- TODO: checking lookups is a simple check, but we could have stronger
           -- guarantee. For example, we might check that the internal structures
           -- match.
           --
-          -- TODO: remove opaqueifyBlobs once blobs are implemented.
           pure $ tabulate "Number of runs snapshotted" [show numRunsSnapped]
-              $ (Test.opaqueifyBlobs lhs === Test.opaqueifyBlobs rhs)
+               $ lhs === rhs
   where
     conf = testTableConfig
 
+    fetchBlobs :: FS.HasFS IO h
+               ->    (V.Vector (Maybe (Entry v (WeakBlobRef IO (FS.Handle h)))))
+               -> IO (V.Vector (Maybe (Entry v SerialisedBlob)))
+    fetchBlobs hfs = traverse (traverse (traverse (fetchBlob hfs)))
+
     Test.InMemLookupData { runData, lookups = keysToLookup } = dat
-    -- TODO: include inserts with blobs once blob retrieval is implemented
-    runDataWithoutblobs = Map.map f runData
-      where f (InsertWithBlob v _) = Insert v
-            f x                    = x
     ks = V.map serialiseKey (V.fromList keysToLookup)
     upds = V.fromList $ fmap (bimap serialiseKey (bimap serialiseValue serialiseBlob))
-                      $ Map.toList runDataWithoutblobs
+                      $ Map.toList runData
 
 -- | Check that reading from a cursor returns exactly the entries that have
 -- been inserted into the table. Roughly:
