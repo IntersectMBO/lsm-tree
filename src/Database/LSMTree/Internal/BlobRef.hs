@@ -44,7 +44,7 @@ data BlobRef m h = BlobRef {
     , blobRefCount :: {-# UNPACK #-} !(RefCounter m)
     , blobRefSpan  :: {-# UNPACK #-} !BlobSpan
     }
-  deriving stock (Eq, Show)
+  deriving stock (Show)
 
 instance NFData h => NFData (BlobRef m h) where
   rnf (BlobRef a b c) = rnf a `seq` rnf b `seq` rnf c
@@ -70,7 +70,7 @@ blobRefSpanSize = fromIntegral . blobSpanSize . blobRefSpan
 -- under our feet.
 --
 newtype WeakBlobRef m h = WeakBlobRef (BlobRef m h)
-  deriving newtype (Eq, Show, NFData)
+  deriving newtype (Show, NFData)
 
 -- | The 'WeakBlobRef' now points to a blob that is no longer available.
 newtype WeakBlobRefInvalid = WeakBlobRefInvalid Int
