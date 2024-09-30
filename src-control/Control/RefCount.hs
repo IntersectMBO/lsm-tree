@@ -27,9 +27,6 @@ data RefCounter m = RefCounter {
   , finaliser :: !(Maybe (m ()))
   }
 
-instance Eq (RefCounter m) where
-  a == b = countVar a == countVar b
-
 instance Show (RefCounter m) where
   show _ = "<RefCounter>"
 
