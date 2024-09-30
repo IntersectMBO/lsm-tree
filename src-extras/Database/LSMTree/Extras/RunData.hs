@@ -10,6 +10,7 @@ module Database.LSMTree.Extras.RunData (
   , RunData (..)
   , serialiseRunData
   , simplePath
+  , simplePaths
     -- * QuickCheck
   , labelRunData
   , genRunData
@@ -121,6 +122,10 @@ serialiseRunData rd =
 -- to the "root" or "mount point" of a 'HasFS' instance.
 simplePath :: Word64 -> RunFsPaths
 simplePath n = RunFsPaths (mkFsPath []) (RunNumber n)
+
+-- | Like 'simplePath', but for a list.
+simplePaths :: [Word64] -> [RunFsPaths]
+simplePaths ns = fmap simplePath ns
 
 {-------------------------------------------------------------------------------
   QuickCheck

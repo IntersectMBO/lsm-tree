@@ -356,7 +356,6 @@ test-suite lsm-tree-test
     Test.System.Posix.Fcntl.NoCache
     Test.Util.FS
     Test.Util.Orphans
-    Test.Util.QuickCheck
     Test.Util.RawPage
     Test.Util.TypeFamilyWrappers
 

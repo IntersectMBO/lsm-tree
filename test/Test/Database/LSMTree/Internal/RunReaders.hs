@@ -16,8 +16,8 @@ import           Data.Proxy (Proxy (..))
 import qualified Data.Vector as V
 import           Data.Word (Word64)
 import           Database.LSMTree.Extras (showPowersOf)
-import           Database.LSMTree.Extras.Generators (KeyForIndexCompact (..),
-                     TypedWriteBuffer (..))
+import           Database.LSMTree.Extras.Generators (KeyForIndexCompact (..))
+import           Database.LSMTree.Extras.RunData
 import           Database.LSMTree.Internal.BlobRef (readBlob)
 import           Database.LSMTree.Internal.Entry
 import qualified Database.LSMTree.Internal.Paths as Paths
@@ -40,7 +40,6 @@ import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans ()
 
-import           Test.Database.LSMTree.Internal.Run (mkRunFromSerialisedKOps)
 import           Test.QuickCheck.StateModel
 import           Test.QuickCheck.StateModel.Lockstep
 import qualified Test.QuickCheck.StateModel.Lockstep.Defaults as Lockstep
@@ -83,12 +82,12 @@ size :: MockReaders -> Int
 size (MockReaders xs) = length xs
 
 newMock :: Maybe SerialisedKey
-        -> [TypedWriteBuffer KeyForIndexCompact SerialisedValue SerialisedBlob]
+        -> [RunData KeyForIndexCompact SerialisedValue SerialisedBlob]
         -> MockReaders
 newMock offset =
       MockReaders . Map.assocs . Map.unions
     . zipWith (\i -> Map.mapKeysMonotonic (\k -> (k, RunNumber i))) [0..]
-    . map (skip . unTypedWriteBuffer)
+    . map (skip . unRunData . serialiseRunData)
   where
     skip = maybe id (\k -> Map.dropWhileAntitone (< k)) offset
 
@@ -133,8 +132,8 @@ deriving stock instance Eq   (Action (Lockstep ReadersState) a)
 instance StateModel (Lockstep ReadersState) where
   data Action (Lockstep ReadersState) a where
     New          :: Maybe KeyForIndexCompact  -- ^ optional offset
-                 -> Maybe (TypedWriteBuffer KeyForIndexCompact SerialisedValue SerialisedBlob)
-                 -> [TypedWriteBuffer KeyForIndexCompact SerialisedValue SerialisedBlob]
+                 -> Maybe (RunData KeyForIndexCompact SerialisedValue SerialisedBlob)
+                 -> [RunData KeyForIndexCompact SerialisedValue SerialisedBlob]
                  -> ReadersAct ()
     PeekKey      :: ReadersAct SerialisedKey
     Pop          :: Int  -- allow popping many at once to drain faster
@@ -205,14 +204,14 @@ instance InLockstep ReadersState where
         let -- TODO: Allow blobs in the generated optional write buffer
             -- when support for WriteBuffer retuning BlobRefs is added.
             withoutBlobs ::
-                 TypedWriteBuffer KeyForIndexCompact SerialisedValue SerialisedBlob
-              -> TypedWriteBuffer KeyForIndexCompact SerialisedValue SerialisedBlob
-            withoutBlobs = TypedWriteBuffer
+                 RunData KeyForIndexCompact SerialisedValue SerialisedBlob
+              -> RunData KeyForIndexCompact SerialisedValue SerialisedBlob
+            withoutBlobs = RunData
                          . Map.filter (not . hasBlob)
-                         . unTypedWriteBuffer
+                         . unRunData
         wb <- fmap withoutBlobs <$> arbitrary
         wbs <- vector =<< chooseInt (1, 10)
-        let keys = map fst $ concatMap (Map.toList . unTypedWriteBuffer) $ toList wb <> wbs
+        let keys = map fst $ concatMap (Map.toList . unRunData) $ toList wb <> wbs
         offset <-
           if null keys
           then pure Nothing
@@ -254,11 +253,11 @@ instance InLockstep ReadersState where
     -- Directly using strings, since there is only a small number of tags.
     [ [ "NewEntries " <> showPowersOf 10 numEntries
       | New _ wb wbs <- [action]
-      , let numEntries = sum (map (Map.size . unTypedWriteBuffer) (toList wb <> wbs))
+      , let numEntries = sum (map (Map.size . unRunData) (toList wb <> wbs))
       ]
     , [ "NewEntriesKeyDuplicates " <> showPowersOf 2 keyCount
       | New _ wb wbs <- [action]
-      , let keyCounts = Map.unionsWith (+) (map (Map.map (const 1) . unTypedWriteBuffer) (toList wb <> wbs))
+      , let keyCounts = Map.unionsWith (+) (map (Map.map (const 1) . unRunData) (toList wb <> wbs))
       , keyCount <- Map.elems keyCounts
       , keyCount > 1
       ]
@@ -334,19 +333,21 @@ runIO act lu = case act of
       RealState numRuns mCtx <- get
       -- if runs are still being read, they need to be cleaned up
       traverse_ (liftIO . closeReadersCtx hfs hbio) mCtx
+      let wb' = fmap serialiseRunData wb
+          wbs' = fmap serialiseRunData wbs
       runs <-
         zipWithM
-          (\p -> liftIO . mkRunFromSerialisedKOps hfs hbio p)
+          (\p -> liftIO . unsafeFlushAsWriteBuffer hfs hbio p)
           (Paths.RunFsPaths (FS.mkFsPath []) . RunNumber <$> [numRuns ..])
-          (map unTypedWriteBuffer wbs)
+          wbs'
       newReaders <- liftIO $ do
         wbblobs <- WBB.new hfs (FS.mkFsPath ["wb.blobs"])
-        wb' <- traverse (fmap (flip (,) wbblobs . WB.fromMap) .
+        wb'' <- traverse (fmap (flip (,) wbblobs . WB.fromMap) .
                          traverse (traverse (WBB.addBlob hfs wbblobs)) .
-                         unTypedWriteBuffer)
-                        wb
+                         unRunData )
+                        wb'
         let offsetKey = maybe Readers.NoOffsetKey (Readers.OffsetKey . coerce) offset
-        mreaders <- Readers.new hfs hbio offsetKey wb' (V.fromList runs)
+        mreaders <- Readers.new hfs hbio offsetKey wb'' (V.fromList runs)
         case mreaders of
           Nothing -> do
             traverse_ Run.removeReference runs
