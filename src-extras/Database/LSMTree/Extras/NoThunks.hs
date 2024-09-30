@@ -330,6 +330,9 @@ deriving anyclass instance (Typeable m, Typeable (PrimState m), Typeable h)
 deriving stock instance Generic Merge.Level
 deriving anyclass instance NoThunks Merge.Level
 
+deriving stock instance Generic Merge.StepResult
+deriving anyclass instance NoThunks Merge.StepResult
+
 {-------------------------------------------------------------------------------
   Readers
 -------------------------------------------------------------------------------}
