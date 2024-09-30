@@ -42,6 +42,9 @@ import qualified Data.Vector.Unboxed as VU
 import           Data.Word
 import           Database.LSMTree.Extras
 import           Database.LSMTree.Extras.Generators
+import           Database.LSMTree.Extras.RunData (RunData (..),
+                     liftArbitrary2Map, liftShrink2Map,
+                     unsafeFlushAsWriteBuffer)
 import           Database.LSMTree.Internal.BlobRef (BlobSpan)
 import           Database.LSMTree.Internal.Entry as Entry
 import           Database.LSMTree.Internal.IndexCompact as Index
@@ -65,12 +68,10 @@ import           System.FS.BlockIO.API
 import           Test.Database.LSMTree.Generators (deepseqInvariant,
                      prop_arbitraryAndShrinkPreserveInvariant,
                      prop_forAllArbitraryAndShrinkPreserveInvariant)
-import           Test.Database.LSMTree.Internal.Run (mkRunFromSerialisedKOps)
 import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.FS (withTempIOHasBlockIO)
-import           Test.Util.QuickCheck as Util.QC
 
 tests :: TestTree
 tests = testGroup "Test.Database.LSMTree.Internal.Lookup" [
@@ -101,7 +102,7 @@ tests = testGroup "Test.Database.LSMTree.Internal.Lookup" [
             forAllShrink genNoMultiPage shrinkNoMultiPage prop_inMemRunLookupAndConstruction
         ]
 
-    , testProperty "Roundtrip from write buffer then batched lookups" $
+    , testProperty "prop_roundtripFromWriteBufferLookupIO" $
         prop_roundtripFromWriteBufferLookupIO
     ]
   where
@@ -343,7 +344,7 @@ withRuns hfs hbio (wbdat:rundats) action =
           runs <-
             V.fromList <$>
             sequence
-              [ mkRunFromSerialisedKOps hfs hbio fsPaths runData
+              [ unsafeFlushAsWriteBuffer hfs hbio fsPaths (RunData runData)
               | (i, InMemLookupData{runData}) <- zip [1..] rundats
               , let fsPaths = RunFsPaths (FS.mkFsPath []) (RunNumber i)
               ]

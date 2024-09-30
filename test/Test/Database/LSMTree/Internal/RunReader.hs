@@ -5,24 +5,17 @@ module Test.Database.LSMTree.Internal.RunReader (
     readKOps,
 ) where
 
-import           Data.Bifoldable (bifoldMap)
 import           Data.Coerce (coerce)
 import qualified Data.Map as Map
-import           Database.LSMTree.Extras (showPowersOf10)
-import           Database.LSMTree.Extras.Generators (KeyForIndexCompact (..),
-                     TypedWriteBuffer (..))
+import           Database.LSMTree.Extras.Generators (KeyForIndexCompact (..))
+import           Database.LSMTree.Extras.RunData
 import           Database.LSMTree.Internal.BlobRef (readBlob)
 import           Database.LSMTree.Internal.Entry (Entry)
-import           Database.LSMTree.Internal.PageAcc (entryWouldFitInPage)
-import qualified Database.LSMTree.Internal.Paths as Paths
 import           Database.LSMTree.Internal.Run (Run)
-import qualified Database.LSMTree.Internal.Run as Run
-import           Database.LSMTree.Internal.RunNumber
 import qualified Database.LSMTree.Internal.RunReader as Reader
 import           Database.LSMTree.Internal.Serialise
 import qualified System.FS.API as FS
 import qualified System.FS.BlockIO.API as FS
-import           Test.Database.LSMTree.Internal.Run (mkRunFromSerialisedKOps)
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck
 import           Test.Util.FS (noOpenHandles, withSimHasBlockIO,
@@ -79,45 +72,40 @@ tests = testGroup "Database.LSMTree.Internal.RunReader"
 prop_readAtOffset ::
      FS.HasFS IO h
   -> FS.HasBlockIO IO h
-  -> TypedWriteBuffer KeyForIndexCompact SerialisedValue SerialisedBlob
+  -> RunData KeyForIndexCompact SerialisedValue SerialisedBlob
   -> Maybe KeyForIndexCompact
   -> IO Property
-prop_readAtOffset fs hbio (TypedWriteBuffer wb) offsetKey = do
-    run <- flush (RunNumber 42) wb
-    rhs <- readKOps fs hbio (coerce offsetKey) run
+prop_readAtOffset fs hbio rd offsetKey =
+    withRun fs hbio (simplePath 42) rd' $ \run -> do
+      rhs <- readKOps fs hbio (coerce offsetKey) run
 
-    -- make sure run gets closed again
-    Run.removeReference run
-
-    return . genStats kops $
-      counterexample ("entries expected: " <> show (length lhs)) $
-      counterexample ("entries found: " <> show (length rhs)) $
-        lhs === rhs
+      return . labelRunData rd' $
+        counterexample ("entries expected: " <> show (length lhs)) $
+        counterexample ("entries found: " <> show (length rhs)) $
+          lhs === rhs
   where
-    kops = Map.toList wb
+    rd' = serialiseRunData rd
+    kops = Map.toList (unRunData rd')
     lhs = case offsetKey of
         Nothing -> kops
         Just k  -> dropWhile ((< coerce k) . fst) kops
-
-    flush n = mkRunFromSerialisedKOps fs hbio
-                (Paths.RunFsPaths (FS.mkFsPath []) n)
 
 -- | A version of 'prop_readAtOffset' where the offset key is always one
 -- of the keys that exist in the run.
 prop_readAtOffsetExisting ::
      FS.HasFS IO h
   -> FS.HasBlockIO IO h
-  -> TypedWriteBuffer KeyForIndexCompact SerialisedValue SerialisedBlob
+  -> RunData KeyForIndexCompact SerialisedValue SerialisedBlob
   -> NonNegative Int
   -> IO Property
-prop_readAtOffsetExisting fs hbio wb (NonNegative index)
+prop_readAtOffsetExisting fs hbio rd (NonNegative index)
   | null kops = pure discard
   | otherwise =
-      prop_readAtOffset fs hbio wb (Just (keys !! (index `mod` length keys)))
+      prop_readAtOffset fs hbio rd (Just (keys !! (index `mod` length keys)))
   where
     keys :: [KeyForIndexCompact]
     keys = coerce (fst <$> kops)
-    kops = Map.toList (unTypedWriteBuffer wb)
+    kops = Map.toList (unRunData rd)
 
 -- | Idempotence of 'readAtOffset'.
 -- Reading at an offset should not perform any stateful effects which alter
@@ -128,25 +116,20 @@ prop_readAtOffsetExisting fs hbio wb (NonNegative index)
 prop_readAtOffsetIdempotence ::
      FS.HasFS IO h
   -> FS.HasBlockIO IO h
-  -> TypedWriteBuffer KeyForIndexCompact SerialisedValue SerialisedBlob
+  -> RunData KeyForIndexCompact SerialisedValue SerialisedBlob
   -> Maybe KeyForIndexCompact
   -> IO Property
-prop_readAtOffsetIdempotence fs hbio (TypedWriteBuffer wb) offsetKey = do
-    run <- flush (RunNumber 42) wb
+prop_readAtOffsetIdempotence fs hbio rd offsetKey =
+    withRun fs hbio (simplePath 42) rd' $ \run -> do
     lhs <- readKOps fs hbio (coerce offsetKey) run
     rhs <- readKOps fs hbio (coerce offsetKey) run
 
-    -- make sure run gets closed again
-    Run.removeReference run
-
-    return . genStats kops $
+    return . labelRunData rd' $
       counterexample ("entries expected: " <> show (length lhs)) $
       counterexample ("entries found: " <> show (length rhs)) $
         lhs === rhs
   where
-    kops = Map.toList wb
-    flush n = mkRunFromSerialisedKOps fs hbio
-                (Paths.RunFsPaths (FS.mkFsPath []) n)
+    rd' = serialiseRunData rd
 
 -- | Head of 'read' equals 'readAtOffset' of head of 'read'.
 -- Reading the first key from the run initialized without an offset
@@ -158,26 +141,21 @@ prop_readAtOffsetIdempotence fs hbio (TypedWriteBuffer wb) offsetKey = do
 prop_readAtOffsetReadHead ::
      FS.HasFS IO h
   -> FS.HasBlockIO IO h
-  -> TypedWriteBuffer KeyForIndexCompact SerialisedValue SerialisedBlob
+  -> RunData KeyForIndexCompact SerialisedValue SerialisedBlob
   -> IO Property
-prop_readAtOffsetReadHead fs hbio (TypedWriteBuffer wb) = do
-    run <- flush (RunNumber 42) wb
-    lhs <- readKOps fs hbio Nothing run
-    rhs <- case lhs of
-      []        -> return []
-      (key,_):_ -> readKOps fs hbio (Just key) run
+prop_readAtOffsetReadHead fs hbio rd =
+    withRun fs hbio (simplePath 42) rd' $ \run -> do
+      lhs <- readKOps fs hbio Nothing run
+      rhs <- case lhs of
+        []        -> return []
+        (key,_):_ -> readKOps fs hbio (Just key) run
 
-    -- make sure run gets closed again
-    Run.removeReference run
-
-    return . genStats kops $
-      counterexample ("entries expected: " <> show (length lhs)) $
-      counterexample ("entries found: " <> show (length rhs)) $
-        lhs === rhs
+      return . labelRunData rd' $
+        counterexample ("entries expected: " <> show (length lhs)) $
+        counterexample ("entries found: " <> show (length rhs)) $
+          lhs === rhs
   where
-    kops = Map.toList wb
-    flush n = mkRunFromSerialisedKOps fs hbio
-                (Paths.RunFsPaths (FS.mkFsPath []) n)
+    rd' = serialiseRunData rd
 
 {-------------------------------------------------------------------------------
   Utilities
@@ -204,11 +182,3 @@ readKOps fs hbio offset run = do
           e' <- traverse (readBlob fs) $ Reader.toFullEntry e
           ((key, e') :) <$> go reader
 
-genStats :: (Testable a, Foldable t) => t SerialisedKOp -> a -> Property
-genStats kops = tabulate "value size" size . label note
-  where
-    size = map (showPowersOf10 . sizeofValue) vals
-    vals = concatMap (bifoldMap pure mempty . snd) kops
-    note
-      | any (uncurry entryWouldFitInPage) kops = "has large k/op"
-      | otherwise = "no large k/op"

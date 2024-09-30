@@ -10,8 +10,8 @@ import qualified Data.Map.Strict as Map
 import           Data.Maybe (isJust)
 import qualified Data.Vector as V
 import           Database.LSMTree.Extras
-import           Database.LSMTree.Extras.Generators (KeyForIndexCompact,
-                     TypedWriteBuffer (..))
+import           Database.LSMTree.Extras.Generators (KeyForIndexCompact)
+import           Database.LSMTree.Extras.RunData
 import qualified Database.LSMTree.Internal.Entry as Entry
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.PageAcc (entryWouldFitInPage)
@@ -27,7 +27,6 @@ import qualified System.FS.BlockIO.API as FS
 import qualified System.FS.BlockIO.Sim as FsSim
 import qualified System.FS.Sim.Error as FsSim
 import qualified System.FS.Sim.MockFS as FsSim
-import           Test.Database.LSMTree.Internal.Run (mkRunFromSerialisedKOps)
 import           Test.Database.LSMTree.Internal.RunReader (readKOps)
 import           Test.QuickCheck
 import           Test.Tasty
@@ -65,54 +64,50 @@ prop_MergeDistributes ::
      FS.HasBlockIO IO h ->
      Merge.Level ->
      StepSize ->
-     SmallList (TypedWriteBuffer KeyForIndexCompact SerialisedValue SerialisedBlob) ->
+     SmallList (RunData KeyForIndexCompact SerialisedValue SerialisedBlob) ->
      IO Property
-prop_MergeDistributes fs hbio level stepSize (fmap unTypedWriteBuffer -> SmallList wbs) = do
-    runs <- fmap V.fromList $ sequenceA $ zipWith (flush . RunNumber) [10..] wbs
-    let stepsNeeded = sum (map Map.size wbs)
-    (stepsDone, lhs) <- mergeRuns fs hbio level (RunNumber 0) runs stepSize
+prop_MergeDistributes fs hbio level stepSize (SmallList rds) =
+    withRuns fs hbio (V.fromList (zip (simplePaths [10..]) rds')) $ \runs -> do
+      let stepsNeeded = sum (map (Map.size . unRunData) rds)
+      (stepsDone, lhs) <- mergeRuns fs hbio level (RunNumber 0) runs stepSize
+      withRun fs hbio (simplePath 1) (RunData $ mergeWriteBuffers level $ fmap unRunData rds') $ \rhs -> do
 
-    rhs <- flush (RunNumber 1) (mergeWriteBuffers level wbs)
+        lhsKOpsFile <- FS.hGetAll fs (Run.runKOpsFile lhs)
+        lhsBlobFile <- FS.hGetAll fs (Run.runBlobFile lhs)
+        rhsKOpsFile <- FS.hGetAll fs (Run.runKOpsFile rhs)
+        rhsBlobFile <- FS.hGetAll fs (Run.runBlobFile rhs)
 
-    lhsKOpsFile <- FS.hGetAll fs (Run.runKOpsFile lhs)
-    lhsBlobFile <- FS.hGetAll fs (Run.runBlobFile lhs)
-    rhsKOpsFile <- FS.hGetAll fs (Run.runKOpsFile rhs)
-    rhsBlobFile <- FS.hGetAll fs (Run.runBlobFile rhs)
+        lhsKOps <- readKOps fs hbio Nothing lhs
+        rhsKOps <- readKOps fs hbio Nothing rhs
 
-    lhsKOps <- readKOps fs hbio Nothing lhs
-    rhsKOps <- readKOps fs hbio Nothing rhs
+        -- cleanup
+        Run.removeReference lhs
 
-    -- cleanup
-    traverse_ Run.removeReference runs
-    Run.removeReference lhs
-    Run.removeReference rhs
-
-    return $ stats $
-           counterexample "numEntries"
-           (Run.runNumEntries lhs === Run.runNumEntries rhs)
-      .&&. -- we can't just test bloom filter equality, their sizes may differ.
-           counterexample "runFilter"
-           (Bloom.length (Run.runFilter lhs) >= Bloom.length (Run.runFilter rhs))
-      .&&. -- the index is equal, but only because range finder precision is
-           -- always 0 for the numbers of entries we are dealing with.
-           counterexample "runIndex"
-           (Run.runIndex lhs === Run.runIndex rhs)
-      .&&. counterexample "kops"
-           (lhsKOps === rhsKOps)
-      .&&. counterexample "kopsFile"
-           (lhsKOpsFile === rhsKOpsFile)
-      .&&. counterexample "blobFile"
-           (lhsBlobFile === rhsBlobFile)
-      .&&. counterexample ("step counting")
-           (stepsDone === stepsNeeded)
+        return $ stats $
+              counterexample "numEntries"
+              (Run.runNumEntries lhs === Run.runNumEntries rhs)
+          .&&. -- we can't just test bloom filter equality, their sizes may differ.
+              counterexample "runFilter"
+              (Bloom.length (Run.runFilter lhs) >= Bloom.length (Run.runFilter rhs))
+          .&&. -- the index is equal, but only because range finder precision is
+              -- always 0 for the numbers of entries we are dealing with.
+              counterexample "runIndex"
+              (Run.runIndex lhs === Run.runIndex rhs)
+          .&&. counterexample "kops"
+              (lhsKOps === rhsKOps)
+          .&&. counterexample "kopsFile"
+              (lhsKOpsFile === rhsKOpsFile)
+          .&&. counterexample "blobFile"
+              (lhsBlobFile === rhsBlobFile)
+          .&&. counterexample ("step counting")
+              (stepsDone === stepsNeeded)
   where
-    flush n = mkRunFromSerialisedKOps fs hbio (RunFsPaths (FS.mkFsPath []) n)
-
     stats = tabulate "value size" (map (showPowersOf10 . sizeofValue) vals)
           . tabulate "entry type" (map (takeWhile (/= ' ') . show . snd) kops)
           . label (if any isLarge kops then "has large k/op" else "no large k/op")
-          . label ("number of runs: " <> showPowersOf 2 (length wbs))
-    kops = foldMap Map.toList wbs
+          . label ("number of runs: " <> showPowersOf 2 (length rds'))
+    rds' = fmap serialiseRunData rds
+    kops = foldMap (Map.toList . unRunData) rds'
     vals = concatMap (bifoldMap pure mempty . snd) kops
     isLarge = uncurry entryWouldFitInPage
 
@@ -123,24 +118,21 @@ prop_CloseMerge ::
      FS.HasBlockIO IO h ->
      Merge.Level ->
      StepSize ->
-     SmallList (TypedWriteBuffer KeyForIndexCompact SerialisedValue SerialisedBlob) ->
+     SmallList (RunData KeyForIndexCompact SerialisedValue SerialisedBlob) ->
      IO Property
-prop_CloseMerge fs hbio level (Positive stepSize) (fmap unTypedWriteBuffer -> SmallList wbs) = do
-    let path0 = RunFsPaths (FS.mkFsPath []) (RunNumber 0)
-    runs <- fmap V.fromList $ sequenceA $ zipWith (flush . RunNumber) [10..] wbs
-    mergeToClose <- makeInProgressMerge path0 runs
-    traverse_ Merge.close mergeToClose
+prop_CloseMerge fs hbio level (Positive stepSize) (SmallList wbs) =
+    withRuns fs hbio (V.fromList (zip (simplePaths [10..]) wbs')) $ \runs -> do
+      let path0 = simplePath 0
+      mergeToClose <- makeInProgressMerge path0 runs
+      traverse_ Merge.close mergeToClose
 
-    filesExist <- traverse (FS.doesFileExist fs) (pathsForRunFiles path0)
+      filesExist <- traverse (FS.doesFileExist fs) (pathsForRunFiles path0)
 
-    -- cleanup
-    traverse_ Run.removeReference runs
-
-    return $
-      counterexample ("run files exist: " <> show filesExist) $
-        isJust mergeToClose ==> all not filesExist
+      return $
+        counterexample ("run files exist: " <> show filesExist) $
+          isJust mergeToClose ==> all not filesExist
   where
-    flush n = mkRunFromSerialisedKOps fs hbio (RunFsPaths (FS.mkFsPath []) n)
+    wbs' = fmap serialiseRunData wbs
 
     makeInProgressMerge path runs =
       Merge.new fs hbio Run.CacheRunData (RunAllocFixed 10) level mappendValues path runs >>= \case
@@ -171,8 +163,8 @@ mergeRuns ::
 mergeRuns fs hbio level runNumber runs (Positive stepSize) = do
     Merge.new fs hbio Run.CacheRunData (RunAllocFixed 10) level mappendValues
               (RunFsPaths (FS.mkFsPath []) runNumber) runs >>= \case
-      Nothing -> (,) 0 <$> mkRunFromSerialisedKOps fs hbio
-                             (RunFsPaths (FS.mkFsPath []) runNumber) Map.empty
+      Nothing -> (,) 0 <$> unsafeFlushAsWriteBuffer fs hbio
+                             (RunFsPaths (FS.mkFsPath []) runNumber) (RunData Map.empty)
       Just m  -> Merge.stepsToCompletionCounted m stepSize
 
 type SerialisedEntry = Entry.Entry SerialisedValue SerialisedBlob
