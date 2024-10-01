@@ -8,6 +8,7 @@ module Database.LSMTree.Extras.RunData (
   , unsafeFlushAsWriteBuffer
     -- * RunData
   , RunData (..)
+  , SerialisedRunData
   , serialiseRunData
   , simplePath
   , simplePaths

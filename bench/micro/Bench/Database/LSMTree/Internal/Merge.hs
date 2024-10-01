@@ -6,25 +6,24 @@ import qualified Criterion.Main as Cr
 import           Data.Bifunctor (first)
 import qualified Data.BloomFilter.Hash as Hash
 import           Data.Foldable (traverse_)
-import qualified Data.Foldable as Fold
 import qualified Data.List as List
+import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromMaybe)
 import qualified Data.Vector as V
 import           Data.Word (Word64)
 import           Database.LSMTree.Extras.Orphans ()
 import qualified Database.LSMTree.Extras.Random as R
+import           Database.LSMTree.Extras.RunData
 import           Database.LSMTree.Extras.UTxO
 import           Database.LSMTree.Internal.Entry
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..),
-                     pathsForRunFiles, runBlobPath, runChecksumsPath)
+                     pathsForRunFiles, runChecksumsPath)
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..))
 import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.Serialise
-import qualified Database.LSMTree.Internal.WriteBuffer as WB
-import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
 import           Prelude hiding (getContents)
 import           System.Directory (removeDirectoryRecursive)
 import qualified System.FS.API as FS
@@ -250,9 +249,6 @@ onDeserialisedValues :: SerialiseValue v => (v -> v -> v) -> Mappend
 onDeserialisedValues f x y =
     serialiseValue (f (deserialiseValue x) (deserialiseValue y))
 
-type SerialisedKOp = (SerialisedKey, SerialisedEntry)
-type SerialisedEntry = Entry SerialisedValue SerialisedBlob
-
 {-------------------------------------------------------------------------------
   Environments
 -------------------------------------------------------------------------------}
@@ -347,53 +343,34 @@ randomRuns ::
   -> Config
   -> StdGen
   -> IO InputRuns
-randomRuns hasFS hasBlockIO config@Config {..} =
-      fmap V.fromList
-    . zipWithM (createRun hasFS hasBlockIO mergeMappend) inputRunPaths
-    . zipWith (randomKOps config) nentries
-    . List.unfoldr (Just . R.split)
-
-createRun ::
-     FS.HasFS IO h
-  -> FS.HasBlockIO IO h
-  -> Maybe Mappend
-  -> Run.RunFsPaths
-  -> [SerialisedKOp]
-  -> IO (Run IO (FS.Handle h))
-createRun hasFS hasBlockIO mMappend targetPath kops = do
-    let blobpath = FS.addExtension (runBlobPath targetPath) ".wb"
-    wbblobs <- WBB.new hasFS blobpath
-    kops' <- traverse (traverse (traverse (WBB.addBlob hasFS wbblobs))) kops
-    let wb = Fold.foldl insert WB.empty kops'
-    run <- Run.fromWriteBuffer hasFS hasBlockIO Run.CacheRunData (RunAllocFixed 10)
-                               targetPath wb wbblobs
-    WBB.removeReference wbblobs
-    return run
+randomRuns hasFS hasBlockIO config@Config {..} rng0 =
+    V.fromList <$>
+    zipWithM (unsafeFlushAsWriteBuffer hasFS hasBlockIO)
+             inputRunPaths runsData
   where
-    insert wb (k, e) = case mMappend of
-      Nothing -> WB.addEntryNormal k (expectNormal e) wb
-      Just f  -> WB.addEntryMonoidal f k (expectMonoidal e) wb
-
-    expectNormal e = fromMaybe (error ("invalid normal update: " <> show e))
-                       (entryToUpdateNormal e)
-    expectMonoidal e = fromMaybe (error ("invalid monoidal update: " <> show e))
-                       (entryToUpdateMonoidal e)
+    runsData :: [SerialisedRunData]
+    runsData =
+      zipWith
+        (randomRunData config)
+        nentries
+        (List.unfoldr (Just . R.split) rng0)
 
 -- | Generate keys and entries to insert into the write buffer.
 -- They are already serialised to exclude the cost from the benchmark.
-randomKOps ::
+randomRunData ::
      Config
   -> Int  -- ^ number of entries
   -> StdGen -- ^ RNG
-  -> [SerialisedKOp]
-randomKOps Config {..} runentries g0 =
+  -> SerialisedRunData
+randomRunData Config {..} runentries g0 =
+    RunData . Map.fromList $
     zip
       (R.withoutReplacement g1 runentries randomKey)
       (R.withReplacement g2 runentries randomEntry)
   where
     (g1, g2) = R.split g0
 
-    randomEntry :: Rnd SerialisedEntry
+    randomEntry :: Rnd (Entry SerialisedValue SerialisedBlob)
     randomEntry = R.frequency
         [ ( finserts
           , \g -> let (!v, !g') = randomValue g
