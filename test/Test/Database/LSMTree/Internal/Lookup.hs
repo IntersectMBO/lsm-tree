@@ -16,7 +16,6 @@ module Test.Database.LSMTree.Internal.Lookup (
     tests
     -- * internals
   , InMemLookupData (..)
-  , opaqueifyBlobs
   , SmallList (..)
   ) where
 
@@ -45,7 +44,8 @@ import           Database.LSMTree.Extras.Generators
 import           Database.LSMTree.Extras.RunData (RunData (..),
                      liftArbitrary2Map, liftShrink2Map,
                      unsafeFlushAsWriteBuffer)
-import           Database.LSMTree.Internal.BlobRef (BlobSpan)
+import           Database.LSMTree.Internal.BlobRef (BlobSpan, WeakBlobRef,
+                     readBlob, withWeakBlobRef)
 import           Database.LSMTree.Internal.Entry as Entry
 import           Database.LSMTree.Internal.IndexCompact as Index
 import           Database.LSMTree.Internal.Lookup
@@ -299,9 +299,11 @@ prop_roundtripFromWriteBufferLookupIO (SmallList dats) =
         model = Map.unionsWith (Entry.combine resolveV) (map runData dats)
         keys  = V.fromList [ k | InMemLookupData{lookups} <- dats
                                , k <- lookups ]
+        modelres :: V.Vector (Maybe (Entry SerialisedValue SerialisedBlob))
         modelres = V.map (\k -> Map.lookup k model) keys
     arenaManager <- newArenaManager
     realres <-
+      fetchBlobs hfs =<< -- retrieve blobs to match type of model result
       lookupsIO
         hbio
         arenaManager
@@ -312,10 +314,16 @@ prop_roundtripFromWriteBufferLookupIO (SmallList dats) =
         (V.map Run.runIndex runs)
         (V.map Run.runKOpsFile runs)
         keys
-    -- TODO: compare blobs: we can do this now we implemented blob retrieval.
-    pure $ opaqueifyBlobs modelres === opaqueifyBlobs realres
+    pure $ modelres === realres
   where
     resolveV = \(SerialisedValue v1) (SerialisedValue v2) -> SerialisedValue (v1 <> v2)
+
+    fetchBlobs :: FS.HasFS IO h
+               ->    (V.Vector (Maybe (Entry v (WeakBlobRef IO (FS.Handle h)))))
+               -> IO (V.Vector (Maybe (Entry v SerialisedBlob)))
+    fetchBlobs hfs = traverse (traverse (traverse fetchBlob))
+      where
+        fetchBlob bref = withWeakBlobRef bref (readBlob hfs)
 
 -- | Given a bunch of 'InMemLookupData', prepare the data into the form needed
 -- for 'lookupsIO': a write buffer (and blobs) and a vector of on-disk runs.
@@ -356,9 +364,6 @@ withRuns hfs hbio (wbdat:rundats) action =
 
       (\(wb, wbblobs, runs) ->
           action wb wbblobs runs)
-
-opaqueifyBlobs :: V.Vector (Maybe (Entry v b)) -> V.Vector (Maybe (Entry v Opaque))
-opaqueifyBlobs = fmap (fmap (fmap Opaque))
 
 {-------------------------------------------------------------------------------
   Utils
@@ -404,15 +409,6 @@ snd3 (_, b, _) = b
 
 thrd3 :: (a, b, c) -> c
 thrd3 (_, _, c) = c
-
--- | An opaque data type with a trivial 'Eq' instance
-data Opaque = forall a. Opaque a
-
-instance Show Opaque where
-  show _ = "Opaque"
-
-instance Eq Opaque where
-  _ == _ = True
 
 {-------------------------------------------------------------------------------
   Test run
