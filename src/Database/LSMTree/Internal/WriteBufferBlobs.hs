@@ -30,7 +30,6 @@ module Database.LSMTree.Internal.WriteBufferBlobs (
     readBlob,
     mkBlobRef,
     -- * For tests
-    BlobFileState (..),
     FilePointer (..)
   ) where
 
@@ -39,7 +38,6 @@ import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Primitive (PrimMonad, PrimState)
 import qualified Control.RefCount as RC
 import           Data.Primitive.ByteArray as P
-import           Data.Primitive.MutVar as P
 import           Data.Primitive.PrimVar as P
 import qualified Data.Vector.Primitive as VP
 import           Data.Word (Word64)
@@ -47,7 +45,7 @@ import           Database.LSMTree.Internal.BlobRef (BlobRef (..), BlobSpan (..))
 import           Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.Serialise
 import qualified System.FS.API as FS
-import           System.FS.API (FsPath, HasFS)
+import           System.FS.API (HasFS)
 import qualified System.Posix.Types as FS (ByteCount)
 
 -- | A single 'WriteBufferBlobs' may be shared between multiple table handles.
@@ -104,52 +102,41 @@ import qualified System.Posix.Types as FS (ByteCount)
 --
 data WriteBufferBlobs m h =
      WriteBufferBlobs {
-       blobFileState      :: !(MutVar (PrimState m) (BlobFileState m h))
+       blobFileHandle     :: {-# UNPACK #-} !(FS.Handle h)
 
-       -- | The name is reserved in advance, even if it is not used.
-     , blobFileName       :: !FsPath
+       -- | The manually tracked file pointer.
+     , blobFilePointer    :: !(FilePointer m)
 
        -- | The reference counter for the blob file.
      , blobFileRefCounter :: {-# UNPACK #-} !(RC.RefCounter m)
      }
 
--- | The blob file itself is opened on-demand, to avoid the cost in cases where
--- blobs are not needed.
-data BlobFileState m h =
-
-     NoBlobFileYet
-   | OpenBlobFile {
-       blobFileHandle  :: {-# UNPACK #-} !(FS.Handle h)
-
-       -- | The manually tracked file pointer.
-     , blobFilePointer :: !(FilePointer m)
-     }
-
-instance NFData (WriteBufferBlobs m h) where
-  rnf (WriteBufferBlobs _ b c) = rnf b `seq` rnf c
+instance NFData h => NFData (WriteBufferBlobs m h) where
+  rnf (WriteBufferBlobs a b c) = rnf a `seq` rnf b `seq` rnf c
 
 new :: PrimMonad m
     => HasFS m h
     -> FS.FsPath
     -> m (WriteBufferBlobs m h)
 new fs blobFileName = do
-    blobFileState <- P.newMutVar NoBlobFileYet
-    blobFileRefCounter <- RC.mkRefCounter1 (Just (finaliser fs blobFileState))
+    -- Must use read/write mode because we write blobs when adding, but
+    -- we can also be asked to retrieve blobs at any time.
+    blobFileHandle <- FS.hOpen fs blobFileName (FS.ReadWriteMode FS.MustBeNew)
+    blobFilePointer <- newFilePointer
+    blobFileRefCounter <- RC.mkRefCounter1 (Just (finaliser fs blobFileHandle))
     return WriteBufferBlobs {
-      blobFileState,
-      blobFileName,
+      blobFileHandle,
+      blobFilePointer,
       blobFileRefCounter
     }
 
 finaliser :: PrimMonad m
           => HasFS m h
-          -> MutVar (PrimState m) (BlobFileState m h)
+          -> FS.Handle h
           -> m ()
-finaliser fs bf = do
-    bfs <- P.readMutVar bf
-    case bfs of
-      OpenBlobFile {blobFileHandle} -> FS.hClose fs blobFileHandle
-      NoBlobFileYet {}              -> return ()
+finaliser fs h = do
+    FS.hClose fs h
+    FS.removeFile fs (FS.handlePath h)
 
 addReference :: PrimMonad m => WriteBufferBlobs m h -> m ()
 addReference WriteBufferBlobs {blobFileRefCounter} =
@@ -164,32 +151,14 @@ addBlob :: (PrimMonad m, MonadThrow m)
         -> WriteBufferBlobs m h
         -> SerialisedBlob
         -> m BlobSpan
-addBlob fs WriteBufferBlobs {blobFileName, blobFileState} blob = do
-    bfs <- P.readMutVar blobFileState
-    case bfs of
-      OpenBlobFile {blobFileHandle, blobFilePointer} ->
-        writeBlob blobFileHandle blobFilePointer
-
-      NoBlobFileYet -> do
-        -- Must use read/write mode because we write blobs when adding, but
-        -- we can also be asked to retrieve blobs at any time.
-        blobFileHandle <- FS.hOpen fs blobFileName (FS.ReadWriteMode FS.MustBeNew)
-        blobFilePointer <- newFilePointer
-        P.writeMutVar blobFileState $! OpenBlobFile {
-          blobFileHandle,
-          blobFilePointer
-        }
-        writeBlob blobFileHandle blobFilePointer
-
-  where
-    writeBlob h hoff = do
-      let blobsize = sizeofBlob blob
-      bloboffset <- updateFilePointer hoff blobsize
-      writeBlobAtOffset fs h blob bloboffset
-      pure BlobSpan {
-        blobSpanOffset = bloboffset,
-        blobSpanSize   = fromIntegral blobsize
-      }
+addBlob fs WriteBufferBlobs {blobFileHandle, blobFilePointer} blob = do
+    let blobsize = sizeofBlob blob
+    bloboffset <- updateFilePointer blobFilePointer blobsize
+    writeBlobAtOffset fs blobFileHandle blob bloboffset
+    return BlobSpan {
+      blobSpanOffset = bloboffset,
+      blobSpanSize   = fromIntegral blobsize
+    }
 
 writeBlobAtOffset :: (PrimMonad m, MonadThrow m)
                   => HasFS m h
@@ -211,53 +180,38 @@ readBlob :: (PrimMonad m, MonadThrow m)
          -> WriteBufferBlobs m h
          -> BlobSpan
          -> m SerialisedBlob
-readBlob fs WriteBufferBlobs {blobFileState} BlobSpan {blobSpanOffset, blobSpanSize} = do
-    bfs <- P.readMutVar blobFileState
-    case bfs of
-      OpenBlobFile {blobFileHandle} -> do
-        let off = FS.AbsOffset blobSpanOffset
-            len :: Int
-            len = fromIntegral blobSpanSize
-        mba <- P.newPinnedByteArray len
-        _ <- FS.hGetBufExactlyAt fs blobFileHandle mba 0
-                                 (fromIntegral len :: FS.ByteCount) off
-        ba <- P.unsafeFreezeByteArray mba
-        let !rb = RB.fromByteArray 0 len ba
-        return (SerialisedBlob rb)
+readBlob fs WriteBufferBlobs {blobFileHandle}
+            BlobSpan {blobSpanOffset, blobSpanSize} = do
+    let off = FS.AbsOffset blobSpanOffset
+        len :: Int
+        len = fromIntegral blobSpanSize
+    mba <- P.newPinnedByteArray len
+    _ <- FS.hGetBufExactlyAt fs blobFileHandle mba 0
+                             (fromIntegral len :: FS.ByteCount) off
+    ba <- P.unsafeFreezeByteArray mba
+    let !rb = RB.fromByteArray 0 len ba
+    return (SerialisedBlob rb)
 
-      -- We must not be asking to read blobs if no blobs have been written.
-      -- That would be an internal error.
-      NoBlobFileYet{} ->
-        error "BlobFile.mkBlobRef: no such blob refs, no blob file open"
 
 -- | Helper function to make a 'BlobRef' that points into a 'WriteBufferBlobs'.
--- TODO: this two stage function design isn't terribly nice, and allocates
--- more than necessary (a closure every call).
-mkBlobRef :: PrimMonad m
-          => WriteBufferBlobs m h
-          -> m (BlobSpan -> BlobRef m (FS.Handle h))
-mkBlobRef WriteBufferBlobs {blobFileState, blobFileRefCounter} = do
-    bfs <- P.readMutVar blobFileState
-    case bfs of
-      --TODO: for assertion checking we could check the span exists within
-      -- the file.
-      OpenBlobFile {blobFileHandle} ->
-        pure $ \blobRefSpan -> BlobRef {
-          blobRefFile  = blobFileHandle,
-          blobRefCount = blobFileRefCounter,
-          blobRefSpan
-        }
-      -- We must not be handing out references to blobs if no blobs have been
-      -- written. That would be an internal error.
-      NoBlobFileYet{} ->
-        pure $ \_blobRefSpan ->
-          error "BlobFile.mkBlobRef: no such blob refs, no blob file open"
+mkBlobRef :: WriteBufferBlobs m h
+          -> BlobSpan
+          -> BlobRef m (FS.Handle h)
+mkBlobRef WriteBufferBlobs {blobFileHandle, blobFileRefCounter} blobRefSpan =
+    BlobRef {
+      blobRefFile  = blobFileHandle,
+      blobRefCount = blobFileRefCounter,
+      blobRefSpan
+    }
 
 
 -- | A mutable file offset, suitable to share between threads.
 newtype FilePointer m = FilePointer (PrimVar (PrimState m) Int)
 --TODO: this would be better as Word64
--- otherwise this will not work on 32bit arches
+-- this will limit to 31bit file sizes on 32bit arches
+
+instance NFData (FilePointer m) where
+  rnf (FilePointer var) = var `seq` ()
 
 newFilePointer :: PrimMonad m => m (FilePointer m)
 newFilePointer = FilePointer <$> P.newPrimVar 0
