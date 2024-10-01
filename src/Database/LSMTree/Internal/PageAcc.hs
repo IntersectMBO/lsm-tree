@@ -190,13 +190,27 @@ newPageAcc = do
 
     -- reset the memory, as it's not initialized
     let page = PageAcc {..}
-    resetPageAcc page
+    resetPageAccN page maxKeys
     return page
+
+dummyKey :: SerialisedKey
+dummyKey = SerialisedKey mempty
+
+dummyValue :: SerialisedValue
+dummyValue = SerialisedValue mempty
 
 -- | Reuse 'PageAcc' for constructing new page, the old data will be reset.
 resetPageAcc :: PageAcc s
     -> ST s ()
-resetPageAcc PageAcc {..} = do
+resetPageAcc pa = do
+    !n <- keysCountPageAcc pa
+    resetPageAccN pa n
+
+-- | Reset the page for the given number of key\/value pairs. This does not
+-- check whether the given number exceeds 'maxKeys', in which case behaviour is
+-- undefined.
+resetPageAccN :: PageAcc s -> Int -> ST s ()
+resetPageAccN PageAcc {..} !n = do
     P.setPrimArray paDir 0 4 0
     P.setPrimArray paOpMap 0 maxOpMap 0
     P.setPrimArray paBlobRefsMap 0 maxBlobRefsMap 0
@@ -204,6 +218,9 @@ resetPageAcc PageAcc {..} = do
     -- we don't need to clear these, we set what we need.
     -- P.setPrimArray paBlobRefs1 0 maxKeys 0
     -- P.setPrimArray paBlobRefs1 0 maxKeys 0
+
+    VM.set (VM.slice 0 n paKeys) $! dummyKey
+    VM.set (VM.slice 0 n paValues) $! dummyValue
 
     -- initial size is 8 bytes for directory and 2 bytes for last value offset.
     P.writePrimArray paDir byteSizeIdx 10
@@ -258,7 +275,7 @@ pageAccAddElem PageAcc {..} k e
 
             -- keys and values
             VM.write paKeys n k
-            VM.write paValues n (entryValue e)
+            VM.write paValues n $! entryValue e
 
             return True
 

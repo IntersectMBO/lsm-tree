@@ -7,6 +7,7 @@
 -- | 'NoThunks' orphan instances
 module Database.LSMTree.Extras.NoThunks (
     assertNoThunks
+  , prop_NoThunks
   , NoThunksIOLike
   ) where
 
@@ -15,7 +16,7 @@ import           Control.Concurrent.Class.MonadSTM.RWVar
 import           Control.Concurrent.Class.MonadSTM.Strict
 import           Control.Exception
 import           Control.Monad.Primitive
-import           Control.Monad.ST.Unsafe (unsafeSTToIO)
+import           Control.Monad.ST.Unsafe (unsafeIOToST, unsafeSTToIO)
 import           Control.RefCount
 import           Control.Tracer
 import           Data.Arena
@@ -63,6 +64,7 @@ import           KMerge.Heap
 import           NoThunks.Class
 import           System.FS.API
 import           System.FS.BlockIO.API
+import           Test.QuickCheck (Property, Testable (..), counterexample)
 import           Unsafe.Coerce
 
 assertNoThunks :: NoThunks a => a -> b -> b
@@ -70,6 +72,12 @@ assertNoThunks x = assert p
   where p = case unsafeNoThunks x of
               Nothing -> True
               Just thunkInfo -> error $ "Assertion failed: found thunk" <> show thunkInfo
+
+prop_NoThunks :: NoThunks a => a -> Property
+prop_NoThunks x =
+    case unsafeNoThunks x of
+      Nothing        -> property True
+      Just thunkInfo -> counterexample ("Found thunk " <> show thunkInfo) False
 
 {-------------------------------------------------------------------------------
   Public API
@@ -510,10 +518,10 @@ instance NoThunks a => NoThunks (StrictMVar IO a) where
 
 -- TODO: upstream to @nothunks@
 instance (NoThunks a, Typeable s, Typeable a) => NoThunks (VM.MVector s a) where
-    showTypeOf (_) = show $ typeRep (Proxy @a)
+    showTypeOf (p :: Proxy (VM.MVector s a)) = show $ typeRep p
     wNoThunks ctx v =
       allNoThunks [
-          unsafeSTToIO (VM.read v i) >>= \x -> noThunks ctx x
+          unsafeSTToIO (VM.read v i >>= \ x -> unsafeIOToST (noThunks ctx x))
         | i <- [0.. VM.length v-1]
         ]
 
