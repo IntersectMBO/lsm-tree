@@ -1,9 +1,12 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Test.Database.LSMTree.Internal.PageAcc (tests) where
 
-import           Control.Monad.ST.Strict (runST)
+import           Control.Exception
+import           Control.Monad (forM_)
+import           Control.Monad.ST.Strict (ST, runST, stToIO)
 import qualified Data.ByteString as BS
 import           Data.Maybe (isJust)
+import           Data.Word
 
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Entry (Entry (..))
@@ -12,6 +15,7 @@ import           Database.LSMTree.Internal.PageAcc1
 import           Database.LSMTree.Internal.RawPage (RawPage)
 import           Database.LSMTree.Internal.Serialise
 
+import           Database.LSMTree.Extras.NoThunks (prop_NoThunks)
 import qualified Database.LSMTree.Extras.ReferenceImpl as Ref
 import           Test.Util.RawPage (propEqualRawPages)
 
@@ -35,6 +39,11 @@ tests =
     ]
 
  ++ [ testProperty "+PageAcc1" prop_vsRefWithPageAcc1
+    ]
+
+ ++ [ testProperty "prop_noThunks_newPageAcc" prop_noThunks_newPageAcc
+    , testProperty "prop_noThunks_pageAccAddElem" prop_noThunks_pageAccAddElem
+    , testProperty "prop_noThunks_resetPageAcc" prop_noThunks_resetPageAcc
     ]
 
   where
@@ -164,3 +173,34 @@ toRawPageViaPageAcc kops0 =
         then go acc kops
         else return Nothing
 
+{-------------------------------------------------------------------------------
+  NoThunks
+-------------------------------------------------------------------------------}
+
+prop_noThunks_newPageAcc :: Property
+prop_noThunks_newPageAcc = once $ ioProperty $ do
+    pa <- stToIO newPageAcc
+    pure $ prop_NoThunks pa
+
+prop_noThunks_pageAccAddElem :: Property
+prop_noThunks_pageAccAddElem = once $ ioProperty $ do
+    pa <- stToIO $ do
+      pa <- newPageAcc
+      pageAccAddElemN pa 10
+      pure pa
+    pure $ prop_NoThunks pa
+
+prop_noThunks_resetPageAcc :: Property
+prop_noThunks_resetPageAcc = once $ ioProperty $ do
+    pa <- stToIO $ do
+      pa <- newPageAcc
+      pageAccAddElemN pa 10
+      resetPageAcc pa
+      pure pa
+    pure $ prop_NoThunks pa
+
+pageAccAddElemN :: PageAcc s -> Word64 -> ST s ()
+pageAccAddElemN pa n = do
+    forM_ [1..n] $ \(x :: Word64) -> do
+        b <- pageAccAddElem pa (serialiseKey x) (Insert (serialiseValue x))
+        assert b $ pure ()
