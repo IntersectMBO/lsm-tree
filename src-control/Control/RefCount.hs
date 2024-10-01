@@ -1,5 +1,7 @@
 {-# LANGUAGE MagicHash #-}
 
+{- HLINT ignore "Evaluate" -}
+
 module Control.RefCount (
     RefCounter (..)
   , RefCount (..)
@@ -19,6 +21,7 @@ import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Primitive
 import           Data.Maybe
 import           Data.Primitive.PrimVar
+import           GHC.Stack
 
 -- | A reference counter with an optional finaliser action. Once the reference
 -- count reaches @0@, the finaliser will be run.
@@ -66,27 +69,27 @@ mkRefCounterN (RefCount !n) finaliser
 mkRefCounter1 :: PrimMonad m => Maybe (m ()) -> m (RefCounter m)
 mkRefCounter1 finaliser = fromJust <$> mkRefCounterN (RefCount 1) finaliser
 
-{-# SPECIALISE addReference :: RefCounter IO -> IO () #-}
+{-# SPECIALISE addReference :: HasCallStack => RefCounter IO -> IO () #-}
 -- | Increase the reference counter by one.
 --
 -- The count must be known (from context) to be non-zero already. Typically
 -- this will be because the caller has a reference already and is handing out
 -- another reference to some other code.
-addReference :: PrimMonad m => RefCounter m -> m ()
+addReference :: (HasCallStack, PrimMonad m) => RefCounter m -> m ()
 addReference RefCounter{countVar} = do
     prevCount <- fetchAddInt countVar 1
-    assert (prevCount > 0) $ pure ()
+    assertWithCallStack (prevCount > 0) $ pure ()
 
-{-# SPECIALISE removeReference :: RefCounter IO -> IO () #-}
+{-# SPECIALISE removeReference :: HasCallStack => RefCounter IO -> IO () #-}
 -- | Decrease the reference counter by one.
 --
 -- The count must be known (from context) to be non-zero. Typically this will
 -- be because the caller has a reference already (that they took out themselves
 -- or were given).
-removeReference :: (PrimMonad m, MonadMask m) => RefCounter m -> m ()
+removeReference :: (HasCallStack, PrimMonad m, MonadMask m) => RefCounter m -> m ()
 removeReference RefCounter{countVar, finaliser} = mask_ $ do
     prevCount <- fetchSubInt countVar 1
-    assert (prevCount > 0) $ pure ()
+    assertWithCallStack (prevCount > 0) $ pure ()
     when (prevCount == 1) $ sequence_ finaliser
 
 -- | Try to turn a \"weak\" reference on something into a proper reference.
@@ -125,3 +128,9 @@ upgradeWeakReference RefCounter{countVar} = do
 -- no way to reliably act on the information. It can be useful for debugging.
 readRefCount :: PrimMonad m => RefCounter m -> m RefCount
 readRefCount RefCounter{countVar} = RefCount <$> readPrimVar countVar
+
+{-# INLINE assertWithCallStack #-}
+-- | Version of 'assert' that does not complain about redundant constraints when
+-- compiling with @-O@ or @-fignore-asserts@.
+assertWithCallStack :: HasCallStack => Bool -> a -> a
+assertWithCallStack b = assert (const b callStack)
