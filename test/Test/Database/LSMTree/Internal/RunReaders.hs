@@ -201,15 +201,7 @@ instance InLockstep ReadersState where
     | isEmpty mock = do
         -- It's not allowed to keep using a drained RunReaders,
         -- we can only create a new one.
-        let -- TODO: Allow blobs in the generated optional write buffer
-            -- when support for WriteBuffer retuning BlobRefs is added.
-            withoutBlobs ::
-                 RunData KeyForIndexCompact SerialisedValue SerialisedBlob
-              -> RunData KeyForIndexCompact SerialisedValue SerialisedBlob
-            withoutBlobs = RunData
-                         . Map.filter (not . hasBlob)
-                         . unRunData
-        wb <- fmap withoutBlobs <$> arbitrary
+        wb <- arbitrary
         wbs <- vector =<< chooseInt (1, 10)
         let keys = map fst $ concatMap (Map.toList . unRunData) $ toList wb <> wbs
         offset <-
@@ -312,12 +304,15 @@ data RealState =
       !(Maybe ReadersCtx)
 
 -- | Readers, together with the runs being read, so they can be cleaned up at the end
-type ReadersCtx = ([Run.Run IO Handle], Readers IO Handle)
+type ReadersCtx = (WBB.WriteBufferBlobs IO MockFS.HandleMock,
+                   [Run.Run IO Handle],
+                   Readers IO Handle)
 
 closeReadersCtx :: FS.HasFS IO MockFS.HandleMock -> FS.HasBlockIO IO MockFS.HandleMock -> ReadersCtx -> IO ()
-closeReadersCtx hfs hbio (runs, readers) = do
+closeReadersCtx hfs hbio (wbblobs, runs, readers) = do
     Readers.close hfs hbio readers
     traverse_ Run.removeReference runs
+    WBB.removeReference wbblobs
 
 instance RunModel (Lockstep ReadersState) RealMonad where
   perform       = \_st -> runIO
@@ -345,7 +340,7 @@ runIO act lu = case act of
           (Paths.RunFsPaths (FS.mkFsPath []) . RunNumber <$> [numRuns ..])
           wbs'
       newReaders <- liftIO $ do
-        wbblobs <- WBB.new hfs (FS.mkFsPath ["wb.blobs"])
+        wbblobs <- WBB.new hfs (FS.mkFsPath [show numRuns <> ".wb.blobs"])
         wb'' <- traverse (fmap (flip (,) wbblobs . WB.fromMap) .
                          traverse (traverse (WBB.addBlob hfs wbblobs)) .
                          unRunData )
@@ -384,7 +379,7 @@ runIO act lu = case act of
         ReaderT $ \(hfs, hbio) -> do
           get >>= \case
             RealState _ Nothing -> return (Left ())
-            RealState n (Just (runs, readers)) -> do
+            RealState n (Just (wbblobs, runs, readers)) -> do
               (hasMore, x) <- liftIO $ f hfs hbio readers
               case hasMore of
                 HasMore ->
@@ -392,6 +387,7 @@ runIO act lu = case act of
                 Drained -> do
                   -- Readers is drained, clean up the runs
                   liftIO $ traverse_ Run.removeReference runs
+                  liftIO $ WBB.removeReference wbblobs
                   put (RealState n Nothing)
                   return (Right x)
 
