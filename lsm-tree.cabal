@@ -281,6 +281,7 @@ library extras
     Database.LSMTree.Extras.Orphans
     Database.LSMTree.Extras.Random
     Database.LSMTree.Extras.ReferenceImpl
+    Database.LSMTree.Extras.RunData
     Database.LSMTree.Extras.UTxO
 
   build-depends:
@@ -355,7 +356,6 @@ test-suite lsm-tree-test
     Test.System.Posix.Fcntl.NoCache
     Test.Util.FS
     Test.Util.Orphans
-    Test.Util.QuickCheck
     Test.Util.RawPage
     Test.Util.TypeFamilyWrappers
 

@@ -2,12 +2,8 @@
 {- HLINT ignore "Use camelCase" -}
 
 module Database.LSMTree.Extras.Generators (
-    -- * WriteBuffer
-    TypedWriteBuffer (..)
-  , genTypedWriteBuffer
-  , shrinkTypedWriteBuffer
     -- * WithSerialised
-  , WithSerialised (..)
+    WithSerialised (..)
     -- * A (logical\/true) page
     -- ** A true page
   , TruePageSummary (..)
@@ -44,12 +40,9 @@ module Database.LSMTree.Extras.Generators (
 
 import           Control.DeepSeq (NFData)
 import           Control.Exception (assert)
-import           Data.Bifunctor (bimap)
 import           Data.Coerce (coerce)
 import           Data.Containers.ListUtils (nubOrd)
 import           Data.List (sort)
-import           Data.Map.Strict (Map)
-import qualified Data.Map.Strict as Map
 import qualified Data.Primitive.ByteArray as BA
 import qualified Data.Vector.Primitive as VP
 import           Data.Word
@@ -166,67 +159,6 @@ instance Arbitrary2 Entry where
 instance Arbitrary WriteBuffer where
   arbitrary = WB.fromMap <$> arbitrary
   shrink = map WB.fromMap . shrink . WB.toMap
-
---TODO: Rename this. It's not a WriteBuffer (anymore), it's just a bunch of
--- key/value pairs suitable for use in test cases.
-type role TypedWriteBuffer nominal nominal nominal
-newtype TypedWriteBuffer k v blob = TypedWriteBuffer {
-    unTypedWriteBuffer :: Map SerialisedKey (Entry SerialisedValue SerialisedBlob)
-  }
-  deriving stock (Eq, Show)
-
-instance ( Arbitrary k, Arbitrary v, Arbitrary blob
-         , SerialiseKey k, SerialiseValue v, SerialiseValue blob
-         )=> Arbitrary (TypedWriteBuffer k v blob) where
-  arbitrary = genTypedWriteBuffer
-                (arbitrary @k)
-                (arbitrary @v)
-                (arbitrary @blob)
-  shrink = shrinkTypedWriteBuffer
-             (shrink @k)
-             (shrink @v)
-             (shrink @blob)
-
--- | We cannot implement 'Arbitrary2' since we have constraints on the type
--- parameters.
-genTypedWriteBuffer ::
-     (SerialiseKey k, SerialiseValue v, SerialiseValue blob)
-  => Gen k
-  -> Gen v
-  -> Gen blob
-  -> Gen (TypedWriteBuffer k v blob)
-genTypedWriteBuffer genKey genVal genBlob =
-    fromKOps <$> QC.listOf (liftArbitrary2 genKey (liftArbitrary2 genVal genBlob))
-
-shrinkTypedWriteBuffer ::
-     (SerialiseKey k, SerialiseValue v, SerialiseValue blob)
-  => (k -> [k])
-  -> (v -> [v])
-  -> (blob -> [blob])
-  -> TypedWriteBuffer k v blob
-  -> [TypedWriteBuffer k v blob]
-shrinkTypedWriteBuffer shrinkKey shrinkVal shrinkBlob =
-      map fromKOps
-    . liftShrink (liftShrink2 shrinkKey (liftShrink2 shrinkVal shrinkBlob))
-    . toKOps
-
--- NOTE: for duplicate keys, only the first one is picked
-fromKOps ::
-     (SerialiseKey k, SerialiseValue v, SerialiseValue blob)
-  => [(k, Entry v blob)]
-  -> TypedWriteBuffer k v blob
-fromKOps = TypedWriteBuffer . Map.fromList . map serialiseKOp
-  where
-    serialiseKOp = bimap serialiseKey (bimap serialiseValue serialiseBlob)
-
-toKOps ::
-     (SerialiseKey k, SerialiseValue v, SerialiseValue blob)
-  => TypedWriteBuffer k v blob
-  -> [(k, Entry v blob)]
-toKOps = map deserialiseKOp . Map.toList . unTypedWriteBuffer
-  where
-    deserialiseKOp =
-      bimap deserialiseKey (bimap deserialiseValue deserialiseBlob)
 
 {-------------------------------------------------------------------------------
   WithSerialised
