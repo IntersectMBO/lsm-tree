@@ -98,10 +98,10 @@ peekKeyMock (MockReaders xs) = case xs of
 
 -- | Drops the first @n@ entries, returning the last of them.
 popMock :: Int -> MockReaders -> (Either () (SerialisedKey, SerialisedEntry, HasMore), MockReaders)
-popMock n m@(MockReaders xs) = assert (n >= 1) $
+popMock n (MockReaders xs) = assert (n >= 1) $
     case drop (n - 1) xs of
       [] ->
-        (Left (), m)
+        (Left (), MockReaders []) --popping too many still modifies state
       (((k, _), e) : rest) ->
         (Right (k, e, toHasMore rest), MockReaders rest)
 
@@ -201,15 +201,7 @@ instance InLockstep ReadersState where
     | isEmpty mock = do
         -- It's not allowed to keep using a drained RunReaders,
         -- we can only create a new one.
-        let -- TODO: Allow blobs in the generated optional write buffer
-            -- when support for WriteBuffer retuning BlobRefs is added.
-            withoutBlobs ::
-                 RunData KeyForIndexCompact SerialisedValue SerialisedBlob
-              -> RunData KeyForIndexCompact SerialisedValue SerialisedBlob
-            withoutBlobs = RunData
-                         . Map.filter (not . hasBlob)
-                         . unRunData
-        wb <- fmap withoutBlobs <$> arbitrary
+        wb <- arbitrary
         wbs <- vector =<< chooseInt (1, 10)
         let keys = map fst $ concatMap (Map.toList . unRunData) $ toList wb <> wbs
         offset <-
@@ -226,6 +218,7 @@ instance InLockstep ReadersState where
           , (8, pure (Some (Pop 1)))
           , (1, Some . Pop <$> chooseInt (1, size mock))  -- drain a significant amount
           , (1, pure (Some (Pop (max 1 (size mock - 3)))))  -- drain almost everything
+          , (1, pure (Some (Pop (size mock + 1)))) -- drain /more/ than available
           , (1, Some . DropWhileKey <$> arbitrary)  -- most likely nothing to drop
           ] <>
           [ (4, pure (Some (DropWhileKey k)))  -- drops at least one key
@@ -241,6 +234,9 @@ instance InLockstep ReadersState where
       New k wb wbs      -> [ Some (New k' wb' wbs')
                            | (k', wb', wbs') <- shrink (k, wb, wbs)
                            ]
+      -- arbitraryWithVars does /not/ have an invariant that n is less than
+      -- the number of elements available. The only invariant to preserve when
+      -- shrinking is to keep n greater than 0.
       Pop n             -> Some . Pop <$> filter (> 0) (shrink n)
       _                 -> []
 
@@ -308,12 +304,15 @@ data RealState =
       !(Maybe ReadersCtx)
 
 -- | Readers, together with the runs being read, so they can be cleaned up at the end
-type ReadersCtx = ([Run.Run IO Handle], Readers IO Handle)
+type ReadersCtx = (WBB.WriteBufferBlobs IO MockFS.HandleMock,
+                   [Run.Run IO Handle],
+                   Readers IO Handle)
 
 closeReadersCtx :: FS.HasFS IO MockFS.HandleMock -> FS.HasBlockIO IO MockFS.HandleMock -> ReadersCtx -> IO ()
-closeReadersCtx hfs hbio (runs, readers) = do
+closeReadersCtx hfs hbio (wbblobs, runs, readers) = do
     Readers.close hfs hbio readers
     traverse_ Run.removeReference runs
+    WBB.removeReference wbblobs
 
 instance RunModel (Lockstep ReadersState) RealMonad where
   perform       = \_st -> runIO
@@ -341,7 +340,7 @@ runIO act lu = case act of
           (Paths.RunFsPaths (FS.mkFsPath []) . RunNumber <$> [numRuns ..])
           wbs'
       newReaders <- liftIO $ do
-        wbblobs <- WBB.new hfs (FS.mkFsPath ["wb.blobs"])
+        wbblobs <- WBB.new hfs (FS.mkFsPath [show numRuns <> ".wb.blobs"])
         wb'' <- traverse (fmap (flip (,) wbblobs . WB.fromMap) .
                          traverse (traverse (WBB.addBlob hfs wbblobs)) .
                          unRunData )
@@ -354,17 +353,16 @@ runIO act lu = case act of
             WBB.removeReference wbblobs
             return Nothing
           Just readers ->
-            return $ Just (runs, readers)
+            return $ Just (wbblobs, runs, readers)
       put (RealState (numRuns + fromIntegral (length wbs)) newReaders)
       return (Right ())
     PeekKey -> expectReaders $ \_ _ r -> do
       (,) HasMore <$> Readers.peekKey r
     Pop n | n <= 1 -> pop
     Pop n -> pop >>= \case
-      Left () -> return $ Left ()
-      Right (_, _, hasMore) -> do
-        assert (hasMore == HasMore) $ pure ()
-        runIO (Pop (n-1)) lu
+      Left  ()              -> return (Left ())
+      Right (_, _, Drained) -> return (Left ()) -- n > 1, so n too big
+      Right (_, _, HasMore) -> runIO (Pop (n-1)) lu
     DropWhileKey k -> expectReaders $ \hfs hbio r -> do
       (n, hasMore) <- Readers.dropWhileKey hfs hbio r k
       return (hasMore, (n, hasMore))
@@ -381,7 +379,7 @@ runIO act lu = case act of
         ReaderT $ \(hfs, hbio) -> do
           get >>= \case
             RealState _ Nothing -> return (Left ())
-            RealState n (Just (runs, readers)) -> do
+            RealState n (Just (wbblobs, runs, readers)) -> do
               (hasMore, x) <- liftIO $ f hfs hbio readers
               case hasMore of
                 HasMore ->
@@ -389,6 +387,7 @@ runIO act lu = case act of
                 Drained -> do
                   -- Readers is drained, clean up the runs
                   liftIO $ traverse_ Run.removeReference runs
+                  liftIO $ WBB.removeReference wbblobs
                   put (RealState n Nothing)
                   return (Right x)
 
