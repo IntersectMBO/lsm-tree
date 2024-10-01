@@ -605,7 +605,7 @@ new sesh conf = do
       wbblobs  <- WBB.new (sessionHasFS seshEnv) blobpath
       newWith sesh seshEnv conf am WB.empty wbblobs V.empty
 
-{-# SPECIALISE newWith :: Session IO h -> SessionEnv IO h -> TableConfig -> ArenaManager RealWorld -> WriteBuffer -> WriteBufferBlobs IO h -> Levels IO (Handle h) -> IO (TableHandle IO h) #-}
+{-# SPECIALISE newWith :: Session IO h -> SessionEnv IO h -> TableConfig -> ArenaManager RealWorld -> WriteBuffer -> WriteBufferBlobs IO h -> Levels IO h -> IO (TableHandle IO h) #-}
 newWith ::
      m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
   => Session m h
@@ -614,7 +614,7 @@ newWith ::
   -> ArenaManager (PrimState m)
   -> WriteBuffer
   -> WriteBufferBlobs m h
-  -> Levels m (Handle h)
+  -> Levels m h
   -> m (TableHandle m h)
 newWith sesh seshEnv conf !am !wb !wbblobs !levels = do
     tableId <- incrUniqCounter (sessionUniqCounter seshEnv)
@@ -1204,7 +1204,7 @@ open sesh label override snap = do
         wbblobs  <- WBB.new hfs blobpath
         newWith sesh seshEnv conf' am WB.empty wbblobs lvls
 
-{-# SPECIALISE openLevels :: TempRegistry IO -> HasFS IO h -> HasBlockIO IO h -> DiskCachePolicy -> V.Vector ((Bool, RunFsPaths), V.Vector RunFsPaths) -> IO (Levels IO (FS.Handle h)) #-}
+{-# SPECIALISE openLevels :: TempRegistry IO -> HasFS IO h -> HasBlockIO IO h -> DiskCachePolicy -> V.Vector ((Bool, RunFsPaths), V.Vector RunFsPaths) -> IO (Levels IO h) #-}
 -- | Open multiple levels.
 openLevels ::
      m ~ IO -- TODO: replace by @io-classes@ constraints for IO simulation.
@@ -1213,7 +1213,7 @@ openLevels ::
   -> HasBlockIO m h
   -> DiskCachePolicy
   -> V.Vector ((Bool, RunFsPaths), V.Vector RunFsPaths)
-  -> m (Levels m (Handle h))
+  -> m (Levels m h)
 openLevels reg hfs hbio diskCachePolicy levels =
     flip V.imapMStrict levels $ \i (mrPath, rsPaths) -> do
       let ln      = LevelNo (i+1) -- level 0 is the write buffer
