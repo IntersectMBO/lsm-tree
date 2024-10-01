@@ -4,8 +4,6 @@ module Database.LSMTree.Internal.RunBuilder (
     RunBuilder (..)
   , new
   , addKeyOp
-  , writeBlob
-  , copyBlob
   , addLargeSerialisedKeyOp
   , unsafeFinalise
   , close
@@ -91,8 +89,13 @@ new fs runBuilderFsPaths numEntries alloc = do
     writeIndexHeader fs builder
     return builder
 
--- | Add a key\/op pair. Blobs will be written to disk. Use only for
--- entries that are fully in-memory.
+-- | Add a key\/op pair.
+--
+-- In the 'InsertWithBlob' case, the 'BlobRef' identifies where the blob can be
+-- found (which is either from a write buffer or another run). The blobs will
+-- be copied from their existing blob file into the new run's blob file.
+--
+-- Use only for entries that are fully in-memory (other than any blob).
 -- To handle larger-than-page values in a chunked style during run merging,
 -- use 'addLargeSerialisedKeyOp'.
 --
@@ -103,12 +106,16 @@ addKeyOp ::
      HasFS IO h
   -> RunBuilder RealWorld (FS.Handle h)
   -> SerialisedKey
-  -> Entry SerialisedValue BlobSpan
+  -> Entry SerialisedValue (BlobRef m (FS.Handle h))
   -> IO ()
 addKeyOp fs builder@RunBuilder{runBuilderAcc} key op = do
-    if RunAcc.entryWouldFitInPage key op
+    --TODO: the fmap entry here reallocates even when there are no blobs.
+    -- We need the Entry _ BlobSpan for RunAcc.add{Small,Large}KeyOp
+    -- Perhaps pass the optional blob span separately from the Entry.
+    op' <- traverse (copyBlob fs builder) op
+    if RunAcc.entryWouldFitInPage key op'
       then do
-        mpagemchunk <- ST.stToIO $ RunAcc.addSmallKeyOp runBuilderAcc key op
+        mpagemchunk <- ST.stToIO $ RunAcc.addSmallKeyOp runBuilderAcc key op'
         case mpagemchunk of
           Nothing -> return ()
           Just (page, mchunk) -> do
@@ -117,7 +124,7 @@ addKeyOp fs builder@RunBuilder{runBuilderAcc} key op = do
 
       else do
        (pages, overflowPages, chunks)
-         <- ST.stToIO $ RunAcc.addLargeKeyOp runBuilderAcc key op
+         <- ST.stToIO $ RunAcc.addLargeKeyOp runBuilderAcc key op'
        --TODO: consider optimisation: use writev to write all pages in one go
        for_ pages $ writeRawPage fs builder
        writeRawOverflowPages fs builder overflowPages
