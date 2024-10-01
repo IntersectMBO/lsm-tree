@@ -235,10 +235,6 @@ deriving stock instance Generic (WriteBufferBlobs m h)
 deriving anyclass instance (Typeable (PrimState m), Typeable h)
                         => NoThunks (WriteBufferBlobs m h)
 
-deriving stock instance Generic (BlobFileState m h)
-deriving anyclass instance (Typeable (PrimState m), Typeable h)
-                        => NoThunks (BlobFileState m h)
-
 deriving stock instance Generic (FilePointer m)
 deriving anyclass instance Typeable (PrimState m)
                         => NoThunks (FilePointer m)

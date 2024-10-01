@@ -241,11 +241,11 @@ intraPageLookups !resolveV !wb !wbblobs !rs !ks !rkixs !ioops !ioress = do
     -- the surface API so that all the conversions can be done in one pass
     -- without intermediate allocations.
     --
-    toBlobRef <- WBB.mkBlobRef wbblobs
     res <- VM.generateM (V.length ks) $ \ki ->
              case WB.lookup wb (V.unsafeIndex ks ki) of
                Nothing -> pure Nothing
-               Just e  -> pure $! Just $! fmap (WeakBlobRef . toBlobRef) e
+               Just e  -> pure $! Just $!
+                            fmap (WeakBlobRef . WBB.mkBlobRef wbblobs) e
                 -- TODO:  ^^ we should be able to avoid this allocation by
                 -- combining the conversion with other later conversions.
     loop res 0
