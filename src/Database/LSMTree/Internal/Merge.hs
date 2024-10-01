@@ -6,7 +6,8 @@ module Database.LSMTree.Internal.Merge (
   , Level (..)
   , Mappend
   , new
-  , close
+  , addReference
+  , removeReference
   , complete
   , stepsToCompletion
   , stepsToCompletionCounted
@@ -16,8 +17,10 @@ module Database.LSMTree.Internal.Merge (
 
 import           Control.Exception (assert)
 import           Control.Monad (when)
-import           Control.Monad.Primitive (PrimState, RealWorld)
-import           Control.RefCount (RefCount (..))
+import           Control.Monad.Class.MonadThrow (MonadMask)
+import           Control.Monad.Primitive (PrimMonad, PrimState, RealWorld)
+import           Control.RefCount (RefCount (..), RefCounter)
+import qualified Control.RefCount as RC
 import           Data.Coerce (coerce)
 import           Data.Primitive.MutVar
 import           Data.Traversable (for)
@@ -41,9 +44,6 @@ import           System.FS.BlockIO.API (HasBlockIO)
 --
 -- Since we always resolve all entries of the same key in one go, there is no
 -- need to store incompletely-resolved entries.
---
--- TODO: Reference counting will have to be done somewhere, either here or in
--- the layer above.
 data Merge m h = Merge {
       mergeLevel          :: !Level
     , mergeMappend        :: !Mappend
@@ -54,6 +54,7 @@ data Merge m h = Merge {
       -- | The result of the latest call to 'steps'. This is used to determine
       -- whether a merge can be 'complete'd.
     , mergeLastStepResult :: !(MutVar (PrimState m) StepResult)
+    , mergeRefCounter     :: !(RefCounter m)
     , mergeHasFS          :: !(HasFS m h)
     , mergeHasBlockIO     :: !(HasBlockIO m h)
     }
@@ -83,27 +84,44 @@ new fs hbio mergeCaching alloc mergeLevel mergeMappend targetPaths runs = do
       let numEntries = coerce (sum @V.Vector @Int) (fmap Run.runNumEntries runs)
       mergeBuilder <- Builder.new fs targetPaths numEntries alloc
       mergeLastStepResult <- newMutVar $! MergeInProgress
+      mergeRefCounter <-
+        RC.unsafeMkRefCounterN (RefCount 1)
+                               (Just $! finaliser fs hbio mergeBuilder mergeReaders)
       return Merge {
           mergeHasFS = fs
         , mergeHasBlockIO = hbio
         , ..
         }
 
+{-# SPECIALISE addReference :: Merge IO h -> IO () #-}
+addReference :: PrimMonad m => Merge m h -> m ()
+addReference Merge{..} = RC.addReference mergeRefCounter
 
--- | This function should be called when discarding a 'Merge' before it
--- was done (i.e. returned 'MergeComplete'). This removes the incomplete files
--- created for the new run so far and avoids leaking file handles.
+{-# SPECIALISE removeReference :: Merge IO h -> IO () #-}
+removeReference :: (PrimMonad m, MonadMask m) => Merge m h -> m ()
+removeReference Merge{..} = RC.removeReference mergeRefCounter
+
+{-# SPECIALISE finaliser :: HasFS IO h -> HasBlockIO IO h -> RunBuilder RealWorld (FS.Handle h) -> Readers IO (FS.Handle h) -> IO () #-}
+-- | Closes the underlying builder and readers.
 --
--- Once it has been called, do not use the 'Merge' any more!
-close :: Merge IO h -> IO ()
-close Merge {..} = do
-    Builder.close mergeHasFS mergeBuilder
-    Readers.close mergeHasFS mergeHasBlockIO mergeReaders
+-- Once the finaliser has been run, do not use the 'Merge' any more!
+finaliser ::
+     m ~ IO -- TODO: replace by io-classes constraints
+  => HasFS m h
+  -> HasBlockIO m h
+  -> RunBuilder (PrimState m) (FS.Handle h)
+  -> Readers m (FS.Handle h)
+  -> m ()
+finaliser hfs hbio b rs = do
+    Builder.close hfs b
+    Readers.close hfs hbio rs
 
 -- | Complete a 'Merge', returning a new 'Run' as the result of merging the
--- input runs. This function will /not/ do any merging work if there is any
--- remaining. That is, if not enough 'steps' were performed to exhaust the input
--- 'Readers', this function will throw an error.
+-- input runs. The resulting run has the same reference count as the merge.
+--
+-- This function will /not/ do any merging work if there is any remaining. That
+-- is, if not enough 'steps' were performed to exhaust the input 'Readers', this
+-- function will throw an error.
 --
 -- Note: this function creates new 'Run' resources, so it is recommended to run
 -- this function with async exceptions masked. Otherwise, these resources can
@@ -113,8 +131,12 @@ complete Merge{..} = do
     readMutVar mergeLastStepResult >>= \case
       MergeInProgress -> error "complete: Merge is not yet completed!"
       MergeComplete -> do
+        -- Since access to a merge /should/ be sequentialised, we can assume
+        -- that the ref count has not changed between this read and the use of
+        -- fromMutable.
+        n <- RC.readRefCount mergeRefCounter
         Run.fromMutable mergeHasFS mergeHasBlockIO mergeCaching
-                        (RefCount 1) mergeBuilder
+                        n mergeBuilder
 
 -- | Like 'steps', but calling 'complete' once the merge is finished.
 --
