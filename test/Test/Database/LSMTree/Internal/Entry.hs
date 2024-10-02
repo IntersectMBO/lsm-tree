@@ -9,7 +9,6 @@ module Test.Database.LSMTree.Internal.Entry (tests) where
 import           Data.Coerce
 import           Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
-import           Data.Proxy
 import           Data.Semigroup
 import           Database.LSMTree.Extras.Generators ()
 import           Database.LSMTree.Internal.BlobRef
@@ -17,24 +16,23 @@ import           Database.LSMTree.Internal.Entry
 import qualified Database.LSMTree.Internal.Monoidal as Monoidal
 import qualified Database.LSMTree.Internal.Normal as Normal
 import           Test.QuickCheck
-import           Test.QuickCheck.Classes.Base
+import           Test.QuickCheck.Classes (semigroupLaws)
 import           Test.Tasty
 import           Test.Tasty.HUnit
 import           Test.Tasty.QuickCheck (QuickCheckMaxSize (QuickCheckMaxSize),
                      QuickCheckTests (QuickCheckTests), testProperty)
+import           Test.Util.QC
 
 tests :: TestTree
 tests = adjustOption (\_ -> QuickCheckTests 10000) $
         adjustOption (\_ -> QuickCheckMaxSize 1000) $
-        testGroup "Test.Database.LSMTree.Internal.Entry" [
-      testGroup "quickcheck-classes" [
-          testGroup "EntrySG"
-            [ lawsProp (semigroupLaws (Proxy @(EntrySG (Sum Int) BlobSpanSG))) ]
-        , testGroup "NormalUpdateSG"
-            [ lawsProp (semigroupLaws (Proxy @(NormalUpdateSG (Sum Int) String))) ]
-        , testGroup "MonoidalUpdateSG"
-            [ lawsProp (semigroupLaws (Proxy @(MonoidalUpdateSG (Sum Int)))) ]
-        ]
+    testGroup "Test.Database.LSMTree.Internal.Entry" [
+      testClassLaws "EntrySG" $
+        semigroupLaws (Proxy @(EntrySG (Sum Int) BlobSpanSG))
+    , testClassLaws "NormalUpdateSG" $
+        semigroupLaws (Proxy @(NormalUpdateSG (Sum Int) String))
+    , testClassLaws "MonoidalUpdateSG" $
+        semigroupLaws (Proxy @(MonoidalUpdateSG (Sum Int)))
     , testProperty "prop_resolveEntriesNormalSemantics" $
         prop_resolveEntriesNormalSemantics @Int @String
     , testProperty "prop_resolveMonoidalSemantics" $
@@ -47,12 +45,6 @@ tests = adjustOption (\_ -> QuickCheckTests 10000) $
         let es = [Mupdate (Sum 11 :: Sum Int), Mupdate (Sum 5), Insert 1]
         Just (Monoidal.Insert (Sum 17)) @=?
           resolveEntriesMonoidal (<>) (NE.fromList es)
-    ]
-
-lawsProp :: Laws -> TestTree
-lawsProp (Laws className properties) = testGroup className [
-      testProperty propName prop
-    | (propName, prop) <- properties
     ]
 
 prop_resolveEntriesNormalSemantics ::

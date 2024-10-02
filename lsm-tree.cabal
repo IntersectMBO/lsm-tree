@@ -374,6 +374,7 @@ test-suite lsm-tree-test
     Test.System.Posix.Fcntl.NoCache
     Test.Util.FS
     Test.Util.Orphans
+    Test.Util.QC
     Test.Util.RawPage
     Test.Util.TypeFamilyWrappers
 
@@ -391,9 +392,9 @@ test-suite lsm-tree-test
     , directory
     , filepath
     , fs-api
-    , fs-sim                   ^>=0.3
-    , io-classes               ^>=1.5
-    , io-sim                   ^>=1.5
+    , fs-sim                ^>=0.3
+    , io-classes            ^>=1.5
+    , io-sim                ^>=1.5
     , lsm-tree
     , lsm-tree:blockio-api
     , lsm-tree:blockio-sim
@@ -406,7 +407,7 @@ test-suite lsm-tree-test
     , nothunks
     , primitive
     , QuickCheck
-    , quickcheck-classes-base
+    , quickcheck-classes
     , quickcheck-dynamic
     , quickcheck-instances
     , quickcheck-lockstep

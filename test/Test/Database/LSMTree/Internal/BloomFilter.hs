@@ -1,4 +1,5 @@
 {-# LANGUAGE CPP #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 module Test.Database.LSMTree.Internal.BloomFilter (tests) where
 
 import           Control.DeepSeq (deepseq)
@@ -9,10 +10,9 @@ import           Data.Primitive.ByteArray (ByteArray (..), byteArrayFromList)
 import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as VU
 import           Data.Word (Word32, Word64)
+
 import           Test.Tasty (TestTree, testGroup)
-import           Test.Tasty.QuickCheck (Positive (..), Property, Small (..),
-                     counterexample, forAll, label, property, testProperty,
-                     vector, withMaxSuccess, (===))
+import           Test.Tasty.QuickCheck hiding ((.&.))
 
 import qualified Data.BloomFilter as BF
 import qualified Data.BloomFilter.Easy as BF
@@ -25,6 +25,8 @@ import           Database.LSMTree.Internal.Serialise (SerialisedKey,
 #ifdef BLOOM_QUERY_FAST
 import qualified Data.Vector.Primitive as VP
 import qualified Database.LSMTree.Internal.BloomFilterQuery2 as Bloom2
+import           Test.QuickCheck.Classes (primLaws)
+import           Test.Util.QC
 #endif
 
 tests :: TestTree
@@ -39,6 +41,7 @@ tests = testGroup "Database.LSMTree.Internal.BloomFilter"
     , testProperty "bloomQueries (bulk)" $
         prop_bloomQueries1
 #ifdef BLOOM_QUERY_FAST
+    , testClassLaws "CandidateProbe" (primLaws (Proxy :: Proxy Bloom2.CandidateProbe))
     , testProperty "bloomQueries (bulk, prefetching)" $
         prop_bloomQueries2
 #endif
@@ -120,4 +123,9 @@ prop_bloomQueries2 filters keys =
         map (\(Bloom2.RunIxKeyIx rix kix) -> (rix, kix))
             (VP.toList (Bloom2.bloomQueriesDefault (V.fromList filters')
                                                    (V.fromList keys')))
+
+instance Arbitrary Bloom2.CandidateProbe where
+  arbitrary = Bloom2.MkCandidateProbe <$> arbitrary <*> arbitrary
+
+deriving stock instance Eq Bloom2.CandidateProbe
 #endif
