@@ -161,25 +161,25 @@ library
     Database.LSMTree.Normal
 
   build-depends:
-    , base                  >=4.14      && <4.21
-    , bitvec                ^>=1.1
-    , bytestring            ^>=0.11.4.0 || ^>=0.12.1.0
-    , containers            ^>=0.6      || ^>=0.7
-    , contra-tracer         ^>=0.2
-    , crc32c                ^>=0.2.1
-    , deepseq               ^>=1.4      || ^>=1.5
+    , base                    >=4.14      && <4.21
+    , bitvec                  ^>=1.1
+    , bytestring              ^>=0.11.4.0 || ^>=0.12.1.0
+    , containers              ^>=0.6      || ^>=0.7
+    , contra-tracer           ^>=0.2
+    , crc32c                  ^>=0.2.1
+    , deepseq                 ^>=1.4      || ^>=1.5
     , filepath
-    , fs-api                ^>=0.3
-    , io-classes            ^>=1.5
+    , fs-api                  ^>=0.3
+    , io-classes              ^>=1.6      || ^>=1.7
+    , io-classes:strict-mvar
     , lsm-tree:blockio-api
     , lsm-tree:bloomfilter
     , lsm-tree:control
     , lsm-tree:kmerge
     , lsm-tree:monkey
-    , primitive             ^>=0.9
-    , strict-mvar           ^>=1.5
-    , vector                ^>=0.13
-    , vector-algorithms     ^>=0.9
+    , primitive               ^>=0.9
+    , vector                  ^>=0.13
+    , vector-algorithms       ^>=0.9
 
   if (flag(bloom-query-fast) && impl(ghc >=9.4))
     -- The bulk bloom filter query uses some fancy stuff
@@ -303,13 +303,15 @@ library extras
     Database.LSMTree.Extras.UTxO
 
   build-depends:
-    , base                  >=4.14 && <4.21
+    , base                    >=4.14 && <4.21
     , bitvec
     , bytestring
     , containers
     , contra-tracer
     , deepseq
     , fs-api
+    , io-classes:strict-mvar
+    , io-classes:strict-stm
     , lsm-tree
     , lsm-tree:blockio-api
     , lsm-tree:bloomfilter
@@ -321,8 +323,6 @@ library extras
     , QuickCheck
     , quickcheck-instances
     , random
-    , strict-mvar
-    , strict-stm
     , vector
     , wide-word
 
@@ -393,9 +393,10 @@ test-suite lsm-tree-test
     , directory
     , filepath
     , fs-api
-    , fs-sim                ^>=0.3
-    , io-classes            ^>=1.5
-    , io-sim                ^>=1.5
+    , fs-sim
+    , io-classes
+    , io-classes:strict-stm
+    , io-sim
     , lsm-tree
     , lsm-tree:blockio-api
     , lsm-tree:blockio-sim
@@ -416,7 +417,6 @@ test-suite lsm-tree-test
     , semialign
     , split
     , stm
-    , strict-stm
     , tasty
     , tasty-hunit
     , tasty-quickcheck
@@ -495,7 +495,7 @@ benchmark lsm-tree-bench-lookups
     , base
     , deepseq
     , fs-api
-    , io-classes            >=1.5
+    , io-classes
     , lsm-tree
     , lsm-tree:blockio-api
     , lsm-tree:bloomfilter
@@ -717,7 +717,7 @@ library blockio-api
     , base        >=4.14  && <4.21
     , deepseq     ^>=1.4  || ^>=1.5
     , fs-api      ^>=0.3
-    , io-classes  ^>=1.5
+    , io-classes  ^>=1.6  || ^>=1.7
     , primitive   ^>=0.9
     , vector      ^>=0.13
 
@@ -771,13 +771,13 @@ library blockio-sim
   hs-source-dirs:  blockio-sim/src
   exposed-modules: System.FS.BlockIO.Sim
   build-depends:
-    , base                  >=4.14 && <4.21
-    , fs-api                ^>=0.3
-    , fs-sim                ^>=0.3
-    , io-classes            ^>=1.5
+    , base                   >=4.14 && <4.21
+    , fs-api                 ^>=0.3
+    , fs-sim                 ^>=0.3
+    , io-classes             ^>=1.6 || ^>=1.7
+    , io-classes:strict-stm
     , lsm-tree:blockio-api
-    , primitive             ^>=0.9
-    , strict-stm            ^>=1.5
+    , primitive              ^>=0.9
 
 library fcntl-nocache
   import:         language, warnings
@@ -798,13 +798,13 @@ library control
     Control.TempRegistry
 
   build-depends:
-    , base         >=4.14 && <4.21
-    , containers   ^>=0.6 || ^>=0.7
-    , deepseq      ^>=1.4 || ^>=1.5
-    , io-classes   ^>=1.5
-    , primitive    ^>=0.9
-    , strict-mvar  ^>=1.5
-    , strict-stm   ^>=1.5
+    , base                    >=4.14 && <4.21
+    , containers              ^>=0.6 || ^>=0.7
+    , deepseq                 ^>=1.4 || ^>=1.5
+    , io-classes              ^>=1.6 || ^>=1.7
+    , io-classes:strict-mvar
+    , io-classes:strict-stm
+    , primitive               ^>=0.9
 
 test-suite control-test
   import:         language, warnings
