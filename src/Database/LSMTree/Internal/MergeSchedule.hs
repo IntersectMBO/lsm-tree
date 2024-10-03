@@ -24,7 +24,7 @@ module Database.LSMTree.Internal.MergeSchedule (
   , maxRunSize
   ) where
 
-import           Control.Concurrent.Class.MonadMVar (MonadMVar)
+import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Monad.Class.MonadST (MonadST)
 import           Control.Monad.Class.MonadSTM (MonadSTM (..))
 import           Control.Monad.Class.MonadThrow (MonadCatch, MonadMask,
@@ -34,7 +34,6 @@ import           Control.Monad.Primitive
 import           Control.TempRegistry
 import           Control.Tracer
 import           Data.BloomFilter (Bloom)
-import           Data.Primitive.MutVar
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Assertions (assert)
 import           Database.LSMTree.Internal.Config
@@ -138,7 +137,9 @@ data LevelsCache m h = LevelsCache_ {
 {-# SPECIALISE mkLevelsCache :: Levels IO h -> IO (LevelsCache IO (Handle h)) #-}
 -- | Flatten the argument 'Level's into a single vector of runs, and use that to
 -- populate the 'LevelsCache'.
-mkLevelsCache :: PrimMonad m => Levels m h -> m (LevelsCache m (Handle h))
+mkLevelsCache ::
+     MonadMVar m
+  => Levels m h -> m (LevelsCache m (Handle h))
 mkLevelsCache lvls = do
   rs <- forRunM lvls pure
   pure $! LevelsCache_ {
@@ -162,9 +163,7 @@ data Level m h = Level {
 
 -- | A merging run is either a single run, or some ongoing merge.
 data MergingRun m h =
-    -- TODO: replace the MutVar by a different type of mutable location when
-    -- implementing scheduled merges
-    MergingRun !(MutVar (PrimState m) (MergingRunState m h))
+    MergingRun !(StrictMVar m (MergingRunState m h))
   | SingleRun !(Run m (Handle h))
 
 data MergingRunState m h =
@@ -176,14 +175,14 @@ data MergingRunState m h =
   -> (Run IO (Handle h) -> IO ())
   -> IO () #-}
 forRunM_ ::
-     PrimMonad m
+     MonadMVar m
   => Levels m h
   -> (Run m (Handle h) -> m ())
   -> m ()
 forRunM_ lvls k = V.forM_ lvls $ \(Level mr rs) -> do
     case mr of
       SingleRun r    -> k r
-      MergingRun var -> readMutVar var >>= \case
+      MergingRun var -> withMVar var $ \case
         CompletedMerge r -> k r
         OngoingMerge irs _m -> V.mapM_ k irs
     V.mapM_ k rs
@@ -195,7 +194,7 @@ forRunM_ lvls k = V.forM_ lvls $ \(Level mr rs) -> do
   -> Levels IO h
   -> IO b #-}
 foldRunM ::
-     PrimMonad m
+     MonadMVar m
   => (b -> Run m (Handle h) -> m b)
   -> b
   -> Levels m h
@@ -203,7 +202,7 @@ foldRunM ::
 foldRunM f x lvls = flip (flip V.foldM x) lvls $ \y (Level mr rs) -> do
     z <- case mr of
       SingleRun r -> f y r
-      MergingRun var -> readMutVar var >>= \case
+      MergingRun var -> withMVar var $ \case
         CompletedMerge r -> f y r
         OngoingMerge irs _m -> V.foldM f y irs
     V.foldM f z rs
@@ -216,7 +215,7 @@ foldRunM f x lvls = flip (flip V.foldM x) lvls $ \y (Level mr rs) -> do
 -- going to need this in the end. We might get rid of the LevelsCache, and we
 -- currently only use forRunM in mkLevelsCache.
 forRunM ::
-     PrimMonad m
+     MonadMVar m
   => Levels m h
   -> (Run m (Handle h) -> m a)
   -> m (V.Vector a)
@@ -574,7 +573,7 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
       traceWith tr $ AtLevel ln $ TraceExpectCompletedMergeSingleRun (runNumber $ Run.runRunFsPaths r)
       pure r
     expectCompletedMerge ln (MergingRun var) = do
-      readMutVar var >>= \case
+      withMVar var $ \case
         CompletedMerge r -> do
           traceWith tr $ AtLevel ln $ TraceExpectCompletedMerge (runNumber $ Run.runRunFsPaths r)
           pure r
@@ -606,7 +605,7 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
                   Run.removeReference
             traceWith tr $ AtLevel ln $ TraceCompletedMerge (Run.runNumEntries r) (runNumber $ Run.runRunFsPaths r)
             V.mapM_ (freeTemp reg . Run.removeReference) rs
-            var <- newMutVar (CompletedMerge r)
+            var <- newMVar (CompletedMerge r)
             pure $! MergingRun var
           Incremental -> error "newMerge: Incremental is not yet supported" -- TODO: implement
 

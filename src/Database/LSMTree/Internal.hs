@@ -77,7 +77,6 @@ import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (catMaybes)
 import qualified Data.Primitive.ByteArray as P
-import           Data.Primitive.MutVar
 import qualified Data.Set as Set
 import           Data.Typeable
 import qualified Data.Vector as V
@@ -644,7 +643,7 @@ new sesh conf = do
   -> Levels IO h
   -> IO (TableHandle IO h) #-}
 newWith ::
-     (MonadSTM m, MonadMVar m, PrimMonad m)
+     (MonadSTM m, MonadMVar m)
   => Session m h
   -> SessionEnv m h
   -> TableConfig
@@ -1237,7 +1236,7 @@ snapshot resolve snap label th = do
           case mr of
             SingleRun r -> pure (True, runNumber (Run.runRunFsPaths r))
             MergingRun var -> do
-              readMutVar var >>= \case
+              withMVar var $ \case
                 CompletedMerge r -> pure (False, runNumber (Run.runRunFsPaths r))
                 OngoingMerge{}   -> error "snapshot: OngoingMerge not yet supported" -- TODO: implement
       let snapPath = Paths.snapshot (tableSessionRoot thEnv) snap
@@ -1324,7 +1323,7 @@ openLevels reg hfs hbio diskCachePolicy levels =
         allocateTemp reg
           (Run.openFromDisk hfs hbio caching run)
           Run.removeReference
-      var <- newMutVar (CompletedMerge r)
+      var <- newMVar (CompletedMerge r)
       let !mr = if fst mrPath then SingleRun r else MergingRun var
       pure $! Level mr rs
 

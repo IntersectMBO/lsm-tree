@@ -255,20 +255,23 @@ deriving anyclass instance NoThunks PageNo
 -------------------------------------------------------------------------------}
 
 deriving stock instance Generic (TableContent m h)
-deriving anyclass instance (Typeable m, Typeable (PrimState m), Typeable h)
-                        => NoThunks (TableContent m h)
+deriving anyclass instance ( Typeable m, Typeable (PrimState m), Typeable h
+                           , NoThunks (StrictMVar m (MergingRunState m h))
+                           ) => NoThunks (TableContent m h)
 
 deriving stock instance Generic (LevelsCache m (Handle h))
 deriving anyclass instance (Typeable (PrimState m), Typeable h)
                         => NoThunks (LevelsCache m (Handle h))
 
 deriving stock instance Generic (Level m  h)
-deriving anyclass instance (Typeable m, Typeable (PrimState m), Typeable h)
-                        => NoThunks (Level m h)
+deriving anyclass instance ( Typeable m, Typeable (PrimState m), Typeable h
+                           , NoThunks (StrictMVar m (MergingRunState m h))
+                           ) => NoThunks (Level m h)
 
 deriving stock instance Generic (MergingRun m h)
-deriving anyclass instance (Typeable m, Typeable (PrimState m), Typeable h)
-                        => NoThunks (MergingRun m h)
+deriving anyclass instance ( Typeable m, Typeable (PrimState m), Typeable h
+                           , NoThunks (StrictMVar m (MergingRunState m h))
+                           ) => NoThunks (MergingRun m h)
 
 deriving stock instance Generic (MergingRunState m h)
 deriving anyclass instance (Typeable m, Typeable (PrimState m), Typeable h)
