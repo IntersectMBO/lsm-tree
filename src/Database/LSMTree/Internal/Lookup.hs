@@ -15,12 +15,21 @@ module Database.LSMTree.Internal.Lookup (
     -- * Internal: exposed for tests and benchmarks
   , RunIx
   , KeyIx
+  , RunIxKeyIx(..)
   , prepLookups
   , bloomQueries
-  , bloomQueriesDefault
   , indexSearches
   , intraPageLookups
   ) where
+
+import           Data.Arena (Arena, ArenaManager, allocateFromArena, withArena)
+import           Data.Bifunctor
+import           Data.BloomFilter (Bloom)
+import           Data.Primitive.ByteArray
+import qualified Data.Vector as V
+import qualified Data.Vector.Mutable as VM
+import qualified Data.Vector.Primitive as VP
+import qualified Data.Vector.Unboxed as VU
 
 import           Control.Exception (Exception, assert)
 import           Control.Monad
@@ -28,18 +37,7 @@ import           Control.Monad.Class.MonadST as Class
 import           Control.Monad.Class.MonadThrow (MonadThrow (..))
 import           Control.Monad.Primitive
 import           Control.Monad.ST.Strict
-import           Data.Arena (Arena, ArenaManager, allocateFromArena, withArena)
-import           Data.Bifunctor
-import           Data.BloomFilter (Bloom)
-import qualified Data.BloomFilter as Bloom
-import qualified Data.BloomFilter.Hash as Bloom
-import           Data.Primitive.ByteArray
-import qualified Data.Vector as V
-import qualified Data.Vector.Mutable as VM
-import qualified Data.Vector.Primitive as VP
-import qualified Data.Vector.Unboxed as VU
-import qualified Data.Vector.Unboxed.Mutable as VUM
-import           Data.Word (Word32)
+
 import           Database.LSMTree.Internal.BlobRef (WeakBlobRef (..))
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.IndexCompact (IndexCompact,
@@ -56,6 +54,14 @@ import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
 import           System.FS.API (BufferOffset (..), Handle)
 import           System.FS.BlockIO.API
 
+#ifdef BLOOM_QUERY_FAST
+import           Database.LSMTree.Internal.BloomFilterQuery2 (RunIxKeyIx (..),
+                     bloomQueries)
+#else
+import           Database.LSMTree.Internal.BloomFilterQuery1 (RunIxKeyIx (..),
+                     bloomQueries)
+#endif
+
 -- | Prepare disk lookups by doing bloom filter queries, index searches and
 -- creating 'IOOp's. The result is a vector of 'IOOp's and a vector of indexes,
 -- both of which are the same length. The indexes record the run and key
@@ -66,99 +72,29 @@ prepLookups ::
   -> V.Vector IndexCompact
   -> V.Vector (Handle h)
   -> V.Vector SerialisedKey
-  -> ST s (VU.Vector (RunIx, KeyIx), V.Vector (IOOp s h))
+  -> ST s (VP.Vector RunIxKeyIx, V.Vector (IOOp s h))
 prepLookups arena blooms indexes kopsFiles ks = do
-  let !rkixs = bloomQueriesDefault blooms ks
+  let !rkixs = bloomQueries blooms ks
   !ioops <- indexSearches arena indexes kopsFiles ks rkixs
   pure (rkixs, ioops)
 
 type KeyIx = Int
 type RunIx = Int
-type ResIx = Int -- Result index
-
--- | 'bloomQueries' with a default result vector size of @V.length ks * 2@.
---
--- TODO: tune the starting estimate based on the expected true- and
--- false-positives.
-bloomQueriesDefault ::
-     V.Vector (Bloom SerialisedKey)
-  -> V.Vector SerialisedKey
-  -> VU.Vector (RunIx, KeyIx)
-bloomQueriesDefault blooms ks = bloomQueries blooms ks (fromIntegral $ V.length ks * 2)
-
--- | Perform a batch of bloom queries. The result is a tuple of indexes into the
--- vector of runs and vector of keys respectively.
---
--- The result vector can be of variable length. An estimate should be provided,
--- and the vector is grown if needed.
---
--- TODO: we consider it likely that we could implement a optimised, batched
--- version of bloom filter queries, which would largely replace this function.
-bloomQueries ::
-     V.Vector (Bloom SerialisedKey)
-  -> V.Vector SerialisedKey
-  -> Word32
-  -> VU.Vector (RunIx, KeyIx)
-bloomQueries !blooms !ks !resN
-  | rsN == 0 || ksN == 0 = VU.empty
-  | otherwise            = VU.create $ do
-      res <- VUM.unsafeNew (fromIntegral resN)
-      loop1 res 0 0
-  where
-    !rsN = V.length blooms
-    !ksN = V.length ks
-
-    hs :: VP.Vector (Bloom.CheapHashes SerialisedKey)
-    !hs  = VP.generate ksN $ \i -> Bloom.makeCheapHashes (V.unsafeIndex ks i)
-
-    -- Loop over all run indexes
-    loop1 ::
-         VUM.MVector s (RunIx, KeyIx)
-      -> ResIx
-      -> RunIx
-      -> ST s (VUM.MVector s (RunIx, KeyIx))
-    loop1 !res1 !resix1 !rix
-      | rix == rsN = pure $ VUM.slice 0 resix1 res1
-      | otherwise
-      = do
-          (res1', resix1') <- loop2 res1 resix1 0 (blooms `V.unsafeIndex` rix)
-          loop1 res1' resix1' (rix+1)
-      where
-        -- Loop over all key indexes
-        loop2 ::
-             VUM.MVector s (RunIx, KeyIx)
-          -> ResIx
-          -> KeyIx
-          -> Bloom SerialisedKey
-          -> ST s (VUM.MVector s (RunIx, KeyIx), ResIx)
-        loop2 !res2 !resix2 !kix !b
-          | kix == ksN = pure (res2, resix2)
-          | let !h = hs `VP.unsafeIndex` kix
-          , Bloom.elemHashes h b = do
-              -- Grows the vector if we've reached the end.
-              --
-              -- TODO: tune how much much we grow the vector each time based on
-              -- the expected true- and false-positives.
-              res2' <- if resix2 == VUM.length res2
-                        then VUM.unsafeGrow res2 ksN
-                        else pure res2
-              VUM.unsafeWrite res2' resix2 (rix, kix)
-              loop2 res2' (resix2+1) (kix+1) b
-          | otherwise = loop2 res2 resix2 (kix+1) b
 
 -- | Perform a batch of fence pointer index searches, and create an 'IOOp' for
 -- each search result. The resulting vector has the same length as the
--- @VU.Vector (RunIx, KeyIx)@ argument, because index searching always returns a
+-- @VP.Vector RunIxKeyIx@ argument, because index searching always returns a
 -- positive search result.
 indexSearches
   :: Arena s
   -> V.Vector IndexCompact
   -> V.Vector (Handle h)
   -> V.Vector SerialisedKey
-  -> VU.Vector (RunIx, KeyIx) -- ^ Result of 'bloomQueries'
+  -> VP.Vector RunIxKeyIx -- ^ Result of 'bloomQueries'
   -> ST s (V.Vector (IOOp s h))
 indexSearches !arena !indexes !kopsFiles !ks !rkixs = V.generateM n $ \i -> do
-    let (!rix, !kix) = rkixs `VU.unsafeIndex` i
+    let (RunIxKeyIx !rix !kix)
+                     = rkixs `VP.unsafeIndex` i
         !c           = indexes `V.unsafeIndex` rix
         !h           = kopsFiles `V.unsafeIndex` rix
         !k           = ks `V.unsafeIndex` kix
@@ -176,7 +112,7 @@ indexSearches !arena !indexes !kopsFiles !ks !rkixs = V.generateM n $ \i -> do
               (fromIntegral off)
               (Index.getNumPages size * 4096)
   where
-    !n = VU.length rkixs
+    !n = VP.length rkixs
 
 {-
   Note [Batched lookups, buffer strategy and restrictions]
@@ -268,7 +204,7 @@ lookupsIO !hbio !mgr !resolveV !wb !wbblobs !rs !blooms !indexes !kopsFiles !ks 
     -> WBB.WriteBufferBlobs IO h
     -> V.Vector (Run IO (Handle h))
     -> V.Vector SerialisedKey
-    -> VU.Vector (RunIx, KeyIx)
+    -> VP.Vector RunIxKeyIx
     -> V.Vector (IOOp RealWorld h)
     -> VU.Vector IOResult
     -> IO (V.Vector (Maybe (Entry SerialisedValue (WeakBlobRef IO (Handle h)))))
@@ -287,7 +223,7 @@ intraPageLookups ::
   -> WBB.WriteBufferBlobs m h
   -> V.Vector (Run m (Handle h))
   -> V.Vector SerialisedKey
-  -> VU.Vector (RunIx, KeyIx)
+  -> VP.Vector RunIxKeyIx
   -> V.Vector (IOOp (PrimState m) h)
   -> VU.Vector IOResult
   -> m (V.Vector (Maybe (Entry SerialisedValue (WeakBlobRef m (Handle h)))))
@@ -328,7 +264,7 @@ intraPageLookups !resolveV !wb !wbblobs !rs !ks !rkixs !ioops !ioress = do
           let ioop = ioops `V.unsafeIndex` ioopix
               iores = ioress `VU.unsafeIndex` ioopix
           checkIOResult ioop iores
-          let (rix, kix) = rkixs `VU.unsafeIndex` ioopix
+          let (RunIxKeyIx !rix !kix) = rkixs `VP.unsafeIndex` ioopix
               r = rs `V.unsafeIndex` rix
               k = ks `V.unsafeIndex` kix
           buf <- unsafeFreezeByteArray (ioopBuffer ioop)

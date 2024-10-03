@@ -13,10 +13,10 @@ import           Data.BloomFilter (Bloom)
 import qualified Data.BloomFilter as Bloom
 import qualified Data.BloomFilter.Hash as Bloom
 import qualified Data.BloomFilter.Mutable as MBloom
-import qualified Data.Foldable as Fold
 import           Data.Time
 import           Data.Vector (Vector)
 import qualified Data.Vector as V
+import qualified Data.Vector.Primitive as VP
 import           Data.WideWord.Word256 (Word256)
 import           GHC.Stats
 import           Numeric
@@ -27,9 +27,14 @@ import           Text.Printf (printf)
 
 import           Database.LSMTree.Extras.Orphans ()
 import           Database.LSMTree.Internal.Assertions (fromIntegralChecked)
+import qualified Database.LSMTree.Internal.BloomFilterQuery1 as Bloom1
 import           Database.LSMTree.Internal.Serialise (SerialisedKey,
                      serialiseKey)
 import qualified Monkey
+
+#ifdef BLOOM_QUERY_FAST
+import qualified Database.LSMTree.Internal.BloomFilterQuery2 as Bloom2
+#endif
 
 main :: IO ()
 main = do
@@ -50,6 +55,10 @@ benchmarkSizeBase = 16
 -- part of the point of this benchmark).
 benchmarkNumLookups :: Integer
 benchmarkNumLookups = 25_000_000
+
+-- | The number of lookups to do in a single batch.
+benchmarkBatchSize :: Int
+benchmarkBatchSize = 256
 
 benchmarkNumBitsPerEntry :: Integer
 benchmarkNumBitsPerEntry = 10
@@ -82,30 +91,43 @@ benchmarks = do
     putStrLn " finished."
     putStrLn ""
 
-    baseline <-
-      benchmark "baseline"
-                "(This is the cost of just computing the keys.)"
-                (benchBaseline vbs rng0) benchmarkNumLookups
-                (0, 0)
-#ifdef NO_IGNORE_ASSERTS
-                80  -- https://gitlab.haskell.org/ghc/ghc/-/issues/24625
-#else
-                48
-#endif
-
     hashcost <-
       benchmark "makeCheapHashes"
-                "(This includes the cost of hashing the keys, less the cost of computing the keys)"
-                (benchMakeCheapHashes vbs rng0) benchmarkNumLookups
-                baseline
-                0
+                "(This baseline is the cost of computing and hashing the keys)"
+                (benchInBatches benchmarkBatchSize rng0
+                   (benchMakeCheapHashes vbs))
+                (fromIntegralChecked benchmarkNumLookups)
+                (0, 0)
+                289
 
     _ <-
       benchmark "elemCheapHashes"
                 "(this is the simple one-by-one lookup, less the cost of computing and hashing the keys)"
-                (benchElemCheapHashes vbs rng0) benchmarkNumLookups
-                (fst hashcost + fst baseline, snd hashcost + snd baseline)
+                (benchInBatches benchmarkBatchSize rng0
+                  (benchElemCheapHashes vbs))
+                (fromIntegralChecked benchmarkNumLookups)
+                hashcost
                 0
+
+    _ <-
+      benchmark "bloomQueries1"
+                "(this is the batch lookup, less the cost of computing and hashing the keys)"
+                (benchInBatches benchmarkBatchSize rng0
+                  (\ks -> Bloom1.bloomQueries vbs ks `seq` ()))
+                (fromIntegralChecked benchmarkNumLookups)
+                hashcost
+                0
+
+#ifdef BLOOM_QUERY_FAST
+    _ <-
+      benchmark "bloomQueries2"
+                "(this is the optimised batch lookup, less the cost of computing and hashing the keys)"
+                (benchInBatches benchmarkBatchSize rng0
+                  (\ks -> Bloom2.bloomQueries vbs ks `seq` ()))
+                (fromIntegralChecked benchmarkNumLookups)
+                hashcost
+                0
+#endif
 
     return ()
 
@@ -113,8 +135,8 @@ type Alloc = Int
 
 benchmark :: String
           -> String
-          -> (Integer -> ())
-          -> Integer
+          -> (Int -> ())
+          -> Int
           -> (NominalDiffTime, Alloc)
           -> Int
           -> IO (NominalDiffTime, Alloc)
@@ -237,33 +259,40 @@ elemManyEnv filterSizes rng0 =
                   , mb' <- replicate (fromIntegralChecked sizeFactor) mb ]))
     V.fromList <$> mapM Bloom.unsafeFreeze mbs
 
--- | This gives us a baseline cost of just calculating the series of keys.
-benchBaseline :: Vector (Bloom SerialisedKey) -> StdGen -> Integer -> ()
-benchBaseline !_  !_   0 = ()
-benchBaseline !bs !rng !n =
-    let k :: Word256
-        (!k, !rng') = uniform rng
-        !k' = serialiseKey k
-     in k' `seq` benchBaseline bs rng' (n-1)
+type BatchBench = V.Vector SerialisedKey -> ()
+
+{-# NOINLINE benchInBatches #-}
+benchInBatches :: Int -> StdGen -> BatchBench -> Int -> ()
+benchInBatches !b !rng0 !action =
+    go rng0
+  where
+    go !rng !n
+      | n <= 0    = ()
+      | otherwise =
+        let (!rng'', !rng') = split rng
+            ks  :: VP.Vector Word256
+            !ks  = VP.unfoldrExactN b uniform rng'
+            ks' :: V.Vector SerialisedKey
+            !ks' = V.map serialiseKey (V.convert ks)
+        in action ks' `seq` go rng'' (n-b)
 
 -- | This gives us a combined cost of calculating the series of keys and their
--- hashes.
-benchMakeCheapHashes :: Vector (Bloom SerialisedKey) -> StdGen -> Integer -> ()
-benchMakeCheapHashes !_  !_   0 = ()
-benchMakeCheapHashes !bs !rng !n =
-    let k :: Word256
-        (!k, !rng') = uniform rng
-        !kh = Bloom.makeHashes (serialiseKey k) :: Bloom.CheapHashes SerialisedKey
-     in kh `seq` benchMakeCheapHashes bs rng' (n-1)
+-- hashes (when used with 'benchInBatches').
+benchMakeCheapHashes :: Vector (Bloom SerialisedKey) -> BatchBench
+benchMakeCheapHashes !_bs !ks =
+    let khs :: VP.Vector (Bloom.CheapHashes SerialisedKey)
+        !khs = V.convert (V.map Bloom.makeHashes ks)
+     in khs `seq` ()
 
 -- | This gives us a combined cost of calculating the series of keys, their
--- hashes, and then using 'Bloom.elemCheapHashes' with each filter.
-benchElemCheapHashes :: Vector (Bloom SerialisedKey) -> StdGen -> Integer -> ()
-benchElemCheapHashes !_  !_   0  = ()
-benchElemCheapHashes !bs !rng !n =
-    let k :: Word256
-        (!k, !rng') = uniform rng
-        !kh =  Bloom.makeHashes (serialiseKey k)
-     in Fold.foldl' (\_ b -> Bloom.elemHashes kh b `seq` ()) () bs
-  `seq` benchElemCheapHashes bs rng' (n-1)
-
+-- hashes, and then using 'Bloom.elemCheapHashes' with each filter  (when used
+-- with 'benchInBatches').
+benchElemCheapHashes :: Vector (Bloom SerialisedKey) -> BatchBench
+benchElemCheapHashes !bs !ks =
+    let khs :: VP.Vector (Bloom.CheapHashes SerialisedKey)
+        !khs = V.convert (V.map Bloom.makeHashes ks)
+     in V.foldl'
+          (\_ b -> VP.foldl'
+                     (\_ kh -> Bloom.elemHashes kh b `seq` ())
+                     () khs)
+          () bs
