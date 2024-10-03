@@ -329,7 +329,7 @@ lookupsEnv ::
   -> FS.HasFS IO FS.HandleIO
   -> FS.HasBlockIO IO FS.HandleIO
   -> Run.RunDataCaching
-  -> IO ( V.Vector (Run IO (FS.Handle FS.HandleIO))
+  -> IO ( V.Vector (Run IO FS.HandleIO)
         , V.Vector (Bloom SerialisedKey)
         , V.Vector IndexCompact
         , V.Vector (FS.Handle FS.HandleIO)
@@ -345,7 +345,7 @@ lookupsEnv runSizes keyRng0 hfs hbio caching = do
 
     -- create the runs
     rbs <- sequence
-            [ RunBuilder.new hfs
+            [ RunBuilder.new hfs hbio
                 (RunFsPaths (FS.mkFsPath []) (RunNumber i))
                 (NumEntries numEntries)
                 (RunAllocFixed benchmarkNumBitsPerEntry)
@@ -361,7 +361,7 @@ lookupsEnv runSizes keyRng0 hfs hbio caching = do
         flip VUM.imapM_ mvecLocal $ \ !j !k -> do
           -- progress
           when (j .&. 0xFFFF == 0) (putStr ".")
-          void $ RunBuilder.addKeyOp hfs rb (serialiseKey k) (Insert zero)
+          void $ RunBuilder.addKeyOp rb (serialiseKey k) (Insert zero)
         pure (i+n)
       )
       0
@@ -370,7 +370,7 @@ lookupsEnv runSizes keyRng0 hfs hbio caching = do
 
     -- return runs
     runs <- V.fromList <$>
-              mapM (Run.fromMutable hfs hbio caching (RefCount 1)) rbs
+              mapM (Run.fromMutable caching (RefCount 1)) rbs
     let blooms = V.map Run.runFilter runs
         indexes = V.map Run.runIndex runs
         handles = V.map Run.runKOpsFile runs
@@ -465,7 +465,7 @@ benchLookupsIO ::
   -> ResolveSerialisedValue
   -> WB.WriteBuffer
   -> WBB.WriteBufferBlobs IO h
-  -> V.Vector (Run IO (FS.Handle h))
+  -> V.Vector (Run IO h)
   -> V.Vector (Bloom SerialisedKey)
   -> V.Vector IndexCompact
   -> V.Vector (FS.Handle h)

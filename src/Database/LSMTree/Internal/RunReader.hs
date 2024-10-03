@@ -54,7 +54,7 @@ import           System.FS.BlockIO.API (HasBlockIO)
 --
 -- TODO(optimise): Reuse page buffers using some kind of allocator. However,
 -- deciding how long a page needs to stay around is not trivial.
-data RunReader m fhandle = RunReader {
+data RunReader m h = RunReader {
       -- | The disk page currently being read. If it is 'Nothing', the reader
       -- is considered closed.
       readerCurrentPage    :: !(MutVar (PrimState m) (Maybe RawPage))
@@ -64,35 +64,33 @@ data RunReader m fhandle = RunReader {
       -- track the position of the next disk page to read, instead of keeping
       -- a counter ourselves. Also, the run's handle is supposed to be opened
       -- with @O_DIRECT@, which is counterproductive here.
-    , readerKOpsHandle     :: !fhandle
+    , readerKOpsHandle     :: !(FS.Handle h)
       -- | The run this reader is reading from.
-    , readerRun            :: !(Run.Run m fhandle)
+    , readerRun            :: !(Run.Run m h)
+    , readerHasFS          :: !(HasFS m h)
+    , readerHasBlockIO     :: !(HasBlockIO m h)
     }
 
 data OffsetKey = NoOffsetKey | OffsetKey !SerialisedKey
 
 {-# SPECIALISE new ::
-     HasFS IO h
-  -> HasBlockIO IO h
-  -> OffsetKey
-  -> Run.Run IO (FS.Handle h)
-  -> IO (RunReader IO (FS.Handle h)) #-}
-new ::
+     OffsetKey
+  -> Run.Run IO h
+  -> IO (RunReader IO h) #-}
+new :: forall m h.
      (MonadCatch m, MonadSTM m, MonadST m)
-  => HasFS m h
-  -> HasBlockIO m h
-  -> OffsetKey
-  -> Run.Run m (FS.Handle h)
-  -> m (RunReader m (FS.Handle h))
-new fs hbio !offsetKey readerRun = do
-    readerKOpsHandle <-
-      FS.hOpen fs (runKOpsPath (Run.runRunFsPaths readerRun)) FS.ReadMode >>= \h -> do
-        fileSize <- FS.hGetSize fs h
+  => OffsetKey
+  -> Run.Run m h
+  -> m  (RunReader m h)
+new !offsetKey readerRun = do
+    (readerKOpsHandle :: FS.Handle h) <-
+      FS.hOpen readerHasFS (runKOpsPath (Run.runRunFsPaths readerRun)) FS.ReadMode >>= \h -> do
+        fileSize <- FS.hGetSize readerHasFS h
         let fileSizeInPages = fileSize `div` toEnum pageSize
         let indexedPages = Index.getNumPages $ Run.sizeInPages readerRun
         assert (indexedPages == fileSizeInPages) $ pure h
     -- Double the file readahead window (only applies to this file descriptor)
-    FS.hAdviseAll hbio readerKOpsHandle FS.AdviceSequential
+    FS.hAdviseAll readerHasBlockIO readerKOpsHandle FS.AdviceSequential
 
     (page, entryNo) <- seekFirstEntry readerKOpsHandle
 
@@ -101,22 +99,25 @@ new fs hbio !offsetKey readerRun = do
     let reader = RunReader {..}
 
     when (isNothing page) $
-      close fs hbio reader
+      close reader
     return reader
   where
+    -- Inherit the FS & BlockIO internals of the Run
+    readerHasFS = Run.runHasFS readerRun
+    readerHasBlockIO = Run.runHasBlockIO readerRun
     index = Run.runIndex readerRun
 
     seekFirstEntry readerKOpsHandle =
         case offsetKey of
           NoOffsetKey -> do
             -- Load first page from disk, if it exists.
-            firstPage <- readDiskPage fs readerKOpsHandle
+            firstPage <- readDiskPage readerHasFS readerKOpsHandle
             return (firstPage, 0)
           OffsetKey offset -> do
             -- Use the index to find the page number for the key (if it exists).
             let Index.PageSpan pageNo pageEnd = Index.search offset index
-            seekToDiskPage fs pageNo readerKOpsHandle
-            readDiskPage fs readerKOpsHandle >>= \case
+            seekToDiskPage readerHasFS pageNo readerKOpsHandle
+            readDiskPage readerHasFS readerKOpsHandle >>= \case
               Nothing ->
                 return (Nothing, 0)
               Just foundPage -> do
@@ -135,45 +136,41 @@ new fs hbio !offsetKey readerRun = do
                     -- page and the first key in the next page.
                     -- Thus the reader should be initialised to return keys
                     -- starting from the next (non-overflow) page.
-                    seekToDiskPage fs (Index.nextPageNo pageEnd) readerKOpsHandle
-                    nextPage <- readDiskPage fs readerKOpsHandle
+                    seekToDiskPage readerHasFS (Index.nextPageNo pageEnd) readerKOpsHandle
+                    nextPage <- readDiskPage readerHasFS readerKOpsHandle
                     return (nextPage, 0)
 
 {-# SPECIALISE close ::
-     HasFS IO h
-  -> HasBlockIO IO h
-  -> RunReader IO (FS.Handle h)
+     RunReader IO h
   -> IO () #-}
 -- | This function should be called when discarding a 'RunReader' before it
 -- was done (i.e. returned 'Empty'). This avoids leaking file handles.
 -- Once it has been called, do not use the reader any more!
 close ::
      (MonadSTM m)
-  => HasFS m h
-  -> HasBlockIO m h
-  -> RunReader m (FS.Handle h)
+  => RunReader m h
   -> m ()
-close fs hbio RunReader {..} = do
+close RunReader{..} = do
     when (Run.runRunDataCaching readerRun == Run.NoCacheRunData) $
       -- drop the file from the OS page cache
-      FS.hDropCacheAll hbio readerKOpsHandle
-    FS.hClose fs readerKOpsHandle
+      FS.hDropCacheAll readerHasBlockIO readerKOpsHandle
+    FS.hClose readerHasFS readerKOpsHandle
 
 -- | The 'SerialisedKey' and 'SerialisedValue' point into the in-memory disk
 -- page. Keeping them alive will also prevent garbage collection of the 4k byte
 -- array, so if they're long-lived, consider making a copy!
-data Result m fhandle
+data Result m h
   = Empty
-  | ReadEntry !SerialisedKey !(Entry m fhandle)
+  | ReadEntry !SerialisedKey !(Entry m h)
 
-data Entry m fhandle =
+data Entry m h =
     Entry
-      !(E.Entry SerialisedValue (BlobRef m fhandle))
+      !(E.Entry SerialisedValue (BlobRef m h))
   | -- | A large entry. The caller might be interested in various different
     -- (redundant) representation, so we return all of them.
     EntryOverflow
       -- | The value is just a prefix, with the remainder in the overflow pages.
-      !(E.Entry SerialisedValue (BlobRef m fhandle))
+      !(E.Entry SerialisedValue (BlobRef m h))
       -- | A page containing the single entry (or rather its prefix).
       !RawPage
       -- | Non-zero length of the overflow in bytes.
@@ -187,11 +184,11 @@ data Entry m fhandle =
       ![RawOverflowPage]
 
 mkEntryOverflow ::
-     E.Entry SerialisedValue (BlobRef m fhandle)
+     E.Entry SerialisedValue (BlobRef m h)
   -> RawPage
   -> Word32
   -> [RawOverflowPage]
-  -> Entry m fhandle
+  -> Entry m h
 mkEntryOverflow entryPrefix page len overflowPages =
     assert (len > 0) $
     assert (rawPageOverflowPages page == ceilDivPageSize (fromIntegral len)) $
@@ -199,7 +196,7 @@ mkEntryOverflow entryPrefix page len overflowPages =
       EntryOverflow entryPrefix page len overflowPages
 
 {-# INLINE toFullEntry #-}
-toFullEntry :: Entry m fhandle -> E.Entry SerialisedValue (BlobRef m fhandle)
+toFullEntry :: Entry m h -> E.Entry SerialisedValue (BlobRef m h)
 toFullEntry = \case
     Entry e ->
       e
@@ -214,19 +211,15 @@ appendOverflow len overflowPages (SerialisedValue prefix) =
         mconcat (prefix : map rawOverflowPageRawBytes overflowPages)
 
 {-# SPECIALISE next ::
-     HasFS IO h
-  -> HasBlockIO IO h
-  -> RunReader IO (FS.Handle h)
+     RunReader IO h
   -> IO (Result IO (FS.Handle h)) #-}
 -- | Stop using the 'RunReader' after getting 'Empty', because the 'Reader' is
 -- automatically closed!
-next ::
+next :: forall m h.
      (MonadCatch m, MonadSTM m, MonadST m)
-  => HasFS m h
-  -> HasBlockIO m h
-  -> RunReader m (FS.Handle h)
+  => RunReader m h
   -> m (Result m (FS.Handle h))
-next fs hbio reader@RunReader {..} = do
+next reader@RunReader {..} = do
     readMutVar readerCurrentPage >>= \case
       Nothing ->
         return Empty
@@ -234,16 +227,17 @@ next fs hbio reader@RunReader {..} = do
         entryNo <- readPrimVar readerCurrentEntryNo
         go entryNo page
   where
+    go :: Word16 -> RawPage -> m (Result m (FS.Handle h))
     go !entryNo !page =
         -- take entry from current page (resolve blob if necessary)
         case rawPageIndex page entryNo of
           IndexNotPresent -> do
             -- if it is past the last one, load a new page from disk, try again
-            newPage <- readDiskPage fs readerKOpsHandle
+            newPage <- readDiskPage readerHasFS readerKOpsHandle
             stToIO $ writeMutVar readerCurrentPage newPage
             case newPage of
               Nothing -> do
-                close fs hbio reader
+                close reader
                 return Empty
               Just p -> do
                 writePrimVar readerCurrentEntryNo 0
@@ -256,8 +250,9 @@ next fs hbio reader@RunReader {..} = do
           IndexEntryOverflow key entry lenSuffix -> do
             -- TODO: we know that we need the next page, could already load?
             modifyPrimVar readerCurrentEntryNo (+1)
-            let entry' = fmap (Run.mkBlobRefForRun readerRun) entry
-            overflowPages <- readOverflowPages fs readerKOpsHandle lenSuffix
+            let entry' :: E.Entry SerialisedValue (BlobRef m (FS.Handle h))
+                entry' = fmap (Run.mkBlobRefForRun readerRun) entry
+            overflowPages <- readOverflowPages readerHasFS readerKOpsHandle lenSuffix
             let rawEntry = mkEntryOverflow entry' page lenSuffix overflowPages
             return (ReadEntry key rawEntry)
 

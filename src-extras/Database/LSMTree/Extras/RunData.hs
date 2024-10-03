@@ -53,7 +53,7 @@ withRun ::
   -> HasBlockIO IO h
   -> RunFsPaths
   -> SerialisedRunData
-  -> (Run IO (Handle h) -> IO a)
+  -> (Run IO h -> IO a)
   -> IO a
 withRun hfs hbio path rd = do
     bracket
@@ -67,7 +67,7 @@ withRuns ::
   => HasFS IO h
   -> HasBlockIO IO h
   -> f (RunFsPaths, SerialisedRunData)
-  -> (f (Run IO (Handle h)) -> IO a)
+  -> (f (Run IO h) -> IO a)
   -> IO a
 withRuns hfs hbio xs = do
     bracket
@@ -85,7 +85,7 @@ unsafeFlushAsWriteBuffer ::
   -> HasBlockIO IO h
   -> RunFsPaths
   -> SerialisedRunData
-  -> IO (Run IO (Handle h))
+  -> IO (Run IO h)
 unsafeFlushAsWriteBuffer fs hbio fsPaths (RunData m) = do
     let blobpath = addExtension (runBlobPath fsPaths) ".wb"
     wbblobs <- WBB.new fs blobpath

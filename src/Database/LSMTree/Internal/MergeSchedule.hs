@@ -58,7 +58,8 @@ import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import           Database.LSMTree.Internal.WriteBufferBlobs (WriteBufferBlobs)
 import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
-import           System.FS.API (Handle, HasFS)
+import qualified System.FS.API as FS
+import           System.FS.API (HasFS)
 import           System.FS.BlockIO.API (HasBlockIO)
 
 {-------------------------------------------------------------------------------
@@ -109,7 +110,7 @@ data TableContent m h = TableContent {
     -- | A hierarchy of levels. The vector indexes double as level numbers.
   , tableLevels           :: !(Levels m h)
     -- | Cache of flattened 'levels'.
-  , tableCache            :: !(LevelsCache m (Handle h))
+  , tableCache            :: !(LevelsCache m h)
   }
 
 {-# SPECIALISE addReferenceTableContent :: TempRegistry IO -> TableContent IO h -> IO () #-}
@@ -156,13 +157,13 @@ data LevelsCache m h = LevelsCache_ {
     cachedRuns      :: !(V.Vector (Run m h))
   , cachedFilters   :: !(V.Vector (Bloom SerialisedKey))
   , cachedIndexes   :: !(V.Vector IndexCompact)
-  , cachedKOpsFiles :: !(V.Vector h)
+  , cachedKOpsFiles :: !(V.Vector (FS.Handle h))
   }
 
 {-# SPECIALISE mkLevelsCache ::
      TempRegistry IO
   -> Levels IO h
-  -> IO (LevelsCache IO (Handle h)) #-}
+  -> IO (LevelsCache IO h) #-}
 -- | Flatten the argument 'Level's into a single vector of runs, and use that to
 -- populate the 'LevelsCache'. The cache will take a reference for each of the
 -- runs that end up in the cache.
@@ -170,7 +171,7 @@ mkLevelsCache ::
      (PrimMonad m, MonadMVar m, MonadMask m)
   => TempRegistry m
   -> Levels m h
-  -> m (LevelsCache m (Handle h))
+  -> m (LevelsCache m h)
 mkLevelsCache reg lvls = do
   rs <- forRunM lvls $ \r -> allocateTemp reg (Run.addReference r) (\_ -> Run.removeReference r) >> pure r
   pure $! LevelsCache_ {
@@ -182,9 +183,9 @@ mkLevelsCache reg lvls = do
 
 {-# SPECIALISE rebuildCache ::
      TempRegistry IO
-  -> LevelsCache IO (Handle h)
+  -> LevelsCache IO h
   -> Levels IO h
-  -> IO (LevelsCache IO (Handle h)) #-}
+  -> IO (LevelsCache IO h) #-}
 -- | Remove references to runs in the old cache, and create a new cache with
 -- fresh references taken for the runs in the new levels.
 --
@@ -202,21 +203,21 @@ mkLevelsCache reg lvls = do
 rebuildCache ::
      (PrimMonad m, MonadMVar m, MonadMask m)
   => TempRegistry m
-  -> LevelsCache m (Handle h) -- ^ old cache
+  -> LevelsCache m h -- ^ old cache
   -> Levels m h -- ^ new levels
-  -> m (LevelsCache m (Handle h)) -- ^ new cache
+  -> m (LevelsCache m h) -- ^ new cache
 rebuildCache reg oldCache newLevels = do
     removeReferenceLevelsCache reg oldCache
     mkLevelsCache reg newLevels
 
 {-# SPECIALISE addReferenceLevelsCache ::
      TempRegistry IO
-  -> LevelsCache IO (Handle h)
+  -> LevelsCache IO h
   -> IO () #-}
 addReferenceLevelsCache ::
      (PrimMonad m, MonadMask m, MonadMVar m)
   => TempRegistry m
-  -> LevelsCache m (Handle h)
+  -> LevelsCache m h
   -> m ()
 addReferenceLevelsCache reg cache =
     V.forM_ (cachedRuns cache) $ \r ->
@@ -226,12 +227,12 @@ addReferenceLevelsCache reg cache =
 
 {-# SPECIALISE removeReferenceLevelsCache ::
      TempRegistry IO
-  -> LevelsCache IO (Handle h)
+  -> LevelsCache IO h
   -> IO () #-}
 removeReferenceLevelsCache ::
      (PrimMonad m, MonadMVar m, MonadMask m)
   => TempRegistry m
-  -> LevelsCache m (Handle h)
+  -> LevelsCache m h
   -> m ()
 removeReferenceLevelsCache reg cache =
     V.forM_ (cachedRuns cache) $ \r -> freeTemp reg (Run.removeReference r)
@@ -245,17 +246,17 @@ type Levels m h = V.Vector (Level m h)
 -- | Runs in order from newer to older
 data Level m h = Level {
     incomingRuns :: !(MergingRun m h)
-  , residentRuns :: !(V.Vector (Run m (Handle h)))
+  , residentRuns :: !(V.Vector (Run m h))
   }
 
 -- | A merging run is either a single run, or some ongoing merge.
 data MergingRun m h =
     MergingRun !(StrictMVar m (MergingRunState m h))
-  | SingleRun !(Run m (Handle h))
+  | SingleRun !(Run m h)
 
 data MergingRunState m h =
-    CompletedMerge !(Run m (Handle h))
-  | OngoingMerge !(V.Vector (Run m (Handle h))) !(Merge m h)
+    CompletedMerge !(Run m h)
+  | OngoingMerge !(V.Vector (Run m h)) !(Merge m h)
 
 {-# SPECIALISE addReferenceLevels :: TempRegistry IO -> Levels IO h -> IO () #-}
 addReferenceLevels ::
@@ -281,13 +282,13 @@ removeReferenceLevels reg levels =
 
 {-# SPECIALISE forRunAndMergeM_ ::
      Levels IO h
-  -> (Run IO (Handle h) -> IO ())
+  -> (Run IO h -> IO ())
   -> (Merge IO h -> IO ())
   -> IO () #-}
 forRunAndMergeM_ ::
      MonadMVar m
   => Levels m h
-  -> (Run m (Handle h) -> m ())
+  -> (Run m h -> m ())
   -> (Merge m h -> m ())
   -> m ()
 forRunAndMergeM_ lvls k1 k2 = V.forM_ lvls $ \(Level mr rs) -> do
@@ -299,13 +300,13 @@ forRunAndMergeM_ lvls k1 k2 = V.forM_ lvls $ \(Level mr rs) -> do
     V.mapM_ k1 rs
 
 {-# SPECIALISE foldRunM ::
-     (b -> Run IO (Handle h) -> IO b)
+     (b -> Run IO h -> IO b)
   -> b
   -> Levels IO h
   -> IO b #-}
 foldRunM ::
      MonadMVar m
-  => (b -> Run m (Handle h) -> m b)
+  => (b -> Run m h -> m b)
   -> b
   -> Levels m h
   -> m b
@@ -319,7 +320,7 @@ foldRunM f x lvls = flip (flip V.foldM x) lvls $ \y (Level mr rs) -> do
 
 {-# SPECIALISE forRunM ::
      Levels IO h
-  -> (Run IO (Handle h) -> IO a)
+  -> (Run IO h -> IO a)
   -> IO (V.Vector a) #-}
 -- TODO: this is not terribly performant, but it is also not sure if we are
 -- going to need this in the end. We might get rid of the LevelsCache, and we
@@ -327,7 +328,7 @@ foldRunM f x lvls = flip (flip V.foldM x) lvls $ \y (Level mr rs) -> do
 forRunM ::
      MonadMVar m
   => Levels m h
-  -> (Run m (Handle h) -> m a)
+  -> (Run m h -> m a)
   -> m (V.Vector a)
 forRunM lvls k = do
     V.reverse . V.fromList <$> foldRunM (\acc r -> k r >>= \x -> pure (x : acc)) [] lvls
@@ -594,7 +595,7 @@ _levelsInvariant conf levels =
   -> HasBlockIO IO h
   -> SessionRoot
   -> UniqCounter IO
-  -> Run IO (Handle h)
+  -> Run IO h
   -> TempRegistry IO
   -> Levels IO h
   -> IO (Levels IO h) #-}
@@ -612,7 +613,7 @@ addRunToLevels ::
   -> HasBlockIO m h
   -> SessionRoot
   -> UniqCounter m
-  -> Run m (Handle h)
+  -> Run m h
   -> TempRegistry m
   -> Levels m h
   -> m (Levels m h)
@@ -678,7 +679,7 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
             mr' <- newMerge LevelLevelling Merge.LastLevel ln (rs' `V.snoc` r)
             pure $! Level mr' V.empty `V.cons` V.empty
 
-    expectCompletedMerge :: LevelNo -> MergingRun m h -> m (Run m (Handle h))
+    expectCompletedMerge :: LevelNo -> MergingRun m h -> m (Run m h)
     expectCompletedMerge ln (SingleRun r) = do
       traceWith tr $ AtLevel ln $ TraceExpectCompletedMergeSingleRun (runNumber $ Run.runRunFsPaths r)
       pure r
@@ -694,7 +695,7 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
     newMerge :: MergePolicyForLevel
              -> Merge.Level
              -> LevelNo
-             -> V.Vector (Run m (Handle h))
+             -> V.Vector (Run m h)
              -> m (MergingRun m h)
     newMerge mergepolicy mergelast ln rs
       | Just (r, rest) <- V.uncons rs
@@ -781,7 +782,7 @@ mergeLastForLevel levels
 levelIsFull :: SizeRatio -> V.Vector (Run m h) -> Bool
 levelIsFull sr rs = V.length rs + 1 >= (sizeRatioInt sr)
 
-{-# SPECIALISE mergeRuns :: ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> RunDataCaching -> RunBloomFilterAlloc -> RunFsPaths -> Merge.Level -> V.Vector (Run IO (Handle h)) -> IO (Run IO (Handle h)) #-}
+{-# SPECIALISE mergeRuns :: ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> RunDataCaching -> RunBloomFilterAlloc -> RunFsPaths -> Merge.Level -> V.Vector (Run IO h) -> IO (Run IO h) #-}
 mergeRuns ::
      (MonadCatch m, MonadFix m, MonadST m, MonadSTM m)
   => ResolveSerialisedValue
@@ -791,8 +792,8 @@ mergeRuns ::
   -> RunBloomFilterAlloc
   -> RunFsPaths
   -> Merge.Level
-  -> V.Vector (Run m (Handle h))
-  -> m (Run m (Handle h))
+  -> V.Vector (Run m h)
+  -> m (Run m h)
 mergeRuns resolve hfs hbio caching alloc runPaths mergeLevel runs = do
     Merge.new hfs hbio caching alloc mergeLevel resolve runPaths runs >>= \case
       Nothing -> error "mergeRuns: no inputs"
