@@ -12,6 +12,7 @@ import qualified Test.Database.LSMTree.Internal.Chunk
 import qualified Test.Database.LSMTree.Internal.CRC32C
 import qualified Test.Database.LSMTree.Internal.Entry
 import qualified Test.Database.LSMTree.Internal.IndexCompact
+import qualified Test.Database.LSMTree.Internal.IndexOrdinary
 import qualified Test.Database.LSMTree.Internal.Lookup
 import qualified Test.Database.LSMTree.Internal.Merge
 import qualified Test.Database.LSMTree.Internal.Monkey
@@ -58,6 +59,7 @@ main = defaultMain $ testGroup "lsm-tree"
     , Test.Database.LSMTree.Internal.RunReader.tests
     , Test.Database.LSMTree.Internal.RunReaders.tests
     , Test.Database.LSMTree.Internal.IndexCompact.tests
+    , Test.Database.LSMTree.Internal.IndexOrdinary.tests
     , Test.Database.LSMTree.Internal.Serialise.tests
     , Test.Database.LSMTree.Internal.Serialise.Class.tests
     , Test.Database.LSMTree.Internal.Vector.tests

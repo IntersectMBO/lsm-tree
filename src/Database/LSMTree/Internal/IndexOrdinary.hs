@@ -4,6 +4,7 @@
 module Database.LSMTree.Internal.IndexOrdinary
 (
     IndexOrdinary (IndexOrdinary),
+    toLastKeys,
 
     -- * Search
     search,
@@ -57,6 +58,10 @@ supportedTypeAndVersion = 0x0101
     to return a valid page span.
 -}
 newtype IndexOrdinary = IndexOrdinary (Vector SerialisedKey)
+    deriving stock (Eq, Show)
+
+toLastKeys :: IndexOrdinary -> Vector SerialisedKey
+toLastKeys (IndexOrdinary lastKeys) = lastKeys
 
 -- * Search
 
@@ -89,7 +94,7 @@ search key (IndexOrdinary lastKeys) = assert (length lastKeys > 0) result where
                 = let
 
                       start :: Int
-                      !start = maybe 0 succ $
+                      !start = maybe 0 succ                  $
                                findIndexR (/= last lastKeys) $
                                lastKeys
 
