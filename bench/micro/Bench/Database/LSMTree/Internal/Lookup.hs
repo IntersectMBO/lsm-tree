@@ -180,7 +180,7 @@ lookupsInBatchesEnv ::
         , ArenaManager RealWorld
         , FS.HasFS IO FS.HandleIO
         , FS.HasBlockIO IO FS.HandleIO
-        , V.Vector (Run IO (FS.Handle FS.HandleIO))
+        , V.Vector (Run IO FS.HandleIO)
         , V.Vector SerialisedKey
         )
 lookupsInBatchesEnv Config {..} = do
@@ -212,7 +212,7 @@ lookupsInBatchesCleanup ::
      , ArenaManager RealWorld
      , FS.HasFS IO FS.HandleIO
      , FS.HasBlockIO IO FS.HandleIO
-     , V.Vector (Run IO (FS.Handle FS.HandleIO))
+     , V.Vector (Run IO FS.HandleIO)
      , V.Vector SerialisedKey
      )
   -> IO ()

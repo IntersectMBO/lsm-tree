@@ -77,7 +77,7 @@ prop_readAtOffset ::
   -> IO Property
 prop_readAtOffset fs hbio rd offsetKey =
     withRun fs hbio (simplePath 42) rd' $ \run -> do
-      rhs <- readKOps fs hbio (coerce offsetKey) run
+      rhs <- readKOps (coerce offsetKey) run
 
       return . labelRunData rd' $
         counterexample ("entries expected: " <> show (length lhs)) $
@@ -121,8 +121,8 @@ prop_readAtOffsetIdempotence ::
   -> IO Property
 prop_readAtOffsetIdempotence fs hbio rd offsetKey =
     withRun fs hbio (simplePath 42) rd' $ \run -> do
-    lhs <- readKOps fs hbio (coerce offsetKey) run
-    rhs <- readKOps fs hbio (coerce offsetKey) run
+    lhs <- readKOps (coerce offsetKey) run
+    rhs <- readKOps (coerce offsetKey) run
 
     return . labelRunData rd' $
       counterexample ("entries expected: " <> show (length lhs)) $
@@ -145,10 +145,10 @@ prop_readAtOffsetReadHead ::
   -> IO Property
 prop_readAtOffsetReadHead fs hbio rd =
     withRun fs hbio (simplePath 42) rd' $ \run -> do
-      lhs <- readKOps fs hbio Nothing run
+      lhs <- readKOps Nothing run
       rhs <- case lhs of
         []        -> return []
-        (key,_):_ -> readKOps fs hbio (Just key) run
+        (key,_):_ -> readKOps (Just key) run
 
       return . labelRunData rd' $
         counterexample ("entries expected: " <> show (length lhs)) $
@@ -165,20 +165,20 @@ type SerialisedEntry = Entry SerialisedValue SerialisedBlob
 type SerialisedKOp = (SerialisedKey, SerialisedEntry)
 
 readKOps ::
-     FS.HasFS IO h -> FS.HasBlockIO IO h
-  -> Maybe (SerialisedKey)  -- ^ offset
-  -> Run IO (FS.Handle h)
+     Maybe (SerialisedKey)  -- ^ offset
+  -> Run IO h
   -> IO [SerialisedKOp]
-readKOps fs hbio offset run = do
-    reader <- Reader.new fs hbio offsetKey run
+readKOps offset run = do
+    reader <- Reader.new offsetKey run
     go reader
   where
     offsetKey = maybe Reader.NoOffsetKey (Reader.OffsetKey . coerce) offset
 
     go reader = do
-      Reader.next fs hbio reader >>= \case
+      Reader.next reader >>= \case
         Reader.Empty -> return []
         Reader.ReadEntry key e -> do
+          let fs = Reader.readerHasFS reader
           e' <- traverse (readBlob fs) $ Reader.toFullEntry e
           ((key, e') :) <$> go reader
 

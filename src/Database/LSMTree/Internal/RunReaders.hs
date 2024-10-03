@@ -29,15 +29,14 @@ import qualified Data.Vector as V
 import           Database.LSMTree.Internal.BlobRef (BlobRef)
 import           Database.LSMTree.Internal.Entry (Entry (..))
 import           Database.LSMTree.Internal.Run (Run)
-import           Database.LSMTree.Internal.RunReader (OffsetKey (..), RunReader)
+import           Database.LSMTree.Internal.RunReader (OffsetKey (..),
+                     RunReader (..))
 import qualified Database.LSMTree.Internal.RunReader as Reader
 import           Database.LSMTree.Internal.Serialise
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import qualified Database.LSMTree.Internal.WriteBufferBlobs as WB
 import qualified KMerge.Heap as Heap
 import qualified System.FS.API as FS
-import           System.FS.API (HasFS)
-import           System.FS.BlockIO.API (HasBlockIO)
 
 -- | A collection of runs and write buffers being read from, yielding elements
 -- in order. More precisely, that means first ordered by their key, then by the
@@ -49,14 +48,14 @@ import           System.FS.BlockIO.API (HasBlockIO)
 --
 -- Creating a 'RunReaders' does not increase the runs' reference count, so make
 -- sure they remain open while using the 'RunReaders'.
-data Readers m fhandle = Readers {
-      readersHeap :: !(Heap.MutableHeap (PrimState m) (ReadCtx m fhandle))
+data Readers m h = Readers {
+      readersHeap :: !(Heap.MutableHeap (PrimState m) (ReadCtx m h))
       -- | Since there is always one reader outside of the heap, we need to
       -- store it separately. This also contains the next k\/op to yield, unless
       -- all readers are drained, i.e. both:
       -- 1. the reader inside the 'ReadCtx' is empty
       -- 2. the heap is empty
-    , readersNext :: !(MutVar (PrimState m) (ReadCtx m fhandle))
+    , readersNext :: !(MutVar (PrimState m) (ReadCtx m h))
     }
 
 newtype ReaderNumber = ReaderNumber Int
@@ -68,27 +67,27 @@ newtype ReaderNumber = ReaderNumber Int
 --
 -- TODO(optimisation): We allocate this record for each k/op. This might be
 -- avoidable, see ideas below.
-data ReadCtx m fhandle = ReadCtx {
+data ReadCtx m h = ReadCtx {
       -- We could avoid this using a more specialised mutable heap with separate
       -- arrays for keys and values (or even each of their components).
       -- Using an 'STRef' could avoid reallocating the record for every entry,
       -- but that might not be straightforward to integrate with the heap.
       readCtxHeadKey   :: !SerialisedKey
-    , readCtxHeadEntry :: !(Reader.Entry m fhandle)
+    , readCtxHeadEntry :: !(Reader.Entry m (FS.Handle h))
       -- We could get rid of this by making 'LoserTree' stable (for which there
       -- is a prototype already).
       -- Alternatively, if we decide to have an invariant that the number in
       -- 'RunFsPaths' is always higher for newer runs, then we could use that
       -- in the 'Ord' instance.
     , readCtxNumber    :: !ReaderNumber
-    , readCtxReader    :: !(Reader m fhandle)
+    , readCtxReader    :: !(Reader m h)
     }
 
-instance Eq (ReadCtx m fhandle) where
+instance Eq (ReadCtx m h) where
   (==) = (==) `on` (\r -> (readCtxHeadKey r, readCtxNumber r))
 
 -- | Makes sure we resolve entries in the right order.
-instance Ord (ReadCtx m fhandle) where
+instance Ord (ReadCtx m h) where
   compare = compare `on` (\r -> (readCtxHeadKey r, readCtxNumber r))
 
 -- TODO: This is slightly inelegant. This module could work generally for
@@ -98,32 +97,28 @@ instance Ord (ReadCtx m fhandle) where
 -- A more general version is possible, but despite SPECIALISE-ing everything
 -- showed ~100 bytes of extra allocations per entry that is read (which might be
 -- avoidable with some tinkering).
-data Reader m fhandle =
-    ReadRun    !(RunReader m fhandle)
+data Reader m h =
+    ReadRun    !(RunReader m h)
     -- The list allows to incrementally read from the write buffer without
     -- having to find the next entry in the Map again (requiring key
     -- comparisons) or having to copy out all entries.
     -- TODO: more efficient representation? benchmark!
-  | ReadBuffer !(MutVar (PrimState m) [KOp m fhandle])
+  | ReadBuffer !(MutVar (PrimState m) [KOp m (FS.Handle h)])
 
-type KOp m fhandle = (SerialisedKey, Entry SerialisedValue (BlobRef m fhandle))
+type KOp m h = (SerialisedKey, Entry SerialisedValue (BlobRef m h))
 
 {-# SPECIALISE new ::
-     HasFS IO h
-  -> HasBlockIO IO h
-  -> OffsetKey
+     OffsetKey
   -> Maybe (WB.WriteBuffer, WB.WriteBufferBlobs IO h)
-  -> V.Vector (Run IO (FS.Handle h))
-  -> IO (Maybe (Readers IO (FS.Handle h))) #-}
-new :: forall h m .
+  -> V.Vector (Run IO h)
+  -> IO (Maybe (Readers IO h)) #-}
+new :: forall m h.
      (MonadCatch m, MonadSTM m, MonadST m)
-  => HasFS m h
-  -> HasBlockIO m h
-  -> OffsetKey
+  => OffsetKey
   -> Maybe (WB.WriteBuffer, WB.WriteBufferBlobs m h)
-  -> V.Vector (Run m (FS.Handle h))
-  -> m (Maybe (Readers m (FS.Handle h)))
-new fs hbio !offsetKey wbs runs = do
+  -> V.Vector (Run m h)
+  -> m (Maybe (Readers m h))
+new !offsetKey wbs runs = do
     wBuffer <- maybe (pure Nothing) (uncurry fromWB) wbs
     readers <- zipWithM (fromRun . ReaderNumber) [1..] (V.toList runs)
     let contexts = nonEmpty . catMaybes $ wBuffer : readers
@@ -134,41 +129,37 @@ new fs hbio !offsetKey wbs runs = do
   where
     fromWB :: WB.WriteBuffer
            -> WB.WriteBufferBlobs m h
-           -> m (Maybe (ReadCtx m (FS.Handle h)))
+           -> m (Maybe (ReadCtx m h))
     fromWB wb wbblobs = do
         --TODO: this BlobSpan to BlobRef conversion involves quite a lot of allocation
         kops <- newMutVar $ map (fmap (fmap (WB.mkBlobRef wbblobs))) $
                   Map.toList $ filterWB $ WB.toMap wb
-        nextReadCtx fs hbio (ReaderNumber 0) (ReadBuffer kops)
+        nextReadCtx (ReaderNumber 0) (ReadBuffer kops)
       where
         filterWB = case offsetKey of
             NoOffsetKey -> id
             OffsetKey k -> Map.dropWhileAntitone (< k)
 
-    fromRun :: ReaderNumber -> Run m (FS.Handle h) -> m (Maybe (ReadCtx m (FS.Handle h)))
+    fromRun :: ReaderNumber -> Run m h -> m (Maybe (ReadCtx m h))
     fromRun n run = do
-        reader <- Reader.new fs hbio offsetKey run
-        nextReadCtx fs hbio n (ReadRun reader)
+        reader <- Reader.new offsetKey run
+        nextReadCtx n (ReadRun reader)
 
 {-# SPECIALISE close ::
-     HasFS IO h
-  -> HasBlockIO IO h
-  -> Readers IO (FS.Handle h)
+     Readers IO (FS.Handle h)
   -> IO () #-}
 -- | Only call when aborting before all readers have been drained.
 close ::
      (MonadSTM m, PrimMonad m)
-  => HasFS m h
-  -> HasBlockIO m h
-  -> Readers m (FS.Handle h)
+  => Readers m h
   -> m ()
-close fs hbio Readers {..} = do
+close Readers {..} = do
     ReadCtx {readCtxReader} <- readMutVar readersNext
     closeReader readCtxReader
     closeHeap
   where
     closeReader = \case
-        ReadRun r    -> Reader.close fs hbio r
+        ReadRun r    -> Reader.close r
         ReadBuffer _ -> pure ()
     closeHeap =
         Heap.extract readersHeap >>= \case
@@ -178,11 +169,11 @@ close fs hbio Readers {..} = do
             closeHeap
 
 {-# SPECIALISE peekKey ::
-     Readers IO (FS.Handle h)
+     Readers IO h
   -> IO SerialisedKey #-}
 peekKey ::
      PrimMonad m
-  => Readers m (FS.Handle h)
+  => Readers m h
   -> m SerialisedKey
 peekKey Readers {..} = do
     readCtxHeadKey <$> readMutVar readersNext
@@ -192,35 +183,27 @@ data HasMore = HasMore | Drained
   deriving stock (Eq, Show)
 
 {-# SPECIALISE pop ::
-     HasFS IO h
-  -> HasBlockIO IO h
-  -> Readers IO (FS.Handle h)
+    Readers IO h
   -> IO (SerialisedKey, Reader.Entry IO (FS.Handle h), HasMore) #-}
 pop ::
      (MonadCatch m, MonadSTM m, MonadST m)
-  => HasFS m h
-  -> HasBlockIO m h
-  -> Readers m (FS.Handle h)
+  => Readers m h
   -> m (SerialisedKey, Reader.Entry m (FS.Handle h), HasMore)
-pop fs hbio r@Readers {..} = do
+pop r@Readers {..} = do
     ReadCtx {..} <- readMutVar readersNext
-    hasMore <- dropOne fs hbio r readCtxNumber readCtxReader
+    hasMore <- dropOne r readCtxNumber readCtxReader
     return (readCtxHeadKey, readCtxHeadEntry, hasMore)
 
 {-# SPECIALISE dropWhileKey ::
-     HasFS IO h
-  -> HasBlockIO IO h
-  -> Readers IO (FS.Handle h)
+     Readers IO h
   -> SerialisedKey
   -> IO (Int, HasMore) #-}
 dropWhileKey ::
      (MonadCatch m, MonadSTM m, MonadST m)
-  => HasFS m h
-  -> HasBlockIO m h
-  -> Readers m (FS.Handle h)
+  => Readers m h
   -> SerialisedKey
   -> m (Int, HasMore)  -- ^ How many were dropped?
-dropWhileKey fs hbio Readers {..} key = do
+dropWhileKey Readers {..} key = do
     cur <- readMutVar readersNext
     if readCtxHeadKey cur == key
       then go 0 cur
@@ -228,7 +211,7 @@ dropWhileKey fs hbio Readers {..} key = do
   where
     -- invariant: @readCtxHeadKey == key@
     go !n ReadCtx {readCtxNumber, readCtxReader} = do
-        mNext <- nextReadCtx fs hbio readCtxNumber readCtxReader >>= \case
+        mNext <- nextReadCtx readCtxNumber readCtxReader >>= \case
           Nothing  -> Heap.extract readersHeap
           Just ctx -> Just <$> Heap.replaceRoot readersHeap ctx
         let !n' = n + 1
@@ -245,22 +228,18 @@ dropWhileKey fs hbio Readers {..} key = do
                 return (n', HasMore)
 
 {-# SPECIALISE dropOne ::
-     HasFS IO h
-  -> HasBlockIO IO h
-  -> Readers IO (FS.Handle h)
+     Readers IO h
   -> ReaderNumber
-  -> Reader IO (FS.Handle h)
+  -> Reader IO h
   -> IO HasMore #-}
 dropOne ::
      (MonadCatch m, MonadSTM m, MonadST m)
-  => HasFS m h
-  -> HasBlockIO m h
-  -> Readers m (FS.Handle h)
+  => Readers m h
   -> ReaderNumber
-  -> Reader m (FS.Handle h)
+  -> Reader m h
   -> m HasMore
-dropOne fs hbio Readers {..} number reader = do
-    mNext <- nextReadCtx fs hbio number reader >>= \case
+dropOne Readers {..} number reader = do
+    mNext <- nextReadCtx number reader >>= \case
       Nothing  -> Heap.extract readersHeap
       Just ctx -> Just <$> Heap.replaceRoot readersHeap ctx
     case mNext of
@@ -271,21 +250,17 @@ dropOne fs hbio Readers {..} number reader = do
         return HasMore
 
 {-# SPECIALISE nextReadCtx ::
-     HasFS IO h
-  -> HasBlockIO IO h
-  -> ReaderNumber
-  -> Reader IO (FS.Handle h)
-  -> IO (Maybe (ReadCtx IO (FS.Handle h))) #-}
+     ReaderNumber
+  -> Reader IO h
+  -> IO (Maybe (ReadCtx IO h)) #-}
 nextReadCtx ::
      (MonadCatch m, MonadSTM m, MonadST m)
-  => HasFS m h
-  -> HasBlockIO m h
-  -> ReaderNumber
-  -> Reader m (FS.Handle h)
-  -> m (Maybe (ReadCtx m (FS.Handle h)))
-nextReadCtx fs hbio readCtxNumber readCtxReader =
+  => ReaderNumber
+  -> Reader m h
+  -> m (Maybe (ReadCtx m h))
+nextReadCtx readCtxNumber readCtxReader =
     case readCtxReader of
-      ReadRun r -> Reader.next fs hbio r <&> \case
+      ReadRun r -> Reader.next r <&> \case
         Reader.Empty ->
           Nothing
         Reader.ReadEntry readCtxHeadKey readCtxHeadEntry ->
@@ -295,4 +270,4 @@ nextReadCtx fs hbio readCtxNumber readCtxReader =
           ([], Nothing)
         ((readCtxHeadKey, e) : rest) ->
           let readCtxHeadEntry = Reader.Entry e
-          in (rest, Just ReadCtx {..})
+          in  (rest, Just ReadCtx {..})

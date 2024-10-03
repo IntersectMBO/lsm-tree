@@ -901,10 +901,10 @@ data CursorEnv m h = CursorEnv {
     -- However, the reference counts to the runs only get removed when calling
     -- 'closeCursor', as there might still be 'BlobRef's that need the
     -- corresponding run to stay alive.
-  , cursorReaders    :: !(Maybe (Readers.Readers m (Handle h)))
+  , cursorReaders    :: !(Maybe (Readers.Readers m h))
     -- | The runs held open by the cursor. We must remove a reference when the
     -- cursor gets closed.
-  , cursorRuns       :: !(V.Vector (Run m (Handle h)))
+  , cursorRuns       :: !(V.Vector (Run m h))
 
     -- | The write buffer blobs, which like the runs, we have to keep open
     -- untile the cursor is closed.
@@ -943,9 +943,6 @@ newCursor !offsetKey th = withOpenTable th $ \thEnv -> do
     let cursorTracer = TraceCursor cursorId `contramap` sessionTracer cursorSession
     traceWith cursorTracer $ TraceCreateCursor (tableId thEnv)
 
-    let hfs = tableHasFS thEnv
-    let hbio = tableHasBlockIO thEnv
-
     -- We acquire a read-lock on the session open-state to prevent races, see
     -- 'sessionOpenTables'.
     withOpenSession cursorSession $ \_ -> do
@@ -954,9 +951,8 @@ newCursor !offsetKey th = withOpenTable th $ \thEnv -> do
           allocTableContent reg (tableContent thEnv)
         cursorReaders <-
           allocateMaybeTemp reg
-            (Readers.new hfs hbio
-               offsetKey (Just (wb, wbblobs)) cursorRuns)
-            (Readers.close hfs hbio)
+            (Readers.new offsetKey (Just (wb, wbblobs)) cursorRuns)
+            Readers.close
         let cursorWBB = wbblobs
         cursorState <- newMVar (CursorOpen CursorEnv {..})
         let !cursor = Cursor {cursorState, cursorTracer}
@@ -997,9 +993,6 @@ closeCursor Cursor {..} = do
     modifyWithTempRegistry_ (takeMVar cursorState) (putMVar cursorState) $ \reg -> \case
       CursorClosed -> return CursorClosed
       CursorOpen CursorEnv {..} -> do
-        let hfs = sessionHasFS cursorSessionEnv
-        let hbio = sessionHasBlockIO cursorSessionEnv
-
         -- This should be safe-ish, but it's still not ideal, because it doesn't
         -- rule out sync exceptions in the cleanup operations.
         -- In that case, the cursor ends up closed, but resources might not have
@@ -1008,7 +1001,7 @@ closeCursor Cursor {..} = do
           modifyMVar_ (sessionOpenCursors cursorSessionEnv) $
             pure . Map.delete cursorId
 
-        forM_ cursorReaders $ freeTemp reg . Readers.close hfs hbio
+        forM_ cursorReaders $ freeTemp reg . Readers.close
         V.forM_ cursorRuns $ freeTemp reg . Run.removeReference
         freeTemp reg (WBB.removeReference cursorWBB)
         return CursorClosed
@@ -1067,9 +1060,7 @@ readCursorWhile resolve keyIsWanted n Cursor {..} fromEntry = do
             -- a drained cursor will just return an empty vector
             return (state, V.empty)
           Just readers -> do
-            let hfs = sessionHasFS (cursorSessionEnv cursorEnv)
-            let hbio = sessionHasBlockIO (cursorSessionEnv cursorEnv)
-            (vec, hasMore) <- readCursorEntriesWhile hfs hbio resolve keyIsWanted fromEntry readers n
+            (vec, hasMore) <- readCursorEntriesWhile resolve keyIsWanted fromEntry readers n
             -- if we drained the readers, remove them from the state
             let !state' = case hasMore of
                   Readers.HasMore -> state
@@ -1078,12 +1069,10 @@ readCursorWhile resolve keyIsWanted n Cursor {..} fromEntry = do
 
 {-# INLINE readCursorEntriesWhile #-}
 {-# SPECIALISE readCursorEntriesWhile :: forall h res.
-     HasFS IO h
-  -> HasBlockIO IO h
-  -> ResolveSerialisedValue
+     ResolveSerialisedValue
   -> (SerialisedKey -> Bool)
   -> (SerialisedKey -> SerialisedValue -> Maybe (WeakBlobRef IO (Handle h)) -> res)
-  -> Readers.Readers IO (Handle h)
+  -> Readers.Readers IO h
   -> Int
   -> IO (V.Vector res, Readers.HasMore) #-}
 -- | General notes on the code below:
@@ -1094,15 +1083,13 @@ readCursorWhile resolve keyIsWanted n Cursor {..} fromEntry = do
 -- * there is probably opportunity for optimisations
 readCursorEntriesWhile :: forall h m res.
      (MonadFix m, MonadMask m, MonadST m, MonadSTM m)
-  => HasFS m h
-  -> HasBlockIO m h
-  -> ResolveSerialisedValue
+  => ResolveSerialisedValue
   -> (SerialisedKey -> Bool)
   -> (SerialisedKey -> SerialisedValue -> Maybe (WeakBlobRef m (Handle h)) -> res)
-  -> Readers.Readers m (Handle h)
+  -> Readers.Readers m h
   -> Int
   -> m (V.Vector res, Readers.HasMore)
-readCursorEntriesWhile hfs hbio resolve keyIsWanted fromEntry readers n =
+readCursorEntriesWhile resolve keyIsWanted fromEntry readers n =
     flip (V.unfoldrNM' n) Readers.HasMore $ \case
       Readers.Drained -> return (Nothing, Readers.Drained)
       Readers.HasMore -> readEntryIfWanted
@@ -1117,7 +1104,7 @@ readCursorEntriesWhile hfs hbio resolve keyIsWanted fromEntry readers n =
 
     readEntry :: m (Maybe res, Readers.HasMore)
     readEntry = do
-        (key, readerEntry, hasMore) <- Readers.pop hfs hbio readers
+        (key, readerEntry, hasMore) <- Readers.pop readers
         let !entry = Reader.toFullEntry readerEntry
         case hasMore of
           Readers.Drained -> do
@@ -1134,7 +1121,7 @@ readCursorEntriesWhile hfs hbio resolve keyIsWanted fromEntry readers n =
 
     dropRemaining :: SerialisedKey -> m Readers.HasMore
     dropRemaining key = do
-        (_, hasMore) <- Readers.dropWhileKey hfs hbio readers key
+        (_, hasMore) <- Readers.dropWhileKey readers key
         return hasMore
 
     -- Resolve a 'Mupsert' value with the other entries of the same key.
@@ -1148,7 +1135,7 @@ readCursorEntriesWhile hfs hbio resolve keyIsWanted fromEntry readers n =
             -- No more entries for same key, done.
             handleResolved key (Entry.Mupdate v) Readers.HasMore
           else do
-            (_, nextEntry, hasMore) <- Readers.pop hfs hbio readers
+            (_, nextEntry, hasMore) <- Readers.pop readers
             let resolved = Entry.combine resolve (Entry.Mupdate v)
                              (Reader.toFullEntry nextEntry)
             case hasMore of

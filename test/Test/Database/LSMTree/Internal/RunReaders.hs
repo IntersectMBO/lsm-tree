@@ -54,7 +54,7 @@ tests = testGroup "Database.LSMTree.Internal.RunReaders"
             hbio <- FsSim.fromHasFS hfs
             (prop, RealState _ mCtx) <- runRealMonad hfs hbio
                                                      (RealState 0 Nothing) act
-            traverse_ (closeReadersCtx hfs hbio) mCtx  -- close current readers
+            traverse_ closeReadersCtx mCtx  -- close current readers
             return prop
 
           -- ensure that all handles have been closed
@@ -66,7 +66,7 @@ tests = testGroup "Database.LSMTree.Internal.RunReaders"
 
 type SerialisedEntry = Entry SerialisedValue SerialisedBlob
 
-type Handle = FS.Handle MockFS.HandleMock
+type Handle = MockFS.HandleMock
 
 --------------------------------------------------------------------------------
 -- Mock
@@ -308,9 +308,9 @@ type ReadersCtx = (WBB.WriteBufferBlobs IO MockFS.HandleMock,
                    [Run.Run IO Handle],
                    Readers IO Handle)
 
-closeReadersCtx :: FS.HasFS IO MockFS.HandleMock -> FS.HasBlockIO IO MockFS.HandleMock -> ReadersCtx -> IO ()
-closeReadersCtx hfs hbio (wbblobs, runs, readers) = do
-    Readers.close hfs hbio readers
+closeReadersCtx :: ReadersCtx -> IO ()
+closeReadersCtx (wbblobs, runs, readers) = do
+    Readers.close readers
     traverse_ Run.removeReference runs
     WBB.removeReference wbblobs
 
@@ -331,7 +331,7 @@ runIO act lu = case act of
     New offset wb wbs -> ReaderT $ \(hfs, hbio) -> do
       RealState numRuns mCtx <- get
       -- if runs are still being read, they need to be cleaned up
-      traverse_ (liftIO . closeReadersCtx hfs hbio) mCtx
+      traverse_ (liftIO . closeReadersCtx) mCtx
       let wb' = fmap serialiseRunData wb
           wbs' = fmap serialiseRunData wbs
       runs <-
@@ -346,7 +346,7 @@ runIO act lu = case act of
                          unRunData )
                         wb'
         let offsetKey = maybe Readers.NoOffsetKey (Readers.OffsetKey . coerce) offset
-        mreaders <- Readers.new hfs hbio offsetKey wb'' (V.fromList runs)
+        mreaders <- Readers.new offsetKey wb'' (V.fromList runs)
         case mreaders of
           Nothing -> do
             traverse_ Run.removeReference runs
@@ -356,31 +356,31 @@ runIO act lu = case act of
             return $ Just (wbblobs, runs, readers)
       put (RealState (numRuns + fromIntegral (length wbs)) newReaders)
       return (Right ())
-    PeekKey -> expectReaders $ \_ _ r -> do
+    PeekKey -> expectReaders $ \_ r -> do
       (,) HasMore <$> Readers.peekKey r
     Pop n | n <= 1 -> pop
     Pop n -> pop >>= \case
       Left  ()              -> return (Left ())
       Right (_, _, Drained) -> return (Left ()) -- n > 1, so n too big
       Right (_, _, HasMore) -> runIO (Pop (n-1)) lu
-    DropWhileKey k -> expectReaders $ \hfs hbio r -> do
-      (n, hasMore) <- Readers.dropWhileKey hfs hbio r k
+    DropWhileKey k -> expectReaders $ \_ r -> do
+      (n, hasMore) <- Readers.dropWhileKey r k
       return (hasMore, (n, hasMore))
   where
-    pop = expectReaders $ \hfs hbio r -> do
-      (key, e, hasMore) <- Readers.pop hfs hbio r
+    pop = expectReaders $ \hfs r -> do
+      (key, e, hasMore) <- Readers.pop r
       fullEntry <- toMockEntry hfs e
       return (hasMore, (key, fullEntry, hasMore))
 
     expectReaders ::
-         (FS.HasFS IO MockFS.HandleMock -> FS.HasBlockIO IO MockFS.HandleMock -> Readers IO Handle -> IO (HasMore, a))
+         (FS.HasFS IO MockFS.HandleMock -> Readers IO MockFS.HandleMock -> IO (HasMore, a))
       -> RealMonad (Either () a)
     expectReaders f =
-        ReaderT $ \(hfs, hbio) -> do
+        ReaderT $ \(hfs, _hbio) -> do
           get >>= \case
             RealState _ Nothing -> return (Left ())
             RealState n (Just (wbblobs, runs, readers)) -> do
-              (hasMore, x) <- liftIO $ f hfs hbio readers
+              (hasMore, x) <- liftIO $ f hfs readers
               case hasMore of
                 HasMore ->
                   return (Right x)
@@ -391,5 +391,5 @@ runIO act lu = case act of
                   put (RealState n Nothing)
                   return (Right x)
 
-    toMockEntry :: FS.HasFS IO MockFS.HandleMock -> Reader.Entry IO Handle -> IO SerialisedEntry
+    toMockEntry :: FS.HasFS IO MockFS.HandleMock -> Reader.Entry IO (FS.Handle MockFS.HandleMock) -> IO SerialisedEntry
     toMockEntry hfs = traverse (readBlob hfs) . Reader.toFullEntry

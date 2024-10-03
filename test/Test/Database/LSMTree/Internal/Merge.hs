@@ -77,8 +77,8 @@ prop_MergeDistributes fs hbio level stepSize (SmallList rds) =
         rhsKOpsFile <- FS.hGetAll fs (Run.runKOpsFile rhs)
         rhsBlobFile <- FS.hGetAll fs (Run.runBlobFile rhs)
 
-        lhsKOps <- readKOps fs hbio Nothing lhs
-        rhsKOps <- readKOps fs hbio Nothing rhs
+        lhsKOps <- readKOps Nothing lhs
+        rhsKOps <- readKOps Nothing rhs
 
         -- cleanup
         Run.removeReference lhs
@@ -157,9 +157,9 @@ mergeRuns ::
      FS.HasBlockIO IO h ->
      Merge.Level ->
      RunNumber ->
-     V.Vector (Run.Run IO (FS.Handle h)) ->
+     V.Vector (Run.Run IO h) ->
      StepSize ->
-     IO (Int, Run.Run IO (FS.Handle h))
+     IO (Int, Run.Run IO h)
 mergeRuns fs hbio level runNumber runs (Positive stepSize) = do
     Merge.new fs hbio Run.CacheRunData (RunAllocFixed 10) level mappendValues
               (RunFsPaths (FS.mkFsPath []) runNumber) runs >>= \case

@@ -53,8 +53,8 @@ import           System.FS.BlockIO.API (HasBlockIO)
 data Merge m h = Merge {
       mergeLevel      :: !Level
     , mergeMappend    :: !Mappend
-    , mergeReaders    :: {-# UNPACK #-} !(Readers m (FS.Handle h))
-    , mergeBuilder    :: !(RunBuilder (PrimState m) (FS.Handle h))
+    , mergeReaders    :: {-# UNPACK #-} !(Readers m h)
+    , mergeBuilder    :: !(RunBuilder m h)
       -- | The caching policy to use for the Run in the 'MergeComplete'.
     , mergeCaching    :: !RunDataCaching
       -- | The result of the latest call to 'steps'. This is used to determine
@@ -91,7 +91,7 @@ type Mappend = SerialisedValue -> SerialisedValue -> SerialisedValue
   -> Level
   -> Mappend
   -> Run.RunFsPaths
-  -> V.Vector (Run IO (FS.Handle h))
+  -> V.Vector (Run IO h)
   -> IO (Maybe (Merge IO h)) #-}
 -- | Returns 'Nothing' if no input 'Run' contains any entries.
 -- The list of runs should be sorted from new to old.
@@ -104,18 +104,18 @@ new ::
   -> Level
   -> Mappend
   -> Run.RunFsPaths
-  -> V.Vector (Run m (FS.Handle h))
+  -> V.Vector (Run m h)
   -> m (Maybe (Merge m h))
 new fs hbio mergeCaching alloc mergeLevel mergeMappend targetPaths runs = do
     -- no offset, no write buffer
-    mreaders <- Readers.new fs hbio Readers.NoOffsetKey Nothing runs
+    mreaders <- Readers.new Readers.NoOffsetKey Nothing runs
     for mreaders $ \mergeReaders -> do
       -- calculate upper bounds based on input runs
       let numEntries = coerce (sum @V.Vector @Int) (fmap Run.runNumEntries runs)
-      mergeBuilder <- Builder.new fs targetPaths numEntries alloc
+      mergeBuilder <- Builder.new fs hbio targetPaths numEntries alloc
       mergeState <- newMutVar $! Merging
       mergeRefCounter <-
-        RC.mkRefCounter1 (Just $! finaliser fs hbio mergeState mergeBuilder mergeReaders)
+        RC.mkRefCounter1 (Just $! finaliser mergeState mergeBuilder mergeReaders)
       return Merge {
           mergeHasFS = fs
         , mergeHasBlockIO = hbio
@@ -131,11 +131,9 @@ removeReference :: (HasCallStack, PrimMonad m, MonadMask m) => Merge m h -> m ()
 removeReference Merge{..} = RC.removeReference mergeRefCounter
 
 {-# SPECIALISE finaliser ::
-     HasFS IO h
-  -> HasBlockIO IO h
-  -> MutVar RealWorld MergeState
-  -> RunBuilder RealWorld (FS.Handle h)
-  -> Readers IO (FS.Handle h)
+     MutVar RealWorld MergeState
+  -> RunBuilder IO h
+  -> Readers IO h
   -> IO () #-}
 -- | Closes the underlying builder and readers.
 --
@@ -144,13 +142,11 @@ removeReference Merge{..} = RC.removeReference mergeRefCounter
 -- @close@-like functions to be idempotent.
 finaliser ::
      (MonadFix m, MonadSTM m, MonadST m)
-  => HasFS m h
-  -> HasBlockIO m h
-  -> MutVar (PrimState m) MergeState
-  -> RunBuilder (PrimState m) (FS.Handle h)
-  -> Readers m (FS.Handle h)
+  => MutVar (PrimState m) MergeState
+  -> RunBuilder m h
+  -> Readers m h
   -> m ()
-finaliser hfs hbio var b rs = do
+finaliser var b rs = do
     st <- readMutVar var
     let shouldClose = case st of
           Merging     -> True
@@ -158,13 +154,13 @@ finaliser hfs hbio var b rs = do
           Completed   -> False
           Closed      -> False
     when shouldClose $ do
-        Builder.close hfs b
-        Readers.close hfs hbio rs
+        Builder.close b
+        Readers.close rs
         writeMutVar var $! Closed
 
 {-# SPECIALISE complete ::
      Merge IO h
-  -> IO (Run IO (FS.Handle h)) #-}
+  -> IO (Run IO h) #-}
 -- | Complete a 'Merge', returning a new 'Run' as the result of merging the
 -- input runs.
 --
@@ -185,7 +181,7 @@ finaliser hfs hbio var b rs = do
 complete ::
      (MonadFix m, MonadSTM m, MonadST m, MonadThrow m)
   => Merge m h
-  -> m (Run m (FS.Handle h))
+  -> m (Run m h)
 complete Merge{..} = do
     readMutVar mergeState >>= \case
       Merging -> error "complete: Merge is not done"
@@ -197,8 +193,7 @@ complete Merge{..} = do
         -- TODO: alternatively, the mergeRefCounter could be reused as the
         -- reference counter for the output run.
         n <- RC.readRefCount mergeRefCounter
-        r <- Run.fromMutable mergeHasFS mergeHasBlockIO mergeCaching
-                        n mergeBuilder
+        r <- Run.fromMutable mergeCaching n mergeBuilder
         writeMutVar mergeState $! Completed
         pure r
       Completed -> error "complete: Merge is already completed"
@@ -207,7 +202,7 @@ complete Merge{..} = do
 {-# SPECIALISE stepsToCompletion ::
      Merge IO h
   -> Int
-  -> IO (Run IO (FS.Handle h)) #-}
+  -> IO (Run IO h) #-}
 -- | Like 'steps', but calling 'complete' once the merge is finished.
 --
 -- Note: run with async exceptions masked. See 'complete'.
@@ -215,7 +210,7 @@ stepsToCompletion ::
       (MonadCatch m, MonadFix m, MonadSTM m, MonadST m)
    => Merge m h
    -> Int
-   -> m (Run m (FS.Handle h))
+   -> m (Run m h)
 stepsToCompletion m stepBatchSize = go
   where
     go = do
@@ -226,7 +221,7 @@ stepsToCompletion m stepBatchSize = go
 {-# SPECIALISE stepsToCompletionCounted ::
      Merge IO h
   -> Int
-  -> IO (Int, Run IO (FS.Handle h)) #-}
+  -> IO (Int, Run IO h) #-}
 -- | Like 'steps', but calling 'complete' once the merge is finished.
 --
 -- Note: run with async exceptions masked. See 'complete'.
@@ -234,7 +229,7 @@ stepsToCompletionCounted ::
      (MonadCatch m, MonadFix m, MonadSTM m, MonadST m)
   => Merge m h
   -> Int
-  -> m (Int, Run m (FS.Handle h))
+  -> m (Int, Run m h)
 stepsToCompletionCounted m stepBatchSize = go 0
   where
     go !stepsSum = do
@@ -264,7 +259,7 @@ stepsInvariant requestedSteps = \case
 --
 -- Returns an error if the merge was already completed or closed.
 steps ::
-     forall h m.
+     forall m h.
      (MonadCatch m, MonadSTM m, MonadST m)
   => Merge m h
   -> Int  -- ^ How many input entries to consume (at least)
@@ -284,21 +279,18 @@ steps Merge {..} requestedSteps = assertStepsInvariant <$> do
   where
     assertStepsInvariant res = assert (stepsInvariant requestedSteps res) res
 
-    fs = mergeHasFS
-    hbio = mergeHasBlockIO
-
     go :: Int -> m (Int, StepResult)
     go !n
       | n >= requestedSteps =
           return (n, MergeInProgress)
       | otherwise = do
-          (key, entry, hasMore) <- Readers.pop fs hbio mergeReaders
+          (key, entry, hasMore) <- Readers.pop mergeReaders
           case hasMore of
             Readers.HasMore ->
               handleEntry (n + 1) key entry
             Readers.Drained -> do
               -- no future entries, no previous entry to resolve, just write!
-              writeReaderEntry fs mergeLevel mergeBuilder key entry
+              writeReaderEntry mergeLevel mergeBuilder key entry
               writeMutVar mergeState $! MergingDone
               pure (n + 1, MergeComplete)
 
@@ -310,7 +302,7 @@ steps Merge {..} requestedSteps = assertStepsInvariant <$> do
         handleMupdate n key (Reader.appendOverflow len overflowPages v)
     handleEntry !n !key entry = do
         -- otherwise, we can just drop all following entries of same key
-        writeReaderEntry fs mergeLevel mergeBuilder key entry
+        writeReaderEntry mergeLevel mergeBuilder key entry
         dropRemaining n key
 
     -- the value is from a mupsert, complete (not just a prefix)
@@ -319,10 +311,10 @@ steps Merge {..} requestedSteps = assertStepsInvariant <$> do
         if nextKey /= key
           then do
             -- resolved all entries for this key, write it
-            writeSerialisedEntry fs mergeLevel mergeBuilder key (Mupdate v)
+            writeSerialisedEntry mergeLevel mergeBuilder key (Mupdate v)
             go n
           else do
-            (_, nextEntry, hasMore) <- Readers.pop fs hbio mergeReaders
+            (_, nextEntry, hasMore) <- Readers.pop mergeReaders
             -- for resolution, we need the full second value to be present
             let resolved = combine mergeMappend
                              (Mupdate v)
@@ -334,15 +326,15 @@ steps Merge {..} requestedSteps = assertStepsInvariant <$> do
                   handleMupdate (n + 1) key v'
                 _ -> do
                   -- done with this key, now the remaining entries are obsolete
-                  writeSerialisedEntry fs mergeLevel mergeBuilder key resolved
+                  writeSerialisedEntry mergeLevel mergeBuilder key resolved
                   dropRemaining (n + 1) key
               Readers.Drained -> do
-                writeSerialisedEntry fs mergeLevel mergeBuilder key resolved
+                writeSerialisedEntry mergeLevel mergeBuilder key resolved
                 writeMutVar mergeState $! MergingDone
                 pure (n + 1, MergeComplete)
 
     dropRemaining !n !key = do
-        (dropped, hasMore) <- Readers.dropWhileKey fs hbio mergeReaders key
+        (dropped, hasMore) <- Readers.dropWhileKey mergeReaders key
         case hasMore of
           Readers.HasMore -> go (n + dropped)
           Readers.Drained -> do
@@ -350,21 +342,19 @@ steps Merge {..} requestedSteps = assertStepsInvariant <$> do
             pure (n + dropped, MergeComplete)
 
 {-# SPECIALISE writeReaderEntry ::
-     HasFS IO h
-  -> Level
-  -> RunBuilder RealWorld (FS.Handle h)
+     Level
+  -> RunBuilder IO h
   -> SerialisedKey
   -> Reader.Entry IO (FS.Handle h)
   -> IO () #-}
 writeReaderEntry ::
      (MonadSTM m, MonadST m, MonadThrow m)
-  => HasFS m h
-  -> Level
-  -> RunBuilder (PrimState m) (FS.Handle h)
+  => Level
+  -> RunBuilder m h
   -> SerialisedKey
   -> Reader.Entry m (FS.Handle h)
   -> m ()
-writeReaderEntry fs level builder key (Reader.Entry entryFull) =
+writeReaderEntry level builder key (Reader.Entry entryFull) =
       -- Small entry.
       -- Note that this small entry could be the only one on the page. We only
       -- care about it being small, not single-entry, since it could still end
@@ -374,13 +364,13 @@ writeReaderEntry fs level builder key (Reader.Entry entryFull) =
       -- entry of a page (which would for example happen a lot if most entries
       -- have 2k-4k bytes). In that case we could have copied the RawPage
       -- (but we find out too late to easily exploit it).
-      writeSerialisedEntry fs level builder key entryFull
-writeReaderEntry fs level builder key entry@(Reader.EntryOverflow prefix page _ overflowPages)
+      writeSerialisedEntry level builder key entryFull
+writeReaderEntry level builder key entry@(Reader.EntryOverflow prefix page _ overflowPages)
   | InsertWithBlob {} <- prefix =
       assert (shouldWriteEntry level prefix) $ do -- large, can't be delete
         -- has blob, we can't just copy the first page, fall back
         -- we simply append the overflow pages to the value
-        Builder.addKeyOp fs builder key (Reader.toFullEntry entry)
+        Builder.addKeyOp builder key (Reader.toFullEntry entry)
         -- TODO(optimise): This copies the overflow pages unnecessarily.
         -- We could extend the RunBuilder API to allow to either:
         -- 1. write an Entry (containing the value prefix) + [RawOverflowPage]
@@ -389,26 +379,24 @@ writeReaderEntry fs level builder key entry@(Reader.EntryOverflow prefix page _ 
   | otherwise =
       assert (shouldWriteEntry level prefix) $  -- large, can't be delete
         -- no blob, directly copy all pages as they are
-        Builder.addLargeSerialisedKeyOp fs builder key page overflowPages
+        Builder.addLargeSerialisedKeyOp builder key page overflowPages
 
 {-# SPECIALISE writeSerialisedEntry ::
-     HasFS IO h
-  -> Level
-  -> RunBuilder RealWorld (FS.Handle h)
+     Level
+  -> RunBuilder IO h
   -> SerialisedKey
   -> Entry SerialisedValue (BlobRef IO (FS.Handle h))
   -> IO () #-}
 writeSerialisedEntry ::
      (MonadSTM m, MonadST m, MonadThrow m)
-  => HasFS m h
-  -> Level
-  -> RunBuilder (PrimState m) (FS.Handle h)
+  => Level
+  -> RunBuilder m h
   -> SerialisedKey
   -> Entry SerialisedValue (BlobRef m (FS.Handle h))
   -> m ()
-writeSerialisedEntry fs level builder key entry =
+writeSerialisedEntry level builder key entry =
     when (shouldWriteEntry level entry) $
-      Builder.addKeyOp fs builder key entry
+      Builder.addKeyOp builder key entry
 
 -- One the last level we could also turn Mupdate into Insert,
 -- but no need to complicate things.
