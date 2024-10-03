@@ -114,6 +114,7 @@ data WriteBufferBlobs m h =
 instance NFData h => NFData (WriteBufferBlobs m h) where
   rnf (WriteBufferBlobs a b c) = rnf a `seq` rnf b `seq` rnf c
 
+{-# SPECIALISE new :: HasFS IO h -> FS.FsPath -> IO (WriteBufferBlobs IO h) #-}
 new :: PrimMonad m
     => HasFS m h
     -> FS.FsPath
@@ -130,6 +131,7 @@ new fs blobFileName = do
       blobFileRefCounter
     }
 
+{-# SPECIALISE finaliser :: HasFS IO h -> FS.Handle h -> IO () #-}
 finaliser :: PrimMonad m
           => HasFS m h
           -> FS.Handle h
@@ -138,14 +140,17 @@ finaliser fs h = do
     FS.hClose fs h
     FS.removeFile fs (FS.handlePath h)
 
+{-# SPECIALISE addReference :: WriteBufferBlobs IO h -> IO () #-}
 addReference :: PrimMonad m => WriteBufferBlobs m h -> m ()
 addReference WriteBufferBlobs {blobFileRefCounter} =
     RC.addReference blobFileRefCounter
 
+{-# SPECIALISE removeReference :: WriteBufferBlobs IO h -> IO () #-}
 removeReference :: (PrimMonad m, MonadMask m) => WriteBufferBlobs m h -> m ()
 removeReference WriteBufferBlobs {blobFileRefCounter} =
     RC.removeReference blobFileRefCounter
 
+{-# SPECIALISE addBlob :: HasFS IO h -> WriteBufferBlobs IO h -> SerialisedBlob -> IO BlobSpan #-}
 addBlob :: (PrimMonad m, MonadThrow m)
         => HasFS m h
         -> WriteBufferBlobs m h
@@ -160,6 +165,7 @@ addBlob fs WriteBufferBlobs {blobFileHandle, blobFilePointer} blob = do
       blobSpanSize   = fromIntegral blobsize
     }
 
+{-# SPECIALISE writeBlobAtOffset :: HasFS IO h -> FS.Handle h -> SerialisedBlob -> Word64 -> IO () #-}
 writeBlobAtOffset :: (PrimMonad m, MonadThrow m)
                   => HasFS m h
                   -> FS.Handle h
@@ -175,6 +181,7 @@ writeBlobAtOffset fs h (SerialisedBlob' (VP.Vector boff blen ba)) off = do
              (FS.AbsOffset off)
     return ()
 
+{-# SPECIALISE readBlob :: HasFS IO h -> WriteBufferBlobs IO h -> BlobSpan -> IO SerialisedBlob #-}
 readBlob :: (PrimMonad m, MonadThrow m)
          => HasFS m h
          -> WriteBufferBlobs m h
@@ -213,9 +220,11 @@ newtype FilePointer m = FilePointer (PrimVar (PrimState m) Int)
 instance NFData (FilePointer m) where
   rnf (FilePointer var) = var `seq` ()
 
+{-# SPECIALISE newFilePointer :: IO (FilePointer IO) #-}
 newFilePointer :: PrimMonad m => m (FilePointer m)
 newFilePointer = FilePointer <$> P.newPrimVar 0
 
+{-# SPECIALISE updateFilePointer :: FilePointer IO -> Int -> IO Word64 #-}
 -- | Update the file offset by a given amount and return the new offset. This
 -- is safe to use concurrently.
 --
