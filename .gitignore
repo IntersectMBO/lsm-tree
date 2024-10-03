@@ -27,7 +27,7 @@ cabal.project.local~
 .vscode/
 
 # Documentation
-docs/haddocks
+haddocks/
 
 # Benchmarks
 _bench_*
