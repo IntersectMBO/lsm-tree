@@ -42,11 +42,26 @@ in use by any open LSM handle in the session.
  * `${session}/active/${n}.index`
  * `${session}/active/${n}.checksums`
 
-The LSM runs are numbered using a session-wide counter that is initialised from
-0 each time a session is opened.
+In addition, there are files related to the write buffer rather than runs. In
+particular for storing blobs associated with entries in the write buffer.
+
+ * `${session}/active/${n}.wbblobs`
+
+The LSM runs (and write buffer blob files) are numbered using a session-wide
+counter that is initialised from 0 each time a session is opened.
 
 Note that there are no metadata files in the active directory (as there are for
 snapshots). This is because the metadata is held in memory for open LSM handles.
+
+# Write buffer blobs files
+
+The `${n}.wbblobs` file format is the same as the `${n}.blobs` format used for
+runs: the concatenation of all the blobs written out so far. These files can be
+shared between open tables (created using `duplicate`), and so can contain
+blobs inserted via many table handles.
+
+The `${n}.wbblobs` files are ephemeral. They are never included into snapshots
+and are not referenced from any `.checksums` file.
 
 # Snapshots directory layout
 

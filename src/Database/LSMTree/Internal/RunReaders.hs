@@ -125,12 +125,9 @@ new fs hbio !offsetKey wbs runs = do
            -> WB.WriteBufferBlobs IO h
            -> IO (Maybe (ReadCtx IO (FS.Handle h)))
     fromWB wb wbblobs = do
-        --TODO: this BlobSpan to BlobRef conversion is ugly
-        -- and it involves quite a lot of allocation
-        toBlobRef <- WB.mkBlobRef wbblobs
-        kops <-
-          newMutVar $ map (fmap (fmap toBlobRef)) $ Map.toList $
-            filterWB $ WB.toMap wb
+        --TODO: this BlobSpan to BlobRef conversion involves quite a lot of allocation
+        kops <- newMutVar $ map (fmap (fmap (WB.mkBlobRef wbblobs))) $
+                  Map.toList $ filterWB $ WB.toMap wb
         nextReadCtx fs hbio (ReaderNumber 0) (ReadBuffer kops)
       where
         filterWB = case offsetKey of

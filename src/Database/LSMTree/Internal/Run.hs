@@ -208,20 +208,10 @@ fromWriteBuffer :: HasFS IO h
                 -> IO (Run IO (FS.Handle h))
 fromWriteBuffer fs hbio caching alloc fsPaths buffer blobs = do
     builder <- Builder.new fs fsPaths (WB.numEntries buffer) alloc
-    for_ (WB.toList buffer) $ \(k, e) -> do
-      e' <- traverse (copyWriteBufferBlob fs builder blobs) e
-      Builder.addKeyOp fs builder k e'
+    for_ (WB.toList buffer) $ \(k, e) ->
+      Builder.addKeyOp fs builder k (fmap (WBB.mkBlobRef blobs) e)
+      --TODO: the fmap entry here reallocates even when there are no blobs
     fromMutable fs hbio caching (RefCount 1) builder
-
-copyWriteBufferBlob :: HasFS IO h
-                    -> RunBuilder RealWorld (FS.Handle h)
-                    -> WriteBufferBlobs IO h
-                    -> BlobSpan
-                    -> IO BlobSpan
-copyWriteBufferBlob fs builder blobs blobspan = do
-    blob <- WBB.readBlob fs blobs blobspan
-    Builder.writeBlob fs builder blob
-
 
 data ChecksumError = ChecksumError FS.FsPath CRC.CRC32C CRC.CRC32C
   deriving stock Show
