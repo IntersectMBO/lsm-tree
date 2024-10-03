@@ -73,8 +73,11 @@ jobs:
 
     - name: Build haddocks
       run: |
-        ./scripts/haddocks.sh
-        tar vzcf haddocks.tgz ./docs/haddocks
+        cabal haddock-project
+
+    - name: Pack haddocks artifact
+      run: |
+        tar vzcf haddocks.tgz ./haddocks
 
     - name: Upload haddocks as an artifact
       uses: actions/upload-artifact@v4
@@ -122,7 +125,7 @@ jobs:
       - name: Upload haddocks artifact to pages
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ./docs/haddocks
+          path: ./haddocks
 
       - name: Deploy to GitHub pages
         id: deployment
