@@ -54,7 +54,10 @@ module Database.LSMTree.Internal.Run (
 
 import           Control.DeepSeq (NFData (..), rwhnf)
 import           Control.Monad (when)
+import           Control.Monad.Class.MonadST (MonadST)
+import           Control.Monad.Class.MonadSTM (MonadSTM (..))
 import           Control.Monad.Class.MonadThrow
+import           Control.Monad.Fix (MonadFix)
 import           Control.Monad.Primitive
 import           Control.RefCount (RefCount (..), RefCounter)
 import qualified Control.RefCount as RC
@@ -138,12 +141,22 @@ mkBlobRefForRun Run{runBlobFile, runRefCounter} blobRefSpan =
       blobRefSpan
     }
 
+{-# SPECIALISE close ::
+     HasFS IO h
+  -> HasBlockIO IO h
+  -> Run IO (FS.Handle h)
+  -> IO () #-}
 -- | Close the files used in the run, but do not remove them from disk.
 -- After calling this operation, the run must not be used anymore.
 --
 -- TODO: Once snapshots are implemented, files should get removed, but for now
 -- we want to be able to re-open closed runs from disk.
-close :: HasFS IO h -> HasBlockIO IO h -> Run IO (FS.Handle h) -> IO ()
+close ::
+     (MonadSTM m, MonadThrow m)
+  => HasFS m h
+  -> HasBlockIO m h
+  -> Run m (FS.Handle h)
+  -> m ()
 close fs hbio Run {..} = do
     -- TODO: removing files should drop them from the page cache, but until we
     -- have proper snapshotting we are keeping the files around. Because of
@@ -164,7 +177,17 @@ instance NFData RunDataCaching where
   rnf CacheRunData   = ()
   rnf NoCacheRunData = ()
 
-setRunDataCaching :: HasBlockIO IO h -> FS.Handle h -> RunDataCaching -> IO ()
+{-# SPECIALISE setRunDataCaching ::
+     HasBlockIO IO h
+  -> FS.Handle h
+  -> RunDataCaching
+  -> IO () #-}
+setRunDataCaching ::
+     MonadSTM m
+  => HasBlockIO m h
+  -> FS.Handle h
+  -> RunDataCaching
+  -> m ()
 setRunDataCaching hbio runKOpsFile CacheRunData = do
     -- disable file readahead (only applies to this file descriptor)
     FS.hAdviseAll hbio runKOpsFile FS.AdviceRandom
@@ -174,13 +197,22 @@ setRunDataCaching hbio runKOpsFile NoCacheRunData = do
     -- do not use the page cache for disk I/O reads
     FS.hSetNoCache hbio runKOpsFile True
 
+{-# SPECIALISE fromMutable ::
+     HasFS IO h
+  -> HasBlockIO IO h
+  -> RunDataCaching
+  -> RefCount
+  -> RunBuilder RealWorld (FS.Handle h)
+  -> IO (Run IO (FS.Handle h)) #-}
 -- | Create a run by finalising a mutable run.
-fromMutable :: HasFS IO h
-            -> HasBlockIO IO h
-            -> RunDataCaching
-            -> RefCount
-            -> RunBuilder RealWorld (FS.Handle h)
-            -> IO (Run IO (FS.Handle h))
+fromMutable ::
+     (MonadFix m, MonadST m, MonadSTM m, MonadThrow m)
+  => HasFS m h
+  -> HasBlockIO m h
+  -> RunDataCaching
+  -> RefCount
+  -> RunBuilder (PrimState m) (FS.Handle h)
+  -> m (Run m (FS.Handle h))
 fromMutable fs hbio runRunDataCaching refCount builder = do
     (runRunFsPaths, runFilter, runIndex, runNumEntries) <-
       Builder.unsafeFinalise fs hbio (runRunDataCaching == NoCacheRunData) builder
@@ -191,21 +223,31 @@ fromMutable fs hbio runRunDataCaching refCount builder = do
         let !r = Run{..}
     pure r
 
-
+{-# SPECIALISE fromWriteBuffer ::
+     HasFS IO h
+  -> HasBlockIO IO h
+  -> RunDataCaching
+  -> RunBloomFilterAlloc
+  -> RunFsPaths
+  -> WriteBuffer
+  -> WriteBufferBlobs IO h
+  -> IO (Run IO (FS.Handle h)) #-}
 -- | Write a write buffer to disk, including the blobs it contains.
 -- The resulting run has a reference count of 1.
 --
 -- TODO: As a possible optimisation, blobs could be written to a blob file
 -- immediately when they are added to the write buffer, avoiding the need to do
 -- it here.
-fromWriteBuffer :: HasFS IO h
-                -> HasBlockIO IO h
-                -> RunDataCaching
-                -> RunBloomFilterAlloc
-                -> RunFsPaths
-                -> WriteBuffer
-                -> WriteBufferBlobs IO h
-                -> IO (Run IO (FS.Handle h))
+fromWriteBuffer ::
+     (MonadFix m, MonadST m, MonadSTM m, MonadThrow m)
+  => HasFS m h
+  -> HasBlockIO m h
+  -> RunDataCaching
+  -> RunBloomFilterAlloc
+  -> RunFsPaths
+  -> WriteBuffer
+  -> WriteBufferBlobs m h
+  -> m (Run m (FS.Handle h))
 fromWriteBuffer fs hbio caching alloc fsPaths buffer blobs = do
     builder <- Builder.new fs fsPaths (WB.numEntries buffer) alloc
     for_ (WB.toList buffer) $ \(k, e) ->
@@ -221,17 +263,26 @@ data FileFormatError = FileFormatError FS.FsPath String
   deriving stock Show
   deriving anyclass Exception
 
+{-# SPECIALISE openFromDisk ::
+     HasFS IO h
+  -> HasBlockIO IO h
+  -> RunDataCaching
+  -> RunFsPaths
+  -> IO (Run IO (FS.Handle h)) #-}
 -- | Load a previously written run from disk, checking each file's checksum
 -- against the checksum file.
 -- The resulting 'Run' has a reference count of 1.
 --
 -- Exceptions will be raised when any of the file's contents don't match their
 -- checksum ('ChecksumError') or can't be parsed ('FileFormatError').
-openFromDisk :: HasFS IO h
-             -> HasBlockIO IO h
-             -> RunDataCaching
-             -> RunFsPaths
-             -> IO (Run IO (FS.Handle h))
+openFromDisk ::
+     forall m h.
+     (MonadFix m, MonadSTM m, MonadThrow m, PrimMonad m)
+  => HasFS m h
+  -> HasBlockIO m h
+  -> RunDataCaching
+  -> RunFsPaths
+  -> m (Run m (FS.Handle h))
 openFromDisk fs hbio runRunDataCaching runRunFsPaths = do
     expectedChecksums <-
        expectValidFile (runChecksumsPath runRunFsPaths) . fromChecksumsFile
@@ -259,7 +310,7 @@ openFromDisk fs hbio runRunDataCaching runRunFsPaths = do
   where
     -- Note: all file data for this path is evicted from the page cache /if/ the
     -- caching argument is 'NoCacheRunData'.
-    checkCRC :: RunDataCaching -> CRC.CRC32C -> FS.FsPath -> IO ()
+    checkCRC :: RunDataCaching -> CRC.CRC32C -> FS.FsPath -> m ()
     checkCRC cache expected fp = FS.withFile fs fp FS.ReadMode $ \h -> do
         -- double the file readahead window (only applies to this file descriptor)
         FS.hAdviseAll hbio h FS.AdviceSequential
@@ -270,7 +321,7 @@ openFromDisk fs hbio runRunDataCaching runRunFsPaths = do
         expectChecksum fp expected checksum
 
     -- Note: all file data for this path is evicted from the page cache
-    readCRC :: CRC.CRC32C -> FS.FsPath -> IO SBS.ShortByteString
+    readCRC :: CRC.CRC32C -> FS.FsPath -> m SBS.ShortByteString
     readCRC expected fp = FS.withFile fs fp FS.ReadMode $ \h -> do
         n <- FS.hGetSize fs h
         -- double the file readahead window (only applies to this file descriptor)

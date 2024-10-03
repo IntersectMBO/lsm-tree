@@ -48,7 +48,10 @@ module Database.LSMTree.Common (
 
 import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Concurrent.Class.MonadSTM (MonadSTM, STM)
+import           Control.Monad.Class.MonadST
 import           Control.Monad.Class.MonadThrow
+import           Control.Monad.Fix (MonadFix)
+import           Control.Monad.Primitive (PrimMonad)
 import           Control.Tracer (Tracer)
 import           Data.Kind (Type)
 import           Data.Typeable (Proxy, Typeable)
@@ -70,10 +73,7 @@ import           System.FS.IO (HandleIO)
 
 -- | Utility class for grouping @io-classes@ constraints.
 class ( MonadMVar m, MonadSTM m, MonadThrow (STM m), MonadThrow m, MonadCatch m
-      , m ~ IO -- TODO: temporary constraint until we add I/O fault testing.
-               -- Don't forget to specialise your functions! @m ~ IO@ in a
-               -- function constraint will not produce to an IO-specialised
-               -- function.
+      , MonadMask m, PrimMonad m, MonadFix m , MonadST m
       ) => IOLike m
 
 instance IOLike IO
@@ -112,7 +112,13 @@ instance IOLike IO
 type Session :: (Type -> Type) -> Type
 type Session = Internal.Session'
 
-{-# SPECIALISE withSession :: Tracer IO Internal.LSMTreeTrace -> HasFS IO HandleIO -> HasBlockIO IO HandleIO -> FsPath -> (Session IO -> IO a) -> IO a #-}
+{-# SPECIALISE withSession ::
+     Tracer IO Internal.LSMTreeTrace
+  -> HasFS IO HandleIO
+  -> HasBlockIO IO HandleIO
+  -> FsPath
+  -> (Session IO -> IO a)
+  -> IO a #-}
 -- | (Asynchronous) exception-safe, bracketed opening and closing of a session.
 --
 -- If possible, it is recommended to use this function instead of 'openSession'
@@ -127,7 +133,12 @@ withSession ::
   -> m a
 withSession tr hfs hbio dir action = Internal.withSession tr hfs hbio dir (action . Internal.Session')
 
-{-# SPECIALISE openSession :: Tracer IO Internal.LSMTreeTrace -> HasFS IO HandleIO -> HasBlockIO IO HandleIO -> FsPath -> IO (Session IO) #-}
+{-# SPECIALISE openSession ::
+     Tracer IO Internal.LSMTreeTrace
+  -> HasFS IO HandleIO
+  -> HasBlockIO IO HandleIO
+  -> FsPath
+  -> IO (Session IO) #-}
 -- | Create either a new empty table session or open an existing table session,
 -- given the path to the session directory.
 --
@@ -183,7 +194,10 @@ closeSession (Internal.Session' sesh) = Internal.closeSession sesh
 class Labellable a where
   makeSnapshotLabel :: Proxy a -> Internal.SnapshotLabel
 
-{-# SPECIALISE deleteSnapshot :: Session IO -> Internal.SnapshotName -> IO () #-}
+{-# SPECIALISE deleteSnapshot ::
+     Session IO
+  -> Internal.SnapshotName
+  -> IO () #-}
 -- | Delete a named snapshot.
 --
 -- NOTE: has similar behaviour to 'removeDirectory'.
@@ -194,15 +208,24 @@ class Labellable a where
 --
 -- TODO: this function currently has a temporary implementation until we have
 -- proper snapshots.
-deleteSnapshot :: IOLike m => Session m -> Internal.SnapshotName -> m ()
+deleteSnapshot ::
+     IOLike m
+  => Session m
+  -> Internal.SnapshotName
+  -> m ()
 deleteSnapshot (Internal.Session' sesh) = Internal.deleteSnapshot sesh
 
-{-# SPECIALISE listSnapshots :: Session IO -> IO [Internal.SnapshotName] #-}
+{-# SPECIALISE listSnapshots ::
+     Session IO
+  -> IO [Internal.SnapshotName] #-}
 -- | List snapshots by name.
 --
 -- TODO: this function currently has a temporary implementation until we have
 -- proper snapshots.
-listSnapshots :: IOLike m => Session m -> m [Internal.SnapshotName]
+listSnapshots ::
+     IOLike m
+  => Session m
+  -> m [Internal.SnapshotName]
 listSnapshots (Internal.Session' sesh) = Internal.listSnapshots sesh
 
 {-------------------------------------------------------------------------------

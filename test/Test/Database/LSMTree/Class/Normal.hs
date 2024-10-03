@@ -14,6 +14,7 @@ import qualified Data.List as List
 import qualified Data.List.NonEmpty as NE
 import           Data.Maybe (fromMaybe)
 import qualified Data.Proxy as Proxy
+import           Data.Typeable (Typeable)
 import qualified Data.Vector as V
 import qualified Data.Vector.Algorithms.Merge as VA
 import           Data.Word (Word64)
@@ -112,8 +113,10 @@ data Setup h m = Setup {
   }
 
 -- | create session, table handle, and populate it with some data.
-withTableNew ::
-     forall h m a. (IsTableHandle h, IOLike m)
+withTableNew :: forall h m a.
+     ( IsTableHandle h
+     , IOLike m
+     )
   => Setup h m
   -> [(Key, Update Value Blob)]
   -> (Session h m -> h m Key Value Blob -> m a)
@@ -129,8 +132,16 @@ withTableNew Setup{..} ups action =
 --
 -- Like 'partsOf' in @lens@ this uses state monad.
 retrieveBlobsTrav ::
-  (IsTableHandle h, IOLike m, SerialiseValue blob, Traversable t)
-  => proxy h -> Session h m -> t (BlobRef h m blob) -> m (t blob)
+     ( IsTableHandle h
+     , IOLike m
+     , SerialiseValue blob
+     , Traversable t
+     , Typeable m
+     )
+  => proxy h
+  -> Session h m
+  -> t (BlobRef h m blob)
+  -> m (t blob)
 retrieveBlobsTrav hdl ses brefs = do
   blobs <- retrieveBlobs hdl ses (V.fromList $ toList brefs)
   evalStateT (traverse (\_ -> state un) brefs) (V.toList blobs)
@@ -138,38 +149,68 @@ retrieveBlobsTrav hdl ses brefs = do
     un []     = error "invalid traversal"
     un (x:xs) = (x, xs)
 
-lookupsWithBlobs ::
-    forall h m k v blob. ( IsTableHandle h, IOLike m
-    , SerialiseKey k, SerialiseValue v, SerialiseValue blob
-    )
-  => h m k v blob -> Session h m -> V.Vector k -> m (V.Vector (LookupResult v blob))
+lookupsWithBlobs :: forall h m k v blob.
+     ( IsTableHandle h
+     , IOLike m
+     , SerialiseKey k
+     , SerialiseValue v
+     , SerialiseValue blob
+     , Typeable m
+     )
+  => h m k v blob
+  -> Session h m
+  -> V.Vector k
+  -> m (V.Vector (LookupResult v blob))
 lookupsWithBlobs hdl ses ks = do
     res <- lookups hdl ks
     getCompose <$> retrieveBlobsTrav (Proxy.Proxy @h) ses (Compose res)
 
-rangeLookupWithBlobs ::
-     forall h m k v blob. ( IsTableHandle h, IOLike m
-     , SerialiseKey k, SerialiseValue v, SerialiseValue blob
+rangeLookupWithBlobs :: forall h m k v blob.
+     ( IsTableHandle h
+     , IOLike m
+     , SerialiseKey k
+     , SerialiseValue v
+     , SerialiseValue blob
+     , Typeable m
      )
-  => h m k v blob -> Session h m -> Range k -> m (V.Vector (QueryResult k v blob))
+  => h m k v blob
+  -> Session h m
+  -> Range k
+  -> m (V.Vector (QueryResult k v blob))
 rangeLookupWithBlobs hdl ses r = do
     res <- rangeLookup hdl r
     getCompose <$> retrieveBlobsTrav (Proxy.Proxy @h) ses (Compose res)
 
-readCursorWithBlobs ::
-     forall h m k v blob proxy. ( IsTableHandle h, IOLike m
-     , SerialiseKey k, SerialiseValue v, SerialiseValue blob
+readCursorWithBlobs :: forall h m k v blob proxy.
+     ( IsTableHandle h
+     , IOLike m
+     , SerialiseKey k
+     , SerialiseValue v
+     , SerialiseValue blob
+     , Typeable m
      )
-  => proxy h -> Session h m -> Cursor h m k v blob -> Int -> m (V.Vector (QueryResult k v blob))
+  => proxy h
+  -> Session h m
+  -> Cursor h m k v blob
+  -> Int
+  -> m (V.Vector (QueryResult k v blob))
 readCursorWithBlobs hdl ses cursor n = do
     res <- readCursor hdl n cursor
     getCompose <$> retrieveBlobsTrav hdl ses (Compose res)
 
-readCursorAllWithBlobs ::
-     forall h m k v blob proxy. ( IsTableHandle h, IOLike m
-     , SerialiseKey k, SerialiseValue v, SerialiseValue blob
+readCursorAllWithBlobs :: forall h m k v blob proxy.
+     ( IsTableHandle h
+     , IOLike m
+     , SerialiseKey k
+     , SerialiseValue v
+     , SerialiseValue blob
+     , Typeable m
      )
-  => proxy h -> Session h m -> Cursor h m k v blob -> CursorReadSchedule -> m [V.Vector (QueryResult k v blob)]
+  => proxy h
+  -> Session h m
+  -> Cursor h m k v blob
+  -> CursorReadSchedule
+  -> m [V.Vector (QueryResult k v blob)]
 readCursorAllWithBlobs hdl ses cursor = go . getCursorReadSchedule
   where
     go [] = error "readCursorAllWithBlobs: finite infinite list"

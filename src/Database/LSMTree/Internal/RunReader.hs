@@ -12,14 +12,19 @@ module Database.LSMTree.Internal.RunReader (
   , appendOverflow
   ) where
 
-import           Control.Exception (assert, handleJust)
+import           Control.Exception (assert)
 import           Control.Monad (guard, when)
+import           Control.Monad.Class.MonadST (MonadST (..))
+import           Control.Monad.Class.MonadSTM (MonadSTM (..))
+import           Control.Monad.Class.MonadThrow (MonadCatch (..),
+                     MonadThrow (..))
 import           Control.Monad.Primitive (PrimMonad (..))
 import           Data.Bifunctor (first)
-import           Data.IORef
 import           Data.Maybe (isNothing)
 import           Data.Primitive.ByteArray (newPinnedByteArray,
                      unsafeFreezeByteArray)
+import           Data.Primitive.MutVar (MutVar, newMutVar, readMutVar,
+                     writeMutVar)
 import           Data.Primitive.PrimVar
 import           Data.Word (Word16, Word32)
 import           Database.LSMTree.Internal.BitMath (ceilDivPageSize,
@@ -52,7 +57,7 @@ import           System.FS.BlockIO.API (HasBlockIO)
 data RunReader m fhandle = RunReader {
       -- | The disk page currently being read. If it is 'Nothing', the reader
       -- is considered closed.
-      readerCurrentPage    :: !(IORef (Maybe RawPage))
+      readerCurrentPage    :: !(MutVar (PrimState m) (Maybe RawPage))
       -- | The index of the entry to be returned by the next call to 'next'.
     , readerCurrentEntryNo :: !(PrimVar (PrimState m) Word16)
       -- | Read mode file handle into the run's k\/ops file. We rely on it to
@@ -66,12 +71,19 @@ data RunReader m fhandle = RunReader {
 
 data OffsetKey = NoOffsetKey | OffsetKey !SerialisedKey
 
-new ::
+{-# SPECIALISE new ::
      HasFS IO h
   -> HasBlockIO IO h
   -> OffsetKey
   -> Run.Run IO (FS.Handle h)
-  -> IO (RunReader IO (FS.Handle h))
+  -> IO (RunReader IO (FS.Handle h)) #-}
+new ::
+     (MonadCatch m, MonadSTM m, MonadST m)
+  => HasFS m h
+  -> HasBlockIO m h
+  -> OffsetKey
+  -> Run.Run m (FS.Handle h)
+  -> m (RunReader m (FS.Handle h))
 new fs hbio !offsetKey readerRun = do
     readerKOpsHandle <-
       FS.hOpen fs (runKOpsPath (Run.runRunFsPaths readerRun)) FS.ReadMode >>= \h -> do
@@ -85,7 +97,7 @@ new fs hbio !offsetKey readerRun = do
     (page, entryNo) <- seekFirstEntry readerKOpsHandle
 
     readerCurrentEntryNo <- newPrimVar entryNo
-    readerCurrentPage <- newIORef page
+    readerCurrentPage <- newMutVar page
     let reader = RunReader {..}
 
     when (isNothing page) $
@@ -127,14 +139,20 @@ new fs hbio !offsetKey readerRun = do
                     nextPage <- readDiskPage fs readerKOpsHandle
                     return (nextPage, 0)
 
+{-# SPECIALISE close ::
+     HasFS IO h
+  -> HasBlockIO IO h
+  -> RunReader IO (FS.Handle h)
+  -> IO () #-}
 -- | This function should be called when discarding a 'RunReader' before it
 -- was done (i.e. returned 'Empty'). This avoids leaking file handles.
 -- Once it has been called, do not use the reader any more!
 close ::
-     HasFS IO h
-  -> HasBlockIO IO h
+     (MonadSTM m)
+  => HasFS m h
+  -> HasBlockIO m h
   -> RunReader m (FS.Handle h)
-  -> IO ()
+  -> m ()
 close fs hbio RunReader {..} = do
     when (Run.runRunDataCaching readerRun == Run.NoCacheRunData) $
       -- drop the file from the OS page cache
@@ -195,15 +213,21 @@ appendOverflow len overflowPages (SerialisedValue prefix) =
       RB.take (RB.size prefix + fromIntegral len) $
         mconcat (prefix : map rawOverflowPageRawBytes overflowPages)
 
--- | Stop using the 'RunReader' after getting 'Empty', because the 'Reader' is
--- automatically closed!
-next ::
+{-# SPECIALISE next ::
      HasFS IO h
   -> HasBlockIO IO h
   -> RunReader IO (FS.Handle h)
-  -> IO (Result IO (FS.Handle h))
+  -> IO (Result IO (FS.Handle h)) #-}
+-- | Stop using the 'RunReader' after getting 'Empty', because the 'Reader' is
+-- automatically closed!
+next ::
+     (MonadCatch m, MonadSTM m, MonadST m)
+  => HasFS m h
+  -> HasBlockIO m h
+  -> RunReader m (FS.Handle h)
+  -> m (Result m (FS.Handle h))
 next fs hbio reader@RunReader {..} = do
-    readIORef readerCurrentPage >>= \case
+    readMutVar readerCurrentPage >>= \case
       Nothing ->
         return Empty
       Just page -> do
@@ -216,7 +240,7 @@ next fs hbio reader@RunReader {..} = do
           IndexNotPresent -> do
             -- if it is past the last one, load a new page from disk, try again
             newPage <- readDiskPage fs readerKOpsHandle
-            writeIORef readerCurrentPage newPage
+            stToIO $ writeMutVar readerCurrentPage newPage
             case newPage of
               Nothing -> do
                 close fs hbio reader
@@ -241,7 +265,7 @@ next fs hbio reader@RunReader {..} = do
   Utilities
 -------------------------------------------------------------------------------}
 
-seekToDiskPage :: HasFS IO h -> Index.PageNo -> FS.Handle h -> IO ()
+seekToDiskPage :: HasFS m h -> Index.PageNo -> FS.Handle h -> m ()
 seekToDiskPage fs pageNo h = do
     FS.hSeek fs h FS.AbsoluteSeek (pageNoToByteOffset pageNo)
   where
@@ -249,8 +273,16 @@ seekToDiskPage fs pageNo h = do
         assert (n >= 0) $
           mulPageSize (fromIntegral n)
 
+{-# SPECIALISE readDiskPage ::
+     HasFS IO h
+  -> FS.Handle h
+  -> IO (Maybe RawPage) #-}
 -- | Returns 'Nothing' on EOF.
-readDiskPage :: HasFS IO h -> FS.Handle h -> IO (Maybe RawPage)
+readDiskPage ::
+     (MonadCatch m, PrimMonad m)
+  => HasFS m h
+  -> FS.Handle h
+  -> m (Maybe RawPage)
 readDiskPage fs h = do
     mba <- newPinnedByteArray pageSize
     -- TODO: make sure no other exception type can be thrown
@@ -264,9 +296,19 @@ readDiskPage fs h = do
 pageSize :: Int
 pageSize = 4096
 
+{-# SPECIALISE readOverflowPages ::
+     HasFS IO h
+  -> FS.Handle h
+  -> Word32
+  -> IO [RawOverflowPage] #-}
 -- | Throws exception on EOF. If a suffix was expected, the file should have it.
 -- Reads full pages, despite the suffix only using part of the last page.
-readOverflowPages :: HasFS IO h -> FS.Handle h -> Word32 -> IO [RawOverflowPage]
+readOverflowPages ::
+     (MonadSTM m, MonadThrow m, PrimMonad m)
+   => HasFS m h
+   -> FS.Handle h
+   -> Word32
+   -> m [RawOverflowPage]
 readOverflowPages fs h len = do
     let lenPages = fromIntegral (roundUpToPageSize len)  -- always read whole pages
     mba <- newPinnedByteArray lenPages

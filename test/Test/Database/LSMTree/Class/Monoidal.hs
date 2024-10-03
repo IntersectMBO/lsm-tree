@@ -130,8 +130,10 @@ data Setup h m = Setup {
   }
 
 -- | create session, table handle, and populate it with some data.
-withTableNew ::
-     forall h m a. (IsTableHandle h, IOLike m)
+withTableNew :: forall h m a.
+     ( IsTableHandle h
+     , IOLike m
+     )
   => Setup h m
   -> [(Key, Update Value)]
   -> (Session h m -> h m Key Value -> m a)
@@ -143,11 +145,17 @@ withTableNew Setup{..} ups action =
           updates table (V.fromList ups)
           action sesh table
 
-readCursorAll ::
-     forall h m k v proxy. ( IsTableHandle h, IOLike m
-     , SerialiseKey k, SerialiseValue v, ResolveValue v
+readCursorAll :: forall h m k v proxy.
+     ( IsTableHandle h
+     , IOLike m
+     , SerialiseKey k
+     , SerialiseValue v
+     , ResolveValue v
      )
-  => proxy h -> Cursor h m k v -> CursorReadSchedule -> m [V.Vector (QueryResult k v)]
+  => proxy h
+  -> Cursor h m k v
+  -> CursorReadSchedule
+  -> m [V.Vector (QueryResult k v)]
 readCursorAll hdl cursor = go . getCursorReadSchedule
   where
     go [] = error "readCursorAll: finite infinite list"
