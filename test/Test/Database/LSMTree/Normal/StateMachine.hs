@@ -42,24 +42,25 @@
 
   TODO: it is currently not correctly modelled what happens if blob references
   are retrieved from an incorrect table handle.
-
-  TODO: run lockstep tests with IOSim too
 -}
 module Test.Database.LSMTree.Normal.StateMachine (
     tests
   , labelledExamples
   ) where
 
+import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Concurrent.Class.MonadSTM.Strict
-import           Control.Monad ((<=<))
+import           Control.Monad (forM_, void, (<=<))
 import           Control.Monad.Class.MonadThrow (Handler (..), MonadCatch (..),
                      MonadThrow (..))
+import           Control.Monad.IOSim
 import           Control.Monad.Reader (ReaderT (..))
 import           Control.Tracer (nullTracer)
 import           Data.Bifunctor (Bifunctor (..))
 import qualified Data.ByteString as BS
 import           Data.Constraint (Dict (..))
 import           Data.Kind (Type)
+import qualified Data.Map.Strict as Map
 import           Data.Maybe (catMaybes, fromJust)
 import           Data.Set (Set)
 import qualified Data.Set as Set
@@ -72,6 +73,7 @@ import           Database.LSMTree.Extras (showPowersOf)
 import           Database.LSMTree.Extras.Generators (KeyForIndexCompact)
 import           Database.LSMTree.Extras.NoThunks (assertNoThunks)
 import           Database.LSMTree.Internal (LSMTreeError (..))
+import qualified Database.LSMTree.Internal as R.Internal
 import qualified Database.LSMTree.Model.Normal.Session as Model
 import qualified Database.LSMTree.ModelIO.Normal as M
 import qualified Database.LSMTree.Normal as R
@@ -92,14 +94,18 @@ import           System.IO.Temp (createTempDirectory,
 import           Test.Database.LSMTree.Normal.StateMachine.Op
                      (HasBlobRef (getBlobRef), Op (..))
 import qualified Test.QuickCheck as QC
-import           Test.QuickCheck (Arbitrary, Gen)
+import           Test.QuickCheck (Arbitrary, Gen, Property)
+import qualified Test.QuickCheck.Extras as QD
+import qualified Test.QuickCheck.Monadic as QC
+import           Test.QuickCheck.Monadic (PropertyM)
+import qualified Test.QuickCheck.StateModel as QD
 import           Test.QuickCheck.StateModel hiding (Var)
 import           Test.QuickCheck.StateModel.Lockstep
 import qualified Test.QuickCheck.StateModel.Lockstep.Defaults as Lockstep.Defaults
 import qualified Test.QuickCheck.StateModel.Lockstep.Run as Lockstep.Run
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck (testProperty)
-import           Test.Util.FS (assertNoOpenHandles)
+import           Test.Util.FS (assertNoOpenHandles, assertNumOpenHandles)
 import           Test.Util.TypeFamilyWrappers (WrapBlob (..), WrapBlobRef (..),
                      WrapCursor (..), WrapSession (..), WrapTableHandle (..))
 
@@ -109,22 +115,33 @@ import           Test.Util.TypeFamilyWrappers (WrapBlob (..), WrapBlobRef (..),
 
 tests :: TestTree
 tests = testGroup "Normal.StateMachine" [
-      testProperty "prop_lockstepIO_ModelIOImpl"
-        prop_lockstepIO_ModelIOImpl
+      testProperty "propLockstep_ModelIOImpl"
+        propLockstep_ModelIOImpl
 
-    , testProperty "prop_lockstepIO_RealImpl_RealFS"
-        prop_lockstepIO_RealImpl_RealFS
+    , testProperty "propLockstep_RealImpl_RealFS_IO"
+        propLockstep_RealImpl_RealFS_IO
 
-    , testProperty "prop_lockstepIO_RealImpl_MockFS"
-        prop_lockstepIO_RealImpl_MockFS
+    , testProperty "propLockstep_RealImpl_MockFS_IO"
+        propLockstep_RealImpl_MockFS_IO
+
+    , testProperty "propLockstep_RealImpl_MockFS_IOSim"
+        propLockstep_RealImpl_MockFS_IOSim
     ]
 
 labelledExamples :: IO ()
 labelledExamples = QC.labelledExamples $ Lockstep.Run.tagActions (Proxy @(ModelState R.TableHandle))
 
-prop_lockstepIO_ModelIOImpl :: Actions (Lockstep (ModelState M.TableHandle))
-                            -> QC.Property
-prop_lockstepIO_ModelIOImpl =
+instance Arbitrary M.TableConfig where
+  arbitrary :: Gen M.TableConfig
+  arbitrary = pure M.TableConfig
+
+deriving via AllowThunk (M.Session IO)
+    instance NoThunks (M.Session IO)
+
+propLockstep_ModelIOImpl ::
+     Actions (Lockstep (ModelState M.TableHandle))
+  -> QC.Property
+propLockstep_ModelIOImpl =
     runActionsBracket'
       (Proxy @(ModelState M.TableHandle))
       acquire
@@ -174,12 +191,22 @@ prop_lockstepIO_ModelIOImpl =
           | otherwise
           = Nothing
 
-deriving via AllowThunk (M.Session IO)
-    instance NoThunks (M.Session IO)
+instance Arbitrary R.TableConfig where
+  arbitrary :: Gen R.TableConfig
+  arbitrary = pure $ R.TableConfig {
+        R.confMergePolicy       = R.MergePolicyLazyLevelling
+      , R.confSizeRatio         = R.Four
+      , R.confWriteBufferAlloc  = R.AllocNumEntries (R.NumEntries 30)
+      , R.confBloomFilterAlloc  = R.AllocFixed 10
+      , R.confFencePointerIndex = R.CompactIndex
+      , R.confDiskCachePolicy   = R.DiskCacheNone
+      , R.confMergeSchedule     = R.OneShot
+      }
 
-prop_lockstepIO_RealImpl_RealFS :: Actions (Lockstep (ModelState R.TableHandle))
-                                -> QC.Property
-prop_lockstepIO_RealImpl_RealFS =
+propLockstep_RealImpl_RealFS_IO ::
+     Actions (Lockstep (ModelState R.TableHandle))
+  -> QC.Property
+propLockstep_RealImpl_RealFS_IO =
     runActionsBracket'
       (Proxy @(ModelState R.TableHandle))
       acquire
@@ -198,28 +225,76 @@ prop_lockstepIO_RealImpl_RealFS =
         R.closeSession session
         removeDirectoryRecursive tmpDir
 
-prop_lockstepIO_RealImpl_MockFS :: Actions (Lockstep (ModelState R.TableHandle))
-                                -> QC.Property
-prop_lockstepIO_RealImpl_MockFS =
+propLockstep_RealImpl_MockFS_IO ::
+     Actions (Lockstep (ModelState R.TableHandle))
+  -> QC.Property
+propLockstep_RealImpl_MockFS_IO =
     runActionsBracket'
       (Proxy @(ModelState R.TableHandle))
-      acquire
-      release
+      acquire_RealImpl_MockFS
+      release_RealImpl_MockFS
       (\r (_, session) -> runReaderT r (session, realHandler @IO))
       tagFinalState'
-  where
-    acquire :: IO (StrictTMVar IO MockFS, WrapSession R.TableHandle IO)
-    acquire = do
-        fsVar <- newTMVarIO MockFS.empty
-        (hfs, hbio) <- simHasBlockIO fsVar
-        session <- R.openSession nullTracer hfs hbio (mkFsPath [])
-        pure (fsVar, WrapSession session)
 
-    release :: (StrictTMVar IO MockFS, WrapSession R.TableHandle IO) -> IO ()
-    release (fsVar, WrapSession session) = do
-      R.closeSession session
-      mockfs <- atomically $ readTMVar fsVar
-      assertNoOpenHandles mockfs $ pure ()
+propLockstep_RealImpl_MockFS_IOSim ::
+     Actions (Lockstep (ModelState R.TableHandle))
+  -> QC.Property
+propLockstep_RealImpl_MockFS_IOSim actions =
+    monadicIOSim_ prop
+  where
+    prop :: forall s. PropertyM (IOSim s) Property
+    prop = do
+        (fsVar, session) <- QC.run acquire_RealImpl_MockFS
+        void $ QD.runPropertyReaderT
+                (QD.runActions @(Lockstep (ModelState R.TableHandle)) actions)
+                (session, realHandler @(IOSim s))
+        QC.run $ release_RealImpl_MockFS (fsVar, session)
+        pure $ tagFinalState actions tagFinalState' $ QC.property True
+
+acquire_RealImpl_MockFS ::
+     R.IOLike m
+  => m (StrictTMVar m MockFS, WrapSession R.TableHandle m)
+acquire_RealImpl_MockFS = do
+    fsVar <- newTMVarIO MockFS.empty
+    (hfs, hbio) <- simHasBlockIO fsVar
+    session <- R.openSession nullTracer hfs hbio (mkFsPath [])
+    pure (fsVar, WrapSession session)
+
+release_RealImpl_MockFS ::
+     R.IOLike m
+  => (StrictTMVar m MockFS, WrapSession R.TableHandle m)
+  -> m ()
+release_RealImpl_MockFS (fsVar, WrapSession session) = do
+    sts <- getAllSessionTables session
+    forM_ sts $ \(SomeTable t) -> R.close t
+    scs <- getAllSessionCursors session
+    forM_ scs $ \(SomeCursor c) -> R.closeCursor c
+    mockfs1 <- atomically $ readTMVar fsVar
+    assertNumOpenHandles mockfs1 1 $ pure ()
+    R.closeSession session
+    mockfs2 <- atomically $ readTMVar fsVar
+    assertNoOpenHandles mockfs2 $ pure ()
+
+data SomeTable m = SomeTable (forall k v b. R.TableHandle m k v b)
+data SomeCursor m = SomeCursor (forall k v b. R.Cursor m k v b)
+
+getAllSessionTables ::
+     (MonadSTM m, MonadThrow m, MonadMVar m)
+  => R.Session m
+  -> m [SomeTable m]
+getAllSessionTables (R.Internal.Session' s) = do
+    R.Internal.withOpenSession s $ \seshEnv -> do
+      ts <- readMVar (R.Internal.sessionOpenTables seshEnv)
+      pure ((\x -> SomeTable (R.Internal.NormalTable x))  <$> Map.elems ts)
+
+getAllSessionCursors ::
+     (MonadSTM m, MonadThrow m, MonadMVar m)
+  => R.Session m
+  -> m [SomeCursor m]
+getAllSessionCursors (R.Internal.Session' s) =
+    R.Internal.withOpenSession s $ \seshEnv -> do
+      cs <- readMVar (R.Internal.sessionOpenCursors seshEnv)
+      pure ((\x -> SomeCursor (R.Internal.NormalCursor x))  <$> Map.elems cs)
 
 realHandler :: Monad m => Handler m (Maybe Model.Err)
 realHandler = Handler $ pure . handler'
@@ -240,22 +315,6 @@ createSystemTempDirectory prefix = do
     let hasFS = ioHasFS (MountPoint tempDir)
     hasBlockIO <- ioHasBlockIO hasFS defaultIOCtxParams
     pure (tempDir, hasFS, hasBlockIO)
-
-instance Arbitrary M.TableConfig where
-  arbitrary :: Gen M.TableConfig
-  arbitrary = pure M.TableConfig
-
-instance Arbitrary R.TableConfig where
-  arbitrary :: Gen R.TableConfig
-  arbitrary = pure $ R.TableConfig {
-        R.confMergePolicy       = R.MergePolicyLazyLevelling
-      , R.confSizeRatio         = R.Four
-      , R.confWriteBufferAlloc  = R.AllocNumEntries (R.NumEntries 30)
-      , R.confBloomFilterAlloc  = R.AllocFixed 10
-      , R.confFencePointerIndex = R.CompactIndex
-      , R.confDiskCachePolicy   = R.DiskCacheNone
-      , R.confMergeSchedule     = R.OneShot
-      }
 
 {-------------------------------------------------------------------------------
   Key and value types
@@ -703,11 +762,11 @@ instance ( Eq (Class.TableConfig h)
       ListSnapshots    -> Just Dict
       Duplicate{}      -> Nothing
 
-{- TODO: temporarily disabled until we start on I/O fault testing.
 instance ( Eq (Class.TableConfig h)
          , Class.IsTableHandle h
          , Show (Class.TableConfig h)
          , Arbitrary (Class.TableConfig h)
+         , Typeable (Class.Cursor h)
          , Typeable h
          ) => RunLockstep (ModelState h) (RealMonad h (IOSim s)) where
   observeReal ::
@@ -722,14 +781,18 @@ instance ( Eq (Class.TableConfig h)
           bimap OId (OVector . fmap (OLookupResult . fmap (const OBlobRef))) result
       RangeLookup{}    -> OEither $
           bimap OId (OVector . fmap (OQueryResult . fmap (const OBlobRef))) result
+      NewCursor{}      -> OEither $ bimap OId (const OCursor) result
+      CloseCursor{}    -> OEither $ bimap OId OId result
+      ReadCursor{}     -> OEither $
+          bimap OId (OVector . fmap (OQueryResult . fmap (const OBlobRef))) result
       Updates{}        -> OEither $ bimap OId OId result
       Inserts{}        -> OEither $ bimap OId OId result
       Deletes{}        -> OEither $ bimap OId OId result
-      RetrieveBlobs{}  -> OEither $ bimap OId (OVector . fmap OId) result
+      RetrieveBlobs{}  -> OEither $ bimap OId (OVector . fmap OBlob) result
       Snapshot{}       -> OEither $ bimap OId OId result
       Open{}           -> OEither $ bimap OId (const OTableHandle) result
       DeleteSnapshot{} -> OEither $ bimap OId OId result
-      ListSnapshots{}  -> OEither $ bimap OId OId result
+      ListSnapshots{}  -> OEither $ bimap OId (OList . fmap OId) result
       Duplicate{}      -> OEither $ bimap OId (const OTableHandle) result
 
   showRealResponse ::
@@ -741,6 +804,9 @@ instance ( Eq (Class.TableConfig h)
       Close{}          -> Just Dict
       Lookups{}        -> Nothing
       RangeLookup{}    -> Nothing
+      NewCursor{}      -> Nothing
+      CloseCursor{}    -> Just Dict
+      ReadCursor{}     -> Nothing
       Updates{}        -> Just Dict
       Inserts{}        -> Just Dict
       Deletes{}        -> Just Dict
@@ -750,7 +816,6 @@ instance ( Eq (Class.TableConfig h)
       DeleteSnapshot{} -> Just Dict
       ListSnapshots    -> Just Dict
       Duplicate{}      -> Nothing
--}
 
 {-------------------------------------------------------------------------------
   RunModel
@@ -768,17 +833,16 @@ instance ( Eq (Class.TableConfig h)
   postcondition = Lockstep.Defaults.postcondition
   monitoring    = Lockstep.Defaults.monitoring (Proxy @(RealMonad h IO))
 
-{- TODO: temporarily disabled until we start on I/O fault testing.
 instance ( Eq (Class.TableConfig h)
          , Class.IsTableHandle h
          , Show (Class.TableConfig h)
          , Arbitrary (Class.TableConfig h)
+         , Typeable (Class.Cursor h)
          , Typeable h
          ) => RunModel (Lockstep (ModelState h)) (RealMonad h (IOSim s)) where
   perform _     = runIOSim
   postcondition = Lockstep.Defaults.postcondition
   monitoring    = Lockstep.Defaults.monitoring (Proxy @(RealMonad h (IOSim s)))
--}
 
 {-------------------------------------------------------------------------------
   Interpreter for the model
@@ -895,10 +959,9 @@ runIO action lookUp = ReaderT $ \(session, handler) -> do
         Duplicate tableVar -> catchErr handler $
           WrapTableHandle <$> Class.duplicate (unwrapTableHandle $ lookUp' tableVar)
 
-    lookUp' :: Var j x -> Realized IO x
+    lookUp' :: Var h x -> Realized IO x
     lookUp' = lookUpGVar (Proxy @(RealMonad h IO)) lookUp
 
-{- TODO: temporarily disabled until we start on I/O fault testing.
 runIOSim ::
      forall s a h. Class.IsTableHandle h
   => LockstepAction (ModelState h) a
@@ -913,7 +976,7 @@ runIOSim action lookUp = ReaderT $ \(session, handler) ->
       -> LockstepAction (ModelState h) a
       -> IOSim s (Realized (IOSim s) a)
     aux session handler = \case
-        New cfg -> catchErr handler $
+        New _ cfg -> catchErr handler $
           WrapTableHandle <$> Class.new session cfg
         Close tableVar -> catchErr handler $
           Class.close (unwrapTableHandle $ lookUp' tableVar)
@@ -921,6 +984,12 @@ runIOSim action lookUp = ReaderT $ \(session, handler) ->
           fmap (fmap WrapBlobRef) <$> Class.lookups (unwrapTableHandle $ lookUp' tableVar) ks
         RangeLookup range tableVar -> catchErr handler $
           fmap (fmap WrapBlobRef) <$> Class.rangeLookup (unwrapTableHandle $ lookUp' tableVar) range
+        NewCursor offset tableVar -> catchErr handler $
+          WrapCursor <$> Class.newCursor offset (unwrapTableHandle $ lookUp' tableVar)
+        CloseCursor cursorVar -> catchErr handler $
+          Class.closeCursor (Proxy @h) (unwrapCursor $ lookUp' cursorVar)
+        ReadCursor n cursorVar -> catchErr handler $
+          fmap (fmap WrapBlobRef) <$> Class.readCursor (Proxy @h) n (unwrapCursor $ lookUp' cursorVar)
         Updates kups tableVar -> catchErr handler $
           Class.updates (unwrapTableHandle $ lookUp' tableVar) kups
         Inserts kins tableVar -> catchErr handler $
@@ -939,9 +1008,9 @@ runIOSim action lookUp = ReaderT $ \(session, handler) ->
           Class.listSnapshots session
         Duplicate tableVar -> catchErr handler $
           WrapTableHandle <$> Class.duplicate (unwrapTableHandle $ lookUp' tableVar)
+
     lookUp' :: Var h x -> Realized (IOSim s) x
     lookUp' = lookUpGVar (Proxy @(RealMonad h (IOSim s))) lookUp
--}
 
 catchErr ::
      forall m a. MonadCatch m
@@ -1409,7 +1478,7 @@ tagFinalState' (getModel -> ModelState _ finalStats) = concat [
 -- then we would want to only tag the final state, not intermediate steps.
 runActionsBracket' ::
      forall state st m e.  (
-        RunLockstep state m
+       RunLockstep state m
      , e ~ Error (Lockstep state)
      , forall a. IsPerformResult e a
      )
@@ -1419,11 +1488,20 @@ runActionsBracket' ::
   -> (m QC.Property -> st -> IO QC.Property)
   -> (Lockstep state -> [(String, [FinalTag])])
   -> Actions (Lockstep state) -> QC.Property
-runActionsBracket' p init cleanup runner tagFinalState actions =
-    flip (foldr (\(key, values) -> QC.tabulate key (fmap show values))) finalTags
+runActionsBracket' p init cleanup runner tagger actions =
+    tagFinalState actions tagger
   $ Lockstep.Run.runActionsBracket p init cleanup runner actions
+
+tagFinalState ::
+     forall state. StateModel (Lockstep state)
+  => Actions (Lockstep state)
+  -> (Lockstep state -> [(String, [FinalTag])])
+  -> Property
+  -> Property
+tagFinalState actions tagger =
+    flip (foldr (\(key, values) -> QC.tabulate key (fmap show values))) finalTags
   where
     finalAnnState :: Annotated (Lockstep state)
     finalAnnState = stateAfter @(Lockstep state) actions
 
-    finalTags = tagFinalState $ underlyingState finalAnnState
+    finalTags = tagger $ underlyingState finalAnnState

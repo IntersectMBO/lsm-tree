@@ -120,8 +120,6 @@ class (IsSession (Session h)) => IsTableHandle h where
     retrieveBlobs ::
            ( IOLike m
            , SerialiseValue blob
-             -- Model-specific constraints
-           , Typeable m
            )
         => proxy h
         -> Session h m
