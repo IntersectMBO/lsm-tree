@@ -115,7 +115,7 @@ import           Control.Exception (throw)
 import           Control.Monad
 import           Data.Bifunctor (Bifunctor (..))
 import           Data.Kind (Type)
-import           Data.Typeable (Proxy (..), Typeable, cast)
+import           Data.Typeable (Proxy (..), eqT, type (:~:) (Refl))
 import qualified Data.Vector as V
 import           Database.LSMTree.Common (BlobRef (BlobRef), IOLike, Range (..),
                      SerialiseKey, SerialiseValue, Session, SnapshotName,
@@ -123,10 +123,12 @@ import           Database.LSMTree.Common (BlobRef (BlobRef), IOLike, Range (..),
                      withSession)
 import qualified Database.LSMTree.Common as Common
 import qualified Database.LSMTree.Internal as Internal
+import qualified Database.LSMTree.Internal.BlobRef as Internal
 import qualified Database.LSMTree.Internal.Entry as Entry
 import           Database.LSMTree.Internal.Normal
 import qualified Database.LSMTree.Internal.Serialise as Internal
 import qualified Database.LSMTree.Internal.Vector as V
+import qualified System.FS.API as FS
 
 -- $resource-management
 -- Sessions, table handles and cursors use resources and as such need to be
@@ -569,16 +571,16 @@ deletes = updates . fmap (,Delete)
 retrieveBlobs ::
      ( IOLike m
      , SerialiseValue blob
-     , Typeable m
      )
   => Session m
   -> V.Vector (BlobRef m blob)
   -> m (V.Vector blob)
-retrieveBlobs (Internal.Session' sesh) refs =
+retrieveBlobs (Internal.Session' (sesh :: Internal.Session m h)) refs =
     V.map Internal.deserialiseBlob <$>
       Internal.retrieveBlobs sesh (V.imap checkBlobRefType refs)
   where
-    checkBlobRefType _ (BlobRef ref) | Just ref' <- cast ref = ref'
+    checkBlobRefType _ (BlobRef (ref :: Internal.WeakBlobRef m (FS.Handle h')))
+      | Just Refl <- eqT @(FS.Handle h) @(FS.Handle h') = ref
     checkBlobRefType i _ = throw (Internal.ErrBlobRefInvalid i)
 
 {-------------------------------------------------------------------------------

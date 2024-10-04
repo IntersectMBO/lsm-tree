@@ -16,6 +16,7 @@ module Database.LSMTree.Internal (
   , Session (..)
   , SessionState (..)
   , SessionEnv (..)
+  , withOpenSession
     -- ** Implementation of public API
   , withSession
   , openSession
