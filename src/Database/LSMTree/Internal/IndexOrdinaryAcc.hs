@@ -17,11 +17,6 @@ import           Prelude hiding (take)
 
 import           Control.Exception (assert)
 import           Control.Monad.ST.Strict (ST)
-import           Data.Primitive.PrimVar (PrimVar, newPrimVar, readPrimVar,
-                     writePrimVar)
-import           Data.Vector (force, take, unsafeFreeze)
-import           Data.Vector.Mutable (MVector)
-import qualified Data.Vector.Mutable as Mutable (unsafeNew, write)
 import qualified Data.Vector.Primitive as Primitive (Vector, length)
 import           Data.Word (Word16, Word8)
 import           Database.LSMTree.Internal.Chunk (Baler, Chunk, createBaler,
@@ -33,33 +28,28 @@ import           Database.LSMTree.Internal.IndexOrdinary
 import           Database.LSMTree.Internal.Serialise
                      (SerialisedKey (SerialisedKey'))
 import           Database.LSMTree.Internal.Vector (byteVectorFromPrim)
+import           Database.LSMTree.Internal.Vector.Growing (GrowingVector)
+import qualified Database.LSMTree.Internal.Vector.Growing as Growing (append,
+                     freeze, new)
 
 {-|
     A general-purpose fence pointer index under incremental construction.
 
-    A value @IndexOrdinaryAcc buffer keyCountRef baler@ denotes a partially
-    constructed index with the following properties:
-
-      * The keys that the index assigns to pages are stored as a prefix of the
-        mutable vector @buffer@.
-      * The reference @keyCountRef@ points to the number of those keys.
-      * The @baler@ object is used by the index for incremental output of the
-        serialised key list.
+    A value @IndexOrdinaryAcc lastKeys baler@ denotes a partially constructed
+    index that assigns keys to pages according to @lastKeys@ and uses @baler@
+    for incremental output of the serialised key list.
 -}
 data IndexOrdinaryAcc s = IndexOrdinaryAcc
-                              !(MVector s SerialisedKey)
-                              !(PrimVar s Int)
+                              !(GrowingVector s SerialisedKey)
                               !(Baler s)
 
 -- | Creates a new, initially empty, index.
-new :: Int                       -- ^ Maximum number of keys
+new :: Int                       -- ^ Initial size of the key buffer
     -> Int                       -- ^ Minimum chunk size in bytes
     -> ST s (IndexOrdinaryAcc s) -- ^ Construction of the index
-new maxKeyCount minChunkSize = assert (maxKeyCount >= 0)      $
-                               IndexOrdinaryAcc              <$>
-                               Mutable.unsafeNew maxKeyCount <*>
-                               newPrimVar 0                  <*>
-                               createBaler minChunkSize
+new initialKeyBufferSize minChunkSize = IndexOrdinaryAcc                 <$>
+                                        Growing.new initialKeyBufferSize <*>
+                                        createBaler minChunkSize
 
 {-|
     Appends keys to the key list of an index and outputs newly available chunks
@@ -69,26 +59,18 @@ new maxKeyCount minChunkSize = assert (maxKeyCount >= 0)      $
     word may result in a corrupted serialised key list.
 -}
 append :: Append -> IndexOrdinaryAcc s -> ST s (Maybe Chunk)
-append instruction (IndexOrdinaryAcc buffer keyCountRef baler)
+append instruction (IndexOrdinaryAcc lastKeys baler)
     = case instruction of
           AppendSinglePage _ key -> do
-              keyCount <- readPrimVar keyCountRef
-              Mutable.write buffer keyCount key
-              writePrimVar keyCountRef (succ keyCount)
+              Growing.append lastKeys 1 key
               feedBaler (keyListElem key) baler
           AppendMultiPage key overflowPageCount -> do
-              keyCount <- readPrimVar keyCountRef
               let
 
                   pageCount :: Int
                   !pageCount = succ (fromIntegral overflowPageCount)
 
-                  keyCount' :: Int
-                  !keyCount' = keyCount + pageCount
-
-              mapM_ (flip (Mutable.write buffer) key)
-                    [keyCount .. pred keyCount']
-              writePrimVar keyCountRef keyCount'
+              Growing.append lastKeys pageCount key
               feedBaler (concat (replicate pageCount (keyListElem key))) baler
     where
 
@@ -112,8 +94,7 @@ append instruction (IndexOrdinaryAcc buffer keyCountRef baler)
     @index@ is not used afterwards.
 -}
 unsafeEnd :: IndexOrdinaryAcc s -> ST s (Maybe Chunk, IndexOrdinary)
-unsafeEnd (IndexOrdinaryAcc buffer keyCountRef baler) = do
-    keyCount <- readPrimVar keyCountRef
-    keys <- force <$> take keyCount <$> unsafeFreeze buffer
+unsafeEnd (IndexOrdinaryAcc lastKeys baler) = do
+    keys <- Growing.freeze lastKeys
     remnant <- unsafeEndBaler baler
     return (remnant, IndexOrdinary keys)
