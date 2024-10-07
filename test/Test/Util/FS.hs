@@ -8,7 +8,7 @@ module Test.Util.FS (
 
 import           Control.Concurrent.Class.MonadMVar
 import           Control.Concurrent.Class.MonadSTM.Strict
-import           Control.Monad.Class.MonadThrow (MonadThrow)
+import           Control.Monad.Class.MonadThrow (MonadCatch, MonadThrow)
 import           Control.Monad.Primitive (PrimMonad)
 import           System.FS.API
 import           System.FS.BlockIO.API
@@ -41,7 +41,7 @@ withSimHasFS post k = do
     pure (x .&&. post fs)
 
 {-# INLINABLE withSimHasBlockIO #-}
-withSimHasBlockIO :: (MonadMVar m, MonadSTM m, MonadThrow m, PrimMonad m) => (MockFS -> Property) -> (HasFS m HandleMock -> HasBlockIO m HandleMock -> m Property) -> m Property
+withSimHasBlockIO :: (MonadMVar m, MonadSTM m, MonadCatch m, PrimMonad m) => (MockFS -> Property) -> (HasFS m HandleMock -> HasBlockIO m HandleMock -> m Property) -> m Property
 withSimHasBlockIO post k = do
     withSimHasFS post $ \hfs -> do
       hbio <- fromHasFS hfs

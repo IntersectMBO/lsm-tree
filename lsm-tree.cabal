@@ -772,12 +772,29 @@ library blockio-sim
   exposed-modules: System.FS.BlockIO.Sim
   build-depends:
     , base                   >=4.14 && <4.21
+    , bytestring
     , fs-api                 ^>=0.3
     , fs-sim                 ^>=0.3
     , io-classes             ^>=1.6 || ^>=1.7
     , io-classes:strict-stm
     , lsm-tree:blockio-api
     , primitive              ^>=0.9
+
+test-suite blockio-sim-test
+  import:         language, warnings
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: blockio-sim/test
+  main-is:        Main.hs
+  build-depends:
+    , base                   >=4.14 && <4.21
+    , fs-api
+    , fs-sim
+    , io-classes:strict-stm
+    , lsm-tree:blockio-api
+    , lsm-tree:blockio-sim
+    , QuickCheck
+    , tasty
+    , tasty-quickcheck
 
 library fcntl-nocache
   import:         language, warnings
