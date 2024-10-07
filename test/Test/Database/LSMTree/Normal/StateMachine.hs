@@ -50,6 +50,8 @@ module Test.Database.LSMTree.Normal.StateMachine (
   , labelledExamples
   ) where
 
+import           Control.Concurrent.Class.MonadSTM.Strict
+import           Control.Exception (assert)
 import           Control.Monad ((<=<))
 import           Control.Monad.Class.MonadThrow (Handler (..), MonadCatch (..),
                      MonadThrow (..))
@@ -81,7 +83,10 @@ import           System.Directory (removeDirectoryRecursive)
 import           System.FS.API (HasFS, MountPoint (..), mkFsPath)
 import           System.FS.BlockIO.API (HasBlockIO, defaultIOCtxParams)
 import           System.FS.BlockIO.IO (ioHasBlockIO)
+import           System.FS.BlockIO.Sim (simHasBlockIO)
 import           System.FS.IO (HandleIO, ioHasFS)
+import qualified System.FS.Sim.MockFS as MockFS
+import           System.FS.Sim.MockFS (MockFS)
 import           System.IO.Error
 import           System.IO.Temp (createTempDirectory,
                      getCanonicalTemporaryDirectory)
@@ -104,18 +109,22 @@ import           Test.Util.TypeFamilyWrappers (WrapBlob (..), WrapBlobRef (..),
 
 tests :: TestTree
 tests = testGroup "Normal.StateMachine" [
-      propLockstepIO_ModelIOImpl
-    , propLockstepIO_RealImpl_RealFS
-{- TODO: temporarily disabled until we start on I/O fault testing.
-    , propLockstepIO_RealImpl_MockFS
--}
+      testProperty "prop_lockstepIO_ModelIOImpl"
+        prop_lockstepIO_ModelIOImpl
+
+    , testProperty "prop_lockstepIO_RealImpl_RealFS"
+        prop_lockstepIO_RealImpl_RealFS
+
+    , testProperty "prop_lockstepIO_RealImpl_MockFS"
+        prop_lockstepIO_RealImpl_MockFS
     ]
 
 labelledExamples :: IO ()
 labelledExamples = QC.labelledExamples $ Lockstep.Run.tagActions (Proxy @(ModelState R.TableHandle))
 
-propLockstepIO_ModelIOImpl :: TestTree
-propLockstepIO_ModelIOImpl = testProperty "propLockstepIO_ModelIOImpl" $
+prop_lockstepIO_ModelIOImpl :: Actions (Lockstep (ModelState M.TableHandle))
+                            -> QC.Property
+prop_lockstepIO_ModelIOImpl =
     runActionsBracket'
       (Proxy @(ModelState M.TableHandle))
       acquire
@@ -168,18 +177,19 @@ propLockstepIO_ModelIOImpl = testProperty "propLockstepIO_ModelIOImpl" $
 deriving via AllowThunk (M.Session IO)
     instance NoThunks (M.Session IO)
 
-propLockstepIO_RealImpl_RealFS :: TestTree
-propLockstepIO_RealImpl_RealFS = testProperty "propLockstepIO_RealImpl_RealFS" $
+prop_lockstepIO_RealImpl_RealFS :: Actions (Lockstep (ModelState R.TableHandle))
+                                -> QC.Property
+prop_lockstepIO_RealImpl_RealFS =
     runActionsBracket'
       (Proxy @(ModelState R.TableHandle))
       acquire
       release
-      (\r (_, session) -> runReaderT r (session, handler))
+      (\r (_, session) -> runReaderT r (session, realHandler @IO))
       tagFinalState'
   where
     acquire :: IO (FilePath, WrapSession R.TableHandle IO)
     acquire = do
-        (tmpDir, hasFS, hasBlockIO) <- createSystemTempDirectory "propLockstepIO_RealIO"
+        (tmpDir, hasFS, hasBlockIO) <- createSystemTempDirectory "prop_lockstepIO_RealIO"
         session <- R.openSession nullTracer hasFS hasBlockIO (mkFsPath [])
         pure (tmpDir, WrapSession session)
 
@@ -188,42 +198,40 @@ propLockstepIO_RealImpl_RealFS = testProperty "propLockstepIO_RealImpl_RealFS" $
         R.closeSession session
         removeDirectoryRecursive tmpDir
 
-    handler :: Handler IO (Maybe Model.Err)
-    handler = Handler $ pure . handler'
-      where
-        handler' :: LSMTreeError -> Maybe Model.Err
-        handler' ErrTableClosed = Just Model.ErrTableHandleClosed
-        handler' ErrCursorClosed = Just Model.ErrCursorClosed
-        handler' (ErrSnapshotNotExists _snap) = Just Model.ErrSnapshotDoesNotExist
-        handler' (ErrSnapshotExists _snap) = Just Model.ErrSnapshotExists
-        handler' (ErrSnapshotWrongType _snap) = Just Model.ErrSnapshotWrongType
-        handler' (ErrBlobRefInvalid _) = Just Model.ErrBlobRefInvalidated
-        handler' _ = Nothing
-
-{- TODO: temporarily disabled until we start on I/O fault testing.
-propLockstepIO_RealImpl_MockFS :: TestTree
-propLockstepIO_RealImpl_MockFS = testProperty "propLockstepIO_RealImpl_MockFS" $
-   QC.expectFailure $ -- TODO: remove once we have a real implementation
-    Lockstep.Run.runActionsBracket
+prop_lockstepIO_RealImpl_MockFS :: Actions (Lockstep (ModelState R.TableHandle))
+                                -> QC.Property
+prop_lockstepIO_RealImpl_MockFS =
+    runActionsBracket'
       (Proxy @(ModelState R.TableHandle))
       acquire
       release
-      (\r session -> runReaderT r (session, handler))
+      (\r (_, session) -> runReaderT r (session, realHandler @IO))
+      tagFinalState'
   where
-    acquire :: IO (WrapSession R.TableHandle IO)
+    acquire :: IO (StrictTMVar IO MockFS, WrapSession R.TableHandle IO)
     acquire = do
-        someHasFS <- SomeHasFS <$> simHasFS' MockFS.empty
-        WrapSession <$> R.openSession someHasFS (mkFsPath [])
+        fsVar <- newTMVarIO MockFS.empty
+        (hfs, hbio) <- simHasBlockIO fsVar
+        session <- R.openSession nullTracer hfs hbio (mkFsPath [])
+        pure (fsVar, WrapSession session)
 
-    release :: WrapSession R.TableHandle IO -> IO ()
-    release (WrapSession session) = R.closeSession session
+    release :: (StrictTMVar IO MockFS, WrapSession R.TableHandle IO) -> IO ()
+    release (fsVar, WrapSession session) = do
+      R.closeSession session
+      mockfs <- atomically $ readTMVar fsVar
+      assert (MockFS.numOpenHandles mockfs == 0) $ pure ()
 
-    handler :: Handler IO (Maybe Model.Err)
-    handler = Handler $ pure . handler'
-      where
-        handler' :: IOError -> Maybe Model.Err
-        handler' _err = Nothing
--}
+realHandler :: Monad m => Handler m (Maybe Model.Err)
+realHandler = Handler $ pure . handler'
+  where
+    handler' :: LSMTreeError -> Maybe Model.Err
+    handler' ErrTableClosed               = Just Model.ErrTableHandleClosed
+    handler' ErrCursorClosed              = Just Model.ErrCursorClosed
+    handler' (ErrSnapshotNotExists _snap) = Just Model.ErrSnapshotDoesNotExist
+    handler' (ErrSnapshotExists _snap)    = Just Model.ErrSnapshotExists
+    handler' (ErrSnapshotWrongType _snap) = Just Model.ErrSnapshotWrongType
+    handler' (ErrBlobRefInvalid _)        = Just Model.ErrBlobRefInvalidated
+    handler' _                            = Nothing
 
 createSystemTempDirectory ::  [Char] -> IO (FilePath, HasFS IO HandleIO, HasBlockIO IO HandleIO)
 createSystemTempDirectory prefix = do
@@ -385,7 +393,7 @@ instance ( Show (Class.TableConfig h)
 -- TODO: show instance does not show key-value-blob types. Example:
 --
 -- Normal.StateMachine
---   propLockstepIO_ModelIOImpl: FAIL
+--   prop_lockstepIO_ModelIOImpl: FAIL
 --     *** Failed! Exception: 'open: inappropriate type (table type mismatch)' (after 25 tests and 2 shrinks):
 --     do action $ New TableConfig
 --        action $ Snapshot "snap" (GVar var1 (FromRight . id))
