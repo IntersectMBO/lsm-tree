@@ -693,16 +693,16 @@ close th = do
     modifyWithTempRegistry_
       (RW.unsafeAcquireWriteAccess (tableHandleState th))
       (atomically . RW.unsafeReleaseWriteAccess (tableHandleState th)) $ \reg -> \case
-      TableHandleClosed -> pure TableHandleClosed
-      TableHandleOpen thEnv -> do
-        -- Since we have a write lock on the table state, we know that we are the
-        -- only thread currently closing the table. We can safely make the session
-        -- forget about this table.
-        freeTemp reg (tableSessionUntrackTable thEnv)
-        RW.withWriteAccess_ (tableContent thEnv) $ \tc -> do
-          removeReferenceTableContent reg tc
-          pure tc
-        pure TableHandleClosed
+        TableHandleClosed -> pure TableHandleClosed
+        TableHandleOpen thEnv -> do
+          -- Since we have a write lock on the table state, we know that we are the
+          -- only thread currently closing the table. We can safely make the session
+          -- forget about this table.
+          freeTemp reg (tableSessionUntrackTable thEnv)
+          RW.withWriteAccess_ (tableContent thEnv) $ \tc -> do
+            removeReferenceTableContent reg tc
+            pure tc
+          pure TableHandleClosed
 
 {-# SPECIALISE lookups ::
      ResolveSerialisedValue
@@ -1239,7 +1239,7 @@ snapshot resolve snap label th = do
         (,V.map (runNumber . Run.runRunFsPaths) rs) <$>
           case mr of
             SingleRun r -> pure (True, runNumber (Run.runRunFsPaths r))
-            MergingRun var -> do
+            MergingRun _ _ var -> do
               withMVar var $ \case
                 CompletedMerge r -> pure (False, runNumber (Run.runRunFsPaths r))
                 OngoingMerge{}   -> error "snapshot: OngoingMerge not yet supported" -- TODO: implement
@@ -1337,8 +1337,8 @@ openLevels reg hfs hbio diskCachePolicy levels =
         allocateTemp reg
           (Run.openFromDisk hfs hbio caching run)
           Run.removeReference
-      var <- newMVar (CompletedMerge r)
-      let !mr = if fst mrPath then SingleRun r else MergingRun var
+      let !mr = if fst mrPath then SingleRun r
+                              else error "openLevels: OngoingMerge not yet supported"
       pure $! Level mr rs
 
 {-# SPECIALISE deleteSnapshot ::
