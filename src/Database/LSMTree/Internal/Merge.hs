@@ -5,8 +5,10 @@ module Database.LSMTree.Internal.Merge (
     Merge (..)
   , Level (..)
   , Mappend
+  , MergeState (..)
   , new
-  , close
+  , addReference
+  , removeReference
   , complete
   , stepsToCompletion
   , stepsToCompletionCounted
@@ -18,10 +20,12 @@ import           Control.Exception (assert)
 import           Control.Monad (when)
 import           Control.Monad.Class.MonadST (MonadST)
 import           Control.Monad.Class.MonadSTM (MonadSTM (..))
-import           Control.Monad.Class.MonadThrow (MonadCatch, MonadThrow (..))
+import           Control.Monad.Class.MonadThrow (MonadCatch, MonadMask (..),
+                     MonadThrow (..))
 import           Control.Monad.Fix (MonadFix)
-import           Control.Monad.Primitive (PrimState, RealWorld)
-import           Control.RefCount (RefCount (..))
+import           Control.Monad.Primitive (PrimMonad, PrimState, RealWorld)
+import           Control.RefCount (RefCounter)
+import qualified Control.RefCount as RC
 import           Data.Coerce (coerce)
 import           Data.Primitive.MutVar
 import           Data.Traversable (for)
@@ -37,6 +41,7 @@ import qualified Database.LSMTree.Internal.RunReader as Reader
 import           Database.LSMTree.Internal.RunReaders (Readers)
 import qualified Database.LSMTree.Internal.RunReaders as Readers
 import           Database.LSMTree.Internal.Serialise
+import           GHC.Stack (HasCallStack)
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
 import           System.FS.BlockIO.API (HasBlockIO)
@@ -45,22 +50,33 @@ import           System.FS.BlockIO.API (HasBlockIO)
 --
 -- Since we always resolve all entries of the same key in one go, there is no
 -- need to store incompletely-resolved entries.
---
--- TODO: Reference counting will have to be done somewhere, either here or in
--- the layer above.
 data Merge m h = Merge {
-      mergeLevel          :: !Level
-    , mergeMappend        :: !Mappend
-    , mergeReaders        :: {-# UNPACK #-} !(Readers m (FS.Handle h))
-    , mergeBuilder        :: !(RunBuilder (PrimState m) (FS.Handle h))
+      mergeLevel      :: !Level
+    , mergeMappend    :: !Mappend
+    , mergeReaders    :: {-# UNPACK #-} !(Readers m (FS.Handle h))
+    , mergeBuilder    :: !(RunBuilder (PrimState m) (FS.Handle h))
       -- | The caching policy to use for the Run in the 'MergeComplete'.
-    , mergeCaching        :: !RunDataCaching
+    , mergeCaching    :: !RunDataCaching
       -- | The result of the latest call to 'steps'. This is used to determine
       -- whether a merge can be 'complete'd.
-    , mergeLastStepResult :: !(MutVar (PrimState m) StepResult)
-    , mergeHasFS          :: !(HasFS m h)
-    , mergeHasBlockIO     :: !(HasBlockIO m h)
+    , mergeState      :: !(MutVar (PrimState m) MergeState)
+    , mergeRefCounter :: !(RefCounter m)
+    , mergeHasFS      :: !(HasFS m h)
+    , mergeHasBlockIO :: !(HasBlockIO m h)
     }
+
+-- | The current state of the merge.
+data MergeState =
+    -- | There is still merging work to be done
+    Merging
+    -- | There is no more merging work to be done, but the merge still has to be
+    -- completed to yield a new run.
+  | MergingDone
+    -- | A run was yielded as the result of a merge. The merge is implicitly
+    -- closed.
+  | Completed
+    -- | The merge was closed before it was completed.
+  | Closed
 
 data Level = MidLevel | LastLevel
   deriving stock (Eq, Show)
@@ -80,7 +96,7 @@ type Mappend = SerialisedValue -> SerialisedValue -> SerialisedValue
 -- | Returns 'Nothing' if no input 'Run' contains any entries.
 -- The list of runs should be sorted from new to old.
 new ::
-     (MonadCatch m, MonadSTM m, MonadST m)
+     (MonadCatch m, MonadSTM m, MonadST m, MonadFix m)
   => HasFS m h
   -> HasBlockIO m h
   -> RunDataCaching
@@ -97,31 +113,65 @@ new fs hbio mergeCaching alloc mergeLevel mergeMappend targetPaths runs = do
       -- calculate upper bounds based on input runs
       let numEntries = coerce (sum @V.Vector @Int) (fmap Run.runNumEntries runs)
       mergeBuilder <- Builder.new fs targetPaths numEntries alloc
-      mergeLastStepResult <- newMutVar $! MergeInProgress
+      mergeState <- newMutVar $! Merging
+      mergeRefCounter <-
+        RC.mkRefCounter1 (Just $! finaliser fs hbio mergeState mergeBuilder mergeReaders)
       return Merge {
           mergeHasFS = fs
         , mergeHasBlockIO = hbio
         , ..
         }
 
-{-# SPECIALISE close :: Merge IO (FS.Handle h) -> IO () #-}
--- | This function should be called when discarding a 'Merge' before it
--- was done (i.e. returned 'MergeComplete'). This removes the incomplete files
--- created for the new run so far and avoids leaking file handles.
+{-# SPECIALISE addReference :: Merge IO h -> IO () #-}
+addReference :: (HasCallStack, PrimMonad m) => Merge m h -> m ()
+addReference Merge{..} = RC.addReference mergeRefCounter
+
+{-# SPECIALISE removeReference :: Merge IO h -> IO () #-}
+removeReference :: (HasCallStack, PrimMonad m, MonadMask m) => Merge m h -> m ()
+removeReference Merge{..} = RC.removeReference mergeRefCounter
+
+{-# SPECIALISE finaliser :: HasFS IO h -> HasBlockIO IO h -> MutVar RealWorld MergeState -> RunBuilder RealWorld (FS.Handle h) -> Readers IO (FS.Handle h) -> IO () #-}
+-- | Closes the underlying builder and readers.
 --
--- Once it has been called, do not use the 'Merge' any more!
-close :: (MonadFix m, MonadSTM m, MonadST m) => Merge m h -> m ()
-close Merge {..} = do
-    Builder.close mergeHasFS mergeBuilder
-    Readers.close mergeHasFS mergeHasBlockIO mergeReaders
+-- This function is idempotent. Technically, this is not necessary because the
+-- finaliser is going to run only once, but it is a nice property for
+-- @close@-like functions to be idempotent.
+finaliser ::
+     (MonadFix m, MonadSTM m, MonadST m)
+  => HasFS m h
+  -> HasBlockIO m h
+  -> MutVar (PrimState m) MergeState
+  -> RunBuilder (PrimState m) (FS.Handle h)
+  -> Readers m (FS.Handle h)
+  -> m ()
+finaliser hfs hbio var b rs = do
+    st <- readMutVar var
+    let shouldClose = case st of
+          Merging     -> True
+          MergingDone -> True
+          Completed   -> False
+          Closed      -> False
+    when shouldClose $ do
+        Builder.close hfs b
+        Readers.close hfs hbio rs
+        writeMutVar var $! Closed
 
 {-# SPECIALISE complete ::
      Merge IO h
   -> IO (Run IO (FS.Handle h)) #-}
 -- | Complete a 'Merge', returning a new 'Run' as the result of merging the
--- input runs. This function will /not/ do any merging work if there is any
--- remaining. That is, if not enough 'steps' were performed to exhaust the input
--- 'Readers', this function will throw an error.
+-- input runs.
+--
+-- The resulting run has the same reference count as the input 'Merge'. The
+-- 'Merge' does not have to be closed afterwards, since it is closed implicitly
+-- by 'complete'.
+--
+-- This function will /not/ do any merging work if there is any remaining. That
+-- is, if not enough 'steps' were performed to exhaust the input 'Readers', this
+-- function will throw an error.
+--
+-- Returns an error if the merge was not yet done, if it was already completed
+-- before, or if it was already closed.
 --
 -- Note: this function creates new 'Run' resources, so it is recommended to run
 -- this function with async exceptions masked. Otherwise, these resources can
@@ -131,11 +181,22 @@ complete ::
   => Merge m h
   -> m (Run m (FS.Handle h))
 complete Merge{..} = do
-    readMutVar mergeLastStepResult >>= \case
-      MergeInProgress -> error "complete: Merge is not yet completed!"
-      MergeComplete -> do
-        Run.fromMutable mergeHasFS mergeHasBlockIO mergeCaching
-                        (RefCount 1) mergeBuilder
+    readMutVar mergeState >>= \case
+      Merging -> error "complete: Merge is not done"
+      MergingDone -> do
+        -- Since access to a merge /should/ be sequentialised, we can assume
+        -- that the ref count has not changed between this read and the use of
+        -- fromMutable.
+        --
+        -- TODO: alternatively, the mergeRefCounter could be reused as the
+        -- reference counter for the output run.
+        n <- RC.readRefCount mergeRefCounter
+        r <- Run.fromMutable mergeHasFS mergeHasBlockIO mergeCaching
+                        n mergeBuilder
+        writeMutVar mergeState $! Completed
+        pure r
+      Completed -> error "complete: Merge is already completed"
+      Closed -> error "complete: Merge is closed"
 
 {-# SPECIALISE stepsToCompletion ::
      Merge IO h
@@ -194,6 +255,8 @@ stepsInvariant requestedSteps = \case
 --
 -- Returns the number of input entries read, which is guaranteed to be at least
 -- as many as requested (unless the merge is complete).
+--
+-- Returns an error if the merge was already completed or closed.
 steps ::
      forall h m.
      (MonadCatch m, MonadSTM m, MonadST m)
@@ -207,9 +270,11 @@ steps Merge {..} requestedSteps = assertStepsInvariant <$> do
     -- clear whether our (upcoming) implementation of scheduled merges is going
     -- to satisfy this precondition when it calls @steps@, so for now we do the
     -- check.
-    readMutVar mergeLastStepResult >>= \case
-      MergeComplete   -> pure (0, MergeComplete)
-      MergeInProgress -> go 0
+    readMutVar mergeState >>= \case
+      Merging -> go 0
+      MergingDone -> pure (0, MergeComplete)
+      Completed -> error "steps: Merge is completed"
+      Closed -> error "steps: Merge is closed"
   where
     assertStepsInvariant res = assert (stepsInvariant requestedSteps res) res
 
@@ -228,7 +293,7 @@ steps Merge {..} requestedSteps = assertStepsInvariant <$> do
             Readers.Drained -> do
               -- no future entries, no previous entry to resolve, just write!
               writeReaderEntry fs mergeLevel mergeBuilder key entry
-              writeMutVar mergeLastStepResult $! MergeComplete
+              writeMutVar mergeState $! MergingDone
               pure (n + 1, MergeComplete)
 
     handleEntry !n !key (Reader.Entry (Mupdate v)) =
@@ -267,7 +332,7 @@ steps Merge {..} requestedSteps = assertStepsInvariant <$> do
                   dropRemaining (n + 1) key
               Readers.Drained -> do
                 writeSerialisedEntry fs mergeLevel mergeBuilder key resolved
-                writeMutVar mergeLastStepResult $! MergeComplete
+                writeMutVar mergeState $! MergingDone
                 pure (n + 1, MergeComplete)
 
     dropRemaining !n !key = do
@@ -275,7 +340,7 @@ steps Merge {..} requestedSteps = assertStepsInvariant <$> do
         case hasMore of
           Readers.HasMore -> go (n + dropped)
           Readers.Drained -> do
-            writeMutVar mergeLastStepResult $! MergeComplete
+            writeMutVar mergeState $! MergingDone
             pure (n + dropped, MergeComplete)
 
 {-# SPECIALISE writeReaderEntry ::
