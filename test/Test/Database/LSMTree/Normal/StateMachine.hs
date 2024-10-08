@@ -1176,8 +1176,29 @@ shrinkActionWithVars ::
   -> [Any (LockstepAction (ModelState h))]
 shrinkActionWithVars _ _ = \case
     New p conf -> [ Some $ New p conf' | conf' <- QC.shrink conf ]
-    Inserts kins tableVar -> [ Some $ Inserts kins' tableVar | kins' <- QC.shrink kins ]
+
+    -- Shrink inserts and deletes towards updates.
+    Updates upds tableVar -> [
+        Some $ Updates upds' tableVar
+      | upds' <- QC.shrink upds
+      ]
+    Inserts kvbs tableVar -> [
+        Some $ Inserts kvbs' tableVar
+      | kvbs' <- QC.shrink kvbs
+      ] <> [
+        Some $ Updates (V.map f kvbs) tableVar
+      | let f (k, v, mb) = (k, R.Insert v mb)
+      ]
+    Deletes ks tableVar -> [
+        Some $ Deletes ks' tableVar
+      | ks' <- QC.shrink ks
+      ] <> [
+        Some $ Updates (V.map f ks) tableVar
+      | let f k = (k, R.Delete)
+      ]
+
     Lookups ks tableVar -> [ Some $ Lookups ks' tableVar | ks' <- QC.shrink ks ]
+
     _ -> []
 
 {-------------------------------------------------------------------------------
