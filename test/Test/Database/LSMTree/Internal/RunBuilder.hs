@@ -27,11 +27,11 @@ tests = testGroup "Test.Database.LSMTree.Internal.RunBuilder" [
         ]
     , testGroup "simHasFS" [
           testProperty "prop_newInExistingDir" $ ioProperty $
-            withSimHasFS noOpenHandles prop_newInExistingDir
+            withSimHasFS propNoOpenHandles prop_newInExistingDir
         , testProperty "prop_newInNonExistingDir" $ ioProperty $
-            withSimHasFS noOpenHandles prop_newInNonExistingDir
+            withSimHasFS propNoOpenHandles prop_newInNonExistingDir
         , testProperty "prop_newTwice" $ ioProperty $
-            withSimHasFS noOpenHandles prop_newTwice
+            withSimHasFS propNoOpenHandles prop_newTwice
         ]
     ]
 

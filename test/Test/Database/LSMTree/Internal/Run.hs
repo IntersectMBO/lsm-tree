@@ -33,7 +33,7 @@ import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.RawPage
 import           Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.Serialise
-import           Test.Util.FS (noOpenHandles, withSimHasBlockIO)
+import           Test.Util.FS (propNoOpenHandles, withSimHasBlockIO)
 
 import qualified FormatPage as Proto
 
@@ -60,10 +60,10 @@ tests = testGroup "Database.LSMTree.Internal.Run"
               (mkVal ("test-value-" <> BS.concat (replicate 500 "0123456789")))
               Nothing
       , testProperty "prop_WriteAndOpen" $ \wb ->
-          ioProperty $ withSimHasBlockIO noOpenHandles $ \hfs hbio ->
+          ioProperty $ withSimHasBlockIO propNoOpenHandles $ \hfs hbio ->
             prop_WriteAndOpen hfs hbio wb
       , testProperty "prop_WriteNumEntries" $ \wb ->
-          ioProperty $ withSimHasBlockIO noOpenHandles $ \hfs hbio ->
+          ioProperty $ withSimHasBlockIO propNoOpenHandles $ \hfs hbio ->
             prop_WriteNumEntries hfs hbio wb
       ]
     ]

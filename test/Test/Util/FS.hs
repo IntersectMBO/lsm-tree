@@ -1,13 +1,19 @@
+{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
+
+{- HLINT ignore "Redundant if" -}
+
 module Test.Util.FS (
     withTempIOHasFS
   , withTempIOHasBlockIO
   , withSimHasFS
   , withSimHasBlockIO
-  , noOpenHandles
+  , propNoOpenHandles
+  , assertNoOpenHandles
   ) where
 
 import           Control.Concurrent.Class.MonadMVar
 import           Control.Concurrent.Class.MonadSTM.Strict
+import           Control.Exception (assert)
 import           Control.Monad.Class.MonadThrow (MonadCatch, MonadThrow)
 import           Control.Monad.Primitive (PrimMonad)
 import           System.FS.API
@@ -47,7 +53,16 @@ withSimHasBlockIO post k = do
       hbio <- fromHasFS hfs
       k hfs hbio
 
-{-# INLINABLE noOpenHandles #-}
-noOpenHandles :: MockFS -> Property
-noOpenHandles fs = counterexample ("Expected 0 open handles, but found " <> show n) $ n == 0
+{-# INLINABLE propNoOpenHandles #-}
+propNoOpenHandles :: MockFS -> Property
+propNoOpenHandles fs = counterexample ("Expected 0 open handles, but found " <> show n) $ n == 0
+  where n = numOpenHandles fs
+
+assertNoOpenHandles :: MockFS -> a -> a
+assertNoOpenHandles fs =
+    assert $
+      if n /= 0 then
+        error ("Expected 0 open handles, but found " <> show n)
+      else
+        True
   where n = numOpenHandles fs
