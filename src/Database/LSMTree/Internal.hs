@@ -641,7 +641,7 @@ new sesh conf = do
   -> ArenaManager RealWorld
   -> WriteBuffer
   -> WriteBufferBlobs IO h
-  -> Levels IO (Handle h)
+  -> Levels IO h
   -> IO (TableHandle IO h) #-}
 newWith ::
      (MonadSTM m, MonadMVar m, PrimMonad m)
@@ -651,7 +651,7 @@ newWith ::
   -> ArenaManager (PrimState m)
   -> WriteBuffer
   -> WriteBufferBlobs m h
-  -> Levels m (Handle h)
+  -> Levels m h
   -> m (TableHandle m h)
 newWith sesh seshEnv conf !am !wb !wbblobs !levels = do
     tableId <- incrUniqCounter (sessionUniqCounter seshEnv)
@@ -1303,7 +1303,7 @@ open sesh label override snap = do
   -> HasBlockIO IO h
   -> DiskCachePolicy
   -> V.Vector ((Bool, RunFsPaths), V.Vector RunFsPaths)
-  -> IO (Levels IO (FS.Handle h)) #-}
+  -> IO (Levels IO h) #-}
 -- | Open multiple levels.
 openLevels ::
      (MonadFix m, MonadMask m, MonadMVar m, MonadSTM m, PrimMonad m)
@@ -1312,7 +1312,7 @@ openLevels ::
   -> HasBlockIO m h
   -> DiskCachePolicy
   -> V.Vector ((Bool, RunFsPaths), V.Vector RunFsPaths)
-  -> m (Levels m (Handle h))
+  -> m (Levels m h)
 openLevels reg hfs hbio diskCachePolicy levels =
     flip V.imapMStrict levels $ \i (mrPath, rsPaths) -> do
       let ln      = LevelNo (i+1) -- level 0 is the write buffer
