@@ -104,9 +104,7 @@ import           Database.LSMTree.Internal.Serialise (SerialisedBlob (..),
                      SerialisedKey, SerialisedValue)
 import           Database.LSMTree.Internal.UniqCounter
 import qualified Database.LSMTree.Internal.Vector as V
-import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
-import           Database.LSMTree.Internal.WriteBufferBlobs (WriteBufferBlobs)
 import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
 import qualified System.FS.API as FS
 import           System.FS.API (FsError, FsErrorPath (..), FsPath, Handle,
@@ -620,53 +618,58 @@ withTable sesh conf = bracket (new sesh conf) close
   -> IO (TableHandle IO h) #-}
 -- | See 'Database.LSMTree.Normal.new'.
 new ::
-     (MonadSTM m, MonadThrow m, MonadMVar m, PrimMonad m)
+     (MonadSTM m, MonadMVar m, PrimMonad m, MonadMask m)
   => Session m h
   -> TableConfig
   -> m (TableHandle m h)
 new sesh conf = do
     traceWith (sessionTracer sesh) TraceNewTable
-    withOpenSession sesh $ \seshEnv -> do
-      am <- newArenaManager
-      blobpath <- Paths.tableBlobPath (sessionRoot seshEnv) <$>
-                    incrUniqCounter (sessionUniqCounter seshEnv)
-      wbblobs  <- WBB.new (sessionHasFS seshEnv) blobpath
-      newWith sesh seshEnv conf am WB.empty wbblobs V.empty
+    withOpenSession sesh $ \seshEnv ->
+      withTempRegistry $ \reg -> do
+        am <- newArenaManager
+        blobpath <- Paths.tableBlobPath (sessionRoot seshEnv) <$>
+                      incrUniqCounter (sessionUniqCounter seshEnv)
+        tableWriteBufferBlobs
+          <- allocateTemp reg
+               (WBB.new (sessionHasFS seshEnv) blobpath)
+               WBB.removeReference
+        let tableWriteBuffer = WB.empty
+            tableLevels = V.empty
+        tableCache <- mkLevelsCache tableLevels
+        let tc = TableContent {
+                tableWriteBuffer
+              , tableWriteBufferBlobs
+              , tableLevels
+              , tableCache
+              }
+        newWith reg sesh seshEnv conf am tc
 
 {-# SPECIALISE newWith ::
-     Session IO h
+     TempRegistry IO
+  -> Session IO h
   -> SessionEnv IO h
   -> TableConfig
   -> ArenaManager RealWorld
-  -> WriteBuffer
-  -> WriteBufferBlobs IO h
-  -> Levels IO h
+  -> TableContent IO h
   -> IO (TableHandle IO h) #-}
 newWith ::
      (MonadSTM m, MonadMVar m)
-  => Session m h
+  => TempRegistry m
+  -> Session m h
   -> SessionEnv m h
   -> TableConfig
   -> ArenaManager (PrimState m)
-  -> WriteBuffer
-  -> WriteBufferBlobs m h
-  -> Levels m h
+  -> TableContent m h
   -> m (TableHandle m h)
-newWith sesh seshEnv conf !am !wb !wbblobs !levels = do
+newWith reg sesh seshEnv conf !am !tc = do
     tableId <- incrUniqCounter (sessionUniqCounter seshEnv)
     let tr = TraceTable (uniqueToWord64 tableId) `contramap` sessionTracer sesh
     traceWith tr $ TraceCreateTableHandle conf
-    cache <- mkLevelsCache levels
     -- The session is kept open until we've updated the session's set of tracked
     -- tables. If 'closeSession' is called by another thread while this code
     -- block is being executed, that thread will block until it reads the
     -- /updated/ set of tracked tables.
-    contentVar <- RW.new $ TableContent
-        { tableWriteBuffer = wb
-        , tableWriteBufferBlobs = wbblobs
-        , tableLevels = levels
-        , tableCache = cache
-        }
+    contentVar <- RW.new $ tc
     tableVar <- RW.new $ TableHandleOpen $ TableHandleEnv {
           tableSession = sesh
         , tableSessionEnv = seshEnv
@@ -675,7 +678,8 @@ newWith sesh seshEnv conf !am !wb !wbblobs !levels = do
         }
     let !th = TableHandle conf tableVar am tr
     -- Track the current table
-    modifyMVar_ (sessionOpenTables seshEnv) $ pure . Map.insert (uniqueToWord64 tableId) th
+    freeTemp reg $ modifyMVar_ (sessionOpenTables seshEnv)
+                 $ pure . Map.insert (uniqueToWord64 tableId) th
     pure $! th
 
 {-# SPECIALISE close :: TableHandle IO h -> IO () #-}
@@ -686,17 +690,17 @@ close ::
   -> m ()
 close th = do
     traceWith (tableTracer th) TraceCloseTable
-    RW.withWriteAccess_ (tableHandleState th) $ \case
+    modifyWithTempRegistry_
+      (RW.unsafeAcquireWriteAccess (tableHandleState th))
+      (atomically . RW.unsafeReleaseWriteAccess (tableHandleState th)) $ \reg -> \case
       TableHandleClosed -> pure TableHandleClosed
       TableHandleOpen thEnv -> do
         -- Since we have a write lock on the table state, we know that we are the
         -- only thread currently closing the table. We can safely make the session
         -- forget about this table.
-        -- TODO: use TempRegistry
-        tableSessionUntrackTable thEnv
+        freeTemp reg (tableSessionUntrackTable thEnv)
         RW.withWriteAccess_ (tableContent thEnv) $ \tc -> do
-          forRunM_ (tableLevels tc) Run.removeReference
-          WBB.removeReference (tableWriteBufferBlobs tc)
+          removeReferenceTableContent reg tc
           pure tc
         pure TableHandleClosed
 
@@ -1289,12 +1293,22 @@ open sesh label override snap = do
         let runPaths = V.map (bimap (second $ RunFsPaths (Paths.activeDir $ sessionRoot seshEnv))
                                     (V.map (RunFsPaths (Paths.activeDir $ sessionRoot seshEnv))))
                             runNumbers
-        lvls <- openLevels reg hfs hbio (confDiskCachePolicy conf') runPaths
+
         am <- newArenaManager
         blobpath <- Paths.tableBlobPath (sessionRoot seshEnv) <$>
                       incrUniqCounter (sessionUniqCounter seshEnv)
-        wbblobs  <- WBB.new hfs blobpath
-        newWith sesh seshEnv conf' am WB.empty wbblobs lvls
+        tableWriteBufferBlobs
+          <- allocateTemp reg
+               (WBB.new hfs blobpath)
+               WBB.removeReference
+        tableLevels <- openLevels reg hfs hbio (confDiskCachePolicy conf') runPaths
+        tableCache <- mkLevelsCache tableLevels
+        newWith reg sesh seshEnv conf' am $! TableContent {
+            tableWriteBuffer = WB.empty
+          , tableWriteBufferBlobs
+          , tableLevels
+          , tableCache
+          }
 
 {-# SPECIALISE openLevels ::
      TempRegistry IO
@@ -1390,21 +1404,12 @@ duplicate th = do
           -- The table contents escape the read access, but we just added references
           -- to each run so it is safe.
           content <- RW.withReadAccess (tableContent thEnv) $ \content -> do
-            forRunM_ (tableLevels content) $ \r -> do
-              allocateTemp reg
-                (Run.addReference r)
-                (\_ -> Run.removeReference r)
+            addReferenceTableContent reg content
             pure content
-          WBB.addReference (tableWriteBufferBlobs content)
-          -- TODO: Fix possible double-free! See 'newCursor'.
-          -- In `newWith`, the table handle (in the open state) gets added to
-          -- `sessionOpenTables', even if later an async exception occurs and
-          -- the temp registry rolls back all allocations.
           newWith
+            reg
             (tableSession thEnv)
             (tableSessionEnv thEnv)
             (tableConfig th)
             (tableHandleArenaManager th)
-            (tableWriteBuffer content)
-            (tableWriteBufferBlobs content)
-            (tableLevels content)
+            content
