@@ -9,6 +9,8 @@ module Database.LSMTree.Internal.Merge (
   , new
   , addReference
   , removeReference
+  , removeReferenceN
+  , readRefCount
   , complete
   , stepsToCompletion
   , stepsToCompletionCounted
@@ -24,12 +26,13 @@ import           Control.Monad.Class.MonadThrow (MonadCatch, MonadMask (..),
                      MonadThrow (..))
 import           Control.Monad.Fix (MonadFix)
 import           Control.Monad.Primitive (PrimMonad, PrimState, RealWorld)
-import           Control.RefCount (RefCounter)
+import           Control.RefCount (RefCount (..), RefCounter)
 import qualified Control.RefCount as RC
 import           Data.Coerce (coerce)
 import           Data.Primitive.MutVar
 import           Data.Traversable (for)
 import qualified Data.Vector as V
+import           Data.Word
 import           Database.LSMTree.Internal.BlobRef (BlobRef)
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.Run (Run, RunDataCaching)
@@ -129,6 +132,14 @@ addReference Merge{..} = RC.addReference mergeRefCounter
 {-# SPECIALISE removeReference :: Merge IO h -> IO () #-}
 removeReference :: (HasCallStack, PrimMonad m, MonadMask m) => Merge m h -> m ()
 removeReference Merge{..} = RC.removeReference mergeRefCounter
+
+{-# SPECIALISE removeReferenceN :: Merge IO h -> Word64 -> IO () #-}
+removeReferenceN :: (HasCallStack, PrimMonad m, MonadMask m) => Merge m h -> Word64 -> m ()
+removeReferenceN r = RC.removeReferenceN (mergeRefCounter r)
+
+{-# SPECIALISE readRefCount :: Merge IO h -> IO RefCount #-}
+readRefCount :: PrimMonad m => Merge m h -> m RefCount
+readRefCount Merge{..} = RC.readRefCount mergeRefCounter
 
 {-# SPECIALISE finaliser ::
      MutVar RealWorld MergeState
