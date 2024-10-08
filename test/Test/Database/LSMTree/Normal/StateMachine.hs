@@ -106,6 +106,7 @@ import qualified Test.QuickCheck.StateModel.Lockstep.Run as Lockstep.Run
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck (testProperty)
 import           Test.Util.FS (assertNoOpenHandles, assertNumOpenHandles)
+import           Test.Util.PrettyProxy
 import           Test.Util.TypeFamilyWrappers (WrapBlob (..), WrapBlobRef (..),
                      WrapCursor (..), WrapSession (..), WrapTableHandle (..))
 
@@ -390,7 +391,7 @@ instance ( Show (Class.TableConfig h)
   data instance Action (Lockstep (ModelState h)) a where
     -- Tables
     New :: C k v blob
-        => {-# UNPACK #-} !(Proxy (k, v, blob))
+        => {-# UNPACK #-} !(PrettyProxy (k, v, blob))
         -> Class.TableConfig h
         -> Act h (WrapTableHandle h IO k v blob)
     Close :: C k v blob
@@ -469,7 +470,7 @@ instance ( Eq (Class.TableConfig h)
   x == y = go x y
     where
       go :: LockstepAction (ModelState h) a -> LockstepAction (ModelState h) a -> Bool
-      go (New (Proxy :: Proxy kvb1) conf1) (New (Proxy :: Proxy kvb2) conf2) =
+      go (New (PrettyProxy :: PrettyProxy kvb1) conf1) (New (PrettyProxy :: PrettyProxy kvb2) conf2) =
           eqT @kvb1 @kvb2 == Just Refl && conf1 == conf2
       go (Close var1)               (Close var2) =
           Just var1 == cast var2
@@ -1088,7 +1089,7 @@ arbitraryActionWithVars _ findVars _st = QC.frequency $ concat [
 
     withoutVars :: [(Int, Gen (Any (LockstepAction (ModelState h))))]
     withoutVars = [
-          (5, Some . New (Proxy :: Proxy (k, v, blob)) <$> QC.arbitrary)
+          (5, Some . New (PrettyProxy :: PrettyProxy (k, v, blob)) <$> QC.arbitrary)
         , (3, fmap Some $ Open @k @v @blob <$> genSnapshotName)
         , (1, fmap Some $ DeleteSnapshot <$> genSnapshotName)
         , (1, pure $ Some ListSnapshots)
@@ -1258,7 +1259,7 @@ updateStats action result =
     -- === Tags
 
     updNewTableTypes stats = case action of
-      New (Proxy :: Proxy (k, v, blob)) _ -> stats {
+      New (PrettyProxy :: PrettyProxy (k, v, blob)) _ -> stats {
           newTableTypes = Set.insert (show $ typeRep (Proxy @(k, v, blob))) (newTableTypes stats)
         }
       _ -> stats
