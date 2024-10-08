@@ -48,6 +48,10 @@
 module Test.Database.LSMTree.Normal.StateMachine (
     tests
   , labelledExamples
+    -- * Properties
+  , prop_lockstepIO_ModelIOImpl
+  , prop_lockstepIO_RealImpl_RealFS
+  , prop_lockstepIO_RealImpl_MockFS
   ) where
 
 import           Control.Concurrent.Class.MonadSTM.Strict
@@ -55,7 +59,7 @@ import           Control.Monad ((<=<))
 import           Control.Monad.Class.MonadThrow (Handler (..), MonadCatch (..),
                      MonadThrow (..))
 import           Control.Monad.Reader (ReaderT (..))
-import           Control.Tracer (nullTracer)
+import           Control.Tracer (Tracer, nullTracer)
 import           Data.Bifunctor (Bifunctor (..))
 import qualified Data.ByteString as BS
 import           Data.Constraint (Dict (..))
@@ -113,18 +117,19 @@ tests = testGroup "Normal.StateMachine" [
       testProperty "prop_lockstepIO_ModelIOImpl"
         prop_lockstepIO_ModelIOImpl
 
-    , testProperty "prop_lockstepIO_RealImpl_RealFS"
-        prop_lockstepIO_RealImpl_RealFS
+    , testProperty "prop_lockstepIO_RealImpl_RealFS" $
+        prop_lockstepIO_RealImpl_RealFS nullTracer
 
-    , testProperty "prop_lockstepIO_RealImpl_MockFS"
-        prop_lockstepIO_RealImpl_MockFS
+    , testProperty "prop_lockstepIO_RealImpl_MockFS" $
+        prop_lockstepIO_RealImpl_MockFS nullTracer
     ]
 
 labelledExamples :: IO ()
 labelledExamples = QC.labelledExamples $ Lockstep.Run.tagActions (Proxy @(ModelState R.TableHandle))
 
-prop_lockstepIO_ModelIOImpl :: Actions (Lockstep (ModelState M.TableHandle))
-                            -> QC.Property
+prop_lockstepIO_ModelIOImpl ::
+     Actions (Lockstep (ModelState M.TableHandle))
+  -> QC.Property
 prop_lockstepIO_ModelIOImpl =
     runActionsBracket'
       (Proxy @(ModelState M.TableHandle))
@@ -178,9 +183,11 @@ prop_lockstepIO_ModelIOImpl =
 deriving via AllowThunk (M.Session IO)
     instance NoThunks (M.Session IO)
 
-prop_lockstepIO_RealImpl_RealFS :: Actions (Lockstep (ModelState R.TableHandle))
-                                -> QC.Property
-prop_lockstepIO_RealImpl_RealFS =
+prop_lockstepIO_RealImpl_RealFS ::
+     Tracer IO R.LSMTreeTrace
+  -> Actions (Lockstep (ModelState R.TableHandle))
+  -> QC.Property
+prop_lockstepIO_RealImpl_RealFS tr =
     runActionsBracket'
       (Proxy @(ModelState R.TableHandle))
       acquire
@@ -191,7 +198,7 @@ prop_lockstepIO_RealImpl_RealFS =
     acquire :: IO (FilePath, WrapSession R.TableHandle IO)
     acquire = do
         (tmpDir, hasFS, hasBlockIO) <- createSystemTempDirectory "prop_lockstepIO_RealImpl_RealFS"
-        session <- R.openSession nullTracer hasFS hasBlockIO (mkFsPath [])
+        session <- R.openSession tr hasFS hasBlockIO (mkFsPath [])
         pure (tmpDir, WrapSession session)
 
     release :: (FilePath, WrapSession R.TableHandle IO) -> IO ()
@@ -199,9 +206,11 @@ prop_lockstepIO_RealImpl_RealFS =
         R.closeSession session
         removeDirectoryRecursive tmpDir
 
-prop_lockstepIO_RealImpl_MockFS :: Actions (Lockstep (ModelState R.TableHandle))
-                                -> QC.Property
-prop_lockstepIO_RealImpl_MockFS =
+prop_lockstepIO_RealImpl_MockFS ::
+     Tracer IO R.LSMTreeTrace
+  -> Actions (Lockstep (ModelState R.TableHandle))
+  -> QC.Property
+prop_lockstepIO_RealImpl_MockFS tr =
     runActionsBracket'
       (Proxy @(ModelState R.TableHandle))
       acquire
@@ -213,7 +222,7 @@ prop_lockstepIO_RealImpl_MockFS =
     acquire = do
         fsVar <- newTMVarIO MockFS.empty
         (hfs, hbio) <- simHasBlockIO fsVar
-        session <- R.openSession nullTracer hfs hbio (mkFsPath [])
+        session <- R.openSession tr hfs hbio (mkFsPath [])
         pure (fsVar, WrapSession session)
 
     release :: (StrictTMVar IO MockFS, WrapSession R.TableHandle IO) -> IO ()
