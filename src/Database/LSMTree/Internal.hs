@@ -77,7 +77,6 @@ import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (catMaybes)
 import qualified Data.Primitive.ByteArray as P
-import           Data.Primitive.MutVar
 import qualified Data.Set as Set
 import           Data.Typeable
 import qualified Data.Vector as V
@@ -641,17 +640,17 @@ new sesh conf = do
   -> ArenaManager RealWorld
   -> WriteBuffer
   -> WriteBufferBlobs IO h
-  -> Levels IO (Handle h)
+  -> Levels IO h
   -> IO (TableHandle IO h) #-}
 newWith ::
-     (MonadSTM m, MonadMVar m, PrimMonad m)
+     (MonadSTM m, MonadMVar m)
   => Session m h
   -> SessionEnv m h
   -> TableConfig
   -> ArenaManager (PrimState m)
   -> WriteBuffer
   -> WriteBufferBlobs m h
-  -> Levels m (Handle h)
+  -> Levels m h
   -> m (TableHandle m h)
 newWith sesh seshEnv conf !am !wb !wbblobs !levels = do
     tableId <- incrUniqCounter (sessionUniqCounter seshEnv)
@@ -1237,7 +1236,7 @@ snapshot resolve snap label th = do
           case mr of
             SingleRun r -> pure (True, runNumber (Run.runRunFsPaths r))
             MergingRun var -> do
-              readMutVar var >>= \case
+              withMVar var $ \case
                 CompletedMerge r -> pure (False, runNumber (Run.runRunFsPaths r))
                 OngoingMerge{}   -> error "snapshot: OngoingMerge not yet supported" -- TODO: implement
       let snapPath = Paths.snapshot (tableSessionRoot thEnv) snap
@@ -1303,7 +1302,7 @@ open sesh label override snap = do
   -> HasBlockIO IO h
   -> DiskCachePolicy
   -> V.Vector ((Bool, RunFsPaths), V.Vector RunFsPaths)
-  -> IO (Levels IO (FS.Handle h)) #-}
+  -> IO (Levels IO h) #-}
 -- | Open multiple levels.
 openLevels ::
      (MonadFix m, MonadMask m, MonadMVar m, MonadSTM m, PrimMonad m)
@@ -1312,7 +1311,7 @@ openLevels ::
   -> HasBlockIO m h
   -> DiskCachePolicy
   -> V.Vector ((Bool, RunFsPaths), V.Vector RunFsPaths)
-  -> m (Levels m (Handle h))
+  -> m (Levels m h)
 openLevels reg hfs hbio diskCachePolicy levels =
     flip V.imapMStrict levels $ \i (mrPath, rsPaths) -> do
       let ln      = LevelNo (i+1) -- level 0 is the write buffer
@@ -1324,7 +1323,7 @@ openLevels reg hfs hbio diskCachePolicy levels =
         allocateTemp reg
           (Run.openFromDisk hfs hbio caching run)
           Run.removeReference
-      var <- newMutVar (CompletedMerge r)
+      var <- newMVar (CompletedMerge r)
       let !mr = if fst mrPath then SingleRun r else MergingRun var
       pure $! Level mr rs
 
