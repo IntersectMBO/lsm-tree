@@ -124,7 +124,7 @@ prop_CloseMerge fs hbio level (Positive stepSize) (SmallList wbs) =
     withRuns fs hbio (V.fromList (zip (simplePaths [10..]) wbs')) $ \runs -> do
       let path0 = simplePath 0
       mergeToClose <- makeInProgressMerge path0 runs
-      traverse_ Merge.close mergeToClose
+      traverse_ Merge.removeReference mergeToClose
 
       filesExist <- traverse (FS.doesFileExist fs) (pathsForRunFiles path0)
 
@@ -141,7 +141,7 @@ prop_CloseMerge fs hbio level (Positive stepSize) (SmallList wbs) =
           -- just do a few steps once, ideally not completing the merge
           Merge.steps merge stepSize >>= \case
             (_, Merge.MergeComplete) -> do
-              Merge.close merge  -- run not needed, close
+              Merge.removeReference merge  -- run not needed, close
               return Nothing  -- not in progress
             (_, Merge.MergeInProgress) ->
               return (Just merge)
