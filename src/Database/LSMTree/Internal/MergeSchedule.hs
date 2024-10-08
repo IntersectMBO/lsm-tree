@@ -109,9 +109,6 @@ data TableContent m h = TableContent {
     -- | A hierarchy of levels. The vector indexes double as level numbers.
   , tableLevels           :: !(Levels m h)
     -- | Cache of flattened 'levels'.
-    --
-    -- INVARIANT: when 'level's is modified, this cache should be updated as
-    -- well, for example using 'mkLevelsCache'.
   , tableCache            :: !(LevelsCache m (Handle h))
   }
 
@@ -121,10 +118,10 @@ addReferenceTableContent ::
   => TempRegistry m
   -> TableContent m h
   -> m ()
-addReferenceTableContent reg (TableContent _wb wbb levels _cache) = do
+addReferenceTableContent reg (TableContent _wb wbb levels cache) = do
     allocateTemp reg (WBB.addReference wbb) (\_ -> WBB.removeReference wbb)
     addReferenceLevels reg levels
-    -- references on the cache are implicit
+    addReferenceLevelsCache reg cache
 
 {-# SPECIALISE removeReferenceTableContent :: TempRegistry IO -> TableContent IO h -> IO () #-}
 removeReferenceTableContent ::
@@ -132,10 +129,10 @@ removeReferenceTableContent ::
   => TempRegistry m
   -> TableContent m h
   -> m ()
-removeReferenceTableContent reg (TableContent _wb wbb levels _cache) = do
+removeReferenceTableContent reg (TableContent _wb wbb levels cache) = do
     freeTemp reg (WBB.removeReference wbb)
     removeReferenceLevels reg levels
-    -- references on the cache are implicit
+    removeReferenceLevelsCache reg cache
 
 {-------------------------------------------------------------------------------
   Levels cache
@@ -148,8 +145,13 @@ removeReferenceTableContent reg (TableContent _wb wbb levels _cache) = do
 -- handles. This allows for quick access in the lookup code. Recomputing this
 -- cache should be relatively rare.
 --
--- Use 'mkLevelsCache' to ensure that there are no mismatches between the vector
--- of runs and the vectors of run components.
+-- Caches take reference counts for its runs on construction, and they release
+-- references when the cache is invalidated. This is done so that incremental
+-- merges can remove references for their input runs when a merge completes,
+-- without closing runs that might be in use for other operations such as
+-- lookups. This does mean that a cache can keep runs open for longer than
+-- necessary, so caches should be rebuilt using, e.g., 'rebuildCache', in a
+-- timely manner.
 data LevelsCache m h = LevelsCache_ {
     cachedRuns      :: !(V.Vector (Run m h))
   , cachedFilters   :: !(V.Vector (Bloom SerialisedKey))
@@ -157,20 +159,82 @@ data LevelsCache m h = LevelsCache_ {
   , cachedKOpsFiles :: !(V.Vector h)
   }
 
-{-# SPECIALISE mkLevelsCache :: Levels IO h -> IO (LevelsCache IO (Handle h)) #-}
+{-# SPECIALISE mkLevelsCache ::
+     TempRegistry IO
+  -> Levels IO h
+  -> IO (LevelsCache IO (Handle h)) #-}
 -- | Flatten the argument 'Level's into a single vector of runs, and use that to
--- populate the 'LevelsCache'.
+-- populate the 'LevelsCache'. The cache will take a reference for each of the
+-- runs that end up in the cache.
 mkLevelsCache ::
-     MonadMVar m
-  => Levels m h -> m (LevelsCache m (Handle h))
-mkLevelsCache lvls = do
-  rs <- forRunM lvls pure
+     (PrimMonad m, MonadMVar m, MonadMask m)
+  => TempRegistry m
+  -> Levels m h
+  -> m (LevelsCache m (Handle h))
+mkLevelsCache reg lvls = do
+  rs <- forRunM lvls $ \r -> allocateTemp reg (Run.addReference r) (\_ -> Run.removeReference r) >> pure r
   pure $! LevelsCache_ {
       cachedRuns      = rs
     , cachedFilters   = mapStrict Run.runFilter rs
     , cachedIndexes   = mapStrict Run.runIndex rs
     , cachedKOpsFiles = mapStrict Run.runKOpsFile rs
     }
+
+{-# SPECIALISE rebuildCache ::
+     TempRegistry IO
+  -> LevelsCache IO (Handle h)
+  -> Levels IO h
+  -> IO (LevelsCache IO (Handle h)) #-}
+-- | Remove references to runs in the old cache, and create a new cache with
+-- fresh references taken for the runs in the new levels.
+--
+-- TODO: caches are currently only rebuilt in flushWriteBuffer. If an
+-- OngoingMerge is completed, then tables will only rebuild the cache, and
+-- therefore release "old" runs, when a flush is initiated. This is sub-optimal,
+-- and there are at least two solutions, but it is unclear which is faster or
+-- more convenient.
+--
+-- * Get rid of the cache entirely, and have each batch of lookups take
+--   references for runs in the levels structure.
+--
+-- * Keep the cache feature, but force a rebuild every once in a while, e.g.,
+--   once in every 100 lookups.
+rebuildCache ::
+     (PrimMonad m, MonadMVar m, MonadMask m)
+  => TempRegistry m
+  -> LevelsCache m (Handle h) -- ^ old cache
+  -> Levels m h -- ^ new levels
+  -> m (LevelsCache m (Handle h)) -- ^ new cache
+rebuildCache reg oldCache newLevels = do
+    removeReferenceLevelsCache reg oldCache
+    mkLevelsCache reg newLevels
+
+{-# SPECIALISE addReferenceLevelsCache ::
+     TempRegistry IO
+  -> LevelsCache IO (Handle h)
+  -> IO () #-}
+addReferenceLevelsCache ::
+     (PrimMonad m, MonadMask m, MonadMVar m)
+  => TempRegistry m
+  -> LevelsCache m (Handle h)
+  -> m ()
+addReferenceLevelsCache reg cache =
+    V.forM_ (cachedRuns cache) $ \r ->
+      allocateTemp reg
+        (Run.addReference r)
+        (\_ -> Run.removeReference r)
+
+{-# SPECIALISE removeReferenceLevelsCache ::
+     TempRegistry IO
+  -> LevelsCache IO (Handle h)
+  -> IO () #-}
+removeReferenceLevelsCache ::
+     (PrimMonad m, MonadMVar m, MonadMask m)
+  => TempRegistry m
+  -> LevelsCache m (Handle h)
+  -> m ()
+removeReferenceLevelsCache reg cache =
+    V.forM_ (cachedRuns cache) $ \r -> freeTemp reg (Run.removeReference r)
 
 {-------------------------------------------------------------------------------
   Levels, runs and ongoing merges
@@ -434,12 +498,12 @@ flushWriteBuffer tr conf@TableConfig{confDiskCachePolicy}
     freeTemp reg (WBB.removeReference (tableWriteBufferBlobs tc))
     wbblobs' <- allocateTemp reg (WBB.new hfs (Paths.tableBlobPath root n)) WBB.removeReference
     levels' <- addRunToLevels tr conf resolve hfs hbio root uc r reg (tableLevels tc)
-    cache' <- mkLevelsCache levels'
+    tableCache' <- rebuildCache reg (tableCache tc) levels'
     pure $! TableContent {
         tableWriteBuffer = WB.empty
       , tableWriteBufferBlobs = wbblobs'
       , tableLevels = levels'
-      , tableCache = cache'
+      , tableCache = tableCache'
       }
 
 {- TODO: re-enable
