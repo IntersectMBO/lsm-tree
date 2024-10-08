@@ -7,6 +7,8 @@ module Database.LSMTree.Internal.MergeSchedule (
   , MergeTrace (..)
     -- * Table content
   , TableContent (..)
+  , addReferenceTableContent
+  , removeReferenceTableContent
     -- * Levels cache
   , LevelsCache (..)
   , mkLevelsCache
@@ -15,7 +17,6 @@ module Database.LSMTree.Internal.MergeSchedule (
   , Level (..)
   , MergingRun (..)
   , MergingRunState (..)
-  , forRunM_
     -- * Flushes and scheduled merges
   , updatesWithInterleavedFlushes
   , flushWriteBuffer
@@ -114,6 +115,28 @@ data TableContent m h = TableContent {
   , tableCache            :: !(LevelsCache m (Handle h))
   }
 
+{-# SPECIALISE addReferenceTableContent :: TempRegistry IO -> TableContent IO h -> IO () #-}
+addReferenceTableContent ::
+     (PrimMonad m, MonadMask m, MonadMVar m)
+  => TempRegistry m
+  -> TableContent m h
+  -> m ()
+addReferenceTableContent reg (TableContent _wb wbb levels _cache) = do
+    allocateTemp reg (WBB.addReference wbb) (\_ -> WBB.removeReference wbb)
+    addReferenceLevels reg levels
+    -- references on the cache are implicit
+
+{-# SPECIALISE removeReferenceTableContent :: TempRegistry IO -> TableContent IO h -> IO () #-}
+removeReferenceTableContent ::
+     (PrimMonad m, MonadMask m, MonadMVar m)
+  => TempRegistry m
+  -> TableContent m h
+  -> m ()
+removeReferenceTableContent reg (TableContent _wb wbb levels _cache) = do
+    freeTemp reg (WBB.removeReference wbb)
+    removeReferenceLevels reg levels
+    -- references on the cache are implicit
+
 {-------------------------------------------------------------------------------
   Levels cache
 -------------------------------------------------------------------------------}
@@ -170,23 +193,46 @@ data MergingRunState m h =
     CompletedMerge !(Run m (Handle h))
   | OngoingMerge !(V.Vector (Run m (Handle h))) !(Merge m h)
 
-{-# SPECIALISE forRunM_ ::
+{-# SPECIALISE addReferenceLevels :: TempRegistry IO -> Levels IO h -> IO () #-}
+addReferenceLevels ::
+     (PrimMonad m, MonadMVar m, MonadMask m)
+  => TempRegistry m
+  -> Levels m h
+  -> m ()
+addReferenceLevels reg levels =
+    forRunAndMergeM_ levels
+      (\r -> allocateTemp reg (Run.addReference r) (\_ -> Run.removeReference r))
+      (\m -> allocateTemp reg (Merge.addReference m) (\_ -> Merge.removeReference m))
+
+{-# SPECIALISE addReferenceLevels :: TempRegistry IO -> Levels IO h -> IO () #-}
+removeReferenceLevels ::
+     (PrimMonad m, MonadMVar m, MonadMask m)
+  => TempRegistry m
+  -> Levels m h
+  -> m ()
+removeReferenceLevels reg levels =
+    forRunAndMergeM_ levels
+      (\r -> freeTemp reg (Run.removeReference r))
+      (\m -> freeTemp reg (Merge.removeReference m))
+
+{-# SPECIALISE forRunAndMergeM_ ::
      Levels IO h
   -> (Run IO (Handle h) -> IO ())
+  -> (Merge IO h -> IO ())
   -> IO () #-}
-forRunM_ ::
+forRunAndMergeM_ ::
      MonadMVar m
   => Levels m h
   -> (Run m (Handle h) -> m ())
+  -> (Merge m h -> m ())
   -> m ()
-forRunM_ lvls k = V.forM_ lvls $ \(Level mr rs) -> do
+forRunAndMergeM_ lvls k1 k2 = V.forM_ lvls $ \(Level mr rs) -> do
     case mr of
-      SingleRun r    -> k r
+      SingleRun r    -> k1 r
       MergingRun var -> withMVar var $ \case
-        CompletedMerge r -> k r
-        OngoingMerge irs _m -> V.mapM_ k irs
-    V.mapM_ k rs
-
+        CompletedMerge r -> k1 r
+        OngoingMerge irs m -> V.mapM_ k1 irs >> k2 m
+    V.mapM_ k1 rs
 
 {-# SPECIALISE foldRunM ::
      (b -> Run IO (Handle h) -> IO b)
@@ -385,8 +431,8 @@ flushWriteBuffer tr conf@TableConfig{confDiskCachePolicy}
               (tableWriteBuffer tc)
               (tableWriteBufferBlobs tc))
             Run.removeReference
-    WBB.removeReference (tableWriteBufferBlobs tc)
-    wbblobs' <- WBB.new hfs (Paths.tableBlobPath root n)
+    freeTemp reg (WBB.removeReference (tableWriteBufferBlobs tc))
+    wbblobs' <- allocateTemp reg (WBB.new hfs (Paths.tableBlobPath root n)) WBB.removeReference
     levels' <- addRunToLevels tr conf resolve hfs hbio root uc r reg (tableLevels tc)
     cache' <- mkLevelsCache levels'
     pure $! TableContent {
