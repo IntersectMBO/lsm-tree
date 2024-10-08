@@ -51,7 +51,6 @@ module Test.Database.LSMTree.Normal.StateMachine (
   ) where
 
 import           Control.Concurrent.Class.MonadSTM.Strict
-import           Control.Exception (assert)
 import           Control.Monad ((<=<))
 import           Control.Monad.Class.MonadThrow (Handler (..), MonadCatch (..),
                      MonadThrow (..))
@@ -100,6 +99,7 @@ import qualified Test.QuickCheck.StateModel.Lockstep.Defaults as Lockstep.Defaul
 import qualified Test.QuickCheck.StateModel.Lockstep.Run as Lockstep.Run
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck (testProperty)
+import           Test.Util.FS (assertNoOpenHandles)
 import           Test.Util.TypeFamilyWrappers (WrapBlob (..), WrapBlobRef (..),
                      WrapCursor (..), WrapSession (..), WrapTableHandle (..))
 
@@ -189,7 +189,7 @@ prop_lockstepIO_RealImpl_RealFS =
   where
     acquire :: IO (FilePath, WrapSession R.TableHandle IO)
     acquire = do
-        (tmpDir, hasFS, hasBlockIO) <- createSystemTempDirectory "prop_lockstepIO_RealIO"
+        (tmpDir, hasFS, hasBlockIO) <- createSystemTempDirectory "prop_lockstepIO_RealImpl_RealFS"
         session <- R.openSession nullTracer hasFS hasBlockIO (mkFsPath [])
         pure (tmpDir, WrapSession session)
 
@@ -219,7 +219,7 @@ prop_lockstepIO_RealImpl_MockFS =
     release (fsVar, WrapSession session) = do
       R.closeSession session
       mockfs <- atomically $ readTMVar fsVar
-      assert (MockFS.numOpenHandles mockfs == 0) $ pure ()
+      assertNoOpenHandles mockfs $ pure ()
 
 realHandler :: Monad m => Handler m (Maybe Model.Err)
 realHandler = Handler $ pure . handler'

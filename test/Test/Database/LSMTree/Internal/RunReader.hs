@@ -18,7 +18,7 @@ import qualified System.FS.API as FS
 import qualified System.FS.BlockIO.API as FS
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck
-import           Test.Util.FS (noOpenHandles, withSimHasBlockIO,
+import           Test.Util.FS (propNoOpenHandles, withSimHasBlockIO,
                      withTempIOHasBlockIO)
 import           Test.Util.Orphans ()
 
@@ -26,19 +26,19 @@ tests :: TestTree
 tests = testGroup "Database.LSMTree.Internal.RunReader"
     [ testGroup "MockFS"
         [ testProperty "prop_read" $ \wb ->
-            ioProperty $ withSimHasBlockIO noOpenHandles $ \hfs hbio -> do
+            ioProperty $ withSimHasBlockIO propNoOpenHandles $ \hfs hbio -> do
               prop_readAtOffset hfs hbio wb Nothing
         , testProperty "prop_readAtOffset" $ \wb offset ->
-            ioProperty $ withSimHasBlockIO noOpenHandles $ \hfs hbio -> do
+            ioProperty $ withSimHasBlockIO propNoOpenHandles $ \hfs hbio -> do
               prop_readAtOffset hfs hbio wb (Just offset)
         , testProperty "prop_readAtOffsetExisting" $ \wb i ->
-            ioProperty $ withSimHasBlockIO noOpenHandles $ \hfs hbio -> do
+            ioProperty $ withSimHasBlockIO propNoOpenHandles $ \hfs hbio -> do
               prop_readAtOffsetExisting hfs hbio wb i
         , testProperty "prop_readAtOffsetIdempotence" $ \wb i ->
-            ioProperty $ withSimHasBlockIO noOpenHandles $ \hfs hbio -> do
+            ioProperty $ withSimHasBlockIO propNoOpenHandles $ \hfs hbio -> do
               prop_readAtOffsetIdempotence hfs hbio wb i
         , testProperty "prop_readAtOffsetReadHead" $ \wb ->
-            ioProperty $ withSimHasBlockIO noOpenHandles $ \hfs hbio -> do
+            ioProperty $ withSimHasBlockIO propNoOpenHandles $ \hfs hbio -> do
               prop_readAtOffsetReadHead hfs hbio wb
         ]
     , testGroup "RealFS"
