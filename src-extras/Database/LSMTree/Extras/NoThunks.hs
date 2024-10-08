@@ -341,6 +341,9 @@ deriving anyclass instance NoThunks Merge.Level
 deriving stock instance Generic Merge.StepResult
 deriving anyclass instance NoThunks Merge.StepResult
 
+deriving stock instance Generic Merge.MergeState
+deriving anyclass instance NoThunks Merge.MergeState
+
 {-------------------------------------------------------------------------------
   Readers
 -------------------------------------------------------------------------------}
