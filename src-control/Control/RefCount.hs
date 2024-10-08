@@ -10,6 +10,7 @@ module Control.RefCount (
   , mkRefCounter1
   , addReference
   , removeReference
+  , removeReferenceN
   , upgradeWeakReference
   , readRefCount
   ) where
@@ -21,7 +22,9 @@ import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Primitive
 import           Data.Maybe
 import           Data.Primitive.PrimVar
+import           Data.Word
 import           GHC.Stack
+import           Text.Printf
 
 -- | A reference counter with an optional finaliser action. Once the reference
 -- count reaches @0@, the finaliser will be run.
@@ -89,6 +92,43 @@ removeReference RefCounter{countVar, finaliser} = mask_ $ do
     assertWithCallStack (prevCount > 0) $ pure ()
     when (prevCount == 1) $ sequence_ finaliser
 
+-- TODO: remove uses of this API. Eventually all references should be singular,
+-- and not use patterns where if A contains B then N references on A becomes N
+-- references on B. Instead this should be a single reference from A to B,
+-- irrespective of the number of references to A.
+{-# SPECIALISE removeReferenceN :: HasCallStack => RefCounter IO -> Word64 -> IO () #-}
+-- | Decrease the reference counter by @n@. @n@ must be a positive number.
+--
+-- The count must be known (from context) to be non-zero and at least as large
+-- as @n@. Typically this will be because the caller has @n@ references already
+-- (that they took out themselves or were given).
+removeReferenceN :: (HasCallStack, PrimMonad m, MonadMask m) => RefCounter m -> Word64 -> m ()
+removeReferenceN RefCounter{countVar, finaliser} n = mask_ $ do
+    -- n should be positive
+    assert (n > 0) $ pure ()
+    let !n' = fromIntegralChecked n
+    prevCount <- fetchSubInt countVar n'
+    -- the reference count must not already be 0, because then the finaliser
+    -- will have run already
+    assertWithCallStack (prevCount > 0) $ pure ()
+    -- the reference count can not go below zero
+    assertWithCallStack (prevCount >= n') $ pure ()
+    when (prevCount <= n') $ sequence_ finaliser
+
+-- TODO: remove when removeReferenceN is removed
+{-# INLINABLE fromIntegralChecked #-}
+-- | Like 'fromIntegral', but throws an error when @(x :: a) /= fromIntegral
+-- (fromIntegral x :: b)@.
+fromIntegralChecked :: (HasCallStack, Integral a, Integral b, Show a) => a -> b
+fromIntegralChecked x
+  | x'' == x
+  = x'
+  | otherwise
+  = error $ printf "fromIntegralChecked: conversion failed, %s /= %s" (show x) (show x'')
+  where
+    x' = fromIntegral x
+    x'' = fromIntegral x'
+
 -- | Try to turn a \"weak\" reference on something into a proper reference.
 -- This is by analogy with @deRefWeak :: Weak v -> IO (Maybe v)@, but for
 -- reference counts.
@@ -120,6 +160,7 @@ upgradeWeakReference RefCounter{countVar} = do
             then return True
             else casLoop prevCount'
 
+-- TODO: remove when removeRefenceN is removed
 {-# SPECIALISE readRefCount :: RefCounter IO -> IO RefCount #-}
 -- | Warning: reading the current reference count is inherently racy as there is
 -- no way to reliably act on the information. It can be useful for debugging.
