@@ -256,16 +256,33 @@ instance Arbitrary M.TableConfig where
   arbitrary = pure M.TableConfig
 
 instance Arbitrary R.TableConfig where
-  arbitrary :: Gen R.TableConfig
-  arbitrary = pure $ R.TableConfig {
+  arbitrary = do
+    mergeSchedule <- QC.elements [R.OneShot, R.Incremental]
+    confWriteBufferAlloc <- QC.arbitrary
+    pure $ R.TableConfig {
         R.confMergePolicy       = R.MergePolicyLazyLevelling
       , R.confSizeRatio         = R.Four
-      , R.confWriteBufferAlloc  = R.AllocNumEntries (R.NumEntries 30)
+      , confWriteBufferAlloc
       , R.confBloomFilterAlloc  = R.AllocFixed 10
       , R.confFencePointerIndex = R.CompactIndex
       , R.confDiskCachePolicy   = R.DiskCacheNone
-      , R.confMergeSchedule     = R.OneShot
+      , R.confMergeSchedule     = mergeSchedule
       }
+
+  shrink R.TableConfig{..} =
+      [ R.TableConfig {
+            confWriteBufferAlloc = confWriteBufferAlloc'
+          , ..
+          }
+      | confWriteBufferAlloc' <- QC.shrink confWriteBufferAlloc
+      ]
+
+instance Arbitrary R.WriteBufferAlloc where
+  arbitrary = pure (R.AllocNumEntries (R.NumEntries 30))
+  shrink (R.AllocNumEntries (R.NumEntries x)) =
+      [ R.AllocNumEntries (R.NumEntries x')
+      | QC.Positive x' <- QC.shrink (QC.Positive x)
+      ]
 
 {-------------------------------------------------------------------------------
   Key and value types
