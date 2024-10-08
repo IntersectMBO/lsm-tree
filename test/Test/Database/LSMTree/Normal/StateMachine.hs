@@ -324,21 +324,31 @@ createSystemTempDirectory prefix = do
 -- TODO: maybe use reference impl generators here?
 
 newtype Key1   = Key1   { _unKey1 :: QC.Small Word64 }
-  deriving newtype (Show, Eq, Ord, Arbitrary, R.SerialiseKey)
+  deriving stock (Show, Eq, Ord)
+  deriving newtype (Arbitrary, R.SerialiseKey)
 newtype Value1 = Value1 { _unValue1 :: QC.Small Word64 }
-  deriving newtype (Show, Eq, Ord, Arbitrary, R.SerialiseValue)
+
+  deriving stock (Show, Eq, Ord)
+  deriving newtype (Arbitrary, R.SerialiseValue)
 newtype Blob1  = Blob1  { _unBlob1 :: QC.Small Word64 }
-  deriving newtype (Show, Eq, Ord, Arbitrary, R.SerialiseValue)
+
+  deriving stock (Show, Eq, Ord)
+  deriving newtype (Arbitrary, R.SerialiseValue)
 
 instance R.Labellable (Key1, Value1, Blob1) where
   makeSnapshotLabel _ = "Key1 Value1 Blob1"
 
 newtype Key2   = Key2   { _unKey2   :: KeyForIndexCompact }
-  deriving newtype (Show, Eq, Ord, Arbitrary, R.SerialiseKey)
+  deriving stock (Show, Eq, Ord)
+  deriving newtype (Arbitrary, R.SerialiseKey)
+
 newtype Value2 = Value2 { _unValue2 :: BS.ByteString }
-  deriving newtype (Show, Eq, Ord, Arbitrary, R.SerialiseValue)
+  deriving stock (Show, Eq, Ord)
+  deriving newtype (Arbitrary, R.SerialiseValue)
+
 newtype Blob2  = Blob2  { _unBlob2  :: BS.ByteString }
-  deriving newtype (Show, Eq, Ord, Arbitrary, R.SerialiseValue)
+  deriving stock (Show, Eq, Ord)
+  deriving newtype (Arbitrary, R.SerialiseValue)
 
 instance R.Labellable (Key2, Value2, Blob2) where
   makeSnapshotLabel _ = "Key2 Value2 Blob2"
