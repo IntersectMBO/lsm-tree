@@ -1291,7 +1291,7 @@ open sesh label override snap resolve = do
           <- allocateTemp reg
                (WBB.new hfs blobpath)
                WBB.removeReference
-        tableLevels <- openLevels reg hfs hbio conf (sessionRoot seshEnv) resolve snappedLevels
+        tableLevels <- openLevels reg hfs hbio conf (sessionUniqCounter seshEnv) (sessionRoot seshEnv) resolve snappedLevels
         tableCache <- mkLevelsCache reg tableLevels
         newWith reg sesh seshEnv conf' am $! TableContent {
             tableWriteBuffer = WB.empty

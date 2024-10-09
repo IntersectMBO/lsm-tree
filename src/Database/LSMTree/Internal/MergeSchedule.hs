@@ -27,6 +27,7 @@ module Database.LSMTree.Internal.MergeSchedule (
   , maxRunSize
     -- * Credits
   , supplyCredits
+  , supplyMergeCredits
   ) where
 
 import           Control.Concurrent.Class.MonadMVar.Strict
@@ -872,7 +873,8 @@ supplyMergeCredits c (MergingRun _ _ var) = do
       CompletedMerge{} -> pure False
       (OngoingMerge _rs pvar m) -> do
         (n, stepResult) <- Merge.steps m c
-        writePrimVar pvar $! NumStepsDone n
+        (NumStepsDone x) <- readPrimVar pvar
+        writePrimVar pvar $! NumStepsDone (n + x)
         pure $ stepResult == MergeComplete
     when b $
       modifyMVarMasked_ var $ \case

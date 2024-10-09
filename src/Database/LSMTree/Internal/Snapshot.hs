@@ -21,21 +21,21 @@ import           Control.Monad.Class.MonadThrow (MonadMask)
 import           Control.Monad.Fix (MonadFix)
 import           Control.Monad.Primitive (PrimMonad)
 import           Control.TempRegistry
-import           Data.Foldable (traverse_)
+import           Data.Foldable (forM_, traverse_)
 import           Data.Primitive.PrimVar
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
-import           Database.LSMTree.Internal.Merge (Merge)
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.MergeSchedule
 import           Database.LSMTree.Internal.Paths (SessionRoot)
 import qualified Database.LSMTree.Internal.Paths as Paths
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
-import qualified Database.LSMTree.Internal.RunBuilder as RunBuilder
 import           Database.LSMTree.Internal.RunNumber
+import           Database.LSMTree.Internal.UniqCounter (UniqCounter,
+                     incrUniqCounter, uniqueToRunNumber)
 import           System.FS.API (HasFS)
 import           System.FS.BlockIO.API (HasBlockIO)
 
@@ -49,8 +49,8 @@ numSnapRuns a = V.sum $ V.map go1 a
     go1 (SnapLevel b c) = go2 b + V.length c
     go2 (SnapMergingRun _ _ d) = go3 d
     go2 (SnapSingleRun _)      = 1
-    go3 (SnapCompletedMerge _)     = 1
-    go3 (SnapOngoingMerge e _ _ _) = V.length e
+    go3 (SnapCompletedMerge _)   = 1
+    go3 (SnapOngoingMerge e _ _) = V.length e
 
 type SnapLevels = V.Vector SnapLevel
 
@@ -67,7 +67,7 @@ data SnapMergingRun =
 
 data SnapMergingRunState =
     SnapCompletedMerge !RunNumber
-  | SnapOngoingMerge !(V.Vector RunNumber) !NumStepsDone {- merge -} !RunNumber !Merge.Level
+  | SnapOngoingMerge !(V.Vector RunNumber) !NumStepsDone {- merge -} !Merge.Level
   deriving stock (Show, Eq, Read)
 
 {-------------------------------------------------------------------------------
@@ -104,13 +104,10 @@ snapMergingRunState ::
 snapMergingRunState (CompletedMerge r) = pure (SnapCompletedMerge (runNumber r))
 snapMergingRunState (OngoingMerge rs nsdVar m) = do
     nsd <- readPrimVar nsdVar
-    pure (SnapOngoingMerge (V.map runNumber rs) nsd (mergeNumber m) (Merge.mergeLevel m))
+    pure (SnapOngoingMerge (V.map runNumber rs) nsd (Merge.mergeLevel m))
 
 runNumber :: Run m h -> RunNumber
 runNumber r = Paths.runNumber (Run.runRunFsPaths r)
-
-mergeNumber :: Merge m h -> RunNumber
-mergeNumber m = Paths.runNumber (RunBuilder.runBuilderFsPaths (Merge.mergeBuilder m))
 
 {-------------------------------------------------------------------------------
   Opening from snapshot format
@@ -122,18 +119,20 @@ openLevels ::
   -> HasFS m h
   -> HasBlockIO m h
   -> TableConfig
+  -> UniqCounter m
   -> SessionRoot
   -> ResolveSerialisedValue
   -> SnapLevels
   -> m (Levels m h)
-openLevels reg hfs hbio conf@TableConfig{..} sessionRoot resolve levels =
+openLevels reg hfs hbio conf@TableConfig{..} uc sessionRoot resolve levels =
     V.iforM levels $ \i -> openLevel (LevelNo (i+1))
   where
     mkPath = Paths.RunFsPaths (Paths.activeDir sessionRoot)
 
     openLevel :: LevelNo -> SnapLevel -> m (Level m h)
     openLevel ln SnapLevel{..} = do
-        incomingRuns <- openMergingRun snapIncomingRuns
+        (mmmay, incomingRuns) <- openMergingRun snapIncomingRuns
+        forM_ mmmay $ \c -> supplyMergeCredits c incomingRuns
         residentRuns <- V.forM snapResidentRuns $ \rn ->
           allocateTemp reg
             (Run.openFromDisk hfs hbio caching (mkPath rn))
@@ -143,36 +142,37 @@ openLevels reg hfs hbio conf@TableConfig{..} sessionRoot resolve levels =
         caching = diskCachePolicyForLevel confDiskCachePolicy ln
         alloc = bloomFilterAllocForLevel conf ln
 
-        openMergingRun :: SnapMergingRun -> m (MergingRun m h)
+        openMergingRun :: SnapMergingRun -> m (Maybe Int, MergingRun m h)
         openMergingRun (SnapMergingRun mpfl nr smrs) = do
-            mrs <- openMergingRunState smrs
-            MergingRun mpfl nr <$> newMVar mrs
+            (n, mrs) <- openMergingRunState smrs
+            (n,) . MergingRun mpfl nr <$> newMVar mrs
         openMergingRun (SnapSingleRun rn) =
-            SingleRun <$>
+            (Nothing,) . SingleRun <$>
               allocateTemp reg
                 (Run.openFromDisk hfs hbio caching (mkPath rn))
                 Run.removeReference
 
-        openMergingRunState :: SnapMergingRunState -> m (MergingRunState m h)
+        openMergingRunState :: SnapMergingRunState -> m (Maybe Int, MergingRunState m h)
         openMergingRunState (SnapCompletedMerge rn) =
-            CompletedMerge <$>
+            (Nothing,) . CompletedMerge <$>
               allocateTemp reg
                 (Run.openFromDisk hfs hbio caching (mkPath rn))
                 Run.removeReference
-        openMergingRunState (SnapOngoingMerge rns nsd rnm mergeLast) = do
+        openMergingRunState (SnapOngoingMerge rns nsd mergeLast) = do
             rs <- V.forM rns $ \rn ->
               allocateTemp reg
                 (Run.openFromDisk hfs hbio caching ((mkPath rn)))
                 Run.removeReference
             nsdVar <- newPrimVar nsd
+            rn <- uniqueToRunNumber <$> incrUniqCounter uc
             mergeMaybe <- allocateTemp reg
-              (Merge.new hfs hbio caching alloc mergeLast resolve (mkPath rnm) rs)
+              (Merge.new hfs hbio caching alloc mergeLast resolve (mkPath rn) rs)
               (traverse_ Merge.removeReference)
             -- TODO: progress merge
             -- TODO: write test that shows a failure because we are not progressing the merge
             case mergeMaybe of
               Nothing -> error "openLevels: merges can not be empty"
-              Just m  -> pure (OngoingMerge rs nsdVar m)
+              Just m  -> pure (Just (unNumStepsDone nsd), OngoingMerge rs nsdVar m)
 
 {-------------------------------------------------------------------------------
   Levels
