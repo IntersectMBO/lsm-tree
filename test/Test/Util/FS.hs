@@ -1,15 +1,23 @@
+{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
+
+{- HLINT ignore "Redundant if" -}
+
 module Test.Util.FS (
     withTempIOHasFS
   , withTempIOHasBlockIO
   , withSimHasFS
   , withSimHasBlockIO
-  , noOpenHandles
+  , propNoOpenHandles
+  , assertNoOpenHandles
+  , assertNumOpenHandles
   ) where
 
 import           Control.Concurrent.Class.MonadMVar
 import           Control.Concurrent.Class.MonadSTM.Strict
+import           Control.Exception (assert)
 import           Control.Monad.Class.MonadThrow (MonadCatch, MonadThrow)
 import           Control.Monad.Primitive (PrimMonad)
+import           GHC.Stack
 import           System.FS.API
 import           System.FS.BlockIO.API
 import           System.FS.BlockIO.IO
@@ -20,6 +28,7 @@ import           System.FS.Sim.MockFS
 import           System.FS.Sim.STM
 import           System.IO.Temp
 import           Test.QuickCheck
+import           Text.Printf
 
 withTempIOHasFS :: FilePath -> (HasFS IO HandleIO -> IO a) -> IO a
 withTempIOHasFS path action = withSystemTempDirectory path $ \dir -> do
@@ -47,7 +56,19 @@ withSimHasBlockIO post k = do
       hbio <- fromHasFS hfs
       k hfs hbio
 
-{-# INLINABLE noOpenHandles #-}
-noOpenHandles :: MockFS -> Property
-noOpenHandles fs = counterexample ("Expected 0 open handles, but found " <> show n) $ n == 0
+{-# INLINABLE propNoOpenHandles #-}
+propNoOpenHandles :: MockFS -> Property
+propNoOpenHandles fs = counterexample ("Expected 0 open handles, but found " <> show n) $ n == 0
+  where n = numOpenHandles fs
+
+assertNoOpenHandles :: HasCallStack => MockFS -> a -> a
+assertNoOpenHandles fs = assertNumOpenHandles fs 0
+
+assertNumOpenHandles :: HasCallStack => MockFS -> Int -> a -> a
+assertNumOpenHandles fs m =
+    assert $
+      if n /= m then
+        error (printf "Expected %d open handles, but found %d" m n)
+      else
+        True
   where n = numOpenHandles fs

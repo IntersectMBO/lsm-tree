@@ -21,7 +21,7 @@ import           Control.Monad.IOSim (IOSim)
 import           Data.Kind (Type)
 import           Database.LSMTree.Common (BlobRef, IOLike, SerialiseValue)
 import           Database.LSMTree.Internal.Serialise (SerialiseKey)
-import           Database.LSMTree.Normal (LookupResult, QueryResult,
+import           Database.LSMTree.Normal (Cursor, LookupResult, QueryResult,
                      TableHandle)
 import           Test.QuickCheck.Modifiers (Small (..))
 import           Test.QuickCheck.StateModel (Realized)
@@ -29,7 +29,7 @@ import           Test.QuickCheck.StateModel.Lockstep (InterpretOp)
 import qualified Test.QuickCheck.StateModel.Lockstep.Op as Op
 import qualified Test.QuickCheck.StateModel.Lockstep.Op.SumProd as SumProd
 import           Test.Util.TypeFamilyWrappers (WrapBlob (..), WrapBlobRef (..),
-                     WrapTableHandle (..))
+                     WrapCursor, WrapTableHandle (..))
 
 {-------------------------------------------------------------------------------
   IOSim
@@ -49,9 +49,11 @@ type family RealizeIOSim s a where
   RealizeIOSim s (TableHandle IO k v blob)       = TableHandle (IOSim s) k v blob
   RealizeIOSim s (LookupResult v blobref)        = LookupResult v (RealizeIOSim s blobref)
   RealizeIOSim s (QueryResult k v blobref)       = QueryResult k v (RealizeIOSim s blobref)
+  RealizeIOSim s (Cursor IO k v blob)            = TableHandle (IOSim s) k v blob
   RealizeIOSim s (BlobRef IO blob)               = BlobRef (IOSim s) blob
   -- Type family wrappers
   RealizeIOSim s (WrapTableHandle h IO k v blob) = WrapTableHandle h (IOSim s) k v blob
+  RealizeIOSim s (WrapCursor h IO k v blob)      = WrapCursor h (IOSim s) k v blob
   RealizeIOSim s (WrapBlobRef h IO blob)         = WrapBlobRef h (IOSim s) blob
   RealizeIOSim s (WrapBlob blob)                 = WrapBlob blob
   -- Congruence

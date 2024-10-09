@@ -395,6 +395,7 @@ test-suite lsm-tree-test
     , fs-api
     , fs-sim
     , io-classes
+    , io-classes:strict-mvar
     , io-classes:strict-stm
     , io-sim
     , lsm-tree

@@ -14,7 +14,6 @@ import qualified Data.List as List
 import qualified Data.List.NonEmpty as NE
 import           Data.Maybe (fromMaybe)
 import qualified Data.Proxy as Proxy
-import           Data.Typeable (Typeable)
 import qualified Data.Vector as V
 import qualified Data.Vector.Algorithms.Merge as VA
 import           Data.Word (Word64)
@@ -136,7 +135,6 @@ retrieveBlobsTrav ::
      , IOLike m
      , SerialiseValue blob
      , Traversable t
-     , Typeable m
      )
   => proxy h
   -> Session h m
@@ -155,7 +153,6 @@ lookupsWithBlobs :: forall h m k v blob.
      , SerialiseKey k
      , SerialiseValue v
      , SerialiseValue blob
-     , Typeable m
      )
   => h m k v blob
   -> Session h m
@@ -171,7 +168,6 @@ rangeLookupWithBlobs :: forall h m k v blob.
      , SerialiseKey k
      , SerialiseValue v
      , SerialiseValue blob
-     , Typeable m
      )
   => h m k v blob
   -> Session h m
@@ -187,7 +183,6 @@ readCursorWithBlobs :: forall h m k v blob proxy.
      , SerialiseKey k
      , SerialiseValue v
      , SerialiseValue blob
-     , Typeable m
      )
   => proxy h
   -> Session h m
@@ -204,7 +199,6 @@ readCursorAllWithBlobs :: forall h m k v blob proxy.
      , SerialiseKey k
      , SerialiseValue v
      , SerialiseValue blob
-     , Typeable m
      )
   => proxy h
   -> Session h m
