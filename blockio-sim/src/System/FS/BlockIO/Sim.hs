@@ -65,18 +65,26 @@ simTryLockFile hfs path lockmode =
       n <- readCount h
       case lockmode of
         SharedLock    | n >= 0 -> do writeCount h (n+1)
-                                     return (Just LockFileHandle { hUnlock })
+                                     mkLockFileHandle
         ExclusiveLock | n == 0 -> do writeCount h (-1)
-                                     return (Just LockFileHandle { hUnlock })
+                                     mkLockFileHandle
         _                      -> return Nothing
   where
-    hUnlock =
+    mkLockFileHandle = do
+      -- A lock file handle keeps open the file in read mode, such that a locked
+      -- file contributes to the number of open file handles. The mock FS allows
+      -- multiple readers and up to one writer to open the file concurrently.
+      h <- API.hOpen hfs path ReadMode
+      return (Just (LockFileHandle { hUnlock = hUnlock h }))
+
+    hUnlock h0 =
       API.withFile hfs path (ReadWriteMode AllowExisting) $ \h -> do
         n <- readCount h
         case lockmode of
           SharedLock    | n >  0  -> writeCount h (n-1)
           ExclusiveLock | n == -1 -> writeCount h 0
           _                       -> throwIO countCorrupt
+        hClose hfs h0
 
     readCount :: Handle h -> m Int
     readCount h = do
