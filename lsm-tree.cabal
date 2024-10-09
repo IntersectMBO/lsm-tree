@@ -152,6 +152,7 @@ library
     Database.LSMTree.Internal.RunReaders
     Database.LSMTree.Internal.Serialise
     Database.LSMTree.Internal.Serialise.Class
+    Database.LSMTree.Internal.Snapshot
     Database.LSMTree.Internal.UniqCounter
     Database.LSMTree.Internal.Unsliced
     Database.LSMTree.Internal.Vector

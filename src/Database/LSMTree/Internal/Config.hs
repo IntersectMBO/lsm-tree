@@ -80,10 +80,6 @@ instance NFData TableConfig where
   rnf (TableConfig a b c d e f g) =
       rnf a `seq` rnf b `seq` rnf c `seq` rnf d `seq` rnf e `seq` rnf f `seq` rnf g
 
--- | TODO: this should be removed once we have proper snapshotting with proper
--- persistence of the config to disk.
-deriving stock instance Read TableConfig
-
 -- | A reasonable default 'TableConfig'.
 --
 -- This uses a write buffer with up to 20,000 elements and a generous amount of
@@ -169,10 +165,6 @@ data MergePolicy =
 instance NFData MergePolicy where
   rnf MergePolicyLazyLevelling = ()
 
--- | TODO: this should be removed once we have proper snapshotting with proper
--- persistence of the config to disk.
-deriving stock instance Read MergePolicy
-
 {-------------------------------------------------------------------------------
   Size ratio
 -------------------------------------------------------------------------------}
@@ -182,10 +174,6 @@ data SizeRatio = Four
 
 instance NFData SizeRatio where
   rnf Four = ()
-
--- | TODO: this should be removed once we have proper snapshotting with proper
--- persistence of the config to disk.
-deriving stock instance Read SizeRatio
 
 sizeRatioInt :: SizeRatio -> Int
 sizeRatioInt = \case Four -> 4
@@ -213,14 +201,6 @@ data WriteBufferAlloc =
 
 instance NFData WriteBufferAlloc where
   rnf (AllocNumEntries n) = rnf n
-
--- | TODO: this should be removed once we have proper snapshotting with proper
--- persistence of the config to disk.
-deriving stock instance Read WriteBufferAlloc
-
--- | TODO: this should be removed once we have proper snapshotting with proper
--- persistence of the config to disk.
-deriving stock instance Read NumEntries
 
 {-------------------------------------------------------------------------------
   Bloom filter allocation
@@ -262,10 +242,6 @@ instance NFData BloomFilterAlloc where
   rnf (AllocFixed n)        = rnf n
   rnf (AllocRequestFPR fpr) = rnf fpr
   rnf (AllocMonkey a b)     = rnf a `seq` rnf b
-
--- | TODO: this should be removed once we have proper snapshotting with proper
--- persistence of the config to disk.
-deriving stock instance Read BloomFilterAlloc
 
 defaultBloomFilterAlloc :: BloomFilterAlloc
 defaultBloomFilterAlloc = AllocFixed 10
@@ -333,10 +309,6 @@ data FencePointerIndex =
 instance NFData FencePointerIndex where
   rnf CompactIndex  = ()
   rnf OrdinaryIndex = ()
-
--- | TODO: this should be removed once we have proper snapshotting with proper
--- persistence of the config to disk.
-deriving stock instance Read FencePointerIndex
 
 {-------------------------------------------------------------------------------
   Disk cache policy

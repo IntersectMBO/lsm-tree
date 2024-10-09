@@ -16,13 +16,17 @@ module Database.LSMTree.Internal.MergeSchedule (
   , Levels
   , Level (..)
   , MergingRun (..)
+  , NumRuns (..)
   , MergingRunState (..)
+  , NumStepsDone (..)
     -- * Flushes and scheduled merges
   , updatesWithInterleavedFlushes
   , flushWriteBuffer
     -- * Exported for cabal-docspec
   , MergePolicyForLevel (..)
   , maxRunSize
+    -- * Credits
+  , supplyCredits
   ) where
 
 import           Control.Concurrent.Class.MonadMVar.Strict
@@ -38,6 +42,8 @@ import           Control.TempRegistry
 import           Control.Tracer
 import           Data.BloomFilter (Bloom)
 import           Data.Foldable (traverse_)
+import           Data.Primitive (Prim)
+import           Data.Primitive.PrimVar
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Assertions (assert,
                      fromIntegralChecked)
@@ -260,12 +266,19 @@ data Level m h = Level {
 
 -- | A merging run is either a single run, or some ongoing merge.
 data MergingRun m h =
-    MergingRun !MergePolicyForLevel !Int !(StrictMVar m (MergingRunState m h))
+    MergingRun !MergePolicyForLevel !NumRuns !(StrictMVar m (MergingRunState m h))
   | SingleRun !(Run m (Handle h))
+
+newtype NumRuns = NumRuns { unNumRuns :: Int }
+  deriving stock (Show, Eq)
 
 data MergingRunState m h =
     CompletedMerge !(Run m (Handle h))
-  | OngoingMerge !(V.Vector (Run m (Handle h))) !(Merge m h)
+  | OngoingMerge !(V.Vector (Run m (Handle h))) !(PrimVar (PrimState m) NumStepsDone) !(Merge m h)
+
+newtype NumStepsDone = NumStepsDone { unNumStepsDone :: Int }
+  deriving stock (Show, Eq)
+  deriving newtype Prim
 
 {-# SPECIALISE addReferenceLevels :: TempRegistry IO -> Levels IO h -> IO () #-}
 addReferenceLevels ::
@@ -305,7 +318,7 @@ forRunAndMergeM_ lvls k1 k2 = V.forM_ lvls $ \(Level mr rs) -> do
       SingleRun r    -> k1 r
       MergingRun _ _ var -> withMVar var $ \case
         CompletedMerge r -> k1 r
-        OngoingMerge irs m -> V.mapM_ k1 irs >> k2 m
+        OngoingMerge irs _ m -> V.mapM_ k1 irs >> k2 m
     V.mapM_ k1 rs
 
 {-# SPECIALISE foldRunM ::
@@ -324,7 +337,7 @@ foldRunM f x lvls = flip (flip V.foldM x) lvls $ \y (Level mr rs) -> do
       SingleRun r -> f y r
       MergingRun _ _ var -> withMVar var $ \case
         CompletedMerge r -> f y r
-        OngoingMerge irs _m -> V.foldM f y irs
+        OngoingMerge irs _ _m -> V.foldM f y irs
     V.foldM f z rs
 
 {-# SPECIALISE forRunM ::
@@ -695,7 +708,7 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
         CompletedMerge r -> do
           traceWith tr $ AtLevel ln $ TraceExpectCompletedMerge (runNumber $ Run.runRunFsPaths r)
           pure r
-        OngoingMerge _rs _m -> error "expectCompletedMerge: OngoingMerge not yet supported" -- TODO: implement.
+        OngoingMerge _rs _ _m -> error "expectCompletedMerge: OngoingMerge not yet supported" -- TODO: implement.
 
     newMerge :: MergePolicyForLevel
              -> Merge.Level
@@ -722,7 +735,7 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
             traceWith tr $ AtLevel ln $ TraceCompletedMerge (Run.runNumEntries r) (runNumber $ Run.runRunFsPaths r)
             V.mapM_ (freeTemp reg . Run.removeReference) rs
             var <- newMVar $! CompletedMerge r
-            pure $! MergingRun mergepolicy (V.length rs) var
+            pure $! MergingRun mergepolicy (NumRuns $ V.length rs) var
           Incremental -> do
             mergeMaybe <- allocateTemp reg
               (Merge.new hfs hbio caching alloc mergelast resolve runPaths rs)
@@ -730,11 +743,12 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
             case mergeMaybe of
               Nothing -> error "newMerge: merges can not be empty"
               Just m -> do
-                var <- newMVar $! OngoingMerge rs m
-                pure $! MergingRun mergepolicy (V.length rs) var
+                pvar <- newPrimVar $! NumStepsDone 0
+                var <- newMVar $! OngoingMerge rs pvar m
+                pure $! MergingRun mergepolicy (NumRuns $ V.length rs) var
 
 data MergePolicyForLevel = LevelTiering | LevelLevelling
-  deriving stock Show
+  deriving stock (Show, Eq)
 
 mergePolicyForLevel :: MergePolicy -> LevelNo -> Levels m h -> MergePolicyForLevel
 mergePolicyForLevel MergePolicyLazyLevelling (LevelNo n) nextLevels
@@ -835,9 +849,9 @@ supplyCredits c levels =
     supplyMergeCredits (ceiling (fromIntegral c * cr)) mr
 
 creditsForMerge :: MergingRun m h -> Rational
-creditsForMerge SingleRun{}                         = 0
-creditsForMerge (MergingRun LevelLevelling _ _)     = 1 + 4
-creditsForMerge (MergingRun LevelTiering numRuns _) = fromIntegral numRuns / 4
+creditsForMerge SingleRun{}                             = 0
+creditsForMerge (MergingRun LevelLevelling _ _)         = 1 + 4
+creditsForMerge (MergingRun LevelTiering (NumRuns n) _) = fromIntegral n / 4
 
 {-# SPECIALISE supplyMergeCredits ::
      Credit
@@ -856,13 +870,14 @@ supplyMergeCredits _ SingleRun{} = pure ()
 supplyMergeCredits c (MergingRun _ _ var) = do
     b <- withMVar var $ \case
       CompletedMerge{} -> pure False
-      (OngoingMerge _rs m) -> do
-        (_n, stepResult) <- Merge.steps m c
+      (OngoingMerge _rs pvar m) -> do
+        (n, stepResult) <- Merge.steps m c
+        writePrimVar pvar $! NumStepsDone n
         pure $ stepResult == MergeComplete
     when b $
       modifyMVarMasked_ var $ \case
         mr@CompletedMerge{} -> pure $! mr
-        (OngoingMerge rs m) -> do
+        (OngoingMerge rs _var m) -> do
           RefCount n <- Merge.readRefCount m
           let !n' = fromIntegralChecked n
           V.forM_ rs $ \r -> Run.removeReferenceN r n'

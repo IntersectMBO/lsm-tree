@@ -173,7 +173,7 @@ prop_interimOpenTable dat = ioProperty $
           updates const upds th
           let snap = fromMaybe (error "invalid name") $ mkSnapshotName "snap"
           numRunsSnapped <- snapshot const snap "someLabel" th
-          th' <- open sesh "someLabel" configNoOverride snap
+          th' <- open sesh "someLabel" configNoOverride snap const
           lhs <- fetchBlobs hfs =<< lookups const ks th
           rhs <- fetchBlobs hfs =<< lookups const ks th'
           -- We must fetch blobs because comparing blob references is meaningless
