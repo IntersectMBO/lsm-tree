@@ -26,22 +26,26 @@ module Database.LSMTree.Internal.MergeSchedule (
   ) where
 
 import           Control.Concurrent.Class.MonadMVar.Strict
+import           Control.Monad (when)
 import           Control.Monad.Class.MonadST (MonadST)
 import           Control.Monad.Class.MonadSTM (MonadSTM (..))
 import           Control.Monad.Class.MonadThrow (MonadCatch, MonadMask,
                      MonadThrow (..))
 import           Control.Monad.Fix (MonadFix)
 import           Control.Monad.Primitive
+import           Control.RefCount (RefCount (..))
 import           Control.TempRegistry
 import           Control.Tracer
 import           Data.BloomFilter (Bloom)
+import           Data.Foldable (traverse_)
 import qualified Data.Vector as V
-import           Database.LSMTree.Internal.Assertions (assert)
+import           Database.LSMTree.Internal.Assertions (assert,
+                     fromIntegralChecked)
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.Entry (Entry, NumEntries (..))
 import           Database.LSMTree.Internal.IndexCompact (IndexCompact)
 import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
-import           Database.LSMTree.Internal.Merge (Merge)
+import           Database.LSMTree.Internal.Merge (Merge, StepResult (..))
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..),
                      SessionRoot (..))
@@ -199,6 +203,12 @@ mkLevelsCache reg lvls = do
 --
 -- * Keep the cache feature, but force a rebuild every once in a while, e.g.,
 --   once in every 100 lookups.
+--
+-- TODO: rebuilding the cache can invalidate blob references if the cache was
+-- holding the last reference to a run. This is not really a problem of just the
+-- caching approach, but allowing merges to finish early. We should come up with
+-- a solution to keep blob references valid until the next /update/ comes along.
+-- Lookups should no invalidate blob erferences.
 rebuildCache ::
      (PrimMonad m, MonadMVar m, MonadMask m)
   => TempRegistry m
@@ -250,7 +260,7 @@ data Level m h = Level {
 
 -- | A merging run is either a single run, or some ongoing merge.
 data MergingRun m h =
-    MergingRun !(StrictMVar m (MergingRunState m h))
+    MergingRun !MergePolicyForLevel !Int !(StrictMVar m (MergingRunState m h))
   | SingleRun !(Run m (Handle h))
 
 data MergingRunState m h =
@@ -293,7 +303,7 @@ forRunAndMergeM_ ::
 forRunAndMergeM_ lvls k1 k2 = V.forM_ lvls $ \(Level mr rs) -> do
     case mr of
       SingleRun r    -> k1 r
-      MergingRun var -> withMVar var $ \case
+      MergingRun _ _ var -> withMVar var $ \case
         CompletedMerge r -> k1 r
         OngoingMerge irs m -> V.mapM_ k1 irs >> k2 m
     V.mapM_ k1 rs
@@ -312,7 +322,7 @@ foldRunM ::
 foldRunM f x lvls = flip (flip V.foldM x) lvls $ \y (Level mr rs) -> do
     z <- case mr of
       SingleRun r -> f y r
-      MergingRun var -> withMVar var $ \case
+      MergingRun _ _ var -> withMVar var $ \case
         CompletedMerge r -> f y r
         OngoingMerge irs _m -> V.foldM f y irs
     V.foldM f z rs
@@ -390,6 +400,7 @@ updatesWithInterleavedFlushes tr conf resolve hfs hbio root uc es reg tc = do
     let wb = tableWriteBuffer tc
         wbblobs = tableWriteBufferBlobs tc
     (wb', es') <- addWriteBufferEntries hfs resolve wbblobs maxn wb es
+    supplyCredits (V.length es - V.length es') (tableLevels tc)
     let tc' = tc { tableWriteBuffer = wb' }
     if WB.numEntries wb' < maxn then do
       pure $! tc'
@@ -634,9 +645,6 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
         mr <- newMerge policyForLevel Merge.LastLevel ln rs
         return $ V.singleton $ Level mr V.empty
     go !ln rs' (V.uncons -> Just (Level mr rs, ls)) = do
-        -- TODO: until we have proper scheduling, the merging run is actually
-        -- always stepped to completion immediately, so we can see it is just a
-        -- single run.
         r <- expectCompletedMerge ln mr
         case mergePolicyForLevel confMergePolicy ln ls of
           -- If r is still too small for this level then keep it and merge again
@@ -682,15 +690,13 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
     expectCompletedMerge ln (SingleRun r) = do
       traceWith tr $ AtLevel ln $ TraceExpectCompletedMergeSingleRun (runNumber $ Run.runRunFsPaths r)
       pure r
-    expectCompletedMerge ln (MergingRun var) = do
+    expectCompletedMerge ln (MergingRun _ _ var) = do
       withMVar var $ \case
         CompletedMerge r -> do
           traceWith tr $ AtLevel ln $ TraceExpectCompletedMerge (runNumber $ Run.runRunFsPaths r)
           pure r
         OngoingMerge _rs _m -> error "expectCompletedMerge: OngoingMerge not yet supported" -- TODO: implement.
 
-    -- TODO: Until we implement proper scheduling, this does not only start a
-    -- merge, but it also steps it to completion.
     newMerge :: MergePolicyForLevel
              -> Merge.Level
              -> LevelNo
@@ -715,9 +721,17 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
                   Run.removeReference
             traceWith tr $ AtLevel ln $ TraceCompletedMerge (Run.runNumEntries r) (runNumber $ Run.runRunFsPaths r)
             V.mapM_ (freeTemp reg . Run.removeReference) rs
-            var <- newMVar (CompletedMerge r)
-            pure $! MergingRun var
-          Incremental -> error "newMerge: Incremental is not yet supported" -- TODO: implement
+            var <- newMVar $! CompletedMerge r
+            pure $! MergingRun mergepolicy (V.length rs) var
+          Incremental -> do
+            mergeMaybe <- allocateTemp reg
+              (Merge.new hfs hbio caching alloc mergelast resolve runPaths rs)
+              (traverse_ Merge.removeReference)
+            case mergeMaybe of
+              Nothing -> error "newMerge: merges can not be empty"
+              Just m -> do
+                var <- newMVar $! OngoingMerge rs m
+                pure $! MergingRun mergepolicy (V.length rs) var
 
 data MergePolicyForLevel = LevelTiering | LevelLevelling
   deriving stock Show
@@ -797,3 +811,61 @@ mergeRuns resolve hfs hbio caching alloc runPaths mergeLevel runs = do
     Merge.new hfs hbio caching alloc mergeLevel resolve runPaths runs >>= \case
       Nothing -> error "mergeRuns: no inputs"
       Just m -> Merge.stepsToCompletion m 1024
+
+{-------------------------------------------------------------------------------
+  Credits
+-------------------------------------------------------------------------------}
+
+type Credit = Int
+
+{-# SPECIALISE supplyCredits ::
+     Credit
+  -> Levels IO h
+  -> IO ()
+  #-}
+supplyCredits ::
+     (MonadSTM m, MonadST m, MonadMVar m, MonadMask m, MonadFix m)
+  => Credit
+  -> Levels m h
+  -> m ()
+supplyCredits c levels =
+    V.iforM_ levels $ \_i (Level mr _rs) ->
+    -- let !ln = i + 1 in
+    let !cr = creditsForMerge mr in
+    supplyMergeCredits (ceiling (fromIntegral c * cr)) mr
+
+creditsForMerge :: MergingRun m h -> Rational
+creditsForMerge SingleRun{}                         = 0
+creditsForMerge (MergingRun LevelLevelling _ _)     = 1 + 4
+creditsForMerge (MergingRun LevelTiering numRuns _) = fromIntegral numRuns / 4
+
+{-# SPECIALISE supplyMergeCredits ::
+     Credit
+  -> MergingRun IO h
+  -> IO ()
+  #-}
+-- TODO: implement doing merge werk in batches, instead of always taking the
+-- MVar. The thresholds for doing merge work should be different for each level,
+-- maybe co-prime?
+supplyMergeCredits ::
+     (MonadSTM m, MonadST m, MonadMVar m, MonadMask m, MonadFix m)
+  => Credit
+  -> MergingRun m h
+  -> m ()
+supplyMergeCredits _ SingleRun{} = pure ()
+supplyMergeCredits c (MergingRun _ _ var) = do
+    b <- withMVar var $ \case
+      CompletedMerge{} -> pure False
+      (OngoingMerge _rs m) -> do
+        (_n, stepResult) <- Merge.steps m c
+        pure $ stepResult == MergeComplete
+    when b $
+      modifyMVarMasked_ var $ \case
+        mr@CompletedMerge{} -> pure $! mr
+        (OngoingMerge rs m) -> do
+          RefCount n <- Merge.readRefCount m
+          let !n' = fromIntegralChecked n
+          V.forM_ rs $ \r -> Run.removeReferenceN r n'
+          r <- Merge.complete m
+          Merge.removeReferenceN m n'
+          pure $! CompletedMerge r
