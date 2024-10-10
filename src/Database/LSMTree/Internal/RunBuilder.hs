@@ -20,7 +20,7 @@ import           Control.Monad.Primitive
 import           Data.BloomFilter (Bloom)
 import qualified Data.ByteString.Lazy as BSL
 import           Data.Foldable (for_, traverse_)
-import           Data.Primitive
+import           Data.Primitive.PrimVar
 import           Data.Word (Word64)
 import           Database.LSMTree.Internal.BlobRef (BlobRef, BlobSpan (..))
 import qualified Database.LSMTree.Internal.BlobRef as BlobRef
@@ -66,7 +66,7 @@ data RunBuilder m h = RunBuilder {
     , runBuilderAcc        :: !(RunAcc (PrimState m))
 
       -- | The byte offset within the blob file for the next blob to be written.
-    , runBuilderBlobOffset :: !(MutVar (PrimState m) Word64)
+    , runBuilderBlobOffset :: !(PrimVar (PrimState m) Word64)
 
       -- | The (write mode) file handles.
     , runBuilderHandles    :: {-# UNPACK #-} !(ForRunFiles (ChecksumHandle (PrimState m) h))
@@ -95,7 +95,7 @@ new ::
   -> m (RunBuilder m h)
 new fs hbio runBuilderFsPaths numEntries alloc = do
     runBuilderAcc <- ST.stToIO $ RunAcc.new numEntries alloc
-    runBuilderBlobOffset <- newMutVar 0
+    runBuilderBlobOffset <- newPrimVar 0
 
     runBuilderHandles <- traverse (makeHandle fs) (pathsForRunFiles runBuilderFsPaths)
 
@@ -266,8 +266,8 @@ writeBlob ::
   -> m BlobSpan
 writeBlob RunBuilder{..} blob = do
     let size = sizeofBlob64 blob
-    offset <- readMutVar runBuilderBlobOffset
-    modifyMutVar' runBuilderBlobOffset (+size)
+    offset <- readPrimVar runBuilderBlobOffset
+    modifyPrimVar runBuilderBlobOffset (+size)
     let SerialisedBlob rb = blob
     let lbs = BSL.fromStrict $ RB.toByteString rb
     writeToHandle runBuilderHasFS (forRunBlob runBuilderHandles) lbs
@@ -342,7 +342,7 @@ writeIndexFinal RunBuilder {..} numEntries index =
 -------------------------------------------------------------------------------}
 
 -- | Tracks the checksum of a (write mode) file handle.
-data ChecksumHandle s h = ChecksumHandle !(FS.Handle h) !(MutVar s CRC32C)
+data ChecksumHandle s h = ChecksumHandle !(FS.Handle h) !(PrimVar s CRC32C)
 
 {-# SPECIALISE makeHandle ::
      HasFS IO h
@@ -356,7 +356,7 @@ makeHandle ::
 makeHandle fs path =
     ChecksumHandle
       <$> FS.hOpen fs path (FS.WriteMode FS.MustBeNew)
-      <*> newMutVar CRC.initialCRC32C
+      <*> newPrimVar CRC.initialCRC32C
 
 {-# SPECIALISE readChecksum ::
      ChecksumHandle RealWorld h
@@ -365,7 +365,7 @@ readChecksum ::
      PrimMonad m
   => ChecksumHandle (PrimState m) h
   -> m CRC32C
-readChecksum (ChecksumHandle _h checksum) = readMutVar checksum
+readChecksum (ChecksumHandle _h checksum) = readPrimVar checksum
 
 dropCache :: HasBlockIO m h -> ChecksumHandle (PrimState m) h -> m ()
 dropCache hbio (ChecksumHandle h _) = FS.hDropCacheAll hbio h
@@ -385,6 +385,6 @@ writeToHandle ::
   -> BSL.ByteString
   -> m ()
 writeToHandle fs (ChecksumHandle h checksum) lbs = do
-    crc <- readMutVar checksum
+    crc <- readPrimVar checksum
     (_, crc') <- CRC.hPutAllChunksCRC32C fs h lbs crc
-    writeMutVar checksum crc'
+    writePrimVar checksum crc'

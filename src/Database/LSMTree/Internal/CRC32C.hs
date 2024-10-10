@@ -3,6 +3,10 @@
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
+-- Needed by GHC <= 9.2 for newtype deriving Prim below
+{-# LANGUAGE DataKinds           #-}
+{-# LANGUAGE UnboxedTuples       #-}
+
 -- | Functionalty related to CRC-32C (Castagnoli) checksums:
 --
 -- * Support for calculating checksums while incrementally writing files.
@@ -65,6 +69,7 @@ import           System.FS.BlockIO.API (ByteCount)
 
 newtype CRC32C = CRC32C Word32
   deriving stock (Eq, Ord, Show)
+  deriving newtype (Prim)
 
 
 initialCRC32C :: CRC32C
