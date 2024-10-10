@@ -77,26 +77,23 @@ import           Data.Constraint (Dict (..))
 import           Data.Kind (Type)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (catMaybes, fromJust)
-import           Data.Semigroup (Sum (..))
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Typeable (Proxy (..), Typeable, cast, eqT,
                      type (:~:) (Refl), typeRep)
 import qualified Data.Vector as V
 import           Data.Word (Word64)
+import           Database.LSMTree.Class.Normal (LookupResult (..),
+                     QueryResult (..))
 import qualified Database.LSMTree.Class.Normal as Class
 import           Database.LSMTree.Extras (showPowersOf)
 import           Database.LSMTree.Extras.Generators (KeyForIndexCompact)
 import           Database.LSMTree.Extras.NoThunks (assertNoThunks)
 import           Database.LSMTree.Internal (LSMTreeError (..))
 import qualified Database.LSMTree.Internal as R.Internal
-import           Database.LSMTree.Monoidal (ResolveValue (resolveValue),
-                     resolveDeserialised)
+import qualified Database.LSMTree.Model.Instance.Normal as Model
+import qualified Database.LSMTree.Model.Session as Model
 import qualified Database.LSMTree.Normal as R
-import qualified Database.LSMTree.SessionModel as M2
-import qualified Database.LSMTree.SessionModel as Model
-import qualified Database.LSMTree.TableModel as Model (LookupResult (..),
-                     QueryResult)
 import           NoThunks.Class
 import           Prelude hiding (init)
 import           System.Directory (removeDirectoryRecursive)
@@ -150,32 +147,32 @@ tests = testGroup "Normal.StateMachine" [
 labelledExamples :: IO ()
 labelledExamples = QC.labelledExamples $ Lockstep.Run.tagActions (Proxy @(ModelState R.TableHandle))
 
-instance Arbitrary M2.TableConfig where
-  arbitrary :: Gen M2.TableConfig
-  arbitrary = pure M2.TableConfig
+instance Arbitrary Model.TableConfig where
+  arbitrary :: Gen Model.TableConfig
+  arbitrary = pure Model.TableConfig
 
 propLockstep_ModelIOImpl ::
-     Actions (Lockstep (ModelState Class.MTableHandle))
+     Actions (Lockstep (ModelState Model.MTableHandle))
   -> QC.Property
 propLockstep_ModelIOImpl =
     runActionsBracket'
-      (Proxy @(ModelState Class.MTableHandle))
+      (Proxy @(ModelState Model.MTableHandle))
       acquire
       release
       (\r session -> runReaderT r (session, handler))
       tagFinalState'
   where
-    acquire :: IO (WrapSession Class.MTableHandle IO)
-    acquire = WrapSession <$> Class.openSession Class.NoMSessionArgs
+    acquire :: IO (WrapSession Model.MTableHandle IO)
+    acquire = WrapSession <$> Class.openSession Model.NoMSessionArgs
 
-    release :: WrapSession Class.MTableHandle IO -> IO ()
+    release :: WrapSession Model.MTableHandle IO -> IO ()
     release (WrapSession session) = Class.closeSession session
 
     handler :: Handler IO (Maybe Model.Err)
     handler = Handler $ pure . handler'
       where
-        handler' :: Class.MErr -> Maybe Model.Err
-        handler' (Class.MErr err) = Just err
+        handler' :: Model.MErr -> Maybe Model.Err
+        handler' (Model.MErr err) = Just err
 
 instance Arbitrary R.TableConfig where
   arbitrary = do
@@ -230,8 +227,8 @@ instance Arbitrary R.WriteBufferAlloc where
       | QC.Positive x' <- QC.shrink (QC.Positive x)
       ]
 
-deriving via AllowThunk (Class.MSession IO)
-    instance NoThunks (Class.MSession IO)
+deriving via AllowThunk (Model.MSession IO)
+    instance NoThunks (Model.MSession IO)
 
 propLockstep_RealImpl_RealFS_IO ::
      Tracer IO R.LSMTreeTrace
@@ -362,7 +359,6 @@ newtype Key1   = Key1   { _unKey1 :: QC.Small Word64 }
 newtype Value1 = Value1 { _unValue1 :: QC.Small Word64 }
   deriving stock (Show, Eq, Ord)
   deriving newtype (Arbitrary, R.SerialiseValue)
-  deriving Semigroup via Sum Word64
 newtype Blob1  = Blob1  { _unBlob1 :: QC.Small Word64 }
 
   deriving stock (Show, Eq, Ord)
@@ -371,25 +367,19 @@ newtype Blob1  = Blob1  { _unBlob1 :: QC.Small Word64 }
 instance R.Labellable (Key1, Value1, Blob1) where
   makeSnapshotLabel _ = "Key1 Value1 Blob1"
 
-instance ResolveValue Value1 where
-  resolveValue = resolveDeserialised (<>)
-
 newtype Key2   = Key2   { _unKey2   :: KeyForIndexCompact }
   deriving stock (Show, Eq, Ord)
   deriving newtype (Arbitrary, R.SerialiseKey)
 
 newtype Value2 = Value2 { _unValue2 :: BS.ByteString }
   deriving stock (Show, Eq, Ord)
-  deriving newtype (Semigroup, Arbitrary, R.SerialiseValue)
+  deriving newtype (Arbitrary, R.SerialiseValue)
 newtype Blob2  = Blob2  { _unBlob2  :: BS.ByteString }
   deriving stock (Show, Eq, Ord)
   deriving newtype (Arbitrary, R.SerialiseValue)
 
 instance R.Labellable (Key2, Value2, Blob2) where
   makeSnapshotLabel _ = "Key2 Value2 Blob2"
-
-instance ResolveValue Value2 where
-  resolveValue = resolveDeserialised (<>)
 
 {-------------------------------------------------------------------------------
   Model state
@@ -412,13 +402,13 @@ type Val h a = ModelValue (ModelState h) a
 type Obs h a = Observable (ModelState h) a
 
 type K a = (
-    Model.C_ a
+    Class.C_ a
   , R.SerialiseKey a
   , Arbitrary a
   )
 
 type V a = (
-    Model.C_ a
+    Class.C_ a
   , R.SerialiseValue a
   , Arbitrary a
   )
@@ -433,7 +423,6 @@ type C k v blob = (K k, V v, V blob)
 instance ( Show (Class.TableConfig h)
          , Eq (Class.TableConfig h)
          , Arbitrary (Class.TableConfig h)
-         , Typeable (Class.Cursor h)
          , Typeable h
          ) => StateModel (Lockstep (ModelState h)) where
   data instance Action (Lockstep (ModelState h)) a where
@@ -448,10 +437,10 @@ instance ( Show (Class.TableConfig h)
     -- Queries
     Lookups :: C k v blob
             => V.Vector k -> Var h (WrapTableHandle h IO k v blob)
-            -> Act h (V.Vector (R.LookupResult v (WrapBlobRef h IO blob)))
+            -> Act h (V.Vector (LookupResult v (WrapBlobRef h IO blob)))
     RangeLookup :: C k v blob
                 => R.Range k -> Var h (WrapTableHandle h IO k v blob)
-                -> Act h (V.Vector (R.QueryResult k v (WrapBlobRef h IO blob)))
+                -> Act h (V.Vector (QueryResult k v (WrapBlobRef h IO blob)))
     -- Cursor
     NewCursor :: C k v blob
               => Maybe k
@@ -463,15 +452,15 @@ instance ( Show (Class.TableConfig h)
     ReadCursor :: C k v blob
                => Int
                -> Var h (WrapCursor h IO k v blob)
-               -> Act h (V.Vector (R.QueryResult k v (WrapBlobRef h IO blob)))
+               -> Act h (V.Vector (QueryResult k v (WrapBlobRef h IO blob)))
     -- Updates
-    Updates :: (C k v blob, ResolveValue v)
+    Updates :: C k v blob
             => V.Vector (k, R.Update v blob) -> Var h (WrapTableHandle h IO k v blob)
             -> Act h ()
-    Inserts :: (C k v blob, ResolveValue v)
+    Inserts :: C k v blob
             => V.Vector (k, v, Maybe blob) -> Var h (WrapTableHandle h IO k v blob)
             -> Act h ()
-    Deletes :: (C k v blob, ResolveValue v)
+    Deletes :: C k v blob
             => V.Vector k -> Var h (WrapTableHandle h IO k v blob)
             -> Act h ()
     -- Blobs
@@ -512,7 +501,6 @@ deriving stock instance Show (Class.TableConfig h)
 
 instance ( Eq (Class.TableConfig h)
          , Typeable h
-         , Typeable (Class.Cursor h)
          ) => Eq (LockstepAction (ModelState h) a) where
   (==) :: LockstepAction (ModelState h) a -> LockstepAction (ModelState h) a -> Bool
   x == y = go x y
@@ -579,7 +567,6 @@ instance ( Eq (Class.TableConfig h)
          , Show (Class.TableConfig h)
          , Arbitrary (Class.TableConfig h)
          , Typeable h
-         , Typeable (Class.Cursor h)
          ) => InLockstep (ModelState h) where
   type instance ModelOp (ModelState h) = Op
 
@@ -587,15 +574,15 @@ instance ( Eq (Class.TableConfig h)
     MTableHandle :: Model.TableHandle k v blob
                  -> Val h (WrapTableHandle h IO k v blob)
     MCursor :: Model.Cursor k v blob -> Val h (WrapCursor h IO k v blob)
-    MBlobRef :: Model.C_ blob
+    MBlobRef :: Class.C_ blob
              => Model.BlobRef blob -> Val h (WrapBlobRef h IO blob)
 
-    MLookupResult :: (Model.C_ v, Model.C_ blob)
-                  => Model.LookupResult v (Val h (WrapBlobRef h IO blob))
-                  -> Val h (R.LookupResult v (WrapBlobRef h IO blob))
-    MQueryResult :: Model.C k v blob
-                 => Model.QueryResult k v (Val h (WrapBlobRef h IO blob))
-                 -> Val h (R.QueryResult k v (WrapBlobRef h IO blob))
+    MLookupResult :: (Class.C_ v, Class.C_ blob)
+                  => LookupResult v (Val h (WrapBlobRef h IO blob))
+                  -> Val h (LookupResult v (WrapBlobRef h IO blob))
+    MQueryResult :: Class.C k v blob
+                 => QueryResult k v (Val h (WrapBlobRef h IO blob))
+                 -> Val h (QueryResult k v (WrapBlobRef h IO blob))
 
     MBlob :: (Show blob, Typeable blob, Eq blob)
           => WrapBlob blob -> Val h (WrapBlob blob)
@@ -613,12 +600,12 @@ instance ( Eq (Class.TableConfig h)
     OCursor :: Obs h (WrapCursor h IO k v blob)
     OBlobRef :: Obs h (WrapBlobRef h IO blob)
 
-    OLookupResult :: (Model.C_ v, Model.C_ blob)
-                  => Model.LookupResult v (Obs h (WrapBlobRef h IO blob))
-                  -> Obs h (R.LookupResult v (WrapBlobRef h IO blob))
-    OQueryResult :: Model.C k v blob
-                 => Model.QueryResult k v (Obs h (WrapBlobRef h IO blob))
-                 -> Obs h (R.QueryResult k v (WrapBlobRef h IO blob))
+    OLookupResult :: (Class.C_ v, Class.C_ blob)
+                  => LookupResult v (Obs h (WrapBlobRef h IO blob))
+                  -> Obs h (LookupResult v (WrapBlobRef h IO blob))
+    OQueryResult :: Class.C k v blob
+                 => QueryResult k v (Obs h (WrapBlobRef h IO blob))
+                 -> Obs h (QueryResult k v (WrapBlobRef h IO blob))
     OBlob :: (Show blob, Typeable blob, Eq blob)
           => WrapBlob blob -> Obs h (WrapBlob blob)
 
@@ -759,7 +746,6 @@ instance ( Eq (Class.TableConfig h)
          , Class.IsTableHandle h
          , Show (Class.TableConfig h)
          , Arbitrary (Class.TableConfig h)
-         , Typeable (Class.Cursor h)
          , Typeable h
          , NoThunks (Class.Session h IO)
          ) => RunLockstep (ModelState h) (RealMonad h IO) where
@@ -772,13 +758,13 @@ instance ( Eq (Class.TableConfig h)
       New{}            -> OEither $ bimap OId (const OTableHandle) result
       Close{}          -> OEither $ bimap OId OId result
       Lookups{}        -> OEither $
-          bimap OId (OVector . fmap (OLookupResult . Class.convLookupResult' . fmap (const OBlobRef))) result
+          bimap OId (OVector . fmap (OLookupResult . fmap (const OBlobRef))) result
       RangeLookup{}    -> OEither $
-          bimap OId (OVector . fmap (OQueryResult . Class.convQueryResult' . fmap (const OBlobRef))) result
+          bimap OId (OVector . fmap (OQueryResult . fmap (const OBlobRef))) result
       NewCursor{}      -> OEither $ bimap OId (const OCursor) result
       CloseCursor{}    -> OEither $ bimap OId OId result
       ReadCursor{}     -> OEither $
-          bimap OId (OVector . fmap (OQueryResult . Class.convQueryResult' .  fmap (const OBlobRef))) result
+          bimap OId (OVector . fmap (OQueryResult . fmap (const OBlobRef))) result
       Updates{}        -> OEither $ bimap OId OId result
       Inserts{}        -> OEither $ bimap OId OId result
       Deletes{}        -> OEither $ bimap OId OId result
@@ -815,7 +801,6 @@ instance ( Eq (Class.TableConfig h)
          , Class.IsTableHandle h
          , Show (Class.TableConfig h)
          , Arbitrary (Class.TableConfig h)
-         , Typeable (Class.Cursor h)
          , Typeable h
          ) => RunLockstep (ModelState h) (RealMonad h (IOSim s)) where
   observeReal ::
@@ -827,13 +812,13 @@ instance ( Eq (Class.TableConfig h)
       New{}            -> OEither $ bimap OId (const OTableHandle) result
       Close{}          -> OEither $ bimap OId OId result
       Lookups{}        -> OEither $
-          bimap OId (OVector . fmap (OLookupResult . Class.convLookupResult' .fmap (const OBlobRef))) result
+          bimap OId (OVector . fmap (OLookupResult . fmap (const OBlobRef))) result
       RangeLookup{}    -> OEither $
-          bimap OId (OVector . fmap (OQueryResult . Class.convQueryResult' . fmap (const OBlobRef))) result
+          bimap OId (OVector . fmap (OQueryResult . fmap (const OBlobRef))) result
       NewCursor{}      -> OEither $ bimap OId (const OCursor) result
       CloseCursor{}    -> OEither $ bimap OId OId result
       ReadCursor{}     -> OEither $
-          bimap OId (OVector . fmap (OQueryResult . Class.convQueryResult' . fmap (const OBlobRef))) result
+          bimap OId (OVector . fmap (OQueryResult . fmap (const OBlobRef))) result
       Updates{}        -> OEither $ bimap OId OId result
       Inserts{}        -> OEither $ bimap OId OId result
       Deletes{}        -> OEither $ bimap OId OId result
@@ -874,7 +859,6 @@ instance ( Eq (Class.TableConfig h)
          , Class.IsTableHandle h
          , Show (Class.TableConfig h)
          , Arbitrary (Class.TableConfig h)
-         , Typeable (Class.Cursor h)
          , Typeable h
          , NoThunks (Class.Session h IO)
          ) => RunModel (Lockstep (ModelState h)) (RealMonad h IO) where
@@ -886,7 +870,6 @@ instance ( Eq (Class.TableConfig h)
          , Class.IsTableHandle h
          , Show (Class.TableConfig h)
          , Arbitrary (Class.TableConfig h)
-         , Typeable (Class.Cursor h)
          , Typeable h
          ) => RunModel (Lockstep (ModelState h)) (RealMonad h (IOSim s)) where
   perform _     = runIOSim
@@ -902,38 +885,54 @@ runModel ::
   -> LockstepAction (ModelState h) a
   -> Model.Model -> (Val h a, Model.Model)
 runModel lookUp = \case
-    New _ _cfg -> wrap MTableHandle .
-      Model.runModelM (Model.new Model.TableConfig)
-    Close tableVar -> wrap MUnit .
-      Model.runModelM (Model.close (getTableHandle $ lookUp tableVar))
-    Lookups ks tableVar -> wrap (MVector . fmap (MLookupResult . fmap MBlobRef)) .
-      Model.runModelM (Model.lookups ks (getTableHandle $ lookUp tableVar))
-    RangeLookup range tableVar -> wrap (MVector . fmap (MQueryResult . fmap MBlobRef)) .
-      Model.runModelM (Model.rangeLookup range (getTableHandle $ lookUp tableVar))
-    NewCursor offset tableVar -> wrap MCursor .
-      Model.runModelM (Model.newCursor offset (getTableHandle $ lookUp tableVar))
-    CloseCursor cursorVar -> wrap MUnit .
-      Model.runModelM (Model.closeCursor (getCursor $ lookUp cursorVar))
-    ReadCursor n cursorVar -> wrap (MVector . fmap (MQueryResult . fmap MBlobRef)) .
-      Model.runModelM (Model.readCursor n (getCursor $ lookUp cursorVar))
-    Updates kups tableVar -> wrap MUnit .
-      Model.runModelM (Model.updates (fmap (fmap Class.convUpdate) kups) (getTableHandle $ lookUp tableVar))
-    Inserts kins tableVar -> wrap MUnit .
-      Model.runModelM (Model.inserts kins (getTableHandle $ lookUp tableVar))
-    Deletes kdels tableVar -> wrap MUnit .
-      Model.runModelM (Model.deletes kdels (getTableHandle $ lookUp tableVar))
-    RetrieveBlobs blobsVar -> wrap (MVector . fmap (MBlob . WrapBlob)) .
-      Model.runModelM (Model.retrieveBlobs (getBlobRefs . lookUp $ blobsVar))
-    Snapshot name tableVar -> wrap MUnit .
-      Model.runModelM (Model.snapshot name (getTableHandle $ lookUp tableVar))
-    Open name -> wrap MTableHandle .
-      Model.runModelM (Model.open name)
-    DeleteSnapshot name -> wrap MUnit .
-      Model.runModelM (Model.deleteSnapshot name)
-    ListSnapshots -> wrap (MList . fmap MSnapshotName) .
-      Model.runModelM Model.listSnapshots
-    Duplicate tableVar -> wrap MTableHandle .
-      Model.runModelM (Model.duplicate (getTableHandle $ lookUp tableVar))
+    New _ _cfg ->
+      wrap MTableHandle
+      . Model.runModelM (Model.new Model.TableConfig)
+    Close tableVar ->
+      wrap MUnit
+      . Model.runModelM (Model.close (getTableHandle $ lookUp tableVar))
+    Lookups ks tableVar ->
+      wrap (MVector . fmap (MLookupResult . fmap MBlobRef . Model.convLookupResult))
+      . Model.runModelM (Model.lookups ks (getTableHandle $ lookUp tableVar))
+    RangeLookup range tableVar ->
+      wrap (MVector . fmap (MQueryResult . fmap MBlobRef . Model.convQueryResult))
+      . Model.runModelM (Model.rangeLookup range (getTableHandle $ lookUp tableVar))
+    NewCursor offset tableVar ->
+      wrap MCursor
+      . Model.runModelM (Model.newCursor offset (getTableHandle $ lookUp tableVar))
+    CloseCursor cursorVar ->
+      wrap MUnit
+      . Model.runModelM (Model.closeCursor (getCursor $ lookUp cursorVar))
+    ReadCursor n cursorVar ->
+      wrap (MVector . fmap (MQueryResult . fmap MBlobRef . Model.convQueryResult))
+      . Model.runModelM (Model.readCursor n (getCursor $ lookUp cursorVar))
+    Updates kups tableVar ->
+      wrap MUnit
+      . Model.runModelM (Model.updates Model.noResolve (fmap Model.convUpdate <$> kups) (getTableHandle $ lookUp tableVar))
+    Inserts kins tableVar ->
+      wrap MUnit
+      . Model.runModelM (Model.inserts Model.noResolve kins (getTableHandle $ lookUp tableVar))
+    Deletes kdels tableVar ->
+      wrap MUnit
+      . Model.runModelM (Model.deletes Model.noResolve kdels (getTableHandle $ lookUp tableVar))
+    RetrieveBlobs blobsVar ->
+      wrap (MVector . fmap (MBlob . WrapBlob))
+      . Model.runModelM (Model.retrieveBlobs (getBlobRefs . lookUp $ blobsVar))
+    Snapshot name tableVar ->
+      wrap MUnit
+      . Model.runModelM (Model.snapshot name (getTableHandle $ lookUp tableVar))
+    Open name ->
+      wrap MTableHandle
+      . Model.runModelM (Model.open name)
+    DeleteSnapshot name ->
+      wrap MUnit
+      . Model.runModelM (Model.deleteSnapshot name)
+    ListSnapshots ->
+      wrap (MList . fmap MSnapshotName)
+      . Model.runModelM Model.listSnapshots
+    Duplicate tableVar ->
+      wrap MTableHandle
+      . Model.runModelM (Model.duplicate (getTableHandle $ lookUp tableVar))
   where
     getTableHandle ::
          ModelValue (ModelState h) (WrapTableHandle h IO k v blob)
@@ -1075,12 +1074,10 @@ catchErr (Handler f) action = catch (Right <$> action) f'
 arbitraryActionWithVars ::
      forall h k v blob. (
        C k v blob
-     , ResolveValue v
      , Ord k
      , R.Labellable (k, v, blob)
      , Eq (Class.TableConfig h)
      , Arbitrary (Class.TableConfig h)
-     , Typeable (Class.Cursor h)
      , Typeable h
      )
   => Proxy (k, v, blob)
@@ -1123,16 +1120,16 @@ arbitraryActionWithVars _ findVars _st = QC.frequency $ concat [
     findBlobRefsVars :: [Var h (Either Model.Err (V.Vector (WrapBlobRef h IO blob)))]
     findBlobRefsVars = fmap fromLookupResults vars1 ++ fmap fromQueryResults vars2
       where
-        vars1 = findVars (Proxy @(Either Model.Err (V.Vector (R.LookupResult v (WrapBlobRef h IO blob)))))
-        vars2 = findVars (Proxy @(Either Model.Err (V.Vector (R.QueryResult k v (WrapBlobRef h IO blob)))))
+        vars1 = findVars (Proxy @(Either Model.Err (V.Vector (LookupResult v (WrapBlobRef h IO blob)))))
+        vars2 = findVars (Proxy @(Either Model.Err (V.Vector (QueryResult k v (WrapBlobRef h IO blob)))))
 
         fromLookupResults ::
-             Var h (Either Model.Err (V.Vector (R.LookupResult v (WrapBlobRef h IO blob))))
+             Var h (Either Model.Err (V.Vector (LookupResult v (WrapBlobRef h IO blob))))
           -> Var h (Either Model.Err (V.Vector (WrapBlobRef h IO blob)))
         fromLookupResults = mapGVar (\op -> OpRight `OpComp` OpLookupResults `OpComp` OpFromRight `OpComp` op)
 
         fromQueryResults ::
-             Var h (Either Model.Err (V.Vector (R.QueryResult k v (WrapBlobRef h IO blob))))
+             Var h (Either Model.Err (V.Vector (QueryResult k v (WrapBlobRef h IO blob))))
           -> Var h (Either Model.Err (V.Vector (WrapBlobRef h IO blob)))
         fromQueryResults = mapGVar (\op -> OpRight `OpComp` OpQueryResults `OpComp` OpFromRight `OpComp` op)
 
@@ -1216,7 +1213,6 @@ shrinkActionWithVars ::
      forall h a. (
        Eq (Class.TableConfig h)
      , Arbitrary (Class.TableConfig h)
-     , Typeable (Class.Cursor h)
      , Typeable h
      )
   => ModelFindVariables (ModelState h)
@@ -1309,7 +1305,6 @@ updateStats ::
      forall h a. ( Show (Class.TableConfig h)
      , Eq (Class.TableConfig h)
      , Arbitrary (Class.TableConfig h)
-     , Typeable (Class.Cursor h)
      , Typeable h
      )
   => LockstepAction (ModelState h) a
@@ -1349,12 +1344,12 @@ updateStats action result =
       (Lookups _ _, MEither (Right (MVector lrs))) -> stats {
           numLookupsResults =
             let count :: (Int, Int, Int)
-                      -> Val h (R.LookupResult v (WrapBlobRef h IO blob))
+                      -> Val h (LookupResult v (WrapBlobRef h IO blob))
                       -> (Int, Int, Int)
                 count (nf, f, fwb) (MLookupResult x) = case x of
-                  Model.NotFound        -> (nf+1, f  , fwb  )
-                  Model.Found{}         -> (nf  , f+1, fwb  )
-                  Model.FoundWithBlob{} -> (nf  , f  , fwb+1)
+                  NotFound        -> (nf+1, f  , fwb  )
+                  Found{}         -> (nf  , f+1, fwb  )
+                  FoundWithBlob{} -> (nf  , f  , fwb+1)
             in V.foldl' count (numLookupsResults stats) lrs
         }
       _ -> stats

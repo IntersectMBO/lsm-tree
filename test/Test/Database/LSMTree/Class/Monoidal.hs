@@ -15,14 +15,12 @@ import           Data.Word (Word64)
 import           Database.LSMTree.Class.Monoidal hiding (withTableDuplicate,
                      withTableNew, withTableOpen)
 import qualified Database.LSMTree.Class.Monoidal as Class
-import           Database.LSMTree.Common (Labellable (..), mkSnapshotName)
+import           Database.LSMTree.Common (mkSnapshotName)
 import           Database.LSMTree.Extras.Generators ()
-import           Database.LSMTree.Monoidal (IOLike, LookupResult (..),
-                     QueryResult (..), Range (..), ResolveValue (..),
-                     SerialiseKey, SerialiseValue, Update (..),
-                     resolveDeserialised)
+import qualified Database.LSMTree.Model.Instance.Monoidal as Model
+import qualified Database.LSMTree.Model.Session as Model (TableConfig (..))
+import           Database.LSMTree.Monoidal (resolveDeserialised)
 import qualified Database.LSMTree.Monoidal as R
-import qualified Database.LSMTree.SessionModel as M2
 import qualified System.FS.API as FS
 import           Test.Database.LSMTree.Class.Normal (testProperty')
 import           Test.Tasty (TestTree, testGroup)
@@ -35,10 +33,10 @@ tests = testGroup "Test.Database.LSMTree.Class.Monoidal"
     , testGroup "Real"  $ zipWith ($) (props tbl2) expectFailures2
     ]
   where
-    tbl1 :: Proxy MTableHandle
+    tbl1 :: Proxy Model.MTableHandle
     tbl1 = Setup {
-          testTableConfig = M2.TableConfig
-        , testWithSessionArgs = \action -> action NoMSessionArgs
+          testTableConfig = Model.TableConfig
+        , testWithSessionArgs = \action -> action Model.NoMSessionArgs
         }
 
     expectFailures1 = repeat False
@@ -151,7 +149,7 @@ readCursorAll :: forall h m k v proxy.
      , SerialiseKey k
      , SerialiseValue v
      , ResolveValue v
-     , M2.C k v Void
+     , C k v Void
      )
   => proxy h
   -> Cursor h m k v

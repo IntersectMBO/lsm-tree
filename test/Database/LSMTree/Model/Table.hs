@@ -2,7 +2,7 @@
 
 {-# OPTIONS_GHC -Wno-missing-export-lists #-}
 
-module Database.LSMTree.TableModel where
+module Database.LSMTree.Model.Table where
 
 import qualified Crypto.Hash.SHA256 as SHA256
 import           Data.Bifunctor
@@ -53,14 +53,22 @@ data Update v b =
   | Mupsert !v
   deriving stock (Show, Eq)
 
+newtype ResolveSerialisedValue v =
+    Resolve { resolveSerialised :: RawBytes -> RawBytes -> RawBytes }
+
+getResolve :: forall v. ResolveValue v => ResolveSerialisedValue v
+getResolve = Resolve (resolveValue (Proxy @v))
+
+noResolve :: ResolveSerialisedValue v
+noResolve = Resolve const
+
 resolveValueAndBlob ::
-     forall v b. ResolveValue v
-  => Proxy v
+     ResolveSerialisedValue v
   -> (RawBytes, Maybe b)
   -> (RawBytes, Maybe b)
   -> (RawBytes, Maybe b)
-resolveValueAndBlob p (v1, bMay1) (v2, bMay2) =
-      (resolveValue p v1 v2, getFirst (First bMay1 <> First bMay2))
+resolveValueAndBlob r (v1, bMay1) (v2, bMay2) =
+      (resolveSerialised r v1 v2, getFirst (First bMay1 <> First bMay2))
 
 {-------------------------------------------------------------------------------
   Tables
@@ -146,11 +154,12 @@ rangeLookup r tbl = V.fromList
 -------------------------------------------------------------------------------}
 
 updates :: forall k v b.
-     (SerialiseKey k, SerialiseValue v, SerialiseValue b, ResolveValue v)
-  => V.Vector (k, Update v b)
+     (SerialiseKey k, SerialiseValue v, SerialiseValue b)
+  => ResolveSerialisedValue v
+  -> V.Vector (k, Update v b)
   -> Table k v b
   -> Table k v b
-updates ups tbl0 = V.foldl' update tbl0 ups where
+updates r ups tbl0 = V.foldl' update tbl0 ups where
     update :: Table k v b -> (k, Update v b) -> Table k v b
     update tbl (k, Delete) = tbl
         { values = Map.delete (serialiseKey k) (values tbl) }
@@ -163,7 +172,7 @@ updates ups tbl0 = V.foldl' update tbl0 ups where
         { values = mapUpsert (serialiseKey k) e f (values tbl) }
       where
         e = (serialiseValue v, Nothing)
-        f = resolveValueAndBlob (Proxy @v) e
+        f = resolveValueAndBlob r e
 
 mapUpsert :: Ord k => k -> v -> (v -> v) -> Map k v -> Map k v
 mapUpsert k v f = Map.alter (Just . g) k where
@@ -171,25 +180,28 @@ mapUpsert k v f = Map.alter (Just . g) k where
     g (Just v') = f v'
 
 inserts ::
-     (SerialiseKey k, SerialiseValue v, ResolveValue v, SerialiseValue b)
-  => V.Vector (k, v, Maybe b)
+     (SerialiseKey k, SerialiseValue v, SerialiseValue b)
+  => ResolveSerialisedValue v
+  -> V.Vector (k, v, Maybe b)
   -> Table k v b
   -> Table k v b
-inserts = updates . fmap (\(k, v, blob) -> (k, Insert v blob))
+inserts r = updates r . fmap (\(k, v, blob) -> (k, Insert v blob))
 
 deletes ::
-     (SerialiseKey k, SerialiseValue v, ResolveValue v, SerialiseValue b)
-  => V.Vector k
+     (SerialiseKey k, SerialiseValue v, SerialiseValue b)
+  => ResolveSerialisedValue v
+  -> V.Vector k
   -> Table k v b
   -> Table k v b
-deletes = updates . fmap (,Delete)
+deletes r = updates r . fmap (,Delete)
 
 mupserts ::
-     (SerialiseKey k, SerialiseValue v, ResolveValue v, SerialiseValue b)
-  => V.Vector (k, v)
+     (SerialiseKey k, SerialiseValue v, SerialiseValue b)
+  => ResolveSerialisedValue v
+  -> V.Vector (k, v)
   -> Table k v b
   -> Table k v b
-mupserts = updates . fmap (second Mupsert)
+mupserts r = updates r . fmap (second Mupsert)
 
 {-------------------------------------------------------------------------------
   Blobs
@@ -290,14 +302,14 @@ readCursor n c =
 --
 -- Multiple tables of the same type but with different configuration parameters
 -- can live in the same session. However, some operations, like
-merge :: forall k v b.
-     ResolveValue v
-  => Table k v b
+merge ::
+     ResolveSerialisedValue v
   -> Table k v b
   -> Table k v b
-merge (Table xs) (Table ys) =
+  -> Table k v b
+merge r (Table xs) (Table ys) =
     Table (Map.unionWith f xs ys)
   where
     f (v1, bMay1) (v2, bMay2) =
-      (resolveValue (Proxy @v) v1 v2, getFirst (First bMay1 <> First bMay2))
+      (resolveSerialised r v1 v2, getFirst (First bMay1 <> First bMay2))
 
