@@ -2,7 +2,40 @@
 
 {-# OPTIONS_GHC -Wno-missing-export-lists #-}
 
-module Database.LSMTree.SessionModel where
+module Database.LSMTree.Model.Session (
+    Model (..)
+  , initModel
+  , ModelT
+  , runModelT
+  , ModelM
+  , runModelM
+  , Err (..)
+  , TableHandle (..)
+  , TableConfig (..)
+  , new
+  , close
+  , duplicate
+  , lookups
+  , rangeLookup
+  , updates
+  , inserts
+  , deletes
+  , mupserts
+  , BlobRef (..)
+  , retrieveBlobs
+  , Snapshot (..)
+  , snapshot
+  , open
+  , deleteSnapshot
+  , listSnapshots
+  , Cursor (..)
+  , newCursor
+  , closeCursor
+  , readCursor
+  , merge
+  , module Types
+  , fromSomeTable
+  ) where
 
 import           Control.Monad (when)
 import           Control.Monad.Except (ExceptT (..), MonadError (..),
@@ -19,9 +52,11 @@ import qualified Data.Vector as V
 import           Data.Word
 import           Database.LSMTree.Common (Range (..), SerialiseKey (..),
                      SerialiseValue (..))
-import           Database.LSMTree.Monoidal (ResolveValue (..))
+import           Database.LSMTree.Model.Table as Types (LookupResult (..),
+                     QueryResult (..), ResolveSerialisedValue (..), Update (..),
+                     getResolve, noResolve)
+import qualified Database.LSMTree.Model.Table as Model
 import qualified Database.LSMTree.Normal as SUT
-import qualified Database.LSMTree.TableModel as Model
 
 {-------------------------------------------------------------------------------
   Model
@@ -257,15 +292,15 @@ updates ::
      , SerialiseKey k
      , SerialiseValue v
      , SerialiseValue blob
-     , ResolveValue v
      , C k v blob
      )
-  => V.Vector (k, Model.Update v blob)
+  => ResolveSerialisedValue v
+  -> V.Vector (k, Model.Update v blob)
   -> TableHandle k v blob
   -> m ()
-updates ups th@TableHandle{..} = do
+updates r ups th@TableHandle{..} = do
   (updc, table) <- guardTableHandleIsOpen th
-  let table' = Model.updates ups table
+  let table' = Model.updates r ups table
   modify (\m -> m {
       tableHandles = Map.insert tableHandleID (updc + 1, toSomeTable table') (tableHandles m)
     })
@@ -276,13 +311,13 @@ inserts ::
      , SerialiseKey k
      , SerialiseValue v
      , SerialiseValue blob
-     , ResolveValue v
      , C k v blob
      )
-  => V.Vector (k, v, Maybe blob)
+  => ResolveSerialisedValue v
+  -> V.Vector (k, v, Maybe blob)
   -> TableHandle k v blob
   -> m ()
-inserts = updates . fmap (\(k, v, blob) -> (k, Model.Insert v blob))
+inserts r = updates r . fmap (\(k, v, blob) -> (k, Model.Insert v blob))
 
 deletes ::
      ( MonadState Model m
@@ -290,13 +325,13 @@ deletes ::
      , SerialiseKey k
      , SerialiseValue v
      , SerialiseValue blob
-     , ResolveValue v
      , C k v blob
      )
-  => V.Vector k
+  => ResolveSerialisedValue v
+  -> V.Vector k
   -> TableHandle k v blob
   -> m ()
-deletes = updates . fmap (,Model.Delete)
+deletes r = updates r . fmap (,Model.Delete)
 
 mupserts ::
      ( MonadState Model m
@@ -304,13 +339,13 @@ mupserts ::
      , SerialiseKey k
      , SerialiseValue v
      , SerialiseValue blob
-     , ResolveValue v
      , C k v blob
      )
-  => V.Vector (k, v)
+  => ResolveSerialisedValue v
+  -> V.Vector (k, v)
   -> TableHandle k v blob
   -> m ()
-mupserts = updates . fmap (fmap Model.Mupsert)
+mupserts r = updates r . fmap (fmap Model.Mupsert)
 
 {-------------------------------------------------------------------------------
   Blobs
@@ -539,16 +574,16 @@ guardCursorIsOpen Cursor{..} =
   Merging tables
 -------------------------------------------------------------------------------}
 
-merge :: forall k v b m.
-     ( ResolveValue v
-     , MonadState Model m
+merge ::
+     ( MonadState Model m
      , MonadError Err m
      , C k v b
      )
-  => TableHandle k v b
+  => ResolveSerialisedValue v
+  -> TableHandle k v b
   -> TableHandle k v b
   -> m (TableHandle k v b)
-merge th1 th2 = do
+merge r th1 th2 = do
   (_, t1) <- guardTableHandleIsOpen th1
   (_, t2) <- guardTableHandleIsOpen th2
-  newTableWith undefined $ Model.merge t1 t2 -- TODO
+  newTableWith TableConfig $ Model.merge r t1 t2

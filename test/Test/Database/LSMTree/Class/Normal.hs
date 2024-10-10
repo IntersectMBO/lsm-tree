@@ -20,14 +20,11 @@ import           Data.Word (Word64)
 import           Database.LSMTree.Class.Normal hiding (withTableDuplicate,
                      withTableNew, withTableOpen)
 import qualified Database.LSMTree.Class.Normal as Class
-import           Database.LSMTree.Common (IOLike, Labellable (..), Range (..),
-                     SerialiseKey, SerialiseValue, mkSnapshotName)
+import           Database.LSMTree.Common (mkSnapshotName)
 import           Database.LSMTree.Extras.Generators ()
-import           Database.LSMTree.Monoidal (ResolveValue (..))
-import           Database.LSMTree.Normal (LookupResult (..), QueryResult (..),
-                     Update (..))
+import qualified Database.LSMTree.Model.Instance.Normal as Model
+import qualified Database.LSMTree.Model.Session as Model (TableConfig (..))
 import qualified Database.LSMTree.Normal as R
-import qualified Database.LSMTree.SessionModel as M2
 import qualified System.FS.API as FS
 import           Test.QuickCheck.Monadic (monadicIO, monitor, run)
 import           Test.Tasty (TestName, TestTree, testGroup)
@@ -41,10 +38,10 @@ tests = testGroup "Test.Database.LSMTree.Class.Normal"
     ]
   where
 
-    tbl3 :: Proxy MTableHandle
+    tbl3 :: Proxy Model.MTableHandle
     tbl3 = Setup {
-          testTableConfig = M2.TableConfig
-        , testWithSessionArgs = \action -> action NoMSessionArgs
+          testTableConfig = Model.TableConfig
+        , testWithSessionArgs = \action -> action Model.NoMSessionArgs
         }
 
     expectFailures3 = repeat False
@@ -103,9 +100,6 @@ newtype Value = Value BS.ByteString
   deriving stock (Eq, Show)
   deriving newtype (Arbitrary, R.SerialiseValue)
 
-instance ResolveValue Value where
-  resolveValue _ = (<>)
-
 instance Labellable (Key, Value, Blob) where
   makeSnapshotLabel _ = "Word64 ByteString ByteString"
 
@@ -140,7 +134,7 @@ retrieveBlobsTrav ::
      , IOLike m
      , SerialiseValue blob
      , Traversable t
-     , M2.C_ blob
+     , C_ blob
      )
   => proxy h
   -> Session h m
@@ -159,7 +153,7 @@ lookupsWithBlobs :: forall h m k v blob.
      , SerialiseKey k
      , SerialiseValue v
      , SerialiseValue blob
-     , M2.C k v blob
+     , C k v blob
      )
   => h m k v blob
   -> Session h m
@@ -175,7 +169,7 @@ rangeLookupWithBlobs :: forall h m k v blob.
      , SerialiseKey k
      , SerialiseValue v
      , SerialiseValue blob
-     , M2.C k v blob
+     , C k v blob
      )
   => h m k v blob
   -> Session h m
@@ -191,7 +185,7 @@ readCursorWithBlobs :: forall h m k v blob proxy.
      , SerialiseKey k
      , SerialiseValue v
      , SerialiseValue blob
-     , M2.C k v blob
+     , C k v blob
      )
   => proxy h
   -> Session h m
@@ -208,7 +202,7 @@ readCursorAllWithBlobs :: forall h m k v blob proxy.
      , SerialiseKey k
      , SerialiseValue v
      , SerialiseValue blob
-     , M2.C k v blob
+     , C k v blob
      )
   => proxy h
   -> Session h m

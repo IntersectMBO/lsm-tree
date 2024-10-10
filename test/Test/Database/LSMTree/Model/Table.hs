@@ -1,21 +1,23 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 {-# OPTIONS_GHC -Wno-incomplete-uni-patterns #-}
 
-module Test.Database.LSMTree.TableModel (tests) where
+module Test.Database.LSMTree.Model.Table (tests) where
 
 import qualified Data.ByteString as BS
 import qualified Data.Vector as V
 import           Database.LSMTree.Common
+import           Database.LSMTree.Model.Table (LookupResult (..), Table,
+                     Update (..), lookups, retrieveBlobs)
+import qualified Database.LSMTree.Model.Table as Model
 import           Database.LSMTree.Monoidal (ResolveValue (..),
                      resolveDeserialised)
-import           Database.LSMTree.TableModel
 import           GHC.Exts (IsList (..))
 import           Test.QuickCheck.Instances ()
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 
 tests :: TestTree
-tests = testGroup "Database.LSMTree.TableModel"
+tests = testGroup "Database.LSMTree.Model.Table"
     [ testProperty "lookup-insert" prop_lookupInsert
     , testProperty "lookup-delete" prop_lookupDelete
     , testProperty "insert-insert" prop_insertInsert
@@ -39,6 +41,18 @@ resolve (Value x) (Value y) = Value (x <> y)
 type Blob = BS.ByteString
 
 type Tbl = Table Key Value Blob
+
+updates :: V.Vector (Key, Update Value Blob) -> Table Key Value Blob -> Table Key Value Blob
+updates = Model.updates Model.getResolve
+
+inserts :: V.Vector (Key, Value, Maybe Blob) -> Table Key Value Blob -> Table Key Value Blob
+inserts = Model.inserts Model.getResolve
+
+deletes :: V.Vector Key -> Table Key Value Blob -> Table Key Value Blob
+deletes = Model.deletes Model.getResolve
+
+mupserts :: V.Vector (Key, Value) -> Table Key Value Blob -> Table Key Value Blob
+mupserts = Model.mupserts Model.getResolve
 
 -- | You can lookup what you inserted.
 prop_lookupInsert :: Key -> Value -> Tbl -> Property

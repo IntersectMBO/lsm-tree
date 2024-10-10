@@ -12,8 +12,9 @@ module Test.Database.LSMTree.Normal.StateMachine.DL (
 import           Control.Tracer
 import qualified Data.Map.Strict as Map
 import qualified Data.Vector as V
-import qualified Database.LSMTree.TableModel as Model (values)
-import qualified Database.LSMTree.SessionModel as Model (fromSomeTable, tableHandles)
+import qualified Database.LSMTree.Model.Session as Model (fromSomeTable,
+                     tableHandles)
+import qualified Database.LSMTree.Model.Table as Model (values)
 import           Database.LSMTree.Normal as R
 import           Prelude
 import           Test.Database.LSMTree.Normal.StateMachine hiding (tests)
