@@ -24,6 +24,10 @@ module Database.LSMTree.Model.Normal.Session (
     Model (..)
   , initModel
   , UpdateCounter (..)
+    -- ** SomeTable
+  , SomeTable (..)
+  , toSomeTable
+  , fromSomeTable
     -- ** Constraints
   , C
   , C_
