@@ -208,16 +208,57 @@ propLockstep_ModelIOImpl =
           = Nothing
 
 instance Arbitrary R.TableConfig where
-  arbitrary :: Gen R.TableConfig
-  arbitrary = pure $ R.TableConfig {
+  arbitrary = do
+    confWriteBufferAlloc <- QC.arbitrary
+    pure $ R.TableConfig {
         R.confMergePolicy       = R.MergePolicyLazyLevelling
       , R.confSizeRatio         = R.Four
-      , R.confWriteBufferAlloc  = R.AllocNumEntries (R.NumEntries 30)
+      , confWriteBufferAlloc
       , R.confBloomFilterAlloc  = R.AllocFixed 10
       , R.confFencePointerIndex = R.CompactIndex
       , R.confDiskCachePolicy   = R.DiskCacheNone
       , R.confMergeSchedule     = R.OneShot
       }
+
+  shrink R.TableConfig{..} =
+      [ R.TableConfig {
+            confWriteBufferAlloc = confWriteBufferAlloc'
+          , ..
+          }
+      | confWriteBufferAlloc' <- QC.shrink confWriteBufferAlloc
+      ]
+
+-- TODO: the current generator is suboptimal, and should be improved. There are
+-- some aspects to consider, and since they are at tension with each other, we
+-- should try find a good balance.
+--
+-- Say the write buffer allocation is @n@.
+--
+-- * If @n@ is too large, then the tests degrade to only testing the write
+--   buffer, because there are no flushes/merges.
+--
+-- * If @n@ is too small, then the resulting runs are also small. They might
+--   consist of only a few disk pages, or they might consist of only 1 underfull
+--   disk page. This means there are some parts of the code that we would rarely
+--   cover in the state machine tests.
+--
+-- * If @n@ is too small, then we flush/merge very frequently, which may exhaust
+--   the number of open file handles when using the real file system. Specially
+--   if the test fails and the shrinker kicks in, then @n@ can currently become
+--   very small. This is good for finding a minimal counterexample, but it might
+--   also make the real filesystem run out of file descriptors. Arguably, you
+--   could overcome this specific issue by only generating or shrinking to small
+--   @n@ when we use the mocked file system. This would require some boilerplate
+--   to add type level tags to distinguish between the two cases.
+instance Arbitrary R.WriteBufferAlloc where
+  arbitrary = QC.scale (max 30) $ do
+      QC.Positive x <- QC.arbitrary
+      pure (R.AllocNumEntries (R.NumEntries x))
+
+  shrink (R.AllocNumEntries (R.NumEntries x)) =
+      [ R.AllocNumEntries (R.NumEntries x')
+      | QC.Positive x' <- QC.shrink (QC.Positive x)
+      ]
 
 propLockstep_RealImpl_RealFS_IO ::
      Tracer IO R.LSMTreeTrace
