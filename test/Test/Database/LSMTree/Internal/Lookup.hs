@@ -337,7 +337,7 @@ withRuns :: FS.HasFS IO h
          -> [InMemLookupData SerialisedKey SerialisedValue SerialisedBlob]
          -> (   WB.WriteBuffer
              -> WBB.WriteBufferBlobs IO h
-             -> V.Vector (Run.Run IO (Handle h))
+             -> V.Vector (Run.Run IO h)
              -> IO a)
          -> IO a
 withRuns hfs _ [] action =

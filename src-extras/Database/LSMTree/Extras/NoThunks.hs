@@ -184,9 +184,9 @@ instance NoThunks (Unsliced a) where
   Run
 -------------------------------------------------------------------------------}
 
-deriving stock instance Generic (Run m (Handle h))
-deriving anyclass instance (Typeable (PrimState m), Typeable h)
-                        => NoThunks (Run m (Handle h))
+deriving stock instance Generic (Run m h)
+deriving anyclass instance (Typeable m, Typeable (PrimState m), Typeable h)
+                        => NoThunks (Run m h)
 
 deriving stock instance Generic RunDataCaching
 deriving anyclass instance NoThunks RunDataCaching
@@ -259,11 +259,11 @@ deriving anyclass instance ( Typeable m, Typeable (PrimState m), Typeable h
                            , NoThunks (StrictMVar m (MergingRunState m h))
                            ) => NoThunks (TableContent m h)
 
-deriving stock instance Generic (LevelsCache m (Handle h))
-deriving anyclass instance (Typeable (PrimState m), Typeable h)
-                        => NoThunks (LevelsCache m (Handle h))
+deriving stock instance Generic (LevelsCache m h)
+deriving anyclass instance (Typeable m, Typeable (PrimState m), Typeable h)
+                        => NoThunks (LevelsCache m h)
 
-deriving stock instance Generic (Level m  h)
+deriving stock instance Generic (Level m h)
 deriving anyclass instance ( Typeable m, Typeable (PrimState m), Typeable h
                            , NoThunks (StrictMVar m (MergingRunState m h))
                            ) => NoThunks (Level m h)
@@ -292,13 +292,13 @@ deriving anyclass instance NoThunks NumEntries
   RunBuilder
 -------------------------------------------------------------------------------}
 
-deriving stock instance Generic (RunBuilder s (Handle h))
-deriving anyclass instance (Typeable s, Typeable h)
-                        => NoThunks (RunBuilder s (Handle h))
+deriving stock instance Generic (RunBuilder m h)
+deriving anyclass instance (Typeable m, Typeable (PrimState m), Typeable h)
+                        => NoThunks (RunBuilder m h)
 
-deriving stock instance Generic (ChecksumHandle s (Handle h))
+deriving stock instance Generic (ChecksumHandle s h)
 deriving anyclass instance (Typeable s, Typeable h)
-                        => NoThunks (ChecksumHandle s (Handle h))
+                        => NoThunks (ChecksumHandle s h)
 
 {-------------------------------------------------------------------------------
   RunAcc
@@ -348,14 +348,14 @@ deriving anyclass instance NoThunks Merge.MergeState
   Readers
 -------------------------------------------------------------------------------}
 
-deriving stock instance Generic (Readers m (Handle h))
+deriving stock instance Generic (Readers m h)
 deriving anyclass instance (Typeable m, Typeable (PrimState m), Typeable h)
-                        => NoThunks (Readers m (Handle h))
+                        => NoThunks (Readers m h)
 
-deriving stock instance Generic (Reader m (Handle h))
+deriving stock instance Generic (Reader m h)
 instance (Typeable m, Typeable (PrimState m), Typeable h)
-      => NoThunks (Reader m (Handle h)) where
-  showTypeOf (_ :: Proxy (Reader m (Handle h))) = "Reader"
+      => NoThunks (Reader m h) where
+  showTypeOf (_ :: Proxy (Reader m h)) = "Reader"
   wNoThunks ctx = \case
     ReadRun r      -> noThunks ctx r
     ReadBuffer var -> noThunks ctx (OnlyCheckWhnf var) -- contents intentionally lazy
@@ -363,20 +363,20 @@ instance (Typeable m, Typeable (PrimState m), Typeable h)
 deriving stock instance Generic ReaderNumber
 deriving anyclass instance NoThunks ReaderNumber
 
-deriving stock instance Generic (ReadCtx m (Handle h))
+deriving stock instance Generic (ReadCtx m h)
 deriving anyclass instance (Typeable m, Typeable (PrimState m), Typeable h)
-                        => NoThunks (ReadCtx m (Handle h))
+                        => NoThunks (ReadCtx m h)
 
 {-------------------------------------------------------------------------------
   Reader
 -------------------------------------------------------------------------------}
 
-deriving stock instance Generic (RunReader m (Handle h))
-deriving anyclass instance (Typeable (PrimState m), Typeable h)
-                        => NoThunks (RunReader m (Handle h))
+deriving stock instance Generic (RunReader m h)
+deriving anyclass instance (Typeable m, Typeable (PrimState m), Typeable h)
+                        => NoThunks (RunReader m h)
 
 deriving stock instance Generic (Reader.Entry m (Handle h))
-deriving anyclass instance (Typeable (PrimState m), Typeable h)
+deriving anyclass instance (Typeable m, Typeable (PrimState m), Typeable h)
                         => NoThunks (Reader.Entry m (Handle h))
 
 {-------------------------------------------------------------------------------

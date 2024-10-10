@@ -228,7 +228,7 @@ merge ::
   -> Config
   -> Run.RunFsPaths
   -> InputRuns
-  -> IO (Run IO (FS.Handle (FS.HandleIO)))
+  -> IO (Run IO FS.HandleIO)
 merge fs hbio Config {..} targetPaths runs = do
     let f = fromMaybe const mergeMappend
     m <- fromMaybe (error "empty inputs, no merge created") <$>
@@ -241,7 +241,7 @@ outputRunPaths = RunFsPaths (FS.mkFsPath []) (RunNumber 0)
 inputRunPaths :: [Run.RunFsPaths]
 inputRunPaths = RunFsPaths (FS.mkFsPath []) . RunNumber <$> [1..]
 
-type InputRuns = V.Vector (Run IO (FS.Handle FS.HandleIO))
+type InputRuns = V.Vector (Run IO FS.HandleIO)
 
 type Mappend = SerialisedValue -> SerialisedValue -> SerialisedValue
 
