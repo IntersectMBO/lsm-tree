@@ -200,7 +200,7 @@ instance Arbitrary R.TableConfig where
       , R.confBloomFilterAlloc  = R.AllocFixed 10
       , R.confFencePointerIndex = R.CompactIndex
       , R.confDiskCachePolicy   = R.DiskCacheNone
-      , R.confMergeSchedule     = R.OneShot
+      , R.confMergeSchedule     = R.Incremental
       }
 
 propLockstep_RealImpl_RealFS_IO ::
