@@ -636,7 +636,7 @@ new sesh conf = do
                WBB.removeReference
         let tableWriteBuffer = WB.empty
             tableLevels = V.empty
-        tableCache <- mkLevelsCache tableLevels
+        tableCache <- mkLevelsCache reg tableLevels
         let tc = TableContent {
                 tableWriteBuffer
               , tableWriteBufferBlobs
@@ -1303,7 +1303,7 @@ open sesh label override snap = do
                (WBB.new hfs blobpath)
                WBB.removeReference
         tableLevels <- openLevels reg hfs hbio (confDiskCachePolicy conf') runPaths
-        tableCache <- mkLevelsCache tableLevels
+        tableCache <- mkLevelsCache reg tableLevels
         newWith reg sesh seshEnv conf' am $! TableContent {
             tableWriteBuffer = WB.empty
           , tableWriteBufferBlobs
