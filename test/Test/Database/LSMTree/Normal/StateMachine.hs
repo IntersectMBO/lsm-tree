@@ -46,6 +46,21 @@
 module Test.Database.LSMTree.Normal.StateMachine (
     tests
   , labelledExamples
+    -- * Properties
+  , propLockstep_ModelIOImpl
+  , propLockstep_RealImpl_RealFS_IO
+  , propLockstep_RealImpl_MockFS_IO
+  , propLockstep_RealImpl_MockFS_IOSim
+    -- * Lockstep
+  , ModelState (..)
+  , Key1 (..)
+  , Value1 (..)
+  , Blob1 (..)
+  , Key2 (..)
+  , Value2 (..)
+  , Blob2 (..)
+  , StateModel (..)
+  , Action (..)
   ) where
 
 import           Control.Concurrent.Class.MonadMVar.Strict
