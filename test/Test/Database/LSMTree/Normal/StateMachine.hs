@@ -75,6 +75,7 @@ import           Data.Bifunctor (Bifunctor (..))
 import qualified Data.ByteString as BS
 import           Data.Constraint (Dict (..))
 import           Data.Kind (Type)
+import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (catMaybes, fromJust)
 import           Data.Set (Set)
@@ -471,7 +472,7 @@ instance ( Show (Class.TableConfig h)
     Lookups :: C k v blob
             => V.Vector k -> Var h (WrapTableHandle h IO k v blob)
             -> Act h (V.Vector (R.LookupResult v (WrapBlobRef h IO blob)))
-    RangeLookup :: C k v blob
+    RangeLookup :: (C k v blob, Ord k)
                 => R.Range k -> Var h (WrapTableHandle h IO k v blob)
                 -> Act h (V.Vector (R.QueryResult k v (WrapBlobRef h IO blob)))
     -- Cursor
@@ -677,7 +678,7 @@ instance ( Eq (Class.TableConfig h)
     where
       auxStats :: (Val h a, Model.Model) -> (Val h a, ModelState h)
       auxStats (result, state') =
-          (result, ModelState state' $ updateStats action result stats)
+          (result, ModelState state' $ updateStats action lookUp result stats)
 
   usedVars :: LockstepAction (ModelState h) a -> [AnyGVar (ModelOp (ModelState h))]
   usedVars = \case
@@ -1299,18 +1300,21 @@ instance InterpretOp Op (ModelValue (ModelState h)) where
 data Stats = Stats {
     -- === Tags
     -- | Unique types at which tables were created
-    newTableTypes     :: Set String
+    newTableTypes      :: Set String
     -- | Names for which snapshots exist
-  , snapshotted       :: Set R.SnapshotName
-    -- === Final tags
+  , snapshotted        :: Set R.SnapshotName
+    -- === Final tags (per action sequence, across all tables)
     -- | Number of succesful lookups and their results
-  , numLookupsResults :: (Int, Int, Int) -- (NotFound, Found, FoundWithBlob)
+  , numLookupsResults  :: (Int, Int, Int) -- (NotFound, Found, FoundWithBlob)
     -- | Number of succesful updates
-  , numUpdates        :: (Int, Int, Int) -- (Insert, InsertWithBlob, Delete)
+  , numUpdates         :: (Int, Int, Int) -- (Insert, InsertWithBlob, Delete)
     -- | Actions that succeeded
-  , successActions    :: [String]
+  , successActions     :: [String]
     -- | Actions that failed with an error
-  , failActions       :: [String]
+  , failActions        :: [String]
+    -- === Final tags (per action sequence, per table)
+    -- | Number of actions per table (succesful or failing)
+  , numActionsPerTable :: !(Map Model.TableHandleID Int)
   }
   deriving stock Show
 
@@ -1324,6 +1328,7 @@ initStats = Stats {
     , numUpdates = (0, 0, 0)
     , successActions = []
     , failActions = []
+    , numActionsPerTable = Map.empty
     }
 
 updateStats ::
@@ -1334,10 +1339,11 @@ updateStats ::
      , Typeable h
      )
   => LockstepAction (ModelState h) a
+  -> ModelLookUp (ModelState h)
   -> Val h a
   -> Stats
   -> Stats
-updateStats action result =
+updateStats action lookUp result =
       -- === Tags
       updNewTableTypes
     . updSnapshotted
@@ -1346,6 +1352,7 @@ updateStats action result =
     . updNumUpdates
     . updSuccessActions
     . updFailActions
+    . updNumActionsPerTable
   where
     -- === Tags
 
@@ -1414,6 +1421,65 @@ updateStats action result =
             failActions = actionName action : failActions stats
           }
         _ -> stats
+
+    updNumActionsPerTable :: Stats -> Stats
+    updNumActionsPerTable stats = case action of
+        New{}
+          | MEither (Right (MTableHandle table)) <- result -> initCount table
+          | otherwise                                      -> stats
+        Open{}
+          | MEither (Right (MTableHandle table)) <- result -> initCount table
+          | otherwise                                      -> stats
+        Duplicate{}
+          | MEither (Right (MTableHandle table)) <- result -> initCount table
+          | otherwise                                      -> stats
+
+        -- Note that for the other actions we don't count success vs failure.
+        -- We don't need that level of detail. We just want to see the
+        -- distribution. Success / failure is detailed elsewhere.
+        Lookups _ tableVar     -> updateCount tableVar
+        RangeLookup _ tableVar -> updateCount tableVar
+        NewCursor _ tableVar   -> updateCount tableVar
+        Updates _ tableVar     -> updateCount tableVar
+        Inserts _ tableVar     -> updateCount tableVar
+        Deletes _ tableVar     -> updateCount tableVar
+        -- Note that we don't remove tracking map entries for tables that get
+        -- closed. We want to know actions per table of all tables used, not
+        -- just those that were still open at the end of the sequence of
+        -- actions. We do also count Close itself as an action.
+        Close tableVar        -> updateCount tableVar
+
+        -- The others are not counted as table actions. We list them here
+        -- explicitly so we don't miss any new ones we might add later.
+        CloseCursor{}         -> stats
+        ReadCursor{}          -> stats
+        RetrieveBlobs{}       -> stats
+        Snapshot{}            -> stats
+        DeleteSnapshot{}      -> stats
+        ListSnapshots{}       -> stats
+      where
+        -- Init to 0 so we get an accurate count of tables with no actions.
+        initCount :: forall k v blob. Model.TableHandle k v blob -> Stats
+        initCount table =
+          let tid = Model.tableHandleID table
+           in stats {
+                numActionsPerTable = Map.insert tid 0 (numActionsPerTable stats)
+              }
+
+        -- Note that batches (of inserts lookups etc) count as one action.
+        updateCount :: forall k v blob.
+                       Var h (WrapTableHandle h IO k v blob)
+                    -> Stats
+        updateCount tableVar =
+          let tid = getTableHandleId (lookUp tableVar)
+           in stats {
+                numActionsPerTable = Map.insertWith (+) tid 1
+                                                    (numActionsPerTable stats)
+              }
+
+    getTableHandleId :: ModelValue (ModelState h) (WrapTableHandle h IO k v blob)
+                     -> Model.TableHandleID
+    getTableHandleId (MTableHandle th) = Model.tableHandleID th
 
 -- | Tags for every step
 data Tag =
@@ -1523,6 +1589,10 @@ data FinalTag =
   | ActionFail String
     -- | Total number of flushes
   | NumFlushes String -- TODO: implement
+    -- | Number of table handles created (new, open or duplicate)
+  | NumTables String
+    -- | Number of actions on each table
+  | NumTableActions String
     -- | Total /logical/ size of a table
   | TableSize String -- TODO: implement
   deriving stock Show
@@ -1534,6 +1604,8 @@ tagFinalState' (getModel -> ModelState _ finalStats) = concat [
     , tagNumUpdates
     , tagSuccessActions
     , tagFailActions
+    , tagNumTables
+    , tagNumTableActions
     ]
   where
     tagNumLookupsResults = [
@@ -1557,6 +1629,16 @@ tagFinalState' (getModel -> ModelState _ finalStats) = concat [
     tagFailActions =
         [ ("Actions that failed", [ActionFail c])
         | c <- failActions finalStats ]
+
+    tagNumTables =
+        [ ("Number of tables", [NumTables (showPowersOf 2 n)])
+        | let n = Map.size (numActionsPerTable finalStats)
+        ]
+
+    tagNumTableActions =
+        [ ("Number of actions per table", [ NumTableActions (showPowersOf 2 n) ])
+        | n <- Map.elems (numActionsPerTable finalStats)
+        ]
 
 {-------------------------------------------------------------------------------
   Utils
