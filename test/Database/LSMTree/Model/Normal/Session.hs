@@ -28,6 +28,8 @@ module Database.LSMTree.Model.Normal.Session (
   , SomeTable (..)
   , toSomeTable
   , fromSomeTable
+  , TableHandleID
+  , tableHandleID
     -- ** Constraints
   , C
   , C_
