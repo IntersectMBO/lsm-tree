@@ -46,6 +46,21 @@
 module Test.Database.LSMTree.Normal.StateMachine (
     tests
   , labelledExamples
+    -- * Properties
+  , propLockstep_ModelIOImpl
+  , propLockstep_RealImpl_RealFS_IO
+  , propLockstep_RealImpl_MockFS_IO
+  , propLockstep_RealImpl_MockFS_IOSim
+    -- * Lockstep
+  , ModelState (..)
+  , Key1 (..)
+  , Value1 (..)
+  , Blob1 (..)
+  , Key2 (..)
+  , Value2 (..)
+  , Blob2 (..)
+  , StateModel (..)
+  , Action (..)
   ) where
 
 import           Control.Concurrent.Class.MonadMVar.Strict
@@ -55,7 +70,7 @@ import           Control.Monad.Class.MonadThrow (Handler (..), MonadCatch (..),
                      MonadThrow (..))
 import           Control.Monad.IOSim
 import           Control.Monad.Reader (ReaderT (..))
-import           Control.Tracer (nullTracer)
+import           Control.Tracer (Tracer, nullTracer)
 import           Data.Bifunctor (Bifunctor (..))
 import qualified Data.ByteString as BS
 import           Data.Constraint (Dict (..))
@@ -106,6 +121,7 @@ import qualified Test.QuickCheck.StateModel.Lockstep.Run as Lockstep.Run
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck (testProperty)
 import           Test.Util.FS (assertNoOpenHandles, assertNumOpenHandles)
+import           Test.Util.PrettyProxy
 import           Test.Util.TypeFamilyWrappers (WrapBlob (..), WrapBlobRef (..),
                      WrapCursor (..), WrapSession (..), WrapTableHandle (..))
 
@@ -118,14 +134,14 @@ tests = testGroup "Normal.StateMachine" [
       testProperty "propLockstep_ModelIOImpl"
         propLockstep_ModelIOImpl
 
-    , testProperty "propLockstep_RealImpl_RealFS_IO"
-        propLockstep_RealImpl_RealFS_IO
+    , testProperty "propLockstep_RealImpl_RealFS_IO" $
+        propLockstep_RealImpl_RealFS_IO nullTracer
 
-    , testProperty "propLockstep_RealImpl_MockFS_IO"
-        propLockstep_RealImpl_MockFS_IO
+    , testProperty "propLockstep_RealImpl_MockFS_IO" $
+        propLockstep_RealImpl_MockFS_IO nullTracer
 
-    , testProperty "propLockstep_RealImpl_MockFS_IOSim"
-        propLockstep_RealImpl_MockFS_IOSim
+    , testProperty "propLockstep_RealImpl_MockFS_IOSim" $
+        propLockstep_RealImpl_MockFS_IOSim nullTracer
     ]
 
 labelledExamples :: IO ()
@@ -204,9 +220,10 @@ instance Arbitrary R.TableConfig where
       }
 
 propLockstep_RealImpl_RealFS_IO ::
-     Actions (Lockstep (ModelState R.TableHandle))
+     Tracer IO R.LSMTreeTrace
+  -> Actions (Lockstep (ModelState R.TableHandle))
   -> QC.Property
-propLockstep_RealImpl_RealFS_IO =
+propLockstep_RealImpl_RealFS_IO tr =
     runActionsBracket'
       (Proxy @(ModelState R.TableHandle))
       acquire
@@ -217,7 +234,7 @@ propLockstep_RealImpl_RealFS_IO =
     acquire :: IO (FilePath, WrapSession R.TableHandle IO)
     acquire = do
         (tmpDir, hasFS, hasBlockIO) <- createSystemTempDirectory "prop_lockstepIO_RealImpl_RealFS"
-        session <- R.openSession nullTracer hasFS hasBlockIO (mkFsPath [])
+        session <- R.openSession tr hasFS hasBlockIO (mkFsPath [])
         pure (tmpDir, WrapSession session)
 
     release :: (FilePath, WrapSession R.TableHandle IO) -> IO ()
@@ -226,25 +243,27 @@ propLockstep_RealImpl_RealFS_IO =
         removeDirectoryRecursive tmpDir
 
 propLockstep_RealImpl_MockFS_IO ::
-     Actions (Lockstep (ModelState R.TableHandle))
+     Tracer IO R.LSMTreeTrace
+  -> Actions (Lockstep (ModelState R.TableHandle))
   -> QC.Property
-propLockstep_RealImpl_MockFS_IO =
+propLockstep_RealImpl_MockFS_IO tr =
     runActionsBracket'
       (Proxy @(ModelState R.TableHandle))
-      acquire_RealImpl_MockFS
+      (acquire_RealImpl_MockFS tr)
       release_RealImpl_MockFS
       (\r (_, session) -> runReaderT r (session, realHandler @IO))
       tagFinalState'
 
 propLockstep_RealImpl_MockFS_IOSim ::
-     Actions (Lockstep (ModelState R.TableHandle))
+     (forall s. Tracer (IOSim s) R.LSMTreeTrace)
+  -> Actions (Lockstep (ModelState R.TableHandle))
   -> QC.Property
-propLockstep_RealImpl_MockFS_IOSim actions =
+propLockstep_RealImpl_MockFS_IOSim tr actions =
     monadicIOSim_ prop
   where
     prop :: forall s. PropertyM (IOSim s) Property
     prop = do
-        (fsVar, session) <- QC.run acquire_RealImpl_MockFS
+        (fsVar, session) <- QC.run (acquire_RealImpl_MockFS tr)
         void $ QD.runPropertyReaderT
                 (QD.runActions @(Lockstep (ModelState R.TableHandle)) actions)
                 (session, realHandler @(IOSim s))
@@ -253,11 +272,12 @@ propLockstep_RealImpl_MockFS_IOSim actions =
 
 acquire_RealImpl_MockFS ::
      R.IOLike m
-  => m (StrictTMVar m MockFS, WrapSession R.TableHandle m)
-acquire_RealImpl_MockFS = do
+  => Tracer m R.LSMTreeTrace
+  -> m (StrictTMVar m MockFS, WrapSession R.TableHandle m)
+acquire_RealImpl_MockFS tr = do
     fsVar <- newTMVarIO MockFS.empty
     (hfs, hbio) <- simHasBlockIO fsVar
-    session <- R.openSession nullTracer hfs hbio (mkFsPath [])
+    session <- R.openSession tr hfs hbio (mkFsPath [])
     pure (fsVar, WrapSession session)
 
 release_RealImpl_MockFS ::
@@ -323,21 +343,31 @@ createSystemTempDirectory prefix = do
 -- TODO: maybe use reference impl generators here?
 
 newtype Key1   = Key1   { _unKey1 :: QC.Small Word64 }
-  deriving newtype (Show, Eq, Ord, Arbitrary, R.SerialiseKey)
+  deriving stock (Show, Eq, Ord)
+  deriving newtype (Arbitrary, R.SerialiseKey)
 newtype Value1 = Value1 { _unValue1 :: QC.Small Word64 }
-  deriving newtype (Show, Eq, Ord, Arbitrary, R.SerialiseValue)
+
+  deriving stock (Show, Eq, Ord)
+  deriving newtype (Arbitrary, R.SerialiseValue)
 newtype Blob1  = Blob1  { _unBlob1 :: QC.Small Word64 }
-  deriving newtype (Show, Eq, Ord, Arbitrary, R.SerialiseValue)
+
+  deriving stock (Show, Eq, Ord)
+  deriving newtype (Arbitrary, R.SerialiseValue)
 
 instance R.Labellable (Key1, Value1, Blob1) where
   makeSnapshotLabel _ = "Key1 Value1 Blob1"
 
 newtype Key2   = Key2   { _unKey2   :: KeyForIndexCompact }
-  deriving newtype (Show, Eq, Ord, Arbitrary, R.SerialiseKey)
+  deriving stock (Show, Eq, Ord)
+  deriving newtype (Arbitrary, R.SerialiseKey)
+
 newtype Value2 = Value2 { _unValue2 :: BS.ByteString }
-  deriving newtype (Show, Eq, Ord, Arbitrary, R.SerialiseValue)
+  deriving stock (Show, Eq, Ord)
+  deriving newtype (Arbitrary, R.SerialiseValue)
+
 newtype Blob2  = Blob2  { _unBlob2  :: BS.ByteString }
-  deriving newtype (Show, Eq, Ord, Arbitrary, R.SerialiseValue)
+  deriving stock (Show, Eq, Ord)
+  deriving newtype (Arbitrary, R.SerialiseValue)
 
 instance R.Labellable (Key2, Value2, Blob2) where
   makeSnapshotLabel _ = "Key2 Value2 Blob2"
@@ -390,7 +420,7 @@ instance ( Show (Class.TableConfig h)
   data instance Action (Lockstep (ModelState h)) a where
     -- Tables
     New :: C k v blob
-        => {-# UNPACK #-} !(Proxy (k, v, blob))
+        => {-# UNPACK #-} !(PrettyProxy (k, v, blob))
         -> Class.TableConfig h
         -> Act h (WrapTableHandle h IO k v blob)
     Close :: C k v blob
@@ -469,7 +499,7 @@ instance ( Eq (Class.TableConfig h)
   x == y = go x y
     where
       go :: LockstepAction (ModelState h) a -> LockstepAction (ModelState h) a -> Bool
-      go (New (Proxy :: Proxy kvb1) conf1) (New (Proxy :: Proxy kvb2) conf2) =
+      go (New (PrettyProxy :: PrettyProxy kvb1) conf1) (New (PrettyProxy :: PrettyProxy kvb2) conf2) =
           eqT @kvb1 @kvb2 == Just Refl && conf1 == conf2
       go (Close var1)               (Close var2) =
           Just var1 == cast var2
@@ -1088,7 +1118,7 @@ arbitraryActionWithVars _ findVars _st = QC.frequency $ concat [
 
     withoutVars :: [(Int, Gen (Any (LockstepAction (ModelState h))))]
     withoutVars = [
-          (5, Some . New (Proxy :: Proxy (k, v, blob)) <$> QC.arbitrary)
+          (5, Some . New (PrettyProxy :: PrettyProxy (k, v, blob)) <$> QC.arbitrary)
         , (3, fmap Some $ Open @k @v @blob <$> genSnapshotName)
         , (1, fmap Some $ DeleteSnapshot <$> genSnapshotName)
         , (1, pure $ Some ListSnapshots)
@@ -1175,8 +1205,29 @@ shrinkActionWithVars ::
   -> [Any (LockstepAction (ModelState h))]
 shrinkActionWithVars _ _ = \case
     New p conf -> [ Some $ New p conf' | conf' <- QC.shrink conf ]
-    Inserts kins tableVar -> [ Some $ Inserts kins' tableVar | kins' <- QC.shrink kins ]
+
+    -- Shrink inserts and deletes towards updates.
+    Updates upds tableVar -> [
+        Some $ Updates upds' tableVar
+      | upds' <- QC.shrink upds
+      ]
+    Inserts kvbs tableVar -> [
+        Some $ Inserts kvbs' tableVar
+      | kvbs' <- QC.shrink kvbs
+      ] <> [
+        Some $ Updates (V.map f kvbs) tableVar
+      | let f (k, v, mb) = (k, R.Insert v mb)
+      ]
+    Deletes ks tableVar -> [
+        Some $ Deletes ks' tableVar
+      | ks' <- QC.shrink ks
+      ] <> [
+        Some $ Updates (V.map f ks) tableVar
+      | let f k = (k, R.Delete)
+      ]
+
     Lookups ks tableVar -> [ Some $ Lookups ks' tableVar | ks' <- QC.shrink ks ]
+
     _ -> []
 
 {-------------------------------------------------------------------------------
@@ -1258,7 +1309,7 @@ updateStats action result =
     -- === Tags
 
     updNewTableTypes stats = case action of
-      New (Proxy :: Proxy (k, v, blob)) _ -> stats {
+      New (PrettyProxy :: PrettyProxy (k, v, blob)) _ -> stats {
           newTableTypes = Set.insert (show $ typeRep (Proxy @(k, v, blob))) (newTableTypes stats)
         }
       _ -> stats

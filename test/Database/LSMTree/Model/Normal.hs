@@ -5,7 +5,7 @@ module Database.LSMTree.Model.Normal (
     SerialiseKey (..)
   , SerialiseValue (..)
     -- * Tables
-  , Table
+  , Table (..)
   , empty
     -- * Table querying and updates
     -- ** Queries
@@ -52,7 +52,7 @@ import           GHC.Exts (IsList (..))
 
 type Table :: Type -> Type -> Type -> Type
 data Table k v blob = Table
-    { _values :: Map RawBytes (RawBytes, Maybe (BlobRef blob))
+    { values :: Map RawBytes (RawBytes, Maybe (BlobRef blob))
     }
 
 type role Table nominal nominal nominal
@@ -102,7 +102,7 @@ lookups ::
   -> Table k v blob
   -> V.Vector (LookupResult v (BlobRef blob))
 lookups ks tbl = flip V.map ks $ \k ->
-    case Map.lookup (serialiseKey k) (_values tbl) of
+    case Map.lookup (serialiseKey k) (values tbl) of
       Nothing           -> NotFound
       Just (v, Nothing) -> Found (deserialiseValue v)
       Just (v, Just br) -> FoundWithBlob (deserialiseValue v) br
@@ -120,7 +120,7 @@ rangeLookup r tbl = V.fromList
         (v', Nothing) -> FoundInQuery (deserialiseKey k) (deserialiseValue v')
         (v', Just br) -> FoundInQueryWithBlob (deserialiseKey k) (deserialiseValue v') br
     | let (lb, ub) = convertRange r
-    , (k, v) <- Map.R.rangeLookup lb ub (_values tbl)
+    , (k, v) <- Map.R.rangeLookup lb ub (values tbl)
     ]
   where
     convertRange :: Range k -> (Map.R.Bound RawBytes, Map.R.Bound RawBytes)
@@ -142,11 +142,11 @@ updates :: forall k v blob.
 updates ups tbl0 = V.foldl' update tbl0 ups where
     update :: Table k v blob -> (k, Update v blob) -> Table k v blob
     update tbl (k, Delete) = tbl
-        { _values = Map.delete (serialiseKey k) (_values tbl) }
+        { values = Map.delete (serialiseKey k) (values tbl) }
     update tbl (k, Insert v Nothing) = tbl
-        { _values = Map.insert (serialiseKey k) (serialiseValue v, Nothing) (_values tbl) }
+        { values = Map.insert (serialiseKey k) (serialiseValue v, Nothing) (values tbl) }
     update tbl (k, Insert v (Just blob)) = tbl
-        { _values = Map.insert (serialiseKey k) (serialiseValue v, Just (mkBlobRef blob)) (_values tbl)
+        { values = Map.insert (serialiseKey k) (serialiseValue v, Just (mkBlobRef blob)) (values tbl)
         }
 
 -- | Perform a batch of inserts.
@@ -247,7 +247,7 @@ newCursor ::
   => Maybe k
   -> Table k v blob
   -> Cursor k v blob
-newCursor offset tbl = Cursor (skip $ Map.toList $ _values tbl)
+newCursor offset tbl = Cursor (skip $ Map.toList $ values tbl)
   where
     skip = case offset of
       Nothing -> id
