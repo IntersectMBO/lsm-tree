@@ -1314,7 +1314,7 @@ data Stats = Stats {
     -- | Actions that succeeded
   , successActions     :: [String]
     -- | Actions that failed with an error
-  , failActions        :: [String]
+  , failActions        :: [(String, Model.Err)]
     -- === Final tags (per action sequence, per table)
     -- | Number of actions per table (succesful or failing)
   , numActionsPerTable :: !(Map Model.TableHandleID Int)
@@ -1428,8 +1428,8 @@ updateStats action lookUp modelBefore _modelAfter result =
         _ -> stats
 
     updFailActions stats = case result of
-        MEither (Left _) -> stats {
-            failActions = actionName action : failActions stats
+        MEither (Left (MErr e)) -> stats {
+            failActions = (actionName action, e) : failActions stats
           }
         _ -> stats
 
@@ -1611,7 +1611,7 @@ data FinalTag =
     -- | Which actions succeded
   | ActionSuccess String
     -- | Which actions failed
-  | ActionFail String
+  | ActionFail String Model.Err
     -- | Total number of flushes
   | NumFlushes String -- TODO: implement
     -- | Number of table handles created (new, open or duplicate)
@@ -1664,8 +1664,8 @@ tagFinalState' (getModel -> ModelState finalState finalStats) = concat [
         | c <- successActions finalStats ]
 
     tagFailActions =
-        [ ("Actions that failed", [ActionFail c])
-        | c <- failActions finalStats ]
+        [ ("Actions that failed", [ActionFail c e])
+        | (c, e) <- failActions finalStats ]
 
     tagNumTables =
         [ ("Number of tables", [NumTables (showPowersOf 2 n)])
