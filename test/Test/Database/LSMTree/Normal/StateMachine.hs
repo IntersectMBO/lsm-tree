@@ -673,12 +673,13 @@ instance ( Eq (Class.TableConfig h)
     -> ModelLookUp (ModelState h)
     -> ModelState h
     -> (ModelValue (ModelState h) a, ModelState h)
-  modelNextState action lookUp (ModelState mock stats) =
-      auxStats $ runModel lookUp action mock
+  modelNextState action lookUp (ModelState state stats) =
+      auxStats $ runModel lookUp action state
     where
       auxStats :: (Val h a, Model.Model) -> (Val h a, ModelState h)
-      auxStats (result, state') =
-          (result, ModelState state' $ updateStats action lookUp result stats)
+      auxStats (result, state') = (result, ModelState state' stats')
+        where
+          stats' = updateStats action lookUp state state' result stats
 
   usedVars :: LockstepAction (ModelState h) a -> [AnyGVar (ModelOp (ModelState h))]
   usedVars = \case
@@ -1315,6 +1316,10 @@ data Stats = Stats {
     -- === Final tags (per action sequence, per table)
     -- | Number of actions per table (succesful or failing)
   , numActionsPerTable :: !(Map Model.TableHandleID Int)
+    -- | The size of tables that were closed. This is used to augment the table
+    -- sizes from the final model state (which of course has only tables still
+    -- open in the final state).
+  , closedTableSizes   :: !(Map Model.TableHandleID Int)
   }
   deriving stock Show
 
@@ -1329,6 +1334,7 @@ initStats = Stats {
     , successActions = []
     , failActions = []
     , numActionsPerTable = Map.empty
+    , closedTableSizes   = Map.empty
     }
 
 updateStats ::
@@ -1340,10 +1346,12 @@ updateStats ::
      )
   => LockstepAction (ModelState h) a
   -> ModelLookUp (ModelState h)
+  -> Model.Model
+  -> Model.Model
   -> Val h a
   -> Stats
   -> Stats
-updateStats action lookUp result =
+updateStats action lookUp modelBefore _modelAfter result =
       -- === Tags
       updNewTableTypes
     . updSnapshotted
@@ -1353,6 +1361,7 @@ updateStats action lookUp result =
     . updSuccessActions
     . updFailActions
     . updNumActionsPerTable
+    . updClosedTableSizes
   where
     -- === Tags
 
@@ -1477,6 +1486,18 @@ updateStats action lookUp result =
                                                     (numActionsPerTable stats)
               }
 
+    updClosedTableSizes stats = case action of
+        Close tableVar
+          | MTableHandle th <- lookUp tableVar
+          , let tid          = Model.tableHandleID th
+            -- This lookup can fail if the table was already closed:
+          , Just (_, table) <- Map.lookup tid (Model.tableHandles modelBefore)
+          , let  tsize       = Model.withSomeTable Model.size table
+          -> stats {
+               closedTableSizes = Map.insert tid tsize (closedTableSizes stats)
+             }
+        _ -> stats
+
     getTableHandleId :: ModelValue (ModelState h) (WrapTableHandle h IO k v blob)
                      -> Model.TableHandleID
     getTableHandleId (MTableHandle th) = Model.tableHandleID th
@@ -1594,18 +1615,19 @@ data FinalTag =
     -- | Number of actions on each table
   | NumTableActions String
     -- | Total /logical/ size of a table
-  | TableSize String -- TODO: implement
+  | TableSize String
   deriving stock Show
 
 -- | This is run only after completing every action
 tagFinalState' :: Lockstep (ModelState h) -> [(String, [FinalTag])]
-tagFinalState' (getModel -> ModelState _ finalStats) = concat [
+tagFinalState' (getModel -> ModelState finalState finalStats) = concat [
       tagNumLookupsResults
     , tagNumUpdates
     , tagSuccessActions
     , tagFailActions
     , tagNumTables
     , tagNumTableActions
+    , tagTableSizes
     ]
   where
     tagNumLookupsResults = [
@@ -1638,6 +1660,15 @@ tagFinalState' (getModel -> ModelState _ finalStats) = concat [
     tagNumTableActions =
         [ ("Number of actions per table", [ NumTableActions (showPowersOf 2 n) ])
         | n <- Map.elems (numActionsPerTable finalStats)
+        ]
+
+    tagTableSizes =
+        [ ("Table sizes", [ TableSize (showPowersOf 2 size) ])
+        | let openSizes, closedSizes :: Map Model.TableHandleID Int
+              openSizes   = Model.withSomeTable Model.size . snd <$>
+                              Model.tableHandles finalState
+              closedSizes = closedTableSizes finalStats
+        , size <- Map.elems (openSizes `Map.union` closedSizes)
         ]
 
 {-------------------------------------------------------------------------------
