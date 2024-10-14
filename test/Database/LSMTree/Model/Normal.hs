@@ -30,6 +30,8 @@ module Database.LSMTree.Model.Normal (
   , snapshot
     -- * Multiple writable table handles
   , duplicate
+    -- * Testing
+  , size
   ) where
 
 import qualified Crypto.Hash.SHA256 as SHA256
@@ -60,6 +62,9 @@ type role Table nominal nominal nominal
 -- | An empty table.
 empty :: Table k v blob
 empty = Table Map.empty
+
+size :: Table k v blob -> Int
+size (Table m) = Map.size m
 
 -- | This instance is for testing and debugging only.
 instance

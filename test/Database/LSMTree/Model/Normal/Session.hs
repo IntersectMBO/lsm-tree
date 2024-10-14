@@ -24,12 +24,14 @@ module Database.LSMTree.Model.Normal.Session (
     Model (..)
   , initModel
   , UpdateCounter (..)
-    -- ** SomeTable
+    -- ** SomeTable, for testing
   , SomeTable (..)
   , toSomeTable
   , fromSomeTable
+  , withSomeTable
   , TableHandleID
   , tableHandleID
+  , Model.size
     -- ** Constraints
   , C
   , C_
@@ -138,6 +140,13 @@ fromSomeTable ::
   => SomeTable
   -> Maybe (Model.Table k v blob)
 fromSomeTable (SomeTable tbl) = cast tbl
+
+withSomeTable ::
+     (forall k v blob. (Typeable k, Typeable v, Typeable blob)
+                    => Model.Table k v blob -> a)
+  -> SomeTable
+  -> a
+withSomeTable f (SomeTable tbl) = f tbl
 
 newtype SomeCursor = SomeCursor Dynamic
 
