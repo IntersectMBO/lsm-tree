@@ -116,6 +116,9 @@ deriving stock instance Generic (SessionEnv m h)
 deriving anyclass instance (NoThunksIOLike m, Typeable m, Typeable h, Typeable (PrimState m))
                         => NoThunks (SessionEnv m h)
 
+deriving via OnlyCheckWhnf (Resource m)
+    instance Typeable m => NoThunks (Resource m)
+
 deriving stock instance Generic (Internal.TableHandle m h)
 -- | Does not check 'NoThunks' for the 'Internal.Session' that this
 -- 'Internal.TableHandle' belongs to.

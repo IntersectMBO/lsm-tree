@@ -65,7 +65,7 @@ module Test.Database.LSMTree.Normal.StateMachine (
 
 import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Concurrent.Class.MonadSTM.Strict
-import           Control.Monad (forM_, void, (<=<))
+import           Control.Monad (void, (<=<))
 import           Control.Monad.Class.MonadThrow (Handler (..), MonadCatch (..),
                      MonadThrow (..))
 import           Control.Monad.IOSim
@@ -326,36 +326,22 @@ release_RealImpl_MockFS ::
   => (StrictTMVar m MockFS, WrapSession R.TableHandle m)
   -> m ()
 release_RealImpl_MockFS (fsVar, WrapSession session) = do
-    sts <- getAllSessionTables session
-    forM_ sts $ \(SomeTable t) -> R.close t
-    scs <- getAllSessionCursors session
-    forM_ scs $ \(SomeCursor c) -> R.closeCursor c
+    mapM_ R.Internal.resourceRelease =<< getAllSessionResources session
     mockfs1 <- atomically $ readTMVar fsVar
     assertNumOpenHandles mockfs1 1 $ pure ()
     R.closeSession session
     mockfs2 <- atomically $ readTMVar fsVar
     assertNoOpenHandles mockfs2 $ pure ()
 
-data SomeTable m = SomeTable (forall k v b. R.TableHandle m k v b)
-data SomeCursor m = SomeCursor (forall k v b. R.Cursor m k v b)
-
-getAllSessionTables ::
+getAllSessionResources ::
      (MonadSTM m, MonadThrow m, MonadMVar m)
   => R.Session m
-  -> m [SomeTable m]
-getAllSessionTables (R.Internal.Session' s) = do
+  -> m [R.Internal.Resource m]
+getAllSessionResources (R.Internal.Session' s) =
     R.Internal.withOpenSession s $ \seshEnv -> do
-      ts <- readMVar (R.Internal.sessionOpenTables seshEnv)
-      pure ((\x -> SomeTable (R.Internal.NormalTable x))  <$> Map.elems ts)
-
-getAllSessionCursors ::
-     (MonadSTM m, MonadThrow m, MonadMVar m)
-  => R.Session m
-  -> m [SomeCursor m]
-getAllSessionCursors (R.Internal.Session' s) =
-    R.Internal.withOpenSession s $ \seshEnv -> do
-      cs <- readMVar (R.Internal.sessionOpenCursors seshEnv)
-      pure ((\x -> SomeCursor (R.Internal.NormalCursor x))  <$> Map.elems cs)
+      tables <- Map.elems <$> readMVar (R.Internal.sessionOpenTables seshEnv)
+      cursors <- Map.elems <$> readMVar (R.Internal.sessionOpenCursors seshEnv)
+      return (tables ++ cursors)
 
 realHandler :: Monad m => Handler m (Maybe Model.Err)
 realHandler = Handler $ pure . handler'

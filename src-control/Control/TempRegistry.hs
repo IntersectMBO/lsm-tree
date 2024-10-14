@@ -13,6 +13,7 @@ module Control.TempRegistry (
   , freeTemp
   , modifyWithTempRegistry
   , modifyWithTempRegistry_
+  , Resource (..)
   ) where
 
 import           Control.Concurrent.Class.MonadMVar.Strict

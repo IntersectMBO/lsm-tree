@@ -1,38 +1,199 @@
+{-# LANGUAGE DataKinds #-}
+
 -- TODO: remove once we properly implement snapshots
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Database.LSMTree.Internal.Snapshot (
-    -- * Snapshot format
-    numSnapRuns
-  , SnapLevels
-  , SnapLevel (..)
-  , SnapMergingRun (..)
-  , SnapMergingRunState (..)
-    -- * Creating snapshots
-  , snapLevels
-    -- * Opening snapshots
-  , openLevels
+    SnapshotLabel
+  , snapshot
+  , open
+  , deleteSnapshot
+  , listSnapshots
   ) where
 
 import           Control.Concurrent.Class.MonadMVar.Strict
-import           Control.Concurrent.Class.MonadSTM (MonadSTM)
-import           Control.Monad.Class.MonadST (MonadST)
-import           Control.Monad.Class.MonadThrow (MonadMask)
+import           Control.Concurrent.Class.MonadSTM (MonadSTM (..))
+import qualified Control.Concurrent.Class.MonadSTM.RWVar as RW
+import           Control.Monad (unless, void, when)
+import           Control.Monad.Class.MonadST (MonadST (..))
+import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Fix (MonadFix)
-import           Control.Monad.Primitive (PrimMonad)
+import           Control.Monad.Primitive
 import           Control.TempRegistry
+import           Control.Tracer
+import           Data.Arena (newArenaManager)
+import qualified Data.ByteString.Char8 as BSC
+import           Data.Maybe (catMaybes)
+import qualified Data.Set as Set
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.Entry
+import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.MergeSchedule
-import           Database.LSMTree.Internal.Paths (SessionRoot)
+import           Database.LSMTree.Internal.Paths (SessionRoot, SnapshotName)
 import qualified Database.LSMTree.Internal.Paths as Paths
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunNumber
+import           Database.LSMTree.Internal.Session
+import           Database.LSMTree.Internal.TableHandle
+import           Database.LSMTree.Internal.UniqCounter
+import qualified Database.LSMTree.Internal.WriteBuffer as WB
+import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
+import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
+import qualified System.FS.API.Lazy as FS
+import qualified System.FS.API.Strict as FS
 import           System.FS.BlockIO.API (HasBlockIO)
+
+type SnapshotLabel = String
+
+{-# SPECIALISE snapshot ::
+     ResolveSerialisedValue
+  -> SnapshotName
+  -> String
+  -> TableHandle IO h
+  -> IO Int #-}
+-- |  See 'Database.LSMTree.Normal.snapshot''.
+snapshot ::
+     (MonadFix m, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+  => ResolveSerialisedValue
+  -> SnapshotName
+  -> SnapshotLabel
+  -> TableHandle m h
+  -> m Int
+snapshot resolve snap label th = do
+    traceWith (tableTracer th) $ TraceSnapshot snap
+    let conf = tableConfig th
+    withOpenTable th $ \thEnv -> do
+      let hfs = tableHasFS thEnv
+      let snapPath = Paths.snapshot (tableSessionRoot thEnv) snap
+      FS.doesFileExist (tableHasFS thEnv) snapPath >>= \b ->
+              when b $ throwIO (ErrSnapshotExists snap)
+
+      -- For the temporary implementation it is okay to just flush the buffer
+      -- before taking the snapshot.
+      content <- modifyWithTempRegistry
+                    (RW.unsafeAcquireWriteAccess (tableContent thEnv))
+                    (atomically . RW.unsafeReleaseWriteAccess (tableContent thEnv))
+                    $ \reg content -> do
+        content' <- flushWriteBuffer
+              (TraceMerge `contramap` tableTracer th)
+              conf
+              resolve
+              hfs
+              (tableHasBlockIO thEnv)
+              (tableSessionRoot thEnv)
+              (tableSessionUniqCounter thEnv)
+              reg
+              content
+        pure (content', content')
+      -- At this point, we've flushed the write buffer but we haven't created the
+      -- snapshot file yet. If an asynchronous exception happens beyond this
+      -- point, we'll take that loss, as the inner state of the table is still
+      -- consistent.
+
+      snappedLevels <- snapLevels (tableLevels content)
+      let snapContents = BSC.pack $ show (label, snappedLevels, tableConfig th)
+
+      FS.withFile
+        (tableHasFS thEnv)
+        snapPath
+        (FS.WriteMode FS.MustBeNew) $ \h ->
+          void $ FS.hPutAllStrict (tableHasFS thEnv) h snapContents
+
+      pure $! numSnapRuns snappedLevels
+
+{-# SPECIALISE open ::
+     Session IO h
+  -> SnapshotLabel
+  -> TableConfigOverride
+  -> SnapshotName
+  -> IO (TableHandle IO h) #-}
+-- |  See 'Database.LSMTree.Normal.open'.
+open ::
+     (MonadFix m, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+  => Session m h
+  -> SnapshotLabel -- ^ Expected label
+  -> TableConfigOverride -- ^ Optional config override
+  -> SnapshotName
+  -> m (TableHandle m h)
+open sesh label override snap = do
+    traceWith (sessionTracer sesh) $ TraceOpenSnapshot snap override
+    withOpenSession sesh $ \seshEnv -> do
+      withTempRegistry $ \reg -> do
+        let hfs      = sessionHasFS seshEnv
+            hbio     = sessionHasBlockIO seshEnv
+            snapPath = Paths.snapshot (sessionRoot seshEnv) snap
+        FS.doesFileExist hfs snapPath >>= \b ->
+          unless b $ throwIO (ErrSnapshotNotExists snap)
+        bs <- FS.withFile
+                hfs
+                snapPath
+                FS.ReadMode $ \h ->
+                  FS.hGetAll (sessionHasFS seshEnv) h
+        let (label', snappedLevels, conf) = read $ BSC.unpack $ BSC.toStrict $ bs
+        unless (label == label') $ throwIO (ErrSnapshotWrongType snap)
+        let conf' = applyOverride override conf
+        am <- newArenaManager
+        blobpath <- Paths.tableBlobPath (sessionRoot seshEnv) <$>
+                      incrUniqCounter (sessionUniqCounter seshEnv)
+        tableWriteBufferBlobs
+          <- allocateTemp reg
+               (WBB.new hfs blobpath)
+               WBB.removeReference
+        tableLevels <- openLevels reg hfs hbio conf (sessionRoot seshEnv) snappedLevels
+        tableCache <- mkLevelsCache reg tableLevels
+        newWith reg sesh seshEnv conf' am $! TableContent {
+            tableWriteBuffer = WB.empty
+          , tableWriteBufferBlobs
+          , tableLevels
+          , tableCache
+          }
+
+{-# SPECIALISE deleteSnapshot ::
+     Session IO h
+  -> SnapshotName
+  -> IO () #-}
+-- |  See 'Database.LSMTree.Common.deleteSnapshot'.
+deleteSnapshot ::
+     (MonadFix m, MonadMask m, MonadSTM m)
+  => Session m h
+  -> SnapshotName
+  -> m ()
+deleteSnapshot sesh snap = do
+    traceWith (sessionTracer sesh) $ TraceDeleteSnapshot snap
+    withOpenSession sesh $ \seshEnv -> do
+      let hfs = sessionHasFS seshEnv
+          snapPath = Paths.snapshot (sessionRoot seshEnv) snap
+      FS.doesFileExist hfs snapPath >>= \b ->
+        unless b $ throwIO (ErrSnapshotNotExists snap)
+      FS.removeFile hfs snapPath
+
+{-# SPECIALISE listSnapshots :: Session IO h -> IO [SnapshotName] #-}
+-- |  See 'Database.LSMTree.Common.listSnapshots'.
+listSnapshots ::
+     (MonadFix m, MonadMask m, MonadSTM m)
+  => Session m h
+  -> m [SnapshotName]
+listSnapshots sesh = do
+    traceWith (sessionTracer sesh) TraceListSnapshots
+    withOpenSession sesh $ \seshEnv -> do
+      let hfs = sessionHasFS seshEnv
+          root = sessionRoot seshEnv
+      contents <- FS.listDirectory hfs (Paths.snapshotsDir (sessionRoot seshEnv))
+      snaps <- mapM (checkSnapshot hfs root) $ Set.toList contents
+      pure $ catMaybes snaps
+  where
+    checkSnapshot hfs root s =
+      case Paths.mkSnapshotName s of
+        Nothing   -> pure Nothing
+        Just snap -> do
+          -- check that it is a file
+          b <- FS.doesFileExist hfs (Paths.snapshot root snap)
+          if b then pure $ Just snap
+               else pure $ Nothing
 
 {-------------------------------------------------------------------------------
   Levels snapshot format
