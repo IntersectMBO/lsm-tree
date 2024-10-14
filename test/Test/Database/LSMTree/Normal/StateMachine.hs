@@ -77,7 +77,7 @@ import           Data.Constraint (Dict (..))
 import           Data.Kind (Type)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (catMaybes, fromJust)
+import           Data.Maybe (catMaybes, fromJust, fromMaybe)
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Typeable (Proxy (..), Typeable, cast, eqT,
@@ -1322,6 +1322,15 @@ data Stats = Stats {
     -- sizes from the final model state (which of course has only tables still
     -- open in the final state).
   , closedTableSizes   :: !(Map Model.TableHandleID Int)
+    -- | The ultimate parent for each table. This is the 'TableId' of a table
+    -- created using 'new' or 'open'.
+  , parentTable        :: Map Model.TableHandleID Model.TableHandleID
+    -- | Track the interleavings of operations via different but related tables.
+    -- This is a map from the ultimate parent table to a summary log of which
+    -- tables (derived from that parent table via duplicate) have had
+    -- \"interesting\" actions performed on them. We record only the
+    -- interleavings of different tables not multiple actions on the same table.
+  , dupTableActionLog  :: Map Model.TableHandleID [Model.TableHandleID]
   }
   deriving stock Show
 
@@ -1337,6 +1346,8 @@ initStats = Stats {
     , failActions = []
     , numActionsPerTable = Map.empty
     , closedTableSizes   = Map.empty
+    , parentTable        = Map.empty
+    , dupTableActionLog  = Map.empty
     }
 
 updateStats ::
@@ -1364,6 +1375,8 @@ updateStats action lookUp modelBefore _modelAfter result =
     . updFailActions
     . updNumActionsPerTable
     . updClosedTableSizes
+    . updDupTableActionLog
+    . updParentTable
   where
     -- === Tags
 
@@ -1500,6 +1513,69 @@ updateStats action lookUp modelBefore _modelAfter result =
              }
         _ -> stats
 
+    updParentTable stats = case (action, result) of
+        (New{}, MEither (Right (MTableHandle tbl))) ->
+          stats {
+            parentTable = Map.insert (Model.tableHandleID tbl)
+                                     (Model.tableHandleID tbl)
+                                     (parentTable stats)
+          }
+        (Open{}, MEither (Right (MTableHandle tbl))) ->
+          stats {
+            parentTable = Map.insert (Model.tableHandleID tbl)
+                                     (Model.tableHandleID tbl)
+                                     (parentTable stats)
+          }
+        (Duplicate ptblVar, MEither (Right (MTableHandle tbl))) ->
+          let -- immediate and ultimate parent table ids
+              iptblId, uptblId :: Model.TableHandleID
+              iptblId = getTableHandleId (lookUp ptblVar)
+              uptblId = parentTable stats Map.! iptblId
+           in stats {
+                parentTable = Map.insert (Model.tableHandleID tbl)
+                                         uptblId
+                                         (parentTable stats)
+              }
+        _ -> stats
+
+    updDupTableActionLog stats | MEither (Right _) <- result =
+      case action of
+        Lookups     ks   tableVar
+          | not (null ks)         -> updateLastActionLog tableVar
+        RangeLookup r    tableVar
+          | not (emptyRange r)    -> updateLastActionLog tableVar
+        NewCursor   _    tableVar -> updateLastActionLog tableVar
+        Updates     upds tableVar
+          | not (null upds)       -> updateLastActionLog tableVar
+        Inserts     ins  tableVar
+          | not (null ins)        -> updateLastActionLog tableVar
+        Deletes     ks   tableVar
+          | not (null ks)         -> updateLastActionLog tableVar
+        Close            tableVar -> updateLastActionLog tableVar
+        _                         -> stats
+      where
+        -- add the current table to the front of the list of tables, if it's
+        -- not the latest one already
+        updateLastActionLog :: GVar Op (WrapTableHandle h IO k v blob) -> Stats
+        updateLastActionLog tableVar =
+          case Map.lookup pthid (dupTableActionLog stats) of
+            Just (thid' : _)
+              | thid == thid' -> stats -- the most recent action was via this table
+            malog ->
+              let alog = thid : fromMaybe [] malog
+               in stats {
+                    dupTableActionLog = Map.insert pthid alog
+                                                   (dupTableActionLog stats)
+                  }
+          where
+            thid  = getTableHandleId (lookUp tableVar)
+            pthid = parentTable stats Map.! thid
+
+        emptyRange (R.FromToExcluding l u) = l >= u
+        emptyRange (R.FromToIncluding l u) = l >  u
+
+    updDupTableActionLog stats = stats
+
     getTableHandleId :: ModelValue (ModelState h) (WrapTableHandle h IO k v blob)
                      -> Model.TableHandleID
     getTableHandleId (MTableHandle th) = Model.tableHandleID th
@@ -1620,6 +1696,8 @@ data FinalTag =
   | NumTableActions String
     -- | Total /logical/ size of a table
   | TableSize String
+    -- | Number of interleaved actions on duplicate tables
+  | DupTableActionLog String
   deriving stock Show
 
 -- | This is run only after completing every action
@@ -1633,6 +1711,7 @@ tagFinalState' (getModel -> ModelState finalState finalStats) = concat [
     , tagNumTables
     , tagNumTableActions
     , tagTableSizes
+    , tagDupTableActionLog
     ]
   where
     tagNumLookupsResults = [
@@ -1684,6 +1763,13 @@ tagFinalState' (getModel -> ModelState finalState finalStats) = concat [
                               Model.tableHandles finalState
               closedSizes = closedTableSizes finalStats
         , size <- Map.elems (openSizes `Map.union` closedSizes)
+        ]
+
+    tagDupTableActionLog =
+        [ ("Interleaved actions on table duplicates",
+           [DupTableActionLog (showPowersOf 2 n)])
+        | (_, alog) <- Map.toList (dupTableActionLog finalStats)
+        , let n = length alog
         ]
 
 {-------------------------------------------------------------------------------
