@@ -126,6 +126,7 @@ library
     Database.LSMTree.Internal.Chunk
     Database.LSMTree.Internal.Config
     Database.LSMTree.Internal.CRC32C
+    Database.LSMTree.Internal.Cursor
     Database.LSMTree.Internal.Entry
     Database.LSMTree.Internal.IndexCompact
     Database.LSMTree.Internal.IndexCompactAcc
@@ -152,7 +153,9 @@ library
     Database.LSMTree.Internal.RunReaders
     Database.LSMTree.Internal.Serialise
     Database.LSMTree.Internal.Serialise.Class
+    Database.LSMTree.Internal.Session
     Database.LSMTree.Internal.Snapshot
+    Database.LSMTree.Internal.TableHandle
     Database.LSMTree.Internal.UniqCounter
     Database.LSMTree.Internal.Unsliced
     Database.LSMTree.Internal.Vector
