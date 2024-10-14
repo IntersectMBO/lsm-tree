@@ -1306,9 +1306,11 @@ data Stats = Stats {
   , snapshotted        :: Set R.SnapshotName
     -- === Final tags (per action sequence, across all tables)
     -- | Number of succesful lookups and their results
-  , numLookupsResults  :: (Int, Int, Int) -- (NotFound, Found, FoundWithBlob)
+  , numLookupsResults  :: {-# UNPACK #-} !(Int, Int, Int)
+                          -- (NotFound, Found, FoundWithBlob)
     -- | Number of succesful updates
-  , numUpdates         :: (Int, Int, Int) -- (Insert, InsertWithBlob, Delete)
+  , numUpdates         :: {-# UNPACK #-} !(Int, Int, Int)
+                          -- (Insert, InsertWithBlob, Delete)
     -- | Actions that succeeded
   , successActions     :: [String]
     -- | Actions that failed with an error
@@ -1604,6 +1606,8 @@ data FinalTag =
     -- (this includes submissions through both 'Class.updates' and
     -- 'Class.deletes')
   | NumDeletes String
+    -- | Total number of actions (failing, succeeding, either)
+  | NumActions String
     -- | Which actions succeded
   | ActionSuccess String
     -- | Which actions failed
@@ -1623,6 +1627,7 @@ tagFinalState' :: Lockstep (ModelState h) -> [(String, [FinalTag])]
 tagFinalState' (getModel -> ModelState finalState finalStats) = concat [
       tagNumLookupsResults
     , tagNumUpdates
+    , tagNumActions
     , tagSuccessActions
     , tagFailActions
     , tagNumTables
@@ -1643,6 +1648,16 @@ tagFinalState' (getModel -> ModelState finalState finalStats) = concat [
         , ("Deletes"            , [NumDeletes          $ showPowersOf 10 d])
         ]
       where (i, iwb, d) = numUpdates finalStats
+
+    tagNumActions =
+        [ let n = length (successActions finalStats) in
+          ("Actions that succeeded total", [NumActions (showPowersOf 10 n)])
+        , let n = length (failActions finalStats) in
+          ("Actions that failed total", [NumActions (showPowersOf 10 n)])
+        , let n = length (successActions finalStats)
+                + length (failActions finalStats) in
+          ("Actions total", [NumActions (showPowersOf 10 n)])
+        ]
 
     tagSuccessActions =
         [ ("Actions that succeeded", [ActionSuccess c])
