@@ -1243,6 +1243,7 @@ snapshot resolve snap label th = do
   -> SnapshotLabel
   -> TableConfigOverride
   -> SnapshotName
+  -> ResolveSerialisedValue
   -> IO (TableHandle IO h) #-}
 -- |  See 'Database.LSMTree.Normal.open'.
 open ::
@@ -1251,8 +1252,9 @@ open ::
   -> SnapshotLabel -- ^ Expected label
   -> TableConfigOverride -- ^ Optional config override
   -> SnapshotName
+  -> ResolveSerialisedValue
   -> m (TableHandle m h)
-open sesh label override snap = do
+open sesh label override snap resolve = do
     traceWith (sessionTracer sesh) $ TraceOpenSnapshot snap override
     withOpenSession sesh $ \seshEnv -> do
       withTempRegistry $ \reg -> do
@@ -1276,7 +1278,7 @@ open sesh label override snap = do
           <- allocateTemp reg
                (WBB.new hfs blobpath)
                WBB.removeReference
-        tableLevels <- openLevels reg hfs hbio conf (sessionRoot seshEnv) snappedLevels
+        tableLevels <- openLevels reg hfs hbio conf (sessionUniqCounter seshEnv) (sessionRoot seshEnv) resolve snappedLevels
         tableCache <- mkLevelsCache reg tableLevels
         newWith reg sesh seshEnv conf' am $! TableContent {
             tableWriteBuffer = WB.empty
