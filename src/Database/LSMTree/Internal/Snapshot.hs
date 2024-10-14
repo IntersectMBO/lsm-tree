@@ -69,12 +69,14 @@ data SnapMergingRunState =
   Conversion to snapshot format
 -------------------------------------------------------------------------------}
 
+{-# SPECIALISE snapLevels :: Levels IO h -> IO SnapLevels #-}
 snapLevels ::
      (PrimMonad m, MonadMVar m)
   => Levels m h
   -> m SnapLevels
 snapLevels = V.mapM snapLevel
 
+{-# SPECIALISE snapLevel :: Level IO h -> IO SnapLevel #-}
 snapLevel ::
      (PrimMonad m, MonadMVar m)
   => Level m h
@@ -83,6 +85,7 @@ snapLevel Level{..} = do
     smr <- snapMergingRun incomingRuns
     pure (SnapLevel smr (V.map runNumber residentRuns))
 
+{-# SPECIALISE snapMergingRun :: MergingRun IO h -> IO SnapMergingRun #-}
 snapMergingRun ::
      (PrimMonad m, MonadMVar m)
   => MergingRun m h
@@ -92,6 +95,7 @@ snapMergingRun (MergingRun mrsVar) = do
     pure (SnapMergingRun smrs)
 snapMergingRun (SingleRun r) = pure (SnapSingleRun (runNumber r))
 
+{-# SPECIALISE snapMergingRunState :: MergingRunState IO h -> IO SnapMergingRunState #-}
 snapMergingRunState ::
      PrimMonad m
   => MergingRunState m h
@@ -107,6 +111,15 @@ runNumber r = Paths.runNumber (Run.runRunFsPaths r)
   Opening from snapshot format
 -------------------------------------------------------------------------------}
 
+{-# SPECIALISE openLevels ::
+     TempRegistry IO
+  -> HasFS IO h
+  -> HasBlockIO IO h
+  -> TableConfig
+  -> SessionRoot
+  -> SnapLevels
+  -> IO (Levels IO h)
+  #-}
 openLevels ::
      forall m h. (MonadFix m, MonadMask m, MonadMVar m, MonadSTM m, MonadST m)
   => TempRegistry m
@@ -150,6 +163,7 @@ openLevels reg hfs hbio TableConfig{..} sessionRoot levels =
                 Run.removeReference
         openMergingRunState (SnapOngoingMerge _rns) = do
             error "openLevels: ongoing merge not yet supported"
+
 {-------------------------------------------------------------------------------
   Levels
 -------------------------------------------------------------------------------}
