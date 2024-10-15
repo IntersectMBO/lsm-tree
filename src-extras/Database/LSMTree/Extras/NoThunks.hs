@@ -277,6 +277,12 @@ deriving stock instance Generic (MergingRunState m h)
 deriving anyclass instance (Typeable m, Typeable (PrimState m), Typeable h)
                         => NoThunks (MergingRunState m h)
 
+deriving stock instance Generic MergePolicyForLevel
+deriving anyclass instance NoThunks MergePolicyForLevel
+
+deriving stock instance Generic NumRuns
+deriving anyclass instance NoThunks NumRuns
+
 {-------------------------------------------------------------------------------
   Entry
 -------------------------------------------------------------------------------}
@@ -521,7 +527,7 @@ instance NoThunks a => NoThunks (StrictTVar IO a) where
 instance NoThunks a => NoThunks (StrictMVar IO a) where
   showTypeOf (_ :: Proxy (StrictMVar IO a)) = "StrictMVar IO"
   wNoThunks ctx var = do
-      x <- readMVar var
+      !x <- readMVar var -- TODO: undo
       noThunks ctx x
 
 {-------------------------------------------------------------------------------

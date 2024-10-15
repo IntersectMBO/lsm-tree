@@ -21,9 +21,12 @@ import           Control.Monad.Class.MonadThrow (MonadMask)
 import           Control.Monad.Fix (MonadFix)
 import           Control.Monad.Primitive (PrimMonad)
 import           Control.TempRegistry
+import           Data.Foldable (forM_, traverse_)
+import           Data.Primitive.PrimVar
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.Entry
+import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.MergeSchedule
 import           Database.LSMTree.Internal.Paths (SessionRoot)
@@ -31,6 +34,8 @@ import qualified Database.LSMTree.Internal.Paths as Paths
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunNumber
+import           Database.LSMTree.Internal.UniqCounter (UniqCounter,
+                     incrUniqCounter, uniqueToRunNumber)
 import           System.FS.API (HasFS)
 import           System.FS.BlockIO.API (HasBlockIO)
 
@@ -42,10 +47,10 @@ numSnapRuns :: SnapLevels -> Int
 numSnapRuns sl = V.sum $ V.map go1 sl
   where
     go1 (SnapLevel sir srr) = go2 sir + V.length srr
-    go2 (SnapMergingRun smrs) = go3 smrs
-    go2 (SnapSingleRun _rn)   = 1
-    go3 (SnapCompletedMerge _rn) = 1
-    go3 (SnapOngoingMerge rns)   = V.length rns
+    go2 (SnapMergingRun _ _ smrs) = go3 smrs
+    go2 (SnapSingleRun _rn)       = 1
+    go3 (SnapCompletedMerge _rn)   = 1
+    go3 (SnapOngoingMerge rns _ _) = V.length rns
 
 type SnapLevels = V.Vector SnapLevel
 
@@ -56,13 +61,13 @@ data SnapLevel = SnapLevel {
   deriving stock (Show, Eq, Read)
 
 data SnapMergingRun =
-    SnapMergingRun !SnapMergingRunState
+    SnapMergingRun !MergePolicyForLevel !NumRuns !SnapMergingRunState
   | SnapSingleRun !RunNumber
   deriving stock (Show, Eq, Read)
 
 data SnapMergingRunState =
     SnapCompletedMerge !RunNumber
-  | SnapOngoingMerge !(V.Vector RunNumber) {- merge -}
+  | SnapOngoingMerge !(V.Vector RunNumber) !NumStepsDone {- merge -} !Merge.Level
   deriving stock (Show, Eq, Read)
 
 {-------------------------------------------------------------------------------
@@ -90,9 +95,9 @@ snapMergingRun ::
      (PrimMonad m, MonadMVar m)
   => MergingRun m h
   -> m SnapMergingRun
-snapMergingRun (MergingRun mrsVar) = do
+snapMergingRun (MergingRun mpfl nr mrsVar) = do
     smrs <- withMVar mrsVar $ \mrs -> snapMergingRunState mrs
-    pure (SnapMergingRun smrs)
+    pure (SnapMergingRun mpfl nr smrs)
 snapMergingRun (SingleRun r) = pure (SnapSingleRun (runNumber r))
 
 {-# SPECIALISE snapMergingRunState :: MergingRunState IO h -> IO SnapMergingRunState #-}
@@ -101,8 +106,9 @@ snapMergingRunState ::
   => MergingRunState m h
   -> m SnapMergingRunState
 snapMergingRunState (CompletedMerge r) = pure (SnapCompletedMerge (runNumber r))
-snapMergingRunState (OngoingMerge rs _m) = do
-    pure (SnapOngoingMerge (V.map runNumber rs))
+snapMergingRunState (OngoingMerge rs nsdVar m) = do
+    nsd <- readPrimVar nsdVar
+    pure (SnapOngoingMerge (V.map runNumber rs) (NumStepsDone nsd) (Merge.mergeLevel m))
 
 runNumber :: Run m h -> RunNumber
 runNumber r = Paths.runNumber (Run.runRunFsPaths r)
@@ -116,7 +122,9 @@ runNumber r = Paths.runNumber (Run.runRunFsPaths r)
   -> HasFS IO h
   -> HasBlockIO IO h
   -> TableConfig
+  -> UniqCounter IO
   -> SessionRoot
+  -> ResolveSerialisedValue
   -> SnapLevels
   -> IO (Levels IO h)
   #-}
@@ -126,17 +134,20 @@ openLevels ::
   -> HasFS m h
   -> HasBlockIO m h
   -> TableConfig
+  -> UniqCounter m
   -> SessionRoot
+  -> ResolveSerialisedValue
   -> SnapLevels
   -> m (Levels m h)
-openLevels reg hfs hbio TableConfig{..} sessionRoot levels =
+openLevels reg hfs hbio conf@TableConfig{..} uc sessionRoot resolve levels =
     V.iforM levels $ \i -> openLevel (LevelNo (i+1))
   where
     mkPath = Paths.RunFsPaths (Paths.activeDir sessionRoot)
 
     openLevel :: LevelNo -> SnapLevel -> m (Level m h)
     openLevel ln SnapLevel{..} = do
-        incomingRuns <- openMergingRun snapIncomingRuns
+        (mmmay, incomingRuns) <- openMergingRun snapIncomingRuns
+        forM_ mmmay $ \(NumStepsDone c) -> supplyMergeCredits c incomingRuns -- TODO: this part is leaky!
         residentRuns <- V.forM snapResidentRuns $ \rn ->
           allocateTemp reg
             (Run.openFromDisk hfs hbio caching (mkPath rn))
@@ -144,31 +155,47 @@ openLevels reg hfs hbio TableConfig{..} sessionRoot levels =
         pure Level{..}
       where
         caching = diskCachePolicyForLevel confDiskCachePolicy ln
+        alloc = bloomFilterAllocForLevel conf ln
 
-        openMergingRun :: SnapMergingRun -> m (MergingRun m h)
-        openMergingRun (SnapMergingRun smrs) = do
-            mrs <- openMergingRunState smrs
-            MergingRun <$> newMVar mrs
+        openMergingRun :: SnapMergingRun -> m (Maybe NumStepsDone, MergingRun m h)
+        openMergingRun (SnapMergingRun mpfl nr smrs) = do
+            (n, mrs) <- openMergingRunState smrs
+            (n,) . MergingRun mpfl nr <$> newMVar mrs
         openMergingRun (SnapSingleRun rn) =
-            SingleRun <$>
+            (Nothing,) . SingleRun <$>
               allocateTemp reg
                 (Run.openFromDisk hfs hbio caching (mkPath rn))
                 Run.removeReference
 
-        openMergingRunState :: SnapMergingRunState -> m (MergingRunState m h)
+        openMergingRunState :: SnapMergingRunState -> m (Maybe NumStepsDone, MergingRunState m h)
         openMergingRunState (SnapCompletedMerge rn) =
-            CompletedMerge <$>
+            (Nothing,) . CompletedMerge <$>
               allocateTemp reg
                 (Run.openFromDisk hfs hbio caching (mkPath rn))
                 Run.removeReference
-        openMergingRunState (SnapOngoingMerge _rns) = do
-            error "openLevels: ongoing merge not yet supported"
+        openMergingRunState (SnapOngoingMerge rns nsd mergeLast) = do
+            rs <- V.forM rns $ \rn ->
+              allocateTemp reg
+                (Run.openFromDisk hfs hbio caching ((mkPath rn)))
+                Run.removeReference
+            nsdVar <- newPrimVar $! unNumStepsDone nsd
+            rn <- uniqueToRunNumber <$> incrUniqCounter uc
+            mergeMaybe <- allocateTemp reg
+              (Merge.new hfs hbio caching alloc mergeLast resolve (mkPath rn) rs)
+              (traverse_ Merge.removeReference)
+            -- TODO: progress merge
+            -- TODO: write test that shows a failure because we are not progressing the merge
+            case mergeMaybe of
+              Nothing -> error "openLevels: merges can not be empty"
+              Just m  -> pure (Just nsd, OngoingMerge rs nsdVar m)
 
 {-------------------------------------------------------------------------------
   Levels
 -------------------------------------------------------------------------------}
 
+deriving stock instance Read NumRuns
 deriving stock instance Read MergePolicyForLevel
+deriving stock instance Read NumStepsDone
 deriving newtype instance Read RunNumber
 deriving stock instance Read Merge.Level
 

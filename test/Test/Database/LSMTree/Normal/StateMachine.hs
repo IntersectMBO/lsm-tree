@@ -209,6 +209,7 @@ propLockstep_ModelIOImpl =
 
 instance Arbitrary R.TableConfig where
   arbitrary = do
+    confMergeSchedule <- QC.elements [R.OneShot, R.Incremental]
     confWriteBufferAlloc <- QC.arbitrary
     pure $ R.TableConfig {
         R.confMergePolicy       = R.MergePolicyLazyLevelling
@@ -217,7 +218,7 @@ instance Arbitrary R.TableConfig where
       , R.confBloomFilterAlloc  = R.AllocFixed 10
       , R.confFencePointerIndex = R.CompactIndex
       , R.confDiskCachePolicy   = R.DiskCacheNone
-      , R.confMergeSchedule     = R.OneShot
+      , confMergeSchedule
       }
 
   shrink R.TableConfig{..} =
