@@ -706,11 +706,18 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
       traceWith tr $ AtLevel ln $ TraceExpectCompletedMergeSingleRun (runNumber $ Run.runRunFsPaths r)
       pure r
     expectCompletedMerge ln (MergingRun _ _ var) = do
-      withMVar var $ \case
-        CompletedMerge r -> do
+      modifyMVarMasked var $ \case
+        x@(CompletedMerge r) -> do
           traceWith tr $ AtLevel ln $ TraceExpectCompletedMerge (runNumber $ Run.runRunFsPaths r)
-          pure r
-        OngoingMerge _rs _ _m -> error "expectCompletedMerge: OngoingMerge not yet supported" -- TODO: implement.
+          pure (x, r)
+        OngoingMerge _rs _ _m -> do
+          -- RefCount n <- Merge.readRefCount m
+          -- let !n' = fromIntegralChecked n
+          -- V.forM_ rs $ \r -> Run.removeReferenceN r n'
+          -- r <- Merge.complete m
+          -- Merge.removeReferenceN m n'
+          -- pure (CompletedMerge r, r)
+          error "expectCompletedMerge: OngoingMerge not yet supported" -- TODO: implement.
 
     newMerge :: MergePolicyForLevel
              -> Merge.Level

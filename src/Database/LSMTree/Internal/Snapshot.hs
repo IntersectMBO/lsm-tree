@@ -122,7 +122,9 @@ runNumber r = Paths.runNumber (Run.runRunFsPaths r)
   -> HasFS IO h
   -> HasBlockIO IO h
   -> TableConfig
+  -> UniqCounter IO
   -> SessionRoot
+  -> ResolveSerialisedValue
   -> SnapLevels
   -> IO (Levels IO h)
   #-}

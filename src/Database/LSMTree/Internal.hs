@@ -1211,6 +1211,7 @@ snapshot resolve snap label th = do
                     (RW.unsafeAcquireWriteAccess (tableContent thEnv))
                     (atomically . RW.unsafeReleaseWriteAccess (tableContent thEnv))
                     $ \reg content -> do
+        supplyCredits (Entry.unNumEntries $ case confWriteBufferAlloc conf of AllocNumEntries x -> x) (tableLevels content)
         content' <- flushWriteBuffer
               (TraceMerge `contramap` tableTracer th)
               conf

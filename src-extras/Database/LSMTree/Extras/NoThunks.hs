@@ -527,7 +527,7 @@ instance NoThunks a => NoThunks (StrictTVar IO a) where
 instance NoThunks a => NoThunks (StrictMVar IO a) where
   showTypeOf (_ :: Proxy (StrictMVar IO a)) = "StrictMVar IO"
   wNoThunks ctx var = do
-      x <- readMVar var
+      !x <- readMVar var -- TODO: undo
       noThunks ctx x
 
 {-------------------------------------------------------------------------------
