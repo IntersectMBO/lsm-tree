@@ -97,7 +97,7 @@ prop_removeReferenceN (Positive n) (NonNegative m) = ioProperty $ do
                              then check e1
                              else isRight e1) .&&.
         counterexample "n1" (n1 == RefCount (n - m)) .&&.
-        counterexample "b1" (b1 == (m == n))
+        counterexample "b1" (b1 == (m >= n))
   where
 #ifdef NO_IGNORE_ASSERTS
     check = \case Left (AssertionFailed _) -> True; Right () -> False
