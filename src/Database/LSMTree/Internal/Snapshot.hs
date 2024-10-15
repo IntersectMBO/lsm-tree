@@ -108,7 +108,7 @@ snapMergingRunState ::
 snapMergingRunState (CompletedMerge r) = pure (SnapCompletedMerge (runNumber r))
 snapMergingRunState (OngoingMerge rs nsdVar m) = do
     nsd <- readPrimVar nsdVar
-    pure (SnapOngoingMerge (V.map runNumber rs) nsd (Merge.mergeLevel m))
+    pure (SnapOngoingMerge (V.map runNumber rs) (NumStepsDone nsd) (Merge.mergeLevel m))
 
 runNumber :: Run m h -> RunNumber
 runNumber r = Paths.runNumber (Run.runRunFsPaths r)
@@ -147,7 +147,7 @@ openLevels reg hfs hbio conf@TableConfig{..} uc sessionRoot resolve levels =
     openLevel :: LevelNo -> SnapLevel -> m (Level m h)
     openLevel ln SnapLevel{..} = do
         (mmmay, incomingRuns) <- openMergingRun snapIncomingRuns
-        forM_ mmmay $ \c -> supplyMergeCredits c incomingRuns -- TODO: this part is leaky!
+        forM_ mmmay $ \(NumStepsDone c) -> supplyMergeCredits c incomingRuns -- TODO: this part is leaky!
         residentRuns <- V.forM snapResidentRuns $ \rn ->
           allocateTemp reg
             (Run.openFromDisk hfs hbio caching (mkPath rn))
@@ -157,7 +157,7 @@ openLevels reg hfs hbio conf@TableConfig{..} uc sessionRoot resolve levels =
         caching = diskCachePolicyForLevel confDiskCachePolicy ln
         alloc = bloomFilterAllocForLevel conf ln
 
-        openMergingRun :: SnapMergingRun -> m (Maybe Int, MergingRun m h)
+        openMergingRun :: SnapMergingRun -> m (Maybe NumStepsDone, MergingRun m h)
         openMergingRun (SnapMergingRun mpfl nr smrs) = do
             (n, mrs) <- openMergingRunState smrs
             (n,) . MergingRun mpfl nr <$> newMVar mrs
@@ -167,7 +167,7 @@ openLevels reg hfs hbio conf@TableConfig{..} uc sessionRoot resolve levels =
                 (Run.openFromDisk hfs hbio caching (mkPath rn))
                 Run.removeReference
 
-        openMergingRunState :: SnapMergingRunState -> m (Maybe Int, MergingRunState m h)
+        openMergingRunState :: SnapMergingRunState -> m (Maybe NumStepsDone, MergingRunState m h)
         openMergingRunState (SnapCompletedMerge rn) =
             (Nothing,) . CompletedMerge <$>
               allocateTemp reg
@@ -178,7 +178,7 @@ openLevels reg hfs hbio conf@TableConfig{..} uc sessionRoot resolve levels =
               allocateTemp reg
                 (Run.openFromDisk hfs hbio caching ((mkPath rn)))
                 Run.removeReference
-            nsdVar <- newPrimVar nsd
+            nsdVar <- newPrimVar $! unNumStepsDone nsd
             rn <- uniqueToRunNumber <$> incrUniqCounter uc
             mergeMaybe <- allocateTemp reg
               (Merge.new hfs hbio caching alloc mergeLast resolve (mkPath rn) rs)
@@ -187,7 +187,7 @@ openLevels reg hfs hbio conf@TableConfig{..} uc sessionRoot resolve levels =
             -- TODO: write test that shows a failure because we are not progressing the merge
             case mergeMaybe of
               Nothing -> error "openLevels: merges can not be empty"
-              Just m  -> pure (Just (unNumStepsDone nsd), OngoingMerge rs nsdVar m)
+              Just m  -> pure (Just nsd, OngoingMerge rs nsdVar m)
 
 {-------------------------------------------------------------------------------
   Levels

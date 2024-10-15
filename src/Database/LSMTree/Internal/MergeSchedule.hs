@@ -43,7 +43,6 @@ import           Control.TempRegistry
 import           Control.Tracer
 import           Data.BloomFilter (Bloom)
 import           Data.Foldable (traverse_)
-import           Data.Primitive (Prim)
 import           Data.Primitive.PrimVar
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Assertions (assert,
@@ -276,11 +275,10 @@ newtype NumRuns = NumRuns { unNumRuns :: Int }
 
 data MergingRunState m h =
     CompletedMerge !(Run m h)
-  | OngoingMerge !(V.Vector (Run m h)) !(PrimVar (PrimState m) NumStepsDone) !(Merge m h)
+  | OngoingMerge !(V.Vector (Run m h)) !(PrimVar (PrimState m) Int {- NumStepsDone -}) !(Merge m h)
 
 newtype NumStepsDone = NumStepsDone { unNumStepsDone :: Int }
   deriving stock (Show, Eq)
-  deriving newtype Prim
 
 {-# SPECIALISE addReferenceLevels :: TempRegistry IO -> Levels IO h -> IO () #-}
 addReferenceLevels ::
@@ -752,7 +750,7 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
             case mergeMaybe of
               Nothing -> error "newMerge: merges can not be empty"
               Just m -> do
-                pvar <- newPrimVar $! NumStepsDone 0
+                pvar <- newPrimVar $! 0
                 var <- newMVar $! OngoingMerge rs pvar m
                 pure $! MergingRun mergepolicy (NumRuns $ V.length rs) var
 
@@ -881,8 +879,8 @@ supplyMergeCredits c (MergingRun _ _ var) = do
       CompletedMerge{} -> pure False
       (OngoingMerge _rs pvar m) -> do
         (n, stepResult) <- Merge.steps m c
-        (NumStepsDone x) <- readPrimVar pvar
-        writePrimVar pvar $! NumStepsDone (n + x)
+        x <- readPrimVar pvar
+        writePrimVar pvar $! n + x
         pure $ stepResult == MergeComplete
     when b $
       modifyMVarMasked_ var $ \case
