@@ -24,10 +24,14 @@ module Database.LSMTree.Model.Normal.Session (
     Model (..)
   , initModel
   , UpdateCounter (..)
-    -- ** SomeTable
+    -- ** SomeTable, for testing
   , SomeTable (..)
   , toSomeTable
   , fromSomeTable
+  , withSomeTable
+  , TableHandleID
+  , tableHandleID
+  , Model.size
     -- ** Constraints
   , C
   , C_
@@ -118,7 +122,9 @@ newtype UpdateCounter = UpdateCounter Word64
   deriving stock (Show, Eq, Ord)
   deriving newtype (Num)
 
-newtype SomeTable = SomeTable Dynamic
+data SomeTable where
+     SomeTable :: (Typeable k, Typeable v, Typeable blob)
+               => Model.Table k v blob -> SomeTable
 
 instance Show SomeTable where
   show (SomeTable table) = show table
@@ -127,13 +133,20 @@ toSomeTable ::
      (Typeable k, Typeable v, Typeable blob)
   => Model.Table k v blob
   -> SomeTable
-toSomeTable = SomeTable . toDyn
+toSomeTable = SomeTable
 
 fromSomeTable ::
      (Typeable k, Typeable v, Typeable blob)
   => SomeTable
   -> Maybe (Model.Table k v blob)
-fromSomeTable (SomeTable tbl) = fromDynamic tbl
+fromSomeTable (SomeTable tbl) = cast tbl
+
+withSomeTable ::
+     (forall k v blob. (Typeable k, Typeable v, Typeable blob)
+                    => Model.Table k v blob -> a)
+  -> SomeTable
+  -> a
+withSomeTable f (SomeTable tbl) = f tbl
 
 newtype SomeCursor = SomeCursor Dynamic
 
