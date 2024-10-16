@@ -22,7 +22,7 @@ import           Database.LSMTree.Class.Normal hiding (withTableDuplicate,
 import qualified Database.LSMTree.Class.Normal as Class
 import           Database.LSMTree.Common (mkSnapshotName)
 import           Database.LSMTree.Extras.Generators ()
-import qualified Database.LSMTree.Model.Instance.Normal as Model
+import qualified Database.LSMTree.Model.IO.Normal as Model
 import qualified Database.LSMTree.Model.Session as Model (TableConfig (..))
 import qualified Database.LSMTree.Normal as R
 import qualified System.FS.API as FS
@@ -38,10 +38,10 @@ tests = testGroup "Test.Database.LSMTree.Class.Normal"
     ]
   where
 
-    tbl3 :: Proxy Model.MTableHandle
+    tbl3 :: Proxy Model.TableHandle
     tbl3 = Setup {
           testTableConfig = Model.TableConfig
-        , testWithSessionArgs = \action -> action Model.NoMSessionArgs
+        , testWithSessionArgs = \action -> action Model.NoSessionArgs
         }
 
     expectFailures3 = repeat False

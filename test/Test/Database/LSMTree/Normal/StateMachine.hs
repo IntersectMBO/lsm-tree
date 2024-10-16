@@ -91,7 +91,7 @@ import           Database.LSMTree.Extras.Generators (KeyForIndexCompact)
 import           Database.LSMTree.Extras.NoThunks (assertNoThunks)
 import           Database.LSMTree.Internal (LSMTreeError (..))
 import qualified Database.LSMTree.Internal as R.Internal
-import qualified Database.LSMTree.Model.Instance.Normal as Model
+import qualified Database.LSMTree.Model.IO.Normal as ModelIO
 import qualified Database.LSMTree.Model.Session as Model
 import qualified Database.LSMTree.Normal as R
 import           NoThunks.Class
@@ -152,27 +152,27 @@ instance Arbitrary Model.TableConfig where
   arbitrary = pure Model.TableConfig
 
 propLockstep_ModelIOImpl ::
-     Actions (Lockstep (ModelState Model.MTableHandle))
+     Actions (Lockstep (ModelState ModelIO.TableHandle))
   -> QC.Property
 propLockstep_ModelIOImpl =
     runActionsBracket'
-      (Proxy @(ModelState Model.MTableHandle))
+      (Proxy @(ModelState ModelIO.TableHandle))
       acquire
       release
       (\r session -> runReaderT r (session, handler))
       tagFinalState'
   where
-    acquire :: IO (WrapSession Model.MTableHandle IO)
-    acquire = WrapSession <$> Class.openSession Model.NoMSessionArgs
+    acquire :: IO (WrapSession ModelIO.TableHandle IO)
+    acquire = WrapSession <$> Class.openSession ModelIO.NoSessionArgs
 
-    release :: WrapSession Model.MTableHandle IO -> IO ()
+    release :: WrapSession ModelIO.TableHandle IO -> IO ()
     release (WrapSession session) = Class.closeSession session
 
     handler :: Handler IO (Maybe Model.Err)
     handler = Handler $ pure . handler'
       where
-        handler' :: Model.MErr -> Maybe Model.Err
-        handler' (Model.MErr err) = Just err
+        handler' :: ModelIO.Err -> Maybe Model.Err
+        handler' (ModelIO.Err err) = Just err
 
 instance Arbitrary R.TableConfig where
   arbitrary = do
@@ -226,9 +226,6 @@ instance Arbitrary R.WriteBufferAlloc where
       [ R.AllocNumEntries (R.NumEntries x')
       | QC.Positive x' <- QC.shrink (QC.Positive x)
       ]
-
-deriving via AllowThunk (Model.MSession IO)
-    instance NoThunks (Model.MSession IO)
 
 propLockstep_RealImpl_RealFS_IO ::
      Tracer IO R.LSMTreeTrace
@@ -892,10 +889,10 @@ runModel lookUp = \case
       wrap MUnit
       . Model.runModelM (Model.close (getTableHandle $ lookUp tableVar))
     Lookups ks tableVar ->
-      wrap (MVector . fmap (MLookupResult . fmap MBlobRef . Model.convLookupResult))
+      wrap (MVector . fmap (MLookupResult . fmap MBlobRef . ModelIO.convLookupResult))
       . Model.runModelM (Model.lookups ks (getTableHandle $ lookUp tableVar))
     RangeLookup range tableVar ->
-      wrap (MVector . fmap (MQueryResult . fmap MBlobRef . Model.convQueryResult))
+      wrap (MVector . fmap (MQueryResult . fmap MBlobRef . ModelIO.convQueryResult))
       . Model.runModelM (Model.rangeLookup range (getTableHandle $ lookUp tableVar))
     NewCursor offset tableVar ->
       wrap MCursor
@@ -904,11 +901,11 @@ runModel lookUp = \case
       wrap MUnit
       . Model.runModelM (Model.closeCursor (getCursor $ lookUp cursorVar))
     ReadCursor n cursorVar ->
-      wrap (MVector . fmap (MQueryResult . fmap MBlobRef . Model.convQueryResult))
+      wrap (MVector . fmap (MQueryResult . fmap MBlobRef . ModelIO.convQueryResult))
       . Model.runModelM (Model.readCursor n (getCursor $ lookUp cursorVar))
     Updates kups tableVar ->
       wrap MUnit
-      . Model.runModelM (Model.updates Model.noResolve (fmap Model.convUpdate <$> kups) (getTableHandle $ lookUp tableVar))
+      . Model.runModelM (Model.updates Model.noResolve (fmap ModelIO.convUpdate <$> kups) (getTableHandle $ lookUp tableVar))
     Inserts kins tableVar ->
       wrap MUnit
       . Model.runModelM (Model.inserts Model.noResolve kins (getTableHandle $ lookUp tableVar))
