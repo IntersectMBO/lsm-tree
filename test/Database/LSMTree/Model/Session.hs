@@ -1,40 +1,60 @@
-{-# LANGUAGE TypeFamilies #-}
-
-{-# OPTIONS_GHC -Wno-missing-export-lists #-}
-
+-- | A pure model of a session, supporting both blobs and mupserts.
 module Database.LSMTree.Model.Session (
+  -- * Model
     Model (..)
   , initModel
-  , ModelT
+  , UpdateCounter (..)
+    -- ** SomeTable
+  , SomeTable (..)
+  , toSomeTable
+  , fromSomeTable
+    -- ** ModelT and ModelM
+  , ModelT (..)
   , runModelT
   , ModelM
   , runModelM
+    -- ** Errors
   , Err (..)
-  , TableHandle (..)
+    -- * Tables
+  , TableHandle
   , TableConfig (..)
   , new
   , close
-  , duplicate
+    -- * Monoidal value resolution
+  , ResolveSerialisedValue (..)
+  , getResolve
+  , noResolve
+    -- * Table querying and updates
+    -- ** Queries
+  , Range (..)
+  , LookupResult (..)
   , lookups
+  , QueryResult (..)
   , rangeLookup
+    -- ** Cursor
+  , Cursor
+  , newCursor
+  , closeCursor
+  , readCursor
+    -- ** Updates
+  , Update (..)
   , updates
   , inserts
   , deletes
   , mupserts
-  , BlobRef (..)
+    -- ** Blobs
+  , BlobRef
   , retrieveBlobs
-  , Snapshot (..)
+    -- * Snapshots
+  , SnapshotName
   , snapshot
   , open
   , deleteSnapshot
   , listSnapshots
-  , Cursor (..)
-  , newCursor
-  , closeCursor
-  , readCursor
+    -- * Multiple writable table handles
+  , duplicate
+    -- * Table merge
   , merge
-  , module Types
-  , fromSomeTable
   ) where
 
 import           Control.Monad (when)
@@ -50,13 +70,12 @@ import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromJust)
 import qualified Data.Vector as V
 import           Data.Word
-import           Database.LSMTree.Common (Range (..), SerialiseKey (..),
-                     SerialiseValue (..))
-import           Database.LSMTree.Model.Table as Types (LookupResult (..),
-                     QueryResult (..), ResolveSerialisedValue (..), Update (..),
-                     getResolve, noResolve)
+import           Database.LSMTree.Common (SerialiseKey (..),
+                     SerialiseValue (..), SnapshotName)
+import           Database.LSMTree.Model.Table (LookupResult (..),
+                     QueryResult (..), Range (..), ResolveSerialisedValue (..),
+                     Update (..), getResolve, noResolve)
 import qualified Database.LSMTree.Model.Table as Model
-import qualified Database.LSMTree.Normal as SUT
 
 {-------------------------------------------------------------------------------
   Model
@@ -66,7 +85,7 @@ data Model = Model {
     tableHandles :: Map TableHandleID (UpdateCounter, SomeTable)
   , cursors      :: Map CursorID SomeCursor
   , nextID       :: Int
-  , snapshots    :: Map SUT.SnapshotName Snapshot
+  , snapshots    :: Map SnapshotName Snapshot
   }
   deriving stock Show
 
@@ -119,14 +138,12 @@ fromSomeCursor ::
   -> Maybe (Model.Cursor k v blob)
 fromSomeCursor (SomeCursor c) = fromDynamic c
 
-
 --
 -- Constraints
 --
 
-type C_ a = (Show a, Eq a, Typeable a)
-
 -- | Common constraints for keys, values and blobs
+type C_ a = (Show a, Eq a, Typeable a)
 type C k v blob = (C_ k, C_ v, C_ blob)
 
 --
@@ -418,7 +435,7 @@ snapshot ::
      , MonadError Err m
      , C k v blob
      )
-  => SUT.SnapshotName
+  => SnapshotName
   -> TableHandle k v blob
   -> m ()
 snapshot name th@TableHandle{..} = do
@@ -447,7 +464,7 @@ open ::
      , MonadError Err m
      , C k v blob
      )
-  => SUT.SnapshotName
+  => SnapshotName
   -> m (TableHandle k v blob)
 open name = do
     snaps <- gets snapshots
@@ -463,7 +480,7 @@ open name = do
 
 deleteSnapshot ::
      (MonadState Model m, MonadError Err m)
-  => SUT.SnapshotName
+  => SnapshotName
   -> m ()
 deleteSnapshot name = do
     snaps <- gets snapshots
@@ -477,7 +494,7 @@ deleteSnapshot name = do
 
 listSnapshots ::
      MonadState Model m
-  => m [SUT.SnapshotName]
+  => m [SnapshotName]
 listSnapshots = gets (Map.keys . snapshots)
 
 {-------------------------------------------------------------------------------

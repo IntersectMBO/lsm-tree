@@ -1,8 +1,41 @@
 {-# LANGUAGE TypeFamilies #-}
 
-{-# OPTIONS_GHC -Wno-missing-export-lists #-}
-
-module Database.LSMTree.Model.Table where
+-- | A pure model of a single table, supporting both blobs and mupserts.
+module Database.LSMTree.Model.Table (
+    -- * Tables
+    Table (..)
+  , empty
+    -- * Monoidal value resolution
+  , ResolveSerialisedValue (..)
+  , getResolve
+  , noResolve
+    -- * Table querying and updates
+    -- ** Queries
+  , Range (..)
+  , LookupResult (..)
+  , lookups
+  , QueryResult (..)
+  , rangeLookup
+    -- ** Cursor
+  , Cursor
+  , newCursor
+  , readCursor
+    -- ** Updates
+  , Update (..)
+  , updates
+  , inserts
+  , deletes
+  , mupserts
+    -- ** Blobs
+  , BlobRef
+  , retrieveBlobs
+    -- * Snapshots
+  , snapshot
+    -- * Multiple writable table handles
+  , duplicate
+    -- * Table merge
+  , merge
+  ) where
 
 import qualified Crypto.Hash.SHA256 as SHA256
 import           Data.Bifunctor

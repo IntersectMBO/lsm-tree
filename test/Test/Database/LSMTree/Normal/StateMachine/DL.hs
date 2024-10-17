@@ -1,7 +1,3 @@
-{-# LANGUAGE DataKinds       #-}
-{-# LANGUAGE OverloadedLists #-}
-{-# LANGUAGE PolyKinds       #-}
-
 {-# OPTIONS_GHC -Wno-unused-do-bind #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 

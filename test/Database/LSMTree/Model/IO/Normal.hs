@@ -1,16 +1,19 @@
 {-# LANGUAGE TypeFamilies #-}
 
+-- | A @TVar@-based normal (i.e. non-monoidal) model of a potentially closed
+-- mutable session, giving an instance of `Class.IsTableHandle`.
 module Database.LSMTree.Model.IO.Normal (
-    runInOpenSession
+    Err (..)
+  , Session (..)
+  , Class.SessionArgs (NoSessionArgs)
+  , TableHandle (..)
+  , BlobRef (..)
+  , Cursor (..)
+    -- * helpers
+  , runInOpenSession
   , convLookupResult
   , convQueryResult
   , convUpdate
-  , Session (..)
-  , TableHandle (..)
-  , Cursor (..)
-  , Err (..)
-  , BlobRef (..)
-  , Class.SessionArgs (NoSessionArgs)
   ) where
 
 import           Control.Concurrent.Class.MonadSTM.Strict
