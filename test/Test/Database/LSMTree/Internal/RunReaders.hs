@@ -184,20 +184,20 @@ instance InLockstep ReadersState where
 
   modelNextState :: forall a.
        LockstepAction ReadersState a
-    -> ModelLookUp ReadersState
+    -> ModelVarContext ReadersState
     -> ReadersState
     -> (ReadersVal a, ReadersState)
-  modelNextState action lookUp (ReadersState mock) =
-      ReadersState <$> runMock lookUp action mock
+  modelNextState action _ctx (ReadersState mock) =
+      ReadersState <$> runMock action mock
 
   usedVars :: LockstepAction ReadersState a -> [AnyGVar (ModelOp ReadersState)]
   usedVars = const []
 
   arbitraryWithVars ::
-       ModelFindVariables ReadersState
+       ModelVarContext ReadersState
     -> ReadersState
     -> Gen (Any (LockstepAction ReadersState))
-  arbitraryWithVars _ (ReadersState mock)
+  arbitraryWithVars _ctx (ReadersState mock)
     | isEmpty mock = do
         -- It's not allowed to keep using a drained RunReaders,
         -- we can only create a new one.
@@ -226,11 +226,11 @@ instance InLockstep ReadersState where
           ]
 
   shrinkWithVars ::
-       ModelFindVariables ReadersState
+       ModelVarContext ReadersState
     -> ReadersState
     -> LockstepAction ReadersState a
     -> [Any (LockstepAction ReadersState)]
-  shrinkWithVars _ _ = \case
+  shrinkWithVars _ctx _st = \case
       New k wb wbs      -> [ Some (New k' wb' wbs')
                            | (k', wb', wbs') <- shrink (k, wb, wbs)
                            ]
@@ -267,11 +267,10 @@ instance InLockstep ReadersState where
     ]
 
 runMock ::
-     lookUp
-  -> Action (Lockstep ReadersState) a
+     Action (Lockstep ReadersState) a
   -> MockReaders
   -> (ReadersVal a, MockReaders)
-runMock _ = \case
+runMock = \case
     New k wb wbs   -> const $ wrap MUnit (Right (), newMock (coerce k) (toList wb <> wbs))
     PeekKey        -> \m -> wrap MKey (peekKeyMock m, m)
     Pop n          -> wrap wrapPop . popMock n

@@ -58,6 +58,8 @@ module Database.LSMTree.Model.Normal.Session (
   , rangeLookup
     -- ** Cursor
   , Cursor
+  , CursorID
+  , cursorID
   , newCursor
   , closeCursor
   , readCursor

@@ -670,16 +670,16 @@ instance ( Eq (Class.TableConfig h)
 
   modelNextState ::  forall a.
        LockstepAction (ModelState h) a
-    -> ModelLookUp (ModelState h)
+    -> ModelVarContext (ModelState h)
     -> ModelState h
     -> (ModelValue (ModelState h) a, ModelState h)
-  modelNextState action lookUp (ModelState state stats) =
-      auxStats $ runModel lookUp action state
+  modelNextState action ctx (ModelState state stats) =
+      auxStats $ runModel (lookupVar ctx) action state
     where
       auxStats :: (Val h a, Model.Model) -> (Val h a, ModelState h)
       auxStats (result, state') = (result, ModelState state' stats')
         where
-          stats' = updateStats action lookUp state state' result stats
+          stats' = updateStats action (lookupVar ctx) state state' result stats
 
   usedVars :: LockstepAction (ModelState h) a -> [AnyGVar (ModelOp (ModelState h))]
   usedVars = \case
@@ -701,16 +701,16 @@ instance ( Eq (Class.TableConfig h)
       Duplicate tableVar              -> [SomeGVar tableVar]
 
   arbitraryWithVars ::
-       ModelFindVariables (ModelState h)
+       ModelVarContext (ModelState h)
     -> ModelState h
     -> Gen (Any (LockstepAction (ModelState h)))
-  arbitraryWithVars findVars st = QC.oneof [
-        arbitraryActionWithVars (Proxy @(Key1, Value1, Blob1)) findVars st
-      , arbitraryActionWithVars (Proxy @(Key2, Value2, Blob2)) findVars st
+  arbitraryWithVars ctx st = QC.oneof [
+        arbitraryActionWithVars (Proxy @(Key1, Value1, Blob1)) ctx st
+      , arbitraryActionWithVars (Proxy @(Key2, Value2, Blob2)) ctx st
       ]
 
   shrinkWithVars ::
-       ModelFindVariables (ModelState h)
+       ModelVarContext (ModelState h)
     -> ModelState h
     -> LockstepAction (ModelState h) a
     -> [Any (LockstepAction (ModelState h))]
@@ -1102,20 +1102,21 @@ arbitraryActionWithVars ::
      , Ord k
      , R.Labellable (k, v, blob)
      , Eq (Class.TableConfig h)
+     , Show (Class.TableConfig h)
      , Arbitrary (Class.TableConfig h)
      , Typeable (Class.Cursor h)
      , Typeable h
      )
   => Proxy (k, v, blob)
-  -> ModelFindVariables (ModelState h)
+  -> ModelVarContext (ModelState h)
   -> ModelState h
   -> Gen (Any (LockstepAction (ModelState h)))
-arbitraryActionWithVars _ findVars _st = QC.frequency $ concat [
+arbitraryActionWithVars _ ctx _st = QC.frequency $ concat [
       withoutVars
-    , case findVars (Proxy @(Either Model.Err (WrapTableHandle h IO k v blob))) of
+    , case findVars ctx (Proxy @(Either Model.Err (WrapTableHandle h IO k v blob))) of
         []   -> []
         vars -> withVars (QC.elements vars)
-    , case findVars (Proxy @(Either Model.Err (WrapCursor h IO k v blob))) of
+    , case findVars ctx (Proxy @(Either Model.Err (WrapCursor h IO k v blob))) of
         []   -> []
         vars -> withVars' (QC.elements vars)
 
@@ -1146,8 +1147,8 @@ arbitraryActionWithVars _ findVars _st = QC.frequency $ concat [
     findBlobRefsVars :: [Var h (Either Model.Err (V.Vector (WrapBlobRef h IO blob)))]
     findBlobRefsVars = fmap fromLookupResults vars1 ++ fmap fromQueryResults vars2
       where
-        vars1 = findVars (Proxy @(Either Model.Err (V.Vector (R.LookupResult v (WrapBlobRef h IO blob)))))
-        vars2 = findVars (Proxy @(Either Model.Err (V.Vector (R.QueryResult k v (WrapBlobRef h IO blob)))))
+        vars1 = findVars ctx (Proxy @(Either Model.Err (V.Vector (R.LookupResult v (WrapBlobRef h IO blob)))))
+        vars2 = findVars ctx (Proxy @(Either Model.Err (V.Vector (R.QueryResult k v (WrapBlobRef h IO blob)))))
 
         fromLookupResults ::
              Var h (Either Model.Err (V.Vector (R.LookupResult v (WrapBlobRef h IO blob))))
@@ -1242,11 +1243,11 @@ shrinkActionWithVars ::
      , Typeable (Class.Cursor h)
      , Typeable h
      )
-  => ModelFindVariables (ModelState h)
+  => ModelVarContext (ModelState h)
   -> ModelState h
   -> LockstepAction (ModelState h) a
   -> [Any (LockstepAction (ModelState h))]
-shrinkActionWithVars _ _ = \case
+shrinkActionWithVars _ctx _st = \case
     New p conf -> [ Some $ New p conf' | conf' <- QC.shrink conf ]
 
     -- Shrink inserts and deletes towards updates.
