@@ -167,6 +167,7 @@ class (IsSession (Session h)) => IsTableHandle h where
     open ::
            ( IOLike m
            , Labellable (k, v)
+           , ResolveValue v
            , SerialiseKey k
            , SerialiseValue v
            , C k v Void
@@ -206,6 +207,7 @@ withTableNew sesh conf = bracket (new sesh conf) close
 withTableOpen :: forall h m k v a.
      ( IOLike m
      , IsTableHandle h
+     , ResolveValue v
      , SerialiseKey k
      , SerialiseValue v
      , Labellable (k, v)

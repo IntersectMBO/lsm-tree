@@ -173,7 +173,7 @@ prop_interimOpenTable dat = ioProperty $
           updates const upds th
           let snap = fromMaybe (error "invalid name") $ mkSnapshotName "snap"
           numRunsSnapped <- snapshot const snap "someLabel" th
-          th' <- open sesh "someLabel" configNoOverride snap
+          th' <- open sesh "someLabel" configNoOverride snap const
           lhs <- fetchBlobs hfs =<< lookups const ks th
           rhs <- fetchBlobs hfs =<< lookups const ks th'
           -- We must fetch blobs because comparing blob references is meaningless
@@ -184,7 +184,10 @@ prop_interimOpenTable dat = ioProperty $
           -- match.
           --
           pure $ tabulate "Number of runs snapshotted" [show numRunsSnapped]
-               $ lhs === rhs
+               -- Just Delete is semantically equivalent to Nothing but not
+               -- syntactically equal, so we "weaken" the property by mapping
+               -- Just Delete to Nothing.
+               $ fmap weaken lhs === fmap weaken rhs
   where
     conf = testTableConfig
 
@@ -197,6 +200,9 @@ prop_interimOpenTable dat = ioProperty $
     ks = V.map serialiseKey (V.fromList keysToLookup)
     upds = V.fromList $ fmap (bimap serialiseKey (bimap serialiseValue serialiseBlob))
                       $ Map.toList runData
+
+    weaken (Just Delete) = Nothing
+    weaken x             = x
 
 -- | Check that reading from a cursor returns exactly the entries that have
 -- been inserted into the table. Roughly:
