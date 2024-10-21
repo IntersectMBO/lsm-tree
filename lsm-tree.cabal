@@ -126,6 +126,7 @@ library
     Database.LSMTree.Internal.Chunk
     Database.LSMTree.Internal.Config
     Database.LSMTree.Internal.CRC32C
+    Database.LSMTree.Internal.Cursor
     Database.LSMTree.Internal.Entry
     Database.LSMTree.Internal.IndexCompact
     Database.LSMTree.Internal.IndexCompactAcc
