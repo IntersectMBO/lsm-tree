@@ -75,8 +75,9 @@ import           Data.Bifunctor (Bifunctor (..))
 import qualified Data.ByteString as BS
 import           Data.Constraint (Dict (..))
 import           Data.Kind (Type)
+import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (catMaybes, fromJust)
+import           Data.Maybe (catMaybes, fromJust, fromMaybe)
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Typeable (Proxy (..), Typeable, cast, eqT,
@@ -471,7 +472,7 @@ instance ( Show (Class.TableConfig h)
     Lookups :: C k v blob
             => V.Vector k -> Var h (WrapTableHandle h IO k v blob)
             -> Act h (V.Vector (R.LookupResult v (WrapBlobRef h IO blob)))
-    RangeLookup :: C k v blob
+    RangeLookup :: (C k v blob, Ord k)
                 => R.Range k -> Var h (WrapTableHandle h IO k v blob)
                 -> Act h (V.Vector (R.QueryResult k v (WrapBlobRef h IO blob)))
     -- Cursor
@@ -672,12 +673,13 @@ instance ( Eq (Class.TableConfig h)
     -> ModelLookUp (ModelState h)
     -> ModelState h
     -> (ModelValue (ModelState h) a, ModelState h)
-  modelNextState action lookUp (ModelState mock stats) =
-      auxStats $ runModel lookUp action mock
+  modelNextState action lookUp (ModelState state stats) =
+      auxStats $ runModel lookUp action state
     where
       auxStats :: (Val h a, Model.Model) -> (Val h a, ModelState h)
-      auxStats (result, state') =
-          (result, ModelState state' $ updateStats action result stats)
+      auxStats (result, state') = (result, ModelState state' stats')
+        where
+          stats' = updateStats action lookUp state state' result stats
 
   usedVars :: LockstepAction (ModelState h) a -> [AnyGVar (ModelOp (ModelState h))]
   usedVars = \case
@@ -1299,18 +1301,36 @@ instance InterpretOp Op (ModelValue (ModelState h)) where
 data Stats = Stats {
     -- === Tags
     -- | Unique types at which tables were created
-    newTableTypes     :: Set String
+    newTableTypes      :: Set String
     -- | Names for which snapshots exist
-  , snapshotted       :: Set R.SnapshotName
-    -- === Final tags
+  , snapshotted        :: Set R.SnapshotName
+    -- === Final tags (per action sequence, across all tables)
     -- | Number of succesful lookups and their results
-  , numLookupsResults :: (Int, Int, Int) -- (NotFound, Found, FoundWithBlob)
+  , numLookupsResults  :: {-# UNPACK #-} !(Int, Int, Int)
+                          -- (NotFound, Found, FoundWithBlob)
     -- | Number of succesful updates
-  , numUpdates        :: (Int, Int, Int) -- (Insert, InsertWithBlob, Delete)
+  , numUpdates         :: {-# UNPACK #-} !(Int, Int, Int)
+                          -- (Insert, InsertWithBlob, Delete)
     -- | Actions that succeeded
-  , successActions    :: [String]
+  , successActions     :: [String]
     -- | Actions that failed with an error
-  , failActions       :: [String]
+  , failActions        :: [(String, Model.Err)]
+    -- === Final tags (per action sequence, per table)
+    -- | Number of actions per table (succesful or failing)
+  , numActionsPerTable :: !(Map Model.TableHandleID Int)
+    -- | The size of tables that were closed. This is used to augment the table
+    -- sizes from the final model state (which of course has only tables still
+    -- open in the final state).
+  , closedTableSizes   :: !(Map Model.TableHandleID Int)
+    -- | The ultimate parent for each table. This is the 'TableId' of a table
+    -- created using 'new' or 'open'.
+  , parentTable        :: Map Model.TableHandleID Model.TableHandleID
+    -- | Track the interleavings of operations via different but related tables.
+    -- This is a map from the ultimate parent table to a summary log of which
+    -- tables (derived from that parent table via duplicate) have had
+    -- \"interesting\" actions performed on them. We record only the
+    -- interleavings of different tables not multiple actions on the same table.
+  , dupTableActionLog  :: Map Model.TableHandleID [Model.TableHandleID]
   }
   deriving stock Show
 
@@ -1324,6 +1344,10 @@ initStats = Stats {
     , numUpdates = (0, 0, 0)
     , successActions = []
     , failActions = []
+    , numActionsPerTable = Map.empty
+    , closedTableSizes   = Map.empty
+    , parentTable        = Map.empty
+    , dupTableActionLog  = Map.empty
     }
 
 updateStats ::
@@ -1334,10 +1358,13 @@ updateStats ::
      , Typeable h
      )
   => LockstepAction (ModelState h) a
+  -> ModelLookUp (ModelState h)
+  -> Model.Model
+  -> Model.Model
   -> Val h a
   -> Stats
   -> Stats
-updateStats action result =
+updateStats action lookUp modelBefore _modelAfter result =
       -- === Tags
       updNewTableTypes
     . updSnapshotted
@@ -1346,6 +1373,10 @@ updateStats action result =
     . updNumUpdates
     . updSuccessActions
     . updFailActions
+    . updNumActionsPerTable
+    . updClosedTableSizes
+    . updDupTableActionLog
+    . updParentTable
   where
     -- === Tags
 
@@ -1410,10 +1441,144 @@ updateStats action result =
         _ -> stats
 
     updFailActions stats = case result of
-        MEither (Left _) -> stats {
-            failActions = actionName action : failActions stats
+        MEither (Left (MErr e)) -> stats {
+            failActions = (actionName action, e) : failActions stats
           }
         _ -> stats
+
+    updNumActionsPerTable :: Stats -> Stats
+    updNumActionsPerTable stats = case action of
+        New{}
+          | MEither (Right (MTableHandle table)) <- result -> initCount table
+          | otherwise                                      -> stats
+        Open{}
+          | MEither (Right (MTableHandle table)) <- result -> initCount table
+          | otherwise                                      -> stats
+        Duplicate{}
+          | MEither (Right (MTableHandle table)) <- result -> initCount table
+          | otherwise                                      -> stats
+
+        -- Note that for the other actions we don't count success vs failure.
+        -- We don't need that level of detail. We just want to see the
+        -- distribution. Success / failure is detailed elsewhere.
+        Lookups _ tableVar     -> updateCount tableVar
+        RangeLookup _ tableVar -> updateCount tableVar
+        NewCursor _ tableVar   -> updateCount tableVar
+        Updates _ tableVar     -> updateCount tableVar
+        Inserts _ tableVar     -> updateCount tableVar
+        Deletes _ tableVar     -> updateCount tableVar
+        -- Note that we don't remove tracking map entries for tables that get
+        -- closed. We want to know actions per table of all tables used, not
+        -- just those that were still open at the end of the sequence of
+        -- actions. We do also count Close itself as an action.
+        Close tableVar        -> updateCount tableVar
+
+        -- The others are not counted as table actions. We list them here
+        -- explicitly so we don't miss any new ones we might add later.
+        CloseCursor{}         -> stats
+        ReadCursor{}          -> stats
+        RetrieveBlobs{}       -> stats
+        Snapshot{}            -> stats
+        DeleteSnapshot{}      -> stats
+        ListSnapshots{}       -> stats
+      where
+        -- Init to 0 so we get an accurate count of tables with no actions.
+        initCount :: forall k v blob. Model.TableHandle k v blob -> Stats
+        initCount table =
+          let tid = Model.tableHandleID table
+           in stats {
+                numActionsPerTable = Map.insert tid 0 (numActionsPerTable stats)
+              }
+
+        -- Note that batches (of inserts lookups etc) count as one action.
+        updateCount :: forall k v blob.
+                       Var h (WrapTableHandle h IO k v blob)
+                    -> Stats
+        updateCount tableVar =
+          let tid = getTableHandleId (lookUp tableVar)
+           in stats {
+                numActionsPerTable = Map.insertWith (+) tid 1
+                                                    (numActionsPerTable stats)
+              }
+
+    updClosedTableSizes stats = case action of
+        Close tableVar
+          | MTableHandle th <- lookUp tableVar
+          , let tid          = Model.tableHandleID th
+            -- This lookup can fail if the table was already closed:
+          , Just (_, table) <- Map.lookup tid (Model.tableHandles modelBefore)
+          , let  tsize       = Model.withSomeTable Model.size table
+          -> stats {
+               closedTableSizes = Map.insert tid tsize (closedTableSizes stats)
+             }
+        _ -> stats
+
+    updParentTable stats = case (action, result) of
+        (New{}, MEither (Right (MTableHandle tbl))) ->
+          stats {
+            parentTable = Map.insert (Model.tableHandleID tbl)
+                                     (Model.tableHandleID tbl)
+                                     (parentTable stats)
+          }
+        (Open{}, MEither (Right (MTableHandle tbl))) ->
+          stats {
+            parentTable = Map.insert (Model.tableHandleID tbl)
+                                     (Model.tableHandleID tbl)
+                                     (parentTable stats)
+          }
+        (Duplicate ptblVar, MEither (Right (MTableHandle tbl))) ->
+          let -- immediate and ultimate parent table ids
+              iptblId, uptblId :: Model.TableHandleID
+              iptblId = getTableHandleId (lookUp ptblVar)
+              uptblId = parentTable stats Map.! iptblId
+           in stats {
+                parentTable = Map.insert (Model.tableHandleID tbl)
+                                         uptblId
+                                         (parentTable stats)
+              }
+        _ -> stats
+
+    updDupTableActionLog stats | MEither (Right _) <- result =
+      case action of
+        Lookups     ks   tableVar
+          | not (null ks)         -> updateLastActionLog tableVar
+        RangeLookup r    tableVar
+          | not (emptyRange r)    -> updateLastActionLog tableVar
+        NewCursor   _    tableVar -> updateLastActionLog tableVar
+        Updates     upds tableVar
+          | not (null upds)       -> updateLastActionLog tableVar
+        Inserts     ins  tableVar
+          | not (null ins)        -> updateLastActionLog tableVar
+        Deletes     ks   tableVar
+          | not (null ks)         -> updateLastActionLog tableVar
+        Close            tableVar -> updateLastActionLog tableVar
+        _                         -> stats
+      where
+        -- add the current table to the front of the list of tables, if it's
+        -- not the latest one already
+        updateLastActionLog :: GVar Op (WrapTableHandle h IO k v blob) -> Stats
+        updateLastActionLog tableVar =
+          case Map.lookup pthid (dupTableActionLog stats) of
+            Just (thid' : _)
+              | thid == thid' -> stats -- the most recent action was via this table
+            malog ->
+              let alog = thid : fromMaybe [] malog
+               in stats {
+                    dupTableActionLog = Map.insert pthid alog
+                                                   (dupTableActionLog stats)
+                  }
+          where
+            thid  = getTableHandleId (lookUp tableVar)
+            pthid = parentTable stats Map.! thid
+
+        emptyRange (R.FromToExcluding l u) = l >= u
+        emptyRange (R.FromToIncluding l u) = l >  u
+
+    updDupTableActionLog stats = stats
+
+    getTableHandleId :: ModelValue (ModelState h) (WrapTableHandle h IO k v blob)
+                     -> Model.TableHandleID
+    getTableHandleId (MTableHandle th) = Model.tableHandleID th
 
 -- | Tags for every step
 data Tag =
@@ -1517,23 +1682,36 @@ data FinalTag =
     -- (this includes submissions through both 'Class.updates' and
     -- 'Class.deletes')
   | NumDeletes String
+    -- | Total number of actions (failing, succeeding, either)
+  | NumActions String
     -- | Which actions succeded
   | ActionSuccess String
     -- | Which actions failed
-  | ActionFail String
+  | ActionFail String Model.Err
     -- | Total number of flushes
   | NumFlushes String -- TODO: implement
+    -- | Number of table handles created (new, open or duplicate)
+  | NumTables String
+    -- | Number of actions on each table
+  | NumTableActions String
     -- | Total /logical/ size of a table
-  | TableSize String -- TODO: implement
+  | TableSize String
+    -- | Number of interleaved actions on duplicate tables
+  | DupTableActionLog String
   deriving stock Show
 
 -- | This is run only after completing every action
 tagFinalState' :: Lockstep (ModelState h) -> [(String, [FinalTag])]
-tagFinalState' (getModel -> ModelState _ finalStats) = concat [
+tagFinalState' (getModel -> ModelState finalState finalStats) = concat [
       tagNumLookupsResults
     , tagNumUpdates
+    , tagNumActions
     , tagSuccessActions
     , tagFailActions
+    , tagNumTables
+    , tagNumTableActions
+    , tagTableSizes
+    , tagDupTableActionLog
     ]
   where
     tagNumLookupsResults = [
@@ -1550,13 +1728,49 @@ tagFinalState' (getModel -> ModelState _ finalStats) = concat [
         ]
       where (i, iwb, d) = numUpdates finalStats
 
+    tagNumActions =
+        [ let n = length (successActions finalStats) in
+          ("Actions that succeeded total", [NumActions (showPowersOf 10 n)])
+        , let n = length (failActions finalStats) in
+          ("Actions that failed total", [NumActions (showPowersOf 10 n)])
+        , let n = length (successActions finalStats)
+                + length (failActions finalStats) in
+          ("Actions total", [NumActions (showPowersOf 10 n)])
+        ]
+
     tagSuccessActions =
         [ ("Actions that succeeded", [ActionSuccess c])
         | c <- successActions finalStats ]
 
     tagFailActions =
-        [ ("Actions that failed", [ActionFail c])
-        | c <- failActions finalStats ]
+        [ ("Actions that failed", [ActionFail c e])
+        | (c, e) <- failActions finalStats ]
+
+    tagNumTables =
+        [ ("Number of tables", [NumTables (showPowersOf 2 n)])
+        | let n = Map.size (numActionsPerTable finalStats)
+        ]
+
+    tagNumTableActions =
+        [ ("Number of actions per table", [ NumTableActions (showPowersOf 2 n) ])
+        | n <- Map.elems (numActionsPerTable finalStats)
+        ]
+
+    tagTableSizes =
+        [ ("Table sizes", [ TableSize (showPowersOf 2 size) ])
+        | let openSizes, closedSizes :: Map Model.TableHandleID Int
+              openSizes   = Model.withSomeTable Model.size . snd <$>
+                              Model.tableHandles finalState
+              closedSizes = closedTableSizes finalStats
+        , size <- Map.elems (openSizes `Map.union` closedSizes)
+        ]
+
+    tagDupTableActionLog =
+        [ ("Interleaved actions on table duplicates",
+           [DupTableActionLog (showPowersOf 2 n)])
+        | (_, alog) <- Map.toList (dupTableActionLog finalStats)
+        , let n = length alog
+        ]
 
 {-------------------------------------------------------------------------------
   Utils
