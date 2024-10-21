@@ -1211,6 +1211,12 @@ snapshot resolve snap label th = do
                     (RW.unsafeAcquireWriteAccess (tableContent thEnv))
                     (atomically . RW.unsafeReleaseWriteAccess (tableContent thEnv))
                     $ \reg content -> do
+        -- TODO: When we flush the buffer here, it might be underfull, which
+        -- could mess up the scheduling. The conservative approach is to supply
+        -- credits as if the buffer was full, and then flush the (possibly)
+        -- underfull buffer. However, note that this bit of code
+        -- here is probably going to change anyway because of #392
+        supplyCredits (Entry.unNumEntries $ case confWriteBufferAlloc conf of AllocNumEntries x -> x) (tableLevels content)
         content' <- flushWriteBuffer
               (TraceMerge `contramap` tableTracer th)
               conf
@@ -1243,6 +1249,7 @@ snapshot resolve snap label th = do
   -> SnapshotLabel
   -> TableConfigOverride
   -> SnapshotName
+  -> ResolveSerialisedValue
   -> IO (TableHandle IO h) #-}
 -- |  See 'Database.LSMTree.Normal.open'.
 open ::
@@ -1251,8 +1258,9 @@ open ::
   -> SnapshotLabel -- ^ Expected label
   -> TableConfigOverride -- ^ Optional config override
   -> SnapshotName
+  -> ResolveSerialisedValue
   -> m (TableHandle m h)
-open sesh label override snap = do
+open sesh label override snap resolve = do
     traceWith (sessionTracer sesh) $ TraceOpenSnapshot snap override
     withOpenSession sesh $ \seshEnv -> do
       withTempRegistry $ \reg -> do
@@ -1276,7 +1284,7 @@ open sesh label override snap = do
           <- allocateTemp reg
                (WBB.new hfs blobpath)
                WBB.removeReference
-        tableLevels <- openLevels reg hfs hbio conf (sessionRoot seshEnv) snappedLevels
+        tableLevels <- openLevels reg hfs hbio conf (sessionUniqCounter seshEnv) (sessionRoot seshEnv) resolve snappedLevels
         tableCache <- mkLevelsCache reg tableLevels
         newWith reg sesh seshEnv conf' am $! TableContent {
             tableWriteBuffer = WB.empty

@@ -250,6 +250,7 @@ stepsToCompletionCounted m stepBatchSize = go 0
                                 in (stepsSum',) <$> complete m
 
 data StepResult = MergeInProgress | MergeComplete
+  deriving stock Eq
 
 stepsInvariant :: Int -> (Int, StepResult) -> Bool
 stepsInvariant requestedSteps = \case
