@@ -563,7 +563,7 @@ snapshot snap (Internal.MonoidalTable th) =
     label = Common.makeSnapshotLabel (Proxy @(k, v)) <> " (monoidal)"
 
 {-# SPECIALISE open ::
-     (SerialiseKey k, SerialiseValue v, Common.Labellable (k, v))
+     (SerialiseKey k, SerialiseValue v, ResolveValue v, Common.Labellable (k, v))
   => Session IO
   -> Common.TableConfigOverride
   -> SnapshotName
@@ -594,6 +594,7 @@ open :: forall m k v.
      ( IOLike m
      , SerialiseKey k
      , SerialiseValue v
+     , ResolveValue v
      , Common.Labellable (k, v)
      )
   => Session m
@@ -601,7 +602,7 @@ open :: forall m k v.
   -> SnapshotName
   -> m (TableHandle m k v)
 open (Internal.Session' sesh) override snap =
-    Internal.MonoidalTable <$> Internal.open sesh label override snap
+    Internal.MonoidalTable <$> Internal.open sesh label override snap (resolve @v Proxy)
   where
     -- to ensure that the table is really a monoidal table
     label = Common.makeSnapshotLabel (Proxy @(k, v)) <> " (monoidal)"
