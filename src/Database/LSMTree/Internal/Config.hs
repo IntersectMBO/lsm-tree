@@ -409,8 +409,6 @@ instance NFData MergeSchedule where
 -- | The default 'MergeSchedule'.
 --
 -- >>> defaultMergeSchedule
--- OneShot
---
--- TODO: replace by 'Incremental'
+-- Incremental
 defaultMergeSchedule :: MergeSchedule
-defaultMergeSchedule = OneShot
+defaultMergeSchedule = Incremental
