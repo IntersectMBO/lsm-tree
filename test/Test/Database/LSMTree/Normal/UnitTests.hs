@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedLists   #-}
 {-# LANGUAGE OverloadedStrings #-}
-module Test.Database.LSMTree.Normal.Examples (tests) where
+module Test.Database.LSMTree.Normal.UnitTests (tests) where
 
 import           Control.Tracer (nullTracer)
 import           Data.ByteString (ByteString)
@@ -22,7 +22,7 @@ import           Test.Util.FS (withTempIOHasBlockIO)
 
 tests :: TestTree
 tests =
-    testGroup "Normal.Examples"
+    testGroup "Normal.UnitTests"
       [ testCaseSteps "unit_blobs"         unit_blobs
       , testCase      "unit_closed_table"  unit_closed_table
       , testCase      "unit_closed_cursor" unit_closed_cursor

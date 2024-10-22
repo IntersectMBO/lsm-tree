@@ -371,10 +371,10 @@ test-suite lsm-tree-test
     Test.Database.LSMTree.Model.Monoidal
     Test.Database.LSMTree.Model.Normal
     Test.Database.LSMTree.Monoidal
-    Test.Database.LSMTree.Normal.Examples
     Test.Database.LSMTree.Normal.StateMachine
     Test.Database.LSMTree.Normal.StateMachine.DL
     Test.Database.LSMTree.Normal.StateMachine.Op
+    Test.Database.LSMTree.Normal.UnitTests
     Test.System.Posix.Fcntl.NoCache
     Test.Util.FS
     Test.Util.Orphans
