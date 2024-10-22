@@ -706,6 +706,7 @@ instance ( Eq (Class.TableConfig h)
     -> ModelState h
     -> Gen (Any (LockstepAction (ModelState h)))
   arbitraryWithVars ctx st =
+    QC.scale (max 100) $
     arbitraryActionWithVars (Proxy @(Key1, Value1, Blob1)) ctx st
 
   shrinkWithVars ::
