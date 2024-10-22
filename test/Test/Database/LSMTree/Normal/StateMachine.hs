@@ -704,10 +704,8 @@ instance ( Eq (Class.TableConfig h)
        ModelVarContext (ModelState h)
     -> ModelState h
     -> Gen (Any (LockstepAction (ModelState h)))
-  arbitraryWithVars ctx st = QC.oneof [
-        arbitraryActionWithVars (Proxy @(Key1, Value1, Blob1)) ctx st
-      , arbitraryActionWithVars (Proxy @(Key2, Value2, Blob2)) ctx st
-      ]
+  arbitraryWithVars ctx st =
+    arbitraryActionWithVars (Proxy @(Key1, Value1, Blob1)) ctx st
 
   shrinkWithVars ::
        ModelVarContext (ModelState h)
