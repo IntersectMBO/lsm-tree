@@ -55,6 +55,7 @@ import qualified Data.Primitive as P
 import qualified Data.Vector as V
 import           Data.Void (Void)
 import           Data.Word (Word32, Word64)
+import           Debug.Trace (traceMarkerIO)
 import qualified GHC.Stats as GHC
 import qualified MCG
 import qualified Options.Applicative as O
@@ -573,6 +574,7 @@ doRun gopts opts = do
         tbl <- if check opts
                  then LSM.new  @IO @K @V @B session (mkTableConfigRun gopts LSM.defaultTableConfig)
                  else LSM.open @IO @K @V @B session (mkTableConfigOverride gopts) name
+        traceMarkerIO "bench_wp8_start"
 
         -- In checking mode, compare each output against a pure reference.
         checkvar <- newIORef $ pureReference
@@ -603,6 +605,8 @@ doRun gopts opts = do
 
         let ops = batchCount opts * batchSize opts
         printf "Operations per second: %7.01f ops/sec\n" (fromIntegral ops / time)
+
+        traceMarkerIO "bench_wp8_end"
 
 -------------------------------------------------------------------------------
 -- sequential
