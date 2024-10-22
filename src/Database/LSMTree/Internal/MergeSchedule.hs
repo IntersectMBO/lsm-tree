@@ -884,7 +884,7 @@ supplyMergeCredits c (MergingRun _ _ var) = do
         (n, stepResult) <- Merge.steps m c
         x <- readPrimVar pvar
         writePrimVar pvar $! n + x
-        pure $ stepResult == MergeComplete
+        pure $ stepResult == MergeDone
     when b $
       modifyMVarMasked_ var $ \case
         mr@CompletedMerge{} -> pure $! mr
