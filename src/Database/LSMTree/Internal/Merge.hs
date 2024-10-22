@@ -58,7 +58,7 @@ data Merge m h = Merge {
     , mergeMappend    :: !Mappend
     , mergeReaders    :: {-# UNPACK #-} !(Readers m h)
     , mergeBuilder    :: !(RunBuilder m h)
-      -- | The caching policy to use for the Run in the 'MergeComplete'.
+      -- | The caching policy to use for the output Run.
     , mergeCaching    :: !RunDataCaching
       -- | The result of the latest call to 'steps'. This is used to determine
       -- whether a merge can be 'complete'd.
@@ -227,7 +227,7 @@ stepsToCompletion m stepBatchSize = go
     go = do
       steps m stepBatchSize >>= \case
         (_, MergeInProgress) -> go
-        (_, MergeComplete)   -> complete m
+        (_, MergeDone)       -> complete m
 
 {-# SPECIALISE stepsToCompletionCounted ::
      Merge IO h
@@ -246,10 +246,10 @@ stepsToCompletionCounted m stepBatchSize = go 0
     go !stepsSum = do
       steps m stepBatchSize >>= \case
         (n, MergeInProgress) -> go (stepsSum + n)
-        (n, MergeComplete)   -> let !stepsSum' = stepsSum + n
+        (n, MergeDone)       -> let !stepsSum' = stepsSum + n
                                 in (stepsSum',) <$> complete m
 
-data StepResult = MergeInProgress | MergeComplete
+data StepResult = MergeInProgress | MergeDone
   deriving stock Eq
 
 stepsInvariant :: Int -> (Int, StepResult) -> Bool
@@ -285,7 +285,7 @@ steps Merge {..} requestedSteps = assertStepsInvariant <$> do
     -- check.
     readMutVar mergeState >>= \case
       Merging -> go 0
-      MergingDone -> pure (0, MergeComplete)
+      MergingDone -> pure (0, MergeDone)
       Completed -> error "steps: Merge is completed"
       Closed -> error "steps: Merge is closed"
   where
@@ -304,7 +304,7 @@ steps Merge {..} requestedSteps = assertStepsInvariant <$> do
               -- no future entries, no previous entry to resolve, just write!
               writeReaderEntry mergeLevel mergeBuilder key entry
               writeMutVar mergeState $! MergingDone
-              pure (n + 1, MergeComplete)
+              pure (n + 1, MergeDone)
 
     handleEntry !n !key (Reader.Entry (Mupdate v)) =
         -- resolve small mupsert vals with the following entries of the same key
@@ -343,7 +343,7 @@ steps Merge {..} requestedSteps = assertStepsInvariant <$> do
               Readers.Drained -> do
                 writeSerialisedEntry mergeLevel mergeBuilder key resolved
                 writeMutVar mergeState $! MergingDone
-                pure (n + 1, MergeComplete)
+                pure (n + 1, MergeDone)
 
     dropRemaining !n !key = do
         (dropped, hasMore) <- Readers.dropWhileKey mergeReaders key
@@ -351,7 +351,7 @@ steps Merge {..} requestedSteps = assertStepsInvariant <$> do
           Readers.HasMore -> go (n + dropped)
           Readers.Drained -> do
             writeMutVar mergeState $! MergingDone
-            pure (n + dropped, MergeComplete)
+            pure (n + dropped, MergeDone)
 
 {-# SPECIALISE writeReaderEntry ::
      Level

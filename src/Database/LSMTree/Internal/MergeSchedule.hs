@@ -921,7 +921,7 @@ supplyMergeCredits (ScaledCredits c) (MergingRun _ _ var) = do
         (stepsDone, stepResult) <- Merge.steps m stepsToDo
         assert (case stepResult of
                   MergeInProgress -> stepsDone >= stepsToDo
-                  MergeComplete   -> True
+                  MergeDone       -> True
                ) $ pure ()
 
         -- This should be the only point at which we write to these variables.
@@ -939,10 +939,10 @@ supplyMergeCredits (ScaledCredits c) (MergingRun _ _ var) = do
         writePrimVar totalCreditsVar $! totalCredits + c
         assert (case stepResult of
                   MergeInProgress -> totalSteps' >= totalCredits'
-                  MergeComplete   -> True
+                  MergeDone       -> True
                ) $ pure ()
 
-        pure $ stepResult == MergeComplete
+        pure $ stepResult == MergeDone
     when mergeIsDone $
       modifyMVarMasked_ var $ \case
         mr@CompletedMerge{} -> pure $! mr
