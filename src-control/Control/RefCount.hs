@@ -12,6 +12,12 @@ module Control.RefCount (
   , removeReference
   , upgradeWeakReference
   , readRefCount
+
+    -- * Alternative new API
+  , Reference
+  , newReference
+  , duplicateReference
+  , releaseReference
   ) where
 
 import           Control.DeepSeq
@@ -131,3 +137,23 @@ readRefCount RefCounter{countVar} = RefCount <$> readPrimVar countVar
 -- compiling with @-O@ or @-fignore-asserts@.
 assertWithCallStack :: HasCallStack => Bool -> a -> a
 assertWithCallStack b = assert (const b callStack)
+
+-------------------------------------------------------------------------------
+-- Alternative new API
+--
+
+newtype Reference m = Reference (RefCounter m)
+
+type Finaliser m = m ()
+
+newReference :: PrimMonad m => Finaliser m -> m (Reference m)
+newReference finaliser = Reference <$> mkRefCounter1 (Just finaliser)
+
+duplicateReference :: PrimMonad m => Reference m -> m (Reference m)
+duplicateReference (Reference rc) = do
+    addReference rc
+    return (Reference rc)
+
+releaseReference :: (PrimMonad m, MonadMask m) => Reference m -> m ()
+releaseReference (Reference rc) =
+    removeReference rc
