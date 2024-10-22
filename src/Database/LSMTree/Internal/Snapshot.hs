@@ -47,8 +47,8 @@ numSnapRuns :: SnapLevels -> Int
 numSnapRuns sl = V.sum $ V.map go1 sl
   where
     go1 (SnapLevel sir srr) = go2 sir + V.length srr
-    go2 (SnapMergingRun _ _ smrs) = go3 smrs
-    go2 (SnapSingleRun _rn)       = 1
+    go2 (SnapMergingRun _ _ _ smrs) = go3 smrs
+    go2 (SnapSingleRun _rn)         = 1
     go3 (SnapCompletedMerge _rn)   = 1
     go3 (SnapOngoingMerge rns _ _) = V.length rns
 
@@ -61,14 +61,22 @@ data SnapLevel = SnapLevel {
   deriving stock (Show, Eq, Read)
 
 data SnapMergingRun =
-    SnapMergingRun !MergePolicyForLevel !NumRuns !SnapMergingRunState
+    SnapMergingRun !MergePolicyForLevel !NumRuns !AccumulatedCredits !SnapMergingRunState
   | SnapSingleRun !RunNumber
+  deriving stock (Show, Eq, Read)
+
+newtype AccumulatedCredits = AccumulatedCredits {
+    unAccumulatedCredits :: Int
+  }
   deriving stock (Show, Eq, Read)
 
 data SnapMergingRunState =
     SnapCompletedMerge !RunNumber
   | SnapOngoingMerge !(V.Vector RunNumber) !NumStepsDone {- merge -} !Merge.Level
   deriving stock (Show, Eq, Read)
+
+newtype NumStepsDone = NumStepsDone { unNumStepsDone :: Int }
+  deriving stock (Show, Eq)
 
 {-------------------------------------------------------------------------------
   Conversion to snapshot format
@@ -95,9 +103,10 @@ snapMergingRun ::
      (PrimMonad m, MonadMVar m)
   => MergingRun m h
   -> m SnapMergingRun
-snapMergingRun (MergingRun mpfl nr mrsVar) = do
+snapMergingRun (MergingRun mpfl nr acVar mrsVar) = do
+    ac <- readPrimVar acVar
     smrs <- withMVar mrsVar $ \mrs -> snapMergingRunState mrs
-    pure (SnapMergingRun mpfl nr smrs)
+    pure (SnapMergingRun mpfl nr (AccumulatedCredits ac) smrs)
 snapMergingRun (SingleRun r) = pure (SnapSingleRun (runNumber r))
 
 {-# SPECIALISE snapMergingRunState :: MergingRunState IO h -> IO SnapMergingRunState #-}
@@ -156,7 +165,7 @@ openLevels reg hfs hbio conf@TableConfig{..} uc sessionRoot resolve levels =
         -- registry, and closing the input runs is also not tracked in the
         -- registry. Note, however, that this bit of code is likely to change in
         -- #392.
-        forM_ mmmay $ \(NumStepsDone c) -> supplyMergeCredits c incomingRuns
+        forM_ mmmay $ \(NumStepsDone c) -> supplyMergeCredits (Credit c) (creditThresholdForLevel conf ln) incomingRuns
         residentRuns <- V.forM snapResidentRuns $ \rn ->
           allocateTemp reg
             (Run.openFromDisk hfs hbio caching (mkPath rn))
@@ -167,9 +176,10 @@ openLevels reg hfs hbio conf@TableConfig{..} uc sessionRoot resolve levels =
         alloc = bloomFilterAllocForLevel conf ln
 
         openMergingRun :: SnapMergingRun -> m (Maybe NumStepsDone, MergingRun m h)
-        openMergingRun (SnapMergingRun mpfl nr smrs) = do
+        openMergingRun (SnapMergingRun mpfl nr ac smrs) = do
             (n, mrs) <- openMergingRunState smrs
-            (n,) . MergingRun mpfl nr <$> newMVar mrs
+            acVar <- newPrimVar (unAccumulatedCredits ac)
+            (n,) . MergingRun mpfl nr acVar <$> newMVar mrs
         openMergingRun (SnapSingleRun rn) =
             (Nothing,) . SingleRun <$>
               allocateTemp reg

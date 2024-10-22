@@ -140,7 +140,7 @@ prop_CloseMerge fs hbio level (Positive stepSize) (SmallList wbs) =
         Just merge -> do
           -- just do a few steps once, ideally not completing the merge
           Merge.steps merge stepSize >>= \case
-            (_, Merge.MergeComplete) -> do
+            (_, Merge.MergeDone) -> do
               Merge.removeReference merge  -- run not needed, close
               return Nothing  -- not in progress
             (_, Merge.MergeInProgress) ->
