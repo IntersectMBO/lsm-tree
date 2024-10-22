@@ -31,6 +31,8 @@ import           Control.DeepSeq (NFData (..))
 import qualified Data.ByteString.Char8 as BS
 import           Data.Foldable (toList)
 import qualified Data.Map as Map
+import           Data.Maybe (fromMaybe)
+import           Data.String (IsString (..))
 import           Data.Traversable (for)
 import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.UniqCounter
@@ -69,6 +71,12 @@ newtype SnapshotName = MkSnapshotName FilePath
 
 instance Show SnapshotName where
   showsPrec d (MkSnapshotName p) = showsPrec d p
+
+-- | This instance uses 'mkSnapshotName', so all the restrictions on snap shot names apply here too. An invalid snapshot name will lead to an error.
+instance IsString SnapshotName where
+  fromString s = fromMaybe bad (mkSnapshotName s)
+    where
+      bad = error ("SnapshotName.fromString: invalid name " ++ show s)
 
 -- | Create snapshot name.
 --
