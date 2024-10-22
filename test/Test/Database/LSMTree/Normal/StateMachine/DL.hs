@@ -18,8 +18,10 @@ import           Database.LSMTree.Normal as R
 import           Prelude
 import           Test.Database.LSMTree.Normal.StateMachine hiding (tests)
 import           Test.Database.LSMTree.Normal.StateMachine.Op
-import           Test.QuickCheck
+import           Test.QuickCheck as QC
 import           Test.QuickCheck.DynamicLogic
+import qualified Test.QuickCheck.Gen as QC
+import qualified Test.QuickCheck.Random as QC
 import           Test.QuickCheck.StateModel.Lockstep
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck (testProperty)
@@ -56,7 +58,7 @@ prop_example =
 dl_example :: DL (Lockstep (ModelState R.TableHandle)) ()
 dl_example = do
     -- Create an initial table and fill it with some inserts
-    var3 <- action $ New (PrettyProxy @((Key1, Value1, Blob1))) (TableConfig {
+    var3 <- action $ New (PrettyProxy @((Key, Value, Blob))) (TableConfig {
           confMergePolicy = MergePolicyLazyLevelling
         , confSizeRatio = Four
         , confWriteBufferAlloc = AllocNumEntries (NumEntries 30)
@@ -64,19 +66,24 @@ dl_example = do
         , confFencePointerIndex = CompactIndex
         , confDiskCachePolicy = DiskCacheNone
         , confMergeSchedule = OneShot })
-    let ins = [ (Key1 y, Value1 y, Nothing)
-              | x <- [1 .. 678]
-              , let y = Small x ]
-    action $ Inserts (V.fromList ins) (unsafeMkGVar var3 (OpFromRight `OpComp` OpId))
+    let kvs :: Map.Map Key Value
+        kvs = Map.fromList $
+              QC.unGen (QC.vectorOf 678 $ (,) <$> QC.arbitrary <*> QC.arbitrary)
+                       (QC.mkQCGen 42) 30
+        ups :: V.Vector (Key, Update Value Blob)
+        ups = V.fromList
+            . map (\(k,v) -> (k, Insert v Nothing))
+            . Map.toList $ kvs
+    action $ Updates ups (unsafeMkGVar var3 (OpFromRight `OpComp` OpId))
     -- This is a rather ugly assertion, and could be improved using some helper
     -- function(s). However, it does serve its purpose as checking that the
     -- insertions we just did were successful.
-    assertModel "table has size 678" $ \s ->
+    assertModel "table size" $ \s ->
         let (ModelState s' _) = getModel s in
         case Map.elems (Model.tableHandles s') of
           [(_, smTbl)]
-            | Just tbl <- (Model.fromSomeTable @Key1 @Value1 @Blob1 smTbl)
-            -> Map.size (Model.values tbl) == 678
+            | Just tbl <- (Model.fromSomeTable @Key @Value @Blob smTbl)
+            -> Map.size (Model.values tbl) == Map.size kvs
           _ -> False
     -- Perform any sequence of actions after
     anyActions_

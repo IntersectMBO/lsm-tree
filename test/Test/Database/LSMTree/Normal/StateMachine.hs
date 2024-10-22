@@ -53,12 +53,9 @@ module Test.Database.LSMTree.Normal.StateMachine (
   , propLockstep_RealImpl_MockFS_IOSim
     -- * Lockstep
   , ModelState (..)
-  , Key1 (..)
-  , Value1 (..)
-  , Blob1 (..)
-  , Key2 (..)
-  , Value2 (..)
-  , Blob2 (..)
+  , Key (..)
+  , Value (..)
+  , Blob (..)
   , StateModel (..)
   , Action (..)
   ) where
@@ -72,7 +69,6 @@ import           Control.Monad.IOSim
 import           Control.Monad.Reader (ReaderT (..))
 import           Control.Tracer (Tracer, nullTracer)
 import           Data.Bifunctor (Bifunctor (..))
-import qualified Data.ByteString as BS
 import           Data.Constraint (Dict (..))
 import           Data.Either (partitionEithers)
 import           Data.Kind (Type)
@@ -84,13 +80,14 @@ import qualified Data.Set as Set
 import           Data.Typeable (Proxy (..), Typeable, cast, eqT,
                      type (:~:) (Refl))
 import qualified Data.Vector as V
-import           Data.Word (Word64)
 import qualified Database.LSMTree.Class.Normal as Class
 import           Database.LSMTree.Extras (showPowersOf)
 import           Database.LSMTree.Extras.Generators (KeyForIndexCompact)
 import           Database.LSMTree.Extras.NoThunks (assertNoThunks)
 import           Database.LSMTree.Internal (LSMTreeError (..))
 import qualified Database.LSMTree.Internal as R.Internal
+import           Database.LSMTree.Internal.Serialise (SerialisedBlob,
+                     SerialisedValue)
 import qualified Database.LSMTree.Model.Normal.Session as Model
 import qualified Database.LSMTree.ModelIO.Normal as M
 import qualified Database.LSMTree.Normal as R
@@ -383,37 +380,20 @@ createSystemTempDirectory prefix = do
   Key and value types
 -------------------------------------------------------------------------------}
 
--- TODO: maybe use reference impl generators here?
-
-newtype Key1   = Key1   { _unKey1 :: QC.Small Word64 }
-  deriving stock (Show, Eq, Ord)
-  deriving newtype (Arbitrary, R.SerialiseKey)
-newtype Value1 = Value1 { _unValue1 :: QC.Small Word64 }
-
-  deriving stock (Show, Eq, Ord)
-  deriving newtype (Arbitrary, R.SerialiseValue)
-newtype Blob1  = Blob1  { _unBlob1 :: QC.Small Word64 }
-
-  deriving stock (Show, Eq, Ord)
-  deriving newtype (Arbitrary, R.SerialiseValue)
-
-instance R.Labellable (Key1, Value1, Blob1) where
-  makeSnapshotLabel _ = "Key1 Value1 Blob1"
-
-newtype Key2   = Key2   { _unKey2   :: KeyForIndexCompact }
+newtype Key = Key KeyForIndexCompact
   deriving stock (Show, Eq, Ord)
   deriving newtype (Arbitrary, R.SerialiseKey)
 
-newtype Value2 = Value2 { _unValue2 :: BS.ByteString }
-  deriving stock (Show, Eq, Ord)
+newtype Value = Value SerialisedValue
+  deriving stock (Show, Eq)
   deriving newtype (Arbitrary, R.SerialiseValue)
 
-newtype Blob2  = Blob2  { _unBlob2  :: BS.ByteString }
-  deriving stock (Show, Eq, Ord)
+newtype Blob = Blob SerialisedBlob
+  deriving stock (Show, Eq)
   deriving newtype (Arbitrary, R.SerialiseValue)
 
-instance R.Labellable (Key2, Value2, Blob2) where
-  makeSnapshotLabel _ = "Key2 Value2 Blob2"
+instance R.Labellable (Key, Value, Blob) where
+  makeSnapshotLabel _ = "Key Value Blob"
 
 {-------------------------------------------------------------------------------
   Model state
@@ -707,7 +687,7 @@ instance ( Eq (Class.TableConfig h)
     -> Gen (Any (LockstepAction (ModelState h)))
   arbitraryWithVars ctx st =
     QC.scale (max 100) $
-    arbitraryActionWithVars (Proxy @(Key1, Value1, Blob1)) ctx st
+    arbitraryActionWithVars (Proxy @(Key, Value, Blob)) ctx st
 
   shrinkWithVars ::
        ModelVarContext (ModelState h)
