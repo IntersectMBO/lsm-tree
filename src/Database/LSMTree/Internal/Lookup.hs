@@ -145,10 +145,10 @@ type ResolveSerialisedValue = SerialisedValue -> SerialisedValue -> SerialisedVa
 
 -- | An 'IOOp' read/wrote fewer or more bytes than expected
 data ByteCountDiscrepancy = ByteCountDiscrepancy {
-    expected :: ByteCount
-  , actual   :: ByteCount
+    expected :: !ByteCount
+  , actual   :: !ByteCount
   }
-  deriving stock (Show)
+  deriving stock (Show, Eq)
   deriving anyclass (Exception)
 
 {-# SPECIALIZE lookupsIO ::
