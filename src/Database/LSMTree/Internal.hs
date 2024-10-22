@@ -201,7 +201,7 @@ data LSMTreeError =
     -- The 'Int' index indicates which 'BlobRef' was invalid. Many may be
     -- invalid but only the first is reported.
   | ErrBlobRefInvalid Int
-  deriving stock (Show)
+  deriving stock (Show, Eq)
   deriving anyclass (Exception)
 
 {-------------------------------------------------------------------------------

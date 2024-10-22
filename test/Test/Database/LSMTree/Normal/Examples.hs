@@ -12,6 +12,7 @@ import qualified System.FS.API as FS
 
 import           Database.LSMTree.Normal as R
 
+import           Control.Exception (Exception, try)
 import           Database.LSMTree.Extras.Generators (KeyForIndexCompact)
 import qualified Test.QuickCheck as QC
 import           Test.Tasty (TestTree, testGroup)
@@ -23,7 +24,10 @@ tests :: TestTree
 tests =
     testGroup "Normal.Examples"
       [ testCaseSteps "unit_blobs"         unit_blobs
+      , testCase      "unit_closed_table"  unit_closed_table
+      , testCase      "unit_closed_cursor" unit_closed_cursor
       , testCase      "unit_twoTableTypes" unit_twoTableTypes
+      , testCase      "unit_snapshots"     unit_snapshots
       ]
 
 unit_blobs :: (String -> IO ()) -> Assertion
@@ -43,6 +47,39 @@ unit_blobs info =
           info (show blob)
           blob @?= ["blob1"]
         _ -> assertFailure "expected FoundWithBlob"
+
+unit_closed_table :: Assertion
+unit_closed_table =
+    withTempIOHasBlockIO "test" $ \hfs hbio ->
+    withSession nullTracer hfs hbio (FS.mkFsPath []) $ \sess -> do
+      tbl <- new @_ @Key1 @Value1 @Blob1 sess defaultTableConfig
+      inserts [(Key1 42, Value1 42, Nothing)] tbl
+      r1 <- lookups [Key1 42] tbl
+      V.map ignoreBlobRef r1 @?= [Found (Value1 42)]
+      close tbl
+      -- Expect ErrTableClosed for operations after close
+      assertException ErrTableClosed $
+        lookups [Key1 42] tbl >> pure ()
+      -- But closing again is idempotent
+      close tbl
+
+unit_closed_cursor :: Assertion
+unit_closed_cursor =
+    withTempIOHasBlockIO "test" $ \hfs hbio ->
+    withSession nullTracer hfs hbio (FS.mkFsPath []) $ \sess -> do
+      tbl <- new @_ @Key1 @Value1 @Blob1 sess defaultTableConfig
+      inserts [(Key1 42, Value1 42, Nothing), (Key1 43, Value1 43, Nothing)] tbl
+      cur <- newCursor tbl
+      -- closing the table should not affect the cursor
+      close tbl
+      r1 <- readCursor 1 cur
+      V.map ignoreBlobRef r1 @?= [FoundInQuery (Key1 42) (Value1 42)]
+      closeCursor cur
+      -- Expect ErrCursorClosed for operations after closeCursor
+      assertException ErrCursorClosed $
+        readCursor 1 cur >> pure ()
+      -- But closing again is idempotent
+      closeCursor cur
 
 unit_twoTableTypes :: Assertion
 unit_twoTableTypes =
@@ -79,8 +116,38 @@ unit_twoTableTypes =
     snap1 = "table1"
     snap2 = "table2"
 
-ignoreBlobRef :: LookupResult v (BlobRef m b) -> LookupResult v ()
+unit_snapshots :: Assertion
+unit_snapshots =
+    withTempIOHasBlockIO "test" $ \hfs hbio ->
+    withSession nullTracer hfs hbio (FS.mkFsPath []) $ \sess -> do
+      tbl <- new @_ @Key1 @Value1 @Blob1 sess defaultTableConfig
+
+      assertException (ErrSnapshotNotExists snap2) $
+        deleteSnapshot sess snap2
+
+      snapshot snap1 tbl
+      assertException (ErrSnapshotExists snap1) $
+        snapshot snap1 tbl
+
+      assertException (ErrSnapshotWrongType snap1) $ do
+        _ <- open @_ @Key2 @Value2 @Blob2 sess configNoOverride snap1
+        return ()
+
+      assertException (ErrSnapshotNotExists snap2) $ do
+        _ <- open @_ @Key1 @Value1 @Blob1 sess configNoOverride snap2
+        return ()
+  where
+    snap1, snap2 :: SnapshotName
+    snap1 = "table1"
+    snap2 = "table2"
+
+ignoreBlobRef :: Functor f => f (BlobRef m b) -> f ()
 ignoreBlobRef = fmap (const ())
+
+assertException :: (Exception e, Eq e) => e -> Assertion -> Assertion
+assertException e assertion = do
+   r <- try assertion
+   r @?= Left e
 
 {-------------------------------------------------------------------------------
   Key and value types
