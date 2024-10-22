@@ -81,7 +81,7 @@ import           Data.Maybe (catMaybes, fromJust, fromMaybe)
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Typeable (Proxy (..), Typeable, cast, eqT,
-                     type (:~:) (Refl), typeRep)
+                     type (:~:) (Refl))
 import qualified Data.Vector as V
 import           Data.Word (Word64)
 import qualified Database.LSMTree.Class.Normal as Class
@@ -1299,10 +1299,8 @@ instance InterpretOp Op (ModelValue (ModelState h)) where
 
 data Stats = Stats {
     -- === Tags
-    -- | Unique types at which tables were created
-    newTableTypes      :: Set String
     -- | Names for which snapshots exist
-  , snapshotted        :: Set R.SnapshotName
+    snapshotted        :: Set R.SnapshotName
     -- === Final tags (per action sequence, across all tables)
     -- | Number of succesful lookups and their results
   , numLookupsResults  :: {-# UNPACK #-} !(Int, Int, Int)
@@ -1336,8 +1334,7 @@ data Stats = Stats {
 initStats :: Stats
 initStats = Stats {
       -- === Tags
-      newTableTypes = Set.empty
-    , snapshotted = Set.empty
+      snapshotted = Set.empty
       -- === Final tags
     , numLookupsResults = (0, 0, 0)
     , numUpdates = (0, 0, 0)
@@ -1365,8 +1362,7 @@ updateStats ::
   -> Stats
 updateStats action lookUp modelBefore _modelAfter result =
       -- === Tags
-      updNewTableTypes
-    . updSnapshotted
+      updSnapshotted
       -- === Final tags
     . updNumLookupsResults
     . updNumUpdates
@@ -1378,12 +1374,6 @@ updateStats action lookUp modelBefore _modelAfter result =
     . updParentTable
   where
     -- === Tags
-
-    updNewTableTypes stats = case action of
-      New (PrettyProxy :: PrettyProxy (k, v, blob)) _ -> stats {
-          newTableTypes = Set.insert (show $ typeRep (Proxy @(k, v, blob))) (newTableTypes stats)
-        }
-      _ -> stats
 
     updSnapshotted stats = case (action, result) of
       (Snapshot name _, MEither (Right (MUnit ()))) -> stats {
@@ -1581,12 +1571,8 @@ updateStats action lookUp modelBefore _modelAfter result =
 
 -- | Tags for every step
 data Tag =
-    -- | (At least) two types of tables were created (i.e., 'New') in the same
-    -- session. The strings represent the representations of the types that the
-    -- tables were created at.
-    NewTwoTableTypes String String
     -- | Snapshot with a name that already exists
-  | SnapshotTwice
+    SnapshotTwice
     -- | Open an existing snapshot
   | OpenExistingSnapshot
     -- | Open a missing snapshot
@@ -1609,9 +1595,11 @@ tagStep' ::
   -> LockstepAction (ModelState h) a
   -> Val h a
   -> [Tag]
-tagStep' (ModelState _stateBefore statsBefore, ModelState _stateAfter statsAfter) action _result = catMaybes [
-      tagNewTwoTableTypes
-    , tagSnapshotTwice
+tagStep' (ModelState _stateBefore statsBefore,
+          ModelState _stateAfter _statsAfter)
+          action _result =
+    catMaybes [
+      tagSnapshotTwice
     , tagOpenExistingSnapshot
     , tagOpenExistingSnapshot
     , tagOpenMissingSnapshot
@@ -1619,13 +1607,6 @@ tagStep' (ModelState _stateBefore statsBefore, ModelState _stateAfter statsAfter
     , tagDeleteMissingSnapshot
     ]
   where
-    tagNewTwoTableTypes
-      | Set.size (newTableTypes statsBefore) < 2
-      , type1 : type2 : _ <- Set.toList (newTableTypes statsAfter)
-      = Just $ NewTwoTableTypes type1 type2
-      | otherwise
-      = Nothing
-
     tagSnapshotTwice
       | Snapshot name _ <- action
       , name `Set.member` snapshotted statsBefore
