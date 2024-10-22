@@ -993,7 +993,7 @@ supplyMergeCredits (Credit newCredits) (CreditThreshold creditsThresh) (MergingR
       | otherwise = do
           -- numThresholds is guaranteed to be >= 1
           let numThresholds = prev `div` creditsThresh
-          prev' <- casInt creditsAccumVar prev (numThresholds * creditsThresh)
+          prev' <- casInt creditsAccumVar prev (prev - numThresholds * creditsThresh)
           if prev' == prev then
             pure (Just (Credit (numThresholds * creditsThresh)))
           else
