@@ -492,7 +492,7 @@ instance Arbitrary LargeRawBytes where
 
 deriving newtype instance SerialiseValue LargeRawBytes
 
--- | Minimum length of 6 bytes.
+-- | Minimum length of 8 bytes.
 newtype KeyForIndexCompact =
     KeyForIndexCompact { getKeyForIndexCompact :: RawBytes }
   deriving stock (Eq, Ord, Show)
