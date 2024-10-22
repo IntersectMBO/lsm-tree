@@ -1189,10 +1189,10 @@ arbitraryActionWithVars _ ctx (ModelState st _stats) =
 
     genActionsSession :: [(Int, Gen (Any (LockstepAction (ModelState h))))]
     genActionsSession =
-        [ (5, fmap Some $ New  @k @v @blob PrettyProxy <$> QC.arbitrary)
+        [ (1, fmap Some $ New  @k @v @blob PrettyProxy <$> QC.arbitrary)
         | length tableVars <= 5 ] -- no more than 5 tables at once
 
-     ++ [ (3, fmap Some $ Open @k @v @blob <$> genUsedSnapshotName)
+     ++ [ (1, fmap Some $ Open @k @v @blob <$> genUsedSnapshotName)
         | not (null usedSnapshotNames) ]
 
      ++ [ (1, fmap Some $ DeleteSnapshot <$> genUsedSnapshotName)
@@ -1205,20 +1205,20 @@ arbitraryActionWithVars _ ctx (ModelState st _stats) =
     genActionsTables
       | null tableVars = []
       | otherwise      =
-        [ (2,  fmap Some $ Close <$> genTableVar)
+        [ (1,  fmap Some $ Close <$> genTableVar)
         , (10, fmap Some $ Lookups <$> genLookupKeys <*> genTableVar)
         , (5,  fmap Some $ RangeLookup <$> genRange <*> genTableVar)
         , (10, fmap Some $ Updates <$> genUpdates <*> genTableVar)
         , (10, fmap Some $ Inserts <$> genInserts <*> genTableVar)
         , (10, fmap Some $ Deletes <$> genDeletes <*> genTableVar)
         ]
-     ++ [ (5,  fmap Some $ NewCursor <$> QC.arbitrary <*> genTableVar)
+     ++ [ (3,  fmap Some $ NewCursor <$> QC.arbitrary <*> genTableVar)
         | length cursorVars <= 5 -- no more than 5 cursors at once
         ]
-     ++ [ (3,  fmap Some $ Snapshot <$> genUnusedSnapshotName <*> genTableVar)
+     ++ [ (2,  fmap Some $ Snapshot <$> genUnusedSnapshotName <*> genTableVar)
         | not (null unusedSnapshotNames)
         ]
-     ++ [ (3,  fmap Some $ Duplicate <$> genTableVar)
+     ++ [ (5,  fmap Some $ Duplicate <$> genTableVar)
         | length tableVars <= 5 -- no more than 5 tables at once
         ]
 
