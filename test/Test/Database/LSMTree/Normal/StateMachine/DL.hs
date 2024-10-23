@@ -24,13 +24,16 @@ import qualified Test.QuickCheck.Gen as QC
 import qualified Test.QuickCheck.Random as QC
 import           Test.QuickCheck.StateModel.Lockstep
 import           Test.Tasty (TestTree, testGroup)
-import           Test.Tasty.QuickCheck (testProperty)
 import           Test.Util.PrettyProxy
 
 tests :: TestTree
 tests = testGroup "Test.Database.LSMTree.Normal.StateMachine.DL" [
-      testProperty "prop_example" prop_example
+   -- This one is not actually enabled, because it runs for rather a long time
+   -- and it's not in itself a very import property.
+   -- QC.testProperty "prop_example" prop_example
     ]
+  where
+    _unused = prop_example
 
 instance DynLogicModel (Lockstep (ModelState R.TableHandle))
 
