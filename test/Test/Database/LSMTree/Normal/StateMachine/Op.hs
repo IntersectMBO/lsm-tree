@@ -19,8 +19,8 @@ import           Control.Monad.IOSim (IOSim)
 import           Control.Monad.Reader (ReaderT)
 import           Control.Monad.State (StateT)
 import qualified Data.Vector as V
-import           Database.LSMTree.Normal as SUT (LookupResult (..),
-                     QueryResult (..))
+import qualified Database.LSMTree.Class.Normal as Class
+import qualified Database.LSMTree.Model.Table as Model
 import           GHC.Show (appPrec)
 import           Test.QuickCheck.StateModel.Lockstep (InterpretOp, Operation)
 import qualified Test.QuickCheck.StateModel.Lockstep.Op as Op
@@ -40,8 +40,8 @@ data Op a b where
   OpFromLeft           :: Op (Either a b) a
   OpFromRight          :: Op (Either a b) b
   OpComp               :: Op b c -> Op a b -> Op a c
-  OpLookupResults      :: Op (V.Vector (LookupResult v (WrapBlobRef h IO blobref))) (V.Vector (WrapBlobRef h IO blobref))
-  OpQueryResults       :: Op (V.Vector (QueryResult k v (WrapBlobRef h IO blobref))) (V.Vector (WrapBlobRef h IO blobref))
+  OpLookupResults      :: Op (V.Vector (Class.LookupResult v (WrapBlobRef h IO blobref))) (V.Vector (WrapBlobRef h IO blobref))
+  OpQueryResults       :: Op (V.Vector (Class.QueryResult k v (WrapBlobRef h IO blobref))) (V.Vector (WrapBlobRef h IO blobref))
 
 intOpId :: Op a b -> a -> Maybe b
 intOpId OpId            = Just
@@ -157,11 +157,20 @@ instance Show (Op a b) where
 class HasBlobRef f where
   getBlobRef :: f blobref  -> Maybe blobref
 
-instance HasBlobRef (LookupResult v) where
-  getBlobRef NotFound{}                = Nothing
-  getBlobRef Found{}                   = Nothing
-  getBlobRef (FoundWithBlob _ blobref) = Just blobref
+instance HasBlobRef (Class.LookupResult v) where
+  getBlobRef Class.NotFound{}                = Nothing
+  getBlobRef Class.Found{}                   = Nothing
+  getBlobRef (Class.FoundWithBlob _ blobref) = Just blobref
 
-instance HasBlobRef (QueryResult k v) where
-  getBlobRef FoundInQuery{}                     = Nothing
-  getBlobRef (FoundInQueryWithBlob _ _ blobref) = Just blobref
+instance HasBlobRef (Class.QueryResult k v) where
+  getBlobRef Class.FoundInQuery{}                     = Nothing
+  getBlobRef (Class.FoundInQueryWithBlob _ _ blobref) = Just blobref
+
+instance HasBlobRef (Model.LookupResult v) where
+  getBlobRef Model.NotFound{}                = Nothing
+  getBlobRef Model.Found{}                   = Nothing
+  getBlobRef (Model.FoundWithBlob _ blobref) = Just blobref
+
+instance HasBlobRef (Model.QueryResult k v) where
+  getBlobRef Model.FoundInQuery{}                     = Nothing
+  getBlobRef (Model.FoundInQueryWithBlob _ _ blobref) = Just blobref
