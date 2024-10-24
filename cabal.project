@@ -24,3 +24,8 @@ import: cabal.project.debug
 -- possible to have conditionals on package flags in a project file. Otherwise,
 -- we could add a conditional on (+serialblockio) to remove this import automatically.
 import: cabal.project.blockio-uring
+
+source-repository-package
+  type: git
+  location: https://github.com/well-typed/quickcheck-lockstep.git
+  tag: 8a724c0a7b2328a7444490f18dc7e401badcc8b8

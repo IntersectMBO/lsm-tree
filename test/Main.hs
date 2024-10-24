@@ -31,9 +31,9 @@ import qualified Test.Database.LSMTree.Internal.Vector
 import qualified Test.Database.LSMTree.Model.Monoidal
 import qualified Test.Database.LSMTree.Model.Normal
 import qualified Test.Database.LSMTree.Monoidal
-import qualified Test.Database.LSMTree.Normal.Examples
 import qualified Test.Database.LSMTree.Normal.StateMachine
 import qualified Test.Database.LSMTree.Normal.StateMachine.DL
+import qualified Test.Database.LSMTree.Normal.UnitTests
 import qualified Test.System.Posix.Fcntl.NoCache
 import           Test.Tasty
 
@@ -67,7 +67,7 @@ main = defaultMain $ testGroup "lsm-tree"
     , Test.Database.LSMTree.Model.Normal.tests
     , Test.Database.LSMTree.Model.Monoidal.tests
     , Test.Database.LSMTree.Monoidal.tests
-    , Test.Database.LSMTree.Normal.Examples.tests
+    , Test.Database.LSMTree.Normal.UnitTests.tests
     , Test.Database.LSMTree.Normal.StateMachine.tests
     , Test.Database.LSMTree.Normal.StateMachine.DL.tests
     , Test.System.Posix.Fcntl.NoCache.tests

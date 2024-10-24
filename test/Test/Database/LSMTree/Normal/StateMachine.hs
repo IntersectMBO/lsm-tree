@@ -26,6 +26,7 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 {- HLINT ignore "Use camelCase" -}
+{- HLINT ignore "Redundant fmap" -}
 
 {-
   TODO: improve generation and shrinking of dependencies. See
@@ -53,12 +54,9 @@ module Test.Database.LSMTree.Normal.StateMachine (
   , propLockstep_RealImpl_MockFS_IOSim
     -- * Lockstep
   , ModelState (..)
-  , Key1 (..)
-  , Value1 (..)
-  , Blob1 (..)
-  , Key2 (..)
-  , Value2 (..)
-  , Blob2 (..)
+  , Key (..)
+  , Value (..)
+  , Blob (..)
   , StateModel (..)
   , Action (..)
   ) where
@@ -72,8 +70,8 @@ import           Control.Monad.IOSim
 import           Control.Monad.Reader (ReaderT (..))
 import           Control.Tracer (Tracer, nullTracer)
 import           Data.Bifunctor (Bifunctor (..))
-import qualified Data.ByteString as BS
 import           Data.Constraint (Dict (..))
+import           Data.Either (partitionEithers)
 import           Data.Kind (Type)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -81,15 +79,16 @@ import           Data.Maybe (catMaybes, fromJust, fromMaybe)
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Typeable (Proxy (..), Typeable, cast, eqT,
-                     type (:~:) (Refl), typeRep)
+                     type (:~:) (Refl))
 import qualified Data.Vector as V
-import           Data.Word (Word64)
 import qualified Database.LSMTree.Class.Normal as Class
 import           Database.LSMTree.Extras (showPowersOf)
 import           Database.LSMTree.Extras.Generators (KeyForIndexCompact)
 import           Database.LSMTree.Extras.NoThunks (assertNoThunks)
 import           Database.LSMTree.Internal (LSMTreeError (..))
 import qualified Database.LSMTree.Internal as R.Internal
+import           Database.LSMTree.Internal.Serialise (SerialisedBlob,
+                     SerialisedValue)
 import qualified Database.LSMTree.Model.Normal.Session as Model
 import qualified Database.LSMTree.ModelIO.Normal as M
 import qualified Database.LSMTree.Normal as R
@@ -382,37 +381,20 @@ createSystemTempDirectory prefix = do
   Key and value types
 -------------------------------------------------------------------------------}
 
--- TODO: maybe use reference impl generators here?
-
-newtype Key1   = Key1   { _unKey1 :: QC.Small Word64 }
-  deriving stock (Show, Eq, Ord)
-  deriving newtype (Arbitrary, R.SerialiseKey)
-newtype Value1 = Value1 { _unValue1 :: QC.Small Word64 }
-
-  deriving stock (Show, Eq, Ord)
-  deriving newtype (Arbitrary, R.SerialiseValue)
-newtype Blob1  = Blob1  { _unBlob1 :: QC.Small Word64 }
-
-  deriving stock (Show, Eq, Ord)
-  deriving newtype (Arbitrary, R.SerialiseValue)
-
-instance R.Labellable (Key1, Value1, Blob1) where
-  makeSnapshotLabel _ = "Key1 Value1 Blob1"
-
-newtype Key2   = Key2   { _unKey2   :: KeyForIndexCompact }
+newtype Key = Key KeyForIndexCompact
   deriving stock (Show, Eq, Ord)
   deriving newtype (Arbitrary, R.SerialiseKey)
 
-newtype Value2 = Value2 { _unValue2 :: BS.ByteString }
-  deriving stock (Show, Eq, Ord)
+newtype Value = Value SerialisedValue
+  deriving stock (Show, Eq)
   deriving newtype (Arbitrary, R.SerialiseValue)
 
-newtype Blob2  = Blob2  { _unBlob2  :: BS.ByteString }
-  deriving stock (Show, Eq, Ord)
+newtype Blob = Blob SerialisedBlob
+  deriving stock (Show, Eq)
   deriving newtype (Arbitrary, R.SerialiseValue)
 
-instance R.Labellable (Key2, Value2, Blob2) where
-  makeSnapshotLabel _ = "Key2 Value2 Blob2"
+instance R.Labellable (Key, Value, Blob) where
+  makeSnapshotLabel _ = "Key Value Blob"
 
 {-------------------------------------------------------------------------------
   Model state
@@ -670,16 +652,16 @@ instance ( Eq (Class.TableConfig h)
 
   modelNextState ::  forall a.
        LockstepAction (ModelState h) a
-    -> ModelLookUp (ModelState h)
+    -> ModelVarContext (ModelState h)
     -> ModelState h
     -> (ModelValue (ModelState h) a, ModelState h)
-  modelNextState action lookUp (ModelState state stats) =
-      auxStats $ runModel lookUp action state
+  modelNextState action ctx (ModelState state stats) =
+      auxStats $ runModel (lookupVar ctx) action state
     where
       auxStats :: (Val h a, Model.Model) -> (Val h a, ModelState h)
       auxStats (result, state') = (result, ModelState state' stats')
         where
-          stats' = updateStats action lookUp state state' result stats
+          stats' = updateStats action (lookupVar ctx) state state' result stats
 
   usedVars :: LockstepAction (ModelState h) a -> [AnyGVar (ModelOp (ModelState h))]
   usedVars = \case
@@ -701,16 +683,15 @@ instance ( Eq (Class.TableConfig h)
       Duplicate tableVar              -> [SomeGVar tableVar]
 
   arbitraryWithVars ::
-       ModelFindVariables (ModelState h)
+       ModelVarContext (ModelState h)
     -> ModelState h
     -> Gen (Any (LockstepAction (ModelState h)))
-  arbitraryWithVars findVars st = QC.oneof [
-        arbitraryActionWithVars (Proxy @(Key1, Value1, Blob1)) findVars st
-      , arbitraryActionWithVars (Proxy @(Key2, Value2, Blob2)) findVars st
-      ]
+  arbitraryWithVars ctx st =
+    QC.scale (max 100) $
+    arbitraryActionWithVars (Proxy @(Key, Value, Blob)) ctx st
 
   shrinkWithVars ::
-       ModelFindVariables (ModelState h)
+       ModelVarContext (ModelState h)
     -> ModelState h
     -> LockstepAction (ModelState h) a
     -> [Any (LockstepAction (ModelState h))]
@@ -1102,27 +1083,23 @@ arbitraryActionWithVars ::
      , Ord k
      , R.Labellable (k, v, blob)
      , Eq (Class.TableConfig h)
+     , Show (Class.TableConfig h)
      , Arbitrary (Class.TableConfig h)
      , Typeable (Class.Cursor h)
      , Typeable h
      )
   => Proxy (k, v, blob)
-  -> ModelFindVariables (ModelState h)
+  -> ModelVarContext (ModelState h)
   -> ModelState h
   -> Gen (Any (LockstepAction (ModelState h)))
-arbitraryActionWithVars _ findVars _st = QC.frequency $ concat [
-      withoutVars
-    , case findVars (Proxy @(Either Model.Err (WrapTableHandle h IO k v blob))) of
-        []   -> []
-        vars -> withVars (QC.elements vars)
-    , case findVars (Proxy @(Either Model.Err (WrapCursor h IO k v blob))) of
-        []   -> []
-        vars -> withVars' (QC.elements vars)
-
-    , case findBlobRefsVars of
-        []    -> []
-        vars' -> withVars'' (QC.elements vars')
-    ]
+arbitraryActionWithVars _ ctx (ModelState st _stats) =
+    QC.frequency $
+      concat
+        [ genActionsSession
+        , genActionsTables
+        , genActionsCursor
+        , genActionsBlobRef
+        ]
   where
     _coveredAllCases :: LockstepAction (ModelState h) a -> ()
     _coveredAllCases = \case
@@ -1143,58 +1120,103 @@ arbitraryActionWithVars _ findVars _st = QC.frequency $ concat [
         Open{} -> ()
         Duplicate{} -> ()
 
-    findBlobRefsVars :: [Var h (Either Model.Err (V.Vector (WrapBlobRef h IO blob)))]
-    findBlobRefsVars = fmap fromLookupResults vars1 ++ fmap fromQueryResults vars2
+    genTableVar = QC.elements tableVars
+
+    tableVars :: [Var h (WrapTableHandle h IO k v blob)]
+    tableVars =
+      [ fromRight v
+      | v <- findVars ctx Proxy
+      , case lookupVar ctx v of
+          MEither (Left _)                  -> False
+          MEither (Right (MTableHandle th)) ->
+            Map.member (Model.tableHandleID th) (Model.tableHandles st)
+      ]
+
+    genCursorVar = QC.elements cursorVars
+
+    cursorVars :: [Var h (WrapCursor h IO k v blob)]
+    cursorVars =
+      [ fromRight v
+      | v <- findVars ctx Proxy
+      , case lookupVar ctx v of
+          MEither (Left _)            -> False
+          MEither (Right (MCursor c)) ->
+            Map.member (Model.cursorID c) (Model.cursors st)
+      ]
+
+    genBlobRefsVar = QC.elements blobRefsVars
+
+    blobRefsVars :: [Var h (V.Vector (WrapBlobRef h IO blob))]
+    blobRefsVars = fmap (mapGVar (OpComp OpLookupResults)) lookupResultVars
+                ++ fmap (mapGVar (OpComp OpQueryResults))  queryResultVars
       where
-        vars1 = findVars (Proxy @(Either Model.Err (V.Vector (R.LookupResult v (WrapBlobRef h IO blob)))))
-        vars2 = findVars (Proxy @(Either Model.Err (V.Vector (R.QueryResult k v (WrapBlobRef h IO blob)))))
+        lookupResultVars :: [Var h (V.Vector (R.LookupResult  v (WrapBlobRef h IO blob)))]
+        queryResultVars  :: [Var h (V.Vector (R.QueryResult k v (WrapBlobRef h IO blob)))]
 
-        fromLookupResults ::
-             Var h (Either Model.Err (V.Vector (R.LookupResult v (WrapBlobRef h IO blob))))
-          -> Var h (Either Model.Err (V.Vector (WrapBlobRef h IO blob)))
-        fromLookupResults = mapGVar (\op -> OpRight `OpComp` OpLookupResults `OpComp` OpFromRight `OpComp` op)
+        lookupResultVars = fromRight <$> findVars ctx Proxy
+        queryResultVars  = fromRight <$> findVars ctx Proxy
 
-        fromQueryResults ::
-             Var h (Either Model.Err (V.Vector (R.QueryResult k v (WrapBlobRef h IO blob))))
-          -> Var h (Either Model.Err (V.Vector (WrapBlobRef h IO blob)))
-        fromQueryResults = mapGVar (\op -> OpRight `OpComp` OpQueryResults `OpComp` OpFromRight `OpComp` op)
+    genUsedSnapshotName   = QC.elements usedSnapshotNames
+    genUnusedSnapshotName = QC.elements unusedSnapshotNames
 
-    withoutVars :: [(Int, Gen (Any (LockstepAction (ModelState h))))]
-    withoutVars = [
-          (5, Some . New (PrettyProxy :: PrettyProxy (k, v, blob)) <$> QC.arbitrary)
-        , (3, fmap Some $ Open @k @v @blob <$> genSnapshotName)
-        , (1, fmap Some $ DeleteSnapshot <$> genSnapshotName)
-        , (1, pure $ Some ListSnapshots)
+    usedSnapshotNames, unusedSnapshotNames :: [R.SnapshotName]
+    (usedSnapshotNames, unusedSnapshotNames) =
+      partitionEithers
+        [ if Map.member snapshotname (Model.snapshots st)
+            then Left  snapshotname -- used
+            else Right snapshotname -- unused
+        | name <- ["snap1", "snap2", "snap3" ]
+        , let snapshotname = fromJust (R.mkSnapshotName name)
         ]
 
-    withVars ::
-         Gen (Var h (Either Model.Err (WrapTableHandle h IO k v blob)))
-      -> [(Int, Gen (Any (LockstepAction (ModelState h))))]
-    withVars genVar = [
-          (2, fmap Some $ Close <$> (fromRight <$> genVar))
-        , (10, fmap Some $ Lookups <$> genLookupKeys <*> (fromRight <$> genVar))
-        , (5, fmap Some $ RangeLookup <$> genRange <*> (fromRight <$> genVar))
-        , (5, fmap Some $ NewCursor <$> QC.arbitrary <*> (fromRight <$> genVar))
-        , (10, fmap Some $ Updates <$> genUpdates <*> (fromRight <$> genVar))
-        , (10, fmap Some $ Inserts <$> genInserts <*> (fromRight <$> genVar))
-        , (10, fmap Some $ Deletes <$> genDeletes <*> (fromRight <$> genVar))
-        , (3, fmap Some $ Snapshot <$> genSnapshotName <*> (fromRight <$> genVar))
-        , (3, fmap Some $ Duplicate <$> (fromRight <$> genVar))
+    genActionsSession :: [(Int, Gen (Any (LockstepAction (ModelState h))))]
+    genActionsSession =
+        [ (1, fmap Some $ New  @k @v @blob PrettyProxy <$> QC.arbitrary)
+        | length tableVars <= 5 ] -- no more than 5 tables at once
+
+     ++ [ (1, fmap Some $ Open @k @v @blob <$> genUsedSnapshotName)
+        | not (null usedSnapshotNames) ]
+
+     ++ [ (1, fmap Some $ DeleteSnapshot <$> genUsedSnapshotName)
+        | not (null usedSnapshotNames) ]
+
+     ++ [ (1, fmap Some $ pure ListSnapshots)
+        | not (null tableVars) ] -- otherwise boring!
+
+    genActionsTables :: [(Int, Gen (Any (LockstepAction (ModelState h))))]
+    genActionsTables
+      | null tableVars = []
+      | otherwise      =
+        [ (1,  fmap Some $ Close <$> genTableVar)
+        , (10, fmap Some $ Lookups <$> genLookupKeys <*> genTableVar)
+        , (5,  fmap Some $ RangeLookup <$> genRange <*> genTableVar)
+        , (10, fmap Some $ Updates <$> genUpdates <*> genTableVar)
+        , (10, fmap Some $ Inserts <$> genInserts <*> genTableVar)
+        , (10, fmap Some $ Deletes <$> genDeletes <*> genTableVar)
+        ]
+     ++ [ (3,  fmap Some $ NewCursor <$> QC.arbitrary <*> genTableVar)
+        | length cursorVars <= 5 -- no more than 5 cursors at once
+        ]
+     ++ [ (2,  fmap Some $ Snapshot <$> genUnusedSnapshotName <*> genTableVar)
+        | not (null unusedSnapshotNames)
+        ]
+     ++ [ (5,  fmap Some $ Duplicate <$> genTableVar)
+        | length tableVars <= 5 -- no more than 5 tables at once
         ]
 
-    withVars' ::
-         Gen (Var h (Either Model.Err (WrapCursor h IO k v blob)))
-      -> [(Int, Gen (Any (LockstepAction (ModelState h))))]
-    withVars' genVar = [
-          (2, fmap Some $ CloseCursor <$> (fromRight <$> genVar))
-        , (10, fmap Some $ ReadCursor <$> (QC.getNonNegative <$> QC.arbitrary) <*> (fromRight <$> genVar))
+    genActionsCursor :: [(Int, Gen (Any (LockstepAction (ModelState h))))]
+    genActionsCursor
+      | null cursorVars = []
+      | otherwise       =
+        [ (2,  fmap Some $ CloseCursor <$> genCursorVar)
+        , (10, fmap Some $ ReadCursor <$> (QC.getNonNegative <$> QC.arbitrary)
+                                      <*> genCursorVar)
         ]
 
-    withVars'' ::
-         Gen (Var h (Either Model.Err (V.Vector (WrapBlobRef h IO blob))))
-      -> [(Int, Gen (Any (LockstepAction (ModelState h))))]
-    withVars'' genBlobRefsVar = [
-          (5, fmap Some $ RetrieveBlobs <$> (fromRight <$> genBlobRefsVar))
+    genActionsBlobRef :: [(Int, Gen (Any (LockstepAction (ModelState h))))]
+    genActionsBlobRef =
+        [ (5, fmap Some $ RetrieveBlobs <$> genBlobRefsVar)
+        | not (null blobRefsVars)
         ]
 
     fromRight ::
@@ -1228,13 +1250,6 @@ arbitraryActionWithVars _ findVars _st = QC.frequency $ concat [
     genBlob :: Gen (Maybe blob)
     genBlob = QC.arbitrary
 
-    genSnapshotName :: Gen R.SnapshotName
-    genSnapshotName = QC.elements [
-        fromJust $ R.mkSnapshotName "snap1"
-      , fromJust $ R.mkSnapshotName "snap2"
-      , fromJust $ R.mkSnapshotName "snap3"
-      ]
-
 shrinkActionWithVars ::
      forall h a. (
        Eq (Class.TableConfig h)
@@ -1242,11 +1257,11 @@ shrinkActionWithVars ::
      , Typeable (Class.Cursor h)
      , Typeable h
      )
-  => ModelFindVariables (ModelState h)
+  => ModelVarContext (ModelState h)
   -> ModelState h
   -> LockstepAction (ModelState h) a
   -> [Any (LockstepAction (ModelState h))]
-shrinkActionWithVars _ _ = \case
+shrinkActionWithVars _ctx _st = \case
     New p conf -> [ Some $ New p conf' | conf' <- QC.shrink conf ]
 
     -- Shrink inserts and deletes towards updates.
@@ -1300,10 +1315,8 @@ instance InterpretOp Op (ModelValue (ModelState h)) where
 
 data Stats = Stats {
     -- === Tags
-    -- | Unique types at which tables were created
-    newTableTypes      :: Set String
     -- | Names for which snapshots exist
-  , snapshotted        :: Set R.SnapshotName
+    snapshotted        :: Set R.SnapshotName
     -- === Final tags (per action sequence, across all tables)
     -- | Number of succesful lookups and their results
   , numLookupsResults  :: {-# UNPACK #-} !(Int, Int, Int)
@@ -1337,8 +1350,7 @@ data Stats = Stats {
 initStats :: Stats
 initStats = Stats {
       -- === Tags
-      newTableTypes = Set.empty
-    , snapshotted = Set.empty
+      snapshotted = Set.empty
       -- === Final tags
     , numLookupsResults = (0, 0, 0)
     , numUpdates = (0, 0, 0)
@@ -1366,8 +1378,7 @@ updateStats ::
   -> Stats
 updateStats action lookUp modelBefore _modelAfter result =
       -- === Tags
-      updNewTableTypes
-    . updSnapshotted
+      updSnapshotted
       -- === Final tags
     . updNumLookupsResults
     . updNumUpdates
@@ -1379,12 +1390,6 @@ updateStats action lookUp modelBefore _modelAfter result =
     . updParentTable
   where
     -- === Tags
-
-    updNewTableTypes stats = case action of
-      New (PrettyProxy :: PrettyProxy (k, v, blob)) _ -> stats {
-          newTableTypes = Set.insert (show $ typeRep (Proxy @(k, v, blob))) (newTableTypes stats)
-        }
-      _ -> stats
 
     updSnapshotted stats = case (action, result) of
       (Snapshot name _, MEither (Right (MUnit ()))) -> stats {
@@ -1582,12 +1587,8 @@ updateStats action lookUp modelBefore _modelAfter result =
 
 -- | Tags for every step
 data Tag =
-    -- | (At least) two types of tables were created (i.e., 'New') in the same
-    -- session. The strings represent the representations of the types that the
-    -- tables were created at.
-    NewTwoTableTypes String String
     -- | Snapshot with a name that already exists
-  | SnapshotTwice
+    SnapshotTwice
     -- | Open an existing snapshot
   | OpenExistingSnapshot
     -- | Open a missing snapshot
@@ -1610,9 +1611,11 @@ tagStep' ::
   -> LockstepAction (ModelState h) a
   -> Val h a
   -> [Tag]
-tagStep' (ModelState _stateBefore statsBefore, ModelState _stateAfter statsAfter) action _result = catMaybes [
-      tagNewTwoTableTypes
-    , tagSnapshotTwice
+tagStep' (ModelState _stateBefore statsBefore,
+          ModelState _stateAfter _statsAfter)
+          action _result =
+    catMaybes [
+      tagSnapshotTwice
     , tagOpenExistingSnapshot
     , tagOpenExistingSnapshot
     , tagOpenMissingSnapshot
@@ -1620,13 +1623,6 @@ tagStep' (ModelState _stateBefore statsBefore, ModelState _stateAfter statsAfter
     , tagDeleteMissingSnapshot
     ]
   where
-    tagNewTwoTableTypes
-      | Set.size (newTableTypes statsBefore) < 2
-      , type1 : type2 : _ <- Set.toList (newTableTypes statsAfter)
-      = Just $ NewTwoTableTypes type1 type2
-      | otherwise
-      = Nothing
-
     tagSnapshotTwice
       | Snapshot name _ <- action
       , name `Set.member` snapshotted statsBefore
