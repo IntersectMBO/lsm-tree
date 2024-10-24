@@ -27,6 +27,7 @@ import qualified Test.Database.LSMTree.Internal.RunReader
 import qualified Test.Database.LSMTree.Internal.RunReaders
 import qualified Test.Database.LSMTree.Internal.Serialise
 import qualified Test.Database.LSMTree.Internal.Serialise.Class
+import qualified Test.Database.LSMTree.Internal.Snapshot
 import qualified Test.Database.LSMTree.Internal.Vector
 import qualified Test.Database.LSMTree.Model.Monoidal
 import qualified Test.Database.LSMTree.Model.Normal
@@ -63,6 +64,7 @@ main = defaultMain $ testGroup "lsm-tree"
     , Test.Database.LSMTree.Internal.IndexOrdinary.tests
     , Test.Database.LSMTree.Internal.Serialise.tests
     , Test.Database.LSMTree.Internal.Serialise.Class.tests
+    , Test.Database.LSMTree.Internal.Snapshot.tests
     , Test.Database.LSMTree.Internal.Vector.tests
     , Test.Database.LSMTree.Model.Normal.tests
     , Test.Database.LSMTree.Model.Monoidal.tests

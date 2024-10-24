@@ -4,8 +4,13 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Database.LSMTree.Internal.Snapshot (
-    SnapshotMetaData (..)
+    SnapshotVersion (..)
   , SnapshotLabel (..)
+  , SnapshotMetaData (..)
+
+  , encode
+  , ToEncoding (..)
+
   , currentSnapshotVersion
   , encodeSnapshotMetaData
 
@@ -28,8 +33,11 @@ import           Control.Monad.Class.MonadThrow (MonadMask)
 import           Control.Monad.Fix (MonadFix)
 import           Control.Monad.Primitive (PrimMonad)
 import           Control.TempRegistry
-import           Data.Aeson
+import           Data.Aeson hiding (encode)
+import qualified Data.Aeson as A
+import           Data.Aeson.Decoding
 import           Data.Aeson.Encoding
+import           Data.Aeson.Types
 import           Data.ByteString.Lazy (ByteString)
 import           Data.Foldable (forM_, traverse_)
 import           Data.Primitive.PrimVar
@@ -57,6 +65,7 @@ import           System.FS.BlockIO.API (HasBlockIO)
 
 -- | Version identifier
 newtype SnapshotVersion = SnapshotVersion Word64
+  deriving stock (Show, Eq)
 
 currentSnapshotVersion :: SnapshotVersion
 currentSnapshotVersion = SnapshotVersion 0
@@ -262,6 +271,8 @@ openLevels reg hfs hbio conf@TableConfig{..} uc sessionRoot resolve levels =
   Levels
 -------------------------------------------------------------------------------}
 
+-- TODO: remove all Read instances
+
 deriving stock instance Read NumRuns
 deriving stock instance Read MergePolicyForLevel
 deriving stock instance Read NumStepsDone
@@ -272,6 +283,8 @@ deriving stock instance Read Merge.Level
   Config
 -------------------------------------------------------------------------------}
 
+-- TODO: remove all Read instances
+
 deriving stock instance Read TableConfig
 deriving stock instance Read WriteBufferAlloc
 deriving stock instance Read NumEntries
@@ -281,11 +294,14 @@ deriving stock instance Read BloomFilterAlloc
 deriving stock instance Read FencePointerIndex
 
 {-------------------------------------------------------------------------------
-  Encode
+  Encoding and decoding
 -------------------------------------------------------------------------------}
 
 encodeSnapshotMetaData :: SnapshotMetaData -> ByteString
 encodeSnapshotMetaData = encodingToLazyByteString . encoder
+
+encode :: ToEncoding a => a -> ByteString
+encode = encodingToLazyByteString . encoder
 
 -- | TODO: custom, because we do not use toJSON from ToJSON
 class ToEncoding a where
@@ -311,9 +327,15 @@ instance ToEncoding SnapshotVersion where
   encoder :: SnapshotVersion -> Encoding
   encoder (SnapshotVersion (n :: Word64)) = word64 n
 
+instance FromJSON SnapshotVersion where
+  parseJSON v = SnapshotVersion <$> parseJSON v
+
 instance ToEncoding SnapshotLabel where
   encoder :: SnapshotLabel -> Encoding
   encoder (SnapshotLabel (s :: String)) = string s
+
+instance FromJSON SnapshotLabel where
+  parseJSON v = SnapshotLabel <$> parseJSON v
 
 instance ToEncoding TableConfig where
   encoder :: TableConfig -> Encoding
@@ -341,9 +363,21 @@ instance ToEncoding MergePolicy where
   encoder :: MergePolicy -> Encoding
   encoder MergePolicyLazyLevelling = string "lazyLevelling"
 
+instance FromJSON MergePolicy where
+  parseJSON v = do
+    parseJSON v >>= \case
+      "lazyLevelling" -> pure MergePolicyLazyLevelling
+      (s :: String)   -> fail ("Expected lazyLevelling, but found " <> s)
+
 instance ToEncoding SizeRatio where
   encoder :: SizeRatio -> Encoding
   encoder Four = word64 4
+
+instance FromJSON SizeRatio where
+  parseJSON v =
+    parseJSON v >>= \case
+      (4 :: Int) -> pure Four
+      s          -> fail ("Expected 4, but found " <> show s)
 
 instance ToEncoding WriteBufferAlloc where
   encoder :: WriteBufferAlloc -> Encoding
@@ -360,6 +394,11 @@ instance ToEncoding BloomFilterAlloc where
       pairs (explicitToField word64 "allocFixed" x)
   encoder (AllocRequestFPR (x :: Double)) =
       pairs (explicitToField double "allocRequestFPR" x)
+  encoder (AllocMonkey (numBytes :: Word64) (numEntries :: NumEntries)) =
+      pairs (explicitToField id "allocMonkey" (pairs (
+           explicitToField word64  "numBytes"   numBytes
+        <> explicitToField encoder "numEntries" numEntries
+        )))
 
 instance ToEncoding FencePointerIndex where
   encoder :: FencePointerIndex -> Encoding
@@ -456,7 +495,3 @@ instance ToEncoding Merge.Level where
   encoder :: Merge.Level -> Encoding
   encoder Merge.MidLevel  = string "midLevel"
   encoder Merge.LastLevel = string "lastLevel"
-
-{-------------------------------------------------------------------------------
-  Decode
--------------------------------------------------------------------------------}

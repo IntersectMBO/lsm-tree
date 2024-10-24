@@ -367,6 +367,7 @@ test-suite lsm-tree-test
     Test.Database.LSMTree.Internal.RunReaders
     Test.Database.LSMTree.Internal.Serialise
     Test.Database.LSMTree.Internal.Serialise.Class
+    Test.Database.LSMTree.Internal.Snapshot
     Test.Database.LSMTree.Internal.Vector
     Test.Database.LSMTree.Model.Monoidal
     Test.Database.LSMTree.Model.Normal
@@ -384,6 +385,7 @@ test-suite lsm-tree-test
     Test.Util.TypeFamilyWrappers
 
   build-depends:
+    , aeson
     , ansi-terminal
     , base
     , bitvec
