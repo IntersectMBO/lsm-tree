@@ -262,7 +262,10 @@ bloomFilterAllocForLevel conf (LevelNo l) =
                                 (fromIntegralChecked n)
                                 (fromIntegralChecked sr)
                                 levelCount
-        in  case allocPerLevel !? (l - 1) of
+        in  -- TODO: monkey-style allocation does not currently work as
+            -- expected, so it is disabled for now.
+            error "boomFilterAllocForLevel: monkey allocation temporarily disabled" $
+            case allocPerLevel !? (l - 1) of
               -- Default to an empty bloom filter in case the level wasn't
               -- accounted for. See 'AllocMonkey'.
               Nothing     -> RunAllocMonkey 0
