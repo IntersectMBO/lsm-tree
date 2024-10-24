@@ -1,8 +1,14 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 -- TODO: remove once we properly implement snapshots
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Database.LSMTree.Internal.Snapshot (
-    SnapshotLabel (..)
+    SnapshotMetaData (..)
+  , SnapshotLabel (..)
+  , currentSnapshotVersion
+  , encodeSnapshotMetaData
+
     -- * Snapshot format
   , numSnapRuns
   , SnapLevels
@@ -22,10 +28,14 @@ import           Control.Monad.Class.MonadThrow (MonadMask)
 import           Control.Monad.Fix (MonadFix)
 import           Control.Monad.Primitive (PrimMonad)
 import           Control.TempRegistry
+import           Data.Aeson
+import           Data.Aeson.Encoding
+import           Data.ByteString.Lazy (ByteString)
 import           Data.Foldable (forM_, traverse_)
 import           Data.Primitive.PrimVar
 import           Data.String
 import qualified Data.Vector as V
+import           Data.Word
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
@@ -41,10 +51,45 @@ import           Database.LSMTree.Internal.UniqCounter (UniqCounter,
 import           System.FS.API (HasFS)
 import           System.FS.BlockIO.API (HasBlockIO)
 
+{-------------------------------------------------------------------------------
+  Snapshot metadata
+-------------------------------------------------------------------------------}
+
+-- | Version identifier
+newtype SnapshotVersion = SnapshotVersion Word64
+
+currentSnapshotVersion :: SnapshotVersion
+currentSnapshotVersion = SnapshotVersion 0
+
 -- | Custom text to include in a snapshot file
 newtype SnapshotLabel = SnapshotLabel String -- TODO: replace by Text?
   deriving stock (Show, Eq, Read)
   deriving newtype (Semigroup, IsString)
+
+data SnapshotMetaData = SnapshotMetaData {
+    -- | The version of the format for the snapshot metadata.
+    snapMetaVersion :: !SnapshotVersion
+    -- | Custom, user-supplied text that is included in the metadata.
+    --
+    -- The main use case for this field is for the user to supply textual
+    -- information about the key\/value\/blob type for the table that
+    -- corresponds to the snapshot. This information can then be used to
+    -- dynamically check that a snapshot is opened at the correct
+    -- key\/value\/blob type.
+    --
+    -- One could argue that the 'SnapshotName' could be used to to hold this
+    -- information, but the file name of snapshot meta data is not guarded by
+    -- checksum, wherease the contents of the file are. Therefore using the
+    -- 'SnapshotLabel' is safer.
+  , snapMetaLabel   :: !SnapshotLabel
+    -- | The 'TableConfig' for the snapshotted table.
+    --
+    -- Some of these configuration options can be overridden when a snapshot is
+    -- opened: see 'TableConfigOverride'.
+  , snapMetaConfig  :: !TableConfig
+    -- | The shape of the LSM tree.
+  , snapMetaLevels  :: !SnapLevels -- TODO: rename
+  }
 
 {-------------------------------------------------------------------------------
   Levels snapshot format
@@ -234,3 +279,184 @@ deriving stock instance Read SizeRatio
 deriving stock instance Read MergePolicy
 deriving stock instance Read BloomFilterAlloc
 deriving stock instance Read FencePointerIndex
+
+{-------------------------------------------------------------------------------
+  Encode
+-------------------------------------------------------------------------------}
+
+encodeSnapshotMetaData :: SnapshotMetaData -> ByteString
+encodeSnapshotMetaData = encodingToLazyByteString . encoder
+
+-- | TODO: custom, because we do not use toJSON from ToJSON
+class ToEncoding a where
+  encoder :: a -> Encoding
+
+instance ToEncoding SnapshotMetaData where
+  encoder :: SnapshotMetaData -> Encoding
+  encoder snap = pairs (
+         explicitToField encoder "version" version
+      <> explicitToField encoder "label"   label
+      <> explicitToField encoder "config"  config
+      <> explicitToField encoder "tree"    levels
+      )
+    where
+      SnapshotMetaData
+        (version :: SnapshotVersion)
+        (label :: SnapshotLabel)
+        (config :: TableConfig)
+        (levels :: SnapLevels)
+        = snap
+
+instance ToEncoding SnapshotVersion where
+  encoder :: SnapshotVersion -> Encoding
+  encoder (SnapshotVersion (n :: Word64)) = word64 n
+
+instance ToEncoding SnapshotLabel where
+  encoder :: SnapshotLabel -> Encoding
+  encoder (SnapshotLabel (s :: String)) = string s
+
+instance ToEncoding TableConfig where
+  encoder :: TableConfig -> Encoding
+  encoder config = pairs (
+         explicitToField encoder "mergePolicy"       mergePolicy
+      <> explicitToField encoder "sizeRatio"         sizeRatio
+      <> explicitToField encoder "writeBufferAlloc"  writeBufferAlloc
+      <> explicitToField encoder "bloomFilterAlloc"  bloomFilterAlloc
+      <> explicitToField encoder "fencePointerIndex" fencePointerIndex
+      <> explicitToField encoder "diskCachePolicy"   diskCachePolicy
+      <> explicitToField encoder "mergeSchedule"     mergeSchedule
+      )
+    where
+      TableConfig
+        (mergePolicy :: MergePolicy)
+        (sizeRatio :: SizeRatio)
+        (writeBufferAlloc :: WriteBufferAlloc)
+        (bloomFilterAlloc :: BloomFilterAlloc)
+        (fencePointerIndex :: FencePointerIndex)
+        (diskCachePolicy :: DiskCachePolicy)
+        (mergeSchedule :: MergeSchedule)
+        = config
+
+instance ToEncoding MergePolicy where
+  encoder :: MergePolicy -> Encoding
+  encoder MergePolicyLazyLevelling = string "lazyLevelling"
+
+instance ToEncoding SizeRatio where
+  encoder :: SizeRatio -> Encoding
+  encoder Four = word64 4
+
+instance ToEncoding WriteBufferAlloc where
+  encoder :: WriteBufferAlloc -> Encoding
+  encoder (AllocNumEntries (numEntries :: NumEntries)) =
+      pairs (explicitToField encoder "numEntries" numEntries)
+
+instance ToEncoding NumEntries where
+  encoder :: NumEntries -> Encoding
+  encoder (NumEntries (x :: Int)) = int x
+
+instance ToEncoding BloomFilterAlloc where
+  encoder :: BloomFilterAlloc -> Encoding
+  encoder (AllocFixed (x :: Word64)) =
+      pairs (explicitToField word64 "allocFixed" x)
+  encoder (AllocRequestFPR (x :: Double)) =
+      pairs (explicitToField double "allocRequestFPR" x)
+
+instance ToEncoding FencePointerIndex where
+  encoder :: FencePointerIndex -> Encoding
+  encoder CompactIndex  = string "compactIndex"
+  encoder OrdinaryIndex = string "ordinaryIndex"
+
+instance ToEncoding DiskCachePolicy where
+  encoder :: DiskCachePolicy -> Encoding
+  encoder DiskCacheAll = string "diskCacheAll"
+  encoder (DiskCacheLevelsAtOrBelow (x :: Int)) =
+      pairs (explicitToField int "diskCacheLevelsAtOrBelow" x)
+  encoder DiskCacheNone = string "diskCacheNone"
+
+instance ToEncoding MergeSchedule where
+  encoder :: MergeSchedule -> Encoding
+  encoder OneShot     = string "oneShot"
+  encoder Incremental = string "incremental"
+
+instance ToEncoding SnapLevel where
+  encoder :: SnapLevel -> Encoding
+  encoder level = pairs (
+         explicitToField encoder "incomingRuns" incomingRuns
+      <> explicitToField encoder "residentRuns" residentRuns
+      )
+    where
+      SnapLevel
+        (incomingRuns :: SnapMergingRun)
+        (residentRuns :: V.Vector RunNumber)
+        = level
+
+instance ToEncoding a => ToEncoding (V.Vector a) where
+  encoder :: V.Vector a -> Encoding
+  encoder = vector encoder
+
+vector :: (a -> Encoding) -> V.Vector a -> Encoding
+vector enc = list enc . V.toList
+
+instance ToEncoding RunNumber where
+  encoder :: RunNumber -> Encoding
+  encoder (RunNumber (x :: Word64)) = word64 x
+
+instance ToEncoding SnapMergingRun where
+  encoder :: SnapMergingRun -> Encoding
+  encoder
+    (SnapMergingRun
+      (mpfl :: MergePolicyForLevel)
+      (nr :: NumRuns)
+      (ac :: AccumulatedCredits)
+      (smrs :: SnapMergingRunState))
+    = pairs (explicitToField id "mergingRun" (pairs (
+           explicitToField encoder "mergePolicyForLevel" mpfl
+        <> explicitToField encoder "numRuns"             nr
+        <> explicitToField encoder "accumulatedCredits"  ac
+        <> explicitToField encoder "mergingRunState"     smrs
+        )))
+  encoder (SnapSingleRun (x :: RunNumber)) =
+      pairs (explicitToField encoder "singleRun" x)
+
+instance ToEncoding MergePolicyForLevel where
+  encoder :: MergePolicyForLevel -> Encoding
+  encoder LevelTiering   = string "tiering"
+  encoder LevelLevelling = string "levelling"
+
+instance ToEncoding NumRuns where
+  encoder :: NumRuns -> Encoding
+  encoder (NumRuns (x :: Int)) = int x
+
+instance ToEncoding AccumulatedCredits where
+  encoder :: AccumulatedCredits -> Encoding
+  encoder (AccumulatedCredits (x :: Int)) = int x
+
+instance ToEncoding SnapMergingRunState where
+  encoder :: SnapMergingRunState -> Encoding
+  encoder (SnapCompletedMerge (x :: RunNumber)) =
+      pairs (explicitToField id "completedMerge" (
+          encoder x
+        ))
+  encoder
+    (SnapOngoingMerge
+      (rs :: V.Vector RunNumber)
+      (nsd :: NumStepsDone)
+      (ml :: Merge.Level))
+    = pairs (explicitToField id "ongoingMerge" ( pairs (
+           explicitToField encoder "inputRuns" rs
+        <> explicitToField encoder "numStepsDone" nsd
+        <> explicitToField encoder "mergeLevel" ml
+        )))
+
+instance ToEncoding NumStepsDone where
+  encoder :: NumStepsDone -> Encoding
+  encoder (NumStepsDone (x :: Int)) = int x
+
+instance ToEncoding Merge.Level where
+  encoder :: Merge.Level -> Encoding
+  encoder Merge.MidLevel  = string "midLevel"
+  encoder Merge.LastLevel = string "lastLevel"
+
+{-------------------------------------------------------------------------------
+  Decode
+-------------------------------------------------------------------------------}
