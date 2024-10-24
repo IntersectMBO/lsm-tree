@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 -- TODO: remove once the API is implemented.
 {-# OPTIONS_GHC -Wno-redundant-constraints #-}
 

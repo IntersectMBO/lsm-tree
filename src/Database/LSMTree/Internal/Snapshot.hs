@@ -2,8 +2,9 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Database.LSMTree.Internal.Snapshot (
+    SnapshotLabel (..)
     -- * Snapshot format
-    numSnapRuns
+  , numSnapRuns
   , SnapLevels
   , SnapLevel (..)
   , SnapMergingRun (..)
@@ -23,6 +24,8 @@ import           Control.Monad.Primitive (PrimMonad)
 import           Control.TempRegistry
 import           Data.Foldable (forM_)
 import           Data.Primitive.PrimVar
+import           Data.String
+import           Data.Text (Text)
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.Entry
@@ -38,6 +41,11 @@ import           Database.LSMTree.Internal.UniqCounter (UniqCounter,
                      incrUniqCounter, uniqueToRunNumber)
 import           System.FS.API (HasFS)
 import           System.FS.BlockIO.API (HasBlockIO)
+
+-- | Custom text to include in a snapshot file
+newtype SnapshotLabel = SnapshotLabel Text
+  deriving stock (Show, Eq, Read)
+  deriving newtype (Semigroup, IsString)
 
 {-------------------------------------------------------------------------------
   Levels snapshot format
