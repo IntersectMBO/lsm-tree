@@ -34,7 +34,7 @@ import qualified Database.LSMTree.Monoidal as R
 type C k v blob = (C_ k, C_ v, C_ blob)
 type C_ a = (Show a, Eq a, Typeable a)
 
--- | Class abstracting over session operations.
+-- | Class abstracting over table handle operations.
 --
 type IsTableHandle :: ((Type -> Type) -> Type -> Type -> Type) -> Constraint
 class (IsSession (Session h)) => IsTableHandle h where

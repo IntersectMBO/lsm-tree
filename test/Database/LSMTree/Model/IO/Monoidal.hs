@@ -1,12 +1,14 @@
 {-# LANGUAGE TypeFamilies #-}
 
--- | A @TVar@-based monoidal model of a potentially closed mutable session,
--- giving an instance of `Class.IsTableHandle`.
+-- | An instance of `Class.IsTableHandle`, modelling monoidal,
+-- potentially closed sessions in @IO@ by lifting the pure session model from
+-- "Database.LSMTree.Model.Session".
 module Database.LSMTree.Model.IO.Monoidal (
     Err (..)
   , Session (..)
   , SessionArgs (NoSessionArgs)
   , TableHandle (..)
+  , TableConfig (..)
   , BlobRef (..)
   , Cursor (..)
     -- * helpers
@@ -21,6 +23,7 @@ import           Data.Void (Void)
 import qualified Database.LSMTree.Class.Monoidal as Class
 import           Database.LSMTree.Model.IO.Normal (Session (..),
                      SessionArgs (NoSessionArgs), runInOpenSession)
+import           Database.LSMTree.Model.Session (TableConfig (..))
 import qualified Database.LSMTree.Model.Session as Model
 
 data TableHandle m k v = TableHandle {

@@ -1,12 +1,14 @@
 {-# LANGUAGE TypeFamilies #-}
 
--- | A @TVar@-based normal (i.e. non-monoidal) model of a potentially closed
--- mutable session, giving an instance of `Class.IsTableHandle`.
+-- | An instance of `Class.IsTableHandle`, modelling normal (i.e. non-monoidal)
+-- potentially closed sessions in @IO@ by lifting the pure session model from
+-- "Database.LSMTree.Model.Session".
 module Database.LSMTree.Model.IO.Normal (
     Err (..)
   , Session (..)
   , Class.SessionArgs (NoSessionArgs)
   , TableHandle (..)
+  , TableConfig (..)
   , BlobRef (..)
   , Cursor (..)
     -- * helpers
@@ -20,13 +22,10 @@ import           Control.Concurrent.Class.MonadSTM.Strict
 import           Control.Exception (Exception)
 import           Control.Monad.Class.MonadThrow (MonadThrow (..))
 import qualified Database.LSMTree.Class.Normal as Class
+import           Database.LSMTree.Model.Session (TableConfig (..))
 import qualified Database.LSMTree.Model.Session as Model
-import           NoThunks.Class (AllowThunk (..), NoThunks)
 
 newtype Session m = Session (StrictTVar m (Maybe Model.Model))
-
-deriving via AllowThunk (Session IO)
-    instance NoThunks (Session IO)
 
 data TableHandle m k v blob = TableHandle {
     _thSession     :: !(Session m)

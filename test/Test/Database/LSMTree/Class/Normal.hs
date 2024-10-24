@@ -22,8 +22,7 @@ import           Database.LSMTree.Class.Normal hiding (withTableDuplicate,
 import qualified Database.LSMTree.Class.Normal as Class
 import           Database.LSMTree.Common (mkSnapshotName)
 import           Database.LSMTree.Extras.Generators ()
-import qualified Database.LSMTree.Model.IO.Normal as Model
-import qualified Database.LSMTree.Model.Session as Model (TableConfig (..))
+import qualified Database.LSMTree.Model.IO.Normal as ModelIO
 import qualified Database.LSMTree.Normal as R
 import qualified System.FS.API as FS
 import           Test.QuickCheck.Monadic (monadicIO, monitor, run)
@@ -38,10 +37,10 @@ tests = testGroup "Test.Database.LSMTree.Class.Normal"
     ]
   where
 
-    tbl3 :: Proxy Model.TableHandle
+    tbl3 :: Proxy ModelIO.TableHandle
     tbl3 = Setup {
-          testTableConfig = Model.TableConfig
-        , testWithSessionArgs = \action -> action Model.NoSessionArgs
+          testTableConfig = ModelIO.TableConfig
+        , testWithSessionArgs = \action -> action ModelIO.NoSessionArgs
         }
 
     expectFailures3 = repeat False

@@ -151,6 +151,9 @@ instance Arbitrary Model.TableConfig where
   arbitrary :: Gen Model.TableConfig
   arbitrary = pure Model.TableConfig
 
+deriving via AllowThunk (ModelIO.Session IO)
+    instance NoThunks (ModelIO.Session IO)
+
 propLockstep_ModelIOImpl ::
      Actions (Lockstep (ModelState ModelIO.TableHandle))
   -> QC.Property
