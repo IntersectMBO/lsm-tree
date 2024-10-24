@@ -17,8 +17,7 @@ import           Criterion.Main (defaultMain)
 main :: IO ()
 main = do
 #ifdef NO_IGNORE_ASSERTS
-    putStrLn "WARNING: BENCHMARKING A BUILD IN DEBUG MODE"
-    putStrLn "         (see cabal.project for details)"
+    putStrLn "WARNING: benchmarking in debug mode (see cabal.project)"
 #endif
     defaultMain [
         Bench.Database.LSMTree.Internal.BloomFilter.benchmarks
