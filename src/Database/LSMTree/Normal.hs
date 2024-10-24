@@ -111,6 +111,7 @@ module Database.LSMTree.Normal (
   , IOLike
   ) where
 
+import           Control.DeepSeq
 import           Control.Exception (throw)
 import           Control.Monad
 import           Data.Bifunctor (Bifunctor (..))
@@ -125,7 +126,6 @@ import qualified Database.LSMTree.Common as Common
 import qualified Database.LSMTree.Internal as Internal
 import qualified Database.LSMTree.Internal.BlobRef as Internal
 import qualified Database.LSMTree.Internal.Entry as Entry
-import           Database.LSMTree.Internal.Normal
 import qualified Database.LSMTree.Internal.Serialise as Internal
 import qualified Database.LSMTree.Internal.Vector as V
 import qualified System.FS.API as FS
@@ -290,6 +290,24 @@ close (Internal.NormalTable th) = Internal.close th
   Table queries
 -------------------------------------------------------------------------------}
 
+-- | Result of a single point lookup.
+data LookupResult v blobref =
+    NotFound
+  | Found         !v
+  | FoundWithBlob !v !blobref
+  deriving stock (Eq, Show, Functor, Foldable, Traversable)
+
+instance Bifunctor LookupResult where
+  first f = \case
+      NotFound          -> NotFound
+      Found v           -> Found (f v)
+      FoundWithBlob v b -> FoundWithBlob (f v) b
+
+  second g = \case
+      NotFound          -> NotFound
+      Found v           -> Found v
+      FoundWithBlob v b -> FoundWithBlob v (g b)
+
 {-# SPECIALISE lookups ::
      (SerialiseKey k, SerialiseValue v)
   => V.Vector k
@@ -318,6 +336,17 @@ lookups ks (Internal.NormalTable th) =
       Entry.Mupdate _           -> error "Normal.lookups: unexpected Mupdate"
       Entry.Delete              -> NotFound
     toLookupResult Nothing = NotFound
+
+-- | A result for one point in a cursor read or range lookup.
+data QueryResult k v blobref =
+    FoundInQuery         !k !v
+  | FoundInQueryWithBlob !k !v !blobref
+  deriving stock (Eq, Show, Functor, Foldable, Traversable)
+
+instance Bifunctor (QueryResult k) where
+  bimap f g = \case
+      FoundInQuery k v           -> FoundInQuery k (f v)
+      FoundInQueryWithBlob k v b -> FoundInQueryWithBlob k (f v) (g b)
 
 {-# SPECIALISE rangeLookup ::
      (SerialiseKey k, SerialiseValue v)
@@ -487,6 +516,19 @@ toNormalQueryResult k v = \case
 {-------------------------------------------------------------------------------
   Table updates
 -------------------------------------------------------------------------------}
+
+-- | Normal tables support insert and delete operations.
+--
+-- An __update__ is a term that groups all types of table-manipulating
+-- operations, like inserts and deletes.
+data Update v blob =
+    Insert !v !(Maybe blob)
+  | Delete
+  deriving stock (Show, Eq)
+
+instance (NFData v, NFData blob) => NFData (Update v blob) where
+  rnf Delete       = ()
+  rnf (Insert v b) = rnf v `seq` rnf b
 
 {-# SPECIALISE updates ::
      (SerialiseKey k, SerialiseValue v, SerialiseValue blob)

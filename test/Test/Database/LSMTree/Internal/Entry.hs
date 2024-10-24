@@ -12,8 +12,8 @@ import           Data.Semigroup
 import           Database.LSMTree.Extras.Generators ()
 import           Database.LSMTree.Internal.BlobRef
 import           Database.LSMTree.Internal.Entry
-import qualified Database.LSMTree.Internal.Monoidal as Monoidal
-import qualified Database.LSMTree.Internal.Normal as Normal
+import qualified Database.LSMTree.Monoidal as Monoidal
+import qualified Database.LSMTree.Normal as Normal
 import           Test.QuickCheck
 import           Test.QuickCheck.Classes (semigroupLaws)
 import           Test.Tasty
