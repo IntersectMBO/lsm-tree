@@ -26,6 +26,7 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 {- HLINT ignore "Use camelCase" -}
+{- HLINT ignore "Redundant fmap" -}
 
 {-
   TODO: improve generation and shrinking of dependencies. See
