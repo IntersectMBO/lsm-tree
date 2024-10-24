@@ -1,0 +1,23 @@
+-- | The are three kinds of model, each depending on the previous one:
+--
+-- * [@Model.Table@]:
+--   Pure model of a single table.
+--   @
+--   updates :: [_] -> Table k v b -> Table k v b
+--   @
+--
+-- * [@Model.Session@]:
+--   Pure model of a session (containing multiple tables).
+--   @
+--   updates :: MonadState Model m => [_] -> TableHandle k v b -> m ()
+--   @
+--
+-- * [@Model.IO.{Normal,Monoidal}@]:
+--   STM-based model allowing multiple (potentially closed) sessions.
+--   There are separate modules for normal/monoidal tables, which involves some
+--   type conversions such as @convLookupResult@.
+--   @
+--   updates :: MonadSTM m => MSession m -> [_] -> TableHandle k v b -> m ()
+--   @
+--
+module Database.LSMTree.Model () where
