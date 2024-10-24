@@ -225,13 +225,6 @@ serialisedIndex entryCount lastKeys
 
 -- ** Construction via appending
 
--- Yields the number of keys that an append operation adds to an index.
-appendedKeysCount :: Append -> Int
-appendedKeysCount (AppendSinglePage _ _)
-    = 1
-appendedKeysCount (AppendMultiPage _ overflowPageCount)
-    = succ (fromIntegral overflowPageCount)
-
 -- Yields the keys that an append operation adds to an index.
 appendedKeys :: Append -> [SerialisedKey]
 appendedKeys (AppendSinglePage _ lastKey)
@@ -265,7 +258,7 @@ lastKeysBlockFromAppends appends = lastKeysBlock where
 -}
 incrementalConstruction :: [Append] -> (IndexOrdinary, Primitive.Vector Word8)
 incrementalConstruction appends = runST $ do
-    acc <- new keyCount minChunkSize
+    acc <- new initialKeyBufferSize minChunkSize
     commonChunks <- mapM (flip append acc) appends
     (remnant, unserialised) <- unsafeEnd acc
     let
@@ -277,8 +270,12 @@ incrementalConstruction appends = runST $ do
     return (unserialised, serialised)
     where
 
-    keyCount :: Int
-    keyCount = sum (map appendedKeysCount appends)
+    {-
+        We do not need to vary the initial key buffer size, since we are not
+        testing growing vectors here.
+    -}
+    initialKeyBufferSize :: Int
+    initialKeyBufferSize = 0x100
 
     {-
         We do not need to vary the minimum chunk size, since we are not testing
