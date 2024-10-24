@@ -1,5 +1,8 @@
 {-# LANGUAGE OverloadedLists   #-}
 {-# LANGUAGE OverloadedStrings #-}
+
+{- HLINT ignore "Use void" -}
+
 module Test.Database.LSMTree.Normal.UnitTests (tests) where
 
 import           Control.Tracer (nullTracer)
