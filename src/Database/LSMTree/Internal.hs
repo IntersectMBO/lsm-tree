@@ -1077,12 +1077,10 @@ readCursorWhile resolve keyIsWanted n Cursor {..} fromEntry = do
   Snapshots
 -------------------------------------------------------------------------------}
 
-type SnapshotLabel = String
-
 {-# SPECIALISE snapshot ::
      ResolveSerialisedValue
   -> SnapshotName
-  -> String
+  -> SnapshotLabel
   -> Table IO h
   -> IO Int #-}
 -- |  See 'Database.LSMTree.Normal.snapshot''.

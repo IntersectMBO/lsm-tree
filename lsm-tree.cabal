@@ -179,6 +179,7 @@ library
     , lsm-tree:kmerge
     , lsm-tree:monkey
     , primitive               ^>=0.9
+    , text                    ^>=2.1.1
     , vector                  ^>=0.13
     , vector-algorithms       ^>=0.9
 
