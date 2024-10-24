@@ -8,7 +8,6 @@ module Test.Database.LSMTree.Internal.Entry (tests) where
 
 import           Data.Coerce
 import           Data.List.NonEmpty (NonEmpty)
-import qualified Data.List.NonEmpty as NE
 import           Data.Semigroup
 import           Database.LSMTree.Extras.Generators ()
 import           Database.LSMTree.Internal.BlobRef
@@ -18,7 +17,6 @@ import qualified Database.LSMTree.Internal.Normal as Normal
 import           Test.QuickCheck
 import           Test.QuickCheck.Classes (semigroupLaws)
 import           Test.Tasty
-import           Test.Tasty.HUnit
 import           Test.Tasty.QuickCheck (QuickCheckMaxSize (QuickCheckMaxSize),
                      QuickCheckTests (QuickCheckTests), testProperty)
 import           Test.Util.QC
@@ -30,37 +28,48 @@ tests = adjustOption (\_ -> QuickCheckTests 10000) $
       testClassLaws "EntrySG" $
         semigroupLaws (Proxy @(EntrySG (Sum Int) BlobSpanSG))
     , testClassLaws "NormalUpdateSG" $
-        semigroupLaws (Proxy @(NormalUpdateSG (Sum Int) String))
+        -- Note that we are using Unlawful here because mupserts /should/ not
+        -- show up for normal updates.
+        semigroupLaws (Proxy @(NormalUpdateSG (Unlawful Int) String))
     , testClassLaws "MonoidalUpdateSG" $
         semigroupLaws (Proxy @(MonoidalUpdateSG (Sum Int)))
     , testProperty "prop_resolveEntriesNormalSemantics" $
-        prop_resolveEntriesNormalSemantics @Int @String
+        -- Note that we are using Unlawful here because mupserts /should/ not
+        -- show up for normal updates.
+        prop_resolveEntriesNormalSemantics @(Unlawful Int) @String
     , testProperty "prop_resolveMonoidalSemantics" $
         prop_resolveMonoidalSemantics @(Sum Int)
-    , testCase "example resolveEntriesNormal" $ do
-        let es = [InsertWithBlob (2 :: Int) 'a', Insert 17]
-        Just (Normal.Insert 2 (Just 'a')) @=?
-          resolveEntriesNormal (NE.fromList es)
-    , testCase "example resolveEntriesMonoidal" $ do
-        let es = [Mupdate (Sum 11 :: Sum Int), Mupdate (Sum 5), Insert 1]
-        Just (Monoidal.Insert (Sum 17)) @=?
-          resolveEntriesMonoidal (<>) (NE.fromList es)
     ]
 
+-- | @resolve == fromEntry . resolve . toEntry@
 prop_resolveEntriesNormalSemantics ::
-     (Show v, Show blob, Eq v, Eq blob)
+     (Show v, Show blob, Eq v, Eq blob, Semigroup v)
   => NonEmpty (Normal.Update v blob)
   -> Property
-prop_resolveEntriesNormalSemantics es = real === expected
-  where expected = coerce (Just . foldr1 (<>) . fmap NormalUpdateSG $ es)
-        real     = resolveEntriesNormal (fmap updateToEntryNormal es)
+prop_resolveEntriesNormalSemantics es = expected === real
+  where expected = Just . unNormalUpdateSG . sconcat . fmap NormalUpdateSG $ es
+        real     = entryToUpdateNormal (sconcat (fmap updateToEntryNormal es))
 
+-- | @resolve == fromEntry . resolve . toEntry@
 prop_resolveMonoidalSemantics ::
      (Show v, Eq v, Semigroup v)
   => NonEmpty (Monoidal.Update v) -> Property
-prop_resolveMonoidalSemantics es = real === expected
-  where expected = coerce (Just . foldr1 (<>) . fmap MonoidalUpdateSG $ es)
-        real     = resolveEntriesMonoidal (<>) (fmap updateToEntryMonoidal es)
+prop_resolveMonoidalSemantics es = expected === real
+  where expected = Just . unMonoidalUpdateSG . sconcat . fmap MonoidalUpdateSG $ es
+        real     = entryToUpdateMonoidal (sconcat (fmap updateToEntryMonoidal es))
+
+{-------------------------------------------------------------------------------
+  Types
+-------------------------------------------------------------------------------}
+
+-- | A wrapper type with a 'Semigroup' instance that always throws an error.
+newtype Unlawful a = Unlawful a
+  deriving stock (Show, Eq)
+  deriving newtype Arbitrary
+
+-- | A 'Semigroup' instance that always throws an error.
+instance Semigroup (Unlawful a) where
+  _ <> _ = error "unlawful"
 
 -- | Semigroup wrapper for 'Normal.Update'
 newtype NormalUpdateSG v blob = NormalUpdateSG (Normal.Update v blob)
@@ -68,10 +77,16 @@ newtype NormalUpdateSG v blob = NormalUpdateSG (Normal.Update v blob)
   deriving newtype (Arbitrary)
   deriving Semigroup via First (Normal.Update v blob)
 
+unNormalUpdateSG :: NormalUpdateSG v b -> Normal.Update v b
+unNormalUpdateSG (NormalUpdateSG x) = x
+
 -- | Semigroup wrapper for 'Monoidal.Update'
 newtype MonoidalUpdateSG v = MonoidalUpdateSG (Monoidal.Update v)
   deriving stock (Show, Eq)
   deriving newtype (Arbitrary)
+
+unMonoidalUpdateSG :: MonoidalUpdateSG v -> Monoidal.Update v
+unMonoidalUpdateSG (MonoidalUpdateSG x) = x
 
 instance Semigroup v => Semigroup (MonoidalUpdateSG v) where
   (<>) = coerce $ \upd1 upd2 -> case (upd1 :: Monoidal.Update v, upd2) of
@@ -81,24 +96,22 @@ instance Semigroup v => Semigroup (MonoidalUpdateSG v) where
       (Monoidal.Mupsert v1 , Monoidal.Insert  v2) -> Monoidal.Insert (v1 <> v2)
       (Monoidal.Mupsert v1 , Monoidal.Mupsert v2) -> Monoidal.Mupsert (v1 <> v2)
 
--- | Semigroup wrapper for Entry
 newtype EntrySG v blob = EntrySG (Entry v blob)
   deriving stock (Show, Eq)
-
--- | As long as values are a semigroup, an Entry is too
-instance Semigroup v => Semigroup (EntrySG v blob) where
-  EntrySG e1 <> EntrySG e2 = EntrySG (combine (<>) e1 e2)
+  deriving newtype Semigroup
 
 instance (Arbitrary v, Arbitrary blob) => Arbitrary (EntrySG v blob) where
   arbitrary = arbitrary2
   shrink = shrink2
 
+-- | We do not use the @'Arbitrary' 'Entry'@ instance here, because we want to
+-- generate each constructor with equal probability.
 instance Arbitrary2 EntrySG where
   liftArbitrary2 genVal genBlob = EntrySG <$> frequency
     [ (1, Insert <$> genVal)
-    , (1,  InsertWithBlob <$> genVal <*> genBlob)
-    , (1,  Mupdate <$> genVal)
-    , (1,  pure Delete)
+    , (1, InsertWithBlob <$> genVal <*> genBlob)
+    , (1, Mupdate <$> genVal)
+    , (1, pure Delete)
     ]
 
   liftShrink2 shrinkVal shrinkBlob = coerce $ \case
@@ -127,8 +140,8 @@ updateToEntryNormal = \case
     Normal.Insert v (Just b) -> InsertWithBlob v b
     Normal.Delete            -> Delete
 
-_entryToUpdateNormal :: Entry v blob -> Maybe (Normal.Update v blob)
-_entryToUpdateNormal = \case
+entryToUpdateNormal :: Entry v blob -> Maybe (Normal.Update v blob)
+entryToUpdateNormal = \case
     Insert v           -> Just (Normal.Insert v Nothing)
     InsertWithBlob v b -> Just (Normal.Insert v (Just b))
     Mupdate _          -> Nothing
@@ -140,8 +153,8 @@ updateToEntryMonoidal = \case
     Monoidal.Mupsert v -> Mupdate v
     Monoidal.Delete    -> Delete
 
-_entryToUpdateMonoidal :: Entry v blob -> Maybe (Monoidal.Update v)
-_entryToUpdateMonoidal = \case
+entryToUpdateMonoidal :: Entry v blob -> Maybe (Monoidal.Update v)
+entryToUpdateMonoidal = \case
     Insert v           -> Just (Monoidal.Insert v)
     InsertWithBlob _ _ -> Nothing
     Mupdate v          -> Just (Monoidal.Mupsert v)
