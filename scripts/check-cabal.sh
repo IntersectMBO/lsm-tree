@@ -1,14 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/sh
 
-set -euo pipefail
-
-for x in $(find . -name '*.cabal' | grep -v dist-newstyle | cut -c 3-); do
-  (
-    d=$(dirname $x)
-    if [ $(basename $d) != "bloomfilter" ]; then
-      echo "== $d =="
-      cd $d
-      cabal check
-    fi
-  )
-done
+# shellcheck disable=SC2016
+git ls-files --exclude-standard --no-deleted --deduplicate '*.cabal' | xargs -L 1 sh -c 'echo "$0" && cd "$(dirname "$0")" && cabal check'
