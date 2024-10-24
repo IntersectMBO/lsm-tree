@@ -424,7 +424,13 @@ updates es (Internal.MonoidalTable th) = do
       th
   where
     serialiseEntry = bimap Internal.serialiseKey serialiseOp
-    serialiseOp = first Internal.serialiseValue . Entry.updateToEntryMonoidal
+    serialiseOp = first Internal.serialiseValue . updateToEntry
+
+    updateToEntry :: Update v -> Entry.Entry v blob
+    updateToEntry = \case
+        Insert v  -> Entry.Insert v
+        Mupsert v -> Entry.Mupdate v
+        Delete    -> Entry.Delete
 
 {-# SPECIALISE inserts ::
      (SerialiseKey k, SerialiseValue v, ResolveValue v)

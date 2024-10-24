@@ -5,11 +5,6 @@ module Database.LSMTree.Internal.Entry (
   , onBlobRef
   , NumEntries (..)
   , unNumEntries
-    -- * Injections/projections
-  , updateToEntryNormal
-  , updateToEntryMonoidal
-  , entryToUpdateNormal
-  , entryToUpdateMonoidal
     -- * Value resolution/merging
   , combine
   , combineMaybe
@@ -90,36 +85,6 @@ unNumEntries :: NumEntries -> Int
 unNumEntries (NumEntries x) = x
 
 {-------------------------------------------------------------------------------
-  Injections/projections
--------------------------------------------------------------------------------}
-
-updateToEntryNormal :: Normal.Update v blob -> Entry v blob
-updateToEntryNormal = \case
-    Normal.Insert v Nothing  -> Insert v
-    Normal.Insert v (Just b) -> InsertWithBlob v b
-    Normal.Delete            -> Delete
-
-entryToUpdateNormal :: Entry v blob -> Maybe (Normal.Update v blob)
-entryToUpdateNormal = \case
-    Insert v           -> Just (Normal.Insert v Nothing)
-    InsertWithBlob v b -> Just (Normal.Insert v (Just b))
-    Mupdate _          -> Nothing
-    Delete             -> Just Normal.Delete
-
-updateToEntryMonoidal :: Monoidal.Update v -> Entry v blob
-updateToEntryMonoidal = \case
-    Monoidal.Insert v  -> Insert v
-    Monoidal.Mupsert v -> Mupdate v
-    Monoidal.Delete    -> Delete
-
-entryToUpdateMonoidal :: Entry v blob -> Maybe (Monoidal.Update v)
-entryToUpdateMonoidal = \case
-    Insert v           -> Just (Monoidal.Insert v)
-    InsertWithBlob _ _ -> Nothing
-    Mupdate v          -> Just (Monoidal.Mupsert v)
-    Delete             -> Just Monoidal.Delete
-
-{-------------------------------------------------------------------------------
   Value resolution/merging
 -------------------------------------------------------------------------------}
 
@@ -149,7 +114,7 @@ combinesNormal = NE.head
 resolveEntriesNormal ::
      NonEmpty (Entry v blob)
   -> Maybe (Normal.Update v blob)
-resolveEntriesNormal es = entryToUpdateNormal (combinesNormal es)
+resolveEntriesNormal _ = error "about to be removed"
 
 -- | Returns 'Nothing' if the combined entries can not be mapped to an
 -- 'Monoidal.Update'.
@@ -157,4 +122,4 @@ resolveEntriesMonoidal ::
      (v -> v -> v)
   -> NonEmpty (Entry v blob)
   -> Maybe (Monoidal.Update v)
-resolveEntriesMonoidal f es = entryToUpdateMonoidal (combinesMonoidal f es)
+resolveEntriesMonoidal _ _ = error "about to be removed"

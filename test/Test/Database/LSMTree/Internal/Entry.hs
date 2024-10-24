@@ -116,3 +116,33 @@ newtype BlobSpanSG = BlobSpanSG BlobSpan
 instance Arbitrary BlobSpanSG where
   arbitrary = coerce (BlobSpan <$> arbitrary <*> arbitrary)
   shrink = coerce $ \(BlobSpan x y)  -> [ BlobSpan x' y' | (x', y') <- shrink2 (x, y) ]
+
+{-------------------------------------------------------------------------------
+  Injections/projections
+-------------------------------------------------------------------------------}
+
+updateToEntryNormal :: Normal.Update v blob -> Entry v blob
+updateToEntryNormal = \case
+    Normal.Insert v Nothing  -> Insert v
+    Normal.Insert v (Just b) -> InsertWithBlob v b
+    Normal.Delete            -> Delete
+
+_entryToUpdateNormal :: Entry v blob -> Maybe (Normal.Update v blob)
+_entryToUpdateNormal = \case
+    Insert v           -> Just (Normal.Insert v Nothing)
+    InsertWithBlob v b -> Just (Normal.Insert v (Just b))
+    Mupdate _          -> Nothing
+    Delete             -> Just Normal.Delete
+
+updateToEntryMonoidal :: Monoidal.Update v -> Entry v blob
+updateToEntryMonoidal = \case
+    Monoidal.Insert v  -> Insert v
+    Monoidal.Mupsert v -> Mupdate v
+    Monoidal.Delete    -> Delete
+
+_entryToUpdateMonoidal :: Entry v blob -> Maybe (Monoidal.Update v)
+_entryToUpdateMonoidal = \case
+    Insert v           -> Just (Monoidal.Insert v)
+    InsertWithBlob _ _ -> Nothing
+    Mupdate v          -> Just (Monoidal.Mupsert v)
+    Delete             -> Just Monoidal.Delete
