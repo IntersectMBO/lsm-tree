@@ -3,16 +3,17 @@
 module Test.Control.RefCount (tests) where
 
 import           Control.Concurrent.Class.MonadMVar
-import           Control.Exception (AssertionFailed (..))
+import           Control.Exception (AssertionFailed (..), try)
 import           Control.Monad
-import           Control.Monad.Class.MonadThrow
 import           Control.RefCount
+import           Data.Either (isRight)
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck
 
 tests :: TestTree
 tests = testGroup "Control.RefCount" [
       testProperty "prop_refCount" prop_refCount
+    , testProperty "prop_removeReferenceN" prop_removeReferenceN
     ]
 
 prop_refCount :: Property
@@ -74,6 +75,28 @@ prop_refCount = once $ ioProperty $ do
         counterexample "e6" (e6 == False) .&&.
         counterexample "n6" (n6 == RefCount 0) .&&.
         counterexample "b6" b6
+  where
+#ifdef NO_IGNORE_ASSERTS
+    check = \case Left (AssertionFailed _) -> True; Right () -> False
+#else
+    check = \case Left (AssertionFailed _) -> False; Right () -> True
+#endif
+
+prop_removeReferenceN :: Positive Int -> NonNegative Int -> Property
+prop_removeReferenceN (Positive n) (NonNegative m) = ioProperty $ do
+    obj <- newMVar False
+    ref <- unsafeMkRefCounterN (RefCount n) $ Just (void $ modifyMVar_ obj (\x -> pure (not x)) )
+
+    e1 <- try @AssertionFailed $ removeReferenceN ref (fromIntegral m)
+    n1 <- readRefCount ref -- 0
+    b1 <- readMVar obj -- True
+
+    pure $
+        counterexample "e1" (if n < m || m == 0
+                             then check e1
+                             else isRight e1) .&&.
+        counterexample "n1" (n1 == RefCount (n - m)) .&&.
+        counterexample "b1" (b1 == (isRight e1 && m >= n))
   where
 #ifdef NO_IGNORE_ASSERTS
     check = \case Left (AssertionFailed _) -> True; Right () -> False
