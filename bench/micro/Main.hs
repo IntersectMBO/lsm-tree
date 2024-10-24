@@ -18,6 +18,7 @@ main :: IO ()
 main = do
 #ifdef NO_IGNORE_ASSERTS
     putStrLn "WARNING: BENCHMARKING A BUILD IN DEBUG MODE"
+    putStrLn "         (see cabal.project for details)"
 #endif
     defaultMain [
         Bench.Database.LSMTree.Internal.BloomFilter.benchmarks
