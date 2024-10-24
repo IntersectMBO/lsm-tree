@@ -1,4 +1,5 @@
-{-# LANGUAGE BlockArguments #-}
+{-# LANGUAGE BlockArguments    #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module Test.Database.LSMTree.Class.Normal (
     tests

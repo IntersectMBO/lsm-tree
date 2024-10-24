@@ -1180,12 +1180,10 @@ readCursorEntriesWhile resolve keyIsWanted fromEntry readers n =
   Snapshots
 -------------------------------------------------------------------------------}
 
-type SnapshotLabel = String
-
 {-# SPECIALISE snapshot ::
      ResolveSerialisedValue
   -> SnapshotName
-  -> String
+  -> SnapshotLabel
   -> TableHandle IO h
   -> IO Int #-}
 -- |  See 'Database.LSMTree.Normal.snapshot''.
