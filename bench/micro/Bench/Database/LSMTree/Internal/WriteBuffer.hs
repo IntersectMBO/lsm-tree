@@ -1,12 +1,13 @@
 module Bench.Database.LSMTree.Internal.WriteBuffer (benchmarks) where
 
-import           Control.DeepSeq (NFData (..))
+import           Control.DeepSeq (NFData (..), rwhnf)
+import           Control.Exception (assert)
 import           Criterion.Main (Benchmark, bench, bgroup)
 import qualified Criterion.Main as Cr
 import           Data.Bifunctor (first)
 import qualified Data.Foldable as Fold
 import qualified Data.List as List
-import           Data.Maybe (fromMaybe)
+import           Data.Maybe (fromMaybe, isJust, isNothing)
 import           Data.Word (Word64)
 import           Database.LSMTree.Extras.Orphans ()
 import           Database.LSMTree.Extras.Random (frequency, randomByteStringR)
@@ -16,9 +17,6 @@ import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
-import qualified Database.LSMTree.Monoidal as Monoidal
-import qualified Database.LSMTree.Normal as Normal
-import           GHC.Generics
 import           System.Random (StdGen, mkStdGen, uniform)
 
 benchmarks :: Benchmark
@@ -110,19 +108,13 @@ benchWriteBuffer conf@Config{name} =
         ]
 
 insert :: InputKOps -> WriteBuffer
-insert (NormalInputs kops) =
-    Fold.foldl' (\wb (k, e) -> WB.addEntryNormal k e wb) WB.empty kops
-insert (MonoidalInputs kops mappendVal) =
-    Fold.foldl' (\wb (k, e) -> WB.addEntryMonoidal mappendVal k e wb) WB.empty kops
+insert (InputKOps kops mappendVal) =
+    Fold.foldl' (\wb (k, e) -> WB.addEntry mappendVal k e wb) WB.empty kops
 
-data InputKOps
-  = NormalInputs
-      ![(SerialisedKey, Normal.Update SerialisedValue BlobSpan)]
-  | MonoidalInputs
-      ![(SerialisedKey, Monoidal.Update SerialisedValue)]
-      !Mappend
-  deriving stock Generic
-  deriving anyclass NFData
+data InputKOps = InputKOps [(SerialisedKey, Entry SerialisedValue BlobSpan)] Mappend
+
+instance NFData InputKOps where
+  rnf (InputKOps kops mappendVal) = rnf kops `seq` rwhnf mappendVal
 
 type Mappend = SerialisedValue -> SerialisedValue -> SerialisedValue
 
@@ -187,14 +179,7 @@ configUTxO = defaultConfig {
 envInputKOps :: Config -> InputKOps
 envInputKOps config = do
     let kops = randomKOps config (mkStdGen 17)
-     in case mappendVal config of
-          Nothing -> NormalInputs (fmap (fmap expectNormal) kops)
-          Just f  -> MonoidalInputs (fmap (fmap expectMonoidal) kops) f
-  where
-    expectNormal e = fromMaybe (error ("invalid normal update: " <> show e))
-                       (entryToUpdateNormal e)
-    expectMonoidal e = fromMaybe (error ("invalid monoidal update: " <> show e))
-                       (entryToUpdateMonoidal e)
+     in InputKOps kops (fromMaybe const (mappendVal config))
 
 -- | Generate keys and entries to insert into the write buffer.
 -- They are already serialised to exclude the cost from the benchmark.
@@ -202,7 +187,8 @@ randomKOps ::
      Config
   -> StdGen -- ^ RNG
   -> [SerialisedKOp]
-randomKOps Config {..} = take nentries . List.unfoldr (Just . randomKOp)
+randomKOps Config {..} = take nentries . List.unfoldr (Just . randomKOp) .
+    assert (if fmupserts > 0 then isJust mappendVal else isNothing mappendVal)
   where
     randomKOp :: Rnd SerialisedKOp
     randomKOp g = let (!k, !g')  = randomKey g

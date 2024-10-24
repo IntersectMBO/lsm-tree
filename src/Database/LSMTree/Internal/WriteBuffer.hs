@@ -2,25 +2,6 @@
 {-# LANGUAGE GeneralisedNewtypeDeriving #-}
 
 -- | The in-memory LSM level 0.
---
--- === TODO
---
--- This is temporary module header documentation. The module will be
--- fleshed out more as we implement bits of it.
---
--- Related work packages: 5
---
--- This module includes in-memory parts parts for, amongst others,
---
--- * Incremental construction
---
--- * Updates (inserts, deletes, mupserts)
---
--- * Queries (lookups, range lookups)
---
--- The above list is a sketch. Functionality may move around, and the list is
--- not exhaustive.
---
 module Database.LSMTree.Internal.WriteBuffer (
     WriteBuffer,
     empty,
@@ -29,10 +10,7 @@ module Database.LSMTree.Internal.WriteBuffer (
     toMap,
     fromList,
     toList,
-    addEntries,
     addEntry,
-    addEntryMonoidal,
-    addEntryNormal,
     null,
     lookups,
     lookup,
@@ -46,8 +24,6 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.BlobRef (BlobSpan)
 import           Database.LSMTree.Internal.Entry
-import qualified Database.LSMTree.Internal.Monoidal as Monoidal
-import qualified Database.LSMTree.Internal.Normal as Normal
 import           Database.LSMTree.Internal.Range (Range (..))
 import           Database.LSMTree.Internal.Serialise
 import qualified Database.LSMTree.Internal.Vector as V
@@ -94,13 +70,6 @@ toList (WB m) = Map.assocs m
   Updates
 -------------------------------------------------------------------------------}
 
-addEntries ::
-     (SerialisedValue -> SerialisedValue -> SerialisedValue) -- ^ merge function
-  -> V.Vector (SerialisedKey, Entry SerialisedValue BlobSpan)
-  -> WriteBuffer
-  -> WriteBuffer
-addEntries f es wb = V.foldl' (flip (uncurry (addEntry f))) wb es
-
 addEntry ::
      (SerialisedValue -> SerialisedValue -> SerialisedValue) -- ^ merge function
   -> SerialisedKey
@@ -109,21 +78,6 @@ addEntry ::
   -> WriteBuffer
 addEntry f k e (WB wb) =
     WB (Map.insertWith (combine f) k e wb)
-
-addEntryMonoidal ::
-     (SerialisedValue -> SerialisedValue -> SerialisedValue) -- ^ merge function
-  -> SerialisedKey
-  -> Monoidal.Update SerialisedValue
-  -> WriteBuffer
-  -> WriteBuffer
-addEntryMonoidal f k = addEntry f k . updateToEntryMonoidal
-
-addEntryNormal ::
-     SerialisedKey
-  -> Normal.Update SerialisedValue BlobSpan
-  -> WriteBuffer
-  -> WriteBuffer
-addEntryNormal k = addEntry const k . updateToEntryNormal
 
 {-------------------------------------------------------------------------------
   Querying
