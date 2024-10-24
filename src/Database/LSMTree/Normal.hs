@@ -513,7 +513,13 @@ updates es (Internal.NormalTable th) = do
   where
     serialiseEntry = bimap Internal.serialiseKey serialiseOp
     serialiseOp = bimap Internal.serialiseValue Internal.serialiseBlob
-                . Entry.updateToEntryNormal
+                . updateToEntry
+
+    updateToEntry :: Update v blob -> Entry.Entry v blob
+    updateToEntry = \case
+        Insert v Nothing  -> Entry.Insert v
+        Insert v (Just b) -> Entry.InsertWithBlob v b
+        Delete            -> Entry.Delete
 
 {-# SPECIALISE inserts ::
      (SerialiseKey k, SerialiseValue v, SerialiseValue blob)

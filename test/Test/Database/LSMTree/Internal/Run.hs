@@ -28,7 +28,6 @@ import           Database.LSMTree.Extras.RunData
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry
-import qualified Database.LSMTree.Internal.Normal as N
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.RawPage
 import           Database.LSMTree.Internal.Run as Run
@@ -80,7 +79,8 @@ testSingleInsert sessionRoot key val mblob =
     let fs = FsIO.ioHasFS (FS.MountPoint sessionRoot) in
     FS.withIOHasBlockIO fs FS.defaultIOCtxParams $ \hbio -> do
     -- flush write buffer
-    let wb = Map.singleton key (updateToEntryNormal (N.Insert val mblob))
+    let e = case mblob of Nothing -> Insert val; Just blob -> InsertWithBlob val blob
+        wb = Map.singleton key e
     withRun fs hbio (simplePath 42) (RunData wb) $ \_ -> do
       -- check all files have been written
       let activeDir = sessionRoot
