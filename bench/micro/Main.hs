@@ -17,7 +17,9 @@ import           Criterion.Main (defaultMain)
 main :: IO ()
 main = do
 #ifdef NO_IGNORE_ASSERTS
-    putStrLn "WARNING: BENCHMARKING A BUILD IN DEBUG MODE"
+    putStrLn "WARNING: Benchmarking in debug mode."
+    putStrLn "         To benchmark in release mode, pass:"
+    putStrLn "         --project-file=cabal.project.release"
 #endif
     defaultMain [
         Bench.Database.LSMTree.Internal.BloomFilter.benchmarks

@@ -26,7 +26,7 @@ jobs:
         cabal: ["3.10.2.1"]
         os: [ubuntu-latest, windows-latest, macOS-latest]
         cabal-flags: [""]
-        no-debug: [""]
+        cabal-project-file: ['cabal.project.debug']
         exclude:
           - ghc: "8.10.7"
             os: macOS-latest
@@ -34,14 +34,16 @@ jobs:
           - ghc: "8.10.7"
             cabal: "3.10.2.1"
             os: macOS-13
+            cabal-project-file: 'cabal.project.debug'
           - ghc: "9.6.4"
             cabal: "3.10.2.1"
             os: ubuntu-latest
             cabal-flags: "+serialblockio"
+            cabal-project-file: 'cabal.project.debug'
           - ghc: "9.6.4"
             cabal: "3.10.2.1"
             os: ubuntu-latest
-            no-debug: "no-debug"
+            cabal-project-file: 'cabal.project.release'
 
     timeout-minutes: 60
 
@@ -75,19 +77,13 @@ jobs:
 
     - name: Configure the build
       run: |
-        cabal configure --enable-tests --enable-benchmark --ghc-options="-Werror" --flag="${{ matrix.cabal-flags }}"
-        cat cabal.project.local
-
-    - name: Configure the build (no-debug)
-      if: ${{ matrix.no-debug }}
-      run: |
-        echo "" > cabal.project.debug
-        cat cabal.project.debug
+        cabal configure --enable-tests --enable-benchmark --ghc-options="-Werror" --flag="${{ matrix.cabal-flags }}" --project-file="${{ matrix.cabal-project-file }}"
+        cat ${{ matrix.cabal-project-file }}.local
 
     - name: Record cabal dependencies
       id: record-deps
       run: |
-        cabal build all --dry-run
+        cabal build all --dry-run --project-file="${{ matrix.cabal-project-file }}"
 
     - name: "Restore cache"
       uses: actions/cache/restore@v4
@@ -104,7 +100,7 @@ jobs:
 
     - name: Install cabal dependencies
       id: build-dependencies
-      run: cabal build --only-dependencies --enable-tests --enable-benchmarks all
+      run: cabal build all --only-dependencies --enable-tests --enable-benchmarks --project-file="${{ matrix.cabal-project-file }}"
 
     - name: "Save cache"
       uses: actions/cache/save@v4
@@ -118,7 +114,7 @@ jobs:
         key:  ${{ steps.restore-cabal-cache.outputs.cache-primary-key }}
 
     - name: Build
-      run: cabal build all
+      run: cabal build all --project-file="${{ matrix.cabal-project-file }}"
 
     # https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#setting-an-environment-variable
     - name: Set test timeout (Unix)
@@ -134,7 +130,7 @@ jobs:
 
     - name: Run tests
       run: |
-        cabal test -j1 --test-show-details=direct all
+        cabal test all -j1 --test-show-details=direct --project-file="${{ matrix.cabal-project-file }}"
 
     - name: cabal-docspec
       if: ${{ startsWith(matrix.os, 'ubuntu') }}
@@ -200,7 +196,7 @@ jobs:
           ${{ runner.os }}-${{ matrix.ghc }}-${{ env.cache-name }}-
 
     - name: Install stylish-haskell
-      run: cabal install --ignore-project --index-state="${{ env.hackage-index-state }}" stylish-haskell --constraint 'stylish-haskell == 0.14.6.0'
+      run: cabal install stylish-haskell --ignore-project --index-state="${{ env.hackage-index-state }}" --constraint 'stylish-haskell == 0.14.6.0'
 
     - name: Record stylish-haskell version
       run: |
@@ -262,7 +258,7 @@ jobs:
           ${{ runner.os }}-${{ matrix.ghc }}-${{ env.cache-name }}-
 
     - name: Install cabal-fmt
-      run: cabal install --ignore-project cabal-fmt --index-state="${{ env.hackage-index-state }}" --constraint 'cabal-fmt == 0.1.11'
+      run: cabal install cabal-fmt  --ignore-project --index-state="${{ env.hackage-index-state }}" --constraint 'cabal-fmt == 0.1.11'
 
     - name: Record cabal-fmt version
       run: |
