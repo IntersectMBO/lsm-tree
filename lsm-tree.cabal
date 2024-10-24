@@ -335,12 +335,11 @@ test-suite lsm-tree-test
   other-modules:
     Database.LSMTree.Class.Monoidal
     Database.LSMTree.Class.Normal
-    Database.LSMTree.Model.Monoidal
-    Database.LSMTree.Model.Normal
-    Database.LSMTree.Model.Normal.Session
-    Database.LSMTree.ModelIO.Monoidal
-    Database.LSMTree.ModelIO.Normal
-    Database.LSMTree.ModelIO.Session
+    Database.LSMTree.Model
+    Database.LSMTree.Model.IO.Monoidal
+    Database.LSMTree.Model.IO.Normal
+    Database.LSMTree.Model.Session
+    Database.LSMTree.Model.Table
     Test.Data.Arena
     Test.Database.LSMTree.Class.Monoidal
     Test.Database.LSMTree.Class.Normal
@@ -367,8 +366,7 @@ test-suite lsm-tree-test
     Test.Database.LSMTree.Internal.Serialise
     Test.Database.LSMTree.Internal.Serialise.Class
     Test.Database.LSMTree.Internal.Vector
-    Test.Database.LSMTree.Model.Monoidal
-    Test.Database.LSMTree.Model.Normal
+    Test.Database.LSMTree.Model.Table
     Test.Database.LSMTree.Monoidal
     Test.Database.LSMTree.Normal.StateMachine
     Test.Database.LSMTree.Normal.StateMachine.DL

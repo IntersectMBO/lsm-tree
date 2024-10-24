@@ -1,7 +1,11 @@
 {-# LANGUAGE TypeFamilies #-}
 
+-- | An abstraction of the monoidal LSM API, instantiated by both the real
+-- implementation and a model (see "Database.LSMTree.Model.IO.Monoidal").
 module Database.LSMTree.Class.Monoidal (
-    IsSession (..)
+    C
+  , C_
+  , IsSession (..)
   , SessionArgs (..)
   , withSession
   , IsTableHandle (..)
@@ -10,21 +14,25 @@ module Database.LSMTree.Class.Monoidal (
   , withTableDuplicate
   , withTableMerge
   , withCursor
+  , module Types
   ) where
 
 import           Control.Monad.Class.MonadThrow (MonadThrow (..))
 import           Data.Kind (Constraint, Type)
 import           Data.Typeable (Proxy (Proxy), Typeable)
 import qualified Data.Vector as V
+import           Data.Void (Void)
 import           Database.LSMTree.Class.Normal (IsSession (..),
                      SessionArgs (..), withSession)
-import           Database.LSMTree.Common (IOLike, Labellable (..), Range (..),
-                     SerialiseKey, SerialiseValue, SnapshotName)
-import qualified Database.LSMTree.ModelIO.Monoidal as M
-import           Database.LSMTree.Monoidal (LookupResult (..), QueryResult (..),
-                     ResolveValue, Update (..))
+import           Database.LSMTree.Common as Types (IOLike, Labellable (..),
+                     Range (..), SerialiseKey, SerialiseValue, SnapshotName)
+import           Database.LSMTree.Monoidal as Types (LookupResult (..),
+                     QueryResult (..), ResolveValue, Update (..))
 import qualified Database.LSMTree.Monoidal as R
 
+-- | Model-specific constraints
+type C k v blob = (C_ k, C_ v, C_ blob)
+type C_ a = (Show a, Eq a, Typeable a)
 
 -- | Class abstracting over table handle operations.
 --
@@ -35,13 +43,17 @@ class (IsSession (Session h)) => IsTableHandle h where
     type Cursor h :: (Type -> Type) -> Type -> Type -> Type
 
     new ::
-           IOLike m
+           ( IOLike m
+           , C k v Void
+           )
         => Session h m
         -> TableConfig h
         -> m (h m k v)
 
     close ::
-           IOLike m
+           ( IOLike m
+           , C k v Void
+           )
         => h m k v
         -> m ()
 
@@ -50,6 +62,7 @@ class (IsSession (Session h)) => IsTableHandle h where
            , ResolveValue v
            , SerialiseKey k
            , SerialiseValue v
+           , C k v Void
            )
         => h m k v
         -> V.Vector k
@@ -60,6 +73,7 @@ class (IsSession (Session h)) => IsTableHandle h where
            , ResolveValue v
            , SerialiseKey k
            , SerialiseValue v
+           , C k v Void
            )
         => h m k v
         -> Range k
@@ -68,13 +82,16 @@ class (IsSession (Session h)) => IsTableHandle h where
     newCursor ::
            ( IOLike m
            , SerialiseKey k
+           , C k v Void
            )
         => Maybe k
         -> h m k v
         -> m (Cursor h m k v)
 
     closeCursor ::
-           IOLike m
+           ( IOLike m
+           , C k v Void
+           )
         => proxy h
         -> Cursor h m k v
         -> m ()
@@ -84,6 +101,7 @@ class (IsSession (Session h)) => IsTableHandle h where
            , ResolveValue v
            , SerialiseKey k
            , SerialiseValue v
+           , C k v Void
            )
         => proxy h
         -> Int
@@ -95,6 +113,7 @@ class (IsSession (Session h)) => IsTableHandle h where
            , SerialiseKey k
            , SerialiseValue v
            , ResolveValue v
+           , C k v Void
            )
         => h m k v
         -> V.Vector (k, Update v)
@@ -105,6 +124,7 @@ class (IsSession (Session h)) => IsTableHandle h where
            , SerialiseKey k
            , SerialiseValue v
            , ResolveValue v
+           , C k v Void
            )
         => h m k v
         -> V.Vector (k, v)
@@ -115,6 +135,7 @@ class (IsSession (Session h)) => IsTableHandle h where
            , SerialiseKey k
            , SerialiseValue v
            , ResolveValue v
+           , C k v Void
            )
         => h m k v
         -> V.Vector k
@@ -125,6 +146,7 @@ class (IsSession (Session h)) => IsTableHandle h where
            , SerialiseKey k
            , SerialiseValue v
            , ResolveValue v
+           , C k v Void
            )
         => h m k v
         -> V.Vector (k, v)
@@ -136,8 +158,7 @@ class (IsSession (Session h)) => IsTableHandle h where
            , ResolveValue v
            , SerialiseKey k
            , SerialiseValue v
-             -- Model-specific constraints
-           , Typeable k, Typeable v
+           , C k v Void
            )
         => SnapshotName
         -> h m k v
@@ -148,15 +169,16 @@ class (IsSession (Session h)) => IsTableHandle h where
            , Labellable (k, v)
            , SerialiseKey k
            , SerialiseValue v
-             -- Model-specific constraints
-           , Typeable k, Typeable v
+           , C k v Void
            )
         => Session h m
         -> SnapshotName
         -> m (h m k v)
 
     duplicate ::
-           IOLike m
+           ( IOLike m
+           , C k v Void
+           )
         => h m k v
         -> m (h m k v)
 
@@ -164,6 +186,7 @@ class (IsSession (Session h)) => IsTableHandle h where
            ( IOLike m
            , ResolveValue v
            , SerialiseValue v
+           , C k v Void
            )
         => h m k v
         -> h m k v
@@ -172,6 +195,7 @@ class (IsSession (Session h)) => IsTableHandle h where
 withTableNew :: forall h m k v a.
      ( IOLike m
      , IsTableHandle h
+     , C k v Void
      )
   => Session h m
   -> TableConfig h
@@ -185,7 +209,7 @@ withTableOpen :: forall h m k v a.
      , SerialiseKey k
      , SerialiseValue v
      , Labellable (k, v)
-     , Typeable k, Typeable v
+     , C k v Void
      )
   => Session h m
   -> SnapshotName
@@ -196,6 +220,7 @@ withTableOpen sesh snap = bracket (open sesh snap) close
 withTableDuplicate :: forall h m k v a.
      ( IOLike m
      , IsTableHandle h
+     , C k v Void
      )
   => h m k v
   -> (h m k v -> m a)
@@ -207,6 +232,7 @@ withTableMerge :: forall h m k v a.
      , IsTableHandle h
      , SerialiseValue v
      , ResolveValue v
+     , C k v Void
      )
   => h m k v
   -> h m k v
@@ -218,41 +244,13 @@ withCursor :: forall h m k v a.
      ( IOLike m
      , IsTableHandle h
      , SerialiseKey k
+     , C k v Void
      )
   => Maybe k
   -> h m k v
   -> (Cursor h m k v -> m a)
   -> m a
 withCursor offset hdl = bracket (newCursor offset hdl) (closeCursor (Proxy @h))
-
-{-------------------------------------------------------------------------------
-  Model instance
--------------------------------------------------------------------------------}
-
-instance IsTableHandle M.TableHandle where
-    type Session M.TableHandle = M.Session
-    type TableConfig M.TableHandle = M.TableConfig
-    type Cursor M.TableHandle = M.Cursor
-
-    new = M.new
-    close = M.close
-    lookups = flip M.lookups
-    updates = flip M.updates
-    inserts = flip M.inserts
-    deletes = flip M.deletes
-    mupserts = flip M.mupserts
-
-    rangeLookup = flip M.rangeLookup
-
-    newCursor = M.newCursor
-    closeCursor _ = M.closeCursor
-    readCursor _ = M.readCursor
-
-    snapshot = M.snapshot
-    open = M.open
-
-    duplicate = M.duplicate
-    merge = M.merge
 
 {-------------------------------------------------------------------------------
   Real instance
