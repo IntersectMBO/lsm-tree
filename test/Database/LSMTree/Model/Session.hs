@@ -1,26 +1,13 @@
-{-# LANGUAGE ConstraintKinds            #-}
-{-# LANGUAGE DeriveFunctor              #-}
-{-# LANGUAGE DerivingStrategies         #-}
-{-# LANGUAGE EmptyDataDeriving          #-}
-{-# LANGUAGE FlexibleContexts           #-}
-{-# LANGUAGE GADTs                      #-}
-{-# LANGUAGE GeneralisedNewtypeDeriving #-}
-{-# LANGUAGE LambdaCase                 #-}
-{-# LANGUAGE MultiParamTypeClasses      #-}
-{-# LANGUAGE NamedFieldPuns             #-}
-{-# LANGUAGE RankNTypes                 #-}
-{-# LANGUAGE RecordWildCards            #-}
-{-# LANGUAGE ScopedTypeVariables        #-}
-{-# LANGUAGE StandaloneDeriving         #-}
-{-# LANGUAGE TupleSections              #-}
-{-# LANGUAGE TypeApplications           #-}
-
--- | Model a single session, allowing multiple tables.
+-- | A pure model of a single session containing multiple tables.
 --
--- Builds on top of "Database.LSMTree.Model.Normal", adding table handle and
--- snapshot administration.
-module Database.LSMTree.Model.Normal.Session (
-    -- * Model
+-- This model supports all features for /both/ normal and monoidal tables,
+-- in particular both blobs and mupserts. The former is typically only provided
+-- by the normal API, and the latter only by the monoidal API.
+--
+-- The session model builds on top of "Database.LSMTree.Model.Table", adding
+-- table handle and snapshot administration.
+module Database.LSMTree.Model.Session (
+  -- * Model
     Model (..)
   , initModel
   , UpdateCounter (..)
@@ -49,12 +36,16 @@ module Database.LSMTree.Model.Normal.Session (
   , TableConfig (..)
   , new
   , close
+    -- * Monoidal value resolution
+  , ResolveSerialisedValue (..)
+  , getResolve
+  , noResolve
     -- * Table querying and updates
     -- ** Queries
-  , Model.Range (..)
-  , Model.LookupResult (..)
+  , Range (..)
+  , LookupResult (..)
   , lookups
-  , Model.QueryResult (..)
+  , QueryResult (..)
   , rangeLookup
     -- ** Cursor
   , Cursor
@@ -64,21 +55,24 @@ module Database.LSMTree.Model.Normal.Session (
   , closeCursor
   , readCursor
     -- ** Updates
-  , Model.Update (..)
+  , Update (..)
   , updates
   , inserts
   , deletes
+  , mupserts
     -- ** Blobs
   , BlobRef
   , retrieveBlobs
     -- * Snapshots
-  , SUT.SnapshotName
+  , SnapshotName
   , snapshot
   , open
   , deleteSnapshot
   , listSnapshots
     -- * Multiple writable table handles
   , duplicate
+    -- * Table merge
+  , merge
   ) where
 
 import           Control.Monad (when)
@@ -94,8 +88,12 @@ import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromJust)
 import qualified Data.Vector as V
 import           Data.Word
-import qualified Database.LSMTree.Model.Normal as Model
-import qualified Database.LSMTree.Normal as SUT
+import           Database.LSMTree.Common (SerialiseKey (..),
+                     SerialiseValue (..), SnapshotName)
+import           Database.LSMTree.Model.Table (LookupResult (..),
+                     QueryResult (..), Range (..), ResolveSerialisedValue (..),
+                     Update (..), getResolve, noResolve)
+import qualified Database.LSMTree.Model.Table as Model
 
 {-------------------------------------------------------------------------------
   Model
@@ -105,7 +103,7 @@ data Model = Model {
     tableHandles :: Map TableHandleID (UpdateCounter, SomeTable)
   , cursors      :: Map CursorID SomeCursor
   , nextID       :: Int
-  , snapshots    :: Map SUT.SnapshotName Snapshot
+  , snapshots    :: Map SnapshotName Snapshot
   }
   deriving stock Show
 
@@ -167,14 +165,12 @@ fromSomeCursor ::
   -> Maybe (Model.Cursor k v blob)
 fromSomeCursor (SomeCursor c) = fromDynamic c
 
-
 --
 -- Constraints
 --
 
-type C_ a = (Show a, Eq a, Typeable a)
-
 -- | Common constraints for keys, values and blobs
+type C_ a = (Show a, Eq a, Typeable a)
 type C k v blob = (C_ k, C_ v, C_ blob)
 
 --
@@ -227,26 +223,13 @@ data TableHandle k v blob = TableHandle {
   deriving stock Show
 
 data TableConfig = TableConfig
-  deriving stock Show
+  deriving stock (Show, Eq)
 
 new ::
      forall k v blob m. (MonadState Model m, C k v blob)
   => TableConfig
   -> m (TableHandle k v blob)
-new config = state $ \Model{..} ->
-    let tableHandle = TableHandle {
-            tableHandleID = nextID
-          , ..
-          }
-        someTable = toSomeTable $ Model.empty @k @v @blob
-        tableHandles' = Map.insert nextID (0, someTable) tableHandles
-        nextID' = nextID + 1
-        model' = Model {
-            tableHandles = tableHandles'
-          , nextID = nextID'
-          , ..
-          }
-    in  (tableHandle, model')
+new config = newTableWith config Model.empty
 
 -- |
 --
@@ -299,18 +282,14 @@ newTableWith config tbl = state $ \Model{..} ->
   in  (tableHandle, model')
 
 {-------------------------------------------------------------------------------
-  Table querying and updates
+  Lookups
 -------------------------------------------------------------------------------}
-
---
--- API
---
 
 lookups ::
      ( MonadState Model m
      , MonadError Err m
-     , Model.SerialiseKey k
-     , Model.SerialiseValue v
+     , SerialiseKey k
+     , SerialiseValue v
      , C k v blob
      )
   => V.Vector k
@@ -320,36 +299,39 @@ lookups ks th = do
     (updc, table) <- guardTableHandleIsOpen th
     pure $ liftBlobRefs (SomeTableID updc (tableHandleID th)) $ Model.lookups ks table
 
-type QueryResult k v blobref = Model.QueryResult k v blobref
-
 rangeLookup ::
      ( MonadState Model m
      , MonadError Err m
-     , Model.SerialiseKey k
-     , Model.SerialiseValue v
+     , SerialiseKey k
+     , SerialiseValue v
      , C k v blob
      )
-  => Model.Range k
+  => Range k
   -> TableHandle k v blob
-  -> m (V.Vector (QueryResult k v (BlobRef blob)))
+  -> m (V.Vector (Model.QueryResult k v (BlobRef blob)))
 rangeLookup r th = do
     (updc, table) <- guardTableHandleIsOpen th
     pure $ liftBlobRefs (SomeTableID updc (tableHandleID th)) $ Model.rangeLookup r table
 
+{-------------------------------------------------------------------------------
+  Updates
+-------------------------------------------------------------------------------}
+
 updates ::
      ( MonadState Model m
      , MonadError Err m
-     , Model.SerialiseKey k
-     , Model.SerialiseValue v
-     , Model.SerialiseValue blob
+     , SerialiseKey k
+     , SerialiseValue v
+     , SerialiseValue blob
      , C k v blob
      )
-  => V.Vector (k, Model.Update v blob)
+  => ResolveSerialisedValue v
+  -> V.Vector (k, Model.Update v blob)
   -> TableHandle k v blob
   -> m ()
-updates ups th@TableHandle{..} = do
+updates r ups th@TableHandle{..} = do
   (updc, table) <- guardTableHandleIsOpen th
-  let table' = Model.updates ups table
+  let table' = Model.updates r ups table
   modify (\m -> m {
       tableHandles = Map.insert tableHandleID (updc + 1, toSomeTable table') (tableHandles m)
     })
@@ -357,28 +339,48 @@ updates ups th@TableHandle{..} = do
 inserts ::
      ( MonadState Model m
      , MonadError Err m
-     , Model.SerialiseKey k
-     , Model.SerialiseValue v
-     , Model.SerialiseValue blob
+     , SerialiseKey k
+     , SerialiseValue v
+     , SerialiseValue blob
      , C k v blob
      )
-  => V.Vector (k, v, Maybe blob)
+  => ResolveSerialisedValue v
+  -> V.Vector (k, v, Maybe blob)
   -> TableHandle k v blob
   -> m ()
-inserts = updates . fmap (\(k, v, blob) -> (k, Model.Insert v blob))
+inserts r = updates r . fmap (\(k, v, blob) -> (k, Model.Insert v blob))
 
 deletes ::
      ( MonadState Model m
      , MonadError Err m
-     , Model.SerialiseKey k
-     , Model.SerialiseValue v
-     , Model.SerialiseValue blob
+     , SerialiseKey k
+     , SerialiseValue v
+     , SerialiseValue blob
      , C k v blob
      )
-  => V.Vector k
+  => ResolveSerialisedValue v
+  -> V.Vector k
   -> TableHandle k v blob
   -> m ()
-deletes = updates . fmap (,Model.Delete)
+deletes r = updates r . fmap (,Model.Delete)
+
+mupserts ::
+     ( MonadState Model m
+     , MonadError Err m
+     , SerialiseKey k
+     , SerialiseValue v
+     , SerialiseValue blob
+     , C k v blob
+     )
+  => ResolveSerialisedValue v
+  -> V.Vector (k, v)
+  -> TableHandle k v blob
+  -> m ()
+mupserts r = updates r . fmap (fmap Model.Mupsert)
+
+{-------------------------------------------------------------------------------
+  Blobs
+-------------------------------------------------------------------------------}
 
 -- | For more details: 'Database.LSMTree.Internal.BlobRef' describes the
 -- intended semantics of blob references.
@@ -392,7 +394,7 @@ deriving stock instance Show blob => Show (BlobRef blob)
 retrieveBlobs ::
      forall m blob. ( MonadState Model m
      , MonadError Err m
-     , Model.SerialiseValue blob
+     , SerialiseValue blob
      )
   => V.Vector (BlobRef blob)
   -> m (V.Vector blob)
@@ -423,10 +425,6 @@ retrieveBlobs refs = Model.retrieveBlobs <$> V.mapM guard refs
     errInvalid :: m a
     errInvalid = throwError ErrBlobRefInvalidated
 
---
--- Utility
---
-
 data SomeHandleID blob where
   SomeTableID  :: !UpdateCounter -> !TableHandleID -> SomeHandleID blob
   SomeCursorID :: !CursorID -> SomeHandleID blob
@@ -446,16 +444,12 @@ liftBlobRefs hid = fmap (fmap (BlobRef hid))
 data Snapshot = Snapshot TableConfig SomeTable
   deriving stock Show
 
---
--- API
---
-
 snapshot ::
      ( MonadState Model m
      , MonadError Err m
      , C k v blob
      )
-  => SUT.SnapshotName
+  => SnapshotName
   -> TableHandle k v blob
   -> m ()
 snapshot name th@TableHandle{..} = do
@@ -484,7 +478,7 @@ open ::
      , MonadError Err m
      , C k v blob
      )
-  => SUT.SnapshotName
+  => SnapshotName
   -> m (TableHandle k v blob)
 open name = do
     snaps <- gets snapshots
@@ -500,7 +494,7 @@ open name = do
 
 deleteSnapshot ::
      (MonadState Model m, MonadError Err m)
-  => SUT.SnapshotName
+  => SnapshotName
   -> m ()
 deleteSnapshot name = do
     snaps <- gets snapshots
@@ -514,16 +508,12 @@ deleteSnapshot name = do
 
 listSnapshots ::
      MonadState Model m
-  => m [SUT.SnapshotName]
+  => m [SnapshotName]
 listSnapshots = gets (Map.keys . snapshots)
 
 {-------------------------------------------------------------------------------
   Mutiple writable table handles
 -------------------------------------------------------------------------------}
-
---
--- API
---
 
 duplicate ::
      ( MonadState Model m
@@ -550,7 +540,7 @@ data Cursor k v blob = Cursor {
 newCursor ::
      forall k v blob m. (
        MonadState Model m, MonadError Err m
-     , Model.SerialiseKey k
+     , SerialiseKey k
      , C k v blob
      )
   => Maybe k
@@ -582,13 +572,13 @@ closeCursor Cursor {..} = state $ \Model{..} ->
 readCursor ::
      ( MonadState Model m
      , MonadError Err m
-     , Model.SerialiseKey k
-     , Model.SerialiseValue v
+     , SerialiseKey k
+     , SerialiseValue v
      , C k v blob
      )
   => Int
   -> Cursor k v blob
-  -> m (V.Vector (QueryResult k v (BlobRef blob)))
+  -> m (V.Vector (Model.QueryResult k v (BlobRef blob)))
 readCursor n c = do
     cursor <- guardCursorIsOpen c
     let (qrs, cursor') = Model.readCursor n cursor
@@ -610,3 +600,21 @@ guardCursorIsOpen Cursor{..} =
         throwError ErrCursorClosed
       Just c ->
         pure (fromJust $ fromSomeCursor c)
+
+{-------------------------------------------------------------------------------
+  Merging tables
+-------------------------------------------------------------------------------}
+
+merge ::
+     ( MonadState Model m
+     , MonadError Err m
+     , C k v b
+     )
+  => ResolveSerialisedValue v
+  -> TableHandle k v b
+  -> TableHandle k v b
+  -> m (TableHandle k v b)
+merge r th1 th2 = do
+  (_, t1) <- guardTableHandleIsOpen th1
+  (_, t2) <- guardTableHandleIsOpen th2
+  newTableWith TableConfig $ Model.merge r t1 t2
