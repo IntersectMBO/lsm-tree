@@ -135,7 +135,6 @@ import           Database.LSMTree.Common (IOLike, Range (..), SerialiseKey,
 import qualified Database.LSMTree.Common as Common
 import qualified Database.LSMTree.Internal as Internal
 import qualified Database.LSMTree.Internal.Entry as Entry
-import           Database.LSMTree.Internal.Monoidal
 import           Database.LSMTree.Internal.RawBytes (RawBytes)
 import qualified Database.LSMTree.Internal.Serialise as Internal
 import qualified Database.LSMTree.Internal.Vector as V
@@ -216,6 +215,12 @@ close (Internal.MonoidalTable th) = Internal.close th
   Table queries
 -------------------------------------------------------------------------------}
 
+-- | Result of a single point lookup.
+data LookupResult v =
+    NotFound
+  | Found !v
+  deriving stock (Eq, Show, Functor, Foldable, Traversable)
+
 {-# SPECIALISE lookups ::
      (SerialiseKey k, SerialiseValue v, ResolveValue v)
   => V.Vector k
@@ -243,6 +248,11 @@ lookups ks (Internal.MonoidalTable th) =
       Entry.Mupdate v          -> Found (Internal.deserialiseValue v)
       Entry.Delete             -> NotFound
     toLookupResult Nothing = NotFound
+
+-- | A result for one point in a cursor read or range query.
+data QueryResult k v =
+    FoundInQuery !k !v
+  deriving stock (Eq, Show, Functor, Foldable, Traversable)
 
 {-# SPECIALISE rangeLookup ::
      (SerialiseKey k, SerialiseValue v, ResolveValue v)
@@ -397,6 +407,22 @@ readCursor n (Internal.MonoidalCursor c) =
   Table updates
 -------------------------------------------------------------------------------}
 
+-- | Monoidal tables support insert, delete and monoidal upsert operations.
+--
+-- An __update__ is a term that groups all types of table-manipulating
+-- operations, like inserts, deletes and mupserts.
+data Update v =
+    Insert !v
+  | Delete
+    -- | TODO: should be given a more suitable name.
+  | Mupsert !v
+  deriving stock (Show, Eq)
+
+instance NFData v => NFData (Update v) where
+  rnf (Insert v)  = rnf v
+  rnf Delete      = ()
+  rnf (Mupsert v) = rnf v
+
 {-# SPECIALISE updates ::
      (SerialiseKey k, SerialiseValue v, ResolveValue v)
   => V.Vector (k, Update v)
@@ -424,7 +450,13 @@ updates es (Internal.MonoidalTable th) = do
       th
   where
     serialiseEntry = bimap Internal.serialiseKey serialiseOp
-    serialiseOp = first Internal.serialiseValue . Entry.updateToEntryMonoidal
+    serialiseOp = first Internal.serialiseValue . updateToEntry
+
+    updateToEntry :: Update v -> Entry.Entry v blob
+    updateToEntry = \case
+        Insert v  -> Entry.Insert v
+        Mupsert v -> Entry.Mupdate v
+        Delete    -> Entry.Delete
 
 {-# SPECIALISE inserts ::
      (SerialiseKey k, SerialiseValue v, ResolveValue v)
