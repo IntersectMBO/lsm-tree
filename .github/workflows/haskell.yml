@@ -227,7 +227,7 @@ jobs:
     # See the comment on the hackage-index-state environment variable for the
     # stylish-haskell job.
     env:
-      hackage-index-state: "2024-04-10T14:36:07Z"
+      hackage-index-state: "2024-04-27T12:31:04Z"
 
     steps:
     - name: Checkout repository
@@ -265,7 +265,7 @@ jobs:
 
     - name: Install cabal-fmt
       run: |
-        cabal install --ignore-project cabal-fmt --index-state="${{ env.hackage-index-state }}" --constraint 'cabal-fmt == 0.1.11'
+        cabal install --ignore-project cabal-fmt --index-state="${{ env.hackage-index-state }}" --constraint 'cabal-fmt == 0.1.12'
 
     - name: Record cabal-fmt version
       run: |
