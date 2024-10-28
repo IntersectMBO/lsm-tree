@@ -165,6 +165,7 @@ library
     , base                    >=4.14      && <4.21
     , bitvec                  ^>=1.1
     , bytestring              ^>=0.11.4.0 || ^>=0.12.1.0
+    , cborg                   ^>=0.2.10.0
     , containers              ^>=0.6      || ^>=0.7
     , contra-tracer           ^>=0.2
     , crc32c                  ^>=0.2.1
@@ -366,6 +367,7 @@ test-suite lsm-tree-test
     Test.Database.LSMTree.Internal.RunReaders
     Test.Database.LSMTree.Internal.Serialise
     Test.Database.LSMTree.Internal.Serialise.Class
+    Test.Database.LSMTree.Internal.Snapshot
     Test.Database.LSMTree.Internal.Vector
     Test.Database.LSMTree.Internal.Vector.Growing
     Test.Database.LSMTree.Model.Table
@@ -387,6 +389,7 @@ test-suite lsm-tree-test
     , base
     , bitvec
     , bytestring
+    , cborg
     , constraints
     , containers
     , contra-tracer
@@ -425,6 +428,7 @@ test-suite lsm-tree-test
     , tasty-hunit
     , tasty-quickcheck
     , temporary
+    , text
     , these
     , transformers
     , vector
