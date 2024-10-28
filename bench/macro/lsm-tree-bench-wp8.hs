@@ -229,6 +229,10 @@ runOptsP = pure RunOpts
     <*> O.switch (O.long "pipelined" <> O.help "Use pipelined mode")
     <*> O.switch (O.long "lookup-only" <> O.help "Use lookup only mode")
 
+deriving stock instance Read LSM.DiskCachePolicy
+deriving stock instance Read LSM.BloomFilterAlloc
+deriving stock instance Read LSM.NumEntries
+
 -------------------------------------------------------------------------------
 -- measurements
 -------------------------------------------------------------------------------

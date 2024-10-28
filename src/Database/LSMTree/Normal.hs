@@ -685,7 +685,8 @@ snapshot :: forall m k v blob.
   => SnapshotName
   -> Table m k v blob
   -> m ()
-snapshot snap (Internal.NormalTable t) = void $ Internal.snapshot const snap label t
+snapshot snap (Internal.NormalTable t) =
+    void $ Internal.snapshot const snap label Internal.SnapNormalTable t
   where
     label = Internal.SnapshotLabel $ Common.makeSnapshotLabel (Proxy @(k, v, blob))
 
@@ -732,7 +733,7 @@ open :: forall m k v blob.
   -> SnapshotName
   -> m (Table m k v blob)
 open (Internal.Session' sesh) override snap =
-    Internal.NormalTable <$!> Internal.open sesh label override snap const
+    Internal.NormalTable <$!> Internal.open sesh label Internal.SnapNormalTable override snap const
   where
     label = Internal.SnapshotLabel $ Common.makeSnapshotLabel (Proxy @(k, v, blob))
 
