@@ -1,7 +1,3 @@
--- TODO: this should be removed once we have proper snapshotting with proper
--- persistence of the config to disk.
-{-# OPTIONS_GHC -Wno-orphans #-}
-
 module Database.LSMTree.Internal.Config (
     LevelNo (..)
     -- * Table configuration
@@ -359,7 +355,7 @@ data DiskCachePolicy =
        -- Use this policy if expected access pattern for the table has poor
        -- spatial or temporal locality, such as uniform random access.
      | DiskCacheNone
-  deriving stock (Eq, Show, Read)
+  deriving stock (Eq, Show)
 
 instance NFData DiskCachePolicy where
   rnf DiskCacheAll                 = ()
@@ -403,7 +399,7 @@ data MergeSchedule =
     -- merges are fully completed in time for when new merges are started on the
     -- same level.
   | Incremental
-  deriving stock (Eq, Show, Read)
+  deriving stock (Eq, Show)
 
 instance NFData MergeSchedule where
   rnf OneShot     = ()

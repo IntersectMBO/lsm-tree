@@ -1,6 +1,3 @@
--- TODO: remove once we properly implement snapshots
-{-# OPTIONS_GHC -Wno-orphans #-}
-
 module Database.LSMTree.Internal.Snapshot (
     -- * Versioning
     SnapshotVersion (..)
@@ -142,10 +139,10 @@ isCompatible otherVersion = do
 
 -- | Custom text to include in a snapshot file
 newtype SnapshotLabel = SnapshotLabel Text
-  deriving stock (Show, Eq, Read)
+  deriving stock (Show, Eq)
 
 data SnapshotTableType = SnapNormalTable | SnapMonoidalTable
-  deriving stock (Show, Eq, Read)
+  deriving stock (Show, Eq)
 
 data SnapshotMetaData = SnapshotMetaData {
     -- | Custom, user-supplied text that is included in the metadata.
@@ -195,22 +192,22 @@ data SnapLevel = SnapLevel {
     snapIncomingRuns :: !SnapMergingRun
   , snapResidentRuns :: !(V.Vector RunNumber)
   }
-  deriving stock (Show, Eq, Read)
+  deriving stock (Show, Eq)
 
 data SnapMergingRun =
     SnapMergingRun !MergePolicyForLevel !NumRuns !SnapMergingRunState
   | SnapSingleRun !RunNumber
-  deriving stock (Show, Eq, Read)
+  deriving stock (Show, Eq)
 
 data SnapMergingRunState =
     SnapCompletedMerge !RunNumber
   | SnapOngoingMerge !(V.Vector RunNumber) !TotalCredits !Merge.Level
-  deriving stock (Show, Eq, Read)
+  deriving stock (Show, Eq)
 
 -- | The total number of supplied credits. This total is used on snapshot load
 -- to restore merging work that was lost when the snapshot was created.
 newtype TotalCredits = TotalCredits Int
-  deriving stock (Show, Eq, Read)
+  deriving stock (Show, Eq)
 
 {-------------------------------------------------------------------------------
   Conversion to snapshot format
@@ -346,27 +343,6 @@ openLevels reg hfs hbio conf@TableConfig{..} uc sessionRoot resolve levels =
             case mergeMaybe of
               Nothing -> error "openLevels: merges can not be empty"
               Just m  -> pure (Just totalCredits, OngoingMerge rs totalStepsVar totalCreditsVar m)
-
-{-------------------------------------------------------------------------------
-  Levels
--------------------------------------------------------------------------------}
-
-deriving stock instance Read NumRuns
-deriving stock instance Read MergePolicyForLevel
-deriving newtype instance Read RunNumber
-deriving stock instance Read Merge.Level
-
-{-------------------------------------------------------------------------------
-  Config
--------------------------------------------------------------------------------}
-
-deriving stock instance Read TableConfig
-deriving stock instance Read WriteBufferAlloc
-deriving stock instance Read NumEntries
-deriving stock instance Read SizeRatio
-deriving stock instance Read MergePolicy
-deriving stock instance Read BloomFilterAlloc
-deriving stock instance Read FencePointerIndex
 
 {-------------------------------------------------------------------------------
   Encoding and decoding

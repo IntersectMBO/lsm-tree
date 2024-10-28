@@ -13,6 +13,7 @@ import qualified Data.Vector as V
 import           Data.Word
 import qualified System.FS.API as FS
 
+import           Database.LSMTree.Internal.Snapshot (SnapshotLabel (..))
 import           Database.LSMTree.Normal as R
 
 import           Control.Exception (Exception, try)
@@ -132,7 +133,9 @@ unit_snapshots =
       assertException (ErrSnapshotExists snap1) $
         snapshot snap1 tbl
 
-      assertException (ErrSnapshotWrongType snap1) $ do
+      assertException (ErrSnapshotWrongLabel snap1
+                        (SnapshotLabel "Key2 Value2 Blob2")
+                        (SnapshotLabel "Key1 Value1 Blob1")) $ do
         _ <- open @_ @Key2 @Value2 @Blob2 sess configNoOverride snap1
         return ()
 
