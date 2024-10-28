@@ -89,7 +89,6 @@ module Database.LSMTree.Normal (
     -- * Durability (snapshots)
   , SnapshotName
   , Common.mkSnapshotName
-  , Common.SnapshotLabel
   , Common.Labellable (..)
   , snapshot
   , open
@@ -129,6 +128,7 @@ import qualified Database.LSMTree.Internal as Internal
 import qualified Database.LSMTree.Internal.BlobRef as Internal
 import qualified Database.LSMTree.Internal.Entry as Entry
 import qualified Database.LSMTree.Internal.Serialise as Internal
+import qualified Database.LSMTree.Internal.Snapshot as Internal
 import qualified Database.LSMTree.Internal.Vector as V
 import qualified System.FS.API as FS
 
@@ -687,8 +687,7 @@ snapshot :: forall m k v blob.
   -> m ()
 snapshot snap (Internal.NormalTable t) = void $ Internal.snapshot const snap label t
   where
-    -- to ensure we don't open a normal table as monoidal later
-    label = Common.makeSnapshotLabel (Proxy @(k, v, blob)) <> " (normal)"
+    label = Internal.SnapshotLabel $ Common.makeSnapshotLabel (Proxy @(k, v, blob))
 
 {-# SPECIALISE open ::
      ( SerialiseKey k
@@ -735,8 +734,7 @@ open :: forall m k v blob.
 open (Internal.Session' sesh) override snap =
     Internal.NormalTable <$!> Internal.open sesh label override snap const
   where
-    -- to ensure that the table is really a normal table
-    label = Common.makeSnapshotLabel (Proxy @(k, v, blob)) <> " (normal)"
+    label = Internal.SnapshotLabel $ Common.makeSnapshotLabel (Proxy @(k, v, blob))
 
 {-------------------------------------------------------------------------------
   Mutiple writable tables
