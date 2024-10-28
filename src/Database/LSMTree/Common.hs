@@ -18,7 +18,6 @@ module Database.LSMTree.Common (
     -- * Small types
   , Internal.Range (..)
     -- * Snapshots
-  , Internal.SnapshotLabel
   , Labellable (..)
   , deleteSnapshot
   , listSnapshots
@@ -54,6 +53,7 @@ import           Control.Monad.Fix (MonadFix)
 import           Control.Monad.Primitive (PrimMonad)
 import           Control.Tracer (Tracer)
 import           Data.Kind (Type)
+import           Data.Text (Text)
 import           Data.Typeable (Proxy, Typeable)
 import qualified Database.LSMTree.Internal as Internal
 import qualified Database.LSMTree.Internal.BlobRef as Internal
@@ -192,7 +192,7 @@ closeSession (Internal.Session' sesh) = Internal.closeSession sesh
 -- directly instead, instead of deriving the label from a type using this type
 -- class.
 class Labellable a where
-  makeSnapshotLabel :: Proxy a -> Internal.SnapshotLabel
+  makeSnapshotLabel :: Proxy a -> Text
 
 {-# SPECIALISE deleteSnapshot ::
      Session IO
