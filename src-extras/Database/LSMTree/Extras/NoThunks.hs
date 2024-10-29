@@ -277,6 +277,12 @@ deriving stock instance Generic (MergingRunState m h)
 deriving anyclass instance (Typeable m, Typeable (PrimState m), Typeable h)
                         => NoThunks (MergingRunState m h)
 
+deriving stock instance Generic MergePolicyForLevel
+deriving anyclass instance NoThunks MergePolicyForLevel
+
+deriving stock instance Generic NumRuns
+deriving anyclass instance NoThunks NumRuns
+
 {-------------------------------------------------------------------------------
   Entry
 -------------------------------------------------------------------------------}

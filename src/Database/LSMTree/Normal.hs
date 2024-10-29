@@ -731,7 +731,7 @@ open :: forall m k v blob.
   -> SnapshotName
   -> m (TableHandle m k v blob)
 open (Internal.Session' sesh) override snap =
-    Internal.NormalTable <$!> Internal.open sesh label override snap
+    Internal.NormalTable <$!> Internal.open sesh label override snap const
   where
     -- to ensure that the table is really a normal table
     label = Common.makeSnapshotLabel (Proxy @(k, v, blob)) <> " (normal)"

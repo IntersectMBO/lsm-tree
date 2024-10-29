@@ -44,6 +44,7 @@ module Database.LSMTree.Internal.Run (
   , sizeInPages
   , addReference
   , removeReference
+  , removeReferenceN
   , mkBlobRefForRun
     -- ** Run creation
   , fromMutable
@@ -64,6 +65,7 @@ import qualified Control.RefCount as RC
 import           Data.BloomFilter (Bloom)
 import qualified Data.ByteString.Short as SBS
 import           Data.Foldable (for_)
+import           Data.Word (Word64)
 import           Database.LSMTree.Internal.BlobRef (BlobRef (..), BlobSpan (..))
 import           Database.LSMTree.Internal.BloomFilter (bloomFilterFromSBS)
 import qualified Database.LSMTree.Internal.CRC32C as CRC
@@ -133,6 +135,10 @@ addReference r = RC.addReference (runRefCounter r)
 {-# SPECIALISE removeReference :: Run IO h -> IO () #-}
 removeReference :: (PrimMonad m, MonadMask m) => Run m h -> m ()
 removeReference r = RC.removeReference (runRefCounter r)
+
+{-# SPECIALISE removeReferenceN :: Run IO h -> Word64 -> IO () #-}
+removeReferenceN :: (PrimMonad m, MonadMask m) => Run m h -> Word64 -> m ()
+removeReferenceN r = RC.removeReferenceN (runRefCounter r)
 
 -- | Helper function to make a 'BlobRef' that points into a 'Run'.
 mkBlobRefForRun :: Run m h -> BlobSpan -> BlobRef m (FS.Handle h)
