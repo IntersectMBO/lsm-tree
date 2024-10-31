@@ -1,5 +1,6 @@
 {- HLINT ignore "Avoid restricted alias" -}
 
+-- | Chunks of bytes, typically output during incremental index serialisation.
 module Database.LSMTree.Internal.Chunk
 (
     -- * Chunks
