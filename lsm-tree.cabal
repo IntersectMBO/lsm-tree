@@ -521,8 +521,19 @@ library mcg
     , base
     , primes
 
+flag measure-batch-latency
+  description:
+    Measure the latency for individual batches of updates and lookups
+
+  default:     False
+  manual:      True
+
+common measure-batch-latency
+  if flag(measure-batch-latency)
+    cpp-options: -DMEASURE_BATCH_LATENCY
+
 benchmark lsm-tree-bench-wp8
-  import:         language, warnings, wno-x-partial
+  import:         language, warnings, wno-x-partial, measure-batch-latency
   type:           exitcode-stdio-1.0
   hs-source-dirs: bench/macro
   main-is:        lsm-tree-bench-wp8.hs
