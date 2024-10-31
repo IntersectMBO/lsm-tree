@@ -66,8 +66,10 @@ propAll prop = [
     , testProperty "SnapMergingRun" $ prop (Proxy @SnapMergingRun)
     , testProperty "NumRuns" $ prop (Proxy @NumRuns)
     , testProperty "MergePolicyForLevel" $ prop (Proxy @MergePolicyForLevel)
+    , testProperty "UnspentCredits" $ prop (Proxy @UnspentCredits)
+    , testProperty "MergeKnownCompleted" $ prop (Proxy @MergeKnownCompleted)
     , testProperty "SnapMergingRunState" $ prop (Proxy @SnapMergingRunState)
-    , testProperty "TotalCredits" $ prop (Proxy @TotalCredits)
+    , testProperty "SpentCredits" $ prop (Proxy @SpentCredits)
     , testProperty "Merge.Level" $ prop (Proxy @Merge.Level)
     ]
 
@@ -253,16 +255,24 @@ deriving newtype instance Arbitrary RunNumber
 instance Arbitrary SnapMergingRun where
   arbitrary = oneof [
         SnapMergingRun <$> arbitrary <*> arbitrary <*> arbitrary
+                       <*> arbitrary <*> arbitrary <*> arbitrary
       , SnapSingleRun <$> arbitrary
       ]
-  shrink (SnapMergingRun a b c) =
-      [ SnapMergingRun a' b' c' | (a', b', c') <- shrink (a, b, c) ]
+  shrink (SnapMergingRun a b c d e f) =
+      [ SnapMergingRun a' b' c' d' e' f'
+      | (a', b', c', d', e', f') <- shrink (a, b, c, d, e, f) ]
   shrink (SnapSingleRun a)  = SnapSingleRun <$> shrink a
 
 deriving newtype instance Arbitrary NumRuns
 
 instance Arbitrary MergePolicyForLevel where
   arbitrary = elements [LevelTiering, LevelLevelling]
+  shrink _ = []
+
+deriving newtype instance Arbitrary UnspentCredits
+
+instance Arbitrary MergeKnownCompleted where
+  arbitrary = elements [MergeKnownCompleted, MergeMaybeCompleted]
   shrink _ = []
 
 instance Arbitrary SnapMergingRunState where
@@ -274,7 +284,7 @@ instance Arbitrary SnapMergingRunState where
   shrink (SnapOngoingMerge x y z)   =
       [ SnapOngoingMerge x' y' z' | (x', y', z') <- shrink (x, y, z) ]
 
-deriving newtype instance Arbitrary TotalCredits
+deriving newtype instance Arbitrary SpentCredits
 
 instance Arbitrary Merge.Level where
   arbitrary = elements [Merge.MidLevel, Merge.LastLevel]

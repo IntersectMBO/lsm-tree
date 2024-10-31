@@ -31,6 +31,7 @@ benchmarks :: Benchmark
 benchmarks = bgroup "Bench.Database.LSMTree.Normal" [
       benchLargeValueVsSmallValueBlob
     , benchCursorScanVsRangeLookupScan
+    , benchInsertBatches
     ]
 
 {-------------------------------------------------------------------------------
@@ -208,6 +209,50 @@ benchCursorScanVsRangeLookupScan =
           s <- Normal.openSession nullTracer hfs hbio (FS.mkFsPath [])
           t <- Normal.new s benchConfig
           V.mapM_ (flip Normal.inserts t) inss
+          pure (tmpDir, hfs, hbio, s, t)
+
+      cleanup (tmpDir, hfs, hbio, s, t) = do
+          Normal.close t
+          Normal.closeSession s
+          cleanupFiles (tmpDir, hfs, hbio)
+
+
+{-------------------------------------------------------------------------------
+  Benchmark batches of inserts
+-------------------------------------------------------------------------------}
+
+benchInsertBatches :: Benchmark
+benchInsertBatches =
+    env genInserts $ \iss ->
+      withEnv $ \ ~(_, _, _, _, t :: Normal.Table IO Word64 Word64 Void) -> do
+        bench "benchInsertBatches" $ whnfIO $
+          V.mapM_ (flip Normal.inserts t) iss
+    where
+      !initialSize = 100_000
+      !batchSize = 256
+
+      _benchConfig :: Common.TableConfig
+      _benchConfig = Common.defaultTableConfig {
+          Common.confWriteBufferAlloc = Common.AllocNumEntries (Common.NumEntries 1000)
+        }
+
+      randomInserts :: Int -> V.Vector (Word64, Word64, Maybe Void)
+      randomInserts n = V.unfoldrExactN n f (mkStdGen 17)
+        where f !g = let (!k, !g') = uniform g
+                    in  ((k, v, Nothing), g')
+              -- The exact value does not matter much, so we pick an arbitrary
+              -- hardcoded one.
+              !v = 17
+
+      genInserts :: IO (V.Vector (V.Vector (Word64, Word64, Maybe Void)))
+      genInserts = pure $ vgroupsOfN batchSize $ randomInserts initialSize
+
+      withEnv = envWithCleanup initialise cleanup
+
+      initialise = do
+          (tmpDir, hfs, hbio) <- mkFiles
+          s <- Normal.openSession nullTracer hfs hbio (FS.mkFsPath [])
+          t <- Normal.new s _benchConfig
           pure (tmpDir, hfs, hbio, s, t)
 
       cleanup (tmpDir, hfs, hbio, s, t) = do
