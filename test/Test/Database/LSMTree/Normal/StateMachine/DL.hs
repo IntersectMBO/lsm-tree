@@ -8,8 +8,7 @@ module Test.Database.LSMTree.Normal.StateMachine.DL (
 import           Control.Tracer
 import qualified Data.Map.Strict as Map
 import qualified Data.Vector as V
-import qualified Database.LSMTree.Model.Session as Model (fromSomeTable,
-                     tableHandles)
+import qualified Database.LSMTree.Model.Session as Model (fromSomeTable, tables)
 import qualified Database.LSMTree.Model.Table as Model (values)
 import           Database.LSMTree.Normal as R
 import           Prelude
@@ -32,7 +31,7 @@ tests = testGroup "Test.Database.LSMTree.Normal.StateMachine.DL" [
   where
     _unused = prop_example
 
-instance DynLogicModel (Lockstep (ModelState R.TableHandle))
+instance DynLogicModel (Lockstep (ModelState R.Table))
 
 -- | An example of how dynamic logic formulas can be run.
 --
@@ -55,7 +54,7 @@ prop_example =
 
 -- | Create an initial "large" table, and then proceed with random actions as
 -- usual.
-dl_example :: DL (Lockstep (ModelState R.TableHandle)) ()
+dl_example :: DL (Lockstep (ModelState R.Table)) ()
 dl_example = do
     -- Create an initial table and fill it with some inserts
     var3 <- action $ New (PrettyProxy @((Key, Value, Blob))) (TableConfig {
@@ -80,7 +79,7 @@ dl_example = do
     -- insertions we just did were successful.
     assertModel "table size" $ \s ->
         let (ModelState s' _) = getModel s in
-        case Map.elems (Model.tableHandles s') of
+        case Map.elems (Model.tables s') of
           [(_, smTbl)]
             | Just tbl <- (Model.fromSomeTable @Key @Value @Blob smTbl)
             -> Map.size (Model.values tbl) == Map.size kvs

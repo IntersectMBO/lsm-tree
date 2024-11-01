@@ -34,7 +34,7 @@ module Database.LSMTree.Model.Table (
   , retrieveBlobs
     -- * Snapshots
   , snapshot
-    -- * Multiple writable table handles
+    -- * Multiple writable tables
   , duplicate
     -- * Table merge
   , merge
@@ -286,7 +286,7 @@ snapshot ::
 snapshot = id
 
 {-------------------------------------------------------------------------------
-  Mutiple writable table handles
+  Mutiple writable tables
 -------------------------------------------------------------------------------}
 
 duplicate ::
@@ -336,9 +336,9 @@ readCursor n c =
   Merging tables
 -------------------------------------------------------------------------------}
 
--- | Merge full tables, creating a new table handle.
+-- | Merge full tables, creating a new table.
 --
--- NOTE: close table handles using 'close' as soon as they are
+-- NOTE: close tables using 'close' as soon as they are
 -- unused.
 --
 -- Multiple tables of the same type but with different configuration parameters

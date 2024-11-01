@@ -126,9 +126,9 @@ prop_interimRestoreSessionUniqueRunNames ::
 prop_interimRestoreSessionUniqueRunNames (Positive (Small n)) (NonNegative m) = ioProperty $
     withTempIOHasBlockIO "TODO" $ \hfs hbio -> do
       prop1 <- withSession nullTracer hfs hbio (FS.mkFsPath []) $ \sesh -> do
-        withTable sesh conf $ \th -> do
-          updates const upds th
-          withOpenTable th $ \thEnv -> do
+        withTable sesh conf $ \t -> do
+          updates const upds t
+          withOpenTable t $ \thEnv -> do
             RW.withReadAccess (tableContent thEnv) $ \tc -> do
               let (Sum nruns) = V.foldMap
                                   (V.foldMap (const (Sum (1 :: Int))) . residentRuns)
@@ -137,8 +137,8 @@ prop_interimRestoreSessionUniqueRunNames (Positive (Small n)) (NonNegative m) = 
                   $ True
 
       withSession nullTracer hfs hbio (FS.mkFsPath []) $ \sesh -> do
-        withTable sesh conf $ \th -> do
-          eith <- try (updates const upds th)
+        withTable sesh conf $ \t -> do
+          eith <- try (updates const upds t)
           fmap (prop1 .&&.) $ case eith of
             Left (e :: FS.FsError)
               | FS.fsErrorType e == FS.FsResourceAlreadyExist
@@ -159,7 +159,7 @@ prop_interimRestoreSessionUniqueRunNames (Positive (Small n)) (NonNegative m) = 
 -- works as expected. Roughly, we test:
 --
 -- @
---  inserts th kvs == open' (snapshot' (inserts th kvs))
+--  inserts t kvs == open' (snapshot' (inserts t kvs))
 -- @
 --
 -- TODO: remove once we have proper snapshotting
@@ -169,16 +169,16 @@ prop_interimOpenTable ::
 prop_interimOpenTable dat = ioProperty $
     withTempIOHasBlockIO "prop_interimOpenTable" $ \hfs hbio -> do
       withSession nullTracer hfs hbio (FS.mkFsPath []) $ \sesh -> do
-        withTable sesh conf $ \th -> do
-          updates const upds th
+        withTable sesh conf $ \t -> do
+          updates const upds t
           let snap = fromMaybe (error "invalid name") $ mkSnapshotName "snap"
-          numRunsSnapped <- snapshot const snap "someLabel" th
-          th' <- open sesh "someLabel" configNoOverride snap const
-          lhs <- fetchBlobs hfs =<< lookups const ks th
-          rhs <- fetchBlobs hfs =<< lookups const ks th'
+          numRunsSnapped <- snapshot const snap "someLabel" t
+          t' <- open sesh "someLabel" configNoOverride snap const
+          lhs <- fetchBlobs hfs =<< lookups const ks t
+          rhs <- fetchBlobs hfs =<< lookups const ks t'
           -- We must fetch blobs because comparing blob references is meaningless
-          close th
-          close th'
+          close t
+          close t'
           -- TODO: checking lookups is a simple check, but we could have stronger
           -- guarantee. For example, we might check that the internal structures
           -- match.
@@ -225,9 +225,9 @@ prop_roundtripCursor ::
 prop_roundtripCursor lb ub kops = ioProperty $
     withTempIOHasBlockIO "prop_roundtripCursor" $ \hfs hbio -> do
       withSession nullTracer hfs hbio (FS.mkFsPath []) $ \sesh -> do
-        withTable sesh conf $ \th -> do
-          updates appendSerialisedValue (coerce kops) th
-          fromCursor <- withCursor (toOffsetKey lb) th $ \c ->
+        withTable sesh conf $ \t -> do
+          updates appendSerialisedValue (coerce kops) t
+          fromCursor <- withCursor (toOffsetKey lb) t $ \c ->
             fetchBlobs hfs =<< readCursorUntil appendSerialisedValue ub c
           return $
             tabulate "duplicates" (show <$> Map.elems duplicates) $

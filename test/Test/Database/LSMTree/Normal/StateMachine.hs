@@ -43,7 +43,7 @@
   instead of a variable of a list (@'Var' ['R.BlobRef' blob]@).
 
   TODO: it is currently not correctly modelled what happens if blob references
-  are retrieved from an incorrect table handle.
+  are retrieved from an incorrect table.
 -}
 module Test.Database.LSMTree.Normal.StateMachine (
     tests
@@ -124,7 +124,7 @@ import           Test.Tasty.QuickCheck (testProperty)
 import           Test.Util.FS (assertNoOpenHandles, assertNumOpenHandles)
 import           Test.Util.PrettyProxy
 import           Test.Util.TypeFamilyWrappers (WrapBlob (..), WrapBlobRef (..),
-                     WrapCursor (..), WrapSession (..), WrapTableHandle (..))
+                     WrapCursor (..), WrapSession (..), WrapTable (..))
 
 {-------------------------------------------------------------------------------
   Test tree
@@ -146,7 +146,7 @@ tests = testGroup "Normal.StateMachine" [
     ]
 
 labelledExamples :: IO ()
-labelledExamples = QC.labelledExamples $ Lockstep.Run.tagActions (Proxy @(ModelState R.TableHandle))
+labelledExamples = QC.labelledExamples $ Lockstep.Run.tagActions (Proxy @(ModelState R.Table))
 
 instance Arbitrary Model.TableConfig where
   arbitrary :: Gen Model.TableConfig
@@ -156,20 +156,20 @@ deriving via AllowThunk (ModelIO.Session IO)
     instance NoThunks (ModelIO.Session IO)
 
 propLockstep_ModelIOImpl ::
-     Actions (Lockstep (ModelState ModelIO.TableHandle))
+     Actions (Lockstep (ModelState ModelIO.Table))
   -> QC.Property
 propLockstep_ModelIOImpl =
     runActionsBracket'
-      (Proxy @(ModelState ModelIO.TableHandle))
+      (Proxy @(ModelState ModelIO.Table))
       acquire
       release
       (\r session -> runReaderT r (session, handler))
       tagFinalState'
   where
-    acquire :: IO (WrapSession ModelIO.TableHandle IO)
+    acquire :: IO (WrapSession ModelIO.Table IO)
     acquire = WrapSession <$> Class.openSession ModelIO.NoSessionArgs
 
-    release :: WrapSession ModelIO.TableHandle IO -> IO ()
+    release :: WrapSession ModelIO.Table IO -> IO ()
     release (WrapSession session) = Class.closeSession session
 
     handler :: Handler IO (Maybe Model.Err)
@@ -237,34 +237,34 @@ instance Arbitrary R.WriteBufferAlloc where
 
 propLockstep_RealImpl_RealFS_IO ::
      Tracer IO R.LSMTreeTrace
-  -> Actions (Lockstep (ModelState R.TableHandle))
+  -> Actions (Lockstep (ModelState R.Table))
   -> QC.Property
 propLockstep_RealImpl_RealFS_IO tr =
     runActionsBracket'
-      (Proxy @(ModelState R.TableHandle))
+      (Proxy @(ModelState R.Table))
       acquire
       release
       (\r (_, session) -> runReaderT r (session, realHandler @IO))
       tagFinalState'
   where
-    acquire :: IO (FilePath, WrapSession R.TableHandle IO)
+    acquire :: IO (FilePath, WrapSession R.Table IO)
     acquire = do
         (tmpDir, hasFS, hasBlockIO) <- createSystemTempDirectory "prop_lockstepIO_RealImpl_RealFS"
         session <- R.openSession tr hasFS hasBlockIO (mkFsPath [])
         pure (tmpDir, WrapSession session)
 
-    release :: (FilePath, WrapSession R.TableHandle IO) -> IO ()
+    release :: (FilePath, WrapSession R.Table IO) -> IO ()
     release (tmpDir, WrapSession session) = do
         R.closeSession session
         removeDirectoryRecursive tmpDir
 
 propLockstep_RealImpl_MockFS_IO ::
      Tracer IO R.LSMTreeTrace
-  -> Actions (Lockstep (ModelState R.TableHandle))
+  -> Actions (Lockstep (ModelState R.Table))
   -> QC.Property
 propLockstep_RealImpl_MockFS_IO tr =
     runActionsBracket'
-      (Proxy @(ModelState R.TableHandle))
+      (Proxy @(ModelState R.Table))
       (acquire_RealImpl_MockFS tr)
       release_RealImpl_MockFS
       (\r (_, session) -> runReaderT r (session, realHandler @IO))
@@ -272,7 +272,7 @@ propLockstep_RealImpl_MockFS_IO tr =
 
 propLockstep_RealImpl_MockFS_IOSim ::
      (forall s. Tracer (IOSim s) R.LSMTreeTrace)
-  -> Actions (Lockstep (ModelState R.TableHandle))
+  -> Actions (Lockstep (ModelState R.Table))
   -> QC.Property
 propLockstep_RealImpl_MockFS_IOSim tr actions =
     monadicIOSim_ prop
@@ -281,7 +281,7 @@ propLockstep_RealImpl_MockFS_IOSim tr actions =
     prop = do
         (fsVar, session) <- QC.run (acquire_RealImpl_MockFS tr)
         void $ QD.runPropertyReaderT
-                (QD.runActions @(Lockstep (ModelState R.TableHandle)) actions)
+                (QD.runActions @(Lockstep (ModelState R.Table)) actions)
                 (session, realHandler @(IOSim s))
         QC.run $ release_RealImpl_MockFS (fsVar, session)
         pure $ tagFinalState actions tagFinalState' $ QC.property True
@@ -289,7 +289,7 @@ propLockstep_RealImpl_MockFS_IOSim tr actions =
 acquire_RealImpl_MockFS ::
      R.IOLike m
   => Tracer m R.LSMTreeTrace
-  -> m (StrictTMVar m MockFS, WrapSession R.TableHandle m)
+  -> m (StrictTMVar m MockFS, WrapSession R.Table m)
 acquire_RealImpl_MockFS tr = do
     fsVar <- newTMVarIO MockFS.empty
     (hfs, hbio) <- simHasBlockIO fsVar
@@ -298,7 +298,7 @@ acquire_RealImpl_MockFS tr = do
 
 release_RealImpl_MockFS ::
      R.IOLike m
-  => (StrictTMVar m MockFS, WrapSession R.TableHandle m)
+  => (StrictTMVar m MockFS, WrapSession R.Table m)
   -> m ()
 release_RealImpl_MockFS (fsVar, WrapSession session) = do
     sts <- getAllSessionTables session
@@ -311,7 +311,7 @@ release_RealImpl_MockFS (fsVar, WrapSession session) = do
     mockfs2 <- atomically $ readTMVar fsVar
     assertNoOpenHandles mockfs2 $ pure ()
 
-data SomeTable m = SomeTable (forall k v b. R.TableHandle m k v b)
+data SomeTable m = SomeTable (forall k v b. R.Table m k v b)
 data SomeCursor m = SomeCursor (forall k v b. R.Cursor m k v b)
 
 getAllSessionTables ::
@@ -336,7 +336,7 @@ realHandler :: Monad m => Handler m (Maybe Model.Err)
 realHandler = Handler $ pure . handler'
   where
     handler' :: LSMTreeError -> Maybe Model.Err
-    handler' ErrTableClosed               = Just Model.ErrTableHandleClosed
+    handler' ErrTableClosed               = Just Model.ErrTableClosed
     handler' ErrCursorClosed              = Just Model.ErrCursorClosed
     handler' (ErrSnapshotNotExists _snap) = Just Model.ErrSnapshotDoesNotExist
     handler' (ErrSnapshotExists _snap)    = Just Model.ErrSnapshotExists
@@ -420,21 +420,21 @@ instance ( Show (Class.TableConfig h)
     New :: C k v blob
         => {-# UNPACK #-} !(PrettyProxy (k, v, blob))
         -> Class.TableConfig h
-        -> Act h (WrapTableHandle h IO k v blob)
+        -> Act h (WrapTable h IO k v blob)
     Close :: C k v blob
-          => Var h (WrapTableHandle h IO k v blob)
+          => Var h (WrapTable h IO k v blob)
           -> Act h ()
     -- Queries
     Lookups :: C k v blob
-            => V.Vector k -> Var h (WrapTableHandle h IO k v blob)
+            => V.Vector k -> Var h (WrapTable h IO k v blob)
             -> Act h (V.Vector (LookupResult v (WrapBlobRef h IO blob)))
     RangeLookup :: (C k v blob, Ord k)
-                => R.Range k -> Var h (WrapTableHandle h IO k v blob)
+                => R.Range k -> Var h (WrapTable h IO k v blob)
                 -> Act h (V.Vector (QueryResult k v (WrapBlobRef h IO blob)))
     -- Cursor
     NewCursor :: C k v blob
               => Maybe k
-              -> Var h (WrapTableHandle h IO k v blob)
+              -> Var h (WrapTable h IO k v blob)
               -> Act h (WrapCursor h IO k v blob)
     CloseCursor :: C k v blob
                 => Var h (WrapCursor h IO k v blob)
@@ -445,13 +445,13 @@ instance ( Show (Class.TableConfig h)
                -> Act h (V.Vector (QueryResult k v (WrapBlobRef h IO blob)))
     -- Updates
     Updates :: C k v blob
-            => V.Vector (k, R.Update v blob) -> Var h (WrapTableHandle h IO k v blob)
+            => V.Vector (k, R.Update v blob) -> Var h (WrapTable h IO k v blob)
             -> Act h ()
     Inserts :: C k v blob
-            => V.Vector (k, v, Maybe blob) -> Var h (WrapTableHandle h IO k v blob)
+            => V.Vector (k, v, Maybe blob) -> Var h (WrapTable h IO k v blob)
             -> Act h ()
     Deletes :: C k v blob
-            => V.Vector k -> Var h (WrapTableHandle h IO k v blob)
+            => V.Vector k -> Var h (WrapTable h IO k v blob)
             -> Act h ()
     -- Blobs
     RetrieveBlobs :: V blob
@@ -459,17 +459,17 @@ instance ( Show (Class.TableConfig h)
                   -> Act h (V.Vector (WrapBlob blob))
     -- Snapshots
     Snapshot :: (C k v blob, R.Labellable (k, v, blob))
-             => R.SnapshotName -> Var h (WrapTableHandle h IO k v blob)
+             => R.SnapshotName -> Var h (WrapTable h IO k v blob)
              -> Act h ()
     Open     :: (C k v blob, R.Labellable (k, v, blob))
              => R.SnapshotName
-             -> Act h (WrapTableHandle h IO k v blob)
+             -> Act h (WrapTable h IO k v blob)
     DeleteSnapshot :: R.SnapshotName -> Act h ()
     ListSnapshots  :: Act h [R.SnapshotName]
-    -- Multiple writable table handles
+    -- Multiple writable tables
     Duplicate :: C k v blob
-              => Var h (WrapTableHandle h IO k v blob)
-              -> Act h (WrapTableHandle h IO k v blob)
+              => Var h (WrapTable h IO k v blob)
+              -> Act h (WrapTable h IO k v blob)
 
   initialState    = Lockstep.Defaults.initialState initModelState
   nextState       = Lockstep.Defaults.nextState
@@ -561,8 +561,8 @@ instance ( Eq (Class.TableConfig h)
   type instance ModelOp (ModelState h) = Op
 
   data instance ModelValue (ModelState h) a where
-    MTableHandle :: Model.TableHandle k v blob
-                 -> Val h (WrapTableHandle h IO k v blob)
+    MTable :: Model.Table k v blob
+                 -> Val h (WrapTable h IO k v blob)
     MCursor :: Model.Cursor k v blob -> Val h (WrapCursor h IO k v blob)
     MBlobRef :: Class.C_ blob
              => Model.BlobRef blob -> Val h (WrapBlobRef h IO blob)
@@ -586,7 +586,7 @@ instance ( Eq (Class.TableConfig h)
     MVector :: V.Vector (Val h a) -> Val h (V.Vector a)
 
   data instance Observable (ModelState h) a where
-    OTableHandle :: Obs h (WrapTableHandle h IO k v blob)
+    OTable :: Obs h (WrapTable h IO k v blob)
     OCursor :: Obs h (WrapCursor h IO k v blob)
     OBlobRef :: Obs h (WrapBlobRef h IO blob)
 
@@ -608,7 +608,7 @@ instance ( Eq (Class.TableConfig h)
 
   observeModel :: Val h a -> Obs h a
   observeModel = \case
-      MTableHandle _       -> OTableHandle
+      MTable _       -> OTable
       MCursor _            -> OCursor
       MBlobRef _           -> OBlobRef
       MLookupResult x      -> OLookupResult $ fmap observeModel x
@@ -689,7 +689,7 @@ instance Eq (Obs h a) where
         | Just (OBlob (WrapBlob _), _) <- V.uncons vec
         , Just Model.ErrBlobRefInvalidated <- cast y -> True
       -- default equalities
-      (OTableHandle, OTableHandle) -> True
+      (OTable, OTable) -> True
       (OCursor, OCursor) -> True
       (OBlobRef, OBlobRef) -> True
       (OLookupResult x, OLookupResult y) -> x == y
@@ -704,7 +704,7 @@ instance Eq (Obs h a) where
     where
       _coveredAllCases :: Obs h a -> ()
       _coveredAllCases = \case
-          OTableHandle{} -> ()
+          OTable{} -> ()
           OCursor{} -> ()
           OBlobRef{} -> ()
           OLookupResult{} -> ()
@@ -725,7 +725,7 @@ instance Eq (Obs h a) where
 -- mention type families directly.
 --
 -- Also carries an exception handle that is specific to the table implementation
--- identified by the table handle @h@.
+-- identified by the table @h@.
 type RealMonad h m = ReaderT (WrapSession h m, Handler m (Maybe Model.Err)) m
 
 {-------------------------------------------------------------------------------
@@ -733,7 +733,7 @@ type RealMonad h m = ReaderT (WrapSession h m, Handler m (Maybe Model.Err)) m
 -------------------------------------------------------------------------------}
 
 instance ( Eq (Class.TableConfig h)
-         , Class.IsTableHandle h
+         , Class.IsTable h
          , Show (Class.TableConfig h)
          , Arbitrary (Class.TableConfig h)
          , Typeable h
@@ -745,7 +745,7 @@ instance ( Eq (Class.TableConfig h)
     -> Realized (RealMonad h IO) a
     -> Obs h a
   observeReal _proxy action result = case action of
-      New{}            -> OEither $ bimap OId (const OTableHandle) result
+      New{}            -> OEither $ bimap OId (const OTable) result
       Close{}          -> OEither $ bimap OId OId result
       Lookups{}        -> OEither $
           bimap OId (OVector . fmap (OLookupResult . fmap (const OBlobRef))) result
@@ -760,10 +760,10 @@ instance ( Eq (Class.TableConfig h)
       Deletes{}        -> OEither $ bimap OId OId result
       RetrieveBlobs{}  -> OEither $ bimap OId (OVector . fmap OBlob) result
       Snapshot{}       -> OEither $ bimap OId OId result
-      Open{}           -> OEither $ bimap OId (const OTableHandle) result
+      Open{}           -> OEither $ bimap OId (const OTable) result
       DeleteSnapshot{} -> OEither $ bimap OId OId result
       ListSnapshots{}  -> OEither $ bimap OId (OList . fmap OId) result
-      Duplicate{}      -> OEither $ bimap OId (const OTableHandle) result
+      Duplicate{}      -> OEither $ bimap OId (const OTable) result
 
   showRealResponse ::
        Proxy (RealMonad h IO)
@@ -788,7 +788,7 @@ instance ( Eq (Class.TableConfig h)
       Duplicate{}      -> Nothing
 
 instance ( Eq (Class.TableConfig h)
-         , Class.IsTableHandle h
+         , Class.IsTable h
          , Show (Class.TableConfig h)
          , Arbitrary (Class.TableConfig h)
          , Typeable h
@@ -799,7 +799,7 @@ instance ( Eq (Class.TableConfig h)
     -> Realized (RealMonad h (IOSim s)) a
     -> Obs h a
   observeReal _proxy action result = case action of
-      New{}            -> OEither $ bimap OId (const OTableHandle) result
+      New{}            -> OEither $ bimap OId (const OTable) result
       Close{}          -> OEither $ bimap OId OId result
       Lookups{}        -> OEither $
           bimap OId (OVector . fmap (OLookupResult . fmap (const OBlobRef))) result
@@ -814,10 +814,10 @@ instance ( Eq (Class.TableConfig h)
       Deletes{}        -> OEither $ bimap OId OId result
       RetrieveBlobs{}  -> OEither $ bimap OId (OVector . fmap OBlob) result
       Snapshot{}       -> OEither $ bimap OId OId result
-      Open{}           -> OEither $ bimap OId (const OTableHandle) result
+      Open{}           -> OEither $ bimap OId (const OTable) result
       DeleteSnapshot{} -> OEither $ bimap OId OId result
       ListSnapshots{}  -> OEither $ bimap OId (OList . fmap OId) result
-      Duplicate{}      -> OEither $ bimap OId (const OTableHandle) result
+      Duplicate{}      -> OEither $ bimap OId (const OTable) result
 
   showRealResponse ::
        Proxy (RealMonad h (IOSim s))
@@ -846,7 +846,7 @@ instance ( Eq (Class.TableConfig h)
 -------------------------------------------------------------------------------}
 
 instance ( Eq (Class.TableConfig h)
-         , Class.IsTableHandle h
+         , Class.IsTable h
          , Show (Class.TableConfig h)
          , Arbitrary (Class.TableConfig h)
          , Typeable h
@@ -857,7 +857,7 @@ instance ( Eq (Class.TableConfig h)
   monitoring    = Lockstep.Defaults.monitoring (Proxy @(RealMonad h IO))
 
 instance ( Eq (Class.TableConfig h)
-         , Class.IsTableHandle h
+         , Class.IsTable h
          , Show (Class.TableConfig h)
          , Arbitrary (Class.TableConfig h)
          , Typeable h
@@ -876,20 +876,20 @@ runModel ::
   -> Model.Model -> (Val h a, Model.Model)
 runModel lookUp = \case
     New _ _cfg ->
-      wrap MTableHandle
+      wrap MTable
       . Model.runModelM (Model.new Model.TableConfig)
     Close tableVar ->
       wrap MUnit
-      . Model.runModelM (Model.close (getTableHandle $ lookUp tableVar))
+      . Model.runModelM (Model.close (getTable $ lookUp tableVar))
     Lookups ks tableVar ->
       wrap (MVector . fmap (MLookupResult . fmap MBlobRef . ModelIO.convLookupResult))
-      . Model.runModelM (Model.lookups ks (getTableHandle $ lookUp tableVar))
+      . Model.runModelM (Model.lookups ks (getTable $ lookUp tableVar))
     RangeLookup range tableVar ->
       wrap (MVector . fmap (MQueryResult . fmap MBlobRef . ModelIO.convQueryResult))
-      . Model.runModelM (Model.rangeLookup range (getTableHandle $ lookUp tableVar))
+      . Model.runModelM (Model.rangeLookup range (getTable $ lookUp tableVar))
     NewCursor offset tableVar ->
       wrap MCursor
-      . Model.runModelM (Model.newCursor offset (getTableHandle $ lookUp tableVar))
+      . Model.runModelM (Model.newCursor offset (getTable $ lookUp tableVar))
     CloseCursor cursorVar ->
       wrap MUnit
       . Model.runModelM (Model.closeCursor (getCursor $ lookUp cursorVar))
@@ -898,21 +898,21 @@ runModel lookUp = \case
       . Model.runModelM (Model.readCursor n (getCursor $ lookUp cursorVar))
     Updates kups tableVar ->
       wrap MUnit
-      . Model.runModelM (Model.updates Model.noResolve (fmap ModelIO.convUpdate <$> kups) (getTableHandle $ lookUp tableVar))
+      . Model.runModelM (Model.updates Model.noResolve (fmap ModelIO.convUpdate <$> kups) (getTable $ lookUp tableVar))
     Inserts kins tableVar ->
       wrap MUnit
-      . Model.runModelM (Model.inserts Model.noResolve kins (getTableHandle $ lookUp tableVar))
+      . Model.runModelM (Model.inserts Model.noResolve kins (getTable $ lookUp tableVar))
     Deletes kdels tableVar ->
       wrap MUnit
-      . Model.runModelM (Model.deletes Model.noResolve kdels (getTableHandle $ lookUp tableVar))
+      . Model.runModelM (Model.deletes Model.noResolve kdels (getTable $ lookUp tableVar))
     RetrieveBlobs blobsVar ->
       wrap (MVector . fmap (MBlob . WrapBlob))
       . Model.runModelM (Model.retrieveBlobs (getBlobRefs . lookUp $ blobsVar))
     Snapshot name tableVar ->
       wrap MUnit
-      . Model.runModelM (Model.snapshot name (getTableHandle $ lookUp tableVar))
+      . Model.runModelM (Model.snapshot name (getTable $ lookUp tableVar))
     Open name ->
-      wrap MTableHandle
+      wrap MTable
       . Model.runModelM (Model.open name)
     DeleteSnapshot name ->
       wrap MUnit
@@ -921,18 +921,18 @@ runModel lookUp = \case
       wrap (MList . fmap MSnapshotName)
       . Model.runModelM Model.listSnapshots
     Duplicate tableVar ->
-      wrap MTableHandle
-      . Model.runModelM (Model.duplicate (getTableHandle $ lookUp tableVar))
+      wrap MTable
+      . Model.runModelM (Model.duplicate (getTable $ lookUp tableVar))
   where
-    getTableHandle ::
-         ModelValue (ModelState h) (WrapTableHandle h IO k v blob)
-      -> Model.TableHandle k v blob
-    getTableHandle (MTableHandle th) = th
+    getTable ::
+         ModelValue (ModelState h) (WrapTable h IO k v blob)
+      -> Model.Table k v blob
+    getTable (MTable t) = t
 
     getCursor ::
          ModelValue (ModelState h) (WrapCursor h IO k v blob)
       -> Model.Cursor k v blob
-    getCursor (MCursor th) = th
+    getCursor (MCursor t) = t
 
     getBlobRefs :: ModelValue (ModelState h) (V.Vector (WrapBlobRef h IO blob)) -> V.Vector (Model.BlobRef blob)
     getBlobRefs (MVector brs) = fmap (\(MBlobRef br) -> br) brs
@@ -948,7 +948,7 @@ wrap f = first (MEither . bimap MErr f)
 -------------------------------------------------------------------------------}
 
 runIO ::
-     forall a h. (Class.IsTableHandle h, NoThunks (Class.Session h IO))
+     forall a h. (Class.IsTable h, NoThunks (Class.Session h IO))
   => LockstepAction (ModelState h) a
   -> LookUp (RealMonad h IO)
   -> RealMonad h IO (Realized (RealMonad h IO) a)
@@ -967,43 +967,43 @@ runIO action lookUp = ReaderT $ \(session, handler) -> do
       -> IO (Realized IO a)
     aux session handler = \case
         New _ cfg -> catchErr handler $
-          WrapTableHandle <$> Class.new session cfg
+          WrapTable <$> Class.new session cfg
         Close tableVar -> catchErr handler $
-          Class.close (unwrapTableHandle $ lookUp' tableVar)
+          Class.close (unwrapTable $ lookUp' tableVar)
         Lookups ks tableVar -> catchErr handler $
-          fmap (fmap WrapBlobRef) <$> Class.lookups (unwrapTableHandle $ lookUp' tableVar) ks
+          fmap (fmap WrapBlobRef) <$> Class.lookups (unwrapTable $ lookUp' tableVar) ks
         RangeLookup range tableVar -> catchErr handler $
-          fmap (fmap WrapBlobRef) <$> Class.rangeLookup (unwrapTableHandle $ lookUp' tableVar) range
+          fmap (fmap WrapBlobRef) <$> Class.rangeLookup (unwrapTable $ lookUp' tableVar) range
         NewCursor offset tableVar -> catchErr handler $
-          WrapCursor <$> Class.newCursor offset (unwrapTableHandle $ lookUp' tableVar)
+          WrapCursor <$> Class.newCursor offset (unwrapTable $ lookUp' tableVar)
         CloseCursor cursorVar -> catchErr handler $
           Class.closeCursor (Proxy @h) (unwrapCursor $ lookUp' cursorVar)
         ReadCursor n cursorVar -> catchErr handler $
           fmap (fmap WrapBlobRef) <$> Class.readCursor (Proxy @h) n (unwrapCursor $ lookUp' cursorVar)
         Updates kups tableVar -> catchErr handler $
-          Class.updates (unwrapTableHandle $ lookUp' tableVar) kups
+          Class.updates (unwrapTable $ lookUp' tableVar) kups
         Inserts kins tableVar -> catchErr handler $
-          Class.inserts (unwrapTableHandle $ lookUp' tableVar) kins
+          Class.inserts (unwrapTable $ lookUp' tableVar) kins
         Deletes kdels tableVar -> catchErr handler $
-          Class.deletes (unwrapTableHandle $ lookUp' tableVar) kdels
+          Class.deletes (unwrapTable $ lookUp' tableVar) kdels
         RetrieveBlobs blobRefsVar -> catchErr handler $
           fmap WrapBlob <$> Class.retrieveBlobs (Proxy @h) session (unwrapBlobRef <$> lookUp' blobRefsVar)
         Snapshot name tableVar -> catchErr handler $
-          Class.snapshot name (unwrapTableHandle $ lookUp' tableVar)
+          Class.snapshot name (unwrapTable $ lookUp' tableVar)
         Open name -> catchErr handler $
-          WrapTableHandle <$> Class.open session name
+          WrapTable <$> Class.open session name
         DeleteSnapshot name -> catchErr handler $
           Class.deleteSnapshot session name
         ListSnapshots -> catchErr handler $
           Class.listSnapshots session
         Duplicate tableVar -> catchErr handler $
-          WrapTableHandle <$> Class.duplicate (unwrapTableHandle $ lookUp' tableVar)
+          WrapTable <$> Class.duplicate (unwrapTable $ lookUp' tableVar)
 
     lookUp' :: Var h x -> Realized IO x
     lookUp' = lookUpGVar (Proxy @(RealMonad h IO)) lookUp
 
 runIOSim ::
-     forall s a h. Class.IsTableHandle h
+     forall s a h. Class.IsTable h
   => LockstepAction (ModelState h) a
   -> LookUp (RealMonad h (IOSim s))
   -> RealMonad h (IOSim s) (Realized (RealMonad h (IOSim s)) a)
@@ -1017,37 +1017,37 @@ runIOSim action lookUp = ReaderT $ \(session, handler) ->
       -> IOSim s (Realized (IOSim s) a)
     aux session handler = \case
         New _ cfg -> catchErr handler $
-          WrapTableHandle <$> Class.new session cfg
+          WrapTable <$> Class.new session cfg
         Close tableVar -> catchErr handler $
-          Class.close (unwrapTableHandle $ lookUp' tableVar)
+          Class.close (unwrapTable $ lookUp' tableVar)
         Lookups ks tableVar -> catchErr handler $
-          fmap (fmap WrapBlobRef) <$> Class.lookups (unwrapTableHandle $ lookUp' tableVar) ks
+          fmap (fmap WrapBlobRef) <$> Class.lookups (unwrapTable $ lookUp' tableVar) ks
         RangeLookup range tableVar -> catchErr handler $
-          fmap (fmap WrapBlobRef) <$> Class.rangeLookup (unwrapTableHandle $ lookUp' tableVar) range
+          fmap (fmap WrapBlobRef) <$> Class.rangeLookup (unwrapTable $ lookUp' tableVar) range
         NewCursor offset tableVar -> catchErr handler $
-          WrapCursor <$> Class.newCursor offset (unwrapTableHandle $ lookUp' tableVar)
+          WrapCursor <$> Class.newCursor offset (unwrapTable $ lookUp' tableVar)
         CloseCursor cursorVar -> catchErr handler $
           Class.closeCursor (Proxy @h) (unwrapCursor $ lookUp' cursorVar)
         ReadCursor n cursorVar -> catchErr handler $
           fmap (fmap WrapBlobRef) <$> Class.readCursor (Proxy @h) n (unwrapCursor $ lookUp' cursorVar)
         Updates kups tableVar -> catchErr handler $
-          Class.updates (unwrapTableHandle $ lookUp' tableVar) kups
+          Class.updates (unwrapTable $ lookUp' tableVar) kups
         Inserts kins tableVar -> catchErr handler $
-          Class.inserts (unwrapTableHandle $ lookUp' tableVar) kins
+          Class.inserts (unwrapTable $ lookUp' tableVar) kins
         Deletes kdels tableVar -> catchErr handler $
-          Class.deletes (unwrapTableHandle $ lookUp' tableVar) kdels
+          Class.deletes (unwrapTable $ lookUp' tableVar) kdels
         RetrieveBlobs blobRefsVar -> catchErr handler $
           fmap WrapBlob <$> Class.retrieveBlobs (Proxy @h) session (unwrapBlobRef <$> lookUp' blobRefsVar)
         Snapshot name tableVar -> catchErr handler $
-          Class.snapshot name (unwrapTableHandle $ lookUp' tableVar)
+          Class.snapshot name (unwrapTable $ lookUp' tableVar)
         Open name -> catchErr handler $
-          WrapTableHandle <$> Class.open session name
+          WrapTable <$> Class.open session name
         DeleteSnapshot name -> catchErr handler $
           Class.deleteSnapshot session name
         ListSnapshots -> catchErr handler $
           Class.listSnapshots session
         Duplicate tableVar -> catchErr handler $
-          WrapTableHandle <$> Class.duplicate (unwrapTableHandle $ lookUp' tableVar)
+          WrapTable <$> Class.duplicate (unwrapTable $ lookUp' tableVar)
 
     lookUp' :: Var h x -> Realized (IOSim s) x
     lookUp' = lookUpGVar (Proxy @(RealMonad h (IOSim s))) lookUp
@@ -1107,14 +1107,14 @@ arbitraryActionWithVars _ ctx (ModelState st _stats) =
 
     genTableVar = QC.elements tableVars
 
-    tableVars :: [Var h (WrapTableHandle h IO k v blob)]
+    tableVars :: [Var h (WrapTable h IO k v blob)]
     tableVars =
       [ fromRight v
       | v <- findVars ctx Proxy
       , case lookupVar ctx v of
           MEither (Left _)                  -> False
-          MEither (Right (MTableHandle th)) ->
-            Map.member (Model.tableHandleID th) (Model.tableHandles st)
+          MEither (Right (MTable t)) ->
+            Map.member (Model.tableID t) (Model.tables st)
       ]
 
     genCursorVar = QC.elements cursorVars
@@ -1314,20 +1314,20 @@ data Stats = Stats {
   , failActions        :: [(String, Model.Err)]
     -- === Final tags (per action sequence, per table)
     -- | Number of actions per table (succesful or failing)
-  , numActionsPerTable :: !(Map Model.TableHandleID Int)
+  , numActionsPerTable :: !(Map Model.TableID Int)
     -- | The size of tables that were closed. This is used to augment the table
     -- sizes from the final model state (which of course has only tables still
     -- open in the final state).
-  , closedTableSizes   :: !(Map Model.TableHandleID Int)
+  , closedTableSizes   :: !(Map Model.TableID Int)
     -- | The ultimate parent for each table. This is the 'TableId' of a table
     -- created using 'new' or 'open'.
-  , parentTable        :: Map Model.TableHandleID Model.TableHandleID
+  , parentTable        :: Map Model.TableID Model.TableID
     -- | Track the interleavings of operations via different but related tables.
     -- This is a map from the ultimate parent table to a summary log of which
     -- tables (derived from that parent table via duplicate) have had
     -- \"interesting\" actions performed on them. We record only the
     -- interleavings of different tables not multiple actions on the same table.
-  , dupTableActionLog  :: Map Model.TableHandleID [Model.TableHandleID]
+  , dupTableActionLog  :: Map Model.TableID [Model.TableID]
   }
   deriving stock Show
 
@@ -1437,13 +1437,13 @@ updateStats action lookUp modelBefore _modelAfter result =
     updNumActionsPerTable :: Stats -> Stats
     updNumActionsPerTable stats = case action of
         New{}
-          | MEither (Right (MTableHandle table)) <- result -> initCount table
+          | MEither (Right (MTable table)) <- result -> initCount table
           | otherwise                                      -> stats
         Open{}
-          | MEither (Right (MTableHandle table)) <- result -> initCount table
+          | MEither (Right (MTable table)) <- result -> initCount table
           | otherwise                                      -> stats
         Duplicate{}
-          | MEither (Right (MTableHandle table)) <- result -> initCount table
+          | MEither (Right (MTable table)) <- result -> initCount table
           | otherwise                                      -> stats
 
         -- Note that for the other actions we don't count success vs failure.
@@ -1471,19 +1471,19 @@ updateStats action lookUp modelBefore _modelAfter result =
         ListSnapshots{}       -> stats
       where
         -- Init to 0 so we get an accurate count of tables with no actions.
-        initCount :: forall k v blob. Model.TableHandle k v blob -> Stats
+        initCount :: forall k v blob. Model.Table k v blob -> Stats
         initCount table =
-          let tid = Model.tableHandleID table
+          let tid = Model.tableID table
            in stats {
                 numActionsPerTable = Map.insert tid 0 (numActionsPerTable stats)
               }
 
         -- Note that batches (of inserts lookups etc) count as one action.
         updateCount :: forall k v blob.
-                       Var h (WrapTableHandle h IO k v blob)
+                       Var h (WrapTable h IO k v blob)
                     -> Stats
         updateCount tableVar =
-          let tid = getTableHandleId (lookUp tableVar)
+          let tid = getTableId (lookUp tableVar)
            in stats {
                 numActionsPerTable = Map.insertWith (+) tid 1
                                                     (numActionsPerTable stats)
@@ -1491,10 +1491,10 @@ updateStats action lookUp modelBefore _modelAfter result =
 
     updClosedTableSizes stats = case action of
         Close tableVar
-          | MTableHandle th <- lookUp tableVar
-          , let tid          = Model.tableHandleID th
+          | MTable t <- lookUp tableVar
+          , let tid          = Model.tableID t
             -- This lookup can fail if the table was already closed:
-          , Just (_, table) <- Map.lookup tid (Model.tableHandles modelBefore)
+          , Just (_, table) <- Map.lookup tid (Model.tables modelBefore)
           , let  tsize       = Model.withSomeTable Model.size table
           -> stats {
                closedTableSizes = Map.insert tid tsize (closedTableSizes stats)
@@ -1502,25 +1502,25 @@ updateStats action lookUp modelBefore _modelAfter result =
         _ -> stats
 
     updParentTable stats = case (action, result) of
-        (New{}, MEither (Right (MTableHandle tbl))) ->
+        (New{}, MEither (Right (MTable tbl))) ->
           stats {
-            parentTable = Map.insert (Model.tableHandleID tbl)
-                                     (Model.tableHandleID tbl)
+            parentTable = Map.insert (Model.tableID tbl)
+                                     (Model.tableID tbl)
                                      (parentTable stats)
           }
-        (Open{}, MEither (Right (MTableHandle tbl))) ->
+        (Open{}, MEither (Right (MTable tbl))) ->
           stats {
-            parentTable = Map.insert (Model.tableHandleID tbl)
-                                     (Model.tableHandleID tbl)
+            parentTable = Map.insert (Model.tableID tbl)
+                                     (Model.tableID tbl)
                                      (parentTable stats)
           }
-        (Duplicate ptblVar, MEither (Right (MTableHandle tbl))) ->
+        (Duplicate ptblVar, MEither (Right (MTable tbl))) ->
           let -- immediate and ultimate parent table ids
-              iptblId, uptblId :: Model.TableHandleID
-              iptblId = getTableHandleId (lookUp ptblVar)
+              iptblId, uptblId :: Model.TableID
+              iptblId = getTableId (lookUp ptblVar)
               uptblId = parentTable stats Map.! iptblId
            in stats {
-                parentTable = Map.insert (Model.tableHandleID tbl)
+                parentTable = Map.insert (Model.tableID tbl)
                                          uptblId
                                          (parentTable stats)
               }
@@ -1544,7 +1544,7 @@ updateStats action lookUp modelBefore _modelAfter result =
       where
         -- add the current table to the front of the list of tables, if it's
         -- not the latest one already
-        updateLastActionLog :: GVar Op (WrapTableHandle h IO k v blob) -> Stats
+        updateLastActionLog :: GVar Op (WrapTable h IO k v blob) -> Stats
         updateLastActionLog tableVar =
           case Map.lookup pthid (dupTableActionLog stats) of
             Just (thid' : _)
@@ -1556,7 +1556,7 @@ updateStats action lookUp modelBefore _modelAfter result =
                                                    (dupTableActionLog stats)
                   }
           where
-            thid  = getTableHandleId (lookUp tableVar)
+            thid  = getTableId (lookUp tableVar)
             pthid = parentTable stats Map.! thid
 
         emptyRange (R.FromToExcluding l u) = l >= u
@@ -1564,9 +1564,9 @@ updateStats action lookUp modelBefore _modelAfter result =
 
     updDupTableActionLog stats = stats
 
-    getTableHandleId :: ModelValue (ModelState h) (WrapTableHandle h IO k v blob)
-                     -> Model.TableHandleID
-    getTableHandleId (MTableHandle th) = Model.tableHandleID th
+    getTableId :: ModelValue (ModelState h) (WrapTable h IO k v blob)
+                     -> Model.TableID
+    getTableId (MTable t) = Model.tableID t
 
 -- | Tags for every step
 data Tag =
@@ -1649,15 +1649,15 @@ data FinalTag =
   | NumLookupsFound String
     -- | Total number of lookup results that were 'SUT.FoundWithBlob'
   | NumLookupsFoundWithBlob String
-    -- | Number of 'Class.Insert's succesfully submitted to a table handle
+    -- | Number of 'Class.Insert's succesfully submitted to a table
     -- (this includes submissions through both 'Class.updates' and
     -- 'Class.inserts')
   | NumInserts String
     -- | Number of 'Class.InsertWithBlob's succesfully submitted to a table
-    -- handle (this includes submissions through both 'Class.updates' and
+    -- (this includes submissions through both 'Class.updates' and
     -- 'Class.inserts')
   | NumInsertsWithBlobs String
-    -- | Number of 'Class.Delete's succesfully submitted to a table handle
+    -- | Number of 'Class.Delete's succesfully submitted to a table
     -- (this includes submissions through both 'Class.updates' and
     -- 'Class.deletes')
   | NumDeletes String
@@ -1669,7 +1669,7 @@ data FinalTag =
   | ActionFail String Model.Err
     -- | Total number of flushes
   | NumFlushes String -- TODO: implement
-    -- | Number of table handles created (new, open or duplicate)
+    -- | Number of tables created (new, open or duplicate)
   | NumTables String
     -- | Number of actions on each table
   | NumTableActions String
@@ -1737,9 +1737,9 @@ tagFinalState' (getModel -> ModelState finalState finalStats) = concat [
 
     tagTableSizes =
         [ ("Table sizes", [ TableSize (showPowersOf 2 size) ])
-        | let openSizes, closedSizes :: Map Model.TableHandleID Int
+        | let openSizes, closedSizes :: Map Model.TableID Int
               openSizes   = Model.withSomeTable Model.size . snd <$>
-                              Model.tableHandles finalState
+                              Model.tables finalState
               closedSizes = closedTableSizes finalStats
         , size <- Map.elems (openSizes `Map.union` closedSizes)
         ]

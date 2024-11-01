@@ -82,7 +82,7 @@ instance IOLike IO
   Sessions
 -------------------------------------------------------------------------------}
 
--- | A session provides context that is shared across multiple table handles.
+-- | A session provides context that is shared across multiple tables.
 --
 -- Sessions are needed to support sharing between multiple table instances.
 -- Sharing occurs when tables are duplicated using 'duplicate', or when tables
@@ -171,8 +171,8 @@ openSession tr hfs hbio dir = Internal.Session' <$> Internal.openSession tr hfs 
 -- | Close the table session. 'closeSession' is idempotent. All subsequent
 -- operations on the session or the tables within it will throw an exception.
 --
--- This also closes any open table handles and cursors in the session. It would
--- typically be good practice however to close all table handles first rather
+-- This also closes any open tables and cursors in the session. It would
+-- typically be good practice however to close all tables first rather
 -- than relying on this for cleanup.
 --
 -- Closing a table session allows the session to be opened again elsewhere, for
@@ -242,12 +242,12 @@ listSnapshots (Internal.Session' sesh) = Internal.listSnapshots sesh
 --
 -- Though blob references are handle-like, they /do not/ keep files open. As
 -- such, when a blob reference is returned by a lookup, modifying the
--- corresponding table handle, cursor, or session /may/ cause the blob reference
+-- corresponding table, cursor, or session /may/ cause the blob reference
 -- to be invalidated (i.e.., the blob has gone missing because the blob file was
 -- removed). These operations include:
 --
 -- * Updates (e.g., inserts, deletes, mupserts)
--- * Closing table handles
+-- * Closing tables
 -- * Closing cursors
 -- * Closing sessions
 --
@@ -256,7 +256,7 @@ listSnapshots (Internal.Session' sesh) = Internal.listSnapshots sesh
 -- do /not/ invalidate blob references. These operations do not modify the
 -- logical contents or state of a table.
 --
--- [Blob reference validity] as long as the table handle or cursor that the blob
+-- [Blob reference validity] as long as the table or cursor that the blob
 -- reference originated from is not updated or closed, the blob reference will
 -- be valid.
 --
