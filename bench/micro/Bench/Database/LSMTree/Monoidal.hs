@@ -240,16 +240,16 @@ mkNormalTable ::
   -> FS.HasBlockIO IO FS.HandleIO
   -> Normal.TableConfig
   -> IO ( Normal.Session IO
-        , Normal.TableHandle IO K V B
+        , Normal.Table IO K V B
         )
 mkNormalTable hfs hbio conf = do
     sesh <- Normal.openSession nullTracer hfs hbio (FS.mkFsPath [])
-    th <- Normal.new sesh conf
-    pure (sesh, th)
+    t <- Normal.new sesh conf
+    pure (sesh, t)
 
 cleanupNormalTable ::
      ( Normal.Session IO
-     , Normal.TableHandle IO K V B
+     , Normal.Table IO K V B
      )
   -> IO ()
 cleanupNormalTable (s, t) = do
@@ -261,16 +261,16 @@ mkMonoidalTable ::
   -> FS.HasBlockIO IO FS.HandleIO
   -> Monoidal.TableConfig
   -> IO ( Monoidal.Session IO
-        , Monoidal.TableHandle IO K V
+        , Monoidal.Table IO K V
         )
 mkMonoidalTable hfs hbio conf = do
     sesh <- Monoidal.openSession nullTracer hfs hbio (FS.mkFsPath [])
-    th <- Monoidal.new sesh conf
-    pure (sesh, th)
+    t <- Monoidal.new sesh conf
+    pure (sesh, t)
 
 cleanupMonoidalTable ::
      ( Monoidal.Session IO
-     , Monoidal.TableHandle IO K V
+     , Monoidal.Table IO K V
      )
   -> IO ()
 cleanupMonoidalTable (s, t) = do

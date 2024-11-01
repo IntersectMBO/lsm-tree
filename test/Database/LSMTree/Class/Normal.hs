@@ -8,7 +8,7 @@ module Database.LSMTree.Class.Normal (
   , IsSession (..)
   , SessionArgs (..)
   , withSession
-  , IsTableHandle (..)
+  , IsTable (..)
   , withTableNew
   , withTableOpen
   , withTableDuplicate
@@ -65,10 +65,10 @@ class IsSession s where
 withSession :: (IOLike m, IsSession s) => SessionArgs s m -> (s m -> m a) -> m a
 withSession seshArgs = bracket (openSession seshArgs) closeSession
 
--- | Class abstracting over table handle operations.
+-- | Class abstracting over table operations.
 --
-type IsTableHandle :: ((Type -> Type) -> Type -> Type -> Type -> Type) -> Constraint
-class (IsSession (Session h)) => IsTableHandle h where
+type IsTable :: ((Type -> Type) -> Type -> Type -> Type -> Type) -> Constraint
+class (IsSession (Session h)) => IsTable h where
     type Session h :: (Type -> Type) -> Type
     type TableConfig h :: Type
     type BlobRef h :: (Type -> Type) -> Type -> Type
@@ -213,7 +213,7 @@ class (IsSession (Session h)) => IsTableHandle h where
 
 withTableNew :: forall h m k v blob a.
     ( IOLike m
-    , IsTableHandle h
+    , IsTable h
     , C k v blob
     )
   => Session h m
@@ -223,7 +223,7 @@ withTableNew :: forall h m k v blob a.
 withTableNew sesh conf = bracket (new sesh conf) close
 
 withTableOpen :: forall h m k v blob a.
-     ( IOLike m, IsTableHandle h, Labellable (k, v, blob)
+     ( IOLike m, IsTable h, Labellable (k, v, blob)
      , SerialiseKey k, SerialiseValue v, SerialiseValue blob
      , C k v blob
      )
@@ -235,7 +235,7 @@ withTableOpen sesh snap = bracket (open sesh snap) close
 
 withTableDuplicate :: forall h m k v blob a.
      ( IOLike m
-     , IsTableHandle h
+     , IsTable h
      , C k v blob
      )
   => h m k v blob
@@ -245,7 +245,7 @@ withTableDuplicate table = bracket (duplicate table) close
 
 withCursor :: forall h m k v blob a.
      ( IOLike m
-     , IsTableHandle h
+     , IsTable h
      , SerialiseKey k
      , C k v blob
      )
@@ -272,11 +272,11 @@ instance IsSession R.Session where
     deleteSnapshot = R.deleteSnapshot
     listSnapshots = R.listSnapshots
 
-instance IsTableHandle R.TableHandle where
-    type Session R.TableHandle = R.Session
-    type TableConfig R.TableHandle = R.TableConfig
-    type BlobRef R.TableHandle = R.BlobRef
-    type Cursor R.TableHandle = R.Cursor
+instance IsTable R.Table where
+    type Session R.Table = R.Session
+    type TableConfig R.Table = R.TableConfig
+    type BlobRef R.Table = R.BlobRef
+    type Cursor R.Table = R.Cursor
 
     new = R.new
     close = R.close

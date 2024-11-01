@@ -36,7 +36,7 @@ tests = testGroup "Test.Database.LSMTree.Class.Normal"
     , testGroup "Real"  $ zipWith ($) (props tbl2) expectFailures2
     ]
   where
-    tbl1 :: Proxy ModelIO.TableHandle
+    tbl1 :: Proxy ModelIO.Table
     tbl1 = Setup {
           testTableConfig = ModelIO.TableConfig
         , testWithSessionArgs = \action -> action ModelIO.NoSessionArgs
@@ -44,7 +44,7 @@ tests = testGroup "Test.Database.LSMTree.Class.Normal"
 
     expectFailures1 = repeat False
 
-    tbl2 :: Proxy R.TableHandle
+    tbl2 :: Proxy R.Table
     tbl2 = Setup {
           testTableConfig = R.defaultTableConfig {
               R.confWriteBufferAlloc = R.AllocNumEntries (R.NumEntries 3)
@@ -108,9 +108,9 @@ data Setup h m = Setup {
   , testWithSessionArgs :: forall a. (SessionArgs (Session h) m -> m a) -> m a
   }
 
--- | create session, table handle, and populate it with some data.
+-- | create session, table, and populate it with some data.
 withTableNew :: forall h m a.
-     ( IsTableHandle h
+     ( IsTable h
      , IOLike m
      )
   => Setup h m
@@ -128,7 +128,7 @@ withTableNew Setup{..} ups action =
 --
 -- Like 'partsOf' in @lens@ this uses state monad.
 retrieveBlobsTrav ::
-     ( IsTableHandle h
+     ( IsTable h
      , IOLike m
      , SerialiseValue blob
      , Traversable t
@@ -146,7 +146,7 @@ retrieveBlobsTrav hdl ses brefs = do
     un (x:xs) = (x, xs)
 
 lookupsWithBlobs :: forall h m k v blob.
-     ( IsTableHandle h
+     ( IsTable h
      , IOLike m
      , SerialiseKey k
      , SerialiseValue v
@@ -162,7 +162,7 @@ lookupsWithBlobs hdl ses ks = do
     getCompose <$> retrieveBlobsTrav (Proxy.Proxy @h) ses (Compose res)
 
 rangeLookupWithBlobs :: forall h m k v blob.
-     ( IsTableHandle h
+     ( IsTable h
      , IOLike m
      , SerialiseKey k
      , SerialiseValue v
@@ -178,7 +178,7 @@ rangeLookupWithBlobs hdl ses r = do
     getCompose <$> retrieveBlobsTrav (Proxy.Proxy @h) ses (Compose res)
 
 readCursorWithBlobs :: forall h m k v blob proxy.
-     ( IsTableHandle h
+     ( IsTable h
      , IOLike m
      , SerialiseKey k
      , SerialiseValue v
@@ -195,7 +195,7 @@ readCursorWithBlobs hdl ses cursor n = do
     getCompose <$> retrieveBlobsTrav hdl ses (Compose res)
 
 readCursorAllWithBlobs :: forall h m k v blob proxy.
-     ( IsTableHandle h
+     ( IsTable h
      , IOLike m
      , SerialiseKey k
      , SerialiseValue v
@@ -227,7 +227,7 @@ getCursorReadSchedule = map getPositive . getInfiniteList
 
 -- | You can lookup what you inserted.
 prop_lookupInsert ::
-     IsTableHandle h
+     IsTable h
   => Proxy h -> [(Key, Update Value Blob)]
   -> Key -> Value -> Property
 prop_lookupInsert h ups k v = ioProperty $ do
@@ -241,7 +241,7 @@ prop_lookupInsert h ups k v = ioProperty $ do
 
 -- | Insert doesn't change the lookup results of other keys.
 prop_lookupInsertElse ::
-     IsTableHandle h
+     IsTable h
   => Proxy h -> [(Key, Update Value Blob)]
   -> Key  -> Value -> [Key] -> Property
 prop_lookupInsertElse h ups k v testKeys = ioProperty $ do
@@ -256,7 +256,7 @@ prop_lookupInsertElse h ups k v testKeys = ioProperty $ do
 
 -- | You cannot lookup what you have just deleted
 prop_lookupDelete ::
-     IsTableHandle h
+     IsTable h
   => Proxy h -> [(Key, Update Value Blob)]
   -> Key -> Property
 prop_lookupDelete h ups k = ioProperty $ do
@@ -267,7 +267,7 @@ prop_lookupDelete h ups k = ioProperty $ do
 
 -- | Delete doesn't change the lookup results of other keys
 prop_lookupDeleteElse ::
-     IsTableHandle h
+     IsTable h
   => Proxy h -> [(Key, Update Value Blob)]
   -> Key  -> [Key] -> Property
 prop_lookupDeleteElse h ups k testKeys = ioProperty $ do
@@ -282,7 +282,7 @@ prop_lookupDeleteElse h ups k testKeys = ioProperty $ do
 
 -- | Last insert wins.
 prop_insertInsert ::
-     IsTableHandle h
+     IsTable h
   => Proxy h -> [(Key, Update Value Blob)]
   -> Key -> Value -> Value -> Property
 prop_insertInsert h ups k v1 v2 = ioProperty $ do
@@ -293,7 +293,7 @@ prop_insertInsert h ups k v1 v2 = ioProperty $ do
 
 -- | Inserts with different keys don't interfere.
 prop_insertCommutes ::
-       IsTableHandle h
+       IsTable h
     => Proxy h -> [(Key, Update Value Blob)]
     -> Key -> Value -> Key -> Value -> Property
 prop_insertCommutes h ups k1 v1 k2 v2 = k1 /= k2 ==> ioProperty do
@@ -309,7 +309,7 @@ prop_insertCommutes h ups k1 v1 k2 v2 = k1 /= k2 ==> ioProperty do
 
 -- | Cursor read results are sorted by key.
 prop_readCursorSorted ::
-     forall h. IsTableHandle h
+     forall h. IsTable h
   => Proxy h -> [(Key, Update Value Blob)]
   -> Maybe Key
   -> CursorReadSchedule
@@ -323,7 +323,7 @@ prop_readCursorSorted h ups offset ns = ioProperty $ do
 
 -- | Cursor reads return the requested number of results, until the end.
 prop_readCursorNumResults ::
-     forall h. IsTableHandle h
+     forall h. IsTable h
   => Proxy h -> [(Key, Update Value Blob)]
   -> Maybe Key
   -> CursorReadSchedule
@@ -340,7 +340,7 @@ prop_readCursorNumResults h ups offset ns = ioProperty $ do
 
 -- | You can read what you inserted.
 prop_readCursorInsert ::
-     forall h. IsTableHandle h
+     forall h. IsTable h
   => Proxy h -> [(Key, Update Value Blob)]
   -> CursorReadSchedule
   -> Key -> Value -> Property
@@ -354,7 +354,7 @@ prop_readCursorInsert h ups ns k v = ioProperty $ do
 
 -- | You can't read what you deleted.
 prop_readCursorDelete ::
-     forall h. IsTableHandle h
+     forall h. IsTable h
   => Proxy h -> [(Key, Update Value Blob)]
   -> CursorReadSchedule
   -> Key -> Property
@@ -367,7 +367,7 @@ prop_readCursorDelete h ups ns k = ioProperty $ do
 
 -- | Updates don't change the cursor read results of other keys.
 prop_readCursorDeleteElse ::
-     forall h. IsTableHandle h
+     forall h. IsTable h
   => Proxy h -> [(Key, Update Value Blob)]
   -> Maybe Key
   -> CursorReadSchedule
@@ -385,7 +385,7 @@ prop_readCursorDeleteElse h ups offset ns ups2 = ioProperty $ do
 
 -- | Updates don't affect previously created cursors.
 prop_readCursorStableView ::
-     forall h. IsTableHandle h
+     forall h. IsTable h
   => Proxy h -> [(Key, Update Value Blob)]
   -> Maybe Key
   -> CursorReadSchedule
@@ -401,7 +401,7 @@ prop_readCursorStableView h ups offset ns ups2 = ioProperty $ do
 
 -- | Creating a cursor at an offset simply skips a prefix.
 prop_readCursorOffset ::
-     forall h. IsTableHandle h
+     forall h. IsTable h
   => Proxy h -> [(Key, Update Value Blob)]
   -> Key
   -> CursorReadSchedule
@@ -434,7 +434,7 @@ queryResultFromLookup k = \case
 
 -- | A range lookup behaves like many point lookups.
 prop_lookupRangeLikeLookups ::
-     IsTableHandle h
+     IsTable h
   => Proxy h -> [(Key, Update Value Blob)]
   -> Range Key
   -> Property
@@ -453,7 +453,7 @@ prop_lookupRangeLikeLookups h ups r = ioProperty $ do
 
 -- | Last insert wins.
 prop_insertLookupRange ::
-     IsTableHandle h
+     IsTable h
   => Proxy h -> [(Key, Update Value Blob)]
   -> Key -> Value -> Range Key  -> Property
 prop_insertLookupRange h ups k v r = ioProperty $ do
@@ -484,7 +484,7 @@ prop_insertLookupRange h ups k v r = ioProperty $ do
 
 -- | You can lookup what you inserted.
 prop_lookupInsertBlob ::
-     IsTableHandle h
+     IsTable h
   => Proxy h -> [(Key, Update Value Blob)]
   -> Key  -> Value -> Blob -> Property
 prop_lookupInsertBlob h ups k v blob = ioProperty $ do
@@ -498,7 +498,7 @@ prop_lookupInsertBlob h ups k v blob = ioProperty $ do
 
 -- | Last insert wins.
 prop_insertInsertBlob ::
-     IsTableHandle h
+     IsTable h
   => Proxy h -> [(Key, Update Value Blob)]
   -> Key -> Value -> Value -> Maybe Blob -> Maybe Blob -> Property
 prop_insertInsertBlob h ups k v1 v2 mblob1 mblob2 = ioProperty $ do
@@ -511,7 +511,7 @@ prop_insertInsertBlob h ups k v1 v2 mblob1 mblob2 = ioProperty $ do
 
 -- | Inserts with different keys don't interfere.
 prop_insertCommutesBlob ::
-       IsTableHandle h
+       IsTable h
     => Proxy h -> [(Key, Update Value Blob)]
     -> Key -> Value -> Maybe Blob
     -> Key -> Value -> Maybe Blob -> Property
@@ -528,7 +528,7 @@ prop_insertCommutesBlob h ups k1 v1 mblob1 k2 v2 mblob2 = k1 /= k2 ==> ioPropert
 
 -- | A blob reference may be invalidated by an update.
 prop_updatesMayInvalidateBlobRefs ::
-     forall h. IsTableHandle h
+     forall h. IsTable h
   => Proxy h -> [(Key, Update Value Blob)]
   -> Key -> Value -> Blob
   -> [(Key, Update Value Blob)]
@@ -569,7 +569,7 @@ prop_updatesMayInvalidateBlobRefs h ups k1 v1 blob1 ups' = monadicIO $ do
 
 -- changes to handle would not change the snapshot
 prop_snapshotNoChanges :: forall h.
-     IsTableHandle h
+     IsTable h
     => Proxy h -> [(Key, Update Value Blob)]
     -> [(Key, Update Value Blob)] -> [Key] -> Property
 prop_snapshotNoChanges h ups ups' testKeys = ioProperty $ do
@@ -591,7 +591,7 @@ prop_snapshotNoChanges h ups ups' testKeys = ioProperty $ do
 -- same snapshot may be opened multiple times,
 -- and the handles are separate.
 prop_snapshotNoChanges2 :: forall h.
-     IsTableHandle h
+     IsTable h
     => Proxy h -> [(Key, Update Value Blob)]
     -> [(Key, Update Value Blob)] -> [Key] -> Property
 prop_snapshotNoChanges2 h ups ups' testKeys = ioProperty $ do
@@ -609,15 +609,15 @@ prop_snapshotNoChanges2 h ups ups' testKeys = ioProperty $ do
           return $ res == res'
 
 -------------------------------------------------------------------------------
--- implement classic QC tests for multiple writable table handles
+-- implement classic QC tests for multiple writable tables
 --  - results of insert/delete, monoidal update, lookups, and range lookups should
---    be equal if applied to two duplicated table handles
---  - changes to one handle should not cause any visible changes in any others
+--    be equal if applied to two duplicated tables
+--  - changes to one table should not cause any visible changes in any others
 -------------------------------------------------------------------------------
 
 -- | Last insert wins.
 prop_dupInsertInsert ::
-     IsTableHandle h
+     IsTable h
   => Proxy h -> [(Key, Update Value Blob)]
   -> Key -> Value -> Value -> [Key] -> Property
 prop_dupInsertInsert h ups k v1 v2 testKeys = ioProperty $ do
@@ -633,7 +633,7 @@ prop_dupInsertInsert h ups k v1 v2 testKeys = ioProperty $ do
 
 -- | Different key inserts commute.
 prop_dupInsertCommutes ::
-     IsTableHandle h
+     IsTable h
     => Proxy h -> [(Key, Update Value Blob)]
     -> Key -> Value -> Key -> Value -> [Key] -> Property
 prop_dupInsertCommutes h ups k1 v1 k2 v2 testKeys = k1 /= k2 ==> ioProperty do
@@ -649,7 +649,7 @@ prop_dupInsertCommutes h ups k1 v1 k2 v2 testKeys = k1 /= k2 ==> ioProperty do
 
 -- changes to one handle should not cause any visible changes in any others
 prop_dupNoChanges ::
-     IsTableHandle h
+     IsTable h
     => Proxy h -> [(Key, Update Value Blob)]
     -> [(Key, Update Value Blob)] -> [Key] -> Property
 prop_dupNoChanges h ups ups' testKeys = ioProperty $ do

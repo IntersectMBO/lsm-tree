@@ -172,8 +172,8 @@ properties. In particular initially we will support a compact index type.
 For more general purpose applications one can foresee the need for a more
 ordinary index type.
 
-The type of index in use is metadata that must be known for the whole LSM table
-handle. It does not vary per run.
+The type of index in use is metadata that must be known for the whole LSM table.
+It does not vary per run.
 
 Independently of the concrete index serialization format, the type and the
 version of the format are stored at the beginning as a 32-bit number called the

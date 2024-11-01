@@ -38,8 +38,8 @@ module Database.LSMTree.Monoidal (
   , openSession
   , closeSession
 
-    -- * Table handles
-  , TableHandle
+    -- * Table
+  , Table
   , Common.TableConfig (..)
   , Common.defaultTableConfig
   , Common.SizeRatio (..)
@@ -155,16 +155,16 @@ import qualified Database.LSMTree.Internal.Vector as V
 -- | A handle to an on-disk key\/value table.
 --
 -- An LSMT table is an individual key value mapping with in-memory and on-disk
--- parts. A table handle is the object\/reference by which an in-use LSM table
--- will be operated upon. In this API it identifies a single mutable instance of
--- an LSM table. The multiple-handles feature allows for there to may be many
--- such instances in use at once.
-type TableHandle = Internal.MonoidalTable
+-- parts. A table is the object\/reference by which an in-use LSM table will be
+-- operated upon. In this API it identifies a single mutable instance of an LSM
+-- table. The duplicate tables feature allows for there to may be many such
+-- instances in use at once.
+type Table = Internal.MonoidalTable
 
 {-# SPECIALISE withTable ::
      Session IO
   -> Common.TableConfig
-  -> (TableHandle IO k v -> IO a)
+  -> (Table IO k v -> IO a)
   -> IO a #-}
 -- | (Asynchronous) exception-safe, bracketed opening and closing of a table.
 --
@@ -174,7 +174,7 @@ withTable :: forall m k v a.
      IOLike m
   => Session m
   -> Common.TableConfig
-  -> (TableHandle m k v -> m a)
+  -> (Table m k v -> m a)
   -> m a
 withTable (Internal.Session' sesh) conf action =
     Internal.withTable sesh conf $
@@ -183,33 +183,33 @@ withTable (Internal.Session' sesh) conf action =
 {-# SPECIALISE new ::
      Session IO
   -> Common.TableConfig
-  -> IO (TableHandle IO k v) #-}
--- | Create a new empty table, returning a fresh table handle.
+  -> IO (Table IO k v) #-}
+-- | Create a new empty table, returning a fresh table.
 --
--- NOTE: table handles hold open resources (such as open files) and should be
+-- NOTE: tables hold open resources (such as open files) and should be
 -- closed using 'close' as soon as they are no longer used.
 --
 new :: forall m k v.
      IOLike m
   => Session m
   -> Common.TableConfig
-  -> m (TableHandle m k v)
+  -> m (Table m k v)
 new (Internal.Session' sesh) conf = Internal.MonoidalTable <$> Internal.new sesh conf
 
 {-# SPECIALISE close ::
-     TableHandle IO k v
+     Table IO k v
   -> IO () #-}
--- | Close a table handle. 'close' is idempotent. All operations on a closed
+-- | Close a table. 'close' is idempotent. All operations on a closed
 -- handle will throw an exception.
 --
 -- Any on-disk files and in-memory data that are no longer referenced after
--- closing the table handle are lost forever. Use 'Snapshot's to ensure data is
+-- closing the table are lost forever. Use 'Snapshot's to ensure data is
 -- not lost.
 close :: forall m k v.
      IOLike m
-  => TableHandle m k v
+  => Table m k v
   -> m ()
-close (Internal.MonoidalTable th) = Internal.close th
+close (Internal.MonoidalTable t) = Internal.close t
 
 {-------------------------------------------------------------------------------
   Table queries
@@ -224,7 +224,7 @@ data LookupResult v =
 {-# SPECIALISE lookups ::
      (SerialiseKey k, SerialiseValue v, ResolveValue v)
   => V.Vector k
-  -> TableHandle IO k v
+  -> Table IO k v
   -> IO (V.Vector (LookupResult v)) #-}
 {-# INLINEABLE lookups #-}
 -- | Perform a batch of lookups.
@@ -233,14 +233,14 @@ data LookupResult v =
 lookups :: forall m k v.
      (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
   => V.Vector k
-  -> TableHandle m k v
+  -> Table m k v
   -> m (V.Vector (LookupResult v))
-lookups ks (Internal.MonoidalTable th) =
+lookups ks (Internal.MonoidalTable t) =
     V.map toLookupResult <$>
     Internal.lookups
       (resolve @v Proxy)
       (V.map Internal.serialiseKey ks)
-      th
+      t
   where
     toLookupResult (Just e) = case e of
       Entry.Insert v           -> Found (Internal.deserialiseValue v)
@@ -257,7 +257,7 @@ data QueryResult k v =
 {-# SPECIALISE rangeLookup ::
      (SerialiseKey k, SerialiseValue v, ResolveValue v)
   => Range k
-  -> TableHandle IO k v
+  -> Table IO k v
   -> IO (V.Vector (QueryResult k v)) #-}
 -- | Perform a range lookup.
 --
@@ -265,10 +265,10 @@ data QueryResult k v =
 rangeLookup :: forall m k v.
      (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
   => Range k
-  -> TableHandle m k v
+  -> Table m k v
   -> m (V.Vector (QueryResult k v))
-rangeLookup range (Internal.MonoidalTable th) =
-    Internal.rangeLookup (resolve @v Proxy)(Internal.serialiseKey <$> range) th $ \k v mblob ->
+rangeLookup range (Internal.MonoidalTable t) =
+    Internal.rangeLookup (resolve @v Proxy)(Internal.serialiseKey <$> range) t $ \k v mblob ->
       assert (null mblob) $
         FoundInQuery (Internal.deserialiseKey k) (Internal.deserialiseValue v)
 
@@ -287,7 +287,7 @@ type Cursor :: (Type -> Type) -> Type -> Type -> Type
 type Cursor = Internal.MonoidalCursor
 
 {-# SPECIALISE withCursor ::
-     TableHandle IO k v
+     Table IO k v
   -> (Cursor IO k v -> IO a)
   -> IO a #-}
 -- | (Asynchronous) exception-safe, bracketed opening and closing of a cursor.
@@ -296,16 +296,16 @@ type Cursor = Internal.MonoidalCursor
 -- and 'closeCursor'.
 withCursor :: forall m k v a.
      IOLike m
-  => TableHandle m k v
+  => Table m k v
   -> (Cursor m k v -> m a)
   -> m a
-withCursor (Internal.MonoidalTable th) action =
-    Internal.withCursor Internal.NoOffsetKey th (action . Internal.MonoidalCursor)
+withCursor (Internal.MonoidalTable t) action =
+    Internal.withCursor Internal.NoOffsetKey t (action . Internal.MonoidalCursor)
 
 {-# SPECIALISE withCursorAtOffset ::
      SerialiseKey k
   => k
-  -> TableHandle IO k v
+  -> Table IO k v
   -> (Cursor IO k v -> IO a)
   -> IO a #-}
 -- | A variant of 'withCursor' that allows initialising the cursor at an offset
@@ -318,15 +318,15 @@ withCursor (Internal.MonoidalTable th) action =
 withCursorAtOffset :: forall m k v a.
      (IOLike m, SerialiseKey k)
   => k
-  -> TableHandle m k v
+  -> Table m k v
   -> (Cursor m k v -> m a)
   -> m a
-withCursorAtOffset offset (Internal.MonoidalTable th) action =
-    Internal.withCursor (Internal.OffsetKey (Internal.serialiseKey offset)) th $
+withCursorAtOffset offset (Internal.MonoidalTable t) action =
+    Internal.withCursor (Internal.OffsetKey (Internal.serialiseKey offset)) t $
       action . Internal.MonoidalCursor
 
 {-# SPECIALISE newCursor ::
-     TableHandle IO k v
+     Table IO k v
   -> IO (Cursor IO k v) #-}
 -- | Create a new cursor to read from a given table. Future updates to the table
 -- will not be reflected in the cursor. The cursor starts at the beginning, i.e.
@@ -338,15 +338,15 @@ withCursorAtOffset offset (Internal.MonoidalTable th) action =
 -- using 'close' as soon as they are no longer used.
 newCursor :: forall m k v.
      IOLike m
-  => TableHandle m k v
+  => Table m k v
   -> m (Cursor m k v)
-newCursor (Internal.MonoidalTable th) =
-    Internal.MonoidalCursor <$!> Internal.newCursor Internal.NoOffsetKey th
+newCursor (Internal.MonoidalTable t) =
+    Internal.MonoidalCursor <$!> Internal.newCursor Internal.NoOffsetKey t
 
 {-# SPECIALISE newCursorAtOffset ::
      SerialiseKey k
   => k
-  -> TableHandle IO k v
+  -> Table IO k v
   -> IO (Cursor IO k v) #-}
 -- | A variant of 'newCursor' that allows initialising the cursor at an offset
 -- within the table such that the first entry the cursor returns will be the
@@ -358,11 +358,11 @@ newCursor (Internal.MonoidalTable th) =
 newCursorAtOffset :: forall m k v.
      (IOLike m, SerialiseKey k)
   => k
-  -> TableHandle m k v
+  -> Table m k v
   -> m (Cursor m k v)
-newCursorAtOffset offset (Internal.MonoidalTable th) =
+newCursorAtOffset offset (Internal.MonoidalTable t) =
     Internal.MonoidalCursor <$!>
-      Internal.newCursor (Internal.OffsetKey (Internal.serialiseKey offset)) th
+      Internal.newCursor (Internal.OffsetKey (Internal.serialiseKey offset)) t
 
 {-# SPECIALISE closeCursor ::
      Cursor IO k v
@@ -426,7 +426,7 @@ instance NFData v => NFData (Update v) where
 {-# SPECIALISE updates ::
      (SerialiseKey k, SerialiseValue v, ResolveValue v)
   => V.Vector (k, Update v)
-  -> TableHandle IO k v
+  -> Table IO k v
   -> IO () #-}
 -- | Perform a mixed batch of inserts, deletes and monoidal upserts.
 --
@@ -441,13 +441,13 @@ updates :: forall m k v.
      , ResolveValue v
      )
   => V.Vector (k, Update v)
-  -> TableHandle m k v
+  -> Table m k v
   -> m ()
-updates es (Internal.MonoidalTable th) = do
+updates es (Internal.MonoidalTable t) = do
     Internal.updates
       (resolve @v Proxy)
       (V.mapStrict serialiseEntry es)
-      th
+      t
   where
     serialiseEntry = bimap Internal.serialiseKey serialiseOp
     serialiseOp = first Internal.serialiseValue . updateToEntry
@@ -461,7 +461,7 @@ updates es (Internal.MonoidalTable th) = do
 {-# SPECIALISE inserts ::
      (SerialiseKey k, SerialiseValue v, ResolveValue v)
   => V.Vector (k, v)
-  -> TableHandle IO k v
+  -> Table IO k v
   -> IO () #-}
 -- | Perform a batch of inserts.
 --
@@ -473,14 +473,14 @@ inserts :: forall m k v.
      , ResolveValue v
      )
   => V.Vector (k, v)
-  -> TableHandle m k v
+  -> Table m k v
   -> m ()
 inserts = updates . fmap (second Insert)
 
 {-# SPECIALISE deletes ::
      (SerialiseKey k, SerialiseValue v, ResolveValue v)
   => V.Vector k
-  -> TableHandle IO k v
+  -> Table IO k v
   -> IO () #-}
 -- | Perform a batch of deletes.
 --
@@ -492,14 +492,14 @@ deletes :: forall m k v.
      , ResolveValue v
      )
   => V.Vector k
-  -> TableHandle m k v
+  -> Table m k v
   -> m ()
 deletes = updates . fmap (,Delete)
 
 {-# SPECIALISE mupserts ::
      (SerialiseKey k, SerialiseValue v, ResolveValue v)
   => V.Vector (k, v)
-  -> TableHandle IO k v
+  -> Table IO k v
   -> IO () #-}
 -- | Perform a batch of monoidal upserts.
 --
@@ -511,7 +511,7 @@ mupserts :: forall m k v.
      , ResolveValue v
      )
   => V.Vector (k, v)
-  -> TableHandle m k v
+  -> Table m k v
   -> m ()
 mupserts = updates . fmap (second Mupsert)
 
@@ -522,7 +522,7 @@ mupserts = updates . fmap (second Mupsert)
 {-# SPECIALISE snapshot ::
      (SerialiseKey k, SerialiseValue v, ResolveValue v, Common.Labellable (k, v))
   => SnapshotName
-  -> TableHandle IO k v
+  -> Table IO k v
   -> IO () #-}
 -- | Make the current value of a table durable on-disk by taking a snapshot and
 -- giving the snapshot a name. This is the __only__ mechanism to make a table
@@ -535,7 +535,7 @@ mupserts = updates . fmap (second Mupsert)
 -- The names correspond to disk files, which imposes some constraints on length
 -- and what characters can be used.
 --
--- Snapshotting does not close the table handle.
+-- Snapshotting does not close the table.
 --
 -- Taking a snapshot is /relatively/ cheap, but it is not so cheap that one can
 -- use it after every operation. In the implementation, it must at least flush
@@ -554,10 +554,10 @@ snapshot :: forall m k v.
      , Common.Labellable (k, v)
      )
   => SnapshotName
-  -> TableHandle m k v
+  -> Table m k v
   -> m ()
-snapshot snap (Internal.MonoidalTable th) =
-    void $ Internal.snapshot (resolve @v Proxy) snap label th
+snapshot snap (Internal.MonoidalTable t) =
+    void $ Internal.snapshot (resolve @v Proxy) snap label t
   where
     -- to ensure we don't open a monoidal table as normal later
     label = Common.makeSnapshotLabel (Proxy @(k, v)) <> " (monoidal)"
@@ -567,10 +567,10 @@ snapshot snap (Internal.MonoidalTable th) =
   => Session IO
   -> Common.TableConfigOverride
   -> SnapshotName
-  -> IO (TableHandle IO k v) #-}
--- | Open a table from a named snapshot, returning a new table handle.
+  -> IO (Table IO k v) #-}
+-- | Open a table from a named snapshot, returning a new table.
 --
--- NOTE: close table handles using 'close' as soon as they are
+-- NOTE: close tables using 'close' as soon as they are
 -- unused.
 --
 -- Exceptions:
@@ -582,13 +582,13 @@ snapshot snap (Internal.MonoidalTable th) =
 --
 -- @
 -- example session = do
---   th <- 'new' \@IO \@Int \@Int \@Int session _
---   'snapshot' "intTable" th
+--   t <- 'new' \@IO \@Int \@Int \@Int session _
+--   'snapshot' "intTable" t
 --   'open' \@IO \@Bool \@Bool \@Bool session "intTable"
 -- @
 --
 -- TOREMOVE: before snapshots are implemented, the snapshot name should be ignored.
--- Instead, this function should open a table handle from files that exist in
+-- Instead, this function should open a table from files that exist in
 -- the session's directory.
 open :: forall m k v.
      ( IOLike m
@@ -600,7 +600,7 @@ open :: forall m k v.
   => Session m
   -> Common.TableConfigOverride -- ^ Optional config override
   -> SnapshotName
-  -> m (TableHandle m k v)
+  -> m (Table m k v)
 open (Internal.Session' sesh) override snap =
     Internal.MonoidalTable <$> Internal.open sesh label override snap (resolve @v Proxy)
   where
@@ -608,16 +608,16 @@ open (Internal.Session' sesh) override snap =
     label = Common.makeSnapshotLabel (Proxy @(k, v)) <> " (monoidal)"
 
 {-------------------------------------------------------------------------------
-  Multiple writable table handles
+  Multiple writable tables
 -------------------------------------------------------------------------------}
 
 {-# SPECIALISE duplicate ::
-     TableHandle IO k v
-  -> IO (TableHandle IO k v) #-}
--- | Create a logically independent duplicate of a table handle. This returns a
--- new table handle.
+     Table IO k v
+  -> IO (Table IO k v) #-}
+-- | Create a logically independent duplicate of a table. This returns a
+-- new table.
 --
--- A table handle and its duplicate are logically independent: changes to one
+-- A table and its duplicate are logically independent: changes to one
 -- are not visible to the other. However, in-memory and on-disk data are
 -- shared internally.
 --
@@ -642,14 +642,14 @@ open (Internal.Session' sesh) override snap =
 -- memory and disk cost will be the same as if each table were entirely
 -- independent.
 --
--- NOTE: duplication create a new table handle, which should be closed when no
+-- NOTE: duplication create a new table, which should be closed when no
 -- longer needed.
 --
 duplicate :: forall m k v.
      IOLike m
-  => TableHandle m k v
-  -> m (TableHandle m k v)
-duplicate (Internal.MonoidalTable th) = Internal.MonoidalTable <$> Internal.duplicate th
+  => Table m k v
+  -> m (Table m k v)
+duplicate (Internal.MonoidalTable t) = Internal.MonoidalTable <$> Internal.duplicate t
 
 {-------------------------------------------------------------------------------
   Merging tables
@@ -657,24 +657,24 @@ duplicate (Internal.MonoidalTable th) = Internal.MonoidalTable <$> Internal.dupl
 
 {-# SPECIALISE merge ::
      ResolveValue v
-  => TableHandle IO k v
-  -> TableHandle IO k v
-  -> IO (TableHandle IO k v) #-}
--- | Merge full tables, creating a new table handle.
+  => Table IO k v
+  -> Table IO k v
+  -> IO (Table IO k v) #-}
+-- | Merge full tables, creating a new table.
 --
 -- Multiple tables of the same type but with different configuration parameters
 -- can live in the same session. However, 'merge' only works for tables that
 -- have the same key\/value types and configuration parameters.
 --
--- NOTE: merging table handles creates a new table handle, but does not close
--- the table handles that were used as inputs.
+-- NOTE: merging tables creates a new table, but does not close
+-- the tables that were used as inputs.
 merge :: forall m k v.
      ( IOLike m
      , ResolveValue v
      )
-  => TableHandle m k v
-  -> TableHandle m k v
-  -> m (TableHandle m k v)
+  => Table m k v
+  -> Table m k v
+  -> m (Table m k v)
 merge = undefined
 
 {-------------------------------------------------------------------------------

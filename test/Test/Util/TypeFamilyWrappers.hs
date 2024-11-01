@@ -10,11 +10,11 @@
 -- * Type family synonyms can not appear in a class head, but type wrappers can.
 --
 -- * Wrappers can be used to direct type family reduction. For an example, see
---   the uses of 'WrapTableHandle' and co in the definition of 'RealizeIOSim',
+--   the uses of 'WrapTable' and co in the definition of 'RealizeIOSim',
 --   which can be found in "Test.Util.Orphans".
 module Test.Util.TypeFamilyWrappers (
     WrapSession (..)
-  , WrapTableHandle (..)
+  , WrapTable (..)
   , WrapCursor (..)
   , WrapBlobRef (..)
   , WrapBlob (..)
@@ -30,11 +30,11 @@ newtype WrapSession h m = WrapSession {
     unwrapSession :: SUT.Class.Session h m
   }
 
-type WrapTableHandle ::
+type WrapTable ::
      ((Type -> Type) -> Type -> Type -> Type -> Type)
   -> (Type -> Type) -> Type -> Type -> Type -> Type
-newtype WrapTableHandle h m k v blob = WrapTableHandle {
-    unwrapTableHandle :: h m k v blob
+newtype WrapTable h m k v blob = WrapTable {
+    unwrapTable :: h m k v blob
   }
   deriving stock (Show, Eq)
 
