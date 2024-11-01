@@ -1,13 +1,13 @@
 {-# LANGUAGE TypeFamilies #-}
 
--- | An instance of `Class.IsTableHandle`, modelling normal (i.e. non-monoidal)
+-- | An instance of `Class.IsTable`, modelling normal (i.e. non-monoidal)
 -- potentially closed sessions in @IO@ by lifting the pure session model from
 -- "Database.LSMTree.Model.Session".
 module Database.LSMTree.Model.IO.Normal (
     Err (..)
   , Session (..)
   , Class.SessionArgs (NoSessionArgs)
-  , TableHandle (..)
+  , Table (..)
   , TableConfig (..)
   , BlobRef (..)
   , Cursor (..)
@@ -27,9 +27,9 @@ import qualified Database.LSMTree.Model.Session as Model
 
 newtype Session m = Session (StrictTVar m (Maybe Model.Model))
 
-data TableHandle m k v blob = TableHandle {
-    _thSession     :: !(Session m)
-  , _thTableHandle :: !(Model.TableHandle k v blob)
+data Table m k v blob = Table {
+    _thSession :: !(Session m)
+  , _thTable   :: !(Model.Table k v blob)
   }
 
 data BlobRef m blob = BlobRef {
@@ -63,33 +63,33 @@ instance Class.IsSession Session where
     deleteSnapshot s x = runInOpenSession s $ Model.deleteSnapshot x
     listSnapshots s = runInOpenSession s $ Model.listSnapshots
 
-instance Class.IsTableHandle TableHandle where
-    type Session TableHandle = Session
-    type TableConfig TableHandle = Model.TableConfig
-    type BlobRef TableHandle = BlobRef
-    type Cursor TableHandle = Cursor
+instance Class.IsTable Table where
+    type Session Table = Session
+    type TableConfig Table = Model.TableConfig
+    type BlobRef Table = BlobRef
+    type Cursor Table = Cursor
 
-    new s x = TableHandle s <$> runInOpenSession s (Model.new x)
-    close (TableHandle s t) = runInOpenSession s (Model.close t)
-    lookups (TableHandle s t) x1 = fmap convLookupResult . fmap (fmap (BlobRef s)) <$>
+    new s x = Table s <$> runInOpenSession s (Model.new x)
+    close (Table s t) = runInOpenSession s (Model.close t)
+    lookups (Table s t) x1 = fmap convLookupResult . fmap (fmap (BlobRef s)) <$>
       runInOpenSession s (Model.lookups x1 t)
-    updates (TableHandle s t) x1 = runInOpenSession s (Model.updates Model.noResolve (fmap (fmap convUpdate) x1) t)
-    inserts (TableHandle s t) x1 = runInOpenSession s (Model.inserts Model.noResolve x1 t)
-    deletes (TableHandle s t) x1 = runInOpenSession s (Model.deletes Model.noResolve x1 t)
+    updates (Table s t) x1 = runInOpenSession s (Model.updates Model.noResolve (fmap (fmap convUpdate) x1) t)
+    inserts (Table s t) x1 = runInOpenSession s (Model.inserts Model.noResolve x1 t)
+    deletes (Table s t) x1 = runInOpenSession s (Model.deletes Model.noResolve x1 t)
 
-    rangeLookup (TableHandle s t) x1 = fmap convQueryResult . fmap (fmap (BlobRef s)) <$>
+    rangeLookup (Table s t) x1 = fmap convQueryResult . fmap (fmap (BlobRef s)) <$>
       runInOpenSession s (Model.rangeLookup x1 t)
     retrieveBlobs _ s x1 = runInOpenSession s (Model.retrieveBlobs (fmap _brBlobRef x1))
 
-    newCursor k (TableHandle s t) = Cursor s <$> runInOpenSession s (Model.newCursor k t)
+    newCursor k (Table s t) = Cursor s <$> runInOpenSession s (Model.newCursor k t)
     closeCursor _ (Cursor s c) = runInOpenSession s (Model.closeCursor c)
     readCursor _ x1 (Cursor s c) = fmap convQueryResult . fmap (fmap (BlobRef s)) <$>
       runInOpenSession s (Model.readCursor x1 c)
 
-    snapshot x1 (TableHandle s t) = runInOpenSession s (Model.snapshot x1 t)
-    open s x1 = TableHandle s <$> runInOpenSession s (Model.open x1)
+    snapshot x1 (Table s t) = runInOpenSession s (Model.snapshot x1 t)
+    open s x1 = Table s <$> runInOpenSession s (Model.open x1)
 
-    duplicate (TableHandle s t) = TableHandle s <$> runInOpenSession s (Model.duplicate t)
+    duplicate (Table s t) = Table s <$> runInOpenSession s (Model.duplicate t)
 
 convLookupResult :: Model.LookupResult v b -> Class.LookupResult v b
 convLookupResult = \case

@@ -9,7 +9,7 @@
 -- * [@Model.Session@]:
 --   Pure model of a session (containing multiple tables).
 --   @
---   updates :: MonadState Model m => [_] -> TableHandle k v b -> m ()
+--   updates :: MonadState Model m => [_] -> Table k v b -> m ()
 --   @
 --
 -- * [@Model.IO.{Normal,Monoidal}@]:
@@ -17,7 +17,7 @@
 --   There are separate modules for normal/monoidal tables, which involves some
 --   type conversions such as @convLookupResult@.
 --   @
---   updates :: MonadSTM m => MSession m -> [_] -> TableHandle k v b -> m ()
+--   updates :: MonadSTM m => MSession m -> [_] -> Table k v b -> m ()
 --   @
 --
 module Database.LSMTree.Model () where

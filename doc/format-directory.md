@@ -58,7 +58,7 @@ snapshots). This is because the metadata is held in memory for open LSM handles.
 The `${n}.wbblobs` file format is the same as the `${n}.blobs` format used for
 runs: the concatenation of all the blobs written out so far. These files can be
 shared between open tables (created using `duplicate`), and so can contain
-blobs inserted via many table handles.
+blobs inserted via many tables.
 
 The `${n}.wbblobs` files are ephemeral. They are never included into snapshots
 and are not referenced from any `.checksums` file.

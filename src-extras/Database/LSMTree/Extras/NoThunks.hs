@@ -84,7 +84,7 @@ prop_NoThunks x =
   Public API
 -------------------------------------------------------------------------------}
 
--- | Also checks 'NoThunks' for the 'Normal.TableHandle's that are known to be
+-- | Also checks 'NoThunks' for the 'Normal.Table's that are known to be
 -- open in the 'Common.Session'.
 instance (NoThunksIOLike m, Typeable m, Typeable (PrimState m))
       => NoThunks (Session' m ) where
@@ -92,18 +92,18 @@ instance (NoThunksIOLike m, Typeable m, Typeable (PrimState m))
   wNoThunks ctx (Session' s) = wNoThunks ctx s
 
 -- | Does not check 'NoThunks' for the 'Common.Session' that this
--- 'Normal.TableHandle' belongs to.
+-- 'Normal.Table' belongs to.
 instance (NoThunksIOLike m, Typeable m, Typeable (PrimState m))
       => NoThunks (NormalTable m k v blob) where
   showTypeOf (_ :: Proxy (NormalTable m k v blob)) = "NormalTable"
-  wNoThunks ctx (NormalTable th) = wNoThunks ctx th
+  wNoThunks ctx (NormalTable t) = wNoThunks ctx t
 
 {-------------------------------------------------------------------------------
   Internal
 -------------------------------------------------------------------------------}
 
 deriving stock instance Generic (Internal.Session m h)
--- | Also checks 'NoThunks' for the 'Internal.TableHandle's that are known to be
+-- | Also checks 'NoThunks' for the 'Internal.Table's that are known to be
 -- open in the 'Internal.Session'.
 deriving anyclass instance (NoThunksIOLike m, Typeable m, Typeable h, Typeable (PrimState m))
                         => NoThunks (Internal.Session m h)
@@ -116,20 +116,20 @@ deriving stock instance Generic (SessionEnv m h)
 deriving anyclass instance (NoThunksIOLike m, Typeable m, Typeable h, Typeable (PrimState m))
                         => NoThunks (SessionEnv m h)
 
-deriving stock instance Generic (Internal.TableHandle m h)
+deriving stock instance Generic (Internal.Table m h)
 -- | Does not check 'NoThunks' for the 'Internal.Session' that this
--- 'Internal.TableHandle' belongs to.
+-- 'Internal.Table' belongs to.
 deriving anyclass instance (NoThunksIOLike m, Typeable m, Typeable h, Typeable (PrimState m))
-                        => NoThunks (Internal.TableHandle m h)
+                        => NoThunks (Internal.Table m h)
 
-deriving stock instance Generic (TableHandleState m h)
+deriving stock instance Generic (TableState m h)
 deriving anyclass instance (NoThunksIOLike m, Typeable m, Typeable h, Typeable (PrimState m))
-                        => NoThunks (TableHandleState m h)
+                        => NoThunks (TableState m h)
 
-deriving stock instance Generic (TableHandleEnv m h)
-deriving via AllowThunksIn ["tableSession", "tableSessionEnv"] (TableHandleEnv m h)
+deriving stock instance Generic (TableEnv m h)
+deriving via AllowThunksIn ["tableSession", "tableSessionEnv"] (TableEnv m h)
     instance (NoThunksIOLike m, Typeable m, Typeable h, Typeable (PrimState m))
-          => NoThunks (TableHandleEnv m h)
+          => NoThunks (TableEnv m h)
 
 -- | Does not check 'NoThunks' for the 'Internal.Session' that this
 -- 'Internal.Cursor' belongs to.

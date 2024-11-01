@@ -1,13 +1,13 @@
 {-# LANGUAGE TypeFamilies #-}
 
--- | An instance of `Class.IsTableHandle`, modelling monoidal,
+-- | An instance of `Class.IsTable`, modelling monoidal,
 -- potentially closed sessions in @IO@ by lifting the pure session model from
 -- "Database.LSMTree.Model.Session".
 module Database.LSMTree.Model.IO.Monoidal (
     Err (..)
   , Session (..)
   , SessionArgs (NoSessionArgs)
-  , TableHandle (..)
+  , Table (..)
   , TableConfig (..)
   , BlobRef (..)
   , Cursor (..)
@@ -26,9 +26,9 @@ import           Database.LSMTree.Model.IO.Normal (Session (..),
 import           Database.LSMTree.Model.Session (TableConfig (..))
 import qualified Database.LSMTree.Model.Session as Model
 
-data TableHandle m k v = TableHandle {
-    _thSession     :: !(Session m)
-  , _thTableHandle :: !(Model.TableHandle k v Void)
+data Table m k v = Table {
+    _thSession :: !(Session m)
+  , _thTable   :: !(Model.Table k v Void)
   }
 
 data BlobRef m = BlobRef {
@@ -45,35 +45,35 @@ newtype Err = Err (Model.Err)
   deriving stock Show
   deriving anyclass Exception
 
-instance Class.IsTableHandle TableHandle where
-    type Session TableHandle = Session
-    type TableConfig TableHandle = Model.TableConfig
-    type Cursor TableHandle = Cursor
+instance Class.IsTable Table where
+    type Session Table = Session
+    type TableConfig Table = Model.TableConfig
+    type Cursor Table = Cursor
 
-    new s x = TableHandle s <$> runInOpenSession s (Model.new x)
-    close (TableHandle s t) = runInOpenSession s (Model.close t)
-    lookups (TableHandle s t) x1 = fmap convLookupResult . fmap (fmap (BlobRef s)) <$>
+    new s x = Table s <$> runInOpenSession s (Model.new x)
+    close (Table s t) = runInOpenSession s (Model.close t)
+    lookups (Table s t) x1 = fmap convLookupResult . fmap (fmap (BlobRef s)) <$>
       runInOpenSession s (Model.lookups x1 t)
-    updates (TableHandle s t) x1 = runInOpenSession s (Model.updates Model.getResolve (fmap (fmap convUpdate) x1) t)
-    inserts (TableHandle s t) x1 = runInOpenSession s (Model.inserts Model.getResolve (fmap (\(k, v) -> (k, v, Nothing)) x1) t)
-    deletes (TableHandle s t) x1 = runInOpenSession s (Model.deletes Model.getResolve x1 t)
-    mupserts (TableHandle s t) x1 = runInOpenSession s (Model.mupserts Model.getResolve x1 t)
+    updates (Table s t) x1 = runInOpenSession s (Model.updates Model.getResolve (fmap (fmap convUpdate) x1) t)
+    inserts (Table s t) x1 = runInOpenSession s (Model.inserts Model.getResolve (fmap (\(k, v) -> (k, v, Nothing)) x1) t)
+    deletes (Table s t) x1 = runInOpenSession s (Model.deletes Model.getResolve x1 t)
+    mupserts (Table s t) x1 = runInOpenSession s (Model.mupserts Model.getResolve x1 t)
 
-    rangeLookup (TableHandle s t) x1 = fmap convQueryResult . fmap (fmap (BlobRef s)) <$>
+    rangeLookup (Table s t) x1 = fmap convQueryResult . fmap (fmap (BlobRef s)) <$>
       runInOpenSession s (Model.rangeLookup x1 t)
 
-    newCursor k (TableHandle s t) = Cursor s <$> runInOpenSession s (Model.newCursor k t)
+    newCursor k (Table s t) = Cursor s <$> runInOpenSession s (Model.newCursor k t)
     closeCursor _ (Cursor s c) = runInOpenSession s (Model.closeCursor c)
     readCursor _ x1 (Cursor s c) = fmap convQueryResult . fmap (fmap (BlobRef s)) <$>
       runInOpenSession s (Model.readCursor x1 c)
 
-    snapshot x1 (TableHandle s t) = runInOpenSession s (Model.snapshot x1 t)
-    open s x1 = TableHandle s <$> runInOpenSession s (Model.open x1)
+    snapshot x1 (Table s t) = runInOpenSession s (Model.snapshot x1 t)
+    open s x1 = Table s <$> runInOpenSession s (Model.open x1)
 
-    duplicate (TableHandle s t) = TableHandle s <$> runInOpenSession s (Model.duplicate t)
+    duplicate (Table s t) = Table s <$> runInOpenSession s (Model.duplicate t)
 
-    merge (TableHandle s1 t1) (TableHandle _s2 t2) =
-        TableHandle s1 <$> runInOpenSession s1 (Model.merge Model.getResolve t1 t2)
+    merge (Table s1 t1) (Table _s2 t2) =
+        Table s1 <$> runInOpenSession s1 (Model.merge Model.getResolve t1 t2)
 
 convLookupResult :: Model.LookupResult v b -> Class.LookupResult v
 convLookupResult = \case

@@ -614,7 +614,7 @@ type LookupResults = V.Vector (K, LSM.LookupResult V ())
 sequentialIteration :: (Int -> LookupResults -> IO ())
                     -> Int
                     -> Int
-                    -> LSM.TableHandle IO K V B
+                    -> LSM.Table IO K V B
                     -> Int
                     -> MCG.MCG
                     -> IO MCG.MCG
@@ -633,7 +633,7 @@ sequentialIteration output !initialSize !batchSize !tbl !b !g = do
 
 sequentialIterations :: (Int -> LookupResults -> IO ())
                      -> Int -> Int -> Int -> Word64
-                     -> LSM.TableHandle IO K V B
+                     -> LSM.Table IO K V B
                      -> IO ()
 sequentialIterations output !initialSize !batchSize !batchCount !seed !tbl =
     void $ forFoldM_ g0 [ 0 .. batchCount - 1 ] $ \b g ->
@@ -645,7 +645,7 @@ sequentialIterations output !initialSize !batchSize !batchCount !seed !tbl =
 sequentialIterationLO :: (Int -> LookupResults -> IO ())
                       -> Int
                       -> Int
-                      -> LSM.TableHandle IO K V B
+                      -> LSM.Table IO K V B
                       -> Int
                       -> MCG.MCG
                       -> IO MCG.MCG
@@ -661,7 +661,7 @@ sequentialIterationLO output !initialSize !batchSize !tbl !b !g = do
 
 sequentialIterationsLO :: (Int -> LookupResults -> IO ())
                        -> Int -> Int -> Int -> Word64
-                       -> LSM.TableHandle IO K V B
+                       -> LSM.Table IO K V B
                        -> IO ()
 sequentialIterationsLO output !initialSize !batchSize !batchCount !seed !tbl =
     void $ forFoldM_ g0 [ 0 .. batchCount - 1 ] $ \b g ->
@@ -721,13 +721,13 @@ And the initial setup looks like this:
 pipelinedIteration :: (Int -> LookupResults -> IO ())
                    -> Int
                    -> Int
-                   -> MVar (LSM.TableHandle IO K V B, Map K (LSM.Update V B))
-                   -> MVar (LSM.TableHandle IO K V B, Map K (LSM.Update V B))
+                   -> MVar (LSM.Table IO K V B, Map K (LSM.Update V B))
+                   -> MVar (LSM.Table IO K V B, Map K (LSM.Update V B))
                    -> MVar MCG.MCG
                    -> MVar MCG.MCG
-                   -> LSM.TableHandle IO K V B
+                   -> LSM.Table IO K V B
                    -> Int
-                   -> IO (LSM.TableHandle IO K V B)
+                   -> IO (LSM.Table IO K V B)
 pipelinedIteration output !initialSize !batchSize
                    !syncTblIn !syncTblOut
                    !syncRngIn !syncRngOut
@@ -738,7 +738,7 @@ pipelinedIteration output !initialSize !batchSize
     -- 1: perform the lookups
     lrs <- LSM.lookups ls tbl_n
 
-    -- 2. sync: receive updates and new table handle
+    -- 2. sync: receive updates and new table
     putMVar syncRngOut g'
     (tbl_n1, delta) <- takeMVar syncTblIn
 
@@ -751,7 +751,7 @@ pipelinedIteration output !initialSize !batchSize
     tbl_n2 <- LSM.duplicate tbl_n1
     LSM.updates is tbl_n2
 
-    -- 4. sync: send the updates and new table handle
+    -- 4. sync: send the updates and new table
     let delta' :: Map K (LSM.Update V B)
         !delta' = Map.fromList (V.toList is)
     putMVar syncTblOut (tbl_n2, delta')
@@ -769,7 +769,7 @@ pipelinedIteration output !initialSize !batchSize
 
 pipelinedIterations :: (Int -> LookupResults -> IO ())
                     -> Int -> Int -> Int -> Word64
-                    -> LSM.TableHandle IO K V B
+                    -> LSM.Table IO K V B
                     -> IO ()
 pipelinedIterations output !initialSize !batchSize !batchCount !seed tbl_0 = do
     n <- getNumCapabilities

@@ -274,7 +274,7 @@ mkBloomST requestedFPR xs = runST $ do
 -- * The FPR (and bits/hash functions) calculations are approximations.
 -- * Rounding errors in the Haskell implementation of FPR calculations
 -- * The Monkey tuning is incompatible with @bloomfilter@'s /next power of 2/
---   rounding of th ebits.
+--   rounding of the bits.
 mkBloomST_Monkey :: Hashable a => Double -> BloomMaker a
 mkBloomST_Monkey requestedFPR xs = runST $ do
     b <- MBloom.new (fromIntegralChecked nhashes) (fromIntegralChecked nbits)

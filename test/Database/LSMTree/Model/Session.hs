@@ -5,7 +5,7 @@
 -- by the normal API, and the latter only by the monoidal API.
 --
 -- The session model builds on top of "Database.LSMTree.Model.Table", adding
--- table handle and snapshot administration.
+-- table and snapshot administration.
 module Database.LSMTree.Model.Session (
   -- * Model
     Model (..)
@@ -16,8 +16,8 @@ module Database.LSMTree.Model.Session (
   , toSomeTable
   , fromSomeTable
   , withSomeTable
-  , TableHandleID
-  , tableHandleID
+  , TableID
+  , tableID
   , Model.size
     -- ** Constraints
   , C
@@ -32,7 +32,7 @@ module Database.LSMTree.Model.Session (
     -- ** Errors
   , Err (..)
     -- * Tables
-  , TableHandle
+  , Table
   , TableConfig (..)
   , new
   , close
@@ -69,7 +69,7 @@ module Database.LSMTree.Model.Session (
   , open
   , deleteSnapshot
   , listSnapshots
-    -- * Multiple writable table handles
+    -- * Multiple writable tables
   , duplicate
     -- * Table merge
   , merge
@@ -100,16 +100,16 @@ import qualified Database.LSMTree.Model.Table as Model
 -------------------------------------------------------------------------------}
 
 data Model = Model {
-    tableHandles :: Map TableHandleID (UpdateCounter, SomeTable)
-  , cursors      :: Map CursorID SomeCursor
-  , nextID       :: Int
-  , snapshots    :: Map SnapshotName Snapshot
+    tables    :: Map TableID (UpdateCounter, SomeTable)
+  , cursors   :: Map CursorID SomeCursor
+  , nextID    :: Int
+  , snapshots :: Map SnapshotName Snapshot
   }
   deriving stock Show
 
 initModel :: Model
 initModel = Model {
-      tableHandles = Map.empty
+      tables = Map.empty
     , cursors = Map.empty
     , nextID = 0
     , snapshots = Map.empty
@@ -198,7 +198,7 @@ runModelM m = runIdentity . runModelT m
 --
 
 data Err =
-    ErrTableHandleClosed
+    ErrTableClosed
   | ErrSnapshotExists
   | ErrSnapshotDoesNotExist
   | ErrSnapshotWrongType
@@ -210,15 +210,15 @@ data Err =
   Tables
 -------------------------------------------------------------------------------}
 
-type TableHandleID = Int
+type TableID = Int
 
 --
 -- API
 --
 
-data TableHandle k v blob = TableHandle {
-    tableHandleID :: TableHandleID
-  , config        :: TableConfig
+data Table k v blob = Table {
+    tableID :: TableID
+  , config  :: TableConfig
   }
   deriving stock Show
 
@@ -228,17 +228,17 @@ data TableConfig = TableConfig
 new ::
      forall k v blob m. (MonadState Model m, C k v blob)
   => TableConfig
-  -> m (TableHandle k v blob)
+  -> m (Table k v blob)
 new config = newTableWith config Model.empty
 
 -- |
 --
 -- This is idempotent.
-close :: MonadState Model m => TableHandle k v blob -> m ()
-close TableHandle{..} = state $ \Model{..} ->
-    let tableHandles' = Map.delete tableHandleID tableHandles
+close :: MonadState Model m => Table k v blob -> m ()
+close Table{..} = state $ \Model{..} ->
+    let tables' = Map.delete tableID tables
         model' = Model {
-            tableHandles = tableHandles'
+            tables = tables'
           , ..
           }
     in ((), model')
@@ -247,17 +247,17 @@ close TableHandle{..} = state $ \Model{..} ->
 -- Utility
 --
 
-guardTableHandleIsOpen ::
+guardTableIsOpen ::
      forall k v blob m. (
        MonadState Model m, MonadError Err m
      , Typeable k, Typeable v, Typeable blob
      )
-  => TableHandle k v blob
+  => Table k v blob
   -> m (UpdateCounter, Model.Table k v blob)
-guardTableHandleIsOpen TableHandle{..} =
-    gets (Map.lookup tableHandleID . tableHandles) >>= \case
+guardTableIsOpen Table{..} =
+    gets (Map.lookup tableID . tables) >>= \case
       Nothing ->
-        throwError ErrTableHandleClosed
+        throwError ErrTableClosed
       Just (updc, tbl) ->
         pure (updc, fromJust $ fromSomeTable tbl)
 
@@ -265,21 +265,21 @@ newTableWith ::
      (MonadState Model m, C k v blob)
   => TableConfig
   -> Model.Table k v blob
-  -> m (TableHandle k v blob)
+  -> m (Table k v blob)
 newTableWith config tbl = state $ \Model{..} ->
-  let tableHandle = TableHandle {
-          tableHandleID = nextID
+  let table = Table {
+          tableID = nextID
         , config
         }
       someTable = toSomeTable tbl
-      tableHandles' = Map.insert nextID (0, someTable) tableHandles
+      tables' = Map.insert nextID (0, someTable) tables
       nextID' = nextID + 1
       model' = Model {
-          tableHandles = tableHandles'
+          tables = tables'
         , nextID = nextID'
         , ..
         }
-  in  (tableHandle, model')
+  in  (table, model')
 
 {-------------------------------------------------------------------------------
   Lookups
@@ -293,11 +293,11 @@ lookups ::
      , C k v blob
      )
   => V.Vector k
-  -> TableHandle k v blob
+  -> Table k v blob
   -> m (V.Vector (Model.LookupResult v (BlobRef blob)))
-lookups ks th = do
-    (updc, table) <- guardTableHandleIsOpen th
-    pure $ liftBlobRefs (SomeTableID updc (tableHandleID th)) $ Model.lookups ks table
+lookups ks t = do
+    (updc, table) <- guardTableIsOpen t
+    pure $ liftBlobRefs (SomeTableID updc (tableID t)) $ Model.lookups ks table
 
 rangeLookup ::
      ( MonadState Model m
@@ -307,11 +307,11 @@ rangeLookup ::
      , C k v blob
      )
   => Range k
-  -> TableHandle k v blob
+  -> Table k v blob
   -> m (V.Vector (Model.QueryResult k v (BlobRef blob)))
-rangeLookup r th = do
-    (updc, table) <- guardTableHandleIsOpen th
-    pure $ liftBlobRefs (SomeTableID updc (tableHandleID th)) $ Model.rangeLookup r table
+rangeLookup r t = do
+    (updc, table) <- guardTableIsOpen t
+    pure $ liftBlobRefs (SomeTableID updc (tableID t)) $ Model.rangeLookup r table
 
 {-------------------------------------------------------------------------------
   Updates
@@ -327,13 +327,13 @@ updates ::
      )
   => ResolveSerialisedValue v
   -> V.Vector (k, Model.Update v blob)
-  -> TableHandle k v blob
+  -> Table k v blob
   -> m ()
-updates r ups th@TableHandle{..} = do
-  (updc, table) <- guardTableHandleIsOpen th
+updates r ups t@Table{..} = do
+  (updc, table) <- guardTableIsOpen t
   let table' = Model.updates r ups table
   modify (\m -> m {
-      tableHandles = Map.insert tableHandleID (updc + 1, toSomeTable table') (tableHandles m)
+      tables = Map.insert tableID (updc + 1, toSomeTable table') (tables m)
     })
 
 inserts ::
@@ -346,7 +346,7 @@ inserts ::
      )
   => ResolveSerialisedValue v
   -> V.Vector (k, v, Maybe blob)
-  -> TableHandle k v blob
+  -> Table k v blob
   -> m ()
 inserts r = updates r . fmap (\(k, v, blob) -> (k, Model.Insert v blob))
 
@@ -360,7 +360,7 @@ deletes ::
      )
   => ResolveSerialisedValue v
   -> V.Vector k
-  -> TableHandle k v blob
+  -> Table k v blob
   -> m ()
 deletes r = updates r . fmap (,Model.Delete)
 
@@ -374,7 +374,7 @@ mupserts ::
      )
   => ResolveSerialisedValue v
   -> V.Vector (k, v)
-  -> TableHandle k v blob
+  -> Table k v blob
   -> m ()
 mupserts r = updates r . fmap (fmap Model.Mupsert)
 
@@ -408,7 +408,7 @@ retrieveBlobs refs = Model.retrieveBlobs <$> V.mapM guard refs
         -- every time a table/cursor is modified.
         case handleRef of
           SomeTableID createdAt tableID ->
-            case Map.lookup tableID (tableHandles m) of
+            case Map.lookup tableID (tables m) of
               -- If the table is now closed, it means the table has been modified.
               Nothing -> errInvalid
               -- If the table is open, we check timestamps (i.e., UpdateCounter)
@@ -426,7 +426,7 @@ retrieveBlobs refs = Model.retrieveBlobs <$> V.mapM guard refs
     errInvalid = throwError ErrBlobRefInvalidated
 
 data SomeHandleID blob where
-  SomeTableID  :: !UpdateCounter -> !TableHandleID -> SomeHandleID blob
+  SomeTableID  :: !UpdateCounter -> !TableID -> SomeHandleID blob
   SomeCursorID :: !CursorID -> SomeHandleID blob
   deriving stock Show
 
@@ -450,10 +450,10 @@ snapshot ::
      , C k v blob
      )
   => SnapshotName
-  -> TableHandle k v blob
+  -> Table k v blob
   -> m ()
-snapshot name th@TableHandle{..} = do
-    (updc, table) <- guardTableHandleIsOpen th
+snapshot name t@Table{..} = do
+    (updc, table) <- guardTableIsOpen t
     snaps <- gets snapshots
     -- TODO: For the moment we allow snapshot to invalidate blob refs.
     -- Ideally we should change the implementation to not invalidate on
@@ -464,7 +464,7 @@ snapshot name th@TableHandle{..} = do
     -- implementation. The implementation should be fixed.
     -- TODO: See https://github.com/IntersectMBO/lsm-tree/issues/392
     modify (\m -> m {
-        tableHandles = Map.insert tableHandleID (updc + 1, toSomeTable table) (tableHandles m)
+        tables = Map.insert tableID (updc + 1, toSomeTable table) (tables m)
       })
     when (Map.member name snaps) $
       throwError ErrSnapshotExists
@@ -479,7 +479,7 @@ open ::
      , C k v blob
      )
   => SnapshotName
-  -> m (TableHandle k v blob)
+  -> m (Table k v blob)
 open name = do
     snaps <- gets snapshots
     case Map.lookup name snaps of
@@ -512,7 +512,7 @@ listSnapshots ::
 listSnapshots = gets (Map.keys . snapshots)
 
 {-------------------------------------------------------------------------------
-  Mutiple writable table handles
+  Mutiple writable tables
 -------------------------------------------------------------------------------}
 
 duplicate ::
@@ -520,10 +520,10 @@ duplicate ::
      , MonadError Err m
      , C k v blob
      )
-  => TableHandle k v blob
-  -> m (TableHandle k v blob)
-duplicate th@TableHandle{..} = do
-    table <- snd <$> guardTableHandleIsOpen th
+  => Table k v blob
+  -> m (Table k v blob)
+duplicate t@Table{..} = do
+    table <- snd <$> guardTableIsOpen t
     newTableWith config $ Model.duplicate table
 
 {-------------------------------------------------------------------------------
@@ -544,10 +544,10 @@ newCursor ::
      , C k v blob
      )
   => Maybe k
-  -> TableHandle k v blob
+  -> Table k v blob
   -> m (Cursor k v blob)
-newCursor offset th = do
-  table <- snd <$> guardTableHandleIsOpen th
+newCursor offset t = do
+  table <- snd <$> guardTableIsOpen t
   state $ \Model{..} ->
     let cursor = Cursor { cursorID = nextID }
         someCursor = toSomeCursor $ Model.newCursor offset table
@@ -611,10 +611,10 @@ merge ::
      , C k v b
      )
   => ResolveSerialisedValue v
-  -> TableHandle k v b
-  -> TableHandle k v b
-  -> m (TableHandle k v b)
+  -> Table k v b
+  -> Table k v b
+  -> m (Table k v b)
 merge r th1 th2 = do
-  (_, t1) <- guardTableHandleIsOpen th1
-  (_, t2) <- guardTableHandleIsOpen th2
+  (_, t1) <- guardTableIsOpen th1
+  (_, t2) <- guardTableIsOpen th2
   newTableWith TableConfig $ Model.merge r t1 t2
