@@ -1,3 +1,6 @@
+-- Import release project configuration
+import: cabal.project.release
+
 package lsm-tree
   -- apply this to all components
   -- relevant mostly only for development & testing
