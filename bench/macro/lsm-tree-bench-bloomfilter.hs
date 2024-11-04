@@ -66,7 +66,9 @@ benchmarkNumBitsPerEntry = 10
 benchmarks :: IO ()
 benchmarks = do
 #ifdef NO_IGNORE_ASSERTS
-    putStrLn "BENCHMARKING A BUILD WITH -fno-ignore-asserts"
+    putStrLn "WARNING: Benchmarking in debug mode."
+    putStrLn "         To benchmark in release mode, pass:"
+    putStrLn "         --project-file=cabal.project.release"
 #endif
 
     enabled <- getRTSStatsEnabled
