@@ -75,15 +75,15 @@ benchLargeValueVsSmallValueBlob :: Benchmark
 benchLargeValueVsSmallValueBlob =
     env mkEntries $ \es -> bgroup "large-value-vs-small-value-blob" [
         env (mkGrouped (mkV1 es)) $ \ ~(ess, kss) -> bgroup "V1" [
-            withEnv ess $ \ ~(_, _, _, _, t :: Normal.TableHandle IO K V1 B1) -> do
+            withEnv ess $ \ ~(_, _, _, _, t :: Normal.Table IO K V1 B1) -> do
               bench "lookups-large-value" $ whnfIO $
                 V.mapM_ (flip Normal.lookups t) kss
           ]
       , env (mkGrouped (mkV2 es)) $ \ ~(ess, kss) -> bgroup "V2" [
-            withEnv ess $ \ ~(_, _, _, _, t :: Normal.TableHandle IO K V2 B2) -> do
+            withEnv ess $ \ ~(_, _, _, _, t :: Normal.Table IO K V2 B2) -> do
               bench "lookups-small-value" $ whnfIO $
                 V.mapM_ (flip Normal.lookups t) kss
-           , withEnv ess $ \ ~(_, _, _, s, t :: Normal.TableHandle IO K V2 B2) -> do
+           , withEnv ess $ \ ~(_, _, _, s, t :: Normal.Table IO K V2 B2) -> do
               bench "lookups-small-value-blob" $ whnfIO $ do
                 V.forM_ kss $ \ks -> do
                   lrs <- Normal.lookups ks t
@@ -147,7 +147,7 @@ benchCursorScanVsRangeLookupScan :: Benchmark
 benchCursorScanVsRangeLookupScan =
     env mkEntries $ \es ->
       env (mkGrouped es) $ \ ess ->
-        withEnv ess $ \ ~(_, _, _, _, t :: Normal.TableHandle IO K V2 B2) ->
+        withEnv ess $ \ ~(_, _, _, _, t :: Normal.Table IO K V2 B2) ->
           bgroup "cursor-scan-vs-range-lookup-scan" [
               bench "cursor-scan-full" $ whnfIO $ do
                 Normal.withCursor t $ \c -> do

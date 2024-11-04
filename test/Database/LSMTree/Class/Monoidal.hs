@@ -8,7 +8,7 @@ module Database.LSMTree.Class.Monoidal (
   , IsSession (..)
   , SessionArgs (..)
   , withSession
-  , IsTableHandle (..)
+  , IsTable (..)
   , withTableNew
   , withTableOpen
   , withTableDuplicate
@@ -34,10 +34,10 @@ import qualified Database.LSMTree.Monoidal as R
 type C k v blob = (C_ k, C_ v, C_ blob)
 type C_ a = (Show a, Eq a, Typeable a)
 
--- | Class abstracting over table handle operations.
+-- | Class abstracting over table operations.
 --
-type IsTableHandle :: ((Type -> Type) -> Type -> Type -> Type) -> Constraint
-class (IsSession (Session h)) => IsTableHandle h where
+type IsTable :: ((Type -> Type) -> Type -> Type -> Type) -> Constraint
+class (IsSession (Session h)) => IsTable h where
     type Session h :: (Type -> Type) -> Type
     type TableConfig h :: Type
     type Cursor h :: (Type -> Type) -> Type -> Type -> Type
@@ -195,7 +195,7 @@ class (IsSession (Session h)) => IsTableHandle h where
 
 withTableNew :: forall h m k v a.
      ( IOLike m
-     , IsTableHandle h
+     , IsTable h
      , C k v Void
      )
   => Session h m
@@ -206,7 +206,7 @@ withTableNew sesh conf = bracket (new sesh conf) close
 
 withTableOpen :: forall h m k v a.
      ( IOLike m
-     , IsTableHandle h
+     , IsTable h
      , ResolveValue v
      , SerialiseKey k
      , SerialiseValue v
@@ -221,7 +221,7 @@ withTableOpen sesh snap = bracket (open sesh snap) close
 
 withTableDuplicate :: forall h m k v a.
      ( IOLike m
-     , IsTableHandle h
+     , IsTable h
      , C k v Void
      )
   => h m k v
@@ -231,7 +231,7 @@ withTableDuplicate table = bracket (duplicate table) close
 
 withTableMerge :: forall h m k v a.
      ( IOLike m
-     , IsTableHandle h
+     , IsTable h
      , SerialiseValue v
      , ResolveValue v
      , C k v Void
@@ -244,7 +244,7 @@ withTableMerge table1 table2 = bracket (merge table1 table2) close
 
 withCursor :: forall h m k v a.
      ( IOLike m
-     , IsTableHandle h
+     , IsTable h
      , SerialiseKey k
      , C k v Void
      )
@@ -258,10 +258,10 @@ withCursor offset hdl = bracket (newCursor offset hdl) (closeCursor (Proxy @h))
   Real instance
 -------------------------------------------------------------------------------}
 
-instance IsTableHandle R.TableHandle where
-    type Session R.TableHandle = R.Session
-    type TableConfig R.TableHandle = R.TableConfig
-    type Cursor R.TableHandle = R.Cursor
+instance IsTable R.Table where
+    type Session R.Table = R.Session
+    type TableConfig R.Table = R.TableConfig
+    type Cursor R.Table = R.Cursor
 
     new = R.new
     close = R.close
