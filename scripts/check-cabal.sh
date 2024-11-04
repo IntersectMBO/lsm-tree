@@ -1,14 +1,15 @@
-#!/usr/bin/env bash
+#!/bin/sh
 
-set -euo pipefail
+# Check for cabal
+cabal="$(which cabal)"
+if [ "${cabal}" = "" ]; then
+    echo "Requires cabal; no version found"
+    exit 1
+fi
 
-for x in $(find . -name '*.cabal' | grep -v dist-newstyle | cut -c 3-); do
-  (
-    d=$(dirname $x)
-    if [ $(basename $d) != "bloomfilter" ]; then
-      echo "== $d =="
-      cd $d
-      cabal check
-    fi
-  )
-done
+# Check Cabal files with cabal
+echo "Checking Cabal source files with cabal"
+# shellcheck disable=SC2016
+if ! git ls-files --exclude-standard --no-deleted --deduplicate '*.cabal' | xargs -L 1 sh -c 'echo "$0" && cd "$(dirname "$0")" && cabal check'; then
+    exit 1
+fi

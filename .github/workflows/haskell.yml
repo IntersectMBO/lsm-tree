@@ -169,11 +169,6 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Install system dependencies (apt-get)
-      run: |
-        sudo apt-get update || true
-        sudo apt-get -y install fd-find
-
     - name: Setup Haskell
       id: setup-haskell
       uses: haskell-actions/setup@v2
@@ -210,7 +205,7 @@ jobs:
 
     - name: Run stylish-haskell
       run: |
-        ./scripts/format-stylish-fd.sh
+        ./scripts/format-stylish.sh
         git diff --exit-code
 
   # Check formatting for cabal files
@@ -227,16 +222,11 @@ jobs:
     # See the comment on the hackage-index-state environment variable for the
     # stylish-haskell job.
     env:
-      hackage-index-state: "2024-04-10T14:36:07Z"
+      hackage-index-state: "2024-04-27T12:31:04Z"
 
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
-
-    - name: Install system dependencies (apt-get)
-      run: |
-        sudo apt-get update || true
-        sudo apt-get -y install fd-find
 
     - name: Setup Haskell
       id: setup-haskell
@@ -265,7 +255,7 @@ jobs:
 
     - name: Install cabal-fmt
       run: |
-        cabal install --ignore-project cabal-fmt --index-state="${{ env.hackage-index-state }}" --constraint 'cabal-fmt == 0.1.11'
+        cabal install --ignore-project cabal-fmt --index-state="${{ env.hackage-index-state }}" --constraint 'cabal-fmt == 0.1.12'
 
     - name: Record cabal-fmt version
       run: |
@@ -274,7 +264,7 @@ jobs:
 
     - name: Run cabal-fmt
       run: |
-        ./scripts/format-cabal-fd.sh
+        ./scripts/format-cabal.sh
         git diff --exit-code
 
   # Check cabal files
