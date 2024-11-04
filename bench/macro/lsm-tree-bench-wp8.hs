@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP                   #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE OverloadedStrings     #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -869,6 +870,11 @@ batchOverlaps initialSize batchSize batchCount seed =
 main :: IO ()
 main = do
     hSetBuffering stdout NoBuffering
+#ifdef NO_IGNORE_ASSERTS
+    putStrLn "WARNING: Benchmarking in debug mode."
+    putStrLn "         To benchmark in release mode, pass:"
+    putStrLn "         --project-file=cabal.project.release"
+#endif
     (gopts, cmd) <- O.customExecParser prefs cliP
     print gopts
     print cmd

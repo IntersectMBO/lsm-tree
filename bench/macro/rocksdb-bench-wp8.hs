@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP                      #-}
 {-# LANGUAGE DuplicateRecordFields    #-}
 {-# LANGUAGE NondecreasingIndentation #-}
 {-# LANGUAGE OverloadedStrings        #-}
@@ -387,6 +388,11 @@ doRun' gopts opts =
 
 main :: IO ()
 main = do
+#ifdef NO_IGNORE_ASSERTS
+    putStrLn "WARNING: Benchmarking in debug mode."
+    putStrLn "         To benchmark in release mode, pass:"
+    putStrLn "         --project-file=cabal.project.release"
+#endif
     (gopts, cmd) <- O.customExecParser prefs cliP
     print gopts
     print cmd

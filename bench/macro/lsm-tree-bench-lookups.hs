@@ -130,7 +130,9 @@ numEntriesFitInPage = fromIntegral unusedPageBits / fromIntegral entryBitsWithOv
 benchmarks :: Run.RunDataCaching -> IO ()
 benchmarks !caching = withFS $ \hfs hbio -> do
 #ifdef NO_IGNORE_ASSERTS
-    putStrLn "BENCHMARKING A BUILD WITH -fno-ignore-asserts"
+    putStrLn "WARNING: Benchmarking in debug mode."
+    putStrLn "         To benchmark in release mode, pass:"
+    putStrLn "         --project-file=cabal.project.release"
 #endif
     arenaManager <- newArenaManager
     enabled <- getRTSStatsEnabled
