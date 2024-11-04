@@ -14,9 +14,6 @@ benchmarks: True
 -- Luckily, bloomfilter is not commonly used package, so this is good enough.
 constraints: bloomfilter <0
 
--- comment me if you are benchmarking
-import: cabal.project.debug
-
 -- comment me if you don't have liburing installed
 --
 -- TODO: it is slightly unfortunate that one has to manually remove this file
