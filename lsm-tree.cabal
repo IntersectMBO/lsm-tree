@@ -119,6 +119,7 @@ library
     Database.LSMTree.Internal
     Database.LSMTree.Internal.Assertions
     Database.LSMTree.Internal.BitMath
+    Database.LSMTree.Internal.BlobFile
     Database.LSMTree.Internal.BlobRef
     Database.LSMTree.Internal.BloomFilter
     Database.LSMTree.Internal.BloomFilterQuery1
