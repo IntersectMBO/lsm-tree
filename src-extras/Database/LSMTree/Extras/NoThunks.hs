@@ -34,6 +34,7 @@ import qualified Data.Vector.Primitive as VP
 import qualified Data.Vector.Unboxed.Mutable as VUM
 import           Data.Word
 import           Database.LSMTree.Internal as Internal
+import           Database.LSMTree.Internal.BlobFile
 import           Database.LSMTree.Internal.BlobRef
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.CRC32C
@@ -422,6 +423,10 @@ deriving anyclass instance (NoThunks h, Typeable (PrimState m))
 
 deriving stock instance Generic BlobSpan
 deriving anyclass instance NoThunks BlobSpan
+
+deriving stock instance Generic (BlobFile m h)
+deriving anyclass instance (Typeable h, Typeable (PrimState m))
+                        => NoThunks (BlobFile m h)
 
 {-------------------------------------------------------------------------------
   Arena
