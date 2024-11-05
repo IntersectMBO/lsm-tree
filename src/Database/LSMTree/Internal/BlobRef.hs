@@ -30,7 +30,7 @@ import           Data.Coerce (coerce)
 import qualified Data.Primitive.ByteArray as P (MutableByteArray,
                      newPinnedByteArray, unsafeFreezeByteArray)
 import qualified Data.Vector as V
-import           Data.Word (Word32, Word64)
+import           Database.LSMTree.Internal.BlobFile (BlobSpan (..))
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.Serialise (SerialisedBlob (..))
 import qualified System.FS.API as FS
@@ -50,16 +50,6 @@ data BlobRef m h = BlobRef {
 
 instance NFData h => NFData (BlobRef m h) where
   rnf (BlobRef a b c) = rnf a `seq` rnf b `seq` rnf c
-
--- | Location of a blob inside a blob file.
-data BlobSpan = BlobSpan {
-    blobSpanOffset :: {-# UNPACK #-} !Word64
-  , blobSpanSize   :: {-# UNPACK #-} !Word32
-  }
-  deriving stock (Show, Eq)
-
-instance NFData BlobSpan where
-  rnf (BlobSpan a b) = rnf a `seq` rnf b
 
 blobRefSpanSize :: BlobRef m h -> Int
 blobRefSpanSize = fromIntegral . blobSpanSize . blobRefSpan
