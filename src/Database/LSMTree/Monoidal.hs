@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 -- TODO: remove once the API is implemented.
 {-# OPTIONS_GHC -Wno-redundant-constraints #-}
 
@@ -86,7 +88,6 @@ module Database.LSMTree.Monoidal (
     -- * Durability (snapshots)
   , SnapshotName
   , Common.mkSnapshotName
-  , Common.SnapshotLabel
   , Common.Labellable (..)
   , snapshot
   , open
@@ -137,6 +138,7 @@ import qualified Database.LSMTree.Internal as Internal
 import qualified Database.LSMTree.Internal.Entry as Entry
 import           Database.LSMTree.Internal.RawBytes (RawBytes)
 import qualified Database.LSMTree.Internal.Serialise as Internal
+import qualified Database.LSMTree.Internal.Snapshot as Internal
 import qualified Database.LSMTree.Internal.Vector as V
 
 -- $resource-management
@@ -559,8 +561,7 @@ snapshot :: forall m k v.
 snapshot snap (Internal.MonoidalTable t) =
     void $ Internal.snapshot (resolve @v Proxy) snap label t
   where
-    -- to ensure we don't open a monoidal table as normal later
-    label = Common.makeSnapshotLabel (Proxy @(k, v)) <> " (monoidal)"
+    label = Internal.SnapshotLabel $ Common.makeSnapshotLabel (Proxy @(k, v))
 
 {-# SPECIALISE open ::
      (SerialiseKey k, SerialiseValue v, ResolveValue v, Common.Labellable (k, v))
@@ -604,8 +605,7 @@ open :: forall m k v.
 open (Internal.Session' sesh) override snap =
     Internal.MonoidalTable <$> Internal.open sesh label override snap (resolve @v Proxy)
   where
-    -- to ensure that the table is really a monoidal table
-    label = Common.makeSnapshotLabel (Proxy @(k, v)) <> " (monoidal)"
+    label = Internal.SnapshotLabel $ Common.makeSnapshotLabel (Proxy @(k, v))
 
 {-------------------------------------------------------------------------------
   Multiple writable tables

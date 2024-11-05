@@ -2,8 +2,18 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Database.LSMTree.Internal.Snapshot (
+    -- * Versioning
+    SnapshotVersion (..)
+  , major
+  , minor
+  , fromMajorMinor
+  , prettySnapshotVersion
+  , currentSnapshotVersion
+    -- * Snapshot metadata
+  , SnapshotMetaData (..)
+  , SnapshotLabel (..)
     -- * Snapshot format
-    numSnapRuns
+  , numSnapRuns
   , SnapLevels
   , SnapLevel (..)
   , SnapMergingRun (..)
@@ -23,6 +33,7 @@ import           Control.Monad.Primitive (PrimMonad)
 import           Control.TempRegistry
 import           Data.Foldable (forM_)
 import           Data.Primitive.PrimVar
+import           Data.Text (Text)
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.Entry
@@ -38,6 +49,116 @@ import           Database.LSMTree.Internal.UniqCounter (UniqCounter,
                      incrUniqCounter, uniqueToRunNumber)
 import           System.FS.API (HasFS)
 import           System.FS.BlockIO.API (HasBlockIO)
+
+{-------------------------------------------------------------------------------
+  Versioning
+-------------------------------------------------------------------------------}
+
+-- | The version of a snapshot.
+--
+-- When encoding snapshot metadata, 'currentSnapshotVersion' is included in the
+-- file. When snapshot metadata is decoded, then the decoded version is checked
+-- for compatibility against 'currentSnapshotVersion'. Decoding will fail if the
+-- versions are incompatible.
+--
+-- A version @x.y@ has two components: a major version number @x@ and a minor
+-- version number @y@. The major version number is used to signal breaking
+-- changes. The minor version number is used to signal non-breaking changes that
+-- are backwards compatible. To be precise, @x.y@ is guaranteed to be backwards
+-- compatible with @x'.y'@ as long as @x == x'@ and @y' <= y@. If @x > x'@, then
+-- backwards compatibility *may* be provided, but is not guaranteed. Forward
+-- compatibilitty is never guaranteed.
+--
+-- If @x.y@ is our current version, and if it @x.y@ is backwards compatible with
+-- @x'.y'@, then @x.y@ can decode snapshots that were encoded at version
+-- @x'.y'@.
+--
+-- The version number determines the format of the snapshot metadata file, but
+-- it also doubles as versioning information for the entire snapshot itself. For
+-- example, if a breaking change is made to the merge scheduling algorithm that
+-- would lead to errors when loading an older snapshot, then the major version
+-- should be increased as well.
+data SnapshotVersion = V0_0
+  deriving stock (Show, Eq)
+
+-- >>> major currentSnapshotVersion
+-- 0
+major :: SnapshotVersion -> Word
+major V0_0 = 0
+
+-- >>> minor currentSnapshotVersion
+-- 0
+minor :: SnapshotVersion -> Word
+minor V0_0 = 0
+
+fromMajorMinor :: Word -> Word -> Maybe SnapshotVersion
+fromMajorMinor 0 0 = Just V0_0
+fromMajorMinor _ _ = Nothing
+
+-- >>> prettySnapshotVersion currentSnapshotVersion
+-- "v0.0"
+prettySnapshotVersion :: SnapshotVersion -> String
+prettySnapshotVersion version = prettyVersion (major version) (minor version)
+
+-- >>> prettyVersion 17 32
+-- "v17.32"
+prettyVersion :: Word -> Word -> String
+prettyVersion majo mino =
+      showChar 'v'
+    . shows majo
+    . showChar '.'
+    . shows mino
+    $ ""
+
+-- >>> currentSnapshotVersion
+-- V0_0
+currentSnapshotVersion :: SnapshotVersion
+currentSnapshotVersion = V0_0
+
+_isCompatible :: SnapshotVersion -> Either String ()
+_isCompatible otherVersion = do
+    case ( currentSnapshotVersion, otherVersion ) of
+      (V0_0, V0_0) -> Right ()
+
+{-------------------------------------------------------------------------------
+  Snapshot metadata
+-------------------------------------------------------------------------------}
+
+-- | Custom text to include in a snapshot file
+newtype SnapshotLabel = SnapshotLabel Text
+  deriving stock (Show, Eq, Read)
+
+data SnapshotTableType = SnapNormalTable | SnapMonoidalTable
+  deriving stock (Show, Eq, Read)
+
+data SnapshotMetaData = SnapshotMetaData {
+    -- | Custom, user-supplied text that is included in the metadata.
+    --
+    -- The main use case for this field is for the user to supply textual
+    -- information about the key\/value\/blob type for the table that
+    -- corresponds to the snapshot. This information can then be used to
+    -- dynamically check that a snapshot is opened at the correct
+    -- key\/value\/blob type.
+    --
+    -- One could argue that the 'SnapshotName' could be used to to hold this
+    -- information, but the file name of snapshot meta data is not guarded by a
+    -- checksum, wherease the contents of the file are. Therefore using the
+    -- 'SnapshotLabel' is safer.
+    snapMetaLabel     :: !SnapshotLabel
+    -- | Whether a table is normal or monoidal.
+    --
+    -- TODO: if we at some point decide to get rid of the normal vs. monoidal
+    -- distinction, we can get rid of this field.
+  , snapMetaTableType :: !SnapshotTableType
+    -- | The 'TableConfig' for the snapshotted table.
+    --
+    -- Some of these configuration options can be overridden when a snapshot is
+    -- opened: see 'TableConfigOverride'.
+  , snapMetaConfig    :: !TableConfig
+    -- | The shape of the LSM tree.
+  , snapMetaLevels    :: !SnapLevels
+  }
+  deriving stock (Show, Eq)
 
 {-------------------------------------------------------------------------------
   Levels snapshot format

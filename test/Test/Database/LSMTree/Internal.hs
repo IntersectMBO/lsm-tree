@@ -1,5 +1,6 @@
-{-# LANGUAGE LambdaCase      #-}
-{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE LambdaCase        #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards   #-}
 
 {- HLINT ignore "Use <=<" -}
 
@@ -28,6 +29,7 @@ import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.MergeSchedule
 import           Database.LSMTree.Internal.Paths (mkSnapshotName)
 import           Database.LSMTree.Internal.Serialise
+import           Database.LSMTree.Internal.Snapshot (SnapshotLabel (..))
 import qualified System.FS.API as FS
 import qualified Test.Database.LSMTree.Internal.Lookup as Test
 import           Test.Database.LSMTree.Internal.Lookup
@@ -172,8 +174,8 @@ prop_interimOpenTable dat = ioProperty $
         withTable sesh conf $ \t -> do
           updates const upds t
           let snap = fromMaybe (error "invalid name") $ mkSnapshotName "snap"
-          numRunsSnapped <- snapshot const snap "someLabel" t
-          t' <- open sesh "someLabel" configNoOverride snap const
+          numRunsSnapped <- snapshot const snap (SnapshotLabel "someLabel") t
+          t' <- open sesh (SnapshotLabel "someLabel") configNoOverride snap const
           lhs <- fetchBlobs hfs =<< lookups const ks t
           rhs <- fetchBlobs hfs =<< lookups const ks t'
           -- We must fetch blobs because comparing blob references is meaningless
