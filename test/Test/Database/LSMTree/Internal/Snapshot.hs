@@ -150,8 +150,8 @@ roundtripFlatTerm' _ = explicitRoundtripFlatTerm encode (decodeVersioned current
 -------------------------------------------------------------------------------}
 
 instance Arbitrary SnapshotVersion where
-  arbitrary = elements [V0_0]
-  shrink V0_0 = []
+  arbitrary = elements [V0]
+  shrink V0 = []
 
 deriving newtype instance Arbitrary a => Arbitrary (Versioned a)
 
