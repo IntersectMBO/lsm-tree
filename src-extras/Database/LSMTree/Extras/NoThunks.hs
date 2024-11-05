@@ -395,9 +395,9 @@ deriving stock instance Generic (RunReader m h)
 deriving anyclass instance (Typeable m, Typeable (PrimState m), Typeable h)
                         => NoThunks (RunReader m h)
 
-deriving stock instance Generic (Reader.Entry m (Handle h))
+deriving stock instance Generic (Reader.Entry m h)
 deriving anyclass instance (Typeable m, Typeable (PrimState m), Typeable h)
-                        => NoThunks (Reader.Entry m (Handle h))
+                        => NoThunks (Reader.Entry m h)
 
 {-------------------------------------------------------------------------------
   RawPage
@@ -418,7 +418,7 @@ deriving anyclass instance NoThunks RawOverflowPage
 -------------------------------------------------------------------------------}
 
 deriving stock instance Generic (BlobRef m h)
-deriving anyclass instance (NoThunks h, Typeable (PrimState m))
+deriving anyclass instance (Typeable h, Typeable (PrimState m))
                         => NoThunks (BlobRef m h)
 
 deriving stock instance Generic BlobSpan

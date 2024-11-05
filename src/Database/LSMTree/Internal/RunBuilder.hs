@@ -106,7 +106,7 @@ new fs hbio runBuilderFsPaths numEntries alloc = do
 {-# SPECIALISE addKeyOp ::
      RunBuilder IO h
   -> SerialisedKey
-  -> Entry SerialisedValue (BlobRef IO (FS.Handle h))
+  -> Entry SerialisedValue (BlobRef IO h)
   -> IO () #-}
 -- | Add a key\/op pair.
 --
@@ -125,7 +125,7 @@ addKeyOp ::
      (MonadST m, MonadSTM m, MonadThrow m)
   => RunBuilder m h
   -> SerialisedKey
-  -> Entry SerialisedValue (BlobRef m (FS.Handle h))
+  -> Entry SerialisedValue (BlobRef m h)
   -> m ()
 addKeyOp builder@RunBuilder{runBuilderAcc} key op = do
     -- TODO: the fmap entry here reallocates even when there are no blobs.
@@ -275,13 +275,13 @@ writeBlob RunBuilder{..} blob = do
 
 {-# SPECIALISE copyBlob ::
      RunBuilder IO h
-  -> BlobRef IO (FS.Handle h)
-  -> IO BlobRef.BlobSpan #-}
+  -> BlobRef IO h
+  -> IO BlobSpan #-}
 copyBlob ::
      (MonadSTM m, MonadThrow m, PrimMonad m)
   => RunBuilder m h
-  -> BlobRef m (FS.Handle h)
-  -> m BlobRef.BlobSpan
+  -> BlobRef m h
+  -> m BlobSpan
 copyBlob builder@RunBuilder {..} blobref = do
     blob <- BlobRef.readBlob runBuilderHasFS blobref
     writeBlob builder blob

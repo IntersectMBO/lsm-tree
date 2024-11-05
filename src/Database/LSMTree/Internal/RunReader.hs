@@ -214,13 +214,13 @@ appendOverflow len overflowPages (SerialisedValue prefix) =
 
 {-# SPECIALISE next ::
      RunReader IO h
-  -> IO (Result IO (FS.Handle h)) #-}
+  -> IO (Result IO h) #-}
 -- | Stop using the 'RunReader' after getting 'Empty', because the 'Reader' is
 -- automatically closed!
 next :: forall m h.
      (MonadCatch m, MonadSTM m, MonadST m)
   => RunReader m h
-  -> m (Result m (FS.Handle h))
+  -> m (Result m h)
 next reader@RunReader {..} = do
     readMutVar readerCurrentPage >>= \case
       Nothing ->
@@ -229,7 +229,7 @@ next reader@RunReader {..} = do
         entryNo <- readPrimVar readerCurrentEntryNo
         go entryNo page
   where
-    go :: Word16 -> RawPage -> m (Result m (FS.Handle h))
+    go :: Word16 -> RawPage -> m (Result m h)
     go !entryNo !page =
         -- take entry from current page (resolve blob if necessary)
         case rawPageIndex page entryNo of
@@ -252,7 +252,7 @@ next reader@RunReader {..} = do
           IndexEntryOverflow key entry lenSuffix -> do
             -- TODO: we know that we need the next page, could already load?
             modifyPrimVar readerCurrentEntryNo (+1)
-            let entry' :: E.Entry SerialisedValue (BlobRef m (FS.Handle h))
+            let entry' :: E.Entry SerialisedValue (BlobRef m h)
                 entry' = fmap (Run.mkBlobRefForRun readerRun) entry
             overflowPages <- readOverflowPages readerHasFS readerKOpsHandle lenSuffix
             let rawEntry = mkEntryOverflow entry' page lenSuffix overflowPages

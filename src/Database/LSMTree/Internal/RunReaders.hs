@@ -73,7 +73,7 @@ data ReadCtx m h = ReadCtx {
       -- Using an 'STRef' could avoid reallocating the record for every entry,
       -- but that might not be straightforward to integrate with the heap.
       readCtxHeadKey   :: !SerialisedKey
-    , readCtxHeadEntry :: !(Reader.Entry m (FS.Handle h))
+    , readCtxHeadEntry :: !(Reader.Entry m h)
       -- We could get rid of this by making 'LoserTree' stable (for which there
       -- is a prototype already).
       -- Alternatively, if we decide to have an invariant that the number in
@@ -103,7 +103,7 @@ data Reader m h =
     -- having to find the next entry in the Map again (requiring key
     -- comparisons) or having to copy out all entries.
     -- TODO: more efficient representation? benchmark!
-  | ReadBuffer !(MutVar (PrimState m) [KOp m (FS.Handle h)])
+  | ReadBuffer !(MutVar (PrimState m) [KOp m h])
 
 type KOp m h = (SerialisedKey, Entry SerialisedValue (BlobRef m h))
 
@@ -184,11 +184,11 @@ data HasMore = HasMore | Drained
 
 {-# SPECIALISE pop ::
     Readers IO h
-  -> IO (SerialisedKey, Reader.Entry IO (FS.Handle h), HasMore) #-}
+  -> IO (SerialisedKey, Reader.Entry IO h, HasMore) #-}
 pop ::
      (MonadCatch m, MonadSTM m, MonadST m)
   => Readers m h
-  -> m (SerialisedKey, Reader.Entry m (FS.Handle h), HasMore)
+  -> m (SerialisedKey, Reader.Entry m h, HasMore)
 pop r@Readers {..} = do
     ReadCtx {..} <- readMutVar readersNext
     hasMore <- dropOne r readCtxNumber readCtxReader

@@ -323,7 +323,7 @@ prop_roundtripFromWriteBufferLookupIO (SmallList dats) =
     resolveV = \(SerialisedValue v1) (SerialisedValue v2) -> SerialisedValue (v1 <> v2)
 
     fetchBlobs :: FS.HasFS IO h
-               ->    (V.Vector (Maybe (Entry v (WeakBlobRef IO (FS.Handle h)))))
+               ->    (V.Vector (Maybe (Entry v (WeakBlobRef IO h))))
                -> IO (V.Vector (Maybe (Entry v SerialisedBlob)))
     fetchBlobs hfs = traverse (traverse (traverse fetchBlob))
       where
