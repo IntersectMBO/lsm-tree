@@ -41,8 +41,9 @@ import           Data.Primitive.ByteArray as P
 import           Data.Primitive.PrimVar as P
 import qualified Data.Vector.Primitive as VP
 import           Data.Word (Word64)
-import           Database.LSMTree.Internal.BlobRef (BlobRef (..), BlobSpan (..))
-import           Database.LSMTree.Internal.RawBytes as RB
+import           Database.LSMTree.Internal.BlobFile hiding (removeReference)
+import qualified Database.LSMTree.Internal.BlobFile as BlobFile
+import           Database.LSMTree.Internal.BlobRef (BlobRef (..))
 import           Database.LSMTree.Internal.Serialise
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
@@ -102,17 +103,14 @@ import qualified System.Posix.Types as FS (ByteCount)
 --
 data WriteBufferBlobs m h =
      WriteBufferBlobs {
-       blobFileHandle     :: {-# UNPACK #-} !(FS.Handle h)
+       blobFile        :: !(BlobFile m h)
 
        -- | The manually tracked file pointer.
-     , blobFilePointer    :: !(FilePointer m)
-
-       -- | The reference counter for the blob file.
-     , blobFileRefCounter :: {-# UNPACK #-} !(RC.RefCounter m)
+     , blobFilePointer :: !(FilePointer m)
      }
 
 instance NFData h => NFData (WriteBufferBlobs m h) where
-  rnf (WriteBufferBlobs a b c) = rnf a `seq` rnf b `seq` rnf c
+  rnf (WriteBufferBlobs a b) = rnf a `seq` rnf b
 
 {-# SPECIALISE new :: HasFS IO h -> FS.FsPath -> IO (WriteBufferBlobs IO h) #-}
 new :: PrimMonad m
@@ -124,31 +122,21 @@ new fs blobFileName = do
     -- we can also be asked to retrieve blobs at any time.
     blobFileHandle <- FS.hOpen fs blobFileName (FS.ReadWriteMode FS.MustBeNew)
     blobFilePointer <- newFilePointer
-    blobFileRefCounter <- RC.mkRefCounter1 (Just (finaliser fs blobFileHandle))
+    blobFile <- newBlobFile fs blobFileHandle
     return WriteBufferBlobs {
-      blobFileHandle,
-      blobFilePointer,
-      blobFileRefCounter
+      blobFile,
+      blobFilePointer
     }
-
-{-# SPECIALISE finaliser :: HasFS IO h -> FS.Handle h -> IO () #-}
-finaliser :: PrimMonad m
-          => HasFS m h
-          -> FS.Handle h
-          -> m ()
-finaliser fs h = do
-    FS.hClose fs h
-    FS.removeFile fs (FS.handlePath h)
 
 {-# SPECIALISE addReference :: WriteBufferBlobs IO h -> IO () #-}
 addReference :: PrimMonad m => WriteBufferBlobs m h -> m ()
-addReference WriteBufferBlobs {blobFileRefCounter} =
-    RC.addReference blobFileRefCounter
+addReference WriteBufferBlobs {blobFile} =
+    RC.addReference (blobFileRefCounter blobFile)
 
 {-# SPECIALISE removeReference :: WriteBufferBlobs IO h -> IO () #-}
 removeReference :: (PrimMonad m, MonadMask m) => WriteBufferBlobs m h -> m ()
-removeReference WriteBufferBlobs {blobFileRefCounter} =
-    RC.removeReference blobFileRefCounter
+removeReference WriteBufferBlobs {blobFile} =
+    BlobFile.removeReference blobFile
 
 {-# SPECIALISE addBlob :: HasFS IO h -> WriteBufferBlobs IO h -> SerialisedBlob -> IO BlobSpan #-}
 addBlob :: (PrimMonad m, MonadThrow m)
@@ -156,10 +144,10 @@ addBlob :: (PrimMonad m, MonadThrow m)
         -> WriteBufferBlobs m h
         -> SerialisedBlob
         -> m BlobSpan
-addBlob fs WriteBufferBlobs {blobFileHandle, blobFilePointer} blob = do
+addBlob fs WriteBufferBlobs {blobFile, blobFilePointer} blob = do
     let blobsize = sizeofBlob blob
     bloboffset <- updateFilePointer blobFilePointer blobsize
-    writeBlobAtOffset fs blobFileHandle blob bloboffset
+    writeBlobAtOffset fs (blobFileHandle blobFile) blob bloboffset
     return BlobSpan {
       blobSpanOffset = bloboffset,
       blobSpanSize   = fromIntegral blobsize
@@ -187,27 +175,17 @@ readBlob :: (PrimMonad m, MonadThrow m)
          -> WriteBufferBlobs m h
          -> BlobSpan
          -> m SerialisedBlob
-readBlob fs WriteBufferBlobs {blobFileHandle}
-            BlobSpan {blobSpanOffset, blobSpanSize} = do
-    let off = FS.AbsOffset blobSpanOffset
-        len :: Int
-        len = fromIntegral blobSpanSize
-    mba <- P.newPinnedByteArray len
-    _ <- FS.hGetBufExactlyAt fs blobFileHandle mba 0
-                             (fromIntegral len :: FS.ByteCount) off
-    ba <- P.unsafeFreezeByteArray mba
-    let !rb = RB.fromByteArray 0 len ba
-    return (SerialisedBlob rb)
-
+readBlob fs WriteBufferBlobs {blobFile} blobspan =
+    readBlobFile fs blobFile blobspan
 
 -- | Helper function to make a 'BlobRef' that points into a 'WriteBufferBlobs'.
 mkBlobRef :: WriteBufferBlobs m h
           -> BlobSpan
           -> BlobRef m (FS.Handle h)
-mkBlobRef WriteBufferBlobs {blobFileHandle, blobFileRefCounter} blobRefSpan =
+mkBlobRef WriteBufferBlobs {blobFile} blobRefSpan =
     BlobRef {
-      blobRefFile  = blobFileHandle,
-      blobRefCount = blobFileRefCounter,
+      blobRefFile  = blobFileHandle blobFile,
+      blobRefCount = blobFileRefCounter blobFile,
       blobRefSpan
     }
 
