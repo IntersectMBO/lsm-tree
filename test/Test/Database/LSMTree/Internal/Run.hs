@@ -25,6 +25,7 @@ import           Test.Tasty.QuickCheck
 import           Control.RefCount (RefCount (..), readRefCount)
 import           Database.LSMTree.Extras.Generators (KeyForIndexCompact (..))
 import           Database.LSMTree.Extras.RunData
+import           Database.LSMTree.Internal.BlobFile (BlobFile (..))
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry
@@ -195,8 +196,8 @@ prop_WriteAndOpen fs hbio wb =
         (FS.handlePath (runKOpsFile written))
         (FS.handlePath (runKOpsFile loaded))
       assertEqual "blob file"
-        (FS.handlePath (runBlobFile written))
-        (FS.handlePath (runBlobFile loaded))
+        (FS.handlePath (blobFileHandle (runBlobFile written)))
+        (FS.handlePath (blobFileHandle (runBlobFile loaded)))
 
       -- make sure runs get closed again
       removeReference loaded

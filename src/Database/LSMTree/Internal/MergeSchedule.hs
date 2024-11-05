@@ -869,7 +869,7 @@ levelIsFull sr rs = V.length rs + 1 >= (sizeRatioInt sr)
 
 {-# SPECIALISE mergeRuns :: ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> RunDataCaching -> RunBloomFilterAlloc -> RunFsPaths -> Merge.Level -> V.Vector (Run IO h) -> IO (Run IO h) #-}
 mergeRuns ::
-     (MonadCatch m, MonadFix m, MonadST m, MonadSTM m)
+     (MonadMask m, MonadFix m, MonadST m, MonadSTM m)
   => ResolveSerialisedValue
   -> HasFS m h
   -> HasBlockIO m h
