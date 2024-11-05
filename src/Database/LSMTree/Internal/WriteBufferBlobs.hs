@@ -181,7 +181,7 @@ readBlob fs WriteBufferBlobs {blobFile} blobspan =
 -- | Helper function to make a 'BlobRef' that points into a 'WriteBufferBlobs'.
 mkBlobRef :: WriteBufferBlobs m h
           -> BlobSpan
-          -> BlobRef m (FS.Handle h)
+          -> BlobRef m h
 mkBlobRef WriteBufferBlobs {blobFile} blobRefSpan =
     BlobRef {
       blobRefFile  = blobFileHandle blobFile,

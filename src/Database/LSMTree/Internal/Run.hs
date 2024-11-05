@@ -144,7 +144,7 @@ removeReferenceN :: (PrimMonad m, MonadMask m) => Run m h -> Word64 -> m ()
 removeReferenceN r = RC.removeReferenceN (runRefCounter r)
 
 -- | Helper function to make a 'BlobRef' that points into a 'Run'.
-mkBlobRefForRun :: Run m h -> BlobSpan -> BlobRef m (FS.Handle h)
+mkBlobRefForRun :: Run m h -> BlobSpan -> BlobRef m h
 mkBlobRefForRun Run{runBlobFile} blobRefSpan =
     BlobRef {
       blobRefFile  = blobFileHandle runBlobFile,

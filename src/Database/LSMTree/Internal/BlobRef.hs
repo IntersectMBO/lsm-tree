@@ -42,7 +42,7 @@ import qualified System.FS.BlockIO.API as FS
 --
 -- See 'Database.LSMTree.Common.BlobRef' for more info.
 data BlobRef m h = BlobRef {
-      blobRefFile  :: !h
+      blobRefFile  :: !(FS.Handle h)
     , blobRefCount :: {-# UNPACK #-} !(RefCounter m)
     , blobRefSpan  :: {-# UNPACK #-} !BlobSpan
     }
@@ -141,12 +141,12 @@ removeReferences = V.mapM_ removeReference
 
 {-# SPECIALISE readBlob ::
      HasFS IO h
-  -> BlobRef IO (FS.Handle h)
+  -> BlobRef IO h
   -> IO SerialisedBlob #-}
 readBlob ::
      (MonadThrow m, PrimMonad m)
   => HasFS m h
-  -> BlobRef m (FS.Handle h)
+  -> BlobRef m h
   -> m SerialisedBlob
 readBlob fs BlobRef {
               blobRefFile,
@@ -164,7 +164,7 @@ readBlob fs BlobRef {
 
 readBlobIOOp ::
      P.MutableByteArray s -> Int
-  -> BlobRef m (FS.Handle h)
+  -> BlobRef m h
   -> FS.IOOp s h
 readBlobIOOp buf bufoff
              BlobRef {

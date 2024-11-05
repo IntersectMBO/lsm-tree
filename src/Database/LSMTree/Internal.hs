@@ -116,8 +116,7 @@ import           Database.LSMTree.Internal.UniqCounter
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
 import qualified System.FS.API as FS
-import           System.FS.API (FsError, FsErrorPath (..), FsPath, Handle,
-                     HasFS)
+import           System.FS.API (FsError, FsErrorPath (..), FsPath, HasFS)
 import qualified System.FS.API.Lazy as FS
 import qualified System.FS.BlockIO.API as FS
 import           System.FS.BlockIO.API (HasBlockIO)
@@ -724,14 +723,14 @@ close t = do
      ResolveSerialisedValue
   -> V.Vector SerialisedKey
   -> Table IO h
-  -> IO (V.Vector (Maybe (Entry SerialisedValue (WeakBlobRef IO (Handle h))))) #-}
+  -> IO (V.Vector (Maybe (Entry SerialisedValue (WeakBlobRef IO h)))) #-}
 -- | See 'Database.LSMTree.Normal.lookups'.
 lookups ::
      (MonadST m, MonadSTM m, MonadThrow m)
   => ResolveSerialisedValue
   -> V.Vector SerialisedKey
   -> Table m h
-  -> m (V.Vector (Maybe (Entry SerialisedValue (WeakBlobRef m (Handle h)))))
+  -> m (V.Vector (Maybe (Entry SerialisedValue (WeakBlobRef m h))))
 lookups resolve ks t = do
     traceWith (tableTracer t) $ TraceLookups (V.length ks)
     withOpenTable t $ \thEnv ->
@@ -753,7 +752,7 @@ lookups resolve ks t = do
      ResolveSerialisedValue
   -> Range SerialisedKey
   -> Table IO h
-  -> (SerialisedKey -> SerialisedValue -> Maybe (WeakBlobRef IO (Handle h)) -> res)
+  -> (SerialisedKey -> SerialisedValue -> Maybe (WeakBlobRef IO h) -> res)
   -> IO (V.Vector res) #-}
 -- | See 'Database.LSMTree.Normal.rangeLookup'.
 rangeLookup ::
@@ -761,7 +760,7 @@ rangeLookup ::
   => ResolveSerialisedValue
   -> Range SerialisedKey
   -> Table m h
-  -> (SerialisedKey -> SerialisedValue -> Maybe (WeakBlobRef m (Handle h)) -> res)
+  -> (SerialisedKey -> SerialisedValue -> Maybe (WeakBlobRef m h) -> res)
      -- ^ How to map to a query result, different for normal/monoidal
   -> m (V.Vector res)
 rangeLookup resolve range t fromEntry = do
@@ -828,12 +827,12 @@ updates resolve es t = do
 
 {-# SPECIALISE retrieveBlobs ::
      Session IO h
-  -> V.Vector (WeakBlobRef IO (FS.Handle h))
+  -> V.Vector (WeakBlobRef IO h)
   -> IO (V.Vector SerialisedBlob) #-}
 retrieveBlobs ::
-     (MonadFix m, MonadMask m, MonadST m, MonadSTM m)
+     (MonadMask m, MonadST m, MonadSTM m)
   => Session m h
-  -> V.Vector (WeakBlobRef m (FS.Handle h))
+  -> V.Vector (WeakBlobRef m h)
   -> m (V.Vector SerialisedBlob)
 retrieveBlobs sesh wrefs =
     withOpenSession sesh $ \seshEnv ->
@@ -1023,7 +1022,7 @@ closeCursor Cursor {..} = do
      ResolveSerialisedValue
   -> Int
   -> Cursor IO h
-  -> (SerialisedKey -> SerialisedValue -> Maybe (WeakBlobRef IO (Handle h)) -> res)
+  -> (SerialisedKey -> SerialisedValue -> Maybe (WeakBlobRef IO h) -> res)
   -> IO (V.Vector res) #-}
 -- | See 'Database.LSMTree.Normal.readCursor'.
 readCursor ::
@@ -1032,7 +1031,7 @@ readCursor ::
   => ResolveSerialisedValue
   -> Int  -- ^ Maximum number of entries to read
   -> Cursor m h
-  -> (SerialisedKey -> SerialisedValue -> Maybe (WeakBlobRef m (Handle h)) -> res)
+  -> (SerialisedKey -> SerialisedValue -> Maybe (WeakBlobRef m h) -> res)
      -- ^ How to map to a query result, different for normal/monoidal
   -> m (V.Vector res)
 readCursor resolve n cursor fromEntry =
@@ -1043,7 +1042,7 @@ readCursor resolve n cursor fromEntry =
   -> (SerialisedKey -> Bool)
   -> Int
   -> Cursor IO h
-  -> (SerialisedKey -> SerialisedValue -> Maybe (WeakBlobRef IO (Handle h)) -> res)
+  -> (SerialisedKey -> SerialisedValue -> Maybe (WeakBlobRef IO h) -> res)
   -> IO (V.Vector res) #-}
 -- | @readCursorWhile _ p n cursor _@ reads elements until either:
 --
@@ -1060,7 +1059,7 @@ readCursorWhile ::
   -> (SerialisedKey -> Bool)  -- ^ Only read as long as this predicate holds
   -> Int  -- ^ Maximum number of entries to read
   -> Cursor m h
-  -> (SerialisedKey -> SerialisedValue -> Maybe (WeakBlobRef m (Handle h)) -> res)
+  -> (SerialisedKey -> SerialisedValue -> Maybe (WeakBlobRef m h) -> res)
      -- ^ How to map to a query result, different for normal/monoidal
   -> m (V.Vector res)
 readCursorWhile resolve keyIsWanted n Cursor {..} fromEntry = do

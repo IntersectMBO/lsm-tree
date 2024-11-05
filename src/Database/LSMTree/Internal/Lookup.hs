@@ -163,7 +163,7 @@ data ByteCountDiscrepancy = ByteCountDiscrepancy {
     -> V.Vector IndexCompact
     -> V.Vector (Handle h)
     -> V.Vector SerialisedKey
-    -> IO (V.Vector (Maybe (Entry SerialisedValue (WeakBlobRef IO (Handle h)))))
+    -> IO (V.Vector (Maybe (Entry SerialisedValue (WeakBlobRef IO h))))
   #-}
 -- | Batched lookups in I\/O.
 --
@@ -183,7 +183,7 @@ lookupsIO ::
   -> V.Vector IndexCompact -- ^ The indexes inside @rs@
   -> V.Vector (Handle h) -- ^ The file handles to the key\/value files inside @rs@
   -> V.Vector SerialisedKey
-  -> m (V.Vector (Maybe (Entry SerialisedValue (WeakBlobRef m (Handle h)))))
+  -> m (V.Vector (Maybe (Entry SerialisedValue (WeakBlobRef m h))))
 lookupsIO !hbio !mgr !resolveV !wb !wbblobs !rs !blooms !indexes !kopsFiles !ks =
     assert precondition $
     withArena mgr $ \arena -> do
@@ -208,7 +208,7 @@ lookupsIO !hbio !mgr !resolveV !wb !wbblobs !rs !blooms !indexes !kopsFiles !ks 
     -> VP.Vector RunIxKeyIx
     -> V.Vector (IOOp RealWorld h)
     -> VU.Vector IOResult
-    -> IO (V.Vector (Maybe (Entry SerialisedValue (WeakBlobRef IO (Handle h)))))
+    -> IO (V.Vector (Maybe (Entry SerialisedValue (WeakBlobRef IO h))))
   #-}
 -- | Intra-page lookups, and combining lookup results from multiple runs and
 -- the write buffer.
@@ -227,7 +227,7 @@ intraPageLookups ::
   -> VP.Vector RunIxKeyIx
   -> V.Vector (IOOp (PrimState m) h)
   -> VU.Vector IOResult
-  -> m (V.Vector (Maybe (Entry SerialisedValue (WeakBlobRef m (Handle h)))))
+  -> m (V.Vector (Maybe (Entry SerialisedValue (WeakBlobRef m h))))
 intraPageLookups !resolveV !wb !wbblobs !rs !ks !rkixs !ioops !ioress = do
     -- We accumulate results into the 'res' vector. When there are several
     -- lookup hits for the same key then we combine the results. The combining
@@ -256,7 +256,7 @@ intraPageLookups !resolveV !wb !wbblobs !rs !ks !rkixs !ioops !ioress = do
 
     loop ::
          VM.MVector (PrimState m)
-                    (Maybe (Entry SerialisedValue (WeakBlobRef m (Handle h))))
+                    (Maybe (Entry SerialisedValue (WeakBlobRef m h)))
       -> Int
       -> m ()
     loop !res !ioopix

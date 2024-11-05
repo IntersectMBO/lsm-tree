@@ -390,5 +390,5 @@ runIO act lu = case act of
                   put (RealState n Nothing)
                   return (Right x)
 
-    toMockEntry :: FS.HasFS IO MockFS.HandleMock -> Reader.Entry IO (FS.Handle MockFS.HandleMock) -> IO SerialisedEntry
+    toMockEntry :: FS.HasFS IO MockFS.HandleMock -> Reader.Entry IO MockFS.HandleMock -> IO SerialisedEntry
     toMockEntry hfs = traverse (readBlob hfs) . Reader.toFullEntry
