@@ -190,7 +190,7 @@ finaliser var b rs = do
 -- this function with async exceptions masked. Otherwise, these resources can
 -- leak.
 complete ::
-     (MonadFix m, MonadSTM m, MonadST m, MonadThrow m)
+     (MonadFix m, MonadSTM m, MonadST m, MonadMask m)
   => Merge m h
   -> m (Run m h)
 complete Merge{..} = do
@@ -218,7 +218,7 @@ complete Merge{..} = do
 --
 -- Note: run with async exceptions masked. See 'complete'.
 stepsToCompletion ::
-      (MonadCatch m, MonadFix m, MonadSTM m, MonadST m)
+      (MonadMask m, MonadFix m, MonadSTM m, MonadST m)
    => Merge m h
    -> Int
    -> m (Run m h)
@@ -237,7 +237,7 @@ stepsToCompletion m stepBatchSize = go
 --
 -- Note: run with async exceptions masked. See 'complete'.
 stepsToCompletionCounted ::
-     (MonadCatch m, MonadFix m, MonadSTM m, MonadST m)
+     (MonadMask m, MonadFix m, MonadSTM m, MonadST m)
   => Merge m h
   -> Int
   -> m (Int, Run m h)

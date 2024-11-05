@@ -66,7 +66,9 @@ import           Data.BloomFilter (Bloom)
 import qualified Data.ByteString.Short as SBS
 import           Data.Foldable (for_)
 import           Data.Word (Word64)
-import           Database.LSMTree.Internal.BlobRef (BlobRef (..), BlobSpan (..))
+import           Database.LSMTree.Internal.BlobFile hiding (removeReference)
+import qualified Database.LSMTree.Internal.BlobFile as BlobFile
+import           Database.LSMTree.Internal.BlobRef hiding (removeReference)
 import           Database.LSMTree.Internal.BloomFilter (bloomFilterFromSBS)
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
@@ -111,7 +113,7 @@ data Run m h = Run {
       -- | The file handle for the BLOBs file. This file is opened
       -- read-only and is accessed in a normal style using buffered
       -- I\/O, reading arbitrary file offset and length spans.
-    , runBlobFile       :: !(FS.Handle h)
+    , runBlobFile       :: !(BlobFile m h)
     , runRunDataCaching :: !RunDataCaching
     , runHasFS          :: !(HasFS m h)
     , runHasBlockIO     :: !(HasBlockIO m h)
@@ -143,10 +145,10 @@ removeReferenceN r = RC.removeReferenceN (runRefCounter r)
 
 -- | Helper function to make a 'BlobRef' that points into a 'Run'.
 mkBlobRefForRun :: Run m h -> BlobSpan -> BlobRef m (FS.Handle h)
-mkBlobRefForRun Run{runBlobFile, runRefCounter} blobRefSpan =
+mkBlobRefForRun Run{runBlobFile} blobRefSpan =
     BlobRef {
-      blobRefFile  = runBlobFile,
-      blobRefCount = runRefCounter,
+      blobRefFile  = blobFileHandle runBlobFile,
+      blobRefCount = blobFileRefCounter runBlobFile,
       blobRefSpan
     }
 
@@ -158,18 +160,18 @@ mkBlobRefForRun Run{runBlobFile, runRefCounter} blobRefSpan =
 --
 -- TODO: Once snapshots are implemented, files should get removed, but for now
 -- we want to be able to re-open closed runs from disk.
-close :: (MonadSTM m, MonadThrow m) => Run m h -> m ()
+close :: (MonadSTM m, MonadMask m, PrimMonad m) => Run m h -> m ()
 close Run {..} = do
     -- TODO: removing files should drop them from the page cache, but until we
     -- have proper snapshotting we are keeping the files around. Because of
     -- this, we instruct the OS to drop all run-related files from the page
     -- cache
     FS.hDropCacheAll runHasBlockIO runKOpsFile
-    FS.hDropCacheAll runHasBlockIO runBlobFile
+    FS.hDropCacheAll runHasBlockIO (blobFileHandle runBlobFile)
 
     FS.hClose runHasFS runKOpsFile
       `finally`
-        FS.hClose runHasFS runBlobFile
+         BlobFile.removeReference runBlobFile
 
 -- | Should this run cache key\/ops data in memory?
 data RunDataCaching = CacheRunData | NoCacheRunData
@@ -205,7 +207,7 @@ setRunDataCaching hbio runKOpsFile NoCacheRunData = do
   -> RunBuilder IO h
   -> IO (Run IO h) #-}
 fromMutable ::
-     (MonadFix m, MonadST m, MonadSTM m, MonadThrow m)
+     (MonadFix m, MonadST m, MonadSTM m, MonadMask m)
   => RunDataCaching
   -> RefCount
   -> RunBuilder m h
@@ -214,7 +216,8 @@ fromMutable runRunDataCaching refCount builder = do
     (runHasFS, runHasBlockIO, runRunFsPaths, runFilter, runIndex, runNumEntries) <-
       Builder.unsafeFinalise (runRunDataCaching == NoCacheRunData) builder
     runKOpsFile <- FS.hOpen runHasFS (runKOpsPath runRunFsPaths) FS.ReadMode
-    runBlobFile <- FS.hOpen runHasFS (runBlobPath runRunFsPaths) FS.ReadMode
+    runBlobFile <- newBlobFile runHasFS
+               =<< FS.hOpen runHasFS (runBlobPath runRunFsPaths) FS.ReadMode
     setRunDataCaching runHasBlockIO runKOpsFile runRunDataCaching
     rec runRefCounter <- RC.unsafeMkRefCounterN refCount (Just $ close r)
         let !r = Run { .. }
@@ -236,7 +239,7 @@ fromMutable runRunDataCaching refCount builder = do
 -- immediately when they are added to the write buffer, avoiding the need to do
 -- it here.
 fromWriteBuffer ::
-     (MonadFix m, MonadST m, MonadSTM m, MonadThrow m)
+     (MonadFix m, MonadST m, MonadSTM m, MonadMask m)
   => HasFS m h
   -> HasBlockIO m h
   -> RunDataCaching
@@ -274,7 +277,7 @@ data FileFormatError = FileFormatError FS.FsPath String
 -- checksum ('ChecksumError') or can't be parsed ('FileFormatError').
 openFromDisk ::
      forall m h.
-     (MonadFix m, MonadSTM m, MonadThrow m, PrimMonad m)
+     (MonadFix m, MonadSTM m, MonadMask m, PrimMonad m)
   => HasFS m h
   -> HasBlockIO m h
   -> RunDataCaching
@@ -299,7 +302,8 @@ openFromDisk fs hbio runRunDataCaching runRunFsPaths = do
         =<< readCRC (forRunIndex expectedChecksums) (forRunIndex paths)
 
     runKOpsFile <- FS.hOpen fs (runKOpsPath runRunFsPaths) FS.ReadMode
-    runBlobFile <- FS.hOpen fs (runBlobPath runRunFsPaths) FS.ReadMode
+    runBlobFile <- newBlobFile fs
+               =<< FS.hOpen fs (runBlobPath runRunFsPaths) FS.ReadMode
     setRunDataCaching hbio runKOpsFile runRunDataCaching
     rec runRefCounter <- RC.unsafeMkRefCounterN (RefCount 1) (Just $ close r)
         let !r = Run
