@@ -63,7 +63,7 @@ propAll prop = [
     , testProperty "SnapLevel" $ prop (Proxy @SnapLevel)
     , testProperty "Vector RunNumber" $ prop (Proxy @(V.Vector RunNumber))
     , testProperty "RunNumber" $ prop (Proxy @RunNumber)
-    , testProperty "SnapMergingRun" $ prop (Proxy @SnapMergingRun)
+    , testProperty "SnapIncomingRun" $ prop (Proxy @SnapIncomingRun)
     , testProperty "NumRuns" $ prop (Proxy @NumRuns)
     , testProperty "MergePolicyForLevel" $ prop (Proxy @MergePolicyForLevel)
     , testProperty "UnspentCredits" $ prop (Proxy @UnspentCredits)
@@ -252,7 +252,7 @@ instance Arbitrary (V.Vector RunNumber) where
 
 deriving newtype instance Arbitrary RunNumber
 
-instance Arbitrary SnapMergingRun where
+instance Arbitrary SnapIncomingRun where
   arbitrary = oneof [
         SnapMergingRun <$> arbitrary <*> arbitrary <*> arbitrary
                        <*> arbitrary <*> arbitrary <*> arbitrary

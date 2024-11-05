@@ -270,6 +270,11 @@ deriving anyclass instance ( Typeable m, Typeable (PrimState m), Typeable h
                            , NoThunks (StrictMVar m (MergingRunState m h))
                            ) => NoThunks (Level m h)
 
+deriving stock instance Generic (IncomingRun m h)
+deriving anyclass instance ( Typeable m, Typeable (PrimState m), Typeable h
+                           , NoThunks (StrictMVar m (MergingRunState m h))
+                           ) => NoThunks (IncomingRun m h)
+
 deriving stock instance Generic (MergingRun m h)
 deriving anyclass instance ( Typeable m, Typeable (PrimState m), Typeable h
                            , NoThunks (StrictMVar m (MergingRunState m h))
