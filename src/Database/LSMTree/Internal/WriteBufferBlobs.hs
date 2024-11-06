@@ -27,7 +27,6 @@ module Database.LSMTree.Internal.WriteBufferBlobs (
     addReference,
     removeReference,
     addBlob,
-    readBlob,
     mkRawBlobRef,
     mkWeakBlobRef,
     -- * For tests
@@ -169,15 +168,6 @@ writeBlobAtOffset fs h (SerialisedBlob' (VP.Vector boff blen ba)) off = do
              (fromIntegral blen :: FS.ByteCount)
              (FS.AbsOffset off)
     return ()
-
-{-# SPECIALISE readBlob :: HasFS IO h -> WriteBufferBlobs IO h -> BlobSpan -> IO SerialisedBlob #-}
-readBlob :: (PrimMonad m, MonadThrow m)
-         => HasFS m h
-         -> WriteBufferBlobs m h
-         -> BlobSpan
-         -> m SerialisedBlob
-readBlob fs WriteBufferBlobs {blobFile} blobspan =
-    readBlobFile fs blobFile blobspan
 
 -- | Helper function to make a 'RawBlobRef' that points into a
 -- 'WriteBufferBlobs'.
