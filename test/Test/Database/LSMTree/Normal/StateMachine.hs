@@ -29,6 +29,7 @@
 {- HLINT ignore "Evaluate" -}
 {- HLINT ignore "Use camelCase" -}
 {- HLINT ignore "Redundant fmap" -}
+{- HLINT ignore "Short-circuited list comprehension -} -- TODO: remove once table union is implemented
 
 {-
   TODO: improve generation and shrinking of dependencies. See
@@ -463,6 +464,9 @@ instance ( Show (Class.TableConfig h)
     Deletes :: C k v blob
             => V.Vector k -> Var h (WrapTable h IO k v blob)
             -> Act h ()
+    Mupserts :: C k v blob
+             => V.Vector (k, v) -> Var h (WrapTable h IO k v blob)
+             -> Act h ()
     -- Blobs
     RetrieveBlobs :: B blob
                   => Var h (V.Vector (WrapBlobRef h IO blob))
@@ -480,6 +484,11 @@ instance ( Show (Class.TableConfig h)
     Duplicate :: C k v blob
               => Var h (WrapTable h IO k v blob)
               -> Act h (WrapTable h IO k v blob)
+    -- Table union
+    Union :: C k v blob
+          => Var h (WrapTable h IO k v blob)
+          -> Var h (WrapTable h IO k v blob)
+          -> Act h (WrapTable h IO k v blob)
 
   initialState    = Lockstep.Defaults.initialState initModelState
   nextState       = Lockstep.Defaults.nextState
@@ -526,6 +535,8 @@ instance ( Eq (Class.TableConfig h)
           Just inss1 == cast inss2 && Just var1 == cast var2
       go (Deletes ks1 var1)         (Deletes ks2 var2) =
           Just ks1 == cast ks2 && Just var1 == cast var2
+      go (Mupserts mups1 var1) (Mupserts mups2 var2) =
+          Just mups1 == cast mups2 && Just var1 == cast var2
       go (RetrieveBlobs vars1) (RetrieveBlobs vars2) =
           Just vars1 == cast vars2
       go (CreateSnapshot name1 var1) (CreateSnapshot name2 var2) =
@@ -538,6 +549,8 @@ instance ( Eq (Class.TableConfig h)
           True
       go (Duplicate var1) (Duplicate var2) =
           Just var1 == cast var2
+      go (Union var1_1 var1_2) (Union var2_1 var2_2) =
+          Just var1_1 == cast var2_1 && Just var1_2 == cast var2_2
       go _  _ = False
 
       _coveredAllCases :: LockstepAction (ModelState h) a -> ()
@@ -552,12 +565,14 @@ instance ( Eq (Class.TableConfig h)
           Updates{} -> ()
           Inserts{} -> ()
           Deletes{} -> ()
+          Mupserts{} -> ()
           RetrieveBlobs{} -> ()
           CreateSnapshot{} -> ()
           OpenSnapshot{} -> ()
           DeleteSnapshot{} -> ()
           ListSnapshots{} -> ()
           Duplicate{} -> ()
+          Union{} -> ()
 
 {-------------------------------------------------------------------------------
   InLockstep
@@ -657,12 +672,14 @@ instance ( Eq (Class.TableConfig h)
       Updates _ tableVar              -> [SomeGVar tableVar]
       Inserts _ tableVar              -> [SomeGVar tableVar]
       Deletes _ tableVar              -> [SomeGVar tableVar]
+      Mupserts _ tableVar             -> [SomeGVar tableVar]
       RetrieveBlobs blobsVar          -> [SomeGVar blobsVar]
       CreateSnapshot _ tableVar       -> [SomeGVar tableVar]
       OpenSnapshot _                  -> []
       DeleteSnapshot _                -> []
       ListSnapshots                   -> []
       Duplicate tableVar              -> [SomeGVar tableVar]
+      Union table1Var table2Var       -> [SomeGVar table1Var, SomeGVar table2Var]
 
   arbitraryWithVars ::
        ModelVarContext (ModelState h)
@@ -768,12 +785,14 @@ instance ( Eq (Class.TableConfig h)
       Updates{}        -> OEither $ bimap OId OId result
       Inserts{}        -> OEither $ bimap OId OId result
       Deletes{}        -> OEither $ bimap OId OId result
+      Mupserts{}       -> OEither $ bimap OId OId result
       RetrieveBlobs{}  -> OEither $ bimap OId (OVector . fmap OBlob) result
       CreateSnapshot{} -> OEither $ bimap OId OId result
       OpenSnapshot{}   -> OEither $ bimap OId (const OTable) result
       DeleteSnapshot{} -> OEither $ bimap OId OId result
       ListSnapshots{}  -> OEither $ bimap OId (OList . fmap OId) result
       Duplicate{}      -> OEither $ bimap OId (const OTable) result
+      Union{}          -> OEither $ bimap OId (const OTable) result
 
   showRealResponse ::
        Proxy (RealMonad h IO)
@@ -790,12 +809,14 @@ instance ( Eq (Class.TableConfig h)
       Updates{}        -> Just Dict
       Inserts{}        -> Just Dict
       Deletes{}        -> Just Dict
+      Mupserts{}       -> Just Dict
       RetrieveBlobs{}  -> Just Dict
       CreateSnapshot{} -> Just Dict
       OpenSnapshot{}   -> Nothing
       DeleteSnapshot{} -> Just Dict
       ListSnapshots    -> Just Dict
       Duplicate{}      -> Nothing
+      Union{}          -> Nothing
 
 instance ( Eq (Class.TableConfig h)
          , Class.IsTable h
@@ -822,12 +843,14 @@ instance ( Eq (Class.TableConfig h)
       Updates{}        -> OEither $ bimap OId OId result
       Inserts{}        -> OEither $ bimap OId OId result
       Deletes{}        -> OEither $ bimap OId OId result
+      Mupserts{}       -> OEither $ bimap OId OId result
       RetrieveBlobs{}  -> OEither $ bimap OId (OVector . fmap OBlob) result
       CreateSnapshot{} -> OEither $ bimap OId OId result
       OpenSnapshot{}   -> OEither $ bimap OId (const OTable) result
       DeleteSnapshot{} -> OEither $ bimap OId OId result
       ListSnapshots{}  -> OEither $ bimap OId (OList . fmap OId) result
       Duplicate{}      -> OEither $ bimap OId (const OTable) result
+      Union{}          -> OEither $ bimap OId (const OTable) result
 
   showRealResponse ::
        Proxy (RealMonad h (IOSim s))
@@ -844,12 +867,14 @@ instance ( Eq (Class.TableConfig h)
       Updates{}        -> Just Dict
       Inserts{}        -> Just Dict
       Deletes{}        -> Just Dict
+      Mupserts{}       -> Just Dict
       RetrieveBlobs{}  -> Just Dict
       CreateSnapshot{} -> Just Dict
       OpenSnapshot{}   -> Nothing
       DeleteSnapshot{} -> Just Dict
       ListSnapshots    -> Just Dict
       Duplicate{}      -> Nothing
+      Union{}          -> Nothing
 
 {-------------------------------------------------------------------------------
   RunModel
@@ -915,6 +940,9 @@ runModel lookUp = \case
     Deletes kdels tableVar ->
       wrap MUnit
       . Model.runModelM (Model.deletes Model.getResolve kdels (getTable $ lookUp tableVar))
+    Mupserts kmups tableVar ->
+      wrap MUnit
+      . Model.runModelM (Model.mupserts Model.getResolve kmups (getTable $ lookUp tableVar))
     RetrieveBlobs blobsVar ->
       wrap (MVector . fmap (MBlob . WrapBlob))
       . Model.runModelM (Model.retrieveBlobs (getBlobRefs . lookUp $ blobsVar))
@@ -933,6 +961,9 @@ runModel lookUp = \case
     Duplicate tableVar ->
       wrap MTable
       . Model.runModelM (Model.duplicate (getTable $ lookUp tableVar))
+    Union table1Var table2Var ->
+      wrap MTable
+      . Model.runModelM (Model.union Model.getResolve (getTable $ lookUp table1Var) (getTable $ lookUp table2Var))
   where
     getTable ::
          ModelValue (ModelState h) (WrapTable h IO k v blob)
@@ -996,6 +1027,8 @@ runIO action lookUp = ReaderT $ \(session, handler) -> do
           Class.inserts (unwrapTable $ lookUp' tableVar) kins
         Deletes kdels tableVar -> catchErr handler $
           Class.deletes (unwrapTable $ lookUp' tableVar) kdels
+        Mupserts kmups tableVar -> catchErr handler $
+          Class.mupserts (unwrapTable $ lookUp' tableVar) kmups
         RetrieveBlobs blobRefsVar -> catchErr handler $
           fmap WrapBlob <$> Class.retrieveBlobs (Proxy @h) session (unwrapBlobRef <$> lookUp' blobRefsVar)
         CreateSnapshot name tableVar -> catchErr handler $
@@ -1008,6 +1041,8 @@ runIO action lookUp = ReaderT $ \(session, handler) -> do
           Class.listSnapshots session
         Duplicate tableVar -> catchErr handler $
           WrapTable <$> Class.duplicate (unwrapTable $ lookUp' tableVar)
+        Union table1Var table2Var -> catchErr handler $
+          WrapTable <$> Class.union (unwrapTable $ lookUp' table1Var) (unwrapTable $ lookUp' table2Var)
 
     lookUp' :: Var h x -> Realized IO x
     lookUp' = lookUpGVar (Proxy @(RealMonad h IO)) lookUp
@@ -1046,6 +1081,8 @@ runIOSim action lookUp = ReaderT $ \(session, handler) ->
           Class.inserts (unwrapTable $ lookUp' tableVar) kins
         Deletes kdels tableVar -> catchErr handler $
           Class.deletes (unwrapTable $ lookUp' tableVar) kdels
+        Mupserts kmups tableVar -> catchErr handler $
+          Class.mupserts (unwrapTable $ lookUp' tableVar) kmups
         RetrieveBlobs blobRefsVar -> catchErr handler $
           fmap WrapBlob <$> Class.retrieveBlobs (Proxy @h) session (unwrapBlobRef <$> lookUp' blobRefsVar)
         CreateSnapshot name tableVar -> catchErr handler $
@@ -1058,6 +1095,8 @@ runIOSim action lookUp = ReaderT $ \(session, handler) ->
           Class.listSnapshots session
         Duplicate tableVar -> catchErr handler $
           WrapTable <$> Class.duplicate (unwrapTable $ lookUp' tableVar)
+        Union table1Var table2Var -> catchErr handler $
+          WrapTable <$> Class.union (unwrapTable $ lookUp' table1Var) (unwrapTable $ lookUp' table2Var)
 
     lookUp' :: Var h x -> Realized (IOSim s) x
     lookUp' = lookUpGVar (Proxy @(RealMonad h (IOSim s))) lookUp
@@ -1108,12 +1147,14 @@ arbitraryActionWithVars _ ctx (ModelState st _stats) =
         Updates{} -> ()
         Inserts{} -> ()
         Deletes{} -> ()
+        Mupserts{} -> ()
         RetrieveBlobs{} -> ()
         CreateSnapshot{} -> ()
         DeleteSnapshot{} -> ()
         ListSnapshots{} -> ()
         OpenSnapshot{} -> ()
         Duplicate{} -> ()
+        Union{} -> ()
 
     genTableVar = QC.elements tableVars
 
@@ -1183,11 +1224,12 @@ arbitraryActionWithVars _ ctx (ModelState st _stats) =
       | null tableVars = []
       | otherwise      =
         [ (1,  fmap Some $ Close <$> genTableVar)
-        , (10, fmap Some $ Lookups <$> genLookupKeys <*> genTableVar)
-        , (5,  fmap Some $ RangeLookup <$> genRange <*> genTableVar)
-        , (10, fmap Some $ Updates <$> genUpdates <*> genTableVar)
-        , (10, fmap Some $ Inserts <$> genInserts <*> genTableVar)
-        , (10, fmap Some $ Deletes <$> genDeletes <*> genTableVar)
+        , (8, fmap Some $ Lookups <$> genLookupKeys <*> genTableVar)
+        , (4,  fmap Some $ RangeLookup <$> genRange <*> genTableVar)
+        , (8, fmap Some $ Updates <$> genUpdates <*> genTableVar)
+        , (8, fmap Some $ Inserts <$> genInserts <*> genTableVar)
+        , (8, fmap Some $ Deletes <$> genDeletes <*> genTableVar)
+        , (8, fmap Some $ Mupserts <$> genMupserts <*> genTableVar)
         ]
      ++ [ (3,  fmap Some $ NewCursor <$> QC.arbitrary <*> genTableVar)
         | length cursorVars <= 5 -- no more than 5 cursors at once
@@ -1197,6 +1239,10 @@ arbitraryActionWithVars _ ctx (ModelState st _stats) =
         ]
      ++ [ (5,  fmap Some $ Duplicate <$> genTableVar)
         | length tableVars <= 5 -- no more than 5 tables at once
+        ]
+     ++ [ (2,  fmap Some $ Union <$> genTableVar <*> genTableVar)
+        | length tableVars <= 5 -- no more than 5 tables at once
+        , False -- TODO: enable once table union is implemented
         ]
 
     genActionsCursor :: [(Int, Gen (Any (LockstepAction (ModelState h))))]
@@ -1243,6 +1289,9 @@ arbitraryActionWithVars _ ctx (ModelState st _stats) =
 
     genDeletes :: Gen (V.Vector k)
     genDeletes = QC.arbitrary
+
+    genMupserts :: Gen (V.Vector (k, v))
+    genMupserts = QC.liftArbitrary ((,) <$> QC.arbitrary <*> QC.arbitrary)
 
     genBlob :: Gen (Maybe blob)
     genBlob = QC.arbitrary
@@ -1458,6 +1507,9 @@ updateStats action lookUp modelBefore _modelAfter result =
         Duplicate{}
           | MEither (Right (MTable table)) <- result -> initCount table
           | otherwise                                      -> stats
+        Union{}
+          | MEither (Right (MTable table)) <- result -> initCount table
+          | otherwise                                      -> stats
 
         -- Note that for the other actions we don't count success vs failure.
         -- We don't need that level of detail. We just want to see the
@@ -1468,6 +1520,7 @@ updateStats action lookUp modelBefore _modelAfter result =
         Updates _ tableVar     -> updateCount tableVar
         Inserts _ tableVar     -> updateCount tableVar
         Deletes _ tableVar     -> updateCount tableVar
+        Mupserts _ tableVar    -> updateCount tableVar
         -- Note that we don't remove tracking map entries for tables that get
         -- closed. We want to know actions per table of all tables used, not
         -- just those that were still open at the end of the sequence of
