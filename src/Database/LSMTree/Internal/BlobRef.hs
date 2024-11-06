@@ -24,14 +24,12 @@ import           Control.Monad (when)
 import           Control.Monad.Class.MonadThrow (Exception, MonadMask,
                      MonadThrow (..), bracket, throwIO)
 import           Control.Monad.Primitive
-import           Control.RefCount (RefCounter)
 import qualified Control.RefCount as RC
 import           Data.Coerce (coerce)
-import qualified Data.Primitive.ByteArray as P (MutableByteArray,
-                     newPinnedByteArray, unsafeFreezeByteArray)
+import qualified Data.Primitive.ByteArray as P (MutableByteArray)
 import qualified Data.Vector as V
-import           Database.LSMTree.Internal.BlobFile (BlobSpan (..))
-import qualified Database.LSMTree.Internal.RawBytes as RB
+import           Database.LSMTree.Internal.BlobFile (BlobFile (..), BlobSpan (..))
+import qualified Database.LSMTree.Internal.BlobFile as BlobFile
 import           Database.LSMTree.Internal.Serialise (SerialisedBlob (..))
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
@@ -48,17 +46,16 @@ import qualified System.FS.BlockIO.API as FS
 -- Thus these cannot be handed out via the API. Use 'WeakBlobRef' for that.
 --
 data RawBlobRef m h = RawBlobRef {
-      blobRefFile  :: !(FS.Handle h)
-    , blobRefCount :: {-# UNPACK #-} !(RefCounter m)
-    , blobRefSpan  :: {-# UNPACK #-} !BlobSpan
+      rawBlobRefFile :: {-# NOUNPACK #-} !(BlobFile m h)
+    , rawBlobRefSpan :: {-# UNPACK #-}   !BlobSpan
     }
   deriving stock (Show)
 
 instance NFData h => NFData (RawBlobRef m h) where
-  rnf (RawBlobRef a b c) = rnf a `seq` rnf b `seq` rnf c
+  rnf (RawBlobRef a b) = rnf a `seq` rnf b
 
 blobRefSpanSize :: RawBlobRef m h -> Int
-blobRefSpanSize = fromIntegral . blobSpanSize . blobRefSpan
+blobRefSpanSize = fromIntegral . blobSpanSize . rawBlobRefSpan
 
 -- | A \"weak\" reference to a blob within a blob file. These are the ones we
 -- can return in the public API and can outlive their parent table.
@@ -117,7 +114,7 @@ deRefWeakBlobRef ::
   => WeakBlobRef m h
   -> m (RawBlobRef m h)
 deRefWeakBlobRef (WeakBlobRef ref) = do
-    ok <- RC.upgradeWeakReference (blobRefCount ref)
+    ok <- RC.upgradeWeakReference (blobFileRefCounter (rawBlobRefFile ref))
     when (not ok) $ throwIO (WeakBlobRefInvalid 0)
     pure ref
 
@@ -133,7 +130,7 @@ deRefWeakBlobRefs wrefs = do
     let refs :: V.Vector (RawBlobRef m h)
         refs = coerce wrefs -- safely coerce away the newtype wrappers
     V.iforM_ wrefs $ \i (WeakBlobRef ref) -> do
-      ok <- RC.upgradeWeakReference (blobRefCount ref)
+      ok <- RC.upgradeWeakReference (blobFileRefCounter (rawBlobRefFile ref))
       when (not ok) $ do
         -- drop refs on the previous ones taken successfully so far
         V.mapM_ removeReference (V.take i refs)
@@ -142,7 +139,7 @@ deRefWeakBlobRefs wrefs = do
 
 {-# SPECIALISE removeReference :: RawBlobRef IO h -> IO () #-}
 removeReference :: (MonadMask m, PrimMonad m) => RawBlobRef m h -> m ()
-removeReference = RC.removeReference . blobRefCount
+removeReference = BlobFile.removeReference . rawBlobRefFile
 
 {-# SPECIALISE removeReferences :: V.Vector (RawBlobRef IO h) -> IO () #-}
 removeReferences :: (MonadMask m, PrimMonad m) => V.Vector (RawBlobRef m h) -> m ()
@@ -157,19 +154,8 @@ readBlob ::
   => HasFS m h
   -> RawBlobRef m h
   -> m SerialisedBlob
-readBlob fs RawBlobRef {
-              blobRefFile,
-              blobRefSpan = BlobSpan {blobSpanOffset, blobSpanSize}
-            } = do
-    let off = FS.AbsOffset blobSpanOffset
-        len :: Int
-        len = fromIntegral blobSpanSize
-    mba <- P.newPinnedByteArray len
-    _ <- FS.hGetBufExactlyAt fs blobRefFile mba 0
-                             (fromIntegral len :: FS.ByteCount) off
-    ba <- P.unsafeFreezeByteArray mba
-    let !rb = RB.fromByteArray 0 len ba
-    return (SerialisedBlob rb)
+readBlob fs RawBlobRef {rawBlobRefFile, rawBlobRefSpan} =
+    BlobFile.readBlobFile fs rawBlobRefFile rawBlobRefSpan
 
 readBlobIOOp ::
      P.MutableByteArray s -> Int
@@ -177,11 +163,11 @@ readBlobIOOp ::
   -> FS.IOOp s h
 readBlobIOOp buf bufoff
              RawBlobRef {
-               blobRefFile,
-               blobRefSpan = BlobSpan {blobSpanOffset, blobSpanSize}
+               rawBlobRefFile = BlobFile {blobFileHandle},
+               rawBlobRefSpan = BlobSpan {blobSpanOffset, blobSpanSize}
              } =
     FS.IOOpRead
-      blobRefFile
+      blobFileHandle
       (fromIntegral blobSpanOffset :: FS.FileOffset)
       buf (FS.BufferOffset bufoff)
       (fromIntegral blobSpanSize :: FS.ByteCount)

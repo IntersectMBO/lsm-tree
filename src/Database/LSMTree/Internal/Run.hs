@@ -145,11 +145,10 @@ removeReferenceN r = RC.removeReferenceN (runRefCounter r)
 
 -- | Helper function to make a 'BlobRef' that points into a 'Run'.
 mkBlobRefForRun :: Run m h -> BlobSpan -> RawBlobRef m h
-mkBlobRefForRun Run{runBlobFile} blobRefSpan =
+mkBlobRefForRun Run{runBlobFile} blobspan =
     RawBlobRef {
-      blobRefFile  = blobFileHandle runBlobFile,
-      blobRefCount = blobFileRefCounter runBlobFile,
-      blobRefSpan
+      rawBlobRefFile = runBlobFile,
+      rawBlobRefSpan = blobspan
     }
 
 {-# SPECIALISE close ::

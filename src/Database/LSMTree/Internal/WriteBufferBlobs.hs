@@ -182,11 +182,10 @@ readBlob fs WriteBufferBlobs {blobFile} blobspan =
 mkBlobRef :: WriteBufferBlobs m h
           -> BlobSpan
           -> RawBlobRef m h
-mkBlobRef WriteBufferBlobs {blobFile} blobRefSpan =
+mkBlobRef WriteBufferBlobs {blobFile} blobspan =
     RawBlobRef {
-      blobRefFile  = blobFileHandle blobFile,
-      blobRefCount = blobFileRefCounter blobFile,
-      blobRefSpan
+      rawBlobRefFile = blobFile,
+      rawBlobRefSpan = blobspan
     }
 
 
