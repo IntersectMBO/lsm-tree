@@ -4,24 +4,16 @@
 {- HLINT ignore "Use unless" -}
 
 module Database.LSMTree.Internal.BlobRef (
-    RawBlobRef (..)
-  , BlobSpan (..)
-  , blobRefSpanSize
+    BlobSpan (..)
+  , RawBlobRef (..)
   , WeakBlobRef (..)
-  , withWeakBlobRef
-  , withWeakBlobRefs
-  , deRefWeakBlobRef
-  , deRefWeakBlobRefs
   , WeakBlobRefInvalid (..)
   , rawToWeakBlobRef
-  , removeReference
-  , removeReferences
   , readRawBlobRef
   , readWeakBlobRef
   , readWeakBlobRefs
   ) where
 
-import           Control.DeepSeq (NFData (..))
 import           Control.Monad (when)
 import           Control.Monad.Class.MonadThrow (Exception, MonadMask,
                      MonadThrow (..), bracket, throwIO)
@@ -55,12 +47,6 @@ data RawBlobRef m h = RawBlobRef {
     , rawBlobRefSpan :: {-# UNPACK #-}   !BlobSpan
     }
   deriving stock (Show)
-
-instance NFData h => NFData (RawBlobRef m h) where
-  rnf (RawBlobRef a b) = rnf a `seq` rnf b
-
-blobRefSpanSize :: StrongBlobRef m h -> Int
-blobRefSpanSize = fromIntegral . blobSpanSize . strongBlobRefSpan
 
 -- | A \"weak\" reference to a blob within a blob file. These are the ones we
 -- can return in the public API and can outlive their parent table.
@@ -105,37 +91,6 @@ newtype WeakBlobRefInvalid = WeakBlobRefInvalid Int
   deriving stock (Show)
   deriving anyclass (Exception)
 
-{-# SPECIALISE withWeakBlobRef ::
-     WeakBlobRef IO h
-  -> (StrongBlobRef IO h -> IO a)
-  -> IO a #-}
--- | 'WeakBlobRef's are weak references. They do not keep the blob file open.
--- Dereference a 'WeakBlobRef' to a strong 'BlobRef' to allow I\/O using
--- 'readBlob' or 'readBlobIOOp'. Use 'removeReference' when the 'BlobRef' is
--- no longer needed.
---
--- Throws 'WeakBlobRefInvalid' if the weak reference has become invalid.
---
-withWeakBlobRef ::
-     (MonadMask m, PrimMonad m)
-  => WeakBlobRef m h
-  -> (StrongBlobRef m h -> m a)
-  -> m a
-withWeakBlobRef wref = bracket (deRefWeakBlobRef wref) removeReference
-
-{-# SPECIALISE withWeakBlobRefs ::
-     V.Vector (WeakBlobRef IO h)
-  -> (V.Vector (StrongBlobRef IO h) -> IO a)
-  -> IO a #-}
--- | The same as 'withWeakBlobRef' but for many references in one go.
---
-withWeakBlobRefs ::
-     (MonadMask m, PrimMonad m)
-  => V.Vector (WeakBlobRef m h)
-  -> (V.Vector (StrongBlobRef m h) -> m a)
-  -> m a
-withWeakBlobRefs wrefs = bracket (deRefWeakBlobRefs wrefs) removeReferences
-
 {-# SPECIALISE deRefWeakBlobRef ::
      WeakBlobRef IO h
   -> IO (StrongBlobRef IO h) #-}
@@ -177,10 +132,6 @@ deRefWeakBlobRefs wrefs = do
 {-# SPECIALISE removeReference :: StrongBlobRef IO h -> IO () #-}
 removeReference :: (MonadMask m, PrimMonad m) => StrongBlobRef m h -> m ()
 removeReference = BlobFile.removeReference . strongBlobRefFile
-
-{-# SPECIALISE removeReferences :: V.Vector (StrongBlobRef IO h) -> IO () #-}
-removeReferences :: (MonadMask m, PrimMonad m) => V.Vector (StrongBlobRef m h) -> m ()
-removeReferences = V.mapM_ removeReference
 
 {-# INLINE readRawBlobRef #-}
 readRawBlobRef ::
@@ -246,3 +197,5 @@ readWeakBlobRefs hbio wrefs =
                 (\off len -> SerialisedBlob (RB.fromByteArray off len ba))
                 bufOffs
                 (V.map blobRefSpanSize refs)
+  where
+    blobRefSpanSize = fromIntegral . blobSpanSize . strongBlobRefSpan
