@@ -559,7 +559,7 @@ prop_updatesMayInvalidateBlobRefs h ups k1 v1 blob1 ups' = monadicIO $ do
 {- Not applicable -}
 
 -------------------------------------------------------------------------------
--- implement classic QC tests for monoidal table merges
+-- implement classic QC tests for monoidal table unions
 -------------------------------------------------------------------------------
 
 {- Not applicable -}

@@ -100,8 +100,8 @@ module Database.LSMTree.Monoidal (
     -- * Persistence
   , duplicate
 
-    -- * Merging tables
-  , merge
+    -- * Table union
+  , union
 
     -- * Concurrency
     -- $concurrency
@@ -652,30 +652,33 @@ duplicate :: forall m k v.
 duplicate (Internal.MonoidalTable t) = Internal.MonoidalTable <$> Internal.duplicate t
 
 {-------------------------------------------------------------------------------
-  Merging tables
+  Table union
 -------------------------------------------------------------------------------}
 
-{-# SPECIALISE merge ::
+{-# SPECIALISE union ::
      ResolveValue v
   => Table IO k v
   -> Table IO k v
   -> IO (Table IO k v) #-}
--- | Merge full tables, creating a new table.
+-- | Union two full tables, creating a new table.
+--
+-- A good mental model of this operation is @'Data.Map.unionWith' (<>)@ on
+-- @'Data.Map.Map' k v@.
 --
 -- Multiple tables of the same type but with different configuration parameters
--- can live in the same session. However, 'merge' only works for tables that
+-- can live in the same session. However, 'union' only works for tables that
 -- have the same key\/value types and configuration parameters.
 --
--- NOTE: merging tables creates a new table, but does not close
--- the tables that were used as inputs.
-merge :: forall m k v.
+-- NOTE: unioning tables creates a new table, but does not close the tables that
+-- were used as inputs.
+union :: forall m k v.
      ( IOLike m
      , ResolveValue v
      )
   => Table m k v
   -> Table m k v
   -> m (Table m k v)
-merge = undefined
+union = undefined
 
 {-------------------------------------------------------------------------------
   Monoidal value resolution

@@ -72,8 +72,8 @@ instance Class.IsTable Table where
 
     duplicate (Table s t) = Table s <$> runInOpenSession s (Model.duplicate t)
 
-    merge (Table s1 t1) (Table _s2 t2) =
-        Table s1 <$> runInOpenSession s1 (Model.merge Model.getResolve t1 t2)
+    union (Table s1 t1) (Table _s2 t2) =
+        Table s1 <$> runInOpenSession s1 (Model.union Model.getResolve t1 t2)
 
 convLookupResult :: Model.LookupResult v b -> Class.LookupResult v
 convLookupResult = \case

@@ -36,8 +36,8 @@ module Database.LSMTree.Model.Table (
   , snapshot
     -- * Multiple writable tables
   , duplicate
-    -- * Table merge
-  , merge
+    -- * Table union
+  , union
     -- * Testing
   , size
   ) where
@@ -343,12 +343,12 @@ readCursor n c =
 --
 -- Multiple tables of the same type but with different configuration parameters
 -- can live in the same session. However, some operations, like
-merge ::
+union ::
      ResolveSerialisedValue v
   -> Table k v b
   -> Table k v b
   -> Table k v b
-merge r (Table xs) (Table ys) =
+union r (Table xs) (Table ys) =
     Table (Map.unionWith f xs ys)
   where
     f (v1, bMay1) (v2, bMay2) =
