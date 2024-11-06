@@ -17,7 +17,7 @@ module Database.LSMTree.Internal.BlobRef (
   , removeReference
   , removeReferences
   , readRawBlobRef
-  , readBlob
+  , readWeakBlobRef
   , readBlobIOOp
   ) where
 
@@ -188,17 +188,16 @@ readRawBlobRef ::
 readRawBlobRef fs RawBlobRef {rawBlobRefFile, rawBlobRefSpan} =
     BlobFile.readBlobFile fs rawBlobRefFile rawBlobRefSpan
 
-{-# SPECIALISE readBlob ::
-     HasFS IO h
-  -> StrongBlobRef IO h
-  -> IO SerialisedBlob #-}
-readBlob ::
-     (MonadThrow m, PrimMonad m)
+{-# SPECIALISE readWeakBlobRef :: HasFS IO h -> WeakBlobRef IO h -> IO SerialisedBlob #-}
+readWeakBlobRef ::
+     (MonadMask m, PrimMonad m)
   => HasFS m h
-  -> StrongBlobRef m h
+  -> WeakBlobRef m h
   -> m SerialisedBlob
-readBlob fs StrongBlobRef {strongBlobRefFile, strongBlobRefSpan} =
-    BlobFile.readBlobFile fs strongBlobRefFile strongBlobRefSpan
+readWeakBlobRef fs wref =
+    bracket (deRefWeakBlobRef wref) removeReference $
+      \StrongBlobRef {strongBlobRefFile, strongBlobRefSpan} ->
+        BlobFile.readBlobFile fs strongBlobRefFile strongBlobRefSpan
 
 readBlobIOOp ::
      P.MutableByteArray s -> Int

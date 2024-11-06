@@ -197,7 +197,7 @@ prop_interimOpenTable dat = ioProperty $
     fetchBlobs :: FS.HasFS IO h
                ->    (V.Vector (Maybe (Entry v (WeakBlobRef IO h))))
                -> IO (V.Vector (Maybe (Entry v SerialisedBlob)))
-    fetchBlobs hfs = traverse (traverse (traverse (fetchBlob hfs)))
+    fetchBlobs hfs = traverse (traverse (traverse (readWeakBlobRef hfs)))
 
     Test.InMemLookupData { runData, lookups = keysToLookup } = dat
     ks = V.map serialiseKey (V.fromList keysToLookup)
@@ -242,7 +242,7 @@ prop_roundtripCursor lb ub kops = ioProperty $
     fetchBlobs :: FS.HasFS IO h
              ->     V.Vector (k, (v, Maybe (WeakBlobRef IO h)))
              -> IO (V.Vector (k, (v, Maybe SerialisedBlob)))
-    fetchBlobs hfs = traverse (traverse (traverse (traverse (fetchBlob hfs))))
+    fetchBlobs hfs = traverse (traverse (traverse (traverse (readWeakBlobRef hfs))))
 
     toOffsetKey = maybe NoOffsetKey (OffsetKey . coerce)
 
@@ -288,6 +288,3 @@ readCursorUntil resolve ub cursor = go V.empty
 appendSerialisedValue :: ResolveSerialisedValue
 appendSerialisedValue (SerialisedValue x) (SerialisedValue y) =
     SerialisedValue (x <> y)
-
-fetchBlob :: FS.HasFS IO h -> WeakBlobRef IO h -> IO SerialisedBlob
-fetchBlob hfs bref = withWeakBlobRef bref (readBlob hfs)
