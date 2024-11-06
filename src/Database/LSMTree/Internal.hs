@@ -87,7 +87,6 @@ import           Data.Kind
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (catMaybes)
-import qualified Data.Primitive.ByteArray as P
 import qualified Data.Set as Set
 import           Data.Typeable
 import qualified Data.Vector as V
@@ -104,7 +103,6 @@ import           Database.LSMTree.Internal.Paths (SessionRoot (..),
                      SnapshotName)
 import qualified Database.LSMTree.Internal.Paths as Paths
 import           Database.LSMTree.Internal.Range (Range (..))
-import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunReaders (OffsetKey (..))
@@ -836,35 +834,10 @@ retrieveBlobs ::
   -> m (V.Vector SerialisedBlob)
 retrieveBlobs sesh wrefs =
     withOpenSession sesh $ \seshEnv ->
-      handle (\(BlobRef.WeakBlobRefInvalid i) -> throwIO (ErrBlobRefInvalid i)) $
-      BlobRef.withWeakBlobRefs wrefs $ \refs -> do
-
-        -- Prepare the IOOps:
-        -- We use a single large memory buffer, with appropriate offsets within
-        -- the buffer.
-        let bufSize :: Int
-            !bufSize = V.sum (V.map BlobRef.blobRefSpanSize refs)
-
-            {-# INLINE bufOffs #-}
-            bufOffs :: V.Vector Int
-            bufOffs = V.scanl (+) 0 (V.map BlobRef.blobRefSpanSize refs)
-        buf <- P.newPinnedByteArray bufSize
-        let ioops = V.zipWith (BlobRef.readBlobIOOp buf) bufOffs refs
-            hbio  = sessionHasBlockIO seshEnv
-
-        -- Submit the IOOps all in one go:
-        _ <- FS.submitIO hbio ioops
-        -- We do not need to inspect the results because IO errors are
-        -- thrown as exceptions, and the result is just the read length
-        -- which is already known. Short reads can't happen here.
-
-        -- Construct the SerialisedBlobs results:
-        -- This is just the different offsets within the shared buffer.
-        ba <- P.unsafeFreezeByteArray buf
-        pure $! V.zipWith
-                  (\off len -> SerialisedBlob (RB.fromByteArray off len ba))
-                  bufOffs
-                  (V.map BlobRef.blobRefSpanSize refs)
+      let hbio = sessionHasBlockIO seshEnv in
+      handle (\(BlobRef.WeakBlobRefInvalid i) ->
+                throwIO (ErrBlobRefInvalid i)) $
+      BlobRef.readWeakBlobRefs hbio wrefs
 
 {-------------------------------------------------------------------------------
   Cursors

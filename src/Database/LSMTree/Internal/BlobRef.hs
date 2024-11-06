@@ -18,7 +18,7 @@ module Database.LSMTree.Internal.BlobRef (
   , removeReferences
   , readRawBlobRef
   , readWeakBlobRef
-  , readBlobIOOp
+  , readWeakBlobRefs
   ) where
 
 import           Control.DeepSeq (NFData (..))
@@ -27,15 +27,18 @@ import           Control.Monad.Class.MonadThrow (Exception, MonadMask,
                      MonadThrow (..), bracket, throwIO)
 import           Control.Monad.Primitive
 import qualified Control.RefCount as RC
-import qualified Data.Primitive.ByteArray as P (MutableByteArray)
+import qualified Data.Primitive.ByteArray as P (newPinnedByteArray,
+                     unsafeFreezeByteArray)
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as VM
 import           Database.LSMTree.Internal.BlobFile (BlobFile (..), BlobSpan (..))
 import qualified Database.LSMTree.Internal.BlobFile as BlobFile
+import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.Serialise (SerialisedBlob (..))
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
 import qualified System.FS.BlockIO.API as FS
+import           System.FS.BlockIO.API (HasBlockIO)
 
 
 -- | A raw blob reference is a reference to a blob within a blob file.
@@ -199,17 +202,47 @@ readWeakBlobRef fs wref =
       \StrongBlobRef {strongBlobRefFile, strongBlobRefSpan} ->
         BlobFile.readBlobFile fs strongBlobRefFile strongBlobRefSpan
 
-readBlobIOOp ::
-     P.MutableByteArray s -> Int
-  -> StrongBlobRef m h
-  -> FS.IOOp s h
-readBlobIOOp buf bufoff
-             StrongBlobRef {
-               strongBlobRefFile = BlobFile {blobFileHandle},
-               strongBlobRefSpan = BlobSpan {blobSpanOffset, blobSpanSize}
-             } =
-    FS.IOOpRead
-      blobFileHandle
-      (fromIntegral blobSpanOffset :: FS.FileOffset)
-      buf (FS.BufferOffset bufoff)
-      (fromIntegral blobSpanSize :: FS.ByteCount)
+{-# SPECIALISE readWeakBlobRefs :: HasBlockIO IO h -> V.Vector (WeakBlobRef IO h) -> IO (V.Vector SerialisedBlob) #-}
+readWeakBlobRefs ::
+     (MonadMask m, PrimMonad m)
+  => HasBlockIO m h
+  -> V.Vector (WeakBlobRef m h)
+  -> m (V.Vector SerialisedBlob)
+readWeakBlobRefs hbio wrefs =
+    bracket (deRefWeakBlobRefs wrefs) (V.mapM_ removeReference) $ \refs -> do
+      -- Prepare the IOOps:
+      -- We use a single large memory buffer, with appropriate offsets within
+      -- the buffer.
+      let bufSize :: Int
+          !bufSize = V.sum (V.map blobRefSpanSize refs)
+
+          {-# INLINE bufOffs #-}
+          bufOffs :: V.Vector Int
+          bufOffs = V.scanl (+) 0 (V.map blobRefSpanSize refs)
+      buf <- P.newPinnedByteArray bufSize
+
+      -- Submit the IOOps all in one go:
+      _ <- FS.submitIO hbio $
+             V.zipWith
+               (\bufoff
+                 StrongBlobRef {
+                   strongBlobRefFile = BlobFile {blobFileHandle},
+                   strongBlobRefSpan = BlobSpan {blobSpanOffset, blobSpanSize}
+                 } ->
+                 FS.IOOpRead
+                   blobFileHandle
+                   (fromIntegral blobSpanOffset :: FS.FileOffset)
+                   buf (FS.BufferOffset bufoff)
+                   (fromIntegral blobSpanSize :: FS.ByteCount))
+               bufOffs refs
+      -- We do not need to inspect the results because IO errors are
+      -- thrown as exceptions, and the result is just the read length
+      -- which is already known. Short reads can't happen here.
+
+      -- Construct the SerialisedBlobs results:
+      -- This is just the different offsets within the shared buffer.
+      ba <- P.unsafeFreezeByteArray buf
+      pure $! V.zipWith
+                (\off len -> SerialisedBlob (RB.fromByteArray off len ba))
+                bufOffs
+                (V.map blobRefSpanSize refs)
