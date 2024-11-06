@@ -71,8 +71,8 @@ module Database.LSMTree.Model.Session (
   , listSnapshots
     -- * Multiple writable tables
   , duplicate
-    -- * Table merge
-  , merge
+    -- * Table union
+  , union
   ) where
 
 import           Control.Monad (when)
@@ -602,10 +602,10 @@ guardCursorIsOpen Cursor{..} =
         pure (fromJust $ fromSomeCursor c)
 
 {-------------------------------------------------------------------------------
-  Merging tables
+  Table union
 -------------------------------------------------------------------------------}
 
-merge ::
+union ::
      ( MonadState Model m
      , MonadError Err m
      , C k v b
@@ -614,7 +614,7 @@ merge ::
   -> Table k v b
   -> Table k v b
   -> m (Table k v b)
-merge r th1 th2 = do
+union r th1 th2 = do
   (_, t1) <- guardTableIsOpen th1
   (_, t2) <- guardTableIsOpen th2
-  newTableWith TableConfig $ Model.merge r t1 t2
+  newTableWith TableConfig $ Model.union r t1 t2

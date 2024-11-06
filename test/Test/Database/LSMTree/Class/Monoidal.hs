@@ -98,7 +98,7 @@ tests = testGroup "Test.Database.LSMTree.Class.Monoidal"
       , testProperty' "snapshot-nochanges" $ prop_snapshotNoChanges tbl
       , testProperty' "snapshot-nochanges2" $ prop_snapshotNoChanges2 tbl
       , testProperty' "lookup-mupsert" $ prop_lookupUpdate tbl
-      , testProperty' "merge" $ prop_merge tbl
+      , testProperty' "merge" $ prop_union tbl
       ]
 
 -------------------------------------------------------------------------------
@@ -450,33 +450,33 @@ prop_lookupUpdate h ups k v1 v2 = ioProperty $ do
       return $ res === V.singleton (Found (resolve v2 v1))
 
 -------------------------------------------------------------------------------
--- implement classic QC tests for monoidal table merges
+-- implement classic QC tests for monoidal table unions
 -------------------------------------------------------------------------------
 
-prop_merge :: forall h.
+prop_union :: forall h.
      IsTable h
   => Proxy h -> [(Key, Update Value)] -> [(Key, Update Value)]
   -> [Key] -> Property
-prop_merge h ups1 ups2 (V.fromList -> testKeys) = ioProperty $ do
+prop_union h ups1 ups2 (V.fromList -> testKeys) = ioProperty $ do
     withTableNew h ups1 $ \s hdl1 -> do
       Class.withTableNew  s (testTableConfig h) $ \hdl2 -> do
         updates hdl2 $ V.fromList ups2
 
-        -- merge them.
-        Class.withTableMerge hdl1 hdl2 $ \hdl3 -> do
+        -- union them.
+        Class.withTableUnion hdl1 hdl2 $ \hdl3 -> do
 
-          -- results in parts and the merge table
+          -- results in parts and the union table
           res1 <- lookups hdl1 testKeys
           res2 <- lookups hdl2 testKeys
           res3 <- lookups hdl3 testKeys
 
-          let mergeResult :: LookupResult Value -> LookupResult Value -> LookupResult Value
-              mergeResult r@NotFound   NotFound     = r
-              mergeResult   NotFound   r@(Found _)  = r
-              mergeResult r@(Found _)    NotFound   = r
-              mergeResult   (Found v1)   (Found v2) = Found (resolve v1 v2)
+          let unionResult :: LookupResult Value -> LookupResult Value -> LookupResult Value
+              unionResult r@NotFound   NotFound     = r
+              unionResult   NotFound   r@(Found _)  = r
+              unionResult r@(Found _)    NotFound   = r
+              unionResult   (Found v1)   (Found v2) = Found (resolve v1 v2)
 
-          return $ V.zipWith mergeResult res1 res2  == res3
+          return $ V.zipWith unionResult res1 res2  == res3
 
 -------------------------------------------------------------------------------
 -- implement classic QC tests for snapshots
