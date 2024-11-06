@@ -1,8 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-
--- TODO: remove once the API is implemented.
-{-# OPTIONS_GHC -Wno-redundant-constraints #-}
-
 -- | On disk key-value tables, implemented as Log Structured Merge (LSM) trees.
 --
 -- This module is the API for \"monoidal\" tables, as opposed to \"normal\"
@@ -522,7 +517,7 @@ mupserts t = updates t . fmap (second Mupsert)
 -------------------------------------------------------------------------------}
 
 {-# SPECIALISE createSnapshot ::
-     (SerialiseKey k, SerialiseValue v, ResolveValue v, Common.Labellable (k, v))
+     (ResolveValue v, Common.Labellable (k, v))
   => SnapshotName
   -> Table IO k v
   -> IO () #-}
@@ -550,8 +545,6 @@ mupserts t = updates t . fmap (second Mupsert)
 --
 createSnapshot :: forall m k v.
      ( IOLike m
-     , SerialiseKey k
-     , SerialiseValue v
      , ResolveValue v
      , Common.Labellable (k, v)
      )
@@ -564,7 +557,7 @@ createSnapshot snap (Internal.MonoidalTable t) =
     label = Internal.SnapshotLabel $ Common.makeSnapshotLabel (Proxy @(k, v))
 
 {-# SPECIALISE openSnapshot ::
-     (SerialiseKey k, SerialiseValue v, ResolveValue v, Common.Labellable (k, v))
+     (ResolveValue v, Common.Labellable (k, v))
   => Session IO
   -> Common.TableConfigOverride
   -> SnapshotName
@@ -589,8 +582,6 @@ createSnapshot snap (Internal.MonoidalTable t) =
 -- @
 openSnapshot :: forall m k v.
      ( IOLike m
-     , SerialiseKey k
-     , SerialiseValue v
      , ResolveValue v
      , Common.Labellable (k, v)
      )
@@ -681,7 +672,7 @@ union :: forall m k v.
   => Table m k v
   -> Table m k v
   -> m (Table m k v)
-union = undefined
+union = error "union: not yet implemented" $ union @m @k @v
 
 {-------------------------------------------------------------------------------
   Monoidal value resolution
