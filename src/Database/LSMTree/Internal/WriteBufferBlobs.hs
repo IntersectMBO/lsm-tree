@@ -28,7 +28,8 @@ module Database.LSMTree.Internal.WriteBufferBlobs (
     removeReference,
     addBlob,
     readBlob,
-    mkBlobRef,
+    mkRawBlobRef,
+    mkWeakBlobRef,
     -- * For tests
     FilePointer (..)
   ) where
@@ -43,7 +44,7 @@ import qualified Data.Vector.Primitive as VP
 import           Data.Word (Word64)
 import           Database.LSMTree.Internal.BlobFile hiding (removeReference)
 import qualified Database.LSMTree.Internal.BlobFile as BlobFile
-import           Database.LSMTree.Internal.BlobRef (RawBlobRef (..))
+import           Database.LSMTree.Internal.BlobRef (RawBlobRef (..), WeakBlobRef (..))
 import           Database.LSMTree.Internal.Serialise
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
@@ -178,14 +179,26 @@ readBlob :: (PrimMonad m, MonadThrow m)
 readBlob fs WriteBufferBlobs {blobFile} blobspan =
     readBlobFile fs blobFile blobspan
 
--- | Helper function to make a 'BlobRef' that points into a 'WriteBufferBlobs'.
-mkBlobRef :: WriteBufferBlobs m h
-          -> BlobSpan
-          -> RawBlobRef m h
-mkBlobRef WriteBufferBlobs {blobFile} blobspan =
+-- | Helper function to make a 'RawBlobRef' that points into a
+-- 'WriteBufferBlobs'.
+mkRawBlobRef :: WriteBufferBlobs m h
+             -> BlobSpan
+             -> RawBlobRef m h
+mkRawBlobRef WriteBufferBlobs {blobFile} blobspan =
     RawBlobRef {
       rawBlobRefFile = blobFile,
       rawBlobRefSpan = blobspan
+    }
+
+-- | Helper function to make a 'WeakBlobRef' that points into a
+-- 'WriteBufferBlobs'.
+mkWeakBlobRef :: WriteBufferBlobs m h
+              -> BlobSpan
+              -> WeakBlobRef m h
+mkWeakBlobRef WriteBufferBlobs {blobFile} blobspan =
+    WeakBlobRef {
+      weakBlobRefFile = blobFile,
+      weakBlobRefSpan = blobspan
     }
 
 

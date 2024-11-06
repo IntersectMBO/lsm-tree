@@ -283,7 +283,7 @@ copyBlob ::
   -> RawBlobRef m h
   -> m BlobSpan
 copyBlob builder@RunBuilder {..} blobref = do
-    blob <- BlobRef.readBlob runBuilderHasFS blobref
+    blob <- BlobRef.readRawBlobRef runBuilderHasFS blobref
     writeBlob builder blob
 
 {-# SPECIALISE writeFilter ::
