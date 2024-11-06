@@ -14,7 +14,7 @@ module Database.LSMTree.Internal.BlobFile (
 
 import           Control.DeepSeq (NFData (..))
 import           Control.Monad (unless)
-import           Control.Monad.Class.MonadThrow (MonadThrow, MonadMask)
+import           Control.Monad.Class.MonadThrow (MonadMask, MonadThrow)
 import           Control.Monad.Primitive (PrimMonad)
 import           Control.RefCount (RefCounter)
 import qualified Control.RefCount as RC

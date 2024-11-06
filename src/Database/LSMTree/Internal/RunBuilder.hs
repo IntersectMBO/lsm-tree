@@ -22,7 +22,7 @@ import qualified Data.ByteString.Lazy as BSL
 import           Data.Foldable (for_, traverse_)
 import           Data.Primitive.PrimVar
 import           Data.Word (Word64)
-import           Database.LSMTree.Internal.BlobRef (RawBlobRef, BlobSpan (..))
+import           Database.LSMTree.Internal.BlobRef (BlobSpan (..), RawBlobRef)
 import qualified Database.LSMTree.Internal.BlobRef as BlobRef
 import           Database.LSMTree.Internal.BloomFilter (bloomFilterToLBS)
 import           Database.LSMTree.Internal.CRC32C (CRC32C)
