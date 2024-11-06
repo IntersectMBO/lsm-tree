@@ -13,6 +13,7 @@
 -- * Support for verifying checksums of files.
 -- * Support for a text file format listing file checksums.
 --
+-- TODO: specialise all the functions here to IO
 module Database.LSMTree.Internal.CRC32C (
 
   CRC32C(..),
