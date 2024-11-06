@@ -417,16 +417,20 @@ deriving anyclass instance NoThunks RawOverflowPage
   BlobRef
 -------------------------------------------------------------------------------}
 
-deriving stock instance Generic (RawBlobRef m h)
-deriving anyclass instance (Typeable h, Typeable (PrimState m))
-                        => NoThunks (RawBlobRef m h)
-
 deriving stock instance Generic BlobSpan
 deriving anyclass instance NoThunks BlobSpan
 
 deriving stock instance Generic (BlobFile m h)
 deriving anyclass instance (Typeable h, Typeable (PrimState m))
                         => NoThunks (BlobFile m h)
+
+deriving stock instance Generic (RawBlobRef m h)
+deriving anyclass instance (Typeable h, Typeable (PrimState m))
+                        => NoThunks (RawBlobRef m h)
+
+deriving stock instance Generic (WeakBlobRef m h)
+deriving anyclass instance (Typeable h, Typeable (PrimState m))
+                        => NoThunks (WeakBlobRef m h)
 
 {-------------------------------------------------------------------------------
   Arena

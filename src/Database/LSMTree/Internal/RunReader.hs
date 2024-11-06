@@ -246,14 +246,14 @@ next reader@RunReader {..} = do
                 go 0 p  -- try again on the new page
           IndexEntry key entry -> do
             modifyPrimVar readerCurrentEntryNo (+1)
-            let entry' = fmap (Run.mkBlobRefForRun readerRun) entry
+            let entry' = fmap (Run.mkRawBlobRef readerRun) entry
             let rawEntry = Entry entry'
             return (ReadEntry key rawEntry)
           IndexEntryOverflow key entry lenSuffix -> do
             -- TODO: we know that we need the next page, could already load?
             modifyPrimVar readerCurrentEntryNo (+1)
             let entry' :: E.Entry SerialisedValue (RawBlobRef m h)
-                entry' = fmap (Run.mkBlobRefForRun readerRun) entry
+                entry' = fmap (Run.mkRawBlobRef readerRun) entry
             overflowPages <- readOverflowPages readerHasFS readerKOpsHandle lenSuffix
             let rawEntry = mkEntryOverflow entry' page lenSuffix overflowPages
             return (ReadEntry key rawEntry)

@@ -45,7 +45,8 @@ module Database.LSMTree.Internal.Run (
   , addReference
   , removeReference
   , removeReferenceN
-  , mkBlobRefForRun
+  , mkRawBlobRef
+  , mkWeakBlobRef
     -- ** Run creation
   , fromMutable
   , fromWriteBuffer
@@ -68,7 +69,7 @@ import           Data.Foldable (for_)
 import           Data.Word (Word64)
 import           Database.LSMTree.Internal.BlobFile hiding (removeReference)
 import qualified Database.LSMTree.Internal.BlobFile as BlobFile
-import           Database.LSMTree.Internal.BlobRef hiding (removeReference)
+import           Database.LSMTree.Internal.BlobRef  (RawBlobRef (..), WeakBlobRef (..))
 import           Database.LSMTree.Internal.BloomFilter (bloomFilterFromSBS)
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
@@ -143,12 +144,20 @@ removeReference r = RC.removeReference (runRefCounter r)
 removeReferenceN :: (PrimMonad m, MonadMask m) => Run m h -> Word64 -> m ()
 removeReferenceN r = RC.removeReferenceN (runRefCounter r)
 
--- | Helper function to make a 'BlobRef' that points into a 'Run'.
-mkBlobRefForRun :: Run m h -> BlobSpan -> RawBlobRef m h
-mkBlobRefForRun Run{runBlobFile} blobspan =
+-- | Helper function to make a 'WeakBlobRef' that points into a 'Run'.
+mkRawBlobRef :: Run m h -> BlobSpan -> RawBlobRef m h
+mkRawBlobRef Run{runBlobFile} blobspan =
     RawBlobRef {
       rawBlobRefFile = runBlobFile,
       rawBlobRefSpan = blobspan
+    }
+
+-- | Helper function to make a 'WeakBlobRef' that points into a 'Run'.
+mkWeakBlobRef :: Run m h -> BlobSpan -> WeakBlobRef m h
+mkWeakBlobRef Run{runBlobFile} blobspan =
+    WeakBlobRef {
+      weakBlobRefFile = runBlobFile,
+      weakBlobRefSpan = blobspan
     }
 
 {-# SPECIALISE close ::
@@ -250,7 +259,7 @@ fromWriteBuffer ::
 fromWriteBuffer fs hbio caching alloc fsPaths buffer blobs = do
     builder <- Builder.new fs hbio fsPaths (WB.numEntries buffer) alloc
     for_ (WB.toList buffer) $ \(k, e) ->
-      Builder.addKeyOp builder k (fmap (WBB.mkBlobRef blobs) e)
+      Builder.addKeyOp builder k (fmap (WBB.mkRawBlobRef blobs) e)
       --TODO: the fmap entry here reallocates even when there are no blobs
     fromMutable caching (RefCount 1) builder
 

@@ -132,7 +132,7 @@ new !offsetKey wbs runs = do
            -> m (Maybe (ReadCtx m h))
     fromWB wb wbblobs = do
         --TODO: this BlobSpan to BlobRef conversion involves quite a lot of allocation
-        kops <- newMutVar $ map (fmap (fmap (WB.mkBlobRef wbblobs))) $
+        kops <- newMutVar $ map (fmap (fmap (WB.mkRawBlobRef wbblobs))) $
                   Map.toList $ filterWB $ WB.toMap wb
         nextReadCtx (ReaderNumber 0) (ReadBuffer kops)
       where

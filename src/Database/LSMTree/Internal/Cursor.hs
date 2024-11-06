@@ -11,6 +11,7 @@ import           Control.Monad.Fix (MonadFix)
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.BlobRef (RawBlobRef,
                      WeakBlobRef (..))
+import qualified Database.LSMTree.Internal.BlobRef as BlobRef
 import           Database.LSMTree.Internal.Entry (Entry)
 import qualified Database.LSMTree.Internal.Entry as Entry
 import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
@@ -126,6 +127,6 @@ readEntriesWhile resolve keyIsWanted fromEntry readers n =
              -> Maybe res
     toResult key = \case
         Entry.Insert v -> Just $ fromEntry key v Nothing
-        Entry.InsertWithBlob v b -> Just $ fromEntry key v (Just (WeakBlobRef b))
+        Entry.InsertWithBlob v b -> Just $ fromEntry key v (Just (BlobRef.rawToWeakBlobRef b))
         Entry.Mupdate v -> Just $ fromEntry key v Nothing
         Entry.Delete -> Nothing

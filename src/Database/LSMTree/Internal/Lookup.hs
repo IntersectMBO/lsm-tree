@@ -47,7 +47,8 @@ import           Database.LSMTree.Internal.Page (PageSpan (..), getNumPages,
 import           Database.LSMTree.Internal.RawBytes (RawBytes (..))
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.RawPage
-import           Database.LSMTree.Internal.Run (Run, mkBlobRefForRun)
+import           Database.LSMTree.Internal.Run (Run)
+import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.Serialise
 import qualified Database.LSMTree.Internal.Vector as V
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
@@ -245,8 +246,7 @@ intraPageLookups !resolveV !wb !wbblobs !rs !ks !rkixs !ioops !ioress = do
     res <- VM.generateM (V.length ks) $ \ki ->
              case WB.lookup wb (V.unsafeIndex ks ki) of
                Nothing -> pure Nothing
-               Just e  -> pure $! Just $!
-                            fmap (WeakBlobRef . WBB.mkBlobRef wbblobs) e
+               Just e  -> pure $! Just $! fmap (WBB.mkWeakBlobRef wbblobs) e
                 -- TODO:  ^^ we should be able to avoid this allocation by
                 -- combining the conversion with other later conversions.
     loop res 0
@@ -275,8 +275,7 @@ intraPageLookups !resolveV !wb !wbblobs !rs !ks !rkixs !ioops !ioress = do
             -- Laziness ensures that we only compute the forcing of the value in
             -- the entry when the result is needed.
             LookupEntry e         -> do
-                let e' = bimap copySerialisedValue
-                               (WeakBlobRef . mkBlobRefForRun r) e
+                let e' = bimap copySerialisedValue (Run.mkWeakBlobRef r) e
                 -- TODO: ^^ we should be able to avoid this allocation by
                 -- combining the conversion with other later conversions.
                 V.unsafeInsertWithMStrict res (combine resolveV) kix e'
@@ -289,7 +288,7 @@ intraPageLookups !resolveV !wb !wbblobs !rs !ks !rkixs !ioops !ioress = do
                                   (unBufferOffset (ioopBufferOffset ioop) + 4096)
                                   (fromIntegral m)
                                   buf)
-                    e' = bimap v' (WeakBlobRef . mkBlobRefForRun r) e
+                    e' = bimap v' (Run.mkWeakBlobRef r) e
                 V.unsafeInsertWithMStrict res (combine resolveV) kix e'
           loop res (ioopix + 1)
 

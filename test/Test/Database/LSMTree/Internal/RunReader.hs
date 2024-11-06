@@ -9,7 +9,7 @@ import           Data.Coerce (coerce)
 import qualified Data.Map as Map
 import           Database.LSMTree.Extras.Generators (KeyForIndexCompact (..))
 import           Database.LSMTree.Extras.RunData
-import           Database.LSMTree.Internal.BlobRef (readBlob)
+import           Database.LSMTree.Internal.BlobRef
 import           Database.LSMTree.Internal.Entry (Entry)
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.RunReader as Reader
@@ -179,6 +179,6 @@ readKOps offset run = do
         Reader.Empty -> return []
         Reader.ReadEntry key e -> do
           let fs = Reader.readerHasFS reader
-          e' <- traverse (readBlob fs) $ Reader.toFullEntry e
+          e' <- traverse (readRawBlobRef fs) $ Reader.toFullEntry e
           ((key, e') :) <$> go reader
 
