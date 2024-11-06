@@ -168,6 +168,8 @@ mkWeakBlobRef Run{runBlobFile} blobspan =
 --
 -- TODO: Once snapshots are implemented, files should get removed, but for now
 -- we want to be able to re-open closed runs from disk.
+-- TODO: see newBlobFile DoNotRemoveFileOnClose. This can be dropped at the
+-- same once when snapshots are implemented.
 close :: (MonadSTM m, MonadMask m, PrimMonad m) => Run m h -> m ()
 close Run {..} = do
     -- TODO: removing files should drop them from the page cache, but until we
@@ -224,7 +226,7 @@ fromMutable runRunDataCaching refCount builder = do
     (runHasFS, runHasBlockIO, runRunFsPaths, runFilter, runIndex, runNumEntries) <-
       Builder.unsafeFinalise (runRunDataCaching == NoCacheRunData) builder
     runKOpsFile <- FS.hOpen runHasFS (runKOpsPath runRunFsPaths) FS.ReadMode
-    runBlobFile <- newBlobFile runHasFS
+    runBlobFile <- newBlobFile runHasFS DoNotRemoveFileOnClose
                =<< FS.hOpen runHasFS (runBlobPath runRunFsPaths) FS.ReadMode
     setRunDataCaching runHasBlockIO runKOpsFile runRunDataCaching
     rec runRefCounter <- RC.unsafeMkRefCounterN refCount (Just $ close r)
@@ -310,7 +312,7 @@ openFromDisk fs hbio runRunDataCaching runRunFsPaths = do
         =<< readCRC (forRunIndex expectedChecksums) (forRunIndex paths)
 
     runKOpsFile <- FS.hOpen fs (runKOpsPath runRunFsPaths) FS.ReadMode
-    runBlobFile <- newBlobFile fs
+    runBlobFile <- newBlobFile fs DoNotRemoveFileOnClose
                =<< FS.hOpen fs (runBlobPath runRunFsPaths) FS.ReadMode
     setRunDataCaching hbio runKOpsFile runRunDataCaching
     rec runRefCounter <- RC.unsafeMkRefCounterN (RefCount 1) (Just $ close r)

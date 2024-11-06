@@ -7,11 +7,13 @@ module Database.LSMTree.Internal.BlobFile (
     BlobFile (..)
   , BlobSpan (..)
   , removeReference
+  , RemoveFileOnClose (..)
   , newBlobFile
   , readBlobFile
   ) where
 
 import           Control.DeepSeq (NFData (..))
+import           Control.Monad (unless)
 import           Control.Monad.Class.MonadThrow (MonadThrow, MonadMask)
 import           Control.Monad.Primitive (PrimMonad)
 import           Control.RefCount (RefCounter)
@@ -56,6 +58,11 @@ removeReference ::
 removeReference BlobFile{blobFileRefCounter} =
     RC.removeReference blobFileRefCounter
 
+-- | TODO: this hack can be removed once snapshots are done properly and so
+-- runs can delete their files on close.
+data RemoveFileOnClose = RemoveFileOnClose | DoNotRemoveFileOnClose
+  deriving stock Eq
+
 -- | Adopt an existing open file handle to make a 'BlobFile'. The file must at
 -- least be open for reading (but may or may not be open for writing).
 --
@@ -64,12 +71,14 @@ removeReference BlobFile{blobFileRefCounter} =
 newBlobFile ::
      PrimMonad m
   => HasFS m h
+  -> RemoveFileOnClose
   -> FS.Handle h
   -> m (BlobFile m h)
-newBlobFile fs blobFileHandle = do
+newBlobFile fs r blobFileHandle = do
     let finaliser = do
           FS.hClose fs blobFileHandle
-          FS.removeFile fs (FS.handlePath blobFileHandle)
+          unless (r == DoNotRemoveFileOnClose) $
+            FS.removeFile fs (FS.handlePath blobFileHandle)
     blobFileRefCounter <- RC.mkRefCounter1 (Just finaliser)
     return BlobFile {
       blobFileHandle,
