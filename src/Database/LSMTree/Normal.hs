@@ -1,8 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-
--- TODO: remove once the API is implemented.
-{-# OPTIONS_GHC -Wno-redundant-constraints #-}
-
 -- | On disk key-value tables, implemented as Log Structured Merge (LSM) trees.
 --
 -- This module is the API for \"normal\" tables, as opposed to \"monoidal\"
@@ -640,11 +635,7 @@ retrieveBlobs (Internal.Session' (sesh :: Internal.Session m h)) refs =
 -------------------------------------------------------------------------------}
 
 {-# SPECIALISE createSnapshot ::
-     ( SerialiseKey k
-     , SerialiseValue v
-     , SerialiseValue blob
-     , Common.Labellable (k, v, blob)
-     )
+     Common.Labellable (k, v, blob)
   => SnapshotName
   -> Table IO k v blob
   -> IO () #-}
@@ -679,9 +670,6 @@ retrieveBlobs (Internal.Session' (sesh :: Internal.Session m h)) refs =
 -- but the original table remains unchanged.
 createSnapshot :: forall m k v blob.
      ( IOLike m
-     , SerialiseKey k
-     , SerialiseValue v
-     , SerialiseValue blob
      , Common.Labellable (k, v, blob)
      )
   => SnapshotName
@@ -693,11 +681,7 @@ createSnapshot snap (Internal.NormalTable t) =
     label = Internal.SnapshotLabel $ Common.makeSnapshotLabel (Proxy @(k, v, blob))
 
 {-# SPECIALISE openSnapshot ::
-     ( SerialiseKey k
-     , SerialiseValue v
-     , SerialiseValue blob
-     , Common.Labellable (k, v, blob)
-     )
+     Common.Labellable (k, v, blob)
   => Session IO
   -> Common.TableConfigOverride
   -> SnapshotName
@@ -725,9 +709,6 @@ createSnapshot snap (Internal.NormalTable t) =
 -- proper snapshots. See 'createSnapshot'.
 openSnapshot :: forall m k v blob.
      ( IOLike m
-     , SerialiseKey k
-     , SerialiseValue v
-     , SerialiseValue blob
      , Common.Labellable (k, v, blob)
      )
   => Session m
@@ -813,4 +794,4 @@ union :: forall m k v blob.
   => Table m k v blob
   -> Table m k v blob
   -> m (Table m k v blob)
-union = undefined
+union = error "union: not yet implemented" $ union @m @k @v
