@@ -12,7 +12,7 @@ module Database.LSMTree.Class.Monoidal (
   , withTableNew
   , withTableOpen
   , withTableDuplicate
-  , withTableMerge
+  , withTableUnion
   , withCursor
   , module Types
   ) where
@@ -183,7 +183,7 @@ class (IsSession (Session h)) => IsTable h where
         => h m k v
         -> m (h m k v)
 
-    merge ::
+    union ::
            ( IOLike m
            , ResolveValue v
            , SerialiseValue v
@@ -229,7 +229,7 @@ withTableDuplicate :: forall h m k v a.
   -> m a
 withTableDuplicate table = bracket (duplicate table) close
 
-withTableMerge :: forall h m k v a.
+withTableUnion :: forall h m k v a.
      ( IOLike m
      , IsTable h
      , SerialiseValue v
@@ -240,7 +240,7 @@ withTableMerge :: forall h m k v a.
   -> h m k v
   -> (h m k v -> m a)
   -> m a
-withTableMerge table1 table2 = bracket (merge table1 table2) close
+withTableUnion table1 table2 = bracket (table1 `union` table2) close
 
 withCursor :: forall h m k v a.
      ( IOLike m
@@ -281,4 +281,4 @@ instance IsTable R.Table where
     open sesh snap = R.open sesh R.configNoOverride snap
 
     duplicate = R.duplicate
-    merge = R.merge
+    union = R.union
