@@ -43,7 +43,7 @@ import qualified Data.Vector.Primitive as VP
 import           Data.Word (Word64)
 import           Database.LSMTree.Internal.BlobFile hiding (removeReference)
 import qualified Database.LSMTree.Internal.BlobFile as BlobFile
-import           Database.LSMTree.Internal.BlobRef (BlobRef (..))
+import           Database.LSMTree.Internal.BlobRef (RawBlobRef (..))
 import           Database.LSMTree.Internal.Serialise
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
@@ -181,9 +181,9 @@ readBlob fs WriteBufferBlobs {blobFile} blobspan =
 -- | Helper function to make a 'BlobRef' that points into a 'WriteBufferBlobs'.
 mkBlobRef :: WriteBufferBlobs m h
           -> BlobSpan
-          -> BlobRef m h
+          -> RawBlobRef m h
 mkBlobRef WriteBufferBlobs {blobFile} blobRefSpan =
-    BlobRef {
+    RawBlobRef {
       blobRefFile  = blobFileHandle blobFile,
       blobRefCount = blobFileRefCounter blobFile,
       blobRefSpan

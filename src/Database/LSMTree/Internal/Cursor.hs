@@ -9,7 +9,7 @@ import           Control.Monad.Class.MonadST (MonadST (..))
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Fix (MonadFix)
 import qualified Data.Vector as V
-import           Database.LSMTree.Internal.BlobRef (BlobRef,
+import           Database.LSMTree.Internal.BlobRef (RawBlobRef,
                      WeakBlobRef (..))
 import           Database.LSMTree.Internal.Entry (Entry)
 import qualified Database.LSMTree.Internal.Entry as Entry
@@ -106,7 +106,7 @@ readEntriesWhile resolve keyIsWanted fromEntry readers n =
     -- Once we have a resolved entry, we still have to make sure it's not
     -- a 'Delete', since we only want to write values to the result vector.
     handleResolved :: SerialisedKey
-                   -> Entry SerialisedValue (BlobRef m h)
+                   -> Entry SerialisedValue (RawBlobRef m h)
                    -> Readers.HasMore
                    -> m (Maybe res, Readers.HasMore)
     handleResolved key entry hasMore =
@@ -122,7 +122,7 @@ readEntriesWhile resolve keyIsWanted fromEntry readers n =
               Readers.Drained -> return (Nothing, Readers.Drained)
 
     toResult :: SerialisedKey
-             -> Entry SerialisedValue (BlobRef m h)
+             -> Entry SerialisedValue (RawBlobRef m h)
              -> Maybe res
     toResult key = \case
         Entry.Insert v -> Just $ fromEntry key v Nothing

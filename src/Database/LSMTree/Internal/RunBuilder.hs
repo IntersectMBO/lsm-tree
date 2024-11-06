@@ -22,7 +22,7 @@ import qualified Data.ByteString.Lazy as BSL
 import           Data.Foldable (for_, traverse_)
 import           Data.Primitive.PrimVar
 import           Data.Word (Word64)
-import           Database.LSMTree.Internal.BlobRef (BlobRef, BlobSpan (..))
+import           Database.LSMTree.Internal.BlobRef (RawBlobRef, BlobSpan (..))
 import qualified Database.LSMTree.Internal.BlobRef as BlobRef
 import           Database.LSMTree.Internal.BloomFilter (bloomFilterToLBS)
 import           Database.LSMTree.Internal.CRC32C (CRC32C)
@@ -106,11 +106,11 @@ new fs hbio runBuilderFsPaths numEntries alloc = do
 {-# SPECIALISE addKeyOp ::
      RunBuilder IO h
   -> SerialisedKey
-  -> Entry SerialisedValue (BlobRef IO h)
+  -> Entry SerialisedValue (RawBlobRef IO h)
   -> IO () #-}
 -- | Add a key\/op pair.
 --
--- In the 'InsertWithBlob' case, the 'BlobRef' identifies where the blob can be
+-- In the 'InsertWithBlob' case, the 'RawBlobRef' identifies where the blob can be
 -- found (which is either from a write buffer or another run). The blobs will
 -- be copied from their existing blob file into the new run's blob file.
 --
@@ -125,7 +125,7 @@ addKeyOp ::
      (MonadST m, MonadSTM m, MonadThrow m)
   => RunBuilder m h
   -> SerialisedKey
-  -> Entry SerialisedValue (BlobRef m h)
+  -> Entry SerialisedValue (RawBlobRef m h)
   -> m ()
 addKeyOp builder@RunBuilder{runBuilderAcc} key op = do
     -- TODO: the fmap entry here reallocates even when there are no blobs.
@@ -275,12 +275,12 @@ writeBlob RunBuilder{..} blob = do
 
 {-# SPECIALISE copyBlob ::
      RunBuilder IO h
-  -> BlobRef IO h
+  -> RawBlobRef IO h
   -> IO BlobSpan #-}
 copyBlob ::
      (MonadSTM m, MonadThrow m, PrimMonad m)
   => RunBuilder m h
-  -> BlobRef m h
+  -> RawBlobRef m h
   -> m BlobSpan
 copyBlob builder@RunBuilder {..} blobref = do
     blob <- BlobRef.readBlob runBuilderHasFS blobref

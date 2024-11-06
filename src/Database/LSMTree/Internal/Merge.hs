@@ -33,7 +33,7 @@ import           Data.Primitive.MutVar
 import           Data.Traversable (for)
 import qualified Data.Vector as V
 import           Data.Word
-import           Database.LSMTree.Internal.BlobRef (BlobRef)
+import           Database.LSMTree.Internal.BlobRef (RawBlobRef)
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.Run (Run, RunDataCaching)
 import qualified Database.LSMTree.Internal.Run as Run
@@ -396,14 +396,14 @@ writeReaderEntry level builder key entry@(Reader.EntryOverflow prefix page _ ove
      Level
   -> RunBuilder IO h
   -> SerialisedKey
-  -> Entry SerialisedValue (BlobRef IO h)
+  -> Entry SerialisedValue (RawBlobRef IO h)
   -> IO () #-}
 writeSerialisedEntry ::
      (MonadSTM m, MonadST m, MonadThrow m)
   => Level
   -> RunBuilder m h
   -> SerialisedKey
-  -> Entry SerialisedValue (BlobRef m h)
+  -> Entry SerialisedValue (RawBlobRef m h)
   -> m ()
 writeSerialisedEntry level builder key entry =
     when (shouldWriteEntry level entry) $

@@ -26,7 +26,7 @@ import           Data.Maybe (catMaybes)
 import           Data.Primitive.MutVar
 import           Data.Traversable (for)
 import qualified Data.Vector as V
-import           Database.LSMTree.Internal.BlobRef (BlobRef)
+import           Database.LSMTree.Internal.BlobRef (RawBlobRef)
 import           Database.LSMTree.Internal.Entry (Entry (..))
 import           Database.LSMTree.Internal.Run (Run)
 import           Database.LSMTree.Internal.RunReader (OffsetKey (..),
@@ -105,7 +105,7 @@ data Reader m h =
     -- TODO: more efficient representation? benchmark!
   | ReadBuffer !(MutVar (PrimState m) [KOp m h])
 
-type KOp m h = (SerialisedKey, Entry SerialisedValue (BlobRef m h))
+type KOp m h = (SerialisedKey, Entry SerialisedValue (RawBlobRef m h))
 
 {-# SPECIALISE new ::
      OffsetKey
