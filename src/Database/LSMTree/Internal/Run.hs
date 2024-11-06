@@ -69,7 +69,8 @@ import           Data.Foldable (for_)
 import           Data.Word (Word64)
 import           Database.LSMTree.Internal.BlobFile hiding (removeReference)
 import qualified Database.LSMTree.Internal.BlobFile as BlobFile
-import           Database.LSMTree.Internal.BlobRef  (RawBlobRef (..), WeakBlobRef (..))
+import           Database.LSMTree.Internal.BlobRef (RawBlobRef (..),
+                     WeakBlobRef (..))
 import           Database.LSMTree.Internal.BloomFilter (bloomFilterFromSBS)
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry (NumEntries (..))

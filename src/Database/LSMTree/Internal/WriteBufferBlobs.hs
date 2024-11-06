@@ -43,7 +43,8 @@ import qualified Data.Vector.Primitive as VP
 import           Data.Word (Word64)
 import           Database.LSMTree.Internal.BlobFile hiding (removeReference)
 import qualified Database.LSMTree.Internal.BlobFile as BlobFile
-import           Database.LSMTree.Internal.BlobRef (RawBlobRef (..), WeakBlobRef (..))
+import           Database.LSMTree.Internal.BlobRef (RawBlobRef (..),
+                     WeakBlobRef (..))
 import           Database.LSMTree.Internal.Serialise
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)

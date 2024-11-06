@@ -23,7 +23,8 @@ import qualified Data.Primitive.ByteArray as P (newPinnedByteArray,
                      unsafeFreezeByteArray)
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as VM
-import           Database.LSMTree.Internal.BlobFile (BlobFile (..), BlobSpan (..))
+import           Database.LSMTree.Internal.BlobFile (BlobFile (..),
+                     BlobSpan (..))
 import qualified Database.LSMTree.Internal.BlobFile as BlobFile
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.Serialise (SerialisedBlob (..))
