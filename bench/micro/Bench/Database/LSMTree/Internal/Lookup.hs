@@ -21,9 +21,9 @@ import           Database.LSMTree.Extras.Random (frequency,
 import           Database.LSMTree.Extras.UTxO
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Entry (Entry (..), unNumEntries)
-import           Database.LSMTree.Internal.IndexCompact (getNumPages)
 import           Database.LSMTree.Internal.Lookup (bloomQueries, indexSearches,
                      intraPageLookups, lookupsIO, prepLookups)
+import           Database.LSMTree.Internal.Page (getNumPages)
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..))
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run

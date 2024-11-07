@@ -40,9 +40,10 @@ import           Control.Monad.ST.Strict
 
 import           Database.LSMTree.Internal.BlobRef (WeakBlobRef (..))
 import           Database.LSMTree.Internal.Entry
-import           Database.LSMTree.Internal.IndexCompact (IndexCompact,
-                     PageSpan (..))
+import           Database.LSMTree.Internal.IndexCompact (IndexCompact)
 import qualified Database.LSMTree.Internal.IndexCompact as Index
+import           Database.LSMTree.Internal.Page (PageSpan (..), getNumPages,
+                     pageSpanSize, unPageNo)
 import           Database.LSMTree.Internal.RawBytes (RawBytes (..))
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.RawPage
@@ -99,18 +100,18 @@ indexSearches !arena !indexes !kopsFiles !ks !rkixs = V.generateM n $ \i -> do
         !h           = kopsFiles `V.unsafeIndex` rix
         !k           = ks `V.unsafeIndex` kix
         !pspan       = Index.search k c
-        !size        = Index.pageSpanSize pspan
+        !size        = pageSpanSize pspan
     -- The current allocation strategy is to allocate a new pinned
     -- byte array for each 'IOOp'. One optimisation we are planning to
     -- do is to use a cache of re-usable buffers, in which case we
     -- decrease the GC load. TODO: re-usable buffers.
-    (!off, !buf) <- allocateFromArena arena (Index.getNumPages size * 4096) 4096
+    (!off, !buf) <- allocateFromArena arena (getNumPages size * 4096) 4096
     pure $! IOOpRead
               h
-              (fromIntegral $ Index.unPageNo (pageSpanStart pspan) * 4096)
+              (fromIntegral $ unPageNo (pageSpanStart pspan) * 4096)
               buf
               (fromIntegral off)
-              (Index.getNumPages size * 4096)
+              (getNumPages size * 4096)
   where
     !n = VP.length rkixs
 

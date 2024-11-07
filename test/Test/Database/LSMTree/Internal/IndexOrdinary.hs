@@ -27,8 +27,6 @@ import           Database.LSMTree.Extras.Generators (LogicalPageSummaries,
                      toAppends)
 import           Database.LSMTree.Internal.Chunk (fromChunk)
 import           Database.LSMTree.Internal.Entry (NumEntries (NumEntries))
-import           Database.LSMTree.Internal.IndexCompact (PageNo (PageNo),
-                     PageSpan (PageSpan))
 import           Database.LSMTree.Internal.IndexCompactAcc
                      (Append (AppendMultiPage, AppendSinglePage))
 import           Database.LSMTree.Internal.IndexOrdinary
@@ -36,6 +34,8 @@ import           Database.LSMTree.Internal.IndexOrdinary
                      toLastKeys)
 import           Database.LSMTree.Internal.IndexOrdinaryAcc (append, new,
                      unsafeEnd)
+import           Database.LSMTree.Internal.Page (PageNo (PageNo),
+                     PageSpan (PageSpan))
 import           Database.LSMTree.Internal.Serialise
                      (SerialisedKey (SerialisedKey'))
 import           Database.LSMTree.Internal.Vector (byteVectorFromPrim)

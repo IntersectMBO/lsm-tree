@@ -13,7 +13,6 @@ module Database.LSMTree.Internal.IndexCompactAcc (
     -- * Construction
     -- $construction-invariants
     IndexCompactAcc (..)
-  , PageNo (..)
   , new
   , Append (..)
   , Chunk (..)
@@ -51,6 +50,7 @@ import qualified Data.Vector.Unboxed.Mutable as VUM
 import           Data.Word
 import           Database.LSMTree.Internal.BitMath
 import           Database.LSMTree.Internal.IndexCompact
+import           Database.LSMTree.Internal.Page
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.Unsliced
 
