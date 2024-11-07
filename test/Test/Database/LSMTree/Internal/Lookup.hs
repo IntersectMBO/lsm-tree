@@ -49,6 +49,7 @@ import           Database.LSMTree.Internal.BlobRef (BlobSpan, WeakBlobRef,
 import           Database.LSMTree.Internal.Entry as Entry
 import           Database.LSMTree.Internal.IndexCompact as Index
 import           Database.LSMTree.Internal.Lookup
+import           Database.LSMTree.Internal.Page (PageNo (PageNo), PageSpan (..))
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..))
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.RawOverflowPage

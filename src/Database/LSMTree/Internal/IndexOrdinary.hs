@@ -28,7 +28,7 @@ import qualified Data.Vector.Primitive as Primitive (Vector (Vector), drop,
                      force, length, null, splitAt, take)
 import           Data.Word (Word16, Word32, Word64, Word8, byteSwap32)
 import           Database.LSMTree.Internal.Entry (NumEntries (NumEntries))
-import           Database.LSMTree.Internal.IndexCompact (PageNo (PageNo),
+import           Database.LSMTree.Internal.Page (PageNo (PageNo),
                      PageSpan (PageSpan))
 import           Database.LSMTree.Internal.Serialise
                      (SerialisedKey (SerialisedKey'))

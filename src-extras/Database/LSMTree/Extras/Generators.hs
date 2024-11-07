@@ -51,9 +51,9 @@ import           Database.LSMTree.Extras
 import           Database.LSMTree.Extras.Orphans ()
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..))
-import           Database.LSMTree.Internal.IndexCompact (PageNo (..))
 import           Database.LSMTree.Internal.IndexCompactAcc (Append (..))
 import qualified Database.LSMTree.Internal.Merge as Merge
+import           Database.LSMTree.Internal.Page (PageNo (..))
 import           Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.Serialise
 import qualified Database.LSMTree.Internal.Serialise.Class as S.Class

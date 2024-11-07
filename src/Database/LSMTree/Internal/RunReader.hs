@@ -32,6 +32,8 @@ import           Database.LSMTree.Internal.BitMath (ceilDivPageSize,
 import           Database.LSMTree.Internal.BlobRef (BlobRef (..))
 import qualified Database.LSMTree.Internal.Entry as E
 import qualified Database.LSMTree.Internal.IndexCompact as Index
+import           Database.LSMTree.Internal.Page (PageNo (..), PageSpan (..),
+                     getNumPages, nextPageNo)
 import           Database.LSMTree.Internal.Paths
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.RawOverflowPage (RawOverflowPage,
@@ -87,7 +89,7 @@ new !offsetKey readerRun = do
       FS.hOpen readerHasFS (runKOpsPath (Run.runRunFsPaths readerRun)) FS.ReadMode >>= \h -> do
         fileSize <- FS.hGetSize readerHasFS h
         let fileSizeInPages = fileSize `div` toEnum pageSize
-        let indexedPages = Index.getNumPages $ Run.sizeInPages readerRun
+        let indexedPages = getNumPages $ Run.sizeInPages readerRun
         assert (indexedPages == fileSizeInPages) $ pure h
     -- Double the file readahead window (only applies to this file descriptor)
     FS.hAdviseAll readerHasBlockIO readerKOpsHandle FS.AdviceSequential
@@ -115,7 +117,7 @@ new !offsetKey readerRun = do
             return (firstPage, 0)
           OffsetKey offset -> do
             -- Use the index to find the page number for the key (if it exists).
-            let Index.PageSpan pageNo pageEnd = Index.search offset index
+            let PageSpan pageNo pageEnd = Index.search offset index
             seekToDiskPage readerHasFS pageNo readerKOpsHandle
             readDiskPage readerHasFS readerKOpsHandle >>= \case
               Nothing ->
@@ -136,7 +138,7 @@ new !offsetKey readerRun = do
                     -- page and the first key in the next page.
                     -- Thus the reader should be initialised to return keys
                     -- starting from the next (non-overflow) page.
-                    seekToDiskPage readerHasFS (Index.nextPageNo pageEnd) readerKOpsHandle
+                    seekToDiskPage readerHasFS (nextPageNo pageEnd) readerKOpsHandle
                     nextPage <- readDiskPage readerHasFS readerKOpsHandle
                     return (nextPage, 0)
 
@@ -260,11 +262,11 @@ next reader@RunReader {..} = do
   Utilities
 -------------------------------------------------------------------------------}
 
-seekToDiskPage :: HasFS m h -> Index.PageNo -> FS.Handle h -> m ()
+seekToDiskPage :: HasFS m h -> PageNo -> FS.Handle h -> m ()
 seekToDiskPage fs pageNo h = do
     FS.hSeek fs h FS.AbsoluteSeek (pageNoToByteOffset pageNo)
   where
-    pageNoToByteOffset (Index.PageNo n) =
+    pageNoToByteOffset (PageNo n) =
         assert (n >= 0) $
           mulPageSize (fromIntegral n)
 
