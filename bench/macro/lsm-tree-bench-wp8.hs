@@ -418,7 +418,7 @@ doSetup' gopts opts = do
                 | i <- NE.toList batch
                 ]
 
-        LSM.snapshot name tbl
+        LSM.createSnapshot name tbl
 
 -------------------------------------------------------------------------------
 -- dry-run
@@ -577,7 +577,7 @@ doRun gopts opts = do
         -- necessary for testing to load the whole snapshot).
         tbl <- if check opts
                 then LSM.new  @IO @K @V @B session (mkTableConfigRun gopts LSM.defaultTableConfig)
-                else LSM.open @IO @K @V @B session (mkTableConfigOverride gopts) name
+                else LSM.openSnapshot @IO @K @V @B session (mkTableConfigOverride gopts) name
 
         -- In checking mode, compare each output against a pure reference.
         checkvar <- newIORef $ pureReference

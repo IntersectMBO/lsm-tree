@@ -58,8 +58,8 @@ module Database.LSMTree.Internal (
   , readCursorWhile
     -- * Snapshots
   , SnapshotLabel
-  , snapshot
-  , open
+  , createSnapshot
+  , openSnapshot
   , deleteSnapshot
   , listSnapshots
     -- * Mutiple writable tables
@@ -297,8 +297,8 @@ data SessionEnv m h = SessionEnv {
     --
     -- Tables are assigned unique identifiers using 'sessionUniqCounter' to
     -- ensure that modifications to the set of known tables are independent.
-    -- Each identifier is added only once in 'new', 'open' or 'duplicate', and
-    -- is deleted only once in 'close' or 'closeSession'.
+    -- Each identifier is added only once in 'new', 'openSnapshot' or
+    -- 'duplicate', and is deleted only once in 'close' or 'closeSession'.
     --
     -- * A new table may only insert its own identifier when it has acquired the
     --   'sessionState' read-lock. This is to prevent races with 'closeSession'.
@@ -1056,15 +1056,15 @@ readCursorWhile resolve keyIsWanted n Cursor {..} fromEntry = do
   Snapshots
 -------------------------------------------------------------------------------}
 
-{-# SPECIALISE snapshot ::
+{-# SPECIALISE createSnapshot ::
      ResolveSerialisedValue
   -> SnapshotName
   -> SnapshotLabel
   -> SnapshotTableType
   -> Table IO h
   -> IO Int #-}
--- |  See 'Database.LSMTree.Normal.snapshot''.
-snapshot ::
+-- |  See 'Database.LSMTree.Normal.createSnapshot''.
+createSnapshot ::
      (MonadFix m, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => ResolveSerialisedValue
   -> SnapshotName
@@ -1072,7 +1072,7 @@ snapshot ::
   -> SnapshotTableType
   -> Table m h
   -> m Int
-snapshot resolve snap label tableType t = do
+createSnapshot resolve snap label tableType t = do
     traceWith (tableTracer t) $ TraceSnapshot snap
     let conf = tableConfig t
     withOpenTable t $ \thEnv -> do
@@ -1120,7 +1120,7 @@ snapshot resolve snap label tableType t = do
 
       pure $! numSnapRuns snappedLevels
 
-{-# SPECIALISE open ::
+{-# SPECIALISE openSnapshot ::
      Session IO h
   -> SnapshotLabel
   -> SnapshotTableType
@@ -1128,8 +1128,8 @@ snapshot resolve snap label tableType t = do
   -> SnapshotName
   -> ResolveSerialisedValue
   -> IO (Table IO h) #-}
--- |  See 'Database.LSMTree.Normal.open'.
-open ::
+-- |  See 'Database.LSMTree.Normal.openSnapshot'.
+openSnapshot ::
      (MonadFix m, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => Session m h
   -> SnapshotLabel -- ^ Expected label
@@ -1138,7 +1138,7 @@ open ::
   -> SnapshotName
   -> ResolveSerialisedValue
   -> m (Table m h)
-open sesh label tableType override snap resolve = do
+openSnapshot sesh label tableType override snap resolve = do
     traceWith (sessionTracer sesh) $ TraceOpenSnapshot snap override
     withOpenSession sesh $ \seshEnv -> do
       withTempRegistry $ \reg -> do
