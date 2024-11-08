@@ -310,9 +310,16 @@ openLevels reg hfs hbio conf@TableConfig{..} uc sessionRoot resolve levels =
 class Encode a where
   encode :: a -> Encoding
 
+-- | Decoder that is not parameterised by a 'SnapshotVersion'.
+--
+-- Used only for 'SnapshotVersion' and 'Versioned', which live outside the
+-- 'SnapshotMetaData' type hierachy.
 class Decode a where
   decode :: Decoder s a
 
+-- | Decoder parameterised by a 'SnapshotVersion'.
+--
+-- Used for every type in the 'SnapshotMetaData' type hierarchy.
 class DecodeVersioned a where
   decodeVersioned :: SnapshotVersion -> Decoder s a
 
@@ -331,6 +338,8 @@ instance Encode a => Encode (Versioned a) where
     <> encode currentSnapshotVersion
     <> encode x
 
+-- | Decodes a 'SnapshotVersion' first, and then passes that into the versioned
+-- decoder for @a@.
 instance DecodeVersioned a => Decode (Versioned a) where
   decode = do
       _ <- decodeListLenOf 2
@@ -339,8 +348,8 @@ instance DecodeVersioned a => Decode (Versioned a) where
         Right () -> pure ()
         Left errMsg ->
           fail $
-            printf "Incompatible version found. Version %s is not backwards \
-                   \compatible with version %s : %s"
+            printf "Incompatible snapshot format version found. Version %s \
+                   \is not backwards compatible with version %s : %s"
                    (prettySnapshotVersion currentSnapshotVersion)
                    (prettySnapshotVersion version)
                    errMsg
@@ -362,7 +371,7 @@ instance Decode SnapshotVersion where
       ver <- decodeWord
       case ver of
         0 -> pure V0
-        _ -> fail ("Unknown version number: " <>  show ver)
+        _ -> fail ("Unknown snapshot format version number: " <>  show ver)
 
 {-------------------------------------------------------------------------------
   Encoding and decoding: SnapshotMetaData
@@ -396,12 +405,11 @@ instance DecodeVersioned SnapshotLabel where
 -- TableType
 
 instance Encode SnapshotTableType where
-  encode SnapNormalTable   = encodeListLen 1 <> encodeWord 0
-  encode SnapMonoidalTable = encodeListLen 1 <> encodeWord 1
+  encode SnapNormalTable   = encodeWord 0
+  encode SnapMonoidalTable = encodeWord 1
 
 instance DecodeVersioned SnapshotTableType where
   decodeVersioned V0 = do
-      _ <- decodeListLenOf 1
       tag <- decodeWord
       case tag of
         0 -> pure SnapNormalTable
@@ -446,12 +454,10 @@ instance DecodeVersioned TableConfig where
 -- MergePolicy
 
 instance Encode MergePolicy where
-  encode MergePolicyLazyLevelling =
-      encodeListLen 1 <> encodeWord 0
+  encode MergePolicyLazyLevelling = encodeWord 0
 
 instance DecodeVersioned MergePolicy where
   decodeVersioned V0 =  do
-      _ <- decodeListLenOf 1
       tag <- decodeWord
       case tag of
         0 -> pure MergePolicyLazyLevelling
@@ -460,7 +466,7 @@ instance DecodeVersioned MergePolicy where
 -- SizeRatio
 
 instance Encode SizeRatio where
-  encode Four = encodeWord64 4
+  encode Four = encodeInt 4
 
 instance DecodeVersioned SizeRatio where
   decodeVersioned V0 = do
@@ -523,12 +529,11 @@ instance DecodeVersioned BloomFilterAlloc where
 -- FencePointerIndex
 
 instance Encode FencePointerIndex where
-  encode CompactIndex  = encodeListLen 1 <> encodeWord 0
-  encode OrdinaryIndex = encodeListLen 1 <> encodeWord 1
+  encode CompactIndex  = encodeWord 0
+  encode OrdinaryIndex = encodeWord 1
 
 instance DecodeVersioned FencePointerIndex where
    decodeVersioned V0 = do
-      _ <- decodeListLenOf 1
       tag <- decodeWord
       case tag of
         0 -> pure CompactIndex
@@ -562,12 +567,11 @@ instance DecodeVersioned DiskCachePolicy where
 -- MergeSchedule
 
 instance Encode MergeSchedule where
-  encode OneShot     = encodeListLen 1 <> encodeWord 0
-  encode Incremental = encodeListLen 1 <> encodeWord 1
+  encode OneShot     = encodeWord 0
+  encode Incremental = encodeWord 1
 
 instance DecodeVersioned MergeSchedule where
   decodeVersioned V0 = do
-      _ <- decodeListLenOf 1
       tag <- decodeWord
       case tag of
         0 -> pure OneShot
@@ -659,12 +663,11 @@ instance DecodeVersioned NumRuns where
 -- MergePolicyForLevel
 
 instance Encode MergePolicyForLevel where
-  encode LevelTiering   = encodeListLen 1 <> encodeWord 0
-  encode LevelLevelling = encodeListLen 1 <> encodeWord 1
+  encode LevelTiering   = encodeWord 0
+  encode LevelLevelling = encodeWord 1
 
 instance DecodeVersioned MergePolicyForLevel where
   decodeVersioned V0 = do
-      _ <- decodeListLenOf 1
       tag <- decodeWord
       case tag of
         0 -> pure LevelTiering
@@ -706,12 +709,11 @@ instance DecodeVersioned TotalCredits where
   -- Merge.Level
 
 instance Encode Merge.Level where
-  encode Merge.MidLevel  = encodeListLen 1 <> encodeWord 0
-  encode Merge.LastLevel = encodeListLen 1 <> encodeWord 1
+  encode Merge.MidLevel  = encodeWord 0
+  encode Merge.LastLevel = encodeWord 1
 
 instance DecodeVersioned Merge.Level where
   decodeVersioned V0 = do
-      _ <- decodeListLenOf 1
       tag <- decodeWord
       case tag of
         0 -> pure Merge.MidLevel
