@@ -1,6 +1,8 @@
 {-# LANGUAGE CPP       #-}
 {-# LANGUAGE DataKinds #-}
 
+{- HLINT ignore "Use when" -}
+
 -- TODO: establish that this implementation matches up with the ScheduledMerges
 -- prototype. See lsm-tree#445.
 module Database.LSMTree.Internal.MergeSchedule (
@@ -19,7 +21,11 @@ module Database.LSMTree.Internal.MergeSchedule (
   , Level (..)
   , MergingRun (..)
   , NumRuns (..)
+  , UnspentCreditsVar (..)
   , MergingRunState (..)
+  , TotalStepsVar (..)
+  , SpentCreditsVar (..)
+  , MergeKnownCompleted (..)
     -- * Flushes and scheduled merges
   , updatesWithInterleavedFlushes
   , flushWriteBuffer
@@ -27,23 +33,27 @@ module Database.LSMTree.Internal.MergeSchedule (
   , MergePolicyForLevel (..)
   , maxRunSize
     -- * Credits
+  , Credit (..)
   , supplyCredits
   , ScaledCredits (..)
   , supplyMergeCredits
+  , CreditThreshold (..)
+  , creditThresholdForLevel
   ) where
 
 import           Control.Concurrent.Class.MonadMVar.Strict
-import           Control.Monad (when)
+import           Control.Monad (void, when)
 import           Control.Monad.Class.MonadST (MonadST)
 import           Control.Monad.Class.MonadSTM (MonadSTM (..))
-import           Control.Monad.Class.MonadThrow (MonadCatch, MonadMask,
-                     MonadThrow (..))
+import           Control.Monad.Class.MonadThrow (MonadCatch (bracketOnError),
+                     MonadMask, MonadThrow (..))
 import           Control.Monad.Fix (MonadFix)
 import           Control.Monad.Primitive
 import           Control.RefCount (RefCount (..))
 import           Control.TempRegistry
 import           Control.Tracer
 import           Data.BloomFilter (Bloom)
+import           Data.Primitive.MutVar
 import           Data.Primitive.PrimVar
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Assertions (assert,
@@ -105,8 +115,6 @@ data MergeTrace =
       RunNumber
   | TraceNewMergeSingleRun
       NumEntries -- ^ Size of run
-      RunNumber
-  | TraceExpectCompletedMergeSingleRun
       RunNumber
   deriving stock Show
 
@@ -270,12 +278,28 @@ data Level m h = Level {
 -- | A merging run is either a single run, or some ongoing merge.
 data MergingRun m h =
     -- | A merging of multiple runs.
-    MergingRun !MergePolicyForLevel !NumRuns !(StrictMVar m (MergingRunState m h))
+    MergingRun
+      !MergePolicyForLevel
+      !NumRuns
+      !NumEntries
+      -- ^ Sum of number of entries in the input runs
+      !(UnspentCreditsVar (PrimState m))
+      -- ^ The number of currently /unspent/ credits
+      !(TotalStepsVar (PrimState m))
+      -- ^ The total number of performed merging steps.
+      !(MutVar (PrimState m) MergeKnownCompleted)
+      -- ^ A variable that caches knowledge about whether the merge has been
+      -- completed. If 'MergeKnownCompleted', then we are sure the merge has
+      -- been completed, otherwise if 'MergeMaybeCompleted' we have to check the
+      -- 'MergingRunState'.
+      !(StrictMVar m (MergingRunState m h))
     -- | The result of merging a single run, is a single run.
   | SingleRun !(Run m h)
 
 newtype NumRuns = NumRuns { unNumRuns :: Int }
   deriving stock (Show, Eq)
+
+newtype UnspentCreditsVar s = UnspentCreditsVar { getUnspentCreditsVar :: PrimVar s Int }
 
 data MergingRunState m h =
     CompletedMerge
@@ -284,11 +308,16 @@ data MergingRunState m h =
   | OngoingMerge
       !(V.Vector (Run m h))
       -- ^ Input runs
-      !(PrimVar (PrimState m) Int)
-      -- ^ The total number of performed merging steps.
-      !(PrimVar (PrimState m) Int)
-      -- ^ The total number of supplied credits.
+      !(SpentCreditsVar (PrimState m))
+      -- ^ The total number of spent credits.
       !(Merge m h)
+
+newtype TotalStepsVar s = TotalStepsVar { getTotalStepsVar ::  PrimVar s Int  }
+
+newtype SpentCreditsVar s = SpentCreditsVar { getSpentCreditsVar :: PrimVar s Int }
+
+data MergeKnownCompleted = MergeKnownCompleted | MergeMaybeCompleted
+  deriving stock (Show, Eq, Read)
 
 {-# SPECIALISE addReferenceLevels :: TempRegistry IO -> Levels IO h -> IO () #-}
 addReferenceLevels ::
@@ -326,9 +355,9 @@ forRunAndMergeM_ ::
 forRunAndMergeM_ lvls k1 k2 = V.forM_ lvls $ \(Level mr rs) -> do
     case mr of
       SingleRun r    -> k1 r
-      MergingRun _ _ var -> withMVar var $ \case
+      MergingRun _ _ _ _ _ _ var -> withMVar var $ \case
         CompletedMerge r -> k1 r
-        OngoingMerge irs _ _ m -> V.mapM_ k1 irs >> k2 m
+        OngoingMerge irs _ m -> V.mapM_ k1 irs >> k2 m
     V.mapM_ k1 rs
 
 {-# SPECIALISE foldRunM ::
@@ -345,9 +374,9 @@ foldRunM ::
 foldRunM f x lvls = flip (flip V.foldM x) lvls $ \y (Level mr rs) -> do
     z <- case mr of
       SingleRun r -> f y r
-      MergingRun _ _ var -> withMVar var $ \case
+      MergingRun _ _ _ _ _ _ var -> withMVar var $ \case
         CompletedMerge r -> f y r
-        OngoingMerge irs _ _ _m -> V.foldM f y irs
+        OngoingMerge irs _ _m -> V.foldM f y irs
     V.foldM f z rs
 
 {-# SPECIALISE forRunM ::
@@ -364,6 +393,10 @@ forRunM ::
   -> m (V.Vector a)
 forRunM lvls k = do
     V.reverse . V.fromList <$> foldRunM (\acc r -> k r >>= \x -> pure (x : acc)) [] lvls
+
+{-# SPECIALISE iforLevelM_ :: Levels IO h -> (LevelNo -> Level IO h -> IO ()) -> IO () #-}
+iforLevelM_ :: Monad m => Levels m h -> (LevelNo -> Level m h -> m ()) -> m ()
+iforLevelM_ lvls k = V.iforM_ lvls $ \i lvl -> k (LevelNo (i + 1)) lvl
 
 {-------------------------------------------------------------------------------
   Flushes and scheduled merges
@@ -427,7 +460,7 @@ updatesWithInterleavedFlushes tr conf resolve hfs hbio root uc es reg tc = do
     -- number of supplied credits is based on the size increase of the write
     -- buffer, not the the number of processed entries @length es' - length es@.
     let numAdded = unNumEntries (WB.numEntries wb') - unNumEntries (WB.numEntries wb)
-    supplyCredits numAdded (tableLevels tc)
+    supplyCredits conf (Credit numAdded) (tableLevels tc)
     let tc' = tc { tableWriteBuffer = wb' }
     if WB.numEntries wb' < maxn then do
       pure $! tc'
@@ -672,7 +705,7 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
         mr <- newMerge policyForLevel Merge.LastLevel ln rs
         return $ V.singleton $ Level mr V.empty
     go !ln rs' (V.uncons -> Just (Level mr rs, ls)) = do
-        r <- expectCompletedMerge ln mr
+        r <- expectCompletedMergeTraced ln mr
         case mergePolicyForLevel confMergePolicy ln ls of
           -- If r is still too small for this level then keep it and merge again
           -- with the incoming runs.
@@ -713,17 +746,9 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
             mr' <- newMerge LevelLevelling Merge.LastLevel ln (rs' `V.snoc` r)
             pure $! Level mr' V.empty `V.cons` V.empty
 
-    expectCompletedMerge :: LevelNo -> MergingRun m h -> m (Run m h)
-    expectCompletedMerge ln (SingleRun r) = do
-      traceWith tr $ AtLevel ln $ TraceExpectCompletedMergeSingleRun (runNumber $ Run.runRunFsPaths r)
-      pure r
-    expectCompletedMerge ln (MergingRun _ _ var) = do
-      r <- withMVar var $ \case
-        CompletedMerge r -> pure r
-        OngoingMerge{} -> do
-          -- If the algorithm finds an ongoing merge here, then it is a bug in
-          -- our merge sceduling algorithm. As such, we throw a pure error.
-          error "expectCompletedMerge: expected a completed merge, but found an ongoing merge"
+    expectCompletedMergeTraced :: LevelNo -> MergingRun m h -> m (Run m h)
+    expectCompletedMergeTraced ln mr = do
+      r <- expectCompletedMerge mr
       traceWith tr $ AtLevel ln $ TraceExpectCompletedMerge (runNumber $ Run.runRunFsPaths r)
       pure r
 
@@ -751,8 +776,9 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
                   Run.removeReference
             traceWith tr $ AtLevel ln $ TraceCompletedMerge (Run.runNumEntries r) (runNumber $ Run.runRunFsPaths r)
             V.mapM_ (freeTemp reg . Run.removeReference) rs
-            var <- newMVar $! CompletedMerge r
-            pure $! MergingRun mergepolicy (NumRuns $ V.length rs) var
+            mergeVar <- newMVar $! CompletedMerge r
+
+            mkMergingRun rs MergeKnownCompleted mergeVar
           Incremental -> do
             mergeMaybe <- allocateMaybeTemp reg
               (Merge.new hfs hbio caching alloc mergelast resolve runPaths rs)
@@ -760,10 +786,24 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
             case mergeMaybe of
               Nothing -> error "newMerge: merges can not be empty"
               Just m -> do
-                totalStepsVar <- newPrimVar $! 0
-                totalCreditsVar <- newPrimVar $! 0
-                var <- newMVar $! OngoingMerge rs totalStepsVar totalCreditsVar m
-                pure $! MergingRun mergepolicy (NumRuns $ V.length rs) var
+                spentCreditsVar <- SpentCreditsVar <$> newPrimVar 0
+                mergeVar <- newMVar $! OngoingMerge rs spentCreditsVar m
+                mkMergingRun rs MergeMaybeCompleted mergeVar
+        where
+          mkMergingRun ::
+               V.Vector (Run m h)
+            -> MergeKnownCompleted
+            -> StrictMVar m (MergingRunState m h)
+            -> m (MergingRun m h)
+          mkMergingRun inputRuns mergeCompleted mergeVar = do
+            unspentCreditsVar <- UnspentCreditsVar <$> newPrimVar 0
+            totalStepsVar <- TotalStepsVar <$> newPrimVar 0
+            mergeKnownCompletedVar <- newMutVar $! mergeCompleted
+            let numInputEntries = NumEntries $
+                  V.sum (V.map (unNumEntries . Run.runNumEntries) inputRuns)
+            pure $! MergingRun
+                      mergepolicy (NumRuns $ V.length rs) numInputEntries
+                      unspentCreditsVar totalStepsVar mergeKnownCompletedVar mergeVar
 
 data MergePolicyForLevel = LevelTiering | LevelLevelling
   deriving stock (Show, Eq)
@@ -848,23 +888,121 @@ mergeRuns resolve hfs hbio caching alloc runPaths mergeLevel runs = do
   Credits
 -------------------------------------------------------------------------------}
 
-type Credit = Int
+{-
+  Note [Credits]
+~~~~~~~~~~~~~~
+
+  With scheduled merges, each update (e.g., insert) on a table contributes to
+  the progression of ongoing merges in the levels structure. This ensures that
+  merges are finished in time before a new merge has to be started. The points
+  in the evolution of the levels structure where new merges are started are
+  known: a flush of a full write buffer will create a new run on the first
+  level, and after sufficient flushes (e.g., 4) we will start at least one new
+  merge on the second level. This may cascade down to lower levels depending on
+  how full the levels are. As such, we have a well-defined measure to determine
+  when merges should be finished: it only depends on the maximum size of the
+  write buffer!
+
+  The simplest solution to making sure merges are done in time is to step them
+  to completion immediately when started. This does not, however, spread out
+  work over time nicely. Instead, we schedule merge work based on how many
+  updates are made on the table, taking care to ensure that the merge is
+  finished /just/ in time before the next flush comes around, and not too early.
+
+  TODO: we can still spread out work more evenly over time. We are finishing
+  some merges too early, for example. See 'creditsForMerge'.
+
+  The progression is tracked using merge credits, where each single update
+  contributes a single credit to each ongoing merge. This is equivalent to
+  saying we contribute a credit to each level, since each level contains
+  precisely one ongoing merge. Contributing a credit does not, however,
+  translate directly to doing one /unit/ of merging work:
+
+  * The amount of work to do for one credit is adjusted depending on the type of
+    merge we are doing. Last-level merges, for example, can have larger inputs,
+    and therefore we have to do a little more work for each credit. As such, we
+    /scale/ credits for the specific type of merge.
+
+  * Unspent credits are accumulated until they go over a threshold, after which
+    a batch of merge work will be performed. Configuring this threshold should
+    allow to achieve a nice balance between spreading out I/O and achieving good
+    (concurrent) performance.
+
+  As mentioned, merge work is done in batches based on accumulated, unspent
+  credits and a threshold value. Moreover, merging runs can be shared across
+  tables, which means that multiple threads can contribute to the same merge
+  concurrently. The design to contribute credits to the same merging run is
+  largely lock-free. The design ensures consistency of the unspent credits and
+  the merge state, while allowing threads to progress without waiting on other
+  threads.
+
+  First, scaled credits are added atomically to a PrimVar that holds the current
+  total of unspent credits. If this addition exceeded the threshold, then
+  credits are atomically subtracted from the PrimVar to get it below the
+  threshold. The number of subtracted credits is then the number of merge steps
+  that will be performed. While doing the merging work, a (more expensive) MVar
+  lock is taken to ensure that the merging work itself is performed only
+  sequentially. If at some point, doing the merge work resulted in the merge
+  being done, then the merge is converted into a new run.
+
+  In the presence of async exceptions, we offer a weaker guarantee regarding
+  consistency of the accumulated, unspent credits and the merge state: a merge
+  /may/ progress more than the number of credits that were taken. If an async
+  exception happens at some point during merging work, then we put back all the
+  credits we took beforehand. This makes the implementation simple, and merges
+  will still finish in time. It would be bad if we did not put back credits,
+  because then a merge might not finish in time, which will mess up the shape of
+  the levels tree.
+
+  The implementation also tracks the total of spent credits, and the number of
+  perfomed merge steps. These are the use cases:
+
+  * The total of spent credits + the total of unspent credits is used by the
+    snapshot feature to restore merge work on snapshot load that was lost during
+    snapshot creation.
+
+  * For simplicity, merges are allowed to do more steps than requested. However,
+    it does mean that once we do more steps next time a batch of work is done,
+    then we should account for the surplus of steps performed by the previous
+    batch. The total of spent credits + the number of performed merge steps is
+    used to compute this surplus, and adjust for it.
+
+    TODO: we should reconsider at some later point in time whether this surplus
+    adjustment is necessary. It does not make a difference for correctness, but it
+    does mean we get a slightly better distribution of work over time. For
+    sensible batch sizes and workloads without many duplicate keys, it probably
+    won't make much of a difference. However, without this calculation the surplus
+    can accumulate over time, so if we're really pedantic about work distribution
+    then this is the way to go
+
+  Async exceptions are allowed to mess up the consistency between the the merge
+  state, the merge steps performed variable, and the spent credits variable.
+  There is an important invariant that we maintain, even in the presence of
+  async exceptions: @merge steps actually performed >= recorded merge steps
+  performed >= recorded spent credits@. TODO: and this makes it correct (?).
+-}
+
+newtype Credit = Credit Int
 
 {-# SPECIALISE supplyCredits ::
-     Credit
+     TableConfig
+  -> Credit
   -> Levels IO h
   -> IO ()
   #-}
+-- | Supply the given amount of credits to each merge in the levels structure.
+-- This /may/ cause some merges to progress.
 supplyCredits ::
      (MonadSTM m, MonadST m, MonadMVar m, MonadMask m, MonadFix m)
-  => Credit
+  => TableConfig
+  -> Credit
   -> Levels m h
   -> m ()
-supplyCredits c levels =
-    V.iforM_ levels $ \_i (Level mr _rs) ->
-    -- let !ln = i + 1 in
-    let !c' = scaleCreditsForMerge mr c in
-    supplyMergeCredits c' mr
+supplyCredits conf c levels =
+    iforLevelM_ levels $ \ln (Level mr _rs) ->
+      let !c' = scaleCreditsForMerge mr c in
+      let !creditsThresh = creditThresholdForLevel conf ln in
+      supplyMergeCredits c' creditsThresh mr
 
 -- | 'Credit's scaled based on the merge requirements for merging runs. See
 -- 'scaleCreditsForMerge'.
@@ -888,70 +1026,244 @@ scaleCreditsForMerge SingleRun{} _ = ScaledCredits 0
 -- the sizes of the input runs. As as result, merge work would/could be more
 -- evenly distributed over time when the resident run is smaller than the worst
 -- case.
-scaleCreditsForMerge (MergingRun LevelLevelling _ _) c =
+scaleCreditsForMerge (MergingRun LevelLevelling _ _ _ _ _ _) (Credit c) =
     ScaledCredits (c * (1 + 4))
 -- A tiering merge has 5 runs at most (one could be held back to merged again)
 -- and must be completed before the level is full (once 4 more runs come in).
-scaleCreditsForMerge (MergingRun LevelTiering (NumRuns n) _) c =
+scaleCreditsForMerge (MergingRun LevelTiering (NumRuns n) _ _ _ _ _) (Credit c) =
     ScaledCredits ((c * n + 3) `div` 4)
     -- same as division rounding up: ceiling (c * n / 4)
 
-{-# SPECIALISE supplyMergeCredits :: ScaledCredits -> MergingRun IO h -> IO () #-}
--- TODO: implement doing merge werk in batches, instead of always taking the
--- MVar. The thresholds for doing merge work should be different for each level,
--- maybe co-prime?
+{-# SPECIALISE supplyMergeCredits :: ScaledCredits -> CreditThreshold -> MergingRun IO h -> IO () #-}
+-- | Supply the given amount of credits to a merging run. This /may/ cause an
+-- ongoing merge to progress.
 supplyMergeCredits ::
-     (MonadSTM m, MonadST m, MonadMVar m, MonadMask m, MonadFix m)
+     forall m h. (MonadSTM m, MonadST m, MonadMVar m, MonadMask m, MonadFix m)
   => ScaledCredits
+  -> CreditThreshold
   -> MergingRun m h
   -> m ()
-supplyMergeCredits _ SingleRun{} = pure ()
-supplyMergeCredits (ScaledCredits c) (MergingRun _ _ var) = do
-    mergeIsDone <- withMVar var $ \case
-      CompletedMerge{} -> pure False
-      (OngoingMerge _rs totalStepsVar totalCreditsVar m) -> do
-        totalSteps <- readPrimVar totalStepsVar
-        totalCredits <- readPrimVar totalCreditsVar
+supplyMergeCredits _ _ SingleRun{} = pure ()
+supplyMergeCredits
+  (ScaledCredits c)
+  thresh@(CreditThreshold creditsThresh)
+  (MergingRun _ _ numInputEntries unspentCreditsVar totalStepsVar mergeKnownCompletedVar mergeVar) = do
+    mergeKnownCompleted <- readMutVar mergeKnownCompletedVar
 
-        -- If we previously performed too many merge steps, then we perform
-        -- fewer now.
-        let stepsToDo = max 0 (totalCredits + c - totalSteps)
-        -- Merge.steps guarantees that stepsDone >= stepsToDo /unless/ the merge
-        -- was just now finished.
+    -- The merge is already finished
+    if mergeKnownCompleted == MergeKnownCompleted then
+      pure ()
+    -- We can finish the merge immediately
+    else do
+      -- unspentCredits' is our /estimate/ of what the new total of unspent credits is.
+      Credit unspentCredits' <- addUnspentCredits unspentCreditsVar (Credit c)
+      totalSteps <- readPrimVar (getTotalStepsVar totalStepsVar)
+
+      if totalSteps + unspentCredits' >= unNumEntries numInputEntries then do
+        isMergeDone <-
+          bracketOnError (takeAllUnspentCredits unspentCreditsVar)
+                        (putBackUnspentCredits unspentCreditsVar)
+                        (stepMerge mergeVar totalStepsVar)
+        when isMergeDone $ completeMerge mergeVar mergeKnownCompletedVar
+      -- Try to do some merging work if the new total now goes over the threshold.
+      else if unspentCredits' >= creditsThresh then do
+        isMergeDone <-
+          -- Try to take some unspent credits. The number of taken credits is the
+          -- number of merging steps we will try to do.
+          --
+          -- If an error happens during the body, then we put back as many credits
+          -- as we took, even if the merge has progressed. See Note [Credits] why
+          -- this is okay.
+          bracketOnError (tryTakeUnspentCredits unspentCreditsVar thresh (Credit unspentCredits'))
+                        (mapM_ (putBackUnspentCredits unspentCreditsVar)) $ \case
+            Nothing -> pure False
+            Just c' -> stepMerge mergeVar totalStepsVar c'
+
+        -- If we just finished the merge, then we convert the output of the merge
+        -- into a new run. i.e., we complete the merge.
+        --
+        -- If an async exception happens before we get to perform the
+        -- completion, then that is fine. The next supplyMergeCredits will
+        -- complete the merge.
+        when isMergeDone $ completeMerge mergeVar mergeKnownCompletedVar
+      -- Just accumulate unspent credits, because we are not over the threshold yet
+      else
+        pure ()
+
+{-# SPECIALISE addUnspentCredits ::
+     UnspentCreditsVar RealWorld
+  -> Credit
+  -> IO Credit #-}
+-- | Add credits to unspent credits. Returns the /estimate/ of what the new
+-- total of unspent credits is. The /actual/ total might have been changed again
+-- by a different thread.
+addUnspentCredits ::
+     PrimMonad m
+  => UnspentCreditsVar (PrimState m)
+  -> Credit
+  -> m Credit
+addUnspentCredits (UnspentCreditsVar !var) (Credit c) = Credit . (c+) <$> fetchAddInt var c
+
+{-# SPECIALISE tryTakeUnspentCredits ::
+     UnspentCreditsVar RealWorld
+  -> CreditThreshold
+  -> Credit
+  -> IO (Maybe Credit) #-}
+-- | In a CAS-loop, subtract credits from the unspent credits to get it below
+-- the threshold again. If succesful, return Just that many credits, or Nothing
+-- otherwise.
+--
+-- The number of taken credits is a multiple of creditsThresh, so that the
+-- amount of merging work that we do each time is relatively uniform.
+--
+-- Nothing can be returned if the variable has already gone below the threshold,
+-- which may happen if another thread is concurrently doing the same loop on
+-- unspentCreditsVar.
+tryTakeUnspentCredits ::
+     PrimMonad m
+  => UnspentCreditsVar (PrimState m)
+  -> CreditThreshold
+  -> Credit
+  -> m (Maybe Credit)
+tryTakeUnspentCredits
+    unspentCreditsVar@(UnspentCreditsVar !var)
+    thresh@(CreditThreshold !creditsThresh)
+    (Credit !prev)
+  | prev < creditsThresh = pure Nothing
+  | otherwise = do
+      -- numThresholds is guaranteed to be >= 1
+      let !numThresholds = prev `div` creditsThresh
+          !creditsToTake = numThresholds * creditsThresh
+          !new = prev - creditsToTake
+      assert (new < creditsThresh) $ pure ()
+      prev' <- casInt var prev new
+      if prev' == prev then
+        pure (Just (Credit creditsToTake))
+      else
+        tryTakeUnspentCredits unspentCreditsVar thresh (Credit prev')
+
+{-# SPECIALISE putBackUnspentCredits :: UnspentCreditsVar RealWorld -> Credit -> IO () #-}
+putBackUnspentCredits ::
+     PrimMonad m
+  => UnspentCreditsVar (PrimState m)
+  -> Credit
+  -> m ()
+putBackUnspentCredits (UnspentCreditsVar !var) (Credit !x) = void $ fetchAddInt var x
+
+{-# SPECIALISE takeAllUnspentCredits :: UnspentCreditsVar RealWorld -> IO Credit #-}
+-- | In a CAS-loop, subtract all unspent credits and return them.
+takeAllUnspentCredits ::
+     PrimMonad m
+  => UnspentCreditsVar (PrimState m)
+  -> m Credit
+takeAllUnspentCredits (UnspentCreditsVar !unspentCreditsVar) = do
+    prev <- readPrimVar unspentCreditsVar
+    casLoop prev
+  where
+    casLoop !prev = do
+      prev' <- casInt unspentCreditsVar prev 0
+      if prev' == prev then
+        pure (Credit prev)
+      else
+        casLoop prev'
+
+{-# SPECIALISE stepMerge :: StrictMVar IO (MergingRunState IO h) -> TotalStepsVar RealWorld -> Credit -> IO Bool #-}
+stepMerge ::
+     (MonadMVar m, MonadCatch m, MonadSTM m, MonadST m)
+  => StrictMVar m (MergingRunState m h)
+  -> TotalStepsVar (PrimState m)
+  -> Credit
+  -> m Bool
+stepMerge mergeVar (TotalStepsVar totalStepsVar) (Credit c) =
+    withMVar mergeVar $ \case
+      CompletedMerge{} -> pure False
+      (OngoingMerge
+          _rs
+          (SpentCreditsVar spentCreditsVar)
+          m) -> do
+        totalSteps <- readPrimVar totalStepsVar
+        spentCredits <- readPrimVar spentCreditsVar
+
+        -- If we previously performed too many merge steps, then we
+        -- perform fewer now.
+        let stepsToDo = max 0 (spentCredits + c - totalSteps)
+        -- Merge.steps guarantees that stepsDone >= stepsToDo /unless/
+        -- the merge was just now finished.
         (stepsDone, stepResult) <- Merge.steps m stepsToDo
         assert (case stepResult of
                   MergeInProgress -> stepsDone >= stepsToDo
-                  MergeComplete   -> True
-               ) $ pure ()
+                  MergeDone       -> True
+                ) $ pure ()
 
-        -- This should be the only point at which we write to these variables.
+        -- This should be the only point at which we write to these
+        -- variables.
         --
-        -- It is guaranteed that totalSteps' >= totaltCredits' /unless/ the
-        -- merge was just now finished.
+        -- It is guaranteed that totalSteps' >= spentCredits' /unless/
+        -- the merge was just now finished.
         let totalSteps' = totalSteps + stepsDone
-        let totalCredits' = totalCredits + c
-        -- If an exception happens between the next two writes, then only
-        -- totalCreditsVar will be outdated, which is okay because we will
-        -- resupply credits. It also means we can maintain that @readPrimVar
-        -- totalStepsVar >= readPrimVar totalCreditsVar@, /unless/ the merge was
-        -- just now finished.
-        writePrimVar totalStepsVar $! totalSteps + stepsDone
-        writePrimVar totalCreditsVar $! totalCredits + c
+        let spentCredits' = spentCredits + c
+        -- It is guaranteed that @readPrimVar totalStepsVar >=
+        -- readPrimVar spentCreditsVar@, /unless/ the merge was just now
+        -- finished.
+        writePrimVar totalStepsVar $! totalSteps'
+        writePrimVar spentCreditsVar $! spentCredits'
         assert (case stepResult of
-                  MergeInProgress -> totalSteps' >= totalCredits'
-                  MergeComplete   -> True
-               ) $ pure ()
+                  MergeInProgress -> totalSteps' >= spentCredits'
+                  MergeDone       -> True
+              ) $ pure ()
 
-        pure $ stepResult == MergeComplete
-    when mergeIsDone $
-      modifyMVarMasked_ var $ \case
-        mr@CompletedMerge{} -> pure $! mr
-        (OngoingMerge rs _totalStepsVar _totalCreditsVar m) -> do
-          -- TODO: we'll likely move away from this style of reference counting,
-          -- so this code will change in the future.
-          RefCount n <- Merge.readRefCount m
-          let !n' = fromIntegralChecked n
-          V.forM_ rs $ \r -> Run.removeReferenceN r n'
-          r <- Merge.complete m
-          Merge.removeReferenceN m n'
-          pure $! CompletedMerge r
+        pure $ stepResult == MergeDone
+
+{-# SPECIALISE completeMerge ::
+     StrictMVar IO (MergingRunState IO h)
+  -> MutVar RealWorld MergeKnownCompleted
+  -> IO () #-}
+-- | Convert an 'OngoingMerge' to a 'CompletedMerge'.
+completeMerge ::
+     (MonadSTM m, MonadST m, MonadMVar m, MonadMask m, MonadFix m)
+  => StrictMVar m (MergingRunState m h)
+  -> MutVar (PrimState m) MergeKnownCompleted
+  -> m ()
+completeMerge mergeVar mergeKnownCompletedVar = do
+    modifyMVarMasked_ mergeVar $ \case
+      mr@CompletedMerge{} -> pure $! mr
+      (OngoingMerge rs _spentCreditsVar m) -> do
+        -- TODO: we'll likely move away from this style of reference counting,
+        -- so this code will change in the future.
+        RefCount n <- Merge.readRefCount m
+        let !n' = fromIntegralChecked n
+        V.forM_ rs $ \r -> Run.removeReferenceN r n'
+        r <- Merge.complete m
+        Merge.removeReferenceN m n'
+        -- Cache the knowledge that we completed the merge
+        writeMutVar mergeKnownCompletedVar MergeKnownCompleted
+        pure $! CompletedMerge r
+
+{-# SPECIALISE expectCompletedMerge :: MergingRun IO h -> IO (Run IO h) #-}
+expectCompletedMerge ::
+     (MonadMVar m, MonadSTM m, MonadST m, MonadMask m, MonadFix m)
+  => MergingRun m h -> m (Run m h)
+expectCompletedMerge (SingleRun r) = pure r
+expectCompletedMerge (MergingRun _ _ numInputEntries _ totalStepsVar@(TotalStepsVar var) mergeKnownCompletedVar mergeVar) = do
+    mergeKnownCompleted <- readMutVar mergeKnownCompletedVar
+    -- The merge is not guaranteed to be complete.
+    when (mergeKnownCompleted == MergeMaybeCompleted) $ do
+      totalSteps <- readPrimVar var
+      isMergeDone <- stepMerge mergeVar totalStepsVar (Credit (unNumEntries numInputEntries - totalSteps))
+      when isMergeDone $ completeMerge mergeVar mergeKnownCompletedVar
+      -- TODO: can we think of a check to see if we did not do too much work here?
+    withMVar mergeVar $ \case
+      CompletedMerge r -> pure r
+      OngoingMerge{} -> do
+        -- If the algorithm /still/ finds an ongoing merge here, then it is a bug in
+        -- our merge sceduling algorithm. As such, we throw a pure error.
+        error "expectCompletedMerge: expected a completed merge, but found an ongoing merge"
+
+newtype CreditThreshold = CreditThreshold Int
+
+-- TODO: the thresholds for doing merge work should be different for each level,
+-- maybe co-prime?
+creditThresholdForLevel :: TableConfig -> LevelNo -> CreditThreshold
+creditThresholdForLevel conf (LevelNo _i) =
+    let AllocNumEntries (NumEntries x) = confWriteBufferAlloc conf
+    in  CreditThreshold x
