@@ -314,8 +314,8 @@ instance Bifunctor LookupResult where
 
 {-# SPECIALISE lookups ::
      (SerialiseKey k, SerialiseValue v)
-  => V.Vector k
-  -> Table IO k v blob
+  => Table IO k v blob
+  -> V.Vector k
   -> IO (V.Vector (LookupResult v (BlobRef IO blob))) #-}
 {-# INLINEABLE lookups #-}
 -- | Perform a batch of lookups.
@@ -326,10 +326,10 @@ lookups ::
      , SerialiseKey k
      , SerialiseValue v
      )
-  => V.Vector k
-  -> Table m k v blob
+  => Table m k v blob
+  -> V.Vector k
   -> m (V.Vector (LookupResult v (BlobRef m blob)))
-lookups ks (Internal.NormalTable t) =
+lookups (Internal.NormalTable t) ks =
     V.map toLookupResult <$>
     Internal.lookups const (V.map Internal.serialiseKey ks) t
   where
@@ -354,8 +354,8 @@ instance Bifunctor (QueryResult k) where
 
 {-# SPECIALISE rangeLookup ::
      (SerialiseKey k, SerialiseValue v)
-  => Range k
-  -> Table IO k v blob
+  => Table IO k v blob
+  -> Range k
   -> IO (V.Vector (QueryResult k v (BlobRef IO blob))) #-}
 -- | Perform a range lookup.
 --
@@ -365,10 +365,10 @@ rangeLookup ::
      , SerialiseKey k
      , SerialiseValue v
      )
-  => Range k
-  -> Table m k v blob
+  => Table m k v blob
+  -> Range k
   -> m (V.Vector (QueryResult k v (BlobRef m blob)))
-rangeLookup range (Internal.NormalTable t) =
+rangeLookup (Internal.NormalTable t) range =
     Internal.rangeLookup const (Internal.serialiseKey <$> range) t $ \k v mblob ->
       toNormalQueryResult
         (Internal.deserialiseKey k)
@@ -536,8 +536,8 @@ instance (NFData v, NFData blob) => NFData (Update v blob) where
 
 {-# SPECIALISE updates ::
      (SerialiseKey k, SerialiseValue v, SerialiseValue blob)
-  => V.Vector (k, Update v blob)
-  -> Table IO k v blob
+  => Table IO k v blob
+  -> V.Vector (k, Update v blob)
   -> IO () #-}
 -- | Perform a mixed batch of inserts and deletes.
 --
@@ -551,10 +551,10 @@ updates ::
      , SerialiseValue v
      , SerialiseValue blob
      )
-  => V.Vector (k, Update v blob)
-  -> Table m k v blob
+  => Table m k v blob
+  -> V.Vector (k, Update v blob)
   -> m ()
-updates es (Internal.NormalTable t) = do
+updates (Internal.NormalTable t) es = do
     Internal.updates const (V.mapStrict serialiseEntry es) t
   where
     serialiseEntry = bimap Internal.serialiseKey serialiseOp
@@ -569,8 +569,8 @@ updates es (Internal.NormalTable t) = do
 
 {-# SPECIALISE inserts ::
      (SerialiseKey k, SerialiseValue v, SerialiseValue blob)
-  => V.Vector (k, v, Maybe blob)
-  -> Table IO k v blob
+  => Table IO k v blob
+  -> V.Vector (k, v, Maybe blob)
   -> IO () #-}
 -- | Perform a batch of inserts.
 --
@@ -581,15 +581,15 @@ inserts ::
      , SerialiseValue v
      , SerialiseValue blob
      )
-  => V.Vector (k, v, Maybe blob)
-  -> Table m k v blob
+  => Table m k v blob
+  -> V.Vector (k, v, Maybe blob)
   -> m ()
-inserts = updates . fmap (\(k, v, blob) -> (k, Insert v blob))
+inserts t = updates t . fmap (\(k, v, blob) -> (k, Insert v blob))
 
 {-# SPECIALISE deletes ::
      (SerialiseKey k, SerialiseValue v, SerialiseValue blob)
-  => V.Vector k
-  -> Table IO k v blob
+  => Table IO k v blob
+  -> V.Vector k
   -> IO () #-}
 -- | Perform a batch of deletes.
 --
@@ -600,10 +600,10 @@ deletes ::
      , SerialiseValue v
      , SerialiseValue blob
      )
-  => V.Vector k
-  -> Table m k v blob
+  => Table m k v blob
+  -> V.Vector k
   -> m ()
-deletes = updates . fmap (,Delete)
+deletes t = updates t . fmap (,Delete)
 
 {-# SPECIALISE retrieveBlobs ::
      SerialiseValue blob
