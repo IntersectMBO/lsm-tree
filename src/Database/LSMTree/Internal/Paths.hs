@@ -4,7 +4,12 @@ module Database.LSMTree.Internal.Paths (
   , activeDir
   , runPath
   , snapshotsDir
-  , snapshot
+  , NamedSnapshotDir (..)
+  , namedSnapshotDir
+  , SnapshotMetaDataFile (..)
+  , snapshotMetaDataFile
+  , SnapshotMetaDataChecksumFile (..)
+  , snapshotMetaDataChecksumFile
     -- * Table paths
   , tableBlobPath
     -- * Snapshot name
@@ -59,8 +64,27 @@ runPath root = RunFsPaths (activeDir root)
 snapshotsDir :: SessionRoot -> FsPath
 snapshotsDir (SessionRoot dir) = dir </> mkFsPath ["snapshots"]
 
-snapshot :: SessionRoot -> SnapshotName -> FsPath
-snapshot root (MkSnapshotName name) = snapshotsDir root </> mkFsPath [name]
+-- | The directory for a specific, /named/ snapshot.
+--
+-- Not to be confused with the snapshot/s/ directory, which holds all named
+-- snapshot directories.
+newtype NamedSnapshotDir = NamedSnapshotDir { getNamedSnapshotDir :: FsPath }
+
+namedSnapshotDir :: SessionRoot -> SnapshotName -> NamedSnapshotDir
+namedSnapshotDir root (MkSnapshotName name) =
+    NamedSnapshotDir (snapshotsDir root </> mkFsPath [name])
+
+newtype SnapshotMetaDataFile = SnapshotMetaDataFile FsPath
+
+snapshotMetaDataFile :: NamedSnapshotDir -> SnapshotMetaDataFile
+snapshotMetaDataFile (NamedSnapshotDir dir) =
+    SnapshotMetaDataFile (dir </> mkFsPath ["metadata"])
+
+newtype SnapshotMetaDataChecksumFile = SnapshotMetaDataChecksumFile FsPath
+
+snapshotMetaDataChecksumFile :: NamedSnapshotDir -> SnapshotMetaDataChecksumFile
+snapshotMetaDataChecksumFile (NamedSnapshotDir dir) =
+    SnapshotMetaDataChecksumFile (dir </> mkFsPath ["metadata.checksum"])
 
 {-------------------------------------------------------------------------------
   Snapshot name
