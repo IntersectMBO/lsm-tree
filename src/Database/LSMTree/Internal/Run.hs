@@ -22,11 +22,12 @@ module Database.LSMTree.Internal.Run (
   , RunDataCaching (..)
     -- * Snapshot
   , ChecksumError (..)
+  , hardLinkRunFiles
   , openFromDisk
   ) where
 
 import           Control.DeepSeq (NFData (..), rwhnf)
-import           Control.Monad (when)
+import           Control.Monad (void, when, zipWithM_)
 import           Control.Monad.Class.MonadST (MonadST)
 import           Control.Monad.Class.MonadSTM (MonadSTM (..))
 import           Control.Monad.Class.MonadThrow
@@ -36,7 +37,7 @@ import           Control.RefCount (RefCount (..), RefCounter)
 import qualified Control.RefCount as RC
 import           Data.BloomFilter (Bloom)
 import qualified Data.ByteString.Short as SBS
-import           Data.Foldable (for_)
+import           Data.Foldable
 import           Data.Word (Word64)
 import           Database.LSMTree.Internal.BlobFile hiding (removeReference)
 import qualified Database.LSMTree.Internal.BlobFile as BlobFile
@@ -59,6 +60,7 @@ import           Database.LSMTree.Internal.WriteBufferBlobs (WriteBufferBlobs)
 import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
+import qualified System.FS.API.Lazy as FS
 import qualified System.FS.BlockIO.API as FS
 import           System.FS.BlockIO.API (HasBlockIO)
 
@@ -236,6 +238,43 @@ fromWriteBuffer fs hbio caching alloc fsPaths buffer blobs = do
       Builder.addKeyOp builder k (fmap (WBB.mkRawBlobRef blobs) e)
       --TODO: the fmap entry here reallocates even when there are no blobs
     fromMutable caching (RefCount 1) builder
+
+
+{----------------------------------------------------------------------------------
+  Snapshot
+----------------------------------------------------------------------------------}
+
+{-# SPECIALISE hardLinkRunFiles :: Run IO h -> FS.FsPath -> IO () #-}
+-- | @'hardLinkRunFiles' run targetDir@ creates a hard link for each file
+-- associated with @run@ in the @targetDir@ directory.
+--
+-- This function assumes that @targetDir@ exists.
+--
+-- TODO: as a temporary implementation/hack, this copies file contents instead
+-- of creating hard links.
+hardLinkRunFiles :: MonadThrow m => Run m h -> FS.FsPath -> m ()
+hardLinkRunFiles run targetDir = do
+    let sourceRunFsPaths = runRunFsPaths run
+        sourcePaths = pathsForRunFiles sourceRunFsPaths
+        targetRunFsPaths = sourceRunFsPaths {
+              runDir = targetDir
+          }
+        targetPaths = pathsForRunFiles targetRunFsPaths
+    zipWithM_ hardLinkOne (toList sourcePaths) (toList targetPaths)
+    hardLinkOne (runChecksumsPath sourceRunFsPaths) (runChecksumsPath targetRunFsPaths)
+  where
+    hfs = runHasFS run
+
+    -- TODO: this is obviously not creating any hard links, but until we have
+    -- functions to create hard links in HasBlockIO, this is the temporary
+    -- implementation/hack to "emulate" hard links.
+    hardLinkOne sourcePath targetPath =
+      FS.withFile hfs sourcePath FS.ReadMode $ \sourceHandle ->
+      FS.withFile hfs targetPath (FS.WriteMode FS.MustBeNew) $ \targetHandle -> do
+        -- This should /hopefully/ stream using lazy IO, though even if it does
+        -- not, it is only a temporary placeholder hack.
+        bs <- FS.hGetAll hfs sourceHandle
+        void $ FS.hPutAll hfs targetHandle bs
 
 data ChecksumError = ChecksumError FS.FsPath CRC.CRC32C CRC.CRC32C
   deriving stock Show

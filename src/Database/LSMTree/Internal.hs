@@ -1117,7 +1117,7 @@ createSnapshot resolve snap label tableType t = do
       -- point, we'll take that loss, as the inner state of the table is still
       -- consistent.
 
-      snappedLevels <- snapLevels (tableLevels content)
+      snappedLevels <- snapLevels snapDir (tableLevels content)
       let snapMetaData = SnapshotMetaData label tableType (tableConfig t) snappedLevels
           SnapshotMetaDataFile contentPath = Paths.snapshotMetaDataFile snapDir
           SnapshotMetaDataChecksumFile checksumPath = Paths.snapshotMetaDataChecksumFile snapDir

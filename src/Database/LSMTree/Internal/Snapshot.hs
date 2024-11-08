@@ -58,7 +58,8 @@ import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.MergeSchedule
-import           Database.LSMTree.Internal.Paths (SessionRoot)
+import           Database.LSMTree.Internal.Paths (NamedSnapshotDir (..),
+                     SessionRoot)
 import qualified Database.LSMTree.Internal.Paths as Paths
 import           Database.LSMTree.Internal.Run (ChecksumError (..), Run)
 import qualified Database.LSMTree.Internal.Run as Run
@@ -249,46 +250,58 @@ newtype SpentCredits = SpentCredits { getSpentCredits :: Int }
   Conversion to snapshot format
 -------------------------------------------------------------------------------}
 
-{-# SPECIALISE snapLevels :: Levels IO h -> IO SnapLevels #-}
+{-# SPECIALISE snapLevels :: NamedSnapshotDir ->Levels IO h -> IO SnapLevels #-}
 snapLevels ::
-     (PrimMonad m, MonadMVar m)
-  => Levels m h
+     (PrimMonad m, MonadMVar m, MonadThrow m)
+  => NamedSnapshotDir
+  -> Levels m h
   -> m SnapLevels
-snapLevels = V.mapM snapLevel
+snapLevels snapDir = V.mapM (snapLevel snapDir)
 
-{-# SPECIALISE snapLevel :: Level IO h -> IO SnapLevel #-}
+{-# SPECIALISE snapLevel :: NamedSnapshotDir -> Level IO h -> IO SnapLevel #-}
 snapLevel ::
-     (PrimMonad m, MonadMVar m)
-  => Level m h
+     (PrimMonad m, MonadMVar m, MonadThrow m)
+  => NamedSnapshotDir
+  -> Level m h
   -> m SnapLevel
-snapLevel Level{..} = do
-    smr <- snapMergingRun incomingRuns
+snapLevel snapDir Level{..} = do
+    smr <- snapMergingRun snapDir incomingRuns
     pure (SnapLevel smr (V.map runNumber residentRuns))
 
-{-# SPECIALISE snapMergingRun :: MergingRun IO h -> IO SnapMergingRun #-}
+{-# SPECIALISE snapMergingRun :: NamedSnapshotDir -> MergingRun IO h -> IO SnapMergingRun #-}
 snapMergingRun ::
-     (PrimMonad m, MonadMVar m)
-  => MergingRun m h
+     (PrimMonad m, MonadMVar m, MonadThrow m)
+  => NamedSnapshotDir
+  -> MergingRun m h
   -> m SnapMergingRun
 -- We need to know how many credits were yet unspent so we can restore merge
 -- work on snapshot load. No need to snapshot the contents of totalStepsVar
 -- here, since we still start counting from 0 again when loading the snapshot.
-snapMergingRun (MergingRun mpfl nr ne (UnspentCreditsVar unspentCreditsVar) _totalStepsVar mergeKnownCompletedVar mrsVar) = do
+snapMergingRun snapDir (MergingRun mpfl nr ne (UnspentCreditsVar unspentCreditsVar) _totalStepsVar mergeKnownCompletedVar mrsVar) = do
     unspentCredits <- readPrimVar unspentCreditsVar
     mergeKnownCompleted <- readMutVar mergeKnownCompletedVar
-    smrs <- withMVar mrsVar $ \mrs -> snapMergingRunState mrs
+    smrs <- withMVar mrsVar $ \mrs -> snapMergingRunState snapDir mrs
     pure (SnapMergingRun mpfl nr ne (UnspentCredits unspentCredits) mergeKnownCompleted smrs)
-snapMergingRun (SingleRun r) = pure (SnapSingleRun (runNumber r))
+snapMergingRun (NamedSnapshotDir dir) (SingleRun r) = do
+    Run.hardLinkRunFiles r dir
+    pure (SnapSingleRun (runNumber r))
 
-{-# SPECIALISE snapMergingRunState :: MergingRunState IO h -> IO SnapMergingRunState #-}
+{-# SPECIALISE snapMergingRunState ::
+     NamedSnapshotDir
+  -> MergingRunState IO h
+  -> IO SnapMergingRunState #-}
 snapMergingRunState ::
-     PrimMonad m
-  => MergingRunState m h
+     (PrimMonad m, MonadThrow m)
+  => NamedSnapshotDir
+  -> MergingRunState m h
   -> m SnapMergingRunState
-snapMergingRunState (CompletedMerge r) = pure (SnapCompletedMerge (runNumber r))
+snapMergingRunState (NamedSnapshotDir dir) (CompletedMerge r) = do
+    Run.hardLinkRunFiles r dir
+    pure (SnapCompletedMerge (runNumber r))
 -- We need to know how many credits were spent already so we can restore merge
 -- work on snapshot load.
-snapMergingRunState (OngoingMerge rs (SpentCreditsVar spentCreditsVar) m) = do
+snapMergingRunState (NamedSnapshotDir dir) (OngoingMerge rs (SpentCreditsVar spentCreditsVar) m) = do
+    V.forM_ rs $ \r -> Run.hardLinkRunFiles r dir
     spentCredits <- readPrimVar spentCreditsVar
     pure (SnapOngoingMerge (V.map runNumber rs) (SpentCredits spentCredits) (Merge.mergeLevel m))
 
