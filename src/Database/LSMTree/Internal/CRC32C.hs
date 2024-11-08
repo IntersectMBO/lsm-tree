@@ -13,7 +13,6 @@
 -- * Support for verifying checksums of files.
 -- * Support for a text file format listing file checksums.
 --
--- TODO: specialise all the functions here to IO
 module Database.LSMTree.Internal.CRC32C (
 
   CRC32C(..),
@@ -80,7 +79,7 @@ initialCRC32C = CRC32C 0 -- same as crc32c BS.empty
 updateCRC32C :: BS.ByteString -> CRC32C -> CRC32C
 updateCRC32C bs (CRC32C crc) = CRC32C (CRC.crc32c_update crc bs)
 
-
+{-# SPECIALISE hGetSomeCRC32C :: HasFS IO h -> Handle h -> Word64 -> CRC32C -> IO (BS.ByteString, CRC32C) #-}
 hGetSomeCRC32C :: Monad m
                => HasFS m h
                -> Handle h
@@ -101,6 +100,7 @@ hGetSomeCRC32C fs h n crc = do
 -- TODO: To reliably return a strict bytestring without additional copying,
 -- @fs-api@ needs to support directly reading into a buffer, which is currently
 -- work in progress: <https://github.com/input-output-hk/fs-sim/pull/46>
+{-# SPECIALISE hGetExactlyCRC32C :: HasFS IO h -> Handle h -> Word64 -> CRC32C -> IO (BSL.ByteString, CRC32C) #-}
 hGetExactlyCRC32C :: MonadThrow m
                => HasFS m h
                -> Handle h
@@ -112,6 +112,7 @@ hGetExactlyCRC32C fs h n crc = do
     return (lbs, crc')
 
 
+{-# SPECIALISE hPutSomeCRC32C :: HasFS IO h -> Handle h -> BS.ByteString -> CRC32C -> IO (Word64, CRC32C) #-}
 hPutSomeCRC32C :: Monad m
                => HasFS m h
                -> Handle h
@@ -124,6 +125,7 @@ hPutSomeCRC32C fs h bs crc = do
 
 
 -- | This function makes sure that the whole 'BS.ByteString' is written.
+{-# SPECIALISE hPutAllCRC32C :: HasFS IO h -> Handle h -> BS.ByteString -> CRC32C -> IO (Word64, CRC32C) #-}
 hPutAllCRC32C :: forall m h
               .  Monad m
               => HasFS m h
@@ -142,6 +144,7 @@ hPutAllCRC32C fs h = go 0
         else go written' bs' crc'
 
 -- | This function makes sure that the whole /lazy/ 'BSL.ByteString' is written.
+{-# SPECIALISE hPutAllChunksCRC32C :: HasFS IO h -> Handle h -> BSL.ByteString -> CRC32C -> IO (Word64, CRC32C) #-}
 hPutAllChunksCRC32C :: forall m h
                     .  Monad m
                     => HasFS m h
@@ -156,6 +159,7 @@ hPutAllChunksCRC32C fs h = \lbs crc ->
       (n, crc') <- hPutAllCRC32C fs h bs crc
       return (written + n, crc')
 
+{-# SPECIALISE readFileCRC32C :: HasFS IO h -> FsPath -> IO CRC32C #-}
 readFileCRC32C :: forall m h. MonadThrow m => HasFS m h -> FsPath -> m CRC32C
 readFileCRC32C fs file =
     withFile fs file ReadMode (\h -> go h initialCRC32C)
@@ -267,6 +271,7 @@ data ChecksumsFileFormatError = ChecksumsFileFormatError FsPath BSC.ByteString
 
 instance Exception ChecksumsFileFormatError
 
+{-# SPECIALISE readChecksumsFile :: HasFS IO h -> FsPath -> IO ChecksumsFile #-}
 readChecksumsFile :: MonadThrow m
                   => HasFS m h -> FsPath -> m ChecksumsFile
 readChecksumsFile fs path = do
@@ -275,6 +280,7 @@ readChecksumsFile fs path = do
       Left  badline   -> throwIO (ChecksumsFileFormatError path badline)
       Right checksums -> return checksums
 
+{-# SPECIALISE writeChecksumsFile :: HasFS IO h -> FsPath -> ChecksumsFile -> IO () #-}
 writeChecksumsFile :: MonadThrow m
                    => HasFS m h -> FsPath -> ChecksumsFile -> m ()
 writeChecksumsFile fs path checksums =
@@ -282,6 +288,7 @@ writeChecksumsFile fs path checksums =
       _ <- hPutAll fs h (formatChecksumsFile checksums)
       return ()
 
+{-# SPECIALISE writeChecksumsFile' :: HasFS IO h -> Handle h -> ChecksumsFile -> IO () #-}
 writeChecksumsFile' :: MonadThrow m
                     => HasFS m h -> Handle h -> ChecksumsFile -> m ()
 writeChecksumsFile' fs h checksums = void $ hPutAll fs h (formatChecksumsFile checksums)
