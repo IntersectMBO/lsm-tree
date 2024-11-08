@@ -165,9 +165,6 @@ instance NFData (MonoidalCursor m k v) where
 -------------------------------------------------------------------------------}
 
 -- TODO: give this a nicer Show instance.
---
--- TODO: the snapshot-related errors could be put in a separate type, since each
--- gets a SnapshotName.
 data LSMTreeError =
     SessionDirDoesNotExist FsErrorPath
     -- | The session directory is already locked
