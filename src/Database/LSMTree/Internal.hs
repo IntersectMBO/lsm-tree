@@ -72,7 +72,7 @@ import           Control.Concurrent.Class.MonadSTM (MonadSTM (..))
 import           Control.Concurrent.Class.MonadSTM.RWVar (RWVar)
 import qualified Control.Concurrent.Class.MonadSTM.RWVar as RW
 import           Control.DeepSeq
-import           Control.Monad (unless, void, when)
+import           Control.Monad (unless)
 import           Control.Monad.Class.MonadST (MonadST (..))
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Fix (MonadFix)
@@ -100,7 +100,8 @@ import           Database.LSMTree.Internal.Lookup (ByteCountDiscrepancy,
                      ResolveSerialisedValue, lookupsIO)
 import           Database.LSMTree.Internal.MergeSchedule
 import           Database.LSMTree.Internal.Paths (SessionRoot (..),
-                     SnapshotName)
+                     SnapshotMetaDataChecksumFile (..),
+                     SnapshotMetaDataFile (..), SnapshotName)
 import qualified Database.LSMTree.Internal.Paths as Paths
 import           Database.LSMTree.Internal.Range (Range (..))
 import           Database.LSMTree.Internal.Run (Run)
@@ -115,7 +116,6 @@ import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
 import qualified System.FS.API as FS
 import           System.FS.API (FsError, FsErrorPath (..), FsPath, HasFS)
-import qualified System.FS.API.Lazy as FS
 import qualified System.FS.BlockIO.API as FS
 import           System.FS.BlockIO.API (HasBlockIO)
 
@@ -1077,9 +1077,17 @@ createSnapshot resolve snap label tableType t = do
     let conf = tableConfig t
     withOpenTable t $ \thEnv -> do
       let hfs = tableHasFS thEnv
-      let snapPath = Paths.snapshot (tableSessionRoot thEnv) snap
-      FS.doesFileExist (tableHasFS thEnv) snapPath >>= \b ->
-              when b $ throwIO (ErrSnapshotExists snap)
+
+      -- Guard that the snapshot does not exist already
+      let snapDir = Paths.namedSnapshotDir (tableSessionRoot thEnv) snap
+      doesSnapshotExist <-
+        FS.doesDirectoryExist (tableHasFS thEnv) (Paths.getNamedSnapshotDir snapDir)
+      if doesSnapshotExist then
+        throwIO (ErrSnapshotExists snap)
+      else
+        -- we assume the snapshots directory already exists, so we just have to
+        -- create the directory for this specific snapshot.
+        FS.createDirectory hfs (Paths.getNamedSnapshotDir snapDir)
 
       -- For the temporary implementation it is okay to just flush the buffer
       -- before taking the snapshot.
@@ -1110,13 +1118,10 @@ createSnapshot resolve snap label tableType t = do
       -- consistent.
 
       snappedLevels <- snapLevels (tableLevels content)
-      let snapContents = encodeSnapshotMetaData (SnapshotMetaData label tableType (tableConfig t) snappedLevels)
-
-      FS.withFile
-        (tableHasFS thEnv)
-        snapPath
-        (FS.WriteMode FS.MustBeNew) $ \h ->
-          void $ FS.hPutAll (tableHasFS thEnv) h snapContents
+      let snapMetaData = SnapshotMetaData label tableType (tableConfig t) snappedLevels
+          SnapshotMetaDataFile contentPath = Paths.snapshotMetaDataFile snapDir
+          SnapshotMetaDataChecksumFile checksumPath = Paths.snapshotMetaDataChecksumFile snapDir
+      writeFileSnapshotMetaData hfs contentPath checksumPath snapMetaData
 
       pure $! numSnapRuns snappedLevels
 
@@ -1142,20 +1147,20 @@ openSnapshot sesh label tableType override snap resolve = do
     traceWith (sessionTracer sesh) $ TraceOpenSnapshot snap override
     withOpenSession sesh $ \seshEnv -> do
       withTempRegistry $ \reg -> do
-        let hfs      = sessionHasFS seshEnv
-            hbio     = sessionHasBlockIO seshEnv
-            snapPath = Paths.snapshot (sessionRoot seshEnv) snap
-        FS.doesFileExist hfs snapPath >>= \b ->
-          unless b $ throwIO (ErrSnapshotNotExists snap)
-        bs <- FS.withFile
-                hfs
-                snapPath
-                FS.ReadMode $ \h ->
-                  FS.hGetAll (sessionHasFS seshEnv) h
+        let hfs     = sessionHasFS seshEnv
+            hbio    = sessionHasBlockIO seshEnv
 
-        snapMetaData <- case decodeSnapshotMetaData bs of
+        -- Guard that the snapshot exists
+        let snapDir = Paths.namedSnapshotDir (sessionRoot seshEnv) snap
+        FS.doesDirectoryExist hfs (Paths.getNamedSnapshotDir snapDir) >>= \b ->
+          unless b $ throwIO (ErrSnapshotNotExists snap)
+
+        let SnapshotMetaDataFile contentPath = Paths.snapshotMetaDataFile snapDir
+            SnapshotMetaDataChecksumFile checksumPath = Paths.snapshotMetaDataChecksumFile snapDir
+        snapMetaData <- readFileSnapshotMetaData hfs contentPath checksumPath >>= \case
           Left e  -> throwIO (ErrSnapshotDeserialiseFailure e snap)
           Right x -> pure x
+
         let SnapshotMetaData label' tableType' conf snappedLevels = snapMetaData
 
         unless (tableType == tableType') $
@@ -1195,10 +1200,12 @@ deleteSnapshot sesh snap = do
     traceWith (sessionTracer sesh) $ TraceDeleteSnapshot snap
     withOpenSession sesh $ \seshEnv -> do
       let hfs = sessionHasFS seshEnv
-          snapPath = Paths.snapshot (sessionRoot seshEnv) snap
-      FS.doesFileExist hfs snapPath >>= \b ->
-        unless b $ throwIO (ErrSnapshotNotExists snap)
-      FS.removeFile hfs snapPath
+
+      let snapDir = Paths.namedSnapshotDir (sessionRoot seshEnv) snap
+      doesSnapshotExist <-
+        FS.doesDirectoryExist (sessionHasFS seshEnv) (Paths.getNamedSnapshotDir snapDir)
+      unless doesSnapshotExist $ throwIO (ErrSnapshotNotExists snap)
+      FS.removeDirectoryRecursive hfs (Paths.getNamedSnapshotDir snapDir)
 
 {-# SPECIALISE listSnapshots :: Session IO h -> IO [SnapshotName] #-}
 -- |  See 'Database.LSMTree.Common.listSnapshots'.
@@ -1219,8 +1226,9 @@ listSnapshots sesh = do
       case Paths.mkSnapshotName s of
         Nothing   -> pure Nothing
         Just snap -> do
-          -- check that it is a file
-          b <- FS.doesFileExist hfs (Paths.snapshot root snap)
+          -- check that it is a directory
+          b <- FS.doesDirectoryExist hfs
+                (Paths.getNamedSnapshotDir $ Paths.namedSnapshotDir root snap)
           if b then pure $ Just snap
                else pure $ Nothing
 

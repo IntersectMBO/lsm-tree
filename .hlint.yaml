@@ -25,6 +25,7 @@
 - ignore: {name: "Use section"}
 - ignore: {name: "Redundant $!"}
 - ignore: {name: "Use shows"}
+- ignore: {name: "Use fmap"}
 
 # Specify additional command line arguments
 #

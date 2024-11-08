@@ -50,8 +50,10 @@ module Database.LSMTree.Internal.Run (
     -- ** Run creation
   , fromMutable
   , fromWriteBuffer
-  , openFromDisk
   , RunDataCaching (..)
+    -- * Snapshot
+  , ChecksumError (..)
+  , openFromDisk
   ) where
 
 import           Control.DeepSeq (NFData (..), rwhnf)
