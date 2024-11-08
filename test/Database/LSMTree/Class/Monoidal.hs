@@ -265,13 +265,13 @@ instance IsTable R.Table where
 
     new = R.new
     close = R.close
-    lookups = flip R.lookups
-    updates = flip R.updates
-    inserts = flip R.inserts
-    deletes = flip R.deletes
-    mupserts = flip R.mupserts
+    lookups = R.lookups
+    updates = R.updates
+    inserts = R.inserts
+    deletes = R.deletes
+    mupserts = R.mupserts
 
-    rangeLookup = flip R.rangeLookup
+    rangeLookup = R.rangeLookup
 
     newCursor = maybe R.newCursor R.newCursorAtOffset
     closeCursor _ = R.closeCursor

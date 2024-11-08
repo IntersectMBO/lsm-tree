@@ -225,8 +225,8 @@ data LookupResult v =
 
 {-# SPECIALISE lookups ::
      (SerialiseKey k, SerialiseValue v, ResolveValue v)
-  => V.Vector k
-  -> Table IO k v
+  => Table IO k v
+  -> V.Vector k
   -> IO (V.Vector (LookupResult v)) #-}
 {-# INLINEABLE lookups #-}
 -- | Perform a batch of lookups.
@@ -234,10 +234,10 @@ data LookupResult v =
 -- Lookups can be performed concurrently from multiple Haskell threads.
 lookups :: forall m k v.
      (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
-  => V.Vector k
-  -> Table m k v
+  => Table m k v
+  -> V.Vector k
   -> m (V.Vector (LookupResult v))
-lookups ks (Internal.MonoidalTable t) =
+lookups (Internal.MonoidalTable t) ks =
     V.map toLookupResult <$>
     Internal.lookups
       (resolve @v Proxy)
@@ -258,18 +258,18 @@ data QueryResult k v =
 
 {-# SPECIALISE rangeLookup ::
      (SerialiseKey k, SerialiseValue v, ResolveValue v)
-  => Range k
-  -> Table IO k v
+  => Table IO k v
+  -> Range k
   -> IO (V.Vector (QueryResult k v)) #-}
 -- | Perform a range lookup.
 --
 -- Range lookups can be performed concurrently from multiple Haskell threads.
 rangeLookup :: forall m k v.
      (IOLike m, SerialiseKey k, SerialiseValue v, ResolveValue v)
-  => Range k
-  -> Table m k v
+  => Table m k v
+  -> Range k
   -> m (V.Vector (QueryResult k v))
-rangeLookup range (Internal.MonoidalTable t) =
+rangeLookup (Internal.MonoidalTable t) range =
     Internal.rangeLookup (resolve @v Proxy)(Internal.serialiseKey <$> range) t $ \k v mblob ->
       assert (null mblob) $
         FoundInQuery (Internal.deserialiseKey k) (Internal.deserialiseValue v)
@@ -427,8 +427,8 @@ instance NFData v => NFData (Update v) where
 
 {-# SPECIALISE updates ::
      (SerialiseKey k, SerialiseValue v, ResolveValue v)
-  => V.Vector (k, Update v)
-  -> Table IO k v
+  => Table IO k v
+  -> V.Vector (k, Update v)
   -> IO () #-}
 -- | Perform a mixed batch of inserts, deletes and monoidal upserts.
 --
@@ -442,10 +442,10 @@ updates :: forall m k v.
      , SerialiseValue v
      , ResolveValue v
      )
-  => V.Vector (k, Update v)
-  -> Table m k v
+  => Table m k v
+  -> V.Vector (k, Update v)
   -> m ()
-updates es (Internal.MonoidalTable t) = do
+updates (Internal.MonoidalTable t) es = do
     Internal.updates
       (resolve @v Proxy)
       (V.mapStrict serialiseEntry es)
@@ -462,8 +462,8 @@ updates es (Internal.MonoidalTable t) = do
 
 {-# SPECIALISE inserts ::
      (SerialiseKey k, SerialiseValue v, ResolveValue v)
-  => V.Vector (k, v)
-  -> Table IO k v
+  => Table IO k v
+  -> V.Vector (k, v)
   -> IO () #-}
 -- | Perform a batch of inserts.
 --
@@ -474,15 +474,15 @@ inserts :: forall m k v.
      , SerialiseValue v
      , ResolveValue v
      )
-  => V.Vector (k, v)
-  -> Table m k v
+  => Table m k v
+  -> V.Vector (k, v)
   -> m ()
-inserts = updates . fmap (second Insert)
+inserts t = updates t . fmap (second Insert)
 
 {-# SPECIALISE deletes ::
      (SerialiseKey k, SerialiseValue v, ResolveValue v)
-  => V.Vector k
-  -> Table IO k v
+  => Table IO k v
+  -> V.Vector k
   -> IO () #-}
 -- | Perform a batch of deletes.
 --
@@ -493,15 +493,15 @@ deletes :: forall m k v.
      , SerialiseValue v
      , ResolveValue v
      )
-  => V.Vector k
-  -> Table m k v
+  => Table m k v
+  -> V.Vector k
   -> m ()
-deletes = updates . fmap (,Delete)
+deletes t = updates t . fmap (,Delete)
 
 {-# SPECIALISE mupserts ::
      (SerialiseKey k, SerialiseValue v, ResolveValue v)
-  => V.Vector (k, v)
-  -> Table IO k v
+  => Table IO k v
+  -> V.Vector (k, v)
   -> IO () #-}
 -- | Perform a batch of monoidal upserts.
 --
@@ -512,10 +512,10 @@ mupserts :: forall m k v.
      , SerialiseValue v
      , ResolveValue v
      )
-  => V.Vector (k, v)
-  -> Table m k v
+  => Table m k v
+  -> V.Vector (k, v)
   -> m ()
-mupserts = updates . fmap (second Mupsert)
+mupserts t = updates t . fmap (second Mupsert)
 
 {-------------------------------------------------------------------------------
   Snapshots

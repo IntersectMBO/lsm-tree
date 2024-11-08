@@ -289,12 +289,12 @@ instance IsTable R.Table where
 
     new = R.new
     close = R.close
-    lookups = flip R.lookups
-    updates = flip R.updates
-    inserts = flip R.inserts
-    deletes = flip R.deletes
+    lookups = R.lookups
+    updates = R.updates
+    inserts = R.inserts
+    deletes = R.deletes
 
-    rangeLookup = flip R.rangeLookup
+    rangeLookup = R.rangeLookup
     retrieveBlobs _ = R.retrieveBlobs
 
     newCursor = maybe R.newCursor R.newCursorAtOffset

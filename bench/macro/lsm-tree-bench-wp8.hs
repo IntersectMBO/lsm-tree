@@ -407,20 +407,18 @@ doSetup' gopts opts = do
         LSM.mkSnapshotName "bench"
 
     LSM.withSession (mkTracer gopts) hasFS hasBlockIO (FS.mkFsPath []) $ \session -> do
-        tbh <- LSM.new @IO @K @V @B session (mkTableConfigSetup gopts opts LSM.defaultTableConfig)
+        tbl <- LSM.new @IO @K @V @B session (mkTableConfigSetup gopts opts LSM.defaultTableConfig)
 
         forM_ (groupsOfN 256 [ 0 .. initialSize gopts ]) $ \batch -> do
             -- TODO: this procedure simply inserts all the keys into initial lsm tree
             -- We might want to do deletes, so there would be delete-insert pairs
             -- Let's do that when we can actually test that benchmark works.
-            --
-            -- TODO: LSM.inserts has annoying order
-            flip LSM.inserts tbh $ V.fromList [
+            LSM.inserts tbl $ V.fromList [
                   (makeKey (fromIntegral i), theValue, Nothing)
                 | i <- NE.toList batch
                 ]
 
-        LSM.snapshot name tbh
+        LSM.snapshot name tbl
 
 -------------------------------------------------------------------------------
 -- dry-run
@@ -631,11 +629,11 @@ sequentialIteration h output !initialSize !batchSize !tbl !b !g =
     let (!g', ls, is) = generateBatch initialSize batchSize g b
 
     -- lookups
-    results <- timeLatency tref $ LSM.lookups ls tbl
+    results <- timeLatency tref $ LSM.lookups tbl ls
     output b (V.zip ls (fmap (fmap (const ())) results))
 
     -- deletes and inserts
-    _ <- timeLatency tref $ LSM.updates is tbl
+    _ <- timeLatency tref $ LSM.updates tbl is
 
     -- continue to the next batch
     return g'
@@ -666,7 +664,7 @@ sequentialIterationLO output !initialSize !batchSize !tbl !b !g = do
     let (!g', ls, _is) = generateBatch initialSize batchSize g b
 
     -- lookups
-    results <- LSM.lookups ls tbl
+    results <- LSM.lookups tbl ls
     output b (V.zip ls (fmap (fmap (const ())) results))
 
     -- continue to the next batch
@@ -751,7 +749,7 @@ pipelinedIteration h output !initialSize !batchSize
     let (!g', !ls, !is) = generateBatch initialSize batchSize g b
 
     -- 1: perform the lookups
-    lrs <- timeLatency tref $ LSM.lookups ls tbl_n
+    lrs <- timeLatency tref $ LSM.lookups tbl_n ls
 
     -- 2. sync: receive updates and new table
     tbl_n1 <- timeLatency tref $ do
@@ -767,7 +765,7 @@ pipelinedIteration h output !initialSize !batchSize
     -- 3. perform the inserts and report outputs (in any order)
     tbl_n2 <- timeLatency tref $ do
       tbl_n2 <- LSM.duplicate tbl_n1
-      LSM.updates is tbl_n2
+      LSM.updates tbl_n2 is
       pure tbl_n2
 
     -- 4. sync: send the updates and new table
@@ -808,9 +806,9 @@ pipelinedIterations h output !initialSize !batchSize !batchCount !seed tbl_0 = d
     tbl_1 <- LSM.duplicate tbl_0
     let prelude = do
           let (g1, ls0, is0) = generateBatch initialSize batchSize g0 0
-          lrs0 <- LSM.lookups ls0 tbl_0
+          lrs0 <- LSM.lookups tbl_0 ls0
           output 0 $! V.zip ls0 (fmap (fmap (const ())) lrs0)
-          LSM.updates is0 tbl_1
+          LSM.updates tbl_1 is0
           let !delta = Map.fromList (V.toList is0)
           putMVar syncTblA2B (tbl_1, delta)
           putMVar syncRngA2B g1

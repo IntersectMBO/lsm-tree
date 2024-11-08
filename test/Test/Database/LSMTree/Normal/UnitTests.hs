@@ -38,10 +38,10 @@ unit_blobs :: (String -> IO ()) -> Assertion
 unit_blobs info =
     withTempIOHasBlockIO "test" $ \hfs hbio ->
     withSession nullTracer hfs hbio (FS.mkFsPath []) $ \sess -> do
-      tbh <- new @_ @ByteString @ByteString @ByteString sess defaultTableConfig
-      inserts [("key1", "value1", Just "blob1")] tbh
+      table <- new @_ @ByteString @ByteString @ByteString sess defaultTableConfig
+      inserts table [("key1", "value1", Just "blob1")]
 
-      res <- lookups ["key1"] tbh
+      res <- lookups table ["key1"]
       info (show res)
 
       case res of
@@ -56,26 +56,26 @@ unit_closed_table :: Assertion
 unit_closed_table =
     withTempIOHasBlockIO "test" $ \hfs hbio ->
     withSession nullTracer hfs hbio (FS.mkFsPath []) $ \sess -> do
-      tbl <- new @_ @Key1 @Value1 @Blob1 sess defaultTableConfig
-      inserts [(Key1 42, Value1 42, Nothing)] tbl
-      r1 <- lookups [Key1 42] tbl
+      table <- new @_ @Key1 @Value1 @Blob1 sess defaultTableConfig
+      inserts table [(Key1 42, Value1 42, Nothing)]
+      r1 <- lookups table [Key1 42]
       V.map ignoreBlobRef r1 @?= [Found (Value1 42)]
-      close tbl
+      close table
       -- Expect ErrTableClosed for operations after close
       assertException ErrTableClosed $
-        lookups [Key1 42] tbl >> pure ()
+        lookups table [Key1 42] >> pure ()
       -- But closing again is idempotent
-      close tbl
+      close table
 
 unit_closed_cursor :: Assertion
 unit_closed_cursor =
     withTempIOHasBlockIO "test" $ \hfs hbio ->
     withSession nullTracer hfs hbio (FS.mkFsPath []) $ \sess -> do
-      tbl <- new @_ @Key1 @Value1 @Blob1 sess defaultTableConfig
-      inserts [(Key1 42, Value1 42, Nothing), (Key1 43, Value1 43, Nothing)] tbl
-      cur <- newCursor tbl
+      table <- new @_ @Key1 @Value1 @Blob1 sess defaultTableConfig
+      inserts table [(Key1 42, Value1 42, Nothing), (Key1 43, Value1 43, Nothing)]
+      cur <- newCursor table
       -- closing the table should not affect the cursor
-      close tbl
+      close table
       r1 <- readCursor 1 cur
       V.map ignoreBlobRef r1 @?= [FoundInQuery (Key1 42) (Value1 42)]
       closeCursor cur
@@ -93,8 +93,8 @@ unit_twoTableTypes =
             defaultTableConfig {
               confWriteBufferAlloc = AllocNumEntries (NumEntries 10)
             }
-      tbl1 <- new @_ @Key1 @Value1 @Blob1 sess tableConfig
-      tbl2 <- new @_ @Key2 @Value2 @Blob2 sess tableConfig
+      table1 <- new @_ @Key1 @Value1 @Blob1 sess tableConfig
+      table2 <- new @_ @Key2 @Value2 @Blob2 sess tableConfig
 
       kvs1 <- QC.generate (Map.fromList <$> QC.vectorOf 100 QC.arbitrary)
       kvs2 <- QC.generate (Map.fromList <$> QC.vectorOf 100 QC.arbitrary)
@@ -102,16 +102,16 @@ unit_twoTableTypes =
                             | (k,v) <- Map.toList kvs1 ]
           ins2 = V.fromList [ (Key2 k, Value2 v, Nothing)
                             | (k,v) <- Map.toList kvs2 ]
-      inserts ins1 tbl1
-      inserts ins2 tbl2
+      inserts table1 ins1
+      inserts table2 ins2
 
-      snapshot snap1 tbl1
-      snapshot snap2 tbl2
-      tbl1' <- open @_ @Key1 @Value1 @Blob1 sess configNoOverride snap1
-      tbl2' <- open @_ @Key2 @Value2 @Blob2 sess configNoOverride snap2
+      snapshot snap1 table1
+      snapshot snap2 table2
+      table1' <- open @_ @Key1 @Value1 @Blob1 sess configNoOverride snap1
+      table2' <- open @_ @Key2 @Value2 @Blob2 sess configNoOverride snap2
 
-      vs1 <- lookups ((\(k,_,_)->k) <$> ins1) tbl1'
-      vs2 <- lookups ((\(k,_,_)->k) <$> ins2) tbl2'
+      vs1 <- lookups table1' ((\(k,_,_)->k) <$> ins1)
+      vs2 <- lookups table2' ((\(k,_,_)->k) <$> ins2)
 
       V.map ignoreBlobRef vs1 @?= ((\(_,v,_) -> Found v) <$> ins1)
       V.map ignoreBlobRef vs2 @?= ((\(_,v,_) -> Found v) <$> ins2)
@@ -124,14 +124,14 @@ unit_snapshots :: Assertion
 unit_snapshots =
     withTempIOHasBlockIO "test" $ \hfs hbio ->
     withSession nullTracer hfs hbio (FS.mkFsPath []) $ \sess -> do
-      tbl <- new @_ @Key1 @Value1 @Blob1 sess defaultTableConfig
+      table <- new @_ @Key1 @Value1 @Blob1 sess defaultTableConfig
 
       assertException (ErrSnapshotNotExists snap2) $
         deleteSnapshot sess snap2
 
-      snapshot snap1 tbl
+      snapshot snap1 table
       assertException (ErrSnapshotExists snap1) $
-        snapshot snap1 tbl
+        snapshot snap1 table
 
       assertException (ErrSnapshotWrongLabel snap1
                         (SnapshotLabel "Key2 Value2 Blob2")
