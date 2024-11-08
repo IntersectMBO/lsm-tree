@@ -32,6 +32,8 @@ import           Database.LSMTree.Internal.BitMath
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
 import           Database.LSMTree.Internal.IndexCompact as Index
 import           Database.LSMTree.Internal.IndexCompactAcc as Cons
+import           Database.LSMTree.Internal.Page (PageNo (PageNo), PageSpan,
+                     multiPage, singlePage)
 import           Database.LSMTree.Internal.Serialise
 import           Numeric (showHex)
 import           Prelude hiding (max, min, pi)
