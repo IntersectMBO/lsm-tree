@@ -211,6 +211,15 @@ class (IsSession (Session h)) => IsTable h where
         => h m k v blob
         -> m (h m k v blob)
 
+    union ::
+           ( IOLike m
+           , SerialiseValue v
+           , C k v blob
+           )
+        => h m k v blob
+        -> h m k v blob
+        -> m (h m k v blob)
+
 withTableNew :: forall h m k v blob a.
     ( IOLike m
     , IsTable h
@@ -296,3 +305,4 @@ instance IsTable R.Table where
     open sesh snap = R.open sesh R.configNoOverride snap
 
     duplicate = R.duplicate
+    union = R.union
