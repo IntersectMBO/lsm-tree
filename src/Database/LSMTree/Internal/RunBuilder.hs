@@ -285,8 +285,8 @@ copyBlob ::
 copyBlob builder@RunBuilder {..} blobref = do
     blob <- BlobRef.readRawBlobRef runBuilderHasFS blobref
     writeBlob builder blob
-    --TODO: consier adding write blob functions to BlobFile
-    -- variants: at offset, at file pointer with CRC update.
+    --TODO: can't easily switch this to use BlobFile.writeBlob because
+    -- RunBuilder currently does everything uniformly with ChecksumHandle.
 
 {-# SPECIALISE writeFilter ::
      RunBuilder IO h
