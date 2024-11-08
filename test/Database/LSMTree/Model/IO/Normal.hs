@@ -86,8 +86,8 @@ instance Class.IsTable Table where
     readCursor _ x1 (Cursor s c) = fmap convQueryResult . fmap (fmap (BlobRef s)) <$>
       runInOpenSession s (Model.readCursor x1 c)
 
-    snapshot x1 (Table s t) = runInOpenSession s (Model.snapshot x1 t)
-    open s x1 = Table s <$> runInOpenSession s (Model.open x1)
+    createSnapshot x1 (Table s t) = runInOpenSession s (Model.createSnapshot x1 t)
+    openSnapshot s x1 = Table s <$> runInOpenSession s (Model.openSnapshot x1)
 
     duplicate (Table s t) = Table s <$> runInOpenSession s (Model.duplicate t)
 

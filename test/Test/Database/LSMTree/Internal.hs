@@ -53,7 +53,7 @@ tests = testGroup "Test.Database.LSMTree.Internal" [
             prop_interimRestoreSessionUniqueRunNames
         ]
     , testGroup "Table" [
-          testProperty "prop_interimOpenTable" prop_interimOpenTable
+          testProperty "prop_interimOpenSnapshot" prop_interimOpenSnapshot
         ]
     , testGroup "Cursor" [
           testProperty "prop_roundtripCursor" $ withMaxSuccess 500 $
@@ -162,21 +162,21 @@ prop_interimRestoreSessionUniqueRunNames (Positive (Small n)) (NonNegative m) = 
 -- works as expected. Roughly, we test:
 --
 -- @
---  inserts t kvs == open' (snapshot' (inserts t kvs))
+--  inserts t kvs == openSnapshot' (createSnapshot' (inserts t kvs))
 -- @
 --
 -- TODO: remove once we have proper snapshotting
-prop_interimOpenTable ::
+prop_interimOpenSnapshot ::
      Test.InMemLookupData SerialisedKey SerialisedValue SerialisedBlob
   -> Property
-prop_interimOpenTable dat = ioProperty $
-    withTempIOHasBlockIO "prop_interimOpenTable" $ \hfs hbio -> do
+prop_interimOpenSnapshot dat = ioProperty $
+    withTempIOHasBlockIO "prop_interimOpenSnapshot" $ \hfs hbio -> do
       withSession nullTracer hfs hbio (FS.mkFsPath []) $ \sesh -> do
         withTable sesh conf $ \t -> do
           updates const upds t
           let snap = fromMaybe (error "invalid name") $ mkSnapshotName "snap"
-          numRunsSnapped <- snapshot const snap (SnapshotLabel "someLabel") SnapNormalTable t
-          t' <- open sesh (SnapshotLabel "someLabel") SnapNormalTable configNoOverride snap const
+          numRunsSnapped <- createSnapshot const snap (SnapshotLabel "someLabel") SnapNormalTable t
+          t' <- openSnapshot sesh (SnapshotLabel "someLabel") SnapNormalTable configNoOverride snap const
           lhs <- fetchBlobs hfs =<< lookups const ks t
           rhs <- fetchBlobs hfs =<< lookups const ks t'
           -- We must fetch blobs because comparing blob references is meaningless

@@ -105,10 +105,10 @@ unit_twoTableTypes =
       inserts table1 ins1
       inserts table2 ins2
 
-      snapshot snap1 table1
-      snapshot snap2 table2
-      table1' <- open @_ @Key1 @Value1 @Blob1 sess configNoOverride snap1
-      table2' <- open @_ @Key2 @Value2 @Blob2 sess configNoOverride snap2
+      createSnapshot snap1 table1
+      createSnapshot snap2 table2
+      table1' <- openSnapshot @_ @Key1 @Value1 @Blob1 sess configNoOverride snap1
+      table2' <- openSnapshot @_ @Key2 @Value2 @Blob2 sess configNoOverride snap2
 
       vs1 <- lookups table1' ((\(k,_,_)->k) <$> ins1)
       vs2 <- lookups table2' ((\(k,_,_)->k) <$> ins2)
@@ -129,18 +129,18 @@ unit_snapshots =
       assertException (ErrSnapshotNotExists snap2) $
         deleteSnapshot sess snap2
 
-      snapshot snap1 table
+      createSnapshot snap1 table
       assertException (ErrSnapshotExists snap1) $
-        snapshot snap1 table
+        createSnapshot snap1 table
 
       assertException (ErrSnapshotWrongLabel snap1
                         (SnapshotLabel "Key2 Value2 Blob2")
                         (SnapshotLabel "Key1 Value1 Blob1")) $ do
-        _ <- open @_ @Key2 @Value2 @Blob2 sess configNoOverride snap1
+        _ <- openSnapshot @_ @Key2 @Value2 @Blob2 sess configNoOverride snap1
         return ()
 
       assertException (ErrSnapshotNotExists snap2) $ do
-        _ <- open @_ @Key1 @Value1 @Blob1 sess configNoOverride snap2
+        _ <- openSnapshot @_ @Key1 @Value1 @Blob1 sess configNoOverride snap2
         return ()
   where
     snap1, snap2 :: SnapshotName

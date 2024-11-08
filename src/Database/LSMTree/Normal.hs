@@ -90,8 +90,8 @@ module Database.LSMTree.Normal (
   , SnapshotName
   , Common.mkSnapshotName
   , Common.Labellable (..)
-  , snapshot
-  , open
+  , createSnapshot
+  , openSnapshot
   , Common.TableConfigOverride
   , Common.configNoOverride
   , Common.configOverrideDiskCachePolicy
@@ -150,7 +150,7 @@ import qualified Database.LSMTree.Internal.Vector as V
 --
 -- * 'openSession'
 -- * 'new'
--- * 'open'
+-- * 'openSnapshot'
 -- * 'duplicate'
 -- * 'newCursor'
 --
@@ -171,7 +171,7 @@ import qualified Database.LSMTree.Internal.Vector as V
 --
 -- * 'openSession', paired with 'closeSession'
 -- * 'new', paired with 'close'
--- * 'open', paired with 'close'
+-- * 'openSnapshot', paired with 'close'
 -- * 'duplicate', paired with 'close'
 -- * 'newCursor', paired with 'closeCursor'
 --
@@ -201,7 +201,7 @@ import qualified Database.LSMTree.Internal.Vector as V
 -- * 'lookups'
 -- * 'rangeLookup'
 -- * 'retrieveBlobs'
--- * 'snapshot'
+-- * 'createSnapshot'
 -- * 'duplicate'
 --
 -- The write operations are:
@@ -639,7 +639,7 @@ retrieveBlobs (Internal.Session' (sesh :: Internal.Session m h)) refs =
   Snapshots
 -------------------------------------------------------------------------------}
 
-{-# SPECIALISE snapshot ::
+{-# SPECIALISE createSnapshot ::
      ( SerialiseKey k
      , SerialiseValue v
      , SerialiseValue blob
@@ -652,9 +652,9 @@ retrieveBlobs (Internal.Session' (sesh :: Internal.Session m h)) refs =
 -- giving the snapshot a name. This is the __only__ mechanism to make a table
 -- durable -- ordinary insert\/delete operations are otherwise not preserved.
 --
--- Snapshots have names and the table may be opened later using 'open' via that
--- name. Names are strings and the management of the names is up to the user of
--- the library.
+-- Snapshots have names and the table may be opened later using 'openSnapshot'
+-- via that name. Names are strings and the management of the names is up to
+-- the user of the library.
 --
 -- The names correspond to disk files, which imposes some constraints on length
 -- and what characters can be used.
@@ -677,7 +677,7 @@ retrieveBlobs (Internal.Session' (sesh :: Internal.Session m h)) refs =
 -- as part of the snapshot because run files aren't (yet) deleted when runs are
 -- closed. The write buffer is also persisted to disk as part of the snapshot,
 -- but the original table remains unchanged.
-snapshot :: forall m k v blob.
+createSnapshot :: forall m k v blob.
      ( IOLike m
      , SerialiseKey k
      , SerialiseValue v
@@ -687,12 +687,12 @@ snapshot :: forall m k v blob.
   => SnapshotName
   -> Table m k v blob
   -> m ()
-snapshot snap (Internal.NormalTable t) =
-    void $ Internal.snapshot const snap label Internal.SnapNormalTable t
+createSnapshot snap (Internal.NormalTable t) =
+    void $ Internal.createSnapshot const snap label Internal.SnapNormalTable t
   where
     label = Internal.SnapshotLabel $ Common.makeSnapshotLabel (Proxy @(k, v, blob))
 
-{-# SPECIALISE open ::
+{-# SPECIALISE openSnapshot ::
      ( SerialiseKey k
      , SerialiseValue v
      , SerialiseValue blob
@@ -717,13 +717,13 @@ snapshot snap (Internal.NormalTable t) =
 -- @
 -- example session = do
 --   t <- 'new' \@IO \@Int \@Int \@Int session _
---   'snapshot' "intTable" t
---   'open' \@IO \@Bool \@Bool \@Bool session "intTable"
+--   'createSnapshot' "intTable" t
+--   'openSnapshot' \@IO \@Bool \@Bool \@Bool session "intTable"
 -- @
 --
 -- TODO: this function currently has a temporary implementation until we have
--- proper snapshots. See 'snapshot'.
-open :: forall m k v blob.
+-- proper snapshots. See 'createSnapshot'.
+openSnapshot :: forall m k v blob.
      ( IOLike m
      , SerialiseKey k
      , SerialiseValue v
@@ -734,8 +734,15 @@ open :: forall m k v blob.
   -> Common.TableConfigOverride -- ^ Optional config override
   -> SnapshotName
   -> m (Table m k v blob)
-open (Internal.Session' sesh) override snap =
-    Internal.NormalTable <$!> Internal.open sesh label Internal.SnapNormalTable override snap const
+openSnapshot (Internal.Session' sesh) override snap =
+    Internal.NormalTable <$!>
+      Internal.openSnapshot
+        sesh
+        label
+        Internal.SnapNormalTable
+        override
+        snap
+        const
   where
     label = Internal.SnapshotLabel $ Common.makeSnapshotLabel (Proxy @(k, v, blob))
 

@@ -65,8 +65,8 @@ module Database.LSMTree.Model.Session (
   , retrieveBlobs
     -- * Snapshots
   , SnapshotName
-  , snapshot
-  , open
+  , createSnapshot
+  , openSnapshot
   , deleteSnapshot
   , listSnapshots
     -- * Multiple writable tables
@@ -444,7 +444,7 @@ liftBlobRefs hid = fmap (fmap (BlobRef hid))
 data Snapshot = Snapshot TableConfig SomeTable
   deriving stock Show
 
-snapshot ::
+createSnapshot ::
      ( MonadState Model m
      , MonadError Err m
      , C k v blob
@@ -452,7 +452,7 @@ snapshot ::
   => SnapshotName
   -> Table k v blob
   -> m ()
-snapshot name t@Table{..} = do
+createSnapshot name t@Table{..} = do
     (updc, table) <- guardTableIsOpen t
     snaps <- gets snapshots
     -- TODO: For the moment we allow snapshot to invalidate blob refs.
@@ -472,7 +472,7 @@ snapshot name t@Table{..} = do
         snapshots = Map.insert name (Snapshot config $ toSomeTable $ Model.snapshot table) (snapshots m)
       })
 
-open ::
+openSnapshot ::
      forall k v blob m.(
        MonadState Model m
      , MonadError Err m
@@ -480,7 +480,7 @@ open ::
      )
   => SnapshotName
   -> m (Table k v blob)
-open name = do
+openSnapshot name = do
     snaps <- gets snapshots
     case Map.lookup name snaps of
       Nothing ->

@@ -89,8 +89,8 @@ module Database.LSMTree.Monoidal (
   , SnapshotName
   , Common.mkSnapshotName
   , Common.Labellable (..)
-  , snapshot
-  , open
+  , createSnapshot
+  , openSnapshot
   , Common.TableConfigOverride
   , Common.configNoOverride
   , Common.configOverrideDiskCachePolicy
@@ -521,7 +521,7 @@ mupserts t = updates t . fmap (second Mupsert)
   Snapshots
 -------------------------------------------------------------------------------}
 
-{-# SPECIALISE snapshot ::
+{-# SPECIALISE createSnapshot ::
      (SerialiseKey k, SerialiseValue v, ResolveValue v, Common.Labellable (k, v))
   => SnapshotName
   -> Table IO k v
@@ -530,9 +530,9 @@ mupserts t = updates t . fmap (second Mupsert)
 -- giving the snapshot a name. This is the __only__ mechanism to make a table
 -- durable -- ordinary insert\/delete operations are otherwise not preserved.
 --
--- Snapshots have names and the table may be opened later using 'open' via that
--- name. Names are strings and the management of the names is up to the user of
--- the library.
+-- Snapshots have names and the table may be opened later using 'openSnapshot'
+-- via that name. Names are strings and the management of the names is up to the
+-- user of the library.
 --
 -- The names correspond to disk files, which imposes some constraints on length
 -- and what characters can be used.
@@ -548,7 +548,7 @@ mupserts t = updates t . fmap (second Mupsert)
 -- * It is safe to concurrently make snapshots from any table, provided that
 --   the snapshot names are distinct (otherwise this would be a race).
 --
-snapshot :: forall m k v.
+createSnapshot :: forall m k v.
      ( IOLike m
      , SerialiseKey k
      , SerialiseValue v
@@ -558,12 +558,12 @@ snapshot :: forall m k v.
   => SnapshotName
   -> Table m k v
   -> m ()
-snapshot snap (Internal.MonoidalTable t) =
-    void $ Internal.snapshot (resolve @v Proxy) snap label Internal.SnapMonoidalTable t
+createSnapshot snap (Internal.MonoidalTable t) =
+    void $ Internal.createSnapshot (resolve @v Proxy) snap label Internal.SnapMonoidalTable t
   where
     label = Internal.SnapshotLabel $ Common.makeSnapshotLabel (Proxy @(k, v))
 
-{-# SPECIALISE open ::
+{-# SPECIALISE openSnapshot ::
      (SerialiseKey k, SerialiseValue v, ResolveValue v, Common.Labellable (k, v))
   => Session IO
   -> Common.TableConfigOverride
@@ -584,14 +584,10 @@ snapshot snap (Internal.MonoidalTable t) =
 -- @
 -- example session = do
 --   t <- 'new' \@IO \@Int \@Int \@Int session _
---   'snapshot' "intTable" t
---   'open' \@IO \@Bool \@Bool \@Bool session "intTable"
+--   'createSnapshot' "intTable" t
+--   'openSnapshot' \@IO \@Bool \@Bool \@Bool session "intTable"
 -- @
---
--- TOREMOVE: before snapshots are implemented, the snapshot name should be ignored.
--- Instead, this function should open a table from files that exist in
--- the session's directory.
-open :: forall m k v.
+openSnapshot :: forall m k v.
      ( IOLike m
      , SerialiseKey k
      , SerialiseValue v
@@ -602,9 +598,9 @@ open :: forall m k v.
   -> Common.TableConfigOverride -- ^ Optional config override
   -> SnapshotName
   -> m (Table m k v)
-open (Internal.Session' sesh) override snap =
+openSnapshot (Internal.Session' sesh) override snap =
     Internal.MonoidalTable <$>
-      Internal.open
+      Internal.openSnapshot
         sesh
         label
         Internal.SnapMonoidalTable

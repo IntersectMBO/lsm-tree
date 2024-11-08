@@ -10,7 +10,7 @@ module Database.LSMTree.Class.Monoidal (
   , withSession
   , IsTable (..)
   , withTableNew
-  , withTableOpen
+  , withTableFromSnapshot
   , withTableDuplicate
   , withTableUnion
   , withCursor
@@ -152,7 +152,7 @@ class (IsSession (Session h)) => IsTable h where
         -> V.Vector (k, v)
         -> m ()
 
-    snapshot ::
+    createSnapshot ::
            ( IOLike m
            , Labellable (k, v)
            , ResolveValue v
@@ -164,7 +164,7 @@ class (IsSession (Session h)) => IsTable h where
         -> h m k v
         -> m ()
 
-    open ::
+    openSnapshot ::
            ( IOLike m
            , Labellable (k, v)
            , ResolveValue v
@@ -204,7 +204,7 @@ withTableNew :: forall h m k v a.
   -> m a
 withTableNew sesh conf = bracket (new sesh conf) close
 
-withTableOpen :: forall h m k v a.
+withTableFromSnapshot :: forall h m k v a.
      ( IOLike m
      , IsTable h
      , ResolveValue v
@@ -217,7 +217,7 @@ withTableOpen :: forall h m k v a.
   -> SnapshotName
   -> (h m k v -> m a)
   -> m a
-withTableOpen sesh snap = bracket (open sesh snap) close
+withTableFromSnapshot sesh snap = bracket (openSnapshot sesh snap) close
 
 withTableDuplicate :: forall h m k v a.
      ( IOLike m
@@ -277,8 +277,8 @@ instance IsTable R.Table where
     closeCursor _ = R.closeCursor
     readCursor _ = R.readCursor
 
-    snapshot = R.snapshot
-    open sesh snap = R.open sesh R.configNoOverride snap
+    createSnapshot = R.createSnapshot
+    openSnapshot sesh snap = R.openSnapshot sesh R.configNoOverride snap
 
     duplicate = R.duplicate
     union = R.union
