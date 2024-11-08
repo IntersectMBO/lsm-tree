@@ -1,29 +1,36 @@
--- TODO: remove once we properly implement snapshots
-{-# OPTIONS_GHC -Wno-orphans #-}
-
 module Database.LSMTree.Internal.Snapshot (
     -- * Versioning
     SnapshotVersion (..)
-  , major
-  , minor
-  , fromMajorMinor
   , prettySnapshotVersion
   , currentSnapshotVersion
     -- * Snapshot metadata
   , SnapshotMetaData (..)
   , SnapshotLabel (..)
+  , SnapshotTableType (..)
     -- * Snapshot format
   , numSnapRuns
   , SnapLevels
   , SnapLevel (..)
   , SnapMergingRun (..)
   , SnapMergingRunState (..)
+  , TotalCredits (..)
     -- * Creating snapshots
   , snapLevels
     -- * Opening snapshots
   , openLevels
+    -- * Encoding and decoding
+  , Encode (..)
+  , Decode (..)
+  , DecodeVersioned (..)
+  , encodeSnapshotMetaData
+  , decodeSnapshotMetaData
+  , Versioned (..)
   ) where
 
+import           Codec.CBOR.Decoding
+import           Codec.CBOR.Encoding
+import           Codec.CBOR.Read
+import           Codec.CBOR.Write
 import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Concurrent.Class.MonadSTM (MonadSTM)
 import           Control.Monad.Class.MonadST (MonadST)
@@ -31,6 +38,8 @@ import           Control.Monad.Class.MonadThrow (MonadMask)
 import           Control.Monad.Fix (MonadFix)
 import           Control.Monad.Primitive (PrimMonad)
 import           Control.TempRegistry
+import           Data.Bifunctor
+import           Data.ByteString.Lazy (ByteString)
 import           Data.Foldable (forM_)
 import           Data.Primitive.PrimVar
 import           Data.Text (Text)
@@ -49,6 +58,7 @@ import           Database.LSMTree.Internal.UniqCounter (UniqCounter,
                      incrUniqCounter, uniqueToRunNumber)
 import           System.FS.API (HasFS)
 import           System.FS.BlockIO.API (HasBlockIO)
+import           Text.Printf
 
 {-------------------------------------------------------------------------------
   Versioning
@@ -56,69 +66,31 @@ import           System.FS.BlockIO.API (HasBlockIO)
 
 -- | The version of a snapshot.
 --
--- When encoding snapshot metadata, 'currentSnapshotVersion' is included in the
--- file. When snapshot metadata is decoded, then the decoded version is checked
--- for compatibility against 'currentSnapshotVersion'. Decoding will fail if the
--- versions are incompatible.
---
--- A version @x.y@ has two components: a major version number @x@ and a minor
--- version number @y@. The major version number is used to signal breaking
--- changes. The minor version number is used to signal non-breaking changes that
--- are backwards compatible. To be precise, @x.y@ is guaranteed to be backwards
--- compatible with @x'.y'@ as long as @x == x'@ and @y' <= y@. If @x > x'@, then
--- backwards compatibility *may* be provided, but is not guaranteed. Forward
--- compatibilitty is never guaranteed.
---
--- If @x.y@ is our current version, and if it @x.y@ is backwards compatible with
--- @x'.y'@, then @x.y@ can decode snapshots that were encoded at version
--- @x'.y'@.
---
--- The version number determines the format of the snapshot metadata file, but
--- it also doubles as versioning information for the entire snapshot itself. For
--- example, if a breaking change is made to the merge scheduling algorithm that
--- would lead to errors when loading an older snapshot, then the major version
--- should be increased as well.
-data SnapshotVersion = V0_0
+-- A snapshot format version is a number. Version numbers are consecutive and
+-- increasing. A single release of the library may support several older
+-- snapshot format versions, and thereby provide backwards compatibility.
+-- Support for old versions is not guaranteed indefinitely, but backwards
+-- compatibility is guaranteed for at least the previous version, and preferably
+-- for more. Forwards compatibility is not provided at all: snapshots with a
+-- later version than the current version for the library release will always
+-- fail.
+data SnapshotVersion = V0
   deriving stock (Show, Eq)
 
--- >>> major currentSnapshotVersion
--- 0
-major :: SnapshotVersion -> Word
-major V0_0 = 0
-
--- >>> minor currentSnapshotVersion
--- 0
-minor :: SnapshotVersion -> Word
-minor V0_0 = 0
-
-fromMajorMinor :: Word -> Word -> Maybe SnapshotVersion
-fromMajorMinor 0 0 = Just V0_0
-fromMajorMinor _ _ = Nothing
-
 -- >>> prettySnapshotVersion currentSnapshotVersion
--- "v0.0"
+-- "v0"
 prettySnapshotVersion :: SnapshotVersion -> String
-prettySnapshotVersion version = prettyVersion (major version) (minor version)
-
--- >>> prettyVersion 17 32
--- "v17.32"
-prettyVersion :: Word -> Word -> String
-prettyVersion majo mino =
-      showChar 'v'
-    . shows majo
-    . showChar '.'
-    . shows mino
-    $ ""
+prettySnapshotVersion V0 = "v0"
 
 -- >>> currentSnapshotVersion
--- V0_0
+-- V0
 currentSnapshotVersion :: SnapshotVersion
-currentSnapshotVersion = V0_0
+currentSnapshotVersion = V0
 
-_isCompatible :: SnapshotVersion -> Either String ()
-_isCompatible otherVersion = do
+isCompatible :: SnapshotVersion -> Either String ()
+isCompatible otherVersion = do
     case ( currentSnapshotVersion, otherVersion ) of
-      (V0_0, V0_0) -> Right ()
+      (V0, V0) -> Right ()
 
 {-------------------------------------------------------------------------------
   Snapshot metadata
@@ -126,10 +98,10 @@ _isCompatible otherVersion = do
 
 -- | Custom text to include in a snapshot file
 newtype SnapshotLabel = SnapshotLabel Text
-  deriving stock (Show, Eq, Read)
+  deriving stock (Show, Eq)
 
 data SnapshotTableType = SnapNormalTable | SnapMonoidalTable
-  deriving stock (Show, Eq, Read)
+  deriving stock (Show, Eq)
 
 data SnapshotMetaData = SnapshotMetaData {
     -- | Custom, user-supplied text that is included in the metadata.
@@ -179,22 +151,22 @@ data SnapLevel = SnapLevel {
     snapIncomingRuns :: !SnapMergingRun
   , snapResidentRuns :: !(V.Vector RunNumber)
   }
-  deriving stock (Show, Eq, Read)
+  deriving stock (Show, Eq)
 
 data SnapMergingRun =
     SnapMergingRun !MergePolicyForLevel !NumRuns !SnapMergingRunState
   | SnapSingleRun !RunNumber
-  deriving stock (Show, Eq, Read)
+  deriving stock (Show, Eq)
 
 data SnapMergingRunState =
     SnapCompletedMerge !RunNumber
   | SnapOngoingMerge !(V.Vector RunNumber) !TotalCredits !Merge.Level
-  deriving stock (Show, Eq, Read)
+  deriving stock (Show, Eq)
 
 -- | The total number of supplied credits. This total is used on snapshot load
 -- to restore merging work that was lost when the snapshot was created.
 newtype TotalCredits = TotalCredits Int
-  deriving stock (Show, Eq, Read)
+  deriving stock (Show, Eq)
 
 {-------------------------------------------------------------------------------
   Conversion to snapshot format
@@ -332,22 +304,418 @@ openLevels reg hfs hbio conf@TableConfig{..} uc sessionRoot resolve levels =
               Just m  -> pure (Just totalCredits, OngoingMerge rs totalStepsVar totalCreditsVar m)
 
 {-------------------------------------------------------------------------------
-  Levels
+  Encoding and decoding
 -------------------------------------------------------------------------------}
 
-deriving stock instance Read NumRuns
-deriving stock instance Read MergePolicyForLevel
-deriving newtype instance Read RunNumber
-deriving stock instance Read Merge.Level
+class Encode a where
+  encode :: a -> Encoding
+
+-- | Decoder that is not parameterised by a 'SnapshotVersion'.
+--
+-- Used only for 'SnapshotVersion' and 'Versioned', which live outside the
+-- 'SnapshotMetaData' type hierachy.
+class Decode a where
+  decode :: Decoder s a
+
+-- | Decoder parameterised by a 'SnapshotVersion'.
+--
+-- Used for every type in the 'SnapshotMetaData' type hierarchy.
+class DecodeVersioned a where
+  decodeVersioned :: SnapshotVersion -> Decoder s a
+
+encodeSnapshotMetaData :: SnapshotMetaData -> ByteString
+encodeSnapshotMetaData = toLazyByteString . encode . Versioned
+
+decodeSnapshotMetaData :: ByteString -> Either DeserialiseFailure SnapshotMetaData
+decodeSnapshotMetaData bs = second (getVersioned . snd) (deserialiseFromBytes decode bs)
+
+newtype Versioned a = Versioned { getVersioned :: a }
+  deriving stock (Show, Eq)
+
+instance Encode a => Encode (Versioned a) where
+  encode (Versioned x) =
+       encodeListLen 2
+    <> encode currentSnapshotVersion
+    <> encode x
+
+-- | Decodes a 'SnapshotVersion' first, and then passes that into the versioned
+-- decoder for @a@.
+instance DecodeVersioned a => Decode (Versioned a) where
+  decode = do
+      _ <- decodeListLenOf 2
+      version <- decode
+      case isCompatible version of
+        Right () -> pure ()
+        Left errMsg ->
+          fail $
+            printf "Incompatible snapshot format version found. Version %s \
+                   \is not backwards compatible with version %s : %s"
+                   (prettySnapshotVersion currentSnapshotVersion)
+                   (prettySnapshotVersion version)
+                   errMsg
+      Versioned <$> decodeVersioned version
 
 {-------------------------------------------------------------------------------
-  Config
+  Encoding and decoding: Versioning
 -------------------------------------------------------------------------------}
 
-deriving stock instance Read TableConfig
-deriving stock instance Read WriteBufferAlloc
-deriving stock instance Read NumEntries
-deriving stock instance Read SizeRatio
-deriving stock instance Read MergePolicy
-deriving stock instance Read BloomFilterAlloc
-deriving stock instance Read FencePointerIndex
+instance Encode SnapshotVersion where
+  encode ver =
+         encodeListLen 1
+      <> case ver of
+           V0 -> encodeWord 0
+
+instance Decode SnapshotVersion where
+  decode = do
+      _ <- decodeListLenOf 1
+      ver <- decodeWord
+      case ver of
+        0 -> pure V0
+        _ -> fail ("Unknown snapshot format version number: " <>  show ver)
+
+{-------------------------------------------------------------------------------
+  Encoding and decoding: SnapshotMetaData
+-------------------------------------------------------------------------------}
+
+-- SnapshotMetaData
+
+instance Encode SnapshotMetaData where
+  encode (SnapshotMetaData label tableType config levels) =
+         encodeListLen 4
+      <> encode label
+      <> encode tableType
+      <> encode config
+      <> encode levels
+
+instance DecodeVersioned SnapshotMetaData where
+  decodeVersioned ver@V0 = do
+      _ <- decodeListLenOf 4
+      SnapshotMetaData
+        <$> decodeVersioned ver <*> decodeVersioned ver
+        <*> decodeVersioned ver <*> decodeVersioned ver
+
+-- SnapshotLabel
+
+instance Encode SnapshotLabel where
+  encode (SnapshotLabel s) = encodeString s
+
+instance DecodeVersioned SnapshotLabel where
+  decodeVersioned V0 = SnapshotLabel <$> decodeString
+
+-- TableType
+
+instance Encode SnapshotTableType where
+  encode SnapNormalTable   = encodeWord 0
+  encode SnapMonoidalTable = encodeWord 1
+
+instance DecodeVersioned SnapshotTableType where
+  decodeVersioned V0 = do
+      tag <- decodeWord
+      case tag of
+        0 -> pure SnapNormalTable
+        1 -> pure SnapMonoidalTable
+        _ -> fail ("[SnapshotTableType] Unexpected tag: " <> show tag)
+
+{-------------------------------------------------------------------------------
+  Encoding and decoding: TableConfig
+-------------------------------------------------------------------------------}
+
+-- TableConfig
+
+instance Encode TableConfig where
+  encode config =
+         encodeListLen 7
+      <> encode mergePolicy
+      <> encode sizeRatio
+      <> encode writeBufferAlloc
+      <> encode bloomFilterAlloc
+      <> encode fencePointerIndex
+      <> encode diskCachePolicy
+      <> encode mergeSchedule
+    where
+      TableConfig
+        mergePolicy
+        sizeRatio
+        writeBufferAlloc
+        bloomFilterAlloc
+        fencePointerIndex
+        diskCachePolicy
+        mergeSchedule
+        = config
+
+instance DecodeVersioned TableConfig where
+  decodeVersioned v@V0 = do
+      _ <- decodeListLenOf 7
+      TableConfig
+        <$> decodeVersioned v <*> decodeVersioned v <*> decodeVersioned v
+        <*> decodeVersioned v <*> decodeVersioned v <*> decodeVersioned v
+        <*> decodeVersioned v
+
+-- MergePolicy
+
+instance Encode MergePolicy where
+  encode MergePolicyLazyLevelling = encodeWord 0
+
+instance DecodeVersioned MergePolicy where
+  decodeVersioned V0 =  do
+      tag <- decodeWord
+      case tag of
+        0 -> pure MergePolicyLazyLevelling
+        _ -> fail ("[MergePolicy] Unexpected tag: " <> show tag)
+
+-- SizeRatio
+
+instance Encode SizeRatio where
+  encode Four = encodeInt 4
+
+instance DecodeVersioned SizeRatio where
+  decodeVersioned V0 = do
+      x <- decodeWord64
+      case x of
+        4 -> pure Four
+        _ -> fail ("Expected 4, but found " <> show x)
+
+-- WriteBufferAlloc
+
+instance Encode WriteBufferAlloc where
+  encode (AllocNumEntries numEntries) =
+         encodeListLen 2
+      <> encodeWord 0
+      <> encode numEntries
+
+instance DecodeVersioned WriteBufferAlloc where
+  decodeVersioned v@V0 = do
+      _ <- decodeListLenOf 2
+      tag <- decodeWord
+      case tag of
+        0 -> AllocNumEntries <$> decodeVersioned v
+        _ -> fail ("[WriteBufferAlloc] Unexpected tag: " <> show tag)
+
+-- NumEntries
+
+instance Encode NumEntries where
+  encode (NumEntries x) = encodeInt x
+
+instance DecodeVersioned NumEntries where
+  decodeVersioned V0 = NumEntries <$> decodeInt
+
+-- BloomFilterAlloc
+
+instance Encode BloomFilterAlloc where
+  encode (AllocFixed x) =
+         encodeListLen 2
+      <> encodeWord 0
+      <> encodeWord64 x
+  encode (AllocRequestFPR x) =
+         encodeListLen 2
+      <> encodeWord 1
+      <> encodeDouble x
+  encode (AllocMonkey numBytes numEntries) =
+         encodeListLen 3
+      <> encodeWord 2
+      <> encodeWord64 numBytes
+      <> encode numEntries
+
+instance DecodeVersioned BloomFilterAlloc where
+  decodeVersioned v@V0 = do
+      n <- decodeListLen
+      tag <- decodeWord
+      case (n, tag) of
+        (2, 0) -> AllocFixed <$> decodeWord64
+        (2, 1) -> AllocRequestFPR <$> decodeDouble
+        (3, 2) -> AllocMonkey <$> decodeWord64 <*> decodeVersioned v
+        _ -> fail ("[BloomFilterAlloc] Unexpected combination of list length and tag: " <> show (n, tag))
+
+-- FencePointerIndex
+
+instance Encode FencePointerIndex where
+  encode CompactIndex  = encodeWord 0
+  encode OrdinaryIndex = encodeWord 1
+
+instance DecodeVersioned FencePointerIndex where
+   decodeVersioned V0 = do
+      tag <- decodeWord
+      case tag of
+        0 -> pure CompactIndex
+        1 -> pure OrdinaryIndex
+        _ -> fail ("[FencePointerIndex] Unexpected tag: " <> show tag)
+
+-- DiskCachePolicy
+
+instance Encode DiskCachePolicy where
+  encode DiskCacheAll =
+         encodeListLen 1
+      <> encodeWord 0
+  encode (DiskCacheLevelsAtOrBelow x) =
+         encodeListLen 2
+      <> encodeWord 1
+      <> encodeInt x
+  encode DiskCacheNone =
+         encodeListLen 1
+      <> encodeWord 2
+
+instance DecodeVersioned DiskCachePolicy where
+  decodeVersioned V0 = do
+      n <- decodeListLen
+      tag <- decodeWord
+      case (n, tag) of
+        (1, 0) -> pure DiskCacheAll
+        (2, 1) -> DiskCacheLevelsAtOrBelow <$> decodeInt
+        (1, 2) -> pure DiskCacheNone
+        _ -> fail ("[DiskCachePolicy] Unexpected combination of list length and tag: " <> show (n, tag))
+
+-- MergeSchedule
+
+instance Encode MergeSchedule where
+  encode OneShot     = encodeWord 0
+  encode Incremental = encodeWord 1
+
+instance DecodeVersioned MergeSchedule where
+  decodeVersioned V0 = do
+      tag <- decodeWord
+      case tag of
+        0 -> pure OneShot
+        1 -> pure Incremental
+        _ -> fail ("[MergeSchedule] Unexpected tag: " <> show tag)
+
+{-------------------------------------------------------------------------------
+  Encoding and decoding: SnapLevels
+-------------------------------------------------------------------------------}
+
+-- SnapLevels
+
+instance Encode SnapLevels where
+  encode levels =
+         encodeListLen (fromIntegral (V.length levels))
+      <> V.foldMap encode levels
+
+instance DecodeVersioned SnapLevels where
+  decodeVersioned v@V0 = do
+      n <- decodeListLen
+      V.replicateM n (decodeVersioned v)
+
+-- SnapLevel
+
+instance Encode SnapLevel where
+  encode (SnapLevel incomingRuns residentRuns) =
+         encodeListLen 2
+      <> encode incomingRuns
+      <> encode residentRuns
+
+
+instance DecodeVersioned SnapLevel where
+  decodeVersioned v@V0 = do
+      _ <- decodeListLenOf 2
+      SnapLevel <$> decodeVersioned v <*> decodeVersioned v
+
+-- Vector RunNumber
+
+instance Encode (V.Vector RunNumber) where
+  encode rns =
+         encodeListLen (fromIntegral (V.length rns))
+      <> V.foldMap encode rns
+
+instance DecodeVersioned (V.Vector RunNumber) where
+  decodeVersioned v@V0 = do
+      n <- decodeListLen
+      V.replicateM n (decodeVersioned v)
+
+-- RunNumber
+
+instance Encode RunNumber where
+  encode (RunNumber x) = encodeWord64 x
+
+instance DecodeVersioned RunNumber where
+  decodeVersioned V0 = RunNumber <$> decodeWord64
+
+-- SnapMergingRun
+
+instance Encode SnapMergingRun where
+  encode (SnapMergingRun mpfl nr smrs) =
+       encodeListLen 4
+    <> encodeWord 0
+    <> encode mpfl
+    <> encode nr
+    <> encode smrs
+  encode (SnapSingleRun x) =
+       encodeListLen 2
+    <> encodeWord 1
+    <> encode x
+
+instance DecodeVersioned SnapMergingRun where
+  decodeVersioned v@V0 = do
+      n <- decodeListLen
+      tag <- decodeWord
+      case (n, tag) of
+        (4, 0) -> SnapMergingRun <$>
+          decodeVersioned v <*> decodeVersioned v <*> decodeVersioned v
+        (2, 1) -> SnapSingleRun <$> decodeVersioned v
+        _ -> fail ("[SnapMergingRun] Unexpected combination of list length and tag: " <> show (n, tag))
+
+-- NumRuns
+
+instance Encode NumRuns where
+  encode (NumRuns x) = encodeInt x
+
+instance DecodeVersioned NumRuns where
+  decodeVersioned V0 = NumRuns <$> decodeInt
+
+-- MergePolicyForLevel
+
+instance Encode MergePolicyForLevel where
+  encode LevelTiering   = encodeWord 0
+  encode LevelLevelling = encodeWord 1
+
+instance DecodeVersioned MergePolicyForLevel where
+  decodeVersioned V0 = do
+      tag <- decodeWord
+      case tag of
+        0 -> pure LevelTiering
+        1 -> pure LevelLevelling
+        _ -> fail ("[MergePolicyForLevel] Unexpected tag: " <> show tag)
+
+-- SnapMergingRunState
+
+instance Encode SnapMergingRunState where
+  encode (SnapCompletedMerge x) =
+         encodeListLen 2
+      <> encodeWord 0
+      <> encode x
+  encode (SnapOngoingMerge rs tc l) =
+         encodeListLen 4
+      <> encodeWord 1
+      <> encode rs
+      <> encode tc
+      <> encode l
+
+instance DecodeVersioned SnapMergingRunState where
+  decodeVersioned v@V0 = do
+      n <- decodeListLen
+      tag <- decodeWord
+      case (n, tag) of
+        (2, 0) -> SnapCompletedMerge <$> decodeVersioned v
+        (4, 1) -> SnapOngoingMerge <$>
+          decodeVersioned v <*> decodeVersioned v <*> decodeVersioned v
+        _ -> fail ("[SnapMergingRunState] Unexpected combination of list length and tag: " <> show (n, tag))
+
+-- TotalCredits
+
+instance Encode TotalCredits where
+  encode (TotalCredits x) = encodeInt x
+
+instance DecodeVersioned TotalCredits where
+  decodeVersioned V0 = TotalCredits <$> decodeInt
+
+  -- Merge.Level
+
+instance Encode Merge.Level where
+  encode Merge.MidLevel  = encodeWord 0
+  encode Merge.LastLevel = encodeWord 1
+
+instance DecodeVersioned Merge.Level where
+  decodeVersioned V0 = do
+      tag <- decodeWord
+      case tag of
+        0 -> pure Merge.MidLevel
+        1 -> pure Merge.LastLevel
+        _ -> fail ("[Merge.Level] Unexpected tag: " <> show tag)

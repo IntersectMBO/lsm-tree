@@ -559,7 +559,7 @@ snapshot :: forall m k v.
   -> Table m k v
   -> m ()
 snapshot snap (Internal.MonoidalTable t) =
-    void $ Internal.snapshot (resolve @v Proxy) snap label t
+    void $ Internal.snapshot (resolve @v Proxy) snap label Internal.SnapMonoidalTable t
   where
     label = Internal.SnapshotLabel $ Common.makeSnapshotLabel (Proxy @(k, v))
 
@@ -603,7 +603,14 @@ open :: forall m k v.
   -> SnapshotName
   -> m (Table m k v)
 open (Internal.Session' sesh) override snap =
-    Internal.MonoidalTable <$> Internal.open sesh label override snap (resolve @v Proxy)
+    Internal.MonoidalTable <$>
+      Internal.open
+        sesh
+        label
+        Internal.SnapMonoidalTable
+        override
+        snap
+        (resolve @v Proxy)
   where
     label = Internal.SnapshotLabel $ Common.makeSnapshotLabel (Proxy @(k, v))
 

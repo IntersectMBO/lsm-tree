@@ -66,6 +66,7 @@ module Database.LSMTree.Internal (
   , duplicate
   ) where
 
+import           Codec.CBOR.Read
 import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Concurrent.Class.MonadSTM (MonadSTM (..))
 import           Control.Concurrent.Class.MonadSTM.RWVar (RWVar)
@@ -79,7 +80,6 @@ import           Control.Monad.Primitive
 import           Control.TempRegistry
 import           Control.Tracer
 import           Data.Arena (ArenaManager, newArenaManager)
-import qualified Data.ByteString.Char8 as BSC
 import           Data.Char (isNumber)
 import           Data.Foldable
 import           Data.Functor.Compose (Compose (..))
@@ -119,7 +119,6 @@ import qualified System.FS.API as FS
 import           System.FS.API (FsError, FsErrorPath (..), FsPath, Handle,
                      HasFS)
 import qualified System.FS.API.Lazy as FS
-import qualified System.FS.API.Strict as FS
 import qualified System.FS.BlockIO.API as FS
 import           System.FS.BlockIO.API (HasBlockIO)
 
@@ -186,7 +185,15 @@ data LSMTreeError =
   | ErrCursorClosed
   | ErrSnapshotExists SnapshotName
   | ErrSnapshotNotExists SnapshotName
-  | ErrSnapshotWrongType SnapshotName
+  | ErrSnapshotDeserialiseFailure DeserialiseFailure SnapshotName
+  | ErrSnapshotWrongTableType
+      SnapshotName
+      SnapshotTableType -- ^ Expected type
+      SnapshotTableType -- ^ Actual type
+  | ErrSnapshotWrongLabel
+      SnapshotName
+      SnapshotLabel -- ^ Expected label
+      SnapshotLabel -- ^ Actual label
     -- | Something went wrong during batch lookups.
   | ErrLookup ByteCountDiscrepancy
     -- | A 'BlobRef' used with 'retrieveBlobs' was invalid.
@@ -1081,6 +1088,7 @@ readCursorWhile resolve keyIsWanted n Cursor {..} fromEntry = do
      ResolveSerialisedValue
   -> SnapshotName
   -> SnapshotLabel
+  -> SnapshotTableType
   -> Table IO h
   -> IO Int #-}
 -- |  See 'Database.LSMTree.Normal.snapshot''.
@@ -1089,9 +1097,10 @@ snapshot ::
   => ResolveSerialisedValue
   -> SnapshotName
   -> SnapshotLabel
+  -> SnapshotTableType
   -> Table m h
   -> m Int
-snapshot resolve snap label t = do
+snapshot resolve snap label tableType t = do
     traceWith (tableTracer t) $ TraceSnapshot snap
     let conf = tableConfig t
     withOpenTable t $ \thEnv -> do
@@ -1129,19 +1138,20 @@ snapshot resolve snap label t = do
       -- consistent.
 
       snappedLevels <- snapLevels (tableLevels content)
-      let snapContents = BSC.pack $ show (label, snappedLevels, tableConfig t)
+      let snapContents = encodeSnapshotMetaData (SnapshotMetaData label tableType (tableConfig t) snappedLevels)
 
       FS.withFile
         (tableHasFS thEnv)
         snapPath
         (FS.WriteMode FS.MustBeNew) $ \h ->
-          void $ FS.hPutAllStrict (tableHasFS thEnv) h snapContents
+          void $ FS.hPutAll (tableHasFS thEnv) h snapContents
 
       pure $! numSnapRuns snappedLevels
 
 {-# SPECIALISE open ::
      Session IO h
   -> SnapshotLabel
+  -> SnapshotTableType
   -> TableConfigOverride
   -> SnapshotName
   -> ResolveSerialisedValue
@@ -1151,11 +1161,12 @@ open ::
      (MonadFix m, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => Session m h
   -> SnapshotLabel -- ^ Expected label
+  -> SnapshotTableType -- ^ Expected table type
   -> TableConfigOverride -- ^ Optional config override
   -> SnapshotName
   -> ResolveSerialisedValue
   -> m (Table m h)
-open sesh label override snap resolve = do
+open sesh label tableType override snap resolve = do
     traceWith (sessionTracer sesh) $ TraceOpenSnapshot snap override
     withOpenSession sesh $ \seshEnv -> do
       withTempRegistry $ \reg -> do
@@ -1169,8 +1180,18 @@ open sesh label override snap resolve = do
                 snapPath
                 FS.ReadMode $ \h ->
                   FS.hGetAll (sessionHasFS seshEnv) h
-        let (label', snappedLevels, conf) = read $ BSC.unpack $ BSC.toStrict $ bs
-        unless (label == label') $ throwIO (ErrSnapshotWrongType snap)
+
+        snapMetaData <- case decodeSnapshotMetaData bs of
+          Left e  -> throwIO (ErrSnapshotDeserialiseFailure e snap)
+          Right x -> pure x
+        let SnapshotMetaData label' tableType' conf snappedLevels = snapMetaData
+
+        unless (tableType == tableType') $
+          throwIO (ErrSnapshotWrongTableType snap tableType tableType')
+
+        unless (label == label') $
+          throwIO (ErrSnapshotWrongLabel snap label label')
+
         let conf' = applyOverride override conf
         am <- newArenaManager
         blobpath <- Paths.tableBlobPath (sessionRoot seshEnv) <$>

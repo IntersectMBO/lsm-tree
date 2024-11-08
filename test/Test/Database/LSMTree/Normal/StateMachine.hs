@@ -341,7 +341,7 @@ realHandler = Handler $ pure . handler'
     handler' ErrCursorClosed              = Just Model.ErrCursorClosed
     handler' (ErrSnapshotNotExists _snap) = Just Model.ErrSnapshotDoesNotExist
     handler' (ErrSnapshotExists _snap)    = Just Model.ErrSnapshotExists
-    handler' (ErrSnapshotWrongType _snap) = Just Model.ErrSnapshotWrongType
+    handler' ErrSnapshotWrongTableType{}  = Just Model.ErrSnapshotWrongType
     handler' (ErrBlobRefInvalid _)        = Just Model.ErrBlobRefInvalidated
     handler' _                            = Nothing
 
