@@ -5,6 +5,7 @@ module Database.LSMTree.Internal.BlobFile (
   , RemoveFileOnClose (..)
   , openBlobFile
   , readBlob
+  , writeBlob
   ) where
 
 import           Control.DeepSeq (NFData (..))
@@ -13,8 +14,8 @@ import           Control.Monad.Class.MonadThrow (MonadMask, MonadThrow)
 import           Control.Monad.Primitive (PrimMonad)
 import           Control.RefCount (RefCounter)
 import qualified Control.RefCount as RC
-import qualified Data.Primitive.ByteArray as P (newPinnedByteArray,
-                     unsafeFreezeByteArray)
+import qualified Data.Primitive.ByteArray as P
+import qualified Data.Vector.Primitive as VP
 import           Data.Word (Word32, Word64)
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.Serialise (SerialisedBlob (..))
@@ -103,3 +104,21 @@ readBlob fs BlobFile {blobFileHandle}
     ba <- P.unsafeFreezeByteArray mba
     let !rb = RB.fromByteArray 0 len ba
     return (SerialisedBlob rb)
+
+{-# SPECIALISE writeBlob :: HasFS IO h -> BlobFile IO h -> SerialisedBlob -> Word64 -> IO () #-}
+writeBlob ::
+     (MonadThrow m, PrimMonad m)
+  => HasFS m h
+  -> BlobFile m h
+  -> SerialisedBlob
+  -> Word64
+  -> m ()
+writeBlob fs BlobFile {blobFileHandle}
+          (SerialisedBlob' (VP.Vector boff blen ba)) off = do
+    mba <- P.unsafeThawByteArray ba
+    _   <- FS.hPutBufExactlyAt
+             fs blobFileHandle mba
+             (FS.BufferOffset boff)
+             (fromIntegral blen :: FS.ByteCount)
+             (FS.AbsOffset off)
+    return ()

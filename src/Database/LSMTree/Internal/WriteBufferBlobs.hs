@@ -37,9 +37,7 @@ import           Control.DeepSeq (NFData (..))
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Primitive (PrimMonad, PrimState)
 import qualified Control.RefCount as RC
-import           Data.Primitive.ByteArray as P
 import           Data.Primitive.PrimVar as P
-import qualified Data.Vector.Primitive as VP
 import           Data.Word (Word64)
 import           Database.LSMTree.Internal.BlobFile hiding (removeReference)
 import qualified Database.LSMTree.Internal.BlobFile as BlobFile
@@ -48,7 +46,6 @@ import           Database.LSMTree.Internal.BlobRef (RawBlobRef (..),
 import           Database.LSMTree.Internal.Serialise
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
-import qualified System.Posix.Types as FS (ByteCount)
 
 -- | A single 'WriteBufferBlobs' may be shared between multiple tables.
 -- As a consequence of being shared, the management of the shared state has to
@@ -148,27 +145,11 @@ addBlob :: (PrimMonad m, MonadThrow m)
 addBlob fs WriteBufferBlobs {blobFile, blobFilePointer} blob = do
     let blobsize = sizeofBlob blob
     bloboffset <- updateFilePointer blobFilePointer blobsize
-    writeBlobAtOffset fs (blobFileHandle blobFile) blob bloboffset
+    BlobFile.writeBlob fs blobFile blob bloboffset
     return BlobSpan {
       blobSpanOffset = bloboffset,
       blobSpanSize   = fromIntegral blobsize
     }
-
-{-# SPECIALISE writeBlobAtOffset :: HasFS IO h -> FS.Handle h -> SerialisedBlob -> Word64 -> IO () #-}
-writeBlobAtOffset :: (PrimMonad m, MonadThrow m)
-                  => HasFS m h
-                  -> FS.Handle h
-                  -> SerialisedBlob
-                  -> Word64
-                  -> m ()
-writeBlobAtOffset fs h (SerialisedBlob' (VP.Vector boff blen ba)) off = do
-    mba <- P.unsafeThawByteArray ba
-    _   <- FS.hPutBufExactlyAt
-             fs h mba
-             (FS.BufferOffset boff)
-             (fromIntegral blen :: FS.ByteCount)
-             (FS.AbsOffset off)
-    return ()
 
 -- | Helper function to make a 'RawBlobRef' that points into a
 -- 'WriteBufferBlobs'.
