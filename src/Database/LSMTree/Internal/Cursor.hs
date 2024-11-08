@@ -9,7 +9,8 @@ import           Control.Monad.Class.MonadST (MonadST (..))
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Fix (MonadFix)
 import qualified Data.Vector as V
-import           Database.LSMTree.Internal.BlobRef (WeakBlobRef (..))
+import           Database.LSMTree.Internal.BlobRef (RawBlobRef,
+                     WeakBlobRef (..))
 import qualified Database.LSMTree.Internal.BlobRef as BlobRef
 import           Database.LSMTree.Internal.Entry (Entry)
 import qualified Database.LSMTree.Internal.Entry as Entry
@@ -19,13 +20,12 @@ import qualified Database.LSMTree.Internal.RunReaders as Readers
 import           Database.LSMTree.Internal.Serialise (SerialisedKey,
                      SerialisedValue)
 import qualified Database.LSMTree.Internal.Vector as V
-import           System.FS.API (Handle)
 
 {-# INLINE readEntriesWhile #-}
 {-# SPECIALISE readEntriesWhile :: forall h res.
      ResolveSerialisedValue
   -> (SerialisedKey -> Bool)
-  -> (SerialisedKey -> SerialisedValue -> Maybe (WeakBlobRef IO (Handle h)) -> res)
+  -> (SerialisedKey -> SerialisedValue -> Maybe (WeakBlobRef IO h) -> res)
   -> Readers.Readers IO h
   -> Int
   -> IO (V.Vector res, Readers.HasMore) #-}
@@ -39,7 +39,7 @@ readEntriesWhile :: forall h m res.
      (MonadFix m, MonadMask m, MonadST m, MonadSTM m)
   => ResolveSerialisedValue
   -> (SerialisedKey -> Bool)
-  -> (SerialisedKey -> SerialisedValue -> Maybe (WeakBlobRef m (Handle h)) -> res)
+  -> (SerialisedKey -> SerialisedValue -> Maybe (WeakBlobRef m h) -> res)
   -> Readers.Readers m h
   -> Int
   -> m (V.Vector res, Readers.HasMore)
@@ -107,7 +107,7 @@ readEntriesWhile resolve keyIsWanted fromEntry readers n =
     -- Once we have a resolved entry, we still have to make sure it's not
     -- a 'Delete', since we only want to write values to the result vector.
     handleResolved :: SerialisedKey
-                   -> Entry SerialisedValue (BlobRef.BlobRef m (Handle h))
+                   -> Entry SerialisedValue (RawBlobRef m h)
                    -> Readers.HasMore
                    -> m (Maybe res, Readers.HasMore)
     handleResolved key entry hasMore =
@@ -123,10 +123,10 @@ readEntriesWhile resolve keyIsWanted fromEntry readers n =
               Readers.Drained -> return (Nothing, Readers.Drained)
 
     toResult :: SerialisedKey
-             -> Entry SerialisedValue (BlobRef.BlobRef m (Handle h))
+             -> Entry SerialisedValue (RawBlobRef m h)
              -> Maybe res
     toResult key = \case
         Entry.Insert v -> Just $ fromEntry key v Nothing
-        Entry.InsertWithBlob v b -> Just $ fromEntry key v (Just (WeakBlobRef b))
+        Entry.InsertWithBlob v b -> Just $ fromEntry key v (Just (BlobRef.rawToWeakBlobRef b))
         Entry.Mupdate v -> Just $ fromEntry key v Nothing
         Entry.Delete -> Nothing

@@ -33,7 +33,7 @@ import           Data.Primitive.MutVar
 import           Data.Traversable (for)
 import qualified Data.Vector as V
 import           Data.Word
-import           Database.LSMTree.Internal.BlobRef (BlobRef)
+import           Database.LSMTree.Internal.BlobRef (RawBlobRef)
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.Run (Run, RunDataCaching)
 import qualified Database.LSMTree.Internal.Run as Run
@@ -45,7 +45,6 @@ import           Database.LSMTree.Internal.RunReaders (Readers)
 import qualified Database.LSMTree.Internal.RunReaders as Readers
 import           Database.LSMTree.Internal.Serialise
 import           GHC.Stack (HasCallStack)
-import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
 import           System.FS.BlockIO.API (HasBlockIO)
 
@@ -190,7 +189,7 @@ finaliser var b rs = do
 -- this function with async exceptions masked. Otherwise, these resources can
 -- leak.
 complete ::
-     (MonadFix m, MonadSTM m, MonadST m, MonadThrow m)
+     (MonadFix m, MonadSTM m, MonadST m, MonadMask m)
   => Merge m h
   -> m (Run m h)
 complete Merge{..} = do
@@ -218,7 +217,7 @@ complete Merge{..} = do
 --
 -- Note: run with async exceptions masked. See 'complete'.
 stepsToCompletion ::
-      (MonadCatch m, MonadFix m, MonadSTM m, MonadST m)
+      (MonadMask m, MonadFix m, MonadSTM m, MonadST m)
    => Merge m h
    -> Int
    -> m (Run m h)
@@ -237,7 +236,7 @@ stepsToCompletion m stepBatchSize = go
 --
 -- Note: run with async exceptions masked. See 'complete'.
 stepsToCompletionCounted ::
-     (MonadCatch m, MonadFix m, MonadSTM m, MonadST m)
+     (MonadMask m, MonadFix m, MonadSTM m, MonadST m)
   => Merge m h
   -> Int
   -> m (Int, Run m h)
@@ -357,14 +356,14 @@ steps Merge {..} requestedSteps = assertStepsInvariant <$> do
      Level
   -> RunBuilder IO h
   -> SerialisedKey
-  -> Reader.Entry IO (FS.Handle h)
+  -> Reader.Entry IO h
   -> IO () #-}
 writeReaderEntry ::
      (MonadSTM m, MonadST m, MonadThrow m)
   => Level
   -> RunBuilder m h
   -> SerialisedKey
-  -> Reader.Entry m (FS.Handle h)
+  -> Reader.Entry m h
   -> m ()
 writeReaderEntry level builder key (Reader.Entry entryFull) =
       -- Small entry.
@@ -397,14 +396,14 @@ writeReaderEntry level builder key entry@(Reader.EntryOverflow prefix page _ ove
      Level
   -> RunBuilder IO h
   -> SerialisedKey
-  -> Entry SerialisedValue (BlobRef IO (FS.Handle h))
+  -> Entry SerialisedValue (RawBlobRef IO h)
   -> IO () #-}
 writeSerialisedEntry ::
      (MonadSTM m, MonadST m, MonadThrow m)
   => Level
   -> RunBuilder m h
   -> SerialisedKey
-  -> Entry SerialisedValue (BlobRef m (FS.Handle h))
+  -> Entry SerialisedValue (RawBlobRef m h)
   -> m ()
 writeSerialisedEntry level builder key entry =
     when (shouldWriteEntry level entry) $

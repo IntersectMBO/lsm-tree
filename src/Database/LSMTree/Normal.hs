@@ -130,7 +130,6 @@ import qualified Database.LSMTree.Internal.Entry as Entry
 import qualified Database.LSMTree.Internal.Serialise as Internal
 import qualified Database.LSMTree.Internal.Snapshot as Internal
 import qualified Database.LSMTree.Internal.Vector as V
-import qualified System.FS.API as FS
 
 -- $resource-management
 -- Sessions, tables and cursors use resources and as such need to be
@@ -629,8 +628,8 @@ retrieveBlobs (Internal.Session' (sesh :: Internal.Session m h)) refs =
     V.map Internal.deserialiseBlob <$>
       Internal.retrieveBlobs sesh (V.imap checkBlobRefType refs)
   where
-    checkBlobRefType _ (BlobRef (ref :: Internal.WeakBlobRef m (FS.Handle h')))
-      | Just Refl <- eqT @(FS.Handle h) @(FS.Handle h') = ref
+    checkBlobRefType _ (BlobRef (ref :: Internal.WeakBlobRef m h'))
+      | Just Refl <- eqT @h @h' = ref
     checkBlobRefType i _ = throw (Internal.ErrBlobRefInvalid i)
 
 {-------------------------------------------------------------------------------

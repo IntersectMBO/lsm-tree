@@ -29,7 +29,7 @@ import           Data.Primitive.PrimVar
 import           Data.Word (Word16, Word32)
 import           Database.LSMTree.Internal.BitMath (ceilDivPageSize,
                      mulPageSize, roundUpToPageSize)
-import           Database.LSMTree.Internal.BlobRef (BlobRef (..))
+import           Database.LSMTree.Internal.BlobRef (RawBlobRef (..))
 import qualified Database.LSMTree.Internal.Entry as E
 import qualified Database.LSMTree.Internal.IndexCompact as Index
 import           Database.LSMTree.Internal.Page (PageNo (..), PageSpan (..),
@@ -167,12 +167,12 @@ data Result m h
 
 data Entry m h =
     Entry
-      !(E.Entry SerialisedValue (BlobRef m h))
+      !(E.Entry SerialisedValue (RawBlobRef m h))
   | -- | A large entry. The caller might be interested in various different
     -- (redundant) representation, so we return all of them.
     EntryOverflow
       -- | The value is just a prefix, with the remainder in the overflow pages.
-      !(E.Entry SerialisedValue (BlobRef m h))
+      !(E.Entry SerialisedValue (RawBlobRef m h))
       -- | A page containing the single entry (or rather its prefix).
       !RawPage
       -- | Non-zero length of the overflow in bytes.
@@ -186,7 +186,7 @@ data Entry m h =
       ![RawOverflowPage]
 
 mkEntryOverflow ::
-     E.Entry SerialisedValue (BlobRef m h)
+     E.Entry SerialisedValue (RawBlobRef m h)
   -> RawPage
   -> Word32
   -> [RawOverflowPage]
@@ -198,7 +198,7 @@ mkEntryOverflow entryPrefix page len overflowPages =
       EntryOverflow entryPrefix page len overflowPages
 
 {-# INLINE toFullEntry #-}
-toFullEntry :: Entry m h -> E.Entry SerialisedValue (BlobRef m h)
+toFullEntry :: Entry m h -> E.Entry SerialisedValue (RawBlobRef m h)
 toFullEntry = \case
     Entry e ->
       e
@@ -214,13 +214,13 @@ appendOverflow len overflowPages (SerialisedValue prefix) =
 
 {-# SPECIALISE next ::
      RunReader IO h
-  -> IO (Result IO (FS.Handle h)) #-}
+  -> IO (Result IO h) #-}
 -- | Stop using the 'RunReader' after getting 'Empty', because the 'Reader' is
 -- automatically closed!
 next :: forall m h.
      (MonadCatch m, MonadSTM m, MonadST m)
   => RunReader m h
-  -> m (Result m (FS.Handle h))
+  -> m (Result m h)
 next reader@RunReader {..} = do
     readMutVar readerCurrentPage >>= \case
       Nothing ->
@@ -229,7 +229,7 @@ next reader@RunReader {..} = do
         entryNo <- readPrimVar readerCurrentEntryNo
         go entryNo page
   where
-    go :: Word16 -> RawPage -> m (Result m (FS.Handle h))
+    go :: Word16 -> RawPage -> m (Result m h)
     go !entryNo !page =
         -- take entry from current page (resolve blob if necessary)
         case rawPageIndex page entryNo of
@@ -246,14 +246,14 @@ next reader@RunReader {..} = do
                 go 0 p  -- try again on the new page
           IndexEntry key entry -> do
             modifyPrimVar readerCurrentEntryNo (+1)
-            let entry' = fmap (Run.mkBlobRefForRun readerRun) entry
+            let entry' = fmap (Run.mkRawBlobRef readerRun) entry
             let rawEntry = Entry entry'
             return (ReadEntry key rawEntry)
           IndexEntryOverflow key entry lenSuffix -> do
             -- TODO: we know that we need the next page, could already load?
             modifyPrimVar readerCurrentEntryNo (+1)
-            let entry' :: E.Entry SerialisedValue (BlobRef m (FS.Handle h))
-                entry' = fmap (Run.mkBlobRefForRun readerRun) entry
+            let entry' :: E.Entry SerialisedValue (RawBlobRef m h)
+                entry' = fmap (Run.mkRawBlobRef readerRun) entry
             overflowPages <- readOverflowPages readerHasFS readerKOpsHandle lenSuffix
             let rawEntry = mkEntryOverflow entry' page lenSuffix overflowPages
             return (ReadEntry key rawEntry)

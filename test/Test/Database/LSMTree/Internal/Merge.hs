@@ -12,6 +12,7 @@ import qualified Data.Vector as V
 import           Database.LSMTree.Extras
 import           Database.LSMTree.Extras.Generators (KeyForIndexCompact)
 import           Database.LSMTree.Extras.RunData
+import qualified Database.LSMTree.Internal.BlobFile as BlobFile
 import qualified Database.LSMTree.Internal.Entry as Entry
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.PageAcc (entryWouldFitInPage)
@@ -73,9 +74,9 @@ prop_MergeDistributes fs hbio level stepSize (SmallList rds) =
       withRun fs hbio (simplePath 1) (RunData $ mergeWriteBuffers level $ fmap unRunData rds') $ \rhs -> do
 
         lhsKOpsFile <- FS.hGetAll fs (Run.runKOpsFile lhs)
-        lhsBlobFile <- FS.hGetAll fs (Run.runBlobFile lhs)
+        lhsBlobFile <- FS.hGetAll fs (BlobFile.blobFileHandle (Run.runBlobFile lhs))
         rhsKOpsFile <- FS.hGetAll fs (Run.runKOpsFile rhs)
-        rhsBlobFile <- FS.hGetAll fs (Run.runBlobFile rhs)
+        rhsBlobFile <- FS.hGetAll fs (BlobFile.blobFileHandle (Run.runBlobFile rhs))
 
         lhsKOps <- readKOps Nothing lhs
         rhsKOps <- readKOps Nothing rhs

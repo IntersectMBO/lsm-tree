@@ -44,8 +44,7 @@ import           Database.LSMTree.Extras.Generators
 import           Database.LSMTree.Extras.RunData (RunData (..),
                      liftArbitrary2Map, liftShrink2Map,
                      unsafeFlushAsWriteBuffer)
-import           Database.LSMTree.Internal.BlobRef (BlobSpan, WeakBlobRef,
-                     readBlob, withWeakBlobRef)
+import           Database.LSMTree.Internal.BlobRef
 import           Database.LSMTree.Internal.Entry as Entry
 import           Database.LSMTree.Internal.IndexCompact as Index
 import           Database.LSMTree.Internal.Lookup
@@ -323,11 +322,9 @@ prop_roundtripFromWriteBufferLookupIO (SmallList dats) =
     resolveV = \(SerialisedValue v1) (SerialisedValue v2) -> SerialisedValue (v1 <> v2)
 
     fetchBlobs :: FS.HasFS IO h
-               ->    (V.Vector (Maybe (Entry v (WeakBlobRef IO (FS.Handle h)))))
+               ->    (V.Vector (Maybe (Entry v (WeakBlobRef IO h))))
                -> IO (V.Vector (Maybe (Entry v SerialisedBlob)))
-    fetchBlobs hfs = traverse (traverse (traverse fetchBlob))
-      where
-        fetchBlob bref = withWeakBlobRef bref (readBlob hfs)
+    fetchBlobs hfs = traverse (traverse (traverse (readWeakBlobRef hfs)))
 
 -- | Given a bunch of 'InMemLookupData', prepare the data into the form needed
 -- for 'lookupsIO': a write buffer (and blobs) and a vector of on-disk runs.

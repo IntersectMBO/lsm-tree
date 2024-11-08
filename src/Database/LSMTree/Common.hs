@@ -63,7 +63,7 @@ import qualified Database.LSMTree.Internal.MergeSchedule as Internal
 import qualified Database.LSMTree.Internal.Paths as Internal
 import qualified Database.LSMTree.Internal.Range as Internal
 import           Database.LSMTree.Internal.Serialise.Class
-import           System.FS.API (FsPath, Handle, HasFS)
+import           System.FS.API (FsPath, HasFS)
 import           System.FS.BlockIO.API (HasBlockIO)
 import           System.FS.IO (HandleIO)
 
@@ -268,7 +268,7 @@ type BlobRef :: (Type -> Type) -> Type -> Type
 type role BlobRef nominal nominal
 data BlobRef m blob where
     BlobRef :: Typeable h
-            => Internal.WeakBlobRef m (Handle h)
+            => Internal.WeakBlobRef m h
             -> BlobRef m blob
 
 instance Show (BlobRef m blob) where

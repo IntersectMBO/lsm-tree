@@ -34,6 +34,7 @@ import qualified Data.Vector.Primitive as VP
 import qualified Data.Vector.Unboxed.Mutable as VUM
 import           Data.Word
 import           Database.LSMTree.Internal as Internal
+import           Database.LSMTree.Internal.BlobFile
 import           Database.LSMTree.Internal.BlobRef
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.CRC32C
@@ -394,9 +395,9 @@ deriving stock instance Generic (RunReader m h)
 deriving anyclass instance (Typeable m, Typeable (PrimState m), Typeable h)
                         => NoThunks (RunReader m h)
 
-deriving stock instance Generic (Reader.Entry m (Handle h))
+deriving stock instance Generic (Reader.Entry m h)
 deriving anyclass instance (Typeable m, Typeable (PrimState m), Typeable h)
-                        => NoThunks (Reader.Entry m (Handle h))
+                        => NoThunks (Reader.Entry m h)
 
 {-------------------------------------------------------------------------------
   RawPage
@@ -416,12 +417,20 @@ deriving anyclass instance NoThunks RawOverflowPage
   BlobRef
 -------------------------------------------------------------------------------}
 
-deriving stock instance Generic (BlobRef m h)
-deriving anyclass instance (NoThunks h, Typeable (PrimState m))
-                        => NoThunks (BlobRef m h)
-
 deriving stock instance Generic BlobSpan
 deriving anyclass instance NoThunks BlobSpan
+
+deriving stock instance Generic (BlobFile m h)
+deriving anyclass instance (Typeable h, Typeable (PrimState m))
+                        => NoThunks (BlobFile m h)
+
+deriving stock instance Generic (RawBlobRef m h)
+deriving anyclass instance (Typeable h, Typeable (PrimState m))
+                        => NoThunks (RawBlobRef m h)
+
+deriving stock instance Generic (WeakBlobRef m h)
+deriving anyclass instance (Typeable h, Typeable (PrimState m))
+                        => NoThunks (WeakBlobRef m h)
 
 {-------------------------------------------------------------------------------
   Arena

@@ -26,7 +26,7 @@ import           Data.Maybe (catMaybes)
 import           Data.Primitive.MutVar
 import           Data.Traversable (for)
 import qualified Data.Vector as V
-import           Database.LSMTree.Internal.BlobRef (BlobRef)
+import           Database.LSMTree.Internal.BlobRef (RawBlobRef)
 import           Database.LSMTree.Internal.Entry (Entry (..))
 import           Database.LSMTree.Internal.Run (Run)
 import           Database.LSMTree.Internal.RunReader (OffsetKey (..),
@@ -73,7 +73,7 @@ data ReadCtx m h = ReadCtx {
       -- Using an 'STRef' could avoid reallocating the record for every entry,
       -- but that might not be straightforward to integrate with the heap.
       readCtxHeadKey   :: !SerialisedKey
-    , readCtxHeadEntry :: !(Reader.Entry m (FS.Handle h))
+    , readCtxHeadEntry :: !(Reader.Entry m h)
       -- We could get rid of this by making 'LoserTree' stable (for which there
       -- is a prototype already).
       -- Alternatively, if we decide to have an invariant that the number in
@@ -103,9 +103,9 @@ data Reader m h =
     -- having to find the next entry in the Map again (requiring key
     -- comparisons) or having to copy out all entries.
     -- TODO: more efficient representation? benchmark!
-  | ReadBuffer !(MutVar (PrimState m) [KOp m (FS.Handle h)])
+  | ReadBuffer !(MutVar (PrimState m) [KOp m h])
 
-type KOp m h = (SerialisedKey, Entry SerialisedValue (BlobRef m h))
+type KOp m h = (SerialisedKey, Entry SerialisedValue (RawBlobRef m h))
 
 {-# SPECIALISE new ::
      OffsetKey
@@ -132,7 +132,7 @@ new !offsetKey wbs runs = do
            -> m (Maybe (ReadCtx m h))
     fromWB wb wbblobs = do
         --TODO: this BlobSpan to BlobRef conversion involves quite a lot of allocation
-        kops <- newMutVar $ map (fmap (fmap (WB.mkBlobRef wbblobs))) $
+        kops <- newMutVar $ map (fmap (fmap (WB.mkRawBlobRef wbblobs))) $
                   Map.toList $ filterWB $ WB.toMap wb
         nextReadCtx (ReaderNumber 0) (ReadBuffer kops)
       where
@@ -184,11 +184,11 @@ data HasMore = HasMore | Drained
 
 {-# SPECIALISE pop ::
     Readers IO h
-  -> IO (SerialisedKey, Reader.Entry IO (FS.Handle h), HasMore) #-}
+  -> IO (SerialisedKey, Reader.Entry IO h, HasMore) #-}
 pop ::
      (MonadCatch m, MonadSTM m, MonadST m)
   => Readers m h
-  -> m (SerialisedKey, Reader.Entry m (FS.Handle h), HasMore)
+  -> m (SerialisedKey, Reader.Entry m h, HasMore)
 pop r@Readers {..} = do
     ReadCtx {..} <- readMutVar readersNext
     hasMore <- dropOne r readCtxNumber readCtxReader
