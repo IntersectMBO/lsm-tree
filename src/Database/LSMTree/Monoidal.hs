@@ -669,8 +669,8 @@ duplicate (Internal.MonoidalTable t) = Internal.MonoidalTable <$> Internal.dupli
   -> IO (Table IO k v) #-}
 -- | Union two full tables, creating a new table.
 --
--- A good mental model of this operation is @'Data.Map.unionWith' (<>)@ on
--- @'Data.Map.Map' k v@.
+-- A good mental model of this operation is @'Data.Map.Lazy.unionWith' (<>)@ on
+-- @'Data.Map.Lazy.Map' k v@.
 --
 -- Multiple tables of the same type but with different configuration parameters
 -- can live in the same session. However, 'union' only works for tables that

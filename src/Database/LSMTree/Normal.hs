@@ -101,6 +101,9 @@ module Database.LSMTree.Normal (
     -- * Persistence
   , duplicate
 
+    -- * Table union
+  , union
+
     -- * Concurrency #concurrency#
     -- $concurrency
 
@@ -778,3 +781,29 @@ duplicate ::
   => Table m k v blob
   -> m (Table m k v blob)
 duplicate (Internal.NormalTable t) = Internal.NormalTable <$!> Internal.duplicate t
+
+{-------------------------------------------------------------------------------
+  Table union
+-------------------------------------------------------------------------------}
+
+{-# SPECIALISE union ::
+     Table IO k v blob
+  -> Table IO k v blob
+  -> IO (Table IO k v blob) #-}
+-- | Union two full tables, creating a new table.
+--
+-- A good mental model of this operation is @'Data.Map.Lazy.union'@ on
+-- @'Data.Map.Lazy.Map' k v@.
+--
+-- Multiple tables of the same type but with different configuration parameters
+-- can live in the same session. However, 'union' only works for tables that
+-- have the same key\/value types and configuration parameters.
+--
+-- NOTE: unioning tables creates a new table, but does not close the tables that
+-- were used as inputs.
+union :: forall m k v blob.
+     IOLike m
+  => Table m k v blob
+  -> Table m k v blob
+  -> m (Table m k v blob)
+union = undefined
