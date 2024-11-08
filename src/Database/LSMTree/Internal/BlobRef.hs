@@ -141,7 +141,7 @@ readRawBlobRef ::
   -> RawBlobRef m h
   -> m SerialisedBlob
 readRawBlobRef fs RawBlobRef {rawBlobRefFile, rawBlobRefSpan} =
-    BlobFile.readBlobFile fs rawBlobRefFile rawBlobRefSpan
+    BlobFile.readBlob fs rawBlobRefFile rawBlobRefSpan
 
 {-# SPECIALISE readWeakBlobRef :: HasFS IO h -> WeakBlobRef IO h -> IO SerialisedBlob #-}
 readWeakBlobRef ::
@@ -152,7 +152,7 @@ readWeakBlobRef ::
 readWeakBlobRef fs wref =
     bracket (deRefWeakBlobRef wref) removeReference $
       \StrongBlobRef {strongBlobRefFile, strongBlobRefSpan} ->
-        BlobFile.readBlobFile fs strongBlobRefFile strongBlobRefSpan
+        BlobFile.readBlob fs strongBlobRefFile strongBlobRefSpan
 
 {-# SPECIALISE readWeakBlobRefs :: HasBlockIO IO h -> V.Vector (WeakBlobRef IO h) -> IO (V.Vector SerialisedBlob) #-}
 readWeakBlobRefs ::

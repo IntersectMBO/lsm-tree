@@ -1,15 +1,10 @@
-{-# LANGUAGE DeriveAnyClass     #-}
-{-# LANGUAGE DeriveGeneric      #-}
-{-# LANGUAGE DerivingStrategies #-}
-{- HLINT ignore "Use unless" -}
-
 module Database.LSMTree.Internal.BlobFile (
     BlobFile (..)
   , BlobSpan (..)
   , removeReference
   , RemoveFileOnClose (..)
-  , newBlobFile
-  , readBlobFile
+  , openBlobFile
+  , readBlob
   ) where
 
 import           Control.DeepSeq (NFData (..))
@@ -27,7 +22,7 @@ import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
 import qualified System.FS.BlockIO.API as FS
 
--- | An open handle to a file containing blobs.
+-- | A handle to a file containing blobs.
 --
 -- This is a reference counted object. Upon finalisation, the file is closed
 -- and deleted.
@@ -51,6 +46,7 @@ data BlobSpan = BlobSpan {
 instance NFData BlobSpan where
   rnf (BlobSpan a b) = rnf a `seq` rnf b
 
+{-# INLINE removeReference #-}
 removeReference ::
      (MonadMask m, PrimMonad m)
   => BlobFile m h
@@ -63,21 +59,25 @@ removeReference BlobFile{blobFileRefCounter} =
 data RemoveFileOnClose = RemoveFileOnClose | DoNotRemoveFileOnClose
   deriving stock Eq
 
--- | Adopt an existing open file handle to make a 'BlobFile'. The file must at
--- least be open for reading (but may or may not be open for writing).
+-- | Open the given file to make a 'BlobFile'. The finaliser will close and
+-- delete the file.
 --
--- The finaliser will close and delete the file.
+-- TODO: Temporarily we have a 'RemoveFileOnClose' flag, which can be removed
+-- once 'Run' no longer needs it, when snapshots are implemented.
 --
-newBlobFile ::
+{-# SPECIALISE openBlobFile :: HasFS IO h -> FS.FsPath -> FS.OpenMode -> RemoveFileOnClose -> IO (BlobFile IO h) #-}
+openBlobFile ::
      PrimMonad m
   => HasFS m h
+  -> FS.FsPath
+  -> FS.OpenMode
   -> RemoveFileOnClose
-  -> FS.Handle h
   -> m (BlobFile m h)
-newBlobFile fs r blobFileHandle = do
+openBlobFile fs path mode remove = do
+    blobFileHandle <- FS.hOpen fs path mode
     let finaliser = do
           FS.hClose fs blobFileHandle
-          unless (r == DoNotRemoveFileOnClose) $
+          unless (remove == DoNotRemoveFileOnClose) $
             FS.removeFile fs (FS.handlePath blobFileHandle)
     blobFileRefCounter <- RC.mkRefCounter1 (Just finaliser)
     return BlobFile {
@@ -85,15 +85,15 @@ newBlobFile fs r blobFileHandle = do
       blobFileRefCounter
     }
 
-{-# SPECIALISE readBlobFile :: HasFS IO h -> BlobFile IO h -> BlobSpan -> IO SerialisedBlob #-}
-readBlobFile ::
+{-# SPECIALISE readBlob :: HasFS IO h -> BlobFile IO h -> BlobSpan -> IO SerialisedBlob #-}
+readBlob ::
      (MonadThrow m, PrimMonad m)
   => HasFS m h
   -> BlobFile m h
   -> BlobSpan
   -> m SerialisedBlob
-readBlobFile fs BlobFile {blobFileHandle}
-                BlobSpan {blobSpanOffset, blobSpanSize} = do
+readBlob fs BlobFile {blobFileHandle}
+            BlobSpan {blobSpanOffset, blobSpanSize} = do
     let off = FS.AbsOffset blobSpanOffset
         len :: Int
         len = fromIntegral blobSpanSize
