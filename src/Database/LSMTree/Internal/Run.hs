@@ -3,7 +3,6 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DerivingVia        #-}
 {-# LANGUAGE RecordWildCards    #-}
-{-# LANGUAGE RecursiveDo        #-}
 
 -- | Runs of sorted key\/value data.
 module Database.LSMTree.Internal.Run (
@@ -133,21 +132,30 @@ mkWeakBlobRef Run{runBlobFile} blobspan =
       weakBlobRefSpan = blobspan
     }
 
-{-# SPECIALISE close ::
-     Run IO h
+{-# SPECIALISE finaliser ::
+     HasFS IO h
+  -> FS.Handle h
+  -> BlobFile IO h
+  -> RunFsPaths
   -> IO () #-}
 -- | Close the files used in the run and remove them from disk. After calling
 -- this operation, the run must not be used anymore.
 --
 -- TODO: exception safety
-close :: (MonadSTM m, MonadMask m, PrimMonad m) => Run m h -> m ()
-close Run {..} = do
-    FS.hClose runHasFS runKOpsFile
-    BlobFile.removeReference runBlobFile
-    FS.removeFile runHasFS (runKOpsPath runRunFsPaths)
-    FS.removeFile runHasFS (runFilterPath runRunFsPaths)
-    FS.removeFile runHasFS (runIndexPath runRunFsPaths)
-    FS.removeFile runHasFS (runChecksumsPath runRunFsPaths)
+finaliser ::
+     (MonadSTM m, MonadMask m, PrimMonad m)
+  => HasFS m h
+  -> FS.Handle h
+  -> BlobFile m h
+  -> RunFsPaths
+  -> m ()
+finaliser hfs kopsFile blobFile runFsPaths = do
+    FS.hClose hfs kopsFile
+    BlobFile.removeReference blobFile
+    FS.removeFile hfs (runKOpsPath runFsPaths)
+    FS.removeFile hfs (runFilterPath runFsPaths)
+    FS.removeFile hfs (runIndexPath runFsPaths)
+    FS.removeFile hfs (runChecksumsPath runFsPaths)
 
 -- | Should this run cache key\/ops data in memory?
 data RunDataCaching = CacheRunData | NoCacheRunData
@@ -194,9 +202,9 @@ fromMutable runRunDataCaching refCount builder = do
     runKOpsFile <- FS.hOpen runHasFS (runKOpsPath runRunFsPaths) FS.ReadMode
     runBlobFile <- openBlobFile runHasFS (runBlobPath runRunFsPaths) FS.ReadMode
     setRunDataCaching runHasBlockIO runKOpsFile runRunDataCaching
-    rec runRefCounter <- RC.unsafeMkRefCounterN refCount (close r)
-        let !r = Run { .. }
-    pure r
+    runRefCounter <- RC.unsafeMkRefCounterN refCount
+                       (finaliser runHasFS runKOpsFile runBlobFile runRunFsPaths)
+    return Run { .. }
 
 {-# SPECIALISE fromWriteBuffer ::
      HasFS IO h
@@ -283,13 +291,12 @@ openFromDisk fs hbio runRunDataCaching runRunFsPaths = do
     runKOpsFile <- FS.hOpen fs (runKOpsPath runRunFsPaths) FS.ReadMode
     runBlobFile <- openBlobFile fs (runBlobPath runRunFsPaths) FS.ReadMode
     setRunDataCaching hbio runKOpsFile runRunDataCaching
-    rec runRefCounter <- RC.unsafeMkRefCounterN (RefCount 1) (close r)
-        let !r = Run
-              { runHasFS = fs
-              , runHasBlockIO = hbio
-              , ..
-              }
-    pure r
+    runRefCounter <- RC.mkRefCounter1 (finaliser fs runKOpsFile runBlobFile runRunFsPaths)
+    return Run {
+      runHasFS = fs
+    , runHasBlockIO = hbio
+    , ..
+    }
   where
     -- Note: all file data for this path is evicted from the page cache /if/ the
     -- caching argument is 'NoCacheRunData'.
