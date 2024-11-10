@@ -505,10 +505,10 @@ deriving anyclass instance NoThunks a => NoThunks (RWState a)
 instance Typeable (PrimState m) => NoThunks (RefCounter m) where
   showTypeOf (_ :: Proxy (RefCounter m)) = "RefCounter"
   wNoThunks ctx
-    (RefCounter (a :: PrimVar (PrimState m) Int) (b :: Maybe (m ())))
+    (RefCounter (a :: PrimVar (PrimState m) Int) (b :: m ()))
     = allNoThunks [
           noThunks ctx a
-        , noThunks ctx $ (OnlyCheckWhnfNamed b :: OnlyCheckWhnfNamed "finaliser" (Maybe (m ())))
+        , noThunks ctx $ (OnlyCheckWhnfNamed b :: OnlyCheckWhnfNamed "finaliser" (m ()))
         ]
 
 deriving stock instance Generic RefCount

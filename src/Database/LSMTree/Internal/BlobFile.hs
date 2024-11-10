@@ -67,7 +67,7 @@ openBlobFile fs path mode = do
     let finaliser = do
           FS.hClose fs blobFileHandle
           FS.removeFile fs (FS.handlePath blobFileHandle)
-    blobFileRefCounter <- RC.mkRefCounter1 (Just finaliser)
+    blobFileRefCounter <- RC.mkRefCounter1 finaliser
     return BlobFile {
       blobFileHandle,
       blobFileRefCounter

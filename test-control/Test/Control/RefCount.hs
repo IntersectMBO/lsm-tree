@@ -19,7 +19,7 @@ tests = testGroup "Control.RefCount" [
 prop_refCount :: Property
 prop_refCount = once $ ioProperty $ do
     obj <- newMVar False
-    ref <- mkRefCounter1 $ Just (void $ modifyMVar_ obj (\x -> pure (not x)) )
+    ref <- mkRefCounter1 (void $ modifyMVar_ obj (\x -> pure (not x)) )
 
     addReference ref
     n1 <- readRefCount ref -- 2
@@ -85,7 +85,7 @@ prop_refCount = once $ ioProperty $ do
 prop_removeReferenceN :: Positive Int -> NonNegative Int -> Property
 prop_removeReferenceN (Positive n) (NonNegative m) = ioProperty $ do
     obj <- newMVar False
-    ref <- unsafeMkRefCounterN (RefCount n) $ Just (void $ modifyMVar_ obj (\x -> pure (not x)) )
+    ref <- unsafeMkRefCounterN (RefCount n) (void $ modifyMVar_ obj (\x -> pure (not x)) )
 
     e1 <- try @AssertionFailed $ removeReferenceN ref (fromIntegral m)
     n1 <- readRefCount ref -- 0

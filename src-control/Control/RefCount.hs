@@ -30,7 +30,7 @@ import           Text.Printf
 -- count reaches @0@, the finaliser will be run.
 data RefCounter m = RefCounter {
     countVar  :: !(PrimVar (PrimState m) Int)
-  , finaliser :: !(Maybe (m ()))
+  , finaliser :: !(m ())
   }
 
 instance Show (RefCounter m) where
@@ -44,29 +44,29 @@ instance NFData (RefCounter m) where
 newtype RefCount = RefCount Int
   deriving stock (Eq, Ord, Show)
 
-{-# SPECIALISE unsafeMkRefCounterN :: RefCount -> Maybe (IO ()) -> IO (RefCounter IO) #-}
+{-# SPECIALISE unsafeMkRefCounterN :: RefCount -> IO () -> IO (RefCounter IO) #-}
 -- | Like 'mkRefCounterN', but throws an error if the initial @n < 1@
-unsafeMkRefCounterN :: PrimMonad m => RefCount -> Maybe (m ()) -> m (RefCounter m)
+unsafeMkRefCounterN :: PrimMonad m => RefCount -> m () -> m (RefCounter m)
 unsafeMkRefCounterN !n finaliser = mkRefCounterN n finaliser >>= \case
     Nothing -> error "unsafeMkRefCounterN: n < 1"
     Just rc -> pure rc
 
-{-# SPECIALISE mkRefCounterN :: RefCount -> Maybe (IO ()) -> IO (Maybe (RefCounter IO)) #-}
+{-# SPECIALISE mkRefCounterN :: RefCount -> IO () -> IO (Maybe (RefCounter IO)) #-}
 -- | Make a reference counter with initial value @n@. An optional finaliser is
 -- run when the reference counter reaches @0@.
 --
 -- Returns 'Nothing' if @n < 1@, and 'Just' otherwise.
-mkRefCounterN :: PrimMonad m => RefCount -> Maybe (m ()) -> m (Maybe (RefCounter m))
+mkRefCounterN :: PrimMonad m => RefCount -> m () -> m (Maybe (RefCounter m))
 mkRefCounterN (RefCount !n) finaliser
   | n < 1 = pure Nothing
   | otherwise = do
     countVar <- newPrimVar $! n
     pure $! Just $! RefCounter{countVar, finaliser}
 
-{-# SPECIALISE mkRefCounter1 :: Maybe (IO ()) -> IO (RefCounter IO) #-}
+{-# SPECIALISE mkRefCounter1 :: IO () -> IO (RefCounter IO) #-}
 -- | Make a reference counter with initial value @1@. An optional finaliser is
 -- run when the reference counter reaches @0@.
-mkRefCounter1 :: PrimMonad m => Maybe (m ()) -> m (RefCounter m)
+mkRefCounter1 :: PrimMonad m => m () -> m (RefCounter m)
 mkRefCounter1 finaliser = fromJust <$> mkRefCounterN (RefCount 1) finaliser
 
 {-# SPECIALISE addReference :: HasCallStack => RefCounter IO -> IO () #-}
@@ -87,10 +87,11 @@ addReference RefCounter{countVar} = do
 -- be because the caller has a reference already (that they took out themselves
 -- or were given).
 removeReference :: (HasCallStack, PrimMonad m, MonadMask m) => RefCounter m -> m ()
-removeReference RefCounter{countVar, finaliser} = mask_ $ do
-    prevCount <- fetchSubInt countVar 1
-    assertWithCallStack (prevCount > 0) $ pure ()
-    when (prevCount == 1) $ sequence_ finaliser
+removeReference RefCounter{countVar, finaliser} =
+    mask_ $ do
+      prevCount <- fetchSubInt countVar 1
+      assertWithCallStack (prevCount > 0) $ pure ()
+      when (prevCount == 1) finaliser
 
 -- TODO: remove uses of this API. Eventually all references should be singular,
 -- and not use patterns where if A contains B then N references on A becomes N
@@ -113,7 +114,7 @@ removeReferenceN RefCounter{countVar, finaliser} n = mask_ $ do
     assertWithCallStack (prevCount > 0) $ pure ()
     -- the reference count can not go below zero
     assertWithCallStack (prevCount >= n') $ pure ()
-    when (prevCount <= n') $ sequence_ finaliser
+    when (prevCount <= n') finaliser
 
 -- TODO: remove when removeReferenceN is removed
 {-# INLINABLE fromIntegralChecked #-}

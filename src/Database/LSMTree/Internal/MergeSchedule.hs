@@ -355,7 +355,7 @@ newMergingRun mergePolicy mergeNumRuns mergeNumEntries knownCompleted state = do
       CompletedMerge{} -> pure ()
     mergeKnownCompleted <- newMutVar knownCompleted
     mergeState <- newMVar $! state
-    mergeRefCounter <- RC.mkRefCounter1 (Just (finalise mergeState))
+    mergeRefCounter <- RC.mkRefCounter1 (finalise mergeState)
     pure $! MergingRun {
         mergePolicy
       , mergeNumRuns

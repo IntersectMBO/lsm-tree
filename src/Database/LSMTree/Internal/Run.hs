@@ -194,7 +194,7 @@ fromMutable runRunDataCaching refCount builder = do
     runKOpsFile <- FS.hOpen runHasFS (runKOpsPath runRunFsPaths) FS.ReadMode
     runBlobFile <- openBlobFile runHasFS (runBlobPath runRunFsPaths) FS.ReadMode
     setRunDataCaching runHasBlockIO runKOpsFile runRunDataCaching
-    rec runRefCounter <- RC.unsafeMkRefCounterN refCount (Just $ close r)
+    rec runRefCounter <- RC.unsafeMkRefCounterN refCount (close r)
         let !r = Run { .. }
     pure r
 
@@ -283,7 +283,7 @@ openFromDisk fs hbio runRunDataCaching runRunFsPaths = do
     runKOpsFile <- FS.hOpen fs (runKOpsPath runRunFsPaths) FS.ReadMode
     runBlobFile <- openBlobFile fs (runBlobPath runRunFsPaths) FS.ReadMode
     setRunDataCaching hbio runKOpsFile runRunDataCaching
-    rec runRefCounter <- RC.unsafeMkRefCounterN (RefCount 1) (Just $ close r)
+    rec runRefCounter <- RC.unsafeMkRefCounterN (RefCount 1) (close r)
         let !r = Run
               { runHasFS = fs
               , runHasBlockIO = hbio
