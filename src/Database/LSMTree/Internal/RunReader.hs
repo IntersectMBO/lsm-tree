@@ -70,7 +70,7 @@ data RunReader m h = RunReader {
       -- with @O_DIRECT@, which is counterproductive here.
     , readerKOpsHandle     :: !(FS.Handle h)
       -- | The blob file from the run this reader is reading from.
-    , readerBlobFile       :: !(BlobFile m h)
+    , readerBlobFile       :: !(Ref (BlobFile m h))
     , readerRunDataCaching :: !Run.RunDataCaching
     , readerHasFS          :: !(HasFS m h)
     , readerHasBlockIO     :: !(HasBlockIO m h)
@@ -105,10 +105,7 @@ new !offsetKey readerRun@(Run.Run {
 
     (page, entryNo) <- seekFirstEntry readerKOpsHandle
 
-    --TODO: instead use: readerBlobFile <- dupRef runBlobFile
-    let readerBlobFile = runBlobFile
-    addReference (blobFileRefCounter readerBlobFile)
-
+    readerBlobFile <- dupRef runBlobFile
     readerCurrentEntryNo <- newPrimVar entryNo
     readerCurrentPage <- newMutVar page
     let reader = RunReader {..}
@@ -165,7 +162,7 @@ close RunReader{..} = do
       -- drop the file from the OS page cache
       FS.hDropCacheAll readerHasBlockIO readerKOpsHandle
     FS.hClose readerHasFS readerKOpsHandle
-    BlobFile.removeReference readerBlobFile
+    releaseRef readerBlobFile
 
 -- | The 'SerialisedKey' and 'SerialisedValue' point into the in-memory disk
 -- page. Keeping them alive will also prevent garbage collection of the 4k byte

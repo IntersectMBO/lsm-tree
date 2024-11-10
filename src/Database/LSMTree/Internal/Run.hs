@@ -34,13 +34,12 @@ import           Control.Monad.Class.MonadST (MonadST)
 import           Control.Monad.Class.MonadSTM (MonadSTM (..))
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Primitive
-import           Control.RefCount (RefCounter)
+import           Control.RefCount hiding (addReference, removeReference)
 import qualified Control.RefCount as RC
 import           Data.BloomFilter (Bloom)
 import qualified Data.ByteString.Short as SBS
 import           Data.Foldable (for_)
-import           Database.LSMTree.Internal.BlobFile hiding (removeReference)
-import qualified Database.LSMTree.Internal.BlobFile as BlobFile
+import           Database.LSMTree.Internal.BlobFile
 import           Database.LSMTree.Internal.BlobRef (RawBlobRef (..),
                      WeakBlobRef (..))
 import           Database.LSMTree.Internal.BloomFilter (bloomFilterFromSBS)
@@ -88,7 +87,7 @@ data Run m h = Run {
       -- | The file handle for the BLOBs file. This file is opened
       -- read-only and is accessed in a normal style using buffered
       -- I\/O, reading arbitrary file offset and length spans.
-    , runBlobFile       :: !(BlobFile m h)
+    , runBlobFile       :: !(Ref (BlobFile m h))
     , runRunDataCaching :: !RunDataCaching
     , runHasFS          :: !(HasFS m h)
     , runHasBlockIO     :: !(HasBlockIO m h)
@@ -125,9 +124,9 @@ removeReference r = RC.removeReference (runRefCounter r)
 
 -- | Helper function to make a 'WeakBlobRef' that points into a 'Run'.
 mkRawBlobRef :: Run m h -> BlobSpan -> RawBlobRef m h
-mkRawBlobRef Run{runBlobFile} blobspan =
+mkRawBlobRef Run{runBlobFile = DeRef blobfile} blobspan =
     RawBlobRef {
-      rawBlobRefFile = runBlobFile,
+      rawBlobRefFile = blobfile,
       rawBlobRefSpan = blobspan
     }
 
@@ -135,14 +134,14 @@ mkRawBlobRef Run{runBlobFile} blobspan =
 mkWeakBlobRef :: Run m h -> BlobSpan -> WeakBlobRef m h
 mkWeakBlobRef Run{runBlobFile} blobspan =
     WeakBlobRef {
-      weakBlobRefFile = runBlobFile,
+      weakBlobRefFile = mkWeakRef runBlobFile,
       weakBlobRefSpan = blobspan
     }
 
 {-# SPECIALISE finaliser ::
      HasFS IO h
   -> FS.Handle h
-  -> BlobFile IO h
+  -> Ref (BlobFile IO h)
   -> RunFsPaths
   -> IO () #-}
 -- | Close the files used in the run and remove them from disk. After calling
@@ -153,12 +152,12 @@ finaliser ::
      (MonadSTM m, MonadMask m, PrimMonad m)
   => HasFS m h
   -> FS.Handle h
-  -> BlobFile m h
+  -> Ref (BlobFile m h)
   -> RunFsPaths
   -> m ()
 finaliser hfs kopsFile blobFile fsPaths = do
     FS.hClose hfs kopsFile
-    BlobFile.removeReference blobFile
+    releaseRef blobFile
     FS.removeFile hfs (runKOpsPath fsPaths)
     FS.removeFile hfs (runFilterPath fsPaths)
     FS.removeFile hfs (runIndexPath fsPaths)

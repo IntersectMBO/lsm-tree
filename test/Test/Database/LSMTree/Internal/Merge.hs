@@ -2,6 +2,7 @@
 
 module Test.Database.LSMTree.Internal.Merge (tests) where
 
+import           Control.RefCount
 import           Data.Bifoldable (bifoldMap)
 import qualified Data.BloomFilter as Bloom
 import           Data.Foldable (traverse_)
@@ -74,9 +75,11 @@ prop_MergeDistributes fs hbio level stepSize (SmallList rds) =
       withRun fs hbio (simplePath 1) (RunData $ mergeWriteBuffers level $ fmap unRunData rds') $ \rhs -> do
 
         lhsKOpsFile <- FS.hGetAll fs (Run.runKOpsFile lhs)
-        lhsBlobFile <- FS.hGetAll fs (BlobFile.blobFileHandle (Run.runBlobFile lhs))
+        lhsBlobFile <- withRef (Run.runBlobFile lhs) $
+                       FS.hGetAll fs . BlobFile.blobFileHandle
         rhsKOpsFile <- FS.hGetAll fs (Run.runKOpsFile rhs)
-        rhsBlobFile <- FS.hGetAll fs (BlobFile.blobFileHandle (Run.runBlobFile rhs))
+        rhsBlobFile <- withRef (Run.runBlobFile rhs) $
+                       FS.hGetAll fs . BlobFile.blobFileHandle
 
         lhsKOps <- readKOps Nothing lhs
         rhsKOps <- readKOps Nothing rhs

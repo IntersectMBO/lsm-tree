@@ -250,7 +250,7 @@ instance NoThunks WriteBuffer where
 -------------------------------------------------------------------------------}
 
 deriving stock instance Generic (WriteBufferBlobs m h)
-deriving anyclass instance (Typeable (PrimState m), Typeable h)
+deriving anyclass instance (Typeable (PrimState m), Typeable m, Typeable h)
                         => NoThunks (WriteBufferBlobs m h)
 
 deriving stock instance Generic (FilePointer m)
@@ -449,7 +449,7 @@ deriving anyclass instance (Typeable h, Typeable (PrimState m))
                         => NoThunks (RawBlobRef m h)
 
 deriving stock instance Generic (WeakBlobRef m h)
-deriving anyclass instance (Typeable h, Typeable (PrimState m))
+deriving anyclass instance (Typeable h, Typeable m, Typeable (PrimState m))
                         => NoThunks (WeakBlobRef m h)
 
 {-------------------------------------------------------------------------------
@@ -510,6 +510,14 @@ instance Typeable (PrimState m) => NoThunks (RefCounter m) where
           noThunks ctx a
         , noThunks ctx $ (OnlyCheckWhnfNamed b :: OnlyCheckWhnfNamed "finaliser" (m ()))
         ]
+
+-- Ref constructor not exported, cannot derive Generic, use DeRef instead.
+instance (NoThunks obj, Typeable obj) => NoThunks (Ref obj) where
+  showTypeOf p@(_ :: Proxy (Ref obj)) = show $ typeRep p
+  wNoThunks ctx (DeRef ref) = noThunks ctx ref
+
+deriving stock instance Generic (WeakRef obj)
+deriving anyclass instance (NoThunks obj, Typeable obj) => NoThunks (WeakRef obj)
 
 {-------------------------------------------------------------------------------
   kmerge

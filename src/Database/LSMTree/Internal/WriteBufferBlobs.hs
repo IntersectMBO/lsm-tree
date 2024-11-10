@@ -36,10 +36,11 @@ module Database.LSMTree.Internal.WriteBufferBlobs (
 import           Control.DeepSeq (NFData (..))
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Primitive (PrimMonad, PrimState)
+import           Control.RefCount hiding (addReference, removeReference)
 import qualified Control.RefCount as RC
 import           Data.Primitive.PrimVar as P
 import           Data.Word (Word64)
-import           Database.LSMTree.Internal.BlobFile hiding (removeReference)
+import           Database.LSMTree.Internal.BlobFile
 import qualified Database.LSMTree.Internal.BlobFile as BlobFile
 import           Database.LSMTree.Internal.BlobRef (RawBlobRef (..),
                      WeakBlobRef (..))
@@ -101,17 +102,20 @@ import           System.FS.API (HasFS)
 --
 data WriteBufferBlobs m h =
      WriteBufferBlobs {
-       blobFile        :: !(BlobFile m h)
+       blobFile           :: !(Ref (BlobFile m h))
 
        -- | The manually tracked file pointer.
-     , blobFilePointer :: !(FilePointer m)
+     , blobFilePointer    :: !(FilePointer m)
+
+       -- The 'WriteBufferBlobs' is a shared reference-counted object type
+     , writeBufRefCounter :: !(RefCounter m)
      }
 
 instance NFData h => NFData (WriteBufferBlobs m h) where
-  rnf (WriteBufferBlobs a b) = rnf a `seq` rnf b
+  rnf (WriteBufferBlobs a b c) = rnf a `seq` rnf b `seq` rnf c
 
 {-# SPECIALISE new :: HasFS IO h -> FS.FsPath -> IO (WriteBufferBlobs IO h) #-}
-new :: PrimMonad m
+new :: (PrimMonad m, MonadMask m)
     => HasFS m h
     -> FS.FsPath
     -> m (WriteBufferBlobs m h)
@@ -120,20 +124,22 @@ new fs blobFileName = do
     -- we can also be asked to retrieve blobs at any time.
     blobFile <- openBlobFile fs blobFileName (FS.ReadWriteMode FS.MustBeNew)
     blobFilePointer <- newFilePointer
+    writeBufRefCounter <- newRefCounter (releaseRef blobFile)
     return WriteBufferBlobs {
       blobFile,
-      blobFilePointer
+      blobFilePointer,
+      writeBufRefCounter
     }
 
 {-# SPECIALISE addReference :: WriteBufferBlobs IO h -> IO () #-}
 addReference :: PrimMonad m => WriteBufferBlobs m h -> m ()
-addReference WriteBufferBlobs {blobFile} =
-    RC.addReference (blobFileRefCounter blobFile)
+addReference WriteBufferBlobs {writeBufRefCounter} =
+    RC.addReference writeBufRefCounter
 
 {-# SPECIALISE removeReference :: WriteBufferBlobs IO h -> IO () #-}
 removeReference :: (PrimMonad m, MonadMask m) => WriteBufferBlobs m h -> m ()
-removeReference WriteBufferBlobs {blobFile} =
-    BlobFile.removeReference blobFile
+removeReference WriteBufferBlobs {writeBufRefCounter} =
+    RC.removeReference writeBufRefCounter
 
 {-# SPECIALISE addBlob :: HasFS IO h -> WriteBufferBlobs IO h -> SerialisedBlob -> IO BlobSpan #-}
 addBlob :: (PrimMonad m, MonadThrow m)
@@ -155,9 +161,9 @@ addBlob fs WriteBufferBlobs {blobFile, blobFilePointer} blob = do
 mkRawBlobRef :: WriteBufferBlobs m h
              -> BlobSpan
              -> RawBlobRef m h
-mkRawBlobRef WriteBufferBlobs {blobFile} blobspan =
+mkRawBlobRef WriteBufferBlobs {blobFile = DeRef blobfile} blobspan =
     RawBlobRef {
-      rawBlobRefFile = blobFile,
+      rawBlobRefFile = blobfile,
       rawBlobRefSpan = blobspan
     }
 
@@ -168,7 +174,7 @@ mkWeakBlobRef :: WriteBufferBlobs m h
               -> WeakBlobRef m h
 mkWeakBlobRef WriteBufferBlobs {blobFile} blobspan =
     WeakBlobRef {
-      weakBlobRefFile = blobFile,
+      weakBlobRefFile = mkWeakRef blobFile,
       weakBlobRefSpan = blobspan
     }
 
