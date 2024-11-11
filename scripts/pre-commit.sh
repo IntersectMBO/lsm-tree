@@ -22,6 +22,6 @@ if [ ! "${unstaged_cabal_files}" = "" ]; then
 fi
 
 # Run various checks and formatters
-./scripts/check-cabal.sh
-./scripts/format-cabal.sh
-./scripts/format-stylish.sh
+./scripts/check-cabal.sh || exit 1
+./scripts/format-cabal.sh || exit 1
+./scripts/format-stylish.sh || exit 1
