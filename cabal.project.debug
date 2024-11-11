@@ -26,3 +26,4 @@ if impl(ghc >=9.4.6 && <9.5 || >=9.6.3)
 
   package fs-sim
     ghc-options: -fcheck-prim-bounds
+
