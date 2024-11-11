@@ -25,7 +25,7 @@ import qualified Data.Vector.Primitive as Primitive (Vector (Vector), concat,
 import           Data.Word (Word16, Word32, Word64, Word8)
 import           Database.LSMTree.Extras.Generators (LogicalPageSummaries,
                      toAppends)
-import           Database.LSMTree.Internal.Chunk (fromChunk)
+import qualified Database.LSMTree.Internal.Chunk as Chunk (toByteVector)
 import           Database.LSMTree.Internal.Entry (NumEntries (NumEntries))
 import           Database.LSMTree.Internal.IndexCompactAcc
                      (Append (AppendMultiPage, AppendSinglePage))
@@ -264,8 +264,9 @@ incrementalConstruction appends = runST $ do
     let
 
         serialised :: Primitive.Vector Word8
-        serialised = Primitive.concat $
-                     fromChunk <$> catMaybes (commonChunks ++ [remnant])
+        serialised = Primitive.concat                      $
+                     map Chunk.toByteVector                $
+                     catMaybes (commonChunks ++ [remnant])
 
     return (unserialised, serialised)
     where

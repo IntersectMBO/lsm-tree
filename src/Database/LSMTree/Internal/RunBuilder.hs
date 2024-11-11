@@ -25,6 +25,8 @@ import           Data.Word (Word64)
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..), RawBlobRef)
 import qualified Database.LSMTree.Internal.BlobRef as BlobRef
 import           Database.LSMTree.Internal.BloomFilter (bloomFilterToLBS)
+import           Database.LSMTree.Internal.Chunk (Chunk)
+import qualified Database.LSMTree.Internal.Chunk as Chunk (toByteString)
 import           Database.LSMTree.Internal.CRC32C (CRC32C)
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry
@@ -313,16 +315,16 @@ writeIndexHeader RunBuilder {..} =
 
 {-# SPECIALISE writeIndexChunk ::
      RunBuilder IO h
-  -> Index.Chunk
+  -> Chunk
   -> IO () #-}
 writeIndexChunk ::
      (MonadSTM m, PrimMonad m)
   => RunBuilder m h
-  -> Index.Chunk
+  -> Chunk
   -> m ()
 writeIndexChunk RunBuilder {..} chunk =
     writeToHandle runBuilderHasFS (forRunIndex runBuilderHandles) $
-      BSL.fromStrict $ Index.chunkToBS chunk
+      BSL.fromStrict $ Chunk.toByteString chunk
 
 {-# SPECIALISE writeIndexFinal ::
      RunBuilder IO h
