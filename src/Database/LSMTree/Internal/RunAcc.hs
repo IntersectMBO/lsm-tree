@@ -42,9 +42,9 @@ import           Data.Primitive.PrimVar (PrimVar, modifyPrimVar, newPrimVar,
 import           Data.Word (Word64)
 import           Database.LSMTree.Internal.Assertions (fromIntegralChecked)
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
+import           Database.LSMTree.Internal.Chunk (Chunk)
 import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..))
 import           Database.LSMTree.Internal.IndexCompact (IndexCompact)
-import qualified Database.LSMTree.Internal.IndexCompact as Index
 import           Database.LSMTree.Internal.IndexCompactAcc (IndexCompactAcc)
 import qualified Database.LSMTree.Internal.IndexCompactAcc as Index
 import           Database.LSMTree.Internal.PageAcc (PageAcc)
@@ -116,7 +116,7 @@ new (NumEntries nentries) alloc = do
 unsafeFinalise ::
      RunAcc s
   -> ST s ( Maybe RawPage
-          , Maybe Index.Chunk
+          , Maybe Chunk
           , Bloom SerialisedKey
           , IndexCompact
           , NumEntries
@@ -130,9 +130,9 @@ unsafeFinalise racc@RunAcc {..} = do
         !mchunk = selectChunk mpagemchunk mchunk'
     pure (mpage, mchunk, bloom, index, NumEntries numEntries)
   where
-    selectChunk :: Maybe (RawPage, Maybe Index.Chunk)
-                -> Maybe Index.Chunk
-                -> Maybe Index.Chunk
+    selectChunk :: Maybe (RawPage, Maybe Chunk)
+                -> Maybe Chunk
+                -> Maybe Chunk
     selectChunk (Just (_page, Just _chunk)) (Just _chunk') =
         -- If flushing the page accumulator gives us an index chunk then
         -- the index can't have any more chunks when we finalise the index.
@@ -154,13 +154,13 @@ addKeyOp
   :: RunAcc s
   -> SerialisedKey
   -> Entry SerialisedValue BlobSpan -- ^ the full value, not just a prefix
-  -> ST s ([RawPage], [RawOverflowPage], [Index.Chunk])
+  -> ST s ([RawPage], [RawOverflowPage], [Chunk])
 addKeyOp racc k e
   | PageAcc.entryWouldFitInPage k e = smallToLarge <$> addSmallKeyOp racc k e
   | otherwise                       =                  addLargeKeyOp racc k e
   where
-    smallToLarge :: Maybe (RawPage, Maybe Index.Chunk)
-                 -> ([RawPage], [RawOverflowPage], [Index.Chunk])
+    smallToLarge :: Maybe (RawPage, Maybe Chunk)
+                 -> ([RawPage], [RawOverflowPage], [Chunk])
     smallToLarge Nothing                   = ([],     [], [])
     smallToLarge (Just (page, Nothing))    = ([page], [], [])
     smallToLarge (Just (page, Just chunk)) = ([page], [], [chunk])
@@ -179,7 +179,7 @@ addSmallKeyOp
   :: RunAcc s
   -> SerialisedKey
   -> Entry SerialisedValue BlobSpan
-  -> ST s (Maybe (RawPage, Maybe Index.Chunk))
+  -> ST s (Maybe (RawPage, Maybe Chunk))
 addSmallKeyOp racc@RunAcc{..} k e =
   assert (PageAcc.entryWouldFitInPage k e) $ do
     modifyPrimVar entryCount (+1)
@@ -225,7 +225,7 @@ addLargeKeyOp
   :: RunAcc s
   -> SerialisedKey
   -> Entry SerialisedValue BlobSpan -- ^ the full value, not just a prefix
-  -> ST s ([RawPage], [RawOverflowPage], [Index.Chunk])
+  -> ST s ([RawPage], [RawOverflowPage], [Chunk])
 addLargeKeyOp racc@RunAcc{..} k e =
   assert (not (PageAcc.entryWouldFitInPage k e)) $ do
     modifyPrimVar entryCount (+1)
@@ -276,7 +276,7 @@ addLargeSerialisedKeyOp
                        -- first page of a multi-page representation of a single
                        -- key\/op /without/ a 'BlobSpan'.
   -> [RawOverflowPage] -- ^ The overflow pages for this key\/op
-  -> ST s ([RawPage], [RawOverflowPage], [Index.Chunk])
+  -> ST s ([RawPage], [RawOverflowPage], [Chunk])
 addLargeSerialisedKeyOp racc@RunAcc{..} k page overflowPages =
   assert (RawPage.rawPageNumKeys page == 1) $
   assert (RawPage.rawPageHasBlobSpanAt page 0 == 0) $
@@ -299,7 +299,7 @@ addLargeSerialisedKeyOp racc@RunAcc{..} k page overflowPages =
 --
 -- Returns @Nothing@ if the page accumulator was empty.
 --
-flushPageIfNonEmpty :: RunAcc s -> ST s (Maybe (RawPage, Maybe Index.Chunk))
+flushPageIfNonEmpty :: RunAcc s -> ST s (Maybe (RawPage, Maybe Chunk))
 flushPageIfNonEmpty RunAcc{mpageacc, mindex} = do
     nkeys <- PageAcc.keysCountPageAcc mpageacc
     if nkeys > 0
@@ -320,10 +320,10 @@ flushPageIfNonEmpty RunAcc{mpageacc, mindex} = do
 -- Combine the result of 'flushPageIfNonEmpty' with extra pages and index
 -- chunks.
 --
-selectPagesAndChunks :: Maybe (RawPage, Maybe Index.Chunk)
+selectPagesAndChunks :: Maybe (RawPage, Maybe Chunk)
                      -> RawPage
-                     -> [Index.Chunk]
-                     -> ([RawPage], [Index.Chunk])
+                     -> [Chunk]
+                     -> ([RawPage], [Chunk])
 selectPagesAndChunks mpagemchunkPre page chunks =
   case mpagemchunkPre of
     Nothing                       -> (         [page],          chunks)

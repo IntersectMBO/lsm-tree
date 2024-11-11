@@ -29,6 +29,7 @@ import           Data.Word
 import           Database.LSMTree.Extras
 import           Database.LSMTree.Extras.Generators as Gen
 import           Database.LSMTree.Internal.BitMath
+import           Database.LSMTree.Internal.Chunk as Chunk (toByteString)
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
 import           Database.LSMTree.Internal.IndexCompact as Index
 import           Database.LSMTree.Internal.IndexCompactAcc as Cons
@@ -98,7 +99,8 @@ tests = testGroup "Test.Database.LSMTree.Internal.IndexCompact" [
                 ]
 
           let header = LBS.unpack headerLBS
-          let primary = LBS.unpack (LBS.fromChunks (map chunkToBS chunks))
+          let primary = LBS.unpack $
+                        LBS.fromChunks (map Chunk.toByteString chunks)
           let rest = LBS.unpack (finalLBS (NumEntries 7) index)
 
           let comparison msg xs ys = unlines $
@@ -229,7 +231,8 @@ prop_roundtrip_chunks (Chunks chunks index) numEntries =
       Right (numEntries, index) === fromSBS sbs
   where
     bsVersion = headerLBS
-    bsPrimary = LBS.fromChunks $ map chunkToBS chunks
+    bsPrimary = LBS.fromChunks $
+                map (Chunk.toByteString . word64VectorToChunk) chunks
     bsRest = finalLBS numEntries index
     sbs = SBS.toShort (LBS.toStrict (bsVersion <> bsPrimary <> bsRest))
 
@@ -290,7 +293,8 @@ writeIndexCompact numEntries (ChunkSize csize) ps = runST $ do
     (c, index) <- unsafeEnd ica
     return
       ( headerLBS
-      , LBS.fromChunks $ foldMap (map chunkToBS) $ cs <> pure (toList c)
+      , LBS.fromChunks $
+        foldMap (map Chunk.toByteString) $ cs <> pure (toList c)
       , finalLBS numEntries index
       )
 
@@ -389,7 +393,7 @@ word32toBytesLE = take 4 . map fromIntegral . iterate (`div` 256)
 word64toBytesLE :: Word64 -> [Word8]
 word64toBytesLE = take 8 . map fromIntegral . iterate (`div` 256)
 
-data Chunks = Chunks [Chunk] IndexCompact
+data Chunks = Chunks [VU.Vector Word64] IndexCompact
   deriving stock (Show)
 
 -- | The concatenated chunks must correspond to the primary array of the index.
@@ -399,7 +403,7 @@ data Chunks = Chunks [Chunk] IndexCompact
 -- valid in other ways (e.g. can successfully be queried).
 chunksInvariant :: Chunks -> Bool
 chunksInvariant (Chunks chunks IndexCompact {..}) =
-       VU.length icPrimary == sum (map (VU.length . cPrimary) chunks)
+       VU.length icPrimary == sum (map VU.length chunks)
     && VU.length icClashes == VU.length icPrimary
     && VU.length icLargerThanPage == VU.length icPrimary
 
@@ -412,16 +416,16 @@ instance Arbitrary Chunks where
     icClashes <- VU.fromList . map Bit <$> vector numPages
     icLargerThanPage <- VU.fromList . map Bit <$> vector numPages
     icTieBreaker <- arbitrary
-    return (Chunks (map Chunk chunks) IndexCompact {..})
+    return (Chunks chunks IndexCompact {..})
 
   shrink (Chunks chunks index) =
     -- shrink number of pages
-    [ Chunks (map Chunk chunks') index
+    [ Chunks chunks' index
         { icPrimary = primary'
         , icClashes = VU.slice 0 numPages' (icClashes index)
         , icLargerThanPage = VU.slice 0 numPages' (icLargerThanPage index)
         }
-    | chunks' <- shrink (map cPrimary chunks)
+    | chunks' <- shrink chunks
     , let primary' = mconcat chunks'
     , let numPages' = VU.length primary'
     ] ++

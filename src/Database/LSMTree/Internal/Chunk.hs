@@ -5,7 +5,8 @@ module Database.LSMTree.Internal.Chunk
 (
     -- * Chunks
     Chunk (Chunk),
-    fromChunk,
+    toByteVector,
+    toByteString,
 
     -- * Balers
     Baler,
@@ -19,23 +20,31 @@ import           Prelude hiding (length)
 
 import           Control.Exception (assert)
 import           Control.Monad.ST.Strict (ST)
+import           Data.ByteString (ByteString)
 import           Data.List (scanl')
 import           Data.Primitive.PrimVar (PrimVar, newPrimVar, readPrimVar,
                      writePrimVar)
-import           Data.Vector.Primitive (Vector, length, unsafeCopy,
+import           Data.Vector.Primitive (Vector (Vector), length, unsafeCopy,
                      unsafeFreeze)
 import           Data.Vector.Primitive.Mutable (MVector)
 import qualified Data.Vector.Primitive.Mutable as Mutable (drop, length, slice,
                      take, unsafeCopy, unsafeNew)
 import           Data.Word (Word8)
+import           Database.LSMTree.Internal.ByteString (byteArrayToByteString)
 
 -- * Chunks
 
 -- | A chunk of bytes, typically output during incremental index serialisation.
-newtype Chunk = Chunk (Vector Word8)
+newtype Chunk = Chunk (Vector Word8) deriving stock (Eq, Show)
 
-fromChunk :: Chunk -> Vector Word8
-fromChunk (Chunk content) = content
+-- | Yields the contents of a chunk as a byte vector.
+toByteVector :: Chunk -> Vector Word8
+toByteVector (Chunk byteVector) = byteVector
+
+-- | Yields the contents of a chunk as a (strict) byte string.
+toByteString :: Chunk -> ByteString
+toByteString (Chunk (Vector vecOffset vecLength byteArray))
+    = byteArrayToByteString vecOffset vecLength byteArray
 
 -- * Balers
 
