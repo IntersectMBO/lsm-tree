@@ -41,6 +41,8 @@ module Database.LSMTree.Internal.CRC32C (
   readChecksumsFile,
   writeChecksumsFile,
   writeChecksumsFile',
+
+  hexdigitsToInt
   ) where
 
 import           Control.Monad
@@ -212,7 +214,7 @@ hGetAllCRC32C' ::
   -> m CRC32C
 hGetAllCRC32C' hfs h (ChunkSize !chunkSize) !crc0
   | chunkSize <= 0
-  = error "hGetAllCRC32C_SBS: chunkSize must be >0"
+  = error "hGetAllCRC32C': chunkSize must be >0"
   | otherwise
   = do
       buf@(MutableByteArray !mba#) <- newPinnedByteArray (fromIntegral chunkSize)

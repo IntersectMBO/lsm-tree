@@ -5,38 +5,7 @@
 {-# LANGUAGE RecordWildCards    #-}
 {-# LANGUAGE RecursiveDo        #-}
 
--- | Functionality related to LSM-Tree runs (sequences of LSM-Tree data).
---
--- === TODO
---
--- This is temporary module header documentation. The module will be
--- fleshed out more as we implement bits of it.
---
--- Related work packages: 5, 6
---
--- This module includes in-memory parts and I\/O parts for, amongst others,
---
--- * High-performance batch lookups
---
--- * Range lookups
---
--- * Incremental run construction
---
--- * Lookups in loaded disk pages, value resolution
---
--- * In-memory representation of a run
---
--- * Flushing a write buffer to a run
---
--- * Opening, deserialising, and verifying files for an LSM run.
---
--- * Closing runs (and removing files)
---
--- * high performance, incremental k-way merge
---
--- The above list is a sketch. Functionality may move around, and the list is
--- not exhaustive.
---
+-- | Runs of sorted key\/value data.
 module Database.LSMTree.Internal.Run (
     -- * Run
     Run (..)
@@ -50,8 +19,10 @@ module Database.LSMTree.Internal.Run (
     -- ** Run creation
   , fromMutable
   , fromWriteBuffer
-  , openFromDisk
   , RunDataCaching (..)
+    -- * Snapshot
+  , ChecksumError (..)
+  , openFromDisk
   ) where
 
 import           Control.DeepSeq (NFData (..), rwhnf)

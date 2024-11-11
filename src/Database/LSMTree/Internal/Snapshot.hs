@@ -7,6 +7,10 @@ module Database.LSMTree.Internal.Snapshot (
   , SnapshotMetaData (..)
   , SnapshotLabel (..)
   , SnapshotTableType (..)
+  , writeFileSnapshotMetaData
+  , readFileSnapshotMetaData
+  , encodeSnapshotMetaData
+  , decodeSnapshotMetaData
     -- * Snapshot format
   , numSnapRuns
   , SnapLevels
@@ -23,8 +27,6 @@ module Database.LSMTree.Internal.Snapshot (
   , Encode (..)
   , Decode (..)
   , DecodeVersioned (..)
-  , encodeSnapshotMetaData
-  , decodeSnapshotMetaData
   , Versioned (..)
   ) where
 
@@ -34,30 +36,38 @@ import           Codec.CBOR.Read
 import           Codec.CBOR.Write
 import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Concurrent.Class.MonadSTM (MonadSTM)
+import           Control.Monad (void, when)
 import           Control.Monad.Class.MonadST (MonadST)
-import           Control.Monad.Class.MonadThrow (MonadMask)
+import           Control.Monad.Class.MonadThrow (MonadMask, MonadThrow (..))
 import           Control.Monad.Fix (MonadFix)
 import           Control.Monad.Primitive (PrimMonad)
 import           Control.TempRegistry
 import           Data.Bifunctor
+import qualified Data.ByteString.Builder as BSB
+import qualified Data.ByteString.Char8 as BSC
 import           Data.ByteString.Lazy (ByteString)
+import qualified Data.ByteString.Lazy as BSL
 import           Data.Primitive (newMutVar, readMutVar)
 import           Data.Primitive.PrimVar
 import           Data.Text (Text)
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Config
+import           Database.LSMTree.Internal.CRC32C
+import qualified Database.LSMTree.Internal.CRC32C as FS
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.MergeSchedule
 import           Database.LSMTree.Internal.Paths (SessionRoot)
 import qualified Database.LSMTree.Internal.Paths as Paths
-import           Database.LSMTree.Internal.Run (Run)
+import           Database.LSMTree.Internal.Run (ChecksumError (..), Run)
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.UniqCounter (UniqCounter,
                      incrUniqCounter, uniqueToRunNumber)
-import           System.FS.API (HasFS)
+import qualified System.FS.API as FS
+import           System.FS.API (FsPath, HasFS)
+import qualified System.FS.API.Lazy as FS
 import           System.FS.BlockIO.API (HasBlockIO)
 import           Text.Printf
 
@@ -132,6 +142,65 @@ data SnapshotMetaData = SnapshotMetaData {
   , snapMetaLevels    :: !SnapLevels
   }
   deriving stock (Show, Eq)
+
+-- | Encode 'SnapshotMetaData' and write it to 'SnapshotMetaDataFile'.
+writeFileSnapshotMetaData ::
+     MonadThrow m
+  => HasFS m h
+  -> FsPath -- ^ Target file for snapshot metadata
+  -> FsPath -- ^ Target file for checksum
+  -> SnapshotMetaData
+  -> m ()
+writeFileSnapshotMetaData hfs contentPath checksumPath snapMetaData = do
+    (_, checksum) <-
+      FS.withFile hfs contentPath (FS.WriteMode FS.MustBeNew) $ \h ->
+        hPutAllChunksCRC32C hfs h (encodeSnapshotMetaData snapMetaData) initialCRC32C
+    FS.withFile hfs checksumPath (FS.WriteMode FS.MustBeNew) $ \h ->
+      void $ FS.hPutAll hfs h $ encodeChecksum checksum
+
+-- | Read from 'SnapshotMetaDataFile' and attempt to decode it to
+-- 'SnapshotMetaData'.
+readFileSnapshotMetaData ::
+     MonadThrow m
+  => HasFS m h
+  -> FsPath -- ^ Source file for snapshot metadata
+  -> FsPath -- ^ Source file for checksum
+  -> m (Either DeserialiseFailure SnapshotMetaData)
+readFileSnapshotMetaData hfs contentPath checksumPath = do
+    !bsc <-
+      FS.withFile hfs checksumPath FS.ReadMode $ \h ->
+        BSC.toStrict <$> FS.hGetAll hfs h
+
+    case decodeChecksum bsc of
+      Left failure -> pure (Left failure)
+      Right expectedChecksum -> do
+
+        (lbs, actualChecksum) <- FS.withFile hfs contentPath FS.ReadMode $ \h -> do
+          n <- FS.hGetSize hfs h
+          FS.hGetExactlyCRC32C hfs h n initialCRC32C
+
+        when (expectedChecksum /= actualChecksum) $
+          throwIO $ ChecksumError contentPath expectedChecksum actualChecksum
+
+        pure $ decodeSnapshotMetaData lbs
+
+encodeChecksum :: CRC32C -> BSL.ByteString
+encodeChecksum (CRC32C x) = BSB.toLazyByteString (BSB.word32HexFixed x)
+
+decodeChecksum :: BSC.ByteString -> Either DeserialiseFailure CRC32C
+decodeChecksum bsc = do
+    when (BSC.length bsc /= 8) $ do
+      let msg = "decodeChecksum: expected 8 bytes, but found "
+              <> (show (BSC.length bsc))
+      Left $ DeserialiseFailure 0 msg
+    let !x = fromIntegral (hexdigitsToInt bsc)
+    pure $! CRC32C x
+
+encodeSnapshotMetaData :: SnapshotMetaData -> ByteString
+encodeSnapshotMetaData = toLazyByteString . encode . Versioned
+
+decodeSnapshotMetaData :: ByteString -> Either DeserialiseFailure SnapshotMetaData
+decodeSnapshotMetaData bs = second (getVersioned . snd) (deserialiseFromBytes decode bs)
 
 {-------------------------------------------------------------------------------
   Levels snapshot format
@@ -342,12 +411,6 @@ class Decode a where
 -- Used for every type in the 'SnapshotMetaData' type hierarchy.
 class DecodeVersioned a where
   decodeVersioned :: SnapshotVersion -> Decoder s a
-
-encodeSnapshotMetaData :: SnapshotMetaData -> ByteString
-encodeSnapshotMetaData = toLazyByteString . encode . Versioned
-
-decodeSnapshotMetaData :: ByteString -> Either DeserialiseFailure SnapshotMetaData
-decodeSnapshotMetaData bs = second (getVersioned . snd) (deserialiseFromBytes decode bs)
 
 newtype Versioned a = Versioned { getVersioned :: a }
   deriving stock (Show, Eq)
