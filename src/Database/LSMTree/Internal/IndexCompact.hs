@@ -14,10 +14,9 @@ module Database.LSMTree.Internal.IndexCompact (
   , toLBS
     -- * Incremental serialisation
     -- $incremental-serialisation
-  , Chunk (..)
   , headerLBS
-  , chunkToBS
   , finalLBS
+  , word64VectorToChunk
     -- * Deserialisation
   , fromSBS
   ) where
@@ -27,7 +26,6 @@ import           Control.Monad (when)
 import           Control.Monad.ST
 import           Data.Bit hiding (flipBit)
 import           Data.Bits (unsafeShiftR, (.&.))
-import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BB
 import qualified Data.ByteString.Builder.Extra as BB
 import qualified Data.ByteString.Lazy as LBS
@@ -46,8 +44,9 @@ import qualified Data.Vector.Unboxed as VU
 import qualified Data.Vector.Unboxed.Base as VU
 import           Data.Word
 import           Database.LSMTree.Internal.BitMath
-import           Database.LSMTree.Internal.ByteString (byteArrayFromTo,
-                     byteArrayToByteString)
+import           Database.LSMTree.Internal.ByteString (byteArrayFromTo)
+import           Database.LSMTree.Internal.Chunk (Chunk (Chunk))
+import qualified Database.LSMTree.Internal.Chunk as Chunk (toByteString)
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
 import           Database.LSMTree.Internal.Page
 import           Database.LSMTree.Internal.Serialise
@@ -456,7 +455,7 @@ sizeInPages = NumPages . toEnum . VU.length . icPrimary
 toLBS :: NumEntries -> IndexCompact -> LBS.ByteString
 toLBS numEntries index =
      headerLBS
-  <> LBS.fromStrict (chunkToBS (Chunk (icPrimary index)))
+  <> LBS.fromStrict (Chunk.toByteString (word64VectorToChunk (icPrimary index)))
   <> finalLBS numEntries index
 
 {-------------------------------------------------------------------------------
@@ -467,8 +466,8 @@ toLBS numEntries index =
 
   To incrementally serialise a compact index as it is being constructed, start
   by using 'headerLBS'. Each yielded chunk can then be written using
-  'chunkToBS'. Once construction is completed, 'finalLBS' will serialise
-  the remaining parts of the compact index.
+  'Chunk.toByteString'. Once construction is completed, 'finalLBS' will
+  serialise the remaining parts of the compact index.
   Also see module "Database.LSMTree.Internal.IndexCompactAcc".
 -}
 
@@ -485,17 +484,8 @@ headerLBS =
     BB.toLazyByteStringWith (BB.safeStrategy 4 BB.smallChunkSize) mempty $
       BB.word32Host supportedTypeAndVersion <> BB.word32Host 0
 
--- | A chunk of the primary array, which can be constructed incrementally.
-data Chunk = Chunk { cPrimary :: !(VU.Vector Word64) }
-  deriving stock (Show, Eq)
-
--- | 64 bit aligned.
-chunkToBS :: Chunk -> BS.ByteString
-chunkToBS (Chunk (VU.V_Word64 (VP.Vector off len ba))) =
-    byteArrayToByteString (mul8 off) (mul8 len) ba
-
 -- | Writes everything after the primary array, which is assumed to have already
--- been written using 'chunkToBS'.
+-- been written using 'Chunk.toByteString'.
 finalLBS :: NumEntries -> IndexCompact -> LBS.ByteString
 finalLBS (NumEntries numEntries) IndexCompact {..} =
     -- use a builder, since it is all relatively small
@@ -507,6 +497,11 @@ finalLBS (NumEntries numEntries) IndexCompact {..} =
       <> BB.word64Host (fromIntegral numEntries)
   where
     numPages = VU.length icPrimary
+
+-- | Constructs a chunk containing the contents of a vector of 64-bit words.
+word64VectorToChunk :: VU.Vector Word64 -> Chunk
+word64VectorToChunk (VU.V_Word64 (VP.Vector off len ba)) =
+    Chunk (mkPrimVector (mul8 off) (mul8 len) ba)
 
 -- | Padded to 64 bit.
 --

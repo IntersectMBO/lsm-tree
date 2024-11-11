@@ -15,7 +15,6 @@ module Database.LSMTree.Internal.IndexCompactAcc (
     IndexCompactAcc (..)
   , new
   , Append (..)
-  , Chunk (..)
   , append
   , appendSingle
   , appendMulti
@@ -49,6 +48,7 @@ import qualified Data.Vector.Unboxed as VU
 import qualified Data.Vector.Unboxed.Mutable as VUM
 import           Data.Word
 import           Database.LSMTree.Internal.BitMath
+import           Database.LSMTree.Internal.Chunk (Chunk)
 import           Database.LSMTree.Internal.IndexCompact
 import           Database.LSMTree.Internal.Page
 import           Database.LSMTree.Internal.Serialise
@@ -243,7 +243,7 @@ yield IndexCompactAcc{..} = do
       modifySTRef' icaPrimary . NE.cons =<< newPinnedMVec64 icaMaxChunkSize
       modifySTRef' icaClashes . NE.cons =<< VUM.new icaMaxChunkSize
       modifySTRef' icaLargerThanPage . NE.cons =<< VUM.new icaMaxChunkSize
-      pure $ Just (Chunk primaryChunk)
+      pure $ Just (word64VectorToChunk primaryChunk)
     else -- the current chunk is not yet full
       pure Nothing
 
@@ -268,7 +268,7 @@ unsafeEnd IndexCompactAcc{..} = do
     -- Only slice out a chunk if there are entries in the chunk
     let mchunk = if ix == 0
           then Nothing
-          else Just (Chunk (head chunksPrimary))
+          else Just (word64VectorToChunk (head chunksPrimary))
 
     let icPrimary = VU.concat . reverse $ chunksPrimary
     let icClashes = VU.concat . reverse $ chunksClashes

@@ -11,7 +11,7 @@ import           Data.Word (Word8)
 import           Database.LSMTree.Extras.Generators ()
                      -- for @Arbitrary@ instantiation of @Vector@
 import           Database.LSMTree.Internal.Chunk (Chunk, createBaler, feedBaler,
-                     fromChunk, unsafeEndBaler)
+                     toByteVector, unsafeEndBaler)
 import           Test.QuickCheck (Arbitrary (arbitrary, shrink),
                      NonEmptyList (NonEmpty), Positive (Positive, getPositive),
                      Property, Small (Small, getSmall), Testable, scale,
@@ -94,7 +94,8 @@ prop_contentIsPreserved (MinChunkSize minChunkSize) food
           input = concat (List.concat food)
 
           output :: Vector Word8
-          output = concat (fromChunk <$> catMaybes (commonChunks ++ [remnant]))
+          output = concat $
+                   toByteVector <$> catMaybes (commonChunks ++ [remnant])
 
       in input === output
 
@@ -108,12 +109,13 @@ prop_noRemnantAfterOutput (MinChunkSize minChunkSize) (NonEmpty food)
 prop_commonChunksAreLarge :: MinChunkSize -> [[Vector Word8]] -> Property
 prop_commonChunksAreLarge (MinChunkSize minChunkSize) food
     = withBalingOutput minChunkSize food $ \ commonChunks _ ->
-      all (fromChunk >>> length >>> (>= minChunkSize)) (catMaybes commonChunks)
+      all (toByteVector >>> length >>> (>= minChunkSize)) $
+      catMaybes commonChunks
 
 remnantChunkSizeIs :: (Int -> Bool) -> Int -> [[Vector Word8]] -> Property
 remnantChunkSizeIs constraint minChunkSize food
     = withBalingOutput minChunkSize food $ \ _ remnant ->
-      isJust remnant ==> constraint (length (fromChunk (fromJust remnant)))
+      isJust remnant ==> constraint (length (toByteVector (fromJust remnant)))
 
 prop_remnantChunkIsNonEmpty :: MinChunkSize -> [[Vector Word8]] -> Property
 prop_remnantChunkIsNonEmpty (MinChunkSize minChunkSize)
