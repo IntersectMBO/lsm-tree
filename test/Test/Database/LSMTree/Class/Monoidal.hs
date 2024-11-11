@@ -14,7 +14,7 @@ import qualified Data.Vector.Algorithms.Merge as VA
 import           Data.Void (Void)
 import           Data.Word (Word64)
 import           Database.LSMTree.Class.Monoidal hiding (withTableDuplicate,
-                     withTableNew, withTableOpen)
+                     withTableFromSnapshot, withTableNew)
 import qualified Database.LSMTree.Class.Monoidal as Class
 import           Database.LSMTree.Common (mkSnapshotName)
 import           Database.LSMTree.Extras.Generators ()
@@ -494,10 +494,10 @@ prop_snapshotNoChanges h ups ups' (V.fromList -> testKeys) = ioProperty $ do
 
       let name = fromMaybe (error "invalid name") $ mkSnapshotName "foo"
 
-      snapshot name hdl1
+      createSnapshot name hdl1
       updates hdl1 $ V.fromList ups'
 
-      Class.withTableOpen @h sess name $ \hdl2 -> do
+      Class.withTableFromSnapshot @h sess name $ \hdl2 -> do
 
         res' <- lookups hdl2 testKeys
 
@@ -512,10 +512,10 @@ prop_snapshotNoChanges2 :: forall h.
 prop_snapshotNoChanges2 h ups ups' (V.fromList -> testKeys) = ioProperty $ do
     withTableNew h ups $ \sess hdl0 -> do
       let name = fromMaybe (error "invalid name") $ mkSnapshotName "foo"
-      snapshot name hdl0
+      createSnapshot name hdl0
 
-      Class.withTableOpen @h sess name $ \hdl1 -> do
-        Class.withTableOpen @h sess name $ \hdl2 -> do
+      Class.withTableFromSnapshot @h sess name $ \hdl1 -> do
+        Class.withTableFromSnapshot @h sess name $ \hdl2 -> do
 
           res <- lookups hdl1 testKeys
           updates hdl1 $ V.fromList ups'

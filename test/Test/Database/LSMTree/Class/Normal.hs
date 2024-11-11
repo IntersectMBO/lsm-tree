@@ -19,7 +19,7 @@ import qualified Data.Vector as V
 import qualified Data.Vector.Algorithms.Merge as VA
 import           Data.Word (Word64)
 import           Database.LSMTree.Class.Normal hiding (withTableDuplicate,
-                     withTableNew, withTableOpen)
+                     withTableFromSnapshot, withTableNew)
 import qualified Database.LSMTree.Class.Normal as Class
 import           Database.LSMTree.Common (mkSnapshotName)
 import           Database.LSMTree.Extras.Generators ()
@@ -580,10 +580,10 @@ prop_snapshotNoChanges h ups ups' testKeys = ioProperty $ do
 
       let name = fromMaybe (error "invalid name") $ mkSnapshotName "foo"
 
-      snapshot name hdl1
+      createSnapshot name hdl1
       updates hdl1 (V.fromList ups')
 
-      Class.withTableOpen @h ses name$ \hdl2 -> do
+      Class.withTableFromSnapshot @h ses name$ \hdl2 -> do
 
         res' <- lookupsWithBlobs hdl2 ses $ V.fromList testKeys
 
@@ -598,10 +598,10 @@ prop_snapshotNoChanges2 :: forall h.
 prop_snapshotNoChanges2 h ups ups' testKeys = ioProperty $ do
     withTableNew h ups $ \sess hdl0 -> do
       let name = fromMaybe (error "invalid name") $ mkSnapshotName "foo"
-      snapshot name hdl0
+      createSnapshot name hdl0
 
-      Class.withTableOpen @h sess name $ \hdl1 ->
-        Class.withTableOpen @h sess name $ \hdl2 -> do
+      Class.withTableFromSnapshot @h sess name $ \hdl1 ->
+        Class.withTableFromSnapshot @h sess name $ \hdl2 -> do
 
           res <- lookupsWithBlobs hdl1 sess $ V.fromList testKeys
           updates hdl1 (V.fromList ups')

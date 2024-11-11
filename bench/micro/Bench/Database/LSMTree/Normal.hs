@@ -78,16 +78,16 @@ benchLargeValueVsSmallValueBlob =
         env (mkGrouped (mkV1 es)) $ \ ~(ess, kss) -> bgroup "V1" [
             withEnv ess $ \ ~(_, _, _, _, t :: Normal.Table IO K V1 B1) -> do
               bench "lookups-large-value" $ whnfIO $
-                V.mapM_ (flip Normal.lookups t) kss
+                V.mapM_ (Normal.lookups t) kss
           ]
       , env (mkGrouped (mkV2 es)) $ \ ~(ess, kss) -> bgroup "V2" [
             withEnv ess $ \ ~(_, _, _, _, t :: Normal.Table IO K V2 B2) -> do
               bench "lookups-small-value" $ whnfIO $
-                V.mapM_ (flip Normal.lookups t) kss
+                V.mapM_ (Normal.lookups t) kss
            , withEnv ess $ \ ~(_, _, _, s, t :: Normal.Table IO K V2 B2) -> do
               bench "lookups-small-value-blob" $ whnfIO $ do
                 V.forM_ kss $ \ks -> do
-                  lrs <- Normal.lookups ks t
+                  lrs <- Normal.lookups t ks
                   Normal.retrieveBlobs s (V.fromList $ toList $ Compose lrs)
           ]
       ]
@@ -123,7 +123,7 @@ benchLargeValueVsSmallValueBlob =
           (tmpDir, hfs, hbio) <- mkFiles
           s <- Normal.openSession nullTracer hfs hbio (FS.mkFsPath [])
           t <- Normal.new s benchConfig
-          V.mapM_ (flip Normal.inserts t) inss
+          V.mapM_ (Normal.inserts t) inss
           pure (tmpDir, hfs, hbio, s, t)
 
       cleanup (tmpDir, hfs, hbio, s, t) = do
@@ -158,10 +158,10 @@ benchCursorScanVsRangeLookupScan =
                   forM_ [1 .. numChunks] $ \(_ :: Int) -> do
                     Normal.readCursor readSize c
             , bench "range-scan-full" $ whnfIO $ do
-                Normal.rangeLookup (Normal.FromToIncluding (K minBound) (K maxBound)) t
+                Normal.rangeLookup t (Normal.FromToIncluding (K minBound) (K maxBound))
             , bench "range-scan-chunked" $ whnfIO $ do
                 forM_ ranges $ \r -> do
-                  Normal.rangeLookup r t
+                  Normal.rangeLookup t r
             ]
     where
       initialSize, batchSize, numChunks :: Int
@@ -208,7 +208,7 @@ benchCursorScanVsRangeLookupScan =
           (tmpDir, hfs, hbio) <- mkFiles
           s <- Normal.openSession nullTracer hfs hbio (FS.mkFsPath [])
           t <- Normal.new s benchConfig
-          V.mapM_ (flip Normal.inserts t) inss
+          V.mapM_ (Normal.inserts t) inss
           pure (tmpDir, hfs, hbio, s, t)
 
       cleanup (tmpDir, hfs, hbio, s, t) = do
@@ -226,7 +226,7 @@ benchInsertBatches =
     env genInserts $ \iss ->
       withEnv $ \ ~(_, _, _, _, t :: Normal.Table IO Word64 Word64 Void) -> do
         bench "benchInsertBatches" $ whnfIO $
-          V.mapM_ (flip Normal.inserts t) iss
+          V.mapM_ (Normal.inserts t) iss
     where
       !initialSize = 100_000
       !batchSize = 256

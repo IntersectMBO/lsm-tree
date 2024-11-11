@@ -10,7 +10,7 @@ module Database.LSMTree.Class.Normal (
   , withSession
   , IsTable (..)
   , withTableNew
-  , withTableOpen
+  , withTableFromSnapshot
   , withTableDuplicate
   , withCursor
   , module Types
@@ -180,7 +180,7 @@ class (IsSession (Session h)) => IsTable h where
         -> V.Vector k
         -> m ()
 
-    snapshot ::
+    createSnapshot ::
            ( IOLike m
            , Labellable (k, v, blob)
            , SerialiseKey k
@@ -192,7 +192,7 @@ class (IsSession (Session h)) => IsTable h where
         -> h m k v blob
         -> m ()
 
-    open ::
+    openSnapshot ::
            ( IOLike m
            , Labellable (k, v, blob)
            , SerialiseKey k
@@ -231,7 +231,7 @@ withTableNew :: forall h m k v blob a.
   -> m a
 withTableNew sesh conf = bracket (new sesh conf) close
 
-withTableOpen :: forall h m k v blob a.
+withTableFromSnapshot :: forall h m k v blob a.
      ( IOLike m, IsTable h, Labellable (k, v, blob)
      , SerialiseKey k, SerialiseValue v, SerialiseValue blob
      , C k v blob
@@ -240,7 +240,7 @@ withTableOpen :: forall h m k v blob a.
   -> SnapshotName
   -> (h m k v blob -> m a)
   -> m a
-withTableOpen sesh snap = bracket (open sesh snap) close
+withTableFromSnapshot sesh snap = bracket (openSnapshot sesh snap) close
 
 withTableDuplicate :: forall h m k v blob a.
      ( IOLike m
@@ -289,20 +289,20 @@ instance IsTable R.Table where
 
     new = R.new
     close = R.close
-    lookups = flip R.lookups
-    updates = flip R.updates
-    inserts = flip R.inserts
-    deletes = flip R.deletes
+    lookups = R.lookups
+    updates = R.updates
+    inserts = R.inserts
+    deletes = R.deletes
 
-    rangeLookup = flip R.rangeLookup
+    rangeLookup = R.rangeLookup
     retrieveBlobs _ = R.retrieveBlobs
 
     newCursor = maybe R.newCursor R.newCursorAtOffset
     closeCursor _ = R.closeCursor
     readCursor _ = R.readCursor
 
-    snapshot = R.snapshot
-    open sesh snap = R.open sesh R.configNoOverride snap
+    createSnapshot = R.createSnapshot
+    openSnapshot sesh snap = R.openSnapshot sesh R.configNoOverride snap
 
     duplicate = R.duplicate
     union = R.union

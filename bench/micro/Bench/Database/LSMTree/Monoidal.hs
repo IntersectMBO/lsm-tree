@@ -69,13 +69,13 @@ benchInsertsVsMupserts =
     env (pure $ snd $ randomEntriesGrouped 800_000 250) $ \ess -> bgroup "inserts-vs-mupserts" [
         env (pure $ V.map mkNormalInserts ess) $ \inss -> bench "normal-inserts" $
           withEmptyNormalTable $ \(_, _, _, _, t) ->
-            V.mapM_ (flip Normal.inserts t) inss
+            V.mapM_ (Normal.inserts t) inss
       , env (pure $ V.map mkMonoidalInserts ess) $ \inss -> bench "monoidal-inserts" $
           withEmptyMonoidalTable $ \(_, _, _, _, t) ->
-            V.mapM_ (flip Monoidal.inserts t) inss
+            V.mapM_ (Monoidal.inserts t) inss
       , env (pure $ V.map mkMonoidalMupserts ess) $ \mupss -> bench "monoidal-mupserts" $
           withEmptyMonoidalTable $ \(_, _, _, _, t) ->
-            V.mapM_ (flip Monoidal.mupserts t) mupss
+            V.mapM_ (Monoidal.mupserts t) mupss
       ]
     where
       withEmptyNormalTable =
@@ -114,15 +114,15 @@ benchLookupsInsertsVsMupserts =
             -- the existing values, sum those with the insert values, then
             -- insert the updated values.
             V.forM_ inss $ \ins -> do
-              lrs <- Monoidal.lookups (V.map fst ins) t
+              lrs <- Monoidal.lookups t (V.map fst ins)
               let ins' = V.zipWith f ins lrs
-              Monoidal.inserts ins' t
+              Monoidal.inserts t ins'
       , env (pure $ V.map mkMonoidalMupserts ess) $ \mupss -> bench "mupserts" $
           withMonoidalTable mupss $ \(_, _, _, _, t) ->
             -- Insert the same keys again, but we sum the existing values in
             -- the table with the values we are going to insert: submit
             -- mupserts with the insert values.
-            V.forM_ mupss $ \mups -> Monoidal.mupserts mups t
+            V.forM_ mupss $ \mups -> Monoidal.mupserts t mups
       ]
   where
     f (k, v) = \case
@@ -133,7 +133,7 @@ benchLookupsInsertsVsMupserts =
           -- Make a monoidal table and fill it up
           (do (tmpDir, hfs, hbio) <- mkFiles
               (s, t) <- mkMonoidalTable hfs hbio benchConfig
-              V.mapM_ (flip Monoidal.inserts t) inss
+              V.mapM_ (Monoidal.inserts t) inss
               pure (tmpDir, hfs, hbio, s, t)
           )
           (\(tmpDir, hfs, hbio, s, t) -> do
@@ -148,10 +148,10 @@ benchNormalResolveVsMonoidalResolve =
     env (pure $ snd $ randomEntriesGrouped 80_000 250) $ \ess -> bgroup "normal-resolve-vs-monoidal-resolve" [
         env (pure $ V.map mkNormalInserts ess) $ \inss -> bench "normal-lookups" $
           withNormalTable inss $ \(_, _, _, _, t) -> do
-              V.forM_ inss $ \ins -> Normal.lookups (V.map fst3 ins) t
+              V.forM_ inss $ \ins -> Normal.lookups t (V.map fst3 ins)
       ,  env (pure $ V.map mkMonoidalInserts ess) $ \inss -> bench "monoidal-lookups" $
           withMonoidalTable inss $ \(_, _, _, _, t) -> do
-              V.forM_ inss $ \ins -> Monoidal.lookups (V.map fst ins) t
+              V.forM_ inss $ \ins -> Monoidal.lookups t (V.map fst ins)
       ]
   where
     fst3 (x,_,_) = x
@@ -165,7 +165,7 @@ benchNormalResolveVsMonoidalResolve =
               (s, t) <- mkNormalTable hfs hbio benchConfig
               V.forM_ [1..10] $ \(i::Int) -> do
                 let inss' = (V.map . V.map) (\(k, v, b) -> (k, fromIntegral i * v, b)) inss
-                V.mapM_ (flip Normal.inserts t) inss'
+                V.mapM_ (Normal.inserts t) inss'
               pure (tmpDir, hfs, hbio, s, t)
           )
           (\(tmpDir, hfs, hbio, s, t) -> do
@@ -180,7 +180,7 @@ benchNormalResolveVsMonoidalResolve =
           (do (tmpDir, hfs, hbio) <- mkFiles
               (s, t) <- mkMonoidalTable hfs hbio benchConfig
               V.forM_ [1..10] $ \(_::Int) ->
-                V.mapM_ (flip Monoidal.mupserts t) inss
+                V.mapM_ (Monoidal.mupserts t) inss
               pure (tmpDir, hfs, hbio, s, t)
           )
           (\(tmpDir, hfs, hbio, s, t) -> do
