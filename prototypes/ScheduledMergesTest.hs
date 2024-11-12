@@ -25,8 +25,8 @@ test_regression_empty_run =
     runWithTracer $ \tracer -> do
       stToIO $ do
         lsm <- LSM.new
-        let ins k = LSM.insert tracer lsm k 0
-        let del k = LSM.delete tracer lsm k
+        let ins k = LSM.insert tracer lsm (K k) (V 0)
+        let del k = LSM.delete tracer lsm (K k)
         -- run 1
         ins 0
         ins 1
@@ -80,7 +80,7 @@ test_merge_again_with_incoming =
     runWithTracer $ \tracer -> do
       stToIO $ do
         lsm <- LSM.new
-        let ins k = LSM.insert tracer lsm k 0
+        let ins k = LSM.insert tracer lsm (K k) (V 0)
         -- get something to 3rd level (so 2nd level is not levelling)
         -- (needs 5 runs to go to level 2 so the resulting run becomes too big)
         traverse_ ins [101..100+(5*16)]

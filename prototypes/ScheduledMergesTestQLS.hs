@@ -1,5 +1,7 @@
 {-# LANGUAGE TypeFamilies #-}
 
+{-# OPTIONS_GHC -Wno-orphans #-}
+
 module ScheduledMergesTestQLS (tests) where
 
 import           Prelude hiding (lookup)
@@ -144,44 +146,44 @@ instance InLockstep Model where
     case findVars ctx (Proxy :: Proxy (LSM RealWorld)) of
       []   -> return (Some ANew)
       vars ->
-        frequency $
-            -- inserts of potentially fresh keys
+        let kvars = findVars ctx (Proxy :: Proxy Key)
+            existingKey = Left <$> elements kvars
+            freshKey = Right <$> arbitrary @Key
+        in frequency $
+          -- inserts of potentially fresh keys
           [ (3, fmap Some $
                   AInsert <$> elements vars
-                          <*> fmap Right arbitrarySizedNatural -- key
-                          <*> arbitrarySizedNatural)           -- value
+                          <*> freshKey
+                          <*> arbitrary @Value)
           ]
-            -- inserts of the same keys as used earlier
+          -- inserts of the same keys as used earlier
        ++ [ (1, fmap Some $
                   AInsert <$> elements vars
-                          <*> fmap Left (elements kvars) -- key var
-                          <*> arbitrarySizedNatural)    -- value
-          | let kvars = findVars ctx (Proxy :: Proxy Key)
-          , not (null kvars)
+                          <*> existingKey
+                          <*> arbitrary @Value)
+          | not (null kvars)
           ]
           -- deletes of arbitrary keys:
        ++ [ (1, fmap Some $
                   ADelete <$> elements vars
-                          <*> fmap Right arbitrarySizedNatural) -- key value
+                          <*> freshKey)
           ]
           -- deletes of the same key as inserted earlier:
        ++ [ (1, fmap Some $
                   ADelete <$> elements vars
-                          <*> fmap Left (elements kvars)) -- key var
-          | let kvars = findVars ctx (Proxy :: Proxy Key)
-          , not (null kvars)
+                          <*> existingKey)
+          | not (null kvars)
           ]
           -- lookup of arbitrary keys:
        ++ [ (1, fmap Some $
                   ALookup <$> elements vars
-                          <*> fmap Right arbitrarySizedNatural) -- key value
+                          <*> freshKey)
           ]
           -- lookup of the same key as inserted earlier:
        ++ [ (3, fmap Some $
                   ALookup <$> elements vars
-                          <*> fmap Left (elements kvars)) -- key var
-          | let kvars = findVars ctx (Proxy :: Proxy Key)
-          , not (null kvars)
+                          <*> existingKey)
+          | not (null kvars)
           ]
        ++ [ (1, fmap Some $
                   ADump <$> elements vars)
@@ -194,13 +196,13 @@ instance InLockstep Model where
     [ Some $ AInsert var (Right k') v' | (k', v') <- shrink (k, v) ]
 
   shrinkWithVars _ctx _model (AInsert var (Left _kv) v) =
-    [ Some $ AInsert var (Right k) v | k <- shrink 100 ]
+    [ Some $ AInsert var (Right k) v | k <- shrink (K 100) ]
 
   shrinkWithVars _ctx _model (ADelete var (Right k)) =
     [ Some $ ADelete var (Right k') | k' <- shrink k ]
 
   shrinkWithVars _ctx _model (ADelete var (Left _kv)) =
-    [ Some $ ADelete var (Right k) | k <- shrink 100 ]
+    [ Some $ ADelete var (Right k) | k <- shrink (K 100) ]
 
   shrinkWithVars _ctx _model _action = []
 
@@ -289,3 +291,19 @@ runModel action ctx m =
 
     lookUpKeyVar :: ModelVar Model Key -> Key
     lookUpKeyVar var = case lookupVar ctx var of MInsert k -> k
+
+-------------------------------------------------------------------------------
+-- Instances
+--
+
+instance Arbitrary Key where
+  arbitrary = K <$> arbitrarySizedNatural
+  shrink (K v) = K <$> shrink v
+
+instance Arbitrary Value where
+  arbitrary = V <$> arbitrarySizedNatural
+  shrink (V v) = V <$> shrink v
+
+instance Arbitrary Blob where
+  arbitrary = B <$> arbitrarySizedNatural
+  shrink (B v) = B <$> shrink v
