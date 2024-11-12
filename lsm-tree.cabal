@@ -689,6 +689,7 @@ library prototypes
   exposed-modules:
     FormatPage
     ScheduledMerges
+    ScheduledMergesTest
     ScheduledMergesTestQLS
 
   build-depends:
