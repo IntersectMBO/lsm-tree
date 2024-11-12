@@ -37,6 +37,7 @@ import           Control.Monad.Class.MonadST as Class
 import           Control.Monad.Class.MonadThrow (MonadThrow (..))
 import           Control.Monad.Primitive
 import           Control.Monad.ST.Strict
+import           Control.RefCount
 
 import           Database.LSMTree.Internal.BlobRef (WeakBlobRef (..))
 import           Database.LSMTree.Internal.Entry
@@ -158,7 +159,7 @@ data ByteCountDiscrepancy = ByteCountDiscrepancy {
     -> ArenaManager RealWorld
     -> ResolveSerialisedValue
     -> WB.WriteBuffer
-    -> WBB.WriteBufferBlobs IO h
+    -> Ref (WBB.WriteBufferBlobs IO h)
     -> V.Vector (Run IO h)
     -> V.Vector (Bloom SerialisedKey)
     -> V.Vector IndexCompact
@@ -178,7 +179,7 @@ lookupsIO ::
   -> ArenaManager (PrimState m)
   -> ResolveSerialisedValue
   -> WB.WriteBuffer
-  -> WBB.WriteBufferBlobs m h
+  -> Ref (WBB.WriteBufferBlobs m h)
   -> V.Vector (Run m h) -- ^ Runs @rs@
   -> V.Vector (Bloom SerialisedKey) -- ^ The bloom filters inside @rs@
   -> V.Vector IndexCompact -- ^ The indexes inside @rs@
@@ -203,7 +204,7 @@ lookupsIO !hbio !mgr !resolveV !wb !wbblobs !rs !blooms !indexes !kopsFiles !ks 
 {-# SPECIALIZE intraPageLookups ::
        ResolveSerialisedValue
     -> WB.WriteBuffer
-    -> WBB.WriteBufferBlobs IO h
+    -> Ref (WBB.WriteBufferBlobs IO h)
     -> V.Vector (Run IO h)
     -> V.Vector SerialisedKey
     -> VP.Vector RunIxKeyIx
@@ -222,7 +223,7 @@ intraPageLookups ::
      forall m h. (PrimMonad m, MonadThrow m)
   => ResolveSerialisedValue
   -> WB.WriteBuffer
-  -> WBB.WriteBufferBlobs m h
+  -> Ref (WBB.WriteBufferBlobs m h)
   -> V.Vector (Run m h)
   -> V.Vector SerialisedKey
   -> VP.Vector RunIxKeyIx

@@ -7,6 +7,7 @@ import           Control.Monad
 import           Control.Monad.Class.MonadST
 import           Control.Monad.Primitive
 import           Control.Monad.ST.Strict (ST, runST)
+import           Control.RefCount (Ref)
 import           Data.Arena (ArenaManager, newArenaManager, withArena)
 import           Data.Bits ((.&.))
 import           Data.BloomFilter (Bloom)
@@ -464,7 +465,7 @@ benchLookupsIO ::
   -> ArenaManager RealWorld
   -> ResolveSerialisedValue
   -> WB.WriteBuffer
-  -> WBB.WriteBufferBlobs IO h
+  -> Ref (WBB.WriteBufferBlobs IO h)
   -> V.Vector (Run IO h)
   -> V.Vector (Bloom SerialisedKey)
   -> V.Vector IndexCompact

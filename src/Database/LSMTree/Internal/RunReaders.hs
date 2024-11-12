@@ -18,6 +18,7 @@ import           Control.Monad.Class.MonadST (MonadST)
 import           Control.Monad.Class.MonadSTM (MonadSTM (..))
 import           Control.Monad.Class.MonadThrow (MonadMask)
 import           Control.Monad.Primitive
+import           Control.RefCount
 import           Data.Function (on)
 import           Data.Functor ((<&>))
 import           Data.List.NonEmpty (nonEmpty)
@@ -109,13 +110,13 @@ type KOp m h = (SerialisedKey, Entry SerialisedValue (RawBlobRef m h))
 
 {-# SPECIALISE new ::
      OffsetKey
-  -> Maybe (WB.WriteBuffer, WB.WriteBufferBlobs IO h)
+  -> Maybe (WB.WriteBuffer, Ref (WB.WriteBufferBlobs IO h))
   -> V.Vector (Run IO h)
   -> IO (Maybe (Readers IO h)) #-}
 new :: forall m h.
      (MonadMask m, MonadST m, MonadSTM m)
   => OffsetKey
-  -> Maybe (WB.WriteBuffer, WB.WriteBufferBlobs m h)
+  -> Maybe (WB.WriteBuffer, Ref (WB.WriteBufferBlobs m h))
   -> V.Vector (Run m h)
   -> m (Maybe (Readers m h))
 new !offsetKey wbs runs = do
@@ -128,7 +129,7 @@ new !offsetKey wbs runs = do
       return Readers {..}
   where
     fromWB :: WB.WriteBuffer
-           -> WB.WriteBufferBlobs m h
+           -> Ref (WB.WriteBufferBlobs m h)
            -> m (Maybe (ReadCtx m h))
     fromWB wb wbblobs = do
         --TODO: this BlobSpan to BlobRef conversion involves quite a lot of allocation

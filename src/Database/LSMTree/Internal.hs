@@ -78,6 +78,7 @@ import           Control.Monad (unless)
 import           Control.Monad.Class.MonadST (MonadST (..))
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Primitive
+import           Control.RefCount
 import           Control.TempRegistry
 import           Control.Tracer
 import           Data.Arena (ArenaManager, newArenaManager)
@@ -649,7 +650,7 @@ new sesh conf = do
         tableWriteBufferBlobs
           <- allocateTemp reg
                (WBB.new (sessionHasFS seshEnv) blobpath)
-               WBB.removeReference
+               releaseRef
         let tableWriteBuffer = WB.empty
             tableLevels = V.empty
         tableCache <- mkLevelsCache reg tableLevels
@@ -717,7 +718,7 @@ close t = do
         -- forget about this table.
         freeTemp reg (tableSessionUntrackTable thEnv)
         RW.withWriteAccess_ (tableContent thEnv) $ \tc -> do
-          removeReferenceTableContent reg tc
+          releaseTableContent reg tc
           pure tc
         pure TableClosed
 
@@ -897,7 +898,7 @@ data CursorEnv m h = CursorEnv {
 
     -- | The write buffer blobs, which like the runs, we have to keep open
     -- untile the cursor is closed.
-  , cursorWBB        :: WBB.WriteBufferBlobs m h
+  , cursorWBB        :: Ref (WBB.WriteBufferBlobs m h)
   }
 
 {-# SPECIALISE withCursor ::
@@ -961,15 +962,13 @@ newCursor !offsetKey t = withOpenTable t $ \thEnv -> do
         RW.withReadAccess contentVar $ \content -> do
           let wb      = tableWriteBuffer content
               wbblobs = tableWriteBufferBlobs content
-          allocateTemp reg
-            (WBB.addReference wbblobs)
-            (\_ -> WBB.removeReference wbblobs)
+          wbblobs' <- allocateTemp reg (dupRef wbblobs) releaseRef
           let runs = cachedRuns (tableCache content)
           V.forM_ runs $ \r -> do
             allocateTemp reg
               (Run.addReference r)
               (\_ -> Run.removeReference r)
-          pure (wb, wbblobs, runs)
+          pure (wb, wbblobs', runs)
 
 {-# SPECIALISE closeCursor :: Cursor IO h -> IO () #-}
 -- | See 'Database.LSMTree.Normal.closeCursor'.
@@ -992,7 +991,7 @@ closeCursor Cursor {..} = do
 
         forM_ cursorReaders $ freeTemp reg . Readers.close
         V.forM_ cursorRuns $ freeTemp reg . Run.removeReference
-        freeTemp reg (WBB.removeReference cursorWBB)
+        freeTemp reg (releaseRef cursorWBB)
         return CursorClosed
 
 {-# SPECIALISE readCursor ::
@@ -1180,10 +1179,8 @@ openSnapshot sesh label tableType override snap resolve = do
         am <- newArenaManager
         blobpath <- Paths.tableBlobPath (sessionRoot seshEnv) <$>
                       incrUniqCounter (sessionUniqCounter seshEnv)
-        tableWriteBufferBlobs
-          <- allocateTemp reg
-               (WBB.new hfs blobpath)
-               WBB.removeReference
+        tableWriteBufferBlobs <- allocateTemp reg (WBB.new hfs blobpath)
+                                                  releaseRef
 
         let actDir = Paths.activeDir (sessionRoot seshEnv)
 
@@ -1265,9 +1262,7 @@ duplicate t@Table{..} = do
         withTempRegistry $ \reg -> do
           -- The table contents escape the read access, but we just added references
           -- to each run so it is safe.
-          content <- RW.withReadAccess tableContent $ \content -> do
-            addReferenceTableContent reg content
-            pure content
+          content <- RW.withReadAccess tableContent (duplicateTableContent reg)
           newWith
             reg
             tableSession

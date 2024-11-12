@@ -22,6 +22,7 @@ module Database.LSMTree.Extras.RunData (
 
 import           Control.Exception (bracket)
 import           Control.Monad
+import           Control.RefCount
 import           Data.Bifoldable (Bifoldable (bifoldMap))
 import           Data.Bifunctor
 import           Data.Map.Strict (Map)
@@ -92,7 +93,7 @@ unsafeFlushAsWriteBuffer fs hbio fsPaths (RunData m) = do
     wb <- WB.fromMap <$> traverse (traverse (WBB.addBlob fs wbblobs)) m
     run <- Run.fromWriteBuffer fs hbio CacheRunData (RunAllocFixed 10)
                                fsPaths wb wbblobs
-    WBB.removeReference wbblobs
+    releaseRef wbblobs
     return run
 
 {-------------------------------------------------------------------------------

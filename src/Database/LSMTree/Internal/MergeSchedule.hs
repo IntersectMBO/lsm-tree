@@ -12,8 +12,8 @@ module Database.LSMTree.Internal.MergeSchedule (
   , MergeTrace (..)
     -- * Table content
   , TableContent (..)
-  , addReferenceTableContent
-  , removeReferenceTableContent
+  , duplicateTableContent
+  , releaseTableContent
     -- * Levels cache
   , LevelsCache (..)
   , mkLevelsCache
@@ -51,6 +51,7 @@ import           Control.Monad.Class.MonadSTM (MonadSTM (..))
 import           Control.Monad.Class.MonadThrow (MonadCatch (bracketOnError),
                      MonadMask, MonadThrow (..))
 import           Control.Monad.Primitive
+import           Control.RefCount (Ref, dupRef, releaseRef)
 import qualified Control.RefCount as RC
 import           Control.TempRegistry
 import           Control.Tracer
@@ -128,32 +129,34 @@ data TableContent m h = TableContent {
     --TODO: probably less allocation to make this a MutVar
     tableWriteBuffer      :: !WriteBuffer
     -- | The blob storage for entries in the write buffer
-  , tableWriteBufferBlobs :: !(WriteBufferBlobs m h)
+  , tableWriteBufferBlobs :: !(Ref (WriteBufferBlobs m h))
     -- | A hierarchy of levels. The vector indexes double as level numbers.
   , tableLevels           :: !(Levels m h)
     -- | Cache of flattened 'levels'.
   , tableCache            :: !(LevelsCache m h)
   }
 
-{-# SPECIALISE addReferenceTableContent :: TempRegistry IO -> TableContent IO h -> IO () #-}
-addReferenceTableContent ::
+{-# SPECIALISE duplicateTableContent :: TempRegistry IO -> TableContent IO h -> IO (TableContent IO h) #-}
+duplicateTableContent ::
      (PrimMonad m, MonadMask m, MonadMVar m)
   => TempRegistry m
   -> TableContent m h
-  -> m ()
-addReferenceTableContent reg (TableContent _wb wbb levels cache) = do
-    allocateTemp reg (WBB.addReference wbb) (\_ -> WBB.removeReference wbb)
+  -> m (TableContent m h)
+duplicateTableContent reg (TableContent wb wbb levels cache) = do
+    wbb' <- allocateTemp reg (dupRef wbb) releaseRef
+    --TODO: convert the remaining resources to Ref style, and duplicate.
     addReferenceLevels reg levels
     addReferenceLevelsCache reg cache
+    return $ TableContent wb wbb' levels cache
 
-{-# SPECIALISE removeReferenceTableContent :: TempRegistry IO -> TableContent IO h -> IO () #-}
-removeReferenceTableContent ::
+{-# SPECIALISE releaseTableContent :: TempRegistry IO -> TableContent IO h -> IO () #-}
+releaseTableContent ::
      (PrimMonad m, MonadMask m, MonadMVar m)
   => TempRegistry m
   -> TableContent m h
   -> m ()
-removeReferenceTableContent reg (TableContent _wb wbb levels cache) = do
-    freeTemp reg (WBB.removeReference wbb)
+releaseTableContent reg (TableContent _wb wbb levels cache) = do
+    freeTemp reg (releaseRef wbb)
     removeReferenceLevels reg levels
     removeReferenceLevelsCache reg cache
 
@@ -559,7 +562,7 @@ updatesWithInterleavedFlushes tr conf resolve hfs hbio root uc es reg tc = do
 {-# SPECIALISE addWriteBufferEntries ::
      HasFS IO h
   -> ResolveSerialisedValue
-  -> WriteBufferBlobs IO h
+  -> Ref (WriteBufferBlobs IO h)
   -> NumEntries
   -> WriteBuffer
   -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob)
@@ -571,7 +574,7 @@ addWriteBufferEntries ::
      (MonadSTM m, MonadThrow m, PrimMonad m)
   => HasFS m h
   -> ResolveSerialisedValue
-  -> WriteBufferBlobs m h
+  -> Ref (WriteBufferBlobs m h)
   -> NumEntries
   -> WriteBuffer
   -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob)
@@ -645,8 +648,9 @@ flushWriteBuffer tr conf@TableConfig{confDiskCachePolicy}
               (tableWriteBuffer tc)
               (tableWriteBufferBlobs tc))
             Run.removeReference
-    freeTemp reg (WBB.removeReference (tableWriteBufferBlobs tc))
-    wbblobs' <- allocateTemp reg (WBB.new hfs (Paths.tableBlobPath root n)) WBB.removeReference
+    freeTemp reg (releaseRef (tableWriteBufferBlobs tc))
+    wbblobs' <- allocateTemp reg (WBB.new hfs (Paths.tableBlobPath root n))
+                                 releaseRef
     levels' <- addRunToLevels tr conf resolve hfs hbio root uc r reg (tableLevels tc)
     tableCache' <- rebuildCache reg (tableCache tc) levels'
     pure $! TableContent {

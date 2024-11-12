@@ -22,6 +22,7 @@ module Test.Database.LSMTree.Internal.Lookup (
 import           Control.DeepSeq
 import           Control.Exception
 import           Control.Monad.ST.Strict
+import           Control.RefCount
 import           Data.Arena (newArenaManager, withUnmanagedArena)
 import           Data.Bifunctor
 import           Data.BloomFilter (Bloom)
@@ -334,14 +335,14 @@ withRuns :: FS.HasFS IO h
          -> FS.HasBlockIO IO h
          -> [InMemLookupData SerialisedKey SerialisedValue SerialisedBlob]
          -> (   WB.WriteBuffer
-             -> WBB.WriteBufferBlobs IO h
+             -> Ref (WBB.WriteBufferBlobs IO h)
              -> V.Vector (Run.Run IO h)
              -> IO a)
          -> IO a
 withRuns hfs _ [] action =
     bracket
       (WBB.new hfs (FS.mkFsPath ["wbblobs"]))
-      WBB.removeReference
+      releaseRef
       (\wbblobs -> action WB.empty wbblobs V.empty)
 
 withRuns hfs hbio (wbdat:rundats) action =
@@ -361,7 +362,7 @@ withRuns hfs hbio (wbdat:rundats) action =
 
       (\(_wb, wbblobs, runs) -> do
           V.mapM_ Run.removeReference runs
-          WBB.removeReference wbblobs)
+          releaseRef wbblobs)
 
       (\(wb, wbblobs, runs) ->
           action wb wbblobs runs)

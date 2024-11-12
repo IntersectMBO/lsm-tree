@@ -5,6 +5,7 @@ module Bench.Database.LSMTree.Internal.Lookup (benchmarks) where
 import           Control.Exception (assert)
 import           Control.Monad
 import           Control.Monad.ST.Strict (stToIO)
+import           Control.RefCount
 import           Criterion.Main (Benchmark, bench, bgroup, env, envWithCleanup,
                      perRunEnv, perRunEnvWithCleanup, whnf, whnfAppIO)
 import           Data.Arena (ArenaManager, closeArena, newArena,
@@ -130,7 +131,7 @@ benchLookups conf@Config{name} =
                 )
                 (\(_, _, _, arena, wbblobs) -> do
                     closeArena arenaManager arena
-                    WBB.removeReference wbblobs)
+                    releaseRef wbblobs)
                 (\ ~(rkixs, ioops, ioress, _, wbblobs_unused) -> do
                   !_ <- intraPageLookups resolveV WB.empty wbblobs_unused
                                          rs ks rkixs ioops ioress

@@ -8,6 +8,7 @@ import           Control.Monad (zipWithM)
 import           Control.Monad.IO.Class (liftIO)
 import           Control.Monad.Trans.Reader (ReaderT (..))
 import           Control.Monad.Trans.State (StateT (..), get, put)
+import           Control.RefCount
 import           Data.Bifunctor (bimap, first)
 import           Data.Coerce (coerce)
 import           Data.Foldable (toList, traverse_)
@@ -303,7 +304,7 @@ data RealState =
       !(Maybe ReadersCtx)
 
 -- | Readers, together with the runs being read, so they can be cleaned up at the end
-type ReadersCtx = (WBB.WriteBufferBlobs IO MockFS.HandleMock,
+type ReadersCtx = (Ref (WBB.WriteBufferBlobs IO MockFS.HandleMock),
                    [Run.Run IO Handle],
                    Readers IO Handle)
 
@@ -311,7 +312,7 @@ closeReadersCtx :: ReadersCtx -> IO ()
 closeReadersCtx (wbblobs, runs, readers) = do
     Readers.close readers
     traverse_ Run.removeReference runs
-    WBB.removeReference wbblobs
+    releaseRef wbblobs
 
 instance RunModel (Lockstep ReadersState) RealMonad where
   perform       = \_st -> runIO
@@ -349,7 +350,7 @@ runIO act lu = case act of
         case mreaders of
           Nothing -> do
             traverse_ Run.removeReference runs
-            WBB.removeReference wbblobs
+            releaseRef wbblobs
             return Nothing
           Just readers ->
             return $ Just (wbblobs, runs, readers)
@@ -386,7 +387,7 @@ runIO act lu = case act of
                 Drained -> do
                   -- Readers is drained, clean up the runs
                   liftIO $ traverse_ Run.removeReference runs
-                  liftIO $ WBB.removeReference wbblobs
+                  liftIO $ releaseRef wbblobs
                   put (RealState n Nothing)
                   return (Right x)
 

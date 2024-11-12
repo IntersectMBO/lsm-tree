@@ -217,7 +217,7 @@ fromMutable runRunDataCaching builder = do
   -> RunBloomFilterAlloc
   -> RunFsPaths
   -> WriteBuffer
-  -> WriteBufferBlobs IO h
+  -> Ref (WriteBufferBlobs IO h)
   -> IO (Run IO h) #-}
 -- | Write a write buffer to disk, including the blobs it contains.
 -- The resulting run has a reference count of 1.
@@ -233,7 +233,7 @@ fromWriteBuffer ::
   -> RunBloomFilterAlloc
   -> RunFsPaths
   -> WriteBuffer
-  -> WriteBufferBlobs m h
+  -> Ref (WriteBufferBlobs m h)
   -> m (Run m h)
 fromWriteBuffer fs hbio caching alloc fsPaths buffer blobs = do
     builder <- Builder.new fs hbio fsPaths (WB.numEntries buffer) alloc
