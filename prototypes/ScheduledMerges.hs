@@ -30,6 +30,7 @@ module ScheduledMerges (
     mupsert, mupserts,
     supply,
     duplicate,
+    union,
 
     -- * Test and trace
     logicalValue,
@@ -654,6 +655,9 @@ duplicate (LSMHandle _scr lsmr) = do
     return (LSMHandle scr' lsmr')
     -- it's that simple here, because we share all the pure value and all the
     -- STRefs and there's no ref counting to be done
+
+union :: LSM s -> LSM s -> ST s (LSM s)
+union = undefined
 
 -------------------------------------------------------------------------------
 -- Measurements
