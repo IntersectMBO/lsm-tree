@@ -30,6 +30,11 @@ module ScheduledMerges (
     mupsert, mupserts,
     supply,
     duplicate,
+    union,
+    Credit,
+    Debt,
+    remainingUnionDebt,
+    supplyUnionCredits,
 
     -- * Test and trace
     logicalValue,
@@ -501,6 +506,27 @@ lookup lsm k = do
     runs <- concat <$> allLayers lsm
     return $ doLookup k runs
 
+duplicate :: LSM s -> ST s (LSM s)
+duplicate (LSMHandle _scr lsmr) = do
+    scr'  <- newSTRef 0
+    lsmr' <- newSTRef =<< readSTRef lsmr
+    return (LSMHandle scr' lsmr')
+    -- it's that simple here, because we share all the pure value and all the
+    -- STRefs and there's no ref counting to be done
+
+union :: LSM s -> LSM s -> ST s (LSM s)
+union = undefined
+
+remainingUnionDebt :: LSM s -> ST s Debt
+remainingUnionDebt _ = return 0
+
+supplyUnionCredits :: LSM s -> Credit -> ST s Credit
+supplyUnionCredits _ credits = return credits
+
+-------------------------------------------------------------------------------
+-- Implementation
+--
+
 doLookup :: Key -> [Run] -> LookupResult Value Blob
 doLookup k =
     foldr (\run continue ->
@@ -618,14 +644,6 @@ tieringLevelIsFull _ln _incoming resident = length resident >= 4
 -- the level.
 levellingLevelIsFull :: Int -> [Run] -> Run -> Bool
 levellingLevelIsFull ln _incoming resident = levellingRunSizeToLevel resident > ln
-
-duplicate :: LSM s -> ST s (LSM s)
-duplicate (LSMHandle _scr lsmr) = do
-    scr'  <- newSTRef 0
-    lsmr' <- newSTRef =<< readSTRef lsmr
-    return (LSMHandle scr' lsmr')
-    -- it's that simple here, because we share all the pure value and all the
-    -- STRefs and there's no ref counting to be done
 
 -------------------------------------------------------------------------------
 -- Measurements

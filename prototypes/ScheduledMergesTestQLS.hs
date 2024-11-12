@@ -9,6 +9,7 @@ import           Control.Tracer (Tracer, nullTracer)
 import           Data.Constraint (Dict (..))
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import           Data.Monoid (First (..))
 import           Data.Proxy
 import           Prelude hiding (lookup)
 
@@ -40,16 +41,21 @@ newtype Model = Model { mlsms :: Map ModelLSM (Map Key (Value, Maybe Blob)) }
 
 type ModelOp r = Model -> (r, Model)
 
-modelNew       ::                                           ModelOp ModelLSM
-modelInsert    :: ModelLSM -> Key -> Value -> Maybe Blob -> ModelOp ()
-modelDelete    :: ModelLSM -> Key ->                        ModelOp ()
-modelMupsert   :: ModelLSM -> Key -> Value ->               ModelOp ()
-modelLookup    :: ModelLSM -> Key ->                        ModelOp (LookupResult Value Blob)
-modelDuplicate :: ModelLSM ->                               ModelOp ModelLSM
-modelDump      :: ModelLSM ->                               ModelOp (Map Key (Value, Maybe Blob))
-
 initModel :: Model
 initModel = Model { mlsms = Map.empty }
+
+resolveValueAndBlob :: (Value, Maybe Blob) -> (Value, Maybe Blob) -> (Value, Maybe Blob)
+resolveValueAndBlob (v, b) (v', b') = (resolveValue v v', getFirst (First b <> First b'))
+
+modelNew         ::                                           ModelOp ModelLSM
+modelInsert      :: ModelLSM -> Key -> Value -> Maybe Blob -> ModelOp ()
+modelDelete      :: ModelLSM -> Key ->                        ModelOp ()
+modelMupsert     :: ModelLSM -> Key -> Value ->               ModelOp ()
+modelLookup      :: ModelLSM -> Key ->                        ModelOp (LookupResult Value Blob)
+modelDuplicate   :: ModelLSM ->                               ModelOp ModelLSM
+modelUnion       :: ModelLSM -> ModelLSM ->                   ModelOp ModelLSM
+modelSupplyUnion :: ModelLSM -> NonNegative Credit ->         ModelOp ()
+modelDump        :: ModelLSM ->                               ModelOp (Map Key (Value, Maybe Blob))
 
 modelNew Model {mlsms} =
     (mlsm, Model { mlsms = Map.insert mlsm Map.empty mlsms })
@@ -63,9 +69,7 @@ modelDelete mlsm k Model {mlsms} =
     ((), Model { mlsms = Map.adjust (Map.delete k) mlsm mlsms })
 
 modelMupsert mlsm k v Model {mlsms} =
-    ((), Model { mlsms = Map.adjust (Map.insertWith f k (v, Nothing)) mlsm mlsms })
-  where
-    f _ (vOld, b) = (resolveValue v vOld, b)
+    ((), Model { mlsms = Map.adjust (Map.insertWith resolveValueAndBlob k (v, Nothing)) mlsm mlsms })
 
 modelLookup mlsm k model@Model {mlsms} =
     (result, model)
@@ -80,6 +84,17 @@ modelDuplicate mlsm Model {mlsms} =
   where
     Just mval = Map.lookup mlsm mlsms
     mlsm'     = Map.size mlsms
+
+modelUnion mlsm1 mlsm2 Model {mlsms} =
+    (mlsm', Model { mlsms = Map.insert mlsm' mval' mlsms })
+  where
+    Just mval1 = Map.lookup mlsm1 mlsms
+    Just mval2 = Map.lookup mlsm2 mlsms
+    mval'      = Map.unionWith resolveValueAndBlob mval1 mval2
+    mlsm'      = Map.size mlsms
+
+modelSupplyUnion _mlsm _credit model =
+    ((), model)
 
 modelDump mlsm model@Model {mlsms} =
     (mval, model)
@@ -111,6 +126,14 @@ instance StateModel (Lockstep Model) where
 
     ADuplicate :: ModelVar Model (LSM RealWorld)
                -> Action (Lockstep Model) (LSM RealWorld)
+
+    AUnion :: ModelVar Model (LSM RealWorld)
+           -> ModelVar Model (LSM RealWorld)
+           -> Action (Lockstep Model) (LSM RealWorld)
+
+    ASupplyUnion :: ModelVar Model (LSM RealWorld)
+                 -> NonNegative Credit
+                 -> Action (Lockstep Model) ()
 
     ADump   :: ModelVar Model (LSM RealWorld)
             -> Action (Lockstep Model) (Map Key (Value, Maybe Blob))
@@ -159,6 +182,8 @@ instance InLockstep Model where
   usedVars (ALookup v evk)     = SomeGVar v
                                : case evk of Left vk -> [SomeGVar vk]; _ -> []
   usedVars (ADuplicate v)      = [SomeGVar v]
+  usedVars (AUnion v1 v2)      = [SomeGVar v1, SomeGVar v2]
+  usedVars (ASupplyUnion v _)  = [SomeGVar v]
   usedVars (ADump v)           = [SomeGVar v]
 
   modelNextState = runModel
@@ -222,10 +247,21 @@ instance InLockstep Model where
           | not (null kvars)
           ]
        ++ [ (1, fmap Some $
-                  ADump <$> elements vars)
+                  ADuplicate <$> elements vars)
+          ]
+          -- TODO: enable
+       ++ [ (0, fmap Some $
+                  AUnion <$> elements vars
+                         <*> elements vars)
+          ]
+          -- TODO: enable
+          -- TODO: only supply to tables with unions?
+       ++ [ (0, fmap Some $
+                  ASupplyUnion <$> elements vars
+                               <*> arbitrary)
           ]
        ++ [ (1, fmap Some $
-                  ADuplicate <$> elements vars)
+                  ADump <$> elements vars)
           ]
 
   shrinkWithVars _ctx _model (AInsert var (Right k) v b) =
@@ -248,27 +284,39 @@ instance InLockstep Model where
     [ Some $ AInsert var (Left kv) v Nothing ] ++
     [ Some $ AMupsert var (Right k') v' | (k', v') <- shrink (K 100, v) ]
 
+  shrinkWithVars _ctx _model (AUnion var1 var2) =
+    [ Some $ ADuplicate var1
+    , Some $ ADuplicate var2
+    ]
+
+  shrinkWithVars _ctx _model (ASupplyUnion var c) =
+    [ Some $ ASupplyUnion var c' | c' <- shrink c ]
+
   shrinkWithVars _ctx _model _action = []
 
 
 instance RunLockstep Model IO where
   observeReal _ action result =
     case (action, result) of
-      (ANew,         _) -> ORef
-      (AInsert{},    x) -> OId x
-      (ADelete{},    x) -> OId x
-      (AMupsert{},   x) -> OId x
-      (ALookup{},    x) -> OId x
-      (ADump{},      x) -> OId x
-      (ADuplicate{}, _) -> ORef
+      (ANew,           _) -> ORef
+      (AInsert{},      x) -> OId x
+      (ADelete{},      x) -> OId x
+      (AMupsert{},     x) -> OId x
+      (ALookup{},      x) -> OId x
+      (ADuplicate{},   _) -> ORef
+      (AUnion{},       _) -> ORef
+      (ASupplyUnion{}, x) -> OId x
+      (ADump{},        x) -> OId x
 
-  showRealResponse _ ANew         = Nothing
-  showRealResponse _ AInsert{}    = Just Dict
-  showRealResponse _ ADelete{}    = Just Dict
-  showRealResponse _ AMupsert{}   = Just Dict
-  showRealResponse _ ALookup{}    = Just Dict
-  showRealResponse _ ADump{}      = Just Dict
-  showRealResponse _ ADuplicate{} = Nothing
+  showRealResponse _ ANew           = Nothing
+  showRealResponse _ AInsert{}      = Just Dict
+  showRealResponse _ ADelete{}      = Just Dict
+  showRealResponse _ AMupsert{}     = Just Dict
+  showRealResponse _ ALookup{}      = Just Dict
+  showRealResponse _ ADuplicate{}   = Nothing
+  showRealResponse _ AUnion{}       = Nothing
+  showRealResponse _ ASupplyUnion{} = Nothing
+  showRealResponse _ ADump{}        = Just Dict
 
 deriving stock instance Show (Action (Lockstep Model) a)
 deriving stock instance Show (Observable Model a)
@@ -295,6 +343,8 @@ runActionIO action lookUp =
     ALookup var evk     -> lookup (lookUpVar var) k
       where k = either lookUpVar id evk
     ADuplicate var      -> duplicate (lookUpVar var)
+    AUnion var1 var2    -> union (lookUpVar var1) (lookUpVar var2)
+    ASupplyUnion var c  -> supplyUnionCredits (lookUpVar var) (getNonNegative c) >> return ()
     ADump      var      -> logicalValue (lookUpVar var)
   where
     lookUpVar :: ModelVar Model a -> a
@@ -330,6 +380,12 @@ runModel action ctx m =
 
     ADuplicate var -> (MLSM mlsm', m')
       where (mlsm', m') = modelDuplicate (lookUpLsMVar var) m
+
+    AUnion var1 var2 -> (MLSM mlsm', m')
+      where (mlsm', m') = modelUnion (lookUpLsMVar var1) (lookUpLsMVar var2) m
+
+    ASupplyUnion var c -> (MUnit (), m')
+      where ((), m') = modelSupplyUnion (lookUpLsMVar var) c m
 
     ADump var -> (MDump mapping, m)
       where (mapping, _) = modelDump (lookUpLsMVar var) m
