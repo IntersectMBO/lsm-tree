@@ -5,8 +5,11 @@
 -- the LSM update operations have worst case complexity rather than amortised
 -- complexity, because they do a fixed amount of merging work each.
 --
--- The other thing this prototype demonstrates is a design for duplicating
--- tables and sharing ongoing incremental merges.
+-- Another thing this prototype demonstrates is a design for duplicating tables
+-- and sharing ongoing incremental merges.
+--
+-- Finally, it demonstrates a design for table unions, including a
+-- representation for in-progress merging trees.
 --
 -- The merging policy that this prototype uses is power 4 \"lazy levelling\".
 -- Power 4 means each level is 4 times bigger than the previous level.
@@ -30,6 +33,11 @@ module ScheduledMerges (
     mupsert, mupserts,
     supply,
     duplicate,
+    union,
+    Credit,
+    Debt,
+    remainingUnionDebt,
+    supplyUnionCredits,
 
     -- * Test and trace
     logicalValue,
@@ -501,6 +509,39 @@ lookup lsm k = do
     runs <- concat <$> allLayers lsm
     return $ doLookup k runs
 
+duplicate :: LSM s -> ST s (LSM s)
+duplicate (LSMHandle _scr lsmr) = do
+    scr'  <- newSTRef 0
+    lsmr' <- newSTRef =<< readSTRef lsmr
+    return (LSMHandle scr' lsmr')
+    -- it's that simple here, because we share all the pure value and all the
+    -- STRefs and there's no ref counting to be done
+
+-- | Similar to @Data.Map.unionWith@.
+--
+-- A call to 'union' itself is not expensive, as the input tables are not
+-- immediately merged. Instead, it creates a representation of an in-progress
+-- merge that can be performed incrementally (somewhat similar to a thunk).
+--
+-- The more merge work remains, the more expensive are lookups on the table.
+union :: LSM s -> LSM s -> ST s (LSM s)
+union = undefined
+
+-- | An upper bound on the number of merging steps that need to be performed
+-- until the delayed work of performing a 'union' is completed. This debt can
+-- be paid off using 'supplyUnionCredits'.
+remainingUnionDebt :: LSM s -> ST s Debt
+remainingUnionDebt _ = return 0
+
+-- | Supplying credits leads to union merging work being performed in batches.
+-- This reduces the debt returned by 'remainingUnionDebt'.
+supplyUnionCredits :: LSM s -> Credit -> ST s Credit
+supplyUnionCredits _ credits = return credits
+
+-------------------------------------------------------------------------------
+-- Implementation
+--
+
 doLookup :: Key -> [Run] -> LookupResult Value Blob
 doLookup k =
     foldr (\run continue ->
@@ -618,14 +659,6 @@ tieringLevelIsFull _ln _incoming resident = length resident >= 4
 -- the level.
 levellingLevelIsFull :: Int -> [Run] -> Run -> Bool
 levellingLevelIsFull ln _incoming resident = levellingRunSizeToLevel resident > ln
-
-duplicate :: LSM s -> ST s (LSM s)
-duplicate (LSMHandle _scr lsmr) = do
-    scr'  <- newSTRef 0
-    lsmr' <- newSTRef =<< readSTRef lsmr
-    return (LSMHandle scr' lsmr')
-    -- it's that simple here, because we share all the pure value and all the
-    -- STRefs and there's no ref counting to be done
 
 -------------------------------------------------------------------------------
 -- Measurements
