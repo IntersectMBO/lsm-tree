@@ -19,7 +19,7 @@
 module ScheduledMerges (
     -- * Main API
     LSM,
-    Key, Value, Blob,
+    Key (K), Value (V), resolveValue, Blob (B),
     new,
     LookupResult (..),
     lookup, lookups,
@@ -122,12 +122,20 @@ runSize = Map.size
 bufferSize :: Buffer -> Int
 bufferSize = Map.size
 
-type Op     = Update Value Blob
+type Op = Update Value Blob
 
-type Key    = Int
-type Value  = Int
-type Blob   = Int
+newtype Key = K Int
+  deriving stock (Eq, Ord, Show)
+  deriving newtype Enum
 
+newtype Value  = V Int
+  deriving stock (Eq, Show)
+
+resolveValue :: Value -> Value -> Value
+resolveValue (V x) (V y) = V (x + y)
+
+newtype Blob = B Int
+  deriving stock (Eq, Show)
 
 -- | The size of the 4 tiering runs at each level are allowed to be:
 -- @4^(level-1) < size <= 4^level@
@@ -425,6 +433,7 @@ new = do
 inserts :: Tracer (ST s) Event -> LSM s -> [(Key, Value)] -> ST s ()
 inserts tr lsm kvs = updates tr lsm [ (k, Insert v Nothing) | (k,v) <- kvs ]
 
+-- TODO: support (and test!) blobs
 insert :: Tracer (ST s) Event -> LSM s -> Key -> Value -> ST s ()
 insert tr lsm k v = update tr lsm k (Insert v Nothing)
 
