@@ -398,7 +398,7 @@ openSession tr hfs hbio dir = do
   where
     root             = Paths.SessionRoot dir
     lockFilePath     = Paths.lockFile root
-    activeDirPath    = Paths.activeDir root
+    activeDirPath    = Paths.getActiveDir (Paths.activeDir root)
     snapshotsDirPath = Paths.snapshotsDir root
 
     acquireLock = try @m @FsError $ FS.tryLockFile hbio lockFilePath FS.ExclusiveLock

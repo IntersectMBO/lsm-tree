@@ -13,6 +13,9 @@ module Database.LSMTree.Internal.Snapshot (
   , SpentCredits (..)
     -- * Conversion to levels snapshot format
   , snapLevels
+    -- * Runs
+  , snapshotRuns
+  , openRuns
     -- * Opening from levels snapshot format
   , openLevels
     -- * Hard links
@@ -31,6 +34,7 @@ import           Data.Foldable (sequenceA_)
 import           Data.Primitive (readMutVar)
 import           Data.Primitive.PrimVar
 import           Data.Text (Text)
+import           Data.Traversable (for)
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.Entry
@@ -193,6 +197,70 @@ getRunNumber :: Run m h -> RunNumber
 getRunNumber r = Paths.runNumber (Run.runRunFsPaths r)
 
 {-------------------------------------------------------------------------------
+  Runs
+-------------------------------------------------------------------------------}
+
+-- TODO: temp registry
+
+{-# SPECIALISE snapshotRuns ::
+     NamedSnapshotDir
+  -> SnapLevels (Run IO h)
+  -> IO (SnapLevels RunNumber) #-}
+-- | @'snapshotRuns' targetDir levels@ creates hard links for all run files
+-- associated with the runs in @levels@, and puts the new directory entries in
+-- the @targetDir@ directory.
+snapshotRuns ::
+     MonadThrow m
+  => NamedSnapshotDir
+  -> SnapLevels (Run m h)
+  -> m (SnapLevels RunNumber)
+snapshotRuns (NamedSnapshotDir targetDir) levels = for levels $ \run -> do
+    let sourcePaths = Run.runRunFsPaths run
+    let targetPaths = sourcePaths { runDir = targetDir }
+    hardLinkRunFiles (Run.runHasFS run) (Run.runHasBlockIO run) sourcePaths targetPaths
+    pure (runNumber targetPaths)
+
+{-# SPECIALISE openRuns ::
+     HasFS IO h
+  -> HasBlockIO IO h
+  -> TableConfig
+  -> UniqCounter IO
+  -> NamedSnapshotDir
+  -> ActiveDir
+  -> SnapLevels RunNumber
+  -> IO (SnapLevels (Run IO h)) #-}
+-- | @'openRuns' _ _ _ uniqCounter sourceDir targetDir levels@ takes all run
+-- files that are referenced by @levels@, and hard links them from @sourceDir@
+-- into @targetDir@ with new, unique names (using @uniqCounter@). Each set of
+-- (hard linked) files that represents a run is opened and verified, returning
+-- 'Run's as a result.
+openRuns ::
+     (MonadFix m, MonadMask m, MonadSTM m, MonadST m, MonadMVar m)
+  => HasFS m h
+  -> HasBlockIO m h
+  -> TableConfig
+  -> UniqCounter m
+  -> NamedSnapshotDir
+  -> ActiveDir
+  -> SnapLevels RunNumber
+  -> m (SnapLevels (Run m h))
+openRuns
+  hfs hbio TableConfig{..} uc
+  (NamedSnapshotDir sourceDir) (ActiveDir targetDir) (SnapLevels levels) = do
+    levels' <-
+      V.iforM levels $ \i level ->
+        let ln = LevelNo (i+1) in
+        let caching = diskCachePolicyForLevel confDiskCachePolicy ln in
+        for level $ \runNum -> do
+          let sourcePaths = RunFsPaths sourceDir runNum
+          runNum' <- uniqueToRunNumber <$> incrUniqCounter uc
+          let targetPaths = RunFsPaths targetDir runNum'
+          hardLinkRunFiles hfs hbio sourcePaths targetPaths
+
+          Run.openFromDisk hfs hbio caching targetPaths
+    pure (SnapLevels levels')
+
+{-------------------------------------------------------------------------------
   Opening from levels snapshot format
 -------------------------------------------------------------------------------}
 
@@ -221,7 +289,7 @@ openLevels ::
 openLevels reg hfs hbio conf@TableConfig{..} uc sessionRoot resolve (SnapLevels levels) =
     V.iforM levels $ \i -> openLevel (LevelNo (i+1))
   where
-    mkPath = Paths.RunFsPaths (Paths.activeDir sessionRoot)
+    mkPath = Paths.RunFsPaths (Paths.getActiveDir (Paths.activeDir sessionRoot))
 
     openLevel :: LevelNo -> SnapLevel RunNumber -> m (Level m h)
     openLevel ln SnapLevel{..} = do
