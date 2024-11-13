@@ -511,3 +511,6 @@ language_extensions:
 # We run stylish from the root of the repo which is a project so this flag
 # doesn't apply
 cabal: false
+
+# Return an exit failure on format.
+exit_code: error_on_format
