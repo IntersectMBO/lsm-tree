@@ -7,10 +7,7 @@ module Database.LSMTree.Internal.Merge (
   , Mappend
   , MergeState (..)
   , new
-  , addReference
-  , removeReference
-  , removeReferenceN
-  , readRefCount
+  , abort
   , complete
   , stepsToCompletion
   , stepsToCompletionCounted
@@ -22,17 +19,15 @@ import           Control.Exception (assert)
 import           Control.Monad (when)
 import           Control.Monad.Class.MonadST (MonadST)
 import           Control.Monad.Class.MonadSTM (MonadSTM (..))
-import           Control.Monad.Class.MonadThrow (MonadCatch, MonadMask (..),
+import           Control.Monad.Class.MonadThrow (MonadCatch, MonadMask,
                      MonadThrow (..))
 import           Control.Monad.Fix (MonadFix)
-import           Control.Monad.Primitive (PrimMonad, PrimState, RealWorld)
-import           Control.RefCount (RefCount (..), RefCounter)
-import qualified Control.RefCount as RC
+import           Control.Monad.Primitive (PrimState)
+import           Control.RefCount (RefCount (..))
 import           Data.Coerce (coerce)
 import           Data.Primitive.MutVar
 import           Data.Traversable (for)
 import qualified Data.Vector as V
-import           Data.Word
 import           Database.LSMTree.Internal.BlobRef (RawBlobRef)
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.Run (Run, RunDataCaching)
@@ -44,7 +39,7 @@ import qualified Database.LSMTree.Internal.RunReader as Reader
 import           Database.LSMTree.Internal.RunReaders (Readers)
 import qualified Database.LSMTree.Internal.RunReaders as Readers
 import           Database.LSMTree.Internal.Serialise
-import           GHC.Stack (HasCallStack)
+import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
 import           System.FS.BlockIO.API (HasBlockIO)
 
@@ -62,7 +57,6 @@ data Merge m h = Merge {
       -- | The result of the latest call to 'steps'. This is used to determine
       -- whether a merge can be 'complete'd.
     , mergeState      :: !(MutVar (PrimState m) MergeState)
-    , mergeRefCounter :: !(RefCounter m)
     , mergeHasFS      :: !(HasFS m h)
     , mergeHasBlockIO :: !(HasBlockIO m h)
     }
@@ -98,7 +92,7 @@ type Mappend = SerialisedValue -> SerialisedValue -> SerialisedValue
 -- | Returns 'Nothing' if no input 'Run' contains any entries.
 -- The list of runs should be sorted from new to old.
 new ::
-     (MonadCatch m, MonadSTM m, MonadST m, MonadFix m)
+     (MonadCatch m, MonadSTM m, MonadST m)
   => HasFS m h
   -> HasBlockIO m h
   -> RunDataCaching
@@ -116,57 +110,32 @@ new fs hbio mergeCaching alloc mergeLevel mergeMappend targetPaths runs = do
       let numEntries = coerce (sum @V.Vector @Int) (fmap Run.runNumEntries runs)
       mergeBuilder <- Builder.new fs hbio targetPaths numEntries alloc
       mergeState <- newMutVar $! Merging
-      mergeRefCounter <-
-        RC.mkRefCounter1 (Just $! finaliser mergeState mergeBuilder mergeReaders)
       return Merge {
           mergeHasFS = fs
         , mergeHasBlockIO = hbio
         , ..
         }
 
-{-# SPECIALISE addReference :: Merge IO h -> IO () #-}
-addReference :: (HasCallStack, PrimMonad m) => Merge m h -> m ()
-addReference Merge{..} = RC.addReference mergeRefCounter
-
-{-# SPECIALISE removeReference :: Merge IO h -> IO () #-}
-removeReference :: (HasCallStack, PrimMonad m, MonadMask m) => Merge m h -> m ()
-removeReference Merge{..} = RC.removeReference mergeRefCounter
-
-{-# SPECIALISE removeReferenceN :: Merge IO h -> Word64 -> IO () #-}
-removeReferenceN :: (HasCallStack, PrimMonad m, MonadMask m) => Merge m h -> Word64 -> m ()
-removeReferenceN r = RC.removeReferenceN (mergeRefCounter r)
-
-{-# SPECIALISE readRefCount :: Merge IO h -> IO RefCount #-}
-readRefCount :: PrimMonad m => Merge m h -> m RefCount
-readRefCount Merge{..} = RC.readRefCount mergeRefCounter
-
-{-# SPECIALISE finaliser ::
-     MutVar RealWorld MergeState
-  -> RunBuilder IO h
-  -> Readers IO h
-  -> IO () #-}
--- | Closes the underlying builder and readers.
+{-# SPECIALISE abort :: Merge IO (FS.Handle h) -> IO () #-}
+-- | This function should be called when discarding a 'Merge' before it
+-- was done (i.e. returned 'MergeComplete'). This removes the incomplete files
+-- created for the new run so far and avoids leaking file handles.
 --
--- This function is idempotent. Technically, this is not necessary because the
--- finaliser is going to run only once, but it is a nice property for
--- @close@-like functions to be idempotent.
-finaliser ::
-     (MonadFix m, MonadSTM m, MonadST m)
-  => MutVar (PrimState m) MergeState
-  -> RunBuilder m h
-  -> Readers m h
-  -> m ()
-finaliser var b rs = do
-    st <- readMutVar var
-    let shouldClose = case st of
-          Merging     -> True
-          MergingDone -> True
-          Completed   -> False
-          Closed      -> False
-    when shouldClose $ do
-        Builder.close b
-        Readers.close rs
-        writeMutVar var $! Closed
+-- Once it has been called, do not use the 'Merge' any more!
+abort :: (MonadSTM m, MonadST m) => Merge m h -> m ()
+abort Merge {..} = do
+    readMutVar mergeState >>= \case
+      Merging -> do
+        Readers.close mergeReaders
+        Builder.close mergeBuilder
+      MergingDone -> do
+        -- the readers are already drained, therefore closed
+        Builder.close mergeBuilder
+      Completed ->
+        assert False $ pure ()
+      Closed ->
+        assert False $ pure ()
+    writeMutVar mergeState $! Closed
 
 {-# SPECIALISE complete ::
      Merge IO h
@@ -174,9 +143,9 @@ finaliser var b rs = do
 -- | Complete a 'Merge', returning a new 'Run' as the result of merging the
 -- input runs.
 --
--- The resulting run has the same reference count as the input 'Merge'. The
--- 'Merge' does not have to be closed afterwards, since it is closed implicitly
--- by 'complete'.
+-- All resources held by the merge are released, so do not use the it any more!
+--
+-- The resulting run has a reference count of 1.
 --
 -- This function will /not/ do any merging work if there is any remaining. That
 -- is, if not enough 'steps' were performed to exhaust the input 'Readers', this
@@ -196,14 +165,8 @@ complete Merge{..} = do
     readMutVar mergeState >>= \case
       Merging -> error "complete: Merge is not done"
       MergingDone -> do
-        -- Since access to a merge /should/ be sequentialised, we can assume
-        -- that the ref count has not changed between this read and the use of
-        -- fromMutable.
-        --
-        -- TODO: alternatively, the mergeRefCounter could be reused as the
-        -- reference counter for the output run.
-        n <- RC.readRefCount mergeRefCounter
-        r <- Run.fromMutable mergeCaching n mergeBuilder
+        -- the readers are already drained, therefore closed
+        r <- Run.fromMutable mergeCaching (RefCount 1) mergeBuilder
         writeMutVar mergeState $! Completed
         pure r
       Completed -> error "complete: Merge is already completed"

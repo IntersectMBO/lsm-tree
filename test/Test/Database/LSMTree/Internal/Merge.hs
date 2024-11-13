@@ -38,9 +38,9 @@ tests = testGroup "Test.Database.LSMTree.Internal.Merge"
     [ testProperty "prop_MergeDistributes" $ \level stepSize wbs ->
         ioPropertyWithMockFS $ \fs hbio ->
           prop_MergeDistributes fs hbio level stepSize wbs
-    , testProperty "prop_CloseMerge" $ \level stepSize wbs ->
+    , testProperty "prop_AbortMerge" $ \level stepSize wbs ->
         ioPropertyWithMockFS $ \fs hbio ->
-          prop_CloseMerge fs hbio level stepSize wbs
+          prop_AbortMerge fs hbio level stepSize wbs
     ]
   where
     ioPropertyWithMockFS ::
@@ -114,18 +114,18 @@ prop_MergeDistributes fs hbio level stepSize (SmallList rds) =
 
 -- | After merging for a few steps, we can prematurely abort the merge, which
 -- should clean up properly.
-prop_CloseMerge ::
+prop_AbortMerge ::
      FS.HasFS IO h ->
      FS.HasBlockIO IO h ->
      Merge.Level ->
      StepSize ->
      SmallList (RunData KeyForIndexCompact SerialisedValue SerialisedBlob) ->
      IO Property
-prop_CloseMerge fs hbio level (Positive stepSize) (SmallList wbs) =
+prop_AbortMerge fs hbio level (Positive stepSize) (SmallList wbs) =
     withRuns fs hbio (V.fromList (zip (simplePaths [10..]) wbs')) $ \runs -> do
       let path0 = simplePath 0
       mergeToClose <- makeInProgressMerge path0 runs
-      traverse_ Merge.removeReference mergeToClose
+      traverse_ Merge.abort mergeToClose
 
       filesExist <- traverse (FS.doesFileExist fs) (pathsForRunFiles path0)
 
@@ -142,7 +142,7 @@ prop_CloseMerge fs hbio level (Positive stepSize) (SmallList wbs) =
           -- just do a few steps once, ideally not completing the merge
           Merge.steps merge stepSize >>= \case
             (_, Merge.MergeDone) -> do
-              Merge.removeReference merge  -- run not needed, close
+              Merge.abort merge  -- run not needed
               return Nothing  -- not in progress
             (_, Merge.MergeInProgress) ->
               return (Just merge)

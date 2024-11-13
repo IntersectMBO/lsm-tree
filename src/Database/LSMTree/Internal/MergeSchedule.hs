@@ -19,7 +19,9 @@ module Database.LSMTree.Internal.MergeSchedule (
     -- * Levels, runs and ongoing merges
   , Levels
   , Level (..)
+  , IncomingRun (..)
   , MergingRun (..)
+  , newMergingRun
   , NumRuns (..)
   , UnspentCreditsVar (..)
   , MergingRunState (..)
@@ -42,22 +44,22 @@ module Database.LSMTree.Internal.MergeSchedule (
   ) where
 
 import           Control.Concurrent.Class.MonadMVar.Strict
-import           Control.Monad (void, when)
+import           Control.Monad (void, when, (<$!>))
 import           Control.Monad.Class.MonadST (MonadST)
 import           Control.Monad.Class.MonadSTM (MonadSTM (..))
 import           Control.Monad.Class.MonadThrow (MonadCatch (bracketOnError),
                      MonadMask, MonadThrow (..))
 import           Control.Monad.Fix (MonadFix)
 import           Control.Monad.Primitive
-import           Control.RefCount (RefCount (..))
+import qualified Control.RefCount as RC
 import           Control.TempRegistry
 import           Control.Tracer
 import           Data.BloomFilter (Bloom)
+import           Data.Foldable (fold)
 import           Data.Primitive.MutVar
 import           Data.Primitive.PrimVar
 import qualified Data.Vector as V
-import           Database.LSMTree.Internal.Assertions (assert,
-                     fromIntegralChecked)
+import           Database.LSMTree.Internal.Assertions (assert)
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.Entry (Entry, NumEntries (..),
                      unNumEntries)
@@ -184,22 +186,41 @@ data LevelsCache m h = LevelsCache_ {
      TempRegistry IO
   -> Levels IO h
   -> IO (LevelsCache IO h) #-}
--- | Flatten the argument 'Level's into a single vector of runs, and use that to
--- populate the 'LevelsCache'. The cache will take a reference for each of the
--- runs that end up in the cache.
+-- | Flatten the argument 'Level's into a single vector of runs, including all
+-- runs that are inputs to an ongoing merge. Use that to populate the
+-- 'LevelsCache'. The cache will take a reference for each of its runs.
 mkLevelsCache ::
-     (PrimMonad m, MonadMVar m, MonadMask m)
+     forall m h. (PrimMonad m, MonadMVar m, MonadMask m)
   => TempRegistry m
   -> Levels m h
   -> m (LevelsCache m h)
 mkLevelsCache reg lvls = do
-  rs <- forRunM lvls $ \r -> allocateTemp reg (Run.addReference r) (\_ -> Run.removeReference r) >> pure r
-  pure $! LevelsCache_ {
-      cachedRuns      = rs
-    , cachedFilters   = mapStrict Run.runFilter rs
-    , cachedIndexes   = mapStrict Run.runIndex rs
-    , cachedKOpsFiles = mapStrict Run.runKOpsFile rs
-    }
+    rs <- foldRunAndMergeM
+      (fmap V.singleton . allocRun)
+      (mergingRunCloneRunRefs reg)
+      lvls
+    pure $! LevelsCache_ {
+        cachedRuns      = rs
+      , cachedFilters   = mapStrict Run.runFilter rs
+      , cachedIndexes   = mapStrict Run.runIndex rs
+      , cachedKOpsFiles = mapStrict Run.runKOpsFile rs
+      }
+  where
+    allocRun r = do
+        allocateTemp reg (Run.addReference r) (\_ -> Run.removeReference r)
+        pure r
+
+    -- TODO: this is not terribly performant, but it is also not sure if we are
+    -- going to need this in the end. We might get rid of the LevelsCache.
+    foldRunAndMergeM ::
+         Monoid a
+      => (Run m h -> m a) -> (MergingRun m h -> m a) -> Levels m h -> m a
+    foldRunAndMergeM k1 k2 ls =
+        fmap fold $ V.forM ls $ \(Level ir rs) -> do
+          incoming <- case ir of
+            Single r   -> k1 r
+            Merging mr -> k2 mr
+          (incoming <>) . fold <$> V.forM rs k1
 
 {-# SPECIALISE rebuildCache ::
      TempRegistry IO
@@ -271,30 +292,116 @@ type Levels m h = V.Vector (Level m h)
 
 -- | Runs in order from newer to older
 data Level m h = Level {
-    incomingRuns :: !(MergingRun m h)
+    incomingRun  :: !(IncomingRun m h)
   , residentRuns :: !(V.Vector (Run m h))
   }
 
--- | A merging run is either a single run, or some ongoing merge.
-data MergingRun m h =
-    -- | A merging of multiple runs.
-    MergingRun
-      !MergePolicyForLevel
-      !NumRuns
-      !NumEntries
-      -- ^ Sum of number of entries in the input runs
-      !(UnspentCreditsVar (PrimState m))
-      -- ^ The number of currently /unspent/ credits
-      !(TotalStepsVar (PrimState m))
-      -- ^ The total number of performed merging steps.
-      !(MutVar (PrimState m) MergeKnownCompleted)
-      -- ^ A variable that caches knowledge about whether the merge has been
-      -- completed. If 'MergeKnownCompleted', then we are sure the merge has
-      -- been completed, otherwise if 'MergeMaybeCompleted' we have to check the
+-- | An incoming run is either a single run, or a merge.
+data IncomingRun m h =
+    Single !(Run m h)
+  | Merging !(MergingRun m h)
+
+-- | A merging of multiple runs.
+--
+-- TODO: Move to a separate module.
+data MergingRun m h = MergingRun {
+      mergePolicy         :: !MergePolicyForLevel
+    , mergeNumRuns        :: !NumRuns
+      -- | Sum of number of entries in the input runs
+    , mergeNumEntries     :: !NumEntries
+      -- | The number of currently /unspent/ credits
+    , mergeUnspentCredits :: !(UnspentCreditsVar (PrimState m))
+      -- | The total number of performed merging steps.
+    , mergeStepsPerformed :: !(TotalStepsVar (PrimState m))
+      -- | A variable that caches knowledge about whether the merge has been
+      -- completed. If 'MergeKnownCompleted', then we are sure the merge has been
+      -- completed, otherwise if 'MergeMaybeCompleted' we have to check the
       -- 'MergingRunState'.
-      !(StrictMVar m (MergingRunState m h))
-    -- | The result of merging a single run, is a single run.
-  | SingleRun !(Run m h)
+    , mergeKnownCompleted :: !(MutVar (PrimState m) MergeKnownCompleted)
+    , mergeState          :: !(StrictMVar m (MergingRunState m h))
+    , mergeRefCounter     :: !(RC.RefCounter m)
+    }
+
+{-# SPECIALISE newMergingRun ::
+     MergePolicyForLevel
+  -> NumRuns
+  -> NumEntries
+  -> MergeKnownCompleted
+  -> MergingRunState IO h
+  -> IO (MergingRun IO h)
+  #-}
+-- | This allows constructing ill-formed MergingRuns, but the flexibility is
+-- needed for creating a merging run that is already Completed, as well as
+-- opening a merging run from a snapshot.
+--
+-- TODO: instead create a Single run when OneShot merging?
+--
+-- TODO: do not store MergeKnownCompleted in snapshot? It's redundant.
+--
+-- TODO: slightly different API for opening from snapshot?
+newMergingRun ::
+     (MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
+  => MergePolicyForLevel
+  -> NumRuns
+  -> NumEntries
+  -> MergeKnownCompleted
+  -> MergingRunState m h
+  -> m (MergingRun m h)
+newMergingRun mergePolicy mergeNumRuns mergeNumEntries knownCompleted state = do
+    mergeUnspentCredits <- UnspentCreditsVar <$> newPrimVar 0
+    mergeStepsPerformed <- TotalStepsVar <$> newPrimVar 0
+    case state of
+      OngoingMerge{}   -> assert (knownCompleted == MergeMaybeCompleted) (pure ())
+      CompletedMerge{} -> pure ()
+    mergeKnownCompleted <- newMutVar knownCompleted
+    mergeState <- newMVar $! state
+    mergeRefCounter <- RC.mkRefCounter1 (Just (finalise mergeState))
+    pure $! MergingRun {
+        mergePolicy
+      , mergeNumRuns
+      , mergeNumEntries
+      , mergeUnspentCredits
+      , mergeStepsPerformed
+      , mergeKnownCompleted
+      , mergeState
+      , mergeRefCounter
+      }
+  where
+    finalise var = withMVar var $ \case
+        CompletedMerge r ->
+          Run.removeReference r
+        OngoingMerge rs _ m -> do
+          V.forM_ rs Run.removeReference
+          Merge.abort m
+
+-- | Create references to the runs that should be queried for lookups.
+-- In particular, if the merge is not complete, these are the input runs.
+mergingRunCloneRunRefs ::
+     (PrimMonad m, MonadMVar m, MonadMask m)
+  => TempRegistry m
+  -> MergingRun m h
+  -> m (V.Vector (Run m h))
+mergingRunCloneRunRefs reg mr =
+    -- We take the references while holding the MVar to make sure the MergingRun
+    -- does not get completed concurrently before we are done.
+    withMVar (mergeState mr) $ \case
+      CompletedMerge r -> V.singleton <$> allocRun r
+      OngoingMerge rs _ _ -> rs <$ V.forM_ rs allocRun
+  where
+    allocRun r = do
+        allocateTemp reg (Run.addReference r) (\_ -> Run.removeReference r)
+        pure r
+
+data MergePolicyForLevel = LevelTiering | LevelLevelling
+  deriving stock (Show, Eq)
+
+mergePolicyForLevel :: MergePolicy -> LevelNo -> Levels m h -> MergePolicyForLevel
+mergePolicyForLevel MergePolicyLazyLevelling (LevelNo n) nextLevels
+  | n == 1
+  , V.null nextLevels
+  = LevelTiering    -- always use tiering on first level
+  | V.null nextLevels = LevelLevelling  -- levelling on last level
+  | otherwise         = LevelTiering
 
 newtype NumRuns = NumRuns { unNumRuns :: Int }
   deriving stock (Show, Eq)
@@ -328,7 +435,7 @@ addReferenceLevels ::
 addReferenceLevels reg levels =
     forRunAndMergeM_ levels
       (\r -> allocateTemp reg (Run.addReference r) (\_ -> Run.removeReference r))
-      (\m -> allocateTemp reg (Merge.addReference m) (\_ -> Merge.removeReference m))
+      (\m -> allocateTemp reg (addReferenceMergingRun m) (\_ -> removeReferenceMergingRun m))
 
 {-# SPECIALISE addReferenceLevels :: TempRegistry IO -> Levels IO h -> IO () #-}
 removeReferenceLevels ::
@@ -339,60 +446,32 @@ removeReferenceLevels ::
 removeReferenceLevels reg levels =
     forRunAndMergeM_ levels
       (\r -> freeTemp reg (Run.removeReference r))
-      (\m -> freeTemp reg (Merge.removeReference m))
+      (\m -> freeTemp reg (removeReferenceMergingRun m))
+
+{-# SPECIALISE addReferenceMergingRun :: MergingRun IO h -> IO () #-}
+addReferenceMergingRun :: (PrimMonad m) => MergingRun m h -> m ()
+addReferenceMergingRun MergingRun{..} = RC.addReference mergeRefCounter
+
+{-# SPECIALISE removeReferenceMergingRun :: MergingRun IO h -> IO () #-}
+removeReferenceMergingRun :: (PrimMonad m, MonadMask m) => MergingRun m h -> m ()
+removeReferenceMergingRun MergingRun{..} = RC.removeReference mergeRefCounter
 
 {-# SPECIALISE forRunAndMergeM_ ::
      Levels IO h
   -> (Run IO h -> IO ())
-  -> (Merge IO h -> IO ())
+  -> (MergingRun IO h -> IO ())
   -> IO () #-}
 forRunAndMergeM_ ::
      MonadMVar m
   => Levels m h
   -> (Run m h -> m ())
-  -> (Merge m h -> m ())
+  -> (MergingRun m h -> m ())
   -> m ()
-forRunAndMergeM_ lvls k1 k2 = V.forM_ lvls $ \(Level mr rs) -> do
-    case mr of
-      SingleRun r    -> k1 r
-      MergingRun _ _ _ _ _ _ var -> withMVar var $ \case
-        CompletedMerge r -> k1 r
-        OngoingMerge irs _ m -> V.mapM_ k1 irs >> k2 m
+forRunAndMergeM_ lvls k1 k2 = V.forM_ lvls $ \(Level ir rs) -> do
+    case ir of
+      Single r   -> k1 r
+      Merging mr -> k2 mr
     V.mapM_ k1 rs
-
-{-# SPECIALISE foldRunM ::
-     (b -> Run IO h -> IO b)
-  -> b
-  -> Levels IO h
-  -> IO b #-}
-foldRunM ::
-     MonadMVar m
-  => (b -> Run m h -> m b)
-  -> b
-  -> Levels m h
-  -> m b
-foldRunM f x lvls = flip (flip V.foldM x) lvls $ \y (Level mr rs) -> do
-    z <- case mr of
-      SingleRun r -> f y r
-      MergingRun _ _ _ _ _ _ var -> withMVar var $ \case
-        CompletedMerge r -> f y r
-        OngoingMerge irs _ _m -> V.foldM f y irs
-    V.foldM f z rs
-
-{-# SPECIALISE forRunM ::
-     Levels IO h
-  -> (Run IO h -> IO a)
-  -> IO (V.Vector a) #-}
--- TODO: this is not terribly performant, but it is also not sure if we are
--- going to need this in the end. We might get rid of the LevelsCache, and we
--- currently only use forRunM in mkLevelsCache.
-forRunM ::
-     MonadMVar m
-  => Levels m h
-  -> (Run m h -> m a)
-  -> m (V.Vector a)
-forRunM lvls k = do
-    V.reverse . V.fromList <$> foldRunM (\acc r -> k r >>= \x -> pure (x : acc)) [] lvls
 
 {-# SPECIALISE iforLevelM_ :: Levels IO h -> (LevelNo -> Level IO h -> IO ()) -> IO () #-}
 iforLevelM_ :: Monad m => Levels m h -> (LevelNo -> Level m h -> m ()) -> m ()
@@ -702,73 +781,77 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
         traceWith tr $ AtLevel ln TraceAddLevel
         -- Make a new level
         let policyForLevel = mergePolicyForLevel confMergePolicy ln V.empty
-        mr <- newMerge policyForLevel Merge.LastLevel ln rs
-        return $ V.singleton $ Level mr V.empty
-    go !ln rs' (V.uncons -> Just (Level mr rs, ls)) = do
-        r <- expectCompletedMergeTraced ln mr
+        ir <- newMerge policyForLevel Merge.LastLevel ln rs
+        return $ V.singleton $ Level ir V.empty
+    go !ln rs' (V.uncons -> Just (Level ir rs, ls)) = do
+        r <- expectCompletedMergeTraced ln ir
+        let !runSize = Run.runNumEntries r
         case mergePolicyForLevel confMergePolicy ln ls of
           -- If r is still too small for this level then keep it and merge again
           -- with the incoming runs.
-          LevelTiering | runSize r <= maxRunSize' conf LevelTiering (pred ln) -> do
+          LevelTiering | runSize <= maxRunSize' conf LevelTiering (pred ln) -> do
             let mergelast = mergeLastForLevel ls
-            mr' <- newMerge LevelTiering mergelast ln (rs' `V.snoc` r)
-            pure $! Level mr' rs `V.cons` ls
+            ir' <- newMerge LevelTiering mergelast ln (rs' `V.snoc` r)
+            pure $! Level ir' rs `V.cons` ls
           -- This tiering level is now full. We take the completed merged run
           -- (the previous incoming runs), plus all the other runs on this level
           -- as a bundle and move them down to the level below. We start a merge
           -- for the new incoming runs. This level is otherwise empty.
           LevelTiering | levelIsFull confSizeRatio rs -> do
-            mr' <- newMerge LevelTiering Merge.MidLevel ln rs'
+            ir' <- newMerge LevelTiering Merge.MidLevel ln rs'
             ls' <- go (succ ln) (r `V.cons` rs) ls
-            pure $! Level mr' V.empty `V.cons` ls'
+            pure $! Level ir' V.empty `V.cons` ls'
           -- This tiering level is not yet full. We move the completed merged run
           -- into the level proper, and start the new merge for the incoming runs.
           LevelTiering -> do
             let mergelast = mergeLastForLevel ls
-            mr' <- newMerge LevelTiering mergelast ln rs'
+            ir' <- newMerge LevelTiering mergelast ln rs'
             traceWith tr $ AtLevel ln
                          $ TraceAddRun
                             (runNumber $ Run.runRunFsPaths r)
                             (V.map (runNumber . Run.runRunFsPaths) rs)
-            pure $! Level mr' (r `V.cons` rs) `V.cons` ls
+            pure $! Level ir' (r `V.cons` rs) `V.cons` ls
           -- The final level is using levelling. If the existing completed merge
           -- run is too large for this level, we promote the run to the next
           -- level and start merging the incoming runs into this (otherwise
           -- empty) level .
-          LevelLevelling | runSize r > maxRunSize' conf LevelLevelling ln -> do
+          LevelLevelling | runSize > maxRunSize' conf LevelLevelling ln -> do
             assert (V.null rs && V.null ls) $ pure ()
-            mr' <- newMerge LevelTiering Merge.MidLevel ln rs'
+            ir' <- newMerge LevelTiering Merge.MidLevel ln rs'
             ls' <- go (succ ln) (V.singleton r) V.empty
-            pure $! Level mr' V.empty `V.cons` ls'
+            pure $! Level ir' V.empty `V.cons` ls'
           -- Otherwise we start merging the incoming runs into the run.
           LevelLevelling -> do
             assert (V.null rs && V.null ls) $ pure ()
-            mr' <- newMerge LevelLevelling Merge.LastLevel ln (rs' `V.snoc` r)
-            pure $! Level mr' V.empty `V.cons` V.empty
+            ir' <- newMerge LevelLevelling Merge.LastLevel ln (rs' `V.snoc` r)
+            pure $! Level ir' V.empty `V.cons` V.empty
 
-    expectCompletedMergeTraced :: LevelNo -> MergingRun m h -> m (Run m h)
-    expectCompletedMergeTraced ln mr = do
-      r <- expectCompletedMerge mr
+    expectCompletedMergeTraced :: LevelNo -> IncomingRun m h -> m (Run m h)
+    expectCompletedMergeTraced ln ir = do
+      r <- expectCompletedMerge reg ir
       traceWith tr $ AtLevel ln $ TraceExpectCompletedMerge (runNumber $ Run.runRunFsPaths r)
       pure r
 
+    -- TODO: refactor, pull to top level?
     newMerge :: MergePolicyForLevel
              -> Merge.Level
              -> LevelNo
              -> V.Vector (Run m h)
-             -> m (MergingRun m h)
-    newMerge mergepolicy mergelast ln rs
+             -> m (IncomingRun m h)
+    newMerge mergePolicy mergelast ln rs
       | Just (r, rest) <- V.uncons rs
       , V.null rest = do
           traceWith tr $ AtLevel ln $ TraceNewMergeSingleRun (Run.runNumEntries r) (runNumber $ Run.runRunFsPaths r)
-          pure (SingleRun r)
+          pure (Single r)
       | otherwise = do
         assert (let l = V.length rs in l >= 2 && l <= 5) $ pure ()
         !n <- incrUniqCounter uc
         let !caching = diskCachePolicyForLevel confDiskCachePolicy ln
             !alloc = bloomFilterAllocForLevel conf ln
             !runPaths = Paths.runPath root (uniqueToRunNumber n)
-        traceWith tr $ AtLevel ln $ TraceNewMerge (V.map Run.runNumEntries rs) (runNumber runPaths) caching alloc mergepolicy mergelast
+        traceWith tr $ AtLevel ln $ TraceNewMerge (V.map Run.runNumEntries rs) (runNumber runPaths) caching alloc mergePolicy mergelast
+        let numInputRuns = NumRuns $ V.length rs
+        let numInputEntries = NumEntries $ V.sum (V.map (unNumEntries . Run.runNumEntries) rs)
         case confMergeSchedule of
           OneShot -> do
             r <- allocateTemp reg
@@ -776,48 +859,17 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
                   Run.removeReference
             traceWith tr $ AtLevel ln $ TraceCompletedMerge (Run.runNumEntries r) (runNumber $ Run.runRunFsPaths r)
             V.mapM_ (freeTemp reg . Run.removeReference) rs
-            mergeVar <- newMVar $! CompletedMerge r
+            Merging <$!> newMergingRun mergePolicy numInputRuns numInputEntries MergeKnownCompleted (CompletedMerge r)
 
-            mkMergingRun rs MergeKnownCompleted mergeVar
           Incremental -> do
             mergeMaybe <- allocateMaybeTemp reg
               (Merge.new hfs hbio caching alloc mergelast resolve runPaths rs)
-              Merge.removeReference
+              Merge.abort
             case mergeMaybe of
               Nothing -> error "newMerge: merges can not be empty"
               Just m -> do
                 spentCreditsVar <- SpentCreditsVar <$> newPrimVar 0
-                mergeVar <- newMVar $! OngoingMerge rs spentCreditsVar m
-                mkMergingRun rs MergeMaybeCompleted mergeVar
-        where
-          mkMergingRun ::
-               V.Vector (Run m h)
-            -> MergeKnownCompleted
-            -> StrictMVar m (MergingRunState m h)
-            -> m (MergingRun m h)
-          mkMergingRun inputRuns mergeCompleted mergeVar = do
-            unspentCreditsVar <- UnspentCreditsVar <$> newPrimVar 0
-            totalStepsVar <- TotalStepsVar <$> newPrimVar 0
-            mergeKnownCompletedVar <- newMutVar $! mergeCompleted
-            let numInputEntries = NumEntries $
-                  V.sum (V.map (unNumEntries . Run.runNumEntries) inputRuns)
-            pure $! MergingRun
-                      mergepolicy (NumRuns $ V.length rs) numInputEntries
-                      unspentCreditsVar totalStepsVar mergeKnownCompletedVar mergeVar
-
-data MergePolicyForLevel = LevelTiering | LevelLevelling
-  deriving stock (Show, Eq)
-
-mergePolicyForLevel :: MergePolicy -> LevelNo -> Levels m h -> MergePolicyForLevel
-mergePolicyForLevel MergePolicyLazyLevelling (LevelNo n) nextLevels
-  | n == 1
-  , V.null nextLevels
-  = LevelTiering    -- always use tiering on first level
-  | V.null nextLevels = LevelLevelling  -- levelling on last level
-  | otherwise         = LevelTiering
-
-runSize :: Run m h -> NumEntries
-runSize run = Run.runNumEntries run
+                Merging <$!> newMergingRun mergePolicy numInputRuns numInputEntries MergeMaybeCompleted (OngoingMerge rs spentCreditsVar m)
 
 -- $setup
 -- >>> import Database.LSMTree.Internal.Entry
@@ -999,10 +1051,10 @@ supplyCredits ::
   -> Levels m h
   -> m ()
 supplyCredits conf c levels =
-    iforLevelM_ levels $ \ln (Level mr _rs) ->
-      let !c' = scaleCreditsForMerge mr c in
+    iforLevelM_ levels $ \ln (Level ir _rs) ->
+      let !c' = scaleCreditsForMerge ir c in
       let !creditsThresh = creditThresholdForLevel conf ln in
-      supplyMergeCredits c' creditsThresh mr
+      supplyMergeCredits c' creditsThresh ir
 
 -- | 'Credit's scaled based on the merge requirements for merging runs. See
 -- 'scaleCreditsForMerge'.
@@ -1014,59 +1066,60 @@ newtype ScaledCredits = ScaledCredits Int
 -- Initially, 1 update supplies 1 credit. However, since merging runs have
 -- different numbers of input runs/entries, we may have to a more or less
 -- merging work than 1 merge step for each credit.
-scaleCreditsForMerge :: MergingRun m h -> Credit -> ScaledCredits
+scaleCreditsForMerge :: IncomingRun m h -> Credit -> ScaledCredits
 -- A single run is a trivially completed merge, so it requires no credits.
-scaleCreditsForMerge SingleRun{} _ = ScaledCredits 0
--- A levelling merge has 1 input run and one resident run, which is (up to) 4x
--- bigger than the others. It needs to be completed before another run comes in.
---
--- TODO: this is currently assuming a naive worst case, where the resident run
--- is as large as it can be for the current level. We probably have enough
--- information available here to lower the worst-case upper bound by looking at
--- the sizes of the input runs. As as result, merge work would/could be more
--- evenly distributed over time when the resident run is smaller than the worst
--- case.
-scaleCreditsForMerge (MergingRun LevelLevelling _ _ _ _ _ _) (Credit c) =
-    ScaledCredits (c * (1 + 4))
--- A tiering merge has 5 runs at most (one could be held back to merged again)
--- and must be completed before the level is full (once 4 more runs come in).
-scaleCreditsForMerge (MergingRun LevelTiering (NumRuns n) _ _ _ _ _) (Credit c) =
-    ScaledCredits ((c * n + 3) `div` 4)
-    -- same as division rounding up: ceiling (c * n / 4)
+scaleCreditsForMerge (Single _) _ = ScaledCredits 0
+scaleCreditsForMerge (Merging MergingRun {..}) (Credit c) =
+    case mergePolicy of
+      LevelTiering ->
+        -- A tiering merge has 5 runs at most (one could be held back to merged
+        -- again) and must be completed before the level is full (once 4 more
+        -- runs come in).
+        ScaledCredits (c * (1 + 4))
+      LevelLevelling ->
+        -- A levelling merge has 1 input run and one resident run, which is (up
+        -- to) 4x bigger than the others. It needs to be completed before
+        -- another run comes in.
+        -- TODO: this is currently assuming a naive worst case, where the
+        -- resident run is as large as it can be for the current level. We
+        -- probably have enough information available here to lower the
+        -- worst-case upper bound by looking at the sizes of the input runs.
+        -- As as result, merge work would/could be more evenly distributed over
+        -- time when the resident run is smaller than the worst case.
+        let NumRuns n = mergeNumRuns
+           -- same as division rounding up: ceiling (c * n / 4)
+        in ScaledCredits ((c * n + 3) `div` 4)
 
-{-# SPECIALISE supplyMergeCredits :: ScaledCredits -> CreditThreshold -> MergingRun IO h -> IO () #-}
+{-# SPECIALISE supplyMergeCredits :: ScaledCredits -> CreditThreshold -> IncomingRun IO h -> IO () #-}
 -- | Supply the given amount of credits to a merging run. This /may/ cause an
 -- ongoing merge to progress.
 supplyMergeCredits ::
      forall m h. (MonadSTM m, MonadST m, MonadMVar m, MonadMask m, MonadFix m)
   => ScaledCredits
   -> CreditThreshold
-  -> MergingRun m h
+  -> IncomingRun m h
   -> m ()
-supplyMergeCredits _ _ SingleRun{} = pure ()
-supplyMergeCredits
-  (ScaledCredits c)
-  thresh@(CreditThreshold creditsThresh)
-  (MergingRun _ _ numInputEntries unspentCreditsVar totalStepsVar mergeKnownCompletedVar mergeVar) = do
-    mergeKnownCompleted <- readMutVar mergeKnownCompletedVar
+supplyMergeCredits _ _ Single{} = pure ()
+supplyMergeCredits (ScaledCredits c) creditsThresh (Merging MergingRun {..}) = do
+    mergeCompleted <- readMutVar mergeKnownCompleted
 
     -- The merge is already finished
-    if mergeKnownCompleted == MergeKnownCompleted then
+    if mergeCompleted == MergeKnownCompleted then
       pure ()
-    -- We can finish the merge immediately
     else do
       -- unspentCredits' is our /estimate/ of what the new total of unspent credits is.
-      Credit unspentCredits' <- addUnspentCredits unspentCreditsVar (Credit c)
-      totalSteps <- readPrimVar (getTotalStepsVar totalStepsVar)
+      Credit unspentCredits' <- addUnspentCredits mergeUnspentCredits (Credit c)
+      totalSteps <- readPrimVar (getTotalStepsVar mergeStepsPerformed)
 
-      if totalSteps + unspentCredits' >= unNumEntries numInputEntries then do
+      -- We can finish the merge immediately
+      if totalSteps + unspentCredits' >= unNumEntries mergeNumEntries then do
         isMergeDone <-
-          bracketOnError (takeAllUnspentCredits unspentCreditsVar)
-                        (putBackUnspentCredits unspentCreditsVar)
-                        (stepMerge mergeVar totalStepsVar)
-        when isMergeDone $ completeMerge mergeVar mergeKnownCompletedVar
-      -- Try to do some merging work if the new total now goes over the threshold.
-      else if unspentCredits' >= creditsThresh then do
+          bracketOnError (takeAllUnspentCredits mergeUnspentCredits)
+                         (putBackUnspentCredits mergeUnspentCredits)
+                         (stepMerge mergeState mergeStepsPerformed)
+        when isMergeDone $ completeMerge mergeState mergeKnownCompleted
+      -- We can do some merging work without finishing the merge immediately
+      else if unspentCredits' >= getCreditThreshold creditsThresh then do
         isMergeDone <-
           -- Try to take some unspent credits. The number of taken credits is the
           -- number of merging steps we will try to do.
@@ -1074,10 +1127,11 @@ supplyMergeCredits
           -- If an error happens during the body, then we put back as many credits
           -- as we took, even if the merge has progressed. See Note [Credits] why
           -- this is okay.
-          bracketOnError (tryTakeUnspentCredits unspentCreditsVar thresh (Credit unspentCredits'))
-                        (mapM_ (putBackUnspentCredits unspentCreditsVar)) $ \case
-            Nothing -> pure False
-            Just c' -> stepMerge mergeVar totalStepsVar c'
+          bracketOnError
+            (tryTakeUnspentCredits mergeUnspentCredits creditsThresh (Credit unspentCredits'))
+            (mapM_ (putBackUnspentCredits mergeUnspentCredits)) $ \case
+              Nothing -> pure False
+              Just c' -> stepMerge mergeState mergeStepsPerformed c'
 
         -- If we just finished the merge, then we convert the output of the merge
         -- into a new run. i.e., we complete the merge.
@@ -1085,7 +1139,7 @@ supplyMergeCredits
         -- If an async exception happens before we get to perform the
         -- completion, then that is fine. The next supplyMergeCredits will
         -- complete the merge.
-        when isMergeDone $ completeMerge mergeVar mergeKnownCompletedVar
+        when isMergeDone $ completeMerge mergeState mergeKnownCompleted
       -- Just accumulate unspent credits, because we are not over the threshold yet
       else
         pure ()
@@ -1118,7 +1172,7 @@ addUnspentCredits (UnspentCreditsVar !var) (Credit c) = Credit . (c+) <$> fetchA
 --
 -- Nothing can be returned if the variable has already gone below the threshold,
 -- which may happen if another thread is concurrently doing the same loop on
--- unspentCreditsVar.
+-- 'mergeUnspentCredits'.
 tryTakeUnspentCredits ::
      PrimMonad m
   => UnspentCreditsVar (PrimState m)
@@ -1226,40 +1280,41 @@ completeMerge ::
   -> m ()
 completeMerge mergeVar mergeKnownCompletedVar = do
     modifyMVarMasked_ mergeVar $ \case
-      mr@CompletedMerge{} -> pure $! mr
+      mrs@CompletedMerge{} -> pure $! mrs
       (OngoingMerge rs _spentCreditsVar m) -> do
-        -- TODO: we'll likely move away from this style of reference counting,
-        -- so this code will change in the future.
-        RefCount n <- Merge.readRefCount m
-        let !n' = fromIntegralChecked n
-        V.forM_ rs $ \r -> Run.removeReferenceN r n'
+        -- first try to complete the merge before performing other side effects,
+        -- in case the completion fails
         r <- Merge.complete m
-        Merge.removeReferenceN m n'
+        V.forM_ rs Run.removeReference
         -- Cache the knowledge that we completed the merge
         writeMutVar mergeKnownCompletedVar MergeKnownCompleted
         pure $! CompletedMerge r
 
-{-# SPECIALISE expectCompletedMerge :: MergingRun IO h -> IO (Run IO h) #-}
+{-# SPECIALISE expectCompletedMerge :: TempRegistry IO -> IncomingRun IO h -> IO (Run IO h) #-}
 expectCompletedMerge ::
      (MonadMVar m, MonadSTM m, MonadST m, MonadMask m, MonadFix m)
-  => MergingRun m h -> m (Run m h)
-expectCompletedMerge (SingleRun r) = pure r
-expectCompletedMerge (MergingRun _ _ numInputEntries _ totalStepsVar@(TotalStepsVar var) mergeKnownCompletedVar mergeVar) = do
-    mergeKnownCompleted <- readMutVar mergeKnownCompletedVar
-    -- The merge is not guaranteed to be complete.
-    when (mergeKnownCompleted == MergeMaybeCompleted) $ do
-      totalSteps <- readPrimVar var
-      isMergeDone <- stepMerge mergeVar totalStepsVar (Credit (unNumEntries numInputEntries - totalSteps))
-      when isMergeDone $ completeMerge mergeVar mergeKnownCompletedVar
+  => TempRegistry m -> IncomingRun m h -> m (Run m h)
+expectCompletedMerge _ (Single r) = pure r
+expectCompletedMerge reg (Merging (mr@MergingRun {..})) = do
+    knownCompleted <- readMutVar mergeKnownCompleted
+    -- The merge is not guaranteed to be complete, so we do the remaining steps
+    when (knownCompleted == MergeMaybeCompleted) $ do
+      totalSteps <- readPrimVar (getTotalStepsVar mergeStepsPerformed)
+      isMergeDone <- stepMerge mergeState mergeStepsPerformed (Credit (unNumEntries mergeNumEntries - totalSteps))
+      when isMergeDone $ completeMerge mergeState mergeKnownCompleted
       -- TODO: can we think of a check to see if we did not do too much work here?
-    withMVar mergeVar $ \case
+    r <- withMVar mergeState $ \case
       CompletedMerge r -> pure r
       OngoingMerge{} -> do
-        -- If the algorithm /still/ finds an ongoing merge here, then it is a bug in
+        -- If the algorithm finds an ongoing merge here, then it is a bug in
         -- our merge sceduling algorithm. As such, we throw a pure error.
         error "expectCompletedMerge: expected a completed merge, but found an ongoing merge"
+    -- return a fresh reference to the run
+    allocateTemp reg (Run.addReference r) (\_ -> Run.removeReference r)
+    freeTemp reg (removeReferenceMergingRun mr)
+    pure r
 
-newtype CreditThreshold = CreditThreshold Int
+newtype CreditThreshold = CreditThreshold { getCreditThreshold :: Int }
 
 -- TODO: the thresholds for doing merge work should be different for each level,
 -- maybe co-prime?
