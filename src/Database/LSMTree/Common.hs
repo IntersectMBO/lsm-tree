@@ -205,9 +205,6 @@ class Labellable a where
 -- Exceptions:
 --
 -- * Deleting a snapshot that doesn't exist is an error.
---
--- TODO: this function currently has a temporary implementation until we have
--- proper snapshots.
 deleteSnapshot ::
      IOLike m
   => Session m
@@ -219,9 +216,6 @@ deleteSnapshot (Internal.Session' sesh) = Internal.deleteSnapshot sesh
      Session IO
   -> IO [Internal.SnapshotName] #-}
 -- | List snapshots by name.
---
--- TODO: this function currently has a temporary implementation until we have
--- proper snapshots.
 listSnapshots ::
      IOLike m
   => Session m
