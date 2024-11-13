@@ -4,13 +4,13 @@
 
 module ScheduledMergesTestQLS (tests) where
 
-import           Prelude hiding (lookup)
-import           Data.Map.Strict (Map)
-import qualified Data.Map.Strict as Map
-import           Data.Constraint (Dict (..))
-import           Data.Proxy
 import           Control.Monad.ST
 import           Control.Tracer (Tracer, nullTracer)
+import           Data.Constraint (Dict (..))
+import           Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
+import           Data.Proxy
+import           Prelude hiding (lookup)
 
 import           ScheduledMerges as LSM
 
@@ -35,17 +35,17 @@ prop_LSM = Lockstep.runActions (Proxy :: Proxy Model)
 
 type ModelLSM = Int
 
-newtype Model = Model { mlsms :: Map ModelLSM (Map Key Value) }
+newtype Model = Model { mlsms :: Map ModelLSM (Map Key (Value, Maybe Blob)) }
   deriving stock (Show)
 
 type ModelOp r = Model -> (r, Model)
 
-modelNew       ::                             ModelOp ModelLSM
-modelInsert    :: ModelLSM -> Key -> Value -> ModelOp ()
-modelDelete    :: ModelLSM -> Key ->          ModelOp ()
-modelLookup    :: ModelLSM -> Key ->          ModelOp (Maybe Value)
-modelDuplicate :: ModelLSM ->                 ModelOp ModelLSM
-modelDump      :: ModelLSM ->                 ModelOp (Map Key Value)
+modelNew       ::                                           ModelOp ModelLSM
+modelInsert    :: ModelLSM -> Key -> Value -> Maybe Blob -> ModelOp ()
+modelDelete    :: ModelLSM -> Key ->                        ModelOp ()
+modelLookup    :: ModelLSM -> Key ->                        ModelOp (LookupResult Value Blob)
+modelDuplicate :: ModelLSM ->                               ModelOp ModelLSM
+modelDump      :: ModelLSM ->                               ModelOp (Map Key (Value, Maybe Blob))
 
 initModel :: Model
 initModel = Model { mlsms = Map.empty }
@@ -55,8 +55,8 @@ modelNew Model {mlsms} =
   where
     mlsm = Map.size mlsms
 
-modelInsert mlsm k v Model {mlsms} =
-    ((), Model { mlsms = Map.adjust (Map.insert k v) mlsm mlsms })
+modelInsert mlsm k v b Model {mlsms} =
+    ((), Model { mlsms = Map.adjust (Map.insert k (v, b)) mlsm mlsms })
 
 modelDelete mlsm k Model {mlsms} =
     ((), Model { mlsms = Map.adjust (Map.delete k) mlsm mlsms })
@@ -65,7 +65,10 @@ modelLookup mlsm k model@Model {mlsms} =
     (result, model)
   where
     Just mval = Map.lookup mlsm mlsms
-    result    = Map.lookup k mval
+    result    = case Map.lookup k mval of
+                  Nothing           -> NotFound
+                  Just (v, Nothing) -> Found v
+                  Just (v, Just b)  -> FoundWithBlob v b
 
 modelDuplicate mlsm Model {mlsms} =
     (mlsm', Model { mlsms = Map.insert mlsm' mval mlsms })
@@ -85,6 +88,7 @@ instance StateModel (Lockstep Model) where
     AInsert :: ModelVar Model (LSM RealWorld)
             -> Either (ModelVar Model Key) Key -- to refer to a prior key
             -> Value
+            -> Maybe Blob
             -> Action (Lockstep Model) (Key)
 
     ADelete :: ModelVar Model (LSM RealWorld)
@@ -93,13 +97,13 @@ instance StateModel (Lockstep Model) where
 
     ALookup :: ModelVar Model (LSM RealWorld)
             -> Either (ModelVar Model Key) Key
-            -> Action (Lockstep Model) (Maybe Value)
+            -> Action (Lockstep Model) (LookupResult Value Blob)
 
     ADuplicate :: ModelVar Model (LSM RealWorld)
                -> Action (Lockstep Model) (LSM RealWorld)
 
     ADump   :: ModelVar Model (LSM RealWorld)
-            -> Action (Lockstep Model) (Map Key Value)
+            -> Action (Lockstep Model) (Map Key (Value, Maybe Blob))
 
   initialState    = Lockstep.initialState initModel
   nextState       = Lockstep.nextState
@@ -114,11 +118,16 @@ instance RunModel (Lockstep Model) IO where
 
 instance InLockstep Model where
   data ModelValue Model a where
-    MLSM    :: ModelLSM      -> ModelValue Model (LSM RealWorld)
-    MUnit   :: ()            -> ModelValue Model ()
-    MInsert :: Key           -> ModelValue Model (Key)
-    MLookup :: Maybe Value   -> ModelValue Model (Maybe Value)
-    MDump   :: Map Key Value -> ModelValue Model (Map Key Value)
+    MLSM    :: ModelLSM
+            -> ModelValue Model (LSM RealWorld)
+    MUnit   :: ()
+            -> ModelValue Model ()
+    MInsert :: Key
+            -> ModelValue Model Key
+    MLookup :: LookupResult Value Blob
+            -> ModelValue Model (LookupResult Value Blob)
+    MDump   :: Map Key (Value, Maybe Blob)
+            -> ModelValue Model (Map Key (Value, Maybe Blob))
 
   data Observable Model a where
     ORef :: Observable Model (LSM RealWorld)
@@ -130,15 +139,15 @@ instance InLockstep Model where
   observeModel (MLookup x) = OId x
   observeModel (MDump   x) = OId x
 
-  usedVars  ANew             = []
-  usedVars (AInsert v evk _) = SomeGVar v
-                             : case evk of Left vk -> [SomeGVar vk]; _ -> []
-  usedVars (ADelete v evk)   = SomeGVar v
-                             : case evk of Left vk -> [SomeGVar vk]; _ -> []
-  usedVars (ALookup v evk)   = SomeGVar v
-                             : case evk of Left vk -> [SomeGVar vk]; _ -> []
-  usedVars (ADuplicate v)    = [SomeGVar v]
-  usedVars (ADump v)         = [SomeGVar v]
+  usedVars  ANew               = []
+  usedVars (AInsert v evk _ _) = SomeGVar v
+                               : case evk of Left vk -> [SomeGVar vk]; _ -> []
+  usedVars (ADelete v evk)     = SomeGVar v
+                               : case evk of Left vk -> [SomeGVar vk]; _ -> []
+  usedVars (ALookup v evk)     = SomeGVar v
+                               : case evk of Left vk -> [SomeGVar vk]; _ -> []
+  usedVars (ADuplicate v)      = [SomeGVar v]
+  usedVars (ADump v)           = [SomeGVar v]
 
   modelNextState = runModel
 
@@ -154,13 +163,15 @@ instance InLockstep Model where
           [ (3, fmap Some $
                   AInsert <$> elements vars
                           <*> freshKey
-                          <*> arbitrary @Value)
+                          <*> arbitrary @Value
+                          <*> arbitrary @(Maybe Blob))
           ]
           -- inserts of the same keys as used earlier
        ++ [ (1, fmap Some $
                   AInsert <$> elements vars
                           <*> existingKey
-                          <*> arbitrary @Value)
+                          <*> arbitrary @Value
+                          <*> arbitrary @(Maybe Blob))
           | not (null kvars)
           ]
           -- deletes of arbitrary keys:
@@ -192,11 +203,11 @@ instance InLockstep Model where
                   ADuplicate <$> elements vars)
           ]
 
-  shrinkWithVars _ctx _model (AInsert var (Right k) v) =
-    [ Some $ AInsert var (Right k') v' | (k', v') <- shrink (k, v) ]
+  shrinkWithVars _ctx _model (AInsert var (Right k) v b) =
+    [ Some $ AInsert var (Right k') v' b' | (k', v', b') <- shrink (k, v, b) ]
 
-  shrinkWithVars _ctx _model (AInsert var (Left _kv) v) =
-    [ Some $ AInsert var (Right k) v | k <- shrink (K 100) ]
+  shrinkWithVars _ctx _model (AInsert var (Left _kv) v b) =
+    [ Some $ AInsert var (Right k') v' b' | (k', v', b') <- shrink (K 100, v, b) ]
 
   shrinkWithVars _ctx _model (ADelete var (Right k)) =
     [ Some $ ADelete var (Right k') | k' <- shrink k ]
@@ -239,22 +250,18 @@ runActionIO :: Action (Lockstep Model) a
 runActionIO action lookUp =
   stToIO $
   case action of
-    ANew              -> new
-    AInsert var evk v -> insert tr (lookUpVar var) k v >> return k
+    ANew                -> new
+    AInsert var evk v b -> insert tr (lookUpVar var) k v b >> return k
       where k = either lookUpVar id evk
-    ADelete var evk   -> delete tr (lookUpVar var) k >> return ()
+    ADelete var evk     -> delete tr (lookUpVar var) k >> return ()
       where k = either lookUpVar id evk
-    ALookup var evk   -> lookupResultValue <$> lookup (lookUpVar var) k
+    ALookup var evk     -> lookup (lookUpVar var) k
       where k = either lookUpVar id evk
-    ADuplicate var    -> duplicate (lookUpVar var)
-    ADump      var    -> logicalValue (lookUpVar var)
+    ADuplicate var      -> duplicate (lookUpVar var)
+    ADump      var      -> logicalValue (lookUpVar var)
   where
     lookUpVar :: ModelVar Model a -> a
     lookUpVar = lookUpGVar (Proxy :: Proxy IO) lookUp
-
-    lookupResultValue NotFound             = Nothing
-    lookupResultValue (Found v)            = Just v
-    lookupResultValue (FoundWithBlob v _b) = Just v
 
     tr :: Tracer (ST RealWorld) Event
     tr = nullTracer
@@ -268,8 +275,8 @@ runModel action ctx m =
     ANew -> (MLSM mlsm, m')
       where (mlsm, m') = modelNew m
 
-    AInsert var evk v -> (MInsert k, m')
-      where ((), m') = modelInsert (lookUpLsMVar var) k v m
+    AInsert var evk v b -> (MInsert k, m')
+      where ((), m') = modelInsert (lookUpLsMVar var) k v b m
             k = either lookUpKeyVar id evk
 
     ADelete var evk -> (MUnit (), m')
