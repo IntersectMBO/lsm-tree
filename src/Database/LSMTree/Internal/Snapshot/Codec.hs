@@ -404,26 +404,26 @@ instance DecodeVersioned MergeSchedule where
 
 -- SnapLevels
 
-instance Encode SnapLevels where
-  encode levels =
+instance Encode (SnapLevels RunNumber) where
+  encode (SnapLevels levels) =
          encodeListLen (fromIntegral (V.length levels))
       <> V.foldMap encode levels
 
-instance DecodeVersioned SnapLevels where
+instance DecodeVersioned (SnapLevels RunNumber) where
   decodeVersioned v@V0 = do
       n <- decodeListLen
-      V.replicateM n (decodeVersioned v)
+      SnapLevels <$> V.replicateM n (decodeVersioned v)
 
 -- SnapLevel
 
-instance Encode SnapLevel where
+instance Encode (SnapLevel RunNumber) where
   encode (SnapLevel incomingRuns residentRuns) =
          encodeListLen 2
       <> encode incomingRuns
       <> encode residentRuns
 
 
-instance DecodeVersioned SnapLevel where
+instance DecodeVersioned (SnapLevel RunNumber) where
   decodeVersioned v@V0 = do
       _ <- decodeListLenOf 2
       SnapLevel <$> decodeVersioned v <*> decodeVersioned v
@@ -450,7 +450,7 @@ instance DecodeVersioned RunNumber where
 
 -- SnapIncomingRun
 
-instance Encode SnapIncomingRun where
+instance Encode (SnapIncomingRun RunNumber) where
   encode (SnapMergingRun mpfl nr ne uc mkc smrs) =
        encodeListLen 7
     <> encodeWord 0
@@ -465,7 +465,7 @@ instance Encode SnapIncomingRun where
     <> encodeWord 1
     <> encode x
 
-instance DecodeVersioned SnapIncomingRun where
+instance DecodeVersioned (SnapIncomingRun RunNumber) where
   decodeVersioned v@V0 = do
       n <- decodeListLen
       tag <- decodeWord
@@ -522,7 +522,7 @@ instance DecodeVersioned MergeKnownCompleted where
 
 -- SnapMergingRunState
 
-instance Encode SnapMergingRunState where
+instance Encode (SnapMergingRunState RunNumber) where
   encode (SnapCompletedMerge x) =
          encodeListLen 2
       <> encodeWord 0
@@ -534,7 +534,7 @@ instance Encode SnapMergingRunState where
       <> encode tc
       <> encode l
 
-instance DecodeVersioned SnapMergingRunState where
+instance DecodeVersioned (SnapMergingRunState RunNumber) where
   decodeVersioned v@V0 = do
       n <- decodeListLen
       tag <- decodeWord

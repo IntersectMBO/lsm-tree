@@ -3,17 +3,17 @@ module Database.LSMTree.Internal.Snapshot (
     SnapshotMetaData (..)
   , SnapshotLabel (..)
   , SnapshotTableType (..)
-    -- * Snapshot format
+    -- * Levels snapshot format
   , numSnapRuns
-  , SnapLevels
+  , SnapLevels (..)
   , SnapLevel (..)
   , SnapIncomingRun (..)
   , UnspentCredits (..)
   , SnapMergingRunState (..)
   , SpentCredits (..)
-    -- * Creating snapshots
+    -- * Conversion to levels snapshot format
   , snapLevels
-    -- * Opening snapshots
+    -- * Opening from levels snapshot format
   , openLevels
   ) where
 
@@ -79,7 +79,7 @@ data SnapshotMetaData = SnapshotMetaData {
     -- opened: see 'TableConfigOverride'.
   , snapMetaConfig    :: !TableConfig
     -- | The shape of the LSM tree.
-  , snapMetaLevels    :: !SnapLevels
+  , snapMetaLevels    :: !(SnapLevels RunNumber)
   }
   deriving stock (Show, Eq)
 
@@ -87,8 +87,8 @@ data SnapshotMetaData = SnapshotMetaData {
   Levels snapshot format
 -------------------------------------------------------------------------------}
 
-numSnapRuns :: SnapLevels -> Int
-numSnapRuns sl = V.sum $ V.map go1 sl
+numSnapRuns :: SnapLevels r -> Int
+numSnapRuns (SnapLevels sl) = V.sum $ V.map go1 sl
   where
     go1 (SnapLevel sir srr) = go2 sir + V.length srr
     go2 (SnapMergingRun _ _ _ _ _ smrs) = go3 smrs
@@ -96,18 +96,19 @@ numSnapRuns sl = V.sum $ V.map go1 sl
     go3 (SnapCompletedMerge _rn)   = 1
     go3 (SnapOngoingMerge rns _ _) = V.length rns
 
-type SnapLevels = V.Vector SnapLevel
+newtype SnapLevels r = SnapLevels { getSnapLevels :: V.Vector (SnapLevel r) }
+  deriving stock (Show, Eq, Functor, Foldable, Traversable)
 
-data SnapLevel = SnapLevel {
-    snapIncoming     :: !SnapIncomingRun
-  , snapResidentRuns :: !(V.Vector RunNumber)
+data SnapLevel r = SnapLevel {
+    snapIncoming     :: !(SnapIncomingRun r)
+  , snapResidentRuns :: !(V.Vector r)
   }
-  deriving stock (Show, Eq)
+  deriving stock (Show, Eq, Functor, Foldable, Traversable)
 
-data SnapIncomingRun =
-    SnapMergingRun !MergePolicyForLevel !NumRuns !NumEntries !UnspentCredits !MergeKnownCompleted !SnapMergingRunState
-  | SnapSingleRun !RunNumber
-  deriving stock (Show, Eq)
+data SnapIncomingRun r =
+    SnapMergingRun !MergePolicyForLevel !NumRuns !NumEntries !UnspentCredits !MergeKnownCompleted !(SnapMergingRunState r)
+  | SnapSingleRun !r
+  deriving stock (Show, Eq, Functor, Foldable, Traversable)
 
 -- | The total number of unspent credits. This total is used in combination with
 -- 'SpentCredits' on snapshot load to restore merging work that was lost when
@@ -115,10 +116,10 @@ data SnapIncomingRun =
 newtype UnspentCredits = UnspentCredits { getUnspentCredits :: Int }
   deriving stock (Show, Eq, Read)
 
-data SnapMergingRunState =
-    SnapCompletedMerge !RunNumber
-  | SnapOngoingMerge !(V.Vector RunNumber) !SpentCredits !Merge.Level
-  deriving stock (Show, Eq)
+data SnapMergingRunState r =
+    SnapCompletedMerge !r
+  | SnapOngoingMerge !(V.Vector r) !SpentCredits !Merge.Level
+  deriving stock (Show, Eq, Functor, Foldable, Traversable)
 
 -- | The total number of spent credits. This total is used in combination with
 -- 'UnspentCedits' on snapshot load to restore merging work that was lost when
@@ -127,30 +128,30 @@ newtype SpentCredits = SpentCredits { getSpentCredits :: Int }
   deriving stock (Show, Eq, Read)
 
 {-------------------------------------------------------------------------------
-  Conversion to snapshot format
+  Conversion to levels snapshot format
 -------------------------------------------------------------------------------}
 
-{-# SPECIALISE snapLevels :: Levels IO h -> IO SnapLevels #-}
+{-# SPECIALISE snapLevels :: Levels IO h -> IO (SnapLevels RunNumber) #-}
 snapLevels ::
      (PrimMonad m, MonadMVar m)
   => Levels m h
-  -> m SnapLevels
-snapLevels = V.mapM snapLevel
+  -> m (SnapLevels RunNumber)
+snapLevels levels = SnapLevels <$> V.mapM snapLevel levels
 
-{-# SPECIALISE snapLevel :: Level IO h -> IO SnapLevel #-}
+{-# SPECIALISE snapLevel :: Level IO h -> IO (SnapLevel RunNumber) #-}
 snapLevel ::
      (PrimMonad m, MonadMVar m)
   => Level m h
-  -> m SnapLevel
+  -> m (SnapLevel RunNumber)
 snapLevel Level{..} = do
     sir <- snapIncomingRun incomingRun
     pure (SnapLevel sir (V.map runNumber residentRuns))
 
-{-# SPECIALISE snapIncomingRun :: IncomingRun IO h -> IO SnapIncomingRun #-}
+{-# SPECIALISE snapIncomingRun :: IncomingRun IO h -> IO (SnapIncomingRun RunNumber) #-}
 snapIncomingRun ::
      (PrimMonad m, MonadMVar m)
   => IncomingRun m h
-  -> m SnapIncomingRun
+  -> m (SnapIncomingRun RunNumber)
 snapIncomingRun (Single r) = pure (SnapSingleRun (runNumber r))
 -- We need to know how many credits were yet unspent so we can restore merge
 -- work on snapshot load. No need to snapshot the contents of totalStepsVar
@@ -168,11 +169,13 @@ snapIncomingRun (Merging MergingRun {..}) = do
         mergeCompletedCache
         smrs
 
-{-# SPECIALISE snapMergingRunState :: MergingRunState IO h -> IO SnapMergingRunState #-}
+{-# SPECIALISE snapMergingRunState ::
+     MergingRunState IO h
+  -> IO (SnapMergingRunState RunNumber) #-}
 snapMergingRunState ::
      PrimMonad m
   => MergingRunState m h
-  -> m SnapMergingRunState
+  -> m (SnapMergingRunState RunNumber)
 snapMergingRunState (CompletedMerge r) = pure (SnapCompletedMerge (runNumber r))
 -- We need to know how many credits were spent already so we can restore merge
 -- work on snapshot load.
@@ -184,7 +187,7 @@ runNumber :: Run m h -> RunNumber
 runNumber r = Paths.runNumber (Run.runRunFsPaths r)
 
 {-------------------------------------------------------------------------------
-  Opening from snapshot format
+  Opening from levels snapshot format
 -------------------------------------------------------------------------------}
 
 {-# SPECIALISE openLevels ::
@@ -195,7 +198,7 @@ runNumber r = Paths.runNumber (Run.runRunFsPaths r)
   -> UniqCounter IO
   -> SessionRoot
   -> ResolveSerialisedValue
-  -> SnapLevels
+  -> SnapLevels RunNumber
   -> IO (Levels IO h)
   #-}
 openLevels ::
@@ -207,14 +210,14 @@ openLevels ::
   -> UniqCounter m
   -> SessionRoot
   -> ResolveSerialisedValue
-  -> SnapLevels
+  -> SnapLevels RunNumber
   -> m (Levels m h)
-openLevels reg hfs hbio conf@TableConfig{..} uc sessionRoot resolve levels =
+openLevels reg hfs hbio conf@TableConfig{..} uc sessionRoot resolve (SnapLevels levels) =
     V.iforM levels $ \i -> openLevel (LevelNo (i+1))
   where
     mkPath = Paths.RunFsPaths (Paths.activeDir sessionRoot)
 
-    openLevel :: LevelNo -> SnapLevel -> m (Level m h)
+    openLevel :: LevelNo -> SnapLevel RunNumber -> m (Level m h)
     openLevel ln SnapLevel{..} = do
         (unspentCreditsMay, spentCreditsMay, incomingRun) <- openIncomingRun snapIncoming
         -- When a snapshot is created, merge progress is lost, so we have to
@@ -241,7 +244,7 @@ openLevels reg hfs hbio conf@TableConfig{..} uc sessionRoot resolve levels =
         caching = diskCachePolicyForLevel confDiskCachePolicy ln
         alloc = bloomFilterAllocForLevel conf ln
 
-        openIncomingRun :: SnapIncomingRun -> m (Maybe UnspentCredits, Maybe SpentCredits, IncomingRun m h)
+        openIncomingRun :: SnapIncomingRun RunNumber -> m (Maybe UnspentCredits, Maybe SpentCredits, IncomingRun m h)
         openIncomingRun (SnapMergingRun mpfl nr ne unspentCredits knownCompleted smrs) = do
             (spentCreditsMay, mrs) <- openMergingRunState smrs
             (Just unspentCredits, spentCreditsMay,) . Merging <$>
@@ -252,7 +255,7 @@ openLevels reg hfs hbio conf@TableConfig{..} uc sessionRoot resolve levels =
                 (Run.openFromDisk hfs hbio caching (mkPath rn))
                 Run.removeReference
 
-        openMergingRunState :: SnapMergingRunState -> m (Maybe SpentCredits, MergingRunState m h)
+        openMergingRunState :: SnapMergingRunState RunNumber -> m (Maybe SpentCredits, MergingRunState m h)
         openMergingRunState (SnapCompletedMerge rn) =
             (Nothing,) . CompletedMerge <$>
               allocateTemp reg

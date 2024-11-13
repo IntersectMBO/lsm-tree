@@ -60,16 +60,16 @@ propAll prop = [
     , testProperty "DiskCachePolicy" $ prop (Proxy @DiskCachePolicy)
     , testProperty "MergeSchedule" $ prop (Proxy @MergeSchedule)
       -- SnapLevels
-    , testProperty "SnapLevels" $ prop (Proxy @SnapLevels)
-    , testProperty "SnapLevel" $ prop (Proxy @SnapLevel)
+    , testProperty "SnapLevels" $ prop (Proxy @(SnapLevels RunNumber))
+    , testProperty "SnapLevel" $ prop (Proxy @(SnapLevel RunNumber))
     , testProperty "Vector RunNumber" $ prop (Proxy @(V.Vector RunNumber))
     , testProperty "RunNumber" $ prop (Proxy @RunNumber)
-    , testProperty "SnapIncomingRun" $ prop (Proxy @SnapIncomingRun)
+    , testProperty "SnapIncomingRun" $ prop (Proxy @(SnapIncomingRun RunNumber))
     , testProperty "NumRuns" $ prop (Proxy @NumRuns)
     , testProperty "MergePolicyForLevel" $ prop (Proxy @MergePolicyForLevel)
     , testProperty "UnspentCredits" $ prop (Proxy @UnspentCredits)
     , testProperty "MergeKnownCompleted" $ prop (Proxy @MergeKnownCompleted)
-    , testProperty "SnapMergingRunState" $ prop (Proxy @SnapMergingRunState)
+    , testProperty "SnapMergingRunState" $ prop (Proxy @(SnapMergingRunState RunNumber))
     , testProperty "SpentCredits" $ prop (Proxy @SpentCredits)
     , testProperty "Merge.Level" $ prop (Proxy @Merge.Level)
     ]
@@ -235,13 +235,13 @@ instance Arbitrary MergeSchedule where
   Arbitrary: SnapLevels
 -------------------------------------------------------------------------------}
 
-instance Arbitrary SnapLevels where
+instance Arbitrary (SnapLevels RunNumber) where
   arbitrary = do
     n <- chooseInt (0, 10)
-    V.fromList <$> vector n
-  shrink x = V.fromList <$> shrink (V.toList x)
+    SnapLevels . V.fromList <$> vector n
+  shrink (SnapLevels x) = SnapLevels . V.fromList <$> shrink (V.toList x)
 
-instance Arbitrary SnapLevel where
+instance Arbitrary (SnapLevel RunNumber) where
   arbitrary = SnapLevel <$> arbitrary <*> arbitrary
   shrink (SnapLevel a b) = [SnapLevel a' b' | (a', b') <- shrink (a, b)]
 
@@ -253,7 +253,7 @@ instance Arbitrary (V.Vector RunNumber) where
 
 deriving newtype instance Arbitrary RunNumber
 
-instance Arbitrary SnapIncomingRun where
+instance Arbitrary (SnapIncomingRun RunNumber) where
   arbitrary = oneof [
         SnapMergingRun <$> arbitrary <*> arbitrary <*> arbitrary
                        <*> arbitrary <*> arbitrary <*> arbitrary
@@ -276,7 +276,7 @@ instance Arbitrary MergeKnownCompleted where
   arbitrary = elements [MergeKnownCompleted, MergeMaybeCompleted]
   shrink _ = []
 
-instance Arbitrary SnapMergingRunState where
+instance Arbitrary (SnapMergingRunState RunNumber) where
   arbitrary = oneof [
         SnapCompletedMerge <$> arbitrary
       , SnapOngoingMerge <$> arbitrary <*> arbitrary <*> arbitrary
