@@ -430,12 +430,11 @@ new = do
   return (LSMHandle c lsm)
 
 
-inserts :: Tracer (ST s) Event -> LSM s -> [(Key, Value)] -> ST s ()
-inserts tr lsm kvs = updates tr lsm [ (k, Insert v Nothing) | (k,v) <- kvs ]
+inserts :: Tracer (ST s) Event -> LSM s -> [(Key, Value, Maybe Blob)] -> ST s ()
+inserts tr lsm kvbs = updates tr lsm [ (k, Insert v b) | (k, v, b) <- kvbs ]
 
--- TODO: support (and test!) blobs
-insert :: Tracer (ST s) Event -> LSM s -> Key -> Value -> ST s ()
-insert tr lsm k v = update tr lsm k (Insert v Nothing)
+insert :: Tracer (ST s) Event -> LSM s -> Key -> Value -> Maybe Blob -> ST s ()
+insert tr lsm k v b = update tr lsm k (Insert v b)
 
 delete :: Tracer (ST s) Event -> LSM s -> Key ->  ST s ()
 delete tr lsm k = update tr lsm k Delete
@@ -624,7 +623,6 @@ duplicate (LSMHandle _scr lsmr) = do
     -- it's that simple here, because we share all the pure value and all the
     -- STRefs and there's no ref counting to be done
 
-
 -------------------------------------------------------------------------------
 -- Measurements
 --
@@ -649,11 +647,11 @@ flattenIncomingRun (Merging (MergingRun _ _ mr)) = do
       CompletedMerge r    -> return [r]
       OngoingMerge _ rs _ -> return rs
 
-logicalValue :: LSM s -> ST s (Map Key Value)
+logicalValue :: LSM s -> ST s (Map Key (Value, Maybe Blob))
 logicalValue = fmap (Map.mapMaybe justInsert . Map.unions . concat)
              . allLayers
   where
-    justInsert (Insert v _) = Just v
+    justInsert (Insert v b) = Just (v, b)
     justInsert  Delete      = Nothing
 
 dumpRepresentation :: LSM s
