@@ -119,7 +119,6 @@ new fs blobFileName = do
     -- Must use read/write mode because we write blobs when adding, but
     -- we can also be asked to retrieve blobs at any time.
     blobFile <- openBlobFile fs blobFileName (FS.ReadWriteMode FS.MustBeNew)
-                                RemoveFileOnClose
     blobFilePointer <- newFilePointer
     return WriteBufferBlobs {
       blobFile,
