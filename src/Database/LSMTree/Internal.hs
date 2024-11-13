@@ -80,7 +80,6 @@ import           Control.Monad.Primitive
 import           Control.TempRegistry
 import           Control.Tracer
 import           Data.Arena (ArenaManager, newArenaManager)
-import           Data.Char (isNumber)
 import           Data.Foldable
 import           Data.Functor.Compose (Compose (..))
 import           Data.Kind
@@ -405,8 +404,8 @@ openSession tr hfs hbio dir = do
 
     releaseLock lockFile = forM_ (Compose lockFile) $ \lockFile' -> FS.hUnlock lockFile'
 
-    mkSession lockFile x = do
-        counterVar <- newUniqCounter x
+    mkSession lockFile = do
+        counterVar <- newUniqCounter 0
         openTablesVar <- newMVar Map.empty
         openCursorsVar <- newMVar Map.empty
         sessionVar <- RW.new $ SessionOpen $ SessionEnv {
@@ -424,29 +423,20 @@ openSession tr hfs hbio dir = do
         traceWith tr TraceNewSession
         FS.createDirectory hfs activeDirPath
         FS.createDirectory hfs snapshotsDirPath
-        mkSession sessionFileLock 0
+        mkSession sessionFileLock
 
     restoreSession sessionFileLock = do
         traceWith tr TraceRestoreSession
         -- If the layouts are wrong, we throw an exception, and the lock file
         -- is automatically released by bracketOnError.
         checkTopLevelDirLayout
+
+        FS.removeDirectoryRecursive hfs activeDirPath -- TODO: exceptions safety
+        FS.createDirectory hfs activeDirPath
+
         checkActiveDirLayout
         checkSnapshotsDirLayout
-        -- TODO: remove once we have proper snapshotting. Before that, we must
-        -- prevent name clashes with runs that are still present in the active
-        -- directory by starting the unique counter at a strictly higher number
-        -- than the name of any run in the active directory. When we do
-        -- snapshoting properly, then we'll hard link files into the active
-        -- directory under new names/numbers, and so session counters will
-        -- always be able to start at 0.
-        files <- FS.listDirectory hfs activeDirPath
-        let (x :: Int) | Set.null files = 0
-                       -- TODO: read is not very robust, but it is only a
-                       -- temporary solution
-                       | otherwise = maximum [ read (takeWhile isNumber f)
-                                             | f <- Set.toList files ]
-        mkSession sessionFileLock (fromIntegral x)
+        mkSession sessionFileLock
 
     -- Check that the active directory and snapshots directory exist. We assume
     -- the lock file already exists at this point.
@@ -460,12 +450,10 @@ openSession tr hfs hbio dir = do
       FS.doesDirectoryExist hfs snapshotsDirPath >>= \b ->
         unless b $ throwIO (SessionDirMalformed (FS.mkFsErrorPath hfs snapshotsDirPath))
 
-    -- Nothing to check: runs are verified when loading a table, not when
-    -- a session is restored.
-    --
-    -- TODO: when we implement proper snapshotting, the files in the active
-    -- directory should be ignored and cleaned up.
-    checkActiveDirLayout = pure ()
+    -- The active directory should be empty
+    checkActiveDirLayout = do
+        contents <- FS.listDirectory hfs activeDirPath
+        unless (Set.null contents) $ throwIO (SessionDirMalformed (FS.mkFsErrorPath hfs activeDirPath))
 
     -- Nothing to check: snapshots are verified when they are loaded, not when a
     -- session is restored.
