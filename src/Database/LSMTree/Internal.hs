@@ -111,6 +111,7 @@ import qualified Database.LSMTree.Internal.RunReaders as Readers
 import           Database.LSMTree.Internal.Serialise (SerialisedBlob (..),
                      SerialisedKey, SerialisedValue)
 import           Database.LSMTree.Internal.Snapshot
+import           Database.LSMTree.Internal.Snapshot.Codec
 import           Database.LSMTree.Internal.UniqCounter
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB

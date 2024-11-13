@@ -1,6 +1,6 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module Test.Database.LSMTree.Internal.Snapshot (tests) where
+module Test.Database.LSMTree.Internal.Snapshot.Codec (tests) where
 
 import           Codec.CBOR.Decoding
 import           Codec.CBOR.Encoding
@@ -18,13 +18,14 @@ import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.MergeSchedule
 import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.Snapshot
+import           Database.LSMTree.Internal.Snapshot.Codec
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 
 -- TODO: we should add golden tests for the CBOR encoders. This should prevent
 -- accidental breakage in the format.
 tests :: TestTree
-tests = testGroup "Test.Database.LSMTree.Internal.Snapshot" [
+tests = testGroup "Test.Database.LSMTree.Internal.Snapshot.Codec" [
       testGroup "SnapshotVersion" [
           testProperty "roundtripCBOR" $ roundtripCBOR (Proxy @SnapshotVersion)
         , testProperty "roundtripFlatTerm" $ roundtripFlatTerm (Proxy @SnapshotVersion)
@@ -234,10 +235,10 @@ instance Arbitrary MergeSchedule where
   Arbitrary: SnapLevels
 -------------------------------------------------------------------------------}
 
-instance Arbitrary (V.Vector SnapLevel) where
+instance Arbitrary SnapLevels where
   arbitrary = do
     n <- chooseInt (0, 10)
-    (V.fromList <$> vector n)
+    V.fromList <$> vector n
   shrink x = V.fromList <$> shrink (V.toList x)
 
 instance Arbitrary SnapLevel where
