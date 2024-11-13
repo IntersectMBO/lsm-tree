@@ -4,7 +4,6 @@ module Database.LSMTree.Internal.Snapshot (
   , SnapshotLabel (..)
   , SnapshotTableType (..)
     -- * Levels snapshot format
-  , numSnapRuns
   , SnapLevels (..)
   , SnapLevel (..)
   , SnapIncomingRun (..)
@@ -95,15 +94,6 @@ data SnapshotMetaData = SnapshotMetaData {
 {-------------------------------------------------------------------------------
   Levels snapshot format
 -------------------------------------------------------------------------------}
-
-numSnapRuns :: SnapLevels r -> Int
-numSnapRuns (SnapLevels sl) = V.sum $ V.map go1 sl
-  where
-    go1 (SnapLevel sir srr) = go2 sir + V.length srr
-    go2 (SnapMergingRun _ _ _ _ _ smrs) = go3 smrs
-    go2 (SnapSingleRun _rn)             = 1
-    go3 (SnapCompletedMerge _rn)   = 1
-    go3 (SnapOngoingMerge rns _ _) = V.length rns
 
 newtype SnapLevels r = SnapLevels { getSnapLevels :: V.Vector (SnapLevel r) }
   deriving stock (Show, Eq, Functor, Foldable, Traversable)

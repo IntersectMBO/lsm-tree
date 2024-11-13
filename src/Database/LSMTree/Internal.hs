@@ -1051,7 +1051,7 @@ readCursorWhile resolve keyIsWanted n Cursor {..} fromEntry = do
   -> SnapshotLabel
   -> SnapshotTableType
   -> Table IO h
-  -> IO Int #-}
+  -> IO () #-}
 -- |  See 'Database.LSMTree.Normal.createSnapshot''.
 createSnapshot ::
      (MonadFix m, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
@@ -1060,7 +1060,7 @@ createSnapshot ::
   -> SnapshotLabel
   -> SnapshotTableType
   -> Table m h
-  -> m Int
+  -> m ()
 createSnapshot resolve snap label tableType t = do
     traceWith (tableTracer t) $ TraceSnapshot snap
     let conf = tableConfig t
@@ -1113,8 +1113,6 @@ createSnapshot resolve snap label tableType t = do
           SnapshotMetaDataFile contentPath = Paths.snapshotMetaDataFile snapDir
           SnapshotMetaDataChecksumFile checksumPath = Paths.snapshotMetaDataChecksumFile snapDir
       writeFileSnapshotMetaData hfs contentPath checksumPath snapMetaData
-
-      pure $! numSnapRuns snappedLevels
 
 {-# SPECIALISE openSnapshot ::
      Session IO h

@@ -8,33 +8,21 @@
 -- add proper support for IOSim for fault testing.
 module Test.Database.LSMTree.Internal (tests) where
 
-import qualified Control.Concurrent.Class.MonadSTM.RWVar as RW
 import           Control.Exception
 import           Control.Monad (void)
 import           Control.Tracer
-import           Data.Bifunctor
 import           Data.Coerce (coerce)
 import           Data.Foldable (traverse_)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (fromMaybe, isJust, mapMaybe)
-import           Data.Monoid (Sum (..))
+import           Data.Maybe (isJust, mapMaybe)
 import qualified Data.Vector as V
-import           Data.Word (Word64)
-import           Database.LSMTree.Extras (showPowersOf)
 import           Database.LSMTree.Extras.Generators (KeyForIndexCompact (..))
 import           Database.LSMTree.Internal
 import           Database.LSMTree.Internal.BlobRef
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.Entry
-import           Database.LSMTree.Internal.MergeSchedule
-import           Database.LSMTree.Internal.Paths (mkSnapshotName)
 import           Database.LSMTree.Internal.Serialise
-import           Database.LSMTree.Internal.Snapshot (SnapshotLabel (..),
-                     SnapshotTableType (..))
 import qualified System.FS.API as FS
-import qualified Test.Database.LSMTree.Internal.Lookup as Test
-import           Test.Database.LSMTree.Internal.Lookup
-                     (InMemLookupData (runData))
 import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.HUnit
@@ -49,11 +37,6 @@ tests = testGroup "Test.Database.LSMTree.Internal" [
         , testProperty "twiceOpenSession" twiceOpenSession
         , testCase "sessionDirLayoutMismatch" sessionDirLayoutMismatch
         , testCase "sessionDirDoesNotExist" sessionDirDoesNotExist
-        , testProperty "prop_interimRestoreSessionUniqueRunNames"
-            prop_interimRestoreSessionUniqueRunNames
-        ]
-    , testGroup "Table" [
-          testProperty "prop_interimOpenSnapshot" prop_interimOpenSnapshot
         ]
     , testGroup "Cursor" [
           testProperty "prop_roundtripCursor" $ withMaxSuccess 500 $
@@ -111,101 +94,6 @@ showLeft :: Show a => String -> Either a b -> String
 showLeft x = \case
     Left e -> show e
     Right _ -> x
-
--- | Runs are currently not deleted when they become unreferenced. As such, when
--- a session is restored, there are still runs in the active directory. When we
--- restore a session, we must ensure that we do not use names for new runs that
--- are already used for existing runs. As such, we should set the
--- @sessionUniqCounter@ accordingly, such that it starts at a number strictly
--- larger then numbers of the runs in the active directory.
---
--- TODO: remove once we have proper snapshotting, in which case files in the
--- active directory are deleted when a session is restored: loading snapshots is
--- the only way to get active runs into the active directory.
-prop_interimRestoreSessionUniqueRunNames ::
-     Positive (Small Int)
-  -> NonNegative Int
-  -> Property
-prop_interimRestoreSessionUniqueRunNames (Positive (Small n)) (NonNegative m) = ioProperty $
-    withTempIOHasBlockIO "TODO" $ \hfs hbio -> do
-      prop1 <- withSession nullTracer hfs hbio (FS.mkFsPath []) $ \sesh -> do
-        withTable sesh conf $ \t -> do
-          updates const upds t
-          withOpenTable t $ \thEnv -> do
-            RW.withReadAccess (tableContent thEnv) $ \tc -> do
-              let (Sum nruns) = V.foldMap
-                                  (V.foldMap (const (Sum (1 :: Int))) . residentRuns)
-                                  (tableLevels tc)
-              pure $ tabulate "number of runs on disk" [showPowersOf 2 nruns]
-                  $ True
-
-      withSession nullTracer hfs hbio (FS.mkFsPath []) $ \sesh -> do
-        withTable sesh conf $ \t -> do
-          eith <- try (updates const upds t)
-          fmap (prop1 .&&.) $ case eith of
-            Left (e :: FS.FsError)
-              | FS.fsErrorType e == FS.FsResourceAlreadyExist
-              -> pure $ counterexample "Test failed... found an FsResourceAlreadyExist error" False
-              | otherwise
-              -> throwIO e
-            Right () -> pure $ property True
-  where
-    conf = testTableConfig {
-        confWriteBufferAlloc = AllocNumEntries (NumEntries n)
-      }
-
-    upds = V.fromList [ (serialiseKey i, Insert (serialiseValue i))
-                      | (i :: Word64) <- fmap fromIntegral [1..m]
-                      ]
-
--- | Check that opening a populated table via the interim table loading function
--- works as expected. Roughly, we test:
---
--- @
---  inserts t kvs == openSnapshot' (createSnapshot' (inserts t kvs))
--- @
---
--- TODO: remove once we have proper snapshotting
-prop_interimOpenSnapshot ::
-     Test.InMemLookupData SerialisedKey SerialisedValue SerialisedBlob
-  -> Property
-prop_interimOpenSnapshot dat = ioProperty $
-    withTempIOHasBlockIO "prop_interimOpenSnapshot" $ \hfs hbio -> do
-      withSession nullTracer hfs hbio (FS.mkFsPath []) $ \sesh -> do
-        withTable sesh conf $ \t -> do
-          updates const upds t
-          let snap = fromMaybe (error "invalid name") $ mkSnapshotName "snap"
-          numRunsSnapped <- createSnapshot const snap (SnapshotLabel "someLabel") SnapNormalTable t
-          t' <- openSnapshot sesh (SnapshotLabel "someLabel") SnapNormalTable configNoOverride snap const
-          lhs <- fetchBlobs hfs =<< lookups const ks t
-          rhs <- fetchBlobs hfs =<< lookups const ks t'
-          -- We must fetch blobs because comparing blob references is meaningless
-          close t
-          close t'
-          -- TODO: checking lookups is a simple check, but we could have stronger
-          -- guarantee. For example, we might check that the internal structures
-          -- match.
-          --
-          pure $ tabulate "Number of runs snapshotted" [show numRunsSnapped]
-               -- Just Delete is semantically equivalent to Nothing but not
-               -- syntactically equal, so we "weaken" the property by mapping
-               -- Just Delete to Nothing.
-               $ fmap weaken lhs === fmap weaken rhs
-  where
-    conf = testTableConfig
-
-    fetchBlobs :: FS.HasFS IO h
-               ->    (V.Vector (Maybe (Entry v (WeakBlobRef IO h))))
-               -> IO (V.Vector (Maybe (Entry v SerialisedBlob)))
-    fetchBlobs hfs = traverse (traverse (traverse (readWeakBlobRef hfs)))
-
-    Test.InMemLookupData { runData, lookups = keysToLookup } = dat
-    ks = V.map serialiseKey (V.fromList keysToLookup)
-    upds = V.fromList $ fmap (bimap serialiseKey (bimap serialiseValue serialiseBlob))
-                      $ Map.toList runData
-
-    weaken (Just Delete) = Nothing
-    weaken x             = x
 
 -- | Check that reading from a cursor returns exactly the entries that have
 -- been inserted into the table. Roughly:
