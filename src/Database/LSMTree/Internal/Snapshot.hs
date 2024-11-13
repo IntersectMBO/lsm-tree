@@ -15,15 +15,19 @@ module Database.LSMTree.Internal.Snapshot (
   , snapLevels
     -- * Opening from levels snapshot format
   , openLevels
+    -- * Hard links
+  , hardLinkRunFiles
   ) where
 
 import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Concurrent.Class.MonadSTM (MonadSTM)
+import           Control.Monad (void)
 import           Control.Monad.Class.MonadST (MonadST)
-import           Control.Monad.Class.MonadThrow (MonadMask)
+import           Control.Monad.Class.MonadThrow (MonadMask, MonadThrow)
 import           Control.Monad.Fix (MonadFix)
 import           Control.Monad.Primitive (PrimMonad)
 import           Control.TempRegistry
+import           Data.Foldable (sequenceA_)
 import           Data.Primitive (readMutVar)
 import           Data.Primitive.PrimVar
 import           Data.Text (Text)
@@ -33,14 +37,16 @@ import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.MergeSchedule
-import           Database.LSMTree.Internal.Paths (SessionRoot)
+import           Database.LSMTree.Internal.Paths
 import qualified Database.LSMTree.Internal.Paths as Paths
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.UniqCounter (UniqCounter,
                      incrUniqCounter, uniqueToRunNumber)
+import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
+import qualified System.FS.API.Lazy as FS
 import           System.FS.BlockIO.API (HasBlockIO)
 
 {-------------------------------------------------------------------------------
@@ -145,14 +151,14 @@ snapLevel ::
   -> m (SnapLevel RunNumber)
 snapLevel Level{..} = do
     sir <- snapIncomingRun incomingRun
-    pure (SnapLevel sir (V.map runNumber residentRuns))
+    pure (SnapLevel sir (V.map getRunNumber residentRuns))
 
 {-# SPECIALISE snapIncomingRun :: IncomingRun IO h -> IO (SnapIncomingRun RunNumber) #-}
 snapIncomingRun ::
      (PrimMonad m, MonadMVar m)
   => IncomingRun m h
   -> m (SnapIncomingRun RunNumber)
-snapIncomingRun (Single r) = pure (SnapSingleRun (runNumber r))
+snapIncomingRun (Single r) = pure (SnapSingleRun (getRunNumber r))
 -- We need to know how many credits were yet unspent so we can restore merge
 -- work on snapshot load. No need to snapshot the contents of totalStepsVar
 -- here, since we still start counting from 0 again when loading the snapshot.
@@ -176,15 +182,15 @@ snapMergingRunState ::
      PrimMonad m
   => MergingRunState m h
   -> m (SnapMergingRunState RunNumber)
-snapMergingRunState (CompletedMerge r) = pure (SnapCompletedMerge (runNumber r))
+snapMergingRunState (CompletedMerge r) = pure (SnapCompletedMerge (getRunNumber r))
 -- We need to know how many credits were spent already so we can restore merge
 -- work on snapshot load.
 snapMergingRunState (OngoingMerge rs (SpentCreditsVar spentCreditsVar) m) = do
     spentCredits <- readPrimVar spentCreditsVar
-    pure (SnapOngoingMerge (V.map runNumber rs) (SpentCredits spentCredits) (Merge.mergeLevel m))
+    pure (SnapOngoingMerge (V.map getRunNumber rs) (SpentCredits spentCredits) (Merge.mergeLevel m))
 
-runNumber :: Run m h -> RunNumber
-runNumber r = Paths.runNumber (Run.runRunFsPaths r)
+getRunNumber :: Run m h -> RunNumber
+getRunNumber r = Paths.runNumber (Run.runRunFsPaths r)
 
 {-------------------------------------------------------------------------------
   Opening from levels snapshot format
@@ -276,3 +282,55 @@ openLevels reg hfs hbio conf@TableConfig{..} uc sessionRoot resolve (SnapLevels 
             case mergeMaybe of
               Nothing -> error "openLevels: merges can not be empty"
               Just m  -> pure (Just spentCredits, OngoingMerge rs spentCreditsVar m)
+
+{-------------------------------------------------------------------------------
+  Hard links
+-------------------------------------------------------------------------------}
+
+-- TODO: temp registry
+
+{-# SPECIALISE hardLinkRunFiles ::
+     HasFS IO h
+  -> HasBlockIO IO h
+  -> RunFsPaths
+  -> RunFsPaths
+  -> IO () #-}
+-- | @'hardLinkRunFiles' hfs hbio sourcePaths targetPaths@ creates a hard link
+-- for each @sourcePaths@ path using the corresponding @targetPaths@ path as the
+-- name for the new directory entry.
+hardLinkRunFiles ::
+     MonadThrow m
+  => HasFS m h
+  -> HasBlockIO m h
+  -> RunFsPaths
+  -> RunFsPaths
+  -> m ()
+hardLinkRunFiles hfs hbio sourceRunFsPaths targetRunFsPaths = do
+    let sourcePaths = pathsForRunFiles sourceRunFsPaths
+        targetPaths = pathsForRunFiles targetRunFsPaths
+    sequenceA_ (hardLink hfs hbio <$> sourcePaths <*> targetPaths)
+    hardLink hfs hbio (runChecksumsPath sourceRunFsPaths) (runChecksumsPath targetRunFsPaths)
+
+{-# SPECIALISE hardLink ::
+     HasFS IO h
+  -> HasBlockIO IO h
+  -> FS.FsPath
+  -> FS.FsPath
+  -> IO () #-}
+-- | @'hardLink' hfs hbio source target@ creates a hard link for the @source@
+-- path at the @target@ path.
+--
+-- TODO: as a temporary implementation/hack, this copies file contents instead
+-- of creating hard links.
+hardLink :: MonadThrow m => HasFS m h -> HasBlockIO m h -> FS.FsPath -> FS.FsPath -> m ()
+hardLink hfs _hbio sourcePath targetPath =
+    FS.withFile hfs sourcePath FS.ReadMode $ \sourceHandle ->
+    FS.withFile hfs targetPath (FS.WriteMode FS.MustBeNew) $ \targetHandle -> do
+      -- TODO: this is obviously not creating any hard links, but until we have
+      -- functions to create hard links in HasBlockIO, this is the temporary
+      -- implementation/hack to "emulate" hard links.
+      --
+      -- This should /hopefully/ stream using lazy IO, though even if it does
+      -- not, it is only a temporary placeholder hack.
+      bs <- FS.hGetAll hfs sourceHandle
+      void $ FS.hPutAll hfs targetHandle bs
