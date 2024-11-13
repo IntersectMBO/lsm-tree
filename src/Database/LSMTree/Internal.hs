@@ -1119,7 +1119,9 @@ createSnapshot resolve snap label tableType t = do
       -- consistent.
 
       snappedLevels <- snapLevels (tableLevels content)
-      let snapMetaData = SnapshotMetaData label tableType (tableConfig t) snappedLevels
+      snappedLevels' <- snapshotRuns snapDir snappedLevels
+
+      let snapMetaData = SnapshotMetaData label tableType (tableConfig t) snappedLevels'
           SnapshotMetaDataFile contentPath = Paths.snapshotMetaDataFile snapDir
           SnapshotMetaDataChecksumFile checksumPath = Paths.snapshotMetaDataChecksumFile snapDir
       writeFileSnapshotMetaData hfs contentPath checksumPath snapMetaData
@@ -1178,7 +1180,11 @@ openSnapshot sesh label tableType override snap resolve = do
           <- allocateTemp reg
                (WBB.new hfs blobpath)
                WBB.removeReference
-        tableLevels <- openLevels reg hfs hbio conf (sessionUniqCounter seshEnv) (sessionRoot seshEnv) resolve snappedLevels
+
+        let actDir = Paths.activeDir (sessionRoot seshEnv)
+        snappedLevels' <- openRuns hfs hbio conf (sessionUniqCounter seshEnv) snapDir actDir snappedLevels
+        tableLevels <- openLevels reg hfs hbio conf (sessionUniqCounter seshEnv) resolve actDir snappedLevels'
+
         tableCache <- mkLevelsCache reg tableLevels
         newWith reg sesh seshEnv conf' am $! TableContent {
             tableWriteBuffer = WB.empty
