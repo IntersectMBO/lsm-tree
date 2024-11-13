@@ -8,7 +8,8 @@ module Database.LSMTree.Internal.IndexOrdinaryAcc
 (
     IndexOrdinaryAcc,
     new,
-    append,
+    appendSingle,
+    appendMulti,
     unsafeEnd
 )
 where
@@ -17,12 +18,11 @@ import           Prelude hiding (take)
 
 import           Control.Exception (assert)
 import           Control.Monad.ST.Strict (ST)
+import           Data.Maybe (maybeToList)
 import qualified Data.Vector.Primitive as Primitive (Vector, length)
-import           Data.Word (Word16, Word8)
+import           Data.Word (Word16, Word32, Word8)
 import           Database.LSMTree.Internal.Chunk (Baler, Chunk, createBaler,
                      feedBaler, unsafeEndBaler)
-import           Database.LSMTree.Internal.IndexCompactAcc
-                     (Append (AppendMultiPage, AppendSinglePage))
 import           Database.LSMTree.Internal.IndexOrdinary
                      (IndexOrdinary (IndexOrdinary))
 import           Database.LSMTree.Internal.Serialise
@@ -51,41 +51,58 @@ new initialKeyBufferSize minChunkSize = IndexOrdinaryAcc                 <$>
                                         Growing.new initialKeyBufferSize <*>
                                         createBaler minChunkSize
 
+-- Yields the serialisation of an element of a key list.
+keyListElem :: SerialisedKey -> [Primitive.Vector Word8]
+keyListElem (SerialisedKey' keyBytes) = [keySizeBytes, keyBytes] where
+
+    keySize :: Int
+    !keySize = Primitive.length keyBytes
+
+    keySizeAsWord16 :: Word16
+    !keySizeAsWord16 = assert (keySize <= fromIntegral (maxBound :: Word16)) $
+                       fromIntegral keySize
+
+    keySizeBytes :: Primitive.Vector Word8
+    !keySizeBytes = byteVectorFromPrim keySizeAsWord16
+
 {-|
-    Appends keys to the key list of an index and outputs newly available chunks
-    of the serialised key list.
+    Adds information about a single page that fully comprises one or more
+    key–value pairs to an index and outputs newly available chunks of the
+    serialised key list.
 
-    __Warning:__ Appending keys whose length cannot be represented by a 16-bit
-    word may result in a corrupted serialised key list.
+    __Warning:__ Using keys whose length cannot be represented by a 16-bit word
+    may result in a corrupted serialised key list.
 -}
-append :: Append -> IndexOrdinaryAcc s -> ST s (Maybe Chunk)
-append instruction (IndexOrdinaryAcc lastKeys baler)
-    = case instruction of
-          AppendSinglePage _ key -> do
-              Growing.append lastKeys 1 key
-              feedBaler (keyListElem key) baler
-          AppendMultiPage key overflowPageCount -> do
-              let
+appendSingle :: (SerialisedKey, SerialisedKey)
+             -> IndexOrdinaryAcc s
+             -> ST s (Maybe Chunk)
+appendSingle (_, key) (IndexOrdinaryAcc lastKeys baler)
+    = do
+          Growing.append lastKeys 1 key
+          feedBaler (keyListElem key) baler
 
-                  pageCount :: Int
-                  !pageCount = succ (fromIntegral overflowPageCount)
+{-|
+    Adds information about multiple pages that together comprise a single
+    key–value pair to an index and outputs newly available chunks of the
+    serialised key list.
 
-              Growing.append lastKeys pageCount key
-              feedBaler (concat (replicate pageCount (keyListElem key))) baler
+    __Warning:__ Using keys whose length cannot be represented by a 16-bit word
+    may result in a corrupted serialised key list.
+-}
+appendMulti :: (SerialisedKey, Word32)
+            -> IndexOrdinaryAcc s
+            -> ST s [Chunk]
+appendMulti (key, overflowPageCount) (IndexOrdinaryAcc lastKeys baler)
+    = do
+          Growing.append lastKeys pageCount key
+          maybeToList <$> feedBaler keyListElems baler
     where
 
-    keyListElem :: SerialisedKey -> [Primitive.Vector Word8]
-    keyListElem (SerialisedKey' keyBytes) = [keySizeBytes, keyBytes] where
+    pageCount :: Int
+    !pageCount = succ (fromIntegral overflowPageCount)
 
-        keySize :: Int
-        !keySize = Primitive.length keyBytes
-
-        keySizeAsWord16 :: Word16
-        !keySizeAsWord16 = assert (keySize <= fromIntegral (maxBound :: Word16)) $
-                           fromIntegral keySize
-
-        keySizeBytes :: Primitive.Vector Word8
-        !keySizeBytes = byteVectorFromPrim keySizeAsWord16
+    keyListElems :: [Primitive.Vector Word8]
+    keyListElems = concat (replicate pageCount (keyListElem key))
 
 {-|
     Returns the constructed index, along with a final chunk in case the

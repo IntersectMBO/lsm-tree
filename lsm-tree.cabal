@@ -300,6 +300,7 @@ library extras
   exposed-modules:
     Database.LSMTree.Extras
     Database.LSMTree.Extras.Generators
+    Database.LSMTree.Extras.Index
     Database.LSMTree.Extras.NoThunks
     Database.LSMTree.Extras.Orphans
     Database.LSMTree.Extras.Random

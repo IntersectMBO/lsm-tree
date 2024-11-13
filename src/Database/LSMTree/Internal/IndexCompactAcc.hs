@@ -14,8 +14,6 @@ module Database.LSMTree.Internal.IndexCompactAcc (
     -- $construction-invariants
     IndexCompactAcc (..)
   , new
-  , Append (..)
-  , append
   , appendSingle
   , appendMulti
   , unsafeEnd
@@ -30,11 +28,9 @@ module Database.LSMTree.Internal.IndexCompactAcc (
 import           Control.Exception (assert)
 #endif
 
-import           Control.DeepSeq (NFData (..))
 import           Control.Monad (when)
 import           Control.Monad.ST.Strict
 import           Data.Bit hiding (flipBit)
-import           Data.Foldable (toList)
 import           Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
 import           Data.Map.Range (Bound (..))
@@ -125,26 +121,6 @@ newPinnedMVec64 lenWords = do
     mba <- newPinnedByteArray (mul8 lenWords)
     setByteArray mba 0 lenWords (0 :: Word64)
     return (VUM.MV_Word64 (VPM.MVector 0 lenWords mba))
-
--- | Min\/max key-info for pages
-data Append =
-    -- | One or more keys are in this page, and their values fit within a single
-    -- page.
-    AppendSinglePage SerialisedKey SerialisedKey
-    -- | There is only one key in this page, and it's value does not fit within
-    -- a single page.
-  | AppendMultiPage SerialisedKey Word32 -- ^ Number of overflow pages
-
-instance NFData Append where
-  rnf (AppendSinglePage kmin kmax)  = rnf kmin `seq` rnf kmax
-  rnf (AppendMultiPage k nOverflow) = rnf k `seq` rnf nOverflow
-
--- | Append a new page entry to a mutable compact index.
---
--- INVARIANTS: see [construction invariants](#construction-invariants).
-append :: Append -> IndexCompactAcc s -> ST s [Chunk]
-append (AppendSinglePage kmin kmax) ica = toList <$> appendSingle (kmin, kmax) ica
-append (AppendMultiPage k n) ica        = appendMulti (k, n) ica
 
 -- | Append a single page to a mutable compact index.
 --
