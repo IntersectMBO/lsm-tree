@@ -20,13 +20,12 @@ import           Codec.CBOR.Decoding
 import           Codec.CBOR.Encoding
 import           Codec.CBOR.Read
 import           Codec.CBOR.Write
-import           Control.Monad (void, when)
+import           Control.Monad (when)
 import           Control.Monad.Class.MonadThrow (MonadThrow (..))
 import           Data.Bifunctor
-import qualified Data.ByteString.Builder as BSB
 import qualified Data.ByteString.Char8 as BSC
 import           Data.ByteString.Lazy (ByteString)
-import qualified Data.ByteString.Lazy as BSL
+import qualified Data.Map.Strict as Map
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.CRC32C
@@ -34,12 +33,12 @@ import qualified Database.LSMTree.Internal.CRC32C as FS
 import           Database.LSMTree.Internal.Entry
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.MergeSchedule
-import           Database.LSMTree.Internal.Run (ChecksumError (..))
+import           Database.LSMTree.Internal.Run (ChecksumError (..),
+                     FileFormatError (..))
 import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.Snapshot
 import qualified System.FS.API as FS
 import           System.FS.API (FsPath, HasFS)
-import qualified System.FS.API.Lazy as FS
 import           Text.Printf
 
 {-------------------------------------------------------------------------------
@@ -90,8 +89,10 @@ writeFileSnapshotMetaData hfs contentPath checksumPath snapMetaData = do
     (_, checksum) <-
       FS.withFile hfs contentPath (FS.WriteMode FS.MustBeNew) $ \h ->
         hPutAllChunksCRC32C hfs h (encodeSnapshotMetaData snapMetaData) initialCRC32C
-    FS.withFile hfs checksumPath (FS.WriteMode FS.MustBeNew) $ \h ->
-      void $ FS.hPutAll hfs h $ encodeChecksum checksum
+
+    let checksumFileName = ChecksumsFileName (BSC.pack "metadata")
+        checksumFile = Map.singleton checksumFileName checksum
+    writeChecksumsFile hfs checksumPath checksumFile
 
 -- | Read from 'SnapshotMetaDataFile' and attempt to decode it to
 -- 'SnapshotMetaData'.
@@ -102,34 +103,25 @@ readFileSnapshotMetaData ::
   -> FsPath -- ^ Source file for checksum
   -> m (Either DeserialiseFailure SnapshotMetaData)
 readFileSnapshotMetaData hfs contentPath checksumPath = do
-    !bsc <-
-      FS.withFile hfs checksumPath FS.ReadMode $ \h ->
-        BSC.toStrict <$> FS.hGetAll hfs h
+    checksumFile <- readChecksumsFile hfs checksumPath
+    let checksumFileName = ChecksumsFileName (BSC.pack "metadata")
 
-    case decodeChecksum bsc of
-      Left failure -> pure (Left failure)
-      Right expectedChecksum -> do
+    expectedChecksum <-
+      case Map.lookup checksumFileName checksumFile of
+        Nothing ->
+          throwIO $ FileFormatError
+                      checksumPath
+                      ("key not found: " <> show checksumFileName)
+        Just checksum -> pure checksum
 
-        (lbs, actualChecksum) <- FS.withFile hfs contentPath FS.ReadMode $ \h -> do
-          n <- FS.hGetSize hfs h
-          FS.hGetExactlyCRC32C hfs h n initialCRC32C
+    (lbs, actualChecksum) <- FS.withFile hfs contentPath FS.ReadMode $ \h -> do
+      n <- FS.hGetSize hfs h
+      FS.hGetExactlyCRC32C hfs h n initialCRC32C
 
-        when (expectedChecksum /= actualChecksum) $
-          throwIO $ ChecksumError contentPath expectedChecksum actualChecksum
+    when (expectedChecksum /= actualChecksum) $
+      throwIO $ ChecksumError contentPath expectedChecksum actualChecksum
 
-        pure $ decodeSnapshotMetaData lbs
-
-encodeChecksum :: CRC32C -> BSL.ByteString
-encodeChecksum (CRC32C x) = BSB.toLazyByteString (BSB.word32HexFixed x)
-
-decodeChecksum :: BSC.ByteString -> Either DeserialiseFailure CRC32C
-decodeChecksum bsc = do
-    when (BSC.length bsc /= 8) $ do
-      let msg = "decodeChecksum: expected 8 bytes, but found "
-              <> (show (BSC.length bsc))
-      Left $ DeserialiseFailure 0 msg
-    let !x = fromIntegral (hexdigitsToInt bsc)
-    pure $! CRC32C x
+    pure $ decodeSnapshotMetaData lbs
 
 encodeSnapshotMetaData :: SnapshotMetaData -> ByteString
 encodeSnapshotMetaData = toLazyByteString . encode . Versioned

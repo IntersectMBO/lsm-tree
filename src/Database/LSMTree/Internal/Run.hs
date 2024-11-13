@@ -21,6 +21,7 @@ module Database.LSMTree.Internal.Run (
   , fromWriteBuffer
   , RunDataCaching (..)
     -- * Snapshot
+  , FileFormatError (..)
   , ChecksumError (..)
   , openFromDisk
   ) where
@@ -236,6 +237,10 @@ fromWriteBuffer fs hbio caching alloc fsPaths buffer blobs = do
       Builder.addKeyOp builder k (fmap (WBB.mkRawBlobRef blobs) e)
       --TODO: the fmap entry here reallocates even when there are no blobs
     fromMutable caching (RefCount 1) builder
+
+{-------------------------------------------------------------------------------
+  Snapshot
+-------------------------------------------------------------------------------}
 
 data ChecksumError = ChecksumError FS.FsPath CRC.CRC32C CRC.CRC32C
   deriving stock Show
