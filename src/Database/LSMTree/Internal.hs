@@ -431,8 +431,10 @@ openSession tr hfs hbio dir = do
         -- is automatically released by bracketOnError.
         checkTopLevelDirLayout
 
-        FS.removeDirectoryRecursive hfs activeDirPath -- TODO: exceptions safety
-        FS.createDirectory hfs activeDirPath
+        -- Clear the active directory by removing the directory and recreating
+        -- it again.
+        FS.removeDirectoryRecursive hfs activeDirPath
+          `finally` FS.createDirectoryIfMissing hfs False activeDirPath
 
         checkActiveDirLayout
         checkSnapshotsDirLayout
@@ -1064,55 +1066,58 @@ createSnapshot ::
 createSnapshot resolve snap label tableType t = do
     traceWith (tableTracer t) $ TraceSnapshot snap
     let conf = tableConfig t
-    withOpenTable t $ \thEnv -> do
-      let hfs = tableHasFS thEnv
+    withOpenTable t $ \thEnv ->
+      withTempRegistry $ \reg -> do -- TODO: use the temp registry for all side effects
+        let hfs = tableHasFS thEnv
 
-      -- Guard that the snapshot does not exist already
-      let snapDir = Paths.namedSnapshotDir (tableSessionRoot thEnv) snap
-      doesSnapshotExist <-
-        FS.doesDirectoryExist (tableHasFS thEnv) (Paths.getNamedSnapshotDir snapDir)
-      if doesSnapshotExist then
-        throwIO (ErrSnapshotExists snap)
-      else
-        -- we assume the snapshots directory already exists, so we just have to
-        -- create the directory for this specific snapshot.
-        FS.createDirectory hfs (Paths.getNamedSnapshotDir snapDir)
+        -- Guard that the snapshot does not exist already
+        let snapDir = Paths.namedSnapshotDir (tableSessionRoot thEnv) snap
+        doesSnapshotExist <-
+          FS.doesDirectoryExist (tableHasFS thEnv) (Paths.getNamedSnapshotDir snapDir)
+        if doesSnapshotExist then
+          throwIO (ErrSnapshotExists snap)
+        else
+          -- we assume the snapshots directory already exists, so we just have to
+          -- create the directory for this specific snapshot.
+          FS.createDirectory hfs (Paths.getNamedSnapshotDir snapDir)
 
-      -- For the temporary implementation it is okay to just flush the buffer
-      -- before taking the snapshot.
-      content <- modifyWithTempRegistry
-                    (RW.unsafeAcquireWriteAccess (tableContent thEnv))
-                    (atomically . RW.unsafeReleaseWriteAccess (tableContent thEnv))
-                    $ \reg content -> do
-        -- TODO: When we flush the buffer here, it might be underfull, which
-        -- could mess up the scheduling. The conservative approach is to supply
-        -- credits as if the buffer was full, and then flush the (possibly)
-        -- underfull buffer. However, note that this bit of code
-        -- here is probably going to change anyway because of #392
-        supplyCredits conf (Credit $ unNumEntries $ case confWriteBufferAlloc conf of AllocNumEntries x -> x) (tableLevels content)
-        content' <- flushWriteBuffer
-              (TraceMerge `contramap` tableTracer t)
-              conf
-              resolve
-              hfs
-              (tableHasBlockIO thEnv)
-              (tableSessionRoot thEnv)
-              (tableSessionUniqCounter thEnv)
-              reg
-              content
-        pure (content', content')
-      -- At this point, we've flushed the write buffer but we haven't created the
-      -- snapshot file yet. If an asynchronous exception happens beyond this
-      -- point, we'll take that loss, as the inner state of the table is still
-      -- consistent.
+        -- For the temporary implementation it is okay to just flush the buffer
+        -- before taking the snapshot.
+        content <- modifyWithTempRegistry
+                      (RW.unsafeAcquireWriteAccess (tableContent thEnv))
+                      (atomically . RW.unsafeReleaseWriteAccess (tableContent thEnv))
+                      $ \innerReg content -> do
+          -- TODO: When we flush the buffer here, it might be underfull, which
+          -- could mess up the scheduling. The conservative approach is to supply
+          -- credits as if the buffer was full, and then flush the (possibly)
+          -- underfull buffer. However, note that this bit of code
+          -- here is probably going to change anyway because of #392
+          supplyCredits conf (Credit $ unNumEntries $ case confWriteBufferAlloc conf of AllocNumEntries x -> x) (tableLevels content)
+          content' <- flushWriteBuffer
+                (TraceMerge `contramap` tableTracer t)
+                conf
+                resolve
+                hfs
+                (tableHasBlockIO thEnv)
+                (tableSessionRoot thEnv)
+                (tableSessionUniqCounter thEnv)
+                innerReg
+                content
+          pure (content', content')
+        -- At this point, we've flushed the write buffer but we haven't created the
+        -- snapshot file yet. If an asynchronous exception happens beyond this
+        -- point, we'll take that loss, as the inner state of the table is still
+        -- consistent.
 
-      snappedLevels <- snapLevels (tableLevels content)
-      snappedLevels' <- snapshotRuns snapDir snappedLevels
+        -- Convert to snapshot format
+        snapLevels <- toSnapLevels (tableLevels content)
+        -- Hard link runs into the named snapshot directory
+        snapLevels' <- snapshotRuns reg snapDir snapLevels
 
-      let snapMetaData = SnapshotMetaData label tableType (tableConfig t) snappedLevels'
-          SnapshotMetaDataFile contentPath = Paths.snapshotMetaDataFile snapDir
-          SnapshotMetaDataChecksumFile checksumPath = Paths.snapshotMetaDataChecksumFile snapDir
-      writeFileSnapshotMetaData hfs contentPath checksumPath snapMetaData
+        let snapMetaData = SnapshotMetaData label tableType (tableConfig t) snapLevels'
+            SnapshotMetaDataFile contentPath = Paths.snapshotMetaDataFile snapDir
+            SnapshotMetaDataChecksumFile checksumPath = Paths.snapshotMetaDataChecksumFile snapDir
+        writeFileSnapshotMetaData hfs contentPath checksumPath snapMetaData
 
 {-# SPECIALISE openSnapshot ::
      Session IO h
@@ -1150,7 +1155,7 @@ openSnapshot sesh label tableType override snap resolve = do
           Left e  -> throwIO (ErrSnapshotDeserialiseFailure e snap)
           Right x -> pure x
 
-        let SnapshotMetaData label' tableType' conf snappedLevels = snapMetaData
+        let SnapshotMetaData label' tableType' conf snapLevels = snapMetaData
 
         unless (tableType == tableType') $
           throwIO (ErrSnapshotWrongTableType snap tableType tableType')
@@ -1168,8 +1173,11 @@ openSnapshot sesh label tableType override snap resolve = do
                WBB.removeReference
 
         let actDir = Paths.activeDir (sessionRoot seshEnv)
-        snappedLevels' <- openRuns hfs hbio conf (sessionUniqCounter seshEnv) snapDir actDir snappedLevels
-        tableLevels <- openLevels reg hfs hbio conf (sessionUniqCounter seshEnv) resolve actDir snappedLevels'
+
+        -- Hard link runs into the active directory,
+        snapLevels' <- openRuns reg hfs hbio conf (sessionUniqCounter seshEnv) snapDir actDir snapLevels
+        -- Convert from the snapshot format, restoring merge progress in the process
+        tableLevels <- fromSnapLevels reg hfs hbio conf (sessionUniqCounter seshEnv) resolve actDir snapLevels'
 
         tableCache <- mkLevelsCache reg tableLevels
         newWith reg sesh seshEnv conf' am $! TableContent {

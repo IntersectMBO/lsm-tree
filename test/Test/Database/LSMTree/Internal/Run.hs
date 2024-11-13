@@ -23,6 +23,7 @@ import           Test.Tasty.HUnit (assertEqual, testCase, (@=?), (@?))
 import           Test.Tasty.QuickCheck
 
 import           Control.RefCount (RefCount (..), readRefCount)
+import           Control.TempRegistry (withTempRegistry)
 import           Database.LSMTree.Extras.Generators (KeyForIndexCompact (..))
 import           Database.LSMTree.Extras.RunData
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
@@ -185,10 +186,11 @@ prop_WriteAndOpen ::
   -> RunData KeyForIndexCompact SerialisedValue SerialisedBlob
   -> IO Property
 prop_WriteAndOpen fs hbio wb =
-    withRun fs hbio (simplePath 1337) (serialiseRunData wb) $ \written -> do
+    withRun fs hbio (simplePath 1337) (serialiseRunData wb) $ \written ->
+    withTempRegistry $ \reg -> do
       let paths = Run.runRunFsPaths written
           paths' = paths { runNumber = RunNumber 17}
-      hardLinkRunFiles fs hbio paths paths'
+      hardLinkRunFiles reg fs hbio paths paths'
       loaded <- openFromDisk fs hbio CacheRunData (simplePath 17)
 
       (RefCount 1 @=?) =<< readRefCount (runRefCounter written)

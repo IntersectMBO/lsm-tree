@@ -11,12 +11,12 @@ module Database.LSMTree.Internal.Snapshot (
   , SnapMergingRunState (..)
   , SpentCredits (..)
     -- * Conversion to levels snapshot format
-  , snapLevels
+  , toSnapLevels
     -- * Runs
   , snapshotRuns
   , openRuns
     -- * Opening from levels snapshot format
-  , openLevels
+  , fromSnapLevels
     -- * Hard links
   , hardLinkRunFiles
   ) where
@@ -40,7 +40,9 @@ import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.MergeSchedule
-import           Database.LSMTree.Internal.Paths
+import           Database.LSMTree.Internal.Paths (ActiveDir (..),
+                     NamedSnapshotDir (..), RunFsPaths (..), pathsForRunFiles,
+                     runChecksumsPath)
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunNumber
@@ -130,35 +132,35 @@ newtype SpentCredits = SpentCredits { getSpentCredits :: Int }
   Conversion to levels snapshot format
 -------------------------------------------------------------------------------}
 
-{-# SPECIALISE snapLevels :: Levels IO h -> IO (SnapLevels (Run IO h)) #-}
-snapLevels ::
+{-# SPECIALISE toSnapLevels :: Levels IO h -> IO (SnapLevels (Run IO h)) #-}
+toSnapLevels ::
      (PrimMonad m, MonadMVar m)
   => Levels m h
   -> m (SnapLevels (Run m h))
-snapLevels levels = SnapLevels <$> V.mapM snapLevel levels
+toSnapLevels levels = SnapLevels <$> V.mapM toSnapLevel levels
 
-{-# SPECIALISE snapLevel :: Level IO h -> IO (SnapLevel (Run IO h)) #-}
-snapLevel ::
+{-# SPECIALISE toSnapLevel :: Level IO h -> IO (SnapLevel (Run IO h)) #-}
+toSnapLevel ::
      (PrimMonad m, MonadMVar m)
   => Level m h
   -> m (SnapLevel (Run m h))
-snapLevel Level{..} = do
-    sir <- snapIncomingRun incomingRun
+toSnapLevel Level{..} = do
+    sir <- toSnapIncomingRun incomingRun
     pure (SnapLevel sir residentRuns)
 
-{-# SPECIALISE snapIncomingRun :: IncomingRun IO h -> IO (SnapIncomingRun (Run IO h)) #-}
-snapIncomingRun ::
+{-# SPECIALISE toSnapIncomingRun :: IncomingRun IO h -> IO (SnapIncomingRun (Run IO h)) #-}
+toSnapIncomingRun ::
      (PrimMonad m, MonadMVar m)
   => IncomingRun m h
   -> m (SnapIncomingRun (Run m h))
-snapIncomingRun (Single r) = pure (SnapSingleRun r)
+toSnapIncomingRun (Single r) = pure (SnapSingleRun r)
 -- We need to know how many credits were yet unspent so we can restore merge
 -- work on snapshot load. No need to snapshot the contents of totalStepsVar
 -- here, since we still start counting from 0 again when loading the snapshot.
-snapIncomingRun (Merging MergingRun {..}) = do
+toSnapIncomingRun (Merging MergingRun {..}) = do
     unspentCredits <- readPrimVar (getUnspentCreditsVar mergeUnspentCredits)
     mergeCompletedCache <- readMutVar mergeKnownCompleted
-    smrs <- withMVar mergeState $ \mrs -> snapMergingRunState mrs
+    smrs <- withMVar mergeState $ \mrs -> toSnapMergingRunState mrs
     pure $
       SnapMergingRun
         mergePolicy
@@ -168,17 +170,17 @@ snapIncomingRun (Merging MergingRun {..}) = do
         mergeCompletedCache
         smrs
 
-{-# SPECIALISE snapMergingRunState ::
+{-# SPECIALISE toSnapMergingRunState ::
      MergingRunState IO h
   -> IO (SnapMergingRunState (Run IO h)) #-}
-snapMergingRunState ::
+toSnapMergingRunState ::
      PrimMonad m
   => MergingRunState m h
   -> m (SnapMergingRunState (Run m h))
-snapMergingRunState (CompletedMerge r) = pure (SnapCompletedMerge r)
+toSnapMergingRunState (CompletedMerge r) = pure (SnapCompletedMerge r)
 -- We need to know how many credits were spent already so we can restore merge
 -- work on snapshot load.
-snapMergingRunState (OngoingMerge rs (SpentCreditsVar spentCreditsVar) m) = do
+toSnapMergingRunState (OngoingMerge rs (SpentCreditsVar spentCreditsVar) m) = do
     spentCredits <- readPrimVar spentCreditsVar
     pure (SnapOngoingMerge rs (SpentCredits spentCredits) (Merge.mergeLevel m))
 
@@ -186,28 +188,29 @@ snapMergingRunState (OngoingMerge rs (SpentCreditsVar spentCreditsVar) m) = do
   Runs
 -------------------------------------------------------------------------------}
 
--- TODO: temp registry
-
 {-# SPECIALISE snapshotRuns ::
-     NamedSnapshotDir
+     TempRegistry IO
+  -> NamedSnapshotDir
   -> SnapLevels (Run IO h)
   -> IO (SnapLevels RunNumber) #-}
--- | @'snapshotRuns' targetDir levels@ creates hard links for all run files
+-- | @'snapshotRuns' _ targetDir levels@ creates hard links for all run files
 -- associated with the runs in @levels@, and puts the new directory entries in
 -- the @targetDir@ directory.
 snapshotRuns ::
-     MonadThrow m
-  => NamedSnapshotDir
+     (MonadMask m, MonadMVar m)
+  => TempRegistry m
+  -> NamedSnapshotDir
   -> SnapLevels (Run m h)
   -> m (SnapLevels RunNumber)
-snapshotRuns (NamedSnapshotDir targetDir) levels = for levels $ \run -> do
+snapshotRuns reg (NamedSnapshotDir targetDir) levels = for levels $ \run -> do
     let sourcePaths = Run.runRunFsPaths run
     let targetPaths = sourcePaths { runDir = targetDir }
-    hardLinkRunFiles (Run.runHasFS run) (Run.runHasBlockIO run) sourcePaths targetPaths
+    hardLinkRunFiles reg (Run.runHasFS run) (Run.runHasBlockIO run) sourcePaths targetPaths
     pure (runNumber targetPaths)
 
 {-# SPECIALISE openRuns ::
-     HasFS IO h
+     TempRegistry IO
+  -> HasFS IO h
   -> HasBlockIO IO h
   -> TableConfig
   -> UniqCounter IO
@@ -215,14 +218,15 @@ snapshotRuns (NamedSnapshotDir targetDir) levels = for levels $ \run -> do
   -> ActiveDir
   -> SnapLevels RunNumber
   -> IO (SnapLevels (Run IO h)) #-}
--- | @'openRuns' _ _ _ uniqCounter sourceDir targetDir levels@ takes all run
+-- | @'openRuns' _ _ _ _ uniqCounter sourceDir targetDir levels@ takes all run
 -- files that are referenced by @levels@, and hard links them from @sourceDir@
 -- into @targetDir@ with new, unique names (using @uniqCounter@). Each set of
 -- (hard linked) files that represents a run is opened and verified, returning
 -- 'Run's as a result.
 openRuns ::
      (MonadFix m, MonadMask m, MonadSTM m, MonadST m, MonadMVar m)
-  => HasFS m h
+  => TempRegistry m
+  -> HasFS m h
   -> HasBlockIO m h
   -> TableConfig
   -> UniqCounter m
@@ -231,7 +235,7 @@ openRuns ::
   -> SnapLevels RunNumber
   -> m (SnapLevels (Run m h))
 openRuns
-  hfs hbio TableConfig{..} uc
+  reg hfs hbio TableConfig{..} uc
   (NamedSnapshotDir sourceDir) (ActiveDir targetDir) (SnapLevels levels) = do
     levels' <-
       V.iforM levels $ \i level ->
@@ -241,16 +245,18 @@ openRuns
           let sourcePaths = RunFsPaths sourceDir runNum
           runNum' <- uniqueToRunNumber <$> incrUniqCounter uc
           let targetPaths = RunFsPaths targetDir runNum'
-          hardLinkRunFiles hfs hbio sourcePaths targetPaths
+          hardLinkRunFiles reg hfs hbio sourcePaths targetPaths
 
-          Run.openFromDisk hfs hbio caching targetPaths
+          allocateTemp reg
+            (Run.openFromDisk hfs hbio caching targetPaths)
+            Run.removeReference
     pure (SnapLevels levels')
 
 {-------------------------------------------------------------------------------
   Opening from levels snapshot format
 -------------------------------------------------------------------------------}
 
-{-# SPECIALISE openLevels ::
+{-# SPECIALISE fromSnapLevels ::
      TempRegistry IO
   -> HasFS IO h
   -> HasBlockIO IO h
@@ -261,7 +267,7 @@ openRuns
   -> SnapLevels (Run IO h)
   -> IO (Levels IO h)
   #-}
-openLevels ::
+fromSnapLevels ::
      forall m h. (MonadFix m, MonadMask m, MonadMVar m, MonadSTM m, MonadST m)
   => TempRegistry m
   -> HasFS m h
@@ -272,14 +278,14 @@ openLevels ::
   -> ActiveDir
   -> SnapLevels (Run m h)
   -> m (Levels m h)
-openLevels reg hfs hbio conf@TableConfig{..} uc resolve dir (SnapLevels levels) =
-    V.iforM levels $ \i -> openLevel (LevelNo (i+1))
+fromSnapLevels reg hfs hbio conf@TableConfig{..} uc resolve dir (SnapLevels levels) =
+    V.iforM levels $ \i -> fromSnapLevel (LevelNo (i+1))
   where
     mkPath = RunFsPaths (getActiveDir dir)
 
-    openLevel :: LevelNo -> SnapLevel (Run m h) -> m (Level m h)
-    openLevel ln SnapLevel{..} = do
-        (unspentCreditsMay, spentCreditsMay, incomingRun) <- openIncomingRun snapIncoming
+    fromSnapLevel :: LevelNo -> SnapLevel (Run m h) -> m (Level m h)
+    fromSnapLevel ln SnapLevel{..} = do
+        (unspentCreditsMay, spentCreditsMay, incomingRun) <- fromSnapIncomingRun snapIncoming
         -- When a snapshot is created, merge progress is lost, so we have to
         -- redo merging work here. UnspentCredits and SpentCredits track how
         -- many credits were supplied before the snapshot was taken.
@@ -303,18 +309,18 @@ openLevels reg hfs hbio conf@TableConfig{..} uc resolve dir (SnapLevels levels) 
         caching = diskCachePolicyForLevel confDiskCachePolicy ln
         alloc = bloomFilterAllocForLevel conf ln
 
-        openIncomingRun :: SnapIncomingRun (Run m h) -> m (Maybe UnspentCredits, Maybe SpentCredits, IncomingRun m h)
-        openIncomingRun (SnapMergingRun mpfl nr ne unspentCredits knownCompleted smrs) = do
-            (spentCreditsMay, mrs) <- openMergingRunState smrs
+        fromSnapIncomingRun :: SnapIncomingRun (Run m h) -> m (Maybe UnspentCredits, Maybe SpentCredits, IncomingRun m h)
+        fromSnapIncomingRun (SnapMergingRun mpfl nr ne unspentCredits knownCompleted smrs) = do
+            (spentCreditsMay, mrs) <- fromSnapMergingRunState smrs
             (Just unspentCredits, spentCreditsMay,) . Merging <$>
               newMergingRun mpfl nr ne knownCompleted mrs
-        openIncomingRun (SnapSingleRun run) =
+        fromSnapIncomingRun (SnapSingleRun run) =
             pure (Nothing, Nothing, Single run)
 
-        openMergingRunState :: SnapMergingRunState (Run m h) -> m (Maybe SpentCredits, MergingRunState m h)
-        openMergingRunState (SnapCompletedMerge run) =
+        fromSnapMergingRunState :: SnapMergingRunState (Run m h) -> m (Maybe SpentCredits, MergingRunState m h)
+        fromSnapMergingRunState (SnapCompletedMerge run) =
             pure (Nothing, CompletedMerge run)
-        openMergingRunState (SnapOngoingMerge runs spentCredits mergeLast) = do
+        fromSnapMergingRunState (SnapOngoingMerge runs spentCredits mergeLast) = do
             -- Initialse the variable with 0. Credits will be re-supplied later,
             -- which will ensure that this variable is updated.
             spentCreditsVar <- SpentCreditsVar <$> newPrimVar 0
@@ -330,29 +336,34 @@ openLevels reg hfs hbio conf@TableConfig{..} uc resolve dir (SnapLevels levels) 
   Hard links
 -------------------------------------------------------------------------------}
 
--- TODO: temp registry
-
 {-# SPECIALISE hardLinkRunFiles ::
-     HasFS IO h
+     TempRegistry IO
+  -> HasFS IO h
   -> HasBlockIO IO h
   -> RunFsPaths
   -> RunFsPaths
   -> IO () #-}
--- | @'hardLinkRunFiles' hfs hbio sourcePaths targetPaths@ creates a hard link
+-- | @'hardLinkRunFiles' _hfs hbio sourcePaths targetPaths@ creates a hard link
 -- for each @sourcePaths@ path using the corresponding @targetPaths@ path as the
 -- name for the new directory entry.
 hardLinkRunFiles ::
-     MonadThrow m
-  => HasFS m h
+     (MonadMask m, MonadMVar m)
+  => TempRegistry m
+  -> HasFS m h
   -> HasBlockIO m h
   -> RunFsPaths
   -> RunFsPaths
   -> m ()
-hardLinkRunFiles hfs hbio sourceRunFsPaths targetRunFsPaths = do
+hardLinkRunFiles reg hfs hbio sourceRunFsPaths targetRunFsPaths = do
     let sourcePaths = pathsForRunFiles sourceRunFsPaths
         targetPaths = pathsForRunFiles targetRunFsPaths
-    sequenceA_ (hardLink hfs hbio <$> sourcePaths <*> targetPaths)
+    sequenceA_ (hardLinkTemp <$> sourcePaths <*> targetPaths)
     hardLink hfs hbio (runChecksumsPath sourceRunFsPaths) (runChecksumsPath targetRunFsPaths)
+  where
+    hardLinkTemp sourcePath targetPath =
+        allocateTemp reg
+          (hardLink hfs hbio sourcePath targetPath)
+          (\_ -> FS.removeFile hfs targetPath)
 
 {-# SPECIALISE hardLink ::
      HasFS IO h

@@ -138,11 +138,12 @@ mkWeakBlobRef Run{runBlobFile} blobspan =
   -> IO () #-}
 -- | Close the files used in the run and remove them from disk. After calling
 -- this operation, the run must not be used anymore.
+--
+-- TODO: exception safety
 close :: (MonadSTM m, MonadMask m, PrimMonad m) => Run m h -> m ()
 close Run {..} = do
     FS.hClose runHasFS runKOpsFile
     BlobFile.removeReference runBlobFile
-
     FS.removeFile runHasFS (runKOpsPath runRunFsPaths)
     FS.removeFile runHasFS (runFilterPath runRunFsPaths)
     FS.removeFile runHasFS (runIndexPath runRunFsPaths)

@@ -9,13 +9,14 @@
 module Test.Database.LSMTree.Internal (tests) where
 
 import           Control.Exception
-import           Control.Monad (void)
 import           Control.Tracer
+import           Data.Bifunctor (Bifunctor (..))
 import           Data.Coerce (coerce)
 import           Data.Foldable (traverse_)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (isJust, mapMaybe)
 import qualified Data.Vector as V
+import           Data.Word
 import           Database.LSMTree.Extras.Generators (KeyForIndexCompact (..))
 import           Database.LSMTree.Internal
 import           Database.LSMTree.Internal.BlobRef
@@ -32,8 +33,8 @@ import           Test.Util.FS
 tests :: TestTree
 tests = testGroup "Test.Database.LSMTree.Internal" [
       testGroup "Session" [
-          testCase "newSession" newSession
-        , testCase "restoreSession" restoreSession
+          testProperty "newSession" newSession
+        , testProperty "restoreSession" restoreSession
         , testProperty "twiceOpenSession" twiceOpenSession
         , testCase "sessionDirLayoutMismatch" sessionDirLayoutMismatch
         , testCase "sessionDirDoesNotExist" sessionDirDoesNotExist
@@ -51,15 +52,37 @@ testTableConfig = defaultTableConfig {
       confWriteBufferAlloc = AllocNumEntries (NumEntries 3)
     }
 
-newSession :: Assertion
-newSession = withTempIOHasBlockIO "newSession" $ \hfs hbio ->
-    void $ openSession nullTracer hfs hbio (FS.mkFsPath [])
+newSession ::
+     Positive (Small Int)
+  -> V.Vector (Word64, Entry Word64 Word64)
+  -> Property
+newSession (Positive (Small bufferSize)) es =
+    ioProperty $
+    withTempIOHasBlockIO "newSession" $ \hfs hbio ->
+    withSession nullTracer hfs hbio (FS.mkFsPath []) $ \session ->
+      withTable session conf (updates const es')
+  where
+    conf = testTableConfig {
+        confWriteBufferAlloc = AllocNumEntries (NumEntries bufferSize)
+      }
+    es' = fmap (bimap serialiseKey (bimap serialiseValue serialiseBlob)) es
 
-restoreSession :: Assertion
-restoreSession = withTempIOHasBlockIO "restoreSession" $ \hfs hbio -> do
-    session1 <- openSession nullTracer hfs hbio (FS.mkFsPath [])
-    closeSession session1
-    void $ openSession nullTracer hfs hbio (FS.mkFsPath [])
+restoreSession ::
+     Positive (Small Int)
+  -> V.Vector (Word64, Entry Word64 Word64)
+  -> Property
+restoreSession (Positive (Small bufferSize)) es =
+    ioProperty $
+    withTempIOHasBlockIO "restoreSession" $ \hfs hbio -> do
+      withSession nullTracer hfs hbio (FS.mkFsPath []) $ \session1 ->
+        withTable session1 conf (updates const es')
+      withSession nullTracer hfs hbio (FS.mkFsPath []) $ \session2 ->
+        withTable session2 conf (updates const es')
+  where
+    conf = testTableConfig {
+        confWriteBufferAlloc = AllocNumEntries (NumEntries bufferSize)
+      }
+    es' = fmap (bimap serialiseKey (bimap serialiseValue serialiseBlob)) es
 
 twiceOpenSession :: Property
 twiceOpenSession = ioProperty $
