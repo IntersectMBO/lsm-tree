@@ -699,7 +699,6 @@ library prototypes
     , constraints
     , containers
     , contra-tracer
-    , lsm-tree
     , QuickCheck
     , quickcheck-dynamic
     , quickcheck-lockstep

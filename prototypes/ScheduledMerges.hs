@@ -27,6 +27,7 @@ module ScheduledMerges (
     update, updates,
     insert, inserts,
     delete, deletes,
+    mupsert, mupserts,
     supply,
     duplicate,
 
@@ -51,8 +52,6 @@ import           Control.Exception (assert)
 import           Control.Monad.ST
 import           Control.Tracer (Tracer, contramap, traceWith)
 import           GHC.Stack (HasCallStack, callStack)
-
-import           Database.LSMTree.Normal (LookupResult (..), Update (..))
 
 
 data LSM s  = LSMHandle !(STRef s Counter)
@@ -329,13 +328,23 @@ newMerge tr level mergepolicy mergelast rs = do
              MergeLastLevel -> lastLevelMerge (mergek rs)
 
 mergek :: [Run] -> Run
-mergek = Map.unions
+mergek = Map.unionsWith combine
+
+combine :: Op -> Op -> Op
+combine x y = case x of
+  Insert{}  -> x
+  Delete{}  -> x
+  Mupsert v -> case y of
+    Insert v' mb -> Insert (resolveValue v v') mb
+    Delete       -> Insert v Nothing
+    Mupsert v'   -> Mupsert (resolveValue v v')
 
 lastLevelMerge :: Run -> Run
-lastLevelMerge = Map.filter isInsert
+lastLevelMerge = Map.filter (not . isDelete)
   where
-    isInsert Insert{} = True
-    isInsert Delete   = False
+    isDelete Delete    = True
+    isDelete Insert{}  = False
+    isDelete Mupsert{} = False
 
 expectCompletedMerge :: HasCallStack
                      => Tracer (ST s) EventDetail
@@ -429,18 +438,29 @@ new = do
   lsm <- newSTRef (LSMContent Map.empty [])
   return (LSMHandle c lsm)
 
-
 inserts :: Tracer (ST s) Event -> LSM s -> [(Key, Value, Maybe Blob)] -> ST s ()
 inserts tr lsm kvbs = updates tr lsm [ (k, Insert v b) | (k, v, b) <- kvbs ]
 
 insert :: Tracer (ST s) Event -> LSM s -> Key -> Value -> Maybe Blob -> ST s ()
 insert tr lsm k v b = update tr lsm k (Insert v b)
 
+deletes :: Tracer (ST s) Event -> LSM s -> [Key] ->  ST s ()
+deletes tr lsm ks = updates tr lsm [ (k, Delete) | k <- ks ]
+
 delete :: Tracer (ST s) Event -> LSM s -> Key ->  ST s ()
 delete tr lsm k = update tr lsm k Delete
 
-deletes :: Tracer (ST s) Event -> LSM s -> [Key] ->  ST s ()
-deletes tr lsm ks = updates tr lsm [ (k, Delete) | k <- ks ]
+mupserts :: Tracer (ST s) Event -> LSM s -> [(Key, Value)] -> ST s ()
+mupserts tr lsm kvbs = updates tr lsm [ (k, Mupsert v) | (k, v) <- kvbs ]
+
+mupsert :: Tracer (ST s) Event -> LSM s -> Key -> Value -> ST s ()
+mupsert tr lsm k v = update tr lsm k (Mupsert v)
+
+data Update v b =
+    Insert !v !(Maybe b)
+  | Mupsert !v
+  | Delete
+  deriving stock (Eq, Show)
 
 updates :: Tracer (ST s) Event -> LSM s -> [(Key, Op)] -> ST s ()
 updates tr lsm = mapM_ (uncurry (update tr lsm))
@@ -452,7 +472,7 @@ update tr (LSMHandle scr lsmr) k op = do
     modifySTRef' scr (+1)
     supplyCredits 1 ls
     invariant ls
-    let wb' = Map.insert k op wb
+    let wb' = Map.insertWith combine k op wb
     if bufferSize wb' >= maxBufferSize
       then do
         ls' <- increment tr sc (bufferToRun wb') ls
@@ -468,21 +488,32 @@ supply (LSMHandle scr lsmr) credits = do
     supplyCredits credits ls
     invariant ls
 
+data LookupResult v b =
+    NotFound
+  | Found !v !(Maybe b)
+  deriving stock (Eq, Show)
+
 lookups :: LSM s -> [Key] -> ST s [(Key, LookupResult Value Blob)]
-lookups lsm = mapM (\k -> (k,) <$> lookup lsm k)
+lookups lsm ks = do
+    runs <- concat <$> allLayers lsm
+    return $ map (\k -> (k, doLookup k runs)) ks
 
 lookup :: LSM s -> Key -> ST s (LookupResult Value Blob)
 lookup lsm k = do
-    rss <- allLayers lsm
-    return $!
-      foldr (\lookures continue ->
-              case lookures of
-                Nothing                  -> continue
-                Just (Insert v Nothing)  -> Found v
-                Just (Insert v (Just b)) -> FoundWithBlob v b
-                Just  Delete             -> NotFound)
-            NotFound
-            [ Map.lookup k r | rs <- rss, r <- rs ]
+    runs <- concat <$> allLayers lsm
+    return $ doLookup k runs
+
+doLookup :: Key -> [Run] -> LookupResult Value Blob
+doLookup k =
+    foldr (\run continue ->
+            case Map.lookup k run of
+              Nothing            -> continue
+              Just (Insert v mb) -> Found v mb
+              Just  Delete       -> NotFound
+              Just (Mupsert v)   -> case continue of
+                NotFound    -> Found v Nothing
+                Found v' mb -> Found (resolveValue v v') mb)
+          NotFound
 
 bufferToRun :: Buffer -> Run
 bufferToRun = id
@@ -648,11 +679,12 @@ flattenIncomingRun (Merging (MergingRun _ _ mr)) = do
       OngoingMerge _ rs _ -> return rs
 
 logicalValue :: LSM s -> ST s (Map Key (Value, Maybe Blob))
-logicalValue = fmap (Map.mapMaybe justInsert . Map.unions . concat)
+logicalValue = fmap (Map.mapMaybe justInsert . Map.unionsWith combine . concat)
              . allLayers
   where
     justInsert (Insert v b) = Just (v, b)
     justInsert  Delete      = Nothing
+    justInsert (Mupsert v)  = Just (v, Nothing)
 
 dumpRepresentation :: LSM s
                    -> ST s [(Maybe (MergePolicy, MergeLastLevel, MergingRunState), [Run])]
