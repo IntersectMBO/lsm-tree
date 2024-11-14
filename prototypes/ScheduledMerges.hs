@@ -93,6 +93,15 @@ data MergePolicy = MergePolicyTiering | MergePolicyLevelling
 data MergeLastLevel = MergeMidLevel | MergeLastLevel
   deriving stock (Eq, Show)
 
+-- | Merges can either exist on a level of the LSM, or be a union merge of two
+-- tables. Union merges follow the semantics of @Data.Map.unionWith (<>)@. Since
+-- the input runs are semantically treated like @Data.Map@s, deletes are ignored
+-- and inserts act like mupserts, so they need to be merged monoidally using
+-- 'resolveValue'.
+--
+data MergeType = MergeLevel MergeLastLevel | MergeUnion
+  deriving stock (Eq, Show)
+
 -- | We represent single runs specially, rather than putting them in as a
 -- 'CompletedMerge'. This is for two reasons: to see statically that it's a
 -- single run without having to read the 'STRef', and secondly to make it easier
@@ -104,7 +113,7 @@ data IncomingRun s = Merging !MergePolicy !(MergingRun s)
 -- | A \"merging run\" is a mutable representation of an incremental merge.
 -- It is also a unit of sharing between duplicated tables.
 --
-data MergingRun s = MergingRun !MergeLastLevel !(STRef s MergingRunState)
+data MergingRun s = MergingRun !MergeType !(STRef s MergingRunState)
 
 data MergingRunState = CompletedMerge !Run
 
@@ -138,6 +147,10 @@ newtype Value  = V Int
 
 resolveValue :: Value -> Value -> Value
 resolveValue (V x) (V y) = V (x + y)
+
+resolveBlob :: Maybe Blob -> Maybe Blob -> Maybe Blob
+resolveBlob (Just b) _ = Just b
+resolveBlob Nothing mb = mb
 
 newtype Blob = B Int
   deriving stock (Eq, Show)
@@ -195,8 +208,8 @@ invariant = go 1
       assertST $ case ir of
         Single{} -> True
         Merging mp (MergingRun ml _) ->
-              mergePolicyForLevel ln ls == mp
-           && mergeLastForLevel ls == ml
+              mp == mergePolicyForLevel ln ls
+           && ml == MergeLevel (mergeLastForLevel ls)
       assertST $ length rs <= 3
       expectedRunLengths ln rs ls
       expectedMergingRunLengths ln ir mrs ls
@@ -299,23 +312,24 @@ assertST p = assert p $ return (const () callStack)
 -- Merging run abstraction
 --
 
-newMerge :: Tracer (ST s) EventDetail
-         -> Int -> MergePolicy -> MergeLastLevel
-         -> [Run] -> ST s (IncomingRun s)
-newMerge _ _ _ _ [r] = return (Single r)
-newMerge tr level mergepolicy mergelast rs = do
+newLevelMerge :: Tracer (ST s) EventDetail
+              -> Int -> MergePolicy -> MergeLastLevel
+              -> [Run] -> ST s (IncomingRun s)
+newLevelMerge _ _ _ _ [r] = return (Single r)
+newLevelMerge tr level mergePolicy mergeLast rs = do
     traceWith tr MergeStartedEvent {
-                   mergePolicy   = mergepolicy,
-                   mergeLast     = mergelast,
+                   mergePolicy,
+                   mergeType,
                    mergeDebt     = debt,
                    mergeCost     = cost,
                    mergeRunsSize = map runSize rs
                  }
     assert (length rs `elem` [4, 5]) $
       assert (mergeDebtLeft debt >= cost) $
-        fmap (Merging mergepolicy . MergingRun mergelast) $
+        fmap (Merging mergePolicy . MergingRun mergeType) $
           newSTRef (OngoingMerge debt rs r)
   where
+    mergeType = MergeLevel mergeLast
     cost = sum (map runSize rs)
     -- How much we need to discharge before the merge can be guaranteed
     -- complete. More precisely, this is the maximum amount a merge at this
@@ -324,46 +338,57 @@ newMerge tr level mergepolicy mergelast rs = do
     -- merges will only complete at the last possible moment.
     -- Note that for levelling this is includes the single run in the current
     -- level.
-    debt = newMergeDebt $ case mergepolicy of
+    debt = newMergeDebt $ case mergePolicy of
              MergePolicyLevelling -> 4 * tieringRunSize (level-1)
                                        + levellingRunSize level
              MergePolicyTiering   -> length rs * tieringRunSize (level-1)
     -- deliberately lazy:
-    r    = case mergelast of
-             MergeMidLevel  ->                (mergek rs)
-             MergeLastLevel -> lastLevelMerge (mergek rs)
+    r    = mergek mergeType rs
 
-mergek :: [Run] -> Run
-mergek = Map.unionsWith combine
-
--- | Newer value, older value.
-combine :: Op -> Op -> Op
-combine x y = case x of
-  Insert{}  -> x
-  Delete{}  -> x
-  Mupsert v -> case y of
-    Insert v' mb -> Insert (resolveValue v v') mb
-    Delete       -> Insert v Nothing
-    Mupsert v'   -> Mupsert (resolveValue v v')
-
-lastLevelMerge :: Run -> Run
-lastLevelMerge = Map.filter (not . isDelete)
+mergek :: MergeType -> [Run] -> Run
+mergek = \case
+    MergeLevel MergeMidLevel  -> Map.unionsWith combine
+    MergeLevel MergeLastLevel -> dropDeletes . Map.unionsWith combine
+    MergeUnion                -> dropDeletes . Map.unionsWith combineUnion
   where
+    dropDeletes = Map.filter (not . isDelete)
+
     isDelete Delete    = True
     isDelete Insert{}  = False
     isDelete Mupsert{} = False
 
+combine :: Op -> Op -> Op
+combine new_ old = case new_ of
+    Insert{}  -> new_
+    Delete{}  -> new_
+    Mupsert v -> case old of
+      Insert v' b -> Insert (resolveValue v v') b
+      Delete      -> Insert v Nothing
+      Mupsert v'  -> Mupsert (resolveValue v v')
+
+combineUnion :: Op -> Op -> Op
+combineUnion new_ old =
+    case (value new_, value old) of
+      (Nothing, _)                 -> old
+      (_, Nothing)                 -> new_
+      (Just (v', b'), Just (v, b)) -> Insert (resolveValue v' v) (resolveBlob b' b)
+  where
+    value = \case
+      Insert v b -> Just (v, b)
+      Delete     -> Nothing
+      Mupsert v  -> Just (v, Nothing)
+
 expectCompletedMerge :: HasCallStack
                      => Tracer (ST s) EventDetail
                      -> MergePolicy -> MergingRun s -> ST s Run
-expectCompletedMerge tr mergepolicy (MergingRun mergelast ref) = do
+expectCompletedMerge tr mergePolicy (MergingRun mergeType ref) = do
     mrs <- readSTRef ref
     case mrs of
       CompletedMerge r -> do
         traceWith tr MergeCompletedEvent {
-            mergePolicy  = mergepolicy,
-            mergeLast    = mergelast,
-            mergeSize    = runSize r
+            mergePolicy,
+            mergeType,
+            mergeSize = runSize r
           }
         return r
       OngoingMerge d _ _ ->
@@ -596,9 +621,9 @@ increment tr sc = \r ls -> do
   where
     go :: Int -> [Run] -> Levels s -> ST s (Levels s)
     go !ln incoming [] = do
-        let mergepolicy = mergePolicyForLevel ln []
+        let mergePolicy = mergePolicyForLevel ln []
         traceWith tr' AddLevelEvent
-        ir <- newMerge tr' ln mergepolicy MergeLastLevel incoming
+        ir <- newLevelMerge tr' ln mergePolicy MergeLastLevel incoming
         return (Level ir [] : [])
       where
         tr' = contramap (EventAt sc ln) tr
@@ -613,8 +638,8 @@ increment tr sc = \r ls -> do
         -- If r is still too small for this level then keep it and merge again
         -- with the incoming runs.
         MergePolicyTiering | tieringRunSizeToLevel r < ln -> do
-          let mergelast = mergeLastForLevel ls
-          ir' <- newMerge tr' ln MergePolicyTiering mergelast (incoming ++ [r])
+          let mergeLast = mergeLastForLevel ls
+          ir' <- newLevelMerge tr' ln MergePolicyTiering mergeLast (incoming ++ [r])
           return (Level ir' rs : ls)
 
         -- This tiering level is now full. We take the completed merged run
@@ -622,15 +647,15 @@ increment tr sc = \r ls -> do
         -- as a bundle and move them down to the level below. We start a merge
         -- for the new incoming runs. This level is otherwise empty.
         MergePolicyTiering | tieringLevelIsFull ln incoming resident -> do
-          ir' <- newMerge tr' ln MergePolicyTiering MergeMidLevel incoming
+          ir' <- newLevelMerge tr' ln MergePolicyTiering MergeMidLevel incoming
           ls' <- go (ln+1) resident ls
           return (Level ir' [] : ls')
 
         -- This tiering level is not yet full. We move the completed merged run
         -- into the level proper, and start the new merge for the incoming runs.
         MergePolicyTiering -> do
-          let mergelast = mergeLastForLevel ls
-          ir' <- newMerge tr' ln MergePolicyTiering mergelast incoming
+          let mergeLast = mergeLastForLevel ls
+          ir' <- newLevelMerge tr' ln MergePolicyTiering mergeLast incoming
           traceWith tr' (AddRunEvent (length resident))
           return (Level ir' resident : ls)
 
@@ -640,14 +665,14 @@ increment tr sc = \r ls -> do
         -- empty) level .
         MergePolicyLevelling | levellingLevelIsFull ln incoming r -> do
           assert (null rs && null ls) $ return ()
-          ir' <- newMerge tr' ln MergePolicyTiering MergeMidLevel incoming
+          ir' <- newLevelMerge tr' ln MergePolicyTiering MergeMidLevel incoming
           ls' <- go (ln+1) [r] []
           return (Level ir' [] : ls')
 
         -- Otherwise we start merging the incoming runs into the run.
         MergePolicyLevelling -> do
           assert (null rs && null ls) $ return ()
-          ir' <- newMerge tr' ln MergePolicyLevelling MergeLastLevel
+          ir' <- newLevelMerge tr' ln MergePolicyLevelling MergeLastLevel
                           (incoming ++ [r])
           return (Level ir' [] : [])
 
@@ -697,22 +722,22 @@ logicalValue lsm = do
     justInsert (Mupsert v)  = Just (v, Nothing)
 
 dumpRepresentation :: LSM s
-                   -> ST s [(Maybe (MergePolicy, MergeLastLevel, MergingRunState), [Run])]
+                   -> ST s [(Maybe (MergePolicy, MergeType, MergingRunState), [Run])]
 dumpRepresentation (LSMHandle _ lsmr) = do
     LSMContent wb ls <- readSTRef lsmr
     ((Nothing, [wb]) :) <$> mapM dumpLevel ls
 
-dumpLevel :: Level s -> ST s (Maybe (MergePolicy, MergeLastLevel, MergingRunState), [Run])
+dumpLevel :: Level s -> ST s (Maybe (MergePolicy, MergeType, MergingRunState), [Run])
 dumpLevel (Level (Single r) rs) =
     return (Nothing, (r:rs))
-dumpLevel (Level (Merging mp (MergingRun ml ref)) rs) = do
+dumpLevel (Level (Merging mp (MergingRun mt ref)) rs) = do
     mrs <- readSTRef ref
-    return (Just (mp, ml, mrs), rs)
+    return (Just (mp, mt, mrs), rs)
 
 -- For each level:
 -- 1. the runs involved in an ongoing merge
 -- 2. the other runs (including completed merge)
-representationShape :: [(Maybe (MergePolicy, MergeLastLevel, MergingRunState), [Run])]
+representationShape :: [(Maybe (MergePolicy, MergeType, MergingRunState), [Run])]
                     -> [([Int], [Int])]
 representationShape =
     map $ \(mmr, rs) ->
@@ -744,14 +769,14 @@ data EventDetail =
        }
      | MergeStartedEvent {
          mergePolicy   :: MergePolicy,
-         mergeLast     :: MergeLastLevel,
+         mergeType     :: MergeType,
          mergeDebt     :: MergeDebt,
          mergeCost     :: Int,
          mergeRunsSize :: [Int]
        }
      | MergeCompletedEvent {
          mergePolicy :: MergePolicy,
-         mergeLast   :: MergeLastLevel,
+         mergeType   :: MergeType,
          mergeSize   :: Int
        }
   deriving stock Show
