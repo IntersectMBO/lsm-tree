@@ -6,7 +6,7 @@
 -- complexity, because they do a fixed amount of merging work each.
 --
 -- The other thing this prototype demonstrates is a design for duplicating
--- LSM handles and sharing ongoing incremental merges.
+-- tables and sharing ongoing incremental merges.
 --
 -- The merging policy that this prototype uses is power 4 \"lazy levelling\".
 -- Power 4 means each level is 4 times bigger than the previous level.
@@ -96,8 +96,8 @@ data MergeLastLevel = MergeMidLevel | MergeLastLevel
 data IncomingRun s = Merging !(MergingRun s)
                    | Single  !Run
 
--- | A \"merging run\" is a mutable representation of an incremental merge,
--- It is also a unit of sharing between duplicated LSM handles.
+-- | A \"merging run\" is a mutable representation of an incremental merge.
+-- It is also a unit of sharing between duplicated tables.
 --
 data MergingRun s =
     MergingRun !MergePolicy !MergeLastLevel !(STRef s MergingRunState)
@@ -107,7 +107,6 @@ data MergingRunState = CompletedMerge !Run
                        -- let r = merge4 r1 r2 r3 r4
                        --  in OngoingMerge 0 [r1, r2, r3, r4] r
                      | OngoingMerge !MergeDebt ![Run] Run
-  deriving stock Show
 
 type Credit = Int
 type Debt   = Int
@@ -180,20 +179,20 @@ invariant = go 1
     go :: Int -> [Level s] -> ST s ()
     go !_ [] = return ()
 
-    go !ln (Level mr rs : ls) = do
+    go !ln (Level ir rs : ls) = do
 
-      mrs <- case mr of
+      mrs <- case ir of
                Single r                     -> return (CompletedMerge r)
                Merging (MergingRun _ _ ref) -> readSTRef ref
 
-      assertST $ case mr of
+      assertST $ case ir of
         Single{}        -> True
         Merging (MergingRun mp ml _) ->
               mergePolicyForLevel ln ls == mp
            && mergeLastForLevel ls == ml
       assertST $ length rs <= 3
       expectedRunLengths ln rs ls
-      expectedMergingRunLengths ln mr mrs ls
+      expectedMergingRunLengths ln ir mrs ls
 
       go (ln+1) ls
 
@@ -220,11 +219,11 @@ invariant = go 1
     -- conditions are more complicated.
     expectedMergingRunLengths :: Int -> IncomingRun s -> MergingRunState
                               -> [Level s] -> ST s ()
-    expectedMergingRunLengths ln mr mrs ls =
+    expectedMergingRunLengths ln ir mrs ls =
       case mergePolicyForLevel ln ls of
         MergePolicyLevelling ->
           assert (mergeLastForLevel ls == MergeLastLevel) $
-          case (mr, mrs) of
+          case (ir, mrs) of
             -- A single incoming run (which thus didn't need merging) must be
             -- of the expected size range already
             (Single r, m) -> do
@@ -252,7 +251,7 @@ invariant = go 1
               assertST $ all (\r -> levellingRunSizeToLevel r <= ln+1) resident
 
         MergePolicyTiering ->
-          case (mr, mrs, mergeLastForLevel ls) of
+          case (ir, mrs, mergeLastForLevel ls) of
             -- A single incoming run (which thus didn't need merging) must be
             -- of the expected size already
             (Single r, m, _) -> do
@@ -348,9 +347,8 @@ lastLevelMerge = Map.filter (not . isDelete)
 
 expectCompletedMerge :: HasCallStack
                      => Tracer (ST s) EventDetail
-                     -> IncomingRun s -> ST s Run
-expectCompletedMerge _  (Single r) = return r
-expectCompletedMerge tr (Merging (MergingRun mergepolicy mergelast ref)) = do
+                     -> MergingRun s -> ST s Run
+expectCompletedMerge tr (MergingRun mergepolicy mergelast ref) = do
     mrs <- readSTRef ref
     case mrs of
       CompletedMerge r -> do
@@ -583,13 +581,15 @@ increment tr sc = \r ls -> do
     go !ln incoming [] = do
         let mergepolicy = mergePolicyForLevel ln []
         traceWith tr' AddLevelEvent
-        mr <- newMerge tr' ln mergepolicy MergeLastLevel incoming
-        return (Level mr [] : [])
+        ir <- newMerge tr' ln mergepolicy MergeLastLevel incoming
+        return (Level ir [] : [])
       where
         tr' = contramap (EventAt sc ln) tr
 
-    go !ln incoming (Level mr rs : ls) = do
-      r <- expectCompletedMerge tr' mr
+    go !ln incoming (Level ir rs : ls) = do
+      r <- case ir of
+        Single r   -> return r
+        Merging mr -> expectCompletedMerge tr' mr
       let resident = r:rs
       case mergePolicyForLevel ln ls of
 
@@ -597,25 +597,25 @@ increment tr sc = \r ls -> do
         -- with the incoming runs.
         MergePolicyTiering | tieringRunSizeToLevel r < ln -> do
           let mergelast = mergeLastForLevel ls
-          mr' <- newMerge tr' ln MergePolicyTiering mergelast (incoming ++ [r])
-          return (Level mr' rs : ls)
+          ir' <- newMerge tr' ln MergePolicyTiering mergelast (incoming ++ [r])
+          return (Level ir' rs : ls)
 
         -- This tiering level is now full. We take the completed merged run
         -- (the previous incoming runs), plus all the other runs on this level
         -- as a bundle and move them down to the level below. We start a merge
         -- for the new incoming runs. This level is otherwise empty.
         MergePolicyTiering | tieringLevelIsFull ln incoming resident -> do
-          mr' <- newMerge tr' ln MergePolicyTiering MergeMidLevel incoming
+          ir' <- newMerge tr' ln MergePolicyTiering MergeMidLevel incoming
           ls' <- go (ln+1) resident ls
-          return (Level mr' [] : ls')
+          return (Level ir' [] : ls')
 
         -- This tiering level is not yet full. We move the completed merged run
         -- into the level proper, and start the new merge for the incoming runs.
         MergePolicyTiering -> do
           let mergelast = mergeLastForLevel ls
-          mr' <- newMerge tr' ln MergePolicyTiering mergelast incoming
+          ir' <- newMerge tr' ln MergePolicyTiering mergelast incoming
           traceWith tr' (AddRunEvent (length resident))
-          return (Level mr' resident : ls)
+          return (Level ir' resident : ls)
 
         -- The final level is using levelling. If the existing completed merge
         -- run is too large for this level, we promote the run to the next
@@ -623,16 +623,16 @@ increment tr sc = \r ls -> do
         -- empty) level .
         MergePolicyLevelling | levellingLevelIsFull ln incoming r -> do
           assert (null rs && null ls) $ return ()
-          mr' <- newMerge tr' ln MergePolicyTiering MergeMidLevel incoming
+          ir' <- newMerge tr' ln MergePolicyTiering MergeMidLevel incoming
           ls' <- go (ln+1) [r] []
-          return (Level mr' [] : ls')
+          return (Level ir' [] : ls')
 
         -- Otherwise we start merging the incoming runs into the run.
         MergePolicyLevelling -> do
           assert (null rs && null ls) $ return ()
-          mr' <- newMerge tr' ln MergePolicyLevelling MergeLastLevel
+          ir' <- newMerge tr' ln MergePolicyLevelling MergeLastLevel
                           (incoming ++ [r])
-          return (Level mr' [] : [])
+          return (Level ir' [] : [])
 
       where
         tr' = contramap (EventAt sc ln) tr
@@ -668,7 +668,7 @@ flattenLevels :: Levels s -> ST s [[Run]]
 flattenLevels = mapM flattenLevel
 
 flattenLevel :: Level s -> ST s [Run]
-flattenLevel (Level mr rs) = (++rs) <$> flattenIncomingRun mr
+flattenLevel (Level ir rs) = (++rs) <$> flattenIncomingRun ir
 
 flattenIncomingRun :: IncomingRun s -> ST s [Run]
 flattenIncomingRun (Single r) = return [r]
