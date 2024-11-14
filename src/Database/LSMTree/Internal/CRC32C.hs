@@ -348,4 +348,3 @@ formatChecksumsFile checksums =
           <> BS.word32HexFixed crc
           <> BS.char8 '\n'
         | (ChecksumsFileName name, CRC32C crc) <- Map.toList checksums ]
-

@@ -36,6 +36,7 @@ import           Data.Word
 import           Database.LSMTree.Internal as Internal
 import           Database.LSMTree.Internal.BlobFile
 import           Database.LSMTree.Internal.BlobRef
+import           Database.LSMTree.Internal.ChecksumHandle
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.CRC32C
 import           Database.LSMTree.Internal.Entry
