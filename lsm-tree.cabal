@@ -124,6 +124,7 @@ library
     Database.LSMTree.Internal.BloomFilter
     Database.LSMTree.Internal.BloomFilterQuery1
     Database.LSMTree.Internal.ByteString
+    Database.LSMTree.Internal.ChecksumHandle
     Database.LSMTree.Internal.Chunk
     Database.LSMTree.Internal.Config
     Database.LSMTree.Internal.CRC32C
