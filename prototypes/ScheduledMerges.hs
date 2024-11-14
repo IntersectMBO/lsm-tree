@@ -57,7 +57,8 @@ import           GHC.Stack (HasCallStack, callStack)
 
 data LSM s  = LSMHandle !(STRef s Counter)
                         !(STRef s (LSMContent s))
-data LSMContent s = LSMContent Buffer (Levels s)
+
+data LSMContent s = LSMContent Buffer (Levels s) (Maybe (MergingTree s))
 
 -- | A simple count of LSM operations to allow logging the operation
 -- number in each event. This enables relating merge events to the
@@ -118,6 +119,18 @@ data MergingRunState = CompletedMerge !Run
                        --  in OngoingMerge 0 [r1, r2, r3, r4] r
                      | OngoingMerge !MergeDebt ![Run] Run
   deriving stock Show
+
+newtype MergingTree s =
+    MergingTree (STRef s (MergingTreeState s))
+
+data MergingTreeState s = CompletedTreeMerge !Run
+                          -- | Reuses MergingRun (with its STRef) to allow
+                          -- sharing existing merges.
+                        | OngoingTreeMerge !(MergingRun s)
+                        | PendingTreeMerge !(PendingMerge s)
+
+-- | Goes via MergingTree (with its STRef) to allow sharing existing unions.
+data PendingMerge s = PendingMerge !MergeType ![MergingTree s]
 
 type Credit = Int
 type Debt   = Int
@@ -180,16 +193,21 @@ mergePolicyForLevel 1 [] = MergePolicyTiering
 mergePolicyForLevel _ [] = MergePolicyLevelling
 mergePolicyForLevel _ _  = MergePolicyTiering
 
-mergeLastForLevel :: [Level s] -> MergeLastLevel
-mergeLastForLevel [] = MergeLastLevel
-mergeLastForLevel _  = MergeMidLevel
+mergeLastForLevel :: [Level s] -> Maybe (MergingTree s) -> MergeLastLevel
+mergeLastForLevel [] Nothing = MergeLastLevel
+mergeLastForLevel _  _       = MergeMidLevel
 
 -- | Note that the invariants rely on the fact that levelling is only used on
 -- the last level.
 --
-invariant :: forall s. Levels s -> ST s ()
-invariant = go 1
+-- TODO: add invariant for MergingTree
+--
+invariant :: forall s. LSMContent s -> ST s ()
+invariant (LSMContent _ levels0 tree0) = go 1 levels0
   where
+    mergeLast :: Levels s -> MergeLastLevel
+    mergeLast ls = mergeLastForLevel ls tree0
+
     go :: Int -> [Level s] -> ST s ()
     go !_ [] = return ()
 
@@ -203,7 +221,7 @@ invariant = go 1
         Single{} -> True
         Merging mp (MergingRun ml _) ->
               mp == mergePolicyForLevel ln ls
-           && ml == MergeLevel (mergeLastForLevel ls)
+           && ml == MergeLevel (mergeLast ls)
       assertST $ length rs <= 3
       expectedRunLengths ln rs ls
       expectedMergingRunLengths ln ir mrs ls
@@ -235,8 +253,11 @@ invariant = go 1
                               -> [Level s] -> ST s ()
     expectedMergingRunLengths ln ir mrs ls =
       case mergePolicyForLevel ln ls of
-        MergePolicyLevelling ->
-          assert (mergeLastForLevel ls == MergeLastLevel) $
+        MergePolicyLevelling -> do
+          case ir of
+            Merging _ (MergingRun mergeType _) ->
+              assertST (mergeType == MergeLevel (mergeLast ls))
+            _ -> pure ()
           case (ir, mrs) of
             -- A single incoming run (which thus didn't need merging) must be
             -- of the expected size range already
@@ -265,7 +286,7 @@ invariant = go 1
               assertST $ all (\r -> levellingRunSizeToLevel r <= ln+1) resident
 
         MergePolicyTiering ->
-          case (ir, mrs, mergeLastForLevel ls) of
+          case (ir, mrs, mergeLast ls) of
             -- A single incoming run (which thus didn't need merging) must be
             -- of the expected size already
             (Single r, m, _) -> do
@@ -450,7 +471,7 @@ paydownMergeDebt c2 (MergeDebt c d)
 new :: ST s (LSM s)
 new = do
   c   <- newSTRef 0
-  lsm <- newSTRef (LSMContent Map.empty [])
+  lsm <- newSTRef (LSMContent Map.empty [] Nothing)
   return (LSMHandle c lsm)
 
 inserts :: Tracer (ST s) Event -> LSM s -> [(Key, Value, Maybe Blob)] -> ST s ()
@@ -483,25 +504,26 @@ updates tr lsm = mapM_ (uncurry (update tr lsm))
 update :: Tracer (ST s) Event -> LSM s -> Key -> Op -> ST s ()
 update tr (LSMHandle scr lsmr) k op = do
     sc <- readSTRef scr
-    LSMContent wb ls <- readSTRef lsmr
+    content@(LSMContent wb ls tree) <- readSTRef lsmr
     modifySTRef' scr (+1)
     supplyCreditsLevels 1 ls
-    invariant ls
+    invariant content
     let wb' = Map.insertWith combine k op wb
     if bufferSize wb' >= maxBufferSize
       then do
-        ls' <- increment tr sc (bufferToRun wb') ls
-        invariant ls'
-        writeSTRef lsmr (LSMContent Map.empty ls')
+        ls' <- increment tr sc (bufferToRun wb') ls tree
+        let content' = LSMContent Map.empty ls' tree
+        invariant content'
+        writeSTRef lsmr content'
       else
-        writeSTRef lsmr (LSMContent wb' ls)
+        writeSTRef lsmr (LSMContent wb' ls tree)
 
 supplyMergeCredits :: LSM s -> Credit -> ST s ()
 supplyMergeCredits (LSMHandle scr lsmr) credits = do
-    LSMContent _ ls <- readSTRef lsmr
+    content@(LSMContent _ ls _) <- readSTRef lsmr
     modifySTRef' scr (+1)
     supplyCreditsLevels credits ls
-    invariant ls
+    invariant content
 
 data LookupResult v b =
     NotFound
@@ -604,15 +626,18 @@ data EventDetail =
   deriving stock Show
 
 increment :: forall s. Tracer (ST s) Event
-          -> Counter -> Run -> Levels s -> ST s (Levels s)
-increment tr sc = \r ls -> do
-    go 1 [r] ls
+          -> Counter -> Run -> Levels s -> Maybe (MergingTree s) -> ST s (Levels s)
+increment tr sc run0 levels0 tree0 = do
+    go 1 [run0] levels0
   where
+    mergeLast :: Levels s -> MergeLastLevel
+    mergeLast ls = mergeLastForLevel ls tree0
+
     go :: Int -> [Run] -> Levels s -> ST s (Levels s)
     go !ln incoming [] = do
         let mergePolicy = mergePolicyForLevel ln []
         traceWith tr' AddLevelEvent
-        ir <- newLevelMerge tr' ln mergePolicy MergeLastLevel incoming
+        ir <- newLevelMerge tr' ln mergePolicy (mergeLast []) incoming
         return (Level ir [] : [])
       where
         tr' = contramap (EventAt sc ln) tr
@@ -627,8 +652,7 @@ increment tr sc = \r ls -> do
         -- If r is still too small for this level then keep it and merge again
         -- with the incoming runs.
         MergePolicyTiering | tieringRunSizeToLevel r < ln -> do
-          let mergeLast = mergeLastForLevel ls
-          ir' <- newLevelMerge tr' ln MergePolicyTiering mergeLast (incoming ++ [r])
+          ir' <- newLevelMerge tr' ln MergePolicyTiering (mergeLast ls) (incoming ++ [r])
           return (Level ir' rs : ls)
 
         -- This tiering level is now full. We take the completed merged run
@@ -643,8 +667,7 @@ increment tr sc = \r ls -> do
         -- This tiering level is not yet full. We move the completed merged run
         -- into the level proper, and start the new merge for the incoming runs.
         MergePolicyTiering -> do
-          let mergeLast = mergeLastForLevel ls
-          ir' <- newLevelMerge tr' ln MergePolicyTiering mergeLast incoming
+          ir' <- newLevelMerge tr' ln MergePolicyTiering (mergeLast ls) incoming
           traceWith tr' (AddRunEvent (length resident))
           return (Level ir' resident : ls)
 
@@ -661,7 +684,7 @@ increment tr sc = \r ls -> do
         -- Otherwise we start merging the incoming runs into the run.
         MergePolicyLevelling -> do
           assert (null rs && null ls) $ return ()
-          ir' <- newLevelMerge tr' ln MergePolicyLevelling MergeLastLevel
+          ir' <- newLevelMerge tr' ln MergePolicyLevelling (mergeLast ls)
                           (incoming ++ [r])
           return (Level ir' [] : [])
 
@@ -694,7 +717,7 @@ union = undefined
 
 allLayers :: LSM s -> ST s (Buffer, [[Run]])
 allLayers (LSMHandle _ lsmr) = do
-    LSMContent wb ls <- readSTRef lsmr
+    LSMContent wb ls _ <- readSTRef lsmr  -- TODO: MergingTree
     rs <- flattenLevels ls
     return (wb, rs)
 
@@ -721,10 +744,11 @@ logicalValue lsm = do
     justInsert  Delete      = Nothing
     justInsert (Mupsert v)  = Just (v, Nothing)
 
+-- TODO: Consider MergingTree, or just remove this function? It's unused.
 dumpRepresentation :: LSM s
                    -> ST s [(Maybe (MergePolicy, MergeType, MergingRunState), [Run])]
 dumpRepresentation (LSMHandle _ lsmr) = do
-    LSMContent wb ls <- readSTRef lsmr
+    LSMContent wb ls _ <- readSTRef lsmr
     ((Nothing, [wb]) :) <$> mapM dumpLevel ls
 
 dumpLevel :: Level s -> ST s (Maybe (MergePolicy, MergeType, MergingRunState), [Run])
