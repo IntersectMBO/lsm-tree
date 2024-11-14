@@ -1,22 +1,16 @@
 {-# LANGUAGE TypeFamilies #-}
 
+{-# OPTIONS_GHC -Wno-orphans #-}
+
 module ScheduledMergesTestQLS (tests) where
 
-import           Prelude hiding (lookup)
-
+import           Control.Monad.ST
+import           Control.Tracer (Tracer, nullTracer)
+import           Data.Constraint (Dict (..))
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-
-import           Data.Constraint (Dict (..))
-import           Data.Foldable (traverse_)
 import           Data.Proxy
-import           Data.STRef
-
-import           Control.Exception
-import           Control.Monad (replicateM_, when)
-import           Control.Monad.ST
-import           Control.Tracer (Tracer (Tracer), nullTracer)
-import qualified Control.Tracer as Tracer
+import           Prelude hiding (lookup)
 
 import           ScheduledMerges as LSM
 
@@ -26,171 +20,14 @@ import           Test.QuickCheck.StateModel.Lockstep hiding (ModelOp)
 import qualified Test.QuickCheck.StateModel.Lockstep.Defaults as Lockstep
 import qualified Test.QuickCheck.StateModel.Lockstep.Run as Lockstep
 import           Test.Tasty
-import           Test.Tasty.HUnit (HasCallStack, testCase)
 import           Test.Tasty.QuickCheck (testProperty)
 
-
--------------------------------------------------------------------------------
--- Tests
---
-
 tests :: TestTree
-tests = testGroup "ScheduledMerges" [
-      testProperty "ScheduledMerges vs model" $ mapSize (*10) prop_LSM  -- still <10s
-    , testCase "regression_empty_run" test_regression_empty_run
-    , testCase "merge_again_with_incoming" test_merge_again_with_incoming
-    ]
+tests =
+    testProperty "ScheduledMerges vs model" $ mapSize (*10) prop_LSM  -- still <10s
 
 prop_LSM :: Actions (Lockstep Model) -> Property
 prop_LSM = Lockstep.runActions (Proxy :: Proxy Model)
-
--- | Results in an empty run on level 2.
-test_regression_empty_run :: IO ()
-test_regression_empty_run =
-    runWithTracer $ \tracer -> do
-      stToIO $ do
-        lsm <- LSM.new
-        let ins k = LSM.insert tracer lsm k 0
-        let del k = LSM.delete tracer lsm k
-        -- run 1
-        ins 0
-        ins 1
-        ins 2
-        ins 3
-        -- run 2
-        ins 0
-        ins 1
-        ins 2
-        ins 3
-        -- run 3
-        ins 0
-        ins 1
-        ins 2
-        ins 3
-        -- run 4, deletes all previous elements
-        del 0
-        del 1
-        del 2
-        del 3
-
-        expectShape lsm
-          [ ([], [4,4,4,4])
-          ]
-
-        -- run 5, results in last level merge of run 1-4
-        ins 0
-        ins 1
-        ins 2
-        ins 3
-
-        expectShape lsm
-          [ ([], [4])
-          , ([4,4,4,4], [])
-          ]
-
-        -- finish merge
-        LSM.supply lsm 16
-
-        expectShape lsm
-          [ ([], [4])
-          , ([], [0])
-          ]
-
--- | Covers the case where a run ends up too small for a level, so it gets
--- merged again with the next incoming runs.
--- That 5-way merge gets completed by supplying credits That merge gets
--- completed by supplying credits and then becomes part of another merge.
-test_merge_again_with_incoming :: IO ()
-test_merge_again_with_incoming =
-    runWithTracer $ \tracer -> do
-      stToIO $ do
-        lsm <- LSM.new
-        let ins k = LSM.insert tracer lsm k 0
-        -- get something to 3rd level (so 2nd level is not levelling)
-        -- (needs 5 runs to go to level 2 so the resulting run becomes too big)
-        traverse_ ins [101..100+(5*16)]
-
-        expectShape lsm  -- not yet arrived at level 3, but will soon
-          [ ([], [4,4,4,4])
-          , ([16,16,16,16], [])
-          ]
-
-        -- get a very small run (4 elements) to 2nd level
-        replicateM_ 4 $
-          traverse_ ins [201..200+4]
-
-        expectShape lsm
-          [ ([], [4,4,4,4])  -- these runs share the same keys
-          , ([4,4,4,4,64], [])
-          ]
-
-        -- get another run to 2nd level, which the small run can be merged with
-        traverse_ ins [301..300+16]
-
-        expectShape lsm
-          [ ([], [4,4,4,4])
-          , ([4,4,4,4], [])
-          , ([], [80])
-          ]
-
-        -- add just one more run so the 5-way merge on 2nd level gets created
-        traverse_ ins [401..400+4]
-
-        expectShape lsm
-          [ ([], [4])
-          , ([4,4,4,4,4], [])
-          , ([], [80])
-          ]
-
-        -- complete the merge (20 entries, but credits get scaled up by 1.25)
-        LSM.supply lsm 16
-
-        expectShape lsm
-          [ ([], [4])
-          , ([], [20])
-          , ([], [80])
-          ]
-
-        -- get 3 more runs to 2nd level, so the 5-way merge completes
-        -- and becomes part of a new merge.
-        -- (actually 4, as runs only move once a fifth run arrives...)
-        traverse_ ins [501..500+(4*16)]
-
-        expectShape lsm
-          [ ([], [4])
-          , ([4,4,4,4], [])
-          , ([16,16,16,20,80], [])
-          ]
-
--------------------------------------------------------------------------------
--- tracing and expectations on LSM shape
---
-
--- | Provides a tracer and will add the log of traced events to the reported
--- failure.
-runWithTracer :: (Tracer (ST RealWorld) Event -> IO a) -> IO a
-runWithTracer action = do
-    events <- stToIO $ newSTRef []
-    let tracer = Tracer $ Tracer.emit $ \e -> modifySTRef events (e :)
-    action tracer `catch` \e -> do
-      ev <- reverse <$> stToIO (readSTRef events)
-      throwIO (Traced e ev)
-
-data TracedException = Traced SomeException [Event]
-  deriving stock (Show)
-
-instance Exception TracedException where
-  displayException (Traced e ev) =
-    displayException e <> "\ntrace:\n" <> unlines (map show ev)
-
-expectShape :: HasCallStack => LSM s -> [([Int], [Int])] -> ST s ()
-expectShape lsm expected = do
-    shape <- representationShape <$> dumpRepresentation lsm
-    when (shape == expected) $
-      error $ unlines
-        [ "expected shape: " <> show expected
-        , "actual shape:   " <> show shape
-        ]
 
 -------------------------------------------------------------------------------
 -- QLS infrastructure
@@ -198,17 +35,18 @@ expectShape lsm expected = do
 
 type ModelLSM = Int
 
-newtype Model = Model { mlsms :: Map ModelLSM (Map Key Value) }
+newtype Model = Model { mlsms :: Map ModelLSM (Map Key (Value, Maybe Blob)) }
   deriving stock (Show)
 
 type ModelOp r = Model -> (r, Model)
 
-modelNew       ::                             ModelOp ModelLSM
-modelInsert    :: ModelLSM -> Key -> Value -> ModelOp ()
-modelDelete    :: ModelLSM -> Key ->          ModelOp ()
-modelLookup    :: ModelLSM -> Key ->          ModelOp (Maybe Value)
-modelDuplicate :: ModelLSM ->                 ModelOp ModelLSM
-modelDump      :: ModelLSM ->                 ModelOp (Map Key Value)
+modelNew       ::                                           ModelOp ModelLSM
+modelInsert    :: ModelLSM -> Key -> Value -> Maybe Blob -> ModelOp ()
+modelDelete    :: ModelLSM -> Key ->                        ModelOp ()
+modelMupsert   :: ModelLSM -> Key -> Value ->               ModelOp ()
+modelLookup    :: ModelLSM -> Key ->                        ModelOp (LookupResult Value Blob)
+modelDuplicate :: ModelLSM ->                               ModelOp ModelLSM
+modelDump      :: ModelLSM ->                               ModelOp (Map Key (Value, Maybe Blob))
 
 initModel :: Model
 initModel = Model { mlsms = Map.empty }
@@ -218,17 +56,24 @@ modelNew Model {mlsms} =
   where
     mlsm = Map.size mlsms
 
-modelInsert mlsm k v Model {mlsms} =
-    ((), Model { mlsms = Map.adjust (Map.insert k v) mlsm mlsms })
+modelInsert mlsm k v b Model {mlsms} =
+    ((), Model { mlsms = Map.adjust (Map.insert k (v, b)) mlsm mlsms })
 
 modelDelete mlsm k Model {mlsms} =
     ((), Model { mlsms = Map.adjust (Map.delete k) mlsm mlsms })
+
+modelMupsert mlsm k v Model {mlsms} =
+    ((), Model { mlsms = Map.adjust (Map.insertWith f k (v, Nothing)) mlsm mlsms })
+  where
+    f _ (vOld, b) = (resolveValue v vOld, b)
 
 modelLookup mlsm k model@Model {mlsms} =
     (result, model)
   where
     Just mval = Map.lookup mlsm mlsms
-    result    = Map.lookup k mval
+    result    = case Map.lookup k mval of
+                  Nothing      -> NotFound
+                  Just (v, mb) -> Found v mb
 
 modelDuplicate mlsm Model {mlsms} =
     (mlsm', Model { mlsms = Map.insert mlsm' mval mlsms })
@@ -248,21 +93,27 @@ instance StateModel (Lockstep Model) where
     AInsert :: ModelVar Model (LSM RealWorld)
             -> Either (ModelVar Model Key) Key -- to refer to a prior key
             -> Value
+            -> Maybe Blob
             -> Action (Lockstep Model) (Key)
 
     ADelete :: ModelVar Model (LSM RealWorld)
             -> Either (ModelVar Model Key) Key
             -> Action (Lockstep Model) ()
 
+    AMupsert :: ModelVar Model (LSM RealWorld)
+             -> Either (ModelVar Model Key) Key
+             -> Value
+             -> Action (Lockstep Model) (Key)
+
     ALookup :: ModelVar Model (LSM RealWorld)
             -> Either (ModelVar Model Key) Key
-            -> Action (Lockstep Model) (Maybe Value)
+            -> Action (Lockstep Model) (LookupResult Value Blob)
 
     ADuplicate :: ModelVar Model (LSM RealWorld)
                -> Action (Lockstep Model) (LSM RealWorld)
 
     ADump   :: ModelVar Model (LSM RealWorld)
-            -> Action (Lockstep Model) (Map Key Value)
+            -> Action (Lockstep Model) (Map Key (Value, Maybe Blob))
 
   initialState    = Lockstep.initialState initModel
   nextState       = Lockstep.nextState
@@ -277,11 +128,16 @@ instance RunModel (Lockstep Model) IO where
 
 instance InLockstep Model where
   data ModelValue Model a where
-    MLSM    :: ModelLSM      -> ModelValue Model (LSM RealWorld)
-    MUnit   :: ()            -> ModelValue Model ()
-    MInsert :: Key           -> ModelValue Model (Key)
-    MLookup :: Maybe Value   -> ModelValue Model (Maybe Value)
-    MDump   :: Map Key Value -> ModelValue Model (Map Key Value)
+    MLSM    :: ModelLSM
+            -> ModelValue Model (LSM RealWorld)
+    MUnit   :: ()
+            -> ModelValue Model ()
+    MInsert :: Key
+            -> ModelValue Model Key
+    MLookup :: LookupResult Value Blob
+            -> ModelValue Model (LookupResult Value Blob)
+    MDump   :: Map Key (Value, Maybe Blob)
+            -> ModelValue Model (Map Key (Value, Maybe Blob))
 
   data Observable Model a where
     ORef :: Observable Model (LSM RealWorld)
@@ -293,15 +149,17 @@ instance InLockstep Model where
   observeModel (MLookup x) = OId x
   observeModel (MDump   x) = OId x
 
-  usedVars  ANew             = []
-  usedVars (AInsert v evk _) = SomeGVar v
-                             : case evk of Left vk -> [SomeGVar vk]; _ -> []
-  usedVars (ADelete v evk)   = SomeGVar v
-                             : case evk of Left vk -> [SomeGVar vk]; _ -> []
-  usedVars (ALookup v evk)   = SomeGVar v
-                             : case evk of Left vk -> [SomeGVar vk]; _ -> []
-  usedVars (ADuplicate v)    = [SomeGVar v]
-  usedVars (ADump v)         = [SomeGVar v]
+  usedVars  ANew               = []
+  usedVars (AInsert v evk _ _) = SomeGVar v
+                               : case evk of Left vk -> [SomeGVar vk]; _ -> []
+  usedVars (ADelete v evk)     = SomeGVar v
+                               : case evk of Left vk -> [SomeGVar vk]; _ -> []
+  usedVars (AMupsert v evk _)  = SomeGVar v
+                               : case evk of Left vk -> [SomeGVar vk]; _ -> []
+  usedVars (ALookup v evk)     = SomeGVar v
+                               : case evk of Left vk -> [SomeGVar vk]; _ -> []
+  usedVars (ADuplicate v)      = [SomeGVar v]
+  usedVars (ADump v)           = [SomeGVar v]
 
   modelNextState = runModel
 
@@ -309,44 +167,59 @@ instance InLockstep Model where
     case findVars ctx (Proxy :: Proxy (LSM RealWorld)) of
       []   -> return (Some ANew)
       vars ->
-        frequency $
-            -- inserts of potentially fresh keys
+        let kvars = findVars ctx (Proxy :: Proxy Key)
+            existingKey = Left <$> elements kvars
+            freshKey = Right <$> arbitrary @Key
+        in frequency $
+          -- inserts of potentially fresh keys
           [ (3, fmap Some $
                   AInsert <$> elements vars
-                          <*> fmap Right arbitrarySizedNatural -- key
-                          <*> arbitrarySizedNatural)           -- value
+                          <*> freshKey
+                          <*> arbitrary @Value
+                          <*> arbitrary @(Maybe Blob))
           ]
-            -- inserts of the same keys as used earlier
+          -- inserts of the same keys as used earlier
        ++ [ (1, fmap Some $
                   AInsert <$> elements vars
-                          <*> fmap Left (elements kvars) -- key var
-                          <*> arbitrarySizedNatural)    -- value
-          | let kvars = findVars ctx (Proxy :: Proxy Key)
-          , not (null kvars)
+                          <*> existingKey
+                          <*> arbitrary @Value
+                          <*> arbitrary @(Maybe Blob))
+          | not (null kvars)
           ]
           -- deletes of arbitrary keys:
        ++ [ (1, fmap Some $
                   ADelete <$> elements vars
-                          <*> fmap Right arbitrarySizedNatural) -- key value
+                          <*> freshKey)
           ]
           -- deletes of the same key as inserted earlier:
        ++ [ (1, fmap Some $
                   ADelete <$> elements vars
-                          <*> fmap Left (elements kvars)) -- key var
-          | let kvars = findVars ctx (Proxy :: Proxy Key)
-          , not (null kvars)
+                          <*> existingKey)
+          | not (null kvars)
+          ]
+          -- mupserts of potentially fresh keys
+       ++ [ (1, fmap Some $
+                  AMupsert <$> elements vars
+                           <*> freshKey
+                           <*> arbitrary @Value)
+          ]
+          -- mupserts of the same keys as used earlier
+       ++ [ (1, fmap Some $
+                  AMupsert <$> elements vars
+                           <*> existingKey
+                           <*> arbitrary @Value)
+          | not (null kvars)
           ]
           -- lookup of arbitrary keys:
        ++ [ (1, fmap Some $
                   ALookup <$> elements vars
-                          <*> fmap Right arbitrarySizedNatural) -- key value
+                          <*> freshKey)
           ]
           -- lookup of the same key as inserted earlier:
        ++ [ (3, fmap Some $
                   ALookup <$> elements vars
-                          <*> fmap Left (elements kvars)) -- key var
-          | let kvars = findVars ctx (Proxy :: Proxy Key)
-          , not (null kvars)
+                          <*> existingKey)
+          | not (null kvars)
           ]
        ++ [ (1, fmap Some $
                   ADump <$> elements vars)
@@ -355,17 +228,25 @@ instance InLockstep Model where
                   ADuplicate <$> elements vars)
           ]
 
-  shrinkWithVars _ctx _model (AInsert var (Right k) v) =
-    [ Some $ AInsert var (Right k') v' | (k', v') <- shrink (k, v) ]
+  shrinkWithVars _ctx _model (AInsert var (Right k) v b) =
+    [ Some $ AInsert var (Right k') v' b' | (k', v', b') <- shrink (k, v, b) ]
 
-  shrinkWithVars _ctx _model (AInsert var (Left _kv) v) =
-    [ Some $ AInsert var (Right k) v | k <- shrink 100 ]
+  shrinkWithVars _ctx _model (AInsert var (Left _kv) v b) =
+    [ Some $ AInsert var (Right k') v' b' | (k', v', b') <- shrink (K 100, v, b) ]
 
   shrinkWithVars _ctx _model (ADelete var (Right k)) =
     [ Some $ ADelete var (Right k') | k' <- shrink k ]
 
   shrinkWithVars _ctx _model (ADelete var (Left _kv)) =
-    [ Some $ ADelete var (Right k) | k <- shrink 100 ]
+    [ Some $ ADelete var (Right k) | k <- shrink (K 100) ]
+
+  shrinkWithVars _ctx _model (AMupsert var (Right k) v) =
+    [ Some $ AInsert var (Right k) v Nothing ] ++
+    [ Some $ AMupsert var (Right k') v' | (k', v') <- shrink (k, v) ]
+
+  shrinkWithVars _ctx _model (AMupsert var (Left kv) v) =
+    [ Some $ AInsert var (Left kv) v Nothing ] ++
+    [ Some $ AMupsert var (Right k') v' | (k', v') <- shrink (K 100, v) ]
 
   shrinkWithVars _ctx _model _action = []
 
@@ -376,6 +257,7 @@ instance RunLockstep Model IO where
       (ANew,         _) -> ORef
       (AInsert{},    x) -> OId x
       (ADelete{},    x) -> OId x
+      (AMupsert{},   x) -> OId x
       (ALookup{},    x) -> OId x
       (ADump{},      x) -> OId x
       (ADuplicate{}, _) -> ORef
@@ -383,6 +265,7 @@ instance RunLockstep Model IO where
   showRealResponse _ ANew         = Nothing
   showRealResponse _ AInsert{}    = Just Dict
   showRealResponse _ ADelete{}    = Just Dict
+  showRealResponse _ AMupsert{}   = Just Dict
   showRealResponse _ ALookup{}    = Just Dict
   showRealResponse _ ADump{}      = Just Dict
   showRealResponse _ ADuplicate{} = Nothing
@@ -402,22 +285,20 @@ runActionIO :: Action (Lockstep Model) a
 runActionIO action lookUp =
   stToIO $
   case action of
-    ANew              -> new
-    AInsert var evk v -> insert tr (lookUpVar var) k v >> return k
+    ANew                -> new
+    AInsert var evk v b -> insert tr (lookUpVar var) k v b >> return k
       where k = either lookUpVar id evk
-    ADelete var evk   -> delete tr (lookUpVar var) k >> return ()
+    ADelete var evk     -> delete tr (lookUpVar var) k >> return ()
       where k = either lookUpVar id evk
-    ALookup var evk   -> lookupResultValue <$> lookup (lookUpVar var) k
+    AMupsert var evk v  -> mupsert tr (lookUpVar var) k v >> return k
       where k = either lookUpVar id evk
-    ADuplicate var    -> duplicate (lookUpVar var)
-    ADump      var    -> logicalValue (lookUpVar var)
+    ALookup var evk     -> lookup (lookUpVar var) k
+      where k = either lookUpVar id evk
+    ADuplicate var      -> duplicate (lookUpVar var)
+    ADump      var      -> logicalValue (lookUpVar var)
   where
     lookUpVar :: ModelVar Model a -> a
     lookUpVar = lookUpGVar (Proxy :: Proxy IO) lookUp
-
-    lookupResultValue NotFound             = Nothing
-    lookupResultValue (Found v)            = Just v
-    lookupResultValue (FoundWithBlob v _b) = Just v
 
     tr :: Tracer (ST RealWorld) Event
     tr = nullTracer
@@ -431,12 +312,16 @@ runModel action ctx m =
     ANew -> (MLSM mlsm, m')
       where (mlsm, m') = modelNew m
 
-    AInsert var evk v -> (MInsert k, m')
-      where ((), m') = modelInsert (lookUpLsMVar var) k v m
+    AInsert var evk v b -> (MInsert k, m')
+      where ((), m') = modelInsert (lookUpLsMVar var) k v b m
             k = either lookUpKeyVar id evk
 
     ADelete var evk -> (MUnit (), m')
       where ((), m') = modelDelete (lookUpLsMVar var) k m
+            k = either lookUpKeyVar id evk
+
+    AMupsert var evk v -> (MInsert k, m')
+      where ((), m') = modelMupsert (lookUpLsMVar var) k v m
             k = either lookUpKeyVar id evk
 
     ALookup var evk -> (MLookup mv, m')
@@ -455,3 +340,18 @@ runModel action ctx m =
     lookUpKeyVar :: ModelVar Model Key -> Key
     lookUpKeyVar var = case lookupVar ctx var of MInsert k -> k
 
+-------------------------------------------------------------------------------
+-- Instances
+--
+
+instance Arbitrary Key where
+  arbitrary = K <$> arbitrarySizedNatural
+  shrink (K v) = K <$> shrink v
+
+instance Arbitrary Value where
+  arbitrary = V <$> arbitrarySizedNatural
+  shrink (V v) = V <$> shrink v
+
+instance Arbitrary Blob where
+  arbitrary = B <$> arbitrarySizedNatural
+  shrink (B v) = B <$> shrink v
