@@ -43,6 +43,7 @@ type ModelOp r = Model -> (r, Model)
 modelNew       ::                                           ModelOp ModelLSM
 modelInsert    :: ModelLSM -> Key -> Value -> Maybe Blob -> ModelOp ()
 modelDelete    :: ModelLSM -> Key ->                        ModelOp ()
+modelMupsert   :: ModelLSM -> Key -> Value ->               ModelOp ()
 modelLookup    :: ModelLSM -> Key ->                        ModelOp (LookupResult Value Blob)
 modelDuplicate :: ModelLSM ->                               ModelOp ModelLSM
 modelDump      :: ModelLSM ->                               ModelOp (Map Key (Value, Maybe Blob))
@@ -61,14 +62,18 @@ modelInsert mlsm k v b Model {mlsms} =
 modelDelete mlsm k Model {mlsms} =
     ((), Model { mlsms = Map.adjust (Map.delete k) mlsm mlsms })
 
+modelMupsert mlsm k v Model {mlsms} =
+    ((), Model { mlsms = Map.adjust (Map.insertWith f k (v, Nothing)) mlsm mlsms })
+  where
+    f _ (vOld, b) = (resolveValue v vOld, b)
+
 modelLookup mlsm k model@Model {mlsms} =
     (result, model)
   where
     Just mval = Map.lookup mlsm mlsms
     result    = case Map.lookup k mval of
-                  Nothing           -> NotFound
-                  Just (v, Nothing) -> Found v
-                  Just (v, Just b)  -> FoundWithBlob v b
+                  Nothing      -> NotFound
+                  Just (v, mb) -> Found v mb
 
 modelDuplicate mlsm Model {mlsms} =
     (mlsm', Model { mlsms = Map.insert mlsm' mval mlsms })
@@ -94,6 +99,11 @@ instance StateModel (Lockstep Model) where
     ADelete :: ModelVar Model (LSM RealWorld)
             -> Either (ModelVar Model Key) Key
             -> Action (Lockstep Model) ()
+
+    AMupsert :: ModelVar Model (LSM RealWorld)
+             -> Either (ModelVar Model Key) Key
+             -> Value
+             -> Action (Lockstep Model) (Key)
 
     ALookup :: ModelVar Model (LSM RealWorld)
             -> Either (ModelVar Model Key) Key
@@ -144,6 +154,8 @@ instance InLockstep Model where
                                : case evk of Left vk -> [SomeGVar vk]; _ -> []
   usedVars (ADelete v evk)     = SomeGVar v
                                : case evk of Left vk -> [SomeGVar vk]; _ -> []
+  usedVars (AMupsert v evk _)  = SomeGVar v
+                               : case evk of Left vk -> [SomeGVar vk]; _ -> []
   usedVars (ALookup v evk)     = SomeGVar v
                                : case evk of Left vk -> [SomeGVar vk]; _ -> []
   usedVars (ADuplicate v)      = [SomeGVar v]
@@ -185,6 +197,19 @@ instance InLockstep Model where
                           <*> existingKey)
           | not (null kvars)
           ]
+          -- mupserts of potentially fresh keys
+       ++ [ (1, fmap Some $
+                  AMupsert <$> elements vars
+                           <*> freshKey
+                           <*> arbitrary @Value)
+          ]
+          -- mupserts of the same keys as used earlier
+       ++ [ (1, fmap Some $
+                  AMupsert <$> elements vars
+                           <*> existingKey
+                           <*> arbitrary @Value)
+          | not (null kvars)
+          ]
           -- lookup of arbitrary keys:
        ++ [ (1, fmap Some $
                   ALookup <$> elements vars
@@ -215,6 +240,14 @@ instance InLockstep Model where
   shrinkWithVars _ctx _model (ADelete var (Left _kv)) =
     [ Some $ ADelete var (Right k) | k <- shrink (K 100) ]
 
+  shrinkWithVars _ctx _model (AMupsert var (Right k) v) =
+    [ Some $ AInsert var (Right k) v Nothing ] ++
+    [ Some $ AMupsert var (Right k') v' | (k', v') <- shrink (k, v) ]
+
+  shrinkWithVars _ctx _model (AMupsert var (Left kv) v) =
+    [ Some $ AInsert var (Left kv) v Nothing ] ++
+    [ Some $ AMupsert var (Right k') v' | (k', v') <- shrink (K 100, v) ]
+
   shrinkWithVars _ctx _model _action = []
 
 
@@ -224,6 +257,7 @@ instance RunLockstep Model IO where
       (ANew,         _) -> ORef
       (AInsert{},    x) -> OId x
       (ADelete{},    x) -> OId x
+      (AMupsert{},   x) -> OId x
       (ALookup{},    x) -> OId x
       (ADump{},      x) -> OId x
       (ADuplicate{}, _) -> ORef
@@ -231,6 +265,7 @@ instance RunLockstep Model IO where
   showRealResponse _ ANew         = Nothing
   showRealResponse _ AInsert{}    = Just Dict
   showRealResponse _ ADelete{}    = Just Dict
+  showRealResponse _ AMupsert{}   = Just Dict
   showRealResponse _ ALookup{}    = Just Dict
   showRealResponse _ ADump{}      = Just Dict
   showRealResponse _ ADuplicate{} = Nothing
@@ -254,6 +289,8 @@ runActionIO action lookUp =
     AInsert var evk v b -> insert tr (lookUpVar var) k v b >> return k
       where k = either lookUpVar id evk
     ADelete var evk     -> delete tr (lookUpVar var) k >> return ()
+      where k = either lookUpVar id evk
+    AMupsert var evk v  -> mupsert tr (lookUpVar var) k v >> return k
       where k = either lookUpVar id evk
     ALookup var evk     -> lookup (lookUpVar var) k
       where k = either lookUpVar id evk
@@ -281,6 +318,10 @@ runModel action ctx m =
 
     ADelete var evk -> (MUnit (), m')
       where ((), m') = modelDelete (lookUpLsMVar var) k m
+            k = either lookUpKeyVar id evk
+
+    AMupsert var evk v -> (MInsert k, m')
+      where ((), m') = modelMupsert (lookUpLsMVar var) k v m
             k = either lookUpKeyVar id evk
 
     ALookup var evk -> (MLookup mv, m')
