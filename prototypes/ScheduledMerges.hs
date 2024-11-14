@@ -94,14 +94,14 @@ data MergeLastLevel = MergeMidLevel | MergeLastLevel
 -- single run without having to read the 'STRef', and secondly to make it easier
 -- to avoid supplying merge credits. It's not essential, but simplifies things
 -- somewhat.
-data IncomingRun s = Merging !(MergingRun s)
+data IncomingRun s = Merging !MergePolicy !(MergingRun s)
                    | Single  !Run
 
 -- | A \"merging run\" is a mutable representation of an incremental merge,
 -- It is also a unit of sharing between duplicated LSM handles.
 --
 data MergingRun s =
-    MergingRun !MergePolicy !MergeLastLevel !(STRef s MergingRunState)
+    MergingRun !MergeLastLevel !(STRef s MergingRunState)
 
 data MergingRunState = CompletedMerge !Run
 
@@ -185,11 +185,11 @@ invariant = go 1
 
       mrs <- case ir of
                Single r                     -> return (CompletedMerge r)
-               Merging (MergingRun _ _ ref) -> readSTRef ref
+               Merging _ (MergingRun _ ref) -> readSTRef ref
 
       assertST $ case ir of
-        Single{}        -> True
-        Merging (MergingRun mp ml _) ->
+        Single{} -> True
+        Merging mp (MergingRun ml _) ->
               mergePolicyForLevel ln ls == mp
            && mergeLastForLevel ls == ml
       assertST $ length rs <= 3
@@ -308,7 +308,7 @@ newMerge tr level mergepolicy mergelast rs = do
                  }
     assert (length rs `elem` [4, 5]) $
       assert (mergeDebtLeft debt >= cost) $
-        fmap (Merging . MergingRun mergepolicy mergelast) $
+        fmap (Merging mergepolicy . MergingRun mergelast) $
           newSTRef (OngoingMerge debt rs r)
   where
     cost = sum (map runSize rs)
@@ -349,8 +349,8 @@ lastLevelMerge = Map.filter (not . isDelete)
 
 expectCompletedMerge :: HasCallStack
                      => Tracer (ST s) EventDetail
-                     -> MergingRun s -> ST s Run
-expectCompletedMerge tr (MergingRun mergepolicy mergelast ref) = do
+                     -> MergePolicy -> MergingRun s -> ST s Run
+expectCompletedMerge tr mergepolicy (MergingRun mergelast ref) = do
     mrs <- readSTRef ref
     case mrs of
       CompletedMerge r -> do
@@ -366,7 +366,7 @@ expectCompletedMerge tr (MergingRun mergepolicy mergelast ref) = do
 
 supplyMergeCredits :: Credit -> IncomingRun s -> ST s ()
 supplyMergeCredits _ Single{} = return ()
-supplyMergeCredits c (Merging (MergingRun _ _ ref)) = do
+supplyMergeCredits c (Merging _ (MergingRun _ ref)) = do
     mrs <- readSTRef ref
     case mrs of
       CompletedMerge{} -> return ()
@@ -534,12 +534,12 @@ creditsForMerge Single{} =
 -- A levelling merge has 1 input run and one resident run, which is (up to) 4x
 -- bigger than the others.
 -- It needs to be completed before another run comes in.
-creditsForMerge (Merging (MergingRun MergePolicyLevelling _ _)) =
+creditsForMerge (Merging MergePolicyLevelling _) =
     return $ (1 + 4) / 1
 
 -- A tiering merge has 5 runs at most (once could be held back to merged again)
 -- and must be completed before the level is full (once 4 more runs come in).
-creditsForMerge (Merging (MergingRun MergePolicyTiering _ ref)) = do
+creditsForMerge (Merging MergePolicyTiering (MergingRun _ ref)) = do
     readSTRef ref >>= \case
       CompletedMerge _ -> return 0
       OngoingMerge _ rs _ -> do
@@ -590,8 +590,8 @@ increment tr sc = \r ls -> do
 
     go !ln incoming (Level ir rs : ls) = do
       r <- case ir of
-        Single r   -> return r
-        Merging mr -> expectCompletedMerge tr' mr
+        Single r      -> return r
+        Merging mp mr -> expectCompletedMerge tr' mp mr
       let resident = r:rs
       case mergePolicyForLevel ln ls of
 
@@ -677,8 +677,8 @@ flattenLevel (Level ir rs) = (++rs) <$> flattenIncomingRun ir
 
 flattenIncomingRun :: IncomingRun s -> ST s [Run]
 flattenIncomingRun (Single r) = return [r]
-flattenIncomingRun (Merging (MergingRun _ _ mr)) = do
-    mrs <- readSTRef mr
+flattenIncomingRun (Merging _ (MergingRun _ ref)) = do
+    mrs <- readSTRef ref
     case mrs of
       CompletedMerge r    -> return [r]
       OngoingMerge _ rs _ -> return rs
@@ -700,8 +700,8 @@ dumpRepresentation (LSMHandle _ lsmr) = do
 dumpLevel :: Level s -> ST s (Maybe (MergePolicy, MergeLastLevel, MergingRunState), [Run])
 dumpLevel (Level (Single r) rs) =
     return (Nothing, (r:rs))
-dumpLevel (Level (Merging (MergingRun mp ml mr)) rs) = do
-    mrs <- readSTRef mr
+dumpLevel (Level (Merging mp (MergingRun ml ref)) rs) = do
+    mrs <- readSTRef ref
     return (Just (mp, ml, mrs), rs)
 
 -- For each level:
