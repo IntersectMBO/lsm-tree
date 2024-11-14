@@ -61,7 +61,8 @@ import           System.FS.BlockIO.API (HasBlockIO)
 newtype SnapshotLabel = SnapshotLabel Text
   deriving stock (Show, Eq)
 
-data SnapshotTableType = SnapNormalTable | SnapMonoidalTable
+-- TODO: revisit if we need three table types.
+data SnapshotTableType = SnapNormalTable | SnapMonoidalTable | SnapFullTable
   deriving stock (Show, Eq)
 
 data SnapshotMetaData = SnapshotMetaData {
