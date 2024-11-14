@@ -42,7 +42,16 @@ module Database.LSMTree.Internal.CRC32C (
   writeChecksumsFile,
   writeChecksumsFile',
 
-  hexdigitsToInt
+  hexdigitsToInt,
+
+  -- * Checksum handles
+  -- $checksum-handles
+  ChecksumHandle (..),
+  makeHandle,
+  readChecksum,
+  dropCache,
+  closeHandle,
+  writeToHandle
   ) where
 
 import           Control.Monad
@@ -65,8 +74,13 @@ import           Data.Word
 import           GHC.Exts
 import qualified GHC.ForeignPtr as Foreign
 import           System.FS.API
+
+import           Control.Monad.Class.MonadSTM (MonadSTM (..))
+import           Data.Primitive.PrimVar
+import qualified System.FS.API as FS
 import           System.FS.API.Lazy
-import           System.FS.BlockIO.API (ByteCount)
+import qualified System.FS.BlockIO.API as FS
+import           System.FS.BlockIO.API (ByteCount, HasBlockIO)
 
 
 newtype CRC32C = CRC32C Word32
@@ -349,3 +363,58 @@ formatChecksumsFile checksums =
           <> BS.char8 '\n'
         | (ChecksumsFileName name, CRC32C crc) <- Map.toList checksums ]
 
+{-------------------------------------------------------------------------------
+  ChecksumHandle
+-------------------------------------------------------------------------------}
+
+{-| $checksum-handles
+    A handle ('ChecksumHandle') that maintains a running CRC32 checksum.
+-}
+
+-- | Tracks the checksum of a (write mode) file handle.
+data ChecksumHandle s h = ChecksumHandle !(FS.Handle h) !(PrimVar s CRC32C)
+
+{-# SPECIALISE makeHandle ::
+     HasFS IO h
+  -> FS.FsPath
+  -> IO (ChecksumHandle RealWorld h) #-}
+makeHandle ::
+     (MonadSTM m, PrimMonad m)
+  => HasFS m h
+  -> FS.FsPath
+  -> m (ChecksumHandle (PrimState m) h)
+makeHandle fs path =
+    ChecksumHandle
+      <$> FS.hOpen fs path (FS.WriteMode FS.MustBeNew)
+      <*> newPrimVar initialCRC32C
+
+{-# SPECIALISE readChecksum ::
+     ChecksumHandle RealWorld h
+  -> IO CRC32C #-}
+readChecksum ::
+     PrimMonad m
+  => ChecksumHandle (PrimState m) h
+  -> m CRC32C
+readChecksum (ChecksumHandle _h checksum) = readPrimVar checksum
+
+dropCache :: HasBlockIO m h -> ChecksumHandle (PrimState m) h -> m ()
+dropCache hbio (ChecksumHandle h _) = FS.hDropCacheAll hbio h
+
+closeHandle :: HasFS m h -> ChecksumHandle (PrimState m) h -> m ()
+closeHandle fs (ChecksumHandle h _checksum) = FS.hClose fs h
+
+{-# SPECIALISE writeToHandle ::
+     HasFS IO h
+  -> ChecksumHandle RealWorld h
+  -> BSL.ByteString
+  -> IO () #-}
+writeToHandle ::
+     (MonadSTM m, PrimMonad m)
+  => HasFS m h
+  -> ChecksumHandle (PrimState m) h
+  -> BSL.ByteString
+  -> m ()
+writeToHandle fs (ChecksumHandle h checksum) lbs = do
+    crc <- readPrimVar checksum
+    (_, crc') <- hPutAllChunksCRC32C fs h lbs crc
+    writePrimVar checksum crc'
