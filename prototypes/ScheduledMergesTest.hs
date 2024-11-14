@@ -66,7 +66,7 @@ test_regression_empty_run =
           ]
 
         -- finish merge
-        LSM.supply lsm 16
+        LSM.supplyMergeCredits lsm 16
 
         expectShape lsm
           0
@@ -119,7 +119,7 @@ test_merge_again_with_incoming =
           ]
 
         -- complete the merge (20 entries, but credits get scaled up by 1.25)
-        LSM.supply lsm 16
+        LSM.supplyMergeCredits lsm 16
 
         expectShape lsm
           0
