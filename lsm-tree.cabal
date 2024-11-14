@@ -124,6 +124,7 @@ library
     Database.LSMTree.Internal.BloomFilter
     Database.LSMTree.Internal.BloomFilterQuery1
     Database.LSMTree.Internal.ByteString
+    Database.LSMTree.Internal.ChecksumHandle
     Database.LSMTree.Internal.Chunk
     Database.LSMTree.Internal.Config
     Database.LSMTree.Internal.CRC32C
@@ -160,6 +161,7 @@ library
     Database.LSMTree.Internal.Vector.Growing
     Database.LSMTree.Internal.WriteBuffer
     Database.LSMTree.Internal.WriteBufferBlobs
+    Database.LSMTree.Internal.WriteBufferWriter
     Database.LSMTree.Monoidal
     Database.LSMTree.Normal
 

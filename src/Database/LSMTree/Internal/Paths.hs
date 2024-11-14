@@ -29,6 +29,13 @@ module Database.LSMTree.Internal.Paths (
   , fromChecksumsFile
     -- * ForRunFiles abstraction
   , ForRunFiles (..)
+    -- * ForWriteBufferFiles abstraction
+  , WriteBufferFsPaths
+  , ForWriteBufferFiles (..)
+  , pathsForWriteBufferFiles
+  , writeBufferKOpsPath
+  , writeBufferBlobPath
+  , writeBufferChecksumsPath
   ) where
 
 import           Control.Applicative (Applicative (..))
@@ -233,3 +240,41 @@ instance Applicative ForRunFiles where
   pure x = ForRunFiles x x x x
   ForRunFiles f1 f2 f3 f4 <*> ForRunFiles x1 x2 x3 x4 =
     ForRunFiles (f1 x1) (f2 x2) (f3 x3) (f4 x4)
+
+{-------------------------------------------------------------------------------
+  ForWriteBufferFile abstraction
+-------------------------------------------------------------------------------}
+
+type WriteBufferFsPaths = RunFsPaths
+
+-- | Stores someting for each run file (except the checksums file), allowing to
+-- easily do something for all of them without mixing them up.
+data ForWriteBufferFiles a = ForWriteBufferFiles {
+      forWriteBufferKOps :: !a
+    , forWriteBufferBlob :: !a
+    }
+  deriving stock (Show, Foldable, Functor, Traversable)
+
+instance Applicative ForWriteBufferFiles where
+  pure x = ForWriteBufferFiles x x
+  ForWriteBufferFiles f1 f2 <*> ForWriteBufferFiles x1 x2 =
+    ForWriteBufferFiles (f1 x1) (f2 x2)
+
+writeBufferFileExts :: ForWriteBufferFiles String
+writeBufferFileExts = ForWriteBufferFiles {
+      forWriteBufferKOps   = forRunKOps runFileExts
+    , forWriteBufferBlob   = forRunBlob runFileExts
+    }
+
+-- | Paths to all files associated with this run, except 'runChecksumsPath'.
+pathsForWriteBufferFiles :: WriteBufferFsPaths -> ForWriteBufferFiles FsPath
+pathsForWriteBufferFiles fsPaths = fmap (runFilePathWithExt fsPaths) writeBufferFileExts
+
+writeBufferKOpsPath :: WriteBufferFsPaths -> FsPath
+writeBufferKOpsPath = forWriteBufferKOps . pathsForWriteBufferFiles
+
+writeBufferBlobPath :: WriteBufferFsPaths -> FsPath
+writeBufferBlobPath = forWriteBufferBlob . pathsForWriteBufferFiles
+
+writeBufferChecksumsPath :: RunFsPaths -> FsPath
+writeBufferChecksumsPath = flip runFilePathWithExt "checksums"
