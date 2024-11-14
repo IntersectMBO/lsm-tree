@@ -28,7 +28,7 @@ module ScheduledMerges (
     insert, inserts,
     delete, deletes,
     mupsert, mupserts,
-    supply,
+    supplyMergeCredits,
     duplicate,
     union,
 
@@ -364,25 +364,26 @@ expectCompletedMerge tr mergepolicy (MergingRun mergelast ref) = do
         error $ "expectCompletedMerge: false expectation, remaining debt of "
              ++ show d
 
-supplyMergeCredits :: Credit -> IncomingRun s -> ST s ()
-supplyMergeCredits _ Single{} = return ()
-supplyMergeCredits c (Merging _ (MergingRun _ ref)) = do
+supplyCreditsMergingRun :: Credit -> MergingRun s -> ST s Credit
+supplyCreditsMergingRun c (MergingRun _ ref) = do
     mrs <- readSTRef ref
     case mrs of
-      CompletedMerge{} -> return ()
+      CompletedMerge{} -> return c
       OngoingMerge d rs r ->
         case paydownMergeDebt c d of
-          MergeDebtDischarged _ ->
+          MergeDebtDischarged _ c' -> do
             writeSTRef ref (CompletedMerge r)
+            return c'
 
-          MergeDebtPaydownCredited  d' ->
+          MergeDebtPaydownCredited  d' -> do
             writeSTRef ref (OngoingMerge d' rs r)
+            return 0
 
-          MergeDebtPaydownPerform _ d' ->
+          MergeDebtPaydownPerform _ d' -> do
             -- we're not doing any actual merging
             -- just tracking what we would do
             writeSTRef ref (OngoingMerge d' rs r)
-
+            return 0
 
 mergeBatchSize :: Int
 mergeBatchSize = 32
@@ -402,8 +403,8 @@ mergeDebtLeft (MergeDebt c d) =
 
 -- | As credits are paid, debt is reduced in batches when sufficient credits have accumulated.
 data MergeDebtPaydown =
-    -- | This remaining merge debt is fully paid off with credits.
-    MergeDebtDischarged      !Debt
+    -- | This remaining merge debt is fully paid off, potentially with leftovers.
+    MergeDebtDischarged      !Debt !Credit
     -- | Credits were paid, but not enough for merge debt to be reduced by some batches of merging work.
   | MergeDebtPaydownCredited       !MergeDebt
     -- | Enough credits were paid to reduce merge debt by performing some batches of merging work.
@@ -415,7 +416,7 @@ data MergeDebtPaydown =
 paydownMergeDebt :: Credit -> MergeDebt -> MergeDebtPaydown
 paydownMergeDebt c2 (MergeDebt c d)
   | d-c' <= 0
-  = MergeDebtDischarged d
+  = MergeDebtDischarged d (c'-d)
 
   | c' >= mergeBatchSize
   , let (!b, !r) = divMod c' mergeBatchSize
@@ -470,7 +471,7 @@ update tr (LSMHandle scr lsmr) k op = do
     sc <- readSTRef scr
     LSMContent wb ls <- readSTRef lsmr
     modifySTRef' scr (+1)
-    supplyCredits 1 ls
+    supplyCreditsLevels 1 ls
     invariant ls
     let wb' = Map.insertWith combine k op wb
     if bufferSize wb' >= maxBufferSize
@@ -481,11 +482,11 @@ update tr (LSMHandle scr lsmr) k op = do
       else
         writeSTRef lsmr (LSMContent wb' ls)
 
-supply :: LSM s -> Credit -> ST s ()
-supply (LSMHandle scr lsmr) credits = do
+supplyMergeCredits :: LSM s -> Credit -> ST s ()
+supplyMergeCredits (LSMHandle scr lsmr) credits = do
     LSMContent _ ls <- readSTRef lsmr
     modifySTRef' scr (+1)
-    supplyCredits credits ls
+    supplyCreditsLevels credits ls
     invariant ls
 
 data LookupResult v b =
@@ -518,11 +519,17 @@ doLookup k =
 bufferToRun :: Buffer -> Run
 bufferToRun = id
 
-supplyCredits :: Credit -> Levels s -> ST s ()
-supplyCredits n =
-  traverse_ $ \(Level mr _rs) -> do
-    cr <- creditsForMerge mr
-    supplyMergeCredits (ceiling (fromIntegral n * cr)) mr
+supplyCreditsLevels :: Credit -> Levels s -> ST s ()
+supplyCreditsLevels n =
+  traverse_ $ \(Level ir _rs) -> do
+    cr <- creditsForMerge ir
+    case ir of
+      Single{} ->
+        return ()
+      Merging _ mr -> do
+        _ <- supplyCreditsMergingRun (ceiling (fromIntegral n * cr)) mr
+        -- we don't mind leftover credits, each level completes independently
+        return ()
 
 -- | The general case (and thus worst case) of how many merge credits we need
 -- for a level. This is based on the merging policy at the level.
