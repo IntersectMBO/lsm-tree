@@ -115,6 +115,7 @@ library
   exposed-modules:
     Data.Arena
     Data.Map.Range
+    Database.LSMTree
     Database.LSMTree.Common
     Database.LSMTree.Internal
     Database.LSMTree.Internal.Assertions

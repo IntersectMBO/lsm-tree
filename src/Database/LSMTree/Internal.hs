@@ -14,6 +14,8 @@
 module Database.LSMTree.Internal (
     -- * Existentials
     Session' (..)
+  , Table' (..)
+  , Cursor' (..)
   , NormalTable (..)
   , NormalCursor (..)
   , MonoidalTable (..)
@@ -128,6 +130,18 @@ data Session' m = forall h. Typeable h => Session' !(Session m h)
 
 instance NFData (Session' m) where
   rnf (Session' s) = rnf s
+
+type Table' :: (Type -> Type) -> Type -> Type -> Type -> Type
+data Table' m k v b = forall h. Typeable h => Table' (Table m h)
+
+instance NFData (Table' m k v b) where
+  rnf (Table' t) = rnf t
+
+type Cursor' :: (Type -> Type) -> Type -> Type -> Type -> Type
+data Cursor' m k v b = forall h. Typeable h => Cursor' (Cursor m h)
+
+instance NFData (Cursor' m k v b) where
+  rnf (Cursor' t) = rnf t
 
 type NormalTable :: (Type -> Type) -> Type -> Type -> Type -> Type
 data NormalTable m k v b = forall h. Typeable h =>
