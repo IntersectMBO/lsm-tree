@@ -28,6 +28,7 @@ import qualified Data.Vector.Unboxed.Base as VU
 import           Data.Word
 import           Database.LSMTree.Extras
 import           Database.LSMTree.Extras.Generators as Gen
+import           Database.LSMTree.Extras.Index as Cons (Append (..), append)
 import           Database.LSMTree.Internal.BitMath
 import           Database.LSMTree.Internal.Chunk as Chunk (toByteString)
 import           Database.LSMTree.Internal.Entry (NumEntries (..))

@@ -48,10 +48,10 @@ import qualified Data.Vector.Primitive as VP
 import           Data.Word
 import           Database.LSMTree.Common (Range (..))
 import           Database.LSMTree.Extras
+import           Database.LSMTree.Extras.Index (Append (..))
 import           Database.LSMTree.Extras.Orphans ()
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..))
-import           Database.LSMTree.Internal.IndexCompactAcc (Append (..))
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.Page (PageNo (..))
 import           Database.LSMTree.Internal.RawBytes as RB

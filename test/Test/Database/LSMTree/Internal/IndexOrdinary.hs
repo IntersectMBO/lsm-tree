@@ -16,7 +16,7 @@ import qualified Data.ByteString.Short as ShortByteString (length, pack)
 import           Data.Either (isLeft)
 import           Data.List (genericReplicate)
 import qualified Data.List as List (tail)
-import           Data.Maybe (catMaybes)
+import           Data.Maybe (maybeToList)
 import           Data.Primitive.ByteArray (ByteArray (ByteArray), ByteArray#)
 import           Data.Vector (Vector, all, fromList, head, last, length,
                      notElem, splitAt, tail, takeWhile, toList, (!))
@@ -25,15 +25,14 @@ import qualified Data.Vector.Primitive as Primitive (Vector (Vector), concat,
 import           Data.Word (Word16, Word32, Word64, Word8)
 import           Database.LSMTree.Extras.Generators (LogicalPageSummaries,
                      toAppends)
+import           Database.LSMTree.Extras.Index
+                     (Append (AppendMultiPage, AppendSinglePage), append')
 import qualified Database.LSMTree.Internal.Chunk as Chunk (toByteVector)
 import           Database.LSMTree.Internal.Entry (NumEntries (NumEntries))
-import           Database.LSMTree.Internal.IndexCompactAcc
-                     (Append (AppendMultiPage, AppendSinglePage))
 import           Database.LSMTree.Internal.IndexOrdinary
                      (IndexOrdinary (IndexOrdinary), fromSBS, search,
                      toLastKeys)
-import           Database.LSMTree.Internal.IndexOrdinaryAcc (append, new,
-                     unsafeEnd)
+import           Database.LSMTree.Internal.IndexOrdinaryAcc (new, unsafeEnd)
 import           Database.LSMTree.Internal.Page (PageNo (PageNo),
                      PageSpan (PageSpan))
 import           Database.LSMTree.Internal.Serialise
@@ -259,14 +258,14 @@ lastKeysBlockFromAppends appends = lastKeysBlock where
 incrementalConstruction :: [Append] -> (IndexOrdinary, Primitive.Vector Word8)
 incrementalConstruction appends = runST $ do
     acc <- new initialKeyBufferSize minChunkSize
-    commonChunks <- mapM (flip append acc) appends
+    commonChunks <- concat <$> mapM (flip append' acc) appends
     (remnant, unserialised) <- unsafeEnd acc
     let
 
         serialised :: Primitive.Vector Word8
-        serialised = Primitive.concat                      $
-                     map Chunk.toByteVector                $
-                     catMaybes (commonChunks ++ [remnant])
+        serialised = Primitive.concat                    $
+                     map Chunk.toByteVector              $
+                     commonChunks ++ maybeToList remnant
 
     return (unserialised, serialised)
     where

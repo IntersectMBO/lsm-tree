@@ -22,6 +22,7 @@ import qualified Data.Vector.Unboxed.Mutable as VUM
 import           Data.Word
 import           Database.LSMTree.Extras
 import           Database.LSMTree.Extras.Generators
+import           Database.LSMTree.Extras.Index
 import           Database.LSMTree.Extras.Random
 import           Database.LSMTree.Extras.UTxO
 import           Database.LSMTree.Internal.IndexCompact
