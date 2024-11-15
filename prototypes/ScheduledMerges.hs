@@ -44,7 +44,7 @@ module ScheduledMerges (
 import           Prelude hiding (lookup)
 
 import           Data.Bits
-import           Data.Foldable (traverse_)
+import           Data.Foldable (toList, traverse_)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.STRef
@@ -709,7 +709,99 @@ duplicate (LSMHandle _scr lsmr) = do
     -- STRefs and there's no ref counting to be done
 
 union :: LSM s -> LSM s -> ST s (LSM s)
-union = undefined
+union (LSMHandle _ lsmr1) (LSMHandle _ lsmr2) = do
+    -- TODO: we currently don't do anything with the debt.
+    -- Should we? Or just drop it (we also compute it when supplying credits)?
+    (_d1, mt1) <- contentToMergingTree =<< readSTRef lsmr1
+    (_d2, mt2) <- contentToMergingTree =<< readSTRef lsmr2
+    let pendingMerge = PendingMerge MergeUnion [mt1, mt2]
+    mt   <- MergingTree <$> newSTRef (PendingTreeMerge pendingMerge)
+    lsmr <- newSTRef (LSMContent Map.empty [] (Just mt))
+    c    <- newSTRef 0
+    return (LSMHandle c lsmr)
+
+contentToMergingTree :: forall s.
+                        LSMContent s -> ST s (Debt, MergingTree s)
+contentToMergingTree content = do
+    (debts, trees) <- unzip <$> fromContent content
+    tree <- MergingTree <$> newSTRef
+      (PendingTreeMerge (PendingMerge (MergeLevel MergeLastLevel) trees))
+    return (sum debts, tree)
+  where
+    -- For each MergingTree, the Debt includes (an upper bound of) both:
+    -- 1. the debt of completing it
+    -- 2. its size, as it determines the cost of the final merge
+    fromContent :: LSMContent s -> ST s [(Debt, MergingTree s)]
+    fromContent (LSMContent wb ls tree) = do
+        fmap concat $ sequence
+          [ toList <$> fromBuffer wb
+          , concat <$> traverse fromLevel ls
+          , toList <$> traverse fromMergingTree tree
+          ]
+
+    -- TODO: is it okay to just flush the buffer when creating a union?
+    fromBuffer :: Buffer -> ST s (Maybe (Debt, MergingTree s))
+    fromBuffer wb
+      | bufferSize wb == 0 = return Nothing
+      | otherwise          = Just <$> fromRun (bufferToRun wb)
+
+    fromLevel :: Level s -> ST s [(Debt, MergingTree s)]
+    fromLevel (Level ir rs) =
+        fmap concat $ sequence
+          [ pure <$> fromIncomingRun ir
+          , traverse fromRun rs
+          ]
+
+    fromIncomingRun :: IncomingRun s -> ST s (Debt, MergingTree s)
+    fromIncomingRun (Single r) = fromRun r
+    fromIncomingRun (Merging _ mr@(MergingRun _ ref)) = do
+        readSTRef ref >>= \case
+          CompletedMerge r -> fromRun r
+          OngoingMerge d _ _ -> do
+            -- TODO: This STRef is not needed, MergingRun already shares the
+            -- merging work and has a notion of ongoing and completed.
+            tree <- MergingTree <$> newSTRef (OngoingTreeMerge mr)
+            return (mergeDebtLeft d, tree)
+
+    fromRun :: Run -> ST s (Debt, MergingTree s)
+    fromRun r = (runSize r,) . MergingTree <$>
+        -- TODO: This STRef is not needed, no work to be shared and its state
+        -- will never change.
+        newSTRef (CompletedTreeMerge r)
+
+    fromMergingTree :: MergingTree s -> ST s (Debt, MergingTree s)
+    fromMergingTree tree = do
+        (d, s) <- remainingDebtMergingTree tree
+        return (d + s, tree)
+
+type Size = Int
+
+-- | Upper bound
+--
+-- TODO: should this be cached somewhere? It might get stale, but it remains
+-- a valid upper bound. Otherwise, just remove this code?
+remainingDebtMergingTree :: MergingTree s -> ST s (Debt, Size)
+remainingDebtMergingTree (MergingTree ref) =
+    readSTRef ref >>= \case
+      CompletedTreeMerge r -> return (0, runSize r)
+      OngoingTreeMerge mr  -> remainingDebtMergingRun mr
+      PendingTreeMerge pm  -> remainingDebtPendingMerge pm
+
+remainingDebtPendingMerge :: PendingMerge s -> ST s (Debt, Size)
+remainingDebtPendingMerge (PendingMerge _ trees) = do
+    (debts, sizes) <- unzip <$> traverse remainingDebtMergingTree trees
+    let totalSize = sum sizes
+    let totalDebt = sum debts + totalSize
+    return (totalDebt, totalSize)
+
+-- | Upper bound
+remainingDebtMergingRun :: MergingRun s -> ST s (Debt, Size)
+remainingDebtMergingRun (MergingRun _ ref) =
+    readSTRef ref >>= \case
+      CompletedMerge r ->
+        return (0, runSize r)
+      OngoingMerge d inputRuns _ ->
+        return (mergeDebtLeft d, sum (map runSize inputRuns))
 
 -------------------------------------------------------------------------------
 -- Measurements
