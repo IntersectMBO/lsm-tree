@@ -121,6 +121,9 @@ type Debt   = Int
 type Run    = Map Key Op
 type Buffer = Map Key Op
 
+bufferToRun :: Buffer -> Run
+bufferToRun = id
+
 runSize :: Run -> Int
 runSize = Map.size
 
@@ -499,15 +502,15 @@ data LookupResult v b =
   | Found !v !(Maybe b)
   deriving stock (Eq, Show)
 
-lookups :: LSM s -> [Key] -> ST s [(Key, LookupResult Value Blob)]
+lookups :: LSM s -> [Key] -> ST s [LookupResult Value Blob]
 lookups lsm ks = do
-    runs <- concat <$> allLayers lsm
-    return $ map (\k -> (k, doLookup k runs)) ks
+    (wb, runs) <- allLayers lsm
+    return $ map (\k -> doLookup k wb (concat runs)) ks
 
 lookup :: LSM s -> Key -> ST s (LookupResult Value Blob)
 lookup lsm k = do
-    runs <- concat <$> allLayers lsm
-    return $ doLookup k runs
+    (wb, runs) <- allLayers lsm
+    return $ doLookup k wb (concat runs)
 
 duplicate :: LSM s -> ST s (LSM s)
 duplicate (LSMHandle _scr lsmr) = do
@@ -542,20 +545,31 @@ supplyUnionCredits _ credits = return credits
 -- Implementation
 --
 
-doLookup :: Key -> [Run] -> LookupResult Value Blob
-doLookup k =
-    foldr (\run continue ->
-            case Map.lookup k run of
-              Nothing            -> continue
-              Just (Insert v mb) -> Found v mb
-              Just  Delete       -> NotFound
-              Just (Mupsert v)   -> case continue of
-                NotFound    -> Found v Nothing
-                Found v' mb -> Found (resolveValue v v') mb)
-          NotFound
+type LookupAcc = Maybe Op
 
-bufferToRun :: Buffer -> Run
-bufferToRun = id
+-- | We handle lookups by accumulating results by going through the runs from
+-- most recent to least recent, starting with the write buffer.
+--
+-- In the real implementation, this is done not on an individual 'LookupAcc',
+-- but one for each key, i.e. @Vector (Maybe Entry)@.
+doLookup :: Key -> Buffer -> [Run] -> LookupResult Value Blob
+doLookup k wb =
+    convertAcc . foldl updateAcc (Map.lookup k wb) . submitLookups k
+  where
+    updateAcc :: LookupAcc -> Op -> LookupAcc
+    updateAcc Nothing     = Just
+    updateAcc (Just new_) = Just . combine new_  -- acc has more recent Op
+
+    convertAcc :: LookupAcc -> LookupResult Value Blob
+    convertAcc = \case
+        Nothing           -> NotFound
+        Just (Insert v b) -> Found v b
+        Just (Mupsert v)  -> Found v Nothing
+        Just Delete       -> NotFound
+
+-- | In a real implementation, this would use all keys at once and be in IO.
+submitLookups :: Key -> [Run] -> [Op]
+submitLookups k rs = [op | r <- rs, Just op <- [Map.lookup k r]]
 
 supplyCreditsLevels :: Credit -> Levels s -> ST s ()
 supplyCreditsLevels n =
@@ -670,11 +684,11 @@ levellingLevelIsFull ln _incoming resident = levellingRunSizeToLevel resident > 
 -- Measurements
 --
 
-allLayers :: LSM s -> ST s [[Run]]
+allLayers :: LSM s -> ST s (Buffer, [[Run]])
 allLayers (LSMHandle _ lsmr) = do
     LSMContent wb ls <- readSTRef lsmr
     rs <- flattenLevels ls
-    return ([wb] : rs)
+    return (wb, rs)
 
 flattenLevels :: Levels s -> ST s [[Run]]
 flattenLevels = mapM flattenLevel
@@ -691,8 +705,9 @@ flattenIncomingRun (Merging _ (MergingRun _ ref)) = do
       OngoingMerge _ rs _ -> return rs
 
 logicalValue :: LSM s -> ST s (Map Key (Value, Maybe Blob))
-logicalValue = fmap (Map.mapMaybe justInsert . Map.unionsWith combine . concat)
-             . allLayers
+logicalValue lsm = do
+    (wb, layers) <- allLayers lsm
+    return $ Map.mapMaybe justInsert $ Map.unionsWith combine (bufferToRun wb : concat layers)
   where
     justInsert (Insert v b) = Just (v, b)
     justInsert  Delete      = Nothing
