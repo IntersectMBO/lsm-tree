@@ -193,12 +193,12 @@ unsafeFinalise dropCaches RunBuilder {..} = do
       -- always drop the checksum file from the cache
       FS.hDropCacheAll runBuilderHasBlockIO h
     -- always drop filter and index files from the cache
-    dropCache runBuilderHasBlockIO (forRunFilter runBuilderHandles)
-    dropCache runBuilderHasBlockIO (forRunIndex runBuilderHandles)
+    dropCache runBuilderHasBlockIO (forRunFilterRaw runBuilderHandles)
+    dropCache runBuilderHasBlockIO (forRunIndexRaw runBuilderHandles)
     -- drop the KOps and blobs files from the cache if asked for
     when dropCaches $ do
-      dropCache runBuilderHasBlockIO (forRunKOps runBuilderHandles)
-      dropCache runBuilderHasBlockIO (forRunBlob runBuilderHandles)
+      dropCache runBuilderHasBlockIO (forRunKOpsRaw runBuilderHandles)
+      dropCache runBuilderHasBlockIO (forRunBlobRaw runBuilderHandles)
     mapM_ (closeHandle runBuilderHasFS) runBuilderHandles
     return (runBuilderHasFS, runBuilderHasBlockIO, runBuilderFsPaths, runFilter, runIndex, numEntries)
 

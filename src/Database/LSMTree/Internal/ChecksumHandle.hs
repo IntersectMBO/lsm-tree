@@ -36,6 +36,8 @@ import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.IndexCompact (IndexCompact)
 import qualified Database.LSMTree.Internal.IndexCompact as Index
+import           Database.LSMTree.Internal.Paths (ForBlob (..), ForFilter (..),
+                     ForIndex (..), ForKOps (..))
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.RawOverflowPage (RawOverflowPage)
 import qualified Database.LSMTree.Internal.RawOverflowPage as RawOverflowPage
@@ -109,48 +111,48 @@ writeToHandle fs (ChecksumHandle h checksum) lbs = do
 
 {-# SPECIALISE writeRawPage ::
      HasFS IO h
-  -> ChecksumHandle RealWorld h
+  -> ForKOps (ChecksumHandle RealWorld h)
   -> RawPage
   -> IO () #-}
 writeRawPage ::
      (MonadSTM m, PrimMonad m)
   => HasFS m h
-  -> ChecksumHandle (PrimState m) h
+  -> ForKOps (ChecksumHandle (PrimState m) h)
   -> RawPage
   -> m ()
 writeRawPage hfs kOpsHandle =
-    writeToHandle hfs kOpsHandle
+    writeToHandle hfs (unForKOps kOpsHandle)
   . BSL.fromStrict
   . RB.unsafePinnedToByteString -- 'RawPage' is guaranteed to be pinned
   . RawPage.rawPageRawBytes
 
 {-# SPECIALISE writeRawOverflowPages ::
      HasFS IO h
-  -> ChecksumHandle RealWorld h
+  -> ForKOps (ChecksumHandle RealWorld h)
   -> [RawOverflowPage]
   -> IO () #-}
 writeRawOverflowPages ::
      (MonadSTM m, PrimMonad m)
   => HasFS m h
-  -> ChecksumHandle (PrimState m) h
+  -> ForKOps (ChecksumHandle (PrimState m) h)
   -> [RawOverflowPage]
   -> m ()
 writeRawOverflowPages hfs kOpsHandle =
-    writeToHandle hfs kOpsHandle
+    writeToHandle hfs (unForKOps kOpsHandle)
   . BSL.fromChunks
   . map (RawOverflowPage.rawOverflowPageToByteString)
 
 {-# SPECIALISE writeBlob ::
      HasFS IO h
   -> PrimVar RealWorld Word64
-  -> ChecksumHandle RealWorld h
+  -> ForBlob (ChecksumHandle RealWorld h)
   -> SerialisedBlob
   -> IO BlobSpan #-}
 writeBlob ::
      (MonadSTM m, PrimMonad m)
   => HasFS m h
   -> PrimVar (PrimState m) Word64
-  -> ChecksumHandle (PrimState m) h
+  -> ForBlob (ChecksumHandle (PrimState m) h)
   -> SerialisedBlob
   -> m BlobSpan
 writeBlob hfs blobOffset blobHandle blob = do
@@ -165,20 +167,20 @@ writeBlob hfs blobOffset blobHandle blob = do
     modifyPrimVar blobOffset (+size)
     let SerialisedBlob rb = blob
     let lbs = BSL.fromStrict $ RB.toByteString rb
-    writeToHandle hfs blobHandle lbs
+    writeToHandle hfs (unForBlob blobHandle) lbs
     return (BlobSpan offset (fromIntegral size))
 
 {-# SPECIALISE copyBlob ::
      HasFS IO h
   -> PrimVar RealWorld Word64
-  -> ChecksumHandle RealWorld h
+  -> ForBlob (ChecksumHandle RealWorld h)
   -> RawBlobRef IO h
   -> IO BlobSpan #-}
 copyBlob ::
      (MonadSTM m, MonadThrow m, PrimMonad m)
   => HasFS m h
   -> PrimVar (PrimState m) Word64
-  -> ChecksumHandle (PrimState m) h
+  -> ForBlob (ChecksumHandle (PrimState m) h)
   -> RawBlobRef m h
   -> m BlobSpan
 copyBlob hfs blobOffset blobHandle blobref = do
@@ -187,59 +189,59 @@ copyBlob hfs blobOffset blobHandle blobref = do
 
 {-# SPECIALISE writeFilter ::
      HasFS IO h
-  -> ChecksumHandle RealWorld h
+  -> ForFilter (ChecksumHandle RealWorld h)
   -> Bloom SerialisedKey
   -> IO () #-}
 writeFilter ::
      (MonadSTM m, PrimMonad m)
   => HasFS m h
-  -> ChecksumHandle (PrimState m) h
+  -> ForFilter (ChecksumHandle (PrimState m) h)
   -> Bloom SerialisedKey
   -> m ()
 writeFilter hfs filterHandle bf =
-    writeToHandle hfs filterHandle (bloomFilterToLBS bf)
+    writeToHandle hfs (unForFilter filterHandle) (bloomFilterToLBS bf)
 
 {-# SPECIALISE writeIndexHeader ::
      HasFS IO h
-  -> ChecksumHandle RealWorld h
+  -> ForIndex (ChecksumHandle RealWorld h)
   -> IO () #-}
 writeIndexHeader ::
      (MonadSTM m, PrimMonad m)
   => HasFS m h
-  -> ChecksumHandle (PrimState m) h
+  -> ForIndex (ChecksumHandle (PrimState m) h)
   -> m ()
 writeIndexHeader hfs indexHandle =
-    writeToHandle hfs indexHandle $
+    writeToHandle hfs (unForIndex indexHandle) $
       Index.headerLBS
 
 {-# SPECIALISE writeIndexChunk ::
      HasFS IO h
-  -> ChecksumHandle RealWorld h
+  -> ForIndex (ChecksumHandle RealWorld h)
   -> Chunk
   -> IO () #-}
 writeIndexChunk ::
      (MonadSTM m, PrimMonad m)
   => HasFS m h
-  -> ChecksumHandle (PrimState m) h
+  -> ForIndex (ChecksumHandle (PrimState m) h)
   -> Chunk
   -> m ()
 writeIndexChunk hfs indexHandle chunk =
-    writeToHandle hfs indexHandle $
+    writeToHandle hfs (unForIndex indexHandle) $
       BSL.fromStrict $ Chunk.toByteString chunk
 
 {-# SPECIALISE writeIndexFinal ::
      HasFS IO h
-  -> ChecksumHandle RealWorld h
+  -> ForIndex (ChecksumHandle RealWorld h)
   -> NumEntries
   -> IndexCompact
   -> IO () #-}
 writeIndexFinal ::
      (MonadSTM m, PrimMonad m)
   => HasFS m h
-  -> ChecksumHandle (PrimState m) h
+  -> ForIndex (ChecksumHandle (PrimState m) h)
   -> NumEntries
   -> IndexCompact
   -> m ()
 writeIndexFinal hfs indexHandle numEntries index =
-    writeToHandle hfs indexHandle $
+    writeToHandle hfs (unForIndex indexHandle) $
       Index.finalLBS numEntries index
