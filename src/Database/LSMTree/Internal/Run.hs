@@ -272,16 +272,16 @@ openFromDisk fs hbio runRunDataCaching runRunFsPaths = do
 
     -- verify checksums of files we don't read yet
     let paths = pathsForRunFiles runRunFsPaths
-    checkCRC runRunDataCaching (forRunKOps expectedChecksums) (forRunKOps paths)
-    checkCRC runRunDataCaching (forRunBlob expectedChecksums) (forRunBlob paths)
+    checkCRC runRunDataCaching (forRunKOpsRaw expectedChecksums) (forRunKOpsRaw paths)
+    checkCRC runRunDataCaching (forRunBlobRaw expectedChecksums) (forRunBlobRaw paths)
 
     -- read and try parsing files
     runFilter <-
-      expectValidFile (forRunFilter paths) . bloomFilterFromSBS
-        =<< readCRC (forRunFilter expectedChecksums) (forRunFilter paths)
+      expectValidFile (forRunFilterRaw paths) . bloomFilterFromSBS
+        =<< readCRC (forRunFilterRaw expectedChecksums) (forRunFilterRaw paths)
     (runNumEntries, runIndex) <-
-      expectValidFile (forRunIndex paths) . Index.fromSBS
-        =<< readCRC (forRunIndex expectedChecksums) (forRunIndex paths)
+      expectValidFile (forRunIndexRaw paths) . Index.fromSBS
+        =<< readCRC (forRunIndexRaw expectedChecksums) (forRunIndexRaw paths)
 
     runKOpsFile <- FS.hOpen fs (runKOpsPath runRunFsPaths) FS.ReadMode
     runBlobFile <- openBlobFile fs (runBlobPath runRunFsPaths) FS.ReadMode

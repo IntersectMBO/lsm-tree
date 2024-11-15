@@ -7,8 +7,6 @@ module Database.LSMTree.Internal.RunBuilder (
   , addLargeSerialisedKeyOp
   , unsafeFinalise
   , close
-    -- Internal: exposed for testing
-  , ChecksumHandle (..)
   ) where
 
 import           Control.Monad (when)
@@ -18,26 +16,17 @@ import           Control.Monad.Class.MonadSTM (MonadSTM (..))
 import           Control.Monad.Class.MonadThrow (MonadThrow)
 import           Control.Monad.Primitive
 import           Data.BloomFilter (Bloom)
-import qualified Data.ByteString.Lazy as BSL
 import           Data.Foldable (for_, traverse_)
 import           Data.Primitive.PrimVar
 import           Data.Word (Word64)
-import           Database.LSMTree.Internal.BlobRef (BlobSpan (..), RawBlobRef)
-import qualified Database.LSMTree.Internal.BlobRef as BlobRef
-import           Database.LSMTree.Internal.BloomFilter (bloomFilterToLBS)
-import           Database.LSMTree.Internal.Chunk (Chunk)
-import qualified Database.LSMTree.Internal.Chunk as Chunk (toByteString)
-import           Database.LSMTree.Internal.CRC32C (CRC32C)
+import           Database.LSMTree.Internal.BlobRef (RawBlobRef)
+import           Database.LSMTree.Internal.ChecksumHandle
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.IndexCompact (IndexCompact)
-import qualified Database.LSMTree.Internal.IndexCompact as Index
 import           Database.LSMTree.Internal.Paths
-import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.RawOverflowPage (RawOverflowPage)
-import qualified Database.LSMTree.Internal.RawOverflowPage as RawOverflowPage
 import           Database.LSMTree.Internal.RawPage (RawPage)
-import qualified Database.LSMTree.Internal.RawPage as RawPage
 import           Database.LSMTree.Internal.RunAcc (RunAcc, RunBloomFilterAlloc)
 import qualified Database.LSMTree.Internal.RunAcc as RunAcc
 import           Database.LSMTree.Internal.Serialise
@@ -95,14 +84,14 @@ new ::
   -> NumEntries  -- ^ an upper bound of the number of entries to be added
   -> RunBloomFilterAlloc
   -> m (RunBuilder m h)
-new fs hbio runBuilderFsPaths numEntries alloc = do
+new hfs hbio runBuilderFsPaths numEntries alloc = do
     runBuilderAcc <- ST.stToIO $ RunAcc.new numEntries alloc
     runBuilderBlobOffset <- newPrimVar 0
 
-    runBuilderHandles <- traverse (makeHandle fs) (pathsForRunFiles runBuilderFsPaths)
+    runBuilderHandles <- traverse (makeHandle hfs) (pathsForRunFiles runBuilderFsPaths)
 
-    let builder = RunBuilder { runBuilderHasFS = fs, runBuilderHasBlockIO = hbio, .. }
-    writeIndexHeader builder
+    let builder = RunBuilder { runBuilderHasFS = hfs, runBuilderHasBlockIO = hbio, .. }
+    writeIndexHeader hfs (forRunIndex runBuilderHandles)
     return builder
 
 {-# SPECIALISE addKeyOp ::
@@ -129,27 +118,27 @@ addKeyOp ::
   -> SerialisedKey
   -> Entry SerialisedValue (RawBlobRef m h)
   -> m ()
-addKeyOp builder@RunBuilder{runBuilderAcc} key op = do
+addKeyOp RunBuilder{..} key op = do
     -- TODO: the fmap entry here reallocates even when there are no blobs.
     -- We need the Entry _ BlobSpan for RunAcc.add{Small,Large}KeyOp
     -- Perhaps pass the optional blob span separately from the Entry.
-    op' <- traverse (copyBlob builder) op
+    op' <- traverse (copyBlob runBuilderHasFS runBuilderBlobOffset (forRunBlob runBuilderHandles)) op
     if RunAcc.entryWouldFitInPage key op'
       then do
         mpagemchunk <- ST.stToIO $ RunAcc.addSmallKeyOp runBuilderAcc key op'
         case mpagemchunk of
           Nothing -> return ()
           Just (page, mchunk) -> do
-            writeRawPage builder page
-            for_ mchunk $ writeIndexChunk builder
+            writeRawPage runBuilderHasFS (forRunKOps runBuilderHandles) page
+            for_ mchunk $ writeIndexChunk runBuilderHasFS (forRunIndex runBuilderHandles)
 
       else do
        (pages, overflowPages, chunks)
          <- ST.stToIO $ RunAcc.addLargeKeyOp runBuilderAcc key op'
        --TODO: consider optimisation: use writev to write all pages in one go
-       for_ pages $ writeRawPage builder
-       writeRawOverflowPages builder overflowPages
-       for_ chunks $ writeIndexChunk builder
+       for_ pages $ writeRawPage runBuilderHasFS (forRunKOps runBuilderHandles)
+       writeRawOverflowPages runBuilderHasFS (forRunKOps runBuilderHandles) overflowPages
+       for_ chunks $ writeIndexChunk runBuilderHasFS (forRunIndex runBuilderHandles)
 
 {-# SPECIALISE addLargeSerialisedKeyOp ::
      RunBuilder IO h
@@ -166,13 +155,13 @@ addLargeSerialisedKeyOp ::
   -> RawPage
   -> [RawOverflowPage]
   -> m ()
-addLargeSerialisedKeyOp builder@RunBuilder{runBuilderAcc} key page overflowPages = do
+addLargeSerialisedKeyOp RunBuilder{..} key page overflowPages = do
     (pages, overflowPages', chunks)
       <- ST.stToIO $
            RunAcc.addLargeSerialisedKeyOp runBuilderAcc key page overflowPages
-    for_ pages $ writeRawPage builder
-    writeRawOverflowPages builder overflowPages'
-    for_ chunks $ writeIndexChunk builder
+    for_ pages $ writeRawPage runBuilderHasFS (forRunKOps runBuilderHandles)
+    writeRawOverflowPages runBuilderHasFS (forRunKOps runBuilderHandles) overflowPages'
+    for_ chunks $ writeIndexChunk runBuilderHasFS (forRunIndex runBuilderHandles)
 
 {-# SPECIALISE unsafeFinalise ::
      Bool
@@ -189,14 +178,14 @@ unsafeFinalise ::
   => Bool -- ^ drop caches
   -> RunBuilder m h
   -> m (HasFS m h, HasBlockIO m h, RunFsPaths, Bloom SerialisedKey, IndexCompact, NumEntries)
-unsafeFinalise dropCaches builder@RunBuilder {..} = do
+unsafeFinalise dropCaches RunBuilder {..} = do
     -- write final bits
     (mPage, mChunk, runFilter, runIndex, numEntries) <-
       ST.stToIO (RunAcc.unsafeFinalise runBuilderAcc)
-    for_ mPage $ writeRawPage builder
-    for_ mChunk $ writeIndexChunk builder
-    writeIndexFinal builder numEntries runIndex
-    writeFilter builder runFilter
+    for_ mPage $ writeRawPage runBuilderHasFS (forRunKOps runBuilderHandles)
+    for_ mChunk $ writeIndexChunk runBuilderHasFS (forRunIndex runBuilderHandles)
+    writeIndexFinal runBuilderHasFS (forRunIndex runBuilderHandles) numEntries runIndex
+    writeFilter runBuilderHasFS (forRunFilter runBuilderHandles) runFilter
     -- write checksums
     checksums <- toChecksumsFile <$> traverse readChecksum runBuilderHandles
     FS.withFile runBuilderHasFS (runChecksumsPath runBuilderFsPaths) (FS.WriteMode FS.MustBeNew) $ \h -> do
@@ -204,12 +193,12 @@ unsafeFinalise dropCaches builder@RunBuilder {..} = do
       -- always drop the checksum file from the cache
       FS.hDropCacheAll runBuilderHasBlockIO h
     -- always drop filter and index files from the cache
-    dropCache runBuilderHasBlockIO (forRunFilter runBuilderHandles)
-    dropCache runBuilderHasBlockIO (forRunIndex runBuilderHandles)
+    dropCache runBuilderHasBlockIO (forRunFilterRaw runBuilderHandles)
+    dropCache runBuilderHasBlockIO (forRunIndexRaw runBuilderHandles)
     -- drop the KOps and blobs files from the cache if asked for
     when dropCaches $ do
-      dropCache runBuilderHasBlockIO (forRunKOps runBuilderHandles)
-      dropCache runBuilderHasBlockIO (forRunBlob runBuilderHandles)
+      dropCache runBuilderHasBlockIO (forRunKOpsRaw runBuilderHandles)
+      dropCache runBuilderHasBlockIO (forRunBlobRaw runBuilderHandles)
     mapM_ (closeHandle runBuilderHasFS) runBuilderHandles
     return (runBuilderHasFS, runBuilderHasBlockIO, runBuilderFsPaths, runFilter, runIndex, numEntries)
 
@@ -223,172 +212,3 @@ close :: MonadSTM m => RunBuilder m h -> m ()
 close RunBuilder {..} = do
     traverse_ (closeHandle runBuilderHasFS) runBuilderHandles
     traverse_ (FS.removeFile runBuilderHasFS) (pathsForRunFiles runBuilderFsPaths)
-
-{-------------------------------------------------------------------------------
-  Helpers
--------------------------------------------------------------------------------}
-
-{-# SPECIALISE writeRawPage ::
-     RunBuilder IO h
-  -> RawPage
-  -> IO () #-}
-writeRawPage ::
-     (MonadSTM m, PrimMonad m)
-  => RunBuilder m h
-  -> RawPage
-  -> m ()
-writeRawPage RunBuilder {..} =
-    writeToHandle runBuilderHasFS (forRunKOps runBuilderHandles)
-  . BSL.fromStrict
-  . RB.unsafePinnedToByteString -- 'RawPage' is guaranteed to be pinned
-  . RawPage.rawPageRawBytes
-
-{-# SPECIALISE writeRawOverflowPages ::
-     RunBuilder IO h
-  -> [RawOverflowPage]
-  -> IO () #-}
-writeRawOverflowPages ::
-     (MonadSTM m, PrimMonad m)
-  => RunBuilder m h
-  -> [RawOverflowPage]
-  -> m ()
-writeRawOverflowPages RunBuilder {..} =
-    writeToHandle runBuilderHasFS (forRunKOps runBuilderHandles)
-  . BSL.fromChunks
-  . map (RawOverflowPage.rawOverflowPageToByteString)
-
-{-# SPECIALISE writeBlob ::
-     RunBuilder IO (FS.Handle h)
-  -> SerialisedBlob
-  -> IO BlobSpan #-}
-writeBlob ::
-     (MonadSTM m, PrimMonad m)
-  => RunBuilder m h
-  -> SerialisedBlob
-  -> m BlobSpan
-writeBlob RunBuilder{..} blob = do
-    let size = sizeofBlob64 blob
-    offset <- readPrimVar runBuilderBlobOffset
-    modifyPrimVar runBuilderBlobOffset (+size)
-    let SerialisedBlob rb = blob
-    let lbs = BSL.fromStrict $ RB.toByteString rb
-    writeToHandle runBuilderHasFS (forRunBlob runBuilderHandles) lbs
-    return (BlobSpan offset (fromIntegral size))
-
-{-# SPECIALISE copyBlob ::
-     RunBuilder IO h
-  -> RawBlobRef IO h
-  -> IO BlobSpan #-}
-copyBlob ::
-     (MonadSTM m, MonadThrow m, PrimMonad m)
-  => RunBuilder m h
-  -> RawBlobRef m h
-  -> m BlobSpan
-copyBlob builder@RunBuilder {..} blobref = do
-    blob <- BlobRef.readRawBlobRef runBuilderHasFS blobref
-    writeBlob builder blob
-    --TODO: can't easily switch this to use BlobFile.writeBlob because
-    -- RunBuilder currently does everything uniformly with ChecksumHandle.
-
-{-# SPECIALISE writeFilter ::
-     RunBuilder IO h
-  -> Bloom SerialisedKey
-  -> IO () #-}
-writeFilter ::
-     (MonadSTM m, PrimMonad m)
-  => RunBuilder m h
-  -> Bloom SerialisedKey
-  -> m ()
-writeFilter RunBuilder {..} bf =
-    writeToHandle runBuilderHasFS (forRunFilter runBuilderHandles) (bloomFilterToLBS bf)
-
-{-# SPECIALISE writeIndexHeader ::
-     RunBuilder IO h
-  -> IO () #-}
-writeIndexHeader ::
-     (MonadSTM m, PrimMonad m)
-  => RunBuilder m h
-  -> m ()
-writeIndexHeader RunBuilder {..} =
-    writeToHandle runBuilderHasFS (forRunIndex runBuilderHandles) $
-      Index.headerLBS
-
-{-# SPECIALISE writeIndexChunk ::
-     RunBuilder IO h
-  -> Chunk
-  -> IO () #-}
-writeIndexChunk ::
-     (MonadSTM m, PrimMonad m)
-  => RunBuilder m h
-  -> Chunk
-  -> m ()
-writeIndexChunk RunBuilder {..} chunk =
-    writeToHandle runBuilderHasFS (forRunIndex runBuilderHandles) $
-      BSL.fromStrict $ Chunk.toByteString chunk
-
-{-# SPECIALISE writeIndexFinal ::
-     RunBuilder IO h
-  -> NumEntries
-  -> IndexCompact
-  -> IO () #-}
-writeIndexFinal ::
-     (MonadSTM m, PrimMonad m)
-  => RunBuilder m h
-  -> NumEntries
-  -> IndexCompact
-  -> m ()
-writeIndexFinal RunBuilder {..} numEntries index =
-    writeToHandle runBuilderHasFS (forRunIndex runBuilderHandles) $
-      Index.finalLBS numEntries index
-
-{-------------------------------------------------------------------------------
-  ChecksumHandle
--------------------------------------------------------------------------------}
-
--- | Tracks the checksum of a (write mode) file handle.
-data ChecksumHandle s h = ChecksumHandle !(FS.Handle h) !(PrimVar s CRC32C)
-
-{-# SPECIALISE makeHandle ::
-     HasFS IO h
-  -> FS.FsPath
-  -> IO (ChecksumHandle RealWorld h) #-}
-makeHandle ::
-     (MonadSTM m, PrimMonad m)
-  => HasFS m h
-  -> FS.FsPath
-  -> m (ChecksumHandle (PrimState m) h)
-makeHandle fs path =
-    ChecksumHandle
-      <$> FS.hOpen fs path (FS.WriteMode FS.MustBeNew)
-      <*> newPrimVar CRC.initialCRC32C
-
-{-# SPECIALISE readChecksum ::
-     ChecksumHandle RealWorld h
-  -> IO CRC32C #-}
-readChecksum ::
-     PrimMonad m
-  => ChecksumHandle (PrimState m) h
-  -> m CRC32C
-readChecksum (ChecksumHandle _h checksum) = readPrimVar checksum
-
-dropCache :: HasBlockIO m h -> ChecksumHandle (PrimState m) h -> m ()
-dropCache hbio (ChecksumHandle h _) = FS.hDropCacheAll hbio h
-
-closeHandle :: HasFS m h -> ChecksumHandle (PrimState m) h -> m ()
-closeHandle fs (ChecksumHandle h _checksum) = FS.hClose fs h
-
-{-# SPECIALISE writeToHandle ::
-     HasFS IO h
-  -> ChecksumHandle RealWorld h
-  -> BSL.ByteString
-  -> IO () #-}
-writeToHandle ::
-     (MonadSTM m, PrimMonad m)
-  => HasFS m h
-  -> ChecksumHandle (PrimState m) h
-  -> BSL.ByteString
-  -> m ()
-writeToHandle fs (ChecksumHandle h checksum) lbs = do
-    crc <- readPrimVar checksum
-    (_, crc') <- CRC.hPutAllChunksCRC32C fs h lbs crc
-    writePrimVar checksum crc'

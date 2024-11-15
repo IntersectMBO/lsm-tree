@@ -36,6 +36,7 @@ import           Data.Word
 import           Database.LSMTree.Internal as Internal
 import           Database.LSMTree.Internal.BlobFile
 import           Database.LSMTree.Internal.BlobRef
+import           Database.LSMTree.Internal.ChecksumHandle
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.CRC32C
 import           Database.LSMTree.Internal.Entry
@@ -205,6 +206,18 @@ deriving anyclass instance NoThunks SessionRoot
 
 deriving stock instance Generic RunFsPaths
 deriving anyclass instance NoThunks RunFsPaths
+
+deriving stock instance Generic (ForKOps a)
+deriving anyclass instance NoThunks a => NoThunks (ForKOps a)
+
+deriving stock instance Generic (ForBlob a)
+deriving anyclass instance NoThunks a => NoThunks (ForBlob a)
+
+deriving stock instance Generic (ForFilter a)
+deriving anyclass instance NoThunks a => NoThunks (ForFilter a)
+
+deriving stock instance Generic (ForIndex a)
+deriving anyclass instance NoThunks a => NoThunks (ForIndex a)
 
 deriving stock instance Generic (ForRunFiles a)
 deriving anyclass instance NoThunks a => NoThunks (ForRunFiles a)
