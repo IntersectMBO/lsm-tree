@@ -28,7 +28,8 @@ import qualified Database.LSMTree.Normal as R
 import qualified System.FS.API as FS
 import           Test.QuickCheck.Monadic (monadicIO, monitor, run)
 import           Test.Tasty (TestName, TestTree, testGroup)
-import           Test.Tasty.QuickCheck
+import qualified Test.Tasty.QuickCheck as QC
+import           Test.Tasty.QuickCheck hiding (label)
 import qualified Test.Util.FS as FS
 
 tests :: TestTree
@@ -99,8 +100,8 @@ newtype Value = Value BS.ByteString
   deriving stock (Eq, Show)
   deriving newtype (Arbitrary, R.SerialiseValue)
 
-instance Labellable (Key, Value, Blob) where
-  makeSnapshotLabel _ = "Word64 ByteString ByteString"
+label :: SnapshotLabel
+label = SnapshotLabel "Word64 ByteString ByteString"
 
 type Proxy h = Setup h IO
 
@@ -547,9 +548,9 @@ prop_updatesMayInvalidateBlobRefs h ups k1 v1 blob1 ups' = monadicIO $ do
     case (V.toList res, V.toList blobs) of
       ([FoundWithBlob{}], [FoundWithBlob _ x])
         | Left _ <- res' ->
-            monitor (label "blob reference invalidated") >> pure True
+            monitor (QC.label "blob reference invalidated") >> pure True
         | Right (V.toList -> [FoundWithBlob _ y]) <- res' ->
-            monitor (label "blob reference valid") >> pure (x == y)
+            monitor (QC.label "blob reference valid") >> pure (x == y)
       _ -> monitor (counterexample "insert before lookup failed, somehow...") >> pure False
 
 -------------------------------------------------------------------------------
@@ -580,10 +581,10 @@ prop_snapshotNoChanges h ups ups' testKeys = ioProperty $ do
 
       let name = fromMaybe (error "invalid name") $ mkSnapshotName "foo"
 
-      createSnapshot name hdl1
+      createSnapshot label name hdl1
       updates hdl1 (V.fromList ups')
 
-      Class.withTableFromSnapshot @h ses name$ \hdl2 -> do
+      Class.withTableFromSnapshot @h ses label name$ \hdl2 -> do
 
         res' <- lookupsWithBlobs hdl2 ses $ V.fromList testKeys
 
@@ -598,10 +599,10 @@ prop_snapshotNoChanges2 :: forall h.
 prop_snapshotNoChanges2 h ups ups' testKeys = ioProperty $ do
     withTableNew h ups $ \sess hdl0 -> do
       let name = fromMaybe (error "invalid name") $ mkSnapshotName "foo"
-      createSnapshot name hdl0
+      createSnapshot label name hdl0
 
-      Class.withTableFromSnapshot @h sess name $ \hdl1 ->
-        Class.withTableFromSnapshot @h sess name $ \hdl2 -> do
+      Class.withTableFromSnapshot @h sess label name $ \hdl1 ->
+        Class.withTableFromSnapshot @h sess label name $ \hdl2 -> do
 
           res <- lookupsWithBlobs hdl1 sess $ V.fromList testKeys
           updates hdl1 (V.fromList ups')

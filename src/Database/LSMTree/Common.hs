@@ -18,7 +18,7 @@ module Database.LSMTree.Common (
     -- * Small types
   , Internal.Range (..)
     -- * Snapshots
-  , Labellable (..)
+  , SnapshotLabel (..)
   , deleteSnapshot
   , listSnapshots
     -- ** Snapshot names
@@ -52,8 +52,7 @@ import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Primitive (PrimMonad)
 import           Control.Tracer (Tracer)
 import           Data.Kind (Type)
-import           Data.Text (Text)
-import           Data.Typeable (Proxy, Typeable)
+import           Data.Typeable (Typeable)
 import qualified Database.LSMTree.Internal as Internal
 import qualified Database.LSMTree.Internal.BlobRef as Internal
 import qualified Database.LSMTree.Internal.Config as Internal
@@ -62,6 +61,7 @@ import qualified Database.LSMTree.Internal.MergeSchedule as Internal
 import qualified Database.LSMTree.Internal.Paths as Internal
 import qualified Database.LSMTree.Internal.Range as Internal
 import           Database.LSMTree.Internal.Serialise.Class
+import           Database.LSMTree.Internal.Snapshot (SnapshotLabel (..))
 import           System.FS.API (FsPath, HasFS)
 import           System.FS.BlockIO.API (HasBlockIO)
 import           System.FS.IO (HandleIO)
@@ -185,13 +185,6 @@ closeSession (Internal.Session' sesh) = Internal.closeSession sesh
 {-------------------------------------------------------------------------------
   Snapshots
 -------------------------------------------------------------------------------}
-
--- TODO: we might replace this with some other form of dynamic checking of
--- snapshot types. For example, we could ask the user to produce a label/version
--- directly instead, instead of deriving the label from a type using this type
--- class.
-class Labellable a where
-  makeSnapshotLabel :: Proxy a -> Text
 
 {-# SPECIALISE deleteSnapshot ::
      Session IO

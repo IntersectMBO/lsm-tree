@@ -57,7 +57,12 @@ import           System.FS.BlockIO.API (HasBlockIO)
   Snapshot metadata
 -------------------------------------------------------------------------------}
 
--- | Custom text to include in a snapshot file
+-- | Custom, user-supplied text that is included in the metadata.
+--
+-- The main use case for a 'SnapshotLabel' is for the user to supply textual
+-- information about the key\/value\/blob type for the table that corresponds to
+-- the snapshot. This information is used to dynamically check that a snapshot
+-- is opened at the correct key\/value\/blob type.
 newtype SnapshotLabel = SnapshotLabel Text
   deriving stock (Show, Eq)
 
@@ -66,17 +71,11 @@ data SnapshotTableType = SnapNormalTable | SnapMonoidalTable | SnapFullTable
   deriving stock (Show, Eq)
 
 data SnapshotMetaData = SnapshotMetaData {
-    -- | Custom, user-supplied text that is included in the metadata.
-    --
-    -- The main use case for this field is for the user to supply textual
-    -- information about the key\/value\/blob type for the table that
-    -- corresponds to the snapshot. This information can then be used to
-    -- dynamically check that a snapshot is opened at the correct
-    -- key\/value\/blob type.
+    -- | See 'SnapshotLabel'.
     --
     -- One could argue that the 'SnapshotName' could be used to to hold this
-    -- information, but the file name of snapshot metadata is not guarded by a
-    -- checksum, wherease the contents of the file are. Therefore using the
+    -- type information, but the file name of snapshot metadata is not guarded
+    -- by a checksum, wherease the contents of the file are. Therefore using the
     -- 'SnapshotLabel' is safer.
     snapMetaLabel     :: !SnapshotLabel
     -- | Whether a table is normal or monoidal.

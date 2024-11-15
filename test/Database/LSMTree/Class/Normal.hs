@@ -21,8 +21,9 @@ import           Control.Tracer (nullTracer)
 import           Data.Kind (Constraint, Type)
 import           Data.Typeable (Proxy (Proxy), Typeable)
 import qualified Data.Vector as V
-import           Database.LSMTree.Common as Types (IOLike, Labellable (..),
-                     Range (..), SerialiseKey, SerialiseValue, SnapshotName)
+import           Database.LSMTree.Common as Types (IOLike, Range (..),
+                     SerialiseKey, SerialiseValue, SnapshotLabel (..),
+                     SnapshotName)
 import           Database.LSMTree.Normal as Types (LookupResult (..),
                      QueryResult (..), Update (..))
 import qualified Database.LSMTree.Normal as R
@@ -180,25 +181,25 @@ class (IsSession (Session h)) => IsTable h where
 
     createSnapshot ::
            ( IOLike m
-           , Labellable (k, v, blob)
            , SerialiseKey k
            , SerialiseValue v
            , SerialiseValue blob
            , C k v blob
            )
-        => SnapshotName
+        => SnapshotLabel
+        -> SnapshotName
         -> h m k v blob
         -> m ()
 
     openSnapshot ::
            ( IOLike m
-           , Labellable (k, v, blob)
            , SerialiseKey k
            , SerialiseValue v
            , SerialiseValue blob
            , C k v blob
            )
         => Session h m
+        -> SnapshotLabel
         -> SnapshotName
         -> m (h m k v blob)
 
@@ -230,15 +231,16 @@ withTableNew :: forall h m k v blob a.
 withTableNew sesh conf = bracket (new sesh conf) close
 
 withTableFromSnapshot :: forall h m k v blob a.
-     ( IOLike m, IsTable h, Labellable (k, v, blob)
+     ( IOLike m, IsTable h
      , SerialiseKey k, SerialiseValue v, SerialiseValue blob
      , C k v blob
      )
   => Session h m
+  -> SnapshotLabel
   -> SnapshotName
   -> (h m k v blob -> m a)
   -> m a
-withTableFromSnapshot sesh snap = bracket (openSnapshot sesh snap) close
+withTableFromSnapshot sesh label snap = bracket (openSnapshot sesh label snap) close
 
 withTableDuplicate :: forall h m k v blob a.
      ( IOLike m

@@ -83,7 +83,7 @@ module Database.LSMTree.Monoidal (
     -- * Durability (snapshots)
   , SnapshotName
   , Common.mkSnapshotName
-  , Common.Labellable (..)
+  , Common.SnapshotLabel (..)
   , createSnapshot
   , openSnapshot
   , Common.TableConfigOverride
@@ -517,8 +517,9 @@ mupserts t = updates t . fmap (second Mupsert)
 -------------------------------------------------------------------------------}
 
 {-# SPECIALISE createSnapshot ::
-     (ResolveValue v, Common.Labellable (k, v))
-  => SnapshotName
+     ResolveValue v
+  => Common.SnapshotLabel
+  -> SnapshotName
   -> Table IO k v
   -> IO () #-}
 -- | Make the current value of a table durable on-disk by taking a snapshot and
@@ -546,20 +547,19 @@ mupserts t = updates t . fmap (second Mupsert)
 createSnapshot :: forall m k v.
      ( IOLike m
      , ResolveValue v
-     , Common.Labellable (k, v)
      )
-  => SnapshotName
+  => Common.SnapshotLabel
+  -> SnapshotName
   -> Table m k v
   -> m ()
-createSnapshot snap (Internal.MonoidalTable t) =
+createSnapshot label snap (Internal.MonoidalTable t) =
     Internal.createSnapshot (resolve @v Proxy) snap label Internal.SnapMonoidalTable t
-  where
-    label = Internal.SnapshotLabel $ Common.makeSnapshotLabel (Proxy @(k, v))
 
 {-# SPECIALISE openSnapshot ::
-     (ResolveValue v, Common.Labellable (k, v))
+     ResolveValue v
   => Session IO
   -> Common.TableConfigOverride
+  -> Common.SnapshotLabel
   -> SnapshotName
   -> IO (Table IO k v) #-}
 -- | Open a table from a named snapshot, returning a new table.
@@ -583,13 +583,13 @@ createSnapshot snap (Internal.MonoidalTable t) =
 openSnapshot :: forall m k v.
      ( IOLike m
      , ResolveValue v
-     , Common.Labellable (k, v)
      )
   => Session m
   -> Common.TableConfigOverride -- ^ Optional config override
+  -> Common.SnapshotLabel
   -> SnapshotName
   -> m (Table m k v)
-openSnapshot (Internal.Session' sesh) override snap =
+openSnapshot (Internal.Session' sesh) override label snap =
     Internal.MonoidalTable <$>
       Internal.openSnapshot
         sesh
@@ -598,8 +598,6 @@ openSnapshot (Internal.Session' sesh) override snap =
         override
         snap
         (resolve @v Proxy)
-  where
-    label = Internal.SnapshotLabel $ Common.makeSnapshotLabel (Proxy @(k, v))
 
 {-------------------------------------------------------------------------------
   Multiple writable tables
