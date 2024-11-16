@@ -238,7 +238,7 @@ hGetAllCRC32C' hfs h (ChunkSize !chunkSize) !crc0
           go bs buf crc'
 
 
-{- | $checksum-files
+{- $checksum-files
 We use @.checksum@ files to help verify the integrity of on disk snapshots.
 Each .checksum file lists the CRC-32C (Castagnoli) of other files. For further
 details see @doc/format-directory.md@.
