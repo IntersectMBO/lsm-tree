@@ -15,7 +15,7 @@ import           Data.Maybe
 import qualified Data.Vector.Primitive as VP
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Entry
-import qualified Database.LSMTree.Internal.IndexCompact as Index
+import qualified Database.LSMTree.Internal.Index.Compact as Index
 import           Database.LSMTree.Internal.Page (PageNo (PageNo), singlePage)
 import qualified Database.LSMTree.Internal.PageAcc as PageAcc
 import qualified Database.LSMTree.Internal.PageAcc1 as PageAcc

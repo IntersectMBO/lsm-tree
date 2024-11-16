@@ -2,7 +2,7 @@
 --
 -- TODO: add utility functions for clash probability calculations
 --
-module Database.LSMTree.Internal.IndexCompact (
+module Database.LSMTree.Internal.Index.Compact (
     -- $compact
     IndexCompact (..)
     -- * Queries
@@ -59,7 +59,7 @@ import           Database.LSMTree.Internal.Vector
   @i@, to min-max information for keys on that page.
 
   Fence-pointer indexes can be constructed and serialised incrementally, see
-  module "Database.LSMTree.Internal.IndexCompactAcc".
+  module "Database.LSMTree.Internal.Index.CompactAcc".
 
   Given a serialised target key @k@, an index can be 'search'ed to find a disk
   page @i@ that /might/ contain @k@. Fence-pointer indices offer no guarantee of
@@ -468,7 +468,7 @@ toLBS numEntries index =
   by using 'headerLBS'. Each yielded chunk can then be written using
   'Chunk.toByteString'. Once construction is completed, 'finalLBS' will
   serialise the remaining parts of the compact index.
-  Also see module "Database.LSMTree.Internal.IndexCompactAcc".
+  Also see module "Database.LSMTree.Internal.Index.CompactAcc".
 -}
 
 -- | By writing out the type–version indicator in host endianness, we also

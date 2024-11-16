@@ -11,11 +11,11 @@ import           Control.Monad.ST.Strict (ST)
 import           Data.Foldable (toList)
 import           Data.Word (Word32)
 import           Database.LSMTree.Internal.Chunk (Chunk)
-import           Database.LSMTree.Internal.IndexCompactAcc (IndexCompactAcc)
-import qualified Database.LSMTree.Internal.IndexCompactAcc as IndexCompact
+import           Database.LSMTree.Internal.Index.CompactAcc (IndexCompactAcc)
+import qualified Database.LSMTree.Internal.Index.CompactAcc as IndexCompact
                      (appendMulti, appendSingle)
-import           Database.LSMTree.Internal.IndexOrdinaryAcc (IndexOrdinaryAcc)
-import qualified Database.LSMTree.Internal.IndexOrdinaryAcc as IndexOrdinary
+import           Database.LSMTree.Internal.Index.OrdinaryAcc (IndexOrdinaryAcc)
+import qualified Database.LSMTree.Internal.Index.OrdinaryAcc as IndexOrdinary
                      (appendMulti, appendSingle)
 import           Database.LSMTree.Internal.Serialise (SerialisedKey)
 

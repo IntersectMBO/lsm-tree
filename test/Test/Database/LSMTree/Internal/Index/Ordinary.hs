@@ -4,7 +4,7 @@
 
 {- HLINT ignore "Avoid restricted alias" -}
 
-module Test.Database.LSMTree.Internal.IndexOrdinary (tests) where
+module Test.Database.LSMTree.Internal.Index.Ordinary (tests) where
 
 import           Prelude hiding (all, head, last, length, notElem, splitAt,
                      tail, takeWhile)
@@ -29,10 +29,10 @@ import           Database.LSMTree.Extras.Index
                      (Append (AppendMultiPage, AppendSinglePage), append')
 import qualified Database.LSMTree.Internal.Chunk as Chunk (toByteVector)
 import           Database.LSMTree.Internal.Entry (NumEntries (NumEntries))
-import           Database.LSMTree.Internal.IndexOrdinary
+import           Database.LSMTree.Internal.Index.Ordinary
                      (IndexOrdinary (IndexOrdinary), fromSBS, search,
                      toLastKeys)
-import           Database.LSMTree.Internal.IndexOrdinaryAcc (new, unsafeEnd)
+import           Database.LSMTree.Internal.Index.OrdinaryAcc (new, unsafeEnd)
 import           Database.LSMTree.Internal.Page (PageNo (PageNo),
                      PageSpan (PageSpan))
 import           Database.LSMTree.Internal.Serialise
@@ -52,7 +52,7 @@ import           Test.Tasty.QuickCheck (testProperty)
 -- * Tests
 
 tests :: TestTree
-tests = testGroup "Test.Database.LSMTree.Internal.IndexOrdinary" $
+tests = testGroup "Test.Database.LSMTree.Internal.Index.Ordinary" $
         [
             testGroup "Search" $
             [

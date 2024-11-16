@@ -9,7 +9,7 @@
   Incremental construction can be finalised with 'unsafeEnd', which yields both
   a 'Chunk' (possibly) and the `IndexCompact'.
 -}
-module Database.LSMTree.Internal.IndexCompactAcc (
+module Database.LSMTree.Internal.Index.CompactAcc (
     -- * Construction
     -- $construction-invariants
     IndexCompactAcc (..)
@@ -45,7 +45,7 @@ import qualified Data.Vector.Unboxed.Mutable as VUM
 import           Data.Word
 import           Database.LSMTree.Internal.BitMath
 import           Database.LSMTree.Internal.Chunk (Chunk)
-import           Database.LSMTree.Internal.IndexCompact
+import           Database.LSMTree.Internal.Index.Compact
 import           Database.LSMTree.Internal.Page
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.Unsliced

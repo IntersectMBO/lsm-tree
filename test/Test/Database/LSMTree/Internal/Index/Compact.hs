@@ -3,7 +3,7 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 {- HLINT ignore "Eta reduce" -}
 
-module Test.Database.LSMTree.Internal.IndexCompact (tests) where
+module Test.Database.LSMTree.Internal.Index.Compact (tests) where
 
 import           Control.DeepSeq (deepseq)
 import           Control.Monad (foldM)
@@ -32,8 +32,8 @@ import           Database.LSMTree.Extras.Index as Cons (Append (..), append)
 import           Database.LSMTree.Internal.BitMath
 import           Database.LSMTree.Internal.Chunk as Chunk (toByteString)
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
-import           Database.LSMTree.Internal.IndexCompact as Index
-import           Database.LSMTree.Internal.IndexCompactAcc as Cons
+import           Database.LSMTree.Internal.Index.Compact as Index
+import           Database.LSMTree.Internal.Index.CompactAcc as Cons
 import           Database.LSMTree.Internal.Page (PageNo (PageNo), PageSpan,
                      multiPage, singlePage)
 import           Database.LSMTree.Internal.Serialise
@@ -48,7 +48,7 @@ import           Test.Util.Orphans ()
 import           Text.Printf (printf)
 
 tests :: TestTree
-tests = testGroup "Test.Database.LSMTree.Internal.IndexCompact" [
+tests = testGroup "Test.Database.LSMTree.Internal.Index.Compact" [
     testProperty "prop_distribution @KeyForIndexCompact" $
       prop_distribution @KeyForIndexCompact
   , testProperty "prop_searchMinMaxKeysAfterConstruction" $

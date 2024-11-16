@@ -46,7 +46,7 @@ import           Database.LSMTree.Extras.RunData (RunData (..),
                      unsafeFlushAsWriteBuffer)
 import           Database.LSMTree.Internal.BlobRef
 import           Database.LSMTree.Internal.Entry as Entry
-import           Database.LSMTree.Internal.IndexCompact as Index
+import           Database.LSMTree.Internal.Index.Compact as Index
 import           Database.LSMTree.Internal.Lookup
 import           Database.LSMTree.Internal.Page (PageNo (PageNo), PageSpan (..))
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..))

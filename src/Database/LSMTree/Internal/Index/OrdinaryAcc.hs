@@ -4,7 +4,7 @@
     Incremental construction functionality for the general-purpose fence pointer
     index.
 -}
-module Database.LSMTree.Internal.IndexOrdinaryAcc
+module Database.LSMTree.Internal.Index.OrdinaryAcc
 (
     IndexOrdinaryAcc,
     new,
@@ -23,7 +23,7 @@ import qualified Data.Vector.Primitive as Primitive (Vector, length)
 import           Data.Word (Word16, Word32, Word8)
 import           Database.LSMTree.Internal.Chunk (Baler, Chunk, createBaler,
                      feedBaler, unsafeEndBaler)
-import           Database.LSMTree.Internal.IndexOrdinary
+import           Database.LSMTree.Internal.Index.Ordinary
                      (IndexOrdinary (IndexOrdinary))
 import           Database.LSMTree.Internal.Serialise
                      (SerialisedKey (SerialisedKey'))
