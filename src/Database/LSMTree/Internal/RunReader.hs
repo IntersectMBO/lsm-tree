@@ -31,7 +31,7 @@ import           Database.LSMTree.Internal.BitMath (ceilDivPageSize,
                      mulPageSize, roundUpToPageSize)
 import           Database.LSMTree.Internal.BlobRef (RawBlobRef (..))
 import qualified Database.LSMTree.Internal.Entry as E
-import qualified Database.LSMTree.Internal.Index.Compact as Index
+import qualified Database.LSMTree.Internal.Index as Index (search)
 import           Database.LSMTree.Internal.Page (PageNo (..), PageSpan (..),
                      getNumPages, nextPageNo)
 import           Database.LSMTree.Internal.Paths

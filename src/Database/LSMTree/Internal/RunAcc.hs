@@ -44,9 +44,11 @@ import           Database.LSMTree.Internal.Assertions (fromIntegralChecked)
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Chunk (Chunk)
 import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..))
+import qualified Database.LSMTree.Internal.Index as Index (appendMulti,
+                     appendSingle, unsafeEnd)
 import           Database.LSMTree.Internal.Index.Compact (IndexCompact)
 import           Database.LSMTree.Internal.Index.CompactAcc (IndexCompactAcc)
-import qualified Database.LSMTree.Internal.Index.CompactAcc as Index
+import qualified Database.LSMTree.Internal.Index.CompactAcc as IndexCompact
 import           Database.LSMTree.Internal.PageAcc (PageAcc)
 import qualified Database.LSMTree.Internal.PageAcc as PageAcc
 import qualified Database.LSMTree.Internal.PageAcc1 as PageAcc
@@ -102,7 +104,7 @@ new (NumEntries nentries) alloc = do
         MBloom.new
           (fromIntegralChecked $ Monkey.numHashFunctions (fromIntegral nbits) (fromIntegral nentries))
           nbits
-    mindex <- Index.new 1024 -- TODO(optimise): tune chunk size
+    mindex <- IndexCompact.new 1024 -- TODO(optimise): tune chunk size
     mpageacc <- PageAcc.newPageAcc
     entryCount <- newPrimVar 0
     pure RunAcc{..}

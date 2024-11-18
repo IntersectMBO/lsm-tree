@@ -1,8 +1,11 @@
+{-|
+    Provides additional support for working with fence pointer indexes and their
+    accumulators.
+-}
 module Database.LSMTree.Extras.Index
 (
     Append (AppendSinglePage, AppendMultiPage),
-    append,
-    append'
+    append
 )
 where
 
@@ -11,12 +14,8 @@ import           Control.Monad.ST.Strict (ST)
 import           Data.Foldable (toList)
 import           Data.Word (Word32)
 import           Database.LSMTree.Internal.Chunk (Chunk)
-import           Database.LSMTree.Internal.Index.CompactAcc (IndexCompactAcc)
-import qualified Database.LSMTree.Internal.Index.CompactAcc as IndexCompact
-                     (appendMulti, appendSingle)
-import           Database.LSMTree.Internal.Index.OrdinaryAcc (IndexOrdinaryAcc)
-import qualified Database.LSMTree.Internal.Index.OrdinaryAcc as IndexOrdinary
-                     (appendMulti, appendSingle)
+import           Database.LSMTree.Internal.Index (IndexAcc, appendMulti,
+                     appendSingle)
 import           Database.LSMTree.Internal.Serialise (SerialisedKey)
 
 -- | Instruction for appending pages, to be used in conjunction with indexes.
@@ -42,31 +41,15 @@ instance NFData Append where
         = rnf key `seq` rnf overflowPageCount
 
 {-|
-    Add information about appended pages to an index under incremental
-    construction.
+    Adds information about appended pages to an index and outputs newly
+    available chunks.
 
-    Internally, 'append' uses 'IndexCompact.appendSingle' and
-    'IndexCompact.appendMulti', and the usage restrictions of those functions
-    apply also here.
+    See the documentation of the 'IndexAcc' class for constraints to adhere to.
 -}
-append :: Append -> IndexCompactAcc s -> ST s [Chunk]
+append :: IndexAcc j => Append -> j s -> ST s [Chunk]
 append instruction indexAcc = case instruction of
     AppendSinglePage minKey maxKey
-        -> toList <$> IndexCompact.appendSingle (minKey, maxKey) indexAcc
+        -> toList <$> appendSingle (minKey, maxKey) indexAcc
     AppendMultiPage key overflowPageCount
-        -> IndexCompact.appendMulti (key, overflowPageCount) indexAcc
-
-{-|
-    A variant of 'append' for ordinary indexes, which is only used temporarily
-    until there is a type class of index types.
-
-    Internally, 'append'' uses 'IndexOrdinary.appendSingle' and
-    'IndexOrdinary.appendMulti', and the usage restrictions of those functions
-    apply also here.
--}
-append' :: Append -> IndexOrdinaryAcc s -> ST s [Chunk]
-append' instruction indexAcc = case instruction of
-    AppendSinglePage minKey maxKey
-        -> toList <$> IndexOrdinary.appendSingle (minKey, maxKey) indexAcc
-    AppendMultiPage key overflowPageCount
-        -> IndexOrdinary.appendMulti (key, overflowPageCount) indexAcc
+        -> appendMulti (key, overflowPageCount) indexAcc
+{-# INLINABLE append #-}
