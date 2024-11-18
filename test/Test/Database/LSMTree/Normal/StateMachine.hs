@@ -84,9 +84,9 @@ import qualified Data.Set as Set
 import           Data.Typeable (Proxy (..), Typeable, cast, eqT,
                      type (:~:) (Refl))
 import qualified Data.Vector as V
-import           Database.LSMTree.Class.Normal (LookupResult (..),
-                     QueryResult (..))
-import qualified Database.LSMTree.Class.Normal as Class
+import qualified Database.LSMTree as R
+import           Database.LSMTree.Class (LookupResult (..), QueryResult (..))
+import qualified Database.LSMTree.Class as Class
 import           Database.LSMTree.Extras (showPowersOf)
 import           Database.LSMTree.Extras.Generators (KeyForIndexCompact)
 import           Database.LSMTree.Extras.NoThunks (assertNoThunks)
@@ -94,9 +94,8 @@ import           Database.LSMTree.Internal (LSMTreeError (..))
 import qualified Database.LSMTree.Internal as R.Internal
 import           Database.LSMTree.Internal.Serialise (SerialisedBlob,
                      SerialisedValue)
-import qualified Database.LSMTree.Model.IO.Normal as ModelIO
+import qualified Database.LSMTree.Model.IO as ModelIO
 import qualified Database.LSMTree.Model.Session as Model
-import qualified Database.LSMTree.Normal as R
 import           NoThunks.Class
 import           Prelude hiding (init)
 import           System.Directory (removeDirectoryRecursive)
@@ -323,7 +322,7 @@ getAllSessionTables ::
 getAllSessionTables (R.Internal.Session' s) = do
     R.Internal.withOpenSession s $ \seshEnv -> do
       ts <- readMVar (R.Internal.sessionOpenTables seshEnv)
-      pure ((\x -> SomeTable (R.Internal.NormalTable x))  <$> Map.elems ts)
+      pure ((\x -> SomeTable (R.Internal.Table' x))  <$> Map.elems ts)
 
 getAllSessionCursors ::
      (MonadSTM m, MonadThrow m, MonadMVar m)
@@ -332,7 +331,7 @@ getAllSessionCursors ::
 getAllSessionCursors (R.Internal.Session' s) =
     R.Internal.withOpenSession s $ \seshEnv -> do
       cs <- readMVar (R.Internal.sessionOpenCursors seshEnv)
-      pure ((\x -> SomeCursor (R.Internal.NormalCursor x))  <$> Map.elems cs)
+      pure ((\x -> SomeCursor (R.Internal.Cursor' x))  <$> Map.elems cs)
 
 realHandler :: Monad m => Handler m (Maybe Model.Err)
 realHandler = Handler $ pure . handler'
@@ -373,6 +372,9 @@ newtype Blob = Blob SerialisedBlob
 keyValueBlobLabel :: R.SnapshotLabel
 keyValueBlobLabel = R.SnapshotLabel "Key Value Blob"
 
+instance R.ResolveValue Value where
+  resolveValue _ = (<>)
+
 {-------------------------------------------------------------------------------
   Model state
 -------------------------------------------------------------------------------}
@@ -402,11 +404,18 @@ type K a = (
 type V a = (
     Class.C_ a
   , R.SerialiseValue a
+  , R.ResolveValue a
+  , Arbitrary a
+  )
+
+type B a = (
+    Class.C_ a
+  , R.SerialiseValue a
   , Arbitrary a
   )
 
 -- | Common constraints for keys, values and blobs
-type C k v blob = (K k, V v, V blob)
+type C k v blob = (K k, V v, B blob)
 
 {-------------------------------------------------------------------------------
   StateModel
@@ -456,7 +465,7 @@ instance ( Show (Class.TableConfig h)
             => V.Vector k -> Var h (WrapTable h IO k v blob)
             -> Act h ()
     -- Blobs
-    RetrieveBlobs :: V blob
+    RetrieveBlobs :: B blob
                   => Var h (V.Vector (WrapBlobRef h IO blob))
                   -> Act h (V.Vector (WrapBlob blob))
     -- Snapshots
@@ -468,7 +477,7 @@ instance ( Show (Class.TableConfig h)
                    -> Act h (WrapTable h IO k v blob)
     DeleteSnapshot :: R.SnapshotName -> Act h ()
     ListSnapshots  :: Act h [R.SnapshotName]
-    -- Multiple writable tables
+    -- Duplicate tables
     Duplicate :: C k v blob
               => Var h (WrapTable h IO k v blob)
               -> Act h (WrapTable h IO k v blob)
@@ -900,13 +909,13 @@ runModel lookUp = \case
       . Model.runModelM (Model.readCursor n (getCursor $ lookUp cursorVar))
     Updates kups tableVar ->
       wrap MUnit
-      . Model.runModelM (Model.updates Model.noResolve (fmap ModelIO.convUpdate <$> kups) (getTable $ lookUp tableVar))
+      . Model.runModelM (Model.updates Model.getResolve (fmap ModelIO.convUpdate <$> kups) (getTable $ lookUp tableVar))
     Inserts kins tableVar ->
       wrap MUnit
-      . Model.runModelM (Model.inserts Model.noResolve kins (getTable $ lookUp tableVar))
+      . Model.runModelM (Model.inserts Model.getResolve kins (getTable $ lookUp tableVar))
     Deletes kdels tableVar ->
       wrap MUnit
-      . Model.runModelM (Model.deletes Model.noResolve kdels (getTable $ lookUp tableVar))
+      . Model.runModelM (Model.deletes Model.getResolve kdels (getTable $ lookUp tableVar))
     RetrieveBlobs blobsVar ->
       wrap (MVector . fmap (MBlob . WrapBlob))
       . Model.runModelM (Model.retrieveBlobs (getBlobRefs . lookUp $ blobsVar))
@@ -1219,12 +1228,14 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
     genUpdates :: Gen (V.Vector (k, R.Update v blob))
     genUpdates = QC.liftArbitrary ((,) <$> QC.arbitrary <*> QC.oneof [
           R.Insert <$> QC.arbitrary <*> genBlob
+        , R.Mupsert <$> QC.arbitrary
         , pure R.Delete
         ])
       where
         _coveredAllCases :: R.Update v blob -> ()
         _coveredAllCases = \case
             R.Insert{} -> ()
+            R.Mupsert{} -> ()
             R.Delete{} -> ()
 
     genInserts :: Gen (V.Vector (k, v, Maybe blob))
@@ -1307,8 +1318,8 @@ data Stats = Stats {
   , numLookupsResults  :: {-# UNPACK #-} !(Int, Int, Int)
                           -- (NotFound, Found, FoundWithBlob)
     -- | Number of succesful updates
-  , numUpdates         :: {-# UNPACK #-} !(Int, Int, Int)
-                          -- (Insert, InsertWithBlob, Delete)
+  , numUpdates         :: {-# UNPACK #-} !(Int, Int, Int, Int)
+                          -- (Insert, InsertWithBlob, Delete, Mupsert)
     -- | Actions that succeeded
   , successActions     :: [String]
     -- | Actions that failed with an error
@@ -1338,7 +1349,7 @@ initStats = Stats {
       snapshotted = Set.empty
       -- === Final tags
     , numLookupsResults = (0, 0, 0)
-    , numUpdates = (0, 0, 0)
+    , numUpdates = (0, 0, 0, 0)
     , successActions = []
     , failActions = []
     , numActionsPerTable = Map.empty
@@ -1412,15 +1423,16 @@ updateStats action lookUp modelBefore _modelAfter result =
           }
         _ -> stats
       where
-        countAll :: forall k v blob. V.Vector (k, R.Update v blob) -> (Int, Int, Int)
+        countAll :: forall k v blob. V.Vector (k, R.Update v blob) -> (Int, Int, Int, Int)
         countAll upds =
-          let count :: (Int, Int, Int)
+          let count :: (Int, Int, Int, Int)
                     -> (k, R.Update v blob)
-                    -> (Int, Int, Int)
-              count (i, iwb, d) (_, upd) = case upd  of
-                R.Insert _ Nothing -> (i+1, iwb  , d  )
-                R.Insert _ Just{}  -> (i  , iwb+1, d  )
-                R.Delete{}         -> (i  , iwb  , d+1)
+                    -> (Int, Int, Int, Int)
+              count (i, iwb, d, m) (_, upd) = case upd  of
+                R.Insert _ Nothing -> (i+1, iwb  , d  , m    )
+                R.Insert _ Just{}  -> (i  , iwb+1, d  , m    )
+                R.Delete{}         -> (i  , iwb  , d+1, m    )
+                R.Mupsert{}        -> (i  , iwb  , d  , m + 1)
           in V.foldl' count (numUpdates stats) upds
 
     updSuccessActions stats = case result of
@@ -1662,6 +1674,10 @@ data FinalTag =
     -- (this includes submissions through both 'Class.updates' and
     -- 'Class.deletes')
   | NumDeletes String
+    -- | Number of 'Class.Mupsert's succesfully submitted to a table
+    -- (this includes submissions through both 'Class.updates' and
+    -- 'Class.mupserts')
+  | NumMupserts String
     -- | Total number of actions (failing, succeeding, either)
   | NumActions String
     -- | Which actions succeded
@@ -1705,8 +1721,9 @@ tagFinalState' (getModel -> ModelState finalState finalStats) = concat [
           ("Inserts"            , [NumInserts          $ showPowersOf 10 i])
         , ("Inserts with blobs" , [NumInsertsWithBlobs $ showPowersOf 10 iwb])
         , ("Deletes"            , [NumDeletes          $ showPowersOf 10 d])
+        , ("Mupserts"           , [NumMupserts         $ showPowersOf 10 m])
         ]
-      where (i, iwb, d) = numUpdates finalStats
+      where (i, iwb, d, m) = numUpdates finalStats
 
     tagNumActions =
         [ let n = length (successActions finalStats) in
