@@ -41,8 +41,6 @@ module Database.LSMTree.Internal.CRC32C (
   readChecksumsFile,
   writeChecksumsFile,
   writeChecksumsFile',
-
-  hexdigitsToInt
   ) where
 
 import           Control.Monad

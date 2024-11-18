@@ -118,7 +118,7 @@ module Database.LSMTree.Monoidal (
 
 import           Control.DeepSeq
 import           Control.Exception (assert)
-import           Control.Monad (void, (<$!>))
+import           Control.Monad ((<$!>))
 import           Data.Bifunctor (Bifunctor (..))
 import           Data.Coerce (coerce)
 import           Data.Kind (Type)
@@ -552,7 +552,7 @@ createSnapshot :: forall m k v.
   -> Table m k v
   -> m ()
 createSnapshot snap (Internal.MonoidalTable t) =
-    void $ Internal.createSnapshot (resolve @v Proxy) snap label Internal.SnapMonoidalTable t
+    Internal.createSnapshot (resolve @v Proxy) snap label Internal.SnapMonoidalTable t
   where
     label = Internal.SnapshotLabel $ Common.makeSnapshotLabel (Proxy @(k, v))
 

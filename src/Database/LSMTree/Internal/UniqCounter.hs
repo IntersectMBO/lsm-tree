@@ -23,6 +23,8 @@ uniqueToRunNumber :: Unique -> RunNumber
 uniqueToRunNumber = coerce
 
 -- | An atomic counter for producing 'Unique' values.
+--
+-- TODO: could we use a PrimVar here?
 newtype UniqCounter m = UniqCounter (StrictMVar m Word64)
 
 {-# INLINE newUniqCounter #-}

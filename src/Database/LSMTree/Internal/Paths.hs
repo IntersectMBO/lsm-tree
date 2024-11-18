@@ -1,6 +1,7 @@
 module Database.LSMTree.Internal.Paths (
     SessionRoot (..)
   , lockFile
+  , ActiveDir (..)
   , activeDir
   , runPath
   , snapshotsDir
@@ -62,11 +63,13 @@ newtype SessionRoot = SessionRoot { getSessionRoot :: FsPath }
 lockFile :: SessionRoot -> FsPath
 lockFile (SessionRoot dir) = dir </> mkFsPath ["lock"]
 
-activeDir :: SessionRoot -> FsPath
-activeDir (SessionRoot dir) = dir </> mkFsPath ["active"]
+newtype ActiveDir = ActiveDir { getActiveDir :: FsPath }
+
+activeDir :: SessionRoot -> ActiveDir
+activeDir (SessionRoot dir) = ActiveDir (dir </> mkFsPath ["active"])
 
 runPath :: SessionRoot -> RunNumber -> RunFsPaths
-runPath root = RunFsPaths (activeDir root)
+runPath root = RunFsPaths (getActiveDir (activeDir root))
 
 snapshotsDir :: SessionRoot -> FsPath
 snapshotsDir (SessionRoot dir) = dir </> mkFsPath ["snapshots"]
@@ -146,7 +149,7 @@ mkSnapshotName s
 -- | The file name for a table's write buffer blob file
 tableBlobPath :: SessionRoot -> Unique -> FsPath
 tableBlobPath session n =
-    activeDir session </> mkFsPath [show (uniqueToWord64 n)] <.> "wbblobs"
+    getActiveDir (activeDir session) </> mkFsPath [show (uniqueToWord64 n)] <.> "wbblobs"
 
 {-------------------------------------------------------------------------------
   Run paths

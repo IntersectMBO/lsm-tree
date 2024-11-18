@@ -660,14 +660,6 @@ retrieveBlobs (Internal.Session' (sesh :: Internal.Session m h)) refs =
 --
 -- * It is safe to concurrently make snapshots from any table, provided that
 --   the snapshot names are distinct (otherwise this would be a race).
---
--- TODO: this function currently has a temporary implementation until we have
--- proper snapshots. The temporary snapshot consists of a small file in the
--- snapshots directory that lists: (i) the runs that are used by a specific
--- snapshot, and (ii) its table configuration. We don't have to copy run files
--- as part of the snapshot because run files aren't (yet) deleted when runs are
--- closed. The write buffer is also persisted to disk as part of the snapshot,
--- but the original table remains unchanged.
 createSnapshot :: forall m k v blob.
      ( IOLike m
      , Common.Labellable (k, v, blob)
@@ -676,7 +668,7 @@ createSnapshot :: forall m k v blob.
   -> Table m k v blob
   -> m ()
 createSnapshot snap (Internal.NormalTable t) =
-    void $ Internal.createSnapshot const snap label Internal.SnapNormalTable t
+    Internal.createSnapshot const snap label Internal.SnapNormalTable t
   where
     label = Internal.SnapshotLabel $ Common.makeSnapshotLabel (Proxy @(k, v, blob))
 
@@ -704,9 +696,6 @@ createSnapshot snap (Internal.NormalTable t) =
 --   'createSnapshot' "intTable" t
 --   'openSnapshot' \@IO \@Bool \@Bool \@Bool session "intTable"
 -- @
---
--- TODO: this function currently has a temporary implementation until we have
--- proper snapshots. See 'createSnapshot'.
 openSnapshot :: forall m k v blob.
      ( IOLike m
      , Common.Labellable (k, v, blob)

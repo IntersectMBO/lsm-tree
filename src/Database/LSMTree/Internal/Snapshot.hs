@@ -1,107 +1,57 @@
 module Database.LSMTree.Internal.Snapshot (
-    -- * Versioning
-    SnapshotVersion (..)
-  , prettySnapshotVersion
-  , currentSnapshotVersion
     -- * Snapshot metadata
-  , SnapshotMetaData (..)
+    SnapshotMetaData (..)
   , SnapshotLabel (..)
   , SnapshotTableType (..)
-  , writeFileSnapshotMetaData
-  , readFileSnapshotMetaData
-  , encodeSnapshotMetaData
-  , decodeSnapshotMetaData
-    -- * Snapshot format
-  , numSnapRuns
-  , SnapLevels
+    -- * Levels snapshot format
+  , SnapLevels (..)
   , SnapLevel (..)
   , SnapIncomingRun (..)
   , UnspentCredits (..)
   , SnapMergingRunState (..)
   , SpentCredits (..)
-    -- * Creating snapshots
-  , snapLevels
-    -- * Opening snapshots
-  , openLevels
-    -- * Encoding and decoding
-  , Encode (..)
-  , Decode (..)
-  , DecodeVersioned (..)
-  , Versioned (..)
+    -- * Conversion to levels snapshot format
+  , toSnapLevels
+    -- * Runs
+  , snapshotRuns
+  , openRuns
+    -- * Opening from levels snapshot format
+  , fromSnapLevels
+    -- * Hard links
+  , hardLinkRunFiles
   ) where
 
-import           Codec.CBOR.Decoding
-import           Codec.CBOR.Encoding
-import           Codec.CBOR.Read
-import           Codec.CBOR.Write
 import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Concurrent.Class.MonadSTM (MonadSTM)
-import           Control.Monad (void, when)
+import           Control.Monad (void)
 import           Control.Monad.Class.MonadST (MonadST)
-import           Control.Monad.Class.MonadThrow (MonadMask, MonadThrow (..))
+import           Control.Monad.Class.MonadThrow (MonadMask, MonadThrow)
 import           Control.Monad.Fix (MonadFix)
 import           Control.Monad.Primitive (PrimMonad)
 import           Control.TempRegistry
-import           Data.Bifunctor
-import qualified Data.ByteString.Builder as BSB
-import qualified Data.ByteString.Char8 as BSC
-import           Data.ByteString.Lazy (ByteString)
-import qualified Data.ByteString.Lazy as BSL
+import           Data.Foldable (sequenceA_)
 import           Data.Primitive (readMutVar)
 import           Data.Primitive.PrimVar
 import           Data.Text (Text)
+import           Data.Traversable (for)
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Config
-import           Database.LSMTree.Internal.CRC32C
-import qualified Database.LSMTree.Internal.CRC32C as FS
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.MergeSchedule
-import           Database.LSMTree.Internal.Paths (SessionRoot)
-import qualified Database.LSMTree.Internal.Paths as Paths
-import           Database.LSMTree.Internal.Run (ChecksumError (..), Run)
+import           Database.LSMTree.Internal.Paths (ActiveDir (..),
+                     NamedSnapshotDir (..), RunFsPaths (..), pathsForRunFiles,
+                     runChecksumsPath)
+import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.UniqCounter (UniqCounter,
                      incrUniqCounter, uniqueToRunNumber)
 import qualified System.FS.API as FS
-import           System.FS.API (FsPath, HasFS)
+import           System.FS.API (HasFS)
 import qualified System.FS.API.Lazy as FS
 import           System.FS.BlockIO.API (HasBlockIO)
-import           Text.Printf
-
-{-------------------------------------------------------------------------------
-  Versioning
--------------------------------------------------------------------------------}
-
--- | The version of a snapshot.
---
--- A snapshot format version is a number. Version numbers are consecutive and
--- increasing. A single release of the library may support several older
--- snapshot format versions, and thereby provide backwards compatibility.
--- Support for old versions is not guaranteed indefinitely, but backwards
--- compatibility is guaranteed for at least the previous version, and preferably
--- for more. Forwards compatibility is not provided at all: snapshots with a
--- later version than the current version for the library release will always
--- fail.
-data SnapshotVersion = V0
-  deriving stock (Show, Eq)
-
--- >>> prettySnapshotVersion currentSnapshotVersion
--- "v0"
-prettySnapshotVersion :: SnapshotVersion -> String
-prettySnapshotVersion V0 = "v0"
-
--- >>> currentSnapshotVersion
--- V0
-currentSnapshotVersion :: SnapshotVersion
-currentSnapshotVersion = V0
-
-isCompatible :: SnapshotVersion -> Either String ()
-isCompatible otherVersion = do
-    case ( currentSnapshotVersion, otherVersion ) of
-      (V0, V0) -> Right ()
 
 {-------------------------------------------------------------------------------
   Snapshot metadata
@@ -124,7 +74,7 @@ data SnapshotMetaData = SnapshotMetaData {
     -- key\/value\/blob type.
     --
     -- One could argue that the 'SnapshotName' could be used to to hold this
-    -- information, but the file name of snapshot meta data is not guarded by a
+    -- information, but the file name of snapshot metadata is not guarded by a
     -- checksum, wherease the contents of the file are. Therefore using the
     -- 'SnapshotLabel' is safer.
     snapMetaLabel     :: !SnapshotLabel
@@ -139,94 +89,27 @@ data SnapshotMetaData = SnapshotMetaData {
     -- opened: see 'TableConfigOverride'.
   , snapMetaConfig    :: !TableConfig
     -- | The shape of the LSM tree.
-  , snapMetaLevels    :: !SnapLevels
+  , snapMetaLevels    :: !(SnapLevels RunNumber)
   }
   deriving stock (Show, Eq)
-
--- | Encode 'SnapshotMetaData' and write it to 'SnapshotMetaDataFile'.
-writeFileSnapshotMetaData ::
-     MonadThrow m
-  => HasFS m h
-  -> FsPath -- ^ Target file for snapshot metadata
-  -> FsPath -- ^ Target file for checksum
-  -> SnapshotMetaData
-  -> m ()
-writeFileSnapshotMetaData hfs contentPath checksumPath snapMetaData = do
-    (_, checksum) <-
-      FS.withFile hfs contentPath (FS.WriteMode FS.MustBeNew) $ \h ->
-        hPutAllChunksCRC32C hfs h (encodeSnapshotMetaData snapMetaData) initialCRC32C
-    FS.withFile hfs checksumPath (FS.WriteMode FS.MustBeNew) $ \h ->
-      void $ FS.hPutAll hfs h $ encodeChecksum checksum
-
--- | Read from 'SnapshotMetaDataFile' and attempt to decode it to
--- 'SnapshotMetaData'.
-readFileSnapshotMetaData ::
-     MonadThrow m
-  => HasFS m h
-  -> FsPath -- ^ Source file for snapshot metadata
-  -> FsPath -- ^ Source file for checksum
-  -> m (Either DeserialiseFailure SnapshotMetaData)
-readFileSnapshotMetaData hfs contentPath checksumPath = do
-    !bsc <-
-      FS.withFile hfs checksumPath FS.ReadMode $ \h ->
-        BSC.toStrict <$> FS.hGetAll hfs h
-
-    case decodeChecksum bsc of
-      Left failure -> pure (Left failure)
-      Right expectedChecksum -> do
-
-        (lbs, actualChecksum) <- FS.withFile hfs contentPath FS.ReadMode $ \h -> do
-          n <- FS.hGetSize hfs h
-          FS.hGetExactlyCRC32C hfs h n initialCRC32C
-
-        when (expectedChecksum /= actualChecksum) $
-          throwIO $ ChecksumError contentPath expectedChecksum actualChecksum
-
-        pure $ decodeSnapshotMetaData lbs
-
-encodeChecksum :: CRC32C -> BSL.ByteString
-encodeChecksum (CRC32C x) = BSB.toLazyByteString (BSB.word32HexFixed x)
-
-decodeChecksum :: BSC.ByteString -> Either DeserialiseFailure CRC32C
-decodeChecksum bsc = do
-    when (BSC.length bsc /= 8) $ do
-      let msg = "decodeChecksum: expected 8 bytes, but found "
-              <> (show (BSC.length bsc))
-      Left $ DeserialiseFailure 0 msg
-    let !x = fromIntegral (hexdigitsToInt bsc)
-    pure $! CRC32C x
-
-encodeSnapshotMetaData :: SnapshotMetaData -> ByteString
-encodeSnapshotMetaData = toLazyByteString . encode . Versioned
-
-decodeSnapshotMetaData :: ByteString -> Either DeserialiseFailure SnapshotMetaData
-decodeSnapshotMetaData bs = second (getVersioned . snd) (deserialiseFromBytes decode bs)
 
 {-------------------------------------------------------------------------------
   Levels snapshot format
 -------------------------------------------------------------------------------}
 
-numSnapRuns :: SnapLevels -> Int
-numSnapRuns sl = V.sum $ V.map go1 sl
-  where
-    go1 (SnapLevel sir srr) = go2 sir + V.length srr
-    go2 (SnapMergingRun _ _ _ _ _ smrs) = go3 smrs
-    go2 (SnapSingleRun _rn)             = 1
-    go3 (SnapCompletedMerge _rn)   = 1
-    go3 (SnapOngoingMerge rns _ _) = V.length rns
+newtype SnapLevels r = SnapLevels { getSnapLevels :: V.Vector (SnapLevel r) }
+  deriving stock (Show, Eq, Functor, Foldable, Traversable)
 
-type SnapLevels = V.Vector SnapLevel
-
-data SnapLevel = SnapLevel {
-    snapIncoming     :: !SnapIncomingRun
-  , snapResidentRuns :: !(V.Vector RunNumber)
+data SnapLevel r = SnapLevel {
+    snapIncoming     :: !(SnapIncomingRun r)
+  , snapResidentRuns :: !(V.Vector r)
   }
-  deriving stock (Show, Eq)
+  deriving stock (Show, Eq, Functor, Foldable, Traversable)
 
-data SnapIncomingRun =
-    SnapMergingRun !MergePolicyForLevel !NumRuns !NumEntries !UnspentCredits !MergeKnownCompleted !SnapMergingRunState
-  | SnapSingleRun !RunNumber
-  deriving stock (Show, Eq)
+data SnapIncomingRun r =
+    SnapMergingRun !MergePolicyForLevel !NumRuns !NumEntries !UnspentCredits !MergeKnownCompleted !(SnapMergingRunState r)
+  | SnapSingleRun !r
+  deriving stock (Show, Eq, Functor, Foldable, Traversable)
 
 -- | The total number of unspent credits. This total is used in combination with
 -- 'SpentCredits' on snapshot load to restore merging work that was lost when
@@ -234,10 +117,10 @@ data SnapIncomingRun =
 newtype UnspentCredits = UnspentCredits { getUnspentCredits :: Int }
   deriving stock (Show, Eq, Read)
 
-data SnapMergingRunState =
-    SnapCompletedMerge !RunNumber
-  | SnapOngoingMerge !(V.Vector RunNumber) !SpentCredits !Merge.Level
-  deriving stock (Show, Eq)
+data SnapMergingRunState r =
+    SnapCompletedMerge !r
+  | SnapOngoingMerge !(V.Vector r) !SpentCredits !Merge.Level
+  deriving stock (Show, Eq, Functor, Foldable, Traversable)
 
 -- | The total number of spent credits. This total is used in combination with
 -- 'UnspentCedits' on snapshot load to restore merging work that was lost when
@@ -246,38 +129,38 @@ newtype SpentCredits = SpentCredits { getSpentCredits :: Int }
   deriving stock (Show, Eq, Read)
 
 {-------------------------------------------------------------------------------
-  Conversion to snapshot format
+  Conversion to levels snapshot format
 -------------------------------------------------------------------------------}
 
-{-# SPECIALISE snapLevels :: Levels IO h -> IO SnapLevels #-}
-snapLevels ::
+{-# SPECIALISE toSnapLevels :: Levels IO h -> IO (SnapLevels (Run IO h)) #-}
+toSnapLevels ::
      (PrimMonad m, MonadMVar m)
   => Levels m h
-  -> m SnapLevels
-snapLevels = V.mapM snapLevel
+  -> m (SnapLevels (Run m h))
+toSnapLevels levels = SnapLevels <$> V.mapM toSnapLevel levels
 
-{-# SPECIALISE snapLevel :: Level IO h -> IO SnapLevel #-}
-snapLevel ::
+{-# SPECIALISE toSnapLevel :: Level IO h -> IO (SnapLevel (Run IO h)) #-}
+toSnapLevel ::
      (PrimMonad m, MonadMVar m)
   => Level m h
-  -> m SnapLevel
-snapLevel Level{..} = do
-    sir <- snapIncomingRun incomingRun
-    pure (SnapLevel sir (V.map runNumber residentRuns))
+  -> m (SnapLevel (Run m h))
+toSnapLevel Level{..} = do
+    sir <- toSnapIncomingRun incomingRun
+    pure (SnapLevel sir residentRuns)
 
-{-# SPECIALISE snapIncomingRun :: IncomingRun IO h -> IO SnapIncomingRun #-}
-snapIncomingRun ::
+{-# SPECIALISE toSnapIncomingRun :: IncomingRun IO h -> IO (SnapIncomingRun (Run IO h)) #-}
+toSnapIncomingRun ::
      (PrimMonad m, MonadMVar m)
   => IncomingRun m h
-  -> m SnapIncomingRun
-snapIncomingRun (Single r) = pure (SnapSingleRun (runNumber r))
+  -> m (SnapIncomingRun (Run m h))
+toSnapIncomingRun (Single r) = pure (SnapSingleRun r)
 -- We need to know how many credits were yet unspent so we can restore merge
 -- work on snapshot load. No need to snapshot the contents of totalStepsVar
 -- here, since we still start counting from 0 again when loading the snapshot.
-snapIncomingRun (Merging MergingRun {..}) = do
+toSnapIncomingRun (Merging MergingRun {..}) = do
     unspentCredits <- readPrimVar (getUnspentCreditsVar mergeUnspentCredits)
     mergeCompletedCache <- readMutVar mergeKnownCompleted
-    smrs <- withMVar mergeState $ \mrs -> snapMergingRunState mrs
+    smrs <- withMVar mergeState $ \mrs -> toSnapMergingRunState mrs
     pure $
       SnapMergingRun
         mergePolicy
@@ -287,55 +170,122 @@ snapIncomingRun (Merging MergingRun {..}) = do
         mergeCompletedCache
         smrs
 
-{-# SPECIALISE snapMergingRunState :: MergingRunState IO h -> IO SnapMergingRunState #-}
-snapMergingRunState ::
+{-# SPECIALISE toSnapMergingRunState ::
+     MergingRunState IO h
+  -> IO (SnapMergingRunState (Run IO h)) #-}
+toSnapMergingRunState ::
      PrimMonad m
   => MergingRunState m h
-  -> m SnapMergingRunState
-snapMergingRunState (CompletedMerge r) = pure (SnapCompletedMerge (runNumber r))
+  -> m (SnapMergingRunState (Run m h))
+toSnapMergingRunState (CompletedMerge r) = pure (SnapCompletedMerge r)
 -- We need to know how many credits were spent already so we can restore merge
 -- work on snapshot load.
-snapMergingRunState (OngoingMerge rs (SpentCreditsVar spentCreditsVar) m) = do
+toSnapMergingRunState (OngoingMerge rs (SpentCreditsVar spentCreditsVar) m) = do
     spentCredits <- readPrimVar spentCreditsVar
-    pure (SnapOngoingMerge (V.map runNumber rs) (SpentCredits spentCredits) (Merge.mergeLevel m))
-
-runNumber :: Run m h -> RunNumber
-runNumber r = Paths.runNumber (Run.runRunFsPaths r)
+    pure (SnapOngoingMerge rs (SpentCredits spentCredits) (Merge.mergeLevel m))
 
 {-------------------------------------------------------------------------------
-  Opening from snapshot format
+  Runs
 -------------------------------------------------------------------------------}
 
-{-# SPECIALISE openLevels ::
+{-# SPECIALISE snapshotRuns ::
+     TempRegistry IO
+  -> NamedSnapshotDir
+  -> SnapLevels (Run IO h)
+  -> IO (SnapLevels RunNumber) #-}
+-- | @'snapshotRuns' _ targetDir levels@ creates hard links for all run files
+-- associated with the runs in @levels@, and puts the new directory entries in
+-- the @targetDir@ directory.
+snapshotRuns ::
+     (MonadMask m, MonadMVar m)
+  => TempRegistry m
+  -> NamedSnapshotDir
+  -> SnapLevels (Run m h)
+  -> m (SnapLevels RunNumber)
+snapshotRuns reg (NamedSnapshotDir targetDir) levels = for levels $ \run -> do
+    let sourcePaths = Run.runRunFsPaths run
+    let targetPaths = sourcePaths { runDir = targetDir }
+    hardLinkRunFiles reg (Run.runHasFS run) (Run.runHasBlockIO run) sourcePaths targetPaths
+    pure (runNumber targetPaths)
+
+{-# SPECIALISE openRuns ::
      TempRegistry IO
   -> HasFS IO h
   -> HasBlockIO IO h
   -> TableConfig
   -> UniqCounter IO
-  -> SessionRoot
+  -> NamedSnapshotDir
+  -> ActiveDir
+  -> SnapLevels RunNumber
+  -> IO (SnapLevels (Run IO h)) #-}
+-- | @'openRuns' _ _ _ _ uniqCounter sourceDir targetDir levels@ takes all run
+-- files that are referenced by @levels@, and hard links them from @sourceDir@
+-- into @targetDir@ with new, unique names (using @uniqCounter@). Each set of
+-- (hard linked) files that represents a run is opened and verified, returning
+-- 'Run's as a result.
+openRuns ::
+     (MonadFix m, MonadMask m, MonadSTM m, MonadST m, MonadMVar m)
+  => TempRegistry m
+  -> HasFS m h
+  -> HasBlockIO m h
+  -> TableConfig
+  -> UniqCounter m
+  -> NamedSnapshotDir
+  -> ActiveDir
+  -> SnapLevels RunNumber
+  -> m (SnapLevels (Run m h))
+openRuns
+  reg hfs hbio TableConfig{..} uc
+  (NamedSnapshotDir sourceDir) (ActiveDir targetDir) (SnapLevels levels) = do
+    levels' <-
+      V.iforM levels $ \i level ->
+        let ln = LevelNo (i+1) in
+        let caching = diskCachePolicyForLevel confDiskCachePolicy ln in
+        for level $ \runNum -> do
+          let sourcePaths = RunFsPaths sourceDir runNum
+          runNum' <- uniqueToRunNumber <$> incrUniqCounter uc
+          let targetPaths = RunFsPaths targetDir runNum'
+          hardLinkRunFiles reg hfs hbio sourcePaths targetPaths
+
+          allocateTemp reg
+            (Run.openFromDisk hfs hbio caching targetPaths)
+            Run.removeReference
+    pure (SnapLevels levels')
+
+{-------------------------------------------------------------------------------
+  Opening from levels snapshot format
+-------------------------------------------------------------------------------}
+
+{-# SPECIALISE fromSnapLevels ::
+     TempRegistry IO
+  -> HasFS IO h
+  -> HasBlockIO IO h
+  -> TableConfig
+  -> UniqCounter IO
   -> ResolveSerialisedValue
-  -> SnapLevels
+  -> ActiveDir
+  -> SnapLevels (Run IO h)
   -> IO (Levels IO h)
   #-}
-openLevels ::
+fromSnapLevels ::
      forall m h. (MonadFix m, MonadMask m, MonadMVar m, MonadSTM m, MonadST m)
   => TempRegistry m
   -> HasFS m h
   -> HasBlockIO m h
   -> TableConfig
   -> UniqCounter m
-  -> SessionRoot
   -> ResolveSerialisedValue
-  -> SnapLevels
+  -> ActiveDir
+  -> SnapLevels (Run m h)
   -> m (Levels m h)
-openLevels reg hfs hbio conf@TableConfig{..} uc sessionRoot resolve levels =
-    V.iforM levels $ \i -> openLevel (LevelNo (i+1))
+fromSnapLevels reg hfs hbio conf@TableConfig{..} uc resolve dir (SnapLevels levels) =
+    V.iforM levels $ \i -> fromSnapLevel (LevelNo (i+1))
   where
-    mkPath = Paths.RunFsPaths (Paths.activeDir sessionRoot)
+    mkPath = RunFsPaths (getActiveDir dir)
 
-    openLevel :: LevelNo -> SnapLevel -> m (Level m h)
-    openLevel ln SnapLevel{..} = do
-        (unspentCreditsMay, spentCreditsMay, incomingRun) <- openIncomingRun snapIncoming
+    fromSnapLevel :: LevelNo -> SnapLevel (Run m h) -> m (Level m h)
+    fromSnapLevel ln SnapLevel{..} = do
+        (unspentCreditsMay, spentCreditsMay, incomingRun) <- fromSnapIncomingRun snapIncoming
         -- When a snapshot is created, merge progress is lost, so we have to
         -- redo merging work here. UnspentCredits and SpentCredits track how
         -- many credits were supplied before the snapshot was taken.
@@ -351,481 +301,90 @@ openLevels reg hfs hbio conf@TableConfig{..} uc sessionRoot resolve levels =
           (ScaledCredits c)
           (creditThresholdForLevel conf ln)
           incomingRun
-        residentRuns <- V.forM snapResidentRuns $ \rn ->
-          allocateTemp reg
-            (Run.openFromDisk hfs hbio caching (mkPath rn))
-            Run.removeReference
-        pure Level{..}
+        pure Level{
+            residentRuns = snapResidentRuns
+          , ..
+          }
       where
         caching = diskCachePolicyForLevel confDiskCachePolicy ln
         alloc = bloomFilterAllocForLevel conf ln
 
-        openIncomingRun :: SnapIncomingRun -> m (Maybe UnspentCredits, Maybe SpentCredits, IncomingRun m h)
-        openIncomingRun (SnapMergingRun mpfl nr ne unspentCredits knownCompleted smrs) = do
-            (spentCreditsMay, mrs) <- openMergingRunState smrs
+        fromSnapIncomingRun :: SnapIncomingRun (Run m h) -> m (Maybe UnspentCredits, Maybe SpentCredits, IncomingRun m h)
+        fromSnapIncomingRun (SnapMergingRun mpfl nr ne unspentCredits knownCompleted smrs) = do
+            (spentCreditsMay, mrs) <- fromSnapMergingRunState smrs
             (Just unspentCredits, spentCreditsMay,) . Merging <$>
               newMergingRun mpfl nr ne knownCompleted mrs
-        openIncomingRun (SnapSingleRun rn) =
-            (Nothing, Nothing,) . Single <$>
-              allocateTemp reg
-                (Run.openFromDisk hfs hbio caching (mkPath rn))
-                Run.removeReference
+        fromSnapIncomingRun (SnapSingleRun run) =
+            pure (Nothing, Nothing, Single run)
 
-        openMergingRunState :: SnapMergingRunState -> m (Maybe SpentCredits, MergingRunState m h)
-        openMergingRunState (SnapCompletedMerge rn) =
-            (Nothing,) . CompletedMerge <$>
-              allocateTemp reg
-                (Run.openFromDisk hfs hbio caching (mkPath rn))
-                Run.removeReference
-        openMergingRunState (SnapOngoingMerge rns spentCredits mergeLast) = do
-            rs <- V.forM rns $ \rn ->
-              allocateTemp reg
-                (Run.openFromDisk hfs hbio caching ((mkPath rn)))
-                Run.removeReference
+        fromSnapMergingRunState :: SnapMergingRunState (Run m h) -> m (Maybe SpentCredits, MergingRunState m h)
+        fromSnapMergingRunState (SnapCompletedMerge run) =
+            pure (Nothing, CompletedMerge run)
+        fromSnapMergingRunState (SnapOngoingMerge runs spentCredits mergeLast) = do
             -- Initialse the variable with 0. Credits will be re-supplied later,
             -- which will ensure that this variable is updated.
             spentCreditsVar <- SpentCreditsVar <$> newPrimVar 0
             rn <- uniqueToRunNumber <$> incrUniqCounter uc
             mergeMaybe <- allocateMaybeTemp reg
-              (Merge.new hfs hbio caching alloc mergeLast resolve (mkPath rn) rs)
+              (Merge.new hfs hbio caching alloc mergeLast resolve (mkPath rn) runs)
               Merge.abort
             case mergeMaybe of
               Nothing -> error "openLevels: merges can not be empty"
-              Just m  -> pure (Just spentCredits, OngoingMerge rs spentCreditsVar m)
+              Just m  -> pure (Just spentCredits, OngoingMerge runs spentCreditsVar m)
 
 {-------------------------------------------------------------------------------
-  Encoding and decoding
+  Hard links
 -------------------------------------------------------------------------------}
 
-class Encode a where
-  encode :: a -> Encoding
+{-# SPECIALISE hardLinkRunFiles ::
+     TempRegistry IO
+  -> HasFS IO h
+  -> HasBlockIO IO h
+  -> RunFsPaths
+  -> RunFsPaths
+  -> IO () #-}
+-- | @'hardLinkRunFiles' _hfs hbio sourcePaths targetPaths@ creates a hard link
+-- for each @sourcePaths@ path using the corresponding @targetPaths@ path as the
+-- name for the new directory entry.
+hardLinkRunFiles ::
+     (MonadMask m, MonadMVar m)
+  => TempRegistry m
+  -> HasFS m h
+  -> HasBlockIO m h
+  -> RunFsPaths
+  -> RunFsPaths
+  -> m ()
+hardLinkRunFiles reg hfs hbio sourceRunFsPaths targetRunFsPaths = do
+    let sourcePaths = pathsForRunFiles sourceRunFsPaths
+        targetPaths = pathsForRunFiles targetRunFsPaths
+    sequenceA_ (hardLinkTemp <$> sourcePaths <*> targetPaths)
+    hardLink hfs hbio (runChecksumsPath sourceRunFsPaths) (runChecksumsPath targetRunFsPaths)
+  where
+    hardLinkTemp sourcePath targetPath =
+        allocateTemp reg
+          (hardLink hfs hbio sourcePath targetPath)
+          (\_ -> FS.removeFile hfs targetPath)
 
--- | Decoder that is not parameterised by a 'SnapshotVersion'.
+{-# SPECIALISE hardLink ::
+     HasFS IO h
+  -> HasBlockIO IO h
+  -> FS.FsPath
+  -> FS.FsPath
+  -> IO () #-}
+-- | @'hardLink' hfs hbio source target@ creates a hard link for the @source@
+-- path at the @target@ path.
 --
--- Used only for 'SnapshotVersion' and 'Versioned', which live outside the
--- 'SnapshotMetaData' type hierachy.
-class Decode a where
-  decode :: Decoder s a
-
--- | Decoder parameterised by a 'SnapshotVersion'.
---
--- Used for every type in the 'SnapshotMetaData' type hierarchy.
-class DecodeVersioned a where
-  decodeVersioned :: SnapshotVersion -> Decoder s a
-
-newtype Versioned a = Versioned { getVersioned :: a }
-  deriving stock (Show, Eq)
-
-instance Encode a => Encode (Versioned a) where
-  encode (Versioned x) =
-       encodeListLen 2
-    <> encode currentSnapshotVersion
-    <> encode x
-
--- | Decodes a 'SnapshotVersion' first, and then passes that into the versioned
--- decoder for @a@.
-instance DecodeVersioned a => Decode (Versioned a) where
-  decode = do
-      _ <- decodeListLenOf 2
-      version <- decode
-      case isCompatible version of
-        Right () -> pure ()
-        Left errMsg ->
-          fail $
-            printf "Incompatible snapshot format version found. Version %s \
-                   \is not backwards compatible with version %s : %s"
-                   (prettySnapshotVersion currentSnapshotVersion)
-                   (prettySnapshotVersion version)
-                   errMsg
-      Versioned <$> decodeVersioned version
-
-{-------------------------------------------------------------------------------
-  Encoding and decoding: Versioning
--------------------------------------------------------------------------------}
-
-instance Encode SnapshotVersion where
-  encode ver =
-         encodeListLen 1
-      <> case ver of
-           V0 -> encodeWord 0
-
-instance Decode SnapshotVersion where
-  decode = do
-      _ <- decodeListLenOf 1
-      ver <- decodeWord
-      case ver of
-        0 -> pure V0
-        _ -> fail ("Unknown snapshot format version number: " <>  show ver)
-
-{-------------------------------------------------------------------------------
-  Encoding and decoding: SnapshotMetaData
--------------------------------------------------------------------------------}
-
--- SnapshotMetaData
-
-instance Encode SnapshotMetaData where
-  encode (SnapshotMetaData label tableType config levels) =
-         encodeListLen 4
-      <> encode label
-      <> encode tableType
-      <> encode config
-      <> encode levels
-
-instance DecodeVersioned SnapshotMetaData where
-  decodeVersioned ver@V0 = do
-      _ <- decodeListLenOf 4
-      SnapshotMetaData
-        <$> decodeVersioned ver <*> decodeVersioned ver
-        <*> decodeVersioned ver <*> decodeVersioned ver
-
--- SnapshotLabel
-
-instance Encode SnapshotLabel where
-  encode (SnapshotLabel s) = encodeString s
-
-instance DecodeVersioned SnapshotLabel where
-  decodeVersioned V0 = SnapshotLabel <$> decodeString
-
--- TableType
-
-instance Encode SnapshotTableType where
-  encode SnapNormalTable   = encodeWord 0
-  encode SnapMonoidalTable = encodeWord 1
-
-instance DecodeVersioned SnapshotTableType where
-  decodeVersioned V0 = do
-      tag <- decodeWord
-      case tag of
-        0 -> pure SnapNormalTable
-        1 -> pure SnapMonoidalTable
-        _ -> fail ("[SnapshotTableType] Unexpected tag: " <> show tag)
-
-{-------------------------------------------------------------------------------
-  Encoding and decoding: TableConfig
--------------------------------------------------------------------------------}
-
--- TableConfig
-
-instance Encode TableConfig where
-  encode config =
-         encodeListLen 7
-      <> encode mergePolicy
-      <> encode sizeRatio
-      <> encode writeBufferAlloc
-      <> encode bloomFilterAlloc
-      <> encode fencePointerIndex
-      <> encode diskCachePolicy
-      <> encode mergeSchedule
-    where
-      TableConfig
-        mergePolicy
-        sizeRatio
-        writeBufferAlloc
-        bloomFilterAlloc
-        fencePointerIndex
-        diskCachePolicy
-        mergeSchedule
-        = config
-
-instance DecodeVersioned TableConfig where
-  decodeVersioned v@V0 = do
-      _ <- decodeListLenOf 7
-      TableConfig
-        <$> decodeVersioned v <*> decodeVersioned v <*> decodeVersioned v
-        <*> decodeVersioned v <*> decodeVersioned v <*> decodeVersioned v
-        <*> decodeVersioned v
-
--- MergePolicy
-
-instance Encode MergePolicy where
-  encode MergePolicyLazyLevelling = encodeWord 0
-
-instance DecodeVersioned MergePolicy where
-  decodeVersioned V0 =  do
-      tag <- decodeWord
-      case tag of
-        0 -> pure MergePolicyLazyLevelling
-        _ -> fail ("[MergePolicy] Unexpected tag: " <> show tag)
-
--- SizeRatio
-
-instance Encode SizeRatio where
-  encode Four = encodeInt 4
-
-instance DecodeVersioned SizeRatio where
-  decodeVersioned V0 = do
-      x <- decodeWord64
-      case x of
-        4 -> pure Four
-        _ -> fail ("Expected 4, but found " <> show x)
-
--- WriteBufferAlloc
-
-instance Encode WriteBufferAlloc where
-  encode (AllocNumEntries numEntries) =
-         encodeListLen 2
-      <> encodeWord 0
-      <> encode numEntries
-
-instance DecodeVersioned WriteBufferAlloc where
-  decodeVersioned v@V0 = do
-      _ <- decodeListLenOf 2
-      tag <- decodeWord
-      case tag of
-        0 -> AllocNumEntries <$> decodeVersioned v
-        _ -> fail ("[WriteBufferAlloc] Unexpected tag: " <> show tag)
-
--- NumEntries
-
-instance Encode NumEntries where
-  encode (NumEntries x) = encodeInt x
-
-instance DecodeVersioned NumEntries where
-  decodeVersioned V0 = NumEntries <$> decodeInt
-
--- BloomFilterAlloc
-
-instance Encode BloomFilterAlloc where
-  encode (AllocFixed x) =
-         encodeListLen 2
-      <> encodeWord 0
-      <> encodeWord64 x
-  encode (AllocRequestFPR x) =
-         encodeListLen 2
-      <> encodeWord 1
-      <> encodeDouble x
-  encode (AllocMonkey numBytes numEntries) =
-         encodeListLen 3
-      <> encodeWord 2
-      <> encodeWord64 numBytes
-      <> encode numEntries
-
-instance DecodeVersioned BloomFilterAlloc where
-  decodeVersioned v@V0 = do
-      n <- decodeListLen
-      tag <- decodeWord
-      case (n, tag) of
-        (2, 0) -> AllocFixed <$> decodeWord64
-        (2, 1) -> AllocRequestFPR <$> decodeDouble
-        (3, 2) -> AllocMonkey <$> decodeWord64 <*> decodeVersioned v
-        _ -> fail ("[BloomFilterAlloc] Unexpected combination of list length and tag: " <> show (n, tag))
-
--- FencePointerIndex
-
-instance Encode FencePointerIndex where
-  encode CompactIndex  = encodeWord 0
-  encode OrdinaryIndex = encodeWord 1
-
-instance DecodeVersioned FencePointerIndex where
-   decodeVersioned V0 = do
-      tag <- decodeWord
-      case tag of
-        0 -> pure CompactIndex
-        1 -> pure OrdinaryIndex
-        _ -> fail ("[FencePointerIndex] Unexpected tag: " <> show tag)
-
--- DiskCachePolicy
-
-instance Encode DiskCachePolicy where
-  encode DiskCacheAll =
-         encodeListLen 1
-      <> encodeWord 0
-  encode (DiskCacheLevelsAtOrBelow x) =
-         encodeListLen 2
-      <> encodeWord 1
-      <> encodeInt x
-  encode DiskCacheNone =
-         encodeListLen 1
-      <> encodeWord 2
-
-instance DecodeVersioned DiskCachePolicy where
-  decodeVersioned V0 = do
-      n <- decodeListLen
-      tag <- decodeWord
-      case (n, tag) of
-        (1, 0) -> pure DiskCacheAll
-        (2, 1) -> DiskCacheLevelsAtOrBelow <$> decodeInt
-        (1, 2) -> pure DiskCacheNone
-        _ -> fail ("[DiskCachePolicy] Unexpected combination of list length and tag: " <> show (n, tag))
-
--- MergeSchedule
-
-instance Encode MergeSchedule where
-  encode OneShot     = encodeWord 0
-  encode Incremental = encodeWord 1
-
-instance DecodeVersioned MergeSchedule where
-  decodeVersioned V0 = do
-      tag <- decodeWord
-      case tag of
-        0 -> pure OneShot
-        1 -> pure Incremental
-        _ -> fail ("[MergeSchedule] Unexpected tag: " <> show tag)
-
-{-------------------------------------------------------------------------------
-  Encoding and decoding: SnapLevels
--------------------------------------------------------------------------------}
-
--- SnapLevels
-
-instance Encode SnapLevels where
-  encode levels =
-         encodeListLen (fromIntegral (V.length levels))
-      <> V.foldMap encode levels
-
-instance DecodeVersioned SnapLevels where
-  decodeVersioned v@V0 = do
-      n <- decodeListLen
-      V.replicateM n (decodeVersioned v)
-
--- SnapLevel
-
-instance Encode SnapLevel where
-  encode (SnapLevel incomingRuns residentRuns) =
-         encodeListLen 2
-      <> encode incomingRuns
-      <> encode residentRuns
-
-
-instance DecodeVersioned SnapLevel where
-  decodeVersioned v@V0 = do
-      _ <- decodeListLenOf 2
-      SnapLevel <$> decodeVersioned v <*> decodeVersioned v
-
--- Vector RunNumber
-
-instance Encode (V.Vector RunNumber) where
-  encode rns =
-         encodeListLen (fromIntegral (V.length rns))
-      <> V.foldMap encode rns
-
-instance DecodeVersioned (V.Vector RunNumber) where
-  decodeVersioned v@V0 = do
-      n <- decodeListLen
-      V.replicateM n (decodeVersioned v)
-
--- RunNumber
-
-instance Encode RunNumber where
-  encode (RunNumber x) = encodeWord64 x
-
-instance DecodeVersioned RunNumber where
-  decodeVersioned V0 = RunNumber <$> decodeWord64
-
--- SnapIncomingRun
-
-instance Encode SnapIncomingRun where
-  encode (SnapMergingRun mpfl nr ne uc mkc smrs) =
-       encodeListLen 7
-    <> encodeWord 0
-    <> encode mpfl
-    <> encode nr
-    <> encode ne
-    <> encode uc
-    <> encode mkc
-    <> encode smrs
-  encode (SnapSingleRun x) =
-       encodeListLen 2
-    <> encodeWord 1
-    <> encode x
-
-instance DecodeVersioned SnapIncomingRun where
-  decodeVersioned v@V0 = do
-      n <- decodeListLen
-      tag <- decodeWord
-      case (n, tag) of
-        (7, 0) -> SnapMergingRun <$>
-          decodeVersioned v <*> decodeVersioned v <*> decodeVersioned v <*>
-          decodeVersioned v <*> decodeVersioned v <*> decodeVersioned v
-        (2, 1) -> SnapSingleRun <$> decodeVersioned v
-        _ -> fail ("[SnapMergingRun] Unexpected combination of list length and tag: " <> show (n, tag))
-
--- NumRuns
-
-instance Encode NumRuns where
-  encode (NumRuns x) = encodeInt x
-
-instance DecodeVersioned NumRuns where
-  decodeVersioned V0 = NumRuns <$> decodeInt
-
--- MergePolicyForLevel
-
-instance Encode MergePolicyForLevel where
-  encode LevelTiering   = encodeWord 0
-  encode LevelLevelling = encodeWord 1
-
-instance DecodeVersioned MergePolicyForLevel where
-  decodeVersioned V0 = do
-      tag <- decodeWord
-      case tag of
-        0 -> pure LevelTiering
-        1 -> pure LevelLevelling
-        _ -> fail ("[MergePolicyForLevel] Unexpected tag: " <> show tag)
-
--- UnspentCredits
-
-instance Encode UnspentCredits where
-  encode (UnspentCredits x) = encodeInt x
-
-instance DecodeVersioned UnspentCredits where
-  decodeVersioned V0 = UnspentCredits <$> decodeInt
-
--- MergeKnownCompleted
-
-instance Encode MergeKnownCompleted where
-  encode MergeKnownCompleted = encodeWord 0
-  encode MergeMaybeCompleted = encodeWord 1
-
-instance DecodeVersioned MergeKnownCompleted where
-  decodeVersioned V0 = do
-      tag <- decodeWord
-      case tag of
-        0 -> pure MergeKnownCompleted
-        1 -> pure MergeMaybeCompleted
-        _ -> fail ("[MergeKnownCompleted] Unexpected tag: " <> show tag)
-
--- SnapMergingRunState
-
-instance Encode SnapMergingRunState where
-  encode (SnapCompletedMerge x) =
-         encodeListLen 2
-      <> encodeWord 0
-      <> encode x
-  encode (SnapOngoingMerge rs tc l) =
-         encodeListLen 4
-      <> encodeWord 1
-      <> encode rs
-      <> encode tc
-      <> encode l
-
-instance DecodeVersioned SnapMergingRunState where
-  decodeVersioned v@V0 = do
-      n <- decodeListLen
-      tag <- decodeWord
-      case (n, tag) of
-        (2, 0) -> SnapCompletedMerge <$> decodeVersioned v
-        (4, 1) -> SnapOngoingMerge <$>
-          decodeVersioned v <*> decodeVersioned v <*> decodeVersioned v
-        _ -> fail ("[SnapMergingRunState] Unexpected combination of list length and tag: " <> show (n, tag))
-
--- SpentCredits
-
-instance Encode SpentCredits where
-  encode (SpentCredits x) = encodeInt x
-
-instance DecodeVersioned SpentCredits where
-  decodeVersioned V0 = SpentCredits <$> decodeInt
-
-  -- Merge.Level
-
-instance Encode Merge.Level where
-  encode Merge.MidLevel  = encodeWord 0
-  encode Merge.LastLevel = encodeWord 1
-
-instance DecodeVersioned Merge.Level where
-  decodeVersioned V0 = do
-      tag <- decodeWord
-      case tag of
-        0 -> pure Merge.MidLevel
-        1 -> pure Merge.LastLevel
-        _ -> fail ("[Merge.Level] Unexpected tag: " <> show tag)
+-- TODO: as a temporary implementation/hack, this copies file contents instead
+-- of creating hard links.
+hardLink :: MonadThrow m => HasFS m h -> HasBlockIO m h -> FS.FsPath -> FS.FsPath -> m ()
+hardLink hfs _hbio sourcePath targetPath =
+    FS.withFile hfs sourcePath FS.ReadMode $ \sourceHandle ->
+    FS.withFile hfs targetPath (FS.WriteMode FS.MustBeNew) $ \targetHandle -> do
+      -- TODO: this is obviously not creating any hard links, but until we have
+      -- functions to create hard links in HasBlockIO, this is the temporary
+      -- implementation/hack to "emulate" hard links.
+      --
+      -- This should /hopefully/ stream using lazy IO, though even if it does
+      -- not, it is only a temporary placeholder hack.
+      bs <- FS.hGetAll hfs sourceHandle
+      void $ FS.hPutAll hfs targetHandle bs

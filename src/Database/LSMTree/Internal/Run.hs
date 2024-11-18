@@ -21,6 +21,7 @@ module Database.LSMTree.Internal.Run (
   , fromWriteBuffer
   , RunDataCaching (..)
     -- * Snapshot
+  , FileFormatError (..)
   , ChecksumError (..)
   , openFromDisk
   ) where
@@ -135,25 +136,18 @@ mkWeakBlobRef Run{runBlobFile} blobspan =
 {-# SPECIALISE close ::
      Run IO h
   -> IO () #-}
--- | Close the files used in the run, but do not remove them from disk.
--- After calling this operation, the run must not be used anymore.
+-- | Close the files used in the run and remove them from disk. After calling
+-- this operation, the run must not be used anymore.
 --
--- TODO: Once snapshots are implemented, files should get removed, but for now
--- we want to be able to re-open closed runs from disk.
--- TODO: see openBlobFile DoNotRemoveFileOnClose. This can be dropped at the
--- same once when snapshots are implemented.
+-- TODO: exception safety
 close :: (MonadSTM m, MonadMask m, PrimMonad m) => Run m h -> m ()
 close Run {..} = do
-    -- TODO: removing files should drop them from the page cache, but until we
-    -- have proper snapshotting we are keeping the files around. Because of
-    -- this, we instruct the OS to drop all run-related files from the page
-    -- cache
-    FS.hDropCacheAll runHasBlockIO runKOpsFile
-    FS.hDropCacheAll runHasBlockIO (blobFileHandle runBlobFile)
-
     FS.hClose runHasFS runKOpsFile
-      `finally`
-         BlobFile.removeReference runBlobFile
+    BlobFile.removeReference runBlobFile
+    FS.removeFile runHasFS (runKOpsPath runRunFsPaths)
+    FS.removeFile runHasFS (runFilterPath runRunFsPaths)
+    FS.removeFile runHasFS (runIndexPath runRunFsPaths)
+    FS.removeFile runHasFS (runChecksumsPath runRunFsPaths)
 
 -- | Should this run cache key\/ops data in memory?
 data RunDataCaching = CacheRunData | NoCacheRunData
@@ -199,7 +193,6 @@ fromMutable runRunDataCaching refCount builder = do
       Builder.unsafeFinalise (runRunDataCaching == NoCacheRunData) builder
     runKOpsFile <- FS.hOpen runHasFS (runKOpsPath runRunFsPaths) FS.ReadMode
     runBlobFile <- openBlobFile runHasFS (runBlobPath runRunFsPaths) FS.ReadMode
-                                DoNotRemoveFileOnClose
     setRunDataCaching runHasBlockIO runKOpsFile runRunDataCaching
     rec runRefCounter <- RC.unsafeMkRefCounterN refCount (Just $ close r)
         let !r = Run { .. }
@@ -236,6 +229,10 @@ fromWriteBuffer fs hbio caching alloc fsPaths buffer blobs = do
       Builder.addKeyOp builder k (fmap (WBB.mkRawBlobRef blobs) e)
       --TODO: the fmap entry here reallocates even when there are no blobs
     fromMutable caching (RefCount 1) builder
+
+{-------------------------------------------------------------------------------
+  Snapshot
+-------------------------------------------------------------------------------}
 
 data ChecksumError = ChecksumError FS.FsPath CRC.CRC32C CRC.CRC32C
   deriving stock Show
@@ -285,7 +282,6 @@ openFromDisk fs hbio runRunDataCaching runRunFsPaths = do
 
     runKOpsFile <- FS.hOpen fs (runKOpsPath runRunFsPaths) FS.ReadMode
     runBlobFile <- openBlobFile fs (runBlobPath runRunFsPaths) FS.ReadMode
-                                DoNotRemoveFileOnClose
     setRunDataCaching hbio runKOpsFile runRunDataCaching
     rec runRefCounter <- RC.unsafeMkRefCounterN (RefCount 1) (Just $ close r)
         let !r = Run

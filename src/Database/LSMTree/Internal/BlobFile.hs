@@ -2,14 +2,12 @@ module Database.LSMTree.Internal.BlobFile (
     BlobFile (..)
   , BlobSpan (..)
   , removeReference
-  , RemoveFileOnClose (..)
   , openBlobFile
   , readBlob
   , writeBlob
   ) where
 
 import           Control.DeepSeq (NFData (..))
-import           Control.Monad (unless)
 import           Control.Monad.Class.MonadThrow (MonadMask, MonadThrow)
 import           Control.Monad.Primitive (PrimMonad)
 import           Control.RefCount (RefCounter)
@@ -55,31 +53,20 @@ removeReference ::
 removeReference BlobFile{blobFileRefCounter} =
     RC.removeReference blobFileRefCounter
 
--- | TODO: this hack can be removed once snapshots are done properly and so
--- runs can delete their files on close.
-data RemoveFileOnClose = RemoveFileOnClose | DoNotRemoveFileOnClose
-  deriving stock Eq
-
 -- | Open the given file to make a 'BlobFile'. The finaliser will close and
 -- delete the file.
---
--- TODO: Temporarily we have a 'RemoveFileOnClose' flag, which can be removed
--- once 'Run' no longer needs it, when snapshots are implemented.
---
-{-# SPECIALISE openBlobFile :: HasFS IO h -> FS.FsPath -> FS.OpenMode -> RemoveFileOnClose -> IO (BlobFile IO h) #-}
+{-# SPECIALISE openBlobFile :: HasFS IO h -> FS.FsPath -> FS.OpenMode -> IO (BlobFile IO h) #-}
 openBlobFile ::
      PrimMonad m
   => HasFS m h
   -> FS.FsPath
   -> FS.OpenMode
-  -> RemoveFileOnClose
   -> m (BlobFile m h)
-openBlobFile fs path mode remove = do
+openBlobFile fs path mode = do
     blobFileHandle <- FS.hOpen fs path mode
     let finaliser = do
           FS.hClose fs blobFileHandle
-          unless (remove == DoNotRemoveFileOnClose) $
-            FS.removeFile fs (FS.handlePath blobFileHandle)
+          FS.removeFile fs (FS.handlePath blobFileHandle)
     blobFileRefCounter <- RC.mkRefCounter1 (Just finaliser)
     return BlobFile {
       blobFileHandle,

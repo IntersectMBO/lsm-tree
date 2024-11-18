@@ -23,16 +23,20 @@ import           Test.Tasty.HUnit (assertEqual, testCase, (@=?), (@?))
 import           Test.Tasty.QuickCheck
 
 import           Control.RefCount (RefCount (..), readRefCount)
+import           Control.TempRegistry (withTempRegistry)
 import           Database.LSMTree.Extras.Generators (KeyForIndexCompact (..))
 import           Database.LSMTree.Extras.RunData
-import           Database.LSMTree.Internal.BlobFile (BlobFile (..))
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry
+import           Database.LSMTree.Internal.Paths (RunFsPaths (..))
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.RawPage
 import           Database.LSMTree.Internal.Run as Run
+import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.Serialise
+import           Database.LSMTree.Internal.Snapshot
+import           Test.Database.LSMTree.Internal.RunReader (readKOps)
 import           Test.Util.FS (propNoOpenHandles, withSimHasBlockIO)
 
 import qualified FormatPage as Proto
@@ -182,8 +186,12 @@ prop_WriteAndOpen ::
   -> RunData KeyForIndexCompact SerialisedValue SerialisedBlob
   -> IO Property
 prop_WriteAndOpen fs hbio wb =
-    withRun fs hbio (simplePath 1337) (serialiseRunData wb) $ \written -> do
-      loaded <- openFromDisk fs hbio CacheRunData (simplePath 1337)
+    withRun fs hbio (simplePath 1337) (serialiseRunData wb) $ \written ->
+    withTempRegistry $ \reg -> do
+      let paths = Run.runRunFsPaths written
+          paths' = paths { runNumber = RunNumber 17}
+      hardLinkRunFiles reg fs hbio paths paths'
+      loaded <- openFromDisk fs hbio CacheRunData (simplePath 17)
 
       (RefCount 1 @=?) =<< readRefCount (runRefCounter written)
       (RefCount 1 @=?) =<< readRefCount (runRefCounter loaded)
@@ -192,12 +200,10 @@ prop_WriteAndOpen fs hbio wb =
       runFilter written @=? runFilter loaded
       runIndex written @=? runIndex loaded
 
-      assertEqual "k/ops file"
-        (FS.handlePath (runKOpsFile written))
-        (FS.handlePath (runKOpsFile loaded))
-      assertEqual "blob file"
-        (FS.handlePath (blobFileHandle (runBlobFile written)))
-        (FS.handlePath (blobFileHandle (runBlobFile loaded)))
+      writtenKOps <- readKOps Nothing written
+      loadedKOps <- readKOps Nothing loaded
+
+      assertEqual "k/ops" writtenKOps loadedKOps
 
       -- make sure runs get closed again
       removeReference loaded
