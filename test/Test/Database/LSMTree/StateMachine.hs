@@ -47,7 +47,7 @@
   TODO: it is currently not correctly modelled what happens if blob references
   are retrieved from an incorrect table.
 -}
-module Test.Database.LSMTree.Normal.StateMachine (
+module Test.Database.LSMTree.StateMachine (
     tests
   , labelledExamples
     -- * Properties
@@ -109,8 +109,8 @@ import qualified System.FS.Sim.MockFS as MockFS
 import           System.FS.Sim.MockFS (MockFS)
 import           System.IO.Temp (createTempDirectory,
                      getCanonicalTemporaryDirectory)
-import           Test.Database.LSMTree.Normal.StateMachine.Op
-                     (HasBlobRef (getBlobRef), Op (..))
+import           Test.Database.LSMTree.StateMachine.Op (HasBlobRef (getBlobRef),
+                     Op (..))
 import qualified Test.QuickCheck as QC
 import           Test.QuickCheck (Arbitrary, Gen, Property)
 import qualified Test.QuickCheck.Extras as QD
@@ -133,7 +133,7 @@ import           Test.Util.TypeFamilyWrappers (WrapBlob (..), WrapBlobRef (..),
 -------------------------------------------------------------------------------}
 
 tests :: TestTree
-tests = testGroup "Normal.StateMachine" [
+tests = testGroup "Test.Database.LSMTree.StateMachine" [
       testProperty "propLockstep_ModelIOImpl"
         propLockstep_ModelIOImpl
 
@@ -499,7 +499,7 @@ instance ( Show (Class.TableConfig h)
 
 -- TODO: show instance does not show key-value-blob types. Example:
 --
--- Normal.StateMachine
+-- StateMachine
 --   prop_lockstepIO_ModelIOImpl: FAIL
 --     *** Failed! Exception: 'open: inappropriate type (table type mismatch)' (after 25 tests and 2 shrinks):
 --     do action $ New TableConfig

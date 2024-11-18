@@ -6,7 +6,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 
 -- | SumProd Op extended with BlobRef extraction
-module Test.Database.LSMTree.Normal.StateMachine.Op (
+module Test.Database.LSMTree.StateMachine.Op (
     -- * 'Op'
     Op (..)
   , intOpId

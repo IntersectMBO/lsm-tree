@@ -34,9 +34,9 @@ import qualified Test.Database.LSMTree.Internal.Vector
 import qualified Test.Database.LSMTree.Internal.Vector.Growing
 import qualified Test.Database.LSMTree.Model.Table
 import qualified Test.Database.LSMTree.Monoidal
-import qualified Test.Database.LSMTree.Normal.StateMachine
-import qualified Test.Database.LSMTree.Normal.StateMachine.DL
-import qualified Test.Database.LSMTree.Normal.UnitTests
+import qualified Test.Database.LSMTree.StateMachine
+import qualified Test.Database.LSMTree.StateMachine.DL
+import qualified Test.Database.LSMTree.UnitTests
 import qualified Test.System.Posix.Fcntl.NoCache
 import           Test.Tasty
 
@@ -72,9 +72,9 @@ main = do
     , Test.Database.LSMTree.Internal.Vector.Growing.tests
     , Test.Database.LSMTree.Model.Table.tests
     , Test.Database.LSMTree.Monoidal.tests
-    , Test.Database.LSMTree.Normal.UnitTests.tests
-    , Test.Database.LSMTree.Normal.StateMachine.tests
-    , Test.Database.LSMTree.Normal.StateMachine.DL.tests
+    , Test.Database.LSMTree.UnitTests.tests
+    , Test.Database.LSMTree.StateMachine.tests
+    , Test.Database.LSMTree.StateMachine.DL.tests
     , Test.System.Posix.Fcntl.NoCache.tests
     , Test.Data.Arena.tests
     ]

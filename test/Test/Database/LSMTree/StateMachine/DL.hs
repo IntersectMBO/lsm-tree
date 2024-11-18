@@ -1,7 +1,7 @@
 {-# OPTIONS_GHC -Wno-unused-do-bind #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module Test.Database.LSMTree.Normal.StateMachine.DL (
+module Test.Database.LSMTree.StateMachine.DL (
     tests
   ) where
 
@@ -12,8 +12,8 @@ import           Database.LSMTree as R
 import qualified Database.LSMTree.Model.Session as Model (fromSomeTable, tables)
 import qualified Database.LSMTree.Model.Table as Model (values)
 import           Prelude
-import           Test.Database.LSMTree.Normal.StateMachine hiding (tests)
-import           Test.Database.LSMTree.Normal.StateMachine.Op
+import           Test.Database.LSMTree.StateMachine hiding (tests)
+import           Test.Database.LSMTree.StateMachine.Op
 import           Test.QuickCheck as QC
 import           Test.QuickCheck.DynamicLogic
 import qualified Test.QuickCheck.Gen as QC
@@ -24,7 +24,7 @@ import qualified Test.Tasty.QuickCheck as QC
 import           Test.Util.PrettyProxy
 
 tests :: TestTree
-tests = testGroup "Test.Database.LSMTree.Normal.StateMachine.DL" [
+tests = testGroup "Test.Database.LSMTree.StateMachine.DL" [
 
       QC.testProperty "prop_example" prop_example
     ]
