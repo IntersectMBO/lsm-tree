@@ -348,6 +348,7 @@ test-suite lsm-tree-test
     Database.LSMTree.Class.Monoidal
     Database.LSMTree.Class.Normal
     Database.LSMTree.Model
+    Database.LSMTree.Model.IO
     Database.LSMTree.Model.IO.Monoidal
     Database.LSMTree.Model.IO.Normal
     Database.LSMTree.Model.Session
