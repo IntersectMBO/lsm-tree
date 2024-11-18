@@ -46,6 +46,7 @@ import           Data.List (sort)
 import qualified Data.Primitive.ByteArray as BA
 import qualified Data.Vector.Primitive as VP
 import           Data.Word
+import qualified Database.LSMTree as LSMTree
 import           Database.LSMTree.Common (Range (..))
 import           Database.LSMTree.Extras
 import           Database.LSMTree.Extras.Orphans ()
@@ -74,6 +75,25 @@ import           Test.QuickCheck.Instances ()
 {-------------------------------------------------------------------------------
   Common LSMTree types
 -------------------------------------------------------------------------------}
+
+instance (Arbitrary v, Arbitrary blob) => Arbitrary (LSMTree.Update v blob) where
+  arbitrary = QC.arbitrary2
+  shrink = QC.shrink2
+
+instance Arbitrary2 LSMTree.Update where
+  liftArbitrary2 genVal genBlob = frequency
+    [ (10, LSMTree.Insert <$> genVal <*> liftArbitrary genBlob)
+    , (5, LSMTree.Mupsert <$> genVal)
+    , (1, pure LSMTree.Delete)
+    ]
+
+  liftShrink2 shrinkVal shrinkBlob = \case
+    LSMTree.Insert v blob ->
+        LSMTree.Delete
+      : map (uncurry LSMTree.Insert)
+            (liftShrink2 shrinkVal (liftShrink shrinkBlob) (v, blob))
+    LSMTree.Mupsert v -> LSMTree.Insert v Nothing : map LSMTree.Mupsert (shrinkVal v)
+    LSMTree.Delete -> []
 
 instance (Arbitrary v, Arbitrary blob) => Arbitrary (Normal.Update v blob) where
   arbitrary = QC.arbitrary2
