@@ -139,16 +139,16 @@ instance Show (Op a b) where
       _        -> go op
     where
       go :: Op x y -> String -> String
-      go OpId            = showString "id"
-      go OpFst           = showString "fst"
-      go OpSnd           = showString "snd"
-      go OpLeft          = showString "Left"
-      go OpRight         = showString "Right"
-      go OpFromLeft      = showString "FromLeft"
-      go OpFromRight     = showString "FromRight"
-      go (OpComp g f)    = go g . showString " . " . go f
-      go OpLookupResults = showString "mapMaybe getBlobRef"
-      go OpQueryResults  = showString "mapMaybe getBlobRef"
+      go OpId            = showString "OpId"
+      go OpFst           = showString "OpFst"
+      go OpSnd           = showString "OpSnd"
+      go OpLeft          = showString "OpLeft"
+      go OpRight         = showString "OpRight"
+      go OpFromLeft      = showString "OpFromLeft"
+      go OpFromRight     = showString "OpFromRight"
+      go (OpComp g f)    = go g . showString " `OpComp` " . go f
+      go OpLookupResults = showString "OpLookupResults"
+      go OpQueryResults  = showString "OpQueryResults"
 
 {-------------------------------------------------------------------------------
   'HasBlobRef' class
