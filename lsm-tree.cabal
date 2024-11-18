@@ -343,6 +343,7 @@ test-suite lsm-tree-test
   hs-source-dirs: test
   main-is:        Main.hs
   other-modules:
+    Database.LSMTree.Class
     Database.LSMTree.Class.Common
     Database.LSMTree.Class.Monoidal
     Database.LSMTree.Class.Normal
