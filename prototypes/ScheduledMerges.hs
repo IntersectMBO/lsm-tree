@@ -47,6 +47,7 @@ import           Data.Bits
 import           Data.Foldable (toList, traverse_)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import           Data.Monoid (First (First, getFirst))
 import           Data.STRef
 
 import           Control.Exception (assert)
@@ -158,6 +159,12 @@ newtype Value  = V Int
 
 resolveValue :: Value -> Value -> Value
 resolveValue (V x) (V y) = V (x + y)
+
+resolveValueAndBlob :: (Value, Maybe Blob)
+                    -> (Value, Maybe Blob)
+                    -> (Value, Maybe Blob)
+resolveValueAndBlob (v, b) (v', b') =
+    (resolveValue v v', getFirst (First b <> First b'))
 
 newtype Blob = B Int
   deriving stock (Eq, Show)
@@ -358,14 +365,21 @@ newLevelMerge tr level mergePolicy mergeLast rs = do
                                        + levellingRunSize level
              MergePolicyTiering   -> length rs * tieringRunSize (level-1)
     -- deliberately lazy:
-    r    = case mergeLast of
-             MergeMidLevel  ->                (mergek rs)
-             MergeLastLevel -> lastLevelMerge (mergek rs)
+    r    = mergek mergeType rs
 
-mergek :: [Run] -> Run
-mergek = Map.unionsWith combine
+mergek :: MergeType -> [Run] -> Run
+mergek = \case
+    MergeLevel MergeMidLevel  -> Map.unionsWith combine
+    MergeLevel MergeLastLevel -> dropDeletes . Map.unionsWith combine
+    MergeUnion                -> dropDeletes . Map.unionsWith combineUnion
+  where
+    dropDeletes = Map.filter (not . isDelete)
 
--- | Newer value, older value.
+    isDelete Delete    = True
+    isDelete Insert{}  = False
+    isDelete Mupsert{} = False
+
+-- | New value, old value.
 combine :: Op -> Op -> Op
 combine x y = case x of
   Insert{}  -> x
@@ -375,12 +389,22 @@ combine x y = case x of
     Delete       -> Insert v Nothing
     Mupsert v'   -> Mupsert (resolveValue v v')
 
-lastLevelMerge :: Run -> Run
-lastLevelMerge = Map.filter (not . isDelete)
+-- | New value, old value.
+--
+-- TODO: implement directly on Ops?
+combineUnion :: Op -> Op -> Op
+combineUnion = \x y -> toOp (resolve (fromOp x) (fromOp y))
   where
-    isDelete Delete    = True
-    isDelete Insert{}  = False
-    isDelete Mupsert{} = False
+    resolve Nothing y         = y
+    resolve x Nothing         = x
+    resolve (Just x) (Just y) = Just (resolveValueAndBlob x y)
+
+    toOp = maybe Delete (uncurry Insert)
+
+    fromOp = \case
+      Insert v b -> Just (v, b)
+      Delete     -> Nothing
+      Mupsert v  -> Just (v, Nothing)
 
 expectCompletedMerge :: HasCallStack
                      => Tracer (ST s) EventDetail
