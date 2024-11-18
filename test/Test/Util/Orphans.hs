@@ -19,10 +19,9 @@ import qualified Control.Concurrent.STM as Real
 import           Control.Monad ((<=<))
 import           Control.Monad.IOSim (IOSim)
 import           Data.Kind (Type)
+import           Database.LSMTree (Cursor, LookupResult, QueryResult, Table)
 import           Database.LSMTree.Common (BlobRef, IOLike, SerialiseValue)
 import           Database.LSMTree.Internal.Serialise (SerialiseKey)
-import           Database.LSMTree.Normal (Cursor, LookupResult, QueryResult,
-                     Table)
 import           Test.QuickCheck.Modifiers (Small (..))
 import           Test.QuickCheck.StateModel (Realized)
 import           Test.QuickCheck.StateModel.Lockstep (InterpretOp)

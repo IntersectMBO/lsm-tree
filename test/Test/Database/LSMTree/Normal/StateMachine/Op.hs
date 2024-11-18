@@ -19,7 +19,7 @@ import           Control.Monad.IOSim (IOSim)
 import           Control.Monad.Reader (ReaderT)
 import           Control.Monad.State (StateT)
 import qualified Data.Vector as V
-import qualified Database.LSMTree.Class.Normal as Class
+import qualified Database.LSMTree.Class as Class
 import qualified Database.LSMTree.Model.Table as Model
 import           GHC.Show (appPrec)
 import           Test.QuickCheck.StateModel.Lockstep (InterpretOp, Operation)
