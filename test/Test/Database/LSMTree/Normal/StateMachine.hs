@@ -70,6 +70,7 @@ import           Control.Monad.Class.MonadThrow (Handler (..), MonadCatch (..),
                      MonadThrow (..))
 import           Control.Monad.IOSim
 import           Control.Monad.Reader (ReaderT (..))
+import           Control.RefCount (checkForgottenRefs)
 import           Control.Tracer (Tracer, nullTracer)
 import           Data.Bifunctor (Bifunctor (..))
 import           Data.Constraint (Dict (..))
@@ -1775,7 +1776,11 @@ runActionsBracket' ::
   -> Actions (Lockstep state) -> QC.Property
 runActionsBracket' p init cleanup runner tagger actions =
     tagFinalState actions tagger
-  $ Lockstep.Run.runActionsBracket p init cleanup runner actions
+  $ Lockstep.Run.runActionsBracket p init cleanup' runner actions
+  where
+    cleanup' st = do
+      cleanup st
+      checkForgottenRefs
 
 tagFinalState ::
      forall state. StateModel (Lockstep state)
