@@ -20,7 +20,6 @@ import           Control.Monad (when)
 import           Control.Monad.Class.MonadST (MonadST)
 import           Control.Monad.Class.MonadSTM (MonadSTM (..))
 import           Control.Monad.Class.MonadThrow (MonadMask, MonadThrow)
-import           Control.Monad.Fix (MonadFix)
 import           Control.Monad.Primitive (PrimState)
 import           Data.Coerce (coerce)
 import           Data.Primitive.MutVar
@@ -156,7 +155,7 @@ abort Merge {..} = do
 -- this function with async exceptions masked. Otherwise, these resources can
 -- leak.
 complete ::
-     (MonadFix m, MonadSTM m, MonadST m, MonadMask m)
+     (MonadSTM m, MonadST m, MonadMask m)
   => Merge m h
   -> m (Run m h)
 complete Merge{..} = do
@@ -178,7 +177,7 @@ complete Merge{..} = do
 --
 -- Note: run with async exceptions masked. See 'complete'.
 stepsToCompletion ::
-      (MonadMask m, MonadFix m, MonadSTM m, MonadST m)
+      (MonadMask m, MonadSTM m, MonadST m)
    => Merge m h
    -> Int
    -> m (Run m h)
@@ -197,7 +196,7 @@ stepsToCompletion m stepBatchSize = go
 --
 -- Note: run with async exceptions masked. See 'complete'.
 stepsToCompletionCounted ::
-     (MonadMask m, MonadFix m, MonadSTM m, MonadST m)
+     (MonadMask m, MonadSTM m, MonadST m)
   => Merge m h
   -> Int
   -> m (Int, Run m h)

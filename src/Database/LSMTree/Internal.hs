@@ -77,7 +77,6 @@ import           Control.DeepSeq
 import           Control.Monad (unless)
 import           Control.Monad.Class.MonadST (MonadST (..))
 import           Control.Monad.Class.MonadThrow
-import           Control.Monad.Fix (MonadFix)
 import           Control.Monad.Primitive
 import           Control.TempRegistry
 import           Control.Tracer
@@ -759,7 +758,7 @@ lookups resolve ks t = do
   -> IO (V.Vector res) #-}
 -- | See 'Database.LSMTree.Normal.rangeLookup'.
 rangeLookup ::
-     (MonadFix m, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+     (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => ResolveSerialisedValue
   -> Range SerialisedKey
   -> Table m h
@@ -800,7 +799,7 @@ rangeLookup resolve range t fromEntry = do
 --
 -- Does not enforce that mupsert and blobs should not occur in the same table.
 updates ::
-     (MonadFix m, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+     (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => ResolveSerialisedValue
   -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob)
   -> Table m h
@@ -908,7 +907,7 @@ data CursorEnv m h = CursorEnv {
   -> IO a #-}
 -- | See 'Database.LSMTree.Normal.withCursor'.
 withCursor ::
-     (MonadFix m, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+     (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => OffsetKey
   -> Table m h
   -> (Cursor m h -> m a)
@@ -921,7 +920,7 @@ withCursor offsetKey t = bracket (newCursor offsetKey t) closeCursor
   -> IO (Cursor IO h) #-}
 -- | See 'Database.LSMTree.Normal.newCursor'.
 newCursor ::
-     (MonadFix m, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+     (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => OffsetKey
   -> Table m h
   -> m (Cursor m h)
@@ -1005,7 +1004,7 @@ closeCursor Cursor {..} = do
 -- | See 'Database.LSMTree.Normal.readCursor'.
 readCursor ::
      forall m h res.
-     (MonadFix m, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+     (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => ResolveSerialisedValue
   -> Int  -- ^ Maximum number of entries to read
   -> Cursor m h
@@ -1032,7 +1031,7 @@ readCursor resolve n cursor fromEntry =
 -- calls with the same predicate @p@ will return an empty vector.
 readCursorWhile ::
      forall m h res.
-     (MonadFix m, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+     (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => ResolveSerialisedValue
   -> (SerialisedKey -> Bool)  -- ^ Only read as long as this predicate holds
   -> Int  -- ^ Maximum number of entries to read
@@ -1070,7 +1069,7 @@ readCursorWhile resolve keyIsWanted n Cursor {..} fromEntry = do
   -> IO () #-}
 -- |  See 'Database.LSMTree.Normal.createSnapshot''.
 createSnapshot ::
-     (MonadFix m, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+     (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => ResolveSerialisedValue
   -> SnapshotName
   -> SnapshotLabel
@@ -1143,7 +1142,7 @@ createSnapshot resolve snap label tableType t = do
   -> IO (Table IO h) #-}
 -- |  See 'Database.LSMTree.Normal.openSnapshot'.
 openSnapshot ::
-     (MonadFix m, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+     (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => Session m h
   -> SnapshotLabel -- ^ Expected label
   -> SnapshotTableType -- ^ Expected table type
@@ -1207,7 +1206,7 @@ openSnapshot sesh label tableType override snap resolve = do
   -> IO () #-}
 -- |  See 'Database.LSMTree.Common.deleteSnapshot'.
 deleteSnapshot ::
-     (MonadFix m, MonadMask m, MonadSTM m)
+     (MonadMask m, MonadSTM m)
   => Session m h
   -> SnapshotName
   -> m ()
@@ -1225,7 +1224,7 @@ deleteSnapshot sesh snap = do
 {-# SPECIALISE listSnapshots :: Session IO h -> IO [SnapshotName] #-}
 -- |  See 'Database.LSMTree.Common.listSnapshots'.
 listSnapshots ::
-     (MonadFix m, MonadMask m, MonadSTM m)
+     (MonadMask m, MonadSTM m)
   => Session m h
   -> m [SnapshotName]
 listSnapshots sesh = do
@@ -1254,7 +1253,7 @@ listSnapshots sesh = do
 {-# SPECIALISE duplicate :: Table IO h -> IO (Table IO h) #-}
 -- | See 'Database.LSMTree.Normal.duplicate'.
 duplicate ::
-     (MonadFix m, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+     (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => Table m h
   -> m (Table m h)
 duplicate t@Table{..} = do

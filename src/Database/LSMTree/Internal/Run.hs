@@ -29,7 +29,6 @@ import           Control.Monad (when)
 import           Control.Monad.Class.MonadST (MonadST)
 import           Control.Monad.Class.MonadSTM (MonadSTM (..))
 import           Control.Monad.Class.MonadThrow
-import           Control.Monad.Fix (MonadFix)
 import           Control.Monad.Primitive
 import           Control.RefCount (RefCounter)
 import qualified Control.RefCount as RC
@@ -184,7 +183,7 @@ setRunDataCaching hbio runKOpsFile NoCacheRunData = do
   -> RunBuilder IO h
   -> IO (Run IO h) #-}
 fromMutable ::
-     (MonadFix m, MonadST m, MonadSTM m, MonadMask m)
+     (MonadST m, MonadSTM m, MonadMask m)
   => RunDataCaching
   -> RunBuilder m h
   -> m (Run m h)
@@ -214,7 +213,7 @@ fromMutable runRunDataCaching builder = do
 -- immediately when they are added to the write buffer, avoiding the need to do
 -- it here.
 fromWriteBuffer ::
-     (MonadFix m, MonadST m, MonadSTM m, MonadMask m)
+     (MonadST m, MonadSTM m, MonadMask m)
   => HasFS m h
   -> HasBlockIO m h
   -> RunDataCaching
@@ -256,7 +255,7 @@ data FileFormatError = FileFormatError FS.FsPath String
 -- checksum ('ChecksumError') or can't be parsed ('FileFormatError').
 openFromDisk ::
      forall m h.
-     (MonadFix m, MonadSTM m, MonadMask m, PrimMonad m)
+     (MonadSTM m, MonadMask m, PrimMonad m)
   => HasFS m h
   -> HasBlockIO m h
   -> RunDataCaching

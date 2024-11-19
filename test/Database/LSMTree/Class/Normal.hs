@@ -16,9 +16,7 @@ module Database.LSMTree.Class.Normal (
   , module Types
   ) where
 
-import           Control.Monad.Class.MonadST (MonadST)
-import           Control.Monad.Class.MonadThrow (MonadMask, MonadThrow (..))
-import           Control.Monad.Fix (MonadFix)
+import           Control.Monad.Class.MonadThrow (bracket)
 import           Control.Tracer (nullTracer)
 import           Data.Kind (Constraint, Type)
 import           Data.Typeable (Proxy (Proxy), Typeable)
@@ -271,7 +269,7 @@ withCursor offset hdl = bracket (newCursor offset hdl) (closeCursor (Proxy @h))
 instance IsSession R.Session where
     data SessionArgs R.Session m where
       SessionArgs ::
-           forall m h. (MonadFix m, MonadMask m, MonadST m, Typeable h)
+           forall m h. Typeable h
         => HasFS m h -> HasBlockIO m h -> FsPath
         -> SessionArgs R.Session m
 

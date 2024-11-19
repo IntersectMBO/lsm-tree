@@ -26,7 +26,6 @@ import           Control.Concurrent.Class.MonadSTM (MonadSTM)
 import           Control.Monad (void)
 import           Control.Monad.Class.MonadST (MonadST)
 import           Control.Monad.Class.MonadThrow (MonadMask, MonadThrow)
-import           Control.Monad.Fix (MonadFix)
 import           Control.Monad.Primitive (PrimMonad)
 import           Control.TempRegistry
 import           Data.Foldable (sequenceA_)
@@ -225,7 +224,7 @@ snapshotRuns reg (NamedSnapshotDir targetDir) levels = for levels $ \run -> do
 -- (hard linked) files that represents a run is opened and verified, returning
 -- 'Run's as a result.
 openRuns ::
-     (MonadFix m, MonadMask m, MonadSTM m, MonadST m, MonadMVar m)
+     (MonadMask m, MonadSTM m, MonadST m, MonadMVar m)
   => TempRegistry m
   -> HasFS m h
   -> HasBlockIO m h
@@ -269,7 +268,7 @@ openRuns
   -> IO (Levels IO h)
   #-}
 fromSnapLevels ::
-     forall m h. (MonadFix m, MonadMask m, MonadMVar m, MonadSTM m, MonadST m)
+     forall m h. (MonadMask m, MonadMVar m, MonadSTM m, MonadST m)
   => TempRegistry m
   -> HasFS m h
   -> HasBlockIO m h
