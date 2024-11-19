@@ -1223,7 +1223,7 @@ takeAllUnspentCredits (UnspentCreditsVar !unspentCreditsVar) = do
 
 {-# SPECIALISE stepMerge :: StrictMVar IO (MergingRunState IO h) -> TotalStepsVar RealWorld -> Credit -> IO Bool #-}
 stepMerge ::
-     (MonadMVar m, MonadCatch m, MonadSTM m, MonadST m)
+     (MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
   => StrictMVar m (MergingRunState m h)
   -> TotalStepsVar (PrimState m)
   -> Credit

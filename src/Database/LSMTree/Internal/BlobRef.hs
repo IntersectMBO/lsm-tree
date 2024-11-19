@@ -8,6 +8,8 @@ module Database.LSMTree.Internal.BlobRef (
   , RawBlobRef (..)
   , WeakBlobRef (..)
   , WeakBlobRefInvalid (..)
+  , mkRawBlobRef
+  , mkWeakBlobRef
   , rawToWeakBlobRef
   , readRawBlobRef
   , readWeakBlobRef
@@ -85,6 +87,20 @@ rawToWeakBlobRef RawBlobRef {rawBlobRefFile, rawBlobRefSpan} =
     WeakBlobRef {
       weakBlobRefFile = rawBlobRefFile,
       weakBlobRefSpan = rawBlobRefSpan
+    }
+
+mkRawBlobRef :: BlobFile m h -> BlobSpan -> RawBlobRef m h
+mkRawBlobRef blobfile blobspan =
+    RawBlobRef {
+      rawBlobRefFile = blobfile,
+      rawBlobRefSpan = blobspan
+    }
+
+mkWeakBlobRef :: BlobFile m h -> BlobSpan -> WeakBlobRef m h
+mkWeakBlobRef blobfile blobspan =
+    WeakBlobRef {
+      weakBlobRefFile = blobfile,
+      weakBlobRefSpan = blobspan
     }
 
 -- | The 'WeakBlobRef' now points to a blob that is no longer available.

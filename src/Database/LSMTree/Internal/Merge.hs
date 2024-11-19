@@ -19,8 +19,7 @@ import           Control.Exception (assert)
 import           Control.Monad (when)
 import           Control.Monad.Class.MonadST (MonadST)
 import           Control.Monad.Class.MonadSTM (MonadSTM (..))
-import           Control.Monad.Class.MonadThrow (MonadCatch, MonadMask,
-                     MonadThrow (..))
+import           Control.Monad.Class.MonadThrow (MonadMask, MonadThrow)
 import           Control.Monad.Fix (MonadFix)
 import           Control.Monad.Primitive (PrimState)
 import           Data.Coerce (coerce)
@@ -91,7 +90,7 @@ type Mappend = SerialisedValue -> SerialisedValue -> SerialisedValue
 -- | Returns 'Nothing' if no input 'Run' contains any entries.
 -- The list of runs should be sorted from new to old.
 new ::
-     (MonadCatch m, MonadSTM m, MonadST m)
+     (MonadMask m, MonadSTM m, MonadST m)
   => HasFS m h
   -> HasBlockIO m h
   -> RunDataCaching
@@ -121,7 +120,7 @@ new fs hbio mergeCaching alloc mergeLevel mergeMappend targetPaths runs = do
 -- created for the new run so far and avoids leaking file handles.
 --
 -- Once it has been called, do not use the 'Merge' any more!
-abort :: (MonadSTM m, MonadST m) => Merge m h -> m ()
+abort :: (MonadMask m, MonadSTM m, MonadST m) => Merge m h -> m ()
 abort Merge {..} = do
     readMutVar mergeState >>= \case
       Merging -> do
@@ -233,7 +232,7 @@ stepsInvariant requestedSteps = \case
 -- Returns an error if the merge was already completed or closed.
 steps ::
      forall m h.
-     (MonadCatch m, MonadSTM m, MonadST m)
+     (MonadMask m, MonadSTM m, MonadST m)
   => Merge m h
   -> Int  -- ^ How many input entries to consume (at least)
   -> m (Int, StepResult)

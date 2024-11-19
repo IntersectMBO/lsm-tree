@@ -17,8 +17,9 @@ import           Control.Monad (guard, when)
 import           Control.Monad.Class.MonadST (MonadST (..))
 import           Control.Monad.Class.MonadSTM (MonadSTM (..))
 import           Control.Monad.Class.MonadThrow (MonadCatch (..),
-                     MonadThrow (..))
+                     MonadMask (..), MonadThrow (..))
 import           Control.Monad.Primitive (PrimMonad (..))
+import           Control.RefCount
 import           Data.Bifunctor (first)
 import           Data.Maybe (isNothing)
 import           Data.Primitive.ByteArray (newPinnedByteArray,
@@ -29,7 +30,8 @@ import           Data.Primitive.PrimVar
 import           Data.Word (Word16, Word32)
 import           Database.LSMTree.Internal.BitMath (ceilDivPageSize,
                      mulPageSize, roundUpToPageSize)
-import           Database.LSMTree.Internal.BlobRef (RawBlobRef (..))
+import           Database.LSMTree.Internal.BlobFile as BlobFile
+import           Database.LSMTree.Internal.BlobRef as BlobRef
 import qualified Database.LSMTree.Internal.Entry as E
 import qualified Database.LSMTree.Internal.Index as Index (search)
 import           Database.LSMTree.Internal.Page (PageNo (..), PageSpan (..),
@@ -67,8 +69,9 @@ data RunReader m h = RunReader {
       -- a counter ourselves. Also, the run's handle is supposed to be opened
       -- with @O_DIRECT@, which is counterproductive here.
     , readerKOpsHandle     :: !(FS.Handle h)
-      -- | The run this reader is reading from.
-    , readerRun            :: !(Run.Run m h)
+      -- | The blob file from the run this reader is reading from.
+    , readerBlobFile       :: !(BlobFile m h)
+    , readerRunDataCaching :: !Run.RunDataCaching
     , readerHasFS          :: !(HasFS m h)
     , readerHasBlockIO     :: !(HasBlockIO m h)
     }
@@ -80,11 +83,17 @@ data OffsetKey = NoOffsetKey | OffsetKey !SerialisedKey
   -> Run.Run IO h
   -> IO (RunReader IO h) #-}
 new :: forall m h.
-     (MonadCatch m, MonadSTM m, MonadST m)
+     (MonadMask m, MonadSTM m, PrimMonad m)
   => OffsetKey
   -> Run.Run m h
   -> m  (RunReader m h)
-new !offsetKey readerRun = do
+new !offsetKey readerRun@(Run.Run {
+                 runBlobFile,
+                 runRunDataCaching = readerRunDataCaching,
+                 runHasFS          = readerHasFS,
+                 runHasBlockIO     = readerHasBlockIO,
+                 runIndex          = index
+               }) = do
     (readerKOpsHandle :: FS.Handle h) <-
       FS.hOpen readerHasFS (runKOpsPath (Run.runRunFsPaths readerRun)) FS.ReadMode >>= \h -> do
         fileSize <- FS.hGetSize readerHasFS h
@@ -96,6 +105,10 @@ new !offsetKey readerRun = do
 
     (page, entryNo) <- seekFirstEntry readerKOpsHandle
 
+    --TODO: instead use: readerBlobFile <- dupRef runBlobFile
+    let readerBlobFile = runBlobFile
+    addReference (blobFileRefCounter readerBlobFile)
+
     readerCurrentEntryNo <- newPrimVar entryNo
     readerCurrentPage <- newMutVar page
     let reader = RunReader {..}
@@ -104,11 +117,6 @@ new !offsetKey readerRun = do
       close reader
     return reader
   where
-    -- Inherit the FS & BlockIO internals of the Run
-    readerHasFS = Run.runHasFS readerRun
-    readerHasBlockIO = Run.runHasBlockIO readerRun
-    index = Run.runIndex readerRun
-
     seekFirstEntry readerKOpsHandle =
         case offsetKey of
           NoOffsetKey -> do
@@ -149,14 +157,15 @@ new !offsetKey readerRun = do
 -- was done (i.e. returned 'Empty'). This avoids leaking file handles.
 -- Once it has been called, do not use the reader any more!
 close ::
-     (MonadSTM m)
+     (MonadSTM m, MonadMask m, PrimMonad m)
   => RunReader m h
   -> m ()
 close RunReader{..} = do
-    when (Run.runRunDataCaching readerRun == Run.NoCacheRunData) $
+    when (readerRunDataCaching == Run.NoCacheRunData) $
       -- drop the file from the OS page cache
       FS.hDropCacheAll readerHasBlockIO readerKOpsHandle
     FS.hClose readerHasFS readerKOpsHandle
+    BlobFile.removeReference readerBlobFile
 
 -- | The 'SerialisedKey' and 'SerialisedValue' point into the in-memory disk
 -- page. Keeping them alive will also prevent garbage collection of the 4k byte
@@ -218,7 +227,7 @@ appendOverflow len overflowPages (SerialisedValue prefix) =
 -- | Stop using the 'RunReader' after getting 'Empty', because the 'Reader' is
 -- automatically closed!
 next :: forall m h.
-     (MonadCatch m, MonadSTM m, MonadST m)
+     (MonadMask m, MonadSTM m, MonadST m)
   => RunReader m h
   -> m (Result m h)
 next reader@RunReader {..} = do
@@ -246,14 +255,14 @@ next reader@RunReader {..} = do
                 go 0 p  -- try again on the new page
           IndexEntry key entry -> do
             modifyPrimVar readerCurrentEntryNo (+1)
-            let entry' = fmap (Run.mkRawBlobRef readerRun) entry
+            let entry' = fmap (BlobRef.mkRawBlobRef readerBlobFile) entry
             let rawEntry = Entry entry'
             return (ReadEntry key rawEntry)
           IndexEntryOverflow key entry lenSuffix -> do
             -- TODO: we know that we need the next page, could already load?
             modifyPrimVar readerCurrentEntryNo (+1)
             let entry' :: E.Entry SerialisedValue (RawBlobRef m h)
-                entry' = fmap (Run.mkRawBlobRef readerRun) entry
+                entry' = fmap (BlobRef.mkRawBlobRef readerBlobFile) entry
             overflowPages <- readOverflowPages readerHasFS readerKOpsHandle lenSuffix
             let rawEntry = mkEntryOverflow entry' page lenSuffix overflowPages
             return (ReadEntry key rawEntry)

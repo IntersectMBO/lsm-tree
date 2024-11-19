@@ -16,7 +16,7 @@ module Database.LSMTree.Internal.RunReaders (
 import           Control.Monad (zipWithM)
 import           Control.Monad.Class.MonadST (MonadST)
 import           Control.Monad.Class.MonadSTM (MonadSTM (..))
-import           Control.Monad.Class.MonadThrow (MonadCatch)
+import           Control.Monad.Class.MonadThrow (MonadMask)
 import           Control.Monad.Primitive
 import           Data.Function (on)
 import           Data.Functor ((<&>))
@@ -113,7 +113,7 @@ type KOp m h = (SerialisedKey, Entry SerialisedValue (RawBlobRef m h))
   -> V.Vector (Run IO h)
   -> IO (Maybe (Readers IO h)) #-}
 new :: forall m h.
-     (MonadCatch m, MonadSTM m, MonadST m)
+     (MonadMask m, MonadST m, MonadSTM m)
   => OffsetKey
   -> Maybe (WB.WriteBuffer, WB.WriteBufferBlobs m h)
   -> V.Vector (Run m h)
@@ -150,7 +150,7 @@ new !offsetKey wbs runs = do
   -> IO () #-}
 -- | Only call when aborting before all readers have been drained.
 close ::
-     (MonadSTM m, PrimMonad m)
+     (MonadMask m, MonadSTM m, PrimMonad m)
   => Readers m h
   -> m ()
 close Readers {..} = do
@@ -186,7 +186,7 @@ data HasMore = HasMore | Drained
     Readers IO h
   -> IO (SerialisedKey, Reader.Entry IO h, HasMore) #-}
 pop ::
-     (MonadCatch m, MonadSTM m, MonadST m)
+     (MonadMask m, MonadSTM m, MonadST m)
   => Readers m h
   -> m (SerialisedKey, Reader.Entry m h, HasMore)
 pop r@Readers {..} = do
@@ -199,7 +199,7 @@ pop r@Readers {..} = do
   -> SerialisedKey
   -> IO (Int, HasMore) #-}
 dropWhileKey ::
-     (MonadCatch m, MonadSTM m, MonadST m)
+     (MonadMask m, MonadSTM m, MonadST m)
   => Readers m h
   -> SerialisedKey
   -> m (Int, HasMore)  -- ^ How many were dropped?
@@ -233,7 +233,7 @@ dropWhileKey Readers {..} key = do
   -> Reader IO h
   -> IO HasMore #-}
 dropOne ::
-     (MonadCatch m, MonadSTM m, MonadST m)
+     (MonadMask m, MonadSTM m, MonadST m)
   => Readers m h
   -> ReaderNumber
   -> Reader m h
@@ -254,7 +254,7 @@ dropOne Readers {..} number reader = do
   -> Reader IO h
   -> IO (Maybe (ReadCtx IO h)) #-}
 nextReadCtx ::
-     (MonadCatch m, MonadSTM m, MonadST m)
+     (MonadMask m, MonadSTM m, MonadST m)
   => ReaderNumber
   -> Reader m h
   -> m (Maybe (ReadCtx m h))
