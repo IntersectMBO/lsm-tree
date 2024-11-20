@@ -104,7 +104,7 @@ new fs hbio mergeCaching alloc mergeLevel mergeMappend targetPaths runs = do
     mreaders <- Readers.new Readers.NoOffsetKey Nothing runs
     for mreaders $ \mergeReaders -> do
       -- calculate upper bounds based on input runs
-      let numEntries = coerce (sum @V.Vector @Int) (fmap Run.runNumEntries runs)
+      let numEntries = coerce (sum @V.Vector @Int) (fmap Run.size runs)
       mergeBuilder <- Builder.new fs hbio targetPaths numEntries alloc
       mergeState <- newMutVar $! Merging
       return Merge {

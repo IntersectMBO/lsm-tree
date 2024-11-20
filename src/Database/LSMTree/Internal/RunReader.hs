@@ -95,7 +95,7 @@ new !offsetKey readerRun@(Run.Run {
                  runIndex          = index
                }) = do
     (readerKOpsHandle :: FS.Handle h) <-
-      FS.hOpen readerHasFS (runKOpsPath (Run.runRunFsPaths readerRun)) FS.ReadMode >>= \h -> do
+      FS.hOpen readerHasFS (runKOpsPath (Run.runFsPaths readerRun)) FS.ReadMode >>= \h -> do
         fileSize <- FS.hGetSize readerHasFS h
         let fileSizeInPages = fileSize `div` toEnum pageSize
         let indexedPages = getNumPages $ Run.sizeInPages readerRun

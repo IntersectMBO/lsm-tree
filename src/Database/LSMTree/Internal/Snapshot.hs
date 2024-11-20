@@ -203,7 +203,7 @@ snapshotRuns ::
   -> SnapLevels (Run m h)
   -> m (SnapLevels RunNumber)
 snapshotRuns reg (NamedSnapshotDir targetDir) levels = for levels $ \run -> do
-    let sourcePaths = Run.runRunFsPaths run
+    let sourcePaths = Run.runFsPaths run
     let targetPaths = sourcePaths { runDir = targetDir }
     hardLinkRunFiles reg (Run.runHasFS run) (Run.runHasBlockIO run) sourcePaths targetPaths
     pure (runNumber targetPaths)

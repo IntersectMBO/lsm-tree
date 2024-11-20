@@ -150,8 +150,8 @@ rawPageFromByteString bs off =
     toBA = (\(SBS.SBS ba) -> BA.ByteArray ba) . SBS.toShort . BS.take (off+4096)
 
 readBlobFromBS :: ByteString -> BlobSpan -> SerialisedBlob
-readBlobFromBS bs (BlobSpan offset size) =
-    serialiseBlob $ BS.take (fromIntegral size) (BS.drop (fromIntegral offset) bs)
+readBlobFromBS bs (BlobSpan off sz) =
+    serialiseBlob $ BS.take (fromIntegral sz) (BS.drop (fromIntegral off) bs)
 
 {-------------------------------------------------------------------------------
   Properties
@@ -169,7 +169,7 @@ prop_WriteNumEntries ::
   -> IO Property
 prop_WriteNumEntries fs hbio wb@(RunData m) =
     withRun fs hbio (simplePath 42) wb' $ \run -> do
-      let !runSize = runNumEntries run
+      let !runSize = Run.size run
 
       return . labelRunData wb' $
         NumEntries (Map.size m) === runSize
@@ -188,7 +188,7 @@ prop_WriteAndOpen ::
 prop_WriteAndOpen fs hbio wb =
     withRun fs hbio (simplePath 1337) (serialiseRunData wb) $ \written ->
     withTempRegistry $ \reg -> do
-      let paths = Run.runRunFsPaths written
+      let paths = Run.runFsPaths written
           paths' = paths { runNumber = RunNumber 17}
       hardLinkRunFiles reg fs hbio paths paths'
       loaded <- openFromDisk fs hbio CacheRunData (simplePath 17)
@@ -196,7 +196,7 @@ prop_WriteAndOpen fs hbio wb =
       (1 @=?) =<< readRefCount (runRefCounter written)
       (1 @=?) =<< readRefCount (runRefCounter loaded)
 
-      runNumEntries written @=? runNumEntries loaded
+      Run.size written @=? Run.size loaded
       runFilter written @=? runFilter loaded
       runIndex written @=? runIndex loaded
 
@@ -206,7 +206,7 @@ prop_WriteAndOpen fs hbio wb =
       assertEqual "k/ops" writtenKOps loadedKOps
 
       -- make sure runs get closed again
-      removeReference loaded
+      Run.removeReference loaded
 
       -- TODO: return a proper Property instead of using assertEqual etc.
       return (property True)

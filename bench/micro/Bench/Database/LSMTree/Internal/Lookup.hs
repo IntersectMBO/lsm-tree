@@ -20,7 +20,7 @@ import           Database.LSMTree.Extras.Random (frequency,
                      sampleUniformWithReplacement, uniformWithoutReplacement)
 import           Database.LSMTree.Extras.UTxO
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
-import           Database.LSMTree.Internal.Entry (Entry (..), unNumEntries)
+import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..))
 import           Database.LSMTree.Internal.Lookup (bloomQueries, indexSearches,
                      intraPageLookups, lookupsIO, prepLookups)
 import           Database.LSMTree.Internal.Page (getNumPages)
@@ -194,7 +194,7 @@ lookupsInBatchesEnv Config {..} = do
         fsps = RunFsPaths (FS.mkFsPath []) (RunNumber 0)
     wbblobs <- WBB.new hasFS (FS.mkFsPath [])
     r <- Run.fromWriteBuffer hasFS hasBlockIO caching (RunAllocFixed 10) fsps wb wbblobs
-    let nentriesReal = unNumEntries $ Run.runNumEntries r
+    let NumEntries nentriesReal = Run.size r
     assert (nentriesReal == nentries) $ pure ()
     let npagesReal = Run.sizeInPages r
     assert (getNumPages npagesReal * 42 <= nentriesReal) $ pure ()

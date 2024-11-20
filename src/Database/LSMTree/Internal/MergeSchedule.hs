@@ -1,5 +1,6 @@
-{-# LANGUAGE CPP       #-}
-{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE CPP          #-}
+{-# LANGUAGE DataKinds    #-}
+{-# LANGUAGE TypeFamilies #-}
 
 {- HLINT ignore "Use when" -}
 
@@ -730,9 +731,9 @@ _levelsInvariant conf levels =
     -- Check that a run fits in the current level
     fits policy r ln = fitsLB policy r ln && fitsUB policy r ln
     -- Check that a run is too large for previous levels
-    fitsLB policy r ln = maxRunSize sr wba policy (pred ln) < Run.runNumEntries r
+    fitsLB policy r ln = maxRunSize sr wba policy (pred ln) < Run.size r
     -- Check that a run is too small for next levels
-    fitsUB policy r ln = Run.runNumEntries r <= maxRunSize sr wba policy ln
+    fitsUB policy r ln = Run.size r <= maxRunSize sr wba policy ln
 -}
 
 {-# SPECIALISE addRunToLevels ::
@@ -784,11 +785,10 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
         return $ V.singleton $ Level ir V.empty
     go !ln rs' (V.uncons -> Just (Level ir rs, ls)) = do
         r <- expectCompletedMergeTraced ln ir
-        let !runSize = Run.runNumEntries r
         case mergePolicyForLevel confMergePolicy ln ls of
           -- If r is still too small for this level then keep it and merge again
           -- with the incoming runs.
-          LevelTiering | runSize <= maxRunSize' conf LevelTiering (pred ln) -> do
+          LevelTiering | Run.size r <= maxRunSize' conf LevelTiering (pred ln) -> do
             let mergelast = mergeLastForLevel ls
             ir' <- newMerge LevelTiering mergelast ln (rs' `V.snoc` r)
             pure $! Level ir' rs `V.cons` ls
@@ -807,14 +807,14 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
             ir' <- newMerge LevelTiering mergelast ln rs'
             traceWith tr $ AtLevel ln
                          $ TraceAddRun
-                            (runNumber $ Run.runRunFsPaths r)
-                            (V.map (runNumber . Run.runRunFsPaths) rs)
+                            (Run.runFsPathsNumber r)
+                            (V.map Run.runFsPathsNumber rs)
             pure $! Level ir' (r `V.cons` rs) `V.cons` ls
           -- The final level is using levelling. If the existing completed merge
           -- run is too large for this level, we promote the run to the next
           -- level and start merging the incoming runs into this (otherwise
           -- empty) level .
-          LevelLevelling | runSize > maxRunSize' conf LevelLevelling ln -> do
+          LevelLevelling | Run.size r > maxRunSize' conf LevelLevelling ln -> do
             assert (V.null rs && V.null ls) $ pure ()
             ir' <- newMerge LevelTiering Merge.MidLevel ln rs'
             ls' <- go (succ ln) (V.singleton r) V.empty
@@ -828,7 +828,8 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
     expectCompletedMergeTraced :: LevelNo -> IncomingRun m h -> m (Run m h)
     expectCompletedMergeTraced ln ir = do
       r <- expectCompletedMerge reg ir
-      traceWith tr $ AtLevel ln $ TraceExpectCompletedMerge (runNumber $ Run.runRunFsPaths r)
+      traceWith tr $ AtLevel ln $
+        TraceExpectCompletedMerge (Run.runFsPathsNumber r)
       pure r
 
     -- TODO: refactor, pull to top level?
@@ -840,7 +841,9 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
     newMerge mergePolicy mergelast ln rs
       | Just (r, rest) <- V.uncons rs
       , V.null rest = do
-          traceWith tr $ AtLevel ln $ TraceNewMergeSingleRun (Run.runNumEntries r) (runNumber $ Run.runRunFsPaths r)
+          traceWith tr $ AtLevel ln $
+            TraceNewMergeSingleRun (Run.size r)
+                                   (Run.runFsPathsNumber r)
           pure (Single r)
       | otherwise = do
         assert (let l = V.length rs in l >= 2 && l <= 5) $ pure ()
@@ -848,15 +851,18 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
         let !caching = diskCachePolicyForLevel confDiskCachePolicy ln
             !alloc = bloomFilterAllocForLevel conf ln
             !runPaths = Paths.runPath root (uniqueToRunNumber n)
-        traceWith tr $ AtLevel ln $ TraceNewMerge (V.map Run.runNumEntries rs) (runNumber runPaths) caching alloc mergePolicy mergelast
+        traceWith tr $ AtLevel ln $
+          TraceNewMerge (V.map Run.size rs) (runNumber runPaths) caching alloc mergePolicy mergelast
         let numInputRuns = NumRuns $ V.length rs
-        let numInputEntries = NumEntries $ V.sum (V.map (unNumEntries . Run.runNumEntries) rs)
+        let numInputEntries = NumEntries $ V.sum (V.map (unNumEntries . Run.size) rs)
         case confMergeSchedule of
           OneShot -> do
             r <- allocateTemp reg
                   (mergeRuns resolve hfs hbio caching alloc runPaths mergelast rs)
                   Run.removeReference
-            traceWith tr $ AtLevel ln $ TraceCompletedMerge (Run.runNumEntries r) (runNumber $ Run.runRunFsPaths r)
+            traceWith tr $ AtLevel ln $
+              TraceCompletedMerge (Run.size r)
+                                  (Run.runFsPathsNumber r)
             V.mapM_ (freeTemp reg . Run.removeReference) rs
             Merging <$!> newMergingRun mergePolicy numInputRuns numInputEntries MergeKnownCompleted (CompletedMerge r)
 

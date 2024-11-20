@@ -86,7 +86,7 @@ prop_MergeDistributes fs hbio level stepSize (SmallList rds) =
 
         return $ stats $
               counterexample "numEntries"
-              (Run.runNumEntries lhs === Run.runNumEntries rhs)
+              (Run.size lhs === Run.size rhs)
           .&&. -- we can't just test bloom filter equality, their sizes may differ.
               counterexample "runFilter"
               (Bloom.length (Run.runFilter lhs) >= Bloom.length (Run.runFilter rhs))

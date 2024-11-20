@@ -7,9 +7,13 @@
 -- | Runs of sorted key\/value data.
 module Database.LSMTree.Internal.Run (
     -- * Run
-    Run (..)
+    Run (Run, runIndex, runHasFS, runHasBlockIO, runRunDataCaching,
+         runBlobFile, runFilter, runKOpsFile, runRefCounter)
   , RunFsPaths
+  , size
   , sizeInPages
+  , runFsPaths
+  , runFsPathsNumber
   , addReference
   , removeReference
   , mkRawBlobRef
@@ -45,10 +49,11 @@ import           Database.LSMTree.Internal.Entry (NumEntries (..))
 import qualified Database.LSMTree.Internal.Index as Index (fromSBS, sizeInPages)
 import           Database.LSMTree.Internal.Index.Compact (IndexCompact)
 import           Database.LSMTree.Internal.Page (NumPages)
-import           Database.LSMTree.Internal.Paths
+import           Database.LSMTree.Internal.Paths as Paths
 import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc)
 import           Database.LSMTree.Internal.RunBuilder (RunBuilder)
 import qualified Database.LSMTree.Internal.RunBuilder as Builder
+import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
@@ -98,8 +103,17 @@ instance NFData h => NFData (Run m h) where
       rnf a `seq` rwhnf b `seq` rnf c `seq` rnf d `seq` rnf e `seq`
       rnf f `seq` rnf g `seq` rnf h `seq` rwhnf i `seq` rwhnf j
 
+size :: Run m h -> NumEntries
+size run = runNumEntries run
+
 sizeInPages :: Run m h -> NumPages
-sizeInPages = Index.sizeInPages . runIndex
+sizeInPages run = Index.sizeInPages (runIndex run)
+
+runFsPaths :: Run m h -> RunFsPaths
+runFsPaths r = runRunFsPaths r
+
+runFsPathsNumber :: Run m h -> RunNumber
+runFsPathsNumber = Paths.runNumber . runFsPaths
 
 {-# SPECIALISE addReference :: Run IO h -> IO () #-}
 addReference :: PrimMonad m => Run m h -> m ()
@@ -142,13 +156,13 @@ finaliser ::
   -> BlobFile m h
   -> RunFsPaths
   -> m ()
-finaliser hfs kopsFile blobFile runFsPaths = do
+finaliser hfs kopsFile blobFile fsPaths = do
     FS.hClose hfs kopsFile
     BlobFile.removeReference blobFile
-    FS.removeFile hfs (runKOpsPath runFsPaths)
-    FS.removeFile hfs (runFilterPath runFsPaths)
-    FS.removeFile hfs (runIndexPath runFsPaths)
-    FS.removeFile hfs (runChecksumsPath runFsPaths)
+    FS.removeFile hfs (runKOpsPath fsPaths)
+    FS.removeFile hfs (runFilterPath fsPaths)
+    FS.removeFile hfs (runIndexPath fsPaths)
+    FS.removeFile hfs (runChecksumsPath fsPaths)
 
 -- | Should this run cache key\/ops data in memory?
 data RunDataCaching = CacheRunData | NoCacheRunData
