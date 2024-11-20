@@ -12,7 +12,6 @@ module Database.LSMTree.Internal.Run (
   , sizeInPages
   , addReference
   , removeReference
-  , removeReferenceN
   , mkRawBlobRef
   , mkWeakBlobRef
     -- ** Run creation
@@ -32,12 +31,11 @@ import           Control.Monad.Class.MonadSTM (MonadSTM (..))
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Fix (MonadFix)
 import           Control.Monad.Primitive
-import           Control.RefCount (RefCount (..), RefCounter)
+import           Control.RefCount (RefCounter)
 import qualified Control.RefCount as RC
 import           Data.BloomFilter (Bloom)
 import qualified Data.ByteString.Short as SBS
 import           Data.Foldable (for_)
-import           Data.Word (Word64)
 import           Database.LSMTree.Internal.BlobFile hiding (removeReference)
 import qualified Database.LSMTree.Internal.BlobFile as BlobFile
 import           Database.LSMTree.Internal.BlobRef (RawBlobRef (..),
@@ -112,10 +110,6 @@ addReference r = RC.addReference (runRefCounter r)
 removeReference :: (PrimMonad m, MonadMask m) => Run m h -> m ()
 removeReference r = RC.removeReference (runRefCounter r)
 
-{-# SPECIALISE removeReferenceN :: Run IO h -> Word64 -> IO () #-}
-removeReferenceN :: (PrimMonad m, MonadMask m) => Run m h -> Word64 -> m ()
-removeReferenceN r = RC.removeReferenceN (runRefCounter r)
-
 -- | Helper function to make a 'WeakBlobRef' that points into a 'Run'.
 mkRawBlobRef :: Run m h -> BlobSpan -> RawBlobRef m h
 mkRawBlobRef Run{runBlobFile} blobspan =
@@ -187,22 +181,20 @@ setRunDataCaching hbio runKOpsFile NoCacheRunData = do
 
 {-# SPECIALISE fromMutable ::
      RunDataCaching
-  -> RefCount
   -> RunBuilder IO h
   -> IO (Run IO h) #-}
 fromMutable ::
      (MonadFix m, MonadST m, MonadSTM m, MonadMask m)
   => RunDataCaching
-  -> RefCount
   -> RunBuilder m h
   -> m (Run m h)
-fromMutable runRunDataCaching refCount builder = do
+fromMutable runRunDataCaching builder = do
     (runHasFS, runHasBlockIO, runRunFsPaths, runFilter, runIndex, runNumEntries) <-
       Builder.unsafeFinalise (runRunDataCaching == NoCacheRunData) builder
     runKOpsFile <- FS.hOpen runHasFS (runKOpsPath runRunFsPaths) FS.ReadMode
     runBlobFile <- openBlobFile runHasFS (runBlobPath runRunFsPaths) FS.ReadMode
     setRunDataCaching runHasBlockIO runKOpsFile runRunDataCaching
-    runRefCounter <- RC.unsafeMkRefCounterN refCount
+    runRefCounter <- RC.mkRefCounter1
                        (finaliser runHasFS runKOpsFile runBlobFile runRunFsPaths)
     return Run { .. }
 
@@ -236,7 +228,7 @@ fromWriteBuffer fs hbio caching alloc fsPaths buffer blobs = do
     for_ (WB.toList buffer) $ \(k, e) ->
       Builder.addKeyOp builder k (fmap (WBB.mkRawBlobRef blobs) e)
       --TODO: the fmap entry here reallocates even when there are no blobs
-    fromMutable caching (RefCount 1) builder
+    fromMutable caching builder
 
 {-------------------------------------------------------------------------------
   Snapshot

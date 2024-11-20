@@ -7,7 +7,6 @@ import           Control.Monad
 import           Control.Monad.Class.MonadST
 import           Control.Monad.Primitive
 import           Control.Monad.ST.Strict (ST, runST)
-import           Control.RefCount (RefCount (..))
 import           Data.Arena (ArenaManager, newArenaManager, withArena)
 import           Data.Bits ((.&.))
 import           Data.BloomFilter (Bloom)
@@ -371,8 +370,7 @@ lookupsEnv runSizes keyRng0 hfs hbio caching = do
     putStr "DONE"
 
     -- return runs
-    runs <- V.fromList <$>
-              mapM (Run.fromMutable caching (RefCount 1)) rbs
+    runs <- V.fromList <$> mapM (Run.fromMutable caching) rbs
     let blooms = V.map Run.runFilter runs
         indexes = V.map Run.runIndex runs
         handles = V.map Run.runKOpsFile runs

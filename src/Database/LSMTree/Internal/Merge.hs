@@ -23,7 +23,6 @@ import           Control.Monad.Class.MonadThrow (MonadCatch, MonadMask,
                      MonadThrow (..))
 import           Control.Monad.Fix (MonadFix)
 import           Control.Monad.Primitive (PrimState)
-import           Control.RefCount (RefCount (..))
 import           Data.Coerce (coerce)
 import           Data.Primitive.MutVar
 import           Data.Traversable (for)
@@ -166,7 +165,7 @@ complete Merge{..} = do
       Merging -> error "complete: Merge is not done"
       MergingDone -> do
         -- the readers are already drained, therefore closed
-        r <- Run.fromMutable mergeCaching (RefCount 1) mergeBuilder
+        r <- Run.fromMutable mergeCaching mergeBuilder
         writeMutVar mergeState $! Completed
         pure r
       Completed -> error "complete: Merge is already completed"

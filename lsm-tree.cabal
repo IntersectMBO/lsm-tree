@@ -515,7 +515,6 @@ benchmark lsm-tree-bench-lookups
     , lsm-tree
     , lsm-tree:blockio-api
     , lsm-tree:bloomfilter
-    , lsm-tree:control
     , lsm-tree:extras
     , primitive
     , random

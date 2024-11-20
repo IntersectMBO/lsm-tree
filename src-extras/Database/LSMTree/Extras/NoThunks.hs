@@ -499,7 +499,7 @@ deriving stock instance Generic (RWState a)
 deriving anyclass instance NoThunks a => NoThunks (RWState a)
 
 {-------------------------------------------------------------------------------
-  RefCount
+  RefCounter
 -------------------------------------------------------------------------------}
 
 instance Typeable (PrimState m) => NoThunks (RefCounter m) where
@@ -510,9 +510,6 @@ instance Typeable (PrimState m) => NoThunks (RefCounter m) where
           noThunks ctx a
         , noThunks ctx $ (OnlyCheckWhnfNamed b :: OnlyCheckWhnfNamed "finaliser" (m ()))
         ]
-
-deriving stock instance Generic RefCount
-deriving anyclass instance NoThunks RefCount
 
 {-------------------------------------------------------------------------------
   kmerge

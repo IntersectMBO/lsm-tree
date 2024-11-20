@@ -22,7 +22,7 @@ import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.HUnit (assertEqual, testCase, (@=?), (@?))
 import           Test.Tasty.QuickCheck
 
-import           Control.RefCount (RefCount (..), readRefCount)
+import           Control.RefCount (readRefCount)
 import           Control.TempRegistry (withTempRegistry)
 import           Database.LSMTree.Extras.Generators (KeyForIndexCompact (..))
 import           Database.LSMTree.Extras.RunData
@@ -193,8 +193,8 @@ prop_WriteAndOpen fs hbio wb =
       hardLinkRunFiles reg fs hbio paths paths'
       loaded <- openFromDisk fs hbio CacheRunData (simplePath 17)
 
-      (RefCount 1 @=?) =<< readRefCount (runRefCounter written)
-      (RefCount 1 @=?) =<< readRefCount (runRefCounter loaded)
+      (1 @=?) =<< readRefCount (runRefCounter written)
+      (1 @=?) =<< readRefCount (runRefCounter loaded)
 
       runNumEntries written @=? runNumEntries loaded
       runFilter written @=? runFilter loaded
