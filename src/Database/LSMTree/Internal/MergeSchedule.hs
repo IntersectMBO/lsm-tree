@@ -854,7 +854,7 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
         traceWith tr $ AtLevel ln $
           TraceNewMerge (V.map Run.size rs) (runNumber runPaths) caching alloc mergePolicy mergelast
         let numInputRuns = NumRuns $ V.length rs
-        let numInputEntries = NumEntries $ V.sum (V.map (unNumEntries . Run.size) rs)
+        let numInputEntries = V.foldMap' Run.size rs
         case confMergeSchedule of
           OneShot -> do
             r <- allocateTemp reg

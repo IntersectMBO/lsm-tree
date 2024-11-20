@@ -73,6 +73,12 @@ newtype NumEntries = NumEntries Int
   deriving stock (Eq, Ord, Show)
   deriving newtype NFData
 
+instance Semigroup NumEntries where
+  NumEntries a <> NumEntries b = NumEntries (a + b)
+
+instance Monoid NumEntries where
+  mempty = NumEntries 0
+
 unNumEntries :: NumEntries -> Int
 unNumEntries (NumEntries x) = x
 

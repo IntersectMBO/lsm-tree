@@ -21,7 +21,6 @@ import           Control.Monad.Class.MonadST (MonadST)
 import           Control.Monad.Class.MonadSTM (MonadSTM (..))
 import           Control.Monad.Class.MonadThrow (MonadMask, MonadThrow)
 import           Control.Monad.Primitive (PrimState)
-import           Data.Coerce (coerce)
 import           Data.Primitive.MutVar
 import           Data.Traversable (for)
 import qualified Data.Vector as V
@@ -104,7 +103,7 @@ new fs hbio mergeCaching alloc mergeLevel mergeMappend targetPaths runs = do
     mreaders <- Readers.new Readers.NoOffsetKey Nothing runs
     for mreaders $ \mergeReaders -> do
       -- calculate upper bounds based on input runs
-      let numEntries = coerce (sum @V.Vector @Int) (fmap Run.size runs)
+      let numEntries = V.foldMap' Run.size runs
       mergeBuilder <- Builder.new fs hbio targetPaths numEntries alloc
       mergeState <- newMutVar $! Merging
       return Merge {
