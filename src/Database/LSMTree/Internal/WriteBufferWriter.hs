@@ -1,5 +1,6 @@
 module Database.LSMTree.Internal.WriteBufferWriter
   (
+    SerialisedWriteBuffer (..),
     WriteBufferWriter (..),
     new,
     addKeyOp,
@@ -45,16 +46,22 @@ import           System.FS.API (HasFS)
 import qualified System.FS.BlockIO.API as FS
 import           System.FS.BlockIO.API (HasBlockIO)
 
-data WriteBufferWriter m h = WriteBufferWriter
-  { -- | The target file.
-    writeBufferWriterFsPaths    :: !WriteBufferFsPaths,
+data SerialisedWriteBuffer m h = SerialisedWriteBuffer
+    { -- | The file system paths for all the files used by the serialised write buffer.
+      serialisedWriteBufferFsPaths    :: !WriteBufferFsPaths
+      -- | The (read mode) file handles.
+    , serialisedWriteBufferHandles    :: !(ForWriteBufferFiles (FS.Handle h))
+    , serialisedWriteBufferHasFS      :: !(HasFS m h)
+    , serialisedWriteBufferHasBlockIO :: !(HasBlockIO m h)
+    }
 
+data WriteBufferWriter m h = WriteBufferWriter
+  { -- | The file system paths for all the files used by the serialised write buffer.
+    writeBufferWriterFsPaths    :: !WriteBufferFsPaths,
     -- | The page accumulator.
     writeBufferWriterPageAcc    :: !(PageAcc (PrimState m)),
-
     -- | The byte offset within the blob file for the next blob to be written.
     writeBufferWriterBlobOffset :: !(PrimVar (PrimState m) Word64),
-
     -- | The (write mode) file handles.
     writeBufferWriterHandles    :: !(ForWriteBufferFiles (ChecksumHandle (PrimState m) h)),
     writeBufferWriterHasFS      :: !(HasFS m h),
