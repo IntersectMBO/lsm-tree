@@ -63,7 +63,11 @@ import           GHC.Stack (HasCallStack, callStack)
 data LSM s  = LSMHandle !(STRef s Counter)
                         !(STRef s (LSMContent s))
 
-data LSMContent s = LSMContent Buffer (Levels s) (Maybe (MergingTree s))
+data LSMContent s = LSMContent Buffer (Levels s) (UnionLevel s)
+
+data UnionLevel s = NoUnion
+                    -- | We track the debt to make sure it never increases.
+                  | Union !(MergingTree s) !(STRef s Debt)
 
 -- | A simple count of LSM operations to allow logging the operation
 -- number in each event. This enables relating merge events to the
@@ -204,18 +208,18 @@ mergePolicyForLevel 1 [] = MergePolicyTiering
 mergePolicyForLevel _ [] = MergePolicyLevelling
 mergePolicyForLevel _ _  = MergePolicyTiering
 
-mergeLastForLevel :: [Level s] -> Maybe (MergingTree s) -> MergeLastLevel
-mergeLastForLevel [] Nothing = MergeLastLevel
+mergeLastForLevel :: [Level s] -> UnionLevel s -> MergeLastLevel
+mergeLastForLevel [] NoUnion = MergeLastLevel
 mergeLastForLevel _  _       = MergeMidLevel
 
 -- | Note that the invariants rely on the fact that levelling is only used on
 -- the last level.
 --
 invariant :: forall s. LSMContent s -> ST s ()
-invariant (LSMContent _ levels0 tree0) = go 1 levels0
+invariant (LSMContent _ levels0 union0) = go 1 levels0
   where
     mergeLast :: Levels s -> MergeLastLevel
-    mergeLast ls = mergeLastForLevel ls tree0
+    mergeLast ls = mergeLastForLevel ls union0
 
     go :: Int -> [Level s] -> ST s ()
     go !_ [] = return ()
@@ -521,7 +525,7 @@ paydownMergeDebt c2 (MergeDebt c d)
 new :: ST s (LSM s)
 new = do
   c   <- newSTRef 0
-  lsm <- newSTRef (LSMContent Map.empty [] Nothing)
+  lsm <- newSTRef (LSMContent Map.empty [] NoUnion)
   return (LSMHandle c lsm)
 
 inserts :: Tracer (ST s) Event -> LSM s -> [(Key, Value, Maybe Blob)] -> ST s ()
@@ -554,19 +558,19 @@ updates tr lsm = mapM_ (uncurry (update tr lsm))
 update :: Tracer (ST s) Event -> LSM s -> Key -> Op -> ST s ()
 update tr (LSMHandle scr lsmr) k op = do
     sc <- readSTRef scr
-    content@(LSMContent wb ls tree) <- readSTRef lsmr
+    content@(LSMContent wb ls unionLevel) <- readSTRef lsmr
     modifySTRef' scr (+1)
     supplyCreditsLevels 1 ls
     invariant content
     let wb' = Map.insertWith combine k op wb
     if bufferSize wb' >= maxBufferSize
       then do
-        ls' <- increment tr sc (bufferToRun wb') ls tree
-        let content' = LSMContent Map.empty ls' tree
+        ls' <- increment tr sc (bufferToRun wb') ls unionLevel
+        let content' = LSMContent Map.empty ls' unionLevel
         invariant content'
         writeSTRef lsmr content'
       else
-        writeSTRef lsmr (LSMContent wb' ls tree)
+        writeSTRef lsmr (LSMContent wb' ls unionLevel)
 
 supplyMergeCredits :: LSM s -> Credit -> ST s ()
 supplyMergeCredits (LSMHandle scr lsmr) credits = do
@@ -582,13 +586,13 @@ data LookupResult v b =
 
 lookups :: LSM s -> [Key] -> ST s [LookupResult Value Blob]
 lookups (LSMHandle _ lsmr) ks = do
-    LSMContent wb ls tree <- readSTRef lsmr
+    LSMContent wb ls ul <- readSTRef lsmr
     runs <- concat <$> flattenLevels ls
     let runsAcc = lookupsBufferAndRuns ks wb runs
-    acc <- case tree of
-      Nothing ->
+    acc <- case ul of
+      NoUnion ->
         return runsAcc
-      Just t -> do
+      Union t _ -> do
         treeAcc <- lookupsTree ks t
         return $ mergeLookupAccs [runsAcc, treeAcc]
     return $ map (\k -> queryLookupAcc k acc) ks
@@ -755,12 +759,12 @@ data EventDetail =
   deriving stock Show
 
 increment :: forall s. Tracer (ST s) Event
-          -> Counter -> Run -> Levels s -> Maybe (MergingTree s) -> ST s (Levels s)
-increment tr sc run0 levels0 tree0 = do
+          -> Counter -> Run -> Levels s -> UnionLevel s -> ST s (Levels s)
+increment tr sc run0 levels0 union0 = do
     go 1 [run0] levels0
   where
     mergeLast :: Levels s -> MergeLastLevel
-    mergeLast ls = mergeLastForLevel ls tree0
+    mergeLast ls = mergeLastForLevel ls union0
 
     go :: Int -> [Run] -> Levels s -> ST s (Levels s)
     go !ln incoming [] = do
@@ -841,8 +845,12 @@ union :: LSM s -> LSM s -> ST s (LSM s)
 union (LSMHandle _ lsmr1) (LSMHandle _ lsmr2) = do
     mt1 <- contentToMergingTree =<< readSTRef lsmr1
     mt2 <- contentToMergingTree =<< readSTRef lsmr2
-    tree <- newPendingMerge MergeUnion (catMaybes [mt1, mt2])
-    lsmr <- newSTRef (LSMContent Map.empty [] tree)
+    unionLevel <- newPendingMerge MergeUnion (catMaybes [mt1, mt2]) >>= \case
+      Nothing -> return NoUnion
+      Just tree -> do
+        debt <- fst <$> remainingDebtMergingTree tree
+        Union tree <$> newSTRef debt
+    lsmr <- newSTRef (LSMContent Map.empty [] unionLevel)
     c    <- newSTRef 0
     return (LSMHandle c lsmr)
 
@@ -860,11 +868,11 @@ contentToMergingTree content = do
     newPendingMerge (MergeLevel MergeLastLevel) =<< fromContent content
   where
     fromContent :: LSMContent s -> ST s [MergingTree s]
-    fromContent (LSMContent wb ls tree) = do
+    fromContent (LSMContent wb ls ul) = do
         fmap concat $ sequence
           [ toList <$> fromBuffer wb
           , concat <$> traverse fromLevel ls
-          , return (toList tree)
+          , toList <$> fromUnionLevel ul
           ]
 
     -- TODO: is it okay to just flush the buffer when creating a union?
@@ -894,6 +902,11 @@ contentToMergingTree content = do
         MergingTree <$> newSTRef (CompletedTreeMerge r)
         -- TODO: This STRef is not really needed, no work to be shared and its
         -- state will never change.
+
+    fromUnionLevel :: UnionLevel s -> ST s (Maybe (MergingTree s))
+    fromUnionLevel = \case
+        NoUnion   -> return Nothing
+        Union t _ -> return (Just t)
 
 type Size = Int
 
@@ -927,14 +940,15 @@ remainingDebtMergingRun (MergingRun _ ref) =
 supplyUnionCredits :: LSM s -> Credit -> ST s Credit
 supplyUnionCredits (LSMHandle scr lsmr) credits = do
     assertST (credits >= 0)
-    content@(LSMContent _ _ tree) <- readSTRef lsmr
-    case tree of
-      Nothing ->
+    content@(LSMContent _ _ ul) <- readSTRef lsmr
+    case ul of
+      NoUnion ->
         return credits
-      Just t -> do
+      Union t debtRef -> do
         modifySTRef' scr (+1)
+        _debt <- checkedUnionDebt t debtRef  -- just to make sure it's checked
         c' <- supplyCreditsMergingTree credits t
-        debt' <- fst <$> remainingDebtMergingTree t
+        debt' <- checkedUnionDebt t debtRef
         if (debt' > 0)
           then
             -- should have spent these credits
@@ -949,6 +963,14 @@ supplyUnionCredits (LSMHandle scr lsmr) credits = do
             return ()
         invariant content
         return c'
+
+checkedUnionDebt :: MergingTree s -> STRef s Debt -> ST s Debt
+checkedUnionDebt tree debtRef = do
+    storedDebt <- readSTRef debtRef
+    debt <- fst <$> remainingDebtMergingTree tree
+    assertST $ debt <= storedDebt
+    writeSTRef debtRef debt
+    return debt
 
 checked :: HasCallStack
         => (a -> ST s (Debt, Size))
@@ -1062,9 +1084,11 @@ data MTree = MLeaf Run
 
 allLayers :: LSM s -> ST s (Buffer, [[Run]], Maybe MTree)
 allLayers (LSMHandle _ lsmr) = do
-    LSMContent wb ls tree <- readSTRef lsmr
+    LSMContent wb ls ul <- readSTRef lsmr
     rs <- flattenLevels ls
-    mtree <- traverse flattenTree tree
+    mtree <- case ul of
+      NoUnion   -> return Nothing
+      Union t _ -> Just <$> flattenTree t
     return (wb, rs, mtree)
 
 flattenLevels :: Levels s -> ST s [[Run]]
