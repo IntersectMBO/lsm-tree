@@ -598,14 +598,16 @@ data LookupResult v b =
   deriving stock (Eq, Show)
 
 lookups :: LSM s -> [Key] -> ST s [LookupResult Value Blob]
-lookups lsm ks = do
-    (wb, levels, _tree) <- allLevels lsm
-    return $ map (\k -> doLookup k wb (concat levels)) ks
+lookups (LSMHandle _ lsmr) ks = do
+    LSMContent wb ls ul <- readSTRef lsmr
+    runs <- concat <$> flattenLevels ls
+    traverse (doLookup wb runs ul) ks
 
 lookup :: LSM s -> Key -> ST s (LookupResult Value Blob)
-lookup lsm k = do
-    (wb, levels, _tree) <- allLevels lsm
-    return $ doLookup k wb (concat levels)
+lookup (LSMHandle _ lsmr) k = do
+    LSMContent wb ls ul <- readSTRef lsmr
+    runs <- concat <$> flattenLevels ls
+    doLookup wb runs ul k
 
 duplicate :: LSM s -> ST s (LSM s)
 duplicate (LSMHandle _scr lsmr) = do
@@ -708,19 +710,31 @@ checkedUnionDebt tree debtRef = do
 
 type LookupAcc = Maybe Op
 
+mergeAcc :: [LookupAcc] -> LookupAcc
+mergeAcc = foldl (updateAcc combine) Nothing . catMaybes
+
+unionAcc :: [LookupAcc] -> LookupAcc
+unionAcc = foldl (updateAcc combineUnion) Nothing . catMaybes
+
+updateAcc :: (Op -> Op -> Op) -> LookupAcc -> Op -> LookupAcc
+updateAcc _ Nothing     old = Just old
+updateAcc f (Just new_) old = Just (f new_ old)  -- acc has more recent Op
+
 -- | We handle lookups by accumulating results by going through the runs from
 -- most recent to least recent, starting with the write buffer.
 --
 -- In the real implementation, this is done not on an individual 'LookupAcc',
 -- but one for each key, i.e. @Vector (Maybe Entry)@.
-doLookup :: Key -> Buffer -> [Run] -> LookupResult Value Blob
-doLookup k wb =
-    convertAcc . foldl updateAcc (Map.lookup k wb) . submitLookups k
+doLookup :: Buffer -> [Run] -> UnionLevel s -> Key -> ST s (LookupResult Value Blob)
+doLookup wb runs ul k = do
+    let acc0 = lookupBatch (Map.lookup k wb) k runs
+    case ul of
+      NoUnion ->
+        return (convertAcc acc0)
+      Union tree _ -> do
+        accTree <- lookupsTree k tree
+        return (convertAcc (mergeAcc [acc0, accTree]))
   where
-    updateAcc :: LookupAcc -> Op -> LookupAcc
-    updateAcc Nothing     = Just
-    updateAcc (Just new_) = Just . combine new_  -- acc has more recent Op
-
     convertAcc :: LookupAcc -> LookupResult Value Blob
     convertAcc = \case
         Nothing           -> NotFound
@@ -728,9 +742,69 @@ doLookup k wb =
         Just (Mupsert v)  -> Found v Nothing
         Just Delete       -> NotFound
 
--- | In a real implementation, this would use all keys at once and be in IO.
-submitLookups :: Key -> [Run] -> [Op]
-submitLookups k rs = [op | r <- rs, Just op <- [Map.lookup k r]]
+-- | Perform a batch of lookups, accumulating the result onto an initial
+-- 'LookupAcc'.
+--
+-- In a real implementation, this would take all keys at once and be in IO.
+lookupBatch :: LookupAcc -> Key -> [Run] -> LookupAcc
+lookupBatch acc k rs =
+    let ops = [op | r <- rs, Just op <- [Map.lookup k r]]
+    in foldl (updateAcc combine) acc ops
+
+-- | Do lookups on runs at the leaves and recursively combine the resulting
+-- 'LookupAcc's, either using 'mergeAcc' or 'unionAcc' depending on the merge
+-- type.
+--
+-- Doing this naively would result in a call to 'lookupBatch' and creation of
+-- a 'LookupAcc' for each run in the tree. However, when there are adjacent
+-- 'Run's or 'MergingRuns' (with 'MergeLevel') as inputs to a level-merge, we
+-- combine them into a single batch of runs.
+--
+-- For example, this means that if we union two tables (which themselves don't
+-- have a union level) and then do lookups, two batches of lookups have to be
+-- performed (plus a batch for the table's regular levels if it has been updated
+-- after the union).
+lookupsTree :: Key -> MergingTree s -> ST s LookupAcc
+lookupsTree k = go
+  where
+    go :: MergingTree s -> ST s LookupAcc
+    go (MergingTree treeState) = readSTRef treeState >>= \case
+        CompletedTreeMerge r ->
+          return $ lookupBatch' [r]
+        OngoingTreeMerge (MergingRun mt mergeState) ->
+          readSTRef mergeState >>= \case
+            CompletedMerge r ->
+              return $ lookupBatch' [r]
+            OngoingMerge _ rs _ -> case mt of
+              MergeLevel _ -> return $ lookupBatch' rs  -- combine into batch
+              MergeUnion   -> return $ unionAcc (map (\r -> lookupBatch' [r]) rs)
+        PendingTreeMerge (PendingMerge mt trees) -> case mt of
+          MergeUnion   -> unionAcc <$> traverse go trees
+          MergeLevel _ -> do
+            (runs, remaining) <- collectLevel [] trees  -- combine into batch
+            let acc0 = lookupBatch' runs
+            case remaining of
+              [] -> return acc0  -- only runs and merging level runs, done here
+              _  -> do
+                accs <- traverse go remaining
+                return (mergeAcc (acc0 : accs))
+
+    lookupBatch' = lookupBatch Nothing k
+
+    -- recover the known structure of pending level merges (created in
+    -- 'contentToMergingTree'), which consist of all runs of a table, plus
+    -- potentially a single union merge at the end
+    collectLevel :: [[Run]] -> [MergingTree s] -> ST s ([Run], [MergingTree s])
+    collectLevel rss []  = return (concat (reverse rss), [])
+    collectLevel rss (mt@(MergingTree ref) : mts) =
+        readSTRef ref >>= \case
+          CompletedTreeMerge r ->
+            collectLevel ([r] : rss) mts
+          OngoingTreeMerge mr@(MergingRun (MergeLevel _) _) -> do
+            rs <- flattenMergingRun mr
+            collectLevel (rs : rss) mts
+          _ ->
+            return (concat (reverse rss), mt : mts)
 
 -------------------------------------------------------------------------------
 -- Updates
