@@ -4,11 +4,11 @@ module Database.LSMTree.Internal.WriteBufferWriter
   ) where
 
 import           Control.Exception (assert)
-import           Control.Monad (when)
+import           Control.Monad (void, when)
 import           Control.Monad.Class.MonadST (MonadST (..))
 import qualified Control.Monad.Class.MonadST as ST
 import           Control.Monad.Class.MonadSTM (MonadSTM (..))
-import           Control.Monad.Class.MonadThrow (MonadThrow, MonadMask)
+import           Control.Monad.Class.MonadThrow (MonadThrow)
 import           Control.Monad.Primitive (PrimMonad (..))
 import           Control.Monad.ST (ST)
 import           Data.Foldable (for_)
@@ -34,20 +34,18 @@ import           Database.LSMTree.Internal.RawOverflowPage (RawOverflowPage)
 import           Database.LSMTree.Internal.RawPage (RawPage)
 import           Database.LSMTree.Internal.Serialise (SerialisedKey,
                      SerialisedValue)
+import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
+import qualified Database.LSMTree.Internal.WriteBuffer as WB
+import           Database.LSMTree.Internal.WriteBufferBlobs (WriteBufferBlobs)
+import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
 import qualified System.FS.BlockIO.API as FS
 import           System.FS.BlockIO.API (HasBlockIO)
-import Control.Monad.Fix (MonadFix)
-import Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
-import Database.LSMTree.Internal.WriteBufferBlobs (WriteBufferBlobs)
-import qualified Database.LSMTree.Internal.WriteBuffer as WB
-import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
-import Data.Functor (void)
 
 
 writeWriteBuffer ::
-     (MonadFix m, MonadST m, MonadSTM m, MonadMask m)
+     (MonadSTM m, MonadST m, MonadThrow m)
   => HasFS m h
   -> HasBlockIO m h
   -> WriteBufferFsPaths

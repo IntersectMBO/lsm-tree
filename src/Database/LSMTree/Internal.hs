@@ -121,6 +121,7 @@ import           Database.LSMTree.Internal.Snapshot.Codec
 import           Database.LSMTree.Internal.UniqCounter
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
+import qualified Database.LSMTree.Internal.WriteBufferWriter as WBW
 import qualified System.FS.API as FS
 import           System.FS.API (FsError, FsErrorPath (..), FsPath, HasFS)
 import qualified System.FS.BlockIO.API as FS
@@ -1161,6 +1162,12 @@ createSnapshot resolve snap label tableType t = do
           allocateTemp reg
             (FS.createDirectory hfs (Paths.getNamedSnapshotDir snapDir))
             (\_ -> FS.removeDirectoryRecursive hfs (Paths.getNamedSnapshotDir snapDir))
+
+        -- Write the write buffer.
+        RW.withReadAccess (tableContent thEnv) $ \content -> do
+          writeBufferRunNumber <- uniqueToRunNumber <$> incrUniqCounter (tableSessionUniqCounter thEnv)
+          let fsPaths = Paths.WriteBufferFsPaths (Paths.getNamedSnapshotDir snapDir) writeBufferRunNumber
+          WBW.writeWriteBuffer hfs hbio fsPaths (tableWriteBuffer content) (tableWriteBufferBlobs content)
 
         -- For the temporary implementation it is okay to just flush the buffer
         -- before taking the snapshot.
