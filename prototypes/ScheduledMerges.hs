@@ -33,6 +33,7 @@ module ScheduledMerges (
     union,
     Credit,
     Debt,
+    remainingUnionDebt,
     supplyUnionCredits,
 
     -- * Test and trace
@@ -600,6 +601,77 @@ lookups (LSMHandle _ lsmr) ks = do
 lookup :: LSM s -> Key -> ST s (LookupResult Value Blob)
 lookup lsm k = head <$> lookups lsm [k]
 
+duplicate :: LSM s -> ST s (LSM s)
+duplicate (LSMHandle _scr lsmr) = do
+    scr'  <- newSTRef 0
+    lsmr' <- newSTRef =<< readSTRef lsmr
+    return (LSMHandle scr' lsmr')
+    -- it's that simple here, because we share all the pure value and all the
+    -- STRefs and there's no ref counting to be done
+
+union :: LSM s -> LSM s -> ST s (LSM s)
+union (LSMHandle _ lsmr1) (LSMHandle _ lsmr2) = do
+    mt1 <- contentToMergingTree =<< readSTRef lsmr1
+    mt2 <- contentToMergingTree =<< readSTRef lsmr2
+    unionLevel <- newPendingMerge MergeUnion (catMaybes [mt1, mt2]) >>= \case
+      Nothing -> return NoUnion
+      Just tree -> do
+        debt <- fst <$> remainingDebtMergingTree tree
+        Union tree <$> newSTRef debt
+    lsmr <- newSTRef (LSMContent Map.empty [] unionLevel)
+    c    <- newSTRef 0
+    return (LSMHandle c lsmr)
+
+-- | An uppoer bound on the number of credits that need to be spent until this
+-- table doesn't contain an ongoing union merge any more. This includes the
+-- cost for existing merges that were part of the union's input tables.
+remainingUnionDebt :: LSM s -> ST s Debt
+remainingUnionDebt (LSMHandle _ lsmr) = do
+    LSMContent _ _ ul <- readSTRef lsmr
+    case ul of
+      NoUnion   -> return 0
+      Union t d -> checkedUnionDebt t d
+
+supplyUnionCredits :: LSM s -> Credit -> ST s Credit
+supplyUnionCredits (LSMHandle scr lsmr) credits = do
+    assertST (credits >= 0)
+    content@(LSMContent _ _ ul) <- readSTRef lsmr
+    case ul of
+      NoUnion ->
+        return credits
+      Union t debtRef -> do
+        modifySTRef' scr (+1)
+        _debt <- checkedUnionDebt t debtRef  -- just to make sure it's checked
+        c' <- supplyCreditsMergingTree credits t
+        debt' <- checkedUnionDebt t debtRef
+        if (debt' > 0)
+          then
+            -- should have spent these credits
+            assertST $ c' == 0
+          else
+            -- TODO: check if really done?
+            -- TODO: If the tree got completed, we can move it to the last level
+            -- so it can be merged with other runs and lookups don't need to
+            -- handle a MergingTree any more. However, this also requires
+            -- tweaking 'invariant' and 'increment' to deal with the arbitrary
+            -- run size.
+            return ()
+        invariant content
+        return c'
+
+-- | Like 'remainingDebtMergingTree', but ensures that debt never increases.
+checkedUnionDebt :: MergingTree s -> STRef s Debt -> ST s Debt
+checkedUnionDebt tree debtRef = do
+    storedDebt <- readSTRef debtRef
+    debt <- fst <$> remainingDebtMergingTree tree
+    assertST $ debt <= storedDebt
+    writeSTRef debtRef debt
+    return debt
+
+-------------------------------------------------------------------------------
+-- Implementation
+--
+
 newtype LookupAcc = LookupAcc { getLookupAcc :: Map Key Op }
 
 emptyLookupAcc :: LookupAcc
@@ -833,27 +905,6 @@ tieringLevelIsFull _ln _incoming resident = length resident >= 4
 levellingLevelIsFull :: Int -> [Run] -> Run -> Bool
 levellingLevelIsFull ln _incoming resident = levellingRunSizeToLevel resident > ln
 
-duplicate :: LSM s -> ST s (LSM s)
-duplicate (LSMHandle _scr lsmr) = do
-    scr'  <- newSTRef 0
-    lsmr' <- newSTRef =<< readSTRef lsmr
-    return (LSMHandle scr' lsmr')
-    -- it's that simple here, because we share all the pure value and all the
-    -- STRefs and there's no ref counting to be done
-
-union :: LSM s -> LSM s -> ST s (LSM s)
-union (LSMHandle _ lsmr1) (LSMHandle _ lsmr2) = do
-    mt1 <- contentToMergingTree =<< readSTRef lsmr1
-    mt2 <- contentToMergingTree =<< readSTRef lsmr2
-    unionLevel <- newPendingMerge MergeUnion (catMaybes [mt1, mt2]) >>= \case
-      Nothing -> return NoUnion
-      Just tree -> do
-        debt <- fst <$> remainingDebtMergingTree tree
-        Union tree <$> newSTRef debt
-    lsmr <- newSTRef (LSMContent Map.empty [] unionLevel)
-    c    <- newSTRef 0
-    return (LSMHandle c lsmr)
-
 -- | Ensures that the merge contains more than one input.
 newPendingMerge :: MergeType -> [MergingTree s] -> ST s (Maybe (MergingTree s))
 newPendingMerge mergeType = \case
@@ -910,10 +961,8 @@ contentToMergingTree content = do
 
 type Size = Int
 
--- | Upper bound
---
--- TODO: should this be cached somewhere? It might get stale, but it remains
--- a valid upper bound. Otherwise, just remove this code?
+-- | Upper bound on the number of credits needed to completely (recursively)
+-- merge this tree, as well as the size of the resulting run.
 remainingDebtMergingTree :: MergingTree s -> ST s (Debt, Size)
 remainingDebtMergingTree (MergingTree ref) =
     readSTRef ref >>= \case
@@ -928,7 +977,8 @@ remainingDebtPendingMerge (PendingMerge _ trees) = do
     let totalDebt = sum debts + totalSize
     return (totalDebt, totalSize)
 
--- | Upper bound
+-- | Upper bound on the number of credits needed to complete this merge, as well
+-- as the size of the resulting run.
 remainingDebtMergingRun :: MergingRun s -> ST s (Debt, Size)
 remainingDebtMergingRun (MergingRun _ ref) =
     readSTRef ref >>= \case
@@ -936,41 +986,6 @@ remainingDebtMergingRun (MergingRun _ ref) =
         return (0, runSize r)
       OngoingMerge d inputRuns _ ->
         return (mergeDebtLeft d, sum (map runSize inputRuns))
-
-supplyUnionCredits :: LSM s -> Credit -> ST s Credit
-supplyUnionCredits (LSMHandle scr lsmr) credits = do
-    assertST (credits >= 0)
-    content@(LSMContent _ _ ul) <- readSTRef lsmr
-    case ul of
-      NoUnion ->
-        return credits
-      Union t debtRef -> do
-        modifySTRef' scr (+1)
-        _debt <- checkedUnionDebt t debtRef  -- just to make sure it's checked
-        c' <- supplyCreditsMergingTree credits t
-        debt' <- checkedUnionDebt t debtRef
-        if (debt' > 0)
-          then
-            -- should have spent these credits
-            assertST $ c' == 0
-          else
-            -- TODO: check if really done?
-            -- TODO: If the tree got completed, we can move it to the last level
-            -- so it can be merged with other runs and lookups don't need to
-            -- handle a MergingTree any more. However, this also requires
-            -- tweaking 'invariant' and 'increment' to deal with the arbitrary
-            -- run size.
-            return ()
-        invariant content
-        return c'
-
-checkedUnionDebt :: MergingTree s -> STRef s Debt -> ST s Debt
-checkedUnionDebt tree debtRef = do
-    storedDebt <- readSTRef debtRef
-    debt <- fst <$> remainingDebtMergingTree tree
-    assertST $ debt <= storedDebt
-    writeSTRef debtRef debt
-    return debt
 
 checked :: HasCallStack
         => (a -> ST s (Debt, Size))
