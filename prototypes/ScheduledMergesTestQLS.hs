@@ -249,14 +249,12 @@ instance InLockstep Model where
        ++ [ (1, fmap Some $
                   ADuplicate <$> elements vars)
           ]
-          -- TODO: enable
-       ++ [ (0, fmap Some $
+       ++ [ (1, fmap Some $
                   AUnion <$> elements vars
                          <*> elements vars)
           ]
-          -- TODO: enable
           -- TODO: only supply to tables with unions?
-       ++ [ (0, fmap Some $
+       ++ [ (1, fmap Some $
                   ASupplyUnion <$> elements vars
                                <*> arbitrary)
           ]

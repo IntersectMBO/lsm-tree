@@ -584,10 +584,16 @@ data LookupResult v b =
   deriving stock (Eq, Show)
 
 lookups :: LSM s -> [Key] -> ST s [LookupResult Value Blob]
-lookups lsm ks = do
-    (wb, layers, _mtree) <- allLayers lsm
-    let lookupRes = submitLookups ks (concat layers)
-    let acc = updateLookupAcc (lookupAccFromBuffer ks wb) lookupRes
+lookups (LSMHandle _ lsmr) ks = do
+    LSMContent wb ls ul <- readSTRef lsmr
+    runs <- concat <$> flattenLevels ls
+    let runsAcc = lookupsBufferAndRuns ks wb runs
+    acc <- case ul of
+      NoUnion ->
+        return runsAcc
+      Union t _ -> do
+        treeAcc <- lookupsTree ks t
+        return $ mergeLookupAccs [runsAcc, treeAcc]
     return $ map (\k -> queryLookupAcc k acc) ks
 
 lookup :: LSM s -> Key -> ST s (LookupResult Value Blob)
@@ -668,6 +674,9 @@ checkedUnionDebt tree debtRef = do
 
 newtype LookupAcc = LookupAcc { getLookupAcc :: Map Key Op }
 
+emptyLookupAcc :: LookupAcc
+emptyLookupAcc = LookupAcc Map.empty
+
 lookupAccFromBuffer :: [Key] -> Buffer -> LookupAcc
 lookupAccFromBuffer ks = LookupAcc . Map.filterWithKey (\k _ -> k `elem` ks)
 
@@ -685,9 +694,64 @@ updateLookupAcc :: LookupAcc -> [(Key, Op)] -> LookupAcc
 updateLookupAcc (LookupAcc acc) =
     LookupAcc . foldl (\a (k, op) -> Map.insertWith (flip combine) k op a) acc
 
+mergeLookupAccs :: [LookupAcc] -> LookupAcc
+mergeLookupAccs = LookupAcc . Map.unionsWith combine . map getLookupAcc
+
+unionLookupAccs :: [LookupAcc] -> LookupAcc
+unionLookupAccs = LookupAcc . Map.unionsWith combineUnion . map getLookupAcc
+
+lookupsBufferAndRuns :: [Key] -> Buffer -> [Run] -> LookupAcc
+lookupsBufferAndRuns ks wb runs =
+    let lookupRes = submitLookups ks runs
+    in updateLookupAcc (lookupAccFromBuffer ks wb) lookupRes
+
 -- | In a real implementation, this would be in IO.
 submitLookups :: [Key] -> [Run] -> [(Key, Op)]
 submitLookups ks rs = [(k, op) | r <- rs, k <- ks, Just op <- [Map.lookup k r]]
+
+-- | Do lookups on runs at the leaves and recursively combine the resulting
+-- 'LookupAcc's.
+--
+-- Doing this naively would result in a call to 'submitLookups' and creation of
+-- a 'LookupAcc' for each run in the tree. However, when there are adjacent
+-- 'Run's or 'MergingRuns' (with 'MergeLevel') as inputs to a level-merge, we
+-- combine them into a single batch of runs.
+--
+lookupsTree :: [Key] -> MergingTree s -> ST s LookupAcc
+lookupsTree ks = go
+  where
+    go :: MergingTree s -> ST s LookupAcc
+    go (MergingTree treeState) = readSTRef treeState >>= \case
+        CompletedTreeMerge r -> return $ lookupRuns [r]
+        OngoingTreeMerge (MergingRun mt mergeState) -> readSTRef mergeState >>= \case
+          CompletedMerge r -> return $ lookupRuns [r]
+          OngoingMerge _ rs _ -> case mt of
+            MergeLevel _ -> return $ lookupRuns rs  -- combine into batch
+            MergeUnion -> return $ unionLookupAccs (map (\r -> lookupRuns [r]) rs)
+        PendingTreeMerge (PendingMerge mt trees) -> case mt of
+          MergeUnion   -> unionLookupAccs <$> traverse go trees
+          MergeLevel _ -> do
+            (runs, remaining) <- collectLevel [] trees
+            let acc0 = updateLookupAcc emptyLookupAcc (submitLookups ks runs)
+            accs <- traverse go remaining
+            return (mergeLookupAccs (acc0 : accs))
+
+    lookupRuns = updateLookupAcc emptyLookupAcc . submitLookups ks
+
+    -- recover the known structure of pending level merges (created in
+    -- 'contentToMergingTree'), which consist of all runs of a table, plus
+    -- potentially a single union merge at the end
+    collectLevel :: [[Run]] -> [MergingTree s] -> ST s ([Run], [MergingTree s])
+    collectLevel rss []  = return (concat (reverse rss), [])
+    collectLevel rss (mt@(MergingTree ref) : mts) =
+        readSTRef ref >>= \case
+          CompletedTreeMerge r ->
+            collectLevel ([r] : rss) mts
+          OngoingTreeMerge mr@(MergingRun (MergeLevel _) _) -> do
+            rs <- flattenMergingRun mr
+            collectLevel (rs : rss) mts
+          _ ->
+            return (concat (reverse rss), mt : mts)
 
 -------------------------------------------------------------------------------
 -- Updates
