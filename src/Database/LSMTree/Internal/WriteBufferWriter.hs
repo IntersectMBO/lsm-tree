@@ -1,12 +1,6 @@
 module Database.LSMTree.Internal.WriteBufferWriter
   (
-    SerialisedWriteBuffer (..),
-    WriteBufferWriter (..),
-    new,
-    addKeyOp,
-    addLargeSerialisedKeyOp,
-    unsafeFinalise,
-    close
+    writeWriteBuffer
   ) where
 
 import           Control.Exception (assert)
@@ -14,7 +8,7 @@ import           Control.Monad (when)
 import           Control.Monad.Class.MonadST (MonadST (..))
 import qualified Control.Monad.Class.MonadST as ST
 import           Control.Monad.Class.MonadSTM (MonadSTM (..))
-import           Control.Monad.Class.MonadThrow (MonadThrow)
+import           Control.Monad.Class.MonadThrow (MonadThrow, MonadMask)
 import           Control.Monad.Primitive (PrimMonad (..))
 import           Control.Monad.ST (ST)
 import           Data.Foldable (for_)
@@ -38,22 +32,43 @@ import           Database.LSMTree.Internal.Paths (ForWriteBufferFiles (..),
                      writeBufferChecksumsPath)
 import           Database.LSMTree.Internal.RawOverflowPage (RawOverflowPage)
 import           Database.LSMTree.Internal.RawPage (RawPage)
-import qualified Database.LSMTree.Internal.RawPage as RawPage
 import           Database.LSMTree.Internal.Serialise (SerialisedKey,
                      SerialisedValue)
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
 import qualified System.FS.BlockIO.API as FS
 import           System.FS.BlockIO.API (HasBlockIO)
+import Control.Monad.Fix (MonadFix)
+import Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
+import Database.LSMTree.Internal.WriteBufferBlobs (WriteBufferBlobs)
+import qualified Database.LSMTree.Internal.WriteBuffer as WB
+import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
+import Data.Functor (void)
 
-data SerialisedWriteBuffer m h = SerialisedWriteBuffer
-    { -- | The file system paths for all the files used by the serialised write buffer.
-      serialisedWriteBufferFsPaths    :: !WriteBufferFsPaths
-      -- | The (read mode) file handles.
-    , serialisedWriteBufferHandles    :: !(ForWriteBufferFiles (FS.Handle h))
-    , serialisedWriteBufferHasFS      :: !(HasFS m h)
-    , serialisedWriteBufferHasBlockIO :: !(HasBlockIO m h)
-    }
+
+writeWriteBuffer ::
+     (MonadFix m, MonadST m, MonadSTM m, MonadMask m)
+  => HasFS m h
+  -> HasBlockIO m h
+  -> WriteBufferFsPaths
+  -> WriteBuffer
+  -> WriteBufferBlobs m h
+  -> m ()
+writeWriteBuffer hfs hbio fsPaths buffer blobs = do
+  writer <- new hfs hbio fsPaths
+  for_ (WB.toList buffer) $ \(key, op) ->
+    -- TODO: The fmap entry here reallocates even when there are no blobs.
+    addKeyOp writer key (WBB.mkRawBlobRef blobs <$> op)
+  void $ unsafeFinalise True writer
+
+-- data SerialisedWriteBuffer m h = SerialisedWriteBuffer
+--     { -- | The file system paths for all the files used by the serialised write buffer.
+--       serialisedWriteBufferFsPaths    :: !WriteBufferFsPaths
+--       -- | The (read mode) file handles.
+--     , serialisedWriteBufferHandles    :: !(ForWriteBufferFiles (FS.Handle h))
+--     , serialisedWriteBufferHasFS      :: !(HasFS m h)
+--     , serialisedWriteBufferHasBlockIO :: !(HasBlockIO m h)
+--     }
 
 data WriteBufferWriter m h = WriteBufferWriter
   { -- | The file system paths for all the files used by the serialised write buffer.
@@ -135,20 +150,20 @@ addKeyOp WriteBufferWriter{..} key op = do
       for_ pages $ writeRawPage writeBufferWriterHasFS (forWriteBufferKOps writeBufferWriterHandles)
       writeRawOverflowPages writeBufferWriterHasFS (forWriteBufferKOps writeBufferWriterHandles) overflowPages
 
-addLargeSerialisedKeyOp ::
-     (MonadST m, MonadSTM m)
-  => WriteBufferWriter m h
-  -> RawPage
-  -> [RawOverflowPage]
-  -> m ()
-addLargeSerialisedKeyOp WriteBufferWriter{..} page overflowPages =
-  assert (RawPage.rawPageNumKeys page == 1) $
-  assert (RawPage.rawPageHasBlobSpanAt page 0 == 0) $
-  assert (RawPage.rawPageOverflowPages page > 0) $
-  assert (RawPage.rawPageOverflowPages page == length overflowPages) $ do
-    !pages <- ST.stToIO $ selectPages <$> flushPageIfNonEmpty writeBufferWriterPageAcc <*> pure page
-    for_ pages $ writeRawPage writeBufferWriterHasFS (forWriteBufferKOps writeBufferWriterHandles)
-    writeRawOverflowPages writeBufferWriterHasFS (forWriteBufferKOps writeBufferWriterHandles) overflowPages
+-- addLargeSerialisedKeyOp ::
+--      (MonadST m, MonadSTM m)
+--   => WriteBufferWriter m h
+--   -> RawPage
+--   -> [RawOverflowPage]
+--   -> m ()
+-- addLargeSerialisedKeyOp WriteBufferWriter{..} page overflowPages =
+--   assert (RawPage.rawPageNumKeys page == 1) $
+--   assert (RawPage.rawPageHasBlobSpanAt page 0 == 0) $
+--   assert (RawPage.rawPageOverflowPages page > 0) $
+--   assert (RawPage.rawPageOverflowPages page == length overflowPages) $ do
+--     !pages <- ST.stToIO $ selectPages <$> flushPageIfNonEmpty writeBufferWriterPageAcc <*> pure page
+--     for_ pages $ writeRawPage writeBufferWriterHasFS (forWriteBufferKOps writeBufferWriterHandles)
+--     writeRawOverflowPages writeBufferWriterHasFS (forWriteBufferKOps writeBufferWriterHandles) overflowPages
 
 -- | See 'RunAcc.addSmallKeyOp'.
 addSmallKeyOp ::
@@ -207,8 +222,8 @@ selectPages :: Maybe RawPage
 selectPages mPagePre page =
   maybeToList mPagePre ++ [page]
 
--- | See 'RunBuilder.close'.
-close :: MonadSTM m => WriteBufferWriter m h -> m ()
-close WriteBufferWriter {..} = do
-    for_ writeBufferWriterHandles $ closeHandle writeBufferWriterHasFS
-    for_ (pathsForWriteBufferFiles writeBufferWriterFsPaths) $ FS.removeFile writeBufferWriterHasFS
+-- -- | See 'RunBuilder.close'.
+-- close :: MonadSTM m => WriteBufferWriter m h -> m ()
+-- close WriteBufferWriter {..} = do
+--     for_ writeBufferWriterHandles $ closeHandle writeBufferWriterHasFS
+--     for_ (pathsForWriteBufferFiles writeBufferWriterFsPaths) $ FS.removeFile writeBufferWriterHasFS
