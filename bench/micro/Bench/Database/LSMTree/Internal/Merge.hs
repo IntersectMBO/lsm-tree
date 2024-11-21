@@ -1,6 +1,7 @@
 module Bench.Database.LSMTree.Internal.Merge (benchmarks) where
 
 import           Control.Monad (when, zipWithM)
+import           Control.RefCount
 import           Criterion.Main (Benchmark, bench, bgroup)
 import qualified Criterion.Main as Cr
 import           Data.Bifunctor (first)
@@ -206,7 +207,7 @@ benchMerge conf@Config{name} =
                 -- Make sure to immediately close resulting runs so we don't run
                 -- out of file handles. Ideally this would not be measured, but at
                 -- least it's pretty cheap.
-                Run.removeReference run
+                releaseRef run
         ]
   where
     withEnv =
@@ -228,7 +229,7 @@ merge ::
   -> Config
   -> Run.RunFsPaths
   -> InputRuns
-  -> IO (Run IO FS.HandleIO)
+  -> IO (Ref (Run IO FS.HandleIO))
 merge fs hbio Config {..} targetPaths runs = do
     let f = fromMaybe const mergeMappend
     m <- fromMaybe (error "empty inputs, no merge created") <$>
@@ -241,7 +242,7 @@ outputRunPaths = RunFsPaths (FS.mkFsPath []) (RunNumber 0)
 inputRunPaths :: [Run.RunFsPaths]
 inputRunPaths = RunFsPaths (FS.mkFsPath []) . RunNumber <$> [1..]
 
-type InputRuns = V.Vector (Run IO FS.HandleIO)
+type InputRuns = V.Vector (Ref (Run IO FS.HandleIO))
 
 type Mappend = SerialisedValue -> SerialisedValue -> SerialisedValue
 
@@ -331,7 +332,7 @@ mergeEnvCleanup ::
      )
   -> IO ()
 mergeEnvCleanup (tmpDir, _hasFS, hasBlockIO, runs) = do
-    traverse_ Run.removeReference runs
+    traverse_ releaseRef runs
     removeDirectoryRecursive tmpDir
     FS.close hasBlockIO
 

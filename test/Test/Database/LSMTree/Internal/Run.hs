@@ -22,7 +22,7 @@ import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.HUnit (assertEqual, testCase, (@=?), (@?))
 import           Test.Tasty.QuickCheck
 
-import           Control.RefCount (readRefCount)
+import           Control.RefCount
 import           Control.TempRegistry (withTempRegistry)
 import           Database.LSMTree.Extras.Generators (KeyForIndexCompact (..))
 import           Database.LSMTree.Extras.RunData
@@ -193,20 +193,19 @@ prop_WriteAndOpen fs hbio wb =
       hardLinkRunFiles reg fs hbio paths paths'
       loaded <- openFromDisk fs hbio CacheRunData (simplePath 17)
 
-      (1 @=?) =<< readRefCount (runRefCounter written)
-      (1 @=?) =<< readRefCount (runRefCounter loaded)
-
       Run.size written @=? Run.size loaded
-      runFilter written @=? runFilter loaded
-      runIndex written @=? runIndex loaded
+      withRef written $ \written' ->
+        withRef loaded $ \loaded' -> do
+          runFilter written' @=? runFilter loaded'
+          runIndex  written' @=? runIndex  loaded'
 
       writtenKOps <- readKOps Nothing written
-      loadedKOps <- readKOps Nothing loaded
+      loadedKOps  <- readKOps Nothing loaded
 
       assertEqual "k/ops" writtenKOps loadedKOps
 
       -- make sure runs get closed again
-      Run.removeReference loaded
+      releaseRef loaded
 
       -- TODO: return a proper Property instead of using assertEqual etc.
       return (property True)

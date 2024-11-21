@@ -5,6 +5,7 @@ module Test.Database.LSMTree.Internal.RunReader (
     readKOps,
 ) where
 
+import           Control.RefCount
 import           Data.Coerce (coerce)
 import qualified Data.Map as Map
 import           Database.LSMTree.Extras.Generators (KeyForIndexCompact (..))
@@ -166,7 +167,7 @@ type SerialisedKOp = (SerialisedKey, SerialisedEntry)
 
 readKOps ::
      Maybe (SerialisedKey)  -- ^ offset
-  -> Run IO h
+  -> Ref (Run IO h)
   -> IO [SerialisedKOp]
 readKOps offset run = do
     reader <- Reader.new offsetKey run

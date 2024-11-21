@@ -54,12 +54,12 @@ withRun ::
   -> HasBlockIO IO h
   -> RunFsPaths
   -> SerialisedRunData
-  -> (Run IO h -> IO a)
+  -> (Ref (Run IO h) -> IO a)
   -> IO a
 withRun hfs hbio path rd = do
     bracket
       (unsafeFlushAsWriteBuffer hfs hbio path $ serialiseRunData rd)
-      Run.removeReference
+      releaseRef
 
 {-# INLINABLE withRuns #-}
 -- | Create temporary 'Run's using 'unsafeFlushAsWriteBuffer'.
@@ -68,25 +68,25 @@ withRuns ::
   => HasFS IO h
   -> HasBlockIO IO h
   -> f (RunFsPaths, SerialisedRunData)
-  -> (f (Run IO h) -> IO a)
+  -> (f (Ref (Run IO h)) -> IO a)
   -> IO a
 withRuns hfs hbio xs = do
     bracket
       (forM xs $ \(path, rd) -> unsafeFlushAsWriteBuffer hfs hbio path rd)
-      (mapM_ Run.removeReference)
+      (mapM_ releaseRef)
 
 -- | Flush serialised run data to disk as if it were a write buffer.
 --
 -- This might leak resources if not run with asynchronous exceptions masked.
 -- Use helper functions like 'withRun' or 'withRuns' instead.
 --
--- Use of this function should be paired with a 'Run.removeReference'.
+-- Use of this function should be paired with a 'releaseRef'.
 unsafeFlushAsWriteBuffer ::
      HasFS IO h
   -> HasBlockIO IO h
   -> RunFsPaths
   -> SerialisedRunData
-  -> IO (Run IO h)
+  -> IO (Ref (Run IO h))
 unsafeFlushAsWriteBuffer fs hbio fsPaths (RunData m) = do
     let blobpath = addExtension (runBlobPath fsPaths) ".wb"
     wbblobs <- WBB.new fs blobpath

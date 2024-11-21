@@ -111,13 +111,13 @@ type KOp m h = (SerialisedKey, Entry SerialisedValue (RawBlobRef m h))
 {-# SPECIALISE new ::
      OffsetKey
   -> Maybe (WB.WriteBuffer, Ref (WB.WriteBufferBlobs IO h))
-  -> V.Vector (Run IO h)
+  -> V.Vector (Ref (Run IO h))
   -> IO (Maybe (Readers IO h)) #-}
 new :: forall m h.
      (MonadMask m, MonadST m, MonadSTM m)
   => OffsetKey
   -> Maybe (WB.WriteBuffer, Ref (WB.WriteBufferBlobs m h))
-  -> V.Vector (Run m h)
+  -> V.Vector (Ref (Run m h))
   -> m (Maybe (Readers m h))
 new !offsetKey wbs runs = do
     wBuffer <- maybe (pure Nothing) (uncurry fromWB) wbs
@@ -141,7 +141,7 @@ new !offsetKey wbs runs = do
             NoOffsetKey -> id
             OffsetKey k -> Map.dropWhileAntitone (< k)
 
-    fromRun :: ReaderNumber -> Run m h -> m (Maybe (ReadCtx m h))
+    fromRun :: ReaderNumber -> Ref (Run m h) -> m (Maybe (ReadCtx m h))
     fromRun n run = do
         reader <- Reader.new offsetKey run
         nextReadCtx n (ReadRun reader)

@@ -21,6 +21,7 @@ import           Control.Monad.Class.MonadST (MonadST)
 import           Control.Monad.Class.MonadSTM (MonadSTM (..))
 import           Control.Monad.Class.MonadThrow (MonadMask, MonadThrow)
 import           Control.Monad.Primitive (PrimState)
+import           Control.RefCount
 import           Data.Primitive.MutVar
 import           Data.Traversable (for)
 import qualified Data.Vector as V
@@ -83,7 +84,7 @@ type Mappend = SerialisedValue -> SerialisedValue -> SerialisedValue
   -> Level
   -> Mappend
   -> Run.RunFsPaths
-  -> V.Vector (Run IO h)
+  -> V.Vector (Ref (Run IO h))
   -> IO (Maybe (Merge IO h)) #-}
 -- | Returns 'Nothing' if no input 'Run' contains any entries.
 -- The list of runs should be sorted from new to old.
@@ -96,7 +97,7 @@ new ::
   -> Level
   -> Mappend
   -> Run.RunFsPaths
-  -> V.Vector (Run m h)
+  -> V.Vector (Ref (Run m h))
   -> m (Maybe (Merge m h))
 new fs hbio mergeCaching alloc mergeLevel mergeMappend targetPaths runs = do
     -- no offset, no write buffer
@@ -135,7 +136,7 @@ abort Merge {..} = do
 
 {-# SPECIALISE complete ::
      Merge IO h
-  -> IO (Run IO h) #-}
+  -> IO (Ref (Run IO h)) #-}
 -- | Complete a 'Merge', returning a new 'Run' as the result of merging the
 -- input runs.
 --
@@ -156,7 +157,7 @@ abort Merge {..} = do
 complete ::
      (MonadSTM m, MonadST m, MonadMask m)
   => Merge m h
-  -> m (Run m h)
+  -> m (Ref (Run m h))
 complete Merge{..} = do
     readMutVar mergeState >>= \case
       Merging -> error "complete: Merge is not done"
@@ -171,7 +172,7 @@ complete Merge{..} = do
 {-# SPECIALISE stepsToCompletion ::
      Merge IO h
   -> Int
-  -> IO (Run IO h) #-}
+  -> IO (Ref (Run IO h)) #-}
 -- | Like 'steps', but calling 'complete' once the merge is finished.
 --
 -- Note: run with async exceptions masked. See 'complete'.
@@ -179,7 +180,7 @@ stepsToCompletion ::
       (MonadMask m, MonadSTM m, MonadST m)
    => Merge m h
    -> Int
-   -> m (Run m h)
+   -> m (Ref (Run m h))
 stepsToCompletion m stepBatchSize = go
   where
     go = do
@@ -190,7 +191,7 @@ stepsToCompletion m stepBatchSize = go
 {-# SPECIALISE stepsToCompletionCounted ::
      Merge IO h
   -> Int
-  -> IO (Int, Run IO h) #-}
+  -> IO (Int, Ref (Run IO h)) #-}
 -- | Like 'steps', but calling 'complete' once the merge is finished.
 --
 -- Note: run with async exceptions masked. See 'complete'.
@@ -198,7 +199,7 @@ stepsToCompletionCounted ::
      (MonadMask m, MonadSTM m, MonadST m)
   => Merge m h
   -> Int
-  -> m (Int, Run m h)
+  -> m (Int, Ref (Run m h))
 stepsToCompletionCounted m stepBatchSize = go 0
   where
     go !stepsSum = do

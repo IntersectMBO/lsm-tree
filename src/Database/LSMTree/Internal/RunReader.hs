@@ -80,20 +80,21 @@ data OffsetKey = NoOffsetKey | OffsetKey !SerialisedKey
 
 {-# SPECIALISE new ::
      OffsetKey
-  -> Run.Run IO h
+  -> Ref (Run.Run IO h)
   -> IO (RunReader IO h) #-}
 new :: forall m h.
      (MonadMask m, MonadSTM m, PrimMonad m)
   => OffsetKey
-  -> Run.Run m h
+  -> Ref (Run.Run m h)
   -> m  (RunReader m h)
-new !offsetKey readerRun@(Run.Run {
-                 runBlobFile,
-                 runRunDataCaching = readerRunDataCaching,
-                 runHasFS          = readerHasFS,
-                 runHasBlockIO     = readerHasBlockIO,
-                 runIndex          = index
-               }) = do
+new !offsetKey
+    readerRun@(DeRef Run.Run {
+      runBlobFile,
+      runRunDataCaching = readerRunDataCaching,
+      runHasFS          = readerHasFS,
+      runHasBlockIO     = readerHasBlockIO,
+      runIndex          = index
+    }) = do
     (readerKOpsHandle :: FS.Handle h) <-
       FS.hOpen readerHasFS (runKOpsPath (Run.runFsPaths readerRun)) FS.ReadMode >>= \h -> do
         fileSize <- FS.hGetSize readerHasFS h

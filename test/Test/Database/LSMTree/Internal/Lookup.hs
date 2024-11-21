@@ -314,9 +314,9 @@ prop_roundtripFromWriteBufferLookupIO (SmallList dats) =
         resolveV
         wb wbblobs
         runs
-        (V.map Run.runFilter runs)
-        (V.map Run.runIndex runs)
-        (V.map Run.runKOpsFile runs)
+        (V.map (\(DeRef r) -> Run.runFilter   r) runs)
+        (V.map (\(DeRef r) -> Run.runIndex    r) runs)
+        (V.map (\(DeRef r) -> Run.runKOpsFile r) runs)
         keys
     pure $ modelres === realres
   where
@@ -336,7 +336,7 @@ withRuns :: FS.HasFS IO h
          -> [InMemLookupData SerialisedKey SerialisedValue SerialisedBlob]
          -> (   WB.WriteBuffer
              -> Ref (WBB.WriteBufferBlobs IO h)
-             -> V.Vector (Run.Run IO h)
+             -> V.Vector (Ref (Run.Run IO h))
              -> IO a)
          -> IO a
 withRuns hfs _ [] action =
@@ -361,7 +361,7 @@ withRuns hfs hbio (wbdat:rundats) action =
           return (wb, wbblobs, runs))
 
       (\(_wb, wbblobs, runs) -> do
-          V.mapM_ Run.removeReference runs
+          V.mapM_ releaseRef runs
           releaseRef wbblobs)
 
       (\(wb, wbblobs, runs) ->

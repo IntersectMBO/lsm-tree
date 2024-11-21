@@ -7,7 +7,7 @@ import           Control.Monad
 import           Control.Monad.Class.MonadST
 import           Control.Monad.Primitive
 import           Control.Monad.ST.Strict (ST, runST)
-import           Control.RefCount (Ref)
+import           Control.RefCount
 import           Data.Arena (ArenaManager, newArenaManager, withArena)
 import           Data.Bits ((.&.))
 import           Data.BloomFilter (Bloom)
@@ -213,7 +213,7 @@ benchmarks !caching = withFS $ \hfs hbio -> do
 
     traceMarkerIO "Cleaning up"
     putStrLn "Cleaning up"
-    V.mapM_ Run.removeReference runs
+    V.mapM_ releaseRef runs
 
     traceMarkerIO "Computing statistics for prepLookups results"
     putStr "<Computing statistics for prepLookups>"
@@ -331,7 +331,7 @@ lookupsEnv ::
   -> FS.HasFS IO FS.HandleIO
   -> FS.HasBlockIO IO FS.HandleIO
   -> Run.RunDataCaching
-  -> IO ( V.Vector (Run IO FS.HandleIO)
+  -> IO ( V.Vector (Ref (Run IO FS.HandleIO))
         , V.Vector (Bloom SerialisedKey)
         , V.Vector IndexCompact
         , V.Vector (FS.Handle FS.HandleIO)
@@ -372,9 +372,9 @@ lookupsEnv runSizes keyRng0 hfs hbio caching = do
 
     -- return runs
     runs <- V.fromList <$> mapM (Run.fromMutable caching) rbs
-    let blooms = V.map Run.runFilter runs
-        indexes = V.map Run.runIndex runs
-        handles = V.map Run.runKOpsFile runs
+    let blooms  = V.map (\(DeRef r) -> Run.runFilter   r) runs
+        indexes = V.map (\(DeRef r) -> Run.runIndex    r) runs
+        handles = V.map (\(DeRef r) -> Run.runKOpsFile r) runs
     pure $!! (runs, blooms, indexes, handles)
 
 genLookupBatch :: StdGen -> Int -> (V.Vector SerialisedKey, StdGen)
@@ -466,7 +466,7 @@ benchLookupsIO ::
   -> ResolveSerialisedValue
   -> WB.WriteBuffer
   -> Ref (WBB.WriteBufferBlobs IO h)
-  -> V.Vector (Run IO h)
+  -> V.Vector (Ref (Run IO h))
   -> V.Vector (Bloom SerialisedKey)
   -> V.Vector IndexCompact
   -> V.Vector (FS.Handle h)

@@ -160,7 +160,7 @@ data ByteCountDiscrepancy = ByteCountDiscrepancy {
     -> ResolveSerialisedValue
     -> WB.WriteBuffer
     -> Ref (WBB.WriteBufferBlobs IO h)
-    -> V.Vector (Run IO h)
+    -> V.Vector (Ref (Run IO h))
     -> V.Vector (Bloom SerialisedKey)
     -> V.Vector IndexCompact
     -> V.Vector (Handle h)
@@ -180,7 +180,7 @@ lookupsIO ::
   -> ResolveSerialisedValue
   -> WB.WriteBuffer
   -> Ref (WBB.WriteBufferBlobs m h)
-  -> V.Vector (Run m h) -- ^ Runs @rs@
+  -> V.Vector (Ref (Run m h)) -- ^ Runs @rs@
   -> V.Vector (Bloom SerialisedKey) -- ^ The bloom filters inside @rs@
   -> V.Vector IndexCompact -- ^ The indexes inside @rs@
   -> V.Vector (Handle h) -- ^ The file handles to the key\/value files inside @rs@
@@ -205,7 +205,7 @@ lookupsIO !hbio !mgr !resolveV !wb !wbblobs !rs !blooms !indexes !kopsFiles !ks 
        ResolveSerialisedValue
     -> WB.WriteBuffer
     -> Ref (WBB.WriteBufferBlobs IO h)
-    -> V.Vector (Run IO h)
+    -> V.Vector (Ref (Run IO h))
     -> V.Vector SerialisedKey
     -> VP.Vector RunIxKeyIx
     -> V.Vector (IOOp RealWorld h)
@@ -224,7 +224,7 @@ intraPageLookups ::
   => ResolveSerialisedValue
   -> WB.WriteBuffer
   -> Ref (WBB.WriteBufferBlobs m h)
-  -> V.Vector (Run m h)
+  -> V.Vector (Ref (Run m h))
   -> V.Vector SerialisedKey
   -> VP.Vector RunIxKeyIx
   -> V.Vector (IOOp (PrimState m) h)

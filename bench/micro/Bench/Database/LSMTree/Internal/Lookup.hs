@@ -84,9 +84,9 @@ benchmarks = bgroup "Bench.Database.LSMTree.Internal.Lookup" [
 benchLookups :: Config -> Benchmark
 benchLookups conf@Config{name} =
     withEnv $ \ ~(_dir, arenaManager, hasFS, hasBlockIO, rs, ks) ->
-      env ( pure ( V.map Run.runFilter rs
-                 , V.map Run.runIndex rs
-                 , V.map Run.runKOpsFile rs
+      env ( pure ( V.map (\(DeRef r) -> Run.runFilter   r) rs
+                 , V.map (\(DeRef r) -> Run.runIndex    r) rs
+                 , V.map (\(DeRef r) -> Run.runKOpsFile r) rs
                  )
           ) $ \ ~(blooms, indexes, kopsFiles) ->
         bgroup name [
@@ -181,7 +181,7 @@ lookupsInBatchesEnv ::
         , ArenaManager RealWorld
         , FS.HasFS IO FS.HandleIO
         , FS.HasBlockIO IO FS.HandleIO
-        , V.Vector (Run IO FS.HandleIO)
+        , V.Vector (Ref (Run IO FS.HandleIO))
         , V.Vector SerialisedKey
         )
 lookupsInBatchesEnv Config {..} = do
@@ -213,13 +213,13 @@ lookupsInBatchesCleanup ::
      , ArenaManager RealWorld
      , FS.HasFS IO FS.HandleIO
      , FS.HasBlockIO IO FS.HandleIO
-     , V.Vector (Run IO FS.HandleIO)
+     , V.Vector (Ref (Run IO FS.HandleIO))
      , V.Vector SerialisedKey
      )
   -> IO ()
 lookupsInBatchesCleanup (tmpDir, _arenaManager, _hasFS, hasBlockIO, rs, _) = do
     FS.close hasBlockIO
-    forM_ rs Run.removeReference
+    forM_ rs releaseRef
     removeDirectoryRecursive tmpDir
 
 -- | Generate keys to store and keys to lookup

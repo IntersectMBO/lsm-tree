@@ -305,13 +305,13 @@ data RealState =
 
 -- | Readers, together with the runs being read, so they can be cleaned up at the end
 type ReadersCtx = (Ref (WBB.WriteBufferBlobs IO MockFS.HandleMock),
-                   [Run.Run IO Handle],
+                   [Ref (Run.Run IO Handle)],
                    Readers IO Handle)
 
 closeReadersCtx :: ReadersCtx -> IO ()
 closeReadersCtx (wbblobs, runs, readers) = do
     Readers.close readers
-    traverse_ Run.removeReference runs
+    traverse_ releaseRef runs
     releaseRef wbblobs
 
 instance RunModel (Lockstep ReadersState) RealMonad where
@@ -349,7 +349,7 @@ runIO act lu = case act of
         mreaders <- Readers.new offsetKey wb'' (V.fromList runs)
         case mreaders of
           Nothing -> do
-            traverse_ Run.removeReference runs
+            traverse_ releaseRef runs
             releaseRef wbblobs
             return Nothing
           Just readers ->
@@ -386,7 +386,7 @@ runIO act lu = case act of
                   return (Right x)
                 Drained -> do
                   -- Readers is drained, clean up the runs
-                  liftIO $ traverse_ Run.removeReference runs
+                  liftIO $ traverse_ releaseRef runs
                   liftIO $ releaseRef wbblobs
                   put (RealState n Nothing)
                   return (Right x)

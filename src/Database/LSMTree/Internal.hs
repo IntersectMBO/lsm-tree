@@ -106,7 +106,6 @@ import           Database.LSMTree.Internal.Paths (SessionRoot (..),
 import qualified Database.LSMTree.Internal.Paths as Paths
 import           Database.LSMTree.Internal.Range (Range (..))
 import           Database.LSMTree.Internal.Run (Run)
-import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunReaders (OffsetKey (..))
 import qualified Database.LSMTree.Internal.RunReaders as Readers
 import           Database.LSMTree.Internal.Serialise (SerialisedBlob (..),
@@ -894,7 +893,7 @@ data CursorEnv m h = CursorEnv {
   , cursorReaders    :: !(Maybe (Readers.Readers m h))
     -- | The runs held open by the cursor. We must remove a reference when the
     -- cursor gets closed.
-  , cursorRuns       :: !(V.Vector (Run m h))
+  , cursorRuns       :: !(V.Vector (Ref (Run m h)))
 
     -- | The write buffer blobs, which like the runs, we have to keep open
     -- untile the cursor is closed.
@@ -937,8 +936,7 @@ newCursor !offsetKey t = withOpenTable t $ \thEnv -> do
     -- 'sessionOpenTables'.
     withOpenSession cursorSession $ \_ -> do
       withTempRegistry $ \reg -> do
-        (wb, wbblobs, cursorRuns) <-
-          allocTableContent reg (tableContent thEnv)
+        (wb, wbblobs, cursorRuns) <- dupTableContent reg (tableContent thEnv)
         cursorReaders <-
           allocateMaybeTemp reg
             (Readers.new offsetKey (Just (wb, wbblobs)) cursorRuns)
@@ -956,19 +954,17 @@ newCursor !offsetKey t = withOpenTable t $ \thEnv -> do
             pure . Map.insert cursorId cursor
         pure $! cursor
   where
-    -- The table contents escape the read access, but we just added
+    -- The table contents escape the read access, but we just duplicate
     -- references to each run, so it is safe.
-    allocTableContent reg contentVar = do
+    dupTableContent reg contentVar = do
         RW.withReadAccess contentVar $ \content -> do
           let wb      = tableWriteBuffer content
               wbblobs = tableWriteBufferBlobs content
           wbblobs' <- allocateTemp reg (dupRef wbblobs) releaseRef
           let runs = cachedRuns (tableCache content)
-          V.forM_ runs $ \r -> do
-            allocateTemp reg
-              (Run.addReference r)
-              (\_ -> Run.removeReference r)
-          pure (wb, wbblobs', runs)
+          runs' <- V.forM runs $ \r ->
+                     allocateTemp reg (dupRef r) releaseRef
+          pure (wb, wbblobs', runs')
 
 {-# SPECIALISE closeCursor :: Cursor IO h -> IO () #-}
 -- | See 'Database.LSMTree.Normal.closeCursor'.
@@ -990,7 +986,7 @@ closeCursor Cursor {..} = do
             pure . Map.delete cursorId
 
         forM_ cursorReaders $ freeTemp reg . Readers.close
-        V.forM_ cursorRuns $ freeTemp reg . Run.removeReference
+        V.forM_ cursorRuns $ freeTemp reg . releaseRef
         freeTemp reg (releaseRef cursorWBB)
         return CursorClosed
 

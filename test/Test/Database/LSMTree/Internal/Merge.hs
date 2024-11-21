@@ -2,6 +2,7 @@
 
 module Test.Database.LSMTree.Internal.Merge (tests) where
 
+import           Control.Exception (evaluate)
 import           Control.RefCount
 import           Data.Bifoldable (bifoldMap)
 import qualified Data.BloomFilter as Bloom
@@ -72,37 +73,34 @@ prop_MergeDistributes fs hbio level stepSize (SmallList rds) =
     withRuns fs hbio (V.fromList (zip (simplePaths [10..]) rds')) $ \runs -> do
       let stepsNeeded = sum (map (Map.size . unRunData) rds)
       (stepsDone, lhs) <- mergeRuns fs hbio level (RunNumber 0) runs stepSize
-      withRun fs hbio (simplePath 1) (RunData $ mergeWriteBuffers level $ fmap unRunData rds') $ \rhs -> do
+      withRun fs hbio (simplePath 1)
+              (RunData $ mergeWriteBuffers level $ fmap unRunData rds') $ \rhs -> do
 
-        lhsKOpsFile <- FS.hGetAll fs (Run.runKOpsFile lhs)
-        lhsBlobFile <- withRef (Run.runBlobFile lhs) $
-                       FS.hGetAll fs . BlobFile.blobFileHandle
-        rhsKOpsFile <- FS.hGetAll fs (Run.runKOpsFile rhs)
-        rhsBlobFile <- withRef (Run.runBlobFile rhs) $
-                       FS.hGetAll fs . BlobFile.blobFileHandle
+        (lhsSize, lhsFilter, lhsIndex, lhsKOps,
+         lhsKOpsFileContent, lhsBlobFileContent) <- getRunContent lhs
 
-        lhsKOps <- readKOps Nothing lhs
-        rhsKOps <- readKOps Nothing rhs
+        (rhsSize, rhsFilter, rhsIndex, rhsKOps,
+         rhsKOpsFileContent, rhsBlobFileContent) <- getRunContent rhs
 
         -- cleanup
-        Run.removeReference lhs
+        releaseRef lhs
 
         return $ stats $
               counterexample "numEntries"
-              (Run.size lhs === Run.size rhs)
+              (lhsSize === rhsSize)
           .&&. -- we can't just test bloom filter equality, their sizes may differ.
               counterexample "runFilter"
-              (Bloom.length (Run.runFilter lhs) >= Bloom.length (Run.runFilter rhs))
+              (Bloom.length lhsFilter >= Bloom.length rhsFilter)
           .&&. -- the index is equal, but only because range finder precision is
               -- always 0 for the numbers of entries we are dealing with.
               counterexample "runIndex"
-              (Run.runIndex lhs === Run.runIndex rhs)
+              (lhsIndex === rhsIndex)
           .&&. counterexample "kops"
               (lhsKOps === rhsKOps)
           .&&. counterexample "kopsFile"
-              (lhsKOpsFile === rhsKOpsFile)
+              (lhsKOpsFileContent === rhsKOpsFileContent)
           .&&. counterexample "blobFile"
-              (lhsBlobFile === rhsBlobFile)
+              (lhsBlobFileContent === rhsBlobFileContent)
           .&&. counterexample ("step counting")
               (stepsDone === stepsNeeded)
   where
@@ -114,6 +112,25 @@ prop_MergeDistributes fs hbio level stepSize (SmallList rds) =
     kops = foldMap (Map.toList . unRunData) rds'
     vals = concatMap (bifoldMap pure mempty . snd) kops
     isLarge = uncurry entryWouldFitInPage
+
+    getRunContent run@(DeRef Run.Run {
+                         Run.runFilter,
+                         Run.runIndex,
+                         Run.runKOpsFile,
+                         Run.runBlobFile
+                       }) = do
+      runSize         <- evaluate (Run.size run)
+      runKOps         <- readKOps Nothing run
+      kopsFileContent <- FS.hGetAll fs runKOpsFile
+      blobFileContent <- withRef runBlobFile $
+                         FS.hGetAll fs . BlobFile.blobFileHandle
+      return ( runSize
+             , runFilter
+             , runIndex
+             , runKOps
+             , kopsFileContent
+             , blobFileContent
+             )
 
 -- | After merging for a few steps, we can prematurely abort the merge, which
 -- should clean up properly.
@@ -161,9 +178,9 @@ mergeRuns ::
      FS.HasBlockIO IO h ->
      Merge.Level ->
      RunNumber ->
-     V.Vector (Run.Run IO h) ->
+     V.Vector (Ref (Run.Run IO h)) ->
      StepSize ->
-     IO (Int, Run.Run IO h)
+     IO (Int, Ref (Run.Run IO h))
 mergeRuns fs hbio level runNumber runs (Positive stepSize) = do
     Merge.new fs hbio Run.CacheRunData (RunAllocFixed 10) level mappendValues
               (RunFsPaths (FS.mkFsPath []) runNumber) runs >>= \case
