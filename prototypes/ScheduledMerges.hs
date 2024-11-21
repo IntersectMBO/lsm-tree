@@ -555,16 +555,25 @@ data LookupResult v b =
   deriving stock (Eq, Show)
 
 lookups :: LSM s -> [Key] -> ST s [LookupResult Value Blob]
-lookups lsm ks = do
-    (wb, layers) <- allLayers lsm
-    let lookupRes = submitLookups ks (concat layers)
-    let acc = updateLookupAcc (lookupAccFromBuffer ks wb) lookupRes
+lookups (LSMHandle _ lsmr) ks = do
+    LSMContent wb ls tree <- readSTRef lsmr
+    runs <- concat <$> flattenLevels ls
+    let runsAcc = lookupsBufferAndRuns ks wb runs
+    acc <- case tree of
+      Nothing ->
+        return runsAcc
+      Just t -> do
+        treeAcc <- lookupsTree ks t
+        return $ mergeLookupAccs [runsAcc, treeAcc]
     return $ map (\k -> queryLookupAcc k acc) ks
 
 lookup :: LSM s -> Key -> ST s (LookupResult Value Blob)
 lookup lsm k = head <$> lookups lsm [k]
 
 newtype LookupAcc = LookupAcc { getLookupAcc :: Map Key Op }
+
+emptyLookupAcc :: LookupAcc
+emptyLookupAcc = LookupAcc Map.empty
 
 lookupAccFromBuffer :: [Key] -> Buffer -> LookupAcc
 lookupAccFromBuffer ks = LookupAcc . Map.filterWithKey (\k _ -> k `elem` ks)
@@ -583,9 +592,79 @@ updateLookupAcc :: LookupAcc -> [(Key, Op)] -> LookupAcc
 updateLookupAcc (LookupAcc acc) =
     LookupAcc . foldl (\a (k, op) -> Map.insertWith (flip combine) k op a) acc
 
+mergeLookupAccs :: [LookupAcc] -> LookupAcc
+mergeLookupAccs = LookupAcc . Map.unionsWith combine . map getLookupAcc
+
+unionLookupAccs :: [LookupAcc] -> LookupAcc
+unionLookupAccs = LookupAcc . Map.unionsWith combineUnion . map getLookupAcc
+
+lookupsBufferAndRuns :: [Key] -> Buffer -> [Run] -> LookupAcc
+lookupsBufferAndRuns ks wb runs =
+    let lookupRes = submitLookups ks runs
+    in updateLookupAcc (lookupAccFromBuffer ks wb) lookupRes
+
 -- | In a real implementation, this would be in IO.
 submitLookups :: [Key] -> [Run] -> [(Key, Op)]
 submitLookups ks rs = [(k, op) | r <- rs, k <- ks, Just op <- [Map.lookup k r]]
+
+-- This is super naive. We could optimise it based on knowledge about the tree
+-- structure that is currently not enforced by the types. For example, let's say
+-- we 'union' the following (simplified) table with some other table:
+--
+-- @
+--   LSMContent
+--     wb
+--     [ Level (Merging (MergingRun (MergeLevel MergeMidLevel) (OngoingMerge [r16, r15, r14, r13]))) [r12, r11, r10]))
+--     , Level (Merging (MergingRun (MergeLevel MergeLastLevel) (OngoingMerge [r09, r08, r07, r06, r05]))) []
+--     ]
+--     (Just t)
+-- @
+--
+-- Then it gets flattened into a pending merge of a list of MergingTrees:
+--
+-- @
+--   PendingMerge (MergeLevel MergeLastLevel)
+--     [ CompletedTreeMerge wb
+--     , OngoingTreeMerge (MergingRun (MergeLevel MergeMidLevel) (OngoingMerge [r16, r15, r14, r13]))
+--     , CompletedTreeMerge r12
+--     , CompletedTreeMerge r11
+--     , CompletedTreeMerge r10
+--     , OngoingTreeMerge (MergingRun (MergeLevel MergeMidLevel) (OngoingMerge [r09, r08, r07, r06, r05]))
+--     , t
+--     ]
+-- @
+--
+-- When we now do lookups on the result, we look at this merge with the naive
+-- algorithm below. We recurse into each of these 'MergingTree's, assembling 7
+-- individual 'LookupAcc' (using 7 calls to 'submitLookups') and merging them.
+--
+-- But whenever we have single 'Run's or 'MergingRuns' (with 'MergeLevel') next
+-- to each other as inputs to a pending level-merge, we can combine them into a
+-- single batch of runs, e.g. @lookupRuns [r16, .. r05]@, and only then combine
+-- that 'LookupAcc' with any others.
+-- In fact, we know that in this type of merge only the last element can contain
+-- a 'MergeUnion', everything else is just 'Run' or 'MergingRun'.
+--
+-- TODO: implement gathering runs like this
+--
+-- TODO: this would be more straight-forward if the structure was enforced
+-- by the types, so maybe tweak 'PendingTreeMerge'?
+lookupsTree :: [Key] -> MergingTree s -> ST s LookupAcc
+lookupsTree ks = go
+  where
+    go :: MergingTree s -> ST s LookupAcc
+    go (MergingTree treeState) = readSTRef treeState >>= \case
+        CompletedTreeMerge r -> return $ lookupRuns [r]
+        OngoingTreeMerge (MergingRun mt mergeState) -> readSTRef mergeState >>= \case
+          CompletedMerge r -> return $ lookupRuns [r]
+          OngoingMerge _ rs _ -> case mt of
+            MergeLevel _ -> return $ lookupRuns rs  -- combine into batch
+            MergeUnion -> return $ unionLookupAccs (map (\r -> lookupRuns [r]) rs)
+        PendingTreeMerge (PendingMerge mt trees) -> case mt of
+          MergeLevel _ -> mergeLookupAccs <$> traverse go trees
+          MergeUnion   -> unionLookupAccs <$> traverse go trees
+
+    lookupRuns = updateLookupAcc emptyLookupAcc . submitLookups ks
 
 supplyCreditsLevels :: Credit -> Levels s -> ST s ()
 supplyCreditsLevels n =
