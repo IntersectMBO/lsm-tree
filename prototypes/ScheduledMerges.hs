@@ -886,9 +886,9 @@ type Size = Int
 remainingDebtMergingTree :: MergingTree s -> ST s (Debt, Size)
 remainingDebtMergingTree (MergingTree ref) =
     readSTRef ref >>= \case
-      CompletedTreeMerge r -> return (0, runSize r)
-      OngoingTreeMerge mr  -> remainingDebtMergingRun mr
-      PendingTreeMerge pm  -> remainingDebtPendingMerge pm
+      CompletedTreeMerge r     -> return (0, runSize r)
+      OngoingTreeMerge mr -> remainingDebtMergingRun mr
+      PendingTreeMerge pm -> remainingDebtPendingMerge pm
 
 remainingDebtPendingMerge :: PendingMerge s -> ST s (Debt, Size)
 remainingDebtPendingMerge (PendingMerge _ trees) = do
@@ -910,31 +910,62 @@ remainingDebtMergingRun (MergingRun _ ref) =
 -- Measurements
 --
 
-allLayers :: LSM s -> ST s (Buffer, [[Run]])
+-- TODO: Is this useful or should we directly flatten to a Map?
+data MTree = MLeaf Run
+           | MNode MergeType [MTree]
+  deriving stock Show
+
+allLayers :: LSM s -> ST s (Buffer, [[Run]], Maybe MTree)
 allLayers (LSMHandle _ lsmr) = do
-    LSMContent wb ls _ <- readSTRef lsmr  -- TODO: MergingTree
+    LSMContent wb ls tree <- readSTRef lsmr
     rs <- flattenLevels ls
-    return (wb, rs)
+    mtree <- traverse flattenTree tree
+    return (wb, rs, mtree)
 
 flattenLevels :: Levels s -> ST s [[Run]]
 flattenLevels = mapM flattenLevel
 
 flattenLevel :: Level s -> ST s [Run]
-flattenLevel (Level ir rs) = (++rs) <$> flattenIncomingRun ir
+flattenLevel (Level ir rs) =
+    case ir of
+      Single r     -> return (r : rs)
+      Merging _ mr -> (++ rs) <$> flattenMergingRun mr
 
-flattenIncomingRun :: IncomingRun s -> ST s [Run]
-flattenIncomingRun (Single r) = return [r]
-flattenIncomingRun (Merging _ (MergingRun _ ref)) = do
+flattenMergingRun :: MergingRun s -> ST s [Run]
+flattenMergingRun (MergingRun _ ref) = do
     mrs <- readSTRef ref
     case mrs of
       CompletedMerge r    -> return [r]
       OngoingMerge _ rs _ -> return rs
 
+flattenTree :: MergingTree s -> ST s MTree
+flattenTree (MergingTree ref) = do
+    mts <- readSTRef ref
+    case mts of
+      CompletedTreeMerge r ->
+        return (MLeaf r)
+      OngoingTreeMerge (MergingRun mt mrs) ->
+        readSTRef mrs >>= \case
+          CompletedMerge r    -> return (MLeaf r)
+          OngoingMerge _ rs _ -> return (MNode mt (MLeaf <$> rs))
+      PendingTreeMerge (PendingMerge mt trees) ->
+        MNode mt <$> traverse flattenTree trees
+
 logicalValue :: LSM s -> ST s (Map Key (Value, Maybe Blob))
 logicalValue lsm = do
-    (wb, layers) <- allLayers lsm
-    return $ Map.mapMaybe justInsert $ Map.unionsWith combine (bufferToRun wb : concat layers)
+    (wb, layers, mtree) <- allLayers lsm
+    let r = mergeRuns
+              (MergeLevel MergeLastLevel)
+              (wb : concat layers ++ toList (mergeTree <$> mtree))
+    return (Map.mapMaybe justInsert r)
   where
+    mergeRuns :: MergeType -> [Run] -> Run
+    mergeRuns = mergek
+
+    mergeTree :: MTree -> Run
+    mergeTree (MLeaf r)     = r
+    mergeTree (MNode mt ts) = mergeRuns mt (map mergeTree ts)
+
     justInsert (Insert v b) = Just (v, b)
     justInsert  Delete      = Nothing
     justInsert (Mupsert v)  = Just (v, Nothing)

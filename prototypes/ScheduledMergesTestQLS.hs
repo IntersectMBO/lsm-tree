@@ -240,8 +240,7 @@ instance InLockstep Model where
        ++ [ (1, fmap Some $
                   ADuplicate <$> elements vars)
           ]
-          -- TODO: enable
-       ++ [ (0, fmap Some $
+       ++ [ (1, fmap Some $
                   AUnion <$> elements vars
                          <*> elements vars)
           ]
