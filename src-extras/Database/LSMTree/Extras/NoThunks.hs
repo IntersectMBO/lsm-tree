@@ -68,6 +68,8 @@ import           KMerge.Heap
 import           NoThunks.Class
 import           System.FS.API
 import           System.FS.BlockIO.API
+import           System.FS.IO
+import           System.FS.Sim.MockFS
 import           Test.QuickCheck (Property, Testable (..), counterexample)
 import           Unsafe.Coerce
 
@@ -542,7 +544,7 @@ instance (NoThunks a, Typeable s, Typeable a) => NoThunks (MutableHeap s a) wher
 -- a)@, can not be satisfied for arbitrary @m@\/@s@, and must be instantiated
 -- for a concrete @m@\/@s@, like @IO@\/@RealWorld@.
 class ( forall a. NoThunks a => NoThunks (StrictTVar m a)
-      , forall a. NoThunks a => NoThunks (StrictMVar m a)
+      , forall a. (NoThunks a, Typeable a) => NoThunks (StrictMVar m a)
       ) => NoThunksIOLike' m s
 
 instance NoThunksIOLike' IO RealWorld
@@ -564,11 +566,37 @@ instance NoThunks a => NoThunks (StrictTVar IO a) where
 #endif
 #endif
 
-instance NoThunks a => NoThunks (StrictMVar IO a) where
-  showTypeOf (_ :: Proxy (StrictMVar IO a)) = "StrictMVar IO"
-  wNoThunks ctx var = do
-      x <- readMVar var
-      noThunks ctx x
+-- TODO: in some cases, strict-mvar functions leave thunks behind, in particular
+-- modifyMVarMasked and modifyMVarMasked_. So in some specific cases we evaluate
+-- the contents of the MVar to WHNF, and keep checking nothunks from there. See
+-- lsm-tree#444.
+--
+-- TODO: we tried using overlapping instances for @StrictMVar IO a@ and
+-- @StrictMVar IO (MergingRunState IO h)@, but the quantified constraint in
+-- NoThunksIOLike' will throw a compiler error telling us to mark the instances
+-- for StrictMVar as incoherent. Marking them as incoherent makes the tests
+-- fail... We are unsure if it can be overcome, but the current casting approach
+-- works, so there is no priority to use rewrite this code to use overlapping
+-- instances.
+instance (NoThunks a, Typeable a) => NoThunks (StrictMVar IO a) where
+  showTypeOf (p :: Proxy (StrictMVar IO a)) = show $ typeRep p
+  wNoThunks ctx var
+    | Just (Proxy :: Proxy (MergingRunState IO HandleIO))
+        <- gcast (Proxy @a)
+    = workAroundCheck
+    | Just (Proxy :: Proxy (MergingRunState IO HandleMock))
+        <- gcast (Proxy @a)
+    = workAroundCheck
+    | otherwise
+    = properCheck
+    where
+      properCheck = do
+        x <- readMVar var
+        noThunks ctx x
+
+      workAroundCheck = do
+        !x <- readMVar var
+        noThunks ctx x
 
 {-------------------------------------------------------------------------------
   vector
