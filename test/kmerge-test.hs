@@ -29,6 +29,7 @@ import           Test.Tasty.QuickCheck (testProperty, (===))
 import qualified KMerge.Heap as K.Heap
 import qualified KMerge.LoserTree as K.Tree
 
+
 -- tests and benchmarks for various k-way merge implementations.
 -- in short: loser tree is optimal in comparison counts performed,
 -- but mutable heap implementation has lower constant factors.
@@ -57,6 +58,7 @@ main = do
     _ <- evaluate $ force input7
     _ <- evaluate $ force input5
 
+
     defaultMainWithIngredients B.benchIngredients $ testGroup "kmerge"
         [ testGroup "tests"
             [ testGroup "merge"
@@ -75,7 +77,7 @@ main = do
                     -- (because the input values are unformly random,
                     -- there shouldn't be a lot of "cheap" leftovers elements,
                     -- i.e. when other inputs are exhausted, but there are few)
-                    [ testCount "sortConcat"      3190 (L.sort . concat) input8
+                    [ testCount "sortConcat"      comparisons8 (L.sort . concat) input8
                     , testCount "listMerge"       3479 listMerge         input8
                     , testCount "treeMerge"       2391 treeMerge         input8
                     , testCount "heapMerge"       3168 heapMerge         input8
@@ -115,7 +117,7 @@ main = do
                     --  but I'm too lazy to think how to do that)
                     --
                 , testGroup "seven"
-                    [ testCount "sortConcat"      2691 (L.sort . concat) input7
+                    [ testCount "sortConcat"      comparisons7 (L.sort . concat) input7
                     , testCount "listMerge"       2682 listMerge         input7
                     , testCount "treeMerge"       1992 treeMerge         input7
                     , testCount "heapMerge"       2645 heapMerge         input7
@@ -126,7 +128,7 @@ main = do
                     -- and 2x100 with 3 comparisons.
                     -- i.e. target is 1200 total comparisons.
                 , testGroup "five"
-                    [ testCount "sortConcat"      1790 (L.sort . concat) input5
+                    [ testCount "sortConcat"      comparisons5 (L.sort . concat) input5
                     , testCount "listMerge"       1389 listMerge         input5
                     , testCount "treeMerge"       1291 treeMerge         input5
                     , testCount "heapMerge"       1485 heapMerge         input5
@@ -139,7 +141,7 @@ main = do
                     -- 4x125 elements with 3 comparisons
                     -- i.e. target is 2000 total comparisons.
                 , testGroup "levelling-min"
-                    [ testCount "sortConcat"      3729 (L.sort . concat) inputLevellingMin
+                    [ testCount "sortConcat"      comparisonsMin (L.sort . concat) inputLevellingMin
                     , testCount "listMerge"       2112 listMerge         inputLevellingMin
                     , testCount "treeMerge"       2730 treeMerge         inputLevellingMin
                     , testCount "heapMerge"       2655 heapMerge         inputLevellingMin
@@ -153,7 +155,7 @@ main = do
                     -- 4x 50 elements with 3 comparisons
                     -- i.e. target is 1400 total comparisons.
                 , testGroup "levelling-max"
-                    [ testCount "sortConcat"      3872 (L.sort . concat) inputLevellingMax
+                    [ testCount "sortConcat"      comparisonsMax (L.sort . concat) inputLevellingMax
                     , testCount "listMerge"       1440 listMerge         inputLevellingMax
                     , testCount "treeMerge"       2873 treeMerge         inputLevellingMax
                     , testCount "heapMerge"       1784 heapMerge         inputLevellingMax
@@ -440,3 +442,27 @@ mutHeapMerge xss = case [ Heap.Entry x xs | x : xs <- xss ] of
     go !heap (Just (Heap.Entry x xs)) = fmap (x :) $ case xs of
         []     -> K.Heap.extract     heap                     >>= go heap
         x':xs' -> K.Heap.replaceRoot heap (Heap.Entry x' xs') >>= go heap . Just
+
+{-------------------------------------------------------------------------------
+  Account for differing sort comparisons across base versions
+-------------------------------------------------------------------------------}
+
+-- | The 'sort' and 'sortBy' implementations changed as of @base-4.21@.
+-- The new implementation performs fewer comparisons on longer lists.
+--
+-- Because of this, we fall back to the old sort method when the version of
+-- @base@ is @4.21@ or greater.
+comparisons5, comparisons7, comparisons8, comparisonsMin, comparisonsMax :: Int
+#if MIN_VERSION_base(4,21,0)
+comparisons5 = 1692
+comparisons7 = 2691
+comparisons8 = 3389
+comparisonsMin = 3606
+comparisonsMax = 3820
+#else
+comparisons5 = 1790
+comparisons7 = 2691
+comparisons8 = 3190
+comparisonsMin = 3729
+comparisonsMax = 3872
+#endif

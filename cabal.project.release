@@ -26,3 +26,6 @@ source-repository-package
   type: git
   location: https://github.com/well-typed/quickcheck-lockstep.git
   tag: 1852cf87a76dc48c71aa0d9fda3fdc7c8b965011
+
+if impl(ghc >=9.12)
+  allow-newer: base

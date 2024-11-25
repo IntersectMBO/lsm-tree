@@ -22,7 +22,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ghc: ["8.10.7", "9.2.8", "9.4.8", "9.6.4", "9.8.2", "9.10.1"]
+        # TODO: Change "9.12.0.20241031" --> "9.12.1" after official release
+        ghc: ["8.10.7", "9.2.8", "9.4.8", "9.6.4", "9.8.2", "9.10.1", "9.12.0.20241031"]
         cabal: ["3.10.2.1"]
         os: [ubuntu-latest, windows-latest, macOS-latest]
         cabal-flags: [""]
@@ -67,6 +68,8 @@ jobs:
         ghc-version: ${{ matrix.ghc }}
         cabal-version: ${{ matrix.cabal }}
         cabal-update: true
+        # TODO: remove once 9.12.1 is officially released
+        ghcup-release-channel: https://raw.githubusercontent.com/haskell/ghcup-metadata/master/ghcup-prereleases-0.0.8.yaml
 
     - name: Install liburing (on Linux)
       id: setup-liburing
