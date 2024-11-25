@@ -48,7 +48,7 @@ module ScheduledMerges (
 import           Prelude hiding (lookup)
 
 import           Data.Bits
-import           Data.Foldable (toList, traverse_)
+import           Data.Foldable (for_, toList, traverse_)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.STRef
@@ -227,33 +227,33 @@ mergeLastForLevel _  _       = MergeMidLevel
 -- | Note that the invariants rely on the fact that levelling is only used on
 -- the last level.
 --
--- TODO: add invariant for MergingTree
---
 invariant :: forall s. LSMContent s -> ST s ()
-invariant (LSMContent _ levels0 ul) = go 1 levels0
+invariant (LSMContent _ levels ul) = do
+    levelsInvariant 1 levels
+    case ul of
+      NoUnion    -> return ()
+      Union tree -> treeInvariant tree
   where
     mergeLast :: Levels s -> MergeLastLevel
     mergeLast ls = mergeLastForLevel ls ul
 
-    go :: Int -> [Level s] -> ST s ()
-    go !_ [] = return ()
+    levelsInvariant :: Int -> Levels s -> ST s ()
+    levelsInvariant !_ [] = return ()
 
-    go !ln (Level ir rs : ls) = do
-
+    levelsInvariant !ln (Level ir rs : ls) = do
       mrs <- case ir of
-        Single r                     -> return (CompletedMerge r)
-        Merging _ (MergingRun _ ref) -> readSTRef ref
+        Single r ->
+          return (CompletedMerge r)
+        Merging mp (MergingRun ml ref) -> do
+          assertST $ mp == mergePolicyForLevel ln ls ul
+                  && ml == MergeLevel (mergeLast ls)
+          readSTRef ref
 
-      assertST $ case ir of
-        Single{} -> True
-        Merging mp (MergingRun ml _) ->
-              mp == mergePolicyForLevel ln ls ul
-           && ml == MergeLevel (mergeLast ls)
       assertST $ length rs <= 3
       expectedRunLengths ln rs ls
       expectedMergingRunLengths ln ir mrs ls
 
-      go (ln+1) ls
+      levelsInvariant (ln+1) ls
 
     -- All runs within a level "proper" (as opposed to the incoming runs
     -- being merged) should be of the correct size for the level.
@@ -340,6 +340,46 @@ invariant (LSMContent _ levels0 ul) = go 1 levels0
             (_, OngoingMerge _ rs _, _) -> do
               assertST $ length rs == 4 || length rs == 5
               assertST $ all (\r -> tieringRunSizeToLevel r == ln-1) rs
+
+    -- We don't make many assumptions. In particular, there are no invariants
+    -- on the progress of the merges, since union merge credits are independent
+    -- from the tables' regular level merges. However, we know that:
+    --
+    -- * union merges are always binary
+    -- * level merges are non-trivial (at least two inputs)
+    -- * only the last input of a level merge can be a union merge or contain
+    --   a nested PendingMerge
+    treeInvariant :: MergingTree s -> ST s ()
+    treeInvariant (MergingTree treeState) = readSTRef treeState >>= \case
+        CompletedTreeMerge _ ->
+          return ()
+
+        OngoingTreeMerge (MergingRun mergeType mergeState) -> do
+          readSTRef mergeState >>= \case
+            CompletedMerge _ -> return ()
+            OngoingMerge _ rs _ -> do
+              assertST $ all (\r -> runSize r > 0) rs
+              case mergeType of
+                MergeUnion   -> assertST $ length rs == 2  -- binary union
+                MergeLevel _ -> assertST $ length rs > 1   -- no trivial merge
+
+        PendingTreeMerge (PendingMerge mt trees) -> do
+          -- union or last level merge, but we never have to consider Deletes
+          assertST $ mt /= MergeLevel MergeMidLevel
+          case mt of
+            MergeUnion ->
+              assertST $ length trees == 2
+            MergeLevel _ -> do
+              assertST $ length trees > 1
+              -- only the last tree can be another union
+              for_ (init trees) $ \t ->
+                assertST =<< isRunOrLevelMerge t
+          for_ trees treeInvariant
+      where
+        isRunOrLevelMerge (MergingTree ref) = readSTRef ref >>= \case
+            CompletedTreeMerge _ -> return True
+            OngoingTreeMerge (MergingRun (MergeLevel _) _) -> return True
+            _ -> return False
 
 -- 'callStack' just ensures that the 'HasCallStack' constraint is not redundant
 -- when compiling with debug assertions disabled.
