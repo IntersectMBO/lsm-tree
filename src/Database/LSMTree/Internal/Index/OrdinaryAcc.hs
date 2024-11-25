@@ -1,10 +1,12 @@
+{-# LANGUAGE TypeFamilies #-}
+
 {- HLINT ignore "Avoid restricted alias" -}
 
 {-|
     Incremental construction functionality for the general-purpose fence pointer
     index.
 -}
-module Database.LSMTree.Internal.IndexOrdinaryAcc
+module Database.LSMTree.Internal.Index.OrdinaryAcc
 (
     IndexOrdinaryAcc,
     new,
@@ -23,7 +25,9 @@ import qualified Data.Vector.Primitive as Primitive (Vector, length)
 import           Data.Word (Word16, Word32, Word8)
 import           Database.LSMTree.Internal.Chunk (Baler, Chunk, createBaler,
                      feedBaler, unsafeEndBaler)
-import           Database.LSMTree.Internal.IndexOrdinary
+import           Database.LSMTree.Internal.Index
+                     (IndexAcc (ResultingIndex, appendMulti, appendSingle, unsafeEnd))
+import           Database.LSMTree.Internal.Index.Ordinary
                      (IndexOrdinary (IndexOrdinary))
 import           Database.LSMTree.Internal.Serialise
                      (SerialisedKey (SerialisedKey'))
@@ -65,53 +69,35 @@ keyListElem (SerialisedKey' keyBytes) = [keySizeBytes, keyBytes] where
     keySizeBytes :: Primitive.Vector Word8
     !keySizeBytes = byteVectorFromPrim keySizeAsWord16
 
-{-|
-    Adds information about a single page that fully comprises one or more
-    key–value pairs to an index and outputs newly available chunks of the
-    serialised key list.
+instance IndexAcc IndexOrdinaryAcc where
 
-    __Warning:__ Using keys whose length cannot be represented by a 16-bit word
-    may result in a corrupted serialised key list.
--}
-appendSingle :: (SerialisedKey, SerialisedKey)
-             -> IndexOrdinaryAcc s
-             -> ST s (Maybe Chunk)
-appendSingle (_, key) (IndexOrdinaryAcc lastKeys baler)
-    = do
-          Growing.append lastKeys 1 key
-          feedBaler (keyListElem key) baler
+    type ResultingIndex IndexOrdinaryAcc = IndexOrdinary
 
-{-|
-    Adds information about multiple pages that together comprise a single
-    key–value pair to an index and outputs newly available chunks of the
-    serialised key list.
+    appendSingle :: (SerialisedKey, SerialisedKey)
+                 -> IndexOrdinaryAcc s
+                 -> ST s (Maybe Chunk)
+    appendSingle (_, key) (IndexOrdinaryAcc lastKeys baler)
+        = do
+              Growing.append lastKeys 1 key
+              feedBaler (keyListElem key) baler
 
-    __Warning:__ Using keys whose length cannot be represented by a 16-bit word
-    may result in a corrupted serialised key list.
--}
-appendMulti :: (SerialisedKey, Word32)
-            -> IndexOrdinaryAcc s
-            -> ST s [Chunk]
-appendMulti (key, overflowPageCount) (IndexOrdinaryAcc lastKeys baler)
-    = do
-          Growing.append lastKeys pageCount key
-          maybeToList <$> feedBaler keyListElems baler
-    where
+    appendMulti :: (SerialisedKey, Word32)
+                -> IndexOrdinaryAcc s
+                -> ST s [Chunk]
+    appendMulti (key, overflowPageCount) (IndexOrdinaryAcc lastKeys baler)
+        = do
+              Growing.append lastKeys pageCount key
+              maybeToList <$> feedBaler keyListElems baler
+        where
 
-    pageCount :: Int
-    !pageCount = succ (fromIntegral overflowPageCount)
+        pageCount :: Int
+        !pageCount = succ (fromIntegral overflowPageCount)
 
-    keyListElems :: [Primitive.Vector Word8]
-    keyListElems = concat (replicate pageCount (keyListElem key))
+        keyListElems :: [Primitive.Vector Word8]
+        keyListElems = concat (replicate pageCount (keyListElem key))
 
-{-|
-    Returns the constructed index, along with a final chunk in case the
-    serialised key list has not been fully output yet, thereby invalidating the
-    index under construction. Executing @unsafeEnd index@ is only safe when
-    @index@ is not used afterwards.
--}
-unsafeEnd :: IndexOrdinaryAcc s -> ST s (Maybe Chunk, IndexOrdinary)
-unsafeEnd (IndexOrdinaryAcc lastKeys baler) = do
-    keys <- Growing.freeze lastKeys
-    remnant <- unsafeEndBaler baler
-    return (remnant, IndexOrdinary keys)
+    unsafeEnd :: IndexOrdinaryAcc s -> ST s (Maybe Chunk, IndexOrdinary)
+    unsafeEnd (IndexOrdinaryAcc lastKeys baler) = do
+        keys <- Growing.freeze lastKeys
+        remnant <- unsafeEndBaler baler
+        return (remnant, IndexOrdinary keys)

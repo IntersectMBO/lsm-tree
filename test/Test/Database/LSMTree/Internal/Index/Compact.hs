@@ -3,7 +3,7 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 {- HLINT ignore "Eta reduce" -}
 
-module Test.Database.LSMTree.Internal.IndexCompact (tests) where
+module Test.Database.LSMTree.Internal.Index.Compact (tests) where
 
 import           Control.DeepSeq (deepseq)
 import           Control.Monad (foldM)
@@ -28,12 +28,12 @@ import qualified Data.Vector.Unboxed.Base as VU
 import           Data.Word
 import           Database.LSMTree.Extras
 import           Database.LSMTree.Extras.Generators as Gen
-import           Database.LSMTree.Extras.Index as Cons (Append (..), append)
+import           Database.LSMTree.Extras.Index as Index (Append (..), append)
 import           Database.LSMTree.Internal.BitMath
 import           Database.LSMTree.Internal.Chunk as Chunk (toByteString)
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
-import           Database.LSMTree.Internal.IndexCompact as Index
-import           Database.LSMTree.Internal.IndexCompactAcc as Cons
+import           Database.LSMTree.Internal.Index.Compact as IndexCompact
+import           Database.LSMTree.Internal.Index.CompactAcc as IndexCompact
 import           Database.LSMTree.Internal.Page (PageNo (PageNo), PageSpan,
                      multiPage, singlePage)
 import           Database.LSMTree.Internal.Serialise
@@ -48,7 +48,7 @@ import           Test.Util.Orphans ()
 import           Text.Printf (printf)
 
 tests :: TestTree
-tests = testGroup "Test.Database.LSMTree.Internal.IndexCompact" [
+tests = testGroup "Test.Database.LSMTree.Internal.Index.Compact" [
     testProperty "prop_distribution @KeyForIndexCompact" $
       prop_distribution @KeyForIndexCompact
   , testProperty "prop_searchMinMaxKeysAfterConstruction" $
@@ -69,9 +69,9 @@ tests = testGroup "Test.Database.LSMTree.Internal.IndexCompact" [
           let k2 = SerialisedKey' (VP.replicate 16 0x11)
           let k3 = SerialisedKey' (VP.replicate 15 0x11 <> VP.replicate 1 0x12)
           let (chunks, index) = runST $ do
-                ica <- Cons.new 16
-                ch1 <- flip Cons.append ica $ AppendSinglePage k1 k2
-                ch2 <- flip Cons.append ica $ AppendSinglePage k3 k3
+                ica <- IndexCompact.new 16
+                ch1 <- flip Index.append ica $ AppendSinglePage k1 k2
+                ch2 <- flip Index.append ica $ AppendSinglePage k3 k3
                 (mCh3, idx) <- unsafeEnd ica
                 return (ch1 <> ch2 <> toList mCh3, idx)
 
@@ -289,7 +289,7 @@ prop_total_deserialisation_whitebox numEntries numPages word32s =
 
 writeIndexCompact :: SerialiseKey k => NumEntries -> ChunkSize -> LogicalPageSummaries k -> (LBS.ByteString, LBS.ByteString, LBS.ByteString)
 writeIndexCompact numEntries (ChunkSize csize) ps = runST $ do
-    ica <- Cons.new csize
+    ica <- IndexCompact.new csize
     cs <- mapM (`append` ica) (toAppends ps)
     (c, index) <- unsafeEnd ica
     return
@@ -325,7 +325,7 @@ labelIndex ic =
     . QC.tabulate "Length of contiguous clash runs" (fmap (showPowersOf10 . snd) nscontig)
     . QC.tabulate "Contiguous clashes contain multi-page values" (fmap (show . fst) nscontig)
     . QC.classify (multiPageValuesClash ic) "Has clashing multi-page values"
-  where nclashes       = Index.countClashes ic
+  where nclashes       = IndexCompact.countClashes ic
         nscontig       = countContiguousClashes ic
 
 multiPageValuesClash :: IndexCompact -> Bool

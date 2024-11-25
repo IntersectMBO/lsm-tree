@@ -1,4 +1,5 @@
-{-# LANGUAGE CPP #-}
+{-# LANGUAGE CPP          #-}
+{-# LANGUAGE TypeFamilies #-}
 {- |
   Incremental construction of a compact index yields chunks of the primary array
   that can be serialised incrementally.
@@ -9,14 +10,13 @@
   Incremental construction can be finalised with 'unsafeEnd', which yields both
   a 'Chunk' (possibly) and the `IndexCompact'.
 -}
-module Database.LSMTree.Internal.IndexCompactAcc (
+module Database.LSMTree.Internal.Index.CompactAcc (
     -- * Construction
-    -- $construction-invariants
     IndexCompactAcc (..)
   , new
-  , appendSingle
-  , appendMulti
-  , unsafeEnd
+  , Index.appendSingle
+  , Index.appendMulti
+  , Index.unsafeEnd
     -- * Internal: exported for testing and benchmarking
   , SMaybe (..)
   , unsafeWriteRange
@@ -45,7 +45,10 @@ import qualified Data.Vector.Unboxed.Mutable as VUM
 import           Data.Word
 import           Database.LSMTree.Internal.BitMath
 import           Database.LSMTree.Internal.Chunk (Chunk)
-import           Database.LSMTree.Internal.IndexCompact
+import           Database.LSMTree.Internal.Index (IndexAcc, ResultingIndex)
+import qualified Database.LSMTree.Internal.Index as Index (appendMulti,
+                     appendSingle, unsafeEnd)
+import           Database.LSMTree.Internal.Index.Compact
 import           Database.LSMTree.Internal.Page
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.Unsliced
@@ -53,15 +56,6 @@ import           Database.LSMTree.Internal.Unsliced
 {-------------------------------------------------------------------------------
   Construction
 -------------------------------------------------------------------------------}
-
-{- $construction-invariants #construction-invariants#
-
-  Constructing a compact index can go wrong, unless the following conditions are
-  met:
-
-  [Sorted] pages must be appended in sorted order according to the keys they
-    contain.
--}
 
 -- | A mutable version of 'IndexCompact'. See [incremental
 -- construction](#incremental).
@@ -122,9 +116,10 @@ newPinnedMVec64 lenWords = do
     setByteArray mba 0 lenWords (0 :: Word64)
     return (VUM.MV_Word64 (VPM.MVector 0 lenWords mba))
 
--- | Append a single page to a mutable compact index.
---
--- INVARIANTS: see [construction invariants](#construction-invariants).
+{-|
+    For a specification of this operation, see the documentation of [its
+    polymorphic version]('Index.appendSingle').
+-}
 appendSingle :: forall s. (SerialisedKey, SerialisedKey) -> IndexCompactAcc s -> ST s (Maybe Chunk)
 appendSingle (minKey, maxKey) ica@IndexCompactAcc{..} = do
 #ifdef NO_IGNORE_ASSERTS
@@ -172,13 +167,10 @@ appendSingle (minKey, maxKey) ica@IndexCompactAcc{..} = do
             when (clash && not ltp) $
               modifySTRef' icaTieBreaker (Map.insert (makeUnslicedKey minKey) (PageNo pageNo))
 
--- | Append multiple pages to the index. The minimum keys and maximum keys for
--- all these pages are set to the same key.
---
--- @appendMulti (k, n)@ is equivalent to @replicateM (n + 1) (appendSingle (k,
--- k))@, but the former should be faster faster.
---
--- INVARIANTS: see [construction invariants](#construction-invariants).
+{-|
+    For a specification of this operation, see the documentation of [its
+    polymorphic version]('Index.appendMulti').
+-}
 appendMulti :: forall s. (SerialisedKey, Word32) -> IndexCompactAcc s -> ST s [Chunk]
 appendMulti (k, n0) ica@IndexCompactAcc{..} =
     maybe id (:) <$> appendSingle (k, k) ica <*> overflows (fromIntegral n0)
@@ -223,12 +215,10 @@ yield IndexCompactAcc{..} = do
     else -- the current chunk is not yet full
       pure Nothing
 
--- | Finalise incremental construction, yielding final chunks.
---
--- This function is unsafe, so do /not/ modify the 'IndexCompactAcc' after using
--- 'unsafeEnd'.
---
--- INVARIANTS: see [construction invariants](#construction-invariants).
+{-|
+    For a specification of this operation, see the documentation of [its
+    polymorphic version]('Index.unsafeEnd').
+-}
 unsafeEnd :: IndexCompactAcc s -> ST s (Maybe Chunk, IndexCompact)
 unsafeEnd IndexCompactAcc{..} = do
     pageNo <- readSTRef icaCurrentPageNumber
@@ -258,6 +248,26 @@ unsafeEnd IndexCompactAcc{..} = do
     sliceCurrent ix (c NE.:| cs)
       | ix == 0 = cs  -- current chunk is completely empty, just ignore it
       | otherwise = VUM.slice 0 ix c : cs
+
+{-------------------------------------------------------------------------------
+  Type class instantiation
+-------------------------------------------------------------------------------}
+
+instance IndexAcc IndexCompactAcc where
+
+    type ResultingIndex IndexCompactAcc = IndexCompact
+
+    appendSingle :: (SerialisedKey, SerialisedKey)
+                 -> IndexCompactAcc s
+                 -> ST s (Maybe Chunk)
+    appendSingle = appendSingle
+
+    appendMulti :: (SerialisedKey, Word32) -> IndexCompactAcc s -> ST s [Chunk]
+    appendMulti = appendMulti
+
+    unsafeEnd :: IndexCompactAcc s
+              -> ST s (Maybe Chunk, ResultingIndex IndexCompactAcc)
+    unsafeEnd = unsafeEnd
 
 {-------------------------------------------------------------------------------
   Strict 'Maybe'

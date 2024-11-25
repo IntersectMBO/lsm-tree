@@ -40,8 +40,8 @@ import           Database.LSMTree.Internal.ChecksumHandle
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.CRC32C
 import           Database.LSMTree.Internal.Entry
-import           Database.LSMTree.Internal.IndexCompact
-import           Database.LSMTree.Internal.IndexCompactAcc
+import           Database.LSMTree.Internal.Index.Compact
+import           Database.LSMTree.Internal.Index.CompactAcc
 import           Database.LSMTree.Internal.Merge hiding (Level)
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.MergeSchedule

@@ -46,7 +46,7 @@ import           Database.LSMTree.Extras.RunData (RunData (..),
                      unsafeFlushAsWriteBuffer)
 import           Database.LSMTree.Internal.BlobRef
 import           Database.LSMTree.Internal.Entry as Entry
-import           Database.LSMTree.Internal.IndexCompact as Index
+import           Database.LSMTree.Internal.Index.Compact
 import           Database.LSMTree.Internal.Lookup
 import           Database.LSMTree.Internal.Page (PageNo (PageNo), PageSpan (..))
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..))
@@ -169,7 +169,7 @@ indexSearchesModel cs ks rkixs =
     flip fmap rkixs $ \(rix, kix) ->
       let c = cs List.!! rix
           k = ks List.!! kix
-      in  Index.search k c
+      in  search k c
 
 prop_prepLookupsModel ::
      SmallList (InMemLookupData SerialisedKey SerialisedValue BlobSpan)
@@ -200,7 +200,7 @@ prepLookupsModel rs ks = unzip
     | (rix, (b, c)) <- zip [0..] rs
     , (kix, k) <- zip [0..] ks
     , Bloom.elem k b
-    , let pspan = Index.search k c
+    , let pspan = search k c
     ]
 
 {-------------------------------------------------------------------------------

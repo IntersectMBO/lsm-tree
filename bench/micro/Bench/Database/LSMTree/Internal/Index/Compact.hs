@@ -2,7 +2,7 @@
 {-# LANGUAGE TypeApplications   #-}
 {- HLINT ignore "Eta reduce" -}
 
-module Bench.Database.LSMTree.Internal.IndexCompact (
+module Bench.Database.LSMTree.Internal.Index.Compact (
     benchmarks
     -- * Benchmarked functions
   , searches
@@ -25,15 +25,15 @@ import           Database.LSMTree.Extras.Generators
 import           Database.LSMTree.Extras.Index
 import           Database.LSMTree.Extras.Random
 import           Database.LSMTree.Extras.UTxO
-import           Database.LSMTree.Internal.IndexCompact
-import           Database.LSMTree.Internal.IndexCompactAcc
+import           Database.LSMTree.Internal.Index.Compact
+import           Database.LSMTree.Internal.Index.CompactAcc
 import           Database.LSMTree.Internal.Serialise (SerialisedKey,
                      serialiseKey)
 import           System.Random
 import           Test.QuickCheck (generate)
 
 benchmarks :: Benchmark
-benchmarks = bgroup "Bench.Database.LSMTree.Internal.IndexCompact" [
+benchmarks = bgroup "Bench.Database.LSMTree.Internal.Index.Compact" [
       env (searchEnv 10000 1000) $ \ ~(ic, ks) ->
         bench "searches-10-1k" $ whnf (searches ic) ks
     , bgroup "construction" [

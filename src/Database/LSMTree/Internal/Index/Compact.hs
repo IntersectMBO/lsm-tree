@@ -2,14 +2,14 @@
 --
 -- TODO: add utility functions for clash probability calculations
 --
-module Database.LSMTree.Internal.IndexCompact (
+module Database.LSMTree.Internal.Index.Compact (
     -- $compact
     IndexCompact (..)
     -- * Queries
-  , search
+  , Index.search
+  , Index.sizeInPages
   , countClashes
   , hasClashes
-  , sizeInPages
     -- * Non-incremental serialisation
   , toLBS
     -- * Incremental serialisation
@@ -18,7 +18,7 @@ module Database.LSMTree.Internal.IndexCompact (
   , finalLBS
   , word64VectorToChunk
     -- * Deserialisation
-  , fromSBS
+  , Index.fromSBS
   ) where
 
 import           Control.DeepSeq (NFData (..))
@@ -48,6 +48,9 @@ import           Database.LSMTree.Internal.ByteString (byteArrayFromTo)
 import           Database.LSMTree.Internal.Chunk (Chunk (Chunk))
 import qualified Database.LSMTree.Internal.Chunk as Chunk (toByteString)
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
+import           Database.LSMTree.Internal.Index (Index)
+import qualified Database.LSMTree.Internal.Index as Index (fromSBS, search,
+                     sizeInPages)
 import           Database.LSMTree.Internal.Page
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.Unsliced
@@ -59,7 +62,7 @@ import           Database.LSMTree.Internal.Vector
   @i@, to min-max information for keys on that page.
 
   Fence-pointer indexes can be constructed and serialised incrementally, see
-  module "Database.LSMTree.Internal.IndexCompactAcc".
+  module "Database.LSMTree.Internal.Index.CompactAcc".
 
   Given a serialised target key @k@, an index can be 'search'ed to find a disk
   page @i@ that /might/ contain @k@. Fence-pointer indices offer no guarantee of
@@ -378,13 +381,13 @@ instance NFData IndexCompact where
   Queries
 -------------------------------------------------------------------------------}
 
--- |  Searches for a page span that contains a key–value pair with the given key.
---
--- If there is indeed such a pair, the result is the corresponding page span; if
--- there is no such pair, the result is an arbitrary but valid page span.
---
--- See [an informal description of the search algorithm](#search-descr) for more
--- details about the search algorithm.
+{-|
+    For a specification of this operation, see the documentation of [its
+    polymorphic version]('Index.search').
+
+    See [an informal description of the search algorithm](#search-descr) for
+    more details about the search algorithm.
+-}
 search :: SerialisedKey -> IndexCompact -> PageSpan
 -- One way to think of the search algorithm is that it starts with the full page
 -- number interval, and shrinks it to a minimal interval that contains the
@@ -443,7 +446,10 @@ countClashes = Map.size . icTieBreaker
 hasClashes :: IndexCompact -> Bool
 hasClashes = not . Map.null . icTieBreaker
 
--- | The number of pages within the index.
+{-|
+    For a specification of this operation, see the documentation of [its
+    polymorphic version]('Index.sizeInPages').
+-}
 sizeInPages :: IndexCompact -> NumPages
 sizeInPages = NumPages . toEnum . VU.length . icPrimary
 
@@ -468,7 +474,7 @@ toLBS numEntries index =
   by using 'headerLBS'. Each yielded chunk can then be written using
   'Chunk.toByteString'. Once construction is completed, 'finalLBS' will
   serialise the remaining parts of the compact index.
-  Also see module "Database.LSMTree.Internal.IndexCompactAcc".
+  Also see module "Database.LSMTree.Internal.Index.CompactAcc".
 -}
 
 -- | By writing out the type–version indicator in host endianness, we also
@@ -548,13 +554,10 @@ putPaddingTo64 written
   Deserialisation
 -------------------------------------------------------------------------------}
 
--- | The input bytestring must be 64 bit aligned and exactly contain the
--- serialised compact index, with no leading or trailing space.
--- It is directly used as the backing memory for the compact index.
---
--- Also note that the implementation reads values in little-endian byte order.
--- If the file has been serialised in big-endian order, the mismatch will be
--- detected by looking at the type–version indicator.
+{-|
+    For a specification of this operation, see the documentation of [its
+    polymorphic version]('Index.fromSBS').
+-}
 fromSBS :: ShortByteString -> Either String (NumEntries, IndexCompact)
 fromSBS (SBS ba') = do
     let ba = ByteArray ba'
@@ -674,6 +677,21 @@ checkedBitVec off len ba
       Just (BitVec off len ba)
   | otherwise =
       Nothing
+
+{-------------------------------------------------------------------------------
+  Type class instantiation
+-------------------------------------------------------------------------------}
+
+instance Index IndexCompact where
+
+    search :: SerialisedKey -> IndexCompact -> PageSpan
+    search = search
+
+    sizeInPages :: IndexCompact -> NumPages
+    sizeInPages = sizeInPages
+
+    fromSBS :: ShortByteString -> Either String (NumEntries, IndexCompact)
+    fromSBS = fromSBS
 
 {-------------------------------------------------------------------------------
  Vector extras

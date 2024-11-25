@@ -40,8 +40,8 @@ import           Control.Monad.ST.Strict
 
 import           Database.LSMTree.Internal.BlobRef (WeakBlobRef (..))
 import           Database.LSMTree.Internal.Entry
-import           Database.LSMTree.Internal.IndexCompact (IndexCompact)
-import qualified Database.LSMTree.Internal.IndexCompact as Index
+import qualified Database.LSMTree.Internal.Index as Index (search)
+import           Database.LSMTree.Internal.Index.Compact (IndexCompact)
 import           Database.LSMTree.Internal.Page (PageSpan (..), getNumPages,
                      pageSpanSize, unPageNo)
 import           Database.LSMTree.Internal.RawBytes (RawBytes (..))

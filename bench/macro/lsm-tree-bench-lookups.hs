@@ -25,7 +25,7 @@ import           Database.LSMTree.Extras.Orphans ()
 import           Database.LSMTree.Extras.UTxO
 import           Database.LSMTree.Internal.Entry (Entry (Insert),
                      NumEntries (..))
-import           Database.LSMTree.Internal.IndexCompact (IndexCompact)
+import           Database.LSMTree.Internal.Index.Compact (IndexCompact)
 import           Database.LSMTree.Internal.Lookup
 import           Database.LSMTree.Internal.Paths (RunFsPaths (RunFsPaths))
 import           Database.LSMTree.Internal.Run (Run)
