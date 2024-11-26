@@ -749,48 +749,14 @@ lookupsBufferAndRuns ks wb runs =
 submitLookups :: [Key] -> [Run] -> [(Key, Op)]
 submitLookups ks rs = [(k, op) | r <- rs, k <- ks, Just op <- [Map.lookup k r]]
 
--- This is super naive. We could optimise it based on knowledge about the tree
--- structure that is currently not enforced by the types. For example, let's say
--- we 'union' the following (simplified) table with some other table:
+-- | Do lookups on runs at the leaves and recursively combine the resulting
+-- 'LookupAcc's.
 --
--- @
---   LSMContent
---     wb
---     [ Level (Merging (MergingRun (MergeLevel MergeMidLevel) (OngoingMerge [r16, r15, r14, r13]))) [r12, r11, r10]))
---     , Level (Merging (MergingRun (MergeLevel MergeLastLevel) (OngoingMerge [r09, r08, r07, r06, r05]))) []
---     ]
---     (Just t)
--- @
+-- Doing this naively would result in a call to 'submitLookups' and creation of
+-- a 'LookupAcc' for each run in the tree. However, when there are adjacent
+-- 'Run's or 'MergingRuns' (with 'MergeLevel') as inputs to a level-merge, we
+-- combine them into a single batch of runs.
 --
--- Then it gets flattened into a pending merge of a list of MergingTrees:
---
--- @
---   PendingMerge (MergeLevel MergeLastLevel)
---     [ CompletedTreeMerge wb
---     , OngoingTreeMerge (MergingRun (MergeLevel MergeMidLevel) (OngoingMerge [r16, r15, r14, r13]))
---     , CompletedTreeMerge r12
---     , CompletedTreeMerge r11
---     , CompletedTreeMerge r10
---     , OngoingTreeMerge (MergingRun (MergeLevel MergeMidLevel) (OngoingMerge [r09, r08, r07, r06, r05]))
---     , t
---     ]
--- @
---
--- When we now do lookups on the result, we look at this merge with the naive
--- algorithm below. We recurse into each of these 'MergingTree's, assembling 7
--- individual 'LookupAcc' (using 7 calls to 'submitLookups') and merging them.
---
--- But whenever we have single 'Run's or 'MergingRuns' (with 'MergeLevel') next
--- to each other as inputs to a pending level-merge, we can combine them into a
--- single batch of runs, e.g. @lookupRuns [r16, .. r05]@, and only then combine
--- that 'LookupAcc' with any others.
--- In fact, we know that in this type of merge only the last element can contain
--- a 'MergeUnion', everything else is just 'Run' or 'MergingRun'.
---
--- TODO: implement gathering runs like this
---
--- TODO: this would be more straight-forward if the structure was enforced
--- by the types, so maybe tweak 'PendingTreeMerge'?
 lookupsTree :: [Key] -> MergingTree s -> ST s LookupAcc
 lookupsTree ks = go
   where
@@ -803,10 +769,29 @@ lookupsTree ks = go
             MergeLevel _ -> return $ lookupRuns rs  -- combine into batch
             MergeUnion -> return $ unionLookupAccs (map (\r -> lookupRuns [r]) rs)
         PendingTreeMerge (PendingMerge mt trees) -> case mt of
-          MergeLevel _ -> mergeLookupAccs <$> traverse go trees
           MergeUnion   -> unionLookupAccs <$> traverse go trees
+          MergeLevel _ -> do
+            (runs, remaining) <- collectLevel [] trees
+            let acc0 = updateLookupAcc emptyLookupAcc (submitLookups ks runs)
+            accs <- traverse go remaining
+            return (mergeLookupAccs (acc0 : accs))
 
     lookupRuns = updateLookupAcc emptyLookupAcc . submitLookups ks
+
+    -- recover the known structure of pending level merges (created in
+    -- 'contentToMergingTree'), which consist of all runs of a table, plus
+    -- potentially a single union merge at the end
+    collectLevel :: [[Run]] -> [MergingTree s] -> ST s ([Run], [MergingTree s])
+    collectLevel rss []  = return (concat (reverse rss), [])
+    collectLevel rss (mt@(MergingTree ref) : mts) =
+        readSTRef ref >>= \case
+          CompletedTreeMerge r ->
+            collectLevel ([r] : rss) mts
+          OngoingTreeMerge mr@(MergingRun (MergeLevel _) _) -> do
+            rs <- flattenMergingRun mr
+            collectLevel (rs : rss) mts
+          _ ->
+            return (concat (reverse rss), mt : mts)
 
 supplyCreditsLevels :: Credit -> Levels s -> ST s ()
 supplyCreditsLevels n =
