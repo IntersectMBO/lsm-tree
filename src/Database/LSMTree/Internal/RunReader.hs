@@ -164,6 +164,10 @@ close RunReader{..} = do
       FS.hDropCacheAll readerHasBlockIO readerKOpsHandle
     FS.hClose readerHasFS readerKOpsHandle
     releaseRef readerBlobFile
+    --TODO: arguably we should have distinct finish and close and require that
+    -- readers are _always_ closed, even after they have been drained.
+    -- This would allow BlobRefs to remain valid until the reader is closed.
+    -- Currently they are invalidated as soon as the cursor is drained.
 
 -- | The 'SerialisedKey' and 'SerialisedValue' point into the in-memory disk
 -- page. Keeping them alive will also prevent garbage collection of the 4k byte
