@@ -239,7 +239,7 @@ type Table = Internal.NormalTable
 {-# SPECIALISE withTable ::
      Session IO
   -> Common.TableConfig
-  -> (Table IO k v blob -> IO a)
+  -> (Table IO k v b -> IO a)
   -> IO a #-}
 -- | (Asynchronous) exception-safe, bracketed opening and closing of a table.
 --
@@ -249,7 +249,7 @@ withTable ::
      IOLike m
   => Session m
   -> Common.TableConfig
-  -> (Table m k v blob -> m a)
+  -> (Table m k v b -> m a)
   -> m a
 withTable (Internal.Session' sesh) conf action =
     Internal.withTable sesh conf (action . Internal.NormalTable)
@@ -257,7 +257,7 @@ withTable (Internal.Session' sesh) conf action =
 {-# SPECIALISE new ::
      Session IO
   -> Common.TableConfig
-  -> IO (Table IO k v blob) #-}
+  -> IO (Table IO k v b) #-}
 -- | Create a new empty table, returning a fresh table.
 --
 -- NOTE: tables hold open resources (such as open files) and should be
@@ -267,11 +267,11 @@ new ::
      IOLike m
   => Session m
   -> Common.TableConfig
-  -> m (Table m k v blob)
+  -> m (Table m k v b)
 new (Internal.Session' sesh) conf = Internal.NormalTable <$> Internal.new sesh conf
 
 {-# SPECIALISE close ::
-     Table IO k v blob
+     Table IO k v b
   -> IO () #-}
 -- | Close a table. 'close' is idempotent. All operations on a closed
 -- handle will throw an exception.
@@ -281,7 +281,7 @@ new (Internal.Session' sesh) conf = Internal.NormalTable <$> Internal.new sesh c
 -- not lost.
 close ::
      IOLike m
-  => Table m k v blob
+  => Table m k v b
   -> m ()
 close (Internal.NormalTable t) = Internal.close t
 
@@ -290,10 +290,10 @@ close (Internal.NormalTable t) = Internal.close t
 -------------------------------------------------------------------------------}
 
 -- | Result of a single point lookup.
-data LookupResult v blobref =
+data LookupResult v b =
     NotFound
   | Found         !v
-  | FoundWithBlob !v !blobref
+  | FoundWithBlob !v !b
   deriving stock (Eq, Show, Functor, Foldable, Traversable)
 
 instance Bifunctor LookupResult where
@@ -309,9 +309,9 @@ instance Bifunctor LookupResult where
 
 {-# SPECIALISE lookups ::
      (SerialiseKey k, SerialiseValue v)
-  => Table IO k v blob
+  => Table IO k v b
   -> V.Vector k
-  -> IO (V.Vector (LookupResult v (BlobRef IO blob))) #-}
+  -> IO (V.Vector (LookupResult v (BlobRef IO b))) #-}
 {-# INLINEABLE lookups #-}
 -- | Perform a batch of lookups.
 --
@@ -321,9 +321,9 @@ lookups ::
      , SerialiseKey k
      , SerialiseValue v
      )
-  => Table m k v blob
+  => Table m k v b
   -> V.Vector k
-  -> m (V.Vector (LookupResult v (BlobRef m blob)))
+  -> m (V.Vector (LookupResult v (BlobRef m b)))
 lookups (Internal.NormalTable t) ks =
     V.map toLookupResult <$>
     Internal.lookups const (V.map Internal.serialiseKey ks) t
@@ -337,9 +337,9 @@ lookups (Internal.NormalTable t) ks =
     toLookupResult Nothing = NotFound
 
 -- | A result for one point in a cursor read or range lookup.
-data QueryResult k v blobref =
+data QueryResult k v b =
     FoundInQuery         !k !v
-  | FoundInQueryWithBlob !k !v !blobref
+  | FoundInQueryWithBlob !k !v !b
   deriving stock (Eq, Show, Functor, Foldable, Traversable)
 
 instance Bifunctor (QueryResult k) where
@@ -349,9 +349,9 @@ instance Bifunctor (QueryResult k) where
 
 {-# SPECIALISE rangeLookup ::
      (SerialiseKey k, SerialiseValue v)
-  => Table IO k v blob
+  => Table IO k v b
   -> Range k
-  -> IO (V.Vector (QueryResult k v (BlobRef IO blob))) #-}
+  -> IO (V.Vector (QueryResult k v (BlobRef IO b))) #-}
 -- | Perform a range lookup.
 --
 -- Range lookups can be performed concurrently from multiple Haskell threads.
@@ -360,9 +360,9 @@ rangeLookup ::
      , SerialiseKey k
      , SerialiseValue v
      )
-  => Table m k v blob
+  => Table m k v b
   -> Range k
-  -> m (V.Vector (QueryResult k v (BlobRef m blob)))
+  -> m (V.Vector (QueryResult k v (BlobRef m b)))
 rangeLookup (Internal.NormalTable t) range =
     Internal.rangeLookup const (Internal.serialiseKey <$> range) t $ \k v mblob ->
       toNormalQueryResult
@@ -386,8 +386,8 @@ type Cursor :: (Type -> Type) -> Type -> Type -> Type -> Type
 type Cursor = Internal.NormalCursor
 
 {-# SPECIALISE withCursor ::
-     Table IO k v blob
-  -> (Cursor IO k v blob -> IO a)
+     Table IO k v b
+  -> (Cursor IO k v b -> IO a)
   -> IO a #-}
 -- | (Asynchronous) exception-safe, bracketed opening and closing of a cursor.
 --
@@ -395,8 +395,8 @@ type Cursor = Internal.NormalCursor
 -- and 'closeCursor'.
 withCursor ::
      IOLike m
-  => Table m k v blob
-  -> (Cursor m k v blob -> m a)
+  => Table m k v b
+  -> (Cursor m k v b -> m a)
   -> m a
 withCursor (Internal.NormalTable t) action =
     Internal.withCursor Internal.NoOffsetKey t (action . Internal.NormalCursor)
@@ -404,8 +404,8 @@ withCursor (Internal.NormalTable t) action =
 {-# SPECIALISE withCursorAtOffset ::
      SerialiseKey k
   => k
-  -> Table IO k v blob
-  -> (Cursor IO k v blob -> IO a)
+  -> Table IO k v b
+  -> (Cursor IO k v b -> IO a)
   -> IO a #-}
 -- | A variant of 'withCursor' that allows initialising the cursor at an offset
 -- within the table such that the first entry the cursor returns will be the
@@ -419,16 +419,16 @@ withCursorAtOffset ::
      , SerialiseKey k
      )
   => k
-  -> Table m k v blob
-  -> (Cursor m k v blob -> m a)
+  -> Table m k v b
+  -> (Cursor m k v b -> m a)
   -> m a
 withCursorAtOffset offset (Internal.NormalTable t) action =
     Internal.withCursor (Internal.OffsetKey (Internal.serialiseKey offset)) t $
       action . Internal.NormalCursor
 
 {-# SPECIALISE newCursor ::
-     Table IO k v blob
-  -> IO (Cursor IO k v blob) #-}
+     Table IO k v b
+  -> IO (Cursor IO k v b) #-}
 -- | Create a new cursor to read from a given table. Future updates to the table
 -- will not be reflected in the cursor. The cursor starts at the beginning, i.e.
 -- the minimum key of the table.
@@ -439,16 +439,16 @@ withCursorAtOffset offset (Internal.NormalTable t) action =
 -- using 'close' as soon as they are no longer used.
 newCursor ::
      IOLike m
-  => Table m k v blob
-  -> m (Cursor m k v blob)
+  => Table m k v b
+  -> m (Cursor m k v b)
 newCursor (Internal.NormalTable t) =
     Internal.NormalCursor <$!> Internal.newCursor Internal.NoOffsetKey t
 
 {-# SPECIALISE newCursorAtOffset ::
      SerialiseKey k
   => k
-  -> Table IO k v blob
-  -> IO (Cursor IO k v blob) #-}
+  -> Table IO k v b
+  -> IO (Cursor IO k v b) #-}
 -- | A variant of 'newCursor' that allows initialising the cursor at an offset
 -- within the table such that the first entry the cursor returns will be the
 -- one with the lowest key that is greater than or equal to the given key.
@@ -461,28 +461,28 @@ newCursorAtOffset ::
      , SerialiseKey k
      )
   => k
-  -> Table m k v blob
-  -> m (Cursor m k v blob)
+  -> Table m k v b
+  -> m (Cursor m k v b)
 newCursorAtOffset offset (Internal.NormalTable t) =
     Internal.NormalCursor <$!>
       Internal.newCursor (Internal.OffsetKey (Internal.serialiseKey offset)) t
 
 {-# SPECIALISE closeCursor ::
-     Cursor IO k v blob
+     Cursor IO k v b
   -> IO () #-}
 -- | Close a cursor. 'closeCursor' is idempotent. All operations on a closed
 -- cursor will throw an exception.
 closeCursor ::
      IOLike m
-  => Cursor m k v blob
+  => Cursor m k v b
   -> m ()
 closeCursor (Internal.NormalCursor c) = Internal.closeCursor c
 
 {-# SPECIALISE readCursor ::
      (SerialiseKey k, SerialiseValue v)
   => Int
-  -> Cursor IO k v blob
-  -> IO (V.Vector (QueryResult k v (BlobRef IO blob))) #-}
+  -> Cursor IO k v b
+  -> IO (V.Vector (QueryResult k v (BlobRef IO b))) #-}
 -- | Read the next @n@ entries from the cursor. The resulting vector is shorter
 -- than @n@ if the end of the table has been reached. The cursor state is
 -- updated, so the next read will continue where this one ended.
@@ -498,8 +498,8 @@ readCursor ::
      , SerialiseValue v
      )
   => Int
-  -> Cursor m k v blob
-  -> m (V.Vector (QueryResult k v (BlobRef m blob)))
+  -> Cursor m k v b
+  -> m (V.Vector (QueryResult k v (BlobRef m b)))
 readCursor n (Internal.NormalCursor c) =
     Internal.readCursor const n c $ \k v mblob ->
       toNormalQueryResult
@@ -520,19 +520,19 @@ toNormalQueryResult k v = \case
 --
 -- An __update__ is a term that groups all types of table-manipulating
 -- operations, like inserts and deletes.
-data Update v blob =
-    Insert !v !(Maybe blob)
+data Update v b =
+    Insert !v !(Maybe b)
   | Delete
   deriving stock (Show, Eq)
 
-instance (NFData v, NFData blob) => NFData (Update v blob) where
+instance (NFData v, NFData b) => NFData (Update v b) where
   rnf Delete       = ()
   rnf (Insert v b) = rnf v `seq` rnf b
 
 {-# SPECIALISE updates ::
-     (SerialiseKey k, SerialiseValue v, SerialiseValue blob)
-  => Table IO k v blob
-  -> V.Vector (k, Update v blob)
+     (SerialiseKey k, SerialiseValue v, SerialiseValue b)
+  => Table IO k v b
+  -> V.Vector (k, Update v b)
   -> IO () #-}
 -- | Perform a mixed batch of inserts and deletes.
 --
@@ -544,10 +544,10 @@ updates ::
      ( IOLike m
      , SerialiseKey k
      , SerialiseValue v
-     , SerialiseValue blob
+     , SerialiseValue b
      )
-  => Table m k v blob
-  -> V.Vector (k, Update v blob)
+  => Table m k v b
+  -> V.Vector (k, Update v b)
   -> m ()
 updates (Internal.NormalTable t) es = do
     Internal.updates const (V.mapStrict serialiseEntry es) t
@@ -556,16 +556,16 @@ updates (Internal.NormalTable t) es = do
     serialiseOp = bimap Internal.serialiseValue Internal.serialiseBlob
                 . updateToEntry
 
-    updateToEntry :: Update v blob -> Entry.Entry v blob
+    updateToEntry :: Update v b -> Entry.Entry v b
     updateToEntry = \case
         Insert v Nothing  -> Entry.Insert v
         Insert v (Just b) -> Entry.InsertWithBlob v b
         Delete            -> Entry.Delete
 
 {-# SPECIALISE inserts ::
-     (SerialiseKey k, SerialiseValue v, SerialiseValue blob)
-  => Table IO k v blob
-  -> V.Vector (k, v, Maybe blob)
+     (SerialiseKey k, SerialiseValue v, SerialiseValue b)
+  => Table IO k v b
+  -> V.Vector (k, v, Maybe b)
   -> IO () #-}
 -- | Perform a batch of inserts.
 --
@@ -574,16 +574,16 @@ inserts ::
      ( IOLike m
      , SerialiseKey k
      , SerialiseValue v
-     , SerialiseValue blob
+     , SerialiseValue b
      )
-  => Table m k v blob
-  -> V.Vector (k, v, Maybe blob)
+  => Table m k v b
+  -> V.Vector (k, v, Maybe b)
   -> m ()
 inserts t = updates t . fmap (\(k, v, blob) -> (k, Insert v blob))
 
 {-# SPECIALISE deletes ::
-     (SerialiseKey k, SerialiseValue v, SerialiseValue blob)
-  => Table IO k v blob
+     (SerialiseKey k, SerialiseValue v, SerialiseValue b)
+  => Table IO k v b
   -> V.Vector k
   -> IO () #-}
 -- | Perform a batch of deletes.
@@ -593,18 +593,18 @@ deletes ::
      ( IOLike m
      , SerialiseKey k
      , SerialiseValue v
-     , SerialiseValue blob
+     , SerialiseValue b
      )
-  => Table m k v blob
+  => Table m k v b
   -> V.Vector k
   -> m ()
 deletes t = updates t . fmap (,Delete)
 
 {-# SPECIALISE retrieveBlobs ::
-     SerialiseValue blob
+     SerialiseValue b
   => Session IO
-  -> V.Vector (BlobRef IO blob)
-  -> IO (V.Vector blob) #-}
+  -> V.Vector (BlobRef IO b)
+  -> IO (V.Vector b) #-}
 -- | Perform a batch of blob retrievals.
 --
 -- This is a separate step from 'lookups' and 'rangeLookup'. The result of a
@@ -617,11 +617,11 @@ deletes t = updates t . fmap (,Delete)
 -- Blob lookups can be performed concurrently from multiple Haskell threads.
 retrieveBlobs ::
      ( IOLike m
-     , SerialiseValue blob
+     , SerialiseValue b
      )
   => Session m
-  -> V.Vector (BlobRef m blob)
-  -> m (V.Vector blob)
+  -> V.Vector (BlobRef m b)
+  -> m (V.Vector b)
 retrieveBlobs (Internal.Session' (sesh :: Internal.Session m h)) refs =
     V.map Internal.deserialiseBlob <$>
       Internal.retrieveBlobs sesh (V.imap checkBlobRefType refs)
@@ -637,7 +637,7 @@ retrieveBlobs (Internal.Session' (sesh :: Internal.Session m h)) refs =
 {-# SPECIALISE createSnapshot ::
      Common.SnapshotLabel
   -> SnapshotName
-  -> Table IO k v blob
+  -> Table IO k v b
   -> IO () #-}
 -- | Make the current value of a table durable on-disk by taking a snapshot and
 -- giving the snapshot a name. This is the __only__ mechanism to make a table
@@ -665,11 +665,11 @@ retrieveBlobs (Internal.Session' (sesh :: Internal.Session m h)) refs =
 --
 -- * It is safe to concurrently make snapshots from any table, provided that
 --   the snapshot names are distinct (otherwise this would be a race).
-createSnapshot :: forall m k v blob.
+createSnapshot :: forall m k v b.
      IOLike m
   => Common.SnapshotLabel
   -> SnapshotName
-  -> Table m k v blob
+  -> Table m k v b
   -> m ()
 createSnapshot label snap (Internal.NormalTable t) =
     Internal.createSnapshot const snap label Internal.SnapNormalTable t
@@ -679,7 +679,7 @@ createSnapshot label snap (Internal.NormalTable t) =
   -> Common.TableConfigOverride
   -> Common.SnapshotLabel
   -> SnapshotName
-  -> IO (Table IO k v blob ) #-}
+  -> IO (Table IO k v b ) #-}
 -- | Open a table from a named snapshot, returning a new table.
 --
 -- This function requires passing in an expected label that will be checked
@@ -702,13 +702,13 @@ createSnapshot label snap (Internal.NormalTable t) =
 --   'createSnapshot' "intTable" t
 --   'openSnapshot' \@IO \@Bool \@Bool \@Bool session "intTable"
 -- @
-openSnapshot :: forall m k v blob.
+openSnapshot :: forall m k v b.
      IOLike m
   => Session m
   -> Common.TableConfigOverride -- ^ Optional config override
   -> Common.SnapshotLabel
   -> SnapshotName
-  -> m (Table m k v blob)
+  -> m (Table m k v b)
 openSnapshot (Internal.Session' sesh) override label snap =
     Internal.NormalTable <$!>
       Internal.openSnapshot
@@ -724,8 +724,8 @@ openSnapshot (Internal.Session' sesh) override label snap =
 -------------------------------------------------------------------------------}
 
 {-# SPECIALISE duplicate ::
-     Table IO k v blob
-  -> IO (Table IO k v blob) #-}
+     Table IO k v b
+  -> IO (Table IO k v b) #-}
 -- | Create a logically independent duplicate of a table. This returns a
 -- new table.
 --
@@ -758,8 +758,8 @@ openSnapshot (Internal.Session' sesh) override label snap =
 -- longer needed.
 duplicate ::
      IOLike m
-  => Table m k v blob
-  -> m (Table m k v blob)
+  => Table m k v b
+  -> m (Table m k v b)
 duplicate (Internal.NormalTable t) = Internal.NormalTable <$!> Internal.duplicate t
 
 {-------------------------------------------------------------------------------
@@ -767,9 +767,9 @@ duplicate (Internal.NormalTable t) = Internal.NormalTable <$!> Internal.duplicat
 -------------------------------------------------------------------------------}
 
 {-# SPECIALISE union ::
-     Table IO k v blob
-  -> Table IO k v blob
-  -> IO (Table IO k v blob) #-}
+     Table IO k v b
+  -> Table IO k v b
+  -> IO (Table IO k v b) #-}
 -- | Union two full tables, creating a new table.
 --
 -- A good mental model of this operation is @'Data.Map.Lazy.union'@ on
@@ -781,9 +781,9 @@ duplicate (Internal.NormalTable t) = Internal.NormalTable <$!> Internal.duplicat
 --
 -- NOTE: unioning tables creates a new table, but does not close the tables that
 -- were used as inputs.
-union :: forall m k v blob.
+union :: forall m k v b.
      IOLike m
-  => Table m k v blob
-  -> Table m k v blob
-  -> m (Table m k v blob)
+  => Table m k v b
+  -> Table m k v b
+  -> m (Table m k v b)
 union = error "union: not yet implemented" $ union @m @k @v

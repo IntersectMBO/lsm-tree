@@ -252,10 +252,10 @@ listSnapshots (Internal.Session' sesh) = Internal.listSnapshots sesh
 -- TODO: get rid of the @m@ parameter?
 type BlobRef :: (Type -> Type) -> Type -> Type
 type role BlobRef nominal nominal
-data BlobRef m blob where
+data BlobRef m b where
     BlobRef :: Typeable h
             => Internal.WeakBlobRef m h
-            -> BlobRef m blob
+            -> BlobRef m b
 
-instance Show (BlobRef m blob) where
+instance Show (BlobRef m b) where
     showsPrec d (BlobRef b) = showsPrec d b

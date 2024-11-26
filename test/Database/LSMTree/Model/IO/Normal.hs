@@ -27,19 +27,19 @@ import qualified Database.LSMTree.Model.Session as Model
 
 newtype Session m = Session (StrictTVar m (Maybe Model.Model))
 
-data Table m k v blob = Table {
+data Table m k v b = Table {
     _thSession :: !(Session m)
-  , _thTable   :: !(Model.Table k v blob)
+  , _thTable   :: !(Model.Table k v b)
   }
 
-data BlobRef m blob = BlobRef {
+data BlobRef m b = BlobRef {
     _brSession :: !(Session m)
-  , _brBlobRef :: !(Model.BlobRef blob)
+  , _brBlobRef :: !(Model.BlobRef b)
   }
 
-data Cursor m k v blob = Cursor {
+data Cursor m k v b = Cursor {
     _cSession :: !(Session m)
-  , _cCursor  :: !(Model.Cursor k v blob)
+  , _cCursor  :: !(Model.Cursor k v b)
   }
 
 newtype Err = Err (Model.Err)

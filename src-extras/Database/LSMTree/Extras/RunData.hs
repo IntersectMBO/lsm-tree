@@ -149,11 +149,11 @@ instance ( Ord k, Arbitrary k, Arbitrary v, Arbitrary b
   shrink = shrinkRunData shrink shrink shrink
 
 genRunData ::
-     forall k v blob. Ord k
+     forall k v b. Ord k
   => Gen k
   -> Gen v
-  -> Gen blob
-  -> Gen (RunData k v blob)
+  -> Gen b
+  -> Gen (RunData k v b)
 genRunData genKey genVal genBlob =
     RunData <$> liftArbitrary2Map genKey (liftArbitrary2 genVal genBlob)
 
@@ -161,9 +161,9 @@ shrinkRunData ::
      Ord k
   => (k -> [k])
   -> (v -> [v])
-  -> (blob -> [blob])
-  -> RunData k v blob
-  -> [RunData k v blob]
+  -> (b -> [b])
+  -> RunData k v b
+  -> [RunData k v b]
 shrinkRunData shrinkKey shrinkVal shrinkBlob =
       fmap RunData
     . liftShrink2Map shrinkKey (liftShrink2 shrinkVal shrinkBlob)

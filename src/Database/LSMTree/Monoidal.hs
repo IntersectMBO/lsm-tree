@@ -449,7 +449,7 @@ updates (Internal.MonoidalTable t) es = do
     serialiseEntry = bimap Internal.serialiseKey serialiseOp
     serialiseOp = first Internal.serialiseValue . updateToEntry
 
-    updateToEntry :: Update v -> Entry.Entry v blob
+    updateToEntry :: Update v -> Entry.Entry v b
     updateToEntry = \case
         Insert v  -> Entry.Insert v
         Mupsert v -> Entry.Mupdate v

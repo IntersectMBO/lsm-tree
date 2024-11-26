@@ -123,7 +123,7 @@ type role Table nominal nominal nominal
 empty :: Table k v b
 empty = Table Map.empty
 
-size :: Table k v blob -> Int
+size :: Table k v b -> Int
 size (Table m) = Map.size m
 
 -- | This instance is for testing and debugging only.
@@ -249,31 +249,31 @@ mupserts r = updates r . fmap (second Mupsert)
 -------------------------------------------------------------------------------}
 
 retrieveBlobs ::
-     SerialiseValue blob
-  => V.Vector (BlobRef blob)
-  -> V.Vector blob
+     SerialiseValue b
+  => V.Vector (BlobRef b)
+  -> V.Vector b
 retrieveBlobs refs = V.map getBlobFromRef refs
 
-data BlobRef blob = BlobRef
+data BlobRef b = BlobRef
     !BS.ByteString  -- ^ digest
     !RawBytes       -- ^ actual contents
   deriving stock (Show)
 
 type role BlobRef nominal
 
-mkBlobRef :: SerialiseValue blob => blob -> BlobRef blob
+mkBlobRef :: SerialiseValue b => b -> BlobRef b
 mkBlobRef blob =  BlobRef (SHA256.hash bs) rb
   where
     !rb = serialiseValue blob
     !bs = deserialiseValue rb :: BS.ByteString
 
-coerceBlobRef :: BlobRef blob -> BlobRef blob'
+coerceBlobRef :: BlobRef b -> BlobRef b'
 coerceBlobRef (BlobRef d b) = BlobRef d b
 
-getBlobFromRef :: SerialiseValue blob => BlobRef blob -> blob
+getBlobFromRef :: SerialiseValue b => BlobRef b -> b
 getBlobFromRef (BlobRef _ rb) = deserialiseValue rb
 
-instance Eq (BlobRef blob) where
+instance Eq (BlobRef b) where
     BlobRef x _ == BlobRef y _ = x == y
 
 {-------------------------------------------------------------------------------

@@ -123,27 +123,27 @@ newtype UpdateCounter = UpdateCounter Word64
   deriving newtype (Num)
 
 data SomeTable where
-     SomeTable :: (Typeable k, Typeable v, Typeable blob)
-               => Model.Table k v blob -> SomeTable
+     SomeTable :: (Typeable k, Typeable v, Typeable b)
+               => Model.Table k v b -> SomeTable
 
 instance Show SomeTable where
   show (SomeTable table) = show table
 
 toSomeTable ::
-     (Typeable k, Typeable v, Typeable blob)
-  => Model.Table k v blob
+     (Typeable k, Typeable v, Typeable b)
+  => Model.Table k v b
   -> SomeTable
 toSomeTable = SomeTable
 
 fromSomeTable ::
-     (Typeable k, Typeable v, Typeable blob)
+     (Typeable k, Typeable v, Typeable b)
   => SomeTable
-  -> Maybe (Model.Table k v blob)
+  -> Maybe (Model.Table k v b)
 fromSomeTable (SomeTable tbl) = cast tbl
 
 withSomeTable ::
-     (forall k v blob. (Typeable k, Typeable v, Typeable blob)
-                    => Model.Table k v blob -> a)
+     (forall k v b. (Typeable k, Typeable v, Typeable b)
+        => Model.Table k v b -> a)
   -> SomeTable
   -> a
 withSomeTable f (SomeTable tbl) = f tbl
@@ -154,15 +154,15 @@ instance Show SomeCursor where
   show (SomeCursor c) = show c
 
 toSomeCursor ::
-     (Typeable k, Typeable v, Typeable blob)
-  => Model.Cursor k v blob
+     (Typeable k, Typeable v, Typeable b)
+  => Model.Cursor k v b
   -> SomeCursor
 toSomeCursor = SomeCursor . toDyn
 
 fromSomeCursor ::
-     (Typeable k, Typeable v, Typeable blob)
+     (Typeable k, Typeable v, Typeable b)
   => SomeCursor
-  -> Maybe (Model.Cursor k v blob)
+  -> Maybe (Model.Cursor k v b)
 fromSomeCursor (SomeCursor c) = fromDynamic c
 
 --
@@ -171,7 +171,7 @@ fromSomeCursor (SomeCursor c) = fromDynamic c
 
 -- | Common constraints for keys, values and blobs
 type C_ a = (Show a, Eq a, Typeable a)
-type C k v blob = (C_ k, C_ v, C_ blob)
+type C k v b = (C_ k, C_ v, C_ b)
 
 --
 -- ModelT and ModelM
@@ -216,7 +216,7 @@ type TableID = Int
 -- API
 --
 
-data Table k v blob = Table {
+data Table k v b = Table {
     tableID :: TableID
   , config  :: TableConfig
   }
@@ -226,15 +226,15 @@ data TableConfig = TableConfig
   deriving stock (Show, Eq)
 
 new ::
-     forall k v blob m. (MonadState Model m, C k v blob)
+     forall k v b m. (MonadState Model m, C k v b)
   => TableConfig
-  -> m (Table k v blob)
+  -> m (Table k v b)
 new config = newTableWith config Model.empty
 
 -- |
 --
 -- This is idempotent.
-close :: MonadState Model m => Table k v blob -> m ()
+close :: MonadState Model m => Table k v b -> m ()
 close Table{..} = state $ \Model{..} ->
     let tables' = Map.delete tableID tables
         model' = Model {
@@ -248,12 +248,12 @@ close Table{..} = state $ \Model{..} ->
 --
 
 guardTableIsOpen ::
-     forall k v blob m. (
+     forall k v b m. (
        MonadState Model m, MonadError Err m
-     , Typeable k, Typeable v, Typeable blob
+     , Typeable k, Typeable v, Typeable b
      )
-  => Table k v blob
-  -> m (UpdateCounter, Model.Table k v blob)
+  => Table k v b
+  -> m (UpdateCounter, Model.Table k v b)
 guardTableIsOpen Table{..} =
     gets (Map.lookup tableID . tables) >>= \case
       Nothing ->
@@ -262,10 +262,10 @@ guardTableIsOpen Table{..} =
         pure (updc, fromJust $ fromSomeTable tbl)
 
 newTableWith ::
-     (MonadState Model m, C k v blob)
+     (MonadState Model m, C k v b)
   => TableConfig
-  -> Model.Table k v blob
-  -> m (Table k v blob)
+  -> Model.Table k v b
+  -> m (Table k v b)
 newTableWith config tbl = state $ \Model{..} ->
   let table = Table {
           tableID = nextID
@@ -290,11 +290,11 @@ lookups ::
      , MonadError Err m
      , SerialiseKey k
      , SerialiseValue v
-     , C k v blob
+     , C k v b
      )
   => V.Vector k
-  -> Table k v blob
-  -> m (V.Vector (Model.LookupResult v (BlobRef blob)))
+  -> Table k v b
+  -> m (V.Vector (Model.LookupResult v (BlobRef b)))
 lookups ks t = do
     (updc, table) <- guardTableIsOpen t
     pure $ liftBlobRefs (SomeTableID updc (tableID t)) $ Model.lookups ks table
@@ -304,11 +304,11 @@ rangeLookup ::
      , MonadError Err m
      , SerialiseKey k
      , SerialiseValue v
-     , C k v blob
+     , C k v b
      )
   => Range k
-  -> Table k v blob
-  -> m (V.Vector (Model.QueryResult k v (BlobRef blob)))
+  -> Table k v b
+  -> m (V.Vector (Model.QueryResult k v (BlobRef b)))
 rangeLookup r t = do
     (updc, table) <- guardTableIsOpen t
     pure $ liftBlobRefs (SomeTableID updc (tableID t)) $ Model.rangeLookup r table
@@ -322,12 +322,12 @@ updates ::
      , MonadError Err m
      , SerialiseKey k
      , SerialiseValue v
-     , SerialiseValue blob
-     , C k v blob
+     , SerialiseValue b
+     , C k v b
      )
   => ResolveSerialisedValue v
-  -> V.Vector (k, Model.Update v blob)
-  -> Table k v blob
+  -> V.Vector (k, Model.Update v b)
+  -> Table k v b
   -> m ()
 updates r ups t@Table{..} = do
   (updc, table) <- guardTableIsOpen t
@@ -341,12 +341,12 @@ inserts ::
      , MonadError Err m
      , SerialiseKey k
      , SerialiseValue v
-     , SerialiseValue blob
-     , C k v blob
+     , SerialiseValue b
+     , C k v b
      )
   => ResolveSerialisedValue v
-  -> V.Vector (k, v, Maybe blob)
-  -> Table k v blob
+  -> V.Vector (k, v, Maybe b)
+  -> Table k v b
   -> m ()
 inserts r = updates r . fmap (\(k, v, blob) -> (k, Model.Insert v blob))
 
@@ -355,12 +355,12 @@ deletes ::
      , MonadError Err m
      , SerialiseKey k
      , SerialiseValue v
-     , SerialiseValue blob
-     , C k v blob
+     , SerialiseValue b
+     , C k v b
      )
   => ResolveSerialisedValue v
   -> V.Vector k
-  -> Table k v blob
+  -> Table k v b
   -> m ()
 deletes r = updates r . fmap (,Model.Delete)
 
@@ -369,12 +369,12 @@ mupserts ::
      , MonadError Err m
      , SerialiseKey k
      , SerialiseValue v
-     , SerialiseValue blob
-     , C k v blob
+     , SerialiseValue b
+     , C k v b
      )
   => ResolveSerialisedValue v
   -> V.Vector (k, v)
-  -> Table k v blob
+  -> Table k v b
   -> m ()
 mupserts r = updates r . fmap (fmap Model.Mupsert)
 
@@ -384,20 +384,20 @@ mupserts r = updates r . fmap (fmap Model.Mupsert)
 
 -- | For more details: 'Database.LSMTree.Internal.BlobRef' describes the
 -- intended semantics of blob references.
-data BlobRef blob = BlobRef {
-    handleRef :: !(SomeHandleID blob)
-  , innerBlob :: !(Model.BlobRef blob)
+data BlobRef b = BlobRef {
+    handleRef :: !(SomeHandleID b)
+  , innerBlob :: !(Model.BlobRef b)
   }
 
-deriving stock instance Show blob => Show (BlobRef blob)
+deriving stock instance Show b => Show (BlobRef b)
 
 retrieveBlobs ::
-     forall m blob. ( MonadState Model m
+     forall m b. ( MonadState Model m
      , MonadError Err m
-     , SerialiseValue blob
+     , SerialiseValue b
      )
-  => V.Vector (BlobRef blob)
-  -> m (V.Vector blob)
+  => V.Vector (BlobRef b)
+  -> m (V.Vector b)
 retrieveBlobs refs = Model.retrieveBlobs <$> V.mapM guard refs
   where
     guard BlobRef{..} = do
@@ -425,16 +425,16 @@ retrieveBlobs refs = Model.retrieveBlobs <$> V.mapM guard refs
     errInvalid :: m a
     errInvalid = throwError ErrBlobRefInvalidated
 
-data SomeHandleID blob where
-  SomeTableID  :: !UpdateCounter -> !TableID -> SomeHandleID blob
-  SomeCursorID :: !CursorID -> SomeHandleID blob
+data SomeHandleID b where
+  SomeTableID  :: !UpdateCounter -> !TableID -> SomeHandleID b
+  SomeCursorID :: !CursorID -> SomeHandleID b
   deriving stock Show
 
 liftBlobRefs ::
      (Functor f, Functor g)
-  => SomeHandleID blob
-  -> g (f (Model.BlobRef blob))
-  -> g (f (BlobRef blob))
+  => SomeHandleID b
+  -> g (f (Model.BlobRef b))
+  -> g (f (BlobRef b))
 liftBlobRefs hid = fmap (fmap (BlobRef hid))
 
 {-------------------------------------------------------------------------------
@@ -447,11 +447,11 @@ data Snapshot = Snapshot TableConfig SnapshotLabel SomeTable
 createSnapshot ::
      ( MonadState Model m
      , MonadError Err m
-     , C k v blob
+     , C k v b
      )
   => SnapshotLabel
   -> SnapshotName
-  -> Table k v blob
+  -> Table k v b
   -> m ()
 createSnapshot label name t@Table{..} = do
     (updc, table) <- guardTableIsOpen t
@@ -474,14 +474,14 @@ createSnapshot label name t@Table{..} = do
       })
 
 openSnapshot ::
-     forall k v blob m.(
+     forall k v b m.(
        MonadState Model m
      , MonadError Err m
-     , C k v blob
+     , C k v b
      )
   => SnapshotLabel
   -> SnapshotName
-  -> m (Table k v blob)
+  -> m (Table k v b)
 openSnapshot label name = do
     snaps <- gets snapshots
     case Map.lookup name snaps of
@@ -528,10 +528,10 @@ listSnapshots = gets (Map.keys . snapshots)
 duplicate ::
      ( MonadState Model m
      , MonadError Err m
-     , C k v blob
+     , C k v b
      )
-  => Table k v blob
-  -> m (Table k v blob)
+  => Table k v b
+  -> m (Table k v b)
 duplicate t@Table{..} = do
     table <- snd <$> guardTableIsOpen t
     newTableWith config $ Model.duplicate table
@@ -542,20 +542,20 @@ duplicate t@Table{..} = do
 
 type CursorID = Int
 
-data Cursor k v blob = Cursor {
+data Cursor k v b = Cursor {
     cursorID :: !CursorID
   }
   deriving stock Show
 
 newCursor ::
-     forall k v blob m. (
+     forall k v b m. (
        MonadState Model m, MonadError Err m
      , SerialiseKey k
-     , C k v blob
+     , C k v b
      )
   => Maybe k
-  -> Table k v blob
-  -> m (Cursor k v blob)
+  -> Table k v b
+  -> m (Cursor k v b)
 newCursor offset t = do
   table <- snd <$> guardTableIsOpen t
   state $ \Model{..} ->
@@ -570,7 +570,7 @@ newCursor offset t = do
           }
     in  (cursor, model')
 
-closeCursor :: MonadState Model m => Cursor k v blob -> m ()
+closeCursor :: MonadState Model m => Cursor k v b -> m ()
 closeCursor Cursor {..} = state $ \Model{..} ->
     let cursors' = Map.delete cursorID cursors
         model' = Model {
@@ -584,11 +584,11 @@ readCursor ::
      , MonadError Err m
      , SerialiseKey k
      , SerialiseValue v
-     , C k v blob
+     , C k v b
      )
   => Int
-  -> Cursor k v blob
-  -> m (V.Vector (Model.QueryResult k v (BlobRef blob)))
+  -> Cursor k v b
+  -> m (V.Vector (Model.QueryResult k v (BlobRef b)))
 readCursor n c = do
     cursor <- guardCursorIsOpen c
     let (qrs, cursor') = Model.readCursor n cursor
@@ -598,12 +598,12 @@ readCursor n c = do
     pure $ liftBlobRefs (SomeCursorID (cursorID c)) $ qrs
 
 guardCursorIsOpen ::
-     forall k v blob m. (
+     forall k v b m. (
        MonadState Model m, MonadError Err m
-     , Typeable k, Typeable v, Typeable blob
+     , Typeable k, Typeable v, Typeable b
      )
-  => Cursor k v blob
-  -> m (Model.Cursor k v blob)
+  => Cursor k v b
+  -> m (Model.Cursor k v b)
 guardCursorIsOpen Cursor{..} =
     gets (Map.lookup cursorID . cursors) >>= \case
       Nothing ->

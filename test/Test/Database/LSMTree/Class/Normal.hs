@@ -132,14 +132,14 @@ withTableNew Setup{..} ups action =
 retrieveBlobsTrav ::
      ( IsTable h
      , IOLike m
-     , SerialiseValue blob
+     , SerialiseValue b
      , Traversable t
-     , C_ blob
+     , C_ b
      )
   => proxy h
   -> Session h m
-  -> t (BlobRef h m blob)
-  -> m (t blob)
+  -> t (BlobRef h m b)
+  -> m (t b)
 retrieveBlobsTrav hdl ses brefs = do
   blobs <- retrieveBlobs hdl ses (V.fromList $ toList brefs)
   evalStateT (traverse (\_ -> state un) brefs) (V.toList blobs)
@@ -147,68 +147,68 @@ retrieveBlobsTrav hdl ses brefs = do
     un []     = error "invalid traversal"
     un (x:xs) = (x, xs)
 
-lookupsWithBlobs :: forall h m k v blob.
+lookupsWithBlobs :: forall h m k v b.
      ( IsTable h
      , IOLike m
      , SerialiseKey k
      , SerialiseValue v
-     , SerialiseValue blob
-     , C k v blob
+     , SerialiseValue b
+     , C k v b
      )
-  => h m k v blob
+  => h m k v b
   -> Session h m
   -> V.Vector k
-  -> m (V.Vector (LookupResult v blob))
+  -> m (V.Vector (LookupResult v b))
 lookupsWithBlobs hdl ses ks = do
     res <- lookups hdl ks
     getCompose <$> retrieveBlobsTrav (Proxy.Proxy @h) ses (Compose res)
 
-rangeLookupWithBlobs :: forall h m k v blob.
+rangeLookupWithBlobs :: forall h m k v b.
      ( IsTable h
      , IOLike m
      , SerialiseKey k
      , SerialiseValue v
-     , SerialiseValue blob
-     , C k v blob
+     , SerialiseValue b
+     , C k v b
      )
-  => h m k v blob
+  => h m k v b
   -> Session h m
   -> Range k
-  -> m (V.Vector (QueryResult k v blob))
+  -> m (V.Vector (QueryResult k v b))
 rangeLookupWithBlobs hdl ses r = do
     res <- rangeLookup hdl r
     getCompose <$> retrieveBlobsTrav (Proxy.Proxy @h) ses (Compose res)
 
-readCursorWithBlobs :: forall h m k v blob proxy.
+readCursorWithBlobs :: forall h m k v b proxy.
      ( IsTable h
      , IOLike m
      , SerialiseKey k
      , SerialiseValue v
-     , SerialiseValue blob
-     , C k v blob
+     , SerialiseValue b
+     , C k v b
      )
   => proxy h
   -> Session h m
-  -> Cursor h m k v blob
+  -> Cursor h m k v b
   -> Int
-  -> m (V.Vector (QueryResult k v blob))
+  -> m (V.Vector (QueryResult k v b))
 readCursorWithBlobs hdl ses cursor n = do
     res <- readCursor hdl n cursor
     getCompose <$> retrieveBlobsTrav hdl ses (Compose res)
 
-readCursorAllWithBlobs :: forall h m k v blob proxy.
+readCursorAllWithBlobs :: forall h m k v b proxy.
      ( IsTable h
      , IOLike m
      , SerialiseKey k
      , SerialiseValue v
-     , SerialiseValue blob
-     , C k v blob
+     , SerialiseValue b
+     , C k v b
      )
   => proxy h
   -> Session h m
-  -> Cursor h m k v blob
+  -> Cursor h m k v b
   -> CursorReadSchedule
-  -> m [V.Vector (QueryResult k v blob)]
+  -> m [V.Vector (QueryResult k v b)]
 readCursorAllWithBlobs hdl ses cursor = go . getCursorReadSchedule
   where
     go [] = error "readCursorAllWithBlobs: finite infinite list"

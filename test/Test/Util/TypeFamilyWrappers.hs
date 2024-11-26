@@ -33,30 +33,30 @@ newtype WrapSession h m = WrapSession {
 type WrapTable ::
      ((Type -> Type) -> Type -> Type -> Type -> Type)
   -> (Type -> Type) -> Type -> Type -> Type -> Type
-newtype WrapTable h m k v blob = WrapTable {
-    unwrapTable :: h m k v blob
+newtype WrapTable h m k v b = WrapTable {
+    unwrapTable :: h m k v b
   }
   deriving stock (Show, Eq)
 
 type WrapCursor ::
      ((Type -> Type) -> Type -> Type -> Type -> Type)
   -> (Type -> Type) -> Type -> Type -> Type -> Type
-newtype WrapCursor h m k v blob = WrapCursor {
-    unwrapCursor :: SUT.Class.Cursor h m k v blob
+newtype WrapCursor h m k v b = WrapCursor {
+    unwrapCursor :: SUT.Class.Cursor h m k v b
   }
 
 type WrapBlobRef ::
      ((Type -> Type) -> Type -> Type -> Type -> Type)
   -> (Type -> Type) -> Type -> Type
-newtype WrapBlobRef h m blob = WrapBlobRef {
-    unwrapBlobRef :: SUT.Class.BlobRef h m blob
+newtype WrapBlobRef h m b = WrapBlobRef {
+    unwrapBlobRef :: SUT.Class.BlobRef h m b
   }
 
-deriving stock instance Show (SUT.Class.BlobRef h m blob) => Show (WrapBlobRef h m blob)
-deriving stock instance Eq (SUT.Class.BlobRef h m blob) => Eq (WrapBlobRef h m blob)
+deriving stock instance Show (SUT.Class.BlobRef h m b) => Show (WrapBlobRef h m b)
+deriving stock instance Eq (SUT.Class.BlobRef h m b) => Eq (WrapBlobRef h m b)
 
 type WrapBlob :: Type -> Type
-newtype WrapBlob blob = WrapBlob {
-    unwrapBlob :: blob
+newtype WrapBlob b = WrapBlob {
+    unwrapBlob :: b
   }
   deriving stock (Show, Eq)

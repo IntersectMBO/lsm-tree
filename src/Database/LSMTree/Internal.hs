@@ -150,7 +150,7 @@ instance NFData (NormalTable m k v b) where
   rnf (NormalTable t) = rnf t
 
 type NormalCursor :: (Type -> Type) -> Type -> Type -> Type -> Type
-data NormalCursor m k v blob = forall h. Typeable h =>
+data NormalCursor m k v b = forall h. Typeable h =>
     NormalCursor !(Cursor m h)
 
 instance NFData (NormalCursor m k v b) where

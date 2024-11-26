@@ -40,8 +40,8 @@ data Op a b where
   OpFromLeft           :: Op (Either a b) a
   OpFromRight          :: Op (Either a b) b
   OpComp               :: Op b c -> Op a b -> Op a c
-  OpLookupResults      :: Op (V.Vector (Class.LookupResult v (WrapBlobRef h IO blobref))) (V.Vector (WrapBlobRef h IO blobref))
-  OpQueryResults       :: Op (V.Vector (Class.QueryResult k v (WrapBlobRef h IO blobref))) (V.Vector (WrapBlobRef h IO blobref))
+  OpLookupResults      :: Op (V.Vector (Class.LookupResult v (WrapBlobRef h IO b))) (V.Vector (WrapBlobRef h IO b))
+  OpQueryResults       :: Op (V.Vector (Class.QueryResult k v (WrapBlobRef h IO b))) (V.Vector (WrapBlobRef h IO b))
 
 intOpId :: Op a b -> a -> Maybe b
 intOpId OpId            = Just
@@ -155,7 +155,7 @@ instance Show (Op a b) where
 -------------------------------------------------------------------------------}
 
 class HasBlobRef f where
-  getBlobRef :: f blobref  -> Maybe blobref
+  getBlobRef :: f b  -> Maybe b
 
 instance HasBlobRef (Class.LookupResult v) where
   getBlobRef Class.NotFound{}                = Nothing

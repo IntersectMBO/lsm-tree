@@ -40,9 +40,9 @@
   to also retrieve blob references from a mix of different batch lookups and/or
   range lookups. This would require some non-trivial changes, such as changes to
   'Op' to also include expressions for manipulating lists, such that we can map
-  @'Var' ['R.BlobRef' blob]@ to @'Var' ('R.BlobRef' blob)@. 'RetrieveBlobs'
-  would then hold a list of variables (e.g., @['Var' ('R.BlobRef blob')]@)
-  instead of a variable of a list (@'Var' ['R.BlobRef' blob]@).
+  @'Var' ['R.BlobRef' b]@ to @'Var' ('R.BlobRef' b)@. 'RetrieveBlobs'
+  would then hold a list of variables (e.g., @['Var' ('R.BlobRef b')]@)
+  instead of a variable of a list (@'Var' ['R.BlobRef' b]@).
 
   TODO: it is currently not correctly modelled what happens if blob references
   are retrieved from an incorrect table.
@@ -416,7 +416,7 @@ type B a = (
   )
 
 -- | Common constraints for keys, values and blobs
-type C k v blob = (K k, V v, B blob)
+type C k v b = (K k, V v, B b)
 
 {-------------------------------------------------------------------------------
   StateModel
@@ -429,67 +429,67 @@ instance ( Show (Class.TableConfig h)
          ) => StateModel (Lockstep (ModelState h)) where
   data instance Action (Lockstep (ModelState h)) a where
     -- Tables
-    New :: C k v blob
-        => {-# UNPACK #-} !(PrettyProxy (k, v, blob))
+    New :: C k v b
+        => {-# UNPACK #-} !(PrettyProxy (k, v, b))
         -> Class.TableConfig h
-        -> Act h (WrapTable h IO k v blob)
-    Close :: C k v blob
-          => Var h (WrapTable h IO k v blob)
+        -> Act h (WrapTable h IO k v b)
+    Close :: C k v b
+          => Var h (WrapTable h IO k v b)
           -> Act h ()
     -- Queries
-    Lookups :: C k v blob
-            => V.Vector k -> Var h (WrapTable h IO k v blob)
-            -> Act h (V.Vector (LookupResult v (WrapBlobRef h IO blob)))
-    RangeLookup :: (C k v blob, Ord k)
-                => R.Range k -> Var h (WrapTable h IO k v blob)
-                -> Act h (V.Vector (QueryResult k v (WrapBlobRef h IO blob)))
+    Lookups :: C k v b
+            => V.Vector k -> Var h (WrapTable h IO k v b)
+            -> Act h (V.Vector (LookupResult v (WrapBlobRef h IO b)))
+    RangeLookup :: (C k v b, Ord k)
+                => R.Range k -> Var h (WrapTable h IO k v b)
+                -> Act h (V.Vector (QueryResult k v (WrapBlobRef h IO b)))
     -- Cursor
-    NewCursor :: C k v blob
+    NewCursor :: C k v b
               => Maybe k
-              -> Var h (WrapTable h IO k v blob)
-              -> Act h (WrapCursor h IO k v blob)
-    CloseCursor :: C k v blob
-                => Var h (WrapCursor h IO k v blob)
+              -> Var h (WrapTable h IO k v b)
+              -> Act h (WrapCursor h IO k v b)
+    CloseCursor :: C k v b
+                => Var h (WrapCursor h IO k v b)
                 -> Act h ()
-    ReadCursor :: C k v blob
+    ReadCursor :: C k v b
                => Int
-               -> Var h (WrapCursor h IO k v blob)
-               -> Act h (V.Vector (QueryResult k v (WrapBlobRef h IO blob)))
+               -> Var h (WrapCursor h IO k v b)
+               -> Act h (V.Vector (QueryResult k v (WrapBlobRef h IO b)))
     -- Updates
-    Updates :: C k v blob
-            => V.Vector (k, R.Update v blob) -> Var h (WrapTable h IO k v blob)
+    Updates :: C k v b
+            => V.Vector (k, R.Update v b) -> Var h (WrapTable h IO k v b)
             -> Act h ()
-    Inserts :: C k v blob
-            => V.Vector (k, v, Maybe blob) -> Var h (WrapTable h IO k v blob)
+    Inserts :: C k v b
+            => V.Vector (k, v, Maybe b) -> Var h (WrapTable h IO k v b)
             -> Act h ()
-    Deletes :: C k v blob
-            => V.Vector k -> Var h (WrapTable h IO k v blob)
+    Deletes :: C k v b
+            => V.Vector k -> Var h (WrapTable h IO k v b)
             -> Act h ()
-    Mupserts :: C k v blob
-             => V.Vector (k, v) -> Var h (WrapTable h IO k v blob)
+    Mupserts :: C k v b
+             => V.Vector (k, v) -> Var h (WrapTable h IO k v b)
              -> Act h ()
     -- Blobs
-    RetrieveBlobs :: B blob
-                  => Var h (V.Vector (WrapBlobRef h IO blob))
-                  -> Act h (V.Vector (WrapBlob blob))
+    RetrieveBlobs :: B b
+                  => Var h (V.Vector (WrapBlobRef h IO b))
+                  -> Act h (V.Vector (WrapBlob b))
     -- Snapshots
-    CreateSnapshot :: C k v blob
-                   => R.SnapshotLabel -> R.SnapshotName -> Var h (WrapTable h IO k v blob)
+    CreateSnapshot :: C k v b
+                   => R.SnapshotLabel -> R.SnapshotName -> Var h (WrapTable h IO k v b)
                    -> Act h ()
-    OpenSnapshot   :: C k v blob
+    OpenSnapshot   :: C k v b
                    => R.SnapshotLabel -> R.SnapshotName
-                   -> Act h (WrapTable h IO k v blob)
+                   -> Act h (WrapTable h IO k v b)
     DeleteSnapshot :: R.SnapshotName -> Act h ()
     ListSnapshots  :: Act h [R.SnapshotName]
     -- Duplicate tables
-    Duplicate :: C k v blob
-              => Var h (WrapTable h IO k v blob)
-              -> Act h (WrapTable h IO k v blob)
+    Duplicate :: C k v b
+              => Var h (WrapTable h IO k v b)
+              -> Act h (WrapTable h IO k v b)
     -- Table union
-    Union :: C k v blob
-          => Var h (WrapTable h IO k v blob)
-          -> Var h (WrapTable h IO k v blob)
-          -> Act h (WrapTable h IO k v blob)
+    Union :: C k v b
+          => Var h (WrapTable h IO k v b)
+          -> Var h (WrapTable h IO k v b)
+          -> Act h (WrapTable h IO k v b)
 
   initialState    = Lockstep.Defaults.initialState initModelState
   nextState       = Lockstep.Defaults.nextState
@@ -587,21 +587,21 @@ instance ( Eq (Class.TableConfig h)
   type instance ModelOp (ModelState h) = Op
 
   data instance ModelValue (ModelState h) a where
-    MTable :: Model.Table k v blob
-                 -> Val h (WrapTable h IO k v blob)
-    MCursor :: Model.Cursor k v blob -> Val h (WrapCursor h IO k v blob)
-    MBlobRef :: Class.C_ blob
-             => Model.BlobRef blob -> Val h (WrapBlobRef h IO blob)
+    MTable :: Model.Table k v b
+                 -> Val h (WrapTable h IO k v b)
+    MCursor :: Model.Cursor k v b -> Val h (WrapCursor h IO k v b)
+    MBlobRef :: Class.C_ b
+             => Model.BlobRef b -> Val h (WrapBlobRef h IO b)
 
-    MLookupResult :: (Class.C_ v, Class.C_ blob)
-                  => LookupResult v (Val h (WrapBlobRef h IO blob))
-                  -> Val h (LookupResult v (WrapBlobRef h IO blob))
-    MQueryResult :: Class.C k v blob
-                 => QueryResult k v (Val h (WrapBlobRef h IO blob))
-                 -> Val h (QueryResult k v (WrapBlobRef h IO blob))
+    MLookupResult :: (Class.C_ v, Class.C_ b)
+                  => LookupResult v (Val h (WrapBlobRef h IO b))
+                  -> Val h (LookupResult v (WrapBlobRef h IO b))
+    MQueryResult :: Class.C k v b
+                 => QueryResult k v (Val h (WrapBlobRef h IO b))
+                 -> Val h (QueryResult k v (WrapBlobRef h IO b))
 
-    MBlob :: (Show blob, Typeable blob, Eq blob)
-          => WrapBlob blob -> Val h (WrapBlob blob)
+    MBlob :: (Show b, Typeable b, Eq b)
+          => WrapBlob b -> Val h (WrapBlob b)
     MSnapshotName :: R.SnapshotName -> Val h R.SnapshotName
     MErr :: Model.Err -> Val h Model.Err
 
@@ -612,18 +612,18 @@ instance ( Eq (Class.TableConfig h)
     MVector :: V.Vector (Val h a) -> Val h (V.Vector a)
 
   data instance Observable (ModelState h) a where
-    OTable :: Obs h (WrapTable h IO k v blob)
-    OCursor :: Obs h (WrapCursor h IO k v blob)
-    OBlobRef :: Obs h (WrapBlobRef h IO blob)
+    OTable :: Obs h (WrapTable h IO k v b)
+    OCursor :: Obs h (WrapCursor h IO k v b)
+    OBlobRef :: Obs h (WrapBlobRef h IO b)
 
-    OLookupResult :: (Class.C_ v, Class.C_ blob)
-                  => LookupResult v (Obs h (WrapBlobRef h IO blob))
-                  -> Obs h (LookupResult v (WrapBlobRef h IO blob))
-    OQueryResult :: Class.C k v blob
-                 => QueryResult k v (Obs h (WrapBlobRef h IO blob))
-                 -> Obs h (QueryResult k v (WrapBlobRef h IO blob))
-    OBlob :: (Show blob, Typeable blob, Eq blob)
-          => WrapBlob blob -> Obs h (WrapBlob blob)
+    OLookupResult :: (Class.C_ v, Class.C_ b)
+                  => LookupResult v (Obs h (WrapBlobRef h IO b))
+                  -> Obs h (LookupResult v (WrapBlobRef h IO b))
+    OQueryResult :: Class.C k v b
+                 => QueryResult k v (Obs h (WrapBlobRef h IO b))
+                 -> Obs h (QueryResult k v (WrapBlobRef h IO b))
+    OBlob :: (Show b, Typeable b, Eq b)
+          => WrapBlob b -> Obs h (WrapBlob b)
 
     OId :: (Show a, Typeable a, Eq a) => a -> Obs h a
 
@@ -967,16 +967,16 @@ runModel lookUp = \case
       . Model.runModelM (Model.union Model.getResolve (getTable $ lookUp table1Var) (getTable $ lookUp table2Var))
   where
     getTable ::
-         ModelValue (ModelState h) (WrapTable h IO k v blob)
-      -> Model.Table k v blob
+         ModelValue (ModelState h) (WrapTable h IO k v b)
+      -> Model.Table k v b
     getTable (MTable t) = t
 
     getCursor ::
-         ModelValue (ModelState h) (WrapCursor h IO k v blob)
-      -> Model.Cursor k v blob
+         ModelValue (ModelState h) (WrapCursor h IO k v b)
+      -> Model.Cursor k v b
     getCursor (MCursor t) = t
 
-    getBlobRefs :: ModelValue (ModelState h) (V.Vector (WrapBlobRef h IO blob)) -> V.Vector (Model.BlobRef blob)
+    getBlobRefs :: ModelValue (ModelState h) (V.Vector (WrapBlobRef h IO b)) -> V.Vector (Model.BlobRef b)
     getBlobRefs (MVector brs) = fmap (\(MBlobRef br) -> br) brs
 
 wrap ::
@@ -1113,15 +1113,15 @@ catchErr (Handler f) action = catch (Right <$> action) f'
 -------------------------------------------------------------------------------}
 
 arbitraryActionWithVars ::
-     forall h k v blob. (
-       C k v blob
+     forall h k v b. (
+       C k v b
      , Ord k
      , Eq (Class.TableConfig h)
      , Show (Class.TableConfig h)
      , Arbitrary (Class.TableConfig h)
      , Typeable h
      )
-  => Proxy (k, v, blob)
+  => Proxy (k, v, b)
   -> R.SnapshotLabel
   -> ModelVarContext (ModelState h)
   -> ModelState h
@@ -1158,7 +1158,7 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
 
     genTableVar = QC.elements tableVars
 
-    tableVars :: [Var h (WrapTable h IO k v blob)]
+    tableVars :: [Var h (WrapTable h IO k v b)]
     tableVars =
       [ fromRight v
       | v <- findVars ctx Proxy
@@ -1170,7 +1170,7 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
 
     genCursorVar = QC.elements cursorVars
 
-    cursorVars :: [Var h (WrapCursor h IO k v blob)]
+    cursorVars :: [Var h (WrapCursor h IO k v b)]
     cursorVars =
       [ fromRight v
       | v <- findVars ctx Proxy
@@ -1182,12 +1182,12 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
 
     genBlobRefsVar = QC.elements blobRefsVars
 
-    blobRefsVars :: [Var h (V.Vector (WrapBlobRef h IO blob))]
+    blobRefsVars :: [Var h (V.Vector (WrapBlobRef h IO b))]
     blobRefsVars = fmap (mapGVar (OpComp OpLookupResults)) lookupResultVars
                 ++ fmap (mapGVar (OpComp OpQueryResults))  queryResultVars
       where
-        lookupResultVars :: [Var h (V.Vector (LookupResult  v (WrapBlobRef h IO blob)))]
-        queryResultVars  :: [Var h (V.Vector (QueryResult k v (WrapBlobRef h IO blob)))]
+        lookupResultVars :: [Var h (V.Vector (LookupResult  v (WrapBlobRef h IO b)))]
+        queryResultVars  :: [Var h (V.Vector (QueryResult k v (WrapBlobRef h IO b)))]
 
         lookupResultVars = fromRight <$> findVars ctx Proxy
         queryResultVars  = fromRight <$> findVars ctx Proxy
@@ -1207,10 +1207,10 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
 
     genActionsSession :: [(Int, Gen (Any (LockstepAction (ModelState h))))]
     genActionsSession =
-        [ (1, fmap Some $ New  @k @v @blob PrettyProxy <$> QC.arbitrary)
+        [ (1, fmap Some $ New  @k @v @b PrettyProxy <$> QC.arbitrary)
         | length tableVars <= 5 ] -- no more than 5 tables at once
 
-     ++ [ (1, fmap Some $ OpenSnapshot @k @v @blob label <$> genUsedSnapshotName)
+     ++ [ (1, fmap Some $ OpenSnapshot @k @v @b label <$> genUsedSnapshotName)
         | not (null usedSnapshotNames) ]
 
      ++ [ (1, fmap Some $ DeleteSnapshot <$> genUsedSnapshotName)
@@ -1271,20 +1271,20 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
     genRange :: Gen (R.Range k)
     genRange = QC.arbitrary
 
-    genUpdates :: Gen (V.Vector (k, R.Update v blob))
+    genUpdates :: Gen (V.Vector (k, R.Update v b))
     genUpdates = QC.liftArbitrary ((,) <$> QC.arbitrary <*> QC.oneof [
           R.Insert <$> QC.arbitrary <*> genBlob
         , R.Mupsert <$> QC.arbitrary
         , pure R.Delete
         ])
       where
-        _coveredAllCases :: R.Update v blob -> ()
+        _coveredAllCases :: R.Update v b -> ()
         _coveredAllCases = \case
             R.Insert{} -> ()
             R.Mupsert{} -> ()
             R.Delete{} -> ()
 
-    genInserts :: Gen (V.Vector (k, v, Maybe blob))
+    genInserts :: Gen (V.Vector (k, v, Maybe b))
     genInserts = QC.liftArbitrary ((,,) <$> QC.arbitrary <*> QC.arbitrary <*> genBlob)
 
     genDeletes :: Gen (V.Vector k)
@@ -1293,7 +1293,7 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
     genMupserts :: Gen (V.Vector (k, v))
     genMupserts = QC.liftArbitrary ((,) <$> QC.arbitrary <*> QC.arbitrary)
 
-    genBlob :: Gen (Maybe blob)
+    genBlob :: Gen (Maybe b)
     genBlob = QC.arbitrary
 
 shrinkActionWithVars ::
@@ -1472,7 +1472,7 @@ updateStats action lookUp modelBefore _modelAfter result =
           }
         _ -> stats
       where
-        countAll :: forall k v blob. V.Vector (k, R.Update v blob) -> (Int, Int, Int, Int)
+        countAll :: forall k v b. V.Vector (k, R.Update v b) -> (Int, Int, Int, Int)
         countAll upds =
           let count :: (Int, Int, Int, Int)
                     -> (k, R.Update v blob)
@@ -1537,7 +1537,7 @@ updateStats action lookUp modelBefore _modelAfter result =
         ListSnapshots{}       -> stats
       where
         -- Init to 0 so we get an accurate count of tables with no actions.
-        initCount :: forall k v blob. Model.Table k v blob -> Stats
+        initCount :: forall k v b. Model.Table k v b -> Stats
         initCount table =
           let tid = Model.tableID table
            in stats {
@@ -1545,8 +1545,8 @@ updateStats action lookUp modelBefore _modelAfter result =
               }
 
         -- Note that batches (of inserts lookups etc) count as one action.
-        updateCount :: forall k v blob.
-                       Var h (WrapTable h IO k v blob)
+        updateCount :: forall k v b.
+                       Var h (WrapTable h IO k v b)
                     -> Stats
         updateCount tableVar =
           let tid = getTableId (lookUp tableVar)
@@ -1610,7 +1610,7 @@ updateStats action lookUp modelBefore _modelAfter result =
       where
         -- add the current table to the front of the list of tables, if it's
         -- not the latest one already
-        updateLastActionLog :: GVar Op (WrapTable h IO k v blob) -> Stats
+        updateLastActionLog :: GVar Op (WrapTable h IO k v b) -> Stats
         updateLastActionLog tableVar =
           case Map.lookup pthid (dupTableActionLog stats) of
             Just (thid' : _)
@@ -1630,7 +1630,7 @@ updateStats action lookUp modelBefore _modelAfter result =
 
     updDupTableActionLog stats = stats
 
-    getTableId :: ModelValue (ModelState h) (WrapTable h IO k v blob)
+    getTableId :: ModelValue (ModelState h) (WrapTable h IO k v b)
                      -> Model.TableID
     getTableId (MTable t) = Model.tableID t
 
