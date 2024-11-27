@@ -43,7 +43,16 @@ import           System.FS.API (HasFS)
 import qualified System.FS.BlockIO.API as FS
 import           System.FS.BlockIO.API (HasBlockIO)
 
-
+{-# SPECIALISE
+    writeWriteBuffer ::
+         HasFS IO h
+      -> HasBlockIO IO h
+      -> WriteBufferFsPaths
+      -> WriteBuffer
+      -> WriteBufferBlobs IO h
+      -> IO ()
+    #-}
+-- | Write a 'WriteBuffer' to disk.
 writeWriteBuffer ::
      (MonadSTM m, MonadST m, MonadThrow m)
   => HasFS m h
@@ -59,34 +68,32 @@ writeWriteBuffer hfs hbio fsPaths buffer blobs = do
     addKeyOp writer key (WBB.mkRawBlobRef blobs <$> op)
   void $ unsafeFinalise True writer
 
--- data SerialisedWriteBuffer m h = SerialisedWriteBuffer
---     { -- | The file system paths for all the files used by the serialised write buffer.
---       serialisedWriteBufferFsPaths    :: !WriteBufferFsPaths
---       -- | The (read mode) file handles.
---     , serialisedWriteBufferHandles    :: !(ForWriteBufferFiles (FS.Handle h))
---     , serialisedWriteBufferHasFS      :: !(HasFS m h)
---     , serialisedWriteBufferHasBlockIO :: !(HasBlockIO m h)
---     }
-
+-- | The in-memory representation of an LSM 'WriteBuffer' that is in the process of being serialised to disk.
 data WriteBufferWriter m h = WriteBufferWriter
   { -- | The file system paths for all the files used by the serialised write buffer.
-    writeBufferWriterFsPaths    :: !WriteBufferFsPaths,
+    writerFsPaths    :: !WriteBufferFsPaths,
     -- | The page accumulator.
-    writeBufferWriterPageAcc    :: !(PageAcc (PrimState m)),
+    writerPageAcc    :: !(PageAcc (PrimState m)),
     -- | The byte offset within the blob file for the next blob to be written.
-    writeBufferWriterBlobOffset :: !(PrimVar (PrimState m) Word64),
+    writerBlobOffset :: !(PrimVar (PrimState m) Word64),
     -- | The (write mode) file handles.
-    writeBufferWriterHandles    :: !(ForWriteBufferFiles (ChecksumHandle (PrimState m) h)),
-    writeBufferWriterHasFS      :: !(HasFS m h),
-    writeBufferWriterHasBlockIO :: !(HasBlockIO m h)
+    writerHandles    :: !(ForWriteBufferFiles (ChecksumHandle (PrimState m) h)),
+    writerHasFS      :: !(HasFS m h),
+    writerHasBlockIO :: !(HasBlockIO m h)
   }
 
-{-# SPECIALISE new ::
-     HasFS IO h
-  -> HasBlockIO IO h
-  -> WriteBufferFsPaths
-  -> IO (WriteBufferWriter IO h) #-}
+{-# SPECIALISE
+  new ::
+      HasFS IO h
+    -> HasBlockIO IO h
+    -> WriteBufferFsPaths
+    -> IO (WriteBufferWriter IO h)
+  #-}
 -- | Create a 'WriteBufferWriter' to start serialising a 'WriteBuffer'.
+--
+-- See 'Database.LSMTree.Internal.RunBuilder.new'.
+--
+-- NOTE: 'new' assumes that the directory passed via 'WriteBufferFsPaths' exists.
 new ::
      (MonadST m, MonadSTM m)
   => HasFS m h
@@ -94,20 +101,30 @@ new ::
   -> WriteBufferFsPaths
   -> m (WriteBufferWriter m h)
 new hfs hbio fsPaths = do
-  writeBufferWriterPageAcc <- ST.stToIO PageAcc.newPageAcc
-  writeBufferWriterBlobOffset <- newPrimVar 0
-  writeBufferWriterHandles <-
+  writerPageAcc <- ST.stToIO PageAcc.newPageAcc
+  writerBlobOffset <- newPrimVar 0
+  writerHandles <-
     traverse (makeHandle hfs) (pathsForWriteBufferFiles fsPaths)
   return WriteBufferWriter
-    { writeBufferWriterFsPaths    = fsPaths,
-      writeBufferWriterHasFS      = hfs,
-      writeBufferWriterHasBlockIO = hbio,
+    { writerFsPaths    = fsPaths,
+      writerHasFS      = hfs,
+      writerHasBlockIO = hbio,
       ..
     }
 
--- | See 'RunBuilder.unsafeFinalise'.
--- Finalise an incremental 'WriteBufferWriter'.
+{-# SPECIALISE
+    unsafeFinalise ::
+        Bool
+      -> WriteBufferWriter IO h
+      -> IO (HasFS IO h, HasBlockIO IO h, WriteBufferFsPaths)
+  #-}
+-- | Finalise an incremental 'WriteBufferWriter'.
+--
 -- Do /not/ use a 'WriteBufferWriter' after finalising it.
+--
+-- See 'Database.LSMTree.Internal.RunBuilder.unsafeFinalise'.
+--
+-- TODO: Ensure proper cleanup even in presence of exceptions.
 unsafeFinalise ::
      (MonadST m, MonadSTM m, MonadThrow m)
   => Bool -- ^ drop caches
@@ -115,21 +132,28 @@ unsafeFinalise ::
   -> m (HasFS m h, HasBlockIO m h, WriteBufferFsPaths)
 unsafeFinalise dropCaches WriteBufferWriter {..} = do
   -- write final bits
-  mPage <- ST.stToIO $ flushPageIfNonEmpty writeBufferWriterPageAcc
-  for_ mPage $ writeRawPage writeBufferWriterHasFS (forWriteBufferKOps writeBufferWriterHandles)
-  checksums <- toChecksumsFileForWriteBufferFiles <$> traverse readChecksum writeBufferWriterHandles
-  FS.withFile writeBufferWriterHasFS (writeBufferChecksumsPath writeBufferWriterFsPaths) (FS.WriteMode FS.MustBeNew) $ \h -> do
-    CRC.writeChecksumsFile' writeBufferWriterHasFS h checksums
-    FS.hDropCacheAll writeBufferWriterHasBlockIO h
+  mPage <- ST.stToIO $ flushPageIfNonEmpty writerPageAcc
+  for_ mPage $ writeRawPage writerHasFS (forWriteBufferKOps writerHandles)
+  checksums <- toChecksumsFileForWriteBufferFiles <$> traverse readChecksum writerHandles
+  FS.withFile writerHasFS (writeBufferChecksumsPath writerFsPaths) (FS.WriteMode FS.MustBeNew) $ \h -> do
+    CRC.writeChecksumsFile' writerHasFS h checksums
+    FS.hDropCacheAll writerHasBlockIO h
   -- drop the KOps and blobs files from the cache if asked for
   when dropCaches $ do
-    dropCache writeBufferWriterHasBlockIO (forWriteBufferKOpsRaw writeBufferWriterHandles)
-    dropCache writeBufferWriterHasBlockIO (forWriteBufferBlobRaw writeBufferWriterHandles)
-  for_ writeBufferWriterHandles $ closeHandle writeBufferWriterHasFS
-  return (writeBufferWriterHasFS, writeBufferWriterHasBlockIO, writeBufferWriterFsPaths)
+    dropCache writerHasBlockIO (forWriteBufferKOpsRaw writerHandles)
+    dropCache writerHasBlockIO (forWriteBufferBlobRaw writerHandles)
+  for_ writerHandles $ closeHandle writerHasFS
+  return (writerHasFS, writerHasBlockIO, writerFsPaths)
 
 
--- | See 'RunBuilder.addKeyOp'.
+{-# SPECIALIZE
+    addKeyOp ::
+        WriteBufferWriter IO h
+      -> SerialisedKey
+      -> Entry SerialisedValue (RawBlobRef IO h)
+      -> IO ()
+    #-}
+-- | See 'Database.LSMTree.Internal.RunBuilder.addKeyOp'.
 addKeyOp ::
      (MonadST m, MonadSTM m, MonadThrow m)
   => WriteBufferWriter m h
@@ -137,33 +161,19 @@ addKeyOp ::
   -> Entry SerialisedValue (RawBlobRef m h)
   -> m ()
 addKeyOp WriteBufferWriter{..} key op = do
-  op' <- traverse (copyBlob writeBufferWriterHasFS writeBufferWriterBlobOffset (forWriteBufferBlob writeBufferWriterHandles)) op
+  -- TODO: consider optimisation described in 'Database.LSMTree.Internal.RunBuilder.addKeyOp'.
+  op' <- traverse (copyBlob writerHasFS writerBlobOffset (forWriteBufferBlob writerHandles)) op
   if PageAcc.entryWouldFitInPage key op
     then do
-      mPage <- ST.stToIO $ addSmallKeyOp writeBufferWriterPageAcc key op'
-      for_ mPage $ writeRawPage writeBufferWriterHasFS (forWriteBufferKOps writeBufferWriterHandles)
+      mPage <- ST.stToIO $ addSmallKeyOp writerPageAcc key op'
+      for_ mPage $ writeRawPage writerHasFS (forWriteBufferKOps writerHandles)
     else do
-      (pages, overflowPages) <- ST.stToIO $ addLargeKeyOp writeBufferWriterPageAcc key op'
-      --TODO: consider optimisation: use writev to write all pages in one go (see RunBuilder)
-      for_ pages $ writeRawPage writeBufferWriterHasFS (forWriteBufferKOps writeBufferWriterHandles)
-      writeRawOverflowPages writeBufferWriterHasFS (forWriteBufferKOps writeBufferWriterHandles) overflowPages
+      (pages, overflowPages) <- ST.stToIO $ addLargeKeyOp writerPageAcc key op'
+      -- TODO: consider optimisation described in 'Database.LSMTree.Internal.RunBuilder.addKeyOp'.
+      for_ pages $ writeRawPage writerHasFS (forWriteBufferKOps writerHandles)
+      writeRawOverflowPages writerHasFS (forWriteBufferKOps writerHandles) overflowPages
 
--- addLargeSerialisedKeyOp ::
---      (MonadST m, MonadSTM m)
---   => WriteBufferWriter m h
---   -> RawPage
---   -> [RawOverflowPage]
---   -> m ()
--- addLargeSerialisedKeyOp WriteBufferWriter{..} page overflowPages =
---   assert (RawPage.rawPageNumKeys page == 1) $
---   assert (RawPage.rawPageHasBlobSpanAt page 0 == 0) $
---   assert (RawPage.rawPageOverflowPages page > 0) $
---   assert (RawPage.rawPageOverflowPages page == length overflowPages) $ do
---     !pages <- ST.stToIO $ selectPages <$> flushPageIfNonEmpty writeBufferWriterPageAcc <*> pure page
---     for_ pages $ writeRawPage writeBufferWriterHasFS (forWriteBufferKOps writeBufferWriterHandles)
---     writeRawOverflowPages writeBufferWriterHasFS (forWriteBufferKOps writeBufferWriterHandles) overflowPages
-
--- | See 'RunAcc.addSmallKeyOp'.
+-- | See 'Database.LSMTree.Internal.RunAcc.addSmallKeyOp'.
 addSmallKeyOp ::
      PageAcc s
   -> SerialisedKey
@@ -177,13 +187,18 @@ addSmallKeyOp pageAcc key op =
         not <$> PageAcc.pageAccAddElem pageAcc key op
     if pageBoundaryNeeded
       then do
+        -- We need a page boundary. If the current page is empty then we have
+        -- a boundary already, otherwise we need to flush the current page.
         mPage <- flushPageIfNonEmpty pageAcc
+        -- The current page is now empty, either because it was already empty
+        -- or because we just flushed it. Adding the new key/op to an empty
+        -- page must now succeed, because we know it fits in a page.
         added <- PageAcc.pageAccAddElem pageAcc key op
         assert added $ pure mPage
       else do
         pure Nothing
 
--- | See 'RunAcc.addLargeKeyOp'.
+-- | See 'Database.LSMTree.Internal.RunAcc.addLargeKeyOp'.
 addLargeKeyOp
   :: PageAcc s
   -> SerialisedKey
@@ -196,12 +211,11 @@ addLargeKeyOp pageAcc key op =
     mPagePre <- flushPageIfNonEmpty pageAcc
     -- Make the new page and overflow pages. Add the span of pages to the index.
     let (page, overflowPages) = PageAcc.singletonPage key op
-
     -- Combine the results with anything we flushed before
     let !pages = selectPages mPagePre page
     return (pages, overflowPages)
 
--- | Internal helper. See 'RunAcc.flushPageIfNonEmpty'.
+-- | Internal helper. See 'Database.LSMTree.Internal.RunAcc.flushPageIfNonEmpty'.
 flushPageIfNonEmpty :: PageAcc s -> ST s (Maybe RawPage)
 flushPageIfNonEmpty pageAcc = do
     keysCount <- PageAcc.keysCountPageAcc pageAcc
@@ -213,15 +227,9 @@ flushPageIfNonEmpty pageAcc = do
         pure $ Just page
       else pure Nothing
 
--- | Internal helper. See 'RunAcc.selectPagesAndChunks'.
+-- | Internal helper. See 'Database.LSMTree.Internal.RunAcc.selectPagesAndChunks'.
 selectPages :: Maybe RawPage
                      -> RawPage
                      -> [RawPage]
 selectPages mPagePre page =
   maybeToList mPagePre ++ [page]
-
--- -- | See 'RunBuilder.close'.
--- close :: MonadSTM m => WriteBufferWriter m h -> m ()
--- close WriteBufferWriter {..} = do
---     for_ writeBufferWriterHandles $ closeHandle writeBufferWriterHasFS
---     for_ (pathsForWriteBufferFiles writeBufferWriterFsPaths) $ FS.removeFile writeBufferWriterHasFS
