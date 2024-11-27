@@ -957,8 +957,7 @@ runIO action lookUp = ReaderT $ \(session, handler) -> do
     x <- aux (unwrapSession session) handler action
     case session of
       WrapSession sesh ->
-        -- TODO: Re-enable NoThunks assertions. See lsm-tree#444.
-        const id (assertNoThunks sesh) $ pure ()
+        assertNoThunks sesh $ pure ()
     pure x
   where
     aux ::

@@ -20,16 +20,14 @@ import qualified Test.QuickCheck.Gen as QC
 import qualified Test.QuickCheck.Random as QC
 import           Test.QuickCheck.StateModel.Lockstep
 import           Test.Tasty (TestTree, testGroup)
+import qualified Test.Tasty.QuickCheck as QC
 import           Test.Util.PrettyProxy
 
 tests :: TestTree
 tests = testGroup "Test.Database.LSMTree.Normal.StateMachine.DL" [
-   -- This one is not actually enabled, because it runs for rather a long time
-   -- and it's not in itself a very import property.
-   -- QC.testProperty "prop_example" prop_example
+
+      QC.testProperty "prop_example" prop_example
     ]
-  where
-    _unused = prop_example
 
 instance DynLogicModel (Lockstep (ModelState R.Table))
 
@@ -52,22 +50,21 @@ prop_example =
     -- instead
     tr = nullTracer
 
--- | Create an initial "large" table, and then proceed with random actions as
--- usual.
+-- | Create an initial "large" table
 dl_example :: DL (Lockstep (ModelState R.Table)) ()
 dl_example = do
     -- Create an initial table and fill it with some inserts
     var3 <- action $ New (PrettyProxy @((Key, Value, Blob))) (TableConfig {
           confMergePolicy = MergePolicyLazyLevelling
         , confSizeRatio = Four
-        , confWriteBufferAlloc = AllocNumEntries (NumEntries 30)
+        , confWriteBufferAlloc = AllocNumEntries (NumEntries 4)
         , confBloomFilterAlloc = AllocFixed 10
         , confFencePointerIndex = CompactIndex
         , confDiskCachePolicy = DiskCacheNone
         , confMergeSchedule = OneShot })
     let kvs :: Map.Map Key Value
         kvs = Map.fromList $
-              QC.unGen (QC.vectorOf 678 $ (,) <$> QC.arbitrary <*> QC.arbitrary)
+              QC.unGen (QC.vectorOf 37 $ (,) <$> QC.arbitrary <*> QC.arbitrary)
                        (QC.mkQCGen 42) 30
         ups :: V.Vector (Key, Update Value Blob)
         ups = V.fromList
@@ -84,5 +81,3 @@ dl_example = do
             | Just tbl <- (Model.fromSomeTable @Key @Value @Blob smTbl)
             -> Map.size (Model.values tbl) == Map.size kvs
           _ -> False
-    -- Perform any sequence of actions after
-    anyActions_
