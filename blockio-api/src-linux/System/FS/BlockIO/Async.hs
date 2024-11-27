@@ -110,7 +110,7 @@ ioopConv (IOOpWrite h off buf bufOff c) = handleFd h >>= \fd ->
 --
 -- TODO: if the handle were to have a reader/writer lock, then we could take the
 -- reader lock in 'submitIO'. However, the current implementation of 'Handle'
--- only allows mutally exclusive access to the underlying file descriptor, so it
+-- only allows mutually exclusive access to the underlying file descriptor, so it
 -- would require a change in @fs-api@. See [fs-sim#49].
 handleFd :: Handle HandleIO -> IO Fd
 handleFd h = withOpenHandle "submitIO" (handleRaw h) pure

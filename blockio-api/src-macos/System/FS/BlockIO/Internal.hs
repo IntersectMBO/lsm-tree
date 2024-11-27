@@ -1,3 +1,5 @@
+{-# LANGUAGE CPP #-}
+
 module System.FS.BlockIO.Internal (
     ioHasBlockIO
   ) where
@@ -10,6 +12,7 @@ import qualified System.FS.BlockIO.Serial as Serial
 import           System.FS.IO (HandleIO)
 import qualified System.FS.IO.Handle as FS
 import qualified System.Posix.Fcntl.NoCache as Unix
+import qualified System.Posix.Unistd as Unix
 
 -- | For now we use the portable serial implementation of HasBlockIO. If you
 -- want to provide a proper async I/O implementation for OSX, then this is where
@@ -20,11 +23,21 @@ ioHasBlockIO ::
      HasFS IO HandleIO
   -> IOCtxParams
   -> IO (HasBlockIO IO HandleIO)
-ioHasBlockIO hfs _params = Serial.serialHasBlockIO hSetNoCache hAdvise hAllocate (FS.tryLockFileIO hfs) hfs
+ioHasBlockIO hfs _params = Serial.serialHasBlockIO hSetNoCache hAdvise hAllocate hSynchronize (FS.tryLockFileIO hfs) hfs
 
 hSetNoCache :: Handle HandleIO -> Bool -> IO ()
 hSetNoCache h b =
   FS.withOpenHandle "hSetNoCache" (handleRaw h) (flip Unix.writeFcntlNoCache b)
+
+-- | Prefer @fdatasync@ over @fsync@ when available for greater throughput.
+hSynchronize :: Handle HandleIO -> IO ()
+hSynchronize h =
+  FS.withOpenHandle "hSynchronize" (handleRaw h)
+#if HAVE_FDATASYNC
+    Unix.fileSynchroniseDataOnly
+#else
+    Unix.fileSynchronise
+#endif
 
 -- TODO: it is unclear if MacOS supports @posix_fadvise(2)@, and it's hard to
 -- check because there are no manual pages online. For now, it's just hardcoded

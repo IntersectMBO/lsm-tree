@@ -27,7 +27,7 @@ fromHasFS ::
   => HasFS m HandleMock
   -> m (HasBlockIO m HandleMock)
 fromHasFS hfs =
-    serialHasBlockIO hSetNoCache hAdvise hAllocate (simTryLockFile hfs) hfs
+    serialHasBlockIO hSetNoCache hAdvise hAllocate hSynchronize (simTryLockFile hfs) hfs
   where
     -- TODO: It should be possible for the implementations and simulation to
     -- throw an FsError when doing file I/O with misaligned byte arrays after
@@ -36,6 +36,7 @@ fromHasFS hfs =
     hSetNoCache _h _b = pure ()
     hAdvise _ _ _ _ = pure ()
     hAllocate _ _ _ = pure ()
+    hSynchronize _ = pure ()
 
 -- | Lock files are reader\/writer locks.
 --

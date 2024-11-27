@@ -94,6 +94,15 @@ data HasBlockIO m h = HasBlockIO {
     -- * [MacOS]: no-op.
     -- * [Windows]: no-op.
   , hAllocate :: Handle h -> FileOffset -> FileOffset -> m ()
+    -- | Synchronize file contents with storage device.
+    --
+    -- Ensure that all change to the file handle's contents which exist only in
+    -- memory (as buffered system cache pages) are transfered/flushed to disk.
+    -- This will also (partially) update the file handle's associated metadate.
+    -- On POSIX systems (including MacOS) this will likely involve call to either
+    -- @fsync(2)@ or @datasync(2)@. On Windows this will likely involve a call to
+    -- @flushFileBuffers@.
+  , hSynchronize :: Handle h -> m ()
     -- | Try to acquire a file lock without blocking.
     --
     -- This uses different locking methods on different distributions.
@@ -128,9 +137,9 @@ data HasBlockIO m h = HasBlockIO {
   }
 
 instance NFData (HasBlockIO m h) where
-  rnf (HasBlockIO a b c d e f) =
+  rnf (HasBlockIO a b c d e f g) =
       rwhnf a `seq` rwhnf b `seq` rnf c `seq`
-      rwhnf d `seq` rwhnf e `seq` rwhnf f
+      rwhnf d `seq` rwhnf e `seq` rwhnf f `seq` rwhnf g
 
 -- | Concurrency parameters for initialising a 'HasBlockIO. Can be ignored by
 -- serial implementations.

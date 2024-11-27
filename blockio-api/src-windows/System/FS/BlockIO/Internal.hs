@@ -8,6 +8,7 @@ import           System.FS.BlockIO.API (Advice (..), FileOffset, HasBlockIO,
                      IOCtxParams)
 import qualified System.FS.BlockIO.Serial as Serial
 import           System.FS.IO (HandleIO)
+import qualified System.Win32.File as Win32
 
 -- | For now we use the portable serial implementation of HasBlockIO. If you
 -- want to provide a proper async I/O implementation for Windows, then this is
@@ -18,7 +19,7 @@ ioHasBlockIO ::
      HasFS IO HandleIO
   -> IOCtxParams
   -> IO (HasBlockIO IO HandleIO)
-ioHasBlockIO hfs _params = Serial.serialHasBlockIO hSetNoCache hAdvise hAllocate (FS.tryLockFileIO hfs) hfs
+ioHasBlockIO hfs _params = Serial.serialHasBlockIO hSetNoCache hAdvise hAllocate hSynchronize (FS.tryLockFileIO hfs) hfs
 
 hSetNoCache :: Handle HandleIO -> Bool -> IO ()
 hSetNoCache _h _b = pure ()
@@ -28,3 +29,9 @@ hAdvise _h _off _len _advice = pure ()
 
 hAllocate :: Handle HandleIO -> FileOffset -> FileOffset -> IO ()
 hAllocate _h _off _len = pure ()
+
+-- | Make a best-effort attempt to utilize the @Win32@ package API to implement
+-- file buffering.
+hSynchronize :: Handle HandleIO -> IO ()
+hSynchronize h =
+  FS.withOpenHandle "hSynchronize" (handleRaw h) Win32.flushFileBuffers

@@ -23,10 +23,11 @@ serialHasBlockIO ::
   => (Handle h -> Bool -> m ())
   -> (Handle h -> API.FileOffset -> API.FileOffset -> API.Advice -> m ())
   -> (Handle h -> API.FileOffset -> API.FileOffset -> m ())
+  -> (Handle h -> m ())
   -> (FsPath -> LockMode -> m (Maybe (API.LockFileHandle m)))
   -> HasFS m h
   -> m (API.HasBlockIO m h)
-serialHasBlockIO hSetNoCache hAdvise hAllocate tryLockFile hfs = do
+serialHasBlockIO hSetNoCache hAdvise hAllocate hSynchronize tryLockFile hfs = do
   ctx <- initIOCtx (SomeHasFS hfs)
   pure $ API.HasBlockIO {
       API.close = close ctx
@@ -34,6 +35,7 @@ serialHasBlockIO hSetNoCache hAdvise hAllocate tryLockFile hfs = do
     , API.hSetNoCache
     , API.hAdvise
     , API.hAllocate
+    , API.hSynchronize
     , API.tryLockFile
     }
 

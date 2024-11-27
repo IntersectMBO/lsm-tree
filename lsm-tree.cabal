@@ -761,11 +761,15 @@ library blockio-api
 
   elif os(osx)
     hs-source-dirs: blockio-api/src-macos
-    build-depends:  lsm-tree:fcntl-nocache
+    build-depends:
+      , lsm-tree:fcntl-nocache
+      , unix                    ^>=2.8
+
     other-modules:  System.FS.BlockIO.Internal
 
   elif os(windows)
     hs-source-dirs: blockio-api/src-windows
+    build-depends:  Win32 >=2.13 && <3.0
     other-modules:  System.FS.BlockIO.Internal
 
   if flag(serialblockio)
