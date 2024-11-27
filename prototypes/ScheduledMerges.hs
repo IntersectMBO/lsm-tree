@@ -35,7 +35,7 @@ module ScheduledMerges (
     mupsert, mupserts,
     supplyMergeCredits,
     duplicate,
-    union,
+    unions,
     Credit,
     Debt,
     remainingUnionDebt,
@@ -60,7 +60,7 @@ import           Data.Maybe (catMaybes)
 import           Data.STRef
 
 import qualified Control.Exception as Exc (assert)
-import           Control.Monad (when)
+import           Control.Monad (foldM, forM, when)
 import           Control.Monad.ST
 import           Control.Tracer (Tracer, contramap, traceWith)
 import           GHC.Stack (HasCallStack, callStack)
@@ -377,17 +377,14 @@ invariant (LSMContent _ levels ul) = do
         CompletedTreeMerge _ ->
           return ()
 
-        OngoingTreeMerge (MergingRun mergeType mergeState) -> do
+        OngoingTreeMerge (MergingRun _ mergeState) -> do
           readSTRef mergeState >>= \case
             CompletedMerge _ -> return ()
             OngoingMerge _ rs _ -> do
               -- Inputs to ongoing merges aren't empty (but can while pending!).
               assertST $ all (\r -> runSize r > 0) rs
-              case mergeType of
-                -- Union merges are always binary.
-                MergeUnion   -> assertST $ length rs == 2
-                -- Merges are non-trivial (at least two inputs).
-                MergeLevel _ -> assertST $ length rs > 1
+              -- Merges are non-trivial (at least two inputs).
+              assertST $ length rs > 1
 
         PendingTreeMerge (PendingLevelMerge irs tree) -> do
           -- Merges are non-trivial (at least two inputs).
@@ -400,8 +397,8 @@ invariant (LSMContent _ levels ul) = do
           for_ tree treeInvariant
 
         PendingTreeMerge (PendingUnionMerge trees) -> do
-          -- Union merges are always binary.
-          assertST $ length trees == 2
+          -- Merges are non-trivial (at least two inputs).
+          assertST $ length trees > 1
           for_ trees treeInvariant
 
 -- 'callStack' just ensures that the 'HasCallStack' constraint is not redundant
@@ -630,13 +627,13 @@ duplicate (LSMHandle _scr lsmr) = do
 -- merge that can be performed incrementally (somewhat similar to a thunk).
 --
 -- The more merge work remains, the more expensive are lookups on the table.
-union :: LSM s -> LSM s -> ST s (LSM s)
-union (LSMHandle _ lsmr1) (LSMHandle _ lsmr2) = do
-    mt1 <- contentToMergingTree =<< readSTRef lsmr1
-    mt2 <- contentToMergingTree =<< readSTRef lsmr2
+unions :: [LSM s] -> ST s (LSM s)
+unions lsms = do
+    trees <- forM lsms $ \(LSMHandle _ lsmr) ->
+      contentToMergingTree =<< readSTRef lsmr
     -- TODO: if only one table is non-empty, we don't have to create a Union,
     -- we can just duplicate the table.
-    unionLevel <- newPendingUnionMerge (catMaybes [mt1, mt2]) >>= \case
+    unionLevel <- newPendingUnionMerge (catMaybes trees) >>= \case
       Nothing -> return NoUnion
       Just tree -> do
         debt <- fst <$> remainingDebtMergingTree tree
@@ -1124,11 +1121,8 @@ supplyCreditsPendingMerge = checked remainingDebtPendingMerge $ \credits -> \cas
     PendingLevelMerge irs tree ->
       leftToRight supplyIncoming irs credits
         >>= leftToRight supplyCreditsMergingTree (toList tree)
-    PendingUnionMerge [tree1, tree2] ->
-      splitEqually tree1 tree2 credits
     PendingUnionMerge trees ->
-      error $ "supplyCreditsPendingMerge: "
-           ++ "expected two union merge inputs, got " ++ show (length trees)
+      splitEqually supplyCreditsMergingTree trees credits
   where
     supplyIncoming c = \case
         Single _     -> return c
@@ -1140,24 +1134,21 @@ supplyCreditsPendingMerge = checked remainingDebtPendingMerge $ \credits -> \cas
     leftToRight _ []     c = return c
     leftToRight f (x:xs) c = f c x >>= leftToRight f xs
 
-    -- supply credit roughly evenly on both sides
-    splitEqually :: MergingTree s -> MergingTree s -> Credit -> ST s Credit
-    splitEqually mt1 mt2 c = do
-        let (c1, c2) = (c `div` 2, c - c1)
-        c1' <- if c1 > 0
-          then supplyCreditsMergingTree c1 mt1
-          else return 0
-        if c1' > 0
-          then
-            -- left side done, use all remaining credits on the right side
-            supplyCreditsMergingTree (c2 + c1') mt2
-          else do
-            -- left side still not done
-            -- if the right side has leftovers, go back
-            c2' <- supplyCreditsMergingTree c2 mt2
-            if c2' > 0
-              then supplyCreditsMergingTree c2' mt1
-              else return 0
+    -- approximately equal, being more precise would require more iterations
+    splitEqually :: (Credit -> a -> ST s Credit) -> [a] -> Credit -> ST s Credit
+    splitEqually f xs credits =
+        -- first give each tree k = ceil(1/n) credits (last ones might get less)
+        -- any remainders go left to right
+        foldM supply credits xs >>= leftToRight f xs
+      where
+        !n = length xs
+        !k = (credits + (n - 1)) `div` n
+
+        supply 0 _ = return 0
+        supply c t = do
+            let creditsToSpend = min k c
+            leftovers <- f creditsToSpend t
+            return (c - creditsToSpend + leftovers)
 
 expectCompletedChildren :: HasCallStack => PendingMerge s -> ST s (MergeType, [Run])
 expectCompletedChildren (PendingMerge mt irs trees) = do
