@@ -3,66 +3,23 @@
 -- | An abstraction of the normal LSM API, instantiated by both the real
 -- implementation and a model (see "Database.LSMTree.Model.IO.Normal").
 module Database.LSMTree.Class.Normal (
-    C
-  , C_
-  , IsSession (..)
-  , SessionArgs (..)
-  , withSession
-  , IsTable (..)
+    IsTable (..)
   , withTableNew
   , withTableFromSnapshot
   , withTableDuplicate
   , withCursor
+  , module Common
   , module Types
   ) where
 
-import           Control.Monad.Class.MonadThrow (bracket)
-import           Control.Tracer (nullTracer)
+import           Control.Monad.Class.MonadThrow (MonadThrow (..))
 import           Data.Kind (Constraint, Type)
-import           Data.Typeable (Proxy (Proxy), Typeable)
+import           Data.Typeable (Proxy (..))
 import qualified Data.Vector as V
-import           Database.LSMTree.Common as Types (IOLike, Range (..),
-                     SerialiseKey, SerialiseValue, SnapshotLabel (..),
-                     SnapshotName)
+import           Database.LSMTree.Class.Common as Common
 import           Database.LSMTree.Normal as Types (LookupResult (..),
                      QueryResult (..), Update (..))
 import qualified Database.LSMTree.Normal as R
-import           System.FS.API (FsPath, HasFS)
-import           System.FS.BlockIO.API (HasBlockIO)
-
--- | Model-specific constraints
-type C k v blob = (C_ k, C_ v, C_ blob)
-type C_ a = (Show a, Eq a, Typeable a)
-
--- | Class abstracting over session operations.
---
-type IsSession :: ((Type -> Type) -> Type) -> Constraint
-class IsSession s where
-    data SessionArgs s :: (Type -> Type) -> Type
-
-    openSession ::
-           IOLike m
-        => SessionArgs s m
-        -> m (s m)
-
-    closeSession ::
-           IOLike m
-        => s m
-        -> m ()
-
-    deleteSnapshot ::
-           IOLike m
-        => s m
-        -> SnapshotName
-        -> m ()
-
-    listSnapshots ::
-           IOLike m
-        => s m
-        -> m [SnapshotName]
-
-withSession :: (IOLike m, IsSession s) => SessionArgs s m -> (s m -> m a) -> m a
-withSession seshArgs = bracket (openSession seshArgs) closeSession
 
 -- | Class abstracting over table operations.
 --
@@ -267,19 +224,6 @@ withCursor offset hdl = bracket (newCursor offset hdl) (closeCursor (Proxy @h))
 {-------------------------------------------------------------------------------
   Real instance
 -------------------------------------------------------------------------------}
-
-instance IsSession R.Session where
-    data SessionArgs R.Session m where
-      SessionArgs ::
-           forall m h. Typeable h
-        => HasFS m h -> HasBlockIO m h -> FsPath
-        -> SessionArgs R.Session m
-
-    openSession (SessionArgs hfs hbio dir) = do
-       R.openSession nullTracer hfs hbio dir
-    closeSession = R.closeSession
-    deleteSnapshot = R.deleteSnapshot
-    listSnapshots = R.listSnapshots
 
 instance IsTable R.Table where
     type Session R.Table = R.Session
