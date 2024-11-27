@@ -1164,6 +1164,8 @@ createSnapshot resolve snap label tableType t = do
             (\_ -> FS.removeDirectoryRecursive hfs (Paths.getNamedSnapshotDir snapDir))
 
         -- Write the write buffer.
+        --
+        -- TODO: Seeing as the write buffer is pure, we probably don't need to keep the read lock lock while we're writing to disk.
         RW.withReadAccess (tableContent thEnv) $ \content -> do
           writeBufferRunNumber <- uniqueToRunNumber <$> incrUniqCounter (tableSessionUniqCounter thEnv)
           let fsPaths = Paths.WriteBufferFsPaths (Paths.getNamedSnapshotDir snapDir) writeBufferRunNumber

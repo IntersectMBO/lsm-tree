@@ -44,7 +44,7 @@ module Database.LSMTree.Internal.Paths (
   , forRunFilterRaw
   , forRunIndexRaw
     -- * WriteBuffer paths
-  , WriteBufferFsPaths (WriteBufferFsPaths, writeBufferDir, writeBufferNumber)
+  , WriteBufferFsPaths (WrapRunFsPaths, WriteBufferFsPaths, writeBufferDir, writeBufferNumber)
   , pathsForWriteBufferFiles
   , writeBufferKOpsPath
   , writeBufferBlobPath

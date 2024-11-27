@@ -3,6 +3,7 @@ module Database.LSMTree.Internal.Entry (
   , hasBlob
   , onValue
   , onBlobRef
+  , traverseBlobRef
   , NumEntries (..)
   , unNumEntries
     -- * Value resolution/merging
@@ -46,6 +47,17 @@ onBlobRef def g = \case
     InsertWithBlob _ br -> g br
     Mupdate{}           -> def
     Delete              -> def
+
+traverseBlobRef ::
+     Applicative t
+  => (blobref -> t blobref')
+  -> Entry v blobref
+  -> t (Entry v blobref')
+traverseBlobRef f = \case
+  Insert v -> pure (Insert v)
+  InsertWithBlob v blobref -> InsertWithBlob v <$> f blobref
+  Mupdate v -> pure (Mupdate v)
+  Delete -> pure Delete
 
 instance Bifunctor Entry where
   first f = \case
