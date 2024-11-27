@@ -72,6 +72,7 @@ module Database.LSMTree.Internal (
   ) where
 
 import           Codec.CBOR.Read
+import           Control.ActionRegistry
 import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Concurrent.Class.MonadSTM (MonadSTM (..))
 import           Control.Concurrent.Class.MonadSTM.RWVar (RWVar)
@@ -85,8 +86,8 @@ import           Control.RefCount
 import           Control.TempRegistry
 import           Control.Tracer
 import           Data.Arena (ArenaManager, newArenaManager)
+import           Data.Either (fromRight)
 import           Data.Foldable
-import           Data.Functor.Compose (Compose (..))
 import           Data.Kind
 import           Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
@@ -401,39 +402,47 @@ withSession tr hfs hbio dir = bracket (openSession tr hfs hbio dir) closeSession
 -- | See 'Database.LSMTree.Common.openSession'.
 openSession ::
      forall m h.
-     (MonadCatch m, MonadSTM m, MonadMVar m)
+     (MonadSTM m, MonadMVar m, PrimMonad m, MonadMask m)
   => Tracer m LSMTreeTrace
   -> HasFS m h
   -> HasBlockIO m h -- TODO: could we prevent the user from having to pass this in?
   -> FsPath -- ^ Path to the session directory
   -> m (Session m h)
-openSession tr hfs hbio dir = do
-    traceWith tr (TraceOpenSession dir)
-    dirExists <- FS.doesDirectoryExist hfs dir
-    unless dirExists $
-      throwIO (SessionDirDoesNotExist (FS.mkFsErrorPath hfs dir))
-    -- List directory contents /before/ trying to acquire a file lock, so that
-    -- that the lock file does not show up in the listed contents.
-    dirContents <- FS.listDirectory hfs dir
-    -- Try to acquire the session file lock as soon as possible to reduce the
-    -- risk of race conditions.
-    --
-    -- The lock is only released when an exception is raised, otherwise the lock
-    -- is included in the returned Session.
-    bracketOnError
-      acquireLock
-      releaseLock
-      $ \case
-          Left e
-            | FS.FsResourceAlreadyInUse <- FS.fsErrorType e
-            , fsep@(FsErrorPath _ fsp) <- FS.fsErrorPath e
-            , fsp == lockFilePath
-            -> throwIO (SessionDirLocked fsep)
-          Left  e -> throwIO e -- rethrow unexpected errors
-          Right Nothing -> throwIO (SessionDirLocked (FS.mkFsErrorPath hfs lockFilePath))
-          Right (Just sessionFileLock) ->
-            if Set.null dirContents then newSession sessionFileLock
-                                    else restoreSession sessionFileLock
+openSession tr hfs hbio dir =
+    -- We can not use modifyWithActionRegistry here, since there is no in-memory
+    -- state to modify. We use withActionRegistry instead, which may have a tiny
+    -- chance of leaking resources if openSession is not called in a masked
+    -- state.
+    withActionRegistry $ \reg -> do
+      traceWith tr (TraceOpenSession dir)
+      dirExists <- FS.doesDirectoryExist hfs dir
+      unless dirExists $
+        throwIO (SessionDirDoesNotExist (FS.mkFsErrorPath hfs dir))
+      -- List directory contents /before/ trying to acquire a file lock, so that
+      -- that the lock file does not show up in the listed contents.
+      dirContents <- FS.listDirectory hfs dir
+      -- Try to acquire the session file lock as soon as possible to reduce the
+      -- risk of race conditions.
+      --
+      -- The lock is only released when an exception is raised, otherwise the lock
+      -- is included in the returned Session.
+      elock <-
+        withRollbackFun reg
+          (fromRight Nothing)
+          acquireLock
+          releaseLock
+
+      case elock of
+        Left e
+          | FS.FsResourceAlreadyInUse <- FS.fsErrorType e
+          , fsep@(FsErrorPath _ fsp) <- FS.fsErrorPath e
+          , fsp == lockFilePath
+          -> throwIO (SessionDirLocked fsep)
+        Left  e -> throwIO e -- rethrow unexpected errors
+        Right Nothing -> throwIO (SessionDirLocked (FS.mkFsErrorPath hfs lockFilePath))
+        Right (Just sessionFileLock) ->
+          if Set.null dirContents then newSession reg sessionFileLock
+                                  else restoreSession reg sessionFileLock
   where
     root             = Paths.SessionRoot dir
     lockFilePath     = Paths.lockFile root
@@ -442,7 +451,7 @@ openSession tr hfs hbio dir = do
 
     acquireLock = try @m @FsError $ FS.tryLockFile hbio lockFilePath FS.ExclusiveLock
 
-    releaseLock lockFile = forM_ (Compose lockFile) $ \lockFile' -> FS.hUnlock lockFile'
+    releaseLock = FS.hUnlock
 
     mkSession lockFile = do
         counterVar <- newUniqCounter 0
@@ -459,16 +468,19 @@ openSession tr hfs hbio dir = do
           }
         pure $! Session sessionVar tr
 
-    newSession sessionFileLock = do
+    newSession reg sessionFileLock = do
         traceWith tr TraceNewSession
-        FS.createDirectory hfs activeDirPath
-        FS.createDirectory hfs snapshotsDirPath
+        withRollback_ reg
+          (FS.createDirectory hfs activeDirPath)
+          (FS.removeDirectoryRecursive hfs activeDirPath)
+        withRollback_ reg
+          (FS.createDirectory hfs snapshotsDirPath)
+          (FS.removeDirectoryRecursive hfs snapshotsDirPath)
         mkSession sessionFileLock
 
-    restoreSession sessionFileLock = do
+    restoreSession _reg sessionFileLock = do
         traceWith tr TraceRestoreSession
-        -- If the layouts are wrong, we throw an exception, and the lock file
-        -- is automatically released by bracketOnError.
+        -- If the layouts are wrong, we throw an exception
         checkTopLevelDirLayout
 
         -- Clear the active directory by removing the directory and recreating
@@ -483,9 +495,9 @@ openSession tr hfs hbio dir = do
     -- Check that the active directory and snapshots directory exist. We assume
     -- the lock file already exists at this point.
     --
-    -- This does /not/ check that /only/ the expected files and directories
-    -- exist. This means that unexpected files in the top-level directory are
-    -- ignored for the layout check.
+    -- This checks only that the /expected/ files and directories exist.
+    -- Unexpected files in the top-level directory are ignored for the layout
+    -- check.
     checkTopLevelDirLayout = do
       FS.doesDirectoryExist hfs activeDirPath >>= \b ->
         unless b $ throwIO (SessionDirMalformed (FS.mkFsErrorPath hfs activeDirPath))
