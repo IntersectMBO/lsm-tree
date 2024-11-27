@@ -78,7 +78,7 @@ import           Control.Concurrent.Class.MonadSTM (MonadSTM (..))
 import           Control.Concurrent.Class.MonadSTM.RWVar (RWVar)
 import qualified Control.Concurrent.Class.MonadSTM.RWVar as RW
 import           Control.DeepSeq
-import           Control.Monad (forM, unless, zipWithM_)
+import           Control.Monad (forM, unless, void, zipWithM_)
 import           Control.Monad.Class.MonadST (MonadST (..))
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Primitive
@@ -517,37 +517,52 @@ openSession tr hfs hbio dir =
 -- | See 'Database.LSMTree.Common.closeSession'.
 --
 -- A session's global resources will only be released once it is sure that no
--- tables are open anymore.
+-- tables or cursors are open anymore.
 closeSession ::
      (MonadMask m, MonadSTM m, MonadMVar m, PrimMonad m)
   => Session m h
   -> m ()
 closeSession Session{sessionState, sessionTracer} = do
     traceWith sessionTracer TraceCloseSession
-    RW.withWriteAccess_ sessionState $ \case
-      SessionClosed -> pure SessionClosed
-      SessionOpen seshEnv -> do
-        -- Close tables and cursors first, so that we know none are open when we
-        -- release session-wide resources.
-        --
-        -- If any has been closed already by a different thread, the idempotent
-        -- 'close' will act like a no-op, and so we are not in trouble.
-        --
-        -- Since we have a write lock on the session state, we know that no
-        -- tables will be added while we are closing the session, and that we
-        -- are the only thread currently closing the session.
-        --
-        -- We technically don't have to overwrite this with an empty Map, but
-        -- why not.
-        --
-        -- TODO: use TempRegistry
-        cursors <- modifyMVar (sessionOpenCursors seshEnv) (\m -> pure (Map.empty, m))
-        mapM_ closeCursor cursors
-        tables <- modifyMVar (sessionOpenTables seshEnv) (\m -> pure (Map.empty, m))
-        mapM_ close tables
-        FS.close (sessionHasBlockIO seshEnv)
-        FS.hUnlock (sessionLockFile seshEnv)
-        pure SessionClosed
+    modifyWithActionRegistry_
+      (RW.unsafeAcquireWriteAccess sessionState)
+      (atomically . RW.unsafeReleaseWriteAccess sessionState)
+      $ \reg -> \case
+        SessionClosed -> pure SessionClosed
+        SessionOpen seshEnv -> do
+          -- Close tables and cursors first, so that we know none are open when we
+          -- release session-wide resources.
+          --
+          -- If any tables or cursors have been closed already by a different
+          -- thread, then the idempotent close functions will act like a no-op,
+          -- and so we are not in trouble.
+          --
+          -- Since we have a write lock on the session state, we know that no
+          -- tables or cursors will be added while we are closing the session
+          -- (see sessionOpenTables), and that we are the only thread currently
+          -- closing the session. .
+          --
+          -- We technically don't have to overwrite this with an empty Map, but
+          -- why not.
+
+          -- close cursors
+          cursors <-
+            withRollback reg
+              (swapMVar (sessionOpenCursors seshEnv) Map.empty)
+              (void . swapMVar (sessionOpenCursors seshEnv))
+          mapM_ (delayedCommit reg . closeCursor) cursors
+
+          -- close tables
+          tables <-
+            withRollback reg
+              (swapMVar (sessionOpenTables seshEnv) Map.empty)
+              (void . swapMVar (sessionOpenTables seshEnv))
+          mapM_ (delayedCommit reg . close) tables
+
+          delayedCommit reg $ FS.close (sessionHasBlockIO seshEnv)
+          delayedCommit reg $ FS.hUnlock (sessionLockFile seshEnv)
+
+          pure SessionClosed
 
 {-------------------------------------------------------------------------------
   Table
