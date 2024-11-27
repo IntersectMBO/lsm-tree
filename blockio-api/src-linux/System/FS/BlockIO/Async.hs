@@ -35,7 +35,7 @@ asyncHasBlockIO ::
   -> HasFS IO HandleIO
   -> API.IOCtxParams
   -> IO (API.HasBlockIO IO HandleIO)
-asyncHasBlockIO hSetNoCache hAdvise hAllocate tryLockFile hasFS ctxParams = do
+asyncHasBlockIO hSetNoCache hAdvise hAllocate hSynchronize tryLockFile hasFS ctxParams = do
   ctx <- I.initIOCtx (ctxParamsConv ctxParams)
   pure $ API.HasBlockIO {
       API.close = I.closeIOCtx ctx
@@ -43,6 +43,7 @@ asyncHasBlockIO hSetNoCache hAdvise hAllocate tryLockFile hasFS ctxParams = do
     , API.hSetNoCache
     , API.hAdvise
     , API.hAllocate
+    , API.hSynchronize
     , API.tryLockFile
     }
 
