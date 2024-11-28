@@ -29,12 +29,6 @@ module Control.RefCount (
   -- * Test API
   , readRefCount
   , checkForgottenRefs
-
-    -- * Old API
-  , mkRefCounter1
-  , addReference
-  , removeReference
-  , upgradeWeakReference
   ) where
 
 import           Data.Kind (Type)
@@ -57,23 +51,6 @@ import           System.IO.Unsafe (unsafeDupablePerformIO, unsafePerformIO)
 import           System.Mem (performMajorGC)
 import           System.Mem.Weak hiding (deRefWeak)
 #endif
-
-
--------------------------------------------------------------------------------
--- Old API
---
-
-mkRefCounter1 :: PrimMonad m => m () -> m (RefCounter m)
-mkRefCounter1 = newRefCounter
-
-addReference :: PrimMonad m => RefCounter m -> m ()
-addReference = incrementRefCounter
-
-removeReference :: (PrimMonad m, MonadMask m) => RefCounter m -> m ()
-removeReference = decrementRefCounter
-
-upgradeWeakReference :: PrimMonad m => RefCounter m -> m Bool
-upgradeWeakReference = tryIncrementRefCounter
 
 
 -------------------------------------------------------------------------------
