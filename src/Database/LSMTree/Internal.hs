@@ -887,12 +887,23 @@ data CursorEnv m h = CursorEnv {
   , cursorId         :: !Word64
     -- | Readers are immediately discarded once they are 'Readers.Drained',
     -- so if there is a 'Just', we can assume that it has further entries.
-    -- However, the reference counts to the runs only get removed when calling
-    -- 'closeCursor', as there might still be 'BlobRef's that need the
-    -- corresponding run to stay alive.
+    -- Note that, while the readers do retain references on the blob files
+    -- while they are active, once they are drained they do not. This could
+    -- invalidate any 'BlobRef's previously handed out. To avoid this, we
+    -- explicitly retain references on the runs and write buffer blofs and
+    -- only release them when the cursor is closed (see cursorRuns and
+    -- cursorWBB below).
   , cursorReaders    :: !(Maybe (Readers.Readers m h))
-    -- | The runs held open by the cursor. We must remove a reference when the
-    -- cursor gets closed.
+
+    --TODO: the cursorRuns and cursorWBB could be replaced by just retaining
+    -- the BlobFile from the runs and WBB, so that we retain less. Since we
+    -- only retain these to keep BlobRefs valid until the cursor is closed.
+    -- Alternatively: the Readers could be modified to keep the BlobFiles even
+    -- once the readers are drained, and only release them when the Readers is
+    -- itself closed.
+
+    -- | The runs held open by the cursor. We must release these references
+    -- when the cursor gets closed.
   , cursorRuns       :: !(V.Vector (Ref (Run m h)))
 
     -- | The write buffer blobs, which like the runs, we have to keep open
