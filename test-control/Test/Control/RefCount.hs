@@ -3,6 +3,7 @@
 
 module Test.Control.RefCount (tests) where
 
+import           Data.Primitive.PrimVar
 import           Control.Concurrent.Class.MonadMVar
 import           Control.Exception
 import           Control.Monad
@@ -97,6 +98,13 @@ prop_RefCounter = once $ ioProperty $ do
 #else
     check = \case Left (AssertionFailed _) -> False; Right () -> True
 #endif
+
+-- | Warning: reading the current reference count is inherently racy as there
+-- is no way to reliably act on the information. It is only useful for tests or
+-- debugging.
+--
+readRefCount :: RefCounter IO -> IO Int
+readRefCount (RefCounter countVar _) = readPrimVar countVar
 
 #ifdef NO_IGNORE_ASSERTS
 data TestObject = TestObject !(RefCounter IO)

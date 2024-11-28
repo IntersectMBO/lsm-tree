@@ -865,6 +865,7 @@ test-suite control-test
     , io-classes
     , io-sim
     , lsm-tree:control
+    , primitive
     , QuickCheck
     , tasty
     , tasty-quickcheck

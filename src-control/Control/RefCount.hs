@@ -27,7 +27,6 @@ module Control.RefCount (
   , tryIncrementRefCounter
 
   -- * Test API
-  , readRefCount
   , checkForgottenRefs
   ) where
 
@@ -139,13 +138,6 @@ tryIncrementRefCounter RefCounter{countVar} = do
           if prevCount' == prevCount
             then return True
             else casLoop prevCount'
-
--- TODO: remove when removeRefenceN is removed
-{-# SPECIALISE readRefCount :: RefCounter IO -> IO Int #-}
--- | Warning: reading the current reference count is inherently racy as there is
--- no way to reliably act on the information. It can be useful for debugging.
-readRefCount :: PrimMonad m => RefCounter m -> m Int
-readRefCount RefCounter{countVar} = readPrimVar countVar
 
 
 -------------------------------------------------------------------------------
