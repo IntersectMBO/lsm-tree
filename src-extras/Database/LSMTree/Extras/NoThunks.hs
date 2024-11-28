@@ -45,6 +45,7 @@ import           Database.LSMTree.Internal.Index.CompactAcc
 import           Database.LSMTree.Internal.Merge hiding (Level)
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.MergeSchedule
+import           Database.LSMTree.Internal.MergingRun
 import           Database.LSMTree.Internal.Page
 import           Database.LSMTree.Internal.PageAcc
 import           Database.LSMTree.Internal.Paths
