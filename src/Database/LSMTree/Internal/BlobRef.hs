@@ -39,10 +39,10 @@ import           System.FS.BlockIO.API (HasBlockIO)
 
 -- | A raw blob reference is a reference to a blob within a blob file.
 --
--- The \"raw\" means that it does no reference counting, so does not maintain
--- ownership of the 'BlobFile'. Thus these are only safe to use in the context
--- of code that already (directly or indirectly) owns the blob file that the
--- blob ref uses (such as within run merging).
+-- The \"raw\" means that it does not maintain ownership of the 'BlobFile' to
+-- keep it open. Thus these are only safe to use in the context of code that
+-- already (directly or indirectly) owns the blob file that the blob ref uses
+-- (such as within run merging).
 --
 -- Thus these cannot be handed out via the API. Use 'WeakBlobRef' for that.
 --
@@ -56,9 +56,9 @@ data RawBlobRef m h = RawBlobRef {
 -- can return in the public API and can outlive their parent table.
 --
 -- They are weak references in that they do not keep the file open using a
--- reference count. So when we want to use our weak reference we have to
--- dereference them to obtain a normal strong reference while we do the I\/O
--- to read the blob. This ensures the file is not closed under our feet.
+-- reference. So when we want to use our weak reference we have to dereference
+-- them to obtain a normal strong reference while we do the I\/O to read the
+-- blob. This ensures the file is not closed under our feet.
 --
 -- See 'Database.LSMTree.Common.BlobRef' for more info.
 --

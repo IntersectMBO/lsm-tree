@@ -208,7 +208,8 @@ fromMutable runRunDataCaching builder = do
   -> Ref (WriteBufferBlobs IO h)
   -> IO (Ref (Run IO h)) #-}
 -- | Write a write buffer to disk, including the blobs it contains.
--- The resulting run has a reference count of 1.
+--
+-- This creates a new 'Run' which must eventually be released with 'releaseRef'.
 --
 -- TODO: As a possible optimisation, blobs could be written to a blob file
 -- immediately when they are added to the write buffer, avoiding the need to do
@@ -250,7 +251,8 @@ data FileFormatError = FileFormatError FS.FsPath String
   -> IO (Ref (Run IO h)) #-}
 -- | Load a previously written run from disk, checking each file's checksum
 -- against the checksum file.
--- The resulting 'Run' has a reference count of 1.
+--
+-- This creates a new 'Run' which must eventually be released with 'releaseRef'.
 --
 -- Exceptions will be raised when any of the file's contents don't match their
 -- checksum ('ChecksumError') or can't be parsed ('FileFormatError').

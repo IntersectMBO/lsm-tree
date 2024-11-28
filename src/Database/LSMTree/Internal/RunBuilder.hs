@@ -73,7 +73,6 @@ data RunBuilder m h = RunBuilder {
   -> RunBloomFilterAlloc
   -> IO (RunBuilder IO h) #-}
 -- | Create an 'RunBuilder' to start building a run.
--- The result will have an initial reference count of 1.
 --
 -- NOTE: 'new' assumes that 'runDir' that the run is created in exists.
 new ::

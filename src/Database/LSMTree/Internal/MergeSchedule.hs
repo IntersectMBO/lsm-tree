@@ -169,8 +169,8 @@ releaseTableContent reg (TableContent _wb wbb levels cache) = do
 -- handles. This allows for quick access in the lookup code. Recomputing this
 -- cache should be relatively rare.
 --
--- Caches take reference counts for its runs on construction, and they release
--- references when the cache is invalidated. This is done so that incremental
+-- Caches keep references to its runs on construction, and they release each
+-- reference when the cache is invalidated. This is done so that incremental
 -- merges can remove references for their input runs when a merge completes,
 -- without closing runs that might be in use for other operations such as
 -- lookups. This does mean that a cache can keep runs open for longer than

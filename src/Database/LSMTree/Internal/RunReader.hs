@@ -51,8 +51,15 @@ import           System.FS.BlockIO.API (HasBlockIO)
 -- | Allows reading the k\/ops of a run incrementally, using its own read-only
 -- file handle and in-memory cache of the current disk page.
 --
--- Creating a 'RunReader' does not increase the run's reference count, so make
--- sure the run remains open while using the reader.
+-- Creating a 'RunReader' does not retain a reference to the 'Run', but does
+-- retain an independent reference on the run's blob file. It is not necessary
+-- to separately retain the 'Run' for correct use of the 'RunReader'. There is
+-- one important caveat however: the 'RunReader' maintains the validity of
+-- 'BlobRef's only up until the point where the reader is drained (or
+-- explicitly closed). In particular this means 'BlobRefs' can be invalidated
+-- as soon as the 'next' returns 'Empty'. If this is not sufficient then it is
+-- necessary to separately retain a reference to the 'Run' or its 'BlobFile' to
+-- preserve the validity of 'BlobRefs'.
 --
 -- New pages are loaded when trying to read their first entry.
 --

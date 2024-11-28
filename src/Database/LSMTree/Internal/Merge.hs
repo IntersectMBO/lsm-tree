@@ -142,8 +142,6 @@ abort Merge {..} = do
 --
 -- All resources held by the merge are released, so do not use the it any more!
 --
--- The resulting run has a reference count of 1.
---
 -- This function will /not/ do any merging work if there is any remaining. That
 -- is, if not enough 'steps' were performed to exhaust the input 'Readers', this
 -- function will throw an error.
@@ -153,7 +151,8 @@ abort Merge {..} = do
 --
 -- Note: this function creates new 'Run' resources, so it is recommended to run
 -- this function with async exceptions masked. Otherwise, these resources can
--- leak.
+-- leak. And it must eventually be released with 'releaseRef'.
+--
 complete ::
      (MonadSTM m, MonadST m, MonadMask m)
   => Merge m h

@@ -47,8 +47,18 @@ import qualified System.FS.API as FS
 -- Construct with 'new', then keep calling 'pop'.
 -- If aborting early, remember to call 'close'!
 --
--- Creating a 'RunReaders' does not increase the runs' reference count, so make
--- sure they remain open while using the 'RunReaders'.
+-- Creating a 'Readers' does not retain a reference to the input 'Run's or the
+-- 'WriteBufferBlobs', but does retain an independent reference on their blob
+-- files. It is not necessary to separately retain the 'Run's or the
+-- 'WriteBufferBlobs' for correct use of the 'Readers'. There is one important
+-- caveat however: to preserve the validity of 'BlobRef's then it is necessary
+-- to separately retain a reference to the 'Run' or its 'BlobFile' to preserve
+-- the validity of 'BlobRefs'.
+--
+-- TODO: do this more nicely by changing 'Reader' to preserve the 'BlobFile'
+-- ref until it is explicitly closed, and also retain the 'BlobFile' from the
+-- WBB and release all of these 'BlobFiles' once the 'Readers' is itself closed.
+--
 data Readers m h = Readers {
       readersHeap :: !(Heap.MutableHeap (PrimState m) (ReadCtx m h))
       -- | Since there is always one reader outside of the heap, we need to
