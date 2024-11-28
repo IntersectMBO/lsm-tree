@@ -42,6 +42,8 @@ import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.MergeSchedule
+import           Database.LSMTree.Internal.MergingRun (NumRuns (..))
+import qualified Database.LSMTree.Internal.MergingRun as MR
 import           Database.LSMTree.Internal.Paths (ActiveDir (..),
                      NamedSnapshotDir (..), RunFsPaths (..), pathsForRunFiles,
                      runChecksumsPath)
@@ -122,7 +124,7 @@ instance NFData r => NFData (SnapLevel r) where
   rnf (SnapLevel a b) = rnf a `seq` rnf b
 
 data SnapIncomingRun r =
-    SnapMergingRun !MergePolicyForLevel !NumRuns !NumEntries !UnspentCredits !MergeKnownCompleted !(SnapMergingRunState r)
+    SnapMergingRun !MergePolicyForLevel !NumRuns !NumEntries !UnspentCredits !MR.MergeKnownCompleted !(SnapMergingRunState r)
   | SnapSingleRun !r
   deriving stock (Show, Eq, Functor, Foldable, Traversable)
 
@@ -183,8 +185,8 @@ toSnapIncomingRun (Single r) = pure (SnapSingleRun r)
 -- We need to know how many credits were yet unspent so we can restore merge
 -- work on snapshot load. No need to snapshot the contents of totalStepsVar
 -- here, since we still start counting from 0 again when loading the snapshot.
-toSnapIncomingRun (Merging (DeRef MergingRun {..})) = do
-    unspentCredits <- readPrimVar (getUnspentCreditsVar mergeUnspentCredits)
+toSnapIncomingRun (Merging (DeRef MR.MergingRun {..})) = do
+    unspentCredits <- readPrimVar (MR.getUnspentCreditsVar mergeUnspentCredits)
     mergeCompletedCache <- readMutVar mergeKnownCompleted
     smrs <- withMVar mergeState $ \mrs -> toSnapMergingRunState mrs
     pure $
@@ -197,16 +199,16 @@ toSnapIncomingRun (Merging (DeRef MergingRun {..})) = do
         smrs
 
 {-# SPECIALISE toSnapMergingRunState ::
-     MergingRunState IO h
+     MR.MergingRunState IO h
   -> IO (SnapMergingRunState (Ref (Run IO h))) #-}
 toSnapMergingRunState ::
      PrimMonad m
-  => MergingRunState m h
+  => MR.MergingRunState m h
   -> m (SnapMergingRunState (Ref (Run m h)))
-toSnapMergingRunState (CompletedMerge r) = pure (SnapCompletedMerge r)
+toSnapMergingRunState (MR.CompletedMerge r) = pure (SnapCompletedMerge r)
 -- We need to know how many credits were spent already so we can restore merge
 -- work on snapshot load.
-toSnapMergingRunState (OngoingMerge rs (SpentCreditsVar spentCreditsVar) m) = do
+toSnapMergingRunState (MR.OngoingMerge rs (MR.SpentCreditsVar spentCreditsVar) m) = do
     spentCredits <- readPrimVar spentCreditsVar
     pure (SnapOngoingMerge rs (SpentCredits spentCredits) (Merge.mergeLevel m))
 
@@ -321,25 +323,10 @@ fromSnapLevels reg hfs hbio conf@TableConfig{..} uc resolve dir (SnapLevels leve
 
     fromSnapLevel :: LevelNo -> SnapLevel (Ref (Run m h)) -> m (Level m h)
     fromSnapLevel ln SnapLevel{..} = do
-        (unspentCreditsMay, spentCreditsMay, incomingRun) <- fromSnapIncomingRun snapIncoming
-        -- When a snapshot is created, merge progress is lost, so we have to
-        -- redo merging work here. UnspentCredits and SpentCredits track how
-        -- many credits were supplied before the snapshot was taken.
-        --
-        -- TODO: this use of supplyMergeCredits is leaky! If a merge completes
-        -- in supplyMergeCredits, then the resulting run is not tracked in the
-        -- registry, and closing the input runs is also not tracked in the
-        -- registry. Note, however, that this bit of code is likely to change in
-        -- #392.
-        let c = maybe 0 getUnspentCredits unspentCreditsMay
-              + maybe 0 getSpentCredits spentCreditsMay
-        supplyMergeCredits
-          (ScaledCredits c)
-          (creditThresholdForLevel conf ln)
-          incomingRun
-        pure Level{
-            residentRuns = snapResidentRuns
-          , ..
+        incomingRun <- fromSnapIncomingRun snapIncoming
+        pure Level {
+            incomingRun
+          , residentRuns = snapResidentRuns
           }
       where
         caching = diskCachePolicyForLevel confDiskCachePolicy ln
@@ -347,30 +334,43 @@ fromSnapLevels reg hfs hbio conf@TableConfig{..} uc resolve dir (SnapLevels leve
 
         fromSnapIncomingRun ::
              SnapIncomingRun (Ref (Run m h))
-          -> m (Maybe UnspentCredits, Maybe SpentCredits, IncomingRun m h)
+          -> m (IncomingRun m h)
+        fromSnapIncomingRun (SnapSingleRun run) =
+            pure (Single run)
         fromSnapIncomingRun (SnapMergingRun mpfl nr ne unspentCredits knownCompleted smrs) = do
             (spentCreditsMay, mrs) <- fromSnapMergingRunState smrs
-            (Just unspentCredits, spentCreditsMay,) . Merging <$>
-              newMergingRun mpfl nr ne knownCompleted mrs
-        fromSnapIncomingRun (SnapSingleRun run) =
-            pure (Nothing, Nothing, Single run)
+            mr <- MR.unsafeNew mpfl nr ne knownCompleted mrs
+
+            -- When a snapshot is created, merge progress is lost, so we have to
+            -- redo merging work here. UnspentCredits and SpentCredits track how
+            -- many credits were supplied before the snapshot was taken.
+            --
+            -- TODO: this use of supplyMergeCredits is leaky! If a merge completes
+            -- in supplyMergeCredits, then the resulting run is not tracked in the
+            -- registry, and closing the input runs is also not tracked in the
+            -- registry. Note, however, that this bit of code is likely to change in
+            -- #392.
+            let c = getUnspentCredits unspentCredits
+                  + maybe 0 getSpentCredits spentCreditsMay
+            MR.supplyCredits (MR.Credits c) (creditThresholdForLevel conf ln) mr
+            return (Merging mr)
 
         fromSnapMergingRunState ::
              SnapMergingRunState (Ref (Run m h))
-          -> m (Maybe SpentCredits, MergingRunState m h)
+          -> m (Maybe SpentCredits, MR.MergingRunState m h)
         fromSnapMergingRunState (SnapCompletedMerge run) =
-            pure (Nothing, CompletedMerge run)
+            pure (Nothing, MR.CompletedMerge run)
         fromSnapMergingRunState (SnapOngoingMerge runs spentCredits mergeLast) = do
-            -- Initialse the variable with 0. Credits will be re-supplied later,
+            -- Initialise the variable with 0. Credits will be re-supplied later,
             -- which will ensure that this variable is updated.
-            spentCreditsVar <- SpentCreditsVar <$> newPrimVar 0
+            spentCreditsVar <- MR.SpentCreditsVar <$> newPrimVar 0
             rn <- uniqueToRunNumber <$> incrUniqCounter uc
             mergeMaybe <- allocateMaybeTemp reg
               (Merge.new hfs hbio caching alloc mergeLast resolve (mkPath rn) runs)
               Merge.abort
             case mergeMaybe of
               Nothing -> error "openLevels: merges can not be empty"
-              Just m  -> pure (Just spentCredits, OngoingMerge runs spentCreditsVar m)
+              Just m  -> pure (Just spentCredits, MR.OngoingMerge runs spentCreditsVar m)
 
 {-------------------------------------------------------------------------------
   Hard links
