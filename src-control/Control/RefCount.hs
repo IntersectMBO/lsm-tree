@@ -321,12 +321,12 @@ deRefWeak (WeakRef obj) = do
 #ifndef NO_IGNORE_ASSERTS
 newRefWithTracker :: PrimMonad m => obj -> m (Ref obj)
 newRefWithTracker obj =
-    return (Ref obj)
+    return $! Ref obj
 #else
 newRefWithTracker :: (PrimMonad m, HasCallStack) => obj -> m (Ref obj)
 newRefWithTracker obj = do
     reftracker' <- newRefTracker callStack
-    return (Ref obj reftracker')
+    return $! Ref obj reftracker'
 #endif
 
 data RefException =

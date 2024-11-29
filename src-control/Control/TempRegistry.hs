@@ -114,7 +114,8 @@ allocateTemp :: (MonadMask m, MonadMVar m) =>
   -> m a
   -> (a -> m ())
   -> m a
-allocateTemp reg acquire free = mustBeRight <$> allocateEitherTemp reg (fmap Right acquire) free
+allocateTemp reg acquire free =
+    mustBeRight <$!> allocateEitherTemp reg (fmap Right acquire) free
   where
     mustBeRight :: Either Void a -> a
     mustBeRight (Left  v) = absurd v
@@ -128,7 +129,8 @@ allocateMaybeTemp ::
   -> m (Maybe a)
   -> (a -> m ())
   -> m (Maybe a)
-allocateMaybeTemp reg acquire free = fromEither <$!> allocateEitherTemp reg (toEither <$> acquire) free
+allocateMaybeTemp reg acquire free =
+    fromEither <$!> allocateEitherTemp reg (toEither <$> acquire) free
   where
     toEither :: Maybe a -> Either () a
     toEither Nothing  = Left ()

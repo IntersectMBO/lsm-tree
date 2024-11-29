@@ -145,7 +145,7 @@ duplicateTableContent reg (TableContent wb wbb levels cache) = do
     wbb'    <- allocateTemp reg (dupRef wbb) releaseRef
     levels' <- duplicateLevels reg levels
     cache'  <- duplicateLevelsCache reg cache
-    return $ TableContent wb wbb' levels' cache'
+    return $! TableContent wb wbb' levels' cache'
 
 {-# SPECIALISE releaseTableContent :: TempRegistry IO -> TableContent IO h -> IO () #-}
 releaseTableContent ::
@@ -441,7 +441,7 @@ duplicateLevels reg levels =
       incomingRun'  <- duplicateIncomingRun reg incomingRun
       residentRuns' <- V.forM residentRuns $ \r ->
                          allocateTemp reg (dupRef r) releaseRef
-      return Level {
+      return $! Level {
         incomingRun  = incomingRun',
         residentRuns = residentRuns'
       }
@@ -787,7 +787,7 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
         -- Make a new level
         let policyForLevel = mergePolicyForLevel confMergePolicy ln V.empty
         ir <- newMerge policyForLevel Merge.LastLevel ln rs
-        return $ V.singleton $ Level ir V.empty
+        return $! V.singleton $ Level ir V.empty
     go !ln rs' (V.uncons -> Just (Level ir rs, ls)) = do
         r <- expectCompletedMergeTraced ln ir
         case mergePolicyForLevel confMergePolicy ln ls of

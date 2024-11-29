@@ -908,7 +908,7 @@ data CursorEnv m h = CursorEnv {
 
     -- | The write buffer blobs, which like the runs, we have to keep open
     -- untile the cursor is closed.
-  , cursorWBB        :: Ref (WBB.WriteBufferBlobs m h)
+  , cursorWBB        :: !(Ref (WBB.WriteBufferBlobs m h))
   }
 
 {-# SPECIALISE withCursor ::
@@ -969,8 +969,8 @@ newCursor !offsetKey t = withOpenTable t $ \thEnv -> do
     -- references to each run, so it is safe.
     dupTableContent reg contentVar = do
         RW.withReadAccess contentVar $ \content -> do
-          let wb      = tableWriteBuffer content
-              wbblobs = tableWriteBufferBlobs content
+          let !wb      = tableWriteBuffer content
+              !wbblobs = tableWriteBufferBlobs content
           wbblobs' <- allocateTemp reg (dupRef wbblobs) releaseRef
           let runs = cachedRuns (tableCache content)
           runs' <- V.forM runs $ \r ->
