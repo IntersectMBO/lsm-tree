@@ -1,3 +1,4 @@
+{-# LANGUAGE MagicHash    #-}
 {-# LANGUAGE TypeFamilies #-}
 
 {-|
@@ -6,20 +7,35 @@
 -}
 module Database.LSMTree.Internal.Index
 (
-    Index (search, sizeInPages, fromSBS),
+    Index (search, sizeInPages, headerLBS, finalLBS, fromSBS),
     IndexAcc (ResultingIndex, appendSingle, appendMulti, unsafeEnd)
 )
 where
 
 import           Control.Monad.ST.Strict (ST)
+import           Data.ByteString.Lazy (LazyByteString)
 import           Data.ByteString.Short (ShortByteString)
 import           Data.Word (Word32)
 import           Database.LSMTree.Internal.Chunk (Chunk)
 import           Database.LSMTree.Internal.Entry (NumEntries)
 import           Database.LSMTree.Internal.Page (NumPages, PageSpan)
 import           Database.LSMTree.Internal.Serialise (SerialisedKey)
+import           GHC.Exts (Proxy#)
 
--- | The class of index types.
+{-|
+    The class of index types.
+
+    This class contains also methods for the non-incremental parts of otherwise
+    incremental serialisation. To completely serialise an index interleaved with
+    its construction, proceed as follows:
+
+     1. Use 'headerLBS' to generate the header of the serialised index.
+
+     2. Incrementally construct the index using the methods of 'IndexAcc', and
+        assemble the body of the serialised index from the generated chunks.
+
+     3. Use 'finalLBS' to generate the footer of the serialised index.
+-}
 class Index i where
 
     {-|
@@ -33,6 +49,21 @@ class Index i where
     -- | Yields the number of pages covered by an index.
     sizeInPages :: i -> NumPages
 
+    {-|
+        Yields the header of the serialised form of an index.
+
+        See the documentation of the 'Index' class for how to generate a
+        complete serialised index.
+    -}
+    headerLBS :: Proxy# i -> LazyByteString
+
+    {-|
+        Yields the footer of the serialised form of an index.
+
+        See the documentation of the 'Index' class for how to generate a
+        complete serialised index.
+    -}
+    finalLBS :: NumEntries -> i -> LazyByteString
     {-|
         Reads an index along with the number of entries of the respective run
         from a byte string.
