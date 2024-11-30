@@ -22,6 +22,7 @@ import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Primitive.ByteArray (ByteArray (..), byteArrayFromList,
                      sizeofByteArray)
+import           Data.Proxy (Proxy (Proxy))
 import qualified Data.Vector.Primitive as VP
 import qualified Data.Vector.Unboxed as VU
 import qualified Data.Vector.Unboxed.Base as VU
@@ -99,7 +100,7 @@ tests = testGroup "Test.Database.LSMTree.Internal.Index.Compact" [
                 , 7, 0
                 ]
 
-          let header = LBS.unpack headerLBS
+          let header = LBS.unpack (headerLBS (Proxy @IndexCompact))
           let primary = LBS.unpack $
                         LBS.fromChunks (map Chunk.toByteString chunks)
           let rest = LBS.unpack (finalLBS (NumEntries 7) index)
@@ -231,7 +232,7 @@ prop_roundtrip_chunks (Chunks chunks index) numEntries =
     counterexample ("rest:\n" <> showBS bsRest) $
       Right (numEntries, index) === fromSBS sbs
   where
-    bsVersion = headerLBS
+    bsVersion = headerLBS (Proxy @IndexCompact)
     bsPrimary = LBS.fromChunks $
                 map (Chunk.toByteString . word64VectorToChunk) chunks
     bsRest = finalLBS numEntries index
@@ -293,7 +294,7 @@ writeIndexCompact numEntries (ChunkSize csize) ps = runST $ do
     cs <- mapM (`append` ica) (toAppends ps)
     (c, index) <- unsafeEnd ica
     return
-      ( headerLBS
+      ( headerLBS (Proxy @IndexCompact)
       , LBS.fromChunks $
         foldMap (map Chunk.toByteString) $ cs <> pure (toList c)
       , finalLBS numEntries index

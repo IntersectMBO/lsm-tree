@@ -13,9 +13,8 @@ module Database.LSMTree.Internal.Index.Compact (
     -- * Non-incremental serialisation
   , toLBS
     -- * Incremental serialisation
-    -- $incremental-serialisation
-  , headerLBS
-  , finalLBS
+  , Index.headerLBS
+  , Index.finalLBS
   , word64VectorToChunk
     -- * Deserialisation
   , Index.fromSBS
@@ -34,6 +33,7 @@ import           Data.Map.Range (Bound (..))
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromMaybe)
+import           Data.Proxy (Proxy (Proxy))
 import           Data.Primitive.ByteArray (ByteArray (..), indexByteArray,
                      sizeofByteArray)
 import           Data.Primitive.Types (sizeOf)
@@ -49,8 +49,8 @@ import           Database.LSMTree.Internal.Chunk (Chunk (Chunk))
 import qualified Database.LSMTree.Internal.Chunk as Chunk (toByteString)
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
 import           Database.LSMTree.Internal.Index (Index)
-import qualified Database.LSMTree.Internal.Index as Index (fromSBS, search,
-                     sizeInPages)
+import qualified Database.LSMTree.Internal.Index as Index (finalLBS, fromSBS,
+                     headerLBS, search, sizeInPages)
 import           Database.LSMTree.Internal.Page
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.Unsliced
@@ -460,7 +460,7 @@ sizeInPages = NumPages . toEnum . VU.length . icPrimary
 -- | Serialises a compact index in one go.
 toLBS :: NumEntries -> IndexCompact -> LBS.ByteString
 toLBS numEntries index =
-     headerLBS
+     headerLBS (Proxy @IndexCompact)
   <> LBS.fromStrict (Chunk.toByteString (word64VectorToChunk (icPrimary index)))
   <> finalLBS numEntries index
 
@@ -468,30 +468,26 @@ toLBS numEntries index =
   Incremental serialisation
 -------------------------------------------------------------------------------}
 
-{- $incremental-serialisation
-
-  To incrementally serialise a compact index as it is being constructed, start
-  by using 'headerLBS'. Each yielded chunk can then be written using
-  'Chunk.toByteString'. Once construction is completed, 'finalLBS' will
-  serialise the remaining parts of the compact index.
-  Also see module "Database.LSMTree.Internal.Index.CompactAcc".
--}
-
 -- | By writing out the type–version indicator in host endianness, we also
 -- indicate endianness. During deserialisation, we would discover an endianness
 -- mismatch.
 supportedTypeAndVersion :: Word32
 supportedTypeAndVersion = 0x0001
 
--- | 64 bits, to be used before writing any other parts of the serialised file!
-headerLBS :: LBS.ByteString
-headerLBS =
+{-|
+    For a specification of this operation, see the documentation of [its
+    polymorphic version]('Index.headerLBS').
+-}
+headerLBS :: Proxy IndexCompact -> LBS.ByteString
+headerLBS _ =
     -- create a single 4 byte chunk
     BB.toLazyByteStringWith (BB.safeStrategy 4 BB.smallChunkSize) mempty $
       BB.word32Host supportedTypeAndVersion <> BB.word32Host 0
 
--- | Writes everything after the primary array, which is assumed to have already
--- been written using 'Chunk.toByteString'.
+{-|
+    For a specification of this operation, see the documentation of [its
+    polymorphic version]('Index.finalLBS').
+-}
 finalLBS :: NumEntries -> IndexCompact -> LBS.ByteString
 finalLBS (NumEntries numEntries) IndexCompact {..} =
     -- use a builder, since it is all relatively small
@@ -689,6 +685,12 @@ instance Index IndexCompact where
 
     sizeInPages :: IndexCompact -> NumPages
     sizeInPages = sizeInPages
+
+    headerLBS :: Proxy IndexCompact -> LBS.ByteString
+    headerLBS = headerLBS
+
+    finalLBS :: NumEntries -> IndexCompact -> LBS.ByteString
+    finalLBS = finalLBS
 
     fromSBS :: ShortByteString -> Either String (NumEntries, IndexCompact)
     fromSBS = fromSBS

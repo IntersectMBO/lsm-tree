@@ -25,6 +25,7 @@ import           Control.Monad.Primitive
 import           Data.BloomFilter (Bloom)
 import qualified Data.ByteString.Lazy as BSL
 import           Data.Primitive.PrimVar
+import           Data.Proxy (Proxy)
 import           Data.Word (Word64)
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..), RawBlobRef)
 import qualified Database.LSMTree.Internal.BlobRef as BlobRef
@@ -204,15 +205,17 @@ writeFilter hfs filterHandle bf =
 {-# SPECIALISE writeIndexHeader ::
      HasFS IO h
   -> ForIndex (ChecksumHandle RealWorld h)
+  -> Proxy IndexCompact
   -> IO () #-}
 writeIndexHeader ::
      (MonadSTM m, PrimMonad m)
   => HasFS m h
   -> ForIndex (ChecksumHandle (PrimState m) h)
+  -> Proxy IndexCompact
   -> m ()
-writeIndexHeader hfs indexHandle =
+writeIndexHeader hfs indexHandle indexTypeProxy =
     writeToHandle hfs (unForIndex indexHandle) $
-      Index.headerLBS
+      Index.headerLBS indexTypeProxy
 
 {-# SPECIALISE writeIndexChunk ::
      HasFS IO h

@@ -17,6 +17,7 @@ import           Control.Monad.Class.MonadThrow (MonadThrow)
 import           Control.Monad.Primitive
 import           Data.BloomFilter (Bloom)
 import           Data.Foldable (for_, traverse_)
+import           Data.Proxy (Proxy (Proxy))
 import           Data.Primitive.PrimVar
 import           Data.Word (Word64)
 import           Database.LSMTree.Internal.BlobRef (RawBlobRef)
@@ -90,7 +91,7 @@ new hfs hbio runBuilderFsPaths numEntries alloc = do
     runBuilderHandles <- traverse (makeHandle hfs) (pathsForRunFiles runBuilderFsPaths)
 
     let builder = RunBuilder { runBuilderHasFS = hfs, runBuilderHasBlockIO = hbio, .. }
-    writeIndexHeader hfs (forRunIndex runBuilderHandles)
+    writeIndexHeader hfs (forRunIndex runBuilderHandles) (Proxy @IndexCompact)
     return builder
 
 {-# SPECIALISE addKeyOp ::
