@@ -140,12 +140,12 @@ instance Index IndexOrdinary where
         typeAndVersion :: Word32
         typeAndVersion = indexByteArray byteArray 0
 
-        postVersionBytes :: Primitive.Vector Word8
-        postVersionBytes = Primitive.drop 4 fullBytes
+        postTypeAndVersionBytes :: Primitive.Vector Word8
+        postTypeAndVersionBytes = Primitive.drop 4 fullBytes
 
         lastKeysBytes, entryCountBytes :: Primitive.Vector Word8
         (lastKeysBytes, entryCountBytes)
-            = Primitive.splitAt (fullSize - 12) postVersionBytes
+            = Primitive.splitAt (fullSize - 12) postTypeAndVersionBytes
 
         entryCount :: Either String NumEntries
         entryCount
