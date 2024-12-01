@@ -3,7 +3,6 @@
 
 module Test.Control.RefCount (tests) where
 
-import           Data.Primitive.PrimVar
 import           Control.Concurrent.Class.MonadMVar
 import           Control.Exception
 import           Control.Monad
