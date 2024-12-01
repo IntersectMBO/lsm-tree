@@ -17,8 +17,8 @@ import           Control.Monad.Class.MonadThrow (MonadThrow)
 import           Control.Monad.Primitive
 import           Data.BloomFilter (Bloom)
 import           Data.Foldable (for_, traverse_)
-import           Data.Proxy (Proxy (Proxy))
 import           Data.Primitive.PrimVar
+import           Data.Proxy (Proxy (Proxy))
 import           Data.Word (Word64)
 import           Database.LSMTree.Internal.BlobRef (RawBlobRef)
 import           Database.LSMTree.Internal.ChecksumHandle

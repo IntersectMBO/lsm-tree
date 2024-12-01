@@ -33,10 +33,10 @@ import           Data.Map.Range (Bound (..))
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromMaybe)
-import           Data.Proxy (Proxy (Proxy))
 import           Data.Primitive.ByteArray (ByteArray (..), indexByteArray,
                      sizeofByteArray)
 import           Data.Primitive.Types (sizeOf)
+import           Data.Proxy (Proxy (Proxy))
 import qualified Data.Vector.Algorithms.Search as VA
 import qualified Data.Vector.Generic as VG
 import qualified Data.Vector.Primitive as VP
