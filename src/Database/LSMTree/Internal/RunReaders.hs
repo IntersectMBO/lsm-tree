@@ -16,8 +16,9 @@ module Database.LSMTree.Internal.RunReaders (
 import           Control.Monad (zipWithM)
 import           Control.Monad.Class.MonadST (MonadST)
 import           Control.Monad.Class.MonadSTM (MonadSTM (..))
-import           Control.Monad.Class.MonadThrow (MonadCatch)
+import           Control.Monad.Class.MonadThrow (MonadMask)
 import           Control.Monad.Primitive
+import           Control.RefCount
 import           Data.Function (on)
 import           Data.Functor ((<&>))
 import           Data.List.NonEmpty (nonEmpty)
@@ -46,8 +47,18 @@ import qualified System.FS.API as FS
 -- Construct with 'new', then keep calling 'pop'.
 -- If aborting early, remember to call 'close'!
 --
--- Creating a 'RunReaders' does not increase the runs' reference count, so make
--- sure they remain open while using the 'RunReaders'.
+-- Creating a 'Readers' does not retain a reference to the input 'Run's or the
+-- 'WriteBufferBlobs', but does retain an independent reference on their blob
+-- files. It is not necessary to separately retain the 'Run's or the
+-- 'WriteBufferBlobs' for correct use of the 'Readers'. There is one important
+-- caveat however: to preserve the validity of 'BlobRef's then it is necessary
+-- to separately retain a reference to the 'Run' or its 'BlobFile' to preserve
+-- the validity of 'BlobRefs'.
+--
+-- TODO: do this more nicely by changing 'Reader' to preserve the 'BlobFile'
+-- ref until it is explicitly closed, and also retain the 'BlobFile' from the
+-- WBB and release all of these 'BlobFiles' once the 'Readers' is itself closed.
+--
 data Readers m h = Readers {
       readersHeap :: !(Heap.MutableHeap (PrimState m) (ReadCtx m h))
       -- | Since there is always one reader outside of the heap, we need to
@@ -109,14 +120,14 @@ type KOp m h = (SerialisedKey, Entry SerialisedValue (RawBlobRef m h))
 
 {-# SPECIALISE new ::
      OffsetKey
-  -> Maybe (WB.WriteBuffer, WB.WriteBufferBlobs IO h)
-  -> V.Vector (Run IO h)
+  -> Maybe (WB.WriteBuffer, Ref (WB.WriteBufferBlobs IO h))
+  -> V.Vector (Ref (Run IO h))
   -> IO (Maybe (Readers IO h)) #-}
 new :: forall m h.
-     (MonadCatch m, MonadSTM m, MonadST m)
+     (MonadMask m, MonadST m, MonadSTM m)
   => OffsetKey
-  -> Maybe (WB.WriteBuffer, WB.WriteBufferBlobs m h)
-  -> V.Vector (Run m h)
+  -> Maybe (WB.WriteBuffer, Ref (WB.WriteBufferBlobs m h))
+  -> V.Vector (Ref (Run m h))
   -> m (Maybe (Readers m h))
 new !offsetKey wbs runs = do
     wBuffer <- maybe (pure Nothing) (uncurry fromWB) wbs
@@ -128,7 +139,7 @@ new !offsetKey wbs runs = do
       return Readers {..}
   where
     fromWB :: WB.WriteBuffer
-           -> WB.WriteBufferBlobs m h
+           -> Ref (WB.WriteBufferBlobs m h)
            -> m (Maybe (ReadCtx m h))
     fromWB wb wbblobs = do
         --TODO: this BlobSpan to BlobRef conversion involves quite a lot of allocation
@@ -140,7 +151,7 @@ new !offsetKey wbs runs = do
             NoOffsetKey -> id
             OffsetKey k -> Map.dropWhileAntitone (< k)
 
-    fromRun :: ReaderNumber -> Run m h -> m (Maybe (ReadCtx m h))
+    fromRun :: ReaderNumber -> Ref (Run m h) -> m (Maybe (ReadCtx m h))
     fromRun n run = do
         reader <- Reader.new offsetKey run
         nextReadCtx n (ReadRun reader)
@@ -150,7 +161,7 @@ new !offsetKey wbs runs = do
   -> IO () #-}
 -- | Only call when aborting before all readers have been drained.
 close ::
-     (MonadSTM m, PrimMonad m)
+     (MonadMask m, MonadSTM m, PrimMonad m)
   => Readers m h
   -> m ()
 close Readers {..} = do
@@ -186,7 +197,7 @@ data HasMore = HasMore | Drained
     Readers IO h
   -> IO (SerialisedKey, Reader.Entry IO h, HasMore) #-}
 pop ::
-     (MonadCatch m, MonadSTM m, MonadST m)
+     (MonadMask m, MonadSTM m, MonadST m)
   => Readers m h
   -> m (SerialisedKey, Reader.Entry m h, HasMore)
 pop r@Readers {..} = do
@@ -199,7 +210,7 @@ pop r@Readers {..} = do
   -> SerialisedKey
   -> IO (Int, HasMore) #-}
 dropWhileKey ::
-     (MonadCatch m, MonadSTM m, MonadST m)
+     (MonadMask m, MonadSTM m, MonadST m)
   => Readers m h
   -> SerialisedKey
   -> m (Int, HasMore)  -- ^ How many were dropped?
@@ -233,7 +244,7 @@ dropWhileKey Readers {..} key = do
   -> Reader IO h
   -> IO HasMore #-}
 dropOne ::
-     (MonadCatch m, MonadSTM m, MonadST m)
+     (MonadMask m, MonadSTM m, MonadST m)
   => Readers m h
   -> ReaderNumber
   -> Reader m h
@@ -254,7 +265,7 @@ dropOne Readers {..} number reader = do
   -> Reader IO h
   -> IO (Maybe (ReadCtx IO h)) #-}
 nextReadCtx ::
-     (MonadCatch m, MonadSTM m, MonadST m)
+     (MonadMask m, MonadSTM m, MonadST m)
   => ReaderNumber
   -> Reader m h
   -> m (Maybe (ReadCtx m h))

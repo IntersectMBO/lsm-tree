@@ -22,6 +22,7 @@ module Test.Database.LSMTree.Internal.Lookup (
 import           Control.DeepSeq
 import           Control.Exception
 import           Control.Monad.ST.Strict
+import           Control.RefCount
 import           Data.Arena (newArenaManager, withUnmanagedArena)
 import           Data.Bifunctor
 import           Data.BloomFilter (Bloom)
@@ -313,9 +314,9 @@ prop_roundtripFromWriteBufferLookupIO (SmallList dats) =
         resolveV
         wb wbblobs
         runs
-        (V.map Run.runFilter runs)
-        (V.map Run.runIndex runs)
-        (V.map Run.runKOpsFile runs)
+        (V.map (\(DeRef r) -> Run.runFilter   r) runs)
+        (V.map (\(DeRef r) -> Run.runIndex    r) runs)
+        (V.map (\(DeRef r) -> Run.runKOpsFile r) runs)
         keys
     pure $ modelres === realres
   where
@@ -334,14 +335,14 @@ withRuns :: FS.HasFS IO h
          -> FS.HasBlockIO IO h
          -> [InMemLookupData SerialisedKey SerialisedValue SerialisedBlob]
          -> (   WB.WriteBuffer
-             -> WBB.WriteBufferBlobs IO h
-             -> V.Vector (Run.Run IO h)
+             -> Ref (WBB.WriteBufferBlobs IO h)
+             -> V.Vector (Ref (Run.Run IO h))
              -> IO a)
          -> IO a
 withRuns hfs _ [] action =
     bracket
       (WBB.new hfs (FS.mkFsPath ["wbblobs"]))
-      WBB.removeReference
+      releaseRef
       (\wbblobs -> action WB.empty wbblobs V.empty)
 
 withRuns hfs hbio (wbdat:rundats) action =
@@ -360,8 +361,8 @@ withRuns hfs hbio (wbdat:rundats) action =
           return (wb, wbblobs, runs))
 
       (\(_wb, wbblobs, runs) -> do
-          V.mapM_ Run.removeReference runs
-          WBB.removeReference wbblobs)
+          V.mapM_ releaseRef runs
+          releaseRef wbblobs)
 
       (\(wb, wbblobs, runs) ->
           action wb wbblobs runs)

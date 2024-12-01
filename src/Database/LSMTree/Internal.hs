@@ -77,8 +77,8 @@ import           Control.DeepSeq
 import           Control.Monad (unless)
 import           Control.Monad.Class.MonadST (MonadST (..))
 import           Control.Monad.Class.MonadThrow
-import           Control.Monad.Fix (MonadFix)
 import           Control.Monad.Primitive
+import           Control.RefCount
 import           Control.TempRegistry
 import           Control.Tracer
 import           Data.Arena (ArenaManager, newArenaManager)
@@ -106,7 +106,6 @@ import           Database.LSMTree.Internal.Paths (SessionRoot (..),
 import qualified Database.LSMTree.Internal.Paths as Paths
 import           Database.LSMTree.Internal.Range (Range (..))
 import           Database.LSMTree.Internal.Run (Run)
-import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunReaders (OffsetKey (..))
 import qualified Database.LSMTree.Internal.RunReaders as Readers
 import           Database.LSMTree.Internal.Serialise (SerialisedBlob (..),
@@ -650,7 +649,7 @@ new sesh conf = do
         tableWriteBufferBlobs
           <- allocateTemp reg
                (WBB.new (sessionHasFS seshEnv) blobpath)
-               WBB.removeReference
+               releaseRef
         let tableWriteBuffer = WB.empty
             tableLevels = V.empty
         tableCache <- mkLevelsCache reg tableLevels
@@ -718,7 +717,7 @@ close t = do
         -- forget about this table.
         freeTemp reg (tableSessionUntrackTable thEnv)
         RW.withWriteAccess_ (tableContent thEnv) $ \tc -> do
-          removeReferenceTableContent reg tc
+          releaseTableContent reg tc
           pure tc
         pure TableClosed
 
@@ -759,7 +758,7 @@ lookups resolve ks t = do
   -> IO (V.Vector res) #-}
 -- | See 'Database.LSMTree.Normal.rangeLookup'.
 rangeLookup ::
-     (MonadFix m, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+     (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => ResolveSerialisedValue
   -> Range SerialisedKey
   -> Table m h
@@ -800,7 +799,7 @@ rangeLookup resolve range t fromEntry = do
 --
 -- Does not enforce that mupsert and blobs should not occur in the same table.
 updates ::
-     (MonadFix m, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+     (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => ResolveSerialisedValue
   -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob)
   -> Table m h
@@ -888,17 +887,28 @@ data CursorEnv m h = CursorEnv {
   , cursorId         :: !Word64
     -- | Readers are immediately discarded once they are 'Readers.Drained',
     -- so if there is a 'Just', we can assume that it has further entries.
-    -- However, the reference counts to the runs only get removed when calling
-    -- 'closeCursor', as there might still be 'BlobRef's that need the
-    -- corresponding run to stay alive.
+    -- Note that, while the readers do retain references on the blob files
+    -- while they are active, once they are drained they do not. This could
+    -- invalidate any 'BlobRef's previously handed out. To avoid this, we
+    -- explicitly retain references on the runs and write buffer blofs and
+    -- only release them when the cursor is closed (see cursorRuns and
+    -- cursorWBB below).
   , cursorReaders    :: !(Maybe (Readers.Readers m h))
-    -- | The runs held open by the cursor. We must remove a reference when the
-    -- cursor gets closed.
-  , cursorRuns       :: !(V.Vector (Run m h))
+
+    --TODO: the cursorRuns and cursorWBB could be replaced by just retaining
+    -- the BlobFile from the runs and WBB, so that we retain less. Since we
+    -- only retain these to keep BlobRefs valid until the cursor is closed.
+    -- Alternatively: the Readers could be modified to keep the BlobFiles even
+    -- once the readers are drained, and only release them when the Readers is
+    -- itself closed.
+
+    -- | The runs held open by the cursor. We must release these references
+    -- when the cursor gets closed.
+  , cursorRuns       :: !(V.Vector (Ref (Run m h)))
 
     -- | The write buffer blobs, which like the runs, we have to keep open
     -- untile the cursor is closed.
-  , cursorWBB        :: WBB.WriteBufferBlobs m h
+  , cursorWBB        :: !(Ref (WBB.WriteBufferBlobs m h))
   }
 
 {-# SPECIALISE withCursor ::
@@ -908,7 +918,7 @@ data CursorEnv m h = CursorEnv {
   -> IO a #-}
 -- | See 'Database.LSMTree.Normal.withCursor'.
 withCursor ::
-     (MonadFix m, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+     (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => OffsetKey
   -> Table m h
   -> (Cursor m h -> m a)
@@ -921,7 +931,7 @@ withCursor offsetKey t = bracket (newCursor offsetKey t) closeCursor
   -> IO (Cursor IO h) #-}
 -- | See 'Database.LSMTree.Normal.newCursor'.
 newCursor ::
-     (MonadFix m, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+     (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => OffsetKey
   -> Table m h
   -> m (Cursor m h)
@@ -937,8 +947,7 @@ newCursor !offsetKey t = withOpenTable t $ \thEnv -> do
     -- 'sessionOpenTables'.
     withOpenSession cursorSession $ \_ -> do
       withTempRegistry $ \reg -> do
-        (wb, wbblobs, cursorRuns) <-
-          allocTableContent reg (tableContent thEnv)
+        (wb, wbblobs, cursorRuns) <- dupTableContent reg (tableContent thEnv)
         cursorReaders <-
           allocateMaybeTemp reg
             (Readers.new offsetKey (Just (wb, wbblobs)) cursorRuns)
@@ -956,21 +965,17 @@ newCursor !offsetKey t = withOpenTable t $ \thEnv -> do
             pure . Map.insert cursorId cursor
         pure $! cursor
   where
-    -- The table contents escape the read access, but we just added
+    -- The table contents escape the read access, but we just duplicate
     -- references to each run, so it is safe.
-    allocTableContent reg contentVar = do
+    dupTableContent reg contentVar = do
         RW.withReadAccess contentVar $ \content -> do
-          let wb      = tableWriteBuffer content
-              wbblobs = tableWriteBufferBlobs content
-          allocateTemp reg
-            (WBB.addReference wbblobs)
-            (\_ -> WBB.removeReference wbblobs)
+          let !wb      = tableWriteBuffer content
+              !wbblobs = tableWriteBufferBlobs content
+          wbblobs' <- allocateTemp reg (dupRef wbblobs) releaseRef
           let runs = cachedRuns (tableCache content)
-          V.forM_ runs $ \r -> do
-            allocateTemp reg
-              (Run.addReference r)
-              (\_ -> Run.removeReference r)
-          pure (wb, wbblobs, runs)
+          runs' <- V.forM runs $ \r ->
+                     allocateTemp reg (dupRef r) releaseRef
+          pure (wb, wbblobs', runs')
 
 {-# SPECIALISE closeCursor :: Cursor IO h -> IO () #-}
 -- | See 'Database.LSMTree.Normal.closeCursor'.
@@ -992,8 +997,8 @@ closeCursor Cursor {..} = do
             pure . Map.delete cursorId
 
         forM_ cursorReaders $ freeTemp reg . Readers.close
-        V.forM_ cursorRuns $ freeTemp reg . Run.removeReference
-        freeTemp reg (WBB.removeReference cursorWBB)
+        V.forM_ cursorRuns $ freeTemp reg . releaseRef
+        freeTemp reg (releaseRef cursorWBB)
         return CursorClosed
 
 {-# SPECIALISE readCursor ::
@@ -1005,7 +1010,7 @@ closeCursor Cursor {..} = do
 -- | See 'Database.LSMTree.Normal.readCursor'.
 readCursor ::
      forall m h res.
-     (MonadFix m, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+     (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => ResolveSerialisedValue
   -> Int  -- ^ Maximum number of entries to read
   -> Cursor m h
@@ -1032,7 +1037,7 @@ readCursor resolve n cursor fromEntry =
 -- calls with the same predicate @p@ will return an empty vector.
 readCursorWhile ::
      forall m h res.
-     (MonadFix m, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+     (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => ResolveSerialisedValue
   -> (SerialisedKey -> Bool)  -- ^ Only read as long as this predicate holds
   -> Int  -- ^ Maximum number of entries to read
@@ -1070,7 +1075,7 @@ readCursorWhile resolve keyIsWanted n Cursor {..} fromEntry = do
   -> IO () #-}
 -- |  See 'Database.LSMTree.Normal.createSnapshot''.
 createSnapshot ::
-     (MonadFix m, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+     (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => ResolveSerialisedValue
   -> SnapshotName
   -> SnapshotLabel
@@ -1143,7 +1148,7 @@ createSnapshot resolve snap label tableType t = do
   -> IO (Table IO h) #-}
 -- |  See 'Database.LSMTree.Normal.openSnapshot'.
 openSnapshot ::
-     (MonadFix m, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+     (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => Session m h
   -> SnapshotLabel -- ^ Expected label
   -> SnapshotTableType -- ^ Expected table type
@@ -1181,10 +1186,8 @@ openSnapshot sesh label tableType override snap resolve = do
         am <- newArenaManager
         blobpath <- Paths.tableBlobPath (sessionRoot seshEnv) <$>
                       incrUniqCounter (sessionUniqCounter seshEnv)
-        tableWriteBufferBlobs
-          <- allocateTemp reg
-               (WBB.new hfs blobpath)
-               WBB.removeReference
+        tableWriteBufferBlobs <- allocateTemp reg (WBB.new hfs blobpath)
+                                                  releaseRef
 
         let actDir = Paths.activeDir (sessionRoot seshEnv)
 
@@ -1207,7 +1210,7 @@ openSnapshot sesh label tableType override snap resolve = do
   -> IO () #-}
 -- |  See 'Database.LSMTree.Common.deleteSnapshot'.
 deleteSnapshot ::
-     (MonadFix m, MonadMask m, MonadSTM m)
+     (MonadMask m, MonadSTM m)
   => Session m h
   -> SnapshotName
   -> m ()
@@ -1225,7 +1228,7 @@ deleteSnapshot sesh snap = do
 {-# SPECIALISE listSnapshots :: Session IO h -> IO [SnapshotName] #-}
 -- |  See 'Database.LSMTree.Common.listSnapshots'.
 listSnapshots ::
-     (MonadFix m, MonadMask m, MonadSTM m)
+     (MonadMask m, MonadSTM m)
   => Session m h
   -> m [SnapshotName]
 listSnapshots sesh = do
@@ -1254,7 +1257,7 @@ listSnapshots sesh = do
 {-# SPECIALISE duplicate :: Table IO h -> IO (Table IO h) #-}
 -- | See 'Database.LSMTree.Normal.duplicate'.
 duplicate ::
-     (MonadFix m, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+     (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => Table m h
   -> m (Table m h)
 duplicate t@Table{..} = do
@@ -1266,9 +1269,7 @@ duplicate t@Table{..} = do
         withTempRegistry $ \reg -> do
           -- The table contents escape the read access, but we just added references
           -- to each run so it is safe.
-          content <- RW.withReadAccess tableContent $ \content -> do
-            addReferenceTableContent reg content
-            pure content
+          content <- RW.withReadAccess tableContent (duplicateTableContent reg)
           newWith
             reg
             tableSession

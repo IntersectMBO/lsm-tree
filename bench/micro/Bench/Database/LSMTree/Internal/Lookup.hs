@@ -5,6 +5,7 @@ module Bench.Database.LSMTree.Internal.Lookup (benchmarks) where
 import           Control.Exception (assert)
 import           Control.Monad
 import           Control.Monad.ST.Strict (stToIO)
+import           Control.RefCount
 import           Criterion.Main (Benchmark, bench, bgroup, env, envWithCleanup,
                      perRunEnv, perRunEnvWithCleanup, whnf, whnfAppIO)
 import           Data.Arena (ArenaManager, closeArena, newArena,
@@ -20,7 +21,7 @@ import           Database.LSMTree.Extras.Random (frequency,
                      sampleUniformWithReplacement, uniformWithoutReplacement)
 import           Database.LSMTree.Extras.UTxO
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
-import           Database.LSMTree.Internal.Entry (Entry (..), unNumEntries)
+import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..))
 import           Database.LSMTree.Internal.Lookup (bloomQueries, indexSearches,
                      intraPageLookups, lookupsIO, prepLookups)
 import           Database.LSMTree.Internal.Page (getNumPages)
@@ -83,9 +84,9 @@ benchmarks = bgroup "Bench.Database.LSMTree.Internal.Lookup" [
 benchLookups :: Config -> Benchmark
 benchLookups conf@Config{name} =
     withEnv $ \ ~(_dir, arenaManager, hasFS, hasBlockIO, rs, ks) ->
-      env ( pure ( V.map Run.runFilter rs
-                 , V.map Run.runIndex rs
-                 , V.map Run.runKOpsFile rs
+      env ( pure ( V.map (\(DeRef r) -> Run.runFilter   r) rs
+                 , V.map (\(DeRef r) -> Run.runIndex    r) rs
+                 , V.map (\(DeRef r) -> Run.runKOpsFile r) rs
                  )
           ) $ \ ~(blooms, indexes, kopsFiles) ->
         bgroup name [
@@ -130,7 +131,7 @@ benchLookups conf@Config{name} =
                 )
                 (\(_, _, _, arena, wbblobs) -> do
                     closeArena arenaManager arena
-                    WBB.removeReference wbblobs)
+                    releaseRef wbblobs)
                 (\ ~(rkixs, ioops, ioress, _, wbblobs_unused) -> do
                   !_ <- intraPageLookups resolveV WB.empty wbblobs_unused
                                          rs ks rkixs ioops ioress
@@ -180,7 +181,7 @@ lookupsInBatchesEnv ::
         , ArenaManager RealWorld
         , FS.HasFS IO FS.HandleIO
         , FS.HasBlockIO IO FS.HandleIO
-        , V.Vector (Run IO FS.HandleIO)
+        , V.Vector (Ref (Run IO FS.HandleIO))
         , V.Vector SerialisedKey
         )
 lookupsInBatchesEnv Config {..} = do
@@ -194,7 +195,7 @@ lookupsInBatchesEnv Config {..} = do
         fsps = RunFsPaths (FS.mkFsPath []) (RunNumber 0)
     wbblobs <- WBB.new hasFS (FS.mkFsPath [])
     r <- Run.fromWriteBuffer hasFS hasBlockIO caching (RunAllocFixed 10) fsps wb wbblobs
-    let nentriesReal = unNumEntries $ Run.runNumEntries r
+    let NumEntries nentriesReal = Run.size r
     assert (nentriesReal == nentries) $ pure ()
     let npagesReal = Run.sizeInPages r
     assert (getNumPages npagesReal * 42 <= nentriesReal) $ pure ()
@@ -212,13 +213,13 @@ lookupsInBatchesCleanup ::
      , ArenaManager RealWorld
      , FS.HasFS IO FS.HandleIO
      , FS.HasBlockIO IO FS.HandleIO
-     , V.Vector (Run IO FS.HandleIO)
+     , V.Vector (Ref (Run IO FS.HandleIO))
      , V.Vector SerialisedKey
      )
   -> IO ()
 lookupsInBatchesCleanup (tmpDir, _arenaManager, _hasFS, hasBlockIO, rs, _) = do
     FS.close hasBlockIO
-    forM_ rs Run.removeReference
+    forM_ rs releaseRef
     removeDirectoryRecursive tmpDir
 
 -- | Generate keys to store and keys to lookup

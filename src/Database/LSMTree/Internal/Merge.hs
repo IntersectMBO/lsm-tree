@@ -19,12 +19,9 @@ import           Control.Exception (assert)
 import           Control.Monad (when)
 import           Control.Monad.Class.MonadST (MonadST)
 import           Control.Monad.Class.MonadSTM (MonadSTM (..))
-import           Control.Monad.Class.MonadThrow (MonadCatch, MonadMask,
-                     MonadThrow (..))
-import           Control.Monad.Fix (MonadFix)
+import           Control.Monad.Class.MonadThrow (MonadMask, MonadThrow)
 import           Control.Monad.Primitive (PrimState)
-import           Control.RefCount (RefCount (..))
-import           Data.Coerce (coerce)
+import           Control.RefCount
 import           Data.Primitive.MutVar
 import           Data.Traversable (for)
 import qualified Data.Vector as V
@@ -87,12 +84,12 @@ type Mappend = SerialisedValue -> SerialisedValue -> SerialisedValue
   -> Level
   -> Mappend
   -> Run.RunFsPaths
-  -> V.Vector (Run IO h)
+  -> V.Vector (Ref (Run IO h))
   -> IO (Maybe (Merge IO h)) #-}
 -- | Returns 'Nothing' if no input 'Run' contains any entries.
 -- The list of runs should be sorted from new to old.
 new ::
-     (MonadCatch m, MonadSTM m, MonadST m)
+     (MonadMask m, MonadSTM m, MonadST m)
   => HasFS m h
   -> HasBlockIO m h
   -> RunDataCaching
@@ -100,14 +97,14 @@ new ::
   -> Level
   -> Mappend
   -> Run.RunFsPaths
-  -> V.Vector (Run m h)
+  -> V.Vector (Ref (Run m h))
   -> m (Maybe (Merge m h))
 new fs hbio mergeCaching alloc mergeLevel mergeMappend targetPaths runs = do
     -- no offset, no write buffer
     mreaders <- Readers.new Readers.NoOffsetKey Nothing runs
     for mreaders $ \mergeReaders -> do
       -- calculate upper bounds based on input runs
-      let numEntries = coerce (sum @V.Vector @Int) (fmap Run.runNumEntries runs)
+      let numEntries = V.foldMap' Run.size runs
       mergeBuilder <- Builder.new fs hbio targetPaths numEntries alloc
       mergeState <- newMutVar $! Merging
       return Merge {
@@ -122,7 +119,7 @@ new fs hbio mergeCaching alloc mergeLevel mergeMappend targetPaths runs = do
 -- created for the new run so far and avoids leaking file handles.
 --
 -- Once it has been called, do not use the 'Merge' any more!
-abort :: (MonadSTM m, MonadST m) => Merge m h -> m ()
+abort :: (MonadMask m, MonadSTM m, MonadST m) => Merge m h -> m ()
 abort Merge {..} = do
     readMutVar mergeState >>= \case
       Merging -> do
@@ -139,13 +136,11 @@ abort Merge {..} = do
 
 {-# SPECIALISE complete ::
      Merge IO h
-  -> IO (Run IO h) #-}
+  -> IO (Ref (Run IO h)) #-}
 -- | Complete a 'Merge', returning a new 'Run' as the result of merging the
 -- input runs.
 --
 -- All resources held by the merge are released, so do not use the it any more!
---
--- The resulting run has a reference count of 1.
 --
 -- This function will /not/ do any merging work if there is any remaining. That
 -- is, if not enough 'steps' were performed to exhaust the input 'Readers', this
@@ -156,17 +151,18 @@ abort Merge {..} = do
 --
 -- Note: this function creates new 'Run' resources, so it is recommended to run
 -- this function with async exceptions masked. Otherwise, these resources can
--- leak.
+-- leak. And it must eventually be released with 'releaseRef'.
+--
 complete ::
-     (MonadFix m, MonadSTM m, MonadST m, MonadMask m)
+     (MonadSTM m, MonadST m, MonadMask m)
   => Merge m h
-  -> m (Run m h)
+  -> m (Ref (Run m h))
 complete Merge{..} = do
     readMutVar mergeState >>= \case
       Merging -> error "complete: Merge is not done"
       MergingDone -> do
         -- the readers are already drained, therefore closed
-        r <- Run.fromMutable mergeCaching (RefCount 1) mergeBuilder
+        r <- Run.fromMutable mergeCaching mergeBuilder
         writeMutVar mergeState $! Completed
         pure r
       Completed -> error "complete: Merge is already completed"
@@ -175,15 +171,15 @@ complete Merge{..} = do
 {-# SPECIALISE stepsToCompletion ::
      Merge IO h
   -> Int
-  -> IO (Run IO h) #-}
+  -> IO (Ref (Run IO h)) #-}
 -- | Like 'steps', but calling 'complete' once the merge is finished.
 --
 -- Note: run with async exceptions masked. See 'complete'.
 stepsToCompletion ::
-      (MonadMask m, MonadFix m, MonadSTM m, MonadST m)
+      (MonadMask m, MonadSTM m, MonadST m)
    => Merge m h
    -> Int
-   -> m (Run m h)
+   -> m (Ref (Run m h))
 stepsToCompletion m stepBatchSize = go
   where
     go = do
@@ -194,15 +190,15 @@ stepsToCompletion m stepBatchSize = go
 {-# SPECIALISE stepsToCompletionCounted ::
      Merge IO h
   -> Int
-  -> IO (Int, Run IO h) #-}
+  -> IO (Int, Ref (Run IO h)) #-}
 -- | Like 'steps', but calling 'complete' once the merge is finished.
 --
 -- Note: run with async exceptions masked. See 'complete'.
 stepsToCompletionCounted ::
-     (MonadMask m, MonadFix m, MonadSTM m, MonadST m)
+     (MonadMask m, MonadSTM m, MonadST m)
   => Merge m h
   -> Int
-  -> m (Int, Run m h)
+  -> m (Int, Ref (Run m h))
 stepsToCompletionCounted m stepBatchSize = go 0
   where
     go !stepsSum = do
@@ -234,7 +230,7 @@ stepsInvariant requestedSteps = \case
 -- Returns an error if the merge was already completed or closed.
 steps ::
      forall m h.
-     (MonadCatch m, MonadSTM m, MonadST m)
+     (MonadMask m, MonadSTM m, MonadST m)
   => Merge m h
   -> Int  -- ^ How many input entries to consume (at least)
   -> m (Int, StepResult)

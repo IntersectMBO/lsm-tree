@@ -7,7 +7,6 @@ module Database.LSMTree.Internal.Cursor (
 import           Control.Concurrent.Class.MonadSTM (MonadSTM (..))
 import           Control.Monad.Class.MonadST (MonadST (..))
 import           Control.Monad.Class.MonadThrow
-import           Control.Monad.Fix (MonadFix)
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.BlobRef (RawBlobRef,
                      WeakBlobRef (..))
@@ -36,7 +35,7 @@ import qualified Database.LSMTree.Internal.Vector as V
 --   readers have not been drained yet, so we must check before calling them
 -- * there is probably opportunity for optimisations
 readEntriesWhile :: forall h m res.
-     (MonadFix m, MonadMask m, MonadST m, MonadSTM m)
+     (MonadMask m, MonadST m, MonadSTM m)
   => ResolveSerialisedValue
   -> (SerialisedKey -> Bool)
   -> (SerialisedKey -> SerialisedValue -> Maybe (WeakBlobRef m h) -> res)

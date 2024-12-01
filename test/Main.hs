@@ -2,6 +2,8 @@
 --
 module Main (main) where
 
+import qualified Control.RefCount
+
 import qualified Test.Data.Arena
 import qualified Test.Database.LSMTree.Class.Monoidal
 import qualified Test.Database.LSMTree.Class.Normal
@@ -39,7 +41,8 @@ import qualified Test.System.Posix.Fcntl.NoCache
 import           Test.Tasty
 
 main :: IO ()
-main = defaultMain $ testGroup "lsm-tree"
+main = do
+  defaultMain $ testGroup "lsm-tree"
     [ Test.Database.LSMTree.Class.Normal.tests
     , Test.Database.LSMTree.Class.Monoidal.tests
     , Test.Database.LSMTree.Generators.tests
@@ -75,3 +78,16 @@ main = defaultMain $ testGroup "lsm-tree"
     , Test.System.Posix.Fcntl.NoCache.tests
     , Test.Data.Arena.tests
     ]
+  Control.RefCount.checkForgottenRefs
+  -- This use of checkForgottenRefs is a last resort. Refs that are forgotten
+  -- before being released are detected by the first Ref operation after a
+  -- major GC. So they may be thrown during the run of individual tests (though
+  -- depending on GC timing this may be during a subsequent test to the one
+  -- that triggered the bug). As a last resort, checkForgottenRefs does a last
+  -- major GC and will trigger any forgotten refs. So this will reliably catch
+  -- the errors, but will not identify where they come from, not even which
+  -- test!
+  --
+  -- If this exception occurs, it may be necessary to put proper use of
+  -- checkForgottenRefs into the tests suspected of being the culprit to
+  -- identiyfy which one is really failing.

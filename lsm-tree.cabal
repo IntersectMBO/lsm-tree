@@ -476,6 +476,7 @@ benchmark lsm-tree-micro-bench
     , lsm-tree
     , lsm-tree:blockio-api
     , lsm-tree:bloomfilter
+    , lsm-tree:control
     , lsm-tree:extras
     , QuickCheck
     , random
@@ -864,6 +865,7 @@ test-suite control-test
     , io-classes
     , io-sim
     , lsm-tree:control
+    , primitive
     , QuickCheck
     , tasty
     , tasty-quickcheck

@@ -49,7 +49,6 @@ import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Concurrent.Class.MonadSTM (MonadSTM, STM)
 import           Control.Monad.Class.MonadST
 import           Control.Monad.Class.MonadThrow
-import           Control.Monad.Fix (MonadFix)
 import           Control.Monad.Primitive (PrimMonad)
 import           Control.Tracer (Tracer)
 import           Data.Kind (Type)
@@ -73,7 +72,7 @@ import           System.FS.IO (HandleIO)
 
 -- | Utility class for grouping @io-classes@ constraints.
 class ( MonadMVar m, MonadSTM m, MonadThrow (STM m), MonadThrow m, MonadCatch m
-      , MonadMask m, PrimMonad m, MonadFix m , MonadST m
+      , MonadMask m, PrimMonad m, MonadST m
       ) => IOLike m
 
 instance IOLike IO
