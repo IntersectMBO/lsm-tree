@@ -24,8 +24,9 @@ import qualified Data.Vector as V
 import           Data.Void (Void)
 import           Database.LSMTree.Class.Normal (IsSession (..),
                      SessionArgs (..), withSession)
-import           Database.LSMTree.Common as Types (IOLike, Labellable (..),
-                     Range (..), SerialiseKey, SerialiseValue, SnapshotName)
+import           Database.LSMTree.Common as Types (IOLike, Range (..),
+                     SerialiseKey, SerialiseValue, SnapshotLabel (..),
+                     SnapshotName)
 import           Database.LSMTree.Monoidal as Types (LookupResult (..),
                      QueryResult (..), ResolveValue, Update (..))
 import qualified Database.LSMTree.Monoidal as R
@@ -154,25 +155,25 @@ class (IsSession (Session h)) => IsTable h where
 
     createSnapshot ::
            ( IOLike m
-           , Labellable (k, v)
            , ResolveValue v
            , SerialiseKey k
            , SerialiseValue v
            , C k v Void
            )
-        => SnapshotName
+        => SnapshotLabel
+        -> SnapshotName
         -> h m k v
         -> m ()
 
     openSnapshot ::
            ( IOLike m
-           , Labellable (k, v)
            , ResolveValue v
            , SerialiseKey k
            , SerialiseValue v
            , C k v Void
            )
         => Session h m
+        -> SnapshotLabel
         -> SnapshotName
         -> m (h m k v)
 
@@ -210,14 +211,14 @@ withTableFromSnapshot :: forall h m k v a.
      , ResolveValue v
      , SerialiseKey k
      , SerialiseValue v
-     , Labellable (k, v)
      , C k v Void
      )
   => Session h m
+  -> SnapshotLabel
   -> SnapshotName
   -> (h m k v -> m a)
   -> m a
-withTableFromSnapshot sesh snap = bracket (openSnapshot sesh snap) close
+withTableFromSnapshot sesh label snap = bracket (openSnapshot sesh label snap) close
 
 withTableDuplicate :: forall h m k v a.
      ( IOLike m

@@ -84,7 +84,7 @@ module Database.LSMTree.Normal (
     -- * Durability (snapshots)
   , SnapshotName
   , Common.mkSnapshotName
-  , Common.Labellable (..)
+  , Common.SnapshotLabel (..)
   , createSnapshot
   , openSnapshot
   , Common.TableConfigOverride
@@ -115,7 +115,7 @@ import           Control.Exception (throw)
 import           Control.Monad
 import           Data.Bifunctor (Bifunctor (..))
 import           Data.Kind (Type)
-import           Data.Typeable (Proxy (..), eqT, type (:~:) (Refl))
+import           Data.Typeable (eqT, type (:~:) (Refl))
 import qualified Data.Vector as V
 import           Database.LSMTree.Common (BlobRef (BlobRef), IOLike, Range (..),
                      SerialiseKey, SerialiseValue, Session, SnapshotName,
@@ -635,8 +635,8 @@ retrieveBlobs (Internal.Session' (sesh :: Internal.Session m h)) refs =
 -------------------------------------------------------------------------------}
 
 {-# SPECIALISE createSnapshot ::
-     Common.Labellable (k, v, blob)
-  => SnapshotName
+     Common.SnapshotLabel
+  -> SnapshotName
   -> Table IO k v blob
   -> IO () #-}
 -- | Make the current value of a table durable on-disk by taking a snapshot and
@@ -646,6 +646,11 @@ retrieveBlobs (Internal.Session' (sesh :: Internal.Session m h)) refs =
 -- Snapshots have names and the table may be opened later using 'openSnapshot'
 -- via that name. Names are strings and the management of the names is up to
 -- the user of the library.
+--
+-- Snapshot labels are included in the snapshot metadata when a snapshot is
+-- created. Labels are text and the management of the labels is up to the user
+-- of the library. Labels assigns a dynamically checked "type" to a snapshot.
+-- See 'Common.SnapshotLabel' for more information.
 --
 -- The names correspond to disk files, which imposes some constraints on length
 -- and what characters can be used.
@@ -661,24 +666,25 @@ retrieveBlobs (Internal.Session' (sesh :: Internal.Session m h)) refs =
 -- * It is safe to concurrently make snapshots from any table, provided that
 --   the snapshot names are distinct (otherwise this would be a race).
 createSnapshot :: forall m k v blob.
-     ( IOLike m
-     , Common.Labellable (k, v, blob)
-     )
-  => SnapshotName
+     IOLike m
+  => Common.SnapshotLabel
+  -> SnapshotName
   -> Table m k v blob
   -> m ()
-createSnapshot snap (Internal.NormalTable t) =
+createSnapshot label snap (Internal.NormalTable t) =
     Internal.createSnapshot const snap label Internal.SnapNormalTable t
-  where
-    label = Internal.SnapshotLabel $ Common.makeSnapshotLabel (Proxy @(k, v, blob))
 
 {-# SPECIALISE openSnapshot ::
-     Common.Labellable (k, v, blob)
-  => Session IO
+     Session IO
   -> Common.TableConfigOverride
+  -> Common.SnapshotLabel
   -> SnapshotName
   -> IO (Table IO k v blob ) #-}
 -- | Open a table from a named snapshot, returning a new table.
+--
+-- This function requires passing in an expected label that will be checked
+-- against the label that was included in the snapshot metadata. If there is a
+-- mismatch, an exception is thrown.
 --
 -- NOTE: close tables using 'close' as soon as they are
 -- unused.
@@ -697,14 +703,13 @@ createSnapshot snap (Internal.NormalTable t) =
 --   'openSnapshot' \@IO \@Bool \@Bool \@Bool session "intTable"
 -- @
 openSnapshot :: forall m k v blob.
-     ( IOLike m
-     , Common.Labellable (k, v, blob)
-     )
+     IOLike m
   => Session m
   -> Common.TableConfigOverride -- ^ Optional config override
+  -> Common.SnapshotLabel
   -> SnapshotName
   -> m (Table m k v blob)
-openSnapshot (Internal.Session' sesh) override snap =
+openSnapshot (Internal.Session' sesh) override label snap =
     Internal.NormalTable <$!>
       Internal.openSnapshot
         sesh
@@ -713,8 +718,6 @@ openSnapshot (Internal.Session' sesh) override snap =
         override
         snap
         const
-  where
-    label = Internal.SnapshotLabel $ Common.makeSnapshotLabel (Proxy @(k, v, blob))
 
 {-------------------------------------------------------------------------------
   Mutiple writable tables

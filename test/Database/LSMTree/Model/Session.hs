@@ -89,7 +89,7 @@ import           Data.Maybe (fromJust)
 import qualified Data.Vector as V
 import           Data.Word
 import           Database.LSMTree.Common (SerialiseKey (..),
-                     SerialiseValue (..), SnapshotName)
+                     SerialiseValue (..), SnapshotLabel, SnapshotName)
 import           Database.LSMTree.Model.Table (LookupResult (..),
                      QueryResult (..), Range (..), ResolveSerialisedValue (..),
                      Update (..), getResolve, noResolve)
@@ -441,7 +441,7 @@ liftBlobRefs hid = fmap (fmap (BlobRef hid))
   Snapshots
 -------------------------------------------------------------------------------}
 
-data Snapshot = Snapshot TableConfig SomeTable
+data Snapshot = Snapshot TableConfig SnapshotLabel SomeTable
   deriving stock Show
 
 createSnapshot ::
@@ -449,10 +449,11 @@ createSnapshot ::
      , MonadError Err m
      , C k v blob
      )
-  => SnapshotName
+  => SnapshotLabel
+  -> SnapshotName
   -> Table k v blob
   -> m ()
-createSnapshot name t@Table{..} = do
+createSnapshot label name t@Table{..} = do
     (updc, table) <- guardTableIsOpen t
     snaps <- gets snapshots
     -- TODO: For the moment we allow snapshot to invalidate blob refs.
@@ -469,7 +470,7 @@ createSnapshot name t@Table{..} = do
     when (Map.member name snaps) $
       throwError ErrSnapshotExists
     modify (\m -> m {
-        snapshots = Map.insert name (Snapshot config $ toSomeTable $ Model.snapshot table) (snapshots m)
+        snapshots = Map.insert name (Snapshot config label $ toSomeTable $ Model.snapshot table) (snapshots m)
       })
 
 openSnapshot ::
@@ -478,17 +479,26 @@ openSnapshot ::
      , MonadError Err m
      , C k v blob
      )
-  => SnapshotName
+  => SnapshotLabel
+  -> SnapshotName
   -> m (Table k v blob)
-openSnapshot name = do
+openSnapshot label name = do
     snaps <- gets snapshots
     case Map.lookup name snaps of
       Nothing ->
         throwError ErrSnapshotDoesNotExist
-      Just (Snapshot conf tbl) ->
+      Just (Snapshot conf label' tbl) -> do
+        when (label /= label') $
+          throwError ErrSnapshotWrongType
         case fromSomeTable tbl of
           Nothing ->
-            throwError ErrSnapshotWrongType
+            -- The label should contain enough information to type snapshots,
+            -- but it's up to the user to pick labels. If the labels are picked
+            -- badly, then the SUT would fail with any number of and type of
+            -- errors. The model simply does not allow this to occur: if we fail
+            -- to cast modelled tables, then we consider it to be a bug in the
+            -- test setup, and so we use @error@ instead of @throwError@.
+            error "openSnapshot: snapshot opened at wrong type"
           Just table' ->
             newTableWith conf table'
 

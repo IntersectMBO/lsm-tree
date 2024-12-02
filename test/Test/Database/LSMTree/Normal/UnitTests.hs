@@ -13,7 +13,6 @@ import qualified Data.Vector as V
 import           Data.Word
 import qualified System.FS.API as FS
 
-import           Database.LSMTree.Internal.Snapshot (SnapshotLabel (..))
 import           Database.LSMTree.Normal as R
 
 import           Control.Exception (Exception, try)
@@ -105,10 +104,10 @@ unit_twoTableTypes =
       inserts table1 ins1
       inserts table2 ins2
 
-      createSnapshot snap1 table1
-      createSnapshot snap2 table2
-      table1' <- openSnapshot @_ @Key1 @Value1 @Blob1 sess configNoOverride snap1
-      table2' <- openSnapshot @_ @Key2 @Value2 @Blob2 sess configNoOverride snap2
+      createSnapshot label1 snap1 table1
+      createSnapshot label2 snap2 table2
+      table1' <- openSnapshot @_ @Key1 @Value1 @Blob1 sess configNoOverride label1 snap1
+      table2' <- openSnapshot @_ @Key2 @Value2 @Blob2 sess configNoOverride label2 snap2
 
       vs1 <- lookups table1' ((\(k,_,_)->k) <$> ins1)
       vs2 <- lookups table2' ((\(k,_,_)->k) <$> ins2)
@@ -129,18 +128,18 @@ unit_snapshots =
       assertException (ErrSnapshotNotExists snap2) $
         deleteSnapshot sess snap2
 
-      createSnapshot snap1 table
+      createSnapshot label1 snap1 table
       assertException (ErrSnapshotExists snap1) $
-        createSnapshot snap1 table
+        createSnapshot label1 snap1 table
 
       assertException (ErrSnapshotWrongLabel snap1
                         (SnapshotLabel "Key2 Value2 Blob2")
                         (SnapshotLabel "Key1 Value1 Blob1")) $ do
-        _ <- openSnapshot @_ @Key2 @Value2 @Blob2 sess configNoOverride snap1
+        _ <- openSnapshot @_ @Key2 @Value2 @Blob2 sess configNoOverride label2 snap1
         return ()
 
       assertException (ErrSnapshotNotExists snap2) $ do
-        _ <- openSnapshot @_ @Key1 @Value1 @Blob1 sess configNoOverride snap2
+        _ <- openSnapshot @_ @Key1 @Value1 @Blob1 sess configNoOverride label2 snap2
         return ()
   where
     snap1, snap2 :: SnapshotName
@@ -171,8 +170,8 @@ newtype Blob1  = Blob1 Word64
   deriving stock (Show, Eq, Ord)
   deriving newtype (SerialiseValue)
 
-instance Labellable (Key1, Value1, Blob1) where
-  makeSnapshotLabel _ = "Key1 Value1 Blob1"
+label1 :: SnapshotLabel
+label1 = SnapshotLabel "Key1 Value1 Blob1"
 
 newtype Key2 = Key2 KeyForIndexCompact
   deriving stock (Show, Eq, Ord)
@@ -186,5 +185,5 @@ newtype Blob2  = Blob2 BS.ByteString
   deriving stock (Show, Eq, Ord)
   deriving newtype (SerialiseValue)
 
-instance Labellable (Key2, Value2, Blob2) where
-  makeSnapshotLabel _ = "Key2 Value2 Blob2"
+label2 :: SnapshotLabel
+label2 = SnapshotLabel "Key2 Value2 Blob2"

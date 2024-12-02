@@ -87,8 +87,8 @@ type K = BS.ShortByteString
 type V = BS.ShortByteString
 type B = Void
 
-instance LSM.Labellable (K, V, B) where
-  makeSnapshotLabel _ = "K V B"
+label :: LSM.SnapshotLabel
+label = LSM.SnapshotLabel "K V B"
 
 -- | We generate 34 byte keys by using a PRNG to extend a word64 to 32 bytes
 -- and then appending two constant bytes. This corresponds relatively closely
@@ -418,7 +418,7 @@ doSetup' gopts opts = do
                 | i <- NE.toList batch
                 ]
 
-        LSM.createSnapshot name tbl
+        LSM.createSnapshot label name tbl
 
 -------------------------------------------------------------------------------
 -- dry-run
@@ -577,7 +577,7 @@ doRun gopts opts = do
         -- necessary for testing to load the whole snapshot).
         tbl <- if check opts
                 then LSM.new  @IO @K @V @B session (mkTableConfigRun gopts LSM.defaultTableConfig)
-                else LSM.openSnapshot @IO @K @V @B session (mkTableConfigOverride gopts) name
+                else LSM.openSnapshot @IO @K @V @B session (mkTableConfigOverride gopts) label name
 
         -- In checking mode, compare each output against a pure reference.
         checkvar <- newIORef $ pureReference
