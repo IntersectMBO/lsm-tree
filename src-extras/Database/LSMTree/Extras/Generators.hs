@@ -61,8 +61,6 @@ import qualified Database.LSMTree.Internal.Serialise.Class as S.Class
 import           Database.LSMTree.Internal.Unsliced (Unsliced, fromUnslicedKey,
                      makeUnslicedKey)
 import           Database.LSMTree.Internal.Vector (mkPrimVector)
-import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
-import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import qualified Database.LSMTree.Monoidal as Monoidal
 import qualified Database.LSMTree.Normal as Normal
 import           GHC.Generics (Generic)
@@ -171,14 +169,6 @@ instance Arbitrary2 Entry where
                             (liftShrink2 shrinkVal shrinkBlob (v, b))
     Mupdate v          -> Delete : Insert v : (Mupdate <$> shrinkVal v)
     Delete             -> []
-
-{-------------------------------------------------------------------------------
-  WriteBuffer
--------------------------------------------------------------------------------}
-
-instance Arbitrary WriteBuffer where
-  arbitrary = WB.fromMap <$> arbitrary
-  shrink = map WB.fromMap . shrink . WB.toMap
 
 {-------------------------------------------------------------------------------
   WithSerialised
