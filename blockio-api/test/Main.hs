@@ -15,6 +15,7 @@ import           Control.Monad
 import           Control.Monad.Primitive
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Char8 as BSC
 import           Data.Foldable (traverse_)
 import           Data.Functor.Compose (Compose (Compose))
 import           Data.Maybe (catMaybes)
@@ -22,8 +23,8 @@ import           Data.Primitive.ByteArray
 import           Data.Typeable
 import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as VU
-import qualified System.FS.API as FS
 import           System.FS.API
+import qualified System.FS.API.Strict as FS
 import           System.FS.API.Strict (hPutAllStrict)
 import qualified System.FS.BlockIO.API as FS
 import           System.FS.BlockIO.API
@@ -47,6 +48,11 @@ tests = testGroup "blockio-api" [
     , testProperty "prop_readWrite" prop_readWrite
     , testProperty "prop_submitToClosedCtx" prop_submitToClosedCtx
     , testProperty "prop_tryLockFileExclusiveTwice" prop_tryLockFileExclusiveTwice
+    , testProperty "prop_synchronise" prop_synchronise
+    , testProperty "prop_synchroniseFile_fileDoesNotExist"
+        prop_synchroniseFile_fileDoesNotExist
+    , testProperty "prop_synchroniseDirectory_directoryDoesNotExist"
+        prop_synchroniseDirectory_directoryDoesNotExist
     ]
 
 instance Arbitrary ByteString where
@@ -164,3 +170,38 @@ prop_tryLockFileExclusiveTwice = ioProperty $
                 False
   where
     fsp = FS.mkFsPath ["lockfile"]
+
+{-------------------------------------------------------------------------------
+  Storage synchronisation
+-------------------------------------------------------------------------------}
+
+prop_synchronise :: Property
+prop_synchronise =
+    ioProperty $
+    withTempIOHasBlockIO "temp" $ \hfs hbio -> do
+      FS.createDirectory hfs dir
+      FS.withFile hfs file (FS.ReadWriteMode FS.MustBeNew) $ \h ->
+        void $ FS.hPutAllStrict hfs h (BSC.pack "file-contents")
+      FS.synchroniseFile hfs hbio file
+      FS.synchroniseDirectory hbio dir
+  where
+    dir = FS.mkFsPath ["dir"]
+    file = dir FS.</> FS.mkFsPath ["file"]
+
+prop_synchroniseFile_fileDoesNotExist :: Property
+prop_synchroniseFile_fileDoesNotExist =
+    expectFailure $
+    ioProperty $
+    withTempIOHasBlockIO "temp" $ \hfs hbio -> do
+      FS.synchroniseFile hfs hbio file
+  where
+    file = FS.mkFsPath ["file"]
+
+prop_synchroniseDirectory_directoryDoesNotExist :: Property
+prop_synchroniseDirectory_directoryDoesNotExist =
+    expectFailure $
+    ioProperty $
+    withTempIOHasBlockIO "temp" $ \_hfs hbio -> do
+      FS.synchroniseDirectory hbio dir
+  where
+    dir = FS.mkFsPath ["dir"]
