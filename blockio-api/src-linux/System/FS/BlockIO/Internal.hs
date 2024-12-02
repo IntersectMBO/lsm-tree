@@ -4,7 +4,10 @@ module System.FS.BlockIO.Internal (
     ioHasBlockIO
   ) where
 
-import           System.FS.API (Handle (..), HasFS)
+#include "HsUnixConfig.h"
+
+import qualified System.FS.API as FS
+import           System.FS.API (FsPath, Handle (..), HasFS)
 import qualified System.FS.BlockIO.API as FS
 import           System.FS.BlockIO.API (Advice (..), FileOffset, HasBlockIO,
                      IOCtxParams)
@@ -12,6 +15,8 @@ import           System.FS.IO (HandleIO)
 import qualified System.FS.IO.Handle as FS
 import qualified System.Posix.Fcntl as Fcntl
 import qualified System.Posix.Fcntl.NoCache as Unix
+import qualified System.Posix.Files as Unix
+import qualified System.Posix.Unistd as Unix
 
 #if SERIALBLOCKIO
 import qualified System.FS.BlockIO.Serial as Serial
@@ -24,9 +29,28 @@ ioHasBlockIO ::
   -> IOCtxParams
   -> IO (HasBlockIO IO HandleIO)
 #if SERIALBLOCKIO
-ioHasBlockIO hfs _params = Serial.serialHasBlockIO hSetNoCache hAdvise hAllocate (FS.tryLockFileIO hfs) hfs
+ioHasBlockIO hfs _params =
+    Serial.serialHasBlockIO
+      hSetNoCache
+      hAdvise
+      hAllocate
+      (FS.tryLockFileIO hfs)
+      hSynchronise
+      (synchroniseDirectory hfs)
+      (FS.createHardLinkIO hfs Unix.createLink)
+      hfs
 #else
-ioHasBlockIO hfs  params = Async.asyncHasBlockIO   hSetNoCache hAdvise hAllocate (FS.tryLockFileIO hfs) hfs params
+ioHasBlockIO hfs  params =
+    Async.asyncHasBlockIO
+      hSetNoCache
+      hAdvise
+      hAllocate
+      (FS.tryLockFileIO hfs)
+      hSynchronise
+      (synchroniseDirectory hfs)
+      (FS.createHardLinkIO hfs Unix.createLink)
+      hfs
+      params
 #endif
 
 hSetNoCache :: Handle HandleIO -> Bool -> IO ()
@@ -48,3 +72,16 @@ hAdvise h off len advice = FS.withOpenHandle "hAdvise" (handleRaw h) $ \fd ->
 hAllocate :: Handle HandleIO -> FileOffset -> FileOffset -> IO ()
 hAllocate h off len = FS.withOpenHandle "hAllocate" (handleRaw h) $ \fd ->
     Fcntl.fileAllocate fd off len
+
+-- | Prefer @fdatasync@ over @fsync@ when available.
+hSynchronise :: Handle HandleIO -> IO ()
+hSynchronise h = FS.withOpenHandle "hSynchronise" (handleRaw h) $ \fd ->
+#if HAVE_FDATASYNC
+    Unix.fileSynchroniseDataOnly fd
+#else
+    Unix.fileSynchronise fd
+#endif
+
+synchroniseDirectory :: HasFS IO HandleIO -> FsPath -> IO ()
+synchroniseDirectory hfs path =
+    FS.withFile hfs path FS.ReadMode $ hSynchronise

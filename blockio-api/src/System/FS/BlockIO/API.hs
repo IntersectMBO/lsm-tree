@@ -8,6 +8,7 @@
 {-# LANGUAGE UnboxedTuples              #-}
 
 module System.FS.BlockIO.API (
+    -- * HasBlockIO
     HasBlockIO (..)
   , IOCtxParams (..)
   , defaultIOCtxParams
@@ -19,15 +20,19 @@ module System.FS.BlockIO.API (
   , ioopBufferOffset
   , ioopByteCount
   , IOResult (..)
-    -- * Advice
+    -- ** Advice
   , Advice (..)
   , hAdviseAll
   , hDropCacheAll
-    -- * File locks
+    -- ** File locks
   , GHC.LockMode (..)
   , GHC.FileLockingNotSupported (..)
   , LockFileHandle (..)
+    -- ** Storage synchronisation
+  , synchroniseFile
+    -- * Defaults for the real file system
   , tryLockFileIO
+  , createHardLinkIO
     -- * Re-exports
   , ByteCount
   , FileOffset
@@ -52,7 +57,8 @@ import           System.FS.API (BufferOffset, FsError (..), FsPath, Handle (..),
                      HasFS, SomeHasFS (..))
 import           System.FS.IO (HandleIO)
 import qualified System.IO as GHC
-import           System.IO.Error (ioeSetErrorString, mkIOError)
+import           System.IO.Error (doesNotExistErrorType, ioeSetErrorString,
+                     mkIOError)
 import           System.Posix.Types (ByteCount, FileOffset)
 
 -- | Abstract interface for submitting large batches of I\/O operations.
@@ -125,12 +131,42 @@ data HasBlockIO m h = HasBlockIO {
     -- limited scope. That is, it has to fit the style of @withHandleToHANDLE ::
     -- Handle -> (HANDLE -> IO a) -> IO a@ from the @Win32@ package.
   , tryLockFile :: FsPath -> GHC.LockMode -> m (Maybe (LockFileHandle m))
+
+    -- | Synchronise file contents with the storage device.
+    --
+    -- Ensure that all change to the file handle's contents which exist only in
+    -- memory (as buffered system cache pages) are transfered/flushed to disk.
+    -- This will also (partially) update the file handle's associated metadata.
+    --
+    -- This uses different system calls on different distributions.
+    -- * [Linux]: @fdatasync(2)@ if available, @fsync(2)@ otherwise
+    -- * [MacOS]: @fdatasync(2)@ if available, @fsync(2)@ otherwise
+    -- * [Windows]: @flushFileBuffers@
+  , hSynchronise :: Handle h -> m ()
+
+    -- | Synchronise a directory with the storage device.
+    --
+    -- This has different effects on different distributions.
+    -- * [Linux]: @fdatasync(2) if available, @fsync(2)@ otherwise
+    -- * [MacOS]: @fdatasync(2) if available, @fsync(2)@ otherwise
+    -- * [Windows]: no-op
+  , synchroniseDirectory :: FsPath -> m ()
+
+    -- | Create a hard link for an existing file at the source path and a new
+    -- file at the target path.
+    --
+    -- This uses different system calls on different distributions.
+    -- * [Linux]: @link@
+    -- * [MacOS]: @link@
+    -- * [Windows]: @CreateHardLinkW@
+  , createHardLink :: FsPath -> FsPath -> m ()
   }
 
 instance NFData (HasBlockIO m h) where
-  rnf (HasBlockIO a b c d e f) =
+  rnf (HasBlockIO a b c d e f g h i) =
       rwhnf a `seq` rwhnf b `seq` rnf c `seq`
-      rwhnf d `seq` rwhnf e `seq` rwhnf f
+      rwhnf d `seq` rwhnf e `seq` rwhnf f `seq`
+      rwhnf g `seq` rwhnf h `seq` rwhnf i
 
 -- | Concurrency parameters for initialising a 'HasBlockIO. Can be ignored by
 -- serial implementations.
@@ -195,6 +231,10 @@ deriving via (VU.UnboxViaPrim IOResult) instance VG.Vector   VU.Vector  IOResult
 
 instance VUM.Unbox IOResult
 
+{-------------------------------------------------------------------------------
+  Advice
+-------------------------------------------------------------------------------}
+
 -- | Basically "System.Posix.Fcntl.Advice" from the @unix@ package
 data Advice =
     AdviceNormal
@@ -213,6 +253,23 @@ hAdviseAll hbio h advice = hAdvise hbio h 0 0 advice -- len=0 implies until the 
 -- present.
 hDropCacheAll :: HasBlockIO m h -> Handle h -> m ()
 hDropCacheAll hbio h = hAdviseAll hbio h AdviceDontNeed
+
+{-------------------------------------------------------------------------------
+  Storage synchronisation
+-------------------------------------------------------------------------------}
+
+synchroniseFile :: MonadThrow m => HasFS m h -> HasBlockIO m h -> FsPath -> m ()
+synchroniseFile hfs hbio path = do
+    b <- FS.doesFileExist hfs path
+    if b then
+      FS.withFile hfs path (FS.ReadWriteMode FS.AllowExisting) $ hSynchronise hbio
+    else
+      throwIO $ FS.ioToFsError (FS.mkFsErrorPath hfs (FS.mkFsPath [])) ioerr
+  where
+    ioerr =
+      ioeSetErrorString
+        (mkIOError doesNotExistErrorType "synchroniseFile" Nothing Nothing)
+        ("synchroniseFile: file does not exist")
 
 {-------------------------------------------------------------------------------
   File locks
@@ -249,3 +306,16 @@ rethrowFsErrorIO hfs fp action = do
     handleError :: HasCallStack => IOError -> IO a
     handleError ioErr =
       throwIO $ FS.ioToFsError (FS.mkFsErrorPath hfs fp) ioErr
+
+{-------------------------------------------------------------------------------
+  Hard links
+-------------------------------------------------------------------------------}
+
+createHardLinkIO ::
+     HasFS IO HandleIO
+  -> (FilePath -> FilePath -> IO ())
+  -> (FsPath -> FsPath -> IO ())
+createHardLinkIO hfs f = \source target -> do
+    source' <- FS.unsafeToFilePath hfs source -- shouldn't fail because we are in IO
+    target' <- FS.unsafeToFilePath hfs target -- shouldn't fail because we are in IO
+    f source' target'

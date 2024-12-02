@@ -32,10 +32,13 @@ asyncHasBlockIO ::
   -> (Handle HandleIO -> FileOffset -> FileOffset -> API.Advice -> IO ())
   -> (Handle HandleIO -> FileOffset -> FileOffset -> IO ())
   -> (FsPath -> LockMode -> IO (Maybe (API.LockFileHandle IO)))
+  -> (Handle HandleIO -> IO ())
+  -> (FsPath -> IO ())
+  -> (FsPath -> FsPath -> IO ())
   -> HasFS IO HandleIO
   -> API.IOCtxParams
   -> IO (API.HasBlockIO IO HandleIO)
-asyncHasBlockIO hSetNoCache hAdvise hAllocate tryLockFile hasFS ctxParams = do
+asyncHasBlockIO hSetNoCache hAdvise hAllocate tryLockFile hSynchronise synchroniseDirectory createHardLink hasFS ctxParams = do
   ctx <- I.initIOCtx (ctxParamsConv ctxParams)
   pure $ API.HasBlockIO {
       API.close = I.closeIOCtx ctx
@@ -44,6 +47,9 @@ asyncHasBlockIO hSetNoCache hAdvise hAllocate tryLockFile hasFS ctxParams = do
     , API.hAdvise
     , API.hAllocate
     , API.tryLockFile
+    , API.hSynchronise
+    , API.synchroniseDirectory
+    , API.createHardLink
     }
 
 ctxParamsConv :: API.IOCtxParams -> I.IOCtxParams
@@ -110,11 +116,18 @@ ioopConv (IOOpWrite h off buf bufOff c) = handleFd h >>= \fd ->
 --
 -- TODO: if the handle were to have a reader/writer lock, then we could take the
 -- reader lock in 'submitIO'. However, the current implementation of 'Handle'
--- only allows mutally exclusive access to the underlying file descriptor, so it
+-- only allows mutually exclusive access to the underlying file descriptor, so it
 -- would require a change in @fs-api@. See [fs-sim#49].
 handleFd :: Handle HandleIO -> IO Fd
 handleFd h = withOpenHandle "submitIO" (handleRaw h) pure
 
+{-# SPECIALISE hzipWithM ::
+     (VUM.Unbox b, VUM.Unbox c)
+  => (a -> b -> IO c)
+  -> V.Vector a
+  -> VU.Vector b
+  -> IO (VU.Vector c)
+  #-}
 -- | Heterogeneous blend of `V.zipWithM` and `VU.zipWithM`
 --
 -- The @vector@ package does not provide functions that take distinct vector

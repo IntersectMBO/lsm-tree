@@ -18,14 +18,15 @@ module Database.LSMTree.Internal.Snapshot (
     -- * Opening from levels snapshot format
   , fromSnapLevels
     -- * Hard links
+  , HardLinkDurable (..)
   , hardLinkRunFiles
   ) where
 
 import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Concurrent.Class.MonadSTM (MonadSTM)
-import           Control.Monad (void)
+import           Control.Monad (when)
 import           Control.Monad.Class.MonadST (MonadST)
-import           Control.Monad.Class.MonadThrow (MonadMask, MonadThrow)
+import           Control.Monad.Class.MonadThrow (MonadMask)
 import           Control.Monad.Primitive (PrimMonad)
 import           Control.RefCount
 import           Control.TempRegistry
@@ -50,7 +51,7 @@ import           Database.LSMTree.Internal.UniqCounter (UniqCounter,
                      incrUniqCounter, uniqueToRunNumber)
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
-import qualified System.FS.API.Lazy as FS
+import qualified System.FS.BlockIO.API as FS
 import           System.FS.BlockIO.API (HasBlockIO)
 
 {-------------------------------------------------------------------------------
@@ -190,25 +191,33 @@ toSnapMergingRunState (OngoingMerge rs (SpentCreditsVar spentCreditsVar) m) = do
 
 {-# SPECIALISE snapshotRuns ::
      TempRegistry IO
+  -> HasBlockIO IO h
   -> NamedSnapshotDir
   -> SnapLevels (Ref (Run IO h))
   -> IO (SnapLevels RunNumber) #-}
--- | @'snapshotRuns' _ targetDir levels@ creates hard links for all run files
+-- | @'snapshotRuns' _ _ targetDir levels@ creates hard links for all run files
 -- associated with the runs in @levels@, and puts the new directory entries in
--- the @targetDir@ directory.
+-- the @targetDir@ directory. The hard links and the @targetDir@ are made
+-- durable on disk.
 snapshotRuns ::
      (MonadMask m, MonadMVar m)
   => TempRegistry m
+  -> HasBlockIO m h
   -> NamedSnapshotDir
   -> SnapLevels (Ref (Run m h))
   -> m (SnapLevels RunNumber)
-snapshotRuns reg (NamedSnapshotDir targetDir) levels =
-    for levels $ \run@(DeRef Run.Run { Run.runHasFS = hfs,
-                                       Run.runHasBlockIO = hbio }) -> do
-      let sourcePaths = Run.runFsPaths run
-      let targetPaths = sourcePaths { runDir = targetDir }
-      hardLinkRunFiles reg hfs hbio sourcePaths targetPaths
-      pure (runNumber targetPaths)
+snapshotRuns reg hbio0 (NamedSnapshotDir targetDir) levels = do
+    levels' <-
+      for levels $ \run@(DeRef Run.Run {
+          Run.runHasFS = hfs,
+          Run.runHasBlockIO = hbio
+        }) -> do
+          let sourcePaths = Run.runFsPaths run
+          let targetPaths = sourcePaths { runDir = targetDir }
+          hardLinkRunFiles reg hfs hbio HardLinkDurable sourcePaths targetPaths
+          pure (runNumber targetPaths)
+    FS.synchroniseDirectory hbio0 targetDir
+    pure levels'
 
 {-# SPECIALISE openRuns ::
      TempRegistry IO
@@ -247,7 +256,7 @@ openRuns
           let sourcePaths = RunFsPaths sourceDir runNum
           runNum' <- uniqueToRunNumber <$> incrUniqCounter uc
           let targetPaths = RunFsPaths targetDir runNum'
-          hardLinkRunFiles reg hfs hbio sourcePaths targetPaths
+          hardLinkRunFiles reg hfs hbio NoHardLinkDurable sourcePaths targetPaths
 
           allocateTemp reg
             (Run.openFromDisk hfs hbio caching targetPaths)
@@ -342,55 +351,39 @@ fromSnapLevels reg hfs hbio conf@TableConfig{..} uc resolve dir (SnapLevels leve
   Hard links
 -------------------------------------------------------------------------------}
 
+data HardLinkDurable = HardLinkDurable | NoHardLinkDurable
+  deriving stock Eq
+
 {-# SPECIALISE hardLinkRunFiles ::
      TempRegistry IO
   -> HasFS IO h
   -> HasBlockIO IO h
+  -> HardLinkDurable
   -> RunFsPaths
   -> RunFsPaths
   -> IO () #-}
--- | @'hardLinkRunFiles' _hfs hbio sourcePaths targetPaths@ creates a hard link
+-- | @'hardLinkRunFiles' _ _ _ dur sourcePaths targetPaths@ creates a hard link
 -- for each @sourcePaths@ path using the corresponding @targetPaths@ path as the
--- name for the new directory entry.
+-- name for the new directory entry. If @dur == HardLinkDurabl@, the links will
+-- also be made durable on disk.
 hardLinkRunFiles ::
      (MonadMask m, MonadMVar m)
   => TempRegistry m
   -> HasFS m h
   -> HasBlockIO m h
+  -> HardLinkDurable
   -> RunFsPaths
   -> RunFsPaths
   -> m ()
-hardLinkRunFiles reg hfs hbio sourceRunFsPaths targetRunFsPaths = do
+hardLinkRunFiles reg hfs hbio dur sourceRunFsPaths targetRunFsPaths = do
     let sourcePaths = pathsForRunFiles sourceRunFsPaths
         targetPaths = pathsForRunFiles targetRunFsPaths
     sequenceA_ (hardLinkTemp <$> sourcePaths <*> targetPaths)
-    hardLink hfs hbio (runChecksumsPath sourceRunFsPaths) (runChecksumsPath targetRunFsPaths)
+    hardLinkTemp (runChecksumsPath sourceRunFsPaths) (runChecksumsPath targetRunFsPaths)
   where
-    hardLinkTemp sourcePath targetPath =
+    hardLinkTemp sourcePath targetPath = do
         allocateTemp reg
-          (hardLink hfs hbio sourcePath targetPath)
+          (FS.createHardLink hbio sourcePath targetPath)
           (\_ -> FS.removeFile hfs targetPath)
-
-{-# SPECIALISE hardLink ::
-     HasFS IO h
-  -> HasBlockIO IO h
-  -> FS.FsPath
-  -> FS.FsPath
-  -> IO () #-}
--- | @'hardLink' hfs hbio source target@ creates a hard link for the @source@
--- path at the @target@ path.
---
--- TODO: as a temporary implementation/hack, this copies file contents instead
--- of creating hard links.
-hardLink :: MonadThrow m => HasFS m h -> HasBlockIO m h -> FS.FsPath -> FS.FsPath -> m ()
-hardLink hfs _hbio sourcePath targetPath =
-    FS.withFile hfs sourcePath FS.ReadMode $ \sourceHandle ->
-    FS.withFile hfs targetPath (FS.WriteMode FS.MustBeNew) $ \targetHandle -> do
-      -- TODO: this is obviously not creating any hard links, but until we have
-      -- functions to create hard links in HasBlockIO, this is the temporary
-      -- implementation/hack to "emulate" hard links.
-      --
-      -- This should /hopefully/ stream using lazy IO, though even if it does
-      -- not, it is only a temporary placeholder hack.
-      bs <- FS.hGetAll hfs sourceHandle
-      void $ FS.hPutAll hfs targetHandle bs
+        when (dur == HardLinkDurable) $
+          FS.synchroniseFile hfs hbio targetPath
