@@ -3,7 +3,7 @@
 
 {- HLINT ignore "Use void" -}
 
-module Test.Database.LSMTree.Normal.UnitTests (tests) where
+module Test.Database.LSMTree.UnitTests (tests) where
 
 import           Control.Tracer (nullTracer)
 import           Data.ByteString (ByteString)
@@ -13,7 +13,7 @@ import qualified Data.Vector as V
 import           Data.Word
 import qualified System.FS.API as FS
 
-import           Database.LSMTree.Normal as R
+import           Database.LSMTree as R
 
 import           Control.Exception (Exception, try)
 import           Database.LSMTree.Extras.Generators (KeyForIndexCompact)
@@ -25,7 +25,7 @@ import           Test.Util.FS (withTempIOHasBlockIO)
 
 tests :: TestTree
 tests =
-    testGroup "Normal.UnitTests"
+    testGroup "Test.Database.LSMTree.UnitTests"
       [ testCaseSteps "unit_blobs"         unit_blobs
       , testCase      "unit_closed_table"  unit_closed_table
       , testCase      "unit_closed_cursor" unit_closed_cursor
@@ -37,15 +37,15 @@ unit_blobs :: (String -> IO ()) -> Assertion
 unit_blobs info =
     withTempIOHasBlockIO "test" $ \hfs hbio ->
     withSession nullTracer hfs hbio (FS.mkFsPath []) $ \sess -> do
-      table <- new @_ @ByteString @ByteString @ByteString sess defaultTableConfig
-      inserts table [("key1", "value1", Just "blob1")]
+      table <- new @_ @ByteString @(ResolveAsFirst ByteString) @ByteString sess defaultTableConfig
+      inserts table [("key1", ResolveAsFirst "value1", Just "blob1")]
 
       res <- lookups table ["key1"]
       info (show res)
 
       case res of
         [FoundWithBlob val bref] -> do
-          val @?= "value1"
+          val @?= ResolveAsFirst "value1"
           blob <- retrieveBlobs sess [bref]
           info (show blob)
           blob @?= ["blob1"]
@@ -166,6 +166,8 @@ newtype Value1 = Value1 Word64
   deriving stock (Show, Eq, Ord)
   deriving newtype (SerialiseValue)
 
+deriving via ResolveAsFirst Word64 instance ResolveValue Value1
+
 newtype Blob1  = Blob1 Word64
   deriving stock (Show, Eq, Ord)
   deriving newtype (SerialiseValue)
@@ -180,6 +182,8 @@ newtype Key2 = Key2 KeyForIndexCompact
 newtype Value2 = Value2 BS.ByteString
   deriving stock (Show, Eq, Ord)
   deriving newtype (QC.Arbitrary, SerialiseValue)
+
+deriving via ResolveAsFirst BS.ByteString instance ResolveValue Value2
 
 newtype Blob2  = Blob2 BS.ByteString
   deriving stock (Show, Eq, Ord)

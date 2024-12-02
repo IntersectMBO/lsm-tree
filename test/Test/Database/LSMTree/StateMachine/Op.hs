@@ -6,7 +6,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 
 -- | SumProd Op extended with BlobRef extraction
-module Test.Database.LSMTree.Normal.StateMachine.Op (
+module Test.Database.LSMTree.StateMachine.Op (
     -- * 'Op'
     Op (..)
   , intOpId
@@ -19,7 +19,7 @@ import           Control.Monad.IOSim (IOSim)
 import           Control.Monad.Reader (ReaderT)
 import           Control.Monad.State (StateT)
 import qualified Data.Vector as V
-import qualified Database.LSMTree.Class.Normal as Class
+import qualified Database.LSMTree.Class as Class
 import qualified Database.LSMTree.Model.Table as Model
 import           GHC.Show (appPrec)
 import           Test.QuickCheck.StateModel.Lockstep (InterpretOp, Operation)
@@ -139,16 +139,16 @@ instance Show (Op a b) where
       _        -> go op
     where
       go :: Op x y -> String -> String
-      go OpId            = showString "id"
-      go OpFst           = showString "fst"
-      go OpSnd           = showString "snd"
-      go OpLeft          = showString "Left"
-      go OpRight         = showString "Right"
-      go OpFromLeft      = showString "FromLeft"
-      go OpFromRight     = showString "FromRight"
-      go (OpComp g f)    = go g . showString " . " . go f
-      go OpLookupResults = showString "mapMaybe getBlobRef"
-      go OpQueryResults  = showString "mapMaybe getBlobRef"
+      go OpId            = showString "OpId"
+      go OpFst           = showString "OpFst"
+      go OpSnd           = showString "OpSnd"
+      go OpLeft          = showString "OpLeft"
+      go OpRight         = showString "OpRight"
+      go OpFromLeft      = showString "OpFromLeft"
+      go OpFromRight     = showString "OpFromRight"
+      go (OpComp g f)    = go g . showString " `OpComp` " . go f
+      go OpLookupResults = showString "OpLookupResults"
+      go OpQueryResults  = showString "OpQueryResults"
 
 {-------------------------------------------------------------------------------
   'HasBlobRef' class

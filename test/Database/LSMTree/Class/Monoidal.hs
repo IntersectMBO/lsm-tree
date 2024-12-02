@@ -3,37 +3,25 @@
 -- | An abstraction of the monoidal LSM API, instantiated by both the real
 -- implementation and a model (see "Database.LSMTree.Model.IO.Monoidal").
 module Database.LSMTree.Class.Monoidal (
-    C
-  , C_
-  , IsSession (..)
-  , SessionArgs (..)
-  , withSession
-  , IsTable (..)
+    IsTable (..)
   , withTableNew
   , withTableFromSnapshot
   , withTableDuplicate
   , withTableUnion
   , withCursor
+  , module Common
   , module Types
   ) where
 
 import           Control.Monad.Class.MonadThrow (MonadThrow (..))
 import           Data.Kind (Constraint, Type)
-import           Data.Typeable (Proxy (Proxy), Typeable)
+import           Data.Typeable (Proxy (..))
 import qualified Data.Vector as V
 import           Data.Void (Void)
-import           Database.LSMTree.Class.Normal (IsSession (..),
-                     SessionArgs (..), withSession)
-import           Database.LSMTree.Common as Types (IOLike, Range (..),
-                     SerialiseKey, SerialiseValue, SnapshotLabel (..),
-                     SnapshotName)
+import           Database.LSMTree.Class.Common as Common
 import           Database.LSMTree.Monoidal as Types (LookupResult (..),
                      QueryResult (..), ResolveValue, Update (..))
 import qualified Database.LSMTree.Monoidal as R
-
--- | Model-specific constraints
-type C k v blob = (C_ k, C_ v, C_ blob)
-type C_ a = (Show a, Eq a, Typeable a)
 
 -- | Class abstracting over table operations.
 --
