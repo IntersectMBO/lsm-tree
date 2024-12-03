@@ -54,7 +54,34 @@ tests = testGroup "Test.Database.LSMTree.Class"
               action (SessionArgs hfs hbio (FS.mkFsPath []))
         }
 
-    expectFailures2 = repeat False
+    expectFailures2 = [
+        False
+      , False
+      , False
+      , False
+      , False
+      , False
+      , False
+      , False
+      , False
+      , False
+      , False
+      , False
+      , False
+      , False
+      , False
+      , False
+      , False
+      , False
+      , False
+      , False
+      , False
+      , False
+      , False
+      , False
+      , False
+      , True  -- merge
+      ] ++ repeat False
 
     props tbl =
       [ testProperty' "lookup-insert" $ prop_lookupInsert tbl
@@ -81,6 +108,8 @@ tests = testGroup "Test.Database.LSMTree.Class"
       , testProperty' "readCursor-offset" $ prop_readCursorOffset tbl
       , testProperty' "snapshot-nochanges" $ prop_snapshotNoChanges tbl
       , testProperty' "snapshot-nochanges2" $ prop_snapshotNoChanges2 tbl
+      , testProperty' "lookup-mupsert" $ prop_lookupUpdate tbl
+      , testProperty' "merge" $ prop_union tbl
       ]
 
 testProperty' :: forall a. Testable a => TestName -> a -> Bool -> TestTree
@@ -97,7 +126,12 @@ type Blob = BS.ByteString
 newtype Value = Value BS.ByteString
   deriving stock (Eq, Show)
   deriving newtype (Arbitrary, SerialiseValue)
-  deriving ResolveValue via ResolveAsFirst Value
+
+instance ResolveValue Value where
+  resolveValue = resolveDeserialised resolve
+
+resolve :: Value -> Value -> Value
+resolve (Value x) (Value y) = Value (x <> y)
 
 label :: SnapshotLabel
 label = SnapshotLabel "Word64 ByteString ByteString"
@@ -560,13 +594,69 @@ prop_updatesMayInvalidateBlobRefs h ups k1 v1 blob1 ups' = monadicIO $ do
 -- implement classic QC tests for monoidal updates
 -------------------------------------------------------------------------------
 
-{- Not applicable -}
+-- | You can lookup what you inserted.
+prop_lookupUpdate ::
+     IsTable h
+  => Proxy h -> [(Key, Update Value Blob)]
+  -> Key -> Value -> Maybe Blob -> Value -> Property
+prop_lookupUpdate h ups k v1 mb1 v2 = ioProperty $ do
+    withSessionAndTableNew h ups $ \s hdl -> do
+
+      -- the main dish
+      inserts hdl (V.singleton (k, v1, mb1))
+      mupserts hdl (V.singleton (k, v2))
+      res <- lookupsWithBlobs hdl s (V.singleton k)
+
+      -- notice the order.
+      return $ case mb1 of
+        Nothing -> res === V.singleton (Found (resolve v2 v1))
+        Just b1 -> res === V.singleton (FoundWithBlob (resolve v2 v1) b1)
 
 -------------------------------------------------------------------------------
 -- implement classic QC tests for monoidal table unions
 -------------------------------------------------------------------------------
 
-{- Not applicable -}
+prop_union :: forall h.
+     IsTable h
+  => Proxy h -> [(Key, Update Value Blob)] -> [(Key, Update Value Blob)]
+  -> [Key] -> Property
+prop_union h ups1 ups2 (V.fromList -> testKeys) = ioProperty $ do
+    withSessionAndTableNew h ups1 $ \s hdl1 -> do
+      withTableNew s (testTableConfig h) $ \hdl2 -> do
+        updates hdl2 $ V.fromList ups2
+
+        -- union them.
+        withTableUnion hdl1 hdl2 $ \hdl3 -> do
+
+          -- results in parts and the union table
+          res1 <- lookupsWithBlobs hdl1 s testKeys
+          res2 <- lookupsWithBlobs hdl2 s testKeys
+          res3 <- lookupsWithBlobs hdl3 s testKeys
+
+          let unionResult ::
+                   LookupResult Value Blob
+                -> LookupResult Value Blob
+                -> LookupResult Value Blob
+
+              unionResult r@NotFound   NotFound            = r
+              unionResult   NotFound r@(Found _)           = r
+              unionResult   NotFound r@(FoundWithBlob _ _) = r
+
+              unionResult r@(Found _)  NotFound
+                = r
+              unionResult   (Found v1) (Found v2)
+                = Found (resolve v1 v2)
+              unionResult   (Found v1) (FoundWithBlob v2 b2)
+                = FoundWithBlob (resolve v1 v2) b2
+
+              unionResult r@(FoundWithBlob _ _)   NotFound
+                = r
+              unionResult   (FoundWithBlob v1 b1) (Found v2)
+                = FoundWithBlob (resolve v1 v2) b1
+              unionResult   (FoundWithBlob v1 b1) (FoundWithBlob v2 _b2)
+                = FoundWithBlob (resolve v1 v2) b1
+
+          return $ V.zipWith unionResult res1 res2  == res3
 
 -------------------------------------------------------------------------------
 -- implement classic QC tests for snapshots

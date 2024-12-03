@@ -7,6 +7,7 @@ module Database.LSMTree.Class (
   , withTableNew
   , withTableFromSnapshot
   , withTableDuplicate
+  , withTableUnion
   , withCursor
   , module Common
   , module Types
@@ -17,7 +18,8 @@ import           Data.Kind (Constraint, Type)
 import           Data.Typeable (Proxy (..))
 import qualified Data.Vector as V
 import           Database.LSMTree as Types (LookupResult (..), QueryResult (..),
-                     ResolveAsFirst (..), ResolveValue, Update (..))
+                     ResolveAsFirst (..), ResolveValue (..), Update (..),
+                     resolveDeserialised)
 import qualified Database.LSMTree as R
 import           Database.LSMTree.Class.Common as Common
 
@@ -229,6 +231,19 @@ withTableDuplicate :: forall h m k v b a.
   -> (h m k v b -> m a)
   -> m a
 withTableDuplicate table = bracket (duplicate table) close
+
+withTableUnion :: forall h m k v b a.
+     ( IOLike m
+     , IsTable h
+     , SerialiseValue v
+     , ResolveValue v
+     , C k v b
+     )
+  => h m k v b
+  -> h m k v b
+  -> (h m k v b -> m a)
+  -> m a
+withTableUnion table1 table2 = bracket (table1 `union` table2) close
 
 withCursor :: forall h m k v b a.
      ( IOLike m
