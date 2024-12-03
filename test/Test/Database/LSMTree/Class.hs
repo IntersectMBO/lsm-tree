@@ -1,7 +1,7 @@
 {-# LANGUAGE BlockArguments    #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Test.Database.LSMTree.Class.Normal (
+module Test.Database.LSMTree.Class (
     tests
   , testProperty'
   ) where

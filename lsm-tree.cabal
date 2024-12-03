@@ -354,8 +354,8 @@ test-suite lsm-tree-test
     Database.LSMTree.Model.Session
     Database.LSMTree.Model.Table
     Test.Data.Arena
+    Test.Database.LSMTree.Class
     Test.Database.LSMTree.Class.Monoidal
-    Test.Database.LSMTree.Class.Normal
     Test.Database.LSMTree.Generators
     Test.Database.LSMTree.Internal
     Test.Database.LSMTree.Internal.BloomFilter

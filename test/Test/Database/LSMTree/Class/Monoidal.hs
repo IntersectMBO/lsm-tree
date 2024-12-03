@@ -22,7 +22,7 @@ import qualified Database.LSMTree.Model.IO.Monoidal as ModelIO
 import           Database.LSMTree.Monoidal (resolveDeserialised)
 import qualified Database.LSMTree.Monoidal as R
 import qualified System.FS.API as FS
-import           Test.Database.LSMTree.Class.Normal (testProperty')
+import           Test.Database.LSMTree.Class (testProperty')
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck hiding (label)
 import qualified Test.Util.FS as FS
