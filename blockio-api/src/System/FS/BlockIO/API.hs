@@ -258,6 +258,19 @@ hDropCacheAll hbio h = hAdviseAll hbio h AdviceDontNeed
   Storage synchronisation
 -------------------------------------------------------------------------------}
 
+-- TODO: currently, we perform an explicit check to see if the file exists and
+-- throw an error when it does not exist. We would prefer to be able to rely on
+-- withFile to throw an error for us that we could rethrow with an upated
+-- description/location. Unfortunately, we have to open te file in ReadWriteMode
+-- on Windows, and withFile currently does not support such errors. The only
+-- options are:
+--
+-- * AllowExisting: silently create a file if it does not exist
+-- * MustBeNew: throw an error if the file exists
+--
+-- We would need to add a third option to fs-api:
+--
+-- * MustExist: throw an error if the file *does not* exist
 synchroniseFile :: MonadThrow m => HasFS m h -> HasBlockIO m h -> FsPath -> m ()
 synchroniseFile hfs hbio path = do
     b <- FS.doesFileExist hfs path
