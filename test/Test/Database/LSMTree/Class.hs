@@ -3,7 +3,6 @@
 
 module Test.Database.LSMTree.Class (
     tests
-  , testProperty'
   ) where
 import           Control.Exception (SomeException, try)
 import           Control.Monad.ST.Strict (runST)

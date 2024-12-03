@@ -6,7 +6,6 @@ import qualified Control.RefCount
 
 import qualified Test.Data.Arena
 import qualified Test.Database.LSMTree.Class
-import qualified Test.Database.LSMTree.Class.Monoidal
 import qualified Test.Database.LSMTree.Generators
 import qualified Test.Database.LSMTree.Internal
 import qualified Test.Database.LSMTree.Internal.BloomFilter
@@ -44,7 +43,6 @@ main :: IO ()
 main = do
   defaultMain $ testGroup "lsm-tree"
     [ Test.Database.LSMTree.Class.tests
-    , Test.Database.LSMTree.Class.Monoidal.tests
     , Test.Database.LSMTree.Generators.tests
     , Test.Database.LSMTree.Internal.tests
     , Test.Database.LSMTree.Internal.BloomFilter.tests
