@@ -17,7 +17,7 @@ import           Data.Kind (Constraint, Type)
 import           Data.Typeable (Proxy (..))
 import qualified Data.Vector as V
 import           Database.LSMTree as Types (LookupResult (..), QueryResult (..),
-                     ResolveValue, Update (..))
+                     ResolveAsFirst (..), ResolveValue, Update (..))
 import qualified Database.LSMTree as R
 import           Database.LSMTree.Class.Common as Common
 
