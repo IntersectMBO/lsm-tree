@@ -241,7 +241,7 @@ lookups (Internal.MonoidalTable t) ks =
   where
     toLookupResult (Just e) = case e of
       Entry.Insert v           -> Found (Internal.deserialiseValue v)
-      Entry.InsertWithBlob _ _ -> error "Monoidal.lookups: unexpected InsertWithBlob"
+      Entry.InsertWithBlob v _ -> Found (Internal.deserialiseValue v)
       Entry.Mupdate v          -> Found (Internal.deserialiseValue v)
       Entry.Delete             -> NotFound
     toLookupResult Nothing = NotFound
