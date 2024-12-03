@@ -20,7 +20,6 @@ import           Control.Monad.Reader (ReaderT)
 import           Control.Monad.State (StateT)
 import qualified Data.Vector as V
 import qualified Database.LSMTree.Class as Class
-import qualified Database.LSMTree.Model.Table as Model
 import           GHC.Show (appPrec)
 import           Test.QuickCheck.StateModel.Lockstep (InterpretOp, Operation)
 import qualified Test.QuickCheck.StateModel.Lockstep.Op as Op
@@ -165,12 +164,3 @@ instance HasBlobRef (Class.LookupResult v) where
 instance HasBlobRef (Class.QueryResult k v) where
   getBlobRef Class.FoundInQuery{}                     = Nothing
   getBlobRef (Class.FoundInQueryWithBlob _ _ blobref) = Just blobref
-
-instance HasBlobRef (Model.LookupResult v) where
-  getBlobRef Model.NotFound{}                = Nothing
-  getBlobRef Model.Found{}                   = Nothing
-  getBlobRef (Model.FoundWithBlob _ blobref) = Just blobref
-
-instance HasBlobRef (Model.QueryResult k v) where
-  getBlobRef Model.FoundInQuery{}                     = Nothing
-  getBlobRef (Model.FoundInQueryWithBlob _ _ blobref) = Just blobref
