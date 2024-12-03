@@ -56,6 +56,7 @@ import           Data.Monoid (First (First, getFirst))
 import           Data.STRef
 
 import qualified Control.Exception as Exc (assert)
+import           Control.Monad (when)
 import           Control.Monad.ST
 import           Control.Tracer (Tracer, contramap, nullTracer, traceWith)
 import           GHC.Stack (HasCallStack, callStack)
@@ -673,8 +674,9 @@ remainingUnionDebt (LSMHandle _ lsmr) = do
       Union t d -> checkedUnionDebt t d
 
 supplyUnionCredits :: LSM s -> Credit -> ST s Credit
-supplyUnionCredits (LSMHandle scr lsmr) credits = do
-    assertST (credits >= 0)
+supplyUnionCredits (LSMHandle scr lsmr) credits
+  | credits <= 0 = return 0
+  | otherwise = do
     content@(LSMContent _ _ ul) <- readSTRef lsmr
     case ul of
       NoUnion ->
@@ -781,33 +783,32 @@ lookupsTree ks = go
     lookupRuns = updateLookupAcc emptyLookupAcc . submitLookups ks
 
 supplyCreditsLevels :: Credit -> Levels s -> ST s ()
-supplyCreditsLevels n =
+supplyCreditsLevels unscaled =
   traverse_ $ \(Level ir _rs) -> do
-    cr <- creditsForMerge ir
     case ir of
-      Single{} ->
-        return ()
-      Merging _ mr -> do
-        _ <- supplyCreditsMergingRun (ceiling (fromIntegral n * cr)) mr
-        -- we don't mind leftover credits, each level completes independently
-        return ()
+      Single{} -> return ()
+      Merging mp mr -> do
+        factor <- creditsForMerge mp mr
+        let credits = ceiling (fromIntegral unscaled * factor)
+        when (credits > 0) $ do
+          _ <- supplyCreditsMergingRun credits mr
+          -- we don't mind leftover credits, each level completes independently
+          return ()
 
 -- | The general case (and thus worst case) of how many merge credits we need
 -- for a level. This is based on the merging policy at the level.
 --
-creditsForMerge :: IncomingRun s -> ST s Rational
-creditsForMerge Single{} =
-    return 0
+creditsForMerge :: MergePolicy -> MergingRun s -> ST s Rational
 
 -- A levelling merge has 1 input run and one resident run, which is (up to) 4x
 -- bigger than the others.
 -- It needs to be completed before another run comes in.
-creditsForMerge (Merging MergePolicyLevelling _) =
+creditsForMerge MergePolicyLevelling _ =
     return $ (1 + 4) / 1
 
 -- A tiering merge has 5 runs at most (once could be held back to merged again)
 -- and must be completed before the level is full (once 4 more runs come in).
-creditsForMerge (Merging MergePolicyTiering (MergingRun _ ref)) = do
+creditsForMerge MergePolicyTiering (MergingRun _ ref) = do
     readSTRef ref >>= \case
       CompletedMerge _ -> return 0
       OngoingMerge _ rs _ -> do
@@ -987,10 +988,11 @@ checked :: HasCallStack
         -> (Credit -> a -> ST s Credit)
         -> Credit -> a -> ST s Credit
 checked query supply credits x = do
-    -- assertST $ credits >= 0
+    assertST $ credits > 0
     debt <- fst <$> query x
     assertST $ debt >= 0
     c' <- supply credits x
+    assertST $ c' <= credits
     assertST $ c' >= 0
     debt' <- fst <$> query x
     assertST $ debt' >= 0
@@ -1000,7 +1002,6 @@ checked query supply credits x = do
 
 supplyCreditsMergingTree :: Credit -> MergingTree s -> ST s Credit
 supplyCreditsMergingTree = checked remainingDebtMergingTree $ \credits (MergingTree ref) -> do
-    assertST (credits >= 0)
     treeState <- readSTRef ref
     (!c', !treeState') <- supplyCreditsMergingTreeState credits treeState
     writeSTRef ref treeState'
@@ -1038,9 +1039,10 @@ supplyCreditsMergingTreeState credits !state = do
 supplyCreditsPendingMerge :: Credit -> PendingMerge s -> ST s Credit
 supplyCreditsPendingMerge = checked remainingDebtPendingMerge $ \credits pm -> do
     let PendingMerge mergeType incoming trees = pm
-    assertST (credits >= 0)
     case mergeType of
-      MergeLevel _ -> leftToRight credits incoming trees
+      MergeLevel _ -> do
+        leftToRight supplyIncoming incoming credits
+          >>= leftToRight supplyCreditsMergingTree trees
       MergeUnion ->
         case (incoming, trees) of
           ([], [t1, t2]) -> splitEqually credits t1 t2
@@ -1049,21 +1051,21 @@ supplyCreditsPendingMerge = checked remainingDebtPendingMerge $ \credits pm -> d
                                  ++ "got " ++ show (length trees)
   where
     -- supply credit left to right until it is used up
-    leftToRight 0 _         _       = return 0
-    leftToRight c []       []       = return c
-    leftToRight c []       (mt:mts) = do
-        c' <- supplyCreditsMergingTree c mt
-        leftToRight c' [] mts
-    leftToRight c (ir:irs) mts      = do
-        c' <- case ir of
-          Single _     -> return c
-          Merging _ mr -> supplyCreditsMergingRun c mr
-        leftToRight c' irs mts
+    leftToRight :: (Credit -> a -> ST s Credit) -> [a] -> Credit -> ST s Credit
+    leftToRight _ _      0 = return 0
+    leftToRight _ []     c = return c
+    leftToRight f (x:xs) c = f c x >>= leftToRight f xs
 
+    supplyIncoming c = \case
+        Single _     -> return c
+        Merging _ mr -> supplyCreditsMergingRun c mr
+
+    -- supply credit roughly evenly on both sides
     splitEqually c mt1 mt2 = do
-        -- supply credit roughly evenly on both sides
         let (c1, c2) = (c `div` 2, c - c1)
-        c1' <- supplyCreditsMergingTree c1 mt1
+        c1' <- if c1 > 0
+          then supplyCreditsMergingTree c1 mt1
+          else return 0
         if c1' > 0
           then
             -- left side done, use all remaining credits on the right side
