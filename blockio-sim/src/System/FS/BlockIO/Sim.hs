@@ -124,9 +124,15 @@ simTryLockFile hfs path lockmode =
         fsLimitation  = False
       }
 
--- | @'simCreateHardLink' hfs source target@ creates a simulated hard link for the
--- @source@ path at the @target@ path. The hard link is simulated by simply
--- copying the source file to the target path.
+-- | @'simCreateHardLink' hfs source target@ creates a simulated hard link for
+-- the @source@ path at the @target@ path.
+--
+-- The hard link is simulated by simply copying the source file to the target
+-- path, which means that it should only be used to create hard links for files
+-- that are not modified afterwards!
+--
+-- TODO: if we wanted to simulate proper hard links, we would have to bake the
+-- feature into @fs-sim@.
 simCreateHardLink :: MonadThrow m => HasFS m h -> FsPath -> FsPath -> m ()
 simCreateHardLink hfs sourcePath targetPath =
     API.withFile hfs sourcePath API.ReadMode $ \sourceHandle ->
