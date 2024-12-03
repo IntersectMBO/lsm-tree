@@ -136,19 +136,19 @@ data HasBlockIO m h = HasBlockIO {
     --
     -- Ensure that all change to the file handle's contents which exist only in
     -- memory (as buffered system cache pages) are transfered/flushed to disk.
-    -- This will also (partially) update the file handle's associated metadata.
+    -- This will also update the file handle's associated metadata.
     --
     -- This uses different system calls on different distributions.
-    -- * [Linux]: @fdatasync(2)@ if available, @fsync(2)@ otherwise
-    -- * [MacOS]: @fdatasync(2)@ if available, @fsync(2)@ otherwise
+    -- * [Linux]: @fsync(2)@
+    -- * [MacOS]: @fsync(2)@
     -- * [Windows]: @flushFileBuffers@
   , hSynchronise :: Handle h -> m ()
 
     -- | Synchronise a directory with the storage device.
     --
-    -- This has different effects on different distributions.
-    -- * [Linux]: @fdatasync(2) if available, @fsync(2)@ otherwise
-    -- * [MacOS]: @fdatasync(2) if available, @fsync(2)@ otherwise
+    -- This uses different system calls on different distributions.
+    -- * [Linux]: @fsync(2)@
+    -- * [MacOS]: @fsync(2)@
     -- * [Windows]: no-op
   , synchroniseDirectory :: FsPath -> m ()
 

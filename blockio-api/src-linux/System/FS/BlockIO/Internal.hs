@@ -4,8 +4,6 @@ module System.FS.BlockIO.Internal (
     ioHasBlockIO
   ) where
 
-#include "HsUnixConfig.h"
-
 import qualified System.FS.API as FS
 import           System.FS.API (FsPath, Handle (..), HasFS)
 import qualified System.FS.BlockIO.API as FS
@@ -73,14 +71,9 @@ hAllocate :: Handle HandleIO -> FileOffset -> FileOffset -> IO ()
 hAllocate h off len = FS.withOpenHandle "hAllocate" (handleRaw h) $ \fd ->
     Fcntl.fileAllocate fd off len
 
--- | Prefer @fdatasync@ over @fsync@ when available.
 hSynchronise :: Handle HandleIO -> IO ()
 hSynchronise h = FS.withOpenHandle "hSynchronise" (handleRaw h) $ \fd ->
-#if HAVE_FDATASYNC
-    Unix.fileSynchroniseDataOnly fd
-#else
     Unix.fileSynchronise fd
-#endif
 
 synchroniseDirectory :: HasFS IO HandleIO -> FsPath -> IO ()
 synchroniseDirectory hfs path =

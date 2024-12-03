@@ -1,10 +1,6 @@
-{-# LANGUAGE CPP #-}
-
 module System.FS.BlockIO.Internal (
     ioHasBlockIO
   ) where
-
-#include "HsUnixConfig.h"
 
 import qualified System.FS.API as FS
 import           System.FS.API (FsPath, Handle (..), HasFS)
@@ -51,14 +47,9 @@ hAdvise _h _off _len _advice = pure ()
 hAllocate :: Handle HandleIO -> FileOffset -> FileOffset -> IO ()
 hAllocate _h _off _len = pure ()
 
--- | Prefer @fdatasync@ over @fsync@ when available.
 hSynchronise :: Handle HandleIO -> IO ()
 hSynchronise h = FS.withOpenHandle "hSynchronise" (handleRaw h) $ \fd ->
-#if HAVE_FDATASYNC
-    Unix.fileSynchroniseDataOnly fd
-#else
     Unix.fileSynchronise fd
-#endif
 
 synchroniseDirectory :: HasFS IO HandleIO -> FsPath -> IO ()
 synchroniseDirectory hfs path =
