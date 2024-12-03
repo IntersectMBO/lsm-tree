@@ -1,7 +1,7 @@
 index-state:
   -- Bump this if you need newer packages from Hackage
-  -- current date: fs-sim-0.3.0.1
-  , hackage.haskell.org 2024-10-02T10:41:30Z
+  -- current date: quickcheck-lockstep-0.6.0
+  , hackage.haskell.org 2024-12-03T16:12:22Z
 
 packages: .
 
@@ -21,11 +21,6 @@ constraints: bloomfilter <0
 -- possible to have conditionals on package flags in a project file. Otherwise,
 -- we could add a conditional on (+serialblockio) to remove this import automatically.
 import: cabal.project.blockio-uring
-
-source-repository-package
-  type: git
-  location: https://github.com/well-typed/quickcheck-lockstep.git
-  tag: 1852cf87a76dc48c71aa0d9fda3fdc7c8b965011
 
 if impl(ghc >=9.12)
   allow-newer: base
