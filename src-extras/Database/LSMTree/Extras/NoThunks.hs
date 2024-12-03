@@ -99,8 +99,8 @@ instance (NoThunksIOLike m, Typeable m, Typeable (PrimState m))
 -- | Does not check 'NoThunks' for the 'Common.Session' that this
 -- 'Normal.Table' belongs to.
 instance (NoThunksIOLike m, Typeable m, Typeable (PrimState m))
-      => NoThunks (NormalTable m k v blob) where
-  showTypeOf (_ :: Proxy (NormalTable m k v blob)) = "NormalTable"
+      => NoThunks (NormalTable m k v b) where
+  showTypeOf (_ :: Proxy (NormalTable m k v b)) = "NormalTable"
   wNoThunks ctx (NormalTable t) = wNoThunks ctx t
 
 {-------------------------------------------------------------------------------

@@ -21,7 +21,7 @@ import           System.FS.API (FsPath, HasFS)
 import           System.FS.BlockIO.API (HasBlockIO)
 
 -- | Model-specific constraints
-type C k v blob = (C_ k, C_ v, C_ blob)
+type C k v b = (C_ k, C_ v, C_ b)
 type C_ a = (Show a, Eq a, Typeable a)
 
 -- | Class abstracting over session operations.

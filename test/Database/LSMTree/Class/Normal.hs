@@ -32,107 +32,107 @@ class (IsSession (Session h)) => IsTable h where
 
     new ::
            ( IOLike m
-           , C k v blob
+           , C k v b
            )
         => Session h m
         -> TableConfig h
-        -> m (h m k v blob)
+        -> m (h m k v b)
 
     close ::
            ( IOLike m
-           , C k v blob
+           , C k v b
            )
-        => h m k v blob
+        => h m k v b
         -> m ()
 
     lookups ::
            ( IOLike m
            , SerialiseKey k
            , SerialiseValue v
-           , C k v blob
+           , C k v b
            )
-        => h m k v blob
+        => h m k v b
         -> V.Vector k
-        -> m (V.Vector (LookupResult v (BlobRef h m blob)))
+        -> m (V.Vector (LookupResult v (BlobRef h m b)))
 
     rangeLookup ::
            ( IOLike m
            , SerialiseKey k
            , SerialiseValue v
-           , C k v blob
+           , C k v b
            )
-        => h m k v blob
+        => h m k v b
         -> Range k
-        -> m (V.Vector (QueryResult k v (BlobRef h m blob)))
+        -> m (V.Vector (QueryResult k v (BlobRef h m b)))
 
     newCursor ::
            ( IOLike m
            , SerialiseKey k
-           , C k v blob
+           , C k v b
            )
         => Maybe k
-        -> h m k v blob
-        -> m (Cursor h m k v blob)
+        -> h m k v b
+        -> m (Cursor h m k v b)
 
     closeCursor ::
            ( IOLike m
-           , C k v blob
+           , C k v b
            )
         => proxy h
-        -> Cursor h m k v blob
+        -> Cursor h m k v b
         -> m ()
 
     readCursor ::
            ( IOLike m
            , SerialiseKey k
            , SerialiseValue v
-           , C k v blob
+           , C k v b
            )
         => proxy h
         -> Int
-        -> Cursor h m k v blob
-        -> m (V.Vector (QueryResult k v (BlobRef h m blob)))
+        -> Cursor h m k v b
+        -> m (V.Vector (QueryResult k v (BlobRef h m b)))
 
     retrieveBlobs ::
            ( IOLike m
-           , SerialiseValue blob
-           , C_ blob
+           , SerialiseValue b
+           , C_ b
            )
         => proxy h
         -> Session h m
-        -> V.Vector (BlobRef h m blob)
-        -> m (V.Vector blob)
+        -> V.Vector (BlobRef h m b)
+        -> m (V.Vector b)
 
     updates ::
            ( IOLike m
            , SerialiseKey k
            , SerialiseValue v
-           , SerialiseValue blob
-           , C k v blob
+           , SerialiseValue b
+           , C k v b
            )
-        => h m k v blob
-        -> V.Vector (k, Update v blob)
+        => h m k v b
+        -> V.Vector (k, Update v b)
         -> m ()
 
     inserts ::
            ( IOLike m
            , SerialiseKey k
            , SerialiseValue v
-           , SerialiseValue blob
-           , C k v blob
+           , SerialiseValue b
+           , C k v b
            )
-        => h m k v blob
-        -> V.Vector (k, v, Maybe blob)
+        => h m k v b
+        -> V.Vector (k, v, Maybe b)
         -> m ()
 
     deletes ::
            ( IOLike m
            , SerialiseKey k
            , SerialiseValue v
-           , SerialiseValue blob
-           , C k v blob
+           , SerialiseValue b
+           , C k v b
            )
-        => h m k v blob
+        => h m k v b
         -> V.Vector k
         -> m ()
 
@@ -140,84 +140,84 @@ class (IsSession (Session h)) => IsTable h where
            ( IOLike m
            , SerialiseKey k
            , SerialiseValue v
-           , SerialiseValue blob
-           , C k v blob
+           , SerialiseValue b
+           , C k v b
            )
         => SnapshotLabel
         -> SnapshotName
-        -> h m k v blob
+        -> h m k v b
         -> m ()
 
     openSnapshot ::
            ( IOLike m
            , SerialiseKey k
            , SerialiseValue v
-           , SerialiseValue blob
-           , C k v blob
+           , SerialiseValue b
+           , C k v b
            )
         => Session h m
         -> SnapshotLabel
         -> SnapshotName
-        -> m (h m k v blob)
+        -> m (h m k v b)
 
     duplicate ::
            ( IOLike m
-           , C k v blob
+           , C k v b
            )
-        => h m k v blob
-        -> m (h m k v blob)
+        => h m k v b
+        -> m (h m k v b)
 
     union ::
            ( IOLike m
            , SerialiseValue v
-           , C k v blob
+           , C k v b
            )
-        => h m k v blob
-        -> h m k v blob
-        -> m (h m k v blob)
+        => h m k v b
+        -> h m k v b
+        -> m (h m k v b)
 
-withTableNew :: forall h m k v blob a.
+withTableNew :: forall h m k v b a.
     ( IOLike m
     , IsTable h
-    , C k v blob
+    , C k v b
     )
   => Session h m
   -> TableConfig h
-  -> (h m k v blob -> m a)
+  -> (h m k v b -> m a)
   -> m a
 withTableNew sesh conf = bracket (new sesh conf) close
 
-withTableFromSnapshot :: forall h m k v blob a.
+withTableFromSnapshot :: forall h m k v b a.
      ( IOLike m, IsTable h
-     , SerialiseKey k, SerialiseValue v, SerialiseValue blob
-     , C k v blob
+     , SerialiseKey k, SerialiseValue v, SerialiseValue b
+     , C k v b
      )
   => Session h m
   -> SnapshotLabel
   -> SnapshotName
-  -> (h m k v blob -> m a)
+  -> (h m k v b -> m a)
   -> m a
 withTableFromSnapshot sesh label snap = bracket (openSnapshot sesh label snap) close
 
-withTableDuplicate :: forall h m k v blob a.
+withTableDuplicate :: forall h m k v b a.
      ( IOLike m
      , IsTable h
-     , C k v blob
+     , C k v b
      )
-  => h m k v blob
-  -> (h m k v blob -> m a)
+  => h m k v b
+  -> (h m k v b -> m a)
   -> m a
 withTableDuplicate table = bracket (duplicate table) close
 
-withCursor :: forall h m k v blob a.
+withCursor :: forall h m k v b a.
      ( IOLike m
      , IsTable h
      , SerialiseKey k
-     , C k v blob
+     , C k v b
      )
   => Maybe k
-  -> h m k v blob
-  -> (Cursor h m k v blob -> m a)
+  -> h m k v b
+  -> (Cursor h m k v b -> m a)
   -> m a
 withCursor offset hdl = bracket (newCursor offset hdl) (closeCursor (Proxy @h))
 

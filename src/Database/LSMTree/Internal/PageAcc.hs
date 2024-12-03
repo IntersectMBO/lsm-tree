@@ -132,7 +132,7 @@ maxBlobRefsMap = 12 -- 768 / 64
 -- Checking entry size allows us to use 'Word16' arithmetic, we don't need to
 -- worry about overflows.
 --
-sizeofEntry :: SerialisedKey -> Entry SerialisedValue blob -> Int
+sizeofEntry :: SerialisedKey -> Entry SerialisedValue b -> Int
 sizeofEntry k Delete               = sizeofKey k
 sizeofEntry k (Mupdate v)          = sizeofKey k + sizeofValue v
 sizeofEntry k (Insert v)           = sizeofKey k + sizeofValue v
@@ -145,7 +145,7 @@ sizeofEntry k (InsertWithBlob v _) = sizeofKey k + sizeofValue v + 12
 -- If 'entryWouldFitInPage' is @True@ and the 'PageAcc' is empty (i.e. using
 --'resetPageAcc') then 'pageAccAddElem' is guaranteed to succeed.
 --
-entryWouldFitInPage :: SerialisedKey -> Entry SerialisedValue blob -> Bool
+entryWouldFitInPage :: SerialisedKey -> Entry SerialisedValue b -> Bool
 entryWouldFitInPage k e = sizeofEntry k e + 32 <= pageSize
 
 -- | Whether 'Entry' adds a blob reference

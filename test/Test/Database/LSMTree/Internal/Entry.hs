@@ -43,8 +43,8 @@ tests = adjustOption (\_ -> QuickCheckTests 10000) $
 
 -- | @resolve == fromEntry . resolve . toEntry@
 prop_resolveEntriesNormalSemantics ::
-     (Show v, Show blob, Eq v, Eq blob, Semigroup v)
-  => NonEmpty (Normal.Update v blob)
+     (Show v, Show b, Eq v, Eq b, Semigroup v)
+  => NonEmpty (Normal.Update v b)
   -> Property
 prop_resolveEntriesNormalSemantics es = expected === real
   where expected = Just . unNormalUpdateSG . sconcat . fmap NormalUpdateSG $ es
@@ -72,10 +72,10 @@ instance Semigroup (Unlawful a) where
   _ <> _ = error "unlawful"
 
 -- | Semigroup wrapper for 'Normal.Update'
-newtype NormalUpdateSG v blob = NormalUpdateSG (Normal.Update v blob)
+newtype NormalUpdateSG v b = NormalUpdateSG (Normal.Update v b)
   deriving stock (Show, Eq)
   deriving newtype (Arbitrary)
-  deriving Semigroup via First (Normal.Update v blob)
+  deriving Semigroup via First (Normal.Update v b)
 
 unNormalUpdateSG :: NormalUpdateSG v b -> Normal.Update v b
 unNormalUpdateSG (NormalUpdateSG x) = x
@@ -96,11 +96,11 @@ instance Semigroup v => Semigroup (MonoidalUpdateSG v) where
       (Monoidal.Mupsert v1 , Monoidal.Insert  v2) -> Monoidal.Insert (v1 <> v2)
       (Monoidal.Mupsert v1 , Monoidal.Mupsert v2) -> Monoidal.Mupsert (v1 <> v2)
 
-newtype EntrySG v blob = EntrySG (Entry v blob)
+newtype EntrySG v b = EntrySG (Entry v b)
   deriving stock (Show, Eq)
   deriving newtype Semigroup
 
-instance (Arbitrary v, Arbitrary blob) => Arbitrary (EntrySG v blob) where
+instance (Arbitrary v, Arbitrary b) => Arbitrary (EntrySG v b) where
   arbitrary = arbitrary2
   shrink = shrink2
 
@@ -134,26 +134,26 @@ instance Arbitrary BlobSpanSG where
   Injections/projections
 -------------------------------------------------------------------------------}
 
-updateToEntryNormal :: Normal.Update v blob -> Entry v blob
+updateToEntryNormal :: Normal.Update v b -> Entry v b
 updateToEntryNormal = \case
     Normal.Insert v Nothing  -> Insert v
     Normal.Insert v (Just b) -> InsertWithBlob v b
     Normal.Delete            -> Delete
 
-entryToUpdateNormal :: Entry v blob -> Maybe (Normal.Update v blob)
+entryToUpdateNormal :: Entry v b -> Maybe (Normal.Update v b)
 entryToUpdateNormal = \case
     Insert v           -> Just (Normal.Insert v Nothing)
     InsertWithBlob v b -> Just (Normal.Insert v (Just b))
     Mupdate _          -> Nothing
     Delete             -> Just Normal.Delete
 
-updateToEntryMonoidal :: Monoidal.Update v -> Entry v blob
+updateToEntryMonoidal :: Monoidal.Update v -> Entry v b
 updateToEntryMonoidal = \case
     Monoidal.Insert v  -> Insert v
     Monoidal.Mupsert v -> Mupdate v
     Monoidal.Delete    -> Delete
 
-entryToUpdateMonoidal :: Entry v blob -> Maybe (Monoidal.Update v)
+entryToUpdateMonoidal :: Entry v b -> Maybe (Monoidal.Update v)
 entryToUpdateMonoidal = \case
     Insert v           -> Just (Monoidal.Insert v)
     InsertWithBlob _ _ -> Nothing

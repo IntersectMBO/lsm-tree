@@ -857,7 +857,7 @@ pureReference !initialSize !batchSize !batchCount !seed =
         Nothing -> (,) k LSM.NotFound
         Just u  -> (,) k $! updateToLookupResult u
 
-updateToLookupResult :: LSM.Update v blob -> LSM.LookupResult v ()
+updateToLookupResult :: LSM.Update v b -> LSM.LookupResult v ()
 updateToLookupResult (LSM.Insert v Nothing)  = LSM.Found v
 updateToLookupResult (LSM.Insert v (Just _)) = LSM.FoundWithBlob v ()
 updateToLookupResult  LSM.Delete             = LSM.NotFound

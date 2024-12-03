@@ -45,16 +45,16 @@ type family RealizeIOSim s a where
   RealizeIOSim s (Real.TMVar a) = TMVar (IOSim s) a
   RealizeIOSim s (Real.MVar a)  = MVar (IOSim s) a
   -- lsm-tree
-  RealizeIOSim s (Table IO k v blob)       = Table (IOSim s) k v blob
-  RealizeIOSim s (LookupResult v blobref)        = LookupResult v (RealizeIOSim s blobref)
-  RealizeIOSim s (QueryResult k v blobref)       = QueryResult k v (RealizeIOSim s blobref)
-  RealizeIOSim s (Cursor IO k v blob)            = Table (IOSim s) k v blob
-  RealizeIOSim s (BlobRef IO blob)               = BlobRef (IOSim s) blob
+  RealizeIOSim s (Table IO k v b)    = Table (IOSim s) k v b
+  RealizeIOSim s (LookupResult v b)  = LookupResult v (RealizeIOSim s b)
+  RealizeIOSim s (QueryResult k v b) = QueryResult k v (RealizeIOSim s b)
+  RealizeIOSim s (Cursor IO k v b)   = Table (IOSim s) k v b
+  RealizeIOSim s (BlobRef IO b)      = BlobRef (IOSim s) b
   -- Type family wrappers
-  RealizeIOSim s (WrapTable h IO k v blob) = WrapTable h (IOSim s) k v blob
-  RealizeIOSim s (WrapCursor h IO k v blob)      = WrapCursor h (IOSim s) k v blob
-  RealizeIOSim s (WrapBlobRef h IO blob)         = WrapBlobRef h (IOSim s) blob
-  RealizeIOSim s (WrapBlob blob)                 = WrapBlob blob
+  RealizeIOSim s (WrapTable h IO k v b)  = WrapTable h (IOSim s) k v b
+  RealizeIOSim s (WrapCursor h IO k v b) = WrapCursor h (IOSim s) k v b
+  RealizeIOSim s (WrapBlobRef h IO b)    = WrapBlobRef h (IOSim s) b
+  RealizeIOSim s (WrapBlob b)            = WrapBlob b
   -- Congruence
   RealizeIOSim s (f a b) = f (RealizeIOSim s a) (RealizeIOSim s b)
   RealizeIOSim s (f a)   = f (RealizeIOSim s a)

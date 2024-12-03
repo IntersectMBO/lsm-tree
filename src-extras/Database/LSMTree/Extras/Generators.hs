@@ -74,7 +74,7 @@ import           Test.QuickCheck.Instances ()
   Common LSMTree types
 -------------------------------------------------------------------------------}
 
-instance (Arbitrary v, Arbitrary blob) => Arbitrary (Unified.Update v blob) where
+instance (Arbitrary v, Arbitrary b) => Arbitrary (Unified.Update v b) where
   arbitrary = QC.arbitrary2
   shrink = QC.shrink2
 
@@ -93,7 +93,7 @@ instance Arbitrary2 Unified.Update where
     Unified.Mupsert v -> Unified.Insert v Nothing : map Unified.Mupsert (shrinkVal v)
     Unified.Delete -> []
 
-instance (Arbitrary v, Arbitrary blob) => Arbitrary (Normal.Update v blob) where
+instance (Arbitrary v, Arbitrary b) => Arbitrary (Normal.Update v b) where
   arbitrary = QC.arbitrary2
   shrink = QC.shrink2
 
@@ -150,7 +150,7 @@ instance (Arbitrary k, Ord k) => Arbitrary (Range k) where
   Entry
 -------------------------------------------------------------------------------}
 
-instance (Arbitrary v, Arbitrary blob) => Arbitrary (Entry v blob) where
+instance (Arbitrary v, Arbitrary b) => Arbitrary (Entry v b) where
   arbitrary = QC.arbitrary2
   shrink = QC.shrink2
 
