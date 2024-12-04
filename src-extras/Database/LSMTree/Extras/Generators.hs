@@ -559,11 +559,3 @@ instance Arbitrary Merge.Level where
   arbitrary = QC.elements [Merge.MidLevel, Merge.LastLevel]
   shrink Merge.LastLevel = [Merge.MidLevel]
   shrink Merge.MidLevel  = []
-
-{-------------------------------------------------------------------------------
-  Vectors
--------------------------------------------------------------------------------}
-
-instance (VP.Prim a, Arbitrary a) => Arbitrary (VP.Vector a) where
-    arbitrary = VP.fromList <$> arbitrary
-    shrink = QC.shrinkMap VP.fromList VP.toList
