@@ -182,10 +182,6 @@ retrieveBlobsTrav hdl ses brefs = do
 lookupsWithBlobs :: forall h m k v b.
      ( IsTable h
      , IOLike m
-     , SerialiseKey k
-     , SerialiseValue v
-     , SerialiseValue b
-     , ResolveValue v
      , C k v b
      )
   => h m k v b
@@ -199,10 +195,6 @@ lookupsWithBlobs hdl ses ks = do
 rangeLookupWithBlobs :: forall h m k v b.
      ( IsTable h
      , IOLike m
-     , SerialiseKey k
-     , SerialiseValue v
-     , SerialiseValue b
-     , ResolveValue v
      , C k v b
      )
   => h m k v b
@@ -216,10 +208,6 @@ rangeLookupWithBlobs hdl ses r = do
 readCursorWithBlobs :: forall h m k v b proxy.
      ( IsTable h
      , IOLike m
-     , SerialiseKey k
-     , SerialiseValue v
-     , SerialiseValue b
-     , ResolveValue v
      , C k v b
      )
   => proxy h
@@ -234,10 +222,6 @@ readCursorWithBlobs hdl ses cursor n = do
 readCursorAllWithBlobs :: forall h m k v b proxy.
      ( IsTable h
      , IOLike m
-     , SerialiseKey k
-     , SerialiseValue v
-     , SerialiseValue b
-     , ResolveValue v
      , C k v b
      )
   => proxy h
