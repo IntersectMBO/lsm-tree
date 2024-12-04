@@ -7,6 +7,7 @@ module Database.LSMTree.Class (
   , withTableNew
   , withTableFromSnapshot
   , withTableDuplicate
+  , withTableUnion
   , withCursor
   , module Common
   , module Types
@@ -17,7 +18,8 @@ import           Data.Kind (Constraint, Type)
 import           Data.Typeable (Proxy (..))
 import qualified Data.Vector as V
 import           Database.LSMTree as Types (LookupResult (..), QueryResult (..),
-                     ResolveValue, Update (..))
+                     ResolveAsFirst (..), ResolveValue (..), Update (..),
+                     resolveDeserialised)
 import qualified Database.LSMTree as R
 import           Database.LSMTree.Class.Common as Common
 
@@ -47,9 +49,6 @@ class (IsSession (Session h)) => IsTable h where
 
     lookups ::
            ( IOLike m
-           , SerialiseKey k
-           , SerialiseValue v
-           , ResolveValue v
            , C k v b
            )
         => h m k v b
@@ -58,9 +57,6 @@ class (IsSession (Session h)) => IsTable h where
 
     rangeLookup ::
            ( IOLike m
-           , SerialiseKey k
-           , SerialiseValue v
-           , ResolveValue v
            , C k v b
            )
         => h m k v b
@@ -69,7 +65,6 @@ class (IsSession (Session h)) => IsTable h where
 
     newCursor ::
            ( IOLike m
-           , SerialiseKey k
            , C k v b
            )
         => Maybe k
@@ -86,9 +81,6 @@ class (IsSession (Session h)) => IsTable h where
 
     readCursor ::
            ( IOLike m
-           , SerialiseKey k
-           , SerialiseValue v
-           , ResolveValue v
            , C k v b
            )
         => proxy h
@@ -98,8 +90,7 @@ class (IsSession (Session h)) => IsTable h where
 
     retrieveBlobs ::
            ( IOLike m
-           , SerialiseValue b
-           , C_ b
+           , CB b
            )
         => proxy h
         -> Session h m
@@ -108,10 +99,6 @@ class (IsSession (Session h)) => IsTable h where
 
     updates ::
            ( IOLike m
-           , SerialiseKey k
-           , SerialiseValue v
-           , SerialiseValue b
-           , ResolveValue v
            , C k v b
            )
         => h m k v b
@@ -120,10 +107,6 @@ class (IsSession (Session h)) => IsTable h where
 
     inserts ::
            ( IOLike m
-           , SerialiseKey k
-           , SerialiseValue v
-           , SerialiseValue b
-           , ResolveValue v
            , C k v b
            )
         => h m k v b
@@ -132,10 +115,6 @@ class (IsSession (Session h)) => IsTable h where
 
     deletes ::
            ( IOLike m
-           , SerialiseKey k
-           , SerialiseValue v
-           , SerialiseValue b
-           , ResolveValue v
            , C k v b
            )
         => h m k v b
@@ -144,10 +123,6 @@ class (IsSession (Session h)) => IsTable h where
 
     mupserts ::
            ( IOLike m
-           , SerialiseKey k
-           , SerialiseValue v
-           , SerialiseValue b
-           , ResolveValue v
            , C k v b
            )
         => h m k v b
@@ -156,10 +131,6 @@ class (IsSession (Session h)) => IsTable h where
 
     createSnapshot ::
            ( IOLike m
-           , SerialiseKey k
-           , SerialiseValue v
-           , SerialiseValue b
-           , ResolveValue v
            , C k v b
            )
         => SnapshotLabel
@@ -169,10 +140,6 @@ class (IsSession (Session h)) => IsTable h where
 
     openSnapshot ::
            ( IOLike m
-           , SerialiseKey k
-           , SerialiseValue v
-           , ResolveValue v
-           , SerialiseValue b
            , C k v b
            )
         => Session h m
@@ -189,8 +156,6 @@ class (IsSession (Session h)) => IsTable h where
 
     union ::
            ( IOLike m
-           , ResolveValue v
-           , SerialiseValue v
            , C k v b
            )
         => h m k v b
@@ -198,10 +163,7 @@ class (IsSession (Session h)) => IsTable h where
         -> m (h m k v b)
 
 withTableNew :: forall h m k v b a.
-    ( IOLike m
-    , IsTable h
-    , C k v b
-    )
+    (IOLike m, IsTable h, C k v b)
   => Session h m
   -> TableConfig h
   -> (h m k v b -> m a)
@@ -209,10 +171,7 @@ withTableNew :: forall h m k v b a.
 withTableNew sesh conf = bracket (new sesh conf) close
 
 withTableFromSnapshot :: forall h m k v b a.
-     ( IOLike m, IsTable h
-     , SerialiseKey k, SerialiseValue v, SerialiseValue b, ResolveValue v
-     , C k v b
-     )
+     (IOLike m, IsTable h, C k v b)
   => Session h m
   -> SnapshotLabel
   -> SnapshotName
@@ -221,21 +180,22 @@ withTableFromSnapshot :: forall h m k v b a.
 withTableFromSnapshot sesh label snap = bracket (openSnapshot sesh label snap) close
 
 withTableDuplicate :: forall h m k v b a.
-     ( IOLike m
-     , IsTable h
-     , C k v b
-     )
+     (IOLike m, IsTable h, C k v b)
   => h m k v b
   -> (h m k v b -> m a)
   -> m a
 withTableDuplicate table = bracket (duplicate table) close
 
+withTableUnion :: forall h m k v b a.
+     (IOLike m, IsTable h, C k v b)
+  => h m k v b
+  -> h m k v b
+  -> (h m k v b -> m a)
+  -> m a
+withTableUnion table1 table2 = bracket (table1 `union` table2) close
+
 withCursor :: forall h m k v b a.
-     ( IOLike m
-     , IsTable h
-     , SerialiseKey k
-     , C k v b
-     )
+     (IOLike m, IsTable h, C k v b)
   => Maybe k
   -> h m k v b
   -> (Cursor h m k v b -> m a)

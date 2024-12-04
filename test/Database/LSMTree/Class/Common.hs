@@ -1,8 +1,7 @@
 {-# LANGUAGE TypeFamilies #-}
 
 module Database.LSMTree.Class.Common (
-    C
-  , C_
+    C, CK, CV, CB, C_
   , IsSession (..)
   , SessionArgs (..)
   , withSession
@@ -13,6 +12,7 @@ import           Control.Monad.Class.MonadThrow (MonadThrow (..))
 import           Control.Tracer (nullTracer)
 import           Data.Kind (Constraint, Type)
 import           Data.Typeable (Typeable)
+import           Database.LSMTree (ResolveValue)
 import           Database.LSMTree.Common as Types (IOLike, Range (..),
                      SerialiseKey, SerialiseValue, SnapshotLabel (..),
                      SnapshotName)
@@ -20,9 +20,28 @@ import qualified Database.LSMTree.Common as R
 import           System.FS.API (FsPath, HasFS)
 import           System.FS.BlockIO.API (HasBlockIO)
 
--- | Model-specific constraints
-type C k v b = (C_ k, C_ v, C_ b)
+{-------------------------------------------------------------------------------
+  Constraints
+-------------------------------------------------------------------------------}
+
+-- | Constraints for keys, values, and blobs
+type C k v b = (CK k, CV v, CB b)
+
+-- | Constaints for keys
+type CK k = (C_ k, SerialiseKey k)
+
+-- | Constraints for values
+type CV v = (C_ v, SerialiseValue v, ResolveValue v)
+
+-- | Constraints for blobs
+type CB b = (C_ b, SerialiseValue b)
+
+-- | Model-specific constraints for keys, values, and blobs
 type C_ a = (Show a, Eq a, Typeable a)
+
+{-------------------------------------------------------------------------------
+  Session
+-------------------------------------------------------------------------------}
 
 -- | Class abstracting over session operations.
 --
