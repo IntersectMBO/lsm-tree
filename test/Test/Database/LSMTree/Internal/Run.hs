@@ -190,7 +190,7 @@ prop_WriteAndOpen fs hbio wb =
     withTempRegistry $ \reg -> do
       let paths = Run.runFsPaths written
           paths' = paths { runNumber = RunNumber 17}
-      hardLinkRunFiles reg fs hbio paths paths'
+      hardLinkRunFiles reg fs hbio NoHardLinkDurable paths paths'
       loaded <- openFromDisk fs hbio CacheRunData (simplePath 17)
 
       Run.size written @=? Run.size loaded

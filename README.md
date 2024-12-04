@@ -26,7 +26,8 @@ key-value store.
 
 ## System requirements
 
-This library only supports 64-bit, little-endian systems.
+This library only supports 64-bit, little-endian systems. On Windows, the
+library only works probably on drives with NTFS.
 
 Provide the -threaded flag to executables, test suites and benchmark suites if
 you use this library on Linux systems.

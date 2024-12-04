@@ -1088,6 +1088,7 @@ createSnapshot resolve snap label tableType t = do
     withOpenTable t $ \thEnv ->
       withTempRegistry $ \reg -> do -- TODO: use the temp registry for all side effects
         let hfs = tableHasFS thEnv
+            hbio = tableHasBlockIO thEnv
 
         -- Guard that the snapshot does not exist already
         let snapDir = Paths.namedSnapshotDir (tableSessionRoot thEnv) snap
@@ -1131,7 +1132,7 @@ createSnapshot resolve snap label tableType t = do
         -- Convert to snapshot format
         snapLevels <- toSnapLevels (tableLevels content)
         -- Hard link runs into the named snapshot directory
-        snapLevels' <- snapshotRuns reg snapDir snapLevels
+        snapLevels' <- snapshotRuns reg hbio snapDir snapLevels
 
         let snapMetaData = SnapshotMetaData label tableType (tableConfig t) snapLevels'
             SnapshotMetaDataFile contentPath = Paths.snapshotMetaDataFile snapDir
