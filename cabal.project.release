@@ -24,3 +24,8 @@ import: cabal.project.blockio-uring
 
 if impl(ghc >=9.12)
   allow-newer: base
+
+-- TODO: fix assembly error in text-2.1.2
+if (impl(ghc < 9.0) && os(windows))
+  package text
+    flags: -simdutf
