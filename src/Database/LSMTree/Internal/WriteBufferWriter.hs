@@ -1,10 +1,11 @@
 module Database.LSMTree.Internal.WriteBufferWriter
   (
-    writeWriteBuffer
+    SerialisedWriteBuffer (..)
+  , writeWriteBuffer
   ) where
 
 import           Control.Exception (assert)
-import           Control.Monad (void, when)
+import           Control.Monad (when)
 import           Control.Monad.Class.MonadST (MonadST (..))
 import qualified Control.Monad.Class.MonadST as ST
 import           Control.Monad.Class.MonadSTM (MonadSTM (..))
@@ -43,6 +44,12 @@ import           System.FS.API (HasFS)
 import qualified System.FS.BlockIO.API as FS
 import           System.FS.BlockIO.API (HasBlockIO)
 
+data SerialisedWriteBuffer m h = SerialisedWriteBuffer
+  { serialisedBufferHasFS      :: HasFS m h
+  , serialisedBufferHasBlockIO :: HasBlockIO m h
+  , serialisedBufferFsPaths    :: WriteBufferFsPaths
+  }
+
 {-# SPECIALISE
     writeWriteBuffer ::
          HasFS IO h
@@ -50,7 +57,7 @@ import           System.FS.BlockIO.API (HasBlockIO)
       -> WriteBufferFsPaths
       -> WriteBuffer
       -> WriteBufferBlobs IO h
-      -> IO ()
+      -> IO (SerialisedWriteBuffer IO h)
     #-}
 -- | Write a 'WriteBuffer' to disk.
 writeWriteBuffer ::
@@ -60,13 +67,14 @@ writeWriteBuffer ::
   -> WriteBufferFsPaths
   -> WriteBuffer
   -> WriteBufferBlobs m h
-  -> m ()
+  -> m (SerialisedWriteBuffer m h)
 writeWriteBuffer hfs hbio fsPaths buffer blobs = do
   writer <- new hfs hbio fsPaths
   for_ (WB.toList buffer) $ \(key, op) ->
     -- TODO: The fmap entry here reallocates even when there are no blobs.
     addKeyOp writer key (WBB.mkRawBlobRef blobs <$> op)
-  void $ unsafeFinalise True writer
+  (hfs', hbio', fsPaths') <- unsafeFinalise True writer
+  pure $ SerialisedWriteBuffer hfs' hbio' fsPaths'
 
 -- | The in-memory representation of an LSM 'WriteBuffer' that is in the process of being serialised to disk.
 data WriteBufferWriter m h = WriteBufferWriter
