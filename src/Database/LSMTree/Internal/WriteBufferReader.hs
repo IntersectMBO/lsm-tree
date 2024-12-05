@@ -6,30 +6,35 @@ module Database.LSMTree.Internal.WriteBufferReader (
 
 import           Control.Monad.Class.MonadST (MonadST (..))
 import           Control.Monad.Class.MonadSTM (MonadSTM (..))
-import           Control.Monad.Class.MonadThrow (MonadCatch (..), MonadThrow (..), MonadMask)
+import           Control.Monad.Class.MonadThrow (MonadCatch (..), MonadMask,
+                     MonadThrow (..))
 import           Control.Monad.Primitive (PrimMonad (..))
-import           Data.Primitive.MutVar (MutVar, newMutVar, readMutVar, writeMutVar)
+import           Data.Primitive.MutVar (MutVar, newMutVar, readMutVar,
+                     writeMutVar)
 import           Data.Primitive.PrimVar
+import qualified Data.Vector as V
 import           Data.Word (Word16)
+import           Database.LSMTree.Internal.BlobFile (BlobFile, openBlobFile)
+import qualified Database.LSMTree.Internal.BlobFile as BlobFile
+import           Database.LSMTree.Internal.BlobRef (RawBlobRef (..),
+                     readRawBlobRef)
 import qualified Database.LSMTree.Internal.Entry as E
+import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
+import           Database.LSMTree.Internal.MergeSchedule (addWriteBufferEntries)
 import           Database.LSMTree.Internal.Paths
 import           Database.LSMTree.Internal.RawPage
+import           Database.LSMTree.Internal.RunReader (Entry (..), Result (..),
+                     mkEntryOverflow, readDiskPage, readOverflowPages,
+                     toFullEntry)
+import           Database.LSMTree.Internal.Serialise (SerialisedValue)
+import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
+import qualified Database.LSMTree.Internal.WriteBuffer as WB
+import           Database.LSMTree.Internal.WriteBufferBlobs (WriteBufferBlobs)
+import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
 import qualified System.FS.BlockIO.API as FS
 import           System.FS.BlockIO.API (HasBlockIO)
-import Database.LSMTree.Internal.RunReader (readDiskPage, Result (..), Entry (..), mkEntryOverflow, readOverflowPages, toFullEntry)
-import Database.LSMTree.Internal.Serialise (SerialisedValue)
-import Database.LSMTree.Internal.BlobRef (RawBlobRef (..), readRawBlobRef)
-import Database.LSMTree.Internal.BlobFile (BlobFile, openBlobFile)
-import Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
-import qualified Data.Vector as V
-import qualified Database.LSMTree.Internal.WriteBuffer as WB
-import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
-import Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
-import Database.LSMTree.Internal.MergeSchedule (addWriteBufferEntries)
-import qualified Database.LSMTree.Internal.BlobFile as BlobFile
-import Database.LSMTree.Internal.WriteBufferBlobs (WriteBufferBlobs)
 
 {-# SPECIALISE
     readWriteBuffer ::
