@@ -5,8 +5,8 @@ module Test.Database.LSMTree.Internal.Run (
     tests,
 ) where
 
-import           Control.Exception (bracket, bracket_)
-import           Control.RefCount
+import           Control.Exception (bracket)
+import           Control.RefCount (RefCount (..), readRefCount)
 import           Control.TempRegistry (withTempRegistry)
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
@@ -37,7 +37,8 @@ import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import           Database.LSMTree.Internal.WriteBufferBlobs (WriteBufferBlobs)
 import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
-import           Database.LSMTree.Internal.WriteBufferWriter (writeWriteBuffer)
+import           Database.LSMTree.Internal.WriteBufferWriter
+                     (SerialisedWriteBuffer (..), writeWriteBuffer)
 import qualified FormatPage as Proto
 import           System.FilePath
 import qualified System.FS.API as FS
@@ -239,7 +240,8 @@ prop_WriteRunEqWriteWriteBuffer hfs hbio rd = do
     -- Serialise run data as write buffer:
     let f (SerialisedValue x) (SerialisedValue y) = SerialisedValue (x <> y)
     withRunDataAsWriteBuffer hfs f (WrapRunFsPaths $ simplePath 1111) srd $ \wb wbb -> do
-      withSerialisedWriteBuffer hfs hbio (WrapRunFsPaths $ simplePath 1312) wb wbb $ \wbPaths -> do
+      withSerialisedWriteBuffer hfs hbio (WrapRunFsPaths $ simplePath 1312) wb wbb $ \swb -> do
+        let wbPaths = Paths.pathsForWriteBufferFiles $ serialisedBufferFsPaths swb
         -- Compare KOps:
         FS.withFile hfs rdKOpsFile FS.ReadMode $ \rdKOpsHandle ->
           FS.withFile hfs (Paths.forWriteBufferKOpsRaw wbPaths) FS.ReadMode $ \wbKOpsHandle -> do
@@ -276,14 +278,14 @@ withSerialisedWriteBuffer ::
   -> WriteBufferFsPaths
   -> WriteBuffer
   -> WriteBufferBlobs IO h
-  -> (Paths.ForWriteBufferFiles FSL.FsPath -> IO a)
+  -> (SerialisedWriteBuffer IO h -> IO a)
   -> IO a
 withSerialisedWriteBuffer hfs hbio fsPaths wb wbb action =
-  bracket_ setup clean . action $ Paths.pathsForWriteBufferFiles fsPaths
+  bracket setup clean action
   where
     setup = writeWriteBuffer hfs hbio fsPaths wb wbb
-    clean = do
-      FS.removeFile hfs (Paths.writeBufferKOpsPath fsPaths)
-      FS.removeFile hfs (Paths.writeBufferBlobPath fsPaths)
-      FS.removeFile hfs (Paths.writeBufferChecksumsPath fsPaths)
-      pure (hfs, hbio)
+    clean (SerialisedWriteBuffer hfs' hbio' fsPaths') = do
+      FS.removeFile hfs' (Paths.writeBufferKOpsPath fsPaths')
+      FS.removeFile hfs' (Paths.writeBufferBlobPath fsPaths')
+      FS.removeFile hfs' (Paths.writeBufferChecksumsPath fsPaths')
+      pure (hfs', hbio')
