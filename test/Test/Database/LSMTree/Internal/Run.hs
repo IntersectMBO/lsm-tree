@@ -54,6 +54,7 @@ import           Test.Util.FS (propNoOpenHandles, withSimHasBlockIO)
 import Database.LSMTree.Internal.WriteBufferReader (readWriteBuffer)
 import Control.Monad (when)
 import Data.Foldable (for_)
+import Control.Exception (bracket, bracket_)
 
 
 tests :: TestTree
@@ -242,21 +243,19 @@ prop_WriteAndOpenWriteBuffer hfs hbio rd = do
   let srd = serialiseRunData rd
   let inPaths = WrapRunFsPaths $ simplePath 1111
   let f (SerialisedValue x) (SerialisedValue y) = SerialisedValue (x <> y)
-  (wb, wbb) <- runDataToWriteBuffer hfs f inPaths srd
-  -- Write write buffer to disk:
-  let wbPaths = WrapRunFsPaths $ simplePath 1312
-  let wbKOpsPath = Paths.ForKOps $ Paths.writeBufferKOpsPath wbPaths
-  let wbBlobPath = Paths.ForBlob $ Paths.writeBufferBlobPath wbPaths
-  writeWriteBuffer hfs hbio wbPaths wb wbb
-  WBB.removeReference wbb
-  -- Read write buffer from disk:
-  let outPaths = WrapRunFsPaths $ simplePath 2222
-  let outBlobPath = Paths.ForBlob $ Paths.writeBufferBlobPath outPaths
-  (wb', wbb') <- readWriteBuffer hfs hbio f outBlobPath wbKOpsPath wbBlobPath
-  WBB.removeReference wbb'
-  assertEqual "k/ops" wb wb'
-  -- TODO: Ensure proper exception safety
-  removeSerialisedWriteBuffer hfs wbPaths
+  withRunDataAsWriteBuffer hfs f inPaths srd $ \wb wbb -> do
+    -- Write write buffer to disk:
+    let wbPaths = WrapRunFsPaths $ simplePath 1312
+    let wbKOpsPath = Paths.ForKOps $ Paths.writeBufferKOpsPath wbPaths
+    let wbBlobPath = Paths.ForBlob $ Paths.writeBufferBlobPath wbPaths
+    withSerialisedWriteBuffer hfs hbio wbPaths wb wbb $ do
+      -- Read write buffer from disk:
+      let outPaths = WrapRunFsPaths $ simplePath 2222
+      let outBlobPath = Paths.ForBlob $ Paths.writeBufferBlobPath outPaths
+      bracket
+        (readWriteBuffer hfs hbio f outBlobPath wbKOpsPath wbBlobPath)
+        (WBB.removeReference . snd) $ \(wb', _wbb') ->
+        assertEqual "k/ops" wb wb'
   -- TODO: return a proper Property instead of using assertEqual etc.
   return (property True)
 
@@ -276,53 +275,57 @@ prop_WriteRunEqWriteWriteBuffer hfs hbio rd = do
   withRun hfs hbio rdPaths srd $ \_run -> do
     -- Serialise run data as write buffer:
     let f (SerialisedValue x) (SerialisedValue y) = SerialisedValue (x <> y)
-    let wbbPaths = WrapRunFsPaths $ simplePath 1111
-    (wb, wbb) <- runDataToWriteBuffer hfs f wbbPaths srd
-    let wbPaths = WrapRunFsPaths $ simplePath 1312
-    let wbKOpsPath = Paths.writeBufferKOpsPath wbPaths
-    let wbBlobPath = Paths.writeBufferBlobPath wbPaths
-    writeWriteBuffer hfs hbio wbPaths wb wbb
-    WBB.removeReference wbb
-    -- Compare KOps:
-    FS.withFile hfs rdKOpsFile FS.ReadMode $ \rdKOpsHandle ->
-      FS.withFile hfs wbKOpsPath FS.ReadMode $ \wbKOpsHandle -> do
-        rdKOps <- FSL.hGetAll hfs rdKOpsHandle
-        wbKOps <- FSL.hGetAll hfs wbKOpsHandle
-        assertEqual "writtenRunKOps/writtenWriteBufferKOps" rdKOps wbKOps
-    -- Compare Blob:
-    FS.withFile hfs rdBlobFile FS.ReadMode $ \rdBlobHandle ->
-      FS.withFile hfs wbBlobPath FS.ReadMode $ \wbBlobHandle -> do
-        rdBlob <- FSL.hGetAll hfs rdBlobHandle
-        wbBlob <- FSL.hGetAll hfs wbBlobHandle
-        assertEqual "writtenRunBlob/writtenWriteBufferBlob" rdBlob wbBlob
-    -- TODO: Ensure proper exception safety
-    removeSerialisedWriteBuffer hfs wbPaths
+    let inPaths = WrapRunFsPaths $ simplePath 1111
+    withRunDataAsWriteBuffer hfs f inPaths srd $ \wb wbb -> do
+      let wbPaths = WrapRunFsPaths $ simplePath 1312
+      let wbKOpsPath = Paths.writeBufferKOpsPath wbPaths
+      let wbBlobPath = Paths.writeBufferBlobPath wbPaths
+      withSerialisedWriteBuffer hfs hbio wbPaths wb wbb $ do
+        -- Compare KOps:
+        FS.withFile hfs rdKOpsFile FS.ReadMode $ \rdKOpsHandle ->
+          FS.withFile hfs wbKOpsPath FS.ReadMode $ \wbKOpsHandle -> do
+            rdKOps <- FSL.hGetAll hfs rdKOpsHandle
+            wbKOps <- FSL.hGetAll hfs wbKOpsHandle
+            assertEqual "writtenRunKOps/writtenWriteBufferKOps" rdKOps wbKOps
+        -- Compare Blob:
+        FS.withFile hfs rdBlobFile FS.ReadMode $ \rdBlobHandle ->
+          FS.withFile hfs wbBlobPath FS.ReadMode $ \wbBlobHandle -> do
+            rdBlob <- FSL.hGetAll hfs rdBlobHandle
+            wbBlob <- FSL.hGetAll hfs wbBlobHandle
+            assertEqual "writtenRunBlob/writtenWriteBufferBlob" rdBlob wbBlob
   -- TODO: return a proper Property instead of using assertEqual etc.
   return (property True)
 
-runDataToWriteBuffer ::
+-- | Use 'SerialisedRunData' to 'WriteBuffer' and 'WriteBufferBlobs'.
+withRunDataAsWriteBuffer ::
     FS.HasFS IO h
   -> ResolveSerialisedValue
   -> WriteBufferFsPaths
   -> SerialisedRunData
-  -> IO (WriteBuffer, WriteBufferBlobs IO h)
-runDataToWriteBuffer hfs f fsPaths rd = do
-  let wb = WB.empty
-  wbb <- WBB.new hfs (Paths.writeBufferBlobPath fsPaths)
+  -> (WriteBuffer -> WriteBufferBlobs IO h -> IO a)
+  -> IO a
+withRunDataAsWriteBuffer hfs f fsPaths rd action = do
   let es = V.fromList . M.toList $ unRunData rd
   let maxn = NumEntries $ V.length es
-  (wb', _es') <- addWriteBufferEntries hfs f wbb maxn wb es
-  pure (wb', wbb)
+  let wbbPath = Paths.writeBufferBlobPath fsPaths
+  bracket (WBB.new hfs wbbPath) WBB.removeReference $ \wbb -> do
+    (wb, _) <- addWriteBufferEntries hfs f wbb maxn WB.empty es
+    action wb wbb
 
-removeSerialisedWriteBuffer ::
-     FS.HasFS IO h
-  -> WriteBufferFsPaths
-  -> IO ()
-removeSerialisedWriteBuffer hfs wbPaths = do
-  for_
-    [ Paths.writeBufferKOpsPath wbPaths
-    , Paths.writeBufferBlobPath wbPaths
-    , Paths.writeBufferChecksumsPath wbPaths
-    ] $ \fsPath -> do
-    fsPathExists <- FS.doesFileExist hfs fsPath
-    when fsPathExists $ FS.removeFile hfs fsPath
+-- | Serialise a 'WriteBuffer' and 'WriteBufferBlobs' to disk and perform an 'IO' action.
+withSerialisedWriteBuffer ::
+       FS.HasFS IO h
+    -> FS.HasBlockIO IO h
+    -> WriteBufferFsPaths
+    -> WriteBuffer
+    -> WriteBufferBlobs IO h
+    -> IO a
+    -> IO a
+withSerialisedWriteBuffer hfs hbio wbPaths wb wbb =
+  bracket_ (writeWriteBuffer hfs hbio wbPaths wb wbb) $ do
+    for_ [ Paths.writeBufferKOpsPath wbPaths
+         , Paths.writeBufferBlobPath wbPaths
+         , Paths.writeBufferChecksumsPath wbPaths
+         ] $ \fsPath -> do
+      fsPathExists <- FS.doesFileExist hfs fsPath
+      when fsPathExists $ FS.removeFile hfs fsPath
