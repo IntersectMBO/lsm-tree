@@ -5,12 +5,15 @@ module Test.Database.LSMTree.Internal.Run (
     tests,
 ) where
 
+import           Control.Exception (bracket, bracket_)
+import           Control.Monad (when)
 import           Control.RefCount (RefCount (..), readRefCount)
 import           Control.TempRegistry (withTempRegistry)
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Short as SBS
 import           Data.Coerce (coerce)
+import           Data.Foldable (for_)
 import qualified Data.Map as M
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromJust)
@@ -36,8 +39,8 @@ import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import           Database.LSMTree.Internal.WriteBufferBlobs (WriteBufferBlobs)
 import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
-import           Database.LSMTree.Internal.WriteBufferWriter
-                     (writeWriteBuffer)
+import           Database.LSMTree.Internal.WriteBufferReader (readWriteBuffer)
+import           Database.LSMTree.Internal.WriteBufferWriter (writeWriteBuffer)
 import qualified FormatPage as Proto
 import           System.FilePath
 import qualified System.FS.API as FS
@@ -51,10 +54,6 @@ import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.HUnit (assertEqual, testCase, (@=?), (@?))
 import           Test.Tasty.QuickCheck
 import           Test.Util.FS (propNoOpenHandles, withSimHasBlockIO)
-import Database.LSMTree.Internal.WriteBufferReader (readWriteBuffer)
-import Control.Monad (when)
-import Data.Foldable (for_)
-import Control.Exception (bracket, bracket_)
 
 
 tests :: TestTree
@@ -233,7 +232,7 @@ prop_WriteAndOpen fs hbio wb =
 
 -- | Writing and loading a 'WriteBuffer' gives the same in-memory
 --   representation as the original run.
-prop_WriteAndOpenWriteBuffer :: 
+prop_WriteAndOpenWriteBuffer ::
      FS.HasFS IO h
   -> FS.HasBlockIO IO h
   -> RunData KeyForIndexCompact SerialisedValue SerialisedBlob
