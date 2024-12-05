@@ -10,6 +10,10 @@ module Database.LSMTree.Internal.RunReader (
   , Entry (..)
   , toFullEntry
   , appendOverflow
+    -- * Exported for WriteBufferReader
+  , mkEntryOverflow
+  , readDiskPage
+  , readOverflowPages
   ) where
 
 import           Control.Exception (assert)
@@ -108,6 +112,7 @@ new !offsetKey
         let fileSizeInPages = fileSize `div` toEnum pageSize
         let indexedPages = getNumPages $ Run.sizeInPages readerRun
         assert (indexedPages == fileSizeInPages) $ pure h
+    -- TODO: Why?
     -- Double the file readahead window (only applies to this file descriptor)
     FS.hAdviseAll readerHasBlockIO readerKOpsHandle FS.AdviceSequential
 
