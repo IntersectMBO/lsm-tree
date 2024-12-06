@@ -10,6 +10,7 @@ import           Control.Monad.Class.MonadSTM (MonadSTM (..))
 import           Control.Monad.Class.MonadThrow (MonadThrow)
 import           Control.Monad.Primitive (PrimMonad (..))
 import           Control.Monad.ST (ST)
+import           Control.RefCount (Ref)
 import           Data.Foldable (for_)
 import           Data.Maybe (maybeToList)
 import           Data.Primitive.PrimVar (PrimVar, newPrimVar)
@@ -49,7 +50,7 @@ import           System.FS.BlockIO.API (HasBlockIO)
       -> HasBlockIO IO h
       -> WriteBufferFsPaths
       -> WriteBuffer
-      -> WriteBufferBlobs IO h
+      -> Ref (WriteBufferBlobs IO h)
       -> IO ()
     #-}
 -- | Write a 'WriteBuffer' to disk.
@@ -59,7 +60,7 @@ writeWriteBuffer ::
   -> HasBlockIO m h
   -> WriteBufferFsPaths
   -> WriteBuffer
-  -> WriteBufferBlobs m h
+  -> Ref (WriteBufferBlobs m h)
   -> m ()
 writeWriteBuffer hfs hbio fsPaths buffer blobs = do
   writer <- new hfs hbio fsPaths
