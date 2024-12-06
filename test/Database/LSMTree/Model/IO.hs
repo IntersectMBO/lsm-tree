@@ -17,6 +17,7 @@ module Database.LSMTree.Model.IO (
 import           Control.Concurrent.Class.MonadSTM.Strict
 import           Control.Exception (Exception)
 import           Control.Monad.Class.MonadThrow (MonadThrow (..))
+import qualified Data.Vector as V
 import qualified Database.LSMTree.Class as Class
 import           Database.LSMTree.Model.Session (TableConfig (..))
 import qualified Database.LSMTree.Model.Session as Model
@@ -90,3 +91,8 @@ instance Class.IsTable Table where
 
     union (Table s1 t1) (Table _s2 t2) =
       Table s1 <$> runInOpenSession s1 (Model.union Model.getResolve t1 t2)
+
+    unions ts =
+        Table s <$> runInOpenSession s (Model.unions Model.getResolve (V.map thTable ts))
+      where
+        Table s _ = V.head ts
