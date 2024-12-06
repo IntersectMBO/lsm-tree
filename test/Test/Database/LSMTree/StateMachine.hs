@@ -490,6 +490,9 @@ instance ( Show (Class.TableConfig h)
           => Var h (WrapTable h IO k v b)
           -> Var h (WrapTable h IO k v b)
           -> Act h (WrapTable h IO k v b)
+    Unions :: C k v b
+           => V.Vector (Var h (WrapTable h IO k v b))
+           -> Act h (WrapTable h IO k v b)
 
   initialState    = Lockstep.Defaults.initialState initModelState
   nextState       = Lockstep.Defaults.nextState
@@ -552,6 +555,8 @@ instance ( Eq (Class.TableConfig h)
           Just var1 == cast var2
       go (Union var1_1 var1_2) (Union var2_1 var2_2) =
           Just var1_1 == cast var2_1 && Just var1_2 == cast var2_2
+      go (Unions vars1) (Unions vars2) =
+          Just vars1 == cast vars2
       go _  _ = False
 
       _coveredAllCases :: LockstepAction (ModelState h) a -> ()
@@ -574,6 +579,7 @@ instance ( Eq (Class.TableConfig h)
           ListSnapshots{} -> ()
           Duplicate{} -> ()
           Union{} -> ()
+          Unions{} -> ()
 
 {-------------------------------------------------------------------------------
   InLockstep
@@ -681,6 +687,7 @@ instance ( Eq (Class.TableConfig h)
       ListSnapshots                   -> []
       Duplicate tableVar              -> [SomeGVar tableVar]
       Union table1Var table2Var       -> [SomeGVar table1Var, SomeGVar table2Var]
+      Unions tableVars                -> [SomeGVar tableVar | tableVar <- V.toList tableVars]
 
   arbitraryWithVars ::
        ModelVarContext (ModelState h)
@@ -794,6 +801,7 @@ instance ( Eq (Class.TableConfig h)
       ListSnapshots{}  -> OEither $ bimap OId (OList . fmap OId) result
       Duplicate{}      -> OEither $ bimap OId (const OTable) result
       Union{}          -> OEither $ bimap OId (const OTable) result
+      Unions{}         -> OEither $ bimap OId (const OTable) result
 
   showRealResponse ::
        Proxy (RealMonad h IO)
@@ -818,6 +826,7 @@ instance ( Eq (Class.TableConfig h)
       ListSnapshots    -> Just Dict
       Duplicate{}      -> Nothing
       Union{}          -> Nothing
+      Unions{}         -> Nothing
 
 instance ( Eq (Class.TableConfig h)
          , Class.IsTable h
@@ -852,6 +861,7 @@ instance ( Eq (Class.TableConfig h)
       ListSnapshots{}  -> OEither $ bimap OId (OList . fmap OId) result
       Duplicate{}      -> OEither $ bimap OId (const OTable) result
       Union{}          -> OEither $ bimap OId (const OTable) result
+      Unions{}         -> OEither $ bimap OId (const OTable) result
 
   showRealResponse ::
        Proxy (RealMonad h (IOSim s))
@@ -876,6 +886,7 @@ instance ( Eq (Class.TableConfig h)
       ListSnapshots    -> Just Dict
       Duplicate{}      -> Nothing
       Union{}          -> Nothing
+      Unions{}         -> Nothing
 
 {-------------------------------------------------------------------------------
   RunModel
@@ -965,6 +976,9 @@ runModel lookUp = \case
     Union table1Var table2Var ->
       wrap MTable
       . Model.runModelM (Model.union Model.getResolve (getTable $ lookUp table1Var) (getTable $ lookUp table2Var))
+    Unions tableVars ->
+      wrap MTable
+      . Model.runModelM (Model.unions Model.getResolve (V.map (getTable . lookUp) tableVars))
   where
     getTable ::
          ModelValue (ModelState h) (WrapTable h IO k v b)
@@ -1043,6 +1057,8 @@ runIO action lookUp = ReaderT $ \(session, handler) -> do
           WrapTable <$> Class.duplicate (unwrapTable $ lookUp' tableVar)
         Union table1Var table2Var -> catchErr handler $
           WrapTable <$> Class.union (unwrapTable $ lookUp' table1Var) (unwrapTable $ lookUp' table2Var)
+        Unions tableVars -> catchErr handler $
+          WrapTable <$> Class.unions (V.map (unwrapTable . lookUp') tableVars)
 
     lookUp' :: Var h x -> Realized IO x
     lookUp' = lookUpGVar (Proxy @(RealMonad h IO)) lookUp
@@ -1097,6 +1113,8 @@ runIOSim action lookUp = ReaderT $ \(session, handler) ->
           WrapTable <$> Class.duplicate (unwrapTable $ lookUp' tableVar)
         Union table1Var table2Var -> catchErr handler $
           WrapTable <$> Class.union (unwrapTable $ lookUp' table1Var) (unwrapTable $ lookUp' table2Var)
+        Unions tableVars -> catchErr handler $
+          WrapTable <$> Class.unions (V.map (unwrapTable . lookUp') tableVars)
 
     lookUp' :: Var h x -> Realized (IOSim s) x
     lookUp' = lookUpGVar (Proxy @(RealMonad h (IOSim s))) lookUp
@@ -1155,6 +1173,7 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
         OpenSnapshot{} -> ()
         Duplicate{} -> ()
         Union{} -> ()
+        Unions{} -> ()
 
     genTableVar = QC.elements tableVars
 
@@ -1244,6 +1263,10 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
         | length tableVars <= 5 -- no more than 5 tables at once
         , False -- TODO: enable once table union is implemented
         ]
+     ++ [ (2,  fmap Some $ Unions <$> genUnionsTableVars)
+        | length tableVars <= 5 -- no more than 5 tables at once
+        , False -- TODO: enable once table unions is implemented
+        ]
 
     genActionsCursor :: [(Int, Gen (Any (LockstepAction (ModelState h))))]
     genActionsCursor
@@ -1295,6 +1318,20 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
 
     genBlob :: Gen (Maybe b)
     genBlob = QC.arbitrary
+
+    -- Generate at least a 2-way union, and at most a 3-way union.
+    --
+    -- Unit tests for 0-way and 1-way unions are included in the UnitTests
+    -- module. n-way unions for n>3 lead to larger unions, which are less likely
+    -- to be finished before the end of an action sequence.
+    genUnionsTableVars :: Gen (V.Vector (Var h (WrapTable h IO k v b)))
+    genUnionsTableVars = do
+        tableVar1 <- genTableVar
+        tableVar2 <- genTableVar
+        mtableVar3 <- QC.liftArbitrary genTableVar
+        pure $ V.fromList $ catMaybes [
+            Just tableVar1, Just tableVar2, mtableVar3
+          ]
 
 shrinkActionWithVars ::
      forall h a. (
@@ -1510,6 +1547,9 @@ updateStats action lookUp modelBefore _modelAfter result =
         Union{}
           | MEither (Right (MTable table)) <- result -> initCount table
           | otherwise                                      -> stats
+        Unions{}
+          | MEither (Right (MTable table)) <- result -> initCount table
+          | otherwise                                      -> stats
 
         -- Note that for the other actions we don't count success vs failure.
         -- We don't need that level of detail. We just want to see the
@@ -1532,7 +1572,7 @@ updateStats action lookUp modelBefore _modelAfter result =
         CloseCursor{}         -> stats
         ReadCursor{}          -> stats
         RetrieveBlobs{}       -> stats
-        CreateSnapshot{}            -> stats
+        CreateSnapshot{}      -> stats
         DeleteSnapshot{}      -> stats
         ListSnapshots{}       -> stats
       where
