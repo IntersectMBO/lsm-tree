@@ -66,6 +66,8 @@ module Database.LSMTree.Internal (
   , listSnapshots
     -- * Mutiple writable tables
   , duplicate
+    -- * Table union
+  , unions
   ) where
 
 import           Codec.CBOR.Read
@@ -74,7 +76,7 @@ import           Control.Concurrent.Class.MonadSTM (MonadSTM (..))
 import           Control.Concurrent.Class.MonadSTM.RWVar (RWVar)
 import qualified Control.Concurrent.Class.MonadSTM.RWVar as RW
 import           Control.DeepSeq
-import           Control.Monad (unless)
+import           Control.Monad (unless, when)
 import           Control.Monad.Class.MonadST (MonadST (..))
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Primitive
@@ -218,6 +220,17 @@ data LSMTreeError =
     -- The 'Int' index indicates which 'BlobRef' was invalid. Many may be
     -- invalid but only the first is reported.
   | ErrBlobRefInvalid Int
+    -- | 'unions' was called on zero tables. Use 'new' instead.
+  | ErrUnionsZeroTables
+    -- | 'unions' was called on one table. Use 'duplicate' instread.
+  | ErrUnionsOneTable
+    -- | 'unions' was called on tables that are not in the same session.
+  | ErrUnionsSessionMismatch
+      Int -- ^ Index of the table in the input vector
+    -- | 'unions' was called on tables that do not have the same configuration.
+  | ErrUnionsTableConfigMismatch
+      Int -- ^ Vector index of table @t1@ involved in the mismatch
+      Int -- ^ Vector index of table @t2@ involved in the mismatch
   deriving stock (Show, Eq)
   deriving anyclass (Exception)
 
@@ -262,6 +275,9 @@ data TableTrace =
   | TraceSnapshot SnapshotName
     -- Duplicate
   | TraceDuplicate
+    -- Unions
+  | TraceUnions
+      Int -- ^ Number of unioned tables
   deriving stock Show
 
 data CursorTrace =
@@ -526,11 +542,15 @@ data Table m h = Table {
     , tableState        :: !(RWVar m (TableState m h))
     , tableArenaManager :: !(ArenaManager (PrimState m))
     , tableTracer       :: !(Tracer m TableTrace)
+      -- === Session-inherited
+
+      -- | The session that this table belongs to.
+    , tableSession      :: !(Session m h)
     }
 
 instance NFData (Table m h) where
-  rnf (Table a b c d) =
-    rnf a `seq` rnf b `seq` rnf c `seq` rwhnf d
+  rnf (Table a b c d e) =
+    rnf a `seq` rnf b `seq` rnf c `seq` rwhnf d `seq` rwhnf e
 
 -- | A table may assume that its corresponding session is still open as
 -- long as the table is open. A session's global resources, and therefore
@@ -543,14 +563,9 @@ data TableState m h =
 data TableEnv m h = TableEnv {
     -- === Session-inherited
 
-    -- | The session that this table belongs to.
-    --
-    -- NOTE: Consider using the 'tableSessionEnv' field and helper functions
-    -- like 'tableHasFS' instead of acquiring the session lock.
-    tableSession    :: !(Session m h)
     -- | Use this instead of 'tableSession' for easy access. An open table may
     -- assume that its session is open.
-  , tableSessionEnv :: !(SessionEnv m h)
+    tableSessionEnv :: !(SessionEnv m h)
 
     -- === Table-specific
 
@@ -688,12 +703,11 @@ newWith reg sesh seshEnv conf !am !tc = do
     -- /updated/ set of tracked tables.
     contentVar <- RW.new $ tc
     tableVar <- RW.new $ TableOpen $ TableEnv {
-          tableSession = sesh
-        , tableSessionEnv = seshEnv
+          tableSessionEnv = seshEnv
         , tableId = uniqueToWord64 tableId
         , tableContent = contentVar
         }
-    let !t = Table conf tableVar am tr
+    let !t = Table conf tableVar am tr  sesh
     -- Track the current table
     freeTemp reg $ modifyMVar_ (sessionOpenTables seshEnv)
                  $ pure . Map.insert (uniqueToWord64 tableId) t
@@ -936,7 +950,7 @@ newCursor ::
   -> Table m h
   -> m (Cursor m h)
 newCursor !offsetKey t = withOpenTable t $ \thEnv -> do
-    let cursorSession = tableSession thEnv
+    let cursorSession = tableSession t
     let cursorSessionEnv = tableSessionEnv thEnv
     cursorId <- uniqueToWord64 <$>
       incrUniqCounter (sessionUniqCounter cursorSessionEnv)
@@ -1277,3 +1291,67 @@ duplicate t@Table{..} = do
             tableConfig
             tableArenaManager
             content
+
+
+{-------------------------------------------------------------------------------
+   Table union
+-------------------------------------------------------------------------------}
+
+{-# SPECIALISE unions :: V.Vector (Table IO h) -> IO (Table IO h) #-}
+-- | See 'Database.LSMTree.Normal.unions'.
+unions ::
+     (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+  => Session m h -- TODO: should this be an argument? Might simplify things
+  -> V.Vector (Table m h)
+  -> m (Table m h)
+unions ts
+  | n == 0 = throwIO ErrUnionsZeroTables
+  | n == 1 = throwIO ErrUnionsOneTable
+  | otherwise = do
+      traceWith tableTracer $ TraceUnions n
+
+      conf <-
+        case vmatch (V.map tableConfig ts) of
+          Left (i, j) -> throwIO $ ErrUnionsTableConfigMismatch i j
+          Right conf  -> pure conf
+
+      withOpenTable t $ \TableEnv{..} -> do
+        -- We acquire a read-lock on the session open-state to prevent races, see
+        -- 'sessionOpenTables'.
+        withOpenSession tableSession $ \_ -> do
+          withTempRegistry $ \reg -> do
+            -- The table contents escape the read access, but we just added references
+            -- to each run so it is safe.
+            content <- RW.withReadAccess tableContent (duplicateTableContent reg)
+            newWith
+              reg
+              tableSession
+              tableSessionEnv
+              tableConfig
+              tableArenaManager
+              content
+  where
+    n = V.length ts
+
+-- | Like 'vmatchBy', but the match function is @(==)@.
+vmatch :: Eq a => V.Vector a -> Either (Int, Int) a
+vmatch = vmatchBy (==)
+
+-- | Check that all values in the vector match. If so, return the matched value.
+-- If there is a mismatch, return the vector indices of the mismatching values.
+--
+-- Assumes the input vector is non-empty.
+vmatchBy :: (a -> a -> Bool) -> V.Vector a -> Either (Int, Int) a
+vmatchBy cmp xs0 =
+    case V.uncons xs0 of
+      Nothing ->
+        error "vmatch: empty vector "
+      Just (x, xs) ->
+        case V.iforM_ xs $ vmatchOne x of
+          Left i   -> Left (0, i)
+          Right () -> Right x
+  where
+    vmatchOne x i y =
+      if (x `cmp` y)
+        then Left i
+        else Right ()
