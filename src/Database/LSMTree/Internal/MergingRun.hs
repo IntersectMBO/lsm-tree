@@ -70,7 +70,7 @@ instance RefCounted m (MergingRun m h) where
     getRefCounter = mergeRefCounter
 
 data MergePolicyForLevel = LevelTiering | LevelLevelling
-  deriving stock (Show, Eq)
+  deriving stock (Bounded, Enum, Eq, Show)
 
 instance NFData MergePolicyForLevel where
   rnf LevelTiering   = ()
