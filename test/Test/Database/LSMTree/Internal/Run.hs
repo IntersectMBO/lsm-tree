@@ -245,14 +245,12 @@ prop_WriteAndOpenWriteBuffer hfs hbio rd = do
   withRunDataAsWriteBuffer hfs f inPaths srd $ \wb wbb -> do
     -- Write write buffer to disk:
     let wbPaths = WrapRunFsPaths $ simplePath 1312
-    let wbKOpsPath = Paths.ForKOps $ Paths.writeBufferKOpsPath wbPaths
-    let wbBlobPath = Paths.ForBlob $ Paths.writeBufferBlobPath wbPaths
     withSerialisedWriteBuffer hfs hbio wbPaths wb wbb $ do
       -- Read write buffer from disk:
       let outPaths = WrapRunFsPaths $ simplePath 2222
       let outBlobPath = Paths.writeBufferBlobPath outPaths
       bracket (WBB.new hfs outBlobPath) releaseRef $ \wbb' -> do
-        wb' <- readWriteBuffer hfs hbio f wbb' wbKOpsPath wbBlobPath
+        wb' <- readWriteBuffer hfs hbio f wbb' wbPaths
         assertEqual "k/ops" wb wb'
   -- TODO: return a proper Property instead of using assertEqual etc.
   return (property True)

@@ -98,7 +98,9 @@ data SnapshotMetaData = SnapshotMetaData {
     -- Some of these configuration options can be overridden when a snapshot is
     -- opened: see 'TableConfigOverride'.
   , snapMetaConfig    :: !TableConfig
-    -- | The shape of the LSM tree.
+    -- | The write buffer.
+  , snapWriteBuffer   :: !(RunNumber)
+    -- | The shape of the levels of the LSM tree.
   , snapMetaLevels    :: !(SnapLevels RunNumber)
   }
   deriving stock (Show, Eq)

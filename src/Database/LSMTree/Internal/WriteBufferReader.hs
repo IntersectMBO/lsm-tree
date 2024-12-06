@@ -34,6 +34,7 @@ import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
 import qualified System.FS.BlockIO.API as FS
 import           System.FS.BlockIO.API (HasBlockIO)
+import qualified Database.LSMTree.Internal.Paths as Paths
 
 {-# SPECIALISE
     readWriteBuffer ::
@@ -41,8 +42,7 @@ import           System.FS.BlockIO.API (HasBlockIO)
       -> HasBlockIO IO h
       -> ResolveSerialisedValue
       -> Ref (WriteBufferBlobs IO h)
-      -> ForKOps FS.FsPath
-      -> ForBlob FS.FsPath
+      -> WriteBufferFsPaths
       -> IO WriteBuffer
   #-}
 readWriteBuffer ::
@@ -51,11 +51,10 @@ readWriteBuffer ::
   -> HasBlockIO m h
   -> ResolveSerialisedValue
   -> Ref (WriteBufferBlobs m h)
-  -> ForKOps FS.FsPath
-  -> ForBlob FS.FsPath
+  -> WriteBufferFsPaths
   -> m WriteBuffer
-readWriteBuffer hfs hbio f wbb kOpsPath blobPath =
-  bracket (new hfs hbio kOpsPath blobPath) close $ \reader -> do
+readWriteBuffer hfs hbio f wbb fsPaths =
+  bracket (new hfs hbio fsPaths) close $ \reader -> do
     let readEntry =
           E.traverseBlobRef (readRawBlobRef hfs) . toFullEntry
     let readEntries = next reader >>= \case
@@ -88,8 +87,7 @@ data WriteBufferReader m h = WriteBufferReader {
     new ::
          HasFS IO h
       -> HasBlockIO IO h
-      -> ForKOps FS.FsPath
-      -> ForBlob FS.FsPath
+      -> WriteBufferFsPaths
       -> IO (WriteBufferReader IO h)
   #-}
 -- | See 'Database.LSMTree.Internal.RunReader.new'.
@@ -97,14 +95,13 @@ new :: forall m h.
      (MonadCatch m, MonadSTM m, MonadST m)
   => HasFS m h
   -> HasBlockIO m h
-  -> ForKOps FS.FsPath
-  -> ForBlob FS.FsPath
+  -> WriteBufferFsPaths
   -> m (WriteBufferReader m h)
-new readerHasFS readerHasBlockIO kOpsPath blobPath = do
-  (readerKOpsHandle :: FS.Handle h) <- FS.hOpen readerHasFS (unForKOps kOpsPath) FS.ReadMode
+new readerHasFS readerHasBlockIO fsPaths = do
+  (readerKOpsHandle :: FS.Handle h) <- FS.hOpen readerHasFS (Paths.writeBufferKOpsPath fsPaths) FS.ReadMode
   -- Double the file readahead window (only applies to this file descriptor)
   FS.hAdviseAll readerHasBlockIO readerKOpsHandle FS.AdviceSequential
-  readerBlobFile <- openBlobFile readerHasFS (unForBlob blobPath) FS.ReadMode
+  readerBlobFile <- openBlobFile readerHasFS (Paths.writeBufferBlobPath fsPaths) FS.ReadMode
   -- Load first page from disk, if it exists.
   readerCurrentEntryNo <- newPrimVar (0 :: Word16)
   firstPage <- readDiskPage readerHasFS readerKOpsHandle
