@@ -69,12 +69,13 @@ module Database.LSMTree.Internal (
   ) where
 
 import           Codec.CBOR.Read
+import           Control.ActionRegistry
 import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Concurrent.Class.MonadSTM (MonadSTM (..))
 import           Control.Concurrent.Class.MonadSTM.RWVar (RWVar)
 import qualified Control.Concurrent.Class.MonadSTM.RWVar as RW
 import           Control.DeepSeq
-import           Control.Monad (unless)
+import           Control.Monad (unless, void, when)
 import           Control.Monad.Class.MonadST (MonadST (..))
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Primitive
@@ -83,11 +84,10 @@ import           Control.TempRegistry
 import           Control.Tracer
 import           Data.Arena (ArenaManager, newArenaManager)
 import           Data.Foldable
-import           Data.Functor.Compose (Compose (..))
 import           Data.Kind
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (catMaybes)
+import           Data.Maybe (catMaybes, isNothing)
 import qualified Data.Set as Set
 import           Data.Typeable
 import qualified Data.Vector as V
@@ -374,39 +374,47 @@ withSession tr hfs hbio dir = bracket (openSession tr hfs hbio dir) closeSession
 -- | See 'Database.LSMTree.Common.openSession'.
 openSession ::
      forall m h.
-     (MonadCatch m, MonadSTM m, MonadMVar m)
+     (MonadSTM m, MonadMVar m, PrimMonad m, MonadMask m)
   => Tracer m LSMTreeTrace
   -> HasFS m h
   -> HasBlockIO m h -- TODO: could we prevent the user from having to pass this in?
   -> FsPath -- ^ Path to the session directory
   -> m (Session m h)
-openSession tr hfs hbio dir = do
-    traceWith tr (TraceOpenSession dir)
-    dirExists <- FS.doesDirectoryExist hfs dir
-    unless dirExists $
-      throwIO (SessionDirDoesNotExist (FS.mkFsErrorPath hfs dir))
-    -- List directory contents /before/ trying to acquire a file lock, so that
-    -- that the lock file does not show up in the listed contents.
-    dirContents <- FS.listDirectory hfs dir
-    -- Try to acquire the session file lock as soon as possible to reduce the
-    -- risk of race conditions.
-    --
-    -- The lock is only released when an exception is raised, otherwise the lock
-    -- is included in the returned Session.
-    bracketOnError
-      acquireLock
-      releaseLock
-      $ \case
-          Left e
-            | FS.FsResourceAlreadyInUse <- FS.fsErrorType e
-            , fsep@(FsErrorPath _ fsp) <- FS.fsErrorPath e
-            , fsp == lockFilePath
-            -> throwIO (SessionDirLocked fsep)
-          Left  e -> throwIO e -- rethrow unexpected errors
-          Right Nothing -> throwIO (SessionDirLocked (FS.mkFsErrorPath hfs lockFilePath))
-          Right (Just sessionFileLock) ->
-            if Set.null dirContents then newSession sessionFileLock
-                                    else restoreSession sessionFileLock
+openSession tr hfs hbio dir =
+    -- We can not use modifyWithActionRegistry here, since there is no in-memory
+    -- state to modify. We use withActionRegistry instead, which may have a tiny
+    -- chance of leaking resources if openSession is not called in a masked
+    -- state.
+    withActionRegistry $ \reg -> do
+      traceWith tr (TraceOpenSession dir)
+      dirExists <- FS.doesDirectoryExist hfs dir
+      unless dirExists $
+        throwIO (SessionDirDoesNotExist (FS.mkFsErrorPath hfs dir))
+      -- List directory contents /before/ trying to acquire a file lock, so that
+      -- that the lock file does not show up in the listed contents.
+      dirContents <- FS.listDirectory hfs dir
+      -- Try to acquire the session file lock as soon as possible to reduce the
+      -- risk of race conditions.
+      --
+      -- The lock is only released when an exception is raised, otherwise the lock
+      -- is included in the returned Session.
+      elock <-
+        withRollbackFun reg
+          (\case Right x -> x; _ -> Nothing)
+          acquireLock
+          releaseLock
+
+      case elock of
+        Left e
+          | FS.FsResourceAlreadyInUse <- FS.fsErrorType e
+          , fsep@(FsErrorPath _ fsp) <- FS.fsErrorPath e
+          , fsp == lockFilePath
+          -> throwIO (SessionDirLocked fsep)
+        Left  e -> throwIO e -- rethrow unexpected errors
+        Right Nothing -> throwIO (SessionDirLocked (FS.mkFsErrorPath hfs lockFilePath))
+        Right (Just sessionFileLock) ->
+          if Set.null dirContents then newSession reg sessionFileLock
+                                  else restoreSession reg sessionFileLock
   where
     root             = Paths.SessionRoot dir
     lockFilePath     = Paths.lockFile root
@@ -415,7 +423,7 @@ openSession tr hfs hbio dir = do
 
     acquireLock = try @m @FsError $ FS.tryLockFile hbio lockFilePath FS.ExclusiveLock
 
-    releaseLock lockFile = forM_ (Compose lockFile) $ \lockFile' -> FS.hUnlock lockFile'
+    releaseLock = FS.hUnlock
 
     mkSession lockFile = do
         counterVar <- newUniqCounter 0
@@ -432,16 +440,19 @@ openSession tr hfs hbio dir = do
           }
         pure $! Session sessionVar tr
 
-    newSession sessionFileLock = do
+    newSession reg sessionFileLock = do
         traceWith tr TraceNewSession
-        FS.createDirectory hfs activeDirPath
-        FS.createDirectory hfs snapshotsDirPath
+        withRollback_ reg
+          (FS.createDirectory hfs activeDirPath)
+          (FS.removeDirectoryRecursive hfs activeDirPath)
+        withRollback_ reg
+          (FS.createDirectory hfs snapshotsDirPath)
+          (FS.removeDirectoryRecursive hfs snapshotsDirPath)
         mkSession sessionFileLock
 
-    restoreSession sessionFileLock = do
+    restoreSession _reg sessionFileLock = do
         traceWith tr TraceRestoreSession
-        -- If the layouts are wrong, we throw an exception, and the lock file
-        -- is automatically released by bracketOnError.
+        -- If the layouts are wrong, we throw an exception
         checkTopLevelDirLayout
 
         -- Clear the active directory by removing the directory and recreating
@@ -456,9 +467,9 @@ openSession tr hfs hbio dir = do
     -- Check that the active directory and snapshots directory exist. We assume
     -- the lock file already exists at this point.
     --
-    -- This does /not/ check that /only/ the expected files and directories
-    -- exist. This means that unexpected files in the top-level directory are
-    -- ignored for the layout check.
+    -- This checks only that the /expected/ files and directories exist.
+    -- Unexpected files in the top-level directory are ignored for the layout
+    -- check.
     checkTopLevelDirLayout = do
       FS.doesDirectoryExist hfs activeDirPath >>= \b ->
         unless b $ throwIO (SessionDirMalformed (FS.mkFsErrorPath hfs activeDirPath))
@@ -470,45 +481,67 @@ openSession tr hfs hbio dir = do
         contents <- FS.listDirectory hfs activeDirPath
         unless (Set.null contents) $ throwIO (SessionDirMalformed (FS.mkFsErrorPath hfs activeDirPath))
 
-    -- Nothing to check: snapshots are verified when they are loaded, not when a
-    -- session is restored.
-    checkSnapshotsDirLayout = pure ()
+    -- The snapshots directory should only contain directories for named
+    -- snapshots
+    checkSnapshotsDirLayout = do
+        contents <- FS.listDirectory hfs snapshotsDirPath
+        forM_ contents $ \x -> do
+          when (isNothing (Paths.mkSnapshotName x)) $
+            throwIO (SessionDirMalformed (FS.mkFsErrorPath hfs snapshotsDirPath))
+          b <- FS.doesDirectoryExist hfs (activeDirPath FS.</> FS.mkFsPath [x])
+          unless b $
+            throwIO (SessionDirMalformed (FS.mkFsErrorPath hfs snapshotsDirPath))
 
 {-# SPECIALISE closeSession :: Session IO h -> IO () #-}
 -- | See 'Database.LSMTree.Common.closeSession'.
 --
 -- A session's global resources will only be released once it is sure that no
--- tables are open anymore.
+-- tables or cursors are open anymore.
 closeSession ::
      (MonadMask m, MonadSTM m, MonadMVar m, PrimMonad m)
   => Session m h
   -> m ()
 closeSession Session{sessionState, sessionTracer} = do
     traceWith sessionTracer TraceCloseSession
-    RW.withWriteAccess_ sessionState $ \case
-      SessionClosed -> pure SessionClosed
-      SessionOpen seshEnv -> do
-        -- Close tables and cursors first, so that we know none are open when we
-        -- release session-wide resources.
-        --
-        -- If any has been closed already by a different thread, the idempotent
-        -- 'close' will act like a no-op, and so we are not in trouble.
-        --
-        -- Since we have a write lock on the session state, we know that no
-        -- tables will be added while we are closing the session, and that we
-        -- are the only thread currently closing the session.
-        --
-        -- We technically don't have to overwrite this with an empty Map, but
-        -- why not.
-        --
-        -- TODO: use TempRegistry
-        cursors <- modifyMVar (sessionOpenCursors seshEnv) (\m -> pure (Map.empty, m))
-        mapM_ closeCursor cursors
-        tables <- modifyMVar (sessionOpenTables seshEnv) (\m -> pure (Map.empty, m))
-        mapM_ close tables
-        FS.close (sessionHasBlockIO seshEnv)
-        FS.hUnlock (sessionLockFile seshEnv)
-        pure SessionClosed
+    modifyWithActionRegistry_
+      (RW.unsafeAcquireWriteAccess sessionState)
+      (atomically . RW.unsafeReleaseWriteAccess sessionState)
+      $ \reg -> \case
+        SessionClosed -> pure SessionClosed
+        SessionOpen seshEnv -> do
+          -- Close tables and cursors first, so that we know none are open when we
+          -- release session-wide resources.
+          --
+          -- If any tables or cursors have been closed already by a different
+          -- thread, then the idempotent close functions will act like a no-op,
+          -- and so we are not in trouble.
+          --
+          -- Since we have a write lock on the session state, we know that no
+          -- tables or cursors will be added while we are closing the session
+          -- (see sessionOpenTables), and that we are the only thread currently
+          -- closing the session. .
+          --
+          -- We technically don't have to overwrite this with an empty Map, but
+          -- why not.
+
+          -- close cursors
+          cursors <-
+            withRollback reg
+              (swapMVar (sessionOpenCursors seshEnv) Map.empty)
+              (void . swapMVar (sessionOpenCursors seshEnv))
+          mapM_ (delay reg . closeCursor) cursors
+
+          -- close tables
+          tables <-
+            withRollback reg
+              (swapMVar (sessionOpenTables seshEnv) Map.empty)
+              (void . swapMVar (sessionOpenTables seshEnv))
+          mapM_ (delay reg . close) tables
+
+          delay reg $ FS.close (sessionHasBlockIO seshEnv)
+          delay reg $ FS.hUnlock (sessionLockFile seshEnv)
+
+          pure SessionClosed
 
 {-------------------------------------------------------------------------------
   Table
