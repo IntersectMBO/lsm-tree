@@ -43,7 +43,7 @@ import           System.FS.BlockIO.API (HasBlockIO)
       -> Ref (WriteBufferBlobs IO h)
       -> ForKOps FS.FsPath
       -> ForBlob FS.FsPath
-      -> IO (WriteBuffer)
+      -> IO WriteBuffer
   #-}
 readWriteBuffer ::
      (MonadMask m, MonadSTM m, MonadST m)
@@ -53,7 +53,7 @@ readWriteBuffer ::
   -> Ref (WriteBufferBlobs m h)
   -> ForKOps FS.FsPath
   -> ForBlob FS.FsPath
-  -> m (WriteBuffer)
+  -> m WriteBuffer
 readWriteBuffer hfs hbio f wbb kOpsPath blobPath =
   bracket (new hfs hbio kOpsPath blobPath) close $ \reader -> do
     let readEntry =
