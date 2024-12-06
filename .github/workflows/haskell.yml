@@ -89,34 +89,34 @@ jobs:
       run: |
         cabal build all --project-file="${{ matrix.cabal-project-file }}" --dry-run
 
-    - name: "Restore cache"
-      uses: actions/cache/restore@v4
-      id: restore-cabal-cache
-      env:
-        cache-name: cache-cabal-build-031224
-      with:
-        path: ${{ steps.setup-haskell.outputs.cabal-store }}
-        key: ${{ runner.os }}-${{ matrix.ghc }}-${{ env.cache-name }}-${{ hashFiles('*.cabal') }}-${{ hashFiles('cabal.project*') }}-${{ matrix.cabal-project-file }}
-        restore-keys: |
-          ${{ runner.os }}-${{ matrix.ghc }}-${{ env.cache-name }}-${{ hashFiles('*.cabal') }}-${{ hashFiles('cabal.project*') }}
-          ${{ runner.os }}-${{ matrix.ghc }}-${{ env.cache-name }}-${{ hashFiles('*.cabal') }}-
-          ${{ runner.os }}-${{ matrix.ghc }}-${{ env.cache-name }}-
+    # - name: "Restore cache"
+    #   uses: actions/cache/restore@v4
+    #   id: restore-cabal-cache
+    #   env:
+    #     cache-name: cache-cabal-build-031224
+    #   with:
+    #     path: ${{ steps.setup-haskell.outputs.cabal-store }}
+    #     key: ${{ runner.os }}-${{ matrix.ghc }}-${{ env.cache-name }}-${{ hashFiles('*.cabal') }}-${{ hashFiles('cabal.project*') }}-${{ matrix.cabal-project-file }}
+    #     restore-keys: |
+    #       ${{ runner.os }}-${{ matrix.ghc }}-${{ env.cache-name }}-${{ hashFiles('*.cabal') }}-${{ hashFiles('cabal.project*') }}
+    #       ${{ runner.os }}-${{ matrix.ghc }}-${{ env.cache-name }}-${{ hashFiles('*.cabal') }}-
+    #       ${{ runner.os }}-${{ matrix.ghc }}-${{ env.cache-name }}-
 
     - name: Install cabal dependencies
       id: build-dependencies
       run: |
         cabal build --project-file="${{ matrix.cabal-project-file }}" --only-dependencies --enable-tests --enable-benchmarks all
 
-    - name: "Save cache"
-      uses: actions/cache/save@v4
-      id: save-cabal-cache
-      # Note: cache-hit will be set to true only when cache hit occurs for the
-      # exact key match. For a partial key match via restore-keys or a cache
-      # miss, it will be set to false.
-      if: steps.build-dependencies.outcome == 'success' && steps.restore-cabal-cache.outputs.cache-hit != 'true'
-      with:
-        path: ${{ steps.setup-haskell.outputs.cabal-store }}
-        key:  ${{ steps.restore-cabal-cache.outputs.cache-primary-key }}
+    # - name: "Save cache"
+    #   uses: actions/cache/save@v4
+    #   id: save-cabal-cache
+    #   # Note: cache-hit will be set to true only when cache hit occurs for the
+    #   # exact key match. For a partial key match via restore-keys or a cache
+    #   # miss, it will be set to false.
+    #   if: steps.build-dependencies.outcome == 'success' && steps.restore-cabal-cache.outputs.cache-hit != 'true'
+    #   with:
+    #     path: ${{ steps.setup-haskell.outputs.cabal-store }}
+    #     key:  ${{ steps.restore-cabal-cache.outputs.cache-primary-key }}
 
     - name: Build
       run: |
