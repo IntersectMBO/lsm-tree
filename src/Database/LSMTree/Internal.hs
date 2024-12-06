@@ -96,7 +96,7 @@ import           Database.LSMTree.Internal.BlobRef (WeakBlobRef (..))
 import qualified Database.LSMTree.Internal.BlobRef as BlobRef
 import           Database.LSMTree.Internal.Config
 import qualified Database.LSMTree.Internal.Cursor as Cursor
-import           Database.LSMTree.Internal.Entry (Entry, unNumEntries)
+import           Database.LSMTree.Internal.Entry (Entry)
 import           Database.LSMTree.Internal.Lookup (ByteCountDiscrepancy,
                      ResolveSerialisedValue, lookupsIO)
 import           Database.LSMTree.Internal.MergeSchedule
@@ -115,10 +115,12 @@ import           Database.LSMTree.Internal.Snapshot.Codec
 import           Database.LSMTree.Internal.UniqCounter
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
+import qualified Database.LSMTree.Internal.WriteBufferWriter as WBW
 import qualified System.FS.API as FS
 import           System.FS.API (FsError, FsErrorPath (..), FsPath, HasFS)
 import qualified System.FS.BlockIO.API as FS
 import           System.FS.BlockIO.API (HasBlockIO)
+import Database.LSMTree.Internal.WriteBufferReader (readWriteBuffer)
 
 {-------------------------------------------------------------------------------
   Existentials
@@ -1084,10 +1086,10 @@ createSnapshot ::
   -> m ()
 createSnapshot resolve snap label tableType t = do
     traceWith (tableTracer t) $ TraceSnapshot snap
-    let conf = tableConfig t
     withOpenTable t $ \thEnv ->
       withTempRegistry $ \reg -> do -- TODO: use the temp registry for all side effects
         let hfs = tableHasFS thEnv
+        let hbio = tableHasBlockIO thEnv
 
         -- Guard that the snapshot does not exist already
         let snapDir = Paths.namedSnapshotDir (tableSessionRoot thEnv) snap
@@ -1100,40 +1102,21 @@ createSnapshot resolve snap label tableType t = do
           -- create the directory for this specific snapshot.
           FS.createDirectory hfs (Paths.getNamedSnapshotDir snapDir)
 
-        -- For the temporary implementation it is okay to just flush the buffer
-        -- before taking the snapshot.
-        content <- modifyWithTempRegistry
-                      (RW.unsafeAcquireWriteAccess (tableContent thEnv))
-                      (atomically . RW.unsafeReleaseWriteAccess (tableContent thEnv))
-                      $ \innerReg content -> do
-          -- TODO: When we flush the buffer here, it might be underfull, which
-          -- could mess up the scheduling. The conservative approach is to supply
-          -- credits as if the buffer was full, and then flush the (possibly)
-          -- underfull buffer. However, note that this bit of code
-          -- here is probably going to change anyway because of #392
-          supplyCredits conf (Credit $ unNumEntries $ case confWriteBufferAlloc conf of AllocNumEntries x -> x) (tableLevels content)
-          content' <- flushWriteBuffer
-                (TraceMerge `contramap` tableTracer t)
-                conf
-                resolve
-                hfs
-                (tableHasBlockIO thEnv)
-                (tableSessionRoot thEnv)
-                (tableSessionUniqCounter thEnv)
-                innerReg
-                content
-          pure (content', content')
-        -- At this point, we've flushed the write buffer but we haven't created the
-        -- snapshot file yet. If an asynchronous exception happens beyond this
-        -- point, we'll take that loss, as the inner state of the table is still
-        -- consistent.
+        -- Get the table content.
+        content <- RW.withReadAccess (tableContent thEnv) pure
+
+        -- Write the write buffer.
+        snapWriteBuffer <- uniqueToRunNumber <$> incrUniqCounter (tableSessionUniqCounter thEnv)
+        let wbPaths = Paths.WriteBufferFsPaths (Paths.getNamedSnapshotDir snapDir) snapWriteBuffer
+        WBW.writeWriteBuffer hfs hbio wbPaths (tableWriteBuffer content) (tableWriteBufferBlobs content)
 
         -- Convert to snapshot format
         snapLevels <- toSnapLevels (tableLevels content)
+
         -- Hard link runs into the named snapshot directory
         snapLevels' <- snapshotRuns reg snapDir snapLevels
 
-        let snapMetaData = SnapshotMetaData label tableType (tableConfig t) snapLevels'
+        let snapMetaData = SnapshotMetaData label tableType (tableConfig t) snapWriteBuffer snapLevels'
             SnapshotMetaDataFile contentPath = Paths.snapshotMetaDataFile snapDir
             SnapshotMetaDataChecksumFile checksumPath = Paths.snapshotMetaDataChecksumFile snapDir
         writeFileSnapshotMetaData hfs contentPath checksumPath snapMetaData
@@ -1174,7 +1157,7 @@ openSnapshot sesh label tableType override snap resolve = do
           Left e  -> throwIO (ErrSnapshotDeserialiseFailure e snap)
           Right x -> pure x
 
-        let SnapshotMetaData label' tableType' conf snapLevels = snapMetaData
+        let SnapshotMetaData label' tableType' conf snapWriteBuffer snapLevels = snapMetaData
 
         unless (tableType == tableType') $
           throwIO (ErrSnapshotWrongTableType snap tableType tableType')
@@ -1191,14 +1174,19 @@ openSnapshot sesh label tableType override snap resolve = do
 
         let actDir = Paths.activeDir (sessionRoot seshEnv)
 
+        -- Read write buffer
+        let wbPaths = Paths.WriteBufferFsPaths (Paths.getNamedSnapshotDir snapDir) snapWriteBuffer
+        tableWriteBuffer <- readWriteBuffer hfs hbio resolve tableWriteBufferBlobs wbPaths
+
         -- Hard link runs into the active directory,
         snapLevels' <- openRuns reg hfs hbio conf (sessionUniqCounter seshEnv) snapDir actDir snapLevels
+        
         -- Convert from the snapshot format, restoring merge progress in the process
         tableLevels <- fromSnapLevels reg hfs hbio conf (sessionUniqCounter seshEnv) resolve actDir snapLevels'
 
         tableCache <- mkLevelsCache reg tableLevels
         newWith reg sesh seshEnv conf' am $! TableContent {
-            tableWriteBuffer = WB.empty
+            tableWriteBuffer
           , tableWriteBufferBlobs
           , tableLevels
           , tableCache

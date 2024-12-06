@@ -42,6 +42,8 @@ module Database.LSMTree.Internal.MergeSchedule (
   , supplyMergeCredits
   , CreditThreshold (..)
   , creditThresholdForLevel
+    -- * Exported for testing
+  , addWriteBufferEntries
   ) where
 
 import           Control.Concurrent.Class.MonadMVar.Strict
