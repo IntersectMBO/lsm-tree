@@ -1,3 +1,5 @@
+{-# LANGUAGE MagicHash #-}
+
 -- | A mutable run ('RunBuilder') that is under construction.
 --
 module Database.LSMTree.Internal.RunBuilder (
@@ -18,7 +20,7 @@ import           Control.Monad.Primitive
 import           Data.BloomFilter (Bloom)
 import           Data.Foldable (for_, traverse_)
 import           Data.Primitive.PrimVar
-import           Data.Proxy (Proxy (Proxy))
+import           GHC.Exts (proxy#)
 import           Data.Word (Word64)
 import           Database.LSMTree.Internal.BlobRef (RawBlobRef)
 import           Database.LSMTree.Internal.ChecksumHandle
@@ -91,7 +93,7 @@ new hfs hbio runBuilderFsPaths numEntries alloc = do
     runBuilderHandles <- traverse (makeHandle hfs) (pathsForRunFiles runBuilderFsPaths)
 
     let builder = RunBuilder { runBuilderHasFS = hfs, runBuilderHasBlockIO = hbio, .. }
-    writeIndexHeader hfs (forRunIndex runBuilderHandles) (Proxy @IndexCompact)
+    writeIndexHeader hfs (forRunIndex runBuilderHandles) (proxy# @IndexCompact)
     return builder
 
 {-# SPECIALISE addKeyOp ::

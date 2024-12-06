@@ -1,3 +1,4 @@
+{-# LANGUAGE MagicHash    #-}
 {-# LANGUAGE TypeFamilies #-}
 
 {-|
@@ -14,7 +15,7 @@ where
 import           Control.Monad.ST.Strict (ST)
 import           Data.ByteString.Lazy (LazyByteString)
 import           Data.ByteString.Short (ShortByteString)
-import           Data.Proxy (Proxy)
+import           GHC.Exts (Proxy#)
 import           Data.Word (Word32)
 import           Database.LSMTree.Internal.Chunk (Chunk)
 import           Database.LSMTree.Internal.Entry (NumEntries)
@@ -54,7 +55,7 @@ class Index i where
         See the documentation of the 'Index' class for how to generate a
         complete serialised index.
     -}
-    headerLBS :: Proxy i -> LazyByteString
+    headerLBS :: Proxy# i -> LazyByteString
 
     {-|
         Yields the footer of the serialised form of an index.

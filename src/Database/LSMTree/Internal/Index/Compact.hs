@@ -1,3 +1,5 @@
+{-# LANGUAGE MagicHash #-}
+
 -- | A compact fence-pointer index for uniformly distributed keys.
 --
 -- TODO: add utility functions for clash probability calculations
@@ -36,7 +38,7 @@ import           Data.Maybe (fromMaybe)
 import           Data.Primitive.ByteArray (ByteArray (..), indexByteArray,
                      sizeofByteArray)
 import           Data.Primitive.Types (sizeOf)
-import           Data.Proxy (Proxy (Proxy))
+import           GHC.Exts (Proxy#, proxy#)
 import qualified Data.Vector.Algorithms.Search as VA
 import qualified Data.Vector.Generic as VG
 import qualified Data.Vector.Primitive as VP
@@ -460,7 +462,7 @@ sizeInPages = NumPages . toEnum . VU.length . icPrimary
 -- | Serialises a compact index in one go.
 toLBS :: NumEntries -> IndexCompact -> LBS.ByteString
 toLBS numEntries index =
-     headerLBS (Proxy @IndexCompact)
+     headerLBS (proxy# @IndexCompact)
   <> LBS.fromStrict (Chunk.toByteString (word64VectorToChunk (icPrimary index)))
   <> finalLBS numEntries index
 
@@ -478,7 +480,7 @@ supportedTypeAndVersion = 0x0001
     For a specification of this operation, see the documentation of [its
     polymorphic version]('Index.headerLBS').
 -}
-headerLBS :: Proxy IndexCompact -> LBS.ByteString
+headerLBS :: Proxy# IndexCompact -> LBS.ByteString
 headerLBS _ =
     -- create a single 4 byte chunk
     BB.toLazyByteStringWith (BB.safeStrategy 4 BB.smallChunkSize) mempty $
@@ -686,7 +688,7 @@ instance Index IndexCompact where
     sizeInPages :: IndexCompact -> NumPages
     sizeInPages = sizeInPages
 
-    headerLBS :: Proxy IndexCompact -> LBS.ByteString
+    headerLBS :: Proxy# IndexCompact -> LBS.ByteString
     headerLBS = headerLBS
 
     finalLBS :: NumEntries -> IndexCompact -> LBS.ByteString

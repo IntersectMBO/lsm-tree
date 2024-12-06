@@ -1,3 +1,5 @@
+{-# LANGUAGE MagicHash #-}
+
 {- HLINT ignore "Avoid restricted alias" -}
 
 -- | A general-purpose fence pointer index.
@@ -22,7 +24,7 @@ import           Data.ByteString.Short (ShortByteString (SBS))
 import qualified Data.ByteString.Short as ShortByteString (length)
 import           Data.Primitive.ByteArray (ByteArray (ByteArray),
                      indexByteArray)
-import           Data.Proxy (Proxy)
+import           GHC.Exts (Proxy#)
 import           Data.Vector (Vector, drop, findIndex, findIndexR, fromList,
                      last, length, (!))
 import qualified Data.Vector.Primitive as Primitive (Vector (Vector), drop,
@@ -104,7 +106,7 @@ instance Index IndexOrdinary where
     sizeInPages (IndexOrdinary lastKeys)
         = NumPages $ fromIntegral (length lastKeys)
 
-    headerLBS :: Proxy IndexOrdinary -> LazyByteString
+    headerLBS :: Proxy# IndexOrdinary -> LazyByteString
     headerLBS _ = toLazyByteString        $
                   word32Host              $
                   supportedTypeAndVersion
