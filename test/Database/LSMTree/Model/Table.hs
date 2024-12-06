@@ -38,6 +38,7 @@ module Database.LSMTree.Model.Table (
   , duplicate
     -- * Table union
   , union
+  , unions
     -- * Testing
   , size
   ) where
@@ -301,24 +302,22 @@ readCursor n c =
     )
 
 {-------------------------------------------------------------------------------
-  Merging tables
+  Table union
 -------------------------------------------------------------------------------}
 
--- | Merge full tables, creating a new table.
---
--- NOTE: close tables using 'close' as soon as they are
--- unused.
---
--- Multiple tables of the same type but with different configuration parameters
--- can live in the same session. However, some operations, like
+-- | Union two full tables, creating a new table.
 union ::
      ResolveSerialisedValue v
   -> Table k v b
   -> Table k v b
   -> Table k v b
 union r (Table xs) (Table ys) =
-    Table (Map.unionWith f xs ys)
-  where
-    f (v1, bMay1) (v2, bMay2) =
-      (resolveSerialised r v1 v2, getFirst (First bMay1 <> First bMay2))
+    Table (Map.unionWith (resolveValueAndBlob r) xs ys)
 
+-- | Like 'union', but for @n@ tables.
+unions ::
+     ResolveSerialisedValue v
+  -> V.Vector (Table k v b)
+  -> Table k v b
+unions r tables =
+    Table (Map.unionsWith (resolveValueAndBlob r) (V.map values tables))
