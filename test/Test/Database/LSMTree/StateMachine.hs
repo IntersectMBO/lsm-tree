@@ -1630,6 +1630,10 @@ updateStats action lookUp modelBefore _modelAfter result =
                                          uptblId
                                          (parentTable stats)
               }
+        -- TODO: also include tables resulting from Union and Unions here. This
+        -- means that tables should be able to have *multiple* ultimate parent
+        -- tables, which is currently not possible: parentTable only stores a
+        -- single ultimate parent table per table.
         _ -> stats
 
     updDupTableActionLog stats | MEither (Right _) <- result =
