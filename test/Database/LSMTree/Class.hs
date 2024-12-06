@@ -8,6 +8,7 @@ module Database.LSMTree.Class (
   , withTableFromSnapshot
   , withTableDuplicate
   , withTableUnion
+  , withTableUnions
   , withCursor
   , module Common
   , module Types
@@ -162,6 +163,13 @@ class (IsSession (Session h)) => IsTable h where
         -> h m k v b
         -> m (h m k v b)
 
+    unions ::
+           ( IOLike m
+           , C k v b
+           )
+        => V.Vector (h m k v b)
+        -> m (h m k v b)
+
 withTableNew :: forall h m k v b a.
     (IOLike m, IsTable h, C k v b)
   => Session h m
@@ -193,6 +201,13 @@ withTableUnion :: forall h m k v b a.
   -> (h m k v b -> m a)
   -> m a
 withTableUnion table1 table2 = bracket (table1 `union` table2) close
+
+withTableUnions :: forall h m k v b a.
+     (IOLike m, IsTable h, C k v b)
+  => V.Vector (h m k v b)
+  -> (h m k v b -> m a)
+  -> m a
+withTableUnions tables = bracket (unions tables) close
 
 withCursor :: forall h m k v b a.
      (IOLike m, IsTable h, C k v b)
@@ -232,3 +247,4 @@ instance IsTable R.Table where
 
     duplicate = R.duplicate
     union = R.union
+    unions = R.unions
