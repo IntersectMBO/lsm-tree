@@ -7,7 +7,7 @@ module Test.Database.LSMTree.Internal.Run (
 
 import           Control.Exception (bracket, bracket_)
 import           Control.Monad (when)
-import           Control.RefCount (RefCount (..), readRefCount)
+import           Control.RefCount
 import           Control.TempRegistry (withTempRegistry)
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
@@ -250,10 +250,9 @@ prop_WriteAndOpenWriteBuffer hfs hbio rd = do
     withSerialisedWriteBuffer hfs hbio wbPaths wb wbb $ do
       -- Read write buffer from disk:
       let outPaths = WrapRunFsPaths $ simplePath 2222
-      let outBlobPath = Paths.ForBlob $ Paths.writeBufferBlobPath outPaths
-      bracket
-        (readWriteBuffer hfs hbio f outBlobPath wbKOpsPath wbBlobPath)
-        (WBB.removeReference . snd) $ \(wb', _wbb') ->
+      let outBlobPath = Paths.writeBufferBlobPath outPaths
+      bracket (WBB.new hfs outBlobPath) releaseRef $ \wbb' -> do
+        wb' <- readWriteBuffer hfs hbio f wbb' wbKOpsPath wbBlobPath
         assertEqual "k/ops" wb wb'
   -- TODO: return a proper Property instead of using assertEqual etc.
   return (property True)
@@ -301,13 +300,13 @@ withRunDataAsWriteBuffer ::
   -> ResolveSerialisedValue
   -> WriteBufferFsPaths
   -> SerialisedRunData
-  -> (WriteBuffer -> WriteBufferBlobs IO h -> IO a)
+  -> (WriteBuffer -> Ref (WriteBufferBlobs IO h) -> IO a)
   -> IO a
 withRunDataAsWriteBuffer hfs f fsPaths rd action = do
   let es = V.fromList . M.toList $ unRunData rd
   let maxn = NumEntries $ V.length es
   let wbbPath = Paths.writeBufferBlobPath fsPaths
-  bracket (WBB.new hfs wbbPath) WBB.removeReference $ \wbb -> do
+  bracket (WBB.new hfs wbbPath) releaseRef $ \wbb -> do
     (wb, _) <- addWriteBufferEntries hfs f wbb maxn WB.empty es
     action wb wbb
 
@@ -317,7 +316,7 @@ withSerialisedWriteBuffer ::
     -> FS.HasBlockIO IO h
     -> WriteBufferFsPaths
     -> WriteBuffer
-    -> WriteBufferBlobs IO h
+    -> Ref (WriteBufferBlobs IO h)
     -> IO a
     -> IO a
 withSerialisedWriteBuffer hfs hbio wbPaths wb wbb =

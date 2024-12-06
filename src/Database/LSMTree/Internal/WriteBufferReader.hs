@@ -9,15 +9,15 @@ import           Control.Monad.Class.MonadSTM (MonadSTM (..))
 import           Control.Monad.Class.MonadThrow (MonadCatch (..), MonadMask,
                      MonadThrow (..))
 import           Control.Monad.Primitive (PrimMonad (..))
+import           Control.RefCount (Ref, releaseRef)
 import           Data.Primitive.MutVar (MutVar, newMutVar, readMutVar,
                      writeMutVar)
 import           Data.Primitive.PrimVar
 import qualified Data.Vector as V
 import           Data.Word (Word16)
 import           Database.LSMTree.Internal.BlobFile (BlobFile, openBlobFile)
-import qualified Database.LSMTree.Internal.BlobFile as BlobFile
 import           Database.LSMTree.Internal.BlobRef (RawBlobRef (..),
-                     readRawBlobRef)
+                     mkRawBlobRef, readRawBlobRef)
 import qualified Database.LSMTree.Internal.Entry as E
 import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
 import           Database.LSMTree.Internal.MergeSchedule (addWriteBufferEntries)
@@ -30,7 +30,6 @@ import           Database.LSMTree.Internal.Serialise (SerialisedValue)
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import           Database.LSMTree.Internal.WriteBufferBlobs (WriteBufferBlobs)
-import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
 import qualified System.FS.BlockIO.API as FS
@@ -41,21 +40,21 @@ import           System.FS.BlockIO.API (HasBlockIO)
          HasFS IO h
       -> HasBlockIO IO h
       -> ResolveSerialisedValue
-      -> ForBlob FS.FsPath
+      -> Ref (WriteBufferBlobs IO h)
       -> ForKOps FS.FsPath
       -> ForBlob FS.FsPath
-      -> IO (WriteBuffer, WriteBufferBlobs IO h)
+      -> IO WriteBuffer
   #-}
 readWriteBuffer ::
      (MonadMask m, MonadSTM m, MonadST m)
   => HasFS m h
   -> HasBlockIO m h
   -> ResolveSerialisedValue
-  -> ForBlob FS.FsPath
+  -> Ref (WriteBufferBlobs m h)
   -> ForKOps FS.FsPath
   -> ForBlob FS.FsPath
-  -> m (WriteBuffer, WriteBufferBlobs m h)
-readWriteBuffer hfs hbio f wbbPath kOpsPath blobPath =
+  -> m WriteBuffer
+readWriteBuffer hfs hbio f wbb kOpsPath blobPath =
   bracket (new hfs hbio kOpsPath blobPath) close $ \reader -> do
     let readEntry =
           E.traverseBlobRef (readRawBlobRef hfs) . toFullEntry
@@ -65,11 +64,9 @@ readWriteBuffer hfs hbio f wbbPath kOpsPath blobPath =
             readEntry entry >>= \entry' ->
               ((key,  entry') :) <$> readEntries
     es <- V.fromList <$> readEntries
-    wbb <- WBB.new hfs (unForBlob wbbPath)
     -- TODO: We cannot derive the number of entries from the in-memory index.
     let maxn = E.NumEntries $ V.length es
-    wb <- fst <$> addWriteBufferEntries hfs f wbb maxn WB.empty es
-    pure (wb, wbb)
+    fst <$> addWriteBufferEntries hfs f wbb maxn WB.empty es
 
 -- | Allows reading the k\/ops of a run incrementally, using its own read-only
 -- file handle and in-memory cache of the current disk page.
@@ -82,7 +79,7 @@ data WriteBufferReader m h = WriteBufferReader {
       -- | The index of the entry to be returned by the next call to 'next'.
     , readerCurrentEntryNo :: !(PrimVar (PrimState m) Word16)
     , readerKOpsHandle     :: !(FS.Handle h)
-    , readerBlobFile       :: !(BlobFile m h)
+    , readerBlobFile       :: !(Ref (BlobFile m h))
     , readerHasFS          :: !(HasFS m h)
     , readerHasBlockIO     :: !(HasBlockIO m h)
     }
@@ -124,7 +121,7 @@ next :: forall m h.
      (MonadSTM m, MonadST m, MonadMask m)
   => WriteBufferReader m h
   -> m (Result m h)
-next reader@WriteBufferReader {..} = do
+next WriteBufferReader {..} = do
     readMutVar readerCurrentPage >>= \case
       Nothing ->
         return Empty
@@ -149,14 +146,14 @@ next reader@WriteBufferReader {..} = do
           IndexEntry key entry -> do
             modifyPrimVar readerCurrentEntryNo (+1)
             let entry' :: E.Entry SerialisedValue (RawBlobRef m h)
-                entry' = fmap (RawBlobRef readerBlobFile) entry
+                entry' = fmap (mkRawBlobRef readerBlobFile) entry
             let rawEntry = Entry entry'
             return (ReadEntry key rawEntry)
           IndexEntryOverflow key entry lenSuffix -> do
             -- TODO: we know that we need the next page, could already load?
             modifyPrimVar readerCurrentEntryNo (+1)
             let entry' :: E.Entry SerialisedValue (RawBlobRef m h)
-                entry' = fmap (RawBlobRef readerBlobFile) entry
+                entry' = fmap (mkRawBlobRef readerBlobFile) entry
             overflowPages <- readOverflowPages readerHasFS readerKOpsHandle lenSuffix
             let rawEntry = mkEntryOverflow entry' page lenSuffix overflowPages
             return (ReadEntry key rawEntry)
@@ -173,4 +170,4 @@ close ::
   -> m ()
 close WriteBufferReader{..} = do
     FS.hClose readerHasFS readerKOpsHandle
-    BlobFile.removeReference readerBlobFile
+    releaseRef readerBlobFile
