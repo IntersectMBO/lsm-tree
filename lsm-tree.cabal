@@ -451,6 +451,23 @@ test-suite lsm-tree-test
 
   ghc-options:    -threaded
 
+test-suite codec-test
+  import:         language, warnings, wno-x-partial
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: test
+  main-is:        codec-test.hs
+  build-depends:
+    , base          >=4.14 && <4.22
+    , deepseq
+    , fs-api        ^>=0.3
+    , heaps
+    , lsm-tree
+    , primitive
+    , splitmix
+    , tasty
+    , tasty-golden
+    , vector
+
 benchmark lsm-tree-micro-bench
   import:         language, warnings, wno-x-partial
   type:           exitcode-stdio-1.0
