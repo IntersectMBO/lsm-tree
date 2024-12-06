@@ -98,6 +98,7 @@ module Database.LSMTree.Normal (
 
     -- * Table union
   , union
+  , unions
 
     -- * Concurrency #concurrency#
     -- $concurrency
@@ -787,3 +788,18 @@ union :: forall m k v b.
   -> Table m k v b
   -> m (Table m k v b)
 union = error "union: not yet implemented" $ union @m @k @v
+
+{-# SPECIALISE unions :: V.Vector (Table IO k v b) -> IO (Table IO k v b) #-}
+-- | Like 'union', but for @n@ tables.
+--
+-- A good mental model of this operation is @'Data.Map.Lazy.unions'@ on
+-- @'Data.Map.Lazy.Map' k v@.
+--
+-- Exceptions:
+--
+-- * Unioning 0 tables is an exception.
+unions :: forall m k v b.
+     IOLike m
+  => V.Vector (Table m k v b)
+  -> m (Table m k v b)
+unions = error "union: not yet implemented" $ union @m @k @v
