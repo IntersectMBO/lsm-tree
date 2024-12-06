@@ -193,10 +193,10 @@ deriving newtype instance Arbitrary a => Arbitrary (Versioned a)
 -------------------------------------------------------------------------------}
 
 instance Arbitrary SnapshotMetaData where
-  arbitrary = SnapshotMetaData <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
-  shrink (SnapshotMetaData a b c d) =
-      [ SnapshotMetaData a' b' c' d'
-      | (a', b', c', d') <- shrink (a, b, c, d)]
+  arbitrary = SnapshotMetaData <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary  <*> arbitrary
+  shrink (SnapshotMetaData a b c d e) =
+      [ SnapshotMetaData a' b' c' d' e'
+      | (a', b', c', d', e') <- shrink (a, b, c, d, e)]
 
 deriving newtype instance Arbitrary SnapshotLabel
 
