@@ -106,7 +106,7 @@ data SnapshotMetaData = SnapshotMetaData {
   deriving stock (Show, Eq)
 
 instance NFData SnapshotMetaData where
-  rnf (SnapshotMetaData a b c d) = rnf a `seq` rnf b `seq` rnf c `seq` rnf d
+  rnf (SnapshotMetaData a b c d e) = rnf a `seq` rnf b `seq` rnf c `seq` rnf d `seq` rnf e
 
 {-------------------------------------------------------------------------------
   Levels snapshot format

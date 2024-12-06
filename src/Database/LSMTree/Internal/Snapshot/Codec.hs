@@ -205,7 +205,7 @@ instance Decode SnapshotVersion where
 
 instance Encode SnapshotMetaData where
   encode (SnapshotMetaData label tableType config writeBuffer levels) =
-         encodeListLen 4
+         encodeListLen 5
       <> encode label
       <> encode tableType
       <> encode config
