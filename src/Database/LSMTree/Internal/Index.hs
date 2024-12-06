@@ -15,12 +15,12 @@ where
 import           Control.Monad.ST.Strict (ST)
 import           Data.ByteString.Lazy (LazyByteString)
 import           Data.ByteString.Short (ShortByteString)
-import           GHC.Exts (Proxy#)
 import           Data.Word (Word32)
 import           Database.LSMTree.Internal.Chunk (Chunk)
 import           Database.LSMTree.Internal.Entry (NumEntries)
 import           Database.LSMTree.Internal.Page (NumPages, PageSpan)
 import           Database.LSMTree.Internal.Serialise (SerialisedKey)
+import           GHC.Exts (Proxy#)
 
 {-|
     The class of index types.

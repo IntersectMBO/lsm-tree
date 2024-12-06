@@ -20,7 +20,6 @@ import           Control.Monad.Primitive
 import           Data.BloomFilter (Bloom)
 import           Data.Foldable (for_, traverse_)
 import           Data.Primitive.PrimVar
-import           GHC.Exts (proxy#)
 import           Data.Word (Word64)
 import           Database.LSMTree.Internal.BlobRef (RawBlobRef)
 import           Database.LSMTree.Internal.ChecksumHandle
@@ -33,6 +32,7 @@ import           Database.LSMTree.Internal.RawPage (RawPage)
 import           Database.LSMTree.Internal.RunAcc (RunAcc, RunBloomFilterAlloc)
 import qualified Database.LSMTree.Internal.RunAcc as RunAcc
 import           Database.LSMTree.Internal.Serialise
+import           GHC.Exts (proxy#)
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
 import qualified System.FS.BlockIO.API as FS

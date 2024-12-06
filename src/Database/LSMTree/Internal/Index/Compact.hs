@@ -38,7 +38,6 @@ import           Data.Maybe (fromMaybe)
 import           Data.Primitive.ByteArray (ByteArray (..), indexByteArray,
                      sizeofByteArray)
 import           Data.Primitive.Types (sizeOf)
-import           GHC.Exts (Proxy#, proxy#)
 import qualified Data.Vector.Algorithms.Search as VA
 import qualified Data.Vector.Generic as VG
 import qualified Data.Vector.Primitive as VP
@@ -57,6 +56,7 @@ import           Database.LSMTree.Internal.Page
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.Unsliced
 import           Database.LSMTree.Internal.Vector
+import           GHC.Exts (Proxy#, proxy#)
 
 {- $compact
 

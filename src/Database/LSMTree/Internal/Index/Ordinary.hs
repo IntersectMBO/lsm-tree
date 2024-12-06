@@ -24,7 +24,6 @@ import           Data.ByteString.Short (ShortByteString (SBS))
 import qualified Data.ByteString.Short as ShortByteString (length)
 import           Data.Primitive.ByteArray (ByteArray (ByteArray),
                      indexByteArray)
-import           GHC.Exts (Proxy#)
 import           Data.Vector (Vector, drop, findIndex, findIndexR, fromList,
                      last, length, (!))
 import qualified Data.Vector.Primitive as Primitive (Vector (Vector), drop,
@@ -39,6 +38,7 @@ import           Database.LSMTree.Internal.Page (NumPages (NumPages),
 import           Database.LSMTree.Internal.Serialise
                      (SerialisedKey (SerialisedKey'))
 import           Database.LSMTree.Internal.Vector (binarySearchL, mkPrimVector)
+import           GHC.Exts (Proxy#)
 
 {-|
     The type–version indicator for the ordinary index and its serialisation

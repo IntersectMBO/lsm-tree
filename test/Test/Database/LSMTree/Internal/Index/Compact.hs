@@ -1,6 +1,6 @@
 {-# LANGUAGE LambdaCase      #-}
-{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE MagicHash       #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 {- HLINT ignore "Eta reduce" -}
 
@@ -23,7 +23,6 @@ import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Primitive.ByteArray (ByteArray (..), byteArrayFromList,
                      sizeofByteArray)
-import           GHC.Exts (proxy#)
 import qualified Data.Vector.Primitive as VP
 import qualified Data.Vector.Unboxed as VU
 import qualified Data.Vector.Unboxed.Base as VU
@@ -39,6 +38,7 @@ import           Database.LSMTree.Internal.Index.CompactAcc as IndexCompact
 import           Database.LSMTree.Internal.Page (PageNo (PageNo), PageSpan,
                      multiPage, singlePage)
 import           Database.LSMTree.Internal.Serialise
+import           GHC.Exts (proxy#)
 import           Numeric (showHex)
 import           Prelude hiding (max, min, pi)
 import qualified Test.QuickCheck as QC

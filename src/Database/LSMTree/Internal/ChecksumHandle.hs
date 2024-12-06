@@ -27,7 +27,6 @@ import           Control.Monad.Primitive
 import           Data.BloomFilter (Bloom)
 import qualified Data.ByteString.Lazy as BSL
 import           Data.Primitive.PrimVar
-import           GHC.Exts (Proxy#)
 import           Data.Word (Word64)
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..), RawBlobRef)
 import qualified Database.LSMTree.Internal.BlobRef as BlobRef
@@ -47,6 +46,7 @@ import qualified Database.LSMTree.Internal.RawOverflowPage as RawOverflowPage
 import           Database.LSMTree.Internal.RawPage (RawPage)
 import qualified Database.LSMTree.Internal.RawPage as RawPage
 import           Database.LSMTree.Internal.Serialise
+import           GHC.Exts (Proxy#)
 import qualified System.FS.API as FS
 import           System.FS.API
 import qualified System.FS.BlockIO.API as FS
