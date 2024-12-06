@@ -142,7 +142,6 @@ next reader@WriteBufferReader {..} = do
             stToIO $ writeMutVar readerCurrentPage newPage
             case newPage of
               Nothing -> do
-                close reader
                 return Empty
               Just p -> do
                 writePrimVar readerCurrentEntryNo 0
