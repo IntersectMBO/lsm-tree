@@ -1,3 +1,5 @@
+{-# LANGUAGE MagicHash #-}
+
 module Database.LSMTree.Internal.ChecksumHandle
   (
     -- * Checksum handles
@@ -44,6 +46,7 @@ import qualified Database.LSMTree.Internal.RawOverflowPage as RawOverflowPage
 import           Database.LSMTree.Internal.RawPage (RawPage)
 import qualified Database.LSMTree.Internal.RawPage as RawPage
 import           Database.LSMTree.Internal.Serialise
+import           GHC.Exts (Proxy#)
 import qualified System.FS.API as FS
 import           System.FS.API
 import qualified System.FS.BlockIO.API as FS
@@ -204,15 +207,17 @@ writeFilter hfs filterHandle bf =
 {-# SPECIALISE writeIndexHeader ::
      HasFS IO h
   -> ForIndex (ChecksumHandle RealWorld h)
+  -> Proxy# IndexCompact
   -> IO () #-}
 writeIndexHeader ::
      (MonadSTM m, PrimMonad m)
   => HasFS m h
   -> ForIndex (ChecksumHandle (PrimState m) h)
+  -> Proxy# IndexCompact
   -> m ()
-writeIndexHeader hfs indexHandle =
+writeIndexHeader hfs indexHandle indexTypeProxy =
     writeToHandle hfs (unForIndex indexHandle) $
-      Index.headerLBS
+      Index.headerLBS indexTypeProxy
 
 {-# SPECIALISE writeIndexChunk ::
      HasFS IO h

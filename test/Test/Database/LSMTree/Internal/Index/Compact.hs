@@ -1,4 +1,5 @@
 {-# LANGUAGE LambdaCase      #-}
+{-# LANGUAGE MagicHash       #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 {- HLINT ignore "Eta reduce" -}
@@ -37,6 +38,7 @@ import           Database.LSMTree.Internal.Index.CompactAcc as IndexCompact
 import           Database.LSMTree.Internal.Page (PageNo (PageNo), PageSpan,
                      multiPage, singlePage)
 import           Database.LSMTree.Internal.Serialise
+import           GHC.Exts (proxy#)
 import           Numeric (showHex)
 import           Prelude hiding (max, min, pi)
 import qualified Test.QuickCheck as QC
@@ -99,7 +101,7 @@ tests = testGroup "Test.Database.LSMTree.Internal.Index.Compact" [
                 , 7, 0
                 ]
 
-          let header = LBS.unpack headerLBS
+          let header = LBS.unpack (headerLBS (proxy# @IndexCompact))
           let primary = LBS.unpack $
                         LBS.fromChunks (map Chunk.toByteString chunks)
           let rest = LBS.unpack (finalLBS (NumEntries 7) index)
@@ -231,7 +233,7 @@ prop_roundtrip_chunks (Chunks chunks index) numEntries =
     counterexample ("rest:\n" <> showBS bsRest) $
       Right (numEntries, index) === fromSBS sbs
   where
-    bsVersion = headerLBS
+    bsVersion = headerLBS (proxy# @IndexCompact)
     bsPrimary = LBS.fromChunks $
                 map (Chunk.toByteString . word64VectorToChunk) chunks
     bsRest = finalLBS numEntries index
@@ -293,7 +295,7 @@ writeIndexCompact numEntries (ChunkSize csize) ps = runST $ do
     cs <- mapM (`append` ica) (toAppends ps)
     (c, index) <- unsafeEnd ica
     return
-      ( headerLBS
+      ( headerLBS (proxy# @IndexCompact)
       , LBS.fromChunks $
         foldMap (map Chunk.toByteString) $ cs <> pure (toList c)
       , finalLBS numEntries index
