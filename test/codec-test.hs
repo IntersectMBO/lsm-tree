@@ -7,24 +7,16 @@
 {-# OPTIONS_GHC -fspecialize-aggressively #-}
 module Main (main) where
 
-import           Control.DeepSeq (NFData (..), force)
-import           Control.Exception (evaluate)
-import           Control.Monad.ST.Strict (ST, runST)
-import           Data.Bits (unsafeShiftR)
-import qualified Data.Heap as Heap
-import           Data.IORef
-import qualified Data.List as L
-import           Data.List.NonEmpty (NonEmpty (..))
-import           Data.Primitive.ByteArray (compareByteArrays)
-import qualified Data.Vector.Primitive as VP
-import           Data.Word (Word64, Word8)
-import           System.IO.Unsafe (unsafePerformIO)
-import qualified System.Random.SplitMix as SM
-import           Test.Tasty (TestName, TestTree, defaultMainWithIngredients,
-                     testGroup)
-
 import           Control.Monad (when)
-import           Database.LSMTree.Common (defaultTableConfig)
+import           Control.Monad.ST.Strict (ST, runST)
+import           Data.Foldable (fold)
+import           Data.STRef
+import           Data.Vector (Vector)
+import qualified Data.Vector as V
+import           Database.LSMTree.Common (BloomFilterAlloc (..),
+                     DiskCachePolicy (..), NumEntries (..), TableConfig (..),
+                     WriteBufferAlloc (..), defaultTableConfig)
+import           Database.LSMTree.Internal.MergeSchedule (NumRuns (..))
 import           Database.LSMTree.Internal.RunNumber (RunNumber (..))
 import           Database.LSMTree.Internal.Snapshot
 import           Database.LSMTree.Internal.Snapshot.Codec
@@ -33,7 +25,10 @@ import           System.FS.API.Types (FsPath, MountPoint (..), fsToFilePath,
                      mkFsPath, (<.>))
 import           System.FS.IO (HandleIO, ioHasFS)
 import qualified Test.Tasty as Tasty
+import           Test.Tasty (TestName, TestTree, testGroup)
 import qualified Test.Tasty.Golden as Au
+import           Text.Printf (printf)
+
 
 -- |
 -- Delete output files on test-case success.
@@ -104,18 +99,173 @@ snapshotCodecTest name datum =
 
 main :: IO ()
 main = do
---    defaultMainWithIngredients $ testGroup "codec"
-  Tasty.defaultMain . handleOutputFiles $ testGroup "codec"
-        [ testGroup "tests"
-          [ snapshotCodecTest "Test1" $ SnapshotMetaData
-            { snapMetaLabel = SnapshotLabel "user-supplied-label"
-            , snapMetaTableType = SnapNormalTable
-            , snapMetaConfig = defaultTableConfig
-            , snapMetaLevels = SnapLevels
-                (pure (SnapLevel
-                  (SnapSingleRun (RunNumber 42))
-                  (pure (RunNumber 42))))
-            }
-
-          ]
+  Tasty.defaultMain . handleOutputFiles . testGroup "codec" $
+        [ testCodecSnapshotLabel
+        , testCodecSnapshotTableType
+        , testCodecTableConfig
+        , testCodecSnapLevels
         ]
+
+testCodecSnapshotLabel :: TestTree
+testCodecSnapshotLabel =
+  let assembler label =
+        SnapshotMetaData
+          label
+          basicSnapshotTableType
+          basicTableConfig
+          basicSnapLevels
+  in  testCodecBuilder "SnapshotLabel" $ assembler <$> enumerateSnapshotLabel
+
+testCodecSnapshotTableType :: TestTree
+testCodecSnapshotTableType =
+  let assembler tType =
+        SnapshotMetaData
+          basicSnapshotLabel
+          tType
+          basicTableConfig
+          basicSnapLevels
+  in  testCodecBuilder "SnapshotTableType" $ assembler <$> enumerateSnapshotTableType
+
+testCodecTableConfig :: TestTree
+testCodecTableConfig =
+  let assembler tConfig =
+        SnapshotMetaData
+          basicSnapshotLabel
+          basicSnapshotTableType
+          tConfig
+          basicSnapLevels
+  in  testCodecBuilder "TableConfig" $ assembler <$> enumerateTableConfig
+
+testCodecSnapLevels :: TestTree
+testCodecSnapLevels =
+  let assembler levels =
+        SnapshotMetaData
+          basicSnapshotLabel
+          basicSnapshotTableType
+          basicTableConfig
+          levels
+  in  testCodecBuilder "SnapLevels" $ assembler <$> enumerateSnapLevels
+
+testCodecBuilder :: TestName -> [SnapshotMetaData] -> TestTree
+testCodecBuilder tName metadata =
+    let finalizer :: STRef s Word -> SnapshotMetaData -> ST s TestTree
+        finalizer ref datum = do
+          curr <- readSTRef ref
+          modifySTRef' ref succ
+          pure $ snapshotCodecTest (tName <> printf "-%03d" curr) datum
+
+        testSubtree = runST $ do
+          counter <- newSTRef 0
+          traverse (finalizer counter) metadata
+
+    in  testGroup tName testSubtree
+
+{----------------
+Defaults used when the SnapshotMetaData sub-component is not under test
+----------------}
+
+basicSnapshotLabel :: SnapshotLabel
+basicSnapshotLabel = head enumerateSnapshotLabel
+
+basicSnapshotTableType :: SnapshotTableType
+basicSnapshotTableType = minBound
+
+basicTableConfig :: TableConfig
+basicTableConfig = defaultTableConfig
+
+basicSnapLevels :: SnapLevels RunNumber
+basicSnapLevels = head enumerateSnapLevels
+
+{----------------
+Enumeration of SnapshotMetaData sub-components
+----------------}
+
+enumerateSnapshotLabel :: [SnapshotLabel]
+enumerateSnapshotLabel = [ SnapshotLabel "UserProvidedLabel", SnapshotLabel "" ]
+
+enumerateSnapshotTableType :: [SnapshotTableType]
+enumerateSnapshotTableType = [minBound .. maxBound]
+
+enumerateTableConfig :: [TableConfig]
+enumerateTableConfig =
+    [ TableConfig
+        policy
+        ratio
+        allocs
+        bloom
+        fence
+        cache
+        merge
+    | policy <- [minBound .. maxBound]
+    , ratio <- [minBound .. maxBound]
+    , allocs <- AllocNumEntries . NumEntries <$> [magicNumber1]
+    , bloom <- enumerateBloomFilterAlloc
+    , fence <- [minBound .. maxBound]
+    , cache <- enumerateDiskCachePolicy
+    , merge <- [minBound .. maxBound]
+    ]
+
+enumerateSnapLevels :: [SnapLevels RunNumber]
+enumerateSnapLevels = SnapLevels . V.singleton <$> enumerateSnapLevel
+
+{----------------
+Enumeration of SnapshotMetaData sub-sub-components and so on...
+----------------}
+
+enumerateBloomFilterAlloc :: [BloomFilterAlloc]
+enumerateBloomFilterAlloc =
+  [ AllocFixed magicNumber3
+  , AllocRequestFPR pi
+  , AllocMonkey magicNumber3 . NumEntries $ magicNumber3 `div` 4
+  ]
+
+enumerateDiskCachePolicy :: [DiskCachePolicy]
+enumerateDiskCachePolicy =
+  [ DiskCacheAll
+  , DiskCacheNone
+  , DiskCacheLevelsAtOrBelow 1
+  ]
+
+enumerateSnapLevel :: [SnapLevel RunNumber]
+enumerateSnapLevel = SnapLevel <$> enumerateSnapIncomingRun <*> enumerateVectorRunNumber
+
+enumerateSnapIncomingRun :: [SnapIncomingRun RunNumber]
+enumerateSnapIncomingRun =
+  let
+      inSnaps = (SnapSingleRun <$> enumerateRunNumbers) <>
+        [ SnapMergingRun policy numRuns entries credits known sState
+        | policy <- [minBound .. maxBound]
+        , numRuns <- NumRuns <$> [ magicNumber1 ]
+        , entries <- NumEntries  <$> [ magicNumber2 ]
+        , credits <- UnspentCredits <$> [ magicNumber1 ]
+        , known <- [minBound .. maxBound]
+        , sState <- enumerateSnapMergingRunState
+        ]
+  in  fold
+      [ SnapSingleRun <$> enumerateRunNumbers
+      , inSnaps
+      ]
+
+enumerateSnapMergingRunState :: [SnapMergingRunState RunNumber]
+enumerateSnapMergingRunState = (SnapCompletedMerge <$> enumerateRunNumbers) <>
+  [ SnapOngoingMerge runVec credits level
+  | runVec <- enumerateVectorRunNumber
+  , credits <- SpentCredits <$> [ magicNumber1]
+  , level <- [minBound .. maxBound]
+  ]
+
+enumerateVectorRunNumber :: [Vector RunNumber]
+enumerateVectorRunNumber =
+  [ mempty
+  , V.fromList [RunNumber magicNumber1]
+  , V.fromList [RunNumber magicNumber1, RunNumber magicNumber2 ]
+  ]
+
+enumerateRunNumbers :: [RunNumber]
+enumerateRunNumbers = RunNumber <$> [ magicNumber2 ]
+
+-- Randomly chosen numbers
+magicNumber1, magicNumber2, magicNumber3 :: Enum e => e
+magicNumber1 = toEnum 42
+magicNumber2 = toEnum 88
+magicNumber3 = toEnum 1024

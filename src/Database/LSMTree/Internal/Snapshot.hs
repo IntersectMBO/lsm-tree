@@ -68,7 +68,7 @@ newtype SnapshotLabel = SnapshotLabel Text
 
 -- TODO: revisit if we need three table types.
 data SnapshotTableType = SnapNormalTable | SnapMonoidalTable | SnapFullTable
-  deriving stock (Show, Eq)
+  deriving stock (Bounded, Enum, Eq, Show)
 
 data SnapshotMetaData = SnapshotMetaData {
     -- | See 'SnapshotLabel'.

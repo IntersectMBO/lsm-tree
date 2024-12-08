@@ -458,12 +458,8 @@ test-suite codec-test
   main-is:        codec-test.hs
   build-depends:
     , base          >=4.14 && <4.22
-    , deepseq
     , fs-api        ^>=0.3
-    , heaps
     , lsm-tree
-    , primitive
-    , splitmix
     , tasty
     , tasty-golden
     , vector

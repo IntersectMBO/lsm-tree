@@ -72,7 +72,8 @@ data MergeState =
   | Closed
 
 data Level = MidLevel | LastLevel
-  deriving stock (Eq, Show)
+  -- @Bounded@ and @Enum@ instances are required for test-case enumeration.
+  deriving stock (Bounded, Enum, Eq, Show)
 
 type Mappend = SerialisedValue -> SerialisedValue -> SerialisedValue
 
