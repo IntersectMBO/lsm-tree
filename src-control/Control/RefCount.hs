@@ -47,8 +47,12 @@ import qualified Control.Exception
 import           Data.IORef
 import           GHC.Stack (HasCallStack, callStack)
 import           System.IO.Unsafe (unsafeDupablePerformIO, unsafePerformIO)
-import           System.Mem (performMajorGC)
 import           System.Mem.Weak hiding (deRefWeak)
+#if MIN_VERSION_base(4,20,0)
+import           System.Mem (performBlockingMajorGC)
+#else
+import           System.Mem (performMajorGC)
+#endif  
 #endif
 
 
@@ -468,12 +472,22 @@ checkForgottenRefs = do
 #ifndef NO_IGNORE_ASSERTS
     return ()
 #else
-    performMajorGC
-    yield
-    assertNoForgottenRefs
-    -- And for good measure, we'll do it again
-    performMajorGC
-    yield
+    tryEmulateBlockingMajorGC
     assertNoForgottenRefs
 #endif
 
+tryEmulateBlockingMajorGC :: IO ()
+tryEmulateBlockingMajorGC = do
+#if MIN_VERSION_base(4,20,0)
+    performBlockingMajorGC
+    yield
+#else
+    -- The hope is that by combining `performMajorGC` with `yield` that
+    -- the former starts the GC threads and the latter puts the current
+    -- process at the back of the thread queue.
+    performMajorGC
+    yield
+    -- For good measure, we'll do it twice.
+    performMajorGC
+    yield
+#endif
