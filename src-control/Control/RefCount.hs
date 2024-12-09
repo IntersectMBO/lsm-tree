@@ -42,6 +42,7 @@ import           Control.Monad.Primitive
 import           GHC.Stack (CallStack, prettyCallStack)
 
 #ifdef NO_IGNORE_ASSERTS
+import           Control.Concurrent (yield)
 import qualified Control.Exception
 import           Data.IORef
 import           GHC.Stack (HasCallStack, callStack)
@@ -51,7 +52,6 @@ import           System.Mem.Weak hiding (deRefWeak)
 import           System.Mem (performBlockingMajorGC)
 #else
 import           System.Mem (performMajorGC)
-import           Control.Concurrent (yield)
 #endif  
 #endif
 
@@ -480,6 +480,7 @@ tryEmulateBlockingMajorGC :: IO ()
 tryEmulateBlockingMajorGC = do
 #if MIN_VERSION_base(4,20,0)
     performBlockingMajorGC
+    yield
 #else
     -- The hope is that by combining `performMajorGC` with `yield` that
     -- the former starts the GC threads and the latter puts the current
