@@ -548,7 +548,7 @@ instance (NoThunks a, Typeable s, Typeable a) => NoThunks (MutableHeap s a) wher
 -- Some constraints, like @NoThunks (MutVar s a)@ and @NoThunks (StrictTVar m
 -- a)@, can not be satisfied for arbitrary @m@\/@s@, and must be instantiated
 -- for a concrete @m@\/@s@, like @IO@\/@RealWorld@.
-class ( forall a. NoThunks a => NoThunks (StrictTVar m a)
+class ( forall a. (NoThunks a, Typeable a) => NoThunks (StrictTVar m a)
       , forall a. (NoThunks a, Typeable a) => NoThunks (StrictMVar m a)
       ) => NoThunksIOLike' m s
 
@@ -556,20 +556,11 @@ instance NoThunksIOLike' IO RealWorld
 
 type NoThunksIOLike m = NoThunksIOLike' m (PrimState m)
 
--- TODO: on ghc-9.4, a check on StrictTVar IO (RWState (TableContent IO h))
--- fails, but we have not yet found out why so we simply disable NoThunks checks
--- for StrictTVars on ghc-9.4
-instance NoThunks a => NoThunks (StrictTVar IO a) where
-  showTypeOf (_ :: Proxy (StrictTVar IO a)) = "StrictTVar IO"
+instance (NoThunks a, Typeable a) => NoThunks (StrictTVar IO a) where
+  showTypeOf (p :: Proxy (StrictTVar IO a)) = show $ typeRep p
   wNoThunks _ctx _var = do
-#if defined(MIN_VERSION_GLASGOW_HASKELL)
-#if MIN_VERSION_GLASGOW_HASKELL(9,4,0,0) && !MIN_VERSION_GLASGOW_HASKELL(9,6,0,0)
-    pure Nothing
-#else
     x <- readTVarIO _var
     noThunks _ctx x
-#endif
-#endif
 
 -- TODO: in some cases, strict-mvar functions leave thunks behind, in particular
 -- modifyMVarMasked and modifyMVarMasked_. So in some specific cases we evaluate

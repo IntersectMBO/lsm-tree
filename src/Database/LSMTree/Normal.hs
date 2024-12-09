@@ -332,7 +332,7 @@ lookups (Internal.NormalTable t) ks =
       Entry.Insert v            -> Found (Internal.deserialiseValue v)
       Entry.InsertWithBlob v br -> FoundWithBlob (Internal.deserialiseValue v)
                                                  (BlobRef br)
-      Entry.Mupdate _           -> error "Normal.lookups: unexpected Mupdate"
+      Entry.Mupdate v           -> Found (Internal.deserialiseValue v)
       Entry.Delete              -> NotFound
     toLookupResult Nothing = NotFound
 

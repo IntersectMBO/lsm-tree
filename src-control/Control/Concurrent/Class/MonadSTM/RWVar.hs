@@ -117,7 +117,7 @@ unsafeAcquireWriteAccess rw@(RWVar !var) = do
 
 {-# SPECIALISE unsafeReleaseWriteAccess :: RWVar IO a -> a -> STM IO () #-}
 unsafeReleaseWriteAccess :: MonadSTM m => RWVar m a -> a -> STM m ()
-unsafeReleaseWriteAccess (RWVar !var) x = do
+unsafeReleaseWriteAccess (RWVar !var) !x = do
     readTVar var >>= \case
       Reading _ _ -> error "releasing a writer without write access (Reading)"
       WaitingToWrite _ _ -> error "releasing a writer without write access (WaitingToWrite)"

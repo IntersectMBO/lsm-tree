@@ -52,44 +52,12 @@ import qualified Data.Map.Strict as Map
 import           Data.Monoid (First (..))
 import           Data.Proxy (Proxy (Proxy))
 import qualified Data.Vector as V
+import           Database.LSMTree (LookupResult (..), QueryResult (..),
+                     ResolveValue (..), Update (..))
 import           Database.LSMTree.Common (Range (..), SerialiseKey (..),
                      SerialiseValue (..))
 import           Database.LSMTree.Internal.RawBytes (RawBytes)
-import           Database.LSMTree.Monoidal (ResolveValue (..))
 import           GHC.Exts (IsList (..))
-
-data LookupResult v b =
-    NotFound
-  | Found         !v
-  | FoundWithBlob !v !b
-  deriving stock (Eq, Show, Functor, Foldable, Traversable)
-
-instance Bifunctor LookupResult where
-  first f = \case
-      NotFound          -> NotFound
-      Found v           -> Found (f v)
-      FoundWithBlob v b -> FoundWithBlob (f v) b
-
-  second g = \case
-      NotFound          -> NotFound
-      Found v           -> Found v
-      FoundWithBlob v b -> FoundWithBlob v (g b)
-
-data QueryResult k v b =
-    FoundInQuery         !k !v
-  | FoundInQueryWithBlob !k !v !b
-  deriving stock (Eq, Show, Functor, Foldable, Traversable)
-
-instance Bifunctor (QueryResult k) where
-  bimap f g = \case
-      FoundInQuery k v           -> FoundInQuery k (f v)
-      FoundInQueryWithBlob k v b -> FoundInQueryWithBlob k (f v) (g b)
-
-data Update v b =
-    Insert !v !(Maybe b)
-  | Delete
-  | Mupsert !v
-  deriving stock (Show, Eq)
 
 newtype ResolveSerialisedValue v =
     Resolve { resolveSerialised :: RawBytes -> RawBytes -> RawBytes }
