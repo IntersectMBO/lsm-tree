@@ -42,13 +42,17 @@ import           Control.Monad.Primitive
 import           GHC.Stack (CallStack, prettyCallStack)
 
 #ifdef NO_IGNORE_ASSERTS
-import           Control.Concurrent (yield)
 import qualified Control.Exception
 import           Data.IORef
 import           GHC.Stack (HasCallStack, callStack)
 import           System.IO.Unsafe (unsafeDupablePerformIO, unsafePerformIO)
-import           System.Mem qualified as Mem
 import           System.Mem.Weak hiding (deRefWeak)
+#if MIN_VERSION_base(4,20,0)
+import           System.Mem (performBlockingMajorGC)
+#else
+import           System.Mem (performMajorGC)
+import           Control.Concurrent (yield)
+#endif  
 #endif
 
 
@@ -474,14 +478,14 @@ checkForgottenRefs = do
 tryEmulateBlockingMajorGC :: IO ()
 tryEmulateBlockingMajorGC = do
 #if MIN_VERSION_base(4,20,0)
-    Mem.performBlockingMajorGC
+    performBlockingMajorGC
 #else
     -- The hope is that by combining `performMajorGC` with `yield` that
     -- the former starts the GC threads and the latter puts the current
     -- process at the back of the thread queue.
-    Mem.performMajorGC
+    performMajorGC
     yield
     -- For good measure, we'll do it twice.
-    Mem.performMajorGC
+    performMajorGC
     yield
 #endif
