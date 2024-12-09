@@ -59,6 +59,7 @@ import           System.FS.API
 
 
 newtype SessionRoot = SessionRoot { getSessionRoot :: FsPath }
+  deriving stock Eq
 
 lockFile :: SessionRoot -> FsPath
 lockFile (SessionRoot dir) = dir </> mkFsPath ["lock"]
