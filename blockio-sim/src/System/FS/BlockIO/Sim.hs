@@ -1,5 +1,6 @@
 module System.FS.BlockIO.Sim (
     fromHasFS
+    -- * Initialisation helpers
   , simHasBlockIO
   , simHasBlockIO'
   , simErrorHasBlockIO
@@ -8,6 +9,7 @@ module System.FS.BlockIO.Sim (
 
 import           Control.Concurrent.Class.MonadMVar
 import           Control.Concurrent.Class.MonadSTM.Strict
+import           Control.Monad (void)
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Primitive (PrimMonad)
 import qualified Data.ByteString.Char8 as BS
@@ -27,7 +29,15 @@ fromHasFS ::
   => HasFS m HandleMock
   -> m (HasBlockIO m HandleMock)
 fromHasFS hfs =
-    serialHasBlockIO hSetNoCache hAdvise hAllocate (simTryLockFile hfs) hfs
+    serialHasBlockIO
+      hSetNoCache
+      hAdvise
+      hAllocate
+      (simTryLockFile hfs)
+      simHSynchronise
+      simSynchroniseDirectory
+      (simCreateHardLink hfs)
+      hfs
   where
     -- TODO: It should be possible for the implementations and simulation to
     -- throw an FsError when doing file I/O with misaligned byte arrays after
@@ -36,6 +46,10 @@ fromHasFS hfs =
     hSetNoCache _h _b = pure ()
     hAdvise _ _ _ _ = pure ()
     hAllocate _ _ _ = pure ()
+
+    -- Disk operations are durable by construction
+    simHSynchronise _ = pure ()
+    simSynchroniseDirectory _ = pure ()
 
 -- | Lock files are reader\/writer locks.
 --
@@ -109,6 +123,27 @@ simTryLockFile hfs path lockmode =
         fsErrorStack  = prettyCallStack,
         fsLimitation  = False
       }
+
+-- | @'simCreateHardLink' hfs source target@ creates a simulated hard link for
+-- the @source@ path at the @target@ path.
+--
+-- The hard link is simulated by simply copying the source file to the target
+-- path, which means that it should only be used to create hard links for files
+-- that are not modified afterwards!
+--
+-- TODO: if we wanted to simulate proper hard links, we would have to bake the
+-- feature into @fs-sim@.
+simCreateHardLink :: MonadThrow m => HasFS m h -> FsPath -> FsPath -> m ()
+simCreateHardLink hfs sourcePath targetPath =
+    API.withFile hfs sourcePath API.ReadMode $ \sourceHandle ->
+    API.withFile hfs targetPath (API.WriteMode API.MustBeNew) $ \targetHandle -> do
+      -- This should /hopefully/ stream using lazy IO
+      bs <- API.hGetAll hfs sourceHandle
+      void $ API.hPutAll hfs targetHandle bs
+
+{-------------------------------------------------------------------------------
+  Initialisation helpers
+-------------------------------------------------------------------------------}
 
 simHasBlockIO ::
      (MonadCatch m, MonadMVar m, PrimMonad m, MonadSTM m)
