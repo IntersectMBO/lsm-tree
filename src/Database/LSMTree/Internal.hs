@@ -1088,8 +1088,9 @@ createSnapshot resolve snap label tableType t = do
     traceWith (tableTracer t) $ TraceSnapshot snap
     withOpenTable t $ \thEnv ->
       withTempRegistry $ \reg -> do -- TODO: use the temp registry for all side effects
-        let hfs = tableHasFS thEnv
-        let hbio = tableHasBlockIO thEnv
+        let hfs  = tableHasFS thEnv
+            hbio = tableHasBlockIO thEnv
+            uc   = tableSessionUniqCounter thEnv
 
         -- Guard that the snapshot does not exist already
         let snapDir = Paths.namedSnapshotDir (tableSessionRoot thEnv) snap
@@ -1105,10 +1106,11 @@ createSnapshot resolve snap label tableType t = do
         -- Get the table content.
         content <- RW.withReadAccess (tableContent thEnv) pure
 
-        -- Write the write buffer.
-        snapWriteBuffer <- uniqueToRunNumber <$> incrUniqCounter (tableSessionUniqCounter thEnv)
-        let wbPaths = Paths.WriteBufferFsPaths (Paths.getNamedSnapshotDir snapDir) snapWriteBuffer
-        WBW.writeWriteBuffer hfs hbio wbPaths (tableWriteBuffer content) (tableWriteBufferBlobs content)
+        -- Snapshot the write buffer.
+        let activeDir = Paths.activeDir (tableSessionRoot thEnv)
+        let wb = tableWriteBuffer content
+        let wbb = tableWriteBufferBlobs content
+        snapWriteBufferNumber <- Paths.writeBufferNumber <$> snapshotWriteBuffer hfs hbio uc activeDir snapDir wb wbb
 
         -- Convert to snapshot format
         snapLevels <- toSnapLevels (tableLevels content)
@@ -1116,7 +1118,7 @@ createSnapshot resolve snap label tableType t = do
         -- Hard link runs into the named snapshot directory
         snapLevels' <- snapshotRuns reg snapDir snapLevels
 
-        let snapMetaData = SnapshotMetaData label tableType (tableConfig t) snapWriteBuffer snapLevels'
+        let snapMetaData = SnapshotMetaData label tableType (tableConfig t) snapWriteBufferNumber snapLevels'
             SnapshotMetaDataFile contentPath = Paths.snapshotMetaDataFile snapDir
             SnapshotMetaDataChecksumFile checksumPath = Paths.snapshotMetaDataChecksumFile snapDir
         writeFileSnapshotMetaData hfs contentPath checksumPath snapMetaData
@@ -1145,6 +1147,7 @@ openSnapshot sesh label tableType override snap resolve = do
       withTempRegistry $ \reg -> do
         let hfs     = sessionHasFS seshEnv
             hbio    = sessionHasBlockIO seshEnv
+            uc      = sessionUniqCounter seshEnv
 
         -- Guard that the snapshot exists
         let snapDir = Paths.namedSnapshotDir (sessionRoot seshEnv) snap
@@ -1167,22 +1170,20 @@ openSnapshot sesh label tableType override snap resolve = do
 
         let conf' = applyOverride override conf
         am <- newArenaManager
-        blobpath <- Paths.tableBlobPath (sessionRoot seshEnv) <$>
-                      incrUniqCounter (sessionUniqCounter seshEnv)
-        tableWriteBufferBlobs <- allocateTemp reg (WBB.new hfs blobpath)
-                                                  releaseRef
 
-        let actDir = Paths.activeDir (sessionRoot seshEnv)
+        let activeDir = Paths.activeDir (sessionRoot seshEnv)
 
         -- Read write buffer
-        let wbPaths = Paths.WriteBufferFsPaths (Paths.getNamedSnapshotDir snapDir) snapWriteBuffer
-        tableWriteBuffer <- readWriteBuffer hfs hbio resolve tableWriteBufferBlobs wbPaths
+        activeWriteBufferNumber <- uniqueToRunNumber <$> incrUniqCounter uc
+        let activeWriteBufferPaths = Paths.WriteBufferFsPaths (Paths.getActiveDir activeDir) activeWriteBufferNumber
+        let snapWriteBufferPaths = Paths.WriteBufferFsPaths (Paths.getNamedSnapshotDir snapDir) snapWriteBuffer
+        (tableWriteBuffer, tableWriteBufferBlobs) <- openWriteBuffer reg resolve hfs hbio snapWriteBufferPaths activeWriteBufferPaths
 
         -- Hard link runs into the active directory,
-        snapLevels' <- openRuns reg hfs hbio conf (sessionUniqCounter seshEnv) snapDir actDir snapLevels
+        snapLevels' <- openRuns reg hfs hbio conf (sessionUniqCounter seshEnv) snapDir activeDir snapLevels
         
         -- Convert from the snapshot format, restoring merge progress in the process
-        tableLevels <- fromSnapLevels reg hfs hbio conf (sessionUniqCounter seshEnv) resolve actDir snapLevels'
+        tableLevels <- fromSnapLevels reg hfs hbio conf (sessionUniqCounter seshEnv) resolve activeDir snapLevels'
 
         tableCache <- mkLevelsCache reg tableLevels
         newWith reg sesh seshEnv conf' am $! TableContent {

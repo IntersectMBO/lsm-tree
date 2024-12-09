@@ -12,6 +12,9 @@ module Database.LSMTree.Internal.Snapshot (
   , SpentCredits (..)
     -- * Conversion to levels snapshot format
   , toSnapLevels
+    -- * Write buffer
+  , snapshotWriteBuffer
+  , openWriteBuffer
     -- * Runs
   , snapshotRuns
   , openRuns
@@ -42,7 +45,7 @@ import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.MergeSchedule
 import           Database.LSMTree.Internal.Paths (ActiveDir (..),
                      NamedSnapshotDir (..), RunFsPaths (..), pathsForRunFiles,
-                     runChecksumsPath)
+                     runChecksumsPath, WriteBufferFsPaths (..), writeBufferKOpsPath, writeBufferBlobPath, writeBufferChecksumsPath)
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunNumber
@@ -52,6 +55,11 @@ import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
 import qualified System.FS.API.Lazy as FS
 import           System.FS.BlockIO.API (HasBlockIO)
+import Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
+import Database.LSMTree.Internal.WriteBufferBlobs (WriteBufferBlobs)
+import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
+import qualified Database.LSMTree.Internal.WriteBufferWriter as WBW
+import qualified Database.LSMTree.Internal.WriteBufferReader as WBR
 
 {-------------------------------------------------------------------------------
   Snapshot metadata
@@ -185,6 +193,72 @@ toSnapMergingRunState (CompletedMerge r) = pure (SnapCompletedMerge r)
 toSnapMergingRunState (OngoingMerge rs (SpentCreditsVar spentCreditsVar) m) = do
     spentCredits <- readPrimVar spentCreditsVar
     pure (SnapOngoingMerge rs (SpentCredits spentCredits) (Merge.mergeLevel m))
+
+{-------------------------------------------------------------------------------
+  Write Buffer
+-------------------------------------------------------------------------------}
+
+{-# SPECIALISE
+  snapshotWriteBuffer ::
+       HasFS IO h
+    -> HasBlockIO IO h
+    -> UniqCounter IO
+    -> ActiveDir
+    -> NamedSnapshotDir
+    -> WriteBuffer
+    -> Ref (WriteBufferBlobs IO h)
+    -> IO WriteBufferFsPaths
+  #-}
+snapshotWriteBuffer ::
+     (MonadMVar m, MonadSTM m, MonadST m, MonadThrow m)
+  => HasFS m h
+  -> HasBlockIO m h
+  -> UniqCounter m
+  -> ActiveDir
+  -> NamedSnapshotDir
+  -> WriteBuffer
+  -> Ref (WriteBufferBlobs m h)
+  -> m WriteBufferFsPaths
+snapshotWriteBuffer hfs hbio uc activeDir snapDir wb wbb = do
+  -- Write the write buffer and write buffer blobs to the active directory.
+  activeWriteBufferNumber <- uniqueToRunNumber <$> incrUniqCounter uc
+  let activeWriteBufferPaths = WriteBufferFsPaths (getActiveDir activeDir) activeWriteBufferNumber
+  WBW.writeWriteBuffer hfs hbio activeWriteBufferPaths wb wbb
+  -- Hard link the write buffer and write buffer blobs to the snapshot directory.
+  snapWriteBufferNumber <- uniqueToRunNumber <$> incrUniqCounter uc
+  let snapWriteBufferPaths = WriteBufferFsPaths (getNamedSnapshotDir snapDir) snapWriteBufferNumber
+  hardLink hfs hbio (writeBufferKOpsPath activeWriteBufferPaths) (writeBufferKOpsPath snapWriteBufferPaths)
+  hardLink hfs hbio (writeBufferBlobPath activeWriteBufferPaths) (writeBufferBlobPath snapWriteBufferPaths)
+  hardLink hfs hbio (writeBufferChecksumsPath activeWriteBufferPaths) (writeBufferChecksumsPath snapWriteBufferPaths)
+  pure snapWriteBufferPaths
+
+{-# SPECIALISE
+  openWriteBuffer ::
+     TempRegistry IO
+  -> ResolveSerialisedValue
+  -> HasFS IO h
+  -> HasBlockIO IO h
+  -> WriteBufferFsPaths
+  -> WriteBufferFsPaths
+  -> IO (WriteBuffer, Ref (WriteBufferBlobs IO h))
+  #-}
+openWriteBuffer ::
+     (MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
+  => TempRegistry m
+  -> ResolveSerialisedValue
+  -> HasFS m h
+  -> HasBlockIO m h
+  -> WriteBufferFsPaths
+  -> WriteBufferFsPaths
+  -> m (WriteBuffer, Ref (WriteBufferBlobs m h))
+openWriteBuffer reg resolve hfs hbio snapWriteBufferPaths activeWriteBufferPaths = do
+  -- Hard link the write buffer keyops and checksum files to the snapshot directory.
+  hardLink hfs hbio (writeBufferKOpsPath snapWriteBufferPaths) (writeBufferKOpsPath activeWriteBufferPaths)
+  hardLink hfs hbio (writeBufferChecksumsPath snapWriteBufferPaths) (writeBufferChecksumsPath activeWriteBufferPaths)
+  -- Copy the write buffer blobs file to the snapshot directory.
+  copyFile hfs hbio (writeBufferBlobPath snapWriteBufferPaths) (writeBufferBlobPath activeWriteBufferPaths)
+  -- Read write buffer
+  WBR.readWriteBuffer reg resolve hfs hbio activeWriteBufferPaths
 
 {-------------------------------------------------------------------------------
   Runs
@@ -394,5 +468,24 @@ hardLink hfs _hbio sourcePath targetPath =
       --
       -- This should /hopefully/ stream using lazy IO, though even if it does
       -- not, it is only a temporary placeholder hack.
+      bs <- FS.hGetAll hfs sourceHandle
+      void $ FS.hPutAll hfs targetHandle bs
+
+
+{-------------------------------------------------------------------------------
+  Copy file
+-------------------------------------------------------------------------------}
+
+{-# SPECIALISE copyFile ::
+     HasFS IO h
+  -> HasBlockIO IO h
+  -> FS.FsPath
+  -> FS.FsPath
+  -> IO () #-}
+-- | @'copyFile' hfs hbio source target@ copies the @source@ path to the @target@ path.
+copyFile :: MonadThrow m => HasFS m h -> HasBlockIO m h -> FS.FsPath -> FS.FsPath -> m ()
+copyFile hfs _hbio sourcePath targetPath =
+    FS.withFile hfs sourcePath FS.ReadMode $ \sourceHandle ->
+    FS.withFile hfs targetPath (FS.WriteMode FS.MustBeNew) $ \targetHandle -> do
       bs <- FS.hGetAll hfs sourceHandle
       void $ FS.hPutAll hfs targetHandle bs
