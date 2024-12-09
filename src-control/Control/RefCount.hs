@@ -473,6 +473,7 @@ checkForgottenRefs = do
     return ()
 #else
     tryEmulateBlockingMajorGC
+    assertNoForgottenRefs
 #endif
 
 tryEmulateBlockingMajorGC :: IO ()
