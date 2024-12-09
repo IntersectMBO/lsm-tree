@@ -1,3 +1,5 @@
+{-# LANGUAGE MagicHash #-}
+
 {- HLINT ignore "Avoid restricted alias" -}
 
 -- | A general-purpose fence pointer index.
@@ -15,6 +17,9 @@ import           Prelude hiding (drop, last, length)
 
 import           Control.Exception (assert)
 import           Control.Monad (when)
+import           Data.ByteString.Builder (toLazyByteString)
+import           Data.ByteString.Builder.Extra (word32Host, word64Host)
+import           Data.ByteString.Lazy (LazyByteString)
 import           Data.ByteString.Short (ShortByteString (SBS))
 import qualified Data.ByteString.Short as ShortByteString (length)
 import           Data.Primitive.ByteArray (ByteArray (ByteArray),
@@ -24,14 +29,16 @@ import           Data.Vector (Vector, drop, findIndex, findIndexR, fromList,
 import qualified Data.Vector.Primitive as Primitive (Vector (Vector), drop,
                      force, length, null, splitAt, take)
 import           Data.Word (Word16, Word32, Word64, Word8, byteSwap32)
-import           Database.LSMTree.Internal.Entry (NumEntries (NumEntries))
+import           Database.LSMTree.Internal.Entry (NumEntries (NumEntries),
+                     unNumEntries)
 import           Database.LSMTree.Internal.Index
-                     (Index (fromSBS, search, sizeInPages))
+                     (Index (finalLBS, fromSBS, headerLBS, search, sizeInPages))
 import           Database.LSMTree.Internal.Page (NumPages (NumPages),
                      PageNo (PageNo), PageSpan (PageSpan))
 import           Database.LSMTree.Internal.Serialise
                      (SerialisedKey (SerialisedKey'))
 import           Database.LSMTree.Internal.Vector (binarySearchL, mkPrimVector)
+import           GHC.Exts (Proxy#)
 
 {-|
     The type–version indicator for the ordinary index and its serialisation
@@ -99,6 +106,18 @@ instance Index IndexOrdinary where
     sizeInPages (IndexOrdinary lastKeys)
         = NumPages $ fromIntegral (length lastKeys)
 
+    headerLBS :: Proxy# IndexOrdinary -> LazyByteString
+    headerLBS _ = toLazyByteString        $
+                  word32Host              $
+                  supportedTypeAndVersion
+
+    finalLBS :: NumEntries -> IndexOrdinary -> LazyByteString
+    finalLBS entryCount _ = toLazyByteString $
+                            word64Host       $
+                            fromIntegral     $
+                            unNumEntries     $
+                            entryCount
+
     fromSBS :: ShortByteString -> Either String (NumEntries, IndexOrdinary)
     fromSBS shortByteString@(SBS unliftedByteArray)
         | fullSize < 12
@@ -123,12 +142,12 @@ instance Index IndexOrdinary where
         typeAndVersion :: Word32
         typeAndVersion = indexByteArray byteArray 0
 
-        postVersionBytes :: Primitive.Vector Word8
-        postVersionBytes = Primitive.drop 4 fullBytes
+        postTypeAndVersionBytes :: Primitive.Vector Word8
+        postTypeAndVersionBytes = Primitive.drop 4 fullBytes
 
         lastKeysBytes, entryCountBytes :: Primitive.Vector Word8
         (lastKeysBytes, entryCountBytes)
-            = Primitive.splitAt (fullSize - 12) postVersionBytes
+            = Primitive.splitAt (fullSize - 12) postTypeAndVersionBytes
 
         entryCount :: Either String NumEntries
         entryCount
