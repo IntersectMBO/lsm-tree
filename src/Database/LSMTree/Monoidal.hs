@@ -649,8 +649,7 @@ duplicate (Internal.MonoidalTable t) = Internal.MonoidalTable <$> Internal.dupli
 -------------------------------------------------------------------------------}
 
 {-# SPECIALISE union ::
-     ResolveValue v
-  => Table IO k v
+     Table IO k v
   -> Table IO k v
   -> IO (Table IO k v) #-}
 -- | Union two full tables, creating a new table.
@@ -665,17 +664,14 @@ duplicate (Internal.MonoidalTable t) = Internal.MonoidalTable <$> Internal.dupli
 -- NOTE: unioning tables creates a new table, but does not close the tables that
 -- were used as inputs.
 union :: forall m k v.
-     ( IOLike m
-     , ResolveValue v
-     )
+     IOLike m
   => Table m k v
   -> Table m k v
   -> m (Table m k v)
-union = error "union: not yet implemented" $ union @m @k @v
+union = error "union: not yet implemented" $ Internal.union @m
 
 {-# SPECIALISE unions ::
-     ResolveValue v
-  => V.Vector (Table IO k v)
+     V.Vector (Table IO k v)
   -> IO (Table IO k v) #-}
 -- | Like 'union', but for @n@ tables.
 --
@@ -686,10 +682,10 @@ union = error "union: not yet implemented" $ union @m @k @v
 --
 -- * Unioning 0 tables is an exception.
 unions :: forall m k v.
-     (IOLike m, ResolveValue v)
+     IOLike m
   => V.Vector (Table m k v)
   -> m (Table m k v)
-unions = error "unions: not yet implemented" $ unions @m @k @v
+unions = error "unions: not yet implemented" $ Internal.unions @m
 
 {-------------------------------------------------------------------------------
   Monoidal value resolution

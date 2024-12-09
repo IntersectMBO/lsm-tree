@@ -518,28 +518,24 @@ duplicate (Internal.Table' t) = Internal.Table' <$!> Internal.duplicate t
 -------------------------------------------------------------------------------}
 
 {-# SPECIALISE union ::
-     ResolveValue v
-  => Table IO k v b
+     Table IO k v b
   -> Table IO k v b
   -> IO (Table IO k v b) #-}
 union :: forall m k v b.
-     ( IOLike m
-     , ResolveValue v
-     )
+     IOLike m
   => Table m k v b
   -> Table m k v b
   -> m (Table m k v b)
-union = error "union: not yet implemented" $ union @m @k @v @b
+union = error "union: not yet implemented" $ Internal.union @m
 
 {-# SPECIALISE unions ::
-     ResolveValue v
-  => V.Vector (Table IO k v b)
+     V.Vector (Table IO k v b)
   -> IO (Table IO k v b) #-}
 unions :: forall m k v b.
-     (IOLike m, ResolveValue v)
+     IOLike m
   => V.Vector (Table m k v b)
   -> m (Table m k v b)
-unions = error "unions: not yet implemented" $ unions @m @k @v
+unions = error "unions: not yet implemented" $ Internal.unions @m
 
 {-------------------------------------------------------------------------------
   Monoidal value resolution
