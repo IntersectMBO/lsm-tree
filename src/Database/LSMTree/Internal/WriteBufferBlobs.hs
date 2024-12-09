@@ -25,6 +25,7 @@
 module Database.LSMTree.Internal.WriteBufferBlobs (
     WriteBufferBlobs (..),
     new,
+    open,
     addBlob,
     mkRawBlobRef,
     mkWeakBlobRef,
@@ -33,6 +34,7 @@ module Database.LSMTree.Internal.WriteBufferBlobs (
   ) where
 
 import           Control.DeepSeq (NFData (..))
+import           Control.Monad (void)
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Primitive (PrimMonad, PrimState)
 import           Control.RefCount
@@ -116,15 +118,29 @@ instance RefCounted m (WriteBufferBlobs m h) where
   getRefCounter = writeBufRefCounter
 
 {-# SPECIALISE new :: HasFS IO h -> FS.FsPath -> IO (Ref (WriteBufferBlobs IO h)) #-}
-new :: (PrimMonad m, MonadMask m)
-    => HasFS m h
-    -> FS.FsPath
-    -> m (Ref (WriteBufferBlobs m h))
-new fs blobFileName = do
+new ::
+     (PrimMonad m, MonadMask m)
+  => HasFS m h
+  -> FS.FsPath
+  -> m (Ref (WriteBufferBlobs m h))
+new fs blobFileName = open fs blobFileName FS.MustBeNew
+
+{-# SPECIALISE open :: HasFS IO h -> FS.FsPath -> FS.AllowExisting -> IO (Ref (WriteBufferBlobs IO h)) #-}
+-- | Open a `WriteBufferBlobs` file and sets the file pointer to the end of the file.
+open ::
+     (PrimMonad m, MonadMask m)
+  => HasFS m h
+  -> FS.FsPath
+  -> FS.AllowExisting
+  -> m (Ref (WriteBufferBlobs m h))
+open fs blobFileName blobFileAllowExisting = do
     -- Must use read/write mode because we write blobs when adding, but
     -- we can also be asked to retrieve blobs at any time.
-    blobFile <- openBlobFile fs blobFileName (FS.ReadWriteMode FS.MustBeNew)
+    blobFile <- openBlobFile fs blobFileName (FS.ReadWriteMode blobFileAllowExisting)
     blobFilePointer <- newFilePointer
+    -- Set the blob file pointer to the end of the file
+    blobFileSize <- withRef blobFile $ FS.hGetSize fs . blobFileHandle
+    void . updateFilePointer blobFilePointer . fromIntegral $ blobFileSize
     newRef (releaseRef blobFile) $ \writeBufRefCounter ->
       WriteBufferBlobs {
         blobFile,
