@@ -238,22 +238,21 @@ prop_WriteAndOpenWriteBuffer ::
   -> RunData KeyForIndexCompact SerialisedValue SerialisedBlob
   -> IO Property
 prop_WriteAndOpenWriteBuffer hfs hbio rd = do
-  -- Serialise run data as write buffer:
-  let srd = serialiseRunData rd
-  let inPaths = WrapRunFsPaths $ simplePath 1111
-  let f (SerialisedValue x) (SerialisedValue y) = SerialisedValue (x <> y)
-  withRunDataAsWriteBuffer hfs f inPaths srd $ \wb wbb -> do
-    -- Write write buffer to disk:
-    let wbPaths = WrapRunFsPaths $ simplePath 1312
-    withSerialisedWriteBuffer hfs hbio wbPaths wb wbb $ do
-      -- Read write buffer from disk:
-      let outPaths = WrapRunFsPaths $ simplePath 2222
-      let outBlobPath = Paths.writeBufferBlobPath outPaths
-      bracket (WBB.new hfs outBlobPath) releaseRef $ \wbb' -> do
-        wb' <- readWriteBuffer hfs hbio f wbb' wbPaths
+  withTempRegistry $ \reg -> do
+    -- Serialise run data as write buffer:
+    let srd = serialiseRunData rd
+    let inPaths = WrapRunFsPaths $ simplePath 1111
+    let resolve (SerialisedValue x) (SerialisedValue y) = SerialisedValue (x <> y)
+    withRunDataAsWriteBuffer hfs resolve inPaths srd $ \wb wbb -> do
+      -- Write write buffer to disk:
+      let wbPaths = WrapRunFsPaths $ simplePath 1312
+      withSerialisedWriteBuffer hfs hbio wbPaths wb wbb $ do
+        -- Read write buffer from disk:
+        (wb', wbb') <- readWriteBuffer reg resolve hfs hbio wbPaths
         assertEqual "k/ops" wb wb'
-  -- TODO: return a proper Property instead of using assertEqual etc.
-  return (property True)
+        releaseRef wbb'
+    -- TODO: return a proper Property instead of using assertEqual etc.
+    return (property True)
 
 -- | Writing run data to the disk via 'writeWriteBuffer' gives the same key/ops
 --   and blob files as when written out as a run.

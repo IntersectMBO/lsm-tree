@@ -20,6 +20,7 @@ import           Database.LSMTree.Internal.Serialise (SerialisedBlob (..))
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
 import qualified System.FS.BlockIO.API as FS
+import           System.FS.CallStack (HasCallStack)
 
 -- | A handle to a file containing blobs.
 --
@@ -50,9 +51,10 @@ instance NFData BlobSpan where
 
 -- | Open the given file to make a 'BlobFile'. The finaliser will close and
 -- delete the file.
-{-# SPECIALISE openBlobFile :: HasFS IO h -> FS.FsPath -> FS.OpenMode -> IO (Ref (BlobFile IO h)) #-}
+{-# SPECIALISE openBlobFile :: HasCallStack => HasFS IO h -> FS.FsPath -> FS.OpenMode -> IO (Ref (BlobFile IO h)) #-}
 openBlobFile ::
      PrimMonad m
+  => HasCallStack
   => HasFS m h
   -> FS.FsPath
   -> FS.OpenMode

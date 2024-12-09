@@ -469,21 +469,18 @@ retrieveBlobs (Internal.Session' (sesh :: Internal.Session m h)) refs =
 -------------------------------------------------------------------------------}
 
 {-# SPECIALISE createSnapshot ::
-     ResolveValue v
-  => Common.SnapshotLabel
+     Common.SnapshotLabel
   -> SnapshotName
   -> Table IO k v b
   -> IO () #-}
 createSnapshot :: forall m k v b.
-     ( IOLike m
-     , ResolveValue v
-     )
+     IOLike m
   => Common.SnapshotLabel
   -> SnapshotName
   -> Table m k v b
   -> m ()
 createSnapshot label snap (Internal.Table' t) =
-    void $ Internal.createSnapshot (resolve (Proxy @v)) snap label Internal.SnapFullTable t
+    void $ Internal.createSnapshot snap label Internal.SnapFullTable t
 
 {-# SPECIALISE openSnapshot ::
      ResolveValue v

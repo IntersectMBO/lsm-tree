@@ -12,6 +12,9 @@ module Database.LSMTree.Internal.Snapshot (
   , SpentCredits (..)
     -- * Conversion to levels snapshot format
   , toSnapLevels
+    -- * Write buffer
+  , snapshotWriteBuffer
+  , openWriteBuffer
     -- * Runs
   , snapshotRuns
   , openRuns
@@ -26,7 +29,7 @@ module Database.LSMTree.Internal.Snapshot (
 import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Concurrent.Class.MonadSTM (MonadSTM)
 import           Control.DeepSeq (NFData (..))
-import           Control.Monad (when)
+import           Control.Monad (void, when)
 import           Control.Monad.Class.MonadST (MonadST)
 import           Control.Monad.Class.MonadThrow (MonadMask)
 import           Control.Monad.Primitive (PrimMonad)
@@ -45,15 +48,22 @@ import           Database.LSMTree.Internal.MergeSchedule
 import           Database.LSMTree.Internal.MergingRun (NumRuns (..))
 import qualified Database.LSMTree.Internal.MergingRun as MR
 import           Database.LSMTree.Internal.Paths (ActiveDir (..),
-                     NamedSnapshotDir (..), RunFsPaths (..), pathsForRunFiles,
-                     runChecksumsPath)
+                     NamedSnapshotDir (..), RunFsPaths (..),
+                     WriteBufferFsPaths (..), pathsForRunFiles,
+                     runChecksumsPath, writeBufferBlobPath,
+                     writeBufferChecksumsPath, writeBufferKOpsPath)
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.UniqCounter (UniqCounter,
                      incrUniqCounter, uniqueToRunNumber)
+import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
+import           Database.LSMTree.Internal.WriteBufferBlobs (WriteBufferBlobs)
+import qualified Database.LSMTree.Internal.WriteBufferReader as WBR
+import qualified Database.LSMTree.Internal.WriteBufferWriter as WBW
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
+import qualified System.FS.API.Lazy as FSL
 import qualified System.FS.BlockIO.API as FS
 import           System.FS.BlockIO.API (HasBlockIO)
 
@@ -211,6 +221,74 @@ toSnapMergingRunState (MR.CompletedMerge r) = pure (SnapCompletedMerge r)
 toSnapMergingRunState (MR.OngoingMerge rs (MR.SpentCreditsVar spentCreditsVar) m) = do
     spentCredits <- readPrimVar spentCreditsVar
     pure (SnapOngoingMerge rs (SpentCredits spentCredits) (Merge.mergeLevel m))
+
+{-------------------------------------------------------------------------------
+  Write Buffer
+-------------------------------------------------------------------------------}
+
+{-# SPECIALISE
+  snapshotWriteBuffer ::
+       TempRegistry IO
+    -> HasFS IO h
+    -> HasBlockIO IO h
+    -> UniqCounter IO
+    -> ActiveDir
+    -> NamedSnapshotDir
+    -> WriteBuffer
+    -> Ref (WriteBufferBlobs IO h)
+    -> IO WriteBufferFsPaths
+  #-}
+snapshotWriteBuffer ::
+     (MonadMVar m, MonadSTM m, MonadST m, MonadMask m)
+  => TempRegistry m
+  -> HasFS m h
+  -> HasBlockIO m h
+  -> UniqCounter m
+  -> ActiveDir
+  -> NamedSnapshotDir
+  -> WriteBuffer
+  -> Ref (WriteBufferBlobs m h)
+  -> m WriteBufferFsPaths
+snapshotWriteBuffer reg hfs hbio uc activeDir snapDir wb wbb = do
+  -- Write the write buffer and write buffer blobs to the active directory.
+  activeWriteBufferNumber <- uniqueToRunNumber <$> incrUniqCounter uc
+  let activeWriteBufferPaths = WriteBufferFsPaths (getActiveDir activeDir) activeWriteBufferNumber
+  WBW.writeWriteBuffer hfs hbio activeWriteBufferPaths wb wbb
+  -- Hard link the write buffer and write buffer blobs to the snapshot directory.
+  snapWriteBufferNumber <- uniqueToRunNumber <$> incrUniqCounter uc
+  let snapWriteBufferPaths = WriteBufferFsPaths (getNamedSnapshotDir snapDir) snapWriteBufferNumber
+  hardLinkTemp reg hfs hbio NoHardLinkDurable (writeBufferKOpsPath activeWriteBufferPaths) (writeBufferKOpsPath snapWriteBufferPaths)
+  hardLinkTemp reg hfs hbio NoHardLinkDurable (writeBufferBlobPath activeWriteBufferPaths) (writeBufferBlobPath snapWriteBufferPaths)
+  hardLinkTemp reg hfs hbio NoHardLinkDurable (writeBufferChecksumsPath activeWriteBufferPaths) (writeBufferChecksumsPath snapWriteBufferPaths)
+  pure snapWriteBufferPaths
+
+{-# SPECIALISE
+  openWriteBuffer ::
+     TempRegistry IO
+  -> ResolveSerialisedValue
+  -> HasFS IO h
+  -> HasBlockIO IO h
+  -> WriteBufferFsPaths
+  -> WriteBufferFsPaths
+  -> IO (WriteBuffer, Ref (WriteBufferBlobs IO h))
+  #-}
+openWriteBuffer ::
+     (MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
+  => TempRegistry m
+  -> ResolveSerialisedValue
+  -> HasFS m h
+  -> HasBlockIO m h
+  -> WriteBufferFsPaths
+  -> WriteBufferFsPaths
+  -> m (WriteBuffer, Ref (WriteBufferBlobs m h))
+openWriteBuffer reg resolve hfs hbio snapWriteBufferPaths activeWriteBufferPaths = do
+  -- Hard link the write buffer keyops and checksum files to the snapshot directory.
+  hardLinkTemp reg hfs hbio NoHardLinkDurable (writeBufferKOpsPath snapWriteBufferPaths) (writeBufferKOpsPath activeWriteBufferPaths)
+  hardLinkTemp reg hfs hbio NoHardLinkDurable (writeBufferChecksumsPath snapWriteBufferPaths) (writeBufferChecksumsPath activeWriteBufferPaths)
+  -- Copy the write buffer blobs file to the snapshot directory.
+  copyFileTemp reg hfs hbio (writeBufferBlobPath snapWriteBufferPaths) (writeBufferBlobPath activeWriteBufferPaths)
+  -- Read write buffer
+  WBR.readWriteBuffer reg resolve hfs hbio activeWriteBufferPaths
 
 {-------------------------------------------------------------------------------
   Runs
@@ -398,12 +476,66 @@ hardLinkRunFiles ::
 hardLinkRunFiles reg hfs hbio dur sourceRunFsPaths targetRunFsPaths = do
     let sourcePaths = pathsForRunFiles sourceRunFsPaths
         targetPaths = pathsForRunFiles targetRunFsPaths
-    sequenceA_ (hardLinkTemp <$> sourcePaths <*> targetPaths)
-    hardLinkTemp (runChecksumsPath sourceRunFsPaths) (runChecksumsPath targetRunFsPaths)
-  where
-    hardLinkTemp sourcePath targetPath = do
-        allocateTemp reg
-          (FS.createHardLink hbio sourcePath targetPath)
-          (\_ -> FS.removeFile hfs targetPath)
-        when (dur == HardLinkDurable) $
-          FS.synchroniseFile hfs hbio targetPath
+    sequenceA_ (hardLinkTemp reg hfs hbio dur <$> sourcePaths <*> targetPaths)
+    hardLinkTemp reg hfs hbio dur (runChecksumsPath sourceRunFsPaths) (runChecksumsPath targetRunFsPaths)
+
+{-------------------------------------------------------------------------------
+  Hard link file
+-------------------------------------------------------------------------------}
+
+{-# SPECIALISE
+  hardLinkTemp ::
+      TempRegistry IO
+    -> HasFS IO h
+    -> HasBlockIO IO h
+    -> HardLinkDurable
+    -> FS.FsPath
+    -> FS.FsPath
+    -> IO ()
+  #-}
+-- | @'hardLinkTemp' reg hfs hbio dur sourcePath targetPath@ creates a hard link
+-- from @sourcePath@ to @targetPath@.
+hardLinkTemp ::
+     (MonadMask m, MonadMVar m)
+  => TempRegistry m
+  -> HasFS m h
+  -> HasBlockIO m h
+  -> HardLinkDurable
+  -> FS.FsPath
+  -> FS.FsPath
+  -> m ()
+hardLinkTemp reg hfs hbio dur sourcePath targetPath = do
+    allocateTemp reg
+      (FS.createHardLink hbio sourcePath targetPath)
+      (\_ -> FS.removeFile hfs targetPath)
+    when (dur == HardLinkDurable) $
+      FS.synchroniseFile hfs hbio targetPath
+
+{-------------------------------------------------------------------------------
+  Copy file
+-------------------------------------------------------------------------------}
+
+{-# SPECIALISE
+  copyFileTemp ::
+       TempRegistry IO
+    -> HasFS IO h
+    -> HasBlockIO IO h
+    -> FS.FsPath
+    -> FS.FsPath
+    -> IO ()
+    #-}
+-- | @'copyFile' hfs hbio source target@ copies the @source@ path to the @target@ path.
+copyFileTemp ::
+     (MonadMask m, MonadMVar m)
+  => TempRegistry m
+  -> HasFS m h
+  -> HasBlockIO m h
+  -> FS.FsPath
+  -> FS.FsPath
+  -> m ()
+copyFileTemp reg hfs _hbio sourcePath targetPath =
+  flip (allocateTemp reg) (\_ -> FS.removeFile hfs targetPath) $
+      FS.withFile hfs sourcePath FS.ReadMode $ \sourceHandle ->
+        FS.withFile hfs targetPath (FS.WriteMode FS.MustBeNew) $ \targetHandle -> do
+          bs <- FSL.hGetAll hfs sourceHandle
+          void $ FSL.hPutAll hfs targetHandle bs
