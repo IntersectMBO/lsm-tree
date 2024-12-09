@@ -787,7 +787,7 @@ union :: forall m k v b.
   => Table m k v b
   -> Table m k v b
   -> m (Table m k v b)
-union = error "union: not yet implemented" $ union @m @k @v
+union = error "union: not yet implemented" $ Internal.union @m
 
 {-# SPECIALISE unions :: V.Vector (Table IO k v b) -> IO (Table IO k v b) #-}
 -- | Like 'union', but for @n@ tables.
@@ -802,4 +802,4 @@ unions :: forall m k v b.
      IOLike m
   => V.Vector (Table m k v b)
   -> m (Table m k v b)
-unions = error "union: not yet implemented" $ union @m @k @v
+unions = error "unions: not yet implemented" $ Internal.unions @m
