@@ -3,4 +3,4 @@ if(os(linux))
     type: git
     location: https://github.com/well-typed/blockio-uring
     -- mega-batches
-    tag: 3bfff118aadb24cf9b12945ea50e37aebeaf6dca
+    tag: ab50126701de7eac9b62c20ae11e9ad706e1e40a
