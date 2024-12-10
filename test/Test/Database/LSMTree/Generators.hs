@@ -3,12 +3,8 @@
 
 module Test.Database.LSMTree.Generators (
     tests
-  , prop_arbitraryAndShrinkPreserveInvariant
-  , prop_forAllArbitraryAndShrinkPreserveInvariant
-  , deepseqInvariant
   ) where
 
-import           Control.DeepSeq (NFData, deepseq)
 import           Data.Bifoldable (bifoldMap)
 import           Data.Coerce (coerce)
 import qualified Data.Map.Strict as Map
@@ -26,9 +22,10 @@ import           Database.LSMTree.Internal.RawBytes (RawBytes (..))
 import           Database.LSMTree.Internal.Serialise
 
 import qualified Test.QuickCheck as QC
-import           Test.QuickCheck (Arbitrary (..), Gen, Property, Testable (..))
+import           Test.QuickCheck (Property)
 import           Test.Tasty (TestTree, localOption, testGroup)
 import           Test.Tasty.QuickCheck (QuickCheckMaxSize (..), testProperty)
+import           Test.Util.Arbitrary
 
 tests :: TestTree
 tests = testGroup "Test.Database.LSMTree.Generators" [
@@ -53,27 +50,6 @@ tests = testGroup "Test.Database.LSMTree.Generators" [
             prop_distributionKOps
         ]
     ]
-
-prop_arbitraryAndShrinkPreserveInvariant ::
-    forall a. (Arbitrary a, Show a) => (a -> Bool) -> [TestTree]
-prop_arbitraryAndShrinkPreserveInvariant =
-    prop_forAllArbitraryAndShrinkPreserveInvariant arbitrary shrink
-
-prop_forAllArbitraryAndShrinkPreserveInvariant ::
-    forall a. Show a => Gen a -> (a -> [a]) -> (a -> Bool) -> [TestTree]
-prop_forAllArbitraryAndShrinkPreserveInvariant gen shr inv =
-    [ testProperty "Arbitrary satisfies invariant" $
-            property $ QC.forAllShrink gen shr inv
-    , testProperty "Shrinking satisfies invariant" $
-            property $ QC.forAll gen $ \x ->
-                         case shr x of
-                           [] -> QC.label "no shrinks" $ property True
-                           xs -> QC.forAll (QC.growingElements xs) inv
-    ]
-
--- | Trivial invariant, but checks that the value is finite
-deepseqInvariant :: NFData a => a -> Bool
-deepseqInvariant x = x `deepseq` True
 
 prop_packRawBytesPinnedOrUnpinned :: Bool -> [Word8] -> Bool
 prop_packRawBytesPinnedOrUnpinned pinned ws =
