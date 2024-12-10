@@ -97,6 +97,7 @@ module Database.LSMTree.Monoidal (
 
     -- * Table union
   , union
+  , unions
 
     -- * Concurrency
     -- $concurrency
@@ -671,6 +672,24 @@ union :: forall m k v.
   -> Table m k v
   -> m (Table m k v)
 union = error "union: not yet implemented" $ union @m @k @v
+
+{-# SPECIALISE unions ::
+     ResolveValue v
+  => V.Vector (Table IO k v)
+  -> IO (Table IO k v) #-}
+-- | Like 'union', but for @n@ tables.
+--
+-- A good mental model of this operation is @'Data.Map.Lazy.unionsWith' (<>)@ on
+-- @'Data.Map.Lazy.Map' k v@.
+--
+-- Exceptions:
+--
+-- * Unioning 0 tables is an exception.
+unions :: forall m k v.
+     (IOLike m, ResolveValue v)
+  => V.Vector (Table m k v)
+  -> m (Table m k v)
+unions = error "unions: not yet implemented" $ unions @m @k @v
 
 {-------------------------------------------------------------------------------
   Monoidal value resolution

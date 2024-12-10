@@ -5,6 +5,7 @@
 
 module Test.Database.LSMTree.UnitTests (tests) where
 
+import           Control.Monad (void)
 import           Control.Tracer (nullTracer)
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS
@@ -15,22 +16,32 @@ import qualified System.FS.API as FS
 
 import           Database.LSMTree as R
 
-import           Control.Exception (Exception, try)
+import           Control.Exception (Exception, bracket, try)
 import           Database.LSMTree.Extras.Generators (KeyForIndexCompact)
 import qualified Test.QuickCheck as QC
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.HUnit
+import           Test.Tasty.QuickCheck (Property, testProperty)
 import           Test.Util.FS (withTempIOHasBlockIO)
 
 
 tests :: TestTree
 tests =
     testGroup "Test.Database.LSMTree.UnitTests"
-      [ testCaseSteps "unit_blobs"         unit_blobs
-      , testCase      "unit_closed_table"  unit_closed_table
-      , testCase      "unit_closed_cursor" unit_closed_cursor
-      , testCase      "unit_twoTableTypes" unit_twoTableTypes
-      , testCase      "unit_snapshots"     unit_snapshots
+      [ testCaseSteps "unit_blobs"          unit_blobs
+      , testCase      "unit_closed_table"   unit_closed_table
+      , testCase      "unit_closed_cursor"  unit_closed_cursor
+      , testCase      "unit_twoTableTypes"  unit_twoTableTypes
+      , testCase      "unit_snapshots"      unit_snapshots
+
+        -- Properties
+
+      , testProperty "prop_unions_0" $
+          -- TODO: enable once unions are implemented
+          QC.expectFailure prop_unions_0
+      , testProperty "prop_unions_1" $
+          -- TODO: enable once unions are implemented
+          QC.expectFailure prop_unions_1
       ]
 
 unit_blobs :: (String -> IO ()) -> Assertion
@@ -145,6 +156,44 @@ unit_snapshots =
     snap1, snap2 :: SnapshotName
     snap1 = "table1"
     snap2 = "table2"
+
+-- | Unions of 0 tables fail with an exception
+prop_unions_0 :: Property
+prop_unions_0 =
+    QC.once $ QC.ioProperty $
+    assertException err $
+      void $ unions @_ @Key1 @Value1 @Blob1 V.empty
+  where
+    -- TODO: fill in once unions has an implementation
+    err :: LSMTreeError
+    err = error "unit_unions_0: unions has no implementation yet"
+
+-- | Unions of 1 table are equivalent to duplicate
+prop_unions_1 :: Property
+prop_unions_1 =
+    QC.once $ QC.ioProperty $
+    withTempIOHasBlockIO "test" $ \hfs hbio ->
+    withSession nullTracer hfs hbio (FS.mkFsPath []) $ \sess ->
+    withTable @_ @Key1 @Value1 @Blob1 sess defaultTableConfig $ \table -> do
+      inserts table [(Key1 17, Value1 42, Nothing)]
+
+      bracket (unions $ V.singleton table) close $ \table' ->
+        bracket (duplicate table) close $ \table'' -> do
+          inserts table [(Key1 17, Value1 43, Nothing)]
+          inserts table [(Key1 17, Value1 44, Nothing)]
+
+          -- The original table is unmodified
+          r <- lookups table [Key1 17]
+          V.map ignoreBlobRef r @?= [Found (Value1 42)]
+
+          -- The unioned table sees an updated value
+          r' <- lookups table' [Key1 17]
+          V.map ignoreBlobRef r' @?= [Found (Value1 43)]
+
+          -- The duplicated table sees a different updated value
+          r'' <- lookups table'' [Key1 17]
+          V.map ignoreBlobRef r'' @?= [Found (Value1 44)]
+
 
 ignoreBlobRef :: Functor f => f (BlobRef m b) -> f ()
 ignoreBlobRef = fmap (const ())

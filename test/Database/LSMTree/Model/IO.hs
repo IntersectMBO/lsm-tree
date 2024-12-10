@@ -17,6 +17,7 @@ module Database.LSMTree.Model.IO (
 import           Control.Concurrent.Class.MonadSTM.Strict
 import           Control.Exception (Exception)
 import           Control.Monad.Class.MonadThrow (MonadThrow (..))
+import qualified Data.Vector as V
 import qualified Database.LSMTree.Class as Class
 import           Database.LSMTree.Model.Session (TableConfig (..))
 import qualified Database.LSMTree.Model.Session as Model
@@ -24,18 +25,18 @@ import qualified Database.LSMTree.Model.Session as Model
 newtype Session m = Session (StrictTVar m (Maybe Model.Model))
 
 data Table m k v b = Table {
-    _thSession :: !(Session m)
-  , _thTable   :: !(Model.Table k v b)
+    thSession :: !(Session m)
+  , thTable   :: !(Model.Table k v b)
   }
 
 data BlobRef m b = BlobRef {
-    _brSession :: !(Session m)
-  , _brBlobRef :: !(Model.BlobRef b)
+    brSession :: !(Session m)
+  , brBlobRef :: !(Model.BlobRef b)
   }
 
 data Cursor m k v b = Cursor {
-    _cSession :: !(Session m)
-  , _cCursor  :: !(Model.Cursor k v b)
+    cSession :: !(Session m)
+  , cCursor  :: !(Model.Cursor k v b)
   }
 
 newtype Err = Err (Model.Err)
@@ -76,7 +77,7 @@ instance Class.IsTable Table where
 
     rangeLookup (Table s t) x1 = fmap (fmap (BlobRef s)) <$>
       runInOpenSession s (Model.rangeLookup x1 t)
-    retrieveBlobs _ s x1 = runInOpenSession s (Model.retrieveBlobs (fmap _brBlobRef x1))
+    retrieveBlobs _ s x1 = runInOpenSession s (Model.retrieveBlobs (fmap brBlobRef x1))
 
     newCursor k (Table s t) = Cursor s <$> runInOpenSession s (Model.newCursor k t)
     closeCursor _ (Cursor s c) = runInOpenSession s (Model.closeCursor c)
@@ -90,3 +91,8 @@ instance Class.IsTable Table where
 
     union (Table s1 t1) (Table _s2 t2) =
       Table s1 <$> runInOpenSession s1 (Model.union Model.getResolve t1 t2)
+
+    unions ts =
+        Table s <$> runInOpenSession s (Model.unions Model.getResolve (V.map thTable ts))
+      where
+        Table s _ = V.head ts

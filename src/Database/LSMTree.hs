@@ -80,6 +80,7 @@ module Database.LSMTree (
 
     -- * Table union
   , union
+  , unions
 
     -- * Serialisation
   , SerialiseKey
@@ -529,6 +530,16 @@ union :: forall m k v b.
   -> Table m k v b
   -> m (Table m k v b)
 union = error "union: not yet implemented" $ union @m @k @v @b
+
+{-# SPECIALISE unions ::
+     ResolveValue v
+  => V.Vector (Table IO k v b)
+  -> IO (Table IO k v b) #-}
+unions :: forall m k v b.
+     (IOLike m, ResolveValue v)
+  => V.Vector (Table m k v b)
+  -> m (Table m k v b)
+unions = error "unions: not yet implemented" $ unions @m @k @v
 
 {-------------------------------------------------------------------------------
   Monoidal value resolution

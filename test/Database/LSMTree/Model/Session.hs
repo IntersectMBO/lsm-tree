@@ -73,6 +73,7 @@ module Database.LSMTree.Model.Session (
   , duplicate
     -- * Table union
   , union
+  , unions
   ) where
 
 import           Control.Monad (when)
@@ -204,6 +205,8 @@ data Err =
   | ErrSnapshotWrongType
   | ErrBlobRefInvalidated
   | ErrCursorClosed
+    -- | Passed zero tables to 'unions'
+  | ErrUnionsZeroTables
   deriving stock (Show, Eq)
 
 {-------------------------------------------------------------------------------
@@ -628,3 +631,21 @@ union r th1 th2 = do
   (_, t1) <- guardTableIsOpen th1
   (_, t2) <- guardTableIsOpen th2
   newTableWith TableConfig $ Model.union r t1 t2
+
+unions ::
+     ( MonadState Model m
+     , MonadError Err m
+     , C k v b
+     )
+  => ResolveSerialisedValue v
+  -> V.Vector (Table k v b)
+  -> m (Table k v b)
+unions r tables
+  | n == 0 = throwError ErrUnionsZeroTables
+  | otherwise = do
+      tables' <- V.forM tables $ \table -> do
+        (_, table') <- guardTableIsOpen table
+        pure table'
+      newTableWith TableConfig $ Model.unions r tables'
+  where
+    n = V.length tables
