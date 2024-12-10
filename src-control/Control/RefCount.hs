@@ -47,8 +47,12 @@ import qualified Control.Exception
 import           Data.IORef
 import           GHC.Stack (HasCallStack, callStack)
 import           System.IO.Unsafe (unsafeDupablePerformIO, unsafePerformIO)
-import           System.Mem (performMajorGC)
 import           System.Mem.Weak hiding (deRefWeak)
+#if MIN_VERSION_base(4,20,0)
+import           System.Mem (performBlockingMajorGC)
+#else
+import           System.Mem (performMajorGC)
+#endif
 #endif
 
 
@@ -468,12 +472,28 @@ checkForgottenRefs = do
 #ifndef NO_IGNORE_ASSERTS
     return ()
 #else
-    performMajorGC
+    -- The hope is that by combining `performMajorGC` with `yield` that the
+    -- former starts the finalizer threads for all dropped weak references and
+    -- the latter suspends the current process and puts it at the end of the
+    -- thread queue, such that when the current process resumes the finalizer
+    -- threads for all dropped weak references have finished.
+    -- Unfortunately, this relies on the implementation of the GHC scheduler,
+    -- not on any Haskell specification, and is therefore both non-portable and
+    -- presumably rather brittle. Therefore, for good measure, we do it twice.
+    performMajorGCWithBlockingIfAvailable
+    yield
+    performMajorGCWithBlockingIfAvailable
     yield
     assertNoForgottenRefs
-    -- And for good measure, we'll do it again
-    performMajorGC
-    yield
-    assertNoForgottenRefs
+  where
 #endif
 
+#ifdef NO_IGNORE_ASSERTS
+performMajorGCWithBlockingIfAvailable :: IO ()
+performMajorGCWithBlockingIfAvailable = do
+#if MIN_VERSION_base(4,20,0)
+    performBlockingMajorGC
+#else
+    performMajorGC
+#endif
+#endif
