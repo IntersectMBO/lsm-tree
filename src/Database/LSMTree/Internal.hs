@@ -115,12 +115,10 @@ import           Database.LSMTree.Internal.Snapshot.Codec
 import           Database.LSMTree.Internal.UniqCounter
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
-import qualified Database.LSMTree.Internal.WriteBufferWriter as WBW
 import qualified System.FS.API as FS
 import           System.FS.API (FsError, FsErrorPath (..), FsPath, HasFS)
 import qualified System.FS.BlockIO.API as FS
 import           System.FS.BlockIO.API (HasBlockIO)
-import Database.LSMTree.Internal.WriteBufferReader (readWriteBuffer)
 
 {-------------------------------------------------------------------------------
   Existentials
@@ -1069,8 +1067,7 @@ readCursorWhile resolve keyIsWanted n Cursor {..} fromEntry = do
 -------------------------------------------------------------------------------}
 
 {-# SPECIALISE createSnapshot ::
-     ResolveSerialisedValue
-  -> SnapshotName
+     SnapshotName
   -> SnapshotLabel
   -> SnapshotTableType
   -> Table IO h
@@ -1078,13 +1075,12 @@ readCursorWhile resolve keyIsWanted n Cursor {..} fromEntry = do
 -- |  See 'Database.LSMTree.Normal.createSnapshot''.
 createSnapshot ::
      (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
-  => ResolveSerialisedValue
-  -> SnapshotName
+  => SnapshotName
   -> SnapshotLabel
   -> SnapshotTableType
   -> Table m h
   -> m ()
-createSnapshot resolve snap label tableType t = do
+createSnapshot snap label tableType t = do
     traceWith (tableTracer t) $ TraceSnapshot snap
     withOpenTable t $ \thEnv ->
       withTempRegistry $ \reg -> do -- TODO: use the temp registry for all side effects
