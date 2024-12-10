@@ -125,7 +125,7 @@ new ::
   -> m (Ref (WriteBufferBlobs m h))
 new fs blobFileName = open fs blobFileName FS.MustBeNew
 
-{-# SPECIALISE new :: HasFS IO h -> FS.FsPath -> IO (Ref (WriteBufferBlobs IO h)) #-}
+{-# SPECIALISE open :: HasFS IO h -> FS.FsPath -> FS.AllowExisting -> IO (Ref (WriteBufferBlobs IO h)) #-}
 open ::
      (PrimMonad m, MonadMask m)
   => HasFS m h
