@@ -38,7 +38,6 @@ import           Control.TempRegistry
 import           Control.Tracer
 import           Data.BloomFilter (Bloom)
 import           Data.Foldable (fold)
-import           Data.Primitive.PrimVar
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Assertions (assert)
 import           Database.LSMTree.Internal.Config
@@ -744,9 +743,7 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
               Merge.abort
             case mergeMaybe of
               Nothing -> error "newMerge: merges can not be empty"
-              Just m -> do
-                spentCreditsVar <- MR.SpentCreditsVar <$> newPrimVar 0
-                Merging <$!> MR.unsafeNew mergePolicy numInputRuns numInputEntries MR.MergeMaybeCompleted (MR.OngoingMerge rs spentCreditsVar m)
+              Just m  -> Merging <$!> MR.new mergePolicy rs m
 
 -- $setup
 -- >>> import Database.LSMTree.Internal.Entry

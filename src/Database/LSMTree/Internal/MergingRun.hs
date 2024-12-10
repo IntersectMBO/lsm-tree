@@ -5,6 +5,7 @@
 -- | An incremental merge of multiple runs.
 module Database.LSMTree.Internal.MergingRun (
     MergingRun (..)
+  , new
   , unsafeNew
   , duplicateRuns
   , supplyCredits
@@ -40,6 +41,7 @@ import           Database.LSMTree.Internal.Entry (NumEntries (..), unNumEntries)
 import           Database.LSMTree.Internal.Merge (Merge, StepResult (..))
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.Run (Run)
+import qualified Database.LSMTree.Internal.Run as Run
 
 data MergingRun m h = MergingRun {
       mergePolicy         :: !MergePolicyForLevel
@@ -103,6 +105,22 @@ data MergeKnownCompleted = MergeKnownCompleted | MergeMaybeCompleted
 instance NFData MergeKnownCompleted where
   rnf MergeKnownCompleted = ()
   rnf MergeMaybeCompleted = ()
+
+{-# SPECIALISE new :: MergePolicyForLevel -> V.Vector (Ref (Run IO h)) -> Merge IO h -> IO (Ref (MergingRun IO h)) #-}
+-- | Create a new merging run, returning a reference to it that must ultimately
+-- be released via 'releaseRef' or by calling 'expectCompleted'.
+new ::
+     (MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
+  => MergePolicyForLevel
+  -> V.Vector (Ref (Run m h))
+  -> Merge m h
+  -> m (Ref (MergingRun m h))
+new mergePolicy runs merge = do
+    let numInputRuns = NumRuns $ V.length runs
+    let numInputEntries = V.foldMap' Run.size runs
+    spentCreditsVar <- SpentCreditsVar <$> newPrimVar 0
+    unsafeNew mergePolicy numInputRuns numInputEntries MergeMaybeCompleted $
+      OngoingMerge runs spentCreditsVar merge
 
 {-# SPECIALISE unsafeNew :: MergePolicyForLevel -> NumRuns -> NumEntries -> MergeKnownCompleted -> MergingRunState IO h -> IO (Ref (MergingRun IO h)) #-}
 -- | This allows constructing ill-formed MergingRuns, but the flexibility is
