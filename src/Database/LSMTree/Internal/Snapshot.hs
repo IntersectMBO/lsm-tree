@@ -201,9 +201,9 @@ toSnapMergingRunState (OngoingMerge rs (SpentCreditsVar spentCreditsVar) m) = do
 
 {-# SPECIALISE
   snapshotWriteBuffer ::
-       HasFS IO h
+       TempRegistry IO
+    -> HasFS IO h
     -> HasBlockIO IO h
-    -> TempRegistry IO
     -> UniqCounter IO
     -> ActiveDir
     -> NamedSnapshotDir
@@ -213,16 +213,16 @@ toSnapMergingRunState (OngoingMerge rs (SpentCreditsVar spentCreditsVar) m) = do
   #-}
 snapshotWriteBuffer ::
      (MonadMVar m, MonadSTM m, MonadST m, MonadMask m)
-  => HasFS m h
+  => TempRegistry m
+  -> HasFS m h
   -> HasBlockIO m h
-  -> TempRegistry m
   -> UniqCounter m
   -> ActiveDir
   -> NamedSnapshotDir
   -> WriteBuffer
   -> Ref (WriteBufferBlobs m h)
   -> m WriteBufferFsPaths
-snapshotWriteBuffer hfs hbio reg uc activeDir snapDir wb wbb = do
+snapshotWriteBuffer reg hfs hbio uc activeDir snapDir wb wbb = do
   -- Write the write buffer and write buffer blobs to the active directory.
   activeWriteBufferNumber <- uniqueToRunNumber <$> incrUniqCounter uc
   let activeWriteBufferPaths = WriteBufferFsPaths (getActiveDir activeDir) activeWriteBufferNumber

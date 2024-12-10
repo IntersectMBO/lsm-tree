@@ -1110,7 +1110,7 @@ createSnapshot resolve snap label tableType t = do
         let activeDir = Paths.activeDir (tableSessionRoot thEnv)
         let wb = tableWriteBuffer content
         let wbb = tableWriteBufferBlobs content
-        snapWriteBufferNumber <- Paths.writeBufferNumber <$> snapshotWriteBuffer hfs hbio uc activeDir snapDir wb wbb
+        snapWriteBufferNumber <- Paths.writeBufferNumber <$> snapshotWriteBuffer reg hfs hbio uc activeDir snapDir wb wbb
 
         -- Convert to snapshot format
         snapLevels <- toSnapLevels (tableLevels content)
