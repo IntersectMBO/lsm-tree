@@ -918,10 +918,10 @@ runModel lookUp = \case
       wrap MUnit
       . Model.runModelM (Model.close (getTable $ lookUp tableVar))
     Lookups ks tableVar ->
-      wrap (MVector . fmap (MLookupResult . fmap MBlobRef . ModelIO.convLookupResult))
+      wrap (MVector . fmap (MLookupResult . fmap MBlobRef))
       . Model.runModelM (Model.lookups ks (getTable $ lookUp tableVar))
     RangeLookup range tableVar ->
-      wrap (MVector . fmap (MQueryResult . fmap MBlobRef . ModelIO.convQueryResult))
+      wrap (MVector . fmap (MQueryResult . fmap MBlobRef))
       . Model.runModelM (Model.rangeLookup range (getTable $ lookUp tableVar))
     NewCursor offset tableVar ->
       wrap MCursor
@@ -930,11 +930,11 @@ runModel lookUp = \case
       wrap MUnit
       . Model.runModelM (Model.closeCursor (getCursor $ lookUp cursorVar))
     ReadCursor n cursorVar ->
-      wrap (MVector . fmap (MQueryResult . fmap MBlobRef . ModelIO.convQueryResult))
+      wrap (MVector . fmap (MQueryResult . fmap MBlobRef))
       . Model.runModelM (Model.readCursor n (getCursor $ lookUp cursorVar))
     Updates kups tableVar ->
       wrap MUnit
-      . Model.runModelM (Model.updates Model.getResolve (fmap ModelIO.convUpdate <$> kups) (getTable $ lookUp tableVar))
+      . Model.runModelM (Model.updates Model.getResolve kups (getTable $ lookUp tableVar))
     Inserts kins tableVar ->
       wrap MUnit
       . Model.runModelM (Model.inserts Model.getResolve kins (getTable $ lookUp tableVar))
