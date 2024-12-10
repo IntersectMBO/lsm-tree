@@ -7,8 +7,7 @@ module Database.LSMTree.Internal.WriteBufferReader (
 import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Monad.Class.MonadST (MonadST (..))
 import           Control.Monad.Class.MonadSTM (MonadSTM (..))
-import           Control.Monad.Class.MonadThrow (MonadCatch (..), MonadMask,
-                     MonadThrow (..))
+import           Control.Monad.Class.MonadThrow (MonadMask, MonadThrow (..))
 import           Control.Monad.Primitive (PrimMonad (..))
 import           Control.RefCount (Ref, releaseRef)
 import           Control.TempRegistry
@@ -34,7 +33,6 @@ import           System.FS.API (HasFS)
 import qualified System.FS.BlockIO.API as FS
 import           System.FS.BlockIO.API (HasBlockIO)
 import qualified Database.LSMTree.Internal.Paths as Paths
-import Control.Monad (void)
 
 {-# SPECIALISE
     readWriteBuffer ::
@@ -89,7 +87,7 @@ data WriteBufferReader m h = WriteBufferReader {
   #-}
 -- | See 'Database.LSMTree.Internal.RunReader.new'.
 new :: forall m h.
-     (MonadMVar m, MonadSTM m, MonadST m, MonadMask m)
+     (MonadMVar m, MonadST m, MonadMask m)
   => TempRegistry m
   -> HasFS m h
   -> HasBlockIO m h
@@ -153,15 +151,5 @@ next WriteBufferReader {..} = do
             let rawEntry = mkEntryOverflow entry' page lenSuffix overflowPages
             return (ReadEntry key rawEntry)
 
-{-# SPECIALISE
-  close ::
-       WriteBufferReader IO h
-    -> IO ()
-  #-}
-close ::
-     (PrimMonad m)
-  => WriteBufferReader m h
-  -> m ()
-close WriteBufferReader{..} = do
-    FS.hClose readerHasFS readerKOpsHandle
-
+close :: WriteBufferReader m h -> m ()
+close WriteBufferReader{..} = FS.hClose readerHasFS readerKOpsHandle
