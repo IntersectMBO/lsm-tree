@@ -325,8 +325,7 @@ data MergingRun m h = MergingRun {
     , mergeRefCounter     :: !(RefCounter m)
     }
 
-instance RefCounted (MergingRun m h) where
-    type FinaliserM (MergingRun m h) = m
+instance RefCounted m (MergingRun m h) where
     getRefCounter = mergeRefCounter
 
 {-# SPECIALISE newMergingRun ::

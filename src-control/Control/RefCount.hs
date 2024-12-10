@@ -1,8 +1,9 @@
-{-# LANGUAGE CPP               #-}
-{-# LANGUAGE DefaultSignatures #-}
-{-# LANGUAGE MagicHash         #-}
-{-# LANGUAGE PatternSynonyms   #-}
-{-# LANGUAGE TypeFamilies      #-}
+{-# LANGUAGE CPP                    #-}
+{-# LANGUAGE DefaultSignatures      #-}
+{-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE MagicHash              #-}
+{-# LANGUAGE PatternSynonyms        #-}
+{-# LANGUAGE TypeFamilies           #-}
 
 module Control.RefCount (
     -- * Using references
@@ -30,15 +31,12 @@ module Control.RefCount (
   , checkForgottenRefs
   ) where
 
-import           Data.Kind (Type)
-import           Data.Primitive.PrimVar
-
 import           Control.DeepSeq
 import           Control.Exception (assert)
 import           Control.Monad (when)
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Primitive
-
+import           Data.Primitive.PrimVar
 import           GHC.Stack (CallStack, prettyCallStack)
 
 #ifdef NO_IGNORE_ASSERTS
@@ -195,9 +193,8 @@ instance NFData obj => NFData (Ref obj) where
 -- For objects in this class the guarantee is that (when the 'Ref' rules are
 -- followed) the object's finaliser is called exactly once.
 --
-class RefCounted obj where
-  type FinaliserM obj :: Type -> Type
-  getRefCounter       :: obj -> RefCounter (FinaliserM obj)
+class RefCounted m obj | obj -> m where
+  getRefCounter :: obj -> RefCounter m
 
 #ifdef NO_IGNORE_ASSERTS
 #define HasCallStackIfDebug HasCallStack
@@ -205,20 +202,27 @@ class RefCounted obj where
 #define HasCallStackIfDebug ()
 #endif
 
--- GHC says specialising is too complicated! But it's ok, each of these can
--- inline to calling a few other specialised helpers.
-{-# INLINE newRef #-}
-{-# INLINE releaseRef #-}
-{-# INLINE dupRef #-}
-{-# INLINE deRefWeak #-}
-
+{-# SPECIALISE
+    newRef ::
+         RefCounted IO obj
+      => IO ()
+      -> (RefCounter IO -> obj)
+      -> IO (Ref obj)
+  #-}
 -- | Make a new reference.
 --
 -- The given finaliser is run when the last reference is released. The
 -- finaliser is run with async exceptions masked.
 --
+{-# SPECIALISE
+  newRef ::
+      RefCounted IO obj
+    => IO ()
+    -> (RefCounter IO -> obj)
+    -> IO (Ref obj)
+  #-}
 newRef ::
-     (RefCounted obj, FinaliserM obj ~ m, PrimMonad m)
+     (RefCounted m obj, PrimMonad m)
   => HasCallStackIfDebug
   => m ()
   -> (RefCounter m -> obj)
@@ -232,8 +236,14 @@ newRef finaliser mkObject = do
 -- | Release a reference to an object that will no longer be used (via this
 -- reference).
 --
+{-# SPECIALISE
+  releaseRef ::
+       RefCounted IO obj
+    => Ref obj
+    -> IO ()
+  #-}
 releaseRef ::
-     (RefCounted obj, FinaliserM obj ~ m, PrimMonad m, MonadMask m)
+     (RefCounted m obj, PrimMonad m, MonadMask m)
   => HasCallStackIfDebug
   => Ref obj
   -> m ()
@@ -261,6 +271,12 @@ deRef ref@Ref{refobj} =
     `seq` refobj
 #endif
 
+{-# SPECIALISE
+  withRef ::
+       Ref obj
+    -> (obj -> IO a)
+    -> IO a
+  #-}
 {-# INLINE withRef #-}
 -- | Use the object in a 'Ref'. Do not retain the object after the scope of
 -- the body. If you cannot use scoped \"with\" style, use pattern 'DeRef'.
@@ -276,10 +292,16 @@ withRef ref@Ref{refobj} f = do
     assertNoUseAfterRelease ref
     f refobj
 
+{-# SPECIALISE
+  dupRef ::
+       RefCounted IO obj
+    => Ref obj
+    -> IO (Ref obj)
+  #-}
 -- | Duplicate an existing reference, to produce a new reference.
 --
 dupRef ::
-     (RefCounted obj, FinaliserM obj ~ m, PrimMonad m)
+     (RefCounted m obj, PrimMonad m)
   => HasCallStackIfDebug
   => Ref obj
   -> m (Ref obj)
@@ -308,11 +330,17 @@ mkWeakRef Ref {refobj} = WeakRef refobj
 mkWeakRefFromRaw :: obj -> WeakRef obj
 mkWeakRefFromRaw obj = WeakRef obj
 
+{-# SPECIALISE
+  deRefWeak ::
+       RefCounted IO obj
+    => WeakRef obj
+    -> IO (Maybe (Ref obj))
+  #-}
 -- | If the object is still alive, obtain a /new/ normal reference. The normal
 -- rules for 'Ref' apply, including the need to eventually call 'releaseRef'.
 --
 deRefWeak ::
-     (RefCounted obj, FinaliserM obj ~ m, PrimMonad m)
+     (RefCounted m obj, PrimMonad m)
   => HasCallStackIfDebug
   => WeakRef obj
   -> m (Maybe (Ref obj))

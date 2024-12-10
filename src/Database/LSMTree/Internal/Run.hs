@@ -101,8 +101,7 @@ instance NFData h => NFData (Run m h) where
       rnf a `seq` rwhnf b `seq` rnf c `seq` rnf d `seq` rnf e `seq`
       rnf f `seq` rnf g `seq` rnf h `seq` rwhnf i `seq` rwhnf j
 
-instance RefCounted (Run m h) where
-    type FinaliserM (Run m h) = m
+instance RefCounted m (Run m h) where
     getRefCounter = runRefCounter
 
 size :: Ref (Run m h) -> NumEntries

@@ -112,8 +112,7 @@ data WriteBufferBlobs m h =
 instance NFData h => NFData (WriteBufferBlobs m h) where
   rnf (WriteBufferBlobs a b c) = rnf a `seq` rnf b `seq` rnf c
 
-instance RefCounted (WriteBufferBlobs m h) where
-  type FinaliserM (WriteBufferBlobs m h) = m
+instance RefCounted m (WriteBufferBlobs m h) where
   getRefCounter = writeBufRefCounter
 
 {-# SPECIALISE new :: HasFS IO h -> FS.FsPath -> IO (Ref (WriteBufferBlobs IO h)) #-}

@@ -32,8 +32,7 @@ data BlobFile m h = BlobFile {
      }
   deriving stock (Show)
 
-instance RefCounted (BlobFile m h) where
-    type FinaliserM (BlobFile m h) = m
+instance RefCounted m (BlobFile m h) where
     getRefCounter = blobFileRefCounter
 
 instance NFData h => NFData (BlobFile m h) where

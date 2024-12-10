@@ -108,14 +108,12 @@ readRefCount (RefCounter countVar _) = readPrimVar countVar
 #ifdef NO_IGNORE_ASSERTS
 data TestObject = TestObject !(RefCounter IO)
 
-instance RefCounted TestObject where
-    type FinaliserM TestObject = IO
+instance RefCounted IO TestObject where
     getRefCounter (TestObject rc) = rc
 
 data TestObject2 = TestObject2 (Ref TestObject)
 
-instance RefCounted TestObject2 where
-    type FinaliserM TestObject2 = IO
+instance RefCounted IO TestObject2 where
     getRefCounter (TestObject2 (DeRef to1)) = getRefCounter to1
 
 prop_ref_double_free :: Property
