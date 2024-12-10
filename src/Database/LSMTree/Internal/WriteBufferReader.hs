@@ -19,6 +19,7 @@ import           Database.LSMTree.Internal.BlobRef (RawBlobRef (..))
 import qualified Database.LSMTree.Internal.Entry as E
 import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
 import           Database.LSMTree.Internal.Paths
+import qualified Database.LSMTree.Internal.Paths as Paths
 import           Database.LSMTree.Internal.RawPage
 import           Database.LSMTree.Internal.RunReader (Entry (..), Result (..),
                      mkEntryOverflow, readDiskPage, readOverflowPages,
@@ -32,7 +33,6 @@ import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
 import qualified System.FS.BlockIO.API as FS
 import           System.FS.BlockIO.API (HasBlockIO)
-import qualified Database.LSMTree.Internal.Paths as Paths
 
 {-# SPECIALISE
     readWriteBuffer ::

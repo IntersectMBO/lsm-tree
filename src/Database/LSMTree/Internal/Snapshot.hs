@@ -27,7 +27,7 @@ module Database.LSMTree.Internal.Snapshot (
 
 import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Concurrent.Class.MonadSTM (MonadSTM)
-import           Control.Monad (when, void)
+import           Control.Monad (void, when)
 import           Control.Monad.Class.MonadST (MonadST)
 import           Control.Monad.Class.MonadThrow (MonadMask)
 import           Control.Monad.Primitive (PrimMonad)
@@ -45,22 +45,24 @@ import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.MergeSchedule
 import           Database.LSMTree.Internal.Paths (ActiveDir (..),
-                     NamedSnapshotDir (..), RunFsPaths (..), pathsForRunFiles,
-                     runChecksumsPath, WriteBufferFsPaths (..), writeBufferKOpsPath, writeBufferBlobPath, writeBufferChecksumsPath)
+                     NamedSnapshotDir (..), RunFsPaths (..),
+                     WriteBufferFsPaths (..), pathsForRunFiles,
+                     runChecksumsPath, writeBufferBlobPath,
+                     writeBufferChecksumsPath, writeBufferKOpsPath)
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.UniqCounter (UniqCounter,
                      incrUniqCounter, uniqueToRunNumber)
+import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
+import           Database.LSMTree.Internal.WriteBufferBlobs (WriteBufferBlobs)
+import qualified Database.LSMTree.Internal.WriteBufferReader as WBR
+import qualified Database.LSMTree.Internal.WriteBufferWriter as WBW
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
+import qualified System.FS.API.Lazy as FSL
 import qualified System.FS.BlockIO.API as FS
 import           System.FS.BlockIO.API (HasBlockIO)
-import Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
-import Database.LSMTree.Internal.WriteBufferBlobs (WriteBufferBlobs)
-import qualified Database.LSMTree.Internal.WriteBufferWriter as WBW
-import qualified Database.LSMTree.Internal.WriteBufferReader as WBR
-import qualified System.FS.API.Lazy as FSL
 
 {-------------------------------------------------------------------------------
   Snapshot metadata
@@ -464,25 +466,25 @@ hardLinkRunFiles reg hfs hbio dur sourceRunFsPaths targetRunFsPaths = do
 -------------------------------------------------------------------------------}
 
 {-# SPECIALISE
-  hardLinkTemp :: 
-      TempRegistry IO 
-    -> HasFS IO h 
-    -> HasBlockIO IO h 
-    -> HardLinkDurable 
-    -> FS.FsPath 
-    -> FS.FsPath 
+  hardLinkTemp ::
+      TempRegistry IO
+    -> HasFS IO h
+    -> HasBlockIO IO h
+    -> HardLinkDurable
+    -> FS.FsPath
+    -> FS.FsPath
     -> IO ()
   #-}
 -- | @'hardLinkTemp' reg hfs hbio dur sourcePath targetPath@ creates a hard link
 -- from @sourcePath@ to @targetPath@.
-hardLinkTemp :: 
+hardLinkTemp ::
      (MonadMask m, MonadMVar m)
-  => TempRegistry m 
-  -> HasFS m h 
-  -> HasBlockIO m h 
-  -> HardLinkDurable 
-  -> FS.FsPath 
-  -> FS.FsPath 
+  => TempRegistry m
+  -> HasFS m h
+  -> HasBlockIO m h
+  -> HardLinkDurable
+  -> FS.FsPath
+  -> FS.FsPath
   -> m ()
 hardLinkTemp reg hfs hbio dur sourcePath targetPath = do
     allocateTemp reg
@@ -505,7 +507,7 @@ hardLinkTemp reg hfs hbio dur sourcePath targetPath = do
     -> IO ()
     #-}
 -- | @'copyFile' hfs hbio source target@ copies the @source@ path to the @target@ path.
-copyFileTemp :: 
+copyFileTemp ::
      (MonadMask m, MonadMVar m)
   => TempRegistry m
   -> HasFS m h

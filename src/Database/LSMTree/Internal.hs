@@ -1177,7 +1177,7 @@ openSnapshot sesh label tableType override snap resolve = do
 
         -- Hard link runs into the active directory,
         snapLevels' <- openRuns reg hfs hbio conf (sessionUniqCounter seshEnv) snapDir activeDir snapLevels
-        
+
         -- Convert from the snapshot format, restoring merge progress in the process
         tableLevels <- fromSnapLevels reg hfs hbio conf (sessionUniqCounter seshEnv) resolve activeDir snapLevels'
 
