@@ -33,15 +33,21 @@ import           Control.Monad.Class.MonadThrow (MonadCatch (bracketOnError),
 import           Control.Monad.Primitive
 import           Control.RefCount
 import           Control.TempRegistry
+import           Data.Maybe (fromMaybe)
 import           Data.Primitive.MutVar
 import           Data.Primitive.PrimVar
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Assertions (assert)
 import           Database.LSMTree.Internal.Entry (NumEntries (..), unNumEntries)
+import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
 import           Database.LSMTree.Internal.Merge (Merge, StepResult (..))
 import qualified Database.LSMTree.Internal.Merge as Merge
+import           Database.LSMTree.Internal.Paths (RunFsPaths (..))
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
+import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc)
+import           System.FS.API (HasFS)
+import           System.FS.BlockIO.API (HasBlockIO)
 
 data MergingRun m h = MergingRun {
       mergePolicy         :: !MergePolicyForLevel
@@ -106,16 +112,29 @@ instance NFData MergeKnownCompleted where
   rnf MergeKnownCompleted = ()
   rnf MergeMaybeCompleted = ()
 
-{-# SPECIALISE new :: MergePolicyForLevel -> V.Vector (Ref (Run IO h)) -> Merge IO h -> IO (Ref (MergingRun IO h)) #-}
+{-# SPECIALISE new :: HasFS IO h -> HasBlockIO IO h -> ResolveSerialisedValue -> Run.RunDataCaching -> RunBloomFilterAlloc -> Merge.Level -> MergePolicyForLevel -> RunFsPaths -> V.Vector (Ref (Run IO h)) -> IO (Ref (MergingRun IO h)) #-}
 -- | Create a new merging run, returning a reference to it that must ultimately
 -- be released via 'releaseRef' or by calling 'expectCompleted'.
+--
+-- Takes over ownership of the references to the runs passed.
+--
+-- This function should be run with asynchronous exceptions masked to prevent
+-- failing after some internal resources have already been created.
 new ::
      (MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
-  => MergePolicyForLevel
+  => HasFS m h
+  -> HasBlockIO m h
+  -> ResolveSerialisedValue
+  -> Run.RunDataCaching
+  -> RunBloomFilterAlloc
+  -> Merge.Level
+  -> MergePolicyForLevel
+  -> RunFsPaths
   -> V.Vector (Ref (Run m h))
-  -> Merge m h
   -> m (Ref (MergingRun m h))
-new mergePolicy runs merge = do
+new hfs hbio resolve caching alloc mergeLevel mergePolicy runPaths runs = do
+    merge <- fromMaybe (error "newMerge: merges can not be empty")
+      <$> Merge.new hfs hbio caching alloc mergeLevel resolve runPaths runs
     let numInputRuns = NumRuns $ V.length runs
     let numInputEntries = V.foldMap' Run.size runs
     spentCreditsVar <- SpentCreditsVar <$> newPrimVar 0
@@ -123,6 +142,9 @@ new mergePolicy runs merge = do
       OngoingMerge runs spentCreditsVar merge
 
 {-# SPECIALISE newCompleted :: MergePolicyForLevel -> NumRuns -> NumEntries -> Ref (Run IO h) -> IO (Ref (MergingRun IO h)) #-}
+-- | Create a merging run that is already in the completed state, returning a
+-- reference to it that must ultimately be released via 'releaseRef' or by
+-- calling 'expectCompleted'.
 newCompleted ::
      (MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
   => MergePolicyForLevel

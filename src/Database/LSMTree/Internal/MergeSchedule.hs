@@ -703,6 +703,7 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
         TraceExpectCompletedMerge (Run.size r) (Run.runFsPathsNumber r)
       pure r
 
+    -- | Takes ownership of the runs passed.
     newMerge :: MergePolicyForLevel
              -> Merge.Level
              -> LevelNo
@@ -723,13 +724,19 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
             !runPaths = Paths.runPath root (uniqueToRunNumber n)
         traceWith tr $ AtLevel ln $
           TraceNewMerge (V.map Run.size rs) (runNumber runPaths) caching alloc mergePolicy mergeLevel
-        -- TODO: creating the merge should happen in MR.new
-        mergeMaybe <- allocateMaybeTemp reg
-          (Merge.new hfs hbio caching alloc mergeLevel resolve runPaths rs)
-          Merge.abort
-        mr <- case mergeMaybe of
-          Nothing -> error "newMerge: merges can not be empty"
-          Just m  -> allocateTemp reg (MR.new mergePolicy rs m) releaseRef
+        -- TODO: There currently is a resource management bug that happens if an
+        -- exception occurs after calling MR.new. In this case, all changes roll
+        -- back, so some of the runs in rs will live in the Levels structure at
+        -- their original places again. However, we passed their references to
+        -- the MergingRun, which gets aborted, releasing the run references.
+        -- Instead of passing the original references into newMerge, we have to
+        -- duplicate the ones that previously existed in the level and then
+        -- freeTemp the original ones. This way, on the happy path the result is
+        -- the same, but if an exception occurs, the original references do not
+        -- get released.
+        mr <- allocateTemp reg
+          (MR.new hfs hbio resolve caching alloc mergeLevel mergePolicy runPaths rs)
+          releaseRef
         case confMergeSchedule of
           Incremental -> pure ()
           OneShot -> do

@@ -339,14 +339,11 @@ fromSnapLevels reg hfs hbio conf@TableConfig{..} uc resolve dir (SnapLevels leve
               SnapCompletedMerge run ->
                 MR.newCompleted mpfl nr ne run
 
-              SnapOngoingMerge runs spentCredits mergeLast -> do
+              SnapOngoingMerge runs spentCredits lvl -> do
                 rn <- uniqueToRunNumber <$> incrUniqCounter uc
-                mergeMaybe <- allocateMaybeTemp reg
-                  (Merge.new hfs hbio caching alloc mergeLast resolve (mkPath rn) runs)
-                  Merge.abort
-                mr <- case mergeMaybe of
-                  Nothing -> error "openLevels: merges can not be empty"
-                  Just m  -> MR.new mpfl runs m
+                mr <- allocateTemp reg
+                  (MR.new hfs hbio resolve caching alloc lvl mpfl (mkPath rn) runs)
+                  releaseRef
 
                 -- When a snapshot is created, merge progress is lost, so we
                 -- have to redo merging work here. UnspentCredits and
