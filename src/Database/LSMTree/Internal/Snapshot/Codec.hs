@@ -455,14 +455,13 @@ instance DecodeVersioned RunNumber where
 -- SnapIncomingRun
 
 instance Encode (SnapIncomingRun RunNumber) where
-  encode (SnapMergingRun mpfl nr ne uc mkc smrs) =
-       encodeListLen 7
+  encode (SnapMergingRun mpfl nr ne uc smrs) =
+       encodeListLen 6
     <> encodeWord 0
     <> encode mpfl
     <> encode nr
     <> encode ne
     <> encode uc
-    <> encode mkc
     <> encode smrs
   encode (SnapSingleRun x) =
        encodeListLen 2
@@ -474,9 +473,9 @@ instance DecodeVersioned (SnapIncomingRun RunNumber) where
       n <- decodeListLen
       tag <- decodeWord
       case (n, tag) of
-        (7, 0) -> SnapMergingRun <$>
+        (6, 0) -> SnapMergingRun <$>
           decodeVersioned v <*> decodeVersioned v <*> decodeVersioned v <*>
-          decodeVersioned v <*> decodeVersioned v <*> decodeVersioned v
+          decodeVersioned v <*> decodeVersioned v
         (2, 1) -> SnapSingleRun <$> decodeVersioned v
         _ -> fail ("[SnapMergingRun] Unexpected combination of list length and tag: " <> show (n, tag))
 

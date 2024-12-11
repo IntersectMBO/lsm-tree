@@ -6,7 +6,7 @@
 module Database.LSMTree.Internal.MergingRun (
     MergingRun (..)
   , new
-  , unsafeNew
+  , newCompleted
   , duplicateRuns
   , supplyCredits
   , expectCompleted
@@ -122,10 +122,19 @@ new mergePolicy runs merge = do
     unsafeNew mergePolicy numInputRuns numInputEntries MergeMaybeCompleted $
       OngoingMerge runs spentCreditsVar merge
 
-{-# SPECIALISE unsafeNew :: MergePolicyForLevel -> NumRuns -> NumEntries -> MergeKnownCompleted -> MergingRunState IO h -> IO (Ref (MergingRun IO h)) #-}
--- | This allows constructing ill-formed MergingRuns, but the flexibility is
--- needed for creating a merging run that is already Completed, as well as
--- opening a merging run from a snapshot.
+{-# SPECIALISE newCompleted :: MergePolicyForLevel -> NumRuns -> NumEntries -> Ref (Run IO h) -> IO (Ref (MergingRun IO h)) #-}
+newCompleted ::
+     (MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
+  => MergePolicyForLevel
+  -> NumRuns
+  -> NumEntries
+  -> Ref (Run m h)
+  -> m (Ref (MergingRun m h))
+newCompleted mergePolicy numInputRuns numInputEntries run = do
+    unsafeNew mergePolicy numInputRuns numInputEntries MergeMaybeCompleted $
+      CompletedMerge run
+
+{-# INLINE unsafeNew #-}
 unsafeNew ::
      (MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
   => MergePolicyForLevel

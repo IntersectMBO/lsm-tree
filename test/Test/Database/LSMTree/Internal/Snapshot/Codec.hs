@@ -287,12 +287,12 @@ deriving newtype instance Arbitrary RunNumber
 instance Arbitrary (SnapIncomingRun RunNumber) where
   arbitrary = oneof [
         SnapMergingRun <$> arbitrary <*> arbitrary <*> arbitrary
-                       <*> arbitrary <*> arbitrary <*> arbitrary
+                       <*> arbitrary <*> arbitrary
       , SnapSingleRun <$> arbitrary
       ]
-  shrink (SnapMergingRun a b c d e f) =
-      [ SnapMergingRun a' b' c' d' e' f'
-      | (a', b', c', d', e', f') <- shrink (a, b, c, d, e, f) ]
+  shrink (SnapMergingRun a b c d e) =
+      [ SnapMergingRun a' b' c' d' e'
+      | (a', b', c', d', e') <- shrink (a, b, c, d, e) ]
   shrink (SnapSingleRun a)  = SnapSingleRun <$> shrink a
 
 deriving newtype instance Arbitrary NumRuns
