@@ -28,7 +28,6 @@ module Database.LSMTree.Internal.MergeSchedule (
   ) where
 
 import           Control.Concurrent.Class.MonadMVar.Strict
-import           Control.Monad ((<$!>))
 import           Control.Monad.Class.MonadST (MonadST)
 import           Control.Monad.Class.MonadSTM (MonadSTM (..))
 import           Control.Monad.Class.MonadThrow (MonadMask, MonadThrow (..))
@@ -92,10 +91,11 @@ data MergeTrace =
       RunBloomFilterAlloc
       MergePolicyForLevel
       Merge.Level
-  | TraceCompletedMerge
+  | -- | This is traced at the latest point the merge could complete. To trace
+    --   at the exact point it really completed, we'd need to do it in the
+    --   @MergingRun@ module.
+    TraceExpectCompletedMerge
       NumEntries -- ^ Size of output run
-      RunNumber
-  | TraceExpectCompletedMerge
       RunNumber
   | TraceNewMergeSingleRun
       NumEntries -- ^ Size of run
@@ -700,16 +700,15 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
         Single r   -> pure r
         Merging mr -> MR.expectCompleted reg mr
       traceWith tr $ AtLevel ln $
-        TraceExpectCompletedMerge (Run.runFsPathsNumber r)
+        TraceExpectCompletedMerge (Run.size r) (Run.runFsPathsNumber r)
       pure r
 
-    -- TODO: refactor, pull to top level?
     newMerge :: MergePolicyForLevel
              -> Merge.Level
              -> LevelNo
              -> V.Vector (Ref (Run m h))
              -> m (IncomingRun m h)
-    newMerge mergePolicy mergelast ln rs
+    newMerge mergePolicy mergeLevel ln rs
       | Just (r, rest) <- V.uncons rs
       , V.null rest = do
           traceWith tr $ AtLevel ln $
@@ -723,27 +722,21 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
             !alloc = bloomFilterAllocForLevel conf ln
             !runPaths = Paths.runPath root (uniqueToRunNumber n)
         traceWith tr $ AtLevel ln $
-          TraceNewMerge (V.map Run.size rs) (runNumber runPaths) caching alloc mergePolicy mergelast
-        let numInputRuns = NumRuns $ V.length rs
-        let numInputEntries = V.foldMap' Run.size rs
+          TraceNewMerge (V.map Run.size rs) (runNumber runPaths) caching alloc mergePolicy mergeLevel
+        -- TODO: creating the merge should happen in MR.new
+        mergeMaybe <- allocateMaybeTemp reg
+          (Merge.new hfs hbio caching alloc mergeLevel resolve runPaths rs)
+          Merge.abort
+        mr <- case mergeMaybe of
+          Nothing -> error "newMerge: merges can not be empty"
+          Just m  -> allocateTemp reg (MR.new mergePolicy rs m) releaseRef
         case confMergeSchedule of
+          Incremental -> pure ()
           OneShot -> do
-            r <- allocateTemp reg
-                  (mergeRuns resolve hfs hbio caching alloc runPaths mergelast rs)
-                  releaseRef
-            traceWith tr $ AtLevel ln $
-              TraceCompletedMerge (Run.size r)
-                                  (Run.runFsPathsNumber r)
-            V.mapM_ (freeTemp reg . releaseRef) rs
-            Merging <$!> MR.unsafeNew mergePolicy numInputRuns numInputEntries MR.MergeKnownCompleted (MR.CompletedMerge r)
-
-          Incremental -> do
-            mergeMaybe <- allocateMaybeTemp reg
-              (Merge.new hfs hbio caching alloc mergelast resolve runPaths rs)
-              Merge.abort
-            case mergeMaybe of
-              Nothing -> error "newMerge: merges can not be empty"
-              Just m  -> Merging <$!> MR.new mergePolicy rs m
+            let !required = MR.Credits (unNumEntries (V.foldMap' Run.size rs))
+            let !thresh = creditThresholdForLevel conf ln
+            MR.supplyCredits required thresh mr
+        return (Merging mr)
 
 -- $setup
 -- >>> import Database.LSMTree.Internal.Entry
@@ -792,23 +785,6 @@ mergeLastForLevel levels
 
 levelIsFull :: SizeRatio -> V.Vector run -> Bool
 levelIsFull sr rs = V.length rs + 1 >= (sizeRatioInt sr)
-
-{-# SPECIALISE mergeRuns :: ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> RunDataCaching -> RunBloomFilterAlloc -> RunFsPaths -> Merge.Level -> V.Vector (Ref (Run IO h)) -> IO (Ref (Run IO h)) #-}
-mergeRuns ::
-     (MonadMask m, MonadST m, MonadSTM m)
-  => ResolveSerialisedValue
-  -> HasFS m h
-  -> HasBlockIO m h
-  -> RunDataCaching
-  -> RunBloomFilterAlloc
-  -> RunFsPaths
-  -> Merge.Level
-  -> V.Vector (Ref (Run m h))
-  -> m (Ref (Run m h))
-mergeRuns resolve hfs hbio caching alloc runPaths mergeLevel runs = do
-    Merge.new hfs hbio caching alloc mergeLevel resolve runPaths runs >>= \case
-      Nothing -> error "mergeRuns: no inputs"
-      Just m -> Merge.stepsToCompletion m 1024
 
 {-------------------------------------------------------------------------------
   Credits

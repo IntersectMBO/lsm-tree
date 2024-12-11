@@ -439,6 +439,7 @@ completeMerge mergeVar mergeKnownCompletedVar = do
         pure $! CompletedMerge r
 
 {-# SPECIALISE expectCompleted :: TempRegistry IO -> Ref(MergingRun IO h) -> IO (Ref (Run IO h)) #-}
+-- | This releases the reference on the merging run, do not use it any more!
 expectCompleted ::
      (MonadMVar m, MonadSTM m, MonadST m, MonadMask m)
   => TempRegistry m -> Ref (MergingRun m h) -> m (Ref (Run m h))
