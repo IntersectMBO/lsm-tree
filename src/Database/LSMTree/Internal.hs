@@ -66,6 +66,9 @@ module Database.LSMTree.Internal (
   , listSnapshots
     -- * Mutiple writable tables
   , duplicate
+    -- * Table union
+  , union
+  , unions
   ) where
 
 import           Codec.CBOR.Read
@@ -218,6 +221,20 @@ data LSMTreeError =
     -- The 'Int' index indicates which 'BlobRef' was invalid. Many may be
     -- invalid but only the first is reported.
   | ErrBlobRefInvalid Int
+    -- | 'unions' was called on zero tables. Use 'new' instead.
+  | ErrUnionsZeroTables
+    -- | 'unions' was called on tables that are not of the same type.
+  | ErrUnionsTableTypeMismatch
+      Int -- ^ Vector index of table @t1@ involved in the mismatch
+      Int -- ^ Vector index of table @t2@ involved in the mismatch
+    -- | 'unions' was called on tables that are not in the same session.
+  | ErrUnionsSessionMismatch
+      Int -- ^ Vector index of table @t1@ involved in the mismatch
+      Int -- ^ Vector index of table @t2@ involved in the mismatch
+    -- | 'unions' was called on tables that do not have the same configuration.
+  | ErrUnionsTableConfigMismatch
+      Int -- ^ Vector index of table @t1@ involved in the mismatch
+      Int -- ^ Vector index of table @t2@ involved in the mismatch
   deriving stock (Show, Eq)
   deriving anyclass (Exception)
 
@@ -243,6 +260,9 @@ data LSMTreeTrace =
   | TraceCursor
       Word64 -- ^ Cursor identifier
       CursorTrace
+    -- Unions
+  | TraceUnions
+      Int -- ^ Number of unioned tables
   deriving stock Show
 
 data TableTrace =
@@ -284,6 +304,9 @@ data Session m h = Session {
       -- to the session's fields (see 'withOpenSession'). We use more
       -- fine-grained synchronisation for various mutable parts of an open
       -- session.
+      --
+      -- INVARIANT: once the session state is changed from 'SessionOpen' to
+      -- 'SessionClosed', it is never changed back to 'SessionOpen' again.
       sessionState  :: !(RWVar m (SessionState m h))
     , sessionTracer :: !(Tracer m LSMTreeTrace)
     }
@@ -298,6 +321,9 @@ data SessionState m h =
 data SessionEnv m h = SessionEnv {
     -- | The path to the directory in which this sesion is live. This is a path
     -- relative to root of the 'HasFS' instance.
+    --
+    -- INVARIANT: the session root is never changed during the lifetime of a
+    -- session.
     sessionRoot        :: !SessionRoot
   , sessionHasFS       :: !(HasFS m h)
   , sessionHasBlockIO  :: !(HasBlockIO m h)
@@ -310,8 +336,9 @@ data SessionEnv m h = SessionEnv {
     --
     -- Tables are assigned unique identifiers using 'sessionUniqCounter' to
     -- ensure that modifications to the set of known tables are independent.
-    -- Each identifier is added only once in 'new', 'openSnapshot' or
-    -- 'duplicate', and is deleted only once in 'close' or 'closeSession'.
+    -- Each identifier is added only once in 'new', 'openSnapshot', 'duplicate',
+    -- 'union', or 'unions', and is deleted only once in 'close' or
+    -- 'closeSession'.
     --
     -- * A new table may only insert its own identifier when it has acquired the
     --   'sessionState' read-lock. This is to prevent races with 'closeSession'.
@@ -526,11 +553,18 @@ data Table m h = Table {
     , tableState        :: !(RWVar m (TableState m h))
     , tableArenaManager :: !(ArenaManager (PrimState m))
     , tableTracer       :: !(Tracer m TableTrace)
+      -- === Session-inherited
+
+      -- | The session that this table belongs to.
+      --
+      -- INVARIANT: a table only ever belongs to one session, and can't be
+      -- transferred to a different session.
+    , tableSession      :: !(Session m h)
     }
 
 instance NFData (Table m h) where
-  rnf (Table a b c d) =
-    rnf a `seq` rnf b `seq` rnf c `seq` rwhnf d
+  rnf (Table a b c d e) =
+    rnf a `seq` rnf b `seq` rnf c `seq` rwhnf d `seq` rwhnf e
 
 -- | A table may assume that its corresponding session is still open as
 -- long as the table is open. A session's global resources, and therefore
@@ -543,14 +577,9 @@ data TableState m h =
 data TableEnv m h = TableEnv {
     -- === Session-inherited
 
-    -- | The session that this table belongs to.
-    --
-    -- NOTE: Consider using the 'tableSessionEnv' field and helper functions
-    -- like 'tableHasFS' instead of acquiring the session lock.
-    tableSession    :: !(Session m h)
     -- | Use this instead of 'tableSession' for easy access. An open table may
     -- assume that its session is open.
-  , tableSessionEnv :: !(SessionEnv m h)
+    tableSessionEnv :: !(SessionEnv m h)
 
     -- === Table-specific
 
@@ -688,12 +717,11 @@ newWith reg sesh seshEnv conf !am !tc = do
     -- /updated/ set of tracked tables.
     contentVar <- RW.new $ tc
     tableVar <- RW.new $ TableOpen $ TableEnv {
-          tableSession = sesh
-        , tableSessionEnv = seshEnv
+          tableSessionEnv = seshEnv
         , tableId = uniqueToWord64 tableId
         , tableContent = contentVar
         }
-    let !t = Table conf tableVar am tr
+    let !t = Table conf tableVar am tr  sesh
     -- Track the current table
     freeTemp reg $ modifyMVar_ (sessionOpenTables seshEnv)
                  $ pure . Map.insert (uniqueToWord64 tableId) t
@@ -936,7 +964,7 @@ newCursor ::
   -> Table m h
   -> m (Cursor m h)
 newCursor !offsetKey t = withOpenTable t $ \thEnv -> do
-    let cursorSession = tableSession thEnv
+    let cursorSession = tableSession t
     let cursorSessionEnv = tableSessionEnv thEnv
     cursorId <- uniqueToWord64 <$>
       incrUniqCounter (sessionUniqCounter cursorSessionEnv)
@@ -1278,3 +1306,140 @@ duplicate t@Table{..} = do
             tableConfig
             tableArenaManager
             content
+
+
+{-------------------------------------------------------------------------------
+   Table union
+-------------------------------------------------------------------------------}
+
+{-# SPECIALISE union :: Table IO h -> Table IO h -> IO (Table IO h) #-}
+-- | See 'Database.LSMTree.Normal.union'.
+union ::
+     (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+  => Table m h
+  -> Table m h
+  -> m (Table m h)
+union t1 t2 = unions $ V.fromList [t1, t2]
+
+{-# SPECIALISE unions :: V.Vector (Table IO h) -> IO (Table IO h) #-}
+-- | See 'Database.LSMTree.Normal.unions'.
+unions ::
+     (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+  => V.Vector (Table m h)
+  -> m (Table m h)
+unions ts
+  | n == 0 = throwIO ErrUnionsZeroTables
+  | otherwise = do
+      conf <-
+        case vmatch (V.map tableConfig ts) of
+          Left (i, j) -> throwIO $ ErrUnionsTableConfigMismatch i j
+          Right conf  -> pure conf
+
+      sesh <-
+        vmatchSessions ts >>= \case
+          Left (i, j) -> throwIO $ ErrUnionsSessionMismatch i j
+          Right sesh -> pure sesh
+
+      traceWith (sessionTracer sesh) $ TraceUnions n
+
+      -- We acquire a read-lock on the session open-state to prevent races, see
+      -- 'sessionOpenTables'.
+      modifyWithTempRegistry
+        (atomically $ RW.unsafeAcquireReadAccess (sessionState sesh))
+        (\_ -> atomically $ RW.unsafeReleaseReadAccess (sessionState sesh)) $ \reg -> \case
+          SessionClosed -> throwIO ErrSessionClosed
+          seshState@(SessionOpen seshEnv) -> do
+            contents <-
+              V.forM ts $ \t -> do
+                withOpenTable t $ \tEnv ->
+                  -- The table contents escape the read access, but we just added references
+                  -- to each run so it is safe.
+                  RW.withReadAccess (tableContent tEnv) (duplicateTableContent reg)
+
+            content <-
+              error "unions: combine contents into merging tree" $ -- TODO
+                contents
+
+            t <-
+              newWith
+                reg
+                sesh
+                seshEnv
+                conf
+                (error "unions: ArenaManager") -- TODO
+                content
+
+            pure (seshState, t)
+  where
+    n = V.length ts
+
+-- | Like 'vmatchBy', but the match function is @(==)@.
+vmatch :: Eq a => V.Vector a -> Either (Int, Int) a
+vmatch = vmatchBy (==)
+
+-- | Check that all values in the vector match. If so, return the matched value.
+-- If there is a mismatch, return the vector indices of the mismatching values.
+--
+-- Assumes the input vector is non-empty.
+vmatchBy :: (a -> a -> Bool) -> V.Vector a -> Either (Int, Int) a
+vmatchBy cmp xs0 =
+    case V.uncons xs0 of
+      Nothing ->
+        error "vmatch: empty vector "
+      Just (x, xs) ->
+        case V.iforM_ xs $ vmatchOne x of
+          Left i   -> Left (0, i)
+          Right () -> Right x
+  where
+    vmatchOne x i y =
+      if (x `cmp` y)
+        then Left i
+        else Right ()
+
+-- | Check that all tables in the session match. If so, return the matched
+-- session. If there is a mismatch, return the vector indices of the mismatching
+-- tables.
+--
+-- Assumes the input vector is non-empty.
+--
+-- TODO: compare LockFileHandle instead of SessionRoot (?). We can write an Eq
+-- instance for LockFileHandle based on pointer equality, just like base does
+-- for Handle.
+vmatchSessions ::
+     (MonadSTM m, MonadThrow m)
+  => V.Vector (Table m h)
+  -> m (Either (Int, Int) (Session m h))
+vmatchSessions ts0
+  | Just (t, ts) <- V.uncons ts0
+  = do
+      root <- getSessionRoot t
+      eith <- go root 1 ts
+      pure $ case eith of
+        Left i   -> Left (0, i)
+        Right () -> Right (tableSession t)
+  | otherwise
+  = error "vmatchSessions: empty vector"
+  where
+    -- Check that the session roots for all tables are the same. There can only
+    -- be one *open/active* session per directory because of cooperative file
+    -- locks, so each unique *open* session has a unique session root.
+    --
+    -- In remote cases, the session can be be closed, after which a new session
+    -- can be opened in the same root directory. In this case, the session root
+    -- is technically not unique. This does not mean that tables in @ts0@ could
+    -- have different sessions with the same root, however. You could prove this
+    -- by contradiction, assuming that there are two tables in @ts0@ that have
+    -- different open sessions with the same session root.
+    go root !i ts
+      | Just (t', ts') <- V.uncons ts
+      = do
+          root' <- getSessionRoot t'
+          if root == root'
+            then go root (i+1) ts'
+            else pure (Left i)
+      | otherwise
+      = pure (Right ())
+
+    -- We do not have to keep the session open for longer than it takes to read
+    -- the session root.
+    getSessionRoot t =  withOpenSession (tableSession t) $ pure . sessionRoot

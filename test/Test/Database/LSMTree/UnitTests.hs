@@ -36,9 +36,7 @@ tests =
 
         -- Properties
 
-      , testProperty "prop_unions_0" $
-          -- TODO: enable once unions are implemented
-          QC.expectFailure prop_unions_0
+      , testProperty "prop_unions_0" $ prop_unions_0
       , testProperty "prop_unions_1" $
           -- TODO: enable once unions are implemented
           QC.expectFailure prop_unions_1
@@ -161,12 +159,8 @@ unit_snapshots =
 prop_unions_0 :: Property
 prop_unions_0 =
     QC.once $ QC.ioProperty $
-    assertException err $
+    assertException ErrUnionsZeroTables $
       void $ unions @_ @Key1 @Value1 @Blob1 V.empty
-  where
-    -- TODO: fill in once unions has an implementation
-    err :: LSMTreeError
-    err = error "unit_unions_0: unions has no implementation yet"
 
 -- | Unions of 1 table are equivalent to duplicate
 prop_unions_1 :: Property
