@@ -200,9 +200,9 @@ class RefCounted obj where
   getRefCounter       :: obj -> RefCounter (FinaliserM obj)
 
 #ifdef NO_IGNORE_ASSERTS
-#define HAS_CALL_STACK => HasCallStack
+#define HasCallStackIfDebug HasCallStack
 #else
-#define HAS_CALL_STACK
+#define HasCallStackIfDebug ()
 #endif
 
 -- GHC says specialising is too complicated! But it's ok, each of these can
@@ -219,7 +219,7 @@ class RefCounted obj where
 --
 newRef ::
      (RefCounted obj, FinaliserM obj ~ m, PrimMonad m)
-     HAS_CALL_STACK
+  => HasCallStackIfDebug
   => m ()
   -> (RefCounter m -> obj)
   -> m (Ref obj)
@@ -234,7 +234,7 @@ newRef finaliser mkObject = do
 --
 releaseRef ::
      (RefCounted obj, FinaliserM obj ~ m, PrimMonad m, MonadMask m)
-     HAS_CALL_STACK
+  => HasCallStackIfDebug
   => Ref obj
   -> m ()
 releaseRef ref@Ref{refobj} = do
@@ -268,7 +268,7 @@ deRef ref@Ref{refobj} =
 withRef ::
      forall m obj a.
      PrimMonad m
-     HAS_CALL_STACK
+  => HasCallStackIfDebug
   => Ref obj
   -> (obj -> m a)
   -> m a
@@ -280,7 +280,7 @@ withRef ref@Ref{refobj} f = do
 --
 dupRef ::
      (RefCounted obj, FinaliserM obj ~ m, PrimMonad m)
-     HAS_CALL_STACK
+  => HasCallStackIfDebug
   => Ref obj
   -> m (Ref obj)
 dupRef ref@Ref{refobj} = do
@@ -313,7 +313,7 @@ mkWeakRefFromRaw obj = WeakRef obj
 --
 deRefWeak ::
      (RefCounted obj, FinaliserM obj ~ m, PrimMonad m)
-     HAS_CALL_STACK
+  => HasCallStackIfDebug
   => WeakRef obj
   -> m (Maybe (Ref obj))
 deRefWeak (WeakRef obj) = do
