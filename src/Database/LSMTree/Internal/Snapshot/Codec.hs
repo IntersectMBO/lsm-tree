@@ -33,6 +33,8 @@ import qualified Database.LSMTree.Internal.CRC32C as FS
 import           Database.LSMTree.Internal.Entry
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.MergeSchedule
+import           Database.LSMTree.Internal.MergingRun (NumRuns (..))
+import qualified Database.LSMTree.Internal.MergingRun as MR
 import           Database.LSMTree.Internal.Run (ChecksumError (..),
                      FileFormatError (..))
 import           Database.LSMTree.Internal.RunNumber
@@ -453,14 +455,13 @@ instance DecodeVersioned RunNumber where
 -- SnapIncomingRun
 
 instance Encode (SnapIncomingRun RunNumber) where
-  encode (SnapMergingRun mpfl nr ne uc mkc smrs) =
-       encodeListLen 7
+  encode (SnapMergingRun mpfl nr ne uc smrs) =
+       encodeListLen 6
     <> encodeWord 0
     <> encode mpfl
     <> encode nr
     <> encode ne
     <> encode uc
-    <> encode mkc
     <> encode smrs
   encode (SnapSingleRun x) =
        encodeListLen 2
@@ -472,9 +473,9 @@ instance DecodeVersioned (SnapIncomingRun RunNumber) where
       n <- decodeListLen
       tag <- decodeWord
       case (n, tag) of
-        (7, 0) -> SnapMergingRun <$>
+        (6, 0) -> SnapMergingRun <$>
           decodeVersioned v <*> decodeVersioned v <*> decodeVersioned v <*>
-          decodeVersioned v <*> decodeVersioned v <*> decodeVersioned v
+          decodeVersioned v <*> decodeVersioned v
         (2, 1) -> SnapSingleRun <$> decodeVersioned v
         _ -> fail ("[SnapMergingRun] Unexpected combination of list length and tag: " <> show (n, tag))
 
@@ -510,16 +511,16 @@ instance DecodeVersioned UnspentCredits where
 
 -- MergeKnownCompleted
 
-instance Encode MergeKnownCompleted where
-  encode MergeKnownCompleted = encodeWord 0
-  encode MergeMaybeCompleted = encodeWord 1
+instance Encode MR.MergeKnownCompleted where
+  encode MR.MergeKnownCompleted = encodeWord 0
+  encode MR.MergeMaybeCompleted = encodeWord 1
 
-instance DecodeVersioned MergeKnownCompleted where
+instance DecodeVersioned MR.MergeKnownCompleted where
   decodeVersioned V0 = do
       tag <- decodeWord
       case tag of
-        0 -> pure MergeKnownCompleted
-        1 -> pure MergeMaybeCompleted
+        0 -> pure MR.MergeKnownCompleted
+        1 -> pure MR.MergeMaybeCompleted
         _ -> fail ("[MergeKnownCompleted] Unexpected tag: " <> show tag)
 
 -- SnapMergingRunState
