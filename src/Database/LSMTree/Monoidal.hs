@@ -1,3 +1,5 @@
+{-# LANGUAGE MagicHash #-}
+
 -- | On disk key-value tables, implemented as Log Structured Merge (LSM) trees.
 --
 -- This module is the API for \"monoidal\" tables, as opposed to \"normal\"
@@ -120,11 +122,13 @@ module Database.LSMTree.Monoidal (
 import           Control.DeepSeq
 import           Control.Exception (assert)
 import           Control.Monad ((<$!>))
+import           Control.Monad.Class.MonadThrow
 import           Data.Bifunctor (Bifunctor (..))
 import           Data.Coerce (coerce)
 import           Data.Kind (Type)
 import           Data.Monoid (Sum (..))
 import           Data.Proxy (Proxy (Proxy))
+import           Data.Typeable (Typeable, eqT, type (:~:) (Refl))
 import qualified Data.Vector as V
 import           Database.LSMTree.Common (IOLike, Range (..), SerialiseKey,
                      SerialiseValue (..), Session, SnapshotName, closeSession,
@@ -136,6 +140,7 @@ import           Database.LSMTree.Internal.RawBytes (RawBytes)
 import qualified Database.LSMTree.Internal.Serialise as Internal
 import qualified Database.LSMTree.Internal.Snapshot as Internal
 import qualified Database.LSMTree.Internal.Vector as V
+import           GHC.Exts (Proxy#, proxy#)
 
 -- $resource-management
 -- See "Database.LSMTree.Normal#g:resource"
@@ -668,7 +673,7 @@ union :: forall m k v.
   => Table m k v
   -> Table m k v
   -> m (Table m k v)
-union = error "union: not yet implemented" $ Internal.union @m
+union t1 t2 = unions $ V.fromList [t1, t2]
 
 {-# SPECIALISE unions ::
      V.Vector (Table IO k v)
@@ -685,7 +690,22 @@ unions :: forall m k v.
      IOLike m
   => V.Vector (Table m k v)
   -> m (Table m k v)
-unions = error "unions: not yet implemented" $ Internal.unions @m
+unions ts0
+  | Just (Internal.MonoidalTable (t' :: Internal.Table m h), ts)
+      <- V.uncons ts0
+  = do ts' <- V.imapM (checkTableType (proxy# @h)) ts
+       Internal.MonoidalTable <$> Internal.unions (t' `V.cons` ts')
+  | otherwise = throwIO Internal.ErrUnionsZeroTables
+  where
+    checkTableType ::
+         forall h. Typeable h
+      => Proxy# h
+      -> Int
+      -> Table m k v
+      -> m (Internal.Table m h)
+    checkTableType _ i (Internal.MonoidalTable (t :: Internal.Table m h'))
+      | Just Refl <- eqT @h @h' = pure t
+      | otherwise = throwIO (Internal.ErrUnionsTableTypeMismatch 0 i)
 
 {-------------------------------------------------------------------------------
   Monoidal value resolution

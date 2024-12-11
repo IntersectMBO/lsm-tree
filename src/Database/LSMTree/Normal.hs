@@ -1,3 +1,5 @@
+{-# LANGUAGE MagicHash #-}
+
 -- | On disk key-value tables, implemented as Log Structured Merge (LSM) trees.
 --
 -- This module is the API for \"normal\" tables, as opposed to \"monoidal\"
@@ -116,7 +118,7 @@ import           Control.Monad
 import           Control.Monad.Class.MonadThrow
 import           Data.Bifunctor (Bifunctor (..))
 import           Data.Kind (Type)
-import           Data.Typeable (eqT, type (:~:) (Refl))
+import           Data.Typeable (Typeable, eqT, type (:~:) (Refl))
 import qualified Data.Vector as V
 import           Database.LSMTree.Common (BlobRef (BlobRef), IOLike, Range (..),
                      SerialiseKey, SerialiseValue, Session, SnapshotName,
@@ -129,6 +131,7 @@ import qualified Database.LSMTree.Internal.Entry as Entry
 import qualified Database.LSMTree.Internal.Serialise as Internal
 import qualified Database.LSMTree.Internal.Snapshot as Internal
 import qualified Database.LSMTree.Internal.Vector as V
+import           GHC.Exts (Proxy#, proxy#)
 
 -- $resource-management
 -- Sessions, tables and cursors use resources and as such need to be
@@ -787,7 +790,7 @@ union :: forall m k v b.
   => Table m k v b
   -> Table m k v b
   -> m (Table m k v b)
-union = error "union: not yet implemented" $ Internal.union @m
+union t1 t2 = unions $ V.fromList [t1, t2]
 
 {-# SPECIALISE unions :: V.Vector (Table IO k v b) -> IO (Table IO k v b) #-}
 -- | Like 'union', but for @n@ tables.
@@ -802,4 +805,19 @@ unions :: forall m k v b.
      IOLike m
   => V.Vector (Table m k v b)
   -> m (Table m k v b)
-unions = error "unions: not yet implemented" $ Internal.unions @m
+unions ts0
+  | Just (Internal.NormalTable (t' :: Internal.Table m h), ts)
+      <- V.uncons ts0
+  = do ts' <- V.imapM (checkTableType (proxy# @h)) ts
+       Internal.NormalTable <$> Internal.unions (t' `V.cons` ts')
+  | otherwise = throwIO Internal.ErrUnionsZeroTables
+  where
+    checkTableType ::
+         forall h. Typeable h
+      => Proxy# h
+      -> Int
+      -> Table m k v b
+      -> m (Internal.Table m h)
+    checkTableType _ i (Internal.NormalTable (t :: Internal.Table m h'))
+      | Just Refl <- eqT @h @h' = pure t
+      | otherwise = throwIO (Internal.ErrUnionsTableTypeMismatch 0 i)

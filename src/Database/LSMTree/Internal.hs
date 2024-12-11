@@ -223,6 +223,10 @@ data LSMTreeError =
   | ErrBlobRefInvalid Int
     -- | 'unions' was called on zero tables. Use 'new' instead.
   | ErrUnionsZeroTables
+    -- | 'unions' was called on tables that are not of the same type.
+  | ErrUnionsTableTypeMismatch
+      Int -- ^ Vector index of table @t1@ involved in the mismatch
+      Int -- ^ Vector index of table @t2@ involved in the mismatch
     -- | 'unions' was called on tables that are not in the same session.
   | ErrUnionsSessionMismatch
       Int -- ^ Vector index of table @t1@ involved in the mismatch
