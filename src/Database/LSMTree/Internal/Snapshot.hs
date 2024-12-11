@@ -24,6 +24,7 @@ module Database.LSMTree.Internal.Snapshot (
 
 import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Concurrent.Class.MonadSTM (MonadSTM)
+import           Control.DeepSeq (NFData (..))
 import           Control.Monad (when)
 import           Control.Monad.Class.MonadST (MonadST)
 import           Control.Monad.Class.MonadThrow (MonadMask)
@@ -66,10 +67,16 @@ import           System.FS.BlockIO.API (HasBlockIO)
 -- is opened at the correct key\/value\/blob type.
 newtype SnapshotLabel = SnapshotLabel Text
   deriving stock (Show, Eq)
+  deriving newtype NFData
 
 -- TODO: revisit if we need three table types.
 data SnapshotTableType = SnapNormalTable | SnapMonoidalTable | SnapFullTable
   deriving stock (Show, Eq)
+
+instance NFData SnapshotTableType where
+  rnf SnapNormalTable   = ()
+  rnf SnapMonoidalTable = ()
+  rnf SnapFullTable     = ()
 
 data SnapshotMetaData = SnapshotMetaData {
     -- | See 'SnapshotLabel'.
@@ -94,12 +101,16 @@ data SnapshotMetaData = SnapshotMetaData {
   }
   deriving stock (Show, Eq)
 
+instance NFData SnapshotMetaData where
+  rnf (SnapshotMetaData a b c d) = rnf a `seq` rnf b `seq` rnf c `seq` rnf d
+
 {-------------------------------------------------------------------------------
   Levels snapshot format
 -------------------------------------------------------------------------------}
 
 newtype SnapLevels r = SnapLevels { getSnapLevels :: V.Vector (SnapLevel r) }
   deriving stock (Show, Eq, Functor, Foldable, Traversable)
+  deriving newtype NFData
 
 data SnapLevel r = SnapLevel {
     snapIncoming     :: !(SnapIncomingRun r)
@@ -107,27 +118,41 @@ data SnapLevel r = SnapLevel {
   }
   deriving stock (Show, Eq, Functor, Foldable, Traversable)
 
+instance NFData r => NFData (SnapLevel r) where
+  rnf (SnapLevel a b) = rnf a `seq` rnf b
+
 data SnapIncomingRun r =
     SnapMergingRun !MergePolicyForLevel !NumRuns !NumEntries !UnspentCredits !MergeKnownCompleted !(SnapMergingRunState r)
   | SnapSingleRun !r
   deriving stock (Show, Eq, Functor, Foldable, Traversable)
+
+instance NFData r => NFData (SnapIncomingRun r) where
+  rnf (SnapMergingRun a b c d e f) =
+      rnf a `seq` rnf b `seq` rnf c `seq` rnf d `seq` rnf e `seq` rnf f
+  rnf (SnapSingleRun a) = rnf a
 
 -- | The total number of unspent credits. This total is used in combination with
 -- 'SpentCredits' on snapshot load to restore merging work that was lost when
 -- the snapshot was created.
 newtype UnspentCredits = UnspentCredits { getUnspentCredits :: Int }
   deriving stock (Show, Eq, Read)
+  deriving newtype NFData
 
 data SnapMergingRunState r =
     SnapCompletedMerge !r
   | SnapOngoingMerge !(V.Vector r) !SpentCredits !Merge.Level
   deriving stock (Show, Eq, Functor, Foldable, Traversable)
 
+instance NFData r => NFData (SnapMergingRunState r) where
+  rnf (SnapCompletedMerge a)   = rnf a
+  rnf (SnapOngoingMerge a b c) = rnf a `seq` rnf b `seq` rnf c
+
 -- | The total number of spent credits. This total is used in combination with
 -- 'UnspentCedits' on snapshot load to restore merging work that was lost when
 -- the snapshot was created.
 newtype SpentCredits = SpentCredits { getSpentCredits :: Int }
   deriving stock (Show, Eq, Read)
+  deriving newtype NFData
 
 {-------------------------------------------------------------------------------
   Conversion to levels snapshot format

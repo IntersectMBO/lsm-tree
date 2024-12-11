@@ -15,6 +15,7 @@ module Database.LSMTree.Internal.Merge (
   , steps
   ) where
 
+import           Control.DeepSeq (NFData (..))
 import           Control.Exception (assert)
 import           Control.Monad (when)
 import           Control.Monad.Class.MonadST (MonadST)
@@ -73,6 +74,10 @@ data MergeState =
 
 data Level = MidLevel | LastLevel
   deriving stock (Eq, Show)
+
+instance NFData Level where
+  rnf MidLevel  = ()
+  rnf LastLevel = ()
 
 type Mappend = SerialisedValue -> SerialisedValue -> SerialisedValue
 

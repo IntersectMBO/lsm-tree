@@ -45,6 +45,7 @@ module Database.LSMTree.Internal.MergeSchedule (
   ) where
 
 import           Control.Concurrent.Class.MonadMVar.Strict
+import           Control.DeepSeq (NFData (..))
 import           Control.Monad (void, when, (<$!>))
 import           Control.Monad.Class.MonadST (MonadST)
 import           Control.Monad.Class.MonadSTM (MonadSTM (..))
@@ -399,6 +400,10 @@ duplicateMergingRunRuns reg (DeRef mr) =
 data MergePolicyForLevel = LevelTiering | LevelLevelling
   deriving stock (Show, Eq)
 
+instance NFData MergePolicyForLevel where
+  rnf LevelTiering   = ()
+  rnf LevelLevelling = ()
+
 mergePolicyForLevel :: MergePolicy -> LevelNo -> Levels m h -> MergePolicyForLevel
 mergePolicyForLevel MergePolicyLazyLevelling (LevelNo n) nextLevels
   | n == 1
@@ -409,6 +414,7 @@ mergePolicyForLevel MergePolicyLazyLevelling (LevelNo n) nextLevels
 
 newtype NumRuns = NumRuns { unNumRuns :: Int }
   deriving stock (Show, Eq)
+  deriving newtype NFData
 
 newtype UnspentCreditsVar s = UnspentCreditsVar { getUnspentCreditsVar :: PrimVar s Int }
 
@@ -429,6 +435,10 @@ newtype SpentCreditsVar s = SpentCreditsVar { getSpentCreditsVar :: PrimVar s In
 
 data MergeKnownCompleted = MergeKnownCompleted | MergeMaybeCompleted
   deriving stock (Show, Eq, Read)
+
+instance NFData MergeKnownCompleted where
+  rnf MergeKnownCompleted = ()
+  rnf MergeMaybeCompleted = ()
 
 {-# SPECIALISE duplicateLevels :: TempRegistry IO -> Levels IO h -> IO (Levels IO h) #-}
 duplicateLevels ::

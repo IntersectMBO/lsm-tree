@@ -66,12 +66,12 @@ import qualified System.FS.API as FS
 import           System.FS.API (Handle (..), mkFsPath)
 import qualified System.FS.BlockIO.API as FS
 import           System.FS.BlockIO.API
-import           Test.Database.LSMTree.Generators (deepseqInvariant,
-                     prop_arbitraryAndShrinkPreserveInvariant,
-                     prop_forAllArbitraryAndShrinkPreserveInvariant)
 import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
+import           Test.Util.Arbitrary (deepseqInvariant,
+                     prop_arbitraryAndShrinkPreserveInvariant,
+                     prop_forAllArbitraryAndShrinkPreserveInvariant)
 import           Test.Util.FS (withTempIOHasBlockIO)
 
 tests :: TestTree

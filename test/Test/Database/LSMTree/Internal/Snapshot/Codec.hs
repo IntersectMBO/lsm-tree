@@ -7,10 +7,12 @@ import           Codec.CBOR.Encoding
 import           Codec.CBOR.FlatTerm
 import           Codec.CBOR.Read
 import           Codec.CBOR.Write
+import           Control.DeepSeq (NFData)
 import qualified Data.ByteString.Lazy as BSL
 import           Data.Proxy
 import           Data.Text (Text)
 import qualified Data.Text as Text
+import           Data.Typeable
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.Entry
@@ -21,6 +23,7 @@ import           Database.LSMTree.Internal.Snapshot
 import           Database.LSMTree.Internal.Snapshot.Codec
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
+import           Test.Util.Arbitrary
 
 -- TODO: we should add golden tests for the CBOR encoders. This should prevent
 -- accidental breakage in the format.
@@ -34,45 +37,20 @@ tests = testGroup "Test.Database.LSMTree.Internal.Snapshot.Codec" [
           testProperty "roundtripCBOR" $ roundtripCBOR (Proxy @(Versioned SnapshotMetaData))
         , testProperty "roundtripFlatTerm" $ roundtripFlatTerm (Proxy @(Versioned SnapshotMetaData))
         ]
-    , testGroup "roundtripCBOR'" (propAll roundtripCBOR')
-    , testGroup "roundtripFlatTerm'" (propAll roundtripFlatTerm')
+     , testGroup "roundtripCBOR'" $
+        propAll roundtripCBOR'
+    , testGroup "roundtripFlatTerm'" $
+        propAll roundtripFlatTerm'
+      -- Test generators and shrinkers
+    , testGroup "Generators and shrinkers are finite" $
+        testAll $ \(p :: Proxy a) ->
+          testGroup (show $ typeRep p) $
+            prop_arbitraryAndShrinkPreserveInvariant @a deepseqInvariant
     ]
 
--- | Run a property on all types in the snapshot metadata hierarchy.
-propAll ::
-     (     forall a. (Encode a, DecodeVersioned a, Eq a, Show a)
-        => Proxy a -> a -> Property
-     )
-  -> [TestTree]
-propAll prop = [
-      -- SnapshotMetaData
-      testProperty "SnapshotMetaData" $ prop (Proxy @SnapshotMetaData)
-    , testProperty "SnapshotLabel" $ prop (Proxy @SnapshotLabel)
-    , testProperty "SnapshotTableType" $ prop (Proxy @SnapshotTableType)
-      -- TableConfig
-    , testProperty "TableConfig" $ prop (Proxy @TableConfig)
-    , testProperty "MergePolicy" $ prop (Proxy @MergePolicy)
-    , testProperty "SizeRatio" $ prop (Proxy @SizeRatio)
-    , testProperty "WriteBufferAlloc" $ prop (Proxy @WriteBufferAlloc)
-    , testProperty "NumEntries" $ prop (Proxy @NumEntries)
-    , testProperty "BloomFilterAlloc" $ prop (Proxy @BloomFilterAlloc)
-    , testProperty "FencePointerIndex" $ prop (Proxy @FencePointerIndex)
-    , testProperty "DiskCachePolicy" $ prop (Proxy @DiskCachePolicy)
-    , testProperty "MergeSchedule" $ prop (Proxy @MergeSchedule)
-      -- SnapLevels
-    , testProperty "SnapLevels" $ prop (Proxy @(SnapLevels RunNumber))
-    , testProperty "SnapLevel" $ prop (Proxy @(SnapLevel RunNumber))
-    , testProperty "Vector RunNumber" $ prop (Proxy @(V.Vector RunNumber))
-    , testProperty "RunNumber" $ prop (Proxy @RunNumber)
-    , testProperty "SnapIncomingRun" $ prop (Proxy @(SnapIncomingRun RunNumber))
-    , testProperty "NumRuns" $ prop (Proxy @NumRuns)
-    , testProperty "MergePolicyForLevel" $ prop (Proxy @MergePolicyForLevel)
-    , testProperty "UnspentCredits" $ prop (Proxy @UnspentCredits)
-    , testProperty "MergeKnownCompleted" $ prop (Proxy @MergeKnownCompleted)
-    , testProperty "SnapMergingRunState" $ prop (Proxy @(SnapMergingRunState RunNumber))
-    , testProperty "SpentCredits" $ prop (Proxy @SpentCredits)
-    , testProperty "Merge.Level" $ prop (Proxy @Merge.Level)
-    ]
+{-------------------------------------------------------------------------------
+  Properties
+-------------------------------------------------------------------------------}
 
 -- | @decode . encode = id@
 explicitRoundtripCBOR ::
@@ -147,6 +125,58 @@ roundtripFlatTerm' ::
   -> a
   -> Property
 roundtripFlatTerm' _ = explicitRoundtripFlatTerm encode (decodeVersioned currentSnapshotVersion)
+
+{-------------------------------------------------------------------------------
+  Test and property runners
+-------------------------------------------------------------------------------}
+
+type Constraints a = (
+      Eq a, Show a, Typeable a, Arbitrary a
+    , Encode a, DecodeVersioned a, NFData a
+    )
+
+-- | Run a property on all types in the snapshot metadata hierarchy.
+propAll ::
+     (forall a. Constraints a => Proxy a -> a -> Property)
+  -> [TestTree]
+propAll prop = testAll mkTest
+  where
+    mkTest :: forall a. Constraints a => Proxy a -> TestTree
+    mkTest pa = testProperty (show $ typeRep pa) (prop pa)
+
+-- | Run a test on all types in the snapshot metadata hierarchy.
+testAll ::
+     (forall a. Constraints a => Proxy a -> TestTree)
+  -> [TestTree]
+testAll test = [
+      -- SnapshotMetaData
+      test (Proxy @SnapshotMetaData)
+    , test (Proxy @SnapshotLabel)
+    , test (Proxy @SnapshotTableType)
+      -- TableConfig
+    , test (Proxy @TableConfig)
+    , test (Proxy @MergePolicy)
+    , test (Proxy @SizeRatio)
+    , test (Proxy @WriteBufferAlloc)
+    , test (Proxy @NumEntries)
+    , test (Proxy @BloomFilterAlloc)
+    , test (Proxy @FencePointerIndex)
+    , test (Proxy @DiskCachePolicy)
+    , test (Proxy @MergeSchedule)
+      -- SnapLevels
+    , test (Proxy @(SnapLevels RunNumber))
+    , test (Proxy @(SnapLevel RunNumber))
+    , test (Proxy @(V.Vector RunNumber))
+    , test (Proxy @RunNumber)
+    , test (Proxy @(SnapIncomingRun RunNumber))
+    , test (Proxy @NumRuns)
+    , test (Proxy @MergePolicyForLevel)
+    , test (Proxy @UnspentCredits)
+    , test (Proxy @MergeKnownCompleted)
+    , test (Proxy @(SnapMergingRunState RunNumber))
+    , test (Proxy @SpentCredits)
+    , test (Proxy @Merge.Level)
+    ]
 
 {-------------------------------------------------------------------------------
   Arbitrary: versioning
