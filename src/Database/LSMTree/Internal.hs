@@ -1112,7 +1112,9 @@ createSnapshot resolve snap label tableType t = do
           -- credits as if the buffer was full, and then flush the (possibly)
           -- underfull buffer. However, note that this bit of code
           -- here is probably going to change anyway because of #392
-          supplyCredits conf (Credit $ unNumEntries $ case confWriteBufferAlloc conf of AllocNumEntries x -> x) (tableLevels content)
+          let credits = case confWriteBufferAlloc conf of
+                AllocNumEntries n -> Credits (unNumEntries n)
+          supplyCredits conf credits (tableLevels content)
           content' <- flushWriteBuffer
                 (TraceMerge `contramap` tableTracer t)
                 conf

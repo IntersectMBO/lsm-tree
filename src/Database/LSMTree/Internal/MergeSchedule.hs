@@ -15,14 +15,6 @@ module Database.LSMTree.Internal.MergeSchedule (
   , Levels
   , Level (..)
   , IncomingRun (..)
-  , MergingRun (..)
-  , newMergingRun
-  , NumRuns (..)
-  , UnspentCreditsVar (..)
-  , MergingRunState (..)
-  , TotalStepsVar (..)
-  , SpentCreditsVar (..)
-  , MergeKnownCompleted (..)
     -- * Flushes and scheduled merges
   , updatesWithInterleavedFlushes
   , flushWriteBuffer
@@ -30,11 +22,8 @@ module Database.LSMTree.Internal.MergeSchedule (
   , MergePolicyForLevel (..)
   , maxRunSize
     -- * Credits
-  , Credit (..)
+  , Credits (..)
   , supplyCredits
-  , ScaledCredits (..)
-  , supplyMergeCredits
-  , CreditThreshold (..)
   , creditThresholdForLevel
   ) where
 
@@ -58,7 +47,9 @@ import           Database.LSMTree.Internal.Entry (Entry, NumEntries (..),
 import           Database.LSMTree.Internal.Index.Compact (IndexCompact)
 import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
 import qualified Database.LSMTree.Internal.Merge as Merge
-import           Database.LSMTree.Internal.MergingRun
+import           Database.LSMTree.Internal.MergingRun (MergePolicyForLevel (..),
+                     MergingRun, NumRuns (..))
+import qualified Database.LSMTree.Internal.MergingRun as MR
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..),
                      SessionRoot (..))
 import qualified Database.LSMTree.Internal.Paths as Paths
@@ -190,7 +181,7 @@ mkLevelsCache ::
 mkLevelsCache reg lvls = do
     rs <- foldRunAndMergeM
       (fmap V.singleton . dupRun)
-      (duplicateMergingRunRuns reg)
+      (MR.duplicateRuns reg)
       lvls
     pure $! LevelsCache_ {
         cachedRuns      = rs
@@ -416,7 +407,7 @@ updatesWithInterleavedFlushes tr conf resolve hfs hbio root uc es reg tc = do
     -- number of supplied credits is based on the size increase of the write
     -- buffer, not the the number of processed entries @length es' - length es@.
     let numAdded = unNumEntries (WB.numEntries wb') - unNumEntries (WB.numEntries wb)
-    supplyCredits conf (Credit numAdded) (tableLevels tc)
+    supplyCredits conf (Credits numAdded) (tableLevels tc)
     let tc' = tc { tableWriteBuffer = wb' }
     if WB.numEntries wb' < maxn then do
       pure $! tc'
@@ -662,7 +653,7 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
         ir <- newMerge policyForLevel Merge.LastLevel ln rs
         return $! V.singleton $ Level ir V.empty
     go !ln rs' (V.uncons -> Just (Level ir rs, ls)) = do
-        r <- expectCompletedMergeTraced ln ir
+        r <- expectCompletedMerge ln ir
         case mergePolicyForLevel confMergePolicy ln ls of
           -- If r is still too small for this level then keep it and merge again
           -- with the incoming runs.
@@ -703,10 +694,11 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
             ir' <- newMerge LevelLevelling Merge.LastLevel ln (rs' `V.snoc` r)
             pure $! Level ir' V.empty `V.cons` V.empty
 
-    expectCompletedMergeTraced :: LevelNo -> IncomingRun m h
-                               -> m (Ref (Run m h))
-    expectCompletedMergeTraced ln ir = do
-      r <- expectCompletedMerge reg ir
+    expectCompletedMerge :: LevelNo -> IncomingRun m h -> m (Ref (Run m h))
+    expectCompletedMerge ln ir = do
+      r <- case ir of
+        Single r   -> pure r
+        Merging mr -> MR.expectCompleted reg mr
       traceWith tr $ AtLevel ln $
         TraceExpectCompletedMerge (Run.runFsPathsNumber r)
       pure r
@@ -743,7 +735,7 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
               TraceCompletedMerge (Run.size r)
                                   (Run.runFsPathsNumber r)
             V.mapM_ (freeTemp reg . releaseRef) rs
-            Merging <$!> newMergingRun mergePolicy numInputRuns numInputEntries MergeKnownCompleted (CompletedMerge r)
+            Merging <$!> MR.unsafeNew mergePolicy numInputRuns numInputEntries MR.MergeKnownCompleted (MR.CompletedMerge r)
 
           Incremental -> do
             mergeMaybe <- allocateMaybeTemp reg
@@ -752,8 +744,8 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
             case mergeMaybe of
               Nothing -> error "newMerge: merges can not be empty"
               Just m -> do
-                spentCreditsVar <- SpentCreditsVar <$> newPrimVar 0
-                Merging <$!> newMergingRun mergePolicy numInputRuns numInputEntries MergeMaybeCompleted (OngoingMerge rs spentCreditsVar m)
+                spentCreditsVar <- MR.SpentCreditsVar <$> newPrimVar 0
+                Merging <$!> MR.unsafeNew mergePolicy numInputRuns numInputEntries MR.MergeMaybeCompleted (MR.OngoingMerge rs spentCreditsVar m)
 
 -- $setup
 -- >>> import Database.LSMTree.Internal.Entry
@@ -868,9 +860,12 @@ mergeRuns resolve hfs hbio caching alloc runPaths mergeLevel runs = do
   can contribute to the same merge concurrently.
 -}
 
+-- | Merge credits that get supplied to a table's levels.
+newtype Credits = Credits Int
+
 {-# SPECIALISE supplyCredits ::
      TableConfig
-  -> Credit
+  -> Credits
   -> Levels IO h
   -> IO ()
   #-}
@@ -879,14 +874,17 @@ mergeRuns resolve hfs hbio caching alloc runPaths mergeLevel runs = do
 supplyCredits ::
      (MonadSTM m, MonadST m, MonadMVar m, MonadMask m)
   => TableConfig
-  -> Credit
+  -> Credits
   -> Levels m h
   -> m ()
 supplyCredits conf c levels =
     iforLevelM_ levels $ \ln (Level ir _rs) ->
-      let !c' = scaleCreditsForMerge ir c in
-      let !creditsThresh = creditThresholdForLevel conf ln in
-      supplyMergeCredits c' creditsThresh ir
+      case ir of
+        Single{}   -> pure ()
+        Merging mr -> do
+          let !c' = scaleCreditsForMerge mr c
+          let !thresh = creditThresholdForLevel conf ln
+          MR.supplyCredits c' thresh mr
 
 -- | Scale a number of credits to a number of merge steps to be performed, based
 -- on the merging run.
@@ -894,16 +892,15 @@ supplyCredits conf c levels =
 -- Initially, 1 update supplies 1 credit. However, since merging runs have
 -- different numbers of input runs/entries, we may have to a more or less
 -- merging work than 1 merge step for each credit.
-scaleCreditsForMerge :: IncomingRun m h -> Credit -> ScaledCredits
+scaleCreditsForMerge :: Ref (MergingRun m h) -> Credits -> MR.Credits
 -- A single run is a trivially completed merge, so it requires no credits.
-scaleCreditsForMerge (Single _) _ = ScaledCredits 0
-scaleCreditsForMerge (Merging (DeRef MergingRun {..})) (Credit c) =
-    case mergePolicy of
+scaleCreditsForMerge (DeRef mr) (Credits c) =
+    case MR.mergePolicy mr of
       LevelTiering ->
         -- A tiering merge has 5 runs at most (one could be held back to merged
         -- again) and must be completed before the level is full (once 4 more
         -- runs come in).
-        ScaledCredits (c * (1 + 4))
+        MR.Credits (c * (1 + 4))
       LevelLevelling ->
         -- A levelling merge has 1 input run and one resident run, which is (up
         -- to) 4x bigger than the others. It needs to be completed before
@@ -914,33 +911,13 @@ scaleCreditsForMerge (Merging (DeRef MergingRun {..})) (Credit c) =
         -- worst-case upper bound by looking at the sizes of the input runs.
         -- As as result, merge work would/could be more evenly distributed over
         -- time when the resident run is smaller than the worst case.
-        let NumRuns n = mergeNumRuns
+        let NumRuns n = MR.mergeNumRuns mr
            -- same as division rounding up: ceiling (c * n / 4)
-        in ScaledCredits ((c * n + 3) `div` 4)
-
-{-# SPECIALISE supplyMergeCredits :: ScaledCredits -> CreditThreshold -> IncomingRun IO h -> IO () #-}
--- | Supply the given amount of credits to a merging run. This /may/ cause an
--- ongoing merge to progress.
-supplyMergeCredits ::
-     forall m h. (MonadSTM m, MonadST m, MonadMVar m, MonadMask m)
-  => ScaledCredits
-  -> CreditThreshold
-  -> IncomingRun m h
-  -> m ()
-supplyMergeCredits _ _ Single{} = pure ()
-supplyMergeCredits credits creditsThresh (Merging mr) =
-    supplyCreditsMergingRun credits creditsThresh mr
-
-{-# SPECIALISE expectCompletedMerge :: TempRegistry IO -> IncomingRun IO h -> IO (Ref (Run IO h)) #-}
-expectCompletedMerge ::
-     (MonadMVar m, MonadSTM m, MonadST m, MonadMask m)
-  => TempRegistry m -> IncomingRun m h -> m (Ref (Run m h))
-expectCompletedMerge _   (Single r)   = pure r
-expectCompletedMerge reg (Merging mr) = expectCompletedMergingRun reg mr
+        in MR.Credits ((c * n + 3) `div` 4)
 
 -- TODO: the thresholds for doing merge work should be different for each level,
 -- maybe co-prime?
-creditThresholdForLevel :: TableConfig -> LevelNo -> CreditThreshold
+creditThresholdForLevel :: TableConfig -> LevelNo -> MR.CreditThreshold
 creditThresholdForLevel conf (LevelNo _i) =
     let AllocNumEntries (NumEntries x) = confWriteBufferAlloc conf
-    in  CreditThreshold x
+    in  MR.CreditThreshold x

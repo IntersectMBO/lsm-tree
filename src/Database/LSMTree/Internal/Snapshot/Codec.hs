@@ -33,6 +33,8 @@ import qualified Database.LSMTree.Internal.CRC32C as FS
 import           Database.LSMTree.Internal.Entry
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.MergeSchedule
+import           Database.LSMTree.Internal.MergingRun (NumRuns (..))
+import qualified Database.LSMTree.Internal.MergingRun as MR
 import           Database.LSMTree.Internal.Run (ChecksumError (..),
                      FileFormatError (..))
 import           Database.LSMTree.Internal.RunNumber
@@ -510,16 +512,16 @@ instance DecodeVersioned UnspentCredits where
 
 -- MergeKnownCompleted
 
-instance Encode MergeKnownCompleted where
-  encode MergeKnownCompleted = encodeWord 0
-  encode MergeMaybeCompleted = encodeWord 1
+instance Encode MR.MergeKnownCompleted where
+  encode MR.MergeKnownCompleted = encodeWord 0
+  encode MR.MergeMaybeCompleted = encodeWord 1
 
-instance DecodeVersioned MergeKnownCompleted where
+instance DecodeVersioned MR.MergeKnownCompleted where
   decodeVersioned V0 = do
       tag <- decodeWord
       case tag of
-        0 -> pure MergeKnownCompleted
-        1 -> pure MergeMaybeCompleted
+        0 -> pure MR.MergeKnownCompleted
+        1 -> pure MR.MergeMaybeCompleted
         _ -> fail ("[MergeKnownCompleted] Unexpected tag: " <> show tag)
 
 -- SnapMergingRunState

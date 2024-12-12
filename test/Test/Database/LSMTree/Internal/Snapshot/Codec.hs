@@ -18,6 +18,7 @@ import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.Entry
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.MergeSchedule
+import           Database.LSMTree.Internal.MergingRun
 import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.Snapshot
 import           Database.LSMTree.Internal.Snapshot.Codec
