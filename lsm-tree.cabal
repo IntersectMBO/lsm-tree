@@ -139,6 +139,7 @@ library
     Database.LSMTree.Internal.Lookup
     Database.LSMTree.Internal.Merge
     Database.LSMTree.Internal.MergeSchedule
+    Database.LSMTree.Internal.MergingRun
     Database.LSMTree.Internal.Page
     Database.LSMTree.Internal.PageAcc
     Database.LSMTree.Internal.PageAcc1
