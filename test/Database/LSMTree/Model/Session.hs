@@ -76,7 +76,7 @@ module Database.LSMTree.Model.Session (
   , unions
   ) where
 
-import           Control.Monad (when)
+import           Control.Monad (forM, when)
 import           Control.Monad.Except (ExceptT (..), MonadError (..),
                      runExceptT)
 import           Control.Monad.Identity (Identity (runIdentity))
@@ -84,6 +84,7 @@ import           Control.Monad.State.Strict (MonadState (..), StateT (..), gets,
                      modify)
 import           Data.Data
 import           Data.Dynamic
+import           Data.List.NonEmpty (NonEmpty (..))
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromJust)
@@ -638,14 +639,10 @@ unions ::
      , C k v b
      )
   => ResolveSerialisedValue v
-  -> V.Vector (Table k v b)
+  -> NonEmpty (Table k v b)
   -> m (Table k v b)
-unions r tables
-  | n == 0 = throwError ErrUnionsZeroTables
-  | otherwise = do
-      tables' <- V.forM tables $ \table -> do
-        (_, table') <- guardTableIsOpen table
-        pure table'
-      newTableWith TableConfig $ Model.unions r tables'
-  where
-    n = V.length tables
+unions r tables = do
+    tables' <- forM tables $ \table -> do
+      (_, table') <- guardTableIsOpen table
+      pure table'
+    newTableWith TableConfig $ Model.unions r tables'

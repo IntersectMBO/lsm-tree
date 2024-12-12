@@ -77,6 +77,8 @@ import           Data.Bifunctor (Bifunctor (..))
 import           Data.Constraint (Dict (..))
 import           Data.Either (partitionEithers)
 import           Data.Kind (Type)
+import           Data.List.NonEmpty (NonEmpty (..))
+import qualified Data.List.NonEmpty as NE
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (catMaybes, fromJust, fromMaybe)
@@ -491,7 +493,7 @@ instance ( Show (Class.TableConfig h)
           -> Var h (WrapTable h IO k v b)
           -> Act h (WrapTable h IO k v b)
     Unions :: C k v b
-           => V.Vector (Var h (WrapTable h IO k v b))
+           => NonEmpty (Var h (WrapTable h IO k v b))
            -> Act h (WrapTable h IO k v b)
 
   initialState    = Lockstep.Defaults.initialState initModelState
@@ -687,7 +689,7 @@ instance ( Eq (Class.TableConfig h)
       ListSnapshots                   -> []
       Duplicate tableVar              -> [SomeGVar tableVar]
       Union table1Var table2Var       -> [SomeGVar table1Var, SomeGVar table2Var]
-      Unions tableVars                -> [SomeGVar tableVar | tableVar <- V.toList tableVars]
+      Unions tableVars                -> [SomeGVar tableVar | tableVar <- NE.toList tableVars]
 
   arbitraryWithVars ::
        ModelVarContext (ModelState h)
@@ -978,7 +980,7 @@ runModel lookUp = \case
       . Model.runModelM (Model.union Model.getResolve (getTable $ lookUp table1Var) (getTable $ lookUp table2Var))
     Unions tableVars ->
       wrap MTable
-      . Model.runModelM (Model.unions Model.getResolve (V.map (getTable . lookUp) tableVars))
+      . Model.runModelM (Model.unions Model.getResolve (fmap (getTable . lookUp) tableVars))
   where
     getTable ::
          ModelValue (ModelState h) (WrapTable h IO k v b)
@@ -1058,7 +1060,7 @@ runIO action lookUp = ReaderT $ \(session, handler) -> do
         Union table1Var table2Var -> catchErr handler $
           WrapTable <$> Class.union (unwrapTable $ lookUp' table1Var) (unwrapTable $ lookUp' table2Var)
         Unions tableVars -> catchErr handler $
-          WrapTable <$> Class.unions (V.map (unwrapTable . lookUp') tableVars)
+          WrapTable <$> Class.unions (fmap (unwrapTable . lookUp') tableVars)
 
     lookUp' :: Var h x -> Realized IO x
     lookUp' = lookUpGVar (Proxy @(RealMonad h IO)) lookUp
@@ -1114,7 +1116,7 @@ runIOSim action lookUp = ReaderT $ \(session, handler) ->
         Union table1Var table2Var -> catchErr handler $
           WrapTable <$> Class.union (unwrapTable $ lookUp' table1Var) (unwrapTable $ lookUp' table2Var)
         Unions tableVars -> catchErr handler $
-          WrapTable <$> Class.unions (V.map (unwrapTable . lookUp') tableVars)
+          WrapTable <$> Class.unions (fmap (unwrapTable . lookUp') tableVars)
 
     lookUp' :: Var h x -> Realized (IOSim s) x
     lookUp' = lookUpGVar (Proxy @(RealMonad h (IOSim s))) lookUp
@@ -1324,12 +1326,12 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
     -- Unit tests for 0-way and 1-way unions are included in the UnitTests
     -- module. n-way unions for n>3 lead to larger unions, which are less likely
     -- to be finished before the end of an action sequence.
-    genUnionsTableVars :: Gen (V.Vector (Var h (WrapTable h IO k v b)))
+    genUnionsTableVars :: Gen (NonEmpty (Var h (WrapTable h IO k v b)))
     genUnionsTableVars = do
         tableVar1 <- genTableVar
         tableVar2 <- genTableVar
         mtableVar3 <- QC.liftArbitrary genTableVar
-        pure $ V.fromList $ catMaybes [
+        pure $ NE.fromList $ catMaybes [
             Just tableVar1, Just tableVar2, mtableVar3
           ]
 

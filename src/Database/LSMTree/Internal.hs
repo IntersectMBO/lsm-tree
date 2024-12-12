@@ -77,7 +77,7 @@ import           Control.Concurrent.Class.MonadSTM (MonadSTM (..))
 import           Control.Concurrent.Class.MonadSTM.RWVar (RWVar)
 import qualified Control.Concurrent.Class.MonadSTM.RWVar as RW
 import           Control.DeepSeq
-import           Control.Monad (unless)
+import           Control.Monad (forM, unless, zipWithM_)
 import           Control.Monad.Class.MonadST (MonadST (..))
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Primitive
@@ -88,6 +88,8 @@ import           Data.Arena (ArenaManager, newArenaManager)
 import           Data.Foldable
 import           Data.Functor.Compose (Compose (..))
 import           Data.Kind
+import           Data.List.NonEmpty (NonEmpty (..))
+import qualified Data.List.NonEmpty as NE
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (catMaybes)
@@ -221,8 +223,6 @@ data LSMTreeError =
     -- The 'Int' index indicates which 'BlobRef' was invalid. Many may be
     -- invalid but only the first is reported.
   | ErrBlobRefInvalid Int
-    -- | 'unions' was called on zero tables. Use 'new' instead.
-  | ErrUnionsZeroTables
     -- | 'unions' was called on tables that are not of the same type.
   | ErrUnionsTableTypeMismatch
       Int -- ^ Vector index of table @t1@ involved in the mismatch
@@ -1322,118 +1322,110 @@ union ::
   => Table m h
   -> Table m h
   -> m (Table m h)
-union t1 t2 = unions $ V.fromList [t1, t2]
+union t1 t2 = unions $ t1 :| [t2]
 
-{-# SPECIALISE unions :: V.Vector (Table IO h) -> IO (Table IO h) #-}
+{-# SPECIALISE unions :: NonEmpty (Table IO h) -> IO (Table IO h) #-}
 -- | See 'Database.LSMTree.Normal.unions'.
 unions ::
      (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
-  => V.Vector (Table m h)
+  => NonEmpty (Table m h)
   -> m (Table m h)
-unions ts
-  | n == 0 = throwIO ErrUnionsZeroTables
-  | otherwise = do
-      conf <-
-        case vmatch (V.map tableConfig ts) of
-          Left (i, j) -> throwIO $ ErrUnionsTableConfigMismatch i j
-          Right conf  -> pure conf
+unions ts = do
+    sesh <-
+      matchSessions ts >>= \case
+        Left (i, j) -> throwIO $ ErrUnionsSessionMismatch i j
+        Right sesh  -> pure sesh
 
-      sesh <-
-        vmatchSessions ts >>= \case
-          Left (i, j) -> throwIO $ ErrUnionsSessionMismatch i j
-          Right sesh -> pure sesh
+    traceWith (sessionTracer sesh) $ TraceUnions n
 
-      traceWith (sessionTracer sesh) $ TraceUnions n
+    -- TODO: Do we really need the configs to match exactly? It's okay as a
+    -- requirement for now, but we might want to revisit it. Some settings don't
+    -- really need to match for things to work, but of course we'd still need to
+    -- answer the question of which config to use for the new table, possibly
+    -- requiring to supply it manually? Or, we could generalise the exact match
+    -- to have a config compatibility test and config merge?
+    conf <-
+      case match (fmap tableConfig ts) of
+        Left (i, j) -> throwIO $ ErrUnionsTableConfigMismatch i j
+        Right conf  -> pure conf
 
-      -- We acquire a read-lock on the session open-state to prevent races, see
-      -- 'sessionOpenTables'.
-      modifyWithTempRegistry
-        (atomically $ RW.unsafeAcquireReadAccess (sessionState sesh))
-        (\_ -> atomically $ RW.unsafeReleaseReadAccess (sessionState sesh)) $ \reg -> \case
-          SessionClosed -> throwIO ErrSessionClosed
-          seshState@(SessionOpen seshEnv) -> do
-            contents <-
-              V.forM ts $ \t -> do
-                withOpenTable t $ \tEnv ->
-                  -- The table contents escape the read access, but we just added references
-                  -- to each run so it is safe.
-                  RW.withReadAccess (tableContent tEnv) (duplicateTableContent reg)
+    -- We acquire a read-lock on the session open-state to prevent races, see
+    -- 'sessionOpenTables'.
+    modifyWithTempRegistry
+      (atomically $ RW.unsafeAcquireReadAccess (sessionState sesh))
+      (\_ -> atomically $ RW.unsafeReleaseReadAccess (sessionState sesh)) $ \reg -> \case
+        SessionClosed -> throwIO ErrSessionClosed
+        seshState@(SessionOpen seshEnv) -> do
+          contents <-
+            forM ts $ \t -> do
+              withOpenTable t $ \tEnv ->
+                -- The table contents escape the read access, but we just added references
+                -- to each run so it is safe.
+                RW.withReadAccess (tableContent tEnv) (duplicateTableContent reg)
 
-            content <-
-              error "unions: combine contents into merging tree" $ -- TODO
-                contents
+          content <-
+            error "unions: combine contents into merging tree" $ -- TODO
+              contents
 
-            t <-
-              newWith
-                reg
-                sesh
-                seshEnv
-                conf
-                (error "unions: ArenaManager") -- TODO
-                content
+          t <-
+            newWith
+              reg
+              sesh
+              seshEnv
+              conf
+              (error "unions: ArenaManager") -- TODO
+              content
 
-            pure (seshState, t)
+          pure (seshState, t)
   where
-    n = V.length ts
+    n = NE.length ts
 
--- | Like 'vmatchBy', but the match function is @(==)@.
-vmatch :: Eq a => V.Vector a -> Either (Int, Int) a
-vmatch = vmatchBy (==)
+-- | Like 'matchBy', but the match function is @(==)@.
+match :: Eq a => NonEmpty a -> Either (Int, Int) a
+match = matchBy (==)
 
--- | Check that all values in the vector match. If so, return the matched value.
--- If there is a mismatch, return the vector indices of the mismatching values.
---
--- Assumes the input vector is non-empty.
-vmatchBy :: (a -> a -> Bool) -> V.Vector a -> Either (Int, Int) a
-vmatchBy eq xs0 =
-    case V.uncons xs0 of
-      Nothing ->
-        error "vmatch: empty vector "
-      Just (x, xs) ->
-        case V.iforM_ xs $ vmatchOne x of
-          Left i   -> Left (0, i)
-          Right () -> Right x
+-- | Check that all values in the list match. If so, return the matched value.
+-- If there is a mismatch, return the list indices of the mismatching values.
+matchBy :: forall a. (a -> a -> Bool) -> NonEmpty a -> Either (Int, Int) a
+matchBy eq (x0 :| xs) =
+    case zipWithM_ (matchOne x0) [1..] xs of
+      Left i   -> Left (0, i)
+      Right () -> Right x0
   where
-    vmatchOne x i y =
+    matchOne :: a -> Int -> a -> Either Int ()
+    matchOne x i y =
       if (x `eq` y)
         then Left i
         else Right ()
 
 -- | Check that all tables in the session match. If so, return the matched
--- session. If there is a mismatch, return the vector indices of the mismatching
+-- session. If there is a mismatch, return the list indices of the mismatching
 -- tables.
---
--- Assumes the input vector is non-empty.
 --
 -- TODO: compare LockFileHandle instead of SessionRoot (?). We can write an Eq
 -- instance for LockFileHandle based on pointer equality, just like base does
 -- for Handle.
-vmatchSessions ::
+matchSessions ::
      (MonadSTM m, MonadThrow m)
-  => V.Vector (Table m h)
+  => NonEmpty (Table m h)
   -> m (Either (Int, Int) (Session m h))
-vmatchSessions ts0
-  | Just (t, ts) <- V.uncons ts0
-  = withSessionRoot t $ \root -> do
+matchSessions = \(t :| ts) ->
+    withSessionRoot t $ \root -> do
       eith <- go root 1 ts
       pure $ case eith of
         Left i   -> Left (0, i)
         Right () -> Right (tableSession t)
-  | otherwise
-  = error "vmatchSessions: empty vector"
   where
     -- Check that the session roots for all tables are the same. There can only
     -- be one *open/active* session per directory because of cooperative file
     -- locks, so each unique *open* session has a unique session root. We check
     -- that all the table's sessions are open at the same time while comparing
     -- the session roots.
-    go root !i ts
-      | Just (t', ts') <- V.uncons ts
-      = withSessionRoot t' $ \root' ->
+    go _ _ [] = pure (Right ())
+    go root !i (t':ts') =
+        withSessionRoot t' $ \root' ->
           if root == root'
             then go root (i+1) ts'
             else pure (Left i)
-      | otherwise
-      = pure (Right ())
 
     withSessionRoot t k =  withOpenSession (tableSession t) $ k . sessionRoot

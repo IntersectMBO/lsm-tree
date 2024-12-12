@@ -107,6 +107,7 @@ import           Control.Monad.Class.MonadThrow
 import           Data.Bifunctor (Bifunctor (..))
 import           Data.Coerce (coerce)
 import           Data.Kind (Type)
+import           Data.List.NonEmpty (NonEmpty (..))
 import           Data.Typeable (Proxy (..), Typeable, eqT, type (:~:) (Refl))
 import qualified Data.Vector as V
 import           Database.LSMTree.Common (BlobRef (BlobRef), IOLike, Range (..),
@@ -529,21 +530,20 @@ union :: forall m k v b.
   => Table m k v b
   -> Table m k v b
   -> m (Table m k v b)
-union t1 t2 = unions $ V.fromList [t1, t2]
+union t1 t2 = unions $ t1 :| [t2]
 
 {-# SPECIALISE unions ::
-     V.Vector (Table IO k v b)
+     NonEmpty (Table IO k v b)
   -> IO (Table IO k v b) #-}
 unions :: forall m k v b.
      IOLike m
-  => V.Vector (Table m k v b)
+  => NonEmpty (Table m k v b)
   -> m (Table m k v b)
-unions ts0
-  | Just (Internal.Table' (t' :: Internal.Table m h), ts)
-      <- V.uncons ts0
-  = do ts' <- V.imapM (checkTableType (proxy# @h)) ts
-       Internal.Table' <$> Internal.unions (t' `V.cons` ts')
-  | otherwise = throwIO Internal.ErrUnionsZeroTables
+unions (t :| ts) =
+    case t of
+      Internal.Table' (t' :: Internal.Table m h) -> do
+        ts' <- zipWithM (checkTableType (proxy# @h)) [1..] ts
+        Internal.Table' <$> Internal.unions (t' :| ts')
   where
     checkTableType ::
          forall h. Typeable h
@@ -551,8 +551,8 @@ unions ts0
       -> Int
       -> Table m k v b
       -> m (Internal.Table m h)
-    checkTableType _ i (Internal.Table' (t :: Internal.Table m h'))
-      | Just Refl <- eqT @h @h' = pure t
+    checkTableType _ i (Internal.Table' (t' :: Internal.Table m h'))
+      | Just Refl <- eqT @h @h' = pure t'
       | otherwise = throwIO (Internal.ErrUnionsTableTypeMismatch 0 i)
 
 {-------------------------------------------------------------------------------

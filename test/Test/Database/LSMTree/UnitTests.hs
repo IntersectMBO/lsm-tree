@@ -5,10 +5,10 @@
 
 module Test.Database.LSMTree.UnitTests (tests) where
 
-import           Control.Monad (void)
 import           Control.Tracer (nullTracer)
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS
+import           Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.Map as Map
 import qualified Data.Vector as V
 import           Data.Word
@@ -36,7 +36,6 @@ tests =
 
         -- Properties
 
-      , testProperty "prop_unions_0" $ prop_unions_0
       , testProperty "prop_unions_1" $
           -- TODO: enable once unions are implemented
           QC.expectFailure prop_unions_1
@@ -155,13 +154,6 @@ unit_snapshots =
     snap1 = "table1"
     snap2 = "table2"
 
--- | Unions of 0 tables fail with an exception
-prop_unions_0 :: Property
-prop_unions_0 =
-    QC.once $ QC.ioProperty $
-    assertException ErrUnionsZeroTables $
-      void $ unions @_ @Key1 @Value1 @Blob1 V.empty
-
 -- | Unions of 1 table are equivalent to duplicate
 prop_unions_1 :: Property
 prop_unions_1 =
@@ -171,7 +163,7 @@ prop_unions_1 =
     withTable @_ @Key1 @Value1 @Blob1 sess defaultTableConfig $ \table -> do
       inserts table [(Key1 17, Value1 42, Nothing)]
 
-      bracket (unions $ V.singleton table) close $ \table' ->
+      bracket (unions $ table :| []) close $ \table' ->
         bracket (duplicate table) close $ \table'' -> do
           inserts table [(Key1 17, Value1 43, Nothing)]
           inserts table [(Key1 17, Value1 44, Nothing)]

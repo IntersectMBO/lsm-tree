@@ -121,11 +121,12 @@ module Database.LSMTree.Monoidal (
 
 import           Control.DeepSeq
 import           Control.Exception (assert)
-import           Control.Monad ((<$!>))
+import           Control.Monad (zipWithM, (<$!>))
 import           Control.Monad.Class.MonadThrow
 import           Data.Bifunctor (Bifunctor (..))
 import           Data.Coerce (coerce)
 import           Data.Kind (Type)
+import           Data.List.NonEmpty (NonEmpty (..))
 import           Data.Monoid (Sum (..))
 import           Data.Proxy (Proxy (Proxy))
 import           Data.Typeable (Typeable, eqT, type (:~:) (Refl))
@@ -673,29 +674,24 @@ union :: forall m k v.
   => Table m k v
   -> Table m k v
   -> m (Table m k v)
-union t1 t2 = unions $ V.fromList [t1, t2]
+union t1 t2 = unions $ t1 :| [t2]
 
 {-# SPECIALISE unions ::
-     V.Vector (Table IO k v)
+     NonEmpty (Table IO k v)
   -> IO (Table IO k v) #-}
 -- | Like 'union', but for @n@ tables.
 --
 -- A good mental model of this operation is @'Data.Map.Lazy.unionsWith' (<>)@ on
 -- @'Data.Map.Lazy.Map' k v@.
---
--- Exceptions:
---
--- * Unioning 0 tables is an exception.
 unions :: forall m k v.
      IOLike m
-  => V.Vector (Table m k v)
+  => NonEmpty (Table m k v)
   -> m (Table m k v)
-unions ts0
-  | Just (Internal.MonoidalTable (t' :: Internal.Table m h), ts)
-      <- V.uncons ts0
-  = do ts' <- V.imapM (checkTableType (proxy# @h)) ts
-       Internal.MonoidalTable <$> Internal.unions (t' `V.cons` ts')
-  | otherwise = throwIO Internal.ErrUnionsZeroTables
+unions (t :| ts) =
+    case t of
+      Internal.MonoidalTable (t' :: Internal.Table m h) -> do
+        ts' <- zipWithM (checkTableType (proxy# @h)) [1..] ts
+        Internal.MonoidalTable <$> Internal.unions (t' :| ts')
   where
     checkTableType ::
          forall h. Typeable h
@@ -703,8 +699,8 @@ unions ts0
       -> Int
       -> Table m k v
       -> m (Internal.Table m h)
-    checkTableType _ i (Internal.MonoidalTable (t :: Internal.Table m h'))
-      | Just Refl <- eqT @h @h' = pure t
+    checkTableType _ i (Internal.MonoidalTable (t' :: Internal.Table m h'))
+      | Just Refl <- eqT @h @h' = pure t'
       | otherwise = throwIO (Internal.ErrUnionsTableTypeMismatch 0 i)
 
 {-------------------------------------------------------------------------------
