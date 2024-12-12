@@ -5,7 +5,8 @@
 -- | An incremental merge of multiple runs.
 module Database.LSMTree.Internal.MergingRun (
     MergingRun (..)
-  , unsafeNew
+  , new
+  , newCompleted
   , duplicateRuns
   , supplyCredits
   , expectCompleted
@@ -32,14 +33,21 @@ import           Control.Monad.Class.MonadThrow (MonadCatch (bracketOnError),
 import           Control.Monad.Primitive
 import           Control.RefCount
 import           Control.TempRegistry
+import           Data.Maybe (fromMaybe)
 import           Data.Primitive.MutVar
 import           Data.Primitive.PrimVar
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Assertions (assert)
 import           Database.LSMTree.Internal.Entry (NumEntries (..), unNumEntries)
+import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
 import           Database.LSMTree.Internal.Merge (Merge, StepResult (..))
 import qualified Database.LSMTree.Internal.Merge as Merge
+import           Database.LSMTree.Internal.Paths (RunFsPaths (..))
 import           Database.LSMTree.Internal.Run (Run)
+import qualified Database.LSMTree.Internal.Run as Run
+import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc)
+import           System.FS.API (HasFS)
+import           System.FS.BlockIO.API (HasBlockIO)
 
 data MergingRun m h = MergingRun {
       mergePolicy         :: !MergePolicyForLevel
@@ -103,16 +111,65 @@ instance NFData MergeKnownCompleted where
   rnf MergeKnownCompleted = ()
   rnf MergeMaybeCompleted = ()
 
-{-# SPECIALISE unsafeNew ::
+{-# SPECIALISE new ::
+     HasFS IO h
+  -> HasBlockIO IO h
+  -> ResolveSerialisedValue
+  -> Run.RunDataCaching
+  -> RunBloomFilterAlloc
+  -> Merge.Level
+  -> MergePolicyForLevel
+  -> RunFsPaths
+  -> V.Vector (Ref (Run IO h))
+  -> IO (Ref (MergingRun IO h)) #-}
+-- | Create a new merging run, returning a reference to it that must ultimately
+-- be released via 'releaseRef'.
+--
+-- Takes over ownership of the references to the runs passed.
+--
+-- This function should be run with asynchronous exceptions masked to prevent
+-- failing after internal resources have already been created.
+new ::
+     (MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
+  => HasFS m h
+  -> HasBlockIO m h
+  -> ResolveSerialisedValue
+  -> Run.RunDataCaching
+  -> RunBloomFilterAlloc
+  -> Merge.Level
+  -> MergePolicyForLevel
+  -> RunFsPaths
+  -> V.Vector (Ref (Run m h))
+  -> m (Ref (MergingRun m h))
+new hfs hbio resolve caching alloc mergeLevel mergePolicy runPaths runs = do
+    merge <- fromMaybe (error "newMerge: merges can not be empty")
+      <$> Merge.new hfs hbio caching alloc mergeLevel resolve runPaths runs
+    let numInputRuns = NumRuns $ V.length runs
+    let numInputEntries = V.foldMap' Run.size runs
+    spentCreditsVar <- SpentCreditsVar <$> newPrimVar 0
+    unsafeNew mergePolicy numInputRuns numInputEntries MergeMaybeCompleted $
+      OngoingMerge runs spentCreditsVar merge
+
+{-# SPECIALISE newCompleted ::
      MergePolicyForLevel
   -> NumRuns
   -> NumEntries
-  -> MergeKnownCompleted
-  -> MergingRunState IO h
+  -> Ref (Run IO h)
   -> IO (Ref (MergingRun IO h)) #-}
--- | This allows constructing ill-formed MergingRuns, but the flexibility is
--- needed for creating a merging run that is already Completed, as well as
--- opening a merging run from a snapshot.
+-- | Create a merging run that is already in the completed state, returning a
+-- reference that must ultimately be released via 'releaseRef'.
+newCompleted ::
+     (MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
+  => MergePolicyForLevel
+  -> NumRuns
+  -> NumEntries
+  -> Ref (Run m h)
+  -> m (Ref (MergingRun m h))
+newCompleted mergePolicy numInputRuns numInputEntries run = do
+    unsafeNew mergePolicy numInputRuns numInputEntries MergeKnownCompleted $
+      CompletedMerge run
+
+{-# INLINE unsafeNew #-}
 unsafeNew ::
      (MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
   => MergePolicyForLevel
@@ -150,20 +207,18 @@ unsafeNew mergePolicy mergeNumRuns mergeNumEntries knownCompleted state = do
 
 -- | Create references to the runs that should be queried for lookups.
 -- In particular, if the merge is not complete, these are the input runs.
-{-# SPECIALISE duplicateRuns :: TempRegistry IO -> Ref (MergingRun IO h) -> IO (V.Vector (Ref (Run IO h))) #-}
+{-# SPECIALISE duplicateRuns :: Ref (MergingRun IO h) -> IO (V.Vector (Ref (Run IO h))) #-}
 duplicateRuns ::
      (PrimMonad m, MonadMVar m, MonadMask m)
-  => TempRegistry m
-  -> Ref (MergingRun m h)
+  => Ref (MergingRun m h)
   -> m (V.Vector (Ref (Run m h)))
-duplicateRuns reg (DeRef mr) =
+duplicateRuns (DeRef mr) =
     -- We take the references while holding the MVar to make sure the MergingRun
     -- does not get completed concurrently before we are done.
     withMVar (mergeState mr) $ \case
-      CompletedMerge r    -> V.singleton <$> dupRun r
-      OngoingMerge rs _ _ -> V.mapM dupRun rs
-  where
-    dupRun r = allocateTemp reg (dupRef r) releaseRef
+      CompletedMerge r    -> V.singleton <$> dupRef r
+      OngoingMerge rs _ _ -> withTempRegistry $ \reg ->
+        V.mapM (\r -> allocateTemp reg (dupRef r) releaseRef) rs
 
 {-------------------------------------------------------------------------------
   Credits
@@ -331,19 +386,19 @@ tryTakeUnspentCredits ::
 tryTakeUnspentCredits
     unspentCreditsVar@(UnspentCreditsVar !var)
     thresh@(CreditThreshold !creditsThresh)
-    (Credits !prev)
-  | prev < creditsThresh = pure Nothing
+    (Credits !before)
+  | before < creditsThresh = pure Nothing
   | otherwise = do
       -- numThresholds is guaranteed to be >= 1
-      let !numThresholds = prev `div` creditsThresh
+      let !numThresholds = before `div` creditsThresh
           !creditsToTake = numThresholds * creditsThresh
-          !new = prev - creditsToTake
-      assert (new < creditsThresh) $ pure ()
-      prev' <- casInt var prev new
-      if prev' == prev then
+          !after = before - creditsToTake
+      assert (after < creditsThresh) $ pure ()
+      before' <- casInt var before after
+      if before' == before then
         pure (Just (Credits creditsToTake))
       else
-        tryTakeUnspentCredits unspentCreditsVar thresh (Credits prev')
+        tryTakeUnspentCredits unspentCreditsVar thresh (Credits before')
 
 {-# SPECIALISE putBackUnspentCredits ::
      UnspentCreditsVar RealWorld
@@ -446,13 +501,14 @@ completeMerge mergeVar mergeKnownCompletedVar = do
         pure $! CompletedMerge r
 
 {-# SPECIALISE expectCompleted ::
-     TempRegistry IO
-  -> Ref (MergingRun IO h)
+     Ref (MergingRun IO h)
   -> IO (Ref (Run IO h)) #-}
+-- | This does /not/ release the reference, but allocates a new reference for
+-- the returned run, which must be released at some point.
 expectCompleted ::
      (MonadMVar m, MonadSTM m, MonadST m, MonadMask m)
-  => TempRegistry m -> Ref (MergingRun m h) -> m (Ref (Run m h))
-expectCompleted reg mr@(DeRef MergingRun {..}) = do
+  => Ref (MergingRun m h) -> m (Ref (Run m h))
+expectCompleted (DeRef MergingRun {..}) = do
     knownCompleted <- readMutVar mergeKnownCompleted
     -- The merge is not guaranteed to be complete, so we do the remaining steps
     when (knownCompleted == MergeMaybeCompleted) $ do
@@ -462,13 +518,9 @@ expectCompleted reg mr@(DeRef MergingRun {..}) = do
       when isMergeDone $ completeMerge mergeState mergeKnownCompleted
       -- TODO: can we think of a check to see if we did not do too much work
       -- here?
-    r <- withMVar mergeState $ \case
-      CompletedMerge r -> pure r
+    withMVar mergeState $ \case
+      CompletedMerge r -> dupRef r  -- return a fresh reference to the run
       OngoingMerge{} -> do
         -- If the algorithm finds an ongoing merge here, then it is a bug in
         -- our merge sceduling algorithm. As such, we throw a pure error.
         error "expectCompleted: expected a completed merge, but found an ongoing merge"
-    -- return a fresh reference to the run
-    r' <- allocateTemp reg (dupRef r) releaseRef
-    freeTemp reg (releaseRef mr)
-    pure r'

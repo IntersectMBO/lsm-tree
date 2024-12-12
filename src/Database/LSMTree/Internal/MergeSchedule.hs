@@ -28,7 +28,6 @@ module Database.LSMTree.Internal.MergeSchedule (
   ) where
 
 import           Control.Concurrent.Class.MonadMVar.Strict
-import           Control.Monad ((<$!>))
 import           Control.Monad.Class.MonadST (MonadST)
 import           Control.Monad.Class.MonadSTM (MonadSTM (..))
 import           Control.Monad.Class.MonadThrow (MonadMask, MonadThrow (..))
@@ -38,7 +37,6 @@ import           Control.TempRegistry
 import           Control.Tracer
 import           Data.BloomFilter (Bloom)
 import           Data.Foldable (fold)
-import           Data.Primitive.PrimVar
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Assertions (assert)
 import           Database.LSMTree.Internal.Config
@@ -93,9 +91,10 @@ data MergeTrace =
       RunBloomFilterAlloc
       MergePolicyForLevel
       Merge.Level
-  | TraceCompletedMerge
+  | TraceCompletedMerge  -- TODO: currently not traced for Incremental merges
       NumEntries -- ^ Size of output run
       RunNumber
+    -- | This is traced at the latest point the merge could complete.
   | TraceExpectCompletedMerge
       RunNumber
   | TraceNewMergeSingleRun
@@ -181,7 +180,7 @@ mkLevelsCache ::
 mkLevelsCache reg lvls = do
     rs <- foldRunAndMergeM
       (fmap V.singleton . dupRun)
-      (MR.duplicateRuns reg)
+      (\mr -> allocateTemp reg (MR.duplicateRuns mr) (V.mapM_ releaseRef))
       lvls
     pure $! LevelsCache_ {
         cachedRuns      = rs
@@ -698,18 +697,21 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
     expectCompletedMerge ln ir = do
       r <- case ir of
         Single r   -> pure r
-        Merging mr -> MR.expectCompleted reg mr
+        Merging mr -> do
+          r <- allocateTemp reg (MR.expectCompleted mr) releaseRef
+          freeTemp reg (releaseRef mr)
+          pure r
       traceWith tr $ AtLevel ln $
         TraceExpectCompletedMerge (Run.runFsPathsNumber r)
       pure r
 
-    -- TODO: refactor, pull to top level?
+    -- Takes ownership of the runs passed.
     newMerge :: MergePolicyForLevel
              -> Merge.Level
              -> LevelNo
              -> V.Vector (Ref (Run m h))
              -> m (IncomingRun m h)
-    newMerge mergePolicy mergelast ln rs
+    newMerge mergePolicy mergeLevel ln rs
       | Just (r, rest) <- V.uncons rs
       , V.null rest = do
           traceWith tr $ AtLevel ln $
@@ -723,29 +725,33 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
             !alloc = bloomFilterAllocForLevel conf ln
             !runPaths = Paths.runPath root (uniqueToRunNumber n)
         traceWith tr $ AtLevel ln $
-          TraceNewMerge (V.map Run.size rs) (runNumber runPaths) caching alloc mergePolicy mergelast
-        let numInputRuns = NumRuns $ V.length rs
-        let numInputEntries = V.foldMap' Run.size rs
+          TraceNewMerge (V.map Run.size rs) (runNumber runPaths) caching alloc mergePolicy mergeLevel
+        -- TODO: There currently is a resource management bug that happens if an
+        -- exception occurs after calling MR.new. In this case, all changes roll
+        -- back, so some of the runs in rs will live in the Levels structure at
+        -- their original places again. However, we passed their references to
+        -- the MergingRun, which gets aborted, releasing the run references.
+        -- Instead of passing the original references into newMerge, we have to
+        -- duplicate the ones that previously existed in the level and then
+        -- freeTemp the original ones. This way, on the happy path the result is
+        -- the same, but if an exception occurs, the original references do not
+        -- get released.
+        mr <- allocateTemp reg
+          (MR.new hfs hbio resolve caching alloc mergeLevel mergePolicy runPaths rs)
+          releaseRef
         case confMergeSchedule of
+          Incremental -> pure ()
           OneShot -> do
-            r <- allocateTemp reg
-                  (mergeRuns resolve hfs hbio caching alloc runPaths mergelast rs)
-                  releaseRef
-            traceWith tr $ AtLevel ln $
-              TraceCompletedMerge (Run.size r)
-                                  (Run.runFsPathsNumber r)
-            V.mapM_ (freeTemp reg . releaseRef) rs
-            Merging <$!> MR.unsafeNew mergePolicy numInputRuns numInputEntries MR.MergeKnownCompleted (MR.CompletedMerge r)
+            let !required = MR.Credits (unNumEntries (V.foldMap' Run.size rs))
+            let !thresh = creditThresholdForLevel conf ln
+            MR.supplyCredits required thresh mr
+            -- This ensures the merge is really completed. However, we don't
+            -- release the merge yet and only briefly inspect the resulting run.
+            bracket (MR.expectCompleted mr) releaseRef $ \r ->
+              traceWith tr $ AtLevel ln $
+                TraceCompletedMerge (Run.size r) (Run.runFsPathsNumber r)
 
-          Incremental -> do
-            mergeMaybe <- allocateMaybeTemp reg
-              (Merge.new hfs hbio caching alloc mergelast resolve runPaths rs)
-              Merge.abort
-            case mergeMaybe of
-              Nothing -> error "newMerge: merges can not be empty"
-              Just m -> do
-                spentCreditsVar <- MR.SpentCreditsVar <$> newPrimVar 0
-                Merging <$!> MR.unsafeNew mergePolicy numInputRuns numInputEntries MR.MergeMaybeCompleted (MR.OngoingMerge rs spentCreditsVar m)
+        return (Merging mr)
 
 -- $setup
 -- >>> import Database.LSMTree.Internal.Entry
@@ -794,23 +800,6 @@ mergeLastForLevel levels
 
 levelIsFull :: SizeRatio -> V.Vector run -> Bool
 levelIsFull sr rs = V.length rs + 1 >= (sizeRatioInt sr)
-
-{-# SPECIALISE mergeRuns :: ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> RunDataCaching -> RunBloomFilterAlloc -> RunFsPaths -> Merge.Level -> V.Vector (Ref (Run IO h)) -> IO (Ref (Run IO h)) #-}
-mergeRuns ::
-     (MonadMask m, MonadST m, MonadSTM m)
-  => ResolveSerialisedValue
-  -> HasFS m h
-  -> HasBlockIO m h
-  -> RunDataCaching
-  -> RunBloomFilterAlloc
-  -> RunFsPaths
-  -> Merge.Level
-  -> V.Vector (Ref (Run m h))
-  -> m (Ref (Run m h))
-mergeRuns resolve hfs hbio caching alloc runPaths mergeLevel runs = do
-    Merge.new hfs hbio caching alloc mergeLevel resolve runPaths runs >>= \case
-      Nothing -> error "mergeRuns: no inputs"
-      Just m -> Merge.stepsToCompletion m 1024
 
 {-------------------------------------------------------------------------------
   Credits
