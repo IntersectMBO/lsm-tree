@@ -156,7 +156,8 @@ data MergePolicy =
 {- TODO: disabled for now
   | MergePolicyLevelling
 -}
-  deriving stock (Show, Eq)
+  -- @Bounded@ and @Enum@ instances are required for test-case enumeration.
+  deriving stock (Bounded, Enum, Eq, Show)
 
 instance NFData MergePolicy where
   rnf MergePolicyLazyLevelling = ()
@@ -166,7 +167,8 @@ instance NFData MergePolicy where
 -------------------------------------------------------------------------------}
 
 data SizeRatio = Four
-  deriving stock (Show, Eq)
+  -- @Bounded@ and @Enum@ instances are required for test-case enumeration.
+  deriving stock (Bounded, Enum, Eq, Show)
 
 instance NFData SizeRatio where
   rnf Four = ()
@@ -303,7 +305,8 @@ data FencePointerIndex =
     -- | Use an ordinary fence pointer index, without any constraints on
     -- serialised keys.
   | OrdinaryIndex
-  deriving stock (Show, Eq)
+  -- @Bounded@ and @Enum@ instances are required for test-case enumeration.
+  deriving stock (Bounded, Enum, Eq, Show)
 
 instance NFData FencePointerIndex where
   rnf CompactIndex  = ()
@@ -355,7 +358,7 @@ data DiskCachePolicy =
        -- Use this policy if expected access pattern for the table has poor
        -- spatial or temporal locality, such as uniform random access.
      | DiskCacheNone
-  deriving stock (Eq, Show)
+  deriving stock (Show, Eq)
 
 instance NFData DiskCachePolicy where
   rnf DiskCacheAll                 = ()
@@ -399,7 +402,8 @@ data MergeSchedule =
     -- merges are fully completed in time for when new merges are started on the
     -- same level.
   | Incremental
-  deriving stock (Eq, Show)
+  -- @Bounded@ and @Enum@ instances are required for test-case enumeration.
+  deriving stock (Bounded, Enum, Eq, Show)
 
 instance NFData MergeSchedule where
   rnf OneShot     = ()

@@ -397,7 +397,8 @@ duplicateMergingRunRuns reg (DeRef mr) =
     dupRun r = allocateTemp reg (dupRef r) releaseRef
 
 data MergePolicyForLevel = LevelTiering | LevelLevelling
-  deriving stock (Show, Eq)
+  -- @Bounded@ and @Enum@ instances are required for test-case enumeration.
+  deriving stock (Bounded, Enum, Eq, Show)
 
 instance NFData MergePolicyForLevel where
   rnf LevelTiering   = ()
@@ -433,7 +434,8 @@ newtype TotalStepsVar s = TotalStepsVar { getTotalStepsVar ::  PrimVar s Int  }
 newtype SpentCreditsVar s = SpentCreditsVar { getSpentCreditsVar :: PrimVar s Int }
 
 data MergeKnownCompleted = MergeKnownCompleted | MergeMaybeCompleted
-  deriving stock (Show, Eq, Read)
+  -- @Bounded@ and @Enum@ instances are required for test-case enumeration.
+  deriving stock (Bounded, Enum, Eq, Read, Show)
 
 instance NFData MergeKnownCompleted where
   rnf MergeKnownCompleted = ()
