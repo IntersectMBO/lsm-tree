@@ -125,7 +125,7 @@ instance NFData MergeKnownCompleted where
 -- | Create a new merging run, returning a reference to it that must ultimately
 -- be released via 'releaseRef'.
 --
--- Takes over ownership of the references to the runs passed.
+-- Duplicates the supplied references to the runs.
 --
 -- This function should be run with asynchronous exceptions masked to prevent
 -- failing after internal resources have already been created.
@@ -141,14 +141,17 @@ new ::
   -> RunFsPaths
   -> V.Vector (Ref (Run m h))
   -> m (Ref (MergingRun m h))
-new hfs hbio resolve caching alloc mergeLevel mergePolicy runPaths runs = do
-    merge <- fromMaybe (error "newMerge: merges can not be empty")
-      <$> Merge.new hfs hbio caching alloc mergeLevel resolve runPaths runs
-    let numInputRuns = NumRuns $ V.length runs
-    let numInputEntries = V.foldMap' Run.size runs
-    spentCreditsVar <- SpentCreditsVar <$> newPrimVar 0
-    unsafeNew mergePolicy numInputRuns numInputEntries MergeMaybeCompleted $
-      OngoingMerge runs spentCreditsVar merge
+new hfs hbio resolve caching alloc mergeLevel mergePolicy runPaths inputRuns =
+    -- If creating the Merge fails, we must release the references again.
+    withTempRegistry $ \reg -> do
+      runs <- V.mapM (\r -> allocateTemp reg (dupRef r) releaseRef) inputRuns
+      merge <- fromMaybe (error "newMerge: merges can not be empty")
+        <$> Merge.new hfs hbio caching alloc mergeLevel resolve runPaths runs
+      let numInputRuns = NumRuns $ V.length runs
+      let numInputEntries = V.foldMap' Run.size runs
+      spentCreditsVar <- SpentCreditsVar <$> newPrimVar 0
+      unsafeNew mergePolicy numInputRuns numInputEntries MergeMaybeCompleted $
+        OngoingMerge runs spentCreditsVar merge
 
 {-# SPECIALISE newCompleted ::
      MergePolicyForLevel
@@ -158,6 +161,11 @@ new hfs hbio resolve caching alloc mergeLevel mergePolicy runPaths runs = do
   -> IO (Ref (MergingRun IO h)) #-}
 -- | Create a merging run that is already in the completed state, returning a
 -- reference that must ultimately be released via 'releaseRef'.
+--
+-- Duplicates the supplied reference to the run.
+--
+-- This function should be run with asynchronous exceptions masked to prevent
+-- failing after internal resources have already been created.
 newCompleted ::
      (MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
   => MergePolicyForLevel
@@ -165,9 +173,10 @@ newCompleted ::
   -> NumEntries
   -> Ref (Run m h)
   -> m (Ref (MergingRun m h))
-newCompleted mergePolicy numInputRuns numInputEntries run = do
-    unsafeNew mergePolicy numInputRuns numInputEntries MergeKnownCompleted $
-      CompletedMerge run
+newCompleted mergePolicy numInputRuns numInputEntries inputRun = do
+    bracketOnError (dupRef inputRun) releaseRef $ \run ->
+      unsafeNew mergePolicy numInputRuns numInputEntries MergeKnownCompleted $
+        CompletedMerge run
 
 {-# INLINE unsafeNew #-}
 unsafeNew ::

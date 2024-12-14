@@ -15,6 +15,7 @@ module Database.LSMTree.Internal.Snapshot (
     -- * Runs
   , snapshotRuns
   , openRuns
+  , releaseRuns
     -- * Opening from levels snapshot format
   , fromSnapLevels
     -- * Hard links
@@ -31,7 +32,7 @@ import           Control.Monad.Class.MonadThrow (MonadMask)
 import           Control.Monad.Primitive (PrimMonad)
 import           Control.RefCount
 import           Control.TempRegistry
-import           Data.Foldable (sequenceA_)
+import           Data.Foldable (sequenceA_, traverse_)
 import           Data.Primitive.PrimVar
 import           Data.Text (Text)
 import           Data.Traversable (for)
@@ -258,6 +259,8 @@ snapshotRuns reg hbio0 (NamedSnapshotDir targetDir) levels = do
 -- into @targetDir@ with new, unique names (using @uniqCounter@). Each set of
 -- (hard linked) files that represents a run is opened and verified, returning
 -- 'Run's as a result.
+--
+-- The result must ultimately be released using 'releaseRuns'.
 openRuns ::
      (MonadMask m, MonadSTM m, MonadST m, MonadMVar m)
   => TempRegistry m
@@ -287,6 +290,14 @@ openRuns
             releaseRef
     pure (SnapLevels levels')
 
+{-# SPECIALISE releaseRuns ::
+     TempRegistry IO -> SnapLevels (Ref (Run IO h)) -> IO ()
+  #-}
+releaseRuns ::
+     (MonadMask m, MonadST m, MonadMVar m)
+  => TempRegistry m -> SnapLevels (Ref (Run m h)) -> m ()
+releaseRuns reg = traverse_ $ \r -> freeTemp reg (releaseRef r)
+
 {-------------------------------------------------------------------------------
   Opening from levels snapshot format
 -------------------------------------------------------------------------------}
@@ -302,6 +313,7 @@ openRuns
   -> SnapLevels (Ref (Run IO h))
   -> IO (Levels IO h)
   #-}
+-- | Duplicates runs and re-creates merging runs.
 fromSnapLevels ::
      forall m h. (MonadMask m, MonadMVar m, MonadSTM m, MonadST m)
   => TempRegistry m
@@ -321,10 +333,8 @@ fromSnapLevels reg hfs hbio conf@TableConfig{..} uc resolve dir (SnapLevels leve
     fromSnapLevel :: LevelNo -> SnapLevel (Ref (Run m h)) -> m (Level m h)
     fromSnapLevel ln SnapLevel{..} = do
         incomingRun <- fromSnapIncomingRun snapIncoming
-        pure Level {
-            incomingRun
-          , residentRuns = snapResidentRuns
-          }
+        residentRuns <- V.mapM dupRun snapResidentRuns
+        pure Level {incomingRun , residentRuns}
       where
         caching = diskCachePolicyForLevel confDiskCachePolicy ln
         alloc = bloomFilterAllocForLevel conf ln
@@ -332,8 +342,8 @@ fromSnapLevels reg hfs hbio conf@TableConfig{..} uc resolve dir (SnapLevels leve
         fromSnapIncomingRun ::
              SnapIncomingRun (Ref (Run m h))
           -> m (IncomingRun m h)
-        fromSnapIncomingRun (SnapSingleRun run) =
-            pure (Single run)
+        fromSnapIncomingRun (SnapSingleRun run) = do
+            Single <$> dupRun run
         fromSnapIncomingRun (SnapMergingRun mpfl nr ne unspentCredits smrs) = do
             Merging <$> case smrs of
               SnapCompletedMerge run ->
@@ -344,7 +354,6 @@ fromSnapLevels reg hfs hbio conf@TableConfig{..} uc resolve dir (SnapLevels leve
                 mr <- allocateTemp reg
                   (MR.new hfs hbio resolve caching alloc lvl mpfl (mkPath rn) runs)
                   releaseRef
-
                 -- When a snapshot is created, merge progress is lost, so we
                 -- have to redo merging work here. UnspentCredits and
                 -- SpentCredits track how many credits were supplied before the
@@ -353,6 +362,8 @@ fromSnapLevels reg hfs hbio conf@TableConfig{..} uc resolve dir (SnapLevels leve
                       + getSpentCredits spentCredits
                 MR.supplyCredits (MR.Credits c) (creditThresholdForLevel conf ln) mr
                 return mr
+
+    dupRun r = allocateTemp reg (dupRef r) releaseRef
 
 {-------------------------------------------------------------------------------
   Hard links

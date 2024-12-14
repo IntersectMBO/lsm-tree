@@ -645,6 +645,13 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
   where
     -- NOTE: @go@ is based on the @increment@ function from the
     -- @ScheduledMerges@ prototype.
+    --
+    -- Releases the vector of runs.
+    go ::
+         LevelNo
+      -> V.Vector (Ref (Run m h))
+      -> V.Vector (Level m h )
+      -> m (V.Vector (Level m h))
     go !ln rs (V.uncons -> Nothing) = do
         traceWith tr $ AtLevel ln TraceAddLevel
         -- Make a new level
@@ -693,6 +700,7 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
             ir' <- newMerge LevelLevelling Merge.LastLevel ln (rs' `V.snoc` r)
             pure $! Level ir' V.empty `V.cons` V.empty
 
+    -- Releases the incoming run.
     expectCompletedMerge :: LevelNo -> IncomingRun m h -> m (Ref (Run m h))
     expectCompletedMerge ln ir = do
       r <- case ir of
@@ -705,7 +713,7 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
         TraceExpectCompletedMerge (Run.runFsPathsNumber r)
       pure r
 
-    -- Takes ownership of the runs passed.
+    -- Releases the runs.
     newMerge :: MergePolicyForLevel
              -> Merge.Level
              -> LevelNo
@@ -717,7 +725,12 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
           traceWith tr $ AtLevel ln $
             TraceNewMergeSingleRun (Run.size r)
                                    (Run.runFsPathsNumber r)
-          pure (Single r)
+          -- We create a fresh reference and release the original one.
+          -- This will also make it easier to trace back where it was allocated.
+          ir <- Single <$> allocateTemp reg (dupRef r) releaseRef
+          freeTemp reg (releaseRef r)
+          pure ir
+
       | otherwise = do
         assert (let l = V.length rs in l >= 2 && l <= 5) $ pure ()
         !n <- incrUniqCounter uc
@@ -726,19 +739,12 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
             !runPaths = Paths.runPath root (uniqueToRunNumber n)
         traceWith tr $ AtLevel ln $
           TraceNewMerge (V.map Run.size rs) (runNumber runPaths) caching alloc mergePolicy mergeLevel
-        -- TODO: There currently is a resource management bug that happens if an
-        -- exception occurs after calling MR.new. In this case, all changes roll
-        -- back, so some of the runs in rs will live in the Levels structure at
-        -- their original places again. However, we passed their references to
-        -- the MergingRun, which gets aborted, releasing the run references.
-        -- Instead of passing the original references into newMerge, we have to
-        -- duplicate the ones that previously existed in the level and then
-        -- freeTemp the original ones. This way, on the happy path the result is
-        -- the same, but if an exception occurs, the original references do not
-        -- get released.
+        -- The runs will end up inside the merging run, with fresh references.
+        -- The original references can be released (but only on the happy path).
         mr <- allocateTemp reg
           (MR.new hfs hbio resolve caching alloc mergeLevel mergePolicy runPaths rs)
           releaseRef
+        V.forM_ rs $ \r -> freeTemp reg (releaseRef r)
         case confMergeSchedule of
           Incremental -> pure ()
           OneShot -> do

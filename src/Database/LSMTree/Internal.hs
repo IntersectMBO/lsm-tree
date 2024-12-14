@@ -1198,6 +1198,7 @@ openSnapshot sesh label tableType override snap resolve = do
         snapLevels' <- openRuns reg hfs hbio conf (sessionUniqCounter seshEnv) snapDir actDir snapLevels
         -- Convert from the snapshot format, restoring merge progress in the process
         tableLevels <- fromSnapLevels reg hfs hbio conf (sessionUniqCounter seshEnv) resolve actDir snapLevels'
+        releaseRuns reg snapLevels'
 
         tableCache <- mkLevelsCache reg tableLevels
         newWith reg sesh seshEnv conf' am $! TableContent {
