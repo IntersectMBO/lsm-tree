@@ -262,7 +262,7 @@ data LSMTreeTrace =
       CursorTrace
     -- Unions
   | TraceUnions
-      Int -- ^ Number of unioned tables
+      (NonEmpty Word64) -- ^ Table identifiers
   deriving stock Show
 
 data TableTrace =
@@ -553,6 +553,12 @@ data Table m h = Table {
     , tableState        :: !(RWVar m (TableState m h))
     , tableArenaManager :: !(ArenaManager (PrimState m))
     , tableTracer       :: !(Tracer m TableTrace)
+      -- | Session-unique identifier for this table.
+      --
+      -- INVARIANT: a table's identifier is never changed during the lifetime of
+      -- the table.
+    , tableId           :: !Word64
+
       -- === Session-inherited
 
       -- | The session that this table belongs to.
@@ -563,8 +569,8 @@ data Table m h = Table {
     }
 
 instance NFData (Table m h) where
-  rnf (Table a b c d e) =
-    rnf a `seq` rnf b `seq` rnf c `seq` rwhnf d `seq` rwhnf e
+  rnf (Table a b c d e f) =
+    rnf a `seq` rnf b `seq` rnf c `seq` rwhnf d `seq` rnf e`seq` rwhnf f
 
 -- | A table may assume that its corresponding session is still open as
 -- long as the table is open. A session's global resources, and therefore
@@ -583,8 +589,6 @@ data TableEnv m h = TableEnv {
 
     -- === Table-specific
 
-    -- | Session-unique identifier for this table.
-  , tableId         :: !Word64
     -- | All of the state being in a single 'StrictMVar' is a relatively simple
     -- solution, but there could be more concurrency. For example, while inserts
     -- are in progress, lookups could still look at the old state without
@@ -615,12 +619,12 @@ tableSessionUniqCounter :: TableEnv m h -> UniqCounter m
 tableSessionUniqCounter = sessionUniqCounter . tableSessionEnv
 
 {-# INLINE tableSessionUntrackTable #-}
-{-# SPECIALISE tableSessionUntrackTable :: TableEnv IO h -> IO () #-}
+{-# SPECIALISE tableSessionUntrackTable :: Word64 -> TableEnv IO h -> IO () #-}
 -- | Open tables are tracked in the corresponding session, so when a table is
 -- closed it should become untracked (forgotten).
-tableSessionUntrackTable :: MonadMVar m => TableEnv m h -> m ()
-tableSessionUntrackTable thEnv =
-    modifyMVar_ (sessionOpenTables (tableSessionEnv thEnv)) $ pure . Map.delete (tableId thEnv)
+tableSessionUntrackTable :: MonadMVar m => Word64 -> TableEnv m h -> m ()
+tableSessionUntrackTable tableId thEnv =
+    modifyMVar_ (sessionOpenTables (tableSessionEnv thEnv)) $ pure . Map.delete tableId
 
 -- | 'withOpenTable' ensures that the table stays open for the duration of the
 -- provided continuation.
@@ -718,10 +722,10 @@ newWith reg sesh seshEnv conf !am !tc = do
     contentVar <- RW.new $ tc
     tableVar <- RW.new $ TableOpen $ TableEnv {
           tableSessionEnv = seshEnv
-        , tableId = uniqueToWord64 tableId
         , tableContent = contentVar
         }
-    let !t = Table conf tableVar am tr  sesh
+    let !tid = uniqueToWord64 tableId
+        !t = Table conf tableVar am tr tid sesh
     -- Track the current table
     freeTemp reg $ modifyMVar_ (sessionOpenTables seshEnv)
                  $ pure . Map.insert (uniqueToWord64 tableId) t
@@ -743,7 +747,7 @@ close t = do
         -- Since we have a write lock on the table state, we know that we are the
         -- only thread currently closing the table. We can safely make the session
         -- forget about this table.
-        freeTemp reg (tableSessionUntrackTable thEnv)
+        freeTemp reg (tableSessionUntrackTable (tableId t) thEnv)
         RW.withWriteAccess_ (tableContent thEnv) $ \tc -> do
           releaseTableContent reg tc
           pure tc
@@ -969,7 +973,7 @@ newCursor !offsetKey t = withOpenTable t $ \thEnv -> do
     cursorId <- uniqueToWord64 <$>
       incrUniqCounter (sessionUniqCounter cursorSessionEnv)
     let cursorTracer = TraceCursor cursorId `contramap` sessionTracer cursorSession
-    traceWith cursorTracer $ TraceCreateCursor (tableId thEnv)
+    traceWith cursorTracer $ TraceCreateCursor (tableId t)
 
     -- We acquire a read-lock on the session open-state to prevent races, see
     -- 'sessionOpenTables'.
@@ -1336,7 +1340,7 @@ unions ts = do
         Left (i, j) -> throwIO $ ErrUnionsSessionMismatch i j
         Right sesh  -> pure sesh
 
-    traceWith (sessionTracer sesh) $ TraceUnions n
+    traceWith (sessionTracer sesh) $ TraceUnions (NE.map tableId ts)
 
     -- TODO: Do we really need the configs to match exactly? It's okay as a
     -- requirement for now, but we might want to revisit it. Some settings don't
@@ -1377,8 +1381,6 @@ unions ts = do
               content
 
           pure (seshState, t)
-  where
-    n = NE.length ts
 
 -- | Like 'matchBy', but the match function is @(==)@.
 match :: Eq a => NonEmpty a -> Either (Int, Int) a
