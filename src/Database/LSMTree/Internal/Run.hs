@@ -33,6 +33,7 @@ import           Control.Monad.Class.MonadST (MonadST)
 import           Control.Monad.Class.MonadSTM (MonadSTM (..))
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Primitive
+import           Control.Monad.ST.Strict (ST)
 import           Control.RefCount
 import           Data.BloomFilter (Bloom)
 import qualified Data.ByteString.Short as SBS
@@ -44,8 +45,9 @@ import qualified Database.LSMTree.Internal.BlobRef as BlobRef
 import           Database.LSMTree.Internal.BloomFilter (bloomFilterFromSBS)
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
+import           Database.LSMTree.Internal.Index (Index,
+                     IndexAcc (ResultingIndex))
 import qualified Database.LSMTree.Internal.Index as Index (fromSBS, sizeInPages)
-import           Database.LSMTree.Internal.Index.Compact (IndexCompact)
 import           Database.LSMTree.Internal.Page (NumPages)
 import           Database.LSMTree.Internal.Paths as Paths
 import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc)
@@ -64,7 +66,7 @@ import           System.FS.BlockIO.API (HasBlockIO)
 
 -- | The in-memory representation of a completed LSM run.
 --
-data Run m h = Run {
+data Run i m h = Run {
       runNumEntries     :: !NumEntries
       -- | The reference count for the LSM run. This counts the
       -- number of references from LSM handles to this run. When
@@ -77,7 +79,7 @@ data Run m h = Run {
       -- | The in-memory index mapping keys to page numbers in the
       -- Key\/Ops file. In future we may support alternative index
       -- representations.
-    , runIndex          :: !IndexCompact
+    , runIndex          :: !i
       -- | The file handle for the Key\/Ops file. This file is opened
       -- read-only and is accessed in a page-oriented way, i.e. only
       -- reading whole pages, at page offsets. It will be opened with
@@ -93,37 +95,37 @@ data Run m h = Run {
     }
 
 -- | Shows only the 'runRunFsPaths' field.
-instance Show (Run m h) where
+instance Show (Run i m h) where
   showsPrec _ run = showString "Run { runRunFsPaths = " . showsPrec 0 (runRunFsPaths run) .  showString " }"
 
-instance NFData h => NFData (Run m h) where
+instance (NFData i, NFData h) => NFData (Run i m h) where
   rnf (Run a b c d e f g h i j) =
       rnf a `seq` rwhnf b `seq` rnf c `seq` rnf d `seq` rnf e `seq`
       rnf f `seq` rnf g `seq` rnf h `seq` rwhnf i `seq` rwhnf j
 
-instance RefCounted (Run m h) where
-    type FinaliserM (Run m h) = m
+instance RefCounted (Run i m h) where
+    type FinaliserM (Run i m h) = m
     getRefCounter = runRefCounter
 
-size :: Ref (Run m h) -> NumEntries
+size :: Ref (Run i m h) -> NumEntries
 size (DeRef run) = runNumEntries run
 
-sizeInPages :: Ref (Run m h) -> NumPages
+sizeInPages :: Index i => Ref (Run i m h) -> NumPages
 sizeInPages (DeRef run) = Index.sizeInPages (runIndex run)
 
-runFsPaths :: Ref (Run m h) -> RunFsPaths
+runFsPaths :: Ref (Run i m h) -> RunFsPaths
 runFsPaths (DeRef r) = runRunFsPaths r
 
-runFsPathsNumber :: Ref (Run m h) -> RunNumber
+runFsPathsNumber :: Ref (Run i m h) -> RunNumber
 runFsPathsNumber = Paths.runNumber . runFsPaths
 
 -- | Helper function to make a 'WeakBlobRef' that points into a 'Run'.
-mkRawBlobRef :: Run m h -> BlobSpan -> RawBlobRef m h
+mkRawBlobRef :: Run i m h -> BlobSpan -> RawBlobRef m h
 mkRawBlobRef Run{runBlobFile} blobspan =
     BlobRef.mkRawBlobRef runBlobFile blobspan
 
 -- | Helper function to make a 'WeakBlobRef' that points into a 'Run'.
-mkWeakBlobRef :: Ref (Run m h) -> BlobSpan -> WeakBlobRef m h
+mkWeakBlobRef :: Ref (Run i m h) -> BlobSpan -> WeakBlobRef m h
 mkWeakBlobRef (DeRef Run{runBlobFile}) blobspan =
     BlobRef.mkWeakBlobRef runBlobFile blobspan
 
@@ -181,14 +183,15 @@ setRunDataCaching hbio runKOpsFile NoCacheRunData = do
     FS.hSetNoCache hbio runKOpsFile True
 
 {-# SPECIALISE fromMutable ::
-     RunDataCaching
-  -> RunBuilder IO h
-  -> IO (Ref (Run IO h)) #-}
-fromMutable ::
-     (MonadST m, MonadSTM m, MonadMask m)
+     IndexAcc j
   => RunDataCaching
-  -> RunBuilder m h
-  -> m (Ref (Run m h))
+  -> RunBuilder j IO h
+  -> IO (Ref (Run (ResultingIndex j) IO h)) #-}
+fromMutable ::
+     (IndexAcc j, MonadST m, MonadSTM m, MonadMask m)
+  => RunDataCaching
+  -> RunBuilder j m h
+  -> m (Ref (Run (ResultingIndex j) m h))
 fromMutable runRunDataCaching builder = do
     (runHasFS, runHasBlockIO, runRunFsPaths, runFilter, runIndex, runNumEntries) <-
       Builder.unsafeFinalise (runRunDataCaching == NoCacheRunData) builder
@@ -199,14 +202,16 @@ fromMutable runRunDataCaching builder = do
            (\runRefCounter -> Run { .. })
 
 {-# SPECIALISE fromWriteBuffer ::
-     HasFS IO h
+     IndexAcc j
+  => HasFS IO h
   -> HasBlockIO IO h
   -> RunDataCaching
   -> RunBloomFilterAlloc
+  -> ST RealWorld (j RealWorld)
   -> RunFsPaths
   -> WriteBuffer
   -> Ref (WriteBufferBlobs IO h)
-  -> IO (Ref (Run IO h)) #-}
+  -> IO (Ref (Run (ResultingIndex j) IO h)) #-}
 -- | Write a write buffer to disk, including the blobs it contains.
 --
 -- This creates a new 'Run' which must eventually be released with 'releaseRef'.
@@ -215,17 +220,18 @@ fromMutable runRunDataCaching builder = do
 -- immediately when they are added to the write buffer, avoiding the need to do
 -- it here.
 fromWriteBuffer ::
-     (MonadST m, MonadSTM m, MonadMask m)
+     (IndexAcc j, MonadST m, MonadSTM m, MonadMask m)
   => HasFS m h
   -> HasBlockIO m h
   -> RunDataCaching
   -> RunBloomFilterAlloc
+  -> ST (PrimState m) (j (PrimState m))
   -> RunFsPaths
   -> WriteBuffer
   -> Ref (WriteBufferBlobs m h)
-  -> m (Ref (Run m h))
-fromWriteBuffer fs hbio caching alloc fsPaths buffer blobs = do
-    builder <- Builder.new fs hbio fsPaths (WB.numEntries buffer) alloc
+  -> m (Ref (Run (ResultingIndex j) m h))
+fromWriteBuffer fs hbio caching alloc newIndex fsPaths buffer blobs = do
+    builder <- Builder.new fs hbio fsPaths (WB.numEntries buffer) alloc newIndex
     for_ (WB.toList buffer) $ \(k, e) ->
       Builder.addKeyOp builder k (fmap (WBB.mkRawBlobRef blobs) e)
       --TODO: the fmap entry here reallocates even when there are no blobs
@@ -244,11 +250,12 @@ data FileFormatError = FileFormatError FS.FsPath String
   deriving anyclass Exception
 
 {-# SPECIALISE openFromDisk ::
-     HasFS IO h
+     Index i
+  => HasFS IO h
   -> HasBlockIO IO h
   -> RunDataCaching
   -> RunFsPaths
-  -> IO (Ref (Run IO h)) #-}
+  -> IO (Ref (Run i IO h)) #-}
 -- | Load a previously written run from disk, checking each file's checksum
 -- against the checksum file.
 --
@@ -257,13 +264,13 @@ data FileFormatError = FileFormatError FS.FsPath String
 -- Exceptions will be raised when any of the file's contents don't match their
 -- checksum ('ChecksumError') or can't be parsed ('FileFormatError').
 openFromDisk ::
-     forall m h.
-     (MonadSTM m, MonadMask m, PrimMonad m)
+     forall i m h.
+     (Index i, MonadSTM m, MonadMask m, PrimMonad m)
   => HasFS m h
   -> HasBlockIO m h
   -> RunDataCaching
   -> RunFsPaths
-  -> m (Ref (Run m h))
+  -> m (Ref (Run i m h))
 openFromDisk fs hbio runRunDataCaching runRunFsPaths = do
     expectedChecksums <-
        expectValidFile (runChecksumsPath runRunFsPaths) . fromChecksumsFile

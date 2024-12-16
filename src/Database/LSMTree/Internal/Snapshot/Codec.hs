@@ -26,6 +26,7 @@ import           Data.Bifunctor
 import qualified Data.ByteString.Char8 as BSC
 import           Data.ByteString.Lazy (ByteString)
 import qualified Data.Map.Strict as Map
+import           Data.Some (Some (Some))
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.CRC32C
@@ -200,19 +201,21 @@ instance Decode SnapshotVersion where
 -- SnapshotMetaData
 
 instance Encode SnapshotMetaData where
-  encode (SnapshotMetaData label tableType config levels) =
+  encode (SnapshotMetaData label tableType someConfig levels) =
          encodeListLen 4
       <> encode label
       <> encode tableType
-      <> encode config
+      <> encode someConfig
       <> encode levels
 
 instance DecodeVersioned SnapshotMetaData where
   decodeVersioned ver@V0 = do
       _ <- decodeListLenOf 4
-      SnapshotMetaData
-        <$> decodeVersioned ver <*> decodeVersioned ver
-        <*> decodeVersioned ver <*> decodeVersioned ver
+      label <- decodeVersioned ver
+      tableType <- decodeVersioned ver
+      someConfig <- decodeVersioned ver
+      levels <- decodeVersioned ver
+      pure (SnapshotMetaData label tableType someConfig levels)
 
 -- SnapshotLabel
 
@@ -244,14 +247,14 @@ instance DecodeVersioned SnapshotTableType where
 
 -- TableConfig
 
-instance Encode TableConfig where
-  encode config =
+instance Encode (Some TableConfig) where
+  encode (Some config) =
          encodeListLen 7
       <> encode mergePolicy
       <> encode sizeRatio
       <> encode writeBufferAlloc
       <> encode bloomFilterAlloc
-      <> encode fencePointerIndex
+      <> encode (Some fencePointerIndex)
       <> encode diskCachePolicy
       <> encode mergeSchedule
     where
@@ -265,13 +268,25 @@ instance Encode TableConfig where
         mergeSchedule
         = config
 
-instance DecodeVersioned TableConfig where
+instance DecodeVersioned (Some TableConfig) where
   decodeVersioned v@V0 = do
       _ <- decodeListLenOf 7
-      TableConfig
-        <$> decodeVersioned v <*> decodeVersioned v <*> decodeVersioned v
-        <*> decodeVersioned v <*> decodeVersioned v <*> decodeVersioned v
-        <*> decodeVersioned v
+      mergePolicy <- decodeVersioned v
+      sizeRatio <- decodeVersioned v
+      writeBufferAlloc <- decodeVersioned v
+      bloomFilterAlloc <- decodeVersioned v
+      Some fencePointerIndex <- decodeVersioned v
+      diskCachePolicy <- decodeVersioned v
+      mergeSchedule <- decodeVersioned v
+      pure $ Some $
+        TableConfig
+          mergePolicy
+          sizeRatio
+          writeBufferAlloc
+          bloomFilterAlloc
+          fencePointerIndex
+          diskCachePolicy
+          mergeSchedule
 
 -- MergePolicy
 
@@ -350,16 +365,16 @@ instance DecodeVersioned BloomFilterAlloc where
 
 -- FencePointerIndex
 
-instance Encode FencePointerIndex where
-  encode CompactIndex  = encodeWord 0
-  encode OrdinaryIndex = encodeWord 1
+instance Encode (Some FencePointerIndex) where
+  encode (Some CompactIndex)  = encodeWord 0
+  encode (Some OrdinaryIndex) = encodeWord 1
 
-instance DecodeVersioned FencePointerIndex where
+instance DecodeVersioned (Some FencePointerIndex) where
    decodeVersioned V0 = do
       tag <- decodeWord
       case tag of
-        0 -> pure CompactIndex
-        1 -> pure OrdinaryIndex
+        0 -> pure (Some CompactIndex)
+        1 -> pure (Some OrdinaryIndex)
         _ -> fail ("[FencePointerIndex] Unexpected tag: " <> show tag)
 
 -- DiskCachePolicy

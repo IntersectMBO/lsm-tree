@@ -27,7 +27,7 @@ module Database.LSMTree.Common (
     -- * Blob references
   , BlobRef (..)
     -- * Table configuration
-  , Internal.TableConfig (..)
+  , TableConfig
   , Internal.defaultTableConfig
   , Internal.SizeRatio (..)
   , Internal.MergePolicy (..)
@@ -259,3 +259,9 @@ data BlobRef m b where
 
 instance Show (BlobRef m b) where
     showsPrec d (BlobRef b) = showsPrec d b
+
+{-------------------------------------------------------------------------------
+  Table configurations
+-------------------------------------------------------------------------------}
+
+type TableConfig = Internal.TableConfig'

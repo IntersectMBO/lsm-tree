@@ -17,6 +17,7 @@ import qualified Control.Monad.Class.MonadST as ST
 import           Control.Monad.Class.MonadSTM (MonadSTM (..))
 import           Control.Monad.Class.MonadThrow (MonadThrow)
 import           Control.Monad.Primitive
+import           Control.Monad.ST.Strict (ST)
 import           Data.BloomFilter (Bloom)
 import           Data.Foldable (for_, traverse_)
 import           Data.Primitive.PrimVar
@@ -25,7 +26,7 @@ import           Database.LSMTree.Internal.BlobRef (RawBlobRef)
 import           Database.LSMTree.Internal.ChecksumHandle
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry
-import           Database.LSMTree.Internal.Index.Compact (IndexCompact)
+import           Database.LSMTree.Internal.Index (IndexAcc (ResultingIndex))
 import           Database.LSMTree.Internal.Paths
 import           Database.LSMTree.Internal.RawOverflowPage (RawOverflowPage)
 import           Database.LSMTree.Internal.RawPage (RawPage)
@@ -49,7 +50,7 @@ import           System.FS.BlockIO.API (HasBlockIO)
 --
 -- __Not suitable for concurrent construction from multiple threads!__
 --
-data RunBuilder m h = RunBuilder {
+data RunBuilder j m h = RunBuilder {
       -- | The file system paths for all the files used by the run.
       runBuilderFsPaths    :: !RunFsPaths
 
@@ -57,7 +58,7 @@ data RunBuilder m h = RunBuilder {
       -- morally pure subset of the run cnstruction functionality. In
       -- particular it contains the (mutable) index, bloom filter and buffered
       -- pending output for the key\/ops file.
-    , runBuilderAcc        :: !(RunAcc (PrimState m))
+    , runBuilderAcc        :: !(RunAcc j (PrimState m))
 
       -- | The byte offset within the blob file for the next blob to be written.
     , runBuilderBlobOffset :: !(PrimVar (PrimState m) Word64)
@@ -68,36 +69,42 @@ data RunBuilder m h = RunBuilder {
     , runBuilderHasBlockIO :: !(HasBlockIO m h)
     }
 
-{-# SPECIALISE new ::
-     HasFS IO h
+{-# SPECIALISE new
+  :: IndexAcc j
+  => HasFS IO h
   -> HasBlockIO IO h
   -> RunFsPaths
   -> NumEntries
   -> RunBloomFilterAlloc
-  -> IO (RunBuilder IO h) #-}
+  -> ST RealWorld (j RealWorld)
+  -> IO (RunBuilder j IO h) #-}
 -- | Create an 'RunBuilder' to start building a run.
 --
 -- NOTE: 'new' assumes that 'runDir' that the run is created in exists.
-new ::
-     (MonadST m, MonadSTM m)
+new 
+  :: forall j m h . (IndexAcc j, MonadST m, MonadSTM m)
   => HasFS m h
   -> HasBlockIO m h
   -> RunFsPaths
   -> NumEntries  -- ^ an upper bound of the number of entries to be added
   -> RunBloomFilterAlloc
-  -> m (RunBuilder m h)
-new hfs hbio runBuilderFsPaths numEntries alloc = do
-    runBuilderAcc <- ST.stToIO $ RunAcc.new numEntries alloc
+  -> ST (PrimState m) (j (PrimState m))
+  -> m (RunBuilder j m h)
+new hfs hbio runBuilderFsPaths numEntries alloc newIndexAcc = do
+    runBuilderAcc <- ST.stToIO $ RunAcc.new numEntries alloc newIndexAcc
     runBuilderBlobOffset <- newPrimVar 0
 
     runBuilderHandles <- traverse (makeHandle hfs) (pathsForRunFiles runBuilderFsPaths)
 
     let builder = RunBuilder { runBuilderHasFS = hfs, runBuilderHasBlockIO = hbio, .. }
-    writeIndexHeader hfs (forRunIndex runBuilderHandles) (proxy# @IndexCompact)
+    writeIndexHeader hfs
+                     (forRunIndex runBuilderHandles)
+                     (proxy# @(ResultingIndex j))
     return builder
 
-{-# SPECIALISE addKeyOp ::
-     RunBuilder IO h
+{-# SPECIALISE addKeyOp
+  :: IndexAcc j
+  => RunBuilder j IO h
   -> SerialisedKey
   -> Entry SerialisedValue (RawBlobRef IO h)
   -> IO () #-}
@@ -115,8 +122,8 @@ new hfs hbio runBuilderFsPaths numEntries alloc = do
 -- everything else only at the end when 'unsafeFinalise' is called.
 --
 addKeyOp ::
-     (MonadST m, MonadSTM m, MonadThrow m)
-  => RunBuilder m h
+     (IndexAcc j, MonadST m, MonadSTM m, MonadThrow m)
+  => RunBuilder j m h
   -> SerialisedKey
   -> Entry SerialisedValue (RawBlobRef m h)
   -> m ()
@@ -142,8 +149,9 @@ addKeyOp RunBuilder{..} key op = do
        writeRawOverflowPages runBuilderHasFS (forRunKOps runBuilderHandles) overflowPages
        for_ chunks $ writeIndexChunk runBuilderHasFS (forRunIndex runBuilderHandles)
 
-{-# SPECIALISE addLargeSerialisedKeyOp ::
-     RunBuilder IO h
+{-# SPECIALISE addLargeSerialisedKeyOp
+  :: IndexAcc j
+  => RunBuilder j IO h
   -> SerialisedKey
   -> RawPage
   -> [RawOverflowPage]
@@ -151,8 +159,8 @@ addKeyOp RunBuilder{..} key op = do
 -- | See 'RunAcc.addLargeSerialisedKeyOp' for details.
 --
 addLargeSerialisedKeyOp ::
-     (MonadST m, MonadSTM m)
-  => RunBuilder m h
+     (IndexAcc j, MonadST m, MonadSTM m)
+  => RunBuilder j m h
   -> SerialisedKey
   -> RawPage
   -> [RawOverflowPage]
@@ -165,10 +173,11 @@ addLargeSerialisedKeyOp RunBuilder{..} key page overflowPages = do
     writeRawOverflowPages runBuilderHasFS (forRunKOps runBuilderHandles) overflowPages'
     for_ chunks $ writeIndexChunk runBuilderHasFS (forRunIndex runBuilderHandles)
 
-{-# SPECIALISE unsafeFinalise ::
-     Bool
-  -> RunBuilder IO h
-  -> IO (HasFS IO h, HasBlockIO IO h, RunFsPaths, Bloom SerialisedKey, IndexCompact, NumEntries) #-}
+{-# SPECIALISE unsafeFinalise
+  :: IndexAcc j
+  => Bool
+  -> RunBuilder j IO h
+  -> IO (HasFS IO h, HasBlockIO IO h, RunFsPaths, Bloom SerialisedKey, ResultingIndex j, NumEntries) #-}
 -- | Finish construction of the run.
 -- Writes the filter and index to file and leaves all written files on disk.
 --
@@ -176,10 +185,10 @@ addLargeSerialisedKeyOp RunBuilder{..} key page overflowPages = do
 --
 -- TODO: Ensure proper cleanup even in presence of exceptions.
 unsafeFinalise ::
-     (MonadST m, MonadSTM m, MonadThrow m)
+     (IndexAcc j, MonadST m, MonadSTM m, MonadThrow m)
   => Bool -- ^ drop caches
-  -> RunBuilder m h
-  -> m (HasFS m h, HasBlockIO m h, RunFsPaths, Bloom SerialisedKey, IndexCompact, NumEntries)
+  -> RunBuilder j m h
+  -> m (HasFS m h, HasBlockIO m h, RunFsPaths, Bloom SerialisedKey, ResultingIndex j, NumEntries)
 unsafeFinalise dropCaches RunBuilder {..} = do
     -- write final bits
     (mPage, mChunk, runFilter, runIndex, numEntries) <-
@@ -204,13 +213,13 @@ unsafeFinalise dropCaches RunBuilder {..} = do
     mapM_ (closeHandle runBuilderHasFS) runBuilderHandles
     return (runBuilderHasFS, runBuilderHasBlockIO, runBuilderFsPaths, runFilter, runIndex, numEntries)
 
-{-# SPECIALISE close :: RunBuilder IO h -> IO () #-}
+{-# SPECIALISE close :: RunBuilder j IO h -> IO () #-}
 -- | Close a run that is being constructed (has not been finalised yet),
 -- removing all files associated with it from disk.
 -- After calling this operation, the run must not be used anymore.
 --
 -- TODO: Ensure proper cleanup even in presence of exceptions.
-close :: MonadSTM m => RunBuilder m h -> m ()
+close :: MonadSTM m => RunBuilder j m h -> m ()
 close RunBuilder {..} = do
     traverse_ (closeHandle runBuilderHasFS) runBuilderHandles
     traverse_ (FS.removeFile runBuilderHasFS) (pathsForRunFiles runBuilderFsPaths)

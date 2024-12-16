@@ -33,6 +33,7 @@ import           Database.LSMTree.Internal.BitMath (ceilDivPageSize,
 import           Database.LSMTree.Internal.BlobFile as BlobFile
 import           Database.LSMTree.Internal.BlobRef as BlobRef
 import qualified Database.LSMTree.Internal.Entry as E
+import           Database.LSMTree.Internal.Index (Index)
 import qualified Database.LSMTree.Internal.Index as Index (search)
 import           Database.LSMTree.Internal.Page (PageNo (..), PageSpan (..),
                      getNumPages, nextPageNo)
@@ -86,13 +87,14 @@ data RunReader m h = RunReader {
 data OffsetKey = NoOffsetKey | OffsetKey !SerialisedKey
 
 {-# SPECIALISE new ::
-     OffsetKey
-  -> Ref (Run.Run IO h)
-  -> IO (RunReader IO h) #-}
-new :: forall m h.
-     (MonadMask m, MonadSTM m, PrimMonad m)
+     Index i
   => OffsetKey
-  -> Ref (Run.Run m h)
+  -> Ref (Run.Run i IO h)
+  -> IO (RunReader IO h) #-}
+new :: forall i m h.
+     (Index i, MonadMask m, MonadSTM m, PrimMonad m)
+  => OffsetKey
+  -> Ref (Run.Run i m h)
   -> m  (RunReader m h)
 new !offsetKey
     readerRun@(DeRef Run.Run {

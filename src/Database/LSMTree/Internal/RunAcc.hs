@@ -44,11 +44,9 @@ import           Database.LSMTree.Internal.Assertions (fromIntegralChecked)
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Chunk (Chunk)
 import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..))
+import           Database.LSMTree.Internal.Index (IndexAcc, ResultingIndex)
 import qualified Database.LSMTree.Internal.Index as Index (appendMulti,
                      appendSingle, unsafeEnd)
-import           Database.LSMTree.Internal.Index.Compact (IndexCompact)
-import           Database.LSMTree.Internal.Index.CompactAcc (IndexCompactAcc)
-import qualified Database.LSMTree.Internal.Index.CompactAcc as IndexCompact
 import           Database.LSMTree.Internal.PageAcc (PageAcc)
 import qualified Database.LSMTree.Internal.PageAcc as PageAcc
 import qualified Database.LSMTree.Internal.PageAcc1 as PageAcc
@@ -70,9 +68,9 @@ import qualified Monkey
 -- Use 'new' to start run construction, add new key\/operation pairs to the run
 -- by using 'addKeyOp' and co, and complete run construction using
 -- 'unsafeFinalise'.
-data RunAcc s = RunAcc {
+data RunAcc j s = RunAcc {
       mbloom     :: !(MBloom s SerialisedKey)
-    , mindex     :: !(IndexCompactAcc s)
+    , mindex     :: !(j s)
     , mpageacc   :: !(PageAcc s)
     , entryCount :: !(PrimVar s Int)
     }
@@ -90,8 +88,8 @@ data RunBloomFilterAlloc =
 --
 -- @nentries@ should be an upper bound on the expected number of entries in the
 -- output run.
-new :: NumEntries -> RunBloomFilterAlloc -> ST s (RunAcc s)
-new (NumEntries nentries) alloc = do
+new :: NumEntries -> RunBloomFilterAlloc -> ST s (j s) -> ST s (RunAcc j s)
+new (NumEntries nentries) alloc newIndexAcc = do
     mbloom <- case alloc of
       RunAllocFixed !bitsPerEntry    ->
         let !nbits = fromIntegral bitsPerEntry * fromIntegral nentries
@@ -104,7 +102,7 @@ new (NumEntries nentries) alloc = do
         MBloom.new
           (fromIntegralChecked $ Monkey.numHashFunctions (fromIntegral nbits) (fromIntegral nentries))
           nbits
-    mindex <- IndexCompact.new 1024 -- TODO(optimise): tune chunk size
+    mindex <- newIndexAcc
     mpageacc <- PageAcc.newPageAcc
     entryCount <- newPrimVar 0
     pure RunAcc{..}
@@ -115,12 +113,13 @@ new (NumEntries nentries) alloc = do
 -- The frozen bloom filter and compact index will be returned, along with the
 -- final page of the run (if necessary), and the remaining chunks of the
 -- incrementally constructed compact index.
-unsafeFinalise ::
-     RunAcc s
+unsafeFinalise
+  :: IndexAcc j
+  => RunAcc j s
   -> ST s ( Maybe RawPage
           , Maybe Chunk
           , Bloom SerialisedKey
-          , IndexCompact
+          , ResultingIndex j
           , NumEntries
           )
 unsafeFinalise racc@RunAcc {..} = do
@@ -153,7 +152,8 @@ unsafeFinalise racc@RunAcc {..} = do
 -- pre-serialised, use 'addLargeSerialisedKeyOp'.
 --
 addKeyOp
-  :: RunAcc s
+  :: IndexAcc j
+  => RunAcc j s
   -> SerialisedKey
   -> Entry SerialisedValue BlobSpan -- ^ the full value, not just a prefix
   -> ST s ([RawPage], [RawOverflowPage], [Chunk])
@@ -178,7 +178,8 @@ addKeyOp racc k e
 -- This is guaranteed to add the key\/op, and it may yield (at most one) page.
 --
 addSmallKeyOp
-  :: RunAcc s
+  :: IndexAcc j
+  => RunAcc j s
   -> SerialisedKey
   -> Entry SerialisedValue BlobSpan
   -> ST s (Maybe (RawPage, Maybe Chunk))
@@ -224,7 +225,8 @@ addSmallKeyOp racc@RunAcc{..} k e =
 -- 'RawOverflowPage's.
 --
 addLargeKeyOp
-  :: RunAcc s
+  :: IndexAcc j
+  => RunAcc j s
   -> SerialisedKey
   -> Entry SerialisedValue BlobSpan -- ^ the full value, not just a prefix
   -> ST s ([RawPage], [RawOverflowPage], [Chunk])
@@ -272,7 +274,8 @@ addLargeKeyOp racc@RunAcc{..} k e =
 -- Otherwise, use 'addLargeKeyOp' or 'addSmallKeyOp' as appropriate.
 --
 addLargeSerialisedKeyOp
-  :: RunAcc s
+  :: IndexAcc j
+  => RunAcc j s
   -> SerialisedKey     -- ^ The key
   -> RawPage           -- ^ The page that this key\/op is in, which must be the
                        -- first page of a multi-page representation of a single
@@ -301,7 +304,10 @@ addLargeSerialisedKeyOp racc@RunAcc{..} k page overflowPages =
 --
 -- Returns @Nothing@ if the page accumulator was empty.
 --
-flushPageIfNonEmpty :: RunAcc s -> ST s (Maybe (RawPage, Maybe Chunk))
+flushPageIfNonEmpty
+  :: IndexAcc j
+  => RunAcc j s
+  -> ST s (Maybe (RawPage, Maybe Chunk))
 flushPageIfNonEmpty RunAcc{mpageacc, mindex} = do
     nkeys <- PageAcc.keysCountPageAcc mpageacc
     if nkeys > 0

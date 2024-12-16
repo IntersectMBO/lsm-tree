@@ -36,8 +36,8 @@ import qualified Database.LSMTree.Internal.Chunk as Chunk (toByteString)
 import           Database.LSMTree.Internal.CRC32C (CRC32C)
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry
-import           Database.LSMTree.Internal.Index.Compact (IndexCompact)
-import qualified Database.LSMTree.Internal.Index.Compact as Index
+import           Database.LSMTree.Internal.Index (Index)
+import qualified Database.LSMTree.Internal.Index as Index
 import           Database.LSMTree.Internal.Paths (ForBlob (..), ForFilter (..),
                      ForIndex (..), ForKOps (..))
 import qualified Database.LSMTree.Internal.RawBytes as RB
@@ -205,15 +205,16 @@ writeFilter hfs filterHandle bf =
     writeToHandle hfs (unForFilter filterHandle) (bloomFilterToLBS bf)
 
 {-# SPECIALISE writeIndexHeader ::
-     HasFS IO h
+     Index i
+  => HasFS IO h
   -> ForIndex (ChecksumHandle RealWorld h)
-  -> Proxy# IndexCompact
+  -> Proxy# i
   -> IO () #-}
 writeIndexHeader ::
-     (MonadSTM m, PrimMonad m)
+     (MonadSTM m, PrimMonad m, Index i)
   => HasFS m h
   -> ForIndex (ChecksumHandle (PrimState m) h)
-  -> Proxy# IndexCompact
+  -> Proxy# i
   -> m ()
 writeIndexHeader hfs indexHandle indexTypeProxy =
     writeToHandle hfs (unForIndex indexHandle) $
@@ -235,17 +236,18 @@ writeIndexChunk hfs indexHandle chunk =
       BSL.fromStrict $ Chunk.toByteString chunk
 
 {-# SPECIALISE writeIndexFinal ::
-     HasFS IO h
+     Index i
+  => HasFS IO h
   -> ForIndex (ChecksumHandle RealWorld h)
   -> NumEntries
-  -> IndexCompact
+  -> i
   -> IO () #-}
 writeIndexFinal ::
-     (MonadSTM m, PrimMonad m)
+     (MonadSTM m, PrimMonad m, Index i)
   => HasFS m h
   -> ForIndex (ChecksumHandle (PrimState m) h)
   -> NumEntries
-  -> IndexCompact
+  -> i
   -> m ()
 writeIndexFinal hfs indexHandle numEntries index =
     writeToHandle hfs (unForIndex indexHandle) $

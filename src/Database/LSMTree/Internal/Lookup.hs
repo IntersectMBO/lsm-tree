@@ -41,8 +41,8 @@ import           Control.RefCount
 
 import           Database.LSMTree.Internal.BlobRef (WeakBlobRef (..))
 import           Database.LSMTree.Internal.Entry
+import           Database.LSMTree.Internal.Index (Index)
 import qualified Database.LSMTree.Internal.Index as Index (search)
-import           Database.LSMTree.Internal.Index.Compact (IndexCompact)
 import           Database.LSMTree.Internal.Page (PageSpan (..), getNumPages,
                      pageSpanSize, unPageNo)
 import           Database.LSMTree.Internal.RawBytes (RawBytes (..))
@@ -70,9 +70,10 @@ import           Database.LSMTree.Internal.BloomFilterQuery1 (RunIxKeyIx (..),
 -- both of which are the same length. The indexes record the run and key
 -- associated with each 'IOOp'.
 prepLookups ::
-     Arena s
+     Index i
+  => Arena s
   -> V.Vector (Bloom SerialisedKey)
-  -> V.Vector IndexCompact
+  -> V.Vector i
   -> V.Vector (Handle h)
   -> V.Vector SerialisedKey
   -> ST s (VP.Vector RunIxKeyIx, V.Vector (IOOp s h))
@@ -89,8 +90,9 @@ type RunIx = Int
 -- @VP.Vector RunIxKeyIx@ argument, because index searching always returns a
 -- positive search result.
 indexSearches
-  :: Arena s
-  -> V.Vector IndexCompact
+  :: Index i
+  => Arena s
+  -> V.Vector i
   -> V.Vector (Handle h)
   -> V.Vector SerialisedKey
   -> VP.Vector RunIxKeyIx -- ^ Result of 'bloomQueries'
@@ -155,14 +157,15 @@ data ByteCountDiscrepancy = ByteCountDiscrepancy {
   deriving anyclass (Exception)
 
 {-# SPECIALIZE lookupsIO ::
-       HasBlockIO IO h
+       Index i
+    => HasBlockIO IO h
     -> ArenaManager RealWorld
     -> ResolveSerialisedValue
     -> WB.WriteBuffer
     -> Ref (WBB.WriteBufferBlobs IO h)
-    -> V.Vector (Ref (Run IO h))
+    -> V.Vector (Ref (Run i IO h))
     -> V.Vector (Bloom SerialisedKey)
-    -> V.Vector IndexCompact
+    -> V.Vector i
     -> V.Vector (Handle h)
     -> V.Vector SerialisedKey
     -> IO (V.Vector (Maybe (Entry SerialisedValue (WeakBlobRef IO h))))
@@ -174,15 +177,15 @@ data ByteCountDiscrepancy = ByteCountDiscrepancy {
 -- PRECONDITION: the vectors of bloom filters, indexes and file handles
 -- should pointwise match with the vectors of runs.
 lookupsIO ::
-     forall m h. (MonadThrow m, MonadST m)
+     forall i m h. (Index i, MonadThrow m, MonadST m)
   => HasBlockIO m h
   -> ArenaManager (PrimState m)
   -> ResolveSerialisedValue
   -> WB.WriteBuffer
   -> Ref (WBB.WriteBufferBlobs m h)
-  -> V.Vector (Ref (Run m h)) -- ^ Runs @rs@
+  -> V.Vector (Ref (Run i m h)) -- ^ Runs @rs@
   -> V.Vector (Bloom SerialisedKey) -- ^ The bloom filters inside @rs@
-  -> V.Vector IndexCompact -- ^ The indexes inside @rs@
+  -> V.Vector i -- ^ The indexes inside @rs@
   -> V.Vector (Handle h) -- ^ The file handles to the key\/value files inside @rs@
   -> V.Vector SerialisedKey
   -> m (V.Vector (Maybe (Entry SerialisedValue (WeakBlobRef m h))))
@@ -205,7 +208,7 @@ lookupsIO !hbio !mgr !resolveV !wb !wbblobs !rs !blooms !indexes !kopsFiles !ks 
        ResolveSerialisedValue
     -> WB.WriteBuffer
     -> Ref (WBB.WriteBufferBlobs IO h)
-    -> V.Vector (Ref (Run IO h))
+    -> V.Vector (Ref (Run i IO h))
     -> V.Vector SerialisedKey
     -> VP.Vector RunIxKeyIx
     -> V.Vector (IOOp RealWorld h)
@@ -220,11 +223,11 @@ lookupsIO !hbio !mgr !resolveV !wb !wbblobs !rs !blooms !indexes !kopsFiles !ks 
 -- key in multiple runs.
 --
 intraPageLookups ::
-     forall m h. (PrimMonad m, MonadThrow m)
+     forall i m h. (PrimMonad m, MonadThrow m)
   => ResolveSerialisedValue
   -> WB.WriteBuffer
   -> Ref (WBB.WriteBufferBlobs m h)
-  -> V.Vector (Ref (Run m h))
+  -> V.Vector (Ref (Run i m h))
   -> V.Vector SerialisedKey
   -> VP.Vector RunIxKeyIx
   -> V.Vector (IOOp (PrimState m) h)

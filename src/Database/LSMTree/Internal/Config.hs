@@ -21,6 +21,7 @@ module Database.LSMTree.Internal.Config (
   , bloomFilterAllocForLevel
     -- * Fence pointer index
   , FencePointerIndex (..)
+  , newFencePointerIndex
     -- * Disk cache policy
   , DiskCachePolicy (..)
   , diskCachePolicyForLevel
@@ -29,13 +30,26 @@ module Database.LSMTree.Internal.Config (
   , defaultMergeSchedule
   ) where
 
+import           Control.Category ((>>>))
 import           Control.DeepSeq (NFData (..))
+import           Control.Monad (guard)
+import           Control.Monad.ST.Strict (ST)
+import           Data.Function (on)
+import           Data.GADT.Compare (GEq (geq))
+import           Data.GADT.Show (GShow (gshowsPrec), defaultGshowsPrec)
 import           Data.Maybe (fromMaybe)
 import           Data.Monoid (Last (..))
+import           Data.Type.Equality ((:~:) (Refl))
 import           Data.Word (Word64)
 import           Database.LSMTree.Internal.Assertions (assert,
                      fromIntegralChecked)
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
+import           Database.LSMTree.Internal.Index.CompactAcc (IndexCompactAcc)
+import           Database.LSMTree.Internal.Index.CompactAcc as IndexCompactAcc
+                     (new)
+import           Database.LSMTree.Internal.Index.OrdinaryAcc (IndexOrdinaryAcc)
+import           Database.LSMTree.Internal.Index.OrdinaryAcc as IndexOrdinaryAcc
+                     (new)
 import           Database.LSMTree.Internal.Run (RunDataCaching (..))
 import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..))
 import qualified Monkey
@@ -55,7 +69,7 @@ newtype LevelNo = LevelNo Int
 -- * Merge policy: Tiering
 --
 -- * Size ratio: 4
-data TableConfig = TableConfig {
+data TableConfig j = TableConfig {
     confMergePolicy       :: !MergePolicy
     -- Size ratio between the capacities of adjacent levels.
   , confSizeRatio         :: !SizeRatio
@@ -65,14 +79,32 @@ data TableConfig = TableConfig {
     -- applications.
   , confWriteBufferAlloc  :: !WriteBufferAlloc
   , confBloomFilterAlloc  :: !BloomFilterAlloc
-  , confFencePointerIndex :: !FencePointerIndex
+  , confFencePointerIndex :: !(FencePointerIndex j)
     -- | The policy for caching key\/value data from disk in memory.
   , confDiskCachePolicy   :: !DiskCachePolicy
   , confMergeSchedule     :: !MergeSchedule
   }
-  deriving stock (Show, Eq)
+  deriving stock Show
 
-instance NFData TableConfig where
+instance GShow TableConfig where
+  gshowsPrec = defaultGshowsPrec
+
+instance GEq TableConfig where
+  config1 `geq` config2 = do
+    Refl <- geq (confFencePointerIndex config1)
+                (confFencePointerIndex config2)
+    guard $ all (($ config1) >>> ($ config2)) $
+            [
+              (==) `on` confMergePolicy,
+              (==) `on` confSizeRatio,
+              (==) `on` confWriteBufferAlloc,
+              (==) `on` confBloomFilterAlloc,
+              (==) `on` confDiskCachePolicy,
+              (==) `on` confMergeSchedule
+            ]
+    return Refl
+
+instance NFData (TableConfig j) where
   rnf (TableConfig a b c d e f g) =
       rnf a `seq` rnf b `seq` rnf c `seq` rnf d `seq` rnf e `seq` rnf f `seq` rnf g
 
@@ -81,7 +113,7 @@ instance NFData TableConfig where
 -- This uses a write buffer with up to 20,000 elements and a generous amount of
 -- memory for Bloom filters (FPR of 2%).
 --
-defaultTableConfig :: TableConfig
+defaultTableConfig :: TableConfig IndexCompactAcc
 defaultTableConfig =
     TableConfig
       { confMergePolicy       = MergePolicyLazyLevelling
@@ -125,7 +157,7 @@ instance Semigroup TableConfigOverride where
 instance Monoid TableConfigOverride where
   mempty = configNoOverride
 
-applyOverride :: TableConfigOverride -> TableConfig -> TableConfig
+applyOverride :: TableConfigOverride -> TableConfig j -> TableConfig j
 applyOverride TableConfigOverride{..} conf = conf {
       confDiskCachePolicy =
         fromMaybe (confDiskCachePolicy conf) (getLast confOverrideDiskCachePolicy)
@@ -242,7 +274,7 @@ instance NFData BloomFilterAlloc where
 defaultBloomFilterAlloc :: BloomFilterAlloc
 defaultBloomFilterAlloc = AllocFixed 10
 
-bloomFilterAllocForLevel :: TableConfig -> LevelNo -> RunBloomFilterAlloc
+bloomFilterAllocForLevel :: TableConfig j -> LevelNo -> RunBloomFilterAlloc
 bloomFilterAllocForLevel conf (LevelNo l) =
     assert (l > 0) $
     case confBloomFilterAlloc conf of
@@ -281,10 +313,7 @@ bloomFilterAllocForLevel conf (LevelNo l) =
 -------------------------------------------------------------------------------}
 
 -- | Configure the type of fence pointer index.
---
--- TODO: this configuration option currently has no effect: 'CompactIndex' is
--- always used.
-data FencePointerIndex =
+data FencePointerIndex j where
     -- | Use a compact fence pointer index.
     --
     -- The compact index type is designed to work with keys that are large
@@ -299,15 +328,30 @@ data FencePointerIndex =
     --
     -- Use 'Database.LSMTree.Internal.Serialise.Class.serialiseKeyMinimalSize'
     -- to test this law.
-    CompactIndex
+    CompactIndex :: FencePointerIndex IndexCompactAcc
     -- | Use an ordinary fence pointer index, without any constraints on
-    -- serialised keys.
-  | OrdinaryIndex
-  deriving stock (Show, Eq)
+    -- serialised keys other than that their serialised forms may not be 64 KiB
+    -- or more in size.
+    OrdinaryIndex :: FencePointerIndex IndexOrdinaryAcc
 
-instance NFData FencePointerIndex where
+deriving stock instance Show (FencePointerIndex j)
+
+instance GShow FencePointerIndex where
+  gshowsPrec = defaultGshowsPrec
+
+instance GEq FencePointerIndex where
+  CompactIndex  `geq` CompactIndex  = Just Refl
+  OrdinaryIndex `geq` OrdinaryIndex = Just Refl
+  _             `geq` _             = Nothing
+
+instance NFData (FencePointerIndex j) where
   rnf CompactIndex  = ()
   rnf OrdinaryIndex = ()
+
+newFencePointerIndex :: TableConfig j -> ST s (j s)
+newFencePointerIndex conf = case confFencePointerIndex conf of
+  CompactIndex  -> IndexCompactAcc.new 1024
+  OrdinaryIndex -> IndexOrdinaryAcc.new 1024 4096
 
 {-------------------------------------------------------------------------------
   Disk cache policy
