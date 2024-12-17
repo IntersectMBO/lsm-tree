@@ -1,3 +1,5 @@
+{-# LANGUAGE MagicHash #-}
+
 -- | On disk key-value tables, implemented as Log Structured Merge (LSM) trees.
 --
 -- This module is the API for \"normal\" tables, as opposed to \"monoidal\"
@@ -124,10 +126,12 @@ import           Database.LSMTree.Common (BlobRef (BlobRef), IOLike, Range (..),
 import qualified Database.LSMTree.Common as Common
 import qualified Database.LSMTree.Internal as Internal
 import qualified Database.LSMTree.Internal.BlobRef as Internal
+import qualified Database.LSMTree.Internal.Config as Internal
 import qualified Database.LSMTree.Internal.Entry as Entry
 import qualified Database.LSMTree.Internal.Serialise as Internal
 import qualified Database.LSMTree.Internal.Snapshot as Internal
 import qualified Database.LSMTree.Internal.Vector as V
+import           GHC.Exts
 
 -- $resource-management
 -- Sessions, tables and cursors use resources and as such need to be
@@ -252,7 +256,9 @@ withTable ::
   -> (Table m k v b -> m a)
   -> m a
 withTable (Internal.Session' sesh) conf action =
-    Internal.withTable sesh conf (action . Internal.NormalTable)
+    case Internal.someFencePointerIndex (Internal.confFencePointerIndex conf) of
+        Internal.SomeFencePointerIndex (p :: Proxy# j) ->
+          Internal.withTable p sesh conf (action . Internal.NormalTable)
 
 {-# SPECIALISE new ::
      Session IO
@@ -264,11 +270,14 @@ withTable (Internal.Session' sesh) conf action =
 -- closed using 'close' as soon as they are no longer used.
 --
 new ::
-     IOLike m
+     forall m k v b. IOLike m
   => Session m
   -> Common.TableConfig
   -> m (Table m k v b)
-new (Internal.Session' sesh) conf = Internal.NormalTable <$> Internal.new sesh conf
+new (Internal.Session' sesh) conf = do
+    case Internal.someFencePointerIndex (Internal.confFencePointerIndex conf) of
+      Internal.SomeFencePointerIndex (p :: Proxy# j) ->
+        Internal.NormalTable <$> Internal.new p sesh conf
 
 {-# SPECIALISE close ::
      Table IO k v b
@@ -710,14 +719,14 @@ openSnapshot :: forall m k v b.
   -> SnapshotName
   -> m (Table m k v b)
 openSnapshot (Internal.Session' sesh) override label snap =
-    Internal.NormalTable <$!>
-      Internal.openSnapshot
-        sesh
-        label
-        Internal.SnapNormalTable
-        override
-        snap
-        const
+    Internal.openSnapshot
+      Internal.NormalTable
+      sesh
+      label
+      Internal.SnapNormalTable
+      override
+      snap
+      const
 
 {-------------------------------------------------------------------------------
   Mutiple writable tables

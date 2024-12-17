@@ -26,7 +26,6 @@ import           Data.Bifunctor
 import qualified Data.ByteString.Char8 as BSC
 import           Data.ByteString.Lazy (ByteString)
 import qualified Data.Map.Strict as Map
-import           Data.Some (Some (Some))
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.CRC32C
@@ -247,14 +246,14 @@ instance DecodeVersioned SnapshotTableType where
 
 -- TableConfig
 
-instance Encode (Some TableConfig) where
-  encode (Some config) =
+instance Encode TableConfig where
+  encode config =
          encodeListLen 7
       <> encode mergePolicy
       <> encode sizeRatio
       <> encode writeBufferAlloc
       <> encode bloomFilterAlloc
-      <> encode (Some fencePointerIndex)
+      <> encode fencePointerIndex
       <> encode diskCachePolicy
       <> encode mergeSchedule
     where
@@ -268,17 +267,17 @@ instance Encode (Some TableConfig) where
         mergeSchedule
         = config
 
-instance DecodeVersioned (Some TableConfig) where
+instance DecodeVersioned TableConfig where
   decodeVersioned v@V0 = do
       _ <- decodeListLenOf 7
       mergePolicy <- decodeVersioned v
       sizeRatio <- decodeVersioned v
       writeBufferAlloc <- decodeVersioned v
       bloomFilterAlloc <- decodeVersioned v
-      Some fencePointerIndex <- decodeVersioned v
+      fencePointerIndex <- decodeVersioned v
       diskCachePolicy <- decodeVersioned v
       mergeSchedule <- decodeVersioned v
-      pure $ Some $
+      pure $
         TableConfig
           mergePolicy
           sizeRatio
@@ -365,16 +364,16 @@ instance DecodeVersioned BloomFilterAlloc where
 
 -- FencePointerIndex
 
-instance Encode (Some FencePointerIndex) where
-  encode (Some CompactIndex)  = encodeWord 0
-  encode (Some OrdinaryIndex) = encodeWord 1
+instance Encode FencePointerIndex where
+  encode CompactIndex   = encodeWord 0
+  encode  OrdinaryIndex = encodeWord 1
 
-instance DecodeVersioned (Some FencePointerIndex) where
+instance DecodeVersioned FencePointerIndex where
    decodeVersioned V0 = do
       tag <- decodeWord
       case tag of
-        0 -> pure (Some CompactIndex)
-        1 -> pure (Some OrdinaryIndex)
+        0 -> pure CompactIndex
+        1 -> pure OrdinaryIndex
         _ -> fail ("[FencePointerIndex] Unexpected tag: " <> show tag)
 
 -- DiskCachePolicy

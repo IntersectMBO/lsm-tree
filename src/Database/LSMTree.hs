@@ -1,3 +1,5 @@
+{-# LANGUAGE MagicHash #-}
+
 -- | This module is experimental. It is mainly used for testing purposes.
 --
 -- See the 'Normal' and 'Monoidal' modules for documentation.
@@ -102,7 +104,6 @@ import           Control.DeepSeq
 import           Control.Exception (throw)
 import           Control.Monad
 import           Data.Bifunctor (Bifunctor (..))
-import           Data.Coerce (coerce)
 import           Data.Kind (Type)
 import           Data.Typeable (Proxy (..), eqT, type (:~:) (Refl))
 import qualified Data.Vector as V
@@ -113,6 +114,7 @@ import           Database.LSMTree.Common (BlobRef (BlobRef), IOLike, Range (..),
 import qualified Database.LSMTree.Common as Common
 import qualified Database.LSMTree.Internal as Internal
 import qualified Database.LSMTree.Internal.BlobRef as Internal
+import qualified Database.LSMTree.Internal.Config as Internal
 import qualified Database.LSMTree.Internal.Entry as Entry
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import qualified Database.LSMTree.Internal.Serialise as Internal
@@ -121,6 +123,7 @@ import qualified Database.LSMTree.Internal.Vector as V
 import           Database.LSMTree.Monoidal (ResolveValue (..),
                      resolveDeserialised, resolveValueAssociativity,
                      resolveValueValidOutput)
+import           GHC.Exts
 
 {-------------------------------------------------------------------------------
   Tables
@@ -140,7 +143,9 @@ withTable ::
   -> (Table m k v b -> m a)
   -> m a
 withTable (Internal.Session' sesh) conf action =
-    Internal.withTable sesh conf (action . Internal.Table')
+    case Internal.someFencePointerIndex (Internal.confFencePointerIndex conf) of
+        Internal.SomeFencePointerIndex (p :: Proxy# j) ->
+          Internal.withTable p sesh conf (action . Internal.Table')
 
 {-# SPECIALISE new ::
      Session IO
@@ -151,7 +156,10 @@ new ::
   => Session m
   -> Common.TableConfig
   -> m (Table m k v b)
-new (Internal.Session' sesh) conf = Internal.Table' <$> Internal.new sesh conf
+new (Internal.Session' sesh) conf =
+    case Internal.someFencePointerIndex (Internal.confFencePointerIndex conf) of
+      Internal.SomeFencePointerIndex (p :: Proxy# j) ->
+        Internal.Table' <$> Internal.new p sesh conf
 
 {-# SPECIALISE close ::
      Table IO k v b
@@ -481,15 +489,13 @@ createSnapshot label snap (Internal.Table' t) =
     void $ Internal.createSnapshot (resolve (Proxy @v)) snap label Internal.SnapFullTable t
 
 {-# SPECIALISE openSnapshot ::
-     ResolveValue v
-  => Session IO
+     Session IO
   -> Common.TableConfigOverride
   -> Common.SnapshotLabel
   -> SnapshotName
   -> IO (Table IO k v b ) #-}
 openSnapshot :: forall m k v b.
      ( IOLike m
-     , ResolveValue v
      )
   => Session m
   -> Common.TableConfigOverride -- ^ Optional config override
@@ -497,7 +503,14 @@ openSnapshot :: forall m k v b.
   -> SnapshotName
   -> m (Table m k v b)
 openSnapshot (Internal.Session' sesh) override label snap =
-    Internal.Table' <$!> Internal.openSnapshot sesh label Internal.SnapFullTable override snap (resolve (Proxy @v))
+    Internal.openSnapshot
+      Internal.Table'
+      sesh
+      label
+      Internal.SnapFullTable
+      override
+      snap
+      const
 
 {-------------------------------------------------------------------------------
   Mutiple writable tables

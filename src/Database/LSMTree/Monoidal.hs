@@ -1,3 +1,5 @@
+{-# LANGUAGE MagicHash #-}
+
 -- | On disk key-value tables, implemented as Log Structured Merge (LSM) trees.
 --
 -- This module is the API for \"monoidal\" tables, as opposed to \"normal\"
@@ -120,7 +122,6 @@ import           Control.DeepSeq
 import           Control.Exception (assert)
 import           Control.Monad ((<$!>))
 import           Data.Bifunctor (Bifunctor (..))
-import           Data.Coerce (coerce)
 import           Data.Kind (Type)
 import           Data.Monoid (Sum (..))
 import           Data.Proxy (Proxy (Proxy))
@@ -130,11 +131,13 @@ import           Database.LSMTree.Common (IOLike, Range (..), SerialiseKey,
                      deleteSnapshot, listSnapshots, openSession, withSession)
 import qualified Database.LSMTree.Common as Common
 import qualified Database.LSMTree.Internal as Internal
+import qualified Database.LSMTree.Internal.Config as Internal
 import qualified Database.LSMTree.Internal.Entry as Entry
 import           Database.LSMTree.Internal.RawBytes (RawBytes)
 import qualified Database.LSMTree.Internal.Serialise as Internal
 import qualified Database.LSMTree.Internal.Snapshot as Internal
 import qualified Database.LSMTree.Internal.Vector as V
+import           GHC.Exts
 
 -- $resource-management
 -- See "Database.LSMTree.Normal#g:resource"
@@ -174,8 +177,9 @@ withTable :: forall m k v a.
   -> (Table m k v -> m a)
   -> m a
 withTable (Internal.Session' sesh) conf action =
-    Internal.withTable sesh conf $
-      action . Internal.MonoidalTable
+    case Internal.someFencePointerIndex (Internal.confFencePointerIndex conf) of
+        Internal.SomeFencePointerIndex (p :: Proxy# j) ->
+          Internal.withTable p sesh conf (action . Internal.MonoidalTable)
 
 {-# SPECIALISE new ::
      Session IO
@@ -191,7 +195,10 @@ new :: forall m k v.
   => Session m
   -> Common.TableConfig
   -> m (Table m k v)
-new (Internal.Session' sesh) conf = Internal.MonoidalTable <$> Internal.new sesh conf
+new (Internal.Session' sesh) conf =
+    case Internal.someFencePointerIndex (Internal.confFencePointerIndex conf) of
+      Internal.SomeFencePointerIndex (p :: Proxy# j) ->
+        Internal.MonoidalTable <$> Internal.new p sesh conf
 
 {-# SPECIALISE close ::
      Table IO k v
@@ -590,8 +597,8 @@ openSnapshot :: forall m k v.
   -> SnapshotName
   -> m (Table m k v)
 openSnapshot (Internal.Session' sesh) override label snap =
-    Internal.MonoidalTable <$>
       Internal.openSnapshot
+        Internal.MonoidalTable
         sesh
         label
         Internal.SnapMonoidalTable

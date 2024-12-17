@@ -487,9 +487,9 @@ iforLevelM_ lvls k = V.iforM_ lvls $ \i lvl -> k (LevelNo (i + 1)) lvl
 -------------------------------------------------------------------------------}
 
 {-# SPECIALISE updatesWithInterleavedFlushes ::
-     IndexAcc j
+     (NewIndexAcc j, IndexAcc j)
   => Tracer IO (AtLevel MergeTrace)
-  -> TableConfig j
+  -> TableConfig
   -> ResolveSerialisedValue
   -> HasFS IO h
   -> HasBlockIO IO h
@@ -525,9 +525,9 @@ iforLevelM_ lvls k = V.iforM_ lvls $ \i lvl -> k (LevelNo (i + 1)) lvl
 -- whole run should then end up in a fresh write buffer.
 updatesWithInterleavedFlushes ::
      forall j m h.
-     (IndexAcc j, MonadMask m, MonadMVar m, MonadSTM m, MonadST m)
+     (NewIndexAcc j, IndexAcc j, MonadMask m, MonadMVar m, MonadSTM m, MonadST m)
   => Tracer m (AtLevel MergeTrace)
-  -> TableConfig j
+  -> TableConfig
   -> ResolveSerialisedValue
   -> HasFS m h
   -> HasBlockIO m h
@@ -606,9 +606,9 @@ addWriteBufferEntries hfs f wbblobs maxn =
 
 
 {-# SPECIALISE flushWriteBuffer ::
-     IndexAcc j
+     (NewIndexAcc j, IndexAcc j)
   => Tracer IO (AtLevel MergeTrace)
-  -> TableConfig j
+  -> TableConfig
   -> ResolveSerialisedValue
   -> HasFS IO h
   -> HasBlockIO IO h
@@ -622,9 +622,9 @@ addWriteBufferEntries hfs f wbblobs maxn =
 -- The returned table content contains an updated set of levels, where the write
 -- buffer is inserted into level 1.
 flushWriteBuffer ::
-     (IndexAcc j, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+     forall j m h. (NewIndexAcc j, IndexAcc j, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => Tracer m (AtLevel MergeTrace)
-  -> TableConfig j
+  -> TableConfig
   -> ResolveSerialisedValue
   -> HasFS m h
   -> HasBlockIO m h
@@ -644,11 +644,12 @@ flushWriteBuffer tr conf@TableConfig{confDiskCachePolicy}
         !alloc = bloomFilterAllocForLevel conf l
         !path  = Paths.runPath root (uniqueToRunNumber n)
     traceWith tr $ AtLevel l $ TraceFlushWriteBuffer size (runNumber path) cache alloc
+
     r <- allocateTemp reg
             (Run.fromWriteBuffer hfs hbio
               cache
               alloc
-              (newFencePointerIndex conf)
+              (newIndexAcc @j)
               path
               (tableWriteBuffer tc)
               (tableWriteBufferBlobs tc))
@@ -746,9 +747,9 @@ _levelsInvariant conf levels =
 -}
 
 {-# SPECIALISE addRunToLevels ::
-     IndexAcc j
+     (NewIndexAcc j, IndexAcc j)
   => Tracer IO (AtLevel MergeTrace)
-  -> TableConfig j
+  -> TableConfig
   -> ResolveSerialisedValue
   -> HasFS IO h
   -> HasBlockIO IO h
@@ -764,9 +765,9 @@ _levelsInvariant conf levels =
 -- for documentation about the merge algorithm.
 addRunToLevels ::
      forall j m h.
-     (IndexAcc j, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+     (NewIndexAcc j, IndexAcc j, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => Tracer m (AtLevel MergeTrace)
-  -> TableConfig j
+  -> TableConfig
   -> ResolveSerialisedValue
   -> HasFS m h
   -> HasBlockIO m h
@@ -861,7 +862,7 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
         !n <- incrUniqCounter uc
         let !caching = diskCachePolicyForLevel confDiskCachePolicy ln
             !alloc = bloomFilterAllocForLevel conf ln
-            !newIndex = newFencePointerIndex conf
+            !newIndex = newIndexAcc @j
             !runPaths = Paths.runPath root (uniqueToRunNumber n)
         traceWith tr $ AtLevel ln $
           TraceNewMerge (V.map Run.size rs) (runNumber runPaths) caching alloc mergePolicy mergelast
@@ -924,7 +925,7 @@ maxRunSize (sizeRatioInt -> sizeRatio) (AllocNumEntries (NumEntries bufferSize))
       | ln == 0 = 0
       | otherwise = bufferSize * sizeRatio ^ (pred ln)
 
-maxRunSize' :: TableConfig j -> MergePolicyForLevel -> LevelNo -> NumEntries
+maxRunSize' :: TableConfig -> MergePolicyForLevel -> LevelNo -> NumEntries
 maxRunSize' config policy ln =
     maxRunSize (confSizeRatio config) (confWriteBufferAlloc config) policy ln
 
@@ -1056,7 +1057,7 @@ newtype Credit = Credit Int
 
 {-# SPECIALISE supplyCredits ::
      IndexAcc j
-  => TableConfig j
+  => TableConfig
   -> Credit
   -> Levels j IO h
   -> IO ()
@@ -1065,7 +1066,7 @@ newtype Credit = Credit Int
 -- This /may/ cause some merges to progress.
 supplyCredits ::
      (IndexAcc j, MonadSTM m, MonadST m, MonadMVar m, MonadMask m)
-  => TableConfig j
+  => TableConfig
   -> Credit
   -> Levels j m h
   -> m ()
@@ -1339,7 +1340,7 @@ newtype CreditThreshold = CreditThreshold { getCreditThreshold :: Int }
 
 -- TODO: the thresholds for doing merge work should be different for each level,
 -- maybe co-prime?
-creditThresholdForLevel :: TableConfig j -> LevelNo -> CreditThreshold
+creditThresholdForLevel :: TableConfig -> LevelNo -> CreditThreshold
 creditThresholdForLevel conf (LevelNo _i) =
     let AllocNumEntries (NumEntries x) = confWriteBufferAlloc conf
     in  CreditThreshold x

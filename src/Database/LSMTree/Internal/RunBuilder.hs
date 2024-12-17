@@ -81,7 +81,7 @@ data RunBuilder j m h = RunBuilder {
 -- | Create an 'RunBuilder' to start building a run.
 --
 -- NOTE: 'new' assumes that 'runDir' that the run is created in exists.
-new 
+new
   :: forall j m h . (IndexAcc j, MonadST m, MonadSTM m)
   => HasFS m h
   -> HasBlockIO m h

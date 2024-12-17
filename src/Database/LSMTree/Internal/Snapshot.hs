@@ -21,7 +21,6 @@ module Database.LSMTree.Internal.Snapshot (
   , hardLinkRunFiles
   ) where
 
-import           Control.Category ((>>>))
 import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Concurrent.Class.MonadSTM (MonadSTM)
 import           Control.Monad (void)
@@ -31,16 +30,15 @@ import           Control.Monad.Primitive (PrimMonad)
 import           Control.RefCount
 import           Control.TempRegistry
 import           Data.Foldable (sequenceA_)
-import           Data.Function (on)
 import           Data.Primitive (readMutVar)
 import           Data.Primitive.PrimVar
-import           Data.Some (Some (Some))
 import           Data.Text (Text)
 import           Data.Traversable (for)
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.Entry
-import           Database.LSMTree.Internal.Index (IndexAcc (ResultingIndex))
+import           Database.LSMTree.Internal.Index (Index,
+                     IndexAcc (ResultingIndex))
 import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.MergeSchedule
@@ -91,7 +89,7 @@ data SnapshotMetaData = SnapshotMetaData {
     --
     -- Some of these configuration options can be overridden when a snapshot is
     -- opened: see 'TableConfigOverride'.
-  , snapMetaConfig    :: !(Some TableConfig)
+  , snapMetaConfig    :: !TableConfig
     -- | The shape of the LSM tree.
   , snapMetaLevels    :: !(SnapLevels RunNumber)
   }
@@ -215,32 +213,32 @@ snapshotRuns reg (NamedSnapshotDir targetDir) levels =
       pure (runNumber targetPaths)
 
 {-# SPECIALISE openRuns ::
-     IndexAcc j
+     Index i
   => TempRegistry IO
   -> HasFS IO h
   -> HasBlockIO IO h
-  -> TableConfig j
+  -> TableConfig
   -> UniqCounter IO
   -> NamedSnapshotDir
   -> ActiveDir
   -> SnapLevels RunNumber
-  -> IO (SnapLevels (Ref (Run (ResultingIndex j) IO h))) #-}
+  -> IO (SnapLevels (Ref (Run i IO h))) #-}
 -- | @'openRuns' _ _ _ _ uniqCounter sourceDir targetDir levels@ takes all run
 -- files that are referenced by @levels@, and hard links them from @sourceDir@
 -- into @targetDir@ with new, unique names (using @uniqCounter@). Each set of
 -- (hard linked) files that represents a run is opened and verified, returning
 -- 'Run's as a result.
 openRuns ::
-     (IndexAcc j, MonadMask m, MonadSTM m, MonadST m, MonadMVar m)
+     (Index i, MonadMask m, MonadSTM m, MonadST m, MonadMVar m)
   => TempRegistry m
   -> HasFS m h
   -> HasBlockIO m h
-  -> TableConfig j
+  -> TableConfig
   -> UniqCounter m
   -> NamedSnapshotDir
   -> ActiveDir
   -> SnapLevels RunNumber
-  -> m (SnapLevels (Ref (Run (ResultingIndex j) m h)))
+  -> m (SnapLevels (Ref (Run i m h)))
 openRuns
   reg hfs hbio TableConfig{..} uc
   (NamedSnapshotDir sourceDir) (ActiveDir targetDir) (SnapLevels levels) = do
@@ -264,11 +262,11 @@ openRuns
 -------------------------------------------------------------------------------}
 
 {-# SPECIALISE fromSnapLevels ::
-     IndexAcc j
+     (NewIndexAcc j, IndexAcc j)
   => TempRegistry IO
   -> HasFS IO h
   -> HasBlockIO IO h
-  -> TableConfig j
+  -> TableConfig
   -> UniqCounter IO
   -> ResolveSerialisedValue
   -> ActiveDir
@@ -276,11 +274,11 @@ openRuns
   -> IO (Levels j IO h)
   #-}
 fromSnapLevels ::
-     forall j m h. (IndexAcc j, MonadMask m, MonadMVar m, MonadSTM m, MonadST m)
+     forall j m h. (NewIndexAcc j, IndexAcc j, MonadMask m, MonadMVar m, MonadSTM m, MonadST m)
   => TempRegistry m
   -> HasFS m h
   -> HasBlockIO m h
-  -> TableConfig j
+  -> TableConfig
   -> UniqCounter m
   -> ResolveSerialisedValue
   -> ActiveDir
@@ -318,7 +316,7 @@ fromSnapLevels reg hfs hbio conf@TableConfig{..} uc resolve dir (SnapLevels leve
       where
         caching = diskCachePolicyForLevel confDiskCachePolicy ln
         alloc = bloomFilterAllocForLevel conf ln
-        newIndex = newFencePointerIndex conf
+        newIndex = newIndexAcc
 
         fromSnapIncomingRun ::
              SnapIncomingRun (Ref (Run (ResultingIndex j) m h))

@@ -1,4 +1,5 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE MagicHash #-}
 
 -- | This module brings together the internal parts to provide an API in terms
 -- of untyped serialised keys, values and blobs. It makes no distinction between
@@ -20,7 +21,6 @@ module Database.LSMTree.Internal (
   , NormalCursor (..)
   , MonoidalTable (..)
   , MonoidalCursor (..)
-  , TableConfig' (..)
     -- * Exceptions
   , LSMTreeError (..)
     -- * Tracing
@@ -85,13 +85,11 @@ import           Control.Tracer
 import           Data.Arena (ArenaManager, newArenaManager)
 import           Data.Foldable
 import           Data.Functor.Compose (Compose (..))
-import           Data.GADT.Compare (GEq (geq))
 import           Data.Kind
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (catMaybes)
 import qualified Data.Set as Set
-import           Data.Some (Some (Some), withSome)
 import           Data.Typeable
 import qualified Data.Vector as V
 import           Data.Word (Word64)
@@ -119,6 +117,7 @@ import           Database.LSMTree.Internal.Snapshot.Codec
 import           Database.LSMTree.Internal.UniqCounter
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
+import           GHC.Exts
 import qualified System.FS.API as FS
 import           System.FS.API (FsError, FsErrorPath (..), FsPath, HasFS)
 import qualified System.FS.BlockIO.API as FS
@@ -129,14 +128,14 @@ import           System.FS.BlockIO.API (HasBlockIO)
 -------------------------------------------------------------------------------}
 
 type Session' :: (Type -> Type) -> Type
-data Session' m = forall j h. (IndexAcc j, Typeable h) =>
-    Session' !(Session j m h)
+data Session' m = forall h. Typeable h =>
+    Session' !(Session m h)
 
 instance NFData (Session' m) where
   rnf (Session' s) = rnf s
 
 type Table' :: (Type -> Type) -> Type -> Type -> Type -> Type
-data Table' m k v b = forall j h. (IndexAcc j, Typeable h) =>
+data Table' m k v b = forall j h. (NewIndexAcc j, IndexAcc j, Typeable h) =>
     Table' (Table j m h)
 
 instance NFData (Table' m k v b) where
@@ -150,7 +149,7 @@ instance NFData (Cursor' m k v b) where
   rnf (Cursor' t) = rnf t
 
 type NormalTable :: (Type -> Type) -> Type -> Type -> Type -> Type
-data NormalTable m k v b = forall j h. (IndexAcc j, Typeable h) =>
+data NormalTable m k v b = forall j h. (NewIndexAcc j, IndexAcc j, Typeable h) =>
     NormalTable !(Table j m h)
 
 instance NFData (NormalTable m k v b) where
@@ -164,7 +163,7 @@ instance NFData (NormalCursor m k v b) where
   rnf (NormalCursor c) = rnf c
 
 type MonoidalTable :: (Type -> Type) -> Type -> Type -> Type
-data MonoidalTable m k v = forall j h. (IndexAcc j, Typeable h) =>
+data MonoidalTable m k v = forall j h. (NewIndexAcc j, IndexAcc j, Typeable h) =>
     MonoidalTable !(Table j m h)
 
 instance NFData (MonoidalTable m k v) where
@@ -176,11 +175,6 @@ data MonoidalCursor m k v = forall j h. (IndexAcc j, Typeable h) =>
 
 instance NFData (MonoidalCursor m k v) where
   rnf (MonoidalCursor c) = rnf c
-
-data TableConfig' = forall j. IndexAcc j => TableConfig' !(TableConfig j)
-
-instance NFData TableConfig' where
-  rnf (TableConfig' tc) = rnf tc
 
 {-------------------------------------------------------------------------------
   Exceptions
@@ -217,9 +211,6 @@ data LSMTreeError =
       SnapshotLabel -- ^ Expected label
       SnapshotLabel -- ^ Actual label
     -- | Something went wrong during batch lookups.
-  | ErrSnapshotWrongIndexType
-      (Some FencePointerIndex) -- ^ Expected index type
-      (Some FencePointerIndex) -- ^ Actual index type
   | ErrLookup ByteCountDiscrepancy
     -- | A 'BlobRef' used with 'retrieveBlobs' was invalid.
     --
@@ -265,7 +256,7 @@ data TableTrace =
     --
     -- This message is traced in addition to messages like 'TraceNewTable' and
     -- 'TraceDuplicate'.
-    TraceCreateTable (Some TableConfig)
+    TraceCreateTable TableConfig
   | TraceCloseTable
     -- Lookups
   | TraceLookups Int
@@ -293,24 +284,24 @@ data CursorTrace =
 -- | A session provides context that is shared across multiple tables.
 --
 -- For more information, see 'Database.LSMTree.Common.Session'.
-data Session j m h = Session {
+data Session m h = Session {
       -- | The primary purpose of this 'RWVar' is to ensure consistent views of
       -- the open-/closedness of a session when multiple threads require access
       -- to the session's fields (see 'withOpenSession'). We use more
       -- fine-grained synchronisation for various mutable parts of an open
       -- session.
-      sessionState  :: !(RWVar m (SessionState j m h))
+      sessionState  :: !(RWVar m (SessionState m h))
     , sessionTracer :: !(Tracer m LSMTreeTrace)
     }
 
-instance NFData (Session j m h) where
+instance NFData (Session m h) where
   rnf (Session a b) = rnf a `seq` rwhnf b
 
-data SessionState j m h =
-    SessionOpen !(SessionEnv j m h)
+data SessionState m h =
+    SessionOpen !(SessionEnv m h)
   | SessionClosed
 
-data SessionEnv j m h = SessionEnv {
+data SessionEnv m h = SessionEnv {
     -- | The path to the directory in which this sesion is live. This is a path
     -- relative to root of the 'HasFS' instance.
     sessionRoot        :: !SessionRoot
@@ -334,16 +325,37 @@ data SessionEnv j m h = SessionEnv {
     -- * A table 'close' may delete its own identifier from the set of open
     --   tables without restrictions, even concurrently with 'closeSession'.
     --   This is safe because 'close' is idempotent'.
-  , sessionOpenTables  :: !(StrictMVar m (Map Word64 (Table j m h)))
+  , sessionOpenTables  :: !(StrictMVar m (Map Word64 (SomeTable m h)))
     -- | Similarly to tables, open cursors are tracked so they can be closed
     -- once the session is closed. See 'sessionOpenTables'.
-  , sessionOpenCursors :: !(StrictMVar m (Map Word64 (Cursor j m h)))
+  , sessionOpenCursors :: !(StrictMVar m (Map Word64 (SomeCursor m h)))
   }
+
+
+data SomeTable m h where
+  SomeTable :: forall j m h. Table j m h -> SomeTable m h
+
+{-# INLINE closeSomeTable #-}
+closeSomeTable ::
+     (MonadMask m, MonadSTM m, MonadMVar m, PrimMonad m)
+  => SomeTable m h
+  -> m ()
+closeSomeTable (SomeTable t) = close t
+
+data SomeCursor m h where
+  SomeCursor :: forall j m h. Cursor j m h -> SomeCursor m h
+
+{-# INLINE closeSomeCursor #-}
+closeSomeCursor ::
+     (MonadMask m, MonadMVar m, MonadSTM m, PrimMonad m)
+  => SomeCursor m h
+  -> m ()
+closeSomeCursor (SomeCursor t) = closeCursor t
 
 {-# INLINE withOpenSession #-}
 {-# SPECIALISE withOpenSession ::
-     Session j IO h
-  -> (SessionEnv j IO h -> IO a)
+     Session IO h
+  -> (SessionEnv IO h -> IO a)
   -> IO a #-}
 -- | 'withOpenSession' ensures that the session stays open for the duration of the
 -- provided continuation.
@@ -351,8 +363,8 @@ data SessionEnv j m h = SessionEnv {
 -- NOTE: any operation except 'sessionClose' can use this function.
 withOpenSession ::
      (MonadSTM m, MonadThrow m)
-  => Session j m h
-  -> (SessionEnv j m h -> m a)
+  => Session m h
+  -> (SessionEnv m h -> m a)
   -> m a
 withOpenSession sesh action = RW.withReadAccess (sessionState sesh) $ \case
     SessionClosed -> throwIO ErrSessionClosed
@@ -367,7 +379,7 @@ withOpenSession sesh action = RW.withReadAccess (sessionState sesh) $ \case
   -> HasFS IO h
   -> HasBlockIO IO h
   -> FsPath
-  -> (Session j IO h -> IO a)
+  -> (Session IO h -> IO a)
   -> IO a #-}
 -- | See 'Database.LSMTree.Common.withSession'.
 withSession ::
@@ -376,7 +388,7 @@ withSession ::
   -> HasFS m h
   -> HasBlockIO m h
   -> FsPath
-  -> (Session j m h -> m a)
+  -> (Session m h -> m a)
   -> m a
 withSession tr hfs hbio dir = bracket (openSession tr hfs hbio dir) closeSession
 
@@ -385,16 +397,16 @@ withSession tr hfs hbio dir = bracket (openSession tr hfs hbio dir) closeSession
   -> HasFS IO h
   -> HasBlockIO IO h
   -> FsPath
-  -> IO (Session j IO h) #-}
+  -> IO (Session IO h) #-}
 -- | See 'Database.LSMTree.Common.openSession'.
 openSession ::
-     forall j m h.
+     forall m h.
      (MonadCatch m, MonadSTM m, MonadMVar m)
   => Tracer m LSMTreeTrace
   -> HasFS m h
   -> HasBlockIO m h -- TODO: could we prevent the user from having to pass this in?
   -> FsPath -- ^ Path to the session directory
-  -> m (Session j m h)
+  -> m (Session m h)
 openSession tr hfs hbio dir = do
     traceWith tr (TraceOpenSession dir)
     dirExists <- FS.doesDirectoryExist hfs dir
@@ -489,14 +501,14 @@ openSession tr hfs hbio dir = do
     -- session is restored.
     checkSnapshotsDirLayout = pure ()
 
-{-# SPECIALISE closeSession :: Session j IO h -> IO () #-}
+{-# SPECIALISE closeSession :: Session IO h -> IO () #-}
 -- | See 'Database.LSMTree.Common.closeSession'.
 --
 -- A session's global resources will only be released once it is sure that no
 -- tables are open anymore.
 closeSession ::
      (MonadMask m, MonadSTM m, MonadMVar m, PrimMonad m)
-  => Session j m h
+  => Session m h
   -> m ()
 closeSession Session{sessionState, sessionTracer} = do
     traceWith sessionTracer TraceCloseSession
@@ -518,9 +530,9 @@ closeSession Session{sessionState, sessionTracer} = do
         --
         -- TODO: use TempRegistry
         cursors <- modifyMVar (sessionOpenCursors seshEnv) (\m -> pure (Map.empty, m))
-        mapM_ closeCursor cursors
+        mapM_ closeSomeCursor cursors
         tables <- modifyMVar (sessionOpenTables seshEnv) (\m -> pure (Map.empty, m))
-        mapM_ close tables
+        mapM_ closeSomeTable tables
         FS.close (sessionHasBlockIO seshEnv)
         FS.hUnlock (sessionLockFile seshEnv)
         pure SessionClosed
@@ -533,7 +545,7 @@ closeSession Session{sessionState, sessionTracer} = do
 --
 -- For more information, see 'Database.LSMTree.Normal.Table'.
 data Table j m h = Table {
-      tableConfig       :: !(TableConfig j)
+      tableConfig       :: !TableConfig
       -- | The primary purpose of this 'RWVar' is to ensure consistent views of
       -- the open-/closedness of a table when multiple threads require access to
       -- the table's fields (see 'withOpenTable'). We use more fine-grained
@@ -562,10 +574,10 @@ data TableEnv j m h = TableEnv {
     --
     -- NOTE: Consider using the 'tableSessionEnv' field and helper functions
     -- like 'tableHasFS' instead of acquiring the session lock.
-    tableSession    :: !(Session j m h)
+    tableSession    :: !(Session m h)
     -- | Use this instead of 'tableSession' for easy access. An open table may
     -- assume that its session is open.
-  , tableSessionEnv :: !(SessionEnv j m h)
+  , tableSessionEnv :: !(SessionEnv m h)
 
     -- === Table-specific
 
@@ -631,30 +643,34 @@ withOpenTable t action = RW.withReadAccess (tableState t) $ \case
 --
 
 {-# SPECIALISE withTable ::
-     Session j IO h
-  -> TableConfig j
+     Proxy# j
+  -> Session IO h
+  -> TableConfig
   -> (Table j IO h -> IO a)
   -> IO a #-}
 -- | See 'Database.LSMTree.Normal.withTable'.
 withTable ::
      (MonadMask m, MonadSTM m, MonadMVar m, PrimMonad m)
-  => Session j m h
-  -> TableConfig j
+  => Proxy# j
+  -> Session m h
+  -> TableConfig
   -> (Table j m h -> m a)
   -> m a
-withTable sesh conf = bracket (new sesh conf) close
+withTable p sesh conf = bracket (new p sesh conf) close
 
 {-# SPECIALISE new ::
-     Session j IO h
-  -> TableConfig j
+     Proxy# j
+  -> Session IO h
+  -> TableConfig
   -> IO (Table j IO h) #-}
 -- | See 'Database.LSMTree.Normal.new'.
 new ::
-     forall j m h. (MonadSTM m, MonadMVar m, PrimMonad m, MonadMask m)
-  => Session j m h
-  -> TableConfig j
+     forall m h j. (MonadSTM m, MonadMVar m, PrimMonad m, MonadMask m)
+  => Proxy# j
+  -> Session m h
+  -> TableConfig
   -> m (Table j m h)
-new sesh conf = do
+new _ sesh conf = do
     traceWith (sessionTracer sesh) TraceNewTable
     withOpenSession sesh $ \seshEnv ->
       withTempRegistry $ \reg -> do
@@ -678,25 +694,25 @@ new sesh conf = do
 
 {-# SPECIALISE newWith ::
      TempRegistry IO
-  -> Session j IO h
-  -> SessionEnv j IO h
-  -> TableConfig j
+  -> Session IO h
+  -> SessionEnv IO h
+  -> TableConfig
   -> ArenaManager RealWorld
   -> TableContent j IO h
   -> IO (Table j IO h) #-}
 newWith ::
      (MonadSTM m, MonadMVar m)
   => TempRegistry m
-  -> Session j m h
-  -> SessionEnv j m h
-  -> TableConfig j
+  -> Session m h
+  -> SessionEnv m h
+  -> TableConfig
   -> ArenaManager (PrimState m)
   -> TableContent j m h
   -> m (Table j m h)
 newWith reg sesh seshEnv conf !am !tc = do
     tableId <- incrUniqCounter (sessionUniqCounter seshEnv)
     let tr = TraceTable (uniqueToWord64 tableId) `contramap` sessionTracer sesh
-    traceWith tr $ TraceCreateTable (Some conf)
+    traceWith tr $ TraceCreateTable conf
     -- The session is kept open until we've updated the session's set of tracked
     -- tables. If 'closeSession' is called by another thread while this code
     -- block is being executed, that thread will block until it reads the
@@ -711,7 +727,7 @@ newWith reg sesh seshEnv conf !am !tc = do
     let !t = Table conf tableVar am tr
     -- Track the current table
     freeTemp reg $ modifyMVar_ (sessionOpenTables seshEnv)
-                 $ pure . Map.insert (uniqueToWord64 tableId) t
+                 $ pure . Map.insert (uniqueToWord64 tableId) (SomeTable t)
     pure $! t
 
 {-# SPECIALISE close :: Table j IO h -> IO () #-}
@@ -808,7 +824,7 @@ rangeLookup resolve range t fromEntry = do
         else return (V.concat (reverse (V.slice 0 n chunk : chunks)))
 
 {-# SPECIALISE updates ::
-     IndexAcc j
+     (NewIndexAcc j, IndexAcc j)
   => ResolveSerialisedValue
   -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob)
   -> Table j IO h
@@ -817,7 +833,7 @@ rangeLookup resolve range t fromEntry = do
 --
 -- Does not enforce that mupsert and blobs should not occur in the same table.
 updates ::
-     (IndexAcc j, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+     (NewIndexAcc j, IndexAcc j, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => ResolveSerialisedValue
   -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob)
   -> Table j m h
@@ -846,12 +862,12 @@ updates resolve es t = do
 -------------------------------------------------------------------------------}
 
 {-# SPECIALISE retrieveBlobs ::
-     Session j IO h
+     Session IO h
   -> V.Vector (WeakBlobRef IO h)
   -> IO (V.Vector SerialisedBlob) #-}
 retrieveBlobs ::
      (MonadMask m, MonadST m, MonadSTM m)
-  => Session j m h
+  => Session m h
   -> V.Vector (WeakBlobRef m h)
   -> m (V.Vector SerialisedBlob)
 retrieveBlobs sesh wrefs =
@@ -892,12 +908,12 @@ data CursorEnv j m h = CursorEnv {
     --
     -- NOTE: Consider using the 'cursorSessionEnv' field instead of acquiring
     -- the session lock.
-    cursorSession    :: !(Session j m h)
+    cursorSession    :: !(Session m h)
     -- | Use this instead of 'cursorSession' for easy access. An open cursor may
     -- assume that its session is open. A session's global resources, and
     -- therefore resources that are inherited by the cursor, will only be
     -- released once the session is sure that no cursors are open anymore.
-  , cursorSessionEnv :: !(SessionEnv j m h)
+  , cursorSessionEnv :: !(SessionEnv m h)
 
     -- === Cursor-specific
 
@@ -982,7 +998,7 @@ newCursor !offsetKey t = withOpenTable t $ \thEnv -> do
         -- successfully, i.e. using 'freeTemp'.
         freeTemp reg $
           modifyMVar_ (sessionOpenCursors cursorSessionEnv) $
-            pure . Map.insert cursorId cursor
+            pure . Map.insert cursorId (SomeCursor cursor)
         pure $! cursor
   where
     -- The table contents escape the read access, but we just duplicate
@@ -1087,7 +1103,7 @@ readCursorWhile resolve keyIsWanted n Cursor {..} fromEntry = do
 -------------------------------------------------------------------------------}
 
 {-# SPECIALISE createSnapshot ::
-     IndexAcc j
+     (NewIndexAcc j, IndexAcc j)
   => ResolveSerialisedValue
   -> SnapshotName
   -> SnapshotLabel
@@ -1096,7 +1112,7 @@ readCursorWhile resolve keyIsWanted n Cursor {..} fromEntry = do
   -> IO () #-}
 -- |  See 'Database.LSMTree.Normal.createSnapshot''.
 createSnapshot ::
-     (IndexAcc j, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+     (NewIndexAcc j, IndexAcc j, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => ResolveSerialisedValue
   -> SnapshotName
   -> SnapshotLabel
@@ -1154,33 +1170,32 @@ createSnapshot resolve snap label tableType t = do
         -- Hard link runs into the named snapshot directory
         snapLevels' <- snapshotRuns reg snapDir snapLevels
 
-        let snapMetaData = SnapshotMetaData label tableType (Some (tableConfig t)) snapLevels'
+        let snapMetaData = SnapshotMetaData label tableType (tableConfig t) snapLevels'
             SnapshotMetaDataFile contentPath = Paths.snapshotMetaDataFile snapDir
             SnapshotMetaDataChecksumFile checksumPath = Paths.snapshotMetaDataChecksumFile snapDir
         writeFileSnapshotMetaData hfs contentPath checksumPath snapMetaData
 
 {-# SPECIALISE openSnapshot ::
-     IndexAcc j
-  => Session j IO h
+     (forall j. (NewIndexAcc j, IndexAcc j) => Table j IO h -> a)
+  -> Session IO h
   -> SnapshotLabel
   -> SnapshotTableType
-  -> FencePointerIndex j
   -> TableConfigOverride
   -> SnapshotName
   -> ResolveSerialisedValue
-  -> IO (Table j IO h) #-}
+  -> IO a #-}
 -- |  See 'Database.LSMTree.Normal.openSnapshot'.
 openSnapshot ::
-     (IndexAcc j, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
-  => Session j m h
+     (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+  => (forall j. (NewIndexAcc j, IndexAcc j) => Table j m h -> a)
+  -> Session m h
   -> SnapshotLabel -- ^ Expected label
   -> SnapshotTableType -- ^ Expected table type
-  -> FencePointerIndex j -- ^ Expected index type
   -> TableConfigOverride -- ^ Optional config override
   -> SnapshotName
   -> ResolveSerialisedValue
-  -> m (Table j m h)
-openSnapshot sesh label tableType indexType override snap resolve = do
+  -> m a
+openSnapshot mkExistential sesh label tableType override snap resolve = do
     traceWith (sessionTracer sesh) $ TraceOpenSnapshot snap override
     withOpenSession sesh $ \seshEnv -> do
       withTempRegistry $ \reg -> do
@@ -1198,52 +1213,47 @@ openSnapshot sesh label tableType indexType override snap resolve = do
           Left e  -> throwIO (ErrSnapshotDeserialiseFailure e snap)
           Right x -> pure x
 
-        let SnapshotMetaData label' tableType' someConf snapLevels =
+        let SnapshotMetaData label' tableType' conf snapLevels =
               snapMetaData
 
-        unless (tableType == tableType') $
-          throwIO (ErrSnapshotWrongTableType snap tableType tableType')
+        case someFencePointerIndex (confFencePointerIndex conf) of
+          SomeFencePointerIndex (_ :: Proxy# j) -> do
+            unless (tableType == tableType') $
+              throwIO (ErrSnapshotWrongTableType snap tableType tableType')
 
-        unless (label == label') $
-          throwIO (ErrSnapshotWrongLabel snap label label')
+            unless (label == label') $
+              throwIO (ErrSnapshotWrongLabel snap label label')
 
-        withSome someConf $ \conf -> do
-          let indexType' = confFencePointerIndex conf
-          case indexType `geq` indexType' of
-            Nothing ->
-              throwIO $ ErrSnapshotWrongIndexType (Some indexType)
-                                                  (Some indexType')
-            Just Refl -> do
-              let conf' = applyOverride override conf
-              am <- newArenaManager
-              blobpath <- Paths.tableBlobPath (sessionRoot seshEnv) <$>
-                            incrUniqCounter (sessionUniqCounter seshEnv)
-              tableWriteBufferBlobs <- allocateTemp reg (WBB.new hfs blobpath)
-                                                        releaseRef
-  
-              let actDir = Paths.activeDir (sessionRoot seshEnv)
-  
-              -- Hard link runs into the active directory,
-              snapLevels' <- openRuns reg hfs hbio conf (sessionUniqCounter seshEnv) snapDir actDir snapLevels
-              -- Convert from the snapshot format, restoring merge progress in the process
-              tableLevels <- fromSnapLevels reg hfs hbio conf (sessionUniqCounter seshEnv) resolve actDir snapLevels'
-  
-              tableCache <- mkLevelsCache reg tableLevels
-              newWith reg sesh seshEnv conf' am $! TableContent {
-                  tableWriteBuffer = WB.empty
-                , tableWriteBufferBlobs
-                , tableLevels
-                , tableCache
-                }
+            let conf' = applyOverride override conf
+            am <- newArenaManager
+            blobpath <- Paths.tableBlobPath (sessionRoot seshEnv) <$>
+                          incrUniqCounter (sessionUniqCounter seshEnv)
+            tableWriteBufferBlobs <- allocateTemp reg (WBB.new hfs blobpath)
+                                                      releaseRef
+
+            let actDir = Paths.activeDir (sessionRoot seshEnv)
+
+            -- Hard link runs into the active directory,
+            snapLevels' <- openRuns @(ResultingIndex j) reg hfs hbio conf (sessionUniqCounter seshEnv) snapDir actDir snapLevels
+            -- Convert from the snapshot format, restoring merge progress in the process
+            tableLevels <- fromSnapLevels @j reg hfs hbio conf (sessionUniqCounter seshEnv) resolve actDir snapLevels'
+
+            tableCache <- mkLevelsCache reg tableLevels
+            mkExistential <$> (newWith reg sesh seshEnv conf' am $! TableContent {
+                tableWriteBuffer = WB.empty
+              , tableWriteBufferBlobs
+              , tableLevels
+              , tableCache
+              })
 
 {-# SPECIALISE deleteSnapshot ::
-     Session j IO h
+     Session IO h
   -> SnapshotName
   -> IO () #-}
 -- |  See 'Database.LSMTree.Common.deleteSnapshot'.
 deleteSnapshot ::
      (MonadMask m, MonadSTM m)
-  => Session j m h
+  => Session m h
   -> SnapshotName
   -> m ()
 deleteSnapshot sesh snap = do
@@ -1257,11 +1267,11 @@ deleteSnapshot sesh snap = do
       unless doesSnapshotExist $ throwIO (ErrSnapshotNotExists snap)
       FS.removeDirectoryRecursive hfs (Paths.getNamedSnapshotDir snapDir)
 
-{-# SPECIALISE listSnapshots :: Session j IO h -> IO [SnapshotName] #-}
+{-# SPECIALISE listSnapshots :: Session IO h -> IO [SnapshotName] #-}
 -- |  See 'Database.LSMTree.Common.listSnapshots'.
 listSnapshots ::
      (MonadMask m, MonadSTM m)
-  => Session j m h
+  => Session m h
   -> m [SnapshotName]
 listSnapshots sesh = do
     traceWith (sessionTracer sesh) TraceListSnapshots
