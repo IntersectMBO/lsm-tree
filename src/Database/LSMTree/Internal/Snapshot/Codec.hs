@@ -21,7 +21,7 @@ import           Codec.CBOR.Encoding
 import           Codec.CBOR.Read
 import           Codec.CBOR.Write
 import           Control.Monad (when)
-import           Control.Monad.Class.MonadThrow (MonadThrow (..))
+import           Control.Monad.Class.MonadThrow (MonadThrow (..), onException, MonadCatch)
 import           Data.Bifunctor
 import qualified Data.ByteString.Char8 as BSC
 import           Data.ByteString.Lazy (ByteString)
@@ -79,20 +79,30 @@ isCompatible otherVersion = do
 
 -- | Encode 'SnapshotMetaData' and write it to 'SnapshotMetaDataFile'.
 writeFileSnapshotMetaData ::
-     MonadThrow m
+     MonadCatch m
   => HasFS m h
   -> FsPath -- ^ Target file for snapshot metadata
   -> FsPath -- ^ Target file for checksum
   -> SnapshotMetaData
   -> m ()
 writeFileSnapshotMetaData hfs contentPath checksumPath snapMetaData = do
-    (_, checksum) <-
-      FS.withFile hfs contentPath (FS.WriteMode FS.MustBeNew) $ \h ->
-        hPutAllChunksCRC32C hfs h (encodeSnapshotMetaData snapMetaData) initialCRC32C
+    -- TODO: also remove file when exceptions happen in the caller (?)
+    doTheThing
+      `onException` do
+        contentFileExists <- FS.doesFileExist hfs contentPath
+        when contentFileExists $ FS.removeFile hfs contentPath
+      `onException` do
+        checksumFileExists <- FS.doesFileExist hfs checksumPath
+        when checksumFileExists $ FS.removeFile hfs checksumPath
+  where
+    doTheThing = do
+      (_, checksum) <-
+        FS.withFile hfs contentPath (FS.WriteMode FS.MustBeNew) $ \h ->
+          hPutAllChunksCRC32C hfs h (encodeSnapshotMetaData snapMetaData) initialCRC32C
 
-    let checksumFileName = ChecksumsFileName (BSC.pack "metadata")
-        checksumFile = Map.singleton checksumFileName checksum
-    writeChecksumsFile hfs checksumPath checksumFile
+      let checksumFileName = ChecksumsFileName (BSC.pack "metadata")
+          checksumFile = Map.singleton checksumFileName checksum
+      writeChecksumsFile hfs checksumPath checksumFile
 
 -- | Read from 'SnapshotMetaDataFile' and attempt to decode it to
 -- 'SnapshotMetaData'.
