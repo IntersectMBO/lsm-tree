@@ -112,8 +112,8 @@ module Database.LSMTree.Normal (
   ) where
 
 import           Control.DeepSeq
-import           Control.Exception (throw)
 import           Control.Monad
+import           Control.Monad.Class.MonadThrow
 import           Data.Bifunctor (Bifunctor (..))
 import           Data.Kind (Type)
 import           Data.Typeable (eqT, type (:~:) (Refl))
@@ -625,11 +625,11 @@ retrieveBlobs ::
   -> m (V.Vector b)
 retrieveBlobs (Internal.Session' (sesh :: Internal.Session m h)) refs =
     V.map Internal.deserialiseBlob <$>
-      Internal.retrieveBlobs sesh (V.imap checkBlobRefType refs)
+      (Internal.retrieveBlobs sesh =<< V.imapM checkBlobRefType refs)
   where
     checkBlobRefType _ (BlobRef (ref :: Internal.WeakBlobRef m h'))
-      | Just Refl <- eqT @h @h' = ref
-    checkBlobRefType i _ = throw (Internal.ErrBlobRefInvalid i)
+      | Just Refl <- eqT @h @h' = pure ref
+    checkBlobRefType i _ = throwIO (Internal.ErrBlobRefInvalid i)
 
 {-------------------------------------------------------------------------------
   Snapshots
