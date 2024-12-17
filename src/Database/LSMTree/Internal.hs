@@ -1112,7 +1112,9 @@ createSnapshot resolve snap label tableType t = do
           -- credits as if the buffer was full, and then flush the (possibly)
           -- underfull buffer. However, note that this bit of code
           -- here is probably going to change anyway because of #392
-          supplyCredits conf (Credit $ unNumEntries $ case confWriteBufferAlloc conf of AllocNumEntries x -> x) (tableLevels content)
+          let credits = case confWriteBufferAlloc conf of
+                AllocNumEntries n -> Credits (unNumEntries n)
+          supplyCredits conf credits (tableLevels content)
           content' <- flushWriteBuffer
                 (TraceMerge `contramap` tableTracer t)
                 conf
@@ -1196,6 +1198,7 @@ openSnapshot sesh label tableType override snap resolve = do
         snapLevels' <- openRuns reg hfs hbio conf (sessionUniqCounter seshEnv) snapDir actDir snapLevels
         -- Convert from the snapshot format, restoring merge progress in the process
         tableLevels <- fromSnapLevels reg hfs hbio conf (sessionUniqCounter seshEnv) resolve actDir snapLevels'
+        releaseRuns reg snapLevels'
 
         tableCache <- mkLevelsCache reg tableLevels
         newWith reg sesh seshEnv conf' am $! TableContent {
