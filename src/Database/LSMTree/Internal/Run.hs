@@ -188,7 +188,7 @@ setRunDataCaching hbio runKOpsFile NoCacheRunData = do
   -> RunBuilder IO h j
   -> IO (Ref (Run IO h (ResultingIndex j))) #-}
 fromMutable ::
-     (IndexAcc j, MonadST m, MonadSTM m, MonadMask m)
+     (MonadST m, MonadSTM m, MonadMask m, IndexAcc j)
   => RunDataCaching
   -> RunBuilder m h j
   -> m (Ref (Run m h (ResultingIndex j)))
@@ -220,7 +220,7 @@ fromMutable runRunDataCaching builder = do
 -- immediately when they are added to the write buffer, avoiding the need to do
 -- it here.
 fromWriteBuffer ::
-     (IndexAcc j, MonadST m, MonadSTM m, MonadMask m)
+     (MonadST m, MonadSTM m, MonadMask m, IndexAcc j)
   => HasFS m h
   -> HasBlockIO m h
   -> RunDataCaching
@@ -265,7 +265,7 @@ data FileFormatError = FileFormatError FS.FsPath String
 -- checksum ('ChecksumError') or can't be parsed ('FileFormatError').
 openFromDisk ::
      forall m h i.
-     (Index i, MonadSTM m, MonadMask m, PrimMonad m)
+     (MonadSTM m, MonadMask m, PrimMonad m, Index i)
   => HasFS m h
   -> HasBlockIO m h
   -> RunDataCaching

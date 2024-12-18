@@ -126,7 +126,7 @@ type KOp m h = (SerialisedKey, Entry SerialisedValue (RawBlobRef m h))
   -> V.Vector (Ref (Run IO h i))
   -> IO (Maybe (Readers IO h)) #-}
 new :: forall m h i.
-     (Index i, MonadMask m, MonadST m, MonadSTM m)
+     (MonadMask m, MonadST m, MonadSTM m, Index i)
   => OffsetKey
   -> Maybe (WB.WriteBuffer, Ref (WB.WriteBufferBlobs m h))
   -> V.Vector (Ref (Run m h i))

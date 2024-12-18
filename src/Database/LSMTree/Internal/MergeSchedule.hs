@@ -526,7 +526,7 @@ iforLevelM_ lvls k = V.iforM_ lvls $ \i lvl -> k (LevelNo (i + 1)) lvl
 -- whole run should then end up in a fresh write buffer.
 updatesWithInterleavedFlushes ::
      forall m h j.
-     (IndexAcc j, MonadMask m, MonadMVar m, MonadSTM m, MonadST m)
+     (MonadMask m, MonadMVar m, MonadSTM m, MonadST m, IndexAcc j)
   => Tracer m (AtLevel MergeTrace)
   -> TableConfig
   -> ResolveSerialisedValue
@@ -623,7 +623,7 @@ addWriteBufferEntries hfs f wbblobs maxn =
 -- The returned table content contains an updated set of levels, where the write
 -- buffer is inserted into level 1.
 flushWriteBuffer ::
-     forall m h j. (IndexAcc j, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+     forall m h j. (MonadMask m, MonadMVar m, MonadST m, MonadSTM m, IndexAcc j)
   => Tracer m (AtLevel MergeTrace)
   -> TableConfig
   -> ResolveSerialisedValue
@@ -766,7 +766,7 @@ _levelsInvariant conf levels =
 -- for documentation about the merge algorithm.
 addRunToLevels ::
      forall m h j.
-     (IndexAcc j, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+     (MonadMask m, MonadMVar m, MonadST m, MonadSTM m, IndexAcc j)
   => Tracer m (AtLevel MergeTrace)
   -> TableConfig
   -> ResolveSerialisedValue
@@ -940,7 +940,7 @@ levelIsFull sr rs = V.length rs + 1 >= (sizeRatioInt sr)
 
 {-# SPECIALISE mergeRuns :: IndexAcc j => ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> RunDataCaching -> RunBloomFilterAlloc -> ST RealWorld (j RealWorld) -> RunFsPaths -> Merge.Level -> V.Vector (Ref (Run IO h (ResultingIndex j))) -> IO (Ref (Run IO h (ResultingIndex j))) #-}
 mergeRuns ::
-     (IndexAcc j, MonadMask m, MonadST m, MonadSTM m)
+     (MonadMask m, MonadST m, MonadSTM m, IndexAcc j)
   => ResolveSerialisedValue
   -> HasFS m h
   -> HasBlockIO m h
@@ -1066,7 +1066,7 @@ newtype Credit = Credit Int
 -- | Supply the given amount of credits to each merge in the levels structure.
 -- This /may/ cause some merges to progress.
 supplyCredits ::
-     (IndexAcc j, MonadSTM m, MonadST m, MonadMVar m, MonadMask m)
+     (MonadSTM m, MonadST m, MonadMVar m, MonadMask m, IndexAcc j)
   => TableConfig
   -> Credit
   -> Levels m h j
@@ -1115,7 +1115,7 @@ scaleCreditsForMerge (Merging (DeRef MergingRun {..})) (Credit c) =
 -- | Supply the given amount of credits to a merging run. This /may/ cause an
 -- ongoing merge to progress.
 supplyMergeCredits ::
-     forall m h j. (IndexAcc j, MonadSTM m, MonadST m, MonadMVar m, MonadMask m)
+     forall m h j. (MonadSTM m, MonadST m, MonadMVar m, MonadMask m, IndexAcc j)
   => ScaledCredits
   -> CreditThreshold
   -> IncomingRun m h j
@@ -1245,7 +1245,7 @@ takeAllUnspentCredits (UnspentCreditsVar !unspentCreditsVar) = do
 
 {-# SPECIALISE stepMerge :: IndexAcc j => StrictMVar IO (MergingRunState IO h j) -> TotalStepsVar RealWorld -> Credit -> IO Bool #-}
 stepMerge ::
-     (IndexAcc j, MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
+     (MonadMVar m, MonadMask m, MonadSTM m, MonadST m, IndexAcc j)
   => StrictMVar m (MergingRunState m h j)
   -> TotalStepsVar (PrimState m)
   -> Credit
@@ -1297,7 +1297,7 @@ stepMerge mergeVar (TotalStepsVar totalStepsVar) (Credit c) =
   -> IO () #-}
 -- | Convert an 'OngoingMerge' to a 'CompletedMerge'.
 completeMerge ::
-     (IndexAcc j, MonadSTM m, MonadST m, MonadMVar m, MonadMask m)
+     (MonadSTM m, MonadST m, MonadMVar m, MonadMask m, IndexAcc j)
   => StrictMVar m (MergingRunState m h j)
   -> MutVar (PrimState m) MergeKnownCompleted
   -> m ()
@@ -1315,7 +1315,7 @@ completeMerge mergeVar mergeKnownCompletedVar = do
 
 {-# SPECIALISE expectCompletedMerge :: IndexAcc j => TempRegistry IO -> IncomingRun IO h j -> IO (Ref (Run IO h (ResultingIndex j))) #-}
 expectCompletedMerge ::
-     (IndexAcc j, MonadMVar m, MonadSTM m, MonadST m, MonadMask m)
+     (MonadMVar m, MonadSTM m, MonadST m, MonadMask m, IndexAcc j)
   => TempRegistry m -> IncomingRun m h j -> m (Ref (Run m h (ResultingIndex j)))
 expectCompletedMerge _ (Single r) = pure r
 expectCompletedMerge reg (Merging (mr@(DeRef MergingRun {..}))) = do

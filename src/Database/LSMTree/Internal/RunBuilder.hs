@@ -82,7 +82,7 @@ data RunBuilder m h j = RunBuilder {
 --
 -- NOTE: 'new' assumes that 'runDir' that the run is created in exists.
 new
-  :: forall m h j . (IndexAcc j, MonadST m, MonadSTM m)
+  :: forall m h j . (MonadST m, MonadSTM m, IndexAcc j)
   => HasFS m h
   -> HasBlockIO m h
   -> RunFsPaths
@@ -122,7 +122,7 @@ new hfs hbio runBuilderFsPaths numEntries alloc newIndexAcc = do
 -- everything else only at the end when 'unsafeFinalise' is called.
 --
 addKeyOp ::
-     (IndexAcc j, MonadST m, MonadSTM m, MonadThrow m)
+     (MonadST m, MonadSTM m, MonadThrow m, IndexAcc j)
   => RunBuilder m h j
   -> SerialisedKey
   -> Entry SerialisedValue (RawBlobRef m h)
@@ -159,7 +159,7 @@ addKeyOp RunBuilder{..} key op = do
 -- | See 'RunAcc.addLargeSerialisedKeyOp' for details.
 --
 addLargeSerialisedKeyOp ::
-     (IndexAcc j, MonadST m, MonadSTM m)
+     (MonadST m, MonadSTM m, IndexAcc j)
   => RunBuilder m h j
   -> SerialisedKey
   -> RawPage
@@ -185,7 +185,7 @@ addLargeSerialisedKeyOp RunBuilder{..} key page overflowPages = do
 --
 -- TODO: Ensure proper cleanup even in presence of exceptions.
 unsafeFinalise ::
-     (IndexAcc j, MonadST m, MonadSTM m, MonadThrow m)
+     (MonadST m, MonadSTM m, MonadThrow m, IndexAcc j)
   => Bool -- ^ drop caches
   -> RunBuilder m h j
   -> m (HasFS m h, HasBlockIO m h, RunFsPaths, Bloom SerialisedKey, ResultingIndex j, NumEntries)

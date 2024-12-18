@@ -93,7 +93,7 @@ type Mappend = SerialisedValue -> SerialisedValue -> SerialisedValue
 -- | Returns 'Nothing' if no input 'Run' contains any entries.
 -- The list of runs should be sorted from new to old.
 new ::
-     (IndexAcc j, MonadMask m, MonadSTM m, MonadST m)
+     (MonadMask m, MonadSTM m, MonadST m, IndexAcc j)
   => HasFS m h
   -> HasBlockIO m h
   -> RunDataCaching
@@ -160,7 +160,7 @@ abort Merge {..} = do
 -- leak. And it must eventually be released with 'releaseRef'.
 --
 complete ::
-     (IndexAcc j, MonadSTM m, MonadST m, MonadMask m)
+     (MonadSTM m, MonadST m, MonadMask m, IndexAcc j)
   => Merge m h j
   -> m (Ref (Run m h (ResultingIndex j)))
 complete Merge{..} = do
@@ -183,7 +183,7 @@ complete Merge{..} = do
 --
 -- Note: run with async exceptions masked. See 'complete'.
 stepsToCompletion ::
-      (IndexAcc j, MonadMask m, MonadSTM m, MonadST m)
+      (MonadMask m, MonadSTM m, MonadST m, IndexAcc j)
    => Merge m h j
    -> Int
    -> m (Ref (Run m h (ResultingIndex j)))
@@ -203,7 +203,7 @@ stepsToCompletion m stepBatchSize = go
 --
 -- Note: run with async exceptions masked. See 'complete'.
 stepsToCompletionCounted ::
-     (IndexAcc j, MonadMask m, MonadSTM m, MonadST m)
+     (MonadMask m, MonadSTM m, MonadST m, IndexAcc j)
   => Merge m h j
   -> Int
   -> m (Int, Ref (Run m h (ResultingIndex j)))
@@ -239,7 +239,7 @@ stepsInvariant requestedSteps = \case
 -- Returns an error if the merge was already completed or closed.
 steps ::
      forall m h j.
-     (IndexAcc j, MonadMask m, MonadSTM m, MonadST m)
+     (MonadMask m, MonadSTM m, MonadST m, IndexAcc j)
   => Merge m h j
   -> Int  -- ^ How many input entries to consume (at least)
   -> m (Int, StepResult)
@@ -328,7 +328,7 @@ steps Merge {..} requestedSteps = assertStepsInvariant <$> do
   -> Reader.Entry IO h
   -> IO () #-}
 writeReaderEntry ::
-     (IndexAcc j, MonadSTM m, MonadST m, MonadThrow m)
+     (MonadSTM m, MonadST m, MonadThrow m, IndexAcc j)
   => Level
   -> RunBuilder m h j
   -> SerialisedKey
@@ -369,7 +369,7 @@ writeReaderEntry level builder key entry@(Reader.EntryOverflow prefix page _ ove
   -> Entry SerialisedValue (RawBlobRef IO h)
   -> IO () #-}
 writeSerialisedEntry ::
-     (IndexAcc j, MonadSTM m, MonadST m, MonadThrow m)
+     (MonadSTM m, MonadST m, MonadThrow m, IndexAcc j)
   => Level
   -> RunBuilder m h j
   -> SerialisedKey

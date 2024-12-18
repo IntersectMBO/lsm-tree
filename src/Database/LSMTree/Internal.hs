@@ -135,42 +135,42 @@ instance NFData (Session' m) where
   rnf (Session' s) = rnf s
 
 type Table' :: (Type -> Type) -> Type -> Type -> Type -> Type
-data Table' m k v b = forall j h. (IndexAcc j, Typeable h) =>
+data Table' m k v b = forall h j. (Typeable h, IndexAcc j) =>
     Table' (Table m h j)
 
 instance NFData (Table' m k v b) where
   rnf (Table' t) = rnf t
 
 type Cursor' :: (Type -> Type) -> Type -> Type -> Type -> Type
-data Cursor' m k v b = forall j h. (IndexAcc j, Typeable h) =>
+data Cursor' m k v b = forall h j. (Typeable h, IndexAcc j) =>
     Cursor' (Cursor m h j)
 
 instance NFData (Cursor' m k v b) where
   rnf (Cursor' t) = rnf t
 
 type NormalTable :: (Type -> Type) -> Type -> Type -> Type -> Type
-data NormalTable m k v b = forall j h. (IndexAcc j, Typeable h) =>
+data NormalTable m k v b = forall h j. (Typeable h, IndexAcc j) =>
     NormalTable !(Table m h j)
 
 instance NFData (NormalTable m k v b) where
   rnf (NormalTable t) = rnf t
 
 type NormalCursor :: (Type -> Type) -> Type -> Type -> Type -> Type
-data NormalCursor m k v b = forall j h. (IndexAcc j, Typeable h) =>
+data NormalCursor m k v b = forall h j. (Typeable h, IndexAcc j) =>
     NormalCursor !(Cursor m h j)
 
 instance NFData (NormalCursor m k v b) where
   rnf (NormalCursor c) = rnf c
 
 type MonoidalTable :: (Type -> Type) -> Type -> Type -> Type
-data MonoidalTable m k v = forall j h. (IndexAcc j, Typeable h) =>
+data MonoidalTable m k v = forall h j. (Typeable h, IndexAcc j) =>
     MonoidalTable !(Table m h j)
 
 instance NFData (MonoidalTable m k v) where
   rnf (MonoidalTable t) = rnf t
 
 type MonoidalCursor :: (Type -> Type) -> Type -> Type -> Type
-data MonoidalCursor m k v = forall j h. (IndexAcc j, Typeable h) =>
+data MonoidalCursor m k v = forall h j. (Typeable h, IndexAcc j) =>
     MonoidalCursor !(Cursor m h j)
 
 instance NFData (MonoidalCursor m k v) where
@@ -760,7 +760,7 @@ close t = do
   -> IO (V.Vector (Maybe (Entry SerialisedValue (WeakBlobRef IO h)))) #-}
 -- | See 'Database.LSMTree.Normal.lookups'.
 lookups ::
-     (IndexAcc j, MonadST m, MonadSTM m, MonadThrow m)
+     (MonadST m, MonadSTM m, MonadThrow m, IndexAcc j)
   => ResolveSerialisedValue
   -> V.Vector SerialisedKey
   -> Table m h j
@@ -791,7 +791,7 @@ lookups resolve ks t = do
   -> IO (V.Vector res) #-}
 -- | See 'Database.LSMTree.Normal.rangeLookup'.
 rangeLookup ::
-     (IndexAcc j, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+     (MonadMask m, MonadMVar m, MonadST m, MonadSTM m, IndexAcc j)
   => ResolveSerialisedValue
   -> Range SerialisedKey
   -> Table m h j
@@ -833,7 +833,7 @@ rangeLookup resolve range t fromEntry = do
 --
 -- Does not enforce that mupsert and blobs should not occur in the same table.
 updates ::
-     (IndexAcc j, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+     (MonadMask m, MonadMVar m, MonadST m, MonadSTM m, IndexAcc j)
   => ResolveSerialisedValue
   -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob)
   -> Table m h j
@@ -953,7 +953,7 @@ data CursorEnv m h j = CursorEnv {
   -> IO a #-}
 -- | See 'Database.LSMTree.Normal.withCursor'.
 withCursor ::
-     (IndexAcc j, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+     (MonadMask m, MonadMVar m, MonadST m, MonadSTM m, IndexAcc j)
   => OffsetKey
   -> Table m h j
   -> (Cursor m h j -> m a)
@@ -967,7 +967,7 @@ withCursor offsetKey t = bracket (newCursor offsetKey t) closeCursor
   -> IO (Cursor IO h j) #-}
 -- | See 'Database.LSMTree.Normal.newCursor'.
 newCursor ::
-     (IndexAcc j, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+     (MonadMask m, MonadMVar m, MonadST m, MonadSTM m, IndexAcc j)
   => OffsetKey
   -> Table m h j
   -> m (Cursor m h j)
@@ -1112,7 +1112,7 @@ readCursorWhile resolve keyIsWanted n Cursor {..} fromEntry = do
   -> IO () #-}
 -- |  See 'Database.LSMTree.Normal.createSnapshot''.
 createSnapshot ::
-     (IndexAcc j, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+     (MonadMask m, MonadMVar m, MonadST m, MonadSTM m, IndexAcc j)
   => ResolveSerialisedValue
   -> SnapshotName
   -> SnapshotLabel

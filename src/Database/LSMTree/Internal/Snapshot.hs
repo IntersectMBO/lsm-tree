@@ -229,7 +229,7 @@ snapshotRuns reg (NamedSnapshotDir targetDir) levels =
 -- (hard linked) files that represents a run is opened and verified, returning
 -- 'Run's as a result.
 openRuns ::
-     (Index i, MonadMask m, MonadSTM m, MonadST m, MonadMVar m)
+     (MonadMask m, MonadSTM m, MonadST m, MonadMVar m, Index i)
   => TempRegistry m
   -> HasFS m h
   -> HasBlockIO m h
@@ -274,7 +274,7 @@ openRuns
   -> IO (Levels IO h j)
   #-}
 fromSnapLevels ::
-     forall m h j. (IndexAcc j, MonadMask m, MonadMVar m, MonadSTM m, MonadST m)
+     forall m h j. (MonadMask m, MonadMVar m, MonadSTM m, MonadST m, IndexAcc j)
   => TempRegistry m
   -> HasFS m h
   -> HasBlockIO m h

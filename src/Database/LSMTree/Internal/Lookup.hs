@@ -177,7 +177,7 @@ data ByteCountDiscrepancy = ByteCountDiscrepancy {
 -- PRECONDITION: the vectors of bloom filters, indexes and file handles
 -- should pointwise match with the vectors of runs.
 lookupsIO ::
-     forall m h i. (Index i, MonadThrow m, MonadST m)
+     forall m h i. (MonadThrow m, MonadST m, Index i)
   => HasBlockIO m h
   -> ArenaManager (PrimState m)
   -> ResolveSerialisedValue
