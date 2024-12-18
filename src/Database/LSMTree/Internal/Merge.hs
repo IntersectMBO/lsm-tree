@@ -46,11 +46,11 @@ import           System.FS.BlockIO.API (HasBlockIO)
 --
 -- Since we always resolve all entries of the same key in one go, there is no
 -- need to store incompletely-resolved entries.
-data Merge j m h = Merge {
+data Merge m h j = Merge {
       mergeLevel      :: !Level
     , mergeMappend    :: !Mappend
     , mergeReaders    :: {-# UNPACK #-} !(Readers m h)
-    , mergeBuilder    :: !(RunBuilder j m h)
+    , mergeBuilder    :: !(RunBuilder m h j)
       -- | The caching policy to use for the output Run.
     , mergeCaching    :: !RunDataCaching
       -- | The result of the latest call to 'steps'. This is used to determine
@@ -88,8 +88,8 @@ type Mappend = SerialisedValue -> SerialisedValue -> SerialisedValue
   -> Level
   -> Mappend
   -> Run.RunFsPaths
-  -> V.Vector (Ref (Run (ResultingIndex j) IO h))
-  -> IO (Maybe (Merge j IO h)) #-}
+  -> V.Vector (Ref (Run IO h (ResultingIndex j)))
+  -> IO (Maybe (Merge IO h j)) #-}
 -- | Returns 'Nothing' if no input 'Run' contains any entries.
 -- The list of runs should be sorted from new to old.
 new ::
@@ -102,8 +102,8 @@ new ::
   -> Level
   -> Mappend
   -> Run.RunFsPaths
-  -> V.Vector (Ref (Run (ResultingIndex j) m h))
-  -> m (Maybe (Merge j m h))
+  -> V.Vector (Ref (Run m h (ResultingIndex j)))
+  -> m (Maybe (Merge m h j))
 new fs hbio mergeCaching alloc newIndex mergeLevel mergeMappend targetPaths runs = do
     -- no offset, no write buffer
     mreaders <- Readers.new Readers.NoOffsetKey Nothing runs
@@ -118,13 +118,13 @@ new fs hbio mergeCaching alloc newIndex mergeLevel mergeMappend targetPaths runs
         , ..
         }
 
-{-# SPECIALISE abort :: Merge j IO (FS.Handle h) -> IO () #-}
+{-# SPECIALISE abort :: Merge IO (FS.Handle h) j -> IO () #-}
 -- | This function should be called when discarding a 'Merge' before it
 -- was done (i.e. returned 'MergeComplete'). This removes the incomplete files
 -- created for the new run so far and avoids leaking file handles.
 --
 -- Once it has been called, do not use the 'Merge' any more!
-abort :: (MonadMask m, MonadSTM m, MonadST m) => Merge j m h -> m ()
+abort :: (MonadMask m, MonadSTM m, MonadST m) => Merge m h j -> m ()
 abort Merge {..} = do
     readMutVar mergeState >>= \case
       Merging -> do
@@ -141,8 +141,8 @@ abort Merge {..} = do
 
 {-# SPECIALISE complete ::
      IndexAcc j
-  => Merge j IO h
-  -> IO (Ref (Run (ResultingIndex j) IO h)) #-}
+  => Merge IO h j
+  -> IO (Ref (Run IO h (ResultingIndex j))) #-}
 -- | Complete a 'Merge', returning a new 'Run' as the result of merging the
 -- input runs.
 --
@@ -161,8 +161,8 @@ abort Merge {..} = do
 --
 complete ::
      (IndexAcc j, MonadSTM m, MonadST m, MonadMask m)
-  => Merge j m h
-  -> m (Ref (Run (ResultingIndex j) m h))
+  => Merge m h j
+  -> m (Ref (Run m h (ResultingIndex j)))
 complete Merge{..} = do
     readMutVar mergeState >>= \case
       Merging -> error "complete: Merge is not done"
@@ -176,17 +176,17 @@ complete Merge{..} = do
 
 {-# SPECIALISE stepsToCompletion ::
      IndexAcc j
-  => Merge j IO h
+  => Merge IO h j
   -> Int
-  -> IO (Ref (Run (ResultingIndex j) IO h)) #-}
+  -> IO (Ref (Run IO h (ResultingIndex j))) #-}
 -- | Like 'steps', but calling 'complete' once the merge is finished.
 --
 -- Note: run with async exceptions masked. See 'complete'.
 stepsToCompletion ::
       (IndexAcc j, MonadMask m, MonadSTM m, MonadST m)
-   => Merge j m h
+   => Merge m h j
    -> Int
-   -> m (Ref (Run (ResultingIndex j) m h))
+   -> m (Ref (Run m h (ResultingIndex j)))
 stepsToCompletion m stepBatchSize = go
   where
     go = do
@@ -196,17 +196,17 @@ stepsToCompletion m stepBatchSize = go
 
 {-# SPECIALISE stepsToCompletionCounted ::
      IndexAcc j
-  => Merge j IO h
+  => Merge IO h j
   -> Int
-  -> IO (Int, Ref (Run (ResultingIndex j) IO h)) #-}
+  -> IO (Int, Ref (Run IO h (ResultingIndex j))) #-}
 -- | Like 'steps', but calling 'complete' once the merge is finished.
 --
 -- Note: run with async exceptions masked. See 'complete'.
 stepsToCompletionCounted ::
      (IndexAcc j, MonadMask m, MonadSTM m, MonadST m)
-  => Merge j m h
+  => Merge m h j
   -> Int
-  -> m (Int, Ref (Run (ResultingIndex j) m h))
+  -> m (Int, Ref (Run m h (ResultingIndex j)))
 stepsToCompletionCounted m stepBatchSize = go 0
   where
     go !stepsSum = do
@@ -225,7 +225,7 @@ stepsInvariant requestedSteps = \case
 
 {-# SPECIALISE steps ::
      IndexAcc j
-  => Merge j IO h
+  => Merge IO h j
   -> Int
   -> IO (Int, StepResult) #-}
 -- | Do at least a given number of steps of merging. Each step reads a single
@@ -238,9 +238,9 @@ stepsInvariant requestedSteps = \case
 --
 -- Returns an error if the merge was already completed or closed.
 steps ::
-     forall j m h.
+     forall m h j.
      (IndexAcc j, MonadMask m, MonadSTM m, MonadST m)
-  => Merge j m h
+  => Merge m h j
   -> Int  -- ^ How many input entries to consume (at least)
   -> m (Int, StepResult)
 steps Merge {..} requestedSteps = assertStepsInvariant <$> do
@@ -323,14 +323,14 @@ steps Merge {..} requestedSteps = assertStepsInvariant <$> do
 {-# SPECIALISE writeReaderEntry ::
      IndexAcc j
   => Level
-  -> RunBuilder j IO h
+  -> RunBuilder IO h j
   -> SerialisedKey
   -> Reader.Entry IO h
   -> IO () #-}
 writeReaderEntry ::
      (IndexAcc j, MonadSTM m, MonadST m, MonadThrow m)
   => Level
-  -> RunBuilder j m h
+  -> RunBuilder m h j
   -> SerialisedKey
   -> Reader.Entry m h
   -> m ()
@@ -364,14 +364,14 @@ writeReaderEntry level builder key entry@(Reader.EntryOverflow prefix page _ ove
 {-# SPECIALISE writeSerialisedEntry ::
      IndexAcc j
   => Level
-  -> RunBuilder j IO h
+  -> RunBuilder IO h j
   -> SerialisedKey
   -> Entry SerialisedValue (RawBlobRef IO h)
   -> IO () #-}
 writeSerialisedEntry ::
      (IndexAcc j, MonadSTM m, MonadST m, MonadThrow m)
   => Level
-  -> RunBuilder j m h
+  -> RunBuilder m h j
   -> SerialisedKey
   -> Entry SerialisedValue (RawBlobRef m h)
   -> m ()

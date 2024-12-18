@@ -134,27 +134,27 @@ newtype SpentCredits = SpentCredits { getSpentCredits :: Int }
   Conversion to levels snapshot format
 -------------------------------------------------------------------------------}
 
-{-# SPECIALISE toSnapLevels :: Levels j IO h -> IO (SnapLevels (Ref (Run (ResultingIndex j) IO h))) #-}
+{-# SPECIALISE toSnapLevels :: Levels IO h j -> IO (SnapLevels (Ref (Run IO h (ResultingIndex j)))) #-}
 toSnapLevels ::
      (PrimMonad m, MonadMVar m)
-  => Levels j m h
-  -> m (SnapLevels (Ref (Run (ResultingIndex j) m h)))
+  => Levels m h j
+  -> m (SnapLevels (Ref (Run m h (ResultingIndex j))))
 toSnapLevels levels = SnapLevels <$> V.mapM toSnapLevel levels
 
-{-# SPECIALISE toSnapLevel :: Level j IO h -> IO (SnapLevel (Ref (Run (ResultingIndex j) IO h))) #-}
+{-# SPECIALISE toSnapLevel :: Level IO h j -> IO (SnapLevel (Ref (Run IO h (ResultingIndex j)))) #-}
 toSnapLevel ::
      (PrimMonad m, MonadMVar m)
-  => Level j m h
-  -> m (SnapLevel (Ref (Run (ResultingIndex j) m h)))
+  => Level m h j
+  -> m (SnapLevel (Ref (Run m h (ResultingIndex j))))
 toSnapLevel Level{..} = do
     sir <- toSnapIncomingRun incomingRun
     pure (SnapLevel sir residentRuns)
 
-{-# SPECIALISE toSnapIncomingRun :: IncomingRun j IO h -> IO (SnapIncomingRun (Ref (Run (ResultingIndex j) IO h))) #-}
+{-# SPECIALISE toSnapIncomingRun :: IncomingRun IO h j -> IO (SnapIncomingRun (Ref (Run IO h (ResultingIndex j)))) #-}
 toSnapIncomingRun ::
      (PrimMonad m, MonadMVar m)
-  => IncomingRun j m h
-  -> m (SnapIncomingRun (Ref (Run (ResultingIndex j) m h)))
+  => IncomingRun m h j
+  -> m (SnapIncomingRun (Ref (Run m h (ResultingIndex j))))
 toSnapIncomingRun (Single r) = pure (SnapSingleRun r)
 -- We need to know how many credits were yet unspent so we can restore merge
 -- work on snapshot load. No need to snapshot the contents of totalStepsVar
@@ -173,12 +173,12 @@ toSnapIncomingRun (Merging (DeRef MergingRun {..})) = do
         smrs
 
 {-# SPECIALISE toSnapMergingRunState ::
-     MergingRunState j IO h
-  -> IO (SnapMergingRunState (Ref (Run (ResultingIndex j) IO h))) #-}
+     MergingRunState IO h j
+  -> IO (SnapMergingRunState (Ref (Run IO h (ResultingIndex j)))) #-}
 toSnapMergingRunState ::
      PrimMonad m
-  => MergingRunState j m h
-  -> m (SnapMergingRunState (Ref (Run (ResultingIndex j) m h)))
+  => MergingRunState m h j
+  -> m (SnapMergingRunState (Ref (Run m h (ResultingIndex j))))
 toSnapMergingRunState (CompletedMerge r) = pure (SnapCompletedMerge r)
 -- We need to know how many credits were spent already so we can restore merge
 -- work on snapshot load.
@@ -193,7 +193,7 @@ toSnapMergingRunState (OngoingMerge rs (SpentCreditsVar spentCreditsVar) m) = do
 {-# SPECIALISE snapshotRuns ::
      TempRegistry IO
   -> NamedSnapshotDir
-  -> SnapLevels (Ref (Run i IO h))
+  -> SnapLevels (Ref (Run IO h i))
   -> IO (SnapLevels RunNumber) #-}
 -- | @'snapshotRuns' _ targetDir levels@ creates hard links for all run files
 -- associated with the runs in @levels@, and puts the new directory entries in
@@ -202,7 +202,7 @@ snapshotRuns ::
      (MonadMask m, MonadMVar m)
   => TempRegistry m
   -> NamedSnapshotDir
-  -> SnapLevels (Ref (Run i m h))
+  -> SnapLevels (Ref (Run m h i))
   -> m (SnapLevels RunNumber)
 snapshotRuns reg (NamedSnapshotDir targetDir) levels =
     for levels $ \run@(DeRef Run.Run { Run.runHasFS = hfs,
@@ -222,7 +222,7 @@ snapshotRuns reg (NamedSnapshotDir targetDir) levels =
   -> NamedSnapshotDir
   -> ActiveDir
   -> SnapLevels RunNumber
-  -> IO (SnapLevels (Ref (Run i IO h))) #-}
+  -> IO (SnapLevels (Ref (Run IO h i))) #-}
 -- | @'openRuns' _ _ _ _ uniqCounter sourceDir targetDir levels@ takes all run
 -- files that are referenced by @levels@, and hard links them from @sourceDir@
 -- into @targetDir@ with new, unique names (using @uniqCounter@). Each set of
@@ -238,7 +238,7 @@ openRuns ::
   -> NamedSnapshotDir
   -> ActiveDir
   -> SnapLevels RunNumber
-  -> m (SnapLevels (Ref (Run i m h)))
+  -> m (SnapLevels (Ref (Run m h i)))
 openRuns
   reg hfs hbio TableConfig{..} uc
   (NamedSnapshotDir sourceDir) (ActiveDir targetDir) (SnapLevels levels) = do
@@ -270,11 +270,11 @@ openRuns
   -> UniqCounter IO
   -> ResolveSerialisedValue
   -> ActiveDir
-  -> SnapLevels (Ref (Run (ResultingIndex j) IO h))
-  -> IO (Levels j IO h)
+  -> SnapLevels (Ref (Run IO h (ResultingIndex j)))
+  -> IO (Levels IO h j)
   #-}
 fromSnapLevels ::
-     forall j m h. (IndexAcc j, MonadMask m, MonadMVar m, MonadSTM m, MonadST m)
+     forall m h j. (IndexAcc j, MonadMask m, MonadMVar m, MonadSTM m, MonadST m)
   => TempRegistry m
   -> HasFS m h
   -> HasBlockIO m h
@@ -282,16 +282,16 @@ fromSnapLevels ::
   -> UniqCounter m
   -> ResolveSerialisedValue
   -> ActiveDir
-  -> SnapLevels (Ref (Run (ResultingIndex j) m h))
-  -> m (Levels j m h)
+  -> SnapLevels (Ref (Run m h (ResultingIndex j)))
+  -> m (Levels m h j)
 fromSnapLevels reg hfs hbio conf@TableConfig{..} uc resolve dir (SnapLevels levels) =
     V.iforM levels $ \i -> fromSnapLevel (LevelNo (i+1))
   where
     mkPath = RunFsPaths (getActiveDir dir)
 
     fromSnapLevel :: LevelNo
-                  -> SnapLevel (Ref (Run (ResultingIndex j) m h))
-                  -> m (Level j m h)
+                  -> SnapLevel (Ref (Run m h (ResultingIndex j)))
+                  -> m (Level m h j)
     fromSnapLevel ln SnapLevel{..} = do
         (unspentCreditsMay, spentCreditsMay, incomingRun) <- fromSnapIncomingRun snapIncoming
         -- When a snapshot is created, merge progress is lost, so we have to
@@ -319,8 +319,8 @@ fromSnapLevels reg hfs hbio conf@TableConfig{..} uc resolve dir (SnapLevels leve
         newIndex = newWithDefaults
 
         fromSnapIncomingRun ::
-             SnapIncomingRun (Ref (Run (ResultingIndex j) m h))
-          -> m (Maybe UnspentCredits, Maybe SpentCredits, IncomingRun j m h)
+             SnapIncomingRun (Ref (Run m h (ResultingIndex j)))
+          -> m (Maybe UnspentCredits, Maybe SpentCredits, IncomingRun m h j)
         fromSnapIncomingRun (SnapMergingRun mpfl nr ne unspentCredits knownCompleted smrs) = do
             (spentCreditsMay, mrs) <- fromSnapMergingRunState smrs
             (Just unspentCredits, spentCreditsMay,) . Merging <$>
@@ -329,8 +329,8 @@ fromSnapLevels reg hfs hbio conf@TableConfig{..} uc resolve dir (SnapLevels leve
             pure (Nothing, Nothing, Single run)
 
         fromSnapMergingRunState ::
-             SnapMergingRunState (Ref (Run (ResultingIndex j) m h))
-          -> m (Maybe SpentCredits, MergingRunState j m h)
+             SnapMergingRunState (Ref (Run m h (ResultingIndex j)))
+          -> m (Maybe SpentCredits, MergingRunState m h j)
         fromSnapMergingRunState (SnapCompletedMerge run) =
             pure (Nothing, CompletedMerge run)
         fromSnapMergingRunState (SnapOngoingMerge runs spentCredits mergeLast) = do

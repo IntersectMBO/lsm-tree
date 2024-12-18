@@ -66,7 +66,7 @@ import           System.FS.BlockIO.API (HasBlockIO)
 
 -- | The in-memory representation of a completed LSM run.
 --
-data Run i m h = Run {
+data Run m h i = Run {
       runNumEntries     :: !NumEntries
       -- | The reference count for the LSM run. This counts the
       -- number of references from LSM handles to this run. When
@@ -95,37 +95,37 @@ data Run i m h = Run {
     }
 
 -- | Shows only the 'runRunFsPaths' field.
-instance Show (Run i m h) where
+instance Show (Run m h i) where
   showsPrec _ run = showString "Run { runRunFsPaths = " . showsPrec 0 (runRunFsPaths run) .  showString " }"
 
-instance (NFData i, NFData h) => NFData (Run i m h) where
+instance (NFData i, NFData h) => NFData (Run m h i) where
   rnf (Run a b c d e f g h i j) =
       rnf a `seq` rwhnf b `seq` rnf c `seq` rnf d `seq` rnf e `seq`
       rnf f `seq` rnf g `seq` rnf h `seq` rwhnf i `seq` rwhnf j
 
-instance RefCounted (Run i m h) where
-    type FinaliserM (Run i m h) = m
+instance RefCounted (Run m h i) where
+    type FinaliserM (Run m h i) = m
     getRefCounter = runRefCounter
 
-size :: Ref (Run i m h) -> NumEntries
+size :: Ref (Run m h i) -> NumEntries
 size (DeRef run) = runNumEntries run
 
-sizeInPages :: Index i => Ref (Run i m h) -> NumPages
+sizeInPages :: Index i => Ref (Run m h i) -> NumPages
 sizeInPages (DeRef run) = Index.sizeInPages (runIndex run)
 
-runFsPaths :: Ref (Run i m h) -> RunFsPaths
+runFsPaths :: Ref (Run m h i) -> RunFsPaths
 runFsPaths (DeRef r) = runRunFsPaths r
 
-runFsPathsNumber :: Ref (Run i m h) -> RunNumber
+runFsPathsNumber :: Ref (Run m h i) -> RunNumber
 runFsPathsNumber = Paths.runNumber . runFsPaths
 
 -- | Helper function to make a 'WeakBlobRef' that points into a 'Run'.
-mkRawBlobRef :: Run i m h -> BlobSpan -> RawBlobRef m h
+mkRawBlobRef :: Run m h i -> BlobSpan -> RawBlobRef m h
 mkRawBlobRef Run{runBlobFile} blobspan =
     BlobRef.mkRawBlobRef runBlobFile blobspan
 
 -- | Helper function to make a 'WeakBlobRef' that points into a 'Run'.
-mkWeakBlobRef :: Ref (Run i m h) -> BlobSpan -> WeakBlobRef m h
+mkWeakBlobRef :: Ref (Run m h i) -> BlobSpan -> WeakBlobRef m h
 mkWeakBlobRef (DeRef Run{runBlobFile}) blobspan =
     BlobRef.mkWeakBlobRef runBlobFile blobspan
 
@@ -185,13 +185,13 @@ setRunDataCaching hbio runKOpsFile NoCacheRunData = do
 {-# SPECIALISE fromMutable ::
      IndexAcc j
   => RunDataCaching
-  -> RunBuilder j IO h
-  -> IO (Ref (Run (ResultingIndex j) IO h)) #-}
+  -> RunBuilder IO h j
+  -> IO (Ref (Run IO h (ResultingIndex j))) #-}
 fromMutable ::
      (IndexAcc j, MonadST m, MonadSTM m, MonadMask m)
   => RunDataCaching
-  -> RunBuilder j m h
-  -> m (Ref (Run (ResultingIndex j) m h))
+  -> RunBuilder m h j
+  -> m (Ref (Run m h (ResultingIndex j)))
 fromMutable runRunDataCaching builder = do
     (runHasFS, runHasBlockIO, runRunFsPaths, runFilter, runIndex, runNumEntries) <-
       Builder.unsafeFinalise (runRunDataCaching == NoCacheRunData) builder
@@ -211,7 +211,7 @@ fromMutable runRunDataCaching builder = do
   -> RunFsPaths
   -> WriteBuffer
   -> Ref (WriteBufferBlobs IO h)
-  -> IO (Ref (Run (ResultingIndex j) IO h)) #-}
+  -> IO (Ref (Run IO h (ResultingIndex j))) #-}
 -- | Write a write buffer to disk, including the blobs it contains.
 --
 -- This creates a new 'Run' which must eventually be released with 'releaseRef'.
@@ -229,7 +229,7 @@ fromWriteBuffer ::
   -> RunFsPaths
   -> WriteBuffer
   -> Ref (WriteBufferBlobs m h)
-  -> m (Ref (Run (ResultingIndex j) m h))
+  -> m (Ref (Run m h (ResultingIndex j)))
 fromWriteBuffer fs hbio caching alloc newIndex fsPaths buffer blobs = do
     builder <- Builder.new fs hbio fsPaths (WB.numEntries buffer) alloc newIndex
     for_ (WB.toList buffer) $ \(k, e) ->
@@ -255,7 +255,7 @@ data FileFormatError = FileFormatError FS.FsPath String
   -> HasBlockIO IO h
   -> RunDataCaching
   -> RunFsPaths
-  -> IO (Ref (Run i IO h)) #-}
+  -> IO (Ref (Run IO h i)) #-}
 -- | Load a previously written run from disk, checking each file's checksum
 -- against the checksum file.
 --
@@ -264,13 +264,13 @@ data FileFormatError = FileFormatError FS.FsPath String
 -- Exceptions will be raised when any of the file's contents don't match their
 -- checksum ('ChecksumError') or can't be parsed ('FileFormatError').
 openFromDisk ::
-     forall i m h.
+     forall m h i.
      (Index i, MonadSTM m, MonadMask m, PrimMonad m)
   => HasFS m h
   -> HasBlockIO m h
   -> RunDataCaching
   -> RunFsPaths
-  -> m (Ref (Run i m h))
+  -> m (Ref (Run m h i))
 openFromDisk fs hbio runRunDataCaching runRunFsPaths = do
     expectedChecksums <-
        expectValidFile (runChecksumsPath runRunFsPaths) . fromChecksumsFile

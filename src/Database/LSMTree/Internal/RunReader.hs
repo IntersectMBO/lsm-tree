@@ -89,12 +89,12 @@ data OffsetKey = NoOffsetKey | OffsetKey !SerialisedKey
 {-# SPECIALISE new ::
      Index i
   => OffsetKey
-  -> Ref (Run.Run i IO h)
+  -> Ref (Run.Run IO h i)
   -> IO (RunReader IO h) #-}
-new :: forall i m h.
+new :: forall m h i.
      (Index i, MonadMask m, MonadSTM m, PrimMonad m)
   => OffsetKey
-  -> Ref (Run.Run i m h)
+  -> Ref (Run.Run m h i)
   -> m  (RunReader m h)
 new !offsetKey
     readerRun@(DeRef Run.Run {

@@ -34,7 +34,6 @@ module Database.LSMTree.Internal.Config (
   ) where
 
 import           Control.DeepSeq (NFData (..))
-import           Control.Monad.ST.Strict (ST)
 import           Data.Maybe (fromMaybe)
 import           Data.Monoid (Last (..))
 import           Data.Word (Word64)
@@ -43,9 +42,9 @@ import           Database.LSMTree.Internal.Assertions (assert,
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
 import           Database.LSMTree.Internal.Index
 import           Database.LSMTree.Internal.Index.CompactAcc as IndexCompactAcc
-                     (IndexCompactAcc, new)
+                     (IndexCompactAcc)
 import           Database.LSMTree.Internal.Index.OrdinaryAcc as IndexOrdinaryAcc
-                     (IndexOrdinaryAcc, new)
+                     (IndexOrdinaryAcc)
 import           Database.LSMTree.Internal.Run (RunDataCaching (..))
 import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..))
 import           GHC.Exts

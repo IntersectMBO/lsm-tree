@@ -126,34 +126,34 @@ data MergeTrace =
   Table content
 -------------------------------------------------------------------------------}
 
-data TableContent j m h = TableContent {
+data TableContent m h j = TableContent {
     --TODO: probably less allocation to make this a MutVar
     tableWriteBuffer      :: !WriteBuffer
     -- | The blob storage for entries in the write buffer
   , tableWriteBufferBlobs :: !(Ref (WriteBufferBlobs m h))
     -- | A hierarchy of levels. The vector indexes double as level numbers.
-  , tableLevels           :: !(Levels j m h)
+  , tableLevels           :: !(Levels m h j)
     -- | Cache of flattened 'levels'.
-  , tableCache            :: !(LevelsCache (ResultingIndex j) m h)
+  , tableCache            :: !(LevelsCache m h (ResultingIndex j))
   }
 
-{-# SPECIALISE duplicateTableContent :: TempRegistry IO -> TableContent j IO h -> IO (TableContent j IO h) #-}
+{-# SPECIALISE duplicateTableContent :: TempRegistry IO -> TableContent IO h j -> IO (TableContent IO h j) #-}
 duplicateTableContent ::
      (PrimMonad m, MonadMask m, MonadMVar m)
   => TempRegistry m
-  -> TableContent j m h
-  -> m (TableContent j m h)
+  -> TableContent m h j
+  -> m (TableContent m h j)
 duplicateTableContent reg (TableContent wb wbb levels cache) = do
     wbb'    <- allocateTemp reg (dupRef wbb) releaseRef
     levels' <- duplicateLevels reg levels
     cache'  <- duplicateLevelsCache reg cache
     return $! TableContent wb wbb' levels' cache'
 
-{-# SPECIALISE releaseTableContent :: TempRegistry IO -> TableContent j IO h -> IO () #-}
+{-# SPECIALISE releaseTableContent :: TempRegistry IO -> TableContent IO h j -> IO () #-}
 releaseTableContent ::
      (PrimMonad m, MonadMask m, MonadMVar m)
   => TempRegistry m
-  -> TableContent j m h
+  -> TableContent m h j
   -> m ()
 releaseTableContent reg (TableContent _wb wbb levels cache) = do
     freeTemp reg (releaseRef wbb)
@@ -178,8 +178,8 @@ releaseTableContent reg (TableContent _wb wbb levels cache) = do
 -- lookups. This does mean that a cache can keep runs open for longer than
 -- necessary, so caches should be rebuilt using, e.g., 'rebuildCache', in a
 -- timely manner.
-data LevelsCache i m h = LevelsCache_ {
-    cachedRuns      :: !(V.Vector (Ref (Run i m h)))
+data LevelsCache m h i = LevelsCache_ {
+    cachedRuns      :: !(V.Vector (Ref (Run m h i)))
   , cachedFilters   :: !(V.Vector (Bloom SerialisedKey))
   , cachedIndexes   :: !(V.Vector i)
   , cachedKOpsFiles :: !(V.Vector (FS.Handle h))
@@ -187,16 +187,16 @@ data LevelsCache i m h = LevelsCache_ {
 
 {-# SPECIALISE mkLevelsCache ::
      TempRegistry IO
-  -> Levels j IO h
-  -> IO (LevelsCache (ResultingIndex j) IO h) #-}
+  -> Levels IO h j
+  -> IO (LevelsCache IO h (ResultingIndex j)) #-}
 -- | Flatten the argument 'Level's into a single vector of runs, including all
 -- runs that are inputs to an ongoing merge. Use that to populate the
 -- 'LevelsCache'. The cache will take a reference for each of its runs.
 mkLevelsCache ::
-     forall j m h. (PrimMonad m, MonadMVar m, MonadMask m)
+     forall m h j. (PrimMonad m, MonadMVar m, MonadMask m)
   => TempRegistry m
-  -> Levels j m h
-  -> m (LevelsCache (ResultingIndex j) m h)
+  -> Levels m h j
+  -> m (LevelsCache m h (ResultingIndex j))
 mkLevelsCache reg lvls = do
     rs <- foldRunAndMergeM
       (fmap V.singleton . dupRun)
@@ -215,9 +215,9 @@ mkLevelsCache reg lvls = do
     -- going to need this in the end. We might get rid of the LevelsCache.
     foldRunAndMergeM ::
          Monoid a
-      => (Ref (Run (ResultingIndex j) m h) -> m a)
-      -> (Ref (MergingRun j m h) -> m a)
-      -> Levels j m h
+      => (Ref (Run m h (ResultingIndex j)) -> m a)
+      -> (Ref (MergingRun m h j) -> m a)
+      -> Levels m h j
       -> m a
     foldRunAndMergeM k1 k2 ls =
         fmap fold $ V.forM ls $ \(Level ir rs) -> do
@@ -228,9 +228,9 @@ mkLevelsCache reg lvls = do
 
 {-# SPECIALISE rebuildCache ::
      TempRegistry IO
-  -> LevelsCache i IO h
-  -> Levels j IO h
-  -> IO (LevelsCache (ResultingIndex j) IO h) #-}
+  -> LevelsCache IO h i
+  -> Levels IO h j
+  -> IO (LevelsCache IO h (ResultingIndex j)) #-}
 -- | Remove references to runs in the old cache, and create a new cache with
 -- fresh references taken for the runs in the new levels.
 --
@@ -254,22 +254,22 @@ mkLevelsCache reg lvls = do
 rebuildCache ::
      (PrimMonad m, MonadMVar m, MonadMask m)
   => TempRegistry m
-  -> LevelsCache i m h -- ^ old cache
-  -> Levels j m h -- ^ new levels
-  -> m (LevelsCache (ResultingIndex j) m h) -- ^ new cache
+  -> LevelsCache m h i -- ^ old cache
+  -> Levels m h j -- ^ new levels
+  -> m (LevelsCache m h (ResultingIndex j)) -- ^ new cache
 rebuildCache reg oldCache newLevels = do
     releaseLevelsCache reg oldCache
     mkLevelsCache reg newLevels
 
 {-# SPECIALISE duplicateLevelsCache ::
      TempRegistry IO
-  -> LevelsCache i IO h
-  -> IO (LevelsCache i IO h) #-}
+  -> LevelsCache IO h i
+  -> IO (LevelsCache IO h i) #-}
 duplicateLevelsCache ::
      (PrimMonad m, MonadMask m, MonadMVar m)
   => TempRegistry m
-  -> LevelsCache i m h
-  -> m (LevelsCache i m h)
+  -> LevelsCache m h i
+  -> m (LevelsCache m h i)
 duplicateLevelsCache reg cache = do
     rs' <- V.forM (cachedRuns cache) $ \r ->
              allocateTemp reg (dupRef r) releaseRef
@@ -277,12 +277,12 @@ duplicateLevelsCache reg cache = do
 
 {-# SPECIALISE releaseLevelsCache ::
      TempRegistry IO
-  -> LevelsCache i IO h
+  -> LevelsCache IO h i
   -> IO () #-}
 releaseLevelsCache ::
      (PrimMonad m, MonadMVar m, MonadMask m)
   => TempRegistry m
-  -> LevelsCache i m h
+  -> LevelsCache m h i
   -> m ()
 releaseLevelsCache reg cache =
     V.forM_ (cachedRuns cache) $ \r ->
@@ -292,23 +292,23 @@ releaseLevelsCache reg cache =
   Levels, runs and ongoing merges
 -------------------------------------------------------------------------------}
 
-type Levels j m h = V.Vector (Level j m h)
+type Levels m h j = V.Vector (Level m h j)
 
 -- | Runs in order from newer to older
-data Level j m h = Level {
-    incomingRun  :: !(IncomingRun j m h)
-  , residentRuns :: !(V.Vector (Ref (Run (ResultingIndex j) m h)))
+data Level m h j = Level {
+    incomingRun  :: !(IncomingRun m h j)
+  , residentRuns :: !(V.Vector (Ref (Run m h (ResultingIndex j))))
   }
 
 -- | An incoming run is either a single run, or a merge.
-data IncomingRun j m h =
-       Single  !(Ref (Run (ResultingIndex j) m h))
-     | Merging !(Ref (MergingRun j m h))
+data IncomingRun m h j =
+       Single  !(Ref (Run m h (ResultingIndex j)))
+     | Merging !(Ref (MergingRun m h j))
 
 -- | A merging of multiple runs.
 --
 -- TODO: Move to a separate module.
-data MergingRun j m h = MergingRun {
+data MergingRun m h j = MergingRun {
       mergePolicy         :: !MergePolicyForLevel
     , mergeNumRuns        :: !NumRuns
       -- | Sum of number of entries in the input runs
@@ -322,12 +322,12 @@ data MergingRun j m h = MergingRun {
       -- completed, otherwise if 'MergeMaybeCompleted' we have to check the
       -- 'MergingRunState'.
     , mergeKnownCompleted :: !(MutVar (PrimState m) MergeKnownCompleted)
-    , mergeState          :: !(StrictMVar m (MergingRunState j m h))
+    , mergeState          :: !(StrictMVar m (MergingRunState m h j))
     , mergeRefCounter     :: !(RefCounter m)
     }
 
-instance RefCounted (MergingRun j m h) where
-    type FinaliserM (MergingRun j m h) = m
+instance RefCounted (MergingRun m h j) where
+    type FinaliserM (MergingRun m h j) = m
     getRefCounter = mergeRefCounter
 
 {-# SPECIALISE newMergingRun ::
@@ -335,8 +335,8 @@ instance RefCounted (MergingRun j m h) where
   -> NumRuns
   -> NumEntries
   -> MergeKnownCompleted
-  -> MergingRunState j IO h
-  -> IO (Ref (MergingRun j IO h))
+  -> MergingRunState IO h j
+  -> IO (Ref (MergingRun IO h j))
   #-}
 -- | This allows constructing ill-formed MergingRuns, but the flexibility is
 -- needed for creating a merging run that is already Completed, as well as
@@ -353,8 +353,8 @@ newMergingRun ::
   -> NumRuns
   -> NumEntries
   -> MergeKnownCompleted
-  -> MergingRunState j m h
-  -> m (Ref (MergingRun j m h))
+  -> MergingRunState m h j
+  -> m (Ref (MergingRun m h j))
 newMergingRun mergePolicy mergeNumRuns mergeNumEntries knownCompleted state = do
     mergeUnspentCredits <- UnspentCreditsVar <$> newPrimVar 0
     mergeStepsPerformed <- TotalStepsVar <$> newPrimVar 0
@@ -387,8 +387,8 @@ newMergingRun mergePolicy mergeNumRuns mergeNumEntries knownCompleted state = do
 duplicateMergingRunRuns ::
      (PrimMonad m, MonadMVar m, MonadMask m)
   => TempRegistry m
-  -> Ref (MergingRun j m h)
-  -> m (V.Vector (Ref (Run (ResultingIndex j) m h)))
+  -> Ref (MergingRun m h j)
+  -> m (V.Vector (Ref (Run m h (ResultingIndex j))))
 duplicateMergingRunRuns reg (DeRef mr) =
     -- We take the references while holding the MVar to make sure the MergingRun
     -- does not get completed concurrently before we are done.
@@ -401,7 +401,7 @@ duplicateMergingRunRuns reg (DeRef mr) =
 data MergePolicyForLevel = LevelTiering | LevelLevelling
   deriving stock (Show, Eq)
 
-mergePolicyForLevel :: MergePolicy -> LevelNo -> Levels j m h -> MergePolicyForLevel
+mergePolicyForLevel :: MergePolicy -> LevelNo -> Levels m h j -> MergePolicyForLevel
 mergePolicyForLevel MergePolicyLazyLevelling (LevelNo n) nextLevels
   | n == 1
   , V.null nextLevels
@@ -414,16 +414,16 @@ newtype NumRuns = NumRuns { unNumRuns :: Int }
 
 newtype UnspentCreditsVar s = UnspentCreditsVar { getUnspentCreditsVar :: PrimVar s Int }
 
-data MergingRunState j m h =
+data MergingRunState m h j =
     CompletedMerge
-      !(Ref (Run (ResultingIndex j) m h))
+      !(Ref (Run m h (ResultingIndex j)))
       -- ^ Output run
   | OngoingMerge
-      !(V.Vector (Ref (Run (ResultingIndex j) m h)))
+      !(V.Vector (Ref (Run m h (ResultingIndex j))))
       -- ^ Input runs
       !(SpentCreditsVar (PrimState m))
       -- ^ The total number of spent credits.
-      !(Merge j m h)
+      !(Merge m h j)
 
 newtype TotalStepsVar s = TotalStepsVar { getTotalStepsVar ::  PrimVar s Int  }
 
@@ -432,12 +432,12 @@ newtype SpentCreditsVar s = SpentCreditsVar { getSpentCreditsVar :: PrimVar s In
 data MergeKnownCompleted = MergeKnownCompleted | MergeMaybeCompleted
   deriving stock (Show, Eq, Read)
 
-{-# SPECIALISE duplicateLevels :: TempRegistry IO -> Levels j IO h -> IO (Levels j IO h) #-}
+{-# SPECIALISE duplicateLevels :: TempRegistry IO -> Levels IO h j -> IO (Levels IO h j) #-}
 duplicateLevels ::
      (PrimMonad m, MonadMVar m, MonadMask m)
   => TempRegistry m
-  -> Levels j m h
-  -> m (Levels j m h)
+  -> Levels m h j
+  -> m (Levels m h j)
 duplicateLevels reg levels =
     V.forM levels $ \Level {incomingRun, residentRuns} -> do
       incomingRun'  <- duplicateIncomingRun reg incomingRun
@@ -448,39 +448,39 @@ duplicateLevels reg levels =
         residentRuns = residentRuns'
       }
 
-{-# SPECIALISE releaseLevels :: TempRegistry IO -> Levels j IO h -> IO () #-}
+{-# SPECIALISE releaseLevels :: TempRegistry IO -> Levels IO h j -> IO () #-}
 releaseLevels ::
      (PrimMonad m, MonadMVar m, MonadMask m)
   => TempRegistry m
-  -> Levels j m h
+  -> Levels m h j
   -> m ()
 releaseLevels reg levels =
     V.forM_ levels $ \Level {incomingRun, residentRuns} -> do
       releaseIncomingRun reg incomingRun
       V.mapM_ (freeTemp reg . releaseRef) residentRuns
 
-{-# SPECIALISE duplicateIncomingRun :: TempRegistry IO -> IncomingRun j IO h -> IO (IncomingRun j IO h) #-}
+{-# SPECIALISE duplicateIncomingRun :: TempRegistry IO -> IncomingRun IO h j -> IO (IncomingRun IO h j) #-}
 duplicateIncomingRun ::
      (PrimMonad m, MonadMask m, MonadMVar m)
   => TempRegistry m
-  -> IncomingRun j m h
-  -> m (IncomingRun j m h)
+  -> IncomingRun m h j
+  -> m (IncomingRun m h j)
 duplicateIncomingRun reg (Single r) =
     Single <$> allocateTemp reg (dupRef r) releaseRef
 
 duplicateIncomingRun reg (Merging mr) =
     Merging <$> allocateTemp reg (dupRef mr) releaseRef
 
-{-# SPECIALISE releaseIncomingRun :: TempRegistry IO -> IncomingRun j IO h -> IO () #-}
+{-# SPECIALISE releaseIncomingRun :: TempRegistry IO -> IncomingRun IO h j -> IO () #-}
 releaseIncomingRun ::
      (PrimMonad m, MonadMask m, MonadMVar m)
   => TempRegistry m
-  -> IncomingRun j m h -> m ()
+  -> IncomingRun m h j -> m ()
 releaseIncomingRun reg (Single r)   = freeTemp reg (releaseRef r)
 releaseIncomingRun reg (Merging mr) = freeTemp reg (releaseRef mr)
 
-{-# SPECIALISE iforLevelM_ :: Levels j IO h -> (LevelNo -> Level j IO h -> IO ()) -> IO () #-}
-iforLevelM_ :: Monad m => Levels j m h -> (LevelNo -> Level j m h -> m ()) -> m ()
+{-# SPECIALISE iforLevelM_ :: Levels IO h j -> (LevelNo -> Level IO h j -> IO ()) -> IO () #-}
+iforLevelM_ :: Monad m => Levels m h j -> (LevelNo -> Level m h j -> m ()) -> m ()
 iforLevelM_ lvls k = V.iforM_ lvls $ \i lvl -> k (LevelNo (i + 1)) lvl
 
 {-------------------------------------------------------------------------------
@@ -498,8 +498,8 @@ iforLevelM_ lvls k = V.iforM_ lvls $ \i lvl -> k (LevelNo (i + 1)) lvl
   -> UniqCounter IO
   -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob)
   -> TempRegistry IO
-  -> TableContent j IO h
-  -> IO (TableContent j IO h) #-}
+  -> TableContent IO h j
+  -> IO (TableContent IO h j) #-}
 -- | A single batch of updates can fill up the write buffer multiple times. We
 -- flush the write buffer each time it fills up before trying to fill it up
 -- again.
@@ -525,7 +525,7 @@ iforLevelM_ lvls k = V.iforM_ lvls $ \i lvl -> k (LevelNo (i + 1)) lvl
 -- and write those to disk. Of course, any remainder that did not fit into a
 -- whole run should then end up in a fresh write buffer.
 updatesWithInterleavedFlushes ::
-     forall j m h.
+     forall m h j.
      (IndexAcc j, MonadMask m, MonadMVar m, MonadSTM m, MonadST m)
   => Tracer m (AtLevel MergeTrace)
   -> TableConfig
@@ -536,8 +536,8 @@ updatesWithInterleavedFlushes ::
   -> UniqCounter m
   -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob)
   -> TempRegistry m
-  -> TableContent j m h
-  -> m (TableContent j m h)
+  -> TableContent m h j
+  -> m (TableContent m h j)
 updatesWithInterleavedFlushes tr conf resolve hfs hbio root uc es reg tc = do
     let wb = tableWriteBuffer tc
         wbblobs = tableWriteBufferBlobs tc
@@ -616,14 +616,14 @@ addWriteBufferEntries hfs f wbblobs maxn =
   -> SessionRoot
   -> UniqCounter IO
   -> TempRegistry IO
-  -> TableContent j IO h
-  -> IO (TableContent j IO h) #-}
+  -> TableContent IO h j
+  -> IO (TableContent IO h j) #-}
 -- | Flush the write buffer to disk, regardless of whether it is full or not.
 --
 -- The returned table content contains an updated set of levels, where the write
 -- buffer is inserted into level 1.
 flushWriteBuffer ::
-     forall j m h. (IndexAcc j, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+     forall m h j. (IndexAcc j, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => Tracer m (AtLevel MergeTrace)
   -> TableConfig
   -> ResolveSerialisedValue
@@ -632,8 +632,8 @@ flushWriteBuffer ::
   -> SessionRoot
   -> UniqCounter m
   -> TempRegistry m
-  -> TableContent j m h
-  -> m (TableContent j m h)
+  -> TableContent m h j
+  -> m (TableContent m h j)
 flushWriteBuffer tr conf@TableConfig{confDiskCachePolicy}
                  resolve hfs hbio root uc reg tc
   | WB.null (tableWriteBuffer tc) = pure tc
@@ -674,14 +674,14 @@ flushWriteBuffer tr conf@TableConfig{confDiskCachePolicy}
 -- NOTE: @_levelsInvariant@ is based on the @ScheduledMerges.invariant@
 -- prototype. See @ScheduledMerges.invariant@ for documentation about the merge
 -- algorithm.
-_levelsInvariant :: forall m h. TableConfig j -> Levels j m h -> ST (PrimState m) Bool
+_levelsInvariant :: forall m h. TableConfig j -> Levels m h j -> ST (PrimState m) Bool
 _levelsInvariant conf levels =
     go (LevelNo 1) levels >>= \ !_ -> pure True
   where
     sr = confSizeRatio conf
     wba = confWriteBufferAlloc conf
 
-    go :: LevelNo -> Levels j m h -> ST (PrimState m) ()
+    go :: LevelNo -> Levels m h j -> ST (PrimState m) ()
     go !_ (V.uncons -> Nothing) = pure ()
 
     go !ln (V.uncons -> Just (Level j mr rs, ls)) = do
@@ -756,16 +756,16 @@ _levelsInvariant conf levels =
   -> HasBlockIO IO h
   -> SessionRoot
   -> UniqCounter IO
-  -> Ref (Run (ResultingIndex j) IO h)
+  -> Ref (Run IO h (ResultingIndex j))
   -> TempRegistry IO
-  -> Levels j IO h
-  -> IO (Levels j IO h) #-}
+  -> Levels IO h j
+  -> IO (Levels IO h j) #-}
 -- | Add a run to the levels, and propagate merges.
 --
 -- NOTE: @go@ is based on the @ScheduledMerges.increment@ prototype. See @ScheduledMerges.increment@
 -- for documentation about the merge algorithm.
 addRunToLevels ::
-     forall j m h.
+     forall m h j.
      (IndexAcc j, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => Tracer m (AtLevel MergeTrace)
   -> TableConfig
@@ -774,10 +774,10 @@ addRunToLevels ::
   -> HasBlockIO m h
   -> SessionRoot
   -> UniqCounter m
-  -> Ref (Run (ResultingIndex j) m h)
+  -> Ref (Run m h (ResultingIndex j))
   -> TempRegistry m
-  -> Levels j m h
-  -> m (Levels j m h)
+  -> Levels m h j
+  -> m (Levels m h j)
 addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = do
     ls' <- go (LevelNo 1) (V.singleton r0) levels
 {- TODO: re-enable
@@ -837,8 +837,8 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
             ir' <- newMerge LevelLevelling Merge.LastLevel ln (rs' `V.snoc` r)
             pure $! Level ir' V.empty `V.cons` V.empty
 
-    expectCompletedMergeTraced :: LevelNo -> IncomingRun j m h
-                               -> m (Ref (Run (ResultingIndex j) m h))
+    expectCompletedMergeTraced :: LevelNo -> IncomingRun m h j
+                               -> m (Ref (Run m h (ResultingIndex j)))
     expectCompletedMergeTraced ln ir = do
       r <- expectCompletedMerge reg ir
       traceWith tr $ AtLevel ln $
@@ -849,8 +849,8 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
     newMerge :: MergePolicyForLevel
              -> Merge.Level
              -> LevelNo
-             -> V.Vector (Ref (Run (ResultingIndex j) m h))
-             -> m (IncomingRun j m h)
+             -> V.Vector (Ref (Run m h (ResultingIndex j)))
+             -> m (IncomingRun m h j)
     newMerge mergePolicy mergelast ln rs
       | Just (r, rest) <- V.uncons rs
       , V.null rest = do
@@ -930,7 +930,7 @@ maxRunSize' :: TableConfig -> MergePolicyForLevel -> LevelNo -> NumEntries
 maxRunSize' config policy ln =
     maxRunSize (confSizeRatio config) (confWriteBufferAlloc config) policy ln
 
-mergeLastForLevel :: Levels j m h -> Merge.Level
+mergeLastForLevel :: Levels m h j -> Merge.Level
 mergeLastForLevel levels
  | V.null levels = Merge.LastLevel
  | otherwise     = Merge.MidLevel
@@ -938,7 +938,7 @@ mergeLastForLevel levels
 levelIsFull :: SizeRatio -> V.Vector run -> Bool
 levelIsFull sr rs = V.length rs + 1 >= (sizeRatioInt sr)
 
-{-# SPECIALISE mergeRuns :: IndexAcc j => ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> RunDataCaching -> RunBloomFilterAlloc -> ST RealWorld (j RealWorld) -> RunFsPaths -> Merge.Level -> V.Vector (Ref (Run (ResultingIndex j) IO h)) -> IO (Ref (Run (ResultingIndex j) IO h)) #-}
+{-# SPECIALISE mergeRuns :: IndexAcc j => ResolveSerialisedValue -> HasFS IO h -> HasBlockIO IO h -> RunDataCaching -> RunBloomFilterAlloc -> ST RealWorld (j RealWorld) -> RunFsPaths -> Merge.Level -> V.Vector (Ref (Run IO h (ResultingIndex j))) -> IO (Ref (Run IO h (ResultingIndex j))) #-}
 mergeRuns ::
      (IndexAcc j, MonadMask m, MonadST m, MonadSTM m)
   => ResolveSerialisedValue
@@ -949,8 +949,8 @@ mergeRuns ::
   -> ST (PrimState m) (j (PrimState m))
   -> RunFsPaths
   -> Merge.Level
-  -> V.Vector (Ref (Run (ResultingIndex j) m h))
-  -> m (Ref (Run (ResultingIndex j) m h))
+  -> V.Vector (Ref (Run m h (ResultingIndex j)))
+  -> m (Ref (Run m h (ResultingIndex j)))
 mergeRuns resolve hfs hbio caching alloc newIndex runPaths mergeLevel runs = do
     Merge.new hfs hbio caching alloc newIndex mergeLevel resolve runPaths runs >>= \case
       Nothing -> error "mergeRuns: no inputs"
@@ -1060,7 +1060,7 @@ newtype Credit = Credit Int
      IndexAcc j
   => TableConfig
   -> Credit
-  -> Levels j IO h
+  -> Levels IO h j
   -> IO ()
   #-}
 -- | Supply the given amount of credits to each merge in the levels structure.
@@ -1069,7 +1069,7 @@ supplyCredits ::
      (IndexAcc j, MonadSTM m, MonadST m, MonadMVar m, MonadMask m)
   => TableConfig
   -> Credit
-  -> Levels j m h
+  -> Levels m h j
   -> m ()
 supplyCredits conf c levels =
     iforLevelM_ levels $ \ln (Level ir _rs) ->
@@ -1087,7 +1087,7 @@ newtype ScaledCredits = ScaledCredits Int
 -- Initially, 1 update supplies 1 credit. However, since merging runs have
 -- different numbers of input runs/entries, we may have to a more or less
 -- merging work than 1 merge step for each credit.
-scaleCreditsForMerge :: IncomingRun j m h -> Credit -> ScaledCredits
+scaleCreditsForMerge :: IncomingRun m h j -> Credit -> ScaledCredits
 -- A single run is a trivially completed merge, so it requires no credits.
 scaleCreditsForMerge (Single _) _ = ScaledCredits 0
 scaleCreditsForMerge (Merging (DeRef MergingRun {..})) (Credit c) =
@@ -1111,14 +1111,14 @@ scaleCreditsForMerge (Merging (DeRef MergingRun {..})) (Credit c) =
            -- same as division rounding up: ceiling (c * n / 4)
         in ScaledCredits ((c * n + 3) `div` 4)
 
-{-# SPECIALISE supplyMergeCredits :: IndexAcc j => ScaledCredits -> CreditThreshold -> IncomingRun j IO h -> IO () #-}
+{-# SPECIALISE supplyMergeCredits :: IndexAcc j => ScaledCredits -> CreditThreshold -> IncomingRun IO h j -> IO () #-}
 -- | Supply the given amount of credits to a merging run. This /may/ cause an
 -- ongoing merge to progress.
 supplyMergeCredits ::
-     forall j m h. (IndexAcc j, MonadSTM m, MonadST m, MonadMVar m, MonadMask m)
+     forall m h j. (IndexAcc j, MonadSTM m, MonadST m, MonadMVar m, MonadMask m)
   => ScaledCredits
   -> CreditThreshold
-  -> IncomingRun j m h
+  -> IncomingRun m h j
   -> m ()
 supplyMergeCredits _ _ Single{} = pure ()
 supplyMergeCredits (ScaledCredits c) creditsThresh
@@ -1243,10 +1243,10 @@ takeAllUnspentCredits (UnspentCreditsVar !unspentCreditsVar) = do
       else
         casLoop prev'
 
-{-# SPECIALISE stepMerge :: IndexAcc j => StrictMVar IO (MergingRunState j IO h) -> TotalStepsVar RealWorld -> Credit -> IO Bool #-}
+{-# SPECIALISE stepMerge :: IndexAcc j => StrictMVar IO (MergingRunState IO h j) -> TotalStepsVar RealWorld -> Credit -> IO Bool #-}
 stepMerge ::
      (IndexAcc j, MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
-  => StrictMVar m (MergingRunState j m h)
+  => StrictMVar m (MergingRunState m h j)
   -> TotalStepsVar (PrimState m)
   -> Credit
   -> m Bool
@@ -1292,13 +1292,13 @@ stepMerge mergeVar (TotalStepsVar totalStepsVar) (Credit c) =
 
 {-# SPECIALISE completeMerge ::
      IndexAcc j
-  => StrictMVar IO (MergingRunState j IO h)
+  => StrictMVar IO (MergingRunState IO h j)
   -> MutVar RealWorld MergeKnownCompleted
   -> IO () #-}
 -- | Convert an 'OngoingMerge' to a 'CompletedMerge'.
 completeMerge ::
      (IndexAcc j, MonadSTM m, MonadST m, MonadMVar m, MonadMask m)
-  => StrictMVar m (MergingRunState j m h)
+  => StrictMVar m (MergingRunState m h j)
   -> MutVar (PrimState m) MergeKnownCompleted
   -> m ()
 completeMerge mergeVar mergeKnownCompletedVar = do
@@ -1313,10 +1313,10 @@ completeMerge mergeVar mergeKnownCompletedVar = do
         writeMutVar mergeKnownCompletedVar MergeKnownCompleted
         pure $! CompletedMerge r
 
-{-# SPECIALISE expectCompletedMerge :: IndexAcc j => TempRegistry IO -> IncomingRun j IO h -> IO (Ref (Run (ResultingIndex j) IO h)) #-}
+{-# SPECIALISE expectCompletedMerge :: IndexAcc j => TempRegistry IO -> IncomingRun IO h j -> IO (Ref (Run IO h (ResultingIndex j))) #-}
 expectCompletedMerge ::
      (IndexAcc j, MonadMVar m, MonadSTM m, MonadST m, MonadMask m)
-  => TempRegistry m -> IncomingRun j m h -> m (Ref (Run (ResultingIndex j) m h))
+  => TempRegistry m -> IncomingRun m h j -> m (Ref (Run m h (ResultingIndex j)))
 expectCompletedMerge _ (Single r) = pure r
 expectCompletedMerge reg (Merging (mr@(DeRef MergingRun {..}))) = do
     knownCompleted <- readMutVar mergeKnownCompleted

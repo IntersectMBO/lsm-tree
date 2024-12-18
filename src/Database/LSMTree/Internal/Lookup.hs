@@ -163,7 +163,7 @@ data ByteCountDiscrepancy = ByteCountDiscrepancy {
     -> ResolveSerialisedValue
     -> WB.WriteBuffer
     -> Ref (WBB.WriteBufferBlobs IO h)
-    -> V.Vector (Ref (Run i IO h))
+    -> V.Vector (Ref (Run IO h i))
     -> V.Vector (Bloom SerialisedKey)
     -> V.Vector i
     -> V.Vector (Handle h)
@@ -177,13 +177,13 @@ data ByteCountDiscrepancy = ByteCountDiscrepancy {
 -- PRECONDITION: the vectors of bloom filters, indexes and file handles
 -- should pointwise match with the vectors of runs.
 lookupsIO ::
-     forall i m h. (Index i, MonadThrow m, MonadST m)
+     forall m h i. (Index i, MonadThrow m, MonadST m)
   => HasBlockIO m h
   -> ArenaManager (PrimState m)
   -> ResolveSerialisedValue
   -> WB.WriteBuffer
   -> Ref (WBB.WriteBufferBlobs m h)
-  -> V.Vector (Ref (Run i m h)) -- ^ Runs @rs@
+  -> V.Vector (Ref (Run m h i)) -- ^ Runs @rs@
   -> V.Vector (Bloom SerialisedKey) -- ^ The bloom filters inside @rs@
   -> V.Vector i -- ^ The indexes inside @rs@
   -> V.Vector (Handle h) -- ^ The file handles to the key\/value files inside @rs@
@@ -208,7 +208,7 @@ lookupsIO !hbio !mgr !resolveV !wb !wbblobs !rs !blooms !indexes !kopsFiles !ks 
        ResolveSerialisedValue
     -> WB.WriteBuffer
     -> Ref (WBB.WriteBufferBlobs IO h)
-    -> V.Vector (Ref (Run i IO h))
+    -> V.Vector (Ref (Run IO h i))
     -> V.Vector SerialisedKey
     -> VP.Vector RunIxKeyIx
     -> V.Vector (IOOp RealWorld h)
@@ -223,11 +223,11 @@ lookupsIO !hbio !mgr !resolveV !wb !wbblobs !rs !blooms !indexes !kopsFiles !ks 
 -- key in multiple runs.
 --
 intraPageLookups ::
-     forall i m h. (PrimMonad m, MonadThrow m)
+     forall m h i. (PrimMonad m, MonadThrow m)
   => ResolveSerialisedValue
   -> WB.WriteBuffer
   -> Ref (WBB.WriteBufferBlobs m h)
-  -> V.Vector (Ref (Run i m h))
+  -> V.Vector (Ref (Run m h i))
   -> V.Vector SerialisedKey
   -> VP.Vector RunIxKeyIx
   -> V.Vector (IOOp (PrimState m) h)
