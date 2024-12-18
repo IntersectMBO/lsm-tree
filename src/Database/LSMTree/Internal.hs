@@ -66,6 +66,9 @@ module Database.LSMTree.Internal (
   , listSnapshots
     -- * Mutiple writable tables
   , duplicate
+    -- * Table union
+  , union
+  , unions
   ) where
 
 import           Codec.CBOR.Read
@@ -74,7 +77,7 @@ import           Control.Concurrent.Class.MonadSTM (MonadSTM (..))
 import           Control.Concurrent.Class.MonadSTM.RWVar (RWVar)
 import qualified Control.Concurrent.Class.MonadSTM.RWVar as RW
 import           Control.DeepSeq
-import           Control.Monad (unless)
+import           Control.Monad (forM, unless, zipWithM_)
 import           Control.Monad.Class.MonadST (MonadST (..))
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Primitive
@@ -85,6 +88,8 @@ import           Data.Arena (ArenaManager, newArenaManager)
 import           Data.Foldable
 import           Data.Functor.Compose (Compose (..))
 import           Data.Kind
+import           Data.List.NonEmpty (NonEmpty (..))
+import qualified Data.List.NonEmpty as NE
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (catMaybes)
@@ -218,6 +223,18 @@ data LSMTreeError =
     -- The 'Int' index indicates which 'BlobRef' was invalid. Many may be
     -- invalid but only the first is reported.
   | ErrBlobRefInvalid Int
+    -- | 'unions' was called on tables that are not of the same type.
+  | ErrUnionsTableTypeMismatch
+      Int -- ^ Vector index of table @t1@ involved in the mismatch
+      Int -- ^ Vector index of table @t2@ involved in the mismatch
+    -- | 'unions' was called on tables that are not in the same session.
+  | ErrUnionsSessionMismatch
+      Int -- ^ Vector index of table @t1@ involved in the mismatch
+      Int -- ^ Vector index of table @t2@ involved in the mismatch
+    -- | 'unions' was called on tables that do not have the same configuration.
+  | ErrUnionsTableConfigMismatch
+      Int -- ^ Vector index of table @t1@ involved in the mismatch
+      Int -- ^ Vector index of table @t2@ involved in the mismatch
   deriving stock (Show, Eq)
   deriving anyclass (Exception)
 
@@ -243,6 +260,9 @@ data LSMTreeTrace =
   | TraceCursor
       Word64 -- ^ Cursor identifier
       CursorTrace
+    -- Unions
+  | TraceUnions
+      (NonEmpty Word64) -- ^ Table identifiers
   deriving stock Show
 
 data TableTrace =
@@ -284,6 +304,9 @@ data Session m h = Session {
       -- to the session's fields (see 'withOpenSession'). We use more
       -- fine-grained synchronisation for various mutable parts of an open
       -- session.
+      --
+      -- INVARIANT: once the session state is changed from 'SessionOpen' to
+      -- 'SessionClosed', it is never changed back to 'SessionOpen' again.
       sessionState  :: !(RWVar m (SessionState m h))
     , sessionTracer :: !(Tracer m LSMTreeTrace)
     }
@@ -298,6 +321,9 @@ data SessionState m h =
 data SessionEnv m h = SessionEnv {
     -- | The path to the directory in which this sesion is live. This is a path
     -- relative to root of the 'HasFS' instance.
+    --
+    -- INVARIANT: the session root is never changed during the lifetime of a
+    -- session.
     sessionRoot        :: !SessionRoot
   , sessionHasFS       :: !(HasFS m h)
   , sessionHasBlockIO  :: !(HasBlockIO m h)
@@ -310,8 +336,9 @@ data SessionEnv m h = SessionEnv {
     --
     -- Tables are assigned unique identifiers using 'sessionUniqCounter' to
     -- ensure that modifications to the set of known tables are independent.
-    -- Each identifier is added only once in 'new', 'openSnapshot' or
-    -- 'duplicate', and is deleted only once in 'close' or 'closeSession'.
+    -- Each identifier is added only once in 'new', 'openSnapshot', 'duplicate',
+    -- 'union', or 'unions', and is deleted only once in 'close' or
+    -- 'closeSession'.
     --
     -- * A new table may only insert its own identifier when it has acquired the
     --   'sessionState' read-lock. This is to prevent races with 'closeSession'.
@@ -526,11 +553,24 @@ data Table m h = Table {
     , tableState        :: !(RWVar m (TableState m h))
     , tableArenaManager :: !(ArenaManager (PrimState m))
     , tableTracer       :: !(Tracer m TableTrace)
+      -- | Session-unique identifier for this table.
+      --
+      -- INVARIANT: a table's identifier is never changed during the lifetime of
+      -- the table.
+    , tableId           :: !Word64
+
+      -- === Session-inherited
+
+      -- | The session that this table belongs to.
+      --
+      -- INVARIANT: a table only ever belongs to one session, and can't be
+      -- transferred to a different session.
+    , tableSession      :: !(Session m h)
     }
 
 instance NFData (Table m h) where
-  rnf (Table a b c d) =
-    rnf a `seq` rnf b `seq` rnf c `seq` rwhnf d
+  rnf (Table a b c d e f) =
+    rnf a `seq` rnf b `seq` rnf c `seq` rwhnf d `seq` rnf e`seq` rwhnf f
 
 -- | A table may assume that its corresponding session is still open as
 -- long as the table is open. A session's global resources, and therefore
@@ -543,19 +583,12 @@ data TableState m h =
 data TableEnv m h = TableEnv {
     -- === Session-inherited
 
-    -- | The session that this table belongs to.
-    --
-    -- NOTE: Consider using the 'tableSessionEnv' field and helper functions
-    -- like 'tableHasFS' instead of acquiring the session lock.
-    tableSession    :: !(Session m h)
     -- | Use this instead of 'tableSession' for easy access. An open table may
     -- assume that its session is open.
-  , tableSessionEnv :: !(SessionEnv m h)
+    tableSessionEnv :: !(SessionEnv m h)
 
     -- === Table-specific
 
-    -- | Session-unique identifier for this table.
-  , tableId         :: !Word64
     -- | All of the state being in a single 'StrictMVar' is a relatively simple
     -- solution, but there could be more concurrency. For example, while inserts
     -- are in progress, lookups could still look at the old state without
@@ -586,12 +619,12 @@ tableSessionUniqCounter :: TableEnv m h -> UniqCounter m
 tableSessionUniqCounter = sessionUniqCounter . tableSessionEnv
 
 {-# INLINE tableSessionUntrackTable #-}
-{-# SPECIALISE tableSessionUntrackTable :: TableEnv IO h -> IO () #-}
+{-# SPECIALISE tableSessionUntrackTable :: Word64 -> TableEnv IO h -> IO () #-}
 -- | Open tables are tracked in the corresponding session, so when a table is
 -- closed it should become untracked (forgotten).
-tableSessionUntrackTable :: MonadMVar m => TableEnv m h -> m ()
-tableSessionUntrackTable thEnv =
-    modifyMVar_ (sessionOpenTables (tableSessionEnv thEnv)) $ pure . Map.delete (tableId thEnv)
+tableSessionUntrackTable :: MonadMVar m => Word64 -> TableEnv m h -> m ()
+tableSessionUntrackTable tableId thEnv =
+    modifyMVar_ (sessionOpenTables (tableSessionEnv thEnv)) $ pure . Map.delete tableId
 
 -- | 'withOpenTable' ensures that the table stays open for the duration of the
 -- provided continuation.
@@ -688,12 +721,11 @@ newWith reg sesh seshEnv conf !am !tc = do
     -- /updated/ set of tracked tables.
     contentVar <- RW.new $ tc
     tableVar <- RW.new $ TableOpen $ TableEnv {
-          tableSession = sesh
-        , tableSessionEnv = seshEnv
-        , tableId = uniqueToWord64 tableId
+          tableSessionEnv = seshEnv
         , tableContent = contentVar
         }
-    let !t = Table conf tableVar am tr
+    let !tid = uniqueToWord64 tableId
+        !t = Table conf tableVar am tr tid sesh
     -- Track the current table
     freeTemp reg $ modifyMVar_ (sessionOpenTables seshEnv)
                  $ pure . Map.insert (uniqueToWord64 tableId) t
@@ -715,7 +747,7 @@ close t = do
         -- Since we have a write lock on the table state, we know that we are the
         -- only thread currently closing the table. We can safely make the session
         -- forget about this table.
-        freeTemp reg (tableSessionUntrackTable thEnv)
+        freeTemp reg (tableSessionUntrackTable (tableId t) thEnv)
         RW.withWriteAccess_ (tableContent thEnv) $ \tc -> do
           releaseTableContent reg tc
           pure tc
@@ -936,12 +968,12 @@ newCursor ::
   -> Table m h
   -> m (Cursor m h)
 newCursor !offsetKey t = withOpenTable t $ \thEnv -> do
-    let cursorSession = tableSession thEnv
+    let cursorSession = tableSession t
     let cursorSessionEnv = tableSessionEnv thEnv
     cursorId <- uniqueToWord64 <$>
       incrUniqCounter (sessionUniqCounter cursorSessionEnv)
     let cursorTracer = TraceCursor cursorId `contramap` sessionTracer cursorSession
-    traceWith cursorTracer $ TraceCreateCursor (tableId thEnv)
+    traceWith cursorTracer $ TraceCreateCursor (tableId t)
 
     -- We acquire a read-lock on the session open-state to prevent races, see
     -- 'sessionOpenTables'.
@@ -1281,3 +1313,121 @@ duplicate t@Table{..} = do
             tableConfig
             tableArenaManager
             content
+
+
+{-------------------------------------------------------------------------------
+   Table union
+-------------------------------------------------------------------------------}
+
+{-# SPECIALISE union :: Table IO h -> Table IO h -> IO (Table IO h) #-}
+-- | See 'Database.LSMTree.Normal.union'.
+union ::
+     (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+  => Table m h
+  -> Table m h
+  -> m (Table m h)
+union t1 t2 = unions $ t1 :| [t2]
+
+{-# SPECIALISE unions :: NonEmpty (Table IO h) -> IO (Table IO h) #-}
+-- | See 'Database.LSMTree.Normal.unions'.
+unions ::
+     (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+  => NonEmpty (Table m h)
+  -> m (Table m h)
+unions ts = do
+    sesh <-
+      matchSessions ts >>= \case
+        Left (i, j) -> throwIO $ ErrUnionsSessionMismatch i j
+        Right sesh  -> pure sesh
+
+    traceWith (sessionTracer sesh) $ TraceUnions (NE.map tableId ts)
+
+    -- TODO: Do we really need the configs to match exactly? It's okay as a
+    -- requirement for now, but we might want to revisit it. Some settings don't
+    -- really need to match for things to work, but of course we'd still need to
+    -- answer the question of which config to use for the new table, possibly
+    -- requiring to supply it manually? Or, we could generalise the exact match
+    -- to have a config compatibility test and config merge?
+    conf <-
+      case match (fmap tableConfig ts) of
+        Left (i, j) -> throwIO $ ErrUnionsTableConfigMismatch i j
+        Right conf  -> pure conf
+
+    -- We acquire a read-lock on the session open-state to prevent races, see
+    -- 'sessionOpenTables'.
+    modifyWithTempRegistry
+      (atomically $ RW.unsafeAcquireReadAccess (sessionState sesh))
+      (\_ -> atomically $ RW.unsafeReleaseReadAccess (sessionState sesh)) $ \reg -> \case
+        SessionClosed -> throwIO ErrSessionClosed
+        seshState@(SessionOpen seshEnv) -> do
+          contents <-
+            forM ts $ \t -> do
+              withOpenTable t $ \tEnv ->
+                -- The table contents escape the read access, but we just added references
+                -- to each run so it is safe.
+                RW.withReadAccess (tableContent tEnv) (duplicateTableContent reg)
+
+          content <-
+            error "unions: combine contents into merging tree" $ -- TODO
+              contents
+
+          t <-
+            newWith
+              reg
+              sesh
+              seshEnv
+              conf
+              (error "unions: ArenaManager") -- TODO
+              content
+
+          pure (seshState, t)
+
+-- | Like 'matchBy', but the match function is @(==)@.
+match :: Eq a => NonEmpty a -> Either (Int, Int) a
+match = matchBy (==)
+
+-- | Check that all values in the list match. If so, return the matched value.
+-- If there is a mismatch, return the list indices of the mismatching values.
+matchBy :: forall a. (a -> a -> Bool) -> NonEmpty a -> Either (Int, Int) a
+matchBy eq (x0 :| xs) =
+    case zipWithM_ (matchOne x0) [1..] xs of
+      Left i   -> Left (0, i)
+      Right () -> Right x0
+  where
+    matchOne :: a -> Int -> a -> Either Int ()
+    matchOne x i y =
+      if (x `eq` y)
+        then Left i
+        else Right ()
+
+-- | Check that all tables in the session match. If so, return the matched
+-- session. If there is a mismatch, return the list indices of the mismatching
+-- tables.
+--
+-- TODO: compare LockFileHandle instead of SessionRoot (?). We can write an Eq
+-- instance for LockFileHandle based on pointer equality, just like base does
+-- for Handle.
+matchSessions ::
+     (MonadSTM m, MonadThrow m)
+  => NonEmpty (Table m h)
+  -> m (Either (Int, Int) (Session m h))
+matchSessions = \(t :| ts) ->
+    withSessionRoot t $ \root -> do
+      eith <- go root 1 ts
+      pure $ case eith of
+        Left i   -> Left (0, i)
+        Right () -> Right (tableSession t)
+  where
+    -- Check that the session roots for all tables are the same. There can only
+    -- be one *open/active* session per directory because of cooperative file
+    -- locks, so each unique *open* session has a unique session root. We check
+    -- that all the table's sessions are open at the same time while comparing
+    -- the session roots.
+    go _ _ [] = pure (Right ())
+    go root !i (t':ts') =
+        withSessionRoot t' $ \root' ->
+          if root == root'
+            then go root (i+1) ts'
+            else pure (Left i)
+
+    withSessionRoot t k =  withOpenSession (tableSession t) $ k . sessionRoot

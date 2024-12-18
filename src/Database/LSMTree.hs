@@ -1,3 +1,5 @@
+{-# LANGUAGE MagicHash #-}
+
 -- | This module is experimental. It is mainly used for testing purposes.
 --
 -- See the 'Normal' and 'Monoidal' modules for documentation.
@@ -105,7 +107,8 @@ import           Control.Monad.Class.MonadThrow
 import           Data.Bifunctor (Bifunctor (..))
 import           Data.Coerce (coerce)
 import           Data.Kind (Type)
-import           Data.Typeable (Proxy (..), eqT, type (:~:) (Refl))
+import           Data.List.NonEmpty (NonEmpty (..))
+import           Data.Typeable (Proxy (..), Typeable, eqT, type (:~:) (Refl))
 import qualified Data.Vector as V
 import           Database.LSMTree.Common (BlobRef (BlobRef), IOLike, Range (..),
                      SerialiseKey, SerialiseValue, Session, SnapshotName,
@@ -122,6 +125,7 @@ import qualified Database.LSMTree.Internal.Vector as V
 import           Database.LSMTree.Monoidal (ResolveValue (..),
                      resolveDeserialised, resolveValueAssociativity,
                      resolveValueValidOutput)
+import           GHC.Exts (Proxy#, proxy#)
 
 {-------------------------------------------------------------------------------
   Tables
@@ -518,28 +522,38 @@ duplicate (Internal.Table' t) = Internal.Table' <$!> Internal.duplicate t
 -------------------------------------------------------------------------------}
 
 {-# SPECIALISE union ::
-     ResolveValue v
-  => Table IO k v b
+     Table IO k v b
   -> Table IO k v b
   -> IO (Table IO k v b) #-}
 union :: forall m k v b.
-     ( IOLike m
-     , ResolveValue v
-     )
+     IOLike m
   => Table m k v b
   -> Table m k v b
   -> m (Table m k v b)
-union = error "union: not yet implemented" $ union @m @k @v @b
+union t1 t2 = unions $ t1 :| [t2]
 
 {-# SPECIALISE unions ::
-     ResolveValue v
-  => V.Vector (Table IO k v b)
+     NonEmpty (Table IO k v b)
   -> IO (Table IO k v b) #-}
 unions :: forall m k v b.
-     (IOLike m, ResolveValue v)
-  => V.Vector (Table m k v b)
+     IOLike m
+  => NonEmpty (Table m k v b)
   -> m (Table m k v b)
-unions = error "unions: not yet implemented" $ unions @m @k @v
+unions (t :| ts) =
+    case t of
+      Internal.Table' (t' :: Internal.Table m h) -> do
+        ts' <- zipWithM (checkTableType (proxy# @h)) [1..] ts
+        Internal.Table' <$> Internal.unions (t' :| ts')
+  where
+    checkTableType ::
+         forall h. Typeable h
+      => Proxy# h
+      -> Int
+      -> Table m k v b
+      -> m (Internal.Table m h)
+    checkTableType _ i (Internal.Table' (t' :: Internal.Table m h'))
+      | Just Refl <- eqT @h @h' = pure t'
+      | otherwise = throwIO (Internal.ErrUnionsTableTypeMismatch 0 i)
 
 {-------------------------------------------------------------------------------
   Monoidal value resolution

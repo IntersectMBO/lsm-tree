@@ -47,6 +47,7 @@ import qualified Crypto.Hash.SHA256 as SHA256
 import           Data.Bifunctor
 import qualified Data.ByteString as BS
 import           Data.Kind (Type)
+import           Data.List.NonEmpty (NonEmpty (..))
 import           Data.Map (Map)
 import qualified Data.Map.Range as Map.R
 import qualified Data.Map.Strict as Map
@@ -317,7 +318,7 @@ union r (Table xs) (Table ys) =
 -- | Like 'union', but for @n@ tables.
 unions ::
      ResolveSerialisedValue v
-  -> V.Vector (Table k v b)
+  -> NonEmpty (Table k v b)
   -> Table k v b
 unions r tables =
-    Table (Map.unionsWith (resolveValueAndBlob r) (V.map values tables))
+    Table (Map.unionsWith (resolveValueAndBlob r) (fmap values tables))

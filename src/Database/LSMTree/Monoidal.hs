@@ -1,3 +1,5 @@
+{-# LANGUAGE MagicHash #-}
+
 -- | On disk key-value tables, implemented as Log Structured Merge (LSM) trees.
 --
 -- This module is the API for \"monoidal\" tables, as opposed to \"normal\"
@@ -119,12 +121,15 @@ module Database.LSMTree.Monoidal (
 
 import           Control.DeepSeq
 import           Control.Exception (assert)
-import           Control.Monad ((<$!>))
+import           Control.Monad (zipWithM, (<$!>))
+import           Control.Monad.Class.MonadThrow
 import           Data.Bifunctor (Bifunctor (..))
 import           Data.Coerce (coerce)
 import           Data.Kind (Type)
+import           Data.List.NonEmpty (NonEmpty (..))
 import           Data.Monoid (Sum (..))
 import           Data.Proxy (Proxy (Proxy))
+import           Data.Typeable (Typeable, eqT, type (:~:) (Refl))
 import qualified Data.Vector as V
 import           Database.LSMTree.Common (IOLike, Range (..), SerialiseKey,
                      SerialiseValue (..), Session, SnapshotName, closeSession,
@@ -136,6 +141,7 @@ import           Database.LSMTree.Internal.RawBytes (RawBytes)
 import qualified Database.LSMTree.Internal.Serialise as Internal
 import qualified Database.LSMTree.Internal.Snapshot as Internal
 import qualified Database.LSMTree.Internal.Vector as V
+import           GHC.Exts (Proxy#, proxy#)
 
 -- $resource-management
 -- See "Database.LSMTree.Normal#g:resource"
@@ -649,8 +655,7 @@ duplicate (Internal.MonoidalTable t) = Internal.MonoidalTable <$> Internal.dupli
 -------------------------------------------------------------------------------}
 
 {-# SPECIALISE union ::
-     ResolveValue v
-  => Table IO k v
+     Table IO k v
   -> Table IO k v
   -> IO (Table IO k v) #-}
 -- | Union two full tables, creating a new table.
@@ -665,31 +670,38 @@ duplicate (Internal.MonoidalTable t) = Internal.MonoidalTable <$> Internal.dupli
 -- NOTE: unioning tables creates a new table, but does not close the tables that
 -- were used as inputs.
 union :: forall m k v.
-     ( IOLike m
-     , ResolveValue v
-     )
+     IOLike m
   => Table m k v
   -> Table m k v
   -> m (Table m k v)
-union = error "union: not yet implemented" $ union @m @k @v
+union t1 t2 = unions $ t1 :| [t2]
 
 {-# SPECIALISE unions ::
-     ResolveValue v
-  => V.Vector (Table IO k v)
+     NonEmpty (Table IO k v)
   -> IO (Table IO k v) #-}
 -- | Like 'union', but for @n@ tables.
 --
 -- A good mental model of this operation is @'Data.Map.Lazy.unionsWith' (<>)@ on
 -- @'Data.Map.Lazy.Map' k v@.
---
--- Exceptions:
---
--- * Unioning 0 tables is an exception.
 unions :: forall m k v.
-     (IOLike m, ResolveValue v)
-  => V.Vector (Table m k v)
+     IOLike m
+  => NonEmpty (Table m k v)
   -> m (Table m k v)
-unions = error "unions: not yet implemented" $ unions @m @k @v
+unions (t :| ts) =
+    case t of
+      Internal.MonoidalTable (t' :: Internal.Table m h) -> do
+        ts' <- zipWithM (checkTableType (proxy# @h)) [1..] ts
+        Internal.MonoidalTable <$> Internal.unions (t' :| ts')
+  where
+    checkTableType ::
+         forall h. Typeable h
+      => Proxy# h
+      -> Int
+      -> Table m k v
+      -> m (Internal.Table m h)
+    checkTableType _ i (Internal.MonoidalTable (t' :: Internal.Table m h'))
+      | Just Refl <- eqT @h @h' = pure t'
+      | otherwise = throwIO (Internal.ErrUnionsTableTypeMismatch 0 i)
 
 {-------------------------------------------------------------------------------
   Monoidal value resolution

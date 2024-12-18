@@ -1,3 +1,5 @@
+{-# LANGUAGE MagicHash #-}
+
 -- | On disk key-value tables, implemented as Log Structured Merge (LSM) trees.
 --
 -- This module is the API for \"normal\" tables, as opposed to \"monoidal\"
@@ -116,7 +118,8 @@ import           Control.Monad
 import           Control.Monad.Class.MonadThrow
 import           Data.Bifunctor (Bifunctor (..))
 import           Data.Kind (Type)
-import           Data.Typeable (eqT, type (:~:) (Refl))
+import           Data.List.NonEmpty (NonEmpty (..))
+import           Data.Typeable (Typeable, eqT, type (:~:) (Refl))
 import qualified Data.Vector as V
 import           Database.LSMTree.Common (BlobRef (BlobRef), IOLike, Range (..),
                      SerialiseKey, SerialiseValue, Session, SnapshotName,
@@ -129,6 +132,7 @@ import qualified Database.LSMTree.Internal.Entry as Entry
 import qualified Database.LSMTree.Internal.Serialise as Internal
 import qualified Database.LSMTree.Internal.Snapshot as Internal
 import qualified Database.LSMTree.Internal.Vector as V
+import           GHC.Exts (Proxy#, proxy#)
 
 -- $resource-management
 -- Sessions, tables and cursors use resources and as such need to be
@@ -787,19 +791,32 @@ union :: forall m k v b.
   => Table m k v b
   -> Table m k v b
   -> m (Table m k v b)
-union = error "union: not yet implemented" $ union @m @k @v
+union t1 t2 = unions $ t1 :| [t2]
 
-{-# SPECIALISE unions :: V.Vector (Table IO k v b) -> IO (Table IO k v b) #-}
+{-# SPECIALISE unions :: NonEmpty (Table IO k v b) -> IO (Table IO k v b) #-}
 -- | Like 'union', but for @n@ tables.
 --
 -- A good mental model of this operation is @'Data.Map.Lazy.unions'@ on
 -- @'Data.Map.Lazy.Map' k v@.
---
--- Exceptions:
---
--- * Unioning 0 tables is an exception.
+{-# SPECIALISE unions ::
+     NonEmpty (Table IO k v b)
+  -> IO (Table IO k v b) #-}
 unions :: forall m k v b.
      IOLike m
-  => V.Vector (Table m k v b)
+  => NonEmpty (Table m k v b)
   -> m (Table m k v b)
-unions = error "union: not yet implemented" $ union @m @k @v
+unions (t :| ts) =
+    case t of
+      Internal.NormalTable (t' :: Internal.Table m h) -> do
+        ts' <- zipWithM (checkTableType (proxy# @h)) [1..] ts
+        Internal.NormalTable <$> Internal.unions (t' :| ts')
+  where
+    checkTableType ::
+         forall h. Typeable h
+      => Proxy# h
+      -> Int
+      -> Table m k v b
+      -> m (Internal.Table m h)
+    checkTableType _ i (Internal.NormalTable (t' :: Internal.Table m h'))
+      | Just Refl <- eqT @h @h' = pure t'
+      | otherwise = throwIO (Internal.ErrUnionsTableTypeMismatch 0 i)

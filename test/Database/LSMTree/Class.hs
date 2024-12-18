@@ -16,6 +16,7 @@ module Database.LSMTree.Class (
 
 import           Control.Monad.Class.MonadThrow (MonadThrow (..))
 import           Data.Kind (Constraint, Type)
+import           Data.List.NonEmpty (NonEmpty)
 import           Data.Typeable (Proxy (..))
 import qualified Data.Vector as V
 import           Database.LSMTree as Types (LookupResult (..), QueryResult (..),
@@ -167,7 +168,7 @@ class (IsSession (Session h)) => IsTable h where
            ( IOLike m
            , C k v b
            )
-        => V.Vector (h m k v b)
+        => NonEmpty (h m k v b)
         -> m (h m k v b)
 
 withTableNew :: forall h m k v b a.
@@ -204,7 +205,7 @@ withTableUnion table1 table2 = bracket (table1 `union` table2) close
 
 withTableUnions :: forall h m k v b a.
      (IOLike m, IsTable h, C k v b)
-  => V.Vector (h m k v b)
+  => NonEmpty (h m k v b)
   -> (h m k v b -> m a)
   -> m a
 withTableUnions tables = bracket (unions tables) close
