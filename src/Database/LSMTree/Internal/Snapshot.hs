@@ -38,7 +38,7 @@ import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.Index (Index,
-                     IndexAcc (ResultingIndex))
+                     IndexAcc (ResultingIndex, newWithDefaults))
 import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.MergeSchedule
@@ -262,7 +262,7 @@ openRuns
 -------------------------------------------------------------------------------}
 
 {-# SPECIALISE fromSnapLevels ::
-     (NewIndexAcc j, IndexAcc j)
+     IndexAcc j
   => TempRegistry IO
   -> HasFS IO h
   -> HasBlockIO IO h
@@ -274,7 +274,7 @@ openRuns
   -> IO (Levels j IO h)
   #-}
 fromSnapLevels ::
-     forall j m h. (NewIndexAcc j, IndexAcc j, MonadMask m, MonadMVar m, MonadSTM m, MonadST m)
+     forall j m h. (IndexAcc j, MonadMask m, MonadMVar m, MonadSTM m, MonadST m)
   => TempRegistry m
   -> HasFS m h
   -> HasBlockIO m h
@@ -316,7 +316,7 @@ fromSnapLevels reg hfs hbio conf@TableConfig{..} uc resolve dir (SnapLevels leve
       where
         caching = diskCachePolicyForLevel confDiskCachePolicy ln
         alloc = bloomFilterAllocForLevel conf ln
-        newIndex = newIndexAcc
+        newIndex = newWithDefaults
 
         fromSnapIncomingRun ::
              SnapIncomingRun (Ref (Run (ResultingIndex j) m h))

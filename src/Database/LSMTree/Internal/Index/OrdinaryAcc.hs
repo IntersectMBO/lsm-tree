@@ -26,7 +26,7 @@ import           Data.Word (Word16, Word32, Word8)
 import           Database.LSMTree.Internal.Chunk (Baler, Chunk, createBaler,
                      feedBaler, unsafeEndBaler)
 import           Database.LSMTree.Internal.Index
-                     (IndexAcc (ResultingIndex, appendMulti, appendSingle, unsafeEnd))
+                     (IndexAcc (ResultingIndex, appendMulti, appendSingle, newWithDefaults, unsafeEnd))
 import           Database.LSMTree.Internal.Index.Ordinary
                      (IndexOrdinary (IndexOrdinary))
 import           Database.LSMTree.Internal.Serialise
@@ -72,6 +72,9 @@ keyListElem (SerialisedKey' keyBytes) = [keySizeBytes, keyBytes] where
 instance IndexAcc IndexOrdinaryAcc where
 
     type ResultingIndex IndexOrdinaryAcc = IndexOrdinary
+
+    newWithDefaults :: ST s (IndexOrdinaryAcc s)
+    newWithDefaults = new 1024 4096
 
     appendSingle :: (SerialisedKey, SerialisedKey)
                  -> IndexOrdinaryAcc s

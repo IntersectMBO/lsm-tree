@@ -7,8 +7,22 @@
 -}
 module Database.LSMTree.Internal.Index
 (
-    Index (search, sizeInPages, headerLBS, finalLBS, fromSBS),
-    IndexAcc (ResultingIndex, appendSingle, appendMulti, unsafeEnd)
+    Index
+    (
+        search,
+        sizeInPages,
+        headerLBS,
+        finalLBS,
+        fromSBS
+    ),
+    IndexAcc
+    (
+        ResultingIndex,
+        newWithDefaults,
+        appendSingle,
+        appendMulti,
+        unsafeEnd
+    )
 )
 where
 
@@ -99,6 +113,9 @@ class Index (ResultingIndex j) => IndexAcc j where
 
     -- | The type of indexes constructed by accumulators of a certain type
     type ResultingIndex j
+
+    -- | Create a new index accumulator with a default configuration.
+    newWithDefaults :: ST s (j s)
 
     {-|
         Adds information about a single page that fully comprises one or more

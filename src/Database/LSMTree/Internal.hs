@@ -135,7 +135,7 @@ instance NFData (Session' m) where
   rnf (Session' s) = rnf s
 
 type Table' :: (Type -> Type) -> Type -> Type -> Type -> Type
-data Table' m k v b = forall j h. (NewIndexAcc j, IndexAcc j, Typeable h) =>
+data Table' m k v b = forall j h. (IndexAcc j, Typeable h) =>
     Table' (Table j m h)
 
 instance NFData (Table' m k v b) where
@@ -149,7 +149,7 @@ instance NFData (Cursor' m k v b) where
   rnf (Cursor' t) = rnf t
 
 type NormalTable :: (Type -> Type) -> Type -> Type -> Type -> Type
-data NormalTable m k v b = forall j h. (NewIndexAcc j, IndexAcc j, Typeable h) =>
+data NormalTable m k v b = forall j h. (IndexAcc j, Typeable h) =>
     NormalTable !(Table j m h)
 
 instance NFData (NormalTable m k v b) where
@@ -163,7 +163,7 @@ instance NFData (NormalCursor m k v b) where
   rnf (NormalCursor c) = rnf c
 
 type MonoidalTable :: (Type -> Type) -> Type -> Type -> Type
-data MonoidalTable m k v = forall j h. (NewIndexAcc j, IndexAcc j, Typeable h) =>
+data MonoidalTable m k v = forall j h. (IndexAcc j, Typeable h) =>
     MonoidalTable !(Table j m h)
 
 instance NFData (MonoidalTable m k v) where
@@ -824,7 +824,7 @@ rangeLookup resolve range t fromEntry = do
         else return (V.concat (reverse (V.slice 0 n chunk : chunks)))
 
 {-# SPECIALISE updates ::
-     (NewIndexAcc j, IndexAcc j)
+     IndexAcc j
   => ResolveSerialisedValue
   -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob)
   -> Table j IO h
@@ -833,7 +833,7 @@ rangeLookup resolve range t fromEntry = do
 --
 -- Does not enforce that mupsert and blobs should not occur in the same table.
 updates ::
-     (NewIndexAcc j, IndexAcc j, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+     (IndexAcc j, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => ResolveSerialisedValue
   -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob)
   -> Table j m h
@@ -1103,7 +1103,7 @@ readCursorWhile resolve keyIsWanted n Cursor {..} fromEntry = do
 -------------------------------------------------------------------------------}
 
 {-# SPECIALISE createSnapshot ::
-     (NewIndexAcc j, IndexAcc j)
+     IndexAcc j
   => ResolveSerialisedValue
   -> SnapshotName
   -> SnapshotLabel
@@ -1112,7 +1112,7 @@ readCursorWhile resolve keyIsWanted n Cursor {..} fromEntry = do
   -> IO () #-}
 -- |  See 'Database.LSMTree.Normal.createSnapshot''.
 createSnapshot ::
-     (NewIndexAcc j, IndexAcc j, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+     (IndexAcc j, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => ResolveSerialisedValue
   -> SnapshotName
   -> SnapshotLabel
@@ -1176,7 +1176,7 @@ createSnapshot resolve snap label tableType t = do
         writeFileSnapshotMetaData hfs contentPath checksumPath snapMetaData
 
 {-# SPECIALISE openSnapshot ::
-     (forall j. (NewIndexAcc j, IndexAcc j) => Table j IO h -> a)
+     (forall j. IndexAcc j => Table j IO h -> a)
   -> Session IO h
   -> SnapshotLabel
   -> SnapshotTableType
@@ -1187,7 +1187,7 @@ createSnapshot resolve snap label tableType t = do
 -- |  See 'Database.LSMTree.Normal.openSnapshot'.
 openSnapshot ::
      (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
-  => (forall j. (NewIndexAcc j, IndexAcc j) => Table j m h -> a)
+  => (forall j. IndexAcc j => Table j m h -> a)
   -> Session m h
   -> SnapshotLabel -- ^ Expected label
   -> SnapshotTableType -- ^ Expected table type

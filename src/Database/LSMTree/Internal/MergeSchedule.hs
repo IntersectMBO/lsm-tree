@@ -64,7 +64,8 @@ import           Database.LSMTree.Internal.Assertions (assert)
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.Entry (Entry, NumEntries (..),
                      unNumEntries)
-import           Database.LSMTree.Internal.Index (IndexAcc (ResultingIndex))
+import           Database.LSMTree.Internal.Index
+                     (IndexAcc (ResultingIndex, newWithDefaults))
 import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
 import           Database.LSMTree.Internal.Merge (Merge, StepResult (..))
 import qualified Database.LSMTree.Internal.Merge as Merge
@@ -487,7 +488,7 @@ iforLevelM_ lvls k = V.iforM_ lvls $ \i lvl -> k (LevelNo (i + 1)) lvl
 -------------------------------------------------------------------------------}
 
 {-# SPECIALISE updatesWithInterleavedFlushes ::
-     (NewIndexAcc j, IndexAcc j)
+     IndexAcc j
   => Tracer IO (AtLevel MergeTrace)
   -> TableConfig
   -> ResolveSerialisedValue
@@ -525,7 +526,7 @@ iforLevelM_ lvls k = V.iforM_ lvls $ \i lvl -> k (LevelNo (i + 1)) lvl
 -- whole run should then end up in a fresh write buffer.
 updatesWithInterleavedFlushes ::
      forall j m h.
-     (NewIndexAcc j, IndexAcc j, MonadMask m, MonadMVar m, MonadSTM m, MonadST m)
+     (IndexAcc j, MonadMask m, MonadMVar m, MonadSTM m, MonadST m)
   => Tracer m (AtLevel MergeTrace)
   -> TableConfig
   -> ResolveSerialisedValue
@@ -606,7 +607,7 @@ addWriteBufferEntries hfs f wbblobs maxn =
 
 
 {-# SPECIALISE flushWriteBuffer ::
-     (NewIndexAcc j, IndexAcc j)
+     IndexAcc j
   => Tracer IO (AtLevel MergeTrace)
   -> TableConfig
   -> ResolveSerialisedValue
@@ -622,7 +623,7 @@ addWriteBufferEntries hfs f wbblobs maxn =
 -- The returned table content contains an updated set of levels, where the write
 -- buffer is inserted into level 1.
 flushWriteBuffer ::
-     forall j m h. (NewIndexAcc j, IndexAcc j, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+     forall j m h. (IndexAcc j, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => Tracer m (AtLevel MergeTrace)
   -> TableConfig
   -> ResolveSerialisedValue
@@ -649,7 +650,7 @@ flushWriteBuffer tr conf@TableConfig{confDiskCachePolicy}
             (Run.fromWriteBuffer hfs hbio
               cache
               alloc
-              (newIndexAcc @j)
+              (newWithDefaults @j)
               path
               (tableWriteBuffer tc)
               (tableWriteBufferBlobs tc))
@@ -747,7 +748,7 @@ _levelsInvariant conf levels =
 -}
 
 {-# SPECIALISE addRunToLevels ::
-     (NewIndexAcc j, IndexAcc j)
+     IndexAcc j
   => Tracer IO (AtLevel MergeTrace)
   -> TableConfig
   -> ResolveSerialisedValue
@@ -765,7 +766,7 @@ _levelsInvariant conf levels =
 -- for documentation about the merge algorithm.
 addRunToLevels ::
      forall j m h.
-     (NewIndexAcc j, IndexAcc j, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+     (IndexAcc j, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => Tracer m (AtLevel MergeTrace)
   -> TableConfig
   -> ResolveSerialisedValue
@@ -862,7 +863,7 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
         !n <- incrUniqCounter uc
         let !caching = diskCachePolicyForLevel confDiskCachePolicy ln
             !alloc = bloomFilterAllocForLevel conf ln
-            !newIndex = newIndexAcc @j
+            !newIndex = newWithDefaults @j
             !runPaths = Paths.runPath root (uniqueToRunNumber n)
         traceWith tr $ AtLevel ln $
           TraceNewMerge (V.map Run.size rs) (runNumber runPaths) caching alloc mergePolicy mergelast

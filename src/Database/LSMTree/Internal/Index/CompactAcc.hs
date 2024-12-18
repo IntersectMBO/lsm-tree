@@ -47,7 +47,7 @@ import           Database.LSMTree.Internal.BitMath
 import           Database.LSMTree.Internal.Chunk (Chunk)
 import           Database.LSMTree.Internal.Index (IndexAcc, ResultingIndex)
 import qualified Database.LSMTree.Internal.Index as Index (appendMulti,
-                     appendSingle, unsafeEnd)
+                     appendSingle, newWithDefaults, unsafeEnd)
 import           Database.LSMTree.Internal.Index.Compact
 import           Database.LSMTree.Internal.Page
 import           Database.LSMTree.Internal.Serialise
@@ -256,6 +256,9 @@ unsafeEnd IndexCompactAcc{..} = do
 instance IndexAcc IndexCompactAcc where
 
     type ResultingIndex IndexCompactAcc = IndexCompact
+
+    newWithDefaults :: ST s (IndexCompactAcc s)
+    newWithDefaults = new 1024
 
     appendSingle :: (SerialisedKey, SerialisedKey)
                  -> IndexCompactAcc s

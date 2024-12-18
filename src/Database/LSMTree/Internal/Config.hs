@@ -23,9 +23,8 @@ module Database.LSMTree.Internal.Config (
   , bloomFilterAllocForLevel
     -- * Fence pointer index
   , FencePointerIndex (..)
-  , NewIndexAcc (..)
-  , someFencePointerIndex
   , SomeFencePointerIndex (..)
+  , someFencePointerIndex
     -- * Disk cache policy
   , DiskCachePolicy (..)
   , diskCachePolicyForLevel
@@ -319,17 +318,8 @@ instance NFData FencePointerIndex where
   rnf CompactIndex  = ()
   rnf OrdinaryIndex = ()
 
-class NewIndexAcc j where
-  newIndexAcc :: ST s (j s)
-
-instance NewIndexAcc IndexCompactAcc where
-  newIndexAcc = IndexCompactAcc.new 1024
-
-instance NewIndexAcc IndexOrdinaryAcc where
-  newIndexAcc = IndexOrdinaryAcc.new 1024 4096
-
 data SomeFencePointerIndex where
-  SomeFencePointerIndex :: forall j. (IndexAcc j, NewIndexAcc j) => Proxy# j -> SomeFencePointerIndex
+  SomeFencePointerIndex :: forall j. IndexAcc j => Proxy# j -> SomeFencePointerIndex
 
 someFencePointerIndex :: FencePointerIndex -> SomeFencePointerIndex
 someFencePointerIndex CompactIndex = SomeFencePointerIndex (proxy# @IndexCompactAcc)
