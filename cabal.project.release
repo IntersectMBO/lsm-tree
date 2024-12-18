@@ -20,9 +20,7 @@ constraints: bloomfilter <0
 -- import in case they don't have liburing installed... Currently, it is not
 -- possible to have conditionals on package flags in a project file. Otherwise,
 -- we could add a conditional on (+serialblockio) to remove this import automatically.
---import: cabal.project.blockio-uring
-
-flags: +serialblockio
+import: cabal.project.blockio-uring
 
 if impl(ghc >=9.12)
   allow-newer: base
