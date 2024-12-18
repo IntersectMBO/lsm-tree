@@ -843,6 +843,7 @@ library control
   import:          language, warnings
   hs-source-dirs:  src-control
   exposed-modules:
+    Control.ActionRegistry
     Control.Concurrent.Class.MonadSTM.RWVar
     Control.RefCount
     Control.TempRegistry
