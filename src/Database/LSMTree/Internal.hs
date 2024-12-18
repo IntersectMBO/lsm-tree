@@ -1234,7 +1234,7 @@ openSnapshot mkExistential sesh label tableType override snap resolve = do
             let actDir = Paths.activeDir (sessionRoot seshEnv)
 
             -- Hard link runs into the active directory,
-            snapLevels' <- openRuns @(ResultingIndex j) reg hfs hbio conf (sessionUniqCounter seshEnv) snapDir actDir snapLevels
+            snapLevels' <- openRuns @_ @_ @(ResultingIndex j) reg hfs hbio conf (sessionUniqCounter seshEnv) snapDir actDir snapLevels
             -- Convert from the snapshot format, restoring merge progress in the process
             tableLevels <- fromSnapLevels @_ @_ @j reg hfs hbio conf (sessionUniqCounter seshEnv) resolve actDir snapLevels'
 
