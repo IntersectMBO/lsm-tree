@@ -202,8 +202,8 @@ mkLevelsCache reg lvls = do
     foldRunAndMergeM k1 k2 ls =
         fmap fold $ V.forM ls $ \(Level ir rs) -> do
           incoming <- case ir of
-            Single r   -> k1 r
-            Merging mr -> k2 mr
+            Single     r -> k1 r
+            Merging _ mr -> k2 mr
           (incoming <>) . fold <$> V.forM rs k1
 
 {-# SPECIALISE rebuildCache ::
@@ -283,7 +283,7 @@ data Level m h = Level {
 -- | An incoming run is either a single run, or a merge.
 data IncomingRun m h =
        Single  !(Ref (Run m h))
-     | Merging !(Ref (MergingRun m h))
+     | Merging !MergePolicyForLevel !(Ref (MergingRun m h))
 
 mergePolicyForLevel :: MergePolicy -> LevelNo -> Levels m h -> MergePolicyForLevel
 mergePolicyForLevel MergePolicyLazyLevelling (LevelNo n) nextLevels
@@ -329,16 +329,16 @@ duplicateIncomingRun ::
 duplicateIncomingRun reg (Single r) =
     Single <$> allocateTemp reg (dupRef r) releaseRef
 
-duplicateIncomingRun reg (Merging mr) =
-    Merging <$> allocateTemp reg (dupRef mr) releaseRef
+duplicateIncomingRun reg (Merging mp mr) =
+    Merging mp <$> allocateTemp reg (dupRef mr) releaseRef
 
 {-# SPECIALISE releaseIncomingRun :: TempRegistry IO -> IncomingRun IO h -> IO () #-}
 releaseIncomingRun ::
      (PrimMonad m, MonadMask m, MonadMVar m)
   => TempRegistry m
   -> IncomingRun m h -> m ()
-releaseIncomingRun reg (Single r)   = freeTemp reg (releaseRef r)
-releaseIncomingRun reg (Merging mr) = freeTemp reg (releaseRef mr)
+releaseIncomingRun reg (Single r)     = freeTemp reg (releaseRef r)
+releaseIncomingRun reg (Merging _ mr) = freeTemp reg (releaseRef mr)
 
 {-# SPECIALISE iforLevelM_ :: Levels IO h -> (LevelNo -> Level IO h -> IO ()) -> IO () #-}
 iforLevelM_ :: Monad m => Levels m h -> (LevelNo -> Level m h -> m ()) -> m ()
@@ -618,8 +618,8 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
     expectCompletedMerge :: LevelNo -> IncomingRun m h -> m (Ref (Run m h))
     expectCompletedMerge ln ir = do
       r <- case ir of
-        Single r   -> pure r
-        Merging mr -> do
+        Single r     -> pure r
+        Merging _ mr -> do
           r <- allocateTemp reg (MR.expectCompleted mr) releaseRef
           freeTemp reg (releaseRef mr)
           pure r
@@ -656,7 +656,7 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
         -- The runs will end up inside the merging run, with fresh references.
         -- The original references can be released (but only on the happy path).
         mr <- allocateTemp reg
-          (MR.new hfs hbio resolve caching alloc mergeLevel mergePolicy runPaths rs)
+          (MR.new hfs hbio resolve caching alloc mergeLevel runPaths rs)
           releaseRef
         V.forM_ rs $ \r -> freeTemp reg (releaseRef r)
         case confMergeSchedule of
@@ -671,7 +671,7 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
               traceWith tr $ AtLevel ln $
                 TraceCompletedMerge (Run.size r) (Run.runFsPathsNumber r)
 
-        return (Merging mr)
+        return (Merging mergePolicy mr)
 
 -- $setup
 -- >>> import Database.LSMTree.Internal.Entry
@@ -790,8 +790,8 @@ supplyCredits conf c levels =
     iforLevelM_ levels $ \ln (Level ir _rs) ->
       case ir of
         Single{}   -> pure ()
-        Merging mr -> do
-          let !c' = scaleCreditsForMerge mr c
+        Merging mp mr -> do
+          let !c' = scaleCreditsForMerge mp mr c
           let !thresh = creditThresholdForLevel conf ln
           MR.supplyCredits c' thresh mr
 
@@ -801,28 +801,27 @@ supplyCredits conf c levels =
 -- Initially, 1 update supplies 1 credit. However, since merging runs have
 -- different numbers of input runs/entries, we may have to a more or less
 -- merging work than 1 merge step for each credit.
-scaleCreditsForMerge :: Ref (MergingRun m h) -> Credits -> MR.Credits
+scaleCreditsForMerge :: MergePolicyForLevel -> Ref (MergingRun m h) -> Credits -> MR.Credits
 -- A single run is a trivially completed merge, so it requires no credits.
-scaleCreditsForMerge (DeRef mr) (Credits c) =
-    case MR.mergePolicy mr of
-      LevelTiering ->
-        -- A tiering merge has 5 runs at most (one could be held back to merged
-        -- again) and must be completed before the level is full (once 4 more
-        -- runs come in).
-        MR.Credits (c * (1 + 4))
-      LevelLevelling ->
-        -- A levelling merge has 1 input run and one resident run, which is (up
-        -- to) 4x bigger than the others. It needs to be completed before
-        -- another run comes in.
-        -- TODO: this is currently assuming a naive worst case, where the
-        -- resident run is as large as it can be for the current level. We
-        -- probably have enough information available here to lower the
-        -- worst-case upper bound by looking at the sizes of the input runs.
-        -- As as result, merge work would/could be more evenly distributed over
-        -- time when the resident run is smaller than the worst case.
-        let NumRuns n = MR.mergeNumRuns mr
-           -- same as division rounding up: ceiling (c * n / 4)
-        in MR.Credits ((c * n + 3) `div` 4)
+scaleCreditsForMerge LevelTiering _ (Credits c) =
+    -- A tiering merge has 5 runs at most (one could be held back to merged
+    -- again) and must be completed before the level is full (once 4 more
+    -- runs come in).
+    MR.Credits (c * (1 + 4))
+
+scaleCreditsForMerge LevelLevelling (DeRef mr) (Credits c) =
+    -- A levelling merge has 1 input run and one resident run, which is (up
+    -- to) 4x bigger than the others. It needs to be completed before
+    -- another run comes in.
+    -- TODO: this is currently assuming a naive worst case, where the
+    -- resident run is as large as it can be for the current level. We
+    -- probably have enough information available here to lower the
+    -- worst-case upper bound by looking at the sizes of the input runs.
+    -- As as result, merge work would/could be more evenly distributed over
+    -- time when the resident run is smaller than the worst case.
+    let NumRuns n = MR.mergeNumRuns mr
+       -- same as division rounding up: ceiling (c * n / 4)
+    in MR.Credits ((c * n + 3) `div` 4)
 
 -- TODO: the thresholds for doing merge work should be different for each level,
 -- maybe co-prime?

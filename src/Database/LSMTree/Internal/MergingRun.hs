@@ -50,8 +50,7 @@ import           System.FS.API (HasFS)
 import           System.FS.BlockIO.API (HasBlockIO)
 
 data MergingRun m h = MergingRun {
-      mergePolicy         :: !MergePolicyForLevel
-    , mergeNumRuns        :: !NumRuns
+      mergeNumRuns        :: !NumRuns
       -- | Sum of number of entries in the input runs
     , mergeNumEntries     :: !NumEntries
       -- | The number of currently /unspent/ credits
@@ -118,7 +117,6 @@ instance NFData MergeKnownCompleted where
   -> Run.RunDataCaching
   -> RunBloomFilterAlloc
   -> Merge.Level
-  -> MergePolicyForLevel
   -> RunFsPaths
   -> V.Vector (Ref (Run IO h))
   -> IO (Ref (MergingRun IO h)) #-}
@@ -137,11 +135,10 @@ new ::
   -> Run.RunDataCaching
   -> RunBloomFilterAlloc
   -> Merge.Level
-  -> MergePolicyForLevel
   -> RunFsPaths
   -> V.Vector (Ref (Run m h))
   -> m (Ref (MergingRun m h))
-new hfs hbio resolve caching alloc mergeLevel mergePolicy runPaths inputRuns =
+new hfs hbio resolve caching alloc mergeLevel runPaths inputRuns =
     -- If creating the Merge fails, we must release the references again.
     withTempRegistry $ \reg -> do
       runs <- V.mapM (\r -> allocateTemp reg (dupRef r) releaseRef) inputRuns
@@ -150,12 +147,11 @@ new hfs hbio resolve caching alloc mergeLevel mergePolicy runPaths inputRuns =
       let numInputRuns = NumRuns $ V.length runs
       let numInputEntries = V.foldMap' Run.size runs
       spentCreditsVar <- SpentCreditsVar <$> newPrimVar 0
-      unsafeNew mergePolicy numInputRuns numInputEntries MergeMaybeCompleted $
+      unsafeNew numInputRuns numInputEntries MergeMaybeCompleted $
         OngoingMerge runs spentCreditsVar merge
 
 {-# SPECIALISE newCompleted ::
-     MergePolicyForLevel
-  -> NumRuns
+     NumRuns
   -> NumEntries
   -> Ref (Run IO h)
   -> IO (Ref (MergingRun IO h)) #-}
@@ -168,26 +164,24 @@ new hfs hbio resolve caching alloc mergeLevel mergePolicy runPaths inputRuns =
 -- failing after internal resources have already been created.
 newCompleted ::
      (MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
-  => MergePolicyForLevel
-  -> NumRuns
+  => NumRuns
   -> NumEntries
   -> Ref (Run m h)
   -> m (Ref (MergingRun m h))
-newCompleted mergePolicy numInputRuns numInputEntries inputRun = do
+newCompleted numInputRuns numInputEntries inputRun = do
     bracketOnError (dupRef inputRun) releaseRef $ \run ->
-      unsafeNew mergePolicy numInputRuns numInputEntries MergeKnownCompleted $
+      unsafeNew numInputRuns numInputEntries MergeKnownCompleted $
         CompletedMerge run
 
 {-# INLINE unsafeNew #-}
 unsafeNew ::
      (MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
-  => MergePolicyForLevel
-  -> NumRuns
+  => NumRuns
   -> NumEntries
   -> MergeKnownCompleted
   -> MergingRunState m h
   -> m (Ref (MergingRun m h))
-unsafeNew mergePolicy mergeNumRuns mergeNumEntries knownCompleted state = do
+unsafeNew mergeNumRuns mergeNumEntries knownCompleted state = do
     mergeUnspentCredits <- UnspentCreditsVar <$> newPrimVar 0
     mergeStepsPerformed <- TotalStepsVar <$> newPrimVar 0
     case state of
@@ -197,8 +191,7 @@ unsafeNew mergePolicy mergeNumRuns mergeNumEntries knownCompleted state = do
     mergeState <- newMVar $! state
     newRef (finalise mergeState) $ \mergeRefCounter ->
       MergingRun {
-        mergePolicy
-      , mergeNumRuns
+        mergeNumRuns
       , mergeNumEntries
       , mergeUnspentCredits
       , mergeStepsPerformed

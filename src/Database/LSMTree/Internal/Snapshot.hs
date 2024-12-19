@@ -185,7 +185,7 @@ toSnapIncomingRun (Single r) = pure (SnapSingleRun r)
 -- We need to know how many credits were yet unspent so we can restore merge
 -- work on snapshot load. No need to snapshot the contents of totalStepsVar
 -- here, since we still start counting from 0 again when loading the snapshot.
-toSnapIncomingRun (Merging (DeRef MR.MergingRun {..})) = do
+toSnapIncomingRun (Merging mergePolicy (DeRef MR.MergingRun {..})) = do
     unspentCredits <- readPrimVar (MR.getUnspentCreditsVar mergeUnspentCredits)
     smrs <- withMVar mergeState $ \mrs -> toSnapMergingRunState mrs
     pure $
@@ -345,14 +345,14 @@ fromSnapLevels reg hfs hbio conf@TableConfig{..} uc resolve dir (SnapLevels leve
         fromSnapIncomingRun (SnapSingleRun run) = do
             Single <$> dupRun run
         fromSnapIncomingRun (SnapMergingRun mpfl nr ne unspentCredits smrs) = do
-            Merging <$> case smrs of
+            Merging mpfl <$> case smrs of
               SnapCompletedMerge run ->
-                allocateTemp reg (MR.newCompleted mpfl nr ne run) releaseRef
+                allocateTemp reg (MR.newCompleted nr ne run) releaseRef
 
               SnapOngoingMerge runs spentCredits lvl -> do
                 rn <- uniqueToRunNumber <$> incrUniqCounter uc
                 mr <- allocateTemp reg
-                  (MR.new hfs hbio resolve caching alloc lvl mpfl (mkPath rn) runs)
+                  (MR.new hfs hbio resolve caching alloc lvl (mkPath rn) runs)
                   releaseRef
                 -- When a snapshot is created, merge progress is lost, so we
                 -- have to redo merging work here. UnspentCredits and
