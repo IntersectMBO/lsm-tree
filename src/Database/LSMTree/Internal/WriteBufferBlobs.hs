@@ -34,6 +34,7 @@ module Database.LSMTree.Internal.WriteBufferBlobs (
   ) where
 
 import           Control.DeepSeq (NFData (..))
+import           Control.Monad (void)
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Primitive (PrimMonad, PrimState)
 import           Control.RefCount
@@ -46,7 +47,6 @@ import           Database.LSMTree.Internal.BlobRef (RawBlobRef (..),
 import           Database.LSMTree.Internal.Serialise
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
-import Control.Monad (void, when)
 
 -- | A single 'WriteBufferBlobs' may be shared between multiple tables.
 -- As a consequence of being shared, the management of the shared state has to
