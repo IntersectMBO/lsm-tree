@@ -677,7 +677,7 @@ createSnapshot :: forall m k v b.
   -> Table m k v b
   -> m ()
 createSnapshot label snap (Internal.NormalTable t) =
-    Internal.createSnapshot const snap label Internal.SnapNormalTable t
+    Internal.createSnapshot snap label Internal.SnapNormalTable t
 
 {-# SPECIALISE openSnapshot ::
      Session IO
