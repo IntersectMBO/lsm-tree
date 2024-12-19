@@ -46,6 +46,7 @@ import           Database.LSMTree.Internal.BlobRef (RawBlobRef (..),
 import           Database.LSMTree.Internal.Serialise
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
+import Control.Monad (void, when)
 
 -- | A single 'WriteBufferBlobs' may be shared between multiple tables.
 -- As a consequence of being shared, the management of the shared state has to
@@ -126,6 +127,7 @@ new ::
 new fs blobFileName = open fs blobFileName FS.MustBeNew
 
 {-# SPECIALISE open :: HasFS IO h -> FS.FsPath -> FS.AllowExisting -> IO (Ref (WriteBufferBlobs IO h)) #-}
+-- | Open a `WriteBufferBlobs` file and sets the file pointer to the end of the file.
 open ::
      (PrimMonad m, MonadMask m)
   => HasFS m h
@@ -137,6 +139,9 @@ open fs blobFileName blobFileAllowExisting = do
     -- we can also be asked to retrieve blobs at any time.
     blobFile <- openBlobFile fs blobFileName (FS.ReadWriteMode blobFileAllowExisting)
     blobFilePointer <- newFilePointer
+    -- Set the blob file pointer to the end of the file
+    blobFileSize <- withRef blobFile $ FS.hGetSize fs . blobFileHandle
+    void . updateFilePointer blobFilePointer . fromIntegral $ blobFileSize
     newRef (releaseRef blobFile) $ \writeBufRefCounter ->
       WriteBufferBlobs {
         blobFile,

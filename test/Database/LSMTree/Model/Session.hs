@@ -454,7 +454,7 @@ createSnapshot ::
   -> Table k v b
   -> m ()
 createSnapshot label name t@Table{..} = do
-    (updc, table) <- guardTableIsOpen t
+    (_updc, table) <- guardTableIsOpen t
     snaps <- gets snapshots
     when (Map.member name snaps) $
       throwError ErrSnapshotExists
