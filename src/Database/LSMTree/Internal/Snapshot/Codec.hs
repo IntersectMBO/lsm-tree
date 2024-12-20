@@ -79,6 +79,9 @@ isCompatible otherVersion = do
 -------------------------------------------------------------------------------}
 
 -- | Encode 'SnapshotMetaData' and write it to 'SnapshotMetaDataFile'.
+--
+-- In the presence of exceptions, newly created files will not be removed. It is
+-- up to the user of this function to clean up the files.
 writeFileSnapshotMetaData ::
      MonadThrow m
   => HasFS m h
