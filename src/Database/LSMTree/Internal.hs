@@ -1156,9 +1156,11 @@ createSnapshot resolve snap label tableType t = do
         if doesSnapshotExist then
           throwIO (ErrSnapshotExists snap)
         else
-          -- we assume the snapshots directory already exists, so we just have to
-          -- create the directory for this specific snapshot.
-          FS.createDirectory hfs (Paths.getNamedSnapshotDir snapDir)
+          -- we assume the snapshots directory already exists, so we just have
+          -- to create the directory for this specific snapshot.
+          allocateTemp reg
+            (FS.createDirectory hfs (Paths.getNamedSnapshotDir snapDir))
+            (\_ -> FS.removeDirectoryRecursive hfs (Paths.getNamedSnapshotDir snapDir))
 
         -- For the temporary implementation it is okay to just flush the buffer
         -- before taking the snapshot.
