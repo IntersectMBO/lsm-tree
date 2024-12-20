@@ -389,7 +389,7 @@ openRuns
           hardLinkRunFiles reg hfs hbio NoHardLinkDurable sourcePaths targetPaths
 
           allocateTemp reg
-            (Run.openFromDisk hfs hbio caching targetPaths)
+            (Run.openFromDisk hfs hbio caching confFencePointerIndex targetPaths)
             releaseRef
     pure (SnapLevels levels')
 
@@ -455,7 +455,7 @@ fromSnapLevels reg hfs hbio conf@TableConfig{..} uc resolve dir (SnapLevels leve
               SnapOngoingMerge runs spentCredits lvl -> do
                 rn <- uniqueToRunNumber <$> incrUniqCounter uc
                 mr <- allocateTemp reg
-                  (MR.new hfs hbio resolve caching alloc lvl (mkPath rn) runs)
+                  (MR.new hfs hbio resolve caching alloc confFencePointerIndex lvl (mkPath rn) runs)
                   releaseRef
                 -- When a snapshot is created, merge progress is lost, so we
                 -- have to redo merging work here. UnspentCredits and

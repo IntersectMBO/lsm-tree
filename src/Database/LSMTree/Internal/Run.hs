@@ -44,8 +44,9 @@ import qualified Database.LSMTree.Internal.BlobRef as BlobRef
 import           Database.LSMTree.Internal.BloomFilter (bloomFilterFromSBS)
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
-import qualified Database.LSMTree.Internal.Index as Index (fromSBS, sizeInPages)
-import           Database.LSMTree.Internal.Index.Compact (IndexCompact)
+import qualified Database.LSMTree.Internal.Index as Index (sizeInPages)
+import           Database.LSMTree.Internal.Index.Some (IndexType, SomeIndex)
+import qualified Database.LSMTree.Internal.Index.Some as Index (fromSBS)
 import           Database.LSMTree.Internal.Page (NumPages)
 import           Database.LSMTree.Internal.Paths as Paths
 import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc)
@@ -77,7 +78,7 @@ data Run m h = Run {
       -- | The in-memory index mapping keys to page numbers in the
       -- Key\/Ops file. In future we may support alternative index
       -- representations.
-    , runIndex          :: !IndexCompact
+    , runIndex          :: !SomeIndex
       -- | The file handle for the Key\/Ops file. This file is opened
       -- read-only and is accessed in a page-oriented way, i.e. only
       -- reading whole pages, at page offsets. It will be opened with
@@ -202,6 +203,7 @@ fromMutable runRunDataCaching builder = do
   -> HasBlockIO IO h
   -> RunDataCaching
   -> RunBloomFilterAlloc
+  -> IndexType
   -> RunFsPaths
   -> WriteBuffer
   -> Ref (WriteBufferBlobs IO h)
@@ -219,12 +221,13 @@ fromWriteBuffer ::
   -> HasBlockIO m h
   -> RunDataCaching
   -> RunBloomFilterAlloc
+  -> IndexType
   -> RunFsPaths
   -> WriteBuffer
   -> Ref (WriteBufferBlobs m h)
   -> m (Ref (Run m h))
-fromWriteBuffer fs hbio caching alloc fsPaths buffer blobs = do
-    builder <- Builder.new fs hbio fsPaths (WB.numEntries buffer) alloc
+fromWriteBuffer fs hbio caching alloc indexType fsPaths buffer blobs = do
+    builder <- Builder.new fs hbio fsPaths (WB.numEntries buffer) alloc indexType
     for_ (WB.toList buffer) $ \(k, e) ->
       Builder.addKeyOp builder k (fmap (WBB.mkRawBlobRef blobs) e)
       --TODO: the fmap entry here reallocates even when there are no blobs
@@ -246,6 +249,7 @@ data FileFormatError = FileFormatError FS.FsPath String
      HasFS IO h
   -> HasBlockIO IO h
   -> RunDataCaching
+  -> IndexType
   -> RunFsPaths
   -> IO (Ref (Run IO h)) #-}
 -- | Load a previously written run from disk, checking each file's checksum
@@ -261,9 +265,10 @@ openFromDisk ::
   => HasFS m h
   -> HasBlockIO m h
   -> RunDataCaching
+  -> IndexType
   -> RunFsPaths
   -> m (Ref (Run m h))
-openFromDisk fs hbio runRunDataCaching runRunFsPaths = do
+openFromDisk fs hbio runRunDataCaching indexType runRunFsPaths = do
     expectedChecksums <-
        expectValidFile (runChecksumsPath runRunFsPaths) . fromChecksumsFile
          =<< CRC.readChecksumsFile fs (runChecksumsPath runRunFsPaths)
@@ -278,7 +283,7 @@ openFromDisk fs hbio runRunDataCaching runRunFsPaths = do
       expectValidFile (forRunFilterRaw paths) . bloomFilterFromSBS
         =<< readCRC (forRunFilterRaw expectedChecksums) (forRunFilterRaw paths)
     (runNumEntries, runIndex) <-
-      expectValidFile (forRunIndexRaw paths) . Index.fromSBS
+      expectValidFile (forRunIndexRaw paths) . Index.fromSBS indexType
         =<< readCRC (forRunIndexRaw expectedChecksums) (forRunIndexRaw paths)
 
     runKOpsFile <- FS.hOpen fs (runKOpsPath runRunFsPaths) FS.ReadMode

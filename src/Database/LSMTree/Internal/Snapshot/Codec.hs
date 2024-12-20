@@ -31,6 +31,7 @@ import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.CRC32C
 import qualified Database.LSMTree.Internal.CRC32C as FS
 import           Database.LSMTree.Internal.Entry
+import           Database.LSMTree.Internal.Index.Some (IndexType (..))
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.MergeSchedule
 import           Database.LSMTree.Internal.MergingRun (NumRuns (..))
@@ -356,19 +357,19 @@ instance DecodeVersioned BloomFilterAlloc where
         (3, 2) -> AllocMonkey <$> decodeWord64 <*> decodeVersioned v
         _ -> fail ("[BloomFilterAlloc] Unexpected combination of list length and tag: " <> show (n, tag))
 
--- FencePointerIndex
+-- IndexType
 
-instance Encode FencePointerIndex where
+instance Encode IndexType where
   encode CompactIndex  = encodeWord 0
   encode OrdinaryIndex = encodeWord 1
 
-instance DecodeVersioned FencePointerIndex where
+instance DecodeVersioned IndexType where
    decodeVersioned V0 = do
       tag <- decodeWord
       case tag of
         0 -> pure CompactIndex
         1 -> pure OrdinaryIndex
-        _ -> fail ("[FencePointerIndex] Unexpected tag: " <> show tag)
+        _ -> fail ("[IndexType] Unexpected tag: " <> show tag)
 
 -- DiskCachePolicy
 
