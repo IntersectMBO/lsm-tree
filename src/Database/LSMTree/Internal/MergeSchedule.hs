@@ -47,7 +47,7 @@ import           Database.LSMTree.Internal.Assertions (assert)
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.Entry (Entry, NumEntries (..),
                      unNumEntries)
-import           Database.LSMTree.Internal.Index.Compact (IndexCompact)
+import           Database.LSMTree.Internal.Index (Index)
 import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
 import           Database.LSMTree.Internal.Merge (MergeType (..))
 import           Database.LSMTree.Internal.MergingRun (MergingRun, NumRuns (..))
@@ -174,7 +174,7 @@ releaseTableContent reg (TableContent _wb wbb levels cache ul) = do
 data LevelsCache m h = LevelsCache_ {
     cachedRuns      :: !(V.Vector (Ref (Run m h)))
   , cachedFilters   :: !(V.Vector (Bloom SerialisedKey))
-  , cachedIndexes   :: !(V.Vector IndexCompact)
+  , cachedIndexes   :: !(V.Vector Index)
   , cachedKOpsFiles :: !(V.Vector (FS.Handle h))
   }
 
@@ -569,21 +569,23 @@ flushWriteBuffer ::
   -> ActionRegistry m
   -> TableContent m h
   -> m (TableContent m h)
-flushWriteBuffer tr conf@TableConfig{confDiskCachePolicy}
+flushWriteBuffer tr conf@TableConfig{confFencePointerIndex, confDiskCachePolicy}
                  resolve hfs hbio root uc reg tc
   | WB.null (tableWriteBuffer tc) = pure tc
   | otherwise = do
     !n <- incrUniqCounter uc
-    let !size  = WB.numEntries (tableWriteBuffer tc)
-        !l     = LevelNo 1
-        !cache = diskCachePolicyForLevel confDiskCachePolicy l
-        !alloc = bloomFilterAllocForLevel conf l
-        !path  = Paths.runPath root (uniqueToRunNumber n)
+    let !size      = WB.numEntries (tableWriteBuffer tc)
+        !l         = LevelNo 1
+        !cache     = diskCachePolicyForLevel confDiskCachePolicy l
+        !alloc     = bloomFilterAllocForLevel conf l
+        !indexType = indexTypeForRun confFencePointerIndex
+        !path      = Paths.runPath root (uniqueToRunNumber n)
     traceWith tr $ AtLevel l $ TraceFlushWriteBuffer size (runNumber path) cache alloc
     r <- withRollback reg
             (Run.fromWriteBuffer hfs hbio
               cache
               alloc
+              indexType
               path
               (tableWriteBuffer tc)
               (tableWriteBufferBlobs tc))
@@ -732,13 +734,14 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels ul
         !n <- incrUniqCounter uc
         let !caching = diskCachePolicyForLevel confDiskCachePolicy ln
             !alloc = bloomFilterAllocForLevel conf ln
+            !indexType = indexTypeForRun confFencePointerIndex
             !runPaths = Paths.runPath root (uniqueToRunNumber n)
         traceWith tr $ AtLevel ln $
           TraceNewMerge (V.map Run.size rs) (runNumber runPaths) caching alloc mergePolicy mergeType
         -- The runs will end up inside the merging run, with fresh references.
         -- The original references can be released (but only on the happy path).
         mr <- withRollback reg
-          (MR.new hfs hbio resolve caching alloc mergeType runPaths rs)
+          (MR.new hfs hbio resolve caching alloc indexType mergeType runPaths rs)
           releaseRef
         V.forM_ rs $ \r -> delayedCommit reg (releaseRef r)
         case confMergeSchedule of

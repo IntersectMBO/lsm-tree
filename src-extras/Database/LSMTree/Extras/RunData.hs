@@ -36,6 +36,7 @@ import qualified Data.Vector as V
 import           Database.LSMTree.Extras (showPowersOf10)
 import           Database.LSMTree.Extras.Generators ()
 import           Database.LSMTree.Internal.Entry
+import           Database.LSMTree.Internal.Index (IndexType)
 import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
 import           Database.LSMTree.Internal.MergeSchedule (addWriteBufferEntries)
 import           Database.LSMTree.Internal.Paths
@@ -63,13 +64,14 @@ import           Test.QuickCheck
 withRun ::
      HasFS IO h
   -> HasBlockIO IO h
+  -> IndexType
   -> RunFsPaths
   -> SerialisedRunData
   -> (Ref (Run IO h) -> IO a)
   -> IO a
-withRun hfs hbio path rd = do
+withRun hfs hbio indexType path rd = do
     bracket
-      (unsafeFlushAsWriteBuffer hfs hbio path $ serialiseRunData rd)
+      (unsafeFlushAsWriteBuffer hfs hbio indexType path $ serialiseRunData rd)
       releaseRef
 
 {-# INLINABLE withRuns #-}
@@ -78,12 +80,13 @@ withRuns ::
      Traversable f
   => HasFS IO h
   -> HasBlockIO IO h
+  -> IndexType
   -> f (RunFsPaths, SerialisedRunData)
   -> (f (Ref (Run IO h)) -> IO a)
   -> IO a
-withRuns hfs hbio xs = do
+withRuns hfs hbio indexType xs = do
     bracket
-      (forM xs $ \(path, rd) -> unsafeFlushAsWriteBuffer hfs hbio path rd)
+      (forM xs $ \(path, rd) -> unsafeFlushAsWriteBuffer hfs hbio indexType path rd)
       (mapM_ releaseRef)
 
 -- | Flush serialised run data to disk as if it were a write buffer.
@@ -95,14 +98,15 @@ withRuns hfs hbio xs = do
 unsafeFlushAsWriteBuffer ::
      HasFS IO h
   -> HasBlockIO IO h
+  -> IndexType
   -> RunFsPaths
   -> SerialisedRunData
   -> IO (Ref (Run IO h))
-unsafeFlushAsWriteBuffer fs hbio fsPaths (RunData m) = do
+unsafeFlushAsWriteBuffer fs hbio indexType fsPaths (RunData m) = do
     let blobpath = addExtension (runBlobPath fsPaths) ".wb"
     wbblobs <- WBB.new fs blobpath
     wb <- WB.fromMap <$> traverse (traverse (WBB.addBlob fs wbblobs)) m
-    run <- Run.fromWriteBuffer fs hbio CacheRunData (RunAllocFixed 10)
+    run <- Run.fromWriteBuffer fs hbio CacheRunData (RunAllocFixed 10) indexType
                                fsPaths wb wbblobs
     releaseRef wbblobs
     return run

@@ -58,6 +58,8 @@ main = do
     , Test.Database.LSMTree.Internal.Chunk.tests
     , Test.Database.LSMTree.Internal.CRC32C.tests
     , Test.Database.LSMTree.Internal.Entry.tests
+    , Test.Database.LSMTree.Internal.Index.Compact.tests
+    , Test.Database.LSMTree.Internal.Index.Ordinary.tests
     , Test.Database.LSMTree.Internal.Lookup.tests
     , Test.Database.LSMTree.Internal.Merge.tests
     , Test.Database.LSMTree.Internal.MergingRun.tests
@@ -72,8 +74,6 @@ main = do
     , Test.Database.LSMTree.Internal.RunBuilder.tests
     , Test.Database.LSMTree.Internal.RunReader.tests
     , Test.Database.LSMTree.Internal.RunReaders.tests
-    , Test.Database.LSMTree.Internal.Index.Compact.tests
-    , Test.Database.LSMTree.Internal.Index.Ordinary.tests
     , Test.Database.LSMTree.Internal.Serialise.tests
     , Test.Database.LSMTree.Internal.Serialise.Class.tests
     , Test.Database.LSMTree.Internal.Snapshot.Codec.tests

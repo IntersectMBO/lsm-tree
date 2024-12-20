@@ -1,5 +1,3 @@
-{-# LANGUAGE MagicHash #-}
-
 -- | A mutable run ('RunBuilder') that is under construction.
 --
 module Database.LSMTree.Internal.RunBuilder (
@@ -25,14 +23,13 @@ import           Database.LSMTree.Internal.BlobRef (RawBlobRef)
 import           Database.LSMTree.Internal.ChecksumHandle
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry
-import           Database.LSMTree.Internal.Index.Compact (IndexCompact)
+import           Database.LSMTree.Internal.Index (Index, IndexType)
 import           Database.LSMTree.Internal.Paths
 import           Database.LSMTree.Internal.RawOverflowPage (RawOverflowPage)
 import           Database.LSMTree.Internal.RawPage (RawPage)
 import           Database.LSMTree.Internal.RunAcc (RunAcc, RunBloomFilterAlloc)
 import qualified Database.LSMTree.Internal.RunAcc as RunAcc
 import           Database.LSMTree.Internal.Serialise
-import           GHC.Exts (proxy#)
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
 import qualified System.FS.BlockIO.API as FS
@@ -74,6 +71,7 @@ data RunBuilder m h = RunBuilder {
   -> RunFsPaths
   -> NumEntries
   -> RunBloomFilterAlloc
+  -> IndexType
   -> IO (RunBuilder IO h) #-}
 -- | Create an 'RunBuilder' to start building a run.
 --
@@ -85,15 +83,16 @@ new ::
   -> RunFsPaths
   -> NumEntries  -- ^ an upper bound of the number of entries to be added
   -> RunBloomFilterAlloc
+  -> IndexType
   -> m (RunBuilder m h)
-new hfs hbio runBuilderFsPaths numEntries alloc = do
-    runBuilderAcc <- ST.stToIO $ RunAcc.new numEntries alloc
+new hfs hbio runBuilderFsPaths numEntries alloc indexType = do
+    runBuilderAcc <- ST.stToIO $ RunAcc.new numEntries alloc indexType
     runBuilderBlobOffset <- newPrimVar 0
 
     runBuilderHandles <- traverse (makeHandle hfs) (pathsForRunFiles runBuilderFsPaths)
 
     let builder = RunBuilder { runBuilderHasFS = hfs, runBuilderHasBlockIO = hbio, .. }
-    writeIndexHeader hfs (forRunIndex runBuilderHandles) (proxy# @IndexCompact)
+    writeIndexHeader hfs (forRunIndex runBuilderHandles) indexType
     return builder
 
 {-# SPECIALISE addKeyOp ::
@@ -168,7 +167,7 @@ addLargeSerialisedKeyOp RunBuilder{..} key page overflowPages = do
 {-# SPECIALISE unsafeFinalise ::
      Bool
   -> RunBuilder IO h
-  -> IO (HasFS IO h, HasBlockIO IO h, RunFsPaths, Bloom SerialisedKey, IndexCompact, NumEntries) #-}
+  -> IO (HasFS IO h, HasBlockIO IO h, RunFsPaths, Bloom SerialisedKey, Index, NumEntries) #-}
 -- | Finish construction of the run.
 -- Writes the filter and index to file and leaves all written files on disk.
 --
@@ -179,7 +178,7 @@ unsafeFinalise ::
      (MonadST m, MonadSTM m, MonadThrow m)
   => Bool -- ^ drop caches
   -> RunBuilder m h
-  -> m (HasFS m h, HasBlockIO m h, RunFsPaths, Bloom SerialisedKey, IndexCompact, NumEntries)
+  -> m (HasFS m h, HasBlockIO m h, RunFsPaths, Bloom SerialisedKey, Index, NumEntries)
 unsafeFinalise dropCaches RunBuilder {..} = do
     -- write final bits
     (mPage, mChunk, runFilter, runIndex, numEntries) <-

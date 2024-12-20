@@ -20,6 +20,7 @@ import           Database.LSMTree.Extras.Generators (KeyForIndexCompact (..))
 import           Database.LSMTree.Extras.RunData
 import           Database.LSMTree.Internal.BlobRef
 import           Database.LSMTree.Internal.Entry
+import qualified Database.LSMTree.Internal.Index as Index (IndexType (Compact))
 import qualified Database.LSMTree.Internal.Paths as Paths
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunNumber
@@ -335,7 +336,7 @@ runIO act lu = case act of
           wbs' = fmap serialiseRunData wbs
       runs <-
         zipWithM
-          (\p -> liftIO . unsafeFlushAsWriteBuffer hfs hbio p)
+          (\p -> liftIO . unsafeFlushAsWriteBuffer hfs hbio Index.Compact p)
           (Paths.RunFsPaths (FS.mkFsPath []) . RunNumber <$> [numRuns ..])
           wbs'
       newReaders <- liftIO $ do

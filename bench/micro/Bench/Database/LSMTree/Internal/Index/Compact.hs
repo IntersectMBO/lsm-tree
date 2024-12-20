@@ -84,7 +84,7 @@ constructIndexCompact ::
   -> IndexCompact
 constructIndexCompact (ChunkSize csize) apps = runST $ do
     ica <- new csize
-    mapM_ (`append` ica) apps
+    mapM_ (`appendToCompact` ica) apps
     (_, index) <- unsafeEnd ica
     pure index
 

@@ -1,5 +1,3 @@
-{-# LANGUAGE MagicHash #-}
-
 -- | A compact fence-pointer index for uniformly distributed keys.
 --
 -- TODO: add utility functions for clash probability calculations
@@ -8,18 +6,18 @@ module Database.LSMTree.Internal.Index.Compact (
     -- $compact
     IndexCompact (..)
     -- * Queries
-  , Index.search
-  , Index.sizeInPages
+  , search
+  , sizeInPages
   , countClashes
   , hasClashes
     -- * Non-incremental serialisation
   , toLBS
     -- * Incremental serialisation
-  , Index.headerLBS
-  , Index.finalLBS
+  , headerLBS
+  , finalLBS
   , word64VectorToChunk
     -- * Deserialisation
-  , Index.fromSBS
+  , fromSBS
   ) where
 
 import           Control.DeepSeq (NFData (..))
@@ -49,14 +47,10 @@ import           Database.LSMTree.Internal.ByteString (byteArrayFromTo)
 import           Database.LSMTree.Internal.Chunk (Chunk (Chunk))
 import qualified Database.LSMTree.Internal.Chunk as Chunk (toByteString)
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
-import           Database.LSMTree.Internal.Index (Index)
-import qualified Database.LSMTree.Internal.Index as Index (finalLBS, fromSBS,
-                     headerLBS, search, sizeInPages)
 import           Database.LSMTree.Internal.Page
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.Unsliced
 import           Database.LSMTree.Internal.Vector
-import           GHC.Exts (Proxy#, proxy#)
 
 {- $compact
 
@@ -385,7 +379,7 @@ instance NFData IndexCompact where
 
 {-|
     For a specification of this operation, see the documentation of [its
-    polymorphic version]('Index.search').
+    type-agnostic version]('Database.LSMTree.Internal.Index.search').
 
     See [an informal description of the search algorithm](#search-descr) for
     more details about the search algorithm.
@@ -450,7 +444,7 @@ hasClashes = not . Map.null . icTieBreaker
 
 {-|
     For a specification of this operation, see the documentation of [its
-    polymorphic version]('Index.sizeInPages').
+    type-agnostic version]('Database.LSMTree.Internal.Index.sizeInPages').
 -}
 sizeInPages :: IndexCompact -> NumPages
 sizeInPages = NumPages . toEnum . VU.length . icPrimary
@@ -462,7 +456,7 @@ sizeInPages = NumPages . toEnum . VU.length . icPrimary
 -- | Serialises a compact index in one go.
 toLBS :: NumEntries -> IndexCompact -> LBS.ByteString
 toLBS numEntries index =
-     headerLBS (proxy# @IndexCompact)
+     headerLBS
   <> LBS.fromStrict (Chunk.toByteString (word64VectorToChunk (icPrimary index)))
   <> finalLBS numEntries index
 
@@ -478,17 +472,17 @@ supportedTypeAndVersion = 0x0001
 
 {-|
     For a specification of this operation, see the documentation of [its
-    polymorphic version]('Index.headerLBS').
+    type-agnostic version]('Database.LSMTree.Internal.Index.headerLBS').
 -}
-headerLBS :: Proxy# IndexCompact -> LBS.ByteString
-headerLBS _ =
+headerLBS :: LBS.ByteString
+headerLBS =
     -- create a single 4 byte chunk
     BB.toLazyByteStringWith (BB.safeStrategy 4 BB.smallChunkSize) mempty $
       BB.word32Host supportedTypeAndVersion <> BB.word32Host 0
 
 {-|
     For a specification of this operation, see the documentation of [its
-    polymorphic version]('Index.finalLBS').
+    type-agnostic version]('Database.LSMTree.Internal.Index.finalLBS').
 -}
 finalLBS :: NumEntries -> IndexCompact -> LBS.ByteString
 finalLBS (NumEntries numEntries) IndexCompact {..} =
@@ -554,7 +548,7 @@ putPaddingTo64 written
 
 {-|
     For a specification of this operation, see the documentation of [its
-    polymorphic version]('Index.fromSBS').
+    type-agnostic version]('Database.LSMTree.Internal.Index.fromSBS').
 -}
 fromSBS :: ShortByteString -> Either String (NumEntries, IndexCompact)
 fromSBS (SBS ba') = do
@@ -675,27 +669,6 @@ checkedBitVec off len ba
       Just (BitVec off len ba)
   | otherwise =
       Nothing
-
-{-------------------------------------------------------------------------------
-  Type class instantiation
--------------------------------------------------------------------------------}
-
-instance Index IndexCompact where
-
-    search :: SerialisedKey -> IndexCompact -> PageSpan
-    search = search
-
-    sizeInPages :: IndexCompact -> NumPages
-    sizeInPages = sizeInPages
-
-    headerLBS :: Proxy# IndexCompact -> LBS.ByteString
-    headerLBS = headerLBS
-
-    finalLBS :: NumEntries -> IndexCompact -> LBS.ByteString
-    finalLBS = finalLBS
-
-    fromSBS :: ShortByteString -> Either String (NumEntries, IndexCompact)
-    fromSBS = fromSBS
 
 {-------------------------------------------------------------------------------
  Vector extras

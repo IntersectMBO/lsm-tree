@@ -28,6 +28,7 @@ import           Data.Traversable (for)
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.BlobRef (RawBlobRef)
 import           Database.LSMTree.Internal.Entry
+import           Database.LSMTree.Internal.Index (IndexType)
 import           Database.LSMTree.Internal.Run (Run, RunDataCaching)
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..))
@@ -99,6 +100,7 @@ type Mappend = SerialisedValue -> SerialisedValue -> SerialisedValue
   -> HasBlockIO IO h
   -> RunDataCaching
   -> RunBloomFilterAlloc
+  -> IndexType
   -> MergeType
   -> Mappend
   -> Run.RunFsPaths
@@ -112,18 +114,19 @@ new ::
   -> HasBlockIO m h
   -> RunDataCaching
   -> RunBloomFilterAlloc
+  -> IndexType
   -> MergeType
   -> Mappend
   -> Run.RunFsPaths
   -> V.Vector (Ref (Run m h))
   -> m (Maybe (Merge m h))
-new fs hbio mergeCaching alloc mergeType mergeMappend targetPaths runs = do
+new fs hbio mergeCaching alloc indexType mergeType mergeMappend targetPaths runs = do
     -- no offset, no write buffer
     mreaders <- Readers.new Readers.NoOffsetKey Nothing runs
     for mreaders $ \mergeReaders -> do
       -- calculate upper bounds based on input runs
       let numEntries = V.foldMap' Run.size runs
-      mergeBuilder <- Builder.new fs hbio targetPaths numEntries alloc
+      mergeBuilder <- Builder.new fs hbio targetPaths numEntries alloc indexType
       mergeState <- newMutVar $! Merging
       return Merge {
           mergeHasFS = fs

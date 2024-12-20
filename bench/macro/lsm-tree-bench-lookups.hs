@@ -25,7 +25,8 @@ import           Database.LSMTree.Extras.Orphans ()
 import           Database.LSMTree.Extras.UTxO
 import           Database.LSMTree.Internal.Entry (Entry (Insert),
                      NumEntries (..))
-import           Database.LSMTree.Internal.Index.Compact (IndexCompact)
+import           Database.LSMTree.Internal.Index (Index)
+import qualified Database.LSMTree.Internal.Index as Index (IndexType (Compact))
 import           Database.LSMTree.Internal.Lookup
 import           Database.LSMTree.Internal.Paths (RunFsPaths (RunFsPaths))
 import           Database.LSMTree.Internal.Run (Run)
@@ -333,7 +334,7 @@ lookupsEnv ::
   -> Run.RunDataCaching
   -> IO ( V.Vector (Ref (Run IO FS.HandleIO))
         , V.Vector (Bloom SerialisedKey)
-        , V.Vector IndexCompact
+        , V.Vector Index
         , V.Vector (FS.Handle FS.HandleIO)
         )
 lookupsEnv runSizes keyRng0 hfs hbio caching = do
@@ -351,6 +352,7 @@ lookupsEnv runSizes keyRng0 hfs hbio caching = do
                 (RunFsPaths (FS.mkFsPath []) (RunNumber i))
                 (NumEntries numEntries)
                 (RunAllocFixed benchmarkNumBitsPerEntry)
+                Index.Compact
             | ((numEntries, _), i) <- zip runSizes [0..] ]
 
     -- fill the runs
@@ -428,7 +430,7 @@ benchBloomQueries !bs !keyRng !n
 benchIndexSearches ::
      ArenaManager RealWorld
   -> V.Vector (Bloom SerialisedKey)
-  -> V.Vector IndexCompact
+  -> V.Vector Index
   -> V.Vector (FS.Handle h)
   -> StdGen
   -> Int
@@ -446,7 +448,7 @@ benchIndexSearches !arenaManager !bs !ics !hs !keyRng !n
 benchPrepLookups ::
      ArenaManager RealWorld
   -> V.Vector (Bloom SerialisedKey)
-  -> V.Vector IndexCompact
+  -> V.Vector Index
   -> V.Vector (FS.Handle h)
   -> StdGen
   -> Int
@@ -468,7 +470,7 @@ benchLookupsIO ::
   -> Ref (WBB.WriteBufferBlobs IO h)
   -> V.Vector (Ref (Run IO h))
   -> V.Vector (Bloom SerialisedKey)
-  -> V.Vector IndexCompact
+  -> V.Vector Index
   -> V.Vector (FS.Handle h)
   -> StdGen
   -> Int

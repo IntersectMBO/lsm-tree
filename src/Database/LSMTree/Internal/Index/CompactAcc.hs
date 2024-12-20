@@ -1,5 +1,4 @@
-{-# LANGUAGE CPP          #-}
-{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE CPP #-}
 {- |
   Incremental construction of a compact index yields chunks of the primary array
   that can be serialised incrementally.
@@ -14,9 +13,10 @@ module Database.LSMTree.Internal.Index.CompactAcc (
     -- * Construction
     IndexCompactAcc (..)
   , new
-  , Index.appendSingle
-  , Index.appendMulti
-  , Index.unsafeEnd
+  , newWithDefaults
+  , appendSingle
+  , appendMulti
+  , unsafeEnd
     -- * Internal: exported for testing and benchmarking
   , SMaybe (..)
   , unsafeWriteRange
@@ -45,9 +45,6 @@ import qualified Data.Vector.Unboxed.Mutable as VUM
 import           Data.Word
 import           Database.LSMTree.Internal.BitMath
 import           Database.LSMTree.Internal.Chunk (Chunk)
-import           Database.LSMTree.Internal.Index (IndexAcc, ResultingIndex)
-import qualified Database.LSMTree.Internal.Index as Index (appendMulti,
-                     appendSingle, unsafeEnd)
 import           Database.LSMTree.Internal.Index.Compact
 import           Database.LSMTree.Internal.Page
 import           Database.LSMTree.Internal.Serialise
@@ -118,7 +115,14 @@ newPinnedMVec64 lenWords = do
 
 {-|
     For a specification of this operation, see the documentation of [its
-    polymorphic version]('Index.appendSingle').
+    type-agnostic version]('Database.LSMTree.Internal.Index.newWithDefaults').
+-}
+newWithDefaults :: ST s (IndexCompactAcc s)
+newWithDefaults = new 1024
+
+{-|
+    For a specification of this operation, see the documentation of [its
+    type-agnostic version]('Database.LSMTree.Internal.Index.appendSingle').
 -}
 appendSingle :: forall s. (SerialisedKey, SerialisedKey) -> IndexCompactAcc s -> ST s (Maybe Chunk)
 appendSingle (minKey, maxKey) ica@IndexCompactAcc{..} = do
@@ -169,7 +173,7 @@ appendSingle (minKey, maxKey) ica@IndexCompactAcc{..} = do
 
 {-|
     For a specification of this operation, see the documentation of [its
-    polymorphic version]('Index.appendMulti').
+    type-agnostic version]('Database.LSMTree.Internal.Index.appendMulti').
 -}
 appendMulti :: forall s. (SerialisedKey, Word32) -> IndexCompactAcc s -> ST s [Chunk]
 appendMulti (k, n0) ica@IndexCompactAcc{..} =
@@ -217,7 +221,7 @@ yield IndexCompactAcc{..} = do
 
 {-|
     For a specification of this operation, see the documentation of [its
-    polymorphic version]('Index.unsafeEnd').
+    type-agnostic version]('Database.LSMTree.Internal.Index.unsafeEnd').
 -}
 unsafeEnd :: IndexCompactAcc s -> ST s (Maybe Chunk, IndexCompact)
 unsafeEnd IndexCompactAcc{..} = do
@@ -248,26 +252,6 @@ unsafeEnd IndexCompactAcc{..} = do
     sliceCurrent ix (c NE.:| cs)
       | ix == 0 = cs  -- current chunk is completely empty, just ignore it
       | otherwise = VUM.slice 0 ix c : cs
-
-{-------------------------------------------------------------------------------
-  Type class instantiation
--------------------------------------------------------------------------------}
-
-instance IndexAcc IndexCompactAcc where
-
-    type ResultingIndex IndexCompactAcc = IndexCompact
-
-    appendSingle :: (SerialisedKey, SerialisedKey)
-                 -> IndexCompactAcc s
-                 -> ST s (Maybe Chunk)
-    appendSingle = appendSingle
-
-    appendMulti :: (SerialisedKey, Word32) -> IndexCompactAcc s -> ST s [Chunk]
-    appendMulti = appendMulti
-
-    unsafeEnd :: IndexCompactAcc s
-              -> ST s (Maybe Chunk, ResultingIndex IndexCompactAcc)
-    unsafeEnd = unsafeEnd
 
 {-------------------------------------------------------------------------------
   Strict 'Maybe'

@@ -1,7 +1,6 @@
 {-# LANGUAGE CPP             #-}
 {-# LANGUAGE MultiWayIf      #-}
 {-# LANGUAGE PatternSynonyms #-}
-{-# LANGUAGE TypeFamilies    #-}
 
 {- HLINT ignore "Use when" -}
 
@@ -55,6 +54,7 @@ import           Data.Primitive.PrimVar
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Assertions (assert)
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
+import           Database.LSMTree.Internal.Index (IndexType)
 import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
 import           Database.LSMTree.Internal.Merge (Merge, MergeType (..),
                      StepResult (..))
@@ -123,6 +123,7 @@ instance NFData MergeKnownCompleted where
   -> ResolveSerialisedValue
   -> Run.RunDataCaching
   -> RunBloomFilterAlloc
+  -> IndexType
   -> MergeType
   -> RunFsPaths
   -> V.Vector (Ref (Run IO h))
@@ -141,16 +142,17 @@ new ::
   -> ResolveSerialisedValue
   -> Run.RunDataCaching
   -> RunBloomFilterAlloc
+  -> IndexType
   -> MergeType
   -> RunFsPaths
   -> V.Vector (Ref (Run m h))
   -> m (Ref (MergingRun m h))
-new hfs hbio resolve caching alloc mergeType runPaths inputRuns =
+new hfs hbio resolve caching alloc indexType mergeType runPaths inputRuns =
     -- If creating the Merge fails, we must release the references again.
     withActionRegistry $ \reg -> do
       runs <- V.mapM (\r -> withRollback reg (dupRef r) releaseRef) inputRuns
       merge <- fromMaybe (error "newMerge: merges can not be empty")
-        <$> Merge.new hfs hbio caching alloc mergeType resolve runPaths runs
+        <$> Merge.new hfs hbio caching alloc indexType mergeType resolve runPaths runs
       let numInputRuns = NumRuns $ V.length runs
       let numInputEntries = V.foldMap' Run.size runs
       unsafeNew numInputRuns numInputEntries MergeMaybeCompleted $

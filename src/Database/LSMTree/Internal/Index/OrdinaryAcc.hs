@@ -1,5 +1,3 @@
-{-# LANGUAGE TypeFamilies #-}
-
 {- HLINT ignore "Avoid restricted alias" -}
 
 {-|
@@ -8,8 +6,9 @@
 -}
 module Database.LSMTree.Internal.Index.OrdinaryAcc
 (
-    IndexOrdinaryAcc,
+    IndexOrdinaryAcc (IndexOrdinaryAcc),
     new,
+    newWithDefaults,
     appendSingle,
     appendMulti,
     unsafeEnd
@@ -25,8 +24,6 @@ import qualified Data.Vector.Primitive as Primitive (Vector, length)
 import           Data.Word (Word16, Word32, Word8)
 import           Database.LSMTree.Internal.Chunk (Baler, Chunk, createBaler,
                      feedBaler, unsafeEndBaler)
-import           Database.LSMTree.Internal.Index
-                     (IndexAcc (ResultingIndex, appendMulti, appendSingle, unsafeEnd))
 import           Database.LSMTree.Internal.Index.Ordinary
                      (IndexOrdinary (IndexOrdinary))
 import           Database.LSMTree.Internal.Serialise
@@ -55,6 +52,13 @@ new initialKeyBufferSize minChunkSize = IndexOrdinaryAcc                 <$>
                                         Growing.new initialKeyBufferSize <*>
                                         createBaler minChunkSize
 
+{-|
+    For a specification of this operation, see the documentation of [its
+    type-agnostic version]('Database.LSMTree.Internal.Index.newWithDefaults').
+-}
+newWithDefaults :: ST s (IndexOrdinaryAcc s)
+newWithDefaults = new 1024 4096
+
 -- Yields the serialisation of an element of a key list.
 keyListElem :: SerialisedKey -> [Primitive.Vector Word8]
 keyListElem (SerialisedKey' keyBytes) = [keySizeBytes, keyBytes] where
@@ -69,35 +73,43 @@ keyListElem (SerialisedKey' keyBytes) = [keySizeBytes, keyBytes] where
     keySizeBytes :: Primitive.Vector Word8
     !keySizeBytes = byteVectorFromPrim keySizeAsWord16
 
-instance IndexAcc IndexOrdinaryAcc where
+{-|
+    For a specification of this operation, see the documentation of [its
+    type-agnostic version]('Database.LSMTree.Internal.Index.appendSingle').
+-}
+appendSingle :: (SerialisedKey, SerialisedKey)
+             -> IndexOrdinaryAcc s
+             -> ST s (Maybe Chunk)
+appendSingle (_, key) (IndexOrdinaryAcc lastKeys baler)
+    = do
+          Growing.append lastKeys 1 key
+          feedBaler (keyListElem key) baler
 
-    type ResultingIndex IndexOrdinaryAcc = IndexOrdinary
+{-|
+    For a specification of this operation, see the documentation of [its
+    type-agnostic version]('Database.LSMTree.Internal.Index.appendMulti').
+-}
+appendMulti :: (SerialisedKey, Word32)
+            -> IndexOrdinaryAcc s
+            -> ST s [Chunk]
+appendMulti (key, overflowPageCount) (IndexOrdinaryAcc lastKeys baler)
+    = do
+          Growing.append lastKeys pageCount key
+          maybeToList <$> feedBaler keyListElems baler
+    where
 
-    appendSingle :: (SerialisedKey, SerialisedKey)
-                 -> IndexOrdinaryAcc s
-                 -> ST s (Maybe Chunk)
-    appendSingle (_, key) (IndexOrdinaryAcc lastKeys baler)
-        = do
-              Growing.append lastKeys 1 key
-              feedBaler (keyListElem key) baler
+    pageCount :: Int
+    !pageCount = succ (fromIntegral overflowPageCount)
 
-    appendMulti :: (SerialisedKey, Word32)
-                -> IndexOrdinaryAcc s
-                -> ST s [Chunk]
-    appendMulti (key, overflowPageCount) (IndexOrdinaryAcc lastKeys baler)
-        = do
-              Growing.append lastKeys pageCount key
-              maybeToList <$> feedBaler keyListElems baler
-        where
+    keyListElems :: [Primitive.Vector Word8]
+    keyListElems = concat (replicate pageCount (keyListElem key))
 
-        pageCount :: Int
-        !pageCount = succ (fromIntegral overflowPageCount)
-
-        keyListElems :: [Primitive.Vector Word8]
-        keyListElems = concat (replicate pageCount (keyListElem key))
-
-    unsafeEnd :: IndexOrdinaryAcc s -> ST s (Maybe Chunk, IndexOrdinary)
-    unsafeEnd (IndexOrdinaryAcc lastKeys baler) = do
-        keys <- Growing.freeze lastKeys
-        remnant <- unsafeEndBaler baler
-        return (remnant, IndexOrdinary keys)
+{-|
+    For a specification of this operation, see the documentation of [its
+    type-agnostic version]('Database.LSMTree.Internal.Index.unsafeEnd').
+-}
+unsafeEnd :: IndexOrdinaryAcc s -> ST s (Maybe Chunk, IndexOrdinary)
+unsafeEnd (IndexOrdinaryAcc lastKeys baler) = do
+    keys <- Growing.freeze lastKeys
+    remnant <- unsafeEndBaler baler
+    return (remnant, IndexOrdinary keys)

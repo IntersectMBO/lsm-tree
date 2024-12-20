@@ -41,8 +41,8 @@ import           Control.RefCount
 
 import           Database.LSMTree.Internal.BlobRef (WeakBlobRef (..))
 import           Database.LSMTree.Internal.Entry
+import           Database.LSMTree.Internal.Index (Index)
 import qualified Database.LSMTree.Internal.Index as Index (search)
-import           Database.LSMTree.Internal.Index.Compact (IndexCompact)
 import           Database.LSMTree.Internal.Page (PageSpan (..), getNumPages,
                      pageSpanSize, unPageNo)
 import           Database.LSMTree.Internal.RawBytes (RawBytes (..))
@@ -72,7 +72,7 @@ import           Database.LSMTree.Internal.BloomFilterQuery1 (RunIxKeyIx (..),
 prepLookups ::
      Arena s
   -> V.Vector (Bloom SerialisedKey)
-  -> V.Vector IndexCompact
+  -> V.Vector Index
   -> V.Vector (Handle h)
   -> V.Vector SerialisedKey
   -> ST s (VP.Vector RunIxKeyIx, V.Vector (IOOp s h))
@@ -90,7 +90,7 @@ type RunIx = Int
 -- positive search result.
 indexSearches ::
      Arena s
-  -> V.Vector IndexCompact
+  -> V.Vector Index
   -> V.Vector (Handle h)
   -> V.Vector SerialisedKey
   -> VP.Vector RunIxKeyIx -- ^ Result of 'bloomQueries'
@@ -162,7 +162,7 @@ data ByteCountDiscrepancy = ByteCountDiscrepancy {
     -> Ref (WBB.WriteBufferBlobs IO h)
     -> V.Vector (Ref (Run IO h))
     -> V.Vector (Bloom SerialisedKey)
-    -> V.Vector IndexCompact
+    -> V.Vector Index
     -> V.Vector (Handle h)
     -> V.Vector SerialisedKey
     -> IO (V.Vector (Maybe (Entry SerialisedValue (WeakBlobRef IO h))))
@@ -182,7 +182,7 @@ lookupsIO ::
   -> Ref (WBB.WriteBufferBlobs m h)
   -> V.Vector (Ref (Run m h)) -- ^ Runs @rs@
   -> V.Vector (Bloom SerialisedKey) -- ^ The bloom filters inside @rs@
-  -> V.Vector IndexCompact -- ^ The indexes inside @rs@
+  -> V.Vector Index -- ^ The indexes inside @rs@
   -> V.Vector (Handle h) -- ^ The file handles to the key\/value files inside @rs@
   -> V.Vector SerialisedKey
   -> m (V.Vector (Maybe (Entry SerialisedValue (WeakBlobRef m h))))
