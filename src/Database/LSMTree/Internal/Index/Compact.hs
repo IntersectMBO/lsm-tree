@@ -15,11 +15,11 @@ module Database.LSMTree.Internal.Index.Compact (
     -- * Non-incremental serialisation
   , toLBS
     -- * Incremental serialisation
-  , Index.headerLBS
+  , headerLBS
   , Index.finalLBS
   , word64VectorToChunk
     -- * Deserialisation
-  , Index.fromSBS
+  , fromSBS
   ) where
 
 import           Control.DeepSeq (NFData (..))
@@ -50,13 +50,12 @@ import           Database.LSMTree.Internal.Chunk (Chunk (Chunk))
 import qualified Database.LSMTree.Internal.Chunk as Chunk (toByteString)
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
 import           Database.LSMTree.Internal.Index (Index)
-import qualified Database.LSMTree.Internal.Index as Index (finalLBS, fromSBS,
-                     headerLBS, search, sizeInPages)
+import qualified Database.LSMTree.Internal.Index as Index (finalLBS, search,
+                     sizeInPages)
 import           Database.LSMTree.Internal.Page
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.Unsliced
 import           Database.LSMTree.Internal.Vector
-import           GHC.Exts (Proxy#, proxy#)
 
 {- $compact
 
@@ -462,7 +461,7 @@ sizeInPages = NumPages . toEnum . VU.length . icPrimary
 -- | Serialises a compact index in one go.
 toLBS :: NumEntries -> IndexCompact -> LBS.ByteString
 toLBS numEntries index =
-     headerLBS (proxy# @IndexCompact)
+     headerLBS
   <> LBS.fromStrict (Chunk.toByteString (word64VectorToChunk (icPrimary index)))
   <> finalLBS numEntries index
 
@@ -477,11 +476,13 @@ supportedTypeAndVersion :: Word32
 supportedTypeAndVersion = 0x0001
 
 {-|
-    For a specification of this operation, see the documentation of [its
-    polymorphic version]('Index.headerLBS').
+    Yields the header of the serialised form of a compact index.
+
+    See the documentation of the 'Index' class for how to generate a complete
+    serialised index.
 -}
-headerLBS :: Proxy# IndexCompact -> LBS.ByteString
-headerLBS _ =
+headerLBS :: LBS.ByteString
+headerLBS =
     -- create a single 4 byte chunk
     BB.toLazyByteStringWith (BB.safeStrategy 4 BB.smallChunkSize) mempty $
       BB.word32Host supportedTypeAndVersion <> BB.word32Host 0
@@ -553,8 +554,18 @@ putPaddingTo64 written
 -------------------------------------------------------------------------------}
 
 {-|
-    For a specification of this operation, see the documentation of [its
-    polymorphic version]('Index.fromSBS').
+    Reads a compact index along with the number of entries of the respective run
+    from a byte string.
+
+    The byte string must contain the serialised index exactly, with no leading
+    or trailing space. Furthermore, its contents must be stored 64-bit-aligned.
+
+    The contents of the byte string are directly used as the backing memory for
+    the constructed index.
+
+    For deserialising numbers, the endianness of the host system is used. If
+    serialisation has been done with a different endianness, this mismatch is
+    detected by looking at the type–version indicator.
 -}
 fromSBS :: ShortByteString -> Either String (NumEntries, IndexCompact)
 fromSBS (SBS ba') = do
@@ -688,14 +699,8 @@ instance Index IndexCompact where
     sizeInPages :: IndexCompact -> NumPages
     sizeInPages = sizeInPages
 
-    headerLBS :: Proxy# IndexCompact -> LBS.ByteString
-    headerLBS = headerLBS
-
     finalLBS :: NumEntries -> IndexCompact -> LBS.ByteString
     finalLBS = finalLBS
-
-    fromSBS :: ShortByteString -> Either String (NumEntries, IndexCompact)
-    fromSBS = fromSBS
 
 {-------------------------------------------------------------------------------
  Vector extras

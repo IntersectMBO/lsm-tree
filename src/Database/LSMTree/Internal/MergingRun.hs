@@ -39,6 +39,7 @@ import           Data.Primitive.PrimVar
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Assertions (assert)
 import           Database.LSMTree.Internal.Entry (NumEntries (..), unNumEntries)
+import           Database.LSMTree.Internal.Index.Some (IndexType)
 import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
 import           Database.LSMTree.Internal.Merge (Merge, StepResult (..))
 import qualified Database.LSMTree.Internal.Merge as Merge
@@ -117,6 +118,7 @@ instance NFData MergeKnownCompleted where
   -> ResolveSerialisedValue
   -> Run.RunDataCaching
   -> RunBloomFilterAlloc
+  -> IndexType
   -> Merge.Level
   -> MergePolicyForLevel
   -> RunFsPaths
@@ -136,17 +138,18 @@ new ::
   -> ResolveSerialisedValue
   -> Run.RunDataCaching
   -> RunBloomFilterAlloc
+  -> IndexType
   -> Merge.Level
   -> MergePolicyForLevel
   -> RunFsPaths
   -> V.Vector (Ref (Run m h))
   -> m (Ref (MergingRun m h))
-new hfs hbio resolve caching alloc mergeLevel mergePolicy runPaths inputRuns =
+new hfs hbio resolve caching alloc indexType mergeLevel mergePolicy runPaths inputRuns =
     -- If creating the Merge fails, we must release the references again.
     withTempRegistry $ \reg -> do
       runs <- V.mapM (\r -> allocateTemp reg (dupRef r) releaseRef) inputRuns
       merge <- fromMaybe (error "newMerge: merges can not be empty")
-        <$> Merge.new hfs hbio caching alloc mergeLevel resolve runPaths runs
+        <$> Merge.new hfs hbio caching alloc indexType mergeLevel resolve runPaths runs
       let numInputRuns = NumRuns $ V.length runs
       let numInputEntries = V.foldMap' Run.size runs
       spentCreditsVar <- SpentCreditsVar <$> newPrimVar 0

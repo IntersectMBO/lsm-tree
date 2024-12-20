@@ -42,7 +42,7 @@ import           Database.LSMTree.Internal.Assertions (assert)
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.Entry (Entry, NumEntries (..),
                      unNumEntries)
-import           Database.LSMTree.Internal.Index.Compact (IndexCompact)
+import           Database.LSMTree.Internal.Index.Some (SomeIndex)
 import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.MergingRun (MergePolicyForLevel (..),
@@ -161,7 +161,7 @@ releaseTableContent reg (TableContent _wb wbb levels cache) = do
 data LevelsCache m h = LevelsCache_ {
     cachedRuns      :: !(V.Vector (Ref (Run m h)))
   , cachedFilters   :: !(V.Vector (Bloom SerialisedKey))
-  , cachedIndexes   :: !(V.Vector IndexCompact)
+  , cachedIndexes   :: !(V.Vector SomeIndex)
   , cachedKOpsFiles :: !(V.Vector (FS.Handle h))
   }
 
@@ -493,7 +493,7 @@ flushWriteBuffer ::
   -> TempRegistry m
   -> TableContent m h
   -> m (TableContent m h)
-flushWriteBuffer tr conf@TableConfig{confDiskCachePolicy}
+flushWriteBuffer tr conf@TableConfig{confFencePointerIndex, confDiskCachePolicy}
                  resolve hfs hbio root uc reg tc
   | WB.null (tableWriteBuffer tc) = pure tc
   | otherwise = do
@@ -508,6 +508,7 @@ flushWriteBuffer tr conf@TableConfig{confDiskCachePolicy}
             (Run.fromWriteBuffer hfs hbio
               cache
               alloc
+              confFencePointerIndex
               path
               (tableWriteBuffer tc)
               (tableWriteBufferBlobs tc))
@@ -656,7 +657,7 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
         -- The runs will end up inside the merging run, with fresh references.
         -- The original references can be released (but only on the happy path).
         mr <- allocateTemp reg
-          (MR.new hfs hbio resolve caching alloc mergeLevel mergePolicy runPaths rs)
+          (MR.new hfs hbio resolve caching alloc confFencePointerIndex mergeLevel mergePolicy runPaths rs)
           releaseRef
         V.forM_ rs $ \r -> freeTemp reg (releaseRef r)
         case confMergeSchedule of

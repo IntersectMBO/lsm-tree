@@ -32,7 +32,7 @@ module Database.LSMTree (
   , Common.NumEntries (..)
   , Common.BloomFilterAlloc (..)
   , Common.defaultBloomFilterAlloc
-  , Common.FencePointerIndex (..)
+  , Common.IndexType (..)
   , Common.DiskCachePolicy (..)
   , Common.MergeSchedule (..)
   , Common.defaultMergeSchedule

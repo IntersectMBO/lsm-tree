@@ -46,7 +46,7 @@ module Database.LSMTree.Normal (
   , Common.NumEntries (..)
   , Common.BloomFilterAlloc (..)
   , Common.defaultBloomFilterAlloc
-  , Common.FencePointerIndex (..)
+  , Common.IndexType (..)
   , Common.DiskCachePolicy (..)
   , Common.MergeSchedule (..)
   , Common.defaultMergeSchedule

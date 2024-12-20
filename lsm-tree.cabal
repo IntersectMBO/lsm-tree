@@ -136,6 +136,7 @@ library
     Database.LSMTree.Internal.Index.CompactAcc
     Database.LSMTree.Internal.Index.Ordinary
     Database.LSMTree.Internal.Index.OrdinaryAcc
+    Database.LSMTree.Internal.Index.Some
     Database.LSMTree.Internal.Lookup
     Database.LSMTree.Internal.Merge
     Database.LSMTree.Internal.MergeSchedule
