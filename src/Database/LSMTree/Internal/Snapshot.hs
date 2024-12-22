@@ -365,7 +365,7 @@ snapshotRuns reg hbio0 (NamedSnapshotDir targetDir) levels = do
 --
 -- The result must ultimately be released using 'releaseRuns'.
 openRuns ::
-     (MonadMask m, MonadSTM m, MonadST m, MonadMVar m)
+     (MonadMask m, MonadSTM m, MonadST m)
   => ActionRegistry m
   -> HasFS m h
   -> HasBlockIO m h
