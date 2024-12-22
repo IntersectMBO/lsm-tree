@@ -317,10 +317,10 @@ instance DecodeVersioned WriteBufferAlloc where
 -- NumEntries
 
 instance Encode NumEntries where
-  encode (NumEntries x) = encodeInt x
+  encode (NumEntries x) = encodeWord64 x
 
 instance DecodeVersioned NumEntries where
-  decodeVersioned V0 = NumEntries <$> decodeInt
+  decodeVersioned V0 = NumEntries <$> decodeWord64
 
 -- BloomFilterAlloc
 

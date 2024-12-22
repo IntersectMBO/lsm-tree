@@ -428,7 +428,7 @@ type TestRun = (Map Int (Either RawPage RawOverflowPage), Bloom SerialisedKey, I
 mkTestRun :: Map SerialisedKey (Entry SerialisedValue BlobSpan) -> TestRun
 mkTestRun dat = (rawPages, b, ic)
   where
-    nentries = NumEntries (Map.size dat)
+    nentries = NumEntries . toEnum $ Map.size dat
 
     -- one-shot run construction
     (pages, b, ic) = runST $ do

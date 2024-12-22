@@ -206,8 +206,8 @@ instance Arbitrary PageNo where
   shrink = coerce (shrink @(QC.NonNegative Int))
 
 instance Arbitrary NumEntries where
-  arbitrary = coerce (arbitrary @(QC.NonNegative Int))
-  shrink = coerce (shrink @(QC.NonNegative Int))
+  arbitrary = coerce (arbitrary @Word64)
+  shrink = coerce (shrink @Word64)
 
 {-------------------------------------------------------------------------------
   True page

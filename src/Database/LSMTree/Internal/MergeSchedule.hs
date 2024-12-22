@@ -405,7 +405,7 @@ updatesWithInterleavedFlushes tr conf resolve hfs hbio root uc es reg tc = do
     -- Supply credits before flushing, so that we complete merges in time. The
     -- number of supplied credits is based on the size increase of the write
     -- buffer, not the the number of processed entries @length es' - length es@.
-    let numAdded = unNumEntries (WB.numEntries wb') - unNumEntries (WB.numEntries wb)
+    let numAdded = fromEnum $ unNumEntries (WB.numEntries wb') - unNumEntries (WB.numEntries wb)
     supplyCredits conf (Credits numAdded) (tableLevels tc)
     let tc' = tc { tableWriteBuffer = wb' }
     if WB.numEntries wb' < maxn then do
@@ -662,7 +662,7 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
         case confMergeSchedule of
           Incremental -> pure ()
           OneShot -> do
-            let !required = MR.Credits (unNumEntries (V.foldMap' Run.size rs))
+            let !required = MR.Credits . fromEnum . unNumEntries $ V.foldMap' Run.size rs
             let !thresh = creditThresholdForLevel conf ln
             MR.supplyCredits required thresh mr
             -- This ensures the merge is really completed. However, we don't
@@ -701,13 +701,14 @@ maxRunSize ::
 maxRunSize (sizeRatioInt -> sizeRatio) (AllocNumEntries (NumEntries bufferSize))
            policy (LevelNo ln) =
     NumEntries $ case policy of
-      LevelLevelling -> runSizeTiering * sizeRatio
+      LevelLevelling -> runSizeTiering * sRatio
       LevelTiering   -> runSizeTiering
   where
+    sRatio = toEnum sizeRatio
     runSizeTiering
       | ln < 0 = error "maxRunSize: non-positive level number"
       | ln == 0 = 0
-      | otherwise = bufferSize * sizeRatio ^ (pred ln)
+      | otherwise = bufferSize * sRatio ^ (pred ln)
 
 maxRunSize' :: TableConfig -> MergePolicyForLevel -> LevelNo -> NumEntries
 maxRunSize' config policy ln =
@@ -828,4 +829,4 @@ scaleCreditsForMerge LevelLevelling (DeRef mr) (Credits c) =
 creditThresholdForLevel :: TableConfig -> LevelNo -> MR.CreditThreshold
 creditThresholdForLevel conf (LevelNo _i) =
     let AllocNumEntries (NumEntries x) = confWriteBufferAlloc conf
-    in  MR.CreditThreshold x
+    in  MR.CreditThreshold $ fromEnum x

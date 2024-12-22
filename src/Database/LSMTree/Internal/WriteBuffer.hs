@@ -43,7 +43,7 @@ empty = WB Map.empty
 
 -- | \( O(1) \)
 numEntries :: WriteBuffer -> NumEntries
-numEntries (WB m) = NumEntries (Map.size m)
+numEntries (WB m) = NumEntries . toEnum $ Map.size m
 
 -- | \( O(1)) \)
 fromMap ::

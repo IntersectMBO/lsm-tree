@@ -74,7 +74,7 @@ data RunAcc s = RunAcc {
       mbloom     :: !(MBloom s SerialisedKey)
     , mindex     :: !(IndexCompactAcc s)
     , mpageacc   :: !(PageAcc s)
-    , entryCount :: !(PrimVar s Int)
+    , entryCount :: !(PrimVar s Word64)
     }
 
 -- | See 'Database.LSMTree.Internal.BloomFilterAlloc'
@@ -99,7 +99,7 @@ new (NumEntries nentries) alloc = do
               (fromIntegralChecked $ Monkey.numHashFunctions nbits (fromIntegralChecked nentries))
               (fromIntegralChecked nbits)
       RunAllocRequestFPR !fpr ->
-        Bloom.Easy.easyNew fpr nentries
+        Bloom.Easy.easyNew fpr $ fromEnum nentries
       RunAllocMonkey !nbits ->
         MBloom.new
           (fromIntegralChecked $ Monkey.numHashFunctions (fromIntegral nbits) (fromIntegral nentries))

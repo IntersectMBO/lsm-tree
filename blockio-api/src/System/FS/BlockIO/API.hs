@@ -271,6 +271,7 @@ hDropCacheAll hbio h = hAdviseAll hbio h AdviceDontNeed
 -- We would need to add a third option to fs-api:
 --
 -- * MustExist: throw an error if the file *does not* exist
+-- TODO: use the newly added @MustExist@ constructor from @fs-api@.
 synchroniseFile :: MonadThrow m => HasFS m h -> HasBlockIO m h -> FsPath -> m ()
 synchroniseFile hfs hbio path = do
     b <- FS.doesFileExist hfs path

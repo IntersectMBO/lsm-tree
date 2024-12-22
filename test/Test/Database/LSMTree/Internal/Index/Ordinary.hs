@@ -22,7 +22,7 @@ import           Data.Vector (Vector, all, fromList, head, last, length,
                      notElem, splitAt, tail, takeWhile, toList, (!))
 import qualified Data.Vector.Primitive as Primitive (Vector (Vector), concat,
                      force, length, singleton)
-import           Data.Word (Word16, Word32, Word64, Word8)
+import           Data.Word (Word16, Word32, Word8)
 import           Database.LSMTree.Extras.Generators (LogicalPageSummaries,
                      toAppends)
 import           Database.LSMTree.Extras.Index
@@ -208,12 +208,7 @@ lastKeysBlocks lastKeys = concatMap lastKeyBlocks lastKeys where
 
 -- Constructs the serialisation of the number of entries of a run.
 entryCountBlock :: NumEntries -> Primitive.Vector Word8
-entryCountBlock (NumEntries entryCount)
-    = byteVectorFromPrim entryCountAsWord64
-    where
-
-    entryCountAsWord64 :: Word64
-    entryCountAsWord64 = fromIntegral entryCount
+entryCountBlock (NumEntries entryCount) = byteVectorFromPrim entryCount
 
 -- Constructs a correct serialised index.
 serialisedIndex :: NumEntries -> [SerialisedKey] -> ShortByteString

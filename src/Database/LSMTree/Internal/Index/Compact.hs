@@ -498,7 +498,7 @@ finalLBS (NumEntries numEntries) IndexCompact {..} =
       <> putBitVec icLargerThanPage
       <> putTieBreaker icTieBreaker
       <> BB.word64Host (fromIntegral numPages)
-      <> BB.word64Host (fromIntegral numEntries)
+      <> BB.word64Host numEntries
   where
     numPages = VU.length icPrimary
 
@@ -572,14 +572,18 @@ fromSBS (SBS ba') = do
 
     -- read footer
     let len64 = div8 len8
-    let getPositive off64 = do
+
+    -- Two distinct access functions required for proper "round-tripping" of
+    -- serialized data.
+    let getPositiveInt off64 = do
           let w = indexByteArray ba off64 :: Word64
           when (w > fromIntegral (maxBound :: Int)) $
             Left "Size information is too large for Int"
-          return (fromIntegral w)
+          return $ fromEnum w
+    let getPositiveWord64 off64 = indexByteArray ba off64 :: Word64
 
-    numPages <- getPositive (len64 - 2)
-    numEntries <- getPositive (len64 - 1)
+    numPages <- getPositiveInt (len64 - 2)
+    let numEntries = getPositiveWord64 (len64 - 1)
 
     -- read vectors
     -- offsets in 64 bits
