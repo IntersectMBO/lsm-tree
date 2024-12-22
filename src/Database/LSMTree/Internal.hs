@@ -730,7 +730,7 @@ new sesh conf = do
   -> TableContent IO h
   -> IO (Table IO h) #-}
 newWith ::
-     (MonadSTM m, MonadMVar m)
+     (MonadSTM m, MonadMVar m, PrimMonad m)
   => TempRegistry m
   -> Session m h
   -> SessionEnv m h
