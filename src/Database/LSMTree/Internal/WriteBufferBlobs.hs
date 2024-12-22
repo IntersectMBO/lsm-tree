@@ -1,4 +1,8 @@
-{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE BangPatterns  #-}
+{-# LANGUAGE CPP           #-}
+{-# LANGUAGE MagicHash     #-}
+{-# LANGUAGE TypeFamilies  #-}
+{-# LANGUAGE UnboxedTuples #-}
 
 {-# OPTIONS_GHC -Wno-partial-fields #-}
 {- HLINT ignore "Use record patterns" -}
@@ -34,8 +38,16 @@ module Database.LSMTree.Internal.WriteBufferBlobs (
 
 import           Control.DeepSeq (NFData (..))
 import           Control.Monad.Class.MonadThrow
+#if MIN_VERSION_base(4,16,1)
+import           Control.Monad.Primitive (PrimMonad, PrimState, primitive)
+#else
 import           Control.Monad.Primitive (PrimMonad, PrimState)
+#endif
 import           Control.RefCount
+#if MIN_VERSION_base(4,16,1)
+import           Data.Primitive.PrimArray (MutablePrimArray (..))
+#else
+#endif
 import           Data.Primitive.PrimVar as P
 import           Data.Word (Word64)
 import           Database.LSMTree.Internal.BlobFile
@@ -43,8 +55,16 @@ import qualified Database.LSMTree.Internal.BlobFile as BlobFile
 import           Database.LSMTree.Internal.BlobRef (RawBlobRef (..),
                      WeakBlobRef (..))
 import           Database.LSMTree.Internal.Serialise
+#if MIN_VERSION_base(4,16,1)
+import           GHC.Exts
+#else
+#endif
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
+#if MIN_VERSION_base(4,16,1)
+#else
+import           Unsafe.Coerce (unsafeCoerce)
+#endif
 
 -- | A single 'WriteBufferBlobs' may be shared between multiple tables.
 -- As a consequence of being shared, the management of the shared state has to
@@ -169,22 +189,47 @@ mkWeakBlobRef (DeRef WriteBufferBlobs {blobFile}) blobspan =
       weakBlobRefSpan = blobspan
     }
 
-
 -- | A mutable file offset, suitable to share between threads.
+#if MIN_VERSION_base(4,16,1)
+newtype FilePointer m = FilePointer (PrimVar (PrimState m) Word)
+#else
 newtype FilePointer m = FilePointer (PrimVar (PrimState m) Int)
---TODO: this would be better as Word64
--- this will limit to 31bit file sizes on 32bit arches
+#endif
+
 
 instance NFData (FilePointer m) where
   rnf (FilePointer var) = var `seq` ()
 
 {-# SPECIALISE newFilePointer :: IO (FilePointer IO) #-}
 newFilePointer :: PrimMonad m => m (FilePointer m)
-newFilePointer = FilePointer <$> P.newPrimVar 0
+newFilePointer = FilePointer <$> P.newPinnedPrimVar 0
+-- It is very important that a /pinned/ PrimVar is used here,
+-- as it is a pre-requisite for the operations performed in @updateFilePointer@!
 
-{-# SPECIALISE updateFilePointer :: FilePointer IO -> Int -> IO Word64 #-}
+{-# SPECIALISE updateFilePointer :: FilePointer IO -> Int    -> IO Word64 #-}
+{-# SPECIALISE updateFilePointer :: FilePointer IO -> Word   -> IO Word64 #-}
+{-# SPECIALISE updateFilePointer :: FilePointer IO -> Word64 -> IO Word64 #-}
 -- | Update the file offset by a given amount and return the new offset. This
 -- is safe to use concurrently.
---
-updateFilePointer :: PrimMonad m => FilePointer m -> Int -> m Word64
-updateFilePointer (FilePointer var) n = fromIntegral <$> P.fetchAddInt var n
+updateFilePointer :: (Integral i, PrimMonad m) => FilePointer m -> i -> m Word64
+#if MIN_VERSION_base(4,16,1)
+updateFilePointer (FilePointer (PrimVar (MutablePrimArray arr))) n =
+  let !(W# delta) = fromIntegral n
+  in  fmap fromIntegral . primitive $ \s ->
+        case fetchAddWordAddr# (mutableByteArrayContents# arr) delta s of
+          (# s', result #) -> (# s', W# result #)
+#else
+updateFilePointer (FilePointer var) n =
+  -- Bad support here for GHC-8.10.7
+  -- Ideally, drop support for GHC-8.10.7 when reasonably possible.
+  -- TODO: Remove hack after GHC-8.10.7 is antiquated!
+  let !delta = fromIntegral n
+
+      -- Rely on the machine's binary reprentation of Int forming an additive ring
+      -- which is homomorphic with Word64 (such as 2's compliment); i.e.:
+      -- let limit = toEnum (maxBound :: Int) :: Word
+      -- in  limit + x === coerce ( (maxBound :: Int) + x )
+      convert :: Int -> Word64
+      convert = unsafeCoerce
+  in  convert <$> fetchAddInt var delta
+#endif
