@@ -38,6 +38,7 @@ module Database.LSMTree.Internal.CRC32C (
   -- $checksum-files
   ChecksumsFile,
   ChecksumsFileName(..),
+  ChecksumsFileFormatError (..),
   readChecksumsFile,
   writeChecksumsFile,
   writeChecksumsFile',
