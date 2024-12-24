@@ -247,8 +247,8 @@ unsafeFinaliseActionRegistry reg ec = case ec of
 unsafeCommitActionRegistry :: (PrimMonad m, MonadCatch m) => ActionRegistry m -> m ()
 unsafeCommitActionRegistry reg = do
     as <- readMutVar (registryDelay reg)
-    -- Run actions in LIFO order
-    r <- runActions as
+    -- Run actions in FIFO order
+    r <- runActions (reverse as)
     case NE.nonEmpty r of
       Nothing         -> pure ()
       Just exceptions -> throwIO (CommitActionRegistryError exceptions)
