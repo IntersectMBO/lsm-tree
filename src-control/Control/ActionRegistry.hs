@@ -142,9 +142,12 @@ modifyWithActionRegistry_ getSt putSt action =
   can register delayed (commit) and rollback actions. The delayed actions are
   all executed at the end if the transaction scope is exited successfully, but
   if an exception is thrown (sync or async) then the rollback actions are
-  executed instead, and the exception is propagated. Delay or rollback actions
-  are executed in the reverse order in which they were registered, which is the
-  natural nesting order when considered as bracketing.
+  executed instead, and the exception is propagated.
+
+  * Rollback actions are executed in the reverse order in which they were
+  registered, which is the natural nesting order when considered as bracketing.
+
+  * Delayed actions are executed in the same order in which they are registered.
 -}
 
 -- | Registry of monadic actions supporting rollback actions and delayed actions
@@ -247,8 +250,8 @@ unsafeFinaliseActionRegistry reg ec = case ec of
 unsafeCommitActionRegistry :: (PrimMonad m, MonadCatch m) => ActionRegistry m -> m ()
 unsafeCommitActionRegistry reg = do
     as <- readMutVar (registryDelay reg)
-    -- Run actions in LIFO order
-    r <- runActions as
+    -- Run actions in FIFO order
+    r <- runActions (reverse as)
     case NE.nonEmpty r of
       Nothing         -> pure ()
       Just exceptions -> throwIO (CommitActionRegistryError exceptions)
