@@ -22,8 +22,8 @@ import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.HUnit (assertEqual, testCase, (@=?), (@?))
 import           Test.Tasty.QuickCheck
 
+import           Control.ActionRegistry (withActionRegistry)
 import           Control.RefCount
-import           Control.TempRegistry (withTempRegistry)
 import           Database.LSMTree.Extras.Generators (KeyForIndexCompact (..))
 import           Database.LSMTree.Extras.RunData
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
@@ -187,7 +187,7 @@ prop_WriteAndOpen ::
   -> IO Property
 prop_WriteAndOpen fs hbio wb =
     withRun fs hbio (simplePath 1337) (serialiseRunData wb) $ \written ->
-    withTempRegistry $ \reg -> do
+    withActionRegistry $ \reg -> do
       let paths = Run.runFsPaths written
           paths' = paths { runNumber = RunNumber 17}
       hardLinkRunFiles reg fs hbio NoHardLinkDurable paths paths'

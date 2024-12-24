@@ -34,8 +34,6 @@ import           Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
 import           Data.Primitive.MutVar
 
--- TODO: replace TempRegistry by ActionRegistry
-
 -- TODO: add tests using fs-sim/io-sim to make sure exception safety is
 -- guaranteed.
 
