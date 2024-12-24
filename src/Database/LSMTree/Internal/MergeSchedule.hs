@@ -58,7 +58,7 @@ import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.Serialise (SerialisedBlob,
                      SerialisedKey, SerialisedValue)
 import           Database.LSMTree.Internal.UniqCounter
-import           Database.LSMTree.Internal.Vector (mapStrict)
+import           Database.LSMTree.Internal.Vector (forMStrict, mapStrict)
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import           Database.LSMTree.Internal.WriteBufferBlobs (WriteBufferBlobs)
@@ -200,7 +200,7 @@ mkLevelsCache reg lvls = do
       -> Levels m h
       -> m a
     foldRunAndMergeM k1 k2 ls =
-        fmap fold $ V.forM ls $ \(Level ir rs) -> do
+        fmap fold $ forMStrict ls $ \(Level ir rs) -> do
           incoming <- case ir of
             Single     r -> k1 r
             Merging _ mr -> k2 mr
@@ -251,7 +251,7 @@ duplicateLevelsCache ::
   -> LevelsCache m h
   -> m (LevelsCache m h)
 duplicateLevelsCache reg cache = do
-    rs' <- V.forM (cachedRuns cache) $ \r ->
+    rs' <- forMStrict (cachedRuns cache) $ \r ->
              withRollback reg (dupRef r) releaseRef
     return cache { cachedRuns = rs' }
 
@@ -300,9 +300,9 @@ duplicateLevels ::
   -> Levels m h
   -> m (Levels m h)
 duplicateLevels reg levels =
-    V.forM levels $ \Level {incomingRun, residentRuns} -> do
+    forMStrict levels $ \Level {incomingRun, residentRuns} -> do
       incomingRun'  <- duplicateIncomingRun reg incomingRun
-      residentRuns' <- V.forM residentRuns $ \r ->
+      residentRuns' <- forMStrict residentRuns $ \r ->
                          withRollback reg (dupRef r) releaseRef
       return $! Level {
         incomingRun  = incomingRun',
