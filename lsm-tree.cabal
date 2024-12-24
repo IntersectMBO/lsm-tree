@@ -848,16 +848,13 @@ library control
     Control.ActionRegistry
     Control.Concurrent.Class.MonadSTM.RWVar
     Control.RefCount
-    Control.TempRegistry
 
   build-depends:
-    , base                    >=4.14 && <4.22
-    , containers              ^>=0.6 || ^>=0.7
-    , deepseq                 ^>=1.4 || ^>=1.5
-    , io-classes              ^>=1.6 || ^>=1.7
-    , io-classes:strict-mvar
+    , base                   >=4.14 && <4.22
+    , deepseq                ^>=1.4 || ^>=1.5
+    , io-classes             ^>=1.6 || ^>=1.7
     , io-classes:strict-stm
-    , primitive               ^>=0.9
+    , primitive              ^>=0.9
 
 test-suite control-test
   import:         language, warnings
