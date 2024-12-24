@@ -29,13 +29,13 @@ module Database.LSMTree.Internal.MergeSchedule (
   , addWriteBufferEntries
   ) where
 
+import           Control.ActionRegistry
 import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Monad.Class.MonadST (MonadST)
 import           Control.Monad.Class.MonadSTM (MonadSTM (..))
 import           Control.Monad.Class.MonadThrow (MonadMask, MonadThrow (..))
 import           Control.Monad.Primitive
 import           Control.RefCount
-import           Control.TempRegistry
 import           Control.Tracer
 import           Data.BloomFilter (Bloom)
 import           Data.Foldable (fold)
@@ -119,26 +119,26 @@ data TableContent m h = TableContent {
   , tableCache            :: !(LevelsCache m h)
   }
 
-{-# SPECIALISE duplicateTableContent :: TempRegistry IO -> TableContent IO h -> IO (TableContent IO h) #-}
+{-# SPECIALISE duplicateTableContent :: ActionRegistry IO -> TableContent IO h -> IO (TableContent IO h) #-}
 duplicateTableContent ::
-     (PrimMonad m, MonadMask m, MonadMVar m)
-  => TempRegistry m
+     (PrimMonad m, MonadMask m)
+  => ActionRegistry m
   -> TableContent m h
   -> m (TableContent m h)
 duplicateTableContent reg (TableContent wb wbb levels cache) = do
-    wbb'    <- allocateTemp reg (dupRef wbb) releaseRef
+    wbb'    <- withRollback reg (dupRef wbb) releaseRef
     levels' <- duplicateLevels reg levels
     cache'  <- duplicateLevelsCache reg cache
     return $! TableContent wb wbb' levels' cache'
 
-{-# SPECIALISE releaseTableContent :: TempRegistry IO -> TableContent IO h -> IO () #-}
+{-# SPECIALISE releaseTableContent :: ActionRegistry IO -> TableContent IO h -> IO () #-}
 releaseTableContent ::
-     (PrimMonad m, MonadMask m, MonadMVar m)
-  => TempRegistry m
+     (PrimMonad m, MonadMask m)
+  => ActionRegistry m
   -> TableContent m h
   -> m ()
 releaseTableContent reg (TableContent _wb wbb levels cache) = do
-    freeTemp reg (releaseRef wbb)
+    delayedCommit reg (releaseRef wbb)
     releaseLevels reg levels
     releaseLevelsCache reg cache
 
@@ -168,7 +168,7 @@ data LevelsCache m h = LevelsCache_ {
   }
 
 {-# SPECIALISE mkLevelsCache ::
-     TempRegistry IO
+     ActionRegistry IO
   -> Levels IO h
   -> IO (LevelsCache IO h) #-}
 -- | Flatten the argument 'Level's into a single vector of runs, including all
@@ -176,13 +176,13 @@ data LevelsCache m h = LevelsCache_ {
 -- 'LevelsCache'. The cache will take a reference for each of its runs.
 mkLevelsCache ::
      forall m h. (PrimMonad m, MonadMVar m, MonadMask m)
-  => TempRegistry m
+  => ActionRegistry m
   -> Levels m h
   -> m (LevelsCache m h)
 mkLevelsCache reg lvls = do
     rs <- foldRunAndMergeM
       (fmap V.singleton . dupRun)
-      (\mr -> allocateTemp reg (MR.duplicateRuns mr) (V.mapM_ releaseRef))
+      (\mr -> withRollback reg (MR.duplicateRuns mr) (V.mapM_ releaseRef))
       lvls
     pure $! LevelsCache_ {
         cachedRuns      = rs
@@ -191,7 +191,7 @@ mkLevelsCache reg lvls = do
       , cachedKOpsFiles = mapStrict (\(DeRef r) -> Run.runKOpsFile r) rs
       }
   where
-    dupRun r = allocateTemp reg (dupRef r) releaseRef
+    dupRun r = withRollback reg (dupRef r) releaseRef
 
     -- TODO: this is not terribly performant, but it is also not sure if we are
     -- going to need this in the end. We might get rid of the LevelsCache.
@@ -209,7 +209,7 @@ mkLevelsCache reg lvls = do
           (incoming <>) . fold <$> V.forM rs k1
 
 {-# SPECIALISE rebuildCache ::
-     TempRegistry IO
+     ActionRegistry IO
   -> LevelsCache IO h
   -> Levels IO h
   -> IO (LevelsCache IO h) #-}
@@ -235,7 +235,7 @@ mkLevelsCache reg lvls = do
 -- Lookups should no invalidate blob erferences.
 rebuildCache ::
      (PrimMonad m, MonadMVar m, MonadMask m)
-  => TempRegistry m
+  => ActionRegistry m
   -> LevelsCache m h -- ^ old cache
   -> Levels m h -- ^ new levels
   -> m (LevelsCache m h) -- ^ new cache
@@ -244,31 +244,31 @@ rebuildCache reg oldCache newLevels = do
     mkLevelsCache reg newLevels
 
 {-# SPECIALISE duplicateLevelsCache ::
-     TempRegistry IO
+     ActionRegistry IO
   -> LevelsCache IO h
   -> IO (LevelsCache IO h) #-}
 duplicateLevelsCache ::
-     (PrimMonad m, MonadMask m, MonadMVar m)
-  => TempRegistry m
+     (PrimMonad m, MonadMask m)
+  => ActionRegistry m
   -> LevelsCache m h
   -> m (LevelsCache m h)
 duplicateLevelsCache reg cache = do
     rs' <- V.forM (cachedRuns cache) $ \r ->
-             allocateTemp reg (dupRef r) releaseRef
+             withRollback reg (dupRef r) releaseRef
     return cache { cachedRuns = rs' }
 
 {-# SPECIALISE releaseLevelsCache ::
-     TempRegistry IO
+     ActionRegistry IO
   -> LevelsCache IO h
   -> IO () #-}
 releaseLevelsCache ::
-     (PrimMonad m, MonadMVar m, MonadMask m)
-  => TempRegistry m
+     (PrimMonad m, MonadMask m)
+  => ActionRegistry m
   -> LevelsCache m h
   -> m ()
 releaseLevelsCache reg cache =
     V.forM_ (cachedRuns cache) $ \r ->
-      freeTemp reg (releaseRef r)
+      delayedCommit reg (releaseRef r)
 
 {-------------------------------------------------------------------------------
   Levels, runs and ongoing merges
@@ -295,52 +295,52 @@ mergePolicyForLevel MergePolicyLazyLevelling (LevelNo n) nextLevels
   | V.null nextLevels = LevelLevelling  -- levelling on last level
   | otherwise         = LevelTiering
 
-{-# SPECIALISE duplicateLevels :: TempRegistry IO -> Levels IO h -> IO (Levels IO h) #-}
+{-# SPECIALISE duplicateLevels :: ActionRegistry IO -> Levels IO h -> IO (Levels IO h) #-}
 duplicateLevels ::
-     (PrimMonad m, MonadMVar m, MonadMask m)
-  => TempRegistry m
+     (PrimMonad m, MonadMask m)
+  => ActionRegistry m
   -> Levels m h
   -> m (Levels m h)
 duplicateLevels reg levels =
     V.forM levels $ \Level {incomingRun, residentRuns} -> do
       incomingRun'  <- duplicateIncomingRun reg incomingRun
       residentRuns' <- V.forM residentRuns $ \r ->
-                         allocateTemp reg (dupRef r) releaseRef
+                         withRollback reg (dupRef r) releaseRef
       return $! Level {
         incomingRun  = incomingRun',
         residentRuns = residentRuns'
       }
 
-{-# SPECIALISE releaseLevels :: TempRegistry IO -> Levels IO h -> IO () #-}
+{-# SPECIALISE releaseLevels :: ActionRegistry IO -> Levels IO h -> IO () #-}
 releaseLevels ::
-     (PrimMonad m, MonadMVar m, MonadMask m)
-  => TempRegistry m
+     (PrimMonad m, MonadMask m)
+  => ActionRegistry m
   -> Levels m h
   -> m ()
 releaseLevels reg levels =
     V.forM_ levels $ \Level {incomingRun, residentRuns} -> do
       releaseIncomingRun reg incomingRun
-      V.mapM_ (freeTemp reg . releaseRef) residentRuns
+      V.mapM_ (delayedCommit reg . releaseRef) residentRuns
 
-{-# SPECIALISE duplicateIncomingRun :: TempRegistry IO -> IncomingRun IO h -> IO (IncomingRun IO h) #-}
+{-# SPECIALISE duplicateIncomingRun :: ActionRegistry IO -> IncomingRun IO h -> IO (IncomingRun IO h) #-}
 duplicateIncomingRun ::
-     (PrimMonad m, MonadMask m, MonadMVar m)
-  => TempRegistry m
+     (PrimMonad m, MonadMask m)
+  => ActionRegistry m
   -> IncomingRun m h
   -> m (IncomingRun m h)
 duplicateIncomingRun reg (Single r) =
-    Single <$> allocateTemp reg (dupRef r) releaseRef
+    Single <$> withRollback reg (dupRef r) releaseRef
 
 duplicateIncomingRun reg (Merging mp mr) =
-    Merging mp <$> allocateTemp reg (dupRef mr) releaseRef
+    Merging mp <$> withRollback reg (dupRef mr) releaseRef
 
-{-# SPECIALISE releaseIncomingRun :: TempRegistry IO -> IncomingRun IO h -> IO () #-}
+{-# SPECIALISE releaseIncomingRun :: ActionRegistry IO -> IncomingRun IO h -> IO () #-}
 releaseIncomingRun ::
-     (PrimMonad m, MonadMask m, MonadMVar m)
-  => TempRegistry m
+     (PrimMonad m, MonadMask m)
+  => ActionRegistry m
   -> IncomingRun m h -> m ()
-releaseIncomingRun reg (Single r)     = freeTemp reg (releaseRef r)
-releaseIncomingRun reg (Merging _ mr) = freeTemp reg (releaseRef mr)
+releaseIncomingRun reg (Single r)     = delayedCommit reg (releaseRef r)
+releaseIncomingRun reg (Merging _ mr) = delayedCommit reg (releaseRef mr)
 
 {-# SPECIALISE iforLevelM_ :: Levels IO h -> (LevelNo -> Level IO h -> IO ()) -> IO () #-}
 iforLevelM_ :: Monad m => Levels m h -> (LevelNo -> Level m h -> m ()) -> m ()
@@ -359,7 +359,7 @@ iforLevelM_ lvls k = V.iforM_ lvls $ \i lvl -> k (LevelNo (i + 1)) lvl
   -> SessionRoot
   -> UniqCounter IO
   -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob)
-  -> TempRegistry IO
+  -> ActionRegistry IO
   -> TableContent IO h
   -> IO (TableContent IO h) #-}
 -- | A single batch of updates can fill up the write buffer multiple times. We
@@ -397,7 +397,7 @@ updatesWithInterleavedFlushes ::
   -> SessionRoot
   -> UniqCounter m
   -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob)
-  -> TempRegistry m
+  -> ActionRegistry m
   -> TableContent m h
   -> m (TableContent m h)
 updatesWithInterleavedFlushes tr conf resolve hfs hbio root uc es reg tc = do
@@ -476,7 +476,7 @@ addWriteBufferEntries hfs f wbblobs maxn =
   -> HasBlockIO IO h
   -> SessionRoot
   -> UniqCounter IO
-  -> TempRegistry IO
+  -> ActionRegistry IO
   -> TableContent IO h
   -> IO (TableContent IO h) #-}
 -- | Flush the write buffer to disk, regardless of whether it is full or not.
@@ -492,7 +492,7 @@ flushWriteBuffer ::
   -> HasBlockIO m h
   -> SessionRoot
   -> UniqCounter m
-  -> TempRegistry m
+  -> ActionRegistry m
   -> TableContent m h
   -> m (TableContent m h)
 flushWriteBuffer tr conf@TableConfig{confDiskCachePolicy}
@@ -506,7 +506,7 @@ flushWriteBuffer tr conf@TableConfig{confDiskCachePolicy}
         !alloc = bloomFilterAllocForLevel conf l
         !path  = Paths.runPath root (uniqueToRunNumber n)
     traceWith tr $ AtLevel l $ TraceFlushWriteBuffer size (runNumber path) cache alloc
-    r <- allocateTemp reg
+    r <- withRollback reg
             (Run.fromWriteBuffer hfs hbio
               cache
               alloc
@@ -514,8 +514,8 @@ flushWriteBuffer tr conf@TableConfig{confDiskCachePolicy}
               (tableWriteBuffer tc)
               (tableWriteBufferBlobs tc))
             releaseRef
-    freeTemp reg (releaseRef (tableWriteBufferBlobs tc))
-    wbblobs' <- allocateTemp reg (WBB.new hfs (Paths.tableBlobPath root n))
+    delayedCommit reg (releaseRef (tableWriteBufferBlobs tc))
+    wbblobs' <- withRollback reg (WBB.new hfs (Paths.tableBlobPath root n))
                                  releaseRef
     levels' <- addRunToLevels tr conf resolve hfs hbio root uc r reg (tableLevels tc)
     tableCache' <- rebuildCache reg (tableCache tc) levels'
@@ -535,7 +535,7 @@ flushWriteBuffer tr conf@TableConfig{confDiskCachePolicy}
   -> SessionRoot
   -> UniqCounter IO
   -> Ref (Run IO h)
-  -> TempRegistry IO
+  -> ActionRegistry IO
   -> Levels IO h
   -> IO (Levels IO h) #-}
 -- | Add a run to the levels, and propagate merges.
@@ -553,7 +553,7 @@ addRunToLevels ::
   -> SessionRoot
   -> UniqCounter m
   -> Ref (Run m h)
-  -> TempRegistry m
+  -> ActionRegistry m
   -> Levels m h
   -> m (Levels m h)
 addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = do
@@ -622,8 +622,8 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
       r <- case ir of
         Single r     -> pure r
         Merging _ mr -> do
-          r <- allocateTemp reg (MR.expectCompleted mr) releaseRef
-          freeTemp reg (releaseRef mr)
+          r <- withRollback reg (MR.expectCompleted mr) releaseRef
+          delayedCommit reg (releaseRef mr)
           pure r
       traceWith tr $ AtLevel ln $
         TraceExpectCompletedMerge (Run.runFsPathsNumber r)
@@ -643,8 +643,8 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
                                    (Run.runFsPathsNumber r)
           -- We create a fresh reference and release the original one.
           -- This will also make it easier to trace back where it was allocated.
-          ir <- Single <$> allocateTemp reg (dupRef r) releaseRef
-          freeTemp reg (releaseRef r)
+          ir <- Single <$> withRollback reg (dupRef r) releaseRef
+          delayedCommit reg (releaseRef r)
           pure ir
 
       | otherwise = do
@@ -657,10 +657,10 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
           TraceNewMerge (V.map Run.size rs) (runNumber runPaths) caching alloc mergePolicy mergeLevel
         -- The runs will end up inside the merging run, with fresh references.
         -- The original references can be released (but only on the happy path).
-        mr <- allocateTemp reg
+        mr <- withRollback reg
           (MR.new hfs hbio resolve caching alloc mergeLevel runPaths rs)
           releaseRef
-        V.forM_ rs $ \r -> freeTemp reg (releaseRef r)
+        V.forM_ rs $ \r -> delayedCommit reg (releaseRef r)
         case confMergeSchedule of
           Incremental -> pure ()
           OneShot -> do

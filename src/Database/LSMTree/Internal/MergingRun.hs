@@ -23,6 +23,7 @@ module Database.LSMTree.Internal.MergingRun (
   , MergeKnownCompleted (..)
   ) where
 
+import           Control.ActionRegistry
 import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.DeepSeq (NFData (..))
 import           Control.Monad (void, when)
@@ -32,7 +33,6 @@ import           Control.Monad.Class.MonadThrow (MonadCatch (bracketOnError),
                      MonadMask)
 import           Control.Monad.Primitive
 import           Control.RefCount
-import           Control.TempRegistry
 import           Data.Maybe (fromMaybe)
 import           Data.Primitive.MutVar
 import           Data.Primitive.PrimVar
@@ -140,8 +140,8 @@ new ::
   -> m (Ref (MergingRun m h))
 new hfs hbio resolve caching alloc mergeLevel runPaths inputRuns =
     -- If creating the Merge fails, we must release the references again.
-    withTempRegistry $ \reg -> do
-      runs <- V.mapM (\r -> allocateTemp reg (dupRef r) releaseRef) inputRuns
+    withActionRegistry $ \reg -> do
+      runs <- V.mapM (\r -> withRollback reg (dupRef r) releaseRef) inputRuns
       merge <- fromMaybe (error "newMerge: merges can not be empty")
         <$> Merge.new hfs hbio caching alloc mergeLevel resolve runPaths runs
       let numInputRuns = NumRuns $ V.length runs
@@ -219,8 +219,8 @@ duplicateRuns (DeRef mr) =
     -- does not get completed concurrently before we are done.
     withMVar (mergeState mr) $ \case
       CompletedMerge r    -> V.singleton <$> dupRef r
-      OngoingMerge rs _ _ -> withTempRegistry $ \reg ->
-        V.mapM (\r -> allocateTemp reg (dupRef r) releaseRef) rs
+      OngoingMerge rs _ _ -> withActionRegistry $ \reg ->
+        V.mapM (\r -> withRollback reg (dupRef r) releaseRef) rs
 
 {-------------------------------------------------------------------------------
   Credits
