@@ -1160,8 +1160,10 @@ createSnapshot snap label tableType t = do
             (FS.createDirectory hfs (Paths.getNamedSnapshotDir snapDir))
             (\_ -> FS.removeDirectoryRecursive hfs (Paths.getNamedSnapshotDir snapDir))
 
-        -- Get the table content.
-        content <- RW.withReadAccess (tableContent thEnv) pure
+        -- Duplicate references to the table content, so that resources do not disappear
+        -- from under our feet while taking a snapshot. These references are released
+        -- again after the snapshot files/directories are written.
+        content <- RW.withReadAccess (tableContent thEnv) (duplicateTableContent reg)
 
         -- Snapshot the write buffer.
         let activeDir = Paths.activeDir (tableSessionRoot thEnv)
@@ -1179,6 +1181,9 @@ createSnapshot snap label tableType t = do
             SnapshotMetaDataFile contentPath = Paths.snapshotMetaDataFile snapDir
             SnapshotMetaDataChecksumFile checksumPath = Paths.snapshotMetaDataChecksumFile snapDir
         writeFileSnapshotMetaData hfs contentPath checksumPath snapMetaData
+
+        -- Release the table content
+        releaseTableContent reg content
 
 {-# SPECIALISE openSnapshot ::
      Session IO h
@@ -1231,10 +1236,8 @@ openSnapshot sesh label tableType override snap resolve = do
         let activeDir = Paths.activeDir (sessionRoot seshEnv)
 
         -- Read write buffer
-        activeWriteBufferNumber <- uniqueToRunNumber <$> incrUniqCounter uc
-        let activeWriteBufferPaths = Paths.WriteBufferFsPaths (Paths.getActiveDir activeDir) activeWriteBufferNumber
         let snapWriteBufferPaths = Paths.WriteBufferFsPaths (Paths.getNamedSnapshotDir snapDir) snapWriteBuffer
-        (tableWriteBuffer, tableWriteBufferBlobs) <- openWriteBuffer reg resolve hfs hbio snapWriteBufferPaths activeWriteBufferPaths
+        (tableWriteBuffer, tableWriteBufferBlobs) <- openWriteBuffer reg resolve hfs hbio uc activeDir snapWriteBufferPaths
 
         -- Hard link runs into the active directory,
         snapLevels' <- openRuns reg hfs hbio conf (sessionUniqCounter seshEnv) snapDir activeDir snapLevels

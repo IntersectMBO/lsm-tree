@@ -5,27 +5,20 @@ module Test.Database.LSMTree.Internal.Run (
     tests,
 ) where
 
-import           Control.Exception (bracket, bracket_)
-import           Control.Monad (when)
 import           Control.RefCount
 import           Control.TempRegistry (withTempRegistry)
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Short as SBS
 import           Data.Coerce (coerce)
-import           Data.Foldable (for_)
-import qualified Data.Map as M
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromJust)
 import qualified Data.Primitive.ByteArray as BA
-import qualified Data.Vector as V
 import           Database.LSMTree.Extras.Generators (KeyForIndexCompact (..))
 import           Database.LSMTree.Extras.RunData
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry
-import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
-import           Database.LSMTree.Internal.MergeSchedule (addWriteBufferEntries)
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..),
                      WriteBufferFsPaths (..))
 import qualified Database.LSMTree.Internal.Paths as Paths
@@ -35,12 +28,8 @@ import           Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.Snapshot
-import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
-import qualified Database.LSMTree.Internal.WriteBuffer as WB
-import           Database.LSMTree.Internal.WriteBufferBlobs (WriteBufferBlobs)
 import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
 import           Database.LSMTree.Internal.WriteBufferReader (readWriteBuffer)
-import           Database.LSMTree.Internal.WriteBufferWriter (writeWriteBuffer)
 import qualified FormatPage as Proto
 import           System.FilePath
 import qualified System.FS.API as FS
@@ -231,28 +220,28 @@ prop_WriteAndOpen fs hbio wb =
       return (property True)
 
 -- | Writing and loading a 'WriteBuffer' gives the same in-memory
---   representation as the original run.
+--   representation as the original write buffer.
 prop_WriteAndOpenWriteBuffer ::
      FS.HasFS IO h
   -> FS.HasBlockIO IO h
   -> RunData KeyForIndexCompact SerialisedValue SerialisedBlob
   -> IO Property
 prop_WriteAndOpenWriteBuffer hfs hbio rd = do
-  withTempRegistry $ \reg -> do
-    -- Serialise run data as write buffer:
-    let srd = serialiseRunData rd
-    let inPaths = WrapRunFsPaths $ simplePath 1111
-    let resolve (SerialisedValue x) (SerialisedValue y) = SerialisedValue (x <> y)
-    withRunDataAsWriteBuffer hfs resolve inPaths srd $ \wb wbb -> do
-      -- Write write buffer to disk:
-      let wbPaths = WrapRunFsPaths $ simplePath 1312
-      withSerialisedWriteBuffer hfs hbio wbPaths wb wbb $ do
-        -- Read write buffer from disk:
-        (wb', wbb') <- readWriteBuffer reg resolve hfs hbio wbPaths
+  -- Serialise run data as write buffer:
+  let srd = serialiseRunData rd
+  let inPaths = WrapRunFsPaths $ simplePath 1111
+  let resolve (SerialisedValue x) (SerialisedValue y) = SerialisedValue (x <> y)
+  withRunDataAsWriteBuffer hfs resolve inPaths srd $ \wb wbb -> do
+    -- Write write buffer to disk:
+    let wbPaths = WrapRunFsPaths $ simplePath 1312
+    withSerialisedWriteBuffer hfs hbio wbPaths wb wbb $ do
+      -- Read write buffer from disk:
+      let kOpsPath = Paths.ForKOps (Paths.writeBufferKOpsPath wbPaths)
+      withRef wbb $ \wbb' -> do
+        wb' <- readWriteBuffer resolve hfs hbio kOpsPath (WBB.blobFile wbb')
         assertEqual "k/ops" wb wb'
-        releaseRef wbb'
-    -- TODO: return a proper Property instead of using assertEqual etc.
-    return (property True)
+  -- TODO: return a proper Property instead of using assertEqual etc.
+  return (property True)
 
 -- | Writing run data to the disk via 'writeWriteBuffer' gives the same key/ops
 --   and blob files as when written out as a run.
@@ -290,37 +279,3 @@ prop_WriteRunEqWriteWriteBuffer hfs hbio rd = do
             assertEqual "writtenRunBlob/writtenWriteBufferBlob" rdBlob wbBlob
   -- TODO: return a proper Property instead of using assertEqual etc.
   return (property True)
-
--- | Use 'SerialisedRunData' to 'WriteBuffer' and 'WriteBufferBlobs'.
-withRunDataAsWriteBuffer ::
-    FS.HasFS IO h
-  -> ResolveSerialisedValue
-  -> WriteBufferFsPaths
-  -> SerialisedRunData
-  -> (WriteBuffer -> Ref (WriteBufferBlobs IO h) -> IO a)
-  -> IO a
-withRunDataAsWriteBuffer hfs f fsPaths rd action = do
-  let es = V.fromList . M.toList $ unRunData rd
-  let maxn = NumEntries $ V.length es
-  let wbbPath = Paths.writeBufferBlobPath fsPaths
-  bracket (WBB.new hfs wbbPath) releaseRef $ \wbb -> do
-    (wb, _) <- addWriteBufferEntries hfs f wbb maxn WB.empty es
-    action wb wbb
-
--- | Serialise a 'WriteBuffer' and 'WriteBufferBlobs' to disk and perform an 'IO' action.
-withSerialisedWriteBuffer ::
-       FS.HasFS IO h
-    -> FS.HasBlockIO IO h
-    -> WriteBufferFsPaths
-    -> WriteBuffer
-    -> Ref (WriteBufferBlobs IO h)
-    -> IO a
-    -> IO a
-withSerialisedWriteBuffer hfs hbio wbPaths wb wbb =
-  bracket_ (writeWriteBuffer hfs hbio wbPaths wb wbb) $ do
-    for_ [ Paths.writeBufferKOpsPath wbPaths
-         , Paths.writeBufferBlobPath wbPaths
-         , Paths.writeBufferChecksumsPath wbPaths
-         ] $ \fsPath -> do
-      fsPathExists <- FS.doesFileExist hfs fsPath
-      when fsPathExists $ FS.removeFile hfs fsPath

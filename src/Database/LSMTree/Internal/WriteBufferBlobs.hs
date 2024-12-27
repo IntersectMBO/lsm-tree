@@ -24,6 +24,7 @@
 --
 module Database.LSMTree.Internal.WriteBufferBlobs (
     WriteBufferBlobs (..),
+    fromBlobFile,
     new,
     open,
     addBlob,
@@ -136,7 +137,16 @@ open ::
 open fs blobFileName blobFileAllowExisting = do
     -- Must use read/write mode because we write blobs when adding, but
     -- we can also be asked to retrieve blobs at any time.
-    blobFile <- openBlobFile fs blobFileName (FS.ReadWriteMode blobFileAllowExisting)
+    fromBlobFile fs =<< openBlobFile fs blobFileName (FS.ReadWriteMode blobFileAllowExisting)
+
+{-# SPECIALISE fromBlobFile :: HasFS IO h -> Ref (BlobFile IO h) -> IO (Ref (WriteBufferBlobs IO h)) #-}
+-- | Make a `WriteBufferBlobs` from a `BlobFile` and set the file pointer to the end of the file.
+fromBlobFile ::
+     (PrimMonad m, MonadMask m)
+  => HasFS m h
+  -> Ref (BlobFile m h)
+  -> m (Ref (WriteBufferBlobs m h))
+fromBlobFile fs blobFile = do
     blobFilePointer <- newFilePointer
     -- Set the blob file pointer to the end of the file
     blobFileSize <- withRef blobFile $ FS.hGetSize fs . blobFileHandle
