@@ -203,24 +203,18 @@ class RefCounted m obj | obj -> m where
 #endif
 
 {-# SPECIALISE
-    newRef ::
-         RefCounted IO obj
-      => IO ()
-      -> (RefCounter IO -> obj)
-      -> IO (Ref obj)
+  newRef ::
+       RefCounted IO obj
+    => HasCallStackIfDebug
+    => IO ()
+    -> (RefCounter IO -> obj)
+    -> IO (Ref obj)
   #-}
 -- | Make a new reference.
 --
 -- The given finaliser is run when the last reference is released. The
 -- finaliser is run with async exceptions masked.
 --
-{-# SPECIALISE
-  newRef ::
-      RefCounted IO obj
-    => IO ()
-    -> (RefCounter IO -> obj)
-    -> IO (Ref obj)
-  #-}
 newRef ::
      (RefCounted m obj, PrimMonad m)
   => HasCallStackIfDebug
@@ -239,6 +233,7 @@ newRef finaliser mkObject = do
 {-# SPECIALISE
   releaseRef ::
        RefCounted IO obj
+    => HasCallStackIfDebug
     => Ref obj
     -> IO ()
   #-}
@@ -273,7 +268,8 @@ deRef ref@Ref{refobj} =
 
 {-# SPECIALISE
   withRef ::
-       Ref obj
+       HasCallStackIfDebug
+    => Ref obj
     -> (obj -> IO a)
     -> IO a
   #-}
@@ -295,6 +291,7 @@ withRef ref@Ref{refobj} f = do
 {-# SPECIALISE
   dupRef ::
        RefCounted IO obj
+    => HasCallStackIfDebug
     => Ref obj
     -> IO (Ref obj)
   #-}
@@ -333,6 +330,7 @@ mkWeakRefFromRaw obj = WeakRef obj
 {-# SPECIALISE
   deRefWeak ::
        RefCounted IO obj
+    => HasCallStackIfDebug
     => WeakRef obj
     -> IO (Maybe (Ref obj))
   #-}
