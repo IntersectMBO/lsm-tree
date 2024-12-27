@@ -11,11 +11,12 @@ module Database.LSMTree.Internal.RunBuilder (
   , close
   ) where
 
-import           Control.Monad (when)
+import           Control.ActionRegistry
+import           Control.Monad (forM, when)
 import           Control.Monad.Class.MonadST (MonadST (..))
 import qualified Control.Monad.Class.MonadST as ST
 import           Control.Monad.Class.MonadSTM (MonadSTM (..))
-import           Control.Monad.Class.MonadThrow (MonadThrow)
+import           Control.Monad.Class.MonadThrow (MonadMask, MonadThrow)
 import           Control.Monad.Primitive
 import           Data.BloomFilter (Bloom)
 import           Data.Foldable (for_, traverse_)
@@ -79,22 +80,26 @@ data RunBuilder m h = RunBuilder {
 --
 -- NOTE: 'new' assumes that 'runDir' that the run is created in exists.
 new ::
-     (MonadST m, MonadSTM m)
+     (MonadST m, MonadSTM m, MonadMask m)
   => HasFS m h
   -> HasBlockIO m h
   -> RunFsPaths
   -> NumEntries  -- ^ an upper bound of the number of entries to be added
   -> RunBloomFilterAlloc
   -> m (RunBuilder m h)
-new hfs hbio runBuilderFsPaths numEntries alloc = do
-    runBuilderAcc <- ST.stToIO $ RunAcc.new numEntries alloc
-    runBuilderBlobOffset <- newPrimVar 0
+new hfs hbio runBuilderFsPaths numEntries alloc =
+    withActionRegistry $ \reg -> do
+      runBuilderAcc <- ST.stToIO $ RunAcc.new numEntries alloc
+      runBuilderBlobOffset <- newPrimVar 0
 
-    runBuilderHandles <- traverse (makeHandle hfs) (pathsForRunFiles runBuilderFsPaths)
+      runBuilderHandles <- forM (pathsForRunFiles runBuilderFsPaths) $ \path ->
+        withRollback reg
+          (makeHandle hfs path)
+          (\h -> closeHandle hfs h >> FS.removeFile hfs path)
 
-    let builder = RunBuilder { runBuilderHasFS = hfs, runBuilderHasBlockIO = hbio, .. }
-    writeIndexHeader hfs (forRunIndex runBuilderHandles) (proxy# @IndexCompact)
-    return builder
+      let builder = RunBuilder { runBuilderHasFS = hfs, runBuilderHasBlockIO = hbio, .. }
+      writeIndexHeader hfs (forRunIndex runBuilderHandles) (proxy# @IndexCompact)
+      return builder
 
 {-# SPECIALISE addKeyOp ::
      RunBuilder IO h

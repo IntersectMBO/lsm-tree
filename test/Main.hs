@@ -24,6 +24,7 @@ import qualified Test.Database.LSMTree.Internal.RawPage
 import qualified Test.Database.LSMTree.Internal.Run
 import qualified Test.Database.LSMTree.Internal.RunAcc
 import qualified Test.Database.LSMTree.Internal.RunBuilder
+import qualified Test.Database.LSMTree.Internal.RunBuilder.FS
 import qualified Test.Database.LSMTree.Internal.RunReader
 import qualified Test.Database.LSMTree.Internal.RunReaders
 import qualified Test.Database.LSMTree.Internal.Serialise
@@ -62,6 +63,7 @@ main = do
     , Test.Database.LSMTree.Internal.Run.tests
     , Test.Database.LSMTree.Internal.RunAcc.tests
     , Test.Database.LSMTree.Internal.RunBuilder.tests
+    , Test.Database.LSMTree.Internal.RunBuilder.FS.tests
     , Test.Database.LSMTree.Internal.RunReader.tests
     , Test.Database.LSMTree.Internal.RunReaders.tests
     , Test.Database.LSMTree.Internal.Index.Compact.tests
