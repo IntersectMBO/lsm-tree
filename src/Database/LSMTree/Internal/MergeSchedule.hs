@@ -65,6 +65,7 @@ import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import           Database.LSMTree.Internal.WriteBufferBlobs (WriteBufferBlobs)
 import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
+import           GHC.Stack
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
 import           System.FS.BlockIO.API (HasBlockIO)
@@ -119,9 +120,9 @@ data TableContent m h = TableContent {
   , tableCache            :: !(LevelsCache m h)
   }
 
-{-# SPECIALISE duplicateTableContent :: ActionRegistry IO -> TableContent IO h -> IO (TableContent IO h) #-}
+{-# SPECIALISE duplicateTableContent :: HasCallStack => ActionRegistry IO -> TableContent IO h -> IO (TableContent IO h) #-}
 duplicateTableContent ::
-     (PrimMonad m, MonadMask m)
+     (HasCallStack, PrimMonad m, MonadMask m)
   => ActionRegistry m
   -> TableContent m h
   -> m (TableContent m h)
@@ -131,9 +132,9 @@ duplicateTableContent reg (TableContent wb wbb levels cache) = do
     cache'  <- duplicateLevelsCache reg cache
     return $! TableContent wb wbb' levels' cache'
 
-{-# SPECIALISE releaseTableContent :: ActionRegistry IO -> TableContent IO h -> IO () #-}
+{-# SPECIALISE releaseTableContent :: HasCallStack => ActionRegistry IO -> TableContent IO h -> IO () #-}
 releaseTableContent ::
-     (PrimMonad m, MonadMask m)
+     (HasCallStack, PrimMonad m, MonadMask m)
   => ActionRegistry m
   -> TableContent m h
   -> m ()
@@ -311,9 +312,9 @@ duplicateLevels reg levels =
         residentRuns = residentRuns'
       }
 
-{-# SPECIALISE releaseLevels :: ActionRegistry IO -> Levels IO h -> IO () #-}
+{-# SPECIALISE releaseLevels :: HasCallStack => ActionRegistry IO -> Levels IO h -> IO () #-}
 releaseLevels ::
-     (PrimMonad m, MonadMask m)
+     (HasCallStack, PrimMonad m, MonadMask m)
   => ActionRegistry m
   -> Levels m h
   -> m ()
@@ -334,9 +335,9 @@ duplicateIncomingRun reg (Single r) =
 duplicateIncomingRun reg (Merging mp mr) =
     Merging mp <$> withRollback reg (dupRef mr) releaseRef
 
-{-# SPECIALISE releaseIncomingRun :: ActionRegistry IO -> IncomingRun IO h -> IO () #-}
+{-# SPECIALISE releaseIncomingRun :: HasCallStack => ActionRegistry IO -> IncomingRun IO h -> IO () #-}
 releaseIncomingRun ::
-     (PrimMonad m, MonadMask m)
+     (HasCallStack, PrimMonad m, MonadMask m)
   => ActionRegistry m
   -> IncomingRun m h -> m ()
 releaseIncomingRun reg (Single r)     = delayedCommit reg (releaseRef r)
@@ -351,7 +352,8 @@ iforLevelM_ lvls k = V.iforM_ lvls $ \i lvl -> k (LevelNo (i + 1)) lvl
 -------------------------------------------------------------------------------}
 
 {-# SPECIALISE updatesWithInterleavedFlushes ::
-     Tracer IO (AtLevel MergeTrace)
+     HasCallStack
+  => Tracer IO (AtLevel MergeTrace)
   -> TableConfig
   -> ResolveSerialisedValue
   -> HasFS IO h
@@ -388,7 +390,7 @@ iforLevelM_ lvls k = V.iforM_ lvls $ \i lvl -> k (LevelNo (i + 1)) lvl
 -- whole run should then end up in a fresh write buffer.
 updatesWithInterleavedFlushes ::
      forall m h.
-     (MonadMask m, MonadMVar m, MonadSTM m, MonadST m)
+     (HasCallStack, MonadMask m, MonadMVar m, MonadSTM m, MonadST m)
   => Tracer m (AtLevel MergeTrace)
   -> TableConfig
   -> ResolveSerialisedValue
@@ -469,7 +471,8 @@ addWriteBufferEntries hfs f wbblobs maxn =
 
 
 {-# SPECIALISE flushWriteBuffer ::
-     Tracer IO (AtLevel MergeTrace)
+     HasCallStack
+  => Tracer IO (AtLevel MergeTrace)
   -> TableConfig
   -> ResolveSerialisedValue
   -> HasFS IO h
@@ -484,7 +487,7 @@ addWriteBufferEntries hfs f wbblobs maxn =
 -- The returned table content contains an updated set of levels, where the write
 -- buffer is inserted into level 1.
 flushWriteBuffer ::
-     (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+     (HasCallStack, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => Tracer m (AtLevel MergeTrace)
   -> TableConfig
   -> ResolveSerialisedValue
@@ -527,7 +530,8 @@ flushWriteBuffer tr conf@TableConfig{confDiskCachePolicy}
       }
 
 {-# SPECIALISE addRunToLevels ::
-     Tracer IO (AtLevel MergeTrace)
+     HasCallStack
+  => Tracer IO (AtLevel MergeTrace)
   -> TableConfig
   -> ResolveSerialisedValue
   -> HasFS IO h
@@ -544,7 +548,7 @@ flushWriteBuffer tr conf@TableConfig{confDiskCachePolicy}
 -- See @ScheduledMerges.increment@ for documentation about the merge algorithm.
 addRunToLevels ::
      forall m h.
-     (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+     (HasCallStack, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => Tracer m (AtLevel MergeTrace)
   -> TableConfig
   -> ResolveSerialisedValue
@@ -775,7 +779,8 @@ levelIsFull sr rs = V.length rs + 1 >= (sizeRatioInt sr)
 newtype Credits = Credits Int
 
 {-# SPECIALISE supplyCredits ::
-     TableConfig
+     HasCallStack
+  => TableConfig
   -> Credits
   -> Levels IO h
   -> IO ()
@@ -783,7 +788,7 @@ newtype Credits = Credits Int
 -- | Supply the given amount of credits to each merge in the levels structure.
 -- This /may/ cause some merges to progress.
 supplyCredits ::
-     (MonadSTM m, MonadST m, MonadMVar m, MonadMask m)
+     (HasCallStack, MonadSTM m, MonadST m, MonadMVar m, MonadMask m)
   => TableConfig
   -> Credits
   -> Levels m h

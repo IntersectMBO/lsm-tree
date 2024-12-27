@@ -45,6 +45,7 @@ import qualified Database.LSMTree.Internal.BlobFile as BlobFile
 import           Database.LSMTree.Internal.BlobRef (RawBlobRef (..),
                      WeakBlobRef (..))
 import           Database.LSMTree.Internal.Serialise
+import           GHC.Stack
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
 
@@ -126,27 +127,27 @@ instance NFData h => NFData (WriteBufferBlobs m h) where
 instance RefCounted m (WriteBufferBlobs m h) where
   getRefCounter = writeBufRefCounter
 
-{-# SPECIALISE new :: HasFS IO h -> FS.FsPath -> IO (Ref (WriteBufferBlobs IO h)) #-}
+{-# SPECIALISE new :: HasCallStack => HasFS IO h -> FS.FsPath -> IO (Ref (WriteBufferBlobs IO h)) #-}
 -- | Create a new 'WriteBufferBlobs' with a new file.
 --
 -- REF: the resulting reference must be released once it is no longer used.
 --
 -- ASYNC: this should be called with asynchronous exceptions masked.
 new ::
-     (PrimMonad m, MonadMask m)
+     (HasCallStack, PrimMonad m, MonadMask m)
   => HasFS m h
   -> FS.FsPath
   -> m (Ref (WriteBufferBlobs m h))
 new fs blobFileName = open fs blobFileName FS.MustBeNew
 
-{-# SPECIALISE open :: HasFS IO h -> FS.FsPath -> FS.AllowExisting -> IO (Ref (WriteBufferBlobs IO h)) #-}
+{-# SPECIALISE open :: HasCallStack => HasFS IO h -> FS.FsPath -> FS.AllowExisting -> IO (Ref (WriteBufferBlobs IO h)) #-}
 -- | Open a `WriteBufferBlobs` file and sets the file pointer to the end of the file.
 --
 -- REF: the resulting reference must be released once it is no longer used.
 --
 -- ASYNC: this should be called with asynchronous exceptions masked.
 open ::
-     (PrimMonad m, MonadMask m)
+     (HasCallStack, PrimMonad m, MonadMask m)
   => HasFS m h
   -> FS.FsPath
   -> FS.AllowExisting
@@ -159,7 +160,7 @@ open fs blobFileName blobFileAllowExisting = do
       releaseRef
       (fromBlobFile fs)
 
-{-# SPECIALISE fromBlobFile :: HasFS IO h -> Ref (BlobFile IO h) -> IO (Ref (WriteBufferBlobs IO h)) #-}
+{-# SPECIALISE fromBlobFile :: HasCallStack => HasFS IO h -> Ref (BlobFile IO h) -> IO (Ref (WriteBufferBlobs IO h)) #-}
 -- | Make a `WriteBufferBlobs` from a `BlobFile` and set the file pointer to the
 -- end of the file.
 --
@@ -167,7 +168,7 @@ open fs blobFileName blobFileAllowExisting = do
 --
 -- ASYNC: this should be called with asynchronous exceptions masked.
 fromBlobFile ::
-     (PrimMonad m, MonadMask m)
+     (HasCallStack, PrimMonad m, MonadMask m)
   => HasFS m h
   -> Ref (BlobFile m h)
   -> m (Ref (WriteBufferBlobs m h))

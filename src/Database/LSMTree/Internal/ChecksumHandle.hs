@@ -47,6 +47,7 @@ import           Database.LSMTree.Internal.RawPage (RawPage)
 import qualified Database.LSMTree.Internal.RawPage as RawPage
 import           Database.LSMTree.Internal.Serialise
 import           GHC.Exts (Proxy#)
+import           GHC.Stack (HasCallStack)
 import qualified System.FS.API as FS
 import           System.FS.API
 import qualified System.FS.BlockIO.API as FS
@@ -93,12 +94,13 @@ closeHandle :: HasFS m h -> ChecksumHandle (PrimState m) h -> m ()
 closeHandle fs (ChecksumHandle h _checksum) = FS.hClose fs h
 
 {-# SPECIALISE writeToHandle ::
-     HasFS IO h
+     HasCallStack
+  => HasFS IO h
   -> ChecksumHandle RealWorld h
   -> BSL.ByteString
   -> IO () #-}
 writeToHandle ::
-     (MonadSTM m, PrimMonad m)
+     (HasCallStack, MonadSTM m, PrimMonad m)
   => HasFS m h
   -> ChecksumHandle (PrimState m) h
   -> BSL.ByteString
@@ -174,13 +176,14 @@ writeBlob hfs blobOffset blobHandle blob = do
     return (BlobSpan offset (fromIntegral size))
 
 {-# SPECIALISE copyBlob ::
-     HasFS IO h
+     HasCallStack
+  => HasFS IO h
   -> PrimVar RealWorld Word64
   -> ForBlob (ChecksumHandle RealWorld h)
   -> RawBlobRef IO h
   -> IO BlobSpan #-}
 copyBlob ::
-     (MonadSTM m, MonadThrow m, PrimMonad m)
+     (HasCallStack, MonadSTM m, MonadThrow m, PrimMonad m)
   => HasFS m h
   -> PrimVar (PrimState m) Word64
   -> ForBlob (ChecksumHandle (PrimState m) h)
@@ -205,12 +208,13 @@ writeFilter hfs filterHandle bf =
     writeToHandle hfs (unForFilter filterHandle) (bloomFilterToLBS bf)
 
 {-# SPECIALISE writeIndexHeader ::
-     HasFS IO h
+     HasCallStack
+  => HasFS IO h
   -> ForIndex (ChecksumHandle RealWorld h)
   -> Proxy# IndexCompact
   -> IO () #-}
 writeIndexHeader ::
-     (MonadSTM m, PrimMonad m)
+     (HasCallStack, MonadSTM m, PrimMonad m)
   => HasFS m h
   -> ForIndex (ChecksumHandle (PrimState m) h)
   -> Proxy# IndexCompact

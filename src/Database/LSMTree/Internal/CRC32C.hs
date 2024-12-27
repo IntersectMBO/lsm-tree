@@ -63,6 +63,7 @@ import           Data.Primitive
 import           Data.Word
 import           GHC.Exts
 import qualified GHC.ForeignPtr as Foreign
+import           GHC.Stack (HasCallStack)
 import           System.FS.API
 import           System.FS.API.Lazy
 import           System.FS.BlockIO.API (ByteCount)
@@ -113,8 +114,8 @@ hGetExactlyCRC32C fs h n crc = do
     return (lbs, crc')
 
 
-{-# SPECIALISE hPutSomeCRC32C :: HasFS IO h -> Handle h -> BS.ByteString -> CRC32C -> IO (Word64, CRC32C) #-}
-hPutSomeCRC32C :: Monad m
+{-# SPECIALISE hPutSomeCRC32C :: HasCallStack => HasFS IO h -> Handle h -> BS.ByteString -> CRC32C -> IO (Word64, CRC32C) #-}
+hPutSomeCRC32C :: (HasCallStack, Monad m)
                => HasFS m h
                -> Handle h
                -> BS.ByteString
@@ -126,9 +127,9 @@ hPutSomeCRC32C fs h bs crc = do
 
 
 -- | This function makes sure that the whole 'BS.ByteString' is written.
-{-# SPECIALISE hPutAllCRC32C :: HasFS IO h -> Handle h -> BS.ByteString -> CRC32C -> IO (Word64, CRC32C) #-}
+{-# SPECIALISE hPutAllCRC32C :: HasCallStack => HasFS IO h -> Handle h -> BS.ByteString -> CRC32C -> IO (Word64, CRC32C) #-}
 hPutAllCRC32C :: forall m h
-              .  Monad m
+              .  (HasCallStack, Monad m)
               => HasFS m h
               -> Handle h
               -> BS.ByteString
@@ -145,9 +146,9 @@ hPutAllCRC32C fs h = go 0
         else go written' bs' crc'
 
 -- | This function makes sure that the whole /lazy/ 'BSL.ByteString' is written.
-{-# SPECIALISE hPutAllChunksCRC32C :: HasFS IO h -> Handle h -> BSL.ByteString -> CRC32C -> IO (Word64, CRC32C) #-}
+{-# SPECIALISE hPutAllChunksCRC32C :: HasCallStack => HasFS IO h -> Handle h -> BSL.ByteString -> CRC32C -> IO (Word64, CRC32C) #-}
 hPutAllChunksCRC32C :: forall m h
-                    .  Monad m
+                    .  (HasCallStack, Monad m)
                     => HasFS m h
                     -> Handle h
                     -> BSL.ByteString

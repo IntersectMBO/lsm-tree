@@ -18,10 +18,10 @@ import qualified Data.Vector.Primitive as VP
 import           Data.Word (Word32, Word64)
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.Serialise (SerialisedBlob (..))
+import           GHC.Stack (HasCallStack)
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
 import qualified System.FS.BlockIO.API as FS
-import           System.FS.CallStack (HasCallStack)
 
 -- | A handle to a file containing blobs.
 --
@@ -91,9 +91,9 @@ readBlob ::
   -> m SerialisedBlob
 readBlob fs (DeRef blobfile) blobspan = readBlobRaw fs blobfile blobspan
 
-{-# SPECIALISE readBlobRaw :: HasFS IO h -> BlobFile IO h -> BlobSpan -> IO SerialisedBlob #-}
+{-# SPECIALISE readBlobRaw :: HasCallStack => HasFS IO h -> BlobFile IO h -> BlobSpan -> IO SerialisedBlob #-}
 readBlobRaw ::
-     (MonadThrow m, PrimMonad m)
+     (HasCallStack, MonadThrow m, PrimMonad m)
   => HasFS m h
   -> BlobFile m h
   -> BlobSpan

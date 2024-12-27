@@ -37,6 +37,7 @@ import qualified Database.LSMTree.Internal.RunReader as Reader
 import           Database.LSMTree.Internal.RunReaders (Readers)
 import qualified Database.LSMTree.Internal.RunReaders as Readers
 import           Database.LSMTree.Internal.Serialise
+import           GHC.Stack (HasCallStack)
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
 import           System.FS.BlockIO.API (HasBlockIO)
@@ -118,13 +119,13 @@ new fs hbio mergeCaching alloc mergeLevel mergeMappend targetPaths runs = do
         , ..
         }
 
-{-# SPECIALISE abort :: Merge IO (FS.Handle h) -> IO () #-}
+{-# SPECIALISE abort :: HasCallStack => Merge IO (FS.Handle h) -> IO () #-}
 -- | This function should be called when discarding a 'Merge' before it
 -- was done (i.e. returned 'MergeComplete'). This removes the incomplete files
 -- created for the new run so far and avoids leaking file handles.
 --
 -- Once it has been called, do not use the 'Merge' any more!
-abort :: (MonadMask m, MonadSTM m, MonadST m) => Merge m h -> m ()
+abort :: (HasCallStack, MonadMask m, MonadSTM m, MonadST m) => Merge m h -> m ()
 abort Merge {..} = do
     readMutVar mergeState >>= \case
       Merging -> do
@@ -221,7 +222,8 @@ stepsInvariant requestedSteps = \case
     _                    -> True
 
 {-# SPECIALISE steps ::
-     Merge IO h
+     HasCallStack
+  => Merge IO h
   -> Int
   -> IO (Int, StepResult) #-}
 -- | Do at least a given number of steps of merging. Each step reads a single
@@ -235,7 +237,7 @@ stepsInvariant requestedSteps = \case
 -- Returns an error if the merge was already completed or closed.
 steps ::
      forall m h.
-     (MonadMask m, MonadSTM m, MonadST m)
+     (HasCallStack, MonadMask m, MonadSTM m, MonadST m)
   => Merge m h
   -> Int  -- ^ How many input entries to consume (at least)
   -> m (Int, StepResult)
@@ -317,13 +319,14 @@ steps Merge {..} requestedSteps = assertStepsInvariant <$> do
             pure (n + dropped, MergeDone)
 
 {-# SPECIALISE writeReaderEntry ::
-     Level
+     HasCallStack
+  => Level
   -> RunBuilder IO h
   -> SerialisedKey
   -> Reader.Entry IO h
   -> IO () #-}
 writeReaderEntry ::
-     (MonadSTM m, MonadST m, MonadThrow m)
+     (HasCallStack, MonadSTM m, MonadST m, MonadThrow m)
   => Level
   -> RunBuilder m h
   -> SerialisedKey
@@ -357,13 +360,14 @@ writeReaderEntry level builder key entry@(Reader.EntryOverflow prefix page _ ove
         Builder.addLargeSerialisedKeyOp builder key page overflowPages
 
 {-# SPECIALISE writeSerialisedEntry ::
-     Level
+     HasCallStack
+  => Level
   -> RunBuilder IO h
   -> SerialisedKey
   -> Entry SerialisedValue (RawBlobRef IO h)
   -> IO () #-}
 writeSerialisedEntry ::
-     (MonadSTM m, MonadST m, MonadThrow m)
+     (HasCallStack, MonadSTM m, MonadST m, MonadThrow m)
   => Level
   -> RunBuilder m h
   -> SerialisedKey

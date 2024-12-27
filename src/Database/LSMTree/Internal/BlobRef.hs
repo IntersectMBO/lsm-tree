@@ -31,6 +31,7 @@ import           Database.LSMTree.Internal.BlobFile (BlobFile (..),
 import qualified Database.LSMTree.Internal.BlobFile as BlobFile
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.Serialise (SerialisedBlob (..))
+import           GHC.Stack (HasCallStack)
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
 import qualified System.FS.BlockIO.API as FS
@@ -156,7 +157,7 @@ releaseBlobRef = releaseRef . strongBlobRefFile
 
 {-# INLINE readRawBlobRef #-}
 readRawBlobRef ::
-     (MonadThrow m, PrimMonad m)
+     (HasCallStack, MonadThrow m, PrimMonad m)
   => HasFS m h
   -> RawBlobRef m h
   -> m SerialisedBlob

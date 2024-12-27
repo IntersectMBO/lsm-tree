@@ -46,6 +46,7 @@ import           Database.LSMTree.Internal.Paths (RunFsPaths (..))
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc)
+import           GHC.Stack
 import           System.FS.API (HasFS)
 import           System.FS.BlockIO.API (HasBlockIO)
 
@@ -111,7 +112,8 @@ instance NFData MergeKnownCompleted where
   rnf MergeMaybeCompleted = ()
 
 {-# SPECIALISE new ::
-     HasFS IO h
+     HasCallStack
+  => HasFS IO h
   -> HasBlockIO IO h
   -> ResolveSerialisedValue
   -> Run.RunDataCaching
@@ -128,7 +130,7 @@ instance NFData MergeKnownCompleted where
 -- This function should be run with asynchronous exceptions masked to prevent
 -- failing after internal resources have already been created.
 new ::
-     (MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
+     (HasCallStack, MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
   => HasFS m h
   -> HasBlockIO m h
   -> ResolveSerialisedValue
@@ -175,7 +177,7 @@ newCompleted numInputRuns numInputEntries inputRun = do
 
 {-# INLINE unsafeNew #-}
 unsafeNew ::
-     (MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
+     (HasCallStack, MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
   => NumRuns
   -> NumEntries
   -> MergeKnownCompleted
@@ -292,14 +294,15 @@ newtype Credits = Credits Int
 newtype CreditThreshold = CreditThreshold { getCreditThreshold :: Int }
 
 {-# SPECIALISE supplyCredits ::
-     Credits
+     HasCallStack
+  => Credits
   -> CreditThreshold
   -> Ref (MergingRun IO h)
   -> IO () #-}
 -- | Supply the given amount of credits to a merging run. This /may/ cause an
 -- ongoing merge to progress.
 supplyCredits ::
-     forall m h. (MonadSTM m, MonadST m, MonadMVar m, MonadMask m)
+     forall m h. (HasCallStack, MonadSTM m, MonadST m, MonadMVar m, MonadMask m)
   => Credits
   -> CreditThreshold
   -> Ref (MergingRun m h)
@@ -434,12 +437,13 @@ takeAllUnspentCredits (UnspentCreditsVar !unspentCreditsVar) = do
         casLoop prev'
 
 {-# SPECIALISE stepMerge ::
-     StrictMVar IO (MergingRunState IO h)
+     HasCallStack
+  => StrictMVar IO (MergingRunState IO h)
   -> TotalStepsVar RealWorld
   -> Credits
   -> IO Bool #-}
 stepMerge ::
-     (MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
+     (HasCallStack, MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
   => StrictMVar m (MergingRunState m h)
   -> TotalStepsVar (PrimState m)
   -> Credits
