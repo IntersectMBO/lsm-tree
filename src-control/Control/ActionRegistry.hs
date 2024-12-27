@@ -21,8 +21,8 @@ module Control.ActionRegistry (
   , withActionRegistry
   , unsafeNewActionRegistry
   , unsafeFinaliseActionRegistry
-  , CommitActionRegistryError
-  , AbortActionRegistryError
+  , CommitActionRegistryError (..)
+  , AbortActionRegistryError (..)
   , AbortActionRegistryReason
     -- * Registering actions #registeringActions#
     -- $registering-actions

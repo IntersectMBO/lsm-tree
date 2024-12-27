@@ -372,6 +372,7 @@ test-suite lsm-tree-test
     Test.Database.LSMTree.Internal.Run
     Test.Database.LSMTree.Internal.RunAcc
     Test.Database.LSMTree.Internal.RunBuilder
+    Test.Database.LSMTree.Internal.RunBuilder.FS
     Test.Database.LSMTree.Internal.RunReader
     Test.Database.LSMTree.Internal.RunReaders
     Test.Database.LSMTree.Internal.Serialise
