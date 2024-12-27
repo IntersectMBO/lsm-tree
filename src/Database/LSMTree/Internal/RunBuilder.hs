@@ -34,6 +34,7 @@ import           Database.LSMTree.Internal.RunAcc (RunAcc, RunBloomFilterAlloc)
 import qualified Database.LSMTree.Internal.RunAcc as RunAcc
 import           Database.LSMTree.Internal.Serialise
 import           GHC.Exts (proxy#)
+import           GHC.Stack (HasCallStack)
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
 import qualified System.FS.BlockIO.API as FS
@@ -102,7 +103,8 @@ new hfs hbio runBuilderFsPaths numEntries alloc =
       return builder
 
 {-# SPECIALISE addKeyOp ::
-     RunBuilder IO h
+     HasCallStack
+  => RunBuilder IO h
   -> SerialisedKey
   -> Entry SerialisedValue (RawBlobRef IO h)
   -> IO () #-}
@@ -120,7 +122,7 @@ new hfs hbio runBuilderFsPaths numEntries alloc =
 -- everything else only at the end when 'unsafeFinalise' is called.
 --
 addKeyOp ::
-     (MonadST m, MonadSTM m, MonadThrow m)
+     (HasCallStack, MonadST m, MonadSTM m, MonadThrow m)
   => RunBuilder m h
   -> SerialisedKey
   -> Entry SerialisedValue (RawBlobRef m h)
@@ -209,13 +211,13 @@ unsafeFinalise dropCaches RunBuilder {..} = do
     mapM_ (closeHandle runBuilderHasFS) runBuilderHandles
     return (runBuilderHasFS, runBuilderHasBlockIO, runBuilderFsPaths, runFilter, runIndex, numEntries)
 
-{-# SPECIALISE close :: RunBuilder IO h -> IO () #-}
+{-# SPECIALISE close :: HasCallStack => RunBuilder IO h -> IO () #-}
 -- | Close a run that is being constructed (has not been finalised yet),
 -- removing all files associated with it from disk.
 -- After calling this operation, the run must not be used anymore.
 --
 -- TODO: Ensure proper cleanup even in presence of exceptions.
-close :: MonadSTM m => RunBuilder m h -> m ()
+close :: (HasCallStack, MonadSTM m) => RunBuilder m h -> m ()
 close RunBuilder {..} = do
     traverse_ (closeHandle runBuilderHasFS) runBuilderHandles
     traverse_ (FS.removeFile runBuilderHasFS) (pathsForRunFiles runBuilderFsPaths)
