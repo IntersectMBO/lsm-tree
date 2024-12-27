@@ -862,6 +862,7 @@ test-suite control-test
   hs-source-dirs: test-control
   main-is:        Main.hs
   other-modules:
+    Test.Control.ActionRegistry
     Test.Control.Concurrent.Class.MonadSTM.RWVar
     Test.Control.RefCount
 

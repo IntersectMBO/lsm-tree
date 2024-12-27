@@ -21,6 +21,9 @@ module Control.ActionRegistry (
   , withActionRegistry
   , unsafeNewActionRegistry
   , unsafeFinaliseActionRegistry
+  , CommitActionRegistryError
+  , AbortActionRegistryError
+  , AbortActionRegistryReason
     -- * Registering actions #registeringActions#
     -- $registering-actions
   , withRollback
@@ -263,8 +266,8 @@ withActionRegistry k = fst <$> generalBracket acquire release k
     release reg ec = unsafeFinaliseActionRegistry reg ec
 
 {-# SPECIALISE unsafeNewActionRegistry :: IO (ActionRegistry IO) #-}
--- | This function is considered unsafe. Preferably, use 'withActionRegistry
--- instead'.
+-- | This function is considered unsafe. Preferably, use 'withActionRegistry'
+-- instead.
 --
 -- If this function is used directly, use 'generalBracket' to pair
 -- 'unsafeNewActionRegistry' with an 'unsafeFinaliseActionRegistry'.
@@ -285,8 +288,9 @@ unsafeFinaliseActionRegistry ::
   -> ExitCase a
   -> m ()
 unsafeFinaliseActionRegistry reg ec = case ec of
-    ExitCaseSuccess{} -> unsafeCommitActionRegistry reg
-    _                 -> unsafeAbortActionRegistry reg
+    ExitCaseSuccess{}   -> unsafeCommitActionRegistry reg
+    ExitCaseException e -> unsafeAbortActionRegistry reg (ReasonExitCaseException e)
+    ExitCaseAbort       -> unsafeAbortActionRegistry reg ReasonExitCaseAbort
 
 {-# SPECIALISE unsafeCommitActionRegistry :: ActionRegistry IO -> IO () #-}
 -- | Perform delayed actions, but not rollback actions.
@@ -303,18 +307,36 @@ data CommitActionRegistryError = CommitActionRegistryError (NonEmpty ActionError
   deriving stock Show
   deriving anyclass Exception
 
-{-# SPECIALISE unsafeAbortActionRegistry :: ActionRegistry IO -> IO () #-}
+{-# SPECIALISE unsafeAbortActionRegistry ::
+     ActionRegistry IO
+  -> AbortActionRegistryReason
+  -> IO () #-}
 -- | Perform rollback actions, but not delayed actions
-unsafeAbortActionRegistry :: (PrimMonad m, MonadCatch m) => ActionRegistry m -> m ()
-unsafeAbortActionRegistry reg = do
+unsafeAbortActionRegistry ::
+     (PrimMonad m, MonadCatch m)
+  => ActionRegistry m
+  -> AbortActionRegistryReason
+  -> m ()
+unsafeAbortActionRegistry reg reason = do
     as <- readMutVar (registryRollback reg)
     -- Run actions in LIFO order
     r <- runActions as
     case NE.nonEmpty r of
       Nothing         -> pure ()
-      Just exceptions -> throwIO (AbortActionRegistryError exceptions)
+      Just exceptions -> throwIO (AbortActionRegistryError reason exceptions)
 
-data AbortActionRegistryError = AbortActionRegistryError (NonEmpty ActionError)
+-- | Reasons why an action registry was aborted.
+data AbortActionRegistryReason =
+    -- | The action registry was aborted because the code that it scoped over
+    -- threw an exception (see 'ExitCaseException').
+    ReasonExitCaseException SomeException
+    -- | The action registry was aborted because the code that it scoped over
+    -- aborted (see 'ExitCaseAbort').
+  | ReasonExitCaseAbort
+  deriving stock Show
+
+data AbortActionRegistryError =
+    AbortActionRegistryError AbortActionRegistryReason (NonEmpty ActionError)
   deriving stock Show
   deriving anyclass Exception
 
