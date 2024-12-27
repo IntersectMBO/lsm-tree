@@ -63,6 +63,7 @@ import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import           Database.LSMTree.Internal.WriteBufferBlobs (WriteBufferBlobs)
 import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
+import           GHC.Stack
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
 import           System.FS.BlockIO.API (HasBlockIO)
@@ -349,7 +350,8 @@ iforLevelM_ lvls k = V.iforM_ lvls $ \i lvl -> k (LevelNo (i + 1)) lvl
 -------------------------------------------------------------------------------}
 
 {-# SPECIALISE updatesWithInterleavedFlushes ::
-     Tracer IO (AtLevel MergeTrace)
+     HasCallStack
+  => Tracer IO (AtLevel MergeTrace)
   -> TableConfig
   -> ResolveSerialisedValue
   -> HasFS IO h
@@ -386,7 +388,7 @@ iforLevelM_ lvls k = V.iforM_ lvls $ \i lvl -> k (LevelNo (i + 1)) lvl
 -- whole run should then end up in a fresh write buffer.
 updatesWithInterleavedFlushes ::
      forall m h.
-     (MonadMask m, MonadMVar m, MonadSTM m, MonadST m)
+     (HasCallStack, MonadMask m, MonadMVar m, MonadSTM m, MonadST m)
   => Tracer m (AtLevel MergeTrace)
   -> TableConfig
   -> ResolveSerialisedValue
@@ -467,7 +469,8 @@ addWriteBufferEntries hfs f wbblobs maxn =
 
 
 {-# SPECIALISE flushWriteBuffer ::
-     Tracer IO (AtLevel MergeTrace)
+     HasCallStack
+  => Tracer IO (AtLevel MergeTrace)
   -> TableConfig
   -> ResolveSerialisedValue
   -> HasFS IO h
@@ -482,7 +485,7 @@ addWriteBufferEntries hfs f wbblobs maxn =
 -- The returned table content contains an updated set of levels, where the write
 -- buffer is inserted into level 1.
 flushWriteBuffer ::
-     (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+     (HasCallStack, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => Tracer m (AtLevel MergeTrace)
   -> TableConfig
   -> ResolveSerialisedValue
@@ -525,7 +528,8 @@ flushWriteBuffer tr conf@TableConfig{confDiskCachePolicy}
       }
 
 {-# SPECIALISE addRunToLevels ::
-     Tracer IO (AtLevel MergeTrace)
+     HasCallStack
+  => Tracer IO (AtLevel MergeTrace)
   -> TableConfig
   -> ResolveSerialisedValue
   -> HasFS IO h
@@ -542,7 +546,7 @@ flushWriteBuffer tr conf@TableConfig{confDiskCachePolicy}
 -- See @ScheduledMerges.increment@ for documentation about the merge algorithm.
 addRunToLevels ::
      forall m h.
-     (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+     (HasCallStack, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => Tracer m (AtLevel MergeTrace)
   -> TableConfig
   -> ResolveSerialisedValue

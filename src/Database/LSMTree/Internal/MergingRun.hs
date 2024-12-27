@@ -46,6 +46,7 @@ import           Database.LSMTree.Internal.Paths (RunFsPaths (..))
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc)
+import           GHC.Stack
 import           System.FS.API (HasFS)
 import           System.FS.BlockIO.API (HasBlockIO)
 
@@ -111,7 +112,8 @@ instance NFData MergeKnownCompleted where
   rnf MergeMaybeCompleted = ()
 
 {-# SPECIALISE new ::
-     HasFS IO h
+     HasCallStack
+  => HasFS IO h
   -> HasBlockIO IO h
   -> ResolveSerialisedValue
   -> Run.RunDataCaching
@@ -128,7 +130,7 @@ instance NFData MergeKnownCompleted where
 -- This function should be run with asynchronous exceptions masked to prevent
 -- failing after internal resources have already been created.
 new ::
-     (MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
+     (HasCallStack, MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
   => HasFS m h
   -> HasBlockIO m h
   -> ResolveSerialisedValue
@@ -175,7 +177,7 @@ newCompleted numInputRuns numInputEntries inputRun = do
 
 {-# INLINE unsafeNew #-}
 unsafeNew ::
-     (MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
+     (HasCallStack, MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
   => NumRuns
   -> NumEntries
   -> MergeKnownCompleted
