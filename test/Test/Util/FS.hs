@@ -15,7 +15,10 @@ module Test.Util.FS (
   , withSimErrorHasBlockIO
   , withSimErrorHasBlockIO'
     -- * Simulated file system properties
+  , propNumOpenHandles
   , propNoOpenHandles
+  , propNumDirEntries
+  , propNoDirEntries
   , assertNoOpenHandles
   , assertNumOpenHandles
   ) where
@@ -24,9 +27,11 @@ import           Control.Concurrent.Class.MonadMVar
 import           Control.Concurrent.Class.MonadSTM.Strict
 import           Control.Exception (assert)
 import           Control.Monad.Class.MonadThrow (MonadCatch, MonadThrow)
+import           Control.Monad.IOSim (runSimOrThrow)
 import           Control.Monad.Primitive (PrimMonad)
+import qualified Data.Set as Set
 import           GHC.Stack
-import           System.FS.API
+import           System.FS.API as FS
 import           System.FS.BlockIO.API
 import           System.FS.BlockIO.IO
 import           System.FS.BlockIO.Sim (fromHasFS)
@@ -166,13 +171,36 @@ withSimErrorHasBlockIO' post errs k = do
   Simulated file system properties
 -------------------------------------------------------------------------------}
 
+{-# INLINABLE propNumOpenHandles #-}
+propNumOpenHandles :: MockFS -> Int -> Property
+propNumOpenHandles fs expected =
+    counterexample (printf "Expected %d open handles, but found %d" expected actual) $
+    counterexample ("Open handles: " <> show (openHandles fs)) $
+    printMockFSOnFailure fs $
+    expected == actual
+  where actual = numOpenHandles fs
+
 {-# INLINABLE propNoOpenHandles #-}
 propNoOpenHandles :: MockFS -> Property
-propNoOpenHandles fs =
-    counterexample ("Expected 0 open handles, but found " <> show n) $
+propNoOpenHandles fs = propNumOpenHandles fs 0
+
+{-# INLINABLE propNumDirEntries #-}
+propNumDirEntries :: MockFS -> Int -> Property
+propNumDirEntries fs expected =
+    counterexample
+      (printf "Expected %d entries in the directory, but found %d" expected actual) $
     printMockFSOnFailure fs $
-    n == 0
-  where n = numOpenHandles fs
+    expected === actual
+  where
+    actual =
+      let (contents, _) = runSimOrThrow $
+            runSimFS fs $ \hfs ->
+              FS.listDirectory hfs (mkFsPath [])
+      in  Set.size contents
+
+{-# INLINABLE propNoDirEntries #-}
+propNoDirEntries :: MockFS -> Property
+propNoDirEntries fs = propNumDirEntries fs 0
 
 printMockFSOnFailure :: Testable prop => MockFS -> prop -> Property
 printMockFSOnFailure fs = counterexample ("Mocked file system: " <> pretty fs)
