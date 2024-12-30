@@ -27,6 +27,7 @@ module Database.LSMTree.Internal.Run (
   , openFromDisk
   ) where
 
+import           Control.ActionRegistry
 import           Control.DeepSeq (NFData (..), rwhnf)
 import           Control.Monad (when)
 import           Control.Monad.Class.MonadST (MonadST)
@@ -188,14 +189,22 @@ fromMutable ::
   => RunDataCaching
   -> RunBuilder m h
   -> m (Ref (Run m h))
-fromMutable runRunDataCaching builder = do
-    (runHasFS, runHasBlockIO, runRunFsPaths, runFilter, runIndex, runNumEntries) <-
-      Builder.unsafeFinalise (runRunDataCaching == NoCacheRunData) builder
-    runKOpsFile <- FS.hOpen runHasFS (runKOpsPath runRunFsPaths) FS.ReadMode
-    runBlobFile <- openBlobFile runHasFS (runBlobPath runRunFsPaths) FS.ReadMode
-    setRunDataCaching runHasBlockIO runKOpsFile runRunDataCaching
-    newRef (finaliser runHasFS runKOpsFile runBlobFile runRunFsPaths)
-           (\runRefCounter -> Run { .. })
+fromMutable runRunDataCaching builder =
+    withActionRegistry $ \reg -> do
+      (runHasFS, runHasBlockIO, runRunFsPaths, runFilter, runIndex, runNumEntries) <-
+        Builder.unsafeFinalise (runRunDataCaching == NoCacheRunData) builder
+      runKOpsFile <-
+        withRollback reg
+          (FS.hOpen runHasFS (runKOpsPath runRunFsPaths) FS.ReadMode)
+          (FS.hClose runHasFS)
+      runBlobFile <-
+        withRollback reg
+          (openBlobFile runHasFS (runBlobPath runRunFsPaths) FS.ReadMode)
+          releaseRef
+      setRunDataCaching runHasBlockIO runKOpsFile runRunDataCaching
+      newRef
+        (finaliser runHasFS runKOpsFile runBlobFile runRunFsPaths)
+        (\runRefCounter -> Run { .. })
 
 {-# SPECIALISE fromWriteBuffer ::
      HasFS IO h
@@ -223,12 +232,18 @@ fromWriteBuffer ::
   -> WriteBuffer
   -> Ref (WriteBufferBlobs m h)
   -> m (Ref (Run m h))
-fromWriteBuffer fs hbio caching alloc fsPaths buffer blobs = do
-    builder <- Builder.new fs hbio fsPaths (WB.numEntries buffer) alloc
-    for_ (WB.toList buffer) $ \(k, e) ->
-      Builder.addKeyOp builder k (fmap (WBB.mkRawBlobRef blobs) e)
-      --TODO: the fmap entry here reallocates even when there are no blobs
-    fromMutable caching builder
+fromWriteBuffer fs hbio caching alloc fsPaths buffer blobs =
+    withActionRegistry $ \reg -> do
+      builder <-
+        withRollback reg
+          (Builder.new fs hbio fsPaths (WB.numEntries buffer) alloc)
+          Builder.close
+      for_ (WB.toList buffer) $ \(k, e) ->
+        Builder.addKeyOp builder k (fmap (WBB.mkRawBlobRef blobs) e)
+        --TODO: the fmap entry here reallocates even when there are no blobs
+      withRollback reg
+        (fromMutable caching builder)
+        releaseRef
 
 {-------------------------------------------------------------------------------
   Snapshot

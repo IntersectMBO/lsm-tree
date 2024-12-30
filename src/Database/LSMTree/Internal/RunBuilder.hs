@@ -12,14 +12,14 @@ module Database.LSMTree.Internal.RunBuilder (
   ) where
 
 import           Control.ActionRegistry
-import           Control.Monad (forM, when)
+import           Control.Monad (forM, forM_, when)
 import           Control.Monad.Class.MonadST (MonadST (..))
 import qualified Control.Monad.Class.MonadST as ST
 import           Control.Monad.Class.MonadSTM (MonadSTM (..))
 import           Control.Monad.Class.MonadThrow (MonadMask, MonadThrow)
 import           Control.Monad.Primitive
 import           Data.BloomFilter (Bloom)
-import           Data.Foldable (for_, traverse_)
+import           Data.Foldable (for_)
 import           Data.Primitive.PrimVar
 import           Data.Word (Word64)
 import           Database.LSMTree.Internal.BlobRef (RawBlobRef)
@@ -180,44 +180,45 @@ addLargeSerialisedKeyOp RunBuilder{..} key page overflowPages = do
 -- Writes the filter and index to file and leaves all written files on disk.
 --
 -- __Do not use the 'RunBuilder' after calling this function!__
---
--- TODO: Ensure proper cleanup even in presence of exceptions.
 unsafeFinalise ::
-     (MonadST m, MonadSTM m, MonadThrow m)
+     (MonadST m, MonadSTM m, MonadMask m)
   => Bool -- ^ drop caches
   -> RunBuilder m h
   -> m (HasFS m h, HasBlockIO m h, RunFsPaths, Bloom SerialisedKey, IndexCompact, NumEntries)
-unsafeFinalise dropCaches RunBuilder {..} = do
-    -- write final bits
-    (mPage, mChunk, runFilter, runIndex, numEntries) <-
-      ST.stToIO (RunAcc.unsafeFinalise runBuilderAcc)
-    for_ mPage $ writeRawPage runBuilderHasFS (forRunKOps runBuilderHandles)
-    for_ mChunk $ writeIndexChunk runBuilderHasFS (forRunIndex runBuilderHandles)
-    writeIndexFinal runBuilderHasFS (forRunIndex runBuilderHandles) numEntries runIndex
-    writeFilter runBuilderHasFS (forRunFilter runBuilderHandles) runFilter
-    -- write checksums
-    checksums <- toChecksumsFile <$> traverse readChecksum runBuilderHandles
-    FS.withFile runBuilderHasFS (runChecksumsPath runBuilderFsPaths) (FS.WriteMode FS.MustBeNew) $ \h -> do
-      CRC.writeChecksumsFile' runBuilderHasFS h checksums
-      -- always drop the checksum file from the cache
-      FS.hDropCacheAll runBuilderHasBlockIO h
-    -- always drop filter and index files from the cache
-    dropCache runBuilderHasBlockIO (forRunFilterRaw runBuilderHandles)
-    dropCache runBuilderHasBlockIO (forRunIndexRaw runBuilderHandles)
-    -- drop the KOps and blobs files from the cache if asked for
-    when dropCaches $ do
-      dropCache runBuilderHasBlockIO (forRunKOpsRaw runBuilderHandles)
-      dropCache runBuilderHasBlockIO (forRunBlobRaw runBuilderHandles)
-    mapM_ (closeHandle runBuilderHasFS) runBuilderHandles
-    return (runBuilderHasFS, runBuilderHasBlockIO, runBuilderFsPaths, runFilter, runIndex, numEntries)
+unsafeFinalise dropCaches RunBuilder {..} =
+    withActionRegistry $ \reg -> do
+      -- write final bits
+      (mPage, mChunk, runFilter, runIndex, numEntries) <-
+        ST.stToIO (RunAcc.unsafeFinalise runBuilderAcc)
+      for_ mPage $ writeRawPage runBuilderHasFS (forRunKOps runBuilderHandles)
+      for_ mChunk $ writeIndexChunk runBuilderHasFS (forRunIndex runBuilderHandles)
+      writeIndexFinal runBuilderHasFS (forRunIndex runBuilderHandles) numEntries runIndex
+      writeFilter runBuilderHasFS (forRunFilter runBuilderHandles) runFilter
+      -- write checksums
+      checksums <- toChecksumsFile <$> traverse readChecksum runBuilderHandles
+      FS.withFile runBuilderHasFS (runChecksumsPath runBuilderFsPaths) (FS.WriteMode FS.MustBeNew) $ \h -> do
+        CRC.writeChecksumsFile' runBuilderHasFS h checksums
+        -- always drop the checksum file from the cache
+        FS.hDropCacheAll runBuilderHasBlockIO h
+      -- always drop filter and index files from the cache
+      dropCache runBuilderHasBlockIO (forRunFilterRaw runBuilderHandles)
+      dropCache runBuilderHasBlockIO (forRunIndexRaw runBuilderHandles)
+      -- drop the KOps and blobs files from the cache if asked for
+      when dropCaches $ do
+        dropCache runBuilderHasBlockIO (forRunKOpsRaw runBuilderHandles)
+        dropCache runBuilderHasBlockIO (forRunBlobRaw runBuilderHandles)
+      forM_ runBuilderHandles $ \h ->
+        delayedCommit reg $ closeHandle runBuilderHasFS h
+      return (runBuilderHasFS, runBuilderHasBlockIO, runBuilderFsPaths, runFilter, runIndex, numEntries)
 
 {-# SPECIALISE close :: HasCallStack => RunBuilder IO h -> IO () #-}
 -- | Close a run that is being constructed (has not been finalised yet),
 -- removing all files associated with it from disk.
 -- After calling this operation, the run must not be used anymore.
---
--- TODO: Ensure proper cleanup even in presence of exceptions.
-close :: (HasCallStack, MonadSTM m) => RunBuilder m h -> m ()
-close RunBuilder {..} = do
-    traverse_ (closeHandle runBuilderHasFS) runBuilderHandles
-    traverse_ (FS.removeFile runBuilderHasFS) (pathsForRunFiles runBuilderFsPaths)
+close :: (HasCallStack, MonadSTM m, PrimMonad m, MonadMask m) => RunBuilder m h -> m ()
+close RunBuilder {..} =
+    withActionRegistry $ \reg -> do
+      forM_ runBuilderHandles $ \h ->
+        delayedCommit reg (closeHandle runBuilderHasFS h)
+      forM_ (pathsForRunFiles runBuilderFsPaths) $ \path ->
+        delayedCommit reg (FS.removeFile runBuilderHasFS path)

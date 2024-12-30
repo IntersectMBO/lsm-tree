@@ -47,6 +47,7 @@ import           Database.LSMTree.Internal.RawOverflowPage (RawOverflowPage,
 import           Database.LSMTree.Internal.RawPage
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.Serialise
+import           GHC.Stack (HasCallStack)
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
 import qualified System.FS.BlockIO.API as FS
@@ -161,13 +162,14 @@ new !offsetKey
                     return (nextPage, 0)
 
 {-# SPECIALISE close ::
-     RunReader IO h
+     HasCallStack
+  => RunReader IO h
   -> IO () #-}
 -- | This function should be called when discarding a 'RunReader' before it
 -- was done (i.e. returned 'Empty'). This avoids leaking file handles.
 -- Once it has been called, do not use the reader any more!
 close ::
-     (MonadSTM m, MonadMask m, PrimMonad m)
+     (HasCallStack, MonadSTM m, MonadMask m, PrimMonad m)
   => RunReader m h
   -> m ()
 close RunReader{..} = do

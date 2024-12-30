@@ -294,14 +294,15 @@ newtype Credits = Credits Int
 newtype CreditThreshold = CreditThreshold { getCreditThreshold :: Int }
 
 {-# SPECIALISE supplyCredits ::
-     Credits
+     HasCallStack
+  => Credits
   -> CreditThreshold
   -> Ref (MergingRun IO h)
   -> IO () #-}
 -- | Supply the given amount of credits to a merging run. This /may/ cause an
 -- ongoing merge to progress.
 supplyCredits ::
-     forall m h. (MonadSTM m, MonadST m, MonadMVar m, MonadMask m)
+     forall m h. (HasCallStack, MonadSTM m, MonadST m, MonadMVar m, MonadMask m)
   => Credits
   -> CreditThreshold
   -> Ref (MergingRun m h)
@@ -436,12 +437,13 @@ takeAllUnspentCredits (UnspentCreditsVar !unspentCreditsVar) = do
         casLoop prev'
 
 {-# SPECIALISE stepMerge ::
-     StrictMVar IO (MergingRunState IO h)
+     HasCallStack
+  => StrictMVar IO (MergingRunState IO h)
   -> TotalStepsVar RealWorld
   -> Credits
   -> IO Bool #-}
 stepMerge ::
-     (MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
+     (HasCallStack, MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
   => StrictMVar m (MergingRunState m h)
   -> TotalStepsVar (PrimState m)
   -> Credits

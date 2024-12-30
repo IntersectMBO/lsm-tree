@@ -21,7 +21,6 @@ import           GHC.Stack (HasCallStack)
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
 import qualified System.FS.BlockIO.API as FS
-import           System.FS.CallStack (HasCallStack)
 
 -- | A handle to a file containing blobs.
 --
