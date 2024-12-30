@@ -53,7 +53,7 @@ testTableConfig = defaultTableConfig {
     }
 
 newSession ::
-     Positive (Small Int)
+     Positive (Small Word64)
   -> V.Vector (Word64, Entry Word64 Word64)
   -> Property
 newSession (Positive (Small bufferSize)) es =
@@ -68,7 +68,7 @@ newSession (Positive (Small bufferSize)) es =
     es' = fmap (bimap serialiseKey (bimap serialiseValue serialiseBlob)) es
 
 restoreSession ::
-     Positive (Small Int)
+     Positive (Small Word64)
   -> V.Vector (Word64, Entry Word64 Word64)
   -> Property
 restoreSession (Positive (Small bufferSize)) es =

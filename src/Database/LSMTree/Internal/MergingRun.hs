@@ -316,7 +316,7 @@ supplyCredits (Credits c) creditsThresh (DeRef MergingRun {..}) = do
       Credits unspentCredits' <- addUnspentCredits mergeUnspentCredits (Credits c)
       totalSteps <- readPrimVar (getTotalStepsVar mergeStepsPerformed)
 
-      if totalSteps + unspentCredits' >= unNumEntries mergeNumEntries then do
+      if totalSteps + unspentCredits' >= fromEnum (unNumEntries mergeNumEntries) then do
         -- We can finish the merge immediately
         isMergeDone <-
           bracketOnError (takeAllUnspentCredits mergeUnspentCredits)
@@ -515,7 +515,7 @@ expectCompleted (DeRef MergingRun {..}) = do
     -- The merge is not guaranteed to be complete, so we do the remaining steps
     when (knownCompleted == MergeMaybeCompleted) $ do
       totalSteps <- readPrimVar (getTotalStepsVar mergeStepsPerformed)
-      let !credits = Credits (unNumEntries mergeNumEntries - totalSteps)
+      let !credits = Credits $ fromEnum (unNumEntries mergeNumEntries) - totalSteps
       isMergeDone <- stepMerge mergeState mergeStepsPerformed credits
       when isMergeDone $ completeMerge mergeState mergeKnownCompleted
       -- TODO: can we think of a check to see if we did not do too much work

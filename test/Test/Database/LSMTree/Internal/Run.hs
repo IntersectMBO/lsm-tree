@@ -172,7 +172,7 @@ prop_WriteNumEntries fs hbio wb@(RunData m) =
       let !runSize = Run.size run
 
       return . labelRunData wb' $
-        NumEntries (Map.size m) === runSize
+        NumEntries (toEnum (Map.size m)) === runSize
   where
     wb' = serialiseRunData wb
 

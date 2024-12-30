@@ -146,7 +146,7 @@ benchmarks !caching = withFS $ \hfs hbio -> do
 
     unless (totalNumEntriesSanityCheck benchmarkSizeBase runSizes) $
       fail "totalNumEntriesSanityCheck failed"
-    unless (totalNumEntries runSizes >= benchmarkNumLookups) $
+    unless (totalNumEntries runSizes >= toEnum benchmarkNumLookups) $
       fail "number of key lookups is more than number of entries"
 
     traceMarkerIO "Generating runs"
@@ -266,7 +266,7 @@ benchmark name description action n (subtractTime, subtractAlloc) = do
     return (timeNet, allocNet)
 
 -- | (numEntries, sizeFactor)
-type RunSizeInfo = (Int, Int)
+type RunSizeInfo = (Word64, Word64)
 type SizeBase     = Int
 
 -- | Calculate the sizes of a realistic LSM style set of runs. This uses base 4,
@@ -290,7 +290,7 @@ lsmStyleRuns l1 =
 -- This should be roughly @100_000_000@ when we pass in @benchmarkSizeBase@.
 -- >>> totalNumEntries (lsmStyleRuns benchmarkSizeBase)
 -- 111804416
-totalNumEntries :: [RunSizeInfo] -> Int
+totalNumEntries :: [RunSizeInfo] -> Word64
 totalNumEntries runSizes =
     sum [ numEntries | (numEntries, _) <- runSizes ]
 
@@ -338,7 +338,7 @@ lookupsEnv ::
         )
 lookupsEnv runSizes keyRng0 hfs hbio caching = do
     -- create the vector of initial keys
-    (mvec :: VUM.MVector RealWorld UTxOKey) <- VUM.unsafeNew (totalNumEntries runSizes)
+    (mvec :: VUM.MVector RealWorld UTxOKey) <- VUM.unsafeNew . fromEnum $ totalNumEntries runSizes
     !keyRng1 <- vectorOfUniforms mvec keyRng0
     -- we reuse keyRng0 to generate batches of lookups, so by shuffling the
     -- vector we ensure that these batches of lookups will do random disk
@@ -367,7 +367,7 @@ lookupsEnv runSizes keyRng0 hfs hbio caching = do
         pure (i+n)
       )
       0
-      (zip rbs (fmap fst runSizes))
+      (zip rbs (fmap (fromEnum . fst) runSizes))
     putStr "DONE"
 
     -- return runs

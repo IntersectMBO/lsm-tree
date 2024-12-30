@@ -114,7 +114,6 @@ instance Index IndexOrdinary where
     finalLBS :: NumEntries -> IndexOrdinary -> LazyByteString
     finalLBS entryCount _ = toLazyByteString $
                             word64Host       $
-                            fromIntegral     $
                             unNumEntries     $
                             entryCount
 
@@ -127,7 +126,7 @@ instance Index IndexOrdinary where
         | typeAndVersion /= supportedTypeAndVersion
             = Left "Unsupported type or version"
         | otherwise
-            = (,) <$> entryCount <*> index
+            = (,) <$> Right entryCount <*> index
         where
 
         fullSize :: Int
@@ -149,19 +148,14 @@ instance Index IndexOrdinary where
         (lastKeysBytes, entryCountBytes)
             = Primitive.splitAt (fullSize - 12) postTypeAndVersionBytes
 
-        entryCount :: Either String NumEntries
-        entryCount
-            | toInteger asWord64 > toInteger (maxBound :: Int)
-                = Left "Number of entries not representable as Int"
-            | otherwise
-                = Right (NumEntries (fromIntegral asWord64))
+        entryCount :: NumEntries
+        entryCount = NumEntries asWord64
             where
+              asWord64 :: Word64
+              asWord64 = indexByteArray entryCountRep 0
 
-            asWord64 :: Word64
-            asWord64 = indexByteArray entryCountRep 0
-
-            entryCountRep :: ByteArray
-            Primitive.Vector _ _ entryCountRep = Primitive.force entryCountBytes
+              entryCountRep :: ByteArray
+              Primitive.Vector _ _ entryCountRep = Primitive.force entryCountBytes
 
         index :: Either String IndexOrdinary
         index = IndexOrdinary <$> fromList <$> lastKeys lastKeysBytes

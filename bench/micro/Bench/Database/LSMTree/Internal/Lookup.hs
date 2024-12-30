@@ -196,7 +196,7 @@ lookupsInBatchesEnv Config {..} = do
     wbblobs <- WBB.new hasFS (FS.mkFsPath [])
     r <- Run.fromWriteBuffer hasFS hasBlockIO caching (RunAllocFixed 10) fsps wb wbblobs
     let NumEntries nentriesReal = Run.size r
-    assert (nentriesReal == nentries) $ pure ()
+    assert (nentriesReal == toEnum nentries) $ pure ()
     let npagesReal = Run.sizeInPages r
     assert (getNumPages npagesReal * 42 <= nentriesReal) $ pure ()
     assert (getNumPages npagesReal * 43 >= nentriesReal) $ pure ()

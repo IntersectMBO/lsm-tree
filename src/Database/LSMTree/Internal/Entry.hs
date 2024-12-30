@@ -13,6 +13,7 @@ module Database.LSMTree.Internal.Entry (
 import           Control.DeepSeq (NFData (..))
 import           Data.Bifoldable (Bifoldable (..))
 import           Data.Bifunctor (Bifunctor (..))
+import           Data.Word (Word64)
 
 data Entry v b
     = Insert !v
@@ -67,9 +68,7 @@ instance Bifoldable Entry where
       Mupdate v           -> f v
       Delete              -> mempty
 
--- | TODO: we should change this to be a Word64, so that it is in line with the
--- disk format.
-newtype NumEntries = NumEntries Int
+newtype NumEntries = NumEntries Word64
   deriving stock (Eq, Ord, Show)
   deriving newtype NFData
 
@@ -79,7 +78,7 @@ instance Semigroup NumEntries where
 instance Monoid NumEntries where
   mempty = NumEntries 0
 
-unNumEntries :: NumEntries -> Int
+unNumEntries :: NumEntries -> Word64
 unNumEntries (NumEntries x) = x
 
 {-------------------------------------------------------------------------------
