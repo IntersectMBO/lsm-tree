@@ -36,6 +36,7 @@ import qualified Database.LSMTree.Internal.RunReader as Reader
 import           Database.LSMTree.Internal.Serialise
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import qualified Database.LSMTree.Internal.WriteBufferBlobs as WB
+import           GHC.Stack (HasCallStack)
 import qualified KMerge.Heap as Heap
 import qualified System.FS.API as FS
 
@@ -157,11 +158,12 @@ new !offsetKey wbs runs = do
         nextReadCtx n (ReadRun reader)
 
 {-# SPECIALISE close ::
-     Readers IO (FS.Handle h)
+     HasCallStack
+  => Readers IO (FS.Handle h)
   -> IO () #-}
 -- | Only call when aborting before all readers have been drained.
 close ::
-     (MonadMask m, MonadSTM m, PrimMonad m)
+     (HasCallStack, MonadMask m, MonadSTM m, PrimMonad m)
   => Readers m h
   -> m ()
 close Readers {..} = do

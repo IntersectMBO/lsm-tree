@@ -120,6 +120,7 @@ import           Database.LSMTree.Internal.Snapshot.Codec
 import           Database.LSMTree.Internal.UniqCounter
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
+import           GHC.Stack (HasCallStack)
 import qualified System.FS.API as FS
 import           System.FS.API (FsError, FsErrorPath (..), FsPath, HasFS)
 import qualified System.FS.BlockIO.API as FS
@@ -675,13 +676,14 @@ withOpenTable t action = RW.withReadAccess (tableState t) $ \case
 --
 
 {-# SPECIALISE withTable ::
-     Session IO h
+     HasCallStack
+  => Session IO h
   -> TableConfig
   -> (Table IO h -> IO a)
   -> IO a #-}
 -- | See 'Database.LSMTree.Normal.withTable'.
 withTable ::
-     (MonadMask m, MonadSTM m, MonadMVar m, PrimMonad m)
+     (HasCallStack, MonadMask m, MonadSTM m, MonadMVar m, PrimMonad m)
   => Session m h
   -> TableConfig
   -> (Table m h -> m a)
@@ -758,10 +760,10 @@ newWith reg sesh seshEnv conf !am !tc = do
         pure . Map.insert (uniqueToWord64 tableId) t
     pure $! t
 
-{-# SPECIALISE close :: Table IO h -> IO () #-}
+{-# SPECIALISE close :: HasCallStack => Table IO h -> IO () #-}
 -- | See 'Database.LSMTree.Normal.close'.
 close ::
-     (MonadMask m, MonadSTM m, MonadMVar m, PrimMonad m)
+     (HasCallStack, MonadMask m, MonadSTM m, MonadMVar m, PrimMonad m)
   => Table m h
   -> m ()
 close t = do
@@ -850,7 +852,8 @@ rangeLookup resolve range t fromEntry = do
         else return (V.concat (reverse (V.slice 0 n chunk : chunks)))
 
 {-# SPECIALISE updates ::
-     ResolveSerialisedValue
+     HasCallStack
+  => ResolveSerialisedValue
   -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob)
   -> Table IO h
   -> IO () #-}
@@ -858,7 +861,7 @@ rangeLookup resolve range t fromEntry = do
 --
 -- Does not enforce that mupsert and blobs should not occur in the same table.
 updates ::
-     (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+     (HasCallStack, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => ResolveSerialisedValue
   -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob)
   -> Table m h
@@ -1126,7 +1129,8 @@ readCursorWhile resolve keyIsWanted n Cursor {..} fromEntry = do
 -------------------------------------------------------------------------------}
 
 {-# SPECIALISE createSnapshot ::
-     ResolveSerialisedValue
+     HasCallStack
+  => ResolveSerialisedValue
   -> SnapshotName
   -> SnapshotLabel
   -> SnapshotTableType
@@ -1134,7 +1138,7 @@ readCursorWhile resolve keyIsWanted n Cursor {..} fromEntry = do
   -> IO () #-}
 -- |  See 'Database.LSMTree.Normal.createSnapshot''.
 createSnapshot ::
-     (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+     (HasCallStack, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => ResolveSerialisedValue
   -> SnapshotName
   -> SnapshotLabel

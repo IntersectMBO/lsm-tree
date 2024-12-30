@@ -130,9 +130,9 @@ duplicateTableContent reg (TableContent wb wbb levels cache) = do
     cache'  <- duplicateLevelsCache reg cache
     return $! TableContent wb wbb' levels' cache'
 
-{-# SPECIALISE releaseTableContent :: ActionRegistry IO -> TableContent IO h -> IO () #-}
+{-# SPECIALISE releaseTableContent :: HasCallStack => ActionRegistry IO -> TableContent IO h -> IO () #-}
 releaseTableContent ::
-     (PrimMonad m, MonadMask m)
+     (HasCallStack, PrimMonad m, MonadMask m)
   => ActionRegistry m
   -> TableContent m h
   -> m ()
@@ -310,9 +310,9 @@ duplicateLevels reg levels =
         residentRuns = residentRuns'
       }
 
-{-# SPECIALISE releaseLevels :: ActionRegistry IO -> Levels IO h -> IO () #-}
+{-# SPECIALISE releaseLevels :: HasCallStack => ActionRegistry IO -> Levels IO h -> IO () #-}
 releaseLevels ::
-     (PrimMonad m, MonadMask m)
+     (HasCallStack, PrimMonad m, MonadMask m)
   => ActionRegistry m
   -> Levels m h
   -> m ()
@@ -333,9 +333,9 @@ duplicateIncomingRun reg (Single r) =
 duplicateIncomingRun reg (Merging mp mr) =
     Merging mp <$> withRollback reg (dupRef mr) releaseRef
 
-{-# SPECIALISE releaseIncomingRun :: ActionRegistry IO -> IncomingRun IO h -> IO () #-}
+{-# SPECIALISE releaseIncomingRun :: HasCallStack => ActionRegistry IO -> IncomingRun IO h -> IO () #-}
 releaseIncomingRun ::
-     (PrimMonad m, MonadMask m)
+     (HasCallStack, PrimMonad m, MonadMask m)
   => ActionRegistry m
   -> IncomingRun m h -> m ()
 releaseIncomingRun reg (Single r)     = delayedCommit reg (releaseRef r)
@@ -777,7 +777,8 @@ levelIsFull sr rs = V.length rs + 1 >= (sizeRatioInt sr)
 newtype Credits = Credits Int
 
 {-# SPECIALISE supplyCredits ::
-     TableConfig
+     HasCallStack
+  => TableConfig
   -> Credits
   -> Levels IO h
   -> IO ()
@@ -785,7 +786,7 @@ newtype Credits = Credits Int
 -- | Supply the given amount of credits to each merge in the levels structure.
 -- This /may/ cause some merges to progress.
 supplyCredits ::
-     (MonadSTM m, MonadST m, MonadMVar m, MonadMask m)
+     (HasCallStack, MonadSTM m, MonadST m, MonadMVar m, MonadMask m)
   => TableConfig
   -> Credits
   -> Levels m h
