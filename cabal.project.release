@@ -30,3 +30,11 @@ if impl(ghc >=9.12)
 if (impl(ghc < 9.0) && os(windows))
   package text
     flags: -simdutf
+
+source-repository-package
+  type: git
+  location: https://github.com/input-output-hk/fs-sim
+  tag: 22ca7c9972c2a9ee9633d2c05dddd010d2938094
+  subdir:
+    fs-api
+    fs-sim
