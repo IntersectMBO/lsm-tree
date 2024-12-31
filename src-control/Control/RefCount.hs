@@ -44,7 +44,6 @@ import           GHC.Stack (CallStack, prettyCallStack)
 import           Control.Concurrent (yield)
 import qualified Control.Exception
 import           Data.IORef
-import           Data.Maybe
 import           GHC.Stack (HasCallStack, callStack)
 import           System.IO.Unsafe (unsafeDupablePerformIO, unsafePerformIO)
 import           System.Mem.Weak hiding (deRefWeak)
@@ -365,6 +364,9 @@ newRefWithTracker obj = do
 
 data RefException =
        RefUseAfterRelease RefId
+        CallStack -- ^ Allocation site
+        CallStack -- ^ Release site
+        CallStack -- ^ Use site
      | RefDoubleRelease RefId
         CallStack -- ^ Allocation site
         CallStack -- ^ First release site
@@ -380,8 +382,11 @@ instance Show RefException where
   showsPrec d x = showParen (d > appPrec) $ showString (displayException x)
 
 instance Exception RefException where
-  displayException (RefUseAfterRelease refid) =
+  displayException (RefUseAfterRelease refid allocSite releaseSite useSite) =
       "Reference is used after release: " ++ show refid
+    ++ "\nAllocation site: " ++ prettyCallStack allocSite
+    ++ "\nRelease site: " ++ prettyCallStack releaseSite
+    ++ "\nUse site: " ++ prettyCallStack useSite
   displayException (RefDoubleRelease refid allocSite releaseSite1 releaseSite2) =
       "Reference is released twice: " ++ show refid
     ++ "\nAllocation site: " ++ prettyCallStack allocSite
@@ -483,10 +488,15 @@ assertNoForgottenRefs = do
         throwIO (RefNeverReleased refid allocSite)
 
 assertNoUseAfterRelease :: (PrimMonad m, HasCallStack) => Ref a -> m ()
-assertNoUseAfterRelease Ref { reftracker = RefTracker refid _weak outer _ } =
+assertNoUseAfterRelease Ref { reftracker = RefTracker refid _weak outer allocSite } =
   unsafeIOToPrim $ do
     released <- readIORef =<< readIORef outer
-    when (isJust released) $ Control.Exception.throwIO (RefUseAfterRelease refid)
+    case released of
+      Nothing -> pure ()
+      Just releaseSite -> do
+        -- The site where the reference is used after release
+        let useSite = callStack
+        Control.Exception.throwIO (RefUseAfterRelease refid allocSite releaseSite useSite)
     assertNoForgottenRefs
 #if !(MIN_VERSION_base(4,20,0))
   where
