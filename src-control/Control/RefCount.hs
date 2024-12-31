@@ -37,6 +37,7 @@ import           Control.Monad (when)
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Primitive
 import           Data.Primitive.PrimVar
+import           GHC.Show (appPrec)
 import           GHC.Stack (CallStack, prettyCallStack)
 
 #ifdef NO_IGNORE_ASSERTS
@@ -364,22 +365,24 @@ newRefWithTracker obj = do
 data RefException =
        RefUseAfterRelease RefId
      | RefDoubleRelease RefId
-     | RefNeverReleased RefId CallStack
-       -- ^ With call stack for Ref allocation site
+     | RefNeverReleased RefId
+        CallStack -- ^ Allocation site
 
 newtype RefId = RefId Int
   deriving stock (Show, Eq, Ord)
 
 instance Show RefException where
-  --Sigh. QuickCheck still uses 'show' rather than 'displayException.
-  show = displayException
+  --Sigh. QuickCheck still uses 'show' rather than 'displayException'.
+  showsPrec d x = showParen (d > appPrec) $ showString (displayException x)
 
 instance Exception RefException where
-  displayException (RefUseAfterRelease refid) = "RefUseAfterRelease " ++ show refid
-  displayException (RefDoubleRelease   refid) = "RefDoubleRelease " ++ show refid
-  displayException (RefNeverReleased refid allocsite) =
-      "RefNeverReleased " ++ show refid
-   ++ "\nAllocation site: " ++ prettyCallStack allocsite
+  displayException (RefUseAfterRelease refid) =
+      "Reference is used after release: " ++ show refid
+  displayException (RefDoubleRelease refid) =
+      "Reference is released twice: " ++ show refid
+  displayException (RefNeverReleased refid allocSite) =
+      "Reference is never released: " ++ show refid
+   ++ "\nAllocation site: " ++ prettyCallStack allocSite
 
 #ifndef NO_IGNORE_ASSERTS
 
