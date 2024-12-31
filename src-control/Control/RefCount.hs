@@ -424,12 +424,12 @@ globalForgottenRef :: IORef (Maybe (RefId, CallStack))
 globalForgottenRef = unsafePerformIO $ newIORef Nothing
 
 newRefTracker :: PrimMonad m => CallStack -> m RefTracker
-newRefTracker callsite = unsafeIOToPrim $ do
+newRefTracker allocSite = unsafeIOToPrim $ do
     inner <- newIORef False
     outer <- newIORef inner
     refid <- fetchAddInt globalRefIdSupply 1
     weak  <- mkWeakIORef outer $
-               finaliserRefTracker inner (RefId refid) callsite
+               finaliserRefTracker inner (RefId refid) allocSite
     return (RefTracker (RefId refid) weak outer)
 
 releaseRefTracker :: PrimMonad m => Ref a -> m ()
@@ -439,7 +439,7 @@ releaseRefTracker Ref { reftracker =  RefTracker _refid _weak outer } =
     writeIORef inner True
 
 finaliserRefTracker :: IORef Bool -> RefId -> CallStack -> IO ()
-finaliserRefTracker inner refid callsite = do
+finaliserRefTracker inner refid allocSite = do
     released <- readIORef inner
     when (not released) $ do
       -- Uh oh! Forgot a reference without releasing!
@@ -453,17 +453,17 @@ finaliserRefTracker inner refid callsite = do
         -- go on a wild goose chase tracking down inner refs that were only
         -- forgotten due to an outer ref being forgotten.
         Just (refid', _) | refid < refid' -> return ()
-        _ -> writeIORef globalForgottenRef (Just (refid, callsite))
+        _ -> writeIORef globalForgottenRef (Just (refid, allocSite))
 
 assertNoForgottenRefs :: IO ()
 assertNoForgottenRefs = do
     mrefs <- readIORef globalForgottenRef
     case mrefs of
       Nothing                -> return ()
-      Just (refid, callsite) -> do
+      Just (refid, allocSite) -> do
         -- Clear the var so we don't assert again.
         writeIORef globalForgottenRef Nothing
-        throwIO (RefNeverReleased refid callsite)
+        throwIO (RefNeverReleased refid allocSite)
 
 assertNoUseAfterRelease :: (PrimMonad m, HasCallStack) => Ref a -> m ()
 assertNoUseAfterRelease Ref { reftracker = RefTracker refid _weak outer } =
