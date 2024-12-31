@@ -122,8 +122,10 @@ prop_ref_double_free = once $ ioProperty $ do
     ref <- newRef (writeIORef finalised True) TestObject
     releaseRef ref
     True <- readIORef finalised
-    Left RefDoubleRelease{} <- try $ releaseRef ref
+    Left e@RefDoubleRelease{} <- try $ releaseRef ref
     checkForgottenRefs
+    -- Print the displayed exception as an example
+    pure $ tabulate "displayException" [displayException e] ()
 
 prop_ref_use_after_free :: Property
 prop_ref_use_after_free = once $ ioProperty $ do
@@ -131,10 +133,12 @@ prop_ref_use_after_free = once $ ioProperty $ do
     ref <- newRef (writeIORef finalised True) TestObject
     releaseRef ref
     True <- readIORef finalised
-    Left RefUseAfterRelease{} <- try $ withRef ref return
+    Left e@RefUseAfterRelease{} <- try $ withRef ref return
     Left RefUseAfterRelease{} <- try $ case ref of DeRef _ -> return ()
     Left RefUseAfterRelease{} <- try $ dupRef ref
     checkForgottenRefs
+    -- Print the displayed exception as an example
+    pure $ tabulate "displayException" [displayException e] ()
 
 prop_ref_never_released0 :: Property
 prop_ref_never_released0 = once $ ioProperty $ do
@@ -173,7 +177,9 @@ prop_ref_never_released2 =
       return (counterexample "no forgotten refs detected" $ property False)
 
 expectRefNeverReleased :: RefException -> IO Property
-expectRefNeverReleased RefNeverReleased{} = return (property True)
+expectRefNeverReleased e@RefNeverReleased{} =
+    -- Print the displayed exception as an example
+    return (tabulate "displayException" [displayException e] (property True))
 expectRefNeverReleased e =
     return (counterexample (displayException e) $ property False)
 #endif
