@@ -76,6 +76,7 @@ import           Control.Tracer (Tracer, nullTracer)
 import           Data.Bifunctor (Bifunctor (..))
 import           Data.Constraint (Dict (..))
 import           Data.Either (partitionEithers)
+import           Data.Functor.Classes (Eq1 (..))
 import           Data.Kind (Type)
 import           Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
@@ -107,6 +108,7 @@ import           System.FS.BlockIO.API (HasBlockIO, defaultIOCtxParams)
 import           System.FS.BlockIO.IO (ioHasBlockIO)
 import           System.FS.BlockIO.Sim (simHasBlockIO)
 import           System.FS.IO (HandleIO, ioHasFS)
+import           System.FS.Sim.Error (Errors)
 import qualified System.FS.Sim.MockFS as MockFS
 import           System.FS.Sim.MockFS (MockFS)
 import           System.IO.Temp (createTempDirectory,
@@ -475,12 +477,16 @@ instance ( Show (Class.TableConfig h)
                   => Var h (V.Vector (WrapBlobRef h IO b))
                   -> Act h (V.Vector (WrapBlob b))
     -- Snapshots
-    CreateSnapshot :: C k v b
-                   => R.SnapshotLabel -> R.SnapshotName -> Var h (WrapTable h IO k v b)
-                   -> Act h ()
-    OpenSnapshot   :: C k v b
-                   => R.SnapshotLabel -> R.SnapshotName
-                   -> Act h (WrapTable h IO k v b)
+    CreateSnapshot ::
+         C k v b
+      => Maybe Errors
+      -> R.SnapshotLabel -> R.SnapshotName -> Var h (WrapTable h IO k v b)
+      -> Act h ()
+    OpenSnapshot   ::
+         C k v b
+      => Maybe Errors
+      -> R.SnapshotLabel -> R.SnapshotName
+      -> Act h (WrapTable h IO k v b)
     DeleteSnapshot :: R.SnapshotName -> Act h ()
     ListSnapshots  :: Act h [R.SnapshotName]
     -- Duplicate tables
@@ -545,10 +551,10 @@ instance ( Eq (Class.TableConfig h)
           Just mups1 == cast mups2 && Just var1 == cast var2
       go (RetrieveBlobs vars1) (RetrieveBlobs vars2) =
           Just vars1 == cast vars2
-      go (CreateSnapshot label1 name1 var1) (CreateSnapshot label2 name2 var2) =
-          label1 == label2 && name1 == name2 && Just var1 == cast var2
-      go (OpenSnapshot label1 name1) (OpenSnapshot label2 name2) =
-          label1 == label2 && name1 == name2
+      go (CreateSnapshot merrs1 label1 name1 var1) (CreateSnapshot merrs2 label2 name2 var2) =
+          merrs1 `eqErrors` merrs2 && label1 == label2 && name1 == name2 && Just var1 == cast var2
+      go (OpenSnapshot merrs1 label1 name1) (OpenSnapshot merrs2 label2 name2) =
+          merrs1 `eqErrors` merrs2 && label1 == label2 && name1 == name2
       go (DeleteSnapshot name1) (DeleteSnapshot name2) =
           name1 == name2
       go ListSnapshots ListSnapshots =
@@ -582,6 +588,13 @@ instance ( Eq (Class.TableConfig h)
           Duplicate{} -> ()
           Union{} -> ()
           Unions{} -> ()
+
+-- TODO: this is wrong of course, because we don't actually compare the
+-- 'Errors'. 'Errors' currently does not have an 'Eq' instance because it can
+-- contain infinite streams, though maybe there is a sensible instance that can
+-- compute an approximation of equality.
+eqErrors :: Eq1 f => f Errors -> f Errors -> Bool
+eqErrors = liftEq (\_ _ -> True)
 
 {-------------------------------------------------------------------------------
   InLockstep
@@ -683,8 +696,8 @@ instance ( Eq (Class.TableConfig h)
       Deletes _ tableVar              -> [SomeGVar tableVar]
       Mupserts _ tableVar             -> [SomeGVar tableVar]
       RetrieveBlobs blobsVar          -> [SomeGVar blobsVar]
-      CreateSnapshot _ _ tableVar     -> [SomeGVar tableVar]
-      OpenSnapshot _ _                -> []
+      CreateSnapshot _ _ _ tableVar   -> [SomeGVar tableVar]
+      OpenSnapshot{}                  -> []
       DeleteSnapshot _                -> []
       ListSnapshots                   -> []
       Duplicate tableVar              -> [SomeGVar tableVar]
@@ -960,10 +973,12 @@ runModel lookUp = \case
     RetrieveBlobs blobsVar ->
       wrap (MVector . fmap (MBlob . WrapBlob))
       . Model.runModelM (Model.retrieveBlobs (getBlobRefs . lookUp $ blobsVar))
-    CreateSnapshot label name tableVar ->
+    -- TODO: use merrs
+    CreateSnapshot _merrs label name tableVar ->
       wrap MUnit
       . Model.runModelM (Model.createSnapshot label name (getTable $ lookUp tableVar))
-    OpenSnapshot label name ->
+    -- TODO: use merrs
+    OpenSnapshot _merrs label name ->
       wrap MTable
       . Model.runModelM (Model.openSnapshot label name)
     DeleteSnapshot name ->
@@ -1047,9 +1062,11 @@ runIO action lookUp = ReaderT $ \(session, handler) -> do
           Class.mupserts (unwrapTable $ lookUp' tableVar) kmups
         RetrieveBlobs blobRefsVar -> catchErr handler $
           fmap WrapBlob <$> Class.retrieveBlobs (Proxy @h) session (unwrapBlobRef <$> lookUp' blobRefsVar)
-        CreateSnapshot label name tableVar -> catchErr handler $
+        -- TODO: use merrs
+        CreateSnapshot _merrs label name tableVar -> catchErr handler $
           Class.createSnapshot label name (unwrapTable $ lookUp' tableVar)
-        OpenSnapshot label name -> catchErr handler $
+        -- TODO: use merrs
+        OpenSnapshot _merrs label name -> catchErr handler $
           WrapTable <$> Class.openSnapshot session label name
         DeleteSnapshot name -> catchErr handler $
           Class.deleteSnapshot session name
@@ -1103,9 +1120,11 @@ runIOSim action lookUp = ReaderT $ \(session, handler) ->
           Class.mupserts (unwrapTable $ lookUp' tableVar) kmups
         RetrieveBlobs blobRefsVar -> catchErr handler $
           fmap WrapBlob <$> Class.retrieveBlobs (Proxy @h) session (unwrapBlobRef <$> lookUp' blobRefsVar)
-        CreateSnapshot label name tableVar -> catchErr handler $
+        -- TODO: use merrs
+        CreateSnapshot _merrs label name tableVar -> catchErr handler $
           Class.createSnapshot label name (unwrapTable $ lookUp' tableVar)
-        OpenSnapshot label name -> catchErr handler $
+        -- TODO: use merrs
+        OpenSnapshot _merrs label name -> catchErr handler $
           WrapTable <$> Class.openSnapshot session label name
         DeleteSnapshot name -> catchErr handler $
           Class.deleteSnapshot session name
@@ -1231,8 +1250,12 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
         [ (1, fmap Some $ New  @k @v @b PrettyProxy <$> QC.arbitrary)
         | length tableVars <= 5 ] -- no more than 5 tables at once
 
-     ++ [ (1, fmap Some $ OpenSnapshot @k @v @b label <$> genUsedSnapshotName)
-        | not (null usedSnapshotNames) ]
+     ++ [ (1, fmap Some $ OpenSnapshot @k @v @b <$>
+                genErrors <*> pure label <*> genUsedSnapshotName)
+        | not (null usedSnapshotNames)
+          -- TODO: generate errors
+        , let genErrors = pure Nothing
+        ]
 
      ++ [ (1, fmap Some $ DeleteSnapshot <$> genUsedSnapshotName)
         | not (null usedSnapshotNames) ]
@@ -1255,8 +1278,11 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
      ++ [ (3,  fmap Some $ NewCursor <$> QC.arbitrary <*> genTableVar)
         | length cursorVars <= 5 -- no more than 5 cursors at once
         ]
-     ++ [ (2,  fmap Some $ CreateSnapshot label <$> genUnusedSnapshotName <*> genTableVar)
+     ++ [ (2,  fmap Some $ CreateSnapshot <$>
+                genErrors <*> pure label <*> genUnusedSnapshotName <*> genTableVar)
         | not (null unusedSnapshotNames)
+           -- TODO: generate errors
+        , let genErrors = pure Nothing
         ]
      ++ [ (5,  fmap Some $ Duplicate <$> genTableVar)
         | length tableVars <= 5 -- no more than 5 tables at once
@@ -1475,7 +1501,7 @@ updateStats action lookUp modelBefore _modelAfter result =
     -- === Tags
 
     updSnapshotted stats = case (action, result) of
-      (CreateSnapshot _ name _, MEither (Right (MUnit ()))) -> stats {
+      (CreateSnapshot _ _ name _, MEither (Right (MUnit ()))) -> stats {
           snapshotted = Set.insert name (snapshotted stats)
         }
       (DeleteSnapshot name, MEither (Right (MUnit ()))) -> stats {
@@ -1719,21 +1745,21 @@ tagStep' (ModelState _stateBefore statsBefore,
     ]
   where
     tagSnapshotTwice
-      | CreateSnapshot _ name _ <- action
+      | CreateSnapshot _ _ name _ <- action
       , name `Set.member` snapshotted statsBefore
       = Just SnapshotTwice
       | otherwise
       = Nothing
 
     tagOpenExistingSnapshot
-      | OpenSnapshot _ name <- action
+      | OpenSnapshot _ _ name <- action
       , name `Set.member` snapshotted statsBefore
       = Just OpenExistingSnapshot
       | otherwise
       = Nothing
 
     tagOpenMissingSnapshot
-      | OpenSnapshot _ name <- action
+      | OpenSnapshot _ _ name <- action
       , not (name `Set.member` snapshotted statsBefore)
       = Just OpenMissingSnapshot
       | otherwise
