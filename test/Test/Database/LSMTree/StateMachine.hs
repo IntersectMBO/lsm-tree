@@ -106,7 +106,7 @@ import qualified System.FS.API as FS
 import           System.FS.API (FsError (..), HasFS, MountPoint (..), mkFsPath)
 import           System.FS.BlockIO.API (HasBlockIO, defaultIOCtxParams)
 import           System.FS.BlockIO.IO (ioHasBlockIO)
-import           System.FS.BlockIO.Sim (simHasBlockIO)
+import           System.FS.BlockIO.Sim (simErrorHasBlockIO)
 import qualified System.FS.CallStack as FS
 import           System.FS.IO (HandleIO, ioHasFS)
 import qualified System.FS.Sim.Error as FSSim
@@ -180,23 +180,25 @@ propLockstep_ModelIOImpl =
       (Proxy @(ModelState ModelIO.Table))
       acquire
       release
-      (\r session -> do
+      (\r (session, errsVar) -> do
             let
               env :: RealEnv ModelIO.Table IO
               env = RealEnv {
                   envSession = session
                 , envHandlers = [handler, fsErrorHandler]
+                , envErrors = errsVar
                 }
             runReaderT r env)
       tagFinalState'
   where
-    acquire :: IO (Class.Session ModelIO.Table IO)
+    acquire :: IO (Class.Session ModelIO.Table IO, StrictTVar IO Errors)
     acquire = do
       session <- Class.openSession ModelIO.NoSessionArgs
-      pure session
+      errsVar <- newTVarIO FSSim.emptyErrors
+      pure (session, errsVar)
 
-    release :: Class.Session ModelIO.Table IO -> IO ()
-    release session = Class.closeSession session
+    release :: (Class.Session ModelIO.Table IO, StrictTVar IO Errors) -> IO ()
+    release (session, _) = Class.closeSession session
 
     handler :: Handler IO (Maybe Model.Err)
     handler = Handler $ pure . handler'
@@ -270,24 +272,26 @@ propLockstep_RealImpl_RealFS_IO tr =
       (Proxy @(ModelState R.Table))
       acquire
       release
-      (\r (_, session) -> do
+      (\r (_, session, errsVar) -> do
             let
               env :: RealEnv R.Table IO
               env = RealEnv {
                   envSession = session
                 , envHandlers = [realHandler @IO, fsErrorHandler]
+                , envErrors = errsVar
                 }
             runReaderT r env)
       tagFinalState'
   where
-    acquire :: IO (FilePath, Class.Session R.Table IO)
+    acquire :: IO (FilePath, Class.Session R.Table IO, StrictTVar IO Errors)
     acquire = do
         (tmpDir, hasFS, hasBlockIO) <- createSystemTempDirectory "prop_lockstepIO_RealImpl_RealFS"
         session <- R.openSession tr hasFS hasBlockIO (mkFsPath [])
-        pure (tmpDir, session)
+        errsVar <- newTVarIO FSSim.emptyErrors
+        pure (tmpDir, session, errsVar)
 
-    release :: (FilePath, Class.Session R.Table IO) -> IO ()
-    release (tmpDir, session) = do
+    release :: (FilePath, Class.Session R.Table IO, StrictTVar IO Errors) -> IO ()
+    release (tmpDir, session, _) = do
         R.closeSession session
         removeDirectoryRecursive tmpDir
 
@@ -300,12 +304,13 @@ propLockstep_RealImpl_MockFS_IO tr =
       (Proxy @(ModelState R.Table))
       (acquire_RealImpl_MockFS tr)
       release_RealImpl_MockFS
-      (\r (_, session) -> do
+      (\r (_, session, errsVar) -> do
             let
               env :: RealEnv R.Table IO
               env = RealEnv {
                   envSession = session
                 , envHandlers = [realHandler @IO, fsErrorHandler]
+                , envErrors = errsVar
                 }
             runReaderT r env)
       tagFinalState'
@@ -319,34 +324,36 @@ propLockstep_RealImpl_MockFS_IOSim tr actions =
   where
     prop :: forall s. PropertyM (IOSim s) Property
     prop = do
-        (fsVar, session) <- QC.run (acquire_RealImpl_MockFS tr)
+        (fsVar, session, errsVar) <- QC.run (acquire_RealImpl_MockFS tr)
         let
           env :: RealEnv R.Table (IOSim s)
           env = RealEnv {
               envSession = session
             , envHandlers = [realHandler @(IOSim s), fsErrorHandler]
+            , envErrors = errsVar
             }
         void $ QD.runPropertyReaderT
                 (QD.runActions @(Lockstep (ModelState R.Table)) actions)
                 env
-        QC.run $ release_RealImpl_MockFS (fsVar, session)
+        QC.run $ release_RealImpl_MockFS (fsVar, session, errsVar)
         pure $ tagFinalState actions tagFinalState' $ QC.property True
 
 acquire_RealImpl_MockFS ::
      R.IOLike m
   => Tracer m R.LSMTreeTrace
-  -> m (StrictTMVar m MockFS, Class.Session R.Table m)
+  -> m (StrictTMVar m MockFS, Class.Session R.Table m, StrictTVar m Errors)
 acquire_RealImpl_MockFS tr = do
     fsVar <- newTMVarIO MockFS.empty
-    (hfs, hbio) <- simHasBlockIO fsVar
+    errsVar <- newTVarIO FSSim.emptyErrors
+    (hfs, hbio) <- simErrorHasBlockIO fsVar errsVar
     session <- R.openSession tr hfs hbio (mkFsPath [])
-    pure (fsVar, session)
+    pure (fsVar, session, errsVar)
 
 release_RealImpl_MockFS ::
      R.IOLike m
-  => (StrictTMVar m MockFS, Class.Session R.Table m)
+  => (StrictTMVar m MockFS, Class.Session R.Table m, StrictTVar m Errors)
   -> m ()
-release_RealImpl_MockFS (fsVar, session) = do
+release_RealImpl_MockFS (fsVar, session, _) = do
     sts <- getAllSessionTables session
     forM_ sts $ \(SomeTable t) -> R.close t
     scs <- getAllSessionCursors session
@@ -834,6 +841,12 @@ data RealEnv h m = RealEnv {
     -- error values obtained from running @h@ to the error values obtained by
     -- running the model.
   , envHandlers :: [Handler m (Maybe Model.Err)]
+    -- | A variable holding simulated disk faults,
+    --
+    -- This variable shared with the simulated file system (if in use). This
+    -- variable can be used to enable/disable errors locally, for example on a
+    -- per-action basis.
+  , envErrors   :: !(StrictTVar m Errors)
   }
 
 {-------------------------------------------------------------------------------
@@ -1138,6 +1151,8 @@ runIO action lookUp = ReaderT $ \ !env -> do
       where
         session = envSession env
         handlers = envHandlers env
+        -- TODO: use errsVar
+        _errsVar = envErrors env
 
     lookUp' :: Var h x -> Realized IO x
     lookUp' = lookUpGVar (Proxy @(RealMonad h IO)) lookUp
@@ -1198,6 +1213,8 @@ runIOSim action lookUp = ReaderT $ \ !env -> do
       where
         session = envSession env
         handlers = envHandlers env
+        -- TODO: use errsVar
+        _errsVar = envErrors env
 
     lookUp' :: Var h x -> Realized (IOSim s) x
     lookUp' = lookUpGVar (Proxy @(RealMonad h (IOSim s))) lookUp
