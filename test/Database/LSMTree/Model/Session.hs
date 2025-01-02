@@ -29,6 +29,7 @@ module Database.LSMTree.Model.Session (
   , runModelT
   , ModelM
   , runModelM
+  , runModelMWithInjectedErrors
     -- ** Errors
   , Err (..)
     -- * Tables
@@ -195,6 +196,43 @@ type ModelM = ModelT Identity
 runModelM :: ModelM a -> Model -> (Either Err a, Model)
 runModelM m = runIdentity . runModelT m
 
+-- | @'runModelMWithInjectedErrors' merrs onNoErrors onErrors@ runs the model
+-- with injected disk faults @merrs@.
+--
+-- The model may run different actions based on whether there are injections or
+-- not. 'onNoErrors' runs in case @merrs == Nothing@, and 'onErrors@ runs in
+-- case @merrs == Just _@.
+--
+-- Typically, @onNoErrors@ will be a model function like 'lookups', and
+-- @onErrors@ should be the identity state transition. This models the approach
+-- of the @lsm-tree@ library: the *logical* state of the database should remain
+-- unchanged if there were any disk faults.
+--
+-- The model functions in the remainder of the module only describe the happy
+-- path with respect to disk faults: they assume there aren't any such faults.
+-- The intent of 'runModelMWithInjectedErrors' is to augment the model with
+-- responses to disk fault injection.
+--
+-- The real system's is not guaranteed to fail with an error if there are
+-- injected disk faults. However, the approach taken in
+-- 'runModelMWithInjectedErrors' is to *always* throw a modelled disk error in
+-- case there are injections, *even if* the real system happened to not fail
+-- completely. This makes 'runModelMWithInjectedErrors' an approximation of the
+-- real system's behaviour in case of injections. For the model to more
+-- accurately model the system's behaviour, the model would have to know for
+-- each API function precisely which errors are injected in which order, and
+-- whether they are handled internally by the library or not. This is simply
+-- infeasible: the model would become very complex.
+runModelMWithInjectedErrors ::
+     Maybe e -- ^ The errors that are injected
+  -> ModelM a -- ^ Action to run on 'Nothing'
+  -> ModelM () -- ^ Action to run on 'Just'
+  -> Model -> (Either Err a, Model)
+runModelMWithInjectedErrors Nothing onNoErrors _ st =
+    runModelM onNoErrors st
+runModelMWithInjectedErrors (Just _) _ onErrors st =
+    runModelM (onErrors >> throwError ErrFsError) st
+
 --
 -- Errors
 --
@@ -208,6 +246,8 @@ data Err =
   | ErrCursorClosed
     -- | Passed zero tables to 'unions'
   | ErrUnionsZeroTables
+    -- | Some file system error occurred
+  | ErrFsError
   deriving stock (Show, Eq)
 
 {-------------------------------------------------------------------------------

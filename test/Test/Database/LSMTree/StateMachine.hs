@@ -978,14 +978,16 @@ runModel lookUp = \case
     RetrieveBlobs blobsVar ->
       wrap (MVector . fmap (MBlob . WrapBlob))
       . Model.runModelM (Model.retrieveBlobs (getBlobRefs . lookUp $ blobsVar))
-    -- TODO: use merrs
-    CreateSnapshot _merrs label name tableVar ->
+    CreateSnapshot merrs label name tableVar ->
       wrap MUnit
-      . Model.runModelM (Model.createSnapshot label name (getTable $ lookUp tableVar))
-    -- TODO: use merrs
-    OpenSnapshot _merrs label name ->
+      . Model.runModelMWithInjectedErrors merrs
+          (Model.createSnapshot label name (getTable $ lookUp tableVar))
+          (pure ())
+    OpenSnapshot merrs label name ->
       wrap MTable
-      . Model.runModelM (Model.openSnapshot label name)
+      . Model.runModelMWithInjectedErrors merrs
+          (Model.openSnapshot label name)
+          (pure ())
     DeleteSnapshot name ->
       wrap MUnit
       . Model.runModelM (Model.deleteSnapshot name)
