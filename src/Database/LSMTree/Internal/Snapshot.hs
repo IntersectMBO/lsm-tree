@@ -26,6 +26,7 @@ module Database.LSMTree.Internal.Snapshot (
   , hardLinkRunFiles
   ) where
 
+import           Control.ActionRegistry
 import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Concurrent.Class.MonadSTM (MonadSTM)
 import           Control.DeepSeq (NFData (..))
@@ -34,7 +35,6 @@ import           Control.Monad.Class.MonadST (MonadST)
 import           Control.Monad.Class.MonadThrow (MonadMask)
 import           Control.Monad.Primitive (PrimMonad)
 import           Control.RefCount
-import           Control.TempRegistry
 import           Data.Foldable (sequenceA_, traverse_)
 import           Data.Primitive.PrimVar
 import           Data.Text (Text)
@@ -229,7 +229,7 @@ toSnapMergingRunState (MR.OngoingMerge rs (MR.SpentCreditsVar spentCreditsVar) m
 
 {-# SPECIALISE
   snapshotWriteBuffer ::
-       TempRegistry IO
+       ActionRegistry IO
     -> HasFS IO h
     -> HasBlockIO IO h
     -> UniqCounter IO
@@ -241,7 +241,7 @@ toSnapMergingRunState (MR.OngoingMerge rs (MR.SpentCreditsVar spentCreditsVar) m
   #-}
 snapshotWriteBuffer ::
      (MonadMVar m, MonadSTM m, MonadST m, MonadMask m)
-  => TempRegistry m
+  => ActionRegistry m
   -> HasFS m h
   -> HasBlockIO m h
   -> UniqCounter m
@@ -254,11 +254,11 @@ snapshotWriteBuffer reg hfs hbio uc activeDir snapDir wb wbb = do
   -- Write the write buffer and write buffer blobs to the active directory.
   activeWriteBufferNumber <- uniqueToRunNumber <$> incrUniqCounter uc
   let activeWriteBufferPaths = WriteBufferFsPaths (getActiveDir activeDir) activeWriteBufferNumber
-  allocateTemp reg
+  withRollback_ reg
     (WBW.writeWriteBuffer hfs hbio activeWriteBufferPaths wb wbb)
     -- TODO: it should probably be the responsibility of writeWriteBuffer to do
     -- cleanup
-    $ \() -> do
+    $ do
       -- TODO: check files exist before removing them
       FS.removeFile hfs (writeBufferKOpsPath activeWriteBufferPaths)
       FS.removeFile hfs (writeBufferBlobPath activeWriteBufferPaths)
@@ -277,18 +277,18 @@ snapshotWriteBuffer reg hfs hbio uc activeDir snapDir wb wbb = do
 
 {-# SPECIALISE
   openWriteBuffer ::
-     TempRegistry IO
-  -> ResolveSerialisedValue
-  -> HasFS IO h
-  -> HasBlockIO IO h
-  -> UniqCounter IO
-  -> ActiveDir
-  -> WriteBufferFsPaths
-  -> IO (WriteBuffer, Ref (WriteBufferBlobs IO h))
+       ActionRegistry IO
+    -> ResolveSerialisedValue
+    -> HasFS IO h
+    -> HasBlockIO IO h
+    -> UniqCounter IO
+    -> ActiveDir
+    -> WriteBufferFsPaths
+    -> IO (WriteBuffer, Ref (WriteBufferBlobs IO h))
   #-}
 openWriteBuffer ::
      (MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
-  => TempRegistry m
+  => ActionRegistry m
   -> ResolveSerialisedValue
   -> HasFS m h
   -> HasBlockIO m h
@@ -303,7 +303,7 @@ openWriteBuffer reg resolve hfs hbio uc activeDir snapWriteBufferPaths = do
         getActiveDir activeDir </> FS.mkFsPath [show activeWriteBufferNumber] <.> "wbblobs"
   copyFile reg hfs hbio (writeBufferBlobPath snapWriteBufferPaths) activeWriteBufferBlobPath
   writeBufferBlobs <-
-    allocateTemp reg
+    withRollback reg
       (WBB.open hfs activeWriteBufferBlobPath FS.AllowExisting)
       releaseRef
   -- Read write buffer key/ops
@@ -318,7 +318,7 @@ openWriteBuffer reg resolve hfs hbio uc activeDir snapWriteBufferPaths = do
 -------------------------------------------------------------------------------}
 
 {-# SPECIALISE snapshotRuns ::
-     TempRegistry IO
+     ActionRegistry IO
   -> HasBlockIO IO h
   -> NamedSnapshotDir
   -> SnapLevels (Ref (Run IO h))
@@ -328,8 +328,8 @@ openWriteBuffer reg resolve hfs hbio uc activeDir snapWriteBufferPaths = do
 -- the @targetDir@ directory. The hard links and the @targetDir@ are made
 -- durable on disk.
 snapshotRuns ::
-     (MonadMask m, MonadMVar m)
-  => TempRegistry m
+     (MonadMask m, PrimMonad m)
+  => ActionRegistry m
   -> HasBlockIO m h
   -> NamedSnapshotDir
   -> SnapLevels (Ref (Run m h))
@@ -348,7 +348,7 @@ snapshotRuns reg hbio0 (NamedSnapshotDir targetDir) levels = do
     pure levels'
 
 {-# SPECIALISE openRuns ::
-     TempRegistry IO
+     ActionRegistry IO
   -> HasFS IO h
   -> HasBlockIO IO h
   -> TableConfig
@@ -366,7 +366,7 @@ snapshotRuns reg hbio0 (NamedSnapshotDir targetDir) levels = do
 -- The result must ultimately be released using 'releaseRuns'.
 openRuns ::
      (MonadMask m, MonadSTM m, MonadST m, MonadMVar m)
-  => TempRegistry m
+  => ActionRegistry m
   -> HasFS m h
   -> HasBlockIO m h
   -> TableConfig
@@ -388,25 +388,25 @@ openRuns
           let targetPaths = RunFsPaths targetDir runNum'
           hardLinkRunFiles reg hfs hbio NoHardLinkDurable sourcePaths targetPaths
 
-          allocateTemp reg
+          withRollback reg
             (Run.openFromDisk hfs hbio caching targetPaths)
             releaseRef
     pure (SnapLevels levels')
 
 {-# SPECIALISE releaseRuns ::
-     TempRegistry IO -> SnapLevels (Ref (Run IO h)) -> IO ()
+     ActionRegistry IO -> SnapLevels (Ref (Run IO h)) -> IO ()
   #-}
 releaseRuns ::
-     (MonadMask m, MonadST m, MonadMVar m)
-  => TempRegistry m -> SnapLevels (Ref (Run m h)) -> m ()
-releaseRuns reg = traverse_ $ \r -> freeTemp reg (releaseRef r)
+     (MonadMask m, MonadST m)
+  => ActionRegistry m -> SnapLevels (Ref (Run m h)) -> m ()
+releaseRuns reg = traverse_ $ \r -> delayedCommit reg (releaseRef r)
 
 {-------------------------------------------------------------------------------
   Opening from levels snapshot format
 -------------------------------------------------------------------------------}
 
 {-# SPECIALISE fromSnapLevels ::
-     TempRegistry IO
+     ActionRegistry IO
   -> HasFS IO h
   -> HasBlockIO IO h
   -> TableConfig
@@ -419,7 +419,7 @@ releaseRuns reg = traverse_ $ \r -> freeTemp reg (releaseRef r)
 -- | Duplicates runs and re-creates merging runs.
 fromSnapLevels ::
      forall m h. (MonadMask m, MonadMVar m, MonadSTM m, MonadST m)
-  => TempRegistry m
+  => ActionRegistry m
   -> HasFS m h
   -> HasBlockIO m h
   -> TableConfig
@@ -450,11 +450,11 @@ fromSnapLevels reg hfs hbio conf@TableConfig{..} uc resolve dir (SnapLevels leve
         fromSnapIncomingRun (SnapMergingRun mpfl nr ne unspentCredits smrs) = do
             Merging mpfl <$> case smrs of
               SnapCompletedMerge run ->
-                allocateTemp reg (MR.newCompleted nr ne run) releaseRef
+                withRollback reg (MR.newCompleted nr ne run) releaseRef
 
               SnapOngoingMerge runs spentCredits lvl -> do
                 rn <- uniqueToRunNumber <$> incrUniqCounter uc
-                mr <- allocateTemp reg
+                mr <- withRollback reg
                   (MR.new hfs hbio resolve caching alloc lvl (mkPath rn) runs)
                   releaseRef
                 -- When a snapshot is created, merge progress is lost, so we
@@ -466,7 +466,7 @@ fromSnapLevels reg hfs hbio conf@TableConfig{..} uc resolve dir (SnapLevels leve
                 MR.supplyCredits (MR.Credits c) (creditThresholdForLevel conf ln) mr
                 return mr
 
-    dupRun r = allocateTemp reg (dupRef r) releaseRef
+    dupRun r = withRollback reg (dupRef r) releaseRef
 
 {-------------------------------------------------------------------------------
   Hard links
@@ -476,7 +476,7 @@ data HardLinkDurable = HardLinkDurable | NoHardLinkDurable
   deriving stock Eq
 
 {-# SPECIALISE hardLinkRunFiles ::
-     TempRegistry IO
+     ActionRegistry IO
   -> HasFS IO h
   -> HasBlockIO IO h
   -> HardLinkDurable
@@ -488,8 +488,8 @@ data HardLinkDurable = HardLinkDurable | NoHardLinkDurable
 -- name for the new directory entry. If @dur == HardLinkDurabl@, the links will
 -- also be made durable on disk.
 hardLinkRunFiles ::
-     (MonadMask m, MonadMVar m)
-  => TempRegistry m
+     (MonadMask m, PrimMonad m)
+  => ActionRegistry m
   -> HasFS m h
   -> HasBlockIO m h
   -> HardLinkDurable
@@ -504,7 +504,7 @@ hardLinkRunFiles reg hfs hbio dur sourceRunFsPaths targetRunFsPaths = do
 
 {-# SPECIALISE
   hardLink ::
-      TempRegistry IO
+       ActionRegistry IO
     -> HasFS IO h
     -> HasBlockIO IO h
     -> HardLinkDurable
@@ -515,8 +515,8 @@ hardLinkRunFiles reg hfs hbio dur sourceRunFsPaths targetRunFsPaths = do
 -- | @'hardLink' reg hfs hbio dur sourcePath targetPath@ creates a hard link
 -- from @sourcePath@ to @targetPath@.
 hardLink ::
-     (MonadMask m, MonadMVar m)
-  => TempRegistry m
+     (MonadMask m, PrimMonad m)
+  => ActionRegistry m
   -> HasFS m h
   -> HasBlockIO m h
   -> HardLinkDurable
@@ -524,11 +524,12 @@ hardLink ::
   -> FS.FsPath
   -> m ()
 hardLink reg hfs hbio dur sourcePath targetPath = do
-    allocateTemp reg
+    withRollback_ reg
       (FS.createHardLink hbio sourcePath targetPath)
-      (\_ -> FS.removeFile hfs targetPath)
+      (FS.removeFile hfs targetPath)
     when (dur == HardLinkDurable) $
       FS.synchroniseFile hfs hbio targetPath
+
 
 {-------------------------------------------------------------------------------
   Copy file
@@ -536,7 +537,7 @@ hardLink reg hfs hbio dur sourcePath targetPath = do
 
 {-# SPECIALISE
   copyFile ::
-       TempRegistry IO
+       ActionRegistry IO
     -> HasFS IO h
     -> HasBlockIO IO h
     -> FS.FsPath
@@ -545,15 +546,15 @@ hardLink reg hfs hbio dur sourcePath targetPath = do
   #-}
 -- | @'copyFile' reg hfs hbio source target@ copies the @source@ path to the @target@ path.
 copyFile ::
-     (MonadMask m, MonadMVar m)
-  => TempRegistry m
+     (MonadMask m, PrimMonad m)
+  => ActionRegistry m
   -> HasFS m h
   -> HasBlockIO m h
   -> FS.FsPath
   -> FS.FsPath
   -> m ()
 copyFile reg hfs _hbio sourcePath targetPath =
-    flip (allocateTemp reg) (\_ -> FS.removeFile hfs targetPath) $
+    flip (withRollback_ reg) (FS.removeFile hfs targetPath) $
       FS.withFile hfs sourcePath FS.ReadMode $ \sourceHandle ->
         FS.withFile hfs targetPath (FS.WriteMode FS.MustBeNew) $ \targetHandle -> do
           bs <- FSL.hGetAll hfs sourceHandle
