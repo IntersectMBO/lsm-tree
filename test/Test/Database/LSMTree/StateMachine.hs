@@ -76,7 +76,6 @@ import           Control.Tracer (Tracer, nullTracer)
 import           Data.Bifunctor (Bifunctor (..))
 import           Data.Constraint (Dict (..))
 import           Data.Either (partitionEithers)
-import           Data.Functor.Classes (Eq1 (..))
 import           Data.Kind (Type)
 import           Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
@@ -108,9 +107,11 @@ import           System.FS.BlockIO.API (HasBlockIO, defaultIOCtxParams)
 import           System.FS.BlockIO.IO (ioHasBlockIO)
 import           System.FS.BlockIO.Sim (simHasBlockIO)
 import           System.FS.IO (HandleIO, ioHasFS)
+import qualified System.FS.Sim.Error as FSSim
 import           System.FS.Sim.Error (Errors)
 import qualified System.FS.Sim.MockFS as MockFS
 import           System.FS.Sim.MockFS (MockFS)
+import           System.FS.Sim.Stream (Stream)
 import           System.IO.Temp (createTempDirectory,
                      getCanonicalTemporaryDirectory)
 import           Test.Database.LSMTree.StateMachine.Op (HasBlobRef (getBlobRef),
@@ -127,7 +128,8 @@ import qualified Test.QuickCheck.StateModel.Lockstep.Defaults as Lockstep.Defaul
 import qualified Test.QuickCheck.StateModel.Lockstep.Run as Lockstep.Run
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck (testProperty)
-import           Test.Util.FS (assertNoOpenHandles, assertNumOpenHandles)
+import           Test.Util.FS (approximateEqStream, assertNoOpenHandles,
+                     assertNumOpenHandles)
 import           Test.Util.PrettyProxy
 import           Test.Util.TypeFamilyWrappers (WrapBlob (..), WrapBlobRef (..),
                      WrapCursor (..), WrapSession (..), WrapTable (..))
@@ -552,9 +554,9 @@ instance ( Eq (Class.TableConfig h)
       go (RetrieveBlobs vars1) (RetrieveBlobs vars2) =
           Just vars1 == cast vars2
       go (CreateSnapshot merrs1 label1 name1 var1) (CreateSnapshot merrs2 label2 name2 var2) =
-          merrs1 `eqErrors` merrs2 && label1 == label2 && name1 == name2 && Just var1 == cast var2
+          merrs1 == merrs2 && label1 == label2 && name1 == name2 && Just var1 == cast var2
       go (OpenSnapshot merrs1 label1 name1) (OpenSnapshot merrs2 label2 name2) =
-          merrs1 `eqErrors` merrs2 && label1 == label2 && name1 == name2
+          merrs1 == merrs2 && label1 == label2 && name1 == name2
       go (DeleteSnapshot name1) (DeleteSnapshot name2) =
           name1 == name2
       go ListSnapshots ListSnapshots =
@@ -589,12 +591,15 @@ instance ( Eq (Class.TableConfig h)
           Union{} -> ()
           Unions{} -> ()
 
--- TODO: this is wrong of course, because we don't actually compare the
--- 'Errors'. 'Errors' currently does not have an 'Eq' instance because it can
--- contain infinite streams, though maybe there is a sensible instance that can
--- compute an approximation of equality.
-eqErrors :: Eq1 f => f Errors -> f Errors -> Bool
-eqErrors = liftEq (\_ _ -> True)
+-- | This is not a fully lawful instance, because it uses 'approximateEqStream'.
+instance Eq a => Eq (Stream a) where
+  (==) = approximateEqStream
+
+-- | This is not a fully lawful instance, because it uses 'approximateEqStream'.
+deriving stock instance Eq Errors
+deriving stock instance Eq FSSim.Partial
+deriving stock instance Eq FSSim.PutCorruption
+deriving stock instance Eq FSSim.Blob
 
 {-------------------------------------------------------------------------------
   InLockstep
