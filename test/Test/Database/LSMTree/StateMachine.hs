@@ -68,7 +68,7 @@ import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Concurrent.Class.MonadSTM.Strict
 import           Control.Monad (forM_, void, (<=<))
 import           Control.Monad.Class.MonadThrow (Handler (..), MonadCatch (..),
-                     MonadThrow (..))
+                     MonadThrow (..), catches)
 import           Control.Monad.IOSim
 import           Control.Monad.Reader (ReaderT (..))
 import           Control.RefCount (checkForgottenRefs)
@@ -176,7 +176,7 @@ propLockstep_ModelIOImpl =
               env :: RealEnv ModelIO.Table IO
               env = RealEnv {
                   envSession = session
-                , envHandler = handler
+                , envHandlers = [handler]
                 }
             runReaderT r env)
       tagFinalState'
@@ -266,7 +266,7 @@ propLockstep_RealImpl_RealFS_IO tr =
               env :: RealEnv R.Table IO
               env = RealEnv {
                   envSession = session
-                , envHandler = realHandler @IO
+                , envHandlers = [realHandler @IO]
                 }
             runReaderT r env)
       tagFinalState'
@@ -296,7 +296,7 @@ propLockstep_RealImpl_MockFS_IO tr =
               env :: RealEnv R.Table IO
               env = RealEnv {
                   envSession = session
-                , envHandler = realHandler @IO
+                , envHandlers = [realHandler @IO]
                 }
             runReaderT r env)
       tagFinalState'
@@ -315,7 +315,7 @@ propLockstep_RealImpl_MockFS_IOSim tr actions =
           env :: RealEnv R.Table (IOSim s)
           env = RealEnv {
               envSession = session
-            , envHandler = realHandler @(IOSim s)
+            , envHandlers = [realHandler @(IOSim s)]
             }
         void $ QD.runPropertyReaderT
                 (QD.runActions @(Lockstep (ModelState R.Table)) actions)
@@ -810,15 +810,15 @@ type RealMonad h m = ReaderT (RealEnv h m) m
 -- (see 'perform', 'runIO', 'runIOSim').
 data RealEnv h m = RealEnv {
     -- | The session to run actions in.
-    envSession :: !(Class.Session h m)
-    -- | Error handler to convert thrown exceptions into pure error values.
+    envSession  :: !(Class.Session h m)
+    -- | Error handlers to convert thrown exceptions into pure error values.
     --
     -- Uncaught exceptions make the tests fail, so some handlers should be
     -- provided that catch the exceptions and turn them into pure error values
     -- if possible. The state machine infrastructure can then also compare the
     -- error values obtained from running @h@ to the error values obtained by
     -- running the model.
-  , envHandler :: Handler m (Maybe Model.Err)
+  , envHandlers :: [Handler m (Maybe Model.Err)]
   }
 
 {-------------------------------------------------------------------------------
@@ -1080,49 +1080,49 @@ runIO action lookUp = ReaderT $ \ !env -> do
       -> LockstepAction (ModelState h) a
       -> IO (Realized IO a)
     aux env = \case
-        New _ cfg -> catchErr handler $
+        New _ cfg -> catchErr handlers $
           WrapTable <$> Class.new session cfg
-        Close tableVar -> catchErr handler $
+        Close tableVar -> catchErr handlers $
           Class.close (unwrapTable $ lookUp' tableVar)
-        Lookups ks tableVar -> catchErr handler $
+        Lookups ks tableVar -> catchErr handlers $
           fmap (fmap WrapBlobRef) <$> Class.lookups (unwrapTable $ lookUp' tableVar) ks
-        RangeLookup range tableVar -> catchErr handler $
+        RangeLookup range tableVar -> catchErr handlers $
           fmap (fmap WrapBlobRef) <$> Class.rangeLookup (unwrapTable $ lookUp' tableVar) range
-        NewCursor offset tableVar -> catchErr handler $
+        NewCursor offset tableVar -> catchErr handlers $
           WrapCursor <$> Class.newCursor offset (unwrapTable $ lookUp' tableVar)
-        CloseCursor cursorVar -> catchErr handler $
+        CloseCursor cursorVar -> catchErr handlers $
           Class.closeCursor (Proxy @h) (unwrapCursor $ lookUp' cursorVar)
-        ReadCursor n cursorVar -> catchErr handler $
+        ReadCursor n cursorVar -> catchErr handlers $
           fmap (fmap WrapBlobRef) <$> Class.readCursor (Proxy @h) n (unwrapCursor $ lookUp' cursorVar)
-        Updates kups tableVar -> catchErr handler $
+        Updates kups tableVar -> catchErr handlers $
           Class.updates (unwrapTable $ lookUp' tableVar) kups
-        Inserts kins tableVar -> catchErr handler $
+        Inserts kins tableVar -> catchErr handlers $
           Class.inserts (unwrapTable $ lookUp' tableVar) kins
-        Deletes kdels tableVar -> catchErr handler $
+        Deletes kdels tableVar -> catchErr handlers $
           Class.deletes (unwrapTable $ lookUp' tableVar) kdels
-        Mupserts kmups tableVar -> catchErr handler $
+        Mupserts kmups tableVar -> catchErr handlers $
           Class.mupserts (unwrapTable $ lookUp' tableVar) kmups
-        RetrieveBlobs blobRefsVar -> catchErr handler $
+        RetrieveBlobs blobRefsVar -> catchErr handlers $
           fmap WrapBlob <$> Class.retrieveBlobs (Proxy @h) session (unwrapBlobRef <$> lookUp' blobRefsVar)
         -- TODO: use merrs
-        CreateSnapshot _merrs label name tableVar -> catchErr handler $
+        CreateSnapshot _merrs label name tableVar -> catchErr handlers $
           Class.createSnapshot label name (unwrapTable $ lookUp' tableVar)
         -- TODO: use merrs
-        OpenSnapshot _merrs label name -> catchErr handler $
+        OpenSnapshot _merrs label name -> catchErr handlers $
           WrapTable <$> Class.openSnapshot session label name
-        DeleteSnapshot name -> catchErr handler $
+        DeleteSnapshot name -> catchErr handlers $
           Class.deleteSnapshot session name
-        ListSnapshots -> catchErr handler $
+        ListSnapshots -> catchErr handlers $
           Class.listSnapshots session
-        Duplicate tableVar -> catchErr handler $
+        Duplicate tableVar -> catchErr handlers $
           WrapTable <$> Class.duplicate (unwrapTable $ lookUp' tableVar)
-        Union table1Var table2Var -> catchErr handler $
+        Union table1Var table2Var -> catchErr handlers $
           WrapTable <$> Class.union (unwrapTable $ lookUp' table1Var) (unwrapTable $ lookUp' table2Var)
-        Unions tableVars -> catchErr handler $
+        Unions tableVars -> catchErr handlers $
           WrapTable <$> Class.unions (fmap (unwrapTable . lookUp') tableVars)
       where
         session = envSession env
-        handler = envHandler env
+        handlers = envHandlers env
 
     lookUp' :: Var h x -> Realized IO x
     lookUp' = lookUpGVar (Proxy @(RealMonad h IO)) lookUp
@@ -1140,59 +1140,59 @@ runIOSim action lookUp = ReaderT $ \ !env -> do
       -> LockstepAction (ModelState h) a
       -> IOSim s (Realized (IOSim s) a)
     aux env = \case
-        New _ cfg -> catchErr handler $
+        New _ cfg -> catchErr handlers $
           WrapTable <$> Class.new session cfg
-        Close tableVar -> catchErr handler $
+        Close tableVar -> catchErr handlers $
           Class.close (unwrapTable $ lookUp' tableVar)
-        Lookups ks tableVar -> catchErr handler $
+        Lookups ks tableVar -> catchErr handlers $
           fmap (fmap WrapBlobRef) <$> Class.lookups (unwrapTable $ lookUp' tableVar) ks
-        RangeLookup range tableVar -> catchErr handler $
+        RangeLookup range tableVar -> catchErr handlers $
           fmap (fmap WrapBlobRef) <$> Class.rangeLookup (unwrapTable $ lookUp' tableVar) range
-        NewCursor offset tableVar -> catchErr handler $
+        NewCursor offset tableVar -> catchErr handlers $
           WrapCursor <$> Class.newCursor offset (unwrapTable $ lookUp' tableVar)
-        CloseCursor cursorVar -> catchErr handler $
+        CloseCursor cursorVar -> catchErr handlers $
           Class.closeCursor (Proxy @h) (unwrapCursor $ lookUp' cursorVar)
-        ReadCursor n cursorVar -> catchErr handler $
+        ReadCursor n cursorVar -> catchErr handlers $
           fmap (fmap WrapBlobRef) <$> Class.readCursor (Proxy @h) n (unwrapCursor $ lookUp' cursorVar)
-        Updates kups tableVar -> catchErr handler $
+        Updates kups tableVar -> catchErr handlers $
           Class.updates (unwrapTable $ lookUp' tableVar) kups
-        Inserts kins tableVar -> catchErr handler $
+        Inserts kins tableVar -> catchErr handlers $
           Class.inserts (unwrapTable $ lookUp' tableVar) kins
-        Deletes kdels tableVar -> catchErr handler $
+        Deletes kdels tableVar -> catchErr handlers $
           Class.deletes (unwrapTable $ lookUp' tableVar) kdels
-        Mupserts kmups tableVar -> catchErr handler $
+        Mupserts kmups tableVar -> catchErr handlers $
           Class.mupserts (unwrapTable $ lookUp' tableVar) kmups
-        RetrieveBlobs blobRefsVar -> catchErr handler $
+        RetrieveBlobs blobRefsVar -> catchErr handlers $
           fmap WrapBlob <$> Class.retrieveBlobs (Proxy @h) session (unwrapBlobRef <$> lookUp' blobRefsVar)
         -- TODO: use merrs
-        CreateSnapshot _merrs label name tableVar -> catchErr handler $
+        CreateSnapshot _merrs label name tableVar -> catchErr handlers $
           Class.createSnapshot label name (unwrapTable $ lookUp' tableVar)
         -- TODO: use merrs
-        OpenSnapshot _merrs label name -> catchErr handler $
+        OpenSnapshot _merrs label name -> catchErr handlers $
           WrapTable <$> Class.openSnapshot session label name
-        DeleteSnapshot name -> catchErr handler $
+        DeleteSnapshot name -> catchErr handlers $
           Class.deleteSnapshot session name
-        ListSnapshots -> catchErr handler $
+        ListSnapshots -> catchErr handlers $
           Class.listSnapshots session
-        Duplicate tableVar -> catchErr handler $
+        Duplicate tableVar -> catchErr handlers $
           WrapTable <$> Class.duplicate (unwrapTable $ lookUp' tableVar)
-        Union table1Var table2Var -> catchErr handler $
+        Union table1Var table2Var -> catchErr handlers $
           WrapTable <$> Class.union (unwrapTable $ lookUp' table1Var) (unwrapTable $ lookUp' table2Var)
-        Unions tableVars -> catchErr handler $
+        Unions tableVars -> catchErr handlers $
           WrapTable <$> Class.unions (fmap (unwrapTable . lookUp') tableVars)
       where
         session = envSession env
-        handler = envHandler env
+        handlers = envHandlers env
 
     lookUp' :: Var h x -> Realized (IOSim s) x
     lookUp' = lookUpGVar (Proxy @(RealMonad h (IOSim s))) lookUp
 
 catchErr ::
      forall m a. MonadCatch m
-  => Handler m (Maybe Model.Err) -> m a -> m (Either Model.Err a)
-catchErr (Handler f) action = catch (Right <$> action) f'
+  => [Handler m (Maybe Model.Err)] -> m a -> m (Either Model.Err a)
+catchErr hs action = catches (Right <$> action) (fmap f hs)
   where
-    f' e = maybe (throwIO e) (pure . Left) =<< f e
+    f (Handler h) = Handler $ \e -> maybe (throwIO e) (pure . Left) =<< h e
 
 {-------------------------------------------------------------------------------
   Generator and shrinking
