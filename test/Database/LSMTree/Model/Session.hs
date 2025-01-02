@@ -64,6 +64,7 @@ module Database.LSMTree.Model.Session (
     -- ** Blobs
   , BlobRef
   , retrieveBlobs
+  , invalidateBlobRefs
     -- * Snapshots
   , SnapshotName
   , createSnapshot
@@ -480,6 +481,23 @@ liftBlobRefs ::
   -> g (f (Model.BlobRef b))
   -> g (f (BlobRef b))
 liftBlobRefs hid = fmap (fmap (BlobRef hid))
+
+-- | Invalidate blob references that were created from the given table. This
+-- function assumes that it is called on an open table.
+--
+-- This is useful in tests where blob references should be invalidated for other
+-- reasons than normal operation of the model.
+invalidateBlobRefs ::
+     MonadState Model m
+  => Table k v b
+  -> m ()
+invalidateBlobRefs Table{..} = do
+    gets (Map.lookup tableID . tables) >>= \case
+      Nothing -> error "invalidateBlobRefs: table is closed!"
+      Just (updc, tbl) -> do
+        modify (\m -> m {
+            tables = Map.insert tableID (updc + 1, tbl) (tables m)
+          })
 
 {-------------------------------------------------------------------------------
   Snapshots
