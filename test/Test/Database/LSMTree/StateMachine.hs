@@ -1414,8 +1414,7 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
      ++ [ (1, fmap Some $ OpenSnapshot @k @v @b PrettyProxy <$>
                 genErrors <*> pure label <*> genUsedSnapshotName)
         | not (null usedSnapshotNames)
-          -- TODO: generate errors
-        , let genErrors = pure Nothing
+        , let genErrors = QC.arbitrary
         ]
 
      ++ [ (1, fmap Some $ DeleteSnapshot <$> genUsedSnapshotName)
@@ -1442,8 +1441,7 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
      ++ [ (2,  fmap Some $ CreateSnapshot <$>
                 genErrors <*> pure label <*> genUnusedSnapshotName <*> genTableVar)
         | not (null unusedSnapshotNames)
-           -- TODO: generate errors
-        , let genErrors = pure Nothing
+        , let genErrors = QC.arbitrary
         ]
      ++ [ (5,  fmap Some $ Duplicate <$> genTableVar)
         | length tableVars <= 5 -- no more than 5 tables at once
