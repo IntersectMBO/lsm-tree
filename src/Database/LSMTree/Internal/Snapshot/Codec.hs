@@ -204,19 +204,23 @@ instance Decode SnapshotVersion where
 -- SnapshotMetaData
 
 instance Encode SnapshotMetaData where
-  encode (SnapshotMetaData label tableType config levels) =
-         encodeListLen 4
+  encode (SnapshotMetaData label tableType config writeBuffer levels) =
+         encodeListLen 5
       <> encode label
       <> encode tableType
       <> encode config
+      <> encode writeBuffer
       <> encode levels
 
 instance DecodeVersioned SnapshotMetaData where
   decodeVersioned ver@V0 = do
-      _ <- decodeListLenOf 4
+      _ <- decodeListLenOf 5
       SnapshotMetaData
-        <$> decodeVersioned ver <*> decodeVersioned ver
-        <*> decodeVersioned ver <*> decodeVersioned ver
+        <$> decodeVersioned ver
+        <*> decodeVersioned ver
+        <*> decodeVersioned ver
+        <*> decodeVersioned ver
+        <*> decodeVersioned ver
 
 -- SnapshotLabel
 

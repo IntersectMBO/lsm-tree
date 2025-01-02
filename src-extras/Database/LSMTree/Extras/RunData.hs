@@ -6,6 +6,9 @@ module Database.LSMTree.Extras.RunData (
     withRun
   , withRuns
   , unsafeFlushAsWriteBuffer
+    -- * Serialise write buffers
+  , withRunDataAsWriteBuffer
+  , withSerialisedWriteBuffer
     -- * RunData
   , RunData (..)
   , SerialisedRunData
@@ -20,18 +23,24 @@ module Database.LSMTree.Extras.RunData (
   , liftShrink2Map
   ) where
 
-import           Control.Exception (bracket)
+import           Control.Exception (bracket, bracket_)
 import           Control.Monad
 import           Control.RefCount
 import           Data.Bifoldable (Bifoldable (bifoldMap))
 import           Data.Bifunctor
+import           Data.Foldable (for_)
+import qualified Data.Map as M
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import qualified Data.Vector as V
 import           Data.Word (Word64)
 import           Database.LSMTree.Extras (showPowersOf10)
 import           Database.LSMTree.Extras.Generators ()
 import           Database.LSMTree.Internal.Entry
+import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
+import           Database.LSMTree.Internal.MergeSchedule (addWriteBufferEntries)
 import           Database.LSMTree.Internal.Paths
+import qualified Database.LSMTree.Internal.Paths as Paths
 import           Database.LSMTree.Internal.Run (Run, RunDataCaching (..))
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..),
@@ -40,7 +49,10 @@ import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.Serialise
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
+import           Database.LSMTree.Internal.WriteBufferWriter (writeWriteBuffer)
+import qualified System.FS.API as FS
 import           System.FS.API
+import qualified System.FS.BlockIO.API as FS
 import           System.FS.BlockIO.API
 import           Test.QuickCheck
 
@@ -95,6 +107,44 @@ unsafeFlushAsWriteBuffer fs hbio fsPaths (RunData m) = do
                                fsPaths wb wbblobs
     releaseRef wbblobs
     return run
+
+{-------------------------------------------------------------------------------
+  Serialise write buffers
+-------------------------------------------------------------------------------}
+
+-- | Use 'SerialisedRunData' to 'WriteBuffer' and 'WriteBufferBlobs'.
+withRunDataAsWriteBuffer ::
+     FS.HasFS IO h
+  -> ResolveSerialisedValue
+  -> WriteBufferFsPaths
+  -> SerialisedRunData
+  -> (WB.WriteBuffer -> Ref (WBB.WriteBufferBlobs IO h) -> IO a)
+  -> IO a
+withRunDataAsWriteBuffer hfs f fsPaths rd action = do
+  let es = V.fromList . M.toList $ unRunData rd
+  let maxn = NumEntries $ V.length es
+  let wbbPath = Paths.writeBufferBlobPath fsPaths
+  bracket (WBB.new hfs wbbPath) releaseRef $ \wbb -> do
+    (wb, _) <- addWriteBufferEntries hfs f wbb maxn WB.empty es
+    action wb wbb
+
+-- | Serialise a 'WriteBuffer' and 'WriteBufferBlobs' to disk and perform an 'IO' action.
+withSerialisedWriteBuffer ::
+     FS.HasFS IO h
+  -> FS.HasBlockIO IO h
+  -> WriteBufferFsPaths
+  -> WB.WriteBuffer
+  -> Ref (WBB.WriteBufferBlobs IO h)
+  -> IO a
+  -> IO a
+withSerialisedWriteBuffer hfs hbio wbPaths wb wbb =
+  bracket_ (writeWriteBuffer hfs hbio wbPaths wb wbb) $ do
+    for_ [ Paths.writeBufferKOpsPath wbPaths
+         , Paths.writeBufferBlobPath wbPaths
+         , Paths.writeBufferChecksumsPath wbPaths
+         ] $ \fsPath -> do
+      fsPathExists <- FS.doesFileExist hfs fsPath
+      when fsPathExists $ FS.removeFile hfs fsPath
 
 {-------------------------------------------------------------------------------
   RunData

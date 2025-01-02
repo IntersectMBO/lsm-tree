@@ -1,3 +1,4 @@
+{-# LANGUAGE PatternSynonyms #-}
 module Database.LSMTree.Internal.Paths (
     SessionRoot (..)
   , lockFile
@@ -24,10 +25,12 @@ module Database.LSMTree.Internal.Paths (
   , runFilterPath
   , runIndexPath
   , runChecksumsPath
-    -- * Checksums
+    -- * Checksums for Run files
   , checksumFileNamesForRunFiles
   , toChecksumsFile
   , fromChecksumsFile
+    -- * Checksums for WriteBuffer files
+  , toChecksumsFileForWriteBufferFiles
     -- * ForRunFiles abstraction
   , ForKOps (..)
   , ForBlob (..)
@@ -38,12 +41,20 @@ module Database.LSMTree.Internal.Paths (
   , forRunBlobRaw
   , forRunFilterRaw
   , forRunIndexRaw
+    -- * WriteBuffer paths
+  , WriteBufferFsPaths (WrapRunFsPaths, WriteBufferFsPaths, writeBufferDir, writeBufferNumber)
+  , writeBufferKOpsPath
+  , writeBufferBlobPath
+  , writeBufferChecksumsPath
+  , writeBufferFilePathWithExt
   ) where
 
 import           Control.Applicative (Applicative (..))
 import           Control.DeepSeq (NFData (..))
+import           Data.Bifunctor (Bifunctor (..))
 import qualified Data.ByteString.Char8 as BS
 import           Data.Foldable (toList)
+import           Data.Function ((&))
 import qualified Data.Map as Map
 import           Data.Maybe (fromMaybe)
 import           Data.String (IsString (..))
@@ -211,7 +222,7 @@ runFileExts = ForRunFiles {
     }
 
 {-------------------------------------------------------------------------------
-  Checksums
+  Checksums For Run Files
 -------------------------------------------------------------------------------}
 
 checksumFileNamesForRunFiles :: ForRunFiles CRC.ChecksumsFileName
@@ -227,7 +238,8 @@ fromChecksumsFile file = for checksumFileNamesForRunFiles $ \name ->
       Nothing  -> Left ("key not found: " <> show name)
 
 {-------------------------------------------------------------------------------
-  Marker newtypes for individual elements of the ForRunFiles abstraction
+  Marker newtypes for individual elements of the ForRunFiles and the
+  ForWriteBufferFiles abstractions
 -------------------------------------------------------------------------------}
 
 newtype ForKOps a = ForKOps {unForKOps :: a}
@@ -268,8 +280,51 @@ forRunFilterRaw = unForFilter . forRunFilter
 forRunIndexRaw :: ForRunFiles a -> a
 forRunIndexRaw = unForIndex . forRunIndex
 
-
 instance Applicative ForRunFiles where
   pure x = ForRunFiles (ForKOps x) (ForBlob x) (ForFilter x) (ForIndex x)
   ForRunFiles (ForKOps f1) (ForBlob f2) (ForFilter f3) (ForIndex f4) <*> ForRunFiles (ForKOps x1) (ForBlob x2) (ForFilter x3) (ForIndex x4) =
     ForRunFiles (ForKOps $ f1 x1) (ForBlob $ f2 x2) (ForFilter $ f3 x3) (ForIndex $ f4 x4)
+
+{-------------------------------------------------------------------------------
+  WriteBuffer paths
+-------------------------------------------------------------------------------}
+
+newtype WriteBufferFsPaths = WrapRunFsPaths RunFsPaths
+
+pattern WriteBufferFsPaths :: FsPath -> RunNumber -> WriteBufferFsPaths
+pattern WriteBufferFsPaths {writeBufferDir, writeBufferNumber} = WrapRunFsPaths (RunFsPaths writeBufferDir writeBufferNumber)
+
+{-# COMPLETE WriteBufferFsPaths #-}
+
+writeBufferKOpsExt :: String
+writeBufferKOpsExt = unForKOps . forRunKOps $ runFileExts
+
+writeBufferBlobExt :: String
+writeBufferBlobExt = unForBlob . forRunBlob $ runFileExts
+
+writeBufferKOpsPath :: WriteBufferFsPaths -> FsPath
+writeBufferKOpsPath = flip writeBufferFilePathWithExt writeBufferKOpsExt
+
+writeBufferBlobPath :: WriteBufferFsPaths -> FsPath
+writeBufferBlobPath = flip writeBufferFilePathWithExt writeBufferBlobExt
+
+writeBufferChecksumsPath :: WriteBufferFsPaths -> FsPath
+writeBufferChecksumsPath = flip writeBufferFilePathWithExt "checksums"
+
+writeBufferFilePathWithExt :: WriteBufferFsPaths -> String -> FsPath
+writeBufferFilePathWithExt (WriteBufferFsPaths dir n) ext =
+    dir </> mkFsPath [show n] <.> ext
+
+
+{-------------------------------------------------------------------------------
+  Checksums For Run Files
+-------------------------------------------------------------------------------}
+
+toChecksumsFileForWriteBufferFiles :: (ForKOps CRC.CRC32C, ForBlob CRC.CRC32C) -> CRC.ChecksumsFile
+toChecksumsFileForWriteBufferFiles checksums =
+  Map.fromList . toList $ checksums & bimap
+    ((toChecksumsFileName writeBufferKOpsExt,) . unForKOps)
+    ((toChecksumsFileName writeBufferBlobExt,) . unForBlob)
+  where
+    toChecksumsFileName :: String -> CRC.ChecksumsFileName
+    toChecksumsFileName = CRC.ChecksumsFileName . BS.pack

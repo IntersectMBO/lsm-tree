@@ -524,8 +524,7 @@ mupserts t = updates t . fmap (second Mupsert)
 -------------------------------------------------------------------------------}
 
 {-# SPECIALISE createSnapshot ::
-     ResolveValue v
-  => Common.SnapshotLabel
+     Common.SnapshotLabel
   -> SnapshotName
   -> Table IO k v
   -> IO () #-}
@@ -552,15 +551,13 @@ mupserts t = updates t . fmap (second Mupsert)
 --   the snapshot names are distinct (otherwise this would be a race).
 --
 createSnapshot :: forall m k v.
-     ( IOLike m
-     , ResolveValue v
-     )
+     IOLike m
   => Common.SnapshotLabel
   -> SnapshotName
   -> Table m k v
   -> m ()
 createSnapshot label snap (Internal.MonoidalTable t) =
-    Internal.createSnapshot (resolve @v Proxy) snap label Internal.SnapMonoidalTable t
+    Internal.createSnapshot snap label Internal.SnapMonoidalTable t
 
 {-# SPECIALISE openSnapshot ::
      ResolveValue v

@@ -5,6 +5,8 @@ module Test.Database.LSMTree.Internal.Run (
     tests,
 ) where
 
+import           Control.RefCount
+import           Control.TempRegistry (withTempRegistry)
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Short as SBS
@@ -12,34 +14,35 @@ import           Data.Coerce (coerce)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromJust)
 import qualified Data.Primitive.ByteArray as BA
-import           System.FilePath
-import qualified System.FS.API as FS
-import qualified System.FS.BlockIO.API as FS
-import qualified System.FS.BlockIO.IO as FS
-import qualified System.FS.IO as FsIO
-import qualified System.IO.Temp as Temp
-import           Test.Tasty (TestTree, testGroup)
-import           Test.Tasty.HUnit (assertEqual, testCase, (@=?), (@?))
-import           Test.Tasty.QuickCheck
-
-import           Control.RefCount
-import           Control.TempRegistry (withTempRegistry)
 import           Database.LSMTree.Extras.Generators (KeyForIndexCompact (..))
 import           Database.LSMTree.Extras.RunData
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry
-import           Database.LSMTree.Internal.Paths (RunFsPaths (..))
+import           Database.LSMTree.Internal.Paths (RunFsPaths (..),
+                     WriteBufferFsPaths (..))
+import qualified Database.LSMTree.Internal.Paths as Paths
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.RawPage
 import           Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.Snapshot
-import           Test.Database.LSMTree.Internal.RunReader (readKOps)
-import           Test.Util.FS (propNoOpenHandles, withSimHasBlockIO)
-
+import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
+import           Database.LSMTree.Internal.WriteBufferReader (readWriteBuffer)
 import qualified FormatPage as Proto
+import           System.FilePath
+import qualified System.FS.API as FS
+import qualified System.FS.API.Lazy as FSL
+import qualified System.FS.BlockIO.API as FS
+import qualified System.FS.BlockIO.IO as FS
+import qualified System.FS.IO as FsIO
+import qualified System.IO.Temp as Temp
+import           Test.Database.LSMTree.Internal.RunReader (readKOps)
+import           Test.Tasty (TestTree, testGroup)
+import           Test.Tasty.HUnit (assertEqual, testCase, (@=?), (@?))
+import           Test.Tasty.QuickCheck
+import           Test.Util.FS (propNoOpenHandles, withSimHasBlockIO)
 
 
 tests :: TestTree
@@ -69,6 +72,12 @@ tests = testGroup "Database.LSMTree.Internal.Run"
       , testProperty "prop_WriteNumEntries" $ \wb ->
           ioProperty $ withSimHasBlockIO propNoOpenHandles $ \hfs hbio ->
             prop_WriteNumEntries hfs hbio wb
+      , testProperty "prop_WriteAndOpenWriteBuffer" $ \wb ->
+          ioProperty $ withSimHasBlockIO propNoOpenHandles $ \hfs hbio ->
+            prop_WriteAndOpenWriteBuffer hfs hbio wb
+      , testProperty "prop_WriteRunEqWriteWriteBuffer" $ \wb ->
+          ioProperty $ withSimHasBlockIO propNoOpenHandles $ \hfs hbio ->
+            prop_WriteRunEqWriteWriteBuffer hfs hbio wb
       ]
     ]
   where
@@ -209,3 +218,64 @@ prop_WriteAndOpen fs hbio wb =
 
       -- TODO: return a proper Property instead of using assertEqual etc.
       return (property True)
+
+-- | Writing and loading a 'WriteBuffer' gives the same in-memory
+--   representation as the original write buffer.
+prop_WriteAndOpenWriteBuffer ::
+     FS.HasFS IO h
+  -> FS.HasBlockIO IO h
+  -> RunData KeyForIndexCompact SerialisedValue SerialisedBlob
+  -> IO Property
+prop_WriteAndOpenWriteBuffer hfs hbio rd = do
+  -- Serialise run data as write buffer:
+  let srd = serialiseRunData rd
+  let inPaths = WrapRunFsPaths $ simplePath 1111
+  let resolve (SerialisedValue x) (SerialisedValue y) = SerialisedValue (x <> y)
+  withRunDataAsWriteBuffer hfs resolve inPaths srd $ \wb wbb -> do
+    -- Write write buffer to disk:
+    let wbPaths = WrapRunFsPaths $ simplePath 1312
+    withSerialisedWriteBuffer hfs hbio wbPaths wb wbb $ do
+      -- Read write buffer from disk:
+      let kOpsPath = Paths.ForKOps (Paths.writeBufferKOpsPath wbPaths)
+      withRef wbb $ \wbb' -> do
+        wb' <- readWriteBuffer resolve hfs hbio kOpsPath (WBB.blobFile wbb')
+        assertEqual "k/ops" wb wb'
+  -- TODO: return a proper Property instead of using assertEqual etc.
+  return (property True)
+
+-- | Writing run data to the disk via 'writeWriteBuffer' gives the same key/ops
+--   and blob files as when written out as a run.
+prop_WriteRunEqWriteWriteBuffer ::
+     FS.HasFS IO h
+  -> FS.HasBlockIO IO h
+  -> RunData KeyForIndexCompact SerialisedValue SerialisedBlob
+  -> IO Property
+prop_WriteRunEqWriteWriteBuffer hfs hbio rd = do
+  -- Serialise run data as run:
+  let srd = serialiseRunData rd
+  let rdPaths = simplePath 1337
+  let rdKOpsFile = Paths.runKOpsPath rdPaths
+  let rdBlobFile = Paths.runBlobPath rdPaths
+  withRun hfs hbio rdPaths srd $ \_run -> do
+    -- Serialise run data as write buffer:
+    let f (SerialisedValue x) (SerialisedValue y) = SerialisedValue (x <> y)
+    let inPaths = WrapRunFsPaths $ simplePath 1111
+    withRunDataAsWriteBuffer hfs f inPaths srd $ \wb wbb -> do
+      let wbPaths = WrapRunFsPaths $ simplePath 1312
+      let wbKOpsPath = Paths.writeBufferKOpsPath wbPaths
+      let wbBlobPath = Paths.writeBufferBlobPath wbPaths
+      withSerialisedWriteBuffer hfs hbio wbPaths wb wbb $ do
+        -- Compare KOps:
+        FS.withFile hfs rdKOpsFile FS.ReadMode $ \rdKOpsHandle ->
+          FS.withFile hfs wbKOpsPath FS.ReadMode $ \wbKOpsHandle -> do
+            rdKOps <- FSL.hGetAll hfs rdKOpsHandle
+            wbKOps <- FSL.hGetAll hfs wbKOpsHandle
+            assertEqual "writtenRunKOps/writtenWriteBufferKOps" rdKOps wbKOps
+        -- Compare Blob:
+        FS.withFile hfs rdBlobFile FS.ReadMode $ \rdBlobHandle ->
+          FS.withFile hfs wbBlobPath FS.ReadMode $ \wbBlobHandle -> do
+            rdBlob <- FSL.hGetAll hfs rdBlobHandle
+            wbBlob <- FSL.hGetAll hfs wbBlobHandle
+            assertEqual "writtenRunBlob/writtenWriteBufferBlob" rdBlob wbBlob
+  -- TODO: return a proper Property instead of using assertEqual etc.
+  return (property True)

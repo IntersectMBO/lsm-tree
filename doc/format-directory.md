@@ -77,6 +77,12 @@ Each snapshot contains a metadata file for the snapshot overall and a checksum:
  * `${session}/snapshots/${name}/snapshot`
  * `${session}/snapshots/${name}/snapshot.checksum`
 
+plus three files for the serialised write buffer:
+
+ * `${session}/snapshots/${name}/${n}.keyops`
+ * `${session}/snapshots/${name}/${n}.blobs`
+ * `${session}/snapshots/${name}/${n}.checksum`
+
 plus the five files for each LSM run in the snapshot:
 
  * `${session}/snapshots/${name}/${n}.keyops`
@@ -85,7 +91,7 @@ plus the five files for each LSM run in the snapshot:
  * `${session}/snapshots/${name}/${n}.index`
  * `${session}/snapshots/${name}/${n}.checksum`
 
-In this case the LSM run files are numbered from 0 within each snapshot.
+In this case the serialised write buffer and the LSM run files are numbered from 0 within each snapshot.
 
 ## Snapshot metadata
 
@@ -97,6 +103,7 @@ The snapshot metadata file contains the following information:
    - Page size for all the key/operations files
    - Index type and parameters
  * Key/value type information for dynamic-type sanity checking
+ * The number of the serialised write buffer files (should always be 0).
  * The shape of the LSM tree overall (runs within levels etc), referencing
    the numbered LSM runs.
 

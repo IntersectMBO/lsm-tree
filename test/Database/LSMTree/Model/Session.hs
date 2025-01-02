@@ -458,19 +458,8 @@ createSnapshot ::
   -> Table k v b
   -> m ()
 createSnapshot label name t@Table{..} = do
-    (updc, table) <- guardTableIsOpen t
+    (_updc, table) <- guardTableIsOpen t
     snaps <- gets snapshots
-    -- TODO: For the moment we allow snapshot to invalidate blob refs.
-    -- Ideally we should change the implementation to not invalidate on
-    -- snapshot, and then we can remove the artificial invalidation from
-    -- the model (i.e. delete the lines below that increments updc).
-    -- Furthermore, we invalidate them _before_ checking if there is a
-    -- duplicate snapshot. This is a bit barmy, but it matches the
-    -- implementation. The implementation should be fixed.
-    -- TODO: See https://github.com/IntersectMBO/lsm-tree/issues/392
-    modify (\m -> m {
-        tables = Map.insert tableID (updc + 1, toSomeTable table) (tables m)
-      })
     when (Map.member name snaps) $
       throwError ErrSnapshotExists
     modify (\m -> m {
