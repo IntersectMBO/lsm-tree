@@ -37,6 +37,7 @@ import           Control.Monad (when)
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Primitive
 import           Data.Primitive.PrimVar
+import           GHC.Show (appPrec)
 import           GHC.Stack (CallStack, prettyCallStack)
 
 #ifdef NO_IGNORE_ASSERTS
@@ -361,23 +362,37 @@ newRefWithTracker obj = do
 
 data RefException =
        RefUseAfterRelease RefId
+        CallStack -- ^ Allocation site
+        CallStack -- ^ Release site
+        CallStack -- ^ Use site
      | RefDoubleRelease RefId
-     | RefNeverReleased RefId CallStack
-       -- ^ With call stack for Ref allocation site
+        CallStack -- ^ Allocation site
+        CallStack -- ^ First release site
+        CallStack -- ^ Second release site
+     | RefNeverReleased RefId
+        CallStack -- ^ Allocation site
 
 newtype RefId = RefId Int
   deriving stock (Show, Eq, Ord)
 
 instance Show RefException where
-  --Sigh. QuickCheck still uses 'show' rather than 'displayException.
-  show = displayException
+  --Sigh. QuickCheck still uses 'show' rather than 'displayException'.
+  showsPrec d x = showParen (d > appPrec) $ showString (displayException x)
 
 instance Exception RefException where
-  displayException (RefUseAfterRelease refid) = "RefUseAfterRelease " ++ show refid
-  displayException (RefDoubleRelease   refid) = "RefDoubleRelease " ++ show refid
-  displayException (RefNeverReleased refid allocsite) =
-      "RefNeverReleased " ++ show refid
-   ++ "\nAllocation site: " ++ prettyCallStack allocsite
+  displayException (RefUseAfterRelease refid allocSite releaseSite useSite) =
+      "Reference is used after release: " ++ show refid
+    ++ "\nAllocation site: " ++ prettyCallStack allocSite
+    ++ "\nRelease site: " ++ prettyCallStack releaseSite
+    ++ "\nUse site: " ++ prettyCallStack useSite
+  displayException (RefDoubleRelease refid allocSite releaseSite1 releaseSite2) =
+      "Reference is released twice: " ++ show refid
+    ++ "\nAllocation site: " ++ prettyCallStack allocSite
+    ++ "\nFirst release site: " ++ prettyCallStack releaseSite1
+    ++ "\nSecond release site: " ++ prettyCallStack releaseSite2
+  displayException (RefNeverReleased refid allocSite) =
+      "Reference is never released: " ++ show refid
+   ++ "\nAllocation site: " ++ prettyCallStack allocSite
 
 #ifndef NO_IGNORE_ASSERTS
 
@@ -395,8 +410,8 @@ assertNoDoubleRelease _ = return ()
 
 #else
 
--- | A weak pointer to an outer IORef, containing an inner IORef with a bool
--- to indicate if the ref has been explicitly released.
+-- | A weak pointer to an outer IORef, containing an inner IORef with a maybe to
+-- indicate if the ref has been explicitly released.
 --
 -- The finaliser for the outer weak pointer is given access to the inner IORef
 -- so that it can tell if the reference has become garbage without being
@@ -409,9 +424,13 @@ assertNoDoubleRelease _ = return ()
 -- The inner IORef is mutated when explicitly released. The outer IORef is
 -- never modified, but we use an IORef to ensure the weak pointer is reliable.
 --
+-- The inner IORef also tracks the call stack for the site where the reference
+-- (tracker) is released. This call stack is used in exceptions for easier
+-- debugging.
 data RefTracker = RefTracker !RefId
-                             !(Weak (IORef (IORef Bool)))
-                             !(IORef (IORef Bool))
+                             !(Weak (IORef (IORef (Maybe CallStack))))
+                             !(IORef (IORef (Maybe CallStack))) -- ^ Release site
+                             !CallStack -- ^ Allocation site
 
 {-# NOINLINE globalRefIdSupply #-}
 globalRefIdSupply :: PrimVar RealWorld Int
@@ -422,52 +441,60 @@ globalForgottenRef :: IORef (Maybe (RefId, CallStack))
 globalForgottenRef = unsafePerformIO $ newIORef Nothing
 
 newRefTracker :: PrimMonad m => CallStack -> m RefTracker
-newRefTracker callsite = unsafeIOToPrim $ do
-    inner <- newIORef False
+newRefTracker allocSite = unsafeIOToPrim $ do
+    inner <- newIORef Nothing
     outer <- newIORef inner
     refid <- fetchAddInt globalRefIdSupply 1
     weak  <- mkWeakIORef outer $
-               finaliserRefTracker inner (RefId refid) callsite
-    return (RefTracker (RefId refid) weak outer)
+               finaliserRefTracker inner (RefId refid) allocSite
+    return (RefTracker (RefId refid) weak outer allocSite)
 
-releaseRefTracker :: PrimMonad m => Ref a -> m ()
-releaseRefTracker Ref { reftracker =  RefTracker _refid _weak outer } =
+releaseRefTracker :: (HasCallStack, PrimMonad m) => Ref a -> m ()
+releaseRefTracker Ref { reftracker =  RefTracker _refid _weak outer _ } =
   unsafeIOToPrim $ do
     inner <- readIORef outer
-    writeIORef inner True
+    let releaseSite = callStack
+    writeIORef inner (Just releaseSite)
 
-finaliserRefTracker :: IORef Bool -> RefId -> CallStack -> IO ()
-finaliserRefTracker inner refid callsite = do
+finaliserRefTracker :: IORef (Maybe CallStack) -> RefId -> CallStack -> IO ()
+finaliserRefTracker inner refid allocSite = do
     released <- readIORef inner
-    when (not released) $ do
-      -- Uh oh! Forgot a reference without releasing!
-      -- Add it to a global var which we can poll elsewhere.
-      mref <- readIORef globalForgottenRef
-      case mref of
-        -- Just keep one, but keep the last allocated one.
-        -- The reason for last is that when there are nested structures with
-        -- refs then the last allocated is likely to be the outermost, which
-        -- is the best place to start hunting for ref leaks. Otherwise one can
-        -- go on a wild goose chase tracking down inner refs that were only
-        -- forgotten due to an outer ref being forgotten.
-        Just (refid', _) | refid < refid' -> return ()
-        _ -> writeIORef globalForgottenRef (Just (refid, callsite))
+    case released of
+      Just _releaseSite -> pure ()
+      Nothing -> do
+        -- Uh oh! Forgot a reference without releasing!
+        -- Add it to a global var which we can poll elsewhere.
+        mref <- readIORef globalForgottenRef
+        case mref of
+          -- Just keep one, but keep the last allocated one.
+          -- The reason for last is that when there are nested structures with
+          -- refs then the last allocated is likely to be the outermost, which
+          -- is the best place to start hunting for ref leaks. Otherwise one can
+          -- go on a wild goose chase tracking down inner refs that were only
+          -- forgotten due to an outer ref being forgotten.
+          Just (refid', _) | refid < refid' -> return ()
+          _ -> writeIORef globalForgottenRef (Just (refid, allocSite))
 
 assertNoForgottenRefs :: IO ()
 assertNoForgottenRefs = do
     mrefs <- readIORef globalForgottenRef
     case mrefs of
       Nothing                -> return ()
-      Just (refid, callsite) -> do
+      Just (refid, allocSite) -> do
         -- Clear the var so we don't assert again.
         writeIORef globalForgottenRef Nothing
-        throwIO (RefNeverReleased refid callsite)
+        throwIO (RefNeverReleased refid allocSite)
 
 assertNoUseAfterRelease :: (PrimMonad m, HasCallStack) => Ref a -> m ()
-assertNoUseAfterRelease Ref { reftracker = RefTracker refid _weak outer } =
+assertNoUseAfterRelease Ref { reftracker = RefTracker refid _weak outer allocSite } =
   unsafeIOToPrim $ do
     released <- readIORef =<< readIORef outer
-    when released $ Control.Exception.throwIO (RefUseAfterRelease refid)
+    case released of
+      Nothing -> pure ()
+      Just releaseSite -> do
+        -- The site where the reference is used after release
+        let useSite = callStack
+        Control.Exception.throwIO (RefUseAfterRelease refid allocSite releaseSite useSite)
     assertNoForgottenRefs
 #if !(MIN_VERSION_base(4,20,0))
   where
@@ -475,10 +502,15 @@ assertNoUseAfterRelease Ref { reftracker = RefTracker refid _weak outer } =
 #endif
 
 assertNoDoubleRelease :: (PrimMonad m, HasCallStack) => Ref a -> m ()
-assertNoDoubleRelease Ref { reftracker = RefTracker refid _weak outer } =
+assertNoDoubleRelease Ref { reftracker = RefTracker refid _weak outer allocSite } =
   unsafeIOToPrim $ do
     released <- readIORef =<< readIORef outer
-    when released $ Control.Exception.throwIO (RefDoubleRelease refid)
+    case released of
+      Nothing -> pure ()
+      Just releaseSite1 -> do
+        -- The second release site
+        let releaseSite2 = callStack
+        Control.Exception.throwIO (RefDoubleRelease refid allocSite releaseSite1 releaseSite2)
     assertNoForgottenRefs
 #if !(MIN_VERSION_base(4,20,0))
   where
