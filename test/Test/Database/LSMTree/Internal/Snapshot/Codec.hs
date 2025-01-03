@@ -22,6 +22,8 @@ import           Database.LSMTree.Internal.MergingRun
 import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.Snapshot
 import           Database.LSMTree.Internal.Snapshot.Codec
+import           Test.Database.LSMTree.Internal.Snapshot.Codec.Golden
+                     (goldenFileTests)
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.Arbitrary
@@ -47,6 +49,7 @@ tests = testGroup "Test.Database.LSMTree.Internal.Snapshot.Codec" [
         testAll $ \(p :: Proxy a) ->
           testGroup (show $ typeRep p) $
             prop_arbitraryAndShrinkPreserveInvariant @a deepseqInvariant
+    , goldenFileTests
     ]
 
 {-------------------------------------------------------------------------------
