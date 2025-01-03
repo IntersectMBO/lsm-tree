@@ -9,6 +9,7 @@ module Database.LSMTree.Internal.Vector (
     mapStrict,
     mapMStrict,
     imapMStrict,
+    forMStrict,
     zipWithStrict,
     binarySearchL,
     unsafeInsertWithMStrict,
@@ -78,6 +79,11 @@ imapMStrict f v = V.imapM (\i -> f i >=> (pure $!)) v
 -- type @c@.
 zipWithStrict :: forall a b c. (a -> b -> c) -> V.Vector a -> V.Vector b -> V.Vector c
 zipWithStrict f xs ys = runST (V.zipWithM (\x y -> pure $! f x y) xs ys)
+
+-- | /( O(n) /) Like 'V.forM', but strict in the produced elements of type @b@.
+{-# INLINE forMStrict #-}
+forMStrict :: Monad m => V.Vector a -> (a -> m b) -> m (V.Vector b)
+forMStrict xs f = V.forM xs (f >=> (pure $!))
 
 {-|
     Finds the lowest index in a given sorted vector at which the given element

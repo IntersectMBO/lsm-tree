@@ -5,8 +5,8 @@ module Test.Database.LSMTree.Internal.Run (
     tests,
 ) where
 
+import           Control.ActionRegistry (withActionRegistry)
 import           Control.RefCount
-import           Control.TempRegistry (withTempRegistry)
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Short as SBS
@@ -196,7 +196,7 @@ prop_WriteAndOpen ::
   -> IO Property
 prop_WriteAndOpen fs hbio wb =
     withRun fs hbio (simplePath 1337) (serialiseRunData wb) $ \written ->
-    withTempRegistry $ \reg -> do
+    withActionRegistry $ \reg -> do
       let paths = Run.runFsPaths written
           paths' = paths { runNumber = RunNumber 17}
       hardLinkRunFiles reg fs hbio NoHardLinkDurable paths paths'
