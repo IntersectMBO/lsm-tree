@@ -244,8 +244,7 @@ releaseRef ::
   -> m ()
 releaseRef ref@Ref{refobj} = do
     assertNoDoubleRelease ref
-    decrementRefCounter (getRefCounter refobj)
-    releaseRefTracker ref
+    withReleaseRefTracker ref (decrementRefCounter (getRefCounter refobj))
 
 {-# COMPLETE DeRef #-}
 #if MIN_VERSION_GLASGOW_HASKELL(9,0,0,0)
@@ -381,9 +380,9 @@ instance Exception RefException where
 
 #ifndef NO_IGNORE_ASSERTS
 
-{-# INLINE releaseRefTracker #-}
-releaseRefTracker :: PrimMonad m => Ref a -> m ()
-releaseRefTracker _ = return ()
+{-# INLINE withReleaseRefTracker #-}
+withReleaseRefTracker :: Ref a -> m () -> m ()
+withReleaseRefTracker _ref k = k
 
 {-# INLINE assertNoUseAfterRelease #-}
 assertNoUseAfterRelease :: PrimMonad m => Ref a -> m ()
@@ -435,6 +434,9 @@ releaseRefTracker Ref { reftracker =  RefTracker _refid _weak outer } =
   unsafeIOToPrim $ do
     inner <- readIORef outer
     writeIORef inner True
+
+withReleaseRefTracker :: (PrimMonad m, MonadThrow m) => Ref a -> m () -> m ()
+withReleaseRefTracker ref k = k `finally` releaseRefTracker ref
 
 finaliserRefTracker :: IORef Bool -> RefId -> CallStack -> IO ()
 finaliserRefTracker inner refid callsite = do
