@@ -158,7 +158,7 @@ deriving via AllowThunksIn ["cursorSession", "cursorSessionEnv"] (CursorEnv m h)
 -------------------------------------------------------------------------------}
 
 deriving stock instance Generic (UniqCounter m)
-deriving anyclass instance NoThunks (StrictMVar m Word64)
+deriving anyclass instance (NoThunks (PrimVar (PrimState m) Int))
                         => NoThunks (UniqCounter m)
 
 {-------------------------------------------------------------------------------
