@@ -70,6 +70,7 @@ import           Control.Monad (forM_, void, (<=<))
 import           Control.Monad.Class.MonadThrow (Handler (..), MonadCatch (..),
                      MonadThrow (..), catches)
 import           Control.Monad.IOSim
+import           Control.Monad.Primitive
 import           Control.Monad.Reader (ReaderT (..))
 import           Control.RefCount (checkForgottenRefs)
 import           Control.Tracer (Tracer, nullTracer)
@@ -82,6 +83,7 @@ import qualified Data.List.NonEmpty as NE
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (catMaybes, fromJust, fromMaybe)
+import           Data.Primitive.MutVar
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Typeable (Proxy (..), Typeable, cast, eqT,
@@ -181,14 +183,19 @@ propLockstep_ModelIOImpl =
       acquire
       release
       (\r (session, errsVar) -> do
+            faultsVar <- newMutVar []
             let
               env :: RealEnv ModelIO.Table IO
               env = RealEnv {
                   envSession = session
                 , envHandlers = [handler, fsErrorHandler]
                 , envErrors = errsVar
+                , envInjectFaultResults = faultsVar
                 }
-            runReaderT r env)
+            prop <- runReaderT r env
+            faults <- readMutVar faultsVar
+            pure $ QC.tabulate "Fault results" (fmap show faults) prop
+        )
       tagFinalState'
   where
     acquire :: IO (Class.Session ModelIO.Table IO, StrictTVar IO Errors)
@@ -273,14 +280,19 @@ propLockstep_RealImpl_RealFS_IO tr =
       acquire
       release
       (\r (_, session, errsVar) -> do
+            faultsVar <- newMutVar []
             let
               env :: RealEnv R.Table IO
               env = RealEnv {
                   envSession = session
                 , envHandlers = [realHandler @IO, fsErrorHandler]
                 , envErrors = errsVar
+                , envInjectFaultResults = faultsVar
                 }
-            runReaderT r env)
+            prop <- runReaderT r env
+            faults <- readMutVar faultsVar
+            pure $ QC.tabulate "Fault results" (fmap show faults) prop
+        )
       tagFinalState'
   where
     acquire :: IO (FilePath, Class.Session R.Table IO, StrictTVar IO Errors)
@@ -305,14 +317,19 @@ propLockstep_RealImpl_MockFS_IO tr =
       (acquire_RealImpl_MockFS tr)
       release_RealImpl_MockFS
       (\r (_, session, errsVar) -> do
+            faultsVar <- newMutVar []
             let
               env :: RealEnv R.Table IO
               env = RealEnv {
                   envSession = session
                 , envHandlers = [realHandler @IO, fsErrorHandler]
                 , envErrors = errsVar
+                , envInjectFaultResults = faultsVar
                 }
-            runReaderT r env)
+            prop <- runReaderT r env
+            faults <- readMutVar faultsVar
+            pure $ QC.tabulate "Fault results" (fmap show faults) prop
+        )
       tagFinalState'
 
 propLockstep_RealImpl_MockFS_IOSim ::
@@ -325,18 +342,24 @@ propLockstep_RealImpl_MockFS_IOSim tr actions =
     prop :: forall s. PropertyM (IOSim s) Property
     prop = do
         (fsVar, session, errsVar) <- QC.run (acquire_RealImpl_MockFS tr)
+        faultsVar <- QC.run $ newMutVar []
         let
           env :: RealEnv R.Table (IOSim s)
           env = RealEnv {
               envSession = session
             , envHandlers = [realHandler @(IOSim s), fsErrorHandler]
             , envErrors = errsVar
+            , envInjectFaultResults = faultsVar
             }
         void $ QD.runPropertyReaderT
                 (QD.runActions @(Lockstep (ModelState R.Table)) actions)
                 env
+        faults <- QC.run $ readMutVar faultsVar
         QC.run $ release_RealImpl_MockFS (fsVar, session, errsVar)
-        pure $ tagFinalState actions tagFinalState' $ QC.property True
+        pure
+          $ tagFinalState actions tagFinalState'
+          $ QC.tabulate "Fault results" (fmap show faults)
+          $ QC.property True
 
 acquire_RealImpl_MockFS ::
      R.IOLike m
@@ -832,7 +855,7 @@ type RealMonad h m = ReaderT (RealEnv h m) m
 -- (see 'perform', 'runIO', 'runIOSim').
 data RealEnv h m = RealEnv {
     -- | The session to run actions in.
-    envSession  :: !(Class.Session h m)
+    envSession            :: !(Class.Session h m)
     -- | Error handlers to convert thrown exceptions into pure error values.
     --
     -- Uncaught exceptions make the tests fail, so some handlers should be
@@ -840,14 +863,29 @@ data RealEnv h m = RealEnv {
     -- if possible. The state machine infrastructure can then also compare the
     -- error values obtained from running @h@ to the error values obtained by
     -- running the model.
-  , envHandlers :: [Handler m (Maybe Model.Err)]
+  , envHandlers           :: [Handler m (Maybe Model.Err)]
     -- | A variable holding simulated disk faults,
     --
     -- This variable shared with the simulated file system (if in use). This
     -- variable can be used to enable/disable errors locally, for example on a
     -- per-action basis.
-  , envErrors   :: !(StrictTVar m Errors)
+  , envErrors             :: !(StrictTVar m Errors)
+    -- | The results of fault injection
+  , envInjectFaultResults :: !(MutVar (PrimState m) [InjectFaultResult])
   }
+
+data InjectFaultResult =
+    -- | No faults were injected.
+    InjectFaultNone
+      String -- ^ Action name
+    -- | Faults were injected, but the action accidentally succeeded, so the
+    -- action had to be rolled back
+  | InjectFaultAccidentalSuccess
+      String -- ^ Action name
+    -- | Faults were injected, which made the action fail with an error.
+  | InjectFaultInducedError
+      String -- ^ Action name
+  deriving stock Show
 
 {-------------------------------------------------------------------------------
   RunLockstep
@@ -1133,11 +1171,11 @@ runIO action lookUp = ReaderT $ \ !env -> do
         RetrieveBlobs blobRefsVar -> catchErr handlers $
           fmap WrapBlob <$> Class.retrieveBlobs (Proxy @h) session (unwrapBlobRef <$> lookUp' blobRefsVar)
         CreateSnapshot merrs label name tableVar -> catchErr handlers $
-          runRealWithInjectedErrors "CreateSnapshot" errsVar merrs
+          runRealWithInjectedErrors faultsVar "CreateSnapshot" errsVar merrs
             (Class.createSnapshot label name (unwrapTable $ lookUp' tableVar))
             (\() -> Class.deleteSnapshot session name)
         OpenSnapshot merrs label name -> catchErr handlers $
-          runRealWithInjectedErrors "OpenSnapshot" errsVar merrs
+          runRealWithInjectedErrors faultsVar "OpenSnapshot" errsVar merrs
             (WrapTable <$> Class.openSnapshot session label name)
             (\(WrapTable t) -> Class.close t)
         DeleteSnapshot name -> catchErr handlers $
@@ -1154,6 +1192,7 @@ runIO action lookUp = ReaderT $ \ !env -> do
         session = envSession env
         handlers = envHandlers env
         errsVar = envErrors env
+        faultsVar = envInjectFaultResults env
 
     lookUp' :: Var h x -> Realized IO x
     lookUp' = lookUpGVar (Proxy @(RealMonad h IO)) lookUp
@@ -1196,11 +1235,11 @@ runIOSim action lookUp = ReaderT $ \ !env -> do
         RetrieveBlobs blobRefsVar -> catchErr handlers $
           fmap WrapBlob <$> Class.retrieveBlobs (Proxy @h) session (unwrapBlobRef <$> lookUp' blobRefsVar)
         CreateSnapshot merrs label name tableVar -> catchErr handlers $
-          runRealWithInjectedErrors "CreateSnapshot" errsVar merrs
+          runRealWithInjectedErrors faultsVar "CreateSnapshot" errsVar merrs
             (Class.createSnapshot label name (unwrapTable $ lookUp' tableVar))
             (\() -> Class.deleteSnapshot session name)
         OpenSnapshot merrs label name -> catchErr handlers $
-          runRealWithInjectedErrors "OpenSnapshot" errsVar merrs
+          runRealWithInjectedErrors faultsVar "OpenSnapshot" errsVar merrs
             (WrapTable <$> Class.openSnapshot session label name)
             (\(WrapTable t) -> Class.close t)
         DeleteSnapshot name -> catchErr handlers $
@@ -1217,6 +1256,7 @@ runIOSim action lookUp = ReaderT $ \ !env -> do
         session = envSession env
         handlers = envHandlers env
         errsVar = envErrors env
+        faultsVar = envInjectFaultResults env
 
     lookUp' :: Var h x -> Realized (IOSim s) x
     lookUp' = lookUpGVar (Proxy @(RealMonad h (IOSim s))) lookUp
@@ -1232,21 +1272,29 @@ runIOSim action lookUp = ReaderT $ \ !env -> do
 -- if creating a snapshot accidentally succeeded, then the rollback action is to
 -- delete that snapshot.
 runRealWithInjectedErrors ::
-     (MonadCatch m, MonadSTM m)
-  => String -- ^ Name of the action
+     (MonadCatch m, MonadSTM m, PrimMonad m)
+  => MutVar (PrimState m) [InjectFaultResult]
+  -> String -- ^ Name of the action
   -> StrictTVar m Errors
   -> Maybe Errors
   -> m t -- ^ Action to run
   -> (t -> m ()) -- ^ Rollback if the action *accidentally* succeeded
   -> m t
-runRealWithInjectedErrors s errsVar merrs k rollback =
+runRealWithInjectedErrors faultsVar s errsVar merrs k rollback =
   case merrs of
-    Nothing -> k
+    Nothing -> do
+      modifyMutVar faultsVar (InjectFaultNone s :)
+      k
     Just errs -> do
       eith <- try @_ @FsError $ FSSim.withErrors errsVar errs k
       case eith of
-        Left e  -> throwIO e
-        Right x -> rollback x >> throwIO (dummyFsError s)
+        Left e  -> do
+          modifyMutVar faultsVar (InjectFaultInducedError s :)
+          throwIO e
+        Right x -> do
+          modifyMutVar faultsVar (InjectFaultAccidentalSuccess s :)
+          rollback x
+          throwIO (dummyFsError s)
 
 catchErr ::
      forall m a. MonadCatch m
