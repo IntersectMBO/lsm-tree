@@ -1132,12 +1132,14 @@ runIO action lookUp = ReaderT $ \ !env -> do
           Class.mupserts (unwrapTable $ lookUp' tableVar) kmups
         RetrieveBlobs blobRefsVar -> catchErr handlers $
           fmap WrapBlob <$> Class.retrieveBlobs (Proxy @h) session (unwrapBlobRef <$> lookUp' blobRefsVar)
-        -- TODO: use merrs
-        CreateSnapshot _merrs label name tableVar -> catchErr handlers $
-          Class.createSnapshot label name (unwrapTable $ lookUp' tableVar)
-        -- TODO: use merrs
-        OpenSnapshot _merrs label name -> catchErr handlers $
-          WrapTable <$> Class.openSnapshot session label name
+        CreateSnapshot merrs label name tableVar -> catchErr handlers $
+          runRealWithInjectedErrors "CreateSnapshot" errsVar merrs
+            (Class.createSnapshot label name (unwrapTable $ lookUp' tableVar))
+            (\() -> Class.deleteSnapshot session name)
+        OpenSnapshot merrs label name -> catchErr handlers $
+          runRealWithInjectedErrors "OpenSnapshot" errsVar merrs
+            (WrapTable <$> Class.openSnapshot session label name)
+            (\(WrapTable t) -> Class.close t)
         DeleteSnapshot name -> catchErr handlers $
           Class.deleteSnapshot session name
         ListSnapshots -> catchErr handlers $
@@ -1151,8 +1153,7 @@ runIO action lookUp = ReaderT $ \ !env -> do
       where
         session = envSession env
         handlers = envHandlers env
-        -- TODO: use errsVar
-        _errsVar = envErrors env
+        errsVar = envErrors env
 
     lookUp' :: Var h x -> Realized IO x
     lookUp' = lookUpGVar (Proxy @(RealMonad h IO)) lookUp
@@ -1194,12 +1195,14 @@ runIOSim action lookUp = ReaderT $ \ !env -> do
           Class.mupserts (unwrapTable $ lookUp' tableVar) kmups
         RetrieveBlobs blobRefsVar -> catchErr handlers $
           fmap WrapBlob <$> Class.retrieveBlobs (Proxy @h) session (unwrapBlobRef <$> lookUp' blobRefsVar)
-        -- TODO: use merrs
-        CreateSnapshot _merrs label name tableVar -> catchErr handlers $
-          Class.createSnapshot label name (unwrapTable $ lookUp' tableVar)
-        -- TODO: use merrs
-        OpenSnapshot _merrs label name -> catchErr handlers $
-          WrapTable <$> Class.openSnapshot session label name
+        CreateSnapshot merrs label name tableVar -> catchErr handlers $
+          runRealWithInjectedErrors "CreateSnapshot" errsVar merrs
+            (Class.createSnapshot label name (unwrapTable $ lookUp' tableVar))
+            (\() -> Class.deleteSnapshot session name)
+        OpenSnapshot merrs label name -> catchErr handlers $
+          runRealWithInjectedErrors "OpenSnapshot" errsVar merrs
+            (WrapTable <$> Class.openSnapshot session label name)
+            (\(WrapTable t) -> Class.close t)
         DeleteSnapshot name -> catchErr handlers $
           Class.deleteSnapshot session name
         ListSnapshots -> catchErr handlers $
@@ -1213,11 +1216,37 @@ runIOSim action lookUp = ReaderT $ \ !env -> do
       where
         session = envSession env
         handlers = envHandlers env
-        -- TODO: use errsVar
-        _errsVar = envErrors env
+        errsVar = envErrors env
 
     lookUp' :: Var h x -> Realized (IOSim s) x
     lookUp' = lookUpGVar (Proxy @(RealMonad h (IOSim s))) lookUp
+
+-- | @'runRealWithInjectedErrors' _ errsVar merrs action rollback@ runs @action@
+-- with injected errors if available in @merrs@.
+--
+-- See 'Model.runModelMWithInjectedErrors': the real system is not guaranteed to
+-- fail with an error if there are injected disk faults, but the model *always*
+-- fails. In case the real system accidentally succeeded in running @action@
+-- when there were errors to inject, then we roll back the success using
+-- @rollback@. This ensures that the model and system stay in sync. For example:
+-- if creating a snapshot accidentally succeeded, then the rollback action is to
+-- delete that snapshot.
+runRealWithInjectedErrors ::
+     (MonadCatch m, MonadSTM m)
+  => String -- ^ Name of the action
+  -> StrictTVar m Errors
+  -> Maybe Errors
+  -> m t -- ^ Action to run
+  -> (t -> m ()) -- ^ Rollback if the action *accidentally* succeeded
+  -> m t
+runRealWithInjectedErrors s errsVar merrs k rollback =
+  case merrs of
+    Nothing -> k
+    Just errs -> do
+      eith <- try @_ @FsError $ FSSim.withErrors errsVar errs k
+      case eith of
+        Left e  -> throwIO e
+        Right x -> rollback x >> throwIO (dummyFsError s)
 
 catchErr ::
      forall m a. MonadCatch m
