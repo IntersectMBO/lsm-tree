@@ -102,10 +102,12 @@ import qualified Database.LSMTree.Model.Session as Model
 import           NoThunks.Class
 import           Prelude hiding (init)
 import           System.Directory (removeDirectoryRecursive)
-import           System.FS.API (HasFS, MountPoint (..), mkFsPath)
+import qualified System.FS.API as FS
+import           System.FS.API (FsError (..), HasFS, MountPoint (..), mkFsPath)
 import           System.FS.BlockIO.API (HasBlockIO, defaultIOCtxParams)
 import           System.FS.BlockIO.IO (ioHasBlockIO)
 import           System.FS.BlockIO.Sim (simHasBlockIO)
+import qualified System.FS.CallStack as FS
 import           System.FS.IO (HandleIO, ioHasFS)
 import qualified System.FS.Sim.Error as FSSim
 import           System.FS.Sim.Error (Errors)
@@ -151,6 +153,13 @@ tests = testGroup "Test.Database.LSMTree.StateMachine" [
 
     , testProperty "propLockstep_RealImpl_MockFS_IOSim" $
         propLockstep_RealImpl_MockFS_IOSim nullTracer
+
+    , testProperty "prop_dummyFsError" $ \s -> QC.ioProperty $
+        case fsErrorHandler of
+          Handler f -> do
+            throwIO (dummyFsError s) `catch` \e -> do
+              e' <- f e
+              pure (e' QC.=== Just Model.ErrFsError)
     ]
 
 labelledExamples :: IO ()
@@ -176,7 +185,7 @@ propLockstep_ModelIOImpl =
               env :: RealEnv ModelIO.Table IO
               env = RealEnv {
                   envSession = session
-                , envHandlers = [handler]
+                , envHandlers = [handler, fsErrorHandler]
                 }
             runReaderT r env)
       tagFinalState'
@@ -266,7 +275,7 @@ propLockstep_RealImpl_RealFS_IO tr =
               env :: RealEnv R.Table IO
               env = RealEnv {
                   envSession = session
-                , envHandlers = [realHandler @IO]
+                , envHandlers = [realHandler @IO, fsErrorHandler]
                 }
             runReaderT r env)
       tagFinalState'
@@ -296,7 +305,7 @@ propLockstep_RealImpl_MockFS_IO tr =
               env :: RealEnv R.Table IO
               env = RealEnv {
                   envSession = session
-                , envHandlers = [realHandler @IO]
+                , envHandlers = [realHandler @IO, fsErrorHandler]
                 }
             runReaderT r env)
       tagFinalState'
@@ -315,7 +324,7 @@ propLockstep_RealImpl_MockFS_IOSim tr actions =
           env :: RealEnv R.Table (IOSim s)
           env = RealEnv {
               envSession = session
-            , envHandlers = [realHandler @(IOSim s)]
+            , envHandlers = [realHandler @(IOSim s), fsErrorHandler]
             }
         void $ QD.runPropertyReaderT
                 (QD.runActions @(Lockstep (ModelState R.Table)) actions)
@@ -380,6 +389,12 @@ realHandler = Handler $ pure . handler'
     handler' ErrSnapshotWrongTableType{}  = Just Model.ErrSnapshotWrongType
     handler' (ErrBlobRefInvalid _)        = Just Model.ErrBlobRefInvalidated
     handler' _                            = Nothing
+
+fsErrorHandler :: Monad m => Handler m (Maybe Model.Err)
+fsErrorHandler = Handler $ pure . handler'
+  where
+    handler' :: FsError -> Maybe Model.Err
+    handler' _ = Just Model.ErrFsError
 
 createSystemTempDirectory ::  [Char] -> IO (FilePath, HasFS IO HandleIO, HasBlockIO IO HandleIO)
 createSystemTempDirectory prefix = do
@@ -1193,6 +1208,16 @@ catchErr ::
 catchErr hs action = catches (Right <$> action) (fmap f hs)
   where
     f (Handler h) = Handler $ \e -> maybe (throwIO e) (pure . Left) =<< h e
+
+dummyFsError :: String -> FsError
+dummyFsError s = FsError {
+      fsErrorType = FS.FsOther
+    , fsErrorPath = FS.FsErrorPath Nothing (FS.mkFsPath [])
+    , fsErrorString = "dummy: " ++ s
+    , fsErrorNo = Nothing
+    , fsErrorStack = FS.prettyCallStack
+    , fsLimitation = False
+    }
 
 {-------------------------------------------------------------------------------
   Generator and shrinking
