@@ -132,7 +132,7 @@ import           Test.Util.FS (approximateEqStream, assertNoOpenHandles,
                      assertNumOpenHandles)
 import           Test.Util.PrettyProxy
 import           Test.Util.TypeFamilyWrappers (WrapBlob (..), WrapBlobRef (..),
-                     WrapCursor (..), WrapSession (..), WrapTable (..))
+                     WrapCursor (..), WrapTable (..))
 
 {-------------------------------------------------------------------------------
   Test tree
@@ -171,14 +171,23 @@ propLockstep_ModelIOImpl =
       (Proxy @(ModelState ModelIO.Table))
       acquire
       release
-      (\r session -> runReaderT r (session, handler))
+      (\r session -> do
+            let
+              env :: RealEnv ModelIO.Table IO
+              env = RealEnv {
+                  envSession = session
+                , envHandler = handler
+                }
+            runReaderT r env)
       tagFinalState'
   where
-    acquire :: IO (WrapSession ModelIO.Table IO)
-    acquire = WrapSession <$> Class.openSession ModelIO.NoSessionArgs
+    acquire :: IO (Class.Session ModelIO.Table IO)
+    acquire = do
+      session <- Class.openSession ModelIO.NoSessionArgs
+      pure session
 
-    release :: WrapSession ModelIO.Table IO -> IO ()
-    release (WrapSession session) = Class.closeSession session
+    release :: Class.Session ModelIO.Table IO -> IO ()
+    release session = Class.closeSession session
 
     handler :: Handler IO (Maybe Model.Err)
     handler = Handler $ pure . handler'
@@ -252,17 +261,24 @@ propLockstep_RealImpl_RealFS_IO tr =
       (Proxy @(ModelState R.Table))
       acquire
       release
-      (\r (_, session) -> runReaderT r (session, realHandler @IO))
+      (\r (_, session) -> do
+            let
+              env :: RealEnv R.Table IO
+              env = RealEnv {
+                  envSession = session
+                , envHandler = realHandler @IO
+                }
+            runReaderT r env)
       tagFinalState'
   where
-    acquire :: IO (FilePath, WrapSession R.Table IO)
+    acquire :: IO (FilePath, Class.Session R.Table IO)
     acquire = do
         (tmpDir, hasFS, hasBlockIO) <- createSystemTempDirectory "prop_lockstepIO_RealImpl_RealFS"
         session <- R.openSession tr hasFS hasBlockIO (mkFsPath [])
-        pure (tmpDir, WrapSession session)
+        pure (tmpDir, session)
 
-    release :: (FilePath, WrapSession R.Table IO) -> IO ()
-    release (tmpDir, WrapSession session) = do
+    release :: (FilePath, Class.Session R.Table IO) -> IO ()
+    release (tmpDir, session) = do
         R.closeSession session
         removeDirectoryRecursive tmpDir
 
@@ -275,7 +291,14 @@ propLockstep_RealImpl_MockFS_IO tr =
       (Proxy @(ModelState R.Table))
       (acquire_RealImpl_MockFS tr)
       release_RealImpl_MockFS
-      (\r (_, session) -> runReaderT r (session, realHandler @IO))
+      (\r (_, session) -> do
+            let
+              env :: RealEnv R.Table IO
+              env = RealEnv {
+                  envSession = session
+                , envHandler = realHandler @IO
+                }
+            runReaderT r env)
       tagFinalState'
 
 propLockstep_RealImpl_MockFS_IOSim ::
@@ -288,27 +311,33 @@ propLockstep_RealImpl_MockFS_IOSim tr actions =
     prop :: forall s. PropertyM (IOSim s) Property
     prop = do
         (fsVar, session) <- QC.run (acquire_RealImpl_MockFS tr)
+        let
+          env :: RealEnv R.Table (IOSim s)
+          env = RealEnv {
+              envSession = session
+            , envHandler = realHandler @(IOSim s)
+            }
         void $ QD.runPropertyReaderT
                 (QD.runActions @(Lockstep (ModelState R.Table)) actions)
-                (session, realHandler @(IOSim s))
+                env
         QC.run $ release_RealImpl_MockFS (fsVar, session)
         pure $ tagFinalState actions tagFinalState' $ QC.property True
 
 acquire_RealImpl_MockFS ::
      R.IOLike m
   => Tracer m R.LSMTreeTrace
-  -> m (StrictTMVar m MockFS, WrapSession R.Table m)
+  -> m (StrictTMVar m MockFS, Class.Session R.Table m)
 acquire_RealImpl_MockFS tr = do
     fsVar <- newTMVarIO MockFS.empty
     (hfs, hbio) <- simHasBlockIO fsVar
     session <- R.openSession tr hfs hbio (mkFsPath [])
-    pure (fsVar, WrapSession session)
+    pure (fsVar, session)
 
 release_RealImpl_MockFS ::
      R.IOLike m
-  => (StrictTMVar m MockFS, WrapSession R.Table m)
+  => (StrictTMVar m MockFS, Class.Session R.Table m)
   -> m ()
-release_RealImpl_MockFS (fsVar, WrapSession session) = do
+release_RealImpl_MockFS (fsVar, session) = do
     sts <- getAllSessionTables session
     forM_ sts $ \(SomeTable t) -> R.close t
     scs <- getAllSessionCursors session
@@ -775,13 +804,22 @@ instance Eq (Obs h a) where
   Real monad
 -------------------------------------------------------------------------------}
 
--- | Uses 'WrapSession' such that we can define class instances that mention
--- 'RealMonad' in the class head. This is necessary because class heads can not
--- mention type families directly.
---
--- Also carries an exception handle that is specific to the table implementation
--- identified by the table @h@.
-type RealMonad h m = ReaderT (WrapSession h m, Handler m (Maybe Model.Err)) m
+type RealMonad h m = ReaderT (RealEnv h m) m
+
+-- | An environment for implementations @h@ of the public API to run actions in
+-- (see 'perform', 'runIO', 'runIOSim').
+data RealEnv h m = RealEnv {
+    -- | The session to run actions in.
+    envSession :: !(Class.Session h m)
+    -- | Error handler to convert thrown exceptions into pure error values.
+    --
+    -- Uncaught exceptions make the tests fail, so some handlers should be
+    -- provided that catch the exceptions and turn them into pure error values
+    -- if possible. The state machine infrastructure can then also compare the
+    -- error values obtained from running @h@ to the error values obtained by
+    -- running the model.
+  , envHandler :: Handler m (Maybe Model.Err)
+  }
 
 {-------------------------------------------------------------------------------
   RunLockstep
@@ -1032,19 +1070,16 @@ runIO ::
   => LockstepAction (ModelState h) a
   -> LookUp (RealMonad h IO)
   -> RealMonad h IO (Realized (RealMonad h IO) a)
-runIO action lookUp = ReaderT $ \(session, handler) -> do
-    x <- aux (unwrapSession session) handler action
-    case session of
-      WrapSession sesh ->
-        assertNoThunks sesh $ pure ()
+runIO action lookUp = ReaderT $ \ !env -> do
+    x <- aux env action
+    assertNoThunks (envSession env) $ pure ()
     pure x
   where
     aux ::
-         Class.Session h IO
-      -> Handler IO (Maybe Model.Err)
+         RealEnv h IO
       -> LockstepAction (ModelState h) a
       -> IO (Realized IO a)
-    aux session handler = \case
+    aux env = \case
         New _ cfg -> catchErr handler $
           WrapTable <$> Class.new session cfg
         Close tableVar -> catchErr handler $
@@ -1085,6 +1120,9 @@ runIO action lookUp = ReaderT $ \(session, handler) -> do
           WrapTable <$> Class.union (unwrapTable $ lookUp' table1Var) (unwrapTable $ lookUp' table2Var)
         Unions tableVars -> catchErr handler $
           WrapTable <$> Class.unions (fmap (unwrapTable . lookUp') tableVars)
+      where
+        session = envSession env
+        handler = envHandler env
 
     lookUp' :: Var h x -> Realized IO x
     lookUp' = lookUpGVar (Proxy @(RealMonad h IO)) lookUp
@@ -1094,15 +1132,14 @@ runIOSim ::
   => LockstepAction (ModelState h) a
   -> LookUp (RealMonad h (IOSim s))
   -> RealMonad h (IOSim s) (Realized (RealMonad h (IOSim s)) a)
-runIOSim action lookUp = ReaderT $ \(session, handler) ->
-    aux (unwrapSession session) handler action
+runIOSim action lookUp = ReaderT $ \ !env -> do
+    aux env action
   where
     aux ::
-         Class.Session h (IOSim s)
-      -> Handler (IOSim s) (Maybe Model.Err)
+         RealEnv h (IOSim s)
       -> LockstepAction (ModelState h) a
       -> IOSim s (Realized (IOSim s) a)
-    aux session handler = \case
+    aux env = \case
         New _ cfg -> catchErr handler $
           WrapTable <$> Class.new session cfg
         Close tableVar -> catchErr handler $
@@ -1143,6 +1180,9 @@ runIOSim action lookUp = ReaderT $ \(session, handler) ->
           WrapTable <$> Class.union (unwrapTable $ lookUp' table1Var) (unwrapTable $ lookUp' table2Var)
         Unions tableVars -> catchErr handler $
           WrapTable <$> Class.unions (fmap (unwrapTable . lookUp') tableVars)
+      where
+        session = envSession env
+        handler = envHandler env
 
     lookUp' :: Var h x -> Realized (IOSim s) x
     lookUp' = lookUpGVar (Proxy @(RealMonad h (IOSim s))) lookUp
