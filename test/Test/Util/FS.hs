@@ -1,4 +1,3 @@
-{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 
 {- HLINT ignore "Redundant if" -}
 
@@ -18,6 +17,8 @@ module Test.Util.FS (
   , propNoOpenHandles
   , assertNoOpenHandles
   , assertNumOpenHandles
+    -- * Equality
+  , approximateEqStream
   ) where
 
 import           Control.Concurrent.Class.MonadMVar
@@ -35,6 +36,7 @@ import           System.FS.Sim.Error
 import qualified System.FS.Sim.MockFS as MockFS
 import           System.FS.Sim.MockFS
 import           System.FS.Sim.STM
+import           System.FS.Sim.Stream (InternalInfo (..), Stream (..))
 import           System.IO.Temp
 import           Test.QuickCheck
 import           Text.Printf
@@ -188,3 +190,26 @@ assertNumOpenHandles fs m =
       else
         True
   where n = numOpenHandles fs
+
+{-------------------------------------------------------------------------------
+  Equality
+-------------------------------------------------------------------------------}
+
+-- | Approximate equality for streams.
+--
+-- Equality is checked as follows:
+-- * Infinite streams are equal: any infinity is as good as another infinity
+-- * Finite streams are are checked for pointwise equality on their elements.
+-- * Other streams are trivially unequal: they do not have matching finiteness
+--
+-- This approximate equality satisfies the __Reflexivity__, __Symmetry__,
+-- __Transitivity__ and __Negation__ laws for the 'Eq' class, but not
+-- __Substitutivity.
+--
+-- TODO: upstream to fs-sim
+approximateEqStream :: Eq a => Stream a -> Stream a -> Bool
+approximateEqStream (UnsafeStream infoXs xs) (UnsafeStream infoYs ys) =
+    case (infoXs, infoYs) of
+      (Infinite, Infinite) -> True
+      (Finite, Finite)     ->  xs == ys
+      (_, _)               -> False

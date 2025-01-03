@@ -386,6 +386,7 @@ test-suite lsm-tree-test
     Test.Database.LSMTree.StateMachine.DL
     Test.Database.LSMTree.StateMachine.Op
     Test.Database.LSMTree.UnitTests
+    Test.FS
     Test.System.Posix.Fcntl.NoCache
     Test.Util.Arbitrary
     Test.Util.FS
