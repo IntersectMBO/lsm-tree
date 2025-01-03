@@ -86,8 +86,7 @@ import           Data.Maybe (catMaybes, fromJust, fromMaybe)
 import           Data.Primitive.MutVar
 import           Data.Set (Set)
 import qualified Data.Set as Set
-import           Data.Typeable (Proxy (..), Typeable, cast, eqT,
-                     type (:~:) (Refl))
+import           Data.Typeable (Proxy (..), Typeable, cast)
 import qualified Data.Vector as V
 import qualified Database.LSMTree as R
 import           Database.LSMTree.Class (LookupResult (..), QueryResult (..))
@@ -560,7 +559,8 @@ instance ( Show (Class.TableConfig h)
       -> Act h ()
     OpenSnapshot   ::
          C k v b
-      => Maybe Errors
+      => {-# UNPACK #-} !(PrettyProxy (k, v, b))
+      -> Maybe Errors
       -> R.SnapshotLabel -> R.SnapshotName
       -> Act h (WrapTable h IO k v b)
     DeleteSnapshot :: R.SnapshotName -> Act h ()
@@ -584,15 +584,6 @@ instance ( Show (Class.TableConfig h)
   arbitraryAction = Lockstep.Defaults.arbitraryAction
   shrinkAction    = Lockstep.Defaults.shrinkAction
 
--- TODO: show instance does not show key-value-blob types. Example:
---
--- StateMachine
---   prop_lockstepIO_ModelIOImpl: FAIL
---     *** Failed! Exception: 'open: inappropriate type (table type mismatch)' (after 25 tests and 2 shrinks):
---     do action $ New TableConfig
---        action $ CreateSnapshot "snap" (GVar var1 (FromRight . id))
---        action $ OpenSnapshot "snap"
---        pure ()
 deriving stock instance Show (Class.TableConfig h)
                      => Show (LockstepAction (ModelState h) a)
 
@@ -603,8 +594,10 @@ instance ( Eq (Class.TableConfig h)
   x == y = go x y
     where
       go :: LockstepAction (ModelState h) a -> LockstepAction (ModelState h) a -> Bool
-      go (New (PrettyProxy :: PrettyProxy kvb1) conf1) (New (PrettyProxy :: PrettyProxy kvb2) conf2) =
-          eqT @kvb1 @kvb2 == Just Refl && conf1 == conf2
+      go
+        (New (PrettyProxy :: PrettyProxy kvb) conf1)
+        (New (PrettyProxy :: PrettyProxy kvb) conf2) =
+          conf1 == conf2
       go (Close var1)               (Close var2) =
           Just var1 == cast var2
       go (Lookups ks1 var1)         (Lookups ks2 var2) =
@@ -629,7 +622,9 @@ instance ( Eq (Class.TableConfig h)
           Just vars1 == cast vars2
       go (CreateSnapshot merrs1 label1 name1 var1) (CreateSnapshot merrs2 label2 name2 var2) =
           merrs1 == merrs2 && label1 == label2 && name1 == name2 && Just var1 == cast var2
-      go (OpenSnapshot merrs1 label1 name1) (OpenSnapshot merrs2 label2 name2) =
+      go
+        (OpenSnapshot (PrettyProxy :: PrettyProxy kvb) merrs1 label1 name1)
+        (OpenSnapshot (PrettyProxy :: PrettyProxy kvb) merrs2 label2 name2) =
           merrs1 == merrs2 && label1 == label2 && name1 == name2
       go (DeleteSnapshot name1) (DeleteSnapshot name2) =
           name1 == name2
@@ -1087,7 +1082,7 @@ runModel lookUp = \case
       . Model.runModelMWithInjectedErrors merrs
           (Model.createSnapshot label name (getTable $ lookUp tableVar))
           (pure ())
-    OpenSnapshot merrs label name ->
+    OpenSnapshot _ merrs label name ->
       wrap MTable
       . Model.runModelMWithInjectedErrors merrs
           (Model.openSnapshot label name)
@@ -1174,7 +1169,7 @@ runIO action lookUp = ReaderT $ \ !env -> do
           runRealWithInjectedErrors faultsVar "CreateSnapshot" errsVar merrs
             (Class.createSnapshot label name (unwrapTable $ lookUp' tableVar))
             (\() -> Class.deleteSnapshot session name)
-        OpenSnapshot merrs label name -> catchErr handlers $
+        OpenSnapshot _ merrs label name -> catchErr handlers $
           runRealWithInjectedErrors faultsVar "OpenSnapshot" errsVar merrs
             (WrapTable <$> Class.openSnapshot session label name)
             (\(WrapTable t) -> Class.close t)
@@ -1238,7 +1233,7 @@ runIOSim action lookUp = ReaderT $ \ !env -> do
           runRealWithInjectedErrors faultsVar "CreateSnapshot" errsVar merrs
             (Class.createSnapshot label name (unwrapTable $ lookUp' tableVar))
             (\() -> Class.deleteSnapshot session name)
-        OpenSnapshot merrs label name -> catchErr handlers $
+        OpenSnapshot _ merrs label name -> catchErr handlers $
           runRealWithInjectedErrors faultsVar "OpenSnapshot" errsVar merrs
             (WrapTable <$> Class.openSnapshot session label name)
             (\(WrapTable t) -> Class.close t)
@@ -1413,10 +1408,10 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
 
     genActionsSession :: [(Int, Gen (Any (LockstepAction (ModelState h))))]
     genActionsSession =
-        [ (1, fmap Some $ New  @k @v @b PrettyProxy <$> QC.arbitrary)
+        [ (1, fmap Some $ New @k @v @b PrettyProxy <$> QC.arbitrary)
         | length tableVars <= 5 ] -- no more than 5 tables at once
 
-     ++ [ (1, fmap Some $ OpenSnapshot @k @v @b <$>
+     ++ [ (1, fmap Some $ OpenSnapshot @k @v @b PrettyProxy <$>
                 genErrors <*> pure label <*> genUsedSnapshotName)
         | not (null usedSnapshotNames)
           -- TODO: generate errors
@@ -1561,6 +1556,17 @@ shrinkActionWithVars _ctx _st = \case
       ]
 
     Lookups ks tableVar -> [ Some $ Lookups ks' tableVar | ks' <- QC.shrink ks ]
+
+    -- Snapshots
+
+    CreateSnapshot merrs label name tableVar -> [
+        Some $ CreateSnapshot merrs' label name tableVar
+      | merrs' <- QC.shrink merrs
+      ]
+    OpenSnapshot pp merrs label name -> [
+        Some $ OpenSnapshot pp merrs' label name
+      | merrs' <- QC.shrink merrs
+      ]
 
     _ -> []
 
@@ -1918,14 +1924,14 @@ tagStep' (ModelState _stateBefore statsBefore,
       = Nothing
 
     tagOpenExistingSnapshot
-      | OpenSnapshot _ _ name <- action
+      | OpenSnapshot _ _ _ name <- action
       , name `Set.member` snapshotted statsBefore
       = Just OpenExistingSnapshot
       | otherwise
       = Nothing
 
     tagOpenMissingSnapshot
-      | OpenSnapshot _ _ name <- action
+      | OpenSnapshot _ _ _ name <- action
       , not (name `Set.member` snapshotted statsBefore)
       = Just OpenMissingSnapshot
       | otherwise
