@@ -9,6 +9,7 @@
 {-# LANGUAGE InstanceSigs             #-}
 {-# LANGUAGE LambdaCase               #-}
 {-# LANGUAGE MultiParamTypeClasses    #-}
+{-# LANGUAGE MultiWayIf               #-}
 {-# LANGUAGE NamedFieldPuns           #-}
 {-# LANGUAGE OverloadedStrings        #-}
 {-# LANGUAGE QuantifiedConstraints    #-}
@@ -64,11 +65,13 @@ module Test.Database.LSMTree.StateMachine (
   , Action (..)
   ) where
 
+import           Control.ActionRegistry (AbortActionRegistryError (..),
+                     CommitActionRegistryError (..))
 import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Concurrent.Class.MonadSTM.Strict
 import           Control.Monad (forM_, void, (<=<))
-import           Control.Monad.Class.MonadThrow (Handler (..), MonadCatch (..),
-                     MonadThrow (..), catches)
+import           Control.Monad.Class.MonadThrow (Exception (fromException),
+                     Handler (..), MonadCatch (..), MonadThrow (..), catches)
 import           Control.Monad.IOSim
 import           Control.Monad.Primitive
 import           Control.Monad.Reader (ReaderT (..))
@@ -195,7 +198,6 @@ propLockstep_ModelIOImpl =
             faults <- readMutVar faultsVar
             pure $ QC.tabulate "Fault results" (fmap show faults) prop
         )
-      tagFinalState'
   where
     acquire :: IO (Class.Session ModelIO.Table IO, StrictTVar IO Errors)
     acquire = do
@@ -284,7 +286,11 @@ propLockstep_RealImpl_RealFS_IO tr =
               env :: RealEnv R.Table IO
               env = RealEnv {
                   envSession = session
-                , envHandlers = [realHandler @IO, fsErrorHandler]
+                , envHandlers = [
+                      realHandler @IO
+                    , fsErrorHandler
+                    , actionRegistryErrorHandler
+                    ]
                 , envErrors = errsVar
                 , envInjectFaultResults = faultsVar
                 }
@@ -292,7 +298,6 @@ propLockstep_RealImpl_RealFS_IO tr =
             faults <- readMutVar faultsVar
             pure $ QC.tabulate "Fault results" (fmap show faults) prop
         )
-      tagFinalState'
   where
     acquire :: IO (FilePath, Class.Session R.Table IO, StrictTVar IO Errors)
     acquire = do
@@ -321,7 +326,11 @@ propLockstep_RealImpl_MockFS_IO tr =
               env :: RealEnv R.Table IO
               env = RealEnv {
                   envSession = session
-                , envHandlers = [realHandler @IO, fsErrorHandler]
+                , envHandlers = [
+                      realHandler @IO
+                    , fsErrorHandler
+                    , actionRegistryErrorHandler
+                    ]
                 , envErrors = errsVar
                 , envInjectFaultResults = faultsVar
                 }
@@ -329,7 +338,6 @@ propLockstep_RealImpl_MockFS_IO tr =
             faults <- readMutVar faultsVar
             pure $ QC.tabulate "Fault results" (fmap show faults) prop
         )
-      tagFinalState'
 
 propLockstep_RealImpl_MockFS_IOSim ::
      (forall s. Tracer (IOSim s) R.LSMTreeTrace)
@@ -346,7 +354,11 @@ propLockstep_RealImpl_MockFS_IOSim tr actions =
           env :: RealEnv R.Table (IOSim s)
           env = RealEnv {
               envSession = session
-            , envHandlers = [realHandler @(IOSim s), fsErrorHandler]
+            , envHandlers = [
+                  realHandler @(IOSim s)
+                , fsErrorHandler
+                , actionRegistryErrorHandler
+                ]
             , envErrors = errsVar
             , envInjectFaultResults = faultsVar
             }
@@ -356,7 +368,7 @@ propLockstep_RealImpl_MockFS_IOSim tr actions =
         faults <- QC.run $ readMutVar faultsVar
         QC.run $ release_RealImpl_MockFS (fsVar, session, errsVar)
         pure
-          $ tagFinalState actions tagFinalState'
+          $ tagFinalState actions
           $ QC.tabulate "Fault results" (fmap show faults)
           $ QC.property True
 
@@ -424,6 +436,16 @@ fsErrorHandler = Handler $ pure . handler'
   where
     handler' :: FsError -> Maybe Model.Err
     handler' _ = Just Model.ErrFsError
+
+actionRegistryErrorHandler :: Monad m => Handler m (Maybe Model.Err)
+actionRegistryErrorHandler = Handler $ \e -> pure $
+    if
+      | Just AbortActionRegistryError{} <- fromException e
+      -> Just Model.ErrFsError
+      | Just CommitActionRegistryError{} <- fromException e
+      -> Just Model.ErrFsError
+      | otherwise
+      -> Nothing
 
 createSystemTempDirectory ::  [Char] -> IO (FilePath, HasFS IO HandleIO, HasBlockIO IO HandleIO)
 createSystemTempDirectory prefix = do
@@ -1949,50 +1971,9 @@ tagStep' (ModelState _stateBefore statsBefore,
       | otherwise
       = Nothing
 
--- | Tags for the final state
-data FinalTag =
-    -- | Total number of lookup results that were 'SUT.NotFound'
-    NumLookupsNotFound String
-    -- | Total number of lookup results that were 'SUT.Found'
-  | NumLookupsFound String
-    -- | Total number of lookup results that were 'SUT.FoundWithBlob'
-  | NumLookupsFoundWithBlob String
-    -- | Number of 'Class.Insert's succesfully submitted to a table
-    -- (this includes submissions through both 'Class.updates' and
-    -- 'Class.inserts')
-  | NumInserts String
-    -- | Number of 'Class.InsertWithBlob's succesfully submitted to a table
-    -- (this includes submissions through both 'Class.updates' and
-    -- 'Class.inserts')
-  | NumInsertsWithBlobs String
-    -- | Number of 'Class.Delete's succesfully submitted to a table
-    -- (this includes submissions through both 'Class.updates' and
-    -- 'Class.deletes')
-  | NumDeletes String
-    -- | Number of 'Class.Mupsert's succesfully submitted to a table
-    -- (this includes submissions through both 'Class.updates' and
-    -- 'Class.mupserts')
-  | NumMupserts String
-    -- | Total number of actions (failing, succeeding, either)
-  | NumActions String
-    -- | Which actions succeded
-  | ActionSuccess String
-    -- | Which actions failed
-  | ActionFail String Model.Err
-    -- | Total number of flushes
-  | NumFlushes String -- TODO: implement
-    -- | Number of tables created (new, open or duplicate)
-  | NumTables String
-    -- | Number of actions on each table
-  | NumTableActions String
-    -- | Total /logical/ size of a table
-  | TableSize String
-    -- | Number of interleaved actions on duplicate tables
-  | DupTableActionLog String
-  deriving stock Show
 
 -- | This is run only after completing every action
-tagFinalState' :: Lockstep (ModelState h) -> [(String, [FinalTag])]
+tagFinalState' :: Lockstep (ModelState h) -> [(String, [FinalTag (ModelState h)])]
 tagFinalState' (getModel -> ModelState finalState finalStats) = concat [
       tagNumLookupsResults
     , tagNumUpdates
@@ -2079,15 +2060,16 @@ runActionsBracket' ::
        RunLockstep state m
      , e ~ Error (Lockstep state)
      , forall a. IsPerformResult e a
+     , Show (FinalTag state)
+     , LockstepTagSequence state
      )
   => Proxy state
   -> IO st
   -> (st -> IO ())
   -> (m QC.Property -> st -> IO QC.Property)
-  -> (Lockstep state -> [(String, [FinalTag])])
   -> Actions (Lockstep state) -> QC.Property
-runActionsBracket' p init cleanup runner tagger actions =
-    tagFinalState actions tagger
+runActionsBracket' p init cleanup runner actions =
+    tagFinalState actions
   $ Lockstep.Run.runActionsBracket p init cleanup' runner actions
   where
     cleanup' st = do
@@ -2095,15 +2077,69 @@ runActionsBracket' p init cleanup runner tagger actions =
       checkForgottenRefs
 
 tagFinalState ::
+     forall state. (Show (FinalTag state), LockstepTagSequence state)
+  => Actions (Lockstep state)
+  -> Property
+  -> Property
+tagFinalState actions =
+    flip (foldr (\(key, values) -> QC.tabulate key (fmap show values))) (tagSequence actions)
+
+
+tagFinalState2 ::
      forall state. StateModel (Lockstep state)
   => Actions (Lockstep state)
-  -> (Lockstep state -> [(String, [FinalTag])])
-  -> Property
-  -> Property
-tagFinalState actions tagger =
-    flip (foldr (\(key, values) -> QC.tabulate key (fmap show values))) finalTags
+  -> (Lockstep state -> [(String, [FinalTag state])])
+  -> [(String, [FinalTag state])]
+tagFinalState2 actions getTags = getTags $ underlyingState finalAnnState
   where
     finalAnnState :: Annotated (Lockstep state)
     finalAnnState = stateAfter @(Lockstep state) actions
 
-    finalTags = tagger $ underlyingState finalAnnState
+instance ( Show (Class.TableConfig h)
+         , Eq (Class.TableConfig h)
+         , Arbitrary (Class.TableConfig h)
+         , Typeable h
+         ) => LockstepTagSequence (ModelState h) where
+  -- | Tags for the final state
+  data FinalTag (ModelState h) =
+      -- | Total number of lookup results that were 'SUT.NotFound'
+      NumLookupsNotFound String
+      -- | Total number of lookup results that were 'SUT.Found'
+    | NumLookupsFound String
+      -- | Total number of lookup results that were 'SUT.FoundWithBlob'
+    | NumLookupsFoundWithBlob String
+      -- | Number of 'Class.Insert's succesfully submitted to a table
+      -- (this includes submissions through both 'Class.updates' and
+      -- 'Class.inserts')
+    | NumInserts String
+      -- | Number of 'Class.InsertWithBlob's succesfully submitted to a table
+      -- (this includes submissions through both 'Class.updates' and
+      -- 'Class.inserts')
+    | NumInsertsWithBlobs String
+      -- | Number of 'Class.Delete's succesfully submitted to a table
+      -- (this includes submissions through both 'Class.updates' and
+      -- 'Class.deletes')
+    | NumDeletes String
+      -- | Number of 'Class.Mupsert's succesfully submitted to a table
+      -- (this includes submissions through both 'Class.updates' and
+      -- 'Class.mupserts')
+    | NumMupserts String
+      -- | Total number of actions (failing, succeeding, either)
+    | NumActions String
+      -- | Which actions succeded
+    | ActionSuccess String
+      -- | Which actions failed
+    | ActionFail String Model.Err
+      -- | Total number of flushes
+    | NumFlushes String -- TODO: implement
+      -- | Number of tables created (new, open or duplicate)
+    | NumTables String
+      -- | Number of actions on each table
+    | NumTableActions String
+      -- | Total /logical/ size of a table
+    | TableSize String
+      -- | Number of interleaved actions on duplicate tables
+    | DupTableActionLog String
+    deriving stock Show
+
+  tagSequence actions = tagFinalState2 actions tagFinalState'

@@ -40,3 +40,7 @@ lsm-tree
 ```
 
 cabal run control-test -- -p "prop_modifyWithActionRegistry"
+
+
+
+cabal run lsm-tree-test -- -p '$NF=="propLockstep_RealImpl_MockFS_IOSim"' --quickcheck-replay="(SMGen 17909374846494722849 12145526585398791291,46)" --quickcheck-shrinks=0
