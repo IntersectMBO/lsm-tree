@@ -500,17 +500,18 @@ flushWriteBuffer tr conf@TableConfig{confFencePointerIndex, confDiskCachePolicy}
   | WB.null (tableWriteBuffer tc) = pure tc
   | otherwise = do
     !n <- incrUniqCounter uc
-    let !size  = WB.numEntries (tableWriteBuffer tc)
-        !l     = LevelNo 1
-        !cache = diskCachePolicyForLevel confDiskCachePolicy l
-        !alloc = bloomFilterAllocForLevel conf l
-        !path  = Paths.runPath root (uniqueToRunNumber n)
+    let !size      = WB.numEntries (tableWriteBuffer tc)
+        !l         = LevelNo 1
+        !cache     = diskCachePolicyForLevel confDiskCachePolicy l
+        !alloc     = bloomFilterAllocForLevel conf l
+        !indexType = indexTypeForRun confFencePointerIndex
+        !path      = Paths.runPath root (uniqueToRunNumber n)
     traceWith tr $ AtLevel l $ TraceFlushWriteBuffer size (runNumber path) cache alloc
     r <- allocateTemp reg
             (Run.fromWriteBuffer hfs hbio
               cache
               alloc
-              confFencePointerIndex
+              indexType
               path
               (tableWriteBuffer tc)
               (tableWriteBufferBlobs tc))
@@ -653,13 +654,14 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
         !n <- incrUniqCounter uc
         let !caching = diskCachePolicyForLevel confDiskCachePolicy ln
             !alloc = bloomFilterAllocForLevel conf ln
+            !indexType = indexTypeForRun confFencePointerIndex
             !runPaths = Paths.runPath root (uniqueToRunNumber n)
         traceWith tr $ AtLevel ln $
           TraceNewMerge (V.map Run.size rs) (runNumber runPaths) caching alloc mergePolicy mergeLevel
         -- The runs will end up inside the merging run, with fresh references.
         -- The original references can be released (but only on the happy path).
         mr <- allocateTemp reg
-          (MR.new hfs hbio resolve caching alloc confFencePointerIndex mergeLevel runPaths rs)
+          (MR.new hfs hbio resolve caching alloc indexType mergeLevel runPaths rs)
           releaseRef
         V.forM_ rs $ \r -> freeTemp reg (releaseRef r)
         case confMergeSchedule of

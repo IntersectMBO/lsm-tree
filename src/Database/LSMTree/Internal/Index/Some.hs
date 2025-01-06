@@ -3,7 +3,7 @@
 -- | Provides support for working with fence pointer indexes of unknown type.
 module Database.LSMTree.Internal.Index.Some
 (
-    IndexType (CompactIndex, OrdinaryIndex),
+    IndexType (Compact, Ordinary),
     SomeIndex (SomeIndex),
     headerLBS,
     fromSBS,
@@ -33,37 +33,7 @@ import           Database.LSMTree.Internal.Page (NumPages, PageSpan)
 import           Database.LSMTree.Internal.Serialise (SerialisedKey)
 
 -- | The type of concrete index types specifically supported by this module.
-data IndexType
-    {-|
-        The type of compact indexes.
-
-        Compact indexes are designed to work with keys that are large (for
-        example, 32 bytes long) cryptographic hashes.
-
-        When using a compact index, it is vital that the
-        'Database.LSMTree.Internal.Serialise.Class.serialiseKey' function
-        satisfies the following law:
-
-        [Minimal size] @'Database.LSMTree.Internal.RawBytes.size'
-          ('Database.LSMTree.Internal.Serialise.Class.serialiseKey' x) >= 8@
-
-        Use 'Database.LSMTree.Internal.Serialise.Class.serialiseKeyMinimalSize'
-        to test this law.
-    -}
-    = CompactIndex
-      {-|
-          The type of ordinary indexes.
-
-          Ordinary indexes do not have any constraints on keys other than that
-          their serialised forms may not be 64 KiB or more in size.
-      -}
-    | OrdinaryIndex
-    deriving stock (Show, Eq)
-
-instance NFData IndexType where
-
-    rnf CompactIndex  = ()
-    rnf OrdinaryIndex = ()
+data IndexType = Compact | Ordinary deriving stock (Show, Eq)
 
 -- | The type of indexes.
 data SomeIndex = forall i . (Index i, NFData i) => SomeIndex i
@@ -85,8 +55,8 @@ instance Index SomeIndex where
 
 -- | Yields the header of the serialised form of an index of a given type.
 headerLBS :: IndexType -> LazyByteString
-headerLBS CompactIndex  = IndexCompact.headerLBS
-headerLBS OrdinaryIndex = IndexOrdinary.headerLBS
+headerLBS Compact  = IndexCompact.headerLBS
+headerLBS Ordinary = IndexOrdinary.headerLBS
 
 {-|
     Reads an index of a given type along with the number of entries of the
@@ -101,8 +71,8 @@ headerLBS OrdinaryIndex = IndexOrdinary.headerLBS
     detected by looking at the type–version indicator.
 -}
 fromSBS :: IndexType -> ShortByteString -> Either String (NumEntries, SomeIndex)
-fromSBS CompactIndex  = fmap (second SomeIndex) . IndexCompact.fromSBS
-fromSBS OrdinaryIndex = fmap (second SomeIndex) . IndexOrdinary.fromSBS
+fromSBS Compact  = fmap (second SomeIndex) . IndexCompact.fromSBS
+fromSBS Ordinary = fmap (second SomeIndex) . IndexOrdinary.fromSBS
 
 -- | The type of index accumulators.
 data SomeIndexAcc s = forall j . IndexAcc j => SomeIndexAcc (j s)
@@ -129,5 +99,5 @@ instance IndexAcc SomeIndexAcc where
     configuration.
 -}
 newWithDefaults :: IndexType -> ST s (SomeIndexAcc s)
-newWithDefaults CompactIndex  = SomeIndexAcc <$> IndexCompact.new 1024
-newWithDefaults OrdinaryIndex = SomeIndexAcc <$> IndexOrdinary.new 1024 4096
+newWithDefaults Compact  = SomeIndexAcc <$> IndexCompact.new 1024
+newWithDefaults Ordinary = SomeIndexAcc <$> IndexOrdinary.new 1024 4096

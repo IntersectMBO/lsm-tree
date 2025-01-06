@@ -35,7 +35,7 @@ module Database.LSMTree.Common (
   , Internal.NumEntries (..)
   , Internal.BloomFilterAlloc (..)
   , Internal.defaultBloomFilterAlloc
-  , Internal.IndexType (..)
+  , Internal.FencePointerIndex (..)
   , Internal.DiskCachePolicy (..)
   , Internal.MergeSchedule (..)
   , Internal.defaultMergeSchedule
@@ -57,7 +57,6 @@ import qualified Database.LSMTree.Internal as Internal
 import qualified Database.LSMTree.Internal.BlobRef as Internal
 import qualified Database.LSMTree.Internal.Config as Internal
 import qualified Database.LSMTree.Internal.Entry as Internal
-import qualified Database.LSMTree.Internal.Index.Some as Internal
 import qualified Database.LSMTree.Internal.MergeSchedule as Internal
 import qualified Database.LSMTree.Internal.Paths as Internal
 import qualified Database.LSMTree.Internal.Range as Internal

@@ -19,6 +19,9 @@ module Database.LSMTree.Internal.Config (
   , BloomFilterAlloc (..)
   , defaultBloomFilterAlloc
   , bloomFilterAllocForLevel
+    -- * Fence pointer index
+  , FencePointerIndex (..)
+  , indexTypeForRun
     -- * Disk cache policy
   , DiskCachePolicy (..)
   , diskCachePolicyForLevel
@@ -34,7 +37,7 @@ import           Data.Word (Word64)
 import           Database.LSMTree.Internal.Assertions (assert,
                      fromIntegralChecked)
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
-import           Database.LSMTree.Internal.Index.Some (IndexType (CompactIndex))
+import           Database.LSMTree.Internal.Index.Some (IndexType (..))
 import           Database.LSMTree.Internal.Run (RunDataCaching (..))
 import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..))
 import qualified Monkey
@@ -64,7 +67,7 @@ data TableConfig = TableConfig {
     -- applications.
   , confWriteBufferAlloc  :: !WriteBufferAlloc
   , confBloomFilterAlloc  :: !BloomFilterAlloc
-  , confFencePointerIndex :: !IndexType
+  , confFencePointerIndex :: !FencePointerIndex
     -- | The policy for caching key\/value data from disk in memory.
   , confDiskCachePolicy   :: !DiskCachePolicy
   , confMergeSchedule     :: !MergeSchedule
@@ -274,6 +277,42 @@ bloomFilterAllocForLevel conf (LevelNo l) =
       | otherwise = foldr (\x r k -> case k of
                                       0 -> Just x
                                       _ -> r (k-1)) (const Nothing) xs n
+
+{-------------------------------------------------------------------------------
+  Fence pointer index
+-------------------------------------------------------------------------------}
+
+-- | Configure the type of fence pointer index.
+data FencePointerIndex =
+    -- | Use a compact fence pointer index.
+    --
+    -- Compact indexes are designed to work with keys that are large (for
+    -- example, 32 bytes long) cryptographic hashes.
+    --
+    -- When using a compact index, it is vital that the
+    -- 'Database.LSMTree.Internal.Serialise.Class.serialiseKey' function
+    -- satisfies the following law:
+    --
+    -- [Minimal size] @'Database.LSMTree.Internal.RawBytes.size'
+    -- ('Database.LSMTree.Internal.Serialise.Class.serialiseKey' x) >= 8@
+    --
+    -- Use 'Database.LSMTree.Internal.Serialise.Class.serialiseKeyMinimalSize'
+    -- to test this law.
+    CompactIndex
+    -- | Use an ordinary fence pointer index
+    --
+    -- Ordinary indexes do not have any constraints on keys other than that
+    -- their serialised forms may not be 64 KiB or more in size.
+  | OrdinaryIndex
+  deriving stock (Show, Eq)
+
+instance NFData FencePointerIndex where
+  rnf CompactIndex  = ()
+  rnf OrdinaryIndex = ()
+
+indexTypeForRun :: FencePointerIndex -> IndexType
+indexTypeForRun CompactIndex  = Compact
+indexTypeForRun OrdinaryIndex = Ordinary
 
 {-------------------------------------------------------------------------------
   Disk cache policy

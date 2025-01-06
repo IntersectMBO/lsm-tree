@@ -47,7 +47,7 @@ module Database.LSMTree.Monoidal (
   , Common.NumEntries (..)
   , Common.BloomFilterAlloc (..)
   , Common.defaultBloomFilterAlloc
-  , Common.IndexType (..)
+  , Common.FencePointerIndex (..)
   , Common.DiskCachePolicy (..)
   , Common.MergeSchedule (..)
   , Common.defaultMergeSchedule
