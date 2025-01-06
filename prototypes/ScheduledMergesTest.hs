@@ -1,7 +1,7 @@
 module ScheduledMergesTest (tests) where
 
 import           Control.Exception
-import           Control.Monad (replicateM_, when)
+import           Control.Monad (forM, replicateM_, when)
 import           Control.Monad.ST
 import           Control.Tracer (Tracer (Tracer))
 import qualified Control.Tracer as Tracer
@@ -10,13 +10,17 @@ import           Data.STRef
 
 import           ScheduledMerges as LSM
 
+import qualified Test.QuickCheck as QC
+import           Test.QuickCheck (Property)
 import           Test.Tasty
 import           Test.Tasty.HUnit (HasCallStack, testCase)
+import           Test.Tasty.QuickCheck (testProperty)
 
 tests :: TestTree
 tests = testGroup "Unit tests"
     [ testCase "regression_empty_run" test_regression_empty_run
     , testCase "merge_again_with_incoming" test_merge_again_with_incoming
+    , testProperty "union" prop_union
     ]
 
 -- | Results in an empty run on level 2.
@@ -158,6 +162,34 @@ test_merge_again_with_incoming =
           ]
 
 -------------------------------------------------------------------------------
+-- properties
+--
+
+-- | Supplying enough credits for the remaining debt completes the union merge.
+prop_union :: [[(LSM.Key, LSM.Op)]] -> Property
+prop_union kopss = length (filter (not . null) kopss) > 1 QC.==>
+    QC.ioProperty $ runWithTracer $ \tr ->
+      stToIO $ do
+        ts <- forM kopss $ \kops -> do
+          t <- LSM.new
+          LSM.updates tr t kops
+          return t
+
+        t <- LSM.unions ts
+
+        expectUnionWith t (not . isCompleted)
+
+        debt <- LSM.remainingUnionDebt t
+        _ <- LSM.supplyUnionCredits t debt
+
+        -- assert that the union merge now has been completed
+        expectUnionWith t isCompleted
+  where
+    isCompleted = \case
+        MLeaf{} -> True
+        MNode{} -> False
+
+-------------------------------------------------------------------------------
 -- tracing and expectations on LSM shape
 --
 
@@ -180,10 +212,17 @@ instance Exception TracedException where
 
 expectShape :: HasCallStack => LSM s -> Int -> [([Int], [Int])] -> ST s ()
 expectShape lsm expectedWb expectedLevels = do
-    let expected = ([], [expectedWb]) : expectedLevels
+    let expected = (expectedWb, expectedLevels, Nothing)
     shape <- representationShape <$> dumpRepresentation lsm
     when (shape /= expected) $
       error $ unlines
         [ "expected shape: " <> show expected
         , "actual shape:   " <> show shape
         ]
+
+expectUnionWith :: HasCallStack => LSM s -> (MTree Int -> Bool) -> ST s ()
+expectUnionWith lsm p = do
+    (_, _, shape) <- representationShape <$> dumpRepresentation lsm
+    case shape of
+      Nothing -> error "expected Union, found NoUnion"
+      Just t  -> when (not (p t)) $ error $ "expectation on Union failed: " ++ show t
