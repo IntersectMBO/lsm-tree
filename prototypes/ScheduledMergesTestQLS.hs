@@ -1,7 +1,5 @@
 {-# LANGUAGE TypeFamilies #-}
 
-{-# OPTIONS_GHC -Wno-orphans #-}
-
 module ScheduledMergesTestQLS (tests) where
 
 import           Control.Monad.ST
@@ -393,19 +391,3 @@ runModel action ctx m =
 
     lookUpKeyVar :: ModelVar Model Key -> Key
     lookUpKeyVar var = case lookupVar ctx var of MInsert k -> k
-
--------------------------------------------------------------------------------
--- Instances
---
-
-instance Arbitrary Key where
-  arbitrary = K <$> arbitrarySizedNatural
-  shrink (K v) = K <$> shrink v
-
-instance Arbitrary Value where
-  arbitrary = V <$> arbitrarySizedNatural
-  shrink (V v) = V <$> shrink v
-
-instance Arbitrary Blob where
-  arbitrary = B <$> arbitrarySizedNatural
-  shrink (B v) = B <$> shrink v

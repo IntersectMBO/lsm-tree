@@ -28,6 +28,7 @@ module ScheduledMerges (
     new,
     LookupResult (..),
     lookup, lookups,
+    Op,
     Update (..),
     update, updates,
     insert, inserts,
@@ -42,7 +43,9 @@ module ScheduledMerges (
     supplyUnionCredits,
 
     -- * Test and trace
+    MTree (..),
     logicalValue,
+    Representation,
     dumpRepresentation,
     representationShape,
     Event,
@@ -65,6 +68,7 @@ import           Control.Monad.ST
 import           Control.Tracer (Tracer, contramap, traceWith)
 import           GHC.Stack (HasCallStack, callStack)
 
+import qualified Test.QuickCheck as QC
 
 data LSM s  = LSMHandle !(STRef s Counter)
                         !(STRef s (LSMContent s))
@@ -1171,11 +1175,11 @@ expectCompletedMergingTree (MergingTree ref) = do
 -- Measurements
 --
 
-data MTree = MLeaf Run
-           | MNode MergeType [MTree]
-  deriving stock Show
+data MTree r = MLeaf r
+             | MNode MergeType [MTree r]
+  deriving stock (Eq, Foldable, Functor, Show)
 
-allLevels :: LSM s -> ST s (Buffer, [[Run]], Maybe MTree)
+allLevels :: LSM s -> ST s (Buffer, [[Run]], Maybe (MTree Run))
 allLevels (LSMHandle _ lsmr) = do
     LSMContent wb ls ul <- readSTRef lsmr
     rs <- flattenLevels ls
@@ -1202,7 +1206,7 @@ flattenMergingRun (MergingRun _ ref) = do
       CompletedMerge r    -> return [r]
       OngoingMerge _ rs _ -> return rs
 
-flattenTree :: MergingTree s -> ST s MTree
+flattenTree :: MergingTree s -> ST s (MTree Run)
 flattenTree (MergingTree ref) = do
     mts <- readSTRef ref
     case mts of
@@ -1228,7 +1232,7 @@ logicalValue lsm = do
     mergeRuns :: MergeType -> [Run] -> Run
     mergeRuns = mergek
 
-    mergeTree :: MTree -> Run
+    mergeTree :: MTree Run -> Run
     mergeTree (MLeaf r)     = r
     mergeTree (MNode mt ts) = mergeRuns mt (map mergeTree ts)
 
@@ -1236,14 +1240,21 @@ logicalValue lsm = do
     justInsert  Delete      = Nothing
     justInsert (Mupsert v)  = Just (v, Nothing)
 
--- TODO: Consider MergingTree, or just remove this function? It's unused.
-dumpRepresentation :: LSM s
-                   -> ST s [(Maybe (MergePolicy, MergeType, MergingRunState), [Run])]
-dumpRepresentation (LSMHandle _ lsmr) = do
-    LSMContent wb ls _ <- readSTRef lsmr
-    ((Nothing, [wb]) :) <$> mapM dumpLevel ls
+type Representation = (Run, [LevelRepresentation], Maybe (MTree Run))
 
-dumpLevel :: Level s -> ST s (Maybe (MergePolicy, MergeType, MergingRunState), [Run])
+type LevelRepresentation =
+    (Maybe (MergePolicy, MergeType, MergingRunState), [Run])
+
+dumpRepresentation :: LSM s -> ST s Representation
+dumpRepresentation (LSMHandle _ lsmr) = do
+    LSMContent wb ls ul <- readSTRef lsmr
+    levels <- mapM dumpLevel ls
+    tree <- case ul of
+      NoUnion   -> return Nothing
+      Union t _ -> Just <$> flattenTree t
+    return (wb, levels, tree)
+
+dumpLevel :: Level s -> ST s LevelRepresentation
 dumpLevel (Level (Single r) rs) =
     return (Nothing, (r:rs))
 dumpLevel (Level (Merging mp (MergingRun mt ref)) rs) = do
@@ -1253,14 +1264,17 @@ dumpLevel (Level (Merging mp (MergingRun mt ref)) rs) = do
 -- For each level:
 -- 1. the runs involved in an ongoing merge
 -- 2. the other runs (including completed merge)
-representationShape :: [(Maybe (MergePolicy, MergeType, MergingRunState), [Run])]
-                    -> [([Int], [Int])]
-representationShape =
-    map $ \(mmr, rs) ->
+representationShape :: Representation
+                    -> (Int, [([Int], [Int])], Maybe (MTree Int))
+representationShape (wb, levels, tree) =
+    (summaryRun wb, map summaryLevel levels, fmap (fmap summaryRun) tree)
+  where
+    summaryLevel (mmr, rs) =
       let (ongoing, complete) = summaryMR mmr
       in (ongoing, complete <> map summaryRun rs)
-  where
+
     summaryRun = runSize
+
     summaryMR = \case
       Nothing                          -> ([], [])
       Just (_, _, CompletedMerge r)    -> ([], [summaryRun r])
@@ -1297,3 +1311,26 @@ data EventDetail =
          mergeSize   :: Int
        }
   deriving stock Show
+
+-------------------------------------------------------------------------------
+-- Arbitrary
+--
+
+instance QC.Arbitrary Key where
+  arbitrary = K <$> QC.arbitrarySizedNatural
+  shrink (K v) = K <$> QC.shrink v
+
+instance QC.Arbitrary Value where
+  arbitrary = V <$> QC.arbitrarySizedNatural
+  shrink (V v) = V <$> QC.shrink v
+
+instance QC.Arbitrary Blob where
+  arbitrary = B <$> QC.arbitrarySizedNatural
+  shrink (B v) = B <$> QC.shrink v
+
+instance (QC.Arbitrary v, QC.Arbitrary b) => QC.Arbitrary (Update v b) where
+  arbitrary = QC.frequency
+      [ (3, Insert <$> QC.arbitrary <*> QC.arbitrary)
+      , (1, Mupsert <$> QC.arbitrary)
+      , (1, pure Delete)
+      ]
