@@ -37,13 +37,15 @@ import qualified Test.Database.LSMTree.Monoidal
 import qualified Test.Database.LSMTree.StateMachine
 import qualified Test.Database.LSMTree.StateMachine.DL
 import qualified Test.Database.LSMTree.UnitTests
+import qualified Test.FS
 import qualified Test.System.Posix.Fcntl.NoCache
 import           Test.Tasty
 
 main :: IO ()
 main = do
   defaultMain $ testGroup "lsm-tree"
-    [ Test.Database.LSMTree.Class.tests
+    [ Test.Data.Arena.tests
+    , Test.Database.LSMTree.Class.tests
     , Test.Database.LSMTree.Generators.tests
     , Test.Database.LSMTree.Internal.tests
     , Test.Database.LSMTree.Internal.BloomFilter.tests
@@ -75,8 +77,8 @@ main = do
     , Test.Database.LSMTree.UnitTests.tests
     , Test.Database.LSMTree.StateMachine.tests
     , Test.Database.LSMTree.StateMachine.DL.tests
+    , Test.FS.tests
     , Test.System.Posix.Fcntl.NoCache.tests
-    , Test.Data.Arena.tests
     ]
   Control.RefCount.checkForgottenRefs
   -- This use of checkForgottenRefs is a last resort. Refs that are forgotten

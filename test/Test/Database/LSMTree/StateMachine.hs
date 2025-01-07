@@ -68,8 +68,9 @@ import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Concurrent.Class.MonadSTM.Strict
 import           Control.Monad (forM_, void, (<=<))
 import           Control.Monad.Class.MonadThrow (Handler (..), MonadCatch (..),
-                     MonadThrow (..))
+                     MonadThrow (..), catches)
 import           Control.Monad.IOSim
+import           Control.Monad.Primitive
 import           Control.Monad.Reader (ReaderT (..))
 import           Control.RefCount (checkForgottenRefs)
 import           Control.Tracer (Tracer, nullTracer)
@@ -82,10 +83,10 @@ import qualified Data.List.NonEmpty as NE
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (catMaybes, fromJust, fromMaybe)
+import           Data.Primitive.MutVar
 import           Data.Set (Set)
 import qualified Data.Set as Set
-import           Data.Typeable (Proxy (..), Typeable, cast, eqT,
-                     type (:~:) (Refl))
+import           Data.Typeable (Proxy (..), Typeable, cast)
 import qualified Data.Vector as V
 import qualified Database.LSMTree as R
 import           Database.LSMTree.Class (LookupResult (..), QueryResult (..))
@@ -102,13 +103,18 @@ import qualified Database.LSMTree.Model.Session as Model
 import           NoThunks.Class
 import           Prelude hiding (init)
 import           System.Directory (removeDirectoryRecursive)
-import           System.FS.API (HasFS, MountPoint (..), mkFsPath)
+import qualified System.FS.API as FS
+import           System.FS.API (FsError (..), HasFS, MountPoint (..), mkFsPath)
 import           System.FS.BlockIO.API (HasBlockIO, defaultIOCtxParams)
 import           System.FS.BlockIO.IO (ioHasBlockIO)
-import           System.FS.BlockIO.Sim (simHasBlockIO)
+import           System.FS.BlockIO.Sim (simErrorHasBlockIO)
+import qualified System.FS.CallStack as FS
 import           System.FS.IO (HandleIO, ioHasFS)
+import qualified System.FS.Sim.Error as FSSim
+import           System.FS.Sim.Error (Errors)
 import qualified System.FS.Sim.MockFS as MockFS
 import           System.FS.Sim.MockFS (MockFS)
+import           System.FS.Sim.Stream (Stream)
 import           System.IO.Temp (createTempDirectory,
                      getCanonicalTemporaryDirectory)
 import           Test.Database.LSMTree.StateMachine.Op (HasBlobRef (getBlobRef),
@@ -125,10 +131,11 @@ import qualified Test.QuickCheck.StateModel.Lockstep.Defaults as Lockstep.Defaul
 import qualified Test.QuickCheck.StateModel.Lockstep.Run as Lockstep.Run
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck (testProperty)
-import           Test.Util.FS (assertNoOpenHandles, assertNumOpenHandles)
+import           Test.Util.FS (approximateEqStream, assertNoOpenHandles,
+                     assertNumOpenHandles)
 import           Test.Util.PrettyProxy
 import           Test.Util.TypeFamilyWrappers (WrapBlob (..), WrapBlobRef (..),
-                     WrapCursor (..), WrapSession (..), WrapTable (..))
+                     WrapCursor (..), WrapTable (..))
 
 {-------------------------------------------------------------------------------
   Test tree
@@ -147,6 +154,13 @@ tests = testGroup "Test.Database.LSMTree.StateMachine" [
 
     , testProperty "propLockstep_RealImpl_MockFS_IOSim" $
         propLockstep_RealImpl_MockFS_IOSim nullTracer
+
+    , testProperty "prop_dummyFsError" $ \s -> QC.ioProperty $
+        case fsErrorHandler of
+          Handler f -> do
+            throwIO (dummyFsError s) `catch` \e -> do
+              e' <- f e
+              pure (e' QC.=== Just Model.ErrFsError)
     ]
 
 labelledExamples :: IO ()
@@ -167,14 +181,30 @@ propLockstep_ModelIOImpl =
       (Proxy @(ModelState ModelIO.Table))
       acquire
       release
-      (\r session -> runReaderT r (session, handler))
+      (\r (session, errsVar) -> do
+            faultsVar <- newMutVar []
+            let
+              env :: RealEnv ModelIO.Table IO
+              env = RealEnv {
+                  envSession = session
+                , envHandlers = [handler, fsErrorHandler]
+                , envErrors = errsVar
+                , envInjectFaultResults = faultsVar
+                }
+            prop <- runReaderT r env
+            faults <- readMutVar faultsVar
+            pure $ QC.tabulate "Fault results" (fmap show faults) prop
+        )
       tagFinalState'
   where
-    acquire :: IO (WrapSession ModelIO.Table IO)
-    acquire = WrapSession <$> Class.openSession ModelIO.NoSessionArgs
+    acquire :: IO (Class.Session ModelIO.Table IO, StrictTVar IO Errors)
+    acquire = do
+      session <- Class.openSession ModelIO.NoSessionArgs
+      errsVar <- newTVarIO FSSim.emptyErrors
+      pure (session, errsVar)
 
-    release :: WrapSession ModelIO.Table IO -> IO ()
-    release (WrapSession session) = Class.closeSession session
+    release :: (Class.Session ModelIO.Table IO, StrictTVar IO Errors) -> IO ()
+    release (session, _) = Class.closeSession session
 
     handler :: Handler IO (Maybe Model.Err)
     handler = Handler $ pure . handler'
@@ -248,17 +278,31 @@ propLockstep_RealImpl_RealFS_IO tr =
       (Proxy @(ModelState R.Table))
       acquire
       release
-      (\r (_, session) -> runReaderT r (session, realHandler @IO))
+      (\r (_, session, errsVar) -> do
+            faultsVar <- newMutVar []
+            let
+              env :: RealEnv R.Table IO
+              env = RealEnv {
+                  envSession = session
+                , envHandlers = [realHandler @IO, fsErrorHandler]
+                , envErrors = errsVar
+                , envInjectFaultResults = faultsVar
+                }
+            prop <- runReaderT r env
+            faults <- readMutVar faultsVar
+            pure $ QC.tabulate "Fault results" (fmap show faults) prop
+        )
       tagFinalState'
   where
-    acquire :: IO (FilePath, WrapSession R.Table IO)
+    acquire :: IO (FilePath, Class.Session R.Table IO, StrictTVar IO Errors)
     acquire = do
         (tmpDir, hasFS, hasBlockIO) <- createSystemTempDirectory "prop_lockstepIO_RealImpl_RealFS"
         session <- R.openSession tr hasFS hasBlockIO (mkFsPath [])
-        pure (tmpDir, WrapSession session)
+        errsVar <- newTVarIO FSSim.emptyErrors
+        pure (tmpDir, session, errsVar)
 
-    release :: (FilePath, WrapSession R.Table IO) -> IO ()
-    release (tmpDir, WrapSession session) = do
+    release :: (FilePath, Class.Session R.Table IO, StrictTVar IO Errors) -> IO ()
+    release (tmpDir, session, _) = do
         R.closeSession session
         removeDirectoryRecursive tmpDir
 
@@ -271,7 +315,20 @@ propLockstep_RealImpl_MockFS_IO tr =
       (Proxy @(ModelState R.Table))
       (acquire_RealImpl_MockFS tr)
       release_RealImpl_MockFS
-      (\r (_, session) -> runReaderT r (session, realHandler @IO))
+      (\r (_, session, errsVar) -> do
+            faultsVar <- newMutVar []
+            let
+              env :: RealEnv R.Table IO
+              env = RealEnv {
+                  envSession = session
+                , envHandlers = [realHandler @IO, fsErrorHandler]
+                , envErrors = errsVar
+                , envInjectFaultResults = faultsVar
+                }
+            prop <- runReaderT r env
+            faults <- readMutVar faultsVar
+            pure $ QC.tabulate "Fault results" (fmap show faults) prop
+        )
       tagFinalState'
 
 propLockstep_RealImpl_MockFS_IOSim ::
@@ -283,28 +340,42 @@ propLockstep_RealImpl_MockFS_IOSim tr actions =
   where
     prop :: forall s. PropertyM (IOSim s) Property
     prop = do
-        (fsVar, session) <- QC.run (acquire_RealImpl_MockFS tr)
+        (fsVar, session, errsVar) <- QC.run (acquire_RealImpl_MockFS tr)
+        faultsVar <- QC.run $ newMutVar []
+        let
+          env :: RealEnv R.Table (IOSim s)
+          env = RealEnv {
+              envSession = session
+            , envHandlers = [realHandler @(IOSim s), fsErrorHandler]
+            , envErrors = errsVar
+            , envInjectFaultResults = faultsVar
+            }
         void $ QD.runPropertyReaderT
                 (QD.runActions @(Lockstep (ModelState R.Table)) actions)
-                (session, realHandler @(IOSim s))
-        QC.run $ release_RealImpl_MockFS (fsVar, session)
-        pure $ tagFinalState actions tagFinalState' $ QC.property True
+                env
+        faults <- QC.run $ readMutVar faultsVar
+        QC.run $ release_RealImpl_MockFS (fsVar, session, errsVar)
+        pure
+          $ tagFinalState actions tagFinalState'
+          $ QC.tabulate "Fault results" (fmap show faults)
+          $ QC.property True
 
 acquire_RealImpl_MockFS ::
      R.IOLike m
   => Tracer m R.LSMTreeTrace
-  -> m (StrictTMVar m MockFS, WrapSession R.Table m)
+  -> m (StrictTMVar m MockFS, Class.Session R.Table m, StrictTVar m Errors)
 acquire_RealImpl_MockFS tr = do
     fsVar <- newTMVarIO MockFS.empty
-    (hfs, hbio) <- simHasBlockIO fsVar
+    errsVar <- newTVarIO FSSim.emptyErrors
+    (hfs, hbio) <- simErrorHasBlockIO fsVar errsVar
     session <- R.openSession tr hfs hbio (mkFsPath [])
-    pure (fsVar, WrapSession session)
+    pure (fsVar, session, errsVar)
 
 release_RealImpl_MockFS ::
      R.IOLike m
-  => (StrictTMVar m MockFS, WrapSession R.Table m)
+  => (StrictTMVar m MockFS, Class.Session R.Table m, StrictTVar m Errors)
   -> m ()
-release_RealImpl_MockFS (fsVar, WrapSession session) = do
+release_RealImpl_MockFS (fsVar, session, _) = do
     sts <- getAllSessionTables session
     forM_ sts $ \(SomeTable t) -> R.close t
     scs <- getAllSessionCursors session
@@ -347,6 +418,12 @@ realHandler = Handler $ pure . handler'
     handler' ErrSnapshotWrongTableType{}  = Just Model.ErrSnapshotWrongType
     handler' (ErrBlobRefInvalid _)        = Just Model.ErrBlobRefInvalidated
     handler' _                            = Nothing
+
+fsErrorHandler :: Monad m => Handler m (Maybe Model.Err)
+fsErrorHandler = Handler $ pure . handler'
+  where
+    handler' :: FsError -> Maybe Model.Err
+    handler' _ = Just Model.ErrFsError
 
 createSystemTempDirectory ::  [Char] -> IO (FilePath, HasFS IO HandleIO, HasBlockIO IO HandleIO)
 createSystemTempDirectory prefix = do
@@ -475,12 +552,17 @@ instance ( Show (Class.TableConfig h)
                   => Var h (V.Vector (WrapBlobRef h IO b))
                   -> Act h (V.Vector (WrapBlob b))
     -- Snapshots
-    CreateSnapshot :: C k v b
-                   => R.SnapshotLabel -> R.SnapshotName -> Var h (WrapTable h IO k v b)
-                   -> Act h ()
-    OpenSnapshot   :: C k v b
-                   => R.SnapshotLabel -> R.SnapshotName
-                   -> Act h (WrapTable h IO k v b)
+    CreateSnapshot ::
+         C k v b
+      => Maybe Errors
+      -> R.SnapshotLabel -> R.SnapshotName -> Var h (WrapTable h IO k v b)
+      -> Act h ()
+    OpenSnapshot   ::
+         C k v b
+      => {-# UNPACK #-} !(PrettyProxy (k, v, b))
+      -> Maybe Errors
+      -> R.SnapshotLabel -> R.SnapshotName
+      -> Act h (WrapTable h IO k v b)
     DeleteSnapshot :: R.SnapshotName -> Act h ()
     ListSnapshots  :: Act h [R.SnapshotName]
     -- Duplicate tables
@@ -502,15 +584,6 @@ instance ( Show (Class.TableConfig h)
   arbitraryAction = Lockstep.Defaults.arbitraryAction
   shrinkAction    = Lockstep.Defaults.shrinkAction
 
--- TODO: show instance does not show key-value-blob types. Example:
---
--- StateMachine
---   prop_lockstepIO_ModelIOImpl: FAIL
---     *** Failed! Exception: 'open: inappropriate type (table type mismatch)' (after 25 tests and 2 shrinks):
---     do action $ New TableConfig
---        action $ CreateSnapshot "snap" (GVar var1 (FromRight . id))
---        action $ OpenSnapshot "snap"
---        pure ()
 deriving stock instance Show (Class.TableConfig h)
                      => Show (LockstepAction (ModelState h) a)
 
@@ -521,8 +594,10 @@ instance ( Eq (Class.TableConfig h)
   x == y = go x y
     where
       go :: LockstepAction (ModelState h) a -> LockstepAction (ModelState h) a -> Bool
-      go (New (PrettyProxy :: PrettyProxy kvb1) conf1) (New (PrettyProxy :: PrettyProxy kvb2) conf2) =
-          eqT @kvb1 @kvb2 == Just Refl && conf1 == conf2
+      go
+        (New (PrettyProxy :: PrettyProxy kvb) conf1)
+        (New (PrettyProxy :: PrettyProxy kvb) conf2) =
+          conf1 == conf2
       go (Close var1)               (Close var2) =
           Just var1 == cast var2
       go (Lookups ks1 var1)         (Lookups ks2 var2) =
@@ -545,10 +620,12 @@ instance ( Eq (Class.TableConfig h)
           Just mups1 == cast mups2 && Just var1 == cast var2
       go (RetrieveBlobs vars1) (RetrieveBlobs vars2) =
           Just vars1 == cast vars2
-      go (CreateSnapshot label1 name1 var1) (CreateSnapshot label2 name2 var2) =
-          label1 == label2 && name1 == name2 && Just var1 == cast var2
-      go (OpenSnapshot label1 name1) (OpenSnapshot label2 name2) =
-          label1 == label2 && name1 == name2
+      go (CreateSnapshot merrs1 label1 name1 var1) (CreateSnapshot merrs2 label2 name2 var2) =
+          merrs1 == merrs2 && label1 == label2 && name1 == name2 && Just var1 == cast var2
+      go
+        (OpenSnapshot (PrettyProxy :: PrettyProxy kvb) merrs1 label1 name1)
+        (OpenSnapshot (PrettyProxy :: PrettyProxy kvb) merrs2 label2 name2) =
+          merrs1 == merrs2 && label1 == label2 && name1 == name2
       go (DeleteSnapshot name1) (DeleteSnapshot name2) =
           name1 == name2
       go ListSnapshots ListSnapshots =
@@ -582,6 +659,16 @@ instance ( Eq (Class.TableConfig h)
           Duplicate{} -> ()
           Union{} -> ()
           Unions{} -> ()
+
+-- | This is not a fully lawful instance, because it uses 'approximateEqStream'.
+instance Eq a => Eq (Stream a) where
+  (==) = approximateEqStream
+
+-- | This is not a fully lawful instance, because it uses 'approximateEqStream'.
+deriving stock instance Eq Errors
+deriving stock instance Eq FSSim.Partial
+deriving stock instance Eq FSSim.PutCorruption
+deriving stock instance Eq FSSim.Blob
 
 {-------------------------------------------------------------------------------
   InLockstep
@@ -683,8 +770,8 @@ instance ( Eq (Class.TableConfig h)
       Deletes _ tableVar              -> [SomeGVar tableVar]
       Mupserts _ tableVar             -> [SomeGVar tableVar]
       RetrieveBlobs blobsVar          -> [SomeGVar blobsVar]
-      CreateSnapshot _ _ tableVar     -> [SomeGVar tableVar]
-      OpenSnapshot _ _                -> []
+      CreateSnapshot _ _ _ tableVar   -> [SomeGVar tableVar]
+      OpenSnapshot{}                  -> []
       DeleteSnapshot _                -> []
       ListSnapshots                   -> []
       Duplicate tableVar              -> [SomeGVar tableVar]
@@ -757,13 +844,43 @@ instance Eq (Obs h a) where
   Real monad
 -------------------------------------------------------------------------------}
 
--- | Uses 'WrapSession' such that we can define class instances that mention
--- 'RealMonad' in the class head. This is necessary because class heads can not
--- mention type families directly.
---
--- Also carries an exception handle that is specific to the table implementation
--- identified by the table @h@.
-type RealMonad h m = ReaderT (WrapSession h m, Handler m (Maybe Model.Err)) m
+type RealMonad h m = ReaderT (RealEnv h m) m
+
+-- | An environment for implementations @h@ of the public API to run actions in
+-- (see 'perform', 'runIO', 'runIOSim').
+data RealEnv h m = RealEnv {
+    -- | The session to run actions in.
+    envSession            :: !(Class.Session h m)
+    -- | Error handlers to convert thrown exceptions into pure error values.
+    --
+    -- Uncaught exceptions make the tests fail, so some handlers should be
+    -- provided that catch the exceptions and turn them into pure error values
+    -- if possible. The state machine infrastructure can then also compare the
+    -- error values obtained from running @h@ to the error values obtained by
+    -- running the model.
+  , envHandlers           :: [Handler m (Maybe Model.Err)]
+    -- | A variable holding simulated disk faults,
+    --
+    -- This variable shared with the simulated file system (if in use). This
+    -- variable can be used to enable/disable errors locally, for example on a
+    -- per-action basis.
+  , envErrors             :: !(StrictTVar m Errors)
+    -- | The results of fault injection
+  , envInjectFaultResults :: !(MutVar (PrimState m) [InjectFaultResult])
+  }
+
+data InjectFaultResult =
+    -- | No faults were injected.
+    InjectFaultNone
+      String -- ^ Action name
+    -- | Faults were injected, but the action accidentally succeeded, so the
+    -- action had to be rolled back
+  | InjectFaultAccidentalSuccess
+      String -- ^ Action name
+    -- | Faults were injected, which made the action fail with an error.
+  | InjectFaultInducedError
+      String -- ^ Action name
+  deriving stock Show
 
 {-------------------------------------------------------------------------------
   RunLockstep
@@ -960,12 +1077,16 @@ runModel lookUp = \case
     RetrieveBlobs blobsVar ->
       wrap (MVector . fmap (MBlob . WrapBlob))
       . Model.runModelM (Model.retrieveBlobs (getBlobRefs . lookUp $ blobsVar))
-    CreateSnapshot label name tableVar ->
+    CreateSnapshot merrs label name tableVar ->
       wrap MUnit
-      . Model.runModelM (Model.createSnapshot label name (getTable $ lookUp tableVar))
-    OpenSnapshot label name ->
+      . Model.runModelMWithInjectedErrors merrs
+          (Model.createSnapshot label name (getTable $ lookUp tableVar))
+          (pure ())
+    OpenSnapshot _ merrs label name ->
       wrap MTable
-      . Model.runModelM (Model.openSnapshot label name)
+      . Model.runModelMWithInjectedErrors merrs
+          (Model.openSnapshot label name)
+          (pure ())
     DeleteSnapshot name ->
       wrap MUnit
       . Model.runModelM (Model.deleteSnapshot name)
@@ -1010,57 +1131,63 @@ runIO ::
   => LockstepAction (ModelState h) a
   -> LookUp (RealMonad h IO)
   -> RealMonad h IO (Realized (RealMonad h IO) a)
-runIO action lookUp = ReaderT $ \(session, handler) -> do
-    x <- aux (unwrapSession session) handler action
-    case session of
-      WrapSession sesh ->
-        assertNoThunks sesh $ pure ()
+runIO action lookUp = ReaderT $ \ !env -> do
+    x <- aux env action
+    assertNoThunks (envSession env) $ pure ()
     pure x
   where
     aux ::
-         Class.Session h IO
-      -> Handler IO (Maybe Model.Err)
+         RealEnv h IO
       -> LockstepAction (ModelState h) a
       -> IO (Realized IO a)
-    aux session handler = \case
-        New _ cfg -> catchErr handler $
+    aux env = \case
+        New _ cfg -> catchErr handlers $
           WrapTable <$> Class.new session cfg
-        Close tableVar -> catchErr handler $
+        Close tableVar -> catchErr handlers $
           Class.close (unwrapTable $ lookUp' tableVar)
-        Lookups ks tableVar -> catchErr handler $
+        Lookups ks tableVar -> catchErr handlers $
           fmap (fmap WrapBlobRef) <$> Class.lookups (unwrapTable $ lookUp' tableVar) ks
-        RangeLookup range tableVar -> catchErr handler $
+        RangeLookup range tableVar -> catchErr handlers $
           fmap (fmap WrapBlobRef) <$> Class.rangeLookup (unwrapTable $ lookUp' tableVar) range
-        NewCursor offset tableVar -> catchErr handler $
+        NewCursor offset tableVar -> catchErr handlers $
           WrapCursor <$> Class.newCursor offset (unwrapTable $ lookUp' tableVar)
-        CloseCursor cursorVar -> catchErr handler $
+        CloseCursor cursorVar -> catchErr handlers $
           Class.closeCursor (Proxy @h) (unwrapCursor $ lookUp' cursorVar)
-        ReadCursor n cursorVar -> catchErr handler $
+        ReadCursor n cursorVar -> catchErr handlers $
           fmap (fmap WrapBlobRef) <$> Class.readCursor (Proxy @h) n (unwrapCursor $ lookUp' cursorVar)
-        Updates kups tableVar -> catchErr handler $
+        Updates kups tableVar -> catchErr handlers $
           Class.updates (unwrapTable $ lookUp' tableVar) kups
-        Inserts kins tableVar -> catchErr handler $
+        Inserts kins tableVar -> catchErr handlers $
           Class.inserts (unwrapTable $ lookUp' tableVar) kins
-        Deletes kdels tableVar -> catchErr handler $
+        Deletes kdels tableVar -> catchErr handlers $
           Class.deletes (unwrapTable $ lookUp' tableVar) kdels
-        Mupserts kmups tableVar -> catchErr handler $
+        Mupserts kmups tableVar -> catchErr handlers $
           Class.mupserts (unwrapTable $ lookUp' tableVar) kmups
-        RetrieveBlobs blobRefsVar -> catchErr handler $
+        RetrieveBlobs blobRefsVar -> catchErr handlers $
           fmap WrapBlob <$> Class.retrieveBlobs (Proxy @h) session (unwrapBlobRef <$> lookUp' blobRefsVar)
-        CreateSnapshot label name tableVar -> catchErr handler $
-          Class.createSnapshot label name (unwrapTable $ lookUp' tableVar)
-        OpenSnapshot label name -> catchErr handler $
-          WrapTable <$> Class.openSnapshot session label name
-        DeleteSnapshot name -> catchErr handler $
+        CreateSnapshot merrs label name tableVar -> catchErr handlers $
+          runRealWithInjectedErrors faultsVar "CreateSnapshot" errsVar merrs
+            (Class.createSnapshot label name (unwrapTable $ lookUp' tableVar))
+            (\() -> Class.deleteSnapshot session name)
+        OpenSnapshot _ merrs label name -> catchErr handlers $
+          runRealWithInjectedErrors faultsVar "OpenSnapshot" errsVar merrs
+            (WrapTable <$> Class.openSnapshot session label name)
+            (\(WrapTable t) -> Class.close t)
+        DeleteSnapshot name -> catchErr handlers $
           Class.deleteSnapshot session name
-        ListSnapshots -> catchErr handler $
+        ListSnapshots -> catchErr handlers $
           Class.listSnapshots session
-        Duplicate tableVar -> catchErr handler $
+        Duplicate tableVar -> catchErr handlers $
           WrapTable <$> Class.duplicate (unwrapTable $ lookUp' tableVar)
-        Union table1Var table2Var -> catchErr handler $
+        Union table1Var table2Var -> catchErr handlers $
           WrapTable <$> Class.union (unwrapTable $ lookUp' table1Var) (unwrapTable $ lookUp' table2Var)
-        Unions tableVars -> catchErr handler $
+        Unions tableVars -> catchErr handlers $
           WrapTable <$> Class.unions (fmap (unwrapTable . lookUp') tableVars)
+      where
+        session = envSession env
+        handlers = envHandlers env
+        errsVar = envErrors env
+        faultsVar = envInjectFaultResults env
 
     lookUp' :: Var h x -> Realized IO x
     lookUp' = lookUpGVar (Proxy @(RealMonad h IO)) lookUp
@@ -1070,63 +1197,116 @@ runIOSim ::
   => LockstepAction (ModelState h) a
   -> LookUp (RealMonad h (IOSim s))
   -> RealMonad h (IOSim s) (Realized (RealMonad h (IOSim s)) a)
-runIOSim action lookUp = ReaderT $ \(session, handler) ->
-    aux (unwrapSession session) handler action
+runIOSim action lookUp = ReaderT $ \ !env -> do
+    aux env action
   where
     aux ::
-         Class.Session h (IOSim s)
-      -> Handler (IOSim s) (Maybe Model.Err)
+         RealEnv h (IOSim s)
       -> LockstepAction (ModelState h) a
       -> IOSim s (Realized (IOSim s) a)
-    aux session handler = \case
-        New _ cfg -> catchErr handler $
+    aux env = \case
+        New _ cfg -> catchErr handlers $
           WrapTable <$> Class.new session cfg
-        Close tableVar -> catchErr handler $
+        Close tableVar -> catchErr handlers $
           Class.close (unwrapTable $ lookUp' tableVar)
-        Lookups ks tableVar -> catchErr handler $
+        Lookups ks tableVar -> catchErr handlers $
           fmap (fmap WrapBlobRef) <$> Class.lookups (unwrapTable $ lookUp' tableVar) ks
-        RangeLookup range tableVar -> catchErr handler $
+        RangeLookup range tableVar -> catchErr handlers $
           fmap (fmap WrapBlobRef) <$> Class.rangeLookup (unwrapTable $ lookUp' tableVar) range
-        NewCursor offset tableVar -> catchErr handler $
+        NewCursor offset tableVar -> catchErr handlers $
           WrapCursor <$> Class.newCursor offset (unwrapTable $ lookUp' tableVar)
-        CloseCursor cursorVar -> catchErr handler $
+        CloseCursor cursorVar -> catchErr handlers $
           Class.closeCursor (Proxy @h) (unwrapCursor $ lookUp' cursorVar)
-        ReadCursor n cursorVar -> catchErr handler $
+        ReadCursor n cursorVar -> catchErr handlers $
           fmap (fmap WrapBlobRef) <$> Class.readCursor (Proxy @h) n (unwrapCursor $ lookUp' cursorVar)
-        Updates kups tableVar -> catchErr handler $
+        Updates kups tableVar -> catchErr handlers $
           Class.updates (unwrapTable $ lookUp' tableVar) kups
-        Inserts kins tableVar -> catchErr handler $
+        Inserts kins tableVar -> catchErr handlers $
           Class.inserts (unwrapTable $ lookUp' tableVar) kins
-        Deletes kdels tableVar -> catchErr handler $
+        Deletes kdels tableVar -> catchErr handlers $
           Class.deletes (unwrapTable $ lookUp' tableVar) kdels
-        Mupserts kmups tableVar -> catchErr handler $
+        Mupserts kmups tableVar -> catchErr handlers $
           Class.mupserts (unwrapTable $ lookUp' tableVar) kmups
-        RetrieveBlobs blobRefsVar -> catchErr handler $
+        RetrieveBlobs blobRefsVar -> catchErr handlers $
           fmap WrapBlob <$> Class.retrieveBlobs (Proxy @h) session (unwrapBlobRef <$> lookUp' blobRefsVar)
-        CreateSnapshot label name tableVar -> catchErr handler $
-          Class.createSnapshot label name (unwrapTable $ lookUp' tableVar)
-        OpenSnapshot label name -> catchErr handler $
-          WrapTable <$> Class.openSnapshot session label name
-        DeleteSnapshot name -> catchErr handler $
+        CreateSnapshot merrs label name tableVar -> catchErr handlers $
+          runRealWithInjectedErrors faultsVar "CreateSnapshot" errsVar merrs
+            (Class.createSnapshot label name (unwrapTable $ lookUp' tableVar))
+            (\() -> Class.deleteSnapshot session name)
+        OpenSnapshot _ merrs label name -> catchErr handlers $
+          runRealWithInjectedErrors faultsVar "OpenSnapshot" errsVar merrs
+            (WrapTable <$> Class.openSnapshot session label name)
+            (\(WrapTable t) -> Class.close t)
+        DeleteSnapshot name -> catchErr handlers $
           Class.deleteSnapshot session name
-        ListSnapshots -> catchErr handler $
+        ListSnapshots -> catchErr handlers $
           Class.listSnapshots session
-        Duplicate tableVar -> catchErr handler $
+        Duplicate tableVar -> catchErr handlers $
           WrapTable <$> Class.duplicate (unwrapTable $ lookUp' tableVar)
-        Union table1Var table2Var -> catchErr handler $
+        Union table1Var table2Var -> catchErr handlers $
           WrapTable <$> Class.union (unwrapTable $ lookUp' table1Var) (unwrapTable $ lookUp' table2Var)
-        Unions tableVars -> catchErr handler $
+        Unions tableVars -> catchErr handlers $
           WrapTable <$> Class.unions (fmap (unwrapTable . lookUp') tableVars)
+      where
+        session = envSession env
+        handlers = envHandlers env
+        errsVar = envErrors env
+        faultsVar = envInjectFaultResults env
 
     lookUp' :: Var h x -> Realized (IOSim s) x
     lookUp' = lookUpGVar (Proxy @(RealMonad h (IOSim s))) lookUp
 
+-- | @'runRealWithInjectedErrors' _ errsVar merrs action rollback@ runs @action@
+-- with injected errors if available in @merrs@.
+--
+-- See 'Model.runModelMWithInjectedErrors': the real system is not guaranteed to
+-- fail with an error if there are injected disk faults, but the model *always*
+-- fails. In case the real system accidentally succeeded in running @action@
+-- when there were errors to inject, then we roll back the success using
+-- @rollback@. This ensures that the model and system stay in sync. For example:
+-- if creating a snapshot accidentally succeeded, then the rollback action is to
+-- delete that snapshot.
+runRealWithInjectedErrors ::
+     (MonadCatch m, MonadSTM m, PrimMonad m)
+  => MutVar (PrimState m) [InjectFaultResult]
+  -> String -- ^ Name of the action
+  -> StrictTVar m Errors
+  -> Maybe Errors
+  -> m t -- ^ Action to run
+  -> (t -> m ()) -- ^ Rollback if the action *accidentally* succeeded
+  -> m t
+runRealWithInjectedErrors faultsVar s errsVar merrs k rollback =
+  case merrs of
+    Nothing -> do
+      modifyMutVar faultsVar (InjectFaultNone s :)
+      k
+    Just errs -> do
+      eith <- try @_ @FsError $ FSSim.withErrors errsVar errs k
+      case eith of
+        Left e  -> do
+          modifyMutVar faultsVar (InjectFaultInducedError s :)
+          throwIO e
+        Right x -> do
+          modifyMutVar faultsVar (InjectFaultAccidentalSuccess s :)
+          rollback x
+          throwIO (dummyFsError s)
+
 catchErr ::
      forall m a. MonadCatch m
-  => Handler m (Maybe Model.Err) -> m a -> m (Either Model.Err a)
-catchErr (Handler f) action = catch (Right <$> action) f'
+  => [Handler m (Maybe Model.Err)] -> m a -> m (Either Model.Err a)
+catchErr hs action = catches (Right <$> action) (fmap f hs)
   where
-    f' e = maybe (throwIO e) (pure . Left) =<< f e
+    f (Handler h) = Handler $ \e -> maybe (throwIO e) (pure . Left) =<< h e
+
+dummyFsError :: String -> FsError
+dummyFsError s = FsError {
+      fsErrorType = FS.FsOther
+    , fsErrorPath = FS.FsErrorPath Nothing (FS.mkFsPath [])
+    , fsErrorString = "dummy: " ++ s
+    , fsErrorNo = Nothing
+    , fsErrorStack = FS.prettyCallStack
+    , fsLimitation = False
+    }
 
 {-------------------------------------------------------------------------------
   Generator and shrinking
@@ -1228,11 +1408,15 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
 
     genActionsSession :: [(Int, Gen (Any (LockstepAction (ModelState h))))]
     genActionsSession =
-        [ (1, fmap Some $ New  @k @v @b PrettyProxy <$> QC.arbitrary)
+        [ (1, fmap Some $ New @k @v @b PrettyProxy <$> QC.arbitrary)
         | length tableVars <= 5 ] -- no more than 5 tables at once
 
-     ++ [ (1, fmap Some $ OpenSnapshot @k @v @b label <$> genUsedSnapshotName)
-        | not (null usedSnapshotNames) ]
+     ++ [ (1, fmap Some $ OpenSnapshot @k @v @b PrettyProxy <$>
+                genErrors <*> pure label <*> genUsedSnapshotName)
+        | not (null usedSnapshotNames)
+          -- TODO: generate errors
+        , let genErrors = pure Nothing
+        ]
 
      ++ [ (1, fmap Some $ DeleteSnapshot <$> genUsedSnapshotName)
         | not (null usedSnapshotNames) ]
@@ -1255,8 +1439,11 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
      ++ [ (3,  fmap Some $ NewCursor <$> QC.arbitrary <*> genTableVar)
         | length cursorVars <= 5 -- no more than 5 cursors at once
         ]
-     ++ [ (2,  fmap Some $ CreateSnapshot label <$> genUnusedSnapshotName <*> genTableVar)
+     ++ [ (2,  fmap Some $ CreateSnapshot <$>
+                genErrors <*> pure label <*> genUnusedSnapshotName <*> genTableVar)
         | not (null unusedSnapshotNames)
+           -- TODO: generate errors
+        , let genErrors = pure Nothing
         ]
      ++ [ (5,  fmap Some $ Duplicate <$> genTableVar)
         | length tableVars <= 5 -- no more than 5 tables at once
@@ -1370,6 +1557,17 @@ shrinkActionWithVars _ctx _st = \case
 
     Lookups ks tableVar -> [ Some $ Lookups ks' tableVar | ks' <- QC.shrink ks ]
 
+    -- Snapshots
+
+    CreateSnapshot merrs label name tableVar -> [
+        Some $ CreateSnapshot merrs' label name tableVar
+      | merrs' <- QC.shrink merrs
+      ]
+    OpenSnapshot pp merrs label name -> [
+        Some $ OpenSnapshot pp merrs' label name
+      | merrs' <- QC.shrink merrs
+      ]
+
     _ -> []
 
 {-------------------------------------------------------------------------------
@@ -1475,7 +1673,7 @@ updateStats action lookUp modelBefore _modelAfter result =
     -- === Tags
 
     updSnapshotted stats = case (action, result) of
-      (CreateSnapshot _ name _, MEither (Right (MUnit ()))) -> stats {
+      (CreateSnapshot _ _ name _, MEither (Right (MUnit ()))) -> stats {
           snapshotted = Set.insert name (snapshotted stats)
         }
       (DeleteSnapshot name, MEither (Right (MUnit ()))) -> stats {
@@ -1719,21 +1917,21 @@ tagStep' (ModelState _stateBefore statsBefore,
     ]
   where
     tagSnapshotTwice
-      | CreateSnapshot _ name _ <- action
+      | CreateSnapshot _ _ name _ <- action
       , name `Set.member` snapshotted statsBefore
       = Just SnapshotTwice
       | otherwise
       = Nothing
 
     tagOpenExistingSnapshot
-      | OpenSnapshot _ name <- action
+      | OpenSnapshot _ _ _ name <- action
       , name `Set.member` snapshotted statsBefore
       = Just OpenExistingSnapshot
       | otherwise
       = Nothing
 
     tagOpenMissingSnapshot
-      | OpenSnapshot _ name <- action
+      | OpenSnapshot _ _ _ name <- action
       , not (name `Set.member` snapshotted statsBefore)
       = Just OpenMissingSnapshot
       | otherwise
