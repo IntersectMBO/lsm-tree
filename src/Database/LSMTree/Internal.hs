@@ -96,7 +96,6 @@ import           Data.Maybe (catMaybes)
 import qualified Data.Set as Set
 import           Data.Typeable
 import qualified Data.Vector as V
-import           Data.Word (Word64)
 import           Database.LSMTree.Internal.BlobRef (WeakBlobRef (..))
 import qualified Database.LSMTree.Internal.BlobRef as BlobRef
 import           Database.LSMTree.Internal.Config
@@ -111,6 +110,7 @@ import           Database.LSMTree.Internal.Paths (SessionRoot (..),
 import qualified Database.LSMTree.Internal.Paths as Paths
 import           Database.LSMTree.Internal.Range (Range (..))
 import           Database.LSMTree.Internal.Run (Run)
+import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.RunReaders (OffsetKey (..))
 import qualified Database.LSMTree.Internal.RunReaders as Readers
 import           Database.LSMTree.Internal.Serialise (SerialisedBlob (..),
@@ -251,18 +251,13 @@ data LSMTreeTrace =
     -- Table
   | TraceNewTable
   | TraceOpenSnapshot SnapshotName TableConfigOverride
-  | TraceTable
-      Word64 -- ^ Table identifier
-      TableTrace
+  | TraceTable TableId TableTrace
   | TraceDeleteSnapshot SnapshotName
   | TraceListSnapshots
     -- Cursor
-  | TraceCursor
-      Word64 -- ^ Cursor identifier
-      CursorTrace
+  | TraceCursor CursorId CursorTrace
     -- Unions
-  | TraceUnions
-      (NonEmpty Word64) -- ^ Table identifiers
+  | TraceUnions (NonEmpty TableId)
   deriving stock Show
 
 data TableTrace =
@@ -285,8 +280,7 @@ data TableTrace =
   deriving stock Show
 
 data CursorTrace =
-    TraceCreateCursor
-      Word64 -- ^ Table identifier
+    TraceCreateCursor TableId
   | TraceCloseCursor
   | TraceReadCursor Int
   deriving stock Show
@@ -346,10 +340,10 @@ data SessionEnv m h = SessionEnv {
     -- * A table 'close' may delete its own identifier from the set of open
     --   tables without restrictions, even concurrently with 'closeSession'.
     --   This is safe because 'close' is idempotent'.
-  , sessionOpenTables  :: !(StrictMVar m (Map Word64 (Table m h)))
+  , sessionOpenTables  :: !(StrictMVar m (Map TableId (Table m h)))
     -- | Similarly to tables, open cursors are tracked so they can be closed
     -- once the session is closed. See 'sessionOpenTables'.
-  , sessionOpenCursors :: !(StrictMVar m (Map Word64 (Cursor m h)))
+  , sessionOpenCursors :: !(StrictMVar m (Map CursorId (Cursor m h)))
   }
 
 {-# INLINE withOpenSession #-}
@@ -583,7 +577,7 @@ data Table m h = Table {
       --
       -- INVARIANT: a table's identifier is never changed during the lifetime of
       -- the table.
-    , tableId           :: !Word64
+    , tableId           :: !TableId
 
       -- === Session-inherited
 
@@ -645,10 +639,10 @@ tableSessionUniqCounter :: TableEnv m h -> UniqCounter m
 tableSessionUniqCounter = sessionUniqCounter . tableSessionEnv
 
 {-# INLINE tableSessionUntrackTable #-}
-{-# SPECIALISE tableSessionUntrackTable :: Word64 -> TableEnv IO h -> IO () #-}
+{-# SPECIALISE tableSessionUntrackTable :: TableId -> TableEnv IO h -> IO () #-}
 -- | Open tables are tracked in the corresponding session, so when a table is
 -- closed it should become untracked (forgotten).
-tableSessionUntrackTable :: MonadMVar m => Word64 -> TableEnv m h -> m ()
+tableSessionUntrackTable :: MonadMVar m => TableId -> TableEnv m h -> m ()
 tableSessionUntrackTable tableId thEnv =
     modifyMVar_ (sessionOpenTables (tableSessionEnv thEnv)) $ pure . Map.delete tableId
 
@@ -738,8 +732,8 @@ newWith ::
   -> TableContent m h
   -> m (Table m h)
 newWith reg sesh seshEnv conf !am !tc = do
-    tableId <- incrUniqCounter (sessionUniqCounter seshEnv)
-    let tr = TraceTable (uniqueToWord64 tableId) `contramap` sessionTracer sesh
+    tableId <- uniqueToTableId <$> incrUniqCounter (sessionUniqCounter seshEnv)
+    let tr = TraceTable tableId `contramap` sessionTracer sesh
     traceWith tr $ TraceCreateTable conf
     -- The session is kept open until we've updated the session's set of tracked
     -- tables. If 'closeSession' is called by another thread while this code
@@ -750,12 +744,11 @@ newWith reg sesh seshEnv conf !am !tc = do
           tableSessionEnv = seshEnv
         , tableContent = contentVar
         }
-    let !tid = uniqueToWord64 tableId
-        !t = Table conf tableVar am tr tid sesh
+    let !t = Table conf tableVar am tr tableId sesh
     -- Track the current table
     delayedCommit reg $
       modifyMVar_ (sessionOpenTables seshEnv) $
-        pure . Map.insert (uniqueToWord64 tableId) t
+        pure . Map.insert tableId t
     pure $! t
 
 {-# SPECIALISE close :: Table IO h -> IO () #-}
@@ -943,7 +936,7 @@ data CursorEnv m h = CursorEnv {
     -- === Cursor-specific
 
     -- | Session-unique identifier for this cursor.
-  , cursorId         :: !Word64
+  , cursorId         :: !CursorId
     -- | Readers are immediately discarded once they are 'Readers.Drained',
     -- so if there is a 'Just', we can assume that it has further entries.
     -- Note that, while the readers do retain references on the blob files
@@ -997,7 +990,7 @@ newCursor ::
 newCursor !offsetKey t = withOpenTable t $ \thEnv -> do
     let cursorSession = tableSession t
     let cursorSessionEnv = tableSessionEnv thEnv
-    cursorId <- uniqueToWord64 <$>
+    cursorId <- uniqueToCursorId <$>
       incrUniqCounter (sessionUniqCounter cursorSessionEnv)
     let cursorTracer = TraceCursor cursorId `contramap` sessionTracer cursorSession
     traceWith cursorTracer $ TraceCreateCursor (tableId t)

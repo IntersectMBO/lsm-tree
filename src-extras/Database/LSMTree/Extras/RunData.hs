@@ -33,7 +33,6 @@ import qualified Data.Map as M
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.Vector as V
-import           Data.Word (Word64)
 import           Database.LSMTree.Extras (showPowersOf10)
 import           Database.LSMTree.Extras.Generators ()
 import           Database.LSMTree.Internal.Entry
@@ -172,11 +171,11 @@ serialiseRunData rd =
 
 -- | Create a 'RunFsPaths' using an empty 'FsPath'. The empty path corresponds
 -- to the "root" or "mount point" of a 'HasFS' instance.
-simplePath :: Word64 -> RunFsPaths
+simplePath :: Int -> RunFsPaths
 simplePath n = RunFsPaths (mkFsPath []) (RunNumber n)
 
 -- | Like 'simplePath', but for a list.
-simplePaths :: [Word64] -> [RunFsPaths]
+simplePaths :: [Int] -> [RunFsPaths]
 simplePaths ns = fmap simplePath ns
 
 {-------------------------------------------------------------------------------

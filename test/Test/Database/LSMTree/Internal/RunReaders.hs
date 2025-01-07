@@ -15,7 +15,6 @@ import           Data.Foldable (toList, traverse_)
 import qualified Data.Map.Strict as Map
 import           Data.Proxy (Proxy (..))
 import qualified Data.Vector as V
-import           Data.Word (Word64)
 import           Database.LSMTree.Extras (showPowersOf)
 import           Database.LSMTree.Extras.Generators (KeyForIndexCompact (..))
 import           Database.LSMTree.Extras.RunData
@@ -300,7 +299,7 @@ runRealMonad hfs hbio st = (`runStateT` st) . (`runReaderT` (hfs, hbio))
 
 data RealState =
     RealState
-      !Word64  -- ^ number of runs created so far (to generate fresh run numbers)
+      !Int  -- ^ number of runs created so far (to generate fresh run numbers)
       !(Maybe ReadersCtx)
 
 -- | Readers, together with the runs being read, so they can be cleaned up at the end
@@ -354,7 +353,7 @@ runIO act lu = case act of
             return Nothing
           Just readers ->
             return $ Just (wbblobs, runs, readers)
-      put (RealState (numRuns + fromIntegral (length wbs)) newReaders)
+      put (RealState (numRuns + length wbs) newReaders)
       return (Right ())
     PeekKey -> expectReaders $ \_ r -> do
       (,) HasMore <$> Readers.peekKey r

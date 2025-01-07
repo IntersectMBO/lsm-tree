@@ -3,24 +3,31 @@ module Database.LSMTree.Internal.UniqCounter (
   newUniqCounter,
   incrUniqCounter,
   Unique,
-  uniqueToWord64,
+  uniqueToInt,
   uniqueToRunNumber,
+  uniqueToTableId,
+  uniqueToCursorId,
 ) where
 
 import           Control.Monad.Primitive (PrimMonad, PrimState)
 import           Data.Primitive.PrimVar as P
-import           Data.Word (Word64)
 import           Database.LSMTree.Internal.RunNumber
 
 -- | A unique value derived from a 'UniqCounter'.
 newtype Unique = Unique Int
 
--- | Avoid this function, use specialised versions like 'uniqueToRunNumber' if possible.
-uniqueToWord64 :: Unique -> Word64
-uniqueToWord64 (Unique n) = fromIntegral n
+-- | Use specialised versions like 'uniqueToRunNumber' where possible.
+uniqueToInt :: Unique -> Int
+uniqueToInt (Unique n) = n
 
 uniqueToRunNumber :: Unique -> RunNumber
-uniqueToRunNumber (Unique n) = RunNumber (fromIntegral n)
+uniqueToRunNumber (Unique n) = RunNumber n
+
+uniqueToTableId :: Unique -> TableId
+uniqueToTableId (Unique n) = TableId n
+
+uniqueToCursorId :: Unique -> CursorId
+uniqueToCursorId (Unique n) = CursorId n
 
 -- | An atomic counter for producing 'Unique' values.
 --

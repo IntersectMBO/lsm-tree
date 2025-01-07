@@ -153,6 +153,12 @@ deriving via AllowThunksIn ["cursorSession", "cursorSessionEnv"] (CursorEnv m h)
     instance (Typeable m, Typeable h, Typeable (PrimState m))
           => NoThunks (CursorEnv m h)
 
+deriving stock instance Generic TableId
+deriving anyclass instance NoThunks TableId
+
+deriving stock instance Generic CursorId
+deriving anyclass instance NoThunks CursorId
+
 {-------------------------------------------------------------------------------
   UniqCounter
 -------------------------------------------------------------------------------}
