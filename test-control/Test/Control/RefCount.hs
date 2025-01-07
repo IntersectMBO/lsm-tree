@@ -16,7 +16,7 @@ import           Data.IORef
 #endif
 
 tests :: TestTree
-tests = testGroup "Control.RefCount" [
+tests = testGroup "Test.Control.RefCount" [
       testProperty "prop_RefCounter"          prop_RefCounter
 #ifdef NO_IGNORE_ASSERTS
       -- All of these tests below are checking that the debug implementation of

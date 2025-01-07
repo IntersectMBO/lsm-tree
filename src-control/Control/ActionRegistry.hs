@@ -1,3 +1,5 @@
+{-# LANGUAGE CPP #-}
+
 -- | Registry of monadic actions supporting rollback actions and delayed actions
 -- in the presence of (a-)synchronous exceptions.
 --
@@ -14,10 +16,14 @@ module Control.ActionRegistry (
     -- * Action registry  #actionRegistry#
     -- $action-registry
   , ActionRegistry
+  , ActionError
     -- * Runners
   , withActionRegistry
   , unsafeNewActionRegistry
   , unsafeFinaliseActionRegistry
+  , CommitActionRegistryError
+  , AbortActionRegistryError
+  , AbortActionRegistryReason
     -- * Registering actions #registeringActions#
     -- $registering-actions
   , withRollback
@@ -30,9 +36,14 @@ module Control.ActionRegistry (
 
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Primitive
+import           Data.Kind
 import           Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
 import           Data.Primitive.MutVar
+
+#ifdef NO_IGNORE_ASSERTS
+import           GHC.Stack
+#endif
 
 -- TODO: add tests using fs-sim/io-sim to make sure exception safety is
 -- guaranteed.
@@ -40,11 +51,15 @@ import           Data.Primitive.MutVar
 -- TODO: add assertions that allocated resources end up in the final state, and
 -- that temporarily freed resources are removed from the final state.
 
--- TODO: add callstacks in debug mode, for example to see where an action was
--- registered.
-
 -- TODO: could we statically disallow using a resource after it is freed using
 -- @delayedCommit@, for example through data abstraction?
+
+-- Call stack instrumentation is enabled if assertions are enabled.
+#ifdef NO_IGNORE_ASSERTS
+#define HasCallStackIfDebug HasCallStack
+#else
+#define HasCallStackIfDebug ()
+#endif
 
 {-------------------------------------------------------------------------------
   Modify mutable state
@@ -185,9 +200,40 @@ consAction !a var = modifyMutVar' var $ \as -> a `consStrict` as
   where consStrict !x xs = x : xs
 
 -- | Monadic computations that (may) produce side effects
+type Action :: (Type -> Type) -> Type
+
+-- | An action failed with an exception
+type ActionError :: Type
+
+mkAction :: HasCallStackIfDebug => m () -> Action m
+mkActionError :: SomeException -> Action m -> ActionError
+
+#ifdef NO_IGNORE_ASSERTS
+data Action m = Action {
+    runAction       :: !(m ())
+  , actionCallStack :: !CallStack
+  }
+
+data ActionError = ActionError SomeException CallStack
+  deriving stock Show
+  deriving anyclass Exception
+
+mkAction a = Action a callStack
+
+mkActionError e a = ActionError e (actionCallStack a)
+#else
 newtype Action m = Action {
     runAction :: m ()
   }
+
+newtype ActionError = ActionError SomeException
+  deriving stock Show
+  deriving anyclass Exception
+
+mkAction a = Action a
+
+mkActionError e _ = ActionError e
+#endif
 
 {-------------------------------------------------------------------------------
   Runners
@@ -220,8 +266,8 @@ withActionRegistry k = fst <$> generalBracket acquire release k
     release reg ec = unsafeFinaliseActionRegistry reg ec
 
 {-# SPECIALISE unsafeNewActionRegistry :: IO (ActionRegistry IO) #-}
--- | This function is considered unsafe. Preferably, use 'withActionRegistry
--- instead'.
+-- | This function is considered unsafe. Preferably, use 'withActionRegistry'
+-- instead.
 --
 -- If this function is used directly, use 'generalBracket' to pair
 -- 'unsafeNewActionRegistry' with an 'unsafeFinaliseActionRegistry'.
@@ -242,8 +288,9 @@ unsafeFinaliseActionRegistry ::
   -> ExitCase a
   -> m ()
 unsafeFinaliseActionRegistry reg ec = case ec of
-    ExitCaseSuccess{} -> unsafeCommitActionRegistry reg
-    _                 -> unsafeAbortActionRegistry reg
+    ExitCaseSuccess{}   -> unsafeCommitActionRegistry reg
+    ExitCaseException e -> unsafeAbortActionRegistry reg (ReasonExitCaseException e)
+    ExitCaseAbort       -> unsafeAbortActionRegistry reg ReasonExitCaseAbort
 
 {-# SPECIALISE unsafeCommitActionRegistry :: ActionRegistry IO -> IO () #-}
 -- | Perform delayed actions, but not rollback actions.
@@ -256,35 +303,53 @@ unsafeCommitActionRegistry reg = do
       Nothing         -> pure ()
       Just exceptions -> throwIO (CommitActionRegistryError exceptions)
 
-data CommitActionRegistryError = CommitActionRegistryError (NonEmpty SomeException)
+data CommitActionRegistryError = CommitActionRegistryError (NonEmpty ActionError)
   deriving stock Show
   deriving anyclass Exception
 
-{-# SPECIALISE unsafeAbortActionRegistry :: ActionRegistry IO -> IO () #-}
+{-# SPECIALISE unsafeAbortActionRegistry ::
+     ActionRegistry IO
+  -> AbortActionRegistryReason
+  -> IO () #-}
 -- | Perform rollback actions, but not delayed actions
-unsafeAbortActionRegistry :: (PrimMonad m, MonadCatch m) => ActionRegistry m -> m ()
-unsafeAbortActionRegistry reg = do
+unsafeAbortActionRegistry ::
+     (PrimMonad m, MonadCatch m)
+  => ActionRegistry m
+  -> AbortActionRegistryReason
+  -> m ()
+unsafeAbortActionRegistry reg reason = do
     as <- readMutVar (registryRollback reg)
     -- Run actions in LIFO order
     r <- runActions as
     case NE.nonEmpty r of
       Nothing         -> pure ()
-      Just exceptions -> throwIO (AbortActionRegistryError exceptions)
+      Just exceptions -> throwIO (AbortActionRegistryError reason exceptions)
 
-data AbortActionRegistryError = AbortActionRegistryError (NonEmpty SomeException)
+-- | Reasons why an action registry was aborted.
+data AbortActionRegistryReason =
+    -- | The action registry was aborted because the code that it scoped over
+    -- threw an exception (see 'ExitCaseException').
+    ReasonExitCaseException SomeException
+    -- | The action registry was aborted because the code that it scoped over
+    -- aborted (see 'ExitCaseAbort').
+  | ReasonExitCaseAbort
+  deriving stock Show
+
+data AbortActionRegistryError =
+    AbortActionRegistryError AbortActionRegistryReason (NonEmpty ActionError)
   deriving stock Show
   deriving anyclass Exception
 
-{-# SPECIALISE runActions :: [Action IO] -> IO [SomeException] #-}
+{-# SPECIALISE runActions :: [Action IO] -> IO [ActionError] #-}
 -- | Run all actions even if previous actions threw exceptions.
-runActions :: MonadCatch m => [Action m] -> m [SomeException]
+runActions :: MonadCatch m => [Action m] -> m [ActionError]
 runActions = go []
   where
     go es [] = pure (reverse es)
     go es (a:as) = do
       eith <- try @_ @SomeException (runAction a)
       case eith of
-        Left e  -> go (e:es) as
+        Left e  -> go (mkActionError e a : es) as
         Right _ -> go es as
 
 {-------------------------------------------------------------------------------
@@ -321,7 +386,12 @@ runActions = go []
   This means all the usual masking caveats apply for the registered actions.
 -}
 
-{-# SPECIALISE withRollback :: ActionRegistry IO -> IO a -> (a -> IO ()) -> IO a #-}
+{-# SPECIALISE withRollback ::
+     HasCallStackIfDebug
+  => ActionRegistry IO
+  -> IO a
+  -> (a -> IO ())
+  -> IO a #-}
 -- | Perform an immediate action and register a rollback action.
 --
 -- See [Registering actions](#g:registeringActions) for more information about
@@ -342,6 +412,7 @@ runActions = go []
 -- @
 withRollback ::
      (PrimMonad m, MonadMask m)
+  => HasCallStackIfDebug
   => ActionRegistry m
   -> m a
   -> (a -> m ())
@@ -349,12 +420,18 @@ withRollback ::
 withRollback reg acquire release =
     withRollbackFun reg Just acquire release
 
-{-# SPECIALISE withRollback_ :: ActionRegistry IO -> IO a -> IO () -> IO a #-}
+{-# SPECIALISE withRollback_ ::
+     HasCallStackIfDebug
+  => ActionRegistry IO
+  -> IO a
+  -> IO ()
+  -> IO a #-}
 -- | Like 'withRollback', but the rollback action does not get access to the
 -- result of the immediate action.
 --
 withRollback_ ::
      (PrimMonad m, MonadMask m)
+  => HasCallStackIfDebug
   => ActionRegistry m
   -> m a
   -> m ()
@@ -363,7 +440,8 @@ withRollback_ reg acquire release =
     withRollbackFun reg Just acquire (\_ -> release)
 
 {-# SPECIALISE withRollbackMaybe ::
-     ActionRegistry IO
+     HasCallStackIfDebug
+  => ActionRegistry IO
   -> IO (Maybe a)
   -> (a -> IO ())
   -> IO (Maybe a)
@@ -373,6 +451,7 @@ withRollback_ reg acquire release =
 --
 withRollbackMaybe ::
      (PrimMonad m, MonadMask m)
+  => HasCallStackIfDebug
   => ActionRegistry m
   -> m (Maybe a)
   -> (a -> m ())
@@ -381,7 +460,8 @@ withRollbackMaybe reg acquire release =
     withRollbackFun reg id acquire release
 
 {-# SPECIALISE withRollbackEither ::
-     ActionRegistry IO
+     HasCallStackIfDebug
+  => ActionRegistry IO
   -> IO (Either e a)
   -> (a -> IO ())
   -> IO (Either e a)
@@ -391,6 +471,7 @@ withRollbackMaybe reg acquire release =
 --
 withRollbackEither ::
      (PrimMonad m, MonadMask m)
+  => HasCallStackIfDebug
   => ActionRegistry m
   -> m (Either e a)
   -> (a -> m ())
@@ -403,7 +484,8 @@ withRollbackEither reg acquire release =
     fromEither (Right x) = Just x
 
 {-# SPECIALISE withRollbackFun ::
-     ActionRegistry IO
+     HasCallStackIfDebug
+  => ActionRegistry IO
   -> (a -> Maybe b)
   -> IO a
   -> (b -> IO ())
@@ -419,6 +501,7 @@ withRollbackEither reg acquire release =
 --
 withRollbackFun ::
      (PrimMonad m, MonadMask m)
+  => HasCallStackIfDebug
   => ActionRegistry m
   -> (a -> Maybe b)
   -> m a
@@ -430,10 +513,14 @@ withRollbackFun reg extract acquire release = do
       case extract x of
         Nothing -> pure x
         Just y -> do
-          consAction (Action (release y)) (registryRollback reg)
+          consAction (mkAction (release y)) (registryRollback reg)
           pure x
 
-{-# SPECIALISE delayedCommit :: ActionRegistry IO -> IO () -> IO () #-}
+{-# SPECIALISE delayedCommit ::
+     HasCallStackIfDebug
+  => ActionRegistry IO
+  -> IO ()
+  -> IO () #-}
 -- | Register a delayed action.
 --
 -- See [Registering actions](#g:registeringActions) for more information about
@@ -449,5 +536,10 @@ withRollbackFun reg extract acquire release = do
 -- For example, incrementing a thread-safe mutable variable can easily be rolled
 -- back by decrementing the same variable again.
 --
-delayedCommit :: PrimMonad m => ActionRegistry m -> m () -> m ()
-delayedCommit reg action = consAction (Action action) (registryDelay reg)
+delayedCommit ::
+     PrimMonad m
+  => HasCallStackIfDebug
+  => ActionRegistry m
+  -> m ()
+  -> m ()
+delayedCommit reg action = consAction (mkAction action) (registryDelay reg)
