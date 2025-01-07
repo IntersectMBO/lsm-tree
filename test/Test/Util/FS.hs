@@ -10,9 +10,7 @@ module Test.Util.FS (
   , withSimHasBlockIO
     -- * Simulated file system with errors
   , withSimErrorHasFS
-  , withSimErrorHasFS'
   , withSimErrorHasBlockIO
-  , withSimErrorHasBlockIO'
     -- * Simulated file system properties
   , propNoOpenHandles
   , assertNoOpenHandles
@@ -33,7 +31,6 @@ import           System.FS.BlockIO.IO
 import           System.FS.BlockIO.Sim (fromHasFS)
 import           System.FS.IO
 import           System.FS.Sim.Error
-import qualified System.FS.Sim.MockFS as MockFS
 import           System.FS.Sim.MockFS
 import           System.FS.Sim.STM
 import           System.FS.Sim.Stream (InternalInfo (..), Stream (..))
@@ -61,27 +58,36 @@ withTempIOHasBlockIO path action =
 
 {-# INLINABLE withSimHasFS #-}
 withSimHasFS ::
-     (MonadSTM m, MonadThrow m, PrimMonad m)
-  => (MockFS -> Property)
-  -> (HasFS m HandleMock -> m Property)
+     (MonadSTM m, MonadThrow m, PrimMonad m, Testable prop1, Testable prop2)
+  => (MockFS -> prop1)
+  -> MockFS
+  -> (  HasFS m HandleMock
+     -> StrictTMVar m MockFS
+     -> m prop2
+     )
   -> m Property
-withSimHasFS post k = do
-    var <- newTMVarIO MockFS.empty
+withSimHasFS post fs k = do
+    var <- newTMVarIO fs
     let hfs = simHasFS var
-    x <- k hfs
-    fs <- atomically $ readTMVar var
-    pure (x .&&. post fs)
+    x <- k hfs var
+    fs' <- atomically $ readTMVar var
+    pure (x .&&. post fs')
 
 {-# INLINABLE withSimHasBlockIO #-}
 withSimHasBlockIO ::
-     (MonadMVar m, MonadSTM m, MonadCatch m, PrimMonad m)
-  => (MockFS -> Property)
-  -> (HasFS m HandleMock -> HasBlockIO m HandleMock -> m Property)
+     (MonadMVar m, MonadSTM m, MonadCatch m, PrimMonad m, Testable prop1, Testable prop2)
+  => (MockFS -> prop1)
+  -> MockFS
+  -> (  HasFS m HandleMock
+     -> HasBlockIO m HandleMock
+     -> StrictTMVar m MockFS
+     -> m prop2
+     )
   -> m Property
-withSimHasBlockIO post k = do
-    withSimHasFS post $ \hfs -> do
+withSimHasBlockIO post fs k = do
+    withSimHasFS post fs $ \hfs fsVar -> do
       hbio <- fromHasFS hfs
-      k hfs hbio
+      k hfs hbio fsVar
 
 {-------------------------------------------------------------------------------
   Simulated file system with errors
@@ -107,28 +113,13 @@ withSimErrorHasFS post fs errs k = do
     fs' <- atomically $ readTMVar fsVar
     pure (x .&&. post fs')
 
-{-# INLINABLE withSimErrorHasFS' #-}
-withSimErrorHasFS' ::
-     (MonadSTM m, MonadThrow m, PrimMonad m, Testable prop1, Testable prop2)
-  => (MockFS -> prop1)
-  -> MockFS
-  -> Errors
-  -> (HasFS m HandleMock -> m prop2)
-  -> m Property
-withSimErrorHasFS' post fs errs k = do
-    fsVar <- newTMVarIO fs
-    errVar <- newTVarIO errs
-    let hfs = simErrorHasFS fsVar errVar
-    x <- k hfs
-    fs' <- atomically $ readTMVar fsVar
-    pure (x .&&. post fs')
-
 {-# INLINABLE withSimErrorHasBlockIO #-}
 withSimErrorHasBlockIO ::
      ( MonadSTM m, MonadCatch m, MonadMVar m, PrimMonad m
      , Testable prop1, Testable prop2
      )
   => (MockFS -> prop1)
+  -> MockFS
   -> Errors
   -> (  HasFS m HandleMock
      -> HasBlockIO m HandleMock
@@ -137,32 +128,10 @@ withSimErrorHasBlockIO ::
      -> m prop2
      )
   -> m Property
-withSimErrorHasBlockIO post errs k = do
-    fsVar <- newTMVarIO MockFS.empty
-    errVar <- newTVarIO errs
-    let hfs = simErrorHasFS fsVar errVar
-    hbio <- fromHasFS hfs
-    x <- k hfs hbio fsVar errVar
-    fs <- atomically $ readTMVar fsVar
-    pure (x .&&. post fs)
-
-{-# INLINABLE withSimErrorHasBlockIO' #-}
-withSimErrorHasBlockIO' ::
-     ( MonadSTM m, MonadCatch m, MonadMVar m, PrimMonad m
-     , Testable prop1, Testable prop2
-     )
-  => (MockFS -> prop1)
-  -> Errors
-  -> (HasFS m HandleMock -> HasBlockIO m HandleMock -> m prop2)
-  -> m Property
-withSimErrorHasBlockIO' post errs k = do
-    fsVar <- newTMVarIO MockFS.empty
-    errVar <- newTVarIO errs
-    let hfs = simErrorHasFS fsVar errVar
-    hbio <- fromHasFS hfs
-    x <- k hfs hbio
-    fs <- atomically $ readTMVar fsVar
-    pure (x .&&. post fs)
+withSimErrorHasBlockIO post fs errs k =
+    withSimErrorHasFS post fs errs $ \hfs fsVar errsVar -> do
+      hbio <- fromHasFS hfs
+      k hfs hbio fsVar errsVar
 
 {-------------------------------------------------------------------------------
   Simulated file system properties
