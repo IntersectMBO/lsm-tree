@@ -83,7 +83,6 @@ import           Control.Monad.Class.MonadST (MonadST (..))
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Primitive
 import           Control.RefCount
-import           Control.TempRegistry
 import           Control.Tracer
 import           Data.Arena (ArenaManager, newArenaManager)
 import           Data.Either (fromRight)
@@ -702,12 +701,12 @@ new ::
 new sesh conf = do
     traceWith (sessionTracer sesh) TraceNewTable
     withOpenSession sesh $ \seshEnv ->
-      withTempRegistry $ \reg -> do
+      withActionRegistry $ \reg -> do
         am <- newArenaManager
         blobpath <- Paths.tableBlobPath (sessionRoot seshEnv) <$>
                       incrUniqCounter (sessionUniqCounter seshEnv)
         tableWriteBufferBlobs
-          <- allocateTemp reg
+          <- withRollback reg
                (WBB.new (sessionHasFS seshEnv) blobpath)
                releaseRef
         let tableWriteBuffer = WB.empty
@@ -722,7 +721,7 @@ new sesh conf = do
         newWith reg sesh seshEnv conf am tc
 
 {-# SPECIALISE newWith ::
-     TempRegistry IO
+     ActionRegistry IO
   -> Session IO h
   -> SessionEnv IO h
   -> TableConfig
@@ -730,8 +729,8 @@ new sesh conf = do
   -> TableContent IO h
   -> IO (Table IO h) #-}
 newWith ::
-     (MonadSTM m, MonadMVar m)
-  => TempRegistry m
+     (MonadSTM m, MonadMVar m, PrimMonad m)
+  => ActionRegistry m
   -> Session m h
   -> SessionEnv m h
   -> TableConfig
@@ -754,8 +753,9 @@ newWith reg sesh seshEnv conf !am !tc = do
     let !tid = uniqueToWord64 tableId
         !t = Table conf tableVar am tr tid sesh
     -- Track the current table
-    freeTemp reg $ modifyMVar_ (sessionOpenTables seshEnv)
-                 $ pure . Map.insert (uniqueToWord64 tableId) t
+    delayedCommit reg $
+      modifyMVar_ (sessionOpenTables seshEnv) $
+        pure . Map.insert (uniqueToWord64 tableId) t
     pure $! t
 
 {-# SPECIALISE close :: Table IO h -> IO () #-}
@@ -766,7 +766,7 @@ close ::
   -> m ()
 close t = do
     traceWith (tableTracer t) TraceCloseTable
-    modifyWithTempRegistry_
+    modifyWithActionRegistry_
       (RW.unsafeAcquireWriteAccess (tableState t))
       (atomically . RW.unsafeReleaseWriteAccess (tableState t)) $ \reg -> \case
       TableClosed -> pure TableClosed
@@ -774,7 +774,7 @@ close t = do
         -- Since we have a write lock on the table state, we know that we are the
         -- only thread currently closing the table. We can safely make the session
         -- forget about this table.
-        freeTemp reg (tableSessionUntrackTable (tableId t) thEnv)
+        delayedCommit reg (tableSessionUntrackTable (tableId t) thEnv)
         RW.withWriteAccess_ (tableContent thEnv) $ \tc -> do
           releaseTableContent reg tc
           pure tc
@@ -868,7 +868,7 @@ updates resolve es t = do
     let conf = tableConfig t
     withOpenTable t $ \thEnv -> do
       let hfs = tableHasFS thEnv
-      modifyWithTempRegistry_
+      modifyWithActionRegistry_
         (RW.unsafeAcquireWriteAccess (tableContent thEnv))
         (atomically . RW.unsafeReleaseWriteAccess (tableContent thEnv)) $ \reg -> do
           updatesWithInterleavedFlushes
@@ -1005,10 +1005,10 @@ newCursor !offsetKey t = withOpenTable t $ \thEnv -> do
     -- We acquire a read-lock on the session open-state to prevent races, see
     -- 'sessionOpenTables'.
     withOpenSession cursorSession $ \_ -> do
-      withTempRegistry $ \reg -> do
+      withActionRegistry $ \reg -> do
         (wb, wbblobs, cursorRuns) <- dupTableContent reg (tableContent thEnv)
         cursorReaders <-
-          allocateMaybeTemp reg
+          withRollbackMaybe reg
             (Readers.new offsetKey (Just (wb, wbblobs)) cursorRuns)
             Readers.close
         let cursorWBB = wbblobs
@@ -1017,9 +1017,9 @@ newCursor !offsetKey t = withOpenTable t $ \thEnv -> do
         -- Track cursor, but careful: If now an exception is raised, all
         -- resources get freed by the registry, so if the session still
         -- tracks 'cursor' (which is 'CursorOpen'), it later double frees.
-        -- Therefore, we only track the cursor if 'withTempRegistry' exits
-        -- successfully, i.e. using 'freeTemp'.
-        freeTemp reg $
+        -- Therefore, we only track the cursor if 'withActionRegistry' exits
+        -- successfully, i.e. using 'delayedCommit'.
+        delayedCommit reg $
           modifyMVar_ (sessionOpenCursors cursorSessionEnv) $
             pure . Map.insert cursorId cursor
         pure $! cursor
@@ -1030,10 +1030,10 @@ newCursor !offsetKey t = withOpenTable t $ \thEnv -> do
         RW.withReadAccess contentVar $ \content -> do
           let !wb      = tableWriteBuffer content
               !wbblobs = tableWriteBufferBlobs content
-          wbblobs' <- allocateTemp reg (dupRef wbblobs) releaseRef
+          wbblobs' <- withRollback reg (dupRef wbblobs) releaseRef
           let runs = cachedRuns (tableCache content)
           runs' <- V.forM runs $ \r ->
-                     allocateTemp reg (dupRef r) releaseRef
+                     withRollback reg (dupRef r) releaseRef
           pure (wb, wbblobs', runs')
 
 {-# SPECIALISE closeCursor :: Cursor IO h -> IO () #-}
@@ -1044,20 +1044,20 @@ closeCursor ::
   -> m ()
 closeCursor Cursor {..} = do
     traceWith cursorTracer $ TraceCloseCursor
-    modifyWithTempRegistry_ (takeMVar cursorState) (putMVar cursorState) $ \reg -> \case
+    modifyWithActionRegistry_ (takeMVar cursorState) (putMVar cursorState) $ \reg -> \case
       CursorClosed -> return CursorClosed
       CursorOpen CursorEnv {..} -> do
         -- This should be safe-ish, but it's still not ideal, because it doesn't
         -- rule out sync exceptions in the cleanup operations.
         -- In that case, the cursor ends up closed, but resources might not have
         -- been freed. Probably better than the other way around, though.
-        freeTemp reg $
+        delayedCommit reg $
           modifyMVar_ (sessionOpenCursors cursorSessionEnv) $
             pure . Map.delete cursorId
 
-        forM_ cursorReaders $ freeTemp reg . Readers.close
-        V.forM_ cursorRuns $ freeTemp reg . releaseRef
-        freeTemp reg (releaseRef cursorWBB)
+        forM_ cursorReaders $ delayedCommit reg . Readers.close
+        V.forM_ cursorRuns $ delayedCommit reg . releaseRef
+        delayedCommit reg (releaseRef cursorWBB)
         return CursorClosed
 
 {-# SPECIALISE readCursor ::
@@ -1142,7 +1142,7 @@ createSnapshot ::
 createSnapshot snap label tableType t = do
     traceWith (tableTracer t) $ TraceSnapshot snap
     withOpenTable t $ \thEnv ->
-      withTempRegistry $ \reg -> do -- TODO: use the temp registry for all side effects
+      withActionRegistry $ \reg -> do -- TODO: use the action registry for all side effects
         let hfs  = tableHasFS thEnv
             hbio = tableHasBlockIO thEnv
             uc   = tableSessionUniqCounter thEnv
@@ -1156,9 +1156,9 @@ createSnapshot snap label tableType t = do
         else
           -- we assume the snapshots directory already exists, so we just have
           -- to create the directory for this specific snapshot.
-          allocateTemp reg
+          withRollback_ reg
             (FS.createDirectory hfs (Paths.getNamedSnapshotDir snapDir))
-            (\_ -> FS.removeDirectoryRecursive hfs (Paths.getNamedSnapshotDir snapDir))
+            (FS.removeDirectoryRecursive hfs (Paths.getNamedSnapshotDir snapDir))
 
         -- Duplicate references to the table content, so that resources do not disappear
         -- from under our feet while taking a snapshot. These references are released
@@ -1206,7 +1206,7 @@ openSnapshot ::
 openSnapshot sesh label tableType override snap resolve = do
     traceWith (sessionTracer sesh) $ TraceOpenSnapshot snap override
     withOpenSession sesh $ \seshEnv -> do
-      withTempRegistry $ \reg -> do
+      withActionRegistry $ \reg -> do
         let hfs     = sessionHasFS seshEnv
             hbio    = sessionHasBlockIO seshEnv
             uc      = sessionUniqCounter seshEnv
@@ -1316,7 +1316,7 @@ duplicate t@Table{..} = do
       -- We acquire a read-lock on the session open-state to prevent races, see
       -- 'sessionOpenTables'.
       withOpenSession tableSession $ \_ -> do
-        withTempRegistry $ \reg -> do
+        withActionRegistry $ \reg -> do
           -- The table contents escape the read access, but we just added references
           -- to each run so it is safe.
           content <- RW.withReadAccess tableContent (duplicateTableContent reg)
@@ -1369,7 +1369,7 @@ unions ts = do
 
     -- We acquire a read-lock on the session open-state to prevent races, see
     -- 'sessionOpenTables'.
-    modifyWithTempRegistry
+    modifyWithActionRegistry
       (atomically $ RW.unsafeAcquireReadAccess (sessionState sesh))
       (\_ -> atomically $ RW.unsafeReleaseReadAccess (sessionState sesh)) $ \reg -> \case
         SessionClosed -> throwIO ErrSessionClosed
