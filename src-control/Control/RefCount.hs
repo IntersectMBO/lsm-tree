@@ -245,8 +245,8 @@ releaseRef ::
   -> m ()
 releaseRef ref@Ref{refobj} = do
     assertNoDoubleRelease ref
-    decrementRefCounter (getRefCounter refobj)
     releaseRefTracker ref
+    decrementRefCounter (getRefCounter refobj)
 
 {-# COMPLETE DeRef #-}
 #if MIN_VERSION_GLASGOW_HASKELL(9,0,0,0)

@@ -28,6 +28,7 @@ tests = testGroup "Control.RefCount" [
     , testProperty "prop_ref_never_released0" prop_ref_never_released0
     , testProperty "prop_ref_never_released1" prop_ref_never_released1
     , testProperty "prop_ref_never_released2" prop_ref_never_released2
+    , testProperty "prop_release_ref_exception" prop_release_ref_exception
 #endif
     ]
 
@@ -182,5 +183,13 @@ expectRefNeverReleased e@RefNeverReleased{} =
     return (tabulate "displayException" [displayException e] (property True))
 expectRefNeverReleased e =
     return (counterexample (displayException e) $ property False)
+
+-- | If a finaliser throws an exception, then the 'RefTracker' is still released
+prop_release_ref_exception :: Property
+prop_release_ref_exception = once $ ioProperty $ do
+    finalised <- newIORef False
+    ref  <- newRef (writeIORef finalised True >> error "oops") TestObject
+    _ <- try @SomeException (releaseRef ref)
+    checkForgottenRefs
 #endif
 
