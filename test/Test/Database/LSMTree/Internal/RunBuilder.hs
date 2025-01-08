@@ -12,6 +12,7 @@ import           Database.LSMTree.Internal.RunNumber
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
 import qualified System.FS.BlockIO.API as FS
+import qualified System.FS.Sim.MockFS as MockFS
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.FS (propNoOpenHandles, withSimHasBlockIO,
@@ -29,11 +30,14 @@ tests = testGroup "Test.Database.LSMTree.Internal.RunBuilder" [
         ]
     , testGroup "simHasFS" [
           testProperty "prop_newInExistingDir" $ ioProperty $
-            withSimHasBlockIO propNoOpenHandles prop_newInExistingDir
+            withSimHasBlockIO propNoOpenHandles MockFS.empty $
+              \hfs hbio _ -> prop_newInExistingDir hfs hbio
         , testProperty "prop_newInNonExistingDir" $ ioProperty $
-            withSimHasBlockIO propNoOpenHandles prop_newInNonExistingDir
+            withSimHasBlockIO propNoOpenHandles MockFS.empty $
+              \hfs hbio _ -> prop_newInNonExistingDir hfs hbio
         , testProperty "prop_newTwice" $ ioProperty $
-            withSimHasBlockIO propNoOpenHandles prop_newTwice
+            withSimHasBlockIO propNoOpenHandles MockFS.empty $
+              \hfs hbio _ -> prop_newTwice hfs hbio
         ]
     ]
 

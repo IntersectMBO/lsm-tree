@@ -37,6 +37,7 @@ import qualified System.FS.API.Lazy as FSL
 import qualified System.FS.BlockIO.API as FS
 import qualified System.FS.BlockIO.IO as FS
 import qualified System.FS.IO as FsIO
+import qualified System.FS.Sim.MockFS as MockFS
 import qualified System.IO.Temp as Temp
 import           Test.Database.LSMTree.Internal.RunReader (readKOps)
 import           Test.Tasty (TestTree, testGroup)
@@ -67,16 +68,16 @@ tests = testGroup "Database.LSMTree.Internal.Run"
               (mkVal ("test-value-" <> BS.concat (replicate 500 "0123456789")))
               Nothing
       , testProperty "prop_WriteAndOpen" $ \wb ->
-          ioProperty $ withSimHasBlockIO propNoOpenHandles $ \hfs hbio ->
+          ioProperty $ withSimHasBlockIO propNoOpenHandles MockFS.empty $ \hfs hbio _ ->
             prop_WriteAndOpen hfs hbio wb
       , testProperty "prop_WriteNumEntries" $ \wb ->
-          ioProperty $ withSimHasBlockIO propNoOpenHandles $ \hfs hbio ->
+          ioProperty $ withSimHasBlockIO propNoOpenHandles MockFS.empty $ \hfs hbio _ ->
             prop_WriteNumEntries hfs hbio wb
       , testProperty "prop_WriteAndOpenWriteBuffer" $ \wb ->
-          ioProperty $ withSimHasBlockIO propNoOpenHandles $ \hfs hbio ->
+          ioProperty $ withSimHasBlockIO propNoOpenHandles MockFS.empty $ \hfs hbio _ ->
             prop_WriteAndOpenWriteBuffer hfs hbio wb
       , testProperty "prop_WriteRunEqWriteWriteBuffer" $ \wb ->
-          ioProperty $ withSimHasBlockIO propNoOpenHandles $ \hfs hbio ->
+          ioProperty $ withSimHasBlockIO propNoOpenHandles MockFS.empty $ \hfs hbio _ ->
             prop_WriteRunEqWriteWriteBuffer hfs hbio wb
       ]
     ]

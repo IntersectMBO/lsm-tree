@@ -10,11 +10,13 @@ module Test.Util.FS (
   , withSimHasBlockIO
     -- * Simulated file system with errors
   , withSimErrorHasFS
-  , withSimErrorHasFS'
   , withSimErrorHasBlockIO
-  , withSimErrorHasBlockIO'
     -- * Simulated file system properties
+  , propTrivial
+  , propNumOpenHandles
   , propNoOpenHandles
+  , propNumDirEntries
+  , propNoDirEntries
   , assertNoOpenHandles
   , assertNumOpenHandles
     -- * Equality
@@ -25,15 +27,16 @@ import           Control.Concurrent.Class.MonadMVar
 import           Control.Concurrent.Class.MonadSTM.Strict
 import           Control.Exception (assert)
 import           Control.Monad.Class.MonadThrow (MonadCatch, MonadThrow)
+import           Control.Monad.IOSim (runSimOrThrow)
 import           Control.Monad.Primitive (PrimMonad)
+import qualified Data.Set as Set
 import           GHC.Stack
-import           System.FS.API
+import           System.FS.API as FS
 import           System.FS.BlockIO.API
 import           System.FS.BlockIO.IO
 import           System.FS.BlockIO.Sim (fromHasFS)
 import           System.FS.IO
 import           System.FS.Sim.Error
-import qualified System.FS.Sim.MockFS as MockFS
 import           System.FS.Sim.MockFS
 import           System.FS.Sim.STM
 import           System.FS.Sim.Stream (InternalInfo (..), Stream (..))
@@ -61,27 +64,36 @@ withTempIOHasBlockIO path action =
 
 {-# INLINABLE withSimHasFS #-}
 withSimHasFS ::
-     (MonadSTM m, MonadThrow m, PrimMonad m)
-  => (MockFS -> Property)
-  -> (HasFS m HandleMock -> m Property)
+     (MonadSTM m, MonadThrow m, PrimMonad m, Testable prop1, Testable prop2)
+  => (MockFS -> prop1)
+  -> MockFS
+  -> (  HasFS m HandleMock
+     -> StrictTMVar m MockFS
+     -> m prop2
+     )
   -> m Property
-withSimHasFS post k = do
-    var <- newTMVarIO MockFS.empty
+withSimHasFS post fs k = do
+    var <- newTMVarIO fs
     let hfs = simHasFS var
-    x <- k hfs
-    fs <- atomically $ readTMVar var
-    pure (x .&&. post fs)
+    x <- k hfs var
+    fs' <- atomically $ readTMVar var
+    pure (x .&&. post fs')
 
 {-# INLINABLE withSimHasBlockIO #-}
 withSimHasBlockIO ::
-     (MonadMVar m, MonadSTM m, MonadCatch m, PrimMonad m)
-  => (MockFS -> Property)
-  -> (HasFS m HandleMock -> HasBlockIO m HandleMock -> m Property)
+     (MonadMVar m, MonadSTM m, MonadCatch m, PrimMonad m, Testable prop1, Testable prop2)
+  => (MockFS -> prop1)
+  -> MockFS
+  -> (  HasFS m HandleMock
+     -> HasBlockIO m HandleMock
+     -> StrictTMVar m MockFS
+     -> m prop2
+     )
   -> m Property
-withSimHasBlockIO post k = do
-    withSimHasFS post $ \hfs -> do
+withSimHasBlockIO post fs k = do
+    withSimHasFS post fs $ \hfs fsVar -> do
       hbio <- fromHasFS hfs
-      k hfs hbio
+      k hfs hbio fsVar
 
 {-------------------------------------------------------------------------------
   Simulated file system with errors
@@ -107,28 +119,13 @@ withSimErrorHasFS post fs errs k = do
     fs' <- atomically $ readTMVar fsVar
     pure (x .&&. post fs')
 
-{-# INLINABLE withSimErrorHasFS' #-}
-withSimErrorHasFS' ::
-     (MonadSTM m, MonadThrow m, PrimMonad m, Testable prop1, Testable prop2)
-  => (MockFS -> prop1)
-  -> MockFS
-  -> Errors
-  -> (HasFS m HandleMock -> m prop2)
-  -> m Property
-withSimErrorHasFS' post fs errs k = do
-    fsVar <- newTMVarIO fs
-    errVar <- newTVarIO errs
-    let hfs = simErrorHasFS fsVar errVar
-    x <- k hfs
-    fs' <- atomically $ readTMVar fsVar
-    pure (x .&&. post fs')
-
 {-# INLINABLE withSimErrorHasBlockIO #-}
 withSimErrorHasBlockIO ::
      ( MonadSTM m, MonadCatch m, MonadMVar m, PrimMonad m
      , Testable prop1, Testable prop2
      )
   => (MockFS -> prop1)
+  -> MockFS
   -> Errors
   -> (  HasFS m HandleMock
      -> HasBlockIO m HandleMock
@@ -137,44 +134,50 @@ withSimErrorHasBlockIO ::
      -> m prop2
      )
   -> m Property
-withSimErrorHasBlockIO post errs k = do
-    fsVar <- newTMVarIO MockFS.empty
-    errVar <- newTVarIO errs
-    let hfs = simErrorHasFS fsVar errVar
-    hbio <- fromHasFS hfs
-    x <- k hfs hbio fsVar errVar
-    fs <- atomically $ readTMVar fsVar
-    pure (x .&&. post fs)
-
-{-# INLINABLE withSimErrorHasBlockIO' #-}
-withSimErrorHasBlockIO' ::
-     ( MonadSTM m, MonadCatch m, MonadMVar m, PrimMonad m
-     , Testable prop1, Testable prop2
-     )
-  => (MockFS -> prop1)
-  -> Errors
-  -> (HasFS m HandleMock -> HasBlockIO m HandleMock -> m prop2)
-  -> m Property
-withSimErrorHasBlockIO' post errs k = do
-    fsVar <- newTMVarIO MockFS.empty
-    errVar <- newTVarIO errs
-    let hfs = simErrorHasFS fsVar errVar
-    hbio <- fromHasFS hfs
-    x <- k hfs hbio
-    fs <- atomically $ readTMVar fsVar
-    pure (x .&&. post fs)
+withSimErrorHasBlockIO post fs errs k =
+    withSimErrorHasFS post fs errs $ \hfs fsVar errsVar -> do
+      hbio <- fromHasFS hfs
+      k hfs hbio fsVar errsVar
 
 {-------------------------------------------------------------------------------
   Simulated file system properties
 -------------------------------------------------------------------------------}
 
+propTrivial :: MockFS -> Property
+propTrivial _ = property True
+
+{-# INLINABLE propNumOpenHandles #-}
+propNumOpenHandles :: Int -> MockFS -> Property
+propNumOpenHandles expected fs =
+    counterexample (printf "Expected %d open handles, but found %d" expected actual) $
+    counterexample ("Open handles: " <> show (openHandles fs)) $
+    printMockFSOnFailure fs $
+    expected == actual
+  where actual = numOpenHandles fs
+
 {-# INLINABLE propNoOpenHandles #-}
 propNoOpenHandles :: MockFS -> Property
-propNoOpenHandles fs =
-    counterexample ("Expected 0 open handles, but found " <> show n) $
+propNoOpenHandles fs = propNumOpenHandles 0 fs
+
+{-# INLINABLE propNumDirEntries #-}
+propNumDirEntries :: FsPath -> Int -> MockFS -> Property
+propNumDirEntries path expected fs =
+    counterexample
+      (printf "Expected %d entries in the directory at %s, but found %d"
+        expected
+        (show path) actual) $
     printMockFSOnFailure fs $
-    n == 0
-  where n = numOpenHandles fs
+    expected === actual
+  where
+    actual =
+      let (contents, _) = runSimOrThrow $
+            runSimFS fs $ \hfs ->
+              FS.listDirectory hfs path
+      in  Set.size contents
+
+{-# INLINABLE propNoDirEntries #-}
+propNoDirEntries :: FsPath -> MockFS -> Property
+propNoDirEntries path fs = propNumDirEntries path 0 fs
 
 printMockFSOnFailure :: Testable prop => MockFS -> prop -> Property
 printMockFSOnFailure fs = counterexample ("Mocked file system: " <> pretty fs)
