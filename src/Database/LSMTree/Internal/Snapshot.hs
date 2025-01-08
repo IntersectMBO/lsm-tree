@@ -56,7 +56,7 @@ import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.UniqCounter (UniqCounter,
-                     incrUniqCounter, uniqueToRunNumber, uniqueToWord64)
+                     incrUniqCounter, uniqueToInt, uniqueToRunNumber)
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import           Database.LSMTree.Internal.WriteBufferBlobs (WriteBufferBlobs)
 import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
@@ -298,7 +298,7 @@ openWriteBuffer ::
   -> m (WriteBuffer, Ref (WriteBufferBlobs m h))
 openWriteBuffer reg resolve hfs hbio uc activeDir snapWriteBufferPaths = do
   -- Copy the write buffer blobs file to the active directory and open it.
-  activeWriteBufferNumber <- uniqueToWord64 <$> incrUniqCounter uc
+  activeWriteBufferNumber <- uniqueToInt <$> incrUniqCounter uc
   let activeWriteBufferBlobPath =
         getActiveDir activeDir </> FS.mkFsPath [show activeWriteBufferNumber] <.> "wbblobs"
   copyFile reg hfs hbio (writeBufferBlobPath snapWriteBufferPaths) activeWriteBufferBlobPath
@@ -365,7 +365,7 @@ snapshotRuns reg hbio0 (NamedSnapshotDir targetDir) levels = do
 --
 -- The result must ultimately be released using 'releaseRuns'.
 openRuns ::
-     (MonadMask m, MonadSTM m, MonadST m, MonadMVar m)
+     (MonadMask m, MonadSTM m, MonadST m)
   => ActionRegistry m
   -> HasFS m h
   -> HasBlockIO m h

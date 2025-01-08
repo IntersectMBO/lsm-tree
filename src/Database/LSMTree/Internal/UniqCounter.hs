@@ -3,36 +3,43 @@ module Database.LSMTree.Internal.UniqCounter (
   newUniqCounter,
   incrUniqCounter,
   Unique,
-  uniqueToWord64,
+  uniqueToInt,
   uniqueToRunNumber,
+  uniqueToTableId,
+  uniqueToCursorId,
 ) where
 
-import           Control.Concurrent.Class.MonadMVar.Strict
-import           Data.Coerce (coerce)
-import           Data.Word (Word64)
+import           Control.Monad.Primitive (PrimMonad, PrimState)
+import           Data.Primitive.PrimVar as P
 import           Database.LSMTree.Internal.RunNumber
 
--- | A newtype wrapper around 'Word64'.
-newtype Unique = Unique Word64
+-- | A unique value derived from a 'UniqCounter'.
+newtype Unique = Unique Int
 
--- | Avoid this function, use specialised versions like 'uniqueToRunNumber' if possible.
-uniqueToWord64 :: Unique -> Word64
-uniqueToWord64 = coerce
+-- | Use specialised versions like 'uniqueToRunNumber' where possible.
+uniqueToInt :: Unique -> Int
+uniqueToInt (Unique n) = n
 
 uniqueToRunNumber :: Unique -> RunNumber
-uniqueToRunNumber = coerce
+uniqueToRunNumber (Unique n) = RunNumber n
+
+uniqueToTableId :: Unique -> TableId
+uniqueToTableId (Unique n) = TableId n
+
+uniqueToCursorId :: Unique -> CursorId
+uniqueToCursorId (Unique n) = CursorId n
 
 -- | An atomic counter for producing 'Unique' values.
 --
--- TODO: could we use a PrimVar here?
-newtype UniqCounter m = UniqCounter (StrictMVar m Word64)
+newtype UniqCounter m = UniqCounter (PrimVar (PrimState m) Int)
 
 {-# INLINE newUniqCounter #-}
-newUniqCounter :: MonadMVar m => Word64 -> m (UniqCounter m)
-newUniqCounter x = UniqCounter <$> newMVar x
+newUniqCounter :: PrimMonad m => Int -> m (UniqCounter m)
+newUniqCounter = fmap UniqCounter . P.newPrimVar
 
 {-# INLINE incrUniqCounter #-}
--- | Return the current state of the atomic counter, and then increment the
+-- | Atomically, return the current state of the counter, and increment the
 -- counter.
-incrUniqCounter :: MonadMVar m => UniqCounter m -> m Unique
-incrUniqCounter (UniqCounter uniqVar) = modifyMVar uniqVar (\x -> pure ((x+1), Unique x))
+incrUniqCounter :: PrimMonad m => UniqCounter m -> m Unique
+incrUniqCounter (UniqCounter uniqVar) =
+  Unique <$> P.fetchAddInt uniqVar 1

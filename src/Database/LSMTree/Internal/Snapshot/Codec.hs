@@ -453,10 +453,10 @@ instance DecodeVersioned (V.Vector RunNumber) where
 -- RunNumber
 
 instance Encode RunNumber where
-  encode (RunNumber x) = encodeWord64 x
+  encode (RunNumber x) = encodeInt x
 
 instance DecodeVersioned RunNumber where
-  decodeVersioned V0 = RunNumber <$> decodeWord64
+  decodeVersioned V0 = RunNumber <$> decodeInt
 
 -- SnapIncomingRun
 

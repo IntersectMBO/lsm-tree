@@ -161,7 +161,7 @@ mkSnapshotName s
 -- | The file name for a table's write buffer blob file
 tableBlobPath :: SessionRoot -> Unique -> FsPath
 tableBlobPath session n =
-    getActiveDir (activeDir session) </> mkFsPath [show (uniqueToWord64 n)] <.> "wbblobs"
+    getActiveDir (activeDir session) </> mkFsPath [show (uniqueToInt n)] <.> "wbblobs"
 
 {-------------------------------------------------------------------------------
   Run paths
