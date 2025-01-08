@@ -9,7 +9,8 @@ module Database.LSMTree.Internal.BlobFile (
   ) where
 
 import           Control.DeepSeq (NFData (..))
-import           Control.Monad.Class.MonadThrow (MonadThrow)
+import           Control.Monad.Class.MonadThrow (MonadCatch (bracketOnError),
+                     MonadThrow (..))
 import           Control.Monad.Primitive (PrimMonad)
 import           Control.RefCount
 import qualified Data.Primitive.ByteArray as P
@@ -51,24 +52,30 @@ instance NFData BlobSpan where
 
 -- | Open the given file to make a 'BlobFile'. The finaliser will close and
 -- delete the file.
+--
+-- REF: the resulting reference must be released once it is no longer used.
+--
+-- ASYNC: this should be called with asynchronous exceptions masked.
 {-# SPECIALISE openBlobFile :: HasCallStack => HasFS IO h -> FS.FsPath -> FS.OpenMode -> IO (Ref (BlobFile IO h)) #-}
 openBlobFile ::
-     PrimMonad m
+     (PrimMonad m, MonadCatch m)
   => HasCallStack
   => HasFS m h
   -> FS.FsPath
   -> FS.OpenMode
   -> m (Ref (BlobFile m h))
-openBlobFile fs path mode = do
-    blobFileHandle <- FS.hOpen fs path mode
-    let finaliser = do
-          FS.hClose fs blobFileHandle
-          FS.removeFile fs (FS.handlePath blobFileHandle)
-    newRef finaliser $ \blobFileRefCounter ->
-      BlobFile {
-        blobFileHandle,
-        blobFileRefCounter
-      }
+openBlobFile fs path mode =
+    bracketOnError (FS.hOpen fs path mode) (FS.hClose fs) $ \blobFileHandle -> do
+      let finaliser = do
+            FS.hClose fs blobFileHandle
+            -- If we fail to close the file handle, then we won't try to remove
+            -- the file.
+            FS.removeFile fs (FS.handlePath blobFileHandle)
+      newRef finaliser $ \blobFileRefCounter ->
+        BlobFile {
+          blobFileHandle,
+          blobFileRefCounter
+        }
 
 {-# INLINE readBlob #-}
 readBlob ::

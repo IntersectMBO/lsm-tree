@@ -183,6 +183,7 @@ setRunDataCaching hbio runKOpsFile NoCacheRunData = do
      RunDataCaching
   -> RunBuilder IO h
   -> IO (Ref (Run IO h)) #-}
+-- TODO: make exception safe
 fromMutable ::
      (MonadST m, MonadSTM m, MonadMask m)
   => RunDataCaching
@@ -192,6 +193,7 @@ fromMutable runRunDataCaching builder = do
     (runHasFS, runHasBlockIO, runRunFsPaths, runFilter, runIndex, runNumEntries) <-
       Builder.unsafeFinalise (runRunDataCaching == NoCacheRunData) builder
     runKOpsFile <- FS.hOpen runHasFS (runKOpsPath runRunFsPaths) FS.ReadMode
+    -- TODO: openBlobFile should be called with exceptions masked
     runBlobFile <- openBlobFile runHasFS (runBlobPath runRunFsPaths) FS.ReadMode
     setRunDataCaching runHasBlockIO runKOpsFile runRunDataCaching
     newRef (finaliser runHasFS runKOpsFile runBlobFile runRunFsPaths)
@@ -263,6 +265,7 @@ openFromDisk ::
   -> RunDataCaching
   -> RunFsPaths
   -> m (Ref (Run m h))
+-- TODO: make exception safe
 openFromDisk fs hbio runRunDataCaching runRunFsPaths = do
     expectedChecksums <-
        expectValidFile (runChecksumsPath runRunFsPaths) . fromChecksumsFile
@@ -282,6 +285,7 @@ openFromDisk fs hbio runRunDataCaching runRunFsPaths = do
         =<< readCRC (forRunIndexRaw expectedChecksums) (forRunIndexRaw paths)
 
     runKOpsFile <- FS.hOpen fs (runKOpsPath runRunFsPaths) FS.ReadMode
+    -- TODO: openBlobFile should be called with exceptions masked
     runBlobFile <- openBlobFile fs (runBlobPath runRunFsPaths) FS.ReadMode
     setRunDataCaching hbio runKOpsFile runRunDataCaching
     newRef (finaliser fs runKOpsFile runBlobFile runRunFsPaths) $ \runRefCounter ->
