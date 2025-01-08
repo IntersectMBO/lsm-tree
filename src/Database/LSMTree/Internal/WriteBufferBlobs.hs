@@ -103,14 +103,23 @@ import           System.FS.API (HasFS)
 --
 data WriteBufferBlobs m h =
      WriteBufferBlobs {
-       blobFile           :: !(Ref (BlobFile m h))
 
-       -- | The manually tracked file pointer.
-     , blobFilePointer    :: !(FilePointer m)
+       -- | The blob file
+       --
+       -- INVARIANT: the file may contain garbage bytes, but no blob reference
+       -- ('RawBlobRef', 'WeakBlobRef', or 'StrongBlobRef) will reference these
+       -- bytes.
+      blobFile           :: !(Ref (BlobFile m h))
 
-       -- The 'WriteBufferBlobs' is a shared reference-counted object type
-     , writeBufRefCounter :: !(RefCounter m)
-     }
+      -- | The manually tracked file pointer.
+      --
+      -- INVARIANT: the file pointer points to a file offset at or beyond the
+      -- file size.
+    , blobFilePointer    :: !(FilePointer m)
+
+      -- The 'WriteBufferBlobs' is a shared reference-counted object type
+    , writeBufRefCounter :: !(RefCounter m)
+    }
 
 instance NFData h => NFData (WriteBufferBlobs m h) where
   rnf (WriteBufferBlobs a b c) = rnf a `seq` rnf b `seq` rnf c
@@ -119,6 +128,11 @@ instance RefCounted m (WriteBufferBlobs m h) where
   getRefCounter = writeBufRefCounter
 
 {-# SPECIALISE new :: HasFS IO h -> FS.FsPath -> IO (Ref (WriteBufferBlobs IO h)) #-}
+-- | Create a new 'WriteBufferBlobs' with a new file.
+--
+-- REF: the resulting reference must be released once it is no longer used.
+--
+-- ASYNC: this should be called with asynchronous exceptions masked.
 new ::
      (PrimMonad m, MonadMask m)
   => HasFS m h
@@ -128,22 +142,31 @@ new fs blobFileName = open fs blobFileName FS.MustBeNew
 
 {-# SPECIALISE open :: HasFS IO h -> FS.FsPath -> FS.AllowExisting -> IO (Ref (WriteBufferBlobs IO h)) #-}
 -- | Open a `WriteBufferBlobs` file and sets the file pointer to the end of the file.
+--
+-- REF: the resulting reference must be released once it is no longer used.
+--
+-- ASYNC: this should be called with asynchronous exceptions masked.
 open ::
      (PrimMonad m, MonadMask m)
   => HasFS m h
   -> FS.FsPath
   -> FS.AllowExisting
   -> m (Ref (WriteBufferBlobs m h))
--- TODO: make exception safe
 open fs blobFileName blobFileAllowExisting = do
     -- Must use read/write mode because we write blobs when adding, but
     -- we can also be asked to retrieve blobs at any time.
-    --
-    -- TODO: openBlobFile should be called with exceptions masked
-    fromBlobFile fs =<< openBlobFile fs blobFileName (FS.ReadWriteMode blobFileAllowExisting)
+    bracketOnError
+      (openBlobFile fs blobFileName (FS.ReadWriteMode blobFileAllowExisting))
+      releaseRef
+      (fromBlobFile fs)
 
 {-# SPECIALISE fromBlobFile :: HasFS IO h -> Ref (BlobFile IO h) -> IO (Ref (WriteBufferBlobs IO h)) #-}
--- | Make a `WriteBufferBlobs` from a `BlobFile` and set the file pointer to the end of the file.
+-- | Make a `WriteBufferBlobs` from a `BlobFile` and set the file pointer to the
+-- end of the file.
+--
+-- REF: the resulting reference must be released once it is no longer used.
+--
+-- ASYNC: this should be called with asynchronous exceptions masked.
 fromBlobFile ::
      (PrimMonad m, MonadMask m)
   => HasFS m h
@@ -162,6 +185,14 @@ fromBlobFile fs blobFile = do
       }
 
 {-# SPECIALISE addBlob :: HasFS IO h -> Ref (WriteBufferBlobs IO h) -> SerialisedBlob -> IO BlobSpan #-}
+-- | Append a blob.
+--
+-- If no exception is returned, then the file pointer will be set to exactly the
+-- file size.
+--
+-- If an exception is returned, the file pointer points to a file
+-- offset at or beyond the file size. The bytes between the old and new offset
+-- might be garbage or missing.
 addBlob :: (PrimMonad m, MonadThrow m)
         => HasFS m h
         -> Ref (WriteBufferBlobs m h)
@@ -169,7 +200,12 @@ addBlob :: (PrimMonad m, MonadThrow m)
         -> m BlobSpan
 addBlob fs (DeRef WriteBufferBlobs {blobFile, blobFilePointer}) blob = do
     let blobsize = sizeofBlob blob
+    -- If an exception happens after updating the file pointer, then no write
+    -- takes place. The next 'addBlob' will start writing at the new file
+    -- offset, so there are going to be some uninitialised bytes in the file.
     bloboffset <- updateFilePointer blobFilePointer blobsize
+    -- If an exception happens while writing the blob, the bytes in the file
+    -- might be corrupted.
     BlobFile.writeBlob fs blobFile blob bloboffset
     return BlobSpan {
       blobSpanOffset = bloboffset,
@@ -178,6 +214,13 @@ addBlob fs (DeRef WriteBufferBlobs {blobFile, blobFilePointer}) blob = do
 
 -- | Helper function to make a 'RawBlobRef' that points into a
 -- 'WriteBufferBlobs'.
+--
+-- This function should only be used on the result of 'addBlob' on the same
+-- 'WriteBufferBlobs'. For example:
+--
+-- @
+--  'addBlob' hfs wbb blob >>= \\span -> pure ('mkRawBlobRef' wbb span)
+-- @
 mkRawBlobRef :: Ref (WriteBufferBlobs m h)
              -> BlobSpan
              -> RawBlobRef m h
@@ -189,6 +232,13 @@ mkRawBlobRef (DeRef WriteBufferBlobs {blobFile = DeRef blobfile}) blobspan =
 
 -- | Helper function to make a 'WeakBlobRef' that points into a
 -- 'WriteBufferBlobs'.
+--
+-- This function should only be used on the result of 'addBlob' on the same
+-- 'WriteBufferBlobs'. For example:
+--
+-- @
+--  'addBlob' hfs wbb blob >>= \\span -> pure ('mkWeakBlobRef' wbb span)
+-- @
 mkWeakBlobRef :: Ref (WriteBufferBlobs m h)
               -> BlobSpan
               -> WeakBlobRef m h
