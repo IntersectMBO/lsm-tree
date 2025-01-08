@@ -7,7 +7,8 @@ module Database.LSMTree.Internal.WriteBufferReader (
 import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Monad.Class.MonadST (MonadST (..))
 import           Control.Monad.Class.MonadSTM (MonadSTM (..))
-import           Control.Monad.Class.MonadThrow (MonadMask, MonadThrow (..))
+import           Control.Monad.Class.MonadThrow (MonadMask, MonadThrow (..),
+                     bracketOnError)
 import           Control.Monad.Primitive (PrimMonad (..))
 import           Control.RefCount (Ref, dupRef, releaseRef)
 import           Data.Primitive.MutVar (MutVar, newMutVar, readMutVar,
@@ -42,9 +43,6 @@ import           System.FS.BlockIO.API (HasBlockIO)
     -> IO WriteBuffer
   #-}
 -- | Read a serialised `WriteBuffer` back into memory.
---
---   NOTE: The `BlobFile` argument /must be/ the blob file associated with the
---         write buffer; @`readWriteBuffer`@ does not check this.
 readWriteBuffer ::
      (MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
   => ResolveSerialisedValue
@@ -88,6 +86,11 @@ data WriteBufferReader m h = WriteBufferReader {
     -> IO (WriteBufferReader IO h)
   #-}
 -- | See 'Database.LSMTree.Internal.RunReader.new'.
+--
+-- REF: the resulting 'WriteBufferReader' must be closed once it is no longer
+-- used.
+--
+-- ASYNC: this should be called with asynchronous exceptions masked.
 new :: forall m h.
      (MonadMVar m, MonadST m, MonadMask m)
   => HasFS m h
@@ -95,16 +98,19 @@ new :: forall m h.
   -> ForKOps FS.FsPath
   -> Ref (BlobFile m h)
   -> m (WriteBufferReader m h)
-new readerHasFS readerHasBlockIO kOpsPath blobFile = do
-  readerKOpsHandle <- FS.hOpen readerHasFS (unForKOps kOpsPath) FS.ReadMode
-  -- Double the file readahead window (only applies to this file descriptor)
-  FS.hAdviseAll readerHasBlockIO readerKOpsHandle FS.AdviceSequential
-  readerBlobFile <- dupRef blobFile
-  -- Load first page from disk, if it exists.
-  readerCurrentEntryNo <- newPrimVar (0 :: Word16)
-  firstPage <- readDiskPage readerHasFS readerKOpsHandle
-  readerCurrentPage <- newMutVar firstPage
-  pure $ WriteBufferReader{..}
+new readerHasFS readerHasBlockIO kOpsPath blobFile =
+    bracketOnError openKOps (FS.hClose readerHasFS) $ \readerKOpsHandle -> do
+      -- Double the file readahead window (only applies to this file descriptor)
+      FS.hAdviseAll readerHasBlockIO readerKOpsHandle FS.AdviceSequential
+      bracketOnError (dupRef blobFile) releaseRef $ \readerBlobFile -> do
+        -- Load first page from disk, if it exists.
+        readerCurrentEntryNo <- newPrimVar (0 :: Word16)
+        firstPage <- readDiskPage readerHasFS readerKOpsHandle
+        readerCurrentPage <- newMutVar firstPage
+        pure $ WriteBufferReader{..}
+  where
+    openKOps = FS.hOpen readerHasFS (unForKOps kOpsPath) FS.ReadMode
+
 
 {-# SPECIALISE
   next ::
@@ -154,10 +160,13 @@ next WriteBufferReader {..} = do
             return (ReadEntry key rawEntry)
 
 {-# SPECIALISE close :: WriteBufferReader IO h -> IO () #-}
+-- | Close the 'WriteBufferReader'.
+--
+-- ASYNC: this should be called with asynchronous exceptions masked.
 close ::
      (MonadMask m, PrimMonad m)
   => WriteBufferReader m h
   -> m ()
 close WriteBufferReader{..} = do
   FS.hClose readerHasFS readerKOpsHandle
-  releaseRef readerBlobFile
+    `finally` releaseRef readerBlobFile
