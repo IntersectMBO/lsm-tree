@@ -12,7 +12,7 @@ module Database.LSMTree.Internal.Index
 )
 where
 
-import           Control.DeepSeq (NFData (..))
+import           Control.DeepSeq (NFData)
 import           Control.Monad.ST.Strict (ST)
 import           Data.ByteString.Lazy (LazyByteString)
 import           Data.Word (Word32)
@@ -36,7 +36,7 @@ import           Database.LSMTree.Internal.Serialise (SerialisedKey)
 
      3. Use 'finalLBS' to generate the footer of the serialised index.
 -}
-class Index i where
+class NFData i => Index i where
 
     {-|
         Searches for a page span that contains a key–value pair with the given
@@ -70,7 +70,7 @@ class Index i where
         (Currently, construction of compact indexes needs the former and
         construction of ordinary indexes needs the latter bound.)
 -}
-class (Index (ResultingIndex j), NFData (ResultingIndex j)) => IndexAcc j where
+class Index (ResultingIndex j) => IndexAcc j where
 
     -- | The type of indexes constructed by accumulators of a certain type
     type ResultingIndex j

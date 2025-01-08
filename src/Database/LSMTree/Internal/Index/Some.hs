@@ -13,7 +13,7 @@ module Database.LSMTree.Internal.Index.Some
 where
 
 import           Control.Arrow (second)
-import           Control.DeepSeq (NFData (..))
+import           Control.DeepSeq (NFData (rnf))
 import           Control.Monad.ST.Strict (ST)
 import           Data.ByteString.Lazy (LazyByteString)
 import           Data.ByteString.Short (ShortByteString)
@@ -36,7 +36,7 @@ import           Database.LSMTree.Internal.Serialise (SerialisedKey)
 data IndexType = Compact | Ordinary deriving stock (Show, Eq)
 
 -- | The type of indexes.
-data SomeIndex = forall i . (Index i, NFData i) => SomeIndex i
+data SomeIndex = forall i . Index i => SomeIndex i
 
 instance NFData SomeIndex where
 
