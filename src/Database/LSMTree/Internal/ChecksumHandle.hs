@@ -9,6 +9,7 @@ module Database.LSMTree.Internal.ChecksumHandle
     readChecksum,
     dropCache,
     closeHandle,
+    removeHandle,
     writeToHandle,
     -- * Specialised writers
     writeRawPage,
@@ -22,7 +23,7 @@ module Database.LSMTree.Internal.ChecksumHandle
   ) where
 
 import           Control.Monad.Class.MonadSTM (MonadSTM (..))
-import           Control.Monad.Class.MonadThrow (MonadThrow)
+import           Control.Monad.Class.MonadThrow (MonadThrow (..))
 import           Control.Monad.Primitive
 import           Data.BloomFilter (Bloom)
 import qualified Data.ByteString.Lazy as BSL
@@ -91,6 +92,14 @@ dropCache hbio (ChecksumHandle h _) = FS.hDropCacheAll hbio h
 
 closeHandle :: HasFS m h -> ChecksumHandle (PrimState m) h -> m ()
 closeHandle fs (ChecksumHandle h _checksum) = FS.hClose fs h
+
+{-# SPECIALISE removeHandle ::
+     HasFS IO h
+  -> ChecksumHandle RealWorld h
+  -> IO () #-}
+removeHandle :: MonadThrow m => HasFS m h -> ChecksumHandle (PrimState m) h -> m ()
+removeHandle fs (ChecksumHandle h _checksum) =
+    FS.hClose fs h `finally` FS.removeFile fs (handlePath h)
 
 {-# SPECIALISE writeToHandle ::
      HasFS IO h
