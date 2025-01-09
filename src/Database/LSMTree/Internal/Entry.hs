@@ -67,8 +67,13 @@ instance Bifoldable Entry where
       Mupdate v           -> f v
       Delete              -> mempty
 
--- | TODO: we should change this to be a Word64, so that it is in line with the
--- disk format.
+-- | A count of entries, for example the number of entries in a run.
+--
+-- This number is limited by the machine's word size. On 32-bit systems, the
+-- maximum number we can represent is @2^31@ which is roughly 2 billion. This
+-- should be a sufficiently large limit that we never reach it in practice. By
+-- extension for 64-bit and higher-bit systems this limit is also sufficiently
+-- large.
 newtype NumEntries = NumEntries Int
   deriving stock (Eq, Ord, Show)
   deriving newtype NFData
