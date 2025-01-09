@@ -1,3 +1,5 @@
+{-# LANGUAGE MagicHash #-}
+
 -- | The 'Merge' type and its functions are not intended for concurrent use.
 -- Concurrent access should therefore be sequentialised using a suitable
 -- concurrency primitive, such as an 'MVar'.
@@ -28,7 +30,7 @@ import           Data.Traversable (for)
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.BlobRef (RawBlobRef)
 import           Database.LSMTree.Internal.Entry
-import           Database.LSMTree.Internal.Index.Some (IndexType)
+import           Database.LSMTree.Internal.Index (IndexAcc)
 import           Database.LSMTree.Internal.Run (Run, RunDataCaching)
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..))
@@ -38,6 +40,7 @@ import qualified Database.LSMTree.Internal.RunReader as Reader
 import           Database.LSMTree.Internal.RunReaders (Readers)
 import qualified Database.LSMTree.Internal.RunReaders as Readers
 import           Database.LSMTree.Internal.Serialise
+import           GHC.Exts (Proxy#)
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
 import           System.FS.BlockIO.API (HasBlockIO)
@@ -83,11 +86,12 @@ instance NFData Level where
 type Mappend = SerialisedValue -> SerialisedValue -> SerialisedValue
 
 {-# SPECIALISE new ::
-     HasFS IO h
+     IndexAcc j
+  => HasFS IO h
   -> HasBlockIO IO h
   -> RunDataCaching
   -> RunBloomFilterAlloc
-  -> IndexType
+  -> Proxy# j
   -> Level
   -> Mappend
   -> Run.RunFsPaths
@@ -96,24 +100,29 @@ type Mappend = SerialisedValue -> SerialisedValue -> SerialisedValue
 -- | Returns 'Nothing' if no input 'Run' contains any entries.
 -- The list of runs should be sorted from new to old.
 new ::
-     (MonadMask m, MonadSTM m, MonadST m)
+     (MonadMask m, MonadSTM m, MonadST m, IndexAcc j)
   => HasFS m h
   -> HasBlockIO m h
   -> RunDataCaching
   -> RunBloomFilterAlloc
-  -> IndexType
+  -> Proxy# j
   -> Level
   -> Mappend
   -> Run.RunFsPaths
   -> V.Vector (Ref (Run m h))
   -> m (Maybe (Merge m h))
-new fs hbio mergeCaching alloc indexType mergeLevel mergeMappend targetPaths runs = do
+new fs hbio mergeCaching alloc indexAccTypeProxy mergeLevel mergeMappend targetPaths runs = do
     -- no offset, no write buffer
     mreaders <- Readers.new Readers.NoOffsetKey Nothing runs
     for mreaders $ \mergeReaders -> do
       -- calculate upper bounds based on input runs
       let numEntries = V.foldMap' Run.size runs
-      mergeBuilder <- Builder.new fs hbio targetPaths numEntries alloc indexType
+      mergeBuilder <- Builder.new fs
+                                  hbio
+                                  targetPaths
+                                  numEntries
+                                  alloc
+                                  indexAccTypeProxy
       mergeState <- newMutVar $! Merging
       return Merge {
           mergeHasFS = fs

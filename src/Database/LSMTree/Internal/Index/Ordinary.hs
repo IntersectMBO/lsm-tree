@@ -34,13 +34,13 @@ import qualified Data.Vector.Primitive as Primitive (Vector (Vector), drop,
 import           Data.Word (Word16, Word32, Word64, Word8, byteSwap32)
 import           Database.LSMTree.Internal.Entry (NumEntries (NumEntries),
                      unNumEntries)
-import           Database.LSMTree.Internal.Index
-                     (Index (finalLBS, search, sizeInPages))
+import           Database.LSMTree.Internal.Index (Index (..))
 import           Database.LSMTree.Internal.Page (NumPages (NumPages),
                      PageNo (PageNo), PageSpan (PageSpan))
 import           Database.LSMTree.Internal.Serialise
                      (SerialisedKey (SerialisedKey'))
 import           Database.LSMTree.Internal.Vector (binarySearchL, mkPrimVector)
+import           GHC.Exts (Proxy#)
 
 {-|
     The type–version indicator for the ordinary index and its serialisation
@@ -112,6 +112,11 @@ instance Index IndexOrdinary where
     sizeInPages (IndexOrdinary lastKeys)
         = NumPages $ fromIntegral (length lastKeys)
 
+    headerLBS :: Proxy# IndexOrdinary -> LazyByteString
+    headerLBS _ = toLazyByteString        $
+                  word32Host              $
+                  supportedTypeAndVersion
+
     finalLBS :: NumEntries -> IndexOrdinary -> LazyByteString
     finalLBS entryCount _ = toLazyByteString $
                             word64Host       $
@@ -119,107 +124,87 @@ instance Index IndexOrdinary where
                             unNumEntries     $
                             entryCount
 
-{-|
-    Yields the header of the serialised form of an ordinary index.
-
-    See the documentation of the 'Index' class for how to generate a complete
-    serialised index.
--}
-headerLBS :: LazyByteString
-headerLBS = toLazyByteString        $
-            word32Host              $
-            supportedTypeAndVersion
-
-{-|
-    Reads an ordinary index along with the number of entries of the respective
-    run from a byte string.
-
-    The byte string must contain the serialised index exactly, with no leading
-    or trailing space.
-
-    For deserialising numbers, the endianness of the host system is used. If
-    serialisation has been done with a different endianness, this mismatch is
-    detected by looking at the type–version indicator.
--}
-fromSBS :: ShortByteString -> Either String (NumEntries, IndexOrdinary)
-fromSBS shortByteString@(SBS unliftedByteArray)
-    | fullSize < 12
-        = Left "Doesn't contain header and footer"
-    | typeAndVersion == byteSwap32 supportedTypeAndVersion
-        = Left "Non-matching endianness"
-    | typeAndVersion /= supportedTypeAndVersion
-        = Left "Unsupported type or version"
-    | otherwise
-        = (,) <$> entryCount <*> index
-    where
-
-    fullSize :: Int
-    fullSize = ShortByteString.length shortByteString
-
-    byteArray :: ByteArray
-    byteArray = ByteArray unliftedByteArray
-
-    fullBytes :: Primitive.Vector Word8
-    fullBytes = mkPrimVector 0 fullSize byteArray
-
-    typeAndVersion :: Word32
-    typeAndVersion = indexByteArray byteArray 0
-
-    postTypeAndVersionBytes :: Primitive.Vector Word8
-    postTypeAndVersionBytes = Primitive.drop 4 fullBytes
-
-    lastKeysBytes, entryCountBytes :: Primitive.Vector Word8
-    (lastKeysBytes, entryCountBytes)
-        = Primitive.splitAt (fullSize - 12) postTypeAndVersionBytes
-
-    entryCount :: Either String NumEntries
-    entryCount
-        | toInteger asWord64 > toInteger (maxBound :: Int)
-            = Left "Number of entries not representable as Int"
+    fromSBS :: Proxy# IndexOrdinary
+            -> ShortByteString
+            -> Either String (NumEntries, IndexOrdinary)
+    fromSBS _ shortByteString@(SBS unliftedByteArray)
+        | fullSize < 12
+            = Left "Doesn't contain header and footer"
+        | typeAndVersion == byteSwap32 supportedTypeAndVersion
+            = Left "Non-matching endianness"
+        | typeAndVersion /= supportedTypeAndVersion
+            = Left "Unsupported type or version"
         | otherwise
-            = Right (NumEntries (fromIntegral asWord64))
+            = (,) <$> entryCount <*> index
         where
 
-        asWord64 :: Word64
-        asWord64 = indexByteArray entryCountRep 0
+        fullSize :: Int
+        fullSize = ShortByteString.length shortByteString
 
-        entryCountRep :: ByteArray
-        Primitive.Vector _ _ entryCountRep = Primitive.force entryCountBytes
+        byteArray :: ByteArray
+        byteArray = ByteArray unliftedByteArray
 
-    index :: Either String IndexOrdinary
-    index = IndexOrdinary <$> fromList <$> lastKeys lastKeysBytes
+        fullBytes :: Primitive.Vector Word8
+        fullBytes = mkPrimVector 0 fullSize byteArray
 
-    lastKeys :: Primitive.Vector Word8 -> Either String [SerialisedKey]
-    lastKeys bytes
-        | Primitive.null bytes
-            = Right []
-        | otherwise
-            = do
-                  when (Primitive.length bytes < 2)
-                       (Left "Too few bytes for key size")
-                  let
+        typeAndVersion :: Word32
+        typeAndVersion = indexByteArray byteArray 0
 
-                      firstSizeRep :: ByteArray
-                      Primitive.Vector _ _ firstSizeRep
-                          = Primitive.force (Primitive.take 2 bytes)
+        postTypeAndVersionBytes :: Primitive.Vector Word8
+        postTypeAndVersionBytes = Primitive.drop 4 fullBytes
 
-                      firstSize :: Int
-                      firstSize = fromIntegral $
-                                  (indexByteArray firstSizeRep 0 :: Word16)
+        lastKeysBytes, entryCountBytes :: Primitive.Vector Word8
+        (lastKeysBytes, entryCountBytes)
+            = Primitive.splitAt (fullSize - 12) postTypeAndVersionBytes
 
-                      postFirstSizeBytes :: Primitive.Vector Word8
-                      postFirstSizeBytes = Primitive.drop 2 bytes
+        entryCount :: Either String NumEntries
+        entryCount
+            | toInteger asWord64 > toInteger (maxBound :: Int)
+                = Left "Number of entries not representable as Int"
+            | otherwise
+                = Right (NumEntries (fromIntegral asWord64))
+            where
 
-                  when (Primitive.length postFirstSizeBytes < firstSize)
-                       (Left "Too few bytes for key")
-                  let
+            asWord64 :: Word64
+            asWord64 = indexByteArray entryCountRep 0
 
-                      firstBytes, othersBytes :: Primitive.Vector Word8
-                      (firstBytes, othersBytes)
-                          = Primitive.splitAt firstSize postFirstSizeBytes
+            entryCountRep :: ByteArray
+            Primitive.Vector _ _ entryCountRep = Primitive.force entryCountBytes
 
-                      first :: SerialisedKey
-                      first = SerialisedKey' (Primitive.force firstBytes)
+        index :: Either String IndexOrdinary
+        index = IndexOrdinary <$> fromList <$> lastKeys lastKeysBytes
 
-                  others <- lastKeys othersBytes
-                  return (first : others)
+        lastKeys :: Primitive.Vector Word8 -> Either String [SerialisedKey]
+        lastKeys bytes
+            | Primitive.null bytes
+                = Right []
+            | otherwise
+                = do
+                      when (Primitive.length bytes < 2)
+                           (Left "Too few bytes for key size")
+                      let
+
+                          firstSizeRep :: ByteArray
+                          Primitive.Vector _ _ firstSizeRep
+                              = Primitive.force (Primitive.take 2 bytes)
+
+                          firstSize :: Int
+                          firstSize = fromIntegral $
+                                      (indexByteArray firstSizeRep 0 :: Word16)
+
+                          postFirstSizeBytes :: Primitive.Vector Word8
+                          postFirstSizeBytes = Primitive.drop 2 bytes
+
+                      when (Primitive.length postFirstSizeBytes < firstSize)
+                           (Left "Too few bytes for key")
+                      let
+
+                          firstBytes, othersBytes :: Primitive.Vector Word8
+                          (firstBytes, othersBytes)
+                              = Primitive.splitAt firstSize postFirstSizeBytes
+
+                          first :: SerialisedKey
+                          first = SerialisedKey' (Primitive.force firstBytes)
+
+                      others <- lastKeys othersBytes
+                      return (first : others)

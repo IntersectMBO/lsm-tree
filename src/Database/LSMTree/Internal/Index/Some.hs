@@ -1,14 +1,19 @@
+{-# LANGUAGE MagicHash    #-}
 {-# LANGUAGE TypeFamilies #-}
 
 -- | Provides support for working with fence pointer indexes of unknown type.
 module Database.LSMTree.Internal.Index.Some
 (
-    IndexType (Compact, Ordinary),
     SomeIndex (SomeIndex),
-    headerLBS,
+    search,
+    sizeInPages,
+    finalLBS,
     fromSBS,
     SomeIndexAcc (SomeIndexAcc),
-    newWithDefaults
+    newWithDefaults,
+    appendSingle,
+    appendMulti,
+    unsafeEnd
 )
 where
 
@@ -20,84 +25,68 @@ import           Data.ByteString.Short (ShortByteString)
 import           Data.Word (Word32)
 import           Database.LSMTree.Internal.Chunk (Chunk)
 import           Database.LSMTree.Internal.Entry (NumEntries)
-import           Database.LSMTree.Internal.Index (Index (..), IndexAcc (..))
-import qualified Database.LSMTree.Internal.Index.Compact as IndexCompact
-                     (fromSBS, headerLBS)
-import qualified Database.LSMTree.Internal.Index.CompactAcc as IndexCompact
-                     (new)
-import qualified Database.LSMTree.Internal.Index.Ordinary as IndexOrdinary
-                     (fromSBS, headerLBS)
-import qualified Database.LSMTree.Internal.Index.OrdinaryAcc as IndexOrdinary
-                     (new)
+import           Database.LSMTree.Internal.Index (Index, IndexAcc)
+import qualified Database.LSMTree.Internal.Index as Index (appendMulti,
+                     appendSingle, finalLBS, fromSBS, newWithDefaults, search,
+                     sizeInPages, unsafeEnd)
 import           Database.LSMTree.Internal.Page (NumPages, PageSpan)
 import           Database.LSMTree.Internal.Serialise (SerialisedKey)
+import           GHC.Exts (Proxy#)
 
--- | The type of concrete index types specifically supported by this module.
-data IndexType = Compact | Ordinary deriving stock (Show, Eq)
-
--- | The type of indexes.
+-- | The type of indexes, where an index can have any concrete type.
 data SomeIndex = forall i . Index i => SomeIndex i
 
 instance NFData SomeIndex where
 
     rnf (SomeIndex index) = rnf index
 
-instance Index SomeIndex where
+-- | A version of 'Index.search' that works with indexes of unknown type.
+search :: SerialisedKey -> SomeIndex -> PageSpan
+search key (SomeIndex index) = Index.search key index
 
-    search :: SerialisedKey -> SomeIndex -> PageSpan
-    search key (SomeIndex index) = search key index
+-- | A version of 'Index.sizeInPages' that works with indexes of unknown type.
+sizeInPages  :: SomeIndex -> NumPages
+sizeInPages (SomeIndex index) = Index.sizeInPages index
 
-    sizeInPages  :: SomeIndex -> NumPages
-    sizeInPages (SomeIndex index) = sizeInPages index
+-- | A version of 'Index.finalLBS' that works with indexes of unknown type.
+finalLBS :: NumEntries -> SomeIndex -> LazyByteString
+finalLBS entryCount (SomeIndex index) = Index.finalLBS entryCount index
 
-    finalLBS :: NumEntries -> SomeIndex -> LazyByteString
-    finalLBS entryCount (SomeIndex index) = finalLBS entryCount index
-
--- | Yields the header of the serialised form of an index of a given type.
-headerLBS :: IndexType -> LazyByteString
-headerLBS Compact  = IndexCompact.headerLBS
-headerLBS Ordinary = IndexOrdinary.headerLBS
+-- | A version of 'Index.fromSBS' that works with indexes of unknown type.
+fromSBS :: Index i
+        => Proxy# i
+        -> ShortByteString
+        -> Either String (NumEntries, SomeIndex)
+fromSBS indexTypeProxy shortByteString
+    = second SomeIndex <$> Index.fromSBS indexTypeProxy shortByteString
 
 {-|
-    Reads an index of a given type along with the number of entries of the
-    respective run from a byte string.
-
-    The byte string must contain the serialised index exactly, with no leading
-    or trailing space. In the case of a compact index, the contents of the byte
-    string must be stored 64-bit-aligned.
-
-    For deserialising numbers, the endianness of the host system is used. If
-    serialisation has been done with a different endianness, this mismatch is
-    detected by looking at the type–version indicator.
+    The type of index accumulators, where an index accumulator can have any
+    concrete type.
 -}
-fromSBS :: IndexType -> ShortByteString -> Either String (NumEntries, SomeIndex)
-fromSBS Compact  = fmap (second SomeIndex) . IndexCompact.fromSBS
-fromSBS Ordinary = fmap (second SomeIndex) . IndexOrdinary.fromSBS
-
--- | The type of index accumulators.
 data SomeIndexAcc s = forall j . IndexAcc j => SomeIndexAcc (j s)
 
-instance IndexAcc SomeIndexAcc where
-
-    type ResultingIndex SomeIndexAcc = SomeIndex
-
-    appendSingle :: (SerialisedKey, SerialisedKey)
-                 -> SomeIndexAcc s
-                 -> ST s (Maybe Chunk)
-    appendSingle pageInfo (SomeIndexAcc indexAcc)
-        = appendSingle pageInfo indexAcc
-
-    appendMulti :: (SerialisedKey, Word32) -> SomeIndexAcc s -> ST s [Chunk]
-    appendMulti pagesInfo (SomeIndexAcc indexAcc)
-        = appendMulti pagesInfo indexAcc
-
-    unsafeEnd :: SomeIndexAcc s -> ST s (Maybe Chunk, SomeIndex)
-    unsafeEnd (SomeIndexAcc indexAcc) = second SomeIndex <$> unsafeEnd indexAcc
-
 {-|
-    Create a new accumulator for an index of a given type, using a default
-    configuration.
+    A version of 'Index.newWithDefaults' that works with indexes of unknown
+    type.
 -}
-newWithDefaults :: IndexType -> ST s (SomeIndexAcc s)
-newWithDefaults Compact  = SomeIndexAcc <$> IndexCompact.new 1024
-newWithDefaults Ordinary = SomeIndexAcc <$> IndexOrdinary.new 1024 4096
+newWithDefaults :: IndexAcc j => Proxy# j -> ST s (SomeIndexAcc s)
+newWithDefaults indexAccTypeProxy
+    = SomeIndexAcc <$> Index.newWithDefaults indexAccTypeProxy
+
+-- | A version of 'Index.appendSingle' that works with indexes of unknown type.
+appendSingle :: (SerialisedKey, SerialisedKey)
+             -> SomeIndexAcc s
+             -> ST s (Maybe Chunk)
+appendSingle pageInfo (SomeIndexAcc indexAcc)
+    = Index.appendSingle pageInfo indexAcc
+
+-- | A version of 'Index.appendMulti' that works with indexes of unknown type.
+appendMulti :: (SerialisedKey, Word32) -> SomeIndexAcc s -> ST s [Chunk]
+appendMulti pagesInfo (SomeIndexAcc indexAcc)
+    = Index.appendMulti pagesInfo indexAcc
+
+-- | A version of 'Index.unsafeEnd' that works with indexes of unknown type.
+unsafeEnd :: SomeIndexAcc s -> ST s (Maybe Chunk, SomeIndex)
+unsafeEnd (SomeIndexAcc indexAcc)
+    = second SomeIndex <$> Index.unsafeEnd indexAcc

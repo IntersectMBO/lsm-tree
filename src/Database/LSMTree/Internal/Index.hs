@@ -7,19 +7,29 @@
 -}
 module Database.LSMTree.Internal.Index
 (
-    Index (search, sizeInPages, finalLBS),
-    IndexAcc (ResultingIndex, appendSingle, appendMulti, unsafeEnd)
+    Index (search, sizeInPages, headerLBS, finalLBS, fromSBS),
+    IndexAcc
+    (
+        ResultingIndex,
+        newWithDefaults,
+        appendSingle,
+        appendMulti,
+        unsafeEnd
+    ),
+    resultingIndexTypeProxy
 )
 where
 
 import           Control.DeepSeq (NFData)
 import           Control.Monad.ST.Strict (ST)
 import           Data.ByteString.Lazy (LazyByteString)
+import           Data.ByteString.Short (ShortByteString)
 import           Data.Word (Word32)
 import           Database.LSMTree.Internal.Chunk (Chunk)
 import           Database.LSMTree.Internal.Entry (NumEntries)
 import           Database.LSMTree.Internal.Page (NumPages, PageSpan)
 import           Database.LSMTree.Internal.Serialise (SerialisedKey)
+import           GHC.Exts (Proxy#, proxy#)
 
 {-|
     The class of index types.
@@ -28,8 +38,7 @@ import           Database.LSMTree.Internal.Serialise (SerialisedKey)
     incremental serialisation. To completely serialise an index interleaved with
     its construction, proceed as follows:
 
-     1. Use the 'headerLBS' operation of the respective index type to generate
-        the header of the serialised index.
+     1. Use 'headerLBS' to generate the header of the serialised index.
 
      2. Incrementally construct the index using the methods of 'IndexAcc', and
         assemble the body of the serialised index from the generated chunks.
@@ -50,12 +59,38 @@ class NFData i => Index i where
     sizeInPages :: i -> NumPages
 
     {-|
+        Yields the header of the serialised form of an index.
+
+        See the documentation of the 'Index' class for how to generate a
+        complete serialised index.
+    -}
+    headerLBS :: Proxy# i -> LazyByteString
+
+    {-|
         Yields the footer of the serialised form of an index.
 
         See the documentation of the 'Index' class for how to generate a
         complete serialised index.
     -}
     finalLBS :: NumEntries -> i -> LazyByteString
+
+    {-|
+        Reads an index along with the number of entries of the respective run
+        from a byte string.
+
+        The byte string must contain the serialised index exactly, with no
+        leading or trailing space. Furthermore, its contents must be stored
+        64-bit-aligned.
+
+        The contents of the byte string may be directly used as the backing
+        memory for the constructed index. Currently, this is done for compact
+        indexes.
+
+        For deserialising numbers, the endianness of the host system is used. If
+        serialisation has been done with a different endianness, this mismatch
+        is detected by looking at the type–version indicator.
+    -}
+    fromSBS :: Proxy# i -> ShortByteString -> Either String (NumEntries, i)
 
 {-|
     The class of index accumulator types, where an index accumulator denotes an
@@ -74,6 +109,9 @@ class Index (ResultingIndex j) => IndexAcc j where
 
     -- | The type of indexes constructed by accumulators of a certain type.
     type ResultingIndex j
+
+    -- | Create a new index accumulator, using a default configuration.
+    newWithDefaults :: Proxy# j -> ST s (j s)
 
     {-|
         Adds information about a single page that fully comprises one or more
@@ -104,3 +142,7 @@ class Index (ResultingIndex j) => IndexAcc j where
         when @index@ is not used afterwards.
     -}
     unsafeEnd :: j s -> ST s (Maybe Chunk, ResultingIndex j)
+
+-- | A value-level analog of 'ResultingIndex', using type proxies.
+resultingIndexTypeProxy :: Proxy# j -> Proxy# (ResultingIndex j)
+resultingIndexTypeProxy _ = proxy#

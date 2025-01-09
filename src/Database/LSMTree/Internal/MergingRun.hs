@@ -1,3 +1,4 @@
+{-# LANGUAGE MagicHash    #-}
 {-# LANGUAGE TypeFamilies #-}
 
 {- HLINT ignore "Use when" -}
@@ -39,7 +40,7 @@ import           Data.Primitive.PrimVar
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Assertions (assert)
 import           Database.LSMTree.Internal.Entry (NumEntries (..), unNumEntries)
-import           Database.LSMTree.Internal.Index.Some (IndexType)
+import           Database.LSMTree.Internal.Index (IndexAcc)
 import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
 import           Database.LSMTree.Internal.Merge (Merge, StepResult (..))
 import qualified Database.LSMTree.Internal.Merge as Merge
@@ -47,6 +48,7 @@ import           Database.LSMTree.Internal.Paths (RunFsPaths (..))
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc)
+import           GHC.Exts (Proxy#)
 import           System.FS.API (HasFS)
 import           System.FS.BlockIO.API (HasBlockIO)
 
@@ -112,12 +114,13 @@ instance NFData MergeKnownCompleted where
   rnf MergeMaybeCompleted = ()
 
 {-# SPECIALISE new ::
-     HasFS IO h
+     IndexAcc j
+  => HasFS IO h
   -> HasBlockIO IO h
   -> ResolveSerialisedValue
   -> Run.RunDataCaching
   -> RunBloomFilterAlloc
-  -> IndexType
+  -> Proxy# j
   -> Merge.Level
   -> RunFsPaths
   -> V.Vector (Ref (Run IO h))
@@ -130,23 +133,31 @@ instance NFData MergeKnownCompleted where
 -- This function should be run with asynchronous exceptions masked to prevent
 -- failing after internal resources have already been created.
 new ::
-     (MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
+     (MonadMVar m, MonadMask m, MonadSTM m, MonadST m, IndexAcc j)
   => HasFS m h
   -> HasBlockIO m h
   -> ResolveSerialisedValue
   -> Run.RunDataCaching
   -> RunBloomFilterAlloc
-  -> IndexType
+  -> Proxy# j
   -> Merge.Level
   -> RunFsPaths
   -> V.Vector (Ref (Run m h))
   -> m (Ref (MergingRun m h))
-new hfs hbio resolve caching alloc indexType mergeLevel runPaths inputRuns =
+new hfs hbio resolve caching alloc indexAccTypeProxy mergeLevel runPaths inputRuns =
     -- If creating the Merge fails, we must release the references again.
     withTempRegistry $ \reg -> do
       runs <- V.mapM (\r -> allocateTemp reg (dupRef r) releaseRef) inputRuns
       merge <- fromMaybe (error "newMerge: merges can not be empty")
-        <$> Merge.new hfs hbio caching alloc indexType mergeLevel resolve runPaths runs
+        <$> Merge.new hfs
+                      hbio
+                      caching
+                      alloc
+                      indexAccTypeProxy
+                      mergeLevel
+                      resolve
+                      runPaths
+                      runs
       let numInputRuns = NumRuns $ V.length runs
       let numInputEntries = V.foldMap' Run.size runs
       spentCreditsVar <- SpentCreditsVar <$> newPrimVar 0

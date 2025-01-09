@@ -25,13 +25,16 @@ import           Database.LSMTree.Internal.BlobRef (RawBlobRef)
 import           Database.LSMTree.Internal.ChecksumHandle
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry
-import           Database.LSMTree.Internal.Index.Some (IndexType, SomeIndex)
+import           Database.LSMTree.Internal.Index (IndexAcc,
+                     resultingIndexTypeProxy)
+import           Database.LSMTree.Internal.Index.Some (SomeIndex)
 import           Database.LSMTree.Internal.Paths
 import           Database.LSMTree.Internal.RawOverflowPage (RawOverflowPage)
 import           Database.LSMTree.Internal.RawPage (RawPage)
 import           Database.LSMTree.Internal.RunAcc (RunAcc, RunBloomFilterAlloc)
 import qualified Database.LSMTree.Internal.RunAcc as RunAcc
 import           Database.LSMTree.Internal.Serialise
+import           GHC.Exts (Proxy#)
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
 import qualified System.FS.BlockIO.API as FS
@@ -68,33 +71,36 @@ data RunBuilder m h = RunBuilder {
     }
 
 {-# SPECIALISE new ::
-     HasFS IO h
+     IndexAcc j
+  => HasFS IO h
   -> HasBlockIO IO h
   -> RunFsPaths
   -> NumEntries
   -> RunBloomFilterAlloc
-  -> IndexType
+  -> Proxy# j
   -> IO (RunBuilder IO h) #-}
 -- | Create an 'RunBuilder' to start building a run.
 --
 -- NOTE: 'new' assumes that 'runDir' that the run is created in exists.
 new ::
-     (MonadST m, MonadSTM m)
+     (MonadST m, MonadSTM m, IndexAcc j)
   => HasFS m h
   -> HasBlockIO m h
   -> RunFsPaths
   -> NumEntries  -- ^ an upper bound of the number of entries to be added
   -> RunBloomFilterAlloc
-  -> IndexType
+  -> Proxy# j
   -> m (RunBuilder m h)
-new hfs hbio runBuilderFsPaths numEntries alloc indexType = do
-    runBuilderAcc <- ST.stToIO $ RunAcc.new numEntries alloc indexType
+new hfs hbio runBuilderFsPaths numEntries alloc indexAccTypeProxy = do
+    runBuilderAcc <- ST.stToIO $ RunAcc.new numEntries alloc indexAccTypeProxy
     runBuilderBlobOffset <- newPrimVar 0
 
     runBuilderHandles <- traverse (makeHandle hfs) (pathsForRunFiles runBuilderFsPaths)
 
     let builder = RunBuilder { runBuilderHasFS = hfs, runBuilderHasBlockIO = hbio, .. }
-    writeIndexHeader hfs (forRunIndex runBuilderHandles) indexType
+    writeIndexHeader hfs
+                     (forRunIndex runBuilderHandles)
+                     (resultingIndexTypeProxy indexAccTypeProxy)
     return builder
 
 {-# SPECIALISE addKeyOp ::

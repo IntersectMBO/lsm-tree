@@ -500,33 +500,33 @@ flushWriteBuffer tr conf@TableConfig{confFencePointerIndex, confDiskCachePolicy}
   | WB.null (tableWriteBuffer tc) = pure tc
   | otherwise = do
     !n <- incrUniqCounter uc
-    let !size      = WB.numEntries (tableWriteBuffer tc)
-        !l         = LevelNo 1
-        !cache     = diskCachePolicyForLevel confDiskCachePolicy l
-        !alloc     = bloomFilterAllocForLevel conf l
-        !indexType = indexTypeForRun confFencePointerIndex
-        !path      = Paths.runPath root (uniqueToRunNumber n)
-    traceWith tr $ AtLevel l $ TraceFlushWriteBuffer size (runNumber path) cache alloc
-    r <- allocateTemp reg
-            (Run.fromWriteBuffer hfs hbio
-              cache
-              alloc
-              indexType
-              path
-              (tableWriteBuffer tc)
-              (tableWriteBufferBlobs tc))
-            releaseRef
-    freeTemp reg (releaseRef (tableWriteBufferBlobs tc))
-    wbblobs' <- allocateTemp reg (WBB.new hfs (Paths.tableBlobPath root n))
-                                 releaseRef
-    levels' <- addRunToLevels tr conf resolve hfs hbio root uc r reg (tableLevels tc)
-    tableCache' <- rebuildCache reg (tableCache tc) levels'
-    pure $! TableContent {
-        tableWriteBuffer = WB.empty
-      , tableWriteBufferBlobs = wbblobs'
-      , tableLevels = levels'
-      , tableCache = tableCache'
-      }
+    let !size  = WB.numEntries (tableWriteBuffer tc)
+        !l     = LevelNo 1
+        !cache = diskCachePolicyForLevel confDiskCachePolicy l
+        !alloc = bloomFilterAllocForLevel conf l
+        !path  = Paths.runPath root (uniqueToRunNumber n)
+    withIndexAccTypeProxyForRun confFencePointerIndex $ \ indexAccTypeProxy -> do
+      traceWith tr $ AtLevel l $ TraceFlushWriteBuffer size (runNumber path) cache alloc
+      r <- allocateTemp reg
+              (Run.fromWriteBuffer hfs hbio
+                cache
+                alloc
+                indexAccTypeProxy
+                path
+                (tableWriteBuffer tc)
+                (tableWriteBufferBlobs tc))
+              releaseRef
+      freeTemp reg (releaseRef (tableWriteBufferBlobs tc))
+      wbblobs' <- allocateTemp reg (WBB.new hfs (Paths.tableBlobPath root n))
+                                   releaseRef
+      levels' <- addRunToLevels tr conf resolve hfs hbio root uc r reg (tableLevels tc)
+      tableCache' <- rebuildCache reg (tableCache tc) levels'
+      pure $! TableContent {
+          tableWriteBuffer = WB.empty
+        , tableWriteBufferBlobs = wbblobs'
+        , tableLevels = levels'
+        , tableCache = tableCache'
+        }
 
 {-# SPECIALISE addRunToLevels ::
      Tracer IO (AtLevel MergeTrace)
@@ -654,29 +654,29 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
         !n <- incrUniqCounter uc
         let !caching = diskCachePolicyForLevel confDiskCachePolicy ln
             !alloc = bloomFilterAllocForLevel conf ln
-            !indexType = indexTypeForRun confFencePointerIndex
             !runPaths = Paths.runPath root (uniqueToRunNumber n)
-        traceWith tr $ AtLevel ln $
-          TraceNewMerge (V.map Run.size rs) (runNumber runPaths) caching alloc mergePolicy mergeLevel
-        -- The runs will end up inside the merging run, with fresh references.
-        -- The original references can be released (but only on the happy path).
-        mr <- allocateTemp reg
-          (MR.new hfs hbio resolve caching alloc indexType mergeLevel runPaths rs)
-          releaseRef
-        V.forM_ rs $ \r -> freeTemp reg (releaseRef r)
-        case confMergeSchedule of
-          Incremental -> pure ()
-          OneShot -> do
-            let !required = MR.Credits (unNumEntries (V.foldMap' Run.size rs))
-            let !thresh = creditThresholdForLevel conf ln
-            MR.supplyCredits required thresh mr
-            -- This ensures the merge is really completed. However, we don't
-            -- release the merge yet and only briefly inspect the resulting run.
-            bracket (MR.expectCompleted mr) releaseRef $ \r ->
-              traceWith tr $ AtLevel ln $
-                TraceCompletedMerge (Run.size r) (Run.runFsPathsNumber r)
+        withIndexAccTypeProxyForRun confFencePointerIndex $ \ indexAccTypeProxy -> do
+          traceWith tr $ AtLevel ln $
+            TraceNewMerge (V.map Run.size rs) (runNumber runPaths) caching alloc mergePolicy mergeLevel
+          -- The runs will end up inside the merging run, with fresh references.
+          -- The original references can be released (but only on the happy path).
+          mr <- allocateTemp reg
+            (MR.new hfs hbio resolve caching alloc indexAccTypeProxy mergeLevel runPaths rs)
+            releaseRef
+          V.forM_ rs $ \r -> freeTemp reg (releaseRef r)
+          case confMergeSchedule of
+            Incremental -> pure ()
+            OneShot -> do
+              let !required = MR.Credits (unNumEntries (V.foldMap' Run.size rs))
+              let !thresh = creditThresholdForLevel conf ln
+              MR.supplyCredits required thresh mr
+              -- This ensures the merge is really completed. However, we don't
+              -- release the merge yet and only briefly inspect the resulting run.
+              bracket (MR.expectCompleted mr) releaseRef $ \r ->
+                traceWith tr $ AtLevel ln $
+                  TraceCompletedMerge (Run.size r) (Run.runFsPathsNumber r)
 
-        return (Merging mergePolicy mr)
+          return (Merging mergePolicy mr)
 
 -- $setup
 -- >>> import Database.LSMTree.Internal.Entry

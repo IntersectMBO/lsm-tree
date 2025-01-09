@@ -1,3 +1,4 @@
+{-# LANGUAGE MagicHash    #-}
 {-# LANGUAGE TypeFamilies #-}
 
 {- HLINT ignore "Avoid restricted alias" -}
@@ -10,6 +11,7 @@ module Database.LSMTree.Internal.Index.OrdinaryAcc
 (
     IndexOrdinaryAcc,
     new,
+    newWithDefaults,
     appendSingle,
     appendMulti,
     unsafeEnd
@@ -25,8 +27,7 @@ import qualified Data.Vector.Primitive as Primitive (Vector, length)
 import           Data.Word (Word16, Word32, Word8)
 import           Database.LSMTree.Internal.Chunk (Baler, Chunk, createBaler,
                      feedBaler, unsafeEndBaler)
-import           Database.LSMTree.Internal.Index
-                     (IndexAcc (ResultingIndex, appendMulti, appendSingle, unsafeEnd))
+import           Database.LSMTree.Internal.Index (IndexAcc (..))
 import           Database.LSMTree.Internal.Index.Ordinary
                      (IndexOrdinary (IndexOrdinary))
 import           Database.LSMTree.Internal.Serialise
@@ -35,6 +36,7 @@ import           Database.LSMTree.Internal.Vector (byteVectorFromPrim)
 import           Database.LSMTree.Internal.Vector.Growing (GrowingVector)
 import qualified Database.LSMTree.Internal.Vector.Growing as Growing (append,
                      freeze, new)
+import           GHC.Exts (Proxy#)
 
 {-|
     A general-purpose fence pointer index under incremental construction.
@@ -72,6 +74,9 @@ keyListElem (SerialisedKey' keyBytes) = [keySizeBytes, keyBytes] where
 instance IndexAcc IndexOrdinaryAcc where
 
     type ResultingIndex IndexOrdinaryAcc = IndexOrdinary
+
+    newWithDefaults :: Proxy# IndexOrdinaryAcc -> ST s (IndexOrdinaryAcc s)
+    newWithDefaults _ = new 1024 4096
 
     appendSingle :: (SerialisedKey, SerialisedKey)
                  -> IndexOrdinaryAcc s

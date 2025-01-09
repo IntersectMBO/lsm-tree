@@ -381,19 +381,17 @@ openRuns
     levels' <-
       V.iforM levels $ \i level ->
         let ln = LevelNo (i+1) in
-        let
-          caching   = diskCachePolicyForLevel confDiskCachePolicy ln
-          indexType = indexTypeForRun confFencePointerIndex
-        in
-        for level $ \runNum -> do
-          let sourcePaths = RunFsPaths sourceDir runNum
-          runNum' <- uniqueToRunNumber <$> incrUniqCounter uc
-          let targetPaths = RunFsPaths targetDir runNum'
-          hardLinkRunFiles reg hfs hbio NoHardLinkDurable sourcePaths targetPaths
+        let caching = diskCachePolicyForLevel confDiskCachePolicy ln in
+        withIndexTypeProxyForRun confFencePointerIndex $ \ indexTypeProxy -> do
+          for level $ \runNum -> do
+            let sourcePaths = RunFsPaths sourceDir runNum
+            runNum' <- uniqueToRunNumber <$> incrUniqCounter uc
+            let targetPaths = RunFsPaths targetDir runNum'
+            hardLinkRunFiles reg hfs hbio NoHardLinkDurable sourcePaths targetPaths
 
-          allocateTemp reg
-            (Run.openFromDisk hfs hbio caching indexType targetPaths)
-            releaseRef
+            allocateTemp reg
+              (Run.openFromDisk hfs hbio caching indexTypeProxy targetPaths)
+              releaseRef
     pure (SnapLevels levels')
 
 {-# SPECIALISE releaseRuns ::
@@ -444,7 +442,6 @@ fromSnapLevels reg hfs hbio conf@TableConfig{..} uc resolve dir (SnapLevels leve
       where
         caching = diskCachePolicyForLevel confDiskCachePolicy ln
         alloc = bloomFilterAllocForLevel conf ln
-        indexType = indexTypeForRun confFencePointerIndex
 
         fromSnapIncomingRun ::
              SnapIncomingRun (Ref (Run m h))
@@ -458,9 +455,19 @@ fromSnapLevels reg hfs hbio conf@TableConfig{..} uc resolve dir (SnapLevels leve
 
               SnapOngoingMerge runs spentCredits lvl -> do
                 rn <- uniqueToRunNumber <$> incrUniqCounter uc
-                mr <- allocateTemp reg
-                  (MR.new hfs hbio resolve caching alloc indexType lvl (mkPath rn) runs)
-                  releaseRef
+                mr <- withIndexAccTypeProxyForRun confFencePointerIndex $
+                      \ indexAccTypeProxy ->
+                        allocateTemp reg
+                                     (MR.new hfs
+                                             hbio
+                                             resolve
+                                             caching
+                                             alloc
+                                             indexAccTypeProxy
+                                             lvl
+                                             (mkPath rn)
+                                             runs)
+                                     releaseRef
                 -- When a snapshot is created, merge progress is lost, so we
                 -- have to redo merging work here. UnspentCredits and
                 -- SpentCredits track how many credits were supplied before the

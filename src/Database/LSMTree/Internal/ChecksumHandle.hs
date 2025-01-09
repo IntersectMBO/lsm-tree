@@ -36,9 +36,10 @@ import qualified Database.LSMTree.Internal.Chunk as Chunk (toByteString)
 import           Database.LSMTree.Internal.CRC32C (CRC32C)
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry
-import           Database.LSMTree.Internal.Index as Index (finalLBS)
-import           Database.LSMTree.Internal.Index.Some as Index (IndexType,
-                     SomeIndex, headerLBS)
+import           Database.LSMTree.Internal.Index (Index)
+import qualified Database.LSMTree.Internal.Index as Index (headerLBS)
+import           Database.LSMTree.Internal.Index.Some (SomeIndex)
+import qualified Database.LSMTree.Internal.Index.Some as Index (finalLBS)
 import           Database.LSMTree.Internal.Paths (ForBlob (..), ForFilter (..),
                      ForIndex (..), ForKOps (..))
 import qualified Database.LSMTree.Internal.RawBytes as RB
@@ -47,6 +48,7 @@ import qualified Database.LSMTree.Internal.RawOverflowPage as RawOverflowPage
 import           Database.LSMTree.Internal.RawPage (RawPage)
 import qualified Database.LSMTree.Internal.RawPage as RawPage
 import           Database.LSMTree.Internal.Serialise
+import           GHC.Exts (Proxy#)
 import qualified System.FS.API as FS
 import           System.FS.API
 import qualified System.FS.BlockIO.API as FS
@@ -205,19 +207,20 @@ writeFilter hfs filterHandle bf =
     writeToHandle hfs (unForFilter filterHandle) (bloomFilterToLBS bf)
 
 {-# SPECIALISE writeIndexHeader ::
-     HasFS IO h
+     Index i
+  => HasFS IO h
   -> ForIndex (ChecksumHandle RealWorld h)
-  -> IndexType
+  -> Proxy# i
   -> IO () #-}
 writeIndexHeader ::
-     (MonadSTM m, PrimMonad m)
+     (MonadSTM m, PrimMonad m, Index i)
   => HasFS m h
   -> ForIndex (ChecksumHandle (PrimState m) h)
-  -> IndexType
+  -> Proxy# i
   -> m ()
-writeIndexHeader hfs indexHandle indexType =
+writeIndexHeader hfs indexHandle indexTypeProxy =
     writeToHandle hfs (unForIndex indexHandle) $
-      Index.headerLBS indexType
+      Index.headerLBS indexTypeProxy
 
 {-# SPECIALISE writeIndexChunk ::
      HasFS IO h

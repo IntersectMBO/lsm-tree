@@ -1,4 +1,5 @@
 {-# LANGUAGE CPP          #-}
+{-# LANGUAGE MagicHash    #-}
 {-# LANGUAGE TypeFamilies #-}
 {- |
   Incremental construction of a compact index yields chunks of the primary array
@@ -14,6 +15,7 @@ module Database.LSMTree.Internal.Index.CompactAcc (
     -- * Construction
     IndexCompactAcc (..)
   , new
+  , Index.newWithDefaults
   , Index.appendSingle
   , Index.appendMulti
   , Index.unsafeEnd
@@ -47,11 +49,12 @@ import           Database.LSMTree.Internal.BitMath
 import           Database.LSMTree.Internal.Chunk (Chunk)
 import           Database.LSMTree.Internal.Index (IndexAcc, ResultingIndex)
 import qualified Database.LSMTree.Internal.Index as Index (appendMulti,
-                     appendSingle, unsafeEnd)
+                     appendSingle, newWithDefaults, unsafeEnd)
 import           Database.LSMTree.Internal.Index.Compact
 import           Database.LSMTree.Internal.Page
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.Unsliced
+import           GHC.Exts (Proxy#)
 
 {-------------------------------------------------------------------------------
   Construction
@@ -256,6 +259,9 @@ unsafeEnd IndexCompactAcc{..} = do
 instance IndexAcc IndexCompactAcc where
 
     type ResultingIndex IndexCompactAcc = IndexCompact
+
+    newWithDefaults :: Proxy# IndexCompactAcc -> ST s (IndexCompactAcc s)
+    newWithDefaults _ = new 1024
 
     appendSingle :: (SerialisedKey, SerialisedKey)
                  -> IndexCompactAcc s

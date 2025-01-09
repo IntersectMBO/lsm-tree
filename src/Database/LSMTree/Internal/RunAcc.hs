@@ -1,3 +1,4 @@
+{-# LANGUAGE MagicHash       #-}
 {-# LANGUAGE RecordWildCards #-}
 {- HLINT ignore "Redundant lambda" -}
 {- HLINT ignore "Use camelCase" -}
@@ -44,10 +45,10 @@ import           Database.LSMTree.Internal.Assertions (fromIntegralChecked)
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Chunk (Chunk)
 import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..))
-import qualified Database.LSMTree.Internal.Index as Index (appendMulti,
-                     appendSingle, unsafeEnd)
-import           Database.LSMTree.Internal.Index.Some as Index (IndexType,
-                     SomeIndex, SomeIndexAcc, newWithDefaults)
+import           Database.LSMTree.Internal.Index (IndexAcc)
+import           Database.LSMTree.Internal.Index.Some (SomeIndex, SomeIndexAcc)
+import qualified Database.LSMTree.Internal.Index.Some as Index (appendMulti,
+                     appendSingle, newWithDefaults, unsafeEnd)
 import           Database.LSMTree.Internal.PageAcc (PageAcc)
 import qualified Database.LSMTree.Internal.PageAcc as PageAcc
 import qualified Database.LSMTree.Internal.PageAcc1 as PageAcc
@@ -56,6 +57,7 @@ import           Database.LSMTree.Internal.RawPage (RawPage)
 import qualified Database.LSMTree.Internal.RawPage as RawPage
 import           Database.LSMTree.Internal.Serialise (SerialisedKey,
                      SerialisedValue)
+import           GHC.Exts (Proxy#)
 import qualified Monkey
 
 {-------------------------------------------------------------------------------
@@ -89,8 +91,12 @@ data RunBloomFilterAlloc =
 --
 -- @nentries@ should be an upper bound on the expected number of entries in the
 -- output run.
-new :: NumEntries -> RunBloomFilterAlloc -> IndexType -> ST s (RunAcc s)
-new (NumEntries nentries) alloc indexType = do
+new :: IndexAcc j
+    => NumEntries
+    -> RunBloomFilterAlloc
+    -> Proxy# j
+    -> ST s (RunAcc s)
+new (NumEntries nentries) alloc indexAccTypeProxy = do
     mbloom <- case alloc of
       RunAllocFixed !bitsPerEntry    ->
         let !nbits = fromIntegral bitsPerEntry * fromIntegral nentries
@@ -103,7 +109,7 @@ new (NumEntries nentries) alloc indexType = do
         MBloom.new
           (fromIntegralChecked $ Monkey.numHashFunctions (fromIntegral nbits) (fromIntegral nentries))
           nbits
-    mindex <- Index.newWithDefaults indexType
+    mindex <- Index.newWithDefaults indexAccTypeProxy
     mpageacc <- PageAcc.newPageAcc
     entryCount <- newPrimVar 0
     pure RunAcc{..}
