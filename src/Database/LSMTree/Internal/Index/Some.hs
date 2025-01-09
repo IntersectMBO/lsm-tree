@@ -1,5 +1,4 @@
 {-# LANGUAGE MagicHash    #-}
-{-# LANGUAGE TypeFamilies #-}
 
 -- | Provides support for working with fence pointer indexes of unknown type.
 module Database.LSMTree.Internal.Index.Some

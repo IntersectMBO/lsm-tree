@@ -1,5 +1,4 @@
 {-# LANGUAGE MagicHash    #-}
-{-# LANGUAGE TypeFamilies #-}
 
 {- HLINT ignore "Use when" -}
 

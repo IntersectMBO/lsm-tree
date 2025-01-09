@@ -4,7 +4,6 @@
 {-# LANGUAGE DerivingVia        #-}
 {-# LANGUAGE MagicHash          #-}
 {-# LANGUAGE RecordWildCards    #-}
-{-# LANGUAGE TypeFamilies       #-}
 
 -- | Runs of sorted key\/value data.
 module Database.LSMTree.Internal.Run (
