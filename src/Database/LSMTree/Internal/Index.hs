@@ -72,7 +72,7 @@ class NFData i => Index i where
 -}
 class Index (ResultingIndex j) => IndexAcc j where
 
-    -- | The type of indexes constructed by accumulators of a certain type
+    -- | The type of indexes constructed by accumulators of a certain type.
     type ResultingIndex j
 
     {-|
