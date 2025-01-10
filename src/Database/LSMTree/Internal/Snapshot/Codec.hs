@@ -31,7 +31,7 @@ import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.CRC32C
 import qualified Database.LSMTree.Internal.CRC32C as FS
 import           Database.LSMTree.Internal.Entry
-import qualified Database.LSMTree.Internal.Merge as Merge
+import           Database.LSMTree.Internal.Merge (MergeType (..))
 import           Database.LSMTree.Internal.MergeSchedule
 import           Database.LSMTree.Internal.MergingRun (NumRuns (..))
 import           Database.LSMTree.Internal.Run (ChecksumError (..),
@@ -547,16 +547,18 @@ instance Encode SpentCredits where
 instance DecodeVersioned SpentCredits where
   decodeVersioned V0 = SpentCredits <$> decodeInt
 
-  -- Merge.Level
+-- MergeType
 
-instance Encode Merge.Level where
-  encode Merge.MidLevel  = encodeWord 0
-  encode Merge.LastLevel = encodeWord 1
+instance Encode MergeType  where
+  encode MergeMidLevel  = encodeWord 0
+  encode MergeLastLevel = encodeWord 1
+  encode MergeUnion     = encodeWord 2
 
-instance DecodeVersioned Merge.Level where
+instance DecodeVersioned MergeType where
   decodeVersioned V0 = do
       tag <- decodeWord
       case tag of
-        0 -> pure Merge.MidLevel
-        1 -> pure Merge.LastLevel
-        _ -> fail ("[Merge.Level] Unexpected tag: " <> show tag)
+        0 -> pure MergeMidLevel
+        1 -> pure MergeLastLevel
+        2 -> pure MergeUnion
+        _ -> fail ("[MergeType] Unexpected tag: " <> show tag)

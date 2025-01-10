@@ -42,7 +42,7 @@ import           Database.LSMTree.Internal.CRC32C
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.Index.Compact
 import           Database.LSMTree.Internal.Index.CompactAcc
-import           Database.LSMTree.Internal.Merge hiding (Level)
+import           Database.LSMTree.Internal.Merge
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.MergeSchedule
 import           Database.LSMTree.Internal.MergingRun
@@ -383,8 +383,8 @@ deriving stock instance Generic (Merge m h)
 deriving anyclass instance (Typeable m, Typeable (PrimState m), Typeable h)
                         => NoThunks (Merge m h)
 
-deriving stock instance Generic Merge.Level
-deriving anyclass instance NoThunks Merge.Level
+deriving stock instance Generic MergeType
+deriving anyclass instance NoThunks MergeType
 
 deriving stock instance Generic Merge.StepResult
 deriving anyclass instance NoThunks Merge.StepResult
