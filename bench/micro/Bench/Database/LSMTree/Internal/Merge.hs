@@ -17,6 +17,7 @@ import qualified Database.LSMTree.Extras.Random as R
 import           Database.LSMTree.Extras.RunData
 import           Database.LSMTree.Extras.UTxO
 import           Database.LSMTree.Internal.Entry
+import           Database.LSMTree.Internal.Merge (MergeType (..))
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..),
                      pathsForRunFiles, runChecksumsPath)
@@ -106,7 +107,7 @@ benchmarks = bgroup "Bench.Database.LSMTree.Internal.Merge" [
         { name         = "word64-delete-x4-lastlevel"
         , nentries     = totalEntries `splitInto` 4
         , fdeletes     = 1
-        , mergeLevel   = Merge.LastLevel
+        , mergeType    = MergeLastLevel
         }
       -- different key and value sizes
     , benchMerge configWord64
@@ -157,21 +158,21 @@ benchmarks = bgroup "Bench.Database.LSMTree.Internal.Merge" [
         , nentries     = totalEntries `splitInto` 4
         , finserts     = 1
         , fdeletes     = 1
-        , mergeLevel   = Merge.LastLevel
+        , mergeType    = MergeLastLevel
         }
     , benchMerge configUTxO
         { name         = "utxo-x4+1-min-skewed-lastlevel"  -- live levelling merge
         , nentries     = totalEntries `distributed` [1, 1, 1, 1, 4]
         , finserts     = 1
         , fdeletes     = 1
-        , mergeLevel   = Merge.LastLevel
+        , mergeType    = MergeLastLevel
         }
     , benchMerge configUTxO
         { name         = "utxo-x4+1-max-skewed-lastlevel"  -- live levelling merge
         , nentries     = totalEntries `distributed` [1, 1, 1, 1, 16]
         , finserts     = 1
         , fdeletes     = 1
-        , mergeLevel   = Merge.LastLevel
+        , mergeType    = MergeLastLevel
         }
     ]
   where
@@ -233,7 +234,8 @@ merge ::
 merge fs hbio Config {..} targetPaths runs = do
     let f = fromMaybe const mergeMappend
     m <- fromMaybe (error "empty inputs, no merge created") <$>
-      Merge.new fs hbio Run.CacheRunData (RunAllocFixed 10) mergeLevel f targetPaths runs
+      Merge.new fs hbio Run.CacheRunData (RunAllocFixed 10)
+                mergeType f targetPaths runs
     Merge.stepsToCompletion m stepSize
 
 outputRunPaths :: Run.RunFsPaths
@@ -271,7 +273,7 @@ data Config = Config {
   , randomKey    :: Rnd SerialisedKey
   , randomValue  :: Rnd SerialisedValue
   , randomBlob   :: Rnd SerialisedBlob
-  , mergeLevel   :: !Merge.Level
+  , mergeType    :: !MergeType
     -- | Needs to be defined when generating mupserts.
   , mergeMappend :: !(Maybe Mappend)
     -- | Merging is done in chunks of @stepSize@ entries.
@@ -291,7 +293,7 @@ defaultConfig = Config {
   , randomKey    = error "randomKey not implemented"
   , randomValue  = error "randomValue not implemented"
   , randomBlob   = error "randomBlob not implemented"
-  , mergeLevel   = Merge.MidLevel
+  , mergeType    = MergeMidLevel
   , mergeMappend = Nothing
   , stepSize     = maxBound  -- by default, just do in one go
   }

@@ -43,6 +43,7 @@ import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
+import           Database.LSMTree.Internal.Merge (MergeType (..))
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.MergeSchedule
 import           Database.LSMTree.Internal.MergingRun (NumRuns (..))
@@ -155,7 +156,7 @@ newtype UnspentCredits = UnspentCredits { getUnspentCredits :: Int }
 
 data SnapMergingRunState r =
     SnapCompletedMerge !r
-  | SnapOngoingMerge !(V.Vector r) !SpentCredits !Merge.Level
+  | SnapOngoingMerge !(V.Vector r) !SpentCredits !MergeType
   deriving stock (Show, Eq, Functor, Foldable, Traversable)
 
 instance NFData r => NFData (SnapMergingRunState r) where
@@ -221,7 +222,7 @@ toSnapMergingRunState (MR.CompletedMerge r) = pure (SnapCompletedMerge r)
 -- work on snapshot load.
 toSnapMergingRunState (MR.OngoingMerge rs (MR.SpentCreditsVar spentCreditsVar) m) = do
     spentCredits <- readPrimVar spentCreditsVar
-    pure (SnapOngoingMerge rs (SpentCredits spentCredits) (Merge.mergeLevel m))
+    pure (SnapOngoingMerge rs (SpentCredits spentCredits) (Merge.mergeType m))
 
 {-------------------------------------------------------------------------------
   Write Buffer
@@ -452,10 +453,10 @@ fromSnapLevels reg hfs hbio conf@TableConfig{..} uc resolve dir (SnapLevels leve
               SnapCompletedMerge run ->
                 withRollback reg (MR.newCompleted nr ne run) releaseRef
 
-              SnapOngoingMerge runs spentCredits lvl -> do
+              SnapOngoingMerge runs spentCredits mt -> do
                 rn <- uniqueToRunNumber <$> incrUniqCounter uc
                 mr <- withRollback reg
-                  (MR.new hfs hbio resolve caching alloc lvl (mkPath rn) runs)
+                  (MR.new hfs hbio resolve caching alloc mt (mkPath rn) runs)
                   releaseRef
                 -- When a snapshot is created, merge progress is lost, so we
                 -- have to redo merging work here. UnspentCredits and

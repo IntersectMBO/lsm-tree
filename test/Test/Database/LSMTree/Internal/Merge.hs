@@ -16,6 +16,7 @@ import           Database.LSMTree.Extras.Generators (KeyForIndexCompact)
 import           Database.LSMTree.Extras.RunData
 import qualified Database.LSMTree.Internal.BlobFile as BlobFile
 import qualified Database.LSMTree.Internal.Entry as Entry
+import           Database.LSMTree.Internal.Merge (MergeType (..))
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.PageAcc (entryWouldFitInPage)
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..),
@@ -65,7 +66,7 @@ tests = testGroup "Test.Database.LSMTree.Internal.Merge"
 prop_MergeDistributes ::
      FS.HasFS IO h ->
      FS.HasBlockIO IO h ->
-     Merge.Level ->
+     MergeType ->
      StepSize ->
      SmallList (RunData KeyForIndexCompact SerialisedValue SerialisedBlob) ->
      IO Property
@@ -137,11 +138,11 @@ prop_MergeDistributes fs hbio level stepSize (SmallList rds) =
 prop_AbortMerge ::
      FS.HasFS IO h ->
      FS.HasBlockIO IO h ->
-     Merge.Level ->
+     MergeType ->
      StepSize ->
      SmallList (RunData KeyForIndexCompact SerialisedValue SerialisedBlob) ->
      IO Property
-prop_AbortMerge fs hbio level (Positive stepSize) (SmallList wbs) =
+prop_AbortMerge fs hbio mergeType (Positive stepSize) (SmallList wbs) =
     withRuns fs hbio (V.fromList (zip (simplePaths [10..]) wbs')) $ \runs -> do
       let path0 = simplePath 0
       mergeToClose <- makeInProgressMerge path0 runs
@@ -156,7 +157,8 @@ prop_AbortMerge fs hbio level (Positive stepSize) (SmallList wbs) =
     wbs' = fmap serialiseRunData wbs
 
     makeInProgressMerge path runs =
-      Merge.new fs hbio Run.CacheRunData (RunAllocFixed 10) level mappendValues path runs >>= \case
+      Merge.new fs hbio Run.CacheRunData (RunAllocFixed 10)
+               mergeType mappendValues path runs >>= \case
         Nothing -> return Nothing  -- not in progress
         Just merge -> do
           -- just do a few steps once, ideally not completing the merge
@@ -176,13 +178,14 @@ type StepSize = Positive Int
 mergeRuns ::
      FS.HasFS IO h ->
      FS.HasBlockIO IO h ->
-     Merge.Level ->
+     MergeType ->
      RunNumber ->
      V.Vector (Ref (Run.Run IO h)) ->
      StepSize ->
      IO (Int, Ref (Run.Run IO h))
-mergeRuns fs hbio level runNumber runs (Positive stepSize) = do
-    Merge.new fs hbio Run.CacheRunData (RunAllocFixed 10) level mappendValues
+mergeRuns fs hbio mergeType runNumber runs (Positive stepSize) = do
+    Merge.new fs hbio Run.CacheRunData (RunAllocFixed 10)
+              mergeType mappendValues
               (RunFsPaths (FS.mkFsPath []) runNumber) runs >>= \case
       Nothing -> (,) 0 <$> unsafeFlushAsWriteBuffer fs hbio
                              (RunFsPaths (FS.mkFsPath []) runNumber) (RunData Map.empty)
@@ -190,11 +193,12 @@ mergeRuns fs hbio level runNumber runs (Positive stepSize) = do
 
 type SerialisedEntry = Entry.Entry SerialisedValue SerialisedBlob
 
-mergeWriteBuffers :: Merge.Level
+mergeWriteBuffers :: MergeType
                   -> [Map SerialisedKey SerialisedEntry]
                   ->  Map SerialisedKey SerialisedEntry
-mergeWriteBuffers level =
-        (if level == Merge.LastLevel then Map.filter (not . isDelete) else id)
+mergeWriteBuffers mergeType =
+--TODO: review and update this to support MergeUnion
+        (if mergeType == MergeMidLevel then id else Map.filter (not . isDelete))
       . Map.unionsWith (Entry.combine mappendValues)
   where
     isDelete Entry.Delete = True
