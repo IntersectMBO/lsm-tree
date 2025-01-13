@@ -26,6 +26,8 @@ tests :: TestTree
 tests =
     testProperty "ScheduledMerges vs model" $ mapSize (*10) prop_LSM  -- still <10s
 
+-- TODO: add tagging, e.g. how often ASupplyUnion makes progress or completes a
+-- union merge.
 prop_LSM :: Actions (Lockstep Model) -> Property
 prop_LSM = Lockstep.runActions (Proxy :: Proxy Model)
 
@@ -35,8 +37,26 @@ prop_LSM = Lockstep.runActions (Proxy :: Proxy Model)
 
 type ModelLSM = Int
 
-newtype Model = Model { mlsms :: Map ModelLSM (Map Key (Value, Maybe Blob)) }
+newtype Model = Model { mlsms :: Map ModelLSM Table }
   deriving stock (Show)
+
+data Table = Table {
+      tableContent  :: !(Map Key (Value, Maybe Blob))
+    , tableHasUnion :: !Bool
+    }
+  deriving stock Show
+
+emptyTable :: Table
+emptyTable = Table Map.empty False
+
+onContent ::
+     (Map Key (Value, Maybe Blob) -> Map Key (Value, Maybe Blob))
+  -> ModelLSM
+  -> Model
+  -> Model
+onContent f k (Model m) = Model (Map.adjust f' k m)
+  where
+    f' t = t { tableContent = f (tableContent t) }
 
 type ModelOp r = Model -> (r, Model)
 
@@ -57,24 +77,24 @@ modelSupplyUnion :: ModelLSM -> NonNegative Credit ->         ModelOp ()
 modelDump        :: ModelLSM ->                               ModelOp (Map Key (Value, Maybe Blob))
 
 modelNew Model {mlsms} =
-    (mlsm, Model { mlsms = Map.insert mlsm Map.empty mlsms })
+    (mlsm, Model { mlsms = Map.insert mlsm emptyTable mlsms })
   where
     mlsm = Map.size mlsms
 
-modelInsert mlsm k v b Model {mlsms} =
-    ((), Model { mlsms = Map.adjust (Map.insert k (v, b)) mlsm mlsms })
+modelInsert mlsm k v b model =
+    ((), onContent (Map.insert k (v, b)) mlsm model)
 
-modelDelete mlsm k Model {mlsms} =
-    ((), Model { mlsms = Map.adjust (Map.delete k) mlsm mlsms })
+modelDelete mlsm k model =
+    ((), onContent (Map.delete k) mlsm model)
 
-modelMupsert mlsm k v Model {mlsms} =
-    ((), Model { mlsms = Map.adjust (Map.insertWith resolveValueAndBlob k (v, Nothing)) mlsm mlsms })
+modelMupsert mlsm k v model =
+    ((), onContent (Map.insertWith resolveValueAndBlob k (v, Nothing)) mlsm model)
 
 modelLookup mlsm k model@Model {mlsms} =
     (result, model)
   where
     Just mval = Map.lookup mlsm mlsms
-    result    = case Map.lookup k mval of
+    result    = case Map.lookup k (tableContent mval) of
                   Nothing      -> NotFound
                   Just (v, mb) -> Found v mb
 
@@ -87,8 +107,9 @@ modelDuplicate mlsm Model {mlsms} =
 modelUnions inputs Model {mlsms} =
     (mlsm', Model { mlsms = Map.insert mlsm' mval' mlsms })
   where
-    mvals      = map (\i -> fromJust (Map.lookup i mlsms)) inputs
-    mval'      = Map.unionsWith resolveValueAndBlob mvals
+    contents   = map (\i -> tableContent (fromJust (Map.lookup i mlsms))) inputs
+    hasUnion   = True
+    mval'      = Table (Map.unionsWith resolveValueAndBlob contents) hasUnion
     mlsm'      = Map.size mlsms
 
 modelSupplyUnion _mlsm _credit model =
@@ -97,7 +118,7 @@ modelSupplyUnion _mlsm _credit model =
 modelDump mlsm model@Model {mlsms} =
     (mval, model)
   where
-    Just mval = Map.lookup mlsm mlsms
+    Just (Table mval _) = Map.lookup mlsm mlsms
 
 instance StateModel (Lockstep Model) where
   data Action (Lockstep Model) a where
@@ -185,7 +206,7 @@ instance InLockstep Model where
 
   modelNextState = runModel
 
-  arbitraryWithVars ctx _model =
+  arbitraryWithVars ctx model =
     case findVars ctx (Proxy :: Proxy (LSM RealWorld)) of
       []   -> return (Some ANew)
       vars ->
@@ -247,13 +268,20 @@ instance InLockstep Model where
                   ADuplicate <$> elements vars)
           ]
        ++ [ (1, fmap Some $ do
-                  len <- elements [1..5]
+                  -- bias towards binary, only go high when many tables exist
+                  len <- elements ([2, 2] ++ take (length vars) [1..5])
                   AUnions <$> vectorOf len (elements vars))
           ]
-          -- TODO: only supply to tables with unions?
-       ++ [ (1, fmap Some $
-                  ASupplyUnion <$> elements vars
+          -- only supply to tables with unions
+       ++ [ (2, fmap Some $
+                  ASupplyUnion <$> elements varsWithUnion
                                <*> arbitrary)
+          | let hasUnion v = let MLSM m = lookupVar ctx v in
+                             case Map.lookup m (mlsms model) of
+                               Nothing -> False
+                               Just t  -> tableHasUnion t
+          , let varsWithUnion = filter hasUnion vars
+          , not (null varsWithUnion)
           ]
        ++ [ (1, fmap Some $
                   ADump <$> elements vars)
