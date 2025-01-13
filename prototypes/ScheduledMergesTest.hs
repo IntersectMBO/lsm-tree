@@ -49,6 +49,7 @@ test_regression_empty_run =
         del 3
 
         expectShape lsm
+          0
           [ ([], [4,4,4,4])
           ]
 
@@ -59,6 +60,7 @@ test_regression_empty_run =
         ins 3
 
         expectShape lsm
+          0
           [ ([], [4])
           , ([4,4,4,4], [])
           ]
@@ -67,6 +69,7 @@ test_regression_empty_run =
         LSM.supply lsm 16
 
         expectShape lsm
+          0
           [ ([], [4])
           , ([], [0])
           ]
@@ -85,24 +88,21 @@ test_merge_again_with_incoming =
         -- (needs 5 runs to go to level 2 so the resulting run becomes too big)
         traverse_ ins [101..100+(5*16)]
 
-        expectShape lsm  -- not yet arrived at level 3, but will soon
-          [ ([], [4,4,4,4])
-          , ([16,16,16,16], [])
-          ]
-
-        -- get a very small run (4 elements) to 2nd level
+        -- also get a very small run (4 elements) to 2nd level by re-using keys
         replicateM_ 4 $
           traverse_ ins [201..200+4]
 
         expectShape lsm
-          [ ([], [4,4,4,4])  -- these runs share the same keys
-          , ([4,4,4,4,64], [])
+          0
+          [ ([], [4,4,4,4])     -- these runs share keys, will compact down to 4
+          , ([4,4,4,4,64], [])  -- this run will end up in level 3
           ]
 
         -- get another run to 2nd level, which the small run can be merged with
         traverse_ ins [301..300+16]
 
         expectShape lsm
+          0
           [ ([], [4,4,4,4])
           , ([4,4,4,4], [])
           , ([], [80])
@@ -112,6 +112,7 @@ test_merge_again_with_incoming =
         traverse_ ins [401..400+4]
 
         expectShape lsm
+          0
           [ ([], [4])
           , ([4,4,4,4,4], [])
           , ([], [80])
@@ -121,6 +122,7 @@ test_merge_again_with_incoming =
         LSM.supply lsm 16
 
         expectShape lsm
+          0
           [ ([], [4])
           , ([], [20])
           , ([], [80])
@@ -132,6 +134,7 @@ test_merge_again_with_incoming =
         traverse_ ins [501..500+(4*16)]
 
         expectShape lsm
+          0
           [ ([], [4])
           , ([4,4,4,4], [])
           , ([16,16,16,20,80], [])
@@ -158,10 +161,11 @@ instance Exception TracedException where
   displayException (Traced e ev) =
     displayException e <> "\ntrace:\n" <> unlines (map show ev)
 
-expectShape :: HasCallStack => LSM s -> [([Int], [Int])] -> ST s ()
-expectShape lsm expected = do
+expectShape :: HasCallStack => LSM s -> Int -> [([Int], [Int])] -> ST s ()
+expectShape lsm expectedWb expectedLevels = do
+    let expected = ([], [expectedWb]) : expectedLevels
     shape <- representationShape <$> dumpRepresentation lsm
-    when (shape == expected) $
+    when (shape /= expected) $
       error $ unlines
         [ "expected shape: " <> show expected
         , "actual shape:   " <> show shape
