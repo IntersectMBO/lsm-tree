@@ -15,11 +15,11 @@ module Database.LSMTree.Internal.MergeSchedule (
   , Levels
   , Level (..)
   , IncomingRun (..)
+  , MergePolicyForLevel (..)
     -- * Flushes and scheduled merges
   , updatesWithInterleavedFlushes
   , flushWriteBuffer
     -- * Exported for cabal-docspec
-  , MergePolicyForLevel (..)
   , maxRunSize
     -- * Credits
   , Credits (..)
@@ -31,6 +31,7 @@ module Database.LSMTree.Internal.MergeSchedule (
 
 import           Control.ActionRegistry
 import           Control.Concurrent.Class.MonadMVar.Strict
+import           Control.DeepSeq (NFData (..))
 import           Control.Monad.Class.MonadST (MonadST)
 import           Control.Monad.Class.MonadSTM (MonadSTM (..))
 import           Control.Monad.Class.MonadThrow (MonadMask, MonadThrow (..))
@@ -47,8 +48,7 @@ import           Database.LSMTree.Internal.Entry (Entry, NumEntries (..),
 import           Database.LSMTree.Internal.Index.Compact (IndexCompact)
 import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
 import           Database.LSMTree.Internal.Merge (MergeType (..))
-import           Database.LSMTree.Internal.MergingRun (MergePolicyForLevel (..),
-                     MergingRun, NumRuns (..))
+import           Database.LSMTree.Internal.MergingRun (MergingRun, NumRuns (..))
 import qualified Database.LSMTree.Internal.MergingRun as MR
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..),
                      SessionRoot (..))
@@ -286,6 +286,13 @@ data Level m h = Level {
 data IncomingRun m h =
        Single  !(Ref (Run m h))
      | Merging !MergePolicyForLevel !(Ref (MergingRun m h))
+
+data MergePolicyForLevel = LevelTiering | LevelLevelling
+  deriving stock (Show, Eq)
+
+instance NFData MergePolicyForLevel where
+  rnf LevelTiering   = ()
+  rnf LevelLevelling = ()
 
 mergePolicyForLevel :: MergePolicy -> LevelNo -> Levels m h -> MergePolicyForLevel
 mergePolicyForLevel MergePolicyLazyLevelling (LevelNo n) nextLevels

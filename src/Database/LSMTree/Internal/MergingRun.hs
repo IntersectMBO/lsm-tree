@@ -14,7 +14,6 @@ module Database.LSMTree.Internal.MergingRun (
   , Credits (..)
   , CreditThreshold (..)
   , NumRuns (..)
-  , MergePolicyForLevel (..)
     -- * Internal state
   , UnspentCreditsVar (..)
   , TotalStepsVar (..)
@@ -69,13 +68,6 @@ data MergingRun m h = MergingRun {
 
 instance RefCounted m (MergingRun m h) where
     getRefCounter = mergeRefCounter
-
-data MergePolicyForLevel = LevelTiering | LevelLevelling
-  deriving stock (Show, Eq)
-
-instance NFData MergePolicyForLevel where
-  rnf LevelTiering   = ()
-  rnf LevelLevelling = ()
 
 newtype NumRuns = NumRuns { unNumRuns :: Int }
   deriving stock (Show, Eq)
