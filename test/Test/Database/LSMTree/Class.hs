@@ -172,8 +172,8 @@ retrieveBlobsTrav ::
   -> Session h m
   -> t (BlobRef h m b)
   -> m (t b)
-retrieveBlobsTrav hdl ses brefs = do
-  blobs <- retrieveBlobs hdl ses (V.fromList $ toList brefs)
+retrieveBlobsTrav tbl ses brefs = do
+  blobs <- retrieveBlobs tbl ses (V.fromList $ toList brefs)
   evalStateT (traverse (\_ -> state un) brefs) (V.toList blobs)
   where
     un []     = error "invalid traversal"
@@ -188,8 +188,8 @@ lookupsWithBlobs :: forall h m k v b.
   -> Session h m
   -> V.Vector k
   -> m (V.Vector (LookupResult v b))
-lookupsWithBlobs hdl ses ks = do
-    res <- lookups hdl ks
+lookupsWithBlobs tbl ses ks = do
+    res <- lookups tbl ks
     getCompose <$> retrieveBlobsTrav (Proxy.Proxy @h) ses (Compose res)
 
 rangeLookupWithBlobs :: forall h m k v b.
@@ -201,8 +201,8 @@ rangeLookupWithBlobs :: forall h m k v b.
   -> Session h m
   -> Range k
   -> m (V.Vector (QueryResult k v b))
-rangeLookupWithBlobs hdl ses r = do
-    res <- rangeLookup hdl r
+rangeLookupWithBlobs tbl ses r = do
+    res <- rangeLookup tbl r
     getCompose <$> retrieveBlobsTrav (Proxy.Proxy @h) ses (Compose res)
 
 readCursorWithBlobs :: forall h m k v b proxy.
@@ -215,9 +215,9 @@ readCursorWithBlobs :: forall h m k v b proxy.
   -> Cursor h m k v b
   -> Int
   -> m (V.Vector (QueryResult k v b))
-readCursorWithBlobs hdl ses cursor n = do
-    res <- readCursor hdl n cursor
-    getCompose <$> retrieveBlobsTrav hdl ses (Compose res)
+readCursorWithBlobs tbl ses cursor n = do
+    res <- readCursor tbl n cursor
+    getCompose <$> retrieveBlobsTrav tbl ses (Compose res)
 
 readCursorAllWithBlobs :: forall h m k v b proxy.
      ( IsTable h
@@ -229,11 +229,11 @@ readCursorAllWithBlobs :: forall h m k v b proxy.
   -> Cursor h m k v b
   -> CursorReadSchedule
   -> m [V.Vector (QueryResult k v b)]
-readCursorAllWithBlobs hdl ses cursor = go . getCursorReadSchedule
+readCursorAllWithBlobs tbl ses cursor = go . getCursorReadSchedule
   where
     go [] = error "readCursorAllWithBlobs: finite infinite list"
     go (n : ns) = do
-      res <- readCursorWithBlobs hdl ses cursor n
+      res <- readCursorWithBlobs tbl ses cursor n
       if V.null res
         then return [res]
         else (res :) <$> go ns
@@ -253,11 +253,11 @@ prop_lookupInsert ::
   => Proxy h -> [(Key, Update Value Blob)]
   -> Key -> Value -> Property
 prop_lookupInsert h ups k v = ioProperty $ do
-    withSessionAndTableNew h ups $ \ses hdl -> do
+    withSessionAndTableNew h ups $ \ses tbl -> do
 
       -- the main dish
-      inserts hdl (V.singleton (k, v, Nothing))
-      res <- lookupsWithBlobs hdl ses (V.singleton k)
+      inserts tbl (V.singleton (k, v, Nothing))
+      res <- lookupsWithBlobs tbl ses (V.singleton k)
 
       return $ res === V.singleton (Found v)
 
@@ -267,12 +267,12 @@ prop_lookupInsertElse ::
   => Proxy h -> [(Key, Update Value Blob)]
   -> Key  -> Value -> [Key] -> Property
 prop_lookupInsertElse h ups k v testKeys = ioProperty $ do
-    withSessionAndTableNew h ups $ \ses hdl -> do
+    withSessionAndTableNew h ups $ \ses tbl -> do
 
       let testKeys' = V.fromList $ filter (/= k) testKeys
-      res1 <- lookupsWithBlobs hdl ses testKeys'
-      inserts hdl (V.singleton (k, v, Nothing))
-      res2 <-  lookupsWithBlobs hdl ses testKeys'
+      res1 <- lookupsWithBlobs tbl ses testKeys'
+      inserts tbl (V.singleton (k, v, Nothing))
+      res2 <-  lookupsWithBlobs tbl ses testKeys'
 
       return $ res1 === res2
 
@@ -282,9 +282,9 @@ prop_lookupDelete ::
   => Proxy h -> [(Key, Update Value Blob)]
   -> Key -> Property
 prop_lookupDelete h ups k = ioProperty $ do
-    withSessionAndTableNew h ups $ \ses hdl -> do
-      deletes hdl (V.singleton k)
-      res <- lookupsWithBlobs hdl ses (V.singleton k)
+    withSessionAndTableNew h ups $ \ses tbl -> do
+      deletes tbl (V.singleton k)
+      res <- lookupsWithBlobs tbl ses (V.singleton k)
       return $ res === V.singleton NotFound
 
 -- | Delete doesn't change the lookup results of other keys
@@ -293,12 +293,12 @@ prop_lookupDeleteElse ::
   => Proxy h -> [(Key, Update Value Blob)]
   -> Key  -> [Key] -> Property
 prop_lookupDeleteElse h ups k testKeys = ioProperty $ do
-    withSessionAndTableNew h ups $ \ses hdl -> do
+    withSessionAndTableNew h ups $ \ses tbl -> do
 
       let testKeys' = V.fromList $ filter (/= k) testKeys
-      res1 <- lookupsWithBlobs hdl ses testKeys'
-      deletes hdl (V.singleton k)
-      res2 <-  lookupsWithBlobs hdl ses testKeys'
+      res1 <- lookupsWithBlobs tbl ses testKeys'
+      deletes tbl (V.singleton k)
+      res2 <-  lookupsWithBlobs tbl ses testKeys'
 
       return $ res1 === res2
 
@@ -308,9 +308,9 @@ prop_insertInsert ::
   => Proxy h -> [(Key, Update Value Blob)]
   -> Key -> Value -> Value -> Property
 prop_insertInsert h ups k v1 v2 = ioProperty $ do
-    withSessionAndTableNew h ups $ \ses hdl -> do
-      inserts hdl (V.fromList [(k, v1, Nothing), (k, v2, Nothing)])
-      res <- lookupsWithBlobs hdl ses (V.singleton k)
+    withSessionAndTableNew h ups $ \ses tbl -> do
+      inserts tbl (V.fromList [(k, v1, Nothing), (k, v2, Nothing)])
+      res <- lookupsWithBlobs tbl ses (V.singleton k)
       return $ res === V.singleton (Found v2)
 
 -- | Inserts with different keys don't interfere.
@@ -319,10 +319,10 @@ prop_insertCommutes ::
     => Proxy h -> [(Key, Update Value Blob)]
     -> Key -> Value -> Key -> Value -> Property
 prop_insertCommutes h ups k1 v1 k2 v2 = k1 /= k2 ==> ioProperty do
-    withSessionAndTableNew h ups $ \ses hdl -> do
-      inserts hdl (V.fromList [(k1, v1, Nothing), (k2, v2, Nothing)])
+    withSessionAndTableNew h ups $ \ses tbl -> do
+      inserts tbl (V.fromList [(k1, v1, Nothing), (k2, v2, Nothing)])
 
-      res <- lookupsWithBlobs hdl ses (V.fromList [k1,k2])
+      res <- lookupsWithBlobs tbl ses (V.fromList [k1,k2])
       return $ res === V.fromList [Found v1, Found v2]
 
 -------------------------------------------------------------------------------
@@ -337,8 +337,8 @@ prop_readCursorSorted ::
   -> CursorReadSchedule
   -> Property
 prop_readCursorSorted h ups offset ns = ioProperty $ do
-    withSessionAndTableNew h ups $ \ses hdl -> do
-      res <- withCursor offset hdl $ \cursor -> do
+    withSessionAndTableNew h ups $ \ses tbl -> do
+      res <- withCursor offset tbl $ \cursor -> do
         V.concat <$> readCursorAllWithBlobs (Proxy.Proxy @h) ses cursor ns
       let keys = map queryResultKey (V.toList res)
       return $ keys === List.sort keys
@@ -351,8 +351,8 @@ prop_readCursorNumResults ::
   -> CursorReadSchedule
   -> Property
 prop_readCursorNumResults h ups offset ns = ioProperty $ do
-    withSessionAndTableNew h ups $ \ses hdl -> do
-      res <- withCursor offset hdl $ \cursor -> do
+    withSessionAndTableNew h ups $ \ses tbl -> do
+      res <- withCursor offset tbl $ \cursor -> do
         readCursorAllWithBlobs (Proxy.Proxy @h) ses cursor ns
       let elemsRead = map V.length res
       let numFullReads = length res - 2
@@ -367,9 +367,9 @@ prop_readCursorInsert ::
   -> CursorReadSchedule
   -> Key -> Value -> Property
 prop_readCursorInsert h ups ns k v = ioProperty $ do
-    withSessionAndTableNew h ups $ \ses hdl -> do
-      inserts hdl (V.singleton (k, v, Nothing))
-      res <- withCursor Nothing hdl $ \cursor ->
+    withSessionAndTableNew h ups $ \ses tbl -> do
+      inserts tbl (V.singleton (k, v, Nothing))
+      res <- withCursor Nothing tbl $ \cursor ->
         V.concat <$> readCursorAllWithBlobs (Proxy.Proxy @h) ses cursor ns
       return $ V.find (\r -> queryResultKey r == k) res
            === Just (FoundInQuery k v)
@@ -381,9 +381,9 @@ prop_readCursorDelete ::
   -> CursorReadSchedule
   -> Key -> Property
 prop_readCursorDelete h ups ns k = ioProperty $ do
-    withSessionAndTableNew h ups $ \ses hdl -> do
-      deletes hdl (V.singleton k)
-      res <- withCursor Nothing hdl $ \cursor -> do
+    withSessionAndTableNew h ups $ \ses tbl -> do
+      deletes tbl (V.singleton k)
+      res <- withCursor Nothing tbl $ \cursor -> do
         V.concat <$> readCursorAllWithBlobs (Proxy.Proxy @h) ses cursor ns
       return $ V.find (\r -> queryResultKey r == k) res === Nothing
 
@@ -395,11 +395,11 @@ prop_readCursorDeleteElse ::
   -> CursorReadSchedule
   -> [(Key, Update Value Blob)] -> Property
 prop_readCursorDeleteElse h ups offset ns ups2 = ioProperty $ do
-    withSessionAndTableNew h ups $ \ses hdl -> do
-      res1 <- withCursor offset hdl $ \cursor -> do
+    withSessionAndTableNew h ups $ \ses tbl -> do
+      res1 <- withCursor offset tbl $ \cursor -> do
         V.concat <$> readCursorAllWithBlobs (Proxy.Proxy @h) ses cursor ns
-      updates hdl (V.fromList ups2)
-      res2 <- withCursor offset hdl $ \cursor -> do
+      updates tbl (V.fromList ups2)
+      res2 <- withCursor offset tbl $ \cursor -> do
         V.concat <$> readCursorAllWithBlobs (Proxy.Proxy @h) ses cursor ns
       let updatedKeys = map fst ups2
       return $ V.filter (\r -> queryResultKey r `notElem` updatedKeys) res1
@@ -413,11 +413,11 @@ prop_readCursorStableView ::
   -> CursorReadSchedule
   -> [(Key, Update Value Blob)] -> Property
 prop_readCursorStableView h ups offset ns ups2 = ioProperty $ do
-    withSessionAndTableNew h ups $ \ses hdl -> do
-      res1 <- withCursor offset hdl $ \cursor -> do
+    withSessionAndTableNew h ups $ \ses tbl -> do
+      res1 <- withCursor offset tbl $ \cursor -> do
         readCursorAllWithBlobs (Proxy.Proxy @h) ses cursor ns
-      res2 <- withCursor offset hdl $ \cursor -> do
-        updates hdl (V.fromList ups2)
+      res2 <- withCursor offset tbl $ \cursor -> do
+        updates tbl (V.fromList ups2)
         readCursorAllWithBlobs (Proxy.Proxy @h) ses cursor ns
       return $ res1 === res2
 
@@ -429,10 +429,10 @@ prop_readCursorOffset ::
   -> CursorReadSchedule
   -> Property
 prop_readCursorOffset h ups offset ns = ioProperty $ do
-    withSessionAndTableNew h ups $ \ses hdl -> do
-      res1 <- withCursor (Just offset) hdl $ \cursor -> do
+    withSessionAndTableNew h ups $ \ses tbl -> do
+      res1 <- withCursor (Just offset) tbl $ \cursor -> do
         V.concat <$> readCursorAllWithBlobs (Proxy.Proxy @h) ses cursor ns
-      res2 <- withCursor Nothing hdl $ \cursor -> do
+      res2 <- withCursor Nothing tbl $ \cursor -> do
         V.concat <$> readCursorAllWithBlobs (Proxy.Proxy @h) ses cursor ns
       return $ res1 === V.dropWhile ((< offset) . queryResultKey) res2
 
@@ -461,12 +461,12 @@ prop_lookupRangeLikeLookups ::
   -> Range Key
   -> Property
 prop_lookupRangeLikeLookups h ups r = ioProperty $ do
-    withSessionAndTableNew h ups $ \ses hdl -> do
-      res1 <- rangeLookupWithBlobs hdl ses r
+    withSessionAndTableNew h ups $ \ses tbl -> do
+      res1 <- rangeLookupWithBlobs tbl ses r
 
       let testKeys = V.fromList $ nubSort $ filter (evalRange r) $ map fst ups
       res2 <- fmap (V.catMaybes . V.zipWith queryResultFromLookup testKeys) $
-        lookupsWithBlobs hdl ses testKeys
+        lookupsWithBlobs tbl ses testKeys
 
       return $ res1 === res2
 
@@ -479,13 +479,13 @@ prop_insertLookupRange ::
   => Proxy h -> [(Key, Update Value Blob)]
   -> Key -> Value -> Range Key  -> Property
 prop_insertLookupRange h ups k v r = ioProperty $ do
-    withSessionAndTableNew h ups $ \ses hdl -> do
+    withSessionAndTableNew h ups $ \ses tbl -> do
 
-      res <- rangeLookupWithBlobs hdl ses r
+      res <- rangeLookupWithBlobs tbl ses r
 
-      inserts hdl (V.singleton (k, v, Nothing))
+      inserts tbl (V.singleton (k, v, Nothing))
 
-      res' <- rangeLookupWithBlobs hdl ses r
+      res' <- rangeLookupWithBlobs tbl ses r
 
       let p :: QueryResult Key Value b -> Bool
           p rlr = queryResultKey rlr /= k
@@ -510,11 +510,11 @@ prop_lookupInsertBlob ::
   => Proxy h -> [(Key, Update Value Blob)]
   -> Key  -> Value -> Blob -> Property
 prop_lookupInsertBlob h ups k v blob = ioProperty $ do
-    withSessionAndTableNew h ups $ \ses hdl -> do
+    withSessionAndTableNew h ups $ \ses tbl -> do
 
       -- the main dish
-      inserts hdl (V.singleton (k, v, Just blob))
-      res <- lookupsWithBlobs hdl ses (V.singleton k)
+      inserts tbl (V.singleton (k, v, Just blob))
+      res <- lookupsWithBlobs tbl ses (V.singleton k)
 
       return $ res === V.singleton (FoundWithBlob v blob)
 
@@ -524,9 +524,9 @@ prop_insertInsertBlob ::
   => Proxy h -> [(Key, Update Value Blob)]
   -> Key -> Value -> Value -> Maybe Blob -> Maybe Blob -> Property
 prop_insertInsertBlob h ups k v1 v2 mblob1 mblob2 = ioProperty $ do
-    withSessionAndTableNew h ups $ \ses hdl -> do
-      inserts hdl (V.fromList [(k, v1, mblob1), (k, v2, mblob2)])
-      res <- lookupsWithBlobs hdl ses (V.singleton k)
+    withSessionAndTableNew h ups $ \ses tbl -> do
+      inserts tbl (V.fromList [(k, v1, mblob1), (k, v2, mblob2)])
+      res <- lookupsWithBlobs tbl ses (V.singleton k)
       return $ res === case mblob2 of
           Nothing    -> V.singleton (Found v2)
           Just blob2 -> V.singleton (FoundWithBlob v2 blob2)
@@ -538,10 +538,10 @@ prop_insertCommutesBlob ::
     -> Key -> Value -> Maybe Blob
     -> Key -> Value -> Maybe Blob -> Property
 prop_insertCommutesBlob h ups k1 v1 mblob1 k2 v2 mblob2 = k1 /= k2 ==> ioProperty do
-    withSessionAndTableNew h ups $ \ses hdl -> do
-      inserts hdl (V.fromList [(k1, v1, mblob1), (k2, v2, mblob2)])
+    withSessionAndTableNew h ups $ \ses tbl -> do
+      inserts tbl (V.fromList [(k1, v1, mblob1), (k2, v2, mblob2)])
 
-      res <- lookupsWithBlobs hdl ses $ V.fromList [k1,k2]
+      res <- lookupsWithBlobs tbl ses $ V.fromList [k1,k2]
       return $ res === case (mblob1, mblob2) of
           (Nothing,    Nothing)    -> V.fromList [Found v1,               Found v2]
           (Just blob1, Nothing)    -> V.fromList [FoundWithBlob v1 blob1, Found v2]
@@ -557,11 +557,11 @@ prop_updatesMayInvalidateBlobRefs ::
   -> Property
 prop_updatesMayInvalidateBlobRefs h ups k1 v1 blob1 ups' = monadicIO $ do
     (res, blobs, res') <- run $ do
-      withSessionAndTableNew h ups $ \ses hdl -> do
-        inserts hdl (V.singleton (k1, v1, Just blob1))
-        res <- lookups hdl (V.singleton k1)
+      withSessionAndTableNew h ups $ \ses tbl -> do
+        inserts tbl (V.singleton (k1, v1, Just blob1))
+        res <- lookups tbl (V.singleton k1)
         blobs <- getCompose <$> retrieveBlobsTrav (Proxy.Proxy @h) ses (Compose res)
-        updates hdl (V.fromList ups')
+        updates tbl (V.fromList ups')
         res' <- try @SomeException (getCompose <$> retrieveBlobsTrav (Proxy.Proxy @h) ses (Compose res))
         pure (res, blobs, res')
 
@@ -583,12 +583,12 @@ prop_lookupUpdate ::
   => Proxy h -> [(Key, Update Value Blob)]
   -> Key -> Value -> Maybe Blob -> Value -> Property
 prop_lookupUpdate h ups k v1 mb1 v2 = ioProperty $ do
-    withSessionAndTableNew h ups $ \s hdl -> do
+    withSessionAndTableNew h ups $ \s tbl -> do
 
       -- the main dish
-      inserts hdl (V.singleton (k, v1, mb1))
-      mupserts hdl (V.singleton (k, v2))
-      res <- lookupsWithBlobs hdl s (V.singleton k)
+      inserts tbl (V.singleton (k, v1, mb1))
+      mupserts tbl (V.singleton (k, v2))
+      res <- lookupsWithBlobs tbl s (V.singleton k)
 
       -- notice the order.
       return $ case mb1 of
@@ -604,17 +604,17 @@ prop_union :: forall h.
   => Proxy h -> [(Key, Update Value Blob)] -> [(Key, Update Value Blob)]
   -> [Key] -> Property
 prop_union h ups1 ups2 (V.fromList -> testKeys) = ioProperty $ do
-    withSessionAndTableNew h ups1 $ \s hdl1 -> do
-      withTableNew s (testTableConfig h) $ \hdl2 -> do
-        updates hdl2 $ V.fromList ups2
+    withSessionAndTableNew h ups1 $ \s tbl1 -> do
+      withTableNew s (testTableConfig h) $ \tbl2 -> do
+        updates tbl2 $ V.fromList ups2
 
         -- union them.
-        withTableUnion hdl1 hdl2 $ \hdl3 -> do
+        withTableUnion tbl1 tbl2 $ \tbl3 -> do
 
           -- results in parts and the union table
-          res1 <- lookupsWithBlobs hdl1 s testKeys
-          res2 <- lookupsWithBlobs hdl2 s testKeys
-          res3 <- lookupsWithBlobs hdl3 s testKeys
+          res1 <- lookupsWithBlobs tbl1 s testKeys
+          res2 <- lookupsWithBlobs tbl2 s testKeys
+          res3 <- lookupsWithBlobs tbl3 s testKeys
 
           let unionResult ::
                    LookupResult Value Blob
@@ -651,18 +651,18 @@ prop_snapshotNoChanges :: forall h.
     => Proxy h -> [(Key, Update Value Blob)]
     -> [(Key, Update Value Blob)] -> [Key] -> Property
 prop_snapshotNoChanges h ups ups' testKeys = ioProperty $ do
-    withSessionAndTableNew h ups $ \ses hdl1 -> do
+    withSessionAndTableNew h ups $ \ses tbl1 -> do
 
-      res <- lookupsWithBlobs hdl1 ses $ V.fromList testKeys
+      res <- lookupsWithBlobs tbl1 ses $ V.fromList testKeys
 
       let name = fromMaybe (error "invalid name") $ mkSnapshotName "foo"
 
-      createSnapshot label name hdl1
-      updates hdl1 (V.fromList ups')
+      createSnapshot label name tbl1
+      updates tbl1 (V.fromList ups')
 
-      withTableFromSnapshot @h ses label name$ \hdl2 -> do
+      withTableFromSnapshot @h ses label name$ \tbl2 -> do
 
-        res' <- lookupsWithBlobs hdl2 ses $ V.fromList testKeys
+        res' <- lookupsWithBlobs tbl2 ses $ V.fromList testKeys
 
         return $ res == res'
 
@@ -673,16 +673,16 @@ prop_snapshotNoChanges2 :: forall h.
     => Proxy h -> [(Key, Update Value Blob)]
     -> [(Key, Update Value Blob)] -> [Key] -> Property
 prop_snapshotNoChanges2 h ups ups' testKeys = ioProperty $ do
-    withSessionAndTableNew h ups $ \sess hdl0 -> do
+    withSessionAndTableNew h ups $ \sess tbl0 -> do
       let name = fromMaybe (error "invalid name") $ mkSnapshotName "foo"
-      createSnapshot label name hdl0
+      createSnapshot label name tbl0
 
-      withTableFromSnapshot @h sess label name $ \hdl1 ->
-        withTableFromSnapshot @h sess label name $ \hdl2 -> do
+      withTableFromSnapshot @h sess label name $ \tbl1 ->
+        withTableFromSnapshot @h sess label name $ \tbl2 -> do
 
-          res <- lookupsWithBlobs hdl1 sess $ V.fromList testKeys
-          updates hdl1 (V.fromList ups')
-          res' <- lookupsWithBlobs hdl2 sess $ V.fromList testKeys
+          res <- lookupsWithBlobs tbl1 sess $ V.fromList testKeys
+          updates tbl1 (V.fromList ups')
+          res' <- lookupsWithBlobs tbl2 sess $ V.fromList testKeys
 
           return $ res == res'
 
@@ -699,14 +699,14 @@ prop_dupInsertInsert ::
   => Proxy h -> [(Key, Update Value Blob)]
   -> Key -> Value -> Value -> [Key] -> Property
 prop_dupInsertInsert h ups k v1 v2 testKeys = ioProperty $ do
-    withSessionAndTableNew h ups $ \sess hdl1 -> do
-      withTableDuplicate hdl1 $ \hdl2 -> do
+    withSessionAndTableNew h ups $ \sess tbl1 -> do
+      withTableDuplicate tbl1 $ \tbl2 -> do
 
-        inserts hdl1 (V.fromList [(k, v1, Nothing), (k, v2, Nothing)])
-        inserts hdl2 (V.fromList [(k, v2, Nothing)])
+        inserts tbl1 (V.fromList [(k, v1, Nothing), (k, v2, Nothing)])
+        inserts tbl2 (V.fromList [(k, v2, Nothing)])
 
-        res1 <- lookupsWithBlobs hdl1 sess $ V.fromList testKeys
-        res2 <- lookupsWithBlobs hdl2 sess $ V.fromList testKeys
+        res1 <- lookupsWithBlobs tbl1 sess $ V.fromList testKeys
+        res2 <- lookupsWithBlobs tbl2 sess $ V.fromList testKeys
         return $ res1 === res2
 
 -- | Different key inserts commute.
@@ -715,14 +715,14 @@ prop_dupInsertCommutes ::
     => Proxy h -> [(Key, Update Value Blob)]
     -> Key -> Value -> Key -> Value -> [Key] -> Property
 prop_dupInsertCommutes h ups k1 v1 k2 v2 testKeys = k1 /= k2 ==> ioProperty do
-    withSessionAndTableNew h ups $ \sess hdl1 -> do
-      withTableDuplicate hdl1 $ \hdl2 -> do
+    withSessionAndTableNew h ups $ \sess tbl1 -> do
+      withTableDuplicate tbl1 $ \tbl2 -> do
 
-        inserts hdl1 (V.fromList [(k1, v1, Nothing), (k2, v2, Nothing)])
-        inserts hdl2 (V.fromList [(k2, v2, Nothing), (k1, v1, Nothing)])
+        inserts tbl1 (V.fromList [(k1, v1, Nothing), (k2, v2, Nothing)])
+        inserts tbl2 (V.fromList [(k2, v2, Nothing), (k1, v1, Nothing)])
 
-        res1 <- lookupsWithBlobs hdl1 sess $ V.fromList testKeys
-        res2 <- lookupsWithBlobs hdl2 sess $ V.fromList testKeys
+        res1 <- lookupsWithBlobs tbl1 sess $ V.fromList testKeys
+        res2 <- lookupsWithBlobs tbl2 sess $ V.fromList testKeys
         return $ res1 === res2
 
 -- changes to one handle should not cause any visible changes in any others
@@ -731,14 +731,14 @@ prop_dupNoChanges ::
     => Proxy h -> [(Key, Update Value Blob)]
     -> [(Key, Update Value Blob)] -> [Key] -> Property
 prop_dupNoChanges h ups ups' testKeys = ioProperty $ do
-    withSessionAndTableNew h ups $ \sess hdl1 -> do
+    withSessionAndTableNew h ups $ \sess tbl1 -> do
 
-      res <- lookupsWithBlobs hdl1 sess $ V.fromList testKeys
+      res <- lookupsWithBlobs tbl1 sess $ V.fromList testKeys
 
-      withTableDuplicate hdl1 $ \hdl2 -> do
-        updates hdl2 (V.fromList ups')
+      withTableDuplicate tbl1 $ \tbl2 -> do
+        updates tbl2 (V.fromList ups')
 
-        -- lookup hdl1 again.
-        res' <- lookupsWithBlobs hdl1 sess $ V.fromList testKeys
+        -- lookup tbl1 again.
+        res' <- lookupsWithBlobs tbl1 sess $ V.fromList testKeys
 
         return $ res == res'

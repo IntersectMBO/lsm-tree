@@ -216,7 +216,7 @@ withCursor :: forall h m k v b a.
   -> h m k v b
   -> (Cursor h m k v b -> m a)
   -> m a
-withCursor offset hdl = bracket (newCursor offset hdl) (closeCursor (Proxy @h))
+withCursor offset tbl = bracket (newCursor offset tbl) (closeCursor (Proxy @h))
 
 {-------------------------------------------------------------------------------
   Real instance
