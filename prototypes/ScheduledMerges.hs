@@ -316,36 +316,15 @@ assertST p = assert p $ return (const () callStack)
 -- Merging run abstraction
 --
 
-newLevelMerge :: Tracer (ST s) EventDetail
-              -> Int -> MergePolicy -> MergeLastLevel
-              -> [Run] -> ST s (IncomingRun s)
-newLevelMerge _ _ _ _ [r] = return (Single r)
-newLevelMerge tr level mergePolicy mergeLast rs = do
-    traceWith tr MergeStartedEvent {
-                   mergePolicy,
-                   mergeType,
-                   mergeDebt     = debt,
-                   mergeCost     = cost,
-                   mergeRunsSize = map runSize rs
-                 }
-    assert (length rs `elem` [4, 5]) $
-      assert (mergeDebtLeft debt >= cost) $
-        fmap (Merging mergePolicy . MergingRun mergeType) $
-          newSTRef (OngoingMerge debt rs r)
+newMergingRun :: Maybe Debt -> MergeType -> [Run] -> ST s (MergingRun s)
+newMergingRun mdebt mergeType rs = do
+    assertST $ length rs > 1
+    debt <- newMergeDebt <$> case mdebt of
+      Nothing -> return cost
+      Just d  -> assert (d >= cost) $ return d
+    MergingRun mergeType <$> newSTRef (OngoingMerge debt rs r)
   where
-    mergeType = MergeLevel mergeLast
     cost = sum (map runSize rs)
-    -- How much we need to discharge before the merge can be guaranteed
-    -- complete. More precisely, this is the maximum amount a merge at this
-    -- level could need. While the real @cost@ of a merge would lead to merges
-    -- finishing early, the overestimation @debt@ means that in this prototype
-    -- merges will only complete at the last possible moment.
-    -- Note that for levelling this is includes the single run in the current
-    -- level.
-    debt = newMergeDebt $ case mergePolicy of
-             MergePolicyLevelling -> 4 * tieringRunSize (level-1)
-                                       + levellingRunSize level
-             MergePolicyTiering   -> length rs * tieringRunSize (level-1)
     -- deliberately lazy:
     r    = mergek mergeType rs
 
@@ -382,22 +361,13 @@ combineUnion (Insert v' b') (Mupsert v)  = Insert (resolveValue v' v) b'
 combineUnion (Insert v' b') (Insert v b) = Insert (resolveValue v' v)
                                                   (resolveBlob b' b)
 
-expectCompletedMerge :: HasCallStack
-                     => Tracer (ST s) EventDetail
-                     -> MergePolicy -> MergingRun s -> ST s Run
-expectCompletedMerge tr mergePolicy (MergingRun mergeType ref) = do
+expectCompletedMergingRun :: HasCallStack => MergingRun s -> ST s Run
+expectCompletedMergingRun (MergingRun _ ref) = do
     mrs <- readSTRef ref
     case mrs of
-      CompletedMerge r -> do
-        traceWith tr MergeCompletedEvent {
-            mergePolicy,
-            mergeType,
-            mergeSize = runSize r
-          }
-        return r
-      OngoingMerge d _ _ ->
-        error $ "expectCompletedMerge: false expectation, remaining debt of "
-             ++ show d
+      CompletedMerge r   -> return r
+      OngoingMerge d _ _ -> error $ "expectCompletedMergingRun:"
+                                 ++ " remaining debt of " ++ show d
 
 supplyCreditsMergingRun :: Credit -> MergingRun s -> ST s Credit
 supplyCreditsMergingRun c (MergingRun _ ref) = do
@@ -649,8 +619,16 @@ increment tr sc = \r ls -> do
 
     go !ln incoming (Level ir rs : ls) = do
       r <- case ir of
-        Single r      -> return r
-        Merging mp mr -> expectCompletedMerge tr' mp mr
+        Single r -> return r
+        Merging mergePolicy mr -> do
+          r <- expectCompletedMergingRun mr
+          traceWith tr' MergeCompletedEvent {
+              mergePolicy,
+              mergeType = let MergingRun mt _ = mr in mt,
+              mergeSize = runSize r
+            }
+          return r
+
       let resident = r:rs
       case mergePolicyForLevel ln ls of
 
@@ -697,6 +675,33 @@ increment tr sc = \r ls -> do
 
       where
         tr' = contramap (EventAt sc ln) tr
+
+newLevelMerge :: Tracer (ST s) EventDetail
+              -> Int -> MergePolicy -> MergeLastLevel
+              -> [Run] -> ST s (IncomingRun s)
+newLevelMerge _ _ _ _ [r] = return (Single r)
+newLevelMerge tr level mergePolicy mergeLast rs = do
+    traceWith tr MergeStartedEvent {
+                   mergePolicy,
+                   mergeType,
+                   mergeDebt     = debt,
+                   mergeRunsSize = map runSize rs
+                 }
+    assertST (length rs `elem` [4, 5])
+    Merging mergePolicy <$> newMergingRun (Just debt) mergeType rs
+  where
+    mergeType = MergeLevel mergeLast
+    -- How much we need to discharge before the merge can be guaranteed
+    -- complete. More precisely, this is the maximum amount a merge at this
+    -- level could need. While the real @cost@ of a merge would lead to merges
+    -- finishing early, the overestimation @debt@ means that in this prototype
+    -- merges will only complete at the last possible moment.
+    -- Note that for levelling this is includes the single run in the current
+    -- level.
+    debt = case mergePolicy of
+             MergePolicyLevelling -> 4 * tieringRunSize (level-1)
+                                       + levellingRunSize level
+             MergePolicyTiering   -> length rs * tieringRunSize (level-1)
 
 -- | Only based on run count, not their sizes.
 tieringLevelIsFull :: Int -> [Run] -> [Run] -> Bool
@@ -791,8 +796,7 @@ data EventDetail =
      | MergeStartedEvent {
          mergePolicy   :: MergePolicy,
          mergeType     :: MergeType,
-         mergeDebt     :: MergeDebt,
-         mergeCost     :: Int,
+         mergeDebt     :: Debt,
          mergeRunsSize :: [Int]
        }
      | MergeCompletedEvent {
