@@ -643,8 +643,8 @@ tableSessionUniqCounter = sessionUniqCounter . tableSessionEnv
 -- | Open tables are tracked in the corresponding session, so when a table is
 -- closed it should become untracked (forgotten).
 tableSessionUntrackTable :: MonadMVar m => TableId -> TableEnv m h -> m ()
-tableSessionUntrackTable tableId thEnv =
-    modifyMVar_ (sessionOpenTables (tableSessionEnv thEnv)) $ pure . Map.delete tableId
+tableSessionUntrackTable tableId tEnv =
+    modifyMVar_ (sessionOpenTables (tableSessionEnv tEnv)) $ pure . Map.delete tableId
 
 -- | 'withOpenTable' ensures that the table stays open for the duration of the
 -- provided continuation.
@@ -662,7 +662,7 @@ withOpenTable ::
   -> m a
 withOpenTable t action = RW.withReadAccess (tableState t) $ \case
     TableClosed -> throwIO ErrTableClosed
-    TableOpen thEnv -> action thEnv
+    TableOpen tEnv -> action tEnv
 
 --
 -- Implementation of public API
@@ -763,12 +763,12 @@ close t = do
       (RW.unsafeAcquireWriteAccess (tableState t))
       (atomically . RW.unsafeReleaseWriteAccess (tableState t)) $ \reg -> \case
       TableClosed -> pure TableClosed
-      TableOpen thEnv -> do
+      TableOpen tEnv -> do
         -- Since we have a write lock on the table state, we know that we are the
         -- only thread currently closing the table. We can safely make the session
         -- forget about this table.
-        delayedCommit reg (tableSessionUntrackTable (tableId t) thEnv)
-        RW.withWriteAccess_ (tableContent thEnv) $ \tc -> do
+        delayedCommit reg (tableSessionUntrackTable (tableId t) tEnv)
+        RW.withWriteAccess_ (tableContent tEnv) $ \tc -> do
           releaseTableContent reg tc
           pure tc
         pure TableClosed
@@ -787,11 +787,11 @@ lookups ::
   -> m (V.Vector (Maybe (Entry SerialisedValue (WeakBlobRef m h))))
 lookups resolve ks t = do
     traceWith (tableTracer t) $ TraceLookups (V.length ks)
-    withOpenTable t $ \thEnv ->
-      RW.withReadAccess (tableContent thEnv) $ \tableContent ->
+    withOpenTable t $ \tEnv ->
+      RW.withReadAccess (tableContent tEnv) $ \tableContent ->
         let !cache = tableCache tableContent in
         lookupsIO
-          (tableHasBlockIO thEnv)
+          (tableHasBlockIO tEnv)
           (tableArenaManager t)
           resolve
           (tableWriteBuffer tableContent)
@@ -859,19 +859,19 @@ updates ::
 updates resolve es t = do
     traceWith (tableTracer t) $ TraceUpdates (V.length es)
     let conf = tableConfig t
-    withOpenTable t $ \thEnv -> do
-      let hfs = tableHasFS thEnv
+    withOpenTable t $ \tEnv -> do
+      let hfs = tableHasFS tEnv
       modifyWithActionRegistry_
-        (RW.unsafeAcquireWriteAccess (tableContent thEnv))
-        (atomically . RW.unsafeReleaseWriteAccess (tableContent thEnv)) $ \reg -> do
+        (RW.unsafeAcquireWriteAccess (tableContent tEnv))
+        (atomically . RW.unsafeReleaseWriteAccess (tableContent tEnv)) $ \reg -> do
           updatesWithInterleavedFlushes
             (TraceMerge `contramap` tableTracer t)
             conf
             resolve
             hfs
-            (tableHasBlockIO thEnv)
-            (tableSessionRoot thEnv)
-            (tableSessionUniqCounter thEnv)
+            (tableHasBlockIO tEnv)
+            (tableSessionRoot tEnv)
+            (tableSessionUniqCounter tEnv)
             es
             reg
 
@@ -987,9 +987,9 @@ newCursor ::
   => OffsetKey
   -> Table m h
   -> m (Cursor m h)
-newCursor !offsetKey t = withOpenTable t $ \thEnv -> do
+newCursor !offsetKey t = withOpenTable t $ \tEnv -> do
     let cursorSession = tableSession t
-    let cursorSessionEnv = tableSessionEnv thEnv
+    let cursorSessionEnv = tableSessionEnv tEnv
     cursorId <- uniqueToCursorId <$>
       incrUniqCounter (sessionUniqCounter cursorSessionEnv)
     let cursorTracer = TraceCursor cursorId `contramap` sessionTracer cursorSession
@@ -999,7 +999,7 @@ newCursor !offsetKey t = withOpenTable t $ \thEnv -> do
     -- 'sessionOpenTables'.
     withOpenSession cursorSession $ \_ -> do
       withActionRegistry $ \reg -> do
-        (wb, wbblobs, cursorRuns) <- dupTableContent reg (tableContent thEnv)
+        (wb, wbblobs, cursorRuns) <- dupTableContent reg (tableContent tEnv)
         cursorReaders <-
           withRollbackMaybe reg
             (Readers.new offsetKey (Just (wb, wbblobs)) cursorRuns)
@@ -1134,16 +1134,16 @@ createSnapshot ::
   -> m ()
 createSnapshot snap label tableType t = do
     traceWith (tableTracer t) $ TraceSnapshot snap
-    withOpenTable t $ \thEnv ->
+    withOpenTable t $ \tEnv ->
       withActionRegistry $ \reg -> do -- TODO: use the action registry for all side effects
-        let hfs  = tableHasFS thEnv
-            hbio = tableHasBlockIO thEnv
-            uc   = tableSessionUniqCounter thEnv
+        let hfs  = tableHasFS tEnv
+            hbio = tableHasBlockIO tEnv
+            uc   = tableSessionUniqCounter tEnv
 
         -- Guard that the snapshot does not exist already
-        let snapDir = Paths.namedSnapshotDir (tableSessionRoot thEnv) snap
+        let snapDir = Paths.namedSnapshotDir (tableSessionRoot tEnv) snap
         doesSnapshotExist <-
-          FS.doesDirectoryExist (tableHasFS thEnv) (Paths.getNamedSnapshotDir snapDir)
+          FS.doesDirectoryExist (tableHasFS tEnv) (Paths.getNamedSnapshotDir snapDir)
         if doesSnapshotExist then
           throwIO (ErrSnapshotExists snap)
         else
@@ -1156,10 +1156,10 @@ createSnapshot snap label tableType t = do
         -- Duplicate references to the table content, so that resources do not disappear
         -- from under our feet while taking a snapshot. These references are released
         -- again after the snapshot files/directories are written.
-        content <- RW.withReadAccess (tableContent thEnv) (duplicateTableContent reg)
+        content <- RW.withReadAccess (tableContent tEnv) (duplicateTableContent reg)
 
         -- Snapshot the write buffer.
-        let activeDir = Paths.activeDir (tableSessionRoot thEnv)
+        let activeDir = Paths.activeDir (tableSessionRoot tEnv)
         let wb = tableWriteBuffer content
         let wbb = tableWriteBufferBlobs content
         snapWriteBufferNumber <- Paths.writeBufferNumber <$> snapshotWriteBuffer reg hfs hbio uc activeDir snapDir wb wbb
