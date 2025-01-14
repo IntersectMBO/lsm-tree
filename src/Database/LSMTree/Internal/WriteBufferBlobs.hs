@@ -197,9 +197,10 @@ mkWeakBlobRef (DeRef WriteBufferBlobs {blobFile}) blobspan =
 
 
 -- | A mutable file offset, suitable to share between threads.
+--
+-- This pointer is limited to 31-bit file offsets on 32-bit systems. This should
+-- be a sufficiently large limit that we never reach it in practice.
 newtype FilePointer m = FilePointer (PrimVar (PrimState m) Int)
---TODO: this would be better as Word64
--- this will limit to 31bit file sizes on 32bit arches
 
 instance NFData (FilePointer m) where
   rnf (FilePointer var) = var `seq` ()
