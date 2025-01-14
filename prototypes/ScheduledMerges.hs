@@ -545,33 +545,6 @@ creditsForMerge (Merging (MergingRun MergePolicyTiering _ ref)) = do
         assertST $ numRuns `elem` [4, 5]
         return $ fromIntegral numRuns / 4
 
-type Event = EventAt EventDetail
-data EventAt e = EventAt {
-                   eventAtStep  :: Counter,
-                   eventAtLevel :: Int,
-                   eventDetail  :: e
-                 }
-  deriving stock Show
-
-data EventDetail =
-       AddLevelEvent
-     | AddRunEvent {
-         runsAtLevel   :: Int
-       }
-     | MergeStartedEvent {
-         mergePolicy   :: MergePolicy,
-         mergeLast     :: MergeLastLevel,
-         mergeDebt     :: MergeDebt,
-         mergeCost     :: Int,
-         mergeRunsSize :: [Int]
-       }
-     | MergeCompletedEvent {
-         mergePolicy :: MergePolicy,
-         mergeLast   :: MergeLastLevel,
-         mergeSize   :: Int
-       }
-  deriving stock Show
-
 increment :: forall s. Tracer (ST s) Event
           -> Counter -> Run -> Levels s -> ST s (Levels s)
 increment tr sc = \r ls -> do
@@ -714,3 +687,36 @@ representationShape =
       Nothing                          -> ([], [])
       Just (_, _, CompletedMerge r)    -> ([], [summaryRun r])
       Just (_, _, OngoingMerge _ rs _) -> (map summaryRun rs, [])
+
+-------------------------------------------------------------------------------
+-- Tracing
+--
+
+-- TODO: these events are incomplete, in particular we should also trace what
+-- happens in the union level.
+type Event = EventAt EventDetail
+data EventAt e = EventAt {
+                   eventAtStep  :: Counter,
+                   eventAtLevel :: Int,
+                   eventDetail  :: e
+                 }
+  deriving stock Show
+
+data EventDetail =
+       AddLevelEvent
+     | AddRunEvent {
+         runsAtLevel   :: Int
+       }
+     | MergeStartedEvent {
+         mergePolicy   :: MergePolicy,
+         mergeLast     :: MergeLastLevel,
+         mergeDebt     :: MergeDebt,
+         mergeCost     :: Int,
+         mergeRunsSize :: [Int]
+       }
+     | MergeCompletedEvent {
+         mergePolicy :: MergePolicy,
+         mergeLast   :: MergeLastLevel,
+         mergeSize   :: Int
+       }
+  deriving stock Show
