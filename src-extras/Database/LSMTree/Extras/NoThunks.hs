@@ -431,9 +431,22 @@ deriving stock instance Generic (RunReader m h)
 deriving anyclass instance (Typeable m, Typeable (PrimState m), Typeable h)
                         => NoThunks (RunReader m h)
 
-deriving stock instance Generic (Reader.Entry m h)
-deriving anyclass instance (Typeable m, Typeable (PrimState m), Typeable h)
-                        => NoThunks (Reader.Entry m h)
+-- | Allows thunks in the overflow pages
+instance ( Typeable m, Typeable (PrimState m), Typeable h
+         ) => NoThunks (Reader.Entry m h) where
+  showTypeOf (p :: Proxy (Reader.Entry m h)) = show $ typeRep p
+  wNoThunks ctx (Reader.Entry (e :: Entry SerialisedValue (RawBlobRef m h))) = noThunks ctx e
+  wNoThunks ctx (EntryOverflow
+    (entryPrefix :: Entry SerialisedValue (RawBlobRef m h))
+    (page :: RawPage)
+    (len :: Word32)
+    (overflowPages :: [RawOverflowPage]) ) =
+      allNoThunks [
+          noThunks ctx entryPrefix
+        , noThunks ctx page
+        , noThunks ctx len
+        , noThunks ctx (OnlyCheckWhnf overflowPages)
+        ]
 
 {-------------------------------------------------------------------------------
   RawPage
