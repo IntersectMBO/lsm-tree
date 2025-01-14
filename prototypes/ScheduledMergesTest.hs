@@ -1,7 +1,7 @@
 module ScheduledMergesTest (tests) where
 
 import           Control.Exception
-import           Control.Monad (replicateM_, when)
+import           Control.Monad (forM, replicateM_, when)
 import           Control.Monad.ST
 import           Control.Tracer (Tracer (Tracer))
 import qualified Control.Tracer as Tracer
@@ -10,13 +10,17 @@ import           Data.STRef
 
 import           ScheduledMerges as LSM
 
+import qualified Test.QuickCheck as QC
+import           Test.QuickCheck (Property)
 import           Test.Tasty
 import           Test.Tasty.HUnit (HasCallStack, testCase)
+import           Test.Tasty.QuickCheck (testProperty)
 
 tests :: TestTree
 tests = testGroup "Unit tests"
     [ testCase "regression_empty_run" test_regression_empty_run
     , testCase "merge_again_with_incoming" test_merge_again_with_incoming
+    , testProperty "union" prop_union
     ]
 
 -- | Results in an empty run on level 2.
@@ -66,12 +70,29 @@ test_regression_empty_run =
           ]
 
         -- finish merge
-        LSM.supply lsm 16
+        LSM.supplyMergeCredits lsm 16
 
         expectShape lsm
           0
           [ ([], [4])
           , ([], [0])
+          ]
+
+        -- insert more data, so the empty run becomes input to a merge
+        traverse_ ins [101..112]
+
+        expectShape lsm
+          0
+          [ ([], [4,4,4,4])  -- about to trigger a new last level merge
+          , ([], [0])
+          ]
+
+        traverse_ ins [113..116]
+
+        expectShape lsm
+          0
+          [ ([], [4])
+          , ([4,4,4,4], [])  -- merge started, empty run has been dropped
           ]
 
 -- | Covers the case where a run ends up too small for a level, so it gets
@@ -119,7 +140,7 @@ test_merge_again_with_incoming =
           ]
 
         -- complete the merge (20 entries, but credits get scaled up by 1.25)
-        LSM.supply lsm 16
+        LSM.supplyMergeCredits lsm 16
 
         expectShape lsm
           0
@@ -139,6 +160,34 @@ test_merge_again_with_incoming =
           , ([4,4,4,4], [])
           , ([16,16,16,20,80], [])
           ]
+
+-------------------------------------------------------------------------------
+-- properties
+--
+
+-- | Supplying enough credits for the remaining debt completes the union merge.
+prop_union :: [[(LSM.Key, LSM.Op)]] -> Property
+prop_union kopss = length (filter (not . null) kopss) > 1 QC.==>
+    QC.ioProperty $ runWithTracer $ \tr ->
+      stToIO $ do
+        ts <- forM kopss $ \kops -> do
+          t <- LSM.new
+          LSM.updates tr t kops
+          return t
+
+        t <- LSM.unions ts
+
+        expectUnionWith t (not . isCompleted)
+
+        debt <- LSM.remainingUnionDebt t
+        _ <- LSM.supplyUnionCredits t debt
+
+        -- assert that the union merge now has been completed
+        expectUnionWith t isCompleted
+  where
+    isCompleted = \case
+        MLeaf{} -> True
+        MNode{} -> False
 
 -------------------------------------------------------------------------------
 -- tracing and expectations on LSM shape
@@ -163,10 +212,17 @@ instance Exception TracedException where
 
 expectShape :: HasCallStack => LSM s -> Int -> [([Int], [Int])] -> ST s ()
 expectShape lsm expectedWb expectedLevels = do
-    let expected = ([], [expectedWb]) : expectedLevels
+    let expected = (expectedWb, expectedLevels, Nothing)
     shape <- representationShape <$> dumpRepresentation lsm
     when (shape /= expected) $
       error $ unlines
         [ "expected shape: " <> show expected
         , "actual shape:   " <> show shape
         ]
+
+expectUnionWith :: HasCallStack => LSM s -> (MTree Int -> Bool) -> ST s ()
+expectUnionWith lsm p = do
+    (_, _, shape) <- representationShape <$> dumpRepresentation lsm
+    case shape of
+      Nothing -> error "expected Union, found NoUnion"
+      Just t  -> when (not (p t)) $ error $ "expectation on Union failed: " ++ show t
