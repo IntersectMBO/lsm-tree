@@ -9,6 +9,7 @@
 {-# LANGUAGE InstanceSigs             #-}
 {-# LANGUAGE LambdaCase               #-}
 {-# LANGUAGE MultiParamTypeClasses    #-}
+{-# LANGUAGE MultiWayIf               #-}
 {-# LANGUAGE NamedFieldPuns           #-}
 {-# LANGUAGE OverloadedStrings        #-}
 {-# LANGUAGE QuantifiedConstraints    #-}
@@ -64,11 +65,14 @@ module Test.Database.LSMTree.StateMachine (
   , Action (..)
   ) where
 
+import           Control.ActionRegistry (AbortActionRegistryError (..),
+                     CommitActionRegistryError (..))
 import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Concurrent.Class.MonadSTM.Strict
 import           Control.Monad (forM_, void, (<=<))
-import           Control.Monad.Class.MonadThrow (Handler (..), MonadCatch (..),
-                     MonadThrow (..), catches)
+import           Control.Monad.Class.MonadThrow (Exception (..), Handler (..),
+                     MonadCatch (..), MonadThrow (..), catches,
+                     displayException)
 import           Control.Monad.IOSim
 import           Control.Monad.Primitive
 import           Control.Monad.Reader (ReaderT (..))
@@ -160,7 +164,7 @@ tests = testGroup "Test.Database.LSMTree.StateMachine" [
           Handler f -> do
             throwIO (dummyFsError s) `catch` \e -> do
               e' <- f e
-              pure (e' QC.=== Just Model.ErrFsError)
+              pure (e' QC.=== Just (Model.ErrFsError ("dummy: " ++ s)))
     ]
 
 labelledExamples :: IO ()
@@ -284,7 +288,11 @@ propLockstep_RealImpl_RealFS_IO tr =
               env :: RealEnv R.Table IO
               env = RealEnv {
                   envSession = session
-                , envHandlers = [realHandler @IO, fsErrorHandler]
+                , envHandlers = [
+                      realHandler @IO
+                    , fsErrorHandler
+                    , actionRegistryErrorHandler
+                    ]
                 , envErrors = errsVar
                 , envInjectFaultResults = faultsVar
                 }
@@ -321,7 +329,11 @@ propLockstep_RealImpl_MockFS_IO tr =
               env :: RealEnv R.Table IO
               env = RealEnv {
                   envSession = session
-                , envHandlers = [realHandler @IO, fsErrorHandler]
+                , envHandlers = [
+                      realHandler @IO
+                    , fsErrorHandler
+                    , actionRegistryErrorHandler
+                    ]
                 , envErrors = errsVar
                 , envInjectFaultResults = faultsVar
                 }
@@ -346,7 +358,11 @@ propLockstep_RealImpl_MockFS_IOSim tr actions =
           env :: RealEnv R.Table (IOSim s)
           env = RealEnv {
               envSession = session
-            , envHandlers = [realHandler @(IOSim s), fsErrorHandler]
+            , envHandlers = [
+                  realHandler @(IOSim s)
+                , fsErrorHandler
+                , actionRegistryErrorHandler
+                ]
             , envErrors = errsVar
             , envInjectFaultResults = faultsVar
             }
@@ -423,7 +439,17 @@ fsErrorHandler :: Monad m => Handler m (Maybe Model.Err)
 fsErrorHandler = Handler $ pure . handler'
   where
     handler' :: FsError -> Maybe Model.Err
-    handler' _ = Just Model.ErrFsError
+    handler' e = Just (Model.ErrFsError (displayException e))
+
+actionRegistryErrorHandler :: Monad m => Handler m (Maybe Model.Err)
+actionRegistryErrorHandler = Handler $ \e -> pure $
+    if
+      | Just AbortActionRegistryError{} <- fromException e
+      -> Just (Model.ErrFsError (displayException e))
+      | Just CommitActionRegistryError{} <- fromException e
+      -> Just (Model.ErrFsError (displayException e))
+      | otherwise
+      -> Nothing
 
 createSystemTempDirectory ::  [Char] -> IO (FilePath, HasFS IO HandleIO, HasBlockIO IO HandleIO)
 createSystemTempDirectory prefix = do

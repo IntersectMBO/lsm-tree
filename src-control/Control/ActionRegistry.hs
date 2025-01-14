@@ -21,8 +21,8 @@ module Control.ActionRegistry (
   , withActionRegistry
   , unsafeNewActionRegistry
   , unsafeFinaliseActionRegistry
-  , CommitActionRegistryError
-  , AbortActionRegistryError
+  , CommitActionRegistryError (..)
+  , AbortActionRegistryError (..)
   , AbortActionRegistryReason
     -- * Registering actions #registeringActions#
     -- $registering-actions
@@ -60,6 +60,23 @@ import           GHC.Stack
 #else
 #define HasCallStackIfDebug ()
 #endif
+
+{-------------------------------------------------------------------------------
+  Printing utilities
+-------------------------------------------------------------------------------}
+
+tabLines1 :: String -> String
+tabLines1 = tabLinesN 1
+
+#ifdef NO_IGNORE_ASSERTS
+tabLines2 :: String -> String
+tabLines2 = tabLinesN 2
+#endif
+
+tabLinesN :: Int -> String -> String
+tabLinesN n = unlines . fmap (ts++) . lines
+  where
+    ts = concat $ replicate n "  "
 
 {-------------------------------------------------------------------------------
   Modify mutable state
@@ -216,7 +233,15 @@ data Action m = Action {
 
 data ActionError = ActionError SomeException CallStack
   deriving stock Show
-  deriving anyclass Exception
+
+instance Exception ActionError where
+  displayException (ActionError err registerSite) = unlines [
+      "A registered action threw an error: "
+    , tabLines1 "The error:"
+    , tabLines2 (displayException err)
+    , tabLines1 "Registration site:"
+    , tabLines2 (prettyCallStack registerSite)
+    ]
 
 mkAction a = Action a callStack
 
@@ -305,7 +330,13 @@ unsafeCommitActionRegistry reg = do
 
 data CommitActionRegistryError = CommitActionRegistryError (NonEmpty ActionError)
   deriving stock Show
-  deriving anyclass Exception
+
+instance Exception CommitActionRegistryError where
+  displayException (CommitActionRegistryError es) = unlines $ [
+        "Exceptions thrown while committing an action registry."
+      ] <> NE.toList (fmap displayOne es)
+    where
+      displayOne e = tabLines1 (displayException e)
 
 {-# SPECIALISE unsafeAbortActionRegistry ::
      ActionRegistry IO
@@ -338,7 +369,14 @@ data AbortActionRegistryReason =
 data AbortActionRegistryError =
     AbortActionRegistryError AbortActionRegistryReason (NonEmpty ActionError)
   deriving stock Show
-  deriving anyclass Exception
+
+instance Exception AbortActionRegistryError where
+  displayException (AbortActionRegistryError reason es) = unlines $ [
+        "Exceptions thrown while aborting an action registry."
+      , ("Reason for aborting the registry: " ++ show reason)
+      ] <> NE.toList (fmap displayOne es)
+    where
+      displayOne e = tabLines1 (displayException e)
 
 {-# SPECIALISE runActions :: [Action IO] -> IO [ActionError] #-}
 -- | Run all actions even if previous actions threw exceptions.
