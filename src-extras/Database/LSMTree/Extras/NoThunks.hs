@@ -8,7 +8,8 @@
 -- | 'NoThunks' orphan instances
 module Database.LSMTree.Extras.NoThunks (
     assertNoThunks
-  , prop_NoThunks
+  , propUnsafeNoThunks
+  , propNoThunks
   , NoThunksIOLike
   ) where
 
@@ -80,9 +81,16 @@ assertNoThunks x = assert p
               Nothing -> True
               Just thunkInfo -> error $ "Assertion failed: found thunk" <> show thunkInfo
 
-prop_NoThunks :: NoThunks a => a -> Property
-prop_NoThunks x =
+propUnsafeNoThunks :: NoThunks a => a -> Property
+propUnsafeNoThunks x =
     case unsafeNoThunks x of
+      Nothing        -> property True
+      Just thunkInfo -> counterexample ("Found thunk " <> show thunkInfo) False
+
+propNoThunks :: NoThunks a => a -> IO Property
+propNoThunks x = do
+    thunkInfoMay <- noThunks [] x
+    pure $ case thunkInfoMay of
       Nothing        -> property True
       Just thunkInfo -> counterexample ("Found thunk " <> show thunkInfo) False
 

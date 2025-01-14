@@ -93,7 +93,7 @@ import           Database.LSMTree.Class (LookupResult (..), QueryResult (..))
 import qualified Database.LSMTree.Class as Class
 import           Database.LSMTree.Extras (showPowersOf)
 import           Database.LSMTree.Extras.Generators (KeyForIndexCompact)
-import           Database.LSMTree.Extras.NoThunks (assertNoThunks)
+import           Database.LSMTree.Extras.NoThunks (propNoThunks)
 import           Database.LSMTree.Internal (LSMTreeError (..))
 import qualified Database.LSMTree.Internal as R.Internal
 import           Database.LSMTree.Internal.Serialise (SerialisedBlob,
@@ -302,10 +302,12 @@ propLockstep_RealImpl_RealFS_IO tr =
         errsVar <- newTVarIO FSSim.emptyErrors
         pure (tmpDir, session, errsVar)
 
-    release :: (FilePath, Class.Session R.Table IO, StrictTVar IO Errors) -> IO ()
-    release (tmpDir, session, _) = do
+    release :: (FilePath, Class.Session R.Table IO, StrictTVar IO Errors) -> IO Property
+    release (tmpDir, !session, _) = do
+        !prop <- propNoThunks session
         R.closeSession session
         removeDirectoryRecursive tmpDir
+        pure prop
 
 propLockstep_RealImpl_MockFS_IO ::
      Tracer IO R.LSMTreeTrace
@@ -891,7 +893,6 @@ instance ( Eq (Class.TableConfig h)
          , Show (Class.TableConfig h)
          , Arbitrary (Class.TableConfig h)
          , Typeable h
-         , NoThunks (Class.Session h IO)
          ) => RunLockstep (ModelState h) (RealMonad h IO) where
   observeReal ::
        Proxy (RealMonad h IO)
@@ -1016,7 +1017,6 @@ instance ( Eq (Class.TableConfig h)
          , Show (Class.TableConfig h)
          , Arbitrary (Class.TableConfig h)
          , Typeable h
-         , NoThunks (Class.Session h IO)
          ) => RunModel (Lockstep (ModelState h)) (RealMonad h IO) where
   perform _     = runIO
   postcondition = Lockstep.Defaults.postcondition
@@ -1127,14 +1127,12 @@ wrap f = first (MEither . bimap MErr f)
 -------------------------------------------------------------------------------}
 
 runIO ::
-     forall a h. (Class.IsTable h, NoThunks (Class.Session h IO))
+     forall a h. Class.IsTable h
   => LockstepAction (ModelState h) a
   -> LookUp (RealMonad h IO)
   -> RealMonad h IO (Realized (RealMonad h IO) a)
 runIO action lookUp = ReaderT $ \ !env -> do
-    x <- aux env action
-    assertNoThunks (envSession env) $ pure ()
-    pure x
+    aux env action
   where
     aux ::
          RealEnv h IO
