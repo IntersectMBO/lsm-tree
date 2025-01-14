@@ -131,9 +131,10 @@ import qualified Test.QuickCheck.StateModel.Lockstep.Defaults as Lockstep.Defaul
 import qualified Test.QuickCheck.StateModel.Lockstep.Run as Lockstep.Run
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck (testProperty)
-import           Test.Util.FS (approximateEqStream, assertNoOpenHandles,
-                     assertNumOpenHandles)
+import           Test.Util.FS (approximateEqStream, propNoOpenHandles,
+                     propNumOpenHandles)
 import           Test.Util.PrettyProxy
+import           Test.Util.QLS
 import           Test.Util.TypeFamilyWrappers (WrapBlob (..), WrapBlobRef (..),
                      WrapCursor (..), WrapTable (..))
 
@@ -354,11 +355,11 @@ propLockstep_RealImpl_MockFS_IOSim tr actions =
                 (QD.runActions @(Lockstep (ModelState R.Table)) actions)
                 env
         faults <- QC.run $ readMutVar faultsVar
-        QC.run $ release_RealImpl_MockFS (fsVar, session, errsVar)
+        p <- QC.run $ release_RealImpl_MockFS (fsVar, session, errsVar)
         pure
           $ tagFinalState actions tagFinalState'
           $ QC.tabulate "Fault results" (fmap show faults)
-          $ QC.property True
+          $ p
 
 acquire_RealImpl_MockFS ::
      R.IOLike m
@@ -374,17 +375,16 @@ acquire_RealImpl_MockFS tr = do
 release_RealImpl_MockFS ::
      R.IOLike m
   => (StrictTMVar m MockFS, Class.Session R.Table m, StrictTVar m Errors)
-  -> m ()
+  -> m Property
 release_RealImpl_MockFS (fsVar, session, _) = do
     sts <- getAllSessionTables session
     forM_ sts $ \(SomeTable t) -> R.close t
     scs <- getAllSessionCursors session
     forM_ scs $ \(SomeCursor c) -> R.closeCursor c
     mockfs1 <- atomically $ readTMVar fsVar
-    assertNumOpenHandles mockfs1 1 $ pure ()
     R.closeSession session
     mockfs2 <- atomically $ readTMVar fsVar
-    assertNoOpenHandles mockfs2 $ pure ()
+    pure (propNumOpenHandles 1 mockfs1 QC..&&. propNoOpenHandles mockfs2)
 
 data SomeTable m = SomeTable (forall k v b. R.Table m k v b)
 data SomeCursor m = SomeCursor (forall k v b. R.Cursor m k v b)
@@ -2077,24 +2077,26 @@ tagFinalState' (getModel -> ModelState finalState finalStats) = concat [
 -- count how often something happens over the course of running these actions,
 -- then we would want to only tag the final state, not intermediate steps.
 runActionsBracket' ::
-     forall state st m e.  (
+     forall state st m e prop.  (
        RunLockstep state m
      , e ~ Error (Lockstep state)
      , forall a. IsPerformResult e a
+     , QC.Testable prop
      )
   => Proxy state
   -> IO st
-  -> (st -> IO ())
+  -> (st -> IO prop)
   -> (m QC.Property -> st -> IO QC.Property)
   -> (Lockstep state -> [(String, [FinalTag])])
   -> Actions (Lockstep state) -> QC.Property
 runActionsBracket' p init cleanup runner tagger actions =
     tagFinalState actions tagger
-  $ Lockstep.Run.runActionsBracket p init cleanup' runner actions
+  $ runActionsBracket p init cleanup' runner actions
   where
     cleanup' st = do
-      cleanup st
+      x <- cleanup st
       checkForgottenRefs
+      pure x
 
 tagFinalState ::
      forall state. StateModel (Lockstep state)
