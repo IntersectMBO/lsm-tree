@@ -20,8 +20,8 @@ pageSize = 4096
 {-# INLINE pageSize #-}
 
 -- | Create a singleton page, also returning the overflow value bytes.
-singletonPage
-    :: SerialisedKey
+singletonPage ::
+       SerialisedKey
     -> Entry SerialisedValue BlobSpan
     -> (RawPage, [RawOverflowPage])
 singletonPage k (Insert v) = runST $ do

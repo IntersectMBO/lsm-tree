@@ -66,8 +66,8 @@ finalVector initialBufferSize segments = runST $ do
     Therefore, a buffer size scaling exponent tells if the buffer is enlarged
     and, if yes, how much.
 -}
-withFinalVector
-    :: Testable prop
+withFinalVector ::
+       Testable prop
     => Int                -- Initial buffer size
     -> [Segment a]        -- Segments
     -> (Vector a -> prop) -- Property from final vector

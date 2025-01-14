@@ -88,8 +88,8 @@ type RunIx = Int
 -- each search result. The resulting vector has the same length as the
 -- @VP.Vector RunIxKeyIx@ argument, because index searching always returns a
 -- positive search result.
-indexSearches
-  :: Arena s
+indexSearches ::
+     Arena s
   -> V.Vector IndexCompact
   -> V.Vector (Handle h)
   -> V.Vector SerialisedKey

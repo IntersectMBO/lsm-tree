@@ -203,8 +203,8 @@ addSmallKeyOp pageAcc key op =
         pure Nothing
 
 -- | See 'Database.LSMTree.Internal.RunAcc.addLargeKeyOp'.
-addLargeKeyOp
-  :: PageAcc s
+addLargeKeyOp ::
+     PageAcc s
   -> SerialisedKey
   -> Entry SerialisedValue BlobSpan -- ^ the full value, not just a prefix
   -> ST s ([RawPage], [RawOverflowPage])

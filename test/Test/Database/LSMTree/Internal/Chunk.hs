@@ -60,8 +60,8 @@ balingOutput minChunkSize food = runST $ do
     happens either due to another feeding or due to the baler run ending and
     producing a remnant chunk.
 -}
-withBalingOutput
-    :: Testable prop
+withBalingOutput ::
+       Testable prop
     => Int                                    -- Minimum chunk size
     -> [[Vector Word8]]                       -- Data portions to be fed
     -> ([Maybe Chunk] -> Maybe Chunk -> prop) -- Property from baler output

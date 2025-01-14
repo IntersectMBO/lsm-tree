@@ -86,8 +86,8 @@ easyNew errRate capacity = MB.new numHashes numBits
 -- >>> safeSuggestSizing 10000 0.01
 -- Right (99317,7)
 --
-safeSuggestSizing
-    :: Int              -- ^ expected maximum capacity
+safeSuggestSizing ::
+       Int              -- ^ expected maximum capacity
     -> Double           -- ^ desired false positive rate (0 < /e/ < 1)
     -> Either String (Word64, Int)
 safeSuggestSizing (fromIntegral -> capacity) errRate

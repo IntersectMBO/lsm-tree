@@ -89,8 +89,8 @@ import           Numeric.AD (Mode, Scalar, auto, conjugateGradientDescent)
 -- >>> nonZeroResultCost t ps
 -- 1.06551
 --
-constantBits
-    :: Integer -- ^ total memory (in bits)
+constantBits ::
+       Integer -- ^ total memory (in bits)
     -> Integer -- ^ total elements
     -> Integer -- ^ T: size ratio
     -> Integer -- ^ L: level count
@@ -159,8 +159,8 @@ constantBits m_max n t l =
 -- >>> nonZeroResultCost t ps
 -- 1.03575
 --
-monkeyBits
-    :: Integer -- ^ total memory (in bits)
+monkeyBits ::
+       Integer -- ^ total memory (in bits)
     -> Integer -- ^ total elements
     -> Integer -- ^ T: size ratio
     -> Integer -- ^ L: level count
@@ -181,8 +181,8 @@ monkeyBits m_max n t l
 -- For now we use conjugate gradient descent instead of an analytical solution.
 -- Iterative version is easier to tweak.
 --
-monkeyImpl
-    :: Double
+monkeyImpl ::
+       Double
     -> Double
     -> [(Double,Double)]
     -> [Double]
@@ -199,8 +199,8 @@ monkeyImpl m_max t ((entries0, _bits0) : initial) =
         ]
 
 -- | Calculate how many buffers we can fit given size ratio T and level count L.
-runsMultiplies
-    :: Integer -- ^ T: size ratio
+runsMultiplies ::
+       Integer -- ^ T: size ratio
     -> Integer -- ^ L: level count
     -> Integer
 runsMultiplies t l = t ^ l -1
@@ -241,8 +241,8 @@ numLevels n m t
 -- Assumes that the bloom filter uses 'numHashFunctions' hash functions.
 --
 -- Equation 2.
-falsePositiveRate
-    :: Floating a
+falsePositiveRate ::
+       Floating a
     => a  -- ^ entries
     -> a  -- ^ bits
     -> a
@@ -278,8 +278,8 @@ numHashFunctions nbits nentries = truncate @Double $ max 1 $
     (fromIntegral nbits / fromIntegral nentries) * log 2
 
 -- | Worst-Case Zero-result Lookup Cost (equation 3).
-zeroResultCost
-    :: Floating t
+zeroResultCost ::
+       Floating t
     => t -- ^ T: Size ratio
     -> [t] -- ^ \(p_i)\
     -> t
@@ -292,8 +292,8 @@ zeroResultCost t ps =
 -- In monoidal setting we might need to read more than one run, if initial lookups are upserts.
 -- (We need another parameter: a ratio of inserts and upserts).
 --
-nonZeroResultCost
-    :: Floating t
+nonZeroResultCost ::
+       Floating t
     => t -- ^ T: Size ratio
     -> [t] -- ^ \(p_i\)
     -> t
@@ -302,8 +302,8 @@ nonZeroResultCost t ps =
 
 -- | Main memory footprint (equation 4).
 --
-totalMemory
-    :: Floating t
+totalMemory ::
+       Floating t
     => t -- ^ N: total entries
     -> t -- ^ T: size ratio
     -> [t]     -- ^ \(p_i)\

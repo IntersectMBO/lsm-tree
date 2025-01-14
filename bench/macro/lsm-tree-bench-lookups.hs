@@ -425,8 +425,8 @@ benchBloomQueries !bs !keyRng !n
 
 -- | This gives us the combined cost of calculating batches of keys, performing
 -- bloom queries for each batch, and performing index searches for each batch.
-benchIndexSearches
-  :: ArenaManager RealWorld
+benchIndexSearches ::
+     ArenaManager RealWorld
   -> V.Vector (Bloom SerialisedKey)
   -> V.Vector IndexCompact
   -> V.Vector (FS.Handle h)
@@ -443,8 +443,8 @@ benchIndexSearches !arenaManager !bs !ics !hs !keyRng !n
 
 -- | This gives us the combined cost of calculating batches of keys, and
 -- preparing lookups for each batch.
-benchPrepLookups
-  :: ArenaManager RealWorld
+benchPrepLookups ::
+     ArenaManager RealWorld
   -> V.Vector (Bloom SerialisedKey)
   -> V.Vector IndexCompact
   -> V.Vector (FS.Handle h)

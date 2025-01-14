@@ -77,8 +77,8 @@ rawOverflowPageToByteString =
 -- This function will copy data if the byte array is not pinned, or the length
 -- is strictly less than 4096.
 --
-makeRawOverflowPage
-    :: ByteArray  -- ^ bytearray
+makeRawOverflowPage ::
+       ByteArray  -- ^ bytearray
     -> Int        -- ^ offset in bytes into the bytearray
     -> Int        -- ^ length in bytes, must be @>= 0 && <= 4096@
     -> RawOverflowPage
@@ -91,8 +91,8 @@ makeRawOverflowPage ba off len
     | otherwise
     = makeRawOverflowPageCopy ba off len
 
-makeRawOverflowPageCopy
-    :: ByteArray  -- ^ bytearray
+makeRawOverflowPageCopy ::
+       ByteArray  -- ^ bytearray
     -> Int        -- ^ offset in bytes into the bytearray
     -> Int        -- ^ length in bytes
     -> RawOverflowPage
@@ -109,8 +109,8 @@ makeRawOverflowPageCopy ba off len =
 -- | Create a 'RawOverflowPage' without copying. The byte array and offset must
 -- satisfy the invariant for 'RawOverflowPage'.
 --
-unsafeMakeRawOverflowPage
-    :: ByteArray  -- ^ bytearray, must be pinned and contain 4096 bytes (after offset)
+unsafeMakeRawOverflowPage ::
+       ByteArray  -- ^ bytearray, must be pinned and contain 4096 bytes (after offset)
     -> Int        -- ^ offset in bytes
     -> RawOverflowPage
 unsafeMakeRawOverflowPage ba off =
