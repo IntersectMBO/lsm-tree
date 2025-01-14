@@ -74,6 +74,23 @@ test_regression_empty_run =
           , ([], [0])
           ]
 
+        -- insert more data, so the empty run becomes input to a merge
+        traverse_ ins [101..112]
+
+        expectShape lsm
+          0
+          [ ([], [4,4,4,4])  -- about to trigger a new last level merge
+          , ([], [0])
+          ]
+
+        traverse_ ins [113..116]
+
+        expectShape lsm
+          0
+          [ ([], [4])
+          , ([4,4,4,4], [])  -- merge started, empty run has been dropped
+          ]
+
 -- | Covers the case where a run ends up too small for a level, so it gets
 -- merged again with the next incoming runs.
 -- That 5-way merge gets completed by supplying credits That merge gets

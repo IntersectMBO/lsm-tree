@@ -269,6 +269,7 @@ invariant = go 1
             -- a new level, it'll have only 4 runs.
             (_, OngoingMerge _ rs _) -> do
               assertST $ length rs `elem` [4, 5]
+              assertST $ all (\r -> runSize r > 0) rs  -- don't merge empty runs
               let incoming = take 4 rs
               let resident = drop 4 rs
               assertST $ all (\r -> tieringRunSizeToLevel r `elem` [ln-1, ln]) incoming
@@ -317,16 +318,20 @@ assertST p = assert p $ return (const () callStack)
 --
 
 newMergingRun :: Maybe Debt -> MergeType -> [Run] -> ST s (MergingRun s)
-newMergingRun mdebt mergeType rs = do
-    assertST $ length rs > 1
-    debt <- newMergeDebt <$> case mdebt of
-      Nothing -> return cost
-      Just d  -> assert (d >= cost) $ return d
-    MergingRun mergeType <$> newSTRef (OngoingMerge debt rs r)
-  where
-    cost = sum (map runSize rs)
-    -- deliberately lazy:
-    r    = mergek mergeType rs
+newMergingRun mdebt mergeType runs = do
+    assertST $ length runs > 1
+    -- in some cases, no merging is required at all
+    state <- case filter (\r -> runSize r > 0) runs of
+      []  -> return $ CompletedMerge Map.empty
+      [r] -> return $ CompletedMerge r
+      rs  -> do
+        let !cost = sum (map runSize rs)
+        debt <- newMergeDebt <$> case mdebt of
+          Nothing -> return cost
+          Just d  -> assert (d >= cost) $ return d
+        let merged = mergek mergeType rs  -- deliberately lazy
+        return $ OngoingMerge debt rs merged
+    MergingRun mergeType <$> newSTRef state
 
 mergek :: MergeType -> [Run] -> Run
 mergek = \case
