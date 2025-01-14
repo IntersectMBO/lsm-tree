@@ -1,3 +1,4 @@
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 {- HLINT ignore "Redundant if" -}
 
@@ -21,6 +22,8 @@ module Test.Util.FS (
   , assertNumOpenHandles
     -- * Equality
   , approximateEqStream
+    -- * Arbitrary
+  , NoCleanupErrors (..)
   ) where
 
 import           Control.Concurrent.Class.MonadMVar
@@ -39,6 +42,7 @@ import           System.FS.IO
 import           System.FS.Sim.Error
 import           System.FS.Sim.MockFS
 import           System.FS.Sim.STM
+import qualified System.FS.Sim.Stream as Stream
 import           System.FS.Sim.Stream (InternalInfo (..), Stream (..))
 import           System.IO.Temp
 import           Test.QuickCheck
@@ -216,3 +220,80 @@ approximateEqStream (UnsafeStream infoXs xs) (UnsafeStream infoYs ys) =
       (Infinite, Infinite) -> True
       (Finite, Finite)     ->  xs == ys
       (_, _)               -> False
+
+{-------------------------------------------------------------------------------
+  Arbitrary
+-------------------------------------------------------------------------------}
+
+-- | No errors on closing file handles and removing files
+newtype NoCleanupErrors = NoCleanupErrors Errors
+  deriving stock Show
+
+mkNoCleanupErrors :: Errors -> NoCleanupErrors
+mkNoCleanupErrors errs = NoCleanupErrors $ errs {
+      hCloseE = Stream.empty
+    , removeFileE = Stream.empty
+    }
+
+instance Arbitrary NoCleanupErrors where
+  arbitrary = do
+      errs <- arbitrary
+      pure $ mkNoCleanupErrors errs
+
+  -- The shrinker for 'Errors' does not re-introduce 'hCloseE' and 'removeFile'.
+  shrink (NoCleanupErrors errs) = NoCleanupErrors <$> shrink errs
+
+newtype TestOpenMode = TestOpenMode OpenMode
+  deriving stock Show
+
+instance Arbitrary OpenMode where
+  arbitrary = genOpenMode
+  shrink = shrinkOpenMode
+
+genOpenMode :: Gen OpenMode
+genOpenMode = oneof [
+      pure ReadMode
+    , WriteMode <$> genAllowExisting
+    , ReadWriteMode <$> genAllowExisting
+    , AppendMode <$> genAllowExisting
+    ]
+  where
+    _coveredAllCases x = case x of
+        ReadMode{}      -> ()
+        WriteMode{}     -> ()
+        ReadWriteMode{} -> ()
+        AppendMode{}    -> ()
+
+shrinkOpenMode :: OpenMode -> [OpenMode]
+shrinkOpenMode = \case
+    ReadMode -> []
+    WriteMode ae ->
+        ReadMode
+      : (WriteMode <$> shrinkAllowExisting ae)
+    ReadWriteMode ae ->
+        ReadMode
+      : WriteMode ae
+      : (ReadWriteMode <$> shrinkAllowExisting ae)
+    AppendMode ae ->
+        ReadMode
+      : WriteMode ae
+      : ReadWriteMode ae
+      : (AppendMode <$> shrinkAllowExisting ae)
+
+instance Arbitrary AllowExisting where
+  arbitrary = genAllowExisting
+  shrink = shrinkAllowExisting
+
+genAllowExisting :: Gen AllowExisting
+genAllowExisting = elements [
+      AllowExisting
+    , MustBeNew
+    ]
+  where
+    _coveredAllCases x = case x of
+        AllowExisting -> ()
+        MustBeNew     -> ()
+
+shrinkAllowExisting :: AllowExisting -> [AllowExisting]
+shrinkAllowExisting AllowExisting = []
+shrinkAllowExisting MustBeNew     = [AllowExisting]
