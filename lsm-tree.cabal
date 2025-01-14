@@ -393,6 +393,7 @@ test-suite lsm-tree-test
     Test.Util.Orphans
     Test.Util.PrettyProxy
     Test.Util.QC
+    Test.Util.QLS
     Test.Util.RawPage
     Test.Util.TypeFamilyWrappers
 

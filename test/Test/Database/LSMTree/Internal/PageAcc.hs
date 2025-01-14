@@ -15,7 +15,7 @@ import           Database.LSMTree.Internal.PageAcc1
 import           Database.LSMTree.Internal.RawPage (RawPage)
 import           Database.LSMTree.Internal.Serialise
 
-import           Database.LSMTree.Extras.NoThunks (prop_NoThunks)
+import           Database.LSMTree.Extras.NoThunks (propNoThunks)
 import qualified Database.LSMTree.Extras.ReferenceImpl as Ref
 import           Test.Util.RawPage (propEqualRawPages)
 
@@ -180,7 +180,7 @@ toRawPageViaPageAcc kops0 =
 prop_noThunks_newPageAcc :: Property
 prop_noThunks_newPageAcc = once $ ioProperty $ do
     pa <- stToIO newPageAcc
-    pure $ prop_NoThunks pa
+    propNoThunks pa
 
 prop_noThunks_pageAccAddElem :: Property
 prop_noThunks_pageAccAddElem = once $ ioProperty $ do
@@ -188,7 +188,7 @@ prop_noThunks_pageAccAddElem = once $ ioProperty $ do
       pa <- newPageAcc
       pageAccAddElemN pa 10
       pure pa
-    pure $ prop_NoThunks pa
+    propNoThunks pa
 
 prop_noThunks_resetPageAcc :: Property
 prop_noThunks_resetPageAcc = once $ ioProperty $ do
@@ -197,7 +197,7 @@ prop_noThunks_resetPageAcc = once $ ioProperty $ do
       pageAccAddElemN pa 10
       resetPageAcc pa
       pure pa
-    pure $ prop_NoThunks pa
+    propNoThunks pa
 
 pageAccAddElemN :: PageAcc s -> Word64 -> ST s ()
 pageAccAddElemN pa n = do
