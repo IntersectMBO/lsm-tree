@@ -30,8 +30,8 @@ data MCG = MCG { m :: !Word64, a :: !Word64, x :: !Word64 }
 -- >>> make 101_000_000 20240429
 -- MCG {m = 101000023, a = 197265, x = 20240430}
 --
-make
-    :: Word64  -- ^ a lower bound for the period
+make ::
+       Word64  -- ^ a lower bound for the period
     -> Word64  -- ^ initial seed.
     -> MCG
 make (max 4 -> period_) seed = MCG m a (mod (seed + 1) m)

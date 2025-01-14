@@ -227,8 +227,8 @@ resetPageAccN PageAcc {..} !n = do
 
 -- | Add an entry to 'PageAcc'.
 --
-pageAccAddElem
-    :: PageAcc s
+pageAccAddElem ::
+       PageAcc s
     -> SerialisedKey
     -> Entry SerialisedValue BlobSpan
     -> ST s Bool   -- ^ 'True' if value was successfully added.

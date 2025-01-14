@@ -90,8 +90,8 @@ instance Eq RawPage where
 --
 -- This function may copy data to satisfy internal 'RawPage' invariants.
 -- Use 'unsafeMakeRawPage' if you don't want copy.
-makeRawPage
-    :: ByteArray  -- ^ bytearray, must contain 4096 bytes (after offset)
+makeRawPage ::
+       ByteArray  -- ^ bytearray, must contain 4096 bytes (after offset)
     -> Int        -- ^ offset in bytes, must be 8 byte aligned.
     -> RawPage
 makeRawPage ba off
@@ -105,8 +105,8 @@ makeRawPage ba off
     page = RawPage (div2 off) ba
     clamp l u x = max l (min u x)
 
-unsafeMakeRawPage
-    :: ByteArray  -- ^ bytearray, must be pinned and contain 4096 bytes (after offset)
+unsafeMakeRawPage ::
+       ByteArray  -- ^ bytearray, must be pinned and contain 4096 bytes (after offset)
     -> Int        -- ^ offset in bytes, must be 8 byte aligned.
     -> RawPage
 unsafeMakeRawPage ba off = assert (invariant page) page
@@ -142,8 +142,8 @@ data RawPageLookup entry =
 --
 -- Return the 'Entry' corresponding to the supplied 'SerialisedKey' if it exists
 -- within the 'RawPage'.
-rawPageLookup
-    :: RawPage
+rawPageLookup ::
+       RawPage
     -> SerialisedKey
     -> RawPageLookup (Entry SerialisedValue BlobSpan)
 rawPageLookup !page !key
@@ -178,8 +178,8 @@ rawPageLookup !page !key
 --   * maybe True (key > ) (getRawPageIndexKey . rawPageIndex page . pred =<< rawPageFindKey page key)
 --
 --   * maybe (maximum (rawPageKeys page) < key) (rawPageFindKey page key)
-rawPageFindKey
-    :: RawPage
+rawPageFindKey ::
+       RawPage
     -> SerialisedKey
     -> Maybe Word16  -- ^ entry number of first entry greater or equal to the key
 rawPageFindKey !page !key
@@ -205,8 +205,8 @@ data BinarySearchResult
 
 -- | Binary search procedure shared between 'rawPageLookup' and 'rawPageFindKey'.
 {-# INLINE bisectPageToKey #-}
-bisectPageToKey
-  :: Int
+bisectPageToKey ::
+     Int
   -> RawPage
   -> SerialisedKey
   -> BinarySearchResult
@@ -255,8 +255,8 @@ getRawPageIndexKey = \case
 
 
 {-# INLINE rawPageIndex #-}
-rawPageIndex
-    :: RawPage
+rawPageIndex ::
+       RawPage
     -> Word16
     -> RawPageIndex (Entry SerialisedValue BlobSpan)
 rawPageIndex !page !ix
@@ -460,8 +460,8 @@ rawPageBlobSpanIndex page@(RawPage off ba) i = BlobSpan
     off1 = div4 off + 1 + ceilDiv64 (fromIntegral dirNumKeys) + ceilDiv64 (fromIntegral (mul2 dirNumKeys))
     off2 = mul2 (off1 + fromIntegral dirNumBlobs)
 
-rawPageCalculateBlobIndex
-    :: RawPage
+rawPageCalculateBlobIndex ::
+       RawPage
     -> Int  -- ^ key index
     -> Int  -- ^ blobspan index
 rawPageCalculateBlobIndex (RawPage off ba) i = do

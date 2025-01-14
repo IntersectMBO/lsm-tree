@@ -123,8 +123,8 @@ indexFromLastKeyList = IndexOrdinary . fromList
     correspond to the pages before, within, and after the page span,
     respectively.
 -}
-searchPartitioning
-    :: SerialisedKey
+searchPartitioning ::
+       SerialisedKey
     -> IndexOrdinary
     -> (Vector SerialisedKey, Vector SerialisedKey, Vector SerialisedKey)
 searchPartitioning key index@(IndexOrdinary lastKeys)
@@ -140,8 +140,8 @@ searchPartitioning key index@(IndexOrdinary lastKeys)
                                     lastKeys
 
 -- Adds a search partitioning to a counterexample.
-searchPartitioningCounterexample
-    :: Testable prop
+searchPartitioningCounterexample ::
+       Testable prop
     => Vector SerialisedKey
     -> Vector SerialisedKey
     -> Vector SerialisedKey
@@ -438,8 +438,8 @@ prop_partialKeyBlockMakesDeserialisationFail lastKeys
 
 -- ** Incremental construction
 
-prop_incrementalIndexConstructionWorks
-    :: LogicalPageSummaries SerialisedKey -> Property
+prop_incrementalIndexConstructionWorks ::
+     LogicalPageSummaries SerialisedKey -> Property
 prop_incrementalIndexConstructionWorks logicalPageSummaries
     = fst (incrementalConstruction appends) === indexFromAppends appends
     where
@@ -447,8 +447,8 @@ prop_incrementalIndexConstructionWorks logicalPageSummaries
     appends :: [Append]
     appends = toAppends logicalPageSummaries
 
-prop_incrementalSerialisedKeyListConstructionWorks
-    :: LogicalPageSummaries SerialisedKey -> Property
+prop_incrementalSerialisedKeyListConstructionWorks ::
+     LogicalPageSummaries SerialisedKey -> Property
 prop_incrementalSerialisedKeyListConstructionWorks logicalPageSummaries
     = snd (incrementalConstruction appends) === lastKeysBlockFromAppends appends
     where

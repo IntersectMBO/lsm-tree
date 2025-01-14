@@ -25,8 +25,8 @@ pattern BoundInclusive k = Bound k Inclusive
 -- | Find all the keys in the given range and return the corresponding
 -- (key, value) pairs (in ascending order).
 --
-rangeLookup
-    :: forall k v. Ord k
+rangeLookup ::
+       forall k v. Ord k
     => Bound k    -- ^ lower bound
     -> Bound k    -- ^ upper bound
     -> Map k v

@@ -295,8 +295,8 @@ We could also make it exact, but then we'll need to carry some state around
 (at least the difference).
 
 -}
-generateBatch
-    :: Int       -- ^ initial size of the collection
+generateBatch ::
+       Int       -- ^ initial size of the collection
     -> Int       -- ^ batch size
     -> MCG.MCG   -- ^ generator
     -> Int       -- ^ batch number

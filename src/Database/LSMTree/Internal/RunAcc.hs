@@ -152,8 +152,8 @@ unsafeFinalise racc@RunAcc {..} = do
 -- the special versions 'addSmallKeyOp' or 'addLargeKeyOp'. If it is
 -- pre-serialised, use 'addLargeSerialisedKeyOp'.
 --
-addKeyOp
-  :: RunAcc s
+addKeyOp ::
+     RunAcc s
   -> SerialisedKey
   -> Entry SerialisedValue BlobSpan -- ^ the full value, not just a prefix
   -> ST s ([RawPage], [RawOverflowPage], [Chunk])
@@ -177,8 +177,8 @@ addKeyOp racc k e
 --
 -- This is guaranteed to add the key\/op, and it may yield (at most one) page.
 --
-addSmallKeyOp
-  :: RunAcc s
+addSmallKeyOp ::
+     RunAcc s
   -> SerialisedKey
   -> Entry SerialisedValue BlobSpan
   -> ST s (Maybe (RawPage, Maybe Chunk))
@@ -223,8 +223,8 @@ addSmallKeyOp racc@RunAcc{..} k e =
 -- the run's page file in that order, the 'RawPage's followed by the
 -- 'RawOverflowPage's.
 --
-addLargeKeyOp
-  :: RunAcc s
+addLargeKeyOp ::
+     RunAcc s
   -> SerialisedKey
   -> Entry SerialisedValue BlobSpan -- ^ the full value, not just a prefix
   -> ST s ([RawPage], [RawOverflowPage], [Chunk])
@@ -271,8 +271,8 @@ addLargeKeyOp racc@RunAcc{..} k e =
 --
 -- Otherwise, use 'addLargeKeyOp' or 'addSmallKeyOp' as appropriate.
 --
-addLargeSerialisedKeyOp
-  :: RunAcc s
+addLargeSerialisedKeyOp ::
+     RunAcc s
   -> SerialisedKey     -- ^ The key
   -> RawPage           -- ^ The page that this key\/op is in, which must be the
                        -- first page of a multi-page representation of a single

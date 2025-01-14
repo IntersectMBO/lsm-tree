@@ -50,8 +50,8 @@ type Hash = Word64
 --
 class Hashable a where
     -- | Compute a 64-bit hash of a value.
-    hashSalt64
-        :: Word64  -- ^ seed
+    hashSalt64 ::
+           Word64  -- ^ seed
         -> a       -- ^ value to hash
         -> Word64
 

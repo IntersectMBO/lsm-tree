@@ -40,8 +40,8 @@ prop :: Bound Int -> Bound Int -> Map Int Int -> Property
 prop lb ub m =
     rangeLookup lb ub m === naiveRangeLookup lb ub m
 
-naiveRangeLookup
-    :: Ord k
+naiveRangeLookup ::
+       Ord k
     => Bound k    -- ^ lower bound
     -> Bound k    -- ^ upper bound
     -> Map k v

@@ -219,8 +219,8 @@ prepKeyHashes keys =
     P.generatePrimArray (V.length keys) $ \i ->
       Bloom.makeCheapHashes (V.unsafeIndex keys i)
 
-prepInitialCandidateProbes
-  :: P.StrictArray (Bloom SerialisedKey)
+prepInitialCandidateProbes ::
+     P.StrictArray (Bloom SerialisedKey)
   -> P.PrimArray (Bloom.CheapHashes SerialisedKey)
      -- ^ The pre-computed \"cheap hashes\" of the keys.
   -> P.MutablePrimArray s CandidateProbe
@@ -262,8 +262,8 @@ prepInitialCandidateProbes
 
 
 {-# NOINLINE bloomQueriesBody #-}
-bloomQueriesBody
-  :: forall s.
+bloomQueriesBody ::
+     forall s.
      P.StrictArray (Bloom SerialisedKey)
   -> P.PrimArray (Bloom.CheapHashes SerialisedKey)
      -- ^ The pre-computed \"cheap hashes\" of the keys.
@@ -286,8 +286,8 @@ bloomQueriesBody !filters !keyhashes !candidateProbes =
     {-# INLINE prepGivenCandidateProbe #-}
 
     -- assume buff size of 0x20, so mask of 0x1f
-    testCandidateProbe, prepNextCandidateProbe
-      :: Int -> Int
+    testCandidateProbe, prepNextCandidateProbe ::
+         Int -> Int
          -- ^ The read and write indexes within the rolling buffer. These wrap
          -- around.
       -> RunIxKeyIx
@@ -374,8 +374,8 @@ bloomQueriesBody !filters !keyhashes !candidateProbes =
       | otherwise =
           P.resizeMutablePrimArray output outputix
 
-    prepGivenCandidateProbe
-      :: Int -> Int
+    prepGivenCandidateProbe ::
+         Int -> Int
       -> RunIxKeyIx
       -> P.MutablePrimArray s RunIxKeyIx
       -> Int

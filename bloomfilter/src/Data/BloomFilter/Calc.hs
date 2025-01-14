@@ -17,8 +17,8 @@ import           Numeric (expm1)
 -- >>> [ showFFloat (Just 5) (falsePositiveProb 10_000 100_000 k) "" | k <- [1..5] ]
 -- ["0.09516","0.03286","0.01741","0.01181","0.00943"]
 --
-falsePositiveProb
-    :: Double  -- ^ /n/, number of elements
+falsePositiveProb ::
+       Double  -- ^ /n/, number of elements
     -> Double  -- ^ /m/, size of bloom filter
     -> Double  -- ^ /k/, number of hash functions
     -> Double
@@ -28,8 +28,8 @@ falsePositiveProb n m k =
 
 -- | Filter size for given number of elements, false positive rate and
 -- number of hash functions.
-filterSize
-    :: Double  -- ^ /n/, number of elements
+filterSize ::
+       Double  -- ^ /n/, number of elements
     -> Double  -- ^ /e/, false positive rate
     -> Double  -- ^ /k/, number of hash functions
     -> Double
