@@ -134,9 +134,12 @@ open ::
   -> FS.FsPath
   -> FS.AllowExisting
   -> m (Ref (WriteBufferBlobs m h))
+-- TODO: make exception safe
 open fs blobFileName blobFileAllowExisting = do
     -- Must use read/write mode because we write blobs when adding, but
     -- we can also be asked to retrieve blobs at any time.
+    --
+    -- TODO: openBlobFile should be called with exceptions masked
     fromBlobFile fs =<< openBlobFile fs blobFileName (FS.ReadWriteMode blobFileAllowExisting)
 
 {-# SPECIALISE fromBlobFile :: HasFS IO h -> Ref (BlobFile IO h) -> IO (Ref (WriteBufferBlobs IO h)) #-}
