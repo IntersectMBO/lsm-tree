@@ -45,7 +45,7 @@ import           Database.LSMTree.Internal.BloomFilter (bloomFilterFromSBS)
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
 import           Database.LSMTree.Internal.Index (Index, IndexAcc)
-import           Database.LSMTree.Internal.Index.Some (SomeIndex)
+import           Database.LSMTree.Internal.Index.Some (Index)
 import qualified Database.LSMTree.Internal.Index.Some as Index (fromSBS,
                      sizeInPages)
 import           Database.LSMTree.Internal.Page (NumPages)
@@ -80,7 +80,7 @@ data Run m h = Run {
       -- | The in-memory index mapping keys to page numbers in the
       -- Key\/Ops file. In future we may support alternative index
       -- representations.
-    , runIndex          :: !SomeIndex
+    , runIndex          :: !Index
       -- | The file handle for the Key\/Ops file. This file is opened
       -- read-only and is accessed in a page-oriented way, i.e. only
       -- reading whole pages, at page offsets. It will be opened with

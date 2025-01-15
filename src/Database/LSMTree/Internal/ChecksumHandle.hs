@@ -38,7 +38,7 @@ import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.Index (Index)
 import qualified Database.LSMTree.Internal.Index as Index (headerLBS)
-import           Database.LSMTree.Internal.Index.Some (SomeIndex)
+import           Database.LSMTree.Internal.Index.Some (Index)
 import qualified Database.LSMTree.Internal.Index.Some as Index (finalLBS)
 import           Database.LSMTree.Internal.Paths (ForBlob (..), ForFilter (..),
                      ForIndex (..), ForKOps (..))
@@ -240,14 +240,14 @@ writeIndexChunk hfs indexHandle chunk =
      HasFS IO h
   -> ForIndex (ChecksumHandle RealWorld h)
   -> NumEntries
-  -> SomeIndex
+  -> Index
   -> IO () #-}
 writeIndexFinal ::
      (MonadSTM m, PrimMonad m)
   => HasFS m h
   -> ForIndex (ChecksumHandle (PrimState m) h)
   -> NumEntries
-  -> SomeIndex
+  -> Index
   -> m ()
 writeIndexFinal hfs indexHandle numEntries index =
     writeToHandle hfs (unForIndex indexHandle) $

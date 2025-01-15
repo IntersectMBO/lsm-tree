@@ -46,7 +46,7 @@ import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Chunk (Chunk)
 import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..))
 import           Database.LSMTree.Internal.Index (IndexAcc)
-import           Database.LSMTree.Internal.Index.Some (SomeIndex, SomeIndexAcc)
+import           Database.LSMTree.Internal.Index.Some (Index, IndexAcc)
 import qualified Database.LSMTree.Internal.Index.Some as Index (appendMulti,
                      appendSingle, newWithDefaults, unsafeEnd)
 import           Database.LSMTree.Internal.PageAcc (PageAcc)
@@ -73,7 +73,7 @@ import qualified Monkey
 -- 'unsafeFinalise'.
 data RunAcc s = RunAcc {
       mbloom     :: !(MBloom s SerialisedKey)
-    , mindex     :: !(SomeIndexAcc s)
+    , mindex     :: !(IndexAcc s)
     , mpageacc   :: !(PageAcc s)
     , entryCount :: !(PrimVar s Int)
     }
@@ -124,7 +124,7 @@ unsafeFinalise ::
   -> ST s ( Maybe RawPage
           , Maybe Chunk
           , Bloom SerialisedKey
-          , SomeIndex
+          , Index
           , NumEntries
           )
 unsafeFinalise racc@RunAcc {..} = do

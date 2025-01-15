@@ -27,7 +27,7 @@ import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.Index (IndexAcc,
                      resultingIndexTypeProxy)
-import           Database.LSMTree.Internal.Index.Some (SomeIndex)
+import           Database.LSMTree.Internal.Index.Some (Index)
 import           Database.LSMTree.Internal.Paths
 import           Database.LSMTree.Internal.RawOverflowPage (RawOverflowPage)
 import           Database.LSMTree.Internal.RawPage (RawPage)
@@ -174,7 +174,7 @@ addLargeSerialisedKeyOp RunBuilder{..} key page overflowPages = do
 {-# SPECIALISE unsafeFinalise ::
      Bool
   -> RunBuilder IO h
-  -> IO (HasFS IO h, HasBlockIO IO h, RunFsPaths, Bloom SerialisedKey, SomeIndex, NumEntries) #-}
+  -> IO (HasFS IO h, HasBlockIO IO h, RunFsPaths, Bloom SerialisedKey, Index, NumEntries) #-}
 -- | Finish construction of the run.
 -- Writes the filter and index to file and leaves all written files on disk.
 --
@@ -185,7 +185,7 @@ unsafeFinalise ::
      (MonadST m, MonadSTM m, MonadThrow m)
   => Bool -- ^ drop caches
   -> RunBuilder m h
-  -> m (HasFS m h, HasBlockIO m h, RunFsPaths, Bloom SerialisedKey, SomeIndex, NumEntries)
+  -> m (HasFS m h, HasBlockIO m h, RunFsPaths, Bloom SerialisedKey, Index, NumEntries)
 unsafeFinalise dropCaches RunBuilder {..} = do
     -- write final bits
     (mPage, mChunk, runFilter, runIndex, numEntries) <-
