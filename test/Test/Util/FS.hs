@@ -24,6 +24,10 @@ module Test.Util.FS (
   , assertNumOpenHandles
     -- * Equality
   , approximateEqStream
+    -- * Errors
+  , noHCloseE
+  , noRemoveFileE
+  , noRemoveDirectoryRecursiveE
     -- * Arbitrary
   , NoCleanupErrors (..)
   ) where
@@ -241,6 +245,19 @@ approximateEqStream (UnsafeStream infoXs xs) (UnsafeStream infoYs ys) =
       (_, _)               -> False
 
 {-------------------------------------------------------------------------------
+  Errors
+-------------------------------------------------------------------------------}
+
+noHCloseE :: Errors -> Errors
+noHCloseE errs = errs { hCloseE = Stream.empty }
+
+noRemoveFileE :: Errors -> Errors
+noRemoveFileE errs = errs { removeFileE = Stream.empty }
+
+noRemoveDirectoryRecursiveE :: Errors -> Errors
+noRemoveDirectoryRecursiveE errs = errs { removeDirectoryRecursiveE = Stream.empty }
+
+{-------------------------------------------------------------------------------
   Arbitrary
 -------------------------------------------------------------------------------}
 
@@ -249,10 +266,11 @@ newtype NoCleanupErrors = NoCleanupErrors Errors
   deriving stock Show
 
 mkNoCleanupErrors :: Errors -> NoCleanupErrors
-mkNoCleanupErrors errs = NoCleanupErrors $ errs {
-      hCloseE = Stream.empty
-    , removeFileE = Stream.empty
-    }
+mkNoCleanupErrors errs = NoCleanupErrors $
+      noHCloseE
+    $ noRemoveFileE
+    $ noRemoveDirectoryRecursiveE
+    $ errs
 
 instance Arbitrary NoCleanupErrors where
   arbitrary = do
