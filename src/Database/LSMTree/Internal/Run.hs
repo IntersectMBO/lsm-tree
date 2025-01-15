@@ -267,7 +267,7 @@ data FileFormatError = FileFormatError FS.FsPath String
 -- Exceptions will be raised when any of the file's contents don't match their
 -- checksum ('ChecksumError') or can't be parsed ('FileFormatError').
 openFromDisk ::
-     forall m h i.
+     forall m h.
      (MonadSTM m, MonadMask m, PrimMonad m)
   => HasFS m h
   -> HasBlockIO m h
