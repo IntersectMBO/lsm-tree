@@ -7,7 +7,8 @@ module Database.LSMTree.Internal.WriteBufferReader (
 import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Monad.Class.MonadST (MonadST (..))
 import           Control.Monad.Class.MonadSTM (MonadSTM (..))
-import           Control.Monad.Class.MonadThrow (MonadMask, MonadThrow (..))
+import           Control.Monad.Class.MonadThrow (MonadMask, MonadThrow (..),
+                     bracketOnError)
 import           Control.Monad.Primitive (PrimMonad (..))
 import           Control.RefCount (Ref, dupRef, releaseRef)
 import           Data.Primitive.MutVar (MutVar, newMutVar, readMutVar,
@@ -43,8 +44,8 @@ import           System.FS.BlockIO.API (HasBlockIO)
   #-}
 -- | Read a serialised `WriteBuffer` back into memory.
 --
---   NOTE: The `BlobFile` argument /must be/ the blob file associated with the
---         write buffer; @`readWriteBuffer`@ does not check this.
+-- The argument blob file ('BlobFile') must be the file associated with the
+-- argument key\/ops file ('ForKOps'). 'readWriteBuffer' does not check this.
 readWriteBuffer ::
      (MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
   => ResolveSerialisedValue
@@ -54,7 +55,7 @@ readWriteBuffer ::
   -> Ref (BlobFile m h)
   -> m WriteBuffer
 readWriteBuffer resolve hfs hbio kOpsPath blobFile =
-  bracket (new hfs hbio kOpsPath blobFile) close $ readEntries
+    bracket (new hfs hbio kOpsPath blobFile) close $ readEntries
   where
     readEntries reader = readEntriesAcc WB.empty
       where
@@ -88,6 +89,12 @@ data WriteBufferReader m h = WriteBufferReader {
     -> IO (WriteBufferReader IO h)
   #-}
 -- | See 'Database.LSMTree.Internal.RunReader.new'.
+--
+-- REF: the resulting 'WriteBufferReader' must be closed once it is no longer
+-- used.
+--
+-- ASYNC: this should be called with asynchronous exceptions masked because it
+-- allocates/creates resources.
 new :: forall m h.
      (MonadMVar m, MonadST m, MonadMask m)
   => HasFS m h
@@ -95,16 +102,18 @@ new :: forall m h.
   -> ForKOps FS.FsPath
   -> Ref (BlobFile m h)
   -> m (WriteBufferReader m h)
-new readerHasFS readerHasBlockIO kOpsPath blobFile = do
-  readerKOpsHandle <- FS.hOpen readerHasFS (unForKOps kOpsPath) FS.ReadMode
-  -- Double the file readahead window (only applies to this file descriptor)
-  FS.hAdviseAll readerHasBlockIO readerKOpsHandle FS.AdviceSequential
-  readerBlobFile <- dupRef blobFile
-  -- Load first page from disk, if it exists.
-  readerCurrentEntryNo <- newPrimVar (0 :: Word16)
-  firstPage <- readDiskPage readerHasFS readerKOpsHandle
-  readerCurrentPage <- newMutVar firstPage
-  pure $ WriteBufferReader{..}
+new readerHasFS readerHasBlockIO kOpsPath blobFile =
+    bracketOnError openKOps (FS.hClose readerHasFS) $ \readerKOpsHandle -> do
+      -- Double the file readahead window (only applies to this file descriptor)
+      FS.hAdviseAll readerHasBlockIO readerKOpsHandle FS.AdviceSequential
+      bracketOnError (dupRef blobFile) releaseRef $ \readerBlobFile -> do
+        -- Load first page from disk, if it exists.
+        readerCurrentEntryNo <- newPrimVar (0 :: Word16)
+        firstPage <- readDiskPage readerHasFS readerKOpsHandle
+        readerCurrentPage <- newMutVar firstPage
+        pure $ WriteBufferReader{..}
+  where
+    openKOps = FS.hOpen readerHasFS (unForKOps kOpsPath) FS.ReadMode
 
 {-# SPECIALISE
   next ::
@@ -112,6 +121,10 @@ new readerHasFS readerHasBlockIO kOpsPath blobFile = do
     -> IO (Result IO h)
   #-}
 -- | See 'Database.LSMTree.Internal.RunReader.next'.
+--
+-- TODO: 'next' is currently only used in 'readWriteBuffer', where it is a safe
+-- use of an unsafe function. If this function is ever exported and used
+-- directly, the TODOs in the body of this function should be addressed first.
 next :: forall m h.
      (MonadSTM m, MonadST m, MonadMask m)
   => WriteBufferReader m h
@@ -124,6 +137,10 @@ next WriteBufferReader {..} = do
         entryNo <- readPrimVar readerCurrentEntryNo
         go entryNo page
   where
+    -- TODO: if 'readerCurrentEntryNo' is incremented but an exception is thrown
+    -- before the 'Result' is used by the caller of 'next', then we'll lose that
+    -- 'Result'. The following call to 'next' will not return the 'Result' we
+    -- missed.
     go :: Word16 -> RawPage -> m (Result m h)
     go !entryNo !page =
         -- take entry from current page (resolve blob if necessary)
@@ -131,6 +148,10 @@ next WriteBufferReader {..} = do
           IndexNotPresent -> do
             -- if it is past the last one, load a new page from disk, try again
             newPage <- readDiskPage readerHasFS readerKOpsHandle
+            -- TODO: if the next disk page is read but an (async) exception is
+            -- thrown just before updating the MutVar below, then we lose the
+            -- disk page because 'readDiskPage' has already updated its file
+            -- pointer.
             stToIO $ writeMutVar readerCurrentPage newPage
             case newPage of
               Nothing -> do
@@ -154,10 +175,14 @@ next WriteBufferReader {..} = do
             return (ReadEntry key rawEntry)
 
 {-# SPECIALISE close :: WriteBufferReader IO h -> IO () #-}
+-- | Close the 'WriteBufferReader'.
+--
+-- ASYNC: this should be called with asynchronous exceptions masked because it
+-- releases/removes resources.
 close ::
      (MonadMask m, PrimMonad m)
   => WriteBufferReader m h
   -> m ()
 close WriteBufferReader{..} = do
   FS.hClose readerHasFS readerKOpsHandle
-  releaseRef readerBlobFile
+    `finally` releaseRef readerBlobFile

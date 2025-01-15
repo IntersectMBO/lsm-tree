@@ -306,6 +306,10 @@ readDiskPage ::
 readDiskPage fs h = do
     mba <- newPinnedByteArray pageSize
     -- TODO: make sure no other exception type can be thrown
+    --
+    -- TODO: if FS.FsReachEOF is thrown as an injected disk fault, then we
+    -- incorrectly deduce that the file has no more contents. We should probably
+    -- use an explicit file pointer instead in the style of 'FilePointer'.
     handleJust (guard . FS.isFsErrorType FS.FsReachedEOF) (\_ -> pure Nothing) $ do
       bytesRead <- FS.hGetBufExactly fs h mba 0 (fromIntegral pageSize)
       assert (fromIntegral bytesRead == pageSize) $ pure ()
