@@ -113,8 +113,7 @@ instance NFData MergeKnownCompleted where
   rnf MergeMaybeCompleted = ()
 
 {-# SPECIALISE new ::
-     IndexAcc j
-  => HasFS IO h
+     HasFS IO h
   -> HasBlockIO IO h
   -> ResolveSerialisedValue
   -> Run.RunDataCaching
@@ -132,7 +131,7 @@ instance NFData MergeKnownCompleted where
 -- This function should be run with asynchronous exceptions masked to prevent
 -- failing after internal resources have already been created.
 new ::
-     (MonadMVar m, MonadMask m, MonadSTM m, MonadST m, IndexAcc j)
+     (MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
   => HasFS m h
   -> HasBlockIO m h
   -> ResolveSerialisedValue

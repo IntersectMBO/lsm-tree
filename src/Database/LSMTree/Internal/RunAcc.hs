@@ -91,8 +91,7 @@ data RunBloomFilterAlloc =
 --
 -- @nentries@ should be an upper bound on the expected number of entries in the
 -- output run.
-new :: IndexAcc j
-    => NumEntries
+new :: NumEntries
     -> RunBloomFilterAlloc
     -> Proxy# j
     -> ST s (RunAcc s)

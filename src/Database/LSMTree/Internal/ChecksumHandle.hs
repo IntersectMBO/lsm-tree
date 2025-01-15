@@ -207,13 +207,12 @@ writeFilter hfs filterHandle bf =
     writeToHandle hfs (unForFilter filterHandle) (bloomFilterToLBS bf)
 
 {-# SPECIALISE writeIndexHeader ::
-     Index i
-  => HasFS IO h
+     HasFS IO h
   -> ForIndex (ChecksumHandle RealWorld h)
   -> Proxy# i
   -> IO () #-}
 writeIndexHeader ::
-     (MonadSTM m, PrimMonad m, Index i)
+     (MonadSTM m, PrimMonad m)
   => HasFS m h
   -> ForIndex (ChecksumHandle (PrimState m) h)
   -> Proxy# i

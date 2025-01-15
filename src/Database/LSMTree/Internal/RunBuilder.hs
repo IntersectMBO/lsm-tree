@@ -71,8 +71,7 @@ data RunBuilder m h = RunBuilder {
     }
 
 {-# SPECIALISE new ::
-     IndexAcc j
-  => HasFS IO h
+     HasFS IO h
   -> HasBlockIO IO h
   -> RunFsPaths
   -> NumEntries
@@ -83,7 +82,7 @@ data RunBuilder m h = RunBuilder {
 --
 -- NOTE: 'new' assumes that 'runDir' that the run is created in exists.
 new ::
-     (MonadST m, MonadSTM m, IndexAcc j)
+     (MonadST m, MonadSTM m)
   => HasFS m h
   -> HasBlockIO m h
   -> RunFsPaths

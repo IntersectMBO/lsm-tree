@@ -86,8 +86,7 @@ instance NFData Level where
 type Mappend = SerialisedValue -> SerialisedValue -> SerialisedValue
 
 {-# SPECIALISE new ::
-     IndexAcc j
-  => HasFS IO h
+     HasFS IO h
   -> HasBlockIO IO h
   -> RunDataCaching
   -> RunBloomFilterAlloc
@@ -100,7 +99,7 @@ type Mappend = SerialisedValue -> SerialisedValue -> SerialisedValue
 -- | Returns 'Nothing' if no input 'Run' contains any entries.
 -- The list of runs should be sorted from new to old.
 new ::
-     (MonadMask m, MonadSTM m, MonadST m, IndexAcc j)
+     (MonadMask m, MonadSTM m, MonadST m)
   => HasFS m h
   -> HasBlockIO m h
   -> RunDataCaching

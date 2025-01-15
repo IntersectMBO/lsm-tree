@@ -201,8 +201,7 @@ fromMutable runRunDataCaching builder = do
            (\runRefCounter -> Run { .. })
 
 {-# SPECIALISE fromWriteBuffer ::
-     IndexAcc j
-  => HasFS IO h
+     HasFS IO h
   -> HasBlockIO IO h
   -> RunDataCaching
   -> RunBloomFilterAlloc
@@ -219,7 +218,7 @@ fromMutable runRunDataCaching builder = do
 -- immediately when they are added to the write buffer, avoiding the need to do
 -- it here.
 fromWriteBuffer ::
-     (MonadST m, MonadSTM m, MonadMask m, IndexAcc j)
+     (MonadST m, MonadSTM m, MonadMask m)
   => HasFS m h
   -> HasBlockIO m h
   -> RunDataCaching
@@ -254,8 +253,7 @@ data FileFormatError = FileFormatError FS.FsPath String
   deriving anyclass Exception
 
 {-# SPECIALISE openFromDisk ::
-     Index i
-  => HasFS IO h
+     HasFS IO h
   -> HasBlockIO IO h
   -> RunDataCaching
   -> Proxy# i
@@ -270,7 +268,7 @@ data FileFormatError = FileFormatError FS.FsPath String
 -- checksum ('ChecksumError') or can't be parsed ('FileFormatError').
 openFromDisk ::
      forall m h i.
-     (MonadSTM m, MonadMask m, PrimMonad m, Index i)
+     (MonadSTM m, MonadMask m, PrimMonad m)
   => HasFS m h
   -> HasBlockIO m h
   -> RunDataCaching
