@@ -114,7 +114,6 @@ import qualified System.FS.Sim.Error as FSSim
 import           System.FS.Sim.Error (Errors)
 import qualified System.FS.Sim.MockFS as MockFS
 import           System.FS.Sim.MockFS (MockFS)
-import qualified System.FS.Sim.Stream as Stream
 import           System.FS.Sim.Stream (Stream)
 import           System.IO.Temp (createTempDirectory,
                      getCanonicalTemporaryDirectory)
@@ -133,7 +132,7 @@ import qualified Test.QuickCheck.StateModel.Lockstep.Run as Lockstep.Run
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck (testProperty)
 import           Test.Util.FS (approximateEqStream, assertNoOpenHandles,
-                     assertNumOpenHandles)
+                     assertNumOpenHandles, noRemoveDirectoryRecursiveE)
 import           Test.Util.PrettyProxy
 import           Test.Util.TypeFamilyWrappers (WrapBlob (..), WrapBlobRef (..),
                      WrapCursor (..), WrapTable (..))
@@ -1415,13 +1414,7 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
      ++ [ (1, fmap Some $ OpenSnapshot @k @v @b PrettyProxy <$>
                 genErrors <*> pure label <*> genUsedSnapshotName)
         | not (null usedSnapshotNames)
-        , let genErrors = do
-                merrs <- QC.arbitrary
-                case merrs of
-                  Nothing -> pure Nothing
-                  Just errs -> pure . Just $ errs {
-                      FSSim.removeDirectoryRecursiveE = Stream.empty
-                    }
+        , let genErrors = fmap noRemoveDirectoryRecursiveE <$> QC.arbitrary
         ]
 
      ++ [ (1, fmap Some $ DeleteSnapshot <$> genUsedSnapshotName)
