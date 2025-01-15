@@ -16,8 +16,10 @@ module Test.Util.FS (
   , propTrivial
   , propNumOpenHandles
   , propNoOpenHandles
+  , numDirEntries
   , propNumDirEntries
   , propNoDirEntries
+  , propEqNumDirEntries
   , assertNoOpenHandles
   , assertNumOpenHandles
     -- * Equality
@@ -190,6 +192,12 @@ propNumOpenHandles expected fs =
 propNoOpenHandles :: MockFS -> Property
 propNoOpenHandles fs = propNumOpenHandles 0 fs
 
+numDirEntries :: FsPath -> MockFS -> Int
+numDirEntries path fs = Set.size contents
+  where
+    (contents, _) =
+        runSimOrThrow $ runSimFS fs $ \hfs -> FS.listDirectory hfs path
+
 {-# INLINABLE propNumDirEntries #-}
 propNumDirEntries :: FsPath -> Int -> MockFS -> Property
 propNumDirEntries path expected fs =
@@ -199,19 +207,30 @@ propNumDirEntries path expected fs =
         (show path) actual) $
     printMockFSOnFailure fs $
     expected === actual
-  where
-    actual =
-      let (contents, _) = runSimOrThrow $
-            runSimFS fs $ \hfs ->
-              FS.listDirectory hfs path
-      in  Set.size contents
+  where actual = numDirEntries path fs
 
 {-# INLINABLE propNoDirEntries #-}
 propNoDirEntries :: FsPath -> MockFS -> Property
 propNoDirEntries path fs = propNumDirEntries path 0 fs
 
+{-# INLINABLE propEqNumDirEntries #-}
+propEqNumDirEntries :: FsPath -> MockFS -> MockFS -> Property
+propEqNumDirEntries path lhsFs rhsFs =
+    counterexample
+      (printf "The LHS has %d entries in the directory at %s, but the RHS has %d"
+        lhs (show path) rhs) $
+      printMockFSOnFailureWith "Mocked file system (LHS)" lhsFs $
+      printMockFSOnFailureWith "Mocked file system (RHS)" rhsFs $
+      lhs === rhs
+  where
+    lhs = numDirEntries path lhsFs
+    rhs = numDirEntries path rhsFs
+
 printMockFSOnFailure :: Testable prop => MockFS -> prop -> Property
-printMockFSOnFailure fs = counterexample ("Mocked file system: " <> pretty fs)
+printMockFSOnFailure = printMockFSOnFailureWith "Mocked file system"
+
+printMockFSOnFailureWith :: Testable prop => String -> MockFS -> prop -> Property
+printMockFSOnFailureWith s fs = counterexample (s <> ": " <> pretty fs)
 
 assertNoOpenHandles :: HasCallStack => MockFS -> a -> a
 assertNoOpenHandles fs = assertNumOpenHandles fs 0
