@@ -141,9 +141,7 @@ withSerialisedWriteBuffer hfs hbio wbPaths wb wbb =
     for_ [ Paths.writeBufferKOpsPath wbPaths
          , Paths.writeBufferBlobPath wbPaths
          , Paths.writeBufferChecksumsPath wbPaths
-         ] $ \fsPath -> do
-      fsPathExists <- FS.doesFileExist hfs fsPath
-      when fsPathExists $ FS.removeFile hfs fsPath
+         ] $ FS.removeFile hfs
 
 {-------------------------------------------------------------------------------
   RunData
