@@ -107,12 +107,10 @@ import qualified Database.LSMTree.Model.Session as Model
 import           NoThunks.Class
 import           Prelude hiding (init)
 import           System.Directory (removeDirectoryRecursive)
-import qualified System.FS.API as FS
 import           System.FS.API (FsError (..), HasFS, MountPoint (..), mkFsPath)
 import           System.FS.BlockIO.API (HasBlockIO, defaultIOCtxParams)
 import           System.FS.BlockIO.IO (ioHasBlockIO)
 import           System.FS.BlockIO.Sim (simErrorHasBlockIO)
-import qualified System.FS.CallStack as FS
 import           System.FS.IO (HandleIO, ioHasFS)
 import qualified System.FS.Sim.Error as FSSim
 import           System.FS.Sim.Error (Errors)
@@ -158,17 +156,14 @@ tests = testGroup "Test.Database.LSMTree.StateMachine" [
 
     , testProperty "propLockstep_RealImpl_MockFS_IOSim" $
         propLockstep_RealImpl_MockFS_IOSim nullTracer
-
-    , testProperty "prop_dummyFsError" $ \s -> QC.ioProperty $
-        case fsErrorHandler of
-          Handler f -> do
-            throwIO (dummyFsError s) `catch` \e -> do
-              e' <- f e
-              pure (e' QC.=== Just (Model.ErrFsError ("dummy: " ++ s)))
     ]
 
 labelledExamples :: IO ()
 labelledExamples = QC.labelledExamples $ Lockstep.Run.tagActions (Proxy @(ModelState R.Table))
+
+{-------------------------------------------------------------------------------
+  propLockstep: reference implementation
+-------------------------------------------------------------------------------}
 
 instance Arbitrary Model.TableConfig where
   arbitrary :: Gen Model.TableConfig
@@ -215,6 +210,10 @@ propLockstep_ModelIOImpl =
       where
         handler' :: ModelIO.Err -> Maybe Model.Err
         handler' (ModelIO.Err err) = Just err
+
+{-------------------------------------------------------------------------------
+  propLockstep: real implementation
+-------------------------------------------------------------------------------}
 
 instance Arbitrary R.TableConfig where
   arbitrary = do
@@ -1191,12 +1190,12 @@ runIO action lookUp = ReaderT $ \ !env -> do
           Class.mupserts (unwrapTable $ lookUp' tableVar) kmups
         RetrieveBlobs blobRefsVar -> catchErr handlers $
           fmap WrapBlob <$> Class.retrieveBlobs (Proxy @h) session (unwrapBlobRef <$> lookUp' blobRefsVar)
-        CreateSnapshot merrs label name tableVar -> catchErr handlers $
-          runRealWithInjectedErrors faultsVar "CreateSnapshot" errsVar merrs
+        CreateSnapshot merrs label name tableVar ->
+          runRealWithInjectedErrors "CreateSnapshot" env merrs
             (Class.createSnapshot label name (unwrapTable $ lookUp' tableVar))
             (\() -> Class.deleteSnapshot session name)
-        OpenSnapshot _ merrs label name -> catchErr handlers $
-          runRealWithInjectedErrors faultsVar "OpenSnapshot" errsVar merrs
+        OpenSnapshot _ merrs label name ->
+          runRealWithInjectedErrors "OpenSnapshot" env merrs
             (WrapTable <$> Class.openSnapshot session label name)
             (\(WrapTable t) -> Class.close t)
         DeleteSnapshot name -> catchErr handlers $
@@ -1212,8 +1211,6 @@ runIO action lookUp = ReaderT $ \ !env -> do
       where
         session = envSession env
         handlers = envHandlers env
-        errsVar = envErrors env
-        faultsVar = envInjectFaultResults env
 
     lookUp' :: Var h x -> Realized IO x
     lookUp' = lookUpGVar (Proxy @(RealMonad h IO)) lookUp
@@ -1255,12 +1252,12 @@ runIOSim action lookUp = ReaderT $ \ !env -> do
           Class.mupserts (unwrapTable $ lookUp' tableVar) kmups
         RetrieveBlobs blobRefsVar -> catchErr handlers $
           fmap WrapBlob <$> Class.retrieveBlobs (Proxy @h) session (unwrapBlobRef <$> lookUp' blobRefsVar)
-        CreateSnapshot merrs label name tableVar -> catchErr handlers $
-          runRealWithInjectedErrors faultsVar "CreateSnapshot" errsVar merrs
+        CreateSnapshot merrs label name tableVar ->
+          runRealWithInjectedErrors "CreateSnapshot" env merrs
             (Class.createSnapshot label name (unwrapTable $ lookUp' tableVar))
             (\() -> Class.deleteSnapshot session name)
-        OpenSnapshot _ merrs label name -> catchErr handlers $
-          runRealWithInjectedErrors faultsVar "OpenSnapshot" errsVar merrs
+        OpenSnapshot _ merrs label name ->
+          runRealWithInjectedErrors "OpenSnapshot" env merrs
             (WrapTable <$> Class.openSnapshot session label name)
             (\(WrapTable t) -> Class.close t)
         DeleteSnapshot name -> catchErr handlers $
@@ -1276,8 +1273,6 @@ runIOSim action lookUp = ReaderT $ \ !env -> do
       where
         session = envSession env
         handlers = envHandlers env
-        errsVar = envErrors env
-        faultsVar = envInjectFaultResults env
 
     lookUp' :: Var h x -> Realized (IOSim s) x
     lookUp' = lookUpGVar (Proxy @(RealMonad h (IOSim s))) lookUp
@@ -1294,45 +1289,40 @@ runIOSim action lookUp = ReaderT $ \ !env -> do
 -- delete that snapshot.
 runRealWithInjectedErrors ::
      (MonadCatch m, MonadSTM m, PrimMonad m)
-  => MutVar (PrimState m) [InjectFaultResult]
-  -> String -- ^ Name of the action
-  -> StrictTVar m Errors
+  => String -- ^ Name of the action
+  -> RealEnv h m
   -> Maybe Errors
-  -> m t -- ^ Action to run
+  -> m t-- ^ Action to run
   -> (t -> m ()) -- ^ Rollback if the action *accidentally* succeeded
-  -> m t
-runRealWithInjectedErrors faultsVar s errsVar merrs k rollback =
+  -> m (Either Model.Err t)
+runRealWithInjectedErrors s env merrs k rollback =
   case merrs of
     Nothing -> do
       modifyMutVar faultsVar (InjectFaultNone s :)
-      k
+      catchErr handlers k
     Just errs -> do
-      eith <- try @_ @FsError $ FSSim.withErrors errsVar errs k
+      eith <- catchErr handlers $ FSSim.withErrors errsVar errs k
       case eith of
-        Left e  -> do
+        Left (Model.ErrFsError _) -> do
           modifyMutVar faultsVar (InjectFaultInducedError s :)
-          throwIO e
+          pure eith
+        Left _ ->
+          pure eith
         Right x -> do
           modifyMutVar faultsVar (InjectFaultAccidentalSuccess s :)
           rollback x
-          throwIO (dummyFsError s)
+          pure $ Left $ Model.ErrFsError ("dummy: " <> s)
+  where
+    errsVar = envErrors env
+    faultsVar = envInjectFaultResults env
+    handlers = envHandlers env
 
 catchErr ::
-     forall m a. MonadCatch m
-  => [Handler m (Maybe Model.Err)] -> m a -> m (Either Model.Err a)
+     forall m a e. MonadCatch m
+  => [Handler m (Maybe e)] -> m a -> m (Either e a)
 catchErr hs action = catches (Right <$> action) (fmap f hs)
   where
     f (Handler h) = Handler $ \e -> maybe (throwIO e) (pure . Left) =<< h e
-
-dummyFsError :: String -> FsError
-dummyFsError s = FsError {
-      fsErrorType = FS.FsOther
-    , fsErrorPath = FS.FsErrorPath Nothing (FS.mkFsPath [])
-    , fsErrorString = "dummy: " ++ s
-    , fsErrorNo = Nothing
-    , fsErrorStack = FS.prettyCallStack
-    , fsLimitation = False
-    }
 
 {-------------------------------------------------------------------------------
   Generator and shrinking
