@@ -209,13 +209,13 @@ writeFilter hfs filterHandle bf =
 {-# SPECIALISE writeIndexHeader ::
      HasFS IO h
   -> ForIndex (ChecksumHandle RealWorld h)
-  -> Proxy# i
+  -> IndexType
   -> IO () #-}
 writeIndexHeader ::
      (MonadSTM m, PrimMonad m)
   => HasFS m h
   -> ForIndex (ChecksumHandle (PrimState m) h)
-  -> Proxy# i
+  -> IndexType
   -> m ()
 writeIndexHeader hfs indexHandle indexTypeProxy =
     writeToHandle hfs (unForIndex indexHandle) $

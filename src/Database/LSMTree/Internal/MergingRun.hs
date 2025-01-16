@@ -118,7 +118,7 @@ instance NFData MergeKnownCompleted where
   -> ResolveSerialisedValue
   -> Run.RunDataCaching
   -> RunBloomFilterAlloc
-  -> Proxy# j
+  -> IndexType
   -> Merge.Level
   -> RunFsPaths
   -> V.Vector (Ref (Run IO h))
@@ -137,7 +137,7 @@ new ::
   -> ResolveSerialisedValue
   -> Run.RunDataCaching
   -> RunBloomFilterAlloc
-  -> Proxy# j
+  -> IndexType
   -> Merge.Level
   -> RunFsPaths
   -> V.Vector (Ref (Run m h))

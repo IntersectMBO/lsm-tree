@@ -319,13 +319,13 @@ instance NFData FencePointerIndex where
   rnf OrdinaryIndex = ()
 
 withIndexTypeProxyForRun :: FencePointerIndex
-                         -> (forall i . Index i => Proxy# i -> r)
+                         -> (forall i . Index i => IndexType -> r)
                          -> r
 withIndexTypeProxyForRun CompactIndex  cont = cont (proxy# @IndexCompact)
 withIndexTypeProxyForRun OrdinaryIndex cont = cont (proxy# @IndexOrdinary)
 
 withIndexAccTypeProxyForRun :: FencePointerIndex
-                            -> (forall j . IndexAcc j => Proxy# j -> r)
+                            -> (forall j . IndexAcc j => IndexType -> r)
                             -> r
 withIndexAccTypeProxyForRun CompactIndex  cont = cont (proxy# @IndexCompactAcc)
 withIndexAccTypeProxyForRun OrdinaryIndex cont = cont (proxy# @IndexOrdinaryAcc)

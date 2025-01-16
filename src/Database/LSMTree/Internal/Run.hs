@@ -205,7 +205,7 @@ fromMutable runRunDataCaching builder = do
   -> HasBlockIO IO h
   -> RunDataCaching
   -> RunBloomFilterAlloc
-  -> Proxy# j
+  -> IndexType
   -> RunFsPaths
   -> WriteBuffer
   -> Ref (WriteBufferBlobs IO h)
@@ -223,7 +223,7 @@ fromWriteBuffer ::
   -> HasBlockIO m h
   -> RunDataCaching
   -> RunBloomFilterAlloc
-  -> Proxy# j
+  -> IndexType
   -> RunFsPaths
   -> WriteBuffer
   -> Ref (WriteBufferBlobs m h)
@@ -256,7 +256,7 @@ data FileFormatError = FileFormatError FS.FsPath String
      HasFS IO h
   -> HasBlockIO IO h
   -> RunDataCaching
-  -> Proxy# i
+  -> IndexType
   -> RunFsPaths
   -> IO (Ref (Run IO h)) #-}
 -- | Load a previously written run from disk, checking each file's checksum
@@ -272,7 +272,7 @@ openFromDisk ::
   => HasFS m h
   -> HasBlockIO m h
   -> RunDataCaching
-  -> Proxy# i
+  -> IndexType
   -> RunFsPaths
   -> m (Ref (Run m h))
 openFromDisk fs hbio runRunDataCaching indexTypeProxy runRunFsPaths = do

@@ -76,7 +76,7 @@ data RunBuilder m h = RunBuilder {
   -> RunFsPaths
   -> NumEntries
   -> RunBloomFilterAlloc
-  -> Proxy# j
+  -> IndexType
   -> IO (RunBuilder IO h) #-}
 -- | Create an 'RunBuilder' to start building a run.
 --
@@ -88,7 +88,7 @@ new ::
   -> RunFsPaths
   -> NumEntries  -- ^ an upper bound of the number of entries to be added
   -> RunBloomFilterAlloc
-  -> Proxy# j
+  -> IndexType
   -> m (RunBuilder m h)
 new hfs hbio runBuilderFsPaths numEntries alloc indexAccTypeProxy = do
     runBuilderAcc <- ST.stToIO $ RunAcc.new numEntries alloc indexAccTypeProxy

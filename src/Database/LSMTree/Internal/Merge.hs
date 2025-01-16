@@ -90,7 +90,7 @@ type Mappend = SerialisedValue -> SerialisedValue -> SerialisedValue
   -> HasBlockIO IO h
   -> RunDataCaching
   -> RunBloomFilterAlloc
-  -> Proxy# j
+  -> IndexType
   -> Level
   -> Mappend
   -> Run.RunFsPaths
@@ -104,7 +104,7 @@ new ::
   -> HasBlockIO m h
   -> RunDataCaching
   -> RunBloomFilterAlloc
-  -> Proxy# j
+  -> IndexType
   -> Level
   -> Mappend
   -> Run.RunFsPaths

@@ -93,7 +93,7 @@ data RunBloomFilterAlloc =
 -- output run.
 new :: NumEntries
     -> RunBloomFilterAlloc
-    -> Proxy# j
+    -> IndexType
     -> ST s (RunAcc s)
 new (NumEntries nentries) alloc indexAccTypeProxy = do
     mbloom <- case alloc of
