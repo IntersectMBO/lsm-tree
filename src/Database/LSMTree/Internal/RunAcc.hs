@@ -1,4 +1,3 @@
-{-# LANGUAGE MagicHash       #-}
 {-# LANGUAGE RecordWildCards #-}
 {- HLINT ignore "Redundant lambda" -}
 {- HLINT ignore "Use camelCase" -}

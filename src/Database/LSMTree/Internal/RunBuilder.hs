@@ -1,5 +1,3 @@
-{-# LANGUAGE MagicHash #-}
-
 -- | A mutable run ('RunBuilder') that is under construction.
 --
 module Database.LSMTree.Internal.RunBuilder (

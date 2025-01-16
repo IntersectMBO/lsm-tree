@@ -1,5 +1,3 @@
-{-# LANGUAGE MagicHash #-}
-
 module Database.LSMTree.Internal.Config (
     LevelNo (..)
     -- * Table configuration

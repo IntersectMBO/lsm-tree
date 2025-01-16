@@ -1,5 +1,3 @@
-{-# LANGUAGE MagicHash #-}
-
 -- | The 'Merge' type and its functions are not intended for concurrent use.
 -- Concurrent access should therefore be sequentialised using a suitable
 -- concurrency primitive, such as an 'MVar'.

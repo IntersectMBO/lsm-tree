@@ -2,7 +2,6 @@
 {-# LANGUAGE DeriveAnyClass     #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DerivingVia        #-}
-{-# LANGUAGE MagicHash          #-}
 {-# LANGUAGE RecordWildCards    #-}
 
 -- | Runs of sorted key\/value data.

@@ -1,5 +1,3 @@
-{-# LANGUAGE MagicHash    #-}
-
 {- HLINT ignore "Use when" -}
 
 -- | An incremental merge of multiple runs.
