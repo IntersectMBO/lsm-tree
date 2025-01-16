@@ -228,13 +228,13 @@ fromWriteBuffer ::
   -> WriteBuffer
   -> Ref (WriteBufferBlobs m h)
   -> m (Ref (Run m h))
-fromWriteBuffer fs hbio caching alloc indexAccTypeProxy fsPaths buffer blobs = do
+fromWriteBuffer fs hbio caching alloc indexType fsPaths buffer blobs = do
     builder <- Builder.new fs
                            hbio
                            fsPaths
                            (WB.numEntries buffer)
                            alloc
-                           indexAccTypeProxy
+                           indexType
     for_ (WB.toList buffer) $ \(k, e) ->
       Builder.addKeyOp builder k (fmap (WBB.mkRawBlobRef blobs) e)
       --TODO: the fmap entry here reallocates even when there are no blobs
@@ -275,7 +275,7 @@ openFromDisk ::
   -> IndexType
   -> RunFsPaths
   -> m (Ref (Run m h))
-openFromDisk fs hbio runRunDataCaching indexTypeProxy runRunFsPaths = do
+openFromDisk fs hbio runRunDataCaching indexType runRunFsPaths = do
     expectedChecksums <-
        expectValidFile (runChecksumsPath runRunFsPaths) . fromChecksumsFile
          =<< CRC.readChecksumsFile fs (runChecksumsPath runRunFsPaths)
@@ -290,7 +290,7 @@ openFromDisk fs hbio runRunDataCaching indexTypeProxy runRunFsPaths = do
       expectValidFile (forRunFilterRaw paths) . bloomFilterFromSBS
         =<< readCRC (forRunFilterRaw expectedChecksums) (forRunFilterRaw paths)
     (runNumEntries, runIndex) <-
-      expectValidFile (forRunIndexRaw paths) . Index.fromSBS indexTypeProxy
+      expectValidFile (forRunIndexRaw paths) . Index.fromSBS indexType
         =<< readCRC (forRunIndexRaw expectedChecksums) (forRunIndexRaw paths)
 
     runKOpsFile <- FS.hOpen fs (runKOpsPath runRunFsPaths) FS.ReadMode

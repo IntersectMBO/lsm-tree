@@ -217,9 +217,9 @@ writeIndexHeader ::
   -> ForIndex (ChecksumHandle (PrimState m) h)
   -> IndexType
   -> m ()
-writeIndexHeader hfs indexHandle indexTypeProxy =
+writeIndexHeader hfs indexHandle indexType =
     writeToHandle hfs (unForIndex indexHandle) $
-      Index.headerLBS indexTypeProxy
+      Index.headerLBS indexType
 
 {-# SPECIALISE writeIndexChunk ::
      HasFS IO h

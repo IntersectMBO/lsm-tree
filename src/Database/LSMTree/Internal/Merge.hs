@@ -110,18 +110,13 @@ new ::
   -> Run.RunFsPaths
   -> V.Vector (Ref (Run m h))
   -> m (Maybe (Merge m h))
-new fs hbio mergeCaching alloc indexAccTypeProxy mergeLevel mergeMappend targetPaths runs = do
+new fs hbio mergeCaching alloc indexType mergeLevel mergeMappend targetPaths runs = do
     -- no offset, no write buffer
     mreaders <- Readers.new Readers.NoOffsetKey Nothing runs
     for mreaders $ \mergeReaders -> do
       -- calculate upper bounds based on input runs
       let numEntries = V.foldMap' Run.size runs
-      mergeBuilder <- Builder.new fs
-                                  hbio
-                                  targetPaths
-                                  numEntries
-                                  alloc
-                                  indexAccTypeProxy
+      mergeBuilder <- Builder.new fs hbio targetPaths numEntries alloc indexType
       mergeState <- newMutVar $! Merging
       return Merge {
           mergeHasFS = fs

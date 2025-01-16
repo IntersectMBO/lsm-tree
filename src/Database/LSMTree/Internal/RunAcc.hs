@@ -95,7 +95,7 @@ new :: NumEntries
     -> RunBloomFilterAlloc
     -> IndexType
     -> ST s (RunAcc s)
-new (NumEntries nentries) alloc indexAccTypeProxy = do
+new (NumEntries nentries) alloc indexType = do
     mbloom <- case alloc of
       RunAllocFixed !bitsPerEntry    ->
         let !nbits = fromIntegral bitsPerEntry * fromIntegral nentries
@@ -108,7 +108,7 @@ new (NumEntries nentries) alloc indexAccTypeProxy = do
         MBloom.new
           (fromIntegralChecked $ Monkey.numHashFunctions (fromIntegral nbits) (fromIntegral nentries))
           nbits
-    mindex <- Index.newWithDefaults indexAccTypeProxy
+    mindex <- Index.newWithDefaults indexType
     mpageacc <- PageAcc.newPageAcc
     entryCount <- newPrimVar 0
     pure RunAcc{..}

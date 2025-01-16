@@ -90,16 +90,14 @@ new ::
   -> RunBloomFilterAlloc
   -> IndexType
   -> m (RunBuilder m h)
-new hfs hbio runBuilderFsPaths numEntries alloc indexAccTypeProxy = do
-    runBuilderAcc <- ST.stToIO $ RunAcc.new numEntries alloc indexAccTypeProxy
+new hfs hbio runBuilderFsPaths numEntries alloc indexType = do
+    runBuilderAcc <- ST.stToIO $ RunAcc.new numEntries alloc indexType
     runBuilderBlobOffset <- newPrimVar 0
 
     runBuilderHandles <- traverse (makeHandle hfs) (pathsForRunFiles runBuilderFsPaths)
 
     let builder = RunBuilder { runBuilderHasFS = hfs, runBuilderHasBlockIO = hbio, .. }
-    writeIndexHeader hfs
-                     (forRunIndex runBuilderHandles)
-                     (resultingIndexTypeProxy indexAccTypeProxy)
+    writeIndexHeader hfs (forRunIndex runBuilderHandles) indexType
     return builder
 
 {-# SPECIALISE addKeyOp ::

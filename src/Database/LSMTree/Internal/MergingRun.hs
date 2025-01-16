@@ -142,7 +142,7 @@ new ::
   -> RunFsPaths
   -> V.Vector (Ref (Run m h))
   -> m (Ref (MergingRun m h))
-new hfs hbio resolve caching alloc indexAccTypeProxy mergeLevel runPaths inputRuns =
+new hfs hbio resolve caching alloc indexType mergeLevel runPaths inputRuns =
     -- If creating the Merge fails, we must release the references again.
     withTempRegistry $ \reg -> do
       runs <- V.mapM (\r -> allocateTemp reg (dupRef r) releaseRef) inputRuns
@@ -151,7 +151,7 @@ new hfs hbio resolve caching alloc indexAccTypeProxy mergeLevel runPaths inputRu
                       hbio
                       caching
                       alloc
-                      indexAccTypeProxy
+                      indexType
                       mergeLevel
                       resolve
                       runPaths
