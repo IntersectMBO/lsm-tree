@@ -34,10 +34,8 @@ import qualified Database.LSMTree.Internal.Chunk as Chunk (toByteString)
 import           Database.LSMTree.Internal.CRC32C (CRC32C)
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry
-import           Database.LSMTree.Internal.Index (Index)
-import qualified Database.LSMTree.Internal.Index as Index (headerLBS)
-import           Database.LSMTree.Internal.Index.Some (Index)
-import qualified Database.LSMTree.Internal.Index.Some as Index (finalLBS)
+import           Database.LSMTree.Internal.Index (IndexType, Index)
+import qualified Database.LSMTree.Internal.Index as Index (headerLBS, finalLBS)
 import           Database.LSMTree.Internal.Paths (ForBlob (..), ForFilter (..),
                      ForIndex (..), ForKOps (..))
 import qualified Database.LSMTree.Internal.RawBytes as RB

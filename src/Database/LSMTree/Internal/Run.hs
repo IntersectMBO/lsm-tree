@@ -43,10 +43,8 @@ import qualified Database.LSMTree.Internal.BlobRef as BlobRef
 import           Database.LSMTree.Internal.BloomFilter (bloomFilterFromSBS)
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
-import           Database.LSMTree.Internal.Index (Index, IndexAcc)
-import           Database.LSMTree.Internal.Index.Some (Index)
-import qualified Database.LSMTree.Internal.Index.Some as Index (fromSBS,
-                     sizeInPages)
+import           Database.LSMTree.Internal.Index (IndexType, Index)
+import qualified Database.LSMTree.Internal.Index as Index (fromSBS, sizeInPages)
 import           Database.LSMTree.Internal.Page (NumPages)
 import           Database.LSMTree.Internal.Paths as Paths
 import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc)

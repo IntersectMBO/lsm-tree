@@ -44,9 +44,8 @@ import           Database.LSMTree.Internal.Assertions (fromIntegralChecked)
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Chunk (Chunk)
 import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..))
-import           Database.LSMTree.Internal.Index (IndexAcc)
-import           Database.LSMTree.Internal.Index.Some (Index, IndexAcc)
-import qualified Database.LSMTree.Internal.Index.Some as Index (appendMulti,
+import           Database.LSMTree.Internal.Index (IndexType, Index, IndexAcc)
+import qualified Database.LSMTree.Internal.Index as Index (appendMulti,
                      appendSingle, newWithDefaults, unsafeEnd)
 import           Database.LSMTree.Internal.PageAcc (PageAcc)
 import qualified Database.LSMTree.Internal.PageAcc as PageAcc
