@@ -30,7 +30,6 @@ import           Database.LSMTree.Internal.RawPage (RawPage)
 import           Database.LSMTree.Internal.RunAcc (RunAcc, RunBloomFilterAlloc)
 import qualified Database.LSMTree.Internal.RunAcc as RunAcc
 import           Database.LSMTree.Internal.Serialise
-import           GHC.Exts (Proxy#)
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
 import qualified System.FS.BlockIO.API as FS

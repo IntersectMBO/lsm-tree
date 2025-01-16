@@ -45,7 +45,6 @@ import           Database.LSMTree.Internal.Paths (RunFsPaths (..))
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc)
-import           GHC.Exts (Proxy#)
 import           System.FS.API (HasFS)
 import           System.FS.BlockIO.API (HasBlockIO)
 

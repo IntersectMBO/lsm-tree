@@ -56,7 +56,6 @@ import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import           Database.LSMTree.Internal.WriteBufferBlobs (WriteBufferBlobs)
 import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
-import           GHC.Exts (Proxy#)
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
 import qualified System.FS.BlockIO.API as FS

@@ -38,7 +38,6 @@ import qualified Database.LSMTree.Internal.RunReader as Reader
 import           Database.LSMTree.Internal.RunReaders (Readers)
 import qualified Database.LSMTree.Internal.RunReaders as Readers
 import           Database.LSMTree.Internal.Serialise
-import           GHC.Exts (Proxy#)
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
 import           System.FS.BlockIO.API (HasBlockIO)

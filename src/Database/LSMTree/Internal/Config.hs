@@ -42,7 +42,6 @@ import qualified Database.LSMTree.Internal.Index as Index
                      (IndexType (Compact, Ordinary))
 import           Database.LSMTree.Internal.Run (RunDataCaching (..))
 import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..))
-import           GHC.Exts (Proxy#, proxy#)
 import qualified Monkey
 
 newtype LevelNo = LevelNo Int

@@ -44,7 +44,6 @@ import qualified Database.LSMTree.Internal.RawOverflowPage as RawOverflowPage
 import           Database.LSMTree.Internal.RawPage (RawPage)
 import qualified Database.LSMTree.Internal.RawPage as RawPage
 import           Database.LSMTree.Internal.Serialise
-import           GHC.Exts (Proxy#)
 import qualified System.FS.API as FS
 import           System.FS.API
 import qualified System.FS.BlockIO.API as FS

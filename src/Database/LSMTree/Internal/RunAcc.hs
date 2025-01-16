@@ -55,7 +55,6 @@ import           Database.LSMTree.Internal.RawPage (RawPage)
 import qualified Database.LSMTree.Internal.RawPage as RawPage
 import           Database.LSMTree.Internal.Serialise (SerialisedKey,
                      SerialisedValue)
-import           GHC.Exts (Proxy#)
 import qualified Monkey
 
 {-------------------------------------------------------------------------------
