@@ -66,13 +66,14 @@ module Test.Database.LSMTree.StateMachine (
   ) where
 
 import           Control.ActionRegistry (AbortActionRegistryError (..),
-                     CommitActionRegistryError (..))
+                     AbortActionRegistryReason (..), ActionError,
+                     CommitActionRegistryError (..), getActionError)
 import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Concurrent.Class.MonadSTM.Strict
 import           Control.Monad (forM_, void, (<=<))
 import           Control.Monad.Class.MonadThrow (Exception (..), Handler (..),
-                     MonadCatch (..), MonadThrow (..), catches,
-                     displayException)
+                     MonadCatch (..), MonadThrow (..), SomeException, catches,
+                     displayException, fromException)
 import           Control.Monad.IOSim
 import           Control.Monad.Primitive
 import           Control.Monad.Reader (ReaderT (..))
@@ -186,7 +187,7 @@ propLockstep_ModelIOImpl =
               env :: RealEnv ModelIO.Table IO
               env = RealEnv {
                   envSession = session
-                , envHandlers = [handler, fsErrorHandler]
+                , envHandlers = [handler, diskFaultErrorHandler]
                 , envErrors = errsVar
                 , envInjectFaultResults = faultsVar
                 }
@@ -289,8 +290,7 @@ propLockstep_RealImpl_RealFS_IO tr =
                   envSession = session
                 , envHandlers = [
                       realHandler @IO
-                    , fsErrorHandler
-                    , actionRegistryErrorHandler
+                    , diskFaultErrorHandler
                     ]
                 , envErrors = errsVar
                 , envInjectFaultResults = faultsVar
@@ -330,8 +330,7 @@ propLockstep_RealImpl_MockFS_IO tr =
                   envSession = session
                 , envHandlers = [
                       realHandler @IO
-                    , fsErrorHandler
-                    , actionRegistryErrorHandler
+                    , diskFaultErrorHandler
                     ]
                 , envErrors = errsVar
                 , envInjectFaultResults = faultsVar
@@ -359,8 +358,7 @@ propLockstep_RealImpl_MockFS_IOSim tr actions =
               envSession = session
             , envHandlers = [
                   realHandler @(IOSim s)
-                , fsErrorHandler
-                , actionRegistryErrorHandler
+                , diskFaultErrorHandler
                 ]
             , envErrors = errsVar
             , envInjectFaultResults = faultsVar
@@ -434,21 +432,29 @@ realHandler = Handler $ pure . handler'
     handler' (ErrBlobRefInvalid _)        = Just Model.ErrBlobRefInvalidated
     handler' _                            = Nothing
 
-fsErrorHandler :: Monad m => Handler m (Maybe Model.Err)
-fsErrorHandler = Handler $ pure . handler'
-  where
-    handler' :: FsError -> Maybe Model.Err
-    handler' e = Just (Model.ErrFsError (displayException e))
+diskFaultErrorHandler :: Monad m => Handler m (Maybe Model.Err)
+diskFaultErrorHandler = Handler $ \e -> pure $
+    if isDiskFault e
+      then Just (Model.ErrFsError (displayException e))
+      else Nothing
 
-actionRegistryErrorHandler :: Monad m => Handler m (Maybe Model.Err)
-actionRegistryErrorHandler = Handler $ \e -> pure $
-    if
-      | Just AbortActionRegistryError{} <- fromException e
-      -> Just (Model.ErrFsError (displayException e))
-      | Just CommitActionRegistryError{} <- fromException e
-      -> Just (Model.ErrFsError (displayException e))
-      | otherwise
-      -> Nothing
+isDiskFault :: SomeException -> Bool
+isDiskFault e
+  | Just (CommitActionRegistryError es) <- fromException e
+  = all isDiskFault' es
+  | Just (AbortActionRegistryError reason es) <- fromException e
+  = case reason of
+      ReasonExitCaseException e' -> isDiskFault e' && all isDiskFault' es
+      ReasonExitCaseAbort        -> False
+  | Just (e' :: ActionError)<- fromException e
+  = isDiskFault' (getActionError e')
+  | Just FsError{} <- fromException e
+  = True
+  | otherwise
+  = False
+  where
+    isDiskFault' :: forall e. Exception e => e -> Bool
+    isDiskFault' = isDiskFault . toException
 
 createSystemTempDirectory ::  [Char] -> IO (FilePath, HasFS IO HandleIO, HasBlockIO IO HandleIO)
 createSystemTempDirectory prefix = do
