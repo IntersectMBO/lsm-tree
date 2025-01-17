@@ -490,11 +490,14 @@ instance R.ResolveValue Value where
   Model state
 -------------------------------------------------------------------------------}
 
-type ModelState :: ((Type -> Type) -> Type -> Type -> Type -> Type) -> Type
-data ModelState h = ModelState Model.Model Stats
+type ModelStateTypeParams = TableKind
+type TableKind = (Type -> Type) -> Type -> Type -> Type -> Type
+
+type ModelState :: ModelStateTypeParams -> Type
+data ModelState ps = ModelState Model.Model Stats
   deriving stock Show
 
-initModelState :: ModelState h
+initModelState :: ModelState ps
 initModelState = ModelState Model.initModel initStats
 
 {-------------------------------------------------------------------------------
