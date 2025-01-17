@@ -29,7 +29,7 @@ tests = testGroup "Test.Database.LSMTree.StateMachine.DL" [
       QC.testProperty "prop_example" prop_example
     ]
 
-instance DynLogicModel (Lockstep (ModelState R.Table))
+instance DynLogicModel (Lockstep (ModelState RealImplMockFS))
 
 -- | An example of how dynamic logic formulas can be run.
 --
@@ -51,7 +51,7 @@ prop_example =
     tr = nullTracer
 
 -- | Create an initial "large" table
-dl_example :: DL (Lockstep (ModelState R.Table)) ()
+dl_example :: DL (Lockstep (ModelState RealImplMockFS)) ()
 dl_example = do
     -- Create an initial table and fill it with some inserts
     var3 <- action $ New (PrettyProxy @((Key, Value, Blob))) (TableConfig {
