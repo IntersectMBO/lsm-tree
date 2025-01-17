@@ -473,6 +473,7 @@ createSystemTempDirectory prefix = do
     hasBlockIO <- ioHasBlockIO hasFS defaultIOCtxParams
     pure (tempDir, hasFS, hasBlockIO)
 
+
 {-------------------------------------------------------------------------------
   Key and value types
 -------------------------------------------------------------------------------}
@@ -601,13 +602,13 @@ instance ( Show (Class.TableConfig (Table h))
     -- Snapshots
     CreateSnapshot ::
          C k v b
-      => Maybe Errors
+      => StaticMaybe 'True (Maybe Errors)
       -> R.SnapshotLabel -> R.SnapshotName -> Var h (WrapTable (Table h) IO k v b)
       -> Act h ()
     OpenSnapshot   ::
          C k v b
       => {-# UNPACK #-} !(PrettyProxy (k, v, b))
-      -> Maybe Errors
+      -> StaticMaybe 'True (Maybe Errors)
       -> R.SnapshotLabel -> R.SnapshotName
       -> Act h (WrapTable (Table h) IO k v b)
     DeleteSnapshot :: R.SnapshotName -> Act h ()
@@ -917,8 +918,11 @@ data RealEnv h m = RealEnv {
   }
 
 data InjectFaultResult =
-    -- | No faults were injected.
-    InjectFaultNone
+    -- | Fault injection was disabled.
+    InjectFaultDisabled
+      String -- ^ Action name
+    -- | Fault injections were enabled, but no faults injections were generated.
+  | InjectFaultNone
       String -- ^ Action name
     -- | Faults were injected, but the action accidentally succeeded, so the
     -- action had to be rolled back
@@ -1126,12 +1130,12 @@ runModel lookUp = \case
       . Model.runModelM (Model.retrieveBlobs (getBlobRefs . lookUp $ blobsVar))
     CreateSnapshot merrs label name tableVar ->
       wrap MUnit
-      . Model.runModelMWithInjectedErrors merrs
+      . Model.runModelMWithInjectedErrors (staticMaybe Nothing id merrs)
           (Model.createSnapshot label name (getTable $ lookUp tableVar))
           (pure ())
     OpenSnapshot _ merrs label name ->
       wrap MTable
-      . Model.runModelMWithInjectedErrors merrs
+      . Model.runModelMWithInjectedErrors (staticMaybe Nothing id merrs)
           (Model.openSnapshot label name)
           (pure ())
     DeleteSnapshot name ->
@@ -1313,16 +1317,19 @@ runRealWithInjectedErrors ::
      (MonadCatch m, MonadSTM m, PrimMonad m)
   => String -- ^ Name of the action
   -> RealEnv h m
-  -> Maybe Errors
+  -> StaticMaybe b (Maybe Errors)
   -> m t-- ^ Action to run
   -> (t -> m ()) -- ^ Rollback if the action *accidentally* succeeded
   -> m (Either Model.Err t)
 runRealWithInjectedErrors s env merrs k rollback =
   case merrs of
-    Nothing -> do
+    StaticNothing -> do
+      modifyMutVar faultsVar (InjectFaultDisabled s :)
+      catchErr handlers k
+    StaticJust Nothing -> do
       modifyMutVar faultsVar (InjectFaultNone s :)
       catchErr handlers k
-    Just errs -> do
+    StaticJust (Just errs) -> do
       eith <- catchErr handlers $ FSSim.withErrors errsVar errs k
       case eith of
         Left (Model.ErrFsError _) -> do
@@ -1453,7 +1460,7 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
                 genErrors <*> pure label <*> genUsedSnapshotName)
         | not (null usedSnapshotNames)
           -- TODO: generate errors
-        , let genErrors = pure Nothing
+        , let genErrors = genStaticMaybe $ pure Nothing
         ]
 
      ++ [ (1, fmap Some $ DeleteSnapshot <$> genUsedSnapshotName)
@@ -1481,7 +1488,7 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
                 genErrors <*> pure label <*> genUnusedSnapshotName <*> genTableVar)
         | not (null unusedSnapshotNames)
            -- TODO: generate errors
-        , let genErrors = pure Nothing
+        , let genErrors = genStaticMaybe $ pure Nothing
         ]
      ++ [ (5,  fmap Some $ Duplicate <$> genTableVar)
         | length tableVars <= 5 -- no more than 5 tables at once
@@ -2147,3 +2154,49 @@ tagFinalState actions tagger =
     finalAnnState = stateAfter @(Lockstep state) actions
 
     finalTags = tagger $ underlyingState finalAnnState
+
+{-------------------------------------------------------------------------------
+  StaticMaybe
+-------------------------------------------------------------------------------}
+
+type StaticMaybe :: Bool -> Type -> Type
+data StaticMaybe isJust a where
+  StaticJust :: a -> StaticMaybe True a
+  StaticNothing :: StaticMaybe False a
+
+deriving stock instance Eq a => Eq (StaticMaybe isJust a)
+deriving stock instance Show a => Show (StaticMaybe isJust a)
+
+staticMaybe :: b -> (a -> b) -> StaticMaybe isJust a -> b
+staticMaybe _ f (StaticJust x) = f x
+staticMaybe z _ StaticNothing  = z
+
+data SBool b where
+  STrue :: SBool True
+  SFalse :: SBool False
+
+class SBoolI a where
+  sbool :: Proxy a -> SBool a
+
+instance SBoolI True where
+  sbool _ = STrue
+
+instance SBoolI False where
+  sbool _ = SFalse
+
+genStaticMaybe ::
+     forall isJust a. SBoolI isJust
+  => Gen a
+  -> Gen (StaticMaybe isJust a)
+genStaticMaybe gen = case sbool (Proxy @isJust) of
+    STrue  -> StaticJust <$> gen
+    SFalse -> pure StaticNothing
+
+shrinkStaticMaybe :: (a -> [a]) -> StaticMaybe isJust a -> [StaticMaybe isJust a]
+shrinkStaticMaybe shr = \case
+    StaticNothing -> []
+    StaticJust x -> StaticJust <$> shr x
+
+instance (Arbitrary a, SBoolI isJust) => Arbitrary (StaticMaybe isJust a) where
+  arbitrary = genStaticMaybe QC.arbitrary
+  shrink = shrinkStaticMaybe QC.shrink
