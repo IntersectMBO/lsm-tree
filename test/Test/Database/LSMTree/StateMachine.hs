@@ -52,8 +52,11 @@ module Test.Database.LSMTree.StateMachine (
     tests
   , labelledExamples
     -- * Properties
+  , ModelIOImpl
   , propLockstep_ModelIOImpl
+  , RealImplRealFS
   , propLockstep_RealImpl_RealFS_IO
+  , RealImplMockFS
   , propLockstep_RealImpl_MockFS_IO
   , propLockstep_RealImpl_MockFS_IOSim
     -- * Lockstep
@@ -160,7 +163,7 @@ tests = testGroup "Test.Database.LSMTree.StateMachine" [
     ]
 
 labelledExamples :: IO ()
-labelledExamples = QC.labelledExamples $ Lockstep.Run.tagActions (Proxy @(ModelState R.Table))
+labelledExamples = QC.labelledExamples $ Lockstep.Run.tagActions (Proxy @(ModelState RealImplMockFS))
 
 {-------------------------------------------------------------------------------
   propLockstep: reference implementation
@@ -173,18 +176,20 @@ instance Arbitrary Model.TableConfig where
 deriving via AllowThunk (ModelIO.Session IO)
     instance NoThunks (ModelIO.Session IO)
 
+type ModelIOImpl = ModelIO.Table
+
 propLockstep_ModelIOImpl ::
-     Actions (Lockstep (ModelState ModelIO.Table))
+     Actions (Lockstep (ModelState ModelIOImpl))
   -> QC.Property
 propLockstep_ModelIOImpl =
     runActionsBracket'
-      (Proxy @(ModelState ModelIO.Table))
+      (Proxy @(ModelState ModelIOImpl))
       acquire
       release
       (\r (session, errsVar) -> do
             faultsVar <- newMutVar []
             let
-              env :: RealEnv ModelIO.Table IO
+              env :: RealEnv ModelIOImpl IO
               env = RealEnv {
                   envSession = session
                 , envHandlers = [handler, diskFaultErrorHandler]
@@ -273,19 +278,21 @@ instance Arbitrary R.WriteBufferAlloc where
       | QC.Positive x' <- QC.shrink (QC.Positive x)
       ]
 
+type RealImplRealFS = R.Table
+
 propLockstep_RealImpl_RealFS_IO ::
      Tracer IO R.LSMTreeTrace
-  -> Actions (Lockstep (ModelState R.Table))
+  -> Actions (Lockstep (ModelState RealImplRealFS))
   -> QC.Property
 propLockstep_RealImpl_RealFS_IO tr =
     runActionsBracket'
-      (Proxy @(ModelState R.Table))
+      (Proxy @(ModelState RealImplRealFS))
       acquire
       release
       (\r (_, session, errsVar) -> do
             faultsVar <- newMutVar []
             let
-              env :: RealEnv R.Table IO
+              env :: RealEnv RealImplRealFS IO
               env = RealEnv {
                   envSession = session
                 , envHandlers = [
@@ -313,19 +320,21 @@ propLockstep_RealImpl_RealFS_IO tr =
         R.closeSession session
         removeDirectoryRecursive tmpDir
 
+type RealImplMockFS = R.Table
+
 propLockstep_RealImpl_MockFS_IO ::
      Tracer IO R.LSMTreeTrace
-  -> Actions (Lockstep (ModelState R.Table))
+  -> Actions (Lockstep (ModelState RealImplMockFS))
   -> QC.Property
 propLockstep_RealImpl_MockFS_IO tr =
     runActionsBracket'
-      (Proxy @(ModelState R.Table))
+      (Proxy @(ModelState RealImplMockFS))
       (acquire_RealImpl_MockFS tr)
       release_RealImpl_MockFS
       (\r (_, session, errsVar) -> do
             faultsVar <- newMutVar []
             let
-              env :: RealEnv R.Table IO
+              env :: RealEnv RealImplMockFS IO
               env = RealEnv {
                   envSession = session
                 , envHandlers = [
@@ -343,7 +352,7 @@ propLockstep_RealImpl_MockFS_IO tr =
 
 propLockstep_RealImpl_MockFS_IOSim ::
      (forall s. Tracer (IOSim s) R.LSMTreeTrace)
-  -> Actions (Lockstep (ModelState R.Table))
+  -> Actions (Lockstep (ModelState RealImplMockFS))
   -> QC.Property
 propLockstep_RealImpl_MockFS_IOSim tr actions =
     monadicIOSim_ prop
@@ -353,7 +362,7 @@ propLockstep_RealImpl_MockFS_IOSim tr actions =
         (fsVar, session, errsVar) <- QC.run (acquire_RealImpl_MockFS tr)
         faultsVar <- QC.run $ newMutVar []
         let
-          env :: RealEnv R.Table (IOSim s)
+          env :: RealEnv RealImplMockFS (IOSim s)
           env = RealEnv {
               envSession = session
             , envHandlers = [
@@ -364,7 +373,7 @@ propLockstep_RealImpl_MockFS_IOSim tr actions =
             , envInjectFaultResults = faultsVar
             }
         void $ QD.runPropertyReaderT
-                (QD.runActions @(Lockstep (ModelState R.Table)) actions)
+                (QD.runActions @(Lockstep (ModelState RealImplMockFS)) actions)
                 env
         faults <- QC.run $ readMutVar faultsVar
         QC.run $ release_RealImpl_MockFS (fsVar, session, errsVar)
