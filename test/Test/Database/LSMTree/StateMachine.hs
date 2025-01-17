@@ -176,7 +176,7 @@ instance Arbitrary Model.TableConfig where
 deriving via AllowThunk (ModelIO.Session IO)
     instance NoThunks (ModelIO.Session IO)
 
-type ModelIOImpl = ModelIO.Table
+type ModelIOImpl = '(ModelIO.Table, DisableFaultInjection)
 
 propLockstep_ModelIOImpl ::
      Actions (Lockstep (ModelState ModelIOImpl))
@@ -278,7 +278,7 @@ instance Arbitrary R.WriteBufferAlloc where
       | QC.Positive x' <- QC.shrink (QC.Positive x)
       ]
 
-type RealImplRealFS = R.Table
+type RealImplRealFS = '(R.Table, DisableFaultInjection)
 
 propLockstep_RealImpl_RealFS_IO ::
      Tracer IO R.LSMTreeTrace
@@ -320,7 +320,7 @@ propLockstep_RealImpl_RealFS_IO tr =
         R.closeSession session
         removeDirectoryRecursive tmpDir
 
-type RealImplMockFS = R.Table
+type RealImplMockFS = '(R.Table, EnableFaultInjection)
 
 propLockstep_RealImpl_MockFS_IO ::
      Tracer IO R.LSMTreeTrace
@@ -500,12 +500,21 @@ instance R.ResolveValue Value where
   Model state
 -------------------------------------------------------------------------------}
 
-type ModelStateTypeParams = TableKind
+type ModelStateTypeParams = (TableKind, OptionFaultInjection)
 type TableKind = (Type -> Type) -> Type -> Type -> Type -> Type
+
+data OptionFaultInjection =
+    EnableFaultInjection
+  | DisableFaultInjection
 
 type Table :: ModelStateTypeParams -> TableKind
 type family Table ps where
-  Table h = h
+  Table '(h, iof) = h
+
+type InjectFault :: ModelStateTypeParams -> Bool
+type family InjectFault ps where
+  InjectFault '(h, EnableFaultInjection) = True
+  InjectFault '(h, DisableFaultInjection) = False
 
 type ModelState :: ModelStateTypeParams -> Type
 data ModelState ps = ModelState Model.Model Stats
@@ -553,6 +562,9 @@ instance ( Show (Class.TableConfig (Table h))
          , Eq (Class.TableConfig (Table h))
          , Arbitrary (Class.TableConfig (Table h))
          , Typeable (Table h)
+         , Typeable h
+         , Typeable (InjectFault h)
+         , SBoolI (InjectFault h)
          ) => StateModel (Lockstep (ModelState h)) where
   data instance Action (Lockstep (ModelState h)) a where
     -- Tables
@@ -602,13 +614,13 @@ instance ( Show (Class.TableConfig (Table h))
     -- Snapshots
     CreateSnapshot ::
          C k v b
-      => StaticMaybe 'True (Maybe Errors)
+      => StaticMaybe (InjectFault h) (Maybe Errors)
       -> R.SnapshotLabel -> R.SnapshotName -> Var h (WrapTable (Table h) IO k v b)
       -> Act h ()
     OpenSnapshot   ::
          C k v b
       => {-# UNPACK #-} !(PrettyProxy (k, v, b))
-      -> StaticMaybe 'True (Maybe Errors)
+      -> StaticMaybe (InjectFault h) (Maybe Errors)
       -> R.SnapshotLabel -> R.SnapshotName
       -> Act h (WrapTable (Table h) IO k v b)
     DeleteSnapshot :: R.SnapshotName -> Act h ()
@@ -726,6 +738,9 @@ instance ( Eq (Class.TableConfig (Table h))
          , Show (Class.TableConfig (Table h))
          , Arbitrary (Class.TableConfig (Table h))
          , Typeable (Table h)
+         , Typeable h
+         , Typeable (InjectFault h)
+         , SBoolI (InjectFault h)
          ) => InLockstep (ModelState h) where
   type instance ModelOp (ModelState h) = Op
 
@@ -942,7 +957,10 @@ instance ( Eq (Class.TableConfig (Table h))
          , Show (Class.TableConfig (Table h))
          , Arbitrary (Class.TableConfig (Table h))
          , Typeable (Table h)
+         , Typeable h
          , NoThunks (Class.Session (Table h) IO)
+         , Typeable (InjectFault h)
+         , SBoolI (InjectFault h)
          ) => RunLockstep (ModelState h) (RealMonad h IO) where
   observeReal ::
        Proxy (RealMonad h IO)
@@ -1003,6 +1021,9 @@ instance ( Eq (Class.TableConfig (Table h))
          , Show (Class.TableConfig (Table h))
          , Arbitrary (Class.TableConfig (Table h))
          , Typeable ((Table h))
+         , Typeable h
+         , Typeable (InjectFault h)
+         , SBoolI (InjectFault h)
          ) => RunLockstep (ModelState h) (RealMonad h (IOSim s)) where
   observeReal ::
        Proxy (RealMonad h (IOSim s))
@@ -1067,7 +1088,10 @@ instance ( Eq (Class.TableConfig (Table h))
          , Show (Class.TableConfig (Table h))
          , Arbitrary (Class.TableConfig (Table h))
          , Typeable (Table h)
+         , Typeable h
          , NoThunks (Class.Session (Table h) IO)
+         , Typeable (InjectFault h)
+         , SBoolI (InjectFault h)
          ) => RunModel (Lockstep (ModelState h)) (RealMonad h IO) where
   perform _     = runIO
   postcondition = Lockstep.Defaults.postcondition
@@ -1078,6 +1102,9 @@ instance ( Eq (Class.TableConfig (Table h))
          , Show (Class.TableConfig (Table h))
          , Arbitrary (Class.TableConfig (Table h))
          , Typeable (Table h)
+         , Typeable h
+         , Typeable (InjectFault h)
+         , SBoolI (InjectFault h)
          ) => RunModel (Lockstep (ModelState h)) (RealMonad h (IOSim s)) where
   perform _     = runIOSim
   postcondition = Lockstep.Defaults.postcondition
@@ -1365,6 +1392,9 @@ arbitraryActionWithVars ::
      , Show (Class.TableConfig (Table h))
      , Arbitrary (Class.TableConfig (Table h))
      , Typeable (Table h)
+     , Typeable h
+     , Typeable (InjectFault h)
+     , SBoolI (InjectFault h)
      )
   => Proxy (k, v, b)
   -> R.SnapshotLabel
@@ -1572,6 +1602,7 @@ shrinkActionWithVars ::
        Eq (Class.TableConfig (Table h))
      , Arbitrary (Class.TableConfig (Table h))
      , Typeable ((Table h))
+     , SBoolI (InjectFault h)
      )
   => ModelVarContext (ModelState h)
   -> ModelState h
@@ -1694,6 +1725,9 @@ updateStats ::
      , Eq (Class.TableConfig (Table h))
      , Arbitrary (Class.TableConfig (Table h))
      , Typeable (Table h)
+     , Typeable h
+     , Typeable (InjectFault h)
+     , SBoolI (InjectFault h)
      )
   => LockstepAction (ModelState h) a
   -> ModelLookUp (ModelState h)
