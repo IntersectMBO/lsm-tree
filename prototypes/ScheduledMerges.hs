@@ -93,12 +93,13 @@ type Levels s = [Level s]
 -- completed, the resulting run will become a resident run at this level.
 data Level s = Level !(IncomingRun s) ![Run]
 
--- | An additional optional last level, created as a result of 'union'. It can
--- not only contain an ongoing merge of multiple runs, but a nested tree of
--- merges. See Note [Table Unions].
-data UnionLevel s = NoUnion
-                    -- | We track the debt to make sure it never increases.
-                  | Union !(MergingTree s) !(STRef s Debt)
+-- | We represent single runs specially, rather than putting them in as a
+-- 'CompletedMerge'. This is for two reasons: to see statically that it's a
+-- single run without having to read the 'STRef', and secondly to make it easier
+-- to avoid supplying merge credits. It's not essential, but simplifies things
+-- somewhat.
+data IncomingRun s = Merging !MergePolicy !(MergingRun s)
+                   | Single  !Run
 
 -- | The merge policy for a LSM level can be either tiering or levelling.
 -- In this design we use levelling for the last level, and tiering for
@@ -108,31 +109,6 @@ data UnionLevel s = NoUnion
 --
 data MergePolicy = MergePolicyTiering | MergePolicyLevelling
   deriving stock (Eq, Show)
-
--- | A last level merge behaves differently from a mid-level merge: last level
--- merges can actually remove delete operations, whereas mid-level merges must
--- preserve them. This is orthogonal to the 'MergePolicy'.
---
-data MergeLastLevel = MergeMidLevel | MergeLastLevel
-  deriving stock (Eq, Show)
-
--- | Merges can either exist on a level of the LSM, or be a union merge of two
--- tables. Union merges follow the semantics of @Data.Map.unionWith (<>)@. Since
--- the input runs are semantically treated like @Data.Map@s, deletes from one
--- input don't affect another (there is no distinction between a deleted value
--- and one that was never inserted) and inserts need to be merged monoidally
--- using 'resolveValue' (as if they were mupserts). See Note [Table Unions].
---
-data MergeType = MergeLevel MergeLastLevel | MergeUnion
-  deriving stock (Eq, Show)
-
--- | We represent single runs specially, rather than putting them in as a
--- 'CompletedMerge'. This is for two reasons: to see statically that it's a
--- single run without having to read the 'STRef', and secondly to make it easier
--- to avoid supplying merge credits. It's not essential, but simplifies things
--- somewhat.
-data IncomingRun s = Merging !MergePolicy !(MergingRun s)
-                   | Single  !Run
 
 -- | A \"merging run\" is a mutable representation of an incremental merge.
 -- It is also a unit of sharing between duplicated tables.
@@ -144,6 +120,30 @@ data MergingRunState = CompletedMerge !Run
                          !MergeDebt
                          ![Run]  -- ^ inputs of the merge
                          Run  -- ^ output of the merge (lazily evaluated)
+
+-- | Merges can either exist on a level of the LSM, or be a union merge of two
+-- tables. Union merges follow the semantics of @Data.Map.unionWith (<>)@. Since
+-- the input runs are semantically treated like @Data.Map@s, deletes from one
+-- input don't affect another (there is no distinction between a deleted value
+-- and one that was never inserted) and inserts need to be merged monoidally
+-- using 'resolveValue' (as if they were mupserts). See Note [Table Unions].
+--
+data MergeType = MergeLevel MergeLastLevel | MergeUnion
+  deriving stock (Eq, Show)
+
+-- | A last level merge behaves differently from a mid-level merge: last level
+-- merges can actually remove delete operations, whereas mid-level merges must
+-- preserve them. This is orthogonal to the 'MergePolicy'.
+--
+data MergeLastLevel = MergeMidLevel | MergeLastLevel
+  deriving stock (Eq, Show)
+
+-- | An additional optional last level, created as a result of 'union'. It can
+-- not only contain an ongoing merge of multiple runs, but a nested tree of
+-- merges. See Note [Table Unions].
+data UnionLevel s = NoUnion
+                    -- | We track the debt to make sure it never increases.
+                  | Union !(MergingTree s) !(STRef s Debt)
 
 -- | A \"merging tree\" is a mutable representation of an incremental
 -- tree-shaped nested merge. This allows to represent union merges of entire
