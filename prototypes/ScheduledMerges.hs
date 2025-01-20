@@ -474,26 +474,26 @@ expectCompletedMergingRun (MergingRun _ ref) = do
       OngoingMerge d _ _ -> error $ "expectCompletedMergingRun:"
                                  ++ " remaining debt of " ++ show d
 
-supplyCreditsMergingRun :: Credit -> MergingRun s -> ST s Credit
+supplyCreditsMergingRun :: Credit -> MergingRun s -> ST s SupplyResult
 supplyCreditsMergingRun = checked remainingDebtMergingRun $ \credits (MergingRun _ ref) -> do
     mrs <- readSTRef ref
     case mrs of
-      CompletedMerge{} -> return credits
+      CompletedMerge{} -> return (Done credits)
       OngoingMerge d rs r ->
         case paydownMergeDebt credits d of
           MergeDebtDischarged _ c' -> do
             writeSTRef ref (CompletedMerge r)
-            return c'
+            return (Done c')
 
           MergeDebtPaydownCredited  d' -> do
             writeSTRef ref (OngoingMerge d' rs r)
-            return 0
+            return NotDone
 
           MergeDebtPaydownPerform _ d' -> do
             -- we're not doing any actual merging
             -- just tracking what we would do
             writeSTRef ref (OngoingMerge d' rs r)
-            return 0
+            return NotDone
 
 mergeBatchSize :: Int
 mergeBatchSize = 32
@@ -670,18 +670,20 @@ supplyUnionCredits (LSMHandle scr lsmr) credits
       Union tree debtRef -> do
         modifySTRef' scr (+1)
         _debt <- checkedUnionDebt tree debtRef  -- just to make sure it's checked
-        c' <- supplyCreditsMergingTree credits tree
+        res <- supplyCreditsMergingTree credits tree
         debt' <- checkedUnionDebt tree debtRef
-        if (debt' > 0)
-          then
-            -- should have spent these credits
-            assertST $ c' == 0
-          else do
+        case res of
+          Done c' -> do
+            assertST $ debt' == 0
             -- check it really is done
             _ <- expectCompletedMergingTree tree
-            return ()
-        invariant content
-        return c'
+            invariant content
+            return c'
+          NotDone -> do
+            assertST $ debt' > 0
+            invariant content
+            return 0
+
 
 -- TODO: At some point the completed merging tree should to moved into the
 -- regular levels, so it can be merged with other runs and last level merges can
@@ -1064,26 +1066,33 @@ remainingDebtMergingRun (MergingRun _ ref) =
       OngoingMerge d inputRuns _ ->
         return (mergeDebtLeft d, sum (map runSize inputRuns))
 
+data SupplyResult = Done Credit | NotDone
+
 -- | For each of the @supplyCredits@ type functions, we want to check some
 -- common properties.
 checked :: HasCallStack
         => (a -> ST s (Debt, Size))  -- ^ how to calculate the current debt
-        -> (Credit -> a -> ST s Credit)  -- ^ how to supply the credits
-        -> Credit -> a -> ST s Credit
+        -> (Credit -> a -> ST s SupplyResult)  -- ^ how to supply the credits
+        -> Credit -> a -> ST s SupplyResult
 checked query supply credits x = do
     assertST $ credits > 0   -- only call them when there are credits to spend
     debt <- fst <$> query x
     assertST $ debt >= 0     -- debt can't be negative
-    c' <- supply credits x
-    assertST $ c' <= credits -- can't have more leftovers than we started with
-    assertST $ c' >= 0       -- leftovers can't be negative
+    res <- supply credits x
     debt' <- fst <$> query x
     assertST $ debt' >= 0
-    -- the debt was reduced sufficiently (amount of credits spent)
-    assertST $ debt' <= debt - (credits - c')
-    return c'
+    case res of
+      Done c' -> do
+        assertST $ c' <= credits  -- can't have more than we started with
+        assertST $ c' >= 0        -- leftovers can't be negative
+        -- the debt was reduced sufficiently (amount of credits spent)
+        assertST $ debt' <= debt - (credits - c')
+      NotDone -> do
+        -- the debt was reduced sufficiently (amount of credits spent)
+        assertST $ debt' <= debt - credits
+    return res
 
-supplyCreditsMergingTree :: Credit -> MergingTree s -> ST s Credit
+supplyCreditsMergingTree :: Credit -> MergingTree s -> ST s SupplyResult
 supplyCreditsMergingTree = checked remainingDebtMergingTree $ \credits (MergingTree ref) -> do
     treeState <- readSTRef ref
     (!c', !treeState') <- supplyCreditsMergingTreeState credits treeState
@@ -1091,54 +1100,60 @@ supplyCreditsMergingTree = checked remainingDebtMergingTree $ \credits (MergingT
     return c'
 
 supplyCreditsMergingTreeState :: Credit -> MergingTreeState s
-                              -> ST s (Credit, MergingTreeState s)
+                              -> ST s (SupplyResult, MergingTreeState s)
 supplyCreditsMergingTreeState credits !state = do
     case state of
       CompletedTreeMerge{} ->
-        return (credits, state)
+        return (Done credits, state)
       OngoingTreeMerge mr -> do
-        c' <- supplyCreditsMergingRun credits mr
-        if c' <= 0
-          then return (0, state)
-          else do
+        supplyCreditsMergingRun credits mr >>= \case
+          NotDone ->
+            return (NotDone, state)
+          Done c' -> do
             r <- expectCompletedMergingRun mr
             -- all work is done, we can't spend any more credits
-            return (c', CompletedTreeMerge r)
+            return (Done c', CompletedTreeMerge r)
       PendingTreeMerge pm -> do
-        c' <- supplyCreditsPendingMerge credits pm
-        if c' <= 0
-          then
+        res <- supplyCreditsPendingMerge credits pm
+        case res of
+          NotDone ->
             -- still remaining work in children, we can't do more for now
-            return (c', state)
-          else do
+            return (NotDone, state)
+          Done c' -> do
             -- all children must be done, create new merge!
             (mergeType, rs) <- expectCompletedChildren pm
             -- no reason to claim a larger debt than sum of run sizes
             let debt = Nothing
             state' <- OngoingTreeMerge <$> newMergingRun debt mergeType rs
             -- use any remaining credits to progress the new merge
-            supplyCreditsMergingTreeState c' state'
+            if c' > 0
+              then supplyCreditsMergingTreeState c' state'
+              else return (NotDone, state')
 
-supplyCreditsPendingMerge :: Credit -> PendingMerge s -> ST s Credit
+supplyCreditsPendingMerge :: Credit -> PendingMerge s -> ST s SupplyResult
 supplyCreditsPendingMerge = checked remainingDebtPendingMerge $ \credits -> \case
     PendingLevelMerge irs tree ->
-      leftToRight supplyIncoming irs credits
-        >>= leftToRight supplyCreditsMergingTree (toList tree)
+      leftToRight supplyIncoming irs credits >>= \case
+        Done c' -> leftToRight supplyCreditsMergingTree (toList tree) c'
+        NotDone -> return NotDone
     PendingUnionMerge trees ->
       splitEqually supplyCreditsMergingTree trees credits
   where
     supplyIncoming c = \case
-        Single _     -> return c
+        Single _     -> return (Done c)
         Merging _ mr -> supplyCreditsMergingRun c mr
 
     -- supply credits left to right until they are used up
-    leftToRight :: (Credit -> a -> ST s Credit) -> [a] -> Credit -> ST s Credit
-    leftToRight _ _      0 = return 0
-    leftToRight _ []     c = return c
-    leftToRight f (x:xs) c = f c x >>= leftToRight f xs
+    leftToRight :: (Credit -> a -> ST s SupplyResult)
+                -> [a] -> Credit -> ST s SupplyResult
+    leftToRight _ []     c = return (Done c)
+    leftToRight _ _      0 = return NotDone
+    leftToRight f (x:xs) c = f c x >>= \case Done c' -> leftToRight f xs c'
+                                             NotDone -> return NotDone
 
     -- approximately equal, being more precise would require more iterations
-    splitEqually :: (Credit -> a -> ST s Credit) -> [a] -> Credit -> ST s Credit
+    splitEqually :: (Credit -> a -> ST s SupplyResult)
+                 -> [a] -> Credit -> ST s SupplyResult
     splitEqually f xs credits =
         -- first give each tree k = ceil(1/n) credits (last ones might get less)
         -- any remainders go left to right
@@ -1150,7 +1165,9 @@ supplyCreditsPendingMerge = checked remainingDebtPendingMerge $ \credits -> \cas
         supply 0 _ = return 0
         supply c t = do
             let creditsToSpend = min k c
-            leftovers <- f creditsToSpend t
+            leftovers <- f creditsToSpend t >>= \case
+              Done c' -> return c'
+              NotDone -> return 0
             return (c - creditsToSpend + leftovers)
 
 expectCompletedChildren :: HasCallStack => PendingMerge s -> ST s (MergeType, [Run])
