@@ -252,7 +252,7 @@ steps ::
   => Merge m h
   -> Int  -- ^ How many input entries to consume (at least)
   -> m (Int, StepResult)
-steps Merge {..} requestedSteps = assertStepsInvariant <$> do
+steps m@Merge {..} requestedSteps = assertStepsInvariant <$> do
     -- TODO: ideally, we would not check whether the merge was already done on
     -- every call to @steps@. It is important for correctness, however, that we
     -- do not call @steps@ on a merge when it was already done. It is not yet
@@ -260,14 +260,27 @@ steps Merge {..} requestedSteps = assertStepsInvariant <$> do
     -- to satisfy this precondition when it calls @steps@, so for now we do the
     -- check.
     readMutVar mergeState >>= \case
-      Merging -> go 0
+      Merging -> case mergeType of
+        MergeMidLevel  -> doStepsLevel m requestedSteps
+        MergeLastLevel -> doStepsLevel m requestedSteps
+        MergeUnion     -> doStepsUnion m requestedSteps
       MergingDone -> pure (0, MergeDone)
       Completed -> error "steps: Merge is completed"
       Closed -> error "steps: Merge is closed"
   where
     assertStepsInvariant res = assert (stepsInvariant requestedSteps res) res
 
-    go :: Int -> m (Int, StepResult)
+{-# SPECIALISE doStepsLevel ::
+     Merge IO h
+  -> Int
+  -> IO (Int, StepResult) #-}
+doStepsLevel ::
+     (MonadMask m, MonadSTM m, MonadST m)
+  => Merge m h
+  -> Int  -- ^ How many input entries to consume (at least)
+  -> m (Int, StepResult)
+doStepsLevel Merge {..} requestedSteps = go 0
+  where
     go !n
       | n >= requestedSteps =
           return (n, MergeInProgress)
@@ -328,6 +341,48 @@ steps Merge {..} requestedSteps = assertStepsInvariant <$> do
           Readers.Drained -> do
             writeMutVar mergeState $! MergingDone
             pure (n + dropped, MergeDone)
+
+{-# SPECIALISE doStepsUnion ::
+     Merge IO h
+  -> Int
+  -> IO (Int, StepResult) #-}
+doStepsUnion ::
+     (MonadMask m, MonadSTM m, MonadST m)
+  => Merge m h
+  -> Int  -- ^ How many input entries to consume (at least)
+  -> m (Int, StepResult)
+doStepsUnion Merge {..} requestedSteps = go 0
+  where
+    go !n
+      | n >= requestedSteps =
+          return (n, MergeInProgress)
+      | otherwise = do
+          (key, entry, hasMore) <- Readers.pop mergeReaders
+          handleEntry (n + 1) key entry hasMore
+
+    -- Similar to 'handleMupdate' in 'stepsLevel', but here we have to combine
+    -- all entries monoidally, so there are no obsolete/overwritten entries
+    -- that we could skip.
+    handleEntry !n !key !entry Readers.Drained = do
+        -- no future entries, no previous entry to resolve, just write!
+        writeReaderEntry mergeType mergeBuilder key entry
+        writeMutVar mergeState $! MergingDone
+        pure (n, MergeDone)
+
+    handleEntry !n !key !entry Readers.HasMore = do
+        nextKey <- Readers.peekKey mergeReaders
+        if nextKey /= key
+          then do
+            -- resolved all entries for this key, write it
+            writeReaderEntry mergeType mergeBuilder key entry
+            go n
+          else do
+            (_, nextEntry, hasMore) <- Readers.pop mergeReaders
+            -- for resolution, we need the full second value to be present
+            let resolved = combineUnion mergeMappend
+                             (Reader.toFullEntry entry)
+                             (Reader.toFullEntry nextEntry)
+            handleEntry (n + 1) key (Reader.Entry resolved) hasMore
 
 {-# SPECIALISE writeReaderEntry ::
      MergeType
