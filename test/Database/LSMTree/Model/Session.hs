@@ -98,6 +98,7 @@ import           Database.LSMTree.Model.Table (LookupResult (..),
                      QueryResult (..), Range (..), ResolveSerialisedValue (..),
                      Update (..), getResolve, noResolve)
 import qualified Database.LSMTree.Model.Table as Model
+import           GHC.Show (appPrec)
 
 {-------------------------------------------------------------------------------
   Model
@@ -232,7 +233,7 @@ runModelMWithInjectedErrors ::
 runModelMWithInjectedErrors Nothing onNoErrors _ st =
     runModelM onNoErrors st
 runModelMWithInjectedErrors (Just _) _ onErrors st =
-    runModelM (onErrors >> throwError ErrFsError) st
+    runModelM (onErrors >> throwError (ErrFsError "modelled FsError")) st
 
 --
 -- Errors
@@ -245,11 +246,47 @@ data Err =
   | ErrSnapshotWrongType
   | ErrBlobRefInvalidated
   | ErrCursorClosed
-    -- | Passed zero tables to 'unions'
-  | ErrUnionsZeroTables
     -- | Some file system error occurred
-  | ErrFsError
-  deriving stock (Show, Eq)
+  | ErrFsError String
+
+instance Show Err where
+  showsPrec d = \case
+      ErrTableClosed ->
+        showString "ErrTableClosed"
+      ErrSnapshotExists ->
+        showString "ErrSnapshotExists"
+      ErrSnapshotDoesNotExist ->
+        showString "ErrSnapshotDoesNotExist"
+      ErrSnapshotWrongType ->
+        showString "ErrSnapshotWrongType"
+      ErrBlobRefInvalidated ->
+        showString "ErrBlobRefInvalidated"
+      ErrCursorClosed ->
+        showString "ErrCursorCosed"
+      ErrFsError s ->
+        showParen (d > appPrec) $
+        showString "ErrFsError " .
+        showParen True (showString s)
+
+instance Eq Err where
+  (==) ErrTableClosed ErrTableClosed = True
+  (==) ErrSnapshotExists ErrSnapshotExists = True
+  (==) ErrSnapshotDoesNotExist ErrSnapshotDoesNotExist = True
+  (==) ErrSnapshotWrongType ErrSnapshotWrongType = True
+  (==) ErrBlobRefInvalidated ErrBlobRefInvalidated = True
+  (==) ErrCursorClosed ErrCursorClosed = True
+  (==) (ErrFsError _) (ErrFsError _) = True
+  (==) _ _ = False
+    where
+      _coveredAllCases x = case x of
+          ErrTableClosed{}          -> ()
+          ErrSnapshotExists{}       -> ()
+          ErrSnapshotDoesNotExist{} -> ()
+          ErrSnapshotWrongType{}    -> ()
+          ErrBlobRefInvalidated{}   -> ()
+          ErrCursorClosed{}         -> ()
+          ErrFsError{}              -> ()
+
 
 {-------------------------------------------------------------------------------
   Tables

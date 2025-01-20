@@ -21,7 +21,8 @@ prop_commitActionRegistryError = once $ ioProperty $ do
           delayedCommit reg
             (throwIO (userError "delayed action failed"))
     pure $ case eith of
-      Left e   -> tabulate "Printed error" [show e] $ property True
+      Left e   ->
+        tabulate "displayException" [displayExceptionNewline e] $ property True
       Right () -> property False
 
 -- | An example where an exception happens while an action registry is being
@@ -36,5 +37,9 @@ prop_abortActionRegistryError = once $ ioProperty $ do
             (\_ -> throwIO (userError "rollback action failed"))
           throwIO (userError "error in withActionRegistry scope")
     pure $ case eith of
-      Left e   -> tabulate "Printed error" [show e] $ property True
+      Left e   ->
+        tabulate "displayException" [displayExceptionNewline e] $ property True
       Right () -> property False
+
+displayExceptionNewline :: Exception e => e -> String
+displayExceptionNewline e = '\n':displayException e
