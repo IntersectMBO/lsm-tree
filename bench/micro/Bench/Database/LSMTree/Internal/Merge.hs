@@ -84,16 +84,9 @@ benchmarks = bgroup "Bench.Database.LSMTree.Internal.Merge" [
                          randomWord64OutOf (totalEntries `div` 2)
         , mergeMappend = Just (onDeserialisedValues ((+) @Word64))
         }
+      -- different merge types
     , benchMerge configWord64
-        { name         = "word64-mix-x4"
-        , nentries     = totalEntries `splitInto` 4
-        , finserts     = 1
-        , fdeletes     = 1
-        , fmupserts    = 1
-        , mergeMappend = Just (onDeserialisedValues ((+) @Word64))
-        }
-    , benchMerge configWord64
-        { name         = "word64-mix-collisions-x4"
+        { name         = "word64-mix-collisions-x4-midlevel"
         , nentries     = totalEntries `splitInto` 4
         , finserts     = 1
         , fdeletes     = 1
@@ -101,6 +94,29 @@ benchmarks = bgroup "Bench.Database.LSMTree.Internal.Merge" [
         , randomKey    = -- each run uses half of the possible keys
                          randomWord64OutOf (totalEntries `div` 2)
         , mergeMappend = Just (onDeserialisedValues ((+) @Word64))
+        , mergeType    = MergeMidLevel
+        }
+    , benchMerge configWord64
+        { name         = "word64-mix-collisions-x4-lastlevel"
+        , nentries     = totalEntries `splitInto` 4
+        , finserts     = 1
+        , fdeletes     = 1
+        , fmupserts    = 1
+        , randomKey    = -- each run uses half of the possible keys
+                         randomWord64OutOf (totalEntries `div` 2)
+        , mergeMappend = Just (onDeserialisedValues ((+) @Word64))
+        , mergeType    = MergeLastLevel
+        }
+    , benchMerge configWord64
+        { name         = "word64-mix-collisions-x4-union"
+        , nentries     = totalEntries `splitInto` 4
+        , finserts     = 1
+        , fdeletes     = 1
+        , fmupserts    = 1
+        , randomKey    = -- each run uses half of the possible keys
+                         randomWord64OutOf (totalEntries `div` 2)
+        , mergeMappend = Just (onDeserialisedValues ((+) @Word64))
+        , mergeType    = MergeUnion
         }
       -- not writing anything at all
     , benchMerge configWord64
@@ -172,6 +188,20 @@ benchmarks = bgroup "Bench.Database.LSMTree.Internal.Merge" [
         , nentries     = totalEntries `distributed` [1, 1, 1, 1, 16]
         , finserts     = 1
         , fdeletes     = 1
+        , mergeType    = MergeLastLevel
+        }
+    , benchMerge configUTxOStaking
+        { name         = "utxo-x2-tree-union"  -- binary union merge
+        , nentries     = totalEntries `distributed` [4, 1]
+        , mergeType    = MergeUnion
+        }
+    , benchMerge configUTxOStaking
+        { name         = "utxo-x10-tree-level"  -- merge a whole table (for union)
+        , nentries     = totalEntries `distributed` [ 1, 1, 1
+                                                    , 4, 4, 4
+                                                    , 16, 16, 16
+                                                    , 100  -- last level
+                                                    ]
         , mergeType    = MergeLastLevel
         }
     ]
@@ -309,6 +339,14 @@ configUTxO :: Config
 configUTxO = defaultConfig {
     randomKey    = first serialiseKey . uniform @_ @UTxOKey
   , randomValue  = first serialiseValue . uniform @_ @UTxOValue
+  }
+
+configUTxOStaking :: Config
+configUTxOStaking = defaultConfig {
+    fmupserts    = 1
+  , randomKey    = first serialiseKey . uniform @_ @UTxOKey
+  , randomValue  = first serialiseValue . uniform @_ @Word64
+  , mergeMappend = Just (onDeserialisedValues ((+) @Word64))
   }
 
 mergeEnv ::
