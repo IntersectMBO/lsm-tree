@@ -1093,7 +1093,6 @@ supplyCreditsMergingTree = checked remainingDebtMergingTree $ \credits (MergingT
 supplyCreditsMergingTreeState :: Credit -> MergingTreeState s
                               -> ST s (Credit, MergingTreeState s)
 supplyCreditsMergingTreeState credits !state = do
-    assertST (credits >= 0)
     case state of
       CompletedTreeMerge{} ->
         return (credits, state)
