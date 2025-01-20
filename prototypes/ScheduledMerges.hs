@@ -121,44 +121,43 @@ data MergingRunState = CompletedMerge !Run
                          ![Run]  -- ^ inputs of the merge
                          Run  -- ^ output of the merge (lazily evaluated)
 
--- | Different ways of combining entries for the same key.
---
--- In level merges, a more recent entry overwrites any older ones (with the
--- exception of monoidal updates 'Mupsert' modifying instead of overwriting).
--- Union merges, on the other hand, follow the semantics of
--- @Data.Map.unionWith (<>)@. Since the input runs are semantically treated like
--- @Data.Map@s, deletes are ignored and inserts act like mupserts, so they need
--- to be merged monoidally using 'resolveValue'.
---
--- A last level merge behaves differently from a mid-level merge: last level
--- merges can actually remove delete operations, whereas mid-level merges must
--- preserve them. This is orthogonal to the 'MergePolicy'. Since the union level
--- is always the last, union merges merges can also drop deletes.
-data MergeType = MergeTypeMidLevel | MergeTypeLastLevel | MergeTypeUnion
-  deriving stock (Eq, Show)
-
 -- | Merges can exist in different parts of the LSM, each with different options
 -- for the exact merge operation performed.
 class Show t => IsMergeType t where
-  toMergeType :: t -> MergeType
+  isLastLevel :: t -> Bool
+  isUnion :: t -> Bool
 
 -- | Different types of merges created as part of a regular (non-union) level.
+--
+-- A last level merge behaves differently from a mid-level merge: last level
+-- merges can actually remove delete operations, whereas mid-level merges must
+-- preserve them. This is orthogonal to the 'MergePolicy'.
 data LevelMergeType = MergeMidLevel | MergeLastLevel
   deriving stock (Eq, Show)
 
 instance IsMergeType LevelMergeType where
-  toMergeType = \case
-      MergeMidLevel  -> MergeTypeMidLevel
-      MergeLastLevel -> MergeTypeLastLevel
+  isLastLevel = \case
+      MergeMidLevel  -> False
+      MergeLastLevel -> True
+  isUnion = const False
 
 -- | Different types of merges created as part of the merging tree.
+--
+-- Union merges follow the semantics of @Data.Map.unionWith (<>)@. Since
+-- the input runs are semantically treated like @Data.Map@s, deletes are ignored
+-- and inserts act like mupserts, so they need to be merged monoidally using
+-- 'resolveValue'.
+--
+-- Trees can only exist on the union level, which is the last. Therefore, node
+-- merges can always drop deletes.
 data TreeMergeType = MergeLevel | MergeUnion
   deriving stock (Eq, Show)
 
 instance IsMergeType TreeMergeType where
-  toMergeType = \case
-      MergeLevel -> MergeTypeLastLevel  -- node merges are always like last level
-      MergeUnion -> MergeTypeUnion
+  isLastLevel = const True
+  isUnion = \case
+      MergeLevel -> False
+      MergeUnion -> True
 
 -- | An additional optional last level, created as a result of 'union'. It can
 -- not only contain an ongoing merge of multiple runs, but a nested tree of
@@ -452,10 +451,9 @@ newMergingRun mdebt mergeType runs = do
     MergingRun mergeType <$> newSTRef state
 
 mergek :: IsMergeType t => t -> [Run] -> Run
-mergek t = case toMergeType t of
-    MergeTypeMidLevel  -> Map.unionsWith combine
-    MergeTypeLastLevel -> Map.filter (/= Delete) . Map.unionsWith combine
-    MergeTypeUnion     -> Map.filter (/= Delete) . Map.unionsWith combineUnion
+mergek t =
+      (if isLastLevel t then Map.filter (/= Delete) else id)
+    . Map.unionsWith (if isUnion t then combineUnion else combine)
 
 -- | Combines two entries that have been performed after another. Therefore, the
 -- newer one overwrites the old one (or modifies it for 'Mupsert').
