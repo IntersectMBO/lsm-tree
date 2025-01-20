@@ -17,13 +17,14 @@ module Control.ActionRegistry (
     -- $action-registry
   , ActionRegistry
   , ActionError
+  , getActionError
     -- * Runners
   , withActionRegistry
   , unsafeNewActionRegistry
   , unsafeFinaliseActionRegistry
   , CommitActionRegistryError (..)
   , AbortActionRegistryError (..)
-  , AbortActionRegistryReason
+  , AbortActionRegistryReason (..)
     -- * Registering actions #registeringActions#
     -- $registering-actions
   , withRollback
@@ -224,6 +225,7 @@ type ActionError :: Type
 
 mkAction :: HasCallStackIfDebug => m () -> Action m
 mkActionError :: SomeException -> Action m -> ActionError
+getActionError :: ActionError -> SomeException
 
 #ifdef NO_IGNORE_ASSERTS
 data Action m = Action {
@@ -246,6 +248,8 @@ instance Exception ActionError where
 mkAction a = Action a callStack
 
 mkActionError e a = ActionError e (actionCallStack a)
+
+getActionError (ActionError e _) = e
 #else
 newtype Action m = Action {
     runAction :: m ()
@@ -258,6 +262,8 @@ newtype ActionError = ActionError SomeException
 mkAction a = Action a
 
 mkActionError e _ = ActionError e
+
+getActionError (ActionError e) = e
 #endif
 
 {-------------------------------------------------------------------------------
