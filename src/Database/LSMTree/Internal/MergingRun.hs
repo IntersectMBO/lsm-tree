@@ -14,7 +14,6 @@ module Database.LSMTree.Internal.MergingRun (
   , Credits (..)
   , CreditThreshold (..)
   , NumRuns (..)
-  , MergePolicyForLevel (..)
     -- * Internal state
   , UnspentCreditsVar (..)
   , TotalStepsVar (..)
@@ -40,7 +39,8 @@ import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Assertions (assert)
 import           Database.LSMTree.Internal.Entry (NumEntries (..), unNumEntries)
 import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
-import           Database.LSMTree.Internal.Merge (Merge, StepResult (..))
+import           Database.LSMTree.Internal.Merge (Merge, MergeType (..),
+                     StepResult (..))
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..))
 import           Database.LSMTree.Internal.Run (Run)
@@ -68,13 +68,6 @@ data MergingRun m h = MergingRun {
 
 instance RefCounted m (MergingRun m h) where
     getRefCounter = mergeRefCounter
-
-data MergePolicyForLevel = LevelTiering | LevelLevelling
-  deriving stock (Show, Eq)
-
-instance NFData MergePolicyForLevel where
-  rnf LevelTiering   = ()
-  rnf LevelLevelling = ()
 
 newtype NumRuns = NumRuns { unNumRuns :: Int }
   deriving stock (Show, Eq)
@@ -116,7 +109,7 @@ instance NFData MergeKnownCompleted where
   -> ResolveSerialisedValue
   -> Run.RunDataCaching
   -> RunBloomFilterAlloc
-  -> Merge.Level
+  -> MergeType
   -> RunFsPaths
   -> V.Vector (Ref (Run IO h))
   -> IO (Ref (MergingRun IO h)) #-}
@@ -134,16 +127,16 @@ new ::
   -> ResolveSerialisedValue
   -> Run.RunDataCaching
   -> RunBloomFilterAlloc
-  -> Merge.Level
+  -> MergeType
   -> RunFsPaths
   -> V.Vector (Ref (Run m h))
   -> m (Ref (MergingRun m h))
-new hfs hbio resolve caching alloc mergeLevel runPaths inputRuns =
+new hfs hbio resolve caching alloc mergeType runPaths inputRuns =
     -- If creating the Merge fails, we must release the references again.
     withActionRegistry $ \reg -> do
       runs <- V.mapM (\r -> withRollback reg (dupRef r) releaseRef) inputRuns
       merge <- fromMaybe (error "newMerge: merges can not be empty")
-        <$> Merge.new hfs hbio caching alloc mergeLevel resolve runPaths runs
+        <$> Merge.new hfs hbio caching alloc mergeType resolve runPaths runs
       let numInputRuns = NumRuns $ V.length runs
       let numInputEntries = V.foldMap' Run.size runs
       spentCreditsVar <- SpentCreditsVar <$> newPrimVar 0

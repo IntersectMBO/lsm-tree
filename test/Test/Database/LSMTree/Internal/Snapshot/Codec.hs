@@ -10,13 +10,12 @@ import           Codec.CBOR.Write
 import           Control.DeepSeq (NFData)
 import qualified Data.ByteString.Lazy as BSL
 import           Data.Proxy
-import           Data.Text (Text)
-import qualified Data.Text as Text
 import           Data.Typeable
 import qualified Data.Vector as V
+import           Database.LSMTree.Extras.Generators ()
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.Entry
-import qualified Database.LSMTree.Internal.Merge as Merge
+import           Database.LSMTree.Internal.Merge (MergeType (..))
 import           Database.LSMTree.Internal.MergeSchedule
 import           Database.LSMTree.Internal.MergingRun
 import           Database.LSMTree.Internal.RunNumber
@@ -175,7 +174,7 @@ testAll test = [
     , test (Proxy @UnspentCredits)
     , test (Proxy @(SnapMergingRunState RunNumber))
     , test (Proxy @SpentCredits)
-    , test (Proxy @Merge.Level)
+    , test (Proxy @MergeType)
     ]
 
 {-------------------------------------------------------------------------------
@@ -199,10 +198,6 @@ instance Arbitrary SnapshotMetaData where
       | (a', b', c', d', e') <- shrink (a, b, c, d, e)]
 
 deriving newtype instance Arbitrary SnapshotLabel
-
-instance Arbitrary Text where
-  arbitrary = Text.pack <$> arbitrary
-  shrink x = Text.pack <$> shrink (Text.unpack x)
 
 instance Arbitrary SnapshotTableType where
   arbitrary = elements [SnapNormalTable, SnapMonoidalTable]
@@ -231,8 +226,6 @@ instance Arbitrary SizeRatio where
 instance Arbitrary WriteBufferAlloc where
   arbitrary = AllocNumEntries <$> arbitrary
   shrink (AllocNumEntries x) = AllocNumEntries <$> shrink x
-
-deriving newtype instance Arbitrary NumEntries
 
 instance Arbitrary BloomFilterAlloc where
   arbitrary = oneof [
@@ -272,14 +265,13 @@ instance Arbitrary (SnapLevels RunNumber) where
   shrink (SnapLevels x) = SnapLevels . V.fromList <$> shrink (V.toList x)
 
 instance Arbitrary (SnapLevel RunNumber) where
-  arbitrary = SnapLevel <$> arbitrary <*> arbitrary
+  arbitrary = SnapLevel <$> arbitrary <*> arbitraryShortVector
   shrink (SnapLevel a b) = [SnapLevel a' b' | (a', b') <- shrink (a, b)]
 
-instance Arbitrary (V.Vector RunNumber) where
-  arbitrary = do
+arbitraryShortVector :: Arbitrary a => Gen (V.Vector a)
+arbitraryShortVector = do
     n <- chooseInt (0, 5)
-    (V.fromList <$> vector n)
-  shrink x = V.fromList <$> shrink (V.toList x)
+    V.fromList <$> vector n
 
 deriving newtype instance Arbitrary RunNumber
 
@@ -313,6 +305,3 @@ instance Arbitrary (SnapMergingRunState RunNumber) where
 
 deriving newtype instance Arbitrary SpentCredits
 
-instance Arbitrary Merge.Level where
-  arbitrary = elements [Merge.MidLevel, Merge.LastLevel]
-  shrink _ = []

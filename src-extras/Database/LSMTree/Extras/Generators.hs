@@ -53,7 +53,7 @@ import           Database.LSMTree.Extras.Index (Append (..))
 import           Database.LSMTree.Extras.Orphans ()
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..))
-import qualified Database.LSMTree.Internal.Merge as Merge
+import           Database.LSMTree.Internal.Merge (MergeType (..))
 import           Database.LSMTree.Internal.Page (PageNo (..))
 import           Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.Serialise
@@ -555,7 +555,9 @@ instance Arbitrary BlobSpan where
   Merge
 -------------------------------------------------------------------------------}
 
-instance Arbitrary Merge.Level where
-  arbitrary = QC.elements [Merge.MidLevel, Merge.LastLevel]
-  shrink Merge.LastLevel = [Merge.MidLevel]
-  shrink Merge.MidLevel  = []
+instance Arbitrary MergeType where
+  arbitrary = QC.elements [MergeMidLevel, MergeLastLevel]
+                          -- TODO: add MergeUnion once it is supported.
+  shrink MergeMidLevel  = []
+  shrink MergeLastLevel = [MergeMidLevel]
+  shrink MergeUnion     = [MergeLastLevel]
