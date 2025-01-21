@@ -47,17 +47,17 @@ import           Data.Word (Word32)
 import           Database.LSMTree.Internal.Chunk (Chunk)
 import           Database.LSMTree.Internal.Entry (NumEntries)
 import           Database.LSMTree.Internal.Index.Compact (IndexCompact)
-import qualified Database.LSMTree.Internal.Index.Compact as Compact (headerLBS,
-                     finalLBS, fromSBS, search, sizeInPages)
+import qualified Database.LSMTree.Internal.Index.Compact as Compact (finalLBS,
+                     fromSBS, headerLBS, search, sizeInPages)
 import           Database.LSMTree.Internal.Index.CompactAcc (IndexCompactAcc)
 import qualified Database.LSMTree.Internal.Index.CompactAcc as Compact
-                     (appendMulti, appendSingle, unsafeEnd, newWithDefaults)
+                     (appendMulti, appendSingle, newWithDefaults, unsafeEnd)
 import           Database.LSMTree.Internal.Index.Ordinary (IndexOrdinary)
-import qualified Database.LSMTree.Internal.Index.Ordinary as Ordinary
-                     (headerLBS, finalLBS, fromSBS, search, sizeInPages)
+import qualified Database.LSMTree.Internal.Index.Ordinary as Ordinary (finalLBS,
+                     fromSBS, headerLBS, search, sizeInPages)
 import           Database.LSMTree.Internal.Index.OrdinaryAcc (IndexOrdinaryAcc)
 import qualified Database.LSMTree.Internal.Index.OrdinaryAcc as Ordinary
-                     (appendMulti, appendSingle, unsafeEnd, newWithDefaults)
+                     (appendMulti, appendSingle, newWithDefaults, unsafeEnd)
 import           Database.LSMTree.Internal.Page (NumPages, PageSpan)
 import           Database.LSMTree.Internal.Serialise (SerialisedKey)
 

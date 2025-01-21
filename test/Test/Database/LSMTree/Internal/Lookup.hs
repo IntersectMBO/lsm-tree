@@ -47,7 +47,7 @@ import           Database.LSMTree.Extras.RunData (RunData (..),
                      unsafeFlushAsWriteBuffer)
 import           Database.LSMTree.Internal.BlobRef
 import           Database.LSMTree.Internal.Entry as Entry
-import           Database.LSMTree.Internal.Index (IndexType, Index)
+import           Database.LSMTree.Internal.Index (Index, IndexType)
 import qualified Database.LSMTree.Internal.Index as Index (IndexType (Compact),
                      search)
 import           Database.LSMTree.Internal.Lookup
