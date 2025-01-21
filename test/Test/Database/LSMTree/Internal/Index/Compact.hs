@@ -1,5 +1,4 @@
 {-# LANGUAGE LambdaCase      #-}
-{-# LANGUAGE MagicHash       #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 {- HLINT ignore "Eta reduce" -}
@@ -29,16 +28,15 @@ import qualified Data.Vector.Unboxed.Base as VU
 import           Data.Word
 import           Database.LSMTree.Extras
 import           Database.LSMTree.Extras.Generators as Gen
-import           Database.LSMTree.Extras.Index as Index (Append (..), append)
+import           Database.LSMTree.Extras.Index (Append (..), appendToCompact)
 import           Database.LSMTree.Internal.BitMath
 import           Database.LSMTree.Internal.Chunk as Chunk (toByteString)
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
-import           Database.LSMTree.Internal.Index.Compact as IndexCompact
-import           Database.LSMTree.Internal.Index.CompactAcc as IndexCompact
+import           Database.LSMTree.Internal.Index.Compact
+import           Database.LSMTree.Internal.Index.CompactAcc
 import           Database.LSMTree.Internal.Page (PageNo (PageNo), PageSpan,
                      multiPage, singlePage)
 import           Database.LSMTree.Internal.Serialise
-import           GHC.Exts (proxy#)
 import           Numeric (showHex)
 import           Prelude hiding (max, min, pi)
 import qualified Test.QuickCheck as QC
@@ -71,9 +69,9 @@ tests = testGroup "Test.Database.LSMTree.Internal.Index.Compact" [
           let k2 = SerialisedKey' (VP.replicate 16 0x11)
           let k3 = SerialisedKey' (VP.replicate 15 0x11 <> VP.replicate 1 0x12)
           let (chunks, index) = runST $ do
-                ica <- IndexCompact.new 16
-                ch1 <- flip Index.append ica $ AppendSinglePage k1 k2
-                ch2 <- flip Index.append ica $ AppendSinglePage k3 k3
+                ica <- new 16
+                ch1 <- flip appendToCompact ica $ AppendSinglePage k1 k2
+                ch2 <- flip appendToCompact ica $ AppendSinglePage k3 k3
                 (mCh3, idx) <- unsafeEnd ica
                 return (ch1 <> ch2 <> toList mCh3, idx)
 
@@ -101,7 +99,7 @@ tests = testGroup "Test.Database.LSMTree.Internal.Index.Compact" [
                 , 7, 0
                 ]
 
-          let header = LBS.unpack (headerLBS (proxy# @IndexCompact))
+          let header = LBS.unpack headerLBS
           let primary = LBS.unpack $
                         LBS.fromChunks (map Chunk.toByteString chunks)
           let rest = LBS.unpack (finalLBS (NumEntries 7) index)
@@ -233,7 +231,7 @@ prop_roundtrip_chunks (Chunks chunks index) numEntries =
     counterexample ("rest:\n" <> showBS bsRest) $
       Right (numEntries, index) === fromSBS sbs
   where
-    bsVersion = headerLBS (proxy# @IndexCompact)
+    bsVersion = headerLBS
     bsPrimary = LBS.fromChunks $
                 map (Chunk.toByteString . word64VectorToChunk) chunks
     bsRest = finalLBS numEntries index
@@ -291,11 +289,11 @@ prop_total_deserialisation_whitebox numEntries numPages word32s =
 
 writeIndexCompact :: SerialiseKey k => NumEntries -> ChunkSize -> LogicalPageSummaries k -> (LBS.ByteString, LBS.ByteString, LBS.ByteString)
 writeIndexCompact numEntries (ChunkSize csize) ps = runST $ do
-    ica <- IndexCompact.new csize
-    cs <- mapM (`append` ica) (toAppends ps)
+    ica <- new csize
+    cs <- mapM (`appendToCompact` ica) (toAppends ps)
     (c, index) <- unsafeEnd ica
     return
-      ( headerLBS (proxy# @IndexCompact)
+      ( headerLBS
       , LBS.fromChunks $
         foldMap (map Chunk.toByteString) $ cs <> pure (toList c)
       , finalLBS numEntries index
@@ -308,7 +306,7 @@ fromPageSummaries (ChunkSize csize) ps =
 fromList :: Int -> [Append] -> IndexCompact
 fromList maxcsize apps = runST $ do
     ica <- new maxcsize
-    mapM_ (`append` ica) apps
+    mapM_ (`appendToCompact` ica) apps
     (_, index) <- unsafeEnd ica
     pure index
 
@@ -327,7 +325,7 @@ labelIndex ic =
     . QC.tabulate "Length of contiguous clash runs" (fmap (showPowersOf10 . snd) nscontig)
     . QC.tabulate "Contiguous clashes contain multi-page values" (fmap (show . fst) nscontig)
     . QC.classify (multiPageValuesClash ic) "Has clashing multi-page values"
-  where nclashes       = IndexCompact.countClashes ic
+  where nclashes       = countClashes ic
         nscontig       = countContiguousClashes ic
 
 multiPageValuesClash :: IndexCompact -> Bool
