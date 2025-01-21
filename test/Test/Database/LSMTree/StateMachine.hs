@@ -77,7 +77,7 @@ import           Control.Monad.Class.MonadThrow (Exception (..), Handler (..),
 import           Control.Monad.IOSim
 import           Control.Monad.Primitive
 import           Control.Monad.Reader (ReaderT (..))
-import           Control.RefCount (checkForgottenRefs)
+import           Control.RefCount (RefException, checkForgottenRefs)
 import           Control.Tracer (Tracer, nullTracer)
 import           Data.Bifunctor (Bifunctor (..))
 import           Data.Constraint (Dict (..))
@@ -2115,8 +2115,12 @@ runActionsBracket' p init cleanup runner tagger actions =
   where
     cleanup' st = do
       x <- cleanup st
-      checkForgottenRefs
-      pure x
+      eith <- try @_ @RefException checkForgottenRefs
+      let
+        propCheckForgottenRefs = case eith of
+          Left e   -> QC.counterexample (show e) False
+          Right () -> QC.property True
+      pure (x QC..&&. propCheckForgottenRefs)
 
 tagFinalState ::
      forall state. StateModel (Lockstep state)
