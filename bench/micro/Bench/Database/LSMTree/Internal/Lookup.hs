@@ -83,7 +83,7 @@ benchmarks = bgroup "Bench.Database.LSMTree.Internal.Lookup" [
 
 benchLookups :: Config -> Benchmark
 benchLookups conf@Config{name} =
-    withEnv $ \ ~(_dir, arenaManager, hasFS, hasBlockIO, rs, ks) ->
+    withEnv $ \ ~(_dir, arenaManager, _hasFS, hasBlockIO, wbblobs, rs, ks) ->
       env ( pure ( V.map (\(DeRef r) -> Run.runFilter   r) rs
                  , V.map (\(DeRef r) -> Run.runIndex    r) rs
                  , V.map (\(DeRef r) -> Run.runKOpsFile r) rs
@@ -126,28 +126,24 @@ benchLookups conf@Config{name} =
                 ( do arena <- newArena arenaManager
                      (rkixs, ioops) <- stToIO (prepLookups arena blooms indexes kopsFiles ks)
                      ioress <- FS.submitIO hasBlockIO ioops
-                     wbblobs <- WBB.new hasFS (FS.mkFsPath [])
-                     pure (rkixs, ioops, ioress, arena, wbblobs)
+                     pure (rkixs, ioops, ioress, arena)
                 )
-                (\(_, _, _, arena, wbblobs) -> do
-                    closeArena arenaManager arena
-                    releaseRef wbblobs)
-                (\ ~(rkixs, ioops, ioress, _, wbblobs_unused) -> do
-                  !_ <- intraPageLookups resolveV WB.empty wbblobs_unused
+                (\(_, _, _, arena) -> closeArena arenaManager arena)
+                (\ ~(rkixs, ioops, ioress, _) -> do
+                  !_ <- intraPageLookups resolveV WB.empty wbblobs
                                          rs ks rkixs ioops ioress
                   pure ())
             -- The whole shebang: lookup preparation, doing the IO, and then
             -- performing intra-page-lookups. Again, we evaluate the result to
             -- WHNF because it is the same result that intraPageLookups produces
             -- (see above).
-          , let wb_unused = WB.empty in
-            env (WBB.new hasFS (FS.mkFsPath [])) $ \wbblobs_unused ->
-            bench "Lookups in IO" $
+          , bench "Lookups in IO" $
               whnfAppIO (\ks' -> lookupsIO hasBlockIO arenaManager resolveV
-                                           wb_unused wbblobs_unused
+                                           WB.empty wbblobs
                                            rs blooms indexes kopsFiles ks') ks
           ]
-          --TODO: consider adding benchmarks that also use the write buffer
+          -- TODO: consider adding benchmarks that also use the write buffer
+          -- (then we can't just use 'WB.empty', but must take it from the env)
   where
     withEnv = envWithCleanup
                 (lookupsInBatchesEnv conf)
@@ -181,6 +177,7 @@ lookupsInBatchesEnv ::
         , ArenaManager RealWorld
         , FS.HasFS IO FS.HandleIO
         , FS.HasBlockIO IO FS.HandleIO
+        , Ref (WBB.WriteBufferBlobs IO FS.HandleIO)
         , V.Vector (Ref (Run IO FS.HandleIO))
         , V.Vector SerialisedKey
         )
@@ -203,6 +200,7 @@ lookupsInBatchesEnv Config {..} = do
          , arenaManager
          , hasFS
          , hasBlockIO
+         , wbblobs
          , V.singleton r
          , lookupKeys
          )
@@ -212,13 +210,15 @@ lookupsInBatchesCleanup ::
      , ArenaManager RealWorld
      , FS.HasFS IO FS.HandleIO
      , FS.HasBlockIO IO FS.HandleIO
+     , Ref (WBB.WriteBufferBlobs IO FS.HandleIO)
      , V.Vector (Ref (Run IO FS.HandleIO))
      , V.Vector SerialisedKey
      )
   -> IO ()
-lookupsInBatchesCleanup (tmpDir, _arenaManager, _hasFS, hasBlockIO, rs, _) = do
+lookupsInBatchesCleanup (tmpDir, _arenaManager, _hasFS, hasBlockIO, wbblobs, rs, _) = do
     FS.close hasBlockIO
     forM_ rs releaseRef
+    releaseRef wbblobs
     removeDirectoryRecursive tmpDir
 
 -- | Generate keys to store and keys to lookup
