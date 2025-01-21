@@ -234,6 +234,7 @@ toSnapMergingRunState (MR.OngoingMerge rs (MR.SpentCreditsVar spentCreditsVar) m
     -> HasFS IO h
     -> HasBlockIO IO h
     -> UniqCounter IO
+    -> UniqCounter IO
     -> ActiveDir
     -> NamedSnapshotDir
     -> WriteBuffer
@@ -246,14 +247,15 @@ snapshotWriteBuffer ::
   -> HasFS m h
   -> HasBlockIO m h
   -> UniqCounter m
+  -> UniqCounter m
   -> ActiveDir
   -> NamedSnapshotDir
   -> WriteBuffer
   -> Ref (WriteBufferBlobs m h)
   -> m WriteBufferFsPaths
-snapshotWriteBuffer reg hfs hbio uc activeDir snapDir wb wbb = do
+snapshotWriteBuffer reg hfs hbio activeUc snapUc activeDir snapDir wb wbb = do
   -- Write the write buffer and write buffer blobs to the active directory.
-  activeWriteBufferNumber <- uniqueToRunNumber <$> incrUniqCounter uc
+  activeWriteBufferNumber <- uniqueToRunNumber <$> incrUniqCounter activeUc
   let activeWriteBufferPaths = WriteBufferFsPaths (getActiveDir activeDir) activeWriteBufferNumber
   withRollback_ reg
     (WBW.writeWriteBuffer hfs hbio activeWriteBufferPaths wb wbb)
@@ -264,7 +266,8 @@ snapshotWriteBuffer reg hfs hbio uc activeDir snapDir wb wbb = do
       FS.removeFile hfs (writeBufferKOpsPath activeWriteBufferPaths)
       FS.removeFile hfs (writeBufferBlobPath activeWriteBufferPaths)
   -- Hard link the write buffer and write buffer blobs to the snapshot directory.
-  let snapWriteBufferPaths = WriteBufferFsPaths (getNamedSnapshotDir snapDir) activeWriteBufferNumber
+  snapWriteBufferNumber <- uniqueToRunNumber <$> incrUniqCounter snapUc
+  let snapWriteBufferPaths = WriteBufferFsPaths (getNamedSnapshotDir snapDir) snapWriteBufferNumber
   hardLink reg hfs hbio HardLinkDurable
     (writeBufferKOpsPath activeWriteBufferPaths)
     (writeBufferKOpsPath snapWriteBufferPaths)
@@ -321,28 +324,31 @@ openWriteBuffer reg resolve hfs hbio uc activeDir snapWriteBufferPaths = do
 {-# SPECIALISE snapshotRuns ::
      ActionRegistry IO
   -> HasBlockIO IO h
+  -> UniqCounter IO
   -> NamedSnapshotDir
   -> SnapLevels (Ref (Run IO h))
   -> IO (SnapLevels RunNumber) #-}
--- | @'snapshotRuns' _ _ targetDir levels@ creates hard links for all run files
--- associated with the runs in @levels@, and puts the new directory entries in
--- the @targetDir@ directory. The hard links and the @targetDir@ are made
--- durable on disk.
+-- | @'snapshotRuns' _ _ snapUc targetDir levels@ creates hard links for all run
+-- files associated with the runs in @levels@, and puts the new directory
+-- entries in the @targetDir@ directory. The entries are renamed using @snapUc@.
+-- The hard links and the @targetDir@ are made durable on disk.
 snapshotRuns ::
      (MonadMask m, PrimMonad m)
   => ActionRegistry m
   -> HasBlockIO m h
+  -> UniqCounter m
   -> NamedSnapshotDir
   -> SnapLevels (Ref (Run m h))
   -> m (SnapLevels RunNumber)
-snapshotRuns reg hbio0 (NamedSnapshotDir targetDir) levels = do
+snapshotRuns reg hbio0 snapUc (NamedSnapshotDir targetDir) levels = do
     levels' <-
       for levels $ \run@(DeRef Run.Run {
           Run.runHasFS = hfs,
           Run.runHasBlockIO = hbio
         }) -> do
+          rn <- uniqueToRunNumber <$> incrUniqCounter snapUc
           let sourcePaths = Run.runFsPaths run
-          let targetPaths = sourcePaths { runDir = targetDir }
+          let targetPaths = sourcePaths { runDir = targetDir , runNumber = rn}
           hardLinkRunFiles reg hfs hbio HardLinkDurable sourcePaths targetPaths
           pure (runNumber targetPaths)
     FS.synchroniseDirectory hbio0 targetDir

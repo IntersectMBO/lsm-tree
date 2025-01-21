@@ -1138,7 +1138,7 @@ createSnapshot snap label tableType t = do
       withActionRegistry $ \reg -> do -- TODO: use the action registry for all side effects
         let hfs  = tableHasFS tEnv
             hbio = tableHasBlockIO tEnv
-            uc   = tableSessionUniqCounter tEnv
+            activeUc = tableSessionUniqCounter tEnv
 
         -- Guard that the snapshot does not exist already
         let snapDir = Paths.namedSnapshotDir (tableSessionRoot tEnv) snap
@@ -1158,17 +1158,22 @@ createSnapshot snap label tableType t = do
         -- again after the snapshot files/directories are written.
         content <- RW.withReadAccess (tableContent tEnv) (duplicateTableContent reg)
 
+        -- Fresh UniqCounter so that we start numbering from 0 in the named
+        -- snapshot directory
+        snapUc <- newUniqCounter 0
+
         -- Snapshot the write buffer.
         let activeDir = Paths.activeDir (tableSessionRoot tEnv)
         let wb = tableWriteBuffer content
         let wbb = tableWriteBufferBlobs content
-        snapWriteBufferNumber <- Paths.writeBufferNumber <$> snapshotWriteBuffer reg hfs hbio uc activeDir snapDir wb wbb
+        snapWriteBufferNumber <- Paths.writeBufferNumber <$>
+            snapshotWriteBuffer reg hfs hbio activeUc snapUc activeDir snapDir wb wbb
 
         -- Convert to snapshot format
         snapLevels <- toSnapLevels (tableLevels content)
 
         -- Hard link runs into the named snapshot directory
-        snapLevels' <- snapshotRuns reg hbio snapDir snapLevels
+        snapLevels' <- snapshotRuns reg hbio snapUc snapDir snapLevels
 
         let snapMetaData = SnapshotMetaData label tableType (tableConfig t) snapWriteBufferNumber snapLevels'
             SnapshotMetaDataFile contentPath = Paths.snapshotMetaDataFile snapDir
