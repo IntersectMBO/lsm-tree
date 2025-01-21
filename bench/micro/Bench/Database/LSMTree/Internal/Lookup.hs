@@ -193,7 +193,7 @@ lookupsInBatchesEnv Config {..} = do
     hasBlockIO <- FS.ioHasBlockIO hasFS (fromMaybe FS.defaultIOCtxParams ioctxps)
     let wb = WB.fromMap storedKeys
         fsps = RunFsPaths (FS.mkFsPath []) (RunNumber 0)
-    wbblobs <- WBB.new hasFS (FS.mkFsPath [])
+    wbblobs <- WBB.new hasFS (FS.mkFsPath ["0.wbblobs"])
     r <- Run.fromWriteBuffer hasFS hasBlockIO caching (RunAllocFixed 10) fsps wb wbblobs
     let NumEntries nentriesReal = Run.size r
     assert (nentriesReal == nentries) $ pure ()
