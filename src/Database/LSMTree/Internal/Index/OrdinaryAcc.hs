@@ -6,7 +6,7 @@
 -}
 module Database.LSMTree.Internal.Index.OrdinaryAcc
 (
-    IndexOrdinaryAcc,
+    IndexOrdinaryAcc (IndexOrdinaryAcc),
     new,
     newWithDefaults,
     appendSingle,
