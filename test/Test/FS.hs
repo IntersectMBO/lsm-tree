@@ -6,12 +6,22 @@ module Test.FS (tests) where
 import           Control.Concurrent.Class.MonadSTM (MonadSTM (atomically))
 import           Control.Concurrent.Class.MonadSTM.Strict.TMVar
 import           Control.Monad
+import           Control.Monad.Class.MonadThrow (MonadCatch (..), MonadThrow)
 import           Control.Monad.IOSim (runSimOrThrow)
-import           Data.Char (isAsciiLower, isAsciiUpper)
+import           Control.Monad.ST (runST)
+import           Data.Bit (cloneFromByteString, cloneToByteString, flipBit)
+import           Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
 import qualified Data.List as List
-import qualified Data.Text as Text
+import           Data.Maybe
+import           Data.Set (Set)
+import qualified Data.Set as Set
+import           Data.Traversable (for)
+import           Data.Vector.Unboxed (thaw, unsafeFreeze)
 import           GHC.Generics (Generic)
 import           System.FS.API
+import           System.FS.API.Lazy (hGetAll)
+import           System.FS.API.Strict (hPutAllStrict)
 import           System.FS.Sim.Error
 import qualified System.FS.Sim.MockFS as MockFS
 import qualified System.FS.Sim.Stream as S
@@ -29,6 +39,14 @@ tests = testGroup "Test.FS" [
       -- * Simulated file system properties
       testProperty "prop_numOpenHandles" prop_numOpenHandles
     , testProperty "prop_numDirEntries" prop_numDirEntries
+      -- * List directory
+    , testProperty "prop_listDirectoryFiles" prop_listDirectoryFiles
+{-     , testProperty "prop_listDirectoryRecursive" $
+        let eq = pathIsPrefixOf `on` getDirEntry in
+        forAllShrink (genNubListBy eq) (shrinkNubListBy eq) $
+          prop_listDirectoryRecursive -}
+      -- * Corruption
+    , testProperty "prop_flipFileBit" prop_flipFileBit
       -- * Equality
     , testClassLaws "Stream" $
         eqLaws (Proxy @(Stream Int))
@@ -40,43 +58,17 @@ tests = testGroup "Test.FS" [
   Simulated file system properties
 -------------------------------------------------------------------------------}
 
-newtype Path = Path FsPath
-  deriving stock (Show, Eq)
-
-newtype UniqueList a = UniqueList [a]
-  deriving stock Show
-
-instance (Arbitrary a, Eq a) => Arbitrary (UniqueList a) where
-  arbitrary = do
-      xs <- arbitrary
-      pure (UniqueList (List.nub xs))
-  shrink (UniqueList []) = []
-  shrink (UniqueList xs) = UniqueList . List.nub <$> shrink xs
-
-instance Arbitrary Path where
-  arbitrary = Path . mkFsPath . (:[]) <$> ((:) <$> genChar <*> listOf genChar)
-    where
-      genChar = elements (['A'..'Z'] ++ ['a'..'z'])
-  shrink (Path p) = case fsPathToList p of
-      [] -> []
-      t:_ -> [
-          Path p'
-        | t' <- shrink t
-        , let t'' = Text.filter (\c -> isAsciiUpper c || isAsciiLower c) t'
-        , not (Text.null t'')
-        , let p' = fsPathFromList [t']
-        ]
 
 -- | Sanity check for 'propNoOpenHandles' and 'propNumOpenHandles'
-prop_numOpenHandles :: UniqueList Path -> Property
-prop_numOpenHandles (UniqueList paths) = runSimOrThrow $
+prop_numOpenHandles :: NubList FsPathComponent -> Property
+prop_numOpenHandles (NubList paths) = runSimOrThrow $
     withSimHasFS propTrivial MockFS.empty $ \hfs fsVar -> do
       -- No open handles initially
       fs <- atomically $ readTMVar fsVar
       let prop = propNoOpenHandles fs
 
       -- Open n handles
-      hs <- forM paths $ \(Path p) -> hOpen hfs p (WriteMode MustBeNew)
+      hs <- forM paths $ \(fsPathComponentFsPath -> p) -> hOpen hfs p (WriteMode MustBeNew)
 
       -- Now there should be precisely n open handles
       fs' <- atomically $ readTMVar fsVar
@@ -94,8 +86,12 @@ prop_numOpenHandles (UniqueList paths) = runSimOrThrow $
     n = length paths
 
 -- | Sanity check for 'propNoDirEntries' and 'propNumDirEntries'
-prop_numDirEntries :: Path -> InfiniteList Bool -> UniqueList Path -> Property
-prop_numDirEntries (Path dir) isFiles (UniqueList paths) = runSimOrThrow $
+prop_numDirEntries ::
+     FsPathComponent
+  -> InfiniteList Bool
+  -> NubList FsPathComponent
+  -> Property
+prop_numDirEntries (fsPathComponentFsPath -> dir) isFiles (NubList paths) = runSimOrThrow $
     withSimHasFS propTrivial MockFS.empty $ \hfs fsVar -> do
       createDirectoryIfMissing hfs False dir
 
@@ -104,9 +100,9 @@ prop_numDirEntries (Path dir) isFiles (UniqueList paths) = runSimOrThrow $
       let prop = propNoDirEntries dir fs
 
       -- Create n entries
-      forM_ xs $ \(isFile, Path p) ->
+      forM_ xs $ \(isFile, fsPathComponentFsPath -> p) ->
         if isFile
-          then withFile hfs (dir </> p) (WriteMode MustBeNew) $ \_ -> pure ()
+          then createFile hfs (dir </> p)
           else createDirectory hfs (dir </> p)
 
       -- Now there should be precisely n entries
@@ -114,7 +110,7 @@ prop_numDirEntries (Path dir) isFiles (UniqueList paths) = runSimOrThrow $
       let prop' = propNumDirEntries dir n fs'
 
       -- Remove n entries
-      forM_ xs $ \(isFile, Path p) ->
+      forM_ xs $ \(isFile, fsPathComponentFsPath -> p) ->
         if isFile
           then removeFile hfs (dir </> p)
           else removeDirectoryRecursive hfs (dir </> p)
@@ -127,6 +123,97 @@ prop_numDirEntries (Path dir) isFiles (UniqueList paths) = runSimOrThrow $
   where
     n = length paths
     xs = zip (getInfiniteList isFiles) paths
+
+{-------------------------------------------------------------------------------
+  List directory
+-------------------------------------------------------------------------------}
+
+createFile :: MonadThrow m => HasFS m h -> FsPath -> m ()
+createFile hfs p = withFile hfs p (WriteMode MustBeNew) $ \_ -> pure ()
+
+prop_listDirectoryFiles :: NubList FsPathComponent -> Property
+prop_listDirectoryFiles (NubList paths) = runSimOrThrow $
+    withSimHasFS propTrivial MockFS.empty $ \hfs _fsVar -> do
+      forM_ paths $ createFile hfs . fsPathComponentFsPath
+      es <- listDirectoryFiles hfs root
+      pure (spec_listDirectoryFiles paths === es)
+  where
+    root = mkFsPath []
+
+spec_listDirectoryFiles :: [FsPathComponent] -> Set FsPath
+spec_listDirectoryFiles = Set.fromList . fmap fsPathComponentFsPath
+
+_prop_listDirectoryRecursive :: NubList (DirEntry FsPath) -> Property
+_prop_listDirectoryRecursive dirEntries@(NubList xs) =
+    runSimOrThrow $
+    withSimHasFS propTrivial MockFS.empty $ \hfs _fsVar -> do
+      es <- forM dirEntries $ \dirEntry -> try @_ @FsError $ do
+          case dirEntry of
+            File p -> do
+              forM_ (fsPathSplit p) $ \(dir, _) -> createDirectoryIfMissing hfs True dir
+              createFile hfs p
+            Directory p -> createDirectoryIfMissing hfs True p
+
+      dirEntries' <- listDirectoryRecursive hfs root
+
+      pure $ counterexample (show (nubListList es)) $
+       Set.fromList (_spec_listDirectoryRecursive xs) === dirEntries'
+
+  where
+    root = mkFsPath []
+
+_spec_listDirectoryRecursive :: [DirEntry FsPath] -> [DirEntry FsPath]
+_spec_listDirectoryRecursive es =
+    concatMap (mapMaybe isRoot) $
+    for es $ \e ->
+        e
+      : List.unfoldr (fmap f . fsPathSplit) (getDirEntry e)
+  where
+    f (p', _) = (Directory p', p')
+
+    isRoot e = if getDirEntry e == root then Nothing else Just e
+    root = mkFsPath []
+
+{-------------------------------------------------------------------------------
+  Corruption
+-------------------------------------------------------------------------------}
+
+data WithBitOffset a = WithBitOffset Int a
+  deriving stock Show
+
+instance Arbitrary (WithBitOffset ByteString) where
+  arbitrary = do
+      bs <- arbitrary `suchThat` (\bs -> BS.length bs > 0)
+      bitOffset <- chooseInt (0, BS.length bs - 1)
+      pure $ WithBitOffset bitOffset bs
+  shrink (WithBitOffset bitOffset bs) =
+      [ WithBitOffset bitOffset' bs'
+      | bs' <- shrink bs
+      , BS.length bs' > 0
+      , let bitOffset' = max 0 $ min (BS.length bs' - 1) bitOffset
+      ] ++ [
+        WithBitOffset bitOffset' bs
+      | bitOffset' <- max 0 <$> shrink bitOffset
+      , bitOffset' >= 0
+      ]
+
+prop_flipFileBit :: WithBitOffset ByteString -> Property
+prop_flipFileBit (WithBitOffset bitOffset bs) =
+    ioProperty $
+    withSimHasFS propTrivial MockFS.empty $ \hfs _fsVar -> do
+      void $ withFile hfs path (WriteMode MustBeNew) $ \h -> hPutAllStrict hfs h bs
+      flipFileBit hfs path bitOffset
+      bs' <- withFile hfs path ReadMode $ \h -> BS.toStrict <$> hGetAll hfs h
+      pure (spec_flipFileBit bs bitOffset === bs')
+  where
+    path = mkFsPath ["file"]
+
+spec_flipFileBit :: ByteString -> Int -> ByteString
+spec_flipFileBit bs bitOffset = runST $ do
+    mv <- thaw $ cloneFromByteString bs
+    flipBit mv bitOffset
+    v <- unsafeFreeze mv
+    pure $ cloneToByteString v
 
 {-------------------------------------------------------------------------------
   Equality
