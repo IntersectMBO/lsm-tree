@@ -2,7 +2,6 @@
 
 module Bench.Database.LSMTree.Internal.Lookup (benchmarks) where
 
-import           Control.Exception (assert)
 import           Control.Monad
 import           Control.Monad.ST.Strict (stToIO)
 import           Control.RefCount
@@ -11,16 +10,16 @@ import           Criterion.Main (Benchmark, bench, bgroup, env, envWithCleanup,
 import           Data.Arena (ArenaManager, closeArena, newArena,
                      newArenaManager, withArena)
 import           Data.Bifunctor (Bifunctor (..))
+import           Data.ByteString (ByteString)
 import qualified Data.List as List
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromMaybe)
 import qualified Data.Vector as V
 import           Database.LSMTree.Extras.Orphans ()
-import           Database.LSMTree.Extras.Random (frequency,
+import           Database.LSMTree.Extras.Random (frequency, randomByteStringR,
                      sampleUniformWithReplacement, uniformWithoutReplacement)
 import           Database.LSMTree.Extras.UTxO
-import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..))
 import           Database.LSMTree.Internal.Lookup (bloomQueries, indexSearches,
                      intraPageLookups, lookupsIO, prepLookups)
@@ -34,6 +33,7 @@ import           Database.LSMTree.Internal.Serialise
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
 import           GHC.Exts (RealWorld)
+import           GHC.Stack (HasCallStack)
 import           Prelude hiding (getContents)
 import           System.Directory (removeDirectoryRecursive)
 import qualified System.FS.API as FS
@@ -191,15 +191,14 @@ lookupsInBatchesEnv Config {..} = do
     (storedKeys, lookupKeys) <- lookupsEnv (mkStdGen 17) nentries npos nneg
     let hasFS = FS.ioHasFS (FS.MountPoint benchTmpDir)
     hasBlockIO <- FS.ioHasBlockIO hasFS (fromMaybe FS.defaultIOCtxParams ioctxps)
-    let wb = WB.fromMap storedKeys
-        fsps = RunFsPaths (FS.mkFsPath []) (RunNumber 0)
     wbblobs <- WBB.new hasFS (FS.mkFsPath ["0.wbblobs"])
+    wb <- WB.fromMap <$> traverse (traverse (WBB.addBlob hasFS wbblobs)) storedKeys
+    let fsps = RunFsPaths (FS.mkFsPath []) (RunNumber 0)
     r <- Run.fromWriteBuffer hasFS hasBlockIO caching (RunAllocFixed 10) fsps wb wbblobs
     let NumEntries nentriesReal = Run.size r
-    assert (nentriesReal == nentries) $ pure ()
-    let npagesReal = Run.sizeInPages r
-    assert (getNumPages npagesReal * 42 <= nentriesReal) $ pure ()
-    assert (getNumPages npagesReal * 43 >= nentriesReal) $ pure ()
+    assertEqual nentriesReal nentries $ pure ()
+    -- 42 to 43 entries per page
+    assertEqual (nentriesReal `div` getNumPages (Run.sizeInPages r)) 42 $ pure ()
     pure ( benchTmpDir
          , arenaManager
          , hasFS
@@ -228,8 +227,8 @@ lookupsEnv ::
   -> Int -- ^ Number of stored key\/operation pairs
   -> Int -- ^ Number of positive lookups
   -> Int -- ^ Number of negative lookups
-  -> IO ( Map SerialisedKey (Entry SerialisedValue BlobSpan)
-        , V.Vector (SerialisedKey)
+  -> IO ( Map SerialisedKey (Entry SerialisedValue SerialisedBlob)
+        , V.Vector SerialisedKey
         )
 lookupsEnv g nentries npos nneg = do
     let  (g1, g') = R.split g
@@ -242,25 +241,26 @@ lookupsEnv g nentries npos nneg = do
     lookups <- generate $ shuffle (negLookups ++ posLookups)
 
     let entries' = Map.mapKeys serialiseKey
-              $ Map.map (bimap serialiseValue id) entries
+              $ Map.map (bimap serialiseValue serialiseBlob) entries
         lookups' = V.fromList $ fmap serialiseKey lookups
-    assert (Map.size entries' == nentries) $ pure ()
-    assert (length lookups' == npos + nneg) $ pure ()
+    assertEqual (Map.size entries') (nentries) $ pure ()
+    assertEqual (length lookups') (npos + nneg) $ pure ()
     pure (entries', lookups')
 
 -- TODO: tweak distribution
-randomEntry :: StdGen -> (Entry UTxOValue BlobSpan, StdGen)
+randomEntry :: StdGen -> (Entry UTxOValue ByteString, StdGen)
 randomEntry g = frequency [
       (20, \g' -> let (!v, !g'') = uniform g' in (Insert v, g''))
     , (1,  \g' -> let (!v, !g'') = uniform g'
-                      (!b, !g''') = genBlobSpan g''
+                      (!b, !g''') = randomByteStringR (0, 2000) g''  -- < 2kB
                   in  (InsertWithBlob v b, g'''))
     , (2,  \g' -> let (!v, !g'') = uniform g' in (Mupdate v, g''))
     , (2,  \g' -> (Delete, g'))
     ] g
 
-genBlobSpan :: RandomGen g => g -> (BlobSpan, g)
-genBlobSpan !g =
-  let (off, !g')  = uniform g
-      (len, !g'') = uniform g'
-  in (BlobSpan off len, g'')
+-- | Assertions on the generated environment should also be checked for release
+-- builds, so don't use 'Control.Exception.assert'.
+assertEqual :: (HasCallStack, Eq a, Show a) => a -> a -> b -> b
+assertEqual x y
+  | x == y    = id
+  | otherwise = error $ show x ++ " /= " ++ show y
