@@ -34,8 +34,7 @@ import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.Merge (MergeType (..))
 import           Database.LSMTree.Internal.MergeSchedule
 import           Database.LSMTree.Internal.MergingRun (NumRuns (..))
-import           Database.LSMTree.Internal.Run (ChecksumError (..),
-                     FileFormatError (..))
+import           Database.LSMTree.Internal.Run (FileFormatError (..))
 import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.Snapshot
 import qualified System.FS.API as FS
