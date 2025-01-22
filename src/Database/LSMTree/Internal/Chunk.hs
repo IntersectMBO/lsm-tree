@@ -9,7 +9,7 @@ module Database.LSMTree.Internal.Chunk
     toByteString,
 
     -- * Balers
-    Baler,
+    Baler (Baler),
     createBaler,
     feedBaler,
     unsafeEndBaler

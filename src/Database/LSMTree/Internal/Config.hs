@@ -1,5 +1,3 @@
-{-# LANGUAGE MagicHash #-}
-
 module Database.LSMTree.Internal.Config (
     LevelNo (..)
     -- * Table configuration
@@ -23,8 +21,7 @@ module Database.LSMTree.Internal.Config (
   , bloomFilterAllocForLevel
     -- * Fence pointer index
   , FencePointerIndex (..)
-  , withIndexTypeProxyForRun
-  , withIndexAccTypeProxyForRun
+  , indexTypeForRun
     -- * Disk cache policy
   , DiskCachePolicy (..)
   , diskCachePolicyForLevel
@@ -40,14 +37,11 @@ import           Data.Word (Word64)
 import           Database.LSMTree.Internal.Assertions (assert,
                      fromIntegralChecked)
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
-import           Database.LSMTree.Internal.Index (Index, IndexAcc)
-import           Database.LSMTree.Internal.Index.Compact (IndexCompact)
-import           Database.LSMTree.Internal.Index.CompactAcc (IndexCompactAcc)
-import           Database.LSMTree.Internal.Index.Ordinary (IndexOrdinary)
-import           Database.LSMTree.Internal.Index.OrdinaryAcc (IndexOrdinaryAcc)
+import           Database.LSMTree.Internal.Index (IndexType)
+import qualified Database.LSMTree.Internal.Index as Index
+                     (IndexType (Compact, Ordinary))
 import           Database.LSMTree.Internal.Run (RunDataCaching (..))
 import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..))
-import           GHC.Exts (Proxy#, proxy#)
 import qualified Monkey
 
 newtype LevelNo = LevelNo Int
@@ -318,17 +312,9 @@ instance NFData FencePointerIndex where
   rnf CompactIndex  = ()
   rnf OrdinaryIndex = ()
 
-withIndexTypeProxyForRun :: FencePointerIndex
-                         -> (forall i . Index i => Proxy# i -> r)
-                         -> r
-withIndexTypeProxyForRun CompactIndex  cont = cont (proxy# @IndexCompact)
-withIndexTypeProxyForRun OrdinaryIndex cont = cont (proxy# @IndexOrdinary)
-
-withIndexAccTypeProxyForRun :: FencePointerIndex
-                            -> (forall j . IndexAcc j => Proxy# j -> r)
-                            -> r
-withIndexAccTypeProxyForRun CompactIndex  cont = cont (proxy# @IndexCompactAcc)
-withIndexAccTypeProxyForRun OrdinaryIndex cont = cont (proxy# @IndexOrdinaryAcc)
+indexTypeForRun :: FencePointerIndex -> IndexType
+indexTypeForRun CompactIndex  = Index.Compact
+indexTypeForRun OrdinaryIndex = Index.Ordinary
 
 {-------------------------------------------------------------------------------
   Disk cache policy

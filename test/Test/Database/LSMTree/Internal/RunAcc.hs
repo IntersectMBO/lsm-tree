@@ -15,7 +15,8 @@ import           Data.Maybe
 import qualified Data.Vector.Primitive as VP
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Entry
-import qualified Database.LSMTree.Internal.Index as Index
+import qualified Database.LSMTree.Internal.Index as Index (IndexType (Compact),
+                     search)
 import           Database.LSMTree.Internal.Page (PageNo (PageNo), singlePage)
 import qualified Database.LSMTree.Internal.PageAcc as PageAcc
 import qualified Database.LSMTree.Internal.PageAcc1 as PageAcc
@@ -56,7 +57,7 @@ test_singleKeyRun =  do
         !e = InsertWithBlob (SerialisedValue' (VP.fromList [48, 19])) (BlobSpan 55 77)
 
     (addRes, (mp, mc, b, ic, _numEntries)) <- stToIO $ do
-      racc <- new (NumEntries 1) (RunAllocFixed 10)
+      racc <- new (NumEntries 1) (RunAllocFixed 10) Index.Compact
       addRes <- addKeyOp racc k e
       (addRes,) <$> unsafeFinalise racc
 

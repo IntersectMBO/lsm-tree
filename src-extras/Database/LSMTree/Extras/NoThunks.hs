@@ -37,11 +37,15 @@ import           Database.LSMTree.Internal as Internal
 import           Database.LSMTree.Internal.BlobFile
 import           Database.LSMTree.Internal.BlobRef
 import           Database.LSMTree.Internal.ChecksumHandle
+import           Database.LSMTree.Internal.Chunk
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.CRC32C
 import           Database.LSMTree.Internal.Entry
+import           Database.LSMTree.Internal.Index
 import           Database.LSMTree.Internal.Index.Compact
 import           Database.LSMTree.Internal.Index.CompactAcc
+import           Database.LSMTree.Internal.Index.Ordinary
+import           Database.LSMTree.Internal.Index.OrdinaryAcc
 import           Database.LSMTree.Internal.Merge hiding (Level)
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.MergeSchedule
@@ -62,6 +66,7 @@ import           Database.LSMTree.Internal.RunReaders
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.UniqCounter
 import           Database.LSMTree.Internal.Unsliced
+import           Database.LSMTree.Internal.Vector.Growing
 import           Database.LSMTree.Internal.WriteBuffer
 import           Database.LSMTree.Internal.WriteBufferBlobs
 import           GHC.Generics
@@ -260,11 +265,21 @@ deriving anyclass instance Typeable (PrimState m)
                         => NoThunks (FilePointer m)
 
 {-------------------------------------------------------------------------------
-  IndexCompact
+  Index
 -------------------------------------------------------------------------------}
 
 deriving stock instance Generic IndexCompact
 deriving anyclass instance NoThunks IndexCompact
+
+deriving stock instance Generic IndexOrdinary
+deriving anyclass instance NoThunks IndexOrdinary
+
+deriving stock instance Generic Index
+deriving anyclass instance NoThunks Index
+
+{-------------------------------------------------------------------------------
+  PageNo
+-------------------------------------------------------------------------------}
 
 deriving stock instance Generic PageNo
 deriving anyclass instance NoThunks PageNo
@@ -351,12 +366,40 @@ deriving anyclass instance Typeable s
                         => NoThunks (RunAcc s)
 
 {-------------------------------------------------------------------------------
-  IndexCompactAcc
+  IndexAcc
 -------------------------------------------------------------------------------}
 
 deriving stock instance Generic (IndexCompactAcc s)
 deriving anyclass instance Typeable s
                         => NoThunks (IndexCompactAcc s)
+
+deriving stock instance Generic (IndexOrdinaryAcc s)
+deriving anyclass instance Typeable s
+                        => NoThunks (IndexOrdinaryAcc s)
+
+deriving stock instance Generic (IndexAcc s)
+deriving anyclass instance Typeable s
+                        => NoThunks (IndexAcc s)
+
+{-------------------------------------------------------------------------------
+  GrowingVector
+-------------------------------------------------------------------------------}
+
+deriving stock instance Generic (GrowingVector s a)
+deriving anyclass instance (Typeable s, Typeable a, NoThunks a)
+                        => NoThunks (GrowingVector s a)
+
+{-------------------------------------------------------------------------------
+  Baler
+-------------------------------------------------------------------------------}
+
+deriving stock instance Generic (Baler s)
+deriving anyclass instance Typeable s
+                        => NoThunks (Baler s)
+
+{-------------------------------------------------------------------------------
+  SMaybe
+-------------------------------------------------------------------------------}
 
 deriving stock instance Generic (SMaybe a)
 deriving anyclass instance NoThunks a => NoThunks (SMaybe a)
@@ -620,6 +663,10 @@ deriving via OnlyCheckWhnf (VUM.MVector s Word64)
 -- TODO: upstream to @nothunks@
 deriving via OnlyCheckWhnf (VUM.MVector s Bit)
     instance Typeable s => NoThunks (VUM.MVector s Bit)
+
+-- TODO: upstream to @nothunks@
+deriving via OnlyCheckWhnf (VP.MVector s Word8)
+    instance Typeable s => NoThunks (VP.MVector s Word8)
 
 {-------------------------------------------------------------------------------
   ST

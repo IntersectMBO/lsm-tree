@@ -47,7 +47,9 @@ import           Database.LSMTree.Extras.RunData (RunData (..),
                      unsafeFlushAsWriteBuffer)
 import           Database.LSMTree.Internal.BlobRef
 import           Database.LSMTree.Internal.Entry as Entry
-import           Database.LSMTree.Internal.Index.Compact
+import           Database.LSMTree.Internal.Index (Index, IndexType)
+import qualified Database.LSMTree.Internal.Index as Index (IndexType (Compact),
+                     search)
 import           Database.LSMTree.Internal.Lookup
 import           Database.LSMTree.Internal.Page (PageNo (PageNo), PageSpan (..))
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..))
@@ -162,7 +164,7 @@ prop_indexSearchesModel dats =
     model rkixs = V.fromList $ indexSearchesModel (fmap thrd3 runs) lookupss $ rkixs
 
 indexSearchesModel ::
-     [IndexCompact]
+     [Index]
   -> [SerialisedKey]
   -> [(RunIx, KeyIx)]
   -> [PageSpan]
@@ -170,7 +172,7 @@ indexSearchesModel cs ks rkixs =
     flip fmap rkixs $ \(rix, kix) ->
       let c = cs List.!! rix
           k = ks List.!! kix
-      in  search k c
+      in  Index.search k c
 
 prop_prepLookupsModel ::
      SmallList (InMemLookupData SerialisedKey SerialisedValue BlobSpan)
@@ -193,7 +195,7 @@ prop_prepLookupsModel dats = real === model
     model = prepLookupsModel (fmap (\x -> (snd3 x, thrd3 x)) runs) lookupss
 
 prepLookupsModel ::
-     [(Bloom SerialisedKey, IndexCompact)]
+     [(Bloom SerialisedKey, Index)]
   -> [SerialisedKey]
   -> ([(RunIx, KeyIx)], [PageSpan])
 prepLookupsModel rs ks = unzip
@@ -201,7 +203,7 @@ prepLookupsModel rs ks = unzip
     | (rix, (b, c)) <- zip [0..] rs
     , (kix, k) <- zip [0..] ks
     , Bloom.elem k b
-    , let pspan = search k c
+    , let pspan = Index.search k c
     ]
 
 {-------------------------------------------------------------------------------
@@ -298,7 +300,7 @@ prop_roundtripFromWriteBufferLookupIO ::
 prop_roundtripFromWriteBufferLookupIO (SmallList dats) =
     ioProperty $
     withTempIOHasBlockIO "prop_roundtripFromWriteBufferLookupIO" $ \hfs hbio ->
-    withRuns hfs hbio dats $ \wb wbblobs runs -> do
+    withRuns hfs hbio Index.Compact dats $ \wb wbblobs runs -> do
     let model :: Map SerialisedKey (Entry SerialisedValue SerialisedBlob)
         model = Map.unionsWith (Entry.combine resolveV) (map runData dats)
         keys  = V.fromList [ k | InMemLookupData{lookups} <- dats
@@ -333,19 +335,20 @@ prop_roundtripFromWriteBufferLookupIO (SmallList dats) =
 --
 withRuns :: FS.HasFS IO h
          -> FS.HasBlockIO IO h
+         -> IndexType
          -> [InMemLookupData SerialisedKey SerialisedValue SerialisedBlob]
          -> (   WB.WriteBuffer
              -> Ref (WBB.WriteBufferBlobs IO h)
              -> V.Vector (Ref (Run.Run IO h))
              -> IO a)
          -> IO a
-withRuns hfs _ [] action =
+withRuns hfs _ _ [] action =
     bracket
       (WBB.new hfs (FS.mkFsPath ["wbblobs"]))
       releaseRef
       (\wbblobs -> action WB.empty wbblobs V.empty)
 
-withRuns hfs hbio (wbdat:rundats) action =
+withRuns hfs hbio indexType (wbdat:rundats) action =
     bracket
       (do wbblobs <- WBB.new hfs (FS.mkFsPath ["wbblobs"])
           wbkops <- traverse (traverse (WBB.addBlob hfs wbblobs))
@@ -354,7 +357,7 @@ withRuns hfs hbio (wbdat:rundats) action =
           runs <-
             V.fromList <$>
             sequence
-              [ unsafeFlushAsWriteBuffer hfs hbio fsPaths (RunData runData)
+              [ unsafeFlushAsWriteBuffer hfs hbio indexType fsPaths (RunData runData)
               | (i, InMemLookupData{runData}) <- zip [1..] rundats
               , let fsPaths = RunFsPaths (FS.mkFsPath []) (RunNumber i)
               ]
@@ -419,11 +422,11 @@ thrd3 (_, _, c) = c
 runWithHandle ::
      TestRun
   -> ( Handle (Map Int (Either RawPage RawOverflowPage))
-     , Bloom SerialisedKey, IndexCompact
+     , Bloom SerialisedKey, Index
      )
 runWithHandle (rawPages, b, ic) = (Handle rawPages (mkFsPath ["do not use"]), b, ic)
 
-type TestRun = (Map Int (Either RawPage RawOverflowPage), Bloom SerialisedKey, IndexCompact)
+type TestRun = (Map Int (Either RawPage RawOverflowPage), Bloom SerialisedKey, Index)
 
 mkTestRun :: Map SerialisedKey (Entry SerialisedValue BlobSpan) -> TestRun
 mkTestRun dat = (rawPages, b, ic)
@@ -432,7 +435,7 @@ mkTestRun dat = (rawPages, b, ic)
 
     -- one-shot run construction
     (pages, b, ic) = runST $ do
-      racc <- Run.new nentries (RunAllocFixed 10)
+      racc <- Run.new nentries (RunAllocFixed 10) Index.Compact
       let kops = Map.toList dat
       psopss <- traverse (uncurry (Run.addKeyOp racc)) kops
       (mp, _ , b', ic', _) <- Run.unsafeFinalise racc

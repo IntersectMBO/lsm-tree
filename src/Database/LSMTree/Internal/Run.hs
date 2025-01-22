@@ -2,7 +2,6 @@
 {-# LANGUAGE DeriveAnyClass     #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DerivingVia        #-}
-{-# LANGUAGE MagicHash          #-}
 {-# LANGUAGE RecordWildCards    #-}
 
 -- | Runs of sorted key\/value data.
@@ -44,10 +43,8 @@ import qualified Database.LSMTree.Internal.BlobRef as BlobRef
 import           Database.LSMTree.Internal.BloomFilter (bloomFilterFromSBS)
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
-import           Database.LSMTree.Internal.Index (Index, IndexAcc)
-import           Database.LSMTree.Internal.Index.Some (SomeIndex)
-import qualified Database.LSMTree.Internal.Index.Some as Index (fromSBS,
-                     sizeInPages)
+import           Database.LSMTree.Internal.Index (Index, IndexType)
+import qualified Database.LSMTree.Internal.Index as Index (fromSBS, sizeInPages)
 import           Database.LSMTree.Internal.Page (NumPages)
 import           Database.LSMTree.Internal.Paths as Paths
 import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc)
@@ -59,7 +56,6 @@ import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import           Database.LSMTree.Internal.WriteBufferBlobs (WriteBufferBlobs)
 import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
-import           GHC.Exts (Proxy#)
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
 import qualified System.FS.BlockIO.API as FS
@@ -80,7 +76,7 @@ data Run m h = Run {
       -- | The in-memory index mapping keys to page numbers in the
       -- Key\/Ops file. In future we may support alternative index
       -- representations.
-    , runIndex          :: !SomeIndex
+    , runIndex          :: !Index
       -- | The file handle for the Key\/Ops file. This file is opened
       -- read-only and is accessed in a page-oriented way, i.e. only
       -- reading whole pages, at page offsets. It will be opened with
@@ -201,12 +197,11 @@ fromMutable runRunDataCaching builder = do
            (\runRefCounter -> Run { .. })
 
 {-# SPECIALISE fromWriteBuffer ::
-     IndexAcc j
-  => HasFS IO h
+     HasFS IO h
   -> HasBlockIO IO h
   -> RunDataCaching
   -> RunBloomFilterAlloc
-  -> Proxy# j
+  -> IndexType
   -> RunFsPaths
   -> WriteBuffer
   -> Ref (WriteBufferBlobs IO h)
@@ -219,23 +214,23 @@ fromMutable runRunDataCaching builder = do
 -- immediately when they are added to the write buffer, avoiding the need to do
 -- it here.
 fromWriteBuffer ::
-     (MonadST m, MonadSTM m, MonadMask m, IndexAcc j)
+     (MonadST m, MonadSTM m, MonadMask m)
   => HasFS m h
   -> HasBlockIO m h
   -> RunDataCaching
   -> RunBloomFilterAlloc
-  -> Proxy# j
+  -> IndexType
   -> RunFsPaths
   -> WriteBuffer
   -> Ref (WriteBufferBlobs m h)
   -> m (Ref (Run m h))
-fromWriteBuffer fs hbio caching alloc indexAccTypeProxy fsPaths buffer blobs = do
+fromWriteBuffer fs hbio caching alloc indexType fsPaths buffer blobs = do
     builder <- Builder.new fs
                            hbio
                            fsPaths
                            (WB.numEntries buffer)
                            alloc
-                           indexAccTypeProxy
+                           indexType
     for_ (WB.toList buffer) $ \(k, e) ->
       Builder.addKeyOp builder k (fmap (WBB.mkRawBlobRef blobs) e)
       --TODO: the fmap entry here reallocates even when there are no blobs
@@ -254,11 +249,10 @@ data FileFormatError = FileFormatError FS.FsPath String
   deriving anyclass Exception
 
 {-# SPECIALISE openFromDisk ::
-     Index i
-  => HasFS IO h
+     HasFS IO h
   -> HasBlockIO IO h
   -> RunDataCaching
-  -> Proxy# i
+  -> IndexType
   -> RunFsPaths
   -> IO (Ref (Run IO h)) #-}
 -- | Load a previously written run from disk, checking each file's checksum
@@ -269,15 +263,15 @@ data FileFormatError = FileFormatError FS.FsPath String
 -- Exceptions will be raised when any of the file's contents don't match their
 -- checksum ('ChecksumError') or can't be parsed ('FileFormatError').
 openFromDisk ::
-     forall m h i.
-     (MonadSTM m, MonadMask m, PrimMonad m, Index i)
+     forall m h.
+     (MonadSTM m, MonadMask m, PrimMonad m)
   => HasFS m h
   -> HasBlockIO m h
   -> RunDataCaching
-  -> Proxy# i
+  -> IndexType
   -> RunFsPaths
   -> m (Ref (Run m h))
-openFromDisk fs hbio runRunDataCaching indexTypeProxy runRunFsPaths = do
+openFromDisk fs hbio runRunDataCaching indexType runRunFsPaths = do
     expectedChecksums <-
        expectValidFile (runChecksumsPath runRunFsPaths) . fromChecksumsFile
          =<< CRC.readChecksumsFile fs (runChecksumsPath runRunFsPaths)
@@ -292,7 +286,7 @@ openFromDisk fs hbio runRunDataCaching indexTypeProxy runRunFsPaths = do
       expectValidFile (forRunFilterRaw paths) . bloomFilterFromSBS
         =<< readCRC (forRunFilterRaw expectedChecksums) (forRunFilterRaw paths)
     (runNumEntries, runIndex) <-
-      expectValidFile (forRunIndexRaw paths) . Index.fromSBS indexTypeProxy
+      expectValidFile (forRunIndexRaw paths) . Index.fromSBS indexType
         =<< readCRC (forRunIndexRaw expectedChecksums) (forRunIndexRaw paths)
 
     runKOpsFile <- FS.hOpen fs (runKOpsPath runRunFsPaths) FS.ReadMode

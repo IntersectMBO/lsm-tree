@@ -22,6 +22,7 @@ import           Database.LSMTree.Extras.Random (frequency,
 import           Database.LSMTree.Extras.UTxO
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..))
+import qualified Database.LSMTree.Internal.Index as Index (IndexType (Compact))
 import           Database.LSMTree.Internal.Lookup (bloomQueries, indexSearches,
                      intraPageLookups, lookupsIO, prepLookups)
 import           Database.LSMTree.Internal.Page (getNumPages)
@@ -194,7 +195,7 @@ lookupsInBatchesEnv Config {..} = do
     let wb = WB.fromMap storedKeys
         fsps = RunFsPaths (FS.mkFsPath []) (RunNumber 0)
     wbblobs <- WBB.new hasFS (FS.mkFsPath [])
-    r <- Run.fromWriteBuffer hasFS hasBlockIO caching (RunAllocFixed 10) fsps wb wbblobs
+    r <- Run.fromWriteBuffer hasFS hasBlockIO caching (RunAllocFixed 10) Index.Compact fsps wb wbblobs
     let NumEntries nentriesReal = Run.size r
     assert (nentriesReal == nentries) $ pure ()
     let npagesReal = Run.sizeInPages r

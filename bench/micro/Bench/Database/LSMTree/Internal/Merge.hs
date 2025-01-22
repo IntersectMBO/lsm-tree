@@ -17,6 +17,7 @@ import qualified Database.LSMTree.Extras.Random as R
 import           Database.LSMTree.Extras.RunData
 import           Database.LSMTree.Extras.UTxO
 import           Database.LSMTree.Internal.Entry
+import qualified Database.LSMTree.Internal.Index as Index (IndexType (Compact))
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..),
                      pathsForRunFiles, runChecksumsPath)
@@ -233,7 +234,7 @@ merge ::
 merge fs hbio Config {..} targetPaths runs = do
     let f = fromMaybe const mergeMappend
     m <- fromMaybe (error "empty inputs, no merge created") <$>
-      Merge.new fs hbio Run.CacheRunData (RunAllocFixed 10) mergeLevel f targetPaths runs
+      Merge.new fs hbio Run.CacheRunData (RunAllocFixed 10) Index.Compact mergeLevel f targetPaths runs
     Merge.stepsToCompletion m stepSize
 
 outputRunPaths :: Run.RunFsPaths
@@ -346,7 +347,7 @@ randomRuns ::
   -> IO InputRuns
 randomRuns hasFS hasBlockIO config@Config {..} rng0 =
     V.fromList <$>
-    zipWithM (unsafeFlushAsWriteBuffer hasFS hasBlockIO)
+    zipWithM (unsafeFlushAsWriteBuffer hasFS hasBlockIO Index.Compact)
              inputRunPaths runsData
   where
     runsData :: [SerialisedRunData]

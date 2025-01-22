@@ -1,5 +1,3 @@
-{-# LANGUAGE MagicHash #-}
-
 module Database.LSMTree.Internal.ChecksumHandle
   (
     -- * Checksum handles
@@ -36,10 +34,8 @@ import qualified Database.LSMTree.Internal.Chunk as Chunk (toByteString)
 import           Database.LSMTree.Internal.CRC32C (CRC32C)
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry
-import           Database.LSMTree.Internal.Index (Index)
-import qualified Database.LSMTree.Internal.Index as Index (headerLBS)
-import           Database.LSMTree.Internal.Index.Some (SomeIndex)
-import qualified Database.LSMTree.Internal.Index.Some as Index (finalLBS)
+import           Database.LSMTree.Internal.Index (Index, IndexType)
+import qualified Database.LSMTree.Internal.Index as Index (finalLBS, headerLBS)
 import           Database.LSMTree.Internal.Paths (ForBlob (..), ForFilter (..),
                      ForIndex (..), ForKOps (..))
 import qualified Database.LSMTree.Internal.RawBytes as RB
@@ -48,7 +44,6 @@ import qualified Database.LSMTree.Internal.RawOverflowPage as RawOverflowPage
 import           Database.LSMTree.Internal.RawPage (RawPage)
 import qualified Database.LSMTree.Internal.RawPage as RawPage
 import           Database.LSMTree.Internal.Serialise
-import           GHC.Exts (Proxy#)
 import qualified System.FS.API as FS
 import           System.FS.API
 import qualified System.FS.BlockIO.API as FS
@@ -207,20 +202,19 @@ writeFilter hfs filterHandle bf =
     writeToHandle hfs (unForFilter filterHandle) (bloomFilterToLBS bf)
 
 {-# SPECIALISE writeIndexHeader ::
-     Index i
-  => HasFS IO h
+     HasFS IO h
   -> ForIndex (ChecksumHandle RealWorld h)
-  -> Proxy# i
+  -> IndexType
   -> IO () #-}
 writeIndexHeader ::
-     (MonadSTM m, PrimMonad m, Index i)
+     (MonadSTM m, PrimMonad m)
   => HasFS m h
   -> ForIndex (ChecksumHandle (PrimState m) h)
-  -> Proxy# i
+  -> IndexType
   -> m ()
-writeIndexHeader hfs indexHandle indexTypeProxy =
+writeIndexHeader hfs indexHandle indexType =
     writeToHandle hfs (unForIndex indexHandle) $
-      Index.headerLBS indexTypeProxy
+      Index.headerLBS indexType
 
 {-# SPECIALISE writeIndexChunk ::
      HasFS IO h
@@ -241,14 +235,14 @@ writeIndexChunk hfs indexHandle chunk =
      HasFS IO h
   -> ForIndex (ChecksumHandle RealWorld h)
   -> NumEntries
-  -> SomeIndex
+  -> Index
   -> IO () #-}
 writeIndexFinal ::
      (MonadSTM m, PrimMonad m)
   => HasFS m h
   -> ForIndex (ChecksumHandle (PrimState m) h)
   -> NumEntries
-  -> SomeIndex
+  -> Index
   -> m ()
 writeIndexFinal hfs indexHandle numEntries index =
     writeToHandle hfs (unForIndex indexHandle) $

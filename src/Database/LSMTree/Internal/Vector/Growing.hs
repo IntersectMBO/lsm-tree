@@ -5,7 +5,7 @@
 -- | Vectors with support for appending elements.
 module Database.LSMTree.Internal.Vector.Growing
 (
-    GrowingVector,
+    GrowingVector (GrowingVector),
     new,
     append,
     freeze
