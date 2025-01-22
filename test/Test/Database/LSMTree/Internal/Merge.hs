@@ -1,5 +1,3 @@
-{-# LANGUAGE LambdaCase #-}
-
 module Test.Database.LSMTree.Internal.Merge (tests) where
 
 import           Control.Exception (evaluate)
@@ -9,7 +7,7 @@ import qualified Data.BloomFilter as Bloom
 import           Data.Foldable (traverse_)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (isJust)
+import           Data.Maybe (isJust, mapMaybe)
 import qualified Data.Vector as V
 import           Database.LSMTree.Extras
 import           Database.LSMTree.Extras.Generators (KeyForIndexCompact)
@@ -38,12 +36,15 @@ import           Test.Tasty.QuickCheck
 
 tests :: TestTree
 tests = testGroup "Test.Database.LSMTree.Internal.Merge"
-    [ testProperty "prop_MergeDistributes" $ \level stepSize wbs ->
+    [ testProperty "prop_MergeDistributes" $ \mergeType stepSize rds ->
         ioPropertyWithMockFS $ \fs hbio ->
-          prop_MergeDistributes fs hbio level stepSize wbs
-    , testProperty "prop_AbortMerge" $ \level stepSize wbs ->
+          prop_MergeDistributes fs hbio mergeType stepSize rds
+    , testProperty "prop_MergeUnion" $ \stepSize rds ->
         ioPropertyWithMockFS $ \fs hbio ->
-          prop_AbortMerge fs hbio level stepSize wbs
+          prop_MergeUnion fs hbio stepSize rds
+    , testProperty "prop_AbortMerge" $ \level stepSize rds ->
+        ioPropertyWithMockFS $ \fs hbio ->
+          prop_AbortMerge fs hbio level stepSize rds
     ]
   where
     ioPropertyWithMockFS ::
@@ -70,12 +71,12 @@ prop_MergeDistributes ::
      StepSize ->
      SmallList (RunData KeyForIndexCompact SerialisedValue SerialisedBlob) ->
      IO Property
-prop_MergeDistributes fs hbio level stepSize (SmallList rds) =
+prop_MergeDistributes fs hbio mergeType stepSize (SmallList rds) =
     withRuns fs hbio (V.fromList (zip (simplePaths [10..]) rds')) $ \runs -> do
       let stepsNeeded = sum (map (Map.size . unRunData) rds)
-      (stepsDone, lhs) <- mergeRuns fs hbio level (RunNumber 0) runs stepSize
-      withRun fs hbio (simplePath 1)
-              (RunData $ mergeWriteBuffers level $ fmap unRunData rds') $ \rhs -> do
+      (stepsDone, lhs) <- mergeRuns fs hbio mergeType (RunNumber 0) runs stepSize
+      let runData = RunData $ mergeWriteBuffers mergeType $ fmap unRunData rds'
+      withRun fs hbio (simplePath 1) runData $ \rhs -> do
 
         (lhsSize, lhsFilter, lhsIndex, lhsKOps,
          lhsKOpsFileContent, lhsBlobFileContent) <- getRunContent lhs
@@ -132,6 +133,45 @@ prop_MergeDistributes fs hbio level stepSize (SmallList rds) =
              , kopsFileContent
              , blobFileContent
              )
+
+-- | Union-merging multiple runs behaves like 'Map.unionsWith' on their values
+-- and blobs.
+prop_MergeUnion ::
+     FS.HasFS IO h ->
+     FS.HasBlockIO IO h ->
+     StepSize ->
+     SmallList (RunData KeyForIndexCompact SerialisedValue SerialisedBlob) ->
+     IO Property
+prop_MergeUnion fs hbio stepSize (SmallList rds) =
+    withRuns fs hbio (V.fromList (zip (simplePaths [10..]) rds')) $ \runs -> do
+      (_, run) <- mergeRuns fs hbio MergeUnion (RunNumber 0) runs stepSize
+
+      lhsKOps <- readKOps Nothing run
+      let lhs = Map.fromList (mapMaybe (traverse getValueAndBlob) lhsKOps)
+
+      -- cleanup
+      releaseRef run
+
+      return $
+             lhs === rhs
+        .&&. counterexample ("Deletes in " <> show lhs)
+               (all ((/= Entry.Delete) . snd) lhsKOps)
+  where
+    rds' = fmap serialiseRunData rds
+
+    rhs :: Map SerialisedKey (SerialisedValue, Maybe SerialisedBlob)
+    rhs = Map.unionsWith resolveValueAndBlob
+            (map (Map.mapMaybe getValueAndBlob . unRunData) rds')
+
+    getValueAndBlob :: Entry.Entry v b -> Maybe (v, Maybe b)
+    getValueAndBlob = \case
+        Entry.Insert v           -> Just (v, Nothing)
+        Entry.InsertWithBlob v b -> Just (v, Just b)
+        Entry.Mupdate v          -> Just (v, Nothing)
+        Entry.Delete             -> Nothing
+
+    resolveValueAndBlob (v', Nothing) (v, b) = (mappendValues v' v, b)
+    resolveValueAndBlob (v', Just b)  (v, _) = (mappendValues v' v, Just b)
 
 -- | After merging for a few steps, we can prematurely abort the merge, which
 -- should clean up properly.
@@ -196,10 +236,12 @@ type SerialisedEntry = Entry.Entry SerialisedValue SerialisedBlob
 mergeWriteBuffers :: MergeType
                   -> [Map SerialisedKey SerialisedEntry]
                   ->  Map SerialisedKey SerialisedEntry
-mergeWriteBuffers mergeType =
---TODO: review and update this to support MergeUnion
-        (if mergeType == MergeMidLevel then id else Map.filter (not . isDelete))
-      . Map.unionsWith (Entry.combine mappendValues)
+mergeWriteBuffers = \case
+    MergeMidLevel  -> Map.unionsWith (Entry.combine mappendValues)
+    MergeLastLevel -> Map.filter (not . isDelete)
+                    . Map.unionsWith (Entry.combine mappendValues)
+    MergeUnion     -> Map.filter (not . isDelete)
+                    . Map.unionsWith (Entry.combineUnion mappendValues)
   where
     isDelete Entry.Delete = True
     isDelete _            = False

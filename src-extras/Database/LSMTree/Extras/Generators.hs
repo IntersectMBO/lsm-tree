@@ -556,8 +556,7 @@ instance Arbitrary BlobSpan where
 -------------------------------------------------------------------------------}
 
 instance Arbitrary MergeType where
-  arbitrary = QC.elements [MergeMidLevel, MergeLastLevel]
-                          -- TODO: add MergeUnion once it is supported.
+  arbitrary = QC.elements [MergeMidLevel, MergeLastLevel, MergeUnion]
   shrink MergeMidLevel  = []
   shrink MergeLastLevel = [MergeMidLevel]
   shrink MergeUnion     = [MergeLastLevel]
