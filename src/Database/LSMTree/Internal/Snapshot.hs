@@ -41,6 +41,8 @@ import           Data.Text (Text)
 import           Data.Traversable (for)
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Config
+import           Database.LSMTree.Internal.CRC32C (checkCRC)
+import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
 import           Database.LSMTree.Internal.Merge (MergeType (..))
@@ -48,9 +50,10 @@ import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.MergeSchedule
 import           Database.LSMTree.Internal.MergingRun (NumRuns (..))
 import qualified Database.LSMTree.Internal.MergingRun as MR
-import           Database.LSMTree.Internal.Paths (ActiveDir (..), ForKOps (..),
-                     NamedSnapshotDir (..), RunFsPaths (..),
-                     WriteBufferFsPaths (..), pathsForRunFiles,
+import           Database.LSMTree.Internal.Paths (ActiveDir (..), ForBlob (..),
+                     ForKOps (..), NamedSnapshotDir (..), RunFsPaths (..),
+                     WriteBufferFsPaths (..),
+                     fromChecksumsFileForWriteBufferFiles, pathsForRunFiles,
                      runChecksumsPath, writeBufferBlobPath,
                      writeBufferChecksumsPath, writeBufferKOpsPath)
 import           Database.LSMTree.Internal.Run (Run)
@@ -301,6 +304,12 @@ openWriteBuffer ::
   -> WriteBufferFsPaths
   -> m (WriteBuffer, Ref (WriteBufferBlobs m h))
 openWriteBuffer reg resolve hfs hbio uc activeDir snapWriteBufferPaths = do
+  -- Check the checksums
+  (expectedChecksumForKOps, expectedChecksumForBlob) <-
+    CRC.expectValidFile (writeBufferChecksumsPath snapWriteBufferPaths) . fromChecksumsFileForWriteBufferFiles
+      =<< CRC.readChecksumsFile hfs (writeBufferChecksumsPath snapWriteBufferPaths)
+  checkCRC hfs hbio False (unForKOps expectedChecksumForKOps) (writeBufferKOpsPath snapWriteBufferPaths)
+  checkCRC hfs hbio False (unForBlob expectedChecksumForBlob) (writeBufferBlobPath snapWriteBufferPaths)
   -- Copy the write buffer blobs file to the active directory and open it.
   activeWriteBufferNumber <- uniqueToInt <$> incrUniqCounter uc
   let activeWriteBufferBlobPath =
