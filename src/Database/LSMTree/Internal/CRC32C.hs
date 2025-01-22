@@ -42,6 +42,11 @@ module Database.LSMTree.Internal.CRC32C (
   readChecksumsFile,
   writeChecksumsFile,
   writeChecksumsFile',
+
+  -- * Checksum checking
+  ChecksumError (..),
+  checkCRC,
+  expectChecksum,
   ) where
 
 import           Control.Monad
@@ -65,7 +70,8 @@ import           GHC.Exts
 import qualified GHC.ForeignPtr as Foreign
 import           System.FS.API
 import           System.FS.API.Lazy
-import           System.FS.BlockIO.API (ByteCount)
+import           System.FS.BlockIO.API (Advice (..), ByteCount, HasBlockIO,
+                     hAdviseAll, hDropCacheAll)
 
 
 newtype CRC32C = CRC32C Word32
@@ -347,3 +353,53 @@ formatChecksumsFile checksums =
           <> BS.word32HexFixed crc
           <> BS.char8 '\n'
         | (ChecksumsFileName name, CRC32C crc) <- Map.toList checksums ]
+
+data ChecksumError = ChecksumError FsPath CRC32C CRC32C
+  deriving stock Show
+  deriving anyclass Exception
+
+-- | Check the CRC32C checksum for a file.
+--
+--   If the boolean argument is @True@, all file data for this path is evicted
+--   from the page cache.
+{-# SPECIALISE
+  checkCRC ::
+       HasFS IO h
+    -> HasBlockIO IO h
+    -> Bool
+    -> CRC32C
+    -> FsPath
+    -> IO ()
+  #-}
+checkCRC ::
+     forall m h.
+     (MonadMask m, PrimMonad m)
+  => HasFS m h
+  -> HasBlockIO m h
+  -> Bool
+  -> CRC32C
+  -> FsPath
+  -> m ()
+checkCRC fs hbio dropCache expected fp = withFile fs fp ReadMode $ \h -> do
+  -- double the file readahead window (only applies to this file descriptor)
+  hAdviseAll hbio h AdviceSequential
+  !checksum <- hGetAllCRC32C' fs h defaultChunkSize initialCRC32C
+  when dropCache $ hDropCacheAll hbio h
+  expectChecksum fp expected checksum
+
+{-# SPECIALISE
+  expectChecksum ::
+     FsPath
+  -> CRC32C
+  -> CRC32C
+  -> IO ()
+  #-}
+expectChecksum ::
+     MonadThrow m
+  => FsPath
+  -> CRC32C
+  -> CRC32C
+  -> m ()
+expectChecksum fp expected checksum =
+    when (expected /= checksum) $
+      throwIO $ ChecksumError fp expected checksum
