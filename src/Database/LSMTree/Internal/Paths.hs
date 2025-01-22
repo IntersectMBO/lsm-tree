@@ -31,6 +31,7 @@ module Database.LSMTree.Internal.Paths (
   , fromChecksumsFile
     -- * Checksums for WriteBuffer files
   , toChecksumsFileForWriteBufferFiles
+  , fromChecksumsFileForWriteBufferFiles
     -- * ForRunFiles abstraction
   , ForKOps (..)
   , ForBlob (..)
@@ -47,10 +48,14 @@ module Database.LSMTree.Internal.Paths (
   , writeBufferBlobPath
   , writeBufferChecksumsPath
   , writeBufferFilePathWithExt
+    -- * File format errors
+  , FileFormatError (..)
+  , expectValidFile
   ) where
 
 import           Control.Applicative (Applicative (..))
 import           Control.DeepSeq (NFData (..))
+import           Control.Monad.Class.MonadThrow (Exception, MonadThrow (..))
 import           Data.Bifunctor (Bifunctor (..))
 import qualified Data.ByteString.Char8 as BS
 import           Data.Foldable (toList)
@@ -59,6 +64,7 @@ import qualified Data.Map as Map
 import           Data.Maybe (fromMaybe)
 import           Data.String (IsString (..))
 import           Data.Traversable (for)
+import           Database.LSMTree.Internal.CRC32C (ChecksumsFileName (..))
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.UniqCounter
@@ -328,3 +334,26 @@ toChecksumsFileForWriteBufferFiles checksums =
   where
     toChecksumsFileName :: String -> CRC.ChecksumsFileName
     toChecksumsFileName = CRC.ChecksumsFileName . BS.pack
+
+fromChecksumsFileForWriteBufferFiles :: CRC.ChecksumsFile -> Either String (ForKOps CRC.CRC32C, ForBlob CRC.CRC32C)
+fromChecksumsFileForWriteBufferFiles file = do
+  forKOps <- maybe (Left $ "key not found: " <> writeBufferKOpsExt) Right (Map.lookup (ChecksumsFileName . fromString $ writeBufferKOpsExt) file)
+  forBlob <- maybe (Left $ "key not found: " <> writeBufferBlobExt) Right (Map.lookup (ChecksumsFileName . fromString $ writeBufferBlobExt) file)
+  pure (ForKOps forKOps, ForBlob forBlob)
+
+
+{-------------------------------------------------------------------------------
+  File format errors
+-------------------------------------------------------------------------------}
+
+data FileFormatError = FileFormatError FsPath String
+  deriving stock Show
+  deriving anyclass Exception
+
+expectValidFile ::
+     MonadThrow f
+  => FsPath
+  -> Either String a
+  -> f a
+expectValidFile _  (Right x)  = pure x
+expectValidFile fp (Left err) = throwIO $ FileFormatError fp err

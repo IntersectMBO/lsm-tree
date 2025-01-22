@@ -22,13 +22,10 @@ module Database.LSMTree.Internal.Run (
   , fromWriteBuffer
   , RunDataCaching (..)
     -- * Snapshot
-  , FileFormatError (..)
-  , ChecksumError (..)
   , openFromDisk
   ) where
 
 import           Control.DeepSeq (NFData (..), rwhnf)
-import           Control.Monad (when)
 import           Control.Monad.Class.MonadST (MonadST)
 import           Control.Monad.Class.MonadSTM (MonadSTM (..))
 import           Control.Monad.Class.MonadThrow
@@ -236,14 +233,6 @@ fromWriteBuffer fs hbio caching alloc fsPaths buffer blobs = do
   Snapshot
 -------------------------------------------------------------------------------}
 
-data ChecksumError = ChecksumError FS.FsPath CRC.CRC32C CRC.CRC32C
-  deriving stock Show
-  deriving anyclass Exception
-
-data FileFormatError = FileFormatError FS.FsPath String
-  deriving stock Show
-  deriving anyclass Exception
-
 {-# SPECIALISE openFromDisk ::
      HasFS IO h
   -> HasBlockIO IO h
@@ -268,7 +257,7 @@ openFromDisk ::
 -- TODO: make exception safe
 openFromDisk fs hbio runRunDataCaching runRunFsPaths = do
     expectedChecksums <-
-       expectValidFile (runChecksumsPath runRunFsPaths) . fromChecksumsFile
+       Paths.expectValidFile (runChecksumsPath runRunFsPaths) . fromChecksumsFile
          =<< CRC.readChecksumsFile fs (runChecksumsPath runRunFsPaths)
 
     -- verify checksums of files we don't read yet
@@ -278,10 +267,10 @@ openFromDisk fs hbio runRunDataCaching runRunFsPaths = do
 
     -- read and try parsing files
     runFilter <-
-      expectValidFile (forRunFilterRaw paths) . bloomFilterFromSBS
+      Paths.expectValidFile (forRunFilterRaw paths) . bloomFilterFromSBS
         =<< readCRC (forRunFilterRaw expectedChecksums) (forRunFilterRaw paths)
     (runNumEntries, runIndex) <-
-      expectValidFile (forRunIndexRaw paths) . Index.fromSBS
+      Paths.expectValidFile (forRunIndexRaw paths) . Index.fromSBS
         =<< readCRC (forRunIndexRaw expectedChecksums) (forRunIndexRaw paths)
 
     runKOpsFile <- FS.hOpen fs (runKOpsPath runRunFsPaths) FS.ReadMode
@@ -298,14 +287,8 @@ openFromDisk fs hbio runRunDataCaching runRunFsPaths = do
     -- Note: all file data for this path is evicted from the page cache /if/ the
     -- caching argument is 'NoCacheRunData'.
     checkCRC :: RunDataCaching -> CRC.CRC32C -> FS.FsPath -> m ()
-    checkCRC cache expected fp = FS.withFile fs fp FS.ReadMode $ \h -> do
-        -- double the file readahead window (only applies to this file descriptor)
-        FS.hAdviseAll hbio h FS.AdviceSequential
-        !checksum <- CRC.hGetAllCRC32C' fs h CRC.defaultChunkSize CRC.initialCRC32C
-        when (cache == NoCacheRunData) $
-          -- drop the file from the OS page cache
-          FS.hDropCacheAll hbio h
-        expectChecksum fp expected checksum
+    checkCRC cache expected fp =
+      CRC.checkCRC fs hbio (cache == NoCacheRunData) expected fp
 
     -- Note: all file data for this path is evicted from the page cache
     readCRC :: CRC.CRC32C -> FS.FsPath -> m SBS.ShortByteString
@@ -316,12 +299,5 @@ openFromDisk fs hbio runRunDataCaching runRunFsPaths = do
         (sbs, !checksum) <- CRC.hGetExactlyCRC32C_SBS fs h (fromIntegral n) CRC.initialCRC32C
         -- drop the file from the OS page cache
         FS.hAdviseAll hbio h FS.AdviceDontNeed
-        expectChecksum fp expected checksum
+        CRC.expectChecksum fp expected checksum
         return sbs
-
-    expectChecksum fp expected checksum =
-        when (expected /= checksum) $
-          throwIO $ ChecksumError fp expected checksum
-
-    expectValidFile _  (Right x)  = pure x
-    expectValidFile fp (Left err) = throwIO $ FileFormatError fp err
