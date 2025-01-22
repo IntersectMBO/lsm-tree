@@ -195,16 +195,8 @@ prop_flipSnapshotBit (Positive (Small bufferSize)) es (Double_0_1 pickFile) (Dou
         tabFlippedBit = tabulate "Flipped bit" [showPowersOf10 j]
         counterFlippedBit = counterexample ("Flipped bit: " ++ show j)
 
-      let isUncheckedFile =
-               file == getNamedSnapshotDir namedSnapDir </> FS.mkFsPath ["0.keyops"]
-            || file == getNamedSnapshotDir namedSnapDir </> FS.mkFsPath ["0.blobs"]
-            || file == getNamedSnapshotDir namedSnapDir </> FS.mkFsPath ["0.checksums"]
-
       -- TODO: check forgotten refs
-
-      if isUncheckedFile then -- TODO: remove once write buffer files have checksum verification
-        pure discard
-      else if n <= 0 then -- file is empty
+      if n <= 0 then -- file is empty
         pure $ tabulate "Result" ["No corruption applied"] True
       else do -- file is non-empty
 
