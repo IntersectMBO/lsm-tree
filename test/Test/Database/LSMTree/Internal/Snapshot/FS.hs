@@ -4,7 +4,6 @@ module Test.Database.LSMTree.Internal.Snapshot.FS (tests) where
 import           Codec.CBOR.Read (DeserialiseFailure)
 import           Control.Exception
 import           Database.LSMTree.Internal.CRC32C
-import           Database.LSMTree.Internal.Run
 import           Database.LSMTree.Internal.Snapshot
 import           Database.LSMTree.Internal.Snapshot.Codec
 import           System.FS.API

@@ -47,6 +47,10 @@ module Database.LSMTree.Internal.CRC32C (
   ChecksumError (..),
   checkCRC,
   expectChecksum,
+
+  -- * File format errors
+  FileFormatError (..),
+  expectValidFile,
   ) where
 
 import           Control.Monad
@@ -354,6 +358,12 @@ formatChecksumsFile checksums =
           <> BS.char8 '\n'
         | (ChecksumsFileName name, CRC32C crc) <- Map.toList checksums ]
 
+
+
+{-------------------------------------------------------------------------------
+  Checksum errors
+-------------------------------------------------------------------------------}
+
 data ChecksumError = ChecksumError FsPath CRC32C CRC32C
   deriving stock Show
   deriving anyclass Exception
@@ -403,3 +413,20 @@ expectChecksum ::
 expectChecksum fp expected checksum =
     when (expected /= checksum) $
       throwIO $ ChecksumError fp expected checksum
+
+
+{-------------------------------------------------------------------------------
+  File format errors
+-------------------------------------------------------------------------------}
+
+data FileFormatError = FileFormatError FsPath String
+  deriving stock Show
+  deriving anyclass Exception
+
+expectValidFile ::
+     MonadThrow f
+  => FsPath
+  -> Either String a
+  -> f a
+expectValidFile _  (Right x)  = pure x
+expectValidFile fp (Left err) = throwIO $ FileFormatError fp err
