@@ -19,7 +19,6 @@ import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.CRC32C
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.Paths
-import           Database.LSMTree.Internal.Run
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.Snapshot
 import           Database.LSMTree.Internal.Snapshot.Codec
