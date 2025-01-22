@@ -70,8 +70,8 @@ data IndexType = Compact | Ordinary
 
 -- | The type of supported indexes.
 data Index
-    = CompactIndex IndexCompact
-    | OrdinaryIndex IndexOrdinary
+    = CompactIndex  !IndexCompact
+    | OrdinaryIndex !IndexOrdinary
     deriving stock (Eq, Show)
 
 instance NFData Index where
