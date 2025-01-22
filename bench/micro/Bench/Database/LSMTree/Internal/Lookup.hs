@@ -2,7 +2,6 @@
 
 module Bench.Database.LSMTree.Internal.Lookup (benchmarks) where
 
-import           Control.Exception (assert)
 import           Control.Monad
 import           Control.Monad.ST.Strict (stToIO)
 import           Control.RefCount
@@ -11,16 +10,16 @@ import           Criterion.Main (Benchmark, bench, bgroup, env, envWithCleanup,
 import           Data.Arena (ArenaManager, closeArena, newArena,
                      newArenaManager, withArena)
 import           Data.Bifunctor (Bifunctor (..))
+import           Data.ByteString (ByteString)
 import qualified Data.List as List
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromMaybe)
 import qualified Data.Vector as V
 import           Database.LSMTree.Extras.Orphans ()
-import           Database.LSMTree.Extras.Random (frequency,
+import           Database.LSMTree.Extras.Random (frequency, randomByteStringR,
                      sampleUniformWithReplacement, uniformWithoutReplacement)
 import           Database.LSMTree.Extras.UTxO
-import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..))
 import           Database.LSMTree.Internal.Lookup (bloomQueries, indexSearches,
                      intraPageLookups, lookupsIO, prepLookups)
@@ -34,6 +33,7 @@ import           Database.LSMTree.Internal.Serialise
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
 import           GHC.Exts (RealWorld)
+import           GHC.Stack (HasCallStack)
 import           Prelude hiding (getContents)
 import           System.Directory (removeDirectoryRecursive)
 import qualified System.FS.API as FS
@@ -83,7 +83,7 @@ benchmarks = bgroup "Bench.Database.LSMTree.Internal.Lookup" [
 
 benchLookups :: Config -> Benchmark
 benchLookups conf@Config{name} =
-    withEnv $ \ ~(_dir, arenaManager, hasFS, hasBlockIO, rs, ks) ->
+    withEnv $ \ ~(_dir, arenaManager, _hasFS, hasBlockIO, wbblobs, rs, ks) ->
       env ( pure ( V.map (\(DeRef r) -> Run.runFilter   r) rs
                  , V.map (\(DeRef r) -> Run.runIndex    r) rs
                  , V.map (\(DeRef r) -> Run.runKOpsFile r) rs
@@ -126,28 +126,24 @@ benchLookups conf@Config{name} =
                 ( do arena <- newArena arenaManager
                      (rkixs, ioops) <- stToIO (prepLookups arena blooms indexes kopsFiles ks)
                      ioress <- FS.submitIO hasBlockIO ioops
-                     wbblobs <- WBB.new hasFS (FS.mkFsPath [])
-                     pure (rkixs, ioops, ioress, arena, wbblobs)
+                     pure (rkixs, ioops, ioress, arena)
                 )
-                (\(_, _, _, arena, wbblobs) -> do
-                    closeArena arenaManager arena
-                    releaseRef wbblobs)
-                (\ ~(rkixs, ioops, ioress, _, wbblobs_unused) -> do
-                  !_ <- intraPageLookups resolveV WB.empty wbblobs_unused
+                (\(_, _, _, arena) -> closeArena arenaManager arena)
+                (\ ~(rkixs, ioops, ioress, _) -> do
+                  !_ <- intraPageLookups resolveV WB.empty wbblobs
                                          rs ks rkixs ioops ioress
                   pure ())
             -- The whole shebang: lookup preparation, doing the IO, and then
             -- performing intra-page-lookups. Again, we evaluate the result to
             -- WHNF because it is the same result that intraPageLookups produces
             -- (see above).
-          , let wb_unused = WB.empty in
-            env (WBB.new hasFS (FS.mkFsPath [])) $ \wbblobs_unused ->
-            bench "Lookups in IO" $
+          , bench "Lookups in IO" $
               whnfAppIO (\ks' -> lookupsIO hasBlockIO arenaManager resolveV
-                                           wb_unused wbblobs_unused
+                                           WB.empty wbblobs
                                            rs blooms indexes kopsFiles ks') ks
           ]
-          --TODO: consider adding benchmarks that also use the write buffer
+          -- TODO: consider adding benchmarks that also use the write buffer
+          -- (then we can't just use 'WB.empty', but must take it from the env)
   where
     withEnv = envWithCleanup
                 (lookupsInBatchesEnv conf)
@@ -181,6 +177,7 @@ lookupsInBatchesEnv ::
         , ArenaManager RealWorld
         , FS.HasFS IO FS.HandleIO
         , FS.HasBlockIO IO FS.HandleIO
+        , Ref (WBB.WriteBufferBlobs IO FS.HandleIO)
         , V.Vector (Ref (Run IO FS.HandleIO))
         , V.Vector SerialisedKey
         )
@@ -191,19 +188,19 @@ lookupsInBatchesEnv Config {..} = do
     (storedKeys, lookupKeys) <- lookupsEnv (mkStdGen 17) nentries npos nneg
     let hasFS = FS.ioHasFS (FS.MountPoint benchTmpDir)
     hasBlockIO <- FS.ioHasBlockIO hasFS (fromMaybe FS.defaultIOCtxParams ioctxps)
-    let wb = WB.fromMap storedKeys
-        fsps = RunFsPaths (FS.mkFsPath []) (RunNumber 0)
-    wbblobs <- WBB.new hasFS (FS.mkFsPath [])
+    wbblobs <- WBB.new hasFS (FS.mkFsPath ["0.wbblobs"])
+    wb <- WB.fromMap <$> traverse (traverse (WBB.addBlob hasFS wbblobs)) storedKeys
+    let fsps = RunFsPaths (FS.mkFsPath []) (RunNumber 0)
     r <- Run.fromWriteBuffer hasFS hasBlockIO caching (RunAllocFixed 10) fsps wb wbblobs
     let NumEntries nentriesReal = Run.size r
-    assert (nentriesReal == nentries) $ pure ()
-    let npagesReal = Run.sizeInPages r
-    assert (getNumPages npagesReal * 42 <= nentriesReal) $ pure ()
-    assert (getNumPages npagesReal * 43 >= nentriesReal) $ pure ()
+    assertEqual nentriesReal nentries $ pure ()
+    -- 42 to 43 entries per page
+    assertEqual (nentriesReal `div` getNumPages (Run.sizeInPages r)) 42 $ pure ()
     pure ( benchTmpDir
          , arenaManager
          , hasFS
          , hasBlockIO
+         , wbblobs
          , V.singleton r
          , lookupKeys
          )
@@ -213,13 +210,15 @@ lookupsInBatchesCleanup ::
      , ArenaManager RealWorld
      , FS.HasFS IO FS.HandleIO
      , FS.HasBlockIO IO FS.HandleIO
+     , Ref (WBB.WriteBufferBlobs IO FS.HandleIO)
      , V.Vector (Ref (Run IO FS.HandleIO))
      , V.Vector SerialisedKey
      )
   -> IO ()
-lookupsInBatchesCleanup (tmpDir, _arenaManager, _hasFS, hasBlockIO, rs, _) = do
+lookupsInBatchesCleanup (tmpDir, _arenaManager, _hasFS, hasBlockIO, wbblobs, rs, _) = do
     FS.close hasBlockIO
     forM_ rs releaseRef
+    releaseRef wbblobs
     removeDirectoryRecursive tmpDir
 
 -- | Generate keys to store and keys to lookup
@@ -228,8 +227,8 @@ lookupsEnv ::
   -> Int -- ^ Number of stored key\/operation pairs
   -> Int -- ^ Number of positive lookups
   -> Int -- ^ Number of negative lookups
-  -> IO ( Map SerialisedKey (Entry SerialisedValue BlobSpan)
-        , V.Vector (SerialisedKey)
+  -> IO ( Map SerialisedKey (Entry SerialisedValue SerialisedBlob)
+        , V.Vector SerialisedKey
         )
 lookupsEnv g nentries npos nneg = do
     let  (g1, g') = R.split g
@@ -242,25 +241,26 @@ lookupsEnv g nentries npos nneg = do
     lookups <- generate $ shuffle (negLookups ++ posLookups)
 
     let entries' = Map.mapKeys serialiseKey
-              $ Map.map (bimap serialiseValue id) entries
+              $ Map.map (bimap serialiseValue serialiseBlob) entries
         lookups' = V.fromList $ fmap serialiseKey lookups
-    assert (Map.size entries' == nentries) $ pure ()
-    assert (length lookups' == npos + nneg) $ pure ()
+    assertEqual (Map.size entries') (nentries) $ pure ()
+    assertEqual (length lookups') (npos + nneg) $ pure ()
     pure (entries', lookups')
 
 -- TODO: tweak distribution
-randomEntry :: StdGen -> (Entry UTxOValue BlobSpan, StdGen)
+randomEntry :: StdGen -> (Entry UTxOValue ByteString, StdGen)
 randomEntry g = frequency [
       (20, \g' -> let (!v, !g'') = uniform g' in (Insert v, g''))
     , (1,  \g' -> let (!v, !g'') = uniform g'
-                      (!b, !g''') = genBlobSpan g''
+                      (!b, !g''') = randomByteStringR (0, 2000) g''  -- < 2kB
                   in  (InsertWithBlob v b, g'''))
     , (2,  \g' -> let (!v, !g'') = uniform g' in (Mupdate v, g''))
     , (2,  \g' -> (Delete, g'))
     ] g
 
-genBlobSpan :: RandomGen g => g -> (BlobSpan, g)
-genBlobSpan !g =
-  let (off, !g')  = uniform g
-      (len, !g'') = uniform g'
-  in (BlobSpan off len, g'')
+-- | Assertions on the generated environment should also be checked for release
+-- builds, so don't use 'Control.Exception.assert'.
+assertEqual :: (HasCallStack, Eq a, Show a) => a -> a -> b -> b
+assertEqual x y
+  | x == y    = id
+  | otherwise = error $ show x ++ " /= " ++ show y

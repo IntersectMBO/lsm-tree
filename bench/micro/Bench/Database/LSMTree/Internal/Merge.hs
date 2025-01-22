@@ -1,12 +1,13 @@
 module Bench.Database.LSMTree.Internal.Merge (benchmarks) where
 
-import           Control.Monad (when, zipWithM)
+import           Control.Monad (zipWithM)
 import           Control.RefCount
 import           Criterion.Main (Benchmark, bench, bgroup)
 import qualified Criterion.Main as Cr
 import           Data.Bifunctor (first)
 import qualified Data.BloomFilter.Hash as Hash
 import           Data.Foldable (traverse_)
+import           Data.IORef
 import qualified Data.List as List
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromMaybe)
@@ -19,8 +20,7 @@ import           Database.LSMTree.Extras.UTxO
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.Merge (MergeType (..))
 import qualified Database.LSMTree.Internal.Merge as Merge
-import           Database.LSMTree.Internal.Paths (RunFsPaths (..),
-                     pathsForRunFiles, runChecksumsPath)
+import           Database.LSMTree.Internal.Paths (RunFsPaths (..))
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..))
@@ -114,7 +114,7 @@ benchmarks = bgroup "Bench.Database.LSMTree.Internal.Merge" [
         { name         = "insert-large-keys-x4"  -- potentially long keys
         , nentries     = (totalEntries `div` 10) `splitInto` 4
         , finserts     = 1
-        , randomKey    = first serialiseKey . R.randomByteStringR (6, 4000)
+        , randomKey    = first serialiseKey . R.randomByteStringR (8, 4000)
         }
     , benchMerge configWord64
         { name         = "insert-mixed-vals-x4"  -- potentially long values
@@ -201,14 +201,16 @@ benchMerge conf@Config{name} =
             --    thread `runs` through the environment, too.
             -- 2. It forces the result to normal form, which would traverse the
             --    whole run, so we force to WHNF ourselves and just return `()`.
+
+            -- We make sure to immediately close resulting runs so we don't run
+            -- out of file handles or disk space. However, we don't want it to
+            -- be part of the measurement, as it includes deleting files.
+            -- Therefore, ... TODO
             Cr.perRunEnvWithCleanup
-              (pure (runs, outputRunPaths))
-              (const (removeOutputRunFiles hasFS)) $ \(runs', p) -> do
-                !run <- merge hasFS hasBlockIO conf p runs'
-                -- Make sure to immediately close resulting runs so we don't run
-                -- out of file handles. Ideally this would not be measured, but at
-                -- least it's pretty cheap.
-                releaseRef run
+              ((runs,) <$> newIORef Nothing)
+              (releaseRun . snd) $ \(runs', ref) -> do
+                !run <- merge hasFS hasBlockIO conf outputRunPaths runs'
+                writeIORef ref $ Just $ releaseRef run
         ]
   where
     withEnv =
@@ -216,13 +218,11 @@ benchMerge conf@Config{name} =
           (mergeEnv conf)
           mergeEnvCleanup
 
-    -- We need to keep the input runs, but remove the freshly created one.
-    removeOutputRunFiles :: FS.HasFS IO FS.HandleIO -> IO ()
-    removeOutputRunFiles hasFS = do
-        traverse_ (FS.removeFile hasFS) (pathsForRunFiles outputRunPaths)
-        exists <- FS.doesFileExist hasFS (runChecksumsPath outputRunPaths)
-        when exists $
-          FS.removeFile hasFS (runChecksumsPath outputRunPaths)
+    releaseRun :: IORef (Maybe (IO ())) -> IO ()
+    releaseRun ref =
+        readIORef ref >>= \case
+          Nothing      -> pure ()
+          Just release -> release
 
 merge ::
      FS.HasFS IO FS.HandleIO
