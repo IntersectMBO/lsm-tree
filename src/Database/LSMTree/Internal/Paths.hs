@@ -31,6 +31,7 @@ module Database.LSMTree.Internal.Paths (
   , fromChecksumsFile
     -- * Checksums for WriteBuffer files
   , toChecksumsFileForWriteBufferFiles
+  , fromChecksumsFileForWriteBufferFiles
     -- * ForRunFiles abstraction
   , ForKOps (..)
   , ForBlob (..)
@@ -328,3 +329,9 @@ toChecksumsFileForWriteBufferFiles checksums =
   where
     toChecksumsFileName :: String -> CRC.ChecksumsFileName
     toChecksumsFileName = CRC.ChecksumsFileName . BS.pack
+
+fromChecksumsFileForWriteBufferFiles :: CRC.ChecksumsFile -> Either String (ForKOps CRC.CRC32C, ForBlob CRC.CRC32C)
+fromChecksumsFileForWriteBufferFiles file = do
+  forKOps <- maybe (Left $ "key not found: " <> writeBufferKOpsExt) Right (Map.lookup (CRC.ChecksumsFileName . fromString $ writeBufferKOpsExt) file)
+  forBlob <- maybe (Left $ "key not found: " <> writeBufferBlobExt) Right (Map.lookup (CRC.ChecksumsFileName . fromString $ writeBufferBlobExt) file)
+  pure (ForKOps forKOps, ForBlob forBlob)
