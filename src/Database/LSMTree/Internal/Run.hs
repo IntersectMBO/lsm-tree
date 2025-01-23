@@ -22,7 +22,6 @@ module Database.LSMTree.Internal.Run (
   , fromWriteBuffer
   , RunDataCaching (..)
     -- * Snapshot
-  , FileFormatError (..)
   , openFromDisk
   ) where
 
@@ -234,10 +233,6 @@ fromWriteBuffer fs hbio caching alloc fsPaths buffer blobs = do
   Snapshot
 -------------------------------------------------------------------------------}
 
-data FileFormatError = FileFormatError FS.FsPath String
-  deriving stock Show
-  deriving anyclass Exception
-
 {-# SPECIALISE openFromDisk ::
      HasFS IO h
   -> HasBlockIO IO h
@@ -262,7 +257,7 @@ openFromDisk ::
 -- TODO: make exception safe
 openFromDisk fs hbio runRunDataCaching runRunFsPaths = do
     expectedChecksums <-
-       expectValidFile (runChecksumsPath runRunFsPaths) . fromChecksumsFile
+       CRC.expectValidFile (runChecksumsPath runRunFsPaths) . fromChecksumsFile
          =<< CRC.readChecksumsFile fs (runChecksumsPath runRunFsPaths)
 
     -- verify checksums of files we don't read yet
@@ -272,10 +267,10 @@ openFromDisk fs hbio runRunDataCaching runRunFsPaths = do
 
     -- read and try parsing files
     runFilter <-
-      expectValidFile (forRunFilterRaw paths) . bloomFilterFromSBS
+      CRC.expectValidFile (forRunFilterRaw paths) . bloomFilterFromSBS
         =<< readCRC (forRunFilterRaw expectedChecksums) (forRunFilterRaw paths)
     (runNumEntries, runIndex) <-
-      expectValidFile (forRunIndexRaw paths) . Index.fromSBS
+      CRC.expectValidFile (forRunIndexRaw paths) . Index.fromSBS
         =<< readCRC (forRunIndexRaw expectedChecksums) (forRunIndexRaw paths)
 
     runKOpsFile <- FS.hOpen fs (runKOpsPath runRunFsPaths) FS.ReadMode
@@ -306,6 +301,3 @@ openFromDisk fs hbio runRunDataCaching runRunFsPaths = do
         FS.hAdviseAll hbio h FS.AdviceDontNeed
         CRC.expectChecksum fp expected checksum
         return sbs
-
-    expectValidFile _  (Right x)  = pure x
-    expectValidFile fp (Left err) = throwIO $ FileFormatError fp err
