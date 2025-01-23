@@ -549,7 +549,7 @@ instance Arbitrary (Unsliced SerialisedKey) where
 
 instance Arbitrary BlobSpan where
   arbitrary = BlobSpan <$> arbitrary <*> arbitrary
-  shrink (BlobSpan x y) = BlobSpan <$> shrink x <*> shrink y
+  shrink (BlobSpan x y) = [ BlobSpan x' y' | (x', y') <- shrink (x, y) ]
 
 {-------------------------------------------------------------------------------
   Merge
