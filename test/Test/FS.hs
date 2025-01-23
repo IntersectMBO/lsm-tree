@@ -7,11 +7,18 @@ import           Control.Concurrent.Class.MonadSTM (MonadSTM (atomically))
 import           Control.Concurrent.Class.MonadSTM.Strict.TMVar
 import           Control.Monad
 import           Control.Monad.IOSim (runSimOrThrow)
+import           Control.Monad.ST (runST)
+import           Data.Bit (cloneFromByteString, cloneToByteString, flipBit)
+import           Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
 import           Data.Char (isAsciiLower, isAsciiUpper)
 import qualified Data.List as List
 import qualified Data.Text as Text
+import           Data.Vector.Unboxed (thaw, unsafeFreeze)
 import           GHC.Generics (Generic)
 import           System.FS.API
+import           System.FS.API.Lazy
+import           System.FS.API.Strict
 import           System.FS.Sim.Error
 import qualified System.FS.Sim.MockFS as MockFS
 import qualified System.FS.Sim.Stream as S
@@ -29,6 +36,8 @@ tests = testGroup "Test.FS" [
       -- * Simulated file system properties
       testProperty "prop_numOpenHandles" prop_numOpenHandles
     , testProperty "prop_numDirEntries" prop_numDirEntries
+      -- * Corruption
+    , testProperty "prop_flipFileBit" prop_flipFileBit
       -- * Equality
     , testClassLaws "Stream" $
         eqLaws (Proxy @(Stream Int))
@@ -127,6 +136,47 @@ prop_numDirEntries (Path dir) isFiles (UniqueList paths) = runSimOrThrow $
   where
     n = length paths
     xs = zip (getInfiniteList isFiles) paths
+
+{-------------------------------------------------------------------------------
+  Corruption
+-------------------------------------------------------------------------------}
+
+data WithBitOffset a = WithBitOffset Int a
+  deriving stock Show
+
+instance Arbitrary (WithBitOffset ByteString) where
+  arbitrary = do
+      bs <- arbitrary `suchThat` (\bs -> BS.length bs > 0)
+      bitOffset <- chooseInt (0, BS.length bs - 1)
+      pure $ WithBitOffset bitOffset bs
+  shrink (WithBitOffset bitOffset bs) =
+      [ WithBitOffset bitOffset' bs'
+      | bs' <- shrink bs
+      , BS.length bs' > 0
+      , let bitOffset' = max 0 $ min (BS.length bs' - 1) bitOffset
+      ] ++ [
+        WithBitOffset bitOffset' bs
+      | bitOffset' <- max 0 <$> shrink bitOffset
+      , bitOffset' >= 0
+      ]
+
+prop_flipFileBit :: WithBitOffset ByteString -> Property
+prop_flipFileBit (WithBitOffset bitOffset bs) =
+    ioProperty $
+    withSimHasFS propTrivial MockFS.empty $ \hfs _fsVar -> do
+      void $ withFile hfs path (WriteMode MustBeNew) $ \h -> hPutAllStrict hfs h bs
+      flipFileBit hfs path bitOffset
+      bs' <- withFile hfs path ReadMode $ \h -> BS.toStrict <$> hGetAll hfs h
+      pure (spec_flipFileBit bs bitOffset === bs')
+  where
+    path = mkFsPath ["file"]
+
+spec_flipFileBit :: ByteString -> Int -> ByteString
+spec_flipFileBit bs bitOffset = runST $ do
+    mv <- thaw $ cloneFromByteString bs
+    flipBit mv bitOffset
+    v <- unsafeFreeze mv
+    pure $ cloneToByteString v
 
 {-------------------------------------------------------------------------------
   Equality
