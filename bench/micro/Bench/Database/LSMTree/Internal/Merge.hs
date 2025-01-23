@@ -231,11 +231,10 @@ benchMerge conf@Config{name} =
             --    thread `runs` through the environment, too.
             -- 2. It forces the result to normal form, which would traverse the
             --    whole run, so we force to WHNF ourselves and just return `()`.
-
-            -- We make sure to immediately close resulting runs so we don't run
-            -- out of file handles or disk space. However, we don't want it to
-            -- be part of the measurement, as it includes deleting files.
-            -- Therefore, ... TODO
+            -- 3. It doesn't have access to the run we created in the benchmark,
+            --    but the cleanup should not be part of the measurement, as it
+            --    includes deleting files. So we smuggle the reference out using
+            --    an `IORef`.
             Cr.perRunEnvWithCleanup
               ((runs,) <$> newIORef Nothing)
               (releaseRun . snd) $ \(runs', ref) -> do
