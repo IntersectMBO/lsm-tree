@@ -9,6 +9,7 @@ module Test.Database.LSMTree.Internal.Entry (tests) where
 import           Data.Coerce
 import           Data.List.NonEmpty (NonEmpty)
 import           Data.Semigroup
+import           Data.Void
 import           Database.LSMTree.Extras.Generators ()
 import           Database.LSMTree.Internal.BlobRef
 import           Database.LSMTree.Internal.Entry
@@ -25,14 +26,21 @@ tests :: TestTree
 tests = adjustOption (\_ -> QuickCheckTests 10000) $
         adjustOption (\_ -> QuickCheckMaxSize 1000) $
     testGroup "Test.Database.LSMTree.Internal.Entry" [
+      -- * Class laws
+
       testClassLaws "EntrySG" $
         semigroupLaws (Proxy @(EntrySG (Sum Int) BlobSpanSG))
+    , testClassLaws "UnionEntrySG" $
+        semigroupLaws (Proxy @(UnionEntrySG (Sum Int) BlobSpanSG))
     , testClassLaws "NormalUpdateSG" $
         -- Note that we are using Unlawful here because mupserts /should/ not
         -- show up for normal updates.
         semigroupLaws (Proxy @(NormalUpdateSG (Unlawful Int) String))
     , testClassLaws "MonoidalUpdateSG" $
         semigroupLaws (Proxy @(MonoidalUpdateSG (Sum Int)))
+
+    -- * Semantics
+
     , testProperty "prop_resolveEntriesNormalSemantics" $
         -- Note that we are using Unlawful here because mupserts /should/ not
         -- show up for normal updates.
@@ -47,16 +55,44 @@ prop_resolveEntriesNormalSemantics ::
   => NonEmpty (Normal.Update v b)
   -> Property
 prop_resolveEntriesNormalSemantics es = expected === real
-  where expected = Just . unNormalUpdateSG . sconcat . fmap NormalUpdateSG $ es
-        real     = entryToUpdateNormal (sconcat (fmap updateToEntryNormal es))
+  where
+    expected = from . sconcat . fmap to $ es
+      where
+        to :: Normal.Update v b -> NormalUpdateSG v b
+        to = NormalUpdateSG
+
+        from :: NormalUpdateSG v b -> Maybe (Normal.Update v b)
+        from = Just . unNormalUpdateSG
+
+    real = from . sconcat . fmap to $ es
+      where
+        to :: Normal.Update v b -> EntrySG v b
+        to = EntrySG . updateToEntryNormal
+
+        from :: EntrySG v b -> Maybe (Normal.Update v b)
+        from (EntrySG x) = entryToUpdateNormal x
 
 -- | @resolve == fromEntry . resolve . toEntry@
 prop_resolveMonoidalSemantics ::
      (Show v, Eq v, Semigroup v)
   => NonEmpty (Monoidal.Update v) -> Property
 prop_resolveMonoidalSemantics es = expected === real
-  where expected = Just . unMonoidalUpdateSG . sconcat . fmap MonoidalUpdateSG $ es
-        real     = entryToUpdateMonoidal (sconcat (fmap updateToEntryMonoidal es))
+  where
+    expected = from . sconcat . fmap to $ es
+      where
+        to :: Monoidal.Update v -> MonoidalUpdateSG v
+        to = MonoidalUpdateSG
+
+        from :: MonoidalUpdateSG v -> Maybe (Monoidal.Update v)
+        from = Just . unMonoidalUpdateSG
+
+    real = from . sconcat . fmap to $ es
+      where
+        to :: Monoidal.Update v -> EntrySG v Void
+        to = EntrySG . updateToEntryMonoidal
+
+        from :: EntrySG v Void -> Maybe (Monoidal.Update v)
+        from (EntrySG x) = entryToUpdateMonoidal x
 
 {-------------------------------------------------------------------------------
   Types
@@ -71,19 +107,27 @@ newtype Unlawful a = Unlawful a
 instance Semigroup (Unlawful a) where
   _ <> _ = error "unlawful"
 
+--
+-- Normal update
+--
+
 -- | Semigroup wrapper for 'Normal.Update'
 newtype NormalUpdateSG v b = NormalUpdateSG (Normal.Update v b)
   deriving stock (Show, Eq)
-  deriving newtype (Arbitrary)
+  deriving newtype Arbitrary
   deriving Semigroup via First (Normal.Update v b)
 
 unNormalUpdateSG :: NormalUpdateSG v b -> Normal.Update v b
 unNormalUpdateSG (NormalUpdateSG x) = x
 
+--
+-- Monoidal update
+--
+
 -- | Semigroup wrapper for 'Monoidal.Update'
 newtype MonoidalUpdateSG v = MonoidalUpdateSG (Monoidal.Update v)
   deriving stock (Show, Eq)
-  deriving newtype (Arbitrary)
+  deriving newtype Arbitrary
 
 unMonoidalUpdateSG :: MonoidalUpdateSG v -> Monoidal.Update v
 unMonoidalUpdateSG (MonoidalUpdateSG x) = x
@@ -96,9 +140,17 @@ instance Semigroup v => Semigroup (MonoidalUpdateSG v) where
       (Monoidal.Mupsert v1 , Monoidal.Insert  v2) -> Monoidal.Insert (v1 <> v2)
       (Monoidal.Mupsert v1 , Monoidal.Mupsert v2) -> Monoidal.Mupsert (v1 <> v2)
 
+--
+-- Entry
+--
+
+-- | Semigroup wrapper for 'Entry'
 newtype EntrySG v b = EntrySG (Entry v b)
   deriving stock (Show, Eq)
-  deriving newtype Semigroup
+
+-- | Semigroup instance using 'combine'.
+instance Semigroup v => Semigroup (EntrySG v b) where
+  EntrySG e1 <> EntrySG e2 = EntrySG $ combine (<>) e1 e2
 
 instance (Arbitrary v, Arbitrary b) => Arbitrary (EntrySG v b) where
   arbitrary = arbitrary2
@@ -122,6 +174,23 @@ instance Arbitrary2 EntrySG where
                           ]
     Mupdate v          -> Delete : Insert v : (Mupdate <$> shrinkVal v)
     Delete             -> []
+
+--
+-- Union entry
+--
+
+-- | Semigroup wrapper for 'Entry'
+newtype UnionEntrySG v b = UnionEntrySG (Entry v b)
+  deriving stock (Show, Eq)
+  deriving Arbitrary via EntrySG v b
+
+-- | Semigroup instance using 'combineUnion'.
+instance Semigroup v => Semigroup (UnionEntrySG v b) where
+  UnionEntrySG e1 <> UnionEntrySG e2 = UnionEntrySG $ combineUnion (<>) e1 e2
+
+--
+-- Blob span
+--
 
 newtype BlobSpanSG = BlobSpanSG BlobSpan
   deriving stock (Show, Eq)
