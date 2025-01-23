@@ -6,19 +6,21 @@ module Test.FS (tests) where
 import           Control.Concurrent.Class.MonadSTM (MonadSTM (atomically))
 import           Control.Concurrent.Class.MonadSTM.Strict.TMVar
 import           Control.Monad
-import           Control.Monad.Class.MonadThrow
+import           Control.Monad.Class.MonadThrow (MonadThrow)
 import           Control.Monad.IOSim (runSimOrThrow)
 import           Control.Monad.ST (runST)
 import           Data.Bit (cloneFromByteString, cloneToByteString, flipBit)
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
+import           Data.Maybe
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Vector.Unboxed (thaw, unsafeFreeze)
+import           Database.LSMTree.Extras (showPowersOf)
 import           GHC.Generics (Generic)
 import           System.FS.API
-import           System.FS.API.Lazy
-import           System.FS.API.Strict
+import           System.FS.API.Lazy (hGetAll)
+import           System.FS.API.Strict (hPutAllStrict)
 import           System.FS.Sim.Error
 import qualified System.FS.Sim.MockFS as MockFS
 import qualified System.FS.Sim.Stream as S
@@ -36,6 +38,9 @@ tests = testGroup "Test.FS" [
       -- * Simulated file system properties
       testProperty "prop_numOpenHandles" prop_numOpenHandles
     , testProperty "prop_numDirEntries" prop_numDirEntries
+      -- * List directory
+    , testProperty "prop_listDirectoryRecursiveFiles" prop_listDirectoryRecursiveFiles
+    , testProperty "prop_listDirectoryFiles" prop_listDirectoryFiles
       -- * Corruption
     , testProperty "prop_flipFileBit" prop_flipFileBit
       -- * Equality
@@ -116,6 +121,93 @@ prop_numDirEntries (fsPathComponentFsPath -> dir) isFiles (Set.toList -> paths) 
 
 createFile :: MonadThrow m => HasFS m h -> FsPath -> m ()
 createFile hfs p = withFile hfs p (WriteMode MustBeNew) $ \_ -> pure ()
+
+{-------------------------------------------------------------------------------
+  List directory
+-------------------------------------------------------------------------------}
+
+createDirEntry :: MonadThrow m => HasFS m h -> DirEntry FsPath -> m ()
+createDirEntry hfs = \case
+    File x -> createFile hfs x
+    Directory x -> createDirectory hfs x
+
+prop_listDirectoryRecursiveFiles :: FsPath -> FsTree FsPathComponent () -> Property
+prop_listDirectoryRecursiveFiles dir fsTree = runSimOrThrow $
+    withSimHasFS propTrivial MockFS.empty $ \hfs _fsVar -> do
+      forM_ dirEntries $ createDirEntry hfs
+      files <- listDirectoryRecursiveFiles hfs root
+      pure $
+        tabulate "Number of created directory entries" [showPowersOf 2 (length dirEntries)] $
+        tabulate "Number of listed directory entries" [showPowersOf 2 (length files)] $
+        counterexample (show dirEntries) $
+        spec_listDirectoryRecursiveFiles dir fsTree === files
+  where
+    root = mkFsPath []
+    dirEntries = fsTreeDirEntries root fsTree
+
+spec_listDirectoryRecursiveFiles :: FsPath -> FsTree FsPathComponent () -> Set FsPath
+spec_listDirectoryRecursiveFiles dir fsTree =
+    Set.fromList $ mapMaybe f $ fsTreeDirEntries dir fsTree
+  where
+    f (File p)      = fsPathStripPrefix dir p
+    f (Directory _) = Nothing
+
+prop_listDirectoryFiles :: FsPath -> FsTree FsPathComponent () -> Property
+prop_listDirectoryFiles dir fsTree = runSimOrThrow $
+    withSimHasFS propTrivial MockFS.empty $ \hfs _fsVar -> do
+      forM_ dirEntries $ createDirEntry hfs
+      files <- listDirectoryFiles hfs root
+      pure $
+        tabulate "Number of created directory entries" [showPowersOf 2 (length dirEntries)] $
+        tabulate "Number of listed directory entries" [showPowersOf 2 (length files)] $
+        counterexample (show dirEntries) $
+        spec_listDirectoryFiles dir fsTree === files
+  where
+    root = mkFsPath []
+    dirEntries = fsTreeDirEntries root fsTree
+
+spec_listDirectoryFiles :: FsPath -> FsTree FsPathComponent () -> Set FsPath
+spec_listDirectoryFiles dir fsTree =
+    Set.fromList $ mapMaybe f $ fsTreeDirEntries dir fsTree
+  where
+    f (File p) = fsPathStripPrefix dir p >>= \p' -> case fsPathToList p' of
+        [_] -> Just p'
+        _   -> Nothing
+    f (Directory _) = Nothing
+
+{- prop_listDirectoryRecursive :: FsTree FsPathComponent () -> Property
+prop_listDirectoryRecursive fsTree =
+    runSimOrThrow $
+    withSimHasFS propTrivial MockFS.empty $ \hfs _fsVar -> do
+      es <- forM fsTree $ \dirEntry -> try @_ @FsError $ do
+          case dirEntry of
+            File p -> do
+              forM_ (fsPathSplit p) $ \(dir, _) -> createDirectoryIfMissing hfs True dir
+              createFile hfs p
+            Directory p -> createDirectoryIfMissing hfs True p
+
+      dirEntries' <- listDirectoryRecursive hfs root
+
+      pure $ counterexample (show (nubListList es)) $
+       Set.fromList (_spec_listDirectoryRecursive xs) === dirEntries'
+
+  where
+    root = mkFsPath []
+
+_spec_listDirectoryRecursive :: FsTree FsPathComponent () -> [DirEntry FsPath]
+_spec_listDirectoryRecursive fsTree = undefined -}
+{-
+    concatMap (mapMaybe isRoot) $
+    for es $ \e ->
+        e
+      : List.unfoldr (fmap f . fsPathSplit) (getDirEntry e)
+  where
+    f (p', _) = (Directory p', p')
+
+    isRoot e = if getDirEntry e == root then Nothing else Just e
+    root = mkFsPath []
+
+    ps = fsTreeFsPaths fsTree -}
 
 {-------------------------------------------------------------------------------
   Corruption

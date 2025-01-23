@@ -31,6 +31,14 @@ module Test.Util.FS (
     -- * Corruption
   , flipFileBit
   , hFlipBit
+
+  , fsPathStripPrefix
+  , FsTree (..)
+  , FsTreeEntry (..)
+  , Folder
+  , fsTreeFsPaths
+  , fsTreeDirEntries
+
     -- * Arbitrary
   , FsPathComponent (..)
   , fsPathComponentFsPath
@@ -51,13 +59,19 @@ import           Control.Monad.Primitive (PrimMonad)
 import           Data.Bit (MVector (..), flipBit)
 import           Data.Char (isAscii, isDigit, isLetter)
 import           Data.Foldable (foldlM)
+import qualified Data.List as List
 import           Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
+import           Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 import           Data.Primitive.ByteArray (newPinnedByteArray, setByteArray)
 import           Data.Primitive.Types (sizeOf)
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.Text as T
+import           Data.Tree (Tree)
+import qualified Data.Tree as Tree
+import           Database.LSMTree.Extras.RunData (liftShrink2Map)
 import           GHC.Stack
 import           System.FS.API as FS
 import           System.FS.BlockIO.API
@@ -363,6 +377,118 @@ hFlipBit hfs h bitOffset = do
 {-------------------------------------------------------------------------------
   Arbitrary
 -------------------------------------------------------------------------------}
+
+fsPathStripPrefix :: FsPath -> FsPath -> Maybe FsPath
+fsPathStripPrefix p1 p2 = fsPathFromList <$> fsPathToList p1 `List.stripPrefix` fsPathToList p2
+
+--
+-- FsTree
+--
+
+-- | Simple in-memory representation of a file system
+--
+-- Copied from "System.FS.Sim.FsTree"
+newtype FsTree a b = FsTree (Folder a b)
+  deriving stock (Show, Eq, Functor)
+
+data FsTreeEntry a b = FsTreeFile !b | FsTreeFolder !(Folder a b)
+  deriving stock (Show, Eq, Functor)
+
+type Folder a b = Map a (FsTreeEntry a b)
+
+instance (Arbitrary a, Ord a, Arbitrary b) => Arbitrary (FsTree a b) where
+  arbitrary = liftArbitrary2FsTree arbitrary arbitrary
+  shrink = liftShrink2FsTree shrink shrink
+
+instance (Arbitrary a, Ord a) => Arbitrary1 (FsTree a) where
+  liftArbitrary genB = liftArbitrary2FsTree arbitrary genB
+  liftShrink shrB = liftShrink2FsTree shrink shrB
+
+liftArbitrary2FsTree :: Ord a => Gen a -> Gen b -> Gen (FsTree a b)
+liftArbitrary2FsTree genA genB = fmap treeFsTree $ liftArbitrary $ do
+    x <- genA
+    y <- genB
+    pure (x, y)
+
+treeFsTree :: Ord a => Tree (a, b) -> FsTree a b
+treeFsTree (Tree.Node (x, _) children) = case children of
+    [] -> FsTree Map.empty
+    _  -> FsTree $ consFolder x children
+
+treeFsTreeEntry :: Ord a => Tree (a, b) -> FsTreeEntry a b
+treeFsTreeEntry (Tree.Node (x, my) children) = case (children, my) of
+    ([], y) -> FsTreeFile y
+    (_, _)  -> FsTreeFolder $ consFolder x children
+
+consFolder :: Ord a => a -> [Tree (a, b)] -> Folder a b
+consFolder x children = Map.fromList $ fmap (\child -> (x, treeFsTreeEntry child)) children
+
+{-
+liftArbitrary2FsTree :: Ord a => Gen a -> Gen b -> Gen (FsTree a b)
+liftArbitrary2FsTree genA genB = scale (`div` 20) $ sized $ \n -> do
+    i <- chooseInt (0, n)
+    if i == 0 then
+      pure $ FsTree Map.empty
+    else
+      FsTree <$> liftArbitrary2Map genA (liftArbitrary2FsTreeEntry n genA genB)
+
+liftArbitrary2FsTreeEntry :: Ord a => Int -> Gen a -> Gen b -> Gen (FsTreeEntry a b)
+liftArbitrary2FsTreeEntry i genA genB
+  | i < 0 = error "liftArbitrary2FsTreeEntry: n < 0"
+  | i == 0 = oneof [
+        FsTreeFile <$> genB
+      , pure (FsTreeFolder Map.empty)
+      ]
+  | otherwise = oneof [
+        FsTreeFile <$> genB
+      , FsTreeFolder <$> liftArbitrary2Map genA (liftArbitrary2FsTreeEntry (i-1) genA genB)
+      ] -}
+
+liftShrink2FsTree :: Ord a => (a -> [a]) -> (b -> [b]) -> FsTree a b -> [FsTree a b]
+liftShrink2FsTree shrA shrB (FsTree folder) =
+    FsTree <$> liftShrink2Map shrA (liftShrink2FsTreeEntry shrA shrB) folder
+
+liftShrink2FsTreeEntry :: Ord a => (a -> [a]) -> (b -> [b]) -> FsTreeEntry a b -> [FsTreeEntry a b]
+liftShrink2FsTreeEntry shrA shrB = \case
+    FsTreeFile file -> FsTreeFile <$> shrB file
+    FsTreeFolder folder ->
+      let shrFolder = FsTreeFolder <$>
+            liftShrink2Folder shrA shrB folder in
+      case Map.toList folder of
+        [(_, e)] -> e : shrFolder
+        _        -> shrFolder
+
+liftShrink2Folder :: Ord a => (a -> [a]) -> (b -> [b]) -> Folder a b -> [Folder a b]
+liftShrink2Folder shrA shrB folder = liftShrink2Map shrA (liftShrink2FsTreeEntry shrA shrB) folder
+
+fsTreeFsPaths :: FsTree FsPathComponent b -> [FsPath]
+fsTreeFsPaths (FsTree folder) = folderFsPaths folder
+
+fsTreeEntryFsPaths :: FsTreeEntry FsPathComponent b -> [FsPath]
+fsTreeEntryFsPaths = \case
+    FsTreeFile _ -> []
+    FsTreeFolder folder -> folderFsPaths folder
+
+folderFsPaths :: Folder FsPathComponent b -> [FsPath]
+folderFsPaths folder = concatMap (uncurry f) $ Map.toAscList folder
+  where
+    f pc child =
+        let p = fsPathComponentFsPath pc
+        in  p : fmap (p </>) (fsTreeEntryFsPaths child)
+
+fsTreeDirEntries :: FsPath -> FsTree FsPathComponent b -> [DirEntry FsPath]
+fsTreeDirEntries p (FsTree folder) = folderDirEntries p folder
+
+fsTreeEntryDirEntries :: FsPath -> FsTreeEntry FsPathComponent b -> [DirEntry FsPath]
+fsTreeEntryDirEntries p = \case
+    FsTreeFile _ -> [File p]
+    FsTreeFolder folder -> Directory p : folderDirEntries p folder
+
+folderDirEntries :: FsPath -> Folder FsPathComponent b -> [DirEntry FsPath]
+folderDirEntries p folder = concatMap (uncurry f) $ Map.toAscList folder
+  where
+    f pc child = fsTreeEntryDirEntries (p </> fsPathComponentFsPath pc) child
+
 
 --
 -- FsPathComponent
