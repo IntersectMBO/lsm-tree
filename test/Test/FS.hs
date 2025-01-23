@@ -6,14 +6,14 @@ module Test.FS (tests) where
 import           Control.Concurrent.Class.MonadSTM (MonadSTM (atomically))
 import           Control.Concurrent.Class.MonadSTM.Strict.TMVar
 import           Control.Monad
+import           Control.Monad.Class.MonadThrow
 import           Control.Monad.IOSim (runSimOrThrow)
 import           Control.Monad.ST (runST)
 import           Data.Bit (cloneFromByteString, cloneToByteString, flipBit)
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
-import           Data.Char (isAsciiLower, isAsciiUpper)
-import qualified Data.List as List
-import qualified Data.Text as Text
+import           Data.Set (Set)
+import qualified Data.Set as Set
 import           Data.Vector.Unboxed (thaw, unsafeFreeze)
 import           GHC.Generics (Generic)
 import           System.FS.API
@@ -49,43 +49,16 @@ tests = testGroup "Test.FS" [
   Simulated file system properties
 -------------------------------------------------------------------------------}
 
-newtype Path = Path FsPath
-  deriving stock (Show, Eq)
-
-newtype UniqueList a = UniqueList [a]
-  deriving stock Show
-
-instance (Arbitrary a, Eq a) => Arbitrary (UniqueList a) where
-  arbitrary = do
-      xs <- arbitrary
-      pure (UniqueList (List.nub xs))
-  shrink (UniqueList []) = []
-  shrink (UniqueList xs) = UniqueList . List.nub <$> shrink xs
-
-instance Arbitrary Path where
-  arbitrary = Path . mkFsPath . (:[]) <$> ((:) <$> genChar <*> listOf genChar)
-    where
-      genChar = elements (['A'..'Z'] ++ ['a'..'z'])
-  shrink (Path p) = case fsPathToList p of
-      [] -> []
-      t:_ -> [
-          Path p'
-        | t' <- shrink t
-        , let t'' = Text.filter (\c -> isAsciiUpper c || isAsciiLower c) t'
-        , not (Text.null t'')
-        , let p' = fsPathFromList [t']
-        ]
-
 -- | Sanity check for 'propNoOpenHandles' and 'propNumOpenHandles'
-prop_numOpenHandles :: UniqueList Path -> Property
-prop_numOpenHandles (UniqueList paths) = runSimOrThrow $
+prop_numOpenHandles :: Set FsPathComponent -> Property
+prop_numOpenHandles (Set.toList -> paths) = runSimOrThrow $
     withSimHasFS propTrivial MockFS.empty $ \hfs fsVar -> do
       -- No open handles initially
       fs <- atomically $ readTMVar fsVar
       let prop = propNoOpenHandles fs
 
       -- Open n handles
-      hs <- forM paths $ \(Path p) -> hOpen hfs p (WriteMode MustBeNew)
+      hs <- forM paths $ \(fsPathComponentFsPath -> p) -> hOpen hfs p (WriteMode MustBeNew)
 
       -- Now there should be precisely n open handles
       fs' <- atomically $ readTMVar fsVar
@@ -103,8 +76,12 @@ prop_numOpenHandles (UniqueList paths) = runSimOrThrow $
     n = length paths
 
 -- | Sanity check for 'propNoDirEntries' and 'propNumDirEntries'
-prop_numDirEntries :: Path -> InfiniteList Bool -> UniqueList Path -> Property
-prop_numDirEntries (Path dir) isFiles (UniqueList paths) = runSimOrThrow $
+prop_numDirEntries ::
+     FsPathComponent
+  -> InfiniteList Bool
+  -> Set FsPathComponent
+  -> Property
+prop_numDirEntries (fsPathComponentFsPath -> dir) isFiles (Set.toList -> paths) = runSimOrThrow $
     withSimHasFS propTrivial MockFS.empty $ \hfs fsVar -> do
       createDirectoryIfMissing hfs False dir
 
@@ -113,9 +90,9 @@ prop_numDirEntries (Path dir) isFiles (UniqueList paths) = runSimOrThrow $
       let prop = propNoDirEntries dir fs
 
       -- Create n entries
-      forM_ xs $ \(isFile, Path p) ->
+      forM_ xs $ \(isFile, fsPathComponentFsPath -> p) ->
         if isFile
-          then withFile hfs (dir </> p) (WriteMode MustBeNew) $ \_ -> pure ()
+          then createFile hfs (dir </> p)
           else createDirectory hfs (dir </> p)
 
       -- Now there should be precisely n entries
@@ -123,7 +100,7 @@ prop_numDirEntries (Path dir) isFiles (UniqueList paths) = runSimOrThrow $
       let prop' = propNumDirEntries dir n fs'
 
       -- Remove n entries
-      forM_ xs $ \(isFile, Path p) ->
+      forM_ xs $ \(isFile, fsPathComponentFsPath -> p) ->
         if isFile
           then removeFile hfs (dir </> p)
           else removeDirectoryRecursive hfs (dir </> p)
@@ -136,6 +113,9 @@ prop_numDirEntries (Path dir) isFiles (UniqueList paths) = runSimOrThrow $
   where
     n = length paths
     xs = zip (getInfiniteList isFiles) paths
+
+createFile :: MonadThrow m => HasFS m h -> FsPath -> m ()
+createFile hfs p = withFile hfs p (WriteMode MustBeNew) $ \_ -> pure ()
 
 {-------------------------------------------------------------------------------
   Corruption
