@@ -93,57 +93,78 @@ type Levels s = [Level s]
 -- completed, the resulting run will become a resident run at this level.
 data Level s = Level !(IncomingRun s) ![Run]
 
--- | An additional optional last level, created as a result of 'union'. It can
--- not only contain an ongoing merge of multiple runs, but a nested tree of
--- merges. See Note [Table Unions].
-data UnionLevel s = NoUnion
-                    -- | We track the debt to make sure it never increases.
-                  | Union !(MergingTree s) !(STRef s Debt)
-
--- | The merge policy for a LSM level can be either tiering or levelling.
--- In this design we use levelling for the last level, and tiering for
--- all other levels. The first level always uses tiering however, even if
--- it's also the last level. So 'MergePolicy' and 'MergeLastLevel' are
--- orthogonal, all combinations are possible.
---
-data MergePolicy = MergePolicyTiering | MergePolicyLevelling
-  deriving stock (Eq, Show)
-
--- | A last level merge behaves differently from a mid-level merge: last level
--- merges can actually remove delete operations, whereas mid-level merges must
--- preserve them. This is orthogonal to the 'MergePolicy'.
---
-data MergeLastLevel = MergeMidLevel | MergeLastLevel
-  deriving stock (Eq, Show)
-
--- | Merges can either exist on a level of the LSM, or be a union merge of two
--- tables. Union merges follow the semantics of @Data.Map.unionWith (<>)@. Since
--- the input runs are semantically treated like @Data.Map@s, deletes from one
--- input don't affect another (there is no distinction between a deleted value
--- and one that was never inserted) and inserts need to be merged monoidally
--- using 'resolveValue' (as if they were mupserts). See Note [Table Unions].
---
-data MergeType = MergeLevel MergeLastLevel | MergeUnion
-  deriving stock (Eq, Show)
-
 -- | We represent single runs specially, rather than putting them in as a
 -- 'CompletedMerge'. This is for two reasons: to see statically that it's a
 -- single run without having to read the 'STRef', and secondly to make it easier
 -- to avoid supplying merge credits. It's not essential, but simplifies things
 -- somewhat.
-data IncomingRun s = Merging !MergePolicy !(MergingRun s)
+data IncomingRun s = Merging !MergePolicy !(MergingRun LevelMergeType s)
                    | Single  !Run
+
+-- | The merge policy for a LSM level can be either tiering or levelling.
+-- In this design we use levelling for the last level, and tiering for
+-- all other levels. The first level always uses tiering however, even if
+-- it's also the last level. So 'MergePolicy' and 'IncomingMergeType' are
+-- orthogonal, all combinations are possible.
+--
+data MergePolicy = MergePolicyTiering | MergePolicyLevelling
+  deriving stock (Eq, Show)
 
 -- | A \"merging run\" is a mutable representation of an incremental merge.
 -- It is also a unit of sharing between duplicated tables.
 --
-data MergingRun s = MergingRun !MergeType !(STRef s MergingRunState)
+data MergingRun t s = MergingRun !t !(STRef s MergingRunState)
 
 data MergingRunState = CompletedMerge !Run
                      | OngoingMerge
                          !MergeDebt
                          ![Run]  -- ^ inputs of the merge
                          Run  -- ^ output of the merge (lazily evaluated)
+
+-- | Merges can exist in different parts of the LSM, each with different options
+-- for the exact merge operation performed.
+class Show t => IsMergeType t where
+  isLastLevel :: t -> Bool
+  isUnion :: t -> Bool
+
+-- | Different types of merges created as part of a regular (non-union) level.
+--
+-- A last level merge behaves differently from a mid-level merge: last level
+-- merges can actually remove delete operations, whereas mid-level merges must
+-- preserve them. This is orthogonal to the 'MergePolicy'.
+data LevelMergeType = MergeMidLevel | MergeLastLevel
+  deriving stock (Eq, Show)
+
+instance IsMergeType LevelMergeType where
+  isLastLevel = \case
+      MergeMidLevel  -> False
+      MergeLastLevel -> True
+  isUnion = const False
+
+-- | Different types of merges created as part of the merging tree.
+--
+-- Union merges follow the semantics of @Data.Map.unionWith (<>)@. Since
+-- the input runs are semantically treated like @Data.Map@s, deletes are ignored
+-- and inserts act like mupserts, so they need to be merged monoidally using
+-- 'resolveValue'.
+--
+-- Trees can only exist on the union level, which is the last. Therefore, node
+-- merges can always drop deletes.
+data TreeMergeType = MergeLevel | MergeUnion
+  deriving stock (Eq, Show)
+
+instance IsMergeType TreeMergeType where
+  isLastLevel = const True
+  isUnion = \case
+      MergeLevel -> False
+      MergeUnion -> True
+
+-- | An additional optional last level, created as a result of 'union'. It can
+-- not only contain an ongoing merge of multiple runs, but a nested tree of
+-- merges. See Note [Table Unions].
+data UnionLevel s = NoUnion
+                    -- | We track the debt to make sure it never increases.
+                  | Union !(MergingTree s) !(STRef s Debt)
 
 -- | A \"merging tree\" is a mutable representation of an incremental
 -- tree-shaped nested merge. This allows to represent union merges of entire
@@ -159,7 +180,7 @@ newtype MergingTree s = MergingTree (STRef s (MergingTreeState s))
 data MergingTreeState s = CompletedTreeMerge !Run
                           -- | Reuses MergingRun (with its STRef) to allow
                           -- sharing existing merges.
-                        | OngoingTreeMerge !(MergingRun s)
+                        | OngoingTreeMerge !(MergingRun TreeMergeType s)
                         | PendingTreeMerge !(PendingMerge s)
 
 -- | A merge that is waiting for its inputs to complete.
@@ -174,13 +195,17 @@ data PendingMerge s = -- | The inputs are entire content of a table, i.e. its
                       -- a table.
                     | PendingUnionMerge ![MergingTree s]
 
-pendingContent :: PendingMerge s -> (MergeType, [IncomingRun s], [MergingTree s])
+pendingContent :: PendingMerge s
+               -> (TreeMergeType, [IncomingRun s], [MergingTree s])
 pendingContent = \case
-    PendingLevelMerge irs t  -> (MergeLevel MergeLastLevel, irs, toList t)
-    PendingUnionMerge     ts -> (MergeUnion,                [],  ts)
+    PendingLevelMerge irs t  -> (MergeLevel, irs, toList t)
+    PendingUnionMerge     ts -> (MergeUnion, [],  ts)
 
 {-# COMPLETE PendingMerge #-}
-pattern PendingMerge :: MergeType -> [IncomingRun s] -> [MergingTree s] -> PendingMerge s
+pattern PendingMerge :: TreeMergeType
+                     -> [IncomingRun s]
+                     -> [MergingTree s]
+                     -> PendingMerge s
 pattern PendingMerge mt irs ts <- (pendingContent -> (mt, irs, ts))
 
 type Credit = Int
@@ -251,9 +276,9 @@ mergePolicyForLevel _ _  _       = MergePolicyTiering
 
 -- | If there are no further levels provided, this level is the last one.
 -- However, if a 'Union' is present, it acts as another (last) level.
-mergeLastForLevel :: [Level s] -> UnionLevel s -> MergeLastLevel
-mergeLastForLevel [] NoUnion = MergeLastLevel
-mergeLastForLevel _  _       = MergeMidLevel
+levelMergeTypeForLevel :: [Level s] -> UnionLevel s -> LevelMergeType
+levelMergeTypeForLevel [] NoUnion = MergeLastLevel
+levelMergeTypeForLevel _  _       = MergeMidLevel
 
 -- | Note that the invariants rely on the fact that levelling is only used on
 -- the last level.
@@ -265,9 +290,6 @@ invariant (LSMContent _ levels ul) = do
       NoUnion      -> return ()
       Union tree _ -> treeInvariant tree
   where
-    mergeLast :: Levels s -> MergeLastLevel
-    mergeLast ls = mergeLastForLevel ls ul
-
     levelsInvariant :: Int -> Levels s -> ST s ()
     levelsInvariant !_ [] = return ()
 
@@ -275,9 +297,9 @@ invariant (LSMContent _ levels ul) = do
       mrs <- case ir of
         Single r ->
           return (CompletedMerge r)
-        Merging mp (MergingRun ml ref) -> do
+        Merging mp (MergingRun mt ref) -> do
           assertST $ mp == mergePolicyForLevel ln ls ul
-                  && ml == MergeLevel (mergeLast ls)
+                  && mt == levelMergeTypeForLevel ls ul
           readSTRef ref
 
       assertST $ length rs <= 3
@@ -341,7 +363,7 @@ invariant (LSMContent _ levels ul) = do
               assertST $ all (\r -> levellingRunSizeToLevel r <= ln+1) resident
 
         MergePolicyTiering ->
-          case (ir, mrs, mergeLast ls) of
+          case (ir, mrs, levelMergeTypeForLevel ls ul) of
             -- A single incoming run (which thus didn't need merging) must be
             -- of the expected size already
             (Single r, m, _) -> do
@@ -391,13 +413,8 @@ invariant (LSMContent _ levels ul) = do
               assertST $ length rs > 1
 
         PendingTreeMerge (PendingLevelMerge irs tree) -> do
-          -- Merges are non-trivial (at least two inputs).
-          assertST $ length irs + length tree > 1
-          -- The IncomingRuns of a level merge come from the regular levels of a
-          -- table, so any MergingRuns must be level merges.
-          for_ irs $ \case
-            Merging _ (MergingRun mt _) -> assertST $ mt /= MergeUnion
-            Single _                    -> return ()
+          -- No empty merge, but could be just one input.
+          assertST $ length irs + length tree > 0
           for_ tree treeInvariant
 
         PendingTreeMerge (PendingUnionMerge trees) -> do
@@ -417,7 +434,7 @@ assertST p = assert p $ return ()
 -- Merging run abstraction
 --
 
-newMergingRun :: Maybe Debt -> MergeType -> [Run] -> ST s (MergingRun s)
+newMergingRun :: IsMergeType t => Maybe Debt -> t -> [Run] -> ST s (MergingRun t s)
 newMergingRun mdebt mergeType runs = do
     assertST $ length runs > 1
     -- in some cases, no merging is required at all
@@ -433,13 +450,10 @@ newMergingRun mdebt mergeType runs = do
         return $ OngoingMerge debt rs merged
     MergingRun mergeType <$> newSTRef state
 
-mergek :: MergeType -> [Run] -> Run
-mergek = \case
-    MergeLevel MergeMidLevel  -> Map.unionsWith combine
-    MergeLevel MergeLastLevel -> dropDeletes . Map.unionsWith combine
-    MergeUnion                -> dropDeletes . Map.unionsWith combineUnion
-  where
-    dropDeletes = Map.filter (/= Delete)
+mergek :: IsMergeType t => t -> [Run] -> Run
+mergek t =
+      (if isLastLevel t then Map.filter (/= Delete) else id)
+    . Map.unionsWith (if isUnion t then combineUnion else combine)
 
 -- | Combines two entries that have been performed after another. Therefore, the
 -- newer one overwrites the old one (or modifies it for 'Mupsert').
@@ -466,7 +480,7 @@ combineUnion (Insert v' b') (Mupsert v)  = Insert (resolveValue v' v) b'
 combineUnion (Insert v' b') (Insert v b) = Insert (resolveValue v' v)
                                                   (resolveBlob b' b)
 
-expectCompletedMergingRun :: HasCallStack => MergingRun s -> ST s Run
+expectCompletedMergingRun :: HasCallStack => MergingRun t s -> ST s Run
 expectCompletedMergingRun (MergingRun _ ref) = do
     mrs <- readSTRef ref
     case mrs of
@@ -474,7 +488,7 @@ expectCompletedMergingRun (MergingRun _ ref) = do
       OngoingMerge d _ _ -> error $ "expectCompletedMergingRun:"
                                  ++ " remaining debt of " ++ show d
 
-supplyCreditsMergingRun :: Credit -> MergingRun s -> ST s Credit
+supplyCreditsMergingRun :: Credit -> MergingRun t s -> ST s Credit
 supplyCreditsMergingRun = checked remainingDebtMergingRun $ \credits (MergingRun _ ref) -> do
     mrs <- readSTRef ref
     case mrs of
@@ -785,8 +799,8 @@ lookupsTree k = go
             CompletedMerge r ->
               return $ lookupBatch' [r]
             OngoingMerge _ rs _ -> case mt of
-              MergeLevel _ -> return $ lookupBatch' rs  -- combine into batch
-              MergeUnion   -> return $ unionAcc (map (\r -> lookupBatch' [r]) rs)
+              MergeLevel -> return $ lookupBatch' rs  -- combine into batch
+              MergeUnion -> return $ unionAcc (map (\r -> lookupBatch' [r]) rs)
         PendingTreeMerge (PendingUnionMerge trees) -> do
           unionAcc <$> traverse go trees
         PendingTreeMerge (PendingLevelMerge irs tree) -> do
@@ -826,7 +840,7 @@ supplyCreditsLevels unscaled =
 -- | The general case (and thus worst case) of how many merge credits we need
 -- for a level. This is based on the merging policy at the level.
 --
-creditsForMerge :: MergePolicy -> MergingRun s -> ST s Rational
+creditsForMerge :: MergePolicy -> MergingRun t s -> ST s Rational
 
 -- A levelling merge has 1 input run and one resident run, which is (up to) 4x
 -- bigger than the others.
@@ -849,14 +863,14 @@ increment :: forall s. Tracer (ST s) Event
 increment tr sc run0 ls0 ul = do
     go 1 [run0] ls0
   where
-    mergeLast :: Levels s -> MergeLastLevel
-    mergeLast ls = mergeLastForLevel ls ul
+    mergeTypeFor :: Levels s -> LevelMergeType
+    mergeTypeFor ls = levelMergeTypeForLevel ls ul
 
     go :: Int -> [Run] -> Levels s -> ST s (Levels s)
     go !ln incoming [] = do
         let mergePolicy = mergePolicyForLevel ln [] ul
         traceWith tr' AddLevelEvent
-        ir <- newLevelMerge tr' ln mergePolicy (mergeLast []) incoming
+        ir <- newLevelMerge tr' ln mergePolicy (mergeTypeFor []) incoming
         return (Level ir [] : [])
       where
         tr' = contramap (EventAt sc ln) tr
@@ -879,7 +893,7 @@ increment tr sc run0 ls0 ul = do
         -- If r is still too small for this level then keep it and merge again
         -- with the incoming runs.
         MergePolicyTiering | tieringRunSizeToLevel r < ln -> do
-          ir' <- newLevelMerge tr' ln MergePolicyTiering (mergeLast ls) (incoming ++ [r])
+          ir' <- newLevelMerge tr' ln MergePolicyTiering (mergeTypeFor ls) (incoming ++ [r])
           return (Level ir' rs : ls)
 
         -- This tiering level is now full. We take the completed merged run
@@ -894,7 +908,7 @@ increment tr sc run0 ls0 ul = do
         -- This tiering level is not yet full. We move the completed merged run
         -- into the level proper, and start the new merge for the incoming runs.
         MergePolicyTiering -> do
-          ir' <- newLevelMerge tr' ln MergePolicyTiering (mergeLast ls) incoming
+          ir' <- newLevelMerge tr' ln MergePolicyTiering (mergeTypeFor ls) incoming
           traceWith tr' (AddRunEvent (length resident))
           return (Level ir' resident : ls)
 
@@ -911,7 +925,7 @@ increment tr sc run0 ls0 ul = do
         -- Otherwise we start merging the incoming runs into the run.
         MergePolicyLevelling -> do
           assert (null rs && null ls) $ return ()
-          ir' <- newLevelMerge tr' ln MergePolicyLevelling (mergeLast ls)
+          ir' <- newLevelMerge tr' ln MergePolicyLevelling (mergeTypeFor ls)
                           (incoming ++ [r])
           return (Level ir' [] : [])
 
@@ -919,10 +933,10 @@ increment tr sc run0 ls0 ul = do
         tr' = contramap (EventAt sc ln) tr
 
 newLevelMerge :: Tracer (ST s) EventDetail
-              -> Int -> MergePolicy -> MergeLastLevel
+              -> Int -> MergePolicy -> LevelMergeType
               -> [Run] -> ST s (IncomingRun s)
 newLevelMerge _ _ _ _ [r] = return (Single r)
-newLevelMerge tr level mergePolicy mergeLast rs = do
+newLevelMerge tr level mergePolicy mergeType rs = do
     traceWith tr MergeStartedEvent {
                    mergePolicy,
                    mergeType,
@@ -932,7 +946,6 @@ newLevelMerge tr level mergePolicy mergeLast rs = do
     assertST (length rs `elem` [4, 5])
     Merging mergePolicy <$> newMergingRun (Just debt) mergeType rs
   where
-    mergeType = MergeLevel mergeLast
     -- How much we need to discharge before the merge can be guaranteed
     -- complete. More precisely, this is the maximum amount a merge at this
     -- level could need. While the real @cost@ of a merge would lead to merges
@@ -998,12 +1011,10 @@ newPendingLevelMerge :: [IncomingRun s]
                      -> Maybe (MergingTree s)
                      -> ST s (Maybe (MergingTree s))
 newPendingLevelMerge [] t = return t
-newPendingLevelMerge [ir] Nothing = do
-    let st = case ir of
-          Single r     -> CompletedTreeMerge r
-          Merging _ mr -> OngoingTreeMerge mr
-    Just . MergingTree <$> newSTRef st
 newPendingLevelMerge irs tree = do
+    -- If there is just a single IncomingRun, we could directly turn that into
+    -- a MergingTree, but it's not necessary and a little complicated because
+    -- of the LevelMergeType/TreeMergeType mismatch.
     let st = PendingTreeMerge (PendingLevelMerge irs tree)
     Just . MergingTree <$> newSTRef st
 
@@ -1056,7 +1067,7 @@ remainingDebtPendingMerge (PendingMerge _ irs trees) = do
         Single r     -> return (0, runSize r)
         Merging _ mr -> remainingDebtMergingRun mr
 
-remainingDebtMergingRun :: MergingRun s -> ST s (Debt, Size)
+remainingDebtMergingRun :: MergingRun t s -> ST s (Debt, Size)
 remainingDebtMergingRun (MergingRun _ ref) =
     readSTRef ref >>= \case
       CompletedMerge r ->
@@ -1116,9 +1127,12 @@ supplyCreditsMergingTreeState credits !state = do
             (mergeType, rs) <- expectCompletedChildren pm
             -- no reason to claim a larger debt than sum of run sizes
             let debt = Nothing
-            state' <- OngoingTreeMerge <$> newMergingRun debt mergeType rs
-            -- use any remaining credits to progress the new merge
-            supplyCreditsMergingTreeState c' state'
+            case rs of
+              [r] -> return (c', CompletedTreeMerge r)
+              _   -> do
+                state' <- OngoingTreeMerge <$> newMergingRun debt mergeType rs
+                -- use any remaining credits to progress the new merge
+                supplyCreditsMergingTreeState c' state'
 
 supplyCreditsPendingMerge :: Credit -> PendingMerge s -> ST s Credit
 supplyCreditsPendingMerge = checked remainingDebtPendingMerge $ \credits -> \case
@@ -1154,7 +1168,8 @@ supplyCreditsPendingMerge = checked remainingDebtPendingMerge $ \credits -> \cas
             leftovers <- f creditsToSpend t
             return (c - creditsToSpend + leftovers)
 
-expectCompletedChildren :: HasCallStack => PendingMerge s -> ST s (MergeType, [Run])
+expectCompletedChildren :: HasCallStack
+                        => PendingMerge s -> ST s (TreeMergeType, [Run])
 expectCompletedChildren (PendingMerge mt irs trees) = do
     rs1 <- traverse expectCompletedIncomingRun irs
     rs2 <- traverse expectCompletedMergingTree trees
@@ -1176,7 +1191,7 @@ expectCompletedMergingTree (MergingTree ref) = do
 --
 
 data MTree r = MLeaf r
-             | MNode MergeType [MTree r]
+             | MNode TreeMergeType [MTree r]
   deriving stock (Eq, Foldable, Functor, Show)
 
 allLevels :: LSM s -> ST s (Buffer, [[Run]], Maybe (MTree Run))
@@ -1199,7 +1214,7 @@ flattenIncomingRun = \case
     Single r     -> return [r]
     Merging _ mr -> flattenMergingRun mr
 
-flattenMergingRun :: MergingRun s -> ST s [Run]
+flattenMergingRun :: MergingRun t s -> ST s [Run]
 flattenMergingRun (MergingRun _ ref) = do
     mrs <- readSTRef ref
     case mrs of
@@ -1224,17 +1239,14 @@ flattenTree (MergingTree ref) = do
 logicalValue :: LSM s -> ST s (Map Key (Value, Maybe Blob))
 logicalValue lsm = do
     (wb, levels, tree) <- allLevels lsm
-    let r = mergeRuns
-              (MergeLevel MergeLastLevel)
+    let r = mergek
+              MergeLevel
               (wb : concat levels ++ toList (mergeTree <$> tree))
     return (Map.mapMaybe justInsert r)
   where
-    mergeRuns :: MergeType -> [Run] -> Run
-    mergeRuns = mergek
-
     mergeTree :: MTree Run -> Run
     mergeTree (MLeaf r)     = r
-    mergeTree (MNode mt ts) = mergeRuns mt (map mergeTree ts)
+    mergeTree (MNode mt ts) = mergek mt (map mergeTree ts)
 
     justInsert (Insert v b) = Just (v, b)
     justInsert  Delete      = Nothing
@@ -1243,7 +1255,7 @@ logicalValue lsm = do
 type Representation = (Run, [LevelRepresentation], Maybe (MTree Run))
 
 type LevelRepresentation =
-    (Maybe (MergePolicy, MergeType, MergingRunState), [Run])
+    (Maybe (MergePolicy, LevelMergeType, MergingRunState), [Run])
 
 dumpRepresentation :: LSM s -> ST s Representation
 dumpRepresentation (LSMHandle _ lsmr) = do
@@ -1301,13 +1313,13 @@ data EventDetail =
        }
      | MergeStartedEvent {
          mergePolicy   :: MergePolicy,
-         mergeType     :: MergeType,
+         mergeType     :: LevelMergeType,
          mergeDebt     :: Debt,
          mergeRunsSize :: [Int]
        }
      | MergeCompletedEvent {
          mergePolicy :: MergePolicy,
-         mergeType   :: MergeType,
+         mergeType   :: LevelMergeType,
          mergeSize   :: Int
        }
   deriving stock Show
