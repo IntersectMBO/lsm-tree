@@ -252,7 +252,10 @@ randomEntry :: StdGen -> (Entry UTxOValue ByteString, StdGen)
 randomEntry g = frequency [
       (20, \g' -> let (!v, !g'') = uniform g' in (Insert v, g''))
     , (1,  \g' -> let (!v, !g'') = uniform g'
-                      (!b, !g''') = randomByteStringR (0, 2000) g''  -- < 2kB
+                      -- The size of the blobs doesn't matter for the benchmark,
+                      -- as it only deals with the blob references. So we make
+                      -- them tiny to not slow down the setup.
+                      (!b, !g''') = randomByteStringR (0, 100) g''
                   in  (InsertWithBlob v b, g'''))
     , (2,  \g' -> let (!v, !g'') = uniform g' in (Mupdate v, g''))
     , (2,  \g' -> (Delete, g'))
