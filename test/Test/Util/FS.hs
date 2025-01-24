@@ -22,6 +22,9 @@ module Test.Util.FS (
   , assertNumOpenHandles
     -- * Equality
   , approximateEqStream
+    -- * Corruption
+  , flipFileBit
+  , hFlipBit
     -- * Arbitrary
   , NoCleanupErrors (..)
   ) where
@@ -29,9 +32,13 @@ module Test.Util.FS (
 import           Control.Concurrent.Class.MonadMVar
 import           Control.Concurrent.Class.MonadSTM.Strict
 import           Control.Exception (assert)
+import           Control.Monad (void)
 import           Control.Monad.Class.MonadThrow (MonadCatch, MonadThrow)
 import           Control.Monad.IOSim (runSimOrThrow)
 import           Control.Monad.Primitive (PrimMonad)
+import           Data.Bit (MVector (..), flipBit)
+import           Data.Primitive.ByteArray (newPinnedByteArray, setByteArray)
+import           Data.Primitive.Types (sizeOf)
 import qualified Data.Set as Set
 import           GHC.Stack
 import           System.FS.API as FS
@@ -220,6 +227,39 @@ approximateEqStream (UnsafeStream infoXs xs) (UnsafeStream infoYs ys) =
       (Infinite, Infinite) -> True
       (Finite, Finite)     ->  xs == ys
       (_, _)               -> False
+
+{-------------------------------------------------------------------------------
+  Corruption
+-------------------------------------------------------------------------------}
+
+-- | Flip a single bit in the given file.
+flipFileBit :: (MonadThrow m, PrimMonad m) => HasFS m h -> FsPath -> Int -> m ()
+flipFileBit hfs p bitOffset =
+    withFile hfs p (ReadWriteMode AllowExisting) $ \h -> hFlipBit hfs h bitOffset
+
+-- | Flip a single bit in the file pointed to by the given handle.
+hFlipBit ::
+     (MonadThrow m, PrimMonad m)
+  => HasFS m h
+  -> Handle h
+  -> Int -- ^ Bit offset
+  -> m ()
+hFlipBit hfs h bitOffset = do
+    -- Create an empty buffer initialised to all 0 bits. The buffer must have at
+    -- least the size of a machine word.
+    let n = sizeOf (0 :: Word)
+    buf <- newPinnedByteArray n
+    setByteArray buf 0 n (0 :: Word)
+    -- Read the bit at the given offset
+    let (byteOffset, i) = bitOffset `quotRem` 8
+        bufOff = BufferOffset 0
+        count = 1
+        off = AbsOffset (fromIntegral byteOffset)
+    void $ hGetBufExactlyAt hfs h buf bufOff count off
+    -- Flip the bit in memory, and then write it back
+    let bvec = BitMVec 0 8 buf
+    flipBit bvec i
+    void $ hPutBufExactlyAt hfs h buf bufOff count off
 
 {-------------------------------------------------------------------------------
   Arbitrary
