@@ -8,10 +8,11 @@ module Test.Database.LSMTree.Internal.Entry (tests) where
 
 import           Data.Coerce
 import           Data.List.NonEmpty (NonEmpty)
-import           Data.Semigroup
+import qualified Data.Monoid as Monoid
+import           Data.Semigroup hiding (First)
+import qualified Data.Semigroup as Semigroup
 import           Data.Void
 import           Database.LSMTree.Extras.Generators ()
-import           Database.LSMTree.Internal.BlobRef
 import           Database.LSMTree.Internal.Entry
 import qualified Database.LSMTree.Monoidal as Monoidal
 import qualified Database.LSMTree.Normal as Normal
@@ -29,32 +30,46 @@ tests = adjustOption (\_ -> QuickCheckTests 10000) $
       -- * Class laws
 
       testClassLaws "EntrySG" $
-        semigroupLaws (Proxy @(EntrySG (Sum Int) BlobSpanSG))
-    , testClassLaws "UnionEntrySG" $
-        semigroupLaws (Proxy @(UnionEntrySG (Sum Int) BlobSpanSG))
+        semigroupLaws (Proxy @(EntrySG (Sum Int) String))
     , testClassLaws "NormalUpdateSG" $
-        -- Note that we are using Unlawful here because mupserts /should/ not
-        -- show up for normal updates.
+        -- Note that we are using Unlawful here because we do not combine values
+        -- monoidally.
         semigroupLaws (Proxy @(NormalUpdateSG (Unlawful Int) String))
     , testClassLaws "MonoidalUpdateSG" $
         semigroupLaws (Proxy @(MonoidalUpdateSG (Sum Int)))
 
+    , testClassLaws "Union Entry" $
+        semigroupLaws (Proxy @(Union (Entry (Sum Int) String)))
+
+    , testClassLaws "Union Normal.Update" $
+        semigroupLaws (Proxy @(Union (Normal.Update (Sum Int) String)))
+
+    , testClassLaws "Union Monoidal.Update" $
+        semigroupLaws (Proxy @(Union (Monoidal.Update (Sum Int))))
+
+
     -- * Semantics
 
-    , testProperty "prop_resolveEntriesNormalSemantics" $
-        -- Note that we are using Unlawful here because mupserts /should/ not
-        -- show up for normal updates.
-        prop_resolveEntriesNormalSemantics @(Unlawful Int) @String
-    , testProperty "prop_resolveMonoidalSemantics" $
-        prop_resolveMonoidalSemantics @(Sum Int)
+    , testProperty "prop_regularSemantics_normal" $
+        -- Note that we are using Unlawful here because we do not combine values
+        -- monoidally.
+        prop_regularSemantics_normal @(Unlawful Int) @String
+    , testProperty "prop_regularSemantics_monoidal" $
+        prop_regularSemantics_monoidal @(Sum Int)
+
+    , testProperty "prop_unionSemantics_normal" $
+        prop_unionSemantics_normal @(Sum Int) @String
+    , testProperty "prop_unionSemantics_monoidal" $
+        prop_unionSemantics_monoidal @(Sum Int)
     ]
 
--- | @resolve == fromEntry . resolve . toEntry@
-prop_resolveEntriesNormalSemantics ::
+-- | @sconcat == fromEntry . sconcat . toEntry@ with regular semantics for
+-- normal updates.
+prop_regularSemantics_normal ::
      (Show v, Show b, Eq v, Eq b, Semigroup v)
   => NonEmpty (Normal.Update v b)
   -> Property
-prop_resolveEntriesNormalSemantics es = expected === real
+prop_regularSemantics_normal es = expected === real
   where
     expected = from . sconcat . fmap to $ es
       where
@@ -72,11 +87,12 @@ prop_resolveEntriesNormalSemantics es = expected === real
         from :: EntrySG v b -> Maybe (Normal.Update v b)
         from (EntrySG x) = entryToUpdateNormal x
 
--- | @resolve == fromEntry . resolve . toEntry@
-prop_resolveMonoidalSemantics ::
+-- | @sconcat == fromEntry . sconcat . toEntry@ with regular semantics for
+-- monoidal updates.
+prop_regularSemantics_monoidal ::
      (Show v, Eq v, Semigroup v)
   => NonEmpty (Monoidal.Update v) -> Property
-prop_resolveMonoidalSemantics es = expected === real
+prop_regularSemantics_monoidal es = expected === real
   where
     expected = from . sconcat . fmap to $ es
       where
@@ -94,18 +110,57 @@ prop_resolveMonoidalSemantics es = expected === real
         from :: EntrySG v Void -> Maybe (Monoidal.Update v)
         from (EntrySG x) = entryToUpdateMonoidal x
 
+-- | @sconcat == fromEntry . sconcat . toEntry@ with union semantics for normal
+-- updates.
+prop_unionSemantics_normal ::
+     (Show v, Show b, Eq v, Eq b, Semigroup v)
+  => NonEmpty (Normal.Update v b)
+  -> Property
+prop_unionSemantics_normal es = expected === real
+  where
+    expected = from . sconcat . fmap to $ es
+      where
+        to :: Normal.Update v b -> Union (Normal.Update v b)
+        to = Union
+
+        from :: Union (Normal.Update v b) -> Maybe (Normal.Update v b)
+        from = Just . unUnion
+
+    real = from . sconcat . fmap to $ es
+      where
+        to :: Normal.Update v b -> Union (Entry v b)
+        to = Union . updateToEntryNormal
+
+        from :: Union (Entry v b) -> Maybe (Normal.Update v b)
+        from = entryToUpdateNormal . unUnion
+
+-- | @sconcat == fromEntry . sconcat . toEntry@ with union semantics for
+-- monoidal updates.
+prop_unionSemantics_monoidal ::
+     (Show v, Eq v, Semigroup v)
+  => NonEmpty (Monoidal.Update v)
+  -> Property
+prop_unionSemantics_monoidal es = expected === real
+  where
+    expected = from . sconcat . fmap to $ es
+      where
+        to :: Monoidal.Update v -> Union (Monoidal.Update v)
+        to = Union
+
+        from :: Union (Monoidal.Update v) -> Maybe (Monoidal.Update v)
+        from = Just . unUnion
+
+    real = from . sconcat . fmap to $ es
+      where
+        to :: Monoidal.Update v -> Union (Entry v Void)
+        to = Union . updateToEntryMonoidal
+
+        from :: Union (Entry v Void) -> Maybe (Monoidal.Update v)
+        from = entryToUpdateMonoidal . unUnion
+
 {-------------------------------------------------------------------------------
-  Types
+  Regular semantics
 -------------------------------------------------------------------------------}
-
--- | A wrapper type with a 'Semigroup' instance that always throws an error.
-newtype Unlawful a = Unlawful a
-  deriving stock (Show, Eq)
-  deriving newtype Arbitrary
-
--- | A 'Semigroup' instance that always throws an error.
-instance Semigroup (Unlawful a) where
-  _ <> _ = error "unlawful"
 
 --
 -- Normal update
@@ -115,7 +170,7 @@ instance Semigroup (Unlawful a) where
 newtype NormalUpdateSG v b = NormalUpdateSG (Normal.Update v b)
   deriving stock (Show, Eq)
   deriving newtype Arbitrary
-  deriving Semigroup via First (Normal.Update v b)
+  deriving Semigroup via Semigroup.First (Normal.Update v b)
 
 unNormalUpdateSG :: NormalUpdateSG v b -> Normal.Update v b
 unNormalUpdateSG (NormalUpdateSG x) = x
@@ -175,29 +230,68 @@ instance Arbitrary2 EntrySG where
     Mupdate v          -> Delete : Insert v : (Mupdate <$> shrinkVal v)
     Delete             -> []
 
+{-------------------------------------------------------------------------------
+  Union semantics
+-------------------------------------------------------------------------------}
+
+newtype Union a = Union { unUnion :: a }
+  deriving stock (Show, Eq)
+
 --
--- Union entry
+-- Normal update
 --
 
--- | Semigroup wrapper for 'Entry'
-newtype UnionEntrySG v b = UnionEntrySG (Entry v b)
-  deriving stock (Show, Eq)
-  deriving Arbitrary via EntrySG v b
+deriving newtype instance (Arbitrary v, Arbitrary b)
+                       => Arbitrary (Union (Normal.Update v b))
+
+instance Semigroup v => Semigroup (Union (Normal.Update v b)) where
+  Union up1 <> Union up2 = Union $ case (up1, up2) of
+    (Normal.Delete       , _                    ) -> up2
+    (_                   , Normal.Delete        ) -> up1
+    (Normal.Insert v1 mb1, Normal.Insert v2 mb2 ) ->
+        Normal.Insert
+          (v1 <> v2)
+          (Monoid.getFirst (Monoid.First mb1 <> Monoid.First mb2))
+
+--
+-- Monoidal update
+--
+
+deriving newtype instance Arbitrary v
+                       => Arbitrary (Union (Monoidal.Update v))
+
+instance Semigroup v => Semigroup (Union (Monoidal.Update v)) where
+  Union up1 <> Union up2 = Union $ case (up1, up2) of
+      (Monoidal.Delete     , _                  ) -> up2
+      (_                   , Monoidal.Delete    ) -> up1
+      (Monoidal.Insert v1  , Monoidal.Insert v2 ) -> Monoidal.Insert (v1 <> v2)
+      (Monoidal.Insert v1  , Monoidal.Mupsert v2) -> Monoidal.Insert (v1 <> v2)
+      (Monoidal.Mupsert v1 , Monoidal.Insert v2 ) -> Monoidal.Insert (v1 <> v2)
+      (Monoidal.Mupsert v1 , Monoidal.Mupsert v2) -> Monoidal.Insert (v1 <> v2)
+
+--
+-- Entry
+--
+
+deriving via EntrySG v b
+    instance (Arbitrary v, Arbitrary b) => Arbitrary (Union (Entry v b))
 
 -- | Semigroup instance using 'combineUnion'.
-instance Semigroup v => Semigroup (UnionEntrySG v b) where
-  UnionEntrySG e1 <> UnionEntrySG e2 = UnionEntrySG $ combineUnion (<>) e1 e2
+instance Semigroup v => Semigroup (Union (Entry v b)) where
+  Union e1 <> Union e2 = Union $ combineUnion (<>) e1 e2
 
---
--- Blob span
---
+{-------------------------------------------------------------------------------
+  Utility
+-------------------------------------------------------------------------------}
 
-newtype BlobSpanSG = BlobSpanSG BlobSpan
+-- | A wrapper type with a 'Semigroup' instance that always throws an error.
+newtype Unlawful a = Unlawful a
   deriving stock (Show, Eq)
+  deriving newtype Arbitrary
 
-instance Arbitrary BlobSpanSG where
-  arbitrary = coerce (BlobSpan <$> arbitrary <*> arbitrary)
-  shrink = coerce $ \(BlobSpan x y)  -> [ BlobSpan x' y' | (x', y') <- shrink2 (x, y) ]
+-- | A 'Semigroup' instance that always throws an error.
+instance Semigroup (Unlawful a) where
+  _ <> _ = error "unlawful"
 
 {-------------------------------------------------------------------------------
   Injections/projections
