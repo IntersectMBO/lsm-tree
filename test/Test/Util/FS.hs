@@ -31,8 +31,14 @@ module Test.Util.FS (
   , flipFileBit
   , hFlipBit
     -- * Arbitrary
+  , FsPathComponent (..)
+  , fsPathComponentFsPath
+  , fsPathComponentString
     -- ** Modifiers
   , NoCleanupErrors (..)
+    -- ** Orphans
+  , isPathChar
+  , pathChars
   ) where
 
 import           Control.Concurrent.Class.MonadMVar
@@ -43,11 +49,15 @@ import           Control.Monad.Class.MonadThrow (MonadCatch, MonadThrow)
 import           Control.Monad.IOSim (runSimOrThrow)
 import           Control.Monad.Primitive (PrimMonad)
 import           Data.Bit (MVector (..), flipBit)
+import           Data.Char (isAscii, isDigit, isLetter)
 import           Data.Foldable (foldlM)
+import           Data.List.NonEmpty (NonEmpty (..))
+import qualified Data.List.NonEmpty as NE
 import           Data.Primitive.ByteArray (newPinnedByteArray, setByteArray)
 import           Data.Primitive.Types (sizeOf)
 import           Data.Set (Set)
 import qualified Data.Set as Set
+import qualified Data.Text as T
 import           GHC.Stack
 import           System.FS.API as FS
 import           System.FS.BlockIO.API
@@ -62,6 +72,7 @@ import qualified System.FS.Sim.Stream as Stream
 import           System.FS.Sim.Stream (InternalInfo (..), Stream (..))
 import           System.IO.Temp
 import           Test.QuickCheck
+import           Test.QuickCheck.Instances ()
 import           Text.Printf
 
 {-------------------------------------------------------------------------------
@@ -342,6 +353,36 @@ hFlipBit hfs h bitOffset = do
     flipBit bvec i
     void $ hPutBufExactlyAt hfs h buf bufOff count off
 
+
+{-------------------------------------------------------------------------------
+  Arbitrary
+-------------------------------------------------------------------------------}
+
+--
+-- FsPathComponent
+--
+
+-- | A single component in an 'FsPath'.
+--
+-- If we have a path @a/b/c/d@, then @a@, @b@ and @c@ are components, but for
+-- example @a/b@ is not.
+newtype FsPathComponent = FsPathComponent (NonEmpty Char)
+  deriving stock (Eq, Ord)
+
+instance Show FsPathComponent where
+  show = show . fsPathComponentFsPath
+
+fsPathComponentFsPath :: FsPathComponent -> FsPath
+fsPathComponentFsPath (FsPathComponent s) = FS.mkFsPath [NE.toList s]
+
+fsPathComponentString :: FsPathComponent -> String
+fsPathComponentString (FsPathComponent s) = NE.toList s
+
+instance Arbitrary FsPathComponent where
+  arbitrary = resize 5 $ -- path components don't have to be very long
+      FsPathComponent <$> liftArbitrary genPathChar
+  shrink (FsPathComponent s) = FsPathComponent <$> liftShrink shrinkPathChar s
+
 {-------------------------------------------------------------------------------
   Arbitrary: modifiers
 -------------------------------------------------------------------------------}
@@ -371,6 +412,32 @@ instance Arbitrary NoCleanupErrors where
 {-------------------------------------------------------------------------------
   Arbitrary: orphans
 -------------------------------------------------------------------------------}
+
+instance Arbitrary FsPath where
+  arbitrary = scale (`div` 10) $ -- paths don't have to be very long
+      FS.mkFsPath <$> listOf (fsPathComponentString <$> arbitrary)
+  shrink p =
+      let ss = T.unpack <$> fsPathToList p
+      in  FS.mkFsPath <$> shrinkList shrinkAsComponent ss
+    where
+      shrinkAsComponent s = fsPathComponentString <$>
+          shrink (FsPathComponent $ NE.fromList s)
+
+-- >>> all isPathChar pathChars
+-- True
+isPathChar :: Char -> Bool
+isPathChar c = isAscii c && (isLetter c || isDigit c)
+
+-- >>> pathChars
+-- "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+pathChars :: [Char]
+pathChars = concat [['a'..'z'], ['A'..'Z'], ['0'..'9']]
+
+genPathChar :: Gen Char
+genPathChar = elements pathChars
+
+shrinkPathChar :: Char -> [Char]
+shrinkPathChar c = [ c' | c' <- shrink c, isPathChar c']
 
 instance Arbitrary OpenMode where
   arbitrary = genOpenMode
