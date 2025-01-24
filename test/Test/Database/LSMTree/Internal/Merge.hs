@@ -1,6 +1,6 @@
 module Test.Database.LSMTree.Internal.Merge (tests) where
 
-import           Control.Exception (evaluate)
+import           Control.Exception (bracket, evaluate)
 import           Control.RefCount
 import           Data.Bifoldable (bifoldMap)
 import qualified Data.BloomFilter as Bloom
@@ -16,6 +16,7 @@ import qualified Database.LSMTree.Internal.BlobFile as BlobFile
 import qualified Database.LSMTree.Internal.Entry as Entry
 import           Database.LSMTree.Internal.Merge (MergeType (..))
 import qualified Database.LSMTree.Internal.Merge as Merge
+import           Database.LSMTree.Internal.MergingTree
 import           Database.LSMTree.Internal.PageAcc (entryWouldFitInPage)
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..),
                      pathsForRunFiles)
@@ -45,6 +46,7 @@ tests = testGroup "Test.Database.LSMTree.Internal.Merge"
     , testProperty "prop_AbortMerge" $ \level stepSize rds ->
         ioPropertyWithMockFS $ \fs hbio ->
           prop_AbortMerge fs hbio level stepSize rds
+    , testProperty "prop_isStructurallyEmpty" prop_isStructurallyEmpty
     ]
   where
     ioPropertyWithMockFS ::
@@ -208,6 +210,62 @@ prop_AbortMerge fs hbio mergeType (Positive stepSize) (SmallList wbs) =
               return Nothing  -- not in progress
             (_, Merge.MergeInProgress) ->
               return (Just merge)
+
+
+{-------------------------------------------------------------------------------
+  MergingTree
+-------------------------------------------------------------------------------}
+
+-- | Check that the merging tree constructor functions preserve the property
+-- that if the inputs are obviously empty, the output is also obviously empty.
+--
+prop_isStructurallyEmpty :: EmptyMergingTree -> Property
+prop_isStructurallyEmpty emt =
+    ioProperty $
+      bracket (mkEmptyMergingTree emt)
+              releaseRef
+              isStructurallyEmpty
+
+-- | An expression to specify the shape of an empty 'MergingTree'
+--
+data EmptyMergingTree = ObviouslyEmptyLevelMerge
+                      | ObviouslyEmptyUnionMerge
+                      | NonObviouslyEmptyLevelMerge EmptyMergingTree
+                      | NonObviouslyEmptyUnionMerge [EmptyMergingTree]
+  deriving stock (Eq, Show)
+
+instance Arbitrary EmptyMergingTree where
+    arbitrary =
+      sized $ \sz ->
+        frequency $
+        take (1 + sz)
+        [ (1, pure ObviouslyEmptyLevelMerge)
+        , (1, pure ObviouslyEmptyUnionMerge)
+        , (2, NonObviouslyEmptyLevelMerge <$> resize (sz `div` 2) arbitrary)
+        , (2, NonObviouslyEmptyUnionMerge <$> resize (sz `div` 2) arbitrary)
+        ]
+    shrink ObviouslyEmptyLevelMerge         = []
+    shrink ObviouslyEmptyUnionMerge         = [ObviouslyEmptyLevelMerge]
+    shrink (NonObviouslyEmptyLevelMerge mt) = ObviouslyEmptyLevelMerge
+                                            : [ NonObviouslyEmptyLevelMerge mt'
+                                              | mt' <- shrink mt ]
+    shrink (NonObviouslyEmptyUnionMerge mt) = ObviouslyEmptyUnionMerge
+                                            : [ NonObviouslyEmptyUnionMerge mt'
+                                              | mt' <- shrink mt ]
+
+mkEmptyMergingTree :: EmptyMergingTree -> IO (Ref (MergingTree IO h))
+mkEmptyMergingTree ObviouslyEmptyLevelMerge = newPendingLevelMerge [] Nothing
+mkEmptyMergingTree ObviouslyEmptyUnionMerge = newPendingUnionMerge []
+mkEmptyMergingTree (NonObviouslyEmptyLevelMerge emt) = do
+    mt  <- mkEmptyMergingTree emt
+    mt' <- newPendingLevelMerge [] (Just mt)
+    releaseRef mt
+    return mt'
+mkEmptyMergingTree (NonObviouslyEmptyUnionMerge emts) = do
+    mts <- mapM mkEmptyMergingTree emts
+    mt' <- newPendingUnionMerge mts
+    mapM_ releaseRef mts
+    return mt'
 
 {-------------------------------------------------------------------------------
   Utilities
