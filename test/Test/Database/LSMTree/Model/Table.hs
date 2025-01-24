@@ -7,7 +7,7 @@ import qualified Data.ByteString as BS
 import qualified Data.Vector as V
 import           Database.LSMTree.Common
 import           Database.LSMTree.Model.Table (LookupResult (..), Table,
-                     Update (..), lookups, retrieveBlobs)
+                     Update (..), lookups)
 import qualified Database.LSMTree.Model.Table as Model
 import           Database.LSMTree.Monoidal (ResolveValue (..),
                      resolveDeserialised)
@@ -84,9 +84,7 @@ prop_upsertDef k v tbl =
   where
     tbl' = case toList (lookups (V.singleton k) tbl) of
         [Found v'] -> inserts (V.singleton (k, resolve v v', Nothing)) tbl
-        [FoundWithBlob v' b'] ->
-              let [b] = V.toList $ retrieveBlobs (V.singleton b') in
-              inserts (V.singleton (k, resolve v v', Just b)) tbl
+        [FoundWithBlob v' _] -> inserts (V.singleton (k, resolve v v', Nothing)) tbl
         _          -> inserts (V.singleton (k, v, Nothing)) tbl
 
 -- | Different key inserts commute.

@@ -8,8 +8,8 @@ import           Data.Constraint (Dict (..))
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromJust)
-import           Data.Monoid (First (..))
 import           Data.Proxy
+import           Data.Semigroup (First (..))
 import           Prelude hiding (lookup)
 
 import           ScheduledMerges as LSM

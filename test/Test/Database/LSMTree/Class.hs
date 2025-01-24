@@ -591,9 +591,7 @@ prop_lookupUpdate h ups k v1 mb1 v2 = ioProperty $ do
       res <- lookupsWithBlobs tbl s (V.singleton k)
 
       -- notice the order.
-      return $ case mb1 of
-        Nothing -> res === V.singleton (Found (resolve v2 v1))
-        Just b1 -> res === V.singleton (FoundWithBlob (resolve v2 v1) b1)
+      return $ res === V.singleton (Found (resolve v2 v1))
 
 -------------------------------------------------------------------------------
 -- implement classic QC tests for monoidal table unions

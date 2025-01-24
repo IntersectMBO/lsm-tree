@@ -211,8 +211,7 @@ resolveValue :: Value -> Value -> Value
 resolveValue (V x) (V y) = V (x + y)
 
 resolveBlob :: Maybe Blob -> Maybe Blob -> Maybe Blob
-resolveBlob (Just b) _ = Just b
-resolveBlob Nothing mb = mb
+resolveBlob mb _ = mb
 
 newtype Blob = B Int
   deriving stock (Eq, Show)
@@ -448,8 +447,8 @@ combine new_ old = case new_ of
     Insert{}  -> new_
     Delete{}  -> new_
     Mupsert v -> case old of
-      Insert v' b -> Insert (resolveValue v v') b
-      Delete      -> Insert v Nothing
+      Insert v' b -> Insert (resolveValue v v') (resolveBlob Nothing b)
+      Delete      -> Insert v                   (resolveBlob Nothing Nothing)
       Mupsert v'  -> Mupsert (resolveValue v v')
 
 -- | Combines two entries of runs that have been 'union'ed together. If any one
@@ -460,11 +459,10 @@ combine new_ old = case new_ of
 combineUnion :: Op -> Op -> Op
 combineUnion Delete         old          = old
 combineUnion new_           Delete       = new_
-combineUnion (Mupsert v')   (Mupsert v ) = Insert (resolveValue v' v) Nothing
-combineUnion (Mupsert v')   (Insert v b) = Insert (resolveValue v' v) b
-combineUnion (Insert v' b') (Mupsert v)  = Insert (resolveValue v' v) b'
-combineUnion (Insert v' b') (Insert v b) = Insert (resolveValue v' v)
-                                                  (resolveBlob b' b)
+combineUnion (Mupsert v')   (Mupsert v ) = Insert (resolveValue v' v) (resolveBlob Nothing Nothing)
+combineUnion (Mupsert v')   (Insert v b) = Insert (resolveValue v' v) (resolveBlob Nothing b)
+combineUnion (Insert v' b') (Mupsert v)  = Insert (resolveValue v' v) (resolveBlob b'      Nothing)
+combineUnion (Insert v' b') (Insert v b) = Insert (resolveValue v' v) (resolveBlob b'      b)
 
 expectCompletedMergingRun :: HasCallStack => MergingRun s -> ST s Run
 expectCompletedMergingRun (MergingRun _ ref) = do
