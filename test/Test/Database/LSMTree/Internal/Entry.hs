@@ -12,6 +12,7 @@ import qualified Data.Monoid as Monoid
 import           Data.Semigroup hiding (First)
 import qualified Data.Semigroup as Semigroup
 import           Data.Void
+import qualified Database.LSMTree as Unified
 import           Database.LSMTree.Extras.Generators ()
 import           Database.LSMTree.Internal.Entry
 import qualified Database.LSMTree.Monoidal as Monoidal
@@ -31,6 +32,8 @@ tests = adjustOption (\_ -> QuickCheckTests 10000) $
 
       testClassLaws "Regular Entry" $
         semigroupLaws (Proxy @(Regular (Entry (Sum Int) String)))
+    , testClassLaws "Regular Unified.Update" $
+        semigroupLaws (Proxy @(Regular (Unified.Update (Sum Int) String)))
     , testClassLaws "Regular Normal.Update" $
         -- Note that we are using Unlawful here because we do not combine values
         -- monoidally.
@@ -40,6 +43,8 @@ tests = adjustOption (\_ -> QuickCheckTests 10000) $
 
     , testClassLaws "Union Entry" $
         semigroupLaws (Proxy @(Union (Entry (Sum Int) String)))
+    , testClassLaws "Union Unified.Update" $
+        semigroupLaws (Proxy @(Union (Unified.Update (Sum Int) String)))
     , testClassLaws "Union Normal.Update" $
         semigroupLaws (Proxy @(Union (Normal.Update (Sum Int) String)))
     , testClassLaws "Union Monoidal.Update" $
@@ -47,6 +52,8 @@ tests = adjustOption (\_ -> QuickCheckTests 10000) $
 
     -- * Semantics
 
+    , testProperty "prop_regularSemantics_unified" $
+        prop_regularSemantics_unified @(Sum Int) @String
     , testProperty "prop_regularSemantics_normal" $
         -- Note that we are using Unlawful here because we do not combine values
         -- monoidally.
@@ -54,11 +61,38 @@ tests = adjustOption (\_ -> QuickCheckTests 10000) $
     , testProperty "prop_regularSemantics_monoidal" $
         prop_regularSemantics_monoidal @(Sum Int)
 
+    , testProperty "prop_unionSemantics_unified" $
+        prop_unionSemantics_unified @(Sum Int) @String
     , testProperty "prop_unionSemantics_normal" $
         prop_unionSemantics_normal @(Sum Int) @String
     , testProperty "prop_unionSemantics_monoidal" $
         prop_unionSemantics_monoidal @(Sum Int)
     ]
+
+
+-- | @sconcat == fromEntry . sconcat . toEntry@ with regular semantics for
+-- unified updates.
+prop_regularSemantics_unified ::
+     (Show v, Show b, Eq v, Eq b, Semigroup v)
+  => NonEmpty (Unified.Update v b)
+  -> Property
+prop_regularSemantics_unified es = expected === real
+  where
+    expected = from . sconcat . fmap to $ es
+      where
+        to :: Unified.Update v b -> Regular (Unified.Update v b)
+        to = Regular
+
+        from :: Regular (Unified.Update v b) -> Unified.Update v b
+        from = unRegular
+
+    real = from . sconcat . fmap to $ es
+      where
+        to :: Unified.Update v b -> Regular (Entry v b)
+        to = Regular . updateToEntryUnified
+
+        from :: Regular (Entry v b) -> Unified.Update v b
+        from = entryToUpdateUnified . unRegular
 
 -- | @sconcat == fromEntry . sconcat . toEntry@ with regular semantics for
 -- normal updates.
@@ -106,6 +140,30 @@ prop_regularSemantics_monoidal es = expected === real
 
         from :: Regular (Entry v Void) -> Maybe (Monoidal.Update v)
         from = entryToUpdateMonoidal . unRegular
+
+-- | @sconcat == fromEntry . sconcat . toEntry@ with union semantics for
+-- unified updates.
+prop_unionSemantics_unified ::
+     (Show v, Show b, Eq v, Eq b, Semigroup v)
+  => NonEmpty (Unified.Update v b)
+  -> Property
+prop_unionSemantics_unified es = expected === real
+  where
+    expected = from . sconcat . fmap to $ es
+      where
+        to :: Unified.Update v b -> Union (Unified.Update v b)
+        to = Union
+
+        from :: Union (Unified.Update v b) -> Unified.Update v b
+        from = unUnion
+
+    real = from . sconcat . fmap to $ es
+      where
+        to :: Unified.Update v b -> Union (Entry v b)
+        to = Union . updateToEntryUnified
+
+        from :: Union (Entry v b) -> Unified.Update v b
+        from = entryToUpdateUnified . unUnion
 
 -- | @sconcat == fromEntry . sconcat . toEntry@ with union semantics for normal
 -- updates.
@@ -163,6 +221,21 @@ newtype Regular a = Regular { unRegular :: a }
   deriving stock (Show, Eq)
 
 --
+-- Unified update
+--
+
+deriving newtype instance (Arbitrary v, Arbitrary b)
+                       => Arbitrary (Regular (Unified.Update v b))
+
+instance Semigroup v => Semigroup (Regular (Unified.Update v b)) where
+  Regular up1 <> Regular up2 = Regular $ case (up1, up2) of
+      (Unified.Delete     , _                    ) -> up1
+      (Unified.Insert{}   , _                    ) -> up1
+      (Unified.Mupsert v1 , Unified.Delete       ) -> Unified.Insert v1 Nothing
+      (Unified.Mupsert v1 , Unified.Insert v2 mb2) -> Unified.Insert (v1 <> v2) mb2
+      (Unified.Mupsert v1 , Unified.Mupsert v2   ) -> Unified.Mupsert (v1 <> v2)
+
+--
 -- Normal update
 --
 
@@ -207,6 +280,25 @@ instance Semigroup v => Semigroup (Regular (Entry v b)) where
 
 newtype Union a = Union { unUnion :: a }
   deriving stock (Show, Eq)
+
+--
+-- Unified update
+--
+
+deriving newtype instance (Arbitrary v, Arbitrary b)
+                       => Arbitrary (Union (Unified.Update v b))
+
+instance Semigroup v => Semigroup (Union (Unified.Update v b)) where
+  Union up1 <> Union up2 = Union $ case (up1, up2) of
+      (Unified.Delete       , _                    ) -> up2
+      (_                    , Unified.Delete       ) -> up1
+      (Unified.Insert v1 mb1, Unified.Insert v2 mb2) ->
+          Unified.Insert
+            (v1 <> v2)
+            (Monoid.getFirst (Monoid.First mb1 <> Monoid.First mb2))
+      (Unified.Insert v1 mb1, Unified.Mupsert v2   ) -> Unified.Insert (v1 <> v2) mb1
+      (Unified.Mupsert v1   , Unified.Insert v2 mb2) -> Unified.Insert (v1 <> v2) mb2
+      (Unified.Mupsert v1   , Unified.Mupsert v2   ) -> Unified.Insert (v1 <> v2) Nothing
 
 --
 -- Normal update
@@ -293,6 +385,22 @@ liftShrink2Entry shrinkVal shrinkBlob = \case
 {-------------------------------------------------------------------------------
   Injections/projections
 -------------------------------------------------------------------------------}
+
+updateToEntryUnified :: Unified.Update v b -> Entry v b
+updateToEntryUnified = \case
+    Unified.Insert v Nothing  -> Insert v
+    Unified.Insert v (Just b) -> InsertWithBlob v b
+    Unified.Mupsert v         -> Mupdate v
+    Unified.Delete            -> Delete
+
+entryToUpdateUnified :: Entry v b -> Unified.Update v b
+entryToUpdateUnified = \case
+    Insert v           -> Unified.Insert v Nothing
+    InsertWithBlob v b -> Unified.Insert v (Just b)
+    Mupdate v          -> Unified.Mupsert v
+    Delete             -> Unified.Delete
+
+
 
 updateToEntryNormal :: Normal.Update v b -> Entry v b
 updateToEntryNormal = \case
