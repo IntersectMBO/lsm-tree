@@ -22,17 +22,42 @@ module Test.Util.FS (
   , assertNumOpenHandles
     -- * Equality
   , approximateEqStream
+    -- * List directory
+  , DirEntry (..)
+  , listDirectoryFiles
+  , listDirectoryRecursive
+  , listDirectoryRecursiveFiles
+    -- * Corruption
+  , flipFileBit
+  , hFlipBit
     -- * Arbitrary
+  , FsPathComponent (..)
+  , fsPathComponentFsPath
+  , fsPathComponentString
+    -- ** Modifiers
   , NoCleanupErrors (..)
+    -- ** Orphans
+  , isPathChar
+  , pathChars
   ) where
 
 import           Control.Concurrent.Class.MonadMVar
 import           Control.Concurrent.Class.MonadSTM.Strict
 import           Control.Exception (assert)
+import           Control.Monad (void)
 import           Control.Monad.Class.MonadThrow (MonadCatch, MonadThrow)
 import           Control.Monad.IOSim (runSimOrThrow)
 import           Control.Monad.Primitive (PrimMonad)
+import           Data.Bit (MVector (..), flipBit)
+import           Data.Char (isAscii, isDigit, isLetter)
+import           Data.Foldable (foldlM)
+import           Data.List.NonEmpty (NonEmpty (..))
+import qualified Data.List.NonEmpty as NE
+import           Data.Primitive.ByteArray (newPinnedByteArray, setByteArray)
+import           Data.Primitive.Types (sizeOf)
+import           Data.Set (Set)
 import qualified Data.Set as Set
+import qualified Data.Text as T
 import           GHC.Stack
 import           System.FS.API as FS
 import           System.FS.BlockIO.API
@@ -40,12 +65,14 @@ import           System.FS.BlockIO.IO
 import           System.FS.BlockIO.Sim (fromHasFS)
 import           System.FS.IO
 import           System.FS.Sim.Error
-import           System.FS.Sim.MockFS
+import           System.FS.Sim.MockFS (HandleMock, MockFS, numOpenHandles,
+                     openHandles, pretty)
 import           System.FS.Sim.STM
 import qualified System.FS.Sim.Stream as Stream
 import           System.FS.Sim.Stream (InternalInfo (..), Stream (..))
 import           System.IO.Temp
 import           Test.QuickCheck
+import           Test.QuickCheck.Instances ()
 import           Text.Printf
 
 {-------------------------------------------------------------------------------
@@ -222,8 +249,147 @@ approximateEqStream (UnsafeStream infoXs xs) (UnsafeStream infoYs ys) =
       (_, _)               -> False
 
 {-------------------------------------------------------------------------------
+  List directory
+-------------------------------------------------------------------------------}
+
+-- TODO: test the list directory functions
+
+data DirEntry a = Directory a | File a
+  deriving stock (Show, Eq, Ord, Functor)
+
+-- | List all files and directories in the given directory and recusively in all
+-- sub-directories.
+listDirectoryRecursive ::
+     Monad m
+  => HasFS m h
+  -> FsPath
+  -> m (Set (DirEntry FsPath))
+listDirectoryRecursive hfs = go Set.empty (mkFsPath [])
+  where
+    go !acc relPath absPath = do
+        pcs <- listDirectory hfs absPath
+        foldlM (\acc' -> go' acc' relPath absPath) acc pcs
+
+    go' !acc relPath absPath pc = do
+        let
+          p = mkFsPath [pc]
+          relPath' = relPath </> p
+          absPath' = absPath </> p
+        isFile <- doesFileExist hfs absPath'
+        if isFile then
+          pure (File relPath' `Set.insert` acc)
+        else do
+          isDirectory <- doesDirectoryExist hfs absPath'
+          if isDirectory then
+            go (Directory relPath' `Set.insert` acc) relPath' absPath'
+          else
+            error $ printf
+              "listDirectoryRecursive: %s is not a file or directory"
+              (show relPath')
+
+-- | List files in the given directory and recursively in all sub-directories.
+listDirectoryRecursiveFiles ::
+     Monad m
+  => HasFS m h
+  -> FsPath
+  -> m (Set FsPath)
+listDirectoryRecursiveFiles hfs dir = do
+    dirEntries <- listDirectoryRecursive hfs dir
+    foldlM f Set.empty dirEntries
+  where
+    f !acc (File p) = pure $ Set.insert p acc
+    f !acc _        = pure acc
+
+-- | List files in the given directory
+listDirectoryFiles ::
+     Monad m
+  => HasFS m h
+  -> FsPath
+  -> m (Set FsPath)
+listDirectoryFiles hfs = go Set.empty
+  where
+    go !acc absPath = do
+        pcs <- listDirectory hfs absPath
+        foldlM go' acc pcs
+
+    go' !acc pc = do
+        let path = mkFsPath [pc]
+        isFile <- doesFileExist hfs path
+        if isFile then
+          pure (path `Set.insert` acc)
+        else
+          pure acc
+
+{-------------------------------------------------------------------------------
+  Corruption
+-------------------------------------------------------------------------------}
+
+-- | Flip a single bit in the given file.
+flipFileBit :: (MonadThrow m, PrimMonad m) => HasFS m h -> FsPath -> Int -> m ()
+flipFileBit hfs p bitOffset =
+    withFile hfs p (ReadWriteMode AllowExisting) $ \h -> hFlipBit hfs h bitOffset
+
+-- | Flip a single bit in the file pointed to by the given handle.
+hFlipBit ::
+     (MonadThrow m, PrimMonad m)
+  => HasFS m h
+  -> Handle h
+  -> Int -- ^ Bit offset
+  -> m ()
+hFlipBit hfs h bitOffset = do
+    -- Create an empty buffer initialised to all 0 bits. The buffer must have at
+    -- least the size of a machine word.
+    let n = sizeOf (0 :: Word)
+    buf <- newPinnedByteArray n
+    setByteArray buf 0 n (0 :: Word)
+    -- Read the bit at the given offset
+    let (byteOffset, i) = bitOffset `quotRem` 8
+        bufOff = BufferOffset 0
+        count = 1
+        off = AbsOffset (fromIntegral byteOffset)
+    void $ hGetBufExactlyAt hfs h buf bufOff count off
+    -- Flip the bit in memory, and then write it back
+    let bvec = BitMVec 0 8 buf
+    flipBit bvec i
+    void $ hPutBufExactlyAt hfs h buf bufOff count off
+
+
+{-------------------------------------------------------------------------------
   Arbitrary
 -------------------------------------------------------------------------------}
+
+--
+-- FsPathComponent
+--
+
+-- | A single component in an 'FsPath'.
+--
+-- If we have a path @a/b/c/d@, then @a@, @b@ and @c@ are components, but for
+-- example @a/b@ is not.
+newtype FsPathComponent = FsPathComponent (NonEmpty Char)
+  deriving stock (Eq, Ord)
+
+instance Show FsPathComponent where
+  show = show . fsPathComponentFsPath
+
+fsPathComponentFsPath :: FsPathComponent -> FsPath
+fsPathComponentFsPath (FsPathComponent s) = FS.mkFsPath [NE.toList s]
+
+fsPathComponentString :: FsPathComponent -> String
+fsPathComponentString (FsPathComponent s) = NE.toList s
+
+instance Arbitrary FsPathComponent where
+  arbitrary = resize 5 $ -- path components don't have to be very long
+      FsPathComponent <$> liftArbitrary genPathChar
+  shrink (FsPathComponent s) = FsPathComponent <$> liftShrink shrinkPathChar s
+
+{-------------------------------------------------------------------------------
+  Arbitrary: modifiers
+-------------------------------------------------------------------------------}
+
+--
+-- NoCleanupErrors
+--
 
 -- | No errors on closing file handles and removing files
 newtype NoCleanupErrors = NoCleanupErrors Errors
@@ -243,8 +409,35 @@ instance Arbitrary NoCleanupErrors where
   -- The shrinker for 'Errors' does not re-introduce 'hCloseE' and 'removeFile'.
   shrink (NoCleanupErrors errs) = NoCleanupErrors <$> shrink errs
 
-newtype TestOpenMode = TestOpenMode OpenMode
-  deriving stock Show
+{-------------------------------------------------------------------------------
+  Arbitrary: orphans
+-------------------------------------------------------------------------------}
+
+instance Arbitrary FsPath where
+  arbitrary = scale (`div` 10) $ -- paths don't have to be very long
+      FS.mkFsPath <$> listOf (fsPathComponentString <$> arbitrary)
+  shrink p =
+      let ss = T.unpack <$> fsPathToList p
+      in  FS.mkFsPath <$> shrinkList shrinkAsComponent ss
+    where
+      shrinkAsComponent s = fsPathComponentString <$>
+          shrink (FsPathComponent $ NE.fromList s)
+
+-- >>> all isPathChar pathChars
+-- True
+isPathChar :: Char -> Bool
+isPathChar c = isAscii c && (isLetter c || isDigit c)
+
+-- >>> pathChars
+-- "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+pathChars :: [Char]
+pathChars = concat [['a'..'z'], ['A'..'Z'], ['0'..'9']]
+
+genPathChar :: Gen Char
+genPathChar = elements pathChars
+
+shrinkPathChar :: Char -> [Char]
+shrinkPathChar c = [ c' | c' <- shrink c, isPathChar c']
 
 instance Arbitrary OpenMode where
   arbitrary = genOpenMode
