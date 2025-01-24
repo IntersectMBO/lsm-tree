@@ -29,24 +29,21 @@ tests = adjustOption (\_ -> QuickCheckTests 10000) $
     testGroup "Test.Database.LSMTree.Internal.Entry" [
       -- * Class laws
 
-      testClassLaws "EntrySG" $
-        semigroupLaws (Proxy @(EntrySG (Sum Int) String))
-    , testClassLaws "NormalUpdateSG" $
+      testClassLaws "Regular Entry" $
+        semigroupLaws (Proxy @(Regular (Entry (Sum Int) String)))
+    , testClassLaws "Regular Normal.Update" $
         -- Note that we are using Unlawful here because we do not combine values
         -- monoidally.
-        semigroupLaws (Proxy @(NormalUpdateSG (Unlawful Int) String))
-    , testClassLaws "MonoidalUpdateSG" $
-        semigroupLaws (Proxy @(MonoidalUpdateSG (Sum Int)))
+        semigroupLaws (Proxy @(Regular (Normal.Update (Unlawful Int) String)))
+    , testClassLaws "Regular (Monoidal.Update)" $
+        semigroupLaws (Proxy @(Regular (Monoidal.Update (Sum Int))))
 
     , testClassLaws "Union Entry" $
         semigroupLaws (Proxy @(Union (Entry (Sum Int) String)))
-
     , testClassLaws "Union Normal.Update" $
         semigroupLaws (Proxy @(Union (Normal.Update (Sum Int) String)))
-
     , testClassLaws "Union Monoidal.Update" $
         semigroupLaws (Proxy @(Union (Monoidal.Update (Sum Int))))
-
 
     -- * Semantics
 
@@ -73,19 +70,19 @@ prop_regularSemantics_normal es = expected === real
   where
     expected = from . sconcat . fmap to $ es
       where
-        to :: Normal.Update v b -> NormalUpdateSG v b
-        to = NormalUpdateSG
+        to :: Normal.Update v b -> Regular (Normal.Update v b)
+        to = Regular
 
-        from :: NormalUpdateSG v b -> Maybe (Normal.Update v b)
-        from = Just . unNormalUpdateSG
+        from :: Regular (Normal.Update v b) -> Maybe (Normal.Update v b)
+        from = Just . unRegular
 
     real = from . sconcat . fmap to $ es
       where
-        to :: Normal.Update v b -> EntrySG v b
-        to = EntrySG . updateToEntryNormal
+        to :: Normal.Update v b -> Regular (Entry v b)
+        to = Regular . updateToEntryNormal
 
-        from :: EntrySG v b -> Maybe (Normal.Update v b)
-        from (EntrySG x) = entryToUpdateNormal x
+        from :: Regular (Entry v b) -> Maybe (Normal.Update v b)
+        from = entryToUpdateNormal . unRegular
 
 -- | @sconcat == fromEntry . sconcat . toEntry@ with regular semantics for
 -- monoidal updates.
@@ -96,19 +93,19 @@ prop_regularSemantics_monoidal es = expected === real
   where
     expected = from . sconcat . fmap to $ es
       where
-        to :: Monoidal.Update v -> MonoidalUpdateSG v
-        to = MonoidalUpdateSG
+        to :: Monoidal.Update v -> Regular (Monoidal.Update v)
+        to = Regular
 
-        from :: MonoidalUpdateSG v -> Maybe (Monoidal.Update v)
-        from = Just . unMonoidalUpdateSG
+        from :: Regular (Monoidal.Update v) -> Maybe (Monoidal.Update v)
+        from = Just . unRegular
 
     real = from . sconcat . fmap to $ es
       where
-        to :: Monoidal.Update v -> EntrySG v Void
-        to = EntrySG . updateToEntryMonoidal
+        to :: Monoidal.Update v -> Regular (Entry v Void)
+        to = Regular . updateToEntryMonoidal
 
-        from :: EntrySG v Void -> Maybe (Monoidal.Update v)
-        from (EntrySG x) = entryToUpdateMonoidal x
+        from :: Regular (Entry v Void) -> Maybe (Monoidal.Update v)
+        from = entryToUpdateMonoidal . unRegular
 
 -- | @sconcat == fromEntry . sconcat . toEntry@ with union semantics for normal
 -- updates.
@@ -162,32 +159,30 @@ prop_unionSemantics_monoidal es = expected === real
   Regular semantics
 -------------------------------------------------------------------------------}
 
+newtype Regular a = Regular { unRegular :: a }
+  deriving stock (Show, Eq)
+
 --
 -- Normal update
 --
 
--- | Semigroup wrapper for 'Normal.Update'
-newtype NormalUpdateSG v b = NormalUpdateSG (Normal.Update v b)
-  deriving stock (Show, Eq)
-  deriving newtype Arbitrary
-  deriving Semigroup via Semigroup.First (Normal.Update v b)
+deriving newtype instance (Arbitrary v, Arbitrary b)
+                       => Arbitrary (Regular (Normal.Update v b))
 
-unNormalUpdateSG :: NormalUpdateSG v b -> Normal.Update v b
-unNormalUpdateSG (NormalUpdateSG x) = x
+
+deriving via Semigroup.First (Normal.Update v b)
+    instance Semigroup (Regular (Normal.Update v b))
+
 
 --
 -- Monoidal update
 --
 
--- | Semigroup wrapper for 'Monoidal.Update'
-newtype MonoidalUpdateSG v = MonoidalUpdateSG (Monoidal.Update v)
-  deriving stock (Show, Eq)
-  deriving newtype Arbitrary
+deriving newtype instance Arbitrary v
+                       => Arbitrary (Regular (Monoidal.Update v))
 
-unMonoidalUpdateSG :: MonoidalUpdateSG v -> Monoidal.Update v
-unMonoidalUpdateSG (MonoidalUpdateSG x) = x
 
-instance Semigroup v => Semigroup (MonoidalUpdateSG v) where
+instance Semigroup v => Semigroup (Regular (Monoidal.Update v)) where
   (<>) = coerce $ \upd1 upd2 -> case (upd1 :: Monoidal.Update v, upd2) of
       (e1@Monoidal.Delete  , _                  ) -> e1
       (e1@Monoidal.Insert{}, _                  ) -> e1
@@ -199,36 +194,12 @@ instance Semigroup v => Semigroup (MonoidalUpdateSG v) where
 -- Entry
 --
 
--- | Semigroup wrapper for 'Entry'
-newtype EntrySG v b = EntrySG (Entry v b)
-  deriving stock (Show, Eq)
+deriving via Uniform (Entry v b)
+    instance (Arbitrary v, Arbitrary b) => Arbitrary (Regular (Entry v b))
 
 -- | Semigroup instance using 'combine'.
-instance Semigroup v => Semigroup (EntrySG v b) where
-  EntrySG e1 <> EntrySG e2 = EntrySG $ combine (<>) e1 e2
-
-instance (Arbitrary v, Arbitrary b) => Arbitrary (EntrySG v b) where
-  arbitrary = arbitrary2
-  shrink = shrink2
-
--- | We do not use the @'Arbitrary' 'Entry'@ instance here, because we want to
--- generate each constructor with equal probability.
-instance Arbitrary2 EntrySG where
-  liftArbitrary2 genVal genBlob = EntrySG <$> frequency
-    [ (1, Insert <$> genVal)
-    , (1, InsertWithBlob <$> genVal <*> genBlob)
-    , (1, Mupdate <$> genVal)
-    , (1, pure Delete)
-    ]
-
-  liftShrink2 shrinkVal shrinkBlob = coerce $ \case
-    Insert v           -> Delete : (Insert <$> shrinkVal v)
-    InsertWithBlob v b -> [Delete, Insert v]
-                       ++ [ InsertWithBlob v' b'
-                          | (v', b') <- liftShrink2 shrinkVal shrinkBlob (v, b)
-                          ]
-    Mupdate v          -> Delete : Insert v : (Mupdate <$> shrinkVal v)
-    Delete             -> []
+instance Semigroup v => Semigroup (Regular (Entry v b)) where
+  Regular e1 <> Regular e2 = Regular $ combine (<>) e1 e2
 
 {-------------------------------------------------------------------------------
   Union semantics
@@ -273,7 +244,7 @@ instance Semigroup v => Semigroup (Union (Monoidal.Update v)) where
 -- Entry
 --
 
-deriving via EntrySG v b
+deriving via Uniform (Entry v b)
     instance (Arbitrary v, Arbitrary b) => Arbitrary (Union (Entry v b))
 
 -- | Semigroup instance using 'combineUnion'.
@@ -292,6 +263,32 @@ newtype Unlawful a = Unlawful a
 -- | A 'Semigroup' instance that always throws an error.
 instance Semigroup (Unlawful a) where
   _ <> _ = error "unlawful"
+
+newtype Uniform a = Uniform a
+
+-- | We do not use the @'Arbitrary' 'Entry'@ instance here, because we want to
+-- generate each constructor with equal probability.
+instance (Arbitrary v, Arbitrary b) => Arbitrary (Uniform (Entry v b)) where
+  arbitrary = Uniform <$> liftArbitrary2Entry arbitrary arbitrary
+  shrink (Uniform x) = Uniform <$> liftShrink2Entry shrink shrink x
+
+liftArbitrary2Entry :: Gen v -> Gen b -> Gen (Entry v b)
+liftArbitrary2Entry genVal genBlob = frequency
+    [ (1, Insert <$> genVal)
+    , (1, InsertWithBlob <$> genVal <*> genBlob)
+    , (1, Mupdate <$> genVal)
+    , (1, pure Delete)
+    ]
+
+liftShrink2Entry :: (v -> [v]) -> (b -> [b]) -> Entry v b -> [Entry v b]
+liftShrink2Entry shrinkVal shrinkBlob = \case
+    Insert v           -> Delete : (Insert <$> shrinkVal v)
+    InsertWithBlob v b -> [Delete, Insert v]
+                       ++ [ InsertWithBlob v' b'
+                          | (v', b') <- liftShrink2 shrinkVal shrinkBlob (v, b)
+                          ]
+    Mupdate v          -> Delete : Insert v : (Mupdate <$> shrinkVal v)
+    Delete             -> []
 
 {-------------------------------------------------------------------------------
   Injections/projections
