@@ -1,17 +1,36 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 -- | Tests for snapshots and their interaction with the file system
 module Test.Database.LSMTree.Internal.Snapshot.FS (tests) where
 
 import           Codec.CBOR.Read (DeserialiseFailure)
-import           Control.Exception
+import           Control.Monad.Class.MonadThrow
+import           Control.Monad.IOSim (runSimOrThrow)
+import           Control.Tracer
+import           Data.Bifunctor (Bifunctor (..))
+import           Data.Maybe (fromJust)
+import qualified Data.Set as Set
+import qualified Data.Vector as V
+import           Data.Word
+import           Database.LSMTree.Extras (showPowersOf10)
+import           Database.LSMTree.Extras.Generators ()
+import           Database.LSMTree.Internal
+import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.CRC32C
+import           Database.LSMTree.Internal.Entry
+import           Database.LSMTree.Internal.Paths
+import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.Snapshot
 import           Database.LSMTree.Internal.Snapshot.Codec
+import qualified System.FS.API as FS
 import           System.FS.API
 import           System.FS.Sim.Error hiding (genErrors)
 import qualified System.FS.Sim.MockFS as MockFS
 import           Test.Database.LSMTree.Internal.Snapshot.Codec ()
+import           Test.QuickCheck
+import           Test.QuickCheck.Gen (genDouble)
 import           Test.Tasty
-import           Test.Tasty.QuickCheck as QC
+import           Test.Tasty.QuickCheck
 import           Test.Util.FS
 
 tests :: TestTree
@@ -20,6 +39,7 @@ tests = testGroup "Test.Database.LSMTree.Internal.Snapshot.FS" [
         prop_fsRoundtripSnapshotMetaData
     , testProperty "prop_fault_fsRoundtripSnapshotMetaData"
         prop_fault_fsRoundtripSnapshotMetaData
+    , testProperty "prop_flipSnapshotBit" prop_flipSnapshotBit
     ]
 
 -- | @readFileSnapshotMetaData . writeFileSnapshotMetaData = id@
@@ -56,12 +76,12 @@ prop_fault_fsRoundtripSnapshotMetaData testErrs metadata =
     ioProperty $
     withSimErrorHasFS propNoOpenHandles MockFS.empty emptyErrors $ \hfs _fsVar errsVar -> do
       writeResult <-
-        try @FsError $
+        try @_ @FsError $
           withErrors errsVar (writeErrors testErrs) $
             writeFileSnapshotMetaData hfs metadataPath checksumPath metadata
 
       readResult <-
-        try @SomeException $
+        try @_ @SomeException $
           withErrors errsVar (readErrors testErrs) $
             readFileSnapshotMetaData hfs metadataPath checksumPath
 
@@ -137,3 +157,106 @@ instance Arbitrary TestErrors where
       [ TestErrors writeErrors' readErrors'
       | (writeErrors', readErrors') <- shrink (writeErrors, readErrors)
       ]
+
+{-------------------------------------------------------------------------------
+  Snapshot corruption
+-------------------------------------------------------------------------------}
+
+-- | A 'Double' in the @[0, 1)@ range.
+newtype Double_0_1 = Double_0_1 Double
+  deriving stock (Show, Eq)
+
+instance Arbitrary Double_0_1 where
+  arbitrary = Double_0_1 <$> genDouble
+  shrink (Double_0_1 x) = [Double_0_1 x' | x' <- shrink x, 0 <= x', x' < 1]
+
+-- TODO: an alternative to generating doubles a priori is to run the monadic
+-- code in @PropertyM (IOSim s)@, and then we can do quantification inside the
+-- monadic property using @pick@. This complicates matters, however, because
+-- functions like @withSimHasBlockIO@ and @withTable@ would have to run in
+-- @PropertyM (IOSim s)@ as well. It's not clear whether the refactoring is
+-- worth it.
+prop_flipSnapshotBit ::
+     Positive (Small Int)
+  -> V.Vector (Word64, Entry Word64 Word64)
+  -> Double_0_1 -- ^ Used to pick which file to corrupt
+  -> Double_0_1 -- ^ Used to pick which bit to flip in the file we picked
+  -> Property
+prop_flipSnapshotBit
+  (Positive (Small bufferSize))
+  es
+  (Double_0_1 pickFile)
+  (Double_0_1 pickBit) =
+    runSimOrThrow $
+    withSimHasBlockIO propNoOpenHandles MockFS.empty $ \hfs hbio _fsVar ->
+    withSession nullTracer hfs hbio root $ \s ->
+    withTable s conf $ \t -> do
+      -- Create a table, populate it, and create a snapshot
+      updates resolve es' t
+      createSnap t
+
+      -- Pick a random file from the named snapshot directory
+      files <- listDirectoryRecursiveFiles hfs (getNamedSnapshotDir namedSnapDir)
+      let i = round (fromIntegral (Set.size files - 1) * pickFile)
+      let file = Set.elemAt i files
+      let path = getNamedSnapshotDir namedSnapDir </> file
+      -- Pick a random bit from the file that we want to corrupt
+      n <- withFile hfs path ReadMode $ hGetSize hfs
+      let j = round (fromIntegral (n * 8 - 1) * pickBit)
+
+      -- Some info for the test output
+      let
+        tabCorruptedFile = tabulate "Corrupted file" [show path]
+        counterCorruptedFile = counterexample ("Corrupted file: " ++ show path)
+        tabFlippedBit = tabulate "Flipped bit" [showPowersOf10 j]
+        counterFlippedBit = counterexample ("Flipped bit: " ++ show j)
+
+      let isUncheckedFile =
+               path == getNamedSnapshotDir namedSnapDir </> FS.mkFsPath ["0.keyops"]
+            || path == getNamedSnapshotDir namedSnapDir </> FS.mkFsPath ["0.blobs"]
+            || path == getNamedSnapshotDir namedSnapDir </> FS.mkFsPath ["0.checksums"]
+
+      -- TODO: remove once write buffer files have checksum verification
+      if isUncheckedFile then
+        pure discard
+      else if n <= 0 then -- file is empty
+        pure $ tabulate "Result" ["No corruption applied"] True
+      else do -- file is non-empty
+
+        -- Flip a bit and try to open the snapshot
+        flipFileBit hfs path j
+        t' <- try @_ @SomeException $ bracket (openSnap s) close $ \_ -> pure ()
+
+        pure $
+          tabCorruptedFile $ counterCorruptedFile $ tabFlippedBit $ counterFlippedBit $
+          case t' of
+            -- If we find an error, we detected corruption. Success!
+            Left e ->
+              tabulate
+                "Result"
+                ["Corruption detected: " <> getConstructorName e]
+                True
+            -- The corruption was not detected. Failure!
+            Right _ -> property False
+  where
+    root = FS.mkFsPath []
+    namedSnapDir = namedSnapshotDir (SessionRoot root) snapName
+
+    conf = defaultTableConfig {
+        confWriteBufferAlloc = AllocNumEntries (NumEntries bufferSize)
+      }
+    es' = fmap (bimap serialiseKey (bimap serialiseValue serialiseBlob)) es
+
+    resolve (SerialisedValue x) (SerialisedValue y) =
+        SerialisedValue (x <> y)
+
+    snapName = fromJust $ mkSnapshotName "snap"
+    snapLabel = SnapshotLabel "label"
+
+    createSnap t =
+        createSnapshot snapName snapLabel SnapFullTable t
+
+    openSnap s =
+        openSnapshot s snapLabel SnapFullTable configNoOverride snapName resolve
+
+    getConstructorName e = takeWhile (/= ' ') (show e)
