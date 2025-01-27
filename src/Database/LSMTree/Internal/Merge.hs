@@ -376,6 +376,9 @@ doStepsUnion Merge {..} requestedSteps = go 0
             -- resolved all entries for this key, write it
             writeReaderEntry mergeType mergeBuilder key entry
             go n
+           -- TODO: could be optimised if we know we can skip the remainder of
+           -- the entries that have the same key, for example if @mergeMappend
+           -- == const@. See the comments on lsm-tree#536.
           else do
             (_, nextEntry, hasMore) <- Readers.pop mergeReaders
             -- for resolution, we need the full second value to be present
