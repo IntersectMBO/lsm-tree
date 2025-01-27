@@ -141,13 +141,13 @@ instance NFData r => NFData (SnapLevel r) where
   rnf (SnapLevel a b) = rnf a `seq` rnf b
 
 data SnapIncomingRun r =
-    SnapMergingRun !MergePolicyForLevel !NumRuns !NumEntries !UnspentCredits !(SnapMergingRunState r)
+    SnapMergingRun !MergePolicyForLevel !NumRuns !NumEntries !UnspentCredits !SpentCredits !(SnapMergingRunState r)
   | SnapSingleRun !r
   deriving stock (Show, Eq, Functor, Foldable, Traversable)
 
 instance NFData r => NFData (SnapIncomingRun r) where
-  rnf (SnapMergingRun a b c d e) =
-      rnf a `seq` rnf b `seq` rnf c `seq` rnf d `seq` rnf e
+  rnf (SnapMergingRun a b c d e f) =
+      rnf a `seq` rnf b `seq` rnf c `seq` rnf d `seq` rnf e `seq` rnf f
   rnf (SnapSingleRun a) = rnf a
 
 -- | The total number of unspent credits. This total is used in combination with
@@ -159,12 +159,12 @@ newtype UnspentCredits = UnspentCredits { getUnspentCredits :: Int }
 
 data SnapMergingRunState r =
     SnapCompletedMerge !r
-  | SnapOngoingMerge !(V.Vector r) !SpentCredits !MergeType
+  | SnapOngoingMerge !(V.Vector r) !MergeType
   deriving stock (Show, Eq, Functor, Foldable, Traversable)
 
 instance NFData r => NFData (SnapMergingRunState r) where
-  rnf (SnapCompletedMerge a)   = rnf a
-  rnf (SnapOngoingMerge a b c) = rnf a `seq` rnf b `seq` rnf c
+  rnf (SnapCompletedMerge a) = rnf a
+  rnf (SnapOngoingMerge a b) = rnf a `seq` rnf b
 
 -- | The total number of spent credits. This total is used in combination with
 -- 'UnspentCedits' on snapshot load to restore merging work that was lost when
@@ -199,33 +199,28 @@ toSnapIncomingRun ::
   => IncomingRun m h
   -> m (SnapIncomingRun (Ref (Run m h)))
 toSnapIncomingRun (Single r) = pure (SnapSingleRun r)
--- We need to know how many credits were yet unspent so we can restore merge
--- work on snapshot load. No need to snapshot the contents of totalStepsVar
--- here, since we still start counting from 0 again when loading the snapshot.
 toSnapIncomingRun (Merging mergePolicy (DeRef MR.MergingRun {..})) = do
+    -- We need to know how many credits were spend and yet unspent so we can
+    -- restore merge work on snapshot load. No need to snapshot the contents
+    -- of totalStepsVar here, since we still start counting from 0 again when
+    -- loading the snapshot.
     unspentCredits <- readPrimVar (MR.getUnspentCreditsVar mergeUnspentCredits)
-    smrs <- withMVar mergeState $ \mrs -> toSnapMergingRunState mrs
+    spentCredits   <- readPrimVar (MR.getSpentCreditsVar mergeSpentCredits)
+    smrs <- toSnapMergingRunState <$> readMVar mergeState
     pure $
       SnapMergingRun
         mergePolicy
         mergeNumRuns
         mergeNumEntries
         (UnspentCredits unspentCredits)
+        (SpentCredits spentCredits)
         smrs
 
-{-# SPECIALISE toSnapMergingRunState ::
-     MR.MergingRunState IO h
-  -> IO (SnapMergingRunState (Ref (Run IO h))) #-}
 toSnapMergingRunState ::
-     PrimMonad m
-  => MR.MergingRunState m h
-  -> m (SnapMergingRunState (Ref (Run m h)))
-toSnapMergingRunState (MR.CompletedMerge r) = pure (SnapCompletedMerge r)
--- We need to know how many credits were spent already so we can restore merge
--- work on snapshot load.
-toSnapMergingRunState (MR.OngoingMerge rs (MR.SpentCreditsVar spentCreditsVar) m) = do
-    spentCredits <- readPrimVar spentCreditsVar
-    pure (SnapOngoingMerge rs (SpentCredits spentCredits) (Merge.mergeType m))
+     MR.MergingRunState m h
+  -> SnapMergingRunState (Ref (Run m h))
+toSnapMergingRunState (MR.CompletedMerge r)  = SnapCompletedMerge r
+toSnapMergingRunState (MR.OngoingMerge rs m) = SnapOngoingMerge rs (Merge.mergeType m)
 
 {-------------------------------------------------------------------------------
   Write Buffer
@@ -465,12 +460,13 @@ fromSnapLevels reg hfs hbio conf@TableConfig{..} uc resolve dir (SnapLevels leve
           -> m (IncomingRun m h)
         fromSnapIncomingRun (SnapSingleRun run) = do
             Single <$> dupRun run
-        fromSnapIncomingRun (SnapMergingRun mpfl nr ne unspentCredits smrs) = do
+        fromSnapIncomingRun (SnapMergingRun mpfl nr ne unspentCredits
+                                            spentCredits smrs) = do
             Merging mpfl <$> case smrs of
               SnapCompletedMerge run ->
                 withRollback reg (MR.newCompleted nr ne run) releaseRef
 
-              SnapOngoingMerge runs spentCredits mt -> do
+              SnapOngoingMerge runs mt -> do
                 rn <- uniqueToRunNumber <$> incrUniqCounter uc
                 mr <- withRollback reg
                   (MR.new hfs hbio resolve caching alloc mt (mkPath rn) runs)

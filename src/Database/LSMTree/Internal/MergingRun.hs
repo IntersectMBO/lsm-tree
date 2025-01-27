@@ -55,6 +55,8 @@ data MergingRun m h = MergingRun {
     , mergeNumEntries     :: !NumEntries
       -- | The number of currently /unspent/ credits
     , mergeUnspentCredits :: !(UnspentCreditsVar (PrimState m))
+      -- | The total number of spent credits.
+    , mergeSpentCredits   :: !(SpentCreditsVar (PrimState m))
       -- | The total number of performed merging steps.
     , mergeStepsPerformed :: !(TotalStepsVar (PrimState m))
       -- | A variable that caches knowledge about whether the merge has been
@@ -77,8 +79,12 @@ newtype UnspentCreditsVar s = UnspentCreditsVar {
     getUnspentCreditsVar :: PrimVar s Int
   }
 
+newtype SpentCreditsVar s = SpentCreditsVar {
+    getSpentCreditsVar :: PrimVar s Int
+  }
+
 newtype TotalStepsVar s = TotalStepsVar {
-    getTotalStepsVar ::  PrimVar s Int
+    getTotalStepsVar :: PrimVar s Int
   }
 
 data MergingRunState m h =
@@ -88,13 +94,7 @@ data MergingRunState m h =
   | OngoingMerge
       !(V.Vector (Ref (Run m h)))
       -- ^ Input runs
-      !(SpentCreditsVar (PrimState m))
-      -- ^ The total number of spent credits.
       !(Merge m h)
-
-newtype SpentCreditsVar s = SpentCreditsVar {
-    getSpentCreditsVar :: PrimVar s Int
-  }
 
 data MergeKnownCompleted = MergeKnownCompleted | MergeMaybeCompleted
   deriving stock (Show, Eq, Read)
@@ -139,9 +139,8 @@ new hfs hbio resolve caching alloc mergeType runPaths inputRuns =
         <$> Merge.new hfs hbio caching alloc mergeType resolve runPaths runs
       let numInputRuns = NumRuns $ V.length runs
       let numInputEntries = V.foldMap' Run.size runs
-      spentCreditsVar <- SpentCreditsVar <$> newPrimVar 0
       unsafeNew numInputRuns numInputEntries MergeMaybeCompleted $
-        OngoingMerge runs spentCreditsVar merge
+        OngoingMerge runs merge
 
 {-# SPECIALISE newCompleted ::
      NumRuns
@@ -176,6 +175,7 @@ unsafeNew ::
   -> m (Ref (MergingRun m h))
 unsafeNew mergeNumRuns mergeNumEntries knownCompleted state = do
     mergeUnspentCredits <- UnspentCreditsVar <$> newPrimVar 0
+    mergeSpentCredits   <- SpentCreditsVar <$> newPrimVar 0
     mergeStepsPerformed <- TotalStepsVar <$> newPrimVar 0
     case state of
       OngoingMerge{}   -> assert (knownCompleted == MergeMaybeCompleted) (pure ())
@@ -187,6 +187,7 @@ unsafeNew mergeNumRuns mergeNumEntries knownCompleted state = do
         mergeNumRuns
       , mergeNumEntries
       , mergeUnspentCredits
+      , mergeSpentCredits
       , mergeStepsPerformed
       , mergeKnownCompleted
       , mergeState
@@ -196,7 +197,7 @@ unsafeNew mergeNumRuns mergeNumEntries knownCompleted state = do
     finalise var = withMVar var $ \case
         CompletedMerge r ->
           releaseRef r
-        OngoingMerge rs _ m -> do
+        OngoingMerge rs m -> do
           V.forM_ rs releaseRef
           Merge.abort m
 
@@ -211,8 +212,8 @@ duplicateRuns (DeRef mr) =
     -- We take the references while holding the MVar to make sure the MergingRun
     -- does not get completed concurrently before we are done.
     withMVar (mergeState mr) $ \case
-      CompletedMerge r    -> V.singleton <$> dupRef r
-      OngoingMerge rs _ _ -> withActionRegistry $ \reg ->
+      CompletedMerge r  -> V.singleton <$> dupRef r
+      OngoingMerge rs _ -> withActionRegistry $ \reg ->
         V.mapM (\r -> withRollback reg (dupRef r) releaseRef) rs
 
 {-------------------------------------------------------------------------------
@@ -314,7 +315,8 @@ supplyCredits (Credits c) creditsThresh (DeRef MergingRun {..}) = do
         isMergeDone <-
           bracketOnError (takeAllUnspentCredits mergeUnspentCredits)
                          (putBackUnspentCredits mergeUnspentCredits)
-                         (stepMerge mergeState mergeStepsPerformed)
+                         (stepMerge mergeSpentCredits mergeStepsPerformed
+                                    mergeState)
         when isMergeDone $ completeMerge mergeState mergeKnownCompleted
       else if unspentCredits' >= getCreditThreshold creditsThresh then do
         -- We can do some merging work without finishing the merge immediately
@@ -329,7 +331,8 @@ supplyCredits (Credits c) creditsThresh (DeRef MergingRun {..}) = do
             (tryTakeUnspentCredits mergeUnspentCredits creditsThresh (Credits unspentCredits'))
             (mapM_ (putBackUnspentCredits mergeUnspentCredits)) $ \case
               Nothing -> pure False
-              Just c' -> stepMerge mergeState mergeStepsPerformed c'
+              Just c' -> stepMerge mergeSpentCredits mergeStepsPerformed
+                                   mergeState c'
 
         -- If we just finished the merge, then we convert the output of the
         -- merge into a new run. i.e., we complete the merge.
@@ -427,20 +430,24 @@ takeAllUnspentCredits (UnspentCreditsVar !unspentCreditsVar) = do
         casLoop prev'
 
 {-# SPECIALISE stepMerge ::
-     StrictMVar IO (MergingRunState IO h)
+     SpentCreditsVar RealWorld
   -> TotalStepsVar RealWorld
+  -> StrictMVar IO (MergingRunState IO h)
   -> Credits
   -> IO Bool #-}
 stepMerge ::
      (MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
-  => StrictMVar m (MergingRunState m h)
+  => SpentCreditsVar (PrimState m)
   -> TotalStepsVar (PrimState m)
+  -> StrictMVar m (MergingRunState m h)
   -> Credits
   -> m Bool
-stepMerge mergeVar (TotalStepsVar totalStepsVar) (Credits c) =
+stepMerge (SpentCreditsVar spentCreditsVar)
+          (TotalStepsVar totalStepsVar)
+          mergeVar (Credits c) =
     withMVar mergeVar $ \case
       CompletedMerge{} -> pure False
-      (OngoingMerge _rs (SpentCreditsVar spentCreditsVar) m) -> do
+      (OngoingMerge _rs m) -> do
         totalSteps <- readPrimVar totalStepsVar
         spentCredits <- readPrimVar spentCreditsVar
 
@@ -486,7 +493,7 @@ completeMerge ::
 completeMerge mergeVar mergeKnownCompletedVar = do
     modifyMVarMasked_ mergeVar $ \case
       mrs@CompletedMerge{} -> pure $! mrs
-      (OngoingMerge rs _spentCreditsVar m) -> do
+      (OngoingMerge rs m) -> do
         -- first try to complete the merge before performing other side effects,
         -- in case the completion fails
         r <- Merge.complete m
@@ -509,7 +516,8 @@ expectCompleted (DeRef MergingRun {..}) = do
     when (knownCompleted == MergeMaybeCompleted) $ do
       totalSteps <- readPrimVar (getTotalStepsVar mergeStepsPerformed)
       let !credits = Credits (unNumEntries mergeNumEntries - totalSteps)
-      isMergeDone <- stepMerge mergeState mergeStepsPerformed credits
+      isMergeDone <- stepMerge mergeSpentCredits mergeStepsPerformed
+                               mergeState credits
       when isMergeDone $ completeMerge mergeState mergeKnownCompleted
       -- TODO: can we think of a check to see if we did not do too much work
       -- here?
