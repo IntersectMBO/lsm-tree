@@ -382,6 +382,7 @@ test-suite lsm-tree-test
     Test.Database.LSMTree.Internal.Vector
     Test.Database.LSMTree.Internal.Vector.Growing
     Test.Database.LSMTree.Internal.WriteBufferBlobs.FS
+    Test.Database.LSMTree.Internal.WriteBufferReader.FS
     Test.Database.LSMTree.Model.Table
     Test.Database.LSMTree.Monoidal
     Test.Database.LSMTree.StateMachine

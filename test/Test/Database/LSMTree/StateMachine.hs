@@ -134,8 +134,8 @@ import qualified Test.QuickCheck.StateModel.Lockstep.Defaults as Lockstep.Defaul
 import qualified Test.QuickCheck.StateModel.Lockstep.Run as Lockstep.Run
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck (testProperty)
-import           Test.Util.FS (approximateEqStream, propNoOpenHandles,
-                     propNumOpenHandles)
+import           Test.Util.FS (approximateEqStream, noRemoveDirectoryRecursiveE,
+                     propNoOpenHandles, propNumOpenHandles)
 import           Test.Util.PrettyProxy
 import           Test.Util.QLS
 import           Test.Util.TypeFamilyWrappers (WrapBlob (..), WrapBlobRef (..),
@@ -1434,8 +1434,7 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
      ++ [ (1, fmap Some $ OpenSnapshot @k @v @b PrettyProxy <$>
                 genErrors <*> pure label <*> genUsedSnapshotName)
         | not (null usedSnapshotNames)
-          -- TODO: generate errors
-        , let genErrors = pure Nothing
+        , let genErrors = fmap noRemoveDirectoryRecursiveE <$> QC.arbitrary
         ]
 
      ++ [ (1, fmap Some $ DeleteSnapshot <$> genUsedSnapshotName)
