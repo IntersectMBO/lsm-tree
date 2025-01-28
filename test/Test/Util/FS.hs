@@ -364,7 +364,7 @@ hFlipBit hfs h bitOffset = do
     -- least the size of a machine word.
     let n = sizeOf (0 :: Word)
     buf <- newPinnedByteArray n
-    setByteArray buf 0 n (0 :: Word)
+    setByteArray buf 0 1 (0 :: Word)
     -- Read the bit at the given offset
     let (byteOffset, i) = bitOffset `quotRem` 8
         bufOff = BufferOffset 0
