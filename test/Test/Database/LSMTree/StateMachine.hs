@@ -101,6 +101,7 @@ import           Database.LSMTree.Extras.Generators (KeyForIndexCompact)
 import           Database.LSMTree.Extras.NoThunks (propNoThunks)
 import           Database.LSMTree.Internal (LSMTreeError (..))
 import qualified Database.LSMTree.Internal as R.Internal
+import           Database.LSMTree.Internal.CRC32C (FileFormatError (..))
 import           Database.LSMTree.Internal.Serialise (SerialisedBlob,
                      SerialisedValue)
 import qualified Database.LSMTree.Model.IO as ModelIO
@@ -188,7 +189,7 @@ propLockstep_ModelIOImpl =
               env :: RealEnv ModelIO.Table IO
               env = RealEnv {
                   envSession = session
-                , envHandlers = [handler, diskFaultErrorHandler]
+                , envHandlers = [handler, diskFaultErrorHandler, fileFormatErrorHandler]
                 , envErrors = errsVar
                 , envInjectFaultResults = faultsVar
                 }
@@ -292,6 +293,7 @@ propLockstep_RealImpl_RealFS_IO tr =
                 , envHandlers = [
                       realHandler @IO
                     , diskFaultErrorHandler
+                    , fileFormatErrorHandler
                     ]
                 , envErrors = errsVar
                 , envInjectFaultResults = faultsVar
@@ -334,6 +336,7 @@ propLockstep_RealImpl_MockFS_IO tr =
                 , envHandlers = [
                       realHandler @IO
                     , diskFaultErrorHandler
+                    , fileFormatErrorHandler
                     ]
                 , envErrors = errsVar
                 , envInjectFaultResults = faultsVar
@@ -362,6 +365,7 @@ propLockstep_RealImpl_MockFS_IOSim tr actions =
             , envHandlers = [
                   realHandler @(IOSim s)
                 , diskFaultErrorHandler
+                , fileFormatErrorHandler
                 ]
             , envErrors = errsVar
             , envInjectFaultResults = faultsVar
@@ -457,6 +461,19 @@ isDiskFault e
   where
     isDiskFault' :: forall e. Exception e => e -> Bool
     isDiskFault' = isDiskFault . toException
+
+fileFormatErrorHandler :: Monad m => Handler m (Maybe Model.Err)
+fileFormatErrorHandler = Handler $ \e -> pure $
+    if isFileFormatError e
+      then Just (Model.ErrFsError (displayException e))
+      else Nothing
+
+isFileFormatError :: SomeException -> Bool
+isFileFormatError e
+  | Just (FileFormatError _file _msg) <- fromException e
+  = True
+  | otherwise
+  = False
 
 createSystemTempDirectory ::  [Char] -> IO (FilePath, HasFS IO HandleIO, HasBlockIO IO HandleIO)
 createSystemTempDirectory prefix = do
