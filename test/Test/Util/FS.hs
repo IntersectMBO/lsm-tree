@@ -360,22 +360,30 @@ hFlipBit ::
   -> Int -- ^ Bit offset
   -> m ()
 hFlipBit hfs h bitOffset = do
+    -- Check that the bit offset is within the file
+    fileSize <- hGetSize hfs h
+    let fileSizeBits = 8 * fileSize
+    assert (bitOffset >= 0) $ pure ()
+    assert (bitOffset < fromIntegral fileSizeBits) $ pure ()
     -- Create an empty buffer initialised to all 0 bits. The buffer must have at
     -- least the size of a machine word.
     let n = sizeOf (0 :: Word)
     buf <- newPinnedByteArray n
-    setByteArray buf 0 n (0 :: Word)
+    setByteArray buf 0 1 (0 :: Word)
     -- Read the bit at the given offset
     let (byteOffset, i) = bitOffset `quotRem` 8
         bufOff = BufferOffset 0
         count = 1
         off = AbsOffset (fromIntegral byteOffset)
+    -- Check that the byte offset is within the file
+    assert (byteOffset >= 0) $ pure ()
+    assert (byteOffset < fromIntegral fileSize) $ pure ()
+    assert (i >= 0 && i < 8) $ pure ()
     void $ hGetBufExactlyAt hfs h buf bufOff count off
     -- Flip the bit in memory, and then write it back
     let bvec = BitMVec 0 8 buf
     flipBit bvec i
     void $ hPutBufExactlyAt hfs h buf bufOff count off
-
 
 {-------------------------------------------------------------------------------
   Errors

@@ -124,16 +124,19 @@ createFile hfs p = withFile hfs p (WriteMode MustBeNew) $ \_ -> pure ()
 data WithBitOffset a = WithBitOffset Int a
   deriving stock Show
 
+bitLength :: BS.ByteString -> Int
+bitLength bs = BS.length bs * 8
+
 instance Arbitrary (WithBitOffset ByteString) where
   arbitrary = do
       bs <- arbitrary `suchThat` (\bs -> BS.length bs > 0)
-      bitOffset <- chooseInt (0, BS.length bs - 1)
+      bitOffset <- chooseInt (0, bitLength bs - 1)
       pure $ WithBitOffset bitOffset bs
   shrink (WithBitOffset bitOffset bs) =
       [ WithBitOffset bitOffset' bs'
       | bs' <- shrink bs
       , BS.length bs' > 0
-      , let bitOffset' = max 0 $ min (BS.length bs' - 1) bitOffset
+      , let bitOffset' = max 0 $ min (bitLength bs' - 1) bitOffset
       ] ++ [
         WithBitOffset bitOffset' bs
       | bitOffset' <- max 0 <$> shrink bitOffset
