@@ -104,7 +104,7 @@ data IncomingRun s = Merging !MergePolicy !(MergingRun LevelMergeType s)
 -- | The merge policy for a LSM level can be either tiering or levelling.
 -- In this design we use levelling for the last level, and tiering for
 -- all other levels. The first level always uses tiering however, even if
--- it's also the last level. So 'MergePolicy' and 'IncomingMergeType' are
+-- it's also the last level. So 'MergePolicy' and 'LevelMergeType' are
 -- orthogonal, all combinations are possible.
 --
 data MergePolicy = MergePolicyTiering | MergePolicyLevelling
@@ -276,9 +276,9 @@ mergePolicyForLevel _ _  _       = MergePolicyTiering
 
 -- | If there are no further levels provided, this level is the last one.
 -- However, if a 'Union' is present, it acts as another (last) level.
-levelMergeTypeForLevel :: [Level s] -> UnionLevel s -> LevelMergeType
-levelMergeTypeForLevel [] NoUnion = MergeLastLevel
-levelMergeTypeForLevel _  _       = MergeMidLevel
+mergeTypeForLevel :: [Level s] -> UnionLevel s -> LevelMergeType
+mergeTypeForLevel [] NoUnion = MergeLastLevel
+mergeTypeForLevel _  _       = MergeMidLevel
 
 -- | Note that the invariants rely on the fact that levelling is only used on
 -- the last level.
@@ -299,7 +299,7 @@ invariant (LSMContent _ levels ul) = do
           return (CompletedMerge r)
         Merging mp (MergingRun mt ref) -> do
           assertST $ mp == mergePolicyForLevel ln ls ul
-                  && mt == levelMergeTypeForLevel ls ul
+                  && mt == mergeTypeForLevel ls ul
           readSTRef ref
 
       assertST $ length rs <= 3
@@ -363,7 +363,7 @@ invariant (LSMContent _ levels ul) = do
               assertST $ all (\r -> levellingRunSizeToLevel r <= ln+1) resident
 
         MergePolicyTiering ->
-          case (ir, mrs, levelMergeTypeForLevel ls ul) of
+          case (ir, mrs, mergeTypeForLevel ls ul) of
             -- A single incoming run (which thus didn't need merging) must be
             -- of the expected size already
             (Single r, m, _) -> do
@@ -413,7 +413,7 @@ invariant (LSMContent _ levels ul) = do
               assertST $ length rs > 1
 
         PendingTreeMerge (PendingLevelMerge irs tree) -> do
-          -- No empty merge, but could be just one input.
+          -- Non-empty, but can be just one input (see 'newPendingLevelMerge').
           assertST $ length irs + length tree > 0
           for_ tree treeInvariant
 
@@ -439,7 +439,7 @@ newMergingRun mdebt mergeType runs = do
     assertST $ length runs > 1
     -- in some cases, no merging is required at all
     state <- case filter (\r -> runSize r > 0) runs of
-      []  -> return $ CompletedMerge Map.empty
+      []  -> return $ CompletedMerge (head runs)  -- just re-use the empty input
       [r] -> return $ CompletedMerge r
       rs  -> do
         let !cost = sum (map runSize rs)
@@ -864,7 +864,7 @@ increment tr sc run0 ls0 ul = do
     go 1 [run0] ls0
   where
     mergeTypeFor :: Levels s -> LevelMergeType
-    mergeTypeFor ls = levelMergeTypeForLevel ls ul
+    mergeTypeFor ls = mergeTypeForLevel ls ul
 
     go :: Int -> [Run] -> Levels s -> ST s (Levels s)
     go !ln incoming [] = do
@@ -1011,10 +1011,13 @@ newPendingLevelMerge :: [IncomingRun s]
                      -> Maybe (MergingTree s)
                      -> ST s (Maybe (MergingTree s))
 newPendingLevelMerge [] t = return t
+newPendingLevelMerge [Single r] Nothing =
+    -- If there is only a 'Merging' run, we could in principle also directly
+    -- turn that into 'OngoingTreeMerge`, but the type parameters don't match,
+    -- since it could be a midlevel merge. For simplicity, we don't handle that
+    -- case here, which means that there can be unary pending level merges.
+    Just . MergingTree <$> newSTRef (CompletedTreeMerge r)
 newPendingLevelMerge irs tree = do
-    -- If there is just a single IncomingRun, we could directly turn that into
-    -- a MergingTree, but it's not necessary and a little complicated because
-    -- of the LevelMergeType/TreeMergeType mismatch.
     let st = PendingTreeMerge (PendingLevelMerge irs tree)
     Just . MergingTree <$> newSTRef st
 
