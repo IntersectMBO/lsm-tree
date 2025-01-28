@@ -4,21 +4,25 @@
 
 -- | An incremental merge of multiple runs.
 module Database.LSMTree.Internal.MergingRun (
+    -- * Merging run
     MergingRun (..)
+  , NumRuns (..)
   , new
   , newCompleted
   , duplicateRuns
   , supplyCredits
   , expectCompleted
-    -- * Useful types
+
+    -- * Credit tracking
+    -- $credittracking
   , Credits (..)
   , CreditThreshold (..)
-  , NumRuns (..)
-    -- * Internal state
   , UnspentCreditsVar (..)
-  , TotalStepsVar (..)
-  , MergingRunState (..)
   , SpentCreditsVar (..)
+  , TotalStepsVar (..)
+
+    -- * Internal state
+  , MergingRunState (..)
   , MergeKnownCompleted (..)
   ) where
 
@@ -53,12 +57,18 @@ data MergingRun m h = MergingRun {
       mergeNumRuns        :: !NumRuns
       -- | Sum of number of entries in the input runs
     , mergeNumEntries     :: !NumEntries
-      -- | The number of currently /unspent/ credits
+
+      -- See $credittracking
+
+      -- | The current number of credits supplied but as yet /unspent/.
     , mergeUnspentCredits :: !(UnspentCreditsVar (PrimState m))
-      -- | The total number of spent credits.
+      -- | The current number of credits supplied but already spent. Note that
+      -- the total number of credits supplied is this plus the unspent credits.
     , mergeSpentCredits   :: !(SpentCreditsVar (PrimState m))
-      -- | The total number of performed merging steps.
+      -- | The current number of merging steps actually performed. This is
+      -- always at least as big as the total number of credits supplied.
     , mergeStepsPerformed :: !(TotalStepsVar (PrimState m))
+
       -- | A variable that caches knowledge about whether the merge has been
       -- completed. If 'MergeKnownCompleted', then we are sure the merge has
       -- been completed, otherwise if 'MergeMaybeCompleted' we have to check the
@@ -74,18 +84,6 @@ instance RefCounted m (MergingRun m h) where
 newtype NumRuns = NumRuns { unNumRuns :: Int }
   deriving stock (Show, Eq)
   deriving newtype NFData
-
-newtype UnspentCreditsVar s = UnspentCreditsVar {
-    getUnspentCreditsVar :: PrimVar s Int
-  }
-
-newtype SpentCreditsVar s = SpentCreditsVar {
-    getSpentCreditsVar :: PrimVar s Int
-  }
-
-newtype TotalStepsVar s = TotalStepsVar {
-    getTotalStepsVar :: PrimVar s Int
-  }
 
 data MergingRunState m h =
     CompletedMerge
@@ -220,16 +218,45 @@ duplicateRuns (DeRef mr) =
   Credits
 -------------------------------------------------------------------------------}
 
-{-
-  Note [Merge Batching]
-~~~~~~~~~~~~~~
+{- $credittracking
 
-  Merge work is done in batches based on accumulated, unspent credits and a
-  threshold value. Moreover, merging runs can be shared across tables, which
-  means that multiple threads can contribute to the same merge concurrently.
-  The design to contribute credits to the same merging run is largely lock-free.
-  It ensures consistency of the unspent credits and the merge state, while
-  allowing threads to progress without waiting on other threads.
+  The credits concept we use here comes from amortised analysis of data
+  structures (see the Bankers Method from Okasaki), though here we use it for
+  tracking the scheduled (i.e. incremental) merge.
+
+  In the prototype things are relatively simple: we simulate performing merge
+  work in batches (based on a threshold) and the credit tracking reflects this
+  by tracking unspent credits (and the debt corresponding to the remaining
+  merge work to do). The implementation does this too, we accumulate unspent
+  credits until they reach a threshold at which point we do a batch of merging
+  work. Unlike the prototype, the implementation tracks both credits supplied
+  but as yet unspent and also tracks credits supplied and spent.
+
+  In the prototype, the credits spent equals the merge steps performed. The
+  real implementation is more complicated: we distinguish credit supplied from
+  merge steps actually performed. When we spend credits on merging work, the
+  number of steps we perform is not guaranteed to be the same as the credits
+  supplied. For example we may ask to do 100 credits of merging work, but the
+  merge code (for perfectly sensible efficiency reasons) will decide to do 102
+  units of merging work. The rule is that we may do (slightly) more work than
+  the credits supplied but not less.
+
+  Thus we track three things:
+
+   * credits unspent ('UnspentCreditsVar')
+   * credits spent ('SpentCreditsVar')
+   * steps performed ('TotalStepsVar')
+
+  The credits supplied is the sum of the credits spent and unspent. The credits
+  supplied and the steps performed will be close but not exactly the same in
+  general. Though the steps performed may never be less than the credits
+  supplied.
+
+  Merging runs can be shared across tables, which means that multiple threads
+  can contribute to the same merge concurrently. The design to contribute
+  credits to the same merging run is largely lock-free. It ensures consistency
+  of the unspent credits and the merge state, while allowing threads to
+  progress without waiting on other threads.
 
   First, credits are added atomically to a PrimVar that holds the current total
   of unspent credits. If this addition exceeded the threshold, then credits are
@@ -240,6 +267,14 @@ duplicateRuns (DeRef mr) =
   some point, doing the merge work resulted in the merge being done, then the
   merge is converted into a new run.
 
+  Concurrency:
+
+  * 'SpentCreditsVar' is only read and modified with the 'mergeState' lock held.
+  * 'StepsPerformedVar' is only modified with the 'mergeState' lock held, but
+    is read without the lock.
+  * 'UnspentCreditsVar' is read and (atomically) modified without the
+    'mergeState' lock held.
+
   In the presence of async exceptions, we offer a weaker guarantee regarding
   consistency of the accumulated, unspent credits and the merge state: a merge
   /may/ progress more than the number of credits that were taken. If an async
@@ -249,8 +284,8 @@ duplicateRuns (DeRef mr) =
   because then a merge might not finish in time, which will mess up the shape of
   the levels tree.
 
-  The implementation also tracks the total of spent credits, and the number of
-  perfomed merge steps. These are the use cases:
+  As mentioned above, the implementation also tracks the total of spent credits,
+  and the number of merge steps performed. These are the use cases:
 
   * The total of spent credits + the total of unspent credits is used by the
     snapshot feature to restore merge work on snapshot load that was lost during
@@ -259,7 +294,7 @@ duplicateRuns (DeRef mr) =
   * For simplicity, merges are allowed to do more steps than requested. However,
     it does mean that once we do more steps next time a batch of work is done,
     then we should account for the surplus of steps performed by the previous
-    batch. The total of spent credits + the number of performed merge steps is
+    batch. The total of spent credits - the number of performed merge steps is
     used to compute this surplus, and adjust for it.
 
     TODO: we should reconsider at some later point in time whether this surplus
@@ -275,6 +310,12 @@ duplicateRuns (DeRef mr) =
   There is an important invariant that we maintain, even in the presence of
   async exceptions: @merge steps actually performed >= recorded merge steps
   performed >= recorded spent credits@. TODO: and this makes it correct (?).
+
+  Plausibly we could rationalise down to just two counters. The idea would be
+  to track spent and unspent credits as before. When more merging work is done
+  than requested, the surplus can be subtracted from the unspent credits. This
+  may result in the unspent credits being negative for a while, which is ok.
+
 -}
 
 newtype Credits = Credits Int
@@ -284,6 +325,10 @@ newtype Credits = Credits Int
 -- should allow to achieve a nice balance between spreading out I/O and
 -- achieving good (concurrent) performance.
 newtype CreditThreshold = CreditThreshold { getCreditThreshold :: Int }
+
+newtype UnspentCreditsVar s = UnspentCreditsVar { getUnspentCreditsVar :: PrimVar s Int }
+newtype SpentCreditsVar   s = SpentCreditsVar { getSpentCreditsVar :: PrimVar s Int }
+newtype TotalStepsVar     s = TotalStepsVar { getTotalStepsVar :: PrimVar s Int }
 
 {-# SPECIALISE supplyCredits ::
      Credits
