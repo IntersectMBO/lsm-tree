@@ -189,7 +189,11 @@ propLockstep_ModelIOImpl =
               env :: RealEnv ModelIO.Table IO
               env = RealEnv {
                   envSession = session
-                , envHandlers = [handler, diskFaultErrorHandler, fileFormatErrorHandler]
+                , envHandlers = [
+                      handler
+                    , fileFormatErrorHandler
+                    , diskFaultErrorHandler
+                    ]
                 , envErrors = errsVar
                 , envInjectFaultResults = faultsVar
                 }
@@ -292,8 +296,8 @@ propLockstep_RealImpl_RealFS_IO tr =
                   envSession = session
                 , envHandlers = [
                       realHandler @IO
-                    , diskFaultErrorHandler
                     , fileFormatErrorHandler
+                    , diskFaultErrorHandler
                     ]
                 , envErrors = errsVar
                 , envInjectFaultResults = faultsVar
@@ -335,8 +339,8 @@ propLockstep_RealImpl_MockFS_IO tr =
                   envSession = session
                 , envHandlers = [
                       realHandler @IO
-                    , diskFaultErrorHandler
                     , fileFormatErrorHandler
+                    , diskFaultErrorHandler
                     ]
                 , envErrors = errsVar
                 , envInjectFaultResults = faultsVar
@@ -364,8 +368,8 @@ propLockstep_RealImpl_MockFS_IOSim tr actions =
               envSession = session
             , envHandlers = [
                   realHandler @(IOSim s)
-                , diskFaultErrorHandler
                 , fileFormatErrorHandler
+                , diskFaultErrorHandler
                 ]
             , envErrors = errsVar
             , envInjectFaultResults = faultsVar
@@ -438,6 +442,9 @@ realHandler = Handler $ pure . handler'
     handler' (ErrBlobRefInvalid _)        = Just Model.ErrBlobRefInvalidated
     handler' _                            = Nothing
 
+-- | When combined with other handlers, 'diskFaultErrorHandler' has to go last
+-- because it matches on 'SomeException', an no other handlers are run after
+-- that. See the use of 'catches' in 'catchErr'.
 diskFaultErrorHandler :: Monad m => Handler m (Maybe Model.Err)
 diskFaultErrorHandler = Handler $ \e -> pure $
     if isDiskFault e
@@ -452,7 +459,7 @@ isDiskFault e
   = case reason of
       ReasonExitCaseException e' -> isDiskFault e' && all isDiskFault' es
       ReasonExitCaseAbort        -> False
-  | Just (e' :: ActionError)<- fromException e
+  | Just (e' :: ActionError) <- fromException e
   = isDiskFault' (getActionError e')
   | Just FsError{} <- fromException e
   = True
@@ -463,17 +470,10 @@ isDiskFault e
     isDiskFault' = isDiskFault . toException
 
 fileFormatErrorHandler :: Monad m => Handler m (Maybe Model.Err)
-fileFormatErrorHandler = Handler $ \e -> pure $
-    if isFileFormatError e
-      then Just (Model.ErrFsError (displayException e))
-      else Nothing
-
-isFileFormatError :: SomeException -> Bool
-isFileFormatError e
-  | Just (FileFormatError _file _msg) <- fromException e
-  = True
-  | otherwise
-  = False
+fileFormatErrorHandler = Handler $ pure . handler'
+  where
+    handler' :: FileFormatError -> Maybe Model.Err
+    handler' e = Just (Model.ErrFsError (displayException e))
 
 createSystemTempDirectory ::  [Char] -> IO (FilePath, HasFS IO HandleIO, HasBlockIO IO HandleIO)
 createSystemTempDirectory prefix = do
