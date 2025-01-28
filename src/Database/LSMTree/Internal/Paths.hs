@@ -52,10 +52,8 @@ module Database.LSMTree.Internal.Paths (
 
 import           Control.Applicative (Applicative (..))
 import           Control.DeepSeq (NFData (..))
-import           Data.Bifunctor (Bifunctor (..))
 import qualified Data.ByteString.Char8 as BS
 import           Data.Foldable (toList)
-import           Data.Function ((&))
 import qualified Data.Map as Map
 import           Data.Maybe (fromMaybe)
 import           Data.String (IsString (..))
@@ -322,16 +320,18 @@ writeBufferFilePathWithExt (WriteBufferFsPaths dir n) ext =
 -------------------------------------------------------------------------------}
 
 toChecksumsFileForWriteBufferFiles :: (ForKOps CRC.CRC32C, ForBlob CRC.CRC32C) -> CRC.ChecksumsFile
-toChecksumsFileForWriteBufferFiles checksums =
-  Map.fromList . toList $ checksums & bimap
-    ((toChecksumsFileName writeBufferKOpsExt,) . unForKOps)
-    ((toChecksumsFileName writeBufferBlobExt,) . unForBlob)
+toChecksumsFileForWriteBufferFiles (ForKOps kOpsChecksum, ForBlob blobChecksum) =
+  Map.fromList
+    [ (toChecksumsFileName writeBufferKOpsExt, kOpsChecksum)
+    , (toChecksumsFileName writeBufferBlobExt, blobChecksum)
+    ]
   where
-    toChecksumsFileName :: String -> CRC.ChecksumsFileName
     toChecksumsFileName = CRC.ChecksumsFileName . BS.pack
 
 fromChecksumsFileForWriteBufferFiles :: CRC.ChecksumsFile -> Either String (ForKOps CRC.CRC32C, ForBlob CRC.CRC32C)
 fromChecksumsFileForWriteBufferFiles file = do
-  forKOps <- maybe (Left $ "key not found: " <> writeBufferKOpsExt) Right (Map.lookup (CRC.ChecksumsFileName . fromString $ writeBufferKOpsExt) file)
-  forBlob <- maybe (Left $ "key not found: " <> writeBufferBlobExt) Right (Map.lookup (CRC.ChecksumsFileName . fromString $ writeBufferBlobExt) file)
-  pure (ForKOps forKOps, ForBlob forBlob)
+  (,) <$> (ForKOps <$> fromChecksumFile writeBufferKOpsExt) <*> (ForBlob <$> fromChecksumFile writeBufferBlobExt)
+  where
+    fromChecksumFile key =
+      maybe (Left $ "key not found: " <> key) Right $
+        Map.lookup (CRC.ChecksumsFileName . fromString $ key) file
