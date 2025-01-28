@@ -746,7 +746,7 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels ul
           OneShot -> do
             let !required = MR.Credits (unNumEntries (V.foldMap' Run.size rs))
             let !thresh = creditThresholdForLevel conf ln
-            MR.supplyCredits required thresh mr
+            MR.supplyCredits mr thresh required
             -- This ensures the merge is really completed. However, we don't
             -- release the merge yet and only briefly inspect the resulting run.
             bracket (MR.expectCompleted mr) releaseRef $ \r ->
@@ -877,7 +877,7 @@ supplyCredits conf c levels =
         Merging mp mr -> do
           let !c' = scaleCreditsForMerge mp mr c
           let !thresh = creditThresholdForLevel conf ln
-          MR.supplyCredits c' thresh mr
+          MR.supplyCredits mr thresh c'
 
 -- | Scale a number of credits to a number of merge steps to be performed, based
 -- on the merging run.
@@ -912,4 +912,4 @@ scaleCreditsForMerge LevelLevelling (DeRef mr) (Credits c) =
 creditThresholdForLevel :: TableConfig -> LevelNo -> MR.CreditThreshold
 creditThresholdForLevel conf (LevelNo _i) =
     let AllocNumEntries (NumEntries x) = confWriteBufferAlloc conf
-    in  MR.CreditThreshold x
+    in  MR.CreditThreshold (MR.Credits x)

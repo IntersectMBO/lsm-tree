@@ -7,9 +7,8 @@ module Database.LSMTree.Internal.Snapshot (
   , SnapLevels (..)
   , SnapLevel (..)
   , SnapIncomingRun (..)
-  , UnspentCredits (..)
+  , SuppliedCredits (..)
   , SnapMergingRunState (..)
-  , SpentCredits (..)
     -- * Conversion to levels snapshot format
   , toSnapLevels
     -- * Write buffer
@@ -35,7 +34,6 @@ import           Control.Monad.Class.MonadThrow (MonadMask)
 import           Control.Monad.Primitive (PrimMonad)
 import           Control.RefCount
 import           Data.Foldable (sequenceA_, traverse_)
-import           Data.Primitive.PrimVar
 import           Data.Text (Text)
 import           Data.Traversable (for)
 import qualified Data.Vector as V
@@ -140,19 +138,22 @@ instance NFData r => NFData (SnapLevel r) where
   rnf (SnapLevel a b) = rnf a `seq` rnf b
 
 data SnapIncomingRun r =
-    SnapMergingRun !MergePolicyForLevel !NumRuns !NumEntries !UnspentCredits !SpentCredits !(SnapMergingRunState r)
+    SnapMergingRun !MergePolicyForLevel
+                   !NumRuns
+                   !NumEntries
+                   !SuppliedCredits
+                   !(SnapMergingRunState r)
   | SnapSingleRun !r
   deriving stock (Show, Eq, Functor, Foldable, Traversable)
 
 instance NFData r => NFData (SnapIncomingRun r) where
-  rnf (SnapMergingRun a b c d e f) =
-      rnf a `seq` rnf b `seq` rnf c `seq` rnf d `seq` rnf e `seq` rnf f
+  rnf (SnapMergingRun a b c d e) =
+      rnf a `seq` rnf b `seq` rnf c `seq` rnf d `seq` rnf e
   rnf (SnapSingleRun a) = rnf a
 
--- | The total number of unspent credits. This total is used in combination with
--- 'SpentCredits' on snapshot load to restore merging work that was lost when
--- the snapshot was created.
-newtype UnspentCredits = UnspentCredits { getUnspentCredits :: Int }
+-- | The total number of supplied credits. This total is used on snapshot load
+-- to restore merging work that was lost when the snapshot was created.
+newtype SuppliedCredits = SuppliedCredits { getSuppliedCredits :: Int }
   deriving stock (Show, Eq, Read)
   deriving newtype NFData
 
@@ -164,13 +165,6 @@ data SnapMergingRunState r =
 instance NFData r => NFData (SnapMergingRunState r) where
   rnf (SnapCompletedMerge a) = rnf a
   rnf (SnapOngoingMerge a b) = rnf a `seq` rnf b
-
--- | The total number of spent credits. This total is used in combination with
--- 'UnspentCedits' on snapshot load to restore merging work that was lost when
--- the snapshot was created.
-newtype SpentCredits = SpentCredits { getSpentCredits :: Int }
-  deriving stock (Show, Eq, Read)
-  deriving newtype NFData
 
 {-------------------------------------------------------------------------------
   Conversion to levels snapshot format
@@ -203,16 +197,15 @@ toSnapIncomingRun (Merging mergePolicy (DeRef MR.MergingRun {..})) = do
     -- restore merge work on snapshot load. No need to snapshot the contents
     -- of totalStepsVar here, since we still start counting from 0 again when
     -- loading the snapshot.
-    unspentCredits <- readPrimVar (MR.getUnspentCreditsVar mergeUnspentCredits)
-    spentCredits   <- readPrimVar (MR.getSpentCreditsVar mergeSpentCredits)
+    MR.SuppliedCredits (MR.Credits suppliedCredits)
+         <- MR.atomicReadSuppliedCredits mergeCreditsVar
     smrs <- toSnapMergingRunState <$> readMVar mergeState
     pure $
       SnapMergingRun
         mergePolicy
         mergeNumRuns
         mergeNumEntries
-        (UnspentCredits unspentCredits)
-        (SpentCredits spentCredits)
+        (SuppliedCredits suppliedCredits)
         smrs
 
 toSnapMergingRunState ::
@@ -453,8 +446,8 @@ fromSnapLevels reg hfs hbio conf@TableConfig{..} uc resolve dir (SnapLevels leve
           -> m (IncomingRun m h)
         fromSnapIncomingRun (SnapSingleRun run) = do
             Single <$> dupRun run
-        fromSnapIncomingRun (SnapMergingRun mpfl nr ne unspentCredits
-                                            spentCredits smrs) = do
+        fromSnapIncomingRun (SnapMergingRun mpfl nr ne
+                                            (SuppliedCredits sc) smrs) = do
             Merging mpfl <$> case smrs of
               SnapCompletedMerge run ->
                 withRollback reg (MR.newCompleted nr ne run) releaseRef
@@ -465,12 +458,10 @@ fromSnapLevels reg hfs hbio conf@TableConfig{..} uc resolve dir (SnapLevels leve
                   (MR.new hfs hbio resolve caching alloc mt (mkPath rn) runs)
                   releaseRef
                 -- When a snapshot is created, merge progress is lost, so we
-                -- have to redo merging work here. UnspentCredits and
-                -- SpentCredits track how many credits were supplied before the
-                -- snapshot was taken.
-                let c = getUnspentCredits unspentCredits
-                      + getSpentCredits spentCredits
-                MR.supplyCredits (MR.Credits c) (creditThresholdForLevel conf ln) mr
+                -- have to redo merging work here. SuppliedCredits tracks how
+                -- many credits were supplied before the snapshot was taken.
+                MR.supplyCredits mr (creditThresholdForLevel conf ln)
+                                 (MR.Credits sc)
                 return mr
 
     dupRun r = withRollback reg (dupRef r) releaseRef
