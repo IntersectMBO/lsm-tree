@@ -19,7 +19,9 @@ module Database.LSMTree.Internal.MergingRun (
   , CreditThreshold (..)
   , UnspentCreditsVar (..)
   , SpentCreditsVar (..)
-  , TotalStepsVar (..)
+  , StepsPerformedVar (..)
+  , readUnspentCredits
+  , readSpentCredits
 
     -- * Internal state
   , MergingRunState (..)
@@ -54,28 +56,28 @@ import           System.FS.API (HasFS)
 import           System.FS.BlockIO.API (HasBlockIO)
 
 data MergingRun m h = MergingRun {
-      mergeNumRuns        :: !NumRuns
+      mergeNumRuns           :: !NumRuns
       -- | Sum of number of entries in the input runs
-    , mergeNumEntries     :: !NumEntries
+    , mergeNumEntries        :: !NumEntries
 
       -- See $credittracking
 
       -- | The current number of credits supplied but as yet /unspent/.
-    , mergeUnspentCredits :: !(UnspentCreditsVar (PrimState m))
+    , mergeUnspentCreditsVar :: !(UnspentCreditsVar (PrimState m))
       -- | The current number of credits supplied but already spent. Note that
       -- the total number of credits supplied is this plus the unspent credits.
-    , mergeSpentCredits   :: !(SpentCreditsVar (PrimState m))
+    , mergeSpentCreditsVar   :: !(SpentCreditsVar (PrimState m))
       -- | The current number of merging steps actually performed. This is
       -- always at least as big as the total number of credits supplied.
-    , mergeStepsPerformed :: !(TotalStepsVar (PrimState m))
+    , mergeStepsPerformedVar :: !(StepsPerformedVar (PrimState m))
 
       -- | A variable that caches knowledge about whether the merge has been
       -- completed. If 'MergeKnownCompleted', then we are sure the merge has
       -- been completed, otherwise if 'MergeMaybeCompleted' we have to check the
       -- 'MergingRunState'.
-    , mergeKnownCompleted :: !(MutVar (PrimState m) MergeKnownCompleted)
-    , mergeState          :: !(StrictMVar m (MergingRunState m h))
-    , mergeRefCounter     :: !(RefCounter m)
+    , mergeKnownCompleted    :: !(MutVar (PrimState m) MergeKnownCompleted)
+    , mergeState             :: !(StrictMVar m (MergingRunState m h))
+    , mergeRefCounter        :: !(RefCounter m)
     }
 
 instance RefCounted m (MergingRun m h) where
@@ -172,9 +174,9 @@ unsafeNew ::
   -> MergingRunState m h
   -> m (Ref (MergingRun m h))
 unsafeNew mergeNumRuns mergeNumEntries knownCompleted state = do
-    mergeUnspentCredits <- UnspentCreditsVar <$> newPrimVar 0
-    mergeSpentCredits   <- SpentCreditsVar <$> newPrimVar 0
-    mergeStepsPerformed <- TotalStepsVar <$> newPrimVar 0
+    mergeUnspentCreditsVar <- UnspentCreditsVar <$> newPrimVar 0
+    mergeSpentCreditsVar   <- SpentCreditsVar   <$> newPrimVar 0
+    mergeStepsPerformedVar <- StepsPerformedVar <$> newPrimVar 0
     case state of
       OngoingMerge{}   -> assert (knownCompleted == MergeMaybeCompleted) (pure ())
       CompletedMerge{} -> pure ()
@@ -184,9 +186,9 @@ unsafeNew mergeNumRuns mergeNumEntries knownCompleted state = do
       MergingRun {
         mergeNumRuns
       , mergeNumEntries
-      , mergeUnspentCredits
-      , mergeSpentCredits
-      , mergeStepsPerformed
+      , mergeUnspentCreditsVar
+      , mergeSpentCreditsVar
+      , mergeStepsPerformedVar
       , mergeKnownCompleted
       , mergeState
       , mergeRefCounter
@@ -245,7 +247,7 @@ duplicateRuns (DeRef mr) =
 
    * credits unspent ('UnspentCreditsVar')
    * credits spent ('SpentCreditsVar')
-   * steps performed ('TotalStepsVar')
+   * steps performed ('StepsPerformedVar')
 
   The credits supplied is the sum of the credits spent and unspent. The credits
   supplied and the steps performed will be close but not exactly the same in
@@ -326,9 +328,26 @@ newtype Credits = Credits Int
 -- achieving good (concurrent) performance.
 newtype CreditThreshold = CreditThreshold { getCreditThreshold :: Int }
 
-newtype UnspentCreditsVar s = UnspentCreditsVar { getUnspentCreditsVar :: PrimVar s Int }
-newtype SpentCreditsVar   s = SpentCreditsVar { getSpentCreditsVar :: PrimVar s Int }
-newtype TotalStepsVar     s = TotalStepsVar { getTotalStepsVar :: PrimVar s Int }
+newtype UnspentCreditsVar s = UnspentCreditsVar (PrimVar s Int)
+newtype SpentCreditsVar   s = SpentCreditsVar   (PrimVar s Int)
+newtype StepsPerformedVar s = StepsPerformedVar (PrimVar s Int)
+
+{-# INLINE readUnspentCredits #-}
+{-# INLINE readSpentCredits #-}
+{-# INLINE readStepsPerformed #-}
+readUnspentCredits :: PrimMonad m => UnspentCreditsVar (PrimState m) -> m Int
+readSpentCredits   :: PrimMonad m => SpentCreditsVar   (PrimState m) -> m Int
+readStepsPerformed :: PrimMonad m => StepsPerformedVar (PrimState m) -> m Int
+readUnspentCredits (UnspentCreditsVar v) = readPrimVar v
+readSpentCredits   (SpentCreditsVar   v) = readPrimVar v
+readStepsPerformed (StepsPerformedVar v) = readPrimVar v
+
+{-# INLINE writeSpentCredits #-}
+{-# INLINE writeStepsPerformed #-}
+writeSpentCredits   :: PrimMonad m => SpentCreditsVar   (PrimState m) -> Int -> m ()
+writeStepsPerformed :: PrimMonad m => StepsPerformedVar (PrimState m) -> Int -> m ()
+writeSpentCredits   (SpentCreditsVar   v) x = writePrimVar v x
+writeStepsPerformed (StepsPerformedVar v) x = writePrimVar v x
 
 {-# SPECIALISE supplyCredits ::
      Credits
@@ -352,15 +371,15 @@ supplyCredits (Credits c) creditsThresh (DeRef MergingRun {..}) = do
     else do
       -- unspentCredits' is our /estimate/ of what the new total of unspent
       -- credits is.
-      Credits unspentCredits' <- addUnspentCredits mergeUnspentCredits (Credits c)
-      totalSteps <- readPrimVar (getTotalStepsVar mergeStepsPerformed)
+      Credits unspentCredits' <- addUnspentCredits mergeUnspentCreditsVar (Credits c)
+      stepsPerformed <- readStepsPerformed mergeStepsPerformedVar
 
-      if totalSteps + unspentCredits' >= unNumEntries mergeNumEntries then do
+      if stepsPerformed + unspentCredits' >= unNumEntries mergeNumEntries then do
         -- We can finish the merge immediately
         isMergeDone <-
-          bracketOnError (takeAllUnspentCredits mergeUnspentCredits)
-                         (putBackUnspentCredits mergeUnspentCredits)
-                         (stepMerge mergeSpentCredits mergeStepsPerformed
+          bracketOnError (takeAllUnspentCredits mergeUnspentCreditsVar)
+                         (putBackUnspentCredits mergeUnspentCreditsVar)
+                         (stepMerge mergeSpentCreditsVar mergeStepsPerformedVar
                                     mergeState)
         when isMergeDone $ completeMerge mergeState mergeKnownCompleted
       else if unspentCredits' >= getCreditThreshold creditsThresh then do
@@ -373,10 +392,10 @@ supplyCredits (Credits c) creditsThresh (DeRef MergingRun {..}) = do
           -- credits as we took, even if the merge has progressed. See Note
           -- [Merge Batching] to see why this is okay.
           bracketOnError
-            (tryTakeUnspentCredits mergeUnspentCredits creditsThresh (Credits unspentCredits'))
-            (mapM_ (putBackUnspentCredits mergeUnspentCredits)) $ \case
+            (tryTakeUnspentCredits mergeUnspentCreditsVar creditsThresh (Credits unspentCredits'))
+            (mapM_ (putBackUnspentCredits mergeUnspentCreditsVar)) $ \case
               Nothing -> pure False
-              Just c' -> stepMerge mergeSpentCredits mergeStepsPerformed
+              Just c' -> stepMerge mergeSpentCreditsVar mergeStepsPerformedVar
                                    mergeState c'
 
         -- If we just finished the merge, then we convert the output of the
@@ -419,7 +438,7 @@ addUnspentCredits (UnspentCreditsVar !var) (Credits c) =
 --
 -- Nothing can be returned if the variable has already gone below the threshold,
 -- which may happen if another thread is concurrently doing the same loop on
--- 'mergeUnspentCredits'.
+-- 'mergeUnspentCreditsVar'.
 tryTakeUnspentCredits ::
      PrimMonad m
   => UnspentCreditsVar (PrimState m)
@@ -463,12 +482,13 @@ takeAllUnspentCredits ::
      PrimMonad m
   => UnspentCreditsVar (PrimState m)
   -> m Credits
-takeAllUnspentCredits (UnspentCreditsVar !unspentCreditsVar) = do
-    prev <- readPrimVar unspentCreditsVar
+takeAllUnspentCredits
+    unspentCreditsVar@(UnspentCreditsVar !var) = do
+    prev <- readUnspentCredits unspentCreditsVar
     casLoop prev
   where
     casLoop !prev = do
-      prev' <- casInt unspentCreditsVar prev 0
+      prev' <- casInt var prev 0
       if prev' == prev then
         pure (Credits prev)
       else
@@ -476,29 +496,27 @@ takeAllUnspentCredits (UnspentCreditsVar !unspentCreditsVar) = do
 
 {-# SPECIALISE stepMerge ::
      SpentCreditsVar RealWorld
-  -> TotalStepsVar RealWorld
+  -> StepsPerformedVar RealWorld
   -> StrictMVar IO (MergingRunState IO h)
   -> Credits
   -> IO Bool #-}
 stepMerge ::
      (MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
   => SpentCreditsVar (PrimState m)
-  -> TotalStepsVar (PrimState m)
+  -> StepsPerformedVar (PrimState m)
   -> StrictMVar m (MergingRunState m h)
   -> Credits
   -> m Bool
-stepMerge (SpentCreditsVar spentCreditsVar)
-          (TotalStepsVar totalStepsVar)
-          mergeVar (Credits c) =
+stepMerge spentCreditsVar stepsPerformedVar mergeVar (Credits c) =
     withMVar mergeVar $ \case
       CompletedMerge{} -> pure False
       (OngoingMerge _rs m) -> do
-        totalSteps <- readPrimVar totalStepsVar
-        spentCredits <- readPrimVar spentCreditsVar
+        stepsPerformed <- readStepsPerformed stepsPerformedVar
+        spentCredits <- readSpentCredits spentCreditsVar
 
         -- If we previously performed too many merge steps, then we perform
         -- fewer now.
-        let stepsToDo = max 0 (spentCredits + c - totalSteps)
+        let stepsToDo = max 0 (spentCredits + c - stepsPerformed)
         -- Merge.steps guarantees that @stepsDone >= stepsToDo@ /unless/ the
         -- merge was just now finished.
         (stepsDone, stepResult) <- Merge.steps m stepsToDo
@@ -509,17 +527,17 @@ stepMerge (SpentCreditsVar spentCreditsVar)
 
         -- This should be the only point at which we write to these variables.
         --
-        -- It is guaranteed that @totalSteps' >= spentCredits'@ /unless/ the
+        -- It is guaranteed that @stepsPerformed' >= spentCredits'@ /unless/ the
         -- merge was just now finished.
-        let totalSteps' = totalSteps + stepsDone
-        let spentCredits' = spentCredits + c
+        let !stepsPerformed' = stepsPerformed + stepsDone
+        let !spentCredits'   = spentCredits + c
         -- It is guaranteed that
-        -- @readPrimVar totalStepsVar >= readPrimVar spentCreditsVar@,
+        -- @readStepsPerformed stepsPerformedVar >= readSpentCredits spentCreditsVar@,
         -- /unless/ the merge was just now finished.
-        writePrimVar totalStepsVar $! totalSteps'
-        writePrimVar spentCreditsVar $! spentCredits'
+        writeStepsPerformed stepsPerformedVar stepsPerformed'
+        writeSpentCredits spentCreditsVar spentCredits'
         assert (case stepResult of
-                  MergeInProgress -> totalSteps' >= spentCredits'
+                  MergeInProgress -> stepsPerformed' >= spentCredits'
                   MergeDone       -> True
               ) $ pure ()
 
@@ -559,9 +577,9 @@ expectCompleted (DeRef MergingRun {..}) = do
     knownCompleted <- readMutVar mergeKnownCompleted
     -- The merge is not guaranteed to be complete, so we do the remaining steps
     when (knownCompleted == MergeMaybeCompleted) $ do
-      totalSteps <- readPrimVar (getTotalStepsVar mergeStepsPerformed)
-      let !credits = Credits (unNumEntries mergeNumEntries - totalSteps)
-      isMergeDone <- stepMerge mergeSpentCredits mergeStepsPerformed
+      stepsPerformed <- readStepsPerformed mergeStepsPerformedVar
+      let !credits = Credits (unNumEntries mergeNumEntries - stepsPerformed)
+      isMergeDone <- stepMerge mergeSpentCreditsVar mergeStepsPerformedVar
                                mergeState credits
       when isMergeDone $ completeMerge mergeState mergeKnownCompleted
       -- TODO: can we think of a check to see if we did not do too much work

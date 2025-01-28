@@ -36,7 +36,6 @@ import           Control.Monad.Class.MonadThrow (MonadMask)
 import           Control.Monad.Primitive (PrimMonad)
 import           Control.RefCount
 import           Data.Foldable (sequenceA_, traverse_)
-import           Data.Primitive.PrimVar
 import           Data.Text (Text)
 import           Data.Traversable (for)
 import qualified Data.Vector as V
@@ -204,8 +203,8 @@ toSnapIncomingRun (Merging mergePolicy (DeRef MR.MergingRun {..})) = do
     -- restore merge work on snapshot load. No need to snapshot the contents
     -- of totalStepsVar here, since we still start counting from 0 again when
     -- loading the snapshot.
-    unspentCredits <- readPrimVar (MR.getUnspentCreditsVar mergeUnspentCredits)
-    spentCredits   <- readPrimVar (MR.getSpentCreditsVar mergeSpentCredits)
+    unspentCredits <- MR.readUnspentCredits mergeUnspentCreditsVar
+    spentCredits   <- MR.readSpentCredits mergeSpentCreditsVar
     smrs <- toSnapMergingRunState <$> readMVar mergeState
     pure $
       SnapMergingRun

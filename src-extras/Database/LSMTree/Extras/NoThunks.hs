@@ -324,8 +324,8 @@ deriving anyclass instance NoThunks NumRuns
 deriving stock instance Generic (UnspentCreditsVar s)
 deriving anyclass instance Typeable s => NoThunks (UnspentCreditsVar s)
 
-deriving stock instance Generic (TotalStepsVar s)
-deriving anyclass instance Typeable s => NoThunks (TotalStepsVar s)
+deriving stock instance Generic (StepsPerformedVar s)
+deriving anyclass instance Typeable s => NoThunks (StepsPerformedVar s)
 
 deriving stock instance Generic (SpentCreditsVar s)
 deriving anyclass instance Typeable s => NoThunks (SpentCreditsVar s)
