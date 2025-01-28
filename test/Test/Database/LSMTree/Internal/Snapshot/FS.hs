@@ -211,15 +211,8 @@ prop_flipSnapshotBit
         tabFlippedBit = tabulate "Flipped bit" [showPowersOf10 j]
         counterFlippedBit = counterexample ("Flipped bit: " ++ show j)
 
-      let isUncheckedFile =
-               path == getNamedSnapshotDir namedSnapDir </> FS.mkFsPath ["0.keyops"]
-            || path == getNamedSnapshotDir namedSnapDir </> FS.mkFsPath ["0.blobs"]
-            || path == getNamedSnapshotDir namedSnapDir </> FS.mkFsPath ["0.checksums"]
-
-      -- TODO: remove once write buffer files have checksum verification
-      if isUncheckedFile then
-        pure discard
-      else if n <= 0 then -- file is empty
+      -- TODO: check forgotten refs
+      if n <= 0 then -- file is empty
         pure $ tabulate "Result" ["No corruption applied"] True
       else do -- file is non-empty
 
