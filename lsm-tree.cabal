@@ -140,6 +140,7 @@ library
     Database.LSMTree.Internal.Merge
     Database.LSMTree.Internal.MergeSchedule
     Database.LSMTree.Internal.MergingRun
+    Database.LSMTree.Internal.MergingTree
     Database.LSMTree.Internal.Page
     Database.LSMTree.Internal.PageAcc
     Database.LSMTree.Internal.PageAcc1
@@ -365,6 +366,7 @@ test-suite lsm-tree-test
     Test.Database.LSMTree.Internal.Index.Ordinary
     Test.Database.LSMTree.Internal.Lookup
     Test.Database.LSMTree.Internal.Merge
+    Test.Database.LSMTree.Internal.MergingTree
     Test.Database.LSMTree.Internal.Monkey
     Test.Database.LSMTree.Internal.PageAcc
     Test.Database.LSMTree.Internal.PageAcc1
