@@ -76,6 +76,14 @@ isCompatible otherVersion = do
   Writing and reading files
 -------------------------------------------------------------------------------}
 
+{-# SPECIALIZE
+  writeFileSnapshotMetaData ::
+       HasFS IO h
+    -> FsPath -- ^ Target file for snapshot metadata
+    -> FsPath -- ^ Target file for checksum
+    -> SnapshotMetaData
+    -> IO ()
+  #-}
 -- | Encode 'SnapshotMetaData' and write it to 'SnapshotMetaDataFile'.
 --
 -- In the presence of exceptions, newly created files will not be removed. It is
@@ -96,6 +104,13 @@ writeFileSnapshotMetaData hfs contentPath checksumPath snapMetaData = do
         checksumFile = Map.singleton checksumFileName checksum
     writeChecksumsFile hfs checksumPath checksumFile
 
+{-# SPECIALIZE
+  readFileSnapshotMetaData ::
+       HasFS IO h
+    -> FsPath -- ^ Source file for snapshot metadata
+    -> FsPath -- ^ Source file for checksum
+    -> IO (Either DeserialiseFailure SnapshotMetaData)
+  #-}
 -- | Read from 'SnapshotMetaDataFile' and attempt to decode it to
 -- 'SnapshotMetaData'.
 readFileSnapshotMetaData ::
