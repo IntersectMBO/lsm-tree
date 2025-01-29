@@ -352,6 +352,14 @@ propLockstep_RealImpl_MockFS_IO tr =
         )
       tagFinalState'
 
+-- We can not use @bracket@ inside @PropertyM@, so @acquire_RealImpl_MockFS@ and
+-- @release_RealImpl_MockFS@ are not run in a masked state and it is not
+-- guaranteed that the latter runs if the former succeeded. Therefore, if
+-- @runActions@ fails (with exceptions), then not having @bracket@ might lead to
+-- more exceptions, which can obfuscate the orginal reason that the property
+-- failed. Because of this, if @prop@ fails, it's probably best to also try
+-- running the @IO@ version of this property with the failing seed, and compare
+-- the counterexamples to see which one is more interesting.
 propLockstep_RealImpl_MockFS_IOSim ::
      (forall s. Tracer (IOSim s) R.LSMTreeTrace)
   -> Actions (Lockstep (ModelState R.Table))
