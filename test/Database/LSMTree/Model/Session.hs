@@ -234,7 +234,10 @@ runModelMWithInjectedErrors ::
 runModelMWithInjectedErrors Nothing onNoErrors _ st =
     runModelM onNoErrors st
 runModelMWithInjectedErrors (Just _) _ onErrors st =
-    runModelM (onErrors >> throwError (ErrDiskFault "modelled FsError")) st
+    runModelM (onErrors >> throwError modelErrDiskFault) st
+
+modelErrDiskFault :: Err
+modelErrDiskFault = ErrDiskFault "modelled disk fault"
 
 --
 -- Errors
@@ -251,6 +254,7 @@ data Err =
     -- | A catch-all error for cases where /something/ went wrong with the file
     -- system.
   | ErrDiskFault String
+  | ErrOther String
 
 instance Show Err where
   showsPrec d = \case
@@ -271,6 +275,10 @@ instance Show Err where
       ErrDiskFault s ->
         showParen (d > appPrec) $
         showString "ErrDiskFault " .
+        showParen True (showString s)
+      ErrOther s ->
+        showParen (d > appPrec) $
+        showString "ErrOther " .
         showParen True (showString s)
 
 -- Approximate equality for errors.
@@ -296,6 +304,9 @@ instance Eq Err where
   (==) ErrSnapshotWrongType ErrSnapshotWrongType = True
   (==) ErrBlobRefInvalidated ErrBlobRefInvalidated = True
   (==) ErrCursorClosed ErrCursorClosed = True
+  (==) (ErrOther s1) (ErrOther s2) = s1 == s2
+  (==) _ (ErrOther _) = False
+  (==) (ErrOther _) _ = False
   (==) _ (ErrDiskFault _) = True
   (==) (ErrDiskFault _) _ = True
   (==) _ _ = False
@@ -309,6 +320,7 @@ instance Eq Err where
           ErrBlobRefInvalidated{}   -> ()
           ErrCursorClosed{}         -> ()
           ErrDiskFault{}            -> ()
+          ErrOther{}                -> ()
 
 {-------------------------------------------------------------------------------
   Tables

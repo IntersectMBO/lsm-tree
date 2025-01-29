@@ -31,6 +31,7 @@ instance Arbitrary Err where
       , pure ErrBlobRefInvalidated
       , pure ErrCursorClosed
       , ErrDiskFault <$> arbitrary
+      , ErrOther <$> arbitrary
       ]
     where
       _coveredAllCases x = case x of
@@ -42,8 +43,10 @@ instance Arbitrary Err where
           ErrBlobRefInvalidated{}   -> ()
           ErrCursorClosed{}         -> ()
           ErrDiskFault{}            -> ()
+          ErrOther{}                -> ()
 
   shrink (ErrDiskFault s) = ErrDiskFault <$> shrink s
+  shrink (ErrOther s)     = ErrOther <$> shrink s
   shrink _                = []
 
 deriving stock instance Generic Err
