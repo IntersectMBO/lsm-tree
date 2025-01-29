@@ -419,6 +419,14 @@ treeInvariant :: MergingTree s -> ST s ()
 treeInvariant tree@(MergingTree treeState) = do
     readSTRef treeState >>= \case
       CompletedTreeMerge _ ->
+        -- We don't require the completed merges to be non-empty, since even
+        -- a (last-level) merge of non-empty runs can end up being empty.
+        -- In the prototype it would be possible to ensure that empty runs are
+        -- immediately trimmed from the tree, but this kind of normalisation
+        -- is complicated with sharing. For example, merging runs and
+        -- trees are shared, so if one of them completes as an empty run,
+        -- all tables referencing it suddenly contain an empty run and would
+        -- need to be updated immediately.
         return ()
 
       OngoingTreeMerge mr ->
@@ -426,6 +434,8 @@ treeInvariant tree@(MergingTree treeState) = do
 
       PendingTreeMerge (PendingLevelMerge irs t) -> do
         -- Non-empty, but can be just one input (see 'newPendingLevelMerge').
+        -- Note that children of a pending merge can be empty runs, as noted
+        -- above for 'CompletedTreeMerge'.
         assertST $ length irs + length t > 0
         for_ irs $ \case
           Single _     -> return ()
@@ -447,7 +457,7 @@ mergeInvariant (MergingRun _ ref) =
     readSTRef ref >>= \case
       CompletedMerge _ -> return ()
       OngoingMerge _ rs _ -> do
-        -- Inputs to ongoing merges aren't empty (but can while pending!).
+        -- Inputs to ongoing merges aren't empty.
         assertST $ all (\r -> runSize r > 0) rs
         -- Merges are non-trivial (at least two inputs).
         assertST $ length rs > 1
@@ -1087,7 +1097,11 @@ remainingDebtPendingMerge (PendingMerge _ irs trees) = do
         , traverse remainingDebtMergingTree trees
         ]
     let totalSize = sum sizes
-    let totalDebt = sum debts + totalSize
+    -- A pending merge should never have 0 remaining debt. It needs some work to
+    -- complete it, even if all its inputs are empty. It's not enought to use
+    -- @max 1@, as this would violate the property that supplying N credits
+    -- reduces the remaining debt by at least N.
+    let totalDebt = sum debts + totalSize + 1
     return (totalDebt, totalSize)
   where
     remainingDebtIncomingRun = \case
