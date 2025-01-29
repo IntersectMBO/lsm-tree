@@ -349,66 +349,6 @@ writeStepsPerformed :: PrimMonad m => StepsPerformedVar (PrimState m) -> Int -> 
 writeSpentCredits   (SpentCreditsVar   v) x = writePrimVar v x
 writeStepsPerformed (StepsPerformedVar v) x = writePrimVar v x
 
-{-# SPECIALISE supplyCredits ::
-     Credits
-  -> CreditThreshold
-  -> Ref (MergingRun IO h)
-  -> IO () #-}
--- | Supply the given amount of credits to a merging run. This /may/ cause an
--- ongoing merge to progress.
-supplyCredits ::
-     forall m h. (MonadSTM m, MonadST m, MonadMVar m, MonadMask m)
-  => Credits
-  -> CreditThreshold
-  -> Ref (MergingRun m h)
-  -> m ()
-supplyCredits (Credits c) creditsThresh (DeRef MergingRun {..}) = do
-    mergeCompleted <- readMutVar mergeKnownCompleted
-
-    -- The merge is already finished
-    if mergeCompleted == MergeKnownCompleted then
-      pure ()
-    else do
-      -- unspentCredits' is our /estimate/ of what the new total of unspent
-      -- credits is.
-      Credits unspentCredits' <- addUnspentCredits mergeUnspentCreditsVar (Credits c)
-      stepsPerformed <- readStepsPerformed mergeStepsPerformedVar
-
-      if stepsPerformed + unspentCredits' >= unNumEntries mergeNumEntries then do
-        -- We can finish the merge immediately
-        isMergeDone <-
-          bracketOnError (takeAllUnspentCredits mergeUnspentCreditsVar)
-                         (putBackUnspentCredits mergeUnspentCreditsVar)
-                         (stepMerge mergeSpentCreditsVar mergeStepsPerformedVar
-                                    mergeState)
-        when isMergeDone $ completeMerge mergeState mergeKnownCompleted
-      else if unspentCredits' >= getCreditThreshold creditsThresh then do
-        -- We can do some merging work without finishing the merge immediately
-        isMergeDone <-
-          -- Try to take some unspent credits. The number of taken credits is
-          -- the number of merging steps we will try to do.
-          --
-          -- If an error happens during the body, then we put back as many
-          -- credits as we took, even if the merge has progressed. See Note
-          -- [Merge Batching] to see why this is okay.
-          bracketOnError
-            (tryTakeUnspentCredits mergeUnspentCreditsVar creditsThresh (Credits unspentCredits'))
-            (mapM_ (putBackUnspentCredits mergeUnspentCreditsVar)) $ \case
-              Nothing -> pure False
-              Just c' -> stepMerge mergeSpentCreditsVar mergeStepsPerformedVar
-                                   mergeState c'
-
-        -- If we just finished the merge, then we convert the output of the
-        -- merge into a new run. i.e., we complete the merge.
-        --
-        -- If an async exception happens before we get to perform the
-        -- completion, then that is fine. The next supplyCredits will
-        -- complete the merge.
-        when isMergeDone $ completeMerge mergeState mergeKnownCompleted
-      else
-        -- Just accumulate credits, because we are not over the threshold yet
-        pure ()
-
 {-# SPECIALISE addUnspentCredits ::
      UnspentCreditsVar RealWorld
   -> Credits
@@ -493,6 +433,66 @@ takeAllUnspentCredits
         pure (Credits prev)
       else
         casLoop prev'
+
+{-# SPECIALISE supplyCredits ::
+     Credits
+  -> CreditThreshold
+  -> Ref (MergingRun IO h)
+  -> IO () #-}
+-- | Supply the given amount of credits to a merging run. This /may/ cause an
+-- ongoing merge to progress.
+supplyCredits ::
+     forall m h. (MonadSTM m, MonadST m, MonadMVar m, MonadMask m)
+  => Credits
+  -> CreditThreshold
+  -> Ref (MergingRun m h)
+  -> m ()
+supplyCredits (Credits c) creditsThresh (DeRef MergingRun {..}) = do
+    mergeCompleted <- readMutVar mergeKnownCompleted
+
+    -- The merge is already finished
+    if mergeCompleted == MergeKnownCompleted then
+      pure ()
+    else do
+      -- unspentCredits' is our /estimate/ of what the new total of unspent
+      -- credits is.
+      Credits unspentCredits' <- addUnspentCredits mergeUnspentCreditsVar (Credits c)
+      stepsPerformed <- readStepsPerformed mergeStepsPerformedVar
+
+      if stepsPerformed + unspentCredits' >= unNumEntries mergeNumEntries then do
+        -- We can finish the merge immediately
+        isMergeDone <-
+          bracketOnError (takeAllUnspentCredits mergeUnspentCreditsVar)
+                         (putBackUnspentCredits mergeUnspentCreditsVar)
+                         (stepMerge mergeSpentCreditsVar mergeStepsPerformedVar
+                                    mergeState)
+        when isMergeDone $ completeMerge mergeState mergeKnownCompleted
+      else if unspentCredits' >= getCreditThreshold creditsThresh then do
+        -- We can do some merging work without finishing the merge immediately
+        isMergeDone <-
+          -- Try to take some unspent credits. The number of taken credits is
+          -- the number of merging steps we will try to do.
+          --
+          -- If an error happens during the body, then we put back as many
+          -- credits as we took, even if the merge has progressed. See Note
+          -- [Merge Batching] to see why this is okay.
+          bracketOnError
+            (tryTakeUnspentCredits mergeUnspentCreditsVar creditsThresh (Credits unspentCredits'))
+            (mapM_ (putBackUnspentCredits mergeUnspentCreditsVar)) $ \case
+              Nothing -> pure False
+              Just c' -> stepMerge mergeSpentCreditsVar mergeStepsPerformedVar
+                                   mergeState c'
+
+        -- If we just finished the merge, then we convert the output of the
+        -- merge into a new run. i.e., we complete the merge.
+        --
+        -- If an async exception happens before we get to perform the
+        -- completion, then that is fine. The next supplyCredits will
+        -- complete the merge.
+        when isMergeDone $ completeMerge mergeState mergeKnownCompleted
+      else
+        -- Just accumulate credits, because we are not over the threshold yet
+        pure ()
 
 {-# SPECIALISE stepMerge ::
      SpentCreditsVar RealWorld
