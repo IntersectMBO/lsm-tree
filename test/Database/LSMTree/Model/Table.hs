@@ -51,8 +51,8 @@ import           Data.List.NonEmpty (NonEmpty (..))
 import           Data.Map (Map)
 import qualified Data.Map.Range as Map.R
 import qualified Data.Map.Strict as Map
-import           Data.Monoid (First (..))
 import           Data.Proxy (Proxy (Proxy))
+import           Data.Semigroup (First (..))
 import qualified Data.Vector as V
 import           Database.LSMTree (LookupResult (..), QueryResult (..),
                      ResolveValue (..), Update (..))

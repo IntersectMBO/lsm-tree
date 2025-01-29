@@ -235,10 +235,6 @@ newtype Value  = V Int
 resolveValue :: Value -> Value -> Value
 resolveValue (V x) (V y) = V (x + y)
 
-resolveBlob :: Maybe Blob -> Maybe Blob -> Maybe Blob
-resolveBlob (Just b) _ = Just b
-resolveBlob Nothing mb = mb
-
 newtype Blob = B Int
   deriving stock (Eq, Show)
 
@@ -456,29 +452,30 @@ mergek t =
     . Map.unionsWith (if isUnion t then combineUnion else combine)
 
 -- | Combines two entries that have been performed after another. Therefore, the
--- newer one overwrites the old one (or modifies it for 'Mupsert').
+-- newer one overwrites the old one (or modifies it for 'Mupsert'). Only take a
+-- blob from the left entry.
 combine :: Op -> Op -> Op
 combine new_ old = case new_ of
     Insert{}  -> new_
     Delete{}  -> new_
     Mupsert v -> case old of
-      Insert v' b -> Insert (resolveValue v v') b
+      Insert v' _ -> Insert (resolveValue v v') Nothing
       Delete      -> Insert v Nothing
       Mupsert v'  -> Mupsert (resolveValue v v')
 
 -- | Combines two entries of runs that have been 'union'ed together. If any one
 -- has a value, the result should have a value (represented by 'Insert'). If
--- both have a value, these values get combined monoidally.
+-- both have a value, these values get combined monoidally. Only take a blob
+-- from the left entry.
 --
 -- See 'MergeUnion'.
 combineUnion :: Op -> Op -> Op
 combineUnion Delete         old          = old
 combineUnion new_           Delete       = new_
 combineUnion (Mupsert v')   (Mupsert v ) = Insert (resolveValue v' v) Nothing
-combineUnion (Mupsert v')   (Insert v b) = Insert (resolveValue v' v) b
+combineUnion (Mupsert v')   (Insert v _) = Insert (resolveValue v' v) Nothing
 combineUnion (Insert v' b') (Mupsert v)  = Insert (resolveValue v' v) b'
-combineUnion (Insert v' b') (Insert v b) = Insert (resolveValue v' v)
-                                                  (resolveBlob b' b)
+combineUnion (Insert v' b') (Insert v _) = Insert (resolveValue v' v) b'
 
 expectCompletedMergingRun :: HasCallStack => MergingRun t s -> ST s Run
 expectCompletedMergingRun (MergingRun _ ref) = do
