@@ -1409,8 +1409,8 @@ matchBy eq (x0 :| xs) =
     matchOne :: a -> Int -> a -> Either Int ()
     matchOne x i y =
       if (x `eq` y)
-        then Left i
-        else Right ()
+        then Right ()
+        else Left i
 
 -- | Check that all tables in the session match. If so, return the matched
 -- session. If there is a mismatch, return the list indices of the mismatching
