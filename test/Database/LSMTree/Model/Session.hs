@@ -255,6 +255,7 @@ data Err =
   | ErrCursorClosed
     -- | Something went wrong with the file system.
   | ErrDiskFault String
+  | ErrOther String
   deriving stock Eq
 
 instance Show Err where
@@ -276,6 +277,10 @@ instance Show Err where
       ErrDiskFault s ->
         showParen (d > appPrec) $
         showString "ErrDiskFault " .
+        showParen True (showString s)
+      ErrOther s ->
+        showParen (d > appPrec) $
+        showString "ErrOther " .
         showParen True (showString s)
 
 {-------------------------------------------------------------------------------

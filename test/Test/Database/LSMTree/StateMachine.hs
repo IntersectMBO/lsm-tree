@@ -190,11 +190,7 @@ propLockstep_ModelIOImpl =
               env :: RealEnv ModelIO.Table IO
               env = RealEnv {
                   envSession = session
-                , envHandlers = [
-                      handler
-                    , fileFormatErrorHandler
-                    , diskFaultErrorHandler
-                    ]
+                , envHandlers = [handler]
                 , envErrors = errsVar
                 , envInjectFaultResults = faultsVar
                 }
@@ -295,11 +291,7 @@ propLockstep_RealImpl_RealFS_IO tr =
               env :: RealEnv R.Table IO
               env = RealEnv {
                   envSession = session
-                , envHandlers = [
-                      realHandler @IO
-                    , fileFormatErrorHandler
-                    , diskFaultErrorHandler
-                    ]
+                , envHandlers = realErrorHandlers @IO
                 , envErrors = errsVar
                 , envInjectFaultResults = faultsVar
                 }
@@ -338,11 +330,7 @@ propLockstep_RealImpl_MockFS_IO tr =
               env :: RealEnv R.Table IO
               env = RealEnv {
                   envSession = session
-                , envHandlers = [
-                      realHandler @IO
-                    , fileFormatErrorHandler
-                    , diskFaultErrorHandler
-                    ]
+                , envHandlers = realErrorHandlers @IO
                 , envErrors = errsVar
                 , envInjectFaultResults = faultsVar
                 }
@@ -375,11 +363,7 @@ propLockstep_RealImpl_MockFS_IOSim tr actions =
           env :: RealEnv R.Table (IOSim s)
           env = RealEnv {
               envSession = session
-            , envHandlers = [
-                  realHandler @(IOSim s)
-                , fileFormatErrorHandler
-                , diskFaultErrorHandler
-                ]
+            , envHandlers = realErrorHandlers @(IOSim s)
             , envErrors = errsVar
             , envInjectFaultResults = faultsVar
             }
@@ -439,8 +423,30 @@ getAllSessionCursors (R.Internal.Session' s) =
       cs <- readMVar (R.Internal.sessionOpenCursors seshEnv)
       pure ((\x -> SomeCursor (R.Internal.Cursor' x))  <$> Map.elems cs)
 
-realHandler :: Monad m => Handler m (Maybe Model.Err)
-realHandler = Handler $ pure . handler'
+createSystemTempDirectory ::  [Char] -> IO (FilePath, HasFS IO HandleIO, HasBlockIO IO HandleIO)
+createSystemTempDirectory prefix = do
+    systemTempDir <- getCanonicalTemporaryDirectory
+    tempDir <- createTempDirectory systemTempDir prefix
+    let hasFS = ioHasFS (MountPoint tempDir)
+    hasBlockIO <- ioHasBlockIO hasFS defaultIOCtxParams
+    pure (tempDir, hasFS, hasBlockIO)
+
+{-------------------------------------------------------------------------------
+  Error handlers
+-------------------------------------------------------------------------------}
+
+realErrorHandlers :: Monad m => [Handler m (Maybe Model.Err)]
+realErrorHandlers = [
+      lsmTreeErrorHandler
+    , commitActionRegistryErrorHandler
+    , abortActionRegistryErrorHandler
+    , fsErrorHandler
+    , fileFormatErrorHandler
+    , catchAllErrorHandler
+    ]
+
+lsmTreeErrorHandler :: Monad m => Handler m (Maybe Model.Err)
+lsmTreeErrorHandler = Handler $ pure . handler'
   where
     handler' :: LSMTreeError -> Maybe Model.Err
     handler' ErrTableClosed               = Just Model.ErrTableClosed
@@ -449,28 +455,40 @@ realHandler = Handler $ pure . handler'
     handler' (ErrSnapshotExists _snap)    = Just Model.ErrSnapshotExists
     handler' ErrSnapshotWrongTableType{}  = Just Model.ErrSnapshotWrongType
     handler' (ErrBlobRefInvalid _)        = Just Model.ErrBlobRefInvalidated
-    handler' _                            = Nothing
+    handler' e                            = Just (Model.ErrOther (displayException e))
 
--- | When combined with other handlers, 'diskFaultErrorHandler' has to go last
--- because it matches on 'SomeException', an no other handlers are run after
--- that. See the use of 'catches' in 'catchErr'.
-diskFaultErrorHandler :: Monad m => Handler m (Maybe Model.Err)
-diskFaultErrorHandler = Handler $ \e -> pure $
-    if isDiskFault e
-      then Just (Model.ErrDiskFault (displayException e))
-      else Nothing
+commitActionRegistryErrorHandler :: Monad m => Handler m (Maybe Model.Err)
+commitActionRegistryErrorHandler = Handler $ pure . handler'
+  where
+    handler' :: CommitActionRegistryError -> Maybe Model.Err
+    handler' e
+      | isDiskFault (toException e) = Just (Model.ErrDiskFault (displayException e))
+      | otherwise                   = Just (Model.ErrOther (displayException e))
 
+abortActionRegistryErrorHandler :: Monad m => Handler m (Maybe Model.Err)
+abortActionRegistryErrorHandler = Handler $ pure . handler'
+  where
+    handler' :: AbortActionRegistryError -> Maybe Model.Err
+    handler' e
+      | isDiskFault (toException e) = Just (Model.ErrDiskFault (displayException e))
+      | otherwise                   = Just (Model.ErrOther (displayException e))
+
+-- | Some exceptions contain other exceptions. We check recursively if there is
+-- *any* exception that must have occurred because of a disk fault, and if so we
+-- consider the whole structure of exceptions a disk fault exception.
 isDiskFault :: SomeException -> Bool
 isDiskFault e
   | Just (CommitActionRegistryError es) <- fromException e
-  = all isDiskFault' es
+  = any isDiskFault' es
   | Just (AbortActionRegistryError reason es) <- fromException e
   = case reason of
-      ReasonExitCaseException e' -> isDiskFault e' && all isDiskFault' es
+      ReasonExitCaseException e' -> isDiskFault e' || any isDiskFault' es
       ReasonExitCaseAbort        -> False
   | Just (e' :: ActionError) <- fromException e
   = isDiskFault' (getActionError e')
   | Just FsError{} <- fromException e
+  = True
+  | Just FileFormatError{} <- fromException e
   = True
   | otherwise
   = False
@@ -478,19 +496,24 @@ isDiskFault e
     isDiskFault' :: forall e. Exception e => e -> Bool
     isDiskFault' = isDiskFault . toException
 
+fsErrorHandler :: Monad m => Handler m (Maybe Model.Err)
+fsErrorHandler = Handler $ pure . handler'
+  where
+    handler' :: FsError -> Maybe Model.Err
+    handler' e = Just (Model.ErrDiskFault (displayException e))
+
 fileFormatErrorHandler :: Monad m => Handler m (Maybe Model.Err)
 fileFormatErrorHandler = Handler $ pure . handler'
   where
     handler' :: FileFormatError -> Maybe Model.Err
     handler' e = Just (Model.ErrDiskFault (displayException e))
 
-createSystemTempDirectory ::  [Char] -> IO (FilePath, HasFS IO HandleIO, HasBlockIO IO HandleIO)
-createSystemTempDirectory prefix = do
-    systemTempDir <- getCanonicalTemporaryDirectory
-    tempDir <- createTempDirectory systemTempDir prefix
-    let hasFS = ioHasFS (MountPoint tempDir)
-    hasBlockIO <- ioHasBlockIO hasFS defaultIOCtxParams
-    pure (tempDir, hasFS, hasBlockIO)
+-- | When combined with other handlers, 'catchAllErrorHandler' has to go last
+-- because it matches on 'SomeException', and no other handlers are run after
+-- that. See the use of 'catches' in 'catchErr'.
+catchAllErrorHandler :: Monad m => Handler m (Maybe Model.Err)
+catchAllErrorHandler = Handler $ \(e :: SomeException) ->
+    pure $ Just (Model.ErrOther (displayException e))
 
 {-------------------------------------------------------------------------------
   Key and value types
