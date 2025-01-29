@@ -448,7 +448,7 @@ realHandler = Handler $ pure . handler'
 diskFaultErrorHandler :: Monad m => Handler m (Maybe Model.Err)
 diskFaultErrorHandler = Handler $ \e -> pure $
     if isDiskFault e
-      then Just (Model.ErrFsError (displayException e))
+      then Just (Model.ErrDiskFault (displayException e))
       else Nothing
 
 isDiskFault :: SomeException -> Bool
@@ -473,7 +473,7 @@ fileFormatErrorHandler :: Monad m => Handler m (Maybe Model.Err)
 fileFormatErrorHandler = Handler $ pure . handler'
   where
     handler' :: FileFormatError -> Maybe Model.Err
-    handler' e = Just (Model.ErrFsError (displayException e))
+    handler' e = Just (Model.ErrDiskFault (displayException e))
 
 createSystemTempDirectory ::  [Char] -> IO (FilePath, HasFS IO HandleIO, HasBlockIO IO HandleIO)
 createSystemTempDirectory prefix = do
@@ -1324,7 +1324,7 @@ runRealWithInjectedErrors s env merrs k rollback =
     Just errs -> do
       eith <- catchErr handlers $ FSSim.withErrors errsVar errs k
       case eith of
-        Left (Model.ErrFsError _) -> do
+        Left (Model.ErrDiskFault _) -> do
           modifyMutVar faultsVar (InjectFaultInducedError s :)
           pure eith
         Left _ ->
@@ -1332,7 +1332,7 @@ runRealWithInjectedErrors s env merrs k rollback =
         Right x -> do
           modifyMutVar faultsVar (InjectFaultAccidentalSuccess s :)
           rollback x
-          pure $ Left $ Model.ErrFsError ("dummy: " <> s)
+          pure $ Left $ Model.ErrDiskFault ("dummy: " <> s)
   where
     errsVar = envErrors env
     faultsVar = envInjectFaultResults env
