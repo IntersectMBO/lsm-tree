@@ -470,7 +470,9 @@ combine new_ old = case new_ of
 --
 -- See 'MergeUnion'.
 combineUnion :: Op -> Op -> Op
+combineUnion Delete         (Mupsert v)  = Insert v Nothing
 combineUnion Delete         old          = old
+combineUnion (Mupsert u)    Delete       = Insert u Nothing
 combineUnion new_           Delete       = new_
 combineUnion (Mupsert v')   (Mupsert v ) = Insert (resolveValue v' v) Nothing
 combineUnion (Mupsert v')   (Insert v _) = Insert (resolveValue v' v) Nothing
