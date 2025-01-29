@@ -101,6 +101,7 @@ import           Database.LSMTree.Extras.Generators (KeyForIndexCompact)
 import           Database.LSMTree.Extras.NoThunks (propNoThunks)
 import           Database.LSMTree.Internal (LSMTreeError (..))
 import qualified Database.LSMTree.Internal as R.Internal
+import           Database.LSMTree.Internal.CRC32C (FileFormatError (..))
 import           Database.LSMTree.Internal.Serialise (SerialisedBlob,
                      SerialisedValue)
 import qualified Database.LSMTree.Model.IO as ModelIO
@@ -188,7 +189,11 @@ propLockstep_ModelIOImpl =
               env :: RealEnv ModelIO.Table IO
               env = RealEnv {
                   envSession = session
-                , envHandlers = [handler, diskFaultErrorHandler]
+                , envHandlers = [
+                      handler
+                    , fileFormatErrorHandler
+                    , diskFaultErrorHandler
+                    ]
                 , envErrors = errsVar
                 , envInjectFaultResults = faultsVar
                 }
@@ -291,6 +296,7 @@ propLockstep_RealImpl_RealFS_IO tr =
                   envSession = session
                 , envHandlers = [
                       realHandler @IO
+                    , fileFormatErrorHandler
                     , diskFaultErrorHandler
                     ]
                 , envErrors = errsVar
@@ -333,6 +339,7 @@ propLockstep_RealImpl_MockFS_IO tr =
                   envSession = session
                 , envHandlers = [
                       realHandler @IO
+                    , fileFormatErrorHandler
                     , diskFaultErrorHandler
                     ]
                 , envErrors = errsVar
@@ -361,6 +368,7 @@ propLockstep_RealImpl_MockFS_IOSim tr actions =
               envSession = session
             , envHandlers = [
                   realHandler @(IOSim s)
+                , fileFormatErrorHandler
                 , diskFaultErrorHandler
                 ]
             , envErrors = errsVar
@@ -434,6 +442,9 @@ realHandler = Handler $ pure . handler'
     handler' (ErrBlobRefInvalid _)        = Just Model.ErrBlobRefInvalidated
     handler' _                            = Nothing
 
+-- | When combined with other handlers, 'diskFaultErrorHandler' has to go last
+-- because it matches on 'SomeException', an no other handlers are run after
+-- that. See the use of 'catches' in 'catchErr'.
 diskFaultErrorHandler :: Monad m => Handler m (Maybe Model.Err)
 diskFaultErrorHandler = Handler $ \e -> pure $
     if isDiskFault e
@@ -448,7 +459,7 @@ isDiskFault e
   = case reason of
       ReasonExitCaseException e' -> isDiskFault e' && all isDiskFault' es
       ReasonExitCaseAbort        -> False
-  | Just (e' :: ActionError)<- fromException e
+  | Just (e' :: ActionError) <- fromException e
   = isDiskFault' (getActionError e')
   | Just FsError{} <- fromException e
   = True
@@ -457,6 +468,12 @@ isDiskFault e
   where
     isDiskFault' :: forall e. Exception e => e -> Bool
     isDiskFault' = isDiskFault . toException
+
+fileFormatErrorHandler :: Monad m => Handler m (Maybe Model.Err)
+fileFormatErrorHandler = Handler $ pure . handler'
+  where
+    handler' :: FileFormatError -> Maybe Model.Err
+    handler' e = Just (Model.ErrFsError (displayException e))
 
 createSystemTempDirectory ::  [Char] -> IO (FilePath, HasFS IO HandleIO, HasBlockIO IO HandleIO)
 createSystemTempDirectory prefix = do
