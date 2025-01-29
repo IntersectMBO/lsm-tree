@@ -69,6 +69,7 @@ module Database.LSMTree.Model.Session (
   , SnapshotName
   , createSnapshot
   , openSnapshot
+  , corruptSnapshot
   , deleteSnapshot
   , listSnapshots
     -- * Multiple writable tables
@@ -589,6 +590,13 @@ openSnapshot label name = do
             error "openSnapshot: snapshot opened at wrong type"
           Just table' ->
             newTableWith conf table'
+
+corruptSnapshot ::
+     (MonadState Model m, MonadError Err m)
+  => SnapshotName
+  -> m ()
+corruptSnapshot name = do
+  undefined
 
 deleteSnapshot ::
      (MonadState Model m, MonadError Err m)
