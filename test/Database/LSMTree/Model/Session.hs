@@ -242,6 +242,7 @@ runModelMWithInjectedErrors (Just _) _ onErrors st =
 
 data Err =
     ErrTableClosed
+  | ErrSnapshotCorrupted
   | ErrSnapshotExists
   | ErrSnapshotDoesNotExist
   | ErrSnapshotWrongType
@@ -254,6 +255,8 @@ instance Show Err where
   showsPrec d = \case
       ErrTableClosed ->
         showString "ErrTableClosed"
+      ErrSnapshotCorrupted ->
+        showString "ErrSnapshotCorrupted"
       ErrSnapshotExists ->
         showString "ErrSnapshotExists"
       ErrSnapshotDoesNotExist ->
@@ -271,6 +274,7 @@ instance Show Err where
 
 instance Eq Err where
   (==) ErrTableClosed ErrTableClosed = True
+  (==) ErrSnapshotCorrupted ErrSnapshotCorrupted = True
   (==) ErrSnapshotExists ErrSnapshotExists = True
   (==) ErrSnapshotDoesNotExist ErrSnapshotDoesNotExist = True
   (==) ErrSnapshotWrongType ErrSnapshotWrongType = True
@@ -281,6 +285,7 @@ instance Eq Err where
     where
       _coveredAllCases x = case x of
           ErrTableClosed{}          -> ()
+          ErrSnapshotCorrupted{}    -> ()
           ErrSnapshotExists{}       -> ()
           ErrSnapshotDoesNotExist{} -> ()
           ErrSnapshotWrongType{}    -> ()
@@ -541,7 +546,12 @@ invalidateBlobRefs Table{..} = do
   Snapshots
 -------------------------------------------------------------------------------}
 
-data Snapshot = Snapshot TableConfig SnapshotLabel SomeTable
+data Snapshot = Snapshot
+  { snapshotConfig    :: TableConfig
+  , snapshotLabel     :: SnapshotLabel
+  , snapshotTable     :: SomeTable
+  , snapshotCorrupted :: Bool
+  }
   deriving stock Show
 
 createSnapshot ::
@@ -559,7 +569,7 @@ createSnapshot label name t@Table{..} = do
     when (Map.member name snaps) $
       throwError ErrSnapshotExists
     modify (\m -> m {
-        snapshots = Map.insert name (Snapshot config label $ toSomeTable $ Model.snapshot table) (snapshots m)
+        snapshots = Map.insert name (Snapshot config label (toSomeTable $ Model.snapshot table) False) (snapshots m)
       })
 
 openSnapshot ::
@@ -576,7 +586,9 @@ openSnapshot label name = do
     case Map.lookup name snaps of
       Nothing ->
         throwError ErrSnapshotDoesNotExist
-      Just (Snapshot conf label' tbl) -> do
+      Just (Snapshot conf label' tbl corrupted) -> do
+        when corrupted $
+          throwError ErrSnapshotCorrupted
         when (label /= label') $
           throwError ErrSnapshotWrongType
         case fromSomeTable tbl of
@@ -596,7 +608,12 @@ corruptSnapshot ::
   => SnapshotName
   -> m ()
 corruptSnapshot name = do
-  undefined
+  snapshots <- gets snapshots
+  if Map.notMember name snapshots
+    then throwError ErrSnapshotDoesNotExist
+    else modify $ \m -> m {snapshots = Map.adjust corruptSnapshotEntry name snapshots}
+  where
+    corruptSnapshotEntry (Snapshot c l t _) = Snapshot c l t True
 
 deleteSnapshot ::
      (MonadState Model m, MonadError Err m)
