@@ -96,32 +96,34 @@ unNumEntries (NumEntries x) = x
 instance Semigroup v => Semigroup (Entry v b) where
   e1 <> e2 = combine (<>) e1 e2
 
--- | Given a value-merge function, combine entries
+-- | Given a value-merge function, combine entries. Only take a blob from the
+-- left entry.
 combine :: (v -> v -> v) -> Entry v b -> Entry v b -> Entry v b
-combine _ e@Delete            _                       = e
-combine _ e@Insert {}         _                       = e
-combine _ e@InsertWithBlob {} _                       = e
-combine _   (Mupdate u)       Delete                  = Insert u
-combine f   (Mupdate u)       (Insert v)              = Insert (f u v)
-combine f   (Mupdate u)       (InsertWithBlob v blob) = InsertWithBlob (f u v) blob
-combine f   (Mupdate u)       (Mupdate v)             = Mupdate (f u v)
+combine _ e@Delete            _                    = e
+combine _ e@Insert {}         _                    = e
+combine _ e@InsertWithBlob {} _                    = e
+combine _   (Mupdate u)       Delete               = Insert u
+combine f   (Mupdate u)       (Insert v)           = Insert (f u v)
+combine f   (Mupdate u)       (InsertWithBlob v _) = Insert (f u v)
+combine f   (Mupdate u)       (Mupdate v)          = Mupdate (f u v)
 
 -- | Combine two entries of runs that have been 'union'ed together. If any one
 -- has a value, the result should have a value (represented by 'Insert'). If
--- both have a value, these values get combined monoidally.
+-- both have a value, these values get combined monoidally. Only take a blob
+-- from the left entry.
 combineUnion :: (v -> v -> v) -> Entry v b -> Entry v b -> Entry v b
 combineUnion f = go
   where
     go Delete               e                    = e
     go e                    Delete               = e
     go (Insert u)           (Insert v)           = Insert (f u v)
-    go (Insert u)           (InsertWithBlob v b) = InsertWithBlob (f u v) b
+    go (Insert u)           (InsertWithBlob v _) = Insert (f u v)
     go (Insert u)           (Mupdate v)          = Insert (f u v)
     go (InsertWithBlob u b) (Insert v)           = InsertWithBlob (f u v) b
     go (InsertWithBlob u b) (InsertWithBlob v _) = InsertWithBlob (f u v) b
     go (InsertWithBlob u b) (Mupdate v)          = InsertWithBlob (f u v) b
     go (Mupdate u)          (Insert v)           = Insert (f u v)
-    go (Mupdate u)          (InsertWithBlob v b) = InsertWithBlob (f u v) b
+    go (Mupdate u)          (InsertWithBlob v _) = Insert (f u v)
     go (Mupdate u)          (Mupdate v)          = Insert (f u v)
 
 combineMaybe :: (v -> v -> v) -> Maybe (Entry v b) -> Maybe (Entry v b) -> Maybe (Entry v b)

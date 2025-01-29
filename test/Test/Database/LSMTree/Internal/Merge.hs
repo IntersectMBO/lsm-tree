@@ -170,8 +170,7 @@ prop_MergeUnion fs hbio stepSize (SmallList rds) =
         Entry.Mupdate v          -> Just (v, Nothing)
         Entry.Delete             -> Nothing
 
-    resolveValueAndBlob (v', Nothing) (v, b) = (mappendValues v' v, b)
-    resolveValueAndBlob (v', Just b)  (v, _) = (mappendValues v' v, Just b)
+    resolveValueAndBlob (v', b') (v, _) = (mappendValues v' v, b')
 
 -- | After merging for a few steps, we can prematurely abort the merge, which
 -- should clean up properly.
