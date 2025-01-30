@@ -65,9 +65,13 @@ module ScheduledMerges (
     Run,
     supplyCreditsMergingTree,
     remainingDebtMergingTree,
-    treeInvariant,
     mergek,
     mergeBatchSize,
+
+    -- * Invariants
+    Invariant,
+    evalInvariant,
+    treeInvariant,
   ) where
 
 import           Prelude hiding (lookup)
@@ -82,6 +86,7 @@ import           Data.STRef
 import qualified Control.Exception as Exc (assert)
 import           Control.Monad (foldM, forM, when)
 import           Control.Monad.ST
+import qualified Control.Monad.Trans.Except as E
 import           Control.Tracer (Tracer, contramap, traceWith)
 import           GHC.Stack (HasCallStack, callStack)
 
@@ -305,7 +310,7 @@ invariant (LSMContent _ levels ul) = do
     levelsInvariant 1 levels
     case ul of
       NoUnion      -> return ()
-      Union tree _ -> treeInvariant tree
+      Union tree _ -> expectInvariant (treeInvariant tree)
   where
     levelsInvariant :: Int -> Levels s -> ST s ()
     levelsInvariant !_ [] = return ()
@@ -415,9 +420,9 @@ invariant (LSMContent _ levels ul) = do
 -- In particular, there are no invariants on the progress of the merges,
 -- since union merge credits are independent from the tables' regular level
 -- merges.
-treeInvariant :: MergingTree s -> ST s ()
+treeInvariant :: MergingTree s -> Invariant s ()
 treeInvariant tree@(MergingTree treeState) = do
-    readSTRef treeState >>= \case
+    liftI (readSTRef treeState) >>= \case
       CompletedTreeMerge _ ->
         -- We don't require the completed merges to be non-empty, since even
         -- a (last-level) merge of non-empty runs can end up being empty.
@@ -436,31 +441,66 @@ treeInvariant tree@(MergingTree treeState) = do
         -- Non-empty, but can be just one input (see 'newPendingLevelMerge').
         -- Note that children of a pending merge can be empty runs, as noted
         -- above for 'CompletedTreeMerge'.
-        assertST $ length irs + length t > 0
+        assertI "pending level merges have at least one input" $
+          length irs + length t > 0
         for_ irs $ \case
           Single _     -> return ()
           Merging _ mr -> mergeInvariant mr
         for_ t treeInvariant
 
       PendingTreeMerge (PendingUnionMerge ts) -> do
-        -- Merges are non-trivial (at least two inputs).
-        assertST $ length ts > 1
+        assertI "pending union merges are non-trivial (at least two inputs)" $
+          length ts > 1
         for_ ts treeInvariant
 
-    (debt, _) <- remainingDebtMergingTree tree
+    (debt, _) <- liftI $ remainingDebtMergingTree tree
     when (debt <= 0) $ do
-      _ <- expectCompletedMergingTree tree
+      _ <- isCompletedMergingTree tree
       return ()
 
-mergeInvariant :: MergingRun t s -> ST s ()
+mergeInvariant :: MergingRun t s -> Invariant s ()
 mergeInvariant (MergingRun _ ref) =
-    readSTRef ref >>= \case
+    liftI (readSTRef ref) >>= \case
       CompletedMerge _ -> return ()
       OngoingMerge _ rs _ -> do
-        -- Inputs to ongoing merges aren't empty.
-        assertST $ all (\r -> runSize r > 0) rs
-        -- Merges are non-trivial (at least two inputs).
-        assertST $ length rs > 1
+        assertI "inputs to ongoing merges aren't empty" $
+          all (\r -> runSize r > 0) rs
+        assertI "ongoing merges are non-trivial (at least two inputs)" $
+          length rs > 1
+
+isCompletedMergingRun :: MergingRun t s -> Invariant s Run
+isCompletedMergingRun (MergingRun _ ref) = do
+    mrs <- liftI $ readSTRef ref
+    case mrs of
+      CompletedMerge r   -> return r
+      OngoingMerge d _ _ -> failI $ "not completed: OngoingMerge with"
+                                 ++ " remaining debt " ++ show d
+
+isCompletedMergingTree :: MergingTree s -> Invariant s Run
+isCompletedMergingTree (MergingTree ref) = do
+    mts <- liftI $ readSTRef ref
+    case mts of
+      CompletedTreeMerge r -> return r
+      OngoingTreeMerge mr  -> isCompletedMergingRun mr
+      PendingTreeMerge _   -> failI $ "not completed: PendingTreeMerge"
+
+type Invariant s = E.ExceptT String (ST s)
+
+assertI :: String -> Bool -> Invariant s ()
+assertI _ True  = return ()
+assertI e False = failI e
+
+failI :: String -> Invariant s a
+failI = E.throwE
+
+liftI :: ST s a -> Invariant s a
+liftI = E.ExceptT . fmap Right
+
+expectInvariant :: HasCallStack => Invariant s a -> ST s a
+expectInvariant act = E.runExceptT act >>= either error return
+
+evalInvariant :: Invariant s a -> ST s (Either String a)
+evalInvariant = E.runExceptT
 
 -- 'callStack' just ensures that the 'HasCallStack' constraint is not redundant
 -- when compiling with debug assertions disabled.
@@ -521,12 +561,7 @@ combineUnion (Insert v' b') (Insert v b) = Insert (resolveValue v' v)
                                                   (resolveBlob b' b)
 
 expectCompletedMergingRun :: HasCallStack => MergingRun t s -> ST s Run
-expectCompletedMergingRun (MergingRun _ ref) = do
-    mrs <- readSTRef ref
-    case mrs of
-      CompletedMerge r   -> return r
-      OngoingMerge d _ _ -> error $ "expectCompletedMergingRun:"
-                                 ++ " remaining debt of " ++ show d
+expectCompletedMergingRun = expectInvariant . isCompletedMergingRun
 
 supplyCreditsMergingRun :: Credit -> MergingRun t s -> ST s Credit
 supplyCreditsMergingRun = checked remainingDebtMergingRun $ \credits (MergingRun _ ref) -> do
@@ -1221,11 +1256,7 @@ expectCompletedChildren (PendingMerge mt irs trees) = do
         Merging _ mr -> expectCompletedMergingRun mr
 
 expectCompletedMergingTree :: HasCallStack => MergingTree s -> ST s Run
-expectCompletedMergingTree (MergingTree ref) = do
-    readSTRef ref >>= \case
-      CompletedTreeMerge r -> return r
-      OngoingTreeMerge mr  -> expectCompletedMergingRun mr
-      PendingTreeMerge _   -> error $ "expectCompletedMergingTree: PendingTreeMerge"
+expectCompletedMergingTree = expectInvariant . isCompletedMergingTree
 
 -------------------------------------------------------------------------------
 -- Measurements

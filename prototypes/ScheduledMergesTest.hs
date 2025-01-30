@@ -208,18 +208,19 @@ prop_MergingTree t credits =
     QC.ioProperty $ runWithTracer $ \_tr ->
       stToIO $ do
         tree <- fromT t
-        go tree (QC.getInfiniteList credits)
-        (d', _) <- LSM.remainingDebtMergingTree tree
+        res <- go tree (QC.getInfiniteList credits)
         return $
-          QC.classify (d' <= 0) "got completed" $
-            True
+          res === Right ()
   where
+    -- keep supplying until there is an error or the tree merge is completed
+    go :: MergingTree s -> [SmallCredit] -> ST s (Either String ())
     go tree (SmallCredit c : cs) = do
         c' <- LSM.supplyCreditsMergingTree c tree
-        treeInvariant tree
-        if c' > 0 then return ()
-                  else go tree cs
-    go _ _ = error "infinite list is finite"
+        evalInvariant (treeInvariant tree) >>= \case
+          Left e   -> return (Left e)
+          Right () -> if c' > 0 then return (Right ())
+                                else go tree cs
+    go _ [] = error "infinite list is finite"
 
 newtype SmallCredit = SmallCredit Credit
   deriving stock Show
