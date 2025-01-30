@@ -394,33 +394,39 @@ invariant (LSMContent _ levels ul) = do
               assertST $ length rs == 4 || length rs == 5
               assertST $ all (\r -> tieringRunSizeToLevel r == ln-1) rs
 
-    -- We don't make many assumptions apart from what the types already enforce.
-    -- In particular, there are no invariants on the progress of the merges,
-    -- since union merge credits are independent from the tables' regular level
-    -- merges.
-    treeInvariant :: MergingTree s -> ST s ()
-    treeInvariant (MergingTree treeState) = readSTRef treeState >>= \case
-        CompletedTreeMerge _ ->
-          return ()
+-- We don't make many assumptions apart from what the types already enforce.
+-- In particular, there are no invariants on the progress of the merges,
+-- since union merge credits are independent from the tables' regular level
+-- merges.
+treeInvariant :: MergingTree s -> ST s ()
+treeInvariant tree@(MergingTree treeState) = do
+    readSTRef treeState >>= \case
+      CompletedTreeMerge _ ->
+        return ()
 
-        OngoingTreeMerge (MergingRun _ mergeState) -> do
-          readSTRef mergeState >>= \case
-            CompletedMerge _ -> return ()
-            OngoingMerge _ rs _ -> do
-              -- Inputs to ongoing merges aren't empty (but can while pending!).
-              assertST $ all (\r -> runSize r > 0) rs
-              -- Merges are non-trivial (at least two inputs).
-              assertST $ length rs > 1
+      OngoingTreeMerge (MergingRun _ mergeState) -> do
+        readSTRef mergeState >>= \case
+          CompletedMerge _ -> return ()
+          OngoingMerge _ rs _ -> do
+            -- Inputs to ongoing merges aren't empty (but can while pending!).
+            assertST $ all (\r -> runSize r > 0) rs
+            -- Merges are non-trivial (at least two inputs).
+            assertST $ length rs > 1
 
-        PendingTreeMerge (PendingLevelMerge irs tree) -> do
-          -- Non-empty, but can be just one input (see 'newPendingLevelMerge').
-          assertST $ length irs + length tree > 0
-          for_ tree treeInvariant
+      PendingTreeMerge (PendingLevelMerge irs t) -> do
+        -- Non-empty, but can be just one input (see 'newPendingLevelMerge').
+        assertST $ length irs + length t > 0
+        for_ t treeInvariant
 
-        PendingTreeMerge (PendingUnionMerge trees) -> do
-          -- Merges are non-trivial (at least two inputs).
-          assertST $ length trees > 1
-          for_ trees treeInvariant
+      PendingTreeMerge (PendingUnionMerge ts) -> do
+        -- Merges are non-trivial (at least two inputs).
+        assertST $ length ts > 1
+        for_ ts treeInvariant
+
+    (debt, _) <- remainingDebtMergingTree tree
+    when (debt <= 0) $ do
+      _ <- expectCompletedMergingTree tree
+      return ()
 
 -- 'callStack' just ensures that the 'HasCallStack' constraint is not redundant
 -- when compiling with debug assertions disabled.
@@ -686,14 +692,8 @@ supplyUnionCredits (LSMHandle scr lsmr) credits
         _debt <- checkedUnionDebt tree debtRef  -- just to make sure it's checked
         c' <- supplyCreditsMergingTree credits tree
         debt' <- checkedUnionDebt tree debtRef
-        if (debt' > 0)
-          then
-            -- should have spent these credits
-            assertST $ c' == 0
-          else do
-            -- check it really is done
-            _ <- expectCompletedMergingTree tree
-            return ()
+        when (debt' > 0) $
+          assertST $ c' == 0  -- should have spent these credits
         invariant content
         return c'
 
