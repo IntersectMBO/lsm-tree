@@ -30,6 +30,7 @@ module System.FS.BlockIO.API (
   , LockFileHandle (..)
     -- ** Storage synchronisation
   , synchroniseFile
+  , synchroniseDirectoryRecursive
     -- * Defaults for the real file system
   , tryLockFileIO
   , createHardLinkIO
@@ -39,6 +40,7 @@ module System.FS.BlockIO.API (
   ) where
 
 import           Control.DeepSeq
+import           Control.Monad (forM_)
 import           Control.Monad.Class.MonadThrow (MonadCatch (bracketOnError),
                      MonadThrow (..), bracketOnError, try)
 import           Control.Monad.Primitive (PrimMonad (PrimState))
@@ -60,6 +62,7 @@ import qualified System.IO as GHC
 import           System.IO.Error (doesNotExistErrorType, ioeSetErrorString,
                      mkIOError)
 import           System.Posix.Types (ByteCount, FileOffset)
+import           Text.Printf
 
 -- | Abstract interface for submitting large batches of I\/O operations.
 data HasBlockIO m h = HasBlockIO {
@@ -258,6 +261,7 @@ hDropCacheAll hbio h = hAdviseAll hbio h AdviceDontNeed
   Storage synchronisation
 -------------------------------------------------------------------------------}
 
+{-# SPECIALISE synchroniseFile :: HasFS IO h -> HasBlockIO IO h -> FsPath -> IO () #-}
 -- TODO: currently, we perform an explicit check to see if the file exists and
 -- throw an error when it does not exist. We would prefer to be able to rely on
 -- withFile to throw an error for us that we could rethrow with an upated
@@ -283,6 +287,37 @@ synchroniseFile hfs hbio path = do
       ioeSetErrorString
         (mkIOError doesNotExistErrorType "synchroniseFile" Nothing Nothing)
         ("synchroniseFile: file does not exist")
+
+{-# SPECIALISE synchroniseDirectoryRecursive ::
+     HasFS IO h
+  -> HasBlockIO IO h
+  -> FsPath
+  -> IO ()
+  #-}
+-- | Synchronise a directory and recursively its contents with the storage
+-- device.
+synchroniseDirectoryRecursive ::
+     MonadThrow m
+  => HasFS m h
+  -> HasBlockIO m h
+  -> FsPath
+  -> m ()
+synchroniseDirectoryRecursive hfs hbio path = do
+    entries <- FS.listDirectory hfs path
+    forM_ entries $ \entry -> do
+      let path' = path FS.</> FS.mkFsPath [entry]
+      isFile <- FS.doesFileExist hfs path'
+      if isFile then
+        synchroniseFile hfs hbio path'
+      else do
+        isDirectory <- FS.doesDirectoryExist hfs path'
+        if isDirectory then do
+          synchroniseDirectoryRecursive hfs hbio path'
+          synchroniseDirectory hbio path'
+        else
+          error $ printf
+            "listDirectoryRecursive: %s is not a file or directory"
+            (show path')
 
 {-------------------------------------------------------------------------------
   File locks

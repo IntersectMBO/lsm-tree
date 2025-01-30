@@ -22,7 +22,6 @@ module Database.LSMTree.Internal.Snapshot (
     -- * Opening from levels snapshot format
   , fromSnapLevels
     -- * Hard links
-  , HardLinkDurable (..)
   , hardLinkRunFiles
   ) where
 
@@ -30,7 +29,7 @@ import           Control.ActionRegistry
 import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Concurrent.Class.MonadSTM (MonadSTM)
 import           Control.DeepSeq (NFData (..))
-import           Control.Monad (void, when)
+import           Control.Monad (void)
 import           Control.Monad.Class.MonadST (MonadST)
 import           Control.Monad.Class.MonadThrow (MonadMask)
 import           Control.Monad.Primitive (PrimMonad)
@@ -271,13 +270,13 @@ snapshotWriteBuffer reg hfs hbio activeUc snapUc activeDir snapDir wb wbb = do
   -- Hard link the write buffer and write buffer blobs to the snapshot directory.
   snapWriteBufferNumber <- uniqueToRunNumber <$> incrUniqCounter snapUc
   let snapWriteBufferPaths = WriteBufferFsPaths (getNamedSnapshotDir snapDir) snapWriteBufferNumber
-  hardLink reg hfs hbio HardLinkDurable
+  hardLink reg hfs hbio
     (writeBufferKOpsPath activeWriteBufferPaths)
     (writeBufferKOpsPath snapWriteBufferPaths)
-  hardLink reg hfs hbio HardLinkDurable
+  hardLink reg hfs hbio
     (writeBufferBlobPath activeWriteBufferPaths)
     (writeBufferBlobPath snapWriteBufferPaths)
-  hardLink reg hfs hbio HardLinkDurable
+  hardLink reg hfs hbio
     (writeBufferChecksumsPath activeWriteBufferPaths)
     (writeBufferChecksumsPath snapWriteBufferPaths)
   pure snapWriteBufferPaths
@@ -334,7 +333,6 @@ openWriteBuffer reg resolve hfs hbio uc activeDir snapWriteBufferPaths = do
 
 {-# SPECIALISE snapshotRuns ::
      ActionRegistry IO
-  -> HasBlockIO IO h
   -> UniqCounter IO
   -> NamedSnapshotDir
   -> SnapLevels (Ref (Run IO h))
@@ -342,28 +340,23 @@ openWriteBuffer reg resolve hfs hbio uc activeDir snapWriteBufferPaths = do
 -- | @'snapshotRuns' _ _ snapUc targetDir levels@ creates hard links for all run
 -- files associated with the runs in @levels@, and puts the new directory
 -- entries in the @targetDir@ directory. The entries are renamed using @snapUc@.
--- The hard links and the @targetDir@ are made durable on disk.
 snapshotRuns ::
      (MonadMask m, PrimMonad m)
   => ActionRegistry m
-  -> HasBlockIO m h
   -> UniqCounter m
   -> NamedSnapshotDir
   -> SnapLevels (Ref (Run m h))
   -> m (SnapLevels RunNumber)
-snapshotRuns reg hbio0 snapUc (NamedSnapshotDir targetDir) levels = do
-    levels' <-
-      for levels $ \run@(DeRef Run.Run {
-          Run.runHasFS = hfs,
-          Run.runHasBlockIO = hbio
-        }) -> do
-          rn <- uniqueToRunNumber <$> incrUniqCounter snapUc
-          let sourcePaths = Run.runFsPaths run
-          let targetPaths = sourcePaths { runDir = targetDir , runNumber = rn}
-          hardLinkRunFiles reg hfs hbio HardLinkDurable sourcePaths targetPaths
-          pure (runNumber targetPaths)
-    FS.synchroniseDirectory hbio0 targetDir
-    pure levels'
+snapshotRuns reg snapUc (NamedSnapshotDir targetDir) levels = do
+    for levels $ \run@(DeRef Run.Run {
+        Run.runHasFS = hfs,
+        Run.runHasBlockIO = hbio
+      }) -> do
+        rn <- uniqueToRunNumber <$> incrUniqCounter snapUc
+        let sourcePaths = Run.runFsPaths run
+        let targetPaths = sourcePaths { runDir = targetDir , runNumber = rn}
+        hardLinkRunFiles reg hfs hbio sourcePaths targetPaths
+        pure (runNumber targetPaths)
 
 {-# SPECIALISE openRuns ::
      ActionRegistry IO
@@ -404,7 +397,7 @@ openRuns
           let sourcePaths = RunFsPaths sourceDir runNum
           runNum' <- uniqueToRunNumber <$> incrUniqCounter uc
           let targetPaths = RunFsPaths targetDir runNum'
-          hardLinkRunFiles reg hfs hbio NoHardLinkDurable sourcePaths targetPaths
+          hardLinkRunFiles reg hfs hbio sourcePaths targetPaths
 
           withRollback reg
             (Run.openFromDisk hfs hbio caching targetPaths)
@@ -490,64 +483,53 @@ fromSnapLevels reg hfs hbio conf@TableConfig{..} uc resolve dir (SnapLevels leve
   Hard links
 -------------------------------------------------------------------------------}
 
-data HardLinkDurable = HardLinkDurable | NoHardLinkDurable
-  deriving stock Eq
-
 {-# SPECIALISE hardLinkRunFiles ::
      ActionRegistry IO
   -> HasFS IO h
   -> HasBlockIO IO h
-  -> HardLinkDurable
   -> RunFsPaths
   -> RunFsPaths
   -> IO () #-}
--- | @'hardLinkRunFiles' _ _ _ dur sourcePaths targetPaths@ creates a hard link
--- for each @sourcePaths@ path using the corresponding @targetPaths@ path as the
--- name for the new directory entry. If @dur == HardLinkDurabl@, the links will
--- also be made durable on disk.
+-- | @'hardLinkRunFiles' _ _ _ sourcePaths targetPaths@ creates a hard link for
+-- each @sourcePaths@ path using the corresponding @targetPaths@ path as the
+-- name for the new directory entry.
 hardLinkRunFiles ::
      (MonadMask m, PrimMonad m)
   => ActionRegistry m
   -> HasFS m h
   -> HasBlockIO m h
-  -> HardLinkDurable
   -> RunFsPaths
   -> RunFsPaths
   -> m ()
-hardLinkRunFiles reg hfs hbio dur sourceRunFsPaths targetRunFsPaths = do
+hardLinkRunFiles reg hfs hbio sourceRunFsPaths targetRunFsPaths = do
     let sourcePaths = pathsForRunFiles sourceRunFsPaths
         targetPaths = pathsForRunFiles targetRunFsPaths
-    sequenceA_ (hardLink reg hfs hbio dur <$> sourcePaths <*> targetPaths)
-    hardLink reg hfs hbio dur (runChecksumsPath sourceRunFsPaths) (runChecksumsPath targetRunFsPaths)
+    sequenceA_ (hardLink reg hfs hbio <$> sourcePaths <*> targetPaths)
+    hardLink reg hfs hbio (runChecksumsPath sourceRunFsPaths) (runChecksumsPath targetRunFsPaths)
 
 {-# SPECIALISE
   hardLink ::
        ActionRegistry IO
     -> HasFS IO h
     -> HasBlockIO IO h
-    -> HardLinkDurable
     -> FS.FsPath
     -> FS.FsPath
     -> IO ()
   #-}
--- | @'hardLink' reg hfs hbio dur sourcePath targetPath@ creates a hard link
--- from @sourcePath@ to @targetPath@.
+-- | @'hardLink' reg hfs hbio sourcePath targetPath@ creates a hard link from
+-- @sourcePath@ to @targetPath@.
 hardLink ::
      (MonadMask m, PrimMonad m)
   => ActionRegistry m
   -> HasFS m h
   -> HasBlockIO m h
-  -> HardLinkDurable
   -> FS.FsPath
   -> FS.FsPath
   -> m ()
-hardLink reg hfs hbio dur sourcePath targetPath = do
+hardLink reg hfs hbio sourcePath targetPath = do
     withRollback_ reg
       (FS.createHardLink hbio sourcePath targetPath)
       (FS.removeFile hfs targetPath)
-    when (dur == HardLinkDurable) $
-      FS.synchroniseFile hfs hbio targetPath
-
 
 {-------------------------------------------------------------------------------
   Copy file
