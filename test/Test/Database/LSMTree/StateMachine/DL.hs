@@ -5,6 +5,7 @@ module Test.Database.LSMTree.StateMachine.DL (
     tests
   ) where
 
+import           Control.Monad (void)
 import           Control.Tracer
 import qualified Data.Map.Strict as Map
 import qualified Data.Vector as V
@@ -19,14 +20,16 @@ import           Test.QuickCheck.DynamicLogic
 import qualified Test.QuickCheck.Gen as QC
 import qualified Test.QuickCheck.Random as QC
 import           Test.QuickCheck.StateModel.Lockstep
+import qualified Test.QuickCheck.StateModel.Lockstep.Defaults as QLS
+import           Test.QuickCheck.StateModel.Variables
 import           Test.Tasty (TestTree, testGroup)
 import qualified Test.Tasty.QuickCheck as QC
 import           Test.Util.PrettyProxy
 
 tests :: TestTree
 tests = testGroup "Test.Database.LSMTree.StateMachine.DL" [
-
       QC.testProperty "prop_example" prop_example
+    , QC.testProperty "prop_noSwalledExceptions" prop_noSwalledExceptions
     ]
 
 instance DynLogicModel (Lockstep (ModelState R.Table))
@@ -81,3 +84,28 @@ dl_example = do
             | Just tbl <- (Model.fromSomeTable @Key @Value @Blob smTbl)
             -> Map.size (Model.values tbl) == Map.size kvs
           _ -> False
+
+
+prop_noSwalledExceptions :: Property
+prop_noSwalledExceptions = forAllDL dl_noSwallowExceptions runner
+  where
+    -- To use a different runner, change out the @propLockstep@ function.
+    runner = propLockstep_RealImpl_MockFS_IO tr
+    -- To enable tracing, use something like @show `contramap` stdoutTracer@
+    -- instead
+    tr = nullTracer
+
+dl_noSwallowExceptions :: DL (Lockstep (ModelState R.Table)) ()
+dl_noSwallowExceptions = do
+    anyActions_
+
+    varCtx <- getVarContextDL
+    st <- getModelStateDL
+
+    let
+      gen = QLS.arbitraryAction varCtx st
+      predicate (Some a) = QLS.precondition st a
+      shr (Some a) = QLS.shrinkAction varCtx st a
+
+    Some a <- forAllQ $ withGenQ gen predicate shr
+    void $ action a
