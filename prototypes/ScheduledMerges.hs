@@ -50,7 +50,24 @@ module ScheduledMerges (
     representationShape,
     Event,
     EventAt(..),
-    EventDetail(..)
+    EventDetail(..),
+    MergingTree(..),
+    MergingTreeState(..),
+    PendingMerge(..),
+    IncomingRun(..),
+    MergingRun(..),
+    MergingRunState(..),
+    MergePolicy(..),
+    IsMergeType(..),
+    TreeMergeType(..),
+    LevelMergeType(..),
+    MergeDebt(..),
+    Run,
+    supplyCreditsMergingTree,
+    remainingDebtMergingTree,
+    treeInvariant,
+    mergek,
+    mergeBatchSize,
   ) where
 
 import           Prelude hiding (lookup)
@@ -1356,3 +1373,9 @@ instance (QC.Arbitrary v, QC.Arbitrary b) => QC.Arbitrary (Update v b) where
       , (1, Mupsert <$> QC.arbitrary)
       , (1, pure Delete)
       ]
+
+instance QC.Arbitrary LevelMergeType where
+  arbitrary = QC.elements [MergeMidLevel, MergeLastLevel]
+
+instance QC.Arbitrary TreeMergeType where
+  arbitrary = QC.elements [MergeLevel, MergeUnion]
