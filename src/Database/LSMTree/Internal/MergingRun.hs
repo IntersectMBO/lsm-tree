@@ -399,9 +399,8 @@ takeAllUnspentCredits ::
      PrimMonad m
   => UnspentCreditsVar (PrimState m)
   -> m Credits
-takeAllUnspentCredits
-    unspentCreditsVar@(UnspentCreditsVar !var) = do
-    prev <- readUnspentCredits unspentCreditsVar
+takeAllUnspentCredits (UnspentCreditsVar !var) = do
+    prev <- readPrimVar var
     casLoop prev
   where
     casLoop !prev = do
