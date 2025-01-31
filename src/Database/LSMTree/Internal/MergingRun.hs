@@ -317,14 +317,14 @@ readSpentCredits   :: PrimMonad m => SpentCreditsVar   (PrimState m) -> m Int
 readStepsPerformed :: PrimMonad m => StepsPerformedVar (PrimState m) -> m Int
 readUnspentCredits (UnspentCreditsVar v) = readPrimVar v
 readSpentCredits   (SpentCreditsVar   v) = readPrimVar v
-readStepsPerformed (StepsPerformedVar v) = readPrimVar v
+readStepsPerformed (StepsPerformedVar v) = atomicReadInt v
 
 {-# INLINE writeSpentCredits #-}
 {-# INLINE writeStepsPerformed #-}
 writeSpentCredits   :: PrimMonad m => SpentCreditsVar   (PrimState m) -> Int -> m ()
 writeStepsPerformed :: PrimMonad m => StepsPerformedVar (PrimState m) -> Int -> m ()
 writeSpentCredits   (SpentCreditsVar   v) x = writePrimVar v x
-writeStepsPerformed (StepsPerformedVar v) x = writePrimVar v x
+writeStepsPerformed (StepsPerformedVar v) x = atomicWriteInt v x
 
 {-# SPECIALISE addUnspentCredits ::
      UnspentCreditsVar RealWorld
