@@ -1,31 +1,42 @@
 
 {-# LANGUAGE CPP                   #-}
 {-# LANGUAGE DataKinds             #-}
+{-# LANGUAGE MagicHash             #-}
 {-# LANGUAGE PatternSynonyms       #-}
 {-# LANGUAGE QuantifiedConstraints #-}
+{-# LANGUAGE TypeFamilies          #-}
 
 {-# OPTIONS_GHC -Wno-unused-top-binds #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
-{-# LANGUAGE TypeFamilies          #-}
 
 module Test.Util.FS.HKD (
 
   ) where
 
+import           Control.Concurrent.Class.MonadMVar
+import           Control.Concurrent.Class.MonadSTM (MonadSTM)
+import           Control.Concurrent.Class.MonadSTM.Strict (StrictTMVar,
+                     StrictTVar, readTVarIO)
 import           Control.Monad (void)
+import           Control.Monad.Class.MonadThrow (MonadThrow)
 import           Control.Monad.Primitive
 import qualified Data.ByteString as BS
 import           Data.Int
+import           Data.Kind (Constraint, Type)
 import           Data.Primitive.ByteArray
 import           Data.Primitive.PrimVar
 import           Data.Set
 import           Data.SOP
+import           Data.SOP.Constraint (SListIN)
 import           Data.Word
 import           Generics.SOP
+import           GHC.Exts (Proxy#, proxy#)
 import qualified GHC.Generics as GHC
 import           System.FS.API
 import           System.FS.IO
 import           System.FS.Sim.Error
+import           System.FS.Sim.MockFS (HandleMock, MockFS)
+import           System.FS.Sim.Stream (Stream (UnsafeStream))
 import           System.Posix.Types
 
 type DumpState m h = m String
@@ -56,12 +67,12 @@ type HPutBufSomeAt m h = Handle h -> MutableByteArray (PrimState m) -> BufferOff
 deriving stock instance GHC.Generic Errors
 deriving anyclass instance Generic Errors
 
-pattern CodeFS ::
-     (IsProductType (HasFS m h) (InnerCode m h), All Top (InnerCode m h))
-  => f (DumpState m h)
-  -> f (HOpen m h)
-  -> g f (Code (HasFS m h))
-pattern CodeFS{cfsDumpState, cfsHOpen} <- (productTypeFrom -> I cfsDumpState :* I cfsHOpen :* _)
+-- pattern CodeFS ::
+--      (IsProductType (HasFS m h) (InnerCode m h), All Top (InnerCode m h))
+--   => f (DumpState m h)
+--   -> f (HOpen m h)
+--   -> g f (Code (HasFS m h))
+-- pattern CodeFS{cfsDumpState, cfsHOpen} <- (productTypeFrom -> I cfsDumpState :* I cfsHOpen :* _)
 
 type InnerCode m h = '[
           DumpState m h
@@ -155,11 +166,72 @@ instance Generic (HasFS m h) where
         :* Nil = x
   to (SOP (S x)) = case x of {}
 
-newCounters :: (All SListI xs, PrimMonad m) => m (POP (K (PrimVar (PrimState m) Int)) xs)
-newCounters = hsequenceK (hpure (K (newPrimVar 0)))
+{-------------------------------------------------------------------------------
+  Indices
+-------------------------------------------------------------------------------}
 
-incrCounter :: PrimMonad m => PrimVar (PrimState m) Int -> m ()
-incrCounter var = void $ fetchAddInt var 1
+type Index :: [k] -> k -> Type
+data Index xs x where
+  IZ ::               Index (x ': xs) x
+  IS :: Index xs x -> Index (y ': xs) x
+
+type Indexx :: [[k]] -> k -> Type
+data Indexx xss x where
+  IZZ :: Index xs x -> Indexx (xs ': xss) x
+  ISS :: Indexx xss x -> Indexx (ys ': xss) x
+
+type Ind :: ((k -> Type) -> l -> Type) -> l -> k -> Type
+type family Ind h
+
+type instance Ind NP = Index
+type instance Ind NS = Index
+type instance Ind POP = Indexx
+type instance Ind SOP = Indexx
+
+type HIndices :: ((k -> Type) -> l -> Type) -> Constraint
+class HIndices h where
+  hindices :: (SListIN h l) => Proxy# h -> (Prod h) (Ind h l) l
+
+instance HIndices NP where
+  hindices :: forall xs. SListI xs => Proxy# NP -> NP (Index xs) xs
+  hindices _ = case sList @xs of
+    SNil  -> Nil
+    SCons -> IZ :* hmap IS (hindices (proxy# @NP))
+
+instance HIndices NS where
+  hindices :: forall xs. SListI xs => Proxy# NS -> NP (Index xs) xs
+  hindices _ = case sList @xs of
+    SNil  -> Nil
+    SCons -> IZ :* hmap IS (hindices (proxy# @NP))
+
+instance HIndices POP where
+  hindices :: forall xss. SListI2 xss => Proxy# POP -> POP (Indexx xss) xss
+  hindices _ = case sList @xss of
+    SNil -> POP Nil
+    SCons @yss @xs -> case hindices @_ @_ @_ @yss (proxy# @POP) of
+      POP rest -> POP $ hmap IZZ (hindices @_ @_ @_ @xs (proxy# @NP)) :* hcmap (Proxy @SListI) (hmap ISS) rest
+
+type HIPure :: ((k -> Type) -> l -> Type) -> Constraint
+class HIPure h where
+  hcipure :: (HAp h, SListIN h l, AllN h c l) => Proxy# c -> (forall x. c x => Ind h l x -> f x) -> h f l
+
+instance HIPure NP where
+  hcipure (_ :: Proxy# c) f = hcpure (Proxy @c) (fn f) `hap` hindices (proxy# @NP)
+
+instance HIPure POP where
+  hcipure (_ :: Proxy# c) f = hcpure (Proxy @c) (fn f) `hap` hindices (proxy# @POP)
+
+{-------------------------------------------------------------------------------
+  Prefix actions
+-------------------------------------------------------------------------------}
+
+hprefixActions :: forall h f l m.
+     (AllN h (Compose (PrefixAction m) f) l, HAp h, Prod h ~ h)
+  => h (K (m ())) l -> h f l -> h f l
+hprefixActions xs ys = hcliftA2 (Proxy @(Compose (PrefixAction m) f)) f xs ys
+  where
+    f :: forall x. PrefixAction m (f x) => K (m ()) x -> f x -> f x
+    f (K action) x = prefixAction action x
 
 class PrefixAction m a where
   prefixAction :: m b -> a -> a
@@ -173,16 +245,95 @@ instance PrefixAction m b => PrefixAction m (a -> b) where
 instance Monad m => PrefixAction m (m a) where
   prefixAction action1 action2 = action1 >> action2
 
+{-------------------------------------------------------------------------------
+  Peek
+-------------------------------------------------------------------------------}
 
-temp2 :: forall a m. (
-       PrimMonad m
-     , All (All (PrefixAction m)) (Code a)
-     )
-  => Proxy m -> Proxy a -> POP (K (PrimVar (PrimState m) Int)) (Code a) -> Rep a -> Rep a
-temp2 _ _ counters rep = hcliftA2 (Proxy @(PrefixAction m)) f counters rep
+hpeek ::
+     forall f h l. (HAp h, AllN (Prod h) (Compose Peek f) l)
+  => h f l -> h (WrapPeekItem :.: f) l
+hpeek xs = hcmap (Proxy @(Compose Peek f)) f xs
   where
-    f :: forall x. PrefixAction m x => K (PrimVar (PrimState m) Int) x -> I x -> I x
-    f (K var) (I x) = I (prefixAction (incrCounter @m var) x)
+    f :: forall x. Peek (f x) => f x -> (WrapPeekItem :.: f) x
+    f x = Comp $ WrapPeekItem $ peek x
+
+newtype WrapPeekItem a = WrapPeekItem {unwrapPeekItem :: PeekItem a }
+
+class Peek a where
+  type PeekItem a :: Type
+  peek :: a -> PeekItem a
+
+instance Peek (Stream a) where
+  type instance PeekItem (Stream a) = Maybe a
+  peek (UnsafeStream _ xs) = case xs of
+      []    -> Nothing
+      (x:_) -> x
+
+instance Peek a => Peek (I a) where
+  type instance PeekItem (I a) = PeekItem a
+  peek (I x) = peek x
+
+{-------------------------------------------------------------------------------
+  Prefix actions
+-------------------------------------------------------------------------------}
+
+newtype Peeker m a = Peeker (MVar m [PeekItem a])
+
+newPeeker :: MonadMVar m => m ((Peeker m :.: f) a)
+newPeeker = Comp . Peeker <$> newMVar []
+
+newPeekers :: (HPure h, SListIN h xs, HSequence h, MonadMVar m) => m (h (Peeker m :.: f) xs)
+newPeekers = hsequence' $ (hpure (Comp newPeeker))
+
+pushPeeker :: MonadMVar m => Peeker m a -> PeekItem a -> m ()
+pushPeeker (Peeker var) x = modifyMVar_ var (pure . (x:))
+
+barrr ::
+     forall m h f g l. (SListIN h l, HAp h
+     , MonadSTM m
+     , MonadMVar m
+     , AllN h (Compose (PrefixAction m) f) l
+     , HIPure h
+     , Prod h ~ h
+     , AllN h Top l
+     )
+  => h (Peeker m :.: g) l -> m (h g l) -> h f l -> h f l
+barrr peekers var =
+    hcliftA3 (Proxy @(Compose (PrefixAction m) f)) f peekers (fooo var)
+  where
+    f :: (PrefixAction m (f x), Peek (g x)) => (Peeker m :.: g) x -> (m :.: g) x -> f x -> f x
+    f (Comp peeker) (Comp getStream) action =
+        flip prefixAction action $ do
+          s <- getStream
+          let x = peek s
+          pushPeeker peeker x
+
+
+{- barrr :: StrictTVar m (h f xs) -> h (Peeker m) xs -> h I xs -> h I xs
+barrr var peekers hfs = hcliftA2 (Proxy @Top) f peekers hfs
+  where
+    f peeker prim = undefined -}
+
+fooo ::
+     forall m h f l. (
+       SListIN h l, HAp h
+     , MonadSTM m
+     , HIPure h
+     , Prod h ~ h
+     , AllN h Top l
+     )
+  => m (h f l)
+  -> h (m :.: f) l
+fooo var = hcipure (proxy# @Top) f
+  where
+    f :: forall x. Ind h l x -> (m :.: f) x
+    f ind = Comp $ do
+      xs <- var
+      pure (proj (proxy# @h) ind xs)
+
+proj :: Proxy# h -> Ind h l x -> Prod h f l -> f x
+proj = undefined
+
 
 -- >>> foo
 -- (0,3)
@@ -200,115 +351,112 @@ foo = do
        POP ((K c :* _) :* Nil) -> readPrimVar c
     pure (x, y)
 
--- pattern FSHKD :: HKD m h f
--- pattern FSHKD {dumpStateHKD,hOpenHKD,hCloseHKD,hIsOpenHKD,hSeekHKD,hGetSomeHKD,hGetSomeAtHKD,hPutSomeHKD
---   ,hTruncateHKD,hGetSizeHKD,createDirectoryHKD,createDirectoryIfMissingHKD,listDirectoryHKD,doesDirectoryExistHKD} =
---         I dumpStateHKD
---         -- file operatoins
---       :* I hOpenHKD
---       :* I hCloseHKD
---       :* I hIsOpenHKD
---       :* I hSeekHKD
---       :* I hGetSomeHKD
---       :* I hGetSomeAtHKD
---       :* I hPutSomeHKD
---       :* I hTruncateHKD
---       :* I hGetSizeHKD
---         -- directory operations
---       :* I createDirectoryHKD
---       :* I createDirectoryIfMissingHKD
---       :* I listDirectoryHKD
---       :* I doesDirectoryExistHKD
---       :* I doesFileExistHKD
---       :* I removeDirectoryRecursiveHKD
---       :* I removeFileHKD
---       :* I renameFileHKD
---       :* I mkFsErrorPathHKD
---       :* I unsafeToFilePathHKD
---         -- file I\/O with user-supplied buffers
---       :* I hGetBufSomeHKD
---       :* I hGetBufSomeAtHKD
---       :* I hPutBufSomeHKD
---       :* I hPutBufSomeAtHKD
---       :* Nil
+
+newCounters :: (All SListI xs, PrimMonad m) => m (POP (K (PrimVar (PrimState m) Int)) xs)
+newCounters = hsequenceK (hpure (K (newPrimVar 0)))
+
+incrCounter :: PrimMonad m => PrimVar (PrimState m) Int -> m ()
+incrCounter var = void $ fetchAddInt var 1
 
 
---   -- | Introduce possibility of errors
--- simErrorHasFS ::
---      forall m. (MonadSTM m, MonadThrow m, PrimMonad m)
---   => StrictTMVar m MockFS
---   -> StrictTVar m Errors
---   -> HasFS m HandleMock
--- simErrorHasFS fsVar errorsVar =
---     -- TODO: Lenses would be nice for the setters
---     case Sim.simHasFS fsVar of
---       hfs@HasFS{..} -> HasFS{
---           dumpState =
---             withErr errorsVar (mkFsPath ["<dumpState>"]) dumpState "dumpState"
---               dumpStateE (\e es -> es { dumpStateE = e })
---         , hOpen      = \p m ->
---             withErr errorsVar p (hOpen p m) "hOpen"
---             hOpenE (\e es -> es { hOpenE = e })
---         , hClose     = \h ->
---             withErr' errorsVar h (hClose h) "hClose"
---             hCloseE (\e es -> es { hCloseE = e })
---         , hIsOpen    = hIsOpen
---         , hSeek      = \h m n ->
---             withErr' errorsVar h (hSeek h m n) "hSeek"
---             hSeekE (\e es -> es { hSeekE = e })
---         , hGetSome   = hGetSome' errorsVar hGetSome
---         , hGetSomeAt = hGetSomeAt' errorsVar hGetSomeAt
---         , hPutSome   = hPutSome' errorsVar hPutSome
---         , hTruncate  = \h w ->
---             withErr' errorsVar h (hTruncate h w) "hTruncate"
---             hTruncateE (\e es -> es { hTruncateE = e })
---         , hGetSize   =  \h ->
---             withErr' errorsVar h (hGetSize h) "hGetSize"
---             hGetSizeE (\e es -> es { hGetSizeE = e })
 
---         , createDirectory          = \p ->
---             withErr errorsVar p (createDirectory p) "createDirectory"
---             createDirectoryE (\e es -> es { createDirectoryE = e })
---         , createDirectoryIfMissing = \b p ->
---             withErr errorsVar p (createDirectoryIfMissing b p) "createDirectoryIfMissing"
---             createDirectoryIfMissingE (\e es -> es { createDirectoryIfMissingE = e })
---         , listDirectory            = \p ->
---             withErr errorsVar p (listDirectory p) "listDirectory"
---             listDirectoryE (\e es -> es { listDirectoryE = e })
---         , doesDirectoryExist       = \p ->
---             withErr errorsVar p (doesDirectoryExist p) "doesDirectoryExist"
---             doesDirectoryExistE (\e es -> es { doesDirectoryExistE = e })
---         , doesFileExist            = \p ->
---             withErr errorsVar p (doesFileExist p) "doesFileExist"
---             doesFileExistE (\e es -> es { doesFileExistE = e })
---         , removeDirectoryRecursive = \p ->
---             withErr errorsVar p (removeDirectoryRecursive p) "removeFile"
---             removeDirectoryRecursiveE (\e es -> es { removeDirectoryRecursiveE = e })
---         , removeFile               = \p ->
---             withErr errorsVar p (removeFile p) "removeFile"
---             removeFileE (\e es -> es { removeFileE = e })
---         , renameFile               = \p1 p2 ->
---             withErr errorsVar p1 (renameFile p1 p2) "renameFile"
---             renameFileE (\e es -> es { renameFileE = e })
---         , mkFsErrorPath = fsToFsErrorPathUnmounted
---         , unsafeToFilePath = error "simErrorHasFS:unsafeToFilePath"
---           -- File I\/O with user-supplied buffers
---         , hGetBufSome   = hGetBufSomeWithErr   errorsVar hfs
---         , hGetBufSomeAt = hGetBufSomeAtWithErr errorsVar hfs
---         , hPutBufSome   = hPutBufSomeWithErr   errorsVar hfs
---         , hPutBufSomeAt = hPutBufSomeAtWithErr errorsVar hfs
---         }
+temp2 :: forall a m. (
+       PrimMonad m
+     , All (All (PrefixAction m)) (Code a)
+     )
+  => Proxy m -> Proxy a -> POP (K (PrimVar (PrimState m) Int)) (Code a) -> Rep a -> Rep a
+temp2 _ _ counters rep = hcliftA2 (Proxy @(PrefixAction m)) f counters rep
+  where
+    f :: forall x. PrefixAction m x => K (PrimVar (PrimState m) Int) x -> I x -> I x
+    f (K var) (I x) = I (prefixAction (incrCounter @m var) x)
 
 
-pattern Foo :: f Int -> f Char -> NP f [Int, Char]
-pattern Foo {foo1, foo2} = foo1 :* foo2 :* Nil
 
-#define types(binOp) \
-        (DumpState m h) \
-  binOp (HOpen m h)
+type HKD m h f = SOP f (Code (HasFS m h))
 
-bar :: types (->)
-bar = undefined
+pattern HKD ::
+     f (DumpState m h)
+  -> f (HOpen m h)
+  -> f (HClose m h)
+  -> f (HIsOpen m h)
+  -> f (HSeek m h)
+  -> f (HGetSome m h)
+  -> f (HGetSomeAt m h)
+  -> f (HPutSome m h)
+  -> f (HTruncate m h)
+  -> f (HGetSize m h)
+  -> f (CreateDirectory m h)
+  -> f (CreateDirectoryIfMissing m h)
+  -> f (ListDirectory m h)
+  -> f (DoesDirectoryExist m h)
+  -> f (DoesFileExist m h)
+  -> f (RemoveDirectoryRecursive m h)
+  -> f (RemoveFile m h)
+  -> f (RenameFile m h)
+  -> f (MkFsErrorPath m h)
+  -> f (UnsafeToFilePath m h)
+  -> f (HGetBufSome m h)
+  -> f (HGetBufSomeAt m h)
+  -> f (HPutBufSome m h)
+  -> f (HPutBufSomeAt m h)
+  -> HKD m h f
+pattern HKD {
+    dumpStateHKD
+    -- file operation
+  , hOpenHKD, hCloseHKD, hIsOpenHKD, hSeekHKD, hGetSomeHKD, hGetSomeAtHKD
+  , hPutSomeHKD, hTruncateHKD, hGetSizeHKD
+    -- directory operations
+  , createDirectoryHKD, createDirectoryIfMissingHKD, listDirectoryHKD
+  , doesDirectoryExistHKD,doesFileExistHKD, removeDirectoryRecursiveHKD
+  , removeFileHKD, renameFileHKD, mkFsErrorPathHKD, unsafeToFilePathHKD
+    -- file I\/O with user-supplied buffers
+  , hGetBufSomeHKD, hGetBufSomeAtHKD, hPutBufSomeHKD, hPutBufSomeAtHKD
+  } = SOP (Z (
+         dumpStateHKD
+        -- file operations
+      :* hOpenHKD
+      :* hCloseHKD
+      :* hIsOpenHKD
+      :* hSeekHKD
+      :* hGetSomeHKD
+      :* hGetSomeAtHKD
+      :* hPutSomeHKD
+      :* hTruncateHKD
+      :* hGetSizeHKD
+        -- directory operations
+      :* createDirectoryHKD
+      :* createDirectoryIfMissingHKD
+      :* listDirectoryHKD
+      :* doesDirectoryExistHKD
+      :* doesFileExistHKD
+      :* removeDirectoryRecursiveHKD
+      :* removeFileHKD
+      :* renameFileHKD
+      :* mkFsErrorPathHKD
+      :* unsafeToFilePathHKD
+        -- file I\/O with user-supplied buffers
+      :* hGetBufSomeHKD
+      :* hGetBufSomeAtHKD
+      :* hPutBufSomeHKD
+      :* hPutBufSomeAtHKD
+      :* Nil))
+
+
+-- | Introduce possibility of errors
+simErrorHasFS2 ::
+     forall m. (MonadSTM m, MonadThrow m, PrimMonad m)
+  => StrictTMVar m MockFS
+  -> StrictTVar m Errors
+  -> m (HasFS m HandleMock, HKD m HandleMock (Peeker m))
+simErrorHasFS2 fsVar errorsVar = do
+    let hfs = simErrorHasFS fsVar errorsVar
+
+    ps <- newPeekers
+    let var = productTypeFrom <$> readTVarIO errorsVar
+        hfs' = productTypeFrom hfs
+        hfs'' = barrr ps var hfs'
+    pure $ productTypeTo hfs''
+
 
 
 {-
