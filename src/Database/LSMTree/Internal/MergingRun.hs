@@ -23,6 +23,9 @@ module Database.LSMTree.Internal.MergingRun (
   , readUnspentCredits
   , readSpentCredits
 
+  -- * Concurrency
+  -- $concurrency
+
     -- * Internal state
   , MergingRunState (..)
   , MergeKnownCompleted (..)
@@ -252,42 +255,7 @@ duplicateRuns (DeRef mr) =
   The credits supplied is the sum of the credits spent and unspent. The credits
   supplied and the steps performed will be close but not exactly the same in
   general. Though the steps performed may never be less than the credits
-  supplied.
-
-  Merging runs can be shared across tables, which means that multiple threads
-  can contribute to the same merge concurrently. The design to contribute
-  credits to the same merging run is largely lock-free. It ensures consistency
-  of the unspent credits and the merge state, while allowing threads to
-  progress without waiting on other threads.
-
-  First, credits are added atomically to a PrimVar that holds the current total
-  of unspent credits. If this addition exceeded the threshold, then credits are
-  atomically subtracted from the PrimVar to get it below the threshold. The
-  number of subtracted credits is then the number of merge steps that will be
-  performed. While doing the merging work, a (more expensive) MVar lock is taken
-  to ensure that the merging work itself is performed only sequentially. If at
-  some point, doing the merge work resulted in the merge being done, then the
-  merge is converted into a new run.
-
-  Concurrency:
-
-  * 'SpentCreditsVar' is only read and modified with the 'mergeState' lock held.
-  * 'StepsPerformedVar' is only modified with the 'mergeState' lock held, but
-    is read without the lock.
-  * 'UnspentCreditsVar' is read and (atomically) modified without the
-    'mergeState' lock held.
-
-  In the presence of async exceptions, we offer a weaker guarantee regarding
-  consistency of the accumulated, unspent credits and the merge state: a merge
-  /may/ progress more than the number of credits that were taken. If an async
-  exception happens at some point during merging work, then we put back all the
-  credits we took beforehand. This makes the implementation simple, and merges
-  will still finish in time. It would be bad if we did not put back credits,
-  because then a merge might not finish in time, which will mess up the shape of
-  the levels tree.
-
-  As mentioned above, the implementation also tracks the total of spent credits,
-  and the number of merge steps performed. These are the use cases:
+  supplied. These are the use cases:
 
   * The total of spent credits + the total of unspent credits is used by the
     snapshot feature to restore merge work on snapshot load that was lost during
@@ -306,6 +274,15 @@ duplicateRuns (DeRef mr) =
     won't make much of a difference. However, without this calculation the
     surplus can accumulate over time, so if we're really pedantic about work
     distribution then this is the way to go.
+
+  In the presence of async exceptions, we offer a weaker guarantee regarding
+  consistency of the accumulated, unspent credits and the merge state: a merge
+  /may/ progress more than the number of credits that were taken. If an async
+  exception happens at some point during merging work, then we put back all the
+  credits we took beforehand. This makes the implementation simple, and merges
+  will still finish in time. It would be bad if we did not put back credits,
+  because then a merge might not finish in time, which will mess up the shape of
+  the levels tree.
 
   Async exceptions are allowed to mess up the consistency between the the merge
   state, the merge steps performed variable, and the spent credits variable.
@@ -433,6 +410,53 @@ takeAllUnspentCredits
         pure (Credits prev)
       else
         casLoop prev'
+
+{- $concurrency
+
+Merging runs can be shared across tables, which means that multiple threads
+can contribute to the same merge concurrently. The design to contribute
+credits to the same merging run is largely lock-free. It ensures consistency
+of the unspent credits and the merge state, while allowing threads to
+progress without waiting on other threads.
+
+The entry point for merging is 'supplyCredits'. This may be called by
+concurrent threads that share the same merging run. No locks are held
+initially.
+
+The main lock will will discuss is the 'mergeState' 'StrictMVar', and we will
+refer to it as the merge lock.
+
+We get the easy things out of the way first: the 'mergeKnownCompleted'
+variable is purely an optimisation. It starts out as 'MergeMaybeCompleted'
+and is only ever modified once to 'MergeKnownCompleted'. It is modified with
+the merge lock held, but read without the lock. It does not matter if a thread
+sees a stale value of 'MergeMaybeCompleted'. We can analyse the remainder of
+the algorithm as if we were always in the 'MergeMaybeCompleted' state.
+
+Variable access and locks:
+
+* 'UnspentCreditsVar' is only operated upon using atomic read & modify (CAS or
+  atomic add\/sub), and without the merge lock held. It's value can increase
+  or decrease.
+* 'SpentCreditsVar' is only read and written with the merge lock held. It's
+  value increases monotonically. We can use ordinary non-atomic access because
+  this variable is only read or written with the merge lock held.
+* 'StepsPerformedVar' is only modified with the merge lock held, but is read
+  without the lock. It's value increases monotonically. We must use atomic
+  read and write because this variable is read outside of the merge lock.
+  Thus atomic reads of this variable will see a valid but possibly old value
+  of the variable. The use of the value read must accommodate this.
+
+First, credits are added atomically to 'UnspentCreditsVar' that holds the
+current total of unspent credits. If this addition exceeded the threshold, then
+credits are atomically subtracted from the 'UnspentCreditsVar' to get it below
+the threshold. The number of subtracted credits is then the number of merge
+steps that will be performed. While doing the merging work, a (more expensive)
+MVar lock is taken to ensure that the merging work itself is performed only
+sequentially. If at some point, doing the merge work resulted in the merge
+being done, then the merge is converted into a new run.
+
+-}
 
 {-# SPECIALISE supplyCredits ::
      Credits
