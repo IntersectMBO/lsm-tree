@@ -88,10 +88,11 @@ data RunBloomFilterAlloc =
 --
 -- @nentries@ should be an upper bound on the expected number of entries in the
 -- output run.
-new :: NumEntries
-    -> RunBloomFilterAlloc
-    -> IndexType
-    -> ST s (RunAcc s)
+new ::
+     NumEntries
+  -> RunBloomFilterAlloc
+  -> IndexType
+  -> ST s (RunAcc s)
 new (NumEntries nentries) alloc indexType = do
     mbloom <- case alloc of
       RunAllocFixed !bitsPerEntry    ->
