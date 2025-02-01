@@ -225,12 +225,8 @@ fromWriteBuffer ::
   -> Ref (WriteBufferBlobs m h)
   -> m (Ref (Run m h))
 fromWriteBuffer fs hbio caching alloc indexType fsPaths buffer blobs = do
-    builder <- Builder.new fs
-                           hbio
-                           fsPaths
-                           (WB.numEntries buffer)
-                           alloc
-                           indexType
+    builder <- Builder.new fs hbio fsPaths (WB.numEntries buffer)
+                           alloc indexType
     for_ (WB.toList buffer) $ \(k, e) ->
       Builder.addKeyOp builder k (fmap (WBB.mkRawBlobRef blobs) e)
       --TODO: the fmap entry here reallocates even when there are no blobs

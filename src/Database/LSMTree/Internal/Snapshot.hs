@@ -459,16 +459,9 @@ fromSnapLevels reg hfs hbio conf@TableConfig{..} uc resolve dir (SnapLevels leve
               SnapOngoingMerge runs spentCredits lvl -> do
                 rn <- uniqueToRunNumber <$> incrUniqCounter uc
                 mr <- allocateTemp reg
-                                   (MR.new hfs
-                                           hbio
-                                           resolve
-                                           caching
-                                           alloc
-                                           indexType
-                                           lvl
-                                           (mkPath rn)
-                                           runs)
-                                   releaseRef
+                  (MR.new hfs hbio resolve caching alloc indexType
+                          lvl (mkPath rn) runs)
+                  releaseRef
                 -- When a snapshot is created, merge progress is lost, so we
                 -- have to redo merging work here. UnspentCredits and
                 -- SpentCredits track how many credits were supplied before the

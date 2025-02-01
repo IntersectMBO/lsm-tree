@@ -144,15 +144,8 @@ new hfs hbio resolve caching alloc indexType mergeLevel runPaths inputRuns =
     withTempRegistry $ \reg -> do
       runs <- V.mapM (\r -> allocateTemp reg (dupRef r) releaseRef) inputRuns
       merge <- fromMaybe (error "newMerge: merges can not be empty")
-        <$> Merge.new hfs
-                      hbio
-                      caching
-                      alloc
-                      indexType
-                      mergeLevel
-                      resolve
-                      runPaths
-                      runs
+        <$> Merge.new hfs hbio caching alloc indexType
+                      mergeLevel resolve runPaths runs
       let numInputRuns = NumRuns $ V.length runs
       let numInputEntries = V.foldMap' Run.size runs
       spentCreditsVar <- SpentCreditsVar <$> newPrimVar 0
