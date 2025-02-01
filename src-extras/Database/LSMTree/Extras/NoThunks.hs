@@ -271,18 +271,14 @@ deriving anyclass instance Typeable (PrimState m)
 deriving stock instance Generic IndexCompact
 deriving anyclass instance NoThunks IndexCompact
 
+deriving stock instance Generic PageNo
+deriving anyclass instance NoThunks PageNo
+
 deriving stock instance Generic IndexOrdinary
 deriving anyclass instance NoThunks IndexOrdinary
 
 deriving stock instance Generic Index
 deriving anyclass instance NoThunks Index
-
-{-------------------------------------------------------------------------------
-  PageNo
--------------------------------------------------------------------------------}
-
-deriving stock instance Generic PageNo
-deriving anyclass instance NoThunks PageNo
 
 {-------------------------------------------------------------------------------
   MergeSchedule
@@ -373,6 +369,9 @@ deriving stock instance Generic (IndexCompactAcc s)
 deriving anyclass instance Typeable s
                         => NoThunks (IndexCompactAcc s)
 
+deriving stock instance Generic (SMaybe a)
+deriving anyclass instance NoThunks a => NoThunks (SMaybe a)
+
 deriving stock instance Generic (IndexOrdinaryAcc s)
 deriving anyclass instance Typeable s
                         => NoThunks (IndexOrdinaryAcc s)
@@ -396,13 +395,6 @@ deriving anyclass instance (Typeable s, Typeable a, NoThunks a)
 deriving stock instance Generic (Baler s)
 deriving anyclass instance Typeable s
                         => NoThunks (Baler s)
-
-{-------------------------------------------------------------------------------
-  SMaybe
--------------------------------------------------------------------------------}
-
-deriving stock instance Generic (SMaybe a)
-deriving anyclass instance NoThunks a => NoThunks (SMaybe a)
 
 {-------------------------------------------------------------------------------
   PageAcc
