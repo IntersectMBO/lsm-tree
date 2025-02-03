@@ -8,25 +8,27 @@
 -- | An incremental merge of multiple runs.
 module Database.LSMTree.Internal.MergingRun (
     -- * Merging run
-    MergingRun (..)
+    MergingRun
   , NumRuns (..)
   , new
   , newCompleted
   , duplicateRuns
   , supplyCredits
   , expectCompleted
+  , snapshot
+  , numRuns
 
     -- * Credit tracking
     -- $credittracking
   , Credits (..)
   , CreditThreshold (..)
   , SuppliedCredits (..)
-  , atomicReadSuppliedCredits
 
   -- * Concurrency
   -- $concurrency
 
     -- * Internal state
+  , pattern MergingRun
   , MergingRunState (..)
   , MergeKnownCompleted (..)
   , CreditsVar (..)
@@ -219,6 +221,24 @@ duplicateRuns (DeRef mr) =
       CompletedMerge r  -> V.singleton <$> dupRef r
       OngoingMerge rs _ -> withActionRegistry $ \reg ->
         V.mapM (\r -> withRollback reg (dupRef r) releaseRef) rs
+
+-- | Take a snapshot of the state of a merging run.
+snapshot ::
+     (PrimMonad m, MonadMVar m)
+  => Ref (MergingRun m h)
+  -> m (MergingRunState m h,
+        SuppliedCredits,
+        NumRuns,
+        NumEntries)
+snapshot (DeRef MergingRun {..}) = do
+    state <- readMVar mergeState
+    (SpentCredits   spent,
+     UnspentCredits unspent) <- atomicReadCredits mergeCreditsVar
+    let supplied = SuppliedCredits (spent + unspent)
+    return (state, supplied, mergeNumRuns, mergeNumEntries)
+
+numRuns :: Ref (MergingRun m h) -> NumRuns
+numRuns (DeRef MergingRun {mergeNumRuns}) = mergeNumRuns
 
 {-------------------------------------------------------------------------------
   Credits
@@ -495,19 +515,6 @@ atomicReadCredits ::
   -> m (SpentCredits, UnspentCredits)
 atomicReadCredits (CreditsVar v) =
     unpackCreditsPair <$> atomicReadInt v
-
-{-# INLINE atomicReadSuppliedCredits #-}
-atomicReadSuppliedCredits ::
-     PrimMonad m
-  => CreditsVar (PrimState m)
-  -> m SuppliedCredits
-atomicReadSuppliedCredits (CreditsVar v) = do
-    cp <- atomicReadInt v
-    let !supplied =
-           case cp of
-             CreditsPair (SpentCredits   spent)
-                         (UnspentCredits unspent) -> spent + unspent
-    return (SuppliedCredits supplied)
 
 {-# INLINE atomicModifyInt #-}
 -- | Atomically modify a single mutable integer variable, using a CAS loop.

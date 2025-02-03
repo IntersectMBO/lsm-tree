@@ -193,14 +193,16 @@ toSnapIncomingRun ::
   => IncomingRun m h
   -> m (SnapIncomingRun (Ref (Run m h)))
 toSnapIncomingRun (Single r) = pure (SnapSingleRun r)
-toSnapIncomingRun (Merging mergePolicy (DeRef MR.MergingRun {..})) = do
+toSnapIncomingRun (Merging mergePolicy mergingRun) = do
     -- We need to know how many credits were spend and yet unspent so we can
     -- restore merge work on snapshot load. No need to snapshot the contents
     -- of totalStepsVar here, since we still start counting from 0 again when
     -- loading the snapshot.
-    MR.SuppliedCredits (MR.Credits suppliedCredits)
-         <- MR.atomicReadSuppliedCredits mergeCreditsVar
-    smrs <- toSnapMergingRunState <$> readMVar mergeState
+    (mergingRunState,
+     MR.SuppliedCredits (MR.Credits suppliedCredits),
+     mergeNumRuns,
+     mergeNumEntries) <- MR.snapshot mergingRun
+    let smrs = toSnapMergingRunState mergingRunState
     pure $
       SnapMergingRun
         mergePolicy
