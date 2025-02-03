@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP             #-}
 {-# LANGUAGE MultiWayIf      #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE TypeFamilies    #-}
@@ -363,7 +364,9 @@ pattern CreditsPair :: SpentCredits -> UnspentCredits -> Int
 pattern CreditsPair sc uc <- (unpackCreditsPair -> (sc, uc))
   where
     CreditsPair sc uc = packCreditsPair sc uc
+#if MIN_VERSION_GLASGOW_HASKELL(9,0,0,0)
 {-# INLINE CreditsPair #-}
+#endif
 {-# COMPLETE CreditsPair #-}
 
 -- TODO: test pack/unpack round trip with the minBound & maxBounds
