@@ -404,18 +404,15 @@ treeInvariant tree@(MergingTree treeState) = do
       CompletedTreeMerge _ ->
         return ()
 
-      OngoingTreeMerge (MergingRun _ mergeState) -> do
-        readSTRef mergeState >>= \case
-          CompletedMerge _ -> return ()
-          OngoingMerge _ rs _ -> do
-            -- Inputs to ongoing merges aren't empty (but can while pending!).
-            assertST $ all (\r -> runSize r > 0) rs
-            -- Merges are non-trivial (at least two inputs).
-            assertST $ length rs > 1
+      OngoingTreeMerge mr ->
+        mergeInvariant mr
 
       PendingTreeMerge (PendingLevelMerge irs t) -> do
         -- Non-empty, but can be just one input (see 'newPendingLevelMerge').
         assertST $ length irs + length t > 0
+        for_ irs $ \case
+          Single _     -> return ()
+          Merging _ mr -> mergeInvariant mr
         for_ t treeInvariant
 
       PendingTreeMerge (PendingUnionMerge ts) -> do
@@ -427,6 +424,16 @@ treeInvariant tree@(MergingTree treeState) = do
     when (debt <= 0) $ do
       _ <- expectCompletedMergingTree tree
       return ()
+
+mergeInvariant :: MergingRun t s -> ST s ()
+mergeInvariant (MergingRun _ ref) =
+    readSTRef ref >>= \case
+      CompletedMerge _ -> return ()
+      OngoingMerge _ rs _ -> do
+        -- Inputs to ongoing merges aren't empty (but can while pending!).
+        assertST $ all (\r -> runSize r > 0) rs
+        -- Merges are non-trivial (at least two inputs).
+        assertST $ length rs > 1
 
 -- 'callStack' just ensures that the 'HasCallStack' constraint is not redundant
 -- when compiling with debug assertions disabled.
