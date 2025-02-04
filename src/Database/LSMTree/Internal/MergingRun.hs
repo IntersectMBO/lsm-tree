@@ -687,7 +687,7 @@ atomicUnspendCredits (CreditsVar var) unspend =
      Ref (MergingRun IO h)
   -> CreditThreshold
   -> Credits
-  -> IO () #-}
+  -> IO Credits #-}
 -- | Supply the given amount of credits to a merging run. This /may/ cause an
 -- ongoing merge to progress.
 supplyCredits ::
@@ -695,25 +695,25 @@ supplyCredits ::
   => Ref (MergingRun m h)
   -> CreditThreshold
   -> Credits
-  -> m ()
+  -> m Credits
 supplyCredits (DeRef mrun@MergingRun {mergeKnownCompleted})
               !creditBatchThreshold !credits = do
     mergeCompleted <- readMutVar mergeKnownCompleted
     case mergeCompleted of
-      MergeKnownCompleted -> pure ()
+      MergeKnownCompleted -> pure credits
       MergeMaybeCompleted -> supplyCredits' mrun creditBatchThreshold credits
 
 {-# SPECIALISE supplyCredits' ::
      MergingRun IO h
   -> CreditThreshold
   -> Credits
-  -> IO () #-}
+  -> IO Credits #-}
 supplyCredits' ::
      forall m h. (MonadSTM m, MonadST m, MonadMVar m, MonadMask m)
   => MergingRun m h
   -> CreditThreshold
   -> Credits
-  -> m ()
+  -> m Credits
 supplyCredits' MergingRun {
                  mergeNumEntries,
                  mergeCreditsVar,
@@ -763,6 +763,8 @@ supplyCredits' MergingRun {
         -- completion, then that is fine. The next supplyCredits will
         -- complete the merge.
         when weFinishedMerge $ completeMerge mergeState mergeKnownCompleted
+        -- We reliably know the credits we supplied that were left over.
+        return leftoverCredits
 
       | unspentCredits >= batchThreshold -> do
         -- If the unspent credits have reached the threshold then we will try
@@ -784,10 +786,14 @@ supplyCredits' MergingRun {
         -- completion, then that is fine. The next supplyCredits will
         -- complete the merge.
         when weFinishedMerge $ completeMerge mergeState mergeKnownCompleted
+        -- We didn't finish, so can be no leftover credits
+        assert (leftoverCredits == 0) $ pure (Credits 0)
 
       -- Otherwise just accumulate credits (which we did already above),
       -- because we are not over the threshold yet.
-      | otherwise -> pure ()
+      | otherwise ->
+        -- We didn't finish, so can be no leftover credits
+        assert (leftoverCredits == 0) $ pure (Credits 0)
 
 {-# SPECIALISE performMergeSteps ::
      StrictMVar IO (MergingRunState IO h)

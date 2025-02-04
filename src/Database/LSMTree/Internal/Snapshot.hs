@@ -29,6 +29,7 @@ import           Control.ActionRegistry
 import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Concurrent.Class.MonadSTM (MonadSTM)
 import           Control.DeepSeq (NFData (..))
+import           Control.Exception (assert)
 import           Control.Monad (void, when)
 import           Control.Monad.Class.MonadST (MonadST)
 import           Control.Monad.Class.MonadThrow (MonadMask)
@@ -469,9 +470,10 @@ fromSnapLevels reg hfs hbio conf@TableConfig{..} uc resolve dir (SnapLevels leve
                 -- When a snapshot is created, merge progress is lost, so we
                 -- have to redo merging work here. SuppliedCredits tracks how
                 -- many credits were supplied before the snapshot was taken.
-                MR.supplyCredits mr (creditThresholdForLevel conf ln)
-                                 (MR.Credits sc)
-                return mr
+                leftoverCredits <- MR.supplyCredits
+                                     mr (creditThresholdForLevel conf ln)
+                                     (MR.Credits sc)
+                assert (leftoverCredits == 0) $ return mr
 
     dupRun r = withRollback reg (dupRef r) releaseRef
 
