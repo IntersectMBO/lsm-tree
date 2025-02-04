@@ -628,7 +628,7 @@ atomicSpendCredits (CreditsVar var) spend =
      Ref (MergingRun IO h)
   -> CreditThreshold
   -> Credits
-  -> IO () #-}
+  -> IO Credits #-}
 -- | Supply the given amount of credits to a merging run. This /may/ cause an
 -- ongoing merge to progress.
 supplyCredits ::
@@ -636,7 +636,7 @@ supplyCredits ::
   => Ref (MergingRun m h)
   -> CreditThreshold
   -> Credits
-  -> m ()
+  -> m Credits
 supplyCredits (DeRef MergingRun {
                  mergeKnownCompleted,
                  mergeNumEntries,
@@ -647,7 +647,7 @@ supplyCredits (DeRef MergingRun {
     assert (credits >= 0) $ do
     mergeCompleted <- readMutVar mergeKnownCompleted
     case mergeCompleted of
-      MergeKnownCompleted -> pure ()
+      MergeKnownCompleted -> pure credits
       MergeMaybeCompleted ->
         bracketOnError
           -- Atomically add credits to the unspent credits (but not allowing
@@ -665,7 +665,7 @@ supplyCredits (DeRef MergingRun {
           (\(spendCredits, _leftoverCredits) ->
             atomicSpendCredits mergeCreditsVar (-spendCredits))
 
-          (\(spendCredits, _leftoverCredits) ->
+          (\(spendCredits, leftoverCredits) -> do
             when (spendCredits > 0) $ do
               weFinishedMerge <-
                 performMergeSteps mergeState mergeCreditsVar spendCredits
@@ -674,7 +674,9 @@ supplyCredits (DeRef MergingRun {
               -- completion, then that is fine. The next supplyCredits will
               -- complete the merge.
               when weFinishedMerge $
-                completeMerge mergeState mergeKnownCompleted)
+                completeMerge mergeState mergeKnownCompleted
+
+            return leftoverCredits)
 
 {-# SPECIALISE performMergeSteps ::
      StrictMVar IO (MergingRunState IO h)
