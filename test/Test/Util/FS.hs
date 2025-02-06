@@ -30,6 +30,7 @@ module Test.Util.FS (
   , listDirectoryRecursive
   , listDirectoryRecursiveFiles
     -- * Corruption
+  , flipRandomBitInRandomFile
   , flipFileBit
   , hFlipBit
     -- * Errors
@@ -56,7 +57,7 @@ import           Control.Monad.IOSim (runSimOrThrow)
 import           Control.Monad.Primitive (PrimMonad)
 import           Data.Bit (MVector (..), flipBit)
 import           Data.Char (isAscii, isDigit, isLetter)
-import           Data.Foldable (foldlM)
+import           Data.Foldable (Foldable (..), foldlM)
 import           Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
 import           Data.Primitive.ByteArray (newPinnedByteArray, setByteArray)
@@ -64,6 +65,8 @@ import           Data.Primitive.Types (sizeOf)
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.Text as T
+import           Data.Traversable (for)
+import           Data.Word (Word64)
 import           GHC.Stack
 import           System.FS.API as FS
 import           System.FS.BlockIO.API
@@ -79,6 +82,7 @@ import           System.FS.Sim.Stream (InternalInfo (..), Stream (..))
 import           System.IO.Temp
 import           Test.QuickCheck
 import           Test.QuickCheck.Instances ()
+import           Test.Util.QC (Choice, getChoice)
 import           Text.Printf
 
 {-------------------------------------------------------------------------------
@@ -346,6 +350,43 @@ listDirectoryFiles hfs = go Set.empty
 {-------------------------------------------------------------------------------
   Corruption
 -------------------------------------------------------------------------------}
+
+-- | Flip a random bit in a random file in a given directory.
+flipRandomBitInRandomFile ::
+     (PrimMonad m, MonadThrow m)
+  => HasFS m h
+  -> Choice
+  -> FsPath
+  -> m (Maybe (FsPath, Int))
+flipRandomBitInRandomFile hfs bitChoice dir = do
+  -- List all files and their sizes
+  files <- fmap (dir </>) . toList <$> listDirectoryRecursiveFiles hfs dir
+  -- Handle the situation where there are no files
+  if null files then pure Nothing else do
+    filesAndFileSizeBits <-
+      for files $ \file -> do
+        fileSizeBytes <- withFile hfs file ReadMode (hGetSize hfs)
+        pure (file, fileSizeBytes * 8)
+    let totalFileSizeBits = sum (snd <$> filesAndFileSizeBits)
+    -- Handle the situation where there are no non-empty files
+    if totalFileSizeBits == 0 then pure Nothing else do
+      assert (totalFileSizeBits > 0) $ pure ()
+      -- Interpret `index` to point to a bit between `0` and `totalFileSize - 1`
+      let bitIndex = getChoice bitChoice (0, totalFileSizeBits - 1)
+      -- Flip the bit
+      Just <$> flipFileBitAt hfs bitIndex filesAndFileSizeBits
+
+-- | Internal helper: flip a single bit in a given list of files and sizes.
+flipFileBitAt :: (MonadThrow m, PrimMonad m) => HasFS m h -> Word64 -> [(FsPath, Word64)] -> m (FsPath, Int)
+flipFileBitAt _hfs bitIndex [] =
+  error $ printf "flipFileBitAt: bit index out of bounds (%d)" bitIndex
+flipFileBitAt hfs bitIndex ((file, fileSize) : filesAndSizes)
+  | bitIndex < fileSize = do
+    let bitIndexAsInt = fromIntegral bitIndex
+    flipFileBit hfs file bitIndexAsInt
+    pure (file, bitIndexAsInt)
+  | otherwise = do
+    flipFileBitAt hfs (bitIndex - fileSize) filesAndSizes
 
 -- | Flip a single bit in the given file.
 flipFileBit :: (MonadThrow m, PrimMonad m) => HasFS m h -> FsPath -> Int -> m ()
