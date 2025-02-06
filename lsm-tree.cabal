@@ -722,6 +722,7 @@ library prototypes
     , tasty
     , tasty-hunit
     , tasty-quickcheck
+    , transformers
 
   ghc-options:
     -Wno-incomplete-uni-patterns -Wno-partial-fields

@@ -50,7 +50,28 @@ module ScheduledMerges (
     representationShape,
     Event,
     EventAt(..),
-    EventDetail(..)
+    EventDetail(..),
+    MergingTree(..),
+    MergingTreeState(..),
+    PendingMerge(..),
+    IncomingRun(..),
+    MergingRun(..),
+    MergingRunState(..),
+    MergePolicy(..),
+    IsMergeType(..),
+    TreeMergeType(..),
+    LevelMergeType(..),
+    MergeDebt(..),
+    Run,
+    supplyCreditsMergingTree,
+    remainingDebtMergingTree,
+    mergek,
+    mergeBatchSize,
+
+    -- * Invariants
+    Invariant,
+    evalInvariant,
+    treeInvariant,
   ) where
 
 import           Prelude hiding (lookup)
@@ -65,6 +86,7 @@ import           Data.STRef
 import qualified Control.Exception as Exc (assert)
 import           Control.Monad (foldM, forM, when)
 import           Control.Monad.ST
+import qualified Control.Monad.Trans.Except as E
 import           Control.Tracer (Tracer, contramap, traceWith)
 import           GHC.Stack (HasCallStack, callStack)
 
@@ -104,7 +126,7 @@ data IncomingRun s = Merging !MergePolicy !(MergingRun LevelMergeType s)
 -- | The merge policy for a LSM level can be either tiering or levelling.
 -- In this design we use levelling for the last level, and tiering for
 -- all other levels. The first level always uses tiering however, even if
--- it's also the last level. So 'MergePolicy' and 'IncomingMergeType' are
+-- it's also the last level. So 'MergePolicy' and 'LevelMergeType' are
 -- orthogonal, all combinations are possible.
 --
 data MergePolicy = MergePolicyTiering | MergePolicyLevelling
@@ -272,9 +294,9 @@ mergePolicyForLevel _ _  _       = MergePolicyTiering
 
 -- | If there are no further levels provided, this level is the last one.
 -- However, if a 'Union' is present, it acts as another (last) level.
-levelMergeTypeForLevel :: [Level s] -> UnionLevel s -> LevelMergeType
-levelMergeTypeForLevel [] NoUnion = MergeLastLevel
-levelMergeTypeForLevel _  _       = MergeMidLevel
+mergeTypeForLevel :: [Level s] -> UnionLevel s -> LevelMergeType
+mergeTypeForLevel [] NoUnion = MergeLastLevel
+mergeTypeForLevel _  _       = MergeMidLevel
 
 -- | Note that the invariants rely on the fact that levelling is only used on
 -- the last level.
@@ -284,7 +306,7 @@ invariant (LSMContent _ levels ul) = do
     levelsInvariant 1 levels
     case ul of
       NoUnion      -> return ()
-      Union tree _ -> treeInvariant tree
+      Union tree _ -> expectInvariant (treeInvariant tree)
   where
     levelsInvariant :: Int -> Levels s -> ST s ()
     levelsInvariant !_ [] = return ()
@@ -295,7 +317,7 @@ invariant (LSMContent _ levels ul) = do
           return (CompletedMerge r)
         Merging mp (MergingRun mt ref) -> do
           assertST $ mp == mergePolicyForLevel ln ls ul
-                  && mt == levelMergeTypeForLevel ls ul
+                  && mt == mergeTypeForLevel ls ul
           readSTRef ref
 
       assertST $ length rs <= 3
@@ -359,7 +381,7 @@ invariant (LSMContent _ levels ul) = do
               assertST $ all (\r -> levellingRunSizeToLevel r <= ln+1) resident
 
         MergePolicyTiering ->
-          case (ir, mrs, levelMergeTypeForLevel ls ul) of
+          case (ir, mrs, mergeTypeForLevel ls ul) of
             -- A single incoming run (which thus didn't need merging) must be
             -- of the expected size already
             (Single r, m, _) -> do
@@ -390,33 +412,91 @@ invariant (LSMContent _ levels ul) = do
               assertST $ length rs == 4 || length rs == 5
               assertST $ all (\r -> tieringRunSizeToLevel r == ln-1) rs
 
-    -- We don't make many assumptions apart from what the types already enforce.
-    -- In particular, there are no invariants on the progress of the merges,
-    -- since union merge credits are independent from the tables' regular level
-    -- merges.
-    treeInvariant :: MergingTree s -> ST s ()
-    treeInvariant (MergingTree treeState) = readSTRef treeState >>= \case
-        CompletedTreeMerge _ ->
-          return ()
+-- We don't make many assumptions apart from what the types already enforce.
+-- In particular, there are no invariants on the progress of the merges,
+-- since union merge credits are independent from the tables' regular level
+-- merges.
+treeInvariant :: MergingTree s -> Invariant s ()
+treeInvariant tree@(MergingTree treeState) = do
+    liftI (readSTRef treeState) >>= \case
+      CompletedTreeMerge _ ->
+        -- We don't require the completed merges to be non-empty, since even
+        -- a (last-level) merge of non-empty runs can end up being empty.
+        -- In the prototype it would be possible to ensure that empty runs are
+        -- immediately trimmed from the tree, but this kind of normalisation
+        -- is complicated with sharing. For example, merging runs and
+        -- trees are shared, so if one of them completes as an empty run,
+        -- all tables referencing it suddenly contain an empty run and would
+        -- need to be updated immediately.
+        return ()
 
-        OngoingTreeMerge (MergingRun _ mergeState) -> do
-          readSTRef mergeState >>= \case
-            CompletedMerge _ -> return ()
-            OngoingMerge _ rs _ -> do
-              -- Inputs to ongoing merges aren't empty (but can while pending!).
-              assertST $ all (\r -> runSize r > 0) rs
-              -- Merges are non-trivial (at least two inputs).
-              assertST $ length rs > 1
+      OngoingTreeMerge mr ->
+        mergeInvariant mr
 
-        PendingTreeMerge (PendingLevelMerge irs tree) -> do
-          -- No empty merge, but could be just one input.
-          assertST $ length irs + length tree > 0
-          for_ tree treeInvariant
+      PendingTreeMerge (PendingLevelMerge irs t) -> do
+        -- Non-empty, but can be just one input (see 'newPendingLevelMerge').
+        -- Note that children of a pending merge can be empty runs, as noted
+        -- above for 'CompletedTreeMerge'.
+        assertI "pending level merges have at least one input" $
+          length irs + length t > 0
+        for_ irs $ \case
+          Single _     -> return ()
+          Merging _ mr -> mergeInvariant mr
+        for_ t treeInvariant
 
-        PendingTreeMerge (PendingUnionMerge trees) -> do
-          -- Merges are non-trivial (at least two inputs).
-          assertST $ length trees > 1
-          for_ trees treeInvariant
+      PendingTreeMerge (PendingUnionMerge ts) -> do
+        assertI "pending union merges are non-trivial (at least two inputs)" $
+          length ts > 1
+        for_ ts treeInvariant
+
+    (debt, _) <- liftI $ remainingDebtMergingTree tree
+    when (debt <= 0) $ do
+      _ <- isCompletedMergingTree tree
+      return ()
+
+mergeInvariant :: MergingRun t s -> Invariant s ()
+mergeInvariant (MergingRun _ ref) =
+    liftI (readSTRef ref) >>= \case
+      CompletedMerge _ -> return ()
+      OngoingMerge _ rs _ -> do
+        assertI "inputs to ongoing merges aren't empty" $
+          all (\r -> runSize r > 0) rs
+        assertI "ongoing merges are non-trivial (at least two inputs)" $
+          length rs > 1
+
+isCompletedMergingRun :: MergingRun t s -> Invariant s Run
+isCompletedMergingRun (MergingRun _ ref) = do
+    mrs <- liftI $ readSTRef ref
+    case mrs of
+      CompletedMerge r   -> return r
+      OngoingMerge d _ _ -> failI $ "not completed: OngoingMerge with"
+                                 ++ " remaining debt " ++ show d
+
+isCompletedMergingTree :: MergingTree s -> Invariant s Run
+isCompletedMergingTree (MergingTree ref) = do
+    mts <- liftI $ readSTRef ref
+    case mts of
+      CompletedTreeMerge r -> return r
+      OngoingTreeMerge mr  -> isCompletedMergingRun mr
+      PendingTreeMerge _   -> failI $ "not completed: PendingTreeMerge"
+
+type Invariant s = E.ExceptT String (ST s)
+
+assertI :: String -> Bool -> Invariant s ()
+assertI _ True  = return ()
+assertI e False = failI e
+
+failI :: String -> Invariant s a
+failI = E.throwE
+
+liftI :: ST s a -> Invariant s a
+liftI = E.ExceptT . fmap Right
+
+expectInvariant :: HasCallStack => Invariant s a -> ST s a
+expectInvariant act = E.runExceptT act >>= either error return
+
+evalInvariant :: Invariant s a -> ST s (Either String a)
+evalInvariant = E.runExceptT
 
 -- 'callStack' just ensures that the 'HasCallStack' constraint is not redundant
 -- when compiling with debug assertions disabled.
@@ -435,7 +515,7 @@ newMergingRun mdebt mergeType runs = do
     assertST $ length runs > 1
     -- in some cases, no merging is required at all
     state <- case filter (\r -> runSize r > 0) runs of
-      []  -> return $ CompletedMerge Map.empty
+      []  -> return $ CompletedMerge (head runs)  -- just re-use the empty input
       [r] -> return $ CompletedMerge r
       rs  -> do
         let !cost = sum (map runSize rs)
@@ -480,12 +560,7 @@ combineUnion (Insert v' b') (Mupsert v)  = Insert (resolveValue v' v) b'
 combineUnion (Insert v' b') (Insert v _) = Insert (resolveValue v' v) b'
 
 expectCompletedMergingRun :: HasCallStack => MergingRun t s -> ST s Run
-expectCompletedMergingRun (MergingRun _ ref) = do
-    mrs <- readSTRef ref
-    case mrs of
-      CompletedMerge r   -> return r
-      OngoingMerge d _ _ -> error $ "expectCompletedMergingRun:"
-                                 ++ " remaining debt of " ++ show d
+expectCompletedMergingRun = expectInvariant . isCompletedMergingRun
 
 supplyCreditsMergingRun :: Credit -> MergingRun t s -> ST s Credit
 supplyCreditsMergingRun = checked remainingDebtMergingRun $ \credits (MergingRun _ ref) -> do
@@ -685,14 +760,8 @@ supplyUnionCredits (LSMHandle scr lsmr) credits
         _debt <- checkedUnionDebt tree debtRef  -- just to make sure it's checked
         c' <- supplyCreditsMergingTree credits tree
         debt' <- checkedUnionDebt tree debtRef
-        if (debt' > 0)
-          then
-            -- should have spent these credits
-            assertST $ c' == 0
-          else do
-            -- check it really is done
-            _ <- expectCompletedMergingTree tree
-            return ()
+        when (debt' > 0) $
+          assertST $ c' == 0  -- should have spent these credits
         invariant content
         return c'
 
@@ -863,7 +932,7 @@ increment tr sc run0 ls0 ul = do
     go 1 [run0] ls0
   where
     mergeTypeFor :: Levels s -> LevelMergeType
-    mergeTypeFor ls = levelMergeTypeForLevel ls ul
+    mergeTypeFor ls = mergeTypeForLevel ls ul
 
     go :: Int -> [Run] -> Levels s -> ST s (Levels s)
     go !ln incoming [] = do
@@ -1010,10 +1079,13 @@ newPendingLevelMerge :: [IncomingRun s]
                      -> Maybe (MergingTree s)
                      -> ST s (Maybe (MergingTree s))
 newPendingLevelMerge [] t = return t
+newPendingLevelMerge [Single r] Nothing =
+    -- If there is only a 'Merging' run, we could in principle also directly
+    -- turn that into 'OngoingTreeMerge`, but the type parameters don't match,
+    -- since it could be a midlevel merge. For simplicity, we don't handle that
+    -- case here, which means that there can be unary pending level merges.
+    Just . MergingTree <$> newSTRef (CompletedTreeMerge r)
 newPendingLevelMerge irs tree = do
-    -- If there is just a single IncomingRun, we could directly turn that into
-    -- a MergingTree, but it's not necessary and a little complicated because
-    -- of the LevelMergeType/TreeMergeType mismatch.
     let st = PendingTreeMerge (PendingLevelMerge irs tree)
     Just . MergingTree <$> newSTRef st
 
@@ -1059,7 +1131,11 @@ remainingDebtPendingMerge (PendingMerge _ irs trees) = do
         , traverse remainingDebtMergingTree trees
         ]
     let totalSize = sum sizes
-    let totalDebt = sum debts + totalSize
+    -- A pending merge should never have 0 remaining debt. It needs some work to
+    -- complete it, even if all its inputs are empty. It's not enought to use
+    -- @max 1@, as this would violate the property that supplying N credits
+    -- reduces the remaining debt by at least N.
+    let totalDebt = sum debts + totalSize + 1
     return (totalDebt, totalSize)
   where
     remainingDebtIncomingRun = \case
@@ -1179,11 +1255,7 @@ expectCompletedChildren (PendingMerge mt irs trees) = do
         Merging _ mr -> expectCompletedMergingRun mr
 
 expectCompletedMergingTree :: HasCallStack => MergingTree s -> ST s Run
-expectCompletedMergingTree (MergingTree ref) = do
-    readSTRef ref >>= \case
-      CompletedTreeMerge r -> return r
-      OngoingTreeMerge mr  -> expectCompletedMergingRun mr
-      PendingTreeMerge _   -> error $ "expectCompletedMergingTree: PendingTreeMerge"
+expectCompletedMergingTree = expectInvariant . isCompletedMergingTree
 
 -------------------------------------------------------------------------------
 -- Measurements
@@ -1345,3 +1417,9 @@ instance (QC.Arbitrary v, QC.Arbitrary b) => QC.Arbitrary (Update v b) where
       , (1, Mupsert <$> QC.arbitrary)
       , (1, pure Delete)
       ]
+
+instance QC.Arbitrary LevelMergeType where
+  arbitrary = QC.elements [MergeMidLevel, MergeLastLevel]
+
+instance QC.Arbitrary TreeMergeType where
+  arbitrary = QC.elements [MergeLevel, MergeUnion]
