@@ -24,6 +24,7 @@ import           Database.LSMTree as Types (LookupResult (..), QueryResult (..),
                      resolveDeserialised)
 import qualified Database.LSMTree as R
 import           Database.LSMTree.Class.Common as Common
+import           Test.Util.QC (Choice)
 
 -- | Class abstracting over table operations.
 --
@@ -140,6 +141,14 @@ class (IsSession (Session h)) => IsTable h where
         -> h m k v b
         -> m ()
 
+    corruptSnapshot ::
+           ( IOLike m
+           )
+        => Choice
+        -> SnapshotName
+        -> h m k v b
+        -> m ()
+
     openSnapshot ::
            ( IOLike m
            , C k v b
@@ -244,6 +253,7 @@ instance IsTable R.Table where
     readCursor _ = R.readCursor
 
     createSnapshot = R.createSnapshot
+    corruptSnapshot = error "TODO: not yet implemented"
     openSnapshot sesh snap = R.openSnapshot sesh R.configNoOverride snap
 
     duplicate = R.duplicate
