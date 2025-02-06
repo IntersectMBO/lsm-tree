@@ -65,6 +65,7 @@ module ScheduledMerges (
     MergeDebt(..),
     NominalCredit(..),
     NominalDebt(..),
+    maxBufferSize,
     Run,
     runSize,
     UnionCredits (..),
@@ -85,6 +86,7 @@ import           Prelude hiding (lookup)
 
 import           Data.Bits
 import           Data.Foldable (for_, toList, traverse_)
+import           Data.Functor ((<&>))
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (catMaybes)
@@ -344,19 +346,25 @@ invariant (LSMContent _ levels ul) = do
     expectedRunLengths :: Int -> [Run] -> [Level s] -> ST s ()
     expectedRunLengths ln rs ls =
       case mergePolicyForLevel ln ls ul of
-        -- Levels using levelling have only one (incoming) run, which almost
-        -- always consists of an ongoing merge. The exception is when a
-        -- levelling run becomes too large and is promoted, in that case
-        -- initially there's no merge, but it is still represented as an
-        -- 'IncomingRun', using 'Single'. Thus there are no other resident runs.
-        MergePolicyLevelling -> assertST $ null rs
-        -- Runs in tiering levels usually fit that size, but they can be one
-        -- larger, if a run has been held back (creating a 5-way merge).
-        MergePolicyTiering   -> assertST $ all (\r -> tieringRunSizeToLevel r `elem` [ln, ln+1]) rs
-        -- (This is actually still not really true, but will hold in practice.
-        -- In the pathological case, all runs passed to the next level can be
-        -- factor (5/4) too large, and there the same holding back can lead to
-        -- factor (6/4) etc., until at level 12 a run is two levels too large.
+        MergePolicyLevelling ->
+          -- Levels using levelling have only one (incoming) run, which almost
+          -- always consists of an ongoing merge. The exception is when a
+          -- levelling run becomes too large and is promoted, in that case
+          -- initially there's no merge, but it is still represented as an
+          -- 'IncomingRun', using 'Single'. Thus there are no other resident
+          -- runs.
+          assertST $ null rs
+        MergePolicyTiering -> do
+          -- Runs in tiering levels usually fit that size, but they can be one
+          -- larger, if a run has been held back (creating a 5-way merge).
+          --
+          -- TODO: This is actually still not really true, but will hold in
+          -- practice. In the pathological case, all runs passed to the next
+          -- level can be factor (5/4) too large, and there the same holding
+          -- back can lead to factor (6/4) etc., until at level 12 a run is two
+          -- levels too large.
+          assertST $ all (\r -> runSize r > 0) rs
+          assertST $ all (\r -> tieringRunSizeToLevel r `elem` [ln, ln+1]) rs
 
     -- Incoming runs being merged also need to be of the right size, but the
     -- conditions are more complicated.
@@ -367,11 +375,12 @@ invariant (LSMContent _ levels ul) = do
         MergePolicyLevelling -> do
           case (ir, mrs) of
             -- A single incoming run (which thus didn't need merging) must be
-            -- of the expected size range already
+            -- of the expected size range already, but it could also be smaller
+            -- if it comes from a union level.
             (Single r, m) -> do
               assertST $ case m of CompletedMerge{} -> True
                                    OngoingMerge{}   -> False
-              assertST $ levellingRunSizeToLevel r == ln
+              assertST $ levellingRunSizeToLevel r <= ln
 
             -- A completed merge for levelling can be of almost any size at all!
             -- It can be smaller, due to deletions in the last level. But it
@@ -495,6 +504,11 @@ isCompletedMergingTree (MergingTree ref) = do
       CompletedTreeMerge r -> return r
       OngoingTreeMerge mr  -> isCompletedMergingRun mr
       PendingTreeMerge _   -> failI $ "not completed: PendingTreeMerge"
+
+getCompletedMergingTree :: MergingTree s -> ST s (Maybe Run)
+getCompletedMergingTree t =
+    either (const Nothing) Just
+      <$> evalInvariant (isCompletedMergingTree t)
 
 type Invariant s = E.ExceptT String (ST s)
 
@@ -781,8 +795,11 @@ update tr (LSMHandle scr lsmr) k op = do
     let wb' = Map.insertWith combine k op wb
     if bufferSize wb' >= maxBufferSize
       then do
-        ls' <- increment tr sc (bufferToRun wb') ls unionLevel
-        let content' = LSMContent Map.empty ls' unionLevel
+        -- Before adding the run to the regular levels, we check if we can get
+        -- rid of the union level (by moving it into into the regular ones).
+        (ls', ul') <- migrateUnionLevel tr sc ls unionLevel
+        ls'' <- increment tr sc (bufferToRun wb') ls' ul'
+        let content' = LSMContent Map.empty ls'' ul'
         invariant content'
         writeSTRef lsmr content'
       else
@@ -1158,9 +1175,44 @@ depositNominalCredit (NominalDebt nominalDebt)
 -- Updates
 --
 
+-- | At some point, we want to merge the union level with the regular levels.
+-- We achieve this by moving it into a new last regular level once it is both
+-- completed (merged down to a single run) and fits into such a new level.
+--
+-- Our representation doesn't allow for empty levels, so we can only put the
+-- run directly after the pre-existing regular levels. If it is too large for
+-- that, we don't want to move it yet to avoid violating run size invariants
+-- and doing inefficient merges of runs with very different sizes.
+migrateUnionLevel :: forall s. Tracer (ST s) Event
+                  -> Counter -> Levels s -> UnionLevel s
+                  -> ST s (Levels s, UnionLevel s)
+migrateUnionLevel _ _ ls NoUnion = do
+    -- nothing to do
+    return (ls, NoUnion)
+migrateUnionLevel _tr _sc ls ul@(Union t _) =
+    -- TODO: tracing
+    getCompletedMergingTree t <&> \case
+      Just r
+        | null r ->
+          -- If the union level is empty, we can just drop it.
+          (ls, NoUnion)
+        | levellingRunSizeToLevel r <= length ls + 1 ->
+          -- If it fits into a hypothetical new last level, put it there.
+          --
+          -- TODO: In some cases it seems desirable to even add it to the
+          -- existing last regular level (so it becomes part of a merge
+          -- sooner), but that would lead to additional merging work that was
+          -- not accounted for. We'd need to be careful to ensure the merge
+          -- completes in time, without doing a lot of work in a short time.
+          (ls ++ [Level (Single r) []], NoUnion)
+      _ ->
+        -- Otherwise, just leave it for now.
+        (ls, ul)
+
 increment :: forall s. Tracer (ST s) Event
-          -> Counter -> Run -> Levels s -> UnionLevel s -> ST s (Levels s)
-increment tr sc run0 ls0 ul = do
+          -> Counter -> Run -> Levels s -> UnionLevel s
+          -> ST s (Levels s)
+increment tr sc run0 ls0 ul =
     go 1 [run0] ls0
   where
     mergeTypeFor :: Levels s -> LevelMergeType
