@@ -85,6 +85,7 @@ instance Class.IsTable Table where
       runInOpenSession s (Model.readCursor x1 c)
 
     createSnapshot x1 x2 (Table s t) = runInOpenSession s (Model.createSnapshot x1 x2 t)
+    corruptSnapshot _ x (Table s _t) = runInOpenSession s (Model.corruptSnapshot x)
     openSnapshot s x1 x2 = Table s <$> runInOpenSession s (Model.openSnapshot x1 x2)
 
     duplicate (Table s t) = Table s <$> runInOpenSession s (Model.duplicate t)
