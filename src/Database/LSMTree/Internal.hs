@@ -711,6 +711,7 @@ new sesh conf = do
               , tableWriteBufferBlobs
               , tableLevels
               , tableCache
+              , tableUnionLevel = NoUnion
               }
         newWith reg sesh seshEnv conf am tc
 
@@ -1250,6 +1251,7 @@ openSnapshot sesh label tableType override snap resolve = do
           , tableWriteBufferBlobs
           , tableLevels
           , tableCache
+          , tableUnionLevel = NoUnion  -- TODO: at some point also load union level from snapshot
           }
 
 {-# SPECIALISE deleteSnapshot ::

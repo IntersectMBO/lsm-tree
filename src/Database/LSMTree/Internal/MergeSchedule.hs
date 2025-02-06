@@ -16,6 +16,8 @@ module Database.LSMTree.Internal.MergeSchedule (
   , Level (..)
   , IncomingRun (..)
   , MergePolicyForLevel (..)
+    -- * Union level
+  , UnionLevel (..)
     -- * Flushes and scheduled merges
   , updatesWithInterleavedFlushes
   , flushWriteBuffer
@@ -50,6 +52,7 @@ import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
 import           Database.LSMTree.Internal.Merge (MergeType (..))
 import           Database.LSMTree.Internal.MergingRun (MergingRun, NumRuns (..))
 import qualified Database.LSMTree.Internal.MergingRun as MR
+import           Database.LSMTree.Internal.MergingTree (MergingTree)
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..),
                      SessionRoot (..))
 import qualified Database.LSMTree.Internal.Paths as Paths
@@ -108,15 +111,21 @@ data MergeTrace =
   Table content
 -------------------------------------------------------------------------------}
 
+-- | The levels of the table, from most to least recently inserted.
 data TableContent m h = TableContent {
-    --TODO: probably less allocation to make this a MutVar
+    -- | The in-memory level 0 of the table
+    --
+    -- TODO: probably less allocation to make this a MutVar
     tableWriteBuffer      :: !WriteBuffer
     -- | The blob storage for entries in the write buffer
   , tableWriteBufferBlobs :: !(Ref (WriteBufferBlobs m h))
-    -- | A hierarchy of levels. The vector indexes double as level numbers.
+    -- | A hierarchy of \"regular\" on-disk levels numbered 1 and up. Note that
+    -- vector index @n@ refers to level @n+1@.
   , tableLevels           :: !(Levels m h)
-    -- | Cache of flattened 'levels'.
+    -- | Cache of flattened regular 'levels'.
   , tableCache            :: !(LevelsCache m h)
+    -- | An optional final union level, not included in the table cache.
+  , tableUnionLevel       :: !(UnionLevel m h)
   }
 
 {-# SPECIALISE duplicateTableContent :: ActionRegistry IO -> TableContent IO h -> IO (TableContent IO h) #-}
@@ -125,11 +134,12 @@ duplicateTableContent ::
   => ActionRegistry m
   -> TableContent m h
   -> m (TableContent m h)
-duplicateTableContent reg (TableContent wb wbb levels cache) = do
+duplicateTableContent reg (TableContent wb wbb levels cache ul) = do
     wbb'    <- withRollback reg (dupRef wbb) releaseRef
     levels' <- duplicateLevels reg levels
     cache'  <- duplicateLevelsCache reg cache
-    return $! TableContent wb wbb' levels' cache'
+    ul'     <- duplicateUnionLevel reg ul
+    return $! TableContent wb wbb' levels' cache' ul'
 
 {-# SPECIALISE releaseTableContent :: ActionRegistry IO -> TableContent IO h -> IO () #-}
 releaseTableContent ::
@@ -137,10 +147,11 @@ releaseTableContent ::
   => ActionRegistry m
   -> TableContent m h
   -> m ()
-releaseTableContent reg (TableContent _wb wbb levels cache) = do
+releaseTableContent reg (TableContent _wb wbb levels cache ul) = do
     delayedCommit reg (releaseRef wbb)
     releaseLevels reg levels
     releaseLevelsCache reg cache
+    releaseUnionLevel reg ul
 
 {-------------------------------------------------------------------------------
   Levels cache
@@ -276,7 +287,9 @@ releaseLevelsCache reg cache =
 
 type Levels m h = V.Vector (Level m h)
 
--- | Runs in order from newer to older
+-- | A level is a sequence of resident runs at this level, prefixed by an
+-- incoming run, which is usually multiple runs that are being merged. Once
+-- completed, the resulting run will become a resident run at this level.
 data Level m h = Level {
     incomingRun  :: !(IncomingRun m h)
   , residentRuns :: !(V.Vector (Ref (Run m h)))
@@ -294,13 +307,23 @@ instance NFData MergePolicyForLevel where
   rnf LevelTiering   = ()
   rnf LevelLevelling = ()
 
-mergePolicyForLevel :: MergePolicy -> LevelNo -> Levels m h -> MergePolicyForLevel
-mergePolicyForLevel MergePolicyLazyLevelling (LevelNo n) nextLevels
+-- | We use levelling on the last level, unless that is also the first level.
+mergePolicyForLevel ::
+     MergePolicy
+  -> LevelNo
+  -> Levels m h
+  -> UnionLevel m h
+  -> MergePolicyForLevel
+mergePolicyForLevel MergePolicyLazyLevelling (LevelNo n) nextLevels unionLevel
   | n == 1
-  , V.null nextLevels
   = LevelTiering    -- always use tiering on first level
-  | V.null nextLevels = LevelLevelling  -- levelling on last level
-  | otherwise         = LevelTiering
+
+  | V.null nextLevels
+  , NoUnion <- unionLevel
+  = LevelLevelling  -- levelling on last level
+
+  | otherwise
+  = LevelTiering
 
 {-# SPECIALISE duplicateLevels :: ActionRegistry IO -> Levels IO h -> IO (Levels IO h) #-}
 duplicateLevels ::
@@ -352,6 +375,50 @@ releaseIncomingRun reg (Merging _ mr) = delayedCommit reg (releaseRef mr)
 {-# SPECIALISE iforLevelM_ :: Levels IO h -> (LevelNo -> Level IO h -> IO ()) -> IO () #-}
 iforLevelM_ :: Monad m => Levels m h -> (LevelNo -> Level m h -> m ()) -> m ()
 iforLevelM_ lvls k = V.iforM_ lvls $ \i lvl -> k (LevelNo (i + 1)) lvl
+
+{-------------------------------------------------------------------------------
+  Union level
+-------------------------------------------------------------------------------}
+
+-- | An additional optional last level, created as a result of
+-- 'Database.LSMTree.Monoidal.union'. It can not only contain an ongoing merge
+-- of multiple runs, but a nested tree of merges.
+--
+-- TODO: So far, this is
+-- * never created
+-- * not stored in snapshots
+-- * not loaded from snapshots
+-- * ignored in lookups
+-- * never merged into the regular levels
+data UnionLevel m h =
+    NoUnion
+  | Union !(Ref (MergingTree m h))
+
+{-# SPECIALISE duplicateUnionLevel ::
+     ActionRegistry IO
+  -> UnionLevel IO h
+  -> IO (UnionLevel IO h) #-}
+duplicateUnionLevel ::
+     (PrimMonad m, MonadMask m)
+  => ActionRegistry m
+  -> UnionLevel m h
+  -> m (UnionLevel m h)
+duplicateUnionLevel reg ul =
+    case ul of
+      NoUnion    -> return ul
+      Union tree -> Union <$> withRollback reg (dupRef tree) releaseRef
+
+{-# SPECIALISE releaseUnionLevel ::
+     ActionRegistry IO
+  -> UnionLevel IO h
+  -> IO () #-}
+releaseUnionLevel ::
+     (PrimMonad m, MonadMask m)
+  => ActionRegistry m
+  -> UnionLevel m h
+  -> m ()
+releaseUnionLevel _   NoUnion      = return ()
+releaseUnionLevel reg (Union tree) = delayedCommit reg (releaseRef tree)
 
 {-------------------------------------------------------------------------------
   Flushes and scheduled merges
@@ -524,13 +591,17 @@ flushWriteBuffer tr conf@TableConfig{confDiskCachePolicy}
     delayedCommit reg (releaseRef (tableWriteBufferBlobs tc))
     wbblobs' <- withRollback reg (WBB.new hfs (Paths.tableBlobPath root n))
                                  releaseRef
-    levels' <- addRunToLevels tr conf resolve hfs hbio root uc r reg (tableLevels tc)
+    levels' <- addRunToLevels tr conf resolve hfs hbio root uc r reg
+                 (tableLevels tc)
+                 (tableUnionLevel tc)
     tableCache' <- rebuildCache reg (tableCache tc) levels'
     pure $! TableContent {
         tableWriteBuffer = WB.empty
       , tableWriteBufferBlobs = wbblobs'
       , tableLevels = levels'
       , tableCache = tableCache'
+        -- TODO: move into regular levels if merge completed and size fits
+      , tableUnionLevel = tableUnionLevel tc
       }
 
 {-# SPECIALISE addRunToLevels ::
@@ -544,6 +615,7 @@ flushWriteBuffer tr conf@TableConfig{confDiskCachePolicy}
   -> Ref (Run IO h)
   -> ActionRegistry IO
   -> Levels IO h
+  -> UnionLevel IO h
   -> IO (Levels IO h) #-}
 -- | Add a run to the levels, and propagate merges.
 --
@@ -562,8 +634,9 @@ addRunToLevels ::
   -> Ref (Run m h)
   -> ActionRegistry m
   -> Levels m h
+  -> UnionLevel m h
   -> m (Levels m h)
-addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = do
+addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels ul = do
     go (LevelNo 1) (V.singleton r0) levels
   where
     -- NOTE: @go@ is based on the @increment@ function from the
@@ -578,16 +651,16 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
     go !ln rs (V.uncons -> Nothing) = do
         traceWith tr $ AtLevel ln TraceAddLevel
         -- Make a new level
-        let policyForLevel = mergePolicyForLevel confMergePolicy ln V.empty
+        let policyForLevel = mergePolicyForLevel confMergePolicy ln V.empty ul
         ir <- newMerge policyForLevel MergeLastLevel ln rs
         return $! V.singleton $ Level ir V.empty
     go !ln rs' (V.uncons -> Just (Level ir rs, ls)) = do
         r <- expectCompletedMerge ln ir
-        case mergePolicyForLevel confMergePolicy ln ls of
+        case mergePolicyForLevel confMergePolicy ln ls ul of
           -- If r is still too small for this level then keep it and merge again
           -- with the incoming runs.
           LevelTiering | Run.size r <= maxRunSize' conf LevelTiering (pred ln) -> do
-            let mergelast = mergeLastForLevel ls
+            let mergelast = mergeLastForLevel ls ul
             ir' <- newMerge LevelTiering mergelast ln (rs' `V.snoc` r)
             pure $! Level ir' rs `V.cons` ls
           -- This tiering level is now full. We take the completed merged run
@@ -601,7 +674,7 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels = 
           -- This tiering level is not yet full. We move the completed merged run
           -- into the level proper, and start the new merge for the incoming runs.
           LevelTiering -> do
-            let mergelast = mergeLastForLevel ls
+            let mergelast = mergeLastForLevel ls ul
             ir' <- newMerge LevelTiering mergelast ln rs'
             traceWith tr $ AtLevel ln
                          $ TraceAddRun
@@ -722,10 +795,12 @@ maxRunSize' :: TableConfig -> MergePolicyForLevel -> LevelNo -> NumEntries
 maxRunSize' config policy ln =
     maxRunSize (confSizeRatio config) (confWriteBufferAlloc config) policy ln
 
-mergeLastForLevel :: Levels m h -> MergeType
-mergeLastForLevel levels
- | V.null levels = MergeLastLevel
- | otherwise     = MergeMidLevel
+-- | If there are no further levels provided, this level is the last one.
+-- However, if a 'Union' is present, it acts as another (last) level.
+mergeLastForLevel :: Levels m h -> UnionLevel m h -> MergeType
+mergeLastForLevel levels unionLevel
+  | V.null levels, NoUnion <- unionLevel = MergeLastLevel
+  | otherwise                            = MergeMidLevel
 
 levelIsFull :: SizeRatio -> V.Vector run -> Bool
 levelIsFull sr rs = V.length rs + 1 >= (sizeRatioInt sr)

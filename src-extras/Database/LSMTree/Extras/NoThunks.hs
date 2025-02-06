@@ -47,6 +47,7 @@ import           Database.LSMTree.Internal.Merge
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.MergeSchedule
 import           Database.LSMTree.Internal.MergingRun
+import           Database.LSMTree.Internal.MergingTree
 import           Database.LSMTree.Internal.Page
 import           Database.LSMTree.Internal.PageAcc
 import           Database.LSMTree.Internal.Paths
@@ -290,6 +291,7 @@ deriving anyclass instance NoThunks PageNo
 deriving stock instance Generic (TableContent m h)
 deriving anyclass instance ( Typeable m, Typeable (PrimState m), Typeable h
                            , NoThunks (StrictMVar m (MergingRunState m h))
+                           , NoThunks (StrictMVar m (MergingTreeState m h))
                            ) => NoThunks (TableContent m h)
 
 deriving stock instance Generic (LevelsCache m h)
@@ -306,14 +308,11 @@ deriving anyclass instance ( Typeable m, Typeable (PrimState m), Typeable h
                            , NoThunks (StrictMVar m (MergingRunState m h))
                            ) => NoThunks (IncomingRun m h)
 
-deriving stock instance Generic (MergingRun m h)
+deriving stock instance Generic (UnionLevel m h)
 deriving anyclass instance ( Typeable m, Typeable (PrimState m), Typeable h
                            , NoThunks (StrictMVar m (MergingRunState m h))
-                           ) => NoThunks (MergingRun m h)
-
-deriving stock instance Generic (MergingRunState m h)
-deriving anyclass instance (Typeable m, Typeable (PrimState m), Typeable h)
-                        => NoThunks (MergingRunState m h)
+                           , NoThunks (StrictMVar m (MergingTreeState m h))
+                           ) => NoThunks (UnionLevel m h)
 
 deriving stock instance Generic MergePolicyForLevel
 deriving anyclass instance NoThunks MergePolicyForLevel
@@ -332,6 +331,46 @@ deriving anyclass instance Typeable s => NoThunks (SpentCreditsVar s)
 
 deriving stock instance Generic MergeKnownCompleted
 deriving anyclass instance NoThunks MergeKnownCompleted
+
+{-------------------------------------------------------------------------------
+  MergingRun
+-------------------------------------------------------------------------------}
+
+deriving stock instance Generic (MergingRun m h)
+deriving anyclass instance ( Typeable m, Typeable (PrimState m), Typeable h
+                           , NoThunks (StrictMVar m (MergingRunState m h))
+                           ) => NoThunks (MergingRun m h)
+
+deriving stock instance Generic (MergingRunState m h)
+deriving anyclass instance (Typeable m, Typeable (PrimState m), Typeable h)
+                        => NoThunks (MergingRunState m h)
+
+{-------------------------------------------------------------------------------
+  MergingTree
+-------------------------------------------------------------------------------}
+
+deriving stock instance Generic (MergingTree m h)
+deriving anyclass instance ( Typeable m, Typeable (PrimState m), Typeable h
+                           , NoThunks (StrictMVar m (MergingRunState m h))
+                           , NoThunks (StrictMVar m (MergingTreeState m h))
+                           ) => NoThunks (MergingTree m h)
+
+deriving stock instance Generic (MergingTreeState m h)
+deriving anyclass instance ( Typeable m, Typeable (PrimState m), Typeable h
+                           , NoThunks (StrictMVar m (MergingRunState m h))
+                           , NoThunks (StrictMVar m (MergingTreeState m h))
+                           ) => NoThunks (MergingTreeState m h)
+
+deriving stock instance Generic (PendingMerge m h)
+deriving anyclass instance ( Typeable m, Typeable (PrimState m), Typeable h
+                           , NoThunks (StrictMVar m (MergingRunState m h))
+                           , NoThunks (StrictMVar m (MergingTreeState m h))
+                           ) => NoThunks (PendingMerge m h)
+
+deriving stock instance Generic (PreExistingRun m h)
+deriving anyclass instance ( Typeable m, Typeable (PrimState m), Typeable h
+                           , NoThunks (StrictMVar m (MergingRunState m h))
+                           ) => NoThunks (PreExistingRun m h)
 
 {-------------------------------------------------------------------------------
   Entry
