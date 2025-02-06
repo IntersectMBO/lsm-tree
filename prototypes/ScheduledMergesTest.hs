@@ -20,7 +20,9 @@ tests :: TestTree
 tests = testGroup "Unit and property tests"
     [ testCase "test_regression_empty_run" test_regression_empty_run
     , testCase "test_merge_again_with_incoming" test_merge_again_with_incoming
-    , testProperty "prop_union" prop_union
+    , testCase "test_union_empty_runs" test_union_empty_runs
+    , testProperty "prop_union_supply_all" prop_union_supply_all
+    , testProperty "prop_union_merge_into_levels" prop_union_merge_into_levels
     ]
 
 -- | Results in an empty run on level 2.
@@ -161,32 +163,81 @@ test_merge_again_with_incoming =
           , ([16,16,16,20,80], [])
           ]
 
+-- TODO: useful?
+test_union_empty_runs :: IO ()
+test_union_empty_runs =
+    runWithTracer $ \tracer -> do
+      stToIO $ do
+        lsm <- LSM.new
+        let ins k = LSM.insert tracer lsm (K k) (V 0) Nothing
+        let del k = LSM.delete tracer lsm (K k)
+        t1 <- mkTable tracer [(K k, Delete) | k <- [1..8]]
+        t2 <- mkTable tracer [(K k, Delete) | k <- [1..8]]
+        t <- LSM.unions [t1, t2]
+
+        LSM.supplyUnionCredits t 16
+
+        expectShape t
+          0
+          [ ([], [4,4,4,4])
+          ]
+
 -------------------------------------------------------------------------------
 -- properties
 --
 
+-- TODO: also generate nested unions?
+
 -- | Supplying enough credits for the remaining debt completes the union merge.
-prop_union :: [[(LSM.Key, LSM.Op)]] -> Property
-prop_union kopss = length (filter (not . null) kopss) > 1 QC.==>
+prop_union_supply_all :: [[(LSM.Key, LSM.Op)]] -> Property
+prop_union_supply_all kopss = length (filter (not . null) kopss) > 1 QC.==>
     QC.ioProperty $ runWithTracer $ \tr ->
       stToIO $ do
         ts <- traverse (mkTable tr) kopss
         t <- LSM.unions ts
 
         debt <- LSM.remainingUnionDebt t
-        _ <- LSM.supplyUnionCredits t debt
+        leftovers <- LSM.supplyUnionCredits t debt
         debt' <- LSM.remainingUnionDebt t
 
         rep <- dumpRepresentation t
         return $ QC.counterexample (show (debt, debt')) $ QC.conjoin
-          [ debt =/= 0
-          , debt' === 0
+          [ QC.counterexample "debt" $ debt =/= 0
+          , QC.counterexample "debt'" $ debt' === 0
+          , QC.counterexample "leftovers" $ leftovers >= 0
           , hasUnionWith isCompleted rep
           ]
   where
     isCompleted = \case
         MLeaf{} -> True
         MNode{} -> False
+{-
+Requirements:
+ -}
+
+-- | The union level will get merged into the last regular level once the union
+-- merge is completed and the result fits.
+prop_union_merge_into_levels :: [[(LSM.Key, LSM.Op)]] -> Property
+prop_union_merge_into_levels kopss = length (filter (not . null) kopss) > 1 QC.==>
+    QC.ioProperty $ runWithTracer $ \tr ->
+      stToIO $ do
+        ts <- traverse (mkTable tr) kopss
+        t <- LSM.unions ts
+
+        -- pay off the union and insert enough that it almost fits
+        -- TODO: could be in any order
+        debt <- LSM.remainingUnionDebt t
+        _ <- LSM.supplyUnionCredits t debt
+
+        unionRunSize <- length <$> LSM.logicalValue t
+        -- insert twice as many entries (over-estimate)
+        LSM.inserts tr t [(K k, V 0, Nothing) | k <- [1 .. (2 * unionRunSize)]]
+
+        (_, _, mtree) <- representationShape <$> dumpRepresentation t
+
+        return $ QC.conjoin
+          [ mtree === Nothing
+          ]
 
 mkTable :: Tracer (ST s) Event -> [(LSM.Key, LSM.Op)] -> ST s (LSM s)
 mkTable tr ks = do

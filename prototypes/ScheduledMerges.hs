@@ -309,19 +309,25 @@ invariant (LSMContent _ levels ul) = do
     expectedRunLengths :: Int -> [Run] -> [Level s] -> ST s ()
     expectedRunLengths ln rs ls =
       case mergePolicyForLevel ln ls ul of
-        -- Levels using levelling have only one (incoming) run, which almost
-        -- always consists of an ongoing merge. The exception is when a
-        -- levelling run becomes too large and is promoted, in that case
-        -- initially there's no merge, but it is still represented as an
-        -- 'IncomingRun', using 'Single'. Thus there are no other resident runs.
-        MergePolicyLevelling -> assertST $ null rs
-        -- Runs in tiering levels usually fit that size, but they can be one
-        -- larger, if a run has been held back (creating a 5-way merge).
-        MergePolicyTiering   -> assertST $ all (\r -> tieringRunSizeToLevel r `elem` [ln, ln+1]) rs
-        -- (This is actually still not really true, but will hold in practice.
-        -- In the pathological case, all runs passed to the next level can be
-        -- factor (5/4) too large, and there the same holding back can lead to
-        -- factor (6/4) etc., until at level 12 a run is two levels too large.
+        MergePolicyLevelling ->
+          -- Levels using levelling have only one (incoming) run, which almost
+          -- always consists of an ongoing merge. The exception is when a
+          -- levelling run becomes too large and is promoted, in that case
+          -- initially there's no merge, but it is still represented as an
+          -- 'IncomingRun', using 'Single'. Thus there are no other resident
+          -- runs.
+          assertST $ null rs
+        MergePolicyTiering -> do
+          -- Runs in tiering levels usually fit that size, but they can be one
+          -- larger, if a run has been held back (creating a 5-way merge).
+          --
+          -- TODO: This is actually still not really true, but will hold in
+          -- practice. In the pathological case, all runs passed to the next
+          -- level can be factor (5/4) too large, and there the same holding
+          -- back can lead to factor (6/4) etc., until at level 12 a run is two
+          -- levels too large.
+          assertST $ all (\r -> runSize r > 0) rs
+          assertST $ all (\r -> tieringRunSizeToLevel r `elem` [ln, ln+1]) rs
 
     -- Incoming runs being merged also need to be of the right size, but the
     -- conditions are more complicated.
@@ -845,7 +851,7 @@ creditsForMerge :: MergePolicy -> MergingRun t s -> ST s Rational
 -- bigger than the others.
 -- It needs to be completed before another run comes in.
 creditsForMerge MergePolicyLevelling _ =
-    return $ (1 + 4) / 1
+    return $ (1 + 4) / 1  -- TODO: this works, but the explanation is misleading
 
 -- A tiering merge has 5 runs at most (once could be held back to merged again)
 -- and must be completed before the level is full (once 4 more runs come in).
