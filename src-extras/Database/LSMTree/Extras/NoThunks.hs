@@ -1,4 +1,3 @@
-{-# LANGUAGE CPP                   #-}
 {-# LANGUAGE DataKinds             #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE UndecidableInstances  #-}
@@ -341,10 +340,10 @@ deriving anyclass instance NoThunks MergeKnownCompleted
   MergingRun
 -------------------------------------------------------------------------------}
 
-deriving stock instance Generic (MergingRun m h)
+deriving stock instance Generic (MergingRun t m h)
 deriving anyclass instance ( Typeable m, Typeable (PrimState m), Typeable h
                            , NoThunks (StrictMVar m (MergingRunState m h))
-                           ) => NoThunks (MergingRun m h)
+                           ) => NoThunks (MergingRun t m h)
 
 deriving stock instance Generic (MergingRunState m h)
 deriving anyclass instance (Typeable m, Typeable (PrimState m), Typeable h)

@@ -1,8 +1,5 @@
 {-# LANGUAGE CPP             #-}
-{-# LANGUAGE MultiWayIf      #-}
 {-# LANGUAGE PatternSynonyms #-}
-
-{- HLINT ignore "Use when" -}
 
 -- | An incremental merge of multiple runs.
 module Database.LSMTree.Internal.MergingRun (
@@ -16,6 +13,11 @@ module Database.LSMTree.Internal.MergingRun (
   , expectCompleted
   , snapshot
   , numRuns
+
+    -- * Merge types
+  , IsMergeType (..)
+  , LevelMergeType (..)
+  , TreeMergeType (..)
 
     -- * Credit tracking
     -- $credittracking
@@ -56,8 +58,7 @@ import           Database.LSMTree.Internal.Assertions (assert)
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
 import           Database.LSMTree.Internal.Index (IndexType)
 import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
-import           Database.LSMTree.Internal.Merge (Merge, MergeType (..),
-                     StepResult (..))
+import           Database.LSMTree.Internal.Merge (Merge, StepResult (..))
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..))
 import           Database.LSMTree.Internal.Run (Run)
@@ -66,7 +67,10 @@ import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc)
 import           System.FS.API (HasFS)
 import           System.FS.BlockIO.API (HasBlockIO)
 
-data MergingRun m h = MergingRun {
+-- t doesn't appear on the right hand side, but we don't want to allow coercions.
+type role MergingRun nominal nominal nominal
+
+data MergingRun t m h = MergingRun {
       mergeNumRuns        :: !NumRuns
       -- | Sum of number of entries in the input runs.
       -- This also corresponds to the total merging debt.
@@ -94,8 +98,51 @@ data MergingRun m h = MergingRun {
     , mergeRefCounter     :: !(RefCounter m)
     }
 
-instance RefCounted m (MergingRun m h) where
+instance RefCounted m (MergingRun t m h) where
     getRefCounter = mergeRefCounter
+
+class IsMergeType t where
+    toMergeType :: t -> Merge.MergeType
+    -- | Needed for deserialisation when opening snapshots.
+    fromMergeType :: Merge.MergeType -> Maybe t
+
+-- | Different types of merges created as part of a regular (non-union) level.
+--
+-- A last level merge behaves differently from a mid-level merge: last level
+-- merges can actually remove delete operations, whereas mid-level merges must
+-- preserve them. This is orthogonal to the 'MergePolicy'.
+data LevelMergeType = MergeMidLevel | MergeLastLevel
+  deriving stock (Eq, Show)
+
+instance NFData LevelMergeType where
+  rnf MergeMidLevel  = ()
+  rnf MergeLastLevel = ()
+
+instance IsMergeType LevelMergeType where
+  toMergeType = \case
+      MergeMidLevel  -> Merge.MergeMidLevel
+      MergeLastLevel -> Merge.MergeLastLevel
+  fromMergeType = \case
+      Merge.MergeMidLevel  -> Just MergeMidLevel
+      Merge.MergeLastLevel -> Just MergeLastLevel
+      Merge.MergeUnion     -> Nothing
+
+-- | Different types of merges created as part of the merging tree.
+data TreeMergeType = MergeLevel | MergeUnion
+  deriving stock (Eq, Show)
+
+instance NFData TreeMergeType where
+  rnf MergeLevel = ()
+  rnf MergeUnion = ()
+
+instance IsMergeType TreeMergeType where
+  toMergeType = \case
+      MergeLevel -> Merge.MergeLastLevel  -- node merges are always last level
+      MergeUnion -> Merge.MergeUnion
+  fromMergeType = \case
+      Merge.MergeMidLevel  -> Nothing
+      Merge.MergeLastLevel -> Just MergeLevel
+      Merge.MergeUnion     -> Just MergeUnion
 
 newtype NumRuns = NumRuns { unNumRuns :: Int }
   deriving stock (Show, Eq)
@@ -118,16 +165,17 @@ instance NFData MergeKnownCompleted where
   rnf MergeMaybeCompleted = ()
 
 {-# SPECIALISE new ::
-     HasFS IO h
+     IsMergeType t
+  => HasFS IO h
   -> HasBlockIO IO h
   -> ResolveSerialisedValue
   -> Run.RunDataCaching
   -> RunBloomFilterAlloc
   -> IndexType
-  -> MergeType
+  -> t
   -> RunFsPaths
   -> V.Vector (Ref (Run IO h))
-  -> IO (Ref (MergingRun IO h)) #-}
+  -> IO (Ref (MergingRun t IO h)) #-}
 -- | Create a new merging run, returning a reference to it that must ultimately
 -- be released via 'releaseRef'.
 --
@@ -136,23 +184,23 @@ instance NFData MergeKnownCompleted where
 -- This function should be run with asynchronous exceptions masked to prevent
 -- failing after internal resources have already been created.
 new ::
-     (MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
+     (IsMergeType t, MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
   => HasFS m h
   -> HasBlockIO m h
   -> ResolveSerialisedValue
   -> Run.RunDataCaching
   -> RunBloomFilterAlloc
   -> IndexType
-  -> MergeType
+  -> t
   -> RunFsPaths
   -> V.Vector (Ref (Run m h))
-  -> m (Ref (MergingRun m h))
+  -> m (Ref (MergingRun t m h))
 new hfs hbio resolve caching alloc indexType mergeType runPaths inputRuns =
     -- If creating the Merge fails, we must release the references again.
     withActionRegistry $ \reg -> do
       runs <- V.mapM (\r -> withRollback reg (dupRef r) releaseRef) inputRuns
       merge <- fromMaybe (error "newMerge: merges can not be empty")
-        <$> Merge.new hfs hbio caching alloc indexType mergeType resolve runPaths runs
+        <$> Merge.new hfs hbio caching alloc indexType (toMergeType mergeType) resolve runPaths runs
       let numInputRuns = NumRuns $ V.length runs
       let numInputEntries = V.foldMap' Run.size runs
       unsafeNew numInputRuns numInputEntries MergeMaybeCompleted $
@@ -162,7 +210,7 @@ new hfs hbio resolve caching alloc indexType mergeType runPaths inputRuns =
      NumRuns
   -> NumEntries
   -> Ref (Run IO h)
-  -> IO (Ref (MergingRun IO h)) #-}
+  -> IO (Ref (MergingRun t IO h)) #-}
 -- | Create a merging run that is already in the completed state, returning a
 -- reference that must ultimately be released via 'releaseRef'.
 --
@@ -175,7 +223,7 @@ newCompleted ::
   => NumRuns
   -> NumEntries
   -> Ref (Run m h)
-  -> m (Ref (MergingRun m h))
+  -> m (Ref (MergingRun t m h))
 newCompleted numInputRuns numInputEntries inputRun = do
     bracketOnError (dupRef inputRun) releaseRef $ \run ->
       unsafeNew numInputRuns numInputEntries MergeKnownCompleted $
@@ -188,7 +236,7 @@ unsafeNew ::
   -> NumEntries
   -> MergeKnownCompleted
   -> MergingRunState m h
-  -> m (Ref (MergingRun m h))
+  -> m (Ref (MergingRun t m h))
 unsafeNew _ mergeNumEntries _ _
   | SpentCredits (numEntriesToTotalDebt mergeNumEntries) > maxBound
   = throwIO (ErrorCall "MergingRun.new: run size exceeds maximum of 2^40")
@@ -219,10 +267,10 @@ unsafeNew mergeNumRuns mergeNumEntries knownCompleted state = do
 
 -- | Create references to the runs that should be queried for lookups.
 -- In particular, if the merge is not complete, these are the input runs.
-{-# SPECIALISE duplicateRuns :: Ref (MergingRun IO h) -> IO (V.Vector (Ref (Run IO h))) #-}
+{-# SPECIALISE duplicateRuns :: Ref (MergingRun t IO h) -> IO (V.Vector (Ref (Run IO h))) #-}
 duplicateRuns ::
      (PrimMonad m, MonadMVar m, MonadMask m)
-  => Ref (MergingRun m h)
+  => Ref (MergingRun t m h)
   -> m (V.Vector (Ref (Run m h)))
 duplicateRuns (DeRef mr) =
     -- We take the references while holding the MVar to make sure the MergingRun
@@ -243,7 +291,7 @@ duplicateRuns (DeRef mr) =
 --
 snapshot ::
      (PrimMonad m, MonadMVar m)
-  => Ref (MergingRun m h)
+  => Ref (MergingRun t m h)
   -> m (MergingRunState m h,
         SuppliedCredits,
         NumRuns,
@@ -255,7 +303,7 @@ snapshot (DeRef MergingRun {..}) = do
     let supplied = SuppliedCredits (spent + unspent)
     return (state, supplied, mergeNumRuns, mergeNumEntries)
 
-numRuns :: Ref (MergingRun m h) -> NumRuns
+numRuns :: Ref (MergingRun t m h) -> NumRuns
 numRuns (DeRef MergingRun {mergeNumRuns}) = mergeNumRuns
 
 {-------------------------------------------------------------------------------
@@ -649,15 +697,15 @@ atomicSpendCredits (CreditsVar var) spend =
 -------------------------------------------------------------------------------}
 
 {-# SPECIALISE supplyCredits ::
-     Ref (MergingRun IO h)
+     Ref (MergingRun t IO h)
   -> CreditThreshold
   -> Credits
   -> IO Credits #-}
 -- | Supply the given amount of credits to a merging run. This /may/ cause an
 -- ongoing merge to progress.
 supplyCredits ::
-     forall m h. (MonadSTM m, MonadST m, MonadMVar m, MonadMask m)
-  => Ref (MergingRun m h)
+     forall t m h. (MonadSTM m, MonadST m, MonadMVar m, MonadMask m)
+  => Ref (MergingRun t m h)
   -> CreditThreshold
   -> Credits
   -> m Credits
@@ -764,13 +812,13 @@ completeMerge mergeVar mergeKnownCompletedVar = do
         pure $! CompletedMerge r
 
 {-# SPECIALISE expectCompleted ::
-     Ref (MergingRun IO h)
+     Ref (MergingRun t IO h)
   -> IO (Ref (Run IO h)) #-}
 -- | This does /not/ release the reference, but allocates a new reference for
 -- the returned run, which must be released at some point.
 expectCompleted ::
      (MonadMVar m, MonadSTM m, MonadST m, MonadMask m)
-  => Ref (MergingRun m h) -> m (Ref (Run m h))
+  => Ref (MergingRun t m h) -> m (Ref (Run m h))
 expectCompleted (DeRef MergingRun {..}) = do
     knownCompleted <- readMutVar mergeKnownCompleted
     -- The merge is not guaranteed to be complete, so we do the remaining steps

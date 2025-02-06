@@ -527,11 +527,11 @@ instance Encode (SnapMergingRunState RunNumber) where
          encodeListLen 2
       <> encodeWord 0
       <> encode x
-  encode (SnapOngoingMerge rs l) =
+  encode (SnapOngoingMerge rs mt) =
          encodeListLen 3
       <> encodeWord 1
       <> encode rs
-      <> encode l
+      <> encode mt
 
 instance DecodeVersioned (SnapMergingRunState RunNumber) where
   decodeVersioned v@V0 = do

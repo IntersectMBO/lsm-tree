@@ -49,7 +49,6 @@ import           Database.LSMTree.Internal.Entry (Entry, NumEntries (..),
                      unNumEntries)
 import           Database.LSMTree.Internal.Index (Index)
 import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
-import           Database.LSMTree.Internal.Merge (MergeType (..))
 import           Database.LSMTree.Internal.MergingRun (MergingRun, NumRuns (..))
 import qualified Database.LSMTree.Internal.MergingRun as MR
 import           Database.LSMTree.Internal.MergingTree (MergingTree)
@@ -95,7 +94,7 @@ data MergeTrace =
       RunDataCaching
       RunBloomFilterAlloc
       MergePolicyForLevel
-      MergeType
+      MR.LevelMergeType
   | TraceCompletedMerge  -- TODO: currently not traced for Incremental merges
       NumEntries -- ^ Size of output run
       RunNumber
@@ -209,7 +208,7 @@ mkLevelsCache reg lvls = do
     foldRunAndMergeM ::
          Monoid a
       => (Ref (Run m h) -> m a)
-      -> (Ref (MergingRun m h) -> m a)
+      -> (Ref (MergingRun MR.LevelMergeType m h) -> m a)
       -> Levels m h
       -> m a
     foldRunAndMergeM k1 k2 ls =
@@ -298,7 +297,7 @@ data Level m h = Level {
 -- | An incoming run is either a single run, or a merge.
 data IncomingRun m h =
        Single  !(Ref (Run m h))
-     | Merging !MergePolicyForLevel !(Ref (MergingRun m h))
+     | Merging !MergePolicyForLevel !(Ref (MergingRun MR.LevelMergeType m h))
 
 data MergePolicyForLevel = LevelTiering | LevelLevelling
   deriving stock (Show, Eq)
@@ -389,6 +388,7 @@ iforLevelM_ lvls k = V.iforM_ lvls $ \i lvl -> k (LevelNo (i + 1)) lvl
 -- * not stored in snapshots
 -- * not loaded from snapshots
 -- * ignored in lookups
+-- * never made merge progress on (by supplying credits to it)
 -- * never merged into the regular levels
 data UnionLevel m h =
     NoUnion
@@ -575,12 +575,13 @@ flushWriteBuffer tr conf@TableConfig{confFencePointerIndex, confDiskCachePolicy}
   | otherwise = do
     !n <- incrUniqCounter uc
     let !size      = WB.numEntries (tableWriteBuffer tc)
-        !l         = LevelNo 1
-        !cache     = diskCachePolicyForLevel confDiskCachePolicy l
-        !alloc     = bloomFilterAllocForLevel conf l
+        !ln        = LevelNo 1
+        !cache     = diskCachePolicyForLevel confDiskCachePolicy ln
+        !alloc     = bloomFilterAllocForLevel conf ln
         !indexType = indexTypeForRun confFencePointerIndex
         !path      = Paths.runPath root (uniqueToRunNumber n)
-    traceWith tr $ AtLevel l $ TraceFlushWriteBuffer size (runNumber path) cache alloc
+    traceWith tr $ AtLevel ln $
+      TraceFlushWriteBuffer size (runNumber path) cache alloc
     r <- withRollback reg
             (Run.fromWriteBuffer hfs hbio
               cache
@@ -654,7 +655,7 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels ul
         traceWith tr $ AtLevel ln TraceAddLevel
         -- Make a new level
         let policyForLevel = mergePolicyForLevel confMergePolicy ln V.empty ul
-        ir <- newMerge policyForLevel MergeLastLevel ln rs
+        ir <- newMerge policyForLevel MR.MergeLastLevel ln rs
         return $! V.singleton $ Level ir V.empty
     go !ln rs' (V.uncons -> Just (Level ir rs, ls)) = do
         r <- expectCompletedMerge ln ir
@@ -662,22 +663,22 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels ul
           -- If r is still too small for this level then keep it and merge again
           -- with the incoming runs.
           LevelTiering | Run.size r <= maxRunSize' conf LevelTiering (pred ln) -> do
-            let mergelast = mergeLastForLevel ls ul
-            ir' <- newMerge LevelTiering mergelast ln (rs' `V.snoc` r)
+            let mergeType = mergeTypeForLevel ls ul
+            ir' <- newMerge LevelTiering mergeType ln (rs' `V.snoc` r)
             pure $! Level ir' rs `V.cons` ls
           -- This tiering level is now full. We take the completed merged run
           -- (the previous incoming runs), plus all the other runs on this level
           -- as a bundle and move them down to the level below. We start a merge
           -- for the new incoming runs. This level is otherwise empty.
           LevelTiering | levelIsFull confSizeRatio rs -> do
-            ir' <- newMerge LevelTiering MergeMidLevel ln rs'
+            ir' <- newMerge LevelTiering MR.MergeMidLevel ln rs'
             ls' <- go (succ ln) (r `V.cons` rs) ls
             pure $! Level ir' V.empty `V.cons` ls'
           -- This tiering level is not yet full. We move the completed merged run
           -- into the level proper, and start the new merge for the incoming runs.
           LevelTiering -> do
-            let mergelast = mergeLastForLevel ls ul
-            ir' <- newMerge LevelTiering mergelast ln rs'
+            let mergeType = mergeTypeForLevel ls ul
+            ir' <- newMerge LevelTiering mergeType ln rs'
             traceWith tr $ AtLevel ln
                          $ TraceAddRun
                             (Run.runFsPathsNumber r)
@@ -689,13 +690,13 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels ul
           -- empty) level .
           LevelLevelling | Run.size r > maxRunSize' conf LevelLevelling ln -> do
             assert (V.null rs && V.null ls) $ pure ()
-            ir' <- newMerge LevelTiering MergeMidLevel ln rs'
+            ir' <- newMerge LevelTiering MR.MergeMidLevel ln rs'
             ls' <- go (succ ln) (V.singleton r) V.empty
             pure $! Level ir' V.empty `V.cons` ls'
           -- Otherwise we start merging the incoming runs into the run.
           LevelLevelling -> do
             assert (V.null rs && V.null ls) $ pure ()
-            ir' <- newMerge LevelLevelling MergeLastLevel ln (rs' `V.snoc` r)
+            ir' <- newMerge LevelLevelling MR.MergeLastLevel ln (rs' `V.snoc` r)
             pure $! Level ir' V.empty `V.cons` V.empty
 
     -- Releases the incoming run.
@@ -713,7 +714,7 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels ul
 
     -- Releases the runs.
     newMerge :: MergePolicyForLevel
-             -> MergeType
+             -> MR.LevelMergeType
              -> LevelNo
              -> V.Vector (Ref (Run m h))
              -> m (IncomingRun m h)
@@ -737,7 +738,8 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels ul
             !indexType = indexTypeForRun confFencePointerIndex
             !runPaths = Paths.runPath root (uniqueToRunNumber n)
         traceWith tr $ AtLevel ln $
-          TraceNewMerge (V.map Run.size rs) (runNumber runPaths) caching alloc mergePolicy mergeType
+          TraceNewMerge (V.map Run.size rs) (runNumber runPaths) caching alloc
+            mergePolicy mergeType
         -- The runs will end up inside the merging run, with fresh references.
         -- The original references can be released (but only on the happy path).
         mr <- withRollback reg
@@ -801,10 +803,10 @@ maxRunSize' config policy ln =
 
 -- | If there are no further levels provided, this level is the last one.
 -- However, if a 'Union' is present, it acts as another (last) level.
-mergeLastForLevel :: Levels m h -> UnionLevel m h -> MergeType
-mergeLastForLevel levels unionLevel
-  | V.null levels, NoUnion <- unionLevel = MergeLastLevel
-  | otherwise                            = MergeMidLevel
+mergeTypeForLevel :: Levels m h -> UnionLevel m h -> MR.LevelMergeType
+mergeTypeForLevel levels unionLevel
+  | V.null levels, NoUnion <- unionLevel = MR.MergeLastLevel
+  | otherwise                            = MR.MergeMidLevel
 
 levelIsFull :: SizeRatio -> V.Vector run -> Bool
 levelIsFull sr rs = V.length rs + 1 >= (sizeRatioInt sr)
@@ -895,7 +897,7 @@ supplyCredits conf c levels =
 -- merging work than 1 merge step for each credit.
 scaleCreditsForMerge ::
      MergePolicyForLevel
-  -> Ref (MergingRun m h)
+  -> Ref (MergingRun t m h)
   -> Credits
   -> MR.Credits
 scaleCreditsForMerge LevelLevelling _ (Credits c) =

@@ -103,6 +103,7 @@ import qualified Database.LSMTree.Internal.Cursor as Cursor
 import           Database.LSMTree.Internal.Entry (Entry)
 import           Database.LSMTree.Internal.Lookup (ByteCountDiscrepancy,
                      ResolveSerialisedValue, lookupsIO)
+import           Database.LSMTree.Internal.Merge (MergeType)
 import           Database.LSMTree.Internal.MergeSchedule
 import           Database.LSMTree.Internal.Paths (SessionRoot (..),
                      SnapshotMetaDataChecksumFile (..),
@@ -201,6 +202,7 @@ data LSMTreeError =
   | ErrSnapshotExists SnapshotName
   | ErrSnapshotNotExists SnapshotName
   | ErrSnapshotDeserialiseFailure DeserialiseFailure SnapshotName
+  | ErrSnapshotInvalidMergeType SnapshotName MergeType
   | ErrSnapshotWrongTableType
       SnapshotName
       SnapshotTableType -- ^ Expected type
@@ -1245,7 +1247,12 @@ openSnapshot sesh label tableType override snap resolve = do
         snapLevels' <- openRuns reg hfs hbio conf (sessionUniqCounter seshEnv) snapDir activeDir snapLevels
 
         -- Convert from the snapshot format, restoring merge progress in the process
-        tableLevels <- fromSnapLevels reg hfs hbio conf (sessionUniqCounter seshEnv) resolve activeDir snapLevels'
+        tableLevels <-
+          fromSnapLevels reg hfs hbio conf (sessionUniqCounter seshEnv) resolve
+            activeDir snapLevels'
+            `catch` \case
+              InvalidLevelMergeType mt ->
+                throwIO (ErrSnapshotInvalidMergeType snap mt)
         releaseRuns reg snapLevels'
 
         tableCache <- mkLevelsCache reg tableLevels
