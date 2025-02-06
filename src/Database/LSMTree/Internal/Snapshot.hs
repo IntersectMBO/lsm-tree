@@ -19,6 +19,7 @@ module Database.LSMTree.Internal.Snapshot (
   , openRuns
   , releaseRuns
     -- * Opening from levels snapshot format
+  , FromSnapError (..)
   , fromSnapLevels
     -- * Hard links
   , hardLinkRunFiles
@@ -31,7 +32,7 @@ import           Control.DeepSeq (NFData (..))
 import           Control.Exception (assert)
 import           Control.Monad (void)
 import           Control.Monad.Class.MonadST (MonadST)
-import           Control.Monad.Class.MonadThrow (MonadMask)
+import           Control.Monad.Class.MonadThrow (Exception, MonadMask, throwIO)
 import           Control.Monad.Primitive (PrimMonad)
 import           Control.RefCount
 import           Data.Foldable (sequenceA_, traverse_)
@@ -161,6 +162,10 @@ newtype SuppliedCredits = SuppliedCredits { getSuppliedCredits :: Int }
 data SnapMergingRunState r =
     SnapCompletedMerge !r
   | SnapOngoingMerge !(V.Vector r) !MergeType
+    -- ^ While 'MR.MergingRun' can statically restrict the type of merge that
+    -- is possible in a specific part of a table (see 'MR.IsMergeType'), the
+    -- serialisation format always allows all of them. This is more future proof
+    -- and avoids accidentally deserialising one merge type as the other.
   deriving stock (Show, Eq, Functor, Foldable, Traversable)
 
 instance NFData r => NFData (SnapMergingRunState r) where
@@ -407,6 +412,10 @@ releaseRuns reg = traverse_ $ \r -> delayedCommit reg (releaseRef r)
   Opening from levels snapshot format
 -------------------------------------------------------------------------------}
 
+data FromSnapError = InvalidLevelMergeType !MergeType
+  deriving stock Show
+  deriving anyclass Exception
+
 {-# SPECIALISE fromSnapLevels ::
      ActionRegistry IO
   -> HasFS IO h
@@ -419,6 +428,9 @@ releaseRuns reg = traverse_ $ \r -> delayedCommit reg (releaseRef r)
   -> IO (Levels IO h)
   #-}
 -- | Duplicates runs and re-creates merging runs.
+--
+-- Throws 'FromSnapError' if the deserialised snapshot violates invariants on
+-- the table structure.
 fromSnapLevels ::
      forall m h. (MonadMask m, MonadMVar m, MonadSTM m, MonadST m)
   => ActionRegistry m
@@ -457,8 +469,11 @@ fromSnapLevels reg hfs hbio conf@TableConfig{..} uc resolve dir (SnapLevels leve
 
               SnapOngoingMerge runs mt -> do
                 rn <- uniqueToRunNumber <$> incrUniqCounter uc
+                lmt <- case MR.fromMergeType mt of
+                  Just lmt -> return lmt
+                  Nothing  -> throwIO (InvalidLevelMergeType mt)
                 mr <- withRollback reg
-                  (MR.new hfs hbio resolve caching alloc mt (mkPath rn) runs)
+                  (MR.new hfs hbio resolve caching alloc lmt (mkPath rn) runs)
                   releaseRef
                 -- When a snapshot is created, merge progress is lost, so we
                 -- have to redo merging work here. SuppliedCredits tracks how
