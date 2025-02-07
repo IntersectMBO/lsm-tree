@@ -1174,15 +1174,18 @@ createSnapshot snap label tableType t = do
         snapLevels <- toSnapLevels (tableLevels content)
 
         -- Hard link runs into the named snapshot directory
-        snapLevels' <- snapshotRuns reg hbio snapUc snapDir snapLevels
+        snapLevels' <- snapshotRuns reg snapUc snapDir snapLevels
+
+        -- Release the table content
+        releaseTableContent reg content
 
         let snapMetaData = SnapshotMetaData label tableType (tableConfig t) snapWriteBufferNumber snapLevels'
             SnapshotMetaDataFile contentPath = Paths.snapshotMetaDataFile snapDir
             SnapshotMetaDataChecksumFile checksumPath = Paths.snapshotMetaDataChecksumFile snapDir
         writeFileSnapshotMetaData hfs contentPath checksumPath snapMetaData
 
-        -- Release the table content
-        releaseTableContent reg content
+        -- Make the directory and its contents durable.
+        FS.synchroniseDirectoryRecursive hfs hbio (Paths.getNamedSnapshotDir snapDir)
 
 {-# SPECIALISE openSnapshot ::
      Session IO h
