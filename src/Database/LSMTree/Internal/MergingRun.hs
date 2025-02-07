@@ -23,6 +23,8 @@ module Database.LSMTree.Internal.MergingRun (
   , Credits (..)
   , CreditThreshold (..)
   , SuppliedCredits (..)
+  , SpentCredits (..)
+  , UnspentCredits (..)
 
   -- * Concurrency
   -- $concurrency
@@ -32,16 +34,18 @@ module Database.LSMTree.Internal.MergingRun (
   , MergingRunState (..)
   , MergeKnownCompleted (..)
   , CreditsVar (..)
+  , pattern CreditsPair
   ) where
 
 import           Control.ActionRegistry
 import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.DeepSeq (NFData (..))
+import           Control.Exception (ErrorCall (..))
 import           Control.Monad (when)
 import           Control.Monad.Class.MonadST (MonadST)
 import           Control.Monad.Class.MonadSTM (MonadSTM (..))
 import           Control.Monad.Class.MonadThrow (MonadCatch (bracketOnError),
-                     MonadMask)
+                     MonadMask, MonadThrow (throwIO))
 import           Control.Monad.Primitive
 import           Control.RefCount
 import           Data.Bits
@@ -183,6 +187,10 @@ unsafeNew ::
   -> MergeKnownCompleted
   -> MergingRunState m h
   -> m (Ref (MergingRun m h))
+unsafeNew _ mergeNumEntries _ _
+  | SpentCredits (numEntriesToTotalDebt mergeNumEntries) > maxBound
+  = throwIO (ErrorCall "MergingRun.new: run size exceeds maximum of 2^40")
+
 unsafeNew mergeNumRuns mergeNumEntries knownCompleted state = do
     mergeCreditsVar <- CreditsVar <$> newPrimVar 0
     case state of
@@ -340,6 +348,7 @@ newtype SuppliedCredits = SuppliedCredits Credits
 -- spent (by some thread calling 'supplyCredits').
 --
 newtype SpentCredits = SpentCredits Credits
+  deriving newtype (Eq, Ord)
 
 -- | 40 bit unsigned number
 instance Bounded SpentCredits where
@@ -355,6 +364,7 @@ instance Bounded SpentCredits where
 -- current unspent credits being negative for a time.
 --
 newtype UnspentCredits = UnspentCredits Credits
+  deriving newtype (Eq, Ord)
 
 -- | 24 bit signed number
 instance Bounded UnspentCredits where
@@ -386,11 +396,13 @@ pattern CreditsPair sc uc <- (unpackCreditsPair -> (sc, uc))
 #endif
 {-# COMPLETE CreditsPair #-}
 
--- TODO: test pack/unpack round trip with the minBound & maxBounds
-
 {-# INLINE packCreditsPair #-}
 packCreditsPair :: SpentCredits -> UnspentCredits -> Int
-packCreditsPair (SpentCredits (Credits sc)) (UnspentCredits (Credits uc)) =
+packCreditsPair spent@(SpentCredits (Credits sc))
+                unspent@(UnspentCredits (Credits uc)) =
+      assert (spent   >= minBound && spent   <= maxBound) $
+      assert (unspent >= minBound && unspent <= maxBound) $
+
       sc `unsafeShiftL` 24
   .|. (uc .&. 0xffffff)
 
