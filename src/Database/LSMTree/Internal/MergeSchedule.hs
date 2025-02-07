@@ -884,17 +884,14 @@ supplyCredits conf c levels =
 -- on the merging run.
 --
 -- Initially, 1 update supplies 1 credit. However, since merging runs have
--- different numbers of input runs/entries, we may have to a more or less
+-- different numbers of input runs\/entries, we may have to a more or less
 -- merging work than 1 merge step for each credit.
-scaleCreditsForMerge :: MergePolicyForLevel -> Ref (MergingRun m h) -> Credits -> MR.Credits
--- A single run is a trivially completed merge, so it requires no credits.
-scaleCreditsForMerge LevelTiering _ (Credits c) =
-    -- A tiering merge has 5 runs at most (one could be held back to merged
-    -- again) and must be completed before the level is full (once 4 more
-    -- runs come in).
-    MR.Credits (c * (1 + 4))
-
-scaleCreditsForMerge LevelLevelling mr (Credits c) =
+scaleCreditsForMerge ::
+     MergePolicyForLevel
+  -> Ref (MergingRun m h)
+  -> Credits
+  -> MR.Credits
+scaleCreditsForMerge LevelLevelling _ (Credits c) =
     -- A levelling merge has 1 input run and one resident run, which is (up
     -- to) 4x bigger than the others. It needs to be completed before
     -- another run comes in.
@@ -904,6 +901,11 @@ scaleCreditsForMerge LevelLevelling mr (Credits c) =
     -- worst-case upper bound by looking at the sizes of the input runs.
     -- As as result, merge work would/could be more evenly distributed over
     -- time when the resident run is smaller than the worst case.
+    MR.Credits (c * (1 + 4))
+scaleCreditsForMerge LevelTiering mr (Credits c) =
+    -- A tiering merge has 5 runs at most (one could be held back to merged
+    -- again) and must be completed before the level is full (once 4 more
+    -- runs come in).
     let NumRuns n = MR.numRuns mr
        -- same as division rounding up: ceiling (c * n / 4)
     in MR.Credits ((c * n + 3) `div` 4)
