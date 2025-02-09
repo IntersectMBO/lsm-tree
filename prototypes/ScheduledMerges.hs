@@ -230,9 +230,6 @@ pattern PendingMerge :: TreeMergeType
                      -> PendingMerge s
 pattern PendingMerge mt irs ts <- (pendingContent -> (mt, irs, ts))
 
-type Credit = Int
-type Debt   = Int
-
 type Run    = Map Key Op
 type Buffer = Map Key Op
 
@@ -507,6 +504,56 @@ assertST :: HasCallStack => Bool -> ST s ()
 assertST p = assert p $ return ()
 
 -------------------------------------------------------------------------------
+-- Merging credits
+--
+
+type Credit = Int
+type Debt   = Int
+
+data MergeDebt =
+    MergeDebt
+      Credit -- ^ Cumulative, not yet used credits.
+      Debt -- ^ Leftover debt.
+  deriving stock Show
+
+newMergeDebt :: HasCallStack => Debt -> MergeDebt
+newMergeDebt d = assert (d > 0) $ MergeDebt 0 d
+
+mergeDebtLeft :: HasCallStack => MergeDebt -> Debt
+mergeDebtLeft (MergeDebt c d) = assert (c < d) $ d - c
+
+-- | As credits are paid, debt is reduced in batches when sufficient credits have accumulated.
+data MergeDebtPaydown =
+    -- | This remaining merge debt is fully paid off, potentially with leftovers.
+    MergeDebtDischarged      !Debt !Credit
+    -- | Credits were paid, but not enough for merge debt to be reduced by some batches of merging work.
+  | MergeDebtPaydownCredited       !MergeDebt
+    -- | Enough credits were paid to reduce merge debt by performing some batches of merging work.
+  | MergeDebtPaydownPerform  !Debt !MergeDebt
+  deriving stock Show
+
+-- | Pay credits to merge debt, which might trigger performing some merge work in batches. See 'MergeDebtPaydown'.
+--
+paydownMergeDebt :: Credit -> MergeDebt -> MergeDebtPaydown
+paydownMergeDebt c2 (MergeDebt c d)
+  | d-c' <= 0
+  = MergeDebtDischarged d (c'-d)
+
+  | c' >= mergeBatchSize
+  , let (!b, !r) = divMod c' mergeBatchSize
+        !perform = b * mergeBatchSize
+  = MergeDebtPaydownPerform perform (MergeDebt r (d-perform))
+
+  | otherwise
+  = MergeDebtPaydownCredited (MergeDebt c' d)
+  where
+    !c' = c+c2
+
+mergeBatchSize :: Int
+mergeBatchSize = 32
+
+
+-------------------------------------------------------------------------------
 -- Merging run abstraction
 --
 
@@ -582,49 +629,6 @@ supplyCreditsMergingRun = checked remainingDebtMergingRun $ \credits (MergingRun
             -- just tracking what we would do
             writeSTRef ref (OngoingMerge d' rs r)
             return 0
-
-mergeBatchSize :: Int
-mergeBatchSize = 32
-
-data MergeDebt =
-    MergeDebt
-      Credit -- ^ Cumulative, not yet used credits.
-      Debt -- ^ Leftover debt.
-  deriving stock Show
-
-newMergeDebt :: HasCallStack => Debt -> MergeDebt
-newMergeDebt d = assert (d > 0) $ MergeDebt 0 d
-
-mergeDebtLeft :: HasCallStack => MergeDebt -> Debt
-mergeDebtLeft (MergeDebt c d) = assert (c < d) $ d - c
-
--- | As credits are paid, debt is reduced in batches when sufficient credits have accumulated.
-data MergeDebtPaydown =
-    -- | This remaining merge debt is fully paid off, potentially with leftovers.
-    MergeDebtDischarged      !Debt !Credit
-    -- | Credits were paid, but not enough for merge debt to be reduced by some batches of merging work.
-  | MergeDebtPaydownCredited       !MergeDebt
-    -- | Enough credits were paid to reduce merge debt by performing some batches of merging work.
-  | MergeDebtPaydownPerform  !Debt !MergeDebt
-  deriving stock Show
-
--- | Pay credits to merge debt, which might trigger performing some merge work in batches. See 'MergeDebtPaydown'.
---
-paydownMergeDebt :: Credit -> MergeDebt -> MergeDebtPaydown
-paydownMergeDebt c2 (MergeDebt c d)
-  | d-c' <= 0
-  = MergeDebtDischarged d (c'-d)
-
-  | c' >= mergeBatchSize
-  , let (!b, !r) = divMod c' mergeBatchSize
-        !perform = b * mergeBatchSize
-  = MergeDebtPaydownPerform perform (MergeDebt r (d-perform))
-
-  | otherwise
-  = MergeDebtPaydownCredited (MergeDebt c' d)
-  where
-    !c' = c+c2
-
 
 -------------------------------------------------------------------------------
 -- LSM handle
