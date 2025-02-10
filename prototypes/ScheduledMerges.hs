@@ -72,6 +72,7 @@ module ScheduledMerges (
     Invariant,
     evalInvariant,
     treeInvariant,
+    mergeDebtInvariant,
   ) where
 
 import           Prelude hiding (lookup)
@@ -507,47 +508,106 @@ assertST p = assert p $ return ()
 -- Merging credits
 --
 
+-- | Credits for keeping track of merge progress. These credits
+-- correspond directly to merge steps performed.
 type Credit = Int
-type Debt   = Int
+
+-- | Debt for keeping track of the total merge work to do.
+type Debt = Int
 
 data MergeDebt =
-    MergeDebt
-      Credit -- ^ Cumulative, not yet used credits.
-      Debt -- ^ Leftover debt.
+     MergeDebt {
+       spentCredits   :: !Credit, -- accumulating
+       unspentCredits :: !Credit, -- fluctuating
+       totalDebt      :: !Debt    -- fixed
+     }
   deriving stock Show
 
 newMergeDebt :: HasCallStack => Debt -> MergeDebt
-newMergeDebt d = assert (d > 0) $ MergeDebt 0 d
+newMergeDebt totalDebt =
+    assert (totalDebt >= 0) $
+    MergeDebt {
+      spentCredits   = 0,
+      unspentCredits = 0,
+      totalDebt
+    }
+
+mergeDebtInvariant :: MergeDebt -> Bool
+mergeDebtInvariant MergeDebt {spentCredits, unspentCredits, totalDebt} =
+    let suppliedCredits = spentCredits + unspentCredits
+     in spentCredits    >= 0
+     -- unspentCredits could legitimately be negative, though that does not
+     -- happen in this prototype
+     && suppliedCredits >= 0
+     && suppliedCredits <= totalDebt
 
 mergeDebtLeft :: HasCallStack => MergeDebt -> Debt
-mergeDebtLeft (MergeDebt c d) = assert (c < d) $ d - c
+mergeDebtLeft MergeDebt {spentCredits, unspentCredits, totalDebt} =
+    let suppliedCredits = spentCredits + unspentCredits
+     in  assert (suppliedCredits <= totalDebt)
+                (totalDebt - suppliedCredits)
 
--- | As credits are paid, debt is reduced in batches when sufficient credits have accumulated.
+-- | As credits are paid, debt is reduced in batches when sufficient credits
+-- have accumulated.
 data MergeDebtPaydown =
-    -- | This remaining merge debt is fully paid off, potentially with leftovers.
-    MergeDebtDischarged      !Debt !Credit
-    -- | Credits were paid, but not enough for merge debt to be reduced by some batches of merging work.
-  | MergeDebtPaydownCredited       !MergeDebt
-    -- | Enough credits were paid to reduce merge debt by performing some batches of merging work.
-  | MergeDebtPaydownPerform  !Debt !MergeDebt
+    -- | This remaining merge debt is fully paid off, potentially with
+    -- leftovers.
+    MergeDebtDischarged !Debt !Credit
+
+    -- | Credits were paid, but not enough for merge debt to be reduced by some
+    -- batches of merging work.
+  | MergeDebtPaydownCredited !MergeDebt
+
+    -- | Enough credits were paid to reduce merge debt by performing some
+    -- batches of merging work.
+  | MergeDebtPaydownPerform !Debt !MergeDebt
   deriving stock Show
 
--- | Pay credits to merge debt, which might trigger performing some merge work in batches. See 'MergeDebtPaydown'.
+-- | Pay credits to merge debt, which might trigger performing some merge work
+-- in batches. See 'MergeDebtPaydown'.
 --
 paydownMergeDebt :: Credit -> MergeDebt -> MergeDebtPaydown
-paydownMergeDebt c2 (MergeDebt c d)
-  | d-c' <= 0
-  = MergeDebtDischarged d (c'-d)
+paydownMergeDebt c MergeDebt {spentCredits, unspentCredits, totalDebt}
+  | let !suppliedCredits' = suppliedCredits + c
+  , suppliedCredits' >= totalDebt
+  , let !leftover = suppliedCredits' - totalDebt
+        !perform  = c - leftover
+  = assert (perform >= 0 && leftover >= 0) $
+    assert (c == perform + leftover) $
+    assert (suppliedCredits + perform == totalDebt) $
+    MergeDebtDischarged perform leftover
 
-  | c' >= mergeBatchSize
-  , let (!b, !r) = divMod c' mergeBatchSize
-        !perform = b * mergeBatchSize
-  = MergeDebtPaydownPerform perform (MergeDebt r (d-perform))
+  | let !unspentCredits' = unspentCredits + c
+  , unspentCredits' >= mergeBatchSize
+  , let (!b, !r)         = divMod unspentCredits' mergeBatchSize
+        !perform         = b * mergeBatchSize
+        spentCredits'    = spentCredits    + perform
+        unspentCredits'' = unspentCredits' - perform
+        suppliedCredits' = spentCredits' + unspentCredits''
+  = assert (unspentCredits'' == r)
+    assert (suppliedCredits + c == suppliedCredits') $
+    assert (suppliedCredits' < totalDebt) $
+    MergeDebtPaydownPerform
+      perform
+      MergeDebt {
+        spentCredits   = spentCredits',
+        unspentCredits = unspentCredits'',
+        totalDebt
+      }
 
   | otherwise
-  = MergeDebtPaydownCredited (MergeDebt c' d)
+  , let unspentCredits'  = unspentCredits + c
+        suppliedCredits' = spentCredits + unspentCredits'
+  = assert (suppliedCredits + c == suppliedCredits') $
+    assert (suppliedCredits' < totalDebt) $
+    MergeDebtPaydownCredited
+      MergeDebt {
+        spentCredits,
+        unspentCredits = unspentCredits',
+        totalDebt
+      }
   where
-    !c' = c+c2
+    !suppliedCredits = spentCredits + unspentCredits
 
 mergeBatchSize :: Int
 mergeBatchSize = 32

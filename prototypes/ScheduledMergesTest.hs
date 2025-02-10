@@ -345,24 +345,39 @@ instance (Arbitrary t, IsMergeType t) => Arbitrary (M t) where
       [ (1, MCompleted <$> arbitrary <*> arbitrary)
       , (1, do
           mt <- arbitrary
-          n <- QC.chooseInt (2, 8)
+          n  <- QC.chooseInt (2, 8)
           rs <- QC.vectorOf n (QC.scale (`div` n) arbitrary)
-          let totalWork = sum (map (length . getNonEmptyRun) rs)
-          workRemaining <- QC.chooseInt (1, totalWork)
-          unspentCredits <- QC.chooseInt (0, min mergeBatchSize workRemaining - 1)
-          let d = MergeDebt unspentCredits workRemaining
-          return (MOngoing mt d rs))
+          let totalDebt    = sum (map (length . getNonEmptyRun) rs)
+          suppliedCredits <- QC.chooseInt (0, totalDebt-1)
+          unspentCredits  <- QC.chooseInt (0, min (mergeBatchSize-1) suppliedCredits)
+          let spentCredits = suppliedCredits - unspentCredits
+          let md = MergeDebt {
+                    unspentCredits,
+                    spentCredits,
+                    totalDebt
+                 }
+          assert (mergeDebtInvariant md) $
+            return (MOngoing mt md rs))
       ]
 
   shrink (MCompleted mt r) =
       [ MCompleted mt r' | r' <- shrink r ]
-  shrink m@(MOngoing mt (MergeDebt c d) rs) =
+  shrink m@(MOngoing mt MergeDebt {spentCredits, unspentCredits} rs) =
       [ MCompleted mt (completeM m) ]
-   <> [ MOngoing mt (MergeDebt c' d') rs'
+   <> [ assert (mergeDebtInvariant md') $
+        MOngoing mt md' rs'
       | rs' <- shrink rs
       , length rs' > 1
-      , let d' = min d (sum (map (length . getNonEmptyRun) rs))
-      , let c' = min c (d' - 1)
+      , let totalDebt'    = sum (map (length . getNonEmptyRun) rs')
+      , suppliedCredits' <- shrink (min (spentCredits+unspentCredits)
+                                        (totalDebt'-1))
+      , unspentCredits'  <- shrink (min unspentCredits suppliedCredits')
+      , let spentCredits' = suppliedCredits' - unspentCredits'
+      , let md' = MergeDebt {
+                    spentCredits   = spentCredits',
+                    unspentCredits = unspentCredits',
+                    totalDebt      = totalDebt'
+                  }
       ]
 
 instance Arbitrary NonEmptyRun where
