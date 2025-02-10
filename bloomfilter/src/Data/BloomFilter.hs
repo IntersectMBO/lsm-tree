@@ -153,7 +153,7 @@ elemHashes !ch !ub = go 0 where
     go !i = let idx' :: Word64
                 !idx' = evalHashes ch i in
             let idx :: Int
-                !idx = fromIntegral (idx' `V.unsafeRemWord64` size ub) in
+                !idx = fromIntegral (idx' `V.reduceRange` size ub) in
             -- While the idx' can cover the full Word64 range,
             -- after taking the remainder, it now must fit in
             -- and Int because it's less than the filter size.

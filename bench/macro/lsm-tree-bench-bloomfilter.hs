@@ -48,7 +48,7 @@ main = do
 -- | The number of entries in the filter in the smallest LSM runs is
 -- @2^benchmarkSizeBase@
 benchmarkSizeBase :: SizeBase
-benchmarkSizeBase = 16
+benchmarkSizeBase = 18
 
 -- | The number of lookups to do. This has to be smaller than the total size of
 -- all the filters (otherwise we will not get true positive probes, which is

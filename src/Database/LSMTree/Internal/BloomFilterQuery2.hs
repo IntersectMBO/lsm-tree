@@ -4,6 +4,7 @@
 {-# LANGUAGE UnboxedTuples       #-}
 
 {-# OPTIONS_GHC -O2 -fregs-iterative -fmax-inline-alloc-size=512 #-}
+{-# OPTIONS_GHC -ddump-to-file -ddump-stg-final -ddump-cmm #-}
 -- The use of -fregs-iterative here does a better job in the hot loop for
 -- the bloomQueriesBody below. It eliminates all spilling to the stack.
 -- There's just 6 stack reads in the loop now, no writes.
@@ -246,7 +247,7 @@ prepInitialCandidateProbes
         !hn      = BF.hashesN filter - 1
         !bix     = (fromIntegral :: Word64 -> Int) $
                    Bloom.evalCheapHashes keyhash hn
-                     `BV64.unsafeRemWord64` -- size must be > 0
+                     `BV64.reduceRange` -- size must be > 0
                    BF.size filter           -- bloomInvariant ensures this
     BV64.prefetchIndex (BF.bitArray filter) bix
     assert ((rix, kix, hn, bix) == unpackCandidateProbe (CandidateProbe rix kix hn bix)) $ return ()
@@ -390,7 +391,7 @@ bloomQueriesBody !filters !keyhashes !candidateProbes =
         let !keyhash = P.indexPrimArray keyhashes kix
             !bix     = (fromIntegral :: Word64 -> Int) $
                        Bloom.evalCheapHashes keyhash hn
-                         `BV64.unsafeRemWord64` -- size must be > 0
+                         `BV64.reduceRange` -- size must be > 0
                        BF.size filter           -- bloomInvariant ensures this
         BV64.prefetchIndex (BF.bitArray filter) bix
         P.writePrimArray candidateProbes i_w (CandidateProbe rix kix hn bix)

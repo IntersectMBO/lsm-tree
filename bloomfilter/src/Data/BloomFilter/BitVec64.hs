@@ -13,7 +13,8 @@ module Data.BloomFilter.BitVec64 (
     freeze,
     unsafeFreeze,
     thaw,
-    unsafeRemWord64,
+    --unsafeRemWord64,
+    reduceRange,
 ) where
 
 import           Control.Monad.ST (ST)
@@ -30,7 +31,7 @@ import           GHC.ST (ST (ST))
 import           GHC.Word (Word64 (W64#))
 
 #if MIN_VERSION_base(4,17,0)
-import           GHC.Exts (remWord64#)
+import           GHC.Exts (remWord64#, timesWord2#, wordToWord64#, word64ToWord#)
 #else
 import           GHC.Exts (remWord#)
 #endif
@@ -119,6 +120,17 @@ unsafeRemWord64 (W64# x#) (W64# y#) = W64# (x# `remWord64#` y#)
 #else
 unsafeRemWord64 (W64# x#) (W64# y#) = W64# (x# `remWord#` y#)
 #endif
+
+-- | Given a word sampled uniformly from the full 'Word64' range, reduce it
+-- fairly to a value in the range @[0,n)@.
+--
+{-# INLINE reduceRange #-}
+reduceRange :: Word64 -- ^ Sample from 0..2^64-1
+            -> Word64 -- ^ upper bound of range [0,n)
+            -> Word64 -- ^ result within range
+reduceRange (W64# x) (W64# n) =
+    case timesWord2# (word64ToWord# x) (word64ToWord# n) of
+      (# high, _low #) -> W64# (wordToWord64# high)
 
 w2i :: Word64 -> Int
 w2i = fromIntegral

@@ -78,7 +78,7 @@ insertHashes :: Hashes h => MBloom' s h a -> h a -> ST s ()
 insertHashes (MBloom k m v) !h = go 0
   where
     go !i | i >= k = return ()
-          | otherwise = let !idx = evalHashes h i `rem` m
+          | otherwise = let !idx = evalHashes h i `V.reduceRange` m
                         in V.unsafeWrite v idx True >> go (i + 1)
 
 -- | Query a mutable Bloom filter for membership.  If the value is
@@ -92,7 +92,7 @@ elemHashes !ch (MBloom k m v) = go 0 where
     go :: Int -> ST s Bool
     go !i | i >= k    = return True
           | otherwise = do let !idx' = evalHashes ch i
-                           let !idx = idx' `rem` m
+                           let !idx = idx' `V.reduceRange` m
                            b <- V.unsafeRead v idx
                            if b
                            then go (i + 1)
