@@ -17,6 +17,7 @@ import qualified Test.Database.LSMTree.Internal.Index.Compact
 import qualified Test.Database.LSMTree.Internal.Index.Ordinary
 import qualified Test.Database.LSMTree.Internal.Lookup
 import qualified Test.Database.LSMTree.Internal.Merge
+import qualified Test.Database.LSMTree.Internal.MergingRun
 import qualified Test.Database.LSMTree.Internal.MergingTree
 import qualified Test.Database.LSMTree.Internal.Monkey
 import qualified Test.Database.LSMTree.Internal.PageAcc
@@ -59,6 +60,7 @@ main = do
     , Test.Database.LSMTree.Internal.Entry.tests
     , Test.Database.LSMTree.Internal.Lookup.tests
     , Test.Database.LSMTree.Internal.Merge.tests
+    , Test.Database.LSMTree.Internal.MergingRun.tests
     , Test.Database.LSMTree.Internal.MergingTree.tests
     , Test.Database.LSMTree.Internal.Monkey.tests
     , Test.Database.LSMTree.Internal.PageAcc.tests

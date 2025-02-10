@@ -1,43 +1,60 @@
-{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE CPP             #-}
+{-# LANGUAGE MultiWayIf      #-}
+{-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE TypeFamilies    #-}
 
 {- HLINT ignore "Use when" -}
 
 -- | An incremental merge of multiple runs.
 module Database.LSMTree.Internal.MergingRun (
-    MergingRun (..)
+    -- * Merging run
+    MergingRun
+  , NumRuns (..)
   , new
   , newCompleted
   , duplicateRuns
   , supplyCredits
   , expectCompleted
-    -- * Useful types
+  , snapshot
+  , numRuns
+
+    -- * Credit tracking
+    -- $credittracking
   , Credits (..)
   , CreditThreshold (..)
-  , NumRuns (..)
+  , SuppliedCredits (..)
+  , SpentCredits (..)
+  , UnspentCredits (..)
+
+  -- * Concurrency
+  -- $concurrency
+
     -- * Internal state
-  , UnspentCreditsVar (..)
-  , TotalStepsVar (..)
+  , pattern MergingRun
   , MergingRunState (..)
-  , SpentCreditsVar (..)
   , MergeKnownCompleted (..)
+  , CreditsVar (..)
+  , pattern CreditsPair
   ) where
 
 import           Control.ActionRegistry
 import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.DeepSeq (NFData (..))
-import           Control.Monad (void, when)
+import           Control.Exception (ErrorCall (..))
+import           Control.Monad (when)
 import           Control.Monad.Class.MonadST (MonadST)
 import           Control.Monad.Class.MonadSTM (MonadSTM (..))
 import           Control.Monad.Class.MonadThrow (MonadCatch (bracketOnError),
-                     MonadMask)
+                     MonadMask, MonadThrow (throwIO))
 import           Control.Monad.Primitive
 import           Control.RefCount
+import           Data.Bits
 import           Data.Maybe (fromMaybe)
 import           Data.Primitive.MutVar
 import           Data.Primitive.PrimVar
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Assertions (assert)
-import           Database.LSMTree.Internal.Entry (NumEntries (..), unNumEntries)
+import           Database.LSMTree.Internal.Entry (NumEntries (..))
 import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
 import           Database.LSMTree.Internal.Merge (Merge, MergeType (..),
                      StepResult (..))
@@ -51,12 +68,23 @@ import           System.FS.BlockIO.API (HasBlockIO)
 
 data MergingRun m h = MergingRun {
       mergeNumRuns        :: !NumRuns
-      -- | Sum of number of entries in the input runs
+      -- | Sum of number of entries in the input runs.
+      -- This also corresponds to the total merging debt.
     , mergeNumEntries     :: !NumEntries
-      -- | The number of currently /unspent/ credits
-    , mergeUnspentCredits :: !(UnspentCreditsVar (PrimState m))
-      -- | The total number of performed merging steps.
-    , mergeStepsPerformed :: !(TotalStepsVar (PrimState m))
+
+      -- See $credittracking
+
+      -- | A pair of counters for tracking supplied credits:
+      --
+      -- 1. The supplied credits that have been spent on merging steps plus the
+      --    supplied credits that are in the process of being spent.
+      -- 2. The supplied credits that have not been spent and are available to
+      --    spend.
+      --
+      -- The counters are always read & modified together atomically.
+      --
+    , mergeCreditsVar     :: !(CreditsVar (PrimState m))
+
       -- | A variable that caches knowledge about whether the merge has been
       -- completed. If 'MergeKnownCompleted', then we are sure the merge has
       -- been completed, otherwise if 'MergeMaybeCompleted' we have to check the
@@ -73,14 +101,6 @@ newtype NumRuns = NumRuns { unNumRuns :: Int }
   deriving stock (Show, Eq)
   deriving newtype NFData
 
-newtype UnspentCreditsVar s = UnspentCreditsVar {
-    getUnspentCreditsVar :: PrimVar s Int
-  }
-
-newtype TotalStepsVar s = TotalStepsVar {
-    getTotalStepsVar ::  PrimVar s Int
-  }
-
 data MergingRunState m h =
     CompletedMerge
       !(Ref (Run m h))
@@ -88,16 +108,10 @@ data MergingRunState m h =
   | OngoingMerge
       !(V.Vector (Ref (Run m h)))
       -- ^ Input runs
-      !(SpentCreditsVar (PrimState m))
-      -- ^ The total number of spent credits.
       !(Merge m h)
 
-newtype SpentCreditsVar s = SpentCreditsVar {
-    getSpentCreditsVar :: PrimVar s Int
-  }
-
 data MergeKnownCompleted = MergeKnownCompleted | MergeMaybeCompleted
-  deriving stock (Show, Eq, Read)
+  deriving stock Eq
 
 instance NFData MergeKnownCompleted where
   rnf MergeKnownCompleted = ()
@@ -139,9 +153,8 @@ new hfs hbio resolve caching alloc mergeType runPaths inputRuns =
         <$> Merge.new hfs hbio caching alloc mergeType resolve runPaths runs
       let numInputRuns = NumRuns $ V.length runs
       let numInputEntries = V.foldMap' Run.size runs
-      spentCreditsVar <- SpentCreditsVar <$> newPrimVar 0
       unsafeNew numInputRuns numInputEntries MergeMaybeCompleted $
-        OngoingMerge runs spentCreditsVar merge
+        OngoingMerge runs merge
 
 {-# SPECIALISE newCompleted ::
      NumRuns
@@ -174,9 +187,12 @@ unsafeNew ::
   -> MergeKnownCompleted
   -> MergingRunState m h
   -> m (Ref (MergingRun m h))
+unsafeNew _ mergeNumEntries _ _
+  | SpentCredits (numEntriesToTotalDebt mergeNumEntries) > maxBound
+  = throwIO (ErrorCall "MergingRun.new: run size exceeds maximum of 2^40")
+
 unsafeNew mergeNumRuns mergeNumEntries knownCompleted state = do
-    mergeUnspentCredits <- UnspentCreditsVar <$> newPrimVar 0
-    mergeStepsPerformed <- TotalStepsVar <$> newPrimVar 0
+    mergeCreditsVar <- CreditsVar <$> newPrimVar 0
     case state of
       OngoingMerge{}   -> assert (knownCompleted == MergeMaybeCompleted) (pure ())
       CompletedMerge{} -> pure ()
@@ -186,8 +202,7 @@ unsafeNew mergeNumRuns mergeNumEntries knownCompleted state = do
       MergingRun {
         mergeNumRuns
       , mergeNumEntries
-      , mergeUnspentCredits
-      , mergeStepsPerformed
+      , mergeCreditsVar
       , mergeKnownCompleted
       , mergeState
       , mergeRefCounter
@@ -196,7 +211,7 @@ unsafeNew mergeNumRuns mergeNumEntries knownCompleted state = do
     finalise var = withMVar var $ \case
         CompletedMerge r ->
           releaseRef r
-        OngoingMerge rs _ m -> do
+        OngoingMerge rs m -> do
           V.forM_ rs releaseRef
           Merge.abort m
 
@@ -211,265 +226,504 @@ duplicateRuns (DeRef mr) =
     -- We take the references while holding the MVar to make sure the MergingRun
     -- does not get completed concurrently before we are done.
     withMVar (mergeState mr) $ \case
-      CompletedMerge r    -> V.singleton <$> dupRef r
-      OngoingMerge rs _ _ -> withActionRegistry $ \reg ->
+      CompletedMerge r  -> V.singleton <$> dupRef r
+      OngoingMerge rs _ -> withActionRegistry $ \reg ->
         V.mapM (\r -> withRollback reg (dupRef r) releaseRef) rs
+
+-- | Take a snapshot of the state of a merging run.
+snapshot ::
+     (PrimMonad m, MonadMVar m)
+  => Ref (MergingRun m h)
+  -> m (MergingRunState m h,
+        SuppliedCredits,
+        NumRuns,
+        NumEntries)
+snapshot (DeRef MergingRun {..}) = do
+    state <- readMVar mergeState
+    (SpentCredits   spent,
+     UnspentCredits unspent) <- atomicReadCredits mergeCreditsVar
+    let supplied = SuppliedCredits (spent + unspent)
+    return (state, supplied, mergeNumRuns, mergeNumEntries)
+
+numRuns :: Ref (MergingRun m h) -> NumRuns
+numRuns (DeRef MergingRun {mergeNumRuns}) = mergeNumRuns
 
 {-------------------------------------------------------------------------------
   Credits
 -------------------------------------------------------------------------------}
 
-{-
-  Note [Merge Batching]
-~~~~~~~~~~~~~~
+{- $credittracking
 
-  Merge work is done in batches based on accumulated, unspent credits and a
-  threshold value. Moreover, merging runs can be shared across tables, which
-  means that multiple threads can contribute to the same merge concurrently.
-  The design to contribute credits to the same merging run is largely lock-free.
-  It ensures consistency of the unspent credits and the merge state, while
-  allowing threads to progress without waiting on other threads.
+The credits concept we use here comes from amortised analysis of data
+structures (see the Bankers Method from Okasaki). Though here we use it not as
+an analysis method but within the code itself for tracking the state of the
+scheduled (i.e. incremental) merge.
 
-  First, credits are added atomically to a PrimVar that holds the current total
-  of unspent credits. If this addition exceeded the threshold, then credits are
-  atomically subtracted from the PrimVar to get it below the threshold. The
-  number of subtracted credits is then the number of merge steps that will be
-  performed. While doing the merging work, a (more expensive) MVar lock is taken
-  to ensure that the merging work itself is performed only sequentially. If at
-  some point, doing the merge work resulted in the merge being done, then the
-  merge is converted into a new run.
+In the prototype things are relatively simple: we simulate performing merge
+work in batches (based on a threshold) and the credit tracking reflects this by
+tracking unspent credits (and the debt corresponding to the remaining merge
+work to do).
 
-  In the presence of async exceptions, we offer a weaker guarantee regarding
-  consistency of the accumulated, unspent credits and the merge state: a merge
-  /may/ progress more than the number of credits that were taken. If an async
-  exception happens at some point during merging work, then we put back all the
-  credits we took beforehand. This makes the implementation simple, and merges
-  will still finish in time. It would be bad if we did not put back credits,
-  because then a merge might not finish in time, which will mess up the shape of
-  the levels tree.
+The implementation is similar but somewhat more complex. We also accumulate
+unspent credits until they reach a threshold at which point we do a batch of
+merging work. Unlike the prototype, the implementation tracks both credits
+spent credits as yet unspent. We will elaborate on why and how below.
 
-  The implementation also tracks the total of spent credits, and the number of
-  perfomed merge steps. These are the use cases:
+In the prototype, the credits spent equals the merge steps performed. The
+same holds in the real implementation, but making it so is more complicated.
+When we spend credits on merging work, the number of steps we perform is not
+guaranteed to be the same as the credits supplied. For example we may ask to do
+100 credits of merging work, but the merge code (for perfectly sensible
+efficiency reasons) will decide to do 102 units of merging work. The rule is
+that we may do (slightly) more work than the credits supplied but not less.
+To account for this we spend more credits, corresponding to the excess merging
+work performed. We spend them by borrowing them from the unspent credits, which
+may leave the unspent credits with a negative balance.
 
-  * The total of spent credits + the total of unspent credits is used by the
-    snapshot feature to restore merge work on snapshot load that was lost during
-    snapshot creation.
+Furthermore, the real implementation has to cope with concurrency: multiple
+threads sharing the same 'MergingRun' and calling 'supplyCredits' concurrently.
+The credit accounting thus needs to define the state of the credits while
+merging work is in progress by some thread. The approach we take is to define
+spent credits to include those that are in the process of being spent, leaving
+unspent credits as those that are available for a thread to spend on merging
+work.
 
-  * For simplicity, merges are allowed to do more steps than requested. However,
-    it does mean that once we do more steps next time a batch of work is done,
-    then we should account for the surplus of steps performed by the previous
-    batch. The total of spent credits + the number of performed merge steps is
-    used to compute this surplus, and adjust for it.
+Thus we track two things:
 
-    TODO: we should reconsider at some later point in time whether this surplus
-    adjustment is necessary. It does not make a difference for correctness, but
-    it does mean we get a slightly better distribution of work over time. For
-    sensible batch sizes and workloads without many duplicate keys, it probably
-    won't make much of a difference. However, without this calculation the
-    surplus can accumulate over time, so if we're really pedantic about work
-    distribution then this is the way to go.
+ * credits spent ('SpentCredits'): credits supplied that have been or are in
+   the process of being spent on performing merging steps; and
 
-  Async exceptions are allowed to mess up the consistency between the the merge
-  state, the merge steps performed variable, and the spent credits variable.
-  There is an important invariant that we maintain, even in the presence of
-  async exceptions: @merge steps actually performed >= recorded merge steps
-  performed >= recorded spent credits@. TODO: and this makes it correct (?).
+ * credits unspent ('UnspentCredits'): credits supplied that are not yet spent
+   and are thus available to spend.
+
+The credits supplied is the sum of the credits spent and unspent.
+
+The credits spent and the steps performed (or in the process of being
+performed) will typically be equal. They are not guaranteed to be equal in the
+presence of exceptions (synchronous or asynchronous). In this case we offer a
+weaker guarantee: : a merge /may/ progress more steps than the number of
+credits that were spent. If an exception happens at some point during merging
+work, we will \"unspend\" all the credits we intended to spend, but we will not
+revert all merging steps that we already successfully performed before the
+exception. Thus we may do more merging steps than the credits we accounted as
+spent. This makes the implementation simple, and merges will still finish in
+time. It would be bad if we did not put back credits, because then a merge
+might not finish in time, which will mess up the shape of the levels tree.
 -}
 
 newtype Credits = Credits Int
+  deriving stock (Eq, Ord)
+  deriving newtype (Num, Real, Enum, Integral)
 
--- | Credits are accumulated until they go over the 'CreditThreshold', after
--- which a batch of merge work will be performed. Configuring this threshold
--- should allow to achieve a nice balance between spreading out I/O and
--- achieving good (concurrent) performance.
-newtype CreditThreshold = CreditThreshold { getCreditThreshold :: Int }
+{-# INLINE numEntriesToTotalDebt #-}
+-- | The total debt of the merging run is exactly the sum total number of
+-- entries across all the input runs to be merged.
+--
+numEntriesToTotalDebt :: NumEntries -> Credits
+numEntriesToTotalDebt (NumEntries n) = Credits n
+
+-- | Unspent credits are accumulated until they go over the 'CreditThreshold',
+-- after which a batch of merge work will be performed. Configuring this
+-- threshold should allow to achieve a nice balance between spreading out
+-- I\/O and achieving good (concurrent) performance.
+--
+-- Note that ideally the batch size for different LSM levels should be
+-- co-prime so that merge work at different levels is not synchronised.
+--
+newtype CreditThreshold = CreditThreshold Credits
+
+-- | The supplied credits is simply the sum of all the credits that have been
+-- (successfully) supplied to a merging run via 'supplyCredits'.
+--
+-- The supplied credits is also the sum of the 'SpentCredits' and
+-- 'UnspentCredits'.
+--
+-- The supplied credits increases monotonically, even in the presence of
+-- (a)synchronous exceptions.
+--
+newtype SuppliedCredits = SuppliedCredits Credits
+
+-- | The spent credits are supplied credits that have been spent on performing
+-- merging steps plus the supplied credits that are in the process of being
+-- spent (by some thread calling 'supplyCredits').
+--
+newtype SpentCredits = SpentCredits Credits
+  deriving newtype (Eq, Ord)
+
+-- | 40 bit unsigned number
+instance Bounded SpentCredits where
+    minBound = SpentCredits 0
+    maxBound = SpentCredits (Credits (1 `unsafeShiftL` 40 - 1))
+
+-- | The unspent credits are supplied credits that have not yet been spent on
+-- performing merging steps and are available to spend.
+--
+-- Note: unspent credits may be negative! This can occur when more merge
+-- steps were performed than there were credits to cover. In this case the
+-- credits are borrowed from the unspent credits, which may result in the
+-- current unspent credits being negative for a time.
+--
+newtype UnspentCredits = UnspentCredits Credits
+  deriving newtype (Eq, Ord)
+
+-- | 24 bit signed number
+instance Bounded UnspentCredits where
+    minBound = UnspentCredits (Credits ((-1) `unsafeShiftL` 23))
+    maxBound = UnspentCredits (Credits (  1  `unsafeShiftL` 23 - 1))
+
+-- | This holds the pair of the 'SpentCredits' and the 'UnspentCredits'. All
+-- operations on this pair are atomic.
+--
+-- The model to think about is a @TVar (SpentCredits, UnspentCredits)@ but the
+-- physical representation is a single mutable unboxed 64bit signed @Int@,
+-- using 40 bits for the spent credits and 24 for the unspent credits. The
+-- spent credits are unsigned, while the unspent credits are signed, so 40 bits
+-- and 23+1 bits respectively. This imposes a limit of just over 1 trillion for
+-- the spent credits and thus run size, and 8.3 million for the unspent credits
+-- (23 + sign bit).
+--
+-- If these limits ever become restrictive, then the implementation could be
+-- changed to use a TVar or a double-word CAS (DWCAS, i.e. 128bit).
+--
+newtype CreditsVar s = CreditsVar (PrimVar s Int)
+
+pattern CreditsPair :: SpentCredits -> UnspentCredits -> Int
+pattern CreditsPair sc uc <- (unpackCreditsPair -> (sc, uc))
+  where
+    CreditsPair sc uc = packCreditsPair sc uc
+#if MIN_VERSION_GLASGOW_HASKELL(9,2,0,0)
+{-# INLINE CreditsPair #-}
+#endif
+{-# COMPLETE CreditsPair #-}
+
+{-# INLINE packCreditsPair #-}
+packCreditsPair :: SpentCredits -> UnspentCredits -> Int
+packCreditsPair spent@(SpentCredits (Credits sc))
+                unspent@(UnspentCredits (Credits uc)) =
+      assert (spent   >= minBound && spent   <= maxBound) $
+      assert (unspent >= minBound && unspent <= maxBound) $
+
+      sc `unsafeShiftL` 24
+  .|. (uc .&. 0xffffff)
+
+{-# INLINE unpackCreditsPair #-}
+unpackCreditsPair :: Int -> (SpentCredits, UnspentCredits)
+unpackCreditsPair cp =
+    -- we use unsigned shift for spent, and sign extending shift for unspent
+    ( SpentCredits   (Credits (w2i (i2w cp `unsafeShiftR` 24)))
+    , UnspentCredits (Credits ((cp `unsafeShiftL` 40) `unsafeShiftR` 40))
+    )
+  where
+    i2w :: Int -> Word
+    w2i :: Word -> Int
+    i2w = fromIntegral
+    w2i = fromIntegral
+
+{-------------------------------------------------------------------------------
+  Credit transactions
+-------------------------------------------------------------------------------}
+
+{- $concurrency
+
+Merging runs can be shared across tables, which means that multiple threads can
+contribute to the same merge concurrently. The design to contribute credits to
+the same merging run is largely lock-free. It ensures consistency of the
+unspent credits and the merge state, while allowing threads to progress without
+waiting on other threads.
+
+The entry point for merging is 'supplyCredits'. This may be called by
+concurrent threads that share the same merging run. No locks are held
+initially.
+
+The main lock we will discuss is the 'mergeState' 'StrictMVar', and we will
+refer to it as the merge lock.
+
+We get the easy things out of the way first: the 'mergeKnownCompleted'
+variable is purely an optimisation. It starts out as 'MergeMaybeCompleted'
+and is only ever modified once to 'MergeKnownCompleted'. It is modified with
+the merge lock held, but read without the lock. It does not matter if a thread
+reads a stale value of 'MergeMaybeCompleted'. We can analyse the remainder of
+the algorithm as if we were always in the 'MergeMaybeCompleted' state.
+
+Variable access and locks:
+
+* 'CreditsVar' contains the pair of the current 'SpentCredits' and
+  'UnspentCredits'. Is only operated upon using transactions (atomic CAS),
+  and most of these transactions are done without the merge lock held.
+  The two constituent components can increase and decrease, but the total
+  supplied credits (sum of spent and unspent) can only increase.
+
+* 'MergeState' contains the state of the merge itself. It is protected by the
+  merge lock.
+
+First, we do a moderately complex transaction 'atomicDepositAndSpendCredits',
+which does the following:
+
+ * Deposit credits to the unspent pot, while guaranteeing that the total
+   supplied credits does not exceed the total debt for the merging run.
+ * Compute any leftover credits (that would have exceeded the total debt).
+ * Compute the credits to spend on performing merge steps, depending on which
+   of three cases we are in:
+
+    1. we have supplied enough credits to complete the merge;
+    2. not case 1, but enough unspent credits have accumulated to do a batch of
+       merge work;
+    3. not case 1 or 2, not enough credits to do any merge work.
+
+  * Update the spent and unspent pots
+  * Return the credits to spend now and any leftover credits.
+
+If there are now credits to spend, then we attempt to perform that number of
+merging steps. While doing the merging work, the (more expensive) merge lock is
+taken to ensure that the merging work itself is performed only sequentially.
+
+Note that it is not guaranteed that the merge gets completed, even if the
+credits supplied has reached the total debt. It may be interrupted during the
+merge (by an async exception). This does not matter because the merge will be
+completed in 'expectCompleted'. Completing early is an optimisation.
+
+If an exception occurs during the merge then the credits that were in the
+process of being spent are transferred back from the spent to the unspent pot
+using 'atomicSpendCredits' (with a negative amount). It is this case that
+implies that the spent credits may not increase monotonically, even though the
+supplied credits do increase monotonically.
+
+Once performing merge steps is done, if it turns out that excess merge steps
+were performed then we must do a further accounting transaction:
+'atomicSpendCredits' to spend the excess credits. This is done without respect
+to the balance of the unspent credits, which may result in the unspent credit
+balance becoming negative. This is ok, and will result in more credits having
+to be supplied next time before reaching the credit batch threshold. The
+unspent credits can not be negative by the time the merge is complete because
+the performing of merge steps cannot do excess steps when it reaches the end of
+the merge.
+
+-}
+
+{-# INLINE atomicReadCredits #-}
+atomicReadCredits ::
+     PrimMonad m
+  => CreditsVar (PrimState m)
+  -> m (SpentCredits, UnspentCredits)
+atomicReadCredits (CreditsVar v) =
+    unpackCreditsPair <$> atomicReadInt v
+
+{-# INLINE atomicModifyInt #-}
+-- | Atomically modify a single mutable integer variable, using a CAS loop.
+atomicModifyInt ::
+     PrimMonad m
+  => PrimVar (PrimState m) Int
+  -> (Int -> (Int, a))
+  -> m a
+atomicModifyInt var f =
+    readPrimVar var >>= casLoop
+  where
+    casLoop !before = do
+      let (!after, !result) = f before
+      before' <- casInt var before after
+      if before' == before
+        then return result
+        else casLoop before'
+
+{-# SPECIALISE atomicDepositAndSpendCredits ::
+     CreditsVar RealWorld
+  -> Credits
+  -> CreditThreshold
+  -> Credits
+  -> IO (Credits, Credits) #-}
+-- | Atomically: add to the unspent credits pot, subject to the supplied
+-- credits not exceeding the total debt. Return the new spent and unspent
+-- credits, plus any leftover credits in excess of the total debt.
+--
+-- This is the only operation that changes the total supplied credits, and in
+-- a non-decreasing way. Hence overall the supplied credits is monotonically
+-- non-decreasing.
+--
+atomicDepositAndSpendCredits ::
+     PrimMonad m
+  => CreditsVar (PrimState m)
+  -> Credits -- ^ total debt
+  -> CreditThreshold
+  -> Credits -- ^ to deposit
+  -> m (Credits, Credits) -- ^ (spendCredits, leftoverCredits)
+atomicDepositAndSpendCredits (CreditsVar !var) !totalDebt
+                             (CreditThreshold !batchThreshold) !credits =
+    assert (credits >= 0) $
+    atomicModifyInt var $ \(CreditsPair !spent !unspent) ->
+      let (supplied', unspent', leftover) = depositCredits spent unspent
+          (spend, spent'', unspent'')
+
+            -- 1. supplied enough credits to complete the merge;
+            | supplied' == totalDebt
+            = spendAllCredits   spent unspent'
+
+            -- 2. not case 1, but enough unspent credits have accumulated to do
+            -- a batch of merge work;
+            | (\(UnspentCredits x)->x) unspent' >= batchThreshold
+            = spendBatchCredits spent unspent'
+
+            -- 3. not case 1 or 2, not enough credits to do any merge work.
+            | otherwise
+            = (0, spent, unspent')
+
+       in txResultFor spent'' unspent'' spend leftover
+  where
+    txResultFor (SpentCredits spent) (UnspentCredits unspent) spend leftover =
+      let !after = CreditsPair (SpentCredits spent) (UnspentCredits unspent)
+          result = (spend, leftover)
+
+       in assert (spent + unspent <= totalDebt) $
+          assert (leftover >= 0 && leftover <= credits) $
+          (after, result)
+
+    depositCredits (SpentCredits !spent) (UnspentCredits !unspent) =
+      let !supplied  = spent + unspent
+          !leftover  = max 0 (supplied + credits - totalDebt)
+          !deposit   = credits - leftover
+          !unspent'  = unspent + deposit
+          !supplied' = spent + unspent'
+       in assert (unspent'  >= unspent) $
+          assert (deposit   >= 0) $
+          assert (leftover  >= 0) $
+          (supplied', UnspentCredits unspent', leftover)
+
+    spendBatchCredits (SpentCredits !spent) (UnspentCredits !unspent) =
+      -- numBatches may be zero, in which case the result will be zero
+      let !nBatches = unspent `div` batchThreshold
+          !spend    = nBatches * batchThreshold
+          !spent'   = spent   + spend
+          !unspent' = unspent - spend
+       in assert (spend >= 0) $
+          assert (unspent' < batchThreshold) $
+          assert (spent' + unspent' == spent + unspent) $
+          (spend, SpentCredits spent', UnspentCredits unspent')
+
+    spendAllCredits (SpentCredits !spent) (UnspentCredits !unspent) =
+      let spend    = unspent
+          spent'   = spent + spend
+          unspent' = 0
+       in assert (spent' + unspent' == spent + unspent) $
+          (spend, SpentCredits spent', UnspentCredits unspent')
+
+
+{-# SPECIALISE atomicSpendCredits ::
+     CreditsVar RealWorld
+  -> Credits
+  -> IO () #-}
+-- | Atomically: transfer the given number of credits from the unspent pot to
+-- the spent pot. The new unspent credits balance may be negative.
+--
+-- The amount to spend can also be negative to reverse a spending transaction.
+--
+-- The total supplied credits is unchanged.
+--
+atomicSpendCredits ::
+     PrimMonad m
+  => CreditsVar (PrimState m)
+  -> Credits -- ^ Can be positive to spend, or negative to unspend.
+  -> m ()
+atomicSpendCredits (CreditsVar var) spend =
+    atomicModifyInt var $ \(CreditsPair (SpentCredits   !spent)
+                                        (UnspentCredits !unspent)) ->
+      let spent'   = spent   + spend
+          unspent' = unspent - spend
+          after    = CreditsPair (SpentCredits   spent')
+                                 (UnspentCredits unspent')
+       in assert (spent' + unspent' == spent + unspent) $
+          (after, ())
+
+{-------------------------------------------------------------------------------
+  The main algorithms
+-------------------------------------------------------------------------------}
 
 {-# SPECIALISE supplyCredits ::
-     Credits
+     Ref (MergingRun IO h)
   -> CreditThreshold
-  -> Ref (MergingRun IO h)
-  -> IO () #-}
+  -> Credits
+  -> IO Credits #-}
 -- | Supply the given amount of credits to a merging run. This /may/ cause an
 -- ongoing merge to progress.
 supplyCredits ::
      forall m h. (MonadSTM m, MonadST m, MonadMVar m, MonadMask m)
-  => Credits
+  => Ref (MergingRun m h)
   -> CreditThreshold
-  -> Ref (MergingRun m h)
-  -> m ()
-supplyCredits (Credits c) creditsThresh (DeRef MergingRun {..}) = do
+  -> Credits
+  -> m Credits
+supplyCredits (DeRef MergingRun {
+                 mergeKnownCompleted,
+                 mergeNumEntries,
+                 mergeCreditsVar,
+                 mergeState
+               })
+              !creditBatchThreshold !credits =
+    assert (credits >= 0) $ do
     mergeCompleted <- readMutVar mergeKnownCompleted
+    case mergeCompleted of
+      MergeKnownCompleted -> pure credits
+      MergeMaybeCompleted ->
+        bracketOnError
+          -- Atomically add credits to the unspent credits (but not allowing
+          -- 'suppliedCredits' to exceed the total debt), determine which case
+          -- we're in and thus how many credits we should try to spend now on
+          -- performing merge steps. Return the credits to spend now and any
+          -- leftover credits that would exceed the debt limit.
+          (atomicDepositAndSpendCredits
+            mergeCreditsVar
+            (numEntriesToTotalDebt mergeNumEntries)
+            creditBatchThreshold credits)
 
-    -- The merge is already finished
-    if mergeCompleted == MergeKnownCompleted then
-      pure ()
-    else do
-      -- unspentCredits' is our /estimate/ of what the new total of unspent
-      -- credits is.
-      Credits unspentCredits' <- addUnspentCredits mergeUnspentCredits (Credits c)
-      totalSteps <- readPrimVar (getTotalStepsVar mergeStepsPerformed)
+          -- If an exception occurs while merging (sync or async) then we
+          -- reverse the spending of the credits (but not the deposit).
+          (\(spendCredits, _leftoverCredits) ->
+            atomicSpendCredits mergeCreditsVar (-spendCredits))
 
-      if totalSteps + unspentCredits' >= unNumEntries mergeNumEntries then do
-        -- We can finish the merge immediately
-        isMergeDone <-
-          bracketOnError (takeAllUnspentCredits mergeUnspentCredits)
-                         (putBackUnspentCredits mergeUnspentCredits)
-                         (stepMerge mergeState mergeStepsPerformed)
-        when isMergeDone $ completeMerge mergeState mergeKnownCompleted
-      else if unspentCredits' >= getCreditThreshold creditsThresh then do
-        -- We can do some merging work without finishing the merge immediately
-        isMergeDone <-
-          -- Try to take some unspent credits. The number of taken credits is
-          -- the number of merging steps we will try to do.
-          --
-          -- If an error happens during the body, then we put back as many
-          -- credits as we took, even if the merge has progressed. See Note
-          -- [Merge Batching] to see why this is okay.
-          bracketOnError
-            (tryTakeUnspentCredits mergeUnspentCredits creditsThresh (Credits unspentCredits'))
-            (mapM_ (putBackUnspentCredits mergeUnspentCredits)) $ \case
-              Nothing -> pure False
-              Just c' -> stepMerge mergeState mergeStepsPerformed c'
+          (\(spendCredits, leftoverCredits) -> do
+            when (spendCredits > 0) $ do
+              weFinishedMerge <-
+                performMergeSteps mergeState mergeCreditsVar spendCredits
 
-        -- If we just finished the merge, then we convert the output of the
-        -- merge into a new run. i.e., we complete the merge.
-        --
-        -- If an async exception happens before we get to perform the
-        -- completion, then that is fine. The next supplyCredits will
-        -- complete the merge.
-        when isMergeDone $ completeMerge mergeState mergeKnownCompleted
-      else
-        -- Just accumulate credits, because we are not over the threshold yet
-        pure ()
+              -- If an async exception happens before we get to perform the
+              -- completion, then that is fine. The next supplyCredits will
+              -- complete the merge.
+              when weFinishedMerge $
+                completeMerge mergeState mergeKnownCompleted
 
-{-# SPECIALISE addUnspentCredits ::
-     UnspentCreditsVar RealWorld
-  -> Credits
-  -> IO Credits #-}
--- | Add credits to unspent credits. Returns the /estimate/ of what the new
--- total of unspent credits is. The /actual/ total might have been changed again
--- by a different thread.
-addUnspentCredits ::
-     PrimMonad m
-  => UnspentCreditsVar (PrimState m)
-  -> Credits
-  -> m Credits
-addUnspentCredits (UnspentCreditsVar !var) (Credits c) =
-    Credits . (c+) <$> fetchAddInt var c
+            return leftoverCredits)
 
-{-# SPECIALISE tryTakeUnspentCredits ::
-     UnspentCreditsVar RealWorld
-  -> CreditThreshold
-  -> Credits
-  -> IO (Maybe Credits) #-}
--- | In a CAS-loop, subtract credits from the unspent credits to get it below
--- the threshold again. If succesful, return Just that many credits, or Nothing
--- otherwise.
---
--- The number of taken credits is a multiple of creditsThresh, so that the
--- amount of merging work that we do each time is relatively uniform.
---
--- Nothing can be returned if the variable has already gone below the threshold,
--- which may happen if another thread is concurrently doing the same loop on
--- 'mergeUnspentCredits'.
-tryTakeUnspentCredits ::
-     PrimMonad m
-  => UnspentCreditsVar (PrimState m)
-  -> CreditThreshold
-  -> Credits
-  -> m (Maybe Credits)
-tryTakeUnspentCredits
-    unspentCreditsVar@(UnspentCreditsVar !var)
-    thresh@(CreditThreshold !creditsThresh)
-    (Credits !before)
-  | before < creditsThresh = pure Nothing
-  | otherwise = do
-      -- numThresholds is guaranteed to be >= 1
-      let !numThresholds = before `div` creditsThresh
-          !creditsToTake = numThresholds * creditsThresh
-          !after = before - creditsToTake
-      assert (after < creditsThresh) $ pure ()
-      before' <- casInt var before after
-      if before' == before then
-        pure (Just (Credits creditsToTake))
-      else
-        tryTakeUnspentCredits unspentCreditsVar thresh (Credits before')
-
-{-# SPECIALISE putBackUnspentCredits ::
-     UnspentCreditsVar RealWorld
-  -> Credits
-  -> IO () #-}
-putBackUnspentCredits ::
-     PrimMonad m
-  => UnspentCreditsVar (PrimState m)
-  -> Credits
-  -> m ()
-putBackUnspentCredits (UnspentCreditsVar !var) (Credits !x) =
-    void $ fetchAddInt var x
-
-{-# SPECIALISE takeAllUnspentCredits ::
-     UnspentCreditsVar RealWorld
-  -> IO Credits #-}
--- | In a CAS-loop, subtract all unspent credits and return them.
-takeAllUnspentCredits ::
-     PrimMonad m
-  => UnspentCreditsVar (PrimState m)
-  -> m Credits
-takeAllUnspentCredits (UnspentCreditsVar !unspentCreditsVar) = do
-    prev <- readPrimVar unspentCreditsVar
-    casLoop prev
-  where
-    casLoop !prev = do
-      prev' <- casInt unspentCreditsVar prev 0
-      if prev' == prev then
-        pure (Credits prev)
-      else
-        casLoop prev'
-
-{-# SPECIALISE stepMerge ::
+{-# SPECIALISE performMergeSteps ::
      StrictMVar IO (MergingRunState IO h)
-  -> TotalStepsVar RealWorld
+  -> CreditsVar RealWorld
   -> Credits
   -> IO Bool #-}
-stepMerge ::
+performMergeSteps ::
      (MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
   => StrictMVar m (MergingRunState m h)
-  -> TotalStepsVar (PrimState m)
+  -> CreditsVar (PrimState m)
   -> Credits
   -> m Bool
-stepMerge mergeVar (TotalStepsVar totalStepsVar) (Credits c) =
+performMergeSteps mergeVar creditsVar (Credits credits) =
     withMVar mergeVar $ \case
-      CompletedMerge{} -> pure False
-      (OngoingMerge _rs (SpentCreditsVar spentCreditsVar) m) -> do
-        totalSteps <- readPrimVar totalStepsVar
-        spentCredits <- readPrimVar spentCreditsVar
-
-        -- If we previously performed too many merge steps, then we perform
-        -- fewer now.
-        let stepsToDo = max 0 (spentCredits + c - totalSteps)
-        -- Merge.steps guarantees that @stepsDone >= stepsToDo@ /unless/ the
-        -- merge was just now finished.
+      CompletedMerge{}   -> pure False
+      OngoingMerge _rs m -> do
+        -- We have dealt with the case of credits <= 0 above,
+        -- so here we know credits is positive
+        let stepsToDo = credits
         (stepsDone, stepResult) <- Merge.steps m stepsToDo
-        assert (case stepResult of
-                  MergeInProgress -> stepsDone >= stepsToDo
-                  MergeDone       -> True
-                ) $ pure ()
+        assert (stepResult == MergeDone || stepsDone >= stepsToDo) (pure ())
+        -- Merge.steps guarantees that @stepsDone >= stepsToDo@ /unless/ the
+        -- merge was just now finished and excess credit was supplied.
+        -- The latter is possible. As noted elsewhere, exceptions can result in
+        -- us having done more merge steps than we accounted for with spent
+        -- credits, hence it is possible when getting to the end of the merge
+        -- for us to try to do more steps than there are steps possible to do.
 
-        -- This should be the only point at which we write to these variables.
-        --
-        -- It is guaranteed that @totalSteps' >= spentCredits'@ /unless/ the
-        -- merge was just now finished.
-        let totalSteps' = totalSteps + stepsDone
-        let spentCredits' = spentCredits + c
-        -- It is guaranteed that
-        -- @readPrimVar totalStepsVar >= readPrimVar spentCreditsVar@,
-        -- /unless/ the merge was just now finished.
-        writePrimVar totalStepsVar $! totalSteps'
-        writePrimVar spentCreditsVar $! spentCredits'
-        assert (case stepResult of
-                  MergeInProgress -> totalSteps' >= spentCredits'
-                  MergeDone       -> True
-              ) $ pure ()
+        -- If excess merging steps were done then we must account for that.
+        -- We do so by borrowing the excess from the unspent credits pot and
+        -- spending them, i.e. doing a transfer from unspent to spent. This
+        -- may result in the unspent credits pot becoming negative.
+        let stepsExcess = Credits (stepsDone - stepsToDo)
+        when (stepsExcess > 0) $
+          atomicSpendCredits creditsVar stepsExcess
 
         pure $ stepResult == MergeDone
 
@@ -486,9 +740,11 @@ completeMerge ::
 completeMerge mergeVar mergeKnownCompletedVar = do
     modifyMVarMasked_ mergeVar $ \case
       mrs@CompletedMerge{} -> pure $! mrs
-      (OngoingMerge rs _spentCreditsVar m) -> do
+      (OngoingMerge rs m) -> do
         -- first try to complete the merge before performing other side effects,
         -- in case the completion fails
+        --TODO: Run.fromMutable claims not to be exception safe
+        -- may need to use uninteruptible mask
         r <- Merge.complete m
         V.forM_ rs releaseRef
         -- Cache the knowledge that we completed the merge
@@ -507,12 +763,24 @@ expectCompleted (DeRef MergingRun {..}) = do
     knownCompleted <- readMutVar mergeKnownCompleted
     -- The merge is not guaranteed to be complete, so we do the remaining steps
     when (knownCompleted == MergeMaybeCompleted) $ do
-      totalSteps <- readPrimVar (getTotalStepsVar mergeStepsPerformed)
-      let !credits = Credits (unNumEntries mergeNumEntries - totalSteps)
-      isMergeDone <- stepMerge mergeState mergeStepsPerformed credits
-      when isMergeDone $ completeMerge mergeState mergeKnownCompleted
+      (SpentCredits   spentCredits,
+       UnspentCredits unspentCredits) <- atomicReadCredits mergeCreditsVar
+      let !totalDebt       = numEntriesToTotalDebt mergeNumEntries
+          !suppliedCredits = spentCredits + unspentCredits
+          !credits         = assert (suppliedCredits <= totalDebt) $
+                             totalDebt - spentCredits
+      --TODO: the following ought to be true and be the right answer:
+      --  !credits         = assert (suppliedCredits == totalDebt) $
+      --                     unspentCredits
+
+      --TODO: what about exception safety: check if it is ok to be interrupted
+      -- between performMergeSteps and completeMerge here, and above.
+      weFinishedMerge <- performMergeSteps mergeState mergeCreditsVar credits
+      when weFinishedMerge $ completeMerge mergeState mergeKnownCompleted
       -- TODO: can we think of a check to see if we did not do too much work
-      -- here?
+      -- here? <-- assert (suppliedCredits == totalDebt) ought to do it!
+      -- A related question is if we finished the merge too early, could have
+      -- spread out the work better.
     withMVar mergeState $ \case
       CompletedMerge r -> dupRef r  -- return a fresh reference to the run
       OngoingMerge{} -> do

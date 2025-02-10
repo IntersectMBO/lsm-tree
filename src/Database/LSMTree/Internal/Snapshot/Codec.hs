@@ -474,13 +474,13 @@ instance DecodeVersioned RunNumber where
 -- SnapIncomingRun
 
 instance Encode (SnapIncomingRun RunNumber) where
-  encode (SnapMergingRun mpfl nr ne uc smrs) =
+  encode (SnapMergingRun mpfl nr ne sc smrs) =
        encodeListLen 6
     <> encodeWord 0
     <> encode mpfl
     <> encode nr
     <> encode ne
-    <> encode uc
+    <> encode sc
     <> encode smrs
   encode (SnapSingleRun x) =
        encodeListLen 2
@@ -520,14 +520,6 @@ instance DecodeVersioned MergePolicyForLevel where
         1 -> pure LevelLevelling
         _ -> fail ("[MergePolicyForLevel] Unexpected tag: " <> show tag)
 
--- UnspentCredits
-
-instance Encode UnspentCredits where
-  encode (UnspentCredits x) = encodeInt x
-
-instance DecodeVersioned UnspentCredits where
-  decodeVersioned V0 = UnspentCredits <$> decodeInt
-
 -- SnapMergingRunState
 
 instance Encode (SnapMergingRunState RunNumber) where
@@ -535,11 +527,10 @@ instance Encode (SnapMergingRunState RunNumber) where
          encodeListLen 2
       <> encodeWord 0
       <> encode x
-  encode (SnapOngoingMerge rs tc l) =
-         encodeListLen 4
+  encode (SnapOngoingMerge rs l) =
+         encodeListLen 3
       <> encodeWord 1
       <> encode rs
-      <> encode tc
       <> encode l
 
 instance DecodeVersioned (SnapMergingRunState RunNumber) where
@@ -548,17 +539,17 @@ instance DecodeVersioned (SnapMergingRunState RunNumber) where
       tag <- decodeWord
       case (n, tag) of
         (2, 0) -> SnapCompletedMerge <$> decodeVersioned v
-        (4, 1) -> SnapOngoingMerge <$>
-          decodeVersioned v <*> decodeVersioned v <*> decodeVersioned v
+        (3, 1) -> SnapOngoingMerge <$> decodeVersioned v
+                                   <*> decodeVersioned v
         _ -> fail ("[SnapMergingRunState] Unexpected combination of list length and tag: " <> show (n, tag))
 
--- SpentCredits
+-- SuppliedCredits
 
-instance Encode SpentCredits where
-  encode (SpentCredits x) = encodeInt x
+instance Encode SuppliedCredits where
+  encode (SuppliedCredits x) = encodeInt x
 
-instance DecodeVersioned SpentCredits where
-  decodeVersioned V0 = SpentCredits <$> decodeInt
+instance DecodeVersioned SuppliedCredits where
+  decodeVersioned V0 = SuppliedCredits <$> decodeInt
 
 -- MergeType
 

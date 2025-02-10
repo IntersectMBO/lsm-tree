@@ -746,7 +746,7 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels ul
           OneShot -> do
             let !required = MR.Credits (unNumEntries (V.foldMap' Run.size rs))
             let !thresh = creditThresholdForLevel conf ln
-            MR.supplyCredits required thresh mr
+            _leftoverCredits <- MR.supplyCredits mr thresh required
             -- This ensures the merge is really completed. However, we don't
             -- release the merge yet and only briefly inspect the resulting run.
             bracket (MR.expectCompleted mr) releaseRef $ \r ->
@@ -877,7 +877,8 @@ supplyCredits conf c levels =
         Merging mp mr -> do
           let !c' = scaleCreditsForMerge mp mr c
           let !thresh = creditThresholdForLevel conf ln
-          MR.supplyCredits c' thresh mr
+          _leftoverCredits <- MR.supplyCredits mr thresh c'
+          return ()
 
 -- | Scale a number of credits to a number of merge steps to be performed, based
 -- on the merging run.
@@ -893,7 +894,7 @@ scaleCreditsForMerge LevelTiering _ (Credits c) =
     -- runs come in).
     MR.Credits (c * (1 + 4))
 
-scaleCreditsForMerge LevelLevelling (DeRef mr) (Credits c) =
+scaleCreditsForMerge LevelLevelling mr (Credits c) =
     -- A levelling merge has 1 input run and one resident run, which is (up
     -- to) 4x bigger than the others. It needs to be completed before
     -- another run comes in.
@@ -903,7 +904,7 @@ scaleCreditsForMerge LevelLevelling (DeRef mr) (Credits c) =
     -- worst-case upper bound by looking at the sizes of the input runs.
     -- As as result, merge work would/could be more evenly distributed over
     -- time when the resident run is smaller than the worst case.
-    let NumRuns n = MR.mergeNumRuns mr
+    let NumRuns n = MR.numRuns mr
        -- same as division rounding up: ceiling (c * n / 4)
     in MR.Credits ((c * n + 3) `div` 4)
 
@@ -912,4 +913,4 @@ scaleCreditsForMerge LevelLevelling (DeRef mr) (Credits c) =
 creditThresholdForLevel :: TableConfig -> LevelNo -> MR.CreditThreshold
 creditThresholdForLevel conf (LevelNo _i) =
     let AllocNumEntries (NumEntries x) = confWriteBufferAlloc conf
-    in  MR.CreditThreshold x
+    in  MR.CreditThreshold (MR.Credits x)
