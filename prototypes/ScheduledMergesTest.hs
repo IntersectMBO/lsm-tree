@@ -242,10 +242,11 @@ data I = ISingle Run
   deriving stock Show
 
 -- simplified non-ST version of MergingRun
-data M t = MCompleted t Run
+data M t = MCompleted t MergeDebt Run
          | MOngoing
              t
              MergeDebt  -- debt bounded by input sizes
+             MergeCredit
              [NonEmptyRun]  -- at least 2 inputs
   deriving stock Show
 
@@ -270,11 +271,11 @@ fromI (IMerging m) = Merging MergePolicyTiering <$> fromM m
 
 fromM :: IsMergeType t => M t -> ST s (MergingRun t s)
 fromM m = do
-    let (mergeType, state) = case m of
-          MCompleted mt r  -> (mt, CompletedMerge r)
-          MOngoing mt d rs -> (mt, OngoingMerge d rs' (mergek mt rs'))
+    let (mergeType, mergeDebt, state) = case m of
+          MCompleted mt md r  -> (mt, md, CompletedMerge r)
+          MOngoing mt md mc rs -> (mt, md, OngoingMerge mc rs' (mergek mt rs'))
             where rs' = map getNonEmptyRun rs
-    MergingRun mergeType <$> newSTRef state
+    MergingRun mergeType mergeDebt <$> newSTRef state
 
 completeT :: T -> Run
 completeT (TCompleted r) = r
@@ -289,8 +290,8 @@ completeI (ISingle r)  = r
 completeI (IMerging m) = completeM m
 
 completeM :: IsMergeType t => M t -> Run
-completeM (MCompleted _ r)   = r
-completeM (MOngoing mt _ rs) = mergek mt (map getNonEmptyRun rs)
+completeM (MCompleted _ _ r)   = r
+completeM (MOngoing mt _ _ rs) = mergek mt (map getNonEmptyRun rs)
 
 instance Arbitrary T where
   arbitrary = QC.frequency
@@ -342,7 +343,9 @@ instance Arbitrary I where
 
 instance (Arbitrary t, IsMergeType t) => Arbitrary (M t) where
   arbitrary = QC.frequency
-      [ (1, MCompleted <$> arbitrary <*> arbitrary)
+      [ (1, do (mt, r) <- arbitrary
+               let md = MergeDebt (runSize r)
+               pure $ MCompleted mt md r)
       , (1, do
           mt <- arbitrary
           n  <- QC.chooseInt (2, 8)
@@ -352,20 +355,22 @@ instance (Arbitrary t, IsMergeType t) => Arbitrary (M t) where
           unspentCredits  <- QC.chooseInt (0, min (mergeBatchSize-1) suppliedCredits)
           let spentCredits = suppliedCredits - unspentCredits
           let md = MergeDebt {
+                     totalDebt
+                   }
+              mc = MergeCredit {
                     unspentCredits,
-                    spentCredits,
-                    totalDebt
+                    spentCredits
                  }
-          assert (mergeDebtInvariant md) $
-            return (MOngoing mt md rs))
+          assert (mergeDebtInvariant md mc) $
+            return (MOngoing mt md mc rs))
       ]
 
-  shrink (MCompleted mt r) =
-      [ MCompleted mt r' | r' <- shrink r ]
-  shrink m@(MOngoing mt MergeDebt {spentCredits, unspentCredits} rs) =
-      [ MCompleted mt (completeM m) ]
-   <> [ assert (mergeDebtInvariant md') $
-        MOngoing mt md' rs'
+  shrink (MCompleted mt md r) =
+      [ MCompleted mt md r' | r' <- shrink r ]
+  shrink m@(MOngoing mt md MergeCredit {spentCredits, unspentCredits} rs) =
+      [ MCompleted mt md (completeM m) ]
+   <> [ assert (mergeDebtInvariant md' mc') $
+        MOngoing mt md' mc' rs'
       | rs' <- shrink rs
       , length rs' > 1
       , let totalDebt'    = sum (map (length . getNonEmptyRun) rs')
@@ -374,9 +379,11 @@ instance (Arbitrary t, IsMergeType t) => Arbitrary (M t) where
       , unspentCredits'  <- shrink (min unspentCredits suppliedCredits')
       , let spentCredits' = suppliedCredits' - unspentCredits'
       , let md' = MergeDebt {
-                    spentCredits   = spentCredits',
-                    unspentCredits = unspentCredits',
                     totalDebt      = totalDebt'
+                  }
+            mc' = MergeCredit {
+                    spentCredits   = spentCredits',
+                    unspentCredits = unspentCredits'
                   }
       ]
 

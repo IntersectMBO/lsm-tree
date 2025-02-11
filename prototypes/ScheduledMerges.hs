@@ -61,8 +61,10 @@ module ScheduledMerges (
     IsMergeType(..),
     TreeMergeType(..),
     LevelMergeType(..),
+    MergeCredit(..),
     MergeDebt(..),
     Run,
+    runSize,
     supplyCreditsMergingTree,
     remainingDebtMergingTree,
     mergek,
@@ -136,11 +138,12 @@ data MergePolicy = MergePolicyTiering | MergePolicyLevelling
 -- | A \"merging run\" is a mutable representation of an incremental merge.
 -- It is also a unit of sharing between duplicated tables.
 --
-data MergingRun t s = MergingRun !t !(STRef s MergingRunState)
+data MergingRun t s = MergingRun !t !MergeDebt
+                                 !(STRef s MergingRunState)
 
 data MergingRunState = CompletedMerge !Run
                      | OngoingMerge
-                         !MergeDebt
+                         !MergeCredit
                          ![Run]  -- ^ inputs of the merge
                          Run  -- ^ output of the merge (lazily evaluated)
 
@@ -313,7 +316,7 @@ invariant (LSMContent _ levels ul) = do
       mrs <- case ir of
         Single r ->
           return (CompletedMerge r)
-        Merging mp (MergingRun mt ref) -> do
+        Merging mp (MergingRun mt _ ref) -> do
           assertST $ mp == mergePolicyForLevel ln ls ul
                   && mt == mergeTypeForLevel ls ul
           readSTRef ref
@@ -453,22 +456,25 @@ treeInvariant tree@(MergingTree treeState) = do
       return ()
 
 mergeInvariant :: MergingRun t s -> Invariant s ()
-mergeInvariant (MergingRun _ ref) =
+mergeInvariant (MergingRun _ mergeDebt ref) =
     liftI (readSTRef ref) >>= \case
       CompletedMerge _ -> return ()
-      OngoingMerge _ rs _ -> do
+      OngoingMerge mergeCredit rs _ -> do
+        assertI "merge debt & credit invariant" $
+          mergeDebtInvariant mergeDebt mergeCredit
         assertI "inputs to ongoing merges aren't empty" $
           all (\r -> runSize r > 0) rs
         assertI "ongoing merges are non-trivial (at least two inputs)" $
           length rs > 1
 
 isCompletedMergingRun :: MergingRun t s -> Invariant s Run
-isCompletedMergingRun (MergingRun _ ref) = do
+isCompletedMergingRun (MergingRun _ d ref) = do
     mrs <- liftI $ readSTRef ref
     case mrs of
       CompletedMerge r   -> return r
-      OngoingMerge d _ _ -> failI $ "not completed: OngoingMerge with"
-                                 ++ " remaining debt " ++ show d
+      OngoingMerge c _ _ -> failI $ "not completed: OngoingMerge with"
+                                 ++ " remaining debt "
+                                 ++ show (mergeDebtLeft d c)
 
 isCompletedMergingTree :: MergingTree s -> Invariant s Run
 isCompletedMergingTree (MergingTree ref) = do
@@ -515,25 +521,29 @@ type Credit = Int
 -- | Debt for keeping track of the total merge work to do.
 type Debt = Int
 
-data MergeDebt =
-     MergeDebt {
+data MergeCredit =
+     MergeCredit {
        spentCredits   :: !Credit, -- accumulating
-       unspentCredits :: !Credit, -- fluctuating
-       totalDebt      :: !Debt    -- fixed
+       unspentCredits :: !Credit  -- fluctuating
      }
   deriving stock Show
 
-newMergeDebt :: HasCallStack => Debt -> MergeDebt
-newMergeDebt totalDebt =
-    assert (totalDebt >= 0) $
-    MergeDebt {
+newtype MergeDebt =
+        MergeDebt {
+          totalDebt :: Debt  -- fixed
+        }
+  deriving stock Show
+
+zeroMergeCredit :: MergeCredit
+zeroMergeCredit =
+    MergeCredit {
       spentCredits   = 0,
-      unspentCredits = 0,
-      totalDebt
+      unspentCredits = 0
     }
 
-mergeDebtInvariant :: MergeDebt -> Bool
-mergeDebtInvariant MergeDebt {spentCredits, unspentCredits, totalDebt} =
+mergeDebtInvariant :: MergeDebt -> MergeCredit -> Bool
+mergeDebtInvariant MergeDebt {totalDebt}
+                   MergeCredit {spentCredits, unspentCredits} =
     let suppliedCredits = spentCredits + unspentCredits
      in spentCredits    >= 0
      -- unspentCredits could legitimately be negative, though that does not
@@ -541,11 +551,12 @@ mergeDebtInvariant MergeDebt {spentCredits, unspentCredits, totalDebt} =
      && suppliedCredits >= 0
      && suppliedCredits <= totalDebt
 
-mergeDebtLeft :: HasCallStack => MergeDebt -> Debt
-mergeDebtLeft MergeDebt {spentCredits, unspentCredits, totalDebt} =
+mergeDebtLeft :: HasCallStack => MergeDebt -> MergeCredit -> Debt
+mergeDebtLeft MergeDebt {totalDebt}
+              MergeCredit {spentCredits, unspentCredits} =
     let suppliedCredits = spentCredits + unspentCredits
-     in  assert (suppliedCredits <= totalDebt)
-                (totalDebt - suppliedCredits)
+     in assert (suppliedCredits <= totalDebt)
+               (totalDebt - suppliedCredits)
 
 -- | As credits are paid, debt is reduced in batches when sufficient credits
 -- have accumulated.
@@ -556,18 +567,20 @@ data MergeDebtPaydown =
 
     -- | Credits were paid, but not enough for merge debt to be reduced by some
     -- batches of merging work.
-  | MergeDebtPaydownCredited !MergeDebt
+  | MergeDebtPaydownCredited !MergeCredit
 
     -- | Enough credits were paid to reduce merge debt by performing some
     -- batches of merging work.
-  | MergeDebtPaydownPerform !Debt !MergeDebt
+  | MergeDebtPaydownPerform !Debt !MergeCredit
   deriving stock Show
 
 -- | Pay credits to merge debt, which might trigger performing some merge work
 -- in batches. See 'MergeDebtPaydown'.
 --
-paydownMergeDebt :: Credit -> MergeDebt -> MergeDebtPaydown
-paydownMergeDebt c MergeDebt {spentCredits, unspentCredits, totalDebt}
+paydownMergeDebt :: MergeDebt -> MergeCredit -> Credit -> MergeDebtPaydown
+paydownMergeDebt MergeDebt {totalDebt}
+                 MergeCredit {spentCredits, unspentCredits}
+                 c
   | let !suppliedCredits' = suppliedCredits + c
   , suppliedCredits' >= totalDebt
   , let !leftover = suppliedCredits' - totalDebt
@@ -589,10 +602,9 @@ paydownMergeDebt c MergeDebt {spentCredits, unspentCredits, totalDebt}
     assert (suppliedCredits' < totalDebt) $
     MergeDebtPaydownPerform
       perform
-      MergeDebt {
+      MergeCredit {
         spentCredits   = spentCredits',
-        unspentCredits = unspentCredits'',
-        totalDebt
+        unspentCredits = unspentCredits''
       }
 
   | otherwise
@@ -601,10 +613,9 @@ paydownMergeDebt c MergeDebt {spentCredits, unspentCredits, totalDebt}
   = assert (suppliedCredits + c == suppliedCredits') $
     assert (suppliedCredits' < totalDebt) $
     MergeDebtPaydownCredited
-      MergeDebt {
+      MergeCredit {
         spentCredits,
-        unspentCredits = unspentCredits',
-        totalDebt
+        unspentCredits = unspentCredits'
       }
   where
     !suppliedCredits = spentCredits + unspentCredits
@@ -621,17 +632,18 @@ newMergingRun :: IsMergeType t => Maybe Debt -> t -> [Run] -> ST s (MergingRun t
 newMergingRun mdebt mergeType runs = do
     assertST $ length runs > 1
     -- in some cases, no merging is required at all
-    state <- case filter (\r -> runSize r > 0) runs of
-      []  -> return $ CompletedMerge (head runs)  -- just re-use the empty input
-      [r] -> return $ CompletedMerge r
+    (debt, state) <- case filter (\r -> runSize r > 0) runs of
+      []  -> let (r:_) = runs -- just re-use the empty input
+              in return (runSize r, CompletedMerge r)
+      [r] -> return (runSize r, CompletedMerge r)
       rs  -> do
         let !cost = sum (map runSize rs)
-        debt <- newMergeDebt <$> case mdebt of
-          Nothing -> return cost
-          Just d  -> assert (d >= cost) $ return d
+            !debt = case mdebt of
+                      Nothing -> cost
+                      Just d  -> assert (d >= cost) d
         let merged = mergek mergeType rs  -- deliberately lazy
-        return $ OngoingMerge debt rs merged
-    MergingRun mergeType <$> newSTRef state
+        return (debt, OngoingMerge zeroMergeCredit rs merged)
+    MergingRun mergeType (MergeDebt debt) <$> newSTRef state
 
 mergek :: IsMergeType t => t -> [Run] -> Run
 mergek t =
@@ -670,24 +682,25 @@ expectCompletedMergingRun :: HasCallStack => MergingRun t s -> ST s Run
 expectCompletedMergingRun = expectInvariant . isCompletedMergingRun
 
 supplyCreditsMergingRun :: Credit -> MergingRun t s -> ST s Credit
-supplyCreditsMergingRun = checked remainingDebtMergingRun $ \credits (MergingRun _ ref) -> do
+supplyCreditsMergingRun =
+    checked remainingDebtMergingRun $ \credits (MergingRun _ mergeDebt ref) -> do
     mrs <- readSTRef ref
     case mrs of
       CompletedMerge{} -> return credits
-      OngoingMerge d rs r ->
-        case paydownMergeDebt credits d of
-          MergeDebtDischarged _ c' -> do
+      OngoingMerge mergeCredit rs r ->
+        case paydownMergeDebt mergeDebt mergeCredit credits of
+          MergeDebtDischarged _ leftover -> do
             writeSTRef ref (CompletedMerge r)
-            return c'
+            return leftover
 
-          MergeDebtPaydownCredited  d' -> do
-            writeSTRef ref (OngoingMerge d' rs r)
+          MergeDebtPaydownCredited mergeCredit' -> do
+            writeSTRef ref (OngoingMerge mergeCredit' rs r)
             return 0
 
-          MergeDebtPaydownPerform _ d' -> do
+          MergeDebtPaydownPerform _mergeSteps mergeCredit' -> do
             -- we're not doing any actual merging
             -- just tracking what we would do
-            writeSTRef ref (OngoingMerge d' rs r)
+            writeSTRef ref (OngoingMerge mergeCredit' rs r)
             return 0
 
 -------------------------------------------------------------------------------
@@ -926,7 +939,7 @@ lookupsTree k = go
     go (MergingTree treeState) = readSTRef treeState >>= \case
         CompletedTreeMerge r ->
           return $ lookupBatch' [r]
-        OngoingTreeMerge (MergingRun mt mergeState) ->
+        OngoingTreeMerge (MergingRun mt _ mergeState) ->
           readSTRef mergeState >>= \case
             CompletedMerge r ->
               return $ lookupBatch' [r]
@@ -982,7 +995,7 @@ creditsForMerge MergePolicyLevelling _ =
 
 -- A tiering merge has 5 runs at most (once could be held back to merged again)
 -- and must be completed before the level is full (once 4 more runs come in).
-creditsForMerge MergePolicyTiering (MergingRun _ ref) = do
+creditsForMerge MergePolicyTiering (MergingRun _ _ ref) = do
     readSTRef ref >>= \case
       CompletedMerge _ -> return 0
       OngoingMerge _ rs _ -> do
@@ -1014,7 +1027,7 @@ increment tr sc run0 ls0 ul = do
           r <- expectCompletedMergingRun mr
           traceWith tr' MergeCompletedEvent {
               mergePolicy,
-              mergeType = let MergingRun mt _ = mr in mt,
+              mergeType = let MergingRun mt _ _ = mr in mt,
               mergeSize = runSize r
             }
           return r
@@ -1207,12 +1220,12 @@ remainingDebtPendingMerge (PendingMerge _ irs trees) = do
         Merging _ mr -> remainingDebtMergingRun mr
 
 remainingDebtMergingRun :: MergingRun t s -> ST s (Debt, Size)
-remainingDebtMergingRun (MergingRun _ ref) =
+remainingDebtMergingRun (MergingRun _ d ref) =
     readSTRef ref >>= \case
       CompletedMerge r ->
         return (0, runSize r)
-      OngoingMerge d inputRuns _ ->
-        return (mergeDebtLeft d, sum (map runSize inputRuns))
+      OngoingMerge c inputRuns _ ->
+        return (mergeDebtLeft d c, sum (map runSize inputRuns))
 
 -- | For each of the @supplyCredits@ type functions, we want to check some
 -- common properties.
@@ -1350,7 +1363,7 @@ flattenIncomingRun = \case
     Merging _ mr -> flattenMergingRun mr
 
 flattenMergingRun :: MergingRun t s -> ST s [Run]
-flattenMergingRun (MergingRun _ ref) = do
+flattenMergingRun (MergingRun _ _ ref) = do
     mrs <- readSTRef ref
     case mrs of
       CompletedMerge r    -> return [r]
@@ -1362,7 +1375,7 @@ flattenTree (MergingTree ref) = do
     case mts of
       CompletedTreeMerge r ->
         return (MLeaf r)
-      OngoingTreeMerge (MergingRun mt mrs) ->
+      OngoingTreeMerge (MergingRun mt _ mrs) ->
         readSTRef mrs >>= \case
           CompletedMerge r    -> return (MLeaf r)
           OngoingMerge _ rs _ -> return (MNode mt (MLeaf <$> rs))
@@ -1404,7 +1417,7 @@ dumpRepresentation (LSMHandle _ lsmr) = do
 dumpLevel :: Level s -> ST s LevelRepresentation
 dumpLevel (Level (Single r) rs) =
     return (Nothing, (r:rs))
-dumpLevel (Level (Merging mp (MergingRun mt ref)) rs) = do
+dumpLevel (Level (Merging mp (MergingRun mt _ ref)) rs) = do
     mrs <- readSTRef ref
     return (Just (mp, mt, mrs), rs)
 
