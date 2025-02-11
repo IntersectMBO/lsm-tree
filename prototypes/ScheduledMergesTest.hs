@@ -242,10 +242,11 @@ data I = ISingle Run
   deriving stock Show
 
 -- simplified non-ST version of MergingRun
-data M t = MCompleted t Run
+data M t = MCompleted t MergeDebt Run
          | MOngoing
              t
              MergeDebt  -- debt bounded by input sizes
+             MergeCredit
              [NonEmptyRun]  -- at least 2 inputs
   deriving stock Show
 
@@ -270,11 +271,11 @@ fromI (IMerging m) = Merging MergePolicyTiering <$> fromM m
 
 fromM :: IsMergeType t => M t -> ST s (MergingRun t s)
 fromM m = do
-    let (mergeType, state) = case m of
-          MCompleted mt r  -> (mt, CompletedMerge r)
-          MOngoing mt d rs -> (mt, OngoingMerge d rs' (mergek mt rs'))
+    let (mergeType, mergeDebt, state) = case m of
+          MCompleted mt md r  -> (mt, md, CompletedMerge r)
+          MOngoing mt md mc rs -> (mt, md, OngoingMerge mc rs' (mergek mt rs'))
             where rs' = map getNonEmptyRun rs
-    MergingRun mergeType <$> newSTRef state
+    MergingRun mergeType mergeDebt <$> newSTRef state
 
 completeT :: T -> Run
 completeT (TCompleted r) = r
@@ -289,8 +290,8 @@ completeI (ISingle r)  = r
 completeI (IMerging m) = completeM m
 
 completeM :: IsMergeType t => M t -> Run
-completeM (MCompleted _ r)   = r
-completeM (MOngoing mt _ rs) = mergek mt (map getNonEmptyRun rs)
+completeM (MCompleted _ _ r)   = r
+completeM (MOngoing mt _ _ rs) = mergek mt (map getNonEmptyRun rs)
 
 instance Arbitrary T where
   arbitrary = QC.frequency
@@ -341,44 +342,71 @@ instance Arbitrary I where
   shrink (IMerging m) = [ISingle (completeM m)] <> [IMerging m' | m' <- shrink m]
 
 instance (Arbitrary t, IsMergeType t) => Arbitrary (M t) where
-  arbitrary = QC.frequency
-      [ (1, MCompleted <$> arbitrary <*> arbitrary)
-      , (1, do
-          mt <- arbitrary
-          n  <- QC.chooseInt (2, 8)
-          rs <- QC.vectorOf n (QC.scale (`div` n) arbitrary)
-          let totalDebt    = sum (map (length . getNonEmptyRun) rs)
-          suppliedCredits <- QC.chooseInt (0, totalDebt-1)
-          unspentCredits  <- QC.chooseInt (0, min (mergeBatchSize-1) suppliedCredits)
-          let spentCredits = suppliedCredits - unspentCredits
-          let md = MergeDebt {
-                    unspentCredits,
-                    spentCredits,
-                    totalDebt
-                 }
-          assert (mergeDebtInvariant md) $
-            return (MOngoing mt md rs))
+  arbitrary = QC.oneof
+      [ do (mt, r) <- arbitrary
+           let md = MergeDebt (runSize r)
+           pure (MCompleted mt md r)
+      , do mt <- arbitrary
+           n  <- QC.chooseInt (2, 8)
+           rs <- QC.vectorOf n (QC.scale (`div` n) arbitrary)
+           (md, mc) <- genMergeCreditForRuns rs
+           pure (MOngoing mt md mc rs)
       ]
 
-  shrink (MCompleted mt r) =
-      [ MCompleted mt r' | r' <- shrink r ]
-  shrink m@(MOngoing mt MergeDebt {spentCredits, unspentCredits} rs) =
-      [ MCompleted mt (completeM m) ]
-   <> [ assert (mergeDebtInvariant md') $
-        MOngoing mt md' rs'
+  shrink (MCompleted mt md r) =
+      [ MCompleted mt md r' | r' <- shrink r ]
+  shrink m@(MOngoing mt md mc rs) =
+      [ MCompleted mt md (completeM m) ]
+   <> [ MOngoing mt md' mc' rs'
       | rs' <- shrink rs
       , length rs' > 1
-      , let totalDebt'    = sum (map (length . getNonEmptyRun) rs')
-      , suppliedCredits' <- shrink (min (spentCredits+unspentCredits)
-                                        (totalDebt'-1))
-      , unspentCredits'  <- shrink (min unspentCredits suppliedCredits')
-      , let spentCredits' = suppliedCredits' - unspentCredits'
-      , let md' = MergeDebt {
-                    spentCredits   = spentCredits',
-                    unspentCredits = unspentCredits',
-                    totalDebt      = totalDebt'
-                  }
+      , (md', mc') <- shrinkMergeCreditForRuns rs' mc
       ]
+
+-- | The 'MergeDebt' and 'MergeCredit' must maintain a couple invariants:
+--
+-- * the total debt must be the same as the sum of the input run sizes;
+-- * the supplied credit is less than the total merge debt.
+--
+genMergeCreditForRuns :: [NonEmptyRun] -> QC.Gen (MergeDebt, MergeCredit)
+genMergeCreditForRuns rs = do
+      let totalDebt    = sum (map (length . getNonEmptyRun) rs)
+      suppliedCredits <- QC.chooseInt (0, totalDebt-1)
+      unspentCredits  <- QC.chooseInt (0, min (mergeBatchSize-1) suppliedCredits)
+      let spentCredits = suppliedCredits - unspentCredits
+          md           = MergeDebt {
+                           totalDebt
+                         }
+          mc           = MergeCredit {
+                            unspentCredits,
+                            spentCredits
+                         }
+      assert (mergeDebtInvariant md mc) $
+        pure (md, mc)
+
+-- | Shrink the 'MergeDebt' and 'MergeCredit' given the old 'MergeCredit' and
+-- the already-shrunk runs.
+--
+-- Thus must maintain invariants, see 'genMergeCreditForDebt'.
+--
+shrinkMergeCreditForRuns :: [NonEmptyRun]
+                         -> MergeCredit -> [(MergeDebt, MergeCredit)]
+shrinkMergeCreditForRuns rs' MergeCredit {spentCredits, unspentCredits} =
+    [ assert (mergeDebtInvariant md' mc')
+      (md', mc')
+    | let totalDebt'    = sum (map (length . getNonEmptyRun) rs')
+    , suppliedCredits' <- shrink (min (spentCredits+unspentCredits)
+                                      (totalDebt'-1))
+    , unspentCredits'  <- shrink (min unspentCredits suppliedCredits')
+    , let spentCredits' = suppliedCredits' - unspentCredits'
+          md'           = MergeDebt {
+                            totalDebt      = totalDebt'
+                          }
+          mc'           = MergeCredit {
+                            spentCredits   = spentCredits',
+                            unspentCredits = unspentCredits'
+                          }
+    ]
 
 instance Arbitrary NonEmptyRun where
   arbitrary = do
