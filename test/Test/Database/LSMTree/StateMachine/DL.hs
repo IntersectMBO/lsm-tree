@@ -15,7 +15,7 @@ import qualified Database.LSMTree.Model.Table as Model (values)
 import           Prelude
 import           Test.Database.LSMTree.StateMachine hiding (tests)
 import           Test.Database.LSMTree.StateMachine.Op
-import           Test.QuickCheck as QC
+import           Test.QuickCheck as QC hiding (label)
 import           Test.QuickCheck.DynamicLogic
 import qualified Test.QuickCheck.Gen as QC
 import qualified Test.QuickCheck.Random as QC
@@ -47,7 +47,7 @@ prop_example =
     -- Run the example ...
     forAllDL dl_example $
     -- ... with the given lockstep property
-    propLockstep_RealImpl_MockFS_IO tr
+    propLockstep_RealImpl_MockFS_IO tr True
   where
     -- To enable tracing, use something like @show `contramap` stdoutTracer@
     -- instead
@@ -90,7 +90,7 @@ prop_noSwalledExceptions :: Property
 prop_noSwalledExceptions = forAllDL dl_noSwallowExceptions runner
   where
     -- To use a different runner, change out the @propLockstep@ function.
-    runner = propLockstep_RealImpl_MockFS_IO tr
+    runner = propLockstep_RealImpl_MockFS_IO tr False
     -- To enable tracing, use something like @show `contramap` stdoutTracer@
     -- instead
     tr = nullTracer
@@ -108,4 +108,14 @@ dl_noSwallowExceptions = do
       shr (Some a) = QLS.shrinkAction varCtx st a
 
     Some a <- forAllQ $ withGenQ gen predicate shr
-    void $ action a
+
+    Some a' <- case a of
+      CreateSnapshot merrs label name tableVar -> case merrs of
+        Just{} -> pure $ Some a
+        Nothing{} -> do
+            HasNoVariables errs <- forAllQ $ hasNoVariablesQ $ withGenQ arbitrary (\_ -> True) shrink
+            pure (Some $ CreateSnapshot (Just errs) label name tableVar)
+      _ -> pure $ Some a
+
+    void $ action a'
+

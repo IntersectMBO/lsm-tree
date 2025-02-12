@@ -396,7 +396,6 @@ test-suite lsm-tree-test
     Test.Util.Arbitrary
     Test.Util.FS
     Test.Util.FS.Errors
-    Test.Util.FS.HKD
     Test.Util.Orphans
     Test.Util.PrettyProxy
     Test.Util.QC
@@ -420,7 +419,6 @@ test-suite lsm-tree-test
     , filepath
     , fs-api
     , fs-sim
-    , generics-sop
     , io-classes
     , io-classes:strict-mvar
     , io-classes:strict-stm
@@ -443,7 +441,6 @@ test-suite lsm-tree-test
     , quickcheck-lockstep
     , random
     , semialign
-    , sop-core
     , split
     , stm
     , tasty
@@ -457,6 +454,8 @@ test-suite lsm-tree-test
     , vector-algorithms
     , wide-word
 
+  -- , generics-sop
+  -- , sop-core
   if !os(windows)
     build-depends: lsm-tree:fcntl-nocache
 
