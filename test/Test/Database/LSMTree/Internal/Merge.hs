@@ -196,11 +196,11 @@ mergeWriteBuffers :: MergeType
                   -> [Map SerialisedKey SerialisedEntry]
                   ->  Map SerialisedKey SerialisedEntry
 mergeWriteBuffers = \case
-    MergeMidLevel  -> Map.unionsWith (Entry.combine mappendValues)
-    MergeLastLevel -> Map.filter (not . isDelete)
-                    . Map.unionsWith (Entry.combine mappendValues)
-    MergeUnion     -> Map.filter (not . isDelete)
-                    . Map.unionsWith (Entry.combineUnion mappendValues)
+    MergeTypeMidLevel  -> Map.unionsWith (Entry.combine mappendValues)
+    MergeTypeLastLevel -> Map.filter (not . isDelete)
+                        . Map.unionsWith (Entry.combine mappendValues)
+    MergeTypeUnion     -> Map.filter (not . isDelete)
+                        . Map.unionsWith (Entry.combineUnion mappendValues)
   where
     isDelete Entry.Delete = True
     isDelete _            = False

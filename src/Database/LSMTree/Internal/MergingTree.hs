@@ -30,7 +30,7 @@ import           Database.LSMTree.Internal.Run (Run)
 -- Looking at the implementation, tables are not just key-value pairs, but
 -- consist of runs. If each table was just a single run, unioning would involve
 -- a run merge similar to the one used for compaction (when a level is full),
--- but with a different merge type 'MergeUnion' that differs semantically:
+-- but with a different merge type 'MR.MergeUnion' that differs semantically:
 -- Here, runs don't represent updates (overwriting each other), but they each
 -- represent the full state of a table. There is no distinction between no
 -- entry and a 'Delete', between an 'Insert' and a 'Mupsert'.

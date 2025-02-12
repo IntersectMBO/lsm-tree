@@ -299,33 +299,51 @@ deriving anyclass instance NoThunks Index
 -------------------------------------------------------------------------------}
 
 deriving stock instance Generic (TableContent m h)
-deriving anyclass instance ( Typeable m, Typeable (PrimState m), Typeable h
-                           , NoThunks (StrictMVar m (MergingRunState m h))
-                           , NoThunks (StrictMVar m (MergingTreeState m h))
-                           ) => NoThunks (TableContent m h)
+deriving anyclass instance
+  ( Typeable m, Typeable (PrimState m), Typeable h
+  , NoThunks (StrictMVar m (MergingRunState LevelMergeType m h))
+  , NoThunks (StrictMVar m (MergingTreeState m h))
+  ) => NoThunks (TableContent m h)
 
 deriving stock instance Generic (LevelsCache m h)
-deriving anyclass instance (Typeable m, Typeable (PrimState m), Typeable h)
-                        => NoThunks (LevelsCache m h)
+deriving anyclass instance
+  (Typeable m, Typeable (PrimState m), Typeable h)
+  => NoThunks (LevelsCache m h)
 
 deriving stock instance Generic (Level m h)
-deriving anyclass instance ( Typeable m, Typeable (PrimState m), Typeable h
-                           , NoThunks (StrictMVar m (MergingRunState m h))
-                           ) => NoThunks (Level m h)
+deriving anyclass instance
+  ( Typeable m, Typeable (PrimState m), Typeable h
+  , NoThunks (StrictMVar m (MergingRunState LevelMergeType m h))
+  ) => NoThunks (Level m h)
 
 deriving stock instance Generic (IncomingRun m h)
-deriving anyclass instance ( Typeable m, Typeable (PrimState m), Typeable h
-                           , NoThunks (StrictMVar m (MergingRunState m h))
-                           ) => NoThunks (IncomingRun m h)
+deriving anyclass instance
+  ( Typeable m, Typeable (PrimState m), Typeable h
+  , NoThunks (StrictMVar m (MergingRunState LevelMergeType m h))
+  ) => NoThunks (IncomingRun m h)
 
 deriving stock instance Generic (UnionLevel m h)
-deriving anyclass instance ( Typeable m, Typeable (PrimState m), Typeable h
-                           , NoThunks (StrictMVar m (MergingRunState m h))
-                           , NoThunks (StrictMVar m (MergingTreeState m h))
-                           ) => NoThunks (UnionLevel m h)
+deriving anyclass instance
+  ( Typeable m, Typeable (PrimState m), Typeable h
+  , NoThunks (StrictMVar m (MergingTreeState m h))
+  ) => NoThunks (UnionLevel m h)
 
 deriving stock instance Generic MergePolicyForLevel
 deriving anyclass instance NoThunks MergePolicyForLevel
+
+{-------------------------------------------------------------------------------
+  MergingRun
+-------------------------------------------------------------------------------}
+
+deriving stock instance Generic (MergingRun t m h)
+deriving anyclass instance ( Typeable m, Typeable (PrimState m), Typeable h
+                           , NoThunks (StrictMVar m (MergingRunState t m h))
+                           ) => NoThunks (MergingRun t m h)
+
+deriving stock instance Generic (MergingRunState t m h)
+deriving anyclass instance ( Typeable m, Typeable (PrimState m), Typeable h
+                           , NoThunks t
+                           ) => NoThunks (MergingRunState t m h)
 
 deriving stock instance Generic NumRuns
 deriving anyclass instance NoThunks NumRuns
@@ -337,44 +355,35 @@ deriving stock instance Generic MergeKnownCompleted
 deriving anyclass instance NoThunks MergeKnownCompleted
 
 {-------------------------------------------------------------------------------
-  MergingRun
--------------------------------------------------------------------------------}
-
-deriving stock instance Generic (MergingRun t m h)
-deriving anyclass instance ( Typeable m, Typeable (PrimState m), Typeable h
-                           , NoThunks (StrictMVar m (MergingRunState m h))
-                           ) => NoThunks (MergingRun t m h)
-
-deriving stock instance Generic (MergingRunState m h)
-deriving anyclass instance (Typeable m, Typeable (PrimState m), Typeable h)
-                        => NoThunks (MergingRunState m h)
-
-{-------------------------------------------------------------------------------
   MergingTree
 -------------------------------------------------------------------------------}
 
 deriving stock instance Generic (MergingTree m h)
-deriving anyclass instance ( Typeable m, Typeable (PrimState m), Typeable h
-                           , NoThunks (StrictMVar m (MergingRunState m h))
-                           , NoThunks (StrictMVar m (MergingTreeState m h))
-                           ) => NoThunks (MergingTree m h)
+deriving anyclass instance
+  ( Typeable m, Typeable (PrimState m), Typeable h
+  , NoThunks (StrictMVar m (MergingTreeState m h))
+  ) => NoThunks (MergingTree m h)
 
 deriving stock instance Generic (MergingTreeState m h)
-deriving anyclass instance ( Typeable m, Typeable (PrimState m), Typeable h
-                           , NoThunks (StrictMVar m (MergingRunState m h))
-                           , NoThunks (StrictMVar m (MergingTreeState m h))
-                           ) => NoThunks (MergingTreeState m h)
+deriving anyclass instance
+  ( Typeable m, Typeable (PrimState m), Typeable h
+  , NoThunks (StrictMVar m (MergingRunState LevelMergeType m h))
+  , NoThunks (StrictMVar m (MergingRunState TreeMergeType m h))
+  , NoThunks (StrictMVar m (MergingTreeState m h))
+  ) => NoThunks (MergingTreeState m h)
 
 deriving stock instance Generic (PendingMerge m h)
-deriving anyclass instance ( Typeable m, Typeable (PrimState m), Typeable h
-                           , NoThunks (StrictMVar m (MergingRunState m h))
-                           , NoThunks (StrictMVar m (MergingTreeState m h))
-                           ) => NoThunks (PendingMerge m h)
+deriving anyclass instance
+  ( Typeable m, Typeable (PrimState m), Typeable h
+  , NoThunks (StrictMVar m (MergingRunState LevelMergeType m h))
+  , NoThunks (StrictMVar m (MergingTreeState m h))
+  ) => NoThunks (PendingMerge m h)
 
 deriving stock instance Generic (PreExistingRun m h)
-deriving anyclass instance ( Typeable m, Typeable (PrimState m), Typeable h
-                           , NoThunks (StrictMVar m (MergingRunState m h))
-                           ) => NoThunks (PreExistingRun m h)
+deriving anyclass instance
+  ( Typeable m, Typeable (PrimState m), Typeable h
+  , NoThunks (StrictMVar m (MergingRunState LevelMergeType m h))
+  ) => NoThunks (PreExistingRun m h)
 
 {-------------------------------------------------------------------------------
   Entry
@@ -454,12 +463,19 @@ deriving anyclass instance Typeable s
   Merge
 -------------------------------------------------------------------------------}
 
-deriving stock instance Generic (Merge m h)
-deriving anyclass instance (Typeable m, Typeable (PrimState m), Typeable h)
-                        => NoThunks (Merge m h)
+deriving stock instance Generic (Merge t m h)
+deriving anyclass instance ( Typeable m, Typeable (PrimState m), Typeable h
+                           , NoThunks t
+                           ) => NoThunks (Merge t m h)
 
 deriving stock instance Generic MergeType
 deriving anyclass instance NoThunks MergeType
+
+deriving stock instance Generic LevelMergeType
+deriving anyclass instance NoThunks LevelMergeType
+
+deriving stock instance Generic TreeMergeType
+deriving anyclass instance NoThunks TreeMergeType
 
 deriving stock instance Generic Merge.StepResult
 deriving anyclass instance NoThunks Merge.StepResult
@@ -673,10 +689,17 @@ instance (NoThunks a, Typeable a) => NoThunks (StrictTVar IO a) where
 instance (NoThunks a, Typeable a) => NoThunks (StrictMVar IO a) where
   showTypeOf (p :: Proxy (StrictMVar IO a)) = show $ typeRep p
   wNoThunks ctx var
-    | Just (Proxy :: Proxy (MergingRunState IO HandleIO))
+    -- TODO: Revisit which of these cases are still needed.
+    | Just (Proxy :: Proxy (MergingRunState LevelMergeType IO HandleIO))
         <- gcast (Proxy @a)
     = workAroundCheck
-    | Just (Proxy :: Proxy (MergingRunState IO HandleMock))
+    | Just (Proxy :: Proxy (MergingRunState TreeMergeType IO HandleIO))
+        <- gcast (Proxy @a)
+    = workAroundCheck
+    | Just (Proxy :: Proxy (MergingRunState LevelMergeType IO HandleMock))
+        <- gcast (Proxy @a)
+    = workAroundCheck
+    | Just (Proxy :: Proxy (MergingRunState TreeMergeType IO HandleMock))
         <- gcast (Proxy @a)
     = workAroundCheck
     | otherwise

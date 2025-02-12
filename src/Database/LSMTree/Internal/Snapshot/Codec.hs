@@ -560,15 +560,15 @@ instance DecodeVersioned SuppliedCredits where
 -- MergeType
 
 instance Encode MergeType  where
-  encode MergeMidLevel  = encodeWord 0
-  encode MergeLastLevel = encodeWord 1
-  encode MergeUnion     = encodeWord 2
+  encode MergeTypeMidLevel  = encodeWord 0
+  encode MergeTypeLastLevel = encodeWord 1
+  encode MergeTypeUnion     = encodeWord 2
 
 instance DecodeVersioned MergeType where
   decodeVersioned V0 = do
       tag <- decodeWord
       case tag of
-        0 -> pure MergeMidLevel
-        1 -> pure MergeLastLevel
-        2 -> pure MergeUnion
+        0 -> pure MergeTypeMidLevel
+        1 -> pure MergeTypeLastLevel
+        2 -> pure MergeTypeUnion
         _ -> fail ("[MergeType] Unexpected tag: " <> show tag)

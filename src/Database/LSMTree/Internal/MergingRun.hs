@@ -58,7 +58,9 @@ import           Database.LSMTree.Internal.Assertions (assert)
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
 import           Database.LSMTree.Internal.Index (IndexType)
 import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
-import           Database.LSMTree.Internal.Merge (Merge, StepResult (..))
+import           Database.LSMTree.Internal.Merge (IsMergeType (..),
+                     LevelMergeType (..), Merge, StepResult (..),
+                     TreeMergeType (..))
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..))
 import           Database.LSMTree.Internal.Run (Run)
@@ -66,9 +68,6 @@ import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc)
 import           System.FS.API (HasFS)
 import           System.FS.BlockIO.API (HasBlockIO)
-
--- t doesn't appear on the right hand side, but we don't want to allow coercions.
-type role MergingRun nominal nominal nominal
 
 data MergingRun t m h = MergingRun {
       mergeNumRuns        :: !NumRuns
@@ -94,68 +93,25 @@ data MergingRun t m h = MergingRun {
       -- been completed, otherwise if 'MergeMaybeCompleted' we have to check the
       -- 'MergingRunState'.
     , mergeKnownCompleted :: !(MutVar (PrimState m) MergeKnownCompleted)
-    , mergeState          :: !(StrictMVar m (MergingRunState m h))
+    , mergeState          :: !(StrictMVar m (MergingRunState t m h))
     , mergeRefCounter     :: !(RefCounter m)
     }
 
 instance RefCounted m (MergingRun t m h) where
     getRefCounter = mergeRefCounter
 
-class IsMergeType t where
-    toMergeType :: t -> Merge.MergeType
-    -- | Needed for deserialisation when opening snapshots.
-    fromMergeType :: Merge.MergeType -> Maybe t
-
--- | Different types of merges created as part of a regular (non-union) level.
---
--- A last level merge behaves differently from a mid-level merge: last level
--- merges can actually remove delete operations, whereas mid-level merges must
--- preserve them. This is orthogonal to the 'MergePolicy'.
-data LevelMergeType = MergeMidLevel | MergeLastLevel
-  deriving stock (Eq, Show)
-
-instance NFData LevelMergeType where
-  rnf MergeMidLevel  = ()
-  rnf MergeLastLevel = ()
-
-instance IsMergeType LevelMergeType where
-  toMergeType = \case
-      MergeMidLevel  -> Merge.MergeMidLevel
-      MergeLastLevel -> Merge.MergeLastLevel
-  fromMergeType = \case
-      Merge.MergeMidLevel  -> Just MergeMidLevel
-      Merge.MergeLastLevel -> Just MergeLastLevel
-      Merge.MergeUnion     -> Nothing
-
--- | Different types of merges created as part of the merging tree.
-data TreeMergeType = MergeLevel | MergeUnion
-  deriving stock (Eq, Show)
-
-instance NFData TreeMergeType where
-  rnf MergeLevel = ()
-  rnf MergeUnion = ()
-
-instance IsMergeType TreeMergeType where
-  toMergeType = \case
-      MergeLevel -> Merge.MergeLastLevel  -- node merges are always last level
-      MergeUnion -> Merge.MergeUnion
-  fromMergeType = \case
-      Merge.MergeMidLevel  -> Nothing
-      Merge.MergeLastLevel -> Just MergeLevel
-      Merge.MergeUnion     -> Just MergeUnion
-
 newtype NumRuns = NumRuns { unNumRuns :: Int }
   deriving stock (Show, Eq)
   deriving newtype NFData
 
-data MergingRunState m h =
+data MergingRunState t m h =
     CompletedMerge
       !(Ref (Run m h))
       -- ^ Output run
   | OngoingMerge
       !(V.Vector (Ref (Run m h)))
       -- ^ Input runs
-      !(Merge m h)
+      !(Merge t m h)
 
 data MergeKnownCompleted = MergeKnownCompleted | MergeMaybeCompleted
   deriving stock Eq
@@ -165,7 +121,7 @@ instance NFData MergeKnownCompleted where
   rnf MergeMaybeCompleted = ()
 
 {-# SPECIALISE new ::
-     IsMergeType t
+     Merge.IsMergeType t
   => HasFS IO h
   -> HasBlockIO IO h
   -> ResolveSerialisedValue
@@ -184,7 +140,7 @@ instance NFData MergeKnownCompleted where
 -- This function should be run with asynchronous exceptions masked to prevent
 -- failing after internal resources have already been created.
 new ::
-     (IsMergeType t, MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
+     (Merge.IsMergeType t, MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
   => HasFS m h
   -> HasBlockIO m h
   -> ResolveSerialisedValue
@@ -200,7 +156,7 @@ new hfs hbio resolve caching alloc indexType mergeType runPaths inputRuns =
     withActionRegistry $ \reg -> do
       runs <- V.mapM (\r -> withRollback reg (dupRef r) releaseRef) inputRuns
       merge <- fromMaybe (error "newMerge: merges can not be empty")
-        <$> Merge.new hfs hbio caching alloc indexType (toMergeType mergeType) resolve runPaths runs
+        <$> Merge.new hfs hbio caching alloc indexType mergeType resolve runPaths runs
       let numInputRuns = NumRuns $ V.length runs
       let numInputEntries = V.foldMap' Run.size runs
       unsafeNew numInputRuns numInputEntries MergeMaybeCompleted $
@@ -235,7 +191,7 @@ unsafeNew ::
   => NumRuns
   -> NumEntries
   -> MergeKnownCompleted
-  -> MergingRunState m h
+  -> MergingRunState t m h
   -> m (Ref (MergingRun t m h))
 unsafeNew _ mergeNumEntries _ _
   | SpentCredits (numEntriesToTotalDebt mergeNumEntries) > maxBound
@@ -292,7 +248,7 @@ duplicateRuns (DeRef mr) =
 snapshot ::
      (PrimMonad m, MonadMVar m)
   => Ref (MergingRun t m h)
-  -> m (MergingRunState m h,
+  -> m (MergingRunState t m h,
         SuppliedCredits,
         NumRuns,
         NumEntries)
@@ -751,13 +707,13 @@ supplyCredits (DeRef MergingRun {
             return leftoverCredits)
 
 {-# SPECIALISE performMergeSteps ::
-     StrictMVar IO (MergingRunState IO h)
+     StrictMVar IO (MergingRunState t IO h)
   -> CreditsVar RealWorld
   -> Credits
   -> IO Bool #-}
 performMergeSteps ::
      (MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
-  => StrictMVar m (MergingRunState m h)
+  => StrictMVar m (MergingRunState t m h)
   -> CreditsVar (PrimState m)
   -> Credits
   -> m Bool
@@ -787,13 +743,13 @@ performMergeSteps mergeVar creditsVar (Credits credits) =
         pure $ stepResult == MergeDone
 
 {-# SPECIALISE completeMerge ::
-     StrictMVar IO (MergingRunState IO h)
+     StrictMVar IO (MergingRunState t IO h)
   -> MutVar RealWorld MergeKnownCompleted
   -> IO () #-}
 -- | Convert an 'OngoingMerge' to a 'CompletedMerge'.
 completeMerge ::
      (MonadSTM m, MonadST m, MonadMVar m, MonadMask m)
-  => StrictMVar m (MergingRunState m h)
+  => StrictMVar m (MergingRunState t m h)
   -> MutVar (PrimState m) MergeKnownCompleted
   -> m ()
 completeMerge mergeVar mergeKnownCompletedVar = do

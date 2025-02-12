@@ -4,6 +4,9 @@
 module Database.LSMTree.Internal.Merge (
     Merge (..)
   , MergeType (..)
+  , IsMergeType (..)
+  , LevelMergeType (..)
+  , TreeMergeType (..)
   , Mappend
   , MergeState (..)
   , new
@@ -46,8 +49,12 @@ import           System.FS.BlockIO.API (HasBlockIO)
 --
 -- Since we always resolve all entries of the same key in one go, there is no
 -- need to store incompletely-resolved entries.
-data Merge m h = Merge {
-      mergeType       :: !MergeType
+data Merge t m h = Merge {
+      narrowMergeType :: !t
+      -- | We also store @toMergeType narrowMergeType@ here to avoid recomputing
+      -- it again and again for each call to 'steps', which would also add
+      -- an 'IsMergeType' constraint to large parts of the interface.
+    , mergeType       :: !MergeType
     , mergeMappend    :: !Mappend
     , mergeReaders    :: {-# UNPACK #-} !(Readers m h)
     , mergeBuilder    :: !(RunBuilder m h)
@@ -85,62 +92,114 @@ data MergeState =
 -- and inserts act like mupserts, so they need to be merged monoidally using
 -- 'resolveValue'.
 --
-data MergeType = MergeMidLevel | MergeLastLevel | MergeUnion
+data MergeType = MergeTypeMidLevel | MergeTypeLastLevel | MergeTypeUnion
   deriving stock (Eq, Show)
 
 instance NFData MergeType where
+  rnf MergeTypeMidLevel  = ()
+  rnf MergeTypeLastLevel = ()
+  rnf MergeTypeUnion     = ()
+
+class IsMergeType t where
+  -- TODO: have @isLastLevel :: t -> Bool@ and @isUnion :: t -> Bool@ instead,
+  -- like in the the prototype?
+  toMergeType :: t -> MergeType
+  -- | Needed for deserialisation when opening snapshots.
+  fromMergeType :: MergeType -> Maybe t
+
+instance IsMergeType MergeType where
+  toMergeType = id
+  fromMergeType = Just
+
+-- | Different types of merges created as part of a regular (non-union) level.
+--
+-- A last level merge behaves differently from a mid-level merge: last level
+-- merges can actually remove delete operations, whereas mid-level merges must
+-- preserve them. This is orthogonal to the 'MergePolicy'.
+data LevelMergeType = MergeMidLevel | MergeLastLevel
+  deriving stock (Eq, Show)
+
+instance NFData LevelMergeType where
   rnf MergeMidLevel  = ()
   rnf MergeLastLevel = ()
-  rnf MergeUnion     = ()
+
+instance IsMergeType LevelMergeType where
+  toMergeType = \case
+      MergeMidLevel  -> MergeTypeMidLevel
+      MergeLastLevel -> MergeTypeLastLevel
+  fromMergeType = \case
+      MergeTypeMidLevel  -> Just MergeMidLevel
+      MergeTypeLastLevel -> Just MergeLastLevel
+      MergeTypeUnion     -> Nothing
+
+-- | Different types of merges created as part of the merging tree.
+data TreeMergeType = MergeLevel | MergeUnion
+  deriving stock (Eq, Show)
+
+instance NFData TreeMergeType where
+  rnf MergeLevel = ()
+  rnf MergeUnion = ()
+
+instance IsMergeType TreeMergeType where
+  toMergeType = \case
+      MergeLevel -> MergeTypeLastLevel  -- node merges are always last level
+      MergeUnion -> MergeTypeUnion
+  fromMergeType = \case
+      MergeTypeMidLevel  -> Nothing
+      MergeTypeLastLevel -> Just MergeLevel
+      MergeTypeUnion     -> Just MergeUnion
 
 type Mappend = SerialisedValue -> SerialisedValue -> SerialisedValue
 
 {-# SPECIALISE new ::
-     HasFS IO h
+     IsMergeType t
+  => HasFS IO h
   -> HasBlockIO IO h
   -> RunDataCaching
   -> RunBloomFilterAlloc
   -> IndexType
-  -> MergeType
+  -> t
   -> Mappend
   -> Run.RunFsPaths
   -> V.Vector (Ref (Run IO h))
-  -> IO (Maybe (Merge IO h)) #-}
+  -> IO (Maybe (Merge t IO h)) #-}
 -- | Returns 'Nothing' if no input 'Run' contains any entries.
 -- The list of runs should be sorted from new to old.
 new ::
-     (MonadMask m, MonadSTM m, MonadST m)
+     (IsMergeType t, MonadMask m, MonadSTM m, MonadST m)
   => HasFS m h
   -> HasBlockIO m h
   -> RunDataCaching
   -> RunBloomFilterAlloc
   -> IndexType
-  -> MergeType
+  -> t
   -> Mappend
   -> Run.RunFsPaths
   -> V.Vector (Ref (Run m h))
-  -> m (Maybe (Merge m h))
-new fs hbio mergeCaching alloc indexType mergeType mergeMappend targetPaths runs = do
+  -> m (Maybe (Merge t m h))
+new hfs hbio mergeCaching alloc indexType narrowMergeType mergeMappend
+      targetPaths runs = do
     -- no offset, no write buffer
     mreaders <- Readers.new Readers.NoOffsetKey Nothing runs
     for mreaders $ \mergeReaders -> do
       -- calculate upper bounds based on input runs
       let numEntries = V.foldMap' Run.size runs
-      mergeBuilder <- Builder.new fs hbio targetPaths numEntries alloc indexType
+      mergeBuilder <- Builder.new hfs hbio targetPaths numEntries alloc indexType
       mergeState <- newMutVar $! Merging
       return Merge {
-          mergeHasFS = fs
+          mergeType = toMergeType narrowMergeType
+        , mergeHasFS = hfs
         , mergeHasBlockIO = hbio
         , ..
         }
 
-{-# SPECIALISE abort :: Merge IO (FS.Handle h) -> IO () #-}
+{-# SPECIALISE abort :: Merge t IO (FS.Handle h) -> IO () #-}
 -- | This function should be called when discarding a 'Merge' before it
 -- was done (i.e. returned 'MergeComplete'). This removes the incomplete files
 -- created for the new run so far and avoids leaking file handles.
 --
 -- Once it has been called, do not use the 'Merge' any more!
-abort :: (MonadMask m, MonadSTM m, MonadST m) => Merge m h -> m ()
+abort :: (MonadMask m, MonadSTM m, MonadST m) => Merge t m h -> m ()
 abort Merge {..} = do
     readMutVar mergeState >>= \case
       Merging -> do
@@ -156,7 +215,7 @@ abort Merge {..} = do
     writeMutVar mergeState $! Closed
 
 {-# SPECIALISE complete ::
-     Merge IO h
+     Merge t IO h
   -> IO (Ref (Run IO h)) #-}
 -- | Complete a 'Merge', returning a new 'Run' as the result of merging the
 -- input runs.
@@ -176,7 +235,7 @@ abort Merge {..} = do
 --
 complete ::
      (MonadSTM m, MonadST m, MonadMask m)
-  => Merge m h
+  => Merge t m h
   -> m (Ref (Run m h))
 complete Merge{..} = do
     readMutVar mergeState >>= \case
@@ -190,7 +249,7 @@ complete Merge{..} = do
       Closed -> error "complete: Merge is closed"
 
 {-# SPECIALISE stepsToCompletion ::
-     Merge IO h
+     Merge t IO h
   -> Int
   -> IO (Ref (Run IO h)) #-}
 -- | Like 'steps', but calling 'complete' once the merge is finished.
@@ -198,7 +257,7 @@ complete Merge{..} = do
 -- Note: run with async exceptions masked. See 'complete'.
 stepsToCompletion ::
       (MonadMask m, MonadSTM m, MonadST m)
-   => Merge m h
+   => Merge t m h
    -> Int
    -> m (Ref (Run m h))
 stepsToCompletion m stepBatchSize = go
@@ -209,7 +268,7 @@ stepsToCompletion m stepBatchSize = go
         (_, MergeDone)       -> complete m
 
 {-# SPECIALISE stepsToCompletionCounted ::
-     Merge IO h
+     Merge t IO h
   -> Int
   -> IO (Int, Ref (Run IO h)) #-}
 -- | Like 'steps', but calling 'complete' once the merge is finished.
@@ -217,7 +276,7 @@ stepsToCompletion m stepBatchSize = go
 -- Note: run with async exceptions masked. See 'complete'.
 stepsToCompletionCounted ::
      (MonadMask m, MonadSTM m, MonadST m)
-  => Merge m h
+  => Merge t m h
   -> Int
   -> m (Int, Ref (Run m h))
 stepsToCompletionCounted m stepBatchSize = go 0
@@ -237,7 +296,7 @@ stepsInvariant requestedSteps = \case
     _                    -> True
 
 {-# SPECIALISE steps ::
-     Merge IO h
+     Merge t IO h
   -> Int
   -> IO (Int, StepResult) #-}
 -- | Do at least a given number of steps of merging. Each step reads a single
@@ -250,9 +309,8 @@ stepsInvariant requestedSteps = \case
 --
 -- Returns an error if the merge was already completed or closed.
 steps ::
-     forall m h.
      (MonadMask m, MonadSTM m, MonadST m)
-  => Merge m h
+  => Merge t m h
   -> Int  -- ^ How many input entries to consume (at least)
   -> m (Int, StepResult)
 steps m@Merge {..} requestedSteps = assertStepsInvariant <$> do
@@ -264,9 +322,9 @@ steps m@Merge {..} requestedSteps = assertStepsInvariant <$> do
     -- check.
     readMutVar mergeState >>= \case
       Merging -> case mergeType of
-        MergeMidLevel  -> doStepsLevel m requestedSteps
-        MergeLastLevel -> doStepsLevel m requestedSteps
-        MergeUnion     -> doStepsUnion m requestedSteps
+        MergeTypeMidLevel  -> doStepsLevel m requestedSteps
+        MergeTypeLastLevel -> doStepsLevel m requestedSteps
+        MergeTypeUnion     -> doStepsUnion m requestedSteps
       MergingDone -> pure (0, MergeDone)
       Completed -> error "steps: Merge is completed"
       Closed -> error "steps: Merge is closed"
@@ -274,12 +332,12 @@ steps m@Merge {..} requestedSteps = assertStepsInvariant <$> do
     assertStepsInvariant res = assert (stepsInvariant requestedSteps res) res
 
 {-# SPECIALISE doStepsLevel ::
-     Merge IO h
+     Merge t IO h
   -> Int
   -> IO (Int, StepResult) #-}
 doStepsLevel ::
      (MonadMask m, MonadSTM m, MonadST m)
-  => Merge m h
+  => Merge t m h
   -> Int  -- ^ How many input entries to consume (at least)
   -> m (Int, StepResult)
 doStepsLevel Merge {..} requestedSteps = go 0
@@ -346,12 +404,12 @@ doStepsLevel Merge {..} requestedSteps = go 0
             pure (n + dropped, MergeDone)
 
 {-# SPECIALISE doStepsUnion ::
-     Merge IO h
+     Merge t IO h
   -> Int
   -> IO (Int, StepResult) #-}
 doStepsUnion ::
      (MonadMask m, MonadSTM m, MonadST m)
-  => Merge m h
+  => Merge t m h
   -> Int  -- ^ How many input entries to consume (at least)
   -> m (Int, StepResult)
 doStepsUnion Merge {..} requestedSteps = go 0
@@ -452,6 +510,6 @@ writeSerialisedEntry mergeType builder key entry =
 -- On the last level we could also turn Mupdate into Insert,
 -- but no need to complicate things.
 shouldWriteEntry :: Entry v b -> MergeType -> Bool
-shouldWriteEntry Delete MergeLastLevel = False
-shouldWriteEntry Delete MergeUnion     = False
-shouldWriteEntry _      _              = True
+shouldWriteEntry Delete MergeTypeLastLevel = False
+shouldWriteEntry Delete MergeTypeUnion     = False
+shouldWriteEntry _      _                  = True
