@@ -232,13 +232,13 @@ instance Arbitrary SmallCredit where
 -- simplified non-ST version of MergingTree
 data T = TCompleted Run
        | TOngoing (M TreeMergeType)
-       | TPendingLevel [I] (Maybe T)  -- not both empty!
+       | TPendingLevel [P] (Maybe T)  -- not both empty!
        | TPendingUnion [T]  -- at least 2 children
   deriving stock Show
 
--- simplified non-ST version of IncomingRun
-data I = ISingle Run
-       | IMerging (M LevelMergeType)
+-- simplified non-ST version of PreExistingRun
+data P = PRun        Run
+       | PMergingRun (M LevelMergeType)
   deriving stock Show
 
 -- simplified non-ST version of MergingRun
@@ -258,16 +258,16 @@ fromT t = do
     state <- case t of
       TCompleted r -> return (CompletedTreeMerge r)
       TOngoing mr  -> OngoingTreeMerge <$> fromM mr
-      TPendingLevel is mt ->
+      TPendingLevel ps mt ->
         fmap PendingTreeMerge $
-          PendingLevelMerge <$> traverse fromI is <*> traverse fromT mt
+          PendingLevelMerge <$> traverse fromP ps <*> traverse fromT mt
       TPendingUnion ts -> do
         fmap PendingTreeMerge $ PendingUnionMerge <$> traverse fromT ts
     MergingTree <$> newSTRef state
 
-fromI :: I -> ST s (IncomingRun s)
-fromI (ISingle r)  = return (Single r)
-fromI (IMerging m) = Merging MergePolicyTiering <$> fromM m
+fromP :: P -> ST s (PreExistingRun s)
+fromP (PRun r)        = pure (PreExistingRun r)
+fromP (PMergingRun m) = PreExistingMergingRun <$> fromM m
 
 fromM :: IsMergeType t => M t -> ST s (MergingRun t s)
 fromM m = do
@@ -281,13 +281,13 @@ completeT :: T -> Run
 completeT (TCompleted r) = r
 completeT (TOngoing m)   = completeM m
 completeT (TPendingLevel is t) =
-    mergek MergeLevel (map completeI is <> maybe [] (pure . completeT) t)
+    mergek MergeLevel (map completeP is <> maybe [] (pure . completeT) t)
 completeT (TPendingUnion ts) =
     mergek MergeUnion (map completeT ts)
 
-completeI :: I -> Run
-completeI (ISingle r)  = r
-completeI (IMerging m) = completeM m
+completeP :: P -> Run
+completeP (PRun r)        = r
+completeP (PMergingRun m) = completeM m
 
 completeM :: IsMergeType t => M t -> Run
 completeM (MCompleted _ _ r)   = r
@@ -318,15 +318,15 @@ instance Arbitrary T where
    <> [ TOngoing m'
       | m' <- shrink m
       ]
-  shrink tree@(TPendingLevel is t) =
+  shrink tree@(TPendingLevel ps t) =
       [ TCompleted (completeT tree) ]
    <> [ t' | Just t' <- [t] ]
-   <> [ TPendingLevel (is ++ [ISingle r]) Nothing  -- move into regular levels
+   <> [ TPendingLevel (ps ++ [PRun r]) Nothing  -- move into regular levels
       | Just (TCompleted r) <- [t]
       ]
-   <> [ TPendingLevel is' t'
-      | (is', t') <- shrink (is, t)
-      , length is' + length t' > 0
+   <> [ TPendingLevel ps' t'
+      | (ps', t') <- shrink (ps, t)
+      , length ps' + length t' > 0
       ]
   shrink tree@(TPendingUnion ts) =
       [ TCompleted (completeT tree) ]
@@ -336,10 +336,11 @@ instance Arbitrary T where
       , length ts' > 1
       ]
 
-instance Arbitrary I where
-  arbitrary = QC.oneof [ISingle <$> arbitrary, IMerging <$> arbitrary]
-  shrink (ISingle r)  = [ISingle r' | r' <- shrink r]
-  shrink (IMerging m) = [ISingle (completeM m)] <> [IMerging m' | m' <- shrink m]
+instance Arbitrary P where
+  arbitrary = QC.oneof [PRun <$> arbitrary, PMergingRun <$> arbitrary]
+  shrink (PRun r)        = [PRun r' | r' <- shrink r]
+  shrink (PMergingRun m) = [PRun (completeM m)]
+                        <> [PMergingRun m' | m' <- shrink m]
 
 instance (Arbitrary t, IsMergeType t) => Arbitrary (M t) where
   arbitrary = QC.oneof
