@@ -765,13 +765,10 @@ expectCompleted (DeRef MergingRun {..}) = do
     when (knownCompleted == MergeMaybeCompleted) $ do
       (SpentCredits   spentCredits,
        UnspentCredits unspentCredits) <- atomicReadCredits mergeCreditsVar
-      let !totalDebt       = numEntriesToTotalDebt mergeNumEntries
-          !suppliedCredits = spentCredits + unspentCredits
-          !credits         = assert (suppliedCredits <= totalDebt) $
-                             totalDebt - spentCredits
-      --TODO: the following ought to be true and be the right answer:
-      --  !credits         = assert (suppliedCredits == totalDebt) $
-      --                     unspentCredits
+      let totalDebt       = numEntriesToTotalDebt mergeNumEntries
+          suppliedCredits = spentCredits + unspentCredits
+          !credits        = assert (suppliedCredits == totalDebt) $
+                            unspentCredits
 
       --TODO: what about exception safety: check if it is ok to be interrupted
       -- between performMergeSteps and completeMerge here, and above.
