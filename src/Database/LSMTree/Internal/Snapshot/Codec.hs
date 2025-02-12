@@ -34,6 +34,7 @@ import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.Merge (MergeType (..))
 import           Database.LSMTree.Internal.MergeSchedule
 import           Database.LSMTree.Internal.MergingRun (NumRuns (..))
+import qualified Database.LSMTree.Internal.MergingRun as MR
 import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.Snapshot
 import qualified System.FS.API as FS
@@ -522,7 +523,7 @@ instance DecodeVersioned MergePolicyForLevel where
 
 -- SnapMergingRunState
 
-instance Encode (SnapMergingRunState RunNumber) where
+instance MR.IsMergeType t => Encode (SnapMergingRunState t RunNumber) where
   encode (SnapCompletedMerge x) =
          encodeListLen 2
       <> encodeWord 0
@@ -531,16 +532,21 @@ instance Encode (SnapMergingRunState RunNumber) where
          encodeListLen 3
       <> encodeWord 1
       <> encode rs
-      <> encode mt
+         -- always encode the full MergeType, see SnapOngoingMerge
+      <> encode @MergeType (MR.toMergeType mt)
 
-instance DecodeVersioned (SnapMergingRunState RunNumber) where
+instance MR.IsMergeType t => DecodeVersioned (SnapMergingRunState t RunNumber) where
   decodeVersioned v@V0 = do
       n <- decodeListLen
       tag <- decodeWord
       case (n, tag) of
         (2, 0) -> SnapCompletedMerge <$> decodeVersioned v
-        (3, 1) -> SnapOngoingMerge <$> decodeVersioned v
-                                   <*> decodeVersioned v
+        (3, 1) -> do
+          rs <- decodeVersioned v
+          mt <- decodeVersioned @MergeType v
+          case MR.fromMergeType mt of
+            Just t  -> return (SnapOngoingMerge rs t)
+            Nothing -> fail ("[SnapMergingRunState] Invalid merge type: " <> show mt)
         _ -> fail ("[SnapMergingRunState] Unexpected combination of list length and tag: " <> show (n, tag))
 
 -- SuppliedCredits

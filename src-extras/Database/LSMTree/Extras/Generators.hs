@@ -54,7 +54,8 @@ import           Database.LSMTree.Extras.Index (Append (..))
 import           Database.LSMTree.Extras.Orphans ()
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..))
-import           Database.LSMTree.Internal.Merge (MergeType (..))
+import qualified Database.LSMTree.Internal.Merge as Merge
+import qualified Database.LSMTree.Internal.MergingRun as MR
 import           Database.LSMTree.Internal.Page (PageNo (..))
 import           Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.Serialise
@@ -561,8 +562,19 @@ instance Arbitrary BlobSpan where
   Merge
 -------------------------------------------------------------------------------}
 
-instance Arbitrary MergeType where
-  arbitrary = QC.elements [MergeMidLevel, MergeLastLevel, MergeUnion]
-  shrink MergeMidLevel  = []
-  shrink MergeLastLevel = [MergeMidLevel]
-  shrink MergeUnion     = [MergeLastLevel]
+instance Arbitrary Merge.MergeType where
+  arbitrary = QC.elements
+      [Merge.MergeMidLevel, Merge.MergeLastLevel, Merge.MergeUnion]
+  shrink Merge.MergeMidLevel  = []
+  shrink Merge.MergeLastLevel = [Merge.MergeMidLevel]
+  shrink Merge.MergeUnion     = [Merge.MergeLastLevel]
+
+instance Arbitrary MR.LevelMergeType where
+  arbitrary = QC.elements [MR.MergeMidLevel, MR.MergeLastLevel]
+  shrink MR.MergeMidLevel  = []
+  shrink MR.MergeLastLevel = [MR.MergeMidLevel]
+
+instance Arbitrary MR.TreeMergeType where
+  arbitrary = QC.elements [MR.MergeLevel, MR.MergeUnion]
+  shrink MR.MergeLevel = []
+  shrink MR.MergeUnion = [MR.MergeLevel]

@@ -19,7 +19,6 @@ module Database.LSMTree.Internal.Snapshot (
   , openRuns
   , releaseRuns
     -- * Opening from levels snapshot format
-  , FromSnapError (..)
   , fromSnapLevels
     -- * Hard links
   , hardLinkRunFiles
@@ -32,7 +31,7 @@ import           Control.DeepSeq (NFData (..))
 import           Control.Exception (assert)
 import           Control.Monad (void)
 import           Control.Monad.Class.MonadST (MonadST)
-import           Control.Monad.Class.MonadThrow (Exception, MonadMask, throwIO)
+import           Control.Monad.Class.MonadThrow (MonadMask)
 import           Control.Monad.Primitive (PrimMonad)
 import           Control.RefCount
 import           Data.Foldable (sequenceA_, traverse_)
@@ -44,7 +43,6 @@ import           Database.LSMTree.Internal.CRC32C (checkCRC)
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
-import           Database.LSMTree.Internal.Merge (MergeType (..))
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.MergeSchedule
 import           Database.LSMTree.Internal.MergingRun (NumRuns (..))
@@ -144,7 +142,7 @@ data SnapIncomingRun r =
                    !NumRuns
                    !NumEntries
                    !SuppliedCredits
-                   !(SnapMergingRunState r)
+                   !(SnapMergingRunState MR.LevelMergeType r)
   | SnapSingleRun !r
   deriving stock (Show, Eq, Functor, Foldable, Traversable)
 
@@ -159,11 +157,11 @@ newtype SuppliedCredits = SuppliedCredits { getSuppliedCredits :: Int }
   deriving stock (Show, Eq, Read)
   deriving newtype NFData
 
-data SnapMergingRunState r =
+data SnapMergingRunState t r =
     SnapCompletedMerge !r
-  | SnapOngoingMerge !(V.Vector r) !MergeType
-    -- ^ While 'MR.MergingRun' can statically restrict the type of merge that
-    -- can occur in specific parts of a table, we use the full 'MergeType' here.
+  | SnapOngoingMerge !(V.Vector r) !t
+    -- ^ While we use a specific, more restrictive merge type @t@ here (see
+    -- 'MR.IsMergeType'), we should always serialise it as a 'MergeType'.
     -- Otherwise, if we for example accidentally deserialised a
     -- @SnapMergingRunState LevelMergeType@ with @MergeLastLevel@ as a
     -- @SnapMergingRunState TreeMergeType@, it would succeed with @MergeUnion@.
@@ -172,7 +170,7 @@ data SnapMergingRunState r =
     -- the table without having to change the serialisation format itself.
   deriving stock (Show, Eq, Functor, Foldable, Traversable)
 
-instance NFData r => NFData (SnapMergingRunState r) where
+instance (NFData t, NFData r) => NFData (SnapMergingRunState t r) where
   rnf (SnapCompletedMerge a) = rnf a
   rnf (SnapOngoingMerge a b) = rnf a `seq` rnf b
 
@@ -226,11 +224,26 @@ toSnapIncomingRun (Merging mergePolicy mergingRun) = do
         (SuppliedCredits suppliedCredits)
         smrs
 
+-- | Only to be used for incoming runs! Merging runs inside a merging tree need
+-- to use MR.TreeMergeType.
+--
+-- We could offer a more general type if 'Mr.MergingRunState' also had a type
+-- parameter 't', but that adds quite a bit of noise.
 toSnapMergingRunState ::
      MR.MergingRunState m h
-  -> SnapMergingRunState (Ref (Run m h))
+  -> SnapMergingRunState MR.LevelMergeType (Ref (Run m h))
 toSnapMergingRunState (MR.CompletedMerge r)  = SnapCompletedMerge r
-toSnapMergingRunState (MR.OngoingMerge rs m) = SnapOngoingMerge rs (Merge.mergeType m)
+toSnapMergingRunState (MR.OngoingMerge rs m) =
+    -- The merge type conversion should never fail, since the Merge was
+    -- constructed based on the restricted LevelMergeType.
+    -- To make the types align, we could either:
+    -- * store the restricted type inside MergingRun itself, but this would
+    --   just duplicate information, not provide any safety.
+    -- * Also add the type parameter to Merge, adding complexity there.
+    let mt = Merge.mergeType m
+    in case MR.fromMergeType mt of
+      Just t  -> SnapOngoingMerge rs t
+      Nothing -> error ("invalid MergeType: " <> show mt)
 
 {-------------------------------------------------------------------------------
   Write Buffer
@@ -425,10 +438,6 @@ releaseRuns reg = traverse_ $ \r -> delayedCommit reg (releaseRef r)
   Opening from levels snapshot format
 -------------------------------------------------------------------------------}
 
-data FromSnapError = InvalidLevelMergeType !MergeType
-  deriving stock Show
-  deriving anyclass Exception
-
 {-# SPECIALISE fromSnapLevels ::
      ActionRegistry IO
   -> HasFS IO h
@@ -441,9 +450,6 @@ data FromSnapError = InvalidLevelMergeType !MergeType
   -> IO (Levels IO h)
   #-}
 -- | Duplicates runs and re-creates merging runs.
---
--- Throws 'FromSnapError' if the deserialised snapshot violates invariants on
--- the table structure.
 fromSnapLevels ::
      forall m h. (MonadMask m, MonadMVar m, MonadSTM m, MonadST m)
   => ActionRegistry m
@@ -483,11 +489,8 @@ fromSnapLevels reg hfs hbio conf@TableConfig{..} uc resolve dir (SnapLevels leve
 
               SnapOngoingMerge runs mt -> do
                 rn <- uniqueToRunNumber <$> incrUniqCounter uc
-                lmt <- case MR.fromMergeType mt of
-                  Just lmt -> return lmt
-                  Nothing  -> throwIO (InvalidLevelMergeType mt)
                 mr <- withRollback reg
-                  (MR.new hfs hbio resolve caching alloc indexType lmt (mkPath rn) runs)
+                  (MR.new hfs hbio resolve caching alloc indexType mt (mkPath rn) runs)
                   releaseRef
                 -- When a snapshot is created, merge progress is lost, so we
                 -- have to redo merging work here. SuppliedCredits tracks how
