@@ -73,7 +73,7 @@ test_regression_empty_run =
           ]
 
         -- finish merge
-        LSM.supplyMergeCredits lsm 16
+        LSM.supplyMergeCredits lsm (NominalCredit 16)
 
         expectShape lsm
           0
@@ -143,7 +143,7 @@ test_merge_again_with_incoming =
           ]
 
         -- complete the merge (20 entries, but credits get scaled up by 1.25)
-        LSM.supplyMergeCredits lsm 16
+        LSM.supplyMergeCredits lsm (NominalCredit 16)
 
         expectShape lsm
           0
@@ -272,7 +272,7 @@ fromP (PMergingRun m) = PreExistingMergingRun <$> fromM m
 fromM :: IsMergeType t => M t -> ST s (MergingRun t s)
 fromM m = do
     let (mergeType, mergeDebt, state) = case m of
-          MCompleted mt md r  -> (mt, md, CompletedMerge r)
+          MCompleted  mt md r  -> (mt, md, CompletedMerge r)
           MOngoing mt md mc rs -> (mt, md, OngoingMerge mc rs' (mergek mt rs'))
             where rs' = map getNonEmptyRun rs
     MergingRun mergeType mergeDebt <$> newSTRef state
