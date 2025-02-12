@@ -2,5 +2,5 @@ if(os(linux))
   source-repository-package
     type: git
     location: https://github.com/well-typed/blockio-uring
-    -- mega-batches
-    tag: ab50126701de7eac9b62c20ae11e9ad706e1e40a
+    -- ghc-9.12
+    tag: 6f6d7285a41a0807e9867e12a617e76942151531
