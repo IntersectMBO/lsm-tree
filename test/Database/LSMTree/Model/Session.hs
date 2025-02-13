@@ -233,8 +233,9 @@ runModelMWithInjectedErrors ::
   -> Model -> (Either Err a, Model)
 runModelMWithInjectedErrors Nothing onNoErrors _ st =
     runModelM onNoErrors st
-runModelMWithInjectedErrors (Just _) _ onErrors st =
+runModelMWithInjectedErrors (Just _errors) _ onErrors st =
     runModelM (onErrors >> throwError (ErrFsError "modelled FsError")) st
+
 
 --
 -- Errors
@@ -603,6 +604,9 @@ openSnapshot label name = do
           Just table' ->
             newTableWith conf table'
 
+-- TODO: to match the implementation of the real table, this should not corrupt the
+--       snapshot if there are _no non-empty files_; however, since there are no such
+--       snapshots, this is probably fine
 corruptSnapshot ::
      (MonadState Model m, MonadError Err m)
   => SnapshotName
