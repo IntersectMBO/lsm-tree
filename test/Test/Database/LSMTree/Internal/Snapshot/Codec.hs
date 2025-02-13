@@ -171,7 +171,7 @@ testAll test = [
     , test (Proxy @(SnapIncomingRun RunNumber))
     , test (Proxy @NumRuns)
     , test (Proxy @MergePolicyForLevel)
-    , test (Proxy @(SnapMergingRunState RunNumber))
+    , test (Proxy @(SnapMergingRunState LevelMergeType RunNumber))
     , test (Proxy @SuppliedCredits)
     , test (Proxy @MergeType)
     ]
@@ -291,7 +291,7 @@ instance Arbitrary MergePolicyForLevel where
   arbitrary = elements [LevelTiering, LevelLevelling]
   shrink _ = []
 
-instance Arbitrary (SnapMergingRunState RunNumber) where
+instance Arbitrary t => Arbitrary (SnapMergingRunState t RunNumber) where
   arbitrary = oneof [
         SnapCompletedMerge <$> arbitrary
       , SnapOngoingMerge <$> arbitrary <*> arbitrary
