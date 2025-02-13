@@ -234,7 +234,10 @@ runModelMWithInjectedErrors ::
 runModelMWithInjectedErrors Nothing onNoErrors _ st =
     runModelM onNoErrors st
 runModelMWithInjectedErrors (Just _) _ onErrors st =
-    runModelM (onErrors >> throwError (ErrFsError "modelled FsError")) st
+    runModelM (onErrors >> throwError modelErrDiskFault) st
+
+modelErrDiskFault :: Err
+modelErrDiskFault = ErrDiskFault "modelled disk fault"
 
 --
 -- Errors
@@ -248,8 +251,10 @@ data Err =
   | ErrSnapshotWrongType
   | ErrBlobRefInvalidated
   | ErrCursorClosed
-    -- | Some file system error occurred
-  | ErrFsError String
+    -- | A catch-all error for cases where /something/ went wrong with the file
+    -- system.
+  | ErrDiskFault String
+  | ErrOther String
 
 instance Show Err where
   showsPrec d = \case
@@ -266,12 +271,31 @@ instance Show Err where
       ErrBlobRefInvalidated ->
         showString "ErrBlobRefInvalidated"
       ErrCursorClosed ->
-        showString "ErrCursorCosed"
-      ErrFsError s ->
+        showString "ErrCursorClosed"
+      ErrDiskFault s ->
         showParen (d > appPrec) $
-        showString "ErrFsError " .
+        showString "ErrDiskFault " .
+        showParen True (showString s)
+      ErrOther s ->
+        showParen (d > appPrec) $
+        showString "ErrOther " .
         showParen True (showString s)
 
+-- Approximate equality for errors.
+--
+-- This approximate equality satisfies the __Reflexivity__, __Symmetry__, and
+-- __Negation__ laws for the 'Eq' class, but not __Transitivity__ and
+-- __Substitutivity__.
+--
+-- These laws should be sufficient for the purpose of comparing an error
+-- returned from the SUT to an error returned from the model.
+--
+-- Where @'Eq' 'Err'@ deviates from a typical instance is that 'ErrDiskFault' is
+-- equal to all other errors. This is important for comparing SUT exceptions to
+-- model exceptions. The model only knows /something/ went wrong, but the SUT
+-- will probably have a very specific error that it throws. In such cases where
+-- the SUT error is more specific then the model error, the errors are
+-- considered equal.
 instance Eq Err where
   (==) ErrTableClosed ErrTableClosed = True
   (==) ErrSnapshotCorrupted ErrSnapshotCorrupted = True
@@ -280,7 +304,11 @@ instance Eq Err where
   (==) ErrSnapshotWrongType ErrSnapshotWrongType = True
   (==) ErrBlobRefInvalidated ErrBlobRefInvalidated = True
   (==) ErrCursorClosed ErrCursorClosed = True
-  (==) (ErrFsError _) (ErrFsError _) = True
+  (==) (ErrOther s1) (ErrOther s2) = s1 == s2
+  (==) _ (ErrOther _) = False
+  (==) (ErrOther _) _ = False
+  (==) _ (ErrDiskFault _) = True
+  (==) (ErrDiskFault _) _ = True
   (==) _ _ = False
     where
       _coveredAllCases x = case x of
@@ -291,8 +319,8 @@ instance Eq Err where
           ErrSnapshotWrongType{}    -> ()
           ErrBlobRefInvalidated{}   -> ()
           ErrCursorClosed{}         -> ()
-          ErrFsError{}              -> ()
-
+          ErrDiskFault{}            -> ()
+          ErrOther{}                -> ()
 
 {-------------------------------------------------------------------------------
   Tables
