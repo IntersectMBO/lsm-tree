@@ -231,6 +231,14 @@ duplicateRuns (DeRef mr) =
         V.mapM (\r -> withRollback reg (dupRef r) releaseRef) rs
 
 -- | Take a snapshot of the state of a merging run.
+--
+-- TODO: this is not concurrency safe! The inputs runs to the merging run could
+-- be released concurrently by another thread that completes the merge, while
+-- the snapshot is taking place. The solution is for snapshot here to duplicate
+-- the runs it returns _while_ holding the mergeState MVar (to exclude threads
+-- that might concurrently complete the merge). And then the caller of course
+-- must be updated to release the extra references.
+--
 snapshot ::
      (PrimMonad m, MonadMVar m)
   => Ref (MergingRun m h)
