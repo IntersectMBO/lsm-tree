@@ -581,44 +581,51 @@ paydownMergeDebt :: MergeDebt -> MergeCredit -> Credit -> MergeDebtPaydown
 paydownMergeDebt MergeDebt {totalDebt}
                  MergeCredit {spentCredits, unspentCredits}
                  c
-  | let !suppliedCredits' = suppliedCredits + c
-  , suppliedCredits' >= totalDebt
+  | suppliedCredits' >= totalDebt
   , let !leftover = suppliedCredits' - totalDebt
         !perform  = c - leftover
-  = assert (perform >= 0 && leftover >= 0) $
-    assert (c == perform + leftover) $
-    assert (suppliedCredits + perform == totalDebt) $
+  = assert (dischargePostcondition perform leftover) $
     MergeDebtDischarged perform leftover
 
-  | let !unspentCredits' = unspentCredits + c
-  , unspentCredits' >= mergeBatchSize
+  | unspentCredits' >= mergeBatchSize
   , let (!b, !r)         = divMod unspentCredits' mergeBatchSize
         !perform         = b * mergeBatchSize
-        spentCredits'    = spentCredits    + perform
-        unspentCredits'' = unspentCredits' - perform
-        suppliedCredits' = spentCredits' + unspentCredits''
-  = assert (unspentCredits'' == r)
-    assert (suppliedCredits + c == suppliedCredits') $
-    assert (suppliedCredits' < totalDebt) $
+  = assert (performPostcondition perform r) $
     MergeDebtPaydownPerform
       perform
       MergeCredit {
-        spentCredits   = spentCredits',
-        unspentCredits = unspentCredits''
+        spentCredits   = spentCredits    + perform,
+        unspentCredits = unspentCredits' - perform
       }
 
   | otherwise
-  , let unspentCredits'  = unspentCredits + c
-        suppliedCredits' = spentCredits + unspentCredits'
-  = assert (suppliedCredits + c == suppliedCredits') $
-    assert (suppliedCredits' < totalDebt) $
+  = assert creditedPostcondition $
     MergeDebtPaydownCredited
       MergeCredit {
         spentCredits,
         unspentCredits = unspentCredits'
       }
   where
-    !suppliedCredits = spentCredits + unspentCredits
+    suppliedCredits' = spentCredits + unspentCredits + c
+    unspentCredits'  =                unspentCredits + c
+
+    dischargePostcondition perform leftover =
+          (c >= 0)
+       && (perform >= 0 && leftover >= 0)
+       && (c == perform + leftover)
+       && (spentCredits + unspentCredits + perform == totalDebt)
+
+    performPostcondition perform r =
+      let spentCredits'    = spentCredits    + perform
+          unspentCredits'' = unspentCredits' - perform
+       in (c >= 0)
+       && (unspentCredits'' == r)
+       && (suppliedCredits' == spentCredits' + unspentCredits'')
+       && (suppliedCredits' < totalDebt)
+
+    creditedPostcondition =
+          (c >= 0)
+       && (suppliedCredits' < totalDebt)
 
 mergeBatchSize :: Int
 mergeBatchSize = 32
