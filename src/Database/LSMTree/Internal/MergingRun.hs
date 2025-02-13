@@ -776,10 +776,6 @@ expectCompleted (DeRef MergingRun {..}) = do
       -- between performMergeSteps and completeMerge here, and above.
       weFinishedMerge <- performMergeSteps mergeState mergeCreditsVar credits
       when weFinishedMerge $ completeMerge mergeState mergeKnownCompleted
-      -- TODO: can we think of a check to see if we did not do too much work
-      -- here? <-- assert (suppliedCredits == totalDebt) ought to do it!
-      -- A related question is if we finished the merge too early, could have
-      -- spread out the work better.
     withMVar mergeState $ \case
       CompletedMerge r -> dupRef r  -- return a fresh reference to the run
       OngoingMerge{} -> do
