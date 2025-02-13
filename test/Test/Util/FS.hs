@@ -30,6 +30,8 @@ module Test.Util.FS (
   , listDirectoryRecursive
   , listDirectoryRecursiveFiles
     -- * Corruption
+  , SilentCorruptions (..)
+  , SilentCorruption (..)
   , flipRandomBitInRandomFile
   , flipFileBit
   , hFlipBit
@@ -350,6 +352,14 @@ listDirectoryFiles hfs = go Set.empty
 {-------------------------------------------------------------------------------
   Corruption
 -------------------------------------------------------------------------------}
+
+newtype SilentCorruptions = SilentCorruptions {unSilentCorruptions :: NonEmpty SilentCorruption}
+  deriving stock (Eq, Show)
+  deriving newtype (Arbitrary)
+
+newtype SilentCorruption = SilentCorruption {bitChoice :: Choice}
+  deriving stock (Eq, Show)
+  deriving newtype (Arbitrary)
 
 -- | Flip a random bit in a random file in a given directory.
 flipRandomBitInRandomFile ::
