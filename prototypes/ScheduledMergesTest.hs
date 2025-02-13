@@ -343,50 +343,71 @@ instance Arbitrary P where
                         <> [PMergingRun m' | m' <- shrink m]
 
 instance (Arbitrary t, IsMergeType t) => Arbitrary (M t) where
-  arbitrary = QC.frequency
-      [ (1, do (mt, r) <- arbitrary
-               let md = MergeDebt (runSize r)
-               pure $ MCompleted mt md r)
-      , (1, do
-          mt <- arbitrary
-          n  <- QC.chooseInt (2, 8)
-          rs <- QC.vectorOf n (QC.scale (`div` n) arbitrary)
-          let totalDebt    = sum (map (length . getNonEmptyRun) rs)
-          suppliedCredits <- QC.chooseInt (0, totalDebt-1)
-          unspentCredits  <- QC.chooseInt (0, min (mergeBatchSize-1) suppliedCredits)
-          let spentCredits = suppliedCredits - unspentCredits
-          let md = MergeDebt {
-                     totalDebt
-                   }
-              mc = MergeCredit {
-                    unspentCredits,
-                    spentCredits
-                 }
-          assert (mergeDebtInvariant md mc) $
-            return (MOngoing mt md mc rs))
+  arbitrary = QC.oneof
+      [ do (mt, r) <- arbitrary
+           let md = MergeDebt (runSize r)
+           pure (MCompleted mt md r)
+      , do mt <- arbitrary
+           n  <- QC.chooseInt (2, 8)
+           rs <- QC.vectorOf n (QC.scale (`div` n) arbitrary)
+           (md, mc) <- genMergeCreditForRuns rs
+           pure (MOngoing mt md mc rs)
       ]
 
   shrink (MCompleted mt md r) =
       [ MCompleted mt md r' | r' <- shrink r ]
-  shrink m@(MOngoing mt md MergeCredit {spentCredits, unspentCredits} rs) =
+  shrink m@(MOngoing mt md mc rs) =
       [ MCompleted mt md (completeM m) ]
-   <> [ assert (mergeDebtInvariant md' mc') $
-        MOngoing mt md' mc' rs'
+   <> [ MOngoing mt md' mc' rs'
       | rs' <- shrink rs
       , length rs' > 1
-      , let totalDebt'    = sum (map (length . getNonEmptyRun) rs')
-      , suppliedCredits' <- shrink (min (spentCredits+unspentCredits)
-                                        (totalDebt'-1))
-      , unspentCredits'  <- shrink (min unspentCredits suppliedCredits')
-      , let spentCredits' = suppliedCredits' - unspentCredits'
-      , let md' = MergeDebt {
-                    totalDebt      = totalDebt'
-                  }
-            mc' = MergeCredit {
-                    spentCredits   = spentCredits',
-                    unspentCredits = unspentCredits'
-                  }
+      , (md', mc') <- shrinkMergeCreditForRuns rs' mc
       ]
+
+-- | The 'MergeDebt' and 'MergeCredit' must maintain a couple invariants:
+--
+-- * the total debt must be the same as the sum of the input run sizes;
+-- * the supplied credit is less than the total merge debt.
+--
+genMergeCreditForRuns :: [NonEmptyRun] -> QC.Gen (MergeDebt, MergeCredit)
+genMergeCreditForRuns rs = do
+      let totalDebt    = sum (map (length . getNonEmptyRun) rs)
+      suppliedCredits <- QC.chooseInt (0, totalDebt-1)
+      unspentCredits  <- QC.chooseInt (0, min (mergeBatchSize-1) suppliedCredits)
+      let spentCredits = suppliedCredits - unspentCredits
+          md           = MergeDebt {
+                           totalDebt
+                         }
+          mc           = MergeCredit {
+                            unspentCredits,
+                            spentCredits
+                         }
+      assert (mergeDebtInvariant md mc) $
+        pure (md, mc)
+
+-- | Shrink the 'MergeDebt' and 'MergeCredit' given the old 'MergeCredit' and
+-- the already-shrunk runs.
+--
+-- Thus must maintain invariants, see 'genMergeCreditForDebt'.
+--
+shrinkMergeCreditForRuns :: [NonEmptyRun]
+                         -> MergeCredit -> [(MergeDebt, MergeCredit)]
+shrinkMergeCreditForRuns rs' MergeCredit {spentCredits, unspentCredits} =
+    [ assert (mergeDebtInvariant md' mc')
+      (md', mc')
+    | let totalDebt'    = sum (map (length . getNonEmptyRun) rs')
+    , suppliedCredits' <- shrink (min (spentCredits+unspentCredits)
+                                      (totalDebt'-1))
+    , unspentCredits'  <- shrink (min unspentCredits suppliedCredits')
+    , let spentCredits' = suppliedCredits' - unspentCredits'
+          md'           = MergeDebt {
+                            totalDebt      = totalDebt'
+                          }
+          mc'           = MergeCredit {
+                            spentCredits   = spentCredits',
+                            unspentCredits = unspentCredits'
+                          }
+    ]
 
 instance Arbitrary NonEmptyRun where
   arbitrary = do

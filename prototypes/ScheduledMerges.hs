@@ -1147,7 +1147,8 @@ newLevelMerge tr level mergePolicy mergeType rs = do
     pure (Merging mergePolicy nominalDebt nominalCreditVar mergingRun)
   where
     -- The nominal debt equals the minimum of credits we will supply before we
-    -- expect the merge to complete. This is the same as the number of updates.
+    -- expect the merge to complete. This is the same as the number of updates
+    -- in a run that gets moved to this level.
     nominalDebt = NominalDebt (tieringRunSize level)
 
     -- The physical debt is the number of actual merge steps we will need to
