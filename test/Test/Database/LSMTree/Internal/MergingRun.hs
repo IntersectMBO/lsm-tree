@@ -13,7 +13,7 @@ tests = testGroup "Test.Database.LSMTree.Internal.MergingRun"
     ]
 
 -- | The representation of CreditsPair should round trip properly. This is
--- non-trivial because it uses a packed bit the representation.
+-- non-trivial because it uses a packed bitfield representation.
 --
 prop_CreditsPair :: SpentCredits -> UnspentCredits -> Property
 prop_CreditsPair spentCredits unspentCredits =

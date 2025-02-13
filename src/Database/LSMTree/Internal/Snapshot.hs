@@ -194,10 +194,8 @@ toSnapIncomingRun ::
   -> m (SnapIncomingRun (Ref (Run m h)))
 toSnapIncomingRun (Single r) = pure (SnapSingleRun r)
 toSnapIncomingRun (Merging mergePolicy mergingRun) = do
-    -- We need to know how many credits were spend and yet unspent so we can
-    -- restore merge work on snapshot load. No need to snapshot the contents
-    -- of totalStepsVar here, since we still start counting from 0 again when
-    -- loading the snapshot.
+    -- We need to know how many credits were supplied so we can restore merge
+    -- work on snapshot load.
     (mergingRunState,
      MR.SuppliedCredits (MR.Credits suppliedCredits),
      mergeNumRuns,

@@ -267,7 +267,7 @@ work to do).
 The implementation is similar but somewhat more complex. We also accumulate
 unspent credits until they reach a threshold at which point we do a batch of
 merging work. Unlike the prototype, the implementation tracks both credits
-spent credits as yet unspent. We will elaborate on why and how below.
+spent and credits as yet unspent. We will elaborate on why and how below.
 
 In the prototype, the credits spent equals the merge steps performed. The
 same holds in the real implementation, but making it so is more complicated.
@@ -296,7 +296,8 @@ Thus we track two things:
  * credits unspent ('UnspentCredits'): credits supplied that are not yet spent
    and are thus available to spend.
 
-The credits supplied is the sum of the credits spent and unspent.
+The credits supplied is the sum of the credits spent and unspent. We guarantee
+that the supplied credits never exceeds the total debt.
 
 The credits spent and the steps performed (or in the process of being
 performed) will typically be equal. They are not guaranteed to be equal in the
