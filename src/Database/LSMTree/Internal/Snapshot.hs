@@ -171,6 +171,12 @@ instance NFData r => NFData (SnapMergingRunState r) where
   Conversion to levels snapshot format
 -------------------------------------------------------------------------------}
 
+--TODO: probably generally all the Ref (Run _) here ought to be fresh
+-- references, created as we snapshot the levels, so that the runs don't
+-- disappear under our feet during the process of making the snapshot durable.
+-- At minimum the volatile runs are the inputs to merging runs, but it may be
+-- simpler to duplicate them all, and release them all at the end.
+
 {-# SPECIALISE toSnapLevels :: Levels IO h -> IO (SnapLevels (Ref (Run IO h))) #-}
 toSnapLevels ::
      (PrimMonad m, MonadMVar m)
@@ -194,14 +200,14 @@ toSnapIncomingRun ::
   -> m (SnapIncomingRun (Ref (Run m h)))
 toSnapIncomingRun (Single r) = pure (SnapSingleRun r)
 toSnapIncomingRun (Merging mergePolicy mergingRun) = do
-    -- We need to know how many credits were spend and yet unspent so we can
-    -- restore merge work on snapshot load. No need to snapshot the contents
-    -- of totalStepsVar here, since we still start counting from 0 again when
-    -- loading the snapshot.
+    -- We need to know how many credits were supplied so we can restore merge
+    -- work on snapshot load.
     (mergingRunState,
      MR.SuppliedCredits (MR.Credits suppliedCredits),
      mergeNumRuns,
      mergeNumEntries) <- MR.snapshot mergingRun
+    -- TODO: MR.snapshot needs to return duplicated run references, and we
+    -- need to arrange to release them when the snapshoting is done.
     let smrs = toSnapMergingRunState mergingRunState
     pure $
       SnapMergingRun

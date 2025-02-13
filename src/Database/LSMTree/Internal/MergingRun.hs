@@ -231,6 +231,14 @@ duplicateRuns (DeRef mr) =
         V.mapM (\r -> withRollback reg (dupRef r) releaseRef) rs
 
 -- | Take a snapshot of the state of a merging run.
+--
+-- TODO: this is not concurrency safe! The inputs runs to the merging run could
+-- be released concurrently by another thread that completes the merge, while
+-- the snapshot is taking place. The solution is for snapshot here to duplicate
+-- the runs it returns _while_ holding the mergeState MVar (to exclude threads
+-- that might concurrently complete the merge). And then the caller of course
+-- must be updated to release the extra references.
+--
 snapshot ::
      (PrimMonad m, MonadMVar m)
   => Ref (MergingRun m h)
@@ -267,7 +275,7 @@ work to do).
 The implementation is similar but somewhat more complex. We also accumulate
 unspent credits until they reach a threshold at which point we do a batch of
 merging work. Unlike the prototype, the implementation tracks both credits
-spent credits as yet unspent. We will elaborate on why and how below.
+spent and credits as yet unspent. We will elaborate on why and how below.
 
 In the prototype, the credits spent equals the merge steps performed. The
 same holds in the real implementation, but making it so is more complicated.
@@ -296,7 +304,8 @@ Thus we track two things:
  * credits unspent ('UnspentCredits'): credits supplied that are not yet spent
    and are thus available to spend.
 
-The credits supplied is the sum of the credits spent and unspent.
+The credits supplied is the sum of the credits spent and unspent. We guarantee
+that the supplied credits never exceeds the total debt.
 
 The credits spent and the steps performed (or in the process of being
 performed) will typically be equal. They are not guaranteed to be equal in the
@@ -330,7 +339,7 @@ numEntriesToTotalDebt (NumEntries n) = Credits n
 -- Note that ideally the batch size for different LSM levels should be
 -- co-prime so that merge work at different levels is not synchronised.
 --
-newtype CreditThreshold = CreditThreshold Credits
+newtype CreditThreshold = CreditThreshold UnspentCredits
 
 -- | The supplied credits is simply the sum of all the credits that have been
 -- (successfully) supplied to a merging run via 'supplyCredits'.
@@ -559,8 +568,8 @@ atomicDepositAndSpendCredits (CreditsVar !var) !totalDebt
 
             -- 2. not case 1, but enough unspent credits have accumulated to do
             -- a batch of merge work;
-            | (\(UnspentCredits x)->x) unspent' >= batchThreshold
-            = spendBatchCredits spent unspent'
+            | unspent' >= batchThreshold
+            = spendBatchCredits spent unspent' batchThreshold
 
             -- 3. not case 1 or 2, not enough credits to do any merge work.
             | otherwise
@@ -587,14 +596,15 @@ atomicDepositAndSpendCredits (CreditsVar !var) !totalDebt
           assert (leftover  >= 0) $
           (supplied', UnspentCredits unspent', leftover)
 
-    spendBatchCredits (SpentCredits !spent) (UnspentCredits !unspent) =
+    spendBatchCredits (SpentCredits !spent) (UnspentCredits !unspent)
+                      (UnspentCredits unspentBatchThreshold) =
       -- numBatches may be zero, in which case the result will be zero
-      let !nBatches = unspent `div` batchThreshold
-          !spend    = nBatches * batchThreshold
+      let !nBatches = unspent `div` unspentBatchThreshold
+          !spend    = nBatches * unspentBatchThreshold
           !spent'   = spent   + spend
           !unspent' = unspent - spend
        in assert (spend >= 0) $
-          assert (unspent' < batchThreshold) $
+          assert (unspent' < unspentBatchThreshold) $
           assert (spent' + unspent' == spent + unspent) $
           (spend, SpentCredits spent', UnspentCredits unspent')
 
@@ -702,11 +712,10 @@ performMergeSteps ::
   -> Credits
   -> m Bool
 performMergeSteps mergeVar creditsVar (Credits credits) =
+    assert (credits >= 0) $
     withMVar mergeVar $ \case
       CompletedMerge{}   -> pure False
       OngoingMerge _rs m -> do
-        -- We have dealt with the case of credits <= 0 above,
-        -- so here we know credits is positive
         let stepsToDo = credits
         (stepsDone, stepResult) <- Merge.steps m stepsToDo
         assert (stepResult == MergeDone || stepsDone >= stepsToDo) (pure ())
@@ -743,8 +752,9 @@ completeMerge mergeVar mergeKnownCompletedVar = do
       (OngoingMerge rs m) -> do
         -- first try to complete the merge before performing other side effects,
         -- in case the completion fails
-        --TODO: Run.fromMutable claims not to be exception safe
-        -- may need to use uninteruptible mask
+        --TODO: Run.fromMutable (used in Merge.complete) claims not to be
+        -- exception safe so we should probably be using the resource registry
+        -- and test for exception safety.
         r <- Merge.complete m
         V.forM_ rs releaseRef
         -- Cache the knowledge that we completed the merge
@@ -768,16 +778,14 @@ expectCompleted (DeRef MergingRun {..}) = do
       let totalDebt       = numEntriesToTotalDebt mergeNumEntries
           suppliedCredits = spentCredits + unspentCredits
           !credits        = assert (suppliedCredits == totalDebt) $
+                            assert (unspentCredits >= 0) $
                             unspentCredits
 
-      --TODO: what about exception safety: check if it is ok to be interrupted
-      -- between performMergeSteps and completeMerge here, and above.
       weFinishedMerge <- performMergeSteps mergeState mergeCreditsVar credits
+      -- If an async exception happens before we get to perform the
+      -- completion, then that is fine. The next 'expectCompleted' will
+      -- complete the merge.
       when weFinishedMerge $ completeMerge mergeState mergeKnownCompleted
-      -- TODO: can we think of a check to see if we did not do too much work
-      -- here? <-- assert (suppliedCredits == totalDebt) ought to do it!
-      -- A related question is if we finished the merge too early, could have
-      -- spread out the work better.
     withMVar mergeState $ \case
       CompletedMerge r -> dupRef r  -- return a fresh reference to the run
       OngoingMerge{} -> do
