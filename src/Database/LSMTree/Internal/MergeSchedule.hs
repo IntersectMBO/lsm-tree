@@ -915,4 +915,4 @@ scaleCreditsForMerge LevelTiering mr (Credits c) =
 creditThresholdForLevel :: TableConfig -> LevelNo -> MR.CreditThreshold
 creditThresholdForLevel conf (LevelNo _i) =
     let AllocNumEntries (NumEntries x) = confWriteBufferAlloc conf
-    in  MR.CreditThreshold (MR.Credits x)
+    in  MR.CreditThreshold (MR.UnspentCredits (MR.Credits x))

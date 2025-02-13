@@ -331,7 +331,7 @@ numEntriesToTotalDebt (NumEntries n) = Credits n
 -- Note that ideally the batch size for different LSM levels should be
 -- co-prime so that merge work at different levels is not synchronised.
 --
-newtype CreditThreshold = CreditThreshold Credits
+newtype CreditThreshold = CreditThreshold UnspentCredits
 
 -- | The supplied credits is simply the sum of all the credits that have been
 -- (successfully) supplied to a merging run via 'supplyCredits'.
@@ -560,8 +560,8 @@ atomicDepositAndSpendCredits (CreditsVar !var) !totalDebt
 
             -- 2. not case 1, but enough unspent credits have accumulated to do
             -- a batch of merge work;
-            | (\(UnspentCredits x)->x) unspent' >= batchThreshold
-            = spendBatchCredits spent unspent'
+            | unspent' >= batchThreshold
+            = spendBatchCredits spent unspent' batchThreshold
 
             -- 3. not case 1 or 2, not enough credits to do any merge work.
             | otherwise
@@ -588,14 +588,15 @@ atomicDepositAndSpendCredits (CreditsVar !var) !totalDebt
           assert (leftover  >= 0) $
           (supplied', UnspentCredits unspent', leftover)
 
-    spendBatchCredits (SpentCredits !spent) (UnspentCredits !unspent) =
+    spendBatchCredits (SpentCredits !spent) (UnspentCredits !unspent)
+                      (UnspentCredits unspentBatchThreshold) =
       -- numBatches may be zero, in which case the result will be zero
-      let !nBatches = unspent `div` batchThreshold
-          !spend    = nBatches * batchThreshold
+      let !nBatches = unspent `div` unspentBatchThreshold
+          !spend    = nBatches * unspentBatchThreshold
           !spent'   = spent   + spend
           !unspent' = unspent - spend
        in assert (spend >= 0) $
-          assert (unspent' < batchThreshold) $
+          assert (unspent' < unspentBatchThreshold) $
           assert (spent' + unspent' == spent + unspent) $
           (spend, SpentCredits spent', UnspentCredits unspent')
 
