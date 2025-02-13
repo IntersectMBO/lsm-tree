@@ -712,11 +712,10 @@ performMergeSteps ::
   -> Credits
   -> m Bool
 performMergeSteps mergeVar creditsVar (Credits credits) =
+    assert (credits >= 0) $
     withMVar mergeVar $ \case
       CompletedMerge{}   -> pure False
       OngoingMerge _rs m -> do
-        -- We have dealt with the case of credits <= 0 above,
-        -- so here we know credits is positive
         let stepsToDo = credits
         (stepsDone, stepResult) <- Merge.steps m stepsToDo
         assert (stepResult == MergeDone || stepsDone >= stepsToDo) (pure ())
@@ -753,8 +752,9 @@ completeMerge mergeVar mergeKnownCompletedVar = do
       (OngoingMerge rs m) -> do
         -- first try to complete the merge before performing other side effects,
         -- in case the completion fails
-        --TODO: Run.fromMutable claims not to be exception safe
-        -- may need to use uninteruptible mask
+        --TODO: Run.fromMutable (used in Merge.complete) claims not to be
+        -- exception safe so we should probably be using the resource registry
+        -- and test for exception safety.
         r <- Merge.complete m
         V.forM_ rs releaseRef
         -- Cache the knowledge that we completed the merge
@@ -778,11 +778,13 @@ expectCompleted (DeRef MergingRun {..}) = do
       let totalDebt       = numEntriesToTotalDebt mergeNumEntries
           suppliedCredits = spentCredits + unspentCredits
           !credits        = assert (suppliedCredits == totalDebt) $
+                            assert (unspentCredits >= 0) $
                             unspentCredits
 
-      --TODO: what about exception safety: check if it is ok to be interrupted
-      -- between performMergeSteps and completeMerge here, and above.
       weFinishedMerge <- performMergeSteps mergeState mergeCreditsVar credits
+      -- If an async exception happens before we get to perform the
+      -- completion, then that is fine. The next 'expectCompleted' will
+      -- complete the merge.
       when weFinishedMerge $ completeMerge mergeState mergeKnownCompleted
     withMVar mergeState $ \case
       CompletedMerge r -> dupRef r  -- return a fresh reference to the run
