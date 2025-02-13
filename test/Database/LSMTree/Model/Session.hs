@@ -592,6 +592,9 @@ openSnapshot label name = do
           Just table' ->
             newTableWith conf table'
 
+-- TODO: to match the implementation of the real table, this should not corrupt the
+--       snapshot if there are _no non-empty files_; however, since there are no such
+--       snapshots, this is probably fine
 corruptSnapshot ::
      (MonadState Model m, MonadError Err m)
   => SnapshotName
