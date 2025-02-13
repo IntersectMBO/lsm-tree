@@ -233,8 +233,9 @@ runModelMWithInjectedErrors ::
   -> Model -> (Either Err a, Model)
 runModelMWithInjectedErrors Nothing onNoErrors _ st =
     runModelM onNoErrors st
-runModelMWithInjectedErrors (Just _) _ onErrors st =
+runModelMWithInjectedErrors (Just _errors) _ onErrors st =
     runModelM (onErrors >> throwError (ErrFsError "modelled FsError")) st
+
 
 --
 -- Errors

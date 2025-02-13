@@ -82,6 +82,7 @@ import           Control.Tracer (Tracer, nullTracer)
 import           Data.Bifunctor (Bifunctor (..))
 import           Data.Constraint (Dict (..))
 import           Data.Either (partitionEithers)
+import           Data.Foldable (for_)
 import           Data.Kind (Type)
 import           Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
@@ -135,7 +136,8 @@ import qualified Test.QuickCheck.StateModel.Lockstep.Defaults as Lockstep.Defaul
 import qualified Test.QuickCheck.StateModel.Lockstep.Run as Lockstep.Run
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck (testProperty)
-import           Test.Util.FS (approximateEqStream, noRemoveDirectoryRecursiveE,
+import           Test.Util.FS (SilentCorruption (..), SilentCorruptions (..),
+                     approximateEqStream, noRemoveDirectoryRecursiveE,
                      propNoOpenHandles, propNumOpenHandles)
 import           Test.Util.PrettyProxy
 import           Test.Util.QLS
@@ -604,7 +606,7 @@ instance ( Show (Class.TableConfig h)
     -- Snapshots
     CreateSnapshot ::
          C k v b
-      => Maybe Errors
+      => Maybe (Either SilentCorruptions Errors)
       -> R.SnapshotLabel -> R.SnapshotName -> Var h (WrapTable h IO k v b)
       -> Act h ()
     OpenSnapshot   ::
@@ -1125,11 +1127,12 @@ runModel lookUp = \case
     RetrieveBlobs blobsVar ->
       wrap (MVector . fmap (MBlob . WrapBlob))
       . Model.runModelM (Model.retrieveBlobs (getBlobRefs . lookUp $ blobsVar))
-    CreateSnapshot merrs label name tableVar ->
-      wrap MUnit
-      . Model.runModelMWithInjectedErrors merrs
-          (Model.createSnapshot label name (getTable $ lookUp tableVar))
-          (pure ())
+    CreateSnapshot mcorrsOrErrs label name tableVar ->
+      wrap MUnit .
+        let mCreateSnapshot = Model.createSnapshot label name (getTable $ lookUp tableVar)
+        in case sequence mcorrsOrErrs of
+              Left _corrs -> Model.runModelM (mCreateSnapshot >> Model.corruptSnapshot name)
+              Right merrs -> Model.runModelMWithInjectedErrors merrs mCreateSnapshot (pure ())
     OpenSnapshot _ merrs label name ->
       wrap MTable
       . Model.runModelMWithInjectedErrors merrs
@@ -1211,10 +1214,18 @@ runIO action lookUp = ReaderT $ \ !env -> do
           Class.mupserts (unwrapTable $ lookUp' tableVar) kmups
         RetrieveBlobs blobRefsVar -> catchErr handlers $
           fmap WrapBlob <$> Class.retrieveBlobs (Proxy @h) session (unwrapBlobRef <$> lookUp' blobRefsVar)
-        CreateSnapshot merrs label name tableVar ->
-          runRealWithInjectedErrors "CreateSnapshot" env merrs
-            (Class.createSnapshot label name (unwrapTable $ lookUp' tableVar))
-            (\() -> Class.deleteSnapshot session name)
+        CreateSnapshot mcorrsOrErrs label name tableVar ->
+          let rCreateSnapshot = Class.createSnapshot label name (unwrapTable $ lookUp' tableVar) in
+          case sequence mcorrsOrErrs of
+            Left (SilentCorruptions corrs) -> do
+              rCreateSnapshot
+              for_ corrs $ \corr ->
+                Class.corruptSnapshot (bitChoice corr) name (unwrapTable $ lookUp' tableVar)
+              pure (Right ())
+            Right merrs ->
+              runRealWithInjectedErrors "CreateSnapshot" env merrs
+                rCreateSnapshot
+                (\() -> Class.deleteSnapshot session name)
         OpenSnapshot _ merrs label name ->
           runRealWithInjectedErrors "OpenSnapshot" env merrs
             (WrapTable <$> Class.openSnapshot session label name)
@@ -1273,10 +1284,18 @@ runIOSim action lookUp = ReaderT $ \ !env -> do
           Class.mupserts (unwrapTable $ lookUp' tableVar) kmups
         RetrieveBlobs blobRefsVar -> catchErr handlers $
           fmap WrapBlob <$> Class.retrieveBlobs (Proxy @h) session (unwrapBlobRef <$> lookUp' blobRefsVar)
-        CreateSnapshot merrs label name tableVar ->
-          runRealWithInjectedErrors "CreateSnapshot" env merrs
-            (Class.createSnapshot label name (unwrapTable $ lookUp' tableVar))
-            (\() -> Class.deleteSnapshot session name)
+        CreateSnapshot mcorrsOrErrs label name tableVar ->
+          let rCreateSnapshot = Class.createSnapshot label name (unwrapTable $ lookUp' tableVar) in
+          case sequence mcorrsOrErrs of
+            Left (SilentCorruptions corrs) -> do
+              rCreateSnapshot
+              for_ corrs $ \corr ->
+                Class.corruptSnapshot (bitChoice corr) name (unwrapTable $ lookUp' tableVar)
+              pure (Right ())
+            Right merrs ->
+              runRealWithInjectedErrors "CreateSnapshot" env merrs
+                rCreateSnapshot
+                (\() -> Class.deleteSnapshot session name)
         OpenSnapshot _ merrs label name ->
           runRealWithInjectedErrors "OpenSnapshot" env merrs
             (WrapTable <$> Class.openSnapshot session label name)
