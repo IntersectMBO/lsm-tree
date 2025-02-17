@@ -854,45 +854,24 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels ul
     newMerge mergePolicy mergeType ln rs
       | Just (r, rest) <- V.uncons rs
       , V.null rest = do
-          traceWith tr $ AtLevel ln $
-            TraceNewMergeSingleRun (Run.size r)
-                                   (Run.runFsPathsNumber r)
           -- We create a fresh reference and release the original one.
           -- This will also make it easier to trace back where it was allocated.
-          ir <- Single <$> withRollback reg (dupRef r) releaseRef
+          r' <- withRollback reg (dupRef r) releaseRef
+          ir <- newIncomingSingleRun tr ln r'
           delayedCommit reg (releaseRef r)
           pure ir
 
-      | otherwise = do
-        assert (let l = V.length rs in l >= 2 && l <= 5) $ pure ()
-        !n <- incrUniqCounter uc
-        let !caching = diskCachePolicyForLevel confDiskCachePolicy ln
-            !alloc = bloomFilterAllocForLevel conf ln
-            !indexType = indexTypeForRun confFencePointerIndex
-            !runPaths = Paths.runPath (Paths.activeDir root) (uniqueToRunNumber n)
-        traceWith tr $ AtLevel ln $
-          TraceNewMerge (V.map Run.size rs) (runNumber runPaths) caching alloc
-            mergePolicy mergeType
-        -- The runs will end up inside the merging run, with fresh references.
-        -- The original references can be released (but only on the happy path).
-        mr <- withRollback reg
-          (MR.new hfs hbio resolve caching alloc indexType mergeType runPaths rs)
-          releaseRef
-        V.forM_ rs $ \r -> delayedCommit reg (releaseRef r)
-        case confMergeSchedule of
-          Incremental -> pure ()
-          OneShot -> do
-            let !required = MR.Credits (unNumEntries (V.foldMap' Run.size rs))
-            let !thresh = creditThresholdForLevel conf ln
-            leftoverCredits <- MR.supplyCredits mr thresh required
-            assert (leftoverCredits == 0) $ return ()
-            -- This ensures the merge is really completed. However, we don't
-            -- release the merge yet and only briefly inspect the resulting run.
-            bracket (MR.expectCompleted mr) releaseRef $ \r ->
-              traceWith tr $ AtLevel ln $
-                TraceCompletedMerge (Run.size r) (Run.runFsPathsNumber r)
-
-        return (Merging mergePolicy mr)
+      | otherwise = assert (let l = V.length rs in l >= 2 && l <= 5) $ do
+          ir <- newIncomingMergingRun tr hfs hbio (Paths.activeDir root) uc
+                                      conf resolve reg
+                                      mergePolicy mergeType ln rs
+          -- The runs will end up inside the merging run, with fresh references.
+          -- The original references can be released (but only on the happy path).
+          V.forM_ rs $ \r -> delayedCommit reg (releaseRef r)
+          case confMergeSchedule of
+            Incremental -> pure ()
+            OneShot     -> immediatelyCompleteIncomingRun tr conf ln ir rs
+          return ir
 
 -- | We use levelling on the last level, unless that is also the first level.
 mergePolicyForLevel ::
