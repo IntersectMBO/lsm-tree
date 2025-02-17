@@ -16,6 +16,10 @@ module Database.LSMTree.Internal.MergeSchedule (
   , Level (..)
   , IncomingRun (..)
   , MergePolicyForLevel (..)
+  , newIncomingSingleRun
+  , newIncomingCompletedMergingRun
+  , newIncomingMergingRun
+  , supplyCreditsIncomingRun
     -- * Union level
   , UnionLevel (..)
     -- * Flushes and scheduled merges
@@ -52,7 +56,7 @@ import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
 import           Database.LSMTree.Internal.MergingRun (MergingRun, NumRuns (..))
 import qualified Database.LSMTree.Internal.MergingRun as MR
 import           Database.LSMTree.Internal.MergingTree (MergingTree)
-import           Database.LSMTree.Internal.Paths (RunFsPaths (..),
+import           Database.LSMTree.Internal.Paths (ActiveDir, RunFsPaths (..),
                      SessionRoot (..))
 import qualified Database.LSMTree.Internal.Paths as Paths
 import           Database.LSMTree.Internal.Run (Run, RunDataCaching (..))
@@ -362,6 +366,148 @@ releaseIncomingRun ::
 releaseIncomingRun reg (Single r)     = delayedCommit reg (releaseRef r)
 releaseIncomingRun reg (Merging _ mr) = delayedCommit reg (releaseRef mr)
 
+{-# SPECIALISE newIncomingSingleRun ::
+     Tracer IO (AtLevel MergeTrace)
+  -> LevelNo
+  -> Ref (Run IO h)
+  -> IO (IncomingRun IO h) #-}
+newIncomingSingleRun ::
+     Monad m
+  => Tracer m (AtLevel MergeTrace)
+  -> LevelNo
+  -> Ref (Run m h)
+  -> m (IncomingRun m h)
+newIncomingSingleRun tr ln r = do
+    traceWith tr $ AtLevel ln $
+      TraceNewMergeSingleRun (Run.size r) (Run.runFsPathsNumber r)
+    return (Single r)
+
+{-# SPECIALISE newIncomingCompletedMergingRun ::
+     Tracer IO (AtLevel MergeTrace)
+  -> ActionRegistry IO
+  -> LevelNo
+  -> MergePolicyForLevel
+  -> NumRuns
+  -> NumEntries
+  -> Ref (Run IO h)
+  -> IO (IncomingRun IO h) #-}
+newIncomingCompletedMergingRun ::
+    (MonadMask m, MonadMVar m, MonadSTM m, MonadST m)
+  => Tracer m (AtLevel MergeTrace)
+  -> ActionRegistry m
+  -> LevelNo
+  -> MergePolicyForLevel
+  -> NumRuns
+  -> NumEntries
+  -> Ref (Run m h)
+  -> m (IncomingRun m h)
+newIncomingCompletedMergingRun tr reg ln mergePolicy nr ne r = do
+    traceWith tr $ AtLevel ln $
+      TraceNewMergeSingleRun (Run.size r) (Run.runFsPathsNumber r)
+    mr <- withRollback reg (MR.newCompleted nr ne r) releaseRef
+    return (Merging mergePolicy mr)
+
+{-# SPECIALISE newIncomingMergingRun ::
+     Tracer IO (AtLevel MergeTrace)
+  -> HasFS IO h
+  -> HasBlockIO IO h
+  -> ActiveDir
+  -> UniqCounter IO
+  -> TableConfig
+  -> ResolveSerialisedValue
+  -> ActionRegistry IO
+  -> MergePolicyForLevel
+  -> MR.LevelMergeType
+  -> LevelNo
+  -> V.Vector (Ref (Run IO h))
+  -> IO (IncomingRun IO h) #-}
+newIncomingMergingRun ::
+     (MonadMask m, MonadMVar m, MonadSTM m, MonadST m)
+  => Tracer m (AtLevel MergeTrace)
+  -> HasFS m h
+  -> HasBlockIO m h
+  -> ActiveDir
+  -> UniqCounter m
+  -> TableConfig
+  -> ResolveSerialisedValue
+  -> ActionRegistry m
+  -> MergePolicyForLevel
+  -> MR.LevelMergeType
+  -> LevelNo
+  -> V.Vector (Ref (Run m h))
+  -> m (IncomingRun m h)
+newIncomingMergingRun tr hfs hbio activeDir uc
+                      conf@TableConfig {
+                             confDiskCachePolicy,
+                             confFencePointerIndex
+                           }
+                      resolve reg
+                      mergePolicy mergeType ln rs = do
+    !rn <- uniqueToRunNumber <$> incrUniqCounter uc
+    let !caching   = diskCachePolicyForLevel confDiskCachePolicy ln
+        !alloc     = bloomFilterAllocForLevel conf ln
+        !indexType = indexTypeForRun confFencePointerIndex
+        !runPaths  = Paths.runPath activeDir rn
+    traceWith tr $ AtLevel ln $
+      TraceNewMerge (V.map Run.size rs) (runNumber runPaths)
+                    caching alloc mergePolicy mergeType
+    mr <- withRollback reg
+            (MR.new hfs hbio resolve caching
+                    alloc indexType mergeType
+                    runPaths rs)
+            releaseRef
+    return (Merging mergePolicy mr)
+
+{-# SPECIALISE supplyCreditsIncomingRun ::
+     TableConfig
+  -> LevelNo
+  -> IncomingRun IO h
+  -> MR.Credits
+  -> IO MR.Credits #-}
+-- | Supply a given number of credits to the merge in an incoming run.
+supplyCreditsIncomingRun ::
+     (MonadSTM m, MonadST m, MonadMVar m, MonadMask m)
+  => TableConfig
+  -> LevelNo
+  -> IncomingRun m h
+  -> MR.Credits
+  -> m MR.Credits
+supplyCreditsIncomingRun _ _     (Single    _r) credits = return credits
+supplyCreditsIncomingRun conf ln (Merging _ mr) credits = do
+    let !thresh = creditThresholdForLevel conf ln
+    MR.supplyCredits mr thresh credits
+
+{-# SPECIALISE immediatelyCompleteIncomingRun ::
+     Tracer IO (AtLevel MergeTrace)
+  -> TableConfig
+  -> LevelNo
+  -> IncomingRun IO h
+  -> V.Vector (Ref (Run IO h))
+  -> IO () #-}
+-- | Supply enough credits to complete the merge now.
+immediatelyCompleteIncomingRun ::
+     (MonadSTM m, MonadST m, MonadMVar m, MonadMask m)
+  => Tracer m (AtLevel MergeTrace)
+  -> TableConfig
+  -> LevelNo
+  -> IncomingRun m h
+  -> V.Vector (Ref (Run m h))
+  -> m ()
+immediatelyCompleteIncomingRun _ _ _ (Single _r) _ = return ()
+immediatelyCompleteIncomingRun tr conf ln (Merging _ mr) rs = do
+    let !required = MR.Credits (unNumEntries (V.foldMap' Run.size rs))
+    --TODO: find remainging debt from the mr itself
+    -- or switch to supplying the 100% absolute physical debt directly
+    let !thresh = creditThresholdForLevel conf ln
+    --TODO: use a maximal threshold, no need to pick one carefully
+    leftoverCredits <- MR.supplyCredits mr thresh required
+    assert (leftoverCredits == 0) $ return ()
+    -- This ensures the merge is really completed. However, we don't
+    -- release the merge yet and only briefly inspect the resulting run.
+    bracket (MR.expectCompleted mr) releaseRef $ \r ->
+      traceWith tr $ AtLevel ln $
+        TraceCompletedMerge (Run.size r) (Run.runFsPathsNumber r)
+
 {-------------------------------------------------------------------------------
   Union level
 -------------------------------------------------------------------------------}
@@ -566,7 +712,7 @@ flushWriteBuffer tr conf@TableConfig{confFencePointerIndex, confDiskCachePolicy}
         !cache     = diskCachePolicyForLevel confDiskCachePolicy ln
         !alloc     = bloomFilterAllocForLevel conf ln
         !indexType = indexTypeForRun confFencePointerIndex
-        !path      = Paths.runPath root (uniqueToRunNumber n)
+        !path      = Paths.runPath (Paths.activeDir root) (uniqueToRunNumber n)
     traceWith tr $ AtLevel ln $
       TraceFlushWriteBuffer size (runNumber path) cache alloc
     r <- withRollback reg
@@ -723,7 +869,7 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels ul
         let !caching = diskCachePolicyForLevel confDiskCachePolicy ln
             !alloc = bloomFilterAllocForLevel conf ln
             !indexType = indexTypeForRun confFencePointerIndex
-            !runPaths = Paths.runPath root (uniqueToRunNumber n)
+            !runPaths = Paths.runPath (Paths.activeDir root) (uniqueToRunNumber n)
         traceWith tr $ AtLevel ln $
           TraceNewMerge (V.map Run.size rs) (runNumber runPaths) caching alloc
             mergePolicy mergeType
