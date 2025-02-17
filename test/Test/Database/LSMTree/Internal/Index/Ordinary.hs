@@ -101,7 +101,7 @@ tests = testGroup "Test.Database.LSMTree.Internal.Index.Ordinary" $
 
 -- * Tested type and version
 
--- The type and version of the index to which these tests refer.
+-- | The type and version of the index to which these tests refer.
 testedTypeAndVersion :: Word32
 testedTypeAndVersion = 0x0101
 
@@ -109,7 +109,7 @@ testedTypeAndVersion = 0x0101
 
 -- ** Simple index construction
 
-{-
+{-|
     Constructs an index from a list of keys. The keys have the same meaning as
     in the vector given to the 'IndexOrdinary' data constructor.
 -}
@@ -118,7 +118,7 @@ indexFromLastKeyList = IndexOrdinary . fromList
 
 -- ** Partitioning according to search
 
-{-
+{-|
     Invokes the 'search' function to obtain a page span and partitions the key
     list of the index into a prefix, selection, and suffix part, which
     correspond to the pages before, within, and after the page span,
@@ -140,7 +140,7 @@ searchPartitioning key index@(IndexOrdinary lastKeys)
                                     splitAt (succ end)    $
                                     lastKeys
 
--- Adds a search partitioning to a counterexample.
+-- | Adds a search partitioning to a counterexample.
 searchPartitioningCounterexample ::
        Testable prop
     => Vector SerialisedKey
@@ -155,7 +155,7 @@ searchPartitioningCounterexample prefix selection suffix
 
 -- ** Construction of serialised indexes, possibly with errors
 
-{-
+{-|
     Constructs a potential serialised index from a block for representing the
     type and the version of the index, a list of blocks for representing the
     keys list of the index, and a block for representing the number of entries
@@ -181,14 +181,14 @@ potentialSerialisedIndex typeAndVersionBlock
     !(Primitive.Vector _ _ (ByteArray unliftedByteArray))
         = Primitive.force primitiveVector
 
-{-
+{-|
     The serialisation of the type and version of the index to which these tests
     refer.
 -}
 testedTypeAndVersionBlock :: Primitive.Vector Word8
 testedTypeAndVersionBlock = byteVectorFromPrim testedTypeAndVersion
 
-{-
+{-|
     Constructs blocks that constitute the serialisation of the key list of an
     index.
 -}
@@ -207,7 +207,7 @@ lastKeysBlocks lastKeys = concatMap lastKeyBlocks lastKeys where
             lastKeySizeAsWord16 = fromIntegral $
                                   Primitive.length lastKeyBlock
 
--- Constructs the serialisation of the number of entries of a run.
+-- | Constructs the serialisation of the number of entries of a run.
 entryCountBlock :: NumEntries -> Primitive.Vector Word8
 entryCountBlock (NumEntries entryCount)
     = byteVectorFromPrim entryCountAsWord64
@@ -216,7 +216,7 @@ entryCountBlock (NumEntries entryCount)
     entryCountAsWord64 :: Word64
     entryCountAsWord64 = fromIntegral entryCount
 
--- Constructs a correct serialised index.
+-- | Constructs a correct serialised index.
 serialisedIndex :: NumEntries -> [SerialisedKey] -> ShortByteString
 serialisedIndex entryCount lastKeys
     = potentialSerialisedIndex testedTypeAndVersionBlock
@@ -225,21 +225,21 @@ serialisedIndex entryCount lastKeys
 
 -- ** Construction via appending
 
--- Yields the keys that an append operation adds to an index.
+-- | Yields the keys that an append operation adds to an index.
 appendedKeys :: Append -> [SerialisedKey]
 appendedKeys (AppendSinglePage _ lastKey)
     = [lastKey]
 appendedKeys (AppendMultiPage key overflowPageCount)
     = key : genericReplicate overflowPageCount key
 
-{-
+{-|
     Yields the index that results from performing a sequence of append
     operations, starting with no keys.
 -}
 indexFromAppends :: [Append] -> IndexOrdinary
 indexFromAppends appends = indexFromLastKeyList (concatMap appendedKeys appends)
 
-{-
+{-|
     Yields the serialized key list that results from performing a sequence of
     append operations, starting with no keys.
 -}
@@ -252,7 +252,7 @@ lastKeysBlockFromAppends appends = lastKeysBlock where
     lastKeysBlock :: Primitive.Vector Word8
     lastKeysBlock = Primitive.concat (lastKeysBlocks lastKeys)
 
-{-
+{-|
     Incrementally constructs an index, using the functions 'new', 'append', and
     'unsafeEnd'.
 -}
@@ -498,7 +498,7 @@ instance Arbitrary SearchableIndex where
                   and (zipWith (<=) lastKeys' (List.tail lastKeys'))
           ]
 
--- A byte string that is too short to be a serialised index.
+-- | A byte string that is too short to be a serialised index.
 newtype TooShortByteString = TooShortByteString ShortByteString
     deriving stock Show
 
