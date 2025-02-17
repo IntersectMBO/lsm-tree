@@ -70,6 +70,7 @@ import           Control.ActionRegistry (AbortActionRegistryError (..),
                      CommitActionRegistryError (..), getActionError)
 import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Concurrent.Class.MonadSTM.Strict
+import qualified Control.Exception
 import           Control.Monad (forM_, void, (<=<))
 import           Control.Monad.Class.MonadThrow (Exception (..), Handler (..),
                      MonadCatch (..), MonadThrow (..), SomeException, catches,
@@ -77,7 +78,7 @@ import           Control.Monad.Class.MonadThrow (Exception (..), Handler (..),
 import           Control.Monad.IOSim
 import           Control.Monad.Primitive
 import           Control.Monad.Reader (ReaderT (..))
-import           Control.RefCount (checkForgottenRefs)
+import           Control.RefCount (RefException, checkForgottenRefs)
 import           Control.Tracer (Tracer, nullTracer)
 import           Data.Bifunctor (Bifunctor (..))
 import           Data.Constraint (Dict (..))
@@ -138,7 +139,7 @@ import           Test.Tasty.QuickCheck (testProperty)
 import           Test.Util.FS (approximateEqStream, noRemoveDirectoryRecursiveE,
                      propNoOpenHandles, propNumOpenHandles)
 import           Test.Util.PrettyProxy
-import           Test.Util.QLS
+import qualified Test.Util.QLS as QLS
 import           Test.Util.TypeFamilyWrappers (WrapBlob (..), WrapBlobRef (..),
                      WrapCursor (..), WrapTable (..))
 
@@ -179,7 +180,7 @@ propLockstep_ModelIOImpl ::
      Actions (Lockstep (ModelState ModelIO.Table))
   -> QC.Property
 propLockstep_ModelIOImpl =
-    runActionsBracket'
+    runActionsBracket
       (Proxy @(ModelState ModelIO.Table))
       acquire
       release
@@ -189,11 +190,7 @@ propLockstep_ModelIOImpl =
               env :: RealEnv ModelIO.Table IO
               env = RealEnv {
                   envSession = session
-                , envHandlers = [
-                      handler
-                    , fileFormatErrorHandler
-                    , diskFaultErrorHandler
-                    ]
+                , envHandlers = [handler]
                 , envErrors = errsVar
                 , envInjectFaultResults = faultsVar
                 }
@@ -284,7 +281,7 @@ propLockstep_RealImpl_RealFS_IO ::
   -> Actions (Lockstep (ModelState R.Table))
   -> QC.Property
 propLockstep_RealImpl_RealFS_IO tr =
-    runActionsBracket'
+    runActionsBracket
       (Proxy @(ModelState R.Table))
       acquire
       release
@@ -294,11 +291,7 @@ propLockstep_RealImpl_RealFS_IO tr =
               env :: RealEnv R.Table IO
               env = RealEnv {
                   envSession = session
-                , envHandlers = [
-                      realHandler @IO
-                    , fileFormatErrorHandler
-                    , diskFaultErrorHandler
-                    ]
+                , envHandlers = realErrorHandlers @IO
                 , envErrors = errsVar
                 , envInjectFaultResults = faultsVar
                 }
@@ -327,7 +320,7 @@ propLockstep_RealImpl_MockFS_IO ::
   -> Actions (Lockstep (ModelState R.Table))
   -> QC.Property
 propLockstep_RealImpl_MockFS_IO tr =
-    runActionsBracket'
+    runActionsBracket
       (Proxy @(ModelState R.Table))
       (acquire_RealImpl_MockFS tr)
       release_RealImpl_MockFS
@@ -337,11 +330,7 @@ propLockstep_RealImpl_MockFS_IO tr =
               env :: RealEnv R.Table IO
               env = RealEnv {
                   envSession = session
-                , envHandlers = [
-                      realHandler @IO
-                    , fileFormatErrorHandler
-                    , diskFaultErrorHandler
-                    ]
+                , envHandlers = realErrorHandlers @IO
                 , envErrors = errsVar
                 , envInjectFaultResults = faultsVar
                 }
@@ -351,6 +340,14 @@ propLockstep_RealImpl_MockFS_IO tr =
         )
       tagFinalState'
 
+-- We can not use @bracket@ inside @PropertyM@, so @acquire_RealImpl_MockFS@ and
+-- @release_RealImpl_MockFS@ are not run in a masked state and it is not
+-- guaranteed that the latter runs if the former succeeded. Therefore, if
+-- @runActions@ fails (with exceptions), then not having @bracket@ might lead to
+-- more exceptions, which can obfuscate the orginal reason that the property
+-- failed. Because of this, if @prop@ fails, it's probably best to also try
+-- running the @IO@ version of this property with the failing seed, and compare
+-- the counterexamples to see which one is more interesting.
 propLockstep_RealImpl_MockFS_IOSim ::
      (forall s. Tracer (IOSim s) R.LSMTreeTrace)
   -> Actions (Lockstep (ModelState R.Table))
@@ -366,11 +363,7 @@ propLockstep_RealImpl_MockFS_IOSim tr actions =
           env :: RealEnv R.Table (IOSim s)
           env = RealEnv {
               envSession = session
-            , envHandlers = [
-                  realHandler @(IOSim s)
-                , fileFormatErrorHandler
-                , diskFaultErrorHandler
-                ]
+            , envHandlers = realErrorHandlers @(IOSim s)
             , envErrors = errsVar
             , envInjectFaultResults = faultsVar
             }
@@ -430,8 +423,30 @@ getAllSessionCursors (R.Internal.Session' s) =
       cs <- readMVar (R.Internal.sessionOpenCursors seshEnv)
       pure ((\x -> SomeCursor (R.Internal.Cursor' x))  <$> Map.elems cs)
 
-realHandler :: Monad m => Handler m (Maybe Model.Err)
-realHandler = Handler $ pure . handler'
+createSystemTempDirectory ::  [Char] -> IO (FilePath, HasFS IO HandleIO, HasBlockIO IO HandleIO)
+createSystemTempDirectory prefix = do
+    systemTempDir <- getCanonicalTemporaryDirectory
+    tempDir <- createTempDirectory systemTempDir prefix
+    let hasFS = ioHasFS (MountPoint tempDir)
+    hasBlockIO <- ioHasBlockIO hasFS defaultIOCtxParams
+    pure (tempDir, hasFS, hasBlockIO)
+
+{-------------------------------------------------------------------------------
+  Error handlers
+-------------------------------------------------------------------------------}
+
+realErrorHandlers :: Monad m => [Handler m (Maybe Model.Err)]
+realErrorHandlers = [
+      lsmTreeErrorHandler
+    , commitActionRegistryErrorHandler
+    , abortActionRegistryErrorHandler
+    , fsErrorHandler
+    , fileFormatErrorHandler
+    , catchAllErrorHandler
+    ]
+
+lsmTreeErrorHandler :: Monad m => Handler m (Maybe Model.Err)
+lsmTreeErrorHandler = Handler $ pure . handler'
   where
     handler' :: LSMTreeError -> Maybe Model.Err
     handler' ErrTableClosed               = Just Model.ErrTableClosed
@@ -440,28 +455,40 @@ realHandler = Handler $ pure . handler'
     handler' (ErrSnapshotExists _snap)    = Just Model.ErrSnapshotExists
     handler' ErrSnapshotWrongTableType{}  = Just Model.ErrSnapshotWrongType
     handler' (ErrBlobRefInvalid _)        = Just Model.ErrBlobRefInvalidated
-    handler' _                            = Nothing
+    handler' e                            = Just (Model.ErrOther (displayException e))
 
--- | When combined with other handlers, 'diskFaultErrorHandler' has to go last
--- because it matches on 'SomeException', an no other handlers are run after
--- that. See the use of 'catches' in 'catchErr'.
-diskFaultErrorHandler :: Monad m => Handler m (Maybe Model.Err)
-diskFaultErrorHandler = Handler $ \e -> pure $
-    if isDiskFault e
-      then Just (Model.ErrFsError (displayException e))
-      else Nothing
+commitActionRegistryErrorHandler :: Monad m => Handler m (Maybe Model.Err)
+commitActionRegistryErrorHandler = Handler $ pure . handler'
+  where
+    handler' :: CommitActionRegistryError -> Maybe Model.Err
+    handler' e
+      | isDiskFault (toException e) = Just (Model.ErrDiskFault (displayException e))
+      | otherwise                   = Just (Model.ErrOther (displayException e))
 
+abortActionRegistryErrorHandler :: Monad m => Handler m (Maybe Model.Err)
+abortActionRegistryErrorHandler = Handler $ pure . handler'
+  where
+    handler' :: AbortActionRegistryError -> Maybe Model.Err
+    handler' e
+      | isDiskFault (toException e) = Just (Model.ErrDiskFault (displayException e))
+      | otherwise                   = Just (Model.ErrOther (displayException e))
+
+-- | Some exceptions contain other exceptions. We check recursively if there is
+-- *any* exception that must have occurred because of a disk fault, and if so we
+-- consider the whole structure of exceptions a disk fault exception.
 isDiskFault :: SomeException -> Bool
 isDiskFault e
   | Just (CommitActionRegistryError es) <- fromException e
-  = all isDiskFault' es
+  = any isDiskFault' es
   | Just (AbortActionRegistryError reason es) <- fromException e
   = case reason of
-      ReasonExitCaseException e' -> isDiskFault e' && all isDiskFault' es
+      ReasonExitCaseException e' -> isDiskFault e' || any isDiskFault' es
       ReasonExitCaseAbort        -> False
   | Just (e' :: ActionError) <- fromException e
   = isDiskFault' (getActionError e')
   | Just FsError{} <- fromException e
+  = True
+  | Just FileFormatError{} <- fromException e
   = True
   | otherwise
   = False
@@ -469,19 +496,24 @@ isDiskFault e
     isDiskFault' :: forall e. Exception e => e -> Bool
     isDiskFault' = isDiskFault . toException
 
+fsErrorHandler :: Monad m => Handler m (Maybe Model.Err)
+fsErrorHandler = Handler $ pure . handler'
+  where
+    handler' :: FsError -> Maybe Model.Err
+    handler' e = Just (Model.ErrDiskFault (displayException e))
+
 fileFormatErrorHandler :: Monad m => Handler m (Maybe Model.Err)
 fileFormatErrorHandler = Handler $ pure . handler'
   where
     handler' :: FileFormatError -> Maybe Model.Err
-    handler' e = Just (Model.ErrFsError (displayException e))
+    handler' e = Just (Model.ErrDiskFault (displayException e))
 
-createSystemTempDirectory ::  [Char] -> IO (FilePath, HasFS IO HandleIO, HasBlockIO IO HandleIO)
-createSystemTempDirectory prefix = do
-    systemTempDir <- getCanonicalTemporaryDirectory
-    tempDir <- createTempDirectory systemTempDir prefix
-    let hasFS = ioHasFS (MountPoint tempDir)
-    hasBlockIO <- ioHasBlockIO hasFS defaultIOCtxParams
-    pure (tempDir, hasFS, hasBlockIO)
+-- | When combined with other handlers, 'catchAllErrorHandler' has to go last
+-- because it matches on 'SomeException', and no other handlers are run after
+-- that. See the use of 'catches' in 'catchErr'.
+catchAllErrorHandler :: Monad m => Handler m (Maybe Model.Err)
+catchAllErrorHandler = Handler $ \(e :: SomeException) ->
+    pure $ Just (Model.ErrOther (displayException e))
 
 {-------------------------------------------------------------------------------
   Key and value types
@@ -860,8 +892,21 @@ instance Eq (Obs h a) where
       -- returns a blob, then that's okay. If both return a blob or both return
       -- an error, then those must match exactly.
       (OEither (Right (OVector vec)), OEither (Left (OId y)))
-        | Just (OBlob (WrapBlob _), _) <- V.uncons vec
-        , Just Model.ErrBlobRefInvalidated <- cast y -> True
+        | Just Model.ErrBlobRefInvalidated <- cast y ->
+            flip all vec $ \case
+              OBlob (WrapBlob _) -> True
+              _ -> False
+
+      -- When disk faults are injected, the model only knows /something/ went
+      -- wrong, but the SUT can throw much more specific errors. We allow this.
+      --
+      -- See also 'Model.runModelMWithInjectedErrors' and
+      -- 'runRealWithInjectedErrors'.
+      (OEither (Left (OId lhs)), OEither (Left (OId rhs)))
+        | Just (_ :: Model.Err) <- cast lhs
+        , Just Model.DefaultErrDiskFault <- cast rhs
+        -> True
+
       -- default equalities
       (OTable, OTable) -> True
       (OCursor, OCursor) -> True
@@ -1324,7 +1369,7 @@ runRealWithInjectedErrors s env merrs k rollback =
     Just errs -> do
       eith <- catchErr handlers $ FSSim.withErrors errsVar errs k
       case eith of
-        Left (Model.ErrFsError _) -> do
+        Left (Model.ErrDiskFault _) -> do
           modifyMutVar faultsVar (InjectFaultInducedError s :)
           pure eith
         Left _ ->
@@ -1332,7 +1377,7 @@ runRealWithInjectedErrors s env merrs k rollback =
         Right x -> do
           modifyMutVar faultsVar (InjectFaultAccidentalSuccess s :)
           rollback x
-          pure $ Left $ Model.ErrFsError ("dummy: " <> s)
+          pure $ Left $ Model.ErrDiskFault ("dummy: " <> s)
   where
     errsVar = envErrors env
     faultsVar = envInjectFaultResults env
@@ -2106,13 +2151,13 @@ tagFinalState' (getModel -> ModelState finalState finalStats) = concat [
   Utils
 -------------------------------------------------------------------------------}
 
--- | Version of 'runActionsBracket' with tagging of the final state.
+-- | Version of 'QLS.runActionsBracket' with tagging of the final state.
 --
 -- The 'tagStep' feature tags each step (i.e., 'Action'), but there are cases
 -- where one wants to tag a /list of/ 'Action's. For example, if one wants to
 -- count how often something happens over the course of running these actions,
 -- then we would want to only tag the final state, not intermediate steps.
-runActionsBracket' ::
+runActionsBracket ::
      forall state st m e prop.  (
        RunLockstep state m
      , e ~ Error (Lockstep state)
@@ -2125,14 +2170,20 @@ runActionsBracket' ::
   -> (m QC.Property -> st -> IO QC.Property)
   -> (Lockstep state -> [(String, [FinalTag])])
   -> Actions (Lockstep state) -> QC.Property
-runActionsBracket' p init cleanup runner tagger actions =
+runActionsBracket p init cleanup runner tagger actions =
     tagFinalState actions tagger
-  $ runActionsBracket p init cleanup' runner actions
+  $ QLS.runActionsBracket p init cleanup' runner actions
   where
     cleanup' st = do
       x <- cleanup st
-      checkForgottenRefs
-      pure x
+      pure (x QC..&&. propCheckForgottenRefs)
+
+propCheckForgottenRefs :: Property
+propCheckForgottenRefs = QC.ioProperty $ do
+    eith <- Control.Exception.try checkForgottenRefs
+    pure $ case eith of
+      Left (e :: RefException) -> QC.counterexample (show e) False
+      Right ()                 -> QC.property True
 
 tagFinalState ::
      forall state. StateModel (Lockstep state)
