@@ -1048,8 +1048,37 @@ supplyCreditsLevels nominalDeposit =
         when (physicalDeposit > 0) $ do
           leftoverCredits <- supplyCreditsMergingRun physicalDeposit mr
           -- For merges at ordinary levels (not unions) we expect to hit the
-          -- debt limit exactly and never exceed it.
-          assert (leftoverCredits == 0) $ return ()
+          -- debt limit exactly and not exceed it. However if we had a race
+          -- on supplying credit then we could go over (which is not a problem).
+          -- We can detect such races if the credit afterwards is not the amount
+          -- that we credited. This is all just for sanity checking.
+          physicalCredit'' <- suppliedCreditMergingRun mr
+          assert (leftoverCredits == 0 || physicalCredit' /= physicalCredit'')
+                 (return ())
+
+        -- There is a potential race here in between deciding how much physical
+        -- credit to supply, and then supplying it. That's because we read the
+        -- "current" (absolute) physical credits, decide how much extra
+        -- (relative) credits to supply and then do the transaction to supply
+        -- the extra (relative) credits. In between the reading and supplying
+        -- the current (absolute) physical credits could have changed due to
+        -- another thread doing a merge on a different table handle.
+        --
+        -- This race is relatively benign. When it happens, we will supply more
+        -- credit to the merge than either thread intended, however, next time
+        -- either thread comes round they'll find the merge has more physical
+        -- credits and will thus supply less or none. The only minor problem is
+        -- in asserting that we don't supply more physical credits than the
+        -- debt limit.
+
+        -- There is a trade-off, we could supply absolute physical credit to
+        -- the merging run, and let it calculate the relative credit as part
+        -- of the credit transaction. However, we would also need to support
+        -- relative credit for the union merges, which do not have any notion
+        -- of nominal credit and only work in terms of relative physical credit.
+        -- So we can have a simple relative physical credit and rare benign
+        -- races, or a more complex scheme for contributing physical credits
+        -- either as absolute or relative values.
 
 scaleNominalToPhysicalCredit ::
      NominalDebt
