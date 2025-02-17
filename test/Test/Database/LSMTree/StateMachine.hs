@@ -138,7 +138,7 @@ import           Test.Tasty.QuickCheck (testProperty)
 import           Test.Util.FS (approximateEqStream, noRemoveDirectoryRecursiveE,
                      propNoOpenHandles, propNumOpenHandles)
 import           Test.Util.PrettyProxy
-import           Test.Util.QLS
+import qualified Test.Util.QLS as QLS
 import           Test.Util.TypeFamilyWrappers (WrapBlob (..), WrapBlobRef (..),
                      WrapCursor (..), WrapTable (..))
 
@@ -179,7 +179,7 @@ propLockstep_ModelIOImpl ::
      Actions (Lockstep (ModelState ModelIO.Table))
   -> QC.Property
 propLockstep_ModelIOImpl =
-    runActionsBracket'
+    runActionsBracket
       (Proxy @(ModelState ModelIO.Table))
       acquire
       release
@@ -284,7 +284,7 @@ propLockstep_RealImpl_RealFS_IO ::
   -> Actions (Lockstep (ModelState R.Table))
   -> QC.Property
 propLockstep_RealImpl_RealFS_IO tr =
-    runActionsBracket'
+    runActionsBracket
       (Proxy @(ModelState R.Table))
       acquire
       release
@@ -327,7 +327,7 @@ propLockstep_RealImpl_MockFS_IO ::
   -> Actions (Lockstep (ModelState R.Table))
   -> QC.Property
 propLockstep_RealImpl_MockFS_IO tr =
-    runActionsBracket'
+    runActionsBracket
       (Proxy @(ModelState R.Table))
       (acquire_RealImpl_MockFS tr)
       release_RealImpl_MockFS
@@ -448,7 +448,7 @@ realHandler = Handler $ pure . handler'
 diskFaultErrorHandler :: Monad m => Handler m (Maybe Model.Err)
 diskFaultErrorHandler = Handler $ \e -> pure $
     if isDiskFault e
-      then Just (Model.ErrFsError (displayException e))
+      then Just (Model.ErrDiskFault (displayException e))
       else Nothing
 
 isDiskFault :: SomeException -> Bool
@@ -473,7 +473,7 @@ fileFormatErrorHandler :: Monad m => Handler m (Maybe Model.Err)
 fileFormatErrorHandler = Handler $ pure . handler'
   where
     handler' :: FileFormatError -> Maybe Model.Err
-    handler' e = Just (Model.ErrFsError (displayException e))
+    handler' e = Just (Model.ErrDiskFault (displayException e))
 
 createSystemTempDirectory ::  [Char] -> IO (FilePath, HasFS IO HandleIO, HasBlockIO IO HandleIO)
 createSystemTempDirectory prefix = do
@@ -860,8 +860,21 @@ instance Eq (Obs h a) where
       -- returns a blob, then that's okay. If both return a blob or both return
       -- an error, then those must match exactly.
       (OEither (Right (OVector vec)), OEither (Left (OId y)))
-        | Just (OBlob (WrapBlob _), _) <- V.uncons vec
-        , Just Model.ErrBlobRefInvalidated <- cast y -> True
+        | Just Model.ErrBlobRefInvalidated <- cast y ->
+            flip all vec $ \case
+              OBlob (WrapBlob _) -> True
+              _ -> False
+
+      -- When disk faults are injected, the model only knows /something/ went
+      -- wrong, but the SUT can throw much more specific errors. We allow this.
+      --
+      -- See also 'Model.runModelMWithInjectedErrors' and
+      -- 'runRealWithInjectedErrors'.
+      (OEither (Left (OId lhs)), OEither (Left (OId rhs)))
+        | Just (_ :: Model.Err) <- cast lhs
+        , Just Model.DefaultErrDiskFault <- cast rhs
+        -> True
+
       -- default equalities
       (OTable, OTable) -> True
       (OCursor, OCursor) -> True
@@ -1324,7 +1337,7 @@ runRealWithInjectedErrors s env merrs k rollback =
     Just errs -> do
       eith <- catchErr handlers $ FSSim.withErrors errsVar errs k
       case eith of
-        Left (Model.ErrFsError _) -> do
+        Left (Model.ErrDiskFault _) -> do
           modifyMutVar faultsVar (InjectFaultInducedError s :)
           pure eith
         Left _ ->
@@ -1332,7 +1345,7 @@ runRealWithInjectedErrors s env merrs k rollback =
         Right x -> do
           modifyMutVar faultsVar (InjectFaultAccidentalSuccess s :)
           rollback x
-          pure $ Left $ Model.ErrFsError ("dummy: " <> s)
+          pure $ Left $ Model.ErrDiskFault ("dummy: " <> s)
   where
     errsVar = envErrors env
     faultsVar = envInjectFaultResults env
@@ -2106,13 +2119,13 @@ tagFinalState' (getModel -> ModelState finalState finalStats) = concat [
   Utils
 -------------------------------------------------------------------------------}
 
--- | Version of 'runActionsBracket' with tagging of the final state.
+-- | Version of 'QLS.runActionsBracket' with tagging of the final state.
 --
 -- The 'tagStep' feature tags each step (i.e., 'Action'), but there are cases
 -- where one wants to tag a /list of/ 'Action's. For example, if one wants to
 -- count how often something happens over the course of running these actions,
 -- then we would want to only tag the final state, not intermediate steps.
-runActionsBracket' ::
+runActionsBracket ::
      forall state st m e prop.  (
        RunLockstep state m
      , e ~ Error (Lockstep state)
@@ -2125,9 +2138,9 @@ runActionsBracket' ::
   -> (m QC.Property -> st -> IO QC.Property)
   -> (Lockstep state -> [(String, [FinalTag])])
   -> Actions (Lockstep state) -> QC.Property
-runActionsBracket' p init cleanup runner tagger actions =
+runActionsBracket p init cleanup runner tagger actions =
     tagFinalState actions tagger
-  $ runActionsBracket p init cleanup' runner actions
+  $ QLS.runActionsBracket p init cleanup' runner actions
   where
     cleanup' st = do
       x <- cleanup st

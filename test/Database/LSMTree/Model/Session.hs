@@ -1,3 +1,4 @@
+{-# LANGUAGE PatternSynonyms #-}
 -- | A pure model of a single session containing multiple tables.
 --
 -- This model supports all features for /both/ normal and monoidal tables,
@@ -31,7 +32,7 @@ module Database.LSMTree.Model.Session (
   , runModelM
   , runModelMWithInjectedErrors
     -- ** Errors
-  , Err (..)
+  , Err (.., DefaultErrDiskFault)
     -- * Tables
   , Table
   , TableConfig (..)
@@ -234,7 +235,11 @@ runModelMWithInjectedErrors ::
 runModelMWithInjectedErrors Nothing onNoErrors _ st =
     runModelM onNoErrors st
 runModelMWithInjectedErrors (Just _) _ onErrors st =
-    runModelM (onErrors >> throwError (ErrFsError "modelled FsError")) st
+    runModelM (onErrors >> throwError DefaultErrDiskFault) st
+
+-- | The default 'ErrDiskFault' that model operations will throw.
+pattern DefaultErrDiskFault :: Err
+pattern DefaultErrDiskFault = ErrDiskFault "default"
 
 --
 -- Errors
@@ -248,8 +253,9 @@ data Err =
   | ErrSnapshotWrongType
   | ErrBlobRefInvalidated
   | ErrCursorClosed
-    -- | Some file system error occurred
-  | ErrFsError String
+    -- | Something went wrong with the file system.
+  | ErrDiskFault String
+  deriving stock Eq
 
 instance Show Err where
   showsPrec d = \case
@@ -266,33 +272,11 @@ instance Show Err where
       ErrBlobRefInvalidated ->
         showString "ErrBlobRefInvalidated"
       ErrCursorClosed ->
-        showString "ErrCursorCosed"
-      ErrFsError s ->
+        showString "ErrCursorClosed"
+      ErrDiskFault s ->
         showParen (d > appPrec) $
-        showString "ErrFsError " .
+        showString "ErrDiskFault " .
         showParen True (showString s)
-
-instance Eq Err where
-  (==) ErrTableClosed ErrTableClosed = True
-  (==) ErrSnapshotCorrupted ErrSnapshotCorrupted = True
-  (==) ErrSnapshotExists ErrSnapshotExists = True
-  (==) ErrSnapshotDoesNotExist ErrSnapshotDoesNotExist = True
-  (==) ErrSnapshotWrongType ErrSnapshotWrongType = True
-  (==) ErrBlobRefInvalidated ErrBlobRefInvalidated = True
-  (==) ErrCursorClosed ErrCursorClosed = True
-  (==) (ErrFsError _) (ErrFsError _) = True
-  (==) _ _ = False
-    where
-      _coveredAllCases x = case x of
-          ErrTableClosed{}          -> ()
-          ErrSnapshotCorrupted{}    -> ()
-          ErrSnapshotExists{}       -> ()
-          ErrSnapshotDoesNotExist{} -> ()
-          ErrSnapshotWrongType{}    -> ()
-          ErrBlobRefInvalidated{}   -> ()
-          ErrCursorClosed{}         -> ()
-          ErrFsError{}              -> ()
-
 
 {-------------------------------------------------------------------------------
   Tables
