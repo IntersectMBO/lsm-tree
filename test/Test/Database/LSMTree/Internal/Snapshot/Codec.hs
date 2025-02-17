@@ -302,3 +302,14 @@ instance Arbitrary t => Arbitrary (SnapMergingRunState t RunNumber) where
 
 deriving newtype instance Arbitrary SuppliedCredits
 
+{-------------------------------------------------------------------------------
+  Show
+-------------------------------------------------------------------------------}
+
+deriving stock instance Show SnapshotMetaData
+deriving stock instance Show r => Show (SnapLevels r)
+deriving stock instance Show r => Show (SnapLevel r)
+deriving stock instance Show r => Show (SnapIncomingRun r)
+deriving stock instance (Show t, Show r) => Show (SnapMergingRunState t r)
+deriving stock instance Show SuppliedCredits
+
