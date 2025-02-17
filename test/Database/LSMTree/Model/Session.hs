@@ -32,7 +32,7 @@ module Database.LSMTree.Model.Session (
   , runModelM
   , runModelMWithInjectedErrors
     -- ** Errors
-  , Err (.., DefaultErrDiskFault)
+  , Err (.., DefaultErrDiskFault, DefaultErrSnapshotCorrupted)
     -- * Tables
   , Table
   , TableConfig (..)
@@ -241,19 +241,23 @@ runModelMWithInjectedErrors (Just _) _ onErrors st =
 pattern DefaultErrDiskFault :: Err
 pattern DefaultErrDiskFault = ErrDiskFault "default"
 
+-- | The default 'ErrSnapshotCorrupted' that model operations will throw.
+pattern DefaultErrSnapshotCorrupted :: Err
+pattern DefaultErrSnapshotCorrupted = ErrSnapshotCorrupted "default"
+
 --
 -- Errors
 --
 
 data Err =
     ErrTableClosed
-  | ErrSnapshotCorrupted
   | ErrSnapshotExists
   | ErrSnapshotDoesNotExist
   | ErrSnapshotWrongType
   | ErrBlobRefInvalidated
   | ErrCursorClosed
     -- | Something went wrong with the file system.
+  | ErrSnapshotCorrupted String
   | ErrDiskFault String
   | ErrOther String
   deriving stock Eq
@@ -262,8 +266,6 @@ instance Show Err where
   showsPrec d = \case
       ErrTableClosed ->
         showString "ErrTableClosed"
-      ErrSnapshotCorrupted ->
-        showString "ErrSnapshotCorrupted"
       ErrSnapshotExists ->
         showString "ErrSnapshotExists"
       ErrSnapshotDoesNotExist ->
@@ -274,6 +276,10 @@ instance Show Err where
         showString "ErrBlobRefInvalidated"
       ErrCursorClosed ->
         showString "ErrCursorClosed"
+      ErrSnapshotCorrupted s ->
+        showParen (d > appPrec) $
+        showString "ErrSnapshotCorrupted " .
+        showParen True (showString s)
       ErrDiskFault s ->
         showParen (d > appPrec) $
         showString "ErrDiskFault " .
@@ -577,7 +583,7 @@ openSnapshot label name = do
         throwError ErrSnapshotDoesNotExist
       Just (Snapshot conf label' tbl corrupted) -> do
         when corrupted $
-          throwError ErrSnapshotCorrupted
+          throwError DefaultErrSnapshotCorrupted
         when (label /= label') $
           throwError ErrSnapshotWrongType
         case fromSomeTable tbl of
@@ -592,9 +598,9 @@ openSnapshot label name = do
           Just table' ->
             newTableWith conf table'
 
--- TODO: to match the implementation of the real table, this should not corrupt the
---       snapshot if there are _no non-empty files_; however, since there are no such
---       snapshots, this is probably fine
+-- To match the implementation of the real table, this should not corrupt the
+-- snapshot if there are _no non-empty files_; however, since there are no such
+-- snapshots, this is probably fine.
 corruptSnapshot ::
      (MonadState Model m, MonadError Err m)
   => SnapshotName

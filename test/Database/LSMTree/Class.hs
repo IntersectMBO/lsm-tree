@@ -28,7 +28,7 @@ import           Database.LSMTree.Class.Common as Common
 import qualified Database.LSMTree.Internal as RI (SessionEnv (..), Table (..),
                      Table' (..), withOpenSession)
 import qualified Database.LSMTree.Internal.Paths as RIP
-import           Test.Util.FS (flipRandomBitInRandomFile)
+import           Test.Util.FS (flipRandomBitInRandomFileHardlinkSafe)
 import           Test.Util.QC (Choice)
 
 -- | Class abstracting over table operations.
@@ -249,7 +249,7 @@ rCorruptSnapshot choice name (RI.Table' t) =
       let hfs = RI.sessionHasFS seshEnv
           root = RI.sessionRoot seshEnv
           namedSnapDir = RIP.getNamedSnapshotDir (RIP.namedSnapshotDir root name)
-       in void $ flipRandomBitInRandomFile hfs choice namedSnapDir
+       in void $ flipRandomBitInRandomFileHardlinkSafe hfs choice namedSnapDir
 
 instance IsTable R.Table where
     type Session R.Table = R.Session

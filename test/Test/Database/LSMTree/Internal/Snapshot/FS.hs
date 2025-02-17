@@ -161,7 +161,7 @@ instance Arbitrary TestErrors where
   Snapshot corruption
 -------------------------------------------------------------------------------}
 
--- TODO: an alternative to generating doubles a priori is to run the monadic
+-- TODO: an alternative to generating a Choice a priori is to run the monadic
 -- code in @PropertyM (IOSim s)@, and then we can do quantification inside the
 -- monadic property using @pick@. This complicates matters, however, because
 -- functions like @withSimHasBlockIO@ and @withTable@ would have to run in
