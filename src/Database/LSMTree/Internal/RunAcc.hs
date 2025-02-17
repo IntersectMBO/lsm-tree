@@ -44,11 +44,9 @@ import           Database.LSMTree.Internal.Assertions (fromIntegralChecked)
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Chunk (Chunk)
 import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..))
+import           Database.LSMTree.Internal.Index (Index, IndexAcc, IndexType)
 import qualified Database.LSMTree.Internal.Index as Index (appendMulti,
-                     appendSingle, unsafeEnd)
-import           Database.LSMTree.Internal.Index.Compact (IndexCompact)
-import           Database.LSMTree.Internal.Index.CompactAcc (IndexCompactAcc)
-import qualified Database.LSMTree.Internal.Index.CompactAcc as IndexCompact
+                     appendSingle, newWithDefaults, unsafeEnd)
 import           Database.LSMTree.Internal.PageAcc (PageAcc)
 import qualified Database.LSMTree.Internal.PageAcc as PageAcc
 import qualified Database.LSMTree.Internal.PageAcc1 as PageAcc
@@ -72,7 +70,7 @@ import qualified Monkey
 -- 'unsafeFinalise'.
 data RunAcc s = RunAcc {
       mbloom     :: !(MBloom s SerialisedKey)
-    , mindex     :: !(IndexCompactAcc s)
+    , mindex     :: !(IndexAcc s)
     , mpageacc   :: !(PageAcc s)
     , entryCount :: !(PrimVar s Int)
     }
@@ -90,8 +88,12 @@ data RunBloomFilterAlloc =
 --
 -- @nentries@ should be an upper bound on the expected number of entries in the
 -- output run.
-new :: NumEntries -> RunBloomFilterAlloc -> ST s (RunAcc s)
-new (NumEntries nentries) alloc = do
+new ::
+     NumEntries
+  -> RunBloomFilterAlloc
+  -> IndexType
+  -> ST s (RunAcc s)
+new (NumEntries nentries) alloc indexType = do
     mbloom <- case alloc of
       RunAllocFixed !bitsPerEntry    ->
         let !nbits = fromIntegral bitsPerEntry * fromIntegral nentries
@@ -104,7 +106,7 @@ new (NumEntries nentries) alloc = do
         MBloom.new
           (fromIntegralChecked $ Monkey.numHashFunctions (fromIntegral nbits) (fromIntegral nentries))
           nbits
-    mindex <- IndexCompact.new 1024 -- TODO(optimise): tune chunk size
+    mindex <- Index.newWithDefaults indexType
     mpageacc <- PageAcc.newPageAcc
     entryCount <- newPrimVar 0
     pure RunAcc{..}
@@ -120,7 +122,7 @@ unsafeFinalise ::
   -> ST s ( Maybe RawPage
           , Maybe Chunk
           , Bloom SerialisedKey
-          , IndexCompact
+          , Index
           , NumEntries
           )
 unsafeFinalise racc@RunAcc {..} = do

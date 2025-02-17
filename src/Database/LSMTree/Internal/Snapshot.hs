@@ -389,7 +389,10 @@ openRuns
     levels' <-
       V.iforM levels $ \i level ->
         let ln = LevelNo (i+1) in
-        let caching = diskCachePolicyForLevel confDiskCachePolicy ln in
+        let
+          caching   = diskCachePolicyForLevel confDiskCachePolicy ln
+          indexType = indexTypeForRun confFencePointerIndex
+        in
         for level $ \runNum -> do
           let sourcePaths = RunFsPaths sourceDir runNum
           runNum' <- uniqueToRunNumber <$> incrUniqCounter uc
@@ -397,7 +400,7 @@ openRuns
           hardLinkRunFiles reg hfs hbio sourcePaths targetPaths
 
           withRollback reg
-            (Run.openFromDisk hfs hbio caching targetPaths)
+            (Run.openFromDisk hfs hbio caching indexType targetPaths)
             releaseRef
     pure (SnapLevels levels')
 
@@ -449,6 +452,7 @@ fromSnapLevels reg hfs hbio conf@TableConfig{..} uc resolve dir (SnapLevels leve
       where
         caching = diskCachePolicyForLevel confDiskCachePolicy ln
         alloc = bloomFilterAllocForLevel conf ln
+        indexType = indexTypeForRun confFencePointerIndex
 
         fromSnapIncomingRun ::
              SnapIncomingRun (Ref (Run m h))
@@ -464,7 +468,7 @@ fromSnapLevels reg hfs hbio conf@TableConfig{..} uc resolve dir (SnapLevels leve
               SnapOngoingMerge runs mt -> do
                 rn <- uniqueToRunNumber <$> incrUniqCounter uc
                 mr <- withRollback reg
-                  (MR.new hfs hbio resolve caching alloc mt (mkPath rn) runs)
+                  (MR.new hfs hbio resolve caching alloc indexType mt (mkPath rn) runs)
                   releaseRef
                 -- When a snapshot is created, merge progress is lost, so we
                 -- have to redo merging work here. SuppliedCredits tracks how

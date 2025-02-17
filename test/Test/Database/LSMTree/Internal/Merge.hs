@@ -14,6 +14,7 @@ import           Database.LSMTree.Extras.Generators (KeyForIndexCompact)
 import           Database.LSMTree.Extras.RunData
 import qualified Database.LSMTree.Internal.BlobFile as BlobFile
 import qualified Database.LSMTree.Internal.Entry as Entry
+import qualified Database.LSMTree.Internal.Index as Index (IndexType (Compact))
 import           Database.LSMTree.Internal.Merge (MergeType (..))
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.PageAcc (entryWouldFitInPage)
@@ -69,11 +70,11 @@ prop_MergeDistributes ::
      SmallList (RunData KeyForIndexCompact SerialisedValue SerialisedBlob) ->
      IO Property
 prop_MergeDistributes fs hbio mergeType stepSize (SmallList rds) =
-    withRuns fs hbio (V.fromList (zip (simplePaths [10..]) rds')) $ \runs -> do
+    withRuns fs hbio Index.Compact (V.fromList (zip (simplePaths [10..]) rds')) $ \runs -> do
       let stepsNeeded = sum (map (Map.size . unRunData) rds)
       (stepsDone, lhs) <- mergeRuns fs hbio mergeType (RunNumber 0) runs stepSize
       let runData = RunData $ mergeWriteBuffers mergeType $ fmap unRunData rds'
-      withRun fs hbio (simplePath 1) runData $ \rhs -> do
+      withRun fs hbio Index.Compact (simplePath 1) runData $ \rhs -> do
 
         (lhsSize, lhsFilter, lhsIndex, lhsKOps,
          lhsKOpsFileContent, lhsBlobFileContent) <- getRunContent lhs
@@ -141,7 +142,7 @@ prop_AbortMerge ::
      SmallList (RunData KeyForIndexCompact SerialisedValue SerialisedBlob) ->
      IO Property
 prop_AbortMerge fs hbio mergeType (Positive stepSize) (SmallList wbs) =
-    withRuns fs hbio (V.fromList (zip (simplePaths [10..]) wbs')) $ \runs -> do
+    withRuns fs hbio Index.Compact (V.fromList (zip (simplePaths [10..]) wbs')) $ \runs -> do
       let path0 = simplePath 0
       mergeToClose <- makeInProgressMerge path0 runs
       traverse_ Merge.abort mergeToClose
@@ -155,7 +156,7 @@ prop_AbortMerge fs hbio mergeType (Positive stepSize) (SmallList wbs) =
     wbs' = fmap serialiseRunData wbs
 
     makeInProgressMerge path runs =
-      Merge.new fs hbio Run.CacheRunData (RunAllocFixed 10)
+      Merge.new fs hbio Run.CacheRunData (RunAllocFixed 10) Index.Compact
                mergeType mappendValues path runs >>= \case
         Nothing -> return Nothing  -- not in progress
         Just merge -> do
@@ -182,10 +183,10 @@ mergeRuns ::
      StepSize ->
      IO (Int, Ref (Run.Run IO h))
 mergeRuns fs hbio mergeType runNumber runs (Positive stepSize) = do
-    Merge.new fs hbio Run.CacheRunData (RunAllocFixed 10)
+    Merge.new fs hbio Run.CacheRunData (RunAllocFixed 10) Index.Compact
               mergeType mappendValues
               (RunFsPaths (FS.mkFsPath []) runNumber) runs >>= \case
-      Nothing -> (,) 0 <$> unsafeFlushAsWriteBuffer fs hbio
+      Nothing -> (,) 0 <$> unsafeFlushAsWriteBuffer fs hbio Index.Compact
                              (RunFsPaths (FS.mkFsPath []) runNumber) (RunData Map.empty)
       Just m  -> Merge.stepsToCompletionCounted m stepSize
 

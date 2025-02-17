@@ -21,6 +21,7 @@ module Database.LSMTree.Internal.Config (
   , bloomFilterAllocForLevel
     -- * Fence pointer index
   , FencePointerIndex (..)
+  , indexTypeForRun
     -- * Disk cache policy
   , DiskCachePolicy (..)
   , diskCachePolicyForLevel
@@ -36,6 +37,9 @@ import           Data.Word (Word64)
 import           Database.LSMTree.Internal.Assertions (assert,
                      fromIntegralChecked)
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
+import           Database.LSMTree.Internal.Index (IndexType)
+import qualified Database.LSMTree.Internal.Index as Index
+                     (IndexType (Compact, Ordinary))
 import           Database.LSMTree.Internal.Run (RunDataCaching (..))
 import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..))
 import qualified Monkey
@@ -281,33 +285,36 @@ bloomFilterAllocForLevel conf (LevelNo l) =
 -------------------------------------------------------------------------------}
 
 -- | Configure the type of fence pointer index.
---
--- TODO: this configuration option currently has no effect: 'CompactIndex' is
--- always used.
 data FencePointerIndex =
     -- | Use a compact fence pointer index.
     --
-    -- The compact index type is designed to work with keys that are large
-    -- cryptographic hashes, e.g. 32 bytes.
+    -- Compact indexes are designed to work with keys that are large (for
+    -- example, 32 bytes long) cryptographic hashes.
     --
-    -- When using the 'IndexCompact', additional constraints apply to the
-    -- 'Database.LSMTree.Internal.Serialise.Class.serialiseKey' function. The
-    -- __Minimal size__ law should be satisfied:
+    -- When using a compact index, it is vital that the
+    -- 'Database.LSMTree.Internal.Serialise.Class.serialiseKey' function
+    -- satisfies the following law:
     --
     -- [Minimal size] @'Database.LSMTree.Internal.RawBytes.size'
-    --   ('Database.LSMTree.Internal.Serialise.Class.serialiseKey' x) >= 8@
+    -- ('Database.LSMTree.Internal.Serialise.Class.serialiseKey' x) >= 8@
     --
     -- Use 'Database.LSMTree.Internal.Serialise.Class.serialiseKeyMinimalSize'
     -- to test this law.
     CompactIndex
-    -- | Use an ordinary fence pointer index, without any constraints on
-    -- serialised keys.
+    -- | Use an ordinary fence pointer index
+    --
+    -- Ordinary indexes do not have any constraints on keys other than that
+    -- their serialised forms may not be 64 KiB or more in size.
   | OrdinaryIndex
   deriving stock (Show, Eq)
 
 instance NFData FencePointerIndex where
   rnf CompactIndex  = ()
   rnf OrdinaryIndex = ()
+
+indexTypeForRun :: FencePointerIndex -> IndexType
+indexTypeForRun CompactIndex  = Index.Compact
+indexTypeForRun OrdinaryIndex = Index.Ordinary
 
 {-------------------------------------------------------------------------------
   Disk cache policy
