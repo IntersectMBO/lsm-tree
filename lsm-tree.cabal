@@ -381,6 +381,7 @@ test-suite lsm-tree-test
     Test.Database.LSMTree.Internal.Serialise
     Test.Database.LSMTree.Internal.Serialise.Class
     Test.Database.LSMTree.Internal.Snapshot.Codec
+    Test.Database.LSMTree.Internal.Snapshot.Codec.Golden
     Test.Database.LSMTree.Internal.Snapshot.FS
     Test.Database.LSMTree.Internal.Vector
     Test.Database.LSMTree.Internal.Vector.Growing
@@ -444,6 +445,7 @@ test-suite lsm-tree-test
     , split
     , stm
     , tasty
+    , tasty-golden
     , tasty-hunit
     , tasty-quickcheck
     , temporary
