@@ -34,6 +34,7 @@ import           Control.Monad.Class.MonadST (MonadST)
 import           Control.Monad.Class.MonadThrow (MonadMask)
 import           Control.Monad.Primitive (PrimMonad)
 import           Control.RefCount
+import           Control.Tracer (Tracer, nullTracer)
 import           Data.Foldable (sequenceA_, traverse_)
 import           Data.Text (Text)
 import           Data.Traversable (for)
@@ -51,7 +52,7 @@ import           Database.LSMTree.Internal.Paths (ActiveDir (..), ForBlob (..),
                      ForKOps (..), NamedSnapshotDir (..), RunFsPaths (..),
                      WriteBufferFsPaths (..),
                      fromChecksumsFileForWriteBufferFiles, pathsForRunFiles,
-                     runChecksumsPath, runPath, writeBufferBlobPath,
+                     runChecksumsPath, writeBufferBlobPath,
                      writeBufferChecksumsPath, writeBufferKOpsPath)
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
@@ -439,43 +440,41 @@ fromSnapLevels ::
   -> ActiveDir
   -> SnapLevels (Ref (Run m h))
   -> m (Levels m h)
-fromSnapLevels reg hfs hbio conf@TableConfig{..} uc resolve dir (SnapLevels levels) =
+fromSnapLevels reg hfs hbio conf uc resolve dir (SnapLevels levels) =
     V.iforM levels $ \i -> fromSnapLevel (LevelNo (i+1))
   where
+    -- TODO: we may wish to trace the merges created during snapshot restore:
+    tr :: Tracer m (AtLevel MergeTrace)
+    tr = nullTracer
+
     fromSnapLevel :: LevelNo -> SnapLevel (Ref (Run m h)) -> m (Level m h)
     fromSnapLevel ln SnapLevel{..} = do
-        incomingRun <- fromSnapIncomingRun snapIncoming
+        incomingRun <- fromSnapIncomingRun ln snapIncoming
         residentRuns <- V.mapM dupRun snapResidentRuns
         pure Level {incomingRun , residentRuns}
-      where
-        caching = diskCachePolicyForLevel confDiskCachePolicy ln
-        alloc = bloomFilterAllocForLevel conf ln
-        indexType = indexTypeForRun confFencePointerIndex
 
-        fromSnapIncomingRun ::
-             SnapIncomingRun (Ref (Run m h))
-          -> m (IncomingRun m h)
-        fromSnapIncomingRun (SnapSingleRun run) = do
-            Single <$> dupRun run
-        fromSnapIncomingRun (SnapMergingRun mpfl nr ne
-                                            (SuppliedCredits sc) smrs) = do
-            Merging mpfl <$> case smrs of
-              SnapCompletedMerge run ->
-                withRollback reg (MR.newCompleted nr ne run) releaseRef
+    fromSnapIncomingRun ::
+         LevelNo
+      -> SnapIncomingRun (Ref (Run m h))
+      -> m (IncomingRun m h)
+    fromSnapIncomingRun ln (SnapSingleRun run) =
+        newIncomingSingleRun tr ln =<< dupRun run
 
-              SnapOngoingMerge runs mt -> do
-                rn <- uniqueToRunNumber <$> incrUniqCounter uc
-                mr <- withRollback reg
-                  (MR.new hfs hbio resolve caching alloc indexType mt
-                          (runPath dir rn) runs)
-                  releaseRef
-                -- When a snapshot is created, merge progress is lost, so we
-                -- have to redo merging work here. SuppliedCredits tracks how
-                -- many credits were supplied before the snapshot was taken.
-                leftoverCredits <- MR.supplyCredits
-                                     mr (creditThresholdForLevel conf ln)
-                                     (MR.Credits sc)
-                assert (leftoverCredits == 0) $ return mr
+    fromSnapIncomingRun ln (SnapMergingRun mpfl nr ne (SuppliedCredits sc) smrs) = do
+      case smrs of
+        SnapCompletedMerge r ->
+          newIncomingCompletedMergingRun tr reg ln mpfl nr ne r
+
+        SnapOngoingMerge rs mt -> do
+          ir <- newIncomingMergingRun tr hfs hbio dir uc
+                                      conf resolve reg
+                                      mpfl mt ln rs
+          -- When a snapshot is created, merge progress is lost, so we
+          -- have to redo merging work here. SuppliedCredits tracks how
+          -- many credits were supplied before the snapshot was taken.
+          leftoverCredits <- supplyCreditsIncomingRun conf ln ir (MR.Credits sc)
+          assert (leftoverCredits == 0) $ return ()
+          return ir
 
     dupRun r = withRollback reg (dupRef r) releaseRef
 
