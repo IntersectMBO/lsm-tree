@@ -54,15 +54,19 @@ module ScheduledMerges (
     MergingTree(..),
     MergingTreeState(..),
     PendingMerge(..),
-    IncomingRun(..),
+    PreExistingRun(..),
     MergingRun(..),
     MergingRunState(..),
     MergePolicy(..),
     IsMergeType(..),
     TreeMergeType(..),
     LevelMergeType(..),
+    MergeCredit(..),
     MergeDebt(..),
+    NominalCredit(..),
+    NominalDebt(..),
     Run,
+    runSize,
     supplyCreditsMergingTree,
     remainingDebtMergingTree,
     mergek,
@@ -72,6 +76,7 @@ module ScheduledMerges (
     Invariant,
     evalInvariant,
     treeInvariant,
+    mergeDebtInvariant,
   ) where
 
 import           Prelude hiding (lookup)
@@ -120,7 +125,9 @@ data Level s = Level !(IncomingRun s) ![Run]
 -- single run without having to read the 'STRef', and secondly to make it easier
 -- to avoid supplying merge credits. It's not essential, but simplifies things
 -- somewhat.
-data IncomingRun s = Merging !MergePolicy !(MergingRun LevelMergeType s)
+data IncomingRun s = Merging !MergePolicy
+                             !NominalDebt !(STRef s NominalCredit)
+                             !(MergingRun LevelMergeType s)
                    | Single  !Run
 
 -- | The merge policy for a LSM level can be either tiering or levelling.
@@ -135,11 +142,12 @@ data MergePolicy = MergePolicyTiering | MergePolicyLevelling
 -- | A \"merging run\" is a mutable representation of an incremental merge.
 -- It is also a unit of sharing between duplicated tables.
 --
-data MergingRun t s = MergingRun !t !(STRef s MergingRunState)
+data MergingRun t s = MergingRun !t !MergeDebt
+                                 !(STRef s MergingRunState)
 
 data MergingRunState = CompletedMerge !Run
                      | OngoingMerge
-                         !MergeDebt
+                         !MergeCredit
                          ![Run]  -- ^ inputs of the merge
                          Run  -- ^ output of the merge (lazily evaluated)
 
@@ -212,26 +220,28 @@ data MergingTreeState s = CompletedTreeMerge !Run
 data PendingMerge s = -- | The inputs are entire content of a table, i.e. its
                       -- (merging) runs and finally a union merge (if that table
                       -- already contained a union).
-                      PendingLevelMerge ![IncomingRun s] !(Maybe (MergingTree s))
+                      PendingLevelMerge ![PreExistingRun s] !(Maybe (MergingTree s))
                       -- | Each input is a level merge of the entire content of
                       -- a table.
                     | PendingUnionMerge ![MergingTree s]
 
+-- | This is much like an 'IncomingRun', and are created from them, but contain
+-- only the essential information needed in a 'PendingLevelMerge'.
+data PreExistingRun s = PreExistingRun  !Run
+                      | PreExistingMergingRun !(MergingRun LevelMergeType s)
+
 pendingContent :: PendingMerge s
-               -> (TreeMergeType, [IncomingRun s], [MergingTree s])
+               -> (TreeMergeType, [PreExistingRun s], [MergingTree s])
 pendingContent = \case
-    PendingLevelMerge irs t  -> (MergeLevel, irs, toList t)
+    PendingLevelMerge prs t  -> (MergeLevel, prs, toList t)
     PendingUnionMerge     ts -> (MergeUnion, [],  ts)
 
 {-# COMPLETE PendingMerge #-}
 pattern PendingMerge :: TreeMergeType
-                     -> [IncomingRun s]
+                     -> [PreExistingRun s]
                      -> [MergingTree s]
                      -> PendingMerge s
-pattern PendingMerge mt irs ts <- (pendingContent -> (mt, irs, ts))
-
-type Credit = Int
-type Debt   = Int
+pattern PendingMerge mt prs ts <- (pendingContent -> (mt, prs, ts))
 
 type Run    = Map Key Op
 type Buffer = Map Key Op
@@ -315,7 +325,7 @@ invariant (LSMContent _ levels ul) = do
       mrs <- case ir of
         Single r ->
           return (CompletedMerge r)
-        Merging mp (MergingRun mt ref) -> do
+        Merging mp _ _ (MergingRun mt _ ref) -> do
           assertST $ mp == mergePolicyForLevel ln ls ul
                   && mt == mergeTypeForLevel ls ul
           readSTRef ref
@@ -433,15 +443,15 @@ treeInvariant tree@(MergingTree treeState) = do
       OngoingTreeMerge mr ->
         mergeInvariant mr
 
-      PendingTreeMerge (PendingLevelMerge irs t) -> do
+      PendingTreeMerge (PendingLevelMerge prs t) -> do
         -- Non-empty, but can be just one input (see 'newPendingLevelMerge').
         -- Note that children of a pending merge can be empty runs, as noted
         -- above for 'CompletedTreeMerge'.
         assertI "pending level merges have at least one input" $
-          length irs + length t > 0
-        for_ irs $ \case
-          Single _     -> return ()
-          Merging _ mr -> mergeInvariant mr
+          length prs + length t > 0
+        for_ prs $ \case
+          PreExistingRun        _r -> return ()
+          PreExistingMergingRun mr -> mergeInvariant mr
         for_ t treeInvariant
 
       PendingTreeMerge (PendingUnionMerge ts) -> do
@@ -455,22 +465,25 @@ treeInvariant tree@(MergingTree treeState) = do
       return ()
 
 mergeInvariant :: MergingRun t s -> Invariant s ()
-mergeInvariant (MergingRun _ ref) =
+mergeInvariant (MergingRun _ mergeDebt ref) =
     liftI (readSTRef ref) >>= \case
       CompletedMerge _ -> return ()
-      OngoingMerge _ rs _ -> do
+      OngoingMerge mergeCredit rs _ -> do
+        assertI "merge debt & credit invariant" $
+          mergeDebtInvariant mergeDebt mergeCredit
         assertI "inputs to ongoing merges aren't empty" $
           all (\r -> runSize r > 0) rs
         assertI "ongoing merges are non-trivial (at least two inputs)" $
           length rs > 1
 
 isCompletedMergingRun :: MergingRun t s -> Invariant s Run
-isCompletedMergingRun (MergingRun _ ref) = do
+isCompletedMergingRun (MergingRun _ d ref) = do
     mrs <- liftI $ readSTRef ref
     case mrs of
       CompletedMerge r   -> return r
-      OngoingMerge d _ _ -> failI $ "not completed: OngoingMerge with"
-                                 ++ " remaining debt " ++ show d
+      OngoingMerge c _ _ -> failI $ "not completed: OngoingMerge with"
+                                 ++ " remaining debt "
+                                 ++ show (mergeDebtLeft d c)
 
 isCompletedMergingTree :: MergingTree s -> Invariant s Run
 isCompletedMergingTree (MergingTree ref) = do
@@ -507,24 +520,149 @@ assertST :: HasCallStack => Bool -> ST s ()
 assertST p = assert p $ return ()
 
 -------------------------------------------------------------------------------
+-- Merging credits
+--
+
+-- | Credits for keeping track of merge progress. These credits correspond
+-- directly to merge steps performed.
+--
+-- We also call these \"physical\" credits (since they correspond to steps
+-- done), and as opposed to \"nominal\" credits in 'NominalCredit' and
+-- 'NominalDebt'.
+type Credit = Int
+
+-- | Debt for keeping track of the total merge work to do.
+type Debt = Int
+
+data MergeCredit =
+     MergeCredit {
+       spentCredits   :: !Credit, -- accumulating
+       unspentCredits :: !Credit  -- fluctuating
+     }
+  deriving stock Show
+
+newtype MergeDebt =
+        MergeDebt {
+          totalDebt :: Debt  -- fixed
+        }
+  deriving stock Show
+
+zeroMergeCredit :: MergeCredit
+zeroMergeCredit =
+    MergeCredit {
+      spentCredits   = 0,
+      unspentCredits = 0
+    }
+
+mergeDebtInvariant :: MergeDebt -> MergeCredit -> Bool
+mergeDebtInvariant MergeDebt {totalDebt}
+                   MergeCredit {spentCredits, unspentCredits} =
+    let suppliedCredits = spentCredits + unspentCredits
+     in spentCredits    >= 0
+     -- unspentCredits could legitimately be negative, though that does not
+     -- happen in this prototype
+     && suppliedCredits >= 0
+     && suppliedCredits <= totalDebt
+
+mergeDebtLeft :: HasCallStack => MergeDebt -> MergeCredit -> Debt
+mergeDebtLeft MergeDebt {totalDebt}
+              MergeCredit {spentCredits, unspentCredits} =
+    let suppliedCredits = spentCredits + unspentCredits
+     in assert (suppliedCredits <= totalDebt)
+               (totalDebt - suppliedCredits)
+
+-- | As credits are paid, debt is reduced in batches when sufficient credits
+-- have accumulated.
+data MergeDebtPaydown =
+    -- | This remaining merge debt is fully paid off, potentially with
+    -- leftovers.
+    MergeDebtDischarged !Debt !Credit
+
+    -- | Credits were paid, but not enough for merge debt to be reduced by some
+    -- batches of merging work.
+  | MergeDebtPaydownCredited !MergeCredit
+
+    -- | Enough credits were paid to reduce merge debt by performing some
+    -- batches of merging work.
+  | MergeDebtPaydownPerform !Debt !MergeCredit
+  deriving stock Show
+
+-- | Pay credits to merge debt, which might trigger performing some merge work
+-- in batches. See 'MergeDebtPaydown'.
+--
+paydownMergeDebt :: MergeDebt -> MergeCredit -> Credit -> MergeDebtPaydown
+paydownMergeDebt MergeDebt {totalDebt}
+                 MergeCredit {spentCredits, unspentCredits}
+                 c
+  | suppliedCredits' >= totalDebt
+  , let !leftover = suppliedCredits' - totalDebt
+        !perform  = c - leftover
+  = assert (dischargePostcondition perform leftover) $
+    MergeDebtDischarged perform leftover
+
+  | unspentCredits' >= mergeBatchSize
+  , let (!b, !r)         = divMod unspentCredits' mergeBatchSize
+        !perform         = b * mergeBatchSize
+  = assert (performPostcondition perform r) $
+    MergeDebtPaydownPerform
+      perform
+      MergeCredit {
+        spentCredits   = spentCredits    + perform,
+        unspentCredits = unspentCredits' - perform
+      }
+
+  | otherwise
+  = assert creditedPostcondition $
+    MergeDebtPaydownCredited
+      MergeCredit {
+        spentCredits,
+        unspentCredits = unspentCredits'
+      }
+  where
+    suppliedCredits' = spentCredits + unspentCredits + c
+    unspentCredits'  =                unspentCredits + c
+
+    dischargePostcondition perform leftover =
+          (c >= 0)
+       && (perform >= 0 && leftover >= 0)
+       && (c == perform + leftover)
+       && (spentCredits + unspentCredits + perform == totalDebt)
+
+    performPostcondition perform r =
+      let spentCredits'    = spentCredits    + perform
+          unspentCredits'' = unspentCredits' - perform
+       in (c >= 0)
+       && (unspentCredits'' == r)
+       && (suppliedCredits' == spentCredits' + unspentCredits'')
+       && (suppliedCredits' < totalDebt)
+
+    creditedPostcondition =
+          (c >= 0)
+       && (suppliedCredits' < totalDebt)
+
+mergeBatchSize :: Int
+mergeBatchSize = 32
+
+
+-------------------------------------------------------------------------------
 -- Merging run abstraction
 --
 
-newMergingRun :: IsMergeType t => Maybe Debt -> t -> [Run] -> ST s (MergingRun t s)
-newMergingRun mdebt mergeType runs = do
+newMergingRun :: IsMergeType t => t -> [Run] -> ST s (MergingRun t s)
+newMergingRun mergeType runs = do
     assertST $ length runs > 1
     -- in some cases, no merging is required at all
-    state <- case filter (\r -> runSize r > 0) runs of
-      []  -> return $ CompletedMerge (head runs)  -- just re-use the empty input
-      [r] -> return $ CompletedMerge r
+    (debt, state) <- case filter (\r -> runSize r > 0) runs of
+      []  -> let (r:_) = runs -- just re-use the empty input
+              in return (runSize r, CompletedMerge r)
+      [r] -> return (runSize r, CompletedMerge r)
       rs  -> do
-        let !cost = sum (map runSize rs)
-        debt <- newMergeDebt <$> case mdebt of
-          Nothing -> return cost
-          Just d  -> assert (d >= cost) $ return d
+        -- The (physical) debt is always exactly the cost (merge steps),
+        -- which is the sum of run lengths in elements.
+        let !debt  = sum (map runSize rs)
         let merged = mergek mergeType rs  -- deliberately lazy
-        return $ OngoingMerge debt rs merged
-    MergingRun mergeType <$> newSTRef state
+        return (debt, OngoingMerge zeroMergeCredit rs merged)
+    MergingRun mergeType (MergeDebt debt) <$> newSTRef state
 
 mergek :: IsMergeType t => t -> [Run] -> Run
 mergek t =
@@ -563,68 +701,35 @@ expectCompletedMergingRun :: HasCallStack => MergingRun t s -> ST s Run
 expectCompletedMergingRun = expectInvariant . isCompletedMergingRun
 
 supplyCreditsMergingRun :: Credit -> MergingRun t s -> ST s Credit
-supplyCreditsMergingRun = checked remainingDebtMergingRun $ \credits (MergingRun _ ref) -> do
+supplyCreditsMergingRun =
+    checked remainingDebtMergingRun $ \credits (MergingRun _ mergeDebt ref) -> do
     mrs <- readSTRef ref
     case mrs of
       CompletedMerge{} -> return credits
-      OngoingMerge d rs r ->
-        case paydownMergeDebt credits d of
-          MergeDebtDischarged _ c' -> do
+      OngoingMerge mergeCredit rs r ->
+        case paydownMergeDebt mergeDebt mergeCredit credits of
+          MergeDebtDischarged _ leftover -> do
             writeSTRef ref (CompletedMerge r)
-            return c'
+            return leftover
 
-          MergeDebtPaydownCredited  d' -> do
-            writeSTRef ref (OngoingMerge d' rs r)
+          MergeDebtPaydownCredited mergeCredit' -> do
+            writeSTRef ref (OngoingMerge mergeCredit' rs r)
             return 0
 
-          MergeDebtPaydownPerform _ d' -> do
+          MergeDebtPaydownPerform _mergeSteps mergeCredit' -> do
             -- we're not doing any actual merging
             -- just tracking what we would do
-            writeSTRef ref (OngoingMerge d' rs r)
+            writeSTRef ref (OngoingMerge mergeCredit' rs r)
             return 0
 
-mergeBatchSize :: Int
-mergeBatchSize = 32
-
-data MergeDebt =
-    MergeDebt
-      Credit -- ^ Cumulative, not yet used credits.
-      Debt -- ^ Leftover debt.
-  deriving stock Show
-
-newMergeDebt :: HasCallStack => Debt -> MergeDebt
-newMergeDebt d = assert (d > 0) $ MergeDebt 0 d
-
-mergeDebtLeft :: HasCallStack => MergeDebt -> Debt
-mergeDebtLeft (MergeDebt c d) = assert (c < d) $ d - c
-
--- | As credits are paid, debt is reduced in batches when sufficient credits have accumulated.
-data MergeDebtPaydown =
-    -- | This remaining merge debt is fully paid off, potentially with leftovers.
-    MergeDebtDischarged      !Debt !Credit
-    -- | Credits were paid, but not enough for merge debt to be reduced by some batches of merging work.
-  | MergeDebtPaydownCredited       !MergeDebt
-    -- | Enough credits were paid to reduce merge debt by performing some batches of merging work.
-  | MergeDebtPaydownPerform  !Debt !MergeDebt
-  deriving stock Show
-
--- | Pay credits to merge debt, which might trigger performing some merge work in batches. See 'MergeDebtPaydown'.
---
-paydownMergeDebt :: Credit -> MergeDebt -> MergeDebtPaydown
-paydownMergeDebt c2 (MergeDebt c d)
-  | d-c' <= 0
-  = MergeDebtDischarged d (c'-d)
-
-  | c' >= mergeBatchSize
-  , let (!b, !r) = divMod c' mergeBatchSize
-        !perform = b * mergeBatchSize
-  = MergeDebtPaydownPerform perform (MergeDebt r (d-perform))
-
-  | otherwise
-  = MergeDebtPaydownCredited (MergeDebt c' d)
-  where
-    !c' = c+c2
-
+suppliedCreditMergingRun :: MergingRun t s -> ST s Credit
+suppliedCreditMergingRun (MergingRun _ d ref) =
+    readSTRef ref >>= \case
+      CompletedMerge{} ->
+        let MergeDebt { totalDebt } = d in
+        return totalDebt
+      OngoingMerge MergeCredit {spentCredits, unspentCredits} _ _ ->
+        return (spentCredits + unspentCredits)
 
 -------------------------------------------------------------------------------
 -- LSM handle
@@ -668,7 +773,7 @@ update tr (LSMHandle scr lsmr) k op = do
     sc <- readSTRef scr
     content@(LSMContent wb ls unionLevel) <- readSTRef lsmr
     modifySTRef' scr (+1)
-    supplyCreditsLevels 1 ls
+    supplyCreditsLevels (NominalCredit 1) ls
     invariant content
     let wb' = Map.insertWith combine k op wb
     if bufferSize wb' >= maxBufferSize
@@ -680,7 +785,7 @@ update tr (LSMHandle scr lsmr) k op = do
       else
         writeSTRef lsmr (LSMContent wb' ls unionLevel)
 
-supplyMergeCredits :: LSM s -> Credit -> ST s ()
+supplyMergeCredits :: LSM s -> NominalCredit -> ST s ()
 supplyMergeCredits (LSMHandle scr lsmr) credits = do
     content@(LSMContent _ ls _) <- readSTRef lsmr
     modifySTRef' scr (+1)
@@ -862,7 +967,7 @@ lookupsTree k = go
     go (MergingTree treeState) = readSTRef treeState >>= \case
         CompletedTreeMerge r ->
           return $ lookupBatch' [r]
-        OngoingTreeMerge (MergingRun mt mergeState) ->
+        OngoingTreeMerge (MergingRun mt _ mergeState) ->
           readSTRef mergeState >>= \case
             CompletedMerge r ->
               return $ lookupBatch' [r]
@@ -871,8 +976,8 @@ lookupsTree k = go
               MergeUnion -> return $ unionAcc (map (\r -> lookupBatch' [r]) rs)
         PendingTreeMerge (PendingUnionMerge trees) -> do
           unionAcc <$> traverse go trees
-        PendingTreeMerge (PendingLevelMerge irs tree) -> do
-          runs <- concat <$> traverse flattenIncomingRun irs -- combine into batch
+        PendingTreeMerge (PendingLevelMerge prs tree) -> do
+          runs <- concat <$> traverse flattenPreExistingRun prs -- combine into batch
           let acc0 = lookupBatch' runs
           case tree of
             Nothing -> return acc0  -- only runs and merging level runs, done
@@ -883,8 +988,37 @@ lookupsTree k = go
     lookupBatch' = lookupBatch Nothing k
 
 -------------------------------------------------------------------------------
--- Updates
+-- Nominal credits
 --
+
+-- | Nominal credit is the credit supplied to each level as we insert update
+-- operations, one credit per update operation inserted.
+--
+-- Nominal credit must be supplied up to the 'NominalDebt' to ensure the merge
+-- is complete.
+--
+-- Nominal credits are a similar order of magnitude to physical credits (see
+-- 'Credit') but not the same, and we have to scale linearly to convert between
+-- them. Physical credits are the actual number of inputs to the merge, which
+-- may be somewhat more or somewhat less than the number of update operations
+-- we will insert before we need the merge to be complete.
+--
+newtype NominalCredit = NominalCredit Credit
+  deriving stock Show
+
+-- | The nominal debt for a merging run is the worst case (minimum) number of
+-- update operations we expect to insert before we expect the merge to be
+-- complete.
+--
+-- We require that an equal amount of nominal credit is supplied before we can
+-- expect a merge to be complete.
+--
+-- We scale linearly to convert nominal credits to physical credits, such that
+-- the nominal debt and physical debt are both considered \"100%\", and so that
+-- both debts are paid off at exactly the same time.
+--
+newtype NominalDebt = NominalDebt Credit
+  deriving stock Show
 
 -- TODO: If there is a UnionLevel, there is no (more expensive) last level merge
 -- in the regular levels, so a little less merging work is required than if
@@ -892,39 +1026,93 @@ lookupsTree k = go
 -- on the UnionLevel instead. This makes future lookups cheaper and ensures that
 -- we can get rid of the UnionLevel at some point, even if a user just keeps
 -- inserting without calling 'supplyUnionCredits'.
-supplyCreditsLevels :: Credit -> Levels s -> ST s ()
-supplyCreditsLevels unscaled =
+supplyCreditsLevels :: NominalCredit -> Levels s -> ST s ()
+supplyCreditsLevels nominalDeposit =
   traverse_ $ \(Level ir _rs) -> do
     case ir of
       Single{} -> return ()
-      Merging mp mr -> do
-        factor <- creditsForMerge mp mr
-        let credits = ceiling (fromIntegral unscaled * factor)
-        when (credits > 0) $ do
-          _ <- supplyCreditsMergingRun credits mr
-          -- we don't mind leftover credits, each level completes independently
-          return ()
+      Merging _mp nominalDebt nominalCreditVar
+              mr@(MergingRun _  physicalDebt _) -> do
 
--- | The general case (and thus worst case) of how many merge credits we need
--- for a level. This is based on the merging policy at the level.
+        nominalCredit       <- depositNominalCredit
+                                 nominalDebt nominalCreditVar nominalDeposit
+        physicalCredit      <- suppliedCreditMergingRun mr
+        let !physicalCredit' = scaleNominalToPhysicalCredit
+                                 nominalDebt physicalDebt nominalCredit
+            -- Our target physicalCredit' could actually be less than the
+            -- actual current physicalCredit if other tables were contributing
+            -- credits to the shared merge.
+            !physicalDeposit = physicalCredit' - physicalCredit
+
+        -- So we may have a zero or negative deposit, which we ignore.
+        when (physicalDeposit > 0) $ do
+          leftoverCredits <- supplyCreditsMergingRun physicalDeposit mr
+          -- For merges at ordinary levels (not unions) we expect to hit the
+          -- debt limit exactly and not exceed it. However if we had a race
+          -- on supplying credit then we could go over (which is not a problem).
+          -- We can detect such races if the credit afterwards is not the amount
+          -- that we credited. This is all just for sanity checking.
+          physicalCredit'' <- suppliedCreditMergingRun mr
+          assert (leftoverCredits == 0 || physicalCredit' /= physicalCredit'')
+                 (return ())
+
+        -- There is a potential race here in between deciding how much physical
+        -- credit to supply, and then supplying it. That's because we read the
+        -- "current" (absolute) physical credits, decide how much extra
+        -- (relative) credits to supply and then do the transaction to supply
+        -- the extra (relative) credits. In between the reading and supplying
+        -- the current (absolute) physical credits could have changed due to
+        -- another thread doing a merge on a different table handle.
+        --
+        -- This race is relatively benign. When it happens, we will supply more
+        -- credit to the merge than either thread intended, however, next time
+        -- either thread comes round they'll find the merge has more physical
+        -- credits and will thus supply less or none. The only minor problem is
+        -- in asserting that we don't supply more physical credits than the
+        -- debt limit.
+
+        -- There is a trade-off, we could supply absolute physical credit to
+        -- the merging run, and let it calculate the relative credit as part
+        -- of the credit transaction. However, we would also need to support
+        -- relative credit for the union merges, which do not have any notion
+        -- of nominal credit and only work in terms of relative physical credit.
+        -- So we can have a simple relative physical credit and rare benign
+        -- races, or a more complex scheme for contributing physical credits
+        -- either as absolute or relative values.
+
+scaleNominalToPhysicalCredit ::
+     NominalDebt
+  -> MergeDebt
+  -> NominalCredit
+  -> Credit
+scaleNominalToPhysicalCredit (NominalDebt nominalDebt)
+                             MergeDebt { totalDebt = physicalDebt }
+                             (NominalCredit nominalCredit) =
+    floor $ toRational nominalCredit * toRational physicalDebt
+                                     / toRational nominalDebt
+    -- This specification using Rational as an intermediate representation can
+    -- be implemented efficiently using only integer operations.
+
+depositNominalCredit ::
+     NominalDebt
+  -> STRef s NominalCredit
+  -> NominalCredit
+  -> ST s NominalCredit
+depositNominalCredit (NominalDebt nominalDebt)
+                     nominalCreditVar
+                     (NominalCredit deposit) = do
+    NominalCredit before <- readSTRef nominalCreditVar
+    -- Depositing _could_ leave the credit higher than the debt, because
+    -- sometimes under-full runs mean we don't shuffle runs down the levels
+    -- as quickly as the worst case. So here we do just drop excess nominal
+    -- credits.
+    let !after = NominalCredit (min (before + deposit) nominalDebt)
+    writeSTRef nominalCreditVar after
+    return after
+
+-------------------------------------------------------------------------------
+-- Updates
 --
-creditsForMerge :: MergePolicy -> MergingRun t s -> ST s Rational
-
--- A levelling merge has 1 input run and one resident run, which is (up to) 4x
--- bigger than the others.
--- It needs to be completed before another run comes in.
-creditsForMerge MergePolicyLevelling _ =
-    return $ (1 + 4) / 1
-
--- A tiering merge has 5 runs at most (once could be held back to merged again)
--- and must be completed before the level is full (once 4 more runs come in).
-creditsForMerge MergePolicyTiering (MergingRun _ ref) = do
-    readSTRef ref >>= \case
-      CompletedMerge _ -> return 0
-      OngoingMerge _ rs _ -> do
-        let numRuns = length rs
-        assertST $ numRuns `elem` [4, 5]
-        return $ fromIntegral numRuns / 4
 
 increment :: forall s. Tracer (ST s) Event
           -> Counter -> Run -> Levels s -> UnionLevel s -> ST s (Levels s)
@@ -946,11 +1134,11 @@ increment tr sc run0 ls0 ul = do
     go !ln incoming (Level ir rs : ls) = do
       r <- case ir of
         Single r -> return r
-        Merging mergePolicy mr -> do
+        Merging mergePolicy _ _ mr -> do
           r <- expectCompletedMergingRun mr
           traceWith tr' MergeCompletedEvent {
               mergePolicy,
-              mergeType = let MergingRun mt _ = mr in mt,
+              mergeType = let MergingRun mt _ _ = mr in mt,
               mergeSize = runSize r
             }
           return r
@@ -1005,26 +1193,38 @@ newLevelMerge :: Tracer (ST s) EventDetail
               -> [Run] -> ST s (IncomingRun s)
 newLevelMerge _ _ _ _ [r] = return (Single r)
 newLevelMerge tr level mergePolicy mergeType rs = do
+    assertST (length rs `elem` [4, 5])
+    mergingRun@(MergingRun _ physicalDebt _) <- newMergingRun mergeType rs
+    assertST (totalDebt physicalDebt <= maxPhysicalDebt)
     traceWith tr MergeStartedEvent {
                    mergePolicy,
                    mergeType,
-                   mergeDebt     = debt,
+                   mergeDebt     = totalDebt physicalDebt,
                    mergeRunsSize = map runSize rs
                  }
-    assertST (length rs `elem` [4, 5])
-    Merging mergePolicy <$> newMergingRun (Just debt) mergeType rs
+    nominalCreditVar <- newSTRef (NominalCredit 0)
+    pure (Merging mergePolicy nominalDebt nominalCreditVar mergingRun)
   where
-    -- How much we need to discharge before the merge can be guaranteed
-    -- complete. More precisely, this is the maximum amount a merge at this
-    -- level could need. While the real @cost@ of a merge would lead to merges
-    -- finishing early, the overestimation @debt@ means that in this prototype
-    -- merges will only complete at the last possible moment.
-    -- Note that for levelling this is includes the single run in the current
-    -- level.
-    debt = case mergePolicy of
-             MergePolicyLevelling -> 4 * tieringRunSize (level-1)
-                                       + levellingRunSize level
-             MergePolicyTiering   -> length rs * tieringRunSize (level-1)
+    -- The nominal debt equals the minimum of credits we will supply before we
+    -- expect the merge to complete. This is the same as the number of updates
+    -- in a run that gets moved to this level.
+    nominalDebt = NominalDebt (tieringRunSize level)
+
+    -- The physical debt is the number of actual merge steps we will need to
+    -- perform before the merge is complete. This is always the sum of the
+    -- lengths of the input runs.
+    --
+    -- As we supply nominal credit, we scale them and supply physical credits,
+    -- such that we pay off the physical and nominal debts at the same time.
+    --
+    -- We can bound the worst case physical debt: this is the maximum amount of
+    -- steps a merge at this level could need. Note that for levelling this is
+    -- includes the single run in the current level.
+    maxPhysicalDebt =
+      case mergePolicy of
+        MergePolicyLevelling -> 4 * tieringRunSize (level-1)
+                                  + levellingRunSize level
+        MergePolicyTiering   -> length rs * tieringRunSize (level-1)
 
 -- | Only based on run count, not their sizes.
 tieringLevelIsFull :: Int -> [Run] -> [Run] -> Bool
@@ -1086,8 +1286,12 @@ newPendingLevelMerge [Single r] Nothing =
     -- case here, which means that there can be unary pending level merges.
     Just . MergingTree <$> newSTRef (CompletedTreeMerge r)
 newPendingLevelMerge irs tree = do
-    let st = PendingTreeMerge (PendingLevelMerge irs tree)
+    let prs = map incomingToPreExistingRun irs
+        st  = PendingTreeMerge (PendingLevelMerge prs tree)
     Just . MergingTree <$> newSTRef st
+  where
+    incomingToPreExistingRun (Single         r) = PreExistingRun r
+    incomingToPreExistingRun (Merging _ _ _ mr) = PreExistingMergingRun mr
 
 -- | Ensures that the merge contains more than one input.
 newPendingUnionMerge :: [MergingTree s] -> ST s (Maybe (MergingTree s))
@@ -1125,9 +1329,9 @@ remainingDebtMergingTree (MergingTree ref) =
       PendingTreeMerge pm  -> remainingDebtPendingMerge pm
 
 remainingDebtPendingMerge :: PendingMerge s -> ST s (Debt, Size)
-remainingDebtPendingMerge (PendingMerge _ irs trees) = do
+remainingDebtPendingMerge (PendingMerge _ prs trees) = do
     (debts, sizes) <- unzip . concat <$> sequence
-        [ traverse remainingDebtIncomingRun irs
+        [ traverse remainingDebtPreExistingRun prs
         , traverse remainingDebtMergingTree trees
         ]
     let totalSize = sum sizes
@@ -1138,17 +1342,17 @@ remainingDebtPendingMerge (PendingMerge _ irs trees) = do
     let totalDebt = sum debts + totalSize + 1
     return (totalDebt, totalSize)
   where
-    remainingDebtIncomingRun = \case
-        Single r     -> return (0, runSize r)
-        Merging _ mr -> remainingDebtMergingRun mr
+    remainingDebtPreExistingRun = \case
+        PreExistingRun         r -> return (0, runSize r)
+        PreExistingMergingRun mr -> remainingDebtMergingRun mr
 
 remainingDebtMergingRun :: MergingRun t s -> ST s (Debt, Size)
-remainingDebtMergingRun (MergingRun _ ref) =
+remainingDebtMergingRun (MergingRun _ d ref) =
     readSTRef ref >>= \case
       CompletedMerge r ->
         return (0, runSize r)
-      OngoingMerge d inputRuns _ ->
-        return (mergeDebtLeft d, sum (map runSize inputRuns))
+      OngoingMerge c inputRuns _ ->
+        return (mergeDebtLeft d c, sum (map runSize inputRuns))
 
 -- | For each of the @supplyCredits@ type functions, we want to check some
 -- common properties.
@@ -1200,26 +1404,24 @@ supplyCreditsMergingTreeState credits !state = do
           else do
             -- all children must be done, create new merge!
             (mergeType, rs) <- expectCompletedChildren pm
-            -- no reason to claim a larger debt than sum of run sizes
-            let debt = Nothing
             case rs of
               [r] -> return (c', CompletedTreeMerge r)
               _   -> do
-                state' <- OngoingTreeMerge <$> newMergingRun debt mergeType rs
+                state' <- OngoingTreeMerge <$> newMergingRun mergeType rs
                 -- use any remaining credits to progress the new merge
                 supplyCreditsMergingTreeState c' state'
 
 supplyCreditsPendingMerge :: Credit -> PendingMerge s -> ST s Credit
 supplyCreditsPendingMerge = checked remainingDebtPendingMerge $ \credits -> \case
-    PendingLevelMerge irs tree ->
-      leftToRight supplyIncoming irs credits
+    PendingLevelMerge prs tree ->
+      leftToRight supplyPreExistingRun prs credits
         >>= leftToRight supplyCreditsMergingTree (toList tree)
     PendingUnionMerge trees ->
       splitEqually supplyCreditsMergingTree trees credits
   where
-    supplyIncoming c = \case
-        Single _     -> return c
-        Merging _ mr -> supplyCreditsMergingRun c mr
+    supplyPreExistingRun c = \case
+        PreExistingRun        _r -> return c
+        PreExistingMergingRun mr -> supplyCreditsMergingRun c mr
 
     -- supply credits left to right until they are used up
     leftToRight :: (Credit -> a -> ST s Credit) -> [a] -> Credit -> ST s Credit
@@ -1245,14 +1447,14 @@ supplyCreditsPendingMerge = checked remainingDebtPendingMerge $ \credits -> \cas
 
 expectCompletedChildren :: HasCallStack
                         => PendingMerge s -> ST s (TreeMergeType, [Run])
-expectCompletedChildren (PendingMerge mt irs trees) = do
-    rs1 <- traverse expectCompletedIncomingRun irs
+expectCompletedChildren (PendingMerge mt prs trees) = do
+    rs1 <- traverse expectCompletedPreExistingRun prs
     rs2 <- traverse expectCompletedMergingTree trees
     return (mt, rs1 ++ rs2)
   where
-    expectCompletedIncomingRun = \case
-        Single     r -> return r
-        Merging _ mr -> expectCompletedMergingRun mr
+    expectCompletedPreExistingRun = \case
+        PreExistingRun         r -> return r
+        PreExistingMergingRun mr -> expectCompletedMergingRun mr
 
 expectCompletedMergingTree :: HasCallStack => MergingTree s -> ST s Run
 expectCompletedMergingTree = expectInvariant . isCompletedMergingTree
@@ -1282,11 +1484,11 @@ flattenLevel (Level ir rs) = (++ rs) <$> flattenIncomingRun ir
 
 flattenIncomingRun :: IncomingRun s -> ST s [Run]
 flattenIncomingRun = \case
-    Single r     -> return [r]
-    Merging _ mr -> flattenMergingRun mr
+    Single r         -> return [r]
+    Merging _ _ _ mr -> flattenMergingRun mr
 
 flattenMergingRun :: MergingRun t s -> ST s [Run]
-flattenMergingRun (MergingRun _ ref) = do
+flattenMergingRun (MergingRun _ _ ref) = do
     mrs <- readSTRef ref
     case mrs of
       CompletedMerge r    -> return [r]
@@ -1298,14 +1500,19 @@ flattenTree (MergingTree ref) = do
     case mts of
       CompletedTreeMerge r ->
         return (MLeaf r)
-      OngoingTreeMerge (MergingRun mt mrs) ->
+      OngoingTreeMerge (MergingRun mt _ mrs) ->
         readSTRef mrs >>= \case
           CompletedMerge r    -> return (MLeaf r)
           OngoingMerge _ rs _ -> return (MNode mt (MLeaf <$> rs))
       PendingTreeMerge (PendingMerge mt irs trees) -> do
-        irs' <- map MLeaf . concat <$> traverse flattenIncomingRun irs
+        irs' <- map MLeaf . concat <$> traverse flattenPreExistingRun irs
         trees' <- traverse flattenTree trees
         return (MNode mt (irs' ++ trees'))
+
+flattenPreExistingRun :: PreExistingRun s -> ST s [Run]
+flattenPreExistingRun = \case
+    PreExistingRun         r -> return [r]
+    PreExistingMergingRun mr -> flattenMergingRun mr
 
 logicalValue :: LSM s -> ST s (Map Key (Value, Maybe Blob))
 logicalValue lsm = do
@@ -1326,7 +1533,9 @@ logicalValue lsm = do
 type Representation = (Run, [LevelRepresentation], Maybe (MTree Run))
 
 type LevelRepresentation =
-    (Maybe (MergePolicy, LevelMergeType, MergingRunState), [Run])
+    (Maybe (MergePolicy, NominalDebt, NominalCredit,
+            LevelMergeType, MergingRunState),
+     [Run])
 
 dumpRepresentation :: LSM s -> ST s Representation
 dumpRepresentation (LSMHandle _ lsmr) = do
@@ -1340,9 +1549,10 @@ dumpRepresentation (LSMHandle _ lsmr) = do
 dumpLevel :: Level s -> ST s LevelRepresentation
 dumpLevel (Level (Single r) rs) =
     return (Nothing, (r:rs))
-dumpLevel (Level (Merging mp (MergingRun mt ref)) rs) = do
+dumpLevel (Level (Merging mp nd ncv (MergingRun mt _ ref)) rs) = do
     mrs <- readSTRef ref
-    return (Just (mp, mt, mrs), rs)
+    nc  <- readSTRef ncv
+    return (Just (mp, nd, nc, mt, mrs), rs)
 
 -- For each level:
 -- 1. the runs involved in an ongoing merge
@@ -1360,8 +1570,8 @@ representationShape (wb, levels, tree) =
 
     summaryMR = \case
       Nothing                          -> ([], [])
-      Just (_, _, CompletedMerge r)    -> ([], [summaryRun r])
-      Just (_, _, OngoingMerge _ rs _) -> (map summaryRun rs, [])
+      Just (_, _, _, _, CompletedMerge r)    -> ([], [summaryRun r])
+      Just (_, _, _, _, OngoingMerge _ rs _) -> (map summaryRun rs, [])
 
 -------------------------------------------------------------------------------
 -- Tracing

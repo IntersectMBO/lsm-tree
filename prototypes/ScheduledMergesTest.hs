@@ -73,7 +73,7 @@ test_regression_empty_run =
           ]
 
         -- finish merge
-        LSM.supplyMergeCredits lsm 16
+        LSM.supplyMergeCredits lsm (NominalCredit 16)
 
         expectShape lsm
           0
@@ -143,7 +143,7 @@ test_merge_again_with_incoming =
           ]
 
         -- complete the merge (20 entries, but credits get scaled up by 1.25)
-        LSM.supplyMergeCredits lsm 16
+        LSM.supplyMergeCredits lsm (NominalCredit 16)
 
         expectShape lsm
           0
@@ -232,20 +232,21 @@ instance Arbitrary SmallCredit where
 -- simplified non-ST version of MergingTree
 data T = TCompleted Run
        | TOngoing (M TreeMergeType)
-       | TPendingLevel [I] (Maybe T)  -- not both empty!
+       | TPendingLevel [P] (Maybe T)  -- not both empty!
        | TPendingUnion [T]  -- at least 2 children
   deriving stock Show
 
--- simplified non-ST version of IncomingRun
-data I = ISingle Run
-       | IMerging (M LevelMergeType)
+-- simplified non-ST version of PreExistingRun
+data P = PRun        Run
+       | PMergingRun (M LevelMergeType)
   deriving stock Show
 
 -- simplified non-ST version of MergingRun
-data M t = MCompleted t Run
+data M t = MCompleted t MergeDebt Run
          | MOngoing
              t
              MergeDebt  -- debt bounded by input sizes
+             MergeCredit
              [NonEmptyRun]  -- at least 2 inputs
   deriving stock Show
 
@@ -257,40 +258,40 @@ fromT t = do
     state <- case t of
       TCompleted r -> return (CompletedTreeMerge r)
       TOngoing mr  -> OngoingTreeMerge <$> fromM mr
-      TPendingLevel is mt ->
+      TPendingLevel ps mt ->
         fmap PendingTreeMerge $
-          PendingLevelMerge <$> traverse fromI is <*> traverse fromT mt
+          PendingLevelMerge <$> traverse fromP ps <*> traverse fromT mt
       TPendingUnion ts -> do
         fmap PendingTreeMerge $ PendingUnionMerge <$> traverse fromT ts
     MergingTree <$> newSTRef state
 
-fromI :: I -> ST s (IncomingRun s)
-fromI (ISingle r)  = return (Single r)
-fromI (IMerging m) = Merging MergePolicyTiering <$> fromM m
+fromP :: P -> ST s (PreExistingRun s)
+fromP (PRun r)        = pure (PreExistingRun r)
+fromP (PMergingRun m) = PreExistingMergingRun <$> fromM m
 
 fromM :: IsMergeType t => M t -> ST s (MergingRun t s)
 fromM m = do
-    let (mergeType, state) = case m of
-          MCompleted mt r  -> (mt, CompletedMerge r)
-          MOngoing mt d rs -> (mt, OngoingMerge d rs' (mergek mt rs'))
+    let (mergeType, mergeDebt, state) = case m of
+          MCompleted  mt md r  -> (mt, md, CompletedMerge r)
+          MOngoing mt md mc rs -> (mt, md, OngoingMerge mc rs' (mergek mt rs'))
             where rs' = map getNonEmptyRun rs
-    MergingRun mergeType <$> newSTRef state
+    MergingRun mergeType mergeDebt <$> newSTRef state
 
 completeT :: T -> Run
 completeT (TCompleted r) = r
 completeT (TOngoing m)   = completeM m
 completeT (TPendingLevel is t) =
-    mergek MergeLevel (map completeI is <> maybe [] (pure . completeT) t)
+    mergek MergeLevel (map completeP is <> maybe [] (pure . completeT) t)
 completeT (TPendingUnion ts) =
     mergek MergeUnion (map completeT ts)
 
-completeI :: I -> Run
-completeI (ISingle r)  = r
-completeI (IMerging m) = completeM m
+completeP :: P -> Run
+completeP (PRun r)        = r
+completeP (PMergingRun m) = completeM m
 
 completeM :: IsMergeType t => M t -> Run
-completeM (MCompleted _ r)   = r
-completeM (MOngoing mt _ rs) = mergek mt (map getNonEmptyRun rs)
+completeM (MCompleted _ _ r)   = r
+completeM (MOngoing mt _ _ rs) = mergek mt (map getNonEmptyRun rs)
 
 instance Arbitrary T where
   arbitrary = QC.frequency
@@ -317,15 +318,15 @@ instance Arbitrary T where
    <> [ TOngoing m'
       | m' <- shrink m
       ]
-  shrink tree@(TPendingLevel is t) =
+  shrink tree@(TPendingLevel ps t) =
       [ TCompleted (completeT tree) ]
    <> [ t' | Just t' <- [t] ]
-   <> [ TPendingLevel (is ++ [ISingle r]) Nothing  -- move into regular levels
+   <> [ TPendingLevel (ps ++ [PRun r]) Nothing  -- move into regular levels
       | Just (TCompleted r) <- [t]
       ]
-   <> [ TPendingLevel is' t'
-      | (is', t') <- shrink (is, t)
-      , length is' + length t' > 0
+   <> [ TPendingLevel ps' t'
+      | (ps', t') <- shrink (ps, t)
+      , length ps' + length t' > 0
       ]
   shrink tree@(TPendingUnion ts) =
       [ TCompleted (completeT tree) ]
@@ -335,35 +336,78 @@ instance Arbitrary T where
       , length ts' > 1
       ]
 
-instance Arbitrary I where
-  arbitrary = QC.oneof [ISingle <$> arbitrary, IMerging <$> arbitrary]
-  shrink (ISingle r)  = [ISingle r' | r' <- shrink r]
-  shrink (IMerging m) = [ISingle (completeM m)] <> [IMerging m' | m' <- shrink m]
+instance Arbitrary P where
+  arbitrary = QC.oneof [PRun <$> arbitrary, PMergingRun <$> arbitrary]
+  shrink (PRun r)        = [PRun r' | r' <- shrink r]
+  shrink (PMergingRun m) = [PRun (completeM m)]
+                        <> [PMergingRun m' | m' <- shrink m]
 
 instance (Arbitrary t, IsMergeType t) => Arbitrary (M t) where
-  arbitrary = QC.frequency
-      [ (1, MCompleted <$> arbitrary <*> arbitrary)
-      , (1, do
-          mt <- arbitrary
-          n <- QC.chooseInt (2, 8)
-          rs <- QC.vectorOf n (QC.scale (`div` n) arbitrary)
-          let totalWork = sum (map (length . getNonEmptyRun) rs)
-          workRemaining <- QC.chooseInt (1, totalWork)
-          unspentCredits <- QC.chooseInt (0, min mergeBatchSize workRemaining - 1)
-          let d = MergeDebt unspentCredits workRemaining
-          return (MOngoing mt d rs))
+  arbitrary = QC.oneof
+      [ do (mt, r) <- arbitrary
+           let md = MergeDebt (runSize r)
+           pure (MCompleted mt md r)
+      , do mt <- arbitrary
+           n  <- QC.chooseInt (2, 8)
+           rs <- QC.vectorOf n (QC.scale (`div` n) arbitrary)
+           (md, mc) <- genMergeCreditForRuns rs
+           pure (MOngoing mt md mc rs)
       ]
 
-  shrink (MCompleted mt r) =
-      [ MCompleted mt r' | r' <- shrink r ]
-  shrink m@(MOngoing mt (MergeDebt c d) rs) =
-      [ MCompleted mt (completeM m) ]
-   <> [ MOngoing mt (MergeDebt c' d') rs'
+  shrink (MCompleted mt md r) =
+      [ MCompleted mt md r' | r' <- shrink r ]
+  shrink m@(MOngoing mt md mc rs) =
+      [ MCompleted mt md (completeM m) ]
+   <> [ MOngoing mt md' mc' rs'
       | rs' <- shrink rs
       , length rs' > 1
-      , let d' = min d (sum (map (length . getNonEmptyRun) rs))
-      , let c' = min c (d' - 1)
+      , (md', mc') <- shrinkMergeCreditForRuns rs' mc
       ]
+
+-- | The 'MergeDebt' and 'MergeCredit' must maintain a couple invariants:
+--
+-- * the total debt must be the same as the sum of the input run sizes;
+-- * the supplied credit is less than the total merge debt.
+--
+genMergeCreditForRuns :: [NonEmptyRun] -> QC.Gen (MergeDebt, MergeCredit)
+genMergeCreditForRuns rs = do
+      let totalDebt    = sum (map (length . getNonEmptyRun) rs)
+      suppliedCredits <- QC.chooseInt (0, totalDebt-1)
+      unspentCredits  <- QC.chooseInt (0, min (mergeBatchSize-1) suppliedCredits)
+      let spentCredits = suppliedCredits - unspentCredits
+          md           = MergeDebt {
+                           totalDebt
+                         }
+          mc           = MergeCredit {
+                            unspentCredits,
+                            spentCredits
+                         }
+      assert (mergeDebtInvariant md mc) $
+        pure (md, mc)
+
+-- | Shrink the 'MergeDebt' and 'MergeCredit' given the old 'MergeCredit' and
+-- the already-shrunk runs.
+--
+-- Thus must maintain invariants, see 'genMergeCreditForDebt'.
+--
+shrinkMergeCreditForRuns :: [NonEmptyRun]
+                         -> MergeCredit -> [(MergeDebt, MergeCredit)]
+shrinkMergeCreditForRuns rs' MergeCredit {spentCredits, unspentCredits} =
+    [ assert (mergeDebtInvariant md' mc')
+      (md', mc')
+    | let totalDebt'    = sum (map (length . getNonEmptyRun) rs')
+    , suppliedCredits' <- shrink (min (spentCredits+unspentCredits)
+                                      (totalDebt'-1))
+    , unspentCredits'  <- shrink (min unspentCredits suppliedCredits')
+    , let spentCredits' = suppliedCredits' - unspentCredits'
+          md'           = MergeDebt {
+                            totalDebt      = totalDebt'
+                          }
+          mc'           = MergeCredit {
+                            spentCredits   = spentCredits',
+                            unspentCredits = unspentCredits'
+                          }
+    ]
 
 instance Arbitrary NonEmptyRun where
   arbitrary = do
