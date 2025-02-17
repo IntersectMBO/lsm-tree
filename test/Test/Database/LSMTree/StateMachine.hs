@@ -70,6 +70,7 @@ import           Control.ActionRegistry (AbortActionRegistryError (..),
                      CommitActionRegistryError (..), getActionError)
 import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Concurrent.Class.MonadSTM.Strict
+import qualified Control.Exception
 import           Control.Monad (forM_, void, (<=<))
 import           Control.Monad.Class.MonadThrow (Exception (..), Handler (..),
                      MonadCatch (..), MonadThrow (..), SomeException, catches,
@@ -77,7 +78,7 @@ import           Control.Monad.Class.MonadThrow (Exception (..), Handler (..),
 import           Control.Monad.IOSim
 import           Control.Monad.Primitive
 import           Control.Monad.Reader (ReaderT (..))
-import           Control.RefCount (checkForgottenRefs)
+import           Control.RefCount (RefException, checkForgottenRefs)
 import           Control.Tracer (Tracer, nullTracer)
 import           Data.Bifunctor (Bifunctor (..))
 import           Data.Constraint (Dict (..))
@@ -2144,8 +2145,14 @@ runActionsBracket p init cleanup runner tagger actions =
   where
     cleanup' st = do
       x <- cleanup st
-      checkForgottenRefs
-      pure x
+      pure (x QC..&&. propCheckForgottenRefs)
+
+propCheckForgottenRefs :: Property
+propCheckForgottenRefs = QC.ioProperty $ do
+    eith <- Control.Exception.try checkForgottenRefs
+    pure $ case eith of
+      Left (e :: RefException) -> QC.counterexample (show e) False
+      Right ()                 -> QC.property True
 
 tagFinalState ::
      forall state. StateModel (Lockstep state)
