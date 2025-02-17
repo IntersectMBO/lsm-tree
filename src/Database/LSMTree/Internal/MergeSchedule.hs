@@ -281,7 +281,7 @@ releaseLevelsCache reg cache =
       delayedCommit reg (releaseRef r)
 
 {-------------------------------------------------------------------------------
-  Levels, runs and ongoing merges
+  Levels
 -------------------------------------------------------------------------------}
 
 type Levels m h = V.Vector (Level m h)
@@ -293,36 +293,6 @@ data Level m h = Level {
     incomingRun  :: !(IncomingRun m h)
   , residentRuns :: !(V.Vector (Ref (Run m h)))
   }
-
--- | An incoming run is either a single run, or a merge.
-data IncomingRun m h =
-       Single  !(Ref (Run m h))
-     | Merging !MergePolicyForLevel !(Ref (MergingRun MR.LevelMergeType m h))
-
-data MergePolicyForLevel = LevelTiering | LevelLevelling
-  deriving stock (Show, Eq)
-
-instance NFData MergePolicyForLevel where
-  rnf LevelTiering   = ()
-  rnf LevelLevelling = ()
-
--- | We use levelling on the last level, unless that is also the first level.
-mergePolicyForLevel ::
-     MergePolicy
-  -> LevelNo
-  -> Levels m h
-  -> UnionLevel m h
-  -> MergePolicyForLevel
-mergePolicyForLevel MergePolicyLazyLevelling (LevelNo n) nextLevels unionLevel
-  | n == 1
-  = LevelTiering    -- always use tiering on first level
-
-  | V.null nextLevels
-  , NoUnion <- unionLevel
-  = LevelLevelling  -- levelling on last level
-
-  | otherwise
-  = LevelTiering
 
 {-# SPECIALISE duplicateLevels :: ActionRegistry IO -> Levels IO h -> IO (Levels IO h) #-}
 duplicateLevels ::
@@ -351,6 +321,27 @@ releaseLevels reg levels =
       releaseIncomingRun reg incomingRun
       V.mapM_ (delayedCommit reg . releaseRef) residentRuns
 
+{-# SPECIALISE iforLevelM_ :: Levels IO h -> (LevelNo -> Level IO h -> IO ()) -> IO () #-}
+iforLevelM_ :: Monad m => Levels m h -> (LevelNo -> Level m h -> m ()) -> m ()
+iforLevelM_ lvls k = V.iforM_ lvls $ \i lvl -> k (LevelNo (i + 1)) lvl
+
+{-------------------------------------------------------------------------------
+  Incoming runs
+-------------------------------------------------------------------------------}
+
+-- | An incoming run is either a single run, or a merge.
+data IncomingRun m h =
+       Single  !(Ref (Run m h))
+     | Merging !MergePolicyForLevel
+               !(Ref (MergingRun MR.LevelMergeType m h))
+
+data MergePolicyForLevel = LevelTiering | LevelLevelling
+  deriving stock (Show, Eq)
+
+instance NFData MergePolicyForLevel where
+  rnf LevelTiering   = ()
+  rnf LevelLevelling = ()
+
 {-# SPECIALISE duplicateIncomingRun :: ActionRegistry IO -> IncomingRun IO h -> IO (IncomingRun IO h) #-}
 duplicateIncomingRun ::
      (PrimMonad m, MonadMask m)
@@ -370,10 +361,6 @@ releaseIncomingRun ::
   -> IncomingRun m h -> m ()
 releaseIncomingRun reg (Single r)     = delayedCommit reg (releaseRef r)
 releaseIncomingRun reg (Merging _ mr) = delayedCommit reg (releaseRef mr)
-
-{-# SPECIALISE iforLevelM_ :: Levels IO h -> (LevelNo -> Level IO h -> IO ()) -> IO () #-}
-iforLevelM_ :: Monad m => Levels m h -> (LevelNo -> Level m h -> m ()) -> m ()
-iforLevelM_ lvls k = V.iforM_ lvls $ \i lvl -> k (LevelNo (i + 1)) lvl
 
 {-------------------------------------------------------------------------------
   Union level
@@ -760,6 +747,24 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels ul
                 TraceCompletedMerge (Run.size r) (Run.runFsPathsNumber r)
 
         return (Merging mergePolicy mr)
+
+-- | We use levelling on the last level, unless that is also the first level.
+mergePolicyForLevel ::
+     MergePolicy
+  -> LevelNo
+  -> Levels m h
+  -> UnionLevel m h
+  -> MergePolicyForLevel
+mergePolicyForLevel MergePolicyLazyLevelling (LevelNo n) nextLevels unionLevel
+  | n == 1
+  = LevelTiering    -- always use tiering on first level
+
+  | V.null nextLevels
+  , NoUnion <- unionLevel
+  = LevelLevelling  -- levelling on last level
+
+  | otherwise
+  = LevelTiering
 
 -- $setup
 -- >>> import Database.LSMTree.Internal.Entry
