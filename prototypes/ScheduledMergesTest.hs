@@ -5,9 +5,10 @@ import           Control.Monad (replicateM_, when)
 import           Control.Monad.ST
 import           Control.Tracer (Tracer (Tracer))
 import qualified Control.Tracer as Tracer
-import           Data.Foldable (traverse_)
-import qualified Data.Map as Map
+import           Data.Foldable (find, traverse_)
+import           Data.Maybe (fromJust)
 import           Data.STRef
+import           Text.Printf (printf)
 
 import           ScheduledMerges as LSM
 
@@ -16,13 +17,20 @@ import           Test.QuickCheck (Arbitrary (arbitrary, shrink), Property)
 import           Test.QuickCheck.Exception (isDiscard)
 import           Test.Tasty
 import           Test.Tasty.HUnit (HasCallStack, testCase)
-import           Test.Tasty.QuickCheck (testProperty, (=/=), (===))
+import           Test.Tasty.QuickCheck (QuickCheckMaxSize (..),
+                     QuickCheckTests (..), testProperty, (=/=), (===))
 
 tests :: TestTree
 tests = testGroup "Unit and property tests"
     [ testCase "test_regression_empty_run" test_regression_empty_run
     , testCase "test_merge_again_with_incoming" test_merge_again_with_incoming
     , testProperty "prop_union" prop_union
+    , testGroup "T"
+        [ localOption (QuickCheckTests 1000) $  -- super quick, run more
+            testProperty "Arbitrary satisfies invariant" prop_arbitrarySatisfiesInvariant
+        , localOption (QuickCheckMaxSize 60) $  -- many shrinks for huge trees
+            testProperty "Shrinking satisfies invariant" prop_shrinkSatisfiesInvariant
+        ]
     , testProperty "prop_MergingTree" prop_MergingTree
     ]
 
@@ -237,7 +245,7 @@ data T = TCompleted Run
   deriving stock Show
 
 -- simplified non-ST version of PreExistingRun
-data P = PRun        Run
+data P = PRun Run
        | PMergingRun (M LevelMergeType)
   deriving stock Show
 
@@ -252,6 +260,41 @@ data M t = MCompleted t MergeDebt Run
 
 newtype NonEmptyRun = NonEmptyRun { getNonEmptyRun :: Run }
   deriving stock Show
+
+invariantT :: T -> Either String ()
+invariantT t = runST $ do
+    tree <- fromT t
+    evalInvariant (treeInvariant tree)
+
+-- | Size is the number of T and P constructors.
+sizeT :: T -> Int
+sizeT (TCompleted _)        = 1
+sizeT (TOngoing _)          = 1
+sizeT (TPendingLevel ps mt) = sum (fmap sizeP ps) + maybe 0 sizeT mt
+sizeT (TPendingUnion ts)    = sum (fmap sizeT ts)
+
+sizeP :: P -> Int
+sizeP (PRun _)        = 1
+sizeP (PMergingRun _) = 1
+
+-- | Depth is the longest path through the tree from the root to a leaf using T
+-- and P constructors.
+depthT :: T -> Int
+depthT (TCompleted _) = 0
+depthT (TOngoing _) = 0
+depthT (TPendingLevel ps mt) =
+    let depthPs = case ps of
+          [] -> 0
+          _  -> maximum (fmap depthP ps)
+        depthMt = maybe 0 depthT mt
+    in 1 + max depthPs depthMt
+depthT (TPendingUnion ts) = case ts of
+    [] -> 0
+    _  -> 1 + maximum (fmap depthT ts)
+
+depthP :: P -> Int
+depthP (PRun _)        = 0
+depthP (PMergingRun _) = 0
 
 fromT :: T -> ST s (MergingTree s)
 fromT t = do
@@ -293,21 +336,55 @@ completeM :: IsMergeType t => M t -> Run
 completeM (MCompleted _ _ r)   = r
 completeM (MOngoing mt _ _ rs) = mergek mt (map getNonEmptyRun rs)
 
+-------------------------------------------------------------------------------
+-- Generators
+--
+
 instance Arbitrary T where
-  arbitrary = QC.frequency
-      [ (1, TCompleted <$> arbitrary)
-      , (1, TOngoing <$> arbitrary)
-      , (1, do
-          (incoming, tree) <- arbitrary
-             `QC.suchThat` (\(i, t) -> length i + length t > 0)
-          return (TPendingLevel incoming tree))
-      , (1, do
-          n <- QC.frequency
-            [ (3, pure 2)
-            , (1, QC.chooseInt (3, 8))
+  arbitrary = QC.sized $ \s -> do
+      n <- QC.chooseInt (1, max 1 s)
+      go n
+    where
+      -- n is the number of constructors of T and P
+      go n | n < 1 = error ("arbitrary T: n == " <> show n)
+      go n | n == 1 =
+          QC.frequency
+            [ (1, TCompleted <$> arbitrary)
+            , (1, TOngoing <$> arbitrary)
             ]
-          TPendingUnion <$> QC.vectorOf n (QC.scale (`div` n) arbitrary))
-      ]
+      go n =
+          QC.frequency
+            [ (1, do
+                -- pending level merge without child
+                preExisting <- QC.vector (n - 1)  -- 1 for constructor itself
+                return (TPendingLevel preExisting Nothing))
+            , (1, do
+                -- pending level merge with child
+                numPreExisting <- QC.chooseInt (0, min 20 (n - 2))
+                preExisting <- QC.vector numPreExisting
+                tree <- go (n - numPreExisting - 1)
+                return (TPendingLevel preExisting (Just tree)))
+            , (2, do
+                -- pending union merge
+                ns <- QC.shuffle =<< arbitraryPartition2 n
+                TPendingUnion <$> traverse go ns)
+            ]
+
+      -- Split into at least two smaller positive numbers. The input needs to be
+      -- greater than or equal to 2.
+      arbitraryPartition2 :: Int -> QC.Gen [Int]
+      arbitraryPartition2 n = assert (n >= 2) $ do
+          first <- QC.chooseInt (1, n-1)
+          (first :) <$> arbitraryPartition (n - first)
+
+      -- Split into smaller positive numbers.
+      arbitraryPartition :: Int -> QC.Gen [Int]
+      arbitraryPartition n
+            | n <  1 = return []
+            | n == 1 = return [1]
+            | otherwise = do
+              first <- QC.chooseInt (1, n)
+              (first :) <$> arbitraryPartition (n - first)
 
   shrink (TCompleted r) =
       [ TCompleted r'
@@ -410,11 +487,35 @@ shrinkMergeCreditForRuns rs' MergeCredit {spentCredits, unspentCredits} =
     ]
 
 instance Arbitrary NonEmptyRun where
-  arbitrary = do
-      s <- QC.getSize
-      n <- QC.chooseInt (1, min s 40 + 1)
-      NonEmptyRun . Map.fromList <$> QC.vector n
+  arbitrary = NonEmptyRun <$> (arbitrary `QC.suchThat` (not . null))
   shrink (NonEmptyRun r) = [NonEmptyRun r' | r' <- shrink r, not (null r')]
+
+prop_arbitrarySatisfiesInvariant :: T -> Property
+prop_arbitrarySatisfiesInvariant t =
+    QC.tabulate "Tree size" [showPowersOf 2 $ sizeT t] $
+    QC.tabulate "Tree depth" [showPowersOf 2 $ depthT t] $
+      Right () === invariantT t
+
+prop_shrinkSatisfiesInvariant :: T -> Property
+prop_shrinkSatisfiesInvariant t =
+    QC.forAll (genShrinkTrace 4 t) $ \trace ->
+      QC.tabulate "Trace length" [showPowersOf 2 $ length trace] $
+      QC.conjoin $ flip map trace $ \(numAlternatives, t') ->
+        QC.tabulate "Shrink alternatives" [showPowersOf 2 numAlternatives] $
+          Right () === invariantT t'
+
+-- | Iterative shrinks, and how many alternatives were possible at each point.
+genShrinkTrace :: Arbitrary a => Int -> a -> QC.Gen [(Int, a)]
+genShrinkTrace !n x
+  | n <= 0 = return []
+  | otherwise =
+    case shrink x of
+      [] -> return []
+      xs -> do
+        -- like QC.elements, but we want access to the length
+        let len = length xs
+        x' <- (xs !!) <$> QC.chooseInt (0, len - 1)
+        ((len, x') :) <$> genShrinkTrace (n - 1) x'
 
 -------------------------------------------------------------------------------
 -- tracing and expectations on LSM shape
@@ -458,3 +559,18 @@ hasUnionWith p rep = do
         case shape of
           Nothing -> False
           Just t  -> p t
+
+-------------------------------------------------------------------------------
+-- Printing utils
+--
+
+-- | Copied from @lsm-tree:extras.Database.LSMTree.Extras@
+showPowersOf :: Int -> Int -> String
+showPowersOf factor n
+  | factor <= 1 = error "showPowersOf: factor must be larger than 1"
+  | n < 0       = "n < 0"
+  | n == 0      = "n == 0"
+  | otherwise   = printf "%d <= n < %d" lb ub
+  where
+    ub = fromJust (find (n <) (iterate (* factor) factor))
+    lb = ub `div` factor
