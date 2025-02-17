@@ -1504,7 +1504,9 @@ logicalValue lsm = do
 type Representation = (Run, [LevelRepresentation], Maybe (MTree Run))
 
 type LevelRepresentation =
-    (Maybe (MergePolicy, LevelMergeType, MergingRunState), [Run])
+    (Maybe (MergePolicy, NominalDebt, NominalCredit,
+            LevelMergeType, MergingRunState),
+     [Run])
 
 dumpRepresentation :: LSM s -> ST s Representation
 dumpRepresentation (LSMHandle _ lsmr) = do
@@ -1518,9 +1520,10 @@ dumpRepresentation (LSMHandle _ lsmr) = do
 dumpLevel :: Level s -> ST s LevelRepresentation
 dumpLevel (Level (Single r) rs) =
     return (Nothing, (r:rs))
-dumpLevel (Level (Merging mp _nd _nc (MergingRun mt _ ref)) rs) = do
+dumpLevel (Level (Merging mp nd ncv (MergingRun mt _ ref)) rs) = do
     mrs <- readSTRef ref
-    return (Just (mp, mt, mrs), rs)
+    nc  <- readSTRef ncv
+    return (Just (mp, nd, nc, mt, mrs), rs)
 
 -- For each level:
 -- 1. the runs involved in an ongoing merge
@@ -1538,8 +1541,8 @@ representationShape (wb, levels, tree) =
 
     summaryMR = \case
       Nothing                          -> ([], [])
-      Just (_, _, CompletedMerge r)    -> ([], [summaryRun r])
-      Just (_, _, OngoingMerge _ rs _) -> (map summaryRun rs, [])
+      Just (_, _, _, _, CompletedMerge r)    -> ([], [summaryRun r])
+      Just (_, _, _, _, OngoingMerge _ rs _) -> (map summaryRun rs, [])
 
 -------------------------------------------------------------------------------
 -- Tracing
