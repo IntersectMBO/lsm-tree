@@ -51,7 +51,7 @@ import           Database.LSMTree.Internal.Paths (ActiveDir (..), ForBlob (..),
                      ForKOps (..), NamedSnapshotDir (..), RunFsPaths (..),
                      WriteBufferFsPaths (..),
                      fromChecksumsFileForWriteBufferFiles, pathsForRunFiles,
-                     runChecksumsPath, writeBufferBlobPath,
+                     runChecksumsPath, runPath, writeBufferBlobPath,
                      writeBufferChecksumsPath, writeBufferKOpsPath)
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
@@ -442,8 +442,6 @@ fromSnapLevels ::
 fromSnapLevels reg hfs hbio conf@TableConfig{..} uc resolve dir (SnapLevels levels) =
     V.iforM levels $ \i -> fromSnapLevel (LevelNo (i+1))
   where
-    mkPath = RunFsPaths (getActiveDir dir)
-
     fromSnapLevel :: LevelNo -> SnapLevel (Ref (Run m h)) -> m (Level m h)
     fromSnapLevel ln SnapLevel{..} = do
         incomingRun <- fromSnapIncomingRun snapIncoming
@@ -468,7 +466,8 @@ fromSnapLevels reg hfs hbio conf@TableConfig{..} uc resolve dir (SnapLevels leve
               SnapOngoingMerge runs mt -> do
                 rn <- uniqueToRunNumber <$> incrUniqCounter uc
                 mr <- withRollback reg
-                  (MR.new hfs hbio resolve caching alloc indexType mt (mkPath rn) runs)
+                  (MR.new hfs hbio resolve caching alloc indexType mt
+                          (runPath dir rn) runs)
                   releaseRef
                 -- When a snapshot is created, merge progress is lost, so we
                 -- have to redo merging work here. SuppliedCredits tracks how
