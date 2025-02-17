@@ -523,10 +523,12 @@ assertST p = assert p $ return ()
 -- Merging credits
 --
 
--- | Credits for keeping track of merge progress. These credits
--- correspond directly to merge steps performed. We also call these \"physical\"
--- credits (since they correspond to steps done), and as opposed to \"nominal\"
--- credits in 'NominalCredit' and 'NominalDebt'.
+-- | Credits for keeping track of merge progress. These credits correspond
+-- directly to merge steps performed.
+--
+-- We also call these \"physical\" credits (since they correspond to steps
+-- done), and as opposed to \"nominal\" credits in 'NominalCredit' and
+-- 'NominalDebt'.
 type Credit = Int
 
 -- | Debt for keeping track of the total merge work to do.
@@ -989,9 +991,32 @@ lookupsTree k = go
 -- Nominal credits
 --
 
+-- | Nominal credit is the credit supplied to each level as we insert update
+-- operations, one credit per update operation inserted.
+--
+-- Nominal credit must be supplied up to the 'NominalDebt' to ensure the merge
+-- is complete.
+--
+-- Nominal credits are a similar order of magnitude to physical credits (see
+-- 'Credit') but not the same, and we have to scale linearly to convert between
+-- them. Physical credits are the actual number of inputs to the merge, which
+-- may be somewhat more or somewhat less than the number of update operations
+-- we will insert before we need the merge to be complete.
+--
 newtype NominalCredit = NominalCredit Credit
   deriving stock Show
 
+-- | The nominal debt for a merging run is the worst case (minimum) number of
+-- update operations we expect to insert before we expect the merge to be
+-- complete.
+--
+-- We require that an equal amount of nominal credit is supplied before we can
+-- expect a merge to be complete.
+--
+-- We scale linearly to convert nominal credits to physical credits, such that
+-- the nominal debt and physical debt are both considered \"100%\", and so that
+-- both debts are paid off at exactly the same time.
+--
 newtype NominalDebt = NominalDebt Credit
   deriving stock Show
 
