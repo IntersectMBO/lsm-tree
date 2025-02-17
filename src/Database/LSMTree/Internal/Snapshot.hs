@@ -115,7 +115,7 @@ data SnapshotMetaData = SnapshotMetaData {
     -- | The shape of the levels of the LSM tree.
   , snapMetaLevels    :: !(SnapLevels RunNumber)
   }
-  deriving stock (Show, Eq)
+  deriving stock Eq
 
 instance NFData SnapshotMetaData where
   rnf (SnapshotMetaData a b c d e) = rnf a `seq` rnf b `seq` rnf c `seq` rnf d `seq` rnf e
@@ -125,14 +125,14 @@ instance NFData SnapshotMetaData where
 -------------------------------------------------------------------------------}
 
 newtype SnapLevels r = SnapLevels { getSnapLevels :: V.Vector (SnapLevel r) }
-  deriving stock (Show, Eq, Functor, Foldable, Traversable)
+  deriving stock (Eq, Functor, Foldable, Traversable)
   deriving newtype NFData
 
 data SnapLevel r = SnapLevel {
     snapIncoming     :: !(SnapIncomingRun r)
   , snapResidentRuns :: !(V.Vector r)
   }
-  deriving stock (Show, Eq, Functor, Foldable, Traversable)
+  deriving stock (Eq, Functor, Foldable, Traversable)
 
 instance NFData r => NFData (SnapLevel r) where
   rnf (SnapLevel a b) = rnf a `seq` rnf b
@@ -144,7 +144,7 @@ data SnapIncomingRun r =
                    !SuppliedCredits
                    !(SnapMergingRunState MR.LevelMergeType r)
   | SnapSingleRun !r
-  deriving stock (Show, Eq, Functor, Foldable, Traversable)
+  deriving stock (Eq, Functor, Foldable, Traversable)
 
 instance NFData r => NFData (SnapIncomingRun r) where
   rnf (SnapMergingRun a b c d e) =
@@ -154,13 +154,13 @@ instance NFData r => NFData (SnapIncomingRun r) where
 -- | The total number of supplied credits. This total is used on snapshot load
 -- to restore merging work that was lost when the snapshot was created.
 newtype SuppliedCredits = SuppliedCredits { getSuppliedCredits :: Int }
-  deriving stock (Show, Eq, Read)
+  deriving stock (Eq, Read)
   deriving newtype NFData
 
 data SnapMergingRunState t r =
     SnapCompletedMerge !r
   | SnapOngoingMerge !(V.Vector r) !t
-  deriving stock (Show, Eq, Functor, Foldable, Traversable)
+  deriving stock (Eq, Functor, Foldable, Traversable)
 
 instance (NFData t, NFData r) => NFData (SnapMergingRunState t r) where
   rnf (SnapCompletedMerge a) = rnf a
