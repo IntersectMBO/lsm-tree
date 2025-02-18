@@ -42,6 +42,7 @@ import           Control.DeepSeq (NFData)
 import           Control.Exception (assert)
 import           Data.Coerce (coerce)
 import           Data.Containers.ListUtils (nubOrd)
+import           Data.Function ((&))
 import           Data.List (sort)
 import qualified Data.Primitive.ByteArray as BA
 import qualified Data.Vector.Primitive as VP
@@ -423,7 +424,12 @@ chunkSizeInvariant (ChunkSize csize) = chunkSizeLB <= csize && csize <= chunkSiz
 -------------------------------------------------------------------------------}
 
 instance Arbitrary RawBytes where
-  arbitrary = genRawBytes >>= genSlice
+  arbitrary = do
+    QC.NonNegative (QC.Small prefixLength)  <- arbitrary
+    QC.NonNegative (QC.Small payloadLength) <- arbitrary
+    QC.NonNegative (QC.Small suffixLength)  <- arbitrary
+    base <- genRawBytesN (prefixLength + payloadLength + suffixLength)
+    return (base & RB.drop prefixLength & RB.take payloadLength)
   shrink rb = shrinkSlice rb ++ shrinkRawBytes rb
 
 genRawBytesN :: Int -> Gen RawBytes
