@@ -59,7 +59,7 @@ import           Database.LSMTree.Internal.Entry (Entry, NumEntries (..),
 import           Database.LSMTree.Internal.Index (Index)
 import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
 import           Database.LSMTree.Internal.MergingRun (MergeCredits (..),
-                     MergeDebt, MergingRun, NumRuns (..))
+                     MergeDebt (..), MergingRun, NumRuns (..))
 import qualified Database.LSMTree.Internal.MergingRun as MR
 import           Database.LSMTree.Internal.MergingTree (MergingTree)
 import           Database.LSMTree.Internal.Paths (ActiveDir, RunFsPaths (..),
@@ -512,29 +512,23 @@ supplyCreditsIncomingRun conf ln (Merging _ _ _ mr) credits = do
 
 {-# SPECIALISE immediatelyCompleteIncomingRun ::
      Tracer IO (AtLevel MergeTrace)
-  -> TableConfig
   -> LevelNo
   -> IncomingRun IO h
-  -> V.Vector (Ref (Run IO h))
   -> IO () #-}
 -- | Supply enough credits to complete the merge now.
 immediatelyCompleteIncomingRun ::
      (MonadSTM m, MonadST m, MonadMVar m, MonadMask m)
   => Tracer m (AtLevel MergeTrace)
-  -> TableConfig
   -> LevelNo
   -> IncomingRun m h
-  -> V.Vector (Ref (Run m h))
   -> m ()
-immediatelyCompleteIncomingRun _ _ _ (Single _r) _ = return ()
-immediatelyCompleteIncomingRun tr conf ln (Merging _ _ _ mr) rs = do
-    let !required = MergeCredits (unNumEntries (V.foldMap' Run.size rs))
-    --TODO: find remainging debt from the mr itself
-    -- or switch to supplying the 100% absolute physical debt directly
-    let !thresh = creditThresholdForLevel conf ln
-    --TODO: use a maximal threshold, no need to pick one carefully
-    _ <- MR.supplyCreditsRelative mr thresh required
-    --TODO: use SupplyAbsolute instead here
+immediatelyCompleteIncomingRun _ _ (Single _r) = return ()
+immediatelyCompleteIncomingRun tr ln (Merging _ _ _ mr) = do
+    let MergeDebt !target = MR.totalMergeDebt mr
+        -- We use a maximal threshold, no need to pick one carefully
+        !thresh = MR.CreditThreshold (MR.UnspentCredits target)
+    (_, suppliedCredits') <- MR.supplyCreditsAbsolute mr thresh target
+    assert (suppliedCredits' == target) $ return ()
     -- This ensures the merge is really completed. However, we don't
     -- release the merge yet and only briefly inspect the resulting run.
     bracket (MR.expectCompleted mr) releaseRef $ \r ->
@@ -903,7 +897,7 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels ul
           V.forM_ rs $ \r -> delayedCommit reg (releaseRef r)
           case confMergeSchedule of
             Incremental -> pure ()
-            OneShot     -> immediatelyCompleteIncomingRun tr conf ln ir rs
+            OneShot     -> immediatelyCompleteIncomingRun tr ln ir
           return ir
 
 -- | We use levelling on the last level, unless that is also the first level.

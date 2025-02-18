@@ -14,6 +14,7 @@ module Database.LSMTree.Internal.MergingRun (
   , expectCompleted
   , snapshot
   , numRuns
+  , totalMergeDebt
 
     -- * Merge types
   , IsMergeType (..)
