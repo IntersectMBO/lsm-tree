@@ -63,6 +63,7 @@ module Test.Database.LSMTree.StateMachine (
   , Blob (..)
   , StateModel (..)
   , Action (..)
+  , Action' (..)
   ) where
 
 import           Control.ActionRegistry (AbortActionRegistryError (..),
@@ -568,7 +569,8 @@ initModelState = ModelState Model.initModel initStats
   Type synonyms
 -------------------------------------------------------------------------------}
 
-type Act h a = Action (Lockstep (ModelState h)) (Either Model.Err a)
+type Act h a = Action (Lockstep (ModelState h)) a
+type Act' h a = Action' h (Either Model.Err a)
 type Var h a = ModelVar (ModelState h) a
 type Val h a = ModelValue (ModelState h) a
 type Obs h a = Observable (ModelState h) a
@@ -609,82 +611,17 @@ instance ( Show (Class.TableConfig h)
          , Typeable h
          ) => StateModel (Lockstep (ModelState h)) where
   data instance Action (Lockstep (ModelState h)) a where
-    -- Tables
-    New :: C k v b
-        => {-# UNPACK #-} !(PrettyProxy (k, v, b))
-        -> Class.TableConfig h
-        -> Act h (WrapTable h IO k v b)
-    Close :: C k v b
-          => Var h (WrapTable h IO k v b)
-          -> Act h ()
-    -- Queries
-    Lookups :: C k v b
-            => V.Vector k -> Var h (WrapTable h IO k v b)
-            -> Act h (V.Vector (LookupResult v (WrapBlobRef h IO b)))
-    RangeLookup :: (C k v b, Ord k)
-                => R.Range k -> Var h (WrapTable h IO k v b)
-                -> Act h (V.Vector (QueryResult k v (WrapBlobRef h IO b)))
-    -- Cursor
-    NewCursor :: C k v b
-              => Maybe k
-              -> Var h (WrapTable h IO k v b)
-              -> Act h (WrapCursor h IO k v b)
-    CloseCursor :: C k v b
-                => Var h (WrapCursor h IO k v b)
-                -> Act h ()
-    ReadCursor :: C k v b
-               => Int
-               -> Var h (WrapCursor h IO k v b)
-               -> Act h (V.Vector (QueryResult k v (WrapBlobRef h IO b)))
-    -- Updates
-    Updates :: C k v b
-            => V.Vector (k, R.Update v b) -> Var h (WrapTable h IO k v b)
-            -> Act h ()
-    Inserts :: C k v b
-            => V.Vector (k, v, Maybe b) -> Var h (WrapTable h IO k v b)
-            -> Act h ()
-    Deletes :: C k v b
-            => V.Vector k -> Var h (WrapTable h IO k v b)
-            -> Act h ()
-    Mupserts :: C k v b
-             => V.Vector (k, v) -> Var h (WrapTable h IO k v b)
-             -> Act h ()
-    -- Blobs
-    RetrieveBlobs :: B b
-                  => Var h (V.Vector (WrapBlobRef h IO b))
-                  -> Act h (V.Vector (WrapBlob b))
-    -- Snapshots
-    CreateSnapshot ::
-         C k v b
-      => Maybe (Either SilentCorruption Errors)
-      -> R.SnapshotLabel -> R.SnapshotName -> Var h (WrapTable h IO k v b)
-      -> Act h ()
-    OpenSnapshot   ::
-         C k v b
-      => {-# UNPACK #-} !(PrettyProxy (k, v, b))
-      -> Maybe Errors
-      -> R.SnapshotLabel -> R.SnapshotName
-      -> Act h (WrapTable h IO k v b)
-    DeleteSnapshot :: R.SnapshotName -> Act h ()
-    ListSnapshots  :: Act h [R.SnapshotName]
-    -- Duplicate tables
-    Duplicate :: C k v b
-              => Var h (WrapTable h IO k v b)
-              -> Act h (WrapTable h IO k v b)
-    -- Table union
-    Union :: C k v b
-          => Var h (WrapTable h IO k v b)
-          -> Var h (WrapTable h IO k v b)
-          -> Act h (WrapTable h IO k v b)
-    Unions :: C k v b
-           => NonEmpty (Var h (WrapTable h IO k v b))
-           -> Act h (WrapTable h IO k v b)
+    Action :: Maybe Errors -> Action' h a -> Act h a
 
   initialState    = Lockstep.Defaults.initialState initModelState
   nextState       = Lockstep.Defaults.nextState
   precondition    = Lockstep.Defaults.precondition
   arbitraryAction = Lockstep.Defaults.arbitraryAction
   shrinkAction    = Lockstep.Defaults.shrinkAction
+
+  -- Does not use the default implementation, because that would print "Action".
+  -- We print the name of the inner 'Action'' instead.
+  actionName (Action _ action') = head . words . show $ action'
 
 deriving stock instance Show (Class.TableConfig h)
                      => Show (LockstepAction (ModelState h) a)
@@ -693,9 +630,107 @@ instance ( Eq (Class.TableConfig h)
          , Typeable h
          ) => Eq (LockstepAction (ModelState h) a) where
   (==) :: LockstepAction (ModelState h) a -> LockstepAction (ModelState h) a -> Bool
+  Action merrs1 x == Action merrs2 y = merrs1 == merrs2 && x == y
+    where
+      _coveredAllCases :: Action (Lockstep (ModelState h)) a -> ()
+      _coveredAllCases = \case
+          Action{} -> ()
+
+data Action' h a where
+  -- Tables
+  New ::
+        C k v b
+    => {-# UNPACK #-} !(PrettyProxy (k, v, b))
+    -> Class.TableConfig h
+    -> Act' h (WrapTable h IO k v b)
+  Close ::
+        C k v b
+    => Var h (WrapTable h IO k v b)
+    -> Act' h ()
+  -- Queries
+  Lookups ::
+        C k v b
+    => V.Vector k -> Var h (WrapTable h IO k v b)
+    -> Act' h (V.Vector (LookupResult v (WrapBlobRef h IO b)))
+  RangeLookup ::
+        (C k v b, Ord k)
+    => R.Range k -> Var h (WrapTable h IO k v b)
+    -> Act' h (V.Vector (QueryResult k v (WrapBlobRef h IO b)))
+  -- Cursor
+  NewCursor ::
+        C k v b
+    => Maybe k
+    -> Var h (WrapTable h IO k v b)
+    -> Act' h (WrapCursor h IO k v b)
+  CloseCursor ::
+        C k v b
+    => Var h (WrapCursor h IO k v b)
+    -> Act' h ()
+  ReadCursor ::
+        C k v b
+    => Int
+    -> Var h (WrapCursor h IO k v b)
+    -> Act' h (V.Vector (QueryResult k v (WrapBlobRef h IO b)))
+  -- Updates
+  Updates ::
+        C k v b
+    => V.Vector (k, R.Update v b) -> Var h (WrapTable h IO k v b)
+    -> Act' h ()
+  Inserts ::
+        C k v b
+    => V.Vector (k, v, Maybe b) -> Var h (WrapTable h IO k v b)
+    -> Act' h ()
+  Deletes ::
+        C k v b
+    => V.Vector k -> Var h (WrapTable h IO k v b)
+    -> Act' h ()
+  Mupserts ::
+        C k v b
+    => V.Vector (k, v) -> Var h (WrapTable h IO k v b)
+    -> Act' h ()
+  -- Blobs
+  RetrieveBlobs ::
+        B b
+    => Var h (V.Vector (WrapBlobRef h IO b))
+    -> Act' h (V.Vector (WrapBlob b))
+  -- Snapshots
+  CreateSnapshot ::
+        C k v b
+    => Maybe SilentCorruption
+    -> R.SnapshotLabel -> R.SnapshotName -> Var h (WrapTable h IO k v b)
+    -> Act' h ()
+  OpenSnapshot   ::
+        C k v b
+    => {-# UNPACK #-} !(PrettyProxy (k, v, b))
+    -> R.SnapshotLabel -> R.SnapshotName
+    -> Act' h (WrapTable h IO k v b)
+  DeleteSnapshot :: R.SnapshotName -> Act' h ()
+  ListSnapshots  :: Act' h [R.SnapshotName]
+  -- Duplicate tables
+  Duplicate ::
+        C k v b
+    => Var h (WrapTable h IO k v b)
+    -> Act' h (WrapTable h IO k v b)
+  -- Table union
+  Union ::
+        C k v b
+    => Var h (WrapTable h IO k v b)
+    -> Var h (WrapTable h IO k v b)
+    -> Act' h (WrapTable h IO k v b)
+  Unions ::
+        C k v b
+    => NonEmpty (Var h (WrapTable h IO k v b))
+    -> Act' h (WrapTable h IO k v b)
+
+deriving stock instance Show (Class.TableConfig h)
+                     => Show (Action' h a)
+
+instance ( Eq (Class.TableConfig h)
+         , Typeable h
+         ) => Eq (Action' h a) where
   x == y = go x y
     where
-      go :: LockstepAction (ModelState h) a -> LockstepAction (ModelState h) a -> Bool
+      go :: Action' h a -> Action' h a -> Bool
       go
         (New (PrettyProxy :: PrettyProxy kvb) conf1)
         (New (PrettyProxy :: PrettyProxy kvb) conf2) =
@@ -722,12 +757,12 @@ instance ( Eq (Class.TableConfig h)
           Just mups1 == cast mups2 && Just var1 == cast var2
       go (RetrieveBlobs vars1) (RetrieveBlobs vars2) =
           Just vars1 == cast vars2
-      go (CreateSnapshot merrs1 label1 name1 var1) (CreateSnapshot merrs2 label2 name2 var2) =
-          merrs1 == merrs2 && label1 == label2 && name1 == name2 && Just var1 == cast var2
+      go (CreateSnapshot mcorr1 label1 name1 var1) (CreateSnapshot mcorr2 label2 name2 var2) =
+          mcorr1 == mcorr2 && label1 == label2 && name1 == name2 && Just var1 == cast var2
       go
-        (OpenSnapshot (PrettyProxy :: PrettyProxy kvb) merrs1 label1 name1)
-        (OpenSnapshot (PrettyProxy :: PrettyProxy kvb) merrs2 label2 name2) =
-          merrs1 == merrs2 && label1 == label2 && name1 == name2
+        (OpenSnapshot (PrettyProxy :: PrettyProxy kvb) label1 name1)
+        (OpenSnapshot (PrettyProxy :: PrettyProxy kvb) label2 name2) =
+          label1 == label2 && name1 == name2
       go (DeleteSnapshot name1) (DeleteSnapshot name2) =
           name1 == name2
       go ListSnapshots ListSnapshots =
@@ -740,7 +775,7 @@ instance ( Eq (Class.TableConfig h)
           Just vars1 == cast vars2
       go _  _ = False
 
-      _coveredAllCases :: LockstepAction (ModelState h) a -> ()
+      _coveredAllCases :: Action' h a -> ()
       _coveredAllCases = \case
           New{} -> ()
           Close{} -> ()
@@ -859,26 +894,26 @@ instance ( Eq (Class.TableConfig h)
           stats' = updateStats action (lookupVar ctx) state state' result stats
 
   usedVars :: LockstepAction (ModelState h) a -> [AnyGVar (ModelOp (ModelState h))]
-  usedVars = \case
-      New _ _                         -> []
-      Close tableVar                  -> [SomeGVar tableVar]
-      Lookups _ tableVar              -> [SomeGVar tableVar]
-      RangeLookup _ tableVar          -> [SomeGVar tableVar]
-      NewCursor _ tableVar            -> [SomeGVar tableVar]
-      CloseCursor cursorVar           -> [SomeGVar cursorVar]
-      ReadCursor _ cursorVar          -> [SomeGVar cursorVar]
-      Updates _ tableVar              -> [SomeGVar tableVar]
-      Inserts _ tableVar              -> [SomeGVar tableVar]
-      Deletes _ tableVar              -> [SomeGVar tableVar]
-      Mupserts _ tableVar             -> [SomeGVar tableVar]
-      RetrieveBlobs blobsVar          -> [SomeGVar blobsVar]
-      CreateSnapshot _ _ _ tableVar   -> [SomeGVar tableVar]
-      OpenSnapshot{}                  -> []
-      DeleteSnapshot _                -> []
-      ListSnapshots                   -> []
-      Duplicate tableVar              -> [SomeGVar tableVar]
-      Union table1Var table2Var       -> [SomeGVar table1Var, SomeGVar table2Var]
-      Unions tableVars                -> [SomeGVar tableVar | tableVar <- NE.toList tableVars]
+  usedVars (Action _ action') = case action' of
+      New _ _                       -> []
+      Close tableVar                -> [SomeGVar tableVar]
+      Lookups _ tableVar            -> [SomeGVar tableVar]
+      RangeLookup _ tableVar        -> [SomeGVar tableVar]
+      NewCursor _ tableVar          -> [SomeGVar tableVar]
+      CloseCursor cursorVar         -> [SomeGVar cursorVar]
+      ReadCursor _ cursorVar        -> [SomeGVar cursorVar]
+      Updates _ tableVar            -> [SomeGVar tableVar]
+      Inserts _ tableVar            -> [SomeGVar tableVar]
+      Deletes _ tableVar            -> [SomeGVar tableVar]
+      Mupserts _ tableVar           -> [SomeGVar tableVar]
+      RetrieveBlobs blobsVar        -> [SomeGVar blobsVar]
+      CreateSnapshot _ _ _ tableVar -> [SomeGVar tableVar]
+      OpenSnapshot{}                -> []
+      DeleteSnapshot _              -> []
+      ListSnapshots                 -> []
+      Duplicate tableVar            -> [SomeGVar tableVar]
+      Union table1Var table2Var     -> [SomeGVar table1Var, SomeGVar table2Var]
+      Unions tableVars              -> [SomeGVar tableVar | tableVar <- NE.toList tableVars]
 
   arbitraryWithVars ::
        ModelVarContext (ModelState h)
@@ -1020,7 +1055,7 @@ instance ( Eq (Class.TableConfig h)
     -> LockstepAction (ModelState h) a
     -> Realized (RealMonad h IO) a
     -> Obs h a
-  observeReal _proxy action result = case action of
+  observeReal _proxy (Action _ action') result = case action' of
       New{}            -> OEither $ bimap OId (const OTable) result
       Close{}          -> OEither $ bimap OId OId result
       Lookups{}        -> OEither $
@@ -1048,7 +1083,7 @@ instance ( Eq (Class.TableConfig h)
        Proxy (RealMonad h IO)
     -> LockstepAction (ModelState h) a
     -> Maybe (Dict (Show (Realized (RealMonad h IO) a)))
-  showRealResponse _ = \case
+  showRealResponse _ (Action _ action') = case action' of
       New{}            -> Nothing
       Close{}          -> Just Dict
       Lookups{}        -> Nothing
@@ -1064,7 +1099,7 @@ instance ( Eq (Class.TableConfig h)
       CreateSnapshot{} -> Just Dict
       OpenSnapshot{}   -> Nothing
       DeleteSnapshot{} -> Just Dict
-      ListSnapshots    -> Just Dict
+      ListSnapshots{}  -> Just Dict
       Duplicate{}      -> Nothing
       Union{}          -> Nothing
       Unions{}         -> Nothing
@@ -1080,7 +1115,7 @@ instance ( Eq (Class.TableConfig h)
     -> LockstepAction (ModelState h) a
     -> Realized (RealMonad h (IOSim s)) a
     -> Obs h a
-  observeReal _proxy action result = case action of
+  observeReal _proxy (Action _ action') result = case action' of
       New{}            -> OEither $ bimap OId (const OTable) result
       Close{}          -> OEither $ bimap OId OId result
       Lookups{}        -> OEither $
@@ -1108,7 +1143,7 @@ instance ( Eq (Class.TableConfig h)
        Proxy (RealMonad h (IOSim s))
     -> LockstepAction (ModelState h) a
     -> Maybe (Dict (Show (Realized (RealMonad h (IOSim s)) a)))
-  showRealResponse _ = \case
+  showRealResponse _ (Action _ action') = case action' of
       New{}            -> Nothing
       Close{}          -> Just Dict
       Lookups{}        -> Nothing
@@ -1124,7 +1159,7 @@ instance ( Eq (Class.TableConfig h)
       CreateSnapshot{} -> Just Dict
       OpenSnapshot{}   -> Nothing
       DeleteSnapshot{} -> Just Dict
-      ListSnapshots    -> Just Dict
+      ListSnapshots{}  -> Just Dict
       Duplicate{}      -> Nothing
       Union{}          -> Nothing
       Unions{}         -> Nothing
@@ -1161,69 +1196,103 @@ runModel ::
      ModelLookUp (ModelState h)
   -> LockstepAction (ModelState h) a
   -> Model.Model -> (Val h a, Model.Model)
-runModel lookUp = \case
+runModel lookUp (Action merrs action') = case action' of
     New _ _cfg ->
       wrap MTable
-      . Model.runModelM (Model.new Model.TableConfig)
+      . Model.runModelMWithInjectedErrors merrs
+          (Model.new Model.TableConfig)
+          (pure ()) -- TODO
     Close tableVar ->
       wrap MUnit
-      . Model.runModelM (Model.close (getTable $ lookUp tableVar))
+      . Model.runModelMWithInjectedErrors merrs
+          (Model.close (getTable $ lookUp tableVar))
+          (pure ()) -- TODO
     Lookups ks tableVar ->
       wrap (MVector . fmap (MLookupResult . fmap MBlobRef))
-      . Model.runModelM (Model.lookups ks (getTable $ lookUp tableVar))
+      . Model.runModelMWithInjectedErrors merrs
+          (Model.lookups ks (getTable $ lookUp tableVar))
+          (pure ()) -- TODO
     RangeLookup range tableVar ->
       wrap (MVector . fmap (MQueryResult . fmap MBlobRef))
-      . Model.runModelM (Model.rangeLookup range (getTable $ lookUp tableVar))
+      . Model.runModelMWithInjectedErrors merrs
+          (Model.rangeLookup range (getTable $ lookUp tableVar))
+          (pure ()) -- TODO
     NewCursor offset tableVar ->
       wrap MCursor
-      . Model.runModelM (Model.newCursor offset (getTable $ lookUp tableVar))
+      . Model.runModelMWithInjectedErrors merrs
+          (Model.newCursor offset (getTable $ lookUp tableVar))
+          (pure ()) -- TODO
     CloseCursor cursorVar ->
       wrap MUnit
-      . Model.runModelM (Model.closeCursor (getCursor $ lookUp cursorVar))
+      . Model.runModelMWithInjectedErrors merrs
+          (Model.closeCursor (getCursor $ lookUp cursorVar))
+          (pure ()) -- TODO
     ReadCursor n cursorVar ->
       wrap (MVector . fmap (MQueryResult . fmap MBlobRef))
-      . Model.runModelM (Model.readCursor n (getCursor $ lookUp cursorVar))
+      . Model.runModelMWithInjectedErrors merrs
+          (Model.readCursor n (getCursor $ lookUp cursorVar))
+          (pure ()) -- TODO
     Updates kups tableVar ->
       wrap MUnit
-      . Model.runModelM (Model.updates Model.getResolve kups (getTable $ lookUp tableVar))
+      . Model.runModelMWithInjectedErrors merrs
+          (Model.updates Model.getResolve kups (getTable $ lookUp tableVar))
+          (pure ()) -- TODO
     Inserts kins tableVar ->
       wrap MUnit
-      . Model.runModelM (Model.inserts Model.getResolve kins (getTable $ lookUp tableVar))
+      . Model.runModelMWithInjectedErrors merrs
+          (Model.inserts Model.getResolve kins (getTable $ lookUp tableVar))
+          (pure ()) -- TODO
     Deletes kdels tableVar ->
       wrap MUnit
-      . Model.runModelM (Model.deletes Model.getResolve kdels (getTable $ lookUp tableVar))
+      . Model.runModelMWithInjectedErrors merrs
+          (Model.deletes Model.getResolve kdels (getTable $ lookUp tableVar))
+          (pure ()) -- TODO
     Mupserts kmups tableVar ->
       wrap MUnit
-      . Model.runModelM (Model.mupserts Model.getResolve kmups (getTable $ lookUp tableVar))
+      . Model.runModelMWithInjectedErrors merrs
+          (Model.mupserts Model.getResolve kmups (getTable $ lookUp tableVar))
+          (pure ()) -- TODO
     RetrieveBlobs blobsVar ->
       wrap (MVector . fmap (MBlob . WrapBlob))
-      . Model.runModelM (Model.retrieveBlobs (getBlobRefs . lookUp $ blobsVar))
-    CreateSnapshot mcorrOrErrs label name tableVar ->
-      wrap MUnit .
-        let mCreateSnapshot = Model.createSnapshot label name (getTable $ lookUp tableVar)
-        in case sequence mcorrOrErrs of
-              Left _corrs -> Model.runModelM (mCreateSnapshot >> Model.corruptSnapshot name)
-              Right merrs -> Model.runModelMWithInjectedErrors merrs mCreateSnapshot (pure ())
-    OpenSnapshot _ merrs label name ->
+      . Model.runModelMWithInjectedErrors merrs
+          (Model.retrieveBlobs (getBlobRefs . lookUp $ blobsVar))
+          (pure ()) -- TODO
+    CreateSnapshot mcorr label name tableVar ->
+      wrap MUnit
+        . Model.runModelMWithInjectedErrors merrs
+            (do Model.createSnapshot label name (getTable $ lookUp tableVar)
+                forM_ mcorr $ \_ -> Model.corruptSnapshot name)
+            (pure ()) -- TODO
+    OpenSnapshot _ label name ->
       wrap MTable
       . Model.runModelMWithInjectedErrors merrs
           (Model.openSnapshot label name)
-          (pure ())
+          (pure ()) -- TODO
     DeleteSnapshot name ->
       wrap MUnit
-      . Model.runModelM (Model.deleteSnapshot name)
+      . Model.runModelMWithInjectedErrors merrs
+          (Model.deleteSnapshot name)
+          (pure ()) -- TODO
     ListSnapshots ->
       wrap (MList . fmap MSnapshotName)
-      . Model.runModelM Model.listSnapshots
+      . Model.runModelMWithInjectedErrors merrs
+          Model.listSnapshots
+          (pure ()) -- TODO
     Duplicate tableVar ->
       wrap MTable
-      . Model.runModelM (Model.duplicate (getTable $ lookUp tableVar))
+      . Model.runModelMWithInjectedErrors merrs
+          (Model.duplicate (getTable $ lookUp tableVar))
+          (pure ()) -- TODO
     Union table1Var table2Var ->
       wrap MTable
-      . Model.runModelM (Model.union Model.getResolve (getTable $ lookUp table1Var) (getTable $ lookUp table2Var))
+      . Model.runModelMWithInjectedErrors merrs
+          (Model.union Model.getResolve (getTable $ lookUp table1Var) (getTable $ lookUp table2Var))
+          (pure ()) -- TODO
     Unions tableVars ->
       wrap MTable
-      . Model.runModelM (Model.unions Model.getResolve (fmap (getTable . lookUp) tableVars))
+      . Model.runModelMWithInjectedErrors merrs
+          (Model.unions Model.getResolve (fmap (getTable . lookUp) tableVars))
+          (pure ()) -- TODO
   where
     getTable ::
          ModelValue (ModelState h) (WrapTable h IO k v b)
@@ -1260,59 +1329,87 @@ runIO action lookUp = ReaderT $ \ !env -> do
          RealEnv h IO
       -> LockstepAction (ModelState h) a
       -> IO (Realized IO a)
-    aux env = \case
-        New _ cfg -> catchErr handlers $
-          WrapTable <$> Class.new session cfg
-        Close tableVar -> catchErr handlers $
-          Class.close (unwrapTable $ lookUp' tableVar)
-        Lookups ks tableVar -> catchErr handlers $
-          fmap (fmap WrapBlobRef) <$> Class.lookups (unwrapTable $ lookUp' tableVar) ks
-        RangeLookup range tableVar -> catchErr handlers $
-          fmap (fmap WrapBlobRef) <$> Class.rangeLookup (unwrapTable $ lookUp' tableVar) range
-        NewCursor offset tableVar -> catchErr handlers $
-          WrapCursor <$> Class.newCursor offset (unwrapTable $ lookUp' tableVar)
-        CloseCursor cursorVar -> catchErr handlers $
-          Class.closeCursor (Proxy @h) (unwrapCursor $ lookUp' cursorVar)
-        ReadCursor n cursorVar -> catchErr handlers $
-          fmap (fmap WrapBlobRef) <$> Class.readCursor (Proxy @h) n (unwrapCursor $ lookUp' cursorVar)
-        Updates kups tableVar -> catchErr handlers $
-          Class.updates (unwrapTable $ lookUp' tableVar) kups
-        Inserts kins tableVar -> catchErr handlers $
-          Class.inserts (unwrapTable $ lookUp' tableVar) kins
-        Deletes kdels tableVar -> catchErr handlers $
-          Class.deletes (unwrapTable $ lookUp' tableVar) kdels
-        Mupserts kmups tableVar -> catchErr handlers $
-          Class.mupserts (unwrapTable $ lookUp' tableVar) kmups
-        RetrieveBlobs blobRefsVar -> catchErr handlers $
-          fmap WrapBlob <$> Class.retrieveBlobs (Proxy @h) session (unwrapBlobRef <$> lookUp' blobRefsVar)
-        CreateSnapshot mcorrOrErrs label name tableVar ->
-          let rCreateSnapshot = Class.createSnapshot label name (unwrapTable $ lookUp' tableVar) in
-          case sequence mcorrOrErrs of
-            Left corr -> do
-              rCreateSnapshot
-              Class.corruptSnapshot (bitChoice corr) name (unwrapTable $ lookUp' tableVar)
-              pure (Right ())
-            Right merrs ->
-              runRealWithInjectedErrors "CreateSnapshot" env merrs
-                rCreateSnapshot
-                (\() -> Class.deleteSnapshot session name)
-        OpenSnapshot _ merrs label name ->
+    aux env (Action merrs action') = case action' of
+        New _ cfg ->
+          runRealWithInjectedErrors "New" env merrs
+            (WrapTable <$> Class.new session cfg)
+            (\_ -> pure ()) -- TODO
+        Close tableVar ->
+          runRealWithInjectedErrors "Close" env merrs
+            (Class.close (unwrapTable $ lookUp' tableVar))
+            (\_ -> pure ()) -- TODO
+        Lookups ks tableVar ->
+          runRealWithInjectedErrors "Lookups" env merrs
+            (fmap (fmap WrapBlobRef) <$> Class.lookups (unwrapTable $ lookUp' tableVar) ks)
+            (\_ -> pure ()) -- TODO
+        RangeLookup range tableVar ->
+          runRealWithInjectedErrors "RangeLookup" env merrs
+            (fmap (fmap WrapBlobRef) <$> Class.rangeLookup (unwrapTable $ lookUp' tableVar) range)
+            (\_ -> pure ()) -- TODO
+        NewCursor offset tableVar ->
+          runRealWithInjectedErrors "NewCursor" env merrs
+            (WrapCursor <$> Class.newCursor offset (unwrapTable $ lookUp' tableVar))
+            (\_ -> pure ()) -- TODO
+        CloseCursor cursorVar ->
+          runRealWithInjectedErrors "CloseCursor" env merrs
+            (Class.closeCursor (Proxy @h) (unwrapCursor $ lookUp' cursorVar))
+            (\_ -> pure ()) -- TODO
+        ReadCursor n cursorVar ->
+          runRealWithInjectedErrors "ReadCursor" env merrs
+            (fmap (fmap WrapBlobRef) <$> Class.readCursor (Proxy @h) n (unwrapCursor $ lookUp' cursorVar))
+            (\_ -> pure ()) -- TODO
+        Updates kups tableVar ->
+          runRealWithInjectedErrors "Updates" env merrs
+            (Class.updates (unwrapTable $ lookUp' tableVar) kups)
+            (\_ -> pure ()) -- TODO
+        Inserts kins tableVar ->
+          runRealWithInjectedErrors "Inserts" env merrs
+            (Class.inserts (unwrapTable $ lookUp' tableVar) kins)
+            (\_ -> pure ()) -- TODO
+        Deletes kdels tableVar ->
+          runRealWithInjectedErrors "Deletes" env merrs
+            (Class.deletes (unwrapTable $ lookUp' tableVar) kdels)
+            (\_ -> pure ()) -- TODO
+        Mupserts kmups tableVar ->
+          runRealWithInjectedErrors "Mupserts" env merrs
+            (Class.mupserts (unwrapTable $ lookUp' tableVar) kmups)
+            (\_ -> pure ()) -- TODO
+        RetrieveBlobs blobRefsVar ->
+          runRealWithInjectedErrors "RetrieveBlobs" env merrs
+            (fmap WrapBlob <$> Class.retrieveBlobs (Proxy @h) session (unwrapBlobRef <$> lookUp' blobRefsVar))
+            (\_ -> pure ()) -- TODO
+        CreateSnapshot mcorr label name tableVar ->
+          let table = unwrapTable $ lookUp' tableVar in
+          runRealWithInjectedErrors "CreateSnapshot" env merrs
+            (do Class.createSnapshot label name table
+                forM_ mcorr $ \corr -> Class.corruptSnapshot (bitChoice corr) name table)
+            (\() -> Class.deleteSnapshot session name)
+        OpenSnapshot _ label name ->
           runRealWithInjectedErrors "OpenSnapshot" env merrs
             (WrapTable <$> Class.openSnapshot session label name)
             (\(WrapTable t) -> Class.close t)
-        DeleteSnapshot name -> catchErr handlers $
-          Class.deleteSnapshot session name
-        ListSnapshots -> catchErr handlers $
-          Class.listSnapshots session
-        Duplicate tableVar -> catchErr handlers $
-          WrapTable <$> Class.duplicate (unwrapTable $ lookUp' tableVar)
-        Union table1Var table2Var -> catchErr handlers $
-          WrapTable <$> Class.union (unwrapTable $ lookUp' table1Var) (unwrapTable $ lookUp' table2Var)
-        Unions tableVars -> catchErr handlers $
-          WrapTable <$> Class.unions (fmap (unwrapTable . lookUp') tableVars)
+        DeleteSnapshot name ->
+          runRealWithInjectedErrors "DeleteSnapshot" env merrs
+            (Class.deleteSnapshot session name)
+            (\_ -> pure ()) -- TODO
+        ListSnapshots ->
+          runRealWithInjectedErrors "ListSnapshots" env merrs
+            (Class.listSnapshots session)
+            (\_ -> pure ()) -- TODO
+        Duplicate tableVar ->
+          runRealWithInjectedErrors "Duplicate" env merrs
+            (WrapTable <$> Class.duplicate (unwrapTable $ lookUp' tableVar))
+            (\_ -> pure ()) -- TODO
+        Union table1Var table2Var ->
+          runRealWithInjectedErrors "Union" env merrs
+            (WrapTable <$> Class.union (unwrapTable $ lookUp' table1Var) (unwrapTable $ lookUp' table2Var))
+            (\_ -> pure ()) -- TODO
+        Unions tableVars ->
+          runRealWithInjectedErrors "Unions" env merrs
+            (WrapTable <$> Class.unions (fmap (unwrapTable . lookUp') tableVars))
+            (\_ -> pure ())
       where
         session = envSession env
-        handlers = envHandlers env
 
     lookUp' :: Var h x -> Realized IO x
     lookUp' = lookUpGVar (Proxy @(RealMonad h IO)) lookUp
@@ -1329,59 +1426,87 @@ runIOSim action lookUp = ReaderT $ \ !env -> do
          RealEnv h (IOSim s)
       -> LockstepAction (ModelState h) a
       -> IOSim s (Realized (IOSim s) a)
-    aux env = \case
-        New _ cfg -> catchErr handlers $
-          WrapTable <$> Class.new session cfg
-        Close tableVar -> catchErr handlers $
-          Class.close (unwrapTable $ lookUp' tableVar)
-        Lookups ks tableVar -> catchErr handlers $
-          fmap (fmap WrapBlobRef) <$> Class.lookups (unwrapTable $ lookUp' tableVar) ks
-        RangeLookup range tableVar -> catchErr handlers $
-          fmap (fmap WrapBlobRef) <$> Class.rangeLookup (unwrapTable $ lookUp' tableVar) range
-        NewCursor offset tableVar -> catchErr handlers $
-          WrapCursor <$> Class.newCursor offset (unwrapTable $ lookUp' tableVar)
-        CloseCursor cursorVar -> catchErr handlers $
-          Class.closeCursor (Proxy @h) (unwrapCursor $ lookUp' cursorVar)
-        ReadCursor n cursorVar -> catchErr handlers $
-          fmap (fmap WrapBlobRef) <$> Class.readCursor (Proxy @h) n (unwrapCursor $ lookUp' cursorVar)
-        Updates kups tableVar -> catchErr handlers $
-          Class.updates (unwrapTable $ lookUp' tableVar) kups
-        Inserts kins tableVar -> catchErr handlers $
-          Class.inserts (unwrapTable $ lookUp' tableVar) kins
-        Deletes kdels tableVar -> catchErr handlers $
-          Class.deletes (unwrapTable $ lookUp' tableVar) kdels
-        Mupserts kmups tableVar -> catchErr handlers $
-          Class.mupserts (unwrapTable $ lookUp' tableVar) kmups
-        RetrieveBlobs blobRefsVar -> catchErr handlers $
-          fmap WrapBlob <$> Class.retrieveBlobs (Proxy @h) session (unwrapBlobRef <$> lookUp' blobRefsVar)
-        CreateSnapshot mcorrOrErrs label name tableVar ->
-          let rCreateSnapshot = Class.createSnapshot label name (unwrapTable $ lookUp' tableVar) in
-          case sequence mcorrOrErrs of
-            Left corr -> do
-              rCreateSnapshot
-              Class.corruptSnapshot (bitChoice corr) name (unwrapTable $ lookUp' tableVar)
-              pure (Right ())
-            Right merrs ->
-              runRealWithInjectedErrors "CreateSnapshot" env merrs
-                rCreateSnapshot
-                (\() -> Class.deleteSnapshot session name)
-        OpenSnapshot _ merrs label name ->
+    aux env (Action merrs action') = case action' of
+        New _ cfg ->
+          runRealWithInjectedErrors "New" env merrs
+            (WrapTable <$> Class.new session cfg)
+            (\_ -> pure ()) -- TODO
+        Close tableVar ->
+          runRealWithInjectedErrors "Close" env merrs
+            (Class.close (unwrapTable $ lookUp' tableVar))
+            (\_ -> pure ()) -- TODO
+        Lookups ks tableVar ->
+          runRealWithInjectedErrors "Lookups" env merrs
+            (fmap (fmap WrapBlobRef) <$> Class.lookups (unwrapTable $ lookUp' tableVar) ks)
+            (\_ -> pure ()) -- TODO
+        RangeLookup range tableVar ->
+          runRealWithInjectedErrors "RangeLookup" env merrs
+            (fmap (fmap WrapBlobRef) <$> Class.rangeLookup (unwrapTable $ lookUp' tableVar) range)
+            (\_ -> pure ()) -- TODO
+        NewCursor offset tableVar ->
+          runRealWithInjectedErrors "NewCursor" env merrs
+            (WrapCursor <$> Class.newCursor offset (unwrapTable $ lookUp' tableVar))
+            (\_ -> pure ()) -- TODO
+        CloseCursor cursorVar ->
+          runRealWithInjectedErrors "CloseCursor" env merrs
+            (Class.closeCursor (Proxy @h) (unwrapCursor $ lookUp' cursorVar))
+            (\_ -> pure ()) -- TODO
+        ReadCursor n cursorVar ->
+          runRealWithInjectedErrors "ReadCursor" env merrs
+            (fmap (fmap WrapBlobRef) <$> Class.readCursor (Proxy @h) n (unwrapCursor $ lookUp' cursorVar))
+            (\_ -> pure ()) -- TODO
+        Updates kups tableVar ->
+          runRealWithInjectedErrors "Updates" env merrs
+            (Class.updates (unwrapTable $ lookUp' tableVar) kups)
+            (\_ -> pure ()) -- TODO
+        Inserts kins tableVar ->
+          runRealWithInjectedErrors "Inserts" env merrs
+            (Class.inserts (unwrapTable $ lookUp' tableVar) kins)
+            (\_ -> pure ()) -- TODO
+        Deletes kdels tableVar ->
+          runRealWithInjectedErrors "Deletes" env merrs
+            (Class.deletes (unwrapTable $ lookUp' tableVar) kdels)
+            (\_ -> pure ()) -- TODO
+        Mupserts kmups tableVar ->
+          runRealWithInjectedErrors "Mupserts" env merrs
+            (Class.mupserts (unwrapTable $ lookUp' tableVar) kmups)
+            (\_ -> pure ()) -- TODO
+        RetrieveBlobs blobRefsVar ->
+          runRealWithInjectedErrors "RetrieveBlobs" env merrs
+            (fmap WrapBlob <$> Class.retrieveBlobs (Proxy @h) session (unwrapBlobRef <$> lookUp' blobRefsVar))
+            (\_ -> pure ()) -- TODO
+        CreateSnapshot mcorr label name tableVar ->
+          let table = unwrapTable $ lookUp' tableVar in
+          runRealWithInjectedErrors "CreateSnapshot" env merrs
+            (do Class.createSnapshot label name table
+                forM_ mcorr $ \corr -> Class.corruptSnapshot (bitChoice corr) name table)
+            (\() -> Class.deleteSnapshot session name)
+        OpenSnapshot _ label name ->
           runRealWithInjectedErrors "OpenSnapshot" env merrs
             (WrapTable <$> Class.openSnapshot session label name)
             (\(WrapTable t) -> Class.close t)
-        DeleteSnapshot name -> catchErr handlers $
-          Class.deleteSnapshot session name
-        ListSnapshots -> catchErr handlers $
-          Class.listSnapshots session
-        Duplicate tableVar -> catchErr handlers $
-          WrapTable <$> Class.duplicate (unwrapTable $ lookUp' tableVar)
-        Union table1Var table2Var -> catchErr handlers $
-          WrapTable <$> Class.union (unwrapTable $ lookUp' table1Var) (unwrapTable $ lookUp' table2Var)
-        Unions tableVars -> catchErr handlers $
-          WrapTable <$> Class.unions (fmap (unwrapTable . lookUp') tableVars)
+        DeleteSnapshot name ->
+          runRealWithInjectedErrors "DeleteSnapshot" env merrs
+            (Class.deleteSnapshot session name)
+            (\_ -> pure ()) -- TODO
+        ListSnapshots ->
+          runRealWithInjectedErrors "ListSnapshots" env merrs
+            (Class.listSnapshots session)
+            (\_ -> pure ()) -- TODO
+        Duplicate tableVar ->
+          runRealWithInjectedErrors "Duplicate" env merrs
+            (WrapTable <$> Class.duplicate (unwrapTable $ lookUp' tableVar))
+            (\_ -> pure ()) -- TODO
+        Union table1Var table2Var ->
+          runRealWithInjectedErrors "Union" env merrs
+            (WrapTable <$> Class.union (unwrapTable $ lookUp' table1Var) (unwrapTable $ lookUp' table2Var))
+            (\_ -> pure ()) -- TODO
+        Unions tableVars ->
+          runRealWithInjectedErrors "Unions" env merrs
+            (WrapTable <$> Class.unions (fmap (unwrapTable . lookUp') tableVars))
+            (\_ -> pure ())
       where
         session = envSession env
-        handlers = envHandlers env
 
     lookUp' :: Var h x -> Realized (IOSim s) x
     lookUp' = lookUpGVar (Proxy @(RealMonad h (IOSim s))) lookUp
@@ -1461,7 +1586,10 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
         ]
   where
     _coveredAllCases :: LockstepAction (ModelState h) a -> ()
-    _coveredAllCases = \case
+    _coveredAllCases (Action _ action') = _coveredAllCases' action'
+
+    _coveredAllCases' :: Action' h a -> ()
+    _coveredAllCases' = \case
         New{} -> ()
         Close{} -> ()
         Lookups{} -> ()
@@ -1533,11 +1661,14 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
 
     genActionsSession :: [(Int, Gen (Any (LockstepAction (ModelState h))))]
     genActionsSession =
-        [ (1, fmap Some $ New @k @v @b PrettyProxy <$> QC.arbitrary)
-        | length tableVars <= 5 ] -- no more than 5 tables at once
+        [ (1, fmap Some $ (Action <$> genErrors <*>) $
+            New @k @v @b <$> pure PrettyProxy <*> QC.arbitrary)
+        | length tableVars <= 5 -- no more than 5 tables at once
+        , let genErrors = pure Nothing -- TODO: generate errors
+        ]
 
-     ++ [ (2, fmap Some $ OpenSnapshot @k @v @b PrettyProxy <$>
-                genErrors <*> pure label <*> genUsedSnapshotName)
+     ++ [ (2, fmap Some $ (Action <$> genErrors <*>) $
+            OpenSnapshot @k @v @b PrettyProxy <$> pure label <*> genUsedSnapshotName)
         | length tableVars <= 5 -- no more than 5 tables at once
         , not (null usedSnapshotNames)
         , let genErrors = QC.frequency [
@@ -1546,46 +1677,81 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
                 ]
         ]
 
-     ++ [ (1, fmap Some $ DeleteSnapshot <$> genUsedSnapshotName)
-        | not (null usedSnapshotNames) ]
+     ++ [ (1, fmap Some $ (Action <$> genErrors <*>) $
+            DeleteSnapshot <$> genUsedSnapshotName)
+        | not (null usedSnapshotNames)
+        , let genErrors = pure Nothing -- TODO: generate errors
+        ]
 
-     ++ [ (1, fmap Some $ pure ListSnapshots)
-        | not (null tableVars) ] -- otherwise boring!
+     ++ [ (1, fmap Some $ (Action <$> genErrors <*>) $
+            pure ListSnapshots)
+        | not (null tableVars) -- otherwise boring!
+        , let genErrors = pure Nothing -- TODO: generate errors
+        ]
 
     genActionsTables :: [(Int, Gen (Any (LockstepAction (ModelState h))))]
     genActionsTables
       | null tableVars = []
       | otherwise      =
-        [ (1,  fmap Some $ Close <$> genTableVar)
-        , (10, fmap Some $ Lookups <$> genLookupKeys <*> genTableVar)
-        , (5,  fmap Some $ RangeLookup <$> genRange <*> genTableVar)
-        , (10, fmap Some $ Updates <$> genUpdates <*> genTableVar)
-        , (10, fmap Some $ Inserts <$> genInserts <*> genTableVar)
-        , (10, fmap Some $ Deletes <$> genDeletes <*> genTableVar)
-        , (10, fmap Some $ Mupserts <$> genMupserts <*> genTableVar)
+        [ (1,  fmap Some $ (Action <$> genErrors <*>) $
+            Close <$> genTableVar)
+        | let genErrors = pure Nothing
         ]
-     ++ [ (3,  fmap Some $ NewCursor <$> QC.arbitrary <*> genTableVar)
+     ++ [ (10, fmap Some $ (Action <$> genErrors <*>) $
+            Lookups <$> genLookupKeys <*> genTableVar)
+        | let genErrors = pure Nothing -- TODO: generate errors
+        ]
+     ++ [ (5,  fmap Some $ (Action <$> genErrors <*>) $
+            RangeLookup <$> genRange <*> genTableVar)
+        | let genErrors = pure Nothing -- TODO: generate errors
+        ]
+     ++ [ (10, fmap Some $ (Action <$> genErrors <*>) $
+            Updates <$> genUpdates <*> genTableVar)
+        | let genErrors = pure Nothing -- TODO: generate errors
+        ]
+     ++ [ (10, fmap Some $ (Action <$> genErrors <*>) $
+            Inserts <$> genInserts <*> genTableVar)
+        | let genErrors = pure Nothing -- TODO: generate errors
+        ]
+     ++ [ (10, fmap Some $ (Action <$> genErrors <*>) $
+            Deletes <$> genDeletes <*> genTableVar)
+        | let genErrors = pure Nothing -- TODO: generate errors
+        ]
+     ++ [ (10, fmap Some $ (Action <$> genErrors <*>) $
+            Mupserts <$> genMupserts <*> genTableVar)
+        | let genErrors = pure Nothing -- TODO: generate errors
+        ]
+     ++ [ (3,  fmap Some $ (Action <$> genErrors <*>) $
+            NewCursor <$> QC.arbitrary <*> genTableVar)
         | length cursorVars <= 5 -- no more than 5 cursors at once
+        , let genErrors = pure Nothing -- TODO: generate errors
         ]
-     ++ [ (2,  fmap Some $ CreateSnapshot <$>
-                genErrors <*> pure label <*> genUnusedSnapshotName <*> genTableVar)
+     ++ [ (2,  fmap Some $ (Action <$> genErrors <*>) $
+            CreateSnapshot <$> genCorruption <*> pure label <*> genUnusedSnapshotName <*> genTableVar)
         | not (null unusedSnapshotNames)
-        , let genErrors = QC.frequency [
+          -- TODO: should errors and corruption be generated at the same time,
+          -- or should they be mutually exclusive?
+        , let genErrors = pure Nothing -- TODO: generate errors
+        , let genCorruption = QC.frequency [
                   (3, pure Nothing)
-                , (1, Just . Left <$> QC.arbitrary)
-                  -- TODO: generate errors, e.g., @Just . Right <$>
-                  -- QC.arbitrary@
+                , (1, Just <$> QC.arbitrary)
                 ]
         ]
-     ++ [ (5,  fmap Some $ Duplicate <$> genTableVar)
+     ++ [ (5,  fmap Some $ (Action <$> genErrors <*>) $
+            Duplicate <$> genTableVar)
         | length tableVars <= 5 -- no more than 5 tables at once
+        , let genErrors = pure Nothing -- TODO: generate errors
         ]
-     ++ [ (2,  fmap Some $ Union <$> genTableVar <*> genTableVar)
+     ++ [ (2,  fmap Some $ (Action <$> genErrors <*>) $
+            Union <$> genTableVar <*> genTableVar)
         | length tableVars <= 5 -- no more than 5 tables at once
+        , let genErrors = pure Nothing -- TODO: generate errors
         , False -- TODO: enable once table union is implemented
         ]
-     ++ [ (2,  fmap Some $ Unions <$> genUnionsTableVars)
+     ++ [ (2,  fmap Some $ (Action <$> genErrors <*>) $
+            Unions <$> genUnionsTableVars)
         | length tableVars <= 5 -- no more than 5 tables at once
+        , let genErrors = pure Nothing -- TODO: generate errors
         , False -- TODO: enable once table unions is implemented
         ]
 
@@ -1593,15 +1759,21 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
     genActionsCursor
       | null cursorVars = []
       | otherwise       =
-        [ (2,  fmap Some $ CloseCursor <$> genCursorVar)
-        , (10, fmap Some $ ReadCursor <$> (QC.getNonNegative <$> QC.arbitrary)
-                                      <*> genCursorVar)
+        [ (2,  fmap Some $ (Action <$> genErrors <*>) $
+            CloseCursor <$> genCursorVar)
+        | let genErrors = pure Nothing -- TODO: generate errors
+        ]
+     ++ [ (10, fmap Some $ (Action <$> genErrors <*>) $
+            ReadCursor <$> (QC.getNonNegative <$> QC.arbitrary) <*> genCursorVar)
+        | let genErrors = pure Nothing -- TODO: generate errors
         ]
 
     genActionsBlobRef :: [(Int, Gen (Any (LockstepAction (ModelState h))))]
     genActionsBlobRef =
-        [ (5, fmap Some $ RetrieveBlobs <$> genBlobRefsVar)
+        [ (5, fmap Some $ (Action <$> genErrors <*>) $
+            RetrieveBlobs <$> genBlobRefsVar)
         | not (null blobRefsVars)
+        , let genErrors = pure Nothing -- TODO: generate errors
         ]
 
     fromRight ::
@@ -1664,8 +1836,57 @@ shrinkActionWithVars ::
   -> ModelState h
   -> LockstepAction (ModelState h) a
   -> [Any (LockstepAction (ModelState h))]
-shrinkActionWithVars _ctx _st = \case
-    New p conf -> [ Some $ New p conf' | conf' <- QC.shrink conf ]
+shrinkActionWithVars _ctx _st (Action merrs action') =
+        [ -- TODO: it's somewhat unfortunate, but we have to dynamically
+          -- construct evidence that @a@ is typeable, which is a requirement
+          -- coming from the @Some@ existential. Could we find a different way
+          -- to solve this using just regular constraints?
+          case dictIsTypeable action' of
+            Dict -> Some $ Action merrs' action'
+        | merrs' <- QC.shrink merrs ]
+     ++ [ Some $ Action merrs action''
+        | Some action'' <- shrinkAction'WithVars _ctx _st action'
+        ]
+
+-- | Dynamically construct evidence that the result type @a@ of an action is
+-- typeable.
+dictIsTypeable :: Typeable h => Action' h a -> Dict (Typeable a)
+dictIsTypeable = \case
+      New{}            -> Dict
+      Close{}          -> Dict
+      Lookups{}        -> Dict
+      RangeLookup{}    -> Dict
+      NewCursor{}      -> Dict
+      CloseCursor{}    -> Dict
+      ReadCursor{}     -> Dict
+      Updates{}        -> Dict
+      Inserts{}        -> Dict
+      Deletes{}        -> Dict
+      Mupserts{}       -> Dict
+      RetrieveBlobs{}  -> Dict
+      CreateSnapshot{} -> Dict
+      OpenSnapshot{}   -> Dict
+      DeleteSnapshot{} -> Dict
+      ListSnapshots{}  -> Dict
+      Duplicate{}      -> Dict
+      Union{}          -> Dict
+      Unions{}         -> Dict
+
+shrinkAction'WithVars ::
+     forall h a. (
+       Eq (Class.TableConfig h)
+     , Arbitrary (Class.TableConfig h)
+     , Typeable h
+     )
+  => ModelVarContext (ModelState h)
+  -> ModelState h
+  -> Action' h a
+  -> [Any (Action' h)]
+shrinkAction'WithVars _ctx _st a = case a of
+    New p conf -> [
+        Some $ New p conf'
+      | conf' <- QC.shrink conf
+      ]
 
     -- Shrink inserts and deletes towards updates.
     Updates upds tableVar -> [
@@ -1687,17 +1908,9 @@ shrinkActionWithVars _ctx _st = \case
       | let f k = (k, R.Delete)
       ]
 
-    Lookups ks tableVar -> [ Some $ Lookups ks' tableVar | ks' <- QC.shrink ks ]
-
-    -- Snapshots
-
-    CreateSnapshot merrs label name tableVar -> [
-        Some $ CreateSnapshot merrs' label name tableVar
-      | merrs' <- QC.shrink merrs
-      ]
-    OpenSnapshot pp merrs label name -> [
-        Some $ OpenSnapshot pp merrs' label name
-      | merrs' <- QC.shrink merrs
+    Lookups ks tableVar -> [
+        Some $ Lookups ks' tableVar
+      | ks' <- QC.shrink ks
       ]
 
     _ -> []
@@ -1789,7 +2002,7 @@ updateStats ::
   -> Val h a
   -> Stats
   -> Stats
-updateStats action lookUp modelBefore _modelAfter result =
+updateStats action@(Action _merrs action') lookUp modelBefore _modelAfter result =
       -- === Tags
       updSnapshotted
       -- === Final tags
@@ -1804,7 +2017,7 @@ updateStats action lookUp modelBefore _modelAfter result =
   where
     -- === Tags
 
-    updSnapshotted stats = case (action, result) of
+    updSnapshotted stats = case (action', result) of
       (CreateSnapshot _ _ name _, MEither (Right (MUnit ()))) -> stats {
           snapshotted = Set.insert name (snapshotted stats)
         }
@@ -1815,7 +2028,7 @@ updateStats action lookUp modelBefore _modelAfter result =
 
     -- === Final tags
 
-    updNumLookupsResults stats = case (action, result) of
+    updNumLookupsResults stats = case (action', result) of
       (Lookups _ _, MEither (Right (MVector lrs))) -> stats {
           numLookupsResults =
             let count :: (Int, Int, Int)
@@ -1829,7 +2042,7 @@ updateStats action lookUp modelBefore _modelAfter result =
         }
       _ -> stats
 
-    updNumUpdates stats = case (action, result) of
+    updNumUpdates stats = case (action', result) of
         (Updates upds _, MEither (Right (MUnit ()))) -> stats {
             numUpdates = countAll upds
           }
@@ -1866,7 +2079,7 @@ updateStats action lookUp modelBefore _modelAfter result =
         _ -> stats
 
     updNumActionsPerTable :: Stats -> Stats
-    updNumActionsPerTable stats = case action of
+    updNumActionsPerTable stats = case action' of
         New{}
           | MEither (Right (MTable table)) <- result -> initCount table
           | otherwise                                      -> stats
@@ -1927,7 +2140,7 @@ updateStats action lookUp modelBefore _modelAfter result =
                                                     (numActionsPerTable stats)
               }
 
-    updClosedTableSizes stats = case action of
+    updClosedTableSizes stats = case action' of
         Close tableVar
           | MTable t <- lookUp tableVar
           , let tid          = Model.tableID t
@@ -1939,7 +2152,7 @@ updateStats action lookUp modelBefore _modelAfter result =
              }
         _ -> stats
 
-    updParentTable stats = case (action, result) of
+    updParentTable stats = case (action', result) of
         (New{}, MEither (Right (MTable tbl))) ->
           stats {
             parentTable = Map.insert (Model.tableID tbl)
@@ -1969,7 +2182,7 @@ updateStats action lookUp modelBefore _modelAfter result =
         _ -> stats
 
     updDupTableActionLog stats | MEither (Right _) <- result =
-      case action of
+      case action' of
         Lookups     ks   tableVar
           | not (null ks)         -> updateLastActionLog tableVar
         RangeLookup r    tableVar
@@ -2045,7 +2258,7 @@ tagStep' ::
   -> [Tag]
 tagStep' (ModelState _stateBefore statsBefore,
           ModelState _stateAfter _statsAfter)
-          action result =
+          (Action _ action) result =
     catMaybes [
       tagSnapshotTwice
     , tagOpenExistingSnapshot
@@ -2065,14 +2278,14 @@ tagStep' (ModelState _stateBefore statsBefore,
       = Nothing
 
     tagOpenExistingSnapshot
-      | OpenSnapshot _ _ _ name <- action
+      | OpenSnapshot _ _ name <- action
       , name `Set.member` snapshotted statsBefore
       = Just OpenExistingSnapshot
       | otherwise
       = Nothing
 
     tagOpenMissingSnapshot
-      | OpenSnapshot _ _ _ name <- action
+      | OpenSnapshot _ _ name <- action
       , not (name `Set.member` snapshotted statsBefore)
       = Just OpenMissingSnapshot
       | otherwise
@@ -2096,13 +2309,13 @@ tagStep' (ModelState _stateBefore statsBefore,
       | CreateSnapshot mcorrOrErrs _ name _ <- action
       , MEither (Right (MUnit ())) <- result
       = Just $ case mcorrOrErrs of
-          Just (Left (_ :: SilentCorruption)) -> CreateSnapshotCorrupted name
-          _                                   -> CreateSnapshotUncorrupted name
+          Just (_ :: SilentCorruption) -> CreateSnapshotCorrupted name
+          _                            -> CreateSnapshotUncorrupted name
       | otherwise
       = Nothing
 
     tagOpenSnapshotDetectsCorruption
-      | OpenSnapshot  _ _ _ name <- action
+      | OpenSnapshot _ _ name <- action
       , MEither (Left (MErr (Model.ErrSnapshotCorrupted _))) <- result
       = Just (OpenSnapshotDetectsCorruption name)
       | otherwise
