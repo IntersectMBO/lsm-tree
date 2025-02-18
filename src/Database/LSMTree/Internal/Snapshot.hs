@@ -199,7 +199,8 @@ toSnapIncomingRun ::
   => IncomingRun m h
   -> m (SnapIncomingRun (Ref (Run m h)))
 toSnapIncomingRun (Single r) = pure (SnapSingleRun r)
-toSnapIncomingRun (Merging mergePolicy mergingRun) = do
+toSnapIncomingRun (Merging mergePolicy _mergeNominalDebt _mergeNominalCreditVar
+                           mergingRun) = do
     -- We need to know how many credits were supplied so we can restore merge
     -- work on snapshot load.
     (mergingRunState,

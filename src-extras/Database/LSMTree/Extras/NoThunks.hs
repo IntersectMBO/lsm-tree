@@ -331,6 +331,12 @@ deriving anyclass instance
 deriving stock instance Generic MergePolicyForLevel
 deriving anyclass instance NoThunks MergePolicyForLevel
 
+deriving stock instance Generic NominalDebt
+deriving anyclass instance NoThunks NominalDebt
+
+deriving stock instance Generic NominalCredits
+deriving anyclass instance NoThunks NominalCredits
+
 {-------------------------------------------------------------------------------
   MergingRun
 -------------------------------------------------------------------------------}
