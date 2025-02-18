@@ -54,7 +54,7 @@ prop_example =
 dl_example :: DL (Lockstep (ModelState R.Table)) ()
 dl_example = do
     -- Create an initial table and fill it with some inserts
-    var3 <- action $ New (PrettyProxy @((Key, Value, Blob))) (TableConfig {
+    var3 <- action $ Action Nothing $ New (PrettyProxy @((Key, Value, Blob))) (TableConfig {
           confMergePolicy = MergePolicyLazyLevelling
         , confSizeRatio = Four
         , confWriteBufferAlloc = AllocNumEntries (NumEntries 4)
@@ -70,7 +70,7 @@ dl_example = do
         ups = V.fromList
             . map (\(k,v) -> (k, Insert v Nothing))
             . Map.toList $ kvs
-    action $ Updates ups (unsafeMkGVar var3 (OpFromRight `OpComp` OpId))
+    action $ Action Nothing $ Updates ups (unsafeMkGVar var3 (OpFromRight `OpComp` OpId))
     -- This is a rather ugly assertion, and could be improved using some helper
     -- function(s). However, it does serve its purpose as checking that the
     -- insertions we just did were successful.
