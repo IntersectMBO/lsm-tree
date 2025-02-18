@@ -160,7 +160,7 @@ data MergePolicy =
 {- TODO: disabled for now
   | MergePolicyLevelling
 -}
-  deriving stock (Show, Eq)
+  deriving stock (Eq, Show)
 
 instance NFData MergePolicy where
   rnf MergePolicyLazyLevelling = ()
@@ -170,7 +170,7 @@ instance NFData MergePolicy where
 -------------------------------------------------------------------------------}
 
 data SizeRatio = Four
-  deriving stock (Show, Eq)
+  deriving stock (Eq, Show)
 
 instance NFData SizeRatio where
   rnf Four = ()
@@ -306,7 +306,7 @@ data FencePointerIndex =
     -- Ordinary indexes do not have any constraints on keys other than that
     -- their serialised forms may not be 64 KiB or more in size.
   | OrdinaryIndex
-  deriving stock (Show, Eq)
+  deriving stock (Eq, Show)
 
 instance NFData FencePointerIndex where
   rnf CompactIndex  = ()
@@ -362,7 +362,7 @@ data DiskCachePolicy =
        -- Use this policy if expected access pattern for the table has poor
        -- spatial or temporal locality, such as uniform random access.
      | DiskCacheNone
-  deriving stock (Eq, Show)
+  deriving stock (Show, Eq)
 
 instance NFData DiskCachePolicy where
   rnf DiskCacheAll                 = ()

@@ -86,7 +86,7 @@ newtype SnapshotLabel = SnapshotLabel Text
 
 -- TODO: revisit if we need three table types.
 data SnapshotTableType = SnapNormalTable | SnapMonoidalTable | SnapFullTable
-  deriving stock (Show, Eq)
+  deriving stock (Eq, Show)
 
 instance NFData SnapshotTableType where
   rnf SnapNormalTable   = ()
