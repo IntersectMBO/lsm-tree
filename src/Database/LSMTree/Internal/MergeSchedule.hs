@@ -495,7 +495,7 @@ newIncomingMergingRun tr hfs hbio activeDir uc
   -> LevelNo
   -> IncomingRun IO h
   -> MergeCredits
-  -> IO MergeCredits #-}
+  -> IO () #-}
 -- | Supply a given number of credits to the merge in an incoming run.
 supplyCreditsIncomingRun ::
      (MonadSTM m, MonadST m, MonadMVar m, MonadMask m)
@@ -503,11 +503,12 @@ supplyCreditsIncomingRun ::
   -> LevelNo
   -> IncomingRun m h
   -> MergeCredits
-  -> m MergeCredits
-supplyCreditsIncomingRun _ _     (Single        _r) credits = return credits
+  -> m ()
+supplyCreditsIncomingRun _ _     (Single        _r) _       = return ()
 supplyCreditsIncomingRun conf ln (Merging _ _ _ mr) credits = do
     let !thresh = creditThresholdForLevel conf ln
-    MR.supplyCredits mr thresh credits
+    _ <- MR.supplyCreditsRelative mr thresh credits
+    return ()
 
 {-# SPECIALISE immediatelyCompleteIncomingRun ::
      Tracer IO (AtLevel MergeTrace)
@@ -532,8 +533,8 @@ immediatelyCompleteIncomingRun tr conf ln (Merging _ _ _ mr) rs = do
     -- or switch to supplying the 100% absolute physical debt directly
     let !thresh = creditThresholdForLevel conf ln
     --TODO: use a maximal threshold, no need to pick one carefully
-    leftoverCredits <- MR.supplyCredits mr thresh required
-    assert (leftoverCredits == 0) $ return ()
+    _ <- MR.supplyCreditsRelative mr thresh required
+    --TODO: use SupplyAbsolute instead here
     -- This ensures the merge is really completed. However, we don't
     -- release the merge yet and only briefly inspect the resulting run.
     bracket (MR.expectCompleted mr) releaseRef $ \r ->
@@ -1042,7 +1043,7 @@ supplyCredits conf c levels =
         Merging mp _md _mcv mr -> do
           let !c' = scaleCreditsForMerge mp mr c
           let !thresh = creditThresholdForLevel conf ln
-          _leftoverCredits <- MR.supplyCredits mr thresh c'
+          _leftoverCredits <- MR.supplyCreditsRelative mr thresh c'
           --TODO: assert leftoverCredits == 0
           -- to assert that we did not finished the merge too early,
           -- and thus have spread the work out evenly.
