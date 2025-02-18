@@ -31,6 +31,8 @@ module Database.LSMTree.Internal.MergeSchedule (
   , Credits (..)
   , supplyCredits
   , creditThresholdForLevel
+  , NominalDebt (..)
+  , NominalCredits (..)
     -- * Exported for testing
   , addWriteBufferEntries
   ) where
@@ -46,6 +48,8 @@ import           Control.RefCount
 import           Control.Tracer
 import           Data.BloomFilter (Bloom)
 import           Data.Foldable (fold)
+import           Data.Primitive (Prim)
+import           Data.Primitive.PrimVar
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Assertions (assert)
 import           Database.LSMTree.Internal.Config
@@ -218,8 +222,8 @@ mkLevelsCache reg lvls = do
     foldRunAndMergeM k1 k2 ls =
         fmap fold $ forMStrict ls $ \(Level ir rs) -> do
           incoming <- case ir of
-            Single     r -> k1 r
-            Merging _ mr -> k2 mr
+            Single         r -> k1 r
+            Merging _ _ _ mr -> k2 mr
           (incoming <>) . fold <$> V.forM rs k1
 
 {-# SPECIALISE rebuildCache ::
@@ -337,6 +341,8 @@ iforLevelM_ lvls k = V.iforM_ lvls $ \i lvl -> k (LevelNo (i + 1)) lvl
 data IncomingRun m h =
        Single  !(Ref (Run m h))
      | Merging !MergePolicyForLevel
+               !NominalDebt
+               !(PrimVar (PrimState m) NominalCredits)
                !(Ref (MergingRun MR.LevelMergeType m h))
 
 data MergePolicyForLevel = LevelTiering | LevelLevelling
@@ -345,6 +351,13 @@ data MergePolicyForLevel = LevelTiering | LevelLevelling
 instance NFData MergePolicyForLevel where
   rnf LevelTiering   = ()
   rnf LevelLevelling = ()
+
+newtype NominalDebt = NominalDebt Int
+  deriving stock Eq
+
+newtype NominalCredits = NominalCredits Int
+  deriving stock Eq
+  deriving newtype Prim
 
 {-# SPECIALISE duplicateIncomingRun :: ActionRegistry IO -> IncomingRun IO h -> IO (IncomingRun IO h) #-}
 duplicateIncomingRun ::
@@ -355,16 +368,17 @@ duplicateIncomingRun ::
 duplicateIncomingRun reg (Single r) =
     Single <$> withRollback reg (dupRef r) releaseRef
 
-duplicateIncomingRun reg (Merging mp mr) =
-    Merging mp <$> withRollback reg (dupRef mr) releaseRef
+duplicateIncomingRun reg (Merging mp md mcv mr) =
+    Merging mp md <$> (newPrimVar =<< readPrimVar mcv)
+                  <*> withRollback reg (dupRef mr) releaseRef
 
 {-# SPECIALISE releaseIncomingRun :: ActionRegistry IO -> IncomingRun IO h -> IO () #-}
 releaseIncomingRun ::
      (PrimMonad m, MonadMask m)
   => ActionRegistry m
   -> IncomingRun m h -> m ()
-releaseIncomingRun reg (Single r)     = delayedCommit reg (releaseRef r)
-releaseIncomingRun reg (Merging _ mr) = delayedCommit reg (releaseRef mr)
+releaseIncomingRun reg (Single         r) = delayedCommit reg (releaseRef r)
+releaseIncomingRun reg (Merging _ _ _ mr) = delayedCommit reg (releaseRef mr)
 
 {-# SPECIALISE newIncomingSingleRun ::
      Tracer IO (AtLevel MergeTrace)
@@ -405,7 +419,11 @@ newIncomingCompletedMergingRun tr reg ln mergePolicy nr ne r = do
     traceWith tr $ AtLevel ln $
       TraceNewMergeSingleRun (Run.size r) (Run.runFsPathsNumber r)
     mr <- withRollback reg (MR.newCompleted nr ne r) releaseRef
-    return (Merging mergePolicy mr)
+    --TODO compute right debt for level number
+    let todo = 0
+        md = NominalDebt todo
+    mcv <- newPrimVar (NominalCredits todo)
+    return (Merging mergePolicy md mcv mr)
 
 {-# SPECIALISE newIncomingMergingRun ::
      Tracer IO (AtLevel MergeTrace)
@@ -456,7 +474,11 @@ newIncomingMergingRun tr hfs hbio activeDir uc
                     alloc indexType mergeType
                     runPaths rs)
             releaseRef
-    return (Merging mergePolicy mr)
+    --TODO compute right debt for level number
+    let todo = 0
+        md = NominalDebt todo
+    mcv <- newPrimVar (NominalCredits todo)
+    return (Merging mergePolicy md mcv mr)
 
 {-# SPECIALISE supplyCreditsIncomingRun ::
      TableConfig
@@ -472,8 +494,8 @@ supplyCreditsIncomingRun ::
   -> IncomingRun m h
   -> MR.Credits
   -> m MR.Credits
-supplyCreditsIncomingRun _ _     (Single    _r) credits = return credits
-supplyCreditsIncomingRun conf ln (Merging _ mr) credits = do
+supplyCreditsIncomingRun _ _     (Single        _r) credits = return credits
+supplyCreditsIncomingRun conf ln (Merging _ _ _ mr) credits = do
     let !thresh = creditThresholdForLevel conf ln
     MR.supplyCredits mr thresh credits
 
@@ -494,7 +516,7 @@ immediatelyCompleteIncomingRun ::
   -> V.Vector (Ref (Run m h))
   -> m ()
 immediatelyCompleteIncomingRun _ _ _ (Single _r) _ = return ()
-immediatelyCompleteIncomingRun tr conf ln (Merging _ mr) rs = do
+immediatelyCompleteIncomingRun tr conf ln (Merging _ _ _ mr) rs = do
     let !required = MR.Credits (unNumEntries (V.foldMap' Run.size rs))
     --TODO: find remainging debt from the mr itself
     -- or switch to supplying the 100% absolute physical debt directly
@@ -836,8 +858,8 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels ul
     expectCompletedMerge :: LevelNo -> IncomingRun m h -> m (Ref (Run m h))
     expectCompletedMerge ln ir = do
       r <- case ir of
-        Single r     -> pure r
-        Merging _ mr -> do
+        Single         r -> pure r
+        Merging _ _ _ mr -> do
           r <- withRollback reg (MR.expectCompleted mr) releaseRef
           delayedCommit reg (releaseRef mr)
           pure r
@@ -990,7 +1012,7 @@ levelIsFull sr rs = V.length rs + 1 >= (sizeRatioInt sr)
 -}
 
 -- | Merge credits that get supplied to a table's levels.
-newtype Credits = Credits Int
+newtype Credits = Credits Int --TODO: this will be replaced by NominalCredits
 
 {-# SPECIALISE supplyCredits ::
      TableConfig
@@ -1009,8 +1031,8 @@ supplyCredits ::
 supplyCredits conf c levels =
     iforLevelM_ levels $ \ln (Level ir _rs) ->
       case ir of
-        Single{}   -> pure ()
-        Merging mp mr -> do
+        Single{}          -> pure ()
+        Merging mp _md _mcv mr -> do
           let !c' = scaleCreditsForMerge mp mr c
           let !thresh = creditThresholdForLevel conf ln
           _leftoverCredits <- MR.supplyCredits mr thresh c'

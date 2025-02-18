@@ -198,6 +198,7 @@ unsafeNew _ mergeNumEntries _ _
   = throwIO (ErrorCall "MergingRun.new: run size exceeds maximum of 2^40")
 
 unsafeNew mergeNumRuns mergeNumEntries knownCompleted state = do
+    --TODO: make sure we have the right physical credits for a completed merge.
     mergeCreditsVar <- CreditsVar <$> newPrimVar 0
     case state of
       OngoingMerge{}   -> assert (knownCompleted == MergeMaybeCompleted) (pure ())
