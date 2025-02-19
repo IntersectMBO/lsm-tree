@@ -28,6 +28,7 @@ module Database.LSMTree.Internal.MergeSchedule (
     -- * Exported for cabal-docspec
   , maxRunSize
     -- * Credits
+  , MergeDebt (..)
   , MergeCredits (..)
   , supplyCredits
   , creditThresholdForLevel
@@ -58,7 +59,7 @@ import           Database.LSMTree.Internal.Entry (Entry, NumEntries (..),
 import           Database.LSMTree.Internal.Index (Index)
 import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
 import           Database.LSMTree.Internal.MergingRun (MergeCredits (..),
-                     MergingRun, NumRuns (..))
+                     MergeDebt, MergingRun, NumRuns (..))
 import qualified Database.LSMTree.Internal.MergingRun as MR
 import           Database.LSMTree.Internal.MergingTree (MergingTree)
 import           Database.LSMTree.Internal.Paths (ActiveDir, RunFsPaths (..),
@@ -411,7 +412,7 @@ newIncomingSingleRun tr ln r = do
   -> LevelNo
   -> MergePolicyForLevel
   -> NumRuns
-  -> NumEntries
+  -> MergeDebt
   -> Ref (Run IO h)
   -> IO (IncomingRun IO h) #-}
 newIncomingCompletedMergingRun ::
@@ -421,7 +422,7 @@ newIncomingCompletedMergingRun ::
   -> LevelNo
   -> MergePolicyForLevel
   -> NumRuns
-  -> NumEntries
+  -> MergeDebt
   -> Ref (Run m h)
   -> m (IncomingRun m h)
 newIncomingCompletedMergingRun tr reg ln mergePolicy nr ne r = do
