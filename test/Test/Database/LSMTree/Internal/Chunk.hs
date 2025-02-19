@@ -38,7 +38,7 @@ tests = testGroup "Test.Database.LSMTree.Internal.Chunk" $
 
 -- * Properties to test
 
-{-
+{-|
     Feeds a freshly created baler a sequence of data portions and ends it
     afterwards, yielding all output.
 -}
@@ -51,7 +51,7 @@ balingOutput minChunkSize food = runST $ do
     remnant <- unsafeEndBaler baler
     return (commonChunks, remnant)
 
-{-
+{-|
     Supplies the output of a complete baler run for constructing a property.
 
     The resulting property additionally provides statistics about the lengths of
@@ -127,7 +127,7 @@ prop_remnantChunkIsSmall (MinChunkSize minChunkSize)
 
 -- * Test case generation and shrinking
 
-{-
+{-|
     The type of minimum chunk sizes.
 
     This type is isomorphic to 'Int' but has a different way of generating test
