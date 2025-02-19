@@ -104,12 +104,9 @@ class IsMergeType t where
   -- TODO: have @isLastLevel :: t -> Bool@ and @isUnion :: t -> Bool@ instead,
   -- like in the the prototype?
   toMergeType :: t -> MergeType
-  -- | Needed for deserialisation when opening snapshots.
-  fromMergeType :: MergeType -> Maybe t
 
 instance IsMergeType MergeType where
   toMergeType = id
-  fromMergeType = Just
 
 -- | Different types of merges created as part of a regular (non-union) level.
 --
@@ -127,10 +124,6 @@ instance IsMergeType LevelMergeType where
   toMergeType = \case
       MergeMidLevel  -> MergeTypeMidLevel
       MergeLastLevel -> MergeTypeLastLevel
-  fromMergeType = \case
-      MergeTypeMidLevel  -> Just MergeMidLevel
-      MergeTypeLastLevel -> Just MergeLastLevel
-      MergeTypeUnion     -> Nothing
 
 -- | Different types of merges created as part of the merging tree.
 data TreeMergeType = MergeLevel | MergeUnion
@@ -144,10 +137,6 @@ instance IsMergeType TreeMergeType where
   toMergeType = \case
       MergeLevel -> MergeTypeLastLevel  -- node merges are always last level
       MergeUnion -> MergeTypeUnion
-  fromMergeType = \case
-      MergeTypeMidLevel  -> Nothing
-      MergeTypeLastLevel -> Just MergeLevel
-      MergeTypeUnion     -> Just MergeUnion
 
 type Mappend = SerialisedValue -> SerialisedValue -> SerialisedValue
 

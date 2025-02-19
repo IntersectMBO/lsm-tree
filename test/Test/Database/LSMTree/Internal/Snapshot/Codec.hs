@@ -15,7 +15,6 @@ import qualified Data.Vector as V
 import           Database.LSMTree.Extras.Generators ()
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.Entry
-import           Database.LSMTree.Internal.Merge (MergeType (..))
 import           Database.LSMTree.Internal.MergeSchedule
 import           Database.LSMTree.Internal.MergingRun hiding (SuppliedCredits)
 import           Database.LSMTree.Internal.RunNumber
@@ -173,7 +172,8 @@ testAll test = [
     , test (Proxy @MergePolicyForLevel)
     , test (Proxy @(SnapMergingRunState LevelMergeType RunNumber))
     , test (Proxy @SuppliedCredits)
-    , test (Proxy @MergeType)
+    , test (Proxy @LevelMergeType)
+    , test (Proxy @TreeMergeType)
     ]
 
 {-------------------------------------------------------------------------------

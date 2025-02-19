@@ -160,14 +160,6 @@ newtype SuppliedCredits = SuppliedCredits { getSuppliedCredits :: Int }
 data SnapMergingRunState t r =
     SnapCompletedMerge !r
   | SnapOngoingMerge !(V.Vector r) !t
-    -- ^ While we use a specific, more restrictive merge type @t@ here (see
-    -- 'MR.IsMergeType'), we should always serialise it as a 'MergeType'.
-    -- Otherwise, if we for example accidentally deserialised a
-    -- @SnapMergingRunState LevelMergeType@ with @MergeLastLevel@ as a
-    -- @SnapMergingRunState TreeMergeType@, it would succeed with @MergeUnion@.
-    -- If we go via 'MergeType', the error will be detected. We could even
-    -- change the invariant about which merge type can occur in which part of
-    -- the table without having to change the serialisation format itself.
   deriving stock (Show, Eq, Functor, Foldable, Traversable)
 
 instance (NFData t, NFData r) => NFData (SnapMergingRunState t r) where
