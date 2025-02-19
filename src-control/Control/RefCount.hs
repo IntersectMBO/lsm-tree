@@ -29,11 +29,12 @@ module Control.RefCount (
 
   -- * Test API
   , checkForgottenRefs
+  , ignoreForgottenRefs
   ) where
 
 import           Control.DeepSeq
 import           Control.Exception (assert)
-import           Control.Monad (when)
+import           Control.Monad (void, when)
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Primitive
 import           Data.Primitive.PrimVar
@@ -545,6 +546,10 @@ checkForgottenRefs = do
     assertNoForgottenRefs
   where
 #endif
+
+-- | Run 'checkForgottenRefs', but ignore the resulting exception, if any.
+ignoreForgottenRefs :: IO ()
+ignoreForgottenRefs = void $ try @_ @SomeException $ checkForgottenRefs
 
 #ifdef NO_IGNORE_ASSERTS
 performMajorGCWithBlockingIfAvailable :: IO ()
