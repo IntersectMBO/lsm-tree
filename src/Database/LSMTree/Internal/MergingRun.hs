@@ -21,7 +21,7 @@ module Database.LSMTree.Internal.MergingRun (
 
     -- * Credit tracking
     -- $credittracking
-  , Credits (..)
+  , MergeCredits (..)
   , CreditThreshold (..)
   , SuppliedCredits (..)
   , SpentCredits (..)
@@ -332,7 +332,7 @@ time. It would be bad if we did not put back credits, because then a merge
 might not finish in time, which will mess up the shape of the levels tree.
 -}
 
-newtype Credits = Credits Int
+newtype MergeCredits = MergeCredits Int
   deriving stock (Eq, Ord)
   deriving newtype (Num, Real, Enum, Integral)
 
@@ -340,8 +340,8 @@ newtype Credits = Credits Int
 -- | The total debt of the merging run is exactly the sum total number of
 -- entries across all the input runs to be merged.
 --
-numEntriesToTotalDebt :: NumEntries -> Credits
-numEntriesToTotalDebt (NumEntries n) = Credits n
+numEntriesToTotalDebt :: NumEntries -> MergeCredits
+numEntriesToTotalDebt (NumEntries n) = MergeCredits n
 
 -- | Unspent credits are accumulated until they go over the 'CreditThreshold',
 -- after which a batch of merge work will be performed. Configuring this
@@ -362,19 +362,19 @@ newtype CreditThreshold = CreditThreshold UnspentCredits
 -- The supplied credits increases monotonically, even in the presence of
 -- (a)synchronous exceptions.
 --
-newtype SuppliedCredits = SuppliedCredits Credits
+newtype SuppliedCredits = SuppliedCredits MergeCredits
 
 -- | The spent credits are supplied credits that have been spent on performing
 -- merging steps plus the supplied credits that are in the process of being
 -- spent (by some thread calling 'supplyCredits').
 --
-newtype SpentCredits = SpentCredits Credits
+newtype SpentCredits = SpentCredits MergeCredits
   deriving newtype (Eq, Ord)
 
 -- | 40 bit unsigned number
 instance Bounded SpentCredits where
     minBound = SpentCredits 0
-    maxBound = SpentCredits (Credits (1 `unsafeShiftL` 40 - 1))
+    maxBound = SpentCredits (MergeCredits (1 `unsafeShiftL` 40 - 1))
 
 -- | The unspent credits are supplied credits that have not yet been spent on
 -- performing merging steps and are available to spend.
@@ -384,13 +384,13 @@ instance Bounded SpentCredits where
 -- credits are borrowed from the unspent credits, which may result in the
 -- current unspent credits being negative for a time.
 --
-newtype UnspentCredits = UnspentCredits Credits
+newtype UnspentCredits = UnspentCredits MergeCredits
   deriving newtype (Eq, Ord)
 
 -- | 24 bit signed number
 instance Bounded UnspentCredits where
-    minBound = UnspentCredits (Credits ((-1) `unsafeShiftL` 23))
-    maxBound = UnspentCredits (Credits (  1  `unsafeShiftL` 23 - 1))
+    minBound = UnspentCredits (MergeCredits ((-1) `unsafeShiftL` 23))
+    maxBound = UnspentCredits (MergeCredits (  1  `unsafeShiftL` 23 - 1))
 
 -- | This holds the pair of the 'SpentCredits' and the 'UnspentCredits'. All
 -- operations on this pair are atomic.
@@ -419,8 +419,8 @@ pattern CreditsPair sc uc <- (unpackCreditsPair -> (sc, uc))
 
 {-# INLINE packCreditsPair #-}
 packCreditsPair :: SpentCredits -> UnspentCredits -> Int
-packCreditsPair spent@(SpentCredits (Credits sc))
-                unspent@(UnspentCredits (Credits uc)) =
+packCreditsPair spent@(SpentCredits (MergeCredits sc))
+                unspent@(UnspentCredits (MergeCredits uc)) =
       assert (spent   >= minBound && spent   <= maxBound) $
       assert (unspent >= minBound && unspent <= maxBound) $
 
@@ -431,8 +431,8 @@ packCreditsPair spent@(SpentCredits (Credits sc))
 unpackCreditsPair :: Int -> (SpentCredits, UnspentCredits)
 unpackCreditsPair cp =
     -- we use unsigned shift for spent, and sign extending shift for unspent
-    ( SpentCredits   (Credits (w2i (i2w cp `unsafeShiftR` 24)))
-    , UnspentCredits (Credits ((cp `unsafeShiftL` 40) `unsafeShiftR` 40))
+    ( SpentCredits   (MergeCredits (w2i (i2w cp `unsafeShiftR` 24)))
+    , UnspentCredits (MergeCredits ((cp `unsafeShiftL` 40) `unsafeShiftR` 40))
     )
   where
     i2w :: Int -> Word
@@ -548,10 +548,10 @@ atomicModifyInt var f =
 
 {-# SPECIALISE atomicDepositAndSpendCredits ::
      CreditsVar RealWorld
-  -> Credits
+  -> MergeCredits
   -> CreditThreshold
-  -> Credits
-  -> IO (Credits, Credits) #-}
+  -> MergeCredits
+  -> IO (MergeCredits, MergeCredits) #-}
 -- | Atomically: add to the unspent credits pot, subject to the supplied
 -- credits not exceeding the total debt. Return the new spent and unspent
 -- credits, plus any leftover credits in excess of the total debt.
@@ -563,10 +563,10 @@ atomicModifyInt var f =
 atomicDepositAndSpendCredits ::
      PrimMonad m
   => CreditsVar (PrimState m)
-  -> Credits -- ^ total debt
+  -> MergeCredits -- ^ total debt
   -> CreditThreshold
-  -> Credits -- ^ to deposit
-  -> m (Credits, Credits) -- ^ (spendCredits, leftoverCredits)
+  -> MergeCredits -- ^ to deposit
+  -> m (MergeCredits, MergeCredits) -- ^ (spendCredits, leftoverCredits)
 atomicDepositAndSpendCredits (CreditsVar !var) !totalDebt
                              (CreditThreshold !batchThreshold) !credits =
     assert (credits >= 0) $
@@ -630,7 +630,7 @@ atomicDepositAndSpendCredits (CreditsVar !var) !totalDebt
 
 {-# SPECIALISE atomicSpendCredits ::
      CreditsVar RealWorld
-  -> Credits
+  -> MergeCredits
   -> IO () #-}
 -- | Atomically: transfer the given number of credits from the unspent pot to
 -- the spent pot. The new unspent credits balance may be negative.
@@ -642,7 +642,7 @@ atomicDepositAndSpendCredits (CreditsVar !var) !totalDebt
 atomicSpendCredits ::
      PrimMonad m
   => CreditsVar (PrimState m)
-  -> Credits -- ^ Can be positive to spend, or negative to unspend.
+  -> MergeCredits -- ^ Can be positive to spend, or negative to unspend.
   -> m ()
 atomicSpendCredits (CreditsVar var) spend =
     atomicModifyInt var $ \(CreditsPair (SpentCredits   !spent)
@@ -661,16 +661,16 @@ atomicSpendCredits (CreditsVar var) spend =
 {-# SPECIALISE supplyCredits ::
      Ref (MergingRun t IO h)
   -> CreditThreshold
-  -> Credits
-  -> IO Credits #-}
+  -> MergeCredits
+  -> IO MergeCredits #-}
 -- | Supply the given amount of credits to a merging run. This /may/ cause an
 -- ongoing merge to progress.
 supplyCredits ::
      forall t m h. (MonadSTM m, MonadST m, MonadMVar m, MonadMask m)
   => Ref (MergingRun t m h)
   -> CreditThreshold
-  -> Credits
-  -> m Credits
+  -> MergeCredits
+  -> m MergeCredits
 supplyCredits (DeRef MergingRun {
                  mergeKnownCompleted,
                  mergeNumEntries,
@@ -715,20 +715,20 @@ supplyCredits (DeRef MergingRun {
 {-# SPECIALISE performMergeSteps ::
      StrictMVar IO (MergingRunState t IO h)
   -> CreditsVar RealWorld
-  -> Credits
+  -> MergeCredits
   -> IO Bool #-}
 performMergeSteps ::
      (MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
   => StrictMVar m (MergingRunState t m h)
   -> CreditsVar (PrimState m)
-  -> Credits
+  -> MergeCredits
   -> m Bool
-performMergeSteps mergeVar creditsVar (Credits credits) =
+performMergeSteps mergeVar creditsVar credits =
     assert (credits >= 0) $
     withMVar mergeVar $ \case
       CompletedMerge{}   -> pure False
       OngoingMerge _rs m -> do
-        let stepsToDo = credits
+        let MergeCredits stepsToDo = credits
         (stepsDone, stepResult) <- Merge.steps m stepsToDo
         assert (stepResult == MergeDone || stepsDone >= stepsToDo) (pure ())
         -- Merge.steps guarantees that @stepsDone >= stepsToDo@ /unless/ the
@@ -742,7 +742,7 @@ performMergeSteps mergeVar creditsVar (Credits credits) =
         -- We do so by borrowing the excess from the unspent credits pot and
         -- spending them, i.e. doing a transfer from unspent to spent. This
         -- may result in the unspent credits pot becoming negative.
-        let stepsExcess = Credits (stepsDone - stepsToDo)
+        let stepsExcess = MergeCredits (stepsDone - stepsToDo)
         when (stepsExcess > 0) $
           atomicSpendCredits creditsVar stepsExcess
 
