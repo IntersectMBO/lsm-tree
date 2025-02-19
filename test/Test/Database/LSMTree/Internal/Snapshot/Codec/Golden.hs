@@ -215,8 +215,8 @@ enumerateSnapIncomingRun =
         [ (fuseAnnotations ["R1", a, b], SnapMergingRun policy numRuns entries credits sState)
         | (a, policy ) <- [("P0", LevelTiering), ("P1", LevelLevelling)]
         , numRuns <- NumRuns <$> [ magicNumber1 ]
-        , entries <- MR.MergeDebt  <$> [ magicNumber2 ]
-        , credits <- SuppliedCredits <$> [ magicNumber1 ]
+        , entries <- MR.MergeDebt    <$> [ magicNumber2 ]
+        , credits <- MR.MergeCredits <$> [ magicNumber1 ]
         , (b, sState ) <- enumerateSnapMergingRunState enumerateLevelMergeType
         ]
   in  fold

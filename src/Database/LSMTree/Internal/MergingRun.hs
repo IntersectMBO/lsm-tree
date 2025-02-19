@@ -24,7 +24,6 @@ module Database.LSMTree.Internal.MergingRun (
   , MergeDebt (..)
   , MergeCredits (..)
   , CreditThreshold (..)
-  , SuppliedCredits (..)
   , SpentCredits (..)
   , UnspentCredits (..)
 
@@ -254,19 +253,25 @@ duplicateRuns (DeRef mr) =
 -- that might concurrently complete the merge). And then the caller of course
 -- must be updated to release the extra references.
 --
+{-# SPECIALISE snapshot ::
+     Ref (MergingRun t IO h)
+  -> IO (NumRuns,
+         MergeDebt,
+         MergeCredits,
+         MergingRunState t IO h) #-}
 snapshot ::
      (PrimMonad m, MonadMVar m)
   => Ref (MergingRun t m h)
-  -> m (MergingRunState t m h,
-        SuppliedCredits,
-        NumRuns,
-        MergeDebt)
+  -> m (NumRuns,
+        MergeDebt,
+        MergeCredits,
+        MergingRunState t m h)
 snapshot (DeRef MergingRun {..}) = do
     state <- readMVar mergeState
     (SpentCredits   spent,
      UnspentCredits unspent) <- atomicReadCredits mergeCreditsVar
-    let supplied = SuppliedCredits (spent + unspent)
-    return (state, supplied, mergeNumRuns, mergeDebt)
+    let supplied = spent + unspent
+    return (mergeNumRuns, mergeDebt, supplied, state)
 
 numRuns :: Ref (MergingRun t m h) -> NumRuns
 numRuns (DeRef MergingRun {mergeNumRuns}) = mergeNumRuns
@@ -359,17 +364,6 @@ numEntriesToTotalDebt (NumEntries n) = MergeDebt (MergeCredits n)
 -- co-prime so that merge work at different levels is not synchronised.
 --
 newtype CreditThreshold = CreditThreshold UnspentCredits
-
--- | The supplied credits is simply the sum of all the credits that have been
--- (successfully) supplied to a merging run via 'supplyCredits'.
---
--- The supplied credits is also the sum of the 'SpentCredits' and
--- 'UnspentCredits'.
---
--- The supplied credits increases monotonically, even in the presence of
--- (a)synchronous exceptions.
---
-newtype SuppliedCredits = SuppliedCredits MergeCredits
 
 -- | The spent credits are supplied credits that have been spent on performing
 -- merging steps plus the supplied credits that are in the process of being
@@ -692,7 +686,7 @@ supplyCredits (DeRef MergingRun {
       MergeMaybeCompleted ->
         bracketOnError
           -- Atomically add credits to the unspent credits (but not allowing
-          -- 'suppliedCredits' to exceed the total debt), determine which case
+          -- supplied credits to exceed the total debt), determine which case
           -- we're in and thus how many credits we should try to spend now on
           -- performing merge steps. Return the credits to spend now and any
           -- leftover credits that would exceed the debt limit.

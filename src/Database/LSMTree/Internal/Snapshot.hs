@@ -7,7 +7,6 @@ module Database.LSMTree.Internal.Snapshot (
   , SnapLevels (..)
   , SnapLevel (..)
   , SnapIncomingRun (..)
-  , SuppliedCredits (..)
   , SnapMergingRunState (..)
     -- * Conversion to levels snapshot format
   , toSnapLevels
@@ -140,8 +139,9 @@ instance NFData r => NFData (SnapLevel r) where
 data SnapIncomingRun r =
     SnapMergingRun !MergePolicyForLevel
                    !NumRuns
-                   !MergeDebt
-                   !SuppliedCredits
+                   !MergeDebt     -- ^ The total merge debt.
+                   !MergeCredits  -- ^ The merge credits supplied, and that
+                                  -- need to be supplied on snapshot open.
                    !(SnapMergingRunState MR.LevelMergeType r)
   | SnapSingleRun !r
   deriving stock (Eq, Functor, Foldable, Traversable)
@@ -202,10 +202,10 @@ toSnapIncomingRun (Merging mergePolicy _mergeNominalDebt _mergeNominalCreditVar
                            mergingRun) = do
     -- We need to know how many credits were supplied so we can restore merge
     -- work on snapshot load.
-    (mergingRunState,
-     MR.SuppliedCredits (MergeCredits suppliedCredits),
-     mergeNumRuns,
-     totalMergeDebt) <- MR.snapshot mergingRun
+    (mergeNumRuns,
+     totalMergeDebt,
+     suppliedMergeCredits,
+     mergingRunState) <- MR.snapshot mergingRun
     -- TODO: MR.snapshot needs to return duplicated run references, and we
     -- need to arrange to release them when the snapshoting is done.
     let smrs = toSnapMergingRunState mergingRunState
@@ -214,7 +214,7 @@ toSnapIncomingRun (Merging mergePolicy _mergeNominalDebt _mergeNominalCreditVar
         mergePolicy
         mergeNumRuns
         totalMergeDebt
-        (SuppliedCredits suppliedCredits)
+        suppliedMergeCredits
         smrs
 
 toSnapMergingRunState ::
@@ -460,7 +460,7 @@ fromSnapLevels reg hfs hbio conf uc resolve dir (SnapLevels levels) =
     fromSnapIncomingRun ln (SnapSingleRun run) =
         newIncomingSingleRun tr ln =<< dupRun run
 
-    fromSnapIncomingRun ln (SnapMergingRun mpfl nr md (SuppliedCredits sc) smrs) = do
+    fromSnapIncomingRun ln (SnapMergingRun mpfl nr md mc smrs) = do
       case smrs of
         SnapCompletedMerge r ->
           newIncomingCompletedMergingRun tr reg ln mpfl nr md r
@@ -469,10 +469,10 @@ fromSnapLevels reg hfs hbio conf uc resolve dir (SnapLevels levels) =
           ir <- newIncomingMergingRun tr hfs hbio dir uc
                                       conf resolve reg
                                       mpfl mt ln rs
-          -- When a snapshot is created, merge progress is lost, so we
-          -- have to redo merging work here. SuppliedCredits tracks how
-          -- many credits were supplied before the snapshot was taken.
-          leftoverCredits <- supplyCreditsIncomingRun conf ln ir (MergeCredits sc)
+          -- When a snapshot is created, merge progress is lost, so we have to
+          -- redo merging work here. The MergeCredits in SnapMergingRun tracks
+          -- how many credits were supplied before the snapshot was taken.
+          leftoverCredits <- supplyCreditsIncomingRun conf ln ir mc
           assert (leftoverCredits == 0) $ return ()
           return ir
 

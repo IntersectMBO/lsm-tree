@@ -542,13 +542,13 @@ instance DecodeVersioned t => DecodeVersioned (SnapMergingRunState t RunNumber) 
         (3, 1) -> SnapOngoingMerge <$> decodeVersioned v <*> decodeVersioned v
         _ -> fail ("[SnapMergingRunState] Unexpected combination of list length and tag: " <> show (n, tag))
 
--- SuppliedCredits
+-- MergeCredits and MergeDebt
 
-instance Encode SuppliedCredits where
-  encode (SuppliedCredits x) = encodeInt x
+instance Encode MergeCredits where
+  encode (MergeCredits x) = encodeInt x
 
-instance DecodeVersioned SuppliedCredits where
-  decodeVersioned V0 = SuppliedCredits <$> decodeInt
+instance DecodeVersioned MergeCredits where
+  decodeVersioned V0 = MergeCredits <$> decodeInt
 
 instance Encode MergeDebt where
   encode (MergeDebt (MergeCredits x)) = encodeInt x
