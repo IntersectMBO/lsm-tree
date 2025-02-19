@@ -282,20 +282,26 @@ numRuns (DeRef MergingRun {mergeNumRuns}) = mergeNumRuns
 
 {- $credittracking
 
-The credits concept we use here comes from amortised analysis of data
+The credits and debt concept we use here comes from amortised analysis of data
 structures (see the Bankers Method from Okasaki). Though here we use it not as
 an analysis method but within the code itself for tracking the state of the
 scheduled (i.e. incremental) merge.
 
-In the prototype things are relatively simple: we simulate performing merge
-work in batches (based on a threshold) and the credit tracking reflects this by
-tracking unspent credits (and the debt corresponding to the remaining merge
-work to do).
+There are two notions of credits (and corresponding debt) in this LSM
+implementation: nominal credits and merge credits. The merging run deals
+exclusively with merge credits. See 'IncomingRun' for nominal credits.
 
-The implementation is similar but somewhat more complex. We also accumulate
-unspent credits until they reach a threshold at which point we do a batch of
-merging work. Unlike the prototype, the implementation tracks both credits
-spent and credits as yet unspent. We will elaborate on why and how below.
+A single merge credit corresponds with a merge step performed. Merge steps are
+measured by the number of entries in the input runs that are consumed. We
+measure the merge in terms of inputs, not outputs, because the number of inputs
+is known beforehand, whereas the number of outputs is not. The total merge debt
+is therefore defined to be the sum of the number of entries across the input
+runs to the merge. Once the merge credits spent equals the merge debt then the
+merge is (or rather must be) complete.
+
+In both the prototype and implementation we accumulate unspent credits until
+they reach a threshold at which point we do a batch of merging work. We track
+both credits spent and credits as yet unspent.
 
 In the prototype, the credits spent equals the merge steps performed. The
 same holds in the real implementation, but making it so is more complicated.
@@ -312,20 +318,36 @@ Furthermore, the real implementation has to cope with concurrency: multiple
 threads sharing the same 'MergingRun' and calling 'supplyCredits' concurrently.
 The credit accounting thus needs to define the state of the credits while
 merging work is in progress by some thread. The approach we take is to define
-spent credits to include those that are in the process of being spent, leaving
-unspent credits as those that are available for a thread to spend on merging
-work.
+spent credit to include credits that are in the process of being spent,
+leaving unspent credit as credits that are available for a thread to spend on
+merging work.
 
-Thus we track two things:
+Thus we track three things:
 
- * credits spent ('SpentCredits'): credits supplied that have been or are in
-   the process of being spent on performing merging steps; and
+ * spent credits ('SpentCredits'): credits supplied that have been or are in
+   the process of being spent on performing merging steps;
 
- * credits unspent ('UnspentCredits'): credits supplied that are not yet spent
-   and are thus available to spend.
+ * unspent credits ('UnspentCredits'): credits supplied that are not yet spent
+   and are thus available to spend; and
 
-The credits supplied is the sum of the credits spent and unspent. We guarantee
-that the supplied credits never exceeds the total debt.
+ * merge debt ('MergeDebt'): the sum of the sizes of the input runs, and thus
+   the total merge credits that have to be spent for the merge to be complete.
+
+And define a derived measure:
+
+ * supplied credits: the sum of the spent and unspent credits. This is
+   therefore also the sum of all the credits that have been (successfully)
+   supplied to a merging run via 'supplyCredits'.
+
+   The supplied credits increases monotonically, even in the presence of
+   (a)synchronous exceptions.
+
+   We guarantee that the supplied credits never exceeds the total debt.
+
+When the supplied credits equals the merge debt then we may not have actually
+completed the merge (since that requires spending the credits) but we have the
+potential to complete the merge whenever needed without supplying any more
+credits.
 
 The credits spent and the steps performed (or in the process of being
 performed) will typically be equal. They are not guaranteed to be equal in the
