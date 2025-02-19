@@ -326,8 +326,9 @@ invariant (LSMContent _ levels ul) = do
         Single r ->
           return (CompletedMerge r)
         Merging mp _ _ (MergingRun mt _ ref) -> do
+          assertST $ ln > 1  -- no merges on level 1
           assertST $ mp == mergePolicyForLevel ln ls ul
-                  && mt == mergeTypeForLevel ls ul
+          assertST $ mt == mergeTypeForLevel ls ul
           readSTRef ref
 
       assertST $ length rs <= 3
@@ -1274,17 +1275,19 @@ levellingLevelIsFull ln _incoming resident = levellingRunSizeToLevel resident > 
 -- first merge each input table into a single run, as there is no practical
 -- distributive property between level and union merges.
 
--- | Ensures that the merge contains more than one input.
+-- | Ensures that the merge contains more than one input, avoiding creating a
+-- pending merge where possible.
 newPendingLevelMerge :: [IncomingRun s]
                      -> Maybe (MergingTree s)
                      -> ST s (Maybe (MergingTree s))
 newPendingLevelMerge [] t = return t
 newPendingLevelMerge [Single r] Nothing =
-    -- If there is only a 'Merging' run, we could in principle also directly
-    -- turn that into 'OngoingTreeMerge`, but the type parameters don't match,
-    -- since it could be a midlevel merge. For simplicity, we don't handle that
-    -- case here, which means that there can be unary pending level merges.
     Just . MergingTree <$> newSTRef (CompletedTreeMerge r)
+newPendingLevelMerge [Merging{}] Nothing =
+    -- This case should never occur. If there is a single entry in the list,
+    -- there can only be one level in the input table. At level 1 there are no
+    -- merging runs, so it must be a PreExistingRun.
+    error "newPendingLevelMerge: singleton Merging run"
 newPendingLevelMerge irs tree = do
     let prs = map incomingToPreExistingRun irs
         st  = PendingTreeMerge (PendingLevelMerge prs tree)

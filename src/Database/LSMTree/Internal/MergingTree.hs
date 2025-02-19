@@ -128,10 +128,14 @@ newPendingLevelMerge prs mmt = do
     -- are masked then there can be no async exceptions here at all.
     mergeTreeState <- case (prs, mmt) of
       ([PreExistingRun r], Nothing) ->
-        -- If there is just a single PreExistingMergingRun, we could in theory
-        -- also directly turn that into a MergingTree, but it's not necessary
-        -- and a little complicated because of the LevelMergeType/TreeMergeType
-        -- mismatch.
+        -- No need to create a pending merge here.
+        --
+        -- We could do something similar for PreExistingMergingRun, but it's:
+        -- * complicated, because of the LevelMergeType/TreeMergeType mismatch.
+        -- * unneeded, since that case should never occur. If there is only a
+        --   single entry in the list, there can only be one level in the input
+        --   table. At level 1 there are no merging runs, so it must be a
+        --   PreExistingRun.
         CompletedTreeMerge <$> dupRef r
 
       _ -> PendingTreeMerge <$>
