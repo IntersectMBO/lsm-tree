@@ -333,6 +333,10 @@ deriving anyclass instance NoThunks NominalDebt
 deriving stock instance Generic NominalCredits
 deriving anyclass instance NoThunks NominalCredits
 
+{-------------------------------------------------------------------------------
+  MergingRun
+-------------------------------------------------------------------------------}
+
 deriving stock instance Generic NumRuns
 deriving anyclass instance NoThunks NumRuns
 
@@ -347,10 +351,6 @@ deriving anyclass instance Typeable s => NoThunks (CreditsVar s)
 
 deriving stock instance Generic MergeKnownCompleted
 deriving anyclass instance NoThunks MergeKnownCompleted
-
-{-------------------------------------------------------------------------------
-  MergingRun
--------------------------------------------------------------------------------}
 
 deriving stock instance Generic (MergingRun t m h)
 deriving anyclass instance ( Typeable m, Typeable (PrimState m), Typeable h
