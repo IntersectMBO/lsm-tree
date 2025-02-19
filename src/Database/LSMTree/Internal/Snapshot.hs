@@ -43,7 +43,6 @@ import           Database.LSMTree.Internal.CRC32C (checkCRC)
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
-import           Database.LSMTree.Internal.Merge (MergeType (..))
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.MergeSchedule
 import           Database.LSMTree.Internal.MergingRun (NumRuns (..))
@@ -143,7 +142,7 @@ data SnapIncomingRun r =
                    !NumRuns
                    !NumEntries
                    !SuppliedCredits
-                   !(SnapMergingRunState r)
+                   !(SnapMergingRunState MR.LevelMergeType r)
   | SnapSingleRun !r
   deriving stock (Show, Eq, Functor, Foldable, Traversable)
 
@@ -158,12 +157,20 @@ newtype SuppliedCredits = SuppliedCredits { getSuppliedCredits :: Int }
   deriving stock (Show, Eq, Read)
   deriving newtype NFData
 
-data SnapMergingRunState r =
+data SnapMergingRunState t r =
     SnapCompletedMerge !r
-  | SnapOngoingMerge !(V.Vector r) !MergeType
+  | SnapOngoingMerge !(V.Vector r) !t
+    -- ^ While we use a specific, more restrictive merge type @t@ here (see
+    -- 'MR.IsMergeType'), we should always serialise it as a 'MergeType'.
+    -- Otherwise, if we for example accidentally deserialised a
+    -- @SnapMergingRunState LevelMergeType@ with @MergeLastLevel@ as a
+    -- @SnapMergingRunState TreeMergeType@, it would succeed with @MergeUnion@.
+    -- If we go via 'MergeType', the error will be detected. We could even
+    -- change the invariant about which merge type can occur in which part of
+    -- the table without having to change the serialisation format itself.
   deriving stock (Show, Eq, Functor, Foldable, Traversable)
 
-instance NFData r => NFData (SnapMergingRunState r) where
+instance (NFData t, NFData r) => NFData (SnapMergingRunState t r) where
   rnf (SnapCompletedMerge a) = rnf a
   rnf (SnapOngoingMerge a b) = rnf a `seq` rnf b
 
@@ -217,11 +224,26 @@ toSnapIncomingRun (Merging mergePolicy mergingRun) = do
         (SuppliedCredits suppliedCredits)
         smrs
 
+-- | Only to be used for incoming runs! Merging runs inside a merging tree need
+-- to use MR.TreeMergeType.
+--
+-- We could offer a more general type if 'Mr.MergingRunState' also had a type
+-- parameter 't', but that adds quite a bit of noise.
 toSnapMergingRunState ::
      MR.MergingRunState m h
-  -> SnapMergingRunState (Ref (Run m h))
+  -> SnapMergingRunState MR.LevelMergeType (Ref (Run m h))
 toSnapMergingRunState (MR.CompletedMerge r)  = SnapCompletedMerge r
-toSnapMergingRunState (MR.OngoingMerge rs m) = SnapOngoingMerge rs (Merge.mergeType m)
+toSnapMergingRunState (MR.OngoingMerge rs m) =
+    -- The merge type conversion should never fail, since the Merge was
+    -- constructed based on the restricted LevelMergeType.
+    -- To make the types align, we could either:
+    -- * store the restricted type inside MergingRun itself, but this would
+    --   just duplicate information, not provide any safety.
+    -- * Also add the type parameter to Merge, adding complexity there.
+    let mt = Merge.mergeType m
+    in case MR.fromMergeType mt of
+      Just t  -> SnapOngoingMerge rs t
+      Nothing -> error ("invalid MergeType: " <> show mt)
 
 {-------------------------------------------------------------------------------
   Write Buffer

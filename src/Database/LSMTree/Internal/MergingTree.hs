@@ -1,5 +1,3 @@
-{-# LANGUAGE TypeFamilies #-}
-
 -- | An incremental merge of multiple runs, preserving a bracketing structure.
 module Database.LSMTree.Internal.MergingTree (
     -- $mergingtrees
@@ -20,6 +18,7 @@ import           Control.Monad.Primitive
 import           Control.RefCount
 import           Data.Foldable (traverse_)
 import           Database.LSMTree.Internal.MergingRun (MergingRun)
+import qualified Database.LSMTree.Internal.MergingRun as MR
 import           Database.LSMTree.Internal.Run (Run)
 
 -- $mergingtrees Semantically, tables are key-value stores like Haskell's
@@ -78,7 +77,7 @@ data MergingTreeState m h =
 
     -- | Reuses MergingRun to allow sharing existing merges.
   | OngoingTreeMerge
-      !(Ref (MergingRun m h))
+      !(Ref (MergingRun MR.TreeMergeType m h))
 
   | PendingTreeMerge
       !(PendingMerge m h)
@@ -98,8 +97,7 @@ data PendingMerge m h =
 
 data PreExistingRun m h =
     PreExistingRun        !(Ref (Run m h))
-  | PreExistingMergingRun !(Ref (MergingRun m h))
-
+  | PreExistingMergingRun !(Ref (MergingRun MR.LevelMergeType m h))
 
 -- | Create a new 'MergingTree' representing the merge of a sequence of
 -- pre-existing runs (completed or ongoing, plus a optional final tree).
@@ -130,10 +128,15 @@ newPendingLevelMerge prs mmt = do
     -- are masked then there can be no async exceptions here at all.
     mergeTreeState <- case (prs, mmt) of
       ([PreExistingRun r], Nothing) ->
+        -- No need to create a pending merge here.
+        --
+        -- We could do something similar for PreExistingMergingRun, but it's:
+        -- * complicated, because of the LevelMergeType/TreeMergeType mismatch.
+        -- * unneeded, since that case should never occur. If there is only a
+        --   single entry in the list, there can only be one level in the input
+        --   table. At level 1 there are no merging runs, so it must be a
+        --   PreExistingRun.
         CompletedTreeMerge <$> dupRef r
-
-      ([PreExistingMergingRun mr], Nothing) ->
-        OngoingTreeMerge <$> dupRef mr
 
       _ -> PendingTreeMerge <$>
             (PendingLevelMerge <$> traverse dupPreExistingRun prs

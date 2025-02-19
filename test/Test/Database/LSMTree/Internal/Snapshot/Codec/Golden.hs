@@ -14,10 +14,10 @@ import           Database.LSMTree.Common (BloomFilterAlloc (..),
                      WriteBufferAlloc (..), defaultTableConfig)
 import           Database.LSMTree.Internal.Config (FencePointerIndex (..),
                      MergePolicy (..), MergeSchedule (..), SizeRatio (..))
-import           Database.LSMTree.Internal.Merge (MergeType (..))
 import           Database.LSMTree.Internal.MergeSchedule
                      (MergePolicyForLevel (..))
 import           Database.LSMTree.Internal.MergingRun (NumRuns (..))
+import qualified Database.LSMTree.Internal.MergingRun as MR
 import           Database.LSMTree.Internal.RunNumber (RunNumber (..))
 import           Database.LSMTree.Internal.Snapshot
 import           Database.LSMTree.Internal.Snapshot.Codec
@@ -217,19 +217,25 @@ enumerateSnapIncomingRun =
         , numRuns <- NumRuns <$> [ magicNumber1 ]
         , entries <- NumEntries  <$> [ magicNumber2 ]
         , credits <- SuppliedCredits <$> [ magicNumber1 ]
-        , (b, sState ) <- enumerateSnapMergingRunState
+        , (b, sState ) <- enumerateSnapMergingRunState enumerateLevelMergeType
         ]
   in  fold
       [ [(fuseAnnotations $ "R0" : replicate 4 blank, SnapSingleRun enumerateRunNumbers)]
       , inSnaps
       ]
 
-enumerateSnapMergingRunState :: [(ComponentAnnotation, SnapMergingRunState RunNumber)]
-enumerateSnapMergingRunState = (fuseAnnotations ["C0", blank, blank], SnapCompletedMerge enumerateRunNumbers) :
-  [ (fuseAnnotations ["C1", a, b], SnapOngoingMerge runVec mType)
-  | (a, runVec ) <- enumerateVectorRunNumber
-  , (b, mType  ) <- [("M1", MergeMidLevel), ("M2", MergeLastLevel), ("M3", MergeUnion)]
-  ]
+enumerateSnapMergingRunState ::
+     [(ComponentAnnotation, t)] -> [(ComponentAnnotation, SnapMergingRunState t RunNumber)]
+enumerateSnapMergingRunState mTypes =
+  (fuseAnnotations ["C0", blank, blank], SnapCompletedMerge enumerateRunNumbers) :
+    [ (fuseAnnotations ["C1", a, b], SnapOngoingMerge runVec mType)
+    | (a, runVec ) <- enumerateVectorRunNumber
+    , (b, mType  ) <- mTypes
+    ]
+
+enumerateLevelMergeType :: [(ComponentAnnotation, MR.LevelMergeType)]
+enumerateLevelMergeType =
+  [("L0", MR.MergeMidLevel), ("L1", MR.MergeLastLevel)]
 
 enumerateVectorRunNumber :: [(ComponentAnnotation, Vector RunNumber)]
 enumerateVectorRunNumber =
