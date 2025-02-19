@@ -354,6 +354,12 @@ deriving anyclass instance ( Typeable m, Typeable (PrimState m), Typeable h
 deriving stock instance Generic NumRuns
 deriving anyclass instance NoThunks NumRuns
 
+deriving stock instance Generic MergeDebt
+deriving anyclass instance NoThunks MergeDebt
+
+deriving stock instance Generic MergeCredits
+deriving anyclass instance NoThunks MergeCredits
+
 deriving stock instance Generic (CreditsVar s)
 deriving anyclass instance Typeable s => NoThunks (CreditsVar s)
 

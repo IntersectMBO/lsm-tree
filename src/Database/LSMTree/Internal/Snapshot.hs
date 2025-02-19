@@ -42,7 +42,6 @@ import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.CRC32C (checkCRC)
 import qualified Database.LSMTree.Internal.CRC32C as CRC
-import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.MergeSchedule
@@ -141,7 +140,7 @@ instance NFData r => NFData (SnapLevel r) where
 data SnapIncomingRun r =
     SnapMergingRun !MergePolicyForLevel
                    !NumRuns
-                   !NumEntries
+                   !MergeDebt
                    !SuppliedCredits
                    !(SnapMergingRunState MR.LevelMergeType r)
   | SnapSingleRun !r
@@ -206,7 +205,7 @@ toSnapIncomingRun (Merging mergePolicy _mergeNominalDebt _mergeNominalCreditVar
     (mergingRunState,
      MR.SuppliedCredits (MergeCredits suppliedCredits),
      mergeNumRuns,
-     mergeNumEntries) <- MR.snapshot mergingRun
+     totalMergeDebt) <- MR.snapshot mergingRun
     -- TODO: MR.snapshot needs to return duplicated run references, and we
     -- need to arrange to release them when the snapshoting is done.
     let smrs = toSnapMergingRunState mergingRunState
@@ -214,7 +213,7 @@ toSnapIncomingRun (Merging mergePolicy _mergeNominalDebt _mergeNominalCreditVar
       SnapMergingRun
         mergePolicy
         mergeNumRuns
-        mergeNumEntries
+        totalMergeDebt
         (SuppliedCredits suppliedCredits)
         smrs
 
@@ -461,10 +460,10 @@ fromSnapLevels reg hfs hbio conf uc resolve dir (SnapLevels levels) =
     fromSnapIncomingRun ln (SnapSingleRun run) =
         newIncomingSingleRun tr ln =<< dupRun run
 
-    fromSnapIncomingRun ln (SnapMergingRun mpfl nr ne (SuppliedCredits sc) smrs) = do
+    fromSnapIncomingRun ln (SnapMergingRun mpfl nr md (SuppliedCredits sc) smrs) = do
       case smrs of
         SnapCompletedMerge r ->
-          newIncomingCompletedMergingRun tr reg ln mpfl nr ne r
+          newIncomingCompletedMergingRun tr reg ln mpfl nr md r
 
         SnapOngoingMerge rs mt -> do
           ir <- newIncomingMergingRun tr hfs hbio dir uc

@@ -172,6 +172,7 @@ testAll test = [
     , test (Proxy @MergePolicyForLevel)
     , test (Proxy @(SnapMergingRunState LevelMergeType RunNumber))
     , test (Proxy @SuppliedCredits)
+    , test (Proxy @MergeDebt)
     , test (Proxy @LevelMergeType)
     , test (Proxy @TreeMergeType)
     ]
@@ -301,6 +302,8 @@ instance Arbitrary t => Arbitrary (SnapMergingRunState t RunNumber) where
       [ SnapOngoingMerge x' y' | (x', y') <- shrink (x, y) ]
 
 deriving newtype instance Arbitrary SuppliedCredits
+deriving newtype instance Arbitrary MergeDebt
+deriving newtype instance Arbitrary MergeCredits
 
 {-------------------------------------------------------------------------------
   Show
@@ -312,4 +315,6 @@ deriving stock instance Show r => Show (SnapLevel r)
 deriving stock instance Show r => Show (SnapIncomingRun r)
 deriving stock instance (Show t, Show r) => Show (SnapMergingRunState t r)
 deriving stock instance Show SuppliedCredits
+deriving stock instance Show MergeDebt
+deriving stock instance Show MergeCredits
 

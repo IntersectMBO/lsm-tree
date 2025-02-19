@@ -550,6 +550,12 @@ instance Encode SuppliedCredits where
 instance DecodeVersioned SuppliedCredits where
   decodeVersioned V0 = SuppliedCredits <$> decodeInt
 
+instance Encode MergeDebt where
+  encode (MergeDebt (MergeCredits x)) = encodeInt x
+
+instance DecodeVersioned MergeDebt where
+  decodeVersioned V0 = (MergeDebt . MergeCredits) <$> decodeInt
+
 -- MergeType
 
 instance Encode MR.LevelMergeType  where

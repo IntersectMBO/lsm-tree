@@ -21,6 +21,7 @@ module Database.LSMTree.Internal.MergingRun (
 
     -- * Credit tracking
     -- $credittracking
+  , MergeDebt (..)
   , MergeCredits (..)
   , CreditThreshold (..)
   , SuppliedCredits (..)
@@ -71,9 +72,11 @@ import           System.FS.BlockIO.API (HasBlockIO)
 
 data MergingRun t m h = MergingRun {
       mergeNumRuns        :: !NumRuns
-      -- | Sum of number of entries in the input runs.
-      -- This also corresponds to the total merging debt.
-    , mergeNumEntries     :: !NumEntries
+
+      -- | The total merge debt.
+      --
+      -- This corresponds to the sum of the number of entries in the input runs.
+    , mergeDebt           :: !MergeDebt
 
       -- See $credittracking
 
@@ -158,13 +161,13 @@ new hfs hbio resolve caching alloc indexType mergeType runPaths inputRuns =
       merge <- fromMaybe (error "newMerge: merges can not be empty")
         <$> Merge.new hfs hbio caching alloc indexType mergeType resolve runPaths runs
       let numInputRuns = NumRuns $ V.length runs
-      let numInputEntries = V.foldMap' Run.size runs
-      unsafeNew numInputRuns numInputEntries MergeMaybeCompleted $
+      let totalDebt = numEntriesToTotalDebt (V.foldMap' Run.size runs)
+      unsafeNew numInputRuns totalDebt MergeMaybeCompleted $
         OngoingMerge runs merge
 
 {-# SPECIALISE newCompleted ::
      NumRuns
-  -> NumEntries
+  -> MergeDebt
   -> Ref (Run IO h)
   -> IO (Ref (MergingRun t IO h)) #-}
 -- | Create a merging run that is already in the completed state, returning a
@@ -177,7 +180,7 @@ new hfs hbio resolve caching alloc indexType mergeType runPaths inputRuns =
 newCompleted ::
      (MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
   => NumRuns
-  -> NumEntries
+  -> MergeDebt
   -> Ref (Run m h)
   -> m (Ref (MergingRun t m h))
 newCompleted numInputRuns numInputEntries inputRun = do
@@ -189,15 +192,15 @@ newCompleted numInputRuns numInputEntries inputRun = do
 unsafeNew ::
      (MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
   => NumRuns
-  -> NumEntries
+  -> MergeDebt
   -> MergeKnownCompleted
   -> MergingRunState t m h
   -> m (Ref (MergingRun t m h))
-unsafeNew _ mergeNumEntries _ _
-  | SpentCredits (numEntriesToTotalDebt mergeNumEntries) > maxBound
+unsafeNew _ (MergeDebt mergeDebt) _ _
+  | SpentCredits mergeDebt > maxBound
   = throwIO (ErrorCall "MergingRun.new: run size exceeds maximum of 2^40")
 
-unsafeNew mergeNumRuns mergeNumEntries knownCompleted state = do
+unsafeNew mergeNumRuns mergeDebt knownCompleted state = do
     --TODO: make sure we have the right physical credits for a completed merge.
     mergeCreditsVar <- CreditsVar <$> newPrimVar 0
     case state of
@@ -208,7 +211,7 @@ unsafeNew mergeNumRuns mergeNumEntries knownCompleted state = do
     newRef (finalise mergeState) $ \mergeRefCounter ->
       MergingRun {
         mergeNumRuns
-      , mergeNumEntries
+      , mergeDebt
       , mergeCreditsVar
       , mergeKnownCompleted
       , mergeState
@@ -257,13 +260,13 @@ snapshot ::
   -> m (MergingRunState t m h,
         SuppliedCredits,
         NumRuns,
-        NumEntries)
+        MergeDebt)
 snapshot (DeRef MergingRun {..}) = do
     state <- readMVar mergeState
     (SpentCredits   spent,
      UnspentCredits unspent) <- atomicReadCredits mergeCreditsVar
     let supplied = SuppliedCredits (spent + unspent)
-    return (state, supplied, mergeNumRuns, mergeNumEntries)
+    return (state, supplied, mergeNumRuns, mergeDebt)
 
 numRuns :: Ref (MergingRun t m h) -> NumRuns
 numRuns (DeRef MergingRun {mergeNumRuns}) = mergeNumRuns
@@ -334,14 +337,18 @@ might not finish in time, which will mess up the shape of the levels tree.
 
 newtype MergeCredits = MergeCredits Int
   deriving stock (Eq, Ord)
-  deriving newtype (Num, Real, Enum, Integral)
+  deriving newtype (Num, Real, Enum, Integral, NFData)
+
+newtype MergeDebt = MergeDebt MergeCredits
+  deriving stock (Eq, Ord)
+  deriving newtype (NFData)
 
 {-# INLINE numEntriesToTotalDebt #-}
 -- | The total debt of the merging run is exactly the sum total number of
 -- entries across all the input runs to be merged.
 --
-numEntriesToTotalDebt :: NumEntries -> MergeCredits
-numEntriesToTotalDebt (NumEntries n) = MergeCredits n
+numEntriesToTotalDebt :: NumEntries -> MergeDebt
+numEntriesToTotalDebt (NumEntries n) = MergeDebt (MergeCredits n)
 
 -- | Unspent credits are accumulated until they go over the 'CreditThreshold',
 -- after which a batch of merge work will be performed. Configuring this
@@ -548,7 +555,7 @@ atomicModifyInt var f =
 
 {-# SPECIALISE atomicDepositAndSpendCredits ::
      CreditsVar RealWorld
-  -> MergeCredits
+  -> MergeDebt
   -> CreditThreshold
   -> MergeCredits
   -> IO (MergeCredits, MergeCredits) #-}
@@ -563,11 +570,11 @@ atomicModifyInt var f =
 atomicDepositAndSpendCredits ::
      PrimMonad m
   => CreditsVar (PrimState m)
-  -> MergeCredits -- ^ total debt
+  -> MergeDebt -- ^ total debt
   -> CreditThreshold
   -> MergeCredits -- ^ to deposit
   -> m (MergeCredits, MergeCredits) -- ^ (spendCredits, leftoverCredits)
-atomicDepositAndSpendCredits (CreditsVar !var) !totalDebt
+atomicDepositAndSpendCredits (CreditsVar !var) (MergeDebt !totalDebt)
                              (CreditThreshold !batchThreshold) !credits =
     assert (credits >= 0) $
     atomicModifyInt var $ \(CreditsPair !spent !unspent) ->
@@ -673,7 +680,7 @@ supplyCredits ::
   -> m MergeCredits
 supplyCredits (DeRef MergingRun {
                  mergeKnownCompleted,
-                 mergeNumEntries,
+                 mergeDebt,
                  mergeCreditsVar,
                  mergeState
                })
@@ -690,8 +697,7 @@ supplyCredits (DeRef MergingRun {
           -- performing merge steps. Return the credits to spend now and any
           -- leftover credits that would exceed the debt limit.
           (atomicDepositAndSpendCredits
-            mergeCreditsVar
-            (numEntriesToTotalDebt mergeNumEntries)
+            mergeCreditsVar mergeDebt
             creditBatchThreshold credits)
 
           -- If an exception occurs while merging (sync or async) then we
@@ -787,9 +793,8 @@ expectCompleted (DeRef MergingRun {..}) = do
     when (knownCompleted == MergeMaybeCompleted) $ do
       (SpentCredits   spentCredits,
        UnspentCredits unspentCredits) <- atomicReadCredits mergeCreditsVar
-      let totalDebt       = numEntriesToTotalDebt mergeNumEntries
-          suppliedCredits = spentCredits + unspentCredits
-          !credits        = assert (suppliedCredits == totalDebt) $
+      let suppliedCredits = spentCredits + unspentCredits
+          !credits        = assert (MergeDebt suppliedCredits == mergeDebt) $
                             assert (unspentCredits >= 0) $
                             unspentCredits
 
