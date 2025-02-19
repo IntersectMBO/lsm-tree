@@ -42,7 +42,7 @@ appendSegment vec (Replicate count val) = append vec count val
 
 -- ** Vector construction
 
-{-
+{-|
     Constructs an ordinary vector by creating a growing vector, appending
     segments to it, and finally freezing it.
 -}
@@ -54,7 +54,7 @@ finalVector initialBufferSize segments = runST $ do
     mapM_ (appendSegment vec) segments
     freeze vec
 
-{-
+{-|
     Supplies the final contents of a growing vector for constructing a property.
 
     The resulting property additionally provides information about the
@@ -129,7 +129,7 @@ shrinkSegment (Replicate count val)
     shrinkNat :: Int -> [Int]
     shrinkNat = shrinkMap getNonNegative NonNegative
 
-{-
+{-|
     A list of segments to be appended to an initially empty vector. 'Segments a'
     is isomorphic to '[Segment a]' but has a special way of generating test
     cases, which avoids skewing with respect to buffer size scaling exponents.
