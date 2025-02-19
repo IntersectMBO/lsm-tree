@@ -353,9 +353,17 @@ instance NFData MergePolicyForLevel where
   rnf LevelTiering   = ()
   rnf LevelLevelling = ()
 
+-- | Total merge debt to complete the merge in an incoming run.
+--
+-- This corresponds to the number (worst case, minimum number) of update
+-- operatons inserted into the table, before we will expect the merge to
+-- complete.
 newtype NominalDebt = NominalDebt Int
   deriving stock Eq
 
+-- | Merge credits that get supplied to a table's levels.
+--
+-- This corresponds to the number of update operatons inserted into the table.
 newtype NominalCredits = NominalCredits Int
   deriving stock Eq
   deriving newtype Prim
@@ -638,7 +646,7 @@ updatesWithInterleavedFlushes tr conf resolve hfs hbio root uc es reg tc = do
     -- number of supplied credits is based on the size increase of the write
     -- buffer, not the the number of processed entries @length es' - length es@.
     let numAdded = unNumEntries (WB.numEntries wb') - unNumEntries (WB.numEntries wb)
-    supplyCredits conf (Credits numAdded) (tableLevels tc)
+    supplyCredits conf (NominalCredits numAdded) (tableLevels tc)
     let tc' = tc { tableWriteBuffer = wb' }
     if WB.numEntries wb' < maxn then do
       pure $! tc'
@@ -1012,12 +1020,9 @@ levelIsFull sr rs = V.length rs + 1 >= (sizeRatioInt sr)
   can contribute to the same merge concurrently.
 -}
 
--- | Merge credits that get supplied to a table's levels.
-newtype Credits = Credits Int --TODO: this will be replaced by NominalCredits
-
 {-# SPECIALISE supplyCredits ::
      TableConfig
-  -> Credits
+  -> NominalCredits
   -> Levels IO h
   -> IO ()
   #-}
@@ -1026,7 +1031,7 @@ newtype Credits = Credits Int --TODO: this will be replaced by NominalCredits
 supplyCredits ::
      (MonadSTM m, MonadST m, MonadMVar m, MonadMask m)
   => TableConfig
-  -> Credits
+  -> NominalCredits
   -> Levels m h
   -> m ()
 supplyCredits conf c levels =
@@ -1051,9 +1056,9 @@ supplyCredits conf c levels =
 scaleCreditsForMerge ::
      MergePolicyForLevel
   -> Ref (MergingRun t m h)
-  -> Credits
+  -> NominalCredits
   -> MergeCredits
-scaleCreditsForMerge LevelLevelling _ (Credits c) =
+scaleCreditsForMerge LevelLevelling _ (NominalCredits c) =
     -- A levelling merge has 1 input run and one resident run, which is (up
     -- to) 4x bigger than the others. It needs to be completed before
     -- another run comes in.
@@ -1064,7 +1069,7 @@ scaleCreditsForMerge LevelLevelling _ (Credits c) =
     -- As as result, merge work would/could be more evenly distributed over
     -- time when the resident run is smaller than the worst case.
     MergeCredits (c * (1 + 4))
-scaleCreditsForMerge LevelTiering mr (Credits c) =
+scaleCreditsForMerge LevelTiering mr (NominalCredits c) =
     -- A tiering merge has 5 runs at most (one could be held back to merged
     -- again) and must be completed before the level is full (once 4 more
     -- runs come in).
