@@ -55,14 +55,22 @@ tests = testGroup "Test.Database.LSMTree.Internal.Serialise" [
   Eq and Ord laws
 -------------------------------------------------------------------------------}
 
+withFirstKeyLengthInfo :: SerialisedKey -> Property -> Property
+withFirstKeyLengthInfo firstKey
+    = collect ("Length of first key is " ++ show (sizeofKey firstKey))
+
 propEqReflexivity :: SerialisedKey -> Property
 propEqReflexivity k = k === k
 
 propEqSymmetry :: SerialisedKey -> SerialisedKey -> Property
 propEqSymmetry k1 k2 = (k1 == k2) === (k2 == k1)
 
-propEqTransitivity :: SerialisedKey -> SerialisedKey -> SerialisedKey -> Property
-propEqTransitivity k1 k2 k3 = mapSize (const 5) $ k1 == k2 && k2 == k3 ==> k1 === k3
+propEqTransitivity :: Property
+propEqTransitivity = mapSize (const 3) $ withDiscardRatio 1000 $ untunedProp
+  where
+    untunedProp :: SerialisedKey -> SerialisedKey -> SerialisedKey -> Property
+    untunedProp k1 k2 k3 = withFirstKeyLengthInfo k1 $
+                           k1 == k2 && k2 == k3 ==> k1 === k3
 
 propEqNegation :: SerialisedKey -> SerialisedKey -> Property
 propEqNegation k1 k2 = (k1 /= k2) === not (k1 == k2)
@@ -76,5 +84,9 @@ propOrdTransitivity k1 k2 k3 = k1 <= k2 && k2 <= k3 ==> k1 <= k3
 propOrdReflexivity :: SerialisedKey -> Property
 propOrdReflexivity k = property $ k <= k
 
-propOrdAntiSymmetry :: SerialisedKey -> SerialisedKey -> Property
-propOrdAntiSymmetry k1 k2 = mapSize (const 5) $ k1 <= k2 && k2 <= k1 ==> k1 === k2
+propOrdAntiSymmetry :: Property
+propOrdAntiSymmetry = mapSize (const 4) $ withDiscardRatio 100 $ untunedProp
+  where
+    untunedProp :: SerialisedKey -> SerialisedKey -> Property
+    untunedProp k1 k2 = withFirstKeyLengthInfo k1 $
+                        k1 <= k2 && k2 <= k1 ==> k1 === k2
