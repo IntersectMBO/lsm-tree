@@ -5,6 +5,7 @@ module Test.Database.LSMTree.StateMachine.DL (
     tests
   ) where
 
+import           Control.RefCount (checkForgottenRefs)
 import           Control.Tracer
 import qualified Data.Map.Strict as Map
 import qualified Data.Vector as V
@@ -19,14 +20,14 @@ import           Test.QuickCheck.DynamicLogic
 import qualified Test.QuickCheck.Gen as QC
 import qualified Test.QuickCheck.Random as QC
 import           Test.QuickCheck.StateModel.Lockstep
-import           Test.Tasty (TestTree, testGroup)
+import           Test.Tasty (TestTree, testGroup, withResource)
 import qualified Test.Tasty.QuickCheck as QC
 import           Test.Util.PrettyProxy
 
 tests :: TestTree
 tests = testGroup "Test.Database.LSMTree.StateMachine.DL" [
-
-      QC.testProperty "prop_example" prop_example
+      withResource checkForgottenRefs (\_ -> checkForgottenRefs) $ \_ ->
+        QC.testProperty "prop_example" prop_example
     ]
 
 instance DynLogicModel (Lockstep (ModelState R.Table))
@@ -44,7 +45,7 @@ prop_example =
     -- Run the example ...
     forAllDL dl_example $
     -- ... with the given lockstep property
-    propLockstep_RealImpl_MockFS_IO tr
+    propLockstep_RealImpl_MockFS_IO tr CheckFS CheckRefs
   where
     -- To enable tracing, use something like @show `contramap` stdoutTracer@
     -- instead
