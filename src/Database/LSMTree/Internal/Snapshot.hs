@@ -204,7 +204,7 @@ toSnapIncomingRun (Merging mergePolicy _mergeNominalDebt _mergeNominalCreditVar
     -- We need to know how many credits were supplied so we can restore merge
     -- work on snapshot load.
     (mergingRunState,
-     MR.SuppliedCredits (MR.Credits suppliedCredits),
+     MR.SuppliedCredits (MergeCredits suppliedCredits),
      mergeNumRuns,
      mergeNumEntries) <- MR.snapshot mergingRun
     -- TODO: MR.snapshot needs to return duplicated run references, and we
@@ -473,7 +473,7 @@ fromSnapLevels reg hfs hbio conf uc resolve dir (SnapLevels levels) =
           -- When a snapshot is created, merge progress is lost, so we
           -- have to redo merging work here. SuppliedCredits tracks how
           -- many credits were supplied before the snapshot was taken.
-          leftoverCredits <- supplyCreditsIncomingRun conf ln ir (MR.Credits sc)
+          leftoverCredits <- supplyCreditsIncomingRun conf ln ir (MergeCredits sc)
           assert (leftoverCredits == 0) $ return ()
           return ir
 

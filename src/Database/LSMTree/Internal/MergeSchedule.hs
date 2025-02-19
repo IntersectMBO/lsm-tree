@@ -28,7 +28,7 @@ module Database.LSMTree.Internal.MergeSchedule (
     -- * Exported for cabal-docspec
   , maxRunSize
     -- * Credits
-  , Credits (..)
+  , MergeCredits (..)
   , supplyCredits
   , creditThresholdForLevel
   , NominalDebt (..)
@@ -57,7 +57,8 @@ import           Database.LSMTree.Internal.Entry (Entry, NumEntries (..),
                      unNumEntries)
 import           Database.LSMTree.Internal.Index (Index)
 import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
-import           Database.LSMTree.Internal.MergingRun (MergingRun, NumRuns (..))
+import           Database.LSMTree.Internal.MergingRun (MergeCredits (..),
+                     MergingRun, NumRuns (..))
 import qualified Database.LSMTree.Internal.MergingRun as MR
 import           Database.LSMTree.Internal.MergingTree (MergingTree)
 import           Database.LSMTree.Internal.Paths (ActiveDir, RunFsPaths (..),
@@ -484,16 +485,16 @@ newIncomingMergingRun tr hfs hbio activeDir uc
      TableConfig
   -> LevelNo
   -> IncomingRun IO h
-  -> MR.Credits
-  -> IO MR.Credits #-}
+  -> MergeCredits
+  -> IO MergeCredits #-}
 -- | Supply a given number of credits to the merge in an incoming run.
 supplyCreditsIncomingRun ::
      (MonadSTM m, MonadST m, MonadMVar m, MonadMask m)
   => TableConfig
   -> LevelNo
   -> IncomingRun m h
-  -> MR.Credits
-  -> m MR.Credits
+  -> MergeCredits
+  -> m MergeCredits
 supplyCreditsIncomingRun _ _     (Single        _r) credits = return credits
 supplyCreditsIncomingRun conf ln (Merging _ _ _ mr) credits = do
     let !thresh = creditThresholdForLevel conf ln
@@ -517,7 +518,7 @@ immediatelyCompleteIncomingRun ::
   -> m ()
 immediatelyCompleteIncomingRun _ _ _ (Single _r) _ = return ()
 immediatelyCompleteIncomingRun tr conf ln (Merging _ _ _ mr) rs = do
-    let !required = MR.Credits (unNumEntries (V.foldMap' Run.size rs))
+    let !required = MergeCredits (unNumEntries (V.foldMap' Run.size rs))
     --TODO: find remainging debt from the mr itself
     -- or switch to supplying the 100% absolute physical debt directly
     let !thresh = creditThresholdForLevel conf ln
@@ -1051,7 +1052,7 @@ scaleCreditsForMerge ::
      MergePolicyForLevel
   -> Ref (MergingRun t m h)
   -> Credits
-  -> MR.Credits
+  -> MergeCredits
 scaleCreditsForMerge LevelLevelling _ (Credits c) =
     -- A levelling merge has 1 input run and one resident run, which is (up
     -- to) 4x bigger than the others. It needs to be completed before
@@ -1062,18 +1063,18 @@ scaleCreditsForMerge LevelLevelling _ (Credits c) =
     -- worst-case upper bound by looking at the sizes of the input runs.
     -- As as result, merge work would/could be more evenly distributed over
     -- time when the resident run is smaller than the worst case.
-    MR.Credits (c * (1 + 4))
+    MergeCredits (c * (1 + 4))
 scaleCreditsForMerge LevelTiering mr (Credits c) =
     -- A tiering merge has 5 runs at most (one could be held back to merged
     -- again) and must be completed before the level is full (once 4 more
     -- runs come in).
     let NumRuns n = MR.numRuns mr
        -- same as division rounding up: ceiling (c * n / 4)
-    in MR.Credits ((c * n + 3) `div` 4)
+    in MergeCredits ((c * n + 3) `div` 4)
 
 -- TODO: the thresholds for doing merge work should be different for each level,
 -- maybe co-prime?
 creditThresholdForLevel :: TableConfig -> LevelNo -> MR.CreditThreshold
 creditThresholdForLevel conf (LevelNo _i) =
     let AllocNumEntries (NumEntries x) = confWriteBufferAlloc conf
-    in  MR.CreditThreshold (MR.UnspentCredits (MR.Credits x))
+    in  MR.CreditThreshold (MR.UnspentCredits (MergeCredits x))
