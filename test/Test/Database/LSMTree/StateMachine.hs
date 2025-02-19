@@ -56,6 +56,8 @@ module Test.Database.LSMTree.StateMachine (
   , propLockstep_RealImpl_RealFS_IO
   , propLockstep_RealImpl_MockFS_IO
   , propLockstep_RealImpl_MockFS_IOSim
+  , CheckFS (..)
+  , CheckRefs (..)
     -- * Lockstep
   , ModelState (..)
   , Key (..)
@@ -75,13 +77,16 @@ import           Control.Concurrent.Class.MonadSTM.Strict
 import           Control.Exception (assert)
 import qualified Control.Exception
 import           Control.Monad (forM_, void, (<=<))
+import           Control.Monad.Class.MonadST
 import           Control.Monad.Class.MonadThrow (Exception (..), Handler (..),
                      MonadCatch (..), MonadThrow (..), SomeException, catches,
                      displayException, fromException)
 import           Control.Monad.IOSim
 import           Control.Monad.Primitive
 import           Control.Monad.Reader (ReaderT (..))
-import           Control.RefCount (RefException, checkForgottenRefs)
+import           Control.Monad.ST.Unsafe (unsafeIOToST)
+import           Control.RefCount (RefException, checkForgottenRefs,
+                     ignoreForgottenRefs)
 import           Control.Tracer (Tracer, nullTracer)
 import           Data.Bifunctor (Bifunctor (..))
 import           Data.Constraint (Dict (..))
@@ -138,7 +143,7 @@ import           Test.QuickCheck.StateModel hiding (Var)
 import           Test.QuickCheck.StateModel.Lockstep
 import qualified Test.QuickCheck.StateModel.Lockstep.Defaults as Lockstep.Defaults
 import qualified Test.QuickCheck.StateModel.Lockstep.Run as Lockstep.Run
-import           Test.Tasty (TestTree, testGroup)
+import           Test.Tasty (TestTree, testGroup, withResource)
 import           Test.Tasty.QuickCheck (testProperty)
 import           Test.Util.FS (approximateEqStream, noRemoveDirectoryRecursiveE,
                      propNoOpenHandles, propNumOpenHandles)
@@ -158,14 +163,25 @@ tests = testGroup "Test.Database.LSMTree.StateMachine" [
       testProperty "propLockstep_ModelIOImpl"
         propLockstep_ModelIOImpl
 
-    , testProperty "propLockstep_RealImpl_RealFS_IO" $
-        propLockstep_RealImpl_RealFS_IO nullTracer
+      -- We check/ignore forgotten referenceschecks before and after each
+      -- property, just to be extra sure that no exceptions because of forgotten
+      -- references leak from one property into the other. This could happen if
+      -- a reference is forgotten but not yet checked in one property, and it
+      -- gets checked in the next property leading to an exception there.
 
-    , testProperty "propLockstep_RealImpl_MockFS_IO" $
-        propLockstep_RealImpl_MockFS_IO nullTracer
+    , withResource checkForgottenRefs (\_ -> checkForgottenRefs) $ \_ ->
+        testProperty "propLockstep_RealImpl_RealFS_IO" $
+          propLockstep_RealImpl_RealFS_IO nullTracer
 
-    , testProperty "propLockstep_RealImpl_MockFS_IOSim" $
-        propLockstep_RealImpl_MockFS_IOSim nullTracer
+    , withResource checkForgottenRefs (\_ -> checkForgottenRefs) $ \_ ->
+        testProperty "propLockstep_RealImpl_MockFS_IO" $
+          propLockstep_RealImpl_MockFS_IO nullTracer CheckFS CheckRefs
+
+    , withResource checkForgottenRefs (\_ -> ignoreForgottenRefs) $ \_ ->
+        testProperty "propLockstep_RealImpl_MockFS_IOSim" $
+          -- references are not checked because they are unreliable when running
+          -- in IOSim.
+          propLockstep_RealImpl_MockFS_IOSim nullTracer CheckFS NoCheckRefs
     ]
 
 labelledExamples :: IO ()
@@ -320,20 +336,23 @@ propLockstep_RealImpl_RealFS_IO tr =
 
     release :: (FilePath, Class.Session R.Table IO, StrictTVar IO Errors, StrictTVar IO ErrorsLog) -> IO Property
     release (tmpDir, !session, _, _) = do
-        !prop <- propNoThunks session
+        !propThunks <- propNoThunks session
         R.closeSession session
         removeDirectoryRecursive tmpDir
-        pure prop
+        propRefs <- propCheckForgottenRefs
+        pure (propThunks QC..&&. propRefs)
 
 propLockstep_RealImpl_MockFS_IO ::
      Tracer IO R.LSMTreeTrace
+  -> CheckFS
+  -> CheckRefs
   -> Actions (Lockstep (ModelState R.Table))
   -> QC.Property
-propLockstep_RealImpl_MockFS_IO tr =
+propLockstep_RealImpl_MockFS_IO tr checkFS checkRefs =
     runActionsBracket
       (Proxy @(ModelState R.Table))
       (acquire_RealImpl_MockFS tr)
-      release_RealImpl_MockFS
+      (release_RealImpl_MockFS checkFS checkRefs)
       (\r (_, session, errsVar, logVar) -> do
             faultsVar <- newMutVar []
             let
@@ -361,9 +380,11 @@ propLockstep_RealImpl_MockFS_IO tr =
 -- the counterexamples to see which one is more interesting.
 propLockstep_RealImpl_MockFS_IOSim ::
      (forall s. Tracer (IOSim s) R.LSMTreeTrace)
+  -> CheckFS
+  -> CheckRefs
   -> Actions (Lockstep (ModelState R.Table))
   -> QC.Property
-propLockstep_RealImpl_MockFS_IOSim tr actions =
+propLockstep_RealImpl_MockFS_IOSim tr checkFS checkRefs actions =
     monadicIOSim_ prop
   where
     prop :: forall s. PropertyM (IOSim s) Property
@@ -383,7 +404,7 @@ propLockstep_RealImpl_MockFS_IOSim tr actions =
                 (QD.runActions @(Lockstep (ModelState R.Table)) actions)
                 env
         faults <- QC.run $ readMutVar faultsVar
-        p <- QC.run $ release_RealImpl_MockFS (fsVar, session, errsVar, logVar)
+        p <- QC.run $ release_RealImpl_MockFS checkFS checkRefs (fsVar, session, errsVar, logVar)
         pure
           $ tagFinalState actions tagFinalState'
           $ QC.tabulate "Fault results" (fmap show faults)
@@ -401,11 +422,19 @@ acquire_RealImpl_MockFS tr = do
     session <- R.openSession tr hfs hbio (mkFsPath [])
     pure (fsVar, session, errsVar, logVar)
 
+-- | Flag that turns on\/off file system checks.
+data CheckFS = CheckFS | NoCheckFS
+
+-- | Flag that turns on\/off reference checks.
+data CheckRefs = CheckRefs | NoCheckRefs
+
 release_RealImpl_MockFS ::
      R.IOLike m
-  => (StrictTMVar m MockFS, Class.Session R.Table m, StrictTVar m Errors, StrictTVar m ErrorsLog)
+  => CheckFS
+  -> CheckRefs
+  -> (StrictTMVar m MockFS, Class.Session R.Table m, StrictTVar m Errors, StrictTVar m ErrorsLog)
   -> m Property
-release_RealImpl_MockFS (fsVar, session, _, _) = do
+release_RealImpl_MockFS checkFS checkRefs (fsVar, session, _, _) = do
     sts <- getAllSessionTables session
     forM_ sts $ \(SomeTable t) -> R.close t
     scs <- getAllSessionCursors session
@@ -413,7 +442,17 @@ release_RealImpl_MockFS (fsVar, session, _, _) = do
     mockfs1 <- atomically $ readTMVar fsVar
     R.closeSession session
     mockfs2 <- atomically $ readTMVar fsVar
-    pure (propNumOpenHandles 1 mockfs1 QC..&&. propNoOpenHandles mockfs2)
+
+    let
+      propFS = case checkFS of
+        CheckFS -> propNumOpenHandles 1 mockfs1 QC..&&. propNoOpenHandles mockfs2
+        NoCheckFS -> QC.property ()
+
+    propRefs <- case checkRefs of
+      CheckRefs   -> propCheckForgottenRefs
+      NoCheckRefs -> propIgnoreForgottenRefs
+
+    pure (propFS QC..&&. propRefs)
 
 data SomeTable m = SomeTable (forall k v b. R.Table m k v b)
 data SomeCursor m = SomeCursor (forall k v b. R.Cursor m k v b)
@@ -2494,18 +2533,7 @@ runActionsBracket ::
   -> Actions (Lockstep state) -> QC.Property
 runActionsBracket p init cleanup runner tagger actions =
     tagFinalState actions tagger
-  $ QLS.runActionsBracket p init cleanup' runner actions
-  where
-    cleanup' st = do
-      x <- cleanup st
-      pure (x QC..&&. propCheckForgottenRefs)
-
-propCheckForgottenRefs :: Property
-propCheckForgottenRefs = QC.ioProperty $ do
-    eith <- Control.Exception.try checkForgottenRefs
-    pure $ case eith of
-      Left (e :: RefException) -> QC.counterexample (show e) False
-      Right ()                 -> QC.property True
+  $ QLS.runActionsBracket p init cleanup runner actions
 
 tagFinalState ::
      forall state. StateModel (Lockstep state)
@@ -2520,3 +2548,15 @@ tagFinalState actions tagger =
     finalAnnState = stateAfter @(Lockstep state) actions
 
     finalTags = tagger $ underlyingState finalAnnState
+
+propCheckForgottenRefs :: MonadST m => m Property
+propCheckForgottenRefs = do
+  eith <- stToIO $ unsafeIOToST $ Control.Exception.try checkForgottenRefs
+  pure $ case eith of
+      Left (e :: RefException) -> QC.counterexample (show e) False
+      Right ()                 -> QC.property True
+
+propIgnoreForgottenRefs :: MonadST m => m Property
+propIgnoreForgottenRefs = do
+  stToIO $ unsafeIOToST $ ignoreForgottenRefs
+  pure $ QC.property ()
