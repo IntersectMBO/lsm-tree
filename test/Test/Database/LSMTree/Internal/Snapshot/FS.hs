@@ -9,7 +9,6 @@ import           Control.Monad.IOSim (runSimOrThrow)
 import           Control.Tracer
 import           Data.Bifunctor (Bifunctor (..))
 import           Data.Maybe (fromJust)
-import qualified Data.Set as Set
 import qualified Data.Vector as V
 import           Data.Word
 import           Database.LSMTree.Extras (showPowersOf10)
@@ -28,10 +27,10 @@ import           System.FS.Sim.Error hiding (genErrors)
 import qualified System.FS.Sim.MockFS as MockFS
 import           Test.Database.LSMTree.Internal.Snapshot.Codec ()
 import           Test.QuickCheck
-import           Test.QuickCheck.Gen (genDouble)
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.FS
+import           Test.Util.QC (Choice)
 
 tests :: TestTree
 tests = testGroup "Test.Database.LSMTree.Internal.Snapshot.FS" [
@@ -162,15 +161,7 @@ instance Arbitrary TestErrors where
   Snapshot corruption
 -------------------------------------------------------------------------------}
 
--- | A 'Double' in the @[0, 1)@ range.
-newtype Double_0_1 = Double_0_1 Double
-  deriving stock (Show, Eq)
-
-instance Arbitrary Double_0_1 where
-  arbitrary = Double_0_1 <$> genDouble
-  shrink (Double_0_1 x) = [Double_0_1 x' | x' <- shrink x, 0 <= x', x' < 1]
-
--- TODO: an alternative to generating doubles a priori is to run the monadic
+-- TODO: an alternative to generating a Choice a priori is to run the monadic
 -- code in @PropertyM (IOSim s)@, and then we can do quantification inside the
 -- monadic property using @pick@. This complicates matters, however, because
 -- functions like @withSimHasBlockIO@ and @withTable@ would have to run in
@@ -179,14 +170,9 @@ instance Arbitrary Double_0_1 where
 prop_flipSnapshotBit ::
      Positive (Small Int)
   -> V.Vector (Word64, Entry Word64 Word64)
-  -> Double_0_1 -- ^ Used to pick which file to corrupt
-  -> Double_0_1 -- ^ Used to pick which bit to flip in the file we picked
+  -> Choice -- ^ Used to pick which file/bit to corrupt.
   -> Property
-prop_flipSnapshotBit
-  (Positive (Small bufferSize))
-  es
-  (Double_0_1 pickFile)
-  (Double_0_1 pickBit) =
+prop_flipSnapshotBit (Positive (Small bufferSize)) es pickFileBit =
     runSimOrThrow $
     withSimHasBlockIO propNoOpenHandles MockFS.empty $ \hfs hbio _fsVar ->
     withSession nullTracer hfs hbio root $ \s ->
@@ -195,42 +181,28 @@ prop_flipSnapshotBit
       updates resolve es' t
       createSnap t
 
-      -- Pick a random file from the named snapshot directory
-      files <- listDirectoryRecursiveFiles hfs (getNamedSnapshotDir namedSnapDir)
-      let i = round (fromIntegral (Set.size files - 1) * pickFile)
-      let file = Set.elemAt i files
-      let path = getNamedSnapshotDir namedSnapDir </> file
-      -- Pick a random bit from the file that we want to corrupt
-      n <- withFile hfs path ReadMode $ hGetSize hfs
-      let j = round (fromIntegral (n * 8 - 1) * pickBit)
+      -- Corrupt the snapshot
+      flipRandomBitInRandomFile hfs pickFileBit (getNamedSnapshotDir namedSnapDir) >>= \case
+        Nothing -> pure $ property False
+        Just (path, j) -> do
+          -- Some info for the test output
+          let tabCorruptedFile = tabulate "Corrupted file" [show path]
+              counterCorruptedFile = counterexample ("Corrupted file: " ++ show path)
+              tabFlippedBit = tabulate "Flipped bit" [showPowersOf10 j]
+              counterFlippedBit = counterexample ("Flipped bit: " ++ show j)
 
-      -- Some info for the test output
-      let
-        tabCorruptedFile = tabulate "Corrupted file" [show path]
-        counterCorruptedFile = counterexample ("Corrupted file: " ++ show path)
-        tabFlippedBit = tabulate "Flipped bit" [showPowersOf10 j]
-        counterFlippedBit = counterexample ("Flipped bit: " ++ show j)
-
-      -- TODO: check forgotten refs
-      if n <= 0 then -- file is empty
-        pure $ tabulate "Result" ["No corruption applied"] True
-      else do -- file is non-empty
-
-        -- Flip a bit and try to open the snapshot
-        flipFileBit hfs path j
-        t' <- try @_ @SomeException $ bracket (openSnap s) close $ \_ -> pure ()
-
-        pure $
-          tabCorruptedFile $ counterCorruptedFile $ tabFlippedBit $ counterFlippedBit $
-          case t' of
-            -- If we find an error, we detected corruption. Success!
-            Left e ->
-              tabulate
-                "Result"
-                ["Corruption detected: " <> getConstructorName e]
-                True
-            -- The corruption was not detected. Failure!
-            Right _ -> property False
+          t' <- try @_ @SomeException $ bracket (openSnap s) close $ \_ -> pure ()
+          pure $
+            tabCorruptedFile $ counterCorruptedFile $ tabFlippedBit $ counterFlippedBit $
+            case t' of
+              -- If we find an error, we detected corruption. Success!
+              Left e ->
+                tabulate
+                  "Result"
+                  ["Corruption detected: " <> getConstructorName e]
+                  True
+              -- The corruption was not detected. Failure!
+              Right _ -> property False
   where
     root = FS.mkFsPath []
     namedSnapDir = namedSnapshotDir (SessionRoot root) snapName

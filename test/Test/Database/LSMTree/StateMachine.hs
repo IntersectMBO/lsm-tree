@@ -66,8 +66,9 @@ module Test.Database.LSMTree.StateMachine (
   ) where
 
 import           Control.ActionRegistry (AbortActionRegistryError (..),
-                     AbortActionRegistryReason (..), ActionError,
-                     CommitActionRegistryError (..), getActionError)
+                     ActionError, CommitActionRegistryError (..),
+                     getActionError, getReasonExitCaseException)
+import           Control.Applicative (Alternative (..))
 import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Concurrent.Class.MonadSTM.Strict
 import qualified Control.Exception
@@ -89,6 +90,7 @@ import qualified Data.List.NonEmpty as NE
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (catMaybes, fromJust, fromMaybe)
+import           Data.Monoid (First (..))
 import           Data.Primitive.MutVar
 import           Data.Set (Set)
 import qualified Data.Set as Set
@@ -102,7 +104,8 @@ import           Database.LSMTree.Extras.Generators (KeyForIndexCompact)
 import           Database.LSMTree.Extras.NoThunks (propNoThunks)
 import           Database.LSMTree.Internal (LSMTreeError (..))
 import qualified Database.LSMTree.Internal as R.Internal
-import           Database.LSMTree.Internal.CRC32C (FileFormatError (..))
+import           Database.LSMTree.Internal.CRC32C (ChecksumError (..),
+                     ChecksumsFileFormatError (..), FileFormatError (..))
 import           Database.LSMTree.Internal.Serialise (SerialisedBlob,
                      SerialisedValue)
 import qualified Database.LSMTree.Model.IO as ModelIO
@@ -139,6 +142,7 @@ import           Test.Tasty.QuickCheck (testProperty)
 import           Test.Util.FS (approximateEqStream, noRemoveDirectoryRecursiveE,
                      propNoOpenHandles, propNumOpenHandles)
 import           Test.Util.PrettyProxy
+import           Test.Util.QC (Choice)
 import qualified Test.Util.QLS as QLS
 import           Test.Util.TypeFamilyWrappers (WrapBlob (..), WrapBlobRef (..),
                      WrapCursor (..), WrapTable (..))
@@ -442,6 +446,8 @@ realErrorHandlers = [
     , abortActionRegistryErrorHandler
     , fsErrorHandler
     , fileFormatErrorHandler
+    , checksumsFileFormatErrorHandler
+    , checksumErrorHandler
     , catchAllErrorHandler
     ]
 
@@ -458,43 +464,41 @@ lsmTreeErrorHandler = Handler $ pure . handler'
     handler' e                            = Just (Model.ErrOther (displayException e))
 
 commitActionRegistryErrorHandler :: Monad m => Handler m (Maybe Model.Err)
-commitActionRegistryErrorHandler = Handler $ pure . handler'
-  where
-    handler' :: CommitActionRegistryError -> Maybe Model.Err
-    handler' e
-      | isDiskFault (toException e) = Just (Model.ErrDiskFault (displayException e))
-      | otherwise                   = Just (Model.ErrOther (displayException e))
+commitActionRegistryErrorHandler = Handler $ \(e :: CommitActionRegistryError) ->
+  pure (classifyException (toException e))
 
 abortActionRegistryErrorHandler :: Monad m => Handler m (Maybe Model.Err)
-abortActionRegistryErrorHandler = Handler $ pure . handler'
-  where
-    handler' :: AbortActionRegistryError -> Maybe Model.Err
-    handler' e
-      | isDiskFault (toException e) = Just (Model.ErrDiskFault (displayException e))
-      | otherwise                   = Just (Model.ErrOther (displayException e))
+abortActionRegistryErrorHandler = Handler $ \(e :: AbortActionRegistryError) ->
+  pure (classifyException (toException e))
 
--- | Some exceptions contain other exceptions. We check recursively if there is
--- *any* exception that must have occurred because of a disk fault, and if so we
--- consider the whole structure of exceptions a disk fault exception.
-isDiskFault :: SomeException -> Bool
-isDiskFault e
+-- | Some exceptions contain other exceptions, which we classify recursively.
+classifyException :: SomeException -> Maybe Model.Err
+classifyException e =
+  Just . fromMaybe (Model.ErrOther (displayException e)) $ classifyException' e
+
+-- | When classifying exceptions recursively, we prefer 'Model.ErrDiskFault'
+--   and 'Model.ErrSnapshotCorrupted' as explanations over 'Model.ErrOther'.
+classifyException' :: SomeException -> Maybe Model.Err
+classifyException' e
   | Just (CommitActionRegistryError es) <- fromException e
-  = any isDiskFault' es
+  = classifyExceptions' es
   | Just (AbortActionRegistryError reason es) <- fromException e
-  = case reason of
-      ReasonExitCaseException e' -> isDiskFault e' || any isDiskFault' es
-      ReasonExitCaseAbort        -> False
+  = (classifyException' =<< getReasonExitCaseException reason) <|> classifyExceptions' es
   | Just (e' :: ActionError) <- fromException e
-  = isDiskFault' (getActionError e')
+  = classifyException' (getActionError e')
   | Just FsError{} <- fromException e
-  = True
+  = Just (Model.ErrDiskFault (displayException e))
   | Just FileFormatError{} <- fromException e
-  = True
+  = Just (Model.ErrSnapshotCorrupted (displayException e))
+  | Just ChecksumsFileFormatError{} <- fromException e
+  = Just (Model.ErrSnapshotCorrupted (displayException e))
+  | Just ChecksumError{} <- fromException e
+  = Just (Model.ErrSnapshotCorrupted (displayException e))
   | otherwise
-  = False
-  where
-    isDiskFault' :: forall e. Exception e => e -> Bool
-    isDiskFault' = isDiskFault . toException
+  = Nothing
+
+classifyExceptions' :: (Foldable t, Exception e) => t e -> Maybe Model.Err
+classifyExceptions' = getFirst . foldMap (First . classifyException' . toException)
 
 fsErrorHandler :: Monad m => Handler m (Maybe Model.Err)
 fsErrorHandler = Handler $ pure . handler'
@@ -506,7 +510,19 @@ fileFormatErrorHandler :: Monad m => Handler m (Maybe Model.Err)
 fileFormatErrorHandler = Handler $ pure . handler'
   where
     handler' :: FileFormatError -> Maybe Model.Err
-    handler' e = Just (Model.ErrDiskFault (displayException e))
+    handler' e = Just (Model.ErrSnapshotCorrupted (displayException e))
+
+checksumsFileFormatErrorHandler :: Monad m => Handler m (Maybe Model.Err)
+checksumsFileFormatErrorHandler = Handler $ pure . handler'
+  where
+    handler' :: ChecksumsFileFormatError -> Maybe Model.Err
+    handler' e = Just (Model.ErrSnapshotCorrupted (displayException e))
+
+checksumErrorHandler :: Monad m => Handler m (Maybe Model.Err)
+checksumErrorHandler = Handler $ pure . handler'
+  where
+    handler' :: ChecksumError -> Maybe Model.Err
+    handler' e = Just (Model.ErrSnapshotCorrupted (displayException e))
 
 -- | When combined with other handlers, 'catchAllErrorHandler' has to go last
 -- because it matches on 'SomeException', and no other handlers are run after
@@ -583,6 +599,10 @@ type C k v b = (K k, V v, B b)
   StateModel
 -------------------------------------------------------------------------------}
 
+newtype SilentCorruption = SilentCorruption {bitChoice :: Choice}
+  deriving stock (Eq, Show)
+  deriving newtype (Arbitrary)
+
 instance ( Show (Class.TableConfig h)
          , Eq (Class.TableConfig h)
          , Arbitrary (Class.TableConfig h)
@@ -636,7 +656,7 @@ instance ( Show (Class.TableConfig h)
     -- Snapshots
     CreateSnapshot ::
          C k v b
-      => Maybe Errors
+      => Maybe (Either SilentCorruption Errors)
       -> R.SnapshotLabel -> R.SnapshotName -> Var h (WrapTable h IO k v b)
       -> Act h ()
     OpenSnapshot   ::
@@ -907,6 +927,14 @@ instance Eq (Obs h a) where
         , Just Model.DefaultErrDiskFault <- cast rhs
         -> True
 
+      -- When snapshots are corrupted, the model only knows that the snapshot
+      -- was corrupted, but not how, but the SUT can throw much more specific
+      -- errors. We allow this.
+      (OEither (Left (OId lhs)), OEither (Left (OId rhs)))
+        | Just (Model.ErrSnapshotCorrupted _) <- cast lhs
+        , Just Model.DefaultErrSnapshotCorrupted <- cast rhs
+        -> True
+
       -- default equalities
       (OTable, OTable) -> True
       (OCursor, OCursor) -> True
@@ -1170,11 +1198,12 @@ runModel lookUp = \case
     RetrieveBlobs blobsVar ->
       wrap (MVector . fmap (MBlob . WrapBlob))
       . Model.runModelM (Model.retrieveBlobs (getBlobRefs . lookUp $ blobsVar))
-    CreateSnapshot merrs label name tableVar ->
-      wrap MUnit
-      . Model.runModelMWithInjectedErrors merrs
-          (Model.createSnapshot label name (getTable $ lookUp tableVar))
-          (pure ())
+    CreateSnapshot mcorrOrErrs label name tableVar ->
+      wrap MUnit .
+        let mCreateSnapshot = Model.createSnapshot label name (getTable $ lookUp tableVar)
+        in case sequence mcorrOrErrs of
+              Left _corrs -> Model.runModelM (mCreateSnapshot >> Model.corruptSnapshot name)
+              Right merrs -> Model.runModelMWithInjectedErrors merrs mCreateSnapshot (pure ())
     OpenSnapshot _ merrs label name ->
       wrap MTable
       . Model.runModelMWithInjectedErrors merrs
@@ -1256,10 +1285,17 @@ runIO action lookUp = ReaderT $ \ !env -> do
           Class.mupserts (unwrapTable $ lookUp' tableVar) kmups
         RetrieveBlobs blobRefsVar -> catchErr handlers $
           fmap WrapBlob <$> Class.retrieveBlobs (Proxy @h) session (unwrapBlobRef <$> lookUp' blobRefsVar)
-        CreateSnapshot merrs label name tableVar ->
-          runRealWithInjectedErrors "CreateSnapshot" env merrs
-            (Class.createSnapshot label name (unwrapTable $ lookUp' tableVar))
-            (\() -> Class.deleteSnapshot session name)
+        CreateSnapshot mcorrOrErrs label name tableVar ->
+          let rCreateSnapshot = Class.createSnapshot label name (unwrapTable $ lookUp' tableVar) in
+          case sequence mcorrOrErrs of
+            Left corr -> do
+              rCreateSnapshot
+              Class.corruptSnapshot (bitChoice corr) name (unwrapTable $ lookUp' tableVar)
+              pure (Right ())
+            Right merrs ->
+              runRealWithInjectedErrors "CreateSnapshot" env merrs
+                rCreateSnapshot
+                (\() -> Class.deleteSnapshot session name)
         OpenSnapshot _ merrs label name ->
           runRealWithInjectedErrors "OpenSnapshot" env merrs
             (WrapTable <$> Class.openSnapshot session label name)
@@ -1318,10 +1354,17 @@ runIOSim action lookUp = ReaderT $ \ !env -> do
           Class.mupserts (unwrapTable $ lookUp' tableVar) kmups
         RetrieveBlobs blobRefsVar -> catchErr handlers $
           fmap WrapBlob <$> Class.retrieveBlobs (Proxy @h) session (unwrapBlobRef <$> lookUp' blobRefsVar)
-        CreateSnapshot merrs label name tableVar ->
-          runRealWithInjectedErrors "CreateSnapshot" env merrs
-            (Class.createSnapshot label name (unwrapTable $ lookUp' tableVar))
-            (\() -> Class.deleteSnapshot session name)
+        CreateSnapshot mcorrOrErrs label name tableVar ->
+          let rCreateSnapshot = Class.createSnapshot label name (unwrapTable $ lookUp' tableVar) in
+          case sequence mcorrOrErrs of
+            Left corr -> do
+              rCreateSnapshot
+              Class.corruptSnapshot (bitChoice corr) name (unwrapTable $ lookUp' tableVar)
+              pure (Right ())
+            Right merrs ->
+              runRealWithInjectedErrors "CreateSnapshot" env merrs
+                rCreateSnapshot
+                (\() -> Class.deleteSnapshot session name)
         OpenSnapshot _ merrs label name ->
           runRealWithInjectedErrors "OpenSnapshot" env merrs
             (WrapTable <$> Class.openSnapshot session label name)
@@ -1493,10 +1536,14 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
         [ (1, fmap Some $ New @k @v @b PrettyProxy <$> QC.arbitrary)
         | length tableVars <= 5 ] -- no more than 5 tables at once
 
-     ++ [ (1, fmap Some $ OpenSnapshot @k @v @b PrettyProxy <$>
+     ++ [ (2, fmap Some $ OpenSnapshot @k @v @b PrettyProxy <$>
                 genErrors <*> pure label <*> genUsedSnapshotName)
-        | not (null usedSnapshotNames)
-        , let genErrors = fmap noRemoveDirectoryRecursiveE <$> QC.arbitrary
+        | length tableVars <= 5 -- no more than 5 tables at once
+        , not (null usedSnapshotNames)
+        , let genErrors = QC.frequency [
+                  (3, pure Nothing)
+                , (1, Just . noRemoveDirectoryRecursiveE <$> QC.arbitrary)
+                ]
         ]
 
      ++ [ (1, fmap Some $ DeleteSnapshot <$> genUsedSnapshotName)
@@ -1523,8 +1570,12 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
      ++ [ (2,  fmap Some $ CreateSnapshot <$>
                 genErrors <*> pure label <*> genUnusedSnapshotName <*> genTableVar)
         | not (null unusedSnapshotNames)
-           -- TODO: generate errors
-        , let genErrors = pure Nothing
+        , let genErrors = QC.frequency [
+                  (3, pure Nothing)
+                , (1, Just . Left <$> QC.arbitrary)
+                  -- TODO: generate errors, e.g., @Just . Right <$>
+                  -- QC.arbitrary@
+                ]
         ]
      ++ [ (5,  fmap Some $ Duplicate <$> genTableVar)
         | length tableVars <= 5 -- no more than 5 tables at once
@@ -1977,6 +2028,13 @@ data Tag =
   | MergeOnLevel Int -- TODO: implement
     -- | A table was closed twice
   | TableCloseTwice String -- TODO: implement
+    -- | A corrupted snapshot was created successfully
+  | CreateSnapshotCorrupted R.SnapshotName
+    -- | An /un/corrupted snapshot was created successfully
+  | CreateSnapshotUncorrupted R.SnapshotName
+    -- | A snapshot failed to open because we detected that the snapshot was
+    -- corrupt
+  | OpenSnapshotDetectsCorruption R.SnapshotName
   deriving stock (Show, Eq, Ord)
 
 -- | This is run for after every action
@@ -1987,7 +2045,7 @@ tagStep' ::
   -> [Tag]
 tagStep' (ModelState _stateBefore statsBefore,
           ModelState _stateAfter _statsAfter)
-          action _result =
+          action result =
     catMaybes [
       tagSnapshotTwice
     , tagOpenExistingSnapshot
@@ -1995,6 +2053,8 @@ tagStep' (ModelState _stateBefore statsBefore,
     , tagOpenMissingSnapshot
     , tagDeleteExistingSnapshot
     , tagDeleteMissingSnapshot
+    , tagCreateSnapshotCorruptedOrUncorrupted
+    , tagOpenSnapshotDetectsCorruption
     ]
   where
     tagSnapshotTwice
@@ -2029,6 +2089,22 @@ tagStep' (ModelState _stateBefore statsBefore,
       | DeleteSnapshot name <- action
       , not (name `Set.member` snapshotted statsBefore)
       = Just DeleteMissingSnapshot
+      | otherwise
+      = Nothing
+
+    tagCreateSnapshotCorruptedOrUncorrupted
+      | CreateSnapshot mcorrOrErrs _ name _ <- action
+      , MEither (Right (MUnit ())) <- result
+      = Just $ case mcorrOrErrs of
+          Just (Left (_ :: SilentCorruption)) -> CreateSnapshotCorrupted name
+          _                                   -> CreateSnapshotUncorrupted name
+      | otherwise
+      = Nothing
+
+    tagOpenSnapshotDetectsCorruption
+      | OpenSnapshot  _ _ _ name <- action
+      , MEither (Left (MErr (Model.ErrSnapshotCorrupted _))) <- result
+      = Just (OpenSnapshotDetectsCorruption name)
       | otherwise
       = Nothing
 

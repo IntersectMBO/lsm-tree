@@ -14,6 +14,7 @@ module Database.LSMTree.Class (
   , module Types
   ) where
 
+import           Control.Monad (void)
 import           Control.Monad.Class.MonadThrow (MonadThrow (..))
 import           Data.Kind (Constraint, Type)
 import           Data.List.NonEmpty (NonEmpty)
@@ -24,6 +25,11 @@ import           Database.LSMTree as Types (LookupResult (..), QueryResult (..),
                      resolveDeserialised)
 import qualified Database.LSMTree as R
 import           Database.LSMTree.Class.Common as Common
+import qualified Database.LSMTree.Internal as RI (SessionEnv (..), Table (..),
+                     Table' (..), withOpenSession)
+import qualified Database.LSMTree.Internal.Paths as RIP
+import           Test.Util.FS (flipRandomBitInRandomFileHardlinkSafe)
+import           Test.Util.QC (Choice)
 
 -- | Class abstracting over table operations.
 --
@@ -140,6 +146,14 @@ class (IsSession (Session h)) => IsTable h where
         -> h m k v b
         -> m ()
 
+    corruptSnapshot ::
+           ( IOLike m
+           )
+        => Choice
+        -> SnapshotName
+        -> h m k v b
+        -> m ()
+
     openSnapshot ::
            ( IOLike m
            , C k v b
@@ -222,6 +236,21 @@ withCursor offset tbl = bracket (newCursor offset tbl) (closeCursor (Proxy @h))
   Real instance
 -------------------------------------------------------------------------------}
 
+-- | Snapshot corruption for the real instance.
+--   Implemented here, instead of as part of the public API.
+rCorruptSnapshot ::
+      IOLike m
+   => Choice
+   -> SnapshotName
+   -> R.Table m k v b
+   -> m ()
+rCorruptSnapshot choice name (RI.Table' t) =
+   RI.withOpenSession (RI.tableSession t) $ \seshEnv ->
+      let hfs = RI.sessionHasFS seshEnv
+          root = RI.sessionRoot seshEnv
+          namedSnapDir = RIP.getNamedSnapshotDir (RIP.namedSnapshotDir root name)
+       in void $ flipRandomBitInRandomFileHardlinkSafe hfs choice namedSnapDir
+
 instance IsTable R.Table where
     type Session R.Table = R.Session
     type TableConfig R.Table = R.TableConfig
@@ -244,6 +273,7 @@ instance IsTable R.Table where
     readCursor _ = R.readCursor
 
     createSnapshot = R.createSnapshot
+    corruptSnapshot = rCorruptSnapshot
     openSnapshot sesh snap = R.openSnapshot sesh R.configNoOverride snap
 
     duplicate = R.duplicate

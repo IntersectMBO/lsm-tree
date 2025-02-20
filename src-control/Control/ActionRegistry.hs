@@ -25,6 +25,7 @@ module Control.ActionRegistry (
   , CommitActionRegistryError (..)
   , AbortActionRegistryError (..)
   , AbortActionRegistryReason (..)
+  , getReasonExitCaseException
     -- * Registering actions #registeringActions#
     -- $registering-actions
   , withRollback
@@ -371,6 +372,11 @@ data AbortActionRegistryReason =
     -- aborted (see 'ExitCaseAbort').
   | ReasonExitCaseAbort
   deriving stock Show
+
+getReasonExitCaseException :: AbortActionRegistryReason -> Maybe SomeException
+getReasonExitCaseException = \case
+  ReasonExitCaseException e -> Just e
+  ReasonExitCaseAbort -> Nothing
 
 data AbortActionRegistryError =
     AbortActionRegistryError AbortActionRegistryReason (NonEmpty ActionError)

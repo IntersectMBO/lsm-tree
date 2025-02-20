@@ -30,6 +30,9 @@ module Test.Util.FS (
   , listDirectoryRecursive
   , listDirectoryRecursiveFiles
     -- * Corruption
+  , flipRandomBitInRandomFileHardlinkSafe
+  , flipRandomBitInRandomFile
+  , flipFileBitHardlinkSafe
   , flipFileBit
   , hFlipBit
     -- * Errors
@@ -56,7 +59,7 @@ import           Control.Monad.IOSim (runSimOrThrow)
 import           Control.Monad.Primitive (PrimMonad)
 import           Data.Bit (MVector (..), flipBit)
 import           Data.Char (isAscii, isDigit, isLetter)
-import           Data.Foldable (foldlM)
+import           Data.Foldable (Foldable (..), foldlM, for_)
 import           Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
 import           Data.Primitive.ByteArray (newPinnedByteArray, setByteArray)
@@ -64,8 +67,11 @@ import           Data.Primitive.Types (sizeOf)
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.Text as T
+import           Data.Traversable (for)
+import           Database.LSMTree.Internal.CRC32C (CRC32C (..), readFileCRC32C)
 import           GHC.Stack
 import           System.FS.API as FS
+import qualified System.FS.API.Lazy as FSL
 import           System.FS.BlockIO.API
 import           System.FS.BlockIO.IO
 import           System.FS.BlockIO.Sim (fromHasFS)
@@ -79,6 +85,7 @@ import           System.FS.Sim.Stream (InternalInfo (..), Stream (..))
 import           System.IO.Temp
 import           Test.QuickCheck
 import           Test.QuickCheck.Instances ()
+import           Test.Util.QC (Choice, getChoice)
 import           Text.Printf
 
 {-------------------------------------------------------------------------------
@@ -342,10 +349,87 @@ listDirectoryFiles hfs = go Set.empty
           pure (path `Set.insert` acc)
         else
           pure acc
-
 {-------------------------------------------------------------------------------
   Corruption
 -------------------------------------------------------------------------------}
+
+-- | Flip a random bit in a random file in a given directory.
+flipRandomBitInRandomFile ::
+     (PrimMonad m, MonadThrow m)
+  => HasFS m h
+  -> Choice
+  -> FsPath
+  -> m (Maybe (FsPath, Int))
+flipRandomBitInRandomFile hfs bitChoice dir = do
+  maybeFileBit <- pickRandomBitInRandomFile hfs bitChoice dir
+  for_ maybeFileBit $ \(file, bit) -> flipFileBit hfs file bit
+  pure maybeFileBit
+
+-- | Flip a random bit in a random file in a given directory.
+flipRandomBitInRandomFileHardlinkSafe ::
+     (PrimMonad m, MonadThrow m)
+  => HasFS m h
+  -> Choice
+  -> FsPath
+  -> m (Maybe (FsPath, Int))
+flipRandomBitInRandomFileHardlinkSafe hfs bitChoice dir = do
+  maybeFileBit <- pickRandomBitInRandomFile hfs bitChoice dir
+  for_ maybeFileBit $ \(file, bit) -> flipFileBitHardlinkSafe hfs file bit
+  pure maybeFileBit
+
+-- | Pick a random bit in a random file in a given directory.
+pickRandomBitInRandomFile ::
+     (PrimMonad m, MonadThrow m)
+  => HasFS m h
+  -> Choice
+  -> FsPath
+  -> m (Maybe (FsPath, Int))
+pickRandomBitInRandomFile hfs bitChoice dir = do
+  -- List all files
+  files <- fmap (dir </>) . toList <$> listDirectoryRecursiveFiles hfs dir
+  -- Handle the situation where there are no files
+  if null files then pure Nothing else do
+    filesAndFileSizeBits <-
+      for files $ \file -> do
+        fileSizeBytes <- withFile hfs file ReadMode (hGetSize hfs)
+        pure (file, fileSizeBytes * 8)
+    let totalFileSizeBits = sum (snd <$> filesAndFileSizeBits)
+    -- Handle the situation where there are no non-empty files
+    if totalFileSizeBits == 0 then pure Nothing else do
+      assert (totalFileSizeBits > 0) $ pure ()
+      -- Internal helper: find the file/bit that a choice points to.
+      let pickFileBitAt bitIndex [] =
+            error $ printf "flipFileBitAt: bit index out of bounds (%d)" bitIndex
+          pickFileBitAt bitIndex ((file, fileSize) : filesAndSizes)
+            | bitIndex < fileSize = pure (file, fromIntegral $ bitIndex `min` fromIntegral (maxBound @Int))
+            | otherwise = pickFileBitAt (bitIndex - fileSize) filesAndSizes
+      -- Interpret `index` to point to a bit between `0` and `totalFileSize - 1`
+      let bitIndex = getChoice bitChoice (0, totalFileSizeBits - 1)
+      Just <$> pickFileBitAt bitIndex filesAndFileSizeBits
+
+-- | Flip a single bit in the given file, ensuring that it is not hardlinked.
+flipFileBitHardlinkSafe ::
+     (PrimMonad m, MonadThrow m)
+  => HasFS m h
+  -> FsPath
+  -> Int -- ^ Bit offset.
+  -> m ()
+flipFileBitHardlinkSafe hfs fileOrig bitOffset = do
+  -- Compute the CRC of fileOrig:
+  CRC32C crc <- readFileCRC32C hfs fileOrig
+  -- Copy fileOrig to fileCorr:
+  let copyFile fileFrom fileTo =
+        withFile hfs fileFrom ReadMode $ \hFrom ->
+          withFile hfs fileTo (WriteMode MustBeNew) $ \hTo -> do
+            bs <- FSL.hGetAll hfs hFrom
+            void $ FSL.hPutAll hfs hTo bs
+  let fileCorr = (fileOrig <.> show crc) <.> "corrupted"
+  copyFile fileOrig fileCorr
+  -- Corrupt fileCorr:
+  flipFileBit hfs fileCorr bitOffset
+  -- Hardlink fileCorr over fileOrig:
+  removeFile hfs fileOrig
+  renameFile hfs fileCorr fileOrig
 
 -- | Flip a single bit in the given file.
 flipFileBit :: (MonadThrow m, PrimMonad m) => HasFS m h -> FsPath -> Int -> m ()
@@ -425,6 +509,7 @@ fsPathComponentString (FsPathComponent s) = NE.toList s
 instance Arbitrary FsPathComponent where
   arbitrary = resize 5 $ -- path components don't have to be very long
       FsPathComponent <$> liftArbitrary genPathChar
+  shrink :: FsPathComponent -> [FsPathComponent]
   shrink (FsPathComponent s) = FsPathComponent <$> liftShrink shrinkPathChar s
 
 {-------------------------------------------------------------------------------
