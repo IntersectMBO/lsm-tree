@@ -45,7 +45,7 @@ prop_example =
     -- Run the example ...
     forAllDL dl_example $
     -- ... with the given lockstep property
-    propLockstep_RealImpl_MockFS_IO tr CheckFS CheckRefs
+    propLockstep_RealImpl_MockFS_IO tr CheckCleanup CheckFS CheckRefs
   where
     -- To enable tracing, use something like @show `contramap` stdoutTracer@
     -- instead
