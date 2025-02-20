@@ -56,6 +56,7 @@ module Test.Database.LSMTree.StateMachine (
   , propLockstep_RealImpl_RealFS_IO
   , propLockstep_RealImpl_MockFS_IO
   , propLockstep_RealImpl_MockFS_IOSim
+  , CheckCleanup (..)
   , CheckFS (..)
   , CheckRefs (..)
     -- * Lockstep
@@ -175,13 +176,13 @@ tests = testGroup "Test.Database.LSMTree.StateMachine" [
 
     , withResource checkForgottenRefs (\_ -> checkForgottenRefs) $ \_ ->
         testProperty "propLockstep_RealImpl_MockFS_IO" $
-          propLockstep_RealImpl_MockFS_IO nullTracer CheckFS CheckRefs
+          propLockstep_RealImpl_MockFS_IO nullTracer CheckCleanup CheckFS CheckRefs
 
     , withResource checkForgottenRefs (\_ -> ignoreForgottenRefs) $ \_ ->
         testProperty "propLockstep_RealImpl_MockFS_IOSim" $
           -- references are not checked because they are unreliable when running
           -- in IOSim.
-          propLockstep_RealImpl_MockFS_IOSim nullTracer CheckFS NoCheckRefs
+          propLockstep_RealImpl_MockFS_IOSim nullTracer CheckCleanup CheckFS NoCheckRefs
     ]
 
 labelledExamples :: IO ()
@@ -344,15 +345,16 @@ propLockstep_RealImpl_RealFS_IO tr =
 
 propLockstep_RealImpl_MockFS_IO ::
      Tracer IO R.LSMTreeTrace
+  -> CheckCleanup
   -> CheckFS
   -> CheckRefs
   -> Actions (Lockstep (ModelState R.Table))
   -> QC.Property
-propLockstep_RealImpl_MockFS_IO tr checkFS checkRefs =
+propLockstep_RealImpl_MockFS_IO tr checkCleanup checkFS checkRefs =
     runActionsBracket
       (Proxy @(ModelState R.Table))
       (acquire_RealImpl_MockFS tr)
-      (release_RealImpl_MockFS checkFS checkRefs)
+      (release_RealImpl_MockFS checkCleanup checkFS checkRefs)
       (\r (_, session, errsVar, logVar) -> do
             faultsVar <- newMutVar []
             let
@@ -380,11 +382,12 @@ propLockstep_RealImpl_MockFS_IO tr checkFS checkRefs =
 -- the counterexamples to see which one is more interesting.
 propLockstep_RealImpl_MockFS_IOSim ::
      (forall s. Tracer (IOSim s) R.LSMTreeTrace)
+  -> CheckCleanup
   -> CheckFS
   -> CheckRefs
   -> Actions (Lockstep (ModelState R.Table))
   -> QC.Property
-propLockstep_RealImpl_MockFS_IOSim tr checkFS checkRefs actions =
+propLockstep_RealImpl_MockFS_IOSim tr checkCleanup checkFS checkRefs actions =
     monadicIOSim_ prop
   where
     prop :: forall s. PropertyM (IOSim s) Property
@@ -404,7 +407,7 @@ propLockstep_RealImpl_MockFS_IOSim tr checkFS checkRefs actions =
                 (QD.runActions @(Lockstep (ModelState R.Table)) actions)
                 env
         faults <- QC.run $ readMutVar faultsVar
-        p <- QC.run $ release_RealImpl_MockFS checkFS checkRefs (fsVar, session, errsVar, logVar)
+        p <- QC.run $ release_RealImpl_MockFS checkCleanup checkFS checkRefs (fsVar, session, errsVar, logVar)
         pure
           $ tagFinalState actions tagFinalState'
           $ QC.tabulate "Fault results" (fmap show faults)
@@ -422,6 +425,13 @@ acquire_RealImpl_MockFS tr = do
     session <- R.openSession tr hfs hbio (mkFsPath [])
     pure (fsVar, session, errsVar, logVar)
 
+-- | Flag that turns on\/off cleanup checks.
+--
+-- If injected errors left the database in an inconsistent state, then property
+-- cleanup might throw exceptions. If 'CheckCleanup' is used, this will lead to
+-- failing properties, otherwise the exceptions are ignored.
+data CheckCleanup = CheckCleanup | NoCheckCleanup
+
 -- | Flag that turns on\/off file system checks.
 data CheckFS = CheckFS | NoCheckFS
 
@@ -430,17 +440,18 @@ data CheckRefs = CheckRefs | NoCheckRefs
 
 release_RealImpl_MockFS ::
      R.IOLike m
-  => CheckFS
+  => CheckCleanup
+  -> CheckFS
   -> CheckRefs
   -> (StrictTMVar m MockFS, Class.Session R.Table m, StrictTVar m Errors, StrictTVar m ErrorsLog)
   -> m Property
-release_RealImpl_MockFS checkFS checkRefs (fsVar, session, _, _) = do
+release_RealImpl_MockFS checkCleanup checkFS checkRefs (fsVar, session, _, _) = do
     sts <- getAllSessionTables session
-    forM_ sts $ \(SomeTable t) -> R.close t
+    e1 <- try @_ @SomeException $ forM_ sts $ \(SomeTable t) -> R.close t
     scs <- getAllSessionCursors session
-    forM_ scs $ \(SomeCursor c) -> R.closeCursor c
+    e2 <- try @_ @SomeException $ forM_ scs $ \(SomeCursor c) -> R.closeCursor c
     mockfs1 <- atomically $ readTMVar fsVar
-    R.closeSession session
+    e3 <- try @_ @SomeException $ R.closeSession session
     mockfs2 <- atomically $ readTMVar fsVar
 
     let
@@ -452,7 +463,22 @@ release_RealImpl_MockFS checkFS checkRefs (fsVar, session, _, _) = do
       CheckRefs   -> propCheckForgottenRefs
       NoCheckRefs -> propIgnoreForgottenRefs
 
-    pure (propFS QC..&&. propRefs)
+    let finalProp = propFS QC..&&. propRefs
+
+    case checkCleanup of
+      NoCheckCleanup -> pure finalProp
+      CheckCleanup ->
+        let mkCounterexample s e =
+              "Error occurred during property cleanup while closing "
+                <> s <> ":" <>  displayException e
+        in  pure $ case (e1, e2, e3) of
+              (Left e, _, _) ->
+                QC.counterexample (mkCounterexample "tables" e) False
+              (_, Left e, _) ->
+                QC.counterexample (mkCounterexample "cursors" e) False
+              (_, _, Left e) ->
+                QC.counterexample (mkCounterexample "the session" e) False
+              _ -> finalProp
 
 data SomeTable m = SomeTable (forall k v b. R.Table m k v b)
 data SomeCursor m = SomeCursor (forall k v b. R.Cursor m k v b)
