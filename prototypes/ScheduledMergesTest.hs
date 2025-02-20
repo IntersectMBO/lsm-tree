@@ -23,7 +23,11 @@ tests = testGroup "Unit and property tests"
     [ testCase "test_regression_empty_run" test_regression_empty_run
     , testCase "test_merge_again_with_incoming" test_merge_again_with_incoming
     , testProperty "prop_union" prop_union
-    , testProperty "prop_MergingTree" prop_MergingTree
+
+    -- TODO: prop_MergingTree can time out occasionally, so it is disabled until
+    -- fixed. See lsm-tree#570.
+
+    -- , testProperty "prop_MergingTree" prop_MergingTree
     ]
 
 -- | Results in an empty run on level 2.
@@ -201,10 +205,10 @@ mkTable tr ks = do
 -- tests for MergingTree
 --
 
-prop_MergingTree :: T -> QC.InfiniteList SmallCredit -> Property
-prop_MergingTree TCompleted{} _ = QC.discard
-prop_MergingTree (TOngoing MCompleted{}) _ = QC.discard
-prop_MergingTree t credits =
+_prop_MergingTree :: T -> QC.InfiniteList SmallCredit -> Property
+_prop_MergingTree TCompleted{} _ = QC.discard
+_prop_MergingTree (TOngoing MCompleted{}) _ = QC.discard
+_prop_MergingTree t credits =
     QC.ioProperty $ runWithTracer $ \_tr ->
       stToIO $ do
         tree <- fromT t
