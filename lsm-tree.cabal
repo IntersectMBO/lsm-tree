@@ -447,6 +447,7 @@ test-suite lsm-tree-test
     , quickcheck-instances
     , quickcheck-lockstep
     , random
+    , safe-wild-cards
     , semialign
     , split
     , stm
