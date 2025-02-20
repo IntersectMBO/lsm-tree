@@ -50,21 +50,23 @@ import           System.FS.BlockIO.API (HasBlockIO)
 -- Since we always resolve all entries of the same key in one go, there is no
 -- need to store incompletely-resolved entries.
 data Merge t m h = Merge {
-      narrowMergeType :: !t
-      -- | We also store @toMergeType narrowMergeType@ here to avoid recomputing
-      -- it again and again for each call to 'steps', which would also add
-      -- an 'IsMergeType' constraint to large parts of the interface.
-    , mergeType       :: !MergeType
-    , mergeMappend    :: !Mappend
-    , mergeReaders    :: {-# UNPACK #-} !(Readers m h)
-    , mergeBuilder    :: !(RunBuilder m h)
+      mergeType        :: !t
+      -- | We also store @isLastLevel mergeType@ and @isUnion mergeType@ here to
+      -- avoid recomputing them it again and again for each call to 'steps',
+      -- which would also add an 'IsMergeType' constraint to large parts of the
+      -- interface.
+    , mergeIsLastLevel :: !Bool
+    , mergeIsUnion     :: !Bool
+    , mergeMappend     :: !Mappend
+    , mergeReaders     :: {-# UNPACK #-} !(Readers m h)
+    , mergeBuilder     :: !(RunBuilder m h)
       -- | The caching policy to use for the output Run.
-    , mergeCaching    :: !RunDataCaching
+    , mergeCaching     :: !RunDataCaching
       -- | The result of the latest call to 'steps'. This is used to determine
       -- whether a merge can be 'complete'd.
-    , mergeState      :: !(MutVar (PrimState m) MergeState)
-    , mergeHasFS      :: !(HasFS m h)
-    , mergeHasBlockIO :: !(HasBlockIO m h)
+    , mergeState       :: !(MutVar (PrimState m) MergeState)
+    , mergeHasFS       :: !(HasFS m h)
+    , mergeHasBlockIO  :: !(HasBlockIO m h)
     }
 
 -- | The current state of the merge.
@@ -82,16 +84,18 @@ data MergeState =
 
 -- | Merges can either exist on a level of the LSM, or be a union merge of two
 -- tables.
---
--- A last level merge behaves differently from a mid-level merge: last level
--- merges can actually remove delete operations, whereas mid-level merges must
--- preserve them.
---
--- Union merges follow the semantics of @Data.Map.unionWith (<>)@. Since the
--- input runs are semantically treated like @Data.Map@s, deletes are ignored
--- and inserts act like mupserts, so they need to be merged monoidally using
--- 'resolveValue'.
---
+class IsMergeType t where
+  -- | A last level merge behaves differently from a mid-level merge: last level
+  -- merges can actually remove delete operations, whereas mid-level merges must
+  -- preserve them.
+  isLastLevel :: t -> Bool
+  -- | Union merges follow the semantics of @Data.Map.unionWith (<>)@. Since the
+  -- input runs are semantically treated like @Data.Map@s, deletes are ignored
+  -- and inserts act like mupserts, so they need to be merged monoidally using
+  -- 'resolveValue'.
+  isUnion :: t -> Bool
+
+-- | Fully general merge type, mainly useful for testing.
 data MergeType = MergeTypeMidLevel | MergeTypeLastLevel | MergeTypeUnion
   deriving stock (Eq, Show)
 
@@ -100,13 +104,15 @@ instance NFData MergeType where
   rnf MergeTypeLastLevel = ()
   rnf MergeTypeUnion     = ()
 
-class IsMergeType t where
-  -- TODO: have @isLastLevel :: t -> Bool@ and @isUnion :: t -> Bool@ instead,
-  -- like in the the prototype?
-  toMergeType :: t -> MergeType
-
 instance IsMergeType MergeType where
-  toMergeType = id
+  isLastLevel = \case
+      MergeTypeMidLevel  -> False
+      MergeTypeLastLevel -> True
+      MergeTypeUnion     -> True
+  isUnion = \case
+      MergeTypeMidLevel  -> False
+      MergeTypeLastLevel -> False
+      MergeTypeUnion     -> True
 
 -- | Different types of merges created as part of a regular (non-union) level.
 --
@@ -121,9 +127,10 @@ instance NFData LevelMergeType where
   rnf MergeLastLevel = ()
 
 instance IsMergeType LevelMergeType where
-  toMergeType = \case
-      MergeMidLevel  -> MergeTypeMidLevel
-      MergeLastLevel -> MergeTypeLastLevel
+  isLastLevel = \case
+      MergeMidLevel  -> False
+      MergeLastLevel -> True
+  isUnion = const False
 
 -- | Different types of merges created as part of the merging tree.
 data TreeMergeType = MergeLevel | MergeUnion
@@ -134,9 +141,10 @@ instance NFData TreeMergeType where
   rnf MergeUnion = ()
 
 instance IsMergeType TreeMergeType where
-  toMergeType = \case
-      MergeLevel -> MergeTypeLastLevel  -- node merges are always last level
-      MergeUnion -> MergeTypeUnion
+  isLastLevel = const True
+  isUnion = \case
+      MergeLevel -> False
+      MergeUnion -> True
 
 type Mappend = SerialisedValue -> SerialisedValue -> SerialisedValue
 
@@ -166,8 +174,7 @@ new ::
   -> Run.RunFsPaths
   -> V.Vector (Ref (Run m h))
   -> m (Maybe (Merge t m h))
-new hfs hbio mergeCaching alloc indexType narrowMergeType mergeMappend
-      targetPaths runs = do
+new hfs hbio mergeCaching alloc indexType mergeType mergeMappend targetPaths runs = do
     -- no offset, no write buffer
     mreaders <- Readers.new Readers.NoOffsetKey Nothing runs
     for mreaders $ \mergeReaders -> do
@@ -176,7 +183,8 @@ new hfs hbio mergeCaching alloc indexType narrowMergeType mergeMappend
       mergeBuilder <- Builder.new hfs hbio targetPaths numEntries alloc indexType
       mergeState <- newMutVar $! Merging
       return Merge {
-          mergeType = toMergeType narrowMergeType
+          mergeIsLastLevel = isLastLevel mergeType
+        , mergeIsUnion = isUnion mergeType
         , mergeHasFS = hfs
         , mergeHasBlockIO = hbio
         , ..
@@ -310,13 +318,11 @@ steps m@Merge {..} requestedSteps = assertStepsInvariant <$> do
     -- to satisfy this precondition when it calls @steps@, so for now we do the
     -- check.
     readMutVar mergeState >>= \case
-      Merging -> case mergeType of
-        MergeTypeMidLevel  -> doStepsLevel m requestedSteps
-        MergeTypeLastLevel -> doStepsLevel m requestedSteps
-        MergeTypeUnion     -> doStepsUnion m requestedSteps
+      Merging     -> if mergeIsUnion then doStepsUnion m requestedSteps
+                                     else doStepsLevel m requestedSteps
       MergingDone -> pure (0, MergeDone)
-      Completed -> error "steps: Merge is completed"
-      Closed -> error "steps: Merge is closed"
+      Completed   -> error "steps: Merge is completed"
+      Closed      -> error "steps: Merge is closed"
   where
     assertStepsInvariant res = assert (stepsInvariant requestedSteps res) res
 
@@ -329,7 +335,7 @@ doStepsLevel ::
   => Merge t m h
   -> Int  -- ^ How many input entries to consume (at least)
   -> m (Int, StepResult)
-doStepsLevel Merge {..} requestedSteps = go 0
+doStepsLevel m@Merge {..} requestedSteps = go 0
   where
     go !n
       | n >= requestedSteps =
@@ -341,7 +347,7 @@ doStepsLevel Merge {..} requestedSteps = go 0
               handleEntry (n + 1) key entry
             Readers.Drained -> do
               -- no future entries, no previous entry to resolve, just write!
-              writeReaderEntry mergeType mergeBuilder key entry
+              writeReaderEntry m key entry
               writeMutVar mergeState $! MergingDone
               pure (n + 1, MergeDone)
 
@@ -353,7 +359,7 @@ doStepsLevel Merge {..} requestedSteps = go 0
         handleMupdate n key (Reader.appendOverflow len overflowPages v)
     handleEntry !n !key entry = do
         -- otherwise, we can just drop all following entries of same key
-        writeReaderEntry mergeType mergeBuilder key entry
+        writeReaderEntry m key entry
         dropRemaining n key
 
     -- the value is from a mupsert, complete (not just a prefix)
@@ -362,7 +368,7 @@ doStepsLevel Merge {..} requestedSteps = go 0
         if nextKey /= key
           then do
             -- resolved all entries for this key, write it
-            writeSerialisedEntry mergeType mergeBuilder key (Mupdate v)
+            writeSerialisedEntry m key (Mupdate v)
             go n
           else do
             (_, nextEntry, hasMore) <- Readers.pop mergeReaders
@@ -377,10 +383,10 @@ doStepsLevel Merge {..} requestedSteps = go 0
                   handleMupdate (n + 1) key v'
                 _ -> do
                   -- done with this key, now the remaining entries are obsolete
-                  writeSerialisedEntry mergeType mergeBuilder key resolved
+                  writeSerialisedEntry m key resolved
                   dropRemaining (n + 1) key
               Readers.Drained -> do
-                writeSerialisedEntry mergeType mergeBuilder key resolved
+                writeSerialisedEntry m key resolved
                 writeMutVar mergeState $! MergingDone
                 pure (n + 1, MergeDone)
 
@@ -401,7 +407,7 @@ doStepsUnion ::
   => Merge t m h
   -> Int  -- ^ How many input entries to consume (at least)
   -> m (Int, StepResult)
-doStepsUnion Merge {..} requestedSteps = go 0
+doStepsUnion m@Merge {..} requestedSteps = go 0
   where
     go !n
       | n >= requestedSteps =
@@ -420,7 +426,7 @@ doStepsUnion Merge {..} requestedSteps = go 0
     -- encoding it as something like `Const | Resolve (_ -> _ -> _)`.
     handleEntry !n !key !entry Readers.Drained = do
         -- no future entries, no previous entry to resolve, just write!
-        writeReaderEntry mergeType mergeBuilder key entry
+        writeReaderEntry m key entry
         writeMutVar mergeState $! MergingDone
         pure (n, MergeDone)
 
@@ -429,7 +435,7 @@ doStepsUnion Merge {..} requestedSteps = go 0
         if nextKey /= key
           then do
             -- resolved all entries for this key, write it
-            writeReaderEntry mergeType mergeBuilder key entry
+            writeReaderEntry m key entry
             go n
           else do
             (_, nextEntry, hasMore) <- Readers.pop mergeReaders
@@ -439,20 +445,14 @@ doStepsUnion Merge {..} requestedSteps = go 0
                              (Reader.toFullEntry nextEntry)
             handleEntry (n + 1) key (Reader.Entry resolved) hasMore
 
-{-# SPECIALISE writeReaderEntry ::
-     MergeType
-  -> RunBuilder IO h
-  -> SerialisedKey
-  -> Reader.Entry IO h
-  -> IO () #-}
+{-# INLINE writeReaderEntry #-}
 writeReaderEntry ::
      (MonadSTM m, MonadST m, MonadThrow m)
-  => MergeType
-  -> RunBuilder m h
+  => Merge t m h
   -> SerialisedKey
   -> Reader.Entry m h
   -> m ()
-writeReaderEntry mergeType builder key (Reader.Entry entryFull) =
+writeReaderEntry m key (Reader.Entry entryFull) =
       -- Small entry.
       -- Note that this small entry could be the only one on the page. We only
       -- care about it being small, not single-entry, since it could still end
@@ -462,43 +462,36 @@ writeReaderEntry mergeType builder key (Reader.Entry entryFull) =
       -- entry of a page (which would for example happen a lot if most entries
       -- have 2k-4k bytes). In that case we could have copied the RawPage
       -- (but we find out too late to easily exploit it).
-      writeSerialisedEntry mergeType builder key entryFull
-writeReaderEntry mergeType builder key entry@(Reader.EntryOverflow prefix page _ overflowPages)
+      writeSerialisedEntry m key entryFull
+writeReaderEntry m key entry@(Reader.EntryOverflow prefix page _ overflowPages)
   | InsertWithBlob {} <- prefix =
-      assert (shouldWriteEntry prefix mergeType) $ do -- large, can't be delete
+      assert (shouldWriteEntry m prefix) $ do -- large, can't be delete
         -- has blob, we can't just copy the first page, fall back
         -- we simply append the overflow pages to the value
-        Builder.addKeyOp builder key (Reader.toFullEntry entry)
+        Builder.addKeyOp (mergeBuilder m) key (Reader.toFullEntry entry)
         -- TODO(optimise): This copies the overflow pages unnecessarily.
         -- We could extend the RunBuilder API to allow to either:
         -- 1. write an Entry (containing the value prefix) + [RawOverflowPage]
         -- 2. write a RawPage + SerialisedBlob + [RawOverflowPage], rewriting
         --      the raw page's blob offset (slightly faster, but a bit hacky)
   | otherwise =
-      assert (shouldWriteEntry prefix mergeType) $  -- large, can't be delete
+      assert (shouldWriteEntry m prefix) $  -- large, can't be delete
         -- no blob, directly copy all pages as they are
-        Builder.addLargeSerialisedKeyOp builder key page overflowPages
+        Builder.addLargeSerialisedKeyOp (mergeBuilder m) key page overflowPages
 
-{-# SPECIALISE writeSerialisedEntry ::
-     MergeType
-  -> RunBuilder IO h
-  -> SerialisedKey
-  -> Entry SerialisedValue (RawBlobRef IO h)
-  -> IO () #-}
+{-# INLINE writeSerialisedEntry #-}
 writeSerialisedEntry ::
      (MonadSTM m, MonadST m, MonadThrow m)
-  => MergeType
-  -> RunBuilder m h
+  => Merge t m h
   -> SerialisedKey
   -> Entry SerialisedValue (RawBlobRef m h)
   -> m ()
-writeSerialisedEntry mergeType builder key entry =
-    when (shouldWriteEntry entry mergeType) $
-      Builder.addKeyOp builder key entry
+writeSerialisedEntry m key entry =
+    when (shouldWriteEntry m entry) $
+      Builder.addKeyOp (mergeBuilder m) key entry
 
--- On the last level we could also turn Mupdate into Insert,
--- but no need to complicate things.
-shouldWriteEntry :: Entry v b -> MergeType -> Bool
-shouldWriteEntry Delete MergeTypeLastLevel = False
-shouldWriteEntry Delete MergeTypeUnion     = False
-shouldWriteEntry _      _                  = True
+-- On the last level we could also turn Mupdate into Insert, but no need to
+-- complicate things.
+shouldWriteEntry :: Merge t m h -> Entry v b -> Bool
+shouldWriteEntry m Delete = not (mergeIsLastLevel m)
+shouldWriteEntry _ _      = True

@@ -221,7 +221,7 @@ toSnapMergingRunState ::
   -> SnapMergingRunState t (Ref (Run m h))
 toSnapMergingRunState = \case
     MR.CompletedMerge r  -> SnapCompletedMerge r
-    MR.OngoingMerge rs m -> SnapOngoingMerge rs (Merge.narrowMergeType m)
+    MR.OngoingMerge rs m -> SnapOngoingMerge rs (Merge.mergeType m)
 
 {-------------------------------------------------------------------------------
   Write Buffer
