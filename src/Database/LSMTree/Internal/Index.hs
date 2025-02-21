@@ -2,6 +2,11 @@
     Provides support for working with fence pointer indexes of different types
     and their accumulators.
 
+    Keys used with an index are subject to the key size constraints of the
+    concrete type of the index. These constraints are stated in the descriptions
+    of the modules "Database.LSMTree.Internal.Index.Compact" and
+    "Database.LSMTree.Internal.Index.Ordinary", respectively.
+
     Part of the functionality that this module provides is the construction of
     serialised indexes in a mostly incremental fashion. The incremental part of
     serialisation is provided through index accumulators, while the
@@ -138,13 +143,7 @@ fromSBS Ordinary input = second OrdinaryIndex <$> Ordinary.fromSBS input
     an index under incremental construction.
 
     Incremental index construction is only guaranteed to work correctly when the
-    following conditions are met:
-
-      * The supplied key ranges do not overlap and are given in ascending order.
-
-      * Each supplied key is at least 8 and at most 65535 bytes long.
-        (Currently, construction of compact indexes needs the former and
-        construction of ordinary indexes needs the latter bound.)
+    supplied key ranges do not overlap and are given in ascending order.
 -}
 data IndexAcc s = CompactIndexAcc  (IndexCompactAcc  s)
                 | OrdinaryIndexAcc (IndexOrdinaryAcc s)

@@ -1,6 +1,10 @@
 {- HLINT ignore "Avoid restricted alias" -}
 
--- | A general-purpose fence pointer index.
+{-|
+    A general-purpose fence pointer index.
+
+    Keys used with an ordinary index must be smaller than 64 KiB.
+-}
 module Database.LSMTree.Internal.Index.Ordinary
 (
     IndexOrdinary (IndexOrdinary),

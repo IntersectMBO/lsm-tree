@@ -1,5 +1,7 @@
 -- | A compact fence-pointer index for uniformly distributed keys.
 --
+-- Keys used with a compact index must be at least 8 bytes long.
+--
 -- TODO: add utility functions for clash probability calculations
 --
 module Database.LSMTree.Internal.Index.Compact (
