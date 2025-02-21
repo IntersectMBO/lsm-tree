@@ -20,6 +20,7 @@ module Database.LSMTree.Internal.MergeSchedule (
   , newIncomingCompletedMergingRun
   , newIncomingMergingRun
   , supplyCreditsIncomingRun
+  , snapshotIncommingRun
     -- * Union level
   , UnionLevel (..)
     -- * Flushes and scheduled merges
@@ -534,6 +535,36 @@ immediatelyCompleteIncomingRun tr ln (Merging _ _ _ mr) = do
     bracket (MR.expectCompleted mr) releaseRef $ \r ->
       traceWith tr $ AtLevel ln $
         TraceCompletedMerge (Run.size r) (Run.runFsPathsNumber r)
+
+{-# SPECIALISE snapshotIncommingRun ::
+     IncomingRun IO h
+  -> IO (Either (Ref (Run IO h))
+                (MergePolicyForLevel,
+                 NumRuns,
+                 NominalDebt,
+                 NominalCredits,
+                 MergeDebt,
+                 MergeCredits,
+                 MR.MergingRunState IO h)) #-}
+snapshotIncommingRun ::
+     (PrimMonad m, MonadMVar m)
+  => IncomingRun m h
+  -> m (Either (Ref (Run m h))
+               (MergePolicyForLevel,
+                NumRuns,
+                NominalDebt,
+                NominalCredits,
+                MergeDebt,
+                MergeCredits,
+                MR.MergingRunState m h))
+snapshotIncommingRun (Single r) = pure (Left r)
+snapshotIncommingRun (Merging mergePolicy nominalDebt nominalCreditsVar mr) = do
+    (numRuns, mergeDebt, mergeCredit, state) <- MR.snapshot mr
+    nominalCredits <- readPrimVar nominalCreditsVar
+    pure (Right (mergePolicy, numRuns,
+                 nominalDebt, nominalCredits,
+                 mergeDebt, mergeCredit,
+                 state))
 
 {-------------------------------------------------------------------------------
   Union level
