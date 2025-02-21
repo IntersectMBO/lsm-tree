@@ -19,12 +19,12 @@ import           Database.LSMTree.Internal.BlobFile (BlobFile)
 import           Database.LSMTree.Internal.BlobRef (RawBlobRef (..),
                      mkRawBlobRef)
 import qualified Database.LSMTree.Internal.Entry as E
+import           Database.LSMTree.Internal.FS.PointedHandle
 import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
 import           Database.LSMTree.Internal.Paths
 import           Database.LSMTree.Internal.RawPage
 import           Database.LSMTree.Internal.RunReader (Entry (..), Result (..),
-                     mkEntryOverflow, readDiskPage, readOverflowPages,
-                     toFullEntry)
+                     mkEntryOverflow, toFullEntry)
 import           Database.LSMTree.Internal.Serialise (SerialisedValue)
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
@@ -74,7 +74,7 @@ data WriteBufferReader m h = WriteBufferReader {
       readerCurrentPage    :: !(MutVar (PrimState m) (Maybe RawPage))
       -- | The index of the entry to be returned by the next call to 'next'.
     , readerCurrentEntryNo :: !(PrimVar (PrimState m) Word16)
-    , readerKOpsHandle     :: !(FS.Handle h)
+    , readerKOpsHandle     :: !(PointedHandle m h)
     , readerBlobFile       :: !(Ref (BlobFile m h))
     , readerHasFS          :: !(HasFS m h)
     , readerHasBlockIO     :: !(HasBlockIO m h)
@@ -103,9 +103,9 @@ new :: forall m h.
   -> Ref (BlobFile m h)
   -> m (WriteBufferReader m h)
 new readerHasFS readerHasBlockIO kOpsPath blobFile =
-    bracketOnError openKOps (FS.hClose readerHasFS) $ \readerKOpsHandle -> do
+    bracketOnError openKOps closeKOps $ \readerKOpsHandle -> do
       -- Double the file readahead window (only applies to this file descriptor)
-      FS.hAdviseAll readerHasBlockIO readerKOpsHandle FS.AdviceSequential
+      FS.hAdviseAll readerHasBlockIO (fileHandle readerKOpsHandle) FS.AdviceSequential
       bracketOnError (dupRef blobFile) releaseRef $ \readerBlobFile -> do
         -- Load first page from disk, if it exists.
         readerCurrentEntryNo <- newPrimVar (0 :: Word16)
@@ -113,7 +113,8 @@ new readerHasFS readerHasBlockIO kOpsPath blobFile =
         readerCurrentPage <- newMutVar firstPage
         pure $ WriteBufferReader{..}
   where
-    openKOps = FS.hOpen readerHasFS (unForKOps kOpsPath) FS.ReadMode
+    openKOps = openReadMode readerHasFS (unForKOps kOpsPath)
+    closeKOps = FS.hClose readerHasFS . fileHandle
 
 {-# SPECIALISE
   next ::
@@ -184,5 +185,5 @@ close ::
   => WriteBufferReader m h
   -> m ()
 close WriteBufferReader{..} = do
-  FS.hClose readerHasFS readerKOpsHandle
+  FS.hClose readerHasFS (fileHandle readerKOpsHandle)
     `finally` releaseRef readerBlobFile

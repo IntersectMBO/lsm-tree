@@ -29,21 +29,18 @@ module Database.LSMTree.Internal.WriteBufferBlobs (
     addBlob,
     mkRawBlobRef,
     mkWeakBlobRef,
-    -- * For tests
-    FilePointer (..)
   ) where
 
 import           Control.DeepSeq (NFData (..))
 import           Control.Monad (void)
 import           Control.Monad.Class.MonadThrow
-import           Control.Monad.Primitive (PrimMonad, PrimState)
+import           Control.Monad.Primitive (PrimMonad)
 import           Control.RefCount
-import           Data.Primitive.PrimVar as P
-import           Data.Word (Word64)
 import           Database.LSMTree.Internal.BlobFile
 import qualified Database.LSMTree.Internal.BlobFile as BlobFile
 import           Database.LSMTree.Internal.BlobRef (RawBlobRef (..),
                      WeakBlobRef (..))
+import           Database.LSMTree.Internal.FS.FilePointer
 import           Database.LSMTree.Internal.Serialise
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
@@ -249,24 +246,3 @@ mkWeakBlobRef (DeRef WriteBufferBlobs {blobFile}) blobspan =
       weakBlobRefFile = mkWeakRef blobFile,
       weakBlobRefSpan = blobspan
     }
-
-
--- | A mutable file offset, suitable to share between threads.
---
--- This pointer is limited to 31-bit file offsets on 32-bit systems. This should
--- be a sufficiently large limit that we never reach it in practice.
-newtype FilePointer m = FilePointer (PrimVar (PrimState m) Int)
-
-instance NFData (FilePointer m) where
-  rnf (FilePointer var) = var `seq` ()
-
-{-# SPECIALISE newFilePointer :: IO (FilePointer IO) #-}
-newFilePointer :: PrimMonad m => m (FilePointer m)
-newFilePointer = FilePointer <$> P.newPrimVar 0
-
-{-# SPECIALISE updateFilePointer :: FilePointer IO -> Int -> IO Word64 #-}
--- | Update the file offset by a given amount and return the new offset. This
--- is safe to use concurrently.
---
-updateFilePointer :: PrimMonad m => FilePointer m -> Int -> m Word64
-updateFilePointer (FilePointer var) n = fromIntegral <$> P.fetchAddInt var n

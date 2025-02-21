@@ -131,6 +131,8 @@ library
     Database.LSMTree.Internal.CRC32C
     Database.LSMTree.Internal.Cursor
     Database.LSMTree.Internal.Entry
+    Database.LSMTree.Internal.FS.FilePointer
+    Database.LSMTree.Internal.FS.PointedHandle
     Database.LSMTree.Internal.Index
     Database.LSMTree.Internal.Index.Compact
     Database.LSMTree.Internal.Index.CompactAcc

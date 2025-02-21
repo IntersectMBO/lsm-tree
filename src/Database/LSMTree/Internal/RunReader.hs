@@ -12,42 +12,36 @@ module Database.LSMTree.Internal.RunReader (
   , appendOverflow
     -- * Exported for WriteBufferReader
   , mkEntryOverflow
-  , readDiskPage
-  , readOverflowPages
   ) where
 
 import           Control.Exception (assert)
-import           Control.Monad (guard, when)
+import           Control.Monad
 import           Control.Monad.Class.MonadST (MonadST (..))
 import           Control.Monad.Class.MonadSTM (MonadSTM (..))
-import           Control.Monad.Class.MonadThrow (MonadCatch (..),
-                     MonadMask (..), MonadThrow (..))
+import           Control.Monad.Class.MonadThrow (MonadMask (..))
 import           Control.Monad.Primitive (PrimMonad (..))
 import           Control.RefCount
 import           Data.Bifunctor (first)
 import           Data.Maybe (isNothing)
-import           Data.Primitive.ByteArray (newPinnedByteArray,
-                     unsafeFreezeByteArray)
 import           Data.Primitive.MutVar (MutVar, newMutVar, readMutVar,
                      writeMutVar)
 import           Data.Primitive.PrimVar
-import           Data.Word (Word16, Word32)
-import           Database.LSMTree.Internal.BitMath (ceilDivPageSize,
-                     mulPageSize, roundUpToPageSize)
+import           Data.Word
+import           Database.LSMTree.Internal.BitMath (ceilDivPageSize)
 import           Database.LSMTree.Internal.BlobFile as BlobFile
 import           Database.LSMTree.Internal.BlobRef as BlobRef
 import qualified Database.LSMTree.Internal.Entry as E
+import           Database.LSMTree.Internal.FS.PointedHandle
 import qualified Database.LSMTree.Internal.Index as Index (search)
-import           Database.LSMTree.Internal.Page (PageNo (..), PageSpan (..),
-                     getNumPages, nextPageNo)
+import           Database.LSMTree.Internal.Page (PageSpan (..), getNumPages,
+                     nextPageNo)
 import           Database.LSMTree.Internal.Paths
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.RawOverflowPage (RawOverflowPage,
-                     pinnedByteArrayToOverflowPages, rawOverflowPageRawBytes)
+                     rawOverflowPageRawBytes)
 import           Database.LSMTree.Internal.RawPage
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.Serialise
-import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
 import qualified System.FS.BlockIO.API as FS
 import           System.FS.BlockIO.API (HasBlockIO)
@@ -79,7 +73,7 @@ data RunReader m h = RunReader {
       -- track the position of the next disk page to read, instead of keeping
       -- a counter ourselves. Also, the run's handle is supposed to be opened
       -- with @O_DIRECT@, which is counterproductive here.
-    , readerKOpsHandle     :: !(FS.Handle h)
+    , readerKOpsHandle     :: !(PointedHandle m h)
       -- | The blob file from the run this reader is reading from.
     , readerBlobFile       :: !(Ref (BlobFile m h))
     , readerRunDataCaching :: !Run.RunDataCaching
@@ -106,15 +100,16 @@ new !offsetKey
       runHasBlockIO     = readerHasBlockIO,
       runIndex          = index
     }) = do
-    (readerKOpsHandle :: FS.Handle h) <-
-      FS.hOpen readerHasFS (runKOpsPath (Run.runFsPaths readerRun)) FS.ReadMode >>= \h -> do
-        fileSize <- FS.hGetSize readerHasFS h
-        let fileSizeInPages = fileSize `div` toEnum pageSize
-        let indexedPages = getNumPages $ Run.sizeInPages readerRun
-        assert (indexedPages == fileSizeInPages) $ pure h
+    readerKOpsHandle <- openReadMode readerHasFS (runKOpsPath (Run.runFsPaths readerRun))
+
+    fileSize <- phGetSize readerKOpsHandle
+    let fileSizeInPages = fileSize `div` toEnum (fromIntegral pageSize)
+    let indexedPages = getNumPages $ Run.sizeInPages readerRun
+    assert (indexedPages == fileSizeInPages) $ pure ()
+
     -- Advise the OS that this file is being read sequentially, which will
     -- double the readahead window in response (only for this file descriptor)
-    FS.hAdviseAll readerHasBlockIO readerKOpsHandle FS.AdviceSequential
+    FS.hAdviseAll readerHasBlockIO (fileHandle readerKOpsHandle) FS.AdviceSequential
 
     (page, entryNo) <- seekFirstEntry readerKOpsHandle
 
@@ -136,7 +131,7 @@ new !offsetKey
           OffsetKey offset -> do
             -- Use the index to find the page number for the key (if it exists).
             let PageSpan pageNo pageEnd = Index.search offset index
-            seekToDiskPage readerHasFS pageNo readerKOpsHandle
+            seekToDiskPage pageNo readerKOpsHandle
             readDiskPage readerHasFS readerKOpsHandle >>= \case
               Nothing ->
                 return (Nothing, 0)
@@ -156,7 +151,7 @@ new !offsetKey
                     -- page and the first key in the next page.
                     -- Thus the reader should be initialised to return keys
                     -- starting from the next (non-overflow) page.
-                    seekToDiskPage readerHasFS (nextPageNo pageEnd) readerKOpsHandle
+                    seekToDiskPage (nextPageNo pageEnd) readerKOpsHandle
                     nextPage <- readDiskPage readerHasFS readerKOpsHandle
                     return (nextPage, 0)
 
@@ -173,8 +168,8 @@ close ::
 close RunReader{..} = do
     when (readerRunDataCaching == Run.NoCacheRunData) $
       -- drop the file from the OS page cache
-      FS.hDropCacheAll readerHasBlockIO readerKOpsHandle
-    FS.hClose readerHasFS readerKOpsHandle
+      FS.hDropCacheAll readerHasBlockIO (fileHandle readerKOpsHandle)
+    phClose readerHasFS readerKOpsHandle
     releaseRef readerBlobFile
     --TODO: arguably we should have distinct finish and close and require that
     -- readers are _always_ closed, even after they have been drained.
@@ -280,63 +275,3 @@ next reader@RunReader {..} = do
             overflowPages <- readOverflowPages readerHasFS readerKOpsHandle lenSuffix
             let rawEntry = mkEntryOverflow entry' page lenSuffix overflowPages
             return (ReadEntry key rawEntry)
-
-{-------------------------------------------------------------------------------
-  Utilities
--------------------------------------------------------------------------------}
-
-seekToDiskPage :: HasFS m h -> PageNo -> FS.Handle h -> m ()
-seekToDiskPage fs pageNo h = do
-    FS.hSeek fs h FS.AbsoluteSeek (pageNoToByteOffset pageNo)
-  where
-    pageNoToByteOffset (PageNo n) =
-        assert (n >= 0) $
-          mulPageSize (fromIntegral n)
-
-{-# SPECIALISE readDiskPage ::
-     HasFS IO h
-  -> FS.Handle h
-  -> IO (Maybe RawPage) #-}
--- | Returns 'Nothing' on EOF.
-readDiskPage ::
-     (MonadCatch m, PrimMonad m)
-  => HasFS m h
-  -> FS.Handle h
-  -> m (Maybe RawPage)
-readDiskPage fs h = do
-    mba <- newPinnedByteArray pageSize
-    -- TODO: make sure no other exception type can be thrown
-    --
-    -- TODO: if FS.FsReachEOF is thrown as an injected disk fault, then we
-    -- incorrectly deduce that the file has no more contents. We should probably
-    -- use an explicit file pointer instead in the style of 'FilePointer'.
-    handleJust (guard . FS.isFsErrorType FS.FsReachedEOF) (\_ -> pure Nothing) $ do
-      bytesRead <- FS.hGetBufExactly fs h mba 0 (fromIntegral pageSize)
-      assert (fromIntegral bytesRead == pageSize) $ pure ()
-      ba <- unsafeFreezeByteArray mba
-      let !rawPage = unsafeMakeRawPage ba 0
-      return (Just rawPage)
-
-pageSize :: Int
-pageSize = 4096
-
-{-# SPECIALISE readOverflowPages ::
-     HasFS IO h
-  -> FS.Handle h
-  -> Word32
-  -> IO [RawOverflowPage] #-}
--- | Throws exception on EOF. If a suffix was expected, the file should have it.
--- Reads full pages, despite the suffix only using part of the last page.
-readOverflowPages ::
-     (MonadSTM m, MonadThrow m, PrimMonad m)
-   => HasFS m h
-   -> FS.Handle h
-   -> Word32
-   -> m [RawOverflowPage]
-readOverflowPages fs h len = do
-    let lenPages = fromIntegral (roundUpToPageSize len)  -- always read whole pages
-    mba <- newPinnedByteArray lenPages
-    _ <- FS.hGetBufExactly fs h mba 0 (fromIntegral lenPages)
-    ba <- unsafeFreezeByteArray mba
-    -- should not copy since 'ba' is pinned and its length is a multiple of 4k.
-    return $ pinnedByteArrayToOverflowPages 0 lenPages ba

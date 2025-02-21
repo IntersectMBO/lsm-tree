@@ -41,6 +41,8 @@ import           Database.LSMTree.Internal.Chunk
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.CRC32C
 import           Database.LSMTree.Internal.Entry
+import           Database.LSMTree.Internal.FS.FilePointer
+import           Database.LSMTree.Internal.FS.PointedHandle
 import           Database.LSMTree.Internal.Index
 import           Database.LSMTree.Internal.Index.Compact
 import           Database.LSMTree.Internal.Index.CompactAcc
@@ -274,9 +276,22 @@ deriving stock instance Generic (WriteBufferBlobs m h)
 deriving anyclass instance (Typeable (PrimState m), Typeable m, Typeable h)
                         => NoThunks (WriteBufferBlobs m h)
 
+{-------------------------------------------------------------------------------
+  FilePointer
+-------------------------------------------------------------------------------}
+
 deriving stock instance Generic (FilePointer m)
 deriving anyclass instance Typeable (PrimState m)
                         => NoThunks (FilePointer m)
+
+
+{-------------------------------------------------------------------------------
+  PointedHandle
+-------------------------------------------------------------------------------}
+
+deriving stock instance Generic (PointedHandle m h)
+deriving anyclass instance (Typeable (PrimState m), Typeable h)
+                        => NoThunks (PointedHandle m h)
 
 {-------------------------------------------------------------------------------
   Index
