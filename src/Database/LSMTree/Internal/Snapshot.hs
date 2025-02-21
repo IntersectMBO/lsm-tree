@@ -463,10 +463,10 @@ fromSnapLevels reg hfs hbio conf uc resolve dir (SnapLevels levels) =
     fromSnapIncomingRun ln (SnapSingleRun run) =
         newIncomingSingleRun tr ln =<< dupRun run
 
-    fromSnapIncomingRun ln (SnapMergingRun mpfl nr md mc smrs) = do
+    fromSnapIncomingRun ln (SnapMergingRun mpfl nr md nc smrs) = do
       case smrs of
         SnapCompletedMerge r ->
-          newIncomingCompletedMergingRun tr reg ln mpfl nr md r
+          newIncomingCompletedMergingRun tr conf reg ln mpfl nr md r
 
         SnapOngoingMerge rs mt -> do
           ir <- newIncomingMergingRun tr hfs hbio dir uc
@@ -475,7 +475,7 @@ fromSnapLevels reg hfs hbio conf uc resolve dir (SnapLevels levels) =
           -- When a snapshot is created, merge progress is lost, so we have to
           -- redo merging work here. The MergeCredits in SnapMergingRun tracks
           -- how many credits were supplied before the snapshot was taken.
-          supplyCreditsIncomingRun conf ln ir mc
+          supplyCreditsIncomingRun conf ln ir nc
           return ir
 
     dupRun r = withRollback reg (dupRef r) releaseRef
