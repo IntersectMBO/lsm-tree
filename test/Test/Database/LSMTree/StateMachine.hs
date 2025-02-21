@@ -1038,7 +1038,10 @@ instance Eq (Obs h a) where
       -- See also 'Model.runModelMWithInjectedErrors' and
       -- 'runRealWithInjectedErrors'.
       (OEither (Left (OId lhs)), OEither (Left (OId rhs)))
-        | Just (_ :: Model.Err) <- cast lhs
+        | Just (e :: Model.Err) <- cast lhs
+        , case e of
+            Model.ErrOther _ -> False
+            _                -> True
         , Just Model.DefaultErrDiskFault <- cast rhs
         -> True
 
@@ -1707,20 +1710,37 @@ runRealWithInjectedErrors s env merrs k rollback =
       atomically $ writeTVar logVar emptyLog
       eith <- catchErr handlers $ FSSim.withErrors errsVar errs k
       errsLog <- readTVarIO logVar
-      -- TODO: turn assertions on @errsLog@ into 'Property's
       case eith of
-        Left (Model.ErrDiskFault _) -> do
+        Left e@(Model.ErrDiskFault _) -> do
           modifyMutVar faultsVar (InjectFaultInducedError s :)
-          assert (countNoisyErrors errsLog >= 1) $ pure ()
-          pure eith
-        Left _ -> do
-          assert (countNoisyErrors errsLog == 0) $ pure ()
-          pure eith
+          if countNoisyErrors errsLog == 0 then
+            pure $ Left $ Model.ErrOther $
+              -- If we injected 0 disk faults, but we still found an
+              -- ErrDiskFault, then there is a bug in our code. ErrDiskFaults
+              -- should not occur on the happy path.
+              "Found an ErrDiskFault error, but no disk faults were injected: " <> show e
+          else
+            pure eith
+        Left e -> do
+          if countNoisyErrors errsLog > 0 then
+            pure $ Left $ Model.ErrOther $
+              -- If we injected 1 or more disk faults, but we did not find an
+              -- ErrDiskFault, then there is a bug in our code. An injected disk
+              -- fault should always lead to an ErrDiskFault.
+              "Found a non-ErrDiskFault error, but disk faults were injected: " <> show e
+          else
+            pure eith
         Right x -> do
           modifyMutVar faultsVar (InjectFaultAccidentalSuccess s :)
           rollback x
-          assert (countNoisyErrors errsLog == 0) $ pure ()
-          pure $ Left $ Model.ErrDiskFault ("dummy: " <> s)
+          if (countNoisyErrors errsLog > 0) then
+            pure $ Left $ Model.ErrOther $
+              -- If we injected 1 or more disk faults, but the action
+              -- accidentally succeeded, then 1 or more errors were swallowed
+              -- that should have been found as ErrDiskFault.
+              "Action succeeded, but disk faults were injected. Errors were swallowed!"
+          else
+            pure $ Left $ Model.ErrDiskFault ("dummy: " <> s)
   where
     errsVar = envErrors env
     logVar = envErrorsLog env
