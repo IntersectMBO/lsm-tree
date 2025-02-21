@@ -49,14 +49,14 @@ import           Text.Printf (printf)
 
 tests :: TestTree
 tests = testGroup "Test.Database.LSMTree.Internal.Index.Compact" [
-    testProperty "prop_distribution @KeyForIndexCompact" $
-      prop_distribution @KeyForIndexCompact
+    testProperty "prop_distribution @BiasedKeyForIndexCompact" $
+      prop_distribution @BiasedKeyForIndexCompact
   , testProperty "prop_searchMinMaxKeysAfterConstruction" $
-      prop_searchMinMaxKeysAfterConstruction @KeyForIndexCompact 100
+      prop_searchMinMaxKeysAfterConstruction @BiasedKeyForIndexCompact 100
   , testProperty "prop_differentChunkSizesSameResults" $
-      prop_differentChunkSizesSameResults @KeyForIndexCompact
+      prop_differentChunkSizesSameResults @BiasedKeyForIndexCompact
   , testProperty "prop_singlesEquivMulti" $
-      prop_singlesEquivMulti @KeyForIndexCompact
+      prop_singlesEquivMulti @BiasedKeyForIndexCompact
   , testGroup "(De)serialisation" [
         testGroup "test Chunks generator" [
             testProperty "Arbitrary satisfies invariant" $
@@ -120,7 +120,7 @@ tests = testGroup "Test.Database.LSMTree.Internal.Index.Compact" [
       , testProperty "prop_roundtrip_chunks" $
           prop_roundtrip_chunks
       , testProperty "prop_roundtrip" $
-          prop_roundtrip @KeyForIndexCompact
+          prop_roundtrip @BiasedKeyForIndexCompact
       , testProperty "prop_total_deserialisation" $ withMaxSuccess 10000
           prop_total_deserialisation
       , testProperty "prop_total_deserialisation_whitebox" $ withMaxSuccess 10000
