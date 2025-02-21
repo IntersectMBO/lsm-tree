@@ -43,8 +43,8 @@ source-repository-package
     fs-api
     fs-sim
 
--- quickcheck-lockstep with more verbose counterexamples
+-- quickcheck-lockstep with shrinking for variables
 source-repository-package
   type: git
   location: https://github.com/well-typed/quickcheck-lockstep
-  tag: 845cd66d03d0410618c660dbcb21f58f66cf0931
+  tag: b511080f0344ba788bb3af2fb834a41c74af4ded

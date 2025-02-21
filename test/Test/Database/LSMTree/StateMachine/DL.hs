@@ -87,7 +87,7 @@ dl_example = do
         ups = V.fromList
             . map (\(k,v) -> (k, Insert v Nothing))
             . Map.toList $ kvs
-    action $ Action Nothing $ Updates ups (unsafeMkGVar var3 (OpFromRight `OpComp` OpId))
+    action $ Action Nothing $ Updates (Left $ unsafeMkGVar var3 (OpFromRight `OpComp` OpId)) ups
     -- This is a rather ugly assertion, and could be improved using some helper
     -- function(s). However, it does serve its purpose as checking that the
     -- insertions we just did were successful.
@@ -102,6 +102,16 @@ dl_example = do
 {-------------------------------------------------------------------------------
   Swallowed exceptions
 -------------------------------------------------------------------------------}
+
+{-
+--quickcheck-replay="(SMGen 601225290552401160 8241196702162822795,50)"
+
+--quickcheck-replay="(SMGen 1262390567463183010 1470447921673677017,56)"
+
+--quickcheck-replay="(SMGen 1761811726072439171 16251490036421965979,69)"
+-}
+
+
 
 -- | Test that the @lsm-tree@ library does not swallow exceptions.
 --

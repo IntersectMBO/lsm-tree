@@ -91,6 +91,7 @@ import           Control.Tracer (Tracer, nullTracer)
 import           Data.Bifunctor (Bifunctor (..))
 import           Data.Constraint (Dict (..))
 import           Data.Either (partitionEithers)
+import           Data.Function ((&))
 import           Data.Kind (Type)
 import           Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
@@ -131,23 +132,26 @@ import           System.FS.Sim.MockFS (MockFS)
 import           System.FS.Sim.Stream (Stream)
 import           System.IO.Temp (createTempDirectory,
                      getCanonicalTemporaryDirectory)
-import           Test.Database.LSMTree.StateMachine.Op (HasBlobRef (getBlobRef),
-                     Op (..))
+import qualified Test.Database.LSMTree.StateMachine.Op as Op
+import           Test.Database.LSMTree.StateMachine.Op (Dep (..),
+                     HasBlobRef (..), Op (..))
 import qualified Test.QuickCheck as QC
 import           Test.QuickCheck (Arbitrary, Gen, Property)
 import qualified Test.QuickCheck.Extras as QD
 import qualified Test.QuickCheck.Monadic as QC
 import           Test.QuickCheck.Monadic (PropertyM)
 import qualified Test.QuickCheck.StateModel as QD
-import           Test.QuickCheck.StateModel hiding (Var)
+import           Test.QuickCheck.StateModel hiding (Var, shrinkVar)
 import           Test.QuickCheck.StateModel.Lockstep
 import qualified Test.QuickCheck.StateModel.Lockstep.Defaults as Lockstep.Defaults
+import qualified Test.QuickCheck.StateModel.Lockstep.Op as Op
 import qualified Test.QuickCheck.StateModel.Lockstep.Run as Lockstep.Run
 import           Test.Tasty (TestTree, testGroup, withResource)
 import           Test.Tasty.QuickCheck (testProperty)
 import           Test.Util.FS (approximateEqStream, noRemoveDirectoryRecursiveE,
                      propNoOpenHandles, propNumOpenHandles)
 import           Test.Util.FS.Error
+import           Test.Util.Orphans ()
 import           Test.Util.PrettyProxy
 import           Test.Util.QC (Choice)
 import qualified Test.Util.QLS as QLS
@@ -670,6 +674,31 @@ type B a = (
 type C k v b = (K k, V v, B b)
 
 {-------------------------------------------------------------------------------
+  Dependent shrinking
+-------------------------------------------------------------------------------}
+
+type DepVar h a = Op.DepVar (ModelState h) a
+
+getDepVar :: forall h a. Proxy h -> DepVar h a -> Var h a
+getDepVar _ = Op.getDepVar (Proxy @(ModelState h))
+
+lookupDepVar :: forall h m a.
+     InterpretOp Op (Op.WrapRealized m)
+  => Proxy m
+  -> Proxy h
+  -> LookUp (RealMonad h m)
+  -> DepVar h a
+  -> Realized (RealMonad h m) a
+lookupDepVar _ _ = Op.lookupDepVar (Proxy @(RealMonad h m)) (Proxy @(ModelState h))
+
+shrinkDepVar ::
+     ModelVarContext (ModelState h)
+  -> [GVar Op (Dep a)]
+  -> DepVar h a
+  -> [DepVar h a]
+shrinkDepVar = Op.shrinkDepVar
+
+{-------------------------------------------------------------------------------
   StateModel
 -------------------------------------------------------------------------------}
 
@@ -732,7 +761,7 @@ data Action' h a where
   NewCursor ::
        C k v b
     => Maybe k
-    -> Var h (WrapTable h IO k v b)
+    -> DepVar h (WrapTable h IO k v b)
     -> Act' h (WrapCursor h IO k v b)
   CloseCursor ::
        C k v b
@@ -746,8 +775,9 @@ data Action' h a where
   -- Updates
   Updates ::
        C k v b
-    => V.Vector (k, R.Update v b) -> Var h (WrapTable h IO k v b)
-    -> Act' h ()
+    => DepVar h (WrapTable h IO k v b)
+    -> V.Vector (k, R.Update v b)
+    -> Act' h (Dep (WrapTable h IO k v b))
   Inserts ::
        C k v b
     => V.Vector (k, v, Maybe b) -> Var h (WrapTable h IO k v b)
@@ -897,6 +927,8 @@ instance ( Eq (Class.TableConfig h)
     MBlobRef :: Class.C_ b
              => Model.BlobRef b -> Val h (WrapBlobRef h IO b)
 
+    MDep :: Dep (Val h a) -> Val h (Dep a)
+
     MLookupResult :: (Class.C_ v, Class.C_ b)
                   => LookupResult v (Val h (WrapBlobRef h IO b))
                   -> Val h (LookupResult v (WrapBlobRef h IO b))
@@ -920,12 +952,15 @@ instance ( Eq (Class.TableConfig h)
     OCursor :: Obs h (WrapCursor h IO k v b)
     OBlobRef :: Obs h (WrapBlobRef h IO b)
 
+    ODep :: Dep (Obs h a) -> Obs h (Dep a)
+
     OLookupResult :: (Class.C_ v, Class.C_ b)
                   => LookupResult v (Obs h (WrapBlobRef h IO b))
                   -> Obs h (LookupResult v (WrapBlobRef h IO b))
     OQueryResult :: Class.C k v b
                  => QueryResult k v (Obs h (WrapBlobRef h IO b))
                  -> Obs h (QueryResult k v (WrapBlobRef h IO b))
+
     OBlob :: (Show b, Typeable b, Eq b)
           => WrapBlob b -> Obs h (WrapBlob b)
 
@@ -938,9 +973,10 @@ instance ( Eq (Class.TableConfig h)
 
   observeModel :: Val h a -> Obs h a
   observeModel = \case
-      MTable _       -> OTable
+      MTable _             -> OTable
       MCursor _            -> OCursor
       MBlobRef _           -> OBlobRef
+      MDep x               -> ODep $ fmap observeModel x
       MLookupResult x      -> OLookupResult $ fmap observeModel x
       MQueryResult x       -> OQueryResult $ fmap observeModel x
       MSnapshotName x      -> OId x
@@ -971,10 +1007,10 @@ instance ( Eq (Class.TableConfig h)
       Close tableVar                -> [SomeGVar tableVar]
       Lookups _ tableVar            -> [SomeGVar tableVar]
       RangeLookup _ tableVar        -> [SomeGVar tableVar]
-      NewCursor _ tableVar          -> [SomeGVar tableVar]
+      NewCursor _ tableVar          -> [either SomeGVar SomeGVar tableVar]
       CloseCursor cursorVar         -> [SomeGVar cursorVar]
       ReadCursor _ cursorVar        -> [SomeGVar cursorVar]
-      Updates _ tableVar            -> [SomeGVar tableVar]
+      Updates tableVar _            -> [either SomeGVar SomeGVar tableVar]
       Inserts _ tableVar            -> [SomeGVar tableVar]
       Deletes _ tableVar            -> [SomeGVar tableVar]
       Mupserts _ tableVar           -> [SomeGVar tableVar]
@@ -1049,6 +1085,7 @@ instance Eq (Obs h a) where
       (OTable, OTable) -> True
       (OCursor, OCursor) -> True
       (OBlobRef, OBlobRef) -> True
+      (ODep x, ODep y) -> x == y
       (OLookupResult x, OLookupResult y) -> x == y
       (OQueryResult x, OQueryResult y) -> x == y
       (OBlob x, OBlob y) -> x == y
@@ -1064,6 +1101,7 @@ instance Eq (Obs h a) where
           OTable{} -> ()
           OCursor{} -> ()
           OBlobRef{} -> ()
+          ODep{} -> ()
           OLookupResult{} -> ()
           OQueryResult{} -> ()
           OBlob{} -> ()
@@ -1146,7 +1184,7 @@ instance ( Eq (Class.TableConfig h)
       CloseCursor{}    -> OEither $ bimap OId OId result
       ReadCursor{}     -> OEither $
           bimap OId (OVector . fmap (OQueryResult . fmap (const OBlobRef))) result
-      Updates{}        -> OEither $ bimap OId OId result
+      Updates{}        -> OEither $ bimap OId (ODep . Dep . const OTable) result
       Inserts{}        -> OEither $ bimap OId OId result
       Deletes{}        -> OEither $ bimap OId OId result
       Mupserts{}       -> OEither $ bimap OId OId result
@@ -1171,7 +1209,7 @@ instance ( Eq (Class.TableConfig h)
       NewCursor{}      -> Nothing
       CloseCursor{}    -> Just Dict
       ReadCursor{}     -> Nothing
-      Updates{}        -> Just Dict
+      Updates{}        -> Nothing
       Inserts{}        -> Just Dict
       Deletes{}        -> Just Dict
       Mupserts{}       -> Just Dict
@@ -1206,7 +1244,7 @@ instance ( Eq (Class.TableConfig h)
       CloseCursor{}    -> OEither $ bimap OId OId result
       ReadCursor{}     -> OEither $
           bimap OId (OVector . fmap (OQueryResult . fmap (const OBlobRef))) result
-      Updates{}        -> OEither $ bimap OId OId result
+      Updates{}        -> OEither $ bimap OId (ODep . Dep . const OTable) result
       Inserts{}        -> OEither $ bimap OId OId result
       Deletes{}        -> OEither $ bimap OId OId result
       Mupserts{}       -> OEither $ bimap OId OId result
@@ -1231,7 +1269,7 @@ instance ( Eq (Class.TableConfig h)
       NewCursor{}      -> Nothing
       CloseCursor{}    -> Just Dict
       ReadCursor{}     -> Nothing
-      Updates{}        -> Just Dict
+      Updates{}        -> Nothing
       Inserts{}        -> Just Dict
       Deletes{}        -> Just Dict
       Mupserts{}       -> Just Dict
@@ -1306,7 +1344,7 @@ runModel lookUp (Action merrs action') = case action' of
     NewCursor offset tableVar ->
       wrap MCursor
       . Model.runModelMWithInjectedErrors merrs
-          (Model.newCursor offset (getTable $ lookUp tableVar))
+          (Model.newCursor offset (lookupDepTable tableVar))
           (pure ()) -- TODO(err)
     CloseCursor cursorVar ->
       wrap MUnit
@@ -1318,10 +1356,12 @@ runModel lookUp (Action merrs action') = case action' of
       . Model.runModelMWithInjectedErrors merrs
           (Model.readCursor n (getCursor $ lookUp cursorVar))
           (pure ()) -- TODO(err)
-    Updates kups tableVar ->
-      wrap MUnit
+    Updates tableVar kups ->
+      wrap (MDep . Dep . MTable)
       . Model.runModelMWithInjectedErrors merrs
-          (Model.updates Model.getResolve kups (getTable $ lookUp tableVar))
+          (do let t = lookupDepTable tableVar
+              Model.updates Model.getResolve kups t
+              pure t)
           (pure ()) -- TODO(err)
     Inserts kins tableVar ->
       wrap MUnit
@@ -1380,10 +1420,23 @@ runModel lookUp (Action merrs action') = case action' of
           (Model.unions Model.getResolve (fmap (getTable . lookUp) tableVars))
           (pure ()) -- TODO(err)
   where
+    lookupTable ::
+         Var h (WrapTable h IO k v b)
+      -> Model.Table k v b
+    lookupTable tableVar = lookUp tableVar & \case MTable t -> t
+
+    -- TODO: replace by lookupTable
     getTable ::
          ModelValue (ModelState h) (WrapTable h IO k v b)
       -> Model.Table k v b
     getTable (MTable t) = t
+
+    lookupDepTable ::
+         DepVar h (WrapTable h IO k v b)
+      -> Model.Table k v b
+    lookupDepTable = \case
+        Left tableVar -> lookupTable tableVar
+        Right tableVar -> lookUp tableVar & \case MDep (Dep (MTable t)) -> t
 
     getCursor ::
          ModelValue (ModelState h) (WrapCursor h IO k v b)
@@ -1441,7 +1494,7 @@ runIO action lookUp = ReaderT $ \ !env -> do
             (\_ -> pure ()) -- TODO(err)
         NewCursor offset tableVar ->
           runRealWithInjectedErrors "NewCursor" env merrs
-            (WrapCursor <$> Class.newCursor offset (unwrapTable $ lookUp' tableVar))
+            (WrapCursor <$> Class.newCursor offset (lookupDepTable tableVar))
             (\_ -> pure ()) -- TODO(err)
         CloseCursor cursorVar ->
           runRealWithInjectedErrors "CloseCursor" env merrs
@@ -1451,9 +1504,11 @@ runIO action lookUp = ReaderT $ \ !env -> do
           runRealWithInjectedErrors "ReadCursor" env merrs
             (fmap (fmap WrapBlobRef) <$> Class.readCursor (Proxy @h) n (unwrapCursor $ lookUp' cursorVar))
             (\_ -> pure ()) -- TODO(err)
-        Updates kups tableVar ->
+        Updates tableVar kups ->
           runRealWithInjectedErrors "Updates" env merrs
-            (Class.updates (unwrapTable $ lookUp' tableVar) kups)
+            (do let t = lookupDepTable tableVar
+                Class.updates t kups
+                pure $ Dep $ WrapTable t)
             (\_ -> pure ()) -- TODO(err)
         Inserts kins tableVar ->
           runRealWithInjectedErrors "Inserts" env merrs
@@ -1507,6 +1562,11 @@ runIO action lookUp = ReaderT $ \ !env -> do
     lookUp' :: Var h x -> Realized IO x
     lookUp' = lookUpGVar (Proxy @(RealMonad h IO)) lookUp
 
+    lookupDepTable ::
+         DepVar h (WrapTable h IO k v b)
+      -> h IO k v b
+    lookupDepTable = unwrapTable . lookupDepVar (Proxy @IO) (Proxy @h) lookUp
+
 runIOSim ::
      forall s a h. Class.IsTable h
   => LockstepAction (ModelState h) a
@@ -1538,7 +1598,7 @@ runIOSim action lookUp = ReaderT $ \ !env -> do
             (\_ -> pure ()) -- TODO(err)
         NewCursor offset tableVar ->
           runRealWithInjectedErrors "NewCursor" env merrs
-            (WrapCursor <$> Class.newCursor offset (unwrapTable $ lookUp' tableVar))
+            (WrapCursor <$> Class.newCursor offset (lookupDepTable tableVar))
             (\_ -> pure ()) -- TODO(err)
         CloseCursor cursorVar ->
           runRealWithInjectedErrors "CloseCursor" env merrs
@@ -1548,9 +1608,11 @@ runIOSim action lookUp = ReaderT $ \ !env -> do
           runRealWithInjectedErrors "ReadCursor" env merrs
             (fmap (fmap WrapBlobRef) <$> Class.readCursor (Proxy @h) n (unwrapCursor $ lookUp' cursorVar))
             (\_ -> pure ()) -- TODO(err)
-        Updates kups tableVar ->
+        Updates tableVar kups ->
           runRealWithInjectedErrors "Updates" env merrs
-            (Class.updates (unwrapTable $ lookUp' tableVar) kups)
+            (do let t = lookupDepTable tableVar
+                Class.updates t kups
+                pure $ Dep $ WrapTable t)
             (\_ -> pure ()) -- TODO(err)
         Inserts kins tableVar ->
           runRealWithInjectedErrors "Inserts" env merrs
@@ -1603,6 +1665,11 @@ runIOSim action lookUp = ReaderT $ \ !env -> do
 
     lookUp' :: Var h x -> Realized (IOSim s) x
     lookUp' = lookUpGVar (Proxy @(RealMonad h (IOSim s))) lookUp
+
+    lookupDepTable ::
+         DepVar h (WrapTable h IO k v b)
+      -> h (IOSim s) k v b
+    lookupDepTable = unwrapTable . lookupDepVar (Proxy @(IOSim s)) (Proxy @h) lookUp
 
 -- | @'runRealWithInjectedErrors' _ errsVar merrs action rollback@ runs @action@
 -- with injected errors if available in @merrs@.
@@ -1823,7 +1890,7 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
         | let genErrors = pure Nothing -- TODO: generate errors
         ]
      ++ [ (10, fmap Some $ (Action <$> genErrors <*>) $
-            Updates <$> genUpdates <*> genTableVar)
+            Updates <$> (Left <$> genTableVar) <*> genUpdates)
         | let genErrors = pure Nothing -- TODO: generate errors
         ]
      ++ [ (10, fmap Some $ (Action <$> genErrors <*>) $
@@ -1839,7 +1906,7 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
         | let genErrors = pure Nothing -- TODO: generate errors
         ]
      ++ [ (3,  fmap Some $ (Action <$> genErrors <*>) $
-            NewCursor <$> QC.arbitrary <*> genTableVar)
+            NewCursor <$> QC.arbitrary <*> (Left <$> genTableVar))
         | length cursorVars <= 5 -- no more than 5 cursors at once
         , let genErrors = pure Nothing -- TODO: generate errors
         ]
@@ -1945,7 +2012,8 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
 
 shrinkActionWithVars ::
      forall h a. (
-       Eq (Class.TableConfig h)
+       Show (Class.TableConfig h)
+     , Eq (Class.TableConfig h)
      , Arbitrary (Class.TableConfig h)
      , Typeable h
      )
@@ -1992,6 +2060,7 @@ dictIsTypeable = \case
 shrinkAction'WithVars ::
      forall h a. (
        Eq (Class.TableConfig h)
+     , Show (Class.TableConfig h)
      , Arbitrary (Class.TableConfig h)
      , Typeable h
      )
@@ -1999,38 +2068,60 @@ shrinkAction'WithVars ::
   -> ModelState h
   -> Action' h a
   -> [Any (Action' h)]
-shrinkAction'WithVars _ctx _st a = case a of
+shrinkAction'WithVars ctx _st a = case a of
     New p conf -> [
         Some $ New p conf'
       | conf' <- QC.shrink conf
       ]
 
+    -- * Updates
+
     -- Shrink inserts and deletes towards updates.
-    Updates upds tableVar -> [
-        Some $ Updates upds' tableVar
-      | upds' <- QC.shrink upds
+
+    Updates tableVar upds -> [
+        Some $ Updates tableVar' upds'
+      | (upds', tableVar') <-
+          QC.liftShrink (shrinkDepVar ctx findDeps) (upds, tableVar)
       ]
     Inserts kvbs tableVar -> [
-        Some $ Inserts kvbs' tableVar
-      | kvbs' <- QC.shrink kvbs
-      ] <> [
-        Some $ Updates (V.map f kvbs) tableVar
+        Some $ Updates (Left tableVar) (V.map f kvbs)
       | let f (k, v, mb) = (k, R.Insert v mb)
       ]
     Deletes ks tableVar -> [
-        Some $ Deletes ks' tableVar
-      | ks' <- QC.shrink ks
-      ] <> [
-        Some $ Updates (V.map f ks) tableVar
+        Some $ Updates (Left tableVar) (V.map f ks)
       | let f k = (k, R.Delete)
+      ]
+    Mupserts mups tableVar -> [
+        Some $ Updates (Left tableVar) (V.map f mups)
+      | let f (k, v) = (k, R.Mupsert v)
       ]
 
     Lookups ks tableVar -> [
-        Some $ Lookups ks' tableVar
-      | ks' <- QC.shrink ks
+        Some $ Lookups ks' tableVar'
+      | (ks', tableVar') <- QC.liftShrink (shrinkVar ctx) (ks, tableVar)
+      ]
+
+    -- * Cursor
+
+    NewCursor kmay tableVar -> [
+        Some $ NewCursor kmay' tableVar'
+      | (kmay', tableVar') <-
+          QC.liftShrink (shrinkDepVar ctx findDeps) (kmay, tableVar)
+      ]
+
+    ReadCursor n cursorVar -> [
+        Some $ ReadCursor n' cursorVar'
+      | (n', cursorVar') <-
+          QC.liftShrink2
+            (\x -> [ x' | QC.NonNegative x' <- QC.shrink (QC.NonNegative x)])
+            (shrinkVar ctx) (n, cursorVar)
       ]
 
     _ -> []
+  where
+    findDeps :: forall k v b. C k v b => [GVar Op (Dep (WrapTable h IO k v b))]
+    findDeps = mapGVar (OpFromRight `OpComp`) <$>
+      findVars ctx (Proxy @(Either Model.Err (Dep (WrapTable h IO k v b))))
 
 {-------------------------------------------------------------------------------
   Interpret 'Op' against 'ModelValue'
@@ -2046,6 +2137,7 @@ instance InterpretOp Op (ModelValue (ModelState h)) where
     OpFromLeft           -> \case MEither x -> either Just (const Nothing) x
     OpFromRight          -> \case MEither x -> either (const Nothing) Just x
     OpComp g f           -> intOp g <=< intOp f
+    OpUnDep              -> \case MDep (Dep x) -> Just x
     OpLookupResults      -> Just . MVector
                           . V.mapMaybe (\case MLookupResult x -> getBlobRef x)
                           . \case MVector x -> x
@@ -2160,7 +2252,7 @@ updateStats action@(Action _merrs action') lookUp modelBefore _modelAfter result
       _ -> stats
 
     updNumUpdates stats = case (action', result) of
-        (Updates upds _, MEither (Right (MUnit ()))) -> stats {
+        (Updates _ upds, MEither (Right (MDep (Dep (MTable _))))) -> stats {
             numUpdates = countAll upds
           }
         (Inserts ins _, MEither (Right (MUnit ()))) -> stats {
@@ -2218,8 +2310,8 @@ updateStats action@(Action _merrs action') lookUp modelBefore _modelAfter result
         -- distribution. Success / failure is detailed elsewhere.
         Lookups _ tableVar     -> updateCount tableVar
         RangeLookup _ tableVar -> updateCount tableVar
-        NewCursor _ tableVar   -> updateCount tableVar
-        Updates _ tableVar     -> updateCount tableVar
+        NewCursor _ tableVar   -> updateCount (getDepVar (Proxy @h) tableVar)
+        Updates tableVar _     -> updateCount (getDepVar (Proxy @h) tableVar)
         Inserts _ tableVar     -> updateCount tableVar
         Deletes _ tableVar     -> updateCount tableVar
         Mupserts _ tableVar    -> updateCount tableVar
@@ -2304,9 +2396,9 @@ updateStats action@(Action _merrs action') lookUp modelBefore _modelAfter result
           | not (null ks)         -> updateLastActionLog tableVar
         RangeLookup r    tableVar
           | not (emptyRange r)    -> updateLastActionLog tableVar
-        NewCursor   _    tableVar -> updateLastActionLog tableVar
-        Updates     upds tableVar
-          | not (null upds)       -> updateLastActionLog tableVar
+        NewCursor   _    tableVar -> updateLastActionLog (getDepVar (Proxy @h) tableVar)
+        Updates tableVar upds
+          | not (null upds)       -> updateLastActionLog (getDepVar (Proxy @h) tableVar)
         Inserts     ins  tableVar
           | not (null ins)        -> updateLastActionLog tableVar
         Deletes     ks   tableVar
