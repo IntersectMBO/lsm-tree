@@ -370,6 +370,9 @@ newtype NominalCredits = NominalCredits Int
   deriving stock Eq
   deriving newtype Prim
 
+nominalDebtAsCredits :: NominalDebt -> NominalCredits
+nominalDebtAsCredits (NominalDebt c) = NominalCredits c
+
 {-# SPECIALISE duplicateIncomingRun :: ActionRegistry IO -> IncomingRun IO h -> IO (IncomingRun IO h) #-}
 duplicateIncomingRun ::
      (PrimMonad m, MonadMask m)
@@ -409,6 +412,7 @@ newIncomingSingleRun tr ln r = do
 
 {-# SPECIALISE newIncomingCompletedMergingRun ::
      Tracer IO (AtLevel MergeTrace)
+  -> TableConfig
   -> ActionRegistry IO
   -> LevelNo
   -> MergePolicyForLevel
@@ -419,6 +423,7 @@ newIncomingSingleRun tr ln r = do
 newIncomingCompletedMergingRun ::
     (MonadMask m, MonadMVar m, MonadSTM m, MonadST m)
   => Tracer m (AtLevel MergeTrace)
+  -> TableConfig
   -> ActionRegistry m
   -> LevelNo
   -> MergePolicyForLevel
@@ -426,15 +431,14 @@ newIncomingCompletedMergingRun ::
   -> MergeDebt
   -> Ref (Run m h)
   -> m (IncomingRun m h)
-newIncomingCompletedMergingRun tr reg ln mergePolicy nr ne r = do
+newIncomingCompletedMergingRun tr conf reg ln mergePolicy nr mergeDebt r = do
     traceWith tr $ AtLevel ln $
       TraceNewMergeSingleRun (Run.size r) (Run.runFsPathsNumber r)
-    mr <- withRollback reg (MR.newCompleted nr ne r) releaseRef
-    --TODO compute right debt for level number
-    let todo = 0
-        md = NominalDebt todo
-    mcv <- newPrimVar (NominalCredits todo)
-    return (Merging mergePolicy md mcv mr)
+    mr <- withRollback reg (MR.newCompleted nr mergeDebt r) releaseRef
+    let nominalDebt    = nominalDebtForLevel conf ln
+        nominalCredits = nominalDebtAsCredits nominalDebt
+    nominalCreditsVar <- newPrimVar nominalCredits
+    return (Merging mergePolicy nominalDebt nominalCreditsVar mr)
 
 {-# SPECIALISE newIncomingMergingRun ::
      Tracer IO (AtLevel MergeTrace)
@@ -485,11 +489,10 @@ newIncomingMergingRun tr hfs hbio activeDir uc
                     alloc indexType mergeType
                     runPaths rs)
             releaseRef
-    --TODO compute right debt for level number
-    let todo = 0
-        md = NominalDebt todo
-    mcv <- newPrimVar (NominalCredits todo)
-    return (Merging mergePolicy md mcv mr)
+    let nominalDebt    = nominalDebtForLevel conf ln
+        nominalCredits = NominalCredits 0
+    nominalCreditsVar <- newPrimVar nominalCredits
+    return (Merging mergePolicy nominalDebt nominalCreditsVar mr)
 
 {-# SPECIALISE supplyCreditsIncomingRun ::
      TableConfig
@@ -1103,6 +1106,18 @@ scaleCreditsForMerge LevelTiering mr (NominalCredits c) =
     let NumRuns n = MR.numRuns mr
        -- same as division rounding up: ceiling (c * n / 4)
     in MergeCredits ((c * n + 3) `div` 4)
+
+-- | The nominal debt equals the minimum of credits we will supply before we
+-- expect the merge to complete. This is the same as the number of updates
+-- in a run that gets moved to this level.
+nominalDebtForLevel :: TableConfig -> LevelNo -> NominalDebt
+nominalDebtForLevel TableConfig {
+                      confWriteBufferAlloc,
+                      confSizeRatio
+                    } (LevelNo ln) =
+    let AllocNumEntries (NumEntries !bufferSize) = confWriteBufferAlloc
+        !sizeRatio = sizeRatioInt confSizeRatio
+     in NominalDebt (bufferSize * sizeRatio ^ pred ln)
 
 -- TODO: the thresholds for doing merge work should be different for each level,
 -- maybe co-prime?
