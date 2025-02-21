@@ -162,9 +162,13 @@ new hfs hbio resolve caching alloc indexType mergeType runPaths inputRuns =
       merge <- fromMaybe (error "newMerge: merges can not be empty")
         <$> Merge.new hfs hbio caching alloc indexType mergeType resolve runPaths runs
       let numInputRuns = NumRuns $ V.length runs
-      let totalDebt = numEntriesToTotalDebt (V.foldMap' Run.size runs)
-      unsafeNew numInputRuns totalDebt MergeMaybeCompleted $
-        OngoingMerge runs merge
+      let mergeDebt = numEntriesToMergeDebt (V.foldMap' Run.size runs)
+      unsafeNew
+        numInputRuns
+        mergeDebt
+        (SpentCredits 0)
+        MergeMaybeCompleted
+        (OngoingMerge runs merge)
 
 {-# SPECIALISE newCompleted ::
      NumRuns
@@ -181,32 +185,36 @@ new hfs hbio resolve caching alloc indexType mergeType runPaths inputRuns =
 newCompleted ::
      (MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
   => NumRuns
-  -> MergeDebt
+  -> MergeDebt -- ^ Since there are no longer any input runs, we need to be
+               -- told what the merge debt was.
   -> Ref (Run m h)
   -> m (Ref (MergingRun t m h))
-newCompleted numInputRuns numInputEntries inputRun = do
+newCompleted numInputRuns mergeDebt inputRun = do
     bracketOnError (dupRef inputRun) releaseRef $ \run ->
-      unsafeNew numInputRuns numInputEntries MergeKnownCompleted $
-        CompletedMerge run
+      unsafeNew
+        numInputRuns
+        mergeDebt
+        (SpentCredits (mergeDebtAsCredits mergeDebt)) -- since it is completed
+        MergeKnownCompleted
+        (CompletedMerge run)
 
 {-# INLINE unsafeNew #-}
 unsafeNew ::
      (MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
   => NumRuns
   -> MergeDebt
+  -> SpentCredits
   -> MergeKnownCompleted
   -> MergingRunState t m h
   -> m (Ref (MergingRun t m h))
-unsafeNew _ (MergeDebt mergeDebt) _ _
+unsafeNew _ (MergeDebt mergeDebt) _ _ _
   | SpentCredits mergeDebt > maxBound
   = throwIO (ErrorCall "MergingRun.new: run size exceeds maximum of 2^40")
 
-unsafeNew mergeNumRuns mergeDebt knownCompleted state = do
-    --TODO: make sure we have the right physical credits for a completed merge.
-    mergeCreditsVar <- CreditsVar <$> newPrimVar 0
-    case state of
-      OngoingMerge{}   -> assert (knownCompleted == MergeMaybeCompleted) (pure ())
-      CompletedMerge{} -> pure ()
+unsafeNew mergeNumRuns mergeDebt (SpentCredits spentCredits)
+          knownCompleted state = do
+    let !credits = CreditsPair (SpentCredits spentCredits) (UnspentCredits 0)
+    mergeCreditsVar <- CreditsVar <$> newPrimVar credits
     mergeKnownCompleted <- newMutVar knownCompleted
     mergeState <- newMVar $! state
     newRef (finalise mergeState) $ \mergeRefCounter ->
@@ -378,12 +386,12 @@ newtype MergeDebt = MergeDebt MergeCredits
 mergeDebtAsCredits :: MergeDebt -> MergeCredits
 mergeDebtAsCredits (MergeDebt c) = c
 
-{-# INLINE numEntriesToTotalDebt #-}
+{-# INLINE numEntriesToMergeDebt #-}
 -- | The total debt of the merging run is exactly the sum total number of
 -- entries across all the input runs to be merged.
 --
-numEntriesToTotalDebt :: NumEntries -> MergeDebt
-numEntriesToTotalDebt (NumEntries n) = MergeDebt (MergeCredits n)
+numEntriesToMergeDebt :: NumEntries -> MergeDebt
+numEntriesToMergeDebt (NumEntries n) = MergeDebt (MergeCredits n)
 
 -- | Unspent credits are accumulated until they go over the 'CreditThreshold',
 -- after which a batch of merge work will be performed. Configuring this
