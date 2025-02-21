@@ -1,7 +1,6 @@
 {-# LANGUAGE DerivingStrategies  #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
-{- HLINT ignore "Use /=" -}
 
 module Test.Database.LSMTree.Internal.Serialise (tests) where
 

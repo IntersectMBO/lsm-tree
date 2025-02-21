@@ -1,3 +1,6 @@
+{- HLINT ignore "Avoid restricted alias" -}
+{- HLINT ignore "Use /=" -}
+
 module Test.Database.LSMTree.Internal.RawBytes (tests) where
 
 import           Database.LSMTree.Extras.Generators ()
