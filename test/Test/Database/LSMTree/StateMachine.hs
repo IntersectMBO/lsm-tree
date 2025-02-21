@@ -639,68 +639,68 @@ instance ( Eq (Class.TableConfig h)
 data Action' h a where
   -- Tables
   New ::
-        C k v b
+       C k v b
     => {-# UNPACK #-} !(PrettyProxy (k, v, b))
     -> Class.TableConfig h
     -> Act' h (WrapTable h IO k v b)
   Close ::
-        C k v b
+       C k v b
     => Var h (WrapTable h IO k v b)
     -> Act' h ()
   -- Queries
   Lookups ::
-        C k v b
+       C k v b
     => V.Vector k -> Var h (WrapTable h IO k v b)
     -> Act' h (V.Vector (LookupResult v (WrapBlobRef h IO b)))
   RangeLookup ::
-        (C k v b, Ord k)
+       (C k v b, Ord k)
     => R.Range k -> Var h (WrapTable h IO k v b)
     -> Act' h (V.Vector (QueryResult k v (WrapBlobRef h IO b)))
   -- Cursor
   NewCursor ::
-        C k v b
+       C k v b
     => Maybe k
     -> Var h (WrapTable h IO k v b)
     -> Act' h (WrapCursor h IO k v b)
   CloseCursor ::
-        C k v b
+       C k v b
     => Var h (WrapCursor h IO k v b)
     -> Act' h ()
   ReadCursor ::
-        C k v b
+       C k v b
     => Int
     -> Var h (WrapCursor h IO k v b)
     -> Act' h (V.Vector (QueryResult k v (WrapBlobRef h IO b)))
   -- Updates
   Updates ::
-        C k v b
+       C k v b
     => V.Vector (k, R.Update v b) -> Var h (WrapTable h IO k v b)
     -> Act' h ()
   Inserts ::
-        C k v b
+       C k v b
     => V.Vector (k, v, Maybe b) -> Var h (WrapTable h IO k v b)
     -> Act' h ()
   Deletes ::
-        C k v b
+       C k v b
     => V.Vector k -> Var h (WrapTable h IO k v b)
     -> Act' h ()
   Mupserts ::
-        C k v b
+       C k v b
     => V.Vector (k, v) -> Var h (WrapTable h IO k v b)
     -> Act' h ()
   -- Blobs
   RetrieveBlobs ::
-        B b
+       B b
     => Var h (V.Vector (WrapBlobRef h IO b))
     -> Act' h (V.Vector (WrapBlob b))
   -- Snapshots
   CreateSnapshot ::
-        C k v b
+       C k v b
     => Maybe SilentCorruption
     -> R.SnapshotLabel -> R.SnapshotName -> Var h (WrapTable h IO k v b)
     -> Act' h ()
   OpenSnapshot   ::
-        C k v b
+       C k v b
     => {-# UNPACK #-} !(PrettyProxy (k, v, b))
     -> R.SnapshotLabel -> R.SnapshotName
     -> Act' h (WrapTable h IO k v b)
@@ -708,17 +708,17 @@ data Action' h a where
   ListSnapshots  :: Act' h [R.SnapshotName]
   -- Duplicate tables
   Duplicate ::
-        C k v b
+       C k v b
     => Var h (WrapTable h IO k v b)
     -> Act' h (WrapTable h IO k v b)
   -- Table union
   Union ::
-        C k v b
+       C k v b
     => Var h (WrapTable h IO k v b)
     -> Var h (WrapTable h IO k v b)
     -> Act' h (WrapTable h IO k v b)
   Unions ::
-        C k v b
+       C k v b
     => NonEmpty (Var h (WrapTable h IO k v b))
     -> Act' h (WrapTable h IO k v b)
 
@@ -1192,6 +1192,12 @@ instance ( Eq (Class.TableConfig h)
   Interpreter for the model
 -------------------------------------------------------------------------------}
 
+-- TODO: there are a bunch of TODO(err) in 'runMode;' on the last argument to
+-- 'Model.runModelMWithInjectedErrors'. This last argument defines how the model
+-- should respond to injected errors. Since we don't generate injected errors
+-- for most of these actions yet, they are left open. We will fill these in as
+-- we start generating injected errors for these actions and testing with them.
+
 runModel ::
      ModelLookUp (ModelState h)
   -> LockstepAction (ModelState h) a
@@ -1201,98 +1207,98 @@ runModel lookUp (Action merrs action') = case action' of
       wrap MTable
       . Model.runModelMWithInjectedErrors merrs
           (Model.new Model.TableConfig)
-          (pure ()) -- TODO
+          (pure ()) -- TODO(err)
     Close tableVar ->
       wrap MUnit
       . Model.runModelMWithInjectedErrors merrs
           (Model.close (getTable $ lookUp tableVar))
-          (pure ()) -- TODO
+          (pure ()) -- TODO(err)
     Lookups ks tableVar ->
       wrap (MVector . fmap (MLookupResult . fmap MBlobRef))
       . Model.runModelMWithInjectedErrors merrs
           (Model.lookups ks (getTable $ lookUp tableVar))
-          (pure ()) -- TODO
+          (pure ()) -- TODO(err)
     RangeLookup range tableVar ->
       wrap (MVector . fmap (MQueryResult . fmap MBlobRef))
       . Model.runModelMWithInjectedErrors merrs
           (Model.rangeLookup range (getTable $ lookUp tableVar))
-          (pure ()) -- TODO
+          (pure ()) -- TODO(err)
     NewCursor offset tableVar ->
       wrap MCursor
       . Model.runModelMWithInjectedErrors merrs
           (Model.newCursor offset (getTable $ lookUp tableVar))
-          (pure ()) -- TODO
+          (pure ()) -- TODO(err)
     CloseCursor cursorVar ->
       wrap MUnit
       . Model.runModelMWithInjectedErrors merrs
           (Model.closeCursor (getCursor $ lookUp cursorVar))
-          (pure ()) -- TODO
+          (pure ()) -- TODO(err)
     ReadCursor n cursorVar ->
       wrap (MVector . fmap (MQueryResult . fmap MBlobRef))
       . Model.runModelMWithInjectedErrors merrs
           (Model.readCursor n (getCursor $ lookUp cursorVar))
-          (pure ()) -- TODO
+          (pure ()) -- TODO(err)
     Updates kups tableVar ->
       wrap MUnit
       . Model.runModelMWithInjectedErrors merrs
           (Model.updates Model.getResolve kups (getTable $ lookUp tableVar))
-          (pure ()) -- TODO
+          (pure ()) -- TODO(err)
     Inserts kins tableVar ->
       wrap MUnit
       . Model.runModelMWithInjectedErrors merrs
           (Model.inserts Model.getResolve kins (getTable $ lookUp tableVar))
-          (pure ()) -- TODO
+          (pure ()) -- TODO(err)
     Deletes kdels tableVar ->
       wrap MUnit
       . Model.runModelMWithInjectedErrors merrs
           (Model.deletes Model.getResolve kdels (getTable $ lookUp tableVar))
-          (pure ()) -- TODO
+          (pure ()) -- TODO(err)
     Mupserts kmups tableVar ->
       wrap MUnit
       . Model.runModelMWithInjectedErrors merrs
           (Model.mupserts Model.getResolve kmups (getTable $ lookUp tableVar))
-          (pure ()) -- TODO
+          (pure ()) -- TODO(err)
     RetrieveBlobs blobsVar ->
       wrap (MVector . fmap (MBlob . WrapBlob))
       . Model.runModelMWithInjectedErrors merrs
           (Model.retrieveBlobs (getBlobRefs . lookUp $ blobsVar))
-          (pure ()) -- TODO
+          (pure ()) -- TODO(err)
     CreateSnapshot mcorr label name tableVar ->
       wrap MUnit
         . Model.runModelMWithInjectedErrors merrs
             (do Model.createSnapshot label name (getTable $ lookUp tableVar)
                 forM_ mcorr $ \_ -> Model.corruptSnapshot name)
-            (pure ()) -- TODO
+            (pure ()) -- TODO(err)
     OpenSnapshot _ label name ->
       wrap MTable
       . Model.runModelMWithInjectedErrors merrs
           (Model.openSnapshot label name)
-          (pure ()) -- TODO
+          (pure ())
     DeleteSnapshot name ->
       wrap MUnit
       . Model.runModelMWithInjectedErrors merrs
           (Model.deleteSnapshot name)
-          (pure ()) -- TODO
+          (pure ()) -- TODO(err)
     ListSnapshots ->
       wrap (MList . fmap MSnapshotName)
       . Model.runModelMWithInjectedErrors merrs
           Model.listSnapshots
-          (pure ()) -- TODO
+          (pure ()) -- TODO(err)
     Duplicate tableVar ->
       wrap MTable
       . Model.runModelMWithInjectedErrors merrs
           (Model.duplicate (getTable $ lookUp tableVar))
-          (pure ()) -- TODO
+          (pure ()) -- TODO(err)
     Union table1Var table2Var ->
       wrap MTable
       . Model.runModelMWithInjectedErrors merrs
           (Model.union Model.getResolve (getTable $ lookUp table1Var) (getTable $ lookUp table2Var))
-          (pure ()) -- TODO
+          (pure ()) -- TODO(err)
     Unions tableVars ->
       wrap MTable
       . Model.runModelMWithInjectedErrors merrs
           (Model.unions Model.getResolve (fmap (getTable . lookUp) tableVars))
-          (pure ()) -- TODO
+          (pure ()) -- TODO(err)
   where
     getTable ::
          ModelValue (ModelState h) (WrapTable h IO k v b)
@@ -1317,6 +1323,13 @@ wrap f = first (MEither . bimap MErr f)
   Interpreters for @'IOLike' m@
 -------------------------------------------------------------------------------}
 
+-- TODO: there are a bunch of TODO(err) in 'runIO' and 'runIOSim' below on the
+-- last argument to 'Model.runModelMWithInjectedErrors'. This last argument
+-- defines how the SUT should recover from actions that accidentally succeeded
+-- in the presence of disk faults. Since we don't generate injected errors for
+-- most of these actions yet, they are left open. We will fill these in as we
+-- start generating injected errors for these actions and testing with them.
+
 runIO ::
      forall a h. Class.IsTable h
   => LockstepAction (ModelState h) a
@@ -1333,57 +1346,57 @@ runIO action lookUp = ReaderT $ \ !env -> do
         New _ cfg ->
           runRealWithInjectedErrors "New" env merrs
             (WrapTable <$> Class.new session cfg)
-            (\_ -> pure ()) -- TODO
+            (\_ -> pure ()) -- TODO(err)
         Close tableVar ->
           runRealWithInjectedErrors "Close" env merrs
             (Class.close (unwrapTable $ lookUp' tableVar))
-            (\_ -> pure ()) -- TODO
+            (\_ -> pure ()) -- TODO(err)
         Lookups ks tableVar ->
           runRealWithInjectedErrors "Lookups" env merrs
             (fmap (fmap WrapBlobRef) <$> Class.lookups (unwrapTable $ lookUp' tableVar) ks)
-            (\_ -> pure ()) -- TODO
+            (\_ -> pure ()) -- TODO(err)
         RangeLookup range tableVar ->
           runRealWithInjectedErrors "RangeLookup" env merrs
             (fmap (fmap WrapBlobRef) <$> Class.rangeLookup (unwrapTable $ lookUp' tableVar) range)
-            (\_ -> pure ()) -- TODO
+            (\_ -> pure ()) -- TODO(err)
         NewCursor offset tableVar ->
           runRealWithInjectedErrors "NewCursor" env merrs
             (WrapCursor <$> Class.newCursor offset (unwrapTable $ lookUp' tableVar))
-            (\_ -> pure ()) -- TODO
+            (\_ -> pure ()) -- TODO(err)
         CloseCursor cursorVar ->
           runRealWithInjectedErrors "CloseCursor" env merrs
             (Class.closeCursor (Proxy @h) (unwrapCursor $ lookUp' cursorVar))
-            (\_ -> pure ()) -- TODO
+            (\_ -> pure ()) -- TODO(err)
         ReadCursor n cursorVar ->
           runRealWithInjectedErrors "ReadCursor" env merrs
             (fmap (fmap WrapBlobRef) <$> Class.readCursor (Proxy @h) n (unwrapCursor $ lookUp' cursorVar))
-            (\_ -> pure ()) -- TODO
+            (\_ -> pure ()) -- TODO(err)
         Updates kups tableVar ->
           runRealWithInjectedErrors "Updates" env merrs
             (Class.updates (unwrapTable $ lookUp' tableVar) kups)
-            (\_ -> pure ()) -- TODO
+            (\_ -> pure ()) -- TODO(err)
         Inserts kins tableVar ->
           runRealWithInjectedErrors "Inserts" env merrs
             (Class.inserts (unwrapTable $ lookUp' tableVar) kins)
-            (\_ -> pure ()) -- TODO
+            (\_ -> pure ()) -- TODO(err)
         Deletes kdels tableVar ->
           runRealWithInjectedErrors "Deletes" env merrs
             (Class.deletes (unwrapTable $ lookUp' tableVar) kdels)
-            (\_ -> pure ()) -- TODO
+            (\_ -> pure ()) -- TODO(err)
         Mupserts kmups tableVar ->
           runRealWithInjectedErrors "Mupserts" env merrs
             (Class.mupserts (unwrapTable $ lookUp' tableVar) kmups)
-            (\_ -> pure ()) -- TODO
+            (\_ -> pure ()) -- TODO(err)
         RetrieveBlobs blobRefsVar ->
           runRealWithInjectedErrors "RetrieveBlobs" env merrs
             (fmap WrapBlob <$> Class.retrieveBlobs (Proxy @h) session (unwrapBlobRef <$> lookUp' blobRefsVar))
-            (\_ -> pure ()) -- TODO
+            (\_ -> pure ()) -- TODO(err)
         CreateSnapshot mcorr label name tableVar ->
           let table = unwrapTable $ lookUp' tableVar in
           runRealWithInjectedErrors "CreateSnapshot" env merrs
             (do Class.createSnapshot label name table
                 forM_ mcorr $ \corr -> Class.corruptSnapshot (bitChoice corr) name table)
-            (\() -> Class.deleteSnapshot session name)
+            (\() -> Class.deleteSnapshot session name) -- TODO(err)
         OpenSnapshot _ label name ->
           runRealWithInjectedErrors "OpenSnapshot" env merrs
             (WrapTable <$> Class.openSnapshot session label name)
@@ -1391,23 +1404,23 @@ runIO action lookUp = ReaderT $ \ !env -> do
         DeleteSnapshot name ->
           runRealWithInjectedErrors "DeleteSnapshot" env merrs
             (Class.deleteSnapshot session name)
-            (\_ -> pure ()) -- TODO
+            (\_ -> pure ()) -- TODO(err)
         ListSnapshots ->
           runRealWithInjectedErrors "ListSnapshots" env merrs
             (Class.listSnapshots session)
-            (\_ -> pure ()) -- TODO
+            (\_ -> pure ()) -- TODO(err)
         Duplicate tableVar ->
           runRealWithInjectedErrors "Duplicate" env merrs
             (WrapTable <$> Class.duplicate (unwrapTable $ lookUp' tableVar))
-            (\_ -> pure ()) -- TODO
+            (\_ -> pure ()) -- TODO(err)
         Union table1Var table2Var ->
           runRealWithInjectedErrors "Union" env merrs
             (WrapTable <$> Class.union (unwrapTable $ lookUp' table1Var) (unwrapTable $ lookUp' table2Var))
-            (\_ -> pure ()) -- TODO
+            (\_ -> pure ()) -- TODO(err)
         Unions tableVars ->
           runRealWithInjectedErrors "Unions" env merrs
             (WrapTable <$> Class.unions (fmap (unwrapTable . lookUp') tableVars))
-            (\_ -> pure ())
+            (\_ -> pure ()) -- TODO(err)
       where
         session = envSession env
 
@@ -1430,57 +1443,57 @@ runIOSim action lookUp = ReaderT $ \ !env -> do
         New _ cfg ->
           runRealWithInjectedErrors "New" env merrs
             (WrapTable <$> Class.new session cfg)
-            (\_ -> pure ()) -- TODO
+            (\_ -> pure ()) -- TODO(err)
         Close tableVar ->
           runRealWithInjectedErrors "Close" env merrs
             (Class.close (unwrapTable $ lookUp' tableVar))
-            (\_ -> pure ()) -- TODO
+            (\_ -> pure ()) -- TODO(err)
         Lookups ks tableVar ->
           runRealWithInjectedErrors "Lookups" env merrs
             (fmap (fmap WrapBlobRef) <$> Class.lookups (unwrapTable $ lookUp' tableVar) ks)
-            (\_ -> pure ()) -- TODO
+            (\_ -> pure ()) -- TODO(err)
         RangeLookup range tableVar ->
           runRealWithInjectedErrors "RangeLookup" env merrs
             (fmap (fmap WrapBlobRef) <$> Class.rangeLookup (unwrapTable $ lookUp' tableVar) range)
-            (\_ -> pure ()) -- TODO
+            (\_ -> pure ()) -- TODO(err)
         NewCursor offset tableVar ->
           runRealWithInjectedErrors "NewCursor" env merrs
             (WrapCursor <$> Class.newCursor offset (unwrapTable $ lookUp' tableVar))
-            (\_ -> pure ()) -- TODO
+            (\_ -> pure ()) -- TODO(err)
         CloseCursor cursorVar ->
           runRealWithInjectedErrors "CloseCursor" env merrs
             (Class.closeCursor (Proxy @h) (unwrapCursor $ lookUp' cursorVar))
-            (\_ -> pure ()) -- TODO
+            (\_ -> pure ()) -- TODO(err)
         ReadCursor n cursorVar ->
           runRealWithInjectedErrors "ReadCursor" env merrs
             (fmap (fmap WrapBlobRef) <$> Class.readCursor (Proxy @h) n (unwrapCursor $ lookUp' cursorVar))
-            (\_ -> pure ()) -- TODO
+            (\_ -> pure ()) -- TODO(err)
         Updates kups tableVar ->
           runRealWithInjectedErrors "Updates" env merrs
             (Class.updates (unwrapTable $ lookUp' tableVar) kups)
-            (\_ -> pure ()) -- TODO
+            (\_ -> pure ()) -- TODO(err)
         Inserts kins tableVar ->
           runRealWithInjectedErrors "Inserts" env merrs
             (Class.inserts (unwrapTable $ lookUp' tableVar) kins)
-            (\_ -> pure ()) -- TODO
+            (\_ -> pure ()) -- TODO(err)
         Deletes kdels tableVar ->
           runRealWithInjectedErrors "Deletes" env merrs
             (Class.deletes (unwrapTable $ lookUp' tableVar) kdels)
-            (\_ -> pure ()) -- TODO
+            (\_ -> pure ()) -- TODO(err)
         Mupserts kmups tableVar ->
           runRealWithInjectedErrors "Mupserts" env merrs
             (Class.mupserts (unwrapTable $ lookUp' tableVar) kmups)
-            (\_ -> pure ()) -- TODO
+            (\_ -> pure ()) -- TODO(err)
         RetrieveBlobs blobRefsVar ->
           runRealWithInjectedErrors "RetrieveBlobs" env merrs
             (fmap WrapBlob <$> Class.retrieveBlobs (Proxy @h) session (unwrapBlobRef <$> lookUp' blobRefsVar))
-            (\_ -> pure ()) -- TODO
+            (\_ -> pure ()) -- TODO(err)
         CreateSnapshot mcorr label name tableVar ->
           let table = unwrapTable $ lookUp' tableVar in
           runRealWithInjectedErrors "CreateSnapshot" env merrs
             (do Class.createSnapshot label name table
                 forM_ mcorr $ \corr -> Class.corruptSnapshot (bitChoice corr) name table)
-            (\() -> Class.deleteSnapshot session name)
+            (\() -> Class.deleteSnapshot session name) -- TODO(err)
         OpenSnapshot _ label name ->
           runRealWithInjectedErrors "OpenSnapshot" env merrs
             (WrapTable <$> Class.openSnapshot session label name)
@@ -1488,23 +1501,23 @@ runIOSim action lookUp = ReaderT $ \ !env -> do
         DeleteSnapshot name ->
           runRealWithInjectedErrors "DeleteSnapshot" env merrs
             (Class.deleteSnapshot session name)
-            (\_ -> pure ()) -- TODO
+            (\_ -> pure ()) -- TODO(err)
         ListSnapshots ->
           runRealWithInjectedErrors "ListSnapshots" env merrs
             (Class.listSnapshots session)
-            (\_ -> pure ()) -- TODO
+            (\_ -> pure ()) -- TODO(err)
         Duplicate tableVar ->
           runRealWithInjectedErrors "Duplicate" env merrs
             (WrapTable <$> Class.duplicate (unwrapTable $ lookUp' tableVar))
-            (\_ -> pure ()) -- TODO
+            (\_ -> pure ()) -- TODO(err)
         Union table1Var table2Var ->
           runRealWithInjectedErrors "Union" env merrs
             (WrapTable <$> Class.union (unwrapTable $ lookUp' table1Var) (unwrapTable $ lookUp' table2Var))
-            (\_ -> pure ()) -- TODO
+            (\_ -> pure ()) -- TODO(err)
         Unions tableVars ->
           runRealWithInjectedErrors "Unions" env merrs
             (WrapTable <$> Class.unions (fmap (unwrapTable . lookUp') tableVars))
-            (\_ -> pure ())
+            (\_ -> pure ()) -- TODO(err)
       where
         session = envSession env
 
