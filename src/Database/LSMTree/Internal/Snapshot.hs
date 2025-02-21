@@ -196,25 +196,29 @@ toSnapIncomingRun ::
      (PrimMonad m, MonadMVar m)
   => IncomingRun m h
   -> m (SnapIncomingRun (Ref (Run m h)))
-toSnapIncomingRun (Single r) = pure (SnapSingleRun r)
-toSnapIncomingRun (Merging mergePolicy _mergeNominalDebt _mergeNominalCreditVar
-                           mergingRun) = do
-    -- We need to know how many credits were supplied so we can restore merge
-    -- work on snapshot load.
-    (mergeNumRuns,
-     totalMergeDebt,
-     suppliedMergeCredits,
-     mergingRunState) <- MR.snapshot mergingRun
-    -- TODO: MR.snapshot needs to return duplicated run references, and we
-    -- need to arrange to release them when the snapshoting is done.
-    let smrs = toSnapMergingRunState mergingRunState
-    pure $
-      SnapMergingRun
-        mergePolicy
-        mergeNumRuns
-        totalMergeDebt
-        suppliedMergeCredits
-        smrs
+toSnapIncomingRun ir = do
+    s <- snapshotIncomingRun ir
+    case s of
+      Left r -> pure $! SnapSingleRun r
+      Right (mergePolicy,
+             numRuns,
+             _nominalDebt,  -- not stored
+             _nominalCredits,
+             mergeDebt,
+             mergeCredits,
+             mergingRunState) -> do
+        -- We need to know how many credits were supplied so we can restore merge
+        -- work on snapshot load.
+        -- TODO: MR.snapshot needs to return duplicated run references, and we
+        -- need to arrange to release them when the snapshoting is done.
+        let smrs = toSnapMergingRunState mergingRunState
+        pure $!
+          SnapMergingRun
+            mergePolicy
+            numRuns
+            mergeDebt
+            mergeCredits
+            smrs
 
 toSnapMergingRunState ::
      MR.MergingRunState t m h
