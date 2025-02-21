@@ -2271,7 +2271,7 @@ tagStep' ::
   -> [Tag]
 tagStep' (ModelState _stateBefore statsBefore,
           ModelState _stateAfter _statsAfter)
-          (Action _ action) result =
+          (Action _ action') result =
     catMaybes [
       tagSnapshotTwice
     , tagOpenExistingSnapshot
@@ -2284,51 +2284,51 @@ tagStep' (ModelState _stateBefore statsBefore,
     ]
   where
     tagSnapshotTwice
-      | CreateSnapshot _ _ name _ <- action
+      | CreateSnapshot _ _ name _ <- action'
       , name `Set.member` snapshotted statsBefore
       = Just SnapshotTwice
       | otherwise
       = Nothing
 
     tagOpenExistingSnapshot
-      | OpenSnapshot _ _ name <- action
+      | OpenSnapshot _ _ name <- action'
       , name `Set.member` snapshotted statsBefore
       = Just OpenExistingSnapshot
       | otherwise
       = Nothing
 
     tagOpenMissingSnapshot
-      | OpenSnapshot _ _ name <- action
+      | OpenSnapshot _ _ name <- action'
       , not (name `Set.member` snapshotted statsBefore)
       = Just OpenMissingSnapshot
       | otherwise
       = Nothing
 
     tagDeleteExistingSnapshot
-      | DeleteSnapshot name <- action
+      | DeleteSnapshot name <- action'
       , name `Set.member` snapshotted statsBefore
       = Just DeleteExistingSnapshot
       | otherwise
       = Nothing
 
     tagDeleteMissingSnapshot
-      | DeleteSnapshot name <- action
+      | DeleteSnapshot name <- action'
       , not (name `Set.member` snapshotted statsBefore)
       = Just DeleteMissingSnapshot
       | otherwise
       = Nothing
 
     tagCreateSnapshotCorruptedOrUncorrupted
-      | CreateSnapshot mcorrOrErrs _ name _ <- action
+      | CreateSnapshot mcorr _ name _ <- action'
       , MEither (Right (MUnit ())) <- result
-      = Just $ case mcorrOrErrs of
+      = Just $ case mcorr of
           Just (_ :: SilentCorruption) -> CreateSnapshotCorrupted name
           _                            -> CreateSnapshotUncorrupted name
       | otherwise
       = Nothing
 
     tagOpenSnapshotDetectsCorruption
-      | OpenSnapshot _ _ name <- action
+      | OpenSnapshot _ _ name <- action'
       , MEither (Left (MErr (Model.ErrSnapshotCorrupted _))) <- result
       = Just (OpenSnapshotDetectsCorruption name)
       | otherwise
