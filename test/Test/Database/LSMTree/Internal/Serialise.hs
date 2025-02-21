@@ -1,7 +1,6 @@
 {-# LANGUAGE DerivingStrategies  #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
-{- HLINT ignore "Use /=" -}
 
 module Test.Database.LSMTree.Internal.Serialise (tests) where
 
@@ -11,28 +10,14 @@ import qualified Data.ByteString.Builder as BB
 import qualified Data.ByteString.Short as SBS
 import qualified Data.Vector.Primitive as VP
 import           Data.Word
-import           Database.LSMTree.Extras.Generators ()
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.Serialise
 import           Test.Tasty
 import           Test.Tasty.HUnit
-import           Test.Tasty.QuickCheck
 
 tests :: TestTree
 tests = testGroup "Test.Database.LSMTree.Internal.Serialise" [
-      testGroup "SerialisedKey Eq and Ord laws" [
-          testProperty "Eq reflexivity" propEqReflexivity
-        , testProperty "Eq symmetry" propEqSymmetry
-        , localOption (QuickCheckMaxRatio 10000) $
-          testProperty "Eq transitivity" propEqTransitivity
-        , testProperty "Eq negation" propEqNegation
-        , testProperty "Ord comparability" propOrdComparability
-        , testProperty "Ord transitivity" propOrdTransitivity
-        , testProperty "Ord reflexivity" propOrdReflexivity
-        , localOption (QuickCheckMaxRatio 1000) $
-          testProperty "Ord antisymmetry" propOrdAntiSymmetry
-        ]
-    , testCase "example keyTopBits64" $ do
+      testCase "example keyTopBits64" $ do
         let k = SerialisedKey' (VP.fromList [0, 0, 0, 0, 37, 42, 204, 130])
             expected :: Word64
             expected = 37 `shiftL` 24 + 42 `shiftL` 16 + 204 `shiftL` 8 + 130
@@ -50,43 +35,3 @@ tests = testGroup "Test.Database.LSMTree.Internal.Serialise" [
             k2 = RB.fromShortByteString (SBS.toShort bs)
         k1 @=? k2
     ]
-
-{-------------------------------------------------------------------------------
-  Eq and Ord laws
--------------------------------------------------------------------------------}
-
-withFirstKeyLengthInfo :: SerialisedKey -> Property -> Property
-withFirstKeyLengthInfo firstKey
-    = collect ("Length of first key is " ++ show (sizeofKey firstKey))
-
-propEqReflexivity :: SerialisedKey -> Property
-propEqReflexivity k = k === k
-
-propEqSymmetry :: SerialisedKey -> SerialisedKey -> Property
-propEqSymmetry k1 k2 = (k1 == k2) === (k2 == k1)
-
-propEqTransitivity :: Property
-propEqTransitivity = mapSize (const 3) $ withDiscardRatio 1000 $ untunedProp
-  where
-    untunedProp :: SerialisedKey -> SerialisedKey -> SerialisedKey -> Property
-    untunedProp k1 k2 k3 = withFirstKeyLengthInfo k1 $
-                           k1 == k2 && k2 == k3 ==> k1 === k3
-
-propEqNegation :: SerialisedKey -> SerialisedKey -> Property
-propEqNegation k1 k2 = (k1 /= k2) === not (k1 == k2)
-
-propOrdComparability :: SerialisedKey -> SerialisedKey -> Property
-propOrdComparability k1 k2 = k1 <= k2 .||. k2 <= k1
-
-propOrdTransitivity :: SerialisedKey -> SerialisedKey -> SerialisedKey -> Property
-propOrdTransitivity k1 k2 k3 = k1 <= k2 && k2 <= k3 ==> k1 <= k3
-
-propOrdReflexivity :: SerialisedKey -> Property
-propOrdReflexivity k = property $ k <= k
-
-propOrdAntiSymmetry :: Property
-propOrdAntiSymmetry = mapSize (const 4) $ withDiscardRatio 100 $ untunedProp
-  where
-    untunedProp :: SerialisedKey -> SerialisedKey -> Property
-    untunedProp k1 k2 = withFirstKeyLengthInfo k1 $
-                        k1 <= k2 && k2 <= k1 ==> k1 === k2

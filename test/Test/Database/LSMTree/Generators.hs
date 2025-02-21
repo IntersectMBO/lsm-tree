@@ -44,7 +44,11 @@ tests = testGroup "Test.Database.LSMTree.Generators" [
         ]
      ++ prop_arbitraryAndShrinkPreserveInvariant (deepseqInvariant @RawBytes)
     , testGroup "KeyForIndexCompact" $
-        prop_arbitraryAndShrinkPreserveInvariant keyForIndexCompactInvariant
+        prop_arbitraryAndShrinkPreserveInvariant $
+          isKeyForIndexCompact . getKeyForIndexCompact
+    , testGroup "BiasedKeyForIndexCompact" $
+        prop_arbitraryAndShrinkPreserveInvariant $
+          isKeyForIndexCompact . getBiasedKeyForIndexCompact
     , testGroup "lists of key/op pairs" $
         [ testProperty "prop_distributionKOps" $
             prop_distributionKOps
@@ -56,7 +60,7 @@ prop_packRawBytesPinnedOrUnpinned pinned ws =
     packRawBytesPinnedOrUnpinned pinned ws == RawBytes (VP.fromList ws)
 
 type TestEntry = Entry SerialisedValue BlobSpan
-type TestKOp = (KeyForIndexCompact, TestEntry)
+type TestKOp = (BiasedKeyForIndexCompact, TestEntry)
 
 prop_distributionKOps :: [TestKOp] -> Property
 prop_distributionKOps kops' =

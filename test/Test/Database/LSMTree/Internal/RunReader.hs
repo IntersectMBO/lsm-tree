@@ -8,7 +8,8 @@ module Test.Database.LSMTree.Internal.RunReader (
 import           Control.RefCount
 import           Data.Coerce (coerce)
 import qualified Data.Map as Map
-import           Database.LSMTree.Extras.Generators (KeyForIndexCompact (..))
+import           Database.LSMTree.Extras.Generators
+                     (BiasedKeyForIndexCompact (..))
 import           Database.LSMTree.Extras.RunData
 import           Database.LSMTree.Internal.BlobRef
 import           Database.LSMTree.Internal.Entry (Entry)
@@ -75,8 +76,8 @@ tests = testGroup "Database.LSMTree.Internal.RunReader"
 prop_readAtOffset ::
      FS.HasFS IO h
   -> FS.HasBlockIO IO h
-  -> RunData KeyForIndexCompact SerialisedValue SerialisedBlob
-  -> Maybe KeyForIndexCompact
+  -> RunData BiasedKeyForIndexCompact SerialisedValue SerialisedBlob
+  -> Maybe BiasedKeyForIndexCompact
   -> IO Property
 prop_readAtOffset fs hbio rd offsetKey =
     withRun fs hbio Index.Compact (simplePath 42) rd' $ \run -> do
@@ -98,7 +99,7 @@ prop_readAtOffset fs hbio rd offsetKey =
 prop_readAtOffsetExisting ::
      FS.HasFS IO h
   -> FS.HasBlockIO IO h
-  -> RunData KeyForIndexCompact SerialisedValue SerialisedBlob
+  -> RunData BiasedKeyForIndexCompact SerialisedValue SerialisedBlob
   -> NonNegative Int
   -> IO Property
 prop_readAtOffsetExisting fs hbio rd (NonNegative index)
@@ -106,7 +107,7 @@ prop_readAtOffsetExisting fs hbio rd (NonNegative index)
   | otherwise =
       prop_readAtOffset fs hbio rd (Just (keys !! (index `mod` length keys)))
   where
-    keys :: [KeyForIndexCompact]
+    keys :: [BiasedKeyForIndexCompact]
     keys = coerce (fst <$> kops)
     kops = Map.toList (unRunData rd)
 
@@ -119,8 +120,8 @@ prop_readAtOffsetExisting fs hbio rd (NonNegative index)
 prop_readAtOffsetIdempotence ::
      FS.HasFS IO h
   -> FS.HasBlockIO IO h
-  -> RunData KeyForIndexCompact SerialisedValue SerialisedBlob
-  -> Maybe KeyForIndexCompact
+  -> RunData BiasedKeyForIndexCompact SerialisedValue SerialisedBlob
+  -> Maybe BiasedKeyForIndexCompact
   -> IO Property
 prop_readAtOffsetIdempotence fs hbio rd offsetKey =
     withRun fs hbio Index.Compact (simplePath 42) rd' $ \run -> do
@@ -144,7 +145,7 @@ prop_readAtOffsetIdempotence fs hbio rd offsetKey =
 prop_readAtOffsetReadHead ::
      FS.HasFS IO h
   -> FS.HasBlockIO IO h
-  -> RunData KeyForIndexCompact SerialisedValue SerialisedBlob
+  -> RunData BiasedKeyForIndexCompact SerialisedValue SerialisedBlob
   -> IO Property
 prop_readAtOffsetReadHead fs hbio rd =
     withRun fs hbio Index.Compact (simplePath 42) rd' $ \run -> do
