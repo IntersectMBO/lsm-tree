@@ -492,7 +492,8 @@ newIncomingMergingRun tr hfs hbio activeDir uc
     let nominalDebt    = nominalDebtForLevel conf ln
         nominalCredits = NominalCredits 0
     nominalCreditsVar <- newPrimVar nominalCredits
-    return (Merging mergePolicy nominalDebt nominalCreditsVar mr)
+    assert (MR.totalMergeDebt mr <= maxMergeDebt conf mergePolicy ln) $
+      return (Merging mergePolicy nominalDebt nominalCreditsVar mr)
 
 {-# SPECIALISE supplyCreditsIncomingRun ::
      TableConfig
@@ -977,16 +978,22 @@ maxRunSize ::
   -> MergePolicyForLevel
   -> LevelNo
   -> NumEntries
-maxRunSize (sizeRatioInt -> sizeRatio) (AllocNumEntries (NumEntries bufferSize))
-           policy (LevelNo ln) =
-    NumEntries $ case policy of
-      LevelLevelling -> runSizeTiering * sizeRatio
-      LevelTiering   -> runSizeTiering
-  where
-    runSizeTiering
-      | ln < 0 = error "maxRunSize: non-positive level number"
-      | ln == 0 = 0
-      | otherwise = bufferSize * sizeRatio ^ (pred ln)
+maxRunSize _ _ _ (LevelNo ln)
+  | ln < 0  = error "maxRunSize: non-positive level number"
+  | ln == 0 = NumEntries 0
+
+maxRunSize sizeRatio (AllocNumEntries bufferSize) LevelTiering ln =
+    NumEntries $ maxRunSizeTiering (sizeRatioInt sizeRatio) bufferSize ln
+
+maxRunSize sizeRatio (AllocNumEntries bufferSize) LevelLevelling ln =
+    NumEntries $ maxRunSizeLevelling (sizeRatioInt sizeRatio) bufferSize ln
+
+maxRunSizeTiering, maxRunSizeLevelling :: Int -> NumEntries -> LevelNo -> Int
+maxRunSizeTiering sizeRatio (NumEntries bufferSize) (LevelNo ln) =
+    bufferSize * sizeRatio ^ pred ln
+
+maxRunSizeLevelling sizeRatio bufferSize ln =
+    maxRunSizeTiering sizeRatio bufferSize (succ ln)
 
 maxRunSize' :: TableConfig -> MergePolicyForLevel -> LevelNo -> NumEntries
 maxRunSize' config policy ln =
@@ -1106,6 +1113,24 @@ scaleCreditsForMerge LevelTiering mr (NominalCredits c) =
     let NumRuns n = MR.numRuns mr
        -- same as division rounding up: ceiling (c * n / 4)
     in MergeCredits ((c * n + 3) `div` 4)
+
+maxMergeDebt :: TableConfig -> MergePolicyForLevel -> LevelNo -> MergeDebt
+maxMergeDebt TableConfig {
+               confWriteBufferAlloc = AllocNumEntries bufferSize,
+               confSizeRatio
+             } mergePolicy ln =
+    let !sizeRatio = sizeRatioInt confSizeRatio in
+    case mergePolicy of
+      LevelLevelling ->
+        MergeDebt . MergeCredits $
+          sizeRatio * maxRunSizeTiering sizeRatio bufferSize (pred ln)
+                    + maxRunSizeLevelling sizeRatio bufferSize ln
+
+      LevelTiering   ->
+        MergeDebt . MergeCredits $
+          maxRuns * maxRunSizeTiering sizeRatio bufferSize (pred ln)
+        where
+          maxRuns = sizeRatio + 1
 
 -- | The nominal debt equals the minimum of credits we will supply before we
 -- expect the merge to complete. This is the same as the number of updates
