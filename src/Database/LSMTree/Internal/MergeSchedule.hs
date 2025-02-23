@@ -1,4 +1,6 @@
 {-# LANGUAGE CPP           #-}
+{-# LANGUAGE MagicHash     #-}
+{-# LANGUAGE UnboxedTuples #-}
 
 #if !(MIN_VERSION_GLASGOW_HASKELL(9,0,0,0))
 -- Fix for ghc 8.10.x with deriving newtype Prim
@@ -88,6 +90,8 @@ import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
 import           System.FS.BlockIO.API (HasBlockIO)
+
+import           GHC.Exts (Word (W#), quotRemWord2#, timesWord2#)
 
 {-------------------------------------------------------------------------------
   Traces
@@ -568,6 +572,16 @@ depositNominalCredits (NominalDebt nominalDebt)
     writePrimVar nominalCreditsVar after
     return (NominalCredits before, after)
 
+-- | Linearly scale a nominal credit (between 0 and the nominal debt) into an
+-- equivalent merge credit (between 0 and the total merge debt).
+--
+-- Crucially, @100% nominal credit ~~ 100% merge credit@, so when we pay off
+-- the nominal debt, we also exactly pay off the merge debt. That is:
+--
+-- > scaleNominalToMergeCredit nominalDebt mergeDebt nominalDebt == mergeDebt
+--
+-- (modulo some newtype conversions)
+--
 scaleNominalToMergeCredit ::
      NominalDebt
   -> MergeDebt
@@ -576,12 +590,77 @@ scaleNominalToMergeCredit ::
 scaleNominalToMergeCredit (NominalDebt             nominalDebt)
                           (MergeDebt (MergeCredits mergeDebt))
                           (NominalCredits          nominalCredits) =
-    -- The specification is:
+    -- The scaling involves an operation: (a * b) `div` c
+    -- but where potentially the variables a,b,c may be bigger than a 32bit
+    -- integer can hold. This would be the case for runs that have more than
+    -- 4 billion entries.
+    --
+    -- (This is assuming 64bit Int, the problem would be even worse for 32bit
+    -- systems. The solution here would also work for 32bit systems, allowing
+    -- up to, 2^31, 2 billion entries per run.)
+    --
+    -- To work correctly in this case we need higher range for the intermediate
+    -- result a*b which could be bigger than 64bits can hold. A correct
+    -- implementation can use Rational, but a fast implementation should use
+    -- only integer operations. This is relevant because this is on the fast
+    -- path for small insertions into the table that often do no merging work
+    -- and just update credit counters.
+
+    -- The fast implementation uses integer operations that produce a 128bit
+    -- intermediate result for the a*b result, and use a 128bit numerator in
+    -- the division operation (but 64bit denominator). These are known as
+    -- "widening multiplication" and "narrowing division". GHC has direct
+    -- support for these operations as primops: timesWord2# and quotRemWord2#,
+    -- but they are not exposed through any high level API shipped with GHC.
+
+    -- The specification using Rational is:
     let mergeCredits_spec = floor $ toRational nominalCredits
                                   * toRational mergeDebt
                                   / toRational nominalDebt
-     in assert (nominalDebt > 0) $
-        MergeCredits mergeCredits_spec
+    -- Note that it doesn't matter if we use floor or ceiling here.
+    -- Rounding errors will not compound because we sum nominal debt and
+    -- convert absolute nominal to absolute merging credit. We don't
+    -- convert each deposit and sum all the rounding errors.
+    -- When nominalCredits == nominalDebt then the result is exact anyway
+    -- (being mergeDebt) so the rounding mode makes no difference when we
+    -- get to the end of the merge. Using floor makes things simpler for
+    -- the fast integer implementation below, so we take that as the spec.
+
+        -- If the nominalCredits is between 0 and nominalDebt then it's
+        -- guaranteed that the mergeCredit is between 0 and mergeDebt.
+        -- The mergeDebt fits in an Int, therefore the result does too.
+        -- Therefore the undefined behaviour case of timesDivABC_fast is
+        -- avoided and the w2i cannot overflow.
+        mergeCredits_fast = w2i $ timesDivABC_fast (i2w nominalCredits)
+                                                   (i2w mergeDebt)
+                                                   (i2w nominalDebt)
+     in assert (0 < nominalDebt) $
+        assert (0 <= nominalCredits && nominalCredits <= nominalDebt) $
+        assert (mergeCredits_spec == mergeCredits_fast) $
+        MergeCredits mergeCredits_fast
+  where
+    {-# INLINE i2w #-}
+    {-# INLINE w2i #-}
+    i2w :: Int -> Word
+    w2i :: Word -> Int
+    i2w = fromIntegral
+    w2i = fromIntegral
+
+-- | Compute @(a * b) `div` c@ for unsigned integers for the full range of
+-- 64bit unsigned integers, provided that @a <= c@ and thus the result will
+-- fit in 64bits.
+--
+-- The @a * b@ intermediate result is computed using 128bit precision.
+--
+-- Note: the behaviour is undefined if the result will not fit in 64bits.
+-- It will probably result in immediate termination with SIGFPE.
+--
+timesDivABC_fast :: Word -> Word -> Word -> Word
+timesDivABC_fast (W# a) (W# b) (W# c) =
+    case timesWord2# a b of
+      (# ph, pl #) ->
+            case quotRemWord2# ph pl c of
+              (# q, _r #) -> W# q
 
 {-# SPECIALISE immediatelyCompleteIncomingRun ::
      Tracer IO (AtLevel MergeTrace)
