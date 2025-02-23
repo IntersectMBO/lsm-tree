@@ -1,4 +1,6 @@
 {-# LANGUAGE CPP           #-}
+{-# LANGUAGE MagicHash     #-}
+{-# LANGUAGE UnboxedTuples #-}
 
 #if !(MIN_VERSION_GLASGOW_HASKELL(9,0,0,0))
 -- Fix for ghc 8.10.x with deriving newtype Prim
@@ -88,6 +90,8 @@ import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
 import           System.FS.BlockIO.API (HasBlockIO)
+
+import           GHC.Exts (Word (W#), quotRemWord2#, timesWord2#)
 
 {-------------------------------------------------------------------------------
   Traces
@@ -562,8 +566,35 @@ scaleNominalToMergeCredit (NominalDebt             nominalDebt)
     let mergeCredits_spec = floor $ toRational nominalCredits
                                   * toRational mergeDebt
                                   / toRational nominalDebt
+        mergeCredits_fast = w2i $ timesDivABC_fast (i2w nominalCredits)
+                                                   (i2w mergeDebt)
+                                                   (i2w nominalDebt)
      in assert (nominalDebt > 0) $
-        MergeCredits mergeCredits_spec
+        assert (mergeCredits_spec == mergeCredits_fast) $
+        MergeCredits mergeCredits_fast
+  where
+    {-# INLINE i2w #-}
+    {-# INLINE w2i #-}
+    i2w :: Int -> Word
+    w2i :: Word -> Int
+    i2w = fromIntegral
+    w2i = fromIntegral
+
+-- | Compute @(a * b) `div` c@ for unsigned integers for the full range of
+-- 64bit unsigned integers, provided that @a <= c@ and thus the result will
+-- fit in 64bits.
+--
+-- The @a * b@ intermediate result is computed using 128bit precision.
+--
+-- Note: the behaviour is undefined if the result will not fit in 64bits.
+-- It will probably result in immediate termination with SIGFPE.
+--
+timesDivABC_fast :: Word -> Word -> Word -> Word
+timesDivABC_fast (W# a) (W# b) (W# c) =
+    case timesWord2# a b of
+      (# ph, pl #) ->
+            case quotRemWord2# ph pl c of
+              (# q, _r #) -> W# q
 
 {-# SPECIALISE immediatelyCompleteIncomingRun ::
      Tracer IO (AtLevel MergeTrace)
