@@ -1,3 +1,10 @@
+{-# LANGUAGE CPP           #-}
+
+#if !(MIN_VERSION_GLASGOW_HASKELL(9,0,0,0))
+-- Fix for ghc 8.10.x with deriving newtype Prim
+{-# LANGUAGE DataKinds     #-}
+#endif
+
 -- TODO: establish that this implementation matches up with the ScheduledMerges
 -- prototype. See lsm-tree#445.
 module Database.LSMTree.Internal.MergeSchedule (
@@ -122,6 +129,12 @@ data MergeTrace =
 -------------------------------------------------------------------------------}
 
 -- | The levels of the table, from most to least recently inserted.
+--
+-- Concurrency: read-only operations are allowed to be concurrent with each
+-- other, but update operations must not be concurrent with each other or read
+-- operations. For example, inspecting the levels cache can be done
+-- concurrently, but 'updatesWithInterleavedFlushes' must be serialised.
+--
 data TableContent m h = TableContent {
     -- | The in-memory level 0 of the table
     --
@@ -368,7 +381,7 @@ newtype NominalDebt = NominalDebt Int
 -- This corresponds to the number of update operatons inserted into the table.
 newtype NominalCredits = NominalCredits Int
   deriving stock Eq
-  deriving newtype Prim
+  deriving newtype (Prim, NFData)
 
 nominalDebtAsCredits :: NominalDebt -> NominalCredits
 nominalDebtAsCredits (NominalDebt c) = NominalCredits c
@@ -499,24 +512,80 @@ newIncomingMergingRun tr hfs hbio activeDir uc
      TableConfig
   -> LevelNo
   -> IncomingRun IO h
-  -> MergeCredits
+  -> NominalCredits
   -> IO () #-}
--- | Supply a given number of credits to the merge in an incoming run.
+-- | Supply a given number of nominal credits to the merge in an incoming run.
+-- This is a relative addition of credits, not a new absolute total value.
 supplyCreditsIncomingRun ::
      (MonadSTM m, MonadST m, MonadMVar m, MonadMask m)
   => TableConfig
   -> LevelNo
   -> IncomingRun m h
-  -> MergeCredits
+  -> NominalCredits
   -> m ()
-supplyCreditsIncomingRun _ _     (Single        _r) _       = return ()
-supplyCreditsIncomingRun conf ln (Merging _ _ _ mr) credits = do
-    let !thresh = creditThresholdForLevel conf ln
-    _ <- MR.supplyCreditsRelative mr thresh credits
+supplyCreditsIncomingRun _ _ (Single _r) _ = return ()
+supplyCreditsIncomingRun conf ln (Merging _ nominalDebt nominalCreditsVar mr)
+                         deposit = do
+    (_nominalCredits,
+     nominalCredits') <- depositNominalCredits nominalDebt nominalCreditsVar
+                                               deposit
+    let !mergeDebt     = MR.totalMergeDebt mr
+        !mergeCredits' = scaleNominalToMergeCredit nominalDebt mergeDebt
+                                                   nominalCredits'
+        !thresh = creditThresholdForLevel conf ln
+    (_suppliedCredits,
+     _suppliedCredits') <- MR.supplyCreditsAbsolute mr thresh mergeCredits'
+    --TODO: consider tracing supply of credits
     return ()
+
+-- | Deposit nominal credits in the local credits var, ensuring the total
+-- credits does not exceed the total debt.
+--
+-- Depositing /could/ leave the credit higher than the total debt. It is not
+-- avoided by construction. The scenario is this: when a completed merge is
+-- underfull, we combine it with the incoming run, so it means we have one run
+-- fewer on the level then we'd normally have. This means that the level
+-- becomes full at a later time, so more time passes before we call
+-- 'MR.expectCompleted' on any levels further down the tree. This means we keep
+-- supplying nominal credits to levels further down past the point their
+-- nominal debt is paid off. So the solution here is just to drop any nominal
+-- credits that are in excess of the nominal debt.
+--
+-- This is /not/ itself thread safe. All 'TableContent' update operations are
+-- expected to be serialised by the caller. See concurrency comments for
+-- 'TableContent' for detail.
+depositNominalCredits ::
+     PrimMonad m
+  => NominalDebt
+  -> PrimVar (PrimState m) NominalCredits
+  -> NominalCredits
+  -> m (NominalCredits, NominalCredits)
+depositNominalCredits (NominalDebt nominalDebt)
+                      nominalCreditsVar
+                      (NominalCredits deposit) = do
+    NominalCredits before <- readPrimVar nominalCreditsVar
+    let !after = NominalCredits (min (before + deposit) nominalDebt)
+    writePrimVar nominalCreditsVar after
+    return (NominalCredits before, after)
+
+scaleNominalToMergeCredit ::
+     NominalDebt
+  -> MergeDebt
+  -> NominalCredits
+  -> MergeCredits
+scaleNominalToMergeCredit (NominalDebt             nominalDebt)
+                          (MergeDebt (MergeCredits mergeDebt))
+                          (NominalCredits          nominalCredits) =
+    -- The specification is:
+    let mergeCredits_spec = floor $ toRational nominalCredits
+                                  * toRational mergeDebt
+                                  / toRational nominalDebt
+     in assert (nominalDebt > 0) $
+        MergeCredits mergeCredits_spec
 
 {-# SPECIALISE immediatelyCompleteIncomingRun ::
      Tracer IO (AtLevel MergeTrace)
+  -> TableConfig
   -> LevelNo
   -> IncomingRun IO h
   -> IO () #-}
@@ -524,21 +593,24 @@ supplyCreditsIncomingRun conf ln (Merging _ _ _ mr) credits = do
 immediatelyCompleteIncomingRun ::
      (MonadSTM m, MonadST m, MonadMVar m, MonadMask m)
   => Tracer m (AtLevel MergeTrace)
+  -> TableConfig
   -> LevelNo
   -> IncomingRun m h
   -> m ()
-immediatelyCompleteIncomingRun _ _ (Single _r) = return ()
-immediatelyCompleteIncomingRun tr ln (Merging _ _ _ mr) = do
-    let MergeDebt !target = MR.totalMergeDebt mr
-        -- We use a maximal threshold, no need to pick one carefully
-        !thresh = MR.CreditThreshold (MR.UnspentCredits target)
-    (_, suppliedCredits') <- MR.supplyCreditsAbsolute mr thresh target
-    assert (suppliedCredits' == target) $ return ()
-    -- This ensures the merge is really completed. However, we don't
-    -- release the merge yet and only briefly inspect the resulting run.
-    bracket (MR.expectCompleted mr) releaseRef $ \r ->
-      traceWith tr $ AtLevel ln $
-        TraceCompletedMerge (Run.size r) (Run.runFsPathsNumber r)
+immediatelyCompleteIncomingRun tr conf ln ir =
+    case ir of
+      Single{} -> return ()
+      Merging _ (NominalDebt nominalDebt) nominalCreditsVar mr -> do
+
+        NominalCredits nominalCredits <- readPrimVar nominalCreditsVar
+        let !deposit = NominalCredits (nominalDebt - nominalCredits)
+        supplyCreditsIncomingRun conf ln ir deposit
+
+        -- This ensures the merge is really completed. However, we don't
+        -- release the merge yet and only briefly inspect the resulting run.
+        bracket (MR.expectCompleted mr) releaseRef $ \r ->
+          traceWith tr $ AtLevel ln $
+            TraceCompletedMerge (Run.size r) (Run.runFsPathsNumber r)
 
 {-# SPECIALISE snapshotIncomingRun ::
      IncomingRun IO h
@@ -932,7 +1004,7 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels ul
           V.forM_ rs $ \r -> delayedCommit reg (releaseRef r)
           case confMergeSchedule of
             Incremental -> pure ()
-            OneShot     -> immediatelyCompleteIncomingRun tr ln ir
+            OneShot     -> immediatelyCompleteIncomingRun tr conf ln ir
           return ir
 
 -- | We use levelling on the last level, unless that is also the first level.
@@ -1071,48 +1143,9 @@ supplyCredits ::
   -> NominalCredits
   -> Levels m h
   -> m ()
-supplyCredits conf c levels =
+supplyCredits conf deposit levels =
     iforLevelM_ levels $ \ln (Level ir _rs) ->
-      case ir of
-        Single{}          -> pure ()
-        Merging mp _md _mcv mr -> do
-          let !c' = scaleCreditsForMerge mp mr c
-          let !thresh = creditThresholdForLevel conf ln
-          _leftoverCredits <- MR.supplyCreditsRelative mr thresh c'
-          --TODO: assert leftoverCredits == 0
-          -- to assert that we did not finished the merge too early,
-          -- and thus have spread the work out evenly.
-          return ()
-
--- | Scale a number of credits to a number of merge steps to be performed, based
--- on the merging run.
---
--- Initially, 1 update supplies 1 credit. However, since merging runs have
--- different numbers of input runs\/entries, we may have to a more or less
--- merging work than 1 merge step for each credit.
-scaleCreditsForMerge ::
-     MergePolicyForLevel
-  -> Ref (MergingRun t m h)
-  -> NominalCredits
-  -> MergeCredits
-scaleCreditsForMerge LevelLevelling _ (NominalCredits c) =
-    -- A levelling merge has 1 input run and one resident run, which is (up
-    -- to) 4x bigger than the others. It needs to be completed before
-    -- another run comes in.
-    -- TODO: this is currently assuming a naive worst case, where the
-    -- resident run is as large as it can be for the current level. We
-    -- probably have enough information available here to lower the
-    -- worst-case upper bound by looking at the sizes of the input runs.
-    -- As as result, merge work would/could be more evenly distributed over
-    -- time when the resident run is smaller than the worst case.
-    MergeCredits (c * (1 + 4))
-scaleCreditsForMerge LevelTiering mr (NominalCredits c) =
-    -- A tiering merge has 5 runs at most (one could be held back to merged
-    -- again) and must be completed before the level is full (once 4 more
-    -- runs come in).
-    let NumRuns n = MR.numRuns mr
-       -- same as division rounding up: ceiling (c * n / 4)
-    in MergeCredits ((c * n + 3) `div` 4)
+      supplyCreditsIncomingRun conf ln ir deposit
 
 maxMergeDebt :: TableConfig -> MergePolicyForLevel -> LevelNo -> MergeDebt
 maxMergeDebt TableConfig {

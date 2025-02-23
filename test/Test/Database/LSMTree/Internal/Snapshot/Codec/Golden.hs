@@ -15,7 +15,7 @@ import           Database.LSMTree.Common (BloomFilterAlloc (..),
 import           Database.LSMTree.Internal.Config (FencePointerIndex (..),
                      MergePolicy (..), MergeSchedule (..), SizeRatio (..))
 import           Database.LSMTree.Internal.MergeSchedule
-                     (MergePolicyForLevel (..))
+                     (MergePolicyForLevel (..), NominalCredits (..))
 import           Database.LSMTree.Internal.MergingRun (NumRuns (..))
 import qualified Database.LSMTree.Internal.MergingRun as MR
 import           Database.LSMTree.Internal.RunNumber (RunNumber (..))
@@ -212,11 +212,12 @@ enumerateSnapIncomingRun :: [(ComponentAnnotation, SnapIncomingRun RunNumber)]
 enumerateSnapIncomingRun =
   let
       inSnaps =
-        [ (fuseAnnotations ["R1", a, b], SnapMergingRun policy numRuns entries credits sState)
+        [ (fuseAnnotations ["R1", a, b],
+           SnapMergingRun policy numRuns mergeDebt nominalCredits sState)
         | (a, policy ) <- [("P0", LevelTiering), ("P1", LevelLevelling)]
         , numRuns <- NumRuns <$> [ magicNumber1 ]
-        , entries <- MR.MergeDebt    <$> [ magicNumber2 ]
-        , credits <- MR.MergeCredits <$> [ magicNumber1 ]
+        , mergeDebt      <- MR.MergeDebt    <$> [ magicNumber2 ]
+        , nominalCredits <- NominalCredits <$>  [ magicNumber1 ]
         , (b, sState ) <- enumerateSnapMergingRunState enumerateLevelMergeType
         ]
   in  fold

@@ -135,12 +135,32 @@ data SnapLevel r = SnapLevel {
 instance NFData r => NFData (SnapLevel r) where
   rnf (SnapLevel a b) = rnf a `seq` rnf b
 
+-- | Note that for snapshots of incoming runs, we store only the merge debt and
+-- nominal credits, not the nominal debt or the merge credits. The rationale is
+-- a bit subtle.
+--
+-- The nominal debt does not need to be stored because it can be derived based
+-- on the table's write buffer size (which is stored in the snapshot's
+-- TableConfig), and on the level number that the merge is at (which also known
+-- from the snapshot structure).
+--
+-- The merge credits can be recalculated from the combination of the nominal debt,
+-- nominal credits and merge debt.
+--
+-- The merge debt is always the sum of the size of the input runs, so at first
+-- glance this seems redundant. However for completed merges we no longer have
+-- the input runs, so we must store the merge debt if we are to perfectly round
+-- trip the snapshot. This is a nice simple property to have though it is
+-- probably not 100% essential. We could weaken the round trip property to
+-- allow forgetting the merge debt and credit of completed merges (and set them
+-- both to zero).
+--
 data SnapIncomingRun r =
     SnapMergingRun !MergePolicyForLevel
                    !NumRuns
                    !MergeDebt     -- ^ The total merge debt.
-                   !MergeCredits  -- ^ The merge credits supplied, and that
-                                  -- need to be supplied on snapshot open.
+                   !NominalCredits -- ^ The nominal credits supplied, and that
+                                   -- need to be supplied on snapshot open.
                    !(SnapMergingRunState MR.LevelMergeType r)
   | SnapSingleRun !r
   deriving stock (Eq, Functor, Foldable, Traversable)
@@ -203,9 +223,9 @@ toSnapIncomingRun ir = do
       Right (mergePolicy,
              numRuns,
              _nominalDebt,  -- not stored
-             _nominalCredits,
+             nominalCredits,
              mergeDebt,
-             mergeCredits,
+             _mergeCredits, -- not stored
              mergingRunState) -> do
         -- We need to know how many credits were supplied so we can restore merge
         -- work on snapshot load.
@@ -217,7 +237,7 @@ toSnapIncomingRun ir = do
             mergePolicy
             numRuns
             mergeDebt
-            mergeCredits
+            nominalCredits
             smrs
 
 toSnapMergingRunState ::
