@@ -475,13 +475,13 @@ instance DecodeVersioned RunNumber where
 -- SnapIncomingRun
 
 instance Encode (SnapIncomingRun RunNumber) where
-  encode (SnapMergingRun mpfl nr ne sc smrs) =
+  encode (SnapMergingRun mpfl nr md nc smrs) =
        encodeListLen 6
     <> encodeWord 0
     <> encode mpfl
     <> encode nr
-    <> encode ne
-    <> encode sc
+    <> encode md
+    <> encode nc
     <> encode smrs
   encode (SnapSingleRun x) =
        encodeListLen 2
@@ -551,11 +551,11 @@ instance MR.IsMergeType t => DecodeVersioned (SnapMergingRunState t RunNumber) w
 
 -- MergeCredits and MergeDebt
 
-instance Encode MergeCredits where
-  encode (MergeCredits x) = encodeInt x
+instance Encode NominalCredits where
+  encode (NominalCredits x) = encodeInt x
 
-instance DecodeVersioned MergeCredits where
-  decodeVersioned V0 = MergeCredits <$> decodeInt
+instance DecodeVersioned NominalCredits where
+  decodeVersioned V0 = NominalCredits <$> decodeInt
 
 instance Encode MergeDebt where
   encode (MergeDebt (MergeCredits x)) = encodeInt x
