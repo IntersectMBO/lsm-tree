@@ -92,7 +92,7 @@ import           Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (catMaybes)
+import           Data.Maybe (catMaybes, maybeToList)
 import qualified Data.Set as Set
 import           Data.Typeable
 import qualified Data.Vector as V
@@ -104,12 +104,14 @@ import           Database.LSMTree.Internal.Entry (Entry)
 import           Database.LSMTree.Internal.Lookup (ByteCountDiscrepancy,
                      ResolveSerialisedValue, lookupsIO)
 import           Database.LSMTree.Internal.MergeSchedule
+import           Database.LSMTree.Internal.MergingTree
 import           Database.LSMTree.Internal.Paths (SessionRoot (..),
                      SnapshotMetaDataChecksumFile (..),
                      SnapshotMetaDataFile (..), SnapshotName)
 import qualified Database.LSMTree.Internal.Paths as Paths
 import           Database.LSMTree.Internal.Range (Range (..))
 import           Database.LSMTree.Internal.Run (Run)
+import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.RunReaders (OffsetKey (..))
 import qualified Database.LSMTree.Internal.RunReaders as Readers
@@ -1369,41 +1371,148 @@ unions ts = do
 
     traceWith (sessionTracer sesh) $ TraceUnions (NE.map tableId ts)
 
-    -- The TableConfig for the new table is taken from the first / left
-    -- table in the union. This works because the new table is almost
-    -- completely fresh. It will have an empty write buffer and no runs
-    -- in the normal levels. All the existing runs get squashed down into
-    -- a single run before rejoining as a last level.
-    let conf = tableConfig (NE.head ts)
+    -- The TableConfig for the new table is taken from the last table in the
+    -- union. This corresponds to the "Data.Map.union updates baseMap" order,
+    -- where we take the config from the base map, not the updates.
+    --
+    -- This could be modified to take the new config as an input. It works to
+    -- pick any config because the new table is almost completely fresh. It
+    -- will have an empty write buffer and no runs in the normal levels. All
+    -- the existing runs get squashed down into a single run before rejoining
+    -- as a last level.
+    let conf = tableConfig (NE.last ts)
 
     -- We acquire a read-lock on the session open-state to prevent races, see
     -- 'sessionOpenTables'.
     modifyWithActionRegistry
       (atomically $ RW.unsafeAcquireReadAccess (sessionState sesh))
-      (\_ -> atomically $ RW.unsafeReleaseReadAccess (sessionState sesh)) $ \reg -> \case
+      (\_ -> atomically $ RW.unsafeReleaseReadAccess (sessionState sesh)) $
+      \reg -> \case
         SessionClosed -> throwIO ErrSessionClosed
         seshState@(SessionOpen seshEnv) -> do
-          contents <-
-            forM ts $ \t -> do
-              withOpenTable t $ \tEnv ->
-                -- The table contents escape the read access, but we just added references
-                -- to each run so it is safe.
-                RW.withReadAccess (tableContent tEnv) (duplicateTableContent reg)
-
-          content <-
-            error "unions: combine contents into merging tree" $ -- TODO
-              contents
-
-          t <-
-            newWith
-              reg
-              sesh
-              seshEnv
-              conf
-              (error "unions: ArenaManager") -- TODO
-              content
-
+          t <- unionsInOpenSession reg sesh seshEnv conf ts
           pure (seshState, t)
+
+{-# SPECIALISE unionsInOpenSession ::
+     ActionRegistry IO
+  -> Session IO h
+  -> SessionEnv IO h
+  -> TableConfig
+  -> NonEmpty (Table IO h)
+  -> IO (Table IO h) #-}
+unionsInOpenSession ::
+     (MonadSTM m, MonadMask m, MonadMVar m, MonadST m)
+  => ActionRegistry m
+  -> Session m h
+  -> SessionEnv m h
+  -> TableConfig
+  -> NonEmpty (Table m h)
+  -> m (Table m h)
+unionsInOpenSession reg sesh seshEnv conf ts = do
+
+    mts <- forM (NE.toList ts) $ \t ->
+      withOpenTable t $ \tEnv ->
+        RW.withReadAccess (tableContent tEnv) $ \tc ->
+          -- tableContentToMergingTree duplicates all runs and merges
+          -- so the ones from the tableContent here do not escape
+          -- the read access.
+          withRollback reg
+            (tableContentToMergingTree seshEnv conf tc)
+            releaseRef
+    mt <- withRollback reg (newPendingUnionMerge mts) releaseRef
+
+    -- The mts here is a temporary value, since newPendingUnionMerge
+    -- will make its own references, so release mts at the end of
+    -- the action registry bracket
+    forM_ mts (delayedCommit reg . releaseRef)
+
+    empty <- newEmptyTableContent seshEnv reg
+    let content = empty { tableUnionLevel = Union mt }
+
+        -- Pick the arena manager to optimise the case of:
+        -- someUpdates <> bigTableWithLotsOfLookups
+        -- by reusing the arena manager from the last one.
+        am = tableArenaManager (NE.last ts)
+
+    newWith reg sesh seshEnv conf am content
+
+{-# SPECIALISE tableContentToMergingTree ::
+     SessionEnv IO h
+  -> TableConfig
+  -> TableContent IO h
+  -> IO (Ref (MergingTree IO h)) #-}
+tableContentToMergingTree ::
+     forall m h.
+     (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+  => SessionEnv m h
+  -> TableConfig
+  -> TableContent m h
+  -> m (Ref (MergingTree m h))
+tableContentToMergingTree seshEnv conf
+                          tc@TableContent {
+                            tableLevels,
+                            tableUnionLevel
+                          } =
+    bracket (writeBufferToNewRun seshEnv conf tc)
+            (mapM_ releaseRef) $ \mwbr ->
+      let runs :: [PreExistingRun m h]
+          runs = maybeToList (fmap PreExistingRun mwbr)
+              ++ concatMap levelToPreExistingRuns (V.toList tableLevels)
+          -- any pre-existing union in the input table:
+          unionmt = case tableUnionLevel of
+                    NoUnion  -> Nothing
+                    Union mt -> Just mt
+       in newPendingLevelMerge runs unionmt
+  where
+    levelToPreExistingRuns :: Level m h -> [PreExistingRun m h]
+    levelToPreExistingRuns Level{incomingRun, residentRuns} =
+        case incomingRun of
+          Single        r  -> PreExistingRun r
+          Merging _ _ _ mr -> PreExistingMergingRun mr
+      : map PreExistingRun (V.toList residentRuns)
+
+--TODO: can we share this or move it to MergeSchedule?
+{-# SPECIALISE writeBufferToNewRun ::
+     SessionEnv IO h
+  -> TableConfig
+  -> TableContent IO h
+  -> IO (Maybe (Ref (Run IO h))) #-}
+writeBufferToNewRun ::
+     (MonadMask m, MonadST m, MonadSTM m)
+  => SessionEnv m h
+  -> TableConfig
+  -> TableContent m h
+  -> m (Maybe (Ref (Run m h)))
+writeBufferToNewRun SessionEnv {
+                      sessionRoot        = root,
+                      sessionHasFS       = hfs,
+                      sessionHasBlockIO  = hbio,
+                      sessionUniqCounter = uc
+                    }
+                    conf@TableConfig {
+                      confDiskCachePolicy,
+                      confFencePointerIndex
+                    }
+                    TableContent{
+                      tableWriteBuffer,
+                      tableWriteBufferBlobs
+                    }
+  | WB.null tableWriteBuffer = pure Nothing
+  | otherwise                = Just <$> do
+    !n <- incrUniqCounter uc
+    let !ln        = LevelNo 1
+        !cache     = diskCachePolicyForLevel confDiskCachePolicy ln
+        !alloc     = bloomFilterAllocForLevel conf ln
+        !indexType = indexTypeForRun confFencePointerIndex
+        !path      = Paths.runPath (Paths.activeDir root)
+                                   (uniqueToRunNumber n)
+    Run.fromWriteBuffer hfs hbio
+      cache
+      alloc
+      indexType
+      path
+      tableWriteBuffer
+      tableWriteBufferBlobs
 
 -- | Check that all tables in the session match. If so, return the matched
 -- session. If there is a mismatch, return the list indices of the mismatching
