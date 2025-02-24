@@ -694,23 +694,36 @@ new sesh conf = do
     withOpenSession sesh $ \seshEnv ->
       withActionRegistry $ \reg -> do
         am <- newArenaManager
-        blobpath <- Paths.tableBlobPath (sessionRoot seshEnv) <$>
-                      incrUniqCounter (sessionUniqCounter seshEnv)
-        tableWriteBufferBlobs
-          <- withRollback reg
-               (WBB.new (sessionHasFS seshEnv) blobpath)
-               releaseRef
-        let tableWriteBuffer = WB.empty
-            tableLevels = V.empty
-        tableCache <- mkLevelsCache reg tableLevels
-        let tc = TableContent {
-                tableWriteBuffer
-              , tableWriteBufferBlobs
-              , tableLevels
-              , tableCache
-              , tableUnionLevel = NoUnion
-              }
+        tc <- newEmptyTableContent seshEnv reg
         newWith reg sesh seshEnv conf am tc
+
+{-# SPECIALISE newEmptyTableContent ::
+     SessionEnv IO h
+  -> ActionRegistry IO
+  -> IO (TableContent IO h) #-}
+newEmptyTableContent ::
+     (PrimMonad m, MonadMask m, MonadMVar m)
+  => SessionEnv m h
+  -> ActionRegistry m
+  -> m (TableContent m h)
+newEmptyTableContent seshEnv reg = do
+    blobpath <- Paths.tableBlobPath (sessionRoot seshEnv) <$>
+                  incrUniqCounter (sessionUniqCounter seshEnv)
+    let tableWriteBuffer = WB.empty
+    tableWriteBufferBlobs
+      <- withRollback reg
+           (WBB.new (sessionHasFS seshEnv) blobpath)
+           releaseRef
+    let tableLevels = V.empty
+    tableCache <- mkLevelsCache reg tableLevels
+    pure TableContent {
+      tableWriteBuffer
+    , tableWriteBufferBlobs
+    , tableLevels
+    , tableCache
+    , tableUnionLevel = NoUnion
+    }
+
 
 {-# SPECIALISE newWith ::
      ActionRegistry IO
