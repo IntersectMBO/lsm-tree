@@ -2181,32 +2181,44 @@ updateStats action@(Action _merrs action') lookUp modelBefore _modelAfter result
 
     updParentTable stats = case (action', result) of
         (New{}, MEither (Right (MTable tbl))) ->
-          stats {
-            parentTable = Map.insert (Model.tableID tbl)
-                                     (Model.tableID tbl)
-                                     (parentTable stats)
-          }
+          insertParentTableNew tbl stats
         (OpenSnapshot{}, MEither (Right (MTable tbl))) ->
-          stats {
+          insertParentTableNew tbl stats
+        (Duplicate ptblVar, MEither (Right (MTable tbl))) ->
+          insertParentTableDerived ptblVar tbl stats
+        (Union ptblVar _ptblVar2, MEither (Right (MTable tbl))) ->
+          insertParentTableDerived ptblVar tbl stats
+        (Unions (ptblVar :| _ptblVars), MEither (Right (MTable tbl))) ->
+          insertParentTableDerived ptblVar tbl stats
+        -- TODO: we're abitrarily picking the first parent as the parent (and
+        -- ignoring ptblVar2 and ptblVars above). Tables should be able to have
+        -- *multiple* ultimate parent tables, which is currently not possible:
+        --parentTable only stores a single ultimate parent table per table.
+        _ -> stats
+
+    -- insert an entry into the parentTable for a completely new table
+    insertParentTableNew :: forall k v b. Model.Table k v b -> Stats -> Stats
+    insertParentTableNew tbl stats =
+      stats {
+        parentTable = Map.insert (Model.tableID tbl)
+                                 (Model.tableID tbl)
+                                 (parentTable stats)
+      }
+
+    -- insert an entry into the parentTable for a table derived from a parent
+    insertParentTableDerived :: forall k v b.
+                                GVar Op (WrapTable h IO k v b)
+                             -> Model.Table k v b -> Stats -> Stats
+    insertParentTableDerived ptblVar tbl stats =
+      let -- immediate and ultimate parent table ids
+          iptblId, uptblId :: Model.TableID
+          iptblId = getTableId (lookUp ptblVar)
+          uptblId = parentTable stats Map.! iptblId
+       in stats {
             parentTable = Map.insert (Model.tableID tbl)
-                                     (Model.tableID tbl)
+                                     uptblId
                                      (parentTable stats)
           }
-        (Duplicate ptblVar, MEither (Right (MTable tbl))) ->
-          let -- immediate and ultimate parent table ids
-              iptblId, uptblId :: Model.TableID
-              iptblId = getTableId (lookUp ptblVar)
-              uptblId = parentTable stats Map.! iptblId
-           in stats {
-                parentTable = Map.insert (Model.tableID tbl)
-                                         uptblId
-                                         (parentTable stats)
-              }
-        -- TODO: also include tables resulting from Union and Unions here. This
-        -- means that tables should be able to have *multiple* ultimate parent
-        -- tables, which is currently not possible: parentTable only stores a
-        -- single ultimate parent table per table.
-        _ -> stats
 
     updDupTableActionLog stats | MEither (Right _) <- result =
       case action' of
