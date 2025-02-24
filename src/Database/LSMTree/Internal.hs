@@ -92,7 +92,7 @@ import           Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (catMaybes)
+import           Data.Maybe (catMaybes, maybeToList)
 import qualified Data.Set as Set
 import           Data.Typeable
 import qualified Data.Vector as V
@@ -104,12 +104,14 @@ import           Database.LSMTree.Internal.Entry (Entry)
 import           Database.LSMTree.Internal.Lookup (ByteCountDiscrepancy,
                      ResolveSerialisedValue, lookupsIO)
 import           Database.LSMTree.Internal.MergeSchedule
+import           Database.LSMTree.Internal.MergingTree
 import           Database.LSMTree.Internal.Paths (SessionRoot (..),
                      SnapshotMetaDataChecksumFile (..),
                      SnapshotMetaDataFile (..), SnapshotName)
 import qualified Database.LSMTree.Internal.Paths as Paths
 import           Database.LSMTree.Internal.Range (Range (..))
 import           Database.LSMTree.Internal.Run (Run)
+import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.RunReaders (OffsetKey (..))
 import qualified Database.LSMTree.Internal.RunReaders as Readers
@@ -1397,9 +1399,15 @@ unions ts = do
                 -- to each run so it is safe.
                 RW.withReadAccess (tableContent tEnv) (duplicateTableContent reg)
 
-          content <-
-            error "unions: combine contents into merging tree" $ -- TODO
-              contents
+          content <- unionsTableContent seshEnv conf reg (NE.toList contents)
+          --TODO: combine unionsTableContent with above loop and avoid
+          -- duplicating and releasing here:
+          mapM_ (releaseTableContent reg) contents
+
+          -- Pick the arena manager to optimise the case of:
+          -- bigTableWithLotsOfLookups <> someUpdates
+          -- by reusing the arena manager from the first one.
+          let am = tableArenaManager (NE.head ts)
 
           t <-
             newWith
@@ -1407,10 +1415,77 @@ unions ts = do
               sesh
               seshEnv
               conf
-              (error "unions: ArenaManager") -- TODO
+              am
               content
 
           pure (seshState, t)
+
+unionsTableContent ::
+     forall m h.
+     (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+  => SessionEnv m h
+  -> TableConfig
+  -> ActionRegistry m
+  -> [TableContent m h]
+  -> m (TableContent m h)
+unionsTableContent seshEnv@SessionEnv {
+                     sessionRoot        = root,
+                     sessionHasFS       = hfs,
+                     sessionHasBlockIO  = hbio,
+                     sessionUniqCounter = uc
+                   }
+                   conf@TableConfig {
+                     confDiskCachePolicy,
+                     confFencePointerIndex
+                   } reg tcs = do
+    --TODO: exception safety, rollback, references etc, masking async exceptions
+    mts <- forM tcs $ \tc ->
+             withRollback reg (tableContentToMergingTree tc) releaseRef
+    mt  <- newPendingUnionMerge mts
+    tc  <- newEmptyTableContent seshEnv reg
+    mapM_ releaseRef mts -- they are intermediate values
+    return tc { tableUnionLevel = Union mt }
+  where
+    tableContentToMergingTree :: TableContent m h -> m (Ref (MergingTree m h))
+    tableContentToMergingTree tc@TableContent{..} = do
+      mwbr <- writeBufferToNewRun tc
+      let runs :: [PreExistingRun m h]
+          runs = maybeToList (fmap PreExistingRun mwbr)
+              ++ concatMap levelToPreExistingRuns (V.toList tableLevels)
+          -- any pre-existing union in the input table:
+          unionmt = case tableUnionLevel of
+                    NoUnion  -> Nothing
+                    Union mt -> Just mt
+      mt <- newPendingLevelMerge runs unionmt
+      mapM_ releaseRef mwbr
+      return mt
+
+    levelToPreExistingRuns :: Level m h -> [PreExistingRun m h]
+    levelToPreExistingRuns Level{incomingRun, residentRuns} =
+        case incomingRun of
+          Single r     -> PreExistingRun r
+          Merging _ mr -> PreExistingMergingRun mr
+      : map PreExistingRun (V.toList residentRuns)
+
+    --TODO: can we share this or move it to MergeSchedule?
+    writeBufferToNewRun TableContent{..}
+      | WB.null tableWriteBuffer = pure Nothing
+      | otherwise                = Just <$> do
+        !n <- incrUniqCounter uc
+        let !ln        = LevelNo 1
+            !cache     = diskCachePolicyForLevel confDiskCachePolicy ln
+            !alloc     = bloomFilterAllocForLevel conf ln
+            !indexType = indexTypeForRun confFencePointerIndex
+            !path      = Paths.runPath root (uniqueToRunNumber n)
+        withRollback reg
+          (Run.fromWriteBuffer hfs hbio
+            cache
+            alloc
+            indexType
+            path
+            tableWriteBuffer
+            tableWriteBufferBlobs)
+          releaseRef
 
 -- | Like 'matchBy', but the match function is @(==)@.
 match :: Eq a => NonEmpty a -> Either (Int, Int) a
