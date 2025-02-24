@@ -1,3 +1,12 @@
+{-# LANGUAGE CPP           #-}
+{-# LANGUAGE MagicHash     #-}
+{-# LANGUAGE UnboxedTuples #-}
+
+#if !(MIN_VERSION_GLASGOW_HASKELL(9,0,0,0))
+-- Fix for ghc 8.10.x with deriving newtype Prim
+{-# LANGUAGE DataKinds #-}
+#endif
+
 -- TODO: establish that this implementation matches up with the ScheduledMerges
 -- prototype. See lsm-tree#445.
 module Database.LSMTree.Internal.MergeSchedule (
@@ -16,6 +25,11 @@ module Database.LSMTree.Internal.MergeSchedule (
   , Level (..)
   , IncomingRun (..)
   , MergePolicyForLevel (..)
+  , newIncomingSingleRun
+  , newIncomingCompletedMergingRun
+  , newIncomingMergingRun
+  , supplyCreditsIncomingRun
+  , snapshotIncommingRun
     -- * Union level
   , UnionLevel (..)
     -- * Flushes and scheduled merges
@@ -24,9 +38,12 @@ module Database.LSMTree.Internal.MergeSchedule (
     -- * Exported for cabal-docspec
   , maxRunSize
     -- * Credits
-  , Credits (..)
+  , MergeDebt (..)
+  , MergeCredits (..)
   , supplyCredits
   , creditThresholdForLevel
+  , NominalDebt (..)
+  , NominalCredits (..)
     -- * Exported for testing
   , addWriteBufferEntries
   ) where
@@ -42,6 +59,8 @@ import           Control.RefCount
 import           Control.Tracer
 import           Data.BloomFilter (Bloom)
 import           Data.Foldable (fold)
+import           Data.Primitive (Prim)
+import           Data.Primitive.PrimVar
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Assertions (assert)
 import           Database.LSMTree.Internal.Config
@@ -49,10 +68,11 @@ import           Database.LSMTree.Internal.Entry (Entry, NumEntries (..),
                      unNumEntries)
 import           Database.LSMTree.Internal.Index (Index)
 import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
-import           Database.LSMTree.Internal.MergingRun (MergingRun, NumRuns (..))
+import           Database.LSMTree.Internal.MergingRun (MergeCredits (..),
+                     MergeDebt (..), MergingRun, NumRuns (..))
 import qualified Database.LSMTree.Internal.MergingRun as MR
 import           Database.LSMTree.Internal.MergingTree (MergingTree)
-import           Database.LSMTree.Internal.Paths (RunFsPaths (..),
+import           Database.LSMTree.Internal.Paths (ActiveDir, RunFsPaths (..),
                      SessionRoot (..))
 import qualified Database.LSMTree.Internal.Paths as Paths
 import           Database.LSMTree.Internal.Run (Run, RunDataCaching (..))
@@ -70,6 +90,8 @@ import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
 import           System.FS.BlockIO.API (HasBlockIO)
+
+import           GHC.Exts (Word (W#), quotRemWord2#, timesWord2#)
 
 {-------------------------------------------------------------------------------
   Traces
@@ -214,8 +236,8 @@ mkLevelsCache reg lvls = do
     foldRunAndMergeM k1 k2 ls =
         fmap fold $ forMStrict ls $ \(Level ir rs) -> do
           incoming <- case ir of
-            Single     r -> k1 r
-            Merging _ mr -> k2 mr
+            Single         r -> k1 r
+            Merging _ _ _ mr -> k2 mr
           (incoming <>) . fold <$> V.forM rs k1
 
 {-# SPECIALISE rebuildCache ::
@@ -281,7 +303,7 @@ releaseLevelsCache reg cache =
       delayedCommit reg (releaseRef r)
 
 {-------------------------------------------------------------------------------
-  Levels, runs and ongoing merges
+  Levels
 -------------------------------------------------------------------------------}
 
 type Levels m h = V.Vector (Level m h)
@@ -293,36 +315,6 @@ data Level m h = Level {
     incomingRun  :: !(IncomingRun m h)
   , residentRuns :: !(V.Vector (Ref (Run m h)))
   }
-
--- | An incoming run is either a single run, or a merge.
-data IncomingRun m h =
-       Single  !(Ref (Run m h))
-     | Merging !MergePolicyForLevel !(Ref (MergingRun MR.LevelMergeType m h))
-
-data MergePolicyForLevel = LevelTiering | LevelLevelling
-  deriving stock (Show, Eq)
-
-instance NFData MergePolicyForLevel where
-  rnf LevelTiering   = ()
-  rnf LevelLevelling = ()
-
--- | We use levelling on the last level, unless that is also the first level.
-mergePolicyForLevel ::
-     MergePolicy
-  -> LevelNo
-  -> Levels m h
-  -> UnionLevel m h
-  -> MergePolicyForLevel
-mergePolicyForLevel MergePolicyLazyLevelling (LevelNo n) nextLevels unionLevel
-  | n == 1
-  = LevelTiering    -- always use tiering on first level
-
-  | V.null nextLevels
-  , NoUnion <- unionLevel
-  = LevelLevelling  -- levelling on last level
-
-  | otherwise
-  = LevelTiering
 
 {-# SPECIALISE duplicateLevels :: ActionRegistry IO -> Levels IO h -> IO (Levels IO h) #-}
 duplicateLevels ::
@@ -351,6 +343,47 @@ releaseLevels reg levels =
       releaseIncomingRun reg incomingRun
       V.mapM_ (delayedCommit reg . releaseRef) residentRuns
 
+{-# SPECIALISE iforLevelM_ :: Levels IO h -> (LevelNo -> Level IO h -> IO ()) -> IO () #-}
+iforLevelM_ :: Monad m => Levels m h -> (LevelNo -> Level m h -> m ()) -> m ()
+iforLevelM_ lvls k = V.iforM_ lvls $ \i lvl -> k (LevelNo (i + 1)) lvl
+
+{-------------------------------------------------------------------------------
+  Incoming runs
+-------------------------------------------------------------------------------}
+
+-- | An incoming run is either a single run, or a merge.
+data IncomingRun m h =
+       Single  !(Ref (Run m h))
+     | Merging !MergePolicyForLevel
+               !NominalDebt
+               !(PrimVar (PrimState m) NominalCredits)
+               !(Ref (MergingRun MR.LevelMergeType m h))
+
+data MergePolicyForLevel = LevelTiering | LevelLevelling
+  deriving stock (Show, Eq)
+
+instance NFData MergePolicyForLevel where
+  rnf LevelTiering   = ()
+  rnf LevelLevelling = ()
+
+-- | Total merge debt to complete the merge in an incoming run.
+--
+-- This corresponds to the number (worst case, minimum number) of update
+-- operatons inserted into the table, before we will expect the merge to
+-- complete.
+newtype NominalDebt = NominalDebt Int
+  deriving stock Eq
+
+-- | Merge credits that get supplied to a table's levels.
+--
+-- This corresponds to the number of update operatons inserted into the table.
+newtype NominalCredits = NominalCredits Int
+  deriving stock Eq
+  deriving newtype (Prim, NFData)
+
+nominalDebtAsCredits :: NominalDebt -> NominalCredits
+nominalDebtAsCredits (NominalDebt c) = NominalCredits c
+
 {-# SPECIALISE duplicateIncomingRun :: ActionRegistry IO -> IncomingRun IO h -> IO (IncomingRun IO h) #-}
 duplicateIncomingRun ::
      (PrimMonad m, MonadMask m)
@@ -360,20 +393,266 @@ duplicateIncomingRun ::
 duplicateIncomingRun reg (Single r) =
     Single <$> withRollback reg (dupRef r) releaseRef
 
-duplicateIncomingRun reg (Merging mp mr) =
-    Merging mp <$> withRollback reg (dupRef mr) releaseRef
+duplicateIncomingRun reg (Merging mp md mcv mr) =
+    Merging mp md <$> (newPrimVar =<< readPrimVar mcv)
+                  <*> withRollback reg (dupRef mr) releaseRef
 
 {-# SPECIALISE releaseIncomingRun :: ActionRegistry IO -> IncomingRun IO h -> IO () #-}
 releaseIncomingRun ::
      (PrimMonad m, MonadMask m)
   => ActionRegistry m
   -> IncomingRun m h -> m ()
-releaseIncomingRun reg (Single r)     = delayedCommit reg (releaseRef r)
-releaseIncomingRun reg (Merging _ mr) = delayedCommit reg (releaseRef mr)
+releaseIncomingRun reg (Single         r) = delayedCommit reg (releaseRef r)
+releaseIncomingRun reg (Merging _ _ _ mr) = delayedCommit reg (releaseRef mr)
 
-{-# SPECIALISE iforLevelM_ :: Levels IO h -> (LevelNo -> Level IO h -> IO ()) -> IO () #-}
-iforLevelM_ :: Monad m => Levels m h -> (LevelNo -> Level m h -> m ()) -> m ()
-iforLevelM_ lvls k = V.iforM_ lvls $ \i lvl -> k (LevelNo (i + 1)) lvl
+{-# SPECIALISE newIncomingSingleRun ::
+     Tracer IO (AtLevel MergeTrace)
+  -> LevelNo
+  -> Ref (Run IO h)
+  -> IO (IncomingRun IO h) #-}
+newIncomingSingleRun ::
+     Monad m
+  => Tracer m (AtLevel MergeTrace)
+  -> LevelNo
+  -> Ref (Run m h)
+  -> m (IncomingRun m h)
+newIncomingSingleRun tr ln r = do
+    traceWith tr $ AtLevel ln $
+      TraceNewMergeSingleRun (Run.size r) (Run.runFsPathsNumber r)
+    return (Single r)
+
+{-# SPECIALISE newIncomingCompletedMergingRun ::
+     Tracer IO (AtLevel MergeTrace)
+  -> TableConfig
+  -> ActionRegistry IO
+  -> LevelNo
+  -> MergePolicyForLevel
+  -> NumRuns
+  -> MergeDebt
+  -> Ref (Run IO h)
+  -> IO (IncomingRun IO h) #-}
+newIncomingCompletedMergingRun ::
+    (MonadMask m, MonadMVar m, MonadSTM m, MonadST m)
+  => Tracer m (AtLevel MergeTrace)
+  -> TableConfig
+  -> ActionRegistry m
+  -> LevelNo
+  -> MergePolicyForLevel
+  -> NumRuns
+  -> MergeDebt
+  -> Ref (Run m h)
+  -> m (IncomingRun m h)
+newIncomingCompletedMergingRun tr conf reg ln mergePolicy nr mergeDebt r = do
+    traceWith tr $ AtLevel ln $
+      TraceNewMergeSingleRun (Run.size r) (Run.runFsPathsNumber r)
+    mr <- withRollback reg (MR.newCompleted nr mergeDebt r) releaseRef
+    let nominalDebt    = nominalDebtForLevel conf ln
+        nominalCredits = nominalDebtAsCredits nominalDebt
+    nominalCreditsVar <- newPrimVar nominalCredits
+    return (Merging mergePolicy nominalDebt nominalCreditsVar mr)
+
+{-# SPECIALISE newIncomingMergingRun ::
+     Tracer IO (AtLevel MergeTrace)
+  -> HasFS IO h
+  -> HasBlockIO IO h
+  -> ActiveDir
+  -> UniqCounter IO
+  -> TableConfig
+  -> ResolveSerialisedValue
+  -> ActionRegistry IO
+  -> MergePolicyForLevel
+  -> MR.LevelMergeType
+  -> LevelNo
+  -> V.Vector (Ref (Run IO h))
+  -> IO (IncomingRun IO h) #-}
+newIncomingMergingRun ::
+     (MonadMask m, MonadMVar m, MonadSTM m, MonadST m)
+  => Tracer m (AtLevel MergeTrace)
+  -> HasFS m h
+  -> HasBlockIO m h
+  -> ActiveDir
+  -> UniqCounter m
+  -> TableConfig
+  -> ResolveSerialisedValue
+  -> ActionRegistry m
+  -> MergePolicyForLevel
+  -> MR.LevelMergeType
+  -> LevelNo
+  -> V.Vector (Ref (Run m h))
+  -> m (IncomingRun m h)
+newIncomingMergingRun tr hfs hbio activeDir uc
+                      conf@TableConfig {
+                             confDiskCachePolicy,
+                             confFencePointerIndex
+                           }
+                      resolve reg
+                      mergePolicy mergeType ln rs = do
+    !rn <- uniqueToRunNumber <$> incrUniqCounter uc
+    let !caching   = diskCachePolicyForLevel confDiskCachePolicy ln
+        !alloc     = bloomFilterAllocForLevel conf ln
+        !indexType = indexTypeForRun confFencePointerIndex
+        !runPaths  = Paths.runPath activeDir rn
+    traceWith tr $ AtLevel ln $
+      TraceNewMerge (V.map Run.size rs) (runNumber runPaths)
+                    caching alloc mergePolicy mergeType
+    mr <- withRollback reg
+            (MR.new hfs hbio resolve caching
+                    alloc indexType mergeType
+                    runPaths rs)
+            releaseRef
+    let nominalDebt    = nominalDebtForLevel conf ln
+        nominalCredits = NominalCredits 0
+    nominalCreditsVar <- newPrimVar nominalCredits
+    assert (MR.totalMergeDebt mr <= maxMergeDebt conf mergePolicy ln) $
+      return (Merging mergePolicy nominalDebt nominalCreditsVar mr)
+
+{-# SPECIALISE supplyCreditsIncomingRun ::
+     TableConfig
+  -> LevelNo
+  -> IncomingRun IO h
+  -> NominalCredits
+  -> IO () #-}
+-- | Set the  a given number of credits to the merge in an incoming run.
+supplyCreditsIncomingRun ::
+     (MonadSTM m, MonadST m, MonadMVar m, MonadMask m)
+  => TableConfig
+  -> LevelNo
+  -> IncomingRun m h
+  -> NominalCredits
+  -> m ()
+supplyCreditsIncomingRun _ _ (Single _r) _ = return ()
+supplyCreditsIncomingRun conf ln (Merging _ nominalDebt nominalCreditsVar mr)
+                         deposit = do
+    (_nominalCredits,
+     nominalCredits') <- depositNominalCredits nominalDebt nominalCreditsVar
+                                               deposit
+    let !mergeDebt     = MR.totalMergeDebt mr
+        !mergeCredits' = scaleNominalToMergeCredit nominalDebt mergeDebt
+                                                   nominalCredits'
+        !thresh = creditThresholdForLevel conf ln
+    (_suppliedCredits,
+     _suppliedCredits') <- MR.supplyCreditsAbsolute mr thresh mergeCredits'
+    --TODO: consider tracing supply of credits
+    return ()
+
+depositNominalCredits ::
+     PrimMonad m
+  => NominalDebt
+  -> PrimVar (PrimState m) NominalCredits
+  -> NominalCredits
+  -> m (NominalCredits, NominalCredits)
+depositNominalCredits (NominalDebt nominalDebt)
+                      nominalCreditsVar
+                      (NominalCredits deposit) = do
+    NominalCredits before <- readPrimVar nominalCreditsVar
+    -- Depositing _could_ leave the credit higher than the debt, because
+    -- sometimes under-full runs mean we don't shuffle runs down the levels
+    -- as quickly as the worst case. So here we do just drop excess nominal
+    -- credits.
+    let !after = NominalCredits (min (before + deposit) nominalDebt)
+    writePrimVar nominalCreditsVar after
+    return (NominalCredits before, after)
+
+scaleNominalToMergeCredit ::
+     NominalDebt
+  -> MergeDebt
+  -> NominalCredits
+  -> MergeCredits
+scaleNominalToMergeCredit (NominalDebt             nominalDebt)
+                          (MergeDebt (MergeCredits mergeDebt))
+                          (NominalCredits          nominalCredits) =
+    -- The specification is:
+    let mergeCredits_spec = floor $ toRational nominalCredits
+                                  * toRational mergeDebt
+                                  / toRational nominalDebt
+        mergeCredits_fast = w2i $ timesDivABC_fast (i2w nominalCredits)
+                                                   (i2w mergeDebt)
+                                                   (i2w nominalDebt)
+     in assert (nominalDebt > 0) $
+        assert (mergeCredits_spec == mergeCredits_fast) $
+        MergeCredits mergeCredits_fast
+  where
+    {-# INLINE i2w #-}
+    {-# INLINE w2i #-}
+    i2w :: Int -> Word
+    w2i :: Word -> Int
+    i2w = fromIntegral
+    w2i = fromIntegral
+
+-- | Compute @(a * b) `div` c@ for unsigned integers for the full range of
+-- 64bit unsigned integers, provided that @a <= c@ and thus the result will
+-- fit in 64bits.
+--
+-- The @a * b@ intermediate result is computed using 128bit precision.
+--
+-- Note: the behaviour is undefined if the result will not fit in 64bits.
+-- It will probably result in immediate termination with SIGFPE.
+--
+timesDivABC_fast :: Word -> Word -> Word -> Word
+timesDivABC_fast (W# a) (W# b) (W# c) =
+    case timesWord2# a b of
+      (# ph, pl #) ->
+            case quotRemWord2# ph pl c of
+              (# q, _r #) -> W# q
+
+{-# SPECIALISE immediatelyCompleteIncomingRun ::
+     Tracer IO (AtLevel MergeTrace)
+  -> TableConfig
+  -> LevelNo
+  -> IncomingRun IO h
+  -> IO () #-}
+-- | Supply enough credits to complete the merge now.
+immediatelyCompleteIncomingRun ::
+     (MonadSTM m, MonadST m, MonadMVar m, MonadMask m)
+  => Tracer m (AtLevel MergeTrace)
+  -> TableConfig
+  -> LevelNo
+  -> IncomingRun m h
+  -> m ()
+immediatelyCompleteIncomingRun tr conf ln ir =
+    case ir of
+      Single{} -> return ()
+      Merging _ (NominalDebt nominalDebt) nominalCreditsVar mr -> do
+
+        NominalCredits nominalCredits <- readPrimVar nominalCreditsVar
+        let !deposit = NominalCredits (nominalDebt - nominalCredits)
+        supplyCreditsIncomingRun conf ln ir deposit
+
+        -- This ensures the merge is really completed. However, we don't
+        -- release the merge yet and only briefly inspect the resulting run.
+        bracket (MR.expectCompleted mr) releaseRef $ \r ->
+          traceWith tr $ AtLevel ln $
+            TraceCompletedMerge (Run.size r) (Run.runFsPathsNumber r)
+
+{-# SPECIALISE snapshotIncommingRun ::
+     IncomingRun IO h
+  -> IO (Either (Ref (Run IO h))
+                (MergePolicyForLevel,
+                 NumRuns,
+                 NominalDebt,
+                 NominalCredits,
+                 MergeDebt,
+                 MergeCredits,
+                 MR.MergingRunState IO h)) #-}
+snapshotIncommingRun ::
+     (PrimMonad m, MonadMVar m)
+  => IncomingRun m h
+  -> m (Either (Ref (Run m h))
+               (MergePolicyForLevel,
+                NumRuns,
+                NominalDebt,
+                NominalCredits,
+                MergeDebt,
+                MergeCredits,
+                MR.MergingRunState m h))
+snapshotIncommingRun (Single r) = pure (Left r)
+snapshotIncommingRun (Merging mergePolicy nominalDebt nominalCreditsVar mr) = do
+    (numRuns, mergeDebt, mergeCredit, state) <- MR.snapshot mr
+    nominalCredits <- readPrimVar nominalCreditsVar
+    pure (Right (mergePolicy, numRuns,
+                 nominalDebt, nominalCredits,
+                 mergeDebt, mergeCredit,
+                 state))
 
 {-------------------------------------------------------------------------------
   Union level
@@ -482,7 +761,7 @@ updatesWithInterleavedFlushes tr conf resolve hfs hbio root uc es reg tc = do
     -- number of supplied credits is based on the size increase of the write
     -- buffer, not the the number of processed entries @length es' - length es@.
     let numAdded = unNumEntries (WB.numEntries wb') - unNumEntries (WB.numEntries wb)
-    supplyCredits conf (Credits numAdded) (tableLevels tc)
+    supplyCredits conf (NominalCredits numAdded) (tableLevels tc)
     let tc' = tc { tableWriteBuffer = wb' }
     if WB.numEntries wb' < maxn then do
       pure $! tc'
@@ -579,7 +858,7 @@ flushWriteBuffer tr conf@TableConfig{confFencePointerIndex, confDiskCachePolicy}
         !cache     = diskCachePolicyForLevel confDiskCachePolicy ln
         !alloc     = bloomFilterAllocForLevel conf ln
         !indexType = indexTypeForRun confFencePointerIndex
-        !path      = Paths.runPath root (uniqueToRunNumber n)
+        !path      = Paths.runPath (Paths.activeDir root) (uniqueToRunNumber n)
     traceWith tr $ AtLevel ln $
       TraceFlushWriteBuffer size (runNumber path) cache alloc
     r <- withRollback reg
@@ -703,8 +982,8 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels ul
     expectCompletedMerge :: LevelNo -> IncomingRun m h -> m (Ref (Run m h))
     expectCompletedMerge ln ir = do
       r <- case ir of
-        Single r     -> pure r
-        Merging _ mr -> do
+        Single         r -> pure r
+        Merging _ _ _ mr -> do
           r <- withRollback reg (MR.expectCompleted mr) releaseRef
           delayedCommit reg (releaseRef mr)
           pure r
@@ -721,45 +1000,42 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels ul
     newMerge mergePolicy mergeType ln rs
       | Just (r, rest) <- V.uncons rs
       , V.null rest = do
-          traceWith tr $ AtLevel ln $
-            TraceNewMergeSingleRun (Run.size r)
-                                   (Run.runFsPathsNumber r)
           -- We create a fresh reference and release the original one.
           -- This will also make it easier to trace back where it was allocated.
-          ir <- Single <$> withRollback reg (dupRef r) releaseRef
+          r' <- withRollback reg (dupRef r) releaseRef
+          ir <- newIncomingSingleRun tr ln r'
           delayedCommit reg (releaseRef r)
           pure ir
 
-      | otherwise = do
-        assert (let l = V.length rs in l >= 2 && l <= 5) $ pure ()
-        !n <- incrUniqCounter uc
-        let !caching = diskCachePolicyForLevel confDiskCachePolicy ln
-            !alloc = bloomFilterAllocForLevel conf ln
-            !indexType = indexTypeForRun confFencePointerIndex
-            !runPaths = Paths.runPath root (uniqueToRunNumber n)
-        traceWith tr $ AtLevel ln $
-          TraceNewMerge (V.map Run.size rs) (runNumber runPaths) caching alloc
-            mergePolicy mergeType
-        -- The runs will end up inside the merging run, with fresh references.
-        -- The original references can be released (but only on the happy path).
-        mr <- withRollback reg
-          (MR.new hfs hbio resolve caching alloc indexType mergeType runPaths rs)
-          releaseRef
-        V.forM_ rs $ \r -> delayedCommit reg (releaseRef r)
-        case confMergeSchedule of
-          Incremental -> pure ()
-          OneShot -> do
-            let !required = MR.Credits (unNumEntries (V.foldMap' Run.size rs))
-            let !thresh = creditThresholdForLevel conf ln
-            leftoverCredits <- MR.supplyCredits mr thresh required
-            assert (leftoverCredits == 0) $ return ()
-            -- This ensures the merge is really completed. However, we don't
-            -- release the merge yet and only briefly inspect the resulting run.
-            bracket (MR.expectCompleted mr) releaseRef $ \r ->
-              traceWith tr $ AtLevel ln $
-                TraceCompletedMerge (Run.size r) (Run.runFsPathsNumber r)
+      | otherwise = assert (let l = V.length rs in l >= 2 && l <= 5) $ do
+          ir <- newIncomingMergingRun tr hfs hbio (Paths.activeDir root) uc
+                                      conf resolve reg
+                                      mergePolicy mergeType ln rs
+          -- The runs will end up inside the merging run, with fresh references.
+          -- The original references can be released (but only on the happy path).
+          V.forM_ rs $ \r -> delayedCommit reg (releaseRef r)
+          case confMergeSchedule of
+            Incremental -> pure ()
+            OneShot     -> immediatelyCompleteIncomingRun tr conf ln ir
+          return ir
 
-        return (Merging mergePolicy mr)
+-- | We use levelling on the last level, unless that is also the first level.
+mergePolicyForLevel ::
+     MergePolicy
+  -> LevelNo
+  -> Levels m h
+  -> UnionLevel m h
+  -> MergePolicyForLevel
+mergePolicyForLevel MergePolicyLazyLevelling (LevelNo n) nextLevels unionLevel
+  | n == 1
+  = LevelTiering    -- always use tiering on first level
+
+  | V.null nextLevels
+  , NoUnion <- unionLevel
+  = LevelLevelling  -- levelling on last level
+
+  | otherwise
+  = LevelTiering
 
 -- $setup
 -- >>> import Database.LSMTree.Internal.Entry
@@ -786,16 +1062,22 @@ maxRunSize ::
   -> MergePolicyForLevel
   -> LevelNo
   -> NumEntries
-maxRunSize (sizeRatioInt -> sizeRatio) (AllocNumEntries (NumEntries bufferSize))
-           policy (LevelNo ln) =
-    NumEntries $ case policy of
-      LevelLevelling -> runSizeTiering * sizeRatio
-      LevelTiering   -> runSizeTiering
-  where
-    runSizeTiering
-      | ln < 0 = error "maxRunSize: non-positive level number"
-      | ln == 0 = 0
-      | otherwise = bufferSize * sizeRatio ^ (pred ln)
+maxRunSize _ _ _ (LevelNo ln)
+    | ln < 0    = error "maxRunSize: non-positive level number"
+    | ln == 0   = NumEntries 0
+
+maxRunSize sizeRatio (AllocNumEntries bufferSize) LevelTiering ln =
+    NumEntries $ maxRunSizeTiering (sizeRatioInt sizeRatio) bufferSize ln
+
+maxRunSize sizeRatio (AllocNumEntries bufferSize) LevelLevelling ln =
+    NumEntries $ maxRunSizeLevelling (sizeRatioInt sizeRatio) bufferSize ln
+
+maxRunSizeTiering, maxRunSizeLevelling :: Int -> NumEntries -> LevelNo -> Int
+maxRunSizeTiering sizeRatio (NumEntries bufferSize) (LevelNo ln) =
+    bufferSize * sizeRatio ^ pred ln
+
+maxRunSizeLevelling sizeRatio bufferSize ln =
+    maxRunSizeTiering sizeRatio bufferSize (succ ln)
 
 maxRunSize' :: TableConfig -> MergePolicyForLevel -> LevelNo -> NumEntries
 maxRunSize' config policy ln =
@@ -859,12 +1141,9 @@ levelIsFull sr rs = V.length rs + 1 >= (sizeRatioInt sr)
   can contribute to the same merge concurrently.
 -}
 
--- | Merge credits that get supplied to a table's levels.
-newtype Credits = Credits Int
-
 {-# SPECIALISE supplyCredits ::
      TableConfig
-  -> Credits
+  -> NominalCredits
   -> Levels IO h
   -> IO ()
   #-}
@@ -873,55 +1152,46 @@ newtype Credits = Credits Int
 supplyCredits ::
      (MonadSTM m, MonadST m, MonadMVar m, MonadMask m)
   => TableConfig
-  -> Credits
+  -> NominalCredits
   -> Levels m h
   -> m ()
-supplyCredits conf c levels =
+supplyCredits conf deposit levels =
     iforLevelM_ levels $ \ln (Level ir _rs) ->
-      case ir of
-        Single{}   -> pure ()
-        Merging mp mr -> do
-          let !c' = scaleCreditsForMerge mp mr c
-          let !thresh = creditThresholdForLevel conf ln
-          _leftoverCredits <- MR.supplyCredits mr thresh c'
-          --TODO: assert leftoverCredits == 0
-          -- to assert that we did not finished the merge too early,
-          -- and thus have spread the work out evenly.
-          return ()
+      supplyCreditsIncomingRun conf ln ir deposit
 
--- | Scale a number of credits to a number of merge steps to be performed, based
--- on the merging run.
---
--- Initially, 1 update supplies 1 credit. However, since merging runs have
--- different numbers of input runs\/entries, we may have to a more or less
--- merging work than 1 merge step for each credit.
-scaleCreditsForMerge ::
-     MergePolicyForLevel
-  -> Ref (MergingRun t m h)
-  -> Credits
-  -> MR.Credits
-scaleCreditsForMerge LevelLevelling _ (Credits c) =
-    -- A levelling merge has 1 input run and one resident run, which is (up
-    -- to) 4x bigger than the others. It needs to be completed before
-    -- another run comes in.
-    -- TODO: this is currently assuming a naive worst case, where the
-    -- resident run is as large as it can be for the current level. We
-    -- probably have enough information available here to lower the
-    -- worst-case upper bound by looking at the sizes of the input runs.
-    -- As as result, merge work would/could be more evenly distributed over
-    -- time when the resident run is smaller than the worst case.
-    MR.Credits (c * (1 + 4))
-scaleCreditsForMerge LevelTiering mr (Credits c) =
-    -- A tiering merge has 5 runs at most (one could be held back to merged
-    -- again) and must be completed before the level is full (once 4 more
-    -- runs come in).
-    let NumRuns n = MR.numRuns mr
-       -- same as division rounding up: ceiling (c * n / 4)
-    in MR.Credits ((c * n + 3) `div` 4)
+maxMergeDebt :: TableConfig -> MergePolicyForLevel -> LevelNo -> MergeDebt
+maxMergeDebt TableConfig {
+               confWriteBufferAlloc = AllocNumEntries bufferSize,
+               confSizeRatio
+             } mergePolicy ln =
+    let !sizeRatio = sizeRatioInt confSizeRatio in
+    case mergePolicy of
+      LevelLevelling ->
+        MergeDebt . MergeCredits $
+          sizeRatio * maxRunSizeTiering sizeRatio bufferSize (pred ln)
+                    + maxRunSizeLevelling sizeRatio bufferSize ln
+
+      LevelTiering   ->
+        MergeDebt . MergeCredits $
+          maxRuns * maxRunSizeTiering sizeRatio bufferSize (pred ln)
+        where
+          maxRuns = sizeRatio + 1
+
+-- | The nominal debt equals the minimum of credits we will supply before we
+-- expect the merge to complete. This is the same as the number of updates
+-- in a run that gets moved to this level.
+nominalDebtForLevel :: TableConfig -> LevelNo -> NominalDebt
+nominalDebtForLevel TableConfig {
+                      confWriteBufferAlloc,
+                      confSizeRatio
+                    } (LevelNo ln) =
+    let AllocNumEntries (NumEntries !bufferSize) = confWriteBufferAlloc
+        !sizeRatio = sizeRatioInt confSizeRatio
+     in NominalDebt (bufferSize * sizeRatio ^ pred ln)
 
 -- TODO: the thresholds for doing merge work should be different for each level,
 -- maybe co-prime?
 creditThresholdForLevel :: TableConfig -> LevelNo -> MR.CreditThreshold
 creditThresholdForLevel conf (LevelNo _i) =
     let AllocNumEntries (NumEntries x) = confWriteBufferAlloc conf
-    in  MR.CreditThreshold (MR.UnspentCredits (MR.Credits x))
+    in  MR.CreditThreshold (MR.UnspentCredits (MergeCredits x))
