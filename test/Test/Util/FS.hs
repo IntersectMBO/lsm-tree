@@ -611,12 +611,15 @@ genAllowExisting :: Gen AllowExisting
 genAllowExisting = elements [
       AllowExisting
     , MustBeNew
+    , MustExist
     ]
   where
     _coveredAllCases x = case x of
         AllowExisting -> ()
         MustBeNew     -> ()
+        MustExist     -> ()
 
 shrinkAllowExisting :: AllowExisting -> [AllowExisting]
 shrinkAllowExisting AllowExisting = []
 shrinkAllowExisting MustBeNew     = [AllowExisting]
+shrinkAllowExisting MustExist     = [AllowExisting, MustBeNew]
