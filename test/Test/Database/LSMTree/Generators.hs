@@ -30,21 +30,27 @@ import           Test.Util.Arbitrary
 tests :: TestTree
 tests = testGroup "Test.Database.LSMTree.Generators" [
       testGroup "PageContentFits" $
-        prop_arbitraryAndShrinkPreserveInvariant pageContentFitsInvariant
+        prop_arbitraryAndShrinkPreserveInvariant noTags
+          pageContentFitsInvariant
     , testGroup "PageContentOrdered" $
-        prop_arbitraryAndShrinkPreserveInvariant pageContentOrderedInvariant
+        prop_arbitraryAndShrinkPreserveInvariant noTags
+          pageContentOrderedInvariant
     , localOption (QuickCheckMaxSize 20) $ -- takes too long!
       testGroup "LogicalPageSummaries" $
-        prop_arbitraryAndShrinkPreserveInvariant (pagesInvariant @Word64)
+        prop_arbitraryAndShrinkPreserveInvariant noTags $
+          pagesInvariant @Word64
     , testGroup "Chunk size" $
-        prop_arbitraryAndShrinkPreserveInvariant chunkSizeInvariant
+        prop_arbitraryAndShrinkPreserveInvariant noTags
+          chunkSizeInvariant
     , testGroup "Raw bytes" $
-        [testProperty "packRawBytesPinnedOrUnpinned"
-                      prop_packRawBytesPinnedOrUnpinned
+        [ testProperty "packRawBytesPinnedOrUnpinned"
+            prop_packRawBytesPinnedOrUnpinned
         ]
-     ++ prop_arbitraryAndShrinkPreserveInvariant (deepseqInvariant @RawBytes)
+     ++ prop_arbitraryAndShrinkPreserveInvariant noTags
+          (deepseqInvariant @RawBytes)
     , testGroup "KeyForIndexCompact" $
-        prop_arbitraryAndShrinkPreserveInvariant keyForIndexCompactInvariant
+        prop_arbitraryAndShrinkPreserveInvariant noTags
+          keyForIndexCompactInvariant
     , testGroup "lists of key/op pairs" $
         [ testProperty "prop_distributionKOps" $
             prop_distributionKOps
