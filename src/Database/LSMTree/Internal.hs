@@ -82,6 +82,7 @@ import           Control.Concurrent.Class.MonadSTM.RWVar (RWVar)
 import qualified Control.Concurrent.Class.MonadSTM.RWVar as RW
 import           Control.DeepSeq
 import           Control.Monad (forM, unless, void)
+import           Control.Monad.Class.MonadAsync as Async
 import           Control.Monad.Class.MonadST (MonadST (..))
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Primitive
@@ -105,9 +106,12 @@ import           Database.LSMTree.Internal.Config
 import qualified Database.LSMTree.Internal.Cursor as Cursor
 import           Database.LSMTree.Internal.Entry (Entry)
 import           Database.LSMTree.Internal.Lookup (ByteCountDiscrepancy,
-                     ResolveSerialisedValue, lookupsIO)
+                     ResolveSerialisedValue, lookupsIO,
+                     lookupsIOWithoutWriteBuffer)
 import           Database.LSMTree.Internal.MergeSchedule
+import qualified Database.LSMTree.Internal.MergingRun as MR
 import           Database.LSMTree.Internal.MergingTree
+import qualified Database.LSMTree.Internal.MergingTree.Lookup as MT
 import           Database.LSMTree.Internal.Paths (SessionRoot (..),
                      SnapshotMetaDataChecksumFile (..),
                      SnapshotMetaDataFile (..), SnapshotName)
@@ -123,6 +127,7 @@ import           Database.LSMTree.Internal.Serialise (SerialisedBlob (..),
 import           Database.LSMTree.Internal.Snapshot
 import           Database.LSMTree.Internal.Snapshot.Codec
 import           Database.LSMTree.Internal.UniqCounter
+import qualified Database.LSMTree.Internal.Vector as V
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
 import qualified System.FS.API as FS
@@ -799,7 +804,7 @@ close t = do
   -> IO (V.Vector (Maybe (Entry SerialisedValue (WeakBlobRef IO h)))) #-}
 -- | See 'Database.LSMTree.Normal.lookups'.
 lookups ::
-     (MonadST m, MonadSTM m, MonadThrow m)
+     (MonadAsync m, MonadMask m, MonadMVar m, MonadST m)
   => ResolveSerialisedValue
   -> V.Vector SerialisedKey
   -> Table m h
@@ -807,8 +812,40 @@ lookups ::
 lookups resolve ks t = do
     traceWith (tableTracer t) $ TraceLookups (V.length ks)
     withOpenTable t $ \tEnv ->
-      RW.withReadAccess (tableContent tEnv) $ \tableContent ->
-        let !cache = tableCache tableContent in
+      RW.withReadAccess (tableContent tEnv) $ \tableContent -> do
+        case tableUnionLevel tableContent of
+          NoUnion -> regularLevelLookups tEnv tableContent
+          Union tree -> do
+            isStructurallyEmpty tree >>= \case
+              True  -> regularLevelLookups tEnv tableContent
+              False ->
+                -- TODO: the blob refs returned from the tree can be invalidated
+                -- by supplyUnionCredits or other operations on any table that
+                -- shares merging runs or trees. We need to keep open the runs!
+                -- This could be achieved by storing the LookupTree and only
+                -- calling MT.releaseLookupTree later, when we are okay with
+                -- invalidating the blob refs (similar to the LevelsCache).
+                -- Lookups then use the cached tree, but when should we rebuild
+                -- the tree? On each call to supplyUnionCredits?
+                withActionRegistry $ \reg -> do
+                  regularResult <-
+                    -- asynchronously, so tree lookup batches can already be
+                    -- submitted without waiting for the result.
+                    Async.async $ regularLevelLookups tEnv tableContent
+                  treeBatches <- MT.buildLookupTree reg tree
+                  treeResults <- forM treeBatches $ \runs ->
+                    Async.async $ treeBatchLookups tEnv runs
+                  -- TODO: if regular levels are empty, don't add them to tree
+                  res <- MT.foldLookupTree resolve $
+                    MT.mkLookupNode MR.MergeLevel $ V.fromList
+                      [ MT.LookupBatch regularResult
+                      , treeResults
+                      ]
+                  MT.releaseLookupTree reg treeBatches
+                  return res
+  where
+    regularLevelLookups tEnv tableContent = do
+        let !cache = tableCache tableContent
         lookupsIO
           (tableHasBlockIO tEnv)
           (tableArenaManager t)
@@ -819,6 +856,17 @@ lookups resolve ks t = do
           (cachedFilters cache)
           (cachedIndexes cache)
           (cachedKOpsFiles cache)
+          ks
+
+    treeBatchLookups tEnv runs =
+        lookupsIOWithoutWriteBuffer
+          (tableHasBlockIO tEnv)
+          (tableArenaManager t)
+          resolve
+          runs
+          (V.mapStrict (\(DeRef r) -> Run.runFilter   r) runs)
+          (V.mapStrict (\(DeRef r) -> Run.runIndex    r) runs)
+          (V.mapStrict (\(DeRef r) -> Run.runKOpsFile r) runs)
           ks
 
 {-# SPECIALISE rangeLookup ::

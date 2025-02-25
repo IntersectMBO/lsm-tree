@@ -15,6 +15,7 @@ module Database.LSMTree.Internal.MergingRun (
   , snapshot
   , numRuns
   , totalMergeDebt
+  , mergeType
 
     -- * Merge types
   , IsMergeType (..)
@@ -35,6 +36,7 @@ module Database.LSMTree.Internal.MergingRun (
 
     -- * Internal state
   , pattern MergingRun
+  , mergeState
   , MergingRunState (..)
   , MergeKnownCompleted (..)
   , CreditsVar (..)
@@ -156,12 +158,12 @@ new ::
   -> RunFsPaths
   -> V.Vector (Ref (Run m h))
   -> m (Ref (MergingRun t m h))
-new hfs hbio resolve caching alloc indexType mergeType runPaths inputRuns =
+new hfs hbio resolve caching alloc indexType ty runPaths inputRuns =
     -- If creating the Merge fails, we must release the references again.
     withActionRegistry $ \reg -> do
       runs <- V.mapM (\r -> withRollback reg (dupRef r) releaseRef) inputRuns
       merge <- fromMaybe (error "newMerge: merges can not be empty")
-        <$> Merge.new hfs hbio caching alloc indexType mergeType resolve runPaths runs
+        <$> Merge.new hfs hbio caching alloc indexType ty resolve runPaths runs
       let numInputRuns = NumRuns $ V.length runs
       let mergeDebt = numEntriesToMergeDebt (V.foldMap' Run.size runs)
       unsafeNew
@@ -243,7 +245,8 @@ unsafeNew mergeNumRuns mergeDebt (SpentCredits spentCredits)
 
 -- | Create references to the runs that should be queried for lookups.
 -- In particular, if the merge is not complete, these are the input runs.
-{-# SPECIALISE duplicateRuns :: Ref (MergingRun t IO h) -> IO (V.Vector (Ref (Run IO h))) #-}
+{-# SPECIALISE duplicateRuns ::
+     Ref (MergingRun t IO h) -> IO (V.Vector (Ref (Run IO h))) #-}
 duplicateRuns ::
      (PrimMonad m, MonadMVar m, MonadMask m)
   => Ref (MergingRun t m h)
@@ -290,6 +293,14 @@ numRuns (DeRef MergingRun {mergeNumRuns}) = mergeNumRuns
 
 totalMergeDebt :: Ref (MergingRun t m h) -> MergeDebt
 totalMergeDebt (DeRef MergingRun {mergeDebt}) = mergeDebt
+
+{-# INLINE mergeType #-}
+mergeType :: MonadMVar m => Ref (MergingRun t m h) -> m (Maybe t)
+mergeType (DeRef mr) = do
+    s <- readMVar (mergeState mr)
+    return $ case s of
+      CompletedMerge _ -> Nothing
+      OngoingMerge _ m -> Just (Merge.mergeType m)
 
 {-------------------------------------------------------------------------------
   Credits
