@@ -533,6 +533,7 @@ deriving newtype instance SerialiseKey KeyForIndexCompact
 newtype BiasedKeyForIndexCompact =
     BiasedKeyForIndexCompact { getBiasedKeyForIndexCompact :: RawBytes }
   deriving stock (Eq, Ord, Show)
+  deriving newtype NFData
 
 instance Arbitrary BiasedKeyForIndexCompact where
   -- we try to make collisions and close keys more likely (very crudely)
