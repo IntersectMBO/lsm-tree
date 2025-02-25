@@ -59,6 +59,9 @@ prop_fault_openRelease doCreateFile om
               propNoDirEntries root fs .||. propNumDirEntries root 1 fs
             MustBeNew ->
               propNumDirEntries root 1 fs
+            MustExist ->
+              -- TODO: fix, see the TODO on openBlobFile
+              propNoDirEntries root fs .||. propNumDirEntries root 1 fs
         else
           propNoDirEntries root fs
 

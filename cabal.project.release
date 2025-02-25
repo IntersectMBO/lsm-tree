@@ -34,11 +34,11 @@ if (impl(ghc < 9.0) && os(windows))
   package text
     flags: -simdutf
 
--- ghc-9.12.1
+-- bugfix hGetBufExactly and hGetBufExactlyAt
 source-repository-package
   type: git
   location: https://github.com/input-output-hk/fs-sim
-  tag: 12dae42a78b95bf290c90b6ce7d30a8a7aa0fb45
+  tag: 55efd82e10c2b2d339bdfdc29d8d4bd8484150ba
   subdir:
     fs-api
     fs-sim
