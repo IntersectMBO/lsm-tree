@@ -80,7 +80,7 @@ prop_readAtOffset ::
   -> Maybe BiasedKeyForIndexCompact
   -> IO Property
 prop_readAtOffset fs hbio rd offsetKey =
-    withRun fs hbio Index.Compact (simplePath 42) rd' $ \run -> do
+    withRunAt fs hbio Index.Compact (simplePath 42) rd' $ \run -> do
       rhs <- readKOps (coerce offsetKey) run
 
       return . labelRunData rd' $
@@ -124,7 +124,7 @@ prop_readAtOffsetIdempotence ::
   -> Maybe BiasedKeyForIndexCompact
   -> IO Property
 prop_readAtOffsetIdempotence fs hbio rd offsetKey =
-    withRun fs hbio Index.Compact (simplePath 42) rd' $ \run -> do
+    withRunAt fs hbio Index.Compact (simplePath 42) rd' $ \run -> do
     lhs <- readKOps (coerce offsetKey) run
     rhs <- readKOps (coerce offsetKey) run
 
@@ -148,7 +148,7 @@ prop_readAtOffsetReadHead ::
   -> RunData BiasedKeyForIndexCompact SerialisedValue SerialisedBlob
   -> IO Property
 prop_readAtOffsetReadHead fs hbio rd =
-    withRun fs hbio Index.Compact (simplePath 42) rd' $ \run -> do
+    withRunAt fs hbio Index.Compact (simplePath 42) rd' $ \run -> do
       lhs <- readKOps Nothing run
       rhs <- case lhs of
         []        -> return []

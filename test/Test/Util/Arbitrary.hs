@@ -2,6 +2,7 @@ module Test.Util.Arbitrary (
     prop_arbitraryAndShrinkPreserveInvariant
   , prop_forAllArbitraryAndShrinkPreserveInvariant
   , deepseqInvariant
+  , noInvariant
   , noTags
   ) where
 
@@ -37,6 +38,9 @@ prop_forAllArbitraryAndShrinkPreserveInvariant tag gen shr inv =
 -- | Trivial invariant, but checks that the value is finite
 deepseqInvariant :: NFData a => a -> Bool
 deepseqInvariant x = x `deepseq` True
+
+noInvariant :: a -> Bool
+noInvariant _ = True
 
 noTags :: a -> Property -> Property
 noTags _ = id

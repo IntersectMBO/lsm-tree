@@ -337,7 +337,7 @@ runIO act lu = case act of
           wbs' = fmap serialiseRunData wbs
       runs <-
         zipWithM
-          (\p -> liftIO . unsafeFlushAsWriteBuffer hfs hbio Index.Compact p)
+          (\p -> liftIO . unsafeCreateRunAt hfs hbio Index.Compact p)
           (Paths.RunFsPaths (FS.mkFsPath []) . RunNumber <$> [numRuns ..])
           wbs'
       newReaders <- liftIO $ do

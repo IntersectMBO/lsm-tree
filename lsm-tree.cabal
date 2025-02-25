@@ -309,6 +309,8 @@ library extras
     Database.LSMTree.Extras
     Database.LSMTree.Extras.Generators
     Database.LSMTree.Extras.Index
+    Database.LSMTree.Extras.MergingRunData
+    Database.LSMTree.Extras.MergingTreeData
     Database.LSMTree.Extras.NoThunks
     Database.LSMTree.Extras.Orphans
     Database.LSMTree.Extras.Random
@@ -333,6 +335,7 @@ library extras
     , lsm-tree:control
     , lsm-tree:kmerge
     , lsm-tree:prototypes
+    , nonempty-containers
     , nothunks
     , primitive
     , QuickCheck

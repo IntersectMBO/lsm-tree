@@ -24,6 +24,7 @@ module Database.LSMTree.Internal.MergingRun (
     -- * Credit tracking
     -- $credittracking
   , MergeDebt (..)
+  , numEntriesToMergeDebt
   , MergeCredits (..)
   , CreditThreshold (..)
   , SpentCredits (..)
@@ -184,7 +185,8 @@ new hfs hbio resolve caching alloc indexType mergeType runPaths inputRuns =
 -- failing after internal resources have already been created.
 newCompleted ::
      (MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
-  => NumRuns
+  => NumRuns   -- ^ Since there are no longer any input runs, we need to be
+               -- told how many there were.
   -> MergeDebt -- ^ Since there are no longer any input runs, we need to be
                -- told what the merge debt was.
   -> Ref (Run m h)
