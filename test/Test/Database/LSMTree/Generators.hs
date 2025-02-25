@@ -1,6 +1,3 @@
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications    #-}
-
 module Test.Database.LSMTree.Generators (
     tests
   ) where
@@ -13,18 +10,24 @@ import           Data.Word (Word64, Word8)
 
 import           Database.LSMTree.Extras (showPowersOf)
 import           Database.LSMTree.Extras.Generators
+import           Database.LSMTree.Extras.MergingRunData
+import           Database.LSMTree.Extras.MergingTreeData
 import           Database.LSMTree.Extras.ReferenceImpl
+import           Database.LSMTree.Extras.RunData
 import           Database.LSMTree.Internal.BlobRef (BlobSpan)
 import           Database.LSMTree.Internal.Entry
+import qualified Database.LSMTree.Internal.MergingRun as MR
 import           Database.LSMTree.Internal.PageAcc (entryWouldFitInPage,
                      sizeofEntry)
 import           Database.LSMTree.Internal.RawBytes (RawBytes (..))
 import           Database.LSMTree.Internal.Serialise
 
+
 import qualified Test.QuickCheck as QC
 import           Test.QuickCheck (Property)
 import           Test.Tasty (TestTree, localOption, testGroup)
-import           Test.Tasty.QuickCheck (QuickCheckMaxSize (..), testProperty)
+import           Test.Tasty.QuickCheck (QuickCheckMaxSize (..), testProperty,
+                     (===))
 import           Test.Util.Arbitrary
 
 tests :: TestTree
@@ -55,6 +58,24 @@ tests = testGroup "Test.Database.LSMTree.Generators" [
         [ testProperty "prop_distributionKOps" $
             prop_distributionKOps
         ]
+    , testGroup "RunData" $
+        prop_arbitraryAndShrinkPreserveInvariant
+          labelRunData
+          (const True)  -- no invariant
+    , testGroup "NonEmptyRunData" $
+        prop_arbitraryAndShrinkPreserveInvariant
+          labelNonEmptyRunData
+          nonEmptyRunDataInvariant
+    , testGroup "MergingRunData" $
+        prop_arbitraryAndShrinkPreserveInvariant
+          @(SerialisedMergingRunData MR.LevelMergeType)
+          labelMergingRunData
+          ((=== Right ()) . mergingRunDataInvariant)
+    , localOption (QuickCheckMaxSize 50) $  -- huge trees take too long
+      testGroup "MergingTreeData" $
+        prop_arbitraryAndShrinkPreserveInvariant
+          labelMergingTreeData
+          ((=== Right ()) . mergingTreeDataInvariant)
     ]
 
 prop_packRawBytesPinnedOrUnpinned :: Bool -> [Word8] -> Bool

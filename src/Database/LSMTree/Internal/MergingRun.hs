@@ -176,8 +176,8 @@ new hfs hbio resolve caching alloc indexType mergeType runPaths inputRuns =
 -- failing after internal resources have already been created.
 newCompleted ::
      (MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
-  => NumRuns
-  -> NumEntries
+  => NumRuns  -- ^ number of input runs
+  -> NumEntries  -- ^ total size of the input runs
   -> Ref (Run m h)
   -> m (Ref (MergingRun t m h))
 newCompleted numInputRuns numInputEntries inputRun = do

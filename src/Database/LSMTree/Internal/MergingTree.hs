@@ -2,13 +2,14 @@
 module Database.LSMTree.Internal.MergingTree (
     -- $mergingtrees
     MergingTree (..)
-  , newPendingLevelMerge
   , PreExistingRun (..)
+  , newPendingLevelMerge
   , newPendingUnionMerge
   , isStructurallyEmpty
     -- * Internal state
   , MergingTreeState (..)
   , PendingMerge (..)
+  , mkMergingTree
   ) where
 
 import           Control.Concurrent.Class.MonadMVar.Strict
@@ -142,7 +143,7 @@ newPendingLevelMerge prs mmt = do
             (PendingLevelMerge <$> traverse dupPreExistingRun prs
                                <*> dupMaybeMergingTree mmt)
 
-    newMergeTree mergeTreeState
+    mkMergingTree mergeTreeState
   where
     dupPreExistingRun (PreExistingRun r) =
       PreExistingRun <$> dupRef r
@@ -181,7 +182,7 @@ newPendingUnionMerge mts = do
     mts' <- mapM dupRef =<< filterM (fmap not . isStructurallyEmpty) mts
     case mts' of
       [mt] -> return mt
-      _    -> newMergeTree (PendingTreeMerge (PendingUnionMerge mts'))
+      _    -> mkMergingTree (PendingTreeMerge (PendingUnionMerge mts'))
 
 -- | Test if a 'MergingTree' is \"obviously\" empty by virtue of its structure.
 -- This is not the same as being empty due to a pending or ongoing merge
@@ -198,11 +199,11 @@ isStructurallyEmpty (DeRef MergingTree {mergeState}) =
     -- a zero length runs as empty.
 
 -- | Constructor helper.
-newMergeTree ::
+mkMergingTree ::
      (MonadMVar m, PrimMonad m, MonadMask m)
   => MergingTreeState m h
   -> m (Ref (MergingTree m h))
-newMergeTree mergeTreeState = do
+mkMergingTree mergeTreeState = do
     mergeState <- newMVar mergeTreeState
     newRef (finalise mergeState) $ \mergeRefCounter ->
       MergingTree {
