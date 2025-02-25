@@ -59,8 +59,7 @@ import           System.FS.API (BufferOffset, FsError (..), FsPath, Handle (..),
                      HasFS, SomeHasFS (..))
 import           System.FS.IO (HandleIO)
 import qualified System.IO as GHC
-import           System.IO.Error (doesNotExistErrorType, ioeSetErrorString,
-                     mkIOError)
+import           System.IO.Error (ioeSetErrorString, mkIOError)
 import           System.Posix.Types (ByteCount, FileOffset)
 import           Text.Printf
 
@@ -262,31 +261,10 @@ hDropCacheAll hbio h = hAdviseAll hbio h AdviceDontNeed
 -------------------------------------------------------------------------------}
 
 {-# SPECIALISE synchroniseFile :: HasFS IO h -> HasBlockIO IO h -> FsPath -> IO () #-}
--- TODO: currently, we perform an explicit check to see if the file exists and
--- throw an error when it does not exist. We would prefer to be able to rely on
--- withFile to throw an error for us that we could rethrow with an upated
--- description/location. Unfortunately, we have to open te file in ReadWriteMode
--- on Windows, and withFile currently does not support such errors. The only
--- options are:
---
--- * AllowExisting: silently create a file if it does not exist
--- * MustBeNew: throw an error if the file exists
---
--- We would need to add a third option to fs-api:
---
--- * MustExist: throw an error if the file *does not* exist
+-- | Synchronise a file and its contents with the storage device.
 synchroniseFile :: MonadThrow m => HasFS m h -> HasBlockIO m h -> FsPath -> m ()
-synchroniseFile hfs hbio path = do
-    b <- FS.doesFileExist hfs path
-    if b then
-      FS.withFile hfs path (FS.ReadWriteMode FS.AllowExisting) $ hSynchronise hbio
-    else
-      throwIO $ FS.ioToFsError (FS.mkFsErrorPath hfs (FS.mkFsPath [])) ioerr
-  where
-    ioerr =
-      ioeSetErrorString
-        (mkIOError doesNotExistErrorType "synchroniseFile" Nothing Nothing)
-        ("synchroniseFile: file does not exist")
+synchroniseFile hfs hbio path =
+    FS.withFile hfs path (FS.ReadWriteMode FS.MustExist) $ hSynchronise hbio
 
 {-# SPECIALISE synchroniseDirectoryRecursive ::
      HasFS IO h

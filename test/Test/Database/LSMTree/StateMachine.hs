@@ -56,6 +56,9 @@ module Test.Database.LSMTree.StateMachine (
   , propLockstep_RealImpl_RealFS_IO
   , propLockstep_RealImpl_MockFS_IO
   , propLockstep_RealImpl_MockFS_IOSim
+  , CheckCleanup (..)
+  , CheckFS (..)
+  , CheckRefs (..)
     -- * Lockstep
   , ModelState (..)
   , Key (..)
@@ -74,13 +77,16 @@ import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Concurrent.Class.MonadSTM.Strict
 import qualified Control.Exception
 import           Control.Monad (forM_, void, (<=<))
+import           Control.Monad.Class.MonadST
 import           Control.Monad.Class.MonadThrow (Exception (..), Handler (..),
                      MonadCatch (..), MonadThrow (..), SomeException, catches,
                      displayException, fromException)
 import           Control.Monad.IOSim
 import           Control.Monad.Primitive
 import           Control.Monad.Reader (ReaderT (..))
-import           Control.RefCount (RefException, checkForgottenRefs)
+import           Control.Monad.ST.Unsafe (unsafeIOToST)
+import           Control.RefCount (RefException, checkForgottenRefs,
+                     ignoreForgottenRefs)
 import           Control.Tracer (Tracer, nullTracer)
 import           Data.Bifunctor (Bifunctor (..))
 import           Data.Constraint (Dict (..))
@@ -117,7 +123,6 @@ import           System.Directory (removeDirectoryRecursive)
 import           System.FS.API (FsError (..), HasFS, MountPoint (..), mkFsPath)
 import           System.FS.BlockIO.API (HasBlockIO, defaultIOCtxParams)
 import           System.FS.BlockIO.IO (ioHasBlockIO)
-import           System.FS.BlockIO.Sim (simErrorHasBlockIO)
 import           System.FS.IO (HandleIO, ioHasFS)
 import qualified System.FS.Sim.Error as FSSim
 import           System.FS.Sim.Error (Errors)
@@ -138,10 +143,11 @@ import           Test.QuickCheck.StateModel hiding (Var)
 import           Test.QuickCheck.StateModel.Lockstep
 import qualified Test.QuickCheck.StateModel.Lockstep.Defaults as Lockstep.Defaults
 import qualified Test.QuickCheck.StateModel.Lockstep.Run as Lockstep.Run
-import           Test.Tasty (TestTree, testGroup)
+import           Test.Tasty (TestTree, testGroup, withResource)
 import           Test.Tasty.QuickCheck (testProperty)
 import           Test.Util.FS (approximateEqStream, noRemoveDirectoryRecursiveE,
                      propNoOpenHandles, propNumOpenHandles)
+import           Test.Util.FS.Error
 import           Test.Util.PrettyProxy
 import           Test.Util.QC (Choice)
 import qualified Test.Util.QLS as QLS
@@ -157,14 +163,25 @@ tests = testGroup "Test.Database.LSMTree.StateMachine" [
       testProperty "propLockstep_ModelIOImpl"
         propLockstep_ModelIOImpl
 
-    , testProperty "propLockstep_RealImpl_RealFS_IO" $
-        propLockstep_RealImpl_RealFS_IO nullTracer
+      -- We check/ignore forgotten referenceschecks before and after each
+      -- property, just to be extra sure that no exceptions because of forgotten
+      -- references leak from one property into the other. This could happen if
+      -- a reference is forgotten but not yet checked in one property, and it
+      -- gets checked in the next property leading to an exception there.
 
-    , testProperty "propLockstep_RealImpl_MockFS_IO" $
-        propLockstep_RealImpl_MockFS_IO nullTracer
+    , withResource checkForgottenRefs (\_ -> checkForgottenRefs) $ \_ ->
+        testProperty "propLockstep_RealImpl_RealFS_IO" $
+          propLockstep_RealImpl_RealFS_IO nullTracer
 
-    , testProperty "propLockstep_RealImpl_MockFS_IOSim" $
-        propLockstep_RealImpl_MockFS_IOSim nullTracer
+    , withResource checkForgottenRefs (\_ -> checkForgottenRefs) $ \_ ->
+        testProperty "propLockstep_RealImpl_MockFS_IO" $
+          propLockstep_RealImpl_MockFS_IO nullTracer CheckCleanup CheckFS CheckRefs
+
+    , withResource checkForgottenRefs (\_ -> ignoreForgottenRefs) $ \_ ->
+        testProperty "propLockstep_RealImpl_MockFS_IOSim" $
+          -- references are not checked because they are unreliable when running
+          -- in IOSim.
+          propLockstep_RealImpl_MockFS_IOSim nullTracer CheckCleanup CheckFS NoCheckRefs
     ]
 
 labelledExamples :: IO ()
@@ -189,7 +206,7 @@ propLockstep_ModelIOImpl =
       (Proxy @(ModelState ModelIO.Table))
       acquire
       release
-      (\r (session, errsVar) -> do
+      (\r (session, errsVar, logVar) -> do
             faultsVar <- newMutVar []
             let
               env :: RealEnv ModelIO.Table IO
@@ -197,6 +214,7 @@ propLockstep_ModelIOImpl =
                   envSession = session
                 , envHandlers = [handler]
                 , envErrors = errsVar
+                , envErrorsLog = logVar
                 , envInjectFaultResults = faultsVar
                 }
             prop <- runReaderT r env
@@ -205,14 +223,15 @@ propLockstep_ModelIOImpl =
         )
       tagFinalState'
   where
-    acquire :: IO (Class.Session ModelIO.Table IO, StrictTVar IO Errors)
+    acquire :: IO (Class.Session ModelIO.Table IO, StrictTVar IO Errors, StrictTVar IO ErrorsLog)
     acquire = do
       session <- Class.openSession ModelIO.NoSessionArgs
       errsVar <- newTVarIO FSSim.emptyErrors
-      pure (session, errsVar)
+      logVar <- newTVarIO emptyLog
+      pure (session, errsVar, logVar)
 
-    release :: (Class.Session ModelIO.Table IO, StrictTVar IO Errors) -> IO ()
-    release (session, _) = Class.closeSession session
+    release :: (Class.Session ModelIO.Table IO, StrictTVar IO Errors, StrictTVar IO ErrorsLog) -> IO ()
+    release (session, _, _) = Class.closeSession session
 
     handler :: Handler IO (Maybe Model.Err)
     handler = Handler $ pure . handler'
@@ -290,7 +309,7 @@ propLockstep_RealImpl_RealFS_IO tr =
       (Proxy @(ModelState R.Table))
       acquire
       release
-      (\r (_, session, errsVar) -> do
+      (\r (_, session, errsVar, logVar) -> do
             faultsVar <- newMutVar []
             let
               env :: RealEnv R.Table IO
@@ -298,6 +317,7 @@ propLockstep_RealImpl_RealFS_IO tr =
                   envSession = session
                 , envHandlers = realErrorHandlers @IO
                 , envErrors = errsVar
+                , envErrorsLog = logVar
                 , envInjectFaultResults = faultsVar
                 }
             prop <- runReaderT r env
@@ -306,30 +326,35 @@ propLockstep_RealImpl_RealFS_IO tr =
         )
       tagFinalState'
   where
-    acquire :: IO (FilePath, Class.Session R.Table IO, StrictTVar IO Errors)
+    acquire :: IO (FilePath, Class.Session R.Table IO, StrictTVar IO Errors, StrictTVar IO ErrorsLog)
     acquire = do
         (tmpDir, hasFS, hasBlockIO) <- createSystemTempDirectory "prop_lockstepIO_RealImpl_RealFS"
         session <- R.openSession tr hasFS hasBlockIO (mkFsPath [])
         errsVar <- newTVarIO FSSim.emptyErrors
-        pure (tmpDir, session, errsVar)
+        logVar <- newTVarIO emptyLog
+        pure (tmpDir, session, errsVar, logVar)
 
-    release :: (FilePath, Class.Session R.Table IO, StrictTVar IO Errors) -> IO Property
-    release (tmpDir, !session, _) = do
-        !prop <- propNoThunks session
+    release :: (FilePath, Class.Session R.Table IO, StrictTVar IO Errors, StrictTVar IO ErrorsLog) -> IO Property
+    release (tmpDir, !session, _, _) = do
+        !propThunks <- propNoThunks session
         R.closeSession session
         removeDirectoryRecursive tmpDir
-        pure prop
+        propRefs <- propCheckForgottenRefs
+        pure (propThunks QC..&&. propRefs)
 
 propLockstep_RealImpl_MockFS_IO ::
      Tracer IO R.LSMTreeTrace
+  -> CheckCleanup
+  -> CheckFS
+  -> CheckRefs
   -> Actions (Lockstep (ModelState R.Table))
   -> QC.Property
-propLockstep_RealImpl_MockFS_IO tr =
+propLockstep_RealImpl_MockFS_IO tr checkCleanup checkFS checkRefs =
     runActionsBracket
       (Proxy @(ModelState R.Table))
       (acquire_RealImpl_MockFS tr)
-      release_RealImpl_MockFS
-      (\r (_, session, errsVar) -> do
+      (release_RealImpl_MockFS checkCleanup checkFS checkRefs)
+      (\r (_, session, errsVar, logVar) -> do
             faultsVar <- newMutVar []
             let
               env :: RealEnv R.Table IO
@@ -337,6 +362,7 @@ propLockstep_RealImpl_MockFS_IO tr =
                   envSession = session
                 , envHandlers = realErrorHandlers @IO
                 , envErrors = errsVar
+                , envErrorsLog = logVar
                 , envInjectFaultResults = faultsVar
                 }
             prop <- runReaderT r env
@@ -355,14 +381,17 @@ propLockstep_RealImpl_MockFS_IO tr =
 -- the counterexamples to see which one is more interesting.
 propLockstep_RealImpl_MockFS_IOSim ::
      (forall s. Tracer (IOSim s) R.LSMTreeTrace)
+  -> CheckCleanup
+  -> CheckFS
+  -> CheckRefs
   -> Actions (Lockstep (ModelState R.Table))
   -> QC.Property
-propLockstep_RealImpl_MockFS_IOSim tr actions =
+propLockstep_RealImpl_MockFS_IOSim tr checkCleanup checkFS checkRefs actions =
     monadicIOSim_ prop
   where
     prop :: forall s. PropertyM (IOSim s) Property
     prop = do
-        (fsVar, session, errsVar) <- QC.run (acquire_RealImpl_MockFS tr)
+        (fsVar, session, errsVar, logVar) <- QC.run (acquire_RealImpl_MockFS tr)
         faultsVar <- QC.run $ newMutVar []
         let
           env :: RealEnv R.Table (IOSim s)
@@ -370,13 +399,14 @@ propLockstep_RealImpl_MockFS_IOSim tr actions =
               envSession = session
             , envHandlers = realErrorHandlers @(IOSim s)
             , envErrors = errsVar
+            , envErrorsLog = logVar
             , envInjectFaultResults = faultsVar
             }
         void $ QD.runPropertyReaderT
                 (QD.runActions @(Lockstep (ModelState R.Table)) actions)
                 env
         faults <- QC.run $ readMutVar faultsVar
-        p <- QC.run $ release_RealImpl_MockFS (fsVar, session, errsVar)
+        p <- QC.run $ release_RealImpl_MockFS checkCleanup checkFS checkRefs (fsVar, session, errsVar, logVar)
         pure
           $ tagFinalState actions tagFinalState'
           $ QC.tabulate "Fault results" (fmap show faults)
@@ -385,27 +415,69 @@ propLockstep_RealImpl_MockFS_IOSim tr actions =
 acquire_RealImpl_MockFS ::
      R.IOLike m
   => Tracer m R.LSMTreeTrace
-  -> m (StrictTMVar m MockFS, Class.Session R.Table m, StrictTVar m Errors)
+  -> m (StrictTMVar m MockFS, Class.Session R.Table m, StrictTVar m Errors, StrictTVar m ErrorsLog)
 acquire_RealImpl_MockFS tr = do
     fsVar <- newTMVarIO MockFS.empty
     errsVar <- newTVarIO FSSim.emptyErrors
-    (hfs, hbio) <- simErrorHasBlockIO fsVar errsVar
+    logVar <- newTVarIO emptyLog
+    (hfs, hbio) <- simErrorHasBlockIOLogged fsVar errsVar logVar
     session <- R.openSession tr hfs hbio (mkFsPath [])
-    pure (fsVar, session, errsVar)
+    pure (fsVar, session, errsVar, logVar)
+
+-- | Flag that turns on\/off cleanup checks.
+--
+-- If injected errors left the database in an inconsistent state, then property
+-- cleanup might throw exceptions. If 'CheckCleanup' is used, this will lead to
+-- failing properties, otherwise the exceptions are ignored.
+data CheckCleanup = CheckCleanup | NoCheckCleanup
+
+-- | Flag that turns on\/off file system checks.
+data CheckFS = CheckFS | NoCheckFS
+
+-- | Flag that turns on\/off reference checks.
+data CheckRefs = CheckRefs | NoCheckRefs
 
 release_RealImpl_MockFS ::
      R.IOLike m
-  => (StrictTMVar m MockFS, Class.Session R.Table m, StrictTVar m Errors)
+  => CheckCleanup
+  -> CheckFS
+  -> CheckRefs
+  -> (StrictTMVar m MockFS, Class.Session R.Table m, StrictTVar m Errors, StrictTVar m ErrorsLog)
   -> m Property
-release_RealImpl_MockFS (fsVar, session, _) = do
+release_RealImpl_MockFS checkCleanup checkFS checkRefs (fsVar, session, _, _) = do
     sts <- getAllSessionTables session
-    forM_ sts $ \(SomeTable t) -> R.close t
+    e1 <- try @_ @SomeException $ forM_ sts $ \(SomeTable t) -> R.close t
     scs <- getAllSessionCursors session
-    forM_ scs $ \(SomeCursor c) -> R.closeCursor c
+    e2 <- try @_ @SomeException $ forM_ scs $ \(SomeCursor c) -> R.closeCursor c
     mockfs1 <- atomically $ readTMVar fsVar
-    R.closeSession session
+    e3 <- try @_ @SomeException $ R.closeSession session
     mockfs2 <- atomically $ readTMVar fsVar
-    pure (propNumOpenHandles 1 mockfs1 QC..&&. propNoOpenHandles mockfs2)
+
+    let
+      propFS = case checkFS of
+        CheckFS -> propNumOpenHandles 1 mockfs1 QC..&&. propNoOpenHandles mockfs2
+        NoCheckFS -> QC.property ()
+
+    propRefs <- case checkRefs of
+      CheckRefs   -> propCheckForgottenRefs
+      NoCheckRefs -> propIgnoreForgottenRefs
+
+    let finalProp = propFS QC..&&. propRefs
+
+    case checkCleanup of
+      NoCheckCleanup -> pure finalProp
+      CheckCleanup ->
+        let mkCounterexample s e =
+              "Error occurred during property cleanup while closing "
+                <> s <> ":" <>  displayException e
+        in  pure $ case (e1, e2, e3) of
+              (Left e, _, _) ->
+                QC.counterexample (mkCounterexample "tables" e) False
+              (_, Left e, _) ->
+                QC.counterexample (mkCounterexample "cursors" e) False
+              (_, _, Left e) ->
+                QC.counterexample (mkCounterexample "the session" e) False
+              _ -> finalProp
 
 data SomeTable m = SomeTable (forall k v b. R.Table m k v b)
 data SomeCursor m = SomeCursor (forall k v b. R.Cursor m k v b)
@@ -958,7 +1030,10 @@ instance Eq (Obs h a) where
       -- See also 'Model.runModelMWithInjectedErrors' and
       -- 'runRealWithInjectedErrors'.
       (OEither (Left (OId lhs)), OEither (Left (OId rhs)))
-        | Just (_ :: Model.Err) <- cast lhs
+        | Just (e :: Model.Err) <- cast lhs
+        , case e of
+            Model.ErrOther _ -> False
+            _                -> True
         , Just Model.DefaultErrDiskFault <- cast rhs
         -> True
 
@@ -1023,6 +1098,11 @@ data RealEnv h m = RealEnv {
     -- variable can be used to enable/disable errors locally, for example on a
     -- per-action basis.
   , envErrors             :: !(StrictTVar m Errors)
+    -- | A variable holding a log of simulated disk faults.
+    --
+    -- Errors that are injected into the simulated file system using 'envErrors'
+    -- are logged here.
+  , envErrorsLog          :: !(StrictTVar m ErrorsLog)
     -- | The results of fault injection
   , envInjectFaultResults :: !(MutVar (PrimState m) [InjectFaultResult])
   }
@@ -1548,19 +1628,43 @@ runRealWithInjectedErrors s env merrs k rollback =
       modifyMutVar faultsVar (InjectFaultNone s :)
       catchErr handlers k
     Just errs -> do
+      atomically $ writeTVar logVar emptyLog
       eith <- catchErr handlers $ FSSim.withErrors errsVar errs k
+      errsLog <- readTVarIO logVar
       case eith of
-        Left (Model.ErrDiskFault _) -> do
+        Left e@(Model.ErrDiskFault _) -> do
           modifyMutVar faultsVar (InjectFaultInducedError s :)
-          pure eith
-        Left _ ->
-          pure eith
+          if countNoisyErrors errsLog == 0 then
+            pure $ Left $ Model.ErrOther $
+              -- If we injected 0 disk faults, but we still found an
+              -- ErrDiskFault, then there is a bug in our code. ErrDiskFaults
+              -- should not occur on the happy path.
+              "Found an ErrDiskFault error, but no disk faults were injected: " <> show e
+          else
+            pure eith
+        Left e -> do
+          if countNoisyErrors errsLog > 0 then
+            pure $ Left $ Model.ErrOther $
+              -- If we injected 1 or more disk faults, but we did not find an
+              -- ErrDiskFault, then there is a bug in our code. An injected disk
+              -- fault should always lead to an ErrDiskFault.
+              "Found a non-ErrDiskFault error, but disk faults were injected: " <> show e
+          else
+            pure eith
         Right x -> do
           modifyMutVar faultsVar (InjectFaultAccidentalSuccess s :)
           rollback x
-          pure $ Left $ Model.ErrDiskFault ("dummy: " <> s)
+          if (countNoisyErrors errsLog > 0) then
+            pure $ Left $ Model.ErrOther $
+              -- If we injected 1 or more disk faults, but the action
+              -- accidentally succeeded, then 1 or more errors were swallowed
+              -- that should have been found as ErrDiskFault.
+              "Action succeeded, but disk faults were injected. Errors were swallowed!"
+          else
+            pure $ Left $ Model.ErrDiskFault ("dummy: " <> s)
   where
     errsVar = envErrors env
+    logVar = envErrorsLog env
     faultsVar = envInjectFaultResults env
     handlers = envHandlers env
 
@@ -2474,18 +2578,7 @@ runActionsBracket ::
   -> Actions (Lockstep state) -> QC.Property
 runActionsBracket p init cleanup runner tagger actions =
     tagFinalState actions tagger
-  $ QLS.runActionsBracket p init cleanup' runner actions
-  where
-    cleanup' st = do
-      x <- cleanup st
-      pure (x QC..&&. propCheckForgottenRefs)
-
-propCheckForgottenRefs :: Property
-propCheckForgottenRefs = QC.ioProperty $ do
-    eith <- Control.Exception.try checkForgottenRefs
-    pure $ case eith of
-      Left (e :: RefException) -> QC.counterexample (show e) False
-      Right ()                 -> QC.property True
+  $ QLS.runActionsBracket p init cleanup runner actions
 
 tagFinalState ::
      forall state. StateModel (Lockstep state)
@@ -2500,3 +2593,15 @@ tagFinalState actions tagger =
     finalAnnState = stateAfter @(Lockstep state) actions
 
     finalTags = tagger $ underlyingState finalAnnState
+
+propCheckForgottenRefs :: MonadST m => m Property
+propCheckForgottenRefs = do
+  eith <- stToIO $ unsafeIOToST $ Control.Exception.try checkForgottenRefs
+  pure $ case eith of
+      Left (e :: RefException) -> QC.counterexample (show e) False
+      Right ()                 -> QC.property True
+
+propIgnoreForgottenRefs :: MonadST m => m Property
+propIgnoreForgottenRefs = do
+  stToIO $ unsafeIOToST $ ignoreForgottenRefs
+  pure $ QC.property ()
