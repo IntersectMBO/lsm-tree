@@ -160,14 +160,6 @@ newtype SuppliedCredits = SuppliedCredits { getSuppliedCredits :: Int }
 data SnapMergingRunState t r =
     SnapCompletedMerge !r
   | SnapOngoingMerge !(V.Vector r) !t
-    -- ^ While we use a specific, more restrictive merge type @t@ here (see
-    -- 'MR.IsMergeType'), we should always serialise it as a 'MergeType'.
-    -- Otherwise, if we for example accidentally deserialised a
-    -- @SnapMergingRunState LevelMergeType@ with @MergeLastLevel@ as a
-    -- @SnapMergingRunState TreeMergeType@, it would succeed with @MergeUnion@.
-    -- If we go via 'MergeType', the error will be detected. We could even
-    -- change the invariant about which merge type can occur in which part of
-    -- the table without having to change the serialisation format itself.
   deriving stock (Show, Eq, Functor, Foldable, Traversable)
 
 instance (NFData t, NFData r) => NFData (SnapMergingRunState t r) where
@@ -224,26 +216,12 @@ toSnapIncomingRun (Merging mergePolicy mergingRun) = do
         (SuppliedCredits suppliedCredits)
         smrs
 
--- | Only to be used for incoming runs! Merging runs inside a merging tree need
--- to use MR.TreeMergeType.
---
--- We could offer a more general type if 'Mr.MergingRunState' also had a type
--- parameter 't', but that adds quite a bit of noise.
 toSnapMergingRunState ::
-     MR.MergingRunState m h
-  -> SnapMergingRunState MR.LevelMergeType (Ref (Run m h))
-toSnapMergingRunState (MR.CompletedMerge r)  = SnapCompletedMerge r
-toSnapMergingRunState (MR.OngoingMerge rs m) =
-    -- The merge type conversion should never fail, since the Merge was
-    -- constructed based on the restricted LevelMergeType.
-    -- To make the types align, we could either:
-    -- * store the restricted type inside MergingRun itself, but this would
-    --   just duplicate information, not provide any safety.
-    -- * Also add the type parameter to Merge, adding complexity there.
-    let mt = Merge.mergeType m
-    in case MR.fromMergeType mt of
-      Just t  -> SnapOngoingMerge rs t
-      Nothing -> error ("invalid MergeType: " <> show mt)
+     MR.MergingRunState t m h
+  -> SnapMergingRunState t (Ref (Run m h))
+toSnapMergingRunState = \case
+    MR.CompletedMerge r  -> SnapCompletedMerge r
+    MR.OngoingMerge rs m -> SnapOngoingMerge rs (Merge.mergeType m)
 
 {-------------------------------------------------------------------------------
   Write Buffer

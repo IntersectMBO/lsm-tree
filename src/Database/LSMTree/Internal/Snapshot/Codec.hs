@@ -31,7 +31,6 @@ import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.CRC32C
 import qualified Database.LSMTree.Internal.CRC32C as FS
 import           Database.LSMTree.Internal.Entry
-import           Database.LSMTree.Internal.Merge (MergeType (..))
 import           Database.LSMTree.Internal.MergeSchedule
 import           Database.LSMTree.Internal.MergingRun (NumRuns (..))
 import qualified Database.LSMTree.Internal.MergingRun as MR
@@ -523,7 +522,7 @@ instance DecodeVersioned MergePolicyForLevel where
 
 -- SnapMergingRunState
 
-instance MR.IsMergeType t => Encode (SnapMergingRunState t RunNumber) where
+instance Encode t => Encode (SnapMergingRunState t RunNumber) where
   encode (SnapCompletedMerge x) =
          encodeListLen 2
       <> encodeWord 0
@@ -532,21 +531,15 @@ instance MR.IsMergeType t => Encode (SnapMergingRunState t RunNumber) where
          encodeListLen 3
       <> encodeWord 1
       <> encode rs
-         -- always encode the full MergeType, see SnapOngoingMerge
-      <> encode @MergeType (MR.toMergeType mt)
+      <> encode mt
 
-instance MR.IsMergeType t => DecodeVersioned (SnapMergingRunState t RunNumber) where
+instance DecodeVersioned t => DecodeVersioned (SnapMergingRunState t RunNumber) where
   decodeVersioned v@V0 = do
       n <- decodeListLen
       tag <- decodeWord
       case (n, tag) of
         (2, 0) -> SnapCompletedMerge <$> decodeVersioned v
-        (3, 1) -> do
-          rs <- decodeVersioned v
-          mt <- decodeVersioned @MergeType v
-          case MR.fromMergeType mt of
-            Just t  -> return (SnapOngoingMerge rs t)
-            Nothing -> fail ("[SnapMergingRunState] Invalid merge type: " <> show mt)
+        (3, 1) -> SnapOngoingMerge <$> decodeVersioned v <*> decodeVersioned v
         _ -> fail ("[SnapMergingRunState] Unexpected combination of list length and tag: " <> show (n, tag))
 
 -- SuppliedCredits
@@ -559,16 +552,36 @@ instance DecodeVersioned SuppliedCredits where
 
 -- MergeType
 
-instance Encode MergeType  where
-  encode MergeMidLevel  = encodeWord 0
-  encode MergeLastLevel = encodeWord 1
-  encode MergeUnion     = encodeWord 2
+instance Encode MR.LevelMergeType  where
+  encode MR.MergeMidLevel  = encodeWord 0
+  encode MR.MergeLastLevel = encodeWord 1
 
-instance DecodeVersioned MergeType where
+instance DecodeVersioned MR.LevelMergeType where
   decodeVersioned V0 = do
       tag <- decodeWord
       case tag of
-        0 -> pure MergeMidLevel
-        1 -> pure MergeLastLevel
-        2 -> pure MergeUnion
-        _ -> fail ("[MergeType] Unexpected tag: " <> show tag)
+        0 -> pure MR.MergeMidLevel
+        1 -> pure MR.MergeLastLevel
+        _ -> fail ("[LevelMergeType] Unexpected tag: " <> show tag)
+
+-- | We start the tags for these merge types at an offset. This way, if we
+-- serialise @MR.MergeMidLevel :: MR.LevelMergeType@ as 0 and then accidentally
+-- try deserialising it as a @MR.TreeMergeType@, that will fail.
+--
+-- However, 'MR.LevelMergeType' and 'MR.TreeMergeType' are only different
+-- (overlapping) subsets of 'MR.MergeType'. In particular, 'MR.MergeLastLevel'
+-- and 'MR.MergeLevel' are semantically the same. Encoding them as the same
+-- number leaves the door open to relaxing the restrictions on which merge types
+-- can occur where, e.g. decoding them as a general 'MR.MergeType', without
+-- having to change the file format.
+instance Encode MR.TreeMergeType  where
+  encode MR.MergeLevel = encodeWord 1
+  encode MR.MergeUnion = encodeWord 2
+
+instance DecodeVersioned MR.TreeMergeType where
+  decodeVersioned V0 = do
+      tag <- decodeWord
+      case tag of
+        1 -> pure MR.MergeLevel
+        2 -> pure MR.MergeUnion
+        _ -> fail ("[TreeMergeType] Unexpected tag: " <> show tag)

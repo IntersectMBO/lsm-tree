@@ -95,7 +95,7 @@ benchmarks = bgroup "Bench.Database.LSMTree.Internal.Merge" [
         , randomKey    = -- each run uses half of the possible keys
                          randomWord64OutOf (totalEntries `div` 2)
         , mergeMappend = Just (onDeserialisedValues ((+) @Word64))
-        , mergeType    = MergeMidLevel
+        , mergeType    = MergeTypeMidLevel
         }
     , benchMerge configWord64
         { name         = "word64-mix-collisions-x4-lastlevel"
@@ -106,7 +106,7 @@ benchmarks = bgroup "Bench.Database.LSMTree.Internal.Merge" [
         , randomKey    = -- each run uses half of the possible keys
                          randomWord64OutOf (totalEntries `div` 2)
         , mergeMappend = Just (onDeserialisedValues ((+) @Word64))
-        , mergeType    = MergeLastLevel
+        , mergeType    = MergeTypeLastLevel
         }
     , benchMerge configWord64
         { name         = "word64-mix-collisions-x4-union"
@@ -117,14 +117,14 @@ benchmarks = bgroup "Bench.Database.LSMTree.Internal.Merge" [
         , randomKey    = -- each run uses half of the possible keys
                          randomWord64OutOf (totalEntries `div` 2)
         , mergeMappend = Just (onDeserialisedValues ((+) @Word64))
-        , mergeType    = MergeUnion
+        , mergeType    = MergeTypeUnion
         }
       -- not writing anything at all
     , benchMerge configWord64
         { name         = "word64-delete-x4-lastlevel"
         , nentries     = totalEntries `splitInto` 4
         , fdeletes     = 1
-        , mergeType    = MergeLastLevel
+        , mergeType    = MergeTypeLastLevel
         }
       -- different key and value sizes
     , benchMerge configWord64
@@ -175,26 +175,26 @@ benchmarks = bgroup "Bench.Database.LSMTree.Internal.Merge" [
         , nentries     = totalEntries `splitInto` 4
         , finserts     = 1
         , fdeletes     = 1
-        , mergeType    = MergeLastLevel
+        , mergeType    = MergeTypeLastLevel
         }
     , benchMerge configUTxO
         { name         = "utxo-x4+1-min-skewed-lastlevel"  -- live levelling merge
         , nentries     = totalEntries `distributed` [1, 1, 1, 1, 4]
         , finserts     = 1
         , fdeletes     = 1
-        , mergeType    = MergeLastLevel
+        , mergeType    = MergeTypeLastLevel
         }
     , benchMerge configUTxO
         { name         = "utxo-x4+1-max-skewed-lastlevel"  -- live levelling merge
         , nentries     = totalEntries `distributed` [1, 1, 1, 1, 16]
         , finserts     = 1
         , fdeletes     = 1
-        , mergeType    = MergeLastLevel
+        , mergeType    = MergeTypeLastLevel
         }
     , benchMerge configUTxOStaking
         { name         = "utxo-x2-tree-union"  -- binary union merge
         , nentries     = totalEntries `distributed` [4, 1]
-        , mergeType    = MergeUnion
+        , mergeType    = MergeTypeUnion
         }
     , benchMerge configUTxOStaking
         { name         = "utxo-x10-tree-level"  -- merge a whole table (for union)
@@ -203,7 +203,7 @@ benchmarks = bgroup "Bench.Database.LSMTree.Internal.Merge" [
                                                     , 16, 16, 16
                                                     , 100  -- last level
                                                     ]
-        , mergeType    = MergeLastLevel
+        , mergeType    = MergeTypeLastLevel
         }
     ]
   where
@@ -323,7 +323,7 @@ defaultConfig = Config {
   , randomKey    = error "randomKey not implemented"
   , randomValue  = error "randomValue not implemented"
   , randomBlob   = error "randomBlob not implemented"
-  , mergeType    = MergeMidLevel
+  , mergeType    = MergeTypeMidLevel
   , mergeMappend = Nothing
   , stepSize     = maxBound  -- by default, just do in one go
   }
