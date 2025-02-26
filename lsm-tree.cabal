@@ -131,6 +131,7 @@ library
     Database.LSMTree.Internal.CRC32C
     Database.LSMTree.Internal.Cursor
     Database.LSMTree.Internal.Entry
+    Database.LSMTree.Internal.FS.File
     Database.LSMTree.Internal.Index
     Database.LSMTree.Internal.Index.Compact
     Database.LSMTree.Internal.Index.CompactAcc
@@ -362,6 +363,7 @@ test-suite lsm-tree-test
     Test.Database.LSMTree.Internal.Chunk
     Test.Database.LSMTree.Internal.CRC32C
     Test.Database.LSMTree.Internal.Entry
+    Test.Database.LSMTree.Internal.FS.File
     Test.Database.LSMTree.Internal.Index.Compact
     Test.Database.LSMTree.Internal.Index.Ordinary
     Test.Database.LSMTree.Internal.Lookup

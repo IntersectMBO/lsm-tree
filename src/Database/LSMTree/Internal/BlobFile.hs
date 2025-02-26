@@ -2,6 +2,8 @@
 module Database.LSMTree.Internal.BlobFile (
     BlobFile (..)
   , BlobSpan (..)
+  , unsafeOpenBlobFile
+  , newBlobFile
   , openBlobFile
   , readBlob
   , readBlobRaw
@@ -10,12 +12,13 @@ module Database.LSMTree.Internal.BlobFile (
 
 import           Control.DeepSeq (NFData (..))
 import           Control.Monad.Class.MonadThrow (MonadCatch (bracketOnError),
-                     MonadThrow (..))
+                     MonadMask, MonadThrow (..))
 import           Control.Monad.Primitive (PrimMonad)
 import           Control.RefCount
 import qualified Data.Primitive.ByteArray as P
 import qualified Data.Vector.Primitive as VP
 import           Data.Word (Word32, Word64)
+import           Database.LSMTree.Internal.FS.File
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.Serialise (SerialisedBlob (..))
 import qualified System.FS.API as FS
@@ -29,16 +32,19 @@ import           System.FS.CallStack (HasCallStack)
 -- and deleted.
 --
 data BlobFile m h = BlobFile {
-       blobFileHandle     :: {-# UNPACK #-} !(FS.Handle h),
-       blobFileRefCounter :: {-# UNPACK #-} !(RefCounter m)
-     }
+      blobFileHandle     :: {-# UNPACK #-} !(FS.Handle h)
+      -- | TODO: once 'unsafeOpenBlobFile' is removed, replace this by just a
+      -- @Ref (File m)@.
+    , blobFileFile       :: {-# UNPACK #-} !(Maybe (Ref (File m)))
+    , blobFileRefCounter :: {-# UNPACK #-} !(RefCounter m)
+    }
   deriving stock (Show)
 
 instance RefCounted m (BlobFile m h) where
     getRefCounter = blobFileRefCounter
 
 instance NFData h => NFData (BlobFile m h) where
-  rnf (BlobFile a b) = rnf a `seq` rnf b
+  rnf (BlobFile a b c) = rnf a `seq` rnf b `seq` rnf c
 
 -- | The location of a blob inside a blob file.
 data BlobSpan = BlobSpan {
@@ -50,22 +56,17 @@ data BlobSpan = BlobSpan {
 instance NFData BlobSpan where
   rnf (BlobSpan a b) = rnf a `seq` rnf b
 
--- | Open the given file to make a 'BlobFile'. The finaliser will close and
--- delete the file.
---
--- REF: the resulting reference must be released once it is no longer used.
---
--- ASYNC: this should be called with asynchronous exceptions masked because it
--- allocates/creates resources.
-{-# SPECIALISE openBlobFile :: HasCallStack => HasFS IO h -> FS.FsPath -> FS.OpenMode -> IO (Ref (BlobFile IO h)) #-}
-openBlobFile ::
+{-# SPECIALISE unsafeOpenBlobFile :: HasCallStack => HasFS IO h -> FS.FsPath -> FS.OpenMode -> IO (Ref (BlobFile IO h)) #-}
+-- | TODO: replace at use sites by 'newBlobFile' or 'openBlobFile', and then
+-- remove this function.
+unsafeOpenBlobFile ::
      (PrimMonad m, MonadCatch m)
   => HasCallStack
   => HasFS m h
   -> FS.FsPath
   -> FS.OpenMode
   -> m (Ref (BlobFile m h))
-openBlobFile fs path mode =
+unsafeOpenBlobFile fs path mode =
     bracketOnError (FS.hOpen fs path mode) (FS.hClose fs) $ \blobFileHandle -> do
       let finaliser =
             FS.hClose fs blobFileHandle `finally`
@@ -77,8 +78,67 @@ openBlobFile fs path mode =
       newRef finaliser $ \blobFileRefCounter ->
         BlobFile {
           blobFileHandle,
+          blobFileFile = Nothing,
           blobFileRefCounter
         }
+
+{-# SPECIALISE fromFile :: HasFS IO h -> Ref (File IO) -> Mode -> IO (Ref (BlobFile IO h)) #-}
+-- | Create a 'BlobFile' from a 'File'.
+--
+-- REF: the resulting reference must be released once it is no longer used.
+--
+-- ASYNC: this should be called with asynchronous exceptions masked because it
+-- allocates/creates resources.
+fromFile ::
+     (PrimMonad m, MonadMask m)
+  => HasFS m h
+  -> Ref (File m)
+  -> Mode
+  -> m (Ref (BlobFile m h))
+fromFile hfs blobFileFile mode =
+    bracketOnError (openHandle hfs blobFileFile mode) (FS.hClose hfs) $ \blobFileHandle -> do
+      let finaliser = FS.hClose hfs blobFileHandle `finally` releaseRef blobFileFile
+      newRef finaliser $ \blobFileRefCounter -> BlobFile {
+          blobFileHandle
+        , blobFileFile = Just $! blobFileFile
+        , blobFileRefCounter
+        }
+
+{-# SPECIALISE newBlobFile :: HasCallStack => HasFS IO h -> FS.FsPath -> Mode -> IO (Ref (BlobFile IO h)) #-}
+-- | Create a new 'BlobFile'.
+--
+-- REF: the resulting reference must be released once it is no longer used.
+--
+-- ASYNC: this should be called with asynchronous exceptions masked because it
+-- allocates/creates resources.
+newBlobFile ::
+     (PrimMonad m, MonadMask m)
+  => HasCallStack
+  => HasFS m h
+  -> FS.FsPath
+  -> Mode
+  -> m (Ref (BlobFile m h))
+newBlobFile hfs path mode =
+    bracketOnError (newFile hfs path) releaseRef $
+      \file -> fromFile hfs file mode
+
+{-# SPECIALISE openBlobFile :: HasCallStack => HasFS IO h -> Ref (File IO) -> Mode -> IO (Ref (BlobFile IO h)) #-}
+-- | Open an existing 'File' to make a 'BlobFile'.
+--
+-- REF: the resulting reference must be released once it is no longer used.
+--
+-- ASYNC: this should be called with asynchronous exceptions masked because it
+-- allocates/creates resources.
+openBlobFile ::
+     (PrimMonad m, MonadMask m)
+  => HasCallStack
+  => HasFS m h
+  -> Ref (File m)
+  -> Mode
+  -> m (Ref (BlobFile m h))
+openBlobFile hfs file mode =
+    bracketOnError (dupRef file) releaseRef $
+      \file' -> fromFile hfs file' mode
 
 {-# INLINE readBlob #-}
 readBlob ::
