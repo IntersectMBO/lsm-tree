@@ -12,11 +12,13 @@ module Database.LSMTree.Internal.MergingTree (
   ) where
 
 import           Control.Concurrent.Class.MonadMVar.Strict
-import           Control.Monad (filterM)
+import           Control.Monad ((<$!>))
 import           Control.Monad.Class.MonadThrow (MonadMask)
 import           Control.Monad.Primitive
 import           Control.RefCount
 import           Data.Foldable (traverse_)
+import           Data.Vector (Vector)
+import qualified Data.Vector as V
 import           Database.LSMTree.Internal.MergingRun (MergingRun)
 import qualified Database.LSMTree.Internal.MergingRun as MR
 import           Database.LSMTree.Internal.Run (Run)
@@ -88,12 +90,12 @@ data PendingMerge m h =
     -- i.e. its (merging) runs and finally a union merge (if that table
     -- already contained a union).
     PendingLevelMerge
-      ![PreExistingRun m h]
+      !(Vector (PreExistingRun m h))
       !(Maybe (Ref (MergingTree m h)))
 
     -- | Each input is the entire content of a table (as a merging tree).
   | PendingUnionMerge
-      ![Ref (MergingTree m h)]
+      !(Vector (Ref (MergingTree m h)))
 
 data PreExistingRun m h =
     PreExistingRun        !(Ref (Run m h))
@@ -139,15 +141,15 @@ newPendingLevelMerge prs mmt = do
         CompletedTreeMerge <$> dupRef r
 
       _ -> PendingTreeMerge <$>
-            (PendingLevelMerge <$> traverse dupPreExistingRun prs
+            (PendingLevelMerge <$> traverse dupPreExistingRun (V.fromList prs)
                                <*> dupMaybeMergingTree mmt)
 
     newMergeTree mergeTreeState
   where
     dupPreExistingRun (PreExistingRun r) =
-      PreExistingRun <$> dupRef r
+      PreExistingRun <$!> dupRef r
     dupPreExistingRun (PreExistingMergingRun mr) =
-      PreExistingMergingRun <$> dupRef mr
+      PreExistingMergingRun <$!> dupRef mr
 
     dupMaybeMergingTree :: Maybe (Ref (MergingTree m h))
                         -> m (Maybe (Ref (MergingTree m h)))
@@ -156,7 +158,7 @@ newPendingLevelMerge prs mmt = do
       isempty <- isStructurallyEmpty mt
       if isempty
         then return Nothing
-        else Just <$> dupRef mt
+        else Just <$!> dupRef mt
 
 -- | Create a new 'MergingTree' representing the union of one or more merging
 -- trees. This is for unioning the content of multiple tables (represented
@@ -178,10 +180,12 @@ newPendingUnionMerge ::
   => [Ref (MergingTree m h)]
   -> m (Ref (MergingTree m h))
 newPendingUnionMerge mts = do
-    mts' <- mapM dupRef =<< filterM (fmap not . isStructurallyEmpty) mts
-    case mts' of
-      [mt] -> return mt
-      _    -> newMergeTree (PendingTreeMerge (PendingUnionMerge mts'))
+    mts' <- V.mapM dupRef
+        =<< V.filterM (fmap not . isStructurallyEmpty) (V.fromList mts)
+    case V.uncons mts' of
+      Just (mt, mts'') | V.null mts''
+        -> return mt
+      _ -> newMergeTree (PendingTreeMerge (PendingUnionMerge mts'))
 
 -- | Test if a 'MergingTree' is \"obviously\" empty by virtue of its structure.
 -- This is not the same as being empty due to a pending or ongoing merge
@@ -191,9 +195,9 @@ isStructurallyEmpty :: MonadMVar m => Ref (MergingTree m h) -> m Bool
 isStructurallyEmpty (DeRef MergingTree {mergeState}) =
     isEmpty <$> readMVar mergeState
   where
-    isEmpty (PendingTreeMerge (PendingLevelMerge [] Nothing)) = True
-    isEmpty (PendingTreeMerge (PendingUnionMerge []))         = True
-    isEmpty _                                                 = False
+    isEmpty (PendingTreeMerge (PendingLevelMerge prs Nothing)) = V.null prs
+    isEmpty (PendingTreeMerge (PendingUnionMerge mts))         = V.null mts
+    isEmpty _                                                  = False
     -- It may also turn out to be useful to consider CompletedTreeMerge with
     -- a zero length runs as empty.
 
