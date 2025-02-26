@@ -305,6 +305,13 @@ data Table k v b = Table {
   }
   deriving stock Show
 
+-- | The model does not distinguish multiple values of the config type. This is
+-- the right thing because the table config is never observed directly, only
+-- via the influence it might have on other operation results. And we /do not
+-- want/ table configs to have observable value-level effects. The table config
+-- should only have performance effects. Thus having only one config value is
+-- the right abstraction for the model.
+--
 data TableConfig = TableConfig
   deriving stock (Show, Eq)
 
