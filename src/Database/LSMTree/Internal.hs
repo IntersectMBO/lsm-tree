@@ -1375,73 +1375,81 @@ unions ts = do
     -- 'sessionOpenTables'.
     modifyWithActionRegistry
       (atomically $ RW.unsafeAcquireReadAccess (sessionState sesh))
-      (\_ -> atomically $ RW.unsafeReleaseReadAccess (sessionState sesh)) $ \reg -> \case
+      (\_ -> atomically $ RW.unsafeReleaseReadAccess (sessionState sesh)) $
+      \reg -> \case
         SessionClosed -> throwIO ErrSessionClosed
         seshState@(SessionOpen seshEnv) -> do
-          contents <-
-            forM ts $ \t -> do
-              withOpenTable t $ \tEnv ->
-                -- The table contents escape the read access, but we just added references
-                -- to each run so it is safe.
-                RW.withReadAccess (tableContent tEnv) (duplicateTableContent reg)
-
-          -- The TableConfig for the new table is taken from the first / left
-          -- table in the union. This works because the new table is almost
-          -- completely fresh. It will have an empty write buffer and no runs
-          -- in the normal levels. All the existing runs get squashed down into
-          -- a single run before rejoining as a last level.
-          let conf = tableConfig (NE.head ts)
-
-          content <- unionsTableContent seshEnv conf reg (NE.toList contents)
-          --TODO: combine unionsTableContent with above loop and avoid
-          -- duplicating and releasing here:
-          mapM_ (releaseTableContent reg) contents
-
-          -- Pick the arena manager to optimise the case of:
-          -- bigTableWithLotsOfLookups <> someUpdates
-          -- by reusing the arena manager from the first one.
-          let am = tableArenaManager (NE.head ts)
-
-          t <-
-            newWith
-              reg
-              sesh
-              seshEnv
-              conf
-              am
-              content
-
+          t <- unionsInOpenSession sesh seshEnv reg ts
           pure (seshState, t)
 
-unionsTableContent ::
+{-# SPECIALISE unionsInOpenSession ::
+     Session IO h
+  -> SessionEnv IO h
+  -> ActionRegistry IO
+  -> NonEmpty (Table IO h)
+  -> IO (Table IO h) #-}
+unionsInOpenSession ::
+     (MonadSTM m, MonadMask m, MonadMVar m, MonadST m)
+  => Session m h
+  -> SessionEnv m h
+  -> ActionRegistry m
+  -> NonEmpty (Table m h)
+  -> m (Table m h)
+unionsInOpenSession sesh seshEnv reg ts = do
+
+    -- The TableConfig for the new table is taken from the first
+    -- table in the union. This works because the new table is almost
+    -- completely fresh. It will have an empty write buffer and no
+    -- runs in the normal levels. All the existing runs get squashed
+    -- down into a single run before rejoining as a last level.
+    let conf = tableConfig (NE.head ts)
+
+    mts <- forM (NE.toList ts) $ \t ->
+      withOpenTable t $ \tEnv ->
+        RW.withReadAccess (tableContent tEnv) $ \tc -> do
+          -- tableContentToMergingTree duplicates all runs and merges
+          -- so the ones from the tableContent here do not escape
+          -- the read access.
+          mt <- withRollback reg
+                  (tableContentToMergingTree seshEnv conf reg tc)
+                  releaseRef
+          -- The mt here is a temporary value, since newPendingUnionMerge
+          -- will make its own references, so release mt at the end of
+          -- the action registry bracket
+          delayedCommit reg (releaseRef mt)
+          return mt
+    mt <- newPendingUnionMerge mts
+    empty <- newEmptyTableContent seshEnv reg
+    let content = empty { tableUnionLevel = Union mt }
+
+        -- Pick the arena manager to optimise the case of:
+        -- bigTableWithLotsOfLookups <> someUpdates
+        -- by reusing the arena manager from the first one.
+        am = tableArenaManager (NE.head ts)
+
+    newWith reg sesh seshEnv conf am content
+
+{-# SPECIALISE tableContentToMergingTree ::
+     SessionEnv IO h
+  -> TableConfig
+  -> ActionRegistry IO
+  -> TableContent IO h
+  -> IO (Ref (MergingTree IO h)) #-}
+tableContentToMergingTree ::
      forall m h.
      (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => SessionEnv m h
   -> TableConfig
   -> ActionRegistry m
-  -> [TableContent m h]
-  -> m (TableContent m h)
-unionsTableContent seshEnv@SessionEnv {
-                     sessionRoot        = root,
-                     sessionHasFS       = hfs,
-                     sessionHasBlockIO  = hbio,
-                     sessionUniqCounter = uc
-                   }
-                   conf@TableConfig {
-                     confDiskCachePolicy,
-                     confFencePointerIndex
-                   } reg tcs = do
-    --TODO: exception safety, rollback, references etc, masking async exceptions
-    mts <- forM tcs $ \tc ->
-             withRollback reg (tableContentToMergingTree tc) releaseRef
-    mt  <- newPendingUnionMerge mts
-    tc  <- newEmptyTableContent seshEnv reg
-    mapM_ releaseRef mts -- they are intermediate values
-    return tc { tableUnionLevel = Union mt }
-  where
-    tableContentToMergingTree :: TableContent m h -> m (Ref (MergingTree m h))
-    tableContentToMergingTree tc@TableContent{..} = do
-      mwbr <- writeBufferToNewRun tc
+  -> TableContent m h
+  -> m (Ref (MergingTree m h))
+tableContentToMergingTree seshEnv conf reg
+                          tc@TableContent {
+                            tableLevels,
+                            tableUnionLevel
+                          } =
+    bracket (writeBufferToNewRun seshEnv conf reg tc)
+            (mapM_ releaseRef) $ \mwbr ->
       let runs :: [PreExistingRun m h]
           runs = maybeToList (fmap PreExistingRun mwbr)
               ++ concatMap levelToPreExistingRuns (V.toList tableLevels)
@@ -1449,10 +1457,8 @@ unionsTableContent seshEnv@SessionEnv {
           unionmt = case tableUnionLevel of
                     NoUnion  -> Nothing
                     Union mt -> Just mt
-      mt <- newPendingLevelMerge runs unionmt
-      mapM_ releaseRef mwbr
-      return mt
-
+       in newPendingLevelMerge runs unionmt
+  where
     levelToPreExistingRuns :: Level m h -> [PreExistingRun m h]
     levelToPreExistingRuns Level{incomingRun, residentRuns} =
         case incomingRun of
@@ -1460,25 +1466,52 @@ unionsTableContent seshEnv@SessionEnv {
           Merging _ mr -> PreExistingMergingRun mr
       : map PreExistingRun (V.toList residentRuns)
 
-    --TODO: can we share this or move it to MergeSchedule?
-    writeBufferToNewRun TableContent{..}
-      | WB.null tableWriteBuffer = pure Nothing
-      | otherwise                = Just <$> do
-        !n <- incrUniqCounter uc
-        let !ln        = LevelNo 1
-            !cache     = diskCachePolicyForLevel confDiskCachePolicy ln
-            !alloc     = bloomFilterAllocForLevel conf ln
-            !indexType = indexTypeForRun confFencePointerIndex
-            !path      = Paths.runPath root (uniqueToRunNumber n)
-        withRollback reg
-          (Run.fromWriteBuffer hfs hbio
-            cache
-            alloc
-            indexType
-            path
-            tableWriteBuffer
-            tableWriteBufferBlobs)
-          releaseRef
+--TODO: can we share this or move it to MergeSchedule?
+{-# SPECIALISE writeBufferToNewRun ::
+     SessionEnv IO h
+  -> TableConfig
+  -> ActionRegistry IO
+  -> TableContent IO h
+  -> IO (Maybe (Ref (Run IO h))) #-}
+writeBufferToNewRun ::
+     (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+  => SessionEnv m h
+  -> TableConfig
+  -> ActionRegistry m
+  -> TableContent m h
+  -> m (Maybe (Ref (Run m h)))
+writeBufferToNewRun SessionEnv {
+                      sessionRoot        = root,
+                      sessionHasFS       = hfs,
+                      sessionHasBlockIO  = hbio,
+                      sessionUniqCounter = uc
+                    }
+                    conf@TableConfig {
+                      confDiskCachePolicy,
+                      confFencePointerIndex
+                    }
+                    reg
+                    TableContent{
+                      tableWriteBuffer,
+                      tableWriteBufferBlobs
+                    }
+  | WB.null tableWriteBuffer = pure Nothing
+  | otherwise                = Just <$> do
+    !n <- incrUniqCounter uc
+    let !ln        = LevelNo 1
+        !cache     = diskCachePolicyForLevel confDiskCachePolicy ln
+        !alloc     = bloomFilterAllocForLevel conf ln
+        !indexType = indexTypeForRun confFencePointerIndex
+        !path      = Paths.runPath root (uniqueToRunNumber n)
+    withRollback reg
+      (Run.fromWriteBuffer hfs hbio
+        cache
+        alloc
+        indexType
+        path
+        tableWriteBuffer
+        tableWriteBufferBlobs)
+      releaseRef
 
 -- | Check that all tables in the session match. If so, return the matched
 -- session. If there is a mismatch, return the list indices of the mismatching
