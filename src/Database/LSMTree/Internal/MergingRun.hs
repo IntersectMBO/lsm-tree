@@ -218,8 +218,8 @@ unsafeNew mergeNumRuns mergeNumEntries knownCompleted state = do
         CompletedMerge r ->
           releaseRef r
         OngoingMerge rs m -> do
-          V.forM_ rs releaseRef
           Merge.abort m
+          V.forM_ rs releaseRef
 
 -- | Create references to the runs that should be queried for lookups.
 -- In particular, if the merge is not complete, these are the input runs.
