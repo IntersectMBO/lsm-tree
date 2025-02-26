@@ -79,7 +79,8 @@ import           Control.Monad.Class.MonadThrow (Exception (..), Handler (..),
 import           Control.Monad.IOSim
 import           Control.Monad.Primitive
 import           Control.Monad.Reader (ReaderT (..))
-import           Control.RefCount (RefException, checkForgottenRefs)
+import           Control.RefCount (RefException, checkForgottenRefs,
+                     ignoreForgottenRefs)
 import           Control.Tracer (Tracer, nullTracer)
 import           Data.Bifunctor (Bifunctor (..))
 import           Data.Constraint (Dict (..))
@@ -2251,15 +2252,19 @@ runActionsBracket p init cleanup runner tagger actions =
   $ QLS.runActionsBracket p init cleanup' runner actions
   where
     cleanup' st = do
-      x <- cleanup st
-      pure (x QC..&&. propCheckForgottenRefs)
+      x <- cleanup st `onException` ignoreForgottenRefs
+      -- We want to do checkForgottenRefs after cleanup, since cleanup itself
+      -- may lead to forgotten refs. And checkForgottenRefs has the crucial
+      -- side effect of reseting the forgotten refs state. If we don't do this
+      -- then the next test run (e.g. during shrinking) will encounter a
+      -- false/stale forgotten refs exception. But we also have to make sure
+      -- that if cleanup itself fails, that we reset the forgotten refs state!
+      e <- Control.Exception.try checkForgottenRefs
+      pure (x QC..&&. propCheckForgottenRefs e)
 
-propCheckForgottenRefs :: Property
-propCheckForgottenRefs = QC.ioProperty $ do
-    eith <- Control.Exception.try checkForgottenRefs
-    pure $ case eith of
-      Left (e :: RefException) -> QC.counterexample (show e) False
-      Right ()                 -> QC.property True
+    propCheckForgottenRefs :: Either RefException () -> Property
+    propCheckForgottenRefs (Left e)   = QC.counterexample (show e) False
+    propCheckForgottenRefs (Right ()) = QC.property True
 
 tagFinalState ::
      forall state. StateModel (Lockstep state)
