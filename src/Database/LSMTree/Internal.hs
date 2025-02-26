@@ -78,7 +78,7 @@ import           Control.Concurrent.Class.MonadSTM (MonadSTM (..))
 import           Control.Concurrent.Class.MonadSTM.RWVar (RWVar)
 import qualified Control.Concurrent.Class.MonadSTM.RWVar as RW
 import           Control.DeepSeq
-import           Control.Monad (forM, unless, void, zipWithM_)
+import           Control.Monad (forM, unless, void)
 import           Control.Monad.Class.MonadST (MonadST (..))
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Primitive
@@ -232,9 +232,6 @@ data LSMTreeError =
       Int -- ^ Vector index of table @t1@ involved in the mismatch
       Int -- ^ Vector index of table @t2@ involved in the mismatch
     -- | 'unions' was called on tables that do not have the same configuration.
-  | ErrUnionsTableConfigMismatch
-      Int -- ^ Vector index of table @t1@ involved in the mismatch
-      Int -- ^ Vector index of table @t2@ involved in the mismatch
   deriving stock (Show, Eq)
   deriving anyclass (Exception)
 
@@ -1359,16 +1356,12 @@ unions ts = do
 
     traceWith (sessionTracer sesh) $ TraceUnions (NE.map tableId ts)
 
-    -- TODO: Do we really need the configs to match exactly? It's okay as a
-    -- requirement for now, but we might want to revisit it. Some settings don't
-    -- really need to match for things to work, but of course we'd still need to
-    -- answer the question of which config to use for the new table, possibly
-    -- requiring to supply it manually? Or, we could generalise the exact match
-    -- to have a config compatibility test and config merge?
-    conf <-
-      case match (fmap tableConfig ts) of
-        Left (i, j) -> throwIO $ ErrUnionsTableConfigMismatch i j
-        Right conf  -> pure conf
+    -- The TableConfig for the new table is taken from the first / left
+    -- table in the union. This works because the new table is almost
+    -- completely fresh. It will have an empty write buffer and no runs
+    -- in the normal levels. All the existing runs get squashed down into
+    -- a single run before rejoining as a last level.
+    let conf = tableConfig (NE.head ts)
 
     -- We acquire a read-lock on the session open-state to prevent races, see
     -- 'sessionOpenTables'.
@@ -1398,24 +1391,6 @@ unions ts = do
               content
 
           pure (seshState, t)
-
--- | Like 'matchBy', but the match function is @(==)@.
-match :: Eq a => NonEmpty a -> Either (Int, Int) a
-match = matchBy (==)
-
--- | Check that all values in the list match. If so, return the matched value.
--- If there is a mismatch, return the list indices of the mismatching values.
-matchBy :: forall a. (a -> a -> Bool) -> NonEmpty a -> Either (Int, Int) a
-matchBy eq (x0 :| xs) =
-    case zipWithM_ (matchOne x0) [1..] xs of
-      Left i   -> Left (0, i)
-      Right () -> Right x0
-  where
-    matchOne :: a -> Int -> a -> Either Int ()
-    matchOne x i y =
-      if (x `eq` y)
-        then Right ()
-        else Left i
 
 -- | Check that all tables in the session match. If so, return the matched
 -- session. If there is a mismatch, return the list indices of the mismatching
