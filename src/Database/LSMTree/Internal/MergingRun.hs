@@ -218,8 +218,13 @@ unsafeNew mergeNumRuns mergeNumEntries knownCompleted state = do
         CompletedMerge r ->
           releaseRef r
         OngoingMerge rs m -> do
-          V.forM_ rs releaseRef
+          -- The RunReaders in the Merge keep their own file handles to the
+          -- run kopsFile open. We must close these handles *before* we release
+          -- the runs themselves, which will close and delete the files.
+          -- Otherwise we would be removing files that still have open handles
+          -- (which does not work on Windows, and is caught by the MockFS).
           Merge.abort m
+          V.forM_ rs releaseRef
 
 -- | Create references to the runs that should be queried for lookups.
 -- In particular, if the merge is not complete, these are the input runs.

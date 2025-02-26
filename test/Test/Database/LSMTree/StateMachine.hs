@@ -79,7 +79,8 @@ import           Control.Monad.Class.MonadThrow (Exception (..), Handler (..),
 import           Control.Monad.IOSim
 import           Control.Monad.Primitive
 import           Control.Monad.Reader (ReaderT (..))
-import           Control.RefCount (RefException, checkForgottenRefs)
+import           Control.RefCount (RefException, checkForgottenRefs,
+                     ignoreForgottenRefs)
 import           Control.Tracer (Tracer, nullTracer)
 import           Data.Bifunctor (Bifunctor (..))
 import           Data.Constraint (Dict (..))
@@ -1687,6 +1688,16 @@ shrinkActionWithVars _ctx _st = \case
       | let f k = (k, R.Delete)
       ]
 
+    Mupserts kvs tableVar -> [
+        Some $ Mupserts kvs' tableVar
+      | kvs' <- QC.shrink kvs
+      ]
+
+    Unions tableVars -> [
+        Some $ Unions (tableVar' NE.:| tableVars')
+      | tableVar':tableVars' <- QC.shrinkList (const []) (NE.toList tableVars)
+      ]
+
     Lookups ks tableVar -> [ Some $ Lookups ks' tableVar | ks' <- QC.shrink ks ]
 
     -- Snapshots
@@ -1941,32 +1952,44 @@ updateStats action lookUp modelBefore _modelAfter result =
 
     updParentTable stats = case (action, result) of
         (New{}, MEither (Right (MTable tbl))) ->
-          stats {
-            parentTable = Map.insert (Model.tableID tbl)
-                                     (Model.tableID tbl)
-                                     (parentTable stats)
-          }
+          insertParentTableNew tbl stats
         (OpenSnapshot{}, MEither (Right (MTable tbl))) ->
-          stats {
+          insertParentTableNew tbl stats
+        (Duplicate ptblVar, MEither (Right (MTable tbl))) ->
+          insertParentTableDerived ptblVar tbl stats
+        (Union ptblVar _ptblVar2, MEither (Right (MTable tbl))) ->
+          insertParentTableDerived ptblVar tbl stats
+        (Unions (ptblVar :| _ptblVars), MEither (Right (MTable tbl))) ->
+          insertParentTableDerived ptblVar tbl stats
+        -- TODO: we're abitrarily picking the first parent as the parent (and
+        -- ignoring ptblVar2 and ptblVars above). Tables should be able to have
+        -- *multiple* ultimate parent tables, which is currently not possible:
+        --parentTable only stores a single ultimate parent table per table.
+        _ -> stats
+
+    -- insert an entry into the parentTable for a completely new table
+    insertParentTableNew :: forall k v b. Model.Table k v b -> Stats -> Stats
+    insertParentTableNew tbl stats =
+      stats {
+        parentTable = Map.insert (Model.tableID tbl)
+                                 (Model.tableID tbl)
+                                 (parentTable stats)
+      }
+
+    -- insert an entry into the parentTable for a table derived from a parent
+    insertParentTableDerived :: forall k v b.
+                                GVar Op (WrapTable h IO k v b)
+                             -> Model.Table k v b -> Stats -> Stats
+    insertParentTableDerived ptblVar tbl stats =
+      let -- immediate and ultimate parent table ids
+          iptblId, uptblId :: Model.TableID
+          iptblId = getTableId (lookUp ptblVar)
+          uptblId = parentTable stats Map.! iptblId
+       in stats {
             parentTable = Map.insert (Model.tableID tbl)
-                                     (Model.tableID tbl)
+                                     uptblId
                                      (parentTable stats)
           }
-        (Duplicate ptblVar, MEither (Right (MTable tbl))) ->
-          let -- immediate and ultimate parent table ids
-              iptblId, uptblId :: Model.TableID
-              iptblId = getTableId (lookUp ptblVar)
-              uptblId = parentTable stats Map.! iptblId
-           in stats {
-                parentTable = Map.insert (Model.tableID tbl)
-                                         uptblId
-                                         (parentTable stats)
-              }
-        -- TODO: also include tables resulting from Union and Unions here. This
-        -- means that tables should be able to have *multiple* ultimate parent
-        -- tables, which is currently not possible: parentTable only stores a
-        -- single ultimate parent table per table.
-        _ -> stats
 
     updDupTableActionLog stats | MEither (Right _) <- result =
       case action of
@@ -2251,15 +2274,19 @@ runActionsBracket p init cleanup runner tagger actions =
   $ QLS.runActionsBracket p init cleanup' runner actions
   where
     cleanup' st = do
-      x <- cleanup st
-      pure (x QC..&&. propCheckForgottenRefs)
+      x <- cleanup st `onException` ignoreForgottenRefs
+      -- We want to do checkForgottenRefs after cleanup, since cleanup itself
+      -- may lead to forgotten refs. And checkForgottenRefs has the crucial
+      -- side effect of reseting the forgotten refs state. If we don't do this
+      -- then the next test run (e.g. during shrinking) will encounter a
+      -- false/stale fogotten refs exception. But we also have to make sure
+      -- that if cleanup itself fails, that we reset the forgotten refs state!
+      e <- Control.Exception.try checkForgottenRefs
+      pure (x QC..&&. propCheckForgottenRefs e)
 
-propCheckForgottenRefs :: Property
-propCheckForgottenRefs = QC.ioProperty $ do
-    eith <- Control.Exception.try checkForgottenRefs
-    pure $ case eith of
-      Left (e :: RefException) -> QC.counterexample (show e) False
-      Right ()                 -> QC.property True
+    propCheckForgottenRefs :: Either RefException () -> Property
+    propCheckForgottenRefs (Left e)   = QC.counterexample (show e) False
+    propCheckForgottenRefs (Right ()) = QC.property True
 
 tagFinalState ::
      forall state. StateModel (Lockstep state)
