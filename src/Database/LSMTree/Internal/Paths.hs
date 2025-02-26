@@ -209,7 +209,7 @@ runChecksumsPath :: RunFsPaths -> FsPath
 runChecksumsPath = flip runFilePathWithExt "checksums"
 
 runFilePathWithExt :: RunFsPaths -> String -> FsPath
-runFilePathWithExt (RunFsPaths dir n) ext =
+runFilePathWithExt (RunFsPaths dir (RunNumber n)) ext =
     dir </> mkFsPath [show n] <.> ext
 
 runFileExts :: ForRunFiles String
@@ -311,7 +311,7 @@ writeBufferChecksumsPath :: WriteBufferFsPaths -> FsPath
 writeBufferChecksumsPath = flip writeBufferFilePathWithExt "checksums"
 
 writeBufferFilePathWithExt :: WriteBufferFsPaths -> String -> FsPath
-writeBufferFilePathWithExt (WriteBufferFsPaths dir n) ext =
+writeBufferFilePathWithExt (WriteBufferFsPaths dir (RunNumber n)) ext =
     dir </> mkFsPath [show n] <.> ext
 
 
