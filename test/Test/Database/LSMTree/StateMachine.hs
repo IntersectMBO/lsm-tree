@@ -1688,6 +1688,16 @@ shrinkActionWithVars _ctx _st = \case
       | let f k = (k, R.Delete)
       ]
 
+    Mupserts kvs tableVar -> [
+        Some $ Mupserts kvs' tableVar
+      | kvs' <- QC.shrink kvs
+      ]
+
+    Unions tableVars -> [
+        Some $ Unions (tableVar' NE.:| tableVars')
+      | tableVar':tableVars' <- QC.shrinkList (const []) (NE.toList tableVars)
+      ]
+
     Lookups ks tableVar -> [ Some $ Lookups ks' tableVar | ks' <- QC.shrink ks ]
 
     -- Snapshots
