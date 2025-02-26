@@ -44,7 +44,7 @@ tests = testGroup "Test.Database.LSMTree.Internal.Snapshot.Codec" [
     , testGroup "Generators and shrinkers are finite" $
         testAll $ \(p :: Proxy a) ->
           testGroup (show $ typeRep p) $
-            prop_arbitraryAndShrinkPreserveInvariant @a deepseqInvariant
+            prop_arbitraryAndShrinkPreserveInvariant @a noTags deepseqInvariant
     ]
 
 {-------------------------------------------------------------------------------
