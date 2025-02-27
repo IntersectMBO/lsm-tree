@@ -16,7 +16,8 @@ import qualified Data.Map.Strict as Map
 import           Data.Proxy (Proxy (..))
 import qualified Data.Vector as V
 import           Database.LSMTree.Extras (showPowersOf)
-import           Database.LSMTree.Extras.Generators (KeyForIndexCompact (..))
+import           Database.LSMTree.Extras.Generators
+                     (BiasedKeyForIndexCompact (..))
 import           Database.LSMTree.Extras.RunData
 import           Database.LSMTree.Internal.BlobRef
 import           Database.LSMTree.Internal.Entry
@@ -83,7 +84,7 @@ size :: MockReaders -> Int
 size (MockReaders xs) = length xs
 
 newMock :: Maybe SerialisedKey
-        -> [RunData KeyForIndexCompact SerialisedValue SerialisedBlob]
+        -> [RunData BiasedKeyForIndexCompact SerialisedValue SerialisedBlob]
         -> MockReaders
 newMock offset =
       MockReaders . Map.assocs . Map.unions
@@ -132,9 +133,9 @@ deriving stock instance Eq   (Action (Lockstep ReadersState) a)
 
 instance StateModel (Lockstep ReadersState) where
   data Action (Lockstep ReadersState) a where
-    New          :: Maybe KeyForIndexCompact  -- ^ optional offset
-                 -> Maybe (RunData KeyForIndexCompact SerialisedValue SerialisedBlob)
-                 -> [RunData KeyForIndexCompact SerialisedValue SerialisedBlob]
+    New          :: Maybe BiasedKeyForIndexCompact  -- ^ optional offset
+                 -> Maybe (RunData BiasedKeyForIndexCompact SerialisedValue SerialisedBlob)
+                 -> [RunData BiasedKeyForIndexCompact SerialisedValue SerialisedBlob]
                  -> ReadersAct ()
     PeekKey      :: ReadersAct SerialisedKey
     Pop          :: Int  -- allow popping many at once to drain faster

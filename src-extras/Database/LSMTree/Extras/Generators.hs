@@ -34,8 +34,9 @@ module Database.LSMTree.Extras.Generators (
   , genRawBytesSized
   , packRawBytesPinnedOrUnpinned
   , LargeRawBytes (..)
+  , isKeyForIndexCompact
   , KeyForIndexCompact (..)
-  , keyForIndexCompactInvariant
+  , BiasedKeyForIndexCompact (..)
   ) where
 
 import           Control.DeepSeq (NFData)
@@ -469,7 +470,6 @@ shrinkSlice (RawBytes pvec) =
     , m <- QC.shrink (VP.length pvec - n)
     ]
 
--- TODO: makes collisions very unlikely
 deriving newtype instance Arbitrary SerialisedKey
 
 instance Arbitrary SerialisedValue where
@@ -508,15 +508,36 @@ instance Arbitrary LargeRawBytes where
 
 deriving newtype instance SerialiseValue LargeRawBytes
 
--- | Minimum length of 8 bytes.
+-- Serialised keys for the compact index must be at least 8 bytes long.
+
+genKeyForIndexCompact :: Gen RawBytes
+genKeyForIndexCompact =
+    genRawBytesN =<< QC.sized (\s -> QC.chooseInt (8, s + 8))
+
+isKeyForIndexCompact :: RawBytes -> Bool
+isKeyForIndexCompact rb = RB.size rb >= 8
+
 newtype KeyForIndexCompact =
     KeyForIndexCompact { getKeyForIndexCompact :: RawBytes }
   deriving stock (Eq, Ord, Show)
 
 instance Arbitrary KeyForIndexCompact where
+  arbitrary =
+      KeyForIndexCompact <$> genKeyForIndexCompact
+  shrink (KeyForIndexCompact rawBytes) =
+      [KeyForIndexCompact rawBytes' | rawBytes' <- shrink rawBytes,
+                                      isKeyForIndexCompact rawBytes']
+
+deriving newtype instance SerialiseKey KeyForIndexCompact
+
+newtype BiasedKeyForIndexCompact =
+    BiasedKeyForIndexCompact { getBiasedKeyForIndexCompact :: RawBytes }
+  deriving stock (Eq, Ord, Show)
+
+instance Arbitrary BiasedKeyForIndexCompact where
   -- we try to make collisions and close keys more likely (very crudely)
-  arbitrary = KeyForIndexCompact <$> frequency
-      [ (6, genRawBytesN =<< QC.sized (\s -> QC.chooseInt (8, s + 8)))
+  arbitrary = BiasedKeyForIndexCompact <$> frequency
+      [ (6, genKeyForIndexCompact)
       , (1, do
           lastByte <- QC.sized $ skewedWithMax . fromIntegral
           return (RB.pack ([1,3,3,7,0,1,7] <> [lastByte]))
@@ -529,17 +550,13 @@ instance Arbitrary KeyForIndexCompact where
           ub2 <- QC.chooseBoundedIntegral (0, ub1)
           QC.chooseBoundedIntegral (0, ub2)
 
-  shrink (KeyForIndexCompact rb) =
-      [ k'
+  shrink (BiasedKeyForIndexCompact rb) =
+      [ BiasedKeyForIndexCompact rb'
       | rb' <- shrink rb
-      , let k' = KeyForIndexCompact rb'
-      , keyForIndexCompactInvariant k'
+      , isKeyForIndexCompact rb'
       ]
 
-deriving newtype instance SerialiseKey KeyForIndexCompact
-
-keyForIndexCompactInvariant :: KeyForIndexCompact -> Bool
-keyForIndexCompactInvariant (KeyForIndexCompact rb) = RB.size rb >= 8
+deriving newtype instance SerialiseKey BiasedKeyForIndexCompact
 
 {-------------------------------------------------------------------------------
   Unsliced
