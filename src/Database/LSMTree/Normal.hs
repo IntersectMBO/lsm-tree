@@ -101,6 +101,10 @@ module Database.LSMTree.Normal (
     -- * Table union
   , union
   , unions
+  , UnionDebt (..)
+  , remainingUnionDebt
+  , UnionCredits (..)
+  , supplyUnionCredits
 
     -- * Concurrency #concurrency#
     -- $concurrency
@@ -123,8 +127,8 @@ import           Data.Typeable (Typeable, eqT, type (:~:) (Refl))
 import qualified Data.Vector as V
 import           Database.LSMTree.Common (BlobRef (BlobRef), IOLike, Range (..),
                      SerialiseKey, SerialiseValue, Session, SnapshotName,
-                     closeSession, deleteSnapshot, listSnapshots, openSession,
-                     withSession)
+                     UnionCredits (..), UnionDebt (..), closeSession,
+                     deleteSnapshot, listSnapshots, openSession, withSession)
 import qualified Database.LSMTree.Common as Common
 import qualified Database.LSMTree.Internal as Internal
 import qualified Database.LSMTree.Internal.BlobRef as Internal
@@ -820,3 +824,28 @@ unions (t :| ts) =
     checkTableType _ i (Internal.NormalTable (t' :: Internal.Table m h'))
       | Just Refl <- eqT @h @h' = pure t'
       | otherwise = throwIO (Internal.ErrUnionsTableTypeMismatch 0 i)
+
+{-# SPECIALISE remainingUnionDebt :: Table IO k v b -> IO UnionDebt #-}
+-- | Return the current union debt. This debt can be reduced until it is paid
+-- off using @supplyUnionCredits@.
+remainingUnionDebt :: IOLike m => Table m k v b -> m UnionDebt
+remainingUnionDebt (Internal.NormalTable t) =
+    (\(Internal.UnionDebt x) -> UnionDebt x) <$>
+      Internal.remainingUnionDebt t
+
+{-# SPECIALISE supplyUnionCredits :: Table IO k v b -> UnionCredits -> IO UnionCredits #-}
+-- | Supply union credits to reduce union debt.
+--
+-- Supplying union credits leads to union merging work being performed in
+-- batches. This reduces the union debt returned by @remainingUnionDebt@. Union
+-- debt will be reduced by /at least/ the number of supplied union credits. It
+-- is therefore advisable to query @remainingUnionDebt@ every once in a while to
+-- see what the current debt is.
+supplyUnionCredits ::
+     IOLike m
+  => Table m k v b
+  -> UnionCredits
+  -> m UnionCredits
+supplyUnionCredits (Internal.NormalTable t) (UnionCredits credits) =
+    (\(Internal.UnionCredits x) -> UnionCredits x) <$>
+      Internal.supplyUnionCredits t (Internal.UnionCredits credits)

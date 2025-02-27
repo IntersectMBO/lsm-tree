@@ -43,6 +43,9 @@ module Database.LSMTree.Common (
   , Internal.TableConfigOverride
   , Internal.configNoOverride
   , Internal.configOverrideDiskCachePolicy
+    -- * Unions
+  , UnionDebt (..)
+  , UnionCredits (..)
   ) where
 
 import           Control.Concurrent.Class.MonadMVar.Strict
@@ -259,3 +262,24 @@ data BlobRef m b where
 
 instance Show (BlobRef m b) where
     showsPrec d (BlobRef b) = showsPrec d b
+
+{-------------------------------------------------------------------------------
+  Unions
+-------------------------------------------------------------------------------}
+
+-- | The /current/ upper bound on the number of 'UnionCredits' that have to be
+-- supplied before a @union@ is completed.
+--
+-- The union debt is the number of merging steps that need to be performed /at
+-- most/ until the delayed work of performing a @union@ is completed. This
+-- includes the cost of completing merges that were part of the union's input
+-- tables.
+newtype UnionDebt = UnionDebt Int
+  deriving stock (Show, Eq)
+
+-- | Credits are used to pay off 'UnionDebt', completing a @union@ in the
+-- process.
+--
+-- A union credit corresponds to a single merging step being performed.
+newtype UnionCredits = UnionCredits Int
+  deriving stock (Show, Eq)

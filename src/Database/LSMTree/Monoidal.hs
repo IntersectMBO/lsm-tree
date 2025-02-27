@@ -100,6 +100,10 @@ module Database.LSMTree.Monoidal (
     -- * Table union
   , union
   , unions
+  , UnionDebt (..)
+  , remainingUnionDebt
+  , UnionCredits (..)
+  , supplyUnionCredits
 
     -- * Concurrency
     -- $concurrency
@@ -132,7 +136,8 @@ import           Data.Proxy (Proxy (Proxy))
 import           Data.Typeable (Typeable, eqT, type (:~:) (Refl))
 import qualified Data.Vector as V
 import           Database.LSMTree.Common (IOLike, Range (..), SerialiseKey,
-                     SerialiseValue (..), Session, SnapshotName, closeSession,
+                     SerialiseValue (..), Session, SnapshotName,
+                     UnionCredits (..), UnionDebt (..), closeSession,
                      deleteSnapshot, listSnapshots, openSession, withSession)
 import qualified Database.LSMTree.Common as Common
 import qualified Database.LSMTree.Internal as Internal
@@ -699,6 +704,31 @@ unions (t :| ts) =
     checkTableType _ i (Internal.MonoidalTable (t' :: Internal.Table m h'))
       | Just Refl <- eqT @h @h' = pure t'
       | otherwise = throwIO (Internal.ErrUnionsTableTypeMismatch 0 i)
+
+{-# SPECIALISE remainingUnionDebt :: Table IO k v -> IO UnionDebt #-}
+-- | Return the current union debt. This debt can be reduced until it is paid
+-- off using @supplyUnionCredits@.
+remainingUnionDebt :: IOLike m => Table m k v -> m UnionDebt
+remainingUnionDebt (Internal.MonoidalTable t) =
+    (\(Internal.UnionDebt x) -> UnionDebt x) <$>
+      Internal.remainingUnionDebt t
+
+{-# SPECIALISE supplyUnionCredits :: Table IO k v -> UnionCredits -> IO UnionCredits #-}
+-- | Supply union credits to reduce union debt.
+--
+-- Supplying union credits leads to union merging work being performed in
+-- batches. This reduces the union debt returned by @remainingUnionDebt@. Union
+-- debt will be reduced by /at least/ the number of supplied union credits. It
+-- is therefore advisable to query @remainingUnionDebt@ every once in a while to
+-- see what the current debt is.
+supplyUnionCredits ::
+     IOLike m
+  => Table m k v
+  -> UnionCredits
+  -> m UnionCredits
+supplyUnionCredits (Internal.MonoidalTable t) (UnionCredits credits) =
+    (\(Internal.UnionCredits x) -> UnionCredits x) <$>
+      Internal.supplyUnionCredits t (Internal.UnionCredits credits)
 
 {-------------------------------------------------------------------------------
   Monoidal value resolution
