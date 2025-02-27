@@ -133,6 +133,12 @@ data MergeTrace =
 -------------------------------------------------------------------------------}
 
 -- | The levels of the table, from most to least recently inserted.
+--
+-- Concurrency: read-only operations are allowed to be concurrent with each
+-- other, but update operations must not be concurrent with each other or read
+-- operations. For example, inspecting the levels cache can be done
+-- concurrently, but 'updatesWithInterleavedFlushes' must be serialised.
+--
 data TableContent m h = TableContent {
     -- | The in-memory level 0 of the table
     --
@@ -536,6 +542,22 @@ supplyCreditsIncomingRun conf ln (Merging _ nominalDebt nominalCreditsVar mr)
     --TODO: consider tracing supply of credits
     return ()
 
+-- | Deposit nominal credits in the local credits var, ensuring the total
+-- credits does not exceed the total debt.
+--
+-- Depositing /could/ leave the credit higher than the total debt. It is not
+-- avoided by construction. The scenario is this: when a completed merge is
+-- underfull, we combine it with the incoming run, so it means we have one run
+-- fewer on the level then we'd normally have. This means that the level
+-- becomes full at a later time, so more time passes before we call
+-- 'MR.expectCompleted' on any levels further down the tree. This means we keep
+-- supplying nominal credits to levels further down past the point their
+-- nominal debt is paid off. So the solution here is just to drop any nominal
+-- credits that are in excess of the nominal debt.
+--
+-- This is /not/ itself thread safe. All 'TableContent' update operations are
+-- expected to be serialised by the caller. See concurrency comments for
+-- 'TableContent' for detail.
 depositNominalCredits ::
      PrimMonad m
   => NominalDebt
@@ -546,10 +568,6 @@ depositNominalCredits (NominalDebt nominalDebt)
                       nominalCreditsVar
                       (NominalCredits deposit) = do
     NominalCredits before <- readPrimVar nominalCreditsVar
-    -- Depositing _could_ leave the credit higher than the debt, because
-    -- sometimes under-full runs mean we don't shuffle runs down the levels
-    -- as quickly as the worst case. So here we do just drop excess nominal
-    -- credits.
     let !after = NominalCredits (min (before + deposit) nominalDebt)
     writePrimVar nominalCreditsVar after
     return (NominalCredits before, after)
