@@ -133,29 +133,38 @@ data PreExistingRunData k v b =
   | PreExistingMergingRunData (MergingRunData MR.LevelMergeType k v b)
   deriving stock (Show, Eq)
 
+mergingTreeIsStructurallyEmpty :: MergingTreeData k v b -> Bool
+mergingTreeIsStructurallyEmpty = \case
+    CompletedTreeMergeData _   -> False  -- could be, but we match MT
+    OngoingTreeMergeData _     -> False
+    PendingLevelMergeData ps t -> null ps && null t
+    PendingUnionMergeData ts   -> null ts
+
 -- | See @treeInvariant@ in prototype.
 mergingTreeDataInvariant :: MergingTreeData k v b -> Either String ()
-mergingTreeDataInvariant = \case
-    CompletedTreeMergeData _rd ->
-      Right ()
-    OngoingTreeMergeData mr ->
-      mergingRunDataInvariant mr
-    PendingLevelMergeData prs t -> do
-      assertI "pending level merges have at least one input" $
-        length prs + length t > 0
-      for_ prs $ \case
-        PreExistingRunData        _r -> Right ()
-        PreExistingMergingRunData mr -> mergingRunDataInvariant mr
-      for_ (drop 1 (reverse prs)) $ \case
-        PreExistingRunData        _r -> Right ()
-        PreExistingMergingRunData mr ->
-          assertI "only the last pre-existing run can be a last level merge" $
-            mergingRunDataMergeType mr == MR.MergeMidLevel
-      for_ t mergingTreeDataInvariant
-    PendingUnionMergeData ts -> do
-      assertI "pending union merges are non-trivial (at least two inputs)" $
-        length ts >= 2
-      for_ ts mergingTreeDataInvariant
+mergingTreeDataInvariant mtd
+  | mergingTreeIsStructurallyEmpty mtd = Right ()
+  | otherwise = case mtd of
+      CompletedTreeMergeData _rd ->
+        Right ()
+      OngoingTreeMergeData mr ->
+        mergingRunDataInvariant mr
+      PendingLevelMergeData prs t -> do
+        assertI "pending level merges have at least one input" $
+          length prs + length t > 0
+        for_ prs $ \case
+          PreExistingRunData        _r -> Right ()
+          PreExistingMergingRunData mr -> mergingRunDataInvariant mr
+        for_ (drop 1 (reverse prs)) $ \case
+          PreExistingRunData        _r -> Right ()
+          PreExistingMergingRunData mr ->
+            assertI "only the last pre-existing run can be a last level merge" $
+              mergingRunDataMergeType mr == MR.MergeMidLevel
+        for_ t mergingTreeDataInvariant
+      PendingUnionMergeData ts -> do
+        assertI "pending union merges are non-trivial (at least two inputs)" $
+          length ts >= 2
+        for_ ts mergingTreeDataInvariant
   where
     assertI msg False = Left msg
     assertI _   True  = Right ()
@@ -241,9 +250,16 @@ instance ( Ord k, Arbitrary k, Arbitrary v, Arbitrary b
 
 genMergingTreeData ::
      Ord k => Gen k -> Gen v -> Gen b -> Gen (MergingTreeData k v b)
-genMergingTreeData genKey genVal genBlob = QC.sized $ \s -> do
-    treeSize <- QC.chooseInt (1, 1 + (s `div` 4)) -- up to 26
-    genMergingTreeDataOfSize genKey genVal genBlob treeSize
+genMergingTreeData genKey genVal genBlob =
+    QC.frequency
+      -- Only at the root, we can have pending merges with no children, see
+      -- 'MR.newPendingLevelMerge' and 'MR.newPendingUnionMerge'.
+      [ ( 1, pure $ PendingLevelMergeData [] Nothing)
+      , ( 1, pure $ PendingUnionMergeData [])
+      , (50, QC.sized $ \s -> do
+          treeSize <- QC.chooseInt (1, 1 + (s `div` 4)) -- up to 26
+          genMergingTreeDataOfSize genKey genVal genBlob treeSize)
+      ]
 
 -- | Minimal returned size will be 1. Doesn't generate structurally empty trees!
 --
