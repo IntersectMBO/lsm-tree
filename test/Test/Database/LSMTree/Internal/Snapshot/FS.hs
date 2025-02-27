@@ -23,6 +23,7 @@ import           Database.LSMTree.Internal.Snapshot
 import           Database.LSMTree.Internal.Snapshot.Codec
 import qualified System.FS.API as FS
 import           System.FS.API
+import           System.FS.IO (HandleIO)
 import           System.FS.Sim.Error hiding (genErrors)
 import qualified System.FS.Sim.MockFS as MockFS
 import           Test.Database.LSMTree.Internal.Snapshot.Codec ()
@@ -34,31 +35,38 @@ import           Test.Util.QC (Choice)
 
 tests :: TestTree
 tests = testGroup "Test.Database.LSMTree.Internal.Snapshot.FS" [
-      testProperty "prop_fsRoundtripSnapshotMetaData" $
-        prop_fsRoundtripSnapshotMetaData
-    , testProperty "prop_fault_fsRoundtripSnapshotMetaData"
-        prop_fault_fsRoundtripSnapshotMetaData
+      testProperty "prop_fsRoundtrip - SnapshotMetaData" $
+        prop_fsRoundtrip readFileSnapshotMetaData writeFileSnapshotMetaData
+    , testProperty "prop_fault_fsRoundtrip - SnapshotMetaData" $
+        prop_fault_fsRoundtrip readFileSnapshotMetaData writeFileSnapshotMetaData
     , testProperty "prop_flipSnapshotBit" prop_flipSnapshotBit
     ]
 
 -- | @readFileSnapshotMetaData . writeFileSnapshotMetaData = id@
 --
--- NOTE: prop_fault_fsRoundtripSnapshotMetaData with empty errors is equivalent
--- to prop_fsRoundtripSnapshotMetaData. I (Joris) chose to keep the properties
+-- NOTE: prop_fault_fsRoundtrip with empty errors is equivalent
+-- to prop_fsRoundtrip. I (Joris) chose to keep the properties
 -- separate, so that there are fewer cases to account for (like @allNull@
--- errors) in prop_fault_fsRoundtripSnapshotMetaData
-prop_fsRoundtripSnapshotMetaData :: SnapshotMetaData -> Property
-prop_fsRoundtripSnapshotMetaData metaData =
+-- errors) in prop_fault_fsRoundtrip
+prop_fsRoundtrip ::
+     (Eq x, Show x)
+  => (HasFS IO HandleIO -> FsPath -> FsPath -> IO (Either DeserialiseFailure x)) -- ^ Reader
+  -> (HasFS IO HandleIO -> FsPath -> FsPath -> x -> IO ()) -- ^ Writer
+  -> x
+  -> Property
+prop_fsRoundtrip reader writer metaData =
     ioProperty $
     withTempIOHasFS "temp" $ \hfs -> do
-      writeFileSnapshotMetaData hfs contentPath checksumPath metaData
-      eMetaData' <- readFileSnapshotMetaData hfs contentPath checksumPath
+      writer hfs contentPath checksumPath metaData
+      eMetaData' <- reader hfs contentPath checksumPath
       pure $ case eMetaData' of
         Left e          -> counterexample (show e) False
         Right metaData' -> metaData === metaData'
   where
     contentPath  = mkFsPath ["content"]
     checksumPath = mkFsPath ["checksum"]
+
+
 
 -- | @readFileSnapshotMetaData . writeFileSnapshotMetaData = id@, even if
 -- exceptions happened.
@@ -67,22 +75,26 @@ prop_fsRoundtripSnapshotMetaData metaData =
 -- but it complicates the test a lot, so I (Joris) decided not to include it for
 -- now. For example, if the read part fails with a deserialise failure, then we
 -- *could* check that file corruption took place during the write part.
-prop_fault_fsRoundtripSnapshotMetaData ::
-     TestErrors
-  -> SnapshotMetaData
+prop_fault_fsRoundtrip ::
+     forall x.
+     (Eq x, Show x)
+  => (HasFS IO MockFS.HandleMock -> FsPath -> FsPath -> IO (Either DeserialiseFailure x)) -- ^ Reader
+  -> (HasFS IO MockFS.HandleMock -> FsPath -> FsPath -> x -> IO ()) -- ^ Writer
+  -> TestErrors
+  -> x
   -> Property
-prop_fault_fsRoundtripSnapshotMetaData testErrs metadata =
+prop_fault_fsRoundtrip reader writer testErrs metadata =
     ioProperty $
     withSimErrorHasFS propNoOpenHandles MockFS.empty emptyErrors $ \hfs _fsVar errsVar -> do
       writeResult <-
         try @_ @FsError $
           withErrors errsVar (writeErrors testErrs) $
-            writeFileSnapshotMetaData hfs metadataPath checksumPath metadata
+            writer hfs metadataPath checksumPath metadata
 
       readResult <-
         try @_ @SomeException $
           withErrors errsVar (readErrors testErrs) $
-            readFileSnapshotMetaData hfs metadataPath checksumPath
+            reader hfs metadataPath checksumPath
 
       let
         -- Regardless of whether the write part failed with an exception, if
@@ -114,7 +126,7 @@ prop_fault_fsRoundtripSnapshotMetaData testErrs metadata =
     -- contents are not printed.
     mkLabel ::
          Either FsError ()
-      -> Either SomeException (Either DeserialiseFailure SnapshotMetaData)
+      -> Either SomeException (Either DeserialiseFailure x)
       -> String
     mkLabel writeResult readResult =
         "("  <> mkLabelWriteResult writeResult <>
@@ -127,7 +139,7 @@ prop_fault_fsRoundtripSnapshotMetaData testErrs metadata =
         Right ()       -> "Right ()"
 
     mkLabelReadResult ::
-         Either SomeException (Either DeserialiseFailure SnapshotMetaData)
+         Either SomeException (Either DeserialiseFailure x)
       -> String
     mkLabelReadResult = \case
         Left e
@@ -141,7 +153,7 @@ prop_fault_fsRoundtripSnapshotMetaData testErrs metadata =
               error ("impossible: " <> show e)
         Right (Left (_ :: DeserialiseFailure)) ->
           "Right (Left DeserialiseFailure)"
-        Right (Right (_ :: SnapshotMetaData)) ->
+        Right (Right (_ :: x)) ->
           "Right (Right SnapshotMetaData)"
 
 data TestErrors = TestErrors {
