@@ -184,14 +184,14 @@ prop_union kopss = length (filter (not . null) kopss) > 1 QC.==>
         ts <- traverse (mkTable tr) kopss
         t <- LSM.unions ts
 
-        debt <- LSM.remainingUnionDebt t
-        _ <- LSM.supplyUnionCredits t debt
+        debt@(UnionDebt x) <- LSM.remainingUnionDebt t
+        _ <- LSM.supplyUnionCredits t (UnionCredits x)
         debt' <- LSM.remainingUnionDebt t
 
         rep <- dumpRepresentation t
         return $ QC.counterexample (show (debt, debt')) $ QC.conjoin
-          [ debt =/= 0
-          , debt' === 0
+          [ debt =/= UnionDebt 0
+          , debt' === UnionDebt 0
           , hasUnionWith isCompleted rep
           ]
   where
