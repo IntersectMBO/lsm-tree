@@ -5,6 +5,7 @@ module Database.LSMTree.Internal.Snapshot.Codec (
   , prettySnapshotVersion
   , currentSnapshotVersion
     -- * Writing and reading files
+    -- ** Metadata
   , writeFileSnapshotMetaData
   , readFileSnapshotMetaData
   , encodeSnapshotMetaData
@@ -20,11 +21,12 @@ import           Codec.CBOR.Decoding
 import           Codec.CBOR.Encoding
 import           Codec.CBOR.Read
 import           Codec.CBOR.Write
-import           Control.Monad (when)
+import           Control.Monad (replicateM, when)
 import           Control.Monad.Class.MonadThrow (MonadThrow (..))
 import           Data.Bifunctor
 import qualified Data.ByteString.Char8 as BSC
 import           Data.ByteString.Lazy (ByteString)
+import           Data.Foldable (fold)
 import qualified Data.Map.Strict as Map
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Config
@@ -149,6 +151,7 @@ encodeSnapshotMetaData = toLazyByteString . encode . Versioned
 decodeSnapshotMetaData :: ByteString -> Either DeserialiseFailure SnapshotMetaData
 decodeSnapshotMetaData bs = second (getVersioned . snd) (deserialiseFromBytes decode bs)
 
+
 {-------------------------------------------------------------------------------
   Encoding and decoding
 -------------------------------------------------------------------------------}
@@ -159,7 +162,7 @@ class Encode a where
 -- | Decoder that is not parameterised by a 'SnapshotVersion'.
 --
 -- Used only for 'SnapshotVersion' and 'Versioned', which live outside the
--- 'SnapshotMetaData' type hierachy.
+-- 'SnapshotMetaData' type hierarchy.
 class Decode a where
   decode :: Decoder s a
 
@@ -220,23 +223,25 @@ instance Decode SnapshotVersion where
 -- SnapshotMetaData
 
 instance Encode SnapshotMetaData where
-  encode (SnapshotMetaData label tableType config writeBuffer levels) =
-         encodeListLen 5
+  encode (SnapshotMetaData label tableType config writeBuffer levels mergingTree) =
+         encodeListLen 7
       <> encode label
       <> encode tableType
       <> encode config
       <> encode writeBuffer
       <> encode levels
+      <> encodeMaybe mergingTree
 
 instance DecodeVersioned SnapshotMetaData where
   decodeVersioned ver@V0 = do
-      _ <- decodeListLenOf 5
+      _ <- decodeListLenOf 7
       SnapshotMetaData
         <$> decodeVersioned ver
         <*> decodeVersioned ver
         <*> decodeVersioned ver
         <*> decodeVersioned ver
         <*> decodeVersioned ver
+        <*> decodeMaybe ver
 
 -- SnapshotLabel
 
@@ -699,3 +704,109 @@ instance DecodeVersioned MR.TreeMergeType where
         1 -> pure MR.MergeLevel
         2 -> pure MR.MergeUnion
         _ -> fail ("[TreeMergeType] Unexpected tag: " <> show tag)
+
+{-------------------------------------------------------------------------------
+  Encoding and decoding: SnapMergingTree
+-------------------------------------------------------------------------------}
+
+-- SnapMergingTree
+
+instance Encode r => Encode (SnapMergingTree r) where
+  encode (SnapMergingTree tState) = encode tState
+
+instance DecodeVersioned r => DecodeVersioned (SnapMergingTree r) where
+  decodeVersioned ver@V0 = SnapMergingTree <$> decodeVersioned ver
+
+-- SnapMergingTreeState
+
+instance Encode r => Encode (SnapMergingTreeState r) where
+  encode (SnapCompletedTreeMerge x) =
+       encodeListLen 2
+    <> encodeWord 0
+    <> encode x
+  encode (SnapPendingTreeMerge x) =
+       encodeListLen 2
+    <> encodeWord 1
+    <> encode x
+  encode (SnapOngoingTreeMerge smrs) =
+       encodeListLen 2
+    <> encodeWord 2
+    <> encode smrs
+
+instance DecodeVersioned r => DecodeVersioned (SnapMergingTreeState r) where
+  decodeVersioned v@V0 = do
+      n <- decodeListLen
+      tag <- decodeWord
+      case (n, tag) of
+        (2, 0) -> SnapCompletedTreeMerge <$> decodeVersioned v
+        (2, 1) -> SnapPendingTreeMerge <$> decodeVersioned v
+        (2, 2) -> SnapOngoingTreeMerge <$> decodeVersioned v
+        _ -> fail ("[SnapMergingTreeState] Unexpected combination of list length and tag: " <> show (n, tag))
+
+-- SnapPendingMerge
+
+instance Encode r => Encode (SnapPendingMerge r) where
+  encode (SnapPendingLevelMerge pe mt) = fold
+    [ encodeListLen 4
+    , encodeWord 0
+    , encodeMaybe mt
+    , encodeListLen . toEnum $ length pe
+    , foldMap encode pe
+    ]
+  encode (SnapPendingUnionMerge mts) =
+       encodeListLen 2
+    <> encodeWord 1
+    <> encodeListLen (toEnum $ length mts)
+    <> foldMap encode mts
+
+instance DecodeVersioned r => DecodeVersioned (SnapPendingMerge r) where
+  decodeVersioned v@V0 = do
+      n <- decodeListLen
+      tag <- decodeWord
+      case (n, tag) of
+        (4, 0) -> do
+          -- Get the whether or not the levels merge exists
+          peLvls <- decodeMaybe v
+          peLen <- decodeListLen
+          peRuns <- replicateM peLen (decodeVersioned v)
+          pure $ SnapPendingLevelMerge peRuns peLvls
+        (2, 1) -> do
+          -- Get the number of pre-existsing unions to read
+          peLen <- decodeListLen
+          SnapPendingUnionMerge <$> replicateM peLen (decodeVersioned v)
+        _ -> fail ("[SnapPendingMerge] Unexpected combination of list length and tag: " <> show (n, tag))
+
+-- SnapPreExistingRun
+
+instance Encode r => Encode (SnapPreExistingRun r) where
+  encode (SnapPreExistingRun x) =
+       encodeListLen 2
+    <> encodeWord 0
+    <> encode x
+  encode (SnapPreExistingMergingRun smrs) =
+       encodeListLen 2
+    <> encodeWord 1
+    <> encode smrs
+
+instance DecodeVersioned r => DecodeVersioned (SnapPreExistingRun r) where
+  decodeVersioned v@V0 = do
+      n <- decodeListLen
+      tag <- decodeWord
+      case (n, tag) of
+        (2, 0) -> SnapPreExistingRun <$> decodeVersioned v
+        (2, 1) -> SnapPreExistingMergingRun <$> decodeVersioned v
+        _ -> fail ("[SnapPreExistingRun] Unexpected combination of list length and tag: " <> show (n, tag))
+
+-- Utilities for encoding/decoding Maybe values
+
+encodeMaybe :: Encode a => Maybe a -> Encoding
+encodeMaybe = \case
+  Nothing -> encodeBool False <> encodeNull
+  Just en -> encodeBool True <> encode en
+
+
+decodeMaybe :: DecodeVersioned a => SnapshotVersion -> Decoder s (Maybe a)
+decodeMaybe v@V0 = decodeBool >>= \exist ->
+  if exist
+  then Just <$> decodeVersioned v
+  else Nothing <$ decodeNull
