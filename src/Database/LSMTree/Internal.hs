@@ -1176,7 +1176,23 @@ createSnapshot snap label tableType t = do
         -- Hard link runs into the named snapshot directory
         snapLevels' <- snapshotRuns reg snapUc snapDir snapLevels
 
-        -- Release the table content
+        -- TODO:
+        -- Extract and serialize the 'MergingTree' within the 'TableEnv' (if it exists).
+        --
+        -- Located Here:
+        --
+        -- TableEnv m h
+        --   { tableContent :: TableContent m h
+        --     { tableUnionLevel :: UnionLevel
+        --       { NoUnion | Union !(Ref (MergingTree m h)) }
+        --     }
+        --   }
+        --
+        --  mergingTree :: Maybe SnapMergingTree
+        --  mergingTree <- case unionLvl of
+        --    NoUnion -> Nothing
+        --    Union (DeRef mTreeRef) -> Just $ toSnapMergingTree mTreeRef
+
         releaseTableContent reg content
 
         let snapMetaData = SnapshotMetaData label tableType (tableConfig t) snapWriteBufferNumber snapLevels'
@@ -1224,6 +1240,7 @@ openSnapshot sesh label tableType override snap resolve = do
           Left e  -> throwIO (ErrSnapshotDeserialiseFailure e snap)
           Right x -> pure x
 
+        -- TODO add the (mTreeOpt ::  Maybe SnapMergingTree) as a data type here.
         let SnapshotMetaData label' tableType' conf snapWriteBuffer snapLevels = snapMetaData
 
         unless (tableType == tableType') $
@@ -1244,6 +1261,13 @@ openSnapshot sesh label tableType override snap resolve = do
         -- Hard link runs into the active directory,
         snapLevels' <- openRuns reg hfs hbio conf (sessionUniqCounter seshEnv) snapDir activeDir snapLevels
 
+        -- TODO: Integrate the MergingTree snapshot functionality
+        let unionLevel = NoUnion
+{-
+        let unionLevel = case mTreeOpt of
+              Nothing -> NoUnion
+              Just mTree -> Union $ fromSnapMergingTree mTree
+-}
         -- Convert from the snapshot format, restoring merge progress in the process
         tableLevels <- fromSnapLevels reg hfs hbio conf (sessionUniqCounter seshEnv) resolve activeDir snapLevels'
         releaseRuns reg snapLevels'
@@ -1254,7 +1278,7 @@ openSnapshot sesh label tableType override snap resolve = do
           , tableWriteBufferBlobs
           , tableLevels
           , tableCache
-          , tableUnionLevel = NoUnion  -- TODO: at some point also load union level from snapshot
+          , tableUnionLevel = unionLevel
           }
 
 {-# SPECIALISE deleteSnapshot ::

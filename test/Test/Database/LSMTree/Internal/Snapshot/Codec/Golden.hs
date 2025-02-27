@@ -42,7 +42,7 @@ tests =  handleOutputFiles . testGroup
 -- | The mount point is defined as the location of the golden file data directory
 -- relative to the project root.
 goldenDataMountPoint :: MountPoint
-goldenDataMountPoint = MountPoint "test/golden-file-data/snapshot-codec"
+goldenDataMountPoint = MountPoint "test/golden-file-data/snapshot-metadata"
 
 -- | Delete output files on test-case success.
 -- Change the option here if this is undesireable.

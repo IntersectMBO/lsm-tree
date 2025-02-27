@@ -9,6 +9,7 @@ module Database.LSMTree.Internal.MergingTree (
     -- * Internal state
   , MergingTreeState (..)
   , PendingMerge (..)
+  , finalise
   ) where
 
 import           Control.Concurrent.Class.MonadMVar.Strict
