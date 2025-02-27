@@ -1474,7 +1474,7 @@ tableContentToMergingTree seshEnv conf reg
   -> TableContent IO h
   -> IO (Maybe (Ref (Run IO h))) #-}
 writeBufferToNewRun ::
-     (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+     (MonadMask m, MonadST m, MonadSTM m)
   => SessionEnv m h
   -> TableConfig
   -> ActionRegistry m
