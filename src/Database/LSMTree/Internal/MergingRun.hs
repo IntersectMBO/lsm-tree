@@ -584,6 +584,13 @@ atomicModifyInt var f =
         then return result
         else casLoop before'
 
+-- | Credits supplied using a relative value or an absolute value.
+data SupplyMergeCredits = SupplyMergeCredits
+                            !SupplyRelativeOrAbsolute
+                            !MergeCredits
+-- Note this is deliberately represented as a product type, not a sum type, to
+-- get better unboxing in function args.
+
 -- | Should we supply credits using a relative value or an absolute value.
 data SupplyRelativeOrAbsolute = SupplyRelative | SupplyAbsolute
 
@@ -591,8 +598,7 @@ data SupplyRelativeOrAbsolute = SupplyRelative | SupplyAbsolute
      CreditsVar RealWorld
   -> MergeDebt
   -> CreditThreshold
-  -> SupplyRelativeOrAbsolute
-  -> MergeCredits
+  -> SupplyMergeCredits
   -> IO (MergeCredits, MergeCredits, MergeCredits, MergeCredits) #-}
 -- | Atomically: add to the unspent credits pot, subject to the supplied
 -- credits not exceeding the total debt. Return the new spent and unspent
@@ -607,13 +613,12 @@ atomicDepositAndSpendCredits ::
   => CreditsVar (PrimState m)
   -> MergeDebt -- ^ total debt
   -> CreditThreshold
-  -> SupplyRelativeOrAbsolute
-  -> MergeCredits -- ^ to deposit
+  -> SupplyMergeCredits
   -> m (MergeCredits, MergeCredits, MergeCredits, MergeCredits)
      -- ^ (suppliedBefore, suppliedAfter, spendCredits, leftoverCredits)
 atomicDepositAndSpendCredits (CreditsVar !var) (MergeDebt !totalDebt)
                              (CreditThreshold !batchThreshold)
-                             !supplyRelOrAbs !credits =
+                             (SupplyMergeCredits !supplyRelOrAbs !credits) =
     assert (credits >= 0) $
     atomicModifyInt var $ \(CreditsPair !spent !unspent) ->
       let (supplied, supplied', unspent', leftover)
@@ -743,7 +748,7 @@ supplyCreditsRelative ::
        -- ^ (suppliedCredits, suppliedCredits', leftoverCredits)
 supplyCreditsRelative mr th c = do
     r@(suppliedCredits, suppliedCredits', leftoverCredits)
-      <- supplyCredits SupplyRelative mr th c
+      <- supplyCredits mr th (SupplyMergeCredits SupplyRelative c)
 
     assert (0 <= suppliedCredits && suppliedCredits <= suppliedCredits') $
       assert (suppliedCredits' <= mergeDebtAsCredits (totalMergeDebt mr)) $
@@ -782,34 +787,32 @@ supplyCreditsAbsolute ::
 supplyCreditsAbsolute mr th c =
     assert (0 <= c && c <= mergeDebtAsCredits (totalMergeDebt mr)) $ do
     (suppliedCredits, suppliedCredits', _leftoverCredits)
-      <- supplyCredits SupplyAbsolute mr th c
+      <- supplyCredits mr th (SupplyMergeCredits SupplyAbsolute c)
     assert (suppliedCredits' == max c suppliedCredits) $
       pure (suppliedCredits, suppliedCredits')
 
 {-# SPECIALISE supplyCredits ::
-     SupplyRelativeOrAbsolute
-  -> Ref (MergingRun t IO h)
+     Ref (MergingRun t IO h)
   -> CreditThreshold
-  -> MergeCredits
+  -> SupplyMergeCredits
   -> IO (MergeCredits, MergeCredits, MergeCredits) #-}
 -- | Supply the given amount of credits to a merging run. This /may/ cause an
 -- ongoing merge to progress.
 supplyCredits ::
      forall t m h. (MonadSTM m, MonadST m, MonadMVar m, MonadMask m)
-  => SupplyRelativeOrAbsolute
-  -> Ref (MergingRun t m h)
+  => Ref (MergingRun t m h)
   -> CreditThreshold
-  -> MergeCredits
+  -> SupplyMergeCredits
   -> m (MergeCredits, MergeCredits, MergeCredits)
        -- ^ (suppliedCredits, suppliedCredits', leftoverCredits)
-supplyCredits !supplyRelOrAbs
-              (DeRef MergingRun {
+supplyCredits (DeRef MergingRun {
                  mergeKnownCompleted,
                  mergeDebt,
                  mergeCreditsVar,
                  mergeState
                })
-              !creditBatchThreshold !credits =
+              !creditBatchThreshold
+              (SupplyMergeCredits !supplyRelOrAbs !credits) =
     assert (credits >= 0) $ do
     mergeCompleted <- readMutVar mergeKnownCompleted
     case mergeCompleted of
@@ -829,7 +832,8 @@ supplyCredits !supplyRelOrAbs
           -- leftover credits that would exceed the debt limit.
           (atomicDepositAndSpendCredits
             mergeCreditsVar mergeDebt
-            creditBatchThreshold supplyRelOrAbs credits)
+            creditBatchThreshold
+            (SupplyMergeCredits supplyRelOrAbs credits))
 
           -- If an exception occurs while merging (sync or async) then we
           -- reverse the spending of the credits (but not the deposit).
