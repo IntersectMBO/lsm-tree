@@ -184,6 +184,10 @@ testAll test = [
     , test (Proxy @NominalCredits)
     , test (Proxy @LevelMergeType)
     , test (Proxy @TreeMergeType)
+    , test (Proxy @(SnapMergingTree SnapshotRun))
+    , test (Proxy @(SnapMergingTreeState SnapshotRun))
+    , test (Proxy @(SnapPendingMerge SnapshotRun))
+    , test (Proxy @(SnapPreExistingRun SnapshotRun))
     ]
 
 {-------------------------------------------------------------------------------
@@ -201,10 +205,12 @@ deriving newtype instance Arbitrary a => Arbitrary (Versioned a)
 -------------------------------------------------------------------------------}
 
 instance Arbitrary SnapshotMetaData where
-  arbitrary = SnapshotMetaData <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary  <*> arbitrary
-  shrink (SnapshotMetaData a b c d e) =
-      [ SnapshotMetaData a' b' c' d' e'
-      | (a', b', c', d', e') <- shrink (a, b, c, d, e)]
+  arbitrary = SnapshotMetaData <$>
+      arbitrary <*> arbitrary <*> arbitrary <*>
+      arbitrary <*> arbitrary <*> arbitrary
+  shrink (SnapshotMetaData a b c d e f) =
+      [ SnapshotMetaData a' b' c' d' e' f'
+      | (a', b', c', d', e', f') <- shrink (a, b, c, d, e, f)]
 
 deriving newtype instance Arbitrary SnapshotLabel
 
@@ -365,7 +371,79 @@ deriving stock instance Show r => Show (SnapLevels r)
 deriving stock instance Show r => Show (SnapLevel r)
 deriving stock instance Show r => Show (SnapIncomingRun r)
 deriving stock instance (Show t, Show r) => Show (SnapMergingRunState t r)
+
+deriving stock instance Show r => Show (SnapMergingTree r)
+deriving stock instance Show r => Show (SnapMergingTreeState r)
+deriving stock instance Show r => Show (SnapPendingMerge r)
+deriving stock instance Show r => Show (SnapPreExistingRun r)
+
 deriving stock instance Show MergeDebt
 deriving stock instance Show MergeCredits
 deriving stock instance Show NominalDebt
 deriving stock instance Show NominalCredits
+
+{-------------------------------------------------------------------------------
+  Arbitrary: SnapshotMetaData
+-------------------------------------------------------------------------------}
+
+deriving newtype instance Arbitrary r => Arbitrary (SnapMergingTree r)
+
+instance Arbitrary r => Arbitrary (SnapMergingTreeState r) where
+  arbitrary = inductiveMergingTreeState inductiveLimit
+  shrink (SnapCompletedTreeMerge a) = SnapCompletedTreeMerge <$> shrink a
+  shrink (SnapPendingTreeMerge a)   = SnapPendingTreeMerge <$> shrink a
+  shrink (SnapOngoingTreeMerge a)   = SnapOngoingTreeMerge <$> shrink a
+
+instance Arbitrary r => Arbitrary (SnapPendingMerge r) where
+  arbitrary = inductivePendingTreeMerge inductiveLimit
+  shrink (SnapPendingUnionMerge a) = SnapPendingUnionMerge <$> shrinkList shrink a
+  shrink (SnapPendingLevelMerge a b) =
+      [ SnapPendingLevelMerge a' b' | a' <- shrinkList shrink a, b' <- shrink b ]
+
+
+instance Arbitrary r => Arbitrary (SnapPreExistingRun r) where
+  arbitrary = oneof [
+        SnapPreExistingRun <$> arbitrary
+      , SnapPreExistingMergingRun <$> arbitrary
+      ]
+  shrink (SnapPreExistingRun a)        = SnapPreExistingRun <$> shrink a
+  shrink (SnapPreExistingMergingRun a) = SnapPreExistingMergingRun <$> shrink a
+
+-- | The 'SnapMergingTree' is an inductive data-type and therefore we must limit
+-- the recursive depth at which new 'Arbitrary' sub-trees are generated. Hence
+-- the need for this limit. This limit is the "gas" for the inductive functions.
+-- At reach recursive call, the "gas" value decremented until it reaches zero.
+-- Each inductive function ensures it never create a forest of sub-trees greater
+-- than the /monotonically decreasing/ gas parameter it received.
+inductiveLimit :: Int
+inductiveLimit = 4
+
+-- |
+-- Generate an 'Arbitrary', "gas-limited" 'SnapMergingTree'.
+inductiveSized :: Arbitrary r => Int -> Gen (SnapMergingTree r)
+inductiveSized = fmap SnapMergingTree . inductiveMergingTreeState
+
+-- |
+-- Generate an 'Arbitrary', "gas-limited" 'SnapMergingTreeState'.
+inductiveMergingTreeState :: Arbitrary a => Int -> Gen (SnapMergingTreeState a)
+inductiveMergingTreeState gas = oneof [
+        SnapCompletedTreeMerge <$> arbitrary
+      , SnapPendingTreeMerge <$> inductivePendingTreeMerge gas
+      , SnapOngoingTreeMerge <$> arbitrary
+      ]
+
+-- |
+-- Generate an 'Arbitrary', "gas-limited" 'SnapPendingMerge'.
+inductivePendingTreeMerge :: Arbitrary a => Int -> Gen (SnapPendingMerge a)
+inductivePendingTreeMerge gas = oneof [
+        SnapPendingLevelMerge <$> genPreExistings <*> genMaybeSubTree
+      , SnapPendingUnionMerge <$> genListSubtrees
+      ]
+    where
+      subGen = inductiveSized . max 0 $ gas - 1
+      -- Define custom generators to ensure that the sub-trees are less than
+      -- or equal to the "gas" parameter.
+      genPreExistings = genVectorsUpToBound gas arbitrary
+      genListSubtrees = genVectorsUpToBound gas subGen
+      genMaybeSubTree = oneof [ pure Nothing, Just <$> subGen ]
+      genVectorsUpToBound x gen = oneof $ flip vectorOf gen <$> [ 0 .. x ]

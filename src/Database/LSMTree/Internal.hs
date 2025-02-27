@@ -64,7 +64,7 @@ module Database.LSMTree.Internal (
   , openSnapshot
   , deleteSnapshot
   , listSnapshots
-    -- * Mutiple writable tables
+    -- * Multiple writable tables
   , duplicate
     -- * Table union
   , unions
@@ -323,7 +323,7 @@ data SessionState m h =
   | SessionClosed
 
 data SessionEnv m h = SessionEnv {
-    -- | The path to the directory in which this sesion is live. This is a path
+    -- | The path to the directory in which this session is live. This is a path
     -- relative to root of the 'HasFS' instance.
     --
     -- INVARIANT: the session root is never changed during the lifetime of a
@@ -1242,10 +1242,22 @@ createSnapshot snap label tableType t = do
         -- Hard link runs into the named snapshot directory
         snapLevels' <- traverse (snapshotRun hfs hbio snapUc reg snapDir) snapLevels
 
-        -- Release the table content
+        -- If a merging tree exists, do the same hard-linking for the runs within
+        mTreeOpt <- case tableUnionLevel content of
+          NoUnion -> pure Nothing
+          Union mTreeRef -> do
+            mTree <- toSnapMergingTree mTreeRef
+            Just <$> traverse (snapshotRun hfs hbio snapUc reg snapDir) mTree
+
         releaseTableContent reg content
 
-        let snapMetaData = SnapshotMetaData label tableType (tableConfig t) snapWriteBufferNumber snapLevels'
+        let snapMetaData = SnapshotMetaData
+                label
+                tableType
+                (tableConfig t)
+                snapWriteBufferNumber
+                snapLevels'
+                mTreeOpt
             SnapshotMetaDataFile contentPath = Paths.snapshotMetaDataFile snapDir
             SnapshotMetaDataChecksumFile checksumPath = Paths.snapshotMetaDataChecksumFile snapDir
         writeFileSnapshotMetaData hfs contentPath checksumPath snapMetaData
@@ -1290,7 +1302,7 @@ openSnapshot sesh label tableType override snap resolve = do
           Left e  -> throwIO (ErrSnapshotDeserialiseFailure e snap)
           Right x -> pure x
 
-        let SnapshotMetaData label' tableType' conf snapWriteBuffer snapLevels = snapMetaData
+        let SnapshotMetaData label' tableType' conf snapWriteBuffer snapLevels mTreeOpt = snapMetaData
 
         unless (tableType == tableType') $
           throwIO (ErrSnapshotWrongTableType snap tableType tableType')
@@ -1309,10 +1321,16 @@ openSnapshot sesh label tableType override snap resolve = do
 
         -- Hard link runs into the active directory,
         snapLevels' <- traverse (openRun hfs hbio uc reg snapDir activeDir) snapLevels
+        unionLevel <- case mTreeOpt of
+              Nothing -> pure NoUnion
+              Just mTree -> do
+                snapTree <- traverse (openRun hfs hbio uc reg snapDir activeDir) mTree
+                Union <$> fromSnapMergingTree reg hfs hbio conf uc resolve activeDir snapTree
 
         -- Convert from the snapshot format, restoring merge progress in the process
         tableLevels <- fromSnapLevels hfs hbio uc conf resolve reg activeDir snapLevels'
         traverse_ (delayedCommit reg . releaseRef) snapLevels'
+        --TODO: also delayedCommit unionLevel
 
         tableCache <- mkLevelsCache reg tableLevels
         newWith reg sesh seshEnv conf' am $! TableContent {
@@ -1320,7 +1338,7 @@ openSnapshot sesh label tableType override snap resolve = do
           , tableWriteBufferBlobs
           , tableLevels
           , tableCache
-          , tableUnionLevel = NoUnion  -- TODO: at some point also load union level from snapshot
+          , tableUnionLevel = unionLevel
           }
 
 {-# SPECIALISE deleteSnapshot ::
@@ -1370,7 +1388,7 @@ listSnapshots sesh = do
                else pure $ Nothing
 
 {-------------------------------------------------------------------------------
-  Mutiple writable tables
+  Multiple writable tables
 -------------------------------------------------------------------------------}
 
 {-# SPECIALISE duplicate :: Table IO h -> IO (Table IO h) #-}

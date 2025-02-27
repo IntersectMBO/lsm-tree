@@ -2,6 +2,7 @@
 module Database.LSMTree.Internal.MergingTree (
     -- $mergingtrees
     MergingTree (..)
+  , newOngoingMerge
   , PreExistingRun (..)
   , newPendingLevelMerge
   , newPendingUnionMerge
@@ -102,6 +103,15 @@ data PreExistingRun m h =
     PreExistingRun        !(Ref (Run m h))
   | PreExistingMergingRun !(Ref (MergingRun MR.LevelMergeType m h))
 
+-- | Create a new 'MergingTree' representing the merge of an ongoing run.
+-- The usage of this function is primarily to facilitate the reloading of an
+-- ongoing merge from a persistent snapshot.
+newOngoingMerge ::
+     (MonadMVar m, PrimMonad m, MonadMask m)
+  => Ref (MergingRun MR.TreeMergeType m h)
+  -> m (Ref (MergingTree m h))
+newOngoingMerge = mkMergingTree . OngoingTreeMerge
+
 -- | Create a new 'MergingTree' representing the merge of a sequence of
 -- pre-existing runs (completed or ongoing, plus a optional final tree).
 -- This is for merging the entire contents of a table down to a single run
@@ -183,7 +193,7 @@ newPendingUnionMerge ::
   -> m (Ref (MergingTree m h))
 newPendingUnionMerge mts = do
     mts' <- V.filterM (fmap not . isStructurallyEmpty) (V.fromList mts)
-    -- isStructurallyEmpty is interruptable even with async exceptions masked,
+    -- isStructurallyEmpty is interruptible even with async exceptions masked,
     -- but we use it before allocating new references.
     mts'' <- V.mapM dupRef mts'
     case V.uncons mts'' of
