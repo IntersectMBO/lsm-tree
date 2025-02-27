@@ -756,13 +756,11 @@ supplyCreditsRelative ::
   -> m (MergeCredits, MergeCredits, MergeCredits)
        -- ^ (suppliedCredits, suppliedCredits', leftoverCredits)
 supplyCreditsRelative mr th c = do
-    r@(suppliedCredits, suppliedCredits', leftoverCredits)
+    r@(_suppliedCredits, suppliedCredits', leftoverCredits)
       <- supplyCredits mr th (SupplyMergeCredits SupplyRelative c)
 
-    assert (0 <= suppliedCredits && suppliedCredits <= suppliedCredits') $
-      assert (suppliedCredits' <= mergeDebtAsCredits (totalMergeDebt mr)) $
-      assert (suppliedCredits' == mergeDebtAsCredits (totalMergeDebt mr)
-              || leftoverCredits == 0) $
+    assert (suppliedCredits' == mergeDebtAsCredits (totalMergeDebt mr)
+            || leftoverCredits == 0) $
       pure r
 
 {-# INLINE supplyCreditsAbsolute #-}
@@ -859,7 +857,10 @@ supplyCredits (DeRef MergingRun {
               when weFinishedMerge $
                 completeMerge mergeState mergeKnownCompleted
 
-            return (suppliedCredits, suppliedCredits', leftoverCredits))
+            assert   (               0 <= suppliedCredits) $
+              assert (suppliedCredits  <= suppliedCredits') $
+              assert (suppliedCredits' <= mergeDebtAsCredits mergeDebt) $
+              return (suppliedCredits, suppliedCredits', leftoverCredits))
 
 {-# SPECIALISE performMergeSteps ::
      StrictMVar IO (MergingRunState t IO h)
