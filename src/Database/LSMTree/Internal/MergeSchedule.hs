@@ -1176,6 +1176,8 @@ maxMergeDebt TableConfig {
         MergeDebt . MergeCredits $
           maxRuns * maxRunSizeTiering sizeRatio bufferSize (pred ln)
         where
+          -- We can hold back underfull runs, so sometimes the are n+1 runs,
+          -- rather than the typical n at a tiering level (n = LSM size ratio).
           maxRuns = sizeRatio + 1
 
 -- | The nominal debt equals the minimum of credits we will supply before we
