@@ -4,6 +4,7 @@
 module Main (main) where
 
 import qualified Bench.Database.LSMTree.Internal.BloomFilter
+import qualified Bench.Database.LSMTree.Internal.Index
 import qualified Bench.Database.LSMTree.Internal.Index.Compact
 import qualified Bench.Database.LSMTree.Internal.Lookup
 import qualified Bench.Database.LSMTree.Internal.Merge
@@ -21,6 +22,7 @@ main = do
 #endif
     defaultMain [
         Bench.Database.LSMTree.Internal.BloomFilter.benchmarks
+      , Bench.Database.LSMTree.Internal.Index.benchmarks
       , Bench.Database.LSMTree.Internal.Index.Compact.benchmarks
       , Bench.Database.LSMTree.Internal.Lookup.benchmarks
       , Bench.Database.LSMTree.Internal.Merge.benchmarks
