@@ -1183,12 +1183,10 @@ maxMergeDebt TableConfig {
 -- in a run that gets moved to this level.
 nominalDebtForLevel :: TableConfig -> LevelNo -> NominalDebt
 nominalDebtForLevel TableConfig {
-                      confWriteBufferAlloc,
+                      confWriteBufferAlloc = AllocNumEntries !bufferSize,
                       confSizeRatio
-                    } (LevelNo ln) =
-    let AllocNumEntries (NumEntries !bufferSize) = confWriteBufferAlloc
-        !sizeRatio = sizeRatioInt confSizeRatio
-     in NominalDebt (bufferSize * sizeRatio ^ pred ln)
+                    } ln =
+    NominalDebt (maxRunSizeTiering (sizeRatioInt confSizeRatio) bufferSize ln)
 
 -- TODO: the thresholds for doing merge work should be different for each level,
 -- maybe co-prime?
