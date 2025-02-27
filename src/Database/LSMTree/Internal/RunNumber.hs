@@ -7,10 +7,13 @@ module Database.LSMTree.Internal.RunNumber (
 import           Control.DeepSeq (NFData)
 
 newtype RunNumber = RunNumber Int
-  deriving newtype (Eq, Ord, Show, NFData)
+  deriving stock (Eq, Ord, Show)
+  deriving newtype (NFData)
 
 newtype TableId = TableId Int
-  deriving newtype (Eq, Ord, Show, NFData)
+  deriving stock (Eq, Ord, Show)
+  deriving newtype (NFData)
 
 newtype CursorId = CursorId Int
-  deriving newtype (Eq, Ord, Show, NFData)
+  deriving stock (Eq, Ord, Show)
+  deriving newtype (NFData)
