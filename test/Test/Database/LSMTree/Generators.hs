@@ -1,6 +1,3 @@
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications    #-}
-
 module Test.Database.LSMTree.Generators (
     tests
   ) where
@@ -10,44 +7,92 @@ import           Data.Coerce (coerce)
 import qualified Data.Map.Strict as Map
 import qualified Data.Vector.Primitive as VP
 import           Data.Word (Word64, Word8)
-
 import           Database.LSMTree.Extras (showPowersOf)
 import           Database.LSMTree.Extras.Generators
+import           Database.LSMTree.Extras.MergingRunData
+import           Database.LSMTree.Extras.MergingTreeData
 import           Database.LSMTree.Extras.ReferenceImpl
+import           Database.LSMTree.Extras.RunData
 import           Database.LSMTree.Internal.BlobRef (BlobSpan)
 import           Database.LSMTree.Internal.Entry
+import qualified Database.LSMTree.Internal.Index as Index
+import qualified Database.LSMTree.Internal.MergingRun as MR
 import           Database.LSMTree.Internal.PageAcc (entryWouldFitInPage,
                      sizeofEntry)
 import           Database.LSMTree.Internal.RawBytes (RawBytes (..))
 import           Database.LSMTree.Internal.Serialise
-
+import           Database.LSMTree.Internal.UniqCounter
+import qualified System.FS.API as FS
+import qualified System.FS.BlockIO.API as FS
+import qualified System.FS.Sim.MockFS as MockFS
 import qualified Test.QuickCheck as QC
 import           Test.QuickCheck (Property)
 import           Test.Tasty (TestTree, localOption, testGroup)
-import           Test.Tasty.QuickCheck (QuickCheckMaxSize (..), testProperty)
+import           Test.Tasty.QuickCheck (QuickCheckMaxSize (..), testProperty,
+                     (===))
 import           Test.Util.Arbitrary
+import           Test.Util.FS (propNoOpenHandles, withSimHasBlockIO)
 
 tests :: TestTree
 tests = testGroup "Test.Database.LSMTree.Generators" [
       testGroup "PageContentFits" $
-        prop_arbitraryAndShrinkPreserveInvariant pageContentFitsInvariant
+        prop_arbitraryAndShrinkPreserveInvariant noTags
+          pageContentFitsInvariant
     , testGroup "PageContentOrdered" $
-        prop_arbitraryAndShrinkPreserveInvariant pageContentOrderedInvariant
+        prop_arbitraryAndShrinkPreserveInvariant noTags
+          pageContentOrderedInvariant
     , localOption (QuickCheckMaxSize 20) $ -- takes too long!
       testGroup "LogicalPageSummaries" $
-        prop_arbitraryAndShrinkPreserveInvariant (pagesInvariant @Word64)
+        prop_arbitraryAndShrinkPreserveInvariant noTags $
+          pagesInvariant @Word64
     , testGroup "Chunk size" $
-        prop_arbitraryAndShrinkPreserveInvariant chunkSizeInvariant
+        prop_arbitraryAndShrinkPreserveInvariant noTags
+          chunkSizeInvariant
     , testGroup "Raw bytes" $
-        [testProperty "packRawBytesPinnedOrUnpinned"
-                      prop_packRawBytesPinnedOrUnpinned
+        [ testProperty "packRawBytesPinnedOrUnpinned"
+            prop_packRawBytesPinnedOrUnpinned
         ]
-     ++ prop_arbitraryAndShrinkPreserveInvariant (deepseqInvariant @RawBytes)
+     ++ prop_arbitraryAndShrinkPreserveInvariant noTags
+          (deepseqInvariant @RawBytes)
     , testGroup "KeyForIndexCompact" $
-        prop_arbitraryAndShrinkPreserveInvariant keyForIndexCompactInvariant
+        prop_arbitraryAndShrinkPreserveInvariant noTags
+          keyForIndexCompactInvariant
     , testGroup "lists of key/op pairs" $
         [ testProperty "prop_distributionKOps" $
             prop_distributionKOps
+        ]
+    , testGroup "RunData" $
+        prop_arbitraryAndShrinkPreserveInvariant
+          labelRunData
+          (const True)  -- no invariant
+     ++ [ testProperty "withRun doesn't leak resources" $ \rd ->
+            QC.ioProperty $
+              withSimHasBlockIO propNoOpenHandles MockFS.empty $ \hfs hbio _ ->
+                prop_withRunDoesntLeak hfs hbio rd
+        ]
+    , testGroup "NonEmptyRunData" $
+        prop_arbitraryAndShrinkPreserveInvariant
+          labelNonEmptyRunData
+          nonEmptyRunDataInvariant
+    , testGroup "MergingRunData" $
+        prop_arbitraryAndShrinkPreserveInvariant
+          @(SerialisedMergingRunData MR.LevelMergeType)
+          labelMergingRunData
+          ((=== Right ()) . mergingRunDataInvariant)
+     ++ [ testProperty "withMergingRun doesn't leak resources" $ \mrd ->
+            QC.ioProperty $
+              withSimHasBlockIO propNoOpenHandles MockFS.empty $ \hfs hbio _ ->
+                prop_withMergingRunDoesntLeak hfs hbio mrd
+        ]
+    , localOption (QuickCheckMaxSize 50) $  -- huge trees take too long
+      testGroup "MergingTreeData" $
+        prop_arbitraryAndShrinkPreserveInvariant
+          labelMergingTreeData
+          ((=== Right ()) . mergingTreeDataInvariant)
+     ++ [ testProperty "withMergingTree doesn't leak resources" $ \mtd ->
+            QC.ioProperty $
+              withSimHasBlockIO propNoOpenHandles MockFS.empty $ \hfs hbio _ ->
+                prop_withMergingTreeDoesntLeak hfs hbio mtd
         ]
     ]
 
@@ -79,3 +124,42 @@ prop_distributionKOps kops' =
     values = foldMap (bifoldMap pure mempty . snd) kops
 
     isLarge = not . uncurry entryWouldFitInPage
+
+prop_withRunDoesntLeak ::
+     FS.HasFS IO h
+  -> FS.HasBlockIO IO h
+  -> SerialisedRunData
+  -> IO Property
+prop_withRunDoesntLeak hfs hbio rd = do
+    let index = Index.Ordinary
+    withRun hfs hbio index (simplePath 0) rd $ \_run -> do
+      return (QC.property True)
+
+prop_withMergingRunDoesntLeak ::
+     forall h.
+     FS.HasFS IO h
+  -> FS.HasBlockIO IO h
+  -> SerialisedMergingRunData MR.LevelMergeType
+  -> IO Property
+prop_withMergingRunDoesntLeak hfs hbio mrd = do
+    let index = Index.Ordinary
+    let path = FS.mkFsPath []
+    counter <- newUniqCounter 0
+    withMergingRun hfs hbio resolveVal index path counter mrd $ \_mr -> do
+      return (QC.property True)
+
+prop_withMergingTreeDoesntLeak ::
+     forall h.
+     FS.HasFS IO h
+  -> FS.HasBlockIO IO h
+  -> SerialisedMergingTreeData
+  -> IO Property
+prop_withMergingTreeDoesntLeak hfs hbio mrd = do
+    let index = Index.Ordinary
+    let path = FS.mkFsPath []
+    counter <- newUniqCounter 0
+    withMergingTree hfs hbio resolveVal index path counter mrd $ \_tree -> do
+      return (QC.property True)
+
+resolveVal :: SerialisedValue -> SerialisedValue -> SerialisedValue
+resolveVal (SerialisedValue x) (SerialisedValue y) = SerialisedValue (x <> y)
