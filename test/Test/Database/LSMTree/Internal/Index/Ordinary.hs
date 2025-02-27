@@ -11,6 +11,7 @@ import           Prelude hiding (all, head, last, length, notElem, splitAt,
 
 import           Control.Arrow (first, (>>>))
 import           Control.Monad.ST.Strict (runST)
+import qualified Data.ByteString.Lazy as LazyByteString (unpack)
 import           Data.ByteString.Short (ShortByteString (SBS))
 import qualified Data.ByteString.Short as ShortByteString (length, pack)
 import           Data.Either (isLeft)
@@ -21,7 +22,7 @@ import           Data.Primitive.ByteArray (ByteArray (ByteArray), ByteArray#)
 import           Data.Vector (Vector, all, fromList, head, last, length,
                      notElem, splitAt, tail, takeWhile, toList, (!))
 import qualified Data.Vector.Primitive as Primitive (Vector (Vector), concat,
-                     force, length, singleton)
+                     force, length, singleton, toList)
 import           Data.Word (Word16, Word32, Word64, Word8)
 import           Database.LSMTree.Extras.Generators (LogicalPageSummaries,
                      toAppends)
@@ -31,8 +32,8 @@ import           Database.LSMTree.Extras.Index
 import qualified Database.LSMTree.Internal.Chunk as Chunk (toByteVector)
 import           Database.LSMTree.Internal.Entry (NumEntries (NumEntries))
 import           Database.LSMTree.Internal.Index.Ordinary
-                     (IndexOrdinary (IndexOrdinary), fromSBS, search,
-                     toLastKeys)
+                     (IndexOrdinary (IndexOrdinary), finalLBS, fromSBS,
+                     headerLBS, search, toLastKeys)
 import           Database.LSMTree.Internal.Index.OrdinaryAcc (new, unsafeEnd)
 import           Database.LSMTree.Internal.Page (PageNo (PageNo),
                      PageSpan (PageSpan))
@@ -66,6 +67,15 @@ tests = testGroup "Test.Database.LSMTree.Internal.Index.Ordinary" $
                 testProperty
                     "Search for unmentioned key beyond range works"
                     prop_searchForUnmentionedKeyBeyondRangeWorks
+            ],
+            testGroup "Header and footer construction" $
+            [
+                testProperty
+                    "Header construction works"
+                    prop_headerConstructionWorks,
+                testProperty
+                    "Footer construction works"
+                    prop_footerConstructionWorks
             ],
             testGroup "Deserialisation" $
             [
@@ -352,6 +362,20 @@ prop_searchForUnmentionedKeyBeyondRangeWorks key (SearchableIndex index)
 
     selectionHead :: SerialisedKey
     selectionHead = head selection
+
+-- ** Header and footer construction
+
+prop_headerConstructionWorks :: Property
+prop_headerConstructionWorks
+    = LazyByteString.unpack headerLBS
+      ===
+      Primitive.toList testedTypeAndVersionBlock
+
+prop_footerConstructionWorks :: NumEntries -> IndexOrdinary -> Property
+prop_footerConstructionWorks entryCount index
+    = LazyByteString.unpack (finalLBS entryCount index)
+      ===
+      Primitive.toList (entryCountBlock entryCount)
 
 -- ** Deserialisation
 
