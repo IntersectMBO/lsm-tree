@@ -825,13 +825,11 @@ supplyCredits (DeRef MergingRun {
     assert (credits >= 0) $ do
     mergeCompleted <- readMutVar mergeKnownCompleted
     case mergeCompleted of
-      MergeKnownCompleted -> do
-        (SpentCredits   spentCredits,
-         UnspentCredits unspentCredits) <- atomicReadCredits mergeCreditsVar
-        let suppliedCredits  = spentCredits + unspentCredits
-            suppliedCredits' = suppliedCredits
-            leftoverCredits  = credits -- meaningless for SupplyAbsolute
-        pure (suppliedCredits, suppliedCredits', leftoverCredits)
+      MergeKnownCompleted ->
+        let suppliedCredits  = mergeDebtAsCredits mergeDebt -- we're completed!
+            suppliedCredits' = suppliedCredits -- we can't supply more now
+            leftoverCredits  = credits -- but meaningless for SupplyAbsolute
+         in pure (suppliedCredits, suppliedCredits', leftoverCredits)
       MergeMaybeCompleted ->
         bracketOnError
           -- Atomically add credits to the unspent credits (but not allowing
