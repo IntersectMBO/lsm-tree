@@ -94,6 +94,7 @@ forMStrict xs f = V.forM xs (f >=> (pure $!))
 -}
 binarySearchL :: Ord a => V.Vector a -> a -> Int
 binarySearchL vec val = runST $ V.unsafeThaw vec >>= flip VA.binarySearchL val
+{-# INLINE binarySearchL #-}
 
 {-# INLINE unsafeInsertWithMStrict #-}
 -- | Insert (in a broad sense) an entry in a mutable vector at a given index,
