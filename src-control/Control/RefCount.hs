@@ -547,7 +547,11 @@ checkForgottenRefs = do
   where
 #endif
 
--- | Run 'checkForgottenRefs', but ignore the resulting exception, if any.
+-- | Ignore and reset the state of forgotten reference tracking. This ensures
+-- that any stale fogotten references are not reported later.
+--
+-- This is especillay important in QC tests with shrinking which otherwise
+-- leads to confusion.
 ignoreForgottenRefs :: IO ()
 ignoreForgottenRefs = void $ try @_ @SomeException $ checkForgottenRefs
 
