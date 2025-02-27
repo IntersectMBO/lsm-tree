@@ -100,6 +100,10 @@ module Database.LSMTree.Monoidal (
     -- * Table union
   , union
   , unions
+  , UnionDebt (..)
+  , remainingUnionDebt
+  , UnionCredits (..)
+  , supplyUnionCredits
 
     -- * Concurrency
     -- $concurrency
@@ -132,7 +136,8 @@ import           Data.Proxy (Proxy (Proxy))
 import           Data.Typeable (Typeable, eqT, type (:~:) (Refl))
 import qualified Data.Vector as V
 import           Database.LSMTree.Common (IOLike, Range (..), SerialiseKey,
-                     SerialiseValue (..), Session, SnapshotName, closeSession,
+                     SerialiseValue (..), Session, SnapshotName,
+                     UnionCredits (..), UnionDebt (..), closeSession,
                      deleteSnapshot, listSnapshots, openSession, withSession)
 import qualified Database.LSMTree.Common as Common
 import qualified Database.LSMTree.Internal as Internal
@@ -699,6 +704,22 @@ unions (t :| ts) =
     checkTableType _ i (Internal.MonoidalTable (t' :: Internal.Table m h'))
       | Just Refl <- eqT @h @h' = pure t'
       | otherwise = throwIO (Internal.ErrUnionsTableTypeMismatch 0 i)
+
+{-# SPECIALISE remainingUnionDebt :: Table IO k v -> IO UnionDebt #-}
+-- | TODO: document this function. See the related TODO on
+-- 'Internal.remainingUnionDebt'.
+remainingUnionDebt :: IOLike m => Table m k v -> m UnionDebt
+remainingUnionDebt (Internal.MonoidalTable t) = Internal.remainingUnionDebt t
+
+{-# SPECIALISE supplyUnionCredits :: Table IO k v -> UnionCredits -> IO UnionCredits #-}
+-- | TODO: document this function. See the related TODO on
+-- 'Internal.supplyUnionCredits'.
+supplyUnionCredits ::
+     IOLike m
+  => Table m k v
+  -> UnionCredits
+  -> m UnionCredits
+supplyUnionCredits (Internal.MonoidalTable t) credits = Internal.supplyUnionCredits t credits
 
 {-------------------------------------------------------------------------------
   Monoidal value resolution
