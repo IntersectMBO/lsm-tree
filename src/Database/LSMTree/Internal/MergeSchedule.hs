@@ -117,14 +117,17 @@ data MergeTrace =
       RunBloomFilterAlloc
       MergePolicyForLevel
       MR.LevelMergeType
+  | TraceNewMergeSingleRun
+      NumEntries -- ^ Size of run
+      RunNumber
+  | TraceNewMergeCompletedRun
+      NumEntries -- ^ Size of run
+      RunNumber
   | TraceCompletedMerge  -- TODO: currently not traced for Incremental merges
       NumEntries -- ^ Size of output run
       RunNumber
     -- | This is traced at the latest point the merge could complete.
   | TraceExpectCompletedMerge
-      RunNumber
-  | TraceNewMergeSingleRun
-      NumEntries -- ^ Size of run
       RunNumber
   deriving stock Show
 
@@ -450,7 +453,7 @@ newIncomingCompletedMergingRun ::
   -> m (IncomingRun m h)
 newIncomingCompletedMergingRun tr conf reg ln mergePolicy nr mergeDebt r = do
     traceWith tr $ AtLevel ln $
-      TraceNewMergeSingleRun (Run.size r) (Run.runFsPathsNumber r)
+      TraceNewMergeCompletedRun (Run.size r) (Run.runFsPathsNumber r)
     mr <- withRollback reg (MR.newCompleted nr mergeDebt r) releaseRef
     let nominalDebt    = nominalDebtForLevel conf ln
         nominalCredits = nominalDebtAsCredits nominalDebt
