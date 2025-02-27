@@ -15,7 +15,7 @@ import           Data.Typeable (Typeable)
 import           Database.LSMTree (ResolveValue)
 import           Database.LSMTree.Common as Types (IOLike, Range (..),
                      SerialiseKey, SerialiseValue, SnapshotLabel (..),
-                     SnapshotName)
+                     SnapshotName, UnionCredits (..), UnionDebt (..))
 import qualified Database.LSMTree.Common as R
 import           System.FS.API (FsPath, HasFS)
 import           System.FS.BlockIO.API (HasBlockIO)

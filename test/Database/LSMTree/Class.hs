@@ -185,6 +185,21 @@ class (IsSession (Session h)) => IsTable h where
         => NonEmpty (h m k v b)
         -> m (h m k v b)
 
+    remainingUnionDebt ::
+           ( IOLike m
+           , C k v b
+           )
+        => h m k v b
+        -> m UnionDebt
+
+    supplyUnionCredits ::
+           ( IOLike m
+           , C k v b
+           )
+        => h m k v b
+        -> UnionCredits
+        -> m UnionCredits
+
 withTableNew :: forall h m k v b a.
     (IOLike m, IsTable h, C k v b)
   => Session h m
@@ -277,5 +292,8 @@ instance IsTable R.Table where
     openSnapshot sesh snap = R.openSnapshot sesh R.configNoOverride snap
 
     duplicate = R.duplicate
+
     union = R.union
     unions = R.unions
+    remainingUnionDebt = R.remainingUnionDebt
+    supplyUnionCredits = R.supplyUnionCredits
