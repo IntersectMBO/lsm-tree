@@ -19,6 +19,7 @@ module Database.LSMTree.Model.Session (
   , withSomeTable
   , TableID
   , tableID
+  , isUnionDescendant
   , Model.size
     -- ** Constraints
   , C
@@ -76,8 +77,13 @@ module Database.LSMTree.Model.Session (
     -- * Multiple writable tables
   , duplicate
     -- * Table union
+  , IsUnionDescendant (..)
   , union
   , unions
+  , UnionDebt (..)
+  , remainingUnionDebt
+  , UnionCredits (..)
+  , supplyUnionCredits
   ) where
 
 import           Control.Monad (forM, when)
@@ -95,7 +101,8 @@ import           Data.Maybe (fromJust)
 import qualified Data.Vector as V
 import           Data.Word
 import           Database.LSMTree.Common (SerialiseKey (..),
-                     SerialiseValue (..), SnapshotLabel, SnapshotName)
+                     SerialiseValue (..), SnapshotLabel, SnapshotName,
+                     UnionCredits (..), UnionDebt (..))
 import           Database.LSMTree.Model.Table (LookupResult (..),
                      QueryResult (..), Range (..), ResolveSerialisedValue (..),
                      Update (..), getResolve, noResolve)
@@ -125,6 +132,10 @@ initModel = Model {
 -- | We conservatively model blob reference invalidation: each update after
 -- acquiring a blob reference will invalidate it. We use 'UpdateCounter' to
 -- track updates.
+--
+-- Supplying union credits is also considered an update, though this can only
+-- invalidate a blob reference that is associated with a (descendant of a) union
+-- table.
 newtype UpdateCounter = UpdateCounter Word64
   deriving stock (Show, Eq, Ord)
   deriving newtype (Num)
@@ -300,8 +311,9 @@ type TableID = Int
 --
 
 data Table k v b = Table {
-    tableID :: TableID
-  , config  :: TableConfig
+    tableID           :: TableID
+  , config            :: TableConfig
+  , isUnionDescendant :: IsUnionDescendant
   }
   deriving stock Show
 
@@ -319,7 +331,7 @@ new ::
      forall k v b m. (MonadState Model m, C k v b)
   => TableConfig
   -> m (Table k v b)
-new config = newTableWith config Model.empty
+new config = newTableWith config IsNotUnionDescendant Model.empty
 
 -- |
 --
@@ -354,12 +366,14 @@ guardTableIsOpen Table{..} =
 newTableWith ::
      (MonadState Model m, C k v b)
   => TableConfig
+  -> IsUnionDescendant
   -> Model.Table k v b
   -> m (Table k v b)
-newTableWith config tbl = state $ \Model{..} ->
+newTableWith config isUnionDescendant tbl = state $ \Model{..} ->
   let table = Table {
           tableID = nextID
         , config
+        , isUnionDescendant
         }
       someTable = toSomeTable tbl
       tables' = Map.insert nextID (0, someTable) tables
@@ -549,10 +563,11 @@ invalidateBlobRefs Table{..} = do
 -------------------------------------------------------------------------------}
 
 data Snapshot = Snapshot
-  { snapshotConfig    :: TableConfig
-  , snapshotLabel     :: SnapshotLabel
-  , snapshotTable     :: SomeTable
-  , snapshotCorrupted :: Bool
+  { snapshotConfig            :: TableConfig
+  , snapshotLabel             :: SnapshotLabel
+  , snapshotTable             :: SomeTable
+  , snapshotIsUnionDescendant :: IsUnionDescendant
+  , snapshotCorrupted         :: Bool
   }
   deriving stock Show
 
@@ -570,8 +585,13 @@ createSnapshot label name t@Table{..} = do
     snaps <- gets snapshots
     when (Map.member name snaps) $
       throwError ErrSnapshotExists
+    let snap =
+          Snapshot
+            config label
+            (toSomeTable $ Model.snapshot table)
+            isUnionDescendant False
     modify (\m -> m {
-        snapshots = Map.insert name (Snapshot config label (toSomeTable $ Model.snapshot table) False) (snapshots m)
+        snapshots = Map.insert name snap (snapshots m)
       })
 
 openSnapshot ::
@@ -588,7 +608,7 @@ openSnapshot label name = do
     case Map.lookup name snaps of
       Nothing ->
         throwError ErrSnapshotDoesNotExist
-      Just (Snapshot conf label' tbl corrupted) -> do
+      Just (Snapshot conf label' tbl snapshotIsUnion corrupted) -> do
         when corrupted $
           throwError DefaultErrSnapshotCorrupted
         when (label /= label') $
@@ -603,7 +623,7 @@ openSnapshot label name = do
             -- test setup, and so we use @error@ instead of @throwError@.
             error "openSnapshot: snapshot opened at wrong type"
           Just table' ->
-            newTableWith conf table'
+            newTableWith conf snapshotIsUnion table'
 
 -- To match the implementation of the real table, this should not corrupt the
 -- snapshot if there are _no non-empty files_; however, since there are no such
@@ -618,7 +638,7 @@ corruptSnapshot name = do
     then throwError ErrSnapshotDoesNotExist
     else modify $ \m -> m {snapshots = Map.adjust corruptSnapshotEntry name snapshots}
   where
-    corruptSnapshotEntry (Snapshot c l t _) = Snapshot c l t True
+    corruptSnapshotEntry (Snapshot c l t u _) = Snapshot c l t u True
 
 deleteSnapshot ::
      (MonadState Model m, MonadError Err m)
@@ -652,7 +672,7 @@ duplicate ::
   -> m (Table k v b)
 duplicate t@Table{..} = do
     table <- snd <$> guardTableIsOpen t
-    newTableWith config $ Model.duplicate table
+    newTableWith config isUnionDescendant $ Model.duplicate table
 
 {-------------------------------------------------------------------------------
   Cursor
@@ -733,6 +753,14 @@ guardCursorIsOpen Cursor{..} =
   Table union
 -------------------------------------------------------------------------------}
 
+-- Is this a (descendant of a) union table?
+--
+-- This is important for invalidating blob references: if a table is a
+-- (descendant of a) union table, then 'supplyUnionCredits' can invalidate blob
+-- references.
+data IsUnionDescendant = IsUnionDescendant | IsNotUnionDescendant
+  deriving stock (Show, Eq)
+
 union ::
      ( MonadState Model m
      , MonadError Err m
@@ -745,7 +773,7 @@ union ::
 union r th1 th2 = do
   (_, t1) <- guardTableIsOpen th1
   (_, t2) <- guardTableIsOpen th2
-  newTableWith TableConfig $ Model.union r t1 t2
+  newTableWith TableConfig IsUnionDescendant $ Model.union r t1 t2
 
 unions ::
      ( MonadState Model m
@@ -759,4 +787,68 @@ unions r tables = do
     tables' <- forM tables $ \table -> do
       (_, table') <- guardTableIsOpen table
       pure table'
-    newTableWith TableConfig $ Model.unions r tables'
+    newTableWith TableConfig IsUnionDescendant $ Model.unions r tables'
+
+-- | The model can not accurately predict union debt without considerable
+-- knowledge about the implementation of /real/ tables. Therefore the model
+-- considers unions to be finished right away, and the resulting debt will
+-- always be 0.
+remainingUnionDebt ::
+     ( MonadState Model m
+     , MonadError Err m
+     , C k v b
+     )
+  => Table k v b
+  -> m UnionDebt
+remainingUnionDebt t = do
+    (_updc, _table) <- guardTableIsOpen t
+    pure (UnionDebt 0)
+
+-- | The union debt is always 0, so supplying union credits has no effect on the
+-- tables, except for invalidating its blob references in some cases.
+--
+-- In the /real/ implementation, blob references can be associated with a run in
+-- a regular level, or in a union level. In the former case, only updates can
+-- invalidate the blob reference. In the latter case, only supplying union
+-- credits can invalidate the blob reference.
+--
+-- Without considerable knowledge about the /real/ implementation, the model can
+-- not /always/ accurately predict which of two cases a blob reference belongs
+-- to. However, there is one case where a table is guaranteed not to contain a
+-- union level: if the table is /not/ a (descendant of a) union table.
+--
+-- There is another caveat: without considerable knowledge about the real
+-- implementation, the model can not accurately predict after how many supplied
+-- union credits /real/ blob references are invalidated. Therefore, we model
+-- invalidation conservatively in a similar way to 'updates': any supply of
+-- @>=1@ union credits is enough to invalidate union blob references.
+--
+-- To summarise, 'supplyUnionCredits' will invalidate blob references associated
+-- with the input table if:
+--
+-- * The table is a (descendant of a) union table
+--
+-- * The number of supplied union credits is at least 1.
+--
+-- TODO: in the real implementation, supplying union credits can invalidate blob
+-- references for other tables if they share merging runs in their union levels.
+-- For example, supplying union credits to a duplicate of a (descendant of a)
+-- union table can invalidate blob references for both the original and
+-- duplicate table.
+supplyUnionCredits ::
+     ( MonadState Model m
+     , MonadError Err m
+     , C k v b
+     )
+  => Table k v b
+  -> UnionCredits
+  -> m UnionCredits
+supplyUnionCredits t@Table{..} c@(UnionCredits credits)
+  | credits <= 0 = pure c
+  | otherwise = do
+      (updc, table) <- guardTableIsOpen t
+      when (isUnionDescendant == IsUnionDescendant) $
+        modify (\m -> m {
+            tables = Map.insert tableID (updc + 1, toSomeTable table) (tables m)
+          })
+      pure c
