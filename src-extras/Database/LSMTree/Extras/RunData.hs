@@ -184,6 +184,7 @@ simplePaths ns = fmap simplePath ns
   QuickCheck
 -------------------------------------------------------------------------------}
 
+{- HLINT ignore "Hoist not" -}
 labelRunData :: SerialisedRunData -> Property -> Property
 labelRunData (RunData m) = tabulate "value size" size . label note
   where
@@ -191,7 +192,7 @@ labelRunData (RunData m) = tabulate "value size" size . label note
     size = map (showPowersOf10 . sizeofValue) vals
     vals = concatMap (bifoldMap pure mempty . snd) kops
     note
-      | any (uncurry entryWouldFitInPage) kops = "has large k/op"
+      | any (not . uncurry entryWouldFitInPage) kops = "has large k/op"
       | otherwise = "no large k/op"
 
 instance ( Ord k, Arbitrary k, Arbitrary v, Arbitrary b

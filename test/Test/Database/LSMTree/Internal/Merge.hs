@@ -111,7 +111,7 @@ prop_MergeDistributes fs hbio mergeType stepSize (SmallList rds) =
     rds' = fmap serialiseRunData rds
     kops = foldMap (Map.toList . unRunData) rds'
     vals = concatMap (bifoldMap pure mempty . snd) kops
-    isLarge = uncurry entryWouldFitInPage
+    isLarge = not . uncurry entryWouldFitInPage
 
     getRunContent run@(DeRef Run.Run {
                          Run.runFilter,
