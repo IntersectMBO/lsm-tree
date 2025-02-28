@@ -37,8 +37,6 @@ module Database.LSMTree.Extras.Generators (
   , isKeyForIndexCompact
   , KeyForIndexCompact (..)
   , BiasedKeyForIndexCompact (..)
-    -- * helpers
-  , shrinkVec
   ) where
 
 import           Control.DeepSeq (NFData)
@@ -59,8 +57,7 @@ import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..))
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.Page (PageNo (..))
-import           Database.LSMTree.Internal.RawBytes (RawBytes (RawBytes))
-import qualified Database.LSMTree.Internal.RawBytes as RB
+import           Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.Serialise
 import qualified Database.LSMTree.Internal.Serialise.Class as S.Class
 import           Database.LSMTree.Internal.Unsliced (Unsliced, fromUnslicedKey,
@@ -457,31 +454,8 @@ packRawBytesPinnedOrUnpinned True  = \ws ->
       return mba
 
 shrinkRawBytes :: RawBytes -> [RawBytes]
-shrinkRawBytes (RawBytes pvec) =
-    [ RawBytes pvec'
-    | pvec' <- shrinkVec (take 1 . QC.shrink) pvec
-                          -- no need to try harder shrinking individual bytes
-    ]
-
--- | Based on QuickCheck's 'shrinkList' (behaves identically, see tests).
-shrinkVec :: VP.Prim a => (a -> [a]) -> VP.Vector a -> [VP.Vector a]
-shrinkVec shr vec =
-    concat [ removeBlockOf k | k <- takeWhile (> 0) (iterate (`div` 2) len) ]
-    ++ shrinkOne
-  where
-    len = VP.length vec
-
-    shrinkOne =
-        [ vec VP.// [(i, x')]
-        | i <- [0 .. len-1]
-        , let x = vec VP.! i
-        , x' <- shr x
-        ]
-
-    removeBlockOf k =
-        [ VP.take i vec VP.++ VP.drop (i + k) vec
-        | i <- [0, k .. len - k]
-        ]
+shrinkRawBytes (RawBytes pvec) = [ RawBytes (VP.fromList ws)
+                                 | ws <- QC.shrink (VP.toList pvec) ]
 
 genSlice :: RawBytes -> Gen RawBytes
 genSlice (RawBytes pvec) = do
@@ -491,14 +465,10 @@ genSlice (RawBytes pvec) = do
 
 shrinkSlice :: RawBytes -> [RawBytes]
 shrinkSlice (RawBytes pvec) =
-    [ RawBytes (VP.take len' pvec)
-    | len' <- QC.shrink len
-    ] ++
-    [ RawBytes (VP.drop (len - len') pvec)
-    | len' <- QC.shrink len
+    [ RawBytes (VP.slice m n pvec)
+    | n <- QC.shrink (VP.length pvec)
+    , m <- QC.shrink (VP.length pvec - n)
     ]
-  where
-    len = VP.length pvec
 
 deriving newtype instance Arbitrary SerialisedKey
 
