@@ -4,7 +4,8 @@
 module Test.Database.LSMTree.Class (
     tests
   ) where
-import           Control.Exception (SomeException, try)
+import           Control.Exception (SomeException, assert, try)
+import           Control.Monad (forM, when)
 import           Control.Monad.ST.Strict (runST)
 import           Control.Monad.Trans.State
 import qualified Data.ByteString as BS
@@ -108,7 +109,7 @@ tests = testGroup "Test.Database.LSMTree.Class"
       , testProperty' "snapshot-nochanges" $ prop_snapshotNoChanges tbl
       , testProperty' "snapshot-nochanges2" $ prop_snapshotNoChanges2 tbl
       , testProperty' "lookup-mupsert" $ prop_lookupUpdate tbl
-      , testProperty' "merge" $ prop_union tbl
+      , testProperty' "union" $ prop_union tbl
       ]
 
 testProperty' :: forall a. Testable a => TestName -> a -> Bool -> TestTree
@@ -600,44 +601,69 @@ prop_lookupUpdate h ups k v1 mb1 v2 = ioProperty $ do
 prop_union :: forall h.
      IsTable h
   => Proxy h -> [(Key, Update Value Blob)] -> [(Key, Update Value Blob)]
-  -> [Key] -> Property
-prop_union h ups1 ups2 (V.fromList -> testKeys) = ioProperty $ do
+  -> [Key]
+  -> Positive (Small Int) -- ^ Number of batches for supplying union credits
+  -> Property
+prop_union h ups1 ups2
+  (V.fromList -> testKeys)
+  (Positive (Small nSupplyBatches))
+  = ioProperty $ do
     withSessionAndTableNew h ups1 $ \s tbl1 -> do
       withTableNew s (testTableConfig h) $ \tbl2 -> do
         updates tbl2 $ V.fromList ups2
 
         -- union them.
         withTableUnion tbl1 tbl2 $ \tbl3 -> do
+          propBegin <- compareLookups s tbl1 tbl2 tbl3
 
-          -- results in parts and the union table
-          res1 <- lookupsWithBlobs tbl1 s testKeys
-          res2 <- lookupsWithBlobs tbl2 s testKeys
-          res3 <- lookupsWithBlobs tbl3 s testKeys
+          -- Supply union credits in @nSupplyBatches@ batches
+          props <- forM (reverse [1 .. nSupplyBatches]) $ \i -> do
+            -- Try to keep the batch sizes roughly the same size
+            UnionDebt debt <- remainingUnionDebt tbl3
+            _ <- supplyUnionCredits tbl3 (UnionCredits (debt `div` i))
 
-          let unionResult ::
-                   LookupResult Value Blob
-                -> LookupResult Value Blob
-                -> LookupResult Value Blob
+            -- In case @i == 0@, then @debt `div` i == debt@, so the last supply
+            -- should have finished the union.
+            when (i == 1) $ do
+              finalDebt <- remainingUnionDebt tbl3
+              assert (finalDebt == UnionDebt 0) $ pure ()
 
-              unionResult r@NotFound   NotFound            = r
-              unionResult   NotFound r@(Found _)           = r
-              unionResult   NotFound r@(FoundWithBlob _ _) = r
+            -- Check that the lookup results are still the same after each batch
+            -- of union credits.
+            compareLookups s tbl1 tbl2 tbl3
 
-              unionResult r@(Found _)  NotFound
-                = r
-              unionResult   (Found v1) (Found v2)
-                = Found (resolve v1 v2)
-              unionResult   (Found v1) (FoundWithBlob v2 _)
-                = Found (resolve v1 v2)
+          pure (propBegin .&&. conjoin props)
+  where
+    compareLookups s tbl1 tbl2 tbl3 = do
+      -- results in parts and the union table
+      res1 <- lookupsWithBlobs tbl1 s testKeys
+      res2 <- lookupsWithBlobs tbl2 s testKeys
+      res3 <- lookupsWithBlobs tbl3 s testKeys
 
-              unionResult r@(FoundWithBlob _ _)   NotFound
-                = r
-              unionResult   (FoundWithBlob v1 b1) (Found v2)
-                = FoundWithBlob (resolve v1 v2) b1
-              unionResult   (FoundWithBlob v1 b1) (FoundWithBlob v2 _b2)
-                = FoundWithBlob (resolve v1 v2) b1
+      let unionResult ::
+               LookupResult Value Blob
+            -> LookupResult Value Blob
+            -> LookupResult Value Blob
 
-          return $ V.zipWith unionResult res1 res2  == res3
+          unionResult r@NotFound   NotFound            = r
+          unionResult   NotFound r@(Found _)           = r
+          unionResult   NotFound r@(FoundWithBlob _ _) = r
+
+          unionResult r@(Found _)  NotFound
+            = r
+          unionResult   (Found v1) (Found v2)
+            = Found (resolve v1 v2)
+          unionResult   (Found v1) (FoundWithBlob v2 _)
+            = Found (resolve v1 v2)
+
+          unionResult r@(FoundWithBlob _ _)   NotFound
+            = r
+          unionResult   (FoundWithBlob v1 b1) (Found v2)
+            = FoundWithBlob (resolve v1 v2) b1
+          unionResult   (FoundWithBlob v1 b1) (FoundWithBlob v2 _b2)
+            = FoundWithBlob (resolve v1 v2) b1
+
+      return $ V.zipWith unionResult res1 res2 === res3
 
 -------------------------------------------------------------------------------
 -- implement classic QC tests for snapshots
