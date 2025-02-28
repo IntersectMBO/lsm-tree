@@ -25,7 +25,8 @@ import           Database.LSMTree.Internal.Serialise
 import qualified Test.QuickCheck as QC
 import           Test.QuickCheck (Property)
 import           Test.Tasty (TestTree, localOption, testGroup)
-import           Test.Tasty.QuickCheck (QuickCheckMaxSize (..), testProperty)
+import           Test.Tasty.QuickCheck (QuickCheckMaxSize (..), testProperty,
+                     (===))
 import           Test.Util.Arbitrary
 
 tests :: TestTree
@@ -62,6 +63,10 @@ tests = testGroup "Test.Database.LSMTree.Generators" [
     , testGroup "lists of key/op pairs" $
         prop_arbitraryAndShrinkPreserveInvariant labelTestKOps $
           deepseqInvariant
+    , testGroup "helpers"
+        [ testProperty "prop_shrinkVec" $ \vec ->
+            shrinkVec (QC.shrink @Int) vec === map VP.fromList (QC.shrink (VP.toList vec))
+        ]
     ]
 
 prop_packRawBytesPinnedOrUnpinned :: Bool -> [Word8] -> Bool
