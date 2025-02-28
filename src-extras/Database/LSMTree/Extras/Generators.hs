@@ -505,11 +505,11 @@ deriving newtype instance Arbitrary SerialisedKey
 instance Arbitrary SerialisedValue where
   -- good mix of sizes, including larger than two pages, also some slices
   arbitrary = SerialisedValue <$> frequency
-      [ (16, arbitrary)
-      , ( 4, genRawBytesN =<< QC.chooseInt ( 100,  1000))
-      , ( 2, genRawBytesN =<< QC.chooseInt (1000,  4000))
-      , ( 1, genRawBytesN =<< QC.chooseInt (4000, 10000))
-      , ( 1, genSlice =<< genRawBytesN =<< QC.chooseInt (0, 10000))
+      [ (80, arbitrary)
+      , ( 2, genRawBytesN =<< QC.chooseInt ( 100, 3900))
+      , ( 6, genRawBytesN =<< QC.chooseInt (3900, 4300))  -- around 4096
+      , ( 2, genRawBytesN =<< QC.chooseInt (8000, 8400))  -- >2 pages (or close)
+      , (10, genSlice =<< genRawBytesN =<< QC.chooseInt (0, 10000))
       ]
   shrink (SerialisedValue rb)
       | RB.size rb > 64 = coerce (shrink (LargeRawBytes rb))
