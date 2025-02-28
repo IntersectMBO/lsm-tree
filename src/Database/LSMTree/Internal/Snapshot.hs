@@ -29,7 +29,7 @@ import           Control.Concurrent.Class.MonadSTM (MonadSTM)
 import           Control.DeepSeq (NFData (..))
 import           Control.Monad (void)
 import           Control.Monad.Class.MonadST (MonadST)
-import           Control.Monad.Class.MonadThrow (MonadMask)
+import           Control.Monad.Class.MonadThrow (MonadMask, bracketOnError)
 import           Control.Monad.Primitive (PrimMonad)
 import           Control.RefCount
 import           Control.Tracer (Tracer, nullTracer)
@@ -471,9 +471,14 @@ fromSnapLevels reg hfs hbio conf uc resolve dir (SnapLevels levels) =
     tr = nullTracer
 
     fromSnapLevel :: LevelNo -> SnapLevel (Ref (Run m h)) -> m (Level m h)
-    fromSnapLevel ln SnapLevel{..} = do
-        incomingRun <- fromSnapIncomingRun ln snapIncoming
-        residentRuns <- V.mapM dupRun snapResidentRuns
+    fromSnapLevel ln SnapLevel{snapIncoming, snapResidentRuns} = do
+        incomingRun <- withRollback reg
+                         (fromSnapIncomingRun ln snapIncoming)
+                         releaseIncomingRun
+        residentRuns <- V.forM snapResidentRuns $ \r ->
+                          withRollback reg
+                            (dupRef r)
+                            releaseRef
         pure Level {incomingRun , residentRuns}
 
     fromSnapIncomingRun ::
@@ -481,24 +486,22 @@ fromSnapLevels reg hfs hbio conf uc resolve dir (SnapLevels levels) =
       -> SnapIncomingRun (Ref (Run m h))
       -> m (IncomingRun m h)
     fromSnapIncomingRun ln (SnapSingleRun run) =
-        newIncomingSingleRun tr ln =<< dupRun run
+        newIncomingSingleRun tr ln run
 
-    fromSnapIncomingRun ln (SnapMergingRun mpfl nr md nc smrs) = do
-      case smrs of
-        SnapCompletedMerge r ->
-          newIncomingCompletedMergingRun tr conf reg ln mpfl nr md r
+    fromSnapIncomingRun ln (SnapMergingRun mpfl nr md _nc
+                                           (SnapCompletedMerge r)) =
+      newIncomingCompletedMergingRun tr conf ln mpfl nr md r
 
-        SnapOngoingMerge rs mt -> do
-          ir <- newIncomingMergingRun tr hfs hbio dir uc
-                                      conf resolve reg
-                                      mpfl mt ln rs
-          -- When a snapshot is created, merge progress is lost, so we have to
-          -- redo merging work here. The MergeCredits in SnapMergingRun tracks
-          -- how many credits were supplied before the snapshot was taken.
-          supplyCreditsIncomingRun conf ln ir nc
-          return ir
-
-    dupRun r = withRollback reg (dupRef r) releaseRef
+    fromSnapIncomingRun ln (SnapMergingRun mpfl _nr _md nc
+                                           (SnapOngoingMerge rs mt)) = do
+      bracketOnError (newIncomingMergingRun tr hfs hbio dir uc
+                                  conf resolve
+                                  mpfl mt ln rs) releaseIncomingRun $ \ir -> do
+        -- When a snapshot is created, merge progress is lost, so we have to
+        -- redo merging work here. The MergeCredits in SnapMergingRun tracks
+        -- how many credits were supplied before the snapshot was taken.
+        supplyCreditsIncomingRun conf ln ir nc
+        return ir
 
 {-------------------------------------------------------------------------------
   Hard links
