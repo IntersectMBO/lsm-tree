@@ -489,6 +489,7 @@ deriving newtype instance Arbitrary SerialisedBlob
 
 newtype LargeRawBytes = LargeRawBytes RawBytes
   deriving stock Show
+  deriving newtype NFData
 
 instance Arbitrary LargeRawBytes where
   arbitrary = genRawBytesSized (4096*3) >>= fmap LargeRawBytes . genSlice
@@ -501,6 +502,7 @@ instance Arbitrary LargeRawBytes where
    ++ [ LargeRawBytes (RawBytes pvec')
       | let (RawBytes pvec) = rb
       , n <- QC.shrink (VP.length pvec)
+      , assert (n >= 0) True  -- negative values would make pvec' longer
       , let pvec' = VP.take n pvec VP.++ VP.replicate (VP.length pvec - n) 0
       , assert (VP.length pvec' == VP.length pvec) $
         pvec' /= pvec
