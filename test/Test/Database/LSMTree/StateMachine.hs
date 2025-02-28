@@ -679,6 +679,22 @@ instance ( Show (Class.TableConfig h)
     Unions :: C k v b
            => NonEmpty (Var h (WrapTable h IO k v b))
            -> Act h (WrapTable h IO k v b)
+    RemainingUnionDebt ::
+         C k v b
+      => Var h (WrapTable h IO k v b)
+      -> Act h R.UnionDebt
+    SupplyUnionCredits ::
+         C k v b
+      => Var h (WrapTable h IO k v b)
+      -> R.UnionCredits
+      -> Act h R.UnionCredits
+    -- TODO: SupplyUnionCredits has no information about union debt, so the
+    -- credits we generate are arbitrary, and it would require precarious,
+    -- manual tuning to make sure the debt is ever paid off by an action
+    -- sequence. We can probably add a version of SupplyUnionCredits that gets a
+    -- variable to previously computed debt, and supplies a percentage (if not
+    -- all) of that debt. Note that the model has no debt information, so we
+    -- have to rely on variables instead of using model state in our generators.
 
   initialState    = Lockstep.Defaults.initialState initModelState
   nextState       = Lockstep.Defaults.nextState
@@ -738,7 +754,11 @@ instance ( Eq (Class.TableConfig h)
           Just var1_1 == cast var2_1 && Just var1_2 == cast var2_2
       go (Unions vars1) (Unions vars2) =
           Just vars1 == cast vars2
-      go _  _ = False
+      go (RemainingUnionDebt var1) (RemainingUnionDebt var2) =
+          Just var1 == cast var2
+      go (SupplyUnionCredits var1 credits1)  (SupplyUnionCredits var2 credits2) =
+          Just var1 == cast var2 && credits1 == credits2
+      go _ _ = False
 
       _coveredAllCases :: LockstepAction (ModelState h) a -> ()
       _coveredAllCases = \case
@@ -761,6 +781,8 @@ instance ( Eq (Class.TableConfig h)
           Duplicate{} -> ()
           Union{} -> ()
           Unions{} -> ()
+          RemainingUnionDebt{} -> ()
+          SupplyUnionCredits{} -> ()
 
 -- | This is not a fully lawful instance, because it uses 'approximateEqStream'.
 instance Eq a => Eq (Stream a) where
@@ -784,24 +806,26 @@ instance ( Eq (Class.TableConfig h)
   type instance ModelOp (ModelState h) = Op
 
   data instance ModelValue (ModelState h) a where
+    -- handle-like
     MTable :: Model.Table k v b
                  -> Val h (WrapTable h IO k v b)
     MCursor :: Model.Cursor k v b -> Val h (WrapCursor h IO k v b)
     MBlobRef :: Class.C_ b
              => Model.BlobRef b -> Val h (WrapBlobRef h IO b)
-
+    -- values
     MLookupResult :: (Class.C_ v, Class.C_ b)
                   => LookupResult v (Val h (WrapBlobRef h IO b))
                   -> Val h (LookupResult v (WrapBlobRef h IO b))
     MQueryResult :: Class.C k v b
                  => QueryResult k v (Val h (WrapBlobRef h IO b))
                  -> Val h (QueryResult k v (WrapBlobRef h IO b))
-
     MBlob :: (Show b, Typeable b, Eq b)
           => WrapBlob b -> Val h (WrapBlob b)
     MSnapshotName :: R.SnapshotName -> Val h R.SnapshotName
+    MUnionDebt :: R.UnionDebt -> Val h R.UnionDebt
+    MUnionCredits :: R.UnionCredits -> Val h R.UnionCredits
     MErr :: Model.Err -> Val h Model.Err
-
+    -- combinators
     MUnit   :: () -> Val h ()
     MPair   :: (Val h a, Val h b) -> Val h (a, b)
     MEither :: Either (Val h a) (Val h b) -> Val h (Either a b)
@@ -809,10 +833,11 @@ instance ( Eq (Class.TableConfig h)
     MVector :: V.Vector (Val h a) -> Val h (V.Vector a)
 
   data instance Observable (ModelState h) a where
+    -- handle-like (opaque)
     OTable :: Obs h (WrapTable h IO k v b)
     OCursor :: Obs h (WrapCursor h IO k v b)
     OBlobRef :: Obs h (WrapBlobRef h IO b)
-
+    -- values
     OLookupResult :: (Class.C_ v, Class.C_ b)
                   => LookupResult v (Obs h (WrapBlobRef h IO b))
                   -> Obs h (LookupResult v (WrapBlobRef h IO b))
@@ -821,9 +846,8 @@ instance ( Eq (Class.TableConfig h)
                  -> Obs h (QueryResult k v (WrapBlobRef h IO b))
     OBlob :: (Show b, Typeable b, Eq b)
           => WrapBlob b -> Obs h (WrapBlob b)
-
     OId :: (Show a, Typeable a, Eq a) => a -> Obs h a
-
+    -- combinators
     OPair   :: (Obs h a, Obs h b) -> Obs h (a, b)
     OEither :: Either (Obs h a) (Obs h b) -> Obs h (Either a b)
     OList   :: [Obs h a] -> Obs h [a]
@@ -838,6 +862,8 @@ instance ( Eq (Class.TableConfig h)
       MQueryResult x       -> OQueryResult $ fmap observeModel x
       MSnapshotName x      -> OId x
       MBlob x              -> OBlob x
+      MUnionDebt x         -> OId x
+      MUnionCredits x      -> OId x
       MErr x               -> OId x
       MUnit x              -> OId x
       MPair x              -> OPair $ bimap observeModel observeModel x
@@ -879,6 +905,8 @@ instance ( Eq (Class.TableConfig h)
       Duplicate tableVar              -> [SomeGVar tableVar]
       Union table1Var table2Var       -> [SomeGVar table1Var, SomeGVar table2Var]
       Unions tableVars                -> [SomeGVar tableVar | tableVar <- NE.toList tableVars]
+      RemainingUnionDebt tableVar     -> [SomeGVar tableVar]
+      SupplyUnionCredits tableVar _   -> [SomeGVar tableVar]
 
   arbitraryWithVars ::
        ModelVarContext (ModelState h)
@@ -934,6 +962,20 @@ instance Eq (Obs h a) where
         | Just (Model.ErrSnapshotCorrupted _) <- cast lhs
         , Just Model.DefaultErrSnapshotCorrupted <- cast rhs
         -> True
+
+      -- Debt in the model is always 0, while debt in the real implementation
+      -- may be larger than 0.
+      (OEither (Right (OId lhs)), OEither (Right (OId rhs)))
+        | Just (lhsDebt :: R.UnionDebt)<- cast lhs
+        , Just (rhsDebt :: R.UnionDebt)<- cast rhs
+        -> lhsDebt >= rhsDebt
+
+      -- In the model, all supplied union credits are returned as leftovers,
+      -- whereas in the real implementation may use up some union credits.
+      (OEither (Right (OId lhs)), OEither (Right (OId rhs)))
+        | Just (lhsLeftovers :: R.UnionCredits)<- cast lhs
+        , Just (rhsLeftovers :: R.UnionCredits)<- cast rhs
+        -> lhsLeftovers <= rhsLeftovers
 
       -- default equalities
       (OTable, OTable) -> True
@@ -1043,6 +1085,8 @@ instance ( Eq (Class.TableConfig h)
       Duplicate{}      -> OEither $ bimap OId (const OTable) result
       Union{}          -> OEither $ bimap OId (const OTable) result
       Unions{}         -> OEither $ bimap OId (const OTable) result
+      RemainingUnionDebt{} -> OEither $ bimap OId OId result
+      SupplyUnionCredits{} -> OEither $ bimap OId OId result
 
   showRealResponse ::
        Proxy (RealMonad h IO)
@@ -1068,6 +1112,8 @@ instance ( Eq (Class.TableConfig h)
       Duplicate{}      -> Nothing
       Union{}          -> Nothing
       Unions{}         -> Nothing
+      RemainingUnionDebt{} -> Just Dict
+      SupplyUnionCredits{} -> Just Dict
 
 instance ( Eq (Class.TableConfig h)
          , Class.IsTable h
@@ -1103,6 +1149,8 @@ instance ( Eq (Class.TableConfig h)
       Duplicate{}      -> OEither $ bimap OId (const OTable) result
       Union{}          -> OEither $ bimap OId (const OTable) result
       Unions{}         -> OEither $ bimap OId (const OTable) result
+      RemainingUnionDebt{} -> OEither $ bimap OId OId result
+      SupplyUnionCredits{} -> OEither $ bimap OId OId result
 
   showRealResponse ::
        Proxy (RealMonad h (IOSim s))
@@ -1128,6 +1176,8 @@ instance ( Eq (Class.TableConfig h)
       Duplicate{}      -> Nothing
       Union{}          -> Nothing
       Unions{}         -> Nothing
+      RemainingUnionDebt{} -> Just Dict
+      SupplyUnionCredits{} -> Just Dict
 
 {-------------------------------------------------------------------------------
   RunModel
@@ -1224,6 +1274,12 @@ runModel lookUp = \case
     Unions tableVars ->
       wrap MTable
       . Model.runModelM (Model.unions Model.getResolve (fmap (getTable . lookUp) tableVars))
+    RemainingUnionDebt tableVar ->
+      wrap MUnionDebt
+      . Model.runModelM (Model.remainingUnionDebt (getTable $ lookUp tableVar))
+    SupplyUnionCredits tableVar credits ->
+      wrap MUnionCredits
+      . Model.runModelM (Model.supplyUnionCredits (getTable $ lookUp tableVar) credits)
   where
     getTable ::
          ModelValue (ModelState h) (WrapTable h IO k v b)
@@ -1310,6 +1366,10 @@ runIO action lookUp = ReaderT $ \ !env -> do
           WrapTable <$> Class.union (unwrapTable $ lookUp' table1Var) (unwrapTable $ lookUp' table2Var)
         Unions tableVars -> catchErr handlers $
           WrapTable <$> Class.unions (fmap (unwrapTable . lookUp') tableVars)
+        RemainingUnionDebt tableVar -> catchErr handlers $
+          Class.remainingUnionDebt (unwrapTable $ lookUp' tableVar)
+        SupplyUnionCredits tableVar credits -> catchErr handlers $
+          Class.supplyUnionCredits (unwrapTable $ lookUp' tableVar) credits
       where
         session = envSession env
         handlers = envHandlers env
@@ -1379,6 +1439,10 @@ runIOSim action lookUp = ReaderT $ \ !env -> do
           WrapTable <$> Class.union (unwrapTable $ lookUp' table1Var) (unwrapTable $ lookUp' table2Var)
         Unions tableVars -> catchErr handlers $
           WrapTable <$> Class.unions (fmap (unwrapTable . lookUp') tableVars)
+        RemainingUnionDebt tableVar -> catchErr handlers $
+          Class.remainingUnionDebt (unwrapTable $ lookUp' tableVar)
+        SupplyUnionCredits tableVar credits -> catchErr handlers $
+          Class.supplyUnionCredits (unwrapTable $ lookUp' tableVar) credits
       where
         session = envSession env
         handlers = envHandlers env
@@ -1456,6 +1520,7 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
       concat
         [ genActionsSession
         , genActionsTables
+        , genUnionActions
         , genActionsCursor
         , genActionsBlobRef
         ]
@@ -1481,6 +1546,8 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
         Duplicate{} -> ()
         Union{} -> ()
         Unions{} -> ()
+        RemainingUnionDebt{} -> ()
+        SupplyUnionCredits{} -> ()
 
     genTableVar = QC.elements tableVars
 
@@ -1493,6 +1560,18 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
           MEither (Right (MTable t)) ->
             Map.member (Model.tableID t) (Model.tables st)
       ]
+
+    genUnionedTableVar = QC.elements (unionedTableVars Model.IsUnion)
+    genNonUnionedTableVar = QC.elements (unionedTableVars Model.IsNotUnion)
+
+    -- | Variables for tables that are a (descendant of a) union table, or not.
+    unionedTableVars :: Model.IsUnion -> [Var h (WrapTable h IO k v b)]
+    unionedTableVars target =
+        [ v
+        | v <- tableVars
+        , case lookupVar ctx v of
+            MTable t -> Model.isUnion t == target
+        ]
 
     genCursorVar = QC.elements cursorVars
 
@@ -1580,7 +1659,11 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
      ++ [ (5,  fmap Some $ Duplicate <$> genTableVar)
         | length tableVars <= 5 -- no more than 5 tables at once
         ]
-     ++ [ (2,  fmap Some $ Union <$> genTableVar <*> genTableVar)
+
+    -- | Generate table actions that have to do with unions.
+    genUnionActions :: [(Int, Gen (Any (LockstepAction (ModelState h))))]
+    genUnionActions =
+        [ (2,  fmap Some $ Union <$> genTableVar <*> genTableVar)
         | length tableVars <= 5 -- no more than 5 tables at once
         , False -- TODO: enable once table union is implemented
         ]
@@ -1588,6 +1671,32 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
         | length tableVars <= 5 -- no more than 5 tables at once
         , False -- TODO: enable once table unions is implemented
         ]
+     ++ [ (2,  fmap Some $ RemainingUnionDebt <$> genTableVar')
+        | False -- TODO: enable once table unions is implemented
+        ]
+     ++ [ (10, fmap Some $ SupplyUnionCredits <$> genTableVar' <*> genUnionCredits)
+        | False -- TODO: enable once table unions is implemented
+        ]
+      where
+        -- TODO: tweak distribution once table unions are implemented
+        genTableVar' = QC.frequency [
+            -- The interesting cases to test for are when tables are union
+            -- tables.
+            (6, genUnionedTableVar)
+            -- For non-union tables, querying the union debt or supplying union
+            -- credits are no-ops, so we generate such tables only rarely.
+          , (1, genNonUnionedTableVar)
+          ]
+
+        -- TODO: tweak distribution once table unions are implemented
+        genUnionCredits = QC.frequency [
+            -- The typical, interesting case is to supply a positive number of
+            -- union credits.
+            (9, R.UnionCredits . QC.getPositive <$> QC.arbitrary)
+            -- Supplying 0 or less credits is a no-op, so we generate it only
+            -- rarely.
+          , (1, R.UnionCredits <$> QC.arbitrary)
+          ]
 
     genActionsCursor :: [(Int, Gen (Any (LockstepAction (ModelState h))))]
     genActionsCursor
@@ -1726,6 +1835,8 @@ instance InterpretOp Op (ModelValue (ModelState h)) where
 {-------------------------------------------------------------------------------
   Statistics, labelling/tagging
 -------------------------------------------------------------------------------}
+
+    -- TODO: add tagging of interesting cases for union-related actions.
 
 data Stats = Stats {
     -- === Tags
@@ -1898,6 +2009,8 @@ updateStats action lookUp modelBefore _modelAfter result =
         -- just those that were still open at the end of the sequence of
         -- actions. We do also count Close itself as an action.
         Close tableVar        -> updateCount tableVar
+        RemainingUnionDebt tableVar -> updateCount tableVar
+        SupplyUnionCredits tableVar _ -> updateCount tableVar
 
         -- The others are not counted as table actions. We list them here
         -- explicitly so we don't miss any new ones we might add later.

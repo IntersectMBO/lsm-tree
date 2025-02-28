@@ -19,6 +19,7 @@ module Database.LSMTree.Model.Session (
   , withSomeTable
   , TableID
   , tableID
+  , isUnion
   , Model.size
     -- ** Constraints
   , C
@@ -76,6 +77,7 @@ module Database.LSMTree.Model.Session (
     -- * Multiple writable tables
   , duplicate
     -- * Table union
+  , IsUnion (..)
   , union
   , unions
   , UnionDebt (..)
