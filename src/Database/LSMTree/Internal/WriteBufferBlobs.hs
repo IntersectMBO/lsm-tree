@@ -24,6 +24,8 @@
 --
 module Database.LSMTree.Internal.WriteBufferBlobs (
     WriteBufferBlobs (..),
+    unsafeNew,
+    unsafeOpen,
     new,
     open,
     addBlob,
@@ -44,6 +46,7 @@ import           Database.LSMTree.Internal.BlobFile
 import qualified Database.LSMTree.Internal.BlobFile as BlobFile
 import           Database.LSMTree.Internal.BlobRef (RawBlobRef (..),
                      WeakBlobRef (..))
+import           Database.LSMTree.Internal.FS.File
 import           Database.LSMTree.Internal.Serialise
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
@@ -126,6 +129,29 @@ instance NFData h => NFData (WriteBufferBlobs m h) where
 instance RefCounted m (WriteBufferBlobs m h) where
   getRefCounter = writeBufRefCounter
 
+{-# SPECIALISE unsafeNew :: HasFS IO h -> FS.FsPath -> IO (Ref (WriteBufferBlobs IO h)) #-}
+-- | TODO: replace at use sites by 'new', and then remove this function.
+unsafeNew ::
+     (PrimMonad m, MonadMask m)
+  => HasFS m h
+  -> FS.FsPath
+  -> m (Ref (WriteBufferBlobs m h))
+unsafeNew fs blobFileName = unsafeOpen fs blobFileName FS.MustBeNew
+
+{-# SPECIALISE unsafeOpen :: HasFS IO h -> FS.FsPath -> FS.AllowExisting -> IO (Ref (WriteBufferBlobs IO h)) #-}
+-- | TODO: replace at use sites by 'open', and then remove this function.
+unsafeOpen ::
+     (PrimMonad m, MonadMask m)
+  => HasFS m h
+  -> FS.FsPath
+  -> FS.AllowExisting
+  -> m (Ref (WriteBufferBlobs m h))
+unsafeOpen fs blobFileName blobFileAllowExisting = do
+    bracketOnError
+      (unsafeOpenBlobFile fs blobFileName (FS.ReadWriteMode blobFileAllowExisting))
+      releaseRef
+      (fromBlobFile fs)
+
 {-# SPECIALISE new :: HasFS IO h -> FS.FsPath -> IO (Ref (WriteBufferBlobs IO h)) #-}
 -- | Create a new 'WriteBufferBlobs' with a new file.
 --
@@ -138,10 +164,15 @@ new ::
   => HasFS m h
   -> FS.FsPath
   -> m (Ref (WriteBufferBlobs m h))
-new fs blobFileName = open fs blobFileName FS.MustBeNew
+new fs blobFileName =
+    bracketOnError
+      (newBlobFile fs blobFileName ReadWrite)
+      releaseRef
+      (fromBlobFile fs)
 
-{-# SPECIALISE open :: HasFS IO h -> FS.FsPath -> FS.AllowExisting -> IO (Ref (WriteBufferBlobs IO h)) #-}
--- | Open a `WriteBufferBlobs` file and sets the file pointer to the end of the file.
+{-# SPECIALISE open :: HasFS IO h -> Ref (File IO) -> IO (Ref (WriteBufferBlobs IO h)) #-}
+-- | Open a 'WriteBufferBlobs' file from an existing file and set the file
+-- pointer to the end of the file.
 --
 -- REF: the resulting reference must be released once it is no longer used.
 --
@@ -150,19 +181,18 @@ new fs blobFileName = open fs blobFileName FS.MustBeNew
 open ::
      (PrimMonad m, MonadMask m)
   => HasFS m h
-  -> FS.FsPath
-  -> FS.AllowExisting
+  -> Ref (File m)
   -> m (Ref (WriteBufferBlobs m h))
-open fs blobFileName blobFileAllowExisting = do
+open fs file = do
     -- Must use read/write mode because we write blobs when adding, but
     -- we can also be asked to retrieve blobs at any time.
     bracketOnError
-      (openBlobFile fs blobFileName (FS.ReadWriteMode blobFileAllowExisting))
+      (openBlobFile fs file ReadWrite)
       releaseRef
       (fromBlobFile fs)
 
 {-# SPECIALISE fromBlobFile :: HasFS IO h -> Ref (BlobFile IO h) -> IO (Ref (WriteBufferBlobs IO h)) #-}
--- | Make a `WriteBufferBlobs` from a `BlobFile` and set the file pointer to the
+-- | Make a 'WriteBufferBlobs' from a 'BlobFile' and set the file pointer to the
 -- end of the file.
 --
 -- REF: the resulting reference must be released once it is no longer used.
