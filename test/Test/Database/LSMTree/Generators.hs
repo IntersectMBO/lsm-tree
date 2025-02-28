@@ -19,6 +19,7 @@ import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.PageAcc (entryWouldFitInPage,
                      sizeofEntry)
 import           Database.LSMTree.Internal.RawBytes (RawBytes (..))
+import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.Serialise
 
 import qualified Test.QuickCheck as QC
@@ -42,12 +43,16 @@ tests = testGroup "Test.Database.LSMTree.Generators" [
     , testGroup "Chunk size" $
         prop_arbitraryAndShrinkPreserveInvariant noTags
           chunkSizeInvariant
-    , testGroup "Raw bytes" $
+    , testGroup "RawBytes" $
         [ testProperty "packRawBytesPinnedOrUnpinned"
             prop_packRawBytesPinnedOrUnpinned
         ]
-     ++ prop_arbitraryAndShrinkPreserveInvariant noTags
+     ++ prop_arbitraryAndShrinkPreserveInvariant labelRawBytes
           (deepseqInvariant @RawBytes)
+    , testGroup "LargeRawBytes" $
+        prop_arbitraryAndShrinkPreserveInvariant
+          (\(LargeRawBytes rb) -> labelRawBytes rb)
+          (deepseqInvariant @LargeRawBytes)
     , testGroup "KeyForIndexCompact" $
         prop_arbitraryAndShrinkPreserveInvariant noTags $
           isKeyForIndexCompact . getKeyForIndexCompact
@@ -62,6 +67,10 @@ tests = testGroup "Test.Database.LSMTree.Generators" [
 prop_packRawBytesPinnedOrUnpinned :: Bool -> [Word8] -> Bool
 prop_packRawBytesPinnedOrUnpinned pinned ws =
     packRawBytesPinnedOrUnpinned pinned ws == RawBytes (VP.fromList ws)
+
+labelRawBytes :: RawBytes -> Property -> Property
+labelRawBytes rb =
+    QC.tabulate "size" [showPowersOf 2 (RB.size rb)]
 
 type TestEntry = Entry SerialisedValue BlobSpan
 type TestKOp = (BiasedKeyForIndexCompact, TestEntry)
