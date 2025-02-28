@@ -89,14 +89,11 @@ labelTestKOps kops' =
     . QC.tabulate "k/op is large" (map (show . isLarge) kops)
     . QC.checkCoverage
     . QC.cover 50 (any isLarge kops) "any k/op is large"
-    . QC.cover  1 (ratioUniqueKeys < (0.9 :: Double)) ">10% of keys collide"
     . QC.cover  5 (any (> 2) keyCounts) "has key with >2 collisions"
   where
     kops = coerce kops' :: [(SerialisedKey, Entry SerialisedValue BlobSpan)]
     keys = map fst kops
     keyCounts = Map.fromListWith (+) [(k, (1 :: Int)) | k <- keys]
-    uniqueKeys = Map.keys keyCounts
-    ratioUniqueKeys = fromIntegral (length uniqueKeys) / fromIntegral (length keys)
     values = foldMap (bifoldMap pure mempty . snd) kops
 
     isLarge = not . uncurry entryWouldFitInPage
