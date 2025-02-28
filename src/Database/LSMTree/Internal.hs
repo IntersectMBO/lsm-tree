@@ -1468,7 +1468,7 @@ matchSessions = \(t :| ts) ->
 -- includes the cost of completing merges that were part of the union's input
 -- tables.
 newtype UnionDebt = UnionDebt Int
-  deriving stock (Show, Eq)
+  deriving stock (Show, Eq, Ord)
 
 {-# SPECIALISE remainingUnionDebt :: Table IO h -> IO UnionDebt #-}
 -- | Return the current union debt. This debt can be reduced until it is paid
@@ -1493,7 +1493,7 @@ remainingUnionDebt t = do
 --
 -- A union credit corresponds to a single merging step being performed.
 newtype UnionCredits = UnionCredits Int
-  deriving stock (Show, Eq)
+  deriving stock (Show, Eq, Ord)
 
 {-# SPECIALISE supplyUnionCredits :: Table IO h -> UnionCredits -> IO UnionCredits #-}
 -- | Supply union credits to reduce union debt.
