@@ -13,6 +13,7 @@ import qualified Test.Database.LSMTree.Internal.BloomFilter
 import qualified Test.Database.LSMTree.Internal.Chunk
 import qualified Test.Database.LSMTree.Internal.CRC32C
 import qualified Test.Database.LSMTree.Internal.Entry
+import qualified Test.Database.LSMTree.Internal.FS.File
 import qualified Test.Database.LSMTree.Internal.Index.Compact
 import qualified Test.Database.LSMTree.Internal.Index.Ordinary
 import qualified Test.Database.LSMTree.Internal.Lookup
@@ -60,6 +61,7 @@ main = do
     , Test.Database.LSMTree.Internal.Chunk.tests
     , Test.Database.LSMTree.Internal.CRC32C.tests
     , Test.Database.LSMTree.Internal.Entry.tests
+    , Test.Database.LSMTree.Internal.FS.File.tests
     , Test.Database.LSMTree.Internal.Index.Compact.tests
     , Test.Database.LSMTree.Internal.Index.Ordinary.tests
     , Test.Database.LSMTree.Internal.Lookup.tests

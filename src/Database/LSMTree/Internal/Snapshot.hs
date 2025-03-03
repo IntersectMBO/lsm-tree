@@ -29,7 +29,6 @@ import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Concurrent.Class.MonadSTM (MonadSTM)
 import           Control.DeepSeq (NFData (..))
 import           Control.Exception (assert)
-import           Control.Monad (void)
 import           Control.Monad.Class.MonadST (MonadST)
 import           Control.Monad.Class.MonadThrow (MonadMask)
 import           Control.Monad.Primitive (PrimMonad)
@@ -42,6 +41,7 @@ import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.CRC32C (checkCRC)
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry
+import           Database.LSMTree.Internal.FS.File
 import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.MergeSchedule
@@ -65,7 +65,6 @@ import qualified Database.LSMTree.Internal.WriteBufferReader as WBR
 import qualified Database.LSMTree.Internal.WriteBufferWriter as WBW
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS, (<.>), (</>))
-import qualified System.FS.API.Lazy as FSL
 import qualified System.FS.BlockIO.API as FS
 import           System.FS.BlockIO.API (HasBlockIO)
 
@@ -312,11 +311,15 @@ openWriteBuffer reg resolve hfs hbio uc activeDir snapWriteBufferPaths = do
   activeWriteBufferNumber <- uniqueToInt <$> incrUniqCounter uc
   let activeWriteBufferBlobPath =
         getActiveDir activeDir </> FS.mkFsPath [show activeWriteBufferNumber] <.> "wbblobs"
-  copyFile reg hfs hbio (writeBufferBlobPath snapWriteBufferPaths) activeWriteBufferBlobPath
+  writeBufferBlobFile <-
+    withRollback reg
+      (copyFile hfs (writeBufferBlobPath snapWriteBufferPaths) activeWriteBufferBlobPath)
+      releaseRef
   writeBufferBlobs <-
     withRollback reg
-      (WBB.open hfs activeWriteBufferBlobPath FS.AllowExisting)
+      (WBB.open hfs writeBufferBlobFile)
       releaseRef
+  delayedCommit reg (releaseRef writeBufferBlobFile)
   -- Read write buffer key/ops
   let kOpsPath = ForKOps (writeBufferKOpsPath snapWriteBufferPaths)
   writeBuffer <-
@@ -531,32 +534,3 @@ hardLink reg hfs hbio sourcePath targetPath = do
     withRollback_ reg
       (FS.createHardLink hbio sourcePath targetPath)
       (FS.removeFile hfs targetPath)
-
-{-------------------------------------------------------------------------------
-  Copy file
--------------------------------------------------------------------------------}
-
-{-# SPECIALISE
-  copyFile ::
-       ActionRegistry IO
-    -> HasFS IO h
-    -> HasBlockIO IO h
-    -> FS.FsPath
-    -> FS.FsPath
-    -> IO ()
-  #-}
--- | @'copyFile' reg hfs hbio source target@ copies the @source@ path to the @target@ path.
-copyFile ::
-     (MonadMask m, PrimMonad m)
-  => ActionRegistry m
-  -> HasFS m h
-  -> HasBlockIO m h
-  -> FS.FsPath
-  -> FS.FsPath
-  -> m ()
-copyFile reg hfs _hbio sourcePath targetPath =
-    flip (withRollback_ reg) (FS.removeFile hfs targetPath) $
-      FS.withFile hfs sourcePath FS.ReadMode $ \sourceHandle ->
-        FS.withFile hfs targetPath (FS.WriteMode FS.MustBeNew) $ \targetHandle -> do
-          bs <- FSL.hGetAll hfs sourceHandle
-          void $ FSL.hPutAll hfs targetHandle bs
