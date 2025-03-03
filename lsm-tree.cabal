@@ -110,7 +110,16 @@ common bloom-query-fast
     cpp-options: -DBLOOM_QUERY_FAST
 
 library
+  reexported-modules:
+    Database.LSMTree,
+    Database.LSMTree.Monoidal,
+    Database.LSMTree.Normal
+
+  build-depends:      lsm-tree:internal
+
+library internal
   import:          language, warnings, wno-x-partial, bloom-query-fast
+  visibility:      private
   hs-source-dirs:  src
   exposed-modules:
     Data.Arena
@@ -327,10 +336,10 @@ library extras
     , fs-sim
     , io-classes:strict-mvar
     , io-classes:strict-stm
-    , lsm-tree
     , lsm-tree:blockio-api
     , lsm-tree:bloomfilter
     , lsm-tree:control
+    , lsm-tree:internal
     , lsm-tree:kmerge
     , lsm-tree:prototypes
     , nothunks
@@ -425,12 +434,12 @@ test-suite lsm-tree-test
     , io-classes:strict-mvar
     , io-classes:strict-stm
     , io-sim
-    , lsm-tree
     , lsm-tree:blockio-api
     , lsm-tree:blockio-sim
     , lsm-tree:bloomfilter
     , lsm-tree:control
     , lsm-tree:extras
+    , lsm-tree:internal
     , lsm-tree:monkey
     , lsm-tree:prototypes
     , mtl
@@ -487,11 +496,11 @@ benchmark lsm-tree-micro-bench
     , deepseq
     , directory
     , fs-api
-    , lsm-tree
     , lsm-tree:blockio-api
     , lsm-tree:bloomfilter
     , lsm-tree:control
     , lsm-tree:extras
+    , lsm-tree:internal
     , QuickCheck
     , random
     , temporary
@@ -506,9 +515,9 @@ benchmark lsm-tree-bench-bloomfilter
   main-is:        lsm-tree-bench-bloomfilter.hs
   build-depends:
     , base
-    , lsm-tree
     , lsm-tree:bloomfilter
     , lsm-tree:extras
+    , lsm-tree:internal
     , lsm-tree:monkey
     , random
     , time
@@ -527,11 +536,11 @@ benchmark lsm-tree-bench-lookups
     , deepseq
     , fs-api
     , io-classes
-    , lsm-tree
     , lsm-tree:blockio-api
     , lsm-tree:bloomfilter
     , lsm-tree:control
     , lsm-tree:extras
+    , lsm-tree:internal
     , primitive
     , random
     , time
@@ -573,9 +582,9 @@ benchmark lsm-tree-bench-wp8
     , contra-tracer
     , deepseq
     , fs-api
-    , lsm-tree
     , lsm-tree:blockio-api
     , lsm-tree:extras
+    , lsm-tree:internal
     , lsm-tree:mcg
     , optparse-applicative
     , pretty-show
@@ -695,10 +704,10 @@ test-suite map-range-test
   hs-source-dirs: test
   main-is:        map-range-test.hs
   build-depends:
-    , base              >=4.14 && <4.22
+    , base               >=4.14 && <4.22
     , bytestring
     , containers
-    , lsm-tree
+    , lsm-tree:internal
     , QuickCheck
     , tasty
     , tasty-hunit
