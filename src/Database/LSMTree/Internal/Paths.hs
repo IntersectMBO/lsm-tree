@@ -79,8 +79,8 @@ newtype ActiveDir = ActiveDir { getActiveDir :: FsPath }
 activeDir :: SessionRoot -> ActiveDir
 activeDir (SessionRoot dir) = ActiveDir (dir </> mkFsPath ["active"])
 
-runPath :: SessionRoot -> RunNumber -> RunFsPaths
-runPath root = RunFsPaths (getActiveDir (activeDir root))
+runPath :: ActiveDir -> RunNumber -> RunFsPaths
+runPath (ActiveDir dir) = RunFsPaths dir
 
 snapshotsDir :: SessionRoot -> FsPath
 snapshotsDir (SessionRoot dir) = dir </> mkFsPath ["snapshots"]

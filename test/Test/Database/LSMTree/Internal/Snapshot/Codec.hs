@@ -16,7 +16,7 @@ import           Database.LSMTree.Extras.Generators ()
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.MergeSchedule
-import           Database.LSMTree.Internal.MergingRun hiding (SuppliedCredits)
+import           Database.LSMTree.Internal.MergingRun
 import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.Snapshot
 import           Database.LSMTree.Internal.Snapshot.Codec
@@ -171,7 +171,8 @@ testAll test = [
     , test (Proxy @NumRuns)
     , test (Proxy @MergePolicyForLevel)
     , test (Proxy @(SnapMergingRunState LevelMergeType RunNumber))
-    , test (Proxy @SuppliedCredits)
+    , test (Proxy @MergeDebt)
+    , test (Proxy @NominalCredits)
     , test (Proxy @LevelMergeType)
     , test (Proxy @TreeMergeType)
     ]
@@ -300,5 +301,19 @@ instance Arbitrary t => Arbitrary (SnapMergingRunState t RunNumber) where
   shrink (SnapOngoingMerge x y) =
       [ SnapOngoingMerge x' y' | (x', y') <- shrink (x, y) ]
 
-deriving newtype instance Arbitrary SuppliedCredits
+deriving newtype instance Arbitrary MergeDebt
+deriving newtype instance Arbitrary MergeCredits
+deriving newtype instance Arbitrary NominalCredits
 
+{-------------------------------------------------------------------------------
+  Show
+-------------------------------------------------------------------------------}
+
+deriving stock instance Show SnapshotMetaData
+deriving stock instance Show r => Show (SnapLevels r)
+deriving stock instance Show r => Show (SnapLevel r)
+deriving stock instance Show r => Show (SnapIncomingRun r)
+deriving stock instance (Show t, Show r) => Show (SnapMergingRunState t r)
+deriving stock instance Show MergeDebt
+deriving stock instance Show MergeCredits
+deriving stock instance Show NominalCredits
