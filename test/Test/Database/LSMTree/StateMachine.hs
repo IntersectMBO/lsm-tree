@@ -56,6 +56,9 @@ module Test.Database.LSMTree.StateMachine (
   , propLockstep_RealImpl_RealFS_IO
   , propLockstep_RealImpl_MockFS_IO
   , propLockstep_RealImpl_MockFS_IOSim
+  , CheckCleanup (..)
+  , CheckFS (..)
+  , CheckRefs (..)
     -- * Lockstep
   , ModelState (..)
   , Key (..)
@@ -73,7 +76,6 @@ import           Control.Applicative (Alternative (..))
 import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Concurrent.Class.MonadSTM.Strict
 import           Control.Exception (assert)
-import qualified Control.Exception
 import           Control.Monad (forM_, void, (<=<))
 import           Control.Monad.Class.MonadThrow (Exception (..), Handler (..),
                      MonadCatch (..), MonadThrow (..), SomeException, catches,
@@ -163,10 +165,10 @@ tests = testGroup "Test.Database.LSMTree.StateMachine" [
         propLockstep_RealImpl_RealFS_IO nullTracer
 
     , testProperty "propLockstep_RealImpl_MockFS_IO" $
-        propLockstep_RealImpl_MockFS_IO nullTracer
+        propLockstep_RealImpl_MockFS_IO nullTracer CheckCleanup CheckFS CheckRefs
 
     , testProperty "propLockstep_RealImpl_MockFS_IOSim" $
-        propLockstep_RealImpl_MockFS_IOSim nullTracer
+        propLockstep_RealImpl_MockFS_IOSim nullTracer CheckCleanup CheckFS CheckRefs
     ]
 
 labelledExamples :: IO ()
@@ -189,6 +191,8 @@ propLockstep_ModelIOImpl ::
 propLockstep_ModelIOImpl =
     runActionsBracket
       (Proxy @(ModelState ModelIO.Table))
+      CheckCleanup
+      NoCheckRefs -- there are no references to check for in the ModelIO implementation
       acquire
       release
       (\r (session, errsVar, logVar) -> do
@@ -292,6 +296,8 @@ propLockstep_RealImpl_RealFS_IO ::
 propLockstep_RealImpl_RealFS_IO tr =
     runActionsBracket
       (Proxy @(ModelState R.Table))
+      CheckCleanup
+      CheckRefs
       acquire
       release
       (\r (_, session, errsVar, logVar) -> do
@@ -328,13 +334,18 @@ propLockstep_RealImpl_RealFS_IO tr =
 
 propLockstep_RealImpl_MockFS_IO ::
      Tracer IO R.LSMTreeTrace
+  -> CheckCleanup
+  -> CheckFS
+  -> CheckRefs
   -> Actions (Lockstep (ModelState R.Table))
   -> QC.Property
-propLockstep_RealImpl_MockFS_IO tr =
+propLockstep_RealImpl_MockFS_IO tr cleanupFlag fsFlag refsFlag =
     runActionsBracket
       (Proxy @(ModelState R.Table))
+      cleanupFlag
+      refsFlag
       (acquire_RealImpl_MockFS tr)
-      release_RealImpl_MockFS
+      (release_RealImpl_MockFS fsFlag)
       (\r (_, session, errsVar, logVar) -> do
             faultsVar <- newMutVar []
             let
@@ -362,9 +373,12 @@ propLockstep_RealImpl_MockFS_IO tr =
 -- the counterexamples to see which one is more interesting.
 propLockstep_RealImpl_MockFS_IOSim ::
      (forall s. Tracer (IOSim s) R.LSMTreeTrace)
+  -> CheckCleanup
+  -> CheckFS
+  -> CheckRefs
   -> Actions (Lockstep (ModelState R.Table))
   -> QC.Property
-propLockstep_RealImpl_MockFS_IOSim tr actions =
+propLockstep_RealImpl_MockFS_IOSim tr cleanupFlag fsFlag refsFlag actions =
     monadicIOSim_ prop
   where
     prop :: forall s. PropertyM (IOSim s) Property
@@ -384,11 +398,13 @@ propLockstep_RealImpl_MockFS_IOSim tr actions =
                 (QD.runActions @(Lockstep (ModelState R.Table)) actions)
                 env
         faults <- QC.run $ readMutVar faultsVar
-        p <- QC.run $ release_RealImpl_MockFS (fsVar, session, errsVar, logVar)
+        p <- QC.run $ propCleanup cleanupFlag $
+          release_RealImpl_MockFS fsFlag (fsVar, session, errsVar, logVar)
+        p' <- QC.run $ propRefs refsFlag
         pure
           $ tagFinalState actions tagFinalState'
           $ QC.tabulate "Fault results" (fmap show faults)
-          $ p
+          $ p QC..&&. p'
 
 acquire_RealImpl_MockFS ::
      R.IOLike m
@@ -402,11 +418,15 @@ acquire_RealImpl_MockFS tr = do
     session <- R.openSession tr hfs hbio (mkFsPath [])
     pure (fsVar, session, errsVar, logVar)
 
+-- | Flag that turns on\/off file system checks.
+data CheckFS = CheckFS | NoCheckFS
+
 release_RealImpl_MockFS ::
      R.IOLike m
-  => (StrictTMVar m MockFS, Class.Session R.Table m, StrictTVar m Errors, StrictTVar m ErrorsLog)
+  => CheckFS
+  -> (StrictTMVar m MockFS, Class.Session R.Table m, StrictTVar m Errors, StrictTVar m ErrorsLog)
   -> m Property
-release_RealImpl_MockFS (fsVar, session, _, _) = do
+release_RealImpl_MockFS fsFlag (fsVar, session, _, _) = do
     sts <- getAllSessionTables session
     forM_ sts $ \(SomeTable t) -> R.close t
     scs <- getAllSessionCursors session
@@ -414,7 +434,9 @@ release_RealImpl_MockFS (fsVar, session, _, _) = do
     mockfs1 <- atomically $ readTMVar fsVar
     R.closeSession session
     mockfs2 <- atomically $ readTMVar fsVar
-    pure (propNumOpenHandles 1 mockfs1 QC..&&. propNoOpenHandles mockfs2)
+    pure $ case fsFlag of
+      CheckFS -> propNumOpenHandles 1 mockfs1 QC..&&. propNoOpenHandles mockfs2
+      NoCheckFS -> QC.property ()
 
 data SomeTable m = SomeTable (forall k v b. R.Table m k v b)
 data SomeCursor m = SomeCursor (forall k v b. R.Cursor m k v b)
@@ -2773,29 +2795,30 @@ runActionsBracket ::
      , QC.Testable prop
      )
   => Proxy state
+  -> CheckCleanup
+  -> CheckRefs
   -> IO st
   -> (st -> IO prop)
   -> (m QC.Property -> st -> IO QC.Property)
   -> (Lockstep state -> [(String, [FinalTag])])
   -> Actions (Lockstep state) -> QC.Property
-runActionsBracket p init cleanup runner tagger actions =
+runActionsBracket p cleanupFlag refsFlag init cleanup runner tagger actions =
     tagFinalState actions tagger
   $ QLS.runActionsBracket p init cleanup' runner actions
   where
     cleanup' st = do
-      x <- cleanup st `onException` ignoreForgottenRefs
-      -- We want to do checkForgottenRefs after cleanup, since cleanup itself
-      -- may lead to forgotten refs. And checkForgottenRefs has the crucial
-      -- side effect of reseting the forgotten refs state. If we don't do this
-      -- then the next test run (e.g. during shrinking) will encounter a
+      -- We want to run forgotten reference checks after cleanup, since cleanup
+      -- itself may lead to forgotten refs. The reference checks have the
+      -- crucial side effect of reseting the forgotten refs state. If we don't
+      -- do this then the next test run (e.g. during shrinking) will encounter a
       -- false/stale forgotten refs exception. But we also have to make sure
-      -- that if cleanup itself fails, that we reset the forgotten refs state!
-      e <- Control.Exception.try checkForgottenRefs
-      pure (x QC..&&. propCheckForgottenRefs e)
-
-    propCheckForgottenRefs :: Either RefException () -> Property
-    propCheckForgottenRefs (Left e)   = QC.counterexample (show e) False
-    propCheckForgottenRefs (Right ()) = QC.property True
+      -- that if cleanup itself fails, that we still run the reference checks.
+      -- 'propCleanup' will make sure to catch any exceptions that are thrown by
+      -- the 'cleanup' action. 'propRefs' will then definitely run afterwards so
+      -- that the frogotten reference checks are definitely performed.
+      x <- propCleanup cleanupFlag $ cleanup st
+      y <- propRefs refsFlag
+      pure (x QC..&&. y)
 
 tagFinalState ::
      forall state. StateModel (Lockstep state)
@@ -2810,3 +2833,50 @@ tagFinalState actions tagger =
     finalAnnState = stateAfter @(Lockstep state) actions
 
     finalTags = tagger $ underlyingState finalAnnState
+
+propException :: (Exception e, QC.Testable prop) => String -> Either e prop -> Property
+propException s (Left e)     = QC.counterexample (s <> displayException e) False
+propException _ (Right prop) = QC.property prop
+
+{-------------------------------------------------------------------------------
+  Cleanup exceptions
+-------------------------------------------------------------------------------}
+
+-- | Flag that turns on\/off cleanup checks.
+--
+-- If injected errors left the database in an inconsistent state, then property
+-- cleanup might throw exceptions. If 'CheckCleanup' is used, this will lead to
+-- failing properties, otherwise the exceptions are ignored.
+data CheckCleanup = CheckCleanup | NoCheckCleanup
+
+propCleanup :: (MonadCatch m, QC.Testable prop) => CheckCleanup -> m prop -> m Property
+propCleanup flag cleanupAction =
+    propException "Cleanup exception: " <$> checkCleanupM flag cleanupAction
+
+checkCleanupM :: (MonadCatch m, QC.Testable prop) => CheckCleanup -> m prop -> m (Either SomeException Property)
+checkCleanupM flag cleanupAction = do
+    eith <- try @_ @SomeException cleanupAction
+    case flag of
+      CheckCleanup   -> pure $ QC.property <$> eith
+      NoCheckCleanup -> pure (Right $ QC.property ())
+
+{-------------------------------------------------------------------------------
+  Reference checks
+-------------------------------------------------------------------------------}
+
+-- | Flag that turns on\/off reference checks.
+--
+-- If injected errors left the database in an inconsistent state, then some
+-- references might be forgotten, which leads to reference exceptions. If
+-- 'CheckRefs' is used, this will lead to failing properties, otherwise the
+-- exceptions are ignored.
+data CheckRefs = CheckRefs | NoCheckRefs
+
+propRefs :: (PrimMonad m, MonadCatch m) => CheckRefs -> m Property
+propRefs flag = propException "Reference exception: " <$> checkRefsM flag
+
+checkRefsM :: (PrimMonad m, MonadCatch m) => CheckRefs -> m (Either RefException ())
+checkRefsM flag = case flag of
+    CheckRefs   -> try checkForgottenRefs
+    NoCheckRefs -> Right <$> ignoreForgottenRefs
+

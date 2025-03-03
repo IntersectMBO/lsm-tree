@@ -25,7 +25,6 @@ import           Test.Util.PrettyProxy
 
 tests :: TestTree
 tests = testGroup "Test.Database.LSMTree.StateMachine.DL" [
-
       QC.testProperty "prop_example" prop_example
     ]
 
@@ -44,7 +43,7 @@ prop_example =
     -- Run the example ...
     forAllDL dl_example $
     -- ... with the given lockstep property
-    propLockstep_RealImpl_MockFS_IO tr
+    propLockstep_RealImpl_MockFS_IO tr CheckCleanup CheckFS CheckRefs
   where
     -- To enable tracing, use something like @show `contramap` stdoutTracer@
     -- instead
