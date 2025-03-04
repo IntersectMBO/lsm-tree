@@ -10,7 +10,7 @@
 
 `lsm-tree` is a project that is developed by Well-Typed LLP on behalf of Input
 Output Global Inc (IOG). The main contributors are Duncan Coutts, Joris Dral,
-and Matthias Heinzel.
+Matthias Heinzel, Wolfgang Jeltsch, Wen Kokke, and Alex Washburn.
 
 The `lsm-tree` library is a Haskell implementation of [log-structured
 merge-trees](https://en.wikipedia.org/wiki/Log-structured_merge-tree), based on
