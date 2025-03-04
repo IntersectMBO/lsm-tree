@@ -8,7 +8,7 @@ license-file:       LICENSE
 author:
   Duncan Coutts, Joris Dral, Matthias Heinzel, Wolfgang Jeltsch, Wen Kokke, and Alex Washburn
 
-maintainer:         Duncan Coutts, Joris Dral, Matthias Heinzel
+maintainer:         TODO: MAINTAINER EMAIL
 copyright:          2023 Input Output Global Inc (IOG), INTERSECT 2023-2024
 category:           Database
 build-type:         Simple
