@@ -26,11 +26,11 @@ module Database.LSMTree.Internal.MergeSchedule (
   , IncomingRun (..)
   , MergePolicyForLevel (..)
   , newIncomingSingleRun
-  , newIncomingCompletedMergingRun
   , newIncomingMergingRun
   , releaseIncomingRun
   , supplyCreditsIncomingRun
   , snapshotIncomingRun
+  , mergingRunParamsForLevel
     -- * Union level
   , UnionLevel (..)
     -- * Flushes and scheduled merges
@@ -45,6 +45,8 @@ module Database.LSMTree.Internal.MergeSchedule (
   , creditThresholdForLevel
   , NominalDebt (..)
   , NominalCredits (..)
+  , nominalDebtAsCredits
+  , nominalDebtForLevel
     -- * Exported for testing
   , addWriteBufferEntries
   ) where
@@ -67,14 +69,14 @@ import           Database.LSMTree.Internal.Assertions (assert)
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.Entry (Entry, NumEntries (..),
                      unNumEntries)
-import           Database.LSMTree.Internal.Index (Index)
+import           Database.LSMTree.Internal.Index (Index, IndexType)
 import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
 import           Database.LSMTree.Internal.MergingRun (MergeCredits (..),
                      MergeDebt (..), MergingRun, NumRuns (..))
 import qualified Database.LSMTree.Internal.MergingRun as MR
 import           Database.LSMTree.Internal.MergingTree (MergingTree)
 import           Database.LSMTree.Internal.Paths (ActiveDir, RunFsPaths (..),
-                     SessionRoot (..))
+                     SessionRoot)
 import qualified Database.LSMTree.Internal.Paths as Paths
 import           Database.LSMTree.Internal.Run (Run, RunDataCaching (..))
 import qualified Database.LSMTree.Internal.Run as Run
@@ -119,9 +121,6 @@ data MergeTrace =
       MergePolicyForLevel
       MR.LevelMergeType
   | TraceNewMergeSingleRun
-      NumEntries -- ^ Size of run
-      RunNumber
-  | TraceNewMergeCompletedRun
       NumEntries -- ^ Size of run
       RunNumber
   | TraceCompletedMerge  -- TODO: currently not traced for Incremental merges
@@ -414,100 +413,23 @@ releaseIncomingRun ::
 releaseIncomingRun (Single         r) = releaseRef r
 releaseIncomingRun (Merging _ _ _ mr) = releaseRef mr
 
-{-# SPECIALISE newIncomingSingleRun ::
-     Tracer IO (AtLevel MergeTrace)
-  -> LevelNo
-  -> Ref (Run IO h)
-  -> IO (IncomingRun IO h) #-}
+{-# INLINE newIncomingSingleRun #-}
 newIncomingSingleRun ::
      (PrimMonad m, MonadThrow m)
-  => Tracer m (AtLevel MergeTrace)
-  -> LevelNo
-  -> Ref (Run m h)
+  => Ref (Run m h)
   -> m (IncomingRun m h)
-newIncomingSingleRun tr ln r = do
-    r' <- dupRef r
-    traceWith tr $ AtLevel ln $
-      TraceNewMergeSingleRun (Run.size r') (Run.runFsPathsNumber r')
-    return (Single r')
+newIncomingSingleRun r = Single <$> dupRef r
 
-{-# SPECIALISE newIncomingCompletedMergingRun ::
-     Tracer IO (AtLevel MergeTrace)
-  -> TableConfig
-  -> LevelNo
-  -> MergePolicyForLevel
-  -> NumRuns
-  -> MergeDebt
-  -> Ref (Run IO h)
-  -> IO (IncomingRun IO h) #-}
-newIncomingCompletedMergingRun ::
-    (MonadMask m, MonadMVar m, MonadSTM m, MonadST m)
-  => Tracer m (AtLevel MergeTrace)
-  -> TableConfig
-  -> LevelNo
-  -> MergePolicyForLevel
-  -> NumRuns
-  -> MergeDebt
-  -> Ref (Run m h)
-  -> m (IncomingRun m h)
-newIncomingCompletedMergingRun tr conf ln mergePolicy nr mergeDebt r = do
-    traceWith tr $ AtLevel ln $
-      TraceNewMergeCompletedRun (Run.size r) (Run.runFsPathsNumber r)
-    mr <- MR.newCompleted nr mergeDebt r
-    let nominalDebt    = nominalDebtForLevel conf ln
-        nominalCredits = nominalDebtAsCredits nominalDebt
-    nominalCreditsVar <- newPrimVar nominalCredits
-    return (Merging mergePolicy nominalDebt nominalCreditsVar mr)
-
-{-# SPECIALISE newIncomingMergingRun ::
-     Tracer IO (AtLevel MergeTrace)
-  -> HasFS IO h
-  -> HasBlockIO IO h
-  -> ActiveDir
-  -> UniqCounter IO
-  -> TableConfig
-  -> ResolveSerialisedValue
-  -> MergePolicyForLevel
-  -> MR.LevelMergeType
-  -> LevelNo
-  -> V.Vector (Ref (Run IO h))
-  -> IO (IncomingRun IO h) #-}
+{-# INLINE newIncomingMergingRun #-}
 newIncomingMergingRun ::
-     (MonadMask m, MonadMVar m, MonadSTM m, MonadST m)
-  => Tracer m (AtLevel MergeTrace)
-  -> HasFS m h
-  -> HasBlockIO m h
-  -> ActiveDir
-  -> UniqCounter m
-  -> TableConfig
-  -> ResolveSerialisedValue
-  -> MergePolicyForLevel
-  -> MR.LevelMergeType
-  -> LevelNo
-  -> V.Vector (Ref (Run m h))
+     PrimMonad m
+  => MergePolicyForLevel
+  -> NominalDebt
+  -> Ref (MergingRun MR.LevelMergeType m h)
   -> m (IncomingRun m h)
-newIncomingMergingRun tr hfs hbio activeDir uc
-                      conf@TableConfig {
-                             confDiskCachePolicy,
-                             confFencePointerIndex
-                           }
-                      resolve mergePolicy mergeType ln rs = do
-    !rn <- uniqueToRunNumber <$> incrUniqCounter uc
-    let !caching   = diskCachePolicyForLevel confDiskCachePolicy ln
-        !alloc     = bloomFilterAllocForLevel conf ln
-        !indexType = indexTypeForRun confFencePointerIndex
-        !runPaths  = Paths.runPath activeDir rn
-    traceWith tr $ AtLevel ln $
-      TraceNewMerge (V.map Run.size rs) (runNumber runPaths)
-                    caching alloc mergePolicy mergeType
-    mr <- MR.new hfs hbio resolve caching
-                 alloc indexType mergeType
-                 runPaths rs
-    let nominalDebt    = nominalDebtForLevel conf ln
-        nominalCredits = NominalCredits 0
-    nominalCreditsVar <- newPrimVar nominalCredits
-    assert (MR.totalMergeDebt mr <= maxMergeDebt conf mergePolicy ln) $
-      return (Merging mergePolicy nominalDebt nominalCreditsVar mr)
+newIncomingMergingRun mergePolicy nominalDebt mr = do
+    nominalCreditsVar <- newPrimVar (NominalCredits 0)
+    return (Merging mergePolicy nominalDebt nominalCreditsVar mr)
 
 {-# SPECIALISE supplyCreditsIncomingRun ::
      TableConfig
@@ -1063,13 +985,9 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels ul
              -> m (IncomingRun m h)
     newMerge mergePolicy mergeType ln rs = do
       ir <- withRollback reg
-              (case V.uncons rs of
-                Just (r, rest) | V.null rest
-                  -> newIncomingSingleRun tr ln r
-                _ -> newIncomingMergingRun tr hfs hbio
-                                           (Paths.activeDir root) uc
-                                           conf resolve mergePolicy mergeType
-                                           ln rs)
+              (newIncomingRunAtLevel tr hfs hbio
+                                     root uc conf resolve
+                                     mergePolicy mergeType ln rs)
               releaseIncomingRun
       -- The runs will end up inside the incoming/merging run, with fresh
       -- references (since newIncoming* will make duplicates).
@@ -1079,6 +997,81 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels ul
         Incremental -> pure ()
         OneShot     -> immediatelyCompleteIncomingRun tr conf ln ir
       return ir
+{-# SPECIALISE newIncomingRunAtLevel ::
+     Tracer IO (AtLevel MergeTrace)
+  -> HasFS IO h
+  -> HasBlockIO IO h
+  -> SessionRoot
+  -> UniqCounter IO
+  -> TableConfig
+  -> ResolveSerialisedValue
+  -> MergePolicyForLevel
+  -> MR.LevelMergeType
+  -> LevelNo
+  -> V.Vector (Ref (Run IO h))
+  -> IO (IncomingRun IO h) #-}
+newIncomingRunAtLevel ::
+     (MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
+  => Tracer m (AtLevel MergeTrace)
+  -> HasFS m h
+  -> HasBlockIO m h
+  -> SessionRoot
+  -> UniqCounter m
+  -> TableConfig
+  -> ResolveSerialisedValue
+  -> MergePolicyForLevel
+  -> MR.LevelMergeType
+  -> LevelNo
+  -> V.Vector (Ref (Run m h))
+  -> m (IncomingRun m h)
+newIncomingRunAtLevel tr hfs hbio
+                      root uc conf resolve
+                      mergePolicy mergeType ln rs
+  | Just (r, rest) <- V.uncons rs, V.null rest = do
+
+    traceWith tr $ AtLevel ln $
+      TraceNewMergeSingleRun (Run.size r) (Run.runFsPathsNumber r)
+
+    newIncomingSingleRun r
+
+  | otherwise = do
+
+    uniq <- incrUniqCounter uc
+    let (caching, alloc, indexType, runPaths) =
+          mergingRunParamsForLevel (Paths.activeDir root) conf uniq ln
+
+    traceWith tr $ AtLevel ln $
+      TraceNewMerge (V.map Run.size rs) (runNumber runPaths)
+                    caching alloc mergePolicy mergeType
+
+    mr <- MR.new hfs hbio resolve caching
+                 alloc indexType mergeType
+                 runPaths rs
+
+    assert (MR.totalMergeDebt mr <= maxMergeDebt conf mergePolicy ln) $ pure ()
+
+    let nominalDebt = nominalDebtForLevel conf ln
+    newIncomingMergingRun mergePolicy nominalDebt mr
+
+mergingRunParamsForLevel ::
+     ActiveDir
+  -> TableConfig
+  -> Unique
+  -> LevelNo
+  -> (RunDataCaching, RunBloomFilterAlloc, IndexType, RunFsPaths)
+mergingRunParamsForLevel dir
+                         conf@TableConfig {
+                                confDiskCachePolicy,
+                                confFencePointerIndex
+                         }
+                         unique ln =
+    (caching, alloc, indexType, runPaths)
+  where
+    !caching   = diskCachePolicyForLevel confDiskCachePolicy ln
+    !alloc     = bloomFilterAllocForLevel conf ln
+    !indexType = indexTypeForRun confFencePointerIndex
+    !runNum    = uniqueToRunNumber unique
+    !runPaths  = Paths.runPath dir runNum
 
 -- | We use levelling on the last level, unless that is also the first level.
 mergePolicyForLevel ::

@@ -32,7 +32,6 @@ import           Control.Monad.Class.MonadST (MonadST)
 import           Control.Monad.Class.MonadThrow (MonadMask, bracketOnError)
 import           Control.Monad.Primitive (PrimMonad)
 import           Control.RefCount
-import           Control.Tracer (Tracer, nullTracer)
 import           Data.Foldable (sequenceA_, traverse_)
 import           Data.Text (Text)
 import           Data.Traversable (for)
@@ -467,8 +466,6 @@ fromSnapLevels reg hfs hbio conf uc resolve dir (SnapLevels levels) =
     V.iforM levels $ \i -> fromSnapLevel (LevelNo (i+1))
   where
     -- TODO: we may wish to trace the merges created during snapshot restore:
-    tr :: Tracer m (AtLevel MergeTrace)
-    tr = nullTracer
 
     fromSnapLevel :: LevelNo -> SnapLevel (Ref (Run m h)) -> m (Level m h)
     fromSnapLevel ln SnapLevel{snapIncoming, snapResidentRuns} = do
@@ -485,23 +482,40 @@ fromSnapLevels reg hfs hbio conf uc resolve dir (SnapLevels levels) =
          LevelNo
       -> SnapIncomingRun (Ref (Run m h))
       -> m (IncomingRun m h)
-    fromSnapIncomingRun ln (SnapSingleRun run) =
-        newIncomingSingleRun tr ln run
+    fromSnapIncomingRun _ln (SnapSingleRun run) =
+        newIncomingSingleRun run
 
-    fromSnapIncomingRun ln (SnapMergingRun mpfl nr md _nc
-                                           (SnapCompletedMerge r)) =
-      newIncomingCompletedMergingRun tr conf ln mpfl nr md r
+    fromSnapIncomingRun ln (SnapMergingRun mergePolicy nr mergeDebt _nc
+                                           (SnapCompletedMerge r)) = do
+      mr <- MR.newCompleted nr mergeDebt r
+      let nominalDebt    = nominalDebtForLevel conf ln
+          nominalCredits = nominalDebtAsCredits nominalDebt
+      ir <- newIncomingMergingRun mergePolicy nominalDebt mr
+      -- This will do no real work, since the mr is completed, it'll just
+      -- set the final nominal credits
+      supplyCreditsIncomingRun conf ln ir nominalCredits
+      return ir
 
-    fromSnapIncomingRun ln (SnapMergingRun mpfl _nr _md nc
-                                           (SnapOngoingMerge rs mt)) = do
-      bracketOnError (newIncomingMergingRun tr hfs hbio dir uc
-                                  conf resolve
-                                  mpfl mt ln rs) releaseIncomingRun $ \ir -> do
-        -- When a snapshot is created, merge progress is lost, so we have to
-        -- redo merging work here. The MergeCredits in SnapMergingRun tracks
-        -- how many credits were supplied before the snapshot was taken.
-        supplyCreditsIncomingRun conf ln ir nc
-        return ir
+    fromSnapIncomingRun ln (SnapMergingRun mergePolicy _nr _md nc
+                                           (SnapOngoingMerge rs mergeType)) =
+      bracketOnError
+        (do uniq <- incrUniqCounter uc
+            let (caching, alloc, indexType, runPaths) =
+                  mergingRunParamsForLevel dir conf uniq ln
+            MR.new hfs hbio resolve caching
+                alloc indexType mergeType
+                runPaths rs)
+        releaseRef $ \mr -> do
+
+          let nominalDebt = nominalDebtForLevel conf ln
+          ir <- newIncomingMergingRun mergePolicy nominalDebt mr
+
+          -- When a snapshot is created, merge progress is lost, so we have to
+          -- redo merging work here. The MergeCredits in SnapMergingRun tracks
+          -- how many credits were supplied before the snapshot was taken.
+          --TODO: bracketOnError the MR.new for this:
+          supplyCreditsIncomingRun conf ln ir nc
+          return ir
 
 {-------------------------------------------------------------------------------
   Hard links
