@@ -1,8 +1,99 @@
 cabal-version:      3.4
 name:               lsm-tree
 version:            0.1.0.0
-synopsis:           Log-structured merge-tree
-description:        Log-structured merge-tree.
+synopsis:           Log-structured merge-trees
+description:
+  This package contains an efficient implementation of on-disk key\/value storage, implemented as a log-structured merge-tree or LSM-tree.
+  An LSM-tree is a data structure for key\/value mappings, similar to "Data.Map", but optimized for large tables with a high insertion volume.
+  It has support for:
+  
+  *   Basic key\/value operations, such as lookup, insert, and delete.
+  *   Range lookups, which efficiently retrieve the values for all keys in a given range.
+  *   Monoidal upserts (or \"mupserts\") which combine the stored and new values.
+  *   BLOB storage which assocates a large auxiliary BLOB with a key.
+  *   Durable on-disk persistence and rollback via named snapshots.
+  *   Cheap table duplication where all duplicates can be independently accessed and modified.
+  *   High-performance lookups on SSDs using I\/O batching and parallelism.
+
+  This package exports two modules:
+
+  *   "Database.LSMTree.Simple"
+
+      This module exports a simplified API which picks sensible defaults for a number of configuration parameters.
+      
+      It does not support mupserts or BLOBs, due to their unintuitive interaction, see [Mupserts and BLOBs](#mupsertsandblobs).
+
+      If you are looking at this package for the first time, it is strongly recommended that you start by reading this module.
+
+  *   "Database.LSMTree"
+
+      This module exports the full API.
+
+  == Mupserts and BLOBs #mupsertsandblobs#
+
+  The interaction between mupserts and BLOBs is unintuitive.
+  A mupsert updates the value stored for a key by combining its old value and new value.  
+  However, this does not apply to any associated BLOB, which is simply overwritten.
+
+  == Portability #portability#
+
+  * This package only supports 64-bit, little-endian systems.
+  * On Windows, the package has only been tested with NTFS filesystems.
+  * On Linux, executables using this package, including test and benchmark suites, must be compiled with the [@-threaded@](https://downloads.haskell.org/ghc/latest/docs/users_guide/phases.html#ghc-flag-threaded) RTS option enabled.
+
+  == Concurrency #concurrency#
+
+  LSM-trees can be used concurrently, but with a few restrictions:
+  Each session locks its database to the current process.
+  This means that the same database cannot be accessed from different processes at the same time.
+  Tables can be used concurrently and concurrent use of lookups is determinstic, but concurrent use of insert or delete with any other operation results in a race condition.
+
+  == Performance #performance#
+
+  The time and space complexities are given in [big-O notation](http://en.wikipedia.org/wiki/Big_O_notation).
+  The time cost of operations on LSM-trees is generally dominated by the number of disk I\/O actions.
+  As such, the complexity bounds on functions in this library are in reference to the number of disk I\/O actions.
+
+  TODO: describe the time complexity of the basic operations.
+
+  The in-memory size of an LSM-tree is \(O(n)\), i.e., linear in the number of physical entries \(n\).
+  A /physical/ database entry is a key\/operation pair that exists on-disk, whereas
+  a /logical/ database entry consists of all physical entries with the same key.
+  In practice, the worst-case in-memory size of an LSM-tree is determined by the following factors:
+
+  *   The size of the write buffer, which is \(O(1)\).
+
+      The maximum size is determined by the maximum number of entries, which is a configuration parameter, multiplied by the size of a key\/operation pair.
+
+  *   The size of the bloom filters, which is \(O(n)\).
+
+      With the bloom filter allocation strategy @AllocFixed@, the exact size is determined by the number of bits per physical entry multiplied by the number of physical entries.
+      
+      TODO: How does one determine the bloom filter size using @AllocRequestFPR@?
+
+  *   The size of the indexes, which is \(O(n)\).
+
+      TODO: How does one determine the index size using @OrdinaryIndex@?
+
+      TODO: How does one determine the index size using @CompactIndex@?
+
+  == Implementation
+
+  The implementation of LSM-trees in this package draws inspiration from:
+
+  * Chris Okasaki.
+    1998.
+    \"Purely Functional Data Structures\"
+    [doi:10.1017/CBO9780511530104](https://doi.org/10.1017/CBO9780511530104)
+  * Niv Dayan, Manos Athanassoulis, and Stratos Idreos.
+    2017.
+    \"Monkey: Optimal Navigable Key-Value Store.\"
+    [doi:10.1145/3035918.3064054](https://doi.org/10.1145/3035918.3064054)
+  * Subhadeep Sarkar, Dimitris Staratzis, Ziehen Zhu, and Manos Athanassoulis.
+    2021.
+    \"Constructing and analyzing the LSM compaction design space.\"
+    [doi:10.14778/3476249.3476274](https://doi.org/10.14778/3476249.3476274)
+
 license:            Apache-2.0
 license-file:       LICENSE
 author:
@@ -121,6 +212,7 @@ library
     Data.Arena
     Data.Map.Range
     Database.LSMTree
+    Database.LSMTree.Simple
     Database.LSMTree.Common
     Database.LSMTree.Internal
     Database.LSMTree.Internal.Assertions
