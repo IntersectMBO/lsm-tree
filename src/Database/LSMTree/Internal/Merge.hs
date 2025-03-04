@@ -17,6 +17,7 @@ module Database.LSMTree.Internal.Merge (
   , stepsToCompletionCounted
   , StepResult (..)
   , steps
+  , mergeRunParams
   ) where
 
 import           Control.DeepSeq (NFData (..))
@@ -65,6 +66,9 @@ data Merge t m h = Merge {
     , mergeHasFS       :: !(HasFS m h)
     , mergeHasBlockIO  :: !(HasBlockIO m h)
     }
+
+mergeRunParams :: Merge t m h -> RunParams
+mergeRunParams = Builder.runBuilderParams . mergeBuilder
 
 -- | The current state of the merge.
 data MergeState =

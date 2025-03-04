@@ -17,6 +17,8 @@ import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.MergeSchedule
 import           Database.LSMTree.Internal.MergingRun
+import           Database.LSMTree.Internal.RunBuilder (IndexType (..),
+                     RunBloomFilterAlloc (..), RunDataCaching (..))
 import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.Snapshot
 import           Database.LSMTree.Internal.Snapshot.Codec
@@ -170,6 +172,7 @@ testAll test = [
     , test (Proxy @(SnapIncomingRun RunNumber))
     , test (Proxy @NumRuns)
     , test (Proxy @MergePolicyForLevel)
+    , test (Proxy @RunParams)
     , test (Proxy @(SnapMergingRunState LevelMergeType RunNumber))
     , test (Proxy @MergeDebt)
     , test (Proxy @NominalCredits)
@@ -277,13 +280,13 @@ deriving newtype instance Arbitrary RunNumber
 
 instance Arbitrary (SnapIncomingRun RunNumber) where
   arbitrary = oneof [
-        SnapMergingRun <$> arbitrary <*> arbitrary <*> arbitrary
+        SnapMergingRun <$> arbitrary <*> arbitrary
                        <*> arbitrary <*> arbitrary
       , SnapSingleRun <$> arbitrary
       ]
-  shrink (SnapMergingRun a b c d e) =
-      [ SnapMergingRun a' b' c' d' e'
-      | (a', b', c', d', e') <- shrink (a, b, c, d, e) ]
+  shrink (SnapMergingRun a b c d) =
+      [ SnapMergingRun a' b' c' d'
+      | (a', b', c', d') <- shrink (a, b, c, d) ]
   shrink (SnapSingleRun a)  = SnapSingleRun <$> shrink a
 
 deriving newtype instance Arbitrary NumRuns
@@ -294,16 +297,51 @@ instance Arbitrary MergePolicyForLevel where
 
 instance Arbitrary t => Arbitrary (SnapMergingRunState t RunNumber) where
   arbitrary = oneof [
-        SnapCompletedMerge <$> arbitrary
+        SnapCompletedMerge <$> arbitrary <*> arbitrary <*> arbitrary
       , SnapOngoingMerge <$> arbitrary <*> arbitrary
+                         <*> arbitrary <*> arbitrary
       ]
-  shrink (SnapCompletedMerge x) = SnapCompletedMerge <$> shrink x
-  shrink (SnapOngoingMerge x y) =
-      [ SnapOngoingMerge x' y' | (x', y') <- shrink (x, y) ]
+  shrink (SnapCompletedMerge a b c) =
+      [ SnapCompletedMerge  a' b' c'
+      | (a', b', c') <- shrink (a, b, c) ]
+  shrink (SnapOngoingMerge a b c d) =
+      [ SnapOngoingMerge  a' b' c' d'
+      | (a', b', c', d') <- shrink (a, b, c, d) ]
 
 deriving newtype instance Arbitrary MergeDebt
 deriving newtype instance Arbitrary MergeCredits
+deriving newtype instance Arbitrary NominalDebt
 deriving newtype instance Arbitrary NominalCredits
+
+{-------------------------------------------------------------------------------
+  RunParams
+-------------------------------------------------------------------------------}
+
+instance Arbitrary RunParams where
+  arbitrary = RunParams <$> arbitrary <*> arbitrary <*> arbitrary
+  shrink (RunParams a b c) =
+    [ RunParams  a' b' c'
+    | (a', b', c') <- shrink (a, b, c) ]
+
+instance Arbitrary RunDataCaching where
+  arbitrary = elements [CacheRunData, NoCacheRunData]
+  shrink NoCacheRunData = [CacheRunData]
+  shrink _              = []
+
+instance Arbitrary IndexType where
+  arbitrary = elements [Ordinary, Compact]
+  shrink Compact = [Ordinary]
+  shrink _       = []
+
+instance Arbitrary RunBloomFilterAlloc where
+  arbitrary = oneof [
+        RunAllocFixed      <$> arbitrary
+      , RunAllocRequestFPR <$> arbitrary
+      , RunAllocMonkey     <$> arbitrary
+      ]
+  shrink (RunAllocFixed x)      = RunAllocFixed <$> shrink x
+  shrink (RunAllocRequestFPR x) = RunAllocRequestFPR <$> shrink x
+  shrink (RunAllocMonkey x)     = RunAllocMonkey <$> shrink x
 
 {-------------------------------------------------------------------------------
   Show
@@ -316,4 +354,5 @@ deriving stock instance Show r => Show (SnapIncomingRun r)
 deriving stock instance (Show t, Show r) => Show (SnapMergingRunState t r)
 deriving stock instance Show MergeDebt
 deriving stock instance Show MergeCredits
+deriving stock instance Show NominalDebt
 deriving stock instance Show NominalCredits

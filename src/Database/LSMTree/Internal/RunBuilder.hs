@@ -78,7 +78,10 @@ data RunParams = RunParams {
        runParamAlloc   :: !RunBloomFilterAlloc,
        runParamIndex   :: !IndexType
      }
-  deriving stock Show
+  deriving stock (Eq, Show)
+
+instance NFData RunParams where
+  rnf (RunParams a b c) = rnf a `seq` rnf b `seq` rnf c
 
 -- | Should this run cache key\/ops data in memory?
 data RunDataCaching = CacheRunData | NoCacheRunData
