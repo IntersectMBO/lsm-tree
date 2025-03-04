@@ -46,7 +46,7 @@ import qualified Monkey
 
 newtype LevelNo = LevelNo Int
   deriving stock (Show, Eq)
-  deriving newtype Enum
+  deriving newtype (Enum, NFData)
 
 {-------------------------------------------------------------------------------
   Table configuration
