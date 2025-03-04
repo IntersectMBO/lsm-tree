@@ -496,7 +496,6 @@ assertNoUseAfterRelease Ref { reftracker = RefTracker refid _weak outer allocSit
         -- The site where the reference is used after release
         let useSite = callStack
         Control.Exception.throwIO (RefUseAfterRelease refid allocSite releaseSite useSite)
-    assertNoForgottenRefs
 #if !(MIN_VERSION_base(4,20,0))
   where
     _unused = callStack
@@ -512,7 +511,6 @@ assertNoDoubleRelease Ref { reftracker = RefTracker refid _weak outer allocSite 
         -- The second release site
         let releaseSite2 = callStack
         Control.Exception.throwIO (RefDoubleRelease refid allocSite releaseSite1 releaseSite2)
-    assertNoForgottenRefs
 #if !(MIN_VERSION_base(4,20,0))
   where
     _unused = callStack

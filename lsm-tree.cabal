@@ -398,6 +398,7 @@ test-suite lsm-tree-test
     Test.System.Posix.Fcntl.NoCache
     Test.Util.Arbitrary
     Test.Util.FS
+    Test.Util.FS.Error
     Test.Util.Orphans
     Test.Util.PrettyProxy
     Test.Util.QC
@@ -407,6 +408,7 @@ test-suite lsm-tree-test
 
   build-depends:
     , ansi-terminal
+    , barbies
     , base
     , bitvec
     , bytestring
@@ -442,6 +444,7 @@ test-suite lsm-tree-test
     , quickcheck-instances
     , quickcheck-lockstep
     , random
+    , safe-wild-cards
     , semialign
     , split
     , stm
