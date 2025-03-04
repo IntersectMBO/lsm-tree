@@ -420,7 +420,7 @@ releaseIncomingRun (Merging _ _ _ mr) = releaseRef mr
   -> Ref (Run IO h)
   -> IO (IncomingRun IO h) #-}
 newIncomingSingleRun ::
-     PrimMonad m
+     (PrimMonad m, MonadThrow m)
   => Tracer m (AtLevel MergeTrace)
   -> LevelNo
   -> Ref (Run m h)
