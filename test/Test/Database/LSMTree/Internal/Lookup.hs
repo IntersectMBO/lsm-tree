@@ -71,7 +71,7 @@ import           System.FS.BlockIO.API
 import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
-import           Test.Util.Arbitrary (deepseqInvariant,
+import           Test.Util.Arbitrary (deepseqInvariant, noTags,
                      prop_arbitraryAndShrinkPreserveInvariant,
                      prop_forAllArbitraryAndShrinkPreserveInvariant)
 import           Test.Util.FS (withTempIOHasBlockIO)
@@ -90,13 +90,14 @@ tests = testGroup "Test.Database.LSMTree.Internal.Lookup" [
         ]
     , testGroup "With multi-page values" [
           testGroup "InMemLookupData" $
-            prop_arbitraryAndShrinkPreserveInvariant (deepseqInvariant @(InMemLookupData SerialisedKey SerialisedValue BlobSpan))
+            prop_arbitraryAndShrinkPreserveInvariant noTags $
+              deepseqInvariant @(InMemLookupData SerialisedKey SerialisedValue BlobSpan)
         , localOption (QuickCheckMaxSize 1000) $
           testProperty "prop_inMemRunLookupAndConstruction" prop_inMemRunLookupAndConstruction
         ]
     , testGroup "Without multi-page values" [
           testGroup "InMemLookupData" $
-            prop_forAllArbitraryAndShrinkPreserveInvariant
+            prop_forAllArbitraryAndShrinkPreserveInvariant noTags
               genNoMultiPage
               shrinkNoMultiPage
               (deepseqInvariant @(InMemLookupData SerialisedKey SerialisedValue BlobSpan))
