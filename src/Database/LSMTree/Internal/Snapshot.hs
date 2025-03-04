@@ -156,8 +156,7 @@ instance NFData r => NFData (SnapLevel r) where
 --
 data SnapIncomingRun r =
     SnapMergingRun !MergePolicyForLevel
-                   !NumRuns
-                   !MergeDebt     -- ^ The total merge debt.
+                   !NominalDebt
                    !NominalCredits -- ^ The nominal credits supplied, and that
                                    -- need to be supplied on snapshot open.
                    !(SnapMergingRunState MR.LevelMergeType r)
@@ -165,8 +164,8 @@ data SnapIncomingRun r =
   deriving stock (Eq, Functor, Foldable, Traversable)
 
 instance NFData r => NFData (SnapIncomingRun r) where
-  rnf (SnapMergingRun a b c d e) =
-      rnf a `seq` rnf b `seq` rnf c `seq` rnf d `seq` rnf e
+  rnf (SnapMergingRun a b c d) =
+      rnf a `seq` rnf b `seq` rnf c `seq` rnf d
   rnf (SnapSingleRun a) = rnf a
 
 -- | The total number of supplied credits. This total is used on snapshot load
@@ -176,13 +175,13 @@ newtype SuppliedCredits = SuppliedCredits { getSuppliedCredits :: Int }
   deriving newtype NFData
 
 data SnapMergingRunState t r =
-    SnapCompletedMerge !r
-  | SnapOngoingMerge !(V.Vector r) !t
+    SnapCompletedMerge !NumRuns !MergeDebt !r
+  | SnapOngoingMerge   !LevelNo !MergeCredits !(V.Vector r) !t
   deriving stock (Eq, Functor, Foldable, Traversable)
 
 instance (NFData t, NFData r) => NFData (SnapMergingRunState t r) where
-  rnf (SnapCompletedMerge a) = rnf a
-  rnf (SnapOngoingMerge a b) = rnf a `seq` rnf b
+  rnf (SnapCompletedMerge a b c)   = rnf a `seq` rnf b `seq` rnf c
+  rnf (SnapOngoingMerge   a b c d) = rnf a `seq` rnf b `seq` rnf c `seq` rnf d
 
 {-------------------------------------------------------------------------------
   Conversion to levels snapshot format
@@ -199,52 +198,54 @@ toSnapLevels ::
      (PrimMonad m, MonadMVar m)
   => Levels m h
   -> m (SnapLevels (Ref (Run m h)))
-toSnapLevels levels = SnapLevels <$> V.mapM toSnapLevel levels
+toSnapLevels levels =
+    SnapLevels <$>
+    V.iforM levels (\i -> toSnapLevel (LevelNo (i+1)))
 
-{-# SPECIALISE toSnapLevel :: Level IO h -> IO (SnapLevel (Ref (Run IO h))) #-}
+{-# SPECIALISE toSnapLevel :: LevelNo -> Level IO h -> IO (SnapLevel (Ref (Run IO h))) #-}
 toSnapLevel ::
      (PrimMonad m, MonadMVar m)
-  => Level m h
+  => LevelNo
+  -> Level m h
   -> m (SnapLevel (Ref (Run m h)))
-toSnapLevel Level{..} = do
-    sir <- toSnapIncomingRun incomingRun
+toSnapLevel !ln Level{..} = do
+    sir <- toSnapIncomingRun ln incomingRun
     pure (SnapLevel sir residentRuns)
 
-{-# SPECIALISE toSnapIncomingRun :: IncomingRun IO h -> IO (SnapIncomingRun (Ref (Run IO h))) #-}
+{-# SPECIALISE toSnapIncomingRun :: LevelNo -> IncomingRun IO h -> IO (SnapIncomingRun (Ref (Run IO h))) #-}
 toSnapIncomingRun ::
      (PrimMonad m, MonadMVar m)
-  => IncomingRun m h
+  => LevelNo
+  -> IncomingRun m h
   -> m (SnapIncomingRun (Ref (Run m h)))
-toSnapIncomingRun ir = do
+toSnapIncomingRun !ln ir = do
     s <- snapshotIncomingRun ir
     case s of
       Left r -> pure $! SnapSingleRun r
       Right (mergePolicy,
-             numRuns,
-             _nominalDebt,  -- not stored
+             nominalDebt,
              nominalCredits,
-             mergeDebt,
-             _mergeCredits, -- not stored
-             mergingRunState) -> do
+             mergingRun) -> do
         -- We need to know how many credits were supplied so we can restore merge
         -- work on snapshot load.
-        -- TODO: MR.snapshot needs to return duplicated run references, and we
-        -- need to arrange to release them when the snapshoting is done.
-        let smrs = toSnapMergingRunState mergingRunState
-        pure $!
-          SnapMergingRun
-            mergePolicy
-            numRuns
-            mergeDebt
-            nominalCredits
-            smrs
+        smrs <- toSnapMergingRunState ln mergingRun
+        pure $! SnapMergingRun mergePolicy nominalDebt nominalCredits smrs
 
 toSnapMergingRunState ::
-     MR.MergingRunState t m h
-  -> SnapMergingRunState t (Ref (Run m h))
-toSnapMergingRunState = \case
-    MR.CompletedMerge r  -> SnapCompletedMerge r
-    MR.OngoingMerge rs m -> SnapOngoingMerge rs (Merge.mergeType m)
+     (PrimMonad m, MonadMVar m)
+  => LevelNo
+  -> Ref (MR.MergingRun t m h)
+  -> m (SnapMergingRunState t (Ref (Run m h)))
+toSnapMergingRunState !ln !mr = do
+    -- TODO: MR.snapshot needs to return duplicated run references, and we
+    -- need to arrange to release them when the snapshoting is done.
+    (numRuns, mergeDebt, mergeCredits, state) <- MR.snapshot mr
+    case state of
+      MR.CompletedMerge r  ->
+        pure $! SnapCompletedMerge numRuns mergeDebt r
+
+      MR.OngoingMerge rs m ->
+        pure $! SnapOngoingMerge ln mergeCredits rs (Merge.mergeType m)
 
 {-------------------------------------------------------------------------------
   Write Buffer
@@ -485,37 +486,49 @@ fromSnapLevels reg hfs hbio conf uc resolve dir (SnapLevels levels) =
     fromSnapIncomingRun _ln (SnapSingleRun run) =
         newIncomingSingleRun run
 
-    fromSnapIncomingRun ln (SnapMergingRun mergePolicy nr mergeDebt _nc
-                                           (SnapCompletedMerge r)) = do
-      mr <- MR.newCompleted nr mergeDebt r
-      let nominalDebt    = nominalDebtForLevel conf ln
-          nominalCredits = nominalDebtAsCredits nominalDebt
+    fromSnapIncomingRun ln (SnapMergingRun mergePolicy nominalDebt
+                                           nominalCredits smrs) = do
+      mr <- fromSnapMergingRunState hfs hbio conf uc resolve dir smrs
       ir <- newIncomingMergingRun mergePolicy nominalDebt mr
-      -- This will do no real work, since the mr is completed, it'll just
-      -- set the final nominal credits
+      -- This will set the correct nominal credits, but it will not do any more
+      -- merging work because fromSnapMergingRunState already supplies all the
+      -- merging credits already.
       supplyCreditsIncomingRun conf ln ir nominalCredits
       return ir
 
-    fromSnapIncomingRun ln (SnapMergingRun mergePolicy _nr _md nc
-                                           (SnapOngoingMerge rs mergeType)) =
-      bracketOnError
-        (do uniq <- incrUniqCounter uc
-            let (caching, alloc, indexType, runPaths) =
-                  mergingRunParamsForLevel dir conf uniq ln
-            MR.new hfs hbio resolve caching
-                alloc indexType mergeType
-                runPaths rs)
-        releaseRef $ \mr -> do
+fromSnapMergingRunState ::
+     (MonadMask m, MonadMVar m, MonadSTM m, MonadST m, MR.IsMergeType t)
+  => HasFS m h
+  -> HasBlockIO m h
+  -> TableConfig
+  -> UniqCounter m
+  -> ResolveSerialisedValue
+  -> ActiveDir
+  -> SnapMergingRunState t (Ref (Run m h))
+  -> m (Ref (MR.MergingRun t m h))
+fromSnapMergingRunState _hfs _hbio _conf _uc _resolve _dir
+                        (SnapCompletedMerge numRuns mergeDebt r) =
+    MR.newCompleted numRuns mergeDebt r
 
-          let nominalDebt = nominalDebtForLevel conf ln
-          ir <- newIncomingMergingRun mergePolicy nominalDebt mr
+fromSnapMergingRunState hfs hbio conf uc resolve dir
+                        (SnapOngoingMerge ln mergeCredits rs mergeType) = do
+    bracketOnError
+      (do uniq <- incrUniqCounter uc
+          let (caching, alloc, indexType, runPaths) =
+                mergingRunParamsForLevel dir conf uniq ln
+          MR.new hfs hbio resolve caching
+                 alloc indexType mergeType
+                 runPaths rs)
+      releaseRef $ \mr -> do
+        -- When a snapshot is created, merge progress is lost, so we have to
+        -- redo merging work here. The MergeCredits in SnapMergingRun tracks
+        -- how many credits were supplied before the snapshot was taken.
 
-          -- When a snapshot is created, merge progress is lost, so we have to
-          -- redo merging work here. The MergeCredits in SnapMergingRun tracks
-          -- how many credits were supplied before the snapshot was taken.
-          --TODO: bracketOnError the MR.new for this:
-          supplyCreditsIncomingRun conf ln ir nc
-          return ir
+        --TODO: the threshold should be stored with the MergingRun
+        -- here we want to supply the credits now, so we can use a threshold of 1
+        let thresh = MR.CreditThreshold (MR.UnspentCredits 1)
+        _ <- MR.supplyCreditsAbsolute mr thresh mergeCredits
+        return mr
 
 {-------------------------------------------------------------------------------
   Hard links

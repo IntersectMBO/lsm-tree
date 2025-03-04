@@ -277,13 +277,13 @@ deriving newtype instance Arbitrary RunNumber
 
 instance Arbitrary (SnapIncomingRun RunNumber) where
   arbitrary = oneof [
-        SnapMergingRun <$> arbitrary <*> arbitrary <*> arbitrary
+        SnapMergingRun <$> arbitrary <*> arbitrary
                        <*> arbitrary <*> arbitrary
       , SnapSingleRun <$> arbitrary
       ]
-  shrink (SnapMergingRun a b c d e) =
-      [ SnapMergingRun a' b' c' d' e'
-      | (a', b', c', d', e') <- shrink (a, b, c, d, e) ]
+  shrink (SnapMergingRun a b c d) =
+      [ SnapMergingRun a' b' c' d'
+      | (a', b', c', d') <- shrink (a, b, c, d) ]
   shrink (SnapSingleRun a)  = SnapSingleRun <$> shrink a
 
 deriving newtype instance Arbitrary NumRuns
@@ -294,16 +294,22 @@ instance Arbitrary MergePolicyForLevel where
 
 instance Arbitrary t => Arbitrary (SnapMergingRunState t RunNumber) where
   arbitrary = oneof [
-        SnapCompletedMerge <$> arbitrary
+        SnapCompletedMerge <$> arbitrary <*> arbitrary <*> arbitrary
       , SnapOngoingMerge <$> arbitrary <*> arbitrary
+                         <*> arbitrary <*> arbitrary
       ]
-  shrink (SnapCompletedMerge x) = SnapCompletedMerge <$> shrink x
-  shrink (SnapOngoingMerge x y) =
-      [ SnapOngoingMerge x' y' | (x', y') <- shrink (x, y) ]
+  shrink (SnapCompletedMerge a b c) =
+      [ SnapCompletedMerge  a' b' c'
+      | (a', b', c') <- shrink (a, b, c) ]
+  shrink (SnapOngoingMerge a b c d) =
+      [ SnapOngoingMerge  a' b' c' d'
+      | (a', b', c', d') <- shrink (a, b, c, d) ]
 
 deriving newtype instance Arbitrary MergeDebt
 deriving newtype instance Arbitrary MergeCredits
+deriving newtype instance Arbitrary NominalDebt
 deriving newtype instance Arbitrary NominalCredits
+deriving newtype instance Arbitrary LevelNo
 
 {-------------------------------------------------------------------------------
   Show
@@ -316,4 +322,5 @@ deriving stock instance Show r => Show (SnapIncomingRun r)
 deriving stock instance (Show t, Show r) => Show (SnapMergingRunState t r)
 deriving stock instance Show MergeDebt
 deriving stock instance Show MergeCredits
+deriving stock instance Show NominalDebt
 deriving stock instance Show NominalCredits
