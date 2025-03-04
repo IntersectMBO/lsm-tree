@@ -5,10 +5,16 @@ module Database.LSMTree.Internal.Snapshot.Codec (
   , prettySnapshotVersion
   , currentSnapshotVersion
     -- * Writing and reading files
+    -- ** Metadata
   , writeFileSnapshotMetaData
   , readFileSnapshotMetaData
   , encodeSnapshotMetaData
   , decodeSnapshotMetaData
+    -- ** Merging trees
+  , writeFileSnapshotMergingTree
+  , readFileSnapshotMergingTree
+  , encodeSnapshotMergingTree
+  , decodeSnapshotMergingTree
     -- * Encoding and decoding
   , Encode (..)
   , Decode (..)
@@ -20,12 +26,15 @@ import           Codec.CBOR.Decoding
 import           Codec.CBOR.Encoding
 import           Codec.CBOR.Read
 import           Codec.CBOR.Write
-import           Control.Monad (when)
+import           Control.Monad (replicateM, when)
 import           Control.Monad.Class.MonadThrow (MonadThrow (..))
 import           Data.Bifunctor
 import qualified Data.ByteString.Char8 as BSC
 import           Data.ByteString.Lazy (ByteString)
+import           Data.Foldable (fold)
+import           Data.Functor (($>))
 import qualified Data.Map.Strict as Map
+import           Data.Maybe (isJust)
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.CRC32C
@@ -75,6 +84,71 @@ isCompatible otherVersion = do
 {-------------------------------------------------------------------------------
   Writing and reading files
 -------------------------------------------------------------------------------}
+
+{-# SPECIALIZE
+  writeFileSnapshotMergingTree ::
+       HasFS IO h
+    -> FsPath
+    -> FsPath
+    -> SnapshotMergingTree
+    -> IO ()
+  #-}
+-- | Encode 'SnapshotMergingTree' and write it to 'SnapshotMergingTreeFile'.
+--
+-- In the presence of exceptions, newly created files will not be removed. It is
+-- up to the user of this function to clean up the files.
+writeFileSnapshotMergingTree ::
+     MonadThrow m
+  => HasFS m h
+  -> FsPath -- ^ Target file for snapshot metadata
+  -> FsPath -- ^ Target file for checksum
+  -> SnapshotMergingTree
+  -> m ()
+writeFileSnapshotMergingTree hfs contentPath checksumPath snapMergeTree = do
+    (_, checksum) <-
+      FS.withFile hfs contentPath (FS.WriteMode FS.MustBeNew) $ \h ->
+        hPutAllChunksCRC32C hfs h (encodeSnapshotMergingTree snapMergeTree) initialCRC32C
+
+    let checksumFileName = ChecksumsFileName (BSC.pack "mergingtree")
+        checksumFile = Map.singleton checksumFileName checksum
+    writeChecksumsFile hfs checksumPath checksumFile
+
+
+{-# SPECIALIZE
+  readFileSnapshotMergingTree ::
+       HasFS IO h
+    -> FsPath
+    -> FsPath
+    -> IO (Either DeserialiseFailure SnapshotMergingTree)
+  #-}
+-- | Read from 'SnapshotMetaDataFile' and attempt to decode it to
+-- 'SnapshotMetaData'.
+readFileSnapshotMergingTree ::
+     MonadThrow m
+  => HasFS m h
+  -> FsPath -- ^ Source file for snapshot metadata
+  -> FsPath -- ^ Source file for checksum
+  -> m (Either DeserialiseFailure SnapshotMergingTree)
+readFileSnapshotMergingTree hfs contentPath checksumPath = do
+    checksumFile <- readChecksumsFile hfs checksumPath
+    let checksumFileName = ChecksumsFileName (BSC.pack "mergingtree")
+
+    expectedChecksum <-
+      case Map.lookup checksumFileName checksumFile of
+        Nothing ->
+          throwIO $ FileFormatError
+                      checksumPath
+                      ("key not found: " <> show checksumFileName)
+        Just checksum -> pure checksum
+
+    (lbs, actualChecksum) <- FS.withFile hfs contentPath FS.ReadMode $ \h -> do
+      n <- FS.hGetSize hfs h
+      FS.hGetExactlyCRC32C hfs h n initialCRC32C
+
+    when (expectedChecksum /= actualChecksum) $
+      throwIO $ ChecksumError contentPath expectedChecksum actualChecksum
+
+    pure $ decodeSnapshotMergingTree lbs
 
 {-# SPECIALIZE
   writeFileSnapshotMetaData ::
@@ -140,11 +214,18 @@ readFileSnapshotMetaData hfs contentPath checksumPath = do
 
     pure $ decodeSnapshotMetaData lbs
 
+encodeSnapshotMergingTree :: SnapshotMergingTree -> ByteString
+encodeSnapshotMergingTree = toLazyByteString . encode . Versioned
+
 encodeSnapshotMetaData :: SnapshotMetaData -> ByteString
 encodeSnapshotMetaData = toLazyByteString . encode . Versioned
 
+decodeSnapshotMergingTree :: ByteString -> Either DeserialiseFailure SnapshotMergingTree
+decodeSnapshotMergingTree bs = second (getVersioned . snd) (deserialiseFromBytes decode bs)
+
 decodeSnapshotMetaData :: ByteString -> Either DeserialiseFailure SnapshotMetaData
 decodeSnapshotMetaData bs = second (getVersioned . snd) (deserialiseFromBytes decode bs)
+
 
 {-------------------------------------------------------------------------------
   Encoding and decoding
@@ -542,7 +623,7 @@ instance DecodeVersioned t => DecodeVersioned (SnapMergingRunState t RunNumber) 
         (3, 1) -> SnapOngoingMerge <$> decodeVersioned v <*> decodeVersioned v
         _ -> fail ("[SnapMergingRunState] Unexpected combination of list length and tag: " <> show (n, tag))
 
--- NominalCredits and MergeDebt
+-- NominalCredits, MergeDebt and MergeCredits
 
 instance Encode NominalCredits where
   encode (NominalCredits x) = encodeInt x
@@ -555,6 +636,12 @@ instance Encode MergeDebt where
 
 instance DecodeVersioned MergeDebt where
   decodeVersioned V0 = (MergeDebt . MergeCredits) <$> decodeInt
+
+instance Encode MergeCredits where
+  encode (MergeCredits x) = encodeInt x
+
+instance DecodeVersioned MergeCredits where
+  decodeVersioned V0 = MergeCredits <$> decodeInt
 
 -- MergeType
 
@@ -591,3 +678,125 @@ instance DecodeVersioned MR.TreeMergeType where
         1 -> pure MR.MergeLevel
         2 -> pure MR.MergeUnion
         _ -> fail ("[TreeMergeType] Unexpected tag: " <> show tag)
+
+{-------------------------------------------------------------------------------
+  Encoding and decoding: SnapshotMergingTree
+-------------------------------------------------------------------------------}
+
+-- SnapshotMergingTree
+
+instance Encode SnapshotMergingTree where
+  encode (SnapshotMergingTree mtSnap) = encode mtSnap
+
+instance DecodeVersioned SnapshotMergingTree where
+  decodeVersioned ver@V0 = SnapshotMergingTree <$> decodeVersioned ver
+
+-- SnapMergingTree
+
+instance Encode (SnapMergingTree RunNumber) where
+  encode (SnapMergingTree tState) = encode tState
+
+instance DecodeVersioned (SnapMergingTree RunNumber) where
+  decodeVersioned ver@V0 = SnapMergingTree <$> decodeVersioned ver
+
+-- SnapMergingTreeState
+
+instance Encode (SnapMergingTreeState RunNumber) where
+  encode (SnapCompletedTreeMerge x) =
+       encodeListLen 2
+    <> encodeWord 0
+    <> encode x
+  encode (SnapPendingTreeMerge x) =
+       encodeListLen 2
+    <> encodeWord 1
+    <> encode x
+  encode (SnapOngoingTreeMerge nr ne sc smrs) =
+       encodeListLen 5
+    <> encodeWord 2
+    <> encode nr
+    <> encode ne
+    <> encode sc
+    <> encode smrs
+
+instance DecodeVersioned (SnapMergingTreeState RunNumber) where
+  decodeVersioned v@V0 = do
+      n <- decodeListLen
+      tag <- decodeWord
+      case (n, tag) of
+        (2, 0) -> SnapCompletedTreeMerge <$> decodeVersioned v
+        (2, 1) -> SnapPendingTreeMerge <$> decodeVersioned v
+        (5, 2) -> SnapOngoingTreeMerge <$>
+          decodeVersioned v <*> decodeVersioned v <*>
+          decodeVersioned v <*> decodeVersioned v
+        _ -> fail ("[SnapMergingTreeState] Unexpected combination of list length and tag: " <> show (n, tag))
+
+-- SnapPendingMerge
+
+instance Encode (SnapPendingMerge RunNumber) where
+  encode (SnapPendingLevelMerge pe mt) = fold
+    [ encodeListLen 4
+    , encodeWord 0
+    , encodeBool $ isJust mt
+    , maybe encodeNull encode mt
+    , encodeListLen . toEnum $ length pe
+    , foldMap encode pe
+    ]
+  encode (SnapPendingUnionMerge mts) =
+       encodeListLen 2
+    <> encodeWord 1
+    <> encodeListLen (toEnum $ length mts)
+    <> foldMap encode mts
+
+instance DecodeVersioned (SnapPendingMerge RunNumber) where
+  decodeVersioned v@V0 = do
+      n <- decodeListLen
+      tag <- decodeWord
+      case (n, tag) of
+        (4, 0) -> do
+          -- Get the whether or not the levels merge exists
+          exist <- decodeBool
+          peLvls <- if exist then Just <$> decodeVersioned v else (decodeNull $> Nothing)
+          peLen <- decodeListLen
+          peRuns <- replicateM peLen (decodeVersioned v)
+          pure $ SnapPendingLevelMerge peRuns peLvls
+--          pure $ SnapPendingLevelMerge [] peLvls
+        (2, 1) -> do
+          -- Get the number of pre-existsing unions to read
+          peLen <- decodeListLen
+          SnapPendingUnionMerge <$> replicateM peLen (decodeVersioned v)
+        _ -> fail ("[SnapPendingMerge] Unexpected combination of list length and tag: " <> show (n, tag))
+{-
+    where
+      decoderLoop = do
+        done <- decodeBreakOr
+        if done
+        then pure []
+        else liftA2 (:) (decodeVersioned v) decoderLoop
+-}
+
+-- SnapPreExistingRun
+
+instance Encode (SnapPreExistingRun RunNumber) where
+  encode (SnapPreExistingRun x) =
+       encodeListLen 2
+    <> encodeWord 0
+    <> encode x
+  encode (SnapPreExistingMergingRun nr ne sc smrs) =
+       encodeListLen 5
+    <> encodeWord 1
+    <> encode nr
+    <> encode ne
+    <> encode sc
+    <> encode smrs
+
+instance DecodeVersioned (SnapPreExistingRun RunNumber) where
+  decodeVersioned v@V0 = do
+      n <- decodeListLen
+      tag <- decodeWord
+      case (n, tag) of
+        (2, 0) -> SnapPreExistingRun <$> decodeVersioned v
+        (5, 1) -> SnapPreExistingMergingRun <$>
+          decodeVersioned v <*> decodeVersioned v <*>
+          decodeVersioned v <*> decodeVersioned v
+        _ -> fail ("[SnapPreExistingRun] Unexpected combination of list length and tag: " <> show (n, tag))
+

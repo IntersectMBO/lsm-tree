@@ -34,6 +34,7 @@ import qualified Test.Database.LSMTree.Internal.Serialise
 import qualified Test.Database.LSMTree.Internal.Serialise.Class
 import qualified Test.Database.LSMTree.Internal.Snapshot.Codec
 import qualified Test.Database.LSMTree.Internal.Snapshot.Codec.Golden
+import qualified Test.Database.LSMTree.Internal.Snapshot.Codec.MergingTree
 import qualified Test.Database.LSMTree.Internal.Snapshot.FS
 import qualified Test.Database.LSMTree.Internal.Vector
 import qualified Test.Database.LSMTree.Internal.Vector.Growing
@@ -81,6 +82,7 @@ main = do
     , Test.Database.LSMTree.Internal.Serialise.Class.tests
     , Test.Database.LSMTree.Internal.Snapshot.Codec.tests
     , Test.Database.LSMTree.Internal.Snapshot.Codec.Golden.tests
+    , Test.Database.LSMTree.Internal.Snapshot.Codec.MergingTree.tests
     , Test.Database.LSMTree.Internal.Snapshot.FS.tests
     , Test.Database.LSMTree.Internal.Vector.tests
     , Test.Database.LSMTree.Internal.Vector.Growing.tests
