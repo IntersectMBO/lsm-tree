@@ -69,6 +69,10 @@ module Database.LSMTree.Internal (
     -- * Table union
   , union
   , unions
+  , UnionDebt (..)
+  , remainingUnionDebt
+  , UnionCredits (..)
+  , supplyUnionCredits
   ) where
 
 import           Codec.CBOR.Read
@@ -277,6 +281,9 @@ data TableTrace =
   | TraceSnapshot SnapshotName
     -- Duplicate
   | TraceDuplicate
+    -- Unions
+  | TraceRemainingUnionDebt
+  | TraceSupplyUnionCredits UnionCredits
   deriving stock Show
 
 data CursorTrace =
@@ -1448,3 +1455,66 @@ matchSessions = \(t :| ts) ->
             else pure (Left i)
 
     withSessionRoot t k =  withOpenSession (tableSession t) $ k . sessionRoot
+
+{-------------------------------------------------------------------------------
+  Table union: debt and credit
+-------------------------------------------------------------------------------}
+
+-- | The /current/ upper bound on the number of 'UnionCredits' that have to be
+-- supplied before a @union@ is completed.
+--
+-- The union debt is the number of merging steps that need to be performed /at
+-- most/ until the delayed work of performing a @union@ is completed. This
+-- includes the cost of completing merges that were part of the union's input
+-- tables.
+newtype UnionDebt = UnionDebt Int
+  deriving stock (Show, Eq)
+
+{-# SPECIALISE remainingUnionDebt :: Table IO h -> IO UnionDebt #-}
+-- | Return the current union debt. This debt can be reduced until it is paid
+-- off using @supplyUnionCredits@.
+--
+-- TODO: 'Internal.UnionDebt' and 'Internal.remainingUnionDebt' have
+-- documentation in this internal module, but it is not ideal to repeat the
+-- documentation in the every public API module as well. It means we would have
+-- to update the same documentation in multiple places, and if we forget, then
+-- the documentation is out of sync. How do we solve this? Can we have a single
+-- source of documentation? Moreover, how do we ensure that hyperlinked
+-- identifiers do not point to internal modules accidentally?
+remainingUnionDebt :: (MonadSTM m, MonadThrow m) => Table m h -> m UnionDebt
+remainingUnionDebt t = do
+    traceWith (tableTracer t) TraceRemainingUnionDebt
+    withOpenTable t $ \tEnv -> do
+      RW.withReadAccess (tableContent tEnv) $ \_tableContent -> do
+        error "remainingUnionDebt: not yet implemented"
+
+-- | Credits are used to pay off 'UnionDebt', completing a @union@ in the
+-- process.
+--
+-- A union credit corresponds to a single merging step being performed.
+newtype UnionCredits = UnionCredits Int
+  deriving stock (Show, Eq)
+
+{-# SPECIALISE supplyUnionCredits :: Table IO h -> UnionCredits -> IO UnionCredits #-}
+-- | Supply union credits to reduce union debt.
+--
+-- Supplying union credits leads to union merging work being performed in
+-- batches. This reduces the union debt returned by @remainingUnionDebt@. Union
+-- debt will be reduced by /at least/ the number of supplied union credits. It
+-- is therefore advisable to query @remainingUnionDebt@ every once in a while to
+-- see what the current debt is.
+--
+-- TODO: 'Internal.UnionCredits' and 'Internal.supplyUnionCredits' have
+-- documentation in this internal module, but it is not ideal to repeat the
+-- documentation in the every public API module as well. It means we would have
+-- to update the same documentation in multiple places, and if we forget, then
+-- the documentation is out of sync. How do we solve this? Can we have a single
+-- source of documentation? Moreover, how do we ensure that hyperlinked
+-- identifiers do not point to internal modules accidentally?
+supplyUnionCredits :: (MonadSTM m, MonadCatch m) => Table m h -> UnionCredits -> m UnionCredits
+supplyUnionCredits t credits = do
+    traceWith (tableTracer t) $ TraceSupplyUnionCredits credits
+    withOpenTable t $ \tEnv -> do
+      -- TODO: should this be acquiring read or write access?
+      RW.withWriteAccess (tableContent tEnv) $ \_tableContent -> do
+        error "supplyUnionCredits: not yet implemented"

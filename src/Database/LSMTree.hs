@@ -83,6 +83,10 @@ module Database.LSMTree (
     -- * Table union
   , union
   , unions
+  , UnionDebt (..)
+  , remainingUnionDebt
+  , UnionCredits (..)
+  , supplyUnionCredits
 
     -- * Serialisation
   , SerialiseKey
@@ -112,8 +116,8 @@ import           Data.Typeable (Proxy (..), Typeable, eqT, type (:~:) (Refl))
 import qualified Data.Vector as V
 import           Database.LSMTree.Common (BlobRef (BlobRef), IOLike, Range (..),
                      SerialiseKey, SerialiseValue, Session, SnapshotName,
-                     closeSession, deleteSnapshot, listSnapshots, openSession,
-                     withSession)
+                     UnionCredits (..), UnionDebt (..), closeSession,
+                     deleteSnapshot, listSnapshots, openSession, withSession)
 import qualified Database.LSMTree.Common as Common
 import qualified Database.LSMTree.Internal as Internal
 import qualified Database.LSMTree.Internal.BlobRef as Internal
@@ -551,6 +555,22 @@ unions (t :| ts) =
     checkTableType _ i (Internal.Table' (t' :: Internal.Table m h'))
       | Just Refl <- eqT @h @h' = pure t'
       | otherwise = throwIO (Internal.ErrUnionsTableTypeMismatch 0 i)
+
+{-# SPECIALISE remainingUnionDebt :: Table IO k v b -> IO UnionDebt #-}
+-- | TODO: document this function. See the related TODO on
+-- 'Internal.remainingUnionDebt'.
+remainingUnionDebt :: IOLike m => Table m k v b -> m UnionDebt
+remainingUnionDebt (Internal.Table' t) = Internal.remainingUnionDebt t
+
+{-# SPECIALISE supplyUnionCredits :: Table IO k v b -> UnionCredits -> IO UnionCredits #-}
+-- | TODO: document this function. See the related TODO on
+-- 'Internal.supplyUnionCredits'.
+supplyUnionCredits ::
+     IOLike m
+  => Table m k v b
+  -> UnionCredits
+  -> m UnionCredits
+supplyUnionCredits (Internal.Table' t) credits = Internal.supplyUnionCredits t credits
 
 {-------------------------------------------------------------------------------
   Monoidal value resolution

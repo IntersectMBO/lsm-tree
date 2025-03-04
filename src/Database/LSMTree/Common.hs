@@ -43,6 +43,9 @@ module Database.LSMTree.Common (
   , Internal.TableConfigOverride
   , Internal.configNoOverride
   , Internal.configOverrideDiskCachePolicy
+    -- * Unions
+  , Internal.UnionDebt (..)
+  , Internal.UnionCredits (..)
   ) where
 
 import           Control.Concurrent.Class.MonadMVar.Strict
