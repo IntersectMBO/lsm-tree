@@ -13,9 +13,10 @@ import           Database.LSMTree.Common (BloomFilterAlloc (..),
                      DiskCachePolicy (..), NumEntries (..), TableConfig (..),
                      WriteBufferAlloc (..), defaultTableConfig)
 import           Database.LSMTree.Internal.Config (FencePointerIndex (..),
-                     MergePolicy (..), MergeSchedule (..), SizeRatio (..))
+                     MergePolicy (..), MergeSchedule (..), SizeRatio (..), LevelNo (..))
 import           Database.LSMTree.Internal.MergeSchedule
-                     (MergePolicyForLevel (..), NominalCredits (..))
+                     (MergePolicyForLevel (..), NominalCredits (..),
+                      NominalDebt (..))
 import           Database.LSMTree.Internal.MergingRun (NumRuns (..))
 import qualified Database.LSMTree.Internal.MergingRun as MR
 import           Database.LSMTree.Internal.RunNumber (RunNumber (..))
@@ -213,11 +214,10 @@ enumerateSnapIncomingRun =
   let
       inSnaps =
         [ (fuseAnnotations ["R1", a, b],
-           SnapMergingRun policy numRuns mergeDebt nominalCredits sState)
+           SnapMergingRun policy nominalDebt nominalCredits sState)
         | (a, policy ) <- [("P0", LevelTiering), ("P1", LevelLevelling)]
-        , numRuns <- NumRuns <$> [ magicNumber1 ]
-        , mergeDebt      <- MR.MergeDebt    <$> [ magicNumber2 ]
-        , nominalCredits <- NominalCredits <$>  [ magicNumber1 ]
+        , nominalDebt    <- NominalDebt    <$> [ magicNumber2 ]
+        , nominalCredits <- NominalCredits <$> [ magicNumber1 ]
         , (b, sState ) <- enumerateSnapMergingRunState enumerateLevelMergeType
         ]
   in  fold
@@ -226,11 +226,19 @@ enumerateSnapIncomingRun =
       ]
 
 enumerateSnapMergingRunState ::
-     [(ComponentAnnotation, t)] -> [(ComponentAnnotation, SnapMergingRunState t RunNumber)]
+     [(ComponentAnnotation, t)]
+  -> [(ComponentAnnotation, SnapMergingRunState t RunNumber)]
 enumerateSnapMergingRunState mTypes =
-  (fuseAnnotations ["C0", blank, blank], SnapCompletedMerge enumerateRunNumbers) :
-    [ (fuseAnnotations ["C1", a, b], SnapOngoingMerge runVec mType)
-    | (a, runVec ) <- enumerateVectorRunNumber
+    [ (fuseAnnotations ["C0", blank, blank],
+       SnapCompletedMerge numRuns mergeDebt enumerateRunNumbers)
+    | numRuns   <- NumRuns <$> [ magicNumber1 ]
+    , mergeDebt <- (MR.MergeDebt. MR.MergeCredits) <$> [ magicNumber2 ]
+    ]
+ ++ [ (fuseAnnotations ["C1", a, b],
+       SnapOngoingMerge levelNo mergeCredits runVec mType)
+    | levelNo      <- LevelNo         <$> [ magicNumber1 ]
+    , mergeCredits <- MR.MergeCredits <$> [ magicNumber2 ]
+    , (a, runVec ) <- enumerateVectorRunNumber
     , (b, mType  ) <- mTypes
     ]
 

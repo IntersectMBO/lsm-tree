@@ -474,12 +474,11 @@ instance DecodeVersioned RunNumber where
 -- SnapIncomingRun
 
 instance Encode (SnapIncomingRun RunNumber) where
-  encode (SnapMergingRun mpfl nr md nc smrs) =
-       encodeListLen 6
+  encode (SnapMergingRun mpfl nd nc smrs) =
+       encodeListLen 5
     <> encodeWord 0
     <> encode mpfl
-    <> encode nr
-    <> encode md
+    <> encode nd
     <> encode nc
     <> encode smrs
   encode (SnapSingleRun x) =
@@ -492,9 +491,8 @@ instance DecodeVersioned (SnapIncomingRun RunNumber) where
       n <- decodeListLen
       tag <- decodeWord
       case (n, tag) of
-        (6, 0) -> SnapMergingRun <$>
-          decodeVersioned v <*> decodeVersioned v <*> decodeVersioned v <*>
-          decodeVersioned v <*> decodeVersioned v
+        (5, 0) -> SnapMergingRun <$> decodeVersioned v <*> decodeVersioned v
+                                 <*> decodeVersioned v <*> decodeVersioned v
         (2, 1) -> SnapSingleRun <$> decodeVersioned v
         _ -> fail ("[SnapMergingRun] Unexpected combination of list length and tag: " <> show (n, tag))
 
@@ -523,13 +521,17 @@ instance DecodeVersioned MergePolicyForLevel where
 -- SnapMergingRunState
 
 instance Encode t => Encode (SnapMergingRunState t RunNumber) where
-  encode (SnapCompletedMerge x) =
-         encodeListLen 2
+  encode (SnapCompletedMerge nr md r) =
+         encodeListLen 4
       <> encodeWord 0
-      <> encode x
-  encode (SnapOngoingMerge rs mt) =
-         encodeListLen 3
+      <> encode nr
+      <> encode md
+      <> encode r
+  encode (SnapOngoingMerge ln mc rs mt) =
+         encodeListLen 5
       <> encodeWord 1
+      <> encode ln
+      <> encode mc
       <> encode rs
       <> encode mt
 
@@ -538,11 +540,20 @@ instance DecodeVersioned t => DecodeVersioned (SnapMergingRunState t RunNumber) 
       n <- decodeListLen
       tag <- decodeWord
       case (n, tag) of
-        (2, 0) -> SnapCompletedMerge <$> decodeVersioned v
-        (3, 1) -> SnapOngoingMerge <$> decodeVersioned v <*> decodeVersioned v
+        (4, 0) -> SnapCompletedMerge <$> decodeVersioned v
+                                     <*> decodeVersioned v
+                                     <*> decodeVersioned v
+        (5, 1) -> SnapOngoingMerge <$> decodeVersioned v <*> decodeVersioned v
+                                   <*> decodeVersioned v <*> decodeVersioned v
         _ -> fail ("[SnapMergingRunState] Unexpected combination of list length and tag: " <> show (n, tag))
 
--- NominalCredits and MergeDebt
+-- NominalDebt, NominalCredits, MergeDebt, MergeCredits and LevelNo
+
+instance Encode NominalDebt where
+  encode (NominalDebt x) = encodeInt x
+
+instance DecodeVersioned NominalDebt where
+  decodeVersioned V0 = NominalDebt <$> decodeInt
 
 instance Encode NominalCredits where
   encode (NominalCredits x) = encodeInt x
@@ -555,6 +566,18 @@ instance Encode MergeDebt where
 
 instance DecodeVersioned MergeDebt where
   decodeVersioned V0 = (MergeDebt . MergeCredits) <$> decodeInt
+
+instance Encode MergeCredits where
+  encode (MergeCredits x) = encodeInt x
+
+instance DecodeVersioned MergeCredits where
+  decodeVersioned V0 = MergeCredits <$> decodeInt
+
+instance Encode LevelNo where
+  encode (LevelNo x) = encodeInt x
+
+instance DecodeVersioned LevelNo where
+  decodeVersioned V0 = LevelNo <$> decodeInt
 
 -- MergeType
 
