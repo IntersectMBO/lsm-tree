@@ -72,7 +72,7 @@ import           Database.LSMTree.Internal.Entry (Entry, NumEntries (..),
 import           Database.LSMTree.Internal.Index (Index)
 import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
 import           Database.LSMTree.Internal.MergingRun (MergeCredits (..),
-                     MergeDebt (..), MergingRun, NumRuns (..), RunParams (..))
+                     MergeDebt (..), MergingRun, RunParams (..))
 import qualified Database.LSMTree.Internal.MergingRun as MR
 import           Database.LSMTree.Internal.MergingTree (MergingTree)
 import           Database.LSMTree.Internal.Paths (ActiveDir, RunFsPaths (..),
@@ -379,6 +379,7 @@ instance NFData MergePolicyForLevel where
 -- complete.
 newtype NominalDebt = NominalDebt Int
   deriving stock Eq
+  deriving newtype (NFData)
 
 -- | Merge credits that get supplied to a table's levels.
 --
@@ -611,31 +612,21 @@ immediatelyCompleteIncomingRun tr conf ln ir =
      IncomingRun IO h
   -> IO (Either (Ref (Run IO h))
                 (MergePolicyForLevel,
-                 NumRuns,
                  NominalDebt,
                  NominalCredits,
-                 MergeDebt,
-                 MergeCredits,
-                 MR.MergingRunState MR.LevelMergeType IO h)) #-}
+                 Ref (MergingRun MR.LevelMergeType IO h))) #-}
 snapshotIncomingRun ::
-     (PrimMonad m, MonadMVar m)
+     PrimMonad m
   => IncomingRun m h
   -> m (Either (Ref (Run m h))
                (MergePolicyForLevel,
-                NumRuns,
                 NominalDebt,
                 NominalCredits,
-                MergeDebt,
-                MergeCredits,
-                MR.MergingRunState MR.LevelMergeType m h))
+                Ref (MergingRun MR.LevelMergeType m h)))
 snapshotIncomingRun (Single r) = pure (Left r)
 snapshotIncomingRun (Merging mergePolicy nominalDebt nominalCreditsVar mr) = do
-    (numRuns, mergeDebt, mergeCredit, state) <- MR.snapshot mr
     nominalCredits <- readPrimVar nominalCreditsVar
-    pure (Right (mergePolicy, numRuns,
-                 nominalDebt, nominalCredits,
-                 mergeDebt, mergeCredit,
-                 state))
+    pure (Right (mergePolicy, nominalDebt, nominalCredits, mr))
 
 {-------------------------------------------------------------------------------
   Union level

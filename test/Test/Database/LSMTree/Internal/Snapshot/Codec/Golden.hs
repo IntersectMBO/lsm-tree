@@ -15,9 +15,12 @@ import           Database.LSMTree.Common (BloomFilterAlloc (..),
 import           Database.LSMTree.Internal.Config (FencePointerIndex (..),
                      MergePolicy (..), MergeSchedule (..), SizeRatio (..))
 import           Database.LSMTree.Internal.MergeSchedule
-                     (MergePolicyForLevel (..), NominalCredits (..))
+                     (MergePolicyForLevel (..), NominalCredits (..),
+                     NominalDebt (..))
 import           Database.LSMTree.Internal.MergingRun (NumRuns (..))
 import qualified Database.LSMTree.Internal.MergingRun as MR
+import           Database.LSMTree.Internal.RunBuilder (IndexType (..),
+                     RunBloomFilterAlloc (..), RunDataCaching (..))
 import           Database.LSMTree.Internal.RunNumber (RunNumber (..))
 import           Database.LSMTree.Internal.Snapshot
 import           Database.LSMTree.Internal.Snapshot.Codec
@@ -213,11 +216,10 @@ enumerateSnapIncomingRun =
   let
       inSnaps =
         [ (fuseAnnotations ["R1", a, b],
-           SnapMergingRun policy numRuns mergeDebt nominalCredits sState)
+           SnapMergingRun policy nominalDebt nominalCredits sState)
         | (a, policy ) <- [("P0", LevelTiering), ("P1", LevelLevelling)]
-        , numRuns <- NumRuns <$> [ magicNumber1 ]
-        , mergeDebt      <- MR.MergeDebt    <$> [ magicNumber2 ]
-        , nominalCredits <- NominalCredits <$>  [ magicNumber1 ]
+        , nominalDebt    <- NominalDebt    <$> [ magicNumber2 ]
+        , nominalCredits <- NominalCredits <$> [ magicNumber1 ]
         , (b, sState ) <- enumerateSnapMergingRunState enumerateLevelMergeType
         ]
   in  fold
@@ -226,11 +228,19 @@ enumerateSnapIncomingRun =
       ]
 
 enumerateSnapMergingRunState ::
-     [(ComponentAnnotation, t)] -> [(ComponentAnnotation, SnapMergingRunState t RunNumber)]
+     [(ComponentAnnotation, t)]
+  -> [(ComponentAnnotation, SnapMergingRunState t RunNumber)]
 enumerateSnapMergingRunState mTypes =
-  (fuseAnnotations ["C0", blank, blank], SnapCompletedMerge enumerateRunNumbers) :
-    [ (fuseAnnotations ["C1", a, b], SnapOngoingMerge runVec mType)
-    | (a, runVec ) <- enumerateVectorRunNumber
+    [ (fuseAnnotations ["C0", blank, blank],
+       SnapCompletedMerge numRuns mergeDebt enumerateRunNumbers)
+    | numRuns   <- NumRuns <$> [ magicNumber1 ]
+    , mergeDebt <- (MR.MergeDebt. MR.MergeCredits) <$> [ magicNumber2 ]
+    ]
+ ++ [ (fuseAnnotations ["C1", a, b],
+       SnapOngoingMerge runParams mergeCredits runVec mType)
+    | let runParams = enumerateRunParams
+    , mergeCredits <- MR.MergeCredits <$> [ magicNumber2 ]
+    , (a, runVec ) <- enumerateVectorRunNumber
     , (b, mType  ) <- mTypes
     ]
 
@@ -265,6 +275,16 @@ enumerateDiskCachePolicy =
 
 enumerateRunNumbers :: RunNumber
 enumerateRunNumbers = RunNumber magicNumber2
+
+--TODO: use a proper enumeration, but don't cause a combinatorial explosion.
+enumerateRunParams :: MR.RunParams
+enumerateRunParams =
+    MR.RunParams {
+      MR.runParamCaching = NoCacheRunData,
+      MR.runParamAlloc   = RunAllocFixed 10,
+      MR.runParamIndex   = Compact
+    }
+
 
 -- Randomly chosen numbers
 magicNumber1, magicNumber2, magicNumber3 :: Enum e => e

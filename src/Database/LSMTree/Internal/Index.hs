@@ -72,6 +72,10 @@ import           Database.LSMTree.Internal.Serialise (SerialisedKey)
 data IndexType = Compact | Ordinary
     deriving stock (Eq, Show)
 
+instance NFData IndexType where
+    rnf Compact  = ()
+    rnf Ordinary = ()
+
 -- * Indexes
 
 -- | The type of supported indexes.
@@ -81,7 +85,6 @@ data Index
     deriving stock (Eq, Show)
 
 instance NFData Index where
-
     rnf (CompactIndex  index) = rnf index
     rnf (OrdinaryIndex index) = rnf index
 
