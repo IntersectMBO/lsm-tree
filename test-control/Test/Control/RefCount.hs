@@ -4,37 +4,81 @@
 module Test.Control.RefCount (tests) where
 
 import           Control.Concurrent.Class.MonadMVar
-import           Control.Exception
+import           Control.Exception (AssertionFailed (..))
 import           Control.Monad
+import           Control.Monad.Class.MonadThrow
+import           Control.Monad.IOSim (IOSim, runSimOrThrow)
+import           Control.Monad.Primitive
 import           Control.RefCount
 import           Data.Primitive.PrimVar
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck
 
 #ifdef NO_IGNORE_ASSERTS
-import           Data.IORef
+import           Data.Primitive
 #endif
 
 tests :: TestTree
 tests = testGroup "Test.Control.RefCount" [
-      testProperty "prop_RefCounter"          prop_RefCounter
+      testProperty "prop_RefCounter @IO" $
+        ioPropertyOnce prop_RefCounter
+#ifndef NO_IGNORE_ASSERTS
+      -- prop_RefCounter throws and catches AssertionFailed exceptions, but we
+      -- can only catch these exceptions in IO. In IOSim, these uncaught
+      -- exceptions will lead to property failures. So, we only run the property
+      -- in IOSim if assertions are turned off.
+    , testProperty "prop_RefCounter @IOSim" $
+        ioSimPropertyOnce prop_RefCounter
+#endif
 #ifdef NO_IGNORE_ASSERTS
       -- All of these tests below are checking that the debug implementation of
       -- Ref does indeed detect all the violations (double-free, use-after-free,
       -- never-free). But this obviously depends on the debug implementation
       -- being in use. Hence only tested when NO_IGNORE_ASSERTS.
-    , testProperty "prop_ref_double_free"     prop_ref_double_free
-    , testProperty "prop_ref_use_after_free"  prop_ref_use_after_free
-    , testProperty "prop_ref_never_released0" prop_ref_never_released0
-    , testProperty "prop_ref_never_released1" prop_ref_never_released1
-    , testProperty "prop_ref_never_released2" prop_ref_never_released2
-    , testProperty "prop_release_ref_exception" prop_release_ref_exception
+    , testGroup "IO" [
+          testProperty "prop_ref_double_free" $
+            ioPropertyOnce prop_ref_double_free
+        , testProperty "prop_ref_use_after_free"  $
+            ioPropertyOnce $ prop_ref_use_after_free True
+        , testProperty "prop_ref_never_released0" $
+            ioPropertyOnce prop_ref_never_released0
+        , testProperty "prop_ref_never_released1" $
+            ioPropertyOnce prop_ref_never_released1
+        , testProperty "prop_ref_never_released2" $
+            ioPropertyOnce prop_ref_never_released2
+        , testProperty "prop_release_ref_exception" $
+            ioPropertyOnce prop_release_ref_exception
+        ]
+    , testGroup "IOSim" [
+          testProperty "prop_ref_double_free" $
+            ioSimPropertyOnce prop_ref_double_free
+        , testProperty "prop_ref_use_after_free"  $
+            -- Exceptions thrown by the DeRef pattern can only be caught from
+            -- IO, so we do not test the DeRef pattern in IOSim.
+            ioSimPropertyOnce $ prop_ref_use_after_free False
+        , testProperty "prop_ref_never_released0" $
+            ioSimPropertyOnce prop_ref_never_released0
+        , testProperty "prop_ref_never_released1" $
+            ioSimPropertyOnce prop_ref_never_released1
+        , testProperty "prop_ref_never_released2" $
+            ioSimPropertyOnce prop_ref_never_released2
+        , testProperty "prop_release_ref_exception" $
+            ioSimPropertyOnce prop_release_ref_exception
+        ]
 #endif
     ]
 
+ioPropertyOnce :: Testable prop => IO prop -> Property
+ioPropertyOnce p = once $ ioProperty p
+
+ioSimPropertyOnce :: Testable prop => (forall s. IOSim s prop) -> Property
+ioSimPropertyOnce p = once $ property $ runSimOrThrow p
+
 -- | Test for the low level RefCounter API
-prop_RefCounter :: Property
-prop_RefCounter = once $ ioProperty $ do
+prop_RefCounter ::
+     (MonadMVar m, PrimMonad m, MonadMask m)
+  => m Property
+prop_RefCounter = do
     obj <- newMVar False
     ref <- newRefCounter (void $ modifyMVar_ obj (\x -> pure (not x)) )
 
@@ -103,72 +147,83 @@ prop_RefCounter = once $ ioProperty $ do
 -- is no way to reliably act on the information. It is only useful for tests or
 -- debugging.
 --
-readRefCount :: RefCounter IO -> IO Int
+readRefCount :: PrimMonad m => RefCounter m -> m Int
 readRefCount (RefCounter countVar _) = readPrimVar countVar
 
 #ifdef NO_IGNORE_ASSERTS
-data TestObject = TestObject !(RefCounter IO)
+data TestObject m = TestObject !(RefCounter m)
 
-instance RefCounted IO TestObject where
+instance RefCounted m (TestObject m) where
     getRefCounter (TestObject rc) = rc
 
-data TestObject2 = TestObject2 (Ref TestObject)
+data TestObject2 m = TestObject2 (Ref (TestObject m))
 
-instance RefCounted IO TestObject2 where
+instance RefCounted m (TestObject2 m) where
     getRefCounter (TestObject2 (DeRef to1)) = getRefCounter to1
 
-prop_ref_double_free :: Property
-prop_ref_double_free = once $ ioProperty $ do
-    finalised <- newIORef False
-    ref <- newRef (writeIORef finalised True) TestObject
+prop_ref_double_free ::
+     (PrimMonad m, MonadMask m, MonadFail m)
+  => m Property
+prop_ref_double_free = do
+    finalised <- newMutVar False
+    ref <- newRef (writeMutVar finalised True) TestObject
     releaseRef ref
-    True <- readIORef finalised
+    True <- readMutVar finalised
     Left e@RefDoubleRelease{} <- try $ releaseRef ref
     checkForgottenRefs
     -- Print the displayed exception as an example
     pure $ tabulate "displayException" [displayException e] ()
 
-prop_ref_use_after_free :: Property
-prop_ref_use_after_free = once $ ioProperty $ do
-    finalised <- newIORef False
-    ref <- newRef (writeIORef finalised True) TestObject
+prop_ref_use_after_free ::
+     (PrimMonad m, MonadMask m, MonadFail m)
+  => Bool -- ^ Test the DeRef pattern
+  -> m Property
+prop_ref_use_after_free testDeRef = do
+    finalised <- newMutVar False
+    ref <- newRef (writeMutVar finalised True) TestObject
     releaseRef ref
-    True <- readIORef finalised
+    True <- readMutVar finalised
     Left e@RefUseAfterRelease{} <- try $ withRef ref return
-    Left RefUseAfterRelease{} <- try $ case ref of DeRef _ -> return ()
+    when testDeRef $ do
+      Left RefUseAfterRelease{} <- try $ case ref of DeRef _ -> return ()
+      pure ()
     Left RefUseAfterRelease{} <- try $ dupRef ref
     checkForgottenRefs
     -- Print the displayed exception as an example
     pure $ tabulate "displayException" [displayException e] ()
 
-prop_ref_never_released0 :: Property
-prop_ref_never_released0 = once $ ioProperty $ do
-    finalised <- newIORef False
-    ref <- newRef (writeIORef finalised True) TestObject
+prop_ref_never_released0 ::
+     (PrimMonad m, MonadMask m)
+  => m ()
+prop_ref_never_released0 = do
+    finalised <- newMutVar False
+    ref <- newRef (writeMutVar finalised True) TestObject
     _ <- case ref of DeRef _ -> return ()
     checkForgottenRefs
     -- ref is still being used, so check should not fail
     _ <- case ref of DeRef _ -> return ()
     releaseRef ref
 
-prop_ref_never_released1 :: Property
+prop_ref_never_released1 ::
+     (PrimMonad m, MonadMask m)
+  => m Property
 prop_ref_never_released1 =
-    once $ ioProperty $
     handle expectRefNeverReleased $ do
-      finalised <- newIORef False
-      ref <- newRef (writeIORef finalised True) TestObject
+      finalised <- newMutVar False
+      ref <- newRef (writeMutVar finalised True) TestObject
       _ <- withRef ref return
       _ <- case ref of DeRef _ -> return ()
       -- ref is never released, so should fail
       checkForgottenRefs
       return (counterexample "no forgotten refs detected" $ property False)
 
-prop_ref_never_released2 :: Property
+prop_ref_never_released2 ::
+     (PrimMonad m, MonadMask m)
+  => m Property
 prop_ref_never_released2 =
-    once $ ioProperty $
     handle expectRefNeverReleased $ do
-      finalised <- newIORef False
-      ref  <- newRef (writeIORef finalised True) TestObject
+      finalised <- newMutVar False
+      ref  <- newRef (writeMutVar finalised True) TestObject
       ref2 <- dupRef ref
       releaseRef ref
       _ <- withRef ref2 return
@@ -177,7 +232,7 @@ prop_ref_never_released2 =
       checkForgottenRefs
       return (counterexample "no forgotten refs detected" $ property False)
 
-expectRefNeverReleased :: RefException -> IO Property
+expectRefNeverReleased :: Monad m => RefException -> m Property
 expectRefNeverReleased e@RefNeverReleased{} =
     -- Print the displayed exception as an example
     return (tabulate "displayException" [displayException e] (property True))
@@ -185,11 +240,13 @@ expectRefNeverReleased e =
     return (counterexample (displayException e) $ property False)
 
 -- | If a finaliser throws an exception, then the 'RefTracker' is still released
-prop_release_ref_exception :: Property
-prop_release_ref_exception = once $ ioProperty $ do
-    finalised <- newIORef False
-    ref  <- newRef (writeIORef finalised True >> error "oops") TestObject
-    _ <- try @SomeException (releaseRef ref)
+prop_release_ref_exception ::
+     (PrimMonad m, MonadMask m)
+  => m ()
+prop_release_ref_exception = do
+    finalised <- newMutVar False
+    ref  <- newRef (writeMutVar finalised True >> throwIO (userError "oops")) TestObject
+    _ <- try @_ @SomeException (releaseRef ref)
     checkForgottenRefs
 #endif
 
