@@ -119,7 +119,6 @@ library
 
 library internal
   import:          language, warnings, wno-x-partial, bloom-query-fast
-  visibility:      private
   hs-source-dirs:  src
   exposed-modules:
     Data.Arena
