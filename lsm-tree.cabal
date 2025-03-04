@@ -1,8 +1,70 @@
 cabal-version:      3.4
 name:               lsm-tree
 version:            0.1.0.0
-synopsis:           Log-structured merge-tree
-description:        Log-structured merge-tree.
+synopsis:           Log-structured merge-trees
+description:
+  This package contains an efficient implementation of on-disk key\/value storage, implemented as log-structured merge-trees or LSM-trees.
+  An LSM-tree is a data structure for key\/value mappings, similar to "Data.Map", but optimized for large tables with a high insertion volume.
+  An LSM-tree incrementally serialises its data to disk, which gives it a constant bound on its memory usage.
+
+  This package exports two variants of LSM-trees: [Normal](#Normal) and [Monoidal](#Monoidal).
+  Each variant support the standard mapping operations, such as insert, delete, and update, as well as range lookups, which efficiently retrieve the values for all keys in a given range.
+  Each variant has one additional operation that is only supported by that variant.
+  
+  [Normal#Normal#]:
+      Normal LSM-trees support the storage of large BLOB values associated
+      with a key.
+
+      Exported from "Database.LSMTree.Normal".
+
+  [Monoidal#Monoidal#]:
+      Monoidal LSM-trees support the monoidal upsert (or "mupsert") operation.
+      
+      A mupsert either inserts the given value (if there is no value associated with the given key) or updates the value associated with the given key by combining the old and new values.
+
+      Exported from "Database.LSMTree.Monoidal".
+
+  If neither BLOBs nor mupserts are needed, the recommendation is to use [Normal](#Normal) LSM-trees and set the type of BLOBs to 'Data.Void.Void'.
+
+  == System requirements
+
+  This package only supports 64-bit, little-endian systems.
+
+  * On Windows, the package has only been tested with NTFS filesystems.
+  * On Linux, any executables, test suites, and and benchmark suites that use this package must be compiled with the [@-threaded@](https://downloads.haskell.org/ghc/latest/docs/users_guide/phases.html#ghc-flag-threaded) RTS option enabled.
+
+  == Implementation
+
+  The implementation of LSM-trees in this package draws inspiration from:
+
+  * Chris Okasaki.
+    1998.
+    \"Purely Functional Data Structures\"
+    [doi:10.1017/CBO9780511530104](https://doi.org/10.1017/CBO9780511530104)
+  * Niv Dayan, Manos Athanassoulis, and Stratos Idreos.
+    2017.
+    \"Monkey: Optimal Navigable Key-Value Store.\"
+    [doi:10.1145/3035918.3064054](https://doi.org/10.1145/3035918.3064054)
+  * Subhadeep Sarkar, Dimitris Staratzis, Ziehen Zhu, and Manos Athanassoulis.
+    2021.
+    \"Constructing and analyzing the LSM compaction design space.\"
+    [doi:10.14778/3476249.3476274](https://doi.org/10.14778/3476249.3476274)
+
+  == Performance information
+
+  The time complexity is given for each operation in [big-O notation](http://en.wikipedia.org/wiki/Big_O_notation).
+  The cost of operations on LSM-trees is generally dominated by the number of disk I\/O actions.
+  As such, the complexity bounds on functions in this library are in reference to the number of disk I\/O actions.  
+
+  The in-memory size of an LSM-tree is bounded by constant that depends on the configuration of the LSM-tree as well as the size of the values.
+
+  [TODO]:
+      We should include an estimate of the upper bound on memory usage based on:
+
+      * bloom filter size, which is bits per key.
+      * index size, which should average out to bits per key when using Monkey, which we're not yet doing.
+      * write buffer size, which is determined by WriteBufferAlloc and the size of an entry.
+
 license:            Apache-2.0
 license-file:       LICENSE
 author:
