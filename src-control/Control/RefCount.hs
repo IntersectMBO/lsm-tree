@@ -256,7 +256,7 @@ releaseRef ref@Ref{refobj} = do
 -- | Get the object in a 'Ref'. Be careful with retaining the object for too
 -- long, since the object must not be used after 'releaseRef' is called.
 --
-pattern DeRef :: obj -> Ref obj
+pattern DeRef :: HasCallStackIfDebug => obj -> Ref obj
 #ifndef NO_IGNORE_ASSERTS
 pattern DeRef obj <- Ref obj
 #else
