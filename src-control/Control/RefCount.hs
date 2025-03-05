@@ -246,6 +246,7 @@ releaseRef ::
   -> m ()
 releaseRef ref@Ref{refobj} = do
     assertNoDoubleRelease ref
+    assertNoForgottenRefs
     releaseRefTracker ref
     decrementRefCounter (getRefCounter refobj)
 
@@ -288,6 +289,7 @@ withRef ::
   -> m a
 withRef ref@Ref{refobj} f = do
     assertNoUseAfterRelease ref
+    assertNoForgottenRefs
     f refobj
 
 {-# SPECIALISE
@@ -306,6 +308,7 @@ dupRef ::
   -> m (Ref obj)
 dupRef ref@Ref{refobj} = do
     assertNoUseAfterRelease ref
+    assertNoForgottenRefs
     incrementRefCounter (getRefCounter refobj)
     newRefWithTracker refobj
 
@@ -401,6 +404,10 @@ instance Exception RefException where
 releaseRefTracker :: PrimMonad m => Ref a -> m ()
 releaseRefTracker _ = return ()
 
+{-# INLINE assertNoForgottenRefs #-}
+assertNoForgottenRefs :: PrimMonad m => m ()
+assertNoForgottenRefs = return ()
+
 {-# INLINE assertNoUseAfterRelease #-}
 assertNoUseAfterRelease :: PrimMonad m => Ref a -> m ()
 assertNoUseAfterRelease _ = return ()
@@ -476,8 +483,9 @@ finaliserRefTracker inner refid allocSite = do
           Just (refid', _) | refid < refid' -> return ()
           _ -> writeIORef globalForgottenRef (Just (refid, allocSite))
 
-assertNoForgottenRefs :: IO ()
-assertNoForgottenRefs = do
+assertNoForgottenRefs :: PrimMonad m => m ()
+assertNoForgottenRefs =
+  unsafeIOToPrim $ do
     mrefs <- readIORef globalForgottenRef
     case mrefs of
       Nothing                -> return ()
@@ -496,7 +504,6 @@ assertNoUseAfterRelease Ref { reftracker = RefTracker refid _weak outer allocSit
         -- The site where the reference is used after release
         let useSite = callStack
         Control.Exception.throwIO (RefUseAfterRelease refid allocSite releaseSite useSite)
-    assertNoForgottenRefs
 #if !(MIN_VERSION_base(4,20,0))
   where
     _unused = callStack
@@ -512,7 +519,6 @@ assertNoDoubleRelease Ref { reftracker = RefTracker refid _weak outer allocSite 
         -- The second release site
         let releaseSite2 = callStack
         Control.Exception.throwIO (RefDoubleRelease refid allocSite releaseSite1 releaseSite2)
-    assertNoForgottenRefs
 #if !(MIN_VERSION_base(4,20,0))
   where
     _unused = callStack
