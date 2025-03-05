@@ -455,8 +455,19 @@ globalRefIdSupply = unsafePerformIO $ newPrimVar 0
 globalForgottenRef :: IORef (Maybe (RefId, CallStack))
 globalForgottenRef = unsafePerformIO $ newIORef Nothing
 
+-- | This version of 'unsafeIOToPrim' is strict in the result of the arument
+-- action.
+--
+-- Without strictness it seems that some IO side effects are not happening at
+-- the right time, like clearing the @globalForgottenRef@ in
+-- @assertNoForgottenRefs@.
+unsafeIOToPrimStrict :: PrimMonad m => IO a -> m a
+unsafeIOToPrimStrict k = do
+    !x <- unsafeIOToPrim k
+    pure x
+
 newRefTracker :: PrimMonad m => CallStack -> m RefTracker
-newRefTracker allocSite = unsafeIOToPrim $ do
+newRefTracker allocSite = unsafeIOToPrimStrict $ do
     inner <- newIORef Nothing
     outer <- newIORef inner
     refid <- fetchAddInt globalRefIdSupply 1
@@ -466,7 +477,7 @@ newRefTracker allocSite = unsafeIOToPrim $ do
 
 releaseRefTracker :: (HasCallStack, PrimMonad m) => Ref a -> m ()
 releaseRefTracker Ref { reftracker =  RefTracker _refid _weak outer _ } =
-  unsafeIOToPrim $ do
+  unsafeIOToPrimStrict $ do
     inner <- readIORef outer
     let releaseSite = callStack
     writeIORef inner (Just releaseSite)
@@ -492,18 +503,22 @@ finaliserRefTracker inner refid allocSite = do
 
 assertNoForgottenRefs :: (PrimMonad m, MonadThrow m) => m ()
 assertNoForgottenRefs = do
-    mrefs <- unsafeIOToPrim $ readIORef globalForgottenRef
+    mrefs <- unsafeIOToPrimStrict $ readIORef globalForgottenRef
     case mrefs of
       Nothing                -> return ()
       Just (refid, allocSite) -> do
         -- Clear the var so we don't assert again.
-        unsafeIOToPrim $ writeIORef globalForgottenRef Nothing
+        --
+        -- Using the strict version is important here: if @m ~ IOSim s@, then
+        -- using the non-strict version will lead to @RefNeverReleased@
+        -- exceptions.
+        unsafeIOToPrimStrict $ writeIORef globalForgottenRef Nothing
         throwIO (RefNeverReleased refid allocSite)
 
 
 assertNoUseAfterRelease :: (PrimMonad m, MonadThrow m, HasCallStack) => Ref a -> m ()
 assertNoUseAfterRelease Ref { reftracker = RefTracker refid _weak outer allocSite } = do
-    released <- unsafeIOToPrim (readIORef =<< readIORef outer)
+    released <- unsafeIOToPrimStrict (readIORef =<< readIORef outer)
     case released of
       Nothing -> pure ()
       Just releaseSite -> do
@@ -517,7 +532,7 @@ assertNoUseAfterRelease Ref { reftracker = RefTracker refid _weak outer allocSit
 
 assertNoDoubleRelease :: (PrimMonad m, MonadThrow m, HasCallStack) => Ref a -> m ()
 assertNoDoubleRelease Ref { reftracker = RefTracker refid _weak outer allocSite } = do
-    released <- unsafeIOToPrim (readIORef =<< readIORef outer)
+    released <- unsafeIOToPrimStrict (readIORef =<< readIORef outer)
     case released of
       Nothing -> pure ()
       Just releaseSite1 -> do
@@ -550,7 +565,7 @@ checkForgottenRefs = do
     -- Unfortunately, this relies on the implementation of the GHC scheduler,
     -- not on any Haskell specification, and is therefore both non-portable and
     -- presumably rather brittle. Therefore, for good measure, we do it twice.
-    unsafeIOToPrim $ do
+    unsafeIOToPrimStrict $ do
       performMajorGCWithBlockingIfAvailable
       yield
       performMajorGCWithBlockingIfAvailable
