@@ -67,7 +67,6 @@ module Database.LSMTree.Internal (
     -- * Mutiple writable tables
   , duplicate
     -- * Table union
-  , union
   , unions
   ) where
 
@@ -1347,15 +1346,6 @@ duplicate t@Table{..} = do
 {-------------------------------------------------------------------------------
    Table union
 -------------------------------------------------------------------------------}
-
-{-# SPECIALISE union :: Table IO h -> Table IO h -> IO (Table IO h) #-}
--- | See 'Database.LSMTree.Normal.union'.
-union ::
-     (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
-  => Table m h
-  -> Table m h
-  -> m (Table m h)
-union t1 t2 = unions $ t1 :| [t2]
 
 {-# SPECIALISE unions :: NonEmpty (Table IO h) -> IO (Table IO h) #-}
 -- | See 'Database.LSMTree.Normal.unions'.
