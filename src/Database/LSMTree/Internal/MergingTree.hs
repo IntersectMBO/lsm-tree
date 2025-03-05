@@ -125,26 +125,27 @@ newPendingLevelMerge ::
   -> Maybe (Ref (MergingTree m h))
   -> m (Ref (MergingTree m h))
 newPendingLevelMerge [] (Just t) = dupRef t
+newPendingLevelMerge [PreExistingRun r] Nothing = do
+    -- No need to create a pending merge here.
+    --
+    -- We could do something similar for PreExistingMergingRun, but it's:
+    -- * complicated, because of the LevelMergeType\/TreeMergeType mismatch.
+    -- * unneeded, since that case should never occur. If there is only a
+    --   single entry in the list, there can only be one level in the input
+    --   table. At level 1 there are no merging runs, so it must be a
+    --   PreExistingRun.
+    r' <- dupRef r
+    -- There are no interruption points here, and thus provided async
+    -- exceptions are masked then there can be no async exceptions here at all.
+    newMergeTree (CompletedTreeMerge r')
+
 newPendingLevelMerge prs mmt = do
-    -- There are no interruption points here, and thus provided async exceptions
-    -- are masked then there can be no async exceptions here at all.
-    mergeTreeState <- case (prs, mmt) of
-      ([PreExistingRun r], Nothing) ->
-        -- No need to create a pending merge here.
-        --
-        -- We could do something similar for PreExistingMergingRun, but it's:
-        -- * complicated, because of the LevelMergeType/TreeMergeType mismatch.
-        -- * unneeded, since that case should never occur. If there is only a
-        --   single entry in the list, there can only be one level in the input
-        --   table. At level 1 there are no merging runs, so it must be a
-        --   PreExistingRun.
-        CompletedTreeMerge <$> dupRef r
-
-      _ -> PendingTreeMerge <$>
-            (PendingLevelMerge <$> traverse dupPreExistingRun (V.fromList prs)
-                               <*> dupMaybeMergingTree mmt)
-
-    newMergeTree mergeTreeState
+    -- isStructurallyEmpty is an interruption point, and can receive async
+    -- exceptions even when masked. So we use it first, *before* allocating
+    -- new references.
+    mmt' <- dupMaybeMergingTree mmt
+    prs' <- traverse dupPreExistingRun (V.fromList prs)
+    newMergeTree (PendingTreeMerge (PendingLevelMerge prs' mmt'))
   where
     dupPreExistingRun (PreExistingRun r) =
       PreExistingRun <$!> dupRef r
@@ -180,12 +181,14 @@ newPendingUnionMerge ::
   => [Ref (MergingTree m h)]
   -> m (Ref (MergingTree m h))
 newPendingUnionMerge mts = do
-    mts' <- V.mapM dupRef
-        =<< V.filterM (fmap not . isStructurallyEmpty) (V.fromList mts)
-    case V.uncons mts' of
-      Just (mt, mts'') | V.null mts''
+    mts' <- V.filterM (fmap not . isStructurallyEmpty) (V.fromList mts)
+    -- isStructurallyEmpty is interruptable even with async exceptions masked,
+    -- but we use it before allocating new references.
+    mts'' <- V.mapM dupRef mts'
+    case V.uncons mts'' of
+      Just (mt, x) | V.null x
         -> return mt
-      _ -> newMergeTree (PendingTreeMerge (PendingUnionMerge mts'))
+      _ -> newMergeTree (PendingTreeMerge (PendingUnionMerge mts''))
 
 -- | Test if a 'MergingTree' is \"obviously\" empty by virtue of its structure.
 -- This is not the same as being empty due to a pending or ongoing merge
@@ -202,6 +205,11 @@ isStructurallyEmpty (DeRef MergingTree {mergeState}) =
     -- a zero length runs as empty.
 
 -- | Constructor helper.
+--
+-- This adopts the references in the MergingTreeState, so callers should
+-- duplicate first. This is not the normal pattern, but this is an internal
+-- helper only.
+--
 newMergeTree ::
      (MonadMVar m, PrimMonad m, MonadMask m)
   => MergingTreeState m h
