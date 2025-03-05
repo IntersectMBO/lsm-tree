@@ -75,7 +75,7 @@ library
     , base        >=4.16  && <4.22
     , deepseq     ^>=1.4  || ^>=1.5
     , fs-api      ^>=0.3
-    , io-classes  ^>=1.6  || ^>=1.7
+    , io-classes  ^>=1.5
     , primitive   ^>=0.9
     , vector      ^>=0.13
 
@@ -149,14 +149,14 @@ library sim
   hs-source-dirs:  src-sim
   exposed-modules: System.FS.BlockIO.Sim
   build-depends:
-    , base                   >=4.16      && <4.22
+    , base        >=4.16      && <4.22
     , blockio
-    , bytestring             ^>=0.11.4.0 || ^>=0.12.1.0
-    , fs-api                 ^>=0.3
-    , fs-sim                 ^>=0.3
-    , io-classes             ^>=1.6      || ^>=1.7
-    , io-classes:strict-stm
-    , primitive              ^>=0.9
+    , bytestring  ^>=0.11.4.0 || ^>=0.12.1.0
+    , fs-api      ^>=0.3
+    , fs-sim      ^>=0.3
+    , io-classes  ^>=1.5
+    , primitive   ^>=0.9
+    , strict-stm  ^>=1.5
 
 test-suite test-sim
   import:         language, warnings
@@ -164,12 +164,12 @@ test-suite test-sim
   hs-source-dirs: test-sim
   main-is:        Main.hs
   build-depends:
-    , base                   <5
+    , base              <5
     , blockio
     , blockio:sim
     , fs-api
     , fs-sim
-    , io-classes:strict-stm
     , QuickCheck
+    , strict-stm
     , tasty
     , tasty-quickcheck
