@@ -976,24 +976,24 @@ data CursorEnv m h = CursorEnv {
     -- while they are active, once they are drained they do not. This could
     -- invalidate any 'BlobRef's previously handed out. To avoid this, we
     -- explicitly retain references on the runs and write buffer blofs and
-    -- only release them when the cursor is closed (see cursorRuns and
-    -- cursorWBB below).
+    -- only release them when the cursor is closed (see 'cursorWBB' and
+    -- 'cursorRuns' below).
   , cursorReaders    :: !(Maybe (Readers.Readers m h))
 
-    --TODO: the cursorRuns and cursorWBB could be replaced by just retaining
+    -- TODO: the cursorRuns and cursorWBB could be replaced by just retaining
     -- the BlobFile from the runs and WBB, so that we retain less. Since we
     -- only retain these to keep BlobRefs valid until the cursor is closed.
     -- Alternatively: the Readers could be modified to keep the BlobFiles even
     -- once the readers are drained, and only release them when the Readers is
     -- itself closed.
 
-    -- | The runs held open by the cursor. We must release these references
-    -- when the cursor gets closed.
-  , cursorRuns       :: !(V.Vector (Ref (Run m h)))
-
     -- | The write buffer blobs, which like the runs, we have to keep open
     -- untile the cursor is closed.
   , cursorWBB        :: !(Ref (WBB.WriteBufferBlobs m h))
+
+    -- | The runs held open by the cursor. We must release these references
+    -- when the cursor gets closed.
+  , cursorRuns       :: !(V.Vector (Ref (Run m h)))
   }
 
 {-# SPECIALISE withCursor ::
@@ -1033,9 +1033,13 @@ newCursor !offsetKey t = withOpenTable t $ \tEnv -> do
     withOpenSession cursorSession $ \_ -> do
       withActionRegistry $ \reg -> do
         (wb, wbblobs, cursorRuns) <- dupTableContent reg (tableContent tEnv)
+        let cursorSources =
+                Readers.FromWriteBuffer wb wbblobs
+              : fmap Readers.FromRun (V.toList cursorRuns)
+              -- TODO: include union level
         cursorReaders <-
           withRollbackMaybe reg
-            (Readers.new offsetKey (Just (wb, wbblobs)) cursorRuns)
+            (Readers.new offsetKey cursorSources)
             Readers.close
         let cursorWBB = wbblobs
         cursorState <- newMVar (CursorOpen CursorEnv {..})

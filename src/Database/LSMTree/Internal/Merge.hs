@@ -172,8 +172,8 @@ new ::
   -> V.Vector (Ref (Run m h))
   -> m (Maybe (Merge t m h))
 new hfs hbio runParams mergeType mergeResolve targetPaths runs = do
-    -- no offset, no write buffer
-    mreaders <- Readers.new Readers.NoOffsetKey Nothing runs
+    let sources = Readers.FromRun <$> V.toList runs
+    mreaders <- Readers.new Readers.NoOffsetKey sources
     -- TODO: Exception safety! If Readers.new fails after already creating some
     -- run readers, or Builder.new fails, the run readers will stay open,
     -- holding handles of the input runs' files.

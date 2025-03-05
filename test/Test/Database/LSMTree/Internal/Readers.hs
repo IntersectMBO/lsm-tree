@@ -1,27 +1,24 @@
-{-# LANGUAGE LambdaCase   #-}
 {-# LANGUAGE TypeFamilies #-}
 
 module Test.Database.LSMTree.Internal.Readers (tests) where
 
 import           Control.Exception (assert)
-import           Control.Monad (zipWithM)
+import           Control.Monad (forM)
 import           Control.Monad.IO.Class (liftIO)
 import           Control.Monad.Trans.Reader (ReaderT (..))
 import           Control.Monad.Trans.State (StateT (..), get, put)
 import           Control.RefCount
 import           Data.Bifunctor (bimap, first)
 import           Data.Coerce (coerce)
-import           Data.Foldable (toList, traverse_)
+import           Data.Foldable (traverse_)
 import qualified Data.Map.Strict as Map
 import           Data.Proxy (Proxy (..))
-import qualified Data.Vector as V
 import           Database.LSMTree.Extras (showPowersOf)
 import           Database.LSMTree.Extras.Generators (BiasedKey (..))
 import           Database.LSMTree.Extras.RunData
 import           Database.LSMTree.Internal.BlobRef
 import           Database.LSMTree.Internal.Entry
 import qualified Database.LSMTree.Internal.Index as Index (IndexType (Ordinary))
-import qualified Database.LSMTree.Internal.Paths as Paths
 import           Database.LSMTree.Internal.Readers (HasMore (Drained, HasMore),
                      Readers)
 import qualified Database.LSMTree.Internal.Readers as Readers
@@ -31,6 +28,7 @@ import qualified Database.LSMTree.Internal.RunBuilder as RunBuilder
 import           Database.LSMTree.Internal.RunNumber
 import qualified Database.LSMTree.Internal.RunReader as Reader
 import           Database.LSMTree.Internal.Serialise
+import           Database.LSMTree.Internal.UniqCounter
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
 import qualified System.FS.API as FS
@@ -79,6 +77,33 @@ type SerialisedEntry = Entry SerialisedValue SerialisedBlob
 
 type Handle = MockFS.HandleMock
 
+data ReaderSourceData =
+    FromWriteBufferData
+      !(RunData BiasedKey SerialisedValue SerialisedBlob)
+  | FromRunData
+      !(RunData BiasedKey SerialisedValue SerialisedBlob)
+  deriving stock (Eq, Show)
+
+instance Arbitrary ReaderSourceData where
+  arbitrary =
+      QC.oneof [
+          FromWriteBufferData <$> arbitrary
+        , FromRunData <$> arbitrary
+        ]
+
+  shrink (FromWriteBufferData rd) =
+      [ FromWriteBufferData rd' | rd' <- shrink rd
+      ]
+  shrink (FromRunData rd) =
+      [ FromWriteBufferData rd
+      ] <>
+      [ FromRunData rd' | rd' <- shrink rd
+      ]
+
+sourceKOps :: ReaderSourceData -> Map.Map BiasedKey SerialisedEntry
+sourceKOps (FromWriteBufferData rd) = unRunData rd
+sourceKOps (FromRunData         rd) = unRunData rd
+
 --------------------------------------------------------------------------------
 -- Mock
 
@@ -93,12 +118,12 @@ size :: MockReaders -> Int
 size (MockReaders xs) = length xs
 
 newMock :: Maybe SerialisedKey
-        -> [RunData BiasedKey SerialisedValue SerialisedBlob]
+        -> [ReaderSourceData]
         -> MockReaders
 newMock offset =
-      MockReaders . Map.assocs . Map.unions
+      MockReaders . Map.toList . Map.unions
     . zipWith (\i -> Map.mapKeysMonotonic (\k -> (k, RunNumber i))) [0..]
-    . map (skip . unRunData . serialiseRunData)
+    . map (skip . Map.mapKeysMonotonic coerce . sourceKOps)
   where
     skip = maybe id (\k -> Map.dropWhileAntitone (< k)) offset
 
@@ -143,8 +168,7 @@ deriving stock instance Eq   (Action (Lockstep ReadersState) a)
 instance StateModel (Lockstep ReadersState) where
   data Action (Lockstep ReadersState) a where
     New          :: Maybe BiasedKey  -- ^ optional offset
-                 -> Maybe (RunData BiasedKey SerialisedValue SerialisedBlob)
-                 -> [RunData BiasedKey SerialisedValue SerialisedBlob]
+                 -> [ReaderSourceData]
                  -> ReadersAct ()
     PeekKey      :: ReadersAct SerialisedKey
     Pop          :: Int  -- allow popping many at once to drain faster
@@ -212,9 +236,8 @@ instance InLockstep ReadersState where
     | isEmpty mock = do
         -- It's not allowed to keep using a drained RunReaders,
         -- we can only create a new one.
-        wb <- arbitrary
-        wbs <- vector =<< chooseInt (1, 10)
-        let keys = map fst $ concatMap (Map.toList . unRunData) $ toList wb <> wbs
+        sources <- vector =<< chooseInt (1, 10)
+        let keys = concatMap (Map.keys . sourceKOps) sources
         offset <-
           if null keys
           then pure Nothing
@@ -222,7 +245,7 @@ instance InLockstep ReadersState where
                  [ liftArbitrary (elements (coerce keys))  -- existing key
                  , arbitrary                               -- any key
                  ]
-        return $ Some $ New offset wb wbs
+        return $ Some $ New offset sources
     | otherwise =
         QC.frequency $
           [ (5, pure (Some PeekKey))
@@ -242,14 +265,14 @@ instance InLockstep ReadersState where
     -> LockstepAction ReadersState a
     -> [Any (LockstepAction ReadersState)]
   shrinkWithVars _ctx _st = \case
-      New k wb wbs      -> [ Some (New k' wb' wbs')
-                           | (k', wb', wbs') <- shrink (k, wb, wbs)
-                           ]
+      New k sources -> [ Some (New k' sources')
+                       | (k', sources') <- shrink (k, sources)
+                       ]
       -- arbitraryWithVars does /not/ have an invariant that n is less than
       -- the number of elements available. The only invariant to preserve when
       -- shrinking is to keep n greater than 0.
-      Pop n             -> Some . Pop <$> filter (> 0) (shrink n)
-      _                 -> []
+      Pop n         -> Some . Pop <$> filter (> 0) (shrink n)
+      _             -> []
 
   tagStep ::
        (ReadersState, ReadersState)
@@ -259,12 +282,12 @@ instance InLockstep ReadersState where
   tagStep (ReadersState before, ReadersState after) action _result = concat
     -- Directly using strings, since there is only a small number of tags.
     [ [ "NewEntries " <> showPowersOf 10 numEntries
-      | New _ wb wbs <- [action]
-      , let numEntries = sum (map (Map.size . unRunData) (toList wb <> wbs))
+      | New _ sources <- [action]
+      , let numEntries = sum (map (Map.size . sourceKOps) sources)
       ]
     , [ "NewEntriesKeyDuplicates " <> showPowersOf 2 keyCount
-      | New _ wb wbs <- [action]
-      , let keyCounts = Map.unionsWith (+) (map (Map.map (const 1) . unRunData) (toList wb <> wbs))
+      | New _ sources <- [action]
+      , let keyCounts = Map.unionsWith (+) (map (Map.map (const 1) . sourceKOps) sources)
       , keyCount <- Map.elems keyCounts
       , keyCount > 1
       ]
@@ -282,7 +305,7 @@ runMock ::
   -> MockReaders
   -> (ReadersVal a, MockReaders)
 runMock = \case
-    New k wb wbs   -> const $ wrap MUnit (Right (), newMock (coerce k) (toList wb <> wbs))
+    New k sources  -> const $ wrap MUnit (Right (), newMock (coerce k) sources)
     PeekKey        -> \m -> wrap MKey (peekKeyMock m, m)
     Pop n          -> wrap wrapPop . popMock n
     DropWhileKey k -> wrap wrapDrop . dropWhileKeyMock k
@@ -313,16 +336,20 @@ data RealState =
       !Int  -- ^ number of runs created so far (to generate fresh run numbers)
       !(Maybe ReadersCtx)
 
--- | Readers, together with the runs being read, so they can be cleaned up at the end
-type ReadersCtx = (Ref (WBB.WriteBufferBlobs IO MockFS.HandleMock),
-                   [Ref (Run.Run IO Handle)],
-                   Readers IO Handle)
+-- | Readers, together with their sources, so they can be cleaned up at the end
+type ReadersCtx = ( [Readers.ReaderSource IO MockFS.HandleMock]
+                  , Readers IO Handle
+                  )
 
 closeReadersCtx :: ReadersCtx -> IO ()
-closeReadersCtx (wbblobs, runs, readers) = do
+closeReadersCtx (sources, readers) = do
     Readers.close readers
-    traverse_ releaseRef runs
-    releaseRef wbblobs
+    traverse_ closeReaderSource sources
+
+closeReaderSource :: Readers.ReaderSource IO h -> IO ()
+closeReaderSource = \case
+    Readers.FromWriteBuffer _ wbblobs -> releaseRef wbblobs
+    Readers.FromRun           run     -> releaseRef run
 
 instance RunModel (Lockstep ReadersState) RealMonad where
   perform       = \_st -> runIO
@@ -338,33 +365,34 @@ instance RunLockstep ReadersState RealMonad where
 
 runIO :: LockstepAction ReadersState a -> LookUp RealMonad -> RealMonad (Realized RealMonad a)
 runIO act lu = case act of
-    New offset wb wbs -> ReaderT $ \(hfs, hbio) -> do
+    New offset srcDatas -> ReaderT $ \(hfs, hbio) -> do
       RealState numRuns mCtx <- get
       -- if runs are still being read, they need to be cleaned up
       traverse_ (liftIO . closeReadersCtx) mCtx
-      let wb' = fmap serialiseRunData wb
-          wbs' = fmap serialiseRunData wbs
-      runs <-
-        zipWithM
-          (\p -> liftIO . unsafeCreateRunAt hfs hbio runParams p)
-          (Paths.RunFsPaths (FS.mkFsPath []) . RunNumber <$> [numRuns ..])
-          wbs'
+      counter <- liftIO $ newUniqCounter numRuns
+      sources <- forM srcDatas $ \case
+        FromWriteBufferData rd -> liftIO $ do
+          n <- incrUniqCounter counter
+          wbblobs <- WBB.new hfs (FS.mkFsPath [show (uniqueToInt n) <> ".wb.blobs"])
+          let kops = unRunData (serialiseRunData rd)
+          wb <- WB.fromMap <$> traverse (traverse (WBB.addBlob hfs wbblobs)) kops
+          return $ Readers.FromWriteBuffer wb wbblobs
+        FromRunData rd -> do
+          r <- liftIO $ unsafeCreateRun hfs hbio runParams (FS.mkFsPath []) counter $ serialiseRunData rd
+          return $ Readers.FromRun r
       newReaders <- liftIO $ do
-        wbblobs <- WBB.new hfs (FS.mkFsPath [show numRuns <> ".wb.blobs"])
-        wb'' <- traverse (fmap (flip (,) wbblobs . WB.fromMap) .
-                         traverse (traverse (WBB.addBlob hfs wbblobs)) .
-                         unRunData )
-                        wb'
         let offsetKey = maybe Readers.NoOffsetKey (Readers.OffsetKey . coerce) offset
-        mreaders <- Readers.new offsetKey wb'' (V.fromList runs)
+        mreaders <- Readers.new offsetKey sources
+        -- TODO: tidy up cleanup code?
         case mreaders of
           Nothing -> do
-            traverse_ releaseRef runs
-            releaseRef wbblobs
+            traverse_ closeReaderSource sources
             return Nothing
           Just readers ->
-            return $ Just (wbblobs, runs, readers)
-      put (RealState (numRuns + length wbs) newReaders)
+            return $ Just (sources, readers)
+      -- TODO: unnecessarily convoluted, should we just drop the State monad?
+      numRuns' <- liftIO $ uniqueToInt <$> incrUniqCounter counter
+      put (RealState numRuns' newReaders)
       return (Right ())
     PeekKey -> expectReaders $ \_ r -> do
       (,) HasMore <$> Readers.peekKey r
@@ -389,15 +417,14 @@ runIO act lu = case act of
         ReaderT $ \(hfs, _hbio) -> do
           get >>= \case
             RealState _ Nothing -> return (Left ())
-            RealState n (Just (wbblobs, runs, readers)) -> do
+            RealState n (Just (sources, readers)) -> do
               (hasMore, x) <- liftIO $ f hfs readers
               case hasMore of
                 HasMore ->
                   return (Right x)
                 Drained -> do
-                  -- Readers is drained, clean up the runs
-                  liftIO $ traverse_ releaseRef runs
-                  liftIO $ releaseRef wbblobs
+                  -- Readers is drained, clean up the sources
+                  liftIO $ traverse_ closeReaderSource sources
                   put (RealState n Nothing)
                   return (Right x)
 

@@ -4,6 +4,7 @@
 module Database.LSMTree.Internal.Readers (
     Readers (..)
   , OffsetKey (..)
+  , ReaderSource (..)
   , new
   , close
   , peekKey
@@ -29,13 +30,12 @@ import qualified Data.Map.Strict as Map
 import           Data.Maybe (catMaybes)
 import           Data.Primitive.MutVar
 import           Data.Traversable (for)
-import qualified Data.Vector as V
-import           Database.LSMTree.Internal.BlobRef (RawBlobRef)
+import           Database.LSMTree.Internal.BlobRef (BlobSpan, RawBlobRef)
 import           Database.LSMTree.Internal.Entry (Entry (..))
 import           Database.LSMTree.Internal.Run (Run)
 import           Database.LSMTree.Internal.RunReader (OffsetKey (..),
                      RunReader (..))
-import qualified Database.LSMTree.Internal.RunReader as Reader
+import qualified Database.LSMTree.Internal.RunReader as RunReader
 import           Database.LSMTree.Internal.Serialise
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import qualified Database.LSMTree.Internal.WriteBufferBlobs as WB
@@ -87,7 +87,7 @@ data ReadCtx m h = ReadCtx {
       -- Using an 'STRef' could avoid reallocating the record for every entry,
       -- but that might not be straightforward to integrate with the heap.
       readCtxHeadKey   :: !SerialisedKey
-    , readCtxHeadEntry :: !(Reader.Entry m h)
+    , readCtxHeadEntry :: !(RunReader.Entry m h)
       -- We could get rid of this by making 'LoserTree' stable (for which there
       -- is a prototype already).
       -- Alternatively, if we decide to have an invariant that the number in
@@ -112,56 +112,54 @@ instance Ord (ReadCtx m h) where
 -- showed ~100 bytes of extra allocations per entry that is read (which might be
 -- avoidable with some tinkering).
 data Reader m h =
-    ReadRun    !(RunReader m h)
-    -- The list allows to incrementally read from the write buffer without
+    -- | The list allows to incrementally read from the write buffer without
     -- having to find the next entry in the Map again (requiring key
     -- comparisons) or having to copy out all entries.
+    --
     -- TODO: more efficient representation? benchmark!
-  | ReadBuffer !(MutVar (PrimState m) [KOp m h])
+    ReadBuffer !(MutVar (PrimState m) [KOp m h])
+  | ReadRun    !(RunReader m h)
 
 type KOp m h = (SerialisedKey, Entry SerialisedValue (RawBlobRef m h))
 
+data ReaderSource m h =
+    FromWriteBuffer !WB.WriteBuffer !(Ref (WB.WriteBufferBlobs m h))
+  | FromRun         !(Ref (Run m h))
+
 {-# SPECIALISE new ::
-     OffsetKey
-  -> Maybe (WB.WriteBuffer, Ref (WB.WriteBufferBlobs IO h))
-  -> V.Vector (Ref (Run IO h))
-  -> IO (Maybe (Readers IO h)) #-}
+     OffsetKey -> [ReaderSource IO h] -> IO (Maybe (Readers IO h)) #-}
 new :: forall m h.
      (MonadMask m, MonadST m, MonadSTM m)
   => OffsetKey
-  -> Maybe (WB.WriteBuffer, Ref (WB.WriteBufferBlobs m h))
-  -> V.Vector (Ref (Run m h))
+  -> [ReaderSource m h]
   -> m (Maybe (Readers m h))
-new !offsetKey wbs runs = do
-    wBuffer <- maybe (pure Nothing) (uncurry fromWB) wbs
-    readers <- zipWithM (fromRun . ReaderNumber) [1..] (V.toList runs)
-    let contexts = nonEmpty . catMaybes $ wBuffer : readers
-    for contexts $ \xs -> do
+new !offsetKey sources = do
+    readers <- zipWithM (fromSource . ReaderNumber) [1..] sources
+    for (nonEmpty (catMaybes readers)) $ \xs -> do
       (readersHeap, readCtx) <- Heap.newMutableHeap xs
       readersNext <- newMutVar readCtx
       return Readers {..}
   where
-    fromWB :: WB.WriteBuffer
-           -> Ref (WB.WriteBufferBlobs m h)
-           -> m (Maybe (ReadCtx m h))
+    fromSource :: ReaderNumber -> ReaderSource m h -> m (Maybe (ReadCtx m h))
+    fromSource n src =
+        nextReadCtx n =<< case src of
+          FromWriteBuffer wb wbblobs -> fromWB wb wbblobs
+          FromRun r                  -> ReadRun <$> RunReader.new offsetKey r
+
+    fromWB :: WB.WriteBuffer -> Ref (WB.WriteBufferBlobs m h) -> m (Reader m h)
     fromWB wb wbblobs = do
-        --TODO: this BlobSpan to BlobRef conversion involves quite a lot of allocation
-        kops <- newMutVar $ map (fmap (fmap (WB.mkRawBlobRef wbblobs))) $
-                  Map.toList $ filterWB $ WB.toMap wb
-        nextReadCtx (ReaderNumber 0) (ReadBuffer kops)
+        let kops = Map.toList $ filterWB $ WB.toMap wb
+        ReadBuffer <$> newMutVar (map convertBlobs kops)
       where
+        -- TODO: this conversion involves quite a lot of allocation
+        convertBlobs :: (k, Entry v BlobSpan) -> (k, Entry v (RawBlobRef m h))
+        convertBlobs = fmap (fmap (WB.mkRawBlobRef wbblobs))
+
         filterWB = case offsetKey of
             NoOffsetKey -> id
             OffsetKey k -> Map.dropWhileAntitone (< k)
 
-    fromRun :: ReaderNumber -> Ref (Run m h) -> m (Maybe (ReadCtx m h))
-    fromRun n run = do
-        reader <- Reader.new offsetKey run
-        nextReadCtx n (ReadRun reader)
-
-{-# SPECIALISE close ::
-     Readers IO (FS.Handle h)
-  -> IO () #-}
+{-# SPECIALISE close :: Readers IO (FS.Handle h) -> IO () #-}
 -- | Only call when aborting before all readers have been drained.
 close ::
      (MonadMask m, MonadSTM m, PrimMonad m)
@@ -173,8 +171,8 @@ close Readers {..} = do
     closeHeap
   where
     closeReader = \case
-        ReadRun r    -> Reader.close r
         ReadBuffer _ -> pure ()
+        ReadRun r    -> RunReader.close r
     closeHeap =
         Heap.extract readersHeap >>= \case
           Nothing -> return ()
@@ -182,9 +180,7 @@ close Readers {..} = do
             closeReader readCtxReader
             closeHeap
 
-{-# SPECIALISE peekKey ::
-     Readers IO h
-  -> IO SerialisedKey #-}
+{-# SPECIALISE peekKey :: Readers IO h -> IO SerialisedKey #-}
 peekKey ::
      PrimMonad m
   => Readers m h
@@ -197,21 +193,18 @@ data HasMore = HasMore | Drained
   deriving stock (Eq, Show)
 
 {-# SPECIALISE pop ::
-    Readers IO h
-  -> IO (SerialisedKey, Reader.Entry IO h, HasMore) #-}
+     Readers IO h -> IO (SerialisedKey, RunReader.Entry IO h, HasMore) #-}
 pop ::
      (MonadMask m, MonadSTM m, MonadST m)
   => Readers m h
-  -> m (SerialisedKey, Reader.Entry m h, HasMore)
+  -> m (SerialisedKey, RunReader.Entry m h, HasMore)
 pop r@Readers {..} = do
     ReadCtx {..} <- readMutVar readersNext
     hasMore <- dropOne r readCtxNumber readCtxReader
     return (readCtxHeadKey, readCtxHeadEntry, hasMore)
 
 {-# SPECIALISE dropWhileKey ::
-     Readers IO h
-  -> SerialisedKey
-  -> IO (Int, HasMore) #-}
+     Readers IO h -> SerialisedKey -> IO (Int, HasMore) #-}
 dropWhileKey ::
      (MonadMask m, MonadSTM m, MonadST m)
   => Readers m h
@@ -242,10 +235,7 @@ dropWhileKey Readers {..} key = do
                 return (n', HasMore)
 
 {-# SPECIALISE dropOne ::
-     Readers IO h
-  -> ReaderNumber
-  -> Reader IO h
-  -> IO HasMore #-}
+     Readers IO h -> ReaderNumber -> Reader IO h -> IO HasMore #-}
 dropOne ::
      (MonadMask m, MonadSTM m, MonadST m)
   => Readers m h
@@ -264,9 +254,7 @@ dropOne Readers {..} number reader = do
         return HasMore
 
 {-# SPECIALISE nextReadCtx ::
-     ReaderNumber
-  -> Reader IO h
-  -> IO (Maybe (ReadCtx IO h)) #-}
+     ReaderNumber -> Reader IO h -> IO (Maybe (ReadCtx IO h)) #-}
 nextReadCtx ::
      (MonadMask m, MonadSTM m, MonadST m)
   => ReaderNumber
@@ -274,14 +262,14 @@ nextReadCtx ::
   -> m (Maybe (ReadCtx m h))
 nextReadCtx readCtxNumber readCtxReader =
     case readCtxReader of
-      ReadRun r -> Reader.next r <&> \case
-        Reader.Empty ->
-          Nothing
-        Reader.ReadEntry readCtxHeadKey readCtxHeadEntry ->
-          Just ReadCtx {..}
       ReadBuffer r -> atomicModifyMutVar r $ \case
         [] ->
           ([], Nothing)
         ((readCtxHeadKey, e) : rest) ->
-          let readCtxHeadEntry = Reader.Entry e
+          let readCtxHeadEntry = RunReader.Entry e
           in  (rest, Just ReadCtx {..})
+      ReadRun r -> RunReader.next r <&> \case
+        RunReader.Empty ->
+          Nothing
+        RunReader.ReadEntry readCtxHeadKey readCtxHeadEntry ->
+          Just ReadCtx {..}
