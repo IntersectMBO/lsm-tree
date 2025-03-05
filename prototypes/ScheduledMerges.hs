@@ -877,6 +877,10 @@ newtype UnionCredits = UnionCredits Credit
 -- debt will be reduced by /at least/ the number of supplied union credits. It
 -- is therefore advisable to query 'remainingUnionDebt' every once in a while to
 -- see what the current debt is.
+--
+-- This function returns any surplus of union credits as /leftover/ credits when
+-- a union has finished. In particular, if the returned number of credits is
+-- non-negative, then the union is finished.
 supplyUnionCredits :: LSM s -> UnionCredits -> ST s UnionCredits
 supplyUnionCredits (LSMHandle scr lsmr) (UnionCredits credits)
   | credits <= 0 = return (UnionCredits 0)
