@@ -67,7 +67,6 @@ module Database.LSMTree.Internal (
     -- * Mutiple writable tables
   , duplicate
     -- * Table union
-  , union
   , unions
   ) where
 
@@ -78,7 +77,7 @@ import           Control.Concurrent.Class.MonadSTM (MonadSTM (..))
 import           Control.Concurrent.Class.MonadSTM.RWVar (RWVar)
 import qualified Control.Concurrent.Class.MonadSTM.RWVar as RW
 import           Control.DeepSeq
-import           Control.Monad (forM, unless, void, zipWithM_)
+import           Control.Monad (forM, unless, void)
 import           Control.Monad.Class.MonadST (MonadST (..))
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Primitive
@@ -92,7 +91,7 @@ import           Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (catMaybes)
+import           Data.Maybe (catMaybes, maybeToList)
 import qualified Data.Set as Set
 import           Data.Typeable
 import qualified Data.Vector as V
@@ -104,12 +103,14 @@ import           Database.LSMTree.Internal.Entry (Entry)
 import           Database.LSMTree.Internal.Lookup (ByteCountDiscrepancy,
                      ResolveSerialisedValue, lookupsIO)
 import           Database.LSMTree.Internal.MergeSchedule
+import           Database.LSMTree.Internal.MergingTree
 import           Database.LSMTree.Internal.Paths (SessionRoot (..),
                      SnapshotMetaDataChecksumFile (..),
                      SnapshotMetaDataFile (..), SnapshotName)
 import qualified Database.LSMTree.Internal.Paths as Paths
 import           Database.LSMTree.Internal.Range (Range (..))
 import           Database.LSMTree.Internal.Run (Run)
+import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.RunReaders (OffsetKey (..))
 import qualified Database.LSMTree.Internal.RunReaders as Readers
@@ -232,9 +233,6 @@ data LSMTreeError =
       Int -- ^ Vector index of table @t1@ involved in the mismatch
       Int -- ^ Vector index of table @t2@ involved in the mismatch
     -- | 'unions' was called on tables that do not have the same configuration.
-  | ErrUnionsTableConfigMismatch
-      Int -- ^ Vector index of table @t1@ involved in the mismatch
-      Int -- ^ Vector index of table @t2@ involved in the mismatch
   deriving stock (Show, Eq)
   deriving anyclass (Exception)
 
@@ -697,23 +695,36 @@ new sesh conf = do
     withOpenSession sesh $ \seshEnv ->
       withActionRegistry $ \reg -> do
         am <- newArenaManager
-        blobpath <- Paths.tableBlobPath (sessionRoot seshEnv) <$>
-                      incrUniqCounter (sessionUniqCounter seshEnv)
-        tableWriteBufferBlobs
-          <- withRollback reg
-               (WBB.new (sessionHasFS seshEnv) blobpath)
-               releaseRef
-        let tableWriteBuffer = WB.empty
-            tableLevels = V.empty
-        tableCache <- mkLevelsCache reg tableLevels
-        let tc = TableContent {
-                tableWriteBuffer
-              , tableWriteBufferBlobs
-              , tableLevels
-              , tableCache
-              , tableUnionLevel = NoUnion
-              }
+        tc <- newEmptyTableContent seshEnv reg
         newWith reg sesh seshEnv conf am tc
+
+{-# SPECIALISE newEmptyTableContent ::
+     SessionEnv IO h
+  -> ActionRegistry IO
+  -> IO (TableContent IO h) #-}
+newEmptyTableContent ::
+     (PrimMonad m, MonadMask m, MonadMVar m)
+  => SessionEnv m h
+  -> ActionRegistry m
+  -> m (TableContent m h)
+newEmptyTableContent seshEnv reg = do
+    blobpath <- Paths.tableBlobPath (sessionRoot seshEnv) <$>
+                  incrUniqCounter (sessionUniqCounter seshEnv)
+    let tableWriteBuffer = WB.empty
+    tableWriteBufferBlobs
+      <- withRollback reg
+           (WBB.new (sessionHasFS seshEnv) blobpath)
+           releaseRef
+    let tableLevels = V.empty
+    tableCache <- mkLevelsCache reg tableLevels
+    pure TableContent {
+      tableWriteBuffer
+    , tableWriteBufferBlobs
+    , tableLevels
+    , tableCache
+    , tableUnionLevel = NoUnion
+    }
+
 
 {-# SPECIALISE newWith ::
      ActionRegistry IO
@@ -1336,15 +1347,6 @@ duplicate t@Table{..} = do
    Table union
 -------------------------------------------------------------------------------}
 
-{-# SPECIALISE union :: Table IO h -> Table IO h -> IO (Table IO h) #-}
--- | See 'Database.LSMTree.Normal.union'.
-union ::
-     (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
-  => Table m h
-  -> Table m h
-  -> m (Table m h)
-union t1 t2 = unions $ t1 :| [t2]
-
 {-# SPECIALISE unions :: NonEmpty (Table IO h) -> IO (Table IO h) #-}
 -- | See 'Database.LSMTree.Normal.unions'.
 unions ::
@@ -1359,63 +1361,148 @@ unions ts = do
 
     traceWith (sessionTracer sesh) $ TraceUnions (NE.map tableId ts)
 
-    -- TODO: Do we really need the configs to match exactly? It's okay as a
-    -- requirement for now, but we might want to revisit it. Some settings don't
-    -- really need to match for things to work, but of course we'd still need to
-    -- answer the question of which config to use for the new table, possibly
-    -- requiring to supply it manually? Or, we could generalise the exact match
-    -- to have a config compatibility test and config merge?
-    conf <-
-      case match (fmap tableConfig ts) of
-        Left (i, j) -> throwIO $ ErrUnionsTableConfigMismatch i j
-        Right conf  -> pure conf
+    -- The TableConfig for the new table is taken from the last table in the
+    -- union. This corresponds to the "Data.Map.union updates baseMap" order,
+    -- where we take the config from the base map, not the updates.
+    --
+    -- This could be modified to take the new config as an input. It works to
+    -- pick any config because the new table is almost completely fresh. It
+    -- will have an empty write buffer and no runs in the normal levels. All
+    -- the existing runs get squashed down into a single run before rejoining
+    -- as a last level.
+    let conf = tableConfig (NE.last ts)
 
     -- We acquire a read-lock on the session open-state to prevent races, see
     -- 'sessionOpenTables'.
     modifyWithActionRegistry
       (atomically $ RW.unsafeAcquireReadAccess (sessionState sesh))
-      (\_ -> atomically $ RW.unsafeReleaseReadAccess (sessionState sesh)) $ \reg -> \case
+      (\_ -> atomically $ RW.unsafeReleaseReadAccess (sessionState sesh)) $
+      \reg -> \case
         SessionClosed -> throwIO ErrSessionClosed
         seshState@(SessionOpen seshEnv) -> do
-          contents <-
-            forM ts $ \t -> do
-              withOpenTable t $ \tEnv ->
-                -- The table contents escape the read access, but we just added references
-                -- to each run so it is safe.
-                RW.withReadAccess (tableContent tEnv) (duplicateTableContent reg)
-
-          content <-
-            error "unions: combine contents into merging tree" $ -- TODO
-              contents
-
-          t <-
-            newWith
-              reg
-              sesh
-              seshEnv
-              conf
-              (error "unions: ArenaManager") -- TODO
-              content
-
+          t <- unionsInOpenSession reg sesh seshEnv conf ts
           pure (seshState, t)
 
--- | Like 'matchBy', but the match function is @(==)@.
-match :: Eq a => NonEmpty a -> Either (Int, Int) a
-match = matchBy (==)
+{-# SPECIALISE unionsInOpenSession ::
+     ActionRegistry IO
+  -> Session IO h
+  -> SessionEnv IO h
+  -> TableConfig
+  -> NonEmpty (Table IO h)
+  -> IO (Table IO h) #-}
+unionsInOpenSession ::
+     (MonadSTM m, MonadMask m, MonadMVar m, MonadST m)
+  => ActionRegistry m
+  -> Session m h
+  -> SessionEnv m h
+  -> TableConfig
+  -> NonEmpty (Table m h)
+  -> m (Table m h)
+unionsInOpenSession reg sesh seshEnv conf ts = do
 
--- | Check that all values in the list match. If so, return the matched value.
--- If there is a mismatch, return the list indices of the mismatching values.
-matchBy :: forall a. (a -> a -> Bool) -> NonEmpty a -> Either (Int, Int) a
-matchBy eq (x0 :| xs) =
-    case zipWithM_ (matchOne x0) [1..] xs of
-      Left i   -> Left (0, i)
-      Right () -> Right x0
+    mts <- forM (NE.toList ts) $ \t ->
+      withOpenTable t $ \tEnv ->
+        RW.withReadAccess (tableContent tEnv) $ \tc ->
+          -- tableContentToMergingTree duplicates all runs and merges
+          -- so the ones from the tableContent here do not escape
+          -- the read access.
+          withRollback reg
+            (tableContentToMergingTree seshEnv conf tc)
+            releaseRef
+    mt <- withRollback reg (newPendingUnionMerge mts) releaseRef
+
+    -- The mts here is a temporary value, since newPendingUnionMerge
+    -- will make its own references, so release mts at the end of
+    -- the action registry bracket
+    forM_ mts (delayedCommit reg . releaseRef)
+
+    empty <- newEmptyTableContent seshEnv reg
+    let content = empty { tableUnionLevel = Union mt }
+
+        -- Pick the arena manager to optimise the case of:
+        -- someUpdates <> bigTableWithLotsOfLookups
+        -- by reusing the arena manager from the last one.
+        am = tableArenaManager (NE.last ts)
+
+    newWith reg sesh seshEnv conf am content
+
+{-# SPECIALISE tableContentToMergingTree ::
+     SessionEnv IO h
+  -> TableConfig
+  -> TableContent IO h
+  -> IO (Ref (MergingTree IO h)) #-}
+tableContentToMergingTree ::
+     forall m h.
+     (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+  => SessionEnv m h
+  -> TableConfig
+  -> TableContent m h
+  -> m (Ref (MergingTree m h))
+tableContentToMergingTree seshEnv conf
+                          tc@TableContent {
+                            tableLevels,
+                            tableUnionLevel
+                          } =
+    bracket (writeBufferToNewRun seshEnv conf tc)
+            (mapM_ releaseRef) $ \mwbr ->
+      let runs :: [PreExistingRun m h]
+          runs = maybeToList (fmap PreExistingRun mwbr)
+              ++ concatMap levelToPreExistingRuns (V.toList tableLevels)
+          -- any pre-existing union in the input table:
+          unionmt = case tableUnionLevel of
+                    NoUnion  -> Nothing
+                    Union mt -> Just mt
+       in newPendingLevelMerge runs unionmt
   where
-    matchOne :: a -> Int -> a -> Either Int ()
-    matchOne x i y =
-      if (x `eq` y)
-        then Right ()
-        else Left i
+    levelToPreExistingRuns :: Level m h -> [PreExistingRun m h]
+    levelToPreExistingRuns Level{incomingRun, residentRuns} =
+        case incomingRun of
+          Single        r  -> PreExistingRun r
+          Merging _ _ _ mr -> PreExistingMergingRun mr
+      : map PreExistingRun (V.toList residentRuns)
+
+--TODO: can we share this or move it to MergeSchedule?
+{-# SPECIALISE writeBufferToNewRun ::
+     SessionEnv IO h
+  -> TableConfig
+  -> TableContent IO h
+  -> IO (Maybe (Ref (Run IO h))) #-}
+writeBufferToNewRun ::
+     (MonadMask m, MonadST m, MonadSTM m)
+  => SessionEnv m h
+  -> TableConfig
+  -> TableContent m h
+  -> m (Maybe (Ref (Run m h)))
+writeBufferToNewRun SessionEnv {
+                      sessionRoot        = root,
+                      sessionHasFS       = hfs,
+                      sessionHasBlockIO  = hbio,
+                      sessionUniqCounter = uc
+                    }
+                    conf@TableConfig {
+                      confDiskCachePolicy,
+                      confFencePointerIndex
+                    }
+                    TableContent{
+                      tableWriteBuffer,
+                      tableWriteBufferBlobs
+                    }
+  | WB.null tableWriteBuffer = pure Nothing
+  | otherwise                = Just <$> do
+    !n <- incrUniqCounter uc
+    let !ln        = LevelNo 1
+        !cache     = diskCachePolicyForLevel confDiskCachePolicy ln
+        !alloc     = bloomFilterAllocForLevel conf ln
+        !indexType = indexTypeForRun confFencePointerIndex
+        !path      = Paths.runPath (Paths.activeDir root)
+                                   (uniqueToRunNumber n)
+    Run.fromWriteBuffer hfs hbio
+      cache
+      alloc
+      indexType
+      path
+      tableWriteBuffer
+      tableWriteBufferBlobs
 
 -- | Check that all tables in the session match. If so, return the matched
 -- session. If there is a mismatch, return the list indices of the mismatching
