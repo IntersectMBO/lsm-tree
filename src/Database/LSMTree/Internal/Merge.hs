@@ -36,13 +36,13 @@ import           Data.Traversable (for)
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.BlobRef (RawBlobRef)
 import           Database.LSMTree.Internal.Entry
+import           Database.LSMTree.Internal.Readers (Readers)
+import qualified Database.LSMTree.Internal.Readers as Readers
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunBuilder (RunBuilder, RunParams)
 import qualified Database.LSMTree.Internal.RunBuilder as Builder
 import qualified Database.LSMTree.Internal.RunReader as Reader
-import           Database.LSMTree.Internal.RunReaders (Readers)
-import qualified Database.LSMTree.Internal.RunReaders as Readers
 import           Database.LSMTree.Internal.Serialise
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)

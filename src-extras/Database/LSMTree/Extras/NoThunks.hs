@@ -59,13 +59,13 @@ import           Database.LSMTree.Internal.Paths
 import           Database.LSMTree.Internal.RawBytes
 import           Database.LSMTree.Internal.RawOverflowPage
 import           Database.LSMTree.Internal.RawPage
+import           Database.LSMTree.Internal.Readers
 import           Database.LSMTree.Internal.Run
 import           Database.LSMTree.Internal.RunAcc
 import           Database.LSMTree.Internal.RunBuilder
 import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.RunReader hiding (Entry)
 import qualified Database.LSMTree.Internal.RunReader as Reader
-import           Database.LSMTree.Internal.RunReaders
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.UniqCounter
 import           Database.LSMTree.Internal.Unsliced

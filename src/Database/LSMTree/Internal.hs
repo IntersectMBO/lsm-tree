@@ -132,11 +132,11 @@ import           Database.LSMTree.Internal.Paths (SessionRoot (..),
                      SnapshotMetaDataFile (..), SnapshotName)
 import qualified Database.LSMTree.Internal.Paths as Paths
 import           Database.LSMTree.Internal.Range (Range (..))
+import           Database.LSMTree.Internal.Readers (OffsetKey (..))
+import qualified Database.LSMTree.Internal.Readers as Readers
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunNumber
-import           Database.LSMTree.Internal.RunReaders (OffsetKey (..))
-import qualified Database.LSMTree.Internal.RunReaders as Readers
 import           Database.LSMTree.Internal.Serialise (SerialisedBlob (..),
                      SerialisedKey, SerialisedValue)
 import           Database.LSMTree.Internal.Snapshot

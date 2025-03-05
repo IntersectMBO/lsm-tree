@@ -1,7 +1,7 @@
 {-# LANGUAGE LambdaCase   #-}
 {-# LANGUAGE TypeFamilies #-}
 
-module Test.Database.LSMTree.Internal.RunReaders (tests) where
+module Test.Database.LSMTree.Internal.Readers (tests) where
 
 import           Control.Exception (assert)
 import           Control.Monad (zipWithM)
@@ -22,14 +22,14 @@ import           Database.LSMTree.Internal.BlobRef
 import           Database.LSMTree.Internal.Entry
 import qualified Database.LSMTree.Internal.Index as Index (IndexType (Ordinary))
 import qualified Database.LSMTree.Internal.Paths as Paths
+import           Database.LSMTree.Internal.Readers (HasMore (Drained, HasMore),
+                     Readers)
+import qualified Database.LSMTree.Internal.Readers as Readers
 import qualified Database.LSMTree.Internal.Run as Run
 import qualified Database.LSMTree.Internal.RunAcc as RunAcc
 import qualified Database.LSMTree.Internal.RunBuilder as RunBuilder
 import           Database.LSMTree.Internal.RunNumber
 import qualified Database.LSMTree.Internal.RunReader as Reader
-import           Database.LSMTree.Internal.RunReaders
-                     (HasMore (Drained, HasMore), Readers)
-import qualified Database.LSMTree.Internal.RunReaders as Readers
 import           Database.LSMTree.Internal.Serialise
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
@@ -49,7 +49,7 @@ import qualified Test.QuickCheck.StateModel.Lockstep.Defaults as Lockstep
 import qualified Test.QuickCheck.StateModel.Lockstep.Run as Lockstep
 
 tests :: TestTree
-tests = testGroup "Database.LSMTree.Internal.RunReaders"
+tests = testGroup "Database.LSMTree.Internal.Readers"
     [ testProperty "prop_lockstep" $
         Lockstep.runActionsBracket (Proxy @ReadersState)
           mempty mempty $ \act () -> do
