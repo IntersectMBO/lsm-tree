@@ -43,7 +43,6 @@ import           GHC.Stack (CallStack, prettyCallStack)
 
 #ifdef NO_IGNORE_ASSERTS
 import           Control.Concurrent (yield)
-import qualified Control.Exception
 import           Data.IORef
 import           GHC.Stack (HasCallStack, callStack)
 import           System.IO.Unsafe (unsafeDupablePerformIO, unsafePerformIO)
@@ -282,7 +281,7 @@ deRef ref@Ref{refobj} =
 --
 withRef ::
      forall m obj a.
-     PrimMonad m
+     (PrimMonad m, MonadThrow m)
   => HasCallStackIfDebug
   => Ref obj
   -> (obj -> m a)
@@ -291,6 +290,10 @@ withRef ref@Ref{refobj} f = do
     assertNoUseAfterRelease ref
     assertNoForgottenRefs
     f refobj
+#ifndef NO_IGNORE_ASSERTS
+  where
+    _unused = throwIO @m @SomeException
+#endif
 
 {-# SPECIALISE
   dupRef ::
@@ -302,7 +305,7 @@ withRef ref@Ref{refobj} f = do
 -- | Duplicate an existing reference, to produce a new reference.
 --
 dupRef ::
-     (RefCounted m obj, PrimMonad m)
+     forall m obj. (RefCounted m obj, PrimMonad m, MonadThrow m)
   => HasCallStackIfDebug
   => Ref obj
   -> m (Ref obj)
@@ -311,6 +314,10 @@ dupRef ref@Ref{refobj} = do
     assertNoForgottenRefs
     incrementRefCounter (getRefCounter refobj)
     newRefWithTracker refobj
+#ifndef NO_IGNORE_ASSERTS
+  where
+    _unused = throwIO @m @SomeException
+#endif
 
 -- | A \"weak\" reference to an object: that is, a reference that does not
 -- guarantee to keep the object alive. If however the object is still alive
@@ -483,42 +490,40 @@ finaliserRefTracker inner refid allocSite = do
           Just (refid', _) | refid < refid' -> return ()
           _ -> writeIORef globalForgottenRef (Just (refid, allocSite))
 
-assertNoForgottenRefs :: PrimMonad m => m ()
-assertNoForgottenRefs =
-  unsafeIOToPrim $ do
-    mrefs <- readIORef globalForgottenRef
+assertNoForgottenRefs :: (PrimMonad m, MonadThrow m) => m ()
+assertNoForgottenRefs = do
+    mrefs <- unsafeIOToPrim $ readIORef globalForgottenRef
     case mrefs of
       Nothing                -> return ()
       Just (refid, allocSite) -> do
         -- Clear the var so we don't assert again.
-        writeIORef globalForgottenRef Nothing
+        unsafeIOToPrim $ writeIORef globalForgottenRef Nothing
         throwIO (RefNeverReleased refid allocSite)
 
-assertNoUseAfterRelease :: (PrimMonad m, HasCallStack) => Ref a -> m ()
-assertNoUseAfterRelease Ref { reftracker = RefTracker refid _weak outer allocSite } =
-  unsafeIOToPrim $ do
-    released <- readIORef =<< readIORef outer
+
+assertNoUseAfterRelease :: (PrimMonad m, MonadThrow m, HasCallStack) => Ref a -> m ()
+assertNoUseAfterRelease Ref { reftracker = RefTracker refid _weak outer allocSite } = do
+    released <- unsafeIOToPrim (readIORef =<< readIORef outer)
     case released of
       Nothing -> pure ()
       Just releaseSite -> do
         -- The site where the reference is used after release
         let useSite = callStack
-        Control.Exception.throwIO (RefUseAfterRelease refid allocSite releaseSite useSite)
+        throwIO (RefUseAfterRelease refid allocSite releaseSite useSite)
 #if !(MIN_VERSION_base(4,20,0))
   where
     _unused = callStack
 #endif
 
-assertNoDoubleRelease :: (PrimMonad m, HasCallStack) => Ref a -> m ()
-assertNoDoubleRelease Ref { reftracker = RefTracker refid _weak outer allocSite } =
-  unsafeIOToPrim $ do
-    released <- readIORef =<< readIORef outer
+assertNoDoubleRelease :: (PrimMonad m, MonadThrow m, HasCallStack) => Ref a -> m ()
+assertNoDoubleRelease Ref { reftracker = RefTracker refid _weak outer allocSite } = do
+    released <- unsafeIOToPrim (readIORef =<< readIORef outer)
     case released of
       Nothing -> pure ()
       Just releaseSite1 -> do
         -- The second release site
         let releaseSite2 = callStack
-        Control.Exception.throwIO (RefDoubleRelease refid allocSite releaseSite1 releaseSite2)
+        throwIO (RefDoubleRelease refid allocSite releaseSite1 releaseSite2)
 #if !(MIN_VERSION_base(4,20,0))
   where
     _unused = callStack
@@ -532,7 +537,7 @@ assertNoDoubleRelease Ref { reftracker = RefTracker refid _weak outer allocSite 
 -- Note however that this is not the only place where 'RefNeverReleased'
 -- exceptions can be thrown. All Ref operations poll for forgotten refs.
 --
-checkForgottenRefs :: IO ()
+checkForgottenRefs :: forall m. (PrimMonad m, MonadThrow m) => m ()
 checkForgottenRefs = do
 #ifndef NO_IGNORE_ASSERTS
     return ()
@@ -545,20 +550,22 @@ checkForgottenRefs = do
     -- Unfortunately, this relies on the implementation of the GHC scheduler,
     -- not on any Haskell specification, and is therefore both non-portable and
     -- presumably rather brittle. Therefore, for good measure, we do it twice.
-    performMajorGCWithBlockingIfAvailable
-    yield
-    performMajorGCWithBlockingIfAvailable
-    yield
+    unsafeIOToPrim $ do
+      performMajorGCWithBlockingIfAvailable
+      yield
+      performMajorGCWithBlockingIfAvailable
+      yield
     assertNoForgottenRefs
-  where
 #endif
+  where
+    _unused = throwIO @m @SomeException
 
 -- | Ignore and reset the state of forgotten reference tracking. This ensures
 -- that any stale fogotten references are not reported later.
 --
 -- This is especillay important in QC tests with shrinking which otherwise
 -- leads to confusion.
-ignoreForgottenRefs :: IO ()
+ignoreForgottenRefs :: (PrimMonad m, MonadCatch m) => m ()
 ignoreForgottenRefs = void $ try @_ @SomeException $ checkForgottenRefs
 
 #ifdef NO_IGNORE_ASSERTS
