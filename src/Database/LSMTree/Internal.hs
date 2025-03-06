@@ -1534,28 +1534,19 @@ writeBufferToNewRun SessionEnv {
                       sessionHasBlockIO  = hbio,
                       sessionUniqCounter = uc
                     }
-                    conf@TableConfig {
-                      confDiskCachePolicy,
-                      confFencePointerIndex
-                    }
+                    conf
                     TableContent{
                       tableWriteBuffer,
                       tableWriteBufferBlobs
                     }
   | WB.null tableWriteBuffer = pure Nothing
   | otherwise                = Just <$> do
-    !n <- incrUniqCounter uc
-    let !ln        = LevelNo 1
-        !cache     = diskCachePolicyForLevel confDiskCachePolicy ln
-        !alloc     = bloomFilterAllocForLevel conf ln
-        !indexType = indexTypeForRun confFencePointerIndex
-        !path      = Paths.runPath (Paths.activeDir root)
-                                   (uniqueToRunNumber n)
-    Run.fromWriteBuffer hfs hbio
-      cache
-      alloc
-      indexType
-      path
+    !uniq <- incrUniqCounter uc
+    let (!runParams, !runPaths) = mergingRunParamsForLevel
+                                   (Paths.activeDir root) conf uniq (LevelNo 1)
+    Run.fromWriteBuffer
+      hfs hbio
+      runParams runPaths
       tableWriteBuffer
       tableWriteBufferBlobs
 

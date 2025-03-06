@@ -69,18 +69,17 @@ import           Database.LSMTree.Internal.Assertions (assert)
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.Entry (Entry, NumEntries (..),
                      unNumEntries)
-import           Database.LSMTree.Internal.Index (Index, IndexType)
+import           Database.LSMTree.Internal.Index (Index)
 import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
 import           Database.LSMTree.Internal.MergingRun (MergeCredits (..),
-                     MergeDebt (..), MergingRun, NumRuns (..))
+                     MergeDebt (..), MergingRun, NumRuns (..), RunParams (..))
 import qualified Database.LSMTree.Internal.MergingRun as MR
 import           Database.LSMTree.Internal.MergingTree (MergingTree)
 import           Database.LSMTree.Internal.Paths (ActiveDir, RunFsPaths (..),
                      SessionRoot)
 import qualified Database.LSMTree.Internal.Paths as Paths
-import           Database.LSMTree.Internal.Run (Run, RunDataCaching (..))
+import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
-import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..))
 import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.Serialise (SerialisedBlob,
                      SerialisedKey, SerialisedValue)
@@ -107,8 +106,7 @@ data MergeTrace =
     TraceFlushWriteBuffer
       NumEntries -- ^ Size of the write buffer
       RunNumber
-      RunDataCaching
-      RunBloomFilterAlloc
+      RunParams
   | TraceAddLevel
   | TraceAddRun
       RunNumber -- ^ newly added run
@@ -116,8 +114,7 @@ data MergeTrace =
   | TraceNewMerge
       (V.Vector NumEntries) -- ^ Sizes of input runs
       RunNumber
-      RunDataCaching
-      RunBloomFilterAlloc
+      RunParams
       MergePolicyForLevel
       MR.LevelMergeType
   | TraceNewMergeSingleRun
@@ -834,30 +831,27 @@ flushWriteBuffer ::
   -> ActionRegistry m
   -> TableContent m h
   -> m (TableContent m h)
-flushWriteBuffer tr conf@TableConfig{confFencePointerIndex, confDiskCachePolicy}
-                 resolve hfs hbio root uc reg tc
+flushWriteBuffer tr conf resolve hfs hbio root uc reg tc
   | WB.null (tableWriteBuffer tc) = pure tc
   | otherwise = do
-    !n <- incrUniqCounter uc
+    !uniq <- incrUniqCounter uc
     let !size      = WB.numEntries (tableWriteBuffer tc)
         !ln        = LevelNo 1
-        !cache     = diskCachePolicyForLevel confDiskCachePolicy ln
-        !alloc     = bloomFilterAllocForLevel conf ln
-        !indexType = indexTypeForRun confFencePointerIndex
-        !path      = Paths.runPath (Paths.activeDir root) (uniqueToRunNumber n)
+        (!runParams,
+         runPaths) = mergingRunParamsForLevel
+                       (Paths.activeDir root) conf uniq ln
+
     traceWith tr $ AtLevel ln $
-      TraceFlushWriteBuffer size (runNumber path) cache alloc
+      TraceFlushWriteBuffer size (runNumber runPaths) runParams
     r <- withRollback reg
-            (Run.fromWriteBuffer hfs hbio
-              cache
-              alloc
-              indexType
-              path
+            (Run.fromWriteBuffer
+              hfs hbio
+              runParams runPaths
               (tableWriteBuffer tc)
               (tableWriteBufferBlobs tc))
             releaseRef
     delayedCommit reg (releaseRef (tableWriteBufferBlobs tc))
-    wbblobs' <- withRollback reg (WBB.new hfs (Paths.tableBlobPath root n))
+    wbblobs' <- withRollback reg (WBB.new hfs (Paths.tableBlobPath root uniq))
                                  releaseRef
     levels' <- addRunToLevels tr conf resolve hfs hbio root uc r reg
                  (tableLevels tc)
@@ -1037,16 +1031,14 @@ newIncomingRunAtLevel tr hfs hbio
   | otherwise = do
 
     uniq <- incrUniqCounter uc
-    let (caching, alloc, indexType, runPaths) =
+    let (!runParams, !runPaths) =
           mergingRunParamsForLevel (Paths.activeDir root) conf uniq ln
 
     traceWith tr $ AtLevel ln $
       TraceNewMerge (V.map Run.size rs) (runNumber runPaths)
-                    caching alloc mergePolicy mergeType
+                    runParams mergePolicy mergeType
 
-    mr <- MR.new hfs hbio resolve caching
-                 alloc indexType mergeType
-                 runPaths rs
+    mr <- MR.new hfs hbio resolve runParams mergeType runPaths rs
 
     assert (MR.totalMergeDebt mr <= maxMergeDebt conf mergePolicy ln) $ pure ()
 
@@ -1058,20 +1050,19 @@ mergingRunParamsForLevel ::
   -> TableConfig
   -> Unique
   -> LevelNo
-  -> (RunDataCaching, RunBloomFilterAlloc, IndexType, RunFsPaths)
+  -> (RunParams, RunFsPaths)
 mergingRunParamsForLevel dir
                          conf@TableConfig {
                                 confDiskCachePolicy,
                                 confFencePointerIndex
                          }
                          unique ln =
-    (caching, alloc, indexType, runPaths)
+    (RunParams {..}, runPaths)
   where
-    !caching   = diskCachePolicyForLevel confDiskCachePolicy ln
-    !alloc     = bloomFilterAllocForLevel conf ln
-    !indexType = indexTypeForRun confFencePointerIndex
-    !runNum    = uniqueToRunNumber unique
-    !runPaths  = Paths.runPath dir runNum
+    !runParamCaching = diskCachePolicyForLevel confDiskCachePolicy ln
+    !runParamAlloc   = bloomFilterAllocForLevel conf ln
+    !runParamIndex   = indexTypeForRun confFencePointerIndex
+    !runPaths        = Paths.runPath dir (uniqueToRunNumber unique)
 
 -- | We use levelling on the last level, unless that is also the first level.
 mergePolicyForLevel ::
