@@ -70,6 +70,7 @@ import           Database.LSMTree.Internal.Serialise (SerialisedKey)
 
 -- | The type of supported index types.
 data IndexType = Compact | Ordinary
+    deriving stock (Eq, Show)
 
 -- * Indexes
 
