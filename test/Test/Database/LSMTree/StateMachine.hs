@@ -76,16 +76,13 @@ import           Control.Applicative (Alternative (..))
 import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Concurrent.Class.MonadSTM.Strict
 import           Control.Exception (assert)
-import qualified Control.Exception
 import           Control.Monad (forM_, void, (<=<))
-import           Control.Monad.Class.MonadST
 import           Control.Monad.Class.MonadThrow (Exception (..), Handler (..),
                      MonadCatch (..), MonadThrow (..), SomeException, catches,
                      displayException, fromException)
 import           Control.Monad.IOSim
 import           Control.Monad.Primitive
 import           Control.Monad.Reader (ReaderT (..))
-import           Control.Monad.ST.Unsafe (unsafeIOToST)
 import           Control.RefCount (RefException, checkForgottenRefs,
                      ignoreForgottenRefs)
 import           Control.Tracer (Tracer, nullTracer)
@@ -144,7 +141,7 @@ import           Test.QuickCheck.StateModel hiding (Var)
 import           Test.QuickCheck.StateModel.Lockstep
 import qualified Test.QuickCheck.StateModel.Lockstep.Defaults as Lockstep.Defaults
 import qualified Test.QuickCheck.StateModel.Lockstep.Run as Lockstep.Run
-import           Test.Tasty (TestTree, testGroup, withResource)
+import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck (testProperty)
 import           Test.Util.FS (approximateEqStream, noRemoveDirectoryRecursiveE,
                      propNoOpenHandles, propNumOpenHandles)
@@ -164,25 +161,14 @@ tests = testGroup "Test.Database.LSMTree.StateMachine" [
       testProperty "propLockstep_ModelIOImpl"
         propLockstep_ModelIOImpl
 
-      -- We check/ignore forgotten referenceschecks before and after each
-      -- property, just to be extra sure that no exceptions because of forgotten
-      -- references leak from one property into the other. This could happen if
-      -- a reference is forgotten but not yet checked in one property, and it
-      -- gets checked in the next property leading to an exception there.
+    , testProperty "propLockstep_RealImpl_RealFS_IO" $
+        propLockstep_RealImpl_RealFS_IO nullTracer
 
-    , withResource checkForgottenRefs (\_ -> checkForgottenRefs) $ \_ ->
-        testProperty "propLockstep_RealImpl_RealFS_IO" $
-          propLockstep_RealImpl_RealFS_IO nullTracer
+    , testProperty "propLockstep_RealImpl_MockFS_IO" $
+        propLockstep_RealImpl_MockFS_IO nullTracer CheckCleanup CheckFS CheckRefs
 
-    , withResource checkForgottenRefs (\_ -> checkForgottenRefs) $ \_ ->
-        testProperty "propLockstep_RealImpl_MockFS_IO" $
-          propLockstep_RealImpl_MockFS_IO nullTracer CheckCleanup CheckFS CheckRefs
-
-    , withResource checkForgottenRefs (\_ -> ignoreForgottenRefs) $ \_ ->
-        testProperty "propLockstep_RealImpl_MockFS_IOSim" $
-          -- references are not checked because they are unreliable when running
-          -- in IOSim.
-          propLockstep_RealImpl_MockFS_IOSim nullTracer CheckCleanup CheckFS NoCheckRefs
+    , testProperty "propLockstep_RealImpl_MockFS_IOSim" $
+        propLockstep_RealImpl_MockFS_IOSim nullTracer CheckCleanup CheckFS CheckRefs
     ]
 
 labelledExamples :: IO ()
@@ -2841,13 +2827,15 @@ runActionsBracket p cleanupFlag refsFlag init cleanup runner tagger actions =
   $ QLS.runActionsBracket p init cleanup' runner actions
   where
     cleanup' st = do
-      -- We want to do run reference checks (checkForgottenRefs /
-      -- ignoreForgottenRefs) after cleanup, since cleanup itself may lead to
-      -- forgotten refs. The reference checks have the crucial side effect of
-      -- reseting the forgotten refs state. If we don't do this then the next
-      -- test run (e.g. during shrinking) will encounter a false/stale forgotten
-      -- refs exception. But we also have to make sure that if cleanup itself
-      -- fails, that we still run the reference checks.
+      -- We want to run forgotten reference checks after cleanup, since cleanup
+      -- itself may lead to forgotten refs. The reference checks have the
+      -- crucial side effect of reseting the forgotten refs state. If we don't
+      -- do this then the next test run (e.g. during shrinking) will encounter a
+      -- false/stale forgotten refs exception. But we also have to make sure
+      -- that if cleanup itself fails, that we still run the reference checks.
+      -- 'propCleanup' will make sure to catch any exceptions that are thrown by
+      -- the 'cleanup' action. 'propRefs' will then definitely run afterwards so
+      -- that the frogotten reference checks are definitely performed.
       x <- propCleanup cleanupFlag $ cleanup st
       y <- propRefs refsFlag
       pure (x QC..&&. y)
@@ -2904,16 +2892,11 @@ checkCleanupM flag cleanupAction = do
 -- exceptions are ignored.
 data CheckRefs = CheckRefs | NoCheckRefs
 
-propRefs :: MonadST m => CheckRefs -> m Property
+propRefs :: (PrimMonad m, MonadCatch m) => CheckRefs -> m Property
 propRefs flag = propException "Reference exception: " <$> checkRefsM flag
 
-checkRefsM :: MonadST m => CheckRefs -> m (Either RefException ())
+checkRefsM :: (PrimMonad m, MonadCatch m) => CheckRefs -> m (Either RefException ())
 checkRefsM flag = case flag of
-    CheckRefs   -> checkForgottenRefs'
-    NoCheckRefs -> Right <$> ignoreForgottenRefs'
+    CheckRefs   -> try checkForgottenRefs
+    NoCheckRefs -> Right <$> ignoreForgottenRefs
 
-checkForgottenRefs' :: MonadST m => m (Either RefException ())
-checkForgottenRefs' = stToIO $ unsafeIOToST $ Control.Exception.try checkForgottenRefs
-
-ignoreForgottenRefs' :: MonadST m => m ()
-ignoreForgottenRefs' = stToIO $ unsafeIOToST $ ignoreForgottenRefs

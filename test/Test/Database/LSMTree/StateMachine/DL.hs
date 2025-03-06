@@ -8,7 +8,6 @@ module Test.Database.LSMTree.StateMachine.DL (
   ) where
 
 import           Control.Monad (void)
-import           Control.RefCount
 import           Control.Tracer
 import qualified Data.Map.Strict as Map
 import qualified Data.Vector as V
@@ -30,16 +29,14 @@ import qualified Test.QuickCheck.Random as QC
 import           Test.QuickCheck.StateModel.Lockstep
 import qualified Test.QuickCheck.StateModel.Lockstep.Defaults as QLS
 import           Test.QuickCheck.StateModel.Variables
-import           Test.Tasty (TestTree, testGroup, withResource)
+import           Test.Tasty (TestTree, testGroup)
 import qualified Test.Tasty.QuickCheck as QC
 import           Test.Util.PrettyProxy
 
 tests :: TestTree
 tests = testGroup "Test.Database.LSMTree.StateMachine.DL" [
-      withResource checkForgottenRefs (\_ -> checkForgottenRefs) $ \_ ->
-        QC.testProperty "prop_example" prop_example
-    , withResource checkForgottenRefs (const ignoreForgottenRefs) $ \_ ->
-        QC.testProperty "prop_noSwallowedExceptions" prop_noSwallowedExceptions
+      QC.testProperty "prop_example" prop_example
+    , QC.testProperty "prop_noSwallowedExceptions" prop_noSwallowedExceptions
     ]
 
 instance DynLogicModel (Lockstep (ModelState R.Table))

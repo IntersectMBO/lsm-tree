@@ -81,7 +81,7 @@ emptyLog :: ErrorsLog
 emptyLog = bpure []
 
 {-------------------------------------------------------------------------------
-  County noisy errors in the log
+  Count noisy errors in the log
 -------------------------------------------------------------------------------}
 
 class IsNoisy a where
@@ -121,7 +121,7 @@ simErrorHasBlockIOLogged fsVar errorsVar logVar = do
 -- errors.
 --
 -- Every time a 'HasFS' primitive is used and an error from 'Errors' is used, it
--- will be loggedin 'ErrorsLog'.
+-- will be logged in 'ErrorsLog'.
 simErrorHasFSLogged ::
      forall m. (MonadSTM m, MonadThrow m, PrimMonad m)
   => StrictTMVar m MockFS
