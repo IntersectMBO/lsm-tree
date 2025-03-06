@@ -500,11 +500,9 @@ fromSnapLevels reg hfs hbio conf uc resolve dir (SnapLevels levels) =
                                            (SnapOngoingMerge rs mergeType)) =
       bracketOnError
         (do uniq <- incrUniqCounter uc
-            let (caching, alloc, indexType, runPaths) =
+            let (runParams, runPaths) =
                   mergingRunParamsForLevel dir conf uniq ln
-            MR.new hfs hbio resolve caching
-                alloc indexType mergeType
-                runPaths rs)
+            MR.new hfs hbio resolve runParams mergeType runPaths rs)
         releaseRef $ \mr -> do
 
           let nominalDebt = nominalDebtForLevel conf ln

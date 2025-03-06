@@ -2,8 +2,10 @@
 -- from them. Tests and benchmarks should preferably use these utilities instead
 -- of (re-)defining their own.
 module Database.LSMTree.Extras.RunData (
+    -- * RunParams
+    defaultRunParams
     -- * Create runs
-    withRun
+  , withRun
   , withRunAt
   , withRuns
   , unsafeCreateRun
@@ -48,12 +50,13 @@ import qualified Data.Vector as V
 import           Database.LSMTree.Extras (showPowersOf10)
 import           Database.LSMTree.Extras.Generators ()
 import           Database.LSMTree.Internal.Entry
-import           Database.LSMTree.Internal.Index (IndexType)
+import           Database.LSMTree.Internal.Index (IndexType (..))
 import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
 import           Database.LSMTree.Internal.MergeSchedule (addWriteBufferEntries)
 import           Database.LSMTree.Internal.Paths
 import qualified Database.LSMTree.Internal.Paths as Paths
-import           Database.LSMTree.Internal.Run (Run, RunDataCaching (..))
+import           Database.LSMTree.Internal.Run (Run, RunDataCaching (..),
+                     RunParams (..))
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..),
                      entryWouldFitInPage)
@@ -68,6 +71,15 @@ import           System.FS.API (HasFS)
 import qualified System.FS.BlockIO.API as FS
 import           System.FS.BlockIO.API (HasBlockIO)
 import           Test.QuickCheck
+
+
+defaultRunParams :: RunParams
+defaultRunParams =
+    RunParams {
+      runParamCaching = CacheRunData,
+      runParamAlloc   = RunAllocFixed 10,
+      runParamIndex   = Compact
+    }
 
 {-------------------------------------------------------------------------------
   Create runs
@@ -153,7 +165,8 @@ unsafeCreateRunAt fs hbio indexType fsPaths (RunData m) = do
     let blobpath = FS.addExtension (runBlobPath fsPaths) ".wb"
     bracket (WBB.new fs blobpath) releaseRef $ \wbblobs -> do
       wb <- WB.fromMap <$> traverse (traverse (WBB.addBlob fs wbblobs)) m
-      Run.fromWriteBuffer fs hbio CacheRunData (RunAllocFixed 10) indexType
+      Run.fromWriteBuffer fs hbio
+                          defaultRunParams { runParamIndex = indexType }
                           fsPaths wb wbblobs
 
 -- | Create a 'RunFsPaths' using an empty 'FsPath'. The empty path corresponds

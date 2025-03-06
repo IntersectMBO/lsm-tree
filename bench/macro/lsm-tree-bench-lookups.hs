@@ -32,6 +32,7 @@ import           Database.LSMTree.Internal.Paths (RunFsPaths (RunFsPaths))
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..))
+import           Database.LSMTree.Internal.RunBuilder (RunParams (..))
 import qualified Database.LSMTree.Internal.RunBuilder as RunBuilder
 import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.Serialise (SerialisedKey,
@@ -349,10 +350,13 @@ lookupsEnv runSizes keyRng0 hfs hbio caching = do
     -- create the runs
     rbs <- sequence
             [ RunBuilder.new hfs hbio
+                RunParams {
+                  runParamCaching = caching,
+                  runParamAlloc   = RunAllocFixed benchmarkNumBitsPerEntry,
+                  runParamIndex   = Index.Compact
+                }
                 (RunFsPaths (FS.mkFsPath []) (RunNumber i))
                 (NumEntries numEntries)
-                (RunAllocFixed benchmarkNumBitsPerEntry)
-                Index.Compact
             | ((numEntries, _), i) <- zip runSizes [0..] ]
 
     -- fill the runs
@@ -373,7 +377,7 @@ lookupsEnv runSizes keyRng0 hfs hbio caching = do
     putStr "DONE"
 
     -- return runs
-    runs <- V.fromList <$> mapM (Run.fromMutable caching) rbs
+    runs <- V.fromList <$> mapM Run.fromMutable rbs
     let blooms  = V.map (\(DeRef r) -> Run.runFilter   r) runs
         indexes = V.map (\(DeRef r) -> Run.runIndex    r) runs
         handles = V.map (\(DeRef r) -> Run.runKOpsFile r) runs
