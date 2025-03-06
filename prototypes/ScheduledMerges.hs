@@ -67,7 +67,9 @@ module ScheduledMerges (
     NominalDebt(..),
     Run,
     runSize,
+    UnionCredits (..),
     supplyCreditsMergingTree,
+    UnionDebt(..),
     remainingDebtMergingTree,
     mergek,
     mergeBatchSize,
@@ -840,25 +842,51 @@ unions lsms = do
     c    <- newSTRef 0
     return (LSMHandle c lsmr)
 
--- | An upper bound on the number of merging steps that need to be performed
--- until the delayed work of performing a 'union' is completed. This debt can
--- be paid off using 'supplyUnionCredits'. This includes the cost for existing
--- merges that were part of the union's input tables.
-remainingUnionDebt :: LSM s -> ST s Debt
+-- | The /current/ upper bound on the number of 'UnionCredits' that have to be
+-- supplied before a 'union' is completed.
+--
+-- The union debt is the number of merging steps that need to be performed /at
+-- most/ until the delayed work of performing a 'union' is completed. This
+-- includes the cost of completing merges that were part of the union's input
+-- tables.
+newtype UnionDebt = UnionDebt Debt
+  deriving stock (Show, Eq, Ord)
+  deriving newtype Num
+
+-- | Return the current union debt. This debt can be reduced until it is paid
+-- off using 'supplyUnionCredits'.
+remainingUnionDebt :: LSM s -> ST s UnionDebt
 remainingUnionDebt (LSMHandle _ lsmr) = do
     LSMContent _ _ ul <- readSTRef lsmr
-    case ul of
+    UnionDebt <$> case ul of
       NoUnion      -> return 0
       Union tree d -> checkedUnionDebt tree d
 
--- | Supplying credits leads to union merging work being performed in batches.
--- This reduces the debt returned by 'remainingUnionDebt'.
-supplyUnionCredits :: LSM s -> Credit -> ST s Credit
-supplyUnionCredits (LSMHandle scr lsmr) credits
-  | credits <= 0 = return 0
+-- | Credits are used to pay off 'UnionDebt', completing a 'union' in the
+-- process.
+--
+-- A union credit corresponds to a single merging step being performed.
+newtype UnionCredits = UnionCredits Credit
+  deriving stock (Show, Eq, Ord)
+  deriving newtype Num
+
+-- | Supply union credits to reduce union debt.
+--
+-- Supplying union credits leads to union merging work being performed in
+-- batches. This reduces the union debt returned by 'remainingUnionDebt'. Union
+-- debt will be reduced by /at least/ the number of supplied union credits. It
+-- is therefore advisable to query 'remainingUnionDebt' every once in a while to
+-- see what the current debt is.
+--
+-- This function returns any surplus of union credits as /leftover/ credits when
+-- a union has finished. In particular, if the returned number of credits is
+-- non-negative, then the union is finished.
+supplyUnionCredits :: LSM s -> UnionCredits -> ST s UnionCredits
+supplyUnionCredits (LSMHandle scr lsmr) (UnionCredits credits)
+  | credits <= 0 = return (UnionCredits 0)
   | otherwise = do
     content@(LSMContent _ _ ul) <- readSTRef lsmr
-    case ul of
+    UnionCredits <$> case ul of
       NoUnion ->
         return credits
       Union tree debtRef -> do

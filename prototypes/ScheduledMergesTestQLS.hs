@@ -1,5 +1,7 @@
 {-# LANGUAGE TypeFamilies #-}
 
+{-# OPTIONS_GHC -Wno-orphans #-}
+
 module ScheduledMergesTestQLS (tests) where
 
 import           Control.Monad.ST
@@ -73,7 +75,7 @@ modelMupsert     :: ModelLSM -> Key -> Value ->               ModelOp ()
 modelLookup      :: ModelLSM -> Key ->                        ModelOp (LookupResult Value Blob)
 modelDuplicate   :: ModelLSM ->                               ModelOp ModelLSM
 modelUnions      :: [ModelLSM] ->                             ModelOp ModelLSM
-modelSupplyUnion :: ModelLSM -> NonNegative Credit ->         ModelOp ()
+modelSupplyUnion :: ModelLSM -> NonNegative UnionCredits ->   ModelOp ()
 modelDump        :: ModelLSM ->                               ModelOp (Map Key (Value, Maybe Blob))
 
 modelNew Model {mlsms} =
@@ -150,7 +152,7 @@ instance StateModel (Lockstep Model) where
             -> Action (Lockstep Model) (LSM RealWorld)
 
     ASupplyUnion :: ModelVar Model (LSM RealWorld)
-                 -> NonNegative Credit
+                 -> NonNegative UnionCredits
                  -> Action (Lockstep Model) ()
 
     ADump   :: ModelVar Model (LSM RealWorld)
@@ -318,6 +320,7 @@ instance InLockstep Model where
 
   shrinkWithVars _ctx _model _action = []
 
+deriving newtype instance Arbitrary UnionCredits
 
 instance RunLockstep Model IO where
   observeReal _ action result =

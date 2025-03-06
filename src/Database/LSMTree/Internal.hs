@@ -68,6 +68,10 @@ module Database.LSMTree.Internal (
   , duplicate
     -- * Table union
   , unions
+  , UnionDebt (..)
+  , remainingUnionDebt
+  , UnionCredits (..)
+  , supplyUnionCredits
   ) where
 
 import           Codec.CBOR.Read
@@ -275,6 +279,9 @@ data TableTrace =
   | TraceSnapshot SnapshotName
     -- Duplicate
   | TraceDuplicate
+    -- Unions
+  | TraceRemainingUnionDebt
+  | TraceSupplyUnionCredits UnionCredits
   deriving stock Show
 
 data CursorTrace =
@@ -1535,3 +1542,34 @@ matchSessions = \(t :| ts) ->
             else pure (Left i)
 
     withSessionRoot t k =  withOpenSession (tableSession t) $ k . sessionRoot
+
+{-------------------------------------------------------------------------------
+  Table union: debt and credit
+-------------------------------------------------------------------------------}
+
+-- | See 'Database.LSMTree.Normal.UnionDebt'.
+newtype UnionDebt = UnionDebt Int
+  deriving newtype (Show, Eq)
+
+{-# SPECIALISE remainingUnionDebt :: Table IO h -> IO UnionDebt #-}
+-- | See 'Database.LSMTree.Normal.remainingUnionDebt'.
+remainingUnionDebt :: (MonadSTM m, MonadThrow m) => Table m h -> m UnionDebt
+remainingUnionDebt t = do
+    traceWith (tableTracer t) TraceRemainingUnionDebt
+    withOpenTable t $ \tEnv -> do
+      RW.withReadAccess (tableContent tEnv) $ \_tableContent -> do
+        error "remainingUnionDebt: not yet implemented"
+
+-- | See 'Database.LSMTree.Normal.UnionCredits'.
+newtype UnionCredits = UnionCredits Int
+  deriving newtype (Show, Eq)
+
+{-# SPECIALISE supplyUnionCredits :: Table IO h -> UnionCredits -> IO UnionCredits #-}
+-- | See 'Database.LSMTree.Normal.supplyUnionCredits'.
+supplyUnionCredits :: (MonadSTM m, MonadCatch m) => Table m h -> UnionCredits -> m UnionCredits
+supplyUnionCredits t credits = do
+    traceWith (tableTracer t) $ TraceSupplyUnionCredits credits
+    withOpenTable t $ \tEnv -> do
+      -- TODO: should this be acquiring read or write access?
+      RW.withWriteAccess (tableContent tEnv) $ \_tableContent -> do
+        error "supplyUnionCredits: not yet implemented"
