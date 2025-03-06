@@ -30,6 +30,8 @@ module Control.RefCount (
   -- * Test API
   , checkForgottenRefs
   , ignoreForgottenRefs
+  , enableForgottenRefChecks
+  , disableForgottenRefChecks
   ) where
 
 import           Control.DeepSeq
@@ -451,9 +453,11 @@ data RefTracker = RefTracker !RefId
 globalRefIdSupply :: PrimVar RealWorld Int
 globalRefIdSupply = unsafePerformIO $ newPrimVar 0
 
+data Enabled a = Enabled !a | Disabled
+
 {-# NOINLINE globalForgottenRef #-}
-globalForgottenRef :: IORef (Maybe (RefId, CallStack))
-globalForgottenRef = unsafePerformIO $ newIORef Nothing
+globalForgottenRef :: IORef (Enabled (Maybe (RefId, CallStack)))
+globalForgottenRef = unsafePerformIO $ newIORef (Enabled Nothing)
 
 -- | This version of 'unsafeIOToPrim' is strict in the result of the arument
 -- action.
@@ -492,27 +496,29 @@ finaliserRefTracker inner refid allocSite = do
         -- Add it to a global var which we can poll elsewhere.
         mref <- readIORef globalForgottenRef
         case mref of
+          Disabled -> pure ()
           -- Just keep one, but keep the last allocated one.
           -- The reason for last is that when there are nested structures with
           -- refs then the last allocated is likely to be the outermost, which
           -- is the best place to start hunting for ref leaks. Otherwise one can
           -- go on a wild goose chase tracking down inner refs that were only
           -- forgotten due to an outer ref being forgotten.
-          Just (refid', _) | refid < refid' -> return ()
-          _ -> writeIORef globalForgottenRef (Just (refid, allocSite))
+          Enabled (Just (refid', _)) | refid < refid' -> return ()
+          Enabled _ -> writeIORef globalForgottenRef (Enabled (Just (refid, allocSite)))
 
 assertNoForgottenRefs :: (PrimMonad m, MonadThrow m) => m ()
 assertNoForgottenRefs = do
     mrefs <- unsafeIOToPrimStrict $ readIORef globalForgottenRef
     case mrefs of
-      Nothing                -> return ()
-      Just (refid, allocSite) -> do
+      Disabled      -> return ()
+      Enabled Nothing -> return ()
+      Enabled (Just (refid, allocSite)) -> do
         -- Clear the var so we don't assert again.
         --
         -- Using the strict version is important here: if @m ~ IOSim s@, then
         -- using the non-strict version will lead to @RefNeverReleased@
         -- exceptions.
-        unsafeIOToPrimStrict $ writeIORef globalForgottenRef Nothing
+        unsafeIOToPrimStrict $ writeIORef globalForgottenRef (Enabled Nothing)
         throwIO (RefNeverReleased refid allocSite)
 
 
@@ -591,4 +597,27 @@ performMajorGCWithBlockingIfAvailable = do
 #else
     performMajorGC
 #endif
+#endif
+
+-- | Enable forgotten reference checks.
+enableForgottenRefChecks :: IO ()
+
+-- | Disable forgotten reference checks. This will error if there are already
+-- forgotten references while we are trying to disable the checks.
+disableForgottenRefChecks :: IO ()
+
+#ifdef NO_IGNORE_ASSERTS
+enableForgottenRefChecks =
+    modifyIORef globalForgottenRef $ \case
+      Disabled -> Enabled Nothing
+      Enabled _  -> error "enableForgottenRefChecks: already enabled"
+
+disableForgottenRefChecks =
+    modifyIORef globalForgottenRef $ \case
+      Disabled -> error "disableForgottenRefChecks: already disabled"
+      Enabled Nothing -> Disabled
+      Enabled _  -> error "disableForgottenRefChecks: can not disable when there are forgotten references"
+#else
+enableForgottenRefChecks = pure ()
+disableForgottenRefChecks = pure ()
 #endif
