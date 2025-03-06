@@ -1549,7 +1549,7 @@ matchSessions = \(t :| ts) ->
 
 -- | See 'Database.LSMTree.Normal.UnionDebt'.
 newtype UnionDebt = UnionDebt Int
-  deriving newtype (Show, Eq)
+  deriving newtype (Show, Eq, Ord, Num)
 
 {-# SPECIALISE remainingUnionDebt :: Table IO h -> IO UnionDebt #-}
 -- | See 'Database.LSMTree.Normal.remainingUnionDebt'.
@@ -1562,7 +1562,7 @@ remainingUnionDebt t = do
 
 -- | See 'Database.LSMTree.Normal.UnionCredits'.
 newtype UnionCredits = UnionCredits Int
-  deriving newtype (Show, Eq)
+  deriving newtype (Show, Eq, Ord, Num)
 
 {-# SPECIALISE supplyUnionCredits :: Table IO h -> UnionCredits -> IO UnionCredits #-}
 -- | See 'Database.LSMTree.Normal.supplyUnionCredits'.

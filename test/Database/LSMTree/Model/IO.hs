@@ -92,8 +92,9 @@ instance Class.IsTable Table where
 
     union (Table s1 t1) (Table _s2 t2) =
       Table s1 <$> runInOpenSession s1 (Model.union Model.getResolve t1 t2)
-
     unions ts =
         Table s <$> runInOpenSession s (Model.unions Model.getResolve (fmap thTable ts))
       where
         Table s _ = NE.head ts
+    remainingUnionDebt (Table s t) = runInOpenSession s (Model.remainingUnionDebt t)
+    supplyUnionCredits (Table s t) credits = runInOpenSession s (Model.supplyUnionCredits t credits)

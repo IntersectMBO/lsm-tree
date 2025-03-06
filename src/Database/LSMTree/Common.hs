@@ -275,11 +275,11 @@ instance Show (BlobRef m b) where
 -- includes the cost of completing merges that were part of the union's input
 -- tables.
 newtype UnionDebt = UnionDebt Int
-  deriving stock (Show, Eq)
+  deriving stock (Show, Eq, Ord)
 
 -- | Credits are used to pay off 'UnionDebt', completing a @union@ in the
 -- process.
 --
 -- A union credit corresponds to a single merging step being performed.
 newtype UnionCredits = UnionCredits Int
-  deriving stock (Show, Eq)
+  deriving stock (Show, Eq, Ord)
