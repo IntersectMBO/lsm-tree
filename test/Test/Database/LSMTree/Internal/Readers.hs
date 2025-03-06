@@ -145,7 +145,7 @@ dropWhileKeyMock :: SerialisedKey -> MockReaders -> (Either () (Int, HasMore), M
 dropWhileKeyMock k m@(MockReaders xs)
   | null xs = (Left (), m)
   | otherwise =
-      let (dropped, xs') = span ((== k) . fst . fst) xs
+      let (dropped, xs') = span ((<= k) . fst . fst) xs
       in (Right (length dropped, toHasMore xs'), MockReaders xs')
 
 toHasMore :: [a] -> HasMore
@@ -253,7 +253,7 @@ instance InLockstep ReadersState where
           , (1, Some . Pop <$> chooseInt (1, size mock))  -- drain a significant amount
           , (1, pure (Some (Pop (max 1 (size mock - 3)))))  -- drain almost everything
           , (1, pure (Some (Pop (size mock + 1)))) -- drain /more/ than available
-          , (1, Some . DropWhileKey <$> arbitrary)  -- most likely nothing to drop
+          , (1, Some . DropWhileKey <$> arbitrary)  -- might drop a lot
           ] <>
           [ (4, pure (Some (DropWhileKey k)))  -- drops at least one key
           | Right k <- [peekKeyMock mock]
@@ -350,6 +350,7 @@ closeReaderSource :: Readers.ReaderSource IO h -> IO ()
 closeReaderSource = \case
     Readers.FromWriteBuffer _ wbblobs -> releaseRef wbblobs
     Readers.FromRun           run     -> releaseRef run
+    Readers.FromReaders     _ sources -> traverse_ closeReaderSource sources
 
 instance RunModel (Lockstep ReadersState) RealMonad where
   perform       = \_st -> runIO

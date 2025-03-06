@@ -5,6 +5,7 @@ module Database.LSMTree.Internal.Readers (
     Readers (..)
   , OffsetKey (..)
   , ReaderSource (..)
+  , ReadersMergeType (..)
   , new
   , close
   , peekKey
@@ -104,6 +105,9 @@ instance Eq (ReadCtx m h) where
 instance Ord (ReadCtx m h) where
   compare = compare `on` (\r -> (readCtxHeadKey r, readCtxNumber r))
 
+-- | An individual reader must be able to produce a sequence of pairs of
+-- 'SerialisedKey' and 'RunReader.Entry', with ordered und unique keys.
+--
 -- TODO: This is slightly inelegant. This module could work generally for
 -- anything that can produce elements, but currently is very specific to having
 -- write buffer and run readers. Also, for run merging, no write buffer is
@@ -117,14 +121,20 @@ data Reader m h =
     -- comparisons) or having to copy out all entries.
     --
     -- TODO: more efficient representation? benchmark!
-    ReadBuffer !(MutVar (PrimState m) [KOp m h])
-  | ReadRun    !(RunReader m h)
+    ReadBuffer  !(MutVar (PrimState m) [KOp m h])
+  | ReadRun     !(RunReader m h)
+    -- | Recursively read from another reader. This requires keeping track of
+    -- its 'HasMore' status, since we should not try to read another entry from
+    -- it once it is drained.
+  | ReadReaders !ReadersMergeType !(Readers m h) !HasMore
 
 type KOp m h = (SerialisedKey, Entry SerialisedValue (RawBlobRef m h))
 
 data ReaderSource m h =
     FromWriteBuffer !WB.WriteBuffer !(Ref (WB.WriteBufferBlobs m h))
   | FromRun         !(Ref (Run m h))
+    -- | Recursive case, allowing to build a tree of readers for a merging tree.
+  | FromReaders     !ReadersMergeType ![ReaderSource m h]
 
 {-# SPECIALISE new ::
      OffsetKey -> [ReaderSource IO h] -> IO (Maybe (Readers IO h)) #-}
@@ -142,9 +152,17 @@ new !offsetKey sources = do
   where
     fromSource :: ReaderNumber -> ReaderSource m h -> m (Maybe (ReadCtx m h))
     fromSource n src =
-        nextReadCtx n =<< case src of
-          FromWriteBuffer wb wbblobs -> fromWB wb wbblobs
-          FromRun r                  -> ReadRun <$> RunReader.new offsetKey r
+        case src of
+          FromWriteBuffer wb wbblobs -> do
+            rs <- fromWB wb wbblobs
+            nextReadCtx n rs
+          FromRun r -> do
+            rs <- ReadRun <$> RunReader.new offsetKey r
+            nextReadCtx n rs
+          FromReaders mergeType nestedSources -> do
+            new offsetKey nestedSources >>= \case
+              Nothing -> return Nothing
+              Just rs -> nextReadCtx n (ReadReaders mergeType rs HasMore)
 
     fromWB :: WB.WriteBuffer -> Ref (WB.WriteBufferBlobs m h) -> m (Reader m h)
     fromWB wb wbblobs = do
@@ -160,7 +178,9 @@ new !offsetKey sources = do
             OffsetKey k -> Map.dropWhileAntitone (< k)
 
 {-# SPECIALISE close :: Readers IO (FS.Handle h) -> IO () #-}
--- | Only call when aborting before all readers have been drained.
+-- | Clean up the resources held by the readers.
+--
+-- Only call this function when aborting before all readers have been drained!
 close ::
      (MonadMask m, MonadSTM m, PrimMonad m)
   => Readers m h
@@ -171,8 +191,10 @@ close Readers {..} = do
     closeHeap
   where
     closeReader = \case
-        ReadBuffer _ -> pure ()
-        ReadRun r    -> RunReader.close r
+        ReadBuffer _             -> pure ()
+        ReadRun r                -> RunReader.close r
+        ReadReaders _ rs HasMore -> close rs
+        ReadReaders _ _  Drained -> pure ()  -- already closed all its resources
     closeHeap =
         Heap.extract readersHeap >>= \case
           Nothing -> return ()
@@ -181,6 +203,8 @@ close Readers {..} = do
             closeHeap
 
 {-# SPECIALISE peekKey :: Readers IO h -> IO SerialisedKey #-}
+-- | Return the smallest key present in the readers, without consuming any
+-- entries.
 peekKey ::
      PrimMonad m
   => Readers m h
@@ -192,8 +216,15 @@ peekKey Readers {..} = do
 data HasMore = HasMore | Drained
   deriving stock (Eq, Show)
 
+-- TODO: avoid duplication with Merge.TreeMergeType?
+data ReadersMergeType = MergeLevel | MergeUnion
+  deriving stock (Eq, Show)
+
 {-# SPECIALISE pop ::
      Readers IO h -> IO (SerialisedKey, RunReader.Entry IO h, HasMore) #-}
+-- | Remove the entry with the smallest key and return it. If there are multiple
+-- entries with that key, it removes the one from the source that came first
+-- in list supplied to 'new'. No resolution of multiple entries takes place.
 pop ::
      (MonadMask m, MonadSTM m, MonadST m)
   => Readers m h
@@ -205,6 +236,7 @@ pop r@Readers {..} = do
 
 {-# SPECIALISE dropWhileKey ::
      Readers IO h -> SerialisedKey -> IO (Int, HasMore) #-}
+-- | Drop all entries with a key that is smaller or equal to the supplied one.
 dropWhileKey ::
      (MonadMask m, MonadSTM m, MonadST m)
   => Readers m h
@@ -212,11 +244,11 @@ dropWhileKey ::
   -> m (Int, HasMore)  -- ^ How many were dropped?
 dropWhileKey Readers {..} key = do
     cur <- readMutVar readersNext
-    if readCtxHeadKey cur == key
+    if readCtxHeadKey cur <= key
       then go 0 cur
       else return (0, HasMore)  -- nothing to do
   where
-    -- invariant: @readCtxHeadKey == key@
+    -- invariant: @readCtxHeadKey <= key@
     go !n ReadCtx {readCtxNumber, readCtxReader} = do
         mNext <- nextReadCtx readCtxNumber readCtxReader >>= \case
           Nothing  -> Heap.extract readersHeap
@@ -227,7 +259,7 @@ dropWhileKey Readers {..} key = do
             return (n', Drained)
           Just next -> do
             -- hasMore
-            if readCtxHeadKey next == key
+            if readCtxHeadKey next <= key
               then
                 go n' next
               else do
@@ -273,3 +305,15 @@ nextReadCtx readCtxNumber readCtxReader =
           Nothing
         RunReader.ReadEntry readCtxHeadKey readCtxHeadEntry ->
           Just ReadCtx {..}
+      ReadReaders mergeType readers hasMore -> case hasMore of
+        Drained ->
+          return Nothing
+        HasMore -> do
+          -- TODO: This is incorrect. We can't just pop one entry out of the
+          -- readers, we need to resolve all entries with the same key!
+          (readCtxHeadKey, readCtxHeadEntry, hasMore') <- pop readers
+          return $ Just ReadCtx {
+              -- TODO: reduce allocations?
+              readCtxReader = ReadReaders mergeType readers hasMore'
+            , ..
+          }
