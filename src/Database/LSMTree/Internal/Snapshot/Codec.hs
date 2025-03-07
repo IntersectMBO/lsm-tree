@@ -21,12 +21,11 @@ import           Codec.CBOR.Decoding
 import           Codec.CBOR.Encoding
 import           Codec.CBOR.Read
 import           Codec.CBOR.Write
-import           Control.Monad (replicateM, when)
+import           Control.Monad (when)
 import           Control.Monad.Class.MonadThrow (MonadThrow (..))
 import           Data.Bifunctor
 import qualified Data.ByteString.Char8 as BSC
 import           Data.ByteString.Lazy (ByteString)
-import           Data.Foldable (fold)
 import qualified Data.Map.Strict as Map
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Config
@@ -224,7 +223,7 @@ instance Decode SnapshotVersion where
 
 instance Encode SnapshotMetaData where
   encode (SnapshotMetaData label tableType config writeBuffer levels mergingTree) =
-         encodeListLen 7
+         encodeListLen 6
       <> encode label
       <> encode tableType
       <> encode config
@@ -234,7 +233,7 @@ instance Encode SnapshotMetaData where
 
 instance DecodeVersioned SnapshotMetaData where
   decodeVersioned ver@V0 = do
-      _ <- decodeListLenOf 7
+      _ <- decodeListLenOf 6
       SnapshotMetaData
         <$> decodeVersioned ver
         <*> decodeVersioned ver
@@ -524,14 +523,10 @@ instance DecodeVersioned MergeSchedule where
 -- SnapLevels
 
 instance Encode r => Encode (SnapLevels r) where
-  encode (SnapLevels levels) =
-         encodeListLen (fromIntegral (V.length levels))
-      <> V.foldMap encode levels
+  encode (SnapLevels levels) = encode levels
 
 instance DecodeVersioned r => DecodeVersioned (SnapLevels r) where
-  decodeVersioned v@V0 = do
-      n <- decodeListLen
-      SnapLevels <$> V.replicateM n (decodeVersioned v)
+  decodeVersioned v@V0 = SnapLevels <$> decodeVersioned v
 
 -- SnapLevel
 
@@ -550,14 +545,10 @@ instance DecodeVersioned r => DecodeVersioned (SnapLevel r) where
 -- Vector
 
 instance Encode r => Encode (V.Vector r) where
-  encode rns =
-         encodeListLen (fromIntegral (V.length rns))
-      <> V.foldMap encode rns
+  encode = encodeVector
 
 instance DecodeVersioned r => DecodeVersioned (V.Vector r) where
-  decodeVersioned v@V0 = do
-      n <- decodeListLen
-      V.replicateM n (decodeVersioned v)
+  decodeVersioned = decodeVector
 
 -- RunNumber
 
@@ -746,34 +737,23 @@ instance DecodeVersioned r => DecodeVersioned (SnapMergingTreeState r) where
 -- SnapPendingMerge
 
 instance Encode r => Encode (SnapPendingMerge r) where
-  encode (SnapPendingLevelMerge pe mt) = fold
-    [ encodeListLen 4
-    , encodeWord 0
-    , encodeMaybe mt
-    , encodeListLen . toEnum $ length pe
-    , foldMap encode pe
-    ]
+  encode (SnapPendingLevelMerge pe mt) =
+      encodeListLen 3
+   <> encodeWord 0
+   <> encodeList pe
+   <> encodeMaybe mt
   encode (SnapPendingUnionMerge mts) =
-       encodeListLen 2
-    <> encodeWord 1
-    <> encodeListLen (toEnum $ length mts)
-    <> foldMap encode mts
+      encodeListLen 2
+   <> encodeWord 1
+   <> encodeList mts
 
 instance DecodeVersioned r => DecodeVersioned (SnapPendingMerge r) where
   decodeVersioned v@V0 = do
       n <- decodeListLen
       tag <- decodeWord
       case (n, tag) of
-        (4, 0) -> do
-          -- Get the whether or not the levels merge exists
-          peLvls <- decodeMaybe v
-          peLen <- decodeListLen
-          peRuns <- replicateM peLen (decodeVersioned v)
-          pure $ SnapPendingLevelMerge peRuns peLvls
-        (2, 1) -> do
-          -- Get the number of pre-existsing unions to read
-          peLen <- decodeListLen
-          SnapPendingUnionMerge <$> replicateM peLen (decodeVersioned v)
+        (3, 0) -> SnapPendingLevelMerge <$> decodeList v <*> decodeMaybe v
+        (2, 1) -> SnapPendingUnionMerge <$> decodeList v
         _ -> fail ("[SnapPendingMerge] Unexpected combination of list length and tag: " <> show (n, tag))
 
 -- SnapPreExistingRun
@@ -799,14 +779,37 @@ instance DecodeVersioned r => DecodeVersioned (SnapPreExistingRun r) where
 
 -- Utilities for encoding/decoding Maybe values
 
+--Note: the Maybe encoding cannot be nested like (Maybe (Maybe a)), but it is
+-- ok for fields of records.
 encodeMaybe :: Encode a => Maybe a -> Encoding
 encodeMaybe = \case
-  Nothing -> encodeBool False <> encodeNull
-  Just en -> encodeBool True <> encode en
-
+  Nothing -> encodeNull
+  Just en -> encode en
 
 decodeMaybe :: DecodeVersioned a => SnapshotVersion -> Decoder s (Maybe a)
-decodeMaybe v@V0 = decodeBool >>= \exist ->
-  if exist
-  then Just <$> decodeVersioned v
-  else Nothing <$ decodeNull
+decodeMaybe v@V0 = do
+    tok <- peekTokenType
+    case tok of
+      TypeNull -> Nothing <$ decodeNull
+      _        -> Just <$> decodeVersioned v
+
+encodeList :: Encode a => [a] -> Encoding
+encodeList xs =
+    encodeListLen (fromIntegral (length xs))
+ <> foldr (\x r -> encode x <> r) mempty xs
+
+decodeList :: DecodeVersioned a => SnapshotVersion -> Decoder s [a]
+decodeList v = do
+    n <- decodeListLen
+    decodeSequenceLenN (flip (:)) [] reverse n (decodeVersioned v)
+
+encodeVector :: Encode a => V.Vector a -> Encoding
+encodeVector xs =
+    encodeListLen (fromIntegral (V.length xs))
+ <> foldr (\x r -> encode x <> r) mempty xs
+
+decodeVector :: DecodeVersioned a => SnapshotVersion -> Decoder s (V.Vector a)
+decodeVector v = do
+    n <- decodeListLen
+    decodeSequenceLenN (flip (:)) [] (V.reverse . V.fromList)
+                       n (decodeVersioned v)
