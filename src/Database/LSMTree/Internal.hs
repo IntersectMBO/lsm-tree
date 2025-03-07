@@ -1186,7 +1186,7 @@ createSnapshot snap label tableType t = do
         let wb = tableWriteBuffer content
         let wbb = tableWriteBufferBlobs content
         snapWriteBufferNumber <- Paths.writeBufferNumber <$>
-            snapshotWriteBuffer reg hfs hbio activeUc snapUc activeDir snapDir wb wbb
+            snapshotWriteBuffer hfs hbio activeUc snapUc reg activeDir snapDir wb wbb
 
         -- Convert to snapshot format
         snapLevels <- toSnapLevels (tableLevels content)
@@ -1263,7 +1263,7 @@ openSnapshot sesh label tableType override snap resolve = do
         snapLevels' <- traverse (openRun hfs hbio uc reg snapDir activeDir) snapLevels
 
         -- Convert from the snapshot format, restoring merge progress in the process
-        tableLevels <- fromSnapLevels reg hfs hbio conf uc resolve activeDir snapLevels'
+        tableLevels <- fromSnapLevels hfs hbio uc conf resolve reg activeDir snapLevels'
         traverse_ (delayedCommit reg . releaseRef) snapLevels'
 
         tableCache <- mkLevelsCache reg tableLevels
