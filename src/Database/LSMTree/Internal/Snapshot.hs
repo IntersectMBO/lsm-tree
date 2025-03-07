@@ -253,11 +253,11 @@ toSnapMergingRunState !mr = do
 
 {-# SPECIALISE
   snapshotWriteBuffer ::
-       ActionRegistry IO
-    -> HasFS IO h
+       HasFS IO h
     -> HasBlockIO IO h
     -> UniqCounter IO
     -> UniqCounter IO
+    -> ActionRegistry IO
     -> ActiveDir
     -> NamedSnapshotDir
     -> WriteBuffer
@@ -266,17 +266,17 @@ toSnapMergingRunState !mr = do
   #-}
 snapshotWriteBuffer ::
      (MonadMVar m, MonadSTM m, MonadST m, MonadMask m)
-  => ActionRegistry m
-  -> HasFS m h
+  => HasFS m h
   -> HasBlockIO m h
   -> UniqCounter m
   -> UniqCounter m
+  -> ActionRegistry m
   -> ActiveDir
   -> NamedSnapshotDir
   -> WriteBuffer
   -> Ref (WriteBufferBlobs m h)
   -> m WriteBufferFsPaths
-snapshotWriteBuffer reg hfs hbio activeUc snapUc activeDir snapDir wb wbb = do
+snapshotWriteBuffer hfs hbio activeUc snapUc reg activeDir snapDir wb wbb = do
   -- Write the write buffer and write buffer blobs to the active directory.
   activeWriteBufferNumber <- uniqueToRunNumber <$> incrUniqCounter activeUc
   let activeWriteBufferPaths = WriteBufferFsPaths (getActiveDir activeDir) activeWriteBufferNumber
@@ -291,13 +291,13 @@ snapshotWriteBuffer reg hfs hbio activeUc snapUc activeDir snapDir wb wbb = do
   -- Hard link the write buffer and write buffer blobs to the snapshot directory.
   snapWriteBufferNumber <- uniqueToRunNumber <$> incrUniqCounter snapUc
   let snapWriteBufferPaths = WriteBufferFsPaths (getNamedSnapshotDir snapDir) snapWriteBufferNumber
-  hardLink reg hfs hbio
+  hardLink hfs hbio reg
     (writeBufferKOpsPath activeWriteBufferPaths)
     (writeBufferKOpsPath snapWriteBufferPaths)
-  hardLink reg hfs hbio
+  hardLink hfs hbio reg
     (writeBufferBlobPath activeWriteBufferPaths)
     (writeBufferBlobPath snapWriteBufferPaths)
-  hardLink reg hfs hbio
+  hardLink hfs hbio reg
     (writeBufferChecksumsPath activeWriteBufferPaths)
     (writeBufferChecksumsPath snapWriteBufferPaths)
   pure snapWriteBufferPaths
@@ -336,7 +336,7 @@ openWriteBuffer reg resolve hfs hbio uc activeDir snapWriteBufferPaths = do
   activeWriteBufferNumber <- uniqueToInt <$> incrUniqCounter uc
   let activeWriteBufferBlobPath =
         getActiveDir activeDir </> FS.mkFsPath [show activeWriteBufferNumber] <.> "wbblobs"
-  copyFile reg hfs hbio (writeBufferBlobPath snapWriteBufferPaths) activeWriteBufferBlobPath
+  copyFile hfs reg (writeBufferBlobPath snapWriteBufferPaths) activeWriteBufferBlobPath
   writeBufferBlobs <-
     withRollback reg
       (WBB.open hfs activeWriteBufferBlobPath FS.AllowExisting)
@@ -376,8 +376,8 @@ instance NFData SnapshotRun where
   -> NamedSnapshotDir
   -> Ref (Run IO h)
   -> IO SnapshotRun #-}
--- | @'snapshotRun' _ _ snapUc targetDir run@ creates hard links for all files
--- associated with the run, and puts the new directory entries in the
+-- | @'snapshotRun' _ _ snapUc _ targetDir run@ creates hard links for all files
+-- associated with the @run@, and puts the new directory entries in the
 -- @targetDir@ directory. The entries are renamed using @snapUc@.
 snapshotRun ::
      (MonadMask m, PrimMonad m)
@@ -392,7 +392,7 @@ snapshotRun hfs hbio snapUc reg (NamedSnapshotDir targetDir) run = do
     rn <- uniqueToRunNumber <$> incrUniqCounter snapUc
     let sourcePaths = Run.runFsPaths run
     let targetPaths = sourcePaths { runDir = targetDir , runNumber = rn}
-    hardLinkRunFiles reg hfs hbio sourcePaths targetPaths
+    hardLinkRunFiles hfs hbio reg sourcePaths targetPaths
     pure SnapshotRun {
            snapRunNumber  = runNumber targetPaths,
            snapRunCaching = Run.runDataCaching run,
@@ -408,7 +408,7 @@ snapshotRun hfs hbio snapUc reg (NamedSnapshotDir targetDir) run = do
   -> ActiveDir
   -> SnapshotRun
   -> IO (Ref (Run IO h)) #-}
--- | @'openRun' _ _ _ _ uniqCounter sourceDir targetDir snaprun@ takes all run
+-- | @'openRun' _ _ uniqCounter _ sourceDir targetDir snaprun@ takes all run
 -- files that are referenced by @snaprun@, and hard links them from @sourceDir@
 -- into @targetDir@ with new, unique names (using @uniqCounter@). Each set of
 -- (hard linked) files that represents a run is opened and verified, returning
@@ -435,7 +435,7 @@ openRun hfs hbio uc reg
     let sourcePaths = RunFsPaths sourceDir runNum
     runNum' <- uniqueToRunNumber <$> incrUniqCounter uc
     let targetPaths = RunFsPaths targetDir runNum'
-    hardLinkRunFiles reg hfs hbio sourcePaths targetPaths
+    hardLinkRunFiles hfs hbio reg sourcePaths targetPaths
 
     withRollback reg
       (Run.openFromDisk hfs hbio caching indexType targetPaths)
@@ -446,12 +446,12 @@ openRun hfs hbio uc reg
 -------------------------------------------------------------------------------}
 
 {-# SPECIALISE fromSnapLevels ::
-     ActionRegistry IO
-  -> HasFS IO h
+     HasFS IO h
   -> HasBlockIO IO h
-  -> TableConfig
   -> UniqCounter IO
+  -> TableConfig
   -> ResolveSerialisedValue
+  -> ActionRegistry IO
   -> ActiveDir
   -> SnapLevels (Ref (Run IO h))
   -> IO (Levels IO h)
@@ -459,16 +459,16 @@ openRun hfs hbio uc reg
 -- | Duplicates runs and re-creates merging runs.
 fromSnapLevels ::
      forall m h. (MonadMask m, MonadMVar m, MonadSTM m, MonadST m)
-  => ActionRegistry m
-  -> HasFS m h
+  => HasFS m h
   -> HasBlockIO m h
-  -> TableConfig
   -> UniqCounter m
+  -> TableConfig
   -> ResolveSerialisedValue
+  -> ActionRegistry m
   -> ActiveDir
   -> SnapLevels (Ref (Run m h))
   -> m (Levels m h)
-fromSnapLevels reg hfs hbio conf uc resolve dir (SnapLevels levels) =
+fromSnapLevels hfs hbio uc conf resolve reg dir (SnapLevels levels) =
     V.iforM levels $ \i -> fromSnapLevel (LevelNo (i+1))
   where
     -- TODO: we may wish to trace the merges created during snapshot restore:
@@ -546,9 +546,9 @@ fromSnapMergingRunState hfs hbio uc resolve dir
 -------------------------------------------------------------------------------}
 
 {-# SPECIALISE hardLinkRunFiles ::
-     ActionRegistry IO
-  -> HasFS IO h
+     HasFS IO h
   -> HasBlockIO IO h
+  -> ActionRegistry IO
   -> RunFsPaths
   -> RunFsPaths
   -> IO () #-}
@@ -557,38 +557,38 @@ fromSnapMergingRunState hfs hbio uc resolve dir
 -- name for the new directory entry.
 hardLinkRunFiles ::
      (MonadMask m, PrimMonad m)
-  => ActionRegistry m
-  -> HasFS m h
+  => HasFS m h
   -> HasBlockIO m h
+  -> ActionRegistry m
   -> RunFsPaths
   -> RunFsPaths
   -> m ()
-hardLinkRunFiles reg hfs hbio sourceRunFsPaths targetRunFsPaths = do
+hardLinkRunFiles hfs hbio reg sourceRunFsPaths targetRunFsPaths = do
     let sourcePaths = pathsForRunFiles sourceRunFsPaths
         targetPaths = pathsForRunFiles targetRunFsPaths
-    sequenceA_ (hardLink reg hfs hbio <$> sourcePaths <*> targetPaths)
-    hardLink reg hfs hbio (runChecksumsPath sourceRunFsPaths) (runChecksumsPath targetRunFsPaths)
+    sequenceA_ (hardLink hfs hbio reg <$> sourcePaths <*> targetPaths)
+    hardLink hfs hbio reg (runChecksumsPath sourceRunFsPaths) (runChecksumsPath targetRunFsPaths)
 
 {-# SPECIALISE
   hardLink ::
-       ActionRegistry IO
-    -> HasFS IO h
+       HasFS IO h
     -> HasBlockIO IO h
+    -> ActionRegistry IO
     -> FS.FsPath
     -> FS.FsPath
     -> IO ()
   #-}
--- | @'hardLink' reg hfs hbio sourcePath targetPath@ creates a hard link from
+-- | @'hardLink' hfs hbio reg sourcePath targetPath@ creates a hard link from
 -- @sourcePath@ to @targetPath@.
 hardLink ::
      (MonadMask m, PrimMonad m)
-  => ActionRegistry m
-  -> HasFS m h
+  => HasFS m h
   -> HasBlockIO m h
+  -> ActionRegistry m
   -> FS.FsPath
   -> FS.FsPath
   -> m ()
-hardLink reg hfs hbio sourcePath targetPath = do
+hardLink hfs hbio reg sourcePath targetPath = do
     withRollback_ reg
       (FS.createHardLink hbio sourcePath targetPath)
       (FS.removeFile hfs targetPath)
@@ -599,23 +599,21 @@ hardLink reg hfs hbio sourcePath targetPath = do
 
 {-# SPECIALISE
   copyFile ::
-       ActionRegistry IO
-    -> HasFS IO h
-    -> HasBlockIO IO h
+       HasFS IO h
+    -> ActionRegistry IO
     -> FS.FsPath
     -> FS.FsPath
     -> IO ()
   #-}
--- | @'copyFile' reg hfs hbio source target@ copies the @source@ path to the @target@ path.
+-- | @'copyFile' hfs reg source target@ copies the @source@ path to the @target@ path.
 copyFile ::
      (MonadMask m, PrimMonad m)
-  => ActionRegistry m
-  -> HasFS m h
-  -> HasBlockIO m h
+  => HasFS m h
+  -> ActionRegistry m
   -> FS.FsPath
   -> FS.FsPath
   -> m ()
-copyFile reg hfs _hbio sourcePath targetPath =
+copyFile hfs reg sourcePath targetPath =
     flip (withRollback_ reg) (FS.removeFile hfs targetPath) $
       FS.withFile hfs sourcePath FS.ReadMode $ \sourceHandle ->
         FS.withFile hfs targetPath (FS.WriteMode FS.MustBeNew) $ \targetHandle -> do
