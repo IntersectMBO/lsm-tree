@@ -157,7 +157,7 @@ basicTableConfig = ( fuseAnnotations $ "T0" : replicate 4 blank, defaultTableCon
 basicRunNumber :: RunNumber
 basicRunNumber = enumerateRunNumbers
 
-basicSnapLevels :: (ComponentAnnotation, SnapLevels RunNumber)
+basicSnapLevels :: (ComponentAnnotation, SnapLevels SnapshotRun)
 basicSnapLevels = head enumerateSnapLevels
 
 {----------------
@@ -198,20 +198,20 @@ enumerateTableConfig =
     , (g, merge ) <- [("G0", OneShot), ("G1", Incremental)]
     ]
 
-enumerateSnapLevels :: [(ComponentAnnotation, SnapLevels RunNumber)]
+enumerateSnapLevels :: [(ComponentAnnotation, SnapLevels SnapshotRun)]
 enumerateSnapLevels = fmap (SnapLevels . V.singleton) <$> enumerateSnapLevel
 
 {----------------
 Enumeration of SnapLevel sub-components
 ----------------}
 
-enumerateSnapLevel :: [(ComponentAnnotation, SnapLevel RunNumber)]
+enumerateSnapLevel :: [(ComponentAnnotation, SnapLevel SnapshotRun)]
 enumerateSnapLevel = do
   (a, run) <- enumerateSnapIncomingRun
-  (b, vec) <- enumerateVectorRunNumber
+  (b, vec) <- enumerateVectorRunInfo
   [( fuseAnnotations [ a, b ], SnapLevel run vec)]
 
-enumerateSnapIncomingRun :: [(ComponentAnnotation, SnapIncomingRun RunNumber)]
+enumerateSnapIncomingRun :: [(ComponentAnnotation, SnapIncomingRun SnapshotRun)]
 enumerateSnapIncomingRun =
   let
       inSnaps =
@@ -223,16 +223,16 @@ enumerateSnapIncomingRun =
         , (b, sState ) <- enumerateSnapMergingRunState enumerateLevelMergeType
         ]
   in  fold
-      [ [(fuseAnnotations $ "R0" : replicate 4 blank, SnapSingleRun enumerateRunNumbers)]
+      [ [(fuseAnnotations $ "R0" : replicate 4 blank, SnapSingleRun enumerateOpenRunInfo)]
       , inSnaps
       ]
 
 enumerateSnapMergingRunState ::
      [(ComponentAnnotation, t)]
-  -> [(ComponentAnnotation, SnapMergingRunState t RunNumber)]
+  -> [(ComponentAnnotation, SnapMergingRunState t SnapshotRun)]
 enumerateSnapMergingRunState mTypes =
     [ (fuseAnnotations ["C0", blank, blank],
-       SnapCompletedMerge numRuns mergeDebt enumerateRunNumbers)
+       SnapCompletedMerge numRuns mergeDebt enumerateOpenRunInfo)
     | numRuns   <- NumRuns <$> [ magicNumber1 ]
     , mergeDebt <- (MR.MergeDebt. MR.MergeCredits) <$> [ magicNumber2 ]
     ]
@@ -245,7 +245,7 @@ enumerateSnapMergingRunState mTypes =
               MR.runParamIndex   = Compact
             }
     , mergeCredits <- MR.MergeCredits <$> [ magicNumber2 ]
-    , (a, runVec ) <- enumerateVectorRunNumber
+    , (a, runVec ) <- enumerateVectorRunInfo
     , (b, mType  ) <- mTypes
     ]
 
@@ -253,11 +253,14 @@ enumerateLevelMergeType :: [(ComponentAnnotation, MR.LevelMergeType)]
 enumerateLevelMergeType =
   [("L0", MR.MergeMidLevel), ("L1", MR.MergeLastLevel)]
 
-enumerateVectorRunNumber :: [(ComponentAnnotation, Vector RunNumber)]
-enumerateVectorRunNumber =
+enumerateVectorRunInfo :: [(ComponentAnnotation, Vector SnapshotRun)]
+enumerateVectorRunInfo =
   [ ("V0", mempty)
-  , ("V1", V.fromList [RunNumber magicNumber1])
-  , ("V2", V.fromList [RunNumber magicNumber1, RunNumber magicNumber2 ])
+  , ("V1", V.fromList [enumerateOpenRunInfo])
+  , ("V2", V.fromList [enumerateOpenRunInfo,
+                       enumerateOpenRunInfo {
+                         snapRunNumber = RunNumber magicNumber2
+                       } ])
   ]
 
 {----------------
@@ -280,6 +283,14 @@ enumerateDiskCachePolicy =
 
 enumerateRunNumbers :: RunNumber
 enumerateRunNumbers = RunNumber magicNumber2
+
+enumerateOpenRunInfo :: SnapshotRun
+enumerateOpenRunInfo =
+    SnapshotRun {
+      snapRunNumber  = enumerateRunNumbers,
+      snapRunCaching = CacheRunData,
+      snapRunIndex   = Compact
+    }
 
 -- Randomly chosen numbers
 magicNumber1, magicNumber2, magicNumber3 :: Enum e => e

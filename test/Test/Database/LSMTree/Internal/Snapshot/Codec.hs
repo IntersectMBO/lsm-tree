@@ -154,6 +154,7 @@ testAll test = [
       test (Proxy @SnapshotMetaData)
     , test (Proxy @SnapshotLabel)
     , test (Proxy @SnapshotTableType)
+    , test (Proxy @SnapshotRun)
       -- TableConfig
     , test (Proxy @TableConfig)
     , test (Proxy @MergePolicy)
@@ -165,15 +166,15 @@ testAll test = [
     , test (Proxy @DiskCachePolicy)
     , test (Proxy @MergeSchedule)
       -- SnapLevels
-    , test (Proxy @(SnapLevels RunNumber))
-    , test (Proxy @(SnapLevel RunNumber))
-    , test (Proxy @(V.Vector RunNumber))
+    , test (Proxy @(SnapLevels SnapshotRun))
+    , test (Proxy @(SnapLevel SnapshotRun))
+    , test (Proxy @(V.Vector SnapshotRun))
     , test (Proxy @RunNumber)
-    , test (Proxy @(SnapIncomingRun RunNumber))
+    , test (Proxy @(SnapIncomingRun SnapshotRun))
     , test (Proxy @NumRuns)
     , test (Proxy @MergePolicyForLevel)
     , test (Proxy @RunParams)
-    , test (Proxy @(SnapMergingRunState LevelMergeType RunNumber))
+    , test (Proxy @(SnapMergingRunState LevelMergeType SnapshotRun))
     , test (Proxy @MergeDebt)
     , test (Proxy @NominalCredits)
     , test (Proxy @LevelMergeType)
@@ -205,6 +206,12 @@ deriving newtype instance Arbitrary SnapshotLabel
 instance Arbitrary SnapshotTableType where
   arbitrary = elements [SnapNormalTable, SnapMonoidalTable]
   shrink _ = []
+
+instance Arbitrary SnapshotRun where
+  arbitrary = SnapshotRun <$> arbitrary <*> arbitrary <*> arbitrary
+  shrink (SnapshotRun a b c) =
+      [ SnapshotRun a' b' c'
+      | (a', b', c') <- shrink (a, b, c)]
 
 {-------------------------------------------------------------------------------
   Arbitrary: TableConfig
@@ -261,13 +268,13 @@ instance Arbitrary MergeSchedule where
   Arbitrary: SnapLevels
 -------------------------------------------------------------------------------}
 
-instance Arbitrary (SnapLevels RunNumber) where
+instance Arbitrary r => Arbitrary (SnapLevels r) where
   arbitrary = do
     n <- chooseInt (0, 10)
     SnapLevels . V.fromList <$> vector n
   shrink (SnapLevels x) = SnapLevels . V.fromList <$> shrink (V.toList x)
 
-instance Arbitrary (SnapLevel RunNumber) where
+instance Arbitrary r => Arbitrary (SnapLevel r) where
   arbitrary = SnapLevel <$> arbitrary <*> arbitraryShortVector
   shrink (SnapLevel a b) = [SnapLevel a' b' | (a', b') <- shrink (a, b)]
 
@@ -278,7 +285,7 @@ arbitraryShortVector = do
 
 deriving newtype instance Arbitrary RunNumber
 
-instance Arbitrary (SnapIncomingRun RunNumber) where
+instance Arbitrary r => Arbitrary (SnapIncomingRun r) where
   arbitrary = oneof [
         SnapMergingRun <$> arbitrary <*> arbitrary
                        <*> arbitrary <*> arbitrary
@@ -295,7 +302,7 @@ instance Arbitrary MergePolicyForLevel where
   arbitrary = elements [LevelTiering, LevelLevelling]
   shrink _ = []
 
-instance Arbitrary t => Arbitrary (SnapMergingRunState t RunNumber) where
+instance (Arbitrary t, Arbitrary r) => Arbitrary (SnapMergingRunState t r) where
   arbitrary = oneof [
         SnapCompletedMerge <$> arbitrary <*> arbitrary <*> arbitrary
       , SnapOngoingMerge <$> arbitrary <*> arbitrary
@@ -348,6 +355,7 @@ instance Arbitrary RunBloomFilterAlloc where
 -------------------------------------------------------------------------------}
 
 deriving stock instance Show SnapshotMetaData
+deriving stock instance Show SnapshotRun
 deriving stock instance Show r => Show (SnapLevels r)
 deriving stock instance Show r => Show (SnapLevel r)
 deriving stock instance Show r => Show (SnapIncomingRun r)
