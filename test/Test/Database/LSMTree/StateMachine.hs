@@ -72,6 +72,7 @@ import           Control.ActionRegistry (AbortActionRegistryError (..),
 import           Control.Applicative (Alternative (..))
 import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Concurrent.Class.MonadSTM.Strict
+import           Control.Exception (assert)
 import qualified Control.Exception
 import           Control.Monad (forM_, void, (<=<))
 import           Control.Monad.Class.MonadThrow (Exception (..), Handler (..),
@@ -731,16 +732,30 @@ data Action' h a where
     => Var h (WrapTable h IO k v b)
     -> R.UnionCredits
     -> Act' h R.UnionCredits
-  -- TODO: SupplyUnionCredits has no information about union debt, so the
-  -- credits we generate are arbitrary, and it would require precarious,
-  -- manual tuning to make sure the debt is ever paid off by an action
-  -- sequence. We can probably add a version of SupplyUnionCredits that
-  -- supplies a percentage (if not al) of the current or previously computed
-  -- debt. Note that the model has no accurate debt information, so we might
-  -- have to use variables.
+  -- | Alternative version of 'SupplyUnionCredits' that supplies a portion of
+  -- the table's current union debt as union credits.
   --
+  -- 'SupplyUnionCredits' gets no information about union debt, so the union
+  -- credits we generate are arbitrary, and it would require precarious, manual
+  -- tuning to make sure the debt is ever paid off by an action sequence.
+  -- 'SupplyUnionCredits' supplies a portion (if not al) of the current debt, so
+  -- that unions are more likely to finish during a sequence of actions.
+  SupplyPortionOfDebt ::
+       C k v b
+    => Var h (WrapTable h IO k v b)
+    -> Portion
+    -> Act' h R.UnionCredits
   -- TODO: we should assert that debt decreases monotonically as credits are
   -- supplied.
+
+portionOf :: Portion -> R.UnionDebt -> R.UnionCredits
+portionOf (Portion denominator) (R.UnionDebt debt)
+  | denominator <= 0 = error "portion: denominator should be positive"
+  | debt < 0 = error "portion: debt should be non-negative"
+  | otherwise = R.UnionCredits (debt `div` denominator)
+
+newtype Portion = Portion Int -- ^ Denominator: should be non-negative
+  deriving stock (Show, Eq)
 
 deriving stock instance Show (Class.TableConfig h)
                      => Show (Action' h a)
@@ -797,6 +812,8 @@ instance ( Eq (Class.TableConfig h)
           Just var1 == cast var2
       go (SupplyUnionCredits var1 credits1)  (SupplyUnionCredits var2 credits2) =
           Just var1 == cast var2 && credits1 == credits2
+      go (SupplyPortionOfDebt var1 portion1) (SupplyPortionOfDebt var2 portion2) =
+          Just var1 == cast var2 && portion1 == portion2
       go _ _ = False
 
       _coveredAllCases :: Action' h a -> ()
@@ -822,6 +839,7 @@ instance ( Eq (Class.TableConfig h)
           Unions{} -> ()
           RemainingUnionDebt{} -> ()
           SupplyUnionCredits{} -> ()
+          SupplyPortionOfDebt{} -> ()
 
 -- | This is not a fully lawful instance, because it uses 'approximateEqStream'.
 instance Eq a => Eq (Stream a) where
@@ -946,6 +964,7 @@ instance ( Eq (Class.TableConfig h)
       Unions tableVars              -> [SomeGVar tableVar | tableVar <- NE.toList tableVars]
       RemainingUnionDebt tableVar   -> [SomeGVar tableVar]
       SupplyUnionCredits tableVar _ -> [SomeGVar tableVar]
+      SupplyPortionOfDebt tableVar _ -> [SomeGVar tableVar]
 
   arbitraryWithVars ::
        ModelVarContext (ModelState h)
@@ -1102,57 +1121,59 @@ instance ( Eq (Class.TableConfig h)
     -> Realized (RealMonad h IO) a
     -> Obs h a
   observeReal _proxy (Action _ action') result = case action' of
-      New{}            -> OEither $ bimap OId (const OTable) result
-      Close{}          -> OEither $ bimap OId OId result
-      Lookups{}        -> OEither $
+      New{}                 -> OEither $ bimap OId (const OTable) result
+      Close{}               -> OEither $ bimap OId OId result
+      Lookups{}             -> OEither $
           bimap OId (OVector . fmap (OLookupResult . fmap (const OBlobRef))) result
-      RangeLookup{}    -> OEither $
+      RangeLookup{}         -> OEither $
           bimap OId (OVector . fmap (OQueryResult . fmap (const OBlobRef))) result
-      NewCursor{}      -> OEither $ bimap OId (const OCursor) result
-      CloseCursor{}    -> OEither $ bimap OId OId result
-      ReadCursor{}     -> OEither $
+      NewCursor{}           -> OEither $ bimap OId (const OCursor) result
+      CloseCursor{}         -> OEither $ bimap OId OId result
+      ReadCursor{}          -> OEither $
           bimap OId (OVector . fmap (OQueryResult . fmap (const OBlobRef))) result
-      Updates{}        -> OEither $ bimap OId OId result
-      Inserts{}        -> OEither $ bimap OId OId result
-      Deletes{}        -> OEither $ bimap OId OId result
-      Mupserts{}       -> OEither $ bimap OId OId result
-      RetrieveBlobs{}  -> OEither $ bimap OId (OVector . fmap OBlob) result
-      CreateSnapshot{} -> OEither $ bimap OId OId result
-      OpenSnapshot{}   -> OEither $ bimap OId (const OTable) result
-      DeleteSnapshot{} -> OEither $ bimap OId OId result
-      ListSnapshots{}  -> OEither $ bimap OId (OList . fmap OId) result
-      Duplicate{}      -> OEither $ bimap OId (const OTable) result
-      Union{}          -> OEither $ bimap OId (const OTable) result
-      Unions{}         -> OEither $ bimap OId (const OTable) result
-      RemainingUnionDebt{} -> OEither $ bimap OId OId result
-      SupplyUnionCredits{} -> OEither $ bimap OId OId result
+      Updates{}             -> OEither $ bimap OId OId result
+      Inserts{}             -> OEither $ bimap OId OId result
+      Deletes{}             -> OEither $ bimap OId OId result
+      Mupserts{}            -> OEither $ bimap OId OId result
+      RetrieveBlobs{}       -> OEither $ bimap OId (OVector . fmap OBlob) result
+      CreateSnapshot{}      -> OEither $ bimap OId OId result
+      OpenSnapshot{}        -> OEither $ bimap OId (const OTable) result
+      DeleteSnapshot{}      -> OEither $ bimap OId OId result
+      ListSnapshots{}       -> OEither $ bimap OId (OList . fmap OId) result
+      Duplicate{}           -> OEither $ bimap OId (const OTable) result
+      Union{}               -> OEither $ bimap OId (const OTable) result
+      Unions{}              -> OEither $ bimap OId (const OTable) result
+      RemainingUnionDebt{}  -> OEither $ bimap OId OId result
+      SupplyUnionCredits{}  -> OEither $ bimap OId OId result
+      SupplyPortionOfDebt{} -> OEither $ bimap OId OId result
 
   showRealResponse ::
        Proxy (RealMonad h IO)
     -> LockstepAction (ModelState h) a
     -> Maybe (Dict (Show (Realized (RealMonad h IO) a)))
   showRealResponse _ (Action _ action') = case action' of
-      New{}                -> Nothing
-      Close{}              -> Just Dict
-      Lookups{}            -> Nothing
-      RangeLookup{}        -> Nothing
-      NewCursor{}          -> Nothing
-      CloseCursor{}        -> Just Dict
-      ReadCursor{}         -> Nothing
-      Updates{}            -> Just Dict
-      Inserts{}            -> Just Dict
-      Deletes{}            -> Just Dict
-      Mupserts{}           -> Just Dict
-      RetrieveBlobs{}      -> Just Dict
-      CreateSnapshot{}     -> Just Dict
-      OpenSnapshot{}       -> Nothing
-      DeleteSnapshot{}     -> Just Dict
-      ListSnapshots{}      -> Just Dict
-      Duplicate{}          -> Nothing
-      Union{}              -> Nothing
-      Unions{}             -> Nothing
-      RemainingUnionDebt{} -> Just Dict
-      SupplyUnionCredits{} -> Just Dict
+      New{}                 -> Nothing
+      Close{}               -> Just Dict
+      Lookups{}             -> Nothing
+      RangeLookup{}         -> Nothing
+      NewCursor{}           -> Nothing
+      CloseCursor{}         -> Just Dict
+      ReadCursor{}          -> Nothing
+      Updates{}             -> Just Dict
+      Inserts{}             -> Just Dict
+      Deletes{}             -> Just Dict
+      Mupserts{}            -> Just Dict
+      RetrieveBlobs{}       -> Just Dict
+      CreateSnapshot{}      -> Just Dict
+      OpenSnapshot{}        -> Nothing
+      DeleteSnapshot{}      -> Just Dict
+      ListSnapshots{}       -> Just Dict
+      Duplicate{}           -> Nothing
+      Union{}               -> Nothing
+      Unions{}              -> Nothing
+      RemainingUnionDebt{}  -> Just Dict
+      SupplyUnionCredits{}  -> Just Dict
+      SupplyPortionOfDebt{} -> Just Dict
 
 instance ( Eq (Class.TableConfig h)
          , Class.IsTable h
@@ -1166,57 +1187,59 @@ instance ( Eq (Class.TableConfig h)
     -> Realized (RealMonad h (IOSim s)) a
     -> Obs h a
   observeReal _proxy (Action _ action') result = case action' of
-      New{}            -> OEither $ bimap OId (const OTable) result
-      Close{}          -> OEither $ bimap OId OId result
-      Lookups{}        -> OEither $
+      New{}                 -> OEither $ bimap OId (const OTable) result
+      Close{}               -> OEither $ bimap OId OId result
+      Lookups{}             -> OEither $
           bimap OId (OVector . fmap (OLookupResult . fmap (const OBlobRef))) result
-      RangeLookup{}    -> OEither $
+      RangeLookup{}         -> OEither $
           bimap OId (OVector . fmap (OQueryResult . fmap (const OBlobRef))) result
-      NewCursor{}      -> OEither $ bimap OId (const OCursor) result
-      CloseCursor{}    -> OEither $ bimap OId OId result
-      ReadCursor{}     -> OEither $
+      NewCursor{}           -> OEither $ bimap OId (const OCursor) result
+      CloseCursor{}         -> OEither $ bimap OId OId result
+      ReadCursor{}          -> OEither $
           bimap OId (OVector . fmap (OQueryResult . fmap (const OBlobRef))) result
-      Updates{}        -> OEither $ bimap OId OId result
-      Inserts{}        -> OEither $ bimap OId OId result
-      Deletes{}        -> OEither $ bimap OId OId result
-      Mupserts{}       -> OEither $ bimap OId OId result
-      RetrieveBlobs{}  -> OEither $ bimap OId (OVector . fmap OBlob) result
-      CreateSnapshot{} -> OEither $ bimap OId OId result
-      OpenSnapshot{}   -> OEither $ bimap OId (const OTable) result
-      DeleteSnapshot{} -> OEither $ bimap OId OId result
-      ListSnapshots{}  -> OEither $ bimap OId (OList . fmap OId) result
-      Duplicate{}      -> OEither $ bimap OId (const OTable) result
-      Union{}          -> OEither $ bimap OId (const OTable) result
-      Unions{}         -> OEither $ bimap OId (const OTable) result
-      RemainingUnionDebt{} -> OEither $ bimap OId OId result
-      SupplyUnionCredits{} -> OEither $ bimap OId OId result
+      Updates{}             -> OEither $ bimap OId OId result
+      Inserts{}             -> OEither $ bimap OId OId result
+      Deletes{}             -> OEither $ bimap OId OId result
+      Mupserts{}            -> OEither $ bimap OId OId result
+      RetrieveBlobs{}       -> OEither $ bimap OId (OVector . fmap OBlob) result
+      CreateSnapshot{}      -> OEither $ bimap OId OId result
+      OpenSnapshot{}        -> OEither $ bimap OId (const OTable) result
+      DeleteSnapshot{}      -> OEither $ bimap OId OId result
+      ListSnapshots{}       -> OEither $ bimap OId (OList . fmap OId) result
+      Duplicate{}           -> OEither $ bimap OId (const OTable) result
+      Union{}               -> OEither $ bimap OId (const OTable) result
+      Unions{}              -> OEither $ bimap OId (const OTable) result
+      RemainingUnionDebt{}  -> OEither $ bimap OId OId result
+      SupplyUnionCredits{}  -> OEither $ bimap OId OId result
+      SupplyPortionOfDebt{} -> OEither $ bimap OId OId result
 
   showRealResponse ::
        Proxy (RealMonad h (IOSim s))
     -> LockstepAction (ModelState h) a
     -> Maybe (Dict (Show (Realized (RealMonad h (IOSim s)) a)))
   showRealResponse _ (Action _ action') = case action' of
-      New{}                -> Nothing
-      Close{}              -> Just Dict
-      Lookups{}            -> Nothing
-      RangeLookup{}        -> Nothing
-      NewCursor{}          -> Nothing
-      CloseCursor{}        -> Just Dict
-      ReadCursor{}         -> Nothing
-      Updates{}            -> Just Dict
-      Inserts{}            -> Just Dict
-      Deletes{}            -> Just Dict
-      Mupserts{}           -> Just Dict
-      RetrieveBlobs{}      -> Just Dict
-      CreateSnapshot{}     -> Just Dict
-      OpenSnapshot{}       -> Nothing
-      DeleteSnapshot{}     -> Just Dict
-      ListSnapshots{}      -> Just Dict
-      Duplicate{}          -> Nothing
-      Union{}              -> Nothing
-      Unions{}             -> Nothing
-      RemainingUnionDebt{} -> Just Dict
-      SupplyUnionCredits{} -> Just Dict
+      New{}                 -> Nothing
+      Close{}               -> Just Dict
+      Lookups{}             -> Nothing
+      RangeLookup{}         -> Nothing
+      NewCursor{}           -> Nothing
+      CloseCursor{}         -> Just Dict
+      ReadCursor{}          -> Nothing
+      Updates{}             -> Just Dict
+      Inserts{}             -> Just Dict
+      Deletes{}             -> Just Dict
+      Mupserts{}            -> Just Dict
+      RetrieveBlobs{}       -> Just Dict
+      CreateSnapshot{}      -> Just Dict
+      OpenSnapshot{}        -> Nothing
+      DeleteSnapshot{}      -> Just Dict
+      ListSnapshots{}       -> Just Dict
+      Duplicate{}           -> Nothing
+      Union{}               -> Nothing
+      Unions{}              -> Nothing
+      RemainingUnionDebt{}  -> Just Dict
+      SupplyUnionCredits{}  -> Just Dict
+      SupplyPortionOfDebt{} -> Just Dict
 
 {-------------------------------------------------------------------------------
   RunModel
@@ -1363,6 +1386,13 @@ runModel lookUp (Action merrs action') = case action' of
       . Model.runModelMWithInjectedErrors merrs
           (Model.supplyUnionCredits (getTable $ lookUp tableVar) credits)
           (pure ()) -- TODO(err)
+    SupplyPortionOfDebt tableVar portion ->
+      wrap MUnionCredits
+      . Model.runModelMWithInjectedErrors merrs
+          (do let table = getTable $ lookUp tableVar
+              debt <- Model.remainingUnionDebt table
+              Model.supplyUnionCredits table (portion `portionOf` debt))
+          (pure ()) -- TODO(err)
   where
     getTable ::
          ModelValue (ModelState h) (WrapTable h IO k v b)
@@ -1493,6 +1523,12 @@ runIO action lookUp = ReaderT $ \ !env -> do
           runRealWithInjectedErrors "SupplyUnionCredits" env merrs
             (Class.supplyUnionCredits (unwrapTable $ lookUp' tableVar) credits)
             (\_ -> pure ()) -- TODO(err)
+        SupplyPortionOfDebt tableVar portion ->
+          runRealWithInjectedErrors "SupplyPortionOfDebt" env merrs
+              (do let table = unwrapTable $ lookUp' tableVar
+                  debt <- Class.remainingUnionDebt table
+                  Class.supplyUnionCredits table (portion `portionOf` debt))
+              (\_ -> pure ()) -- TODO(err)
       where
         session = envSession env
 
@@ -1598,6 +1634,12 @@ runIOSim action lookUp = ReaderT $ \ !env -> do
           runRealWithInjectedErrors "SupplyUnionCredits" env merrs
             (Class.supplyUnionCredits (unwrapTable $ lookUp' tableVar) credits)
             (\_ -> pure ()) -- TODO(err)
+        SupplyPortionOfDebt tableVar portion ->
+          runRealWithInjectedErrors "SupplyPortionOfDebt" env merrs
+              (do let table = unwrapTable $ lookUp' tableVar
+                  debt <- Class.remainingUnionDebt table
+                  Class.supplyUnionCredits table (portion `portionOf` debt))
+              (\_ -> pure ()) -- TODO(err)
       where
         session = envSession env
 
@@ -1705,6 +1747,7 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
         Unions{} -> ()
         RemainingUnionDebt{} -> ()
         SupplyUnionCredits{} -> ()
+        SupplyPortionOfDebt{} -> ()
 
     genTableVar = QC.elements tableVars
 
@@ -1871,9 +1914,14 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
         | let genErrors = pure Nothing -- TODO: generate errors
         , False -- TODO: enable once table unions is implemented
         ]
-     ++ [ (10, fmap Some $ (Action <$> genErrors <*>) $
+     ++ [ (8, fmap Some $ (Action <$> genErrors <*>) $
             SupplyUnionCredits <$> genTableVar' <*> genUnionCredits)
         | let genErrors = pure Nothing -- TODO: generate errors
+        , False -- TODO: enable once table unions is implemented
+        ]
+      ++ [ (2, fmap Some $ (Action <$> genErrors <*>) $
+            SupplyPortionOfDebt <$> genTableVar' <*> genPortion)
+        | let genErrors  = pure Nothing -- TODO: generate errors
         , False -- TODO: enable once table unions is implemented
         ]
       where
@@ -1899,6 +1947,9 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
             -- rarely.
           , (1, R.UnionCredits <$> QC.arbitrary)
           ]
+
+        -- TODO: tweak distribution once table unions are implemented
+        genPortion = Portion <$> QC.elements [1, 2, 3]
 
     genActionsCursor :: [(Int, Gen (Any (LockstepAction (ModelState h))))]
     genActionsCursor
@@ -2018,6 +2069,7 @@ dictIsTypeable = \case
       Unions{}         -> Dict
       RemainingUnionDebt{} -> Dict
       SupplyUnionCredits{} -> Dict
+      SupplyPortionOfDebt{} -> Dict
 
 shrinkAction'WithVars ::
      forall h a. (
@@ -2063,14 +2115,38 @@ shrinkAction'WithVars _ctx _st a = case a of
       | let f (k, v) = (k, R.Mupsert v)
       ]
 
+    Lookups ks tableVar -> [
+        Some $ Lookups ks' tableVar
+      | ks' <- QC.shrink ks
+      ]
+
+    -- * Unions
+
     Unions tableVars -> [
         Some $ Unions tableVars'
       | tableVars' <- QC.liftShrink (const []) tableVars
       ]
 
-    Lookups ks tableVar -> [
-        Some $ Lookups ks' tableVar
-      | ks' <- QC.shrink ks
+    SupplyUnionCredits tableVar (R.UnionCredits x) -> [
+        Some $ SupplyUnionCredits tableVar (R.UnionCredits x')
+      | x' <- QC.shrink x
+      ]
+
+    -- Shrink portions to absolute union credits. The credits are all /positive/
+    -- powers of 2 that fit into a 64-bit Int. This choice is arbitrary, but the
+    -- model has no accurate debt information, so the best we can do is provide
+    -- a sensible distribution of union credits. This particular distribution is
+    -- skewed to smaller numbers, because the union debt is also likely to be on
+    -- the smaller side. Still, all larger powers of 2 are also included in case
+    -- the union debt is larger.
+    SupplyPortionOfDebt tableVar (Portion x) -> [
+        Some $ SupplyUnionCredits tableVar (R.UnionCredits x')
+      | x' <- [2 ^ i - 1 | (i :: Int) <- [0..63]]
+      , assert (x' >= 0) True
+      ] ++ [
+        Some $ SupplyPortionOfDebt tableVar (Portion x')
+      | x' <- QC.shrink x
+      , x' > 0
       ]
 
     _ -> []
@@ -2268,13 +2344,14 @@ updateStats action@(Action _merrs action') lookUp modelBefore _modelAfter result
         Inserts _ tableVar     -> updateCount tableVar
         Deletes _ tableVar     -> updateCount tableVar
         Mupserts _ tableVar    -> updateCount tableVar
+        RemainingUnionDebt tableVar -> updateCount tableVar
+        SupplyUnionCredits tableVar _ -> updateCount tableVar
+        SupplyPortionOfDebt tableVar _ -> updateCount tableVar
         -- Note that we don't remove tracking map entries for tables that get
         -- closed. We want to know actions per table of all tables used, not
         -- just those that were still open at the end of the sequence of
         -- actions. We do also count Close itself as an action.
         Close tableVar        -> updateCount tableVar
-        RemainingUnionDebt tableVar -> updateCount tableVar
-        SupplyUnionCredits tableVar _ -> updateCount tableVar
 
         -- The others are not counted as table actions. We list them here
         -- explicitly so we don't miss any new ones we might add later.
@@ -2371,6 +2448,8 @@ updateStats action@(Action _merrs action') lookUp modelBefore _modelAfter result
         Deletes     ks   tableVar
           | not (null ks)         -> updateLastActionLog tableVar
         Close            tableVar -> updateLastActionLog tableVar
+        -- TODO: pattern match on all constructors so don't we don't miss any
+        -- (in the future)
         _                         -> stats
       where
         -- add the current table to the front of the list of tables, if it's
