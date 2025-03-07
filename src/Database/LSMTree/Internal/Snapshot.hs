@@ -13,11 +13,10 @@ module Database.LSMTree.Internal.Snapshot (
     -- * Write buffer
   , snapshotWriteBuffer
   , openWriteBuffer
-    -- * Runs
+    -- * Run
   , SnapshotRun (..)
-  , snapshotRuns
-  , openRuns
-  , releaseRuns
+  , snapshotRun
+  , openRun
     -- * Opening from levels snapshot format
   , fromSnapLevels
     -- * Hard links
@@ -33,9 +32,8 @@ import           Control.Monad.Class.MonadST (MonadST)
 import           Control.Monad.Class.MonadThrow (MonadMask, bracketOnError)
 import           Control.Monad.Primitive (PrimMonad)
 import           Control.RefCount
-import           Data.Foldable (sequenceA_, traverse_)
+import           Data.Foldable (sequenceA_)
 import           Data.Text (Text)
-import           Data.Traversable (for)
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.CRC32C (checkCRC)
@@ -354,8 +352,8 @@ openWriteBuffer reg resolve hfs hbio uc activeDir snapWriteBufferPaths = do
   Runs
 -------------------------------------------------------------------------------}
 
--- | Information needed to open a 'Run' from disk using 'snapshotRuns' and
--- 'openRuns'.
+-- | Information needed to open a 'Run' from disk using 'snapshotRun' and
+-- 'openRun'.
 --
 -- TODO: one could imagine needing only the 'RunNumber' to identify the files
 -- on disk, and the other parameters being stored with the run itself, rather
@@ -370,87 +368,78 @@ data SnapshotRun = SnapshotRun {
 instance NFData SnapshotRun where
   rnf (SnapshotRun a b c) = rnf a `seq` rnf b `seq` rnf c
 
-{-# SPECIALISE snapshotRuns ::
-     ActionRegistry IO
-  -> UniqCounter IO
-  -> NamedSnapshotDir
-  -> SnapLevels (Ref (Run IO h))
-  -> IO (SnapLevels SnapshotRun) #-}
--- | @'snapshotRuns' _ _ snapUc targetDir levels@ creates hard links for all run
--- files associated with the runs in @levels@, and puts the new directory
--- entries in the @targetDir@ directory. The entries are renamed using @snapUc@.
-snapshotRuns ::
-     (MonadMask m, PrimMonad m)
-  => ActionRegistry m
-  -> UniqCounter m
-  -> NamedSnapshotDir
-  -> SnapLevels (Ref (Run m h))
-  -> m (SnapLevels SnapshotRun)
-snapshotRuns reg snapUc (NamedSnapshotDir targetDir) levels = do
-    for levels $ \run@(DeRef Run.Run {
-        Run.runHasFS = hfs,
-        Run.runHasBlockIO = hbio
-      }) -> do
-        rn <- uniqueToRunNumber <$> incrUniqCounter snapUc
-        let sourcePaths = Run.runFsPaths run
-        let targetPaths = sourcePaths { runDir = targetDir , runNumber = rn}
-        hardLinkRunFiles reg hfs hbio sourcePaths targetPaths
-        pure SnapshotRun {
-               snapRunNumber  = runNumber targetPaths,
-               snapRunCaching = Run.runDataCaching run,
-               snapRunIndex   = Run.runIndexType run
-             }
-
-{-# SPECIALISE openRuns ::
-     ActionRegistry IO
-  -> HasFS IO h
+{-# SPECIALISE snapshotRun ::
+     HasFS IO h
   -> HasBlockIO IO h
   -> UniqCounter IO
+  -> ActionRegistry IO
   -> NamedSnapshotDir
-  -> ActiveDir
-  -> SnapLevels SnapshotRun
-  -> IO (SnapLevels (Ref (Run IO h))) #-}
--- | @'openRuns' _ _ _ _ uniqCounter sourceDir targetDir levels@ takes all run
--- files that are referenced by @levels@, and hard links them from @sourceDir@
--- into @targetDir@ with new, unique names (using @uniqCounter@). Each set of
--- (hard linked) files that represents a run is opened and verified, returning
--- 'Run's as a result.
---
--- The result must ultimately be released using 'releaseRuns'.
-openRuns ::
-     (MonadMask m, MonadSTM m, MonadST m)
-  => ActionRegistry m
-  -> HasFS m h
+  -> Ref (Run IO h)
+  -> IO SnapshotRun #-}
+-- | @'snapshotRun' _ _ snapUc targetDir run@ creates hard links for all files
+-- associated with the run, and puts the new directory entries in the
+-- @targetDir@ directory. The entries are renamed using @snapUc@.
+snapshotRun ::
+     (MonadMask m, PrimMonad m)
+  => HasFS m h
   -> HasBlockIO m h
   -> UniqCounter m
+  -> ActionRegistry m
+  -> NamedSnapshotDir
+  -> Ref (Run m h)
+  -> m SnapshotRun
+snapshotRun hfs hbio snapUc reg (NamedSnapshotDir targetDir) run = do
+    rn <- uniqueToRunNumber <$> incrUniqCounter snapUc
+    let sourcePaths = Run.runFsPaths run
+    let targetPaths = sourcePaths { runDir = targetDir , runNumber = rn}
+    hardLinkRunFiles reg hfs hbio sourcePaths targetPaths
+    pure SnapshotRun {
+           snapRunNumber  = runNumber targetPaths,
+           snapRunCaching = Run.runDataCaching run,
+           snapRunIndex   = Run.runIndexType run
+         }
+
+{-# SPECIALISE openRun ::
+     HasFS IO h
+  -> HasBlockIO IO h
+  -> UniqCounter IO
+  -> ActionRegistry IO
   -> NamedSnapshotDir
   -> ActiveDir
-  -> SnapLevels SnapshotRun
-  -> m (SnapLevels (Ref (Run m h)))
-openRuns reg hfs hbio uc (NamedSnapshotDir sourceDir) (ActiveDir targetDir)
-         levels =
-    for levels $
-      \SnapshotRun {
-         snapRunNumber  = runNum,
-         snapRunCaching = caching,
-         snapRunIndex   = indexType
-       } -> do
-          let sourcePaths = RunFsPaths sourceDir runNum
-          runNum' <- uniqueToRunNumber <$> incrUniqCounter uc
-          let targetPaths = RunFsPaths targetDir runNum'
-          hardLinkRunFiles reg hfs hbio sourcePaths targetPaths
+  -> SnapshotRun
+  -> IO (Ref (Run IO h)) #-}
+-- | @'openRun' _ _ _ _ uniqCounter sourceDir targetDir snaprun@ takes all run
+-- files that are referenced by @snaprun@, and hard links them from @sourceDir@
+-- into @targetDir@ with new, unique names (using @uniqCounter@). Each set of
+-- (hard linked) files that represents a run is opened and verified, returning
+-- 'Run' as a result.
+--
+-- The result must ultimately be released using 'releaseRef'.
+openRun ::
+     (MonadMask m, MonadSTM m, MonadST m)
+  => HasFS m h
+  -> HasBlockIO m h
+  -> UniqCounter m
+  -> ActionRegistry m
+  -> NamedSnapshotDir
+  -> ActiveDir
+  -> SnapshotRun
+  -> m (Ref (Run m h))
+openRun hfs hbio uc reg
+        (NamedSnapshotDir sourceDir) (ActiveDir targetDir)
+        SnapshotRun {
+          snapRunNumber  = runNum,
+          snapRunCaching = caching,
+          snapRunIndex   = indexType
+        } = do
+    let sourcePaths = RunFsPaths sourceDir runNum
+    runNum' <- uniqueToRunNumber <$> incrUniqCounter uc
+    let targetPaths = RunFsPaths targetDir runNum'
+    hardLinkRunFiles reg hfs hbio sourcePaths targetPaths
 
-          withRollback reg
-            (Run.openFromDisk hfs hbio caching indexType targetPaths)
-            releaseRef
-
-{-# SPECIALISE releaseRuns ::
-     ActionRegistry IO -> SnapLevels (Ref (Run IO h)) -> IO ()
-  #-}
-releaseRuns ::
-     (MonadMask m, MonadST m)
-  => ActionRegistry m -> SnapLevels (Ref (Run m h)) -> m ()
-releaseRuns reg = traverse_ $ \r -> delayedCommit reg (releaseRef r)
+    withRollback reg
+      (Run.openFromDisk hfs hbio caching indexType targetPaths)
+      releaseRef
 
 {-------------------------------------------------------------------------------
   Opening from levels snapshot format
