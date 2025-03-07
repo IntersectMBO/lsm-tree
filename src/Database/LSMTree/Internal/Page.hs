@@ -1,4 +1,7 @@
+{-# OPTIONS_HADDOCK not-home #-}
+
 -- | Utilities related to pages.
+--
 module Database.LSMTree.Internal.Page (
     PageNo (..)
   , nextPageNo

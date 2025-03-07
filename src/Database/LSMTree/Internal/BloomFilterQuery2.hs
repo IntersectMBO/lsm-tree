@@ -2,11 +2,12 @@
 {-# LANGUAGE PatternSynonyms     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE UnboxedTuples       #-}
+{-# OPTIONS_HADDOCK not-home #-}
 
-{-# OPTIONS_GHC -O2 -fregs-iterative -fmax-inline-alloc-size=512 #-}
 -- The use of -fregs-iterative here does a better job in the hot loop for
 -- the bloomQueriesBody below. It eliminates all spilling to the stack.
 -- There's just 6 stack reads in the loop now, no writes.
+{-# OPTIONS_GHC -O2 -fregs-iterative -fmax-inline-alloc-size=512 #-}
 
 -- | An implementation of batched bloom filter query, optimised for memory
 -- prefetch.

@@ -1,26 +1,28 @@
-{-|
-    Provides support for working with fence pointer indexes of different types
-    and their accumulators.
+{-# OPTIONS_HADDOCK not-home #-}
 
-    Keys used with an index are subject to the key size constraints of the
-    concrete type of the index. These constraints are stated in the descriptions
-    of the modules "Database.LSMTree.Internal.Index.Compact" and
-    "Database.LSMTree.Internal.Index.Ordinary", respectively.
-
-    Part of the functionality that this module provides is the construction of
-    serialised indexes in a mostly incremental fashion. The incremental part of
-    serialisation is provided through index accumulators, while the
-    non-incremental bits are provided through the index operations 'headerLBS'
-    and 'finalLBS'. To completely serialise an index interleaved with its
-    construction, proceed as follows:
-
-     1. Use 'headerLBS' to generate the header of the serialised index.
-
-     2. Incrementally construct the index using the operations of 'IndexAcc',
-        and assemble the body of the serialised index from the generated chunks.
-
-     3. Use 'finalLBS' to generate the footer of the serialised index.
--}
+-- |
+--  Provides support for working with fence pointer indexes of different types
+--  and their accumulators.
+--
+--  Keys used with an index are subject to the key size constraints of the
+--  concrete type of the index. These constraints are stated in the descriptions
+--  of the modules "Database.LSMTree.Internal.Index.Compact" and
+--  "Database.LSMTree.Internal.Index.Ordinary", respectively.
+--
+--  Part of the functionality that this module provides is the construction of
+--  serialised indexes in a mostly incremental fashion. The incremental part of
+--  serialisation is provided through index accumulators, while the
+--  non-incremental bits are provided through the index operations 'headerLBS'
+--  and 'finalLBS'. To completely serialise an index interleaved with its
+--  construction, proceed as follows:
+--
+--   1. Use 'headerLBS' to generate the header of the serialised index.
+--
+--   2. Incrementally construct the index using the operations of 'IndexAcc',
+--      and assemble the body of the serialised index from the generated chunks.
+--
+--   3. Use 'finalLBS' to generate the footer of the serialised index.
+--
 module Database.LSMTree.Internal.Index
 (
     -- * Index types

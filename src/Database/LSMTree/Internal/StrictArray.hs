@@ -2,6 +2,8 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications    #-}
 {-# LANGUAGE UnboxedTuples       #-}
+{-# OPTIONS_HADDOCK not-home #-}
+
 module Database.LSMTree.Internal.StrictArray (
     StrictArray,
     vectorToStrictArray,

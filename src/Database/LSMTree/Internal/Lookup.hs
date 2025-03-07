@@ -7,6 +7,7 @@
 {-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections       #-}
+{-# OPTIONS_HADDOCK not-home #-}
 
 module Database.LSMTree.Internal.Lookup (
     ResolveSerialisedValue

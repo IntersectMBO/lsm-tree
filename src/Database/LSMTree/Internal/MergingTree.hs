@@ -1,4 +1,7 @@
+{-# OPTIONS_HADDOCK not-home #-}
+
 -- | An incremental merge of multiple runs, preserving a bracketing structure.
+--
 module Database.LSMTree.Internal.MergingTree (
     -- $mergingtrees
     MergingTree (..)

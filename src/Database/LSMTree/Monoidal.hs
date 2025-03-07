@@ -8,14 +8,14 @@
 -- Maintainer  : TODO: MAINTAINER EMAIL
 -- Stability   : experimental
 -- Portability : portable
--- 
+--
 -- On disk key-value tables, implemented as Log Structured Merge (LSM) trees.
--- 
+--
 -- This module is the API for \"monoidal\" tables, as opposed to \"normal\"
 -- tables (that do not support monoidal updates and unions).
--- 
+--
 -- Key features:
--- 
+--
 -- * Basic key\/value operations: lookup, insert, delete
 -- * Monoidal operations: mupsert
 -- * Merging of tables
@@ -26,11 +26,11 @@
 -- * Full persistent data structure by cheap table duplication: all duplicate
 --   tables can be both accessed and modified
 -- * High performance lookups on SSDs by I\/O batching and concurrency
--- 
+--
 -- This module is intended to be imported qualified.
--- 
+--
 -- > import qualified Database.LSMTree.Monoidal as LSMT
--- 
+--
 --------------------------------------------------------------------------------
 module Database.LSMTree.Monoidal (
     -- * Exceptions

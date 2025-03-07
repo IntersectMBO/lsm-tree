@@ -3,6 +3,7 @@
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralisedNewtypeDeriving #-}
 {-# LANGUAGE RoleAnnotations            #-}
+{-# OPTIONS_HADDOCK not-home #-}
 
 module Database.LSMTree.Internal.Unsliced (
     -- * Unsliced raw bytes
