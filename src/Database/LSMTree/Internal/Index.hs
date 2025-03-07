@@ -25,6 +25,7 @@ module Database.LSMTree.Internal.Index
 (
     -- * Index types
     IndexType (Compact, Ordinary),
+    indexToIndexType,
 
     -- * Indexes
     Index (CompactIndex, OrdinaryIndex),
@@ -87,6 +88,10 @@ data Index
 instance NFData Index where
     rnf (CompactIndex  index) = rnf index
     rnf (OrdinaryIndex index) = rnf index
+
+indexToIndexType :: Index -> IndexType
+indexToIndexType CompactIndex{}  = Compact
+indexToIndexType OrdinaryIndex{} = Ordinary
 
 {-|
     Searches for a page span that contains a key–value pair with the given key.

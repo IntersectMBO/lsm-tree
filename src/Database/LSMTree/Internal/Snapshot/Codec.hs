@@ -262,6 +262,25 @@ instance DecodeVersioned SnapshotTableType where
         2 -> pure SnapFullTable
         _ -> fail ("[SnapshotTableType] Unexpected tag: " <> show tag)
 
+instance Encode SnapshotRun where
+  encode SnapshotRun { snapRunNumber, snapRunCaching, snapRunIndex } =
+         encodeListLen 4
+      <> encodeWord 0
+      <> encode snapRunNumber
+      <> encode snapRunCaching
+      <> encode snapRunIndex
+
+instance DecodeVersioned SnapshotRun where
+  decodeVersioned v@V0 = do
+      n <- decodeListLen
+      tag <- decodeWord
+      case (n, tag) of
+        (4, 0) -> do snapRunNumber  <- decodeVersioned v
+                     snapRunCaching <- decodeVersioned v
+                     snapRunIndex   <- decodeVersioned v
+                     pure SnapshotRun{..}
+        _ -> fail ("[SnapshotRun] Unexpected combination of list length and tag: " <> show (n, tag))
+
 {-------------------------------------------------------------------------------
   Encoding and decoding: TableConfig
 -------------------------------------------------------------------------------}
@@ -499,38 +518,38 @@ instance DecodeVersioned MergeSchedule where
 
 -- SnapLevels
 
-instance Encode (SnapLevels RunNumber) where
+instance Encode r => Encode (SnapLevels r) where
   encode (SnapLevels levels) =
          encodeListLen (fromIntegral (V.length levels))
       <> V.foldMap encode levels
 
-instance DecodeVersioned (SnapLevels RunNumber) where
+instance DecodeVersioned r => DecodeVersioned (SnapLevels r) where
   decodeVersioned v@V0 = do
       n <- decodeListLen
       SnapLevels <$> V.replicateM n (decodeVersioned v)
 
 -- SnapLevel
 
-instance Encode (SnapLevel RunNumber) where
+instance Encode r => Encode (SnapLevel r) where
   encode (SnapLevel incomingRuns residentRuns) =
          encodeListLen 2
       <> encode incomingRuns
       <> encode residentRuns
 
 
-instance DecodeVersioned (SnapLevel RunNumber) where
+instance DecodeVersioned r => DecodeVersioned (SnapLevel r) where
   decodeVersioned v@V0 = do
       _ <- decodeListLenOf 2
       SnapLevel <$> decodeVersioned v <*> decodeVersioned v
 
--- Vector RunNumber
+-- Vector
 
-instance Encode (V.Vector RunNumber) where
+instance Encode r => Encode (V.Vector r) where
   encode rns =
          encodeListLen (fromIntegral (V.length rns))
       <> V.foldMap encode rns
 
-instance DecodeVersioned (V.Vector RunNumber) where
+instance DecodeVersioned r => DecodeVersioned (V.Vector r) where
   decodeVersioned v@V0 = do
       n <- decodeListLen
       V.replicateM n (decodeVersioned v)
@@ -545,7 +564,7 @@ instance DecodeVersioned RunNumber where
 
 -- SnapIncomingRun
 
-instance Encode (SnapIncomingRun RunNumber) where
+instance Encode r => Encode (SnapIncomingRun r) where
   encode (SnapMergingRun mpfl nd nc smrs) =
        encodeListLen 5
     <> encodeWord 0
@@ -558,7 +577,7 @@ instance Encode (SnapIncomingRun RunNumber) where
     <> encodeWord 1
     <> encode x
 
-instance DecodeVersioned (SnapIncomingRun RunNumber) where
+instance DecodeVersioned r => DecodeVersioned (SnapIncomingRun r) where
   decodeVersioned v@V0 = do
       n <- decodeListLen
       tag <- decodeWord
@@ -592,7 +611,7 @@ instance DecodeVersioned MergePolicyForLevel where
 
 -- SnapMergingRunState
 
-instance Encode t => Encode (SnapMergingRunState t RunNumber) where
+instance (Encode t, Encode r) => Encode (SnapMergingRunState t r) where
   encode (SnapCompletedMerge nr md r) =
          encodeListLen 4
       <> encodeWord 0
@@ -607,7 +626,7 @@ instance Encode t => Encode (SnapMergingRunState t RunNumber) where
       <> encode rs
       <> encode mt
 
-instance DecodeVersioned t => DecodeVersioned (SnapMergingRunState t RunNumber) where
+instance (DecodeVersioned t, DecodeVersioned r) => DecodeVersioned (SnapMergingRunState t r) where
   decodeVersioned v@V0 = do
       n <- decodeListLen
       tag <- decodeWord
