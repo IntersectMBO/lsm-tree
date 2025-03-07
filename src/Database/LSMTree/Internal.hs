@@ -1192,7 +1192,7 @@ createSnapshot snap label tableType t = do
         snapLevels <- toSnapLevels (tableLevels content)
 
         -- Hard link runs into the named snapshot directory
-        snapLevels' <- snapshotRuns reg snapUc snapDir snapLevels
+        snapLevels' <- traverse (snapshotRun hfs hbio snapUc reg snapDir) snapLevels
 
         -- Release the table content
         releaseTableContent reg content
@@ -1260,11 +1260,11 @@ openSnapshot sesh label tableType override snap resolve = do
         (tableWriteBuffer, tableWriteBufferBlobs) <- openWriteBuffer reg resolve hfs hbio uc activeDir snapWriteBufferPaths
 
         -- Hard link runs into the active directory,
-        snapLevels' <- openRuns reg hfs hbio (sessionUniqCounter seshEnv) snapDir activeDir snapLevels
+        snapLevels' <- traverse (openRun hfs hbio uc reg snapDir activeDir) snapLevels
 
         -- Convert from the snapshot format, restoring merge progress in the process
-        tableLevels <- fromSnapLevels reg hfs hbio conf (sessionUniqCounter seshEnv) resolve activeDir snapLevels'
-        releaseRuns reg snapLevels'
+        tableLevels <- fromSnapLevels reg hfs hbio conf uc resolve activeDir snapLevels'
+        traverse_ (delayedCommit reg . releaseRef) snapLevels'
 
         tableCache <- mkLevelsCache reg tableLevels
         newWith reg sesh seshEnv conf' am $! TableContent {
