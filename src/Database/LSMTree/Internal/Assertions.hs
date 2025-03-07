@@ -1,5 +1,7 @@
 {-# LANGUAGE CPP       #-}
 {-# LANGUAGE MagicHash #-}
+{-# OPTIONS_HADDOCK not-home #-}
+
 module Database.LSMTree.Internal.Assertions (
     assert,
     isValidSlice,

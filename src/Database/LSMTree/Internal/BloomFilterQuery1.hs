@@ -2,6 +2,8 @@
 {-# LANGUAGE MagicHash       #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE UnboxedTuples   #-}
+{-# OPTIONS_HADDOCK not-home #-}
+
 module Database.LSMTree.Internal.BloomFilterQuery1 (
   bloomQueries,
   RunIxKeyIx(RunIxKeyIx),

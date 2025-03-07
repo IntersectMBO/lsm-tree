@@ -1,3 +1,5 @@
+{-# OPTIONS_HADDOCK not-home #-}
+
 -- | Some arithmetic implemented using bit operations
 --
 -- Valid for non-negative arguments.

@@ -1,7 +1,10 @@
 {-# LANGUAGE CPP           #-}
 {-# LANGUAGE MagicHash     #-}
 {-# LANGUAGE UnboxedTuples #-}
+{-# OPTIONS_HADDOCK not-home #-}
+
 -- | @bytestring@ extras
+--
 module Database.LSMTree.Internal.ByteString (
     tryCheapToShort,
     tryGetByteArray,

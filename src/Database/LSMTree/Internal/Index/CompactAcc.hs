@@ -1,14 +1,16 @@
 {-# LANGUAGE CPP #-}
-{- |
-  Incremental construction of a compact index yields chunks of the primary array
-  that can be serialised incrementally.
+{-# OPTIONS_HADDOCK not-home #-}
 
-  Incremental construction is an 'ST' computation that can be started using
-  'new', returning an 'IndexCompactAcc' structure that accumulates internal
-  state. 'append'ing new pages to the 'IndexCompactAcc' /might/ yield 'Chunk's.
-  Incremental construction can be finalised with 'unsafeEnd', which yields both
-  a 'Chunk' (possibly) and the `IndexCompact'.
--}
+-- |
+-- Incremental construction of a compact index yields chunks of the primary array
+-- that can be serialised incrementally.
+--
+-- Incremental construction is an 'ST' computation that can be started using
+-- 'new', returning an 'IndexCompactAcc' structure that accumulates internal
+-- state. 'append'ing new pages to the 'IndexCompactAcc' /might/ yield 'Chunk's.
+-- Incremental construction can be finalised with 'unsafeEnd', which yields both
+-- a 'Chunk' (possibly) and the `IndexCompact'.
+--
 module Database.LSMTree.Internal.Index.CompactAcc (
     -- * Construction
     IndexCompactAcc (..)
