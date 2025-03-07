@@ -26,6 +26,7 @@
 - ignore: {name: "Redundant $!"}
 - ignore: {name: "Use shows"}
 - ignore: {name: "Use fmap"}
+- ignore: {name: "Use <=<"}
 
 # Specify additional command line arguments
 #

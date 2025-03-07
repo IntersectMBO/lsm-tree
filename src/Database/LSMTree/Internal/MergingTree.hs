@@ -2,13 +2,14 @@
 module Database.LSMTree.Internal.MergingTree (
     -- $mergingtrees
     MergingTree (..)
-  , newPendingLevelMerge
   , PreExistingRun (..)
+  , newPendingLevelMerge
   , newPendingUnionMerge
   , isStructurallyEmpty
     -- * Internal state
   , MergingTreeState (..)
   , PendingMerge (..)
+  , mkMergingTree
   ) where
 
 import           Control.Concurrent.Class.MonadMVar.Strict
@@ -137,7 +138,7 @@ newPendingLevelMerge [PreExistingRun r] Nothing = do
     r' <- dupRef r
     -- There are no interruption points here, and thus provided async
     -- exceptions are masked then there can be no async exceptions here at all.
-    newMergeTree (CompletedTreeMerge r')
+    mkMergingTree (CompletedTreeMerge r')
 
 newPendingLevelMerge prs mmt = do
     -- isStructurallyEmpty is an interruption point, and can receive async
@@ -145,7 +146,7 @@ newPendingLevelMerge prs mmt = do
     -- new references.
     mmt' <- dupMaybeMergingTree mmt
     prs' <- traverse dupPreExistingRun (V.fromList prs)
-    newMergeTree (PendingTreeMerge (PendingLevelMerge prs' mmt'))
+    mkMergingTree (PendingTreeMerge (PendingLevelMerge prs' mmt'))
   where
     dupPreExistingRun (PreExistingRun r) =
       PreExistingRun <$!> dupRef r
@@ -188,7 +189,7 @@ newPendingUnionMerge mts = do
     case V.uncons mts'' of
       Just (mt, x) | V.null x
         -> return mt
-      _ -> newMergeTree (PendingTreeMerge (PendingUnionMerge mts''))
+      _ -> mkMergingTree (PendingTreeMerge (PendingUnionMerge mts''))
 
 -- | Test if a 'MergingTree' is \"obviously\" empty by virtue of its structure.
 -- This is not the same as being empty due to a pending or ongoing merge
@@ -210,11 +211,11 @@ isStructurallyEmpty (DeRef MergingTree {mergeState}) =
 -- duplicate first. This is not the normal pattern, but this is an internal
 -- helper only.
 --
-newMergeTree ::
+mkMergingTree ::
      (MonadMVar m, PrimMonad m, MonadMask m)
   => MergingTreeState m h
   -> m (Ref (MergingTree m h))
-newMergeTree mergeTreeState = do
+mkMergingTree mergeTreeState = do
     mergeState <- newMVar mergeTreeState
     newRef (finalise mergeState) $ \mergeRefCounter ->
       MergingTree {

@@ -1,6 +1,5 @@
 module Bench.Database.LSMTree.Internal.Merge (benchmarks) where
 
-import           Control.Monad (zipWithM)
 import           Control.RefCount
 import           Criterion.Main (Benchmark, bench, bgroup)
 import qualified Criterion.Main as Cr
@@ -27,6 +26,7 @@ import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..))
 import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.Serialise
+import           Database.LSMTree.Internal.UniqCounter
 import           Prelude hiding (getContents)
 import           System.Directory (removeDirectoryRecursive)
 import qualified System.FS.API as FS
@@ -268,11 +268,14 @@ merge fs hbio Config {..} targetPaths runs = do
                 mergeType f targetPaths runs
     Merge.stepsToCompletion m stepSize
 
-outputRunPaths :: Run.RunFsPaths
-outputRunPaths = RunFsPaths (FS.mkFsPath []) (RunNumber 0)
+fsPath :: FS.FsPath
+fsPath = FS.mkFsPath []
 
-inputRunPaths :: [Run.RunFsPaths]
-inputRunPaths = RunFsPaths (FS.mkFsPath []) . RunNumber <$> [1..]
+outputRunPaths :: Run.RunFsPaths
+outputRunPaths = RunFsPaths fsPath (RunNumber 0)
+
+inputRunPathsCounter :: IO (UniqCounter IO)
+inputRunPathsCounter = newUniqCounter 1  -- 0 is for output
 
 type InputRuns = V.Vector (Ref (Run IO FS.HandleIO))
 
@@ -384,17 +387,14 @@ randomRuns ::
   -> Config
   -> StdGen
   -> IO InputRuns
-randomRuns hasFS hasBlockIO config@Config {..} rng0 =
-    V.fromList <$>
-    zipWithM (unsafeFlushAsWriteBuffer hasFS hasBlockIO Index.Compact)
-             inputRunPaths runsData
-  where
-    runsData :: [SerialisedRunData]
-    runsData =
-      zipWith
-        (randomRunData config)
-        nentries
-        (List.unfoldr (Just . R.split) rng0)
+randomRuns hasFS hasBlockIO config@Config {..} rng0 = do
+    counter <- inputRunPathsCounter
+    fmap V.fromList $
+      mapM (unsafeCreateRun hasFS hasBlockIO Index.Compact fsPath counter) $
+        zipWith
+          (randomRunData config)
+          nentries
+          (List.unfoldr (Just . R.split) rng0)
 
 -- | Generate keys and entries to insert into the write buffer.
 -- They are already serialised to exclude the cost from the benchmark.

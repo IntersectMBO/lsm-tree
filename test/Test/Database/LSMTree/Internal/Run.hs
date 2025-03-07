@@ -97,7 +97,7 @@ testSingleInsert sessionRoot key val mblob =
     -- flush write buffer
     let e = case mblob of Nothing -> Insert val; Just blob -> InsertWithBlob val blob
         wb = Map.singleton key e
-    withRun fs hbio Index.Compact (simplePath 42) (RunData wb) $ \_ -> do
+    withRunAt fs hbio Index.Compact (simplePath 42) (RunData wb) $ \_ -> do
       -- check all files have been written
       let activeDir = sessionRoot
       bsKOps <- BS.readFile (activeDir </> "42.keyops")
@@ -179,7 +179,7 @@ prop_WriteNumEntries ::
   -> RunData KeyForIndexCompact SerialisedValue SerialisedBlob
   -> IO Property
 prop_WriteNumEntries fs hbio wb@(RunData m) =
-    withRun fs hbio Index.Compact (simplePath 42) wb' $ \run -> do
+    withRunAt fs hbio Index.Compact (simplePath 42) wb' $ \run -> do
       let !runSize = Run.size run
 
       return . labelRunData wb' $
@@ -197,7 +197,7 @@ prop_WriteAndOpen ::
   -> RunData KeyForIndexCompact SerialisedValue SerialisedBlob
   -> IO Property
 prop_WriteAndOpen fs hbio wb =
-    withRun fs hbio Index.Compact (simplePath 1337) (serialiseRunData wb) $ \written ->
+    withRunAt fs hbio Index.Compact (simplePath 1337) (serialiseRunData wb) $ \written ->
     withActionRegistry $ \reg -> do
       let paths = Run.runFsPaths written
           paths' = paths { runNumber = RunNumber 17}
@@ -258,7 +258,7 @@ prop_WriteRunEqWriteWriteBuffer hfs hbio rd = do
   let rdPaths = simplePath 1337
   let rdKOpsFile = Paths.runKOpsPath rdPaths
   let rdBlobFile = Paths.runBlobPath rdPaths
-  withRun hfs hbio Index.Compact rdPaths srd $ \_run -> do
+  withRunAt hfs hbio Index.Compact rdPaths srd $ \_run -> do
     -- Serialise run data as write buffer:
     let f (SerialisedValue x) (SerialisedValue y) = SerialisedValue (x <> y)
     let inPaths = WrapRunFsPaths $ simplePath 1111

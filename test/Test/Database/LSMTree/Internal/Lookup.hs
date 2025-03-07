@@ -43,8 +43,7 @@ import           Data.Word
 import           Database.LSMTree.Extras
 import           Database.LSMTree.Extras.Generators
 import           Database.LSMTree.Extras.RunData (RunData (..),
-                     liftArbitrary2Map, liftShrink2Map,
-                     unsafeFlushAsWriteBuffer)
+                     liftArbitrary2Map, liftShrink2Map, withRuns)
 import           Database.LSMTree.Internal.BlobRef
 import           Database.LSMTree.Internal.Entry as Entry
 import           Database.LSMTree.Internal.Index (Index, IndexType)
@@ -52,15 +51,14 @@ import qualified Database.LSMTree.Internal.Index as Index (IndexType (Compact),
                      search)
 import           Database.LSMTree.Internal.Lookup
 import           Database.LSMTree.Internal.Page (PageNo (PageNo), PageSpan (..))
-import           Database.LSMTree.Internal.Paths (RunFsPaths (..))
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.RawOverflowPage
 import           Database.LSMTree.Internal.RawPage
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunAcc as Run
-import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.Serialise.Class
+import           Database.LSMTree.Internal.UniqCounter
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
 import           GHC.Generics
@@ -301,7 +299,7 @@ prop_roundtripFromWriteBufferLookupIO ::
 prop_roundtripFromWriteBufferLookupIO (SmallList dats) =
     ioProperty $
     withTempIOHasBlockIO "prop_roundtripFromWriteBufferLookupIO" $ \hfs hbio ->
-    withRuns hfs hbio Index.Compact dats $ \wb wbblobs runs -> do
+    withWbAndRuns hfs hbio Index.Compact dats $ \wb wbblobs runs -> do
     let model :: Map SerialisedKey (Entry SerialisedValue SerialisedBlob)
         model = Map.unionsWith (Entry.combine resolveV) (map runData dats)
         keys  = V.fromList [ k | InMemLookupData{lookups} <- dats
@@ -334,7 +332,7 @@ prop_roundtripFromWriteBufferLookupIO (SmallList dats) =
 -- for 'lookupsIO': a write buffer (and blobs) and a vector of on-disk runs.
 -- Also passes the model and the keys to look up to the inner action.
 --
-withRuns :: FS.HasFS IO h
+withWbAndRuns :: FS.HasFS IO h
          -> FS.HasBlockIO IO h
          -> IndexType
          -> [InMemLookupData SerialisedKey SerialisedValue SerialisedBlob]
@@ -343,33 +341,21 @@ withRuns :: FS.HasFS IO h
              -> V.Vector (Ref (Run.Run IO h))
              -> IO a)
          -> IO a
-withRuns hfs _ _ [] action =
+withWbAndRuns hfs _ _ [] action =
     bracket
       (WBB.new hfs (FS.mkFsPath ["wbblobs"]))
       releaseRef
       (\wbblobs -> action WB.empty wbblobs V.empty)
 
-withRuns hfs hbio indexType (wbdat:rundats) action =
-    bracket
-      (do wbblobs <- WBB.new hfs (FS.mkFsPath ["wbblobs"])
-          wbkops <- traverse (traverse (WBB.addBlob hfs wbblobs))
-                             (runData wbdat)
-          let wb = WB.fromMap wbkops
-          runs <-
-            V.fromList <$>
-            sequence
-              [ unsafeFlushAsWriteBuffer hfs hbio indexType fsPaths (RunData runData)
-              | (i, InMemLookupData{runData}) <- zip [1..] rundats
-              , let fsPaths = RunFsPaths (FS.mkFsPath []) (RunNumber i)
-              ]
-          return (wb, wbblobs, runs))
-
-      (\(_wb, wbblobs, runs) -> do
-          V.mapM_ releaseRef runs
-          releaseRef wbblobs)
-
-      (\(wb, wbblobs, runs) ->
-          action wb wbblobs runs)
+withWbAndRuns hfs hbio indexType (wbdat:rundats) action =
+    bracket (WBB.new hfs (FS.mkFsPath ["wbblobs"])) releaseRef $ \wbblobs -> do
+      wbkops <- traverse (traverse (WBB.addBlob hfs wbblobs))
+                         (runData wbdat)
+      let wb = WB.fromMap wbkops
+      let rds = map (RunData . runData) rundats
+      counter <- newUniqCounter 1
+      withRuns hfs hbio indexType (FS.mkFsPath []) counter rds $ \runs ->
+        action wb wbblobs (V.fromList runs)
 
 {-------------------------------------------------------------------------------
   Utils
