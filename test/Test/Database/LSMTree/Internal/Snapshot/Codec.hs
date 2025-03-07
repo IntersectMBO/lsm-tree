@@ -154,6 +154,7 @@ testAll test = [
       test (Proxy @SnapshotMetaData)
     , test (Proxy @SnapshotLabel)
     , test (Proxy @SnapshotTableType)
+    , test (Proxy @SnapshotRun)
       -- TableConfig
     , test (Proxy @TableConfig)
     , test (Proxy @MergePolicy)
