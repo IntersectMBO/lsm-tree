@@ -1,4 +1,7 @@
+{-# OPTIONS_HADDOCK not-home #-}
+
 -- | Create a single value page
+--
 module Database.LSMTree.Internal.PageAcc1 (
     singletonPage,
 ) where

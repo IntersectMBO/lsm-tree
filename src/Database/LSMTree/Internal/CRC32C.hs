@@ -2,6 +2,7 @@
 {-# LANGUAGE MagicHash           #-}
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# OPTIONS_HADDOCK not-home #-}
 
 -- Needed by GHC <= 9.2 for newtype deriving Prim below
 {-# LANGUAGE DataKinds           #-}

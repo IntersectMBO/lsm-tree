@@ -1,4 +1,5 @@
 {-# LANGUAGE DataKinds #-}
+{-# OPTIONS_HADDOCK not-home #-}
 
 -- | This module brings together the internal parts to provide an API in terms
 -- of untyped serialised keys, values and blobs. It makes no distinction between
