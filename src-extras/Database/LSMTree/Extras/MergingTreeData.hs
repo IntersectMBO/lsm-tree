@@ -265,7 +265,8 @@ genMergingTreeData genKey genVal genBlob =
 --
 -- The size is measured by the number of MergingTreeData constructors.
 genMergingTreeDataOfSize ::
-     Ord k => Gen k -> Gen v -> Gen b -> Int -> Gen (MergingTreeData k v b)
+     forall k v b. Ord k
+  => Gen k -> Gen v -> Gen b -> Int -> Gen (MergingTreeData k v b)
 genMergingTreeDataOfSize genKey genVal genBlob = \n0 -> do
     tree <- genMergingTree n0
     assert (mergingTreeDataSize tree == n0) $
@@ -277,8 +278,8 @@ genMergingTreeDataOfSize genKey genVal genBlob = \n0 -> do
 
       | n == 1
       = QC.oneof
-          [ CompletedTreeMergeData <$> genRunData genKey genVal genBlob
-          , OngoingTreeMergeData <$> genMergingRunData arbitrary genKey genVal genBlob
+          [ CompletedTreeMergeData <$> genRun
+          , OngoingTreeMergeData <$> genMergingRun arbitrary
           , genPendingLevelMergeNoChild
           ]
 
@@ -290,12 +291,12 @@ genMergingTreeDataOfSize genKey genVal genBlob = \n0 -> do
 
     -- n == 1
     genPendingLevelMergeNoChild = do
-        numPreExisting <- chooseIntSkewed (0, 5)
+        numPreExisting <- chooseIntSkewed (0, 6)
         initPreExisting <- QC.vectorOf numPreExisting $
           -- these can't be last level. we generate the last input below.
-          genPreExistingRunData (pure MR.MergeMidLevel) genKey genVal genBlob
+          genPreExistingRun (pure MR.MergeMidLevel)
         -- there must be at least one (last) input to the pending merge.
-        lastPreExisting <- genPreExistingRunData arbitrary genKey genVal genBlob
+        lastPreExisting <- genPreExistingRun arbitrary
         let preExisting = initPreExisting ++ [lastPreExisting]
         return (PendingLevelMergeData preExisting Nothing)
 
@@ -304,7 +305,7 @@ genMergingTreeDataOfSize genKey genVal genBlob = \n0 -> do
         numPreExisting <- chooseIntSkewed (0, 6)
         preExisting <- QC.vectorOf numPreExisting $
           -- there can't be a last level merge, child is last
-          genPreExistingRunData (pure MR.MergeMidLevel) genKey genVal genBlob
+          genPreExistingRun (pure MR.MergeMidLevel)
         tree <- genMergingTree (n - 1)
         return (PendingLevelMergeData preExisting (Just tree))
 
@@ -312,6 +313,18 @@ genMergingTreeDataOfSize genKey genVal genBlob = \n0 -> do
     genPendingUnionMerge n = do
         ns <- QC.shuffle =<< arbitraryPartition2 (n - 1)
         PendingUnionMergeData <$> traverse genMergingTree ns
+
+    genRun                    = genScaled genRunData
+    genMergingRun genType     = genScaled (genMergingRunData genType)
+    genPreExistingRun genType = genScaled (genPreExistingRunData genType)
+
+    -- To avoid generating too large test cases, we reduce the number of
+    -- entries for each run. The size of the individual entries is unaffected.
+    genScaled :: forall r. (Gen k -> Gen v -> Gen b -> Gen r) -> Gen r
+    genScaled gen =
+        QC.sized $ \s ->
+          QC.scale (`div` 2) $
+            gen (QC.resize s genKey) (QC.resize s genVal) (QC.resize s genBlob)
 
     -- skewed towards smaller values
     chooseIntSkewed (lb, ub) = do
