@@ -1,3 +1,5 @@
+{-# OPTIONS_HADDOCK not-home #-}
+
 module Database.LSMTree.Internal.RunNumber (
     RunNumber (..),
     TableId (..),

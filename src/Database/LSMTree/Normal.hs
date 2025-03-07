@@ -7,14 +7,14 @@
 -- License     : Apache-2.0
 -- Stability   : experimental
 -- Portability : portable
--- 
+--
 -- On disk key-value tables, implemented as Log Structured Merge (LSM) trees.
--- 
+--
 -- This module is the API for \"normal\" tables, as opposed to \"monoidal\"
 -- tables (that support monoidal updates and unions).
--- 
+--
 -- Key features:
--- 
+--
 -- * Basic key\/value operations: lookup, insert, delete
 -- * Range lookups by key or key prefix
 -- * Support for BLOBs: large auxilliary values associated with a key
@@ -24,11 +24,11 @@
 -- * Full persistent data structure by cheap table duplication: all duplicate
 --   tables can be both accessed and modified
 -- * High performance lookups on SSDs by I\/O batching and concurrency
--- 
+--
 -- This module is intended to be imported qualified.
--- 
+--
 -- > import qualified Database.LSMTree.Normal as LSMT
--- 
+--
 --------------------------------------------------------------------------------
 module Database.LSMTree.Normal (
     -- * Exceptions
