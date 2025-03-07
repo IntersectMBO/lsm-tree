@@ -2290,6 +2290,9 @@ updateStats action@(Action _merrs action') lookUp modelBefore _modelAfter result
         (Deletes ks _, MEither (Right (MUnit ()))) -> stats {
             numUpdates = countAll $ V.map (\k -> (k, R.Delete)) ks
           }
+        (Mupserts mups _, MEither (Right (MUnit ()))) -> stats {
+            numUpdates = countAll $ V.map (second R.Mupsert) mups
+          }
         _ -> stats
       where
         countAll :: forall k v b. V.Vector (k, R.Update v b) -> (Int, Int, Int, Int)
@@ -2381,8 +2384,8 @@ updateStats action@(Action _merrs action') lookUp modelBefore _modelAfter result
                                                     (numActionsPerTable stats)
               }
 
-    updClosedTableSizes stats = case action' of
-        Close tableVar
+    updClosedTableSizes stats = case (action', result) of
+        (Close tableVar, MEither (Right (MUnit ())))
           | MTable t <- lookUp tableVar
           , let tid          = Model.tableID t
             -- This lookup can fail if the table was already closed:
@@ -2438,19 +2441,39 @@ updateStats action@(Action _merrs action') lookUp modelBefore _modelAfter result
       case action' of
         Lookups     ks   tableVar
           | not (null ks)         -> updateLastActionLog tableVar
+          | otherwise             -> stats
         RangeLookup r    tableVar
           | not (emptyRange r)    -> updateLastActionLog tableVar
+          | otherwise             -> stats
         NewCursor   _    tableVar -> updateLastActionLog tableVar
         Updates     upds tableVar
           | not (null upds)       -> updateLastActionLog tableVar
+          | otherwise             -> stats
         Inserts     ins  tableVar
           | not (null ins)        -> updateLastActionLog tableVar
+          | otherwise             -> stats
         Deletes     ks   tableVar
           | not (null ks)         -> updateLastActionLog tableVar
+          | otherwise             -> stats
+        Mupserts    mups tableVar
+          | not (null mups)       -> updateLastActionLog tableVar
+          | otherwise             -> stats
         Close            tableVar -> updateLastActionLog tableVar
-        -- TODO: pattern match on all constructors so don't we don't miss any
-        -- (in the future)
-        _                         -> stats
+        -- Uninteresting actions
+        New{} -> stats
+        CloseCursor{} -> stats
+        ReadCursor{} -> stats
+        RetrieveBlobs{} -> stats
+        CreateSnapshot{} -> stats
+        OpenSnapshot{} -> stats
+        DeleteSnapshot{} -> stats
+        ListSnapshots{} -> stats
+        Duplicate{} -> stats
+        Union{} -> stats
+        Unions{} -> stats
+        RemainingUnionDebt{} -> stats
+        SupplyUnionCredits{} -> stats
+        SupplyPortionOfDebt{} -> stats
       where
         -- add the current table to the front of the list of tables, if it's
         -- not the latest one already
