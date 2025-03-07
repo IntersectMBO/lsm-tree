@@ -1308,7 +1308,7 @@ openSnapshot sesh label tableType override snap resolve = do
         (tableWriteBuffer, tableWriteBufferBlobs) <- openWriteBuffer reg resolve hfs hbio uc activeDir snapWriteBufferPaths
 
         -- Hard link runs into the active directory,
-        snapLevels' <- openRuns reg hfs hbio conf (sessionUniqCounter seshEnv) snapDir activeDir snapLevels
+        snapLevels' <- openRuns reg hfs hbio (sessionUniqCounter seshEnv) snapDir activeDir snapLevels
 
         -- Convert from the snapshot format, restoring merge progress in the process
         tableLevels <- fromSnapLevels reg hfs hbio conf (sessionUniqCounter seshEnv) resolve activeDir snapLevels'

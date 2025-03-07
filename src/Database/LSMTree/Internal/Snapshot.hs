@@ -14,6 +14,7 @@ module Database.LSMTree.Internal.Snapshot (
   , snapshotWriteBuffer
   , openWriteBuffer
     -- * Runs
+  , SnapshotRun (..)
   , snapshotRuns
   , openRuns
   , releaseRuns
@@ -110,7 +111,7 @@ data SnapshotMetaData = SnapshotMetaData {
     -- | The write buffer.
   , snapWriteBuffer   :: !RunNumber
     -- | The shape of the levels of the LSM tree.
-  , snapMetaLevels    :: !(SnapLevels RunNumber)
+  , snapMetaLevels    :: !(SnapLevels SnapshotRun)
   }
   deriving stock Eq
 
@@ -353,12 +354,28 @@ openWriteBuffer reg resolve hfs hbio uc activeDir snapWriteBufferPaths = do
   Runs
 -------------------------------------------------------------------------------}
 
+-- | Information needed to open a 'Run' from disk using 'snapshotRuns' and
+-- 'openRuns'.
+--
+-- TODO: one could imagine needing only the 'RunNumber' to identify the files
+-- on disk, and the other parameters being stored with the run itself, rather
+-- than needing to be supplied.
+data SnapshotRun = SnapshotRun {
+       snapRunNumber  :: !RunNumber,
+       snapRunCaching :: !Run.RunDataCaching,
+       snapRunIndex   :: !Run.IndexType
+     }
+  deriving stock Eq
+
+instance NFData SnapshotRun where
+  rnf (SnapshotRun a b c) = rnf a `seq` rnf b `seq` rnf c
+
 {-# SPECIALISE snapshotRuns ::
      ActionRegistry IO
   -> UniqCounter IO
   -> NamedSnapshotDir
   -> SnapLevels (Ref (Run IO h))
-  -> IO (SnapLevels RunNumber) #-}
+  -> IO (SnapLevels SnapshotRun) #-}
 -- | @'snapshotRuns' _ _ snapUc targetDir levels@ creates hard links for all run
 -- files associated with the runs in @levels@, and puts the new directory
 -- entries in the @targetDir@ directory. The entries are renamed using @snapUc@.
@@ -368,7 +385,7 @@ snapshotRuns ::
   -> UniqCounter m
   -> NamedSnapshotDir
   -> SnapLevels (Ref (Run m h))
-  -> m (SnapLevels RunNumber)
+  -> m (SnapLevels SnapshotRun)
 snapshotRuns reg snapUc (NamedSnapshotDir targetDir) levels = do
     for levels $ \run@(DeRef Run.Run {
         Run.runHasFS = hfs,
@@ -378,17 +395,20 @@ snapshotRuns reg snapUc (NamedSnapshotDir targetDir) levels = do
         let sourcePaths = Run.runFsPaths run
         let targetPaths = sourcePaths { runDir = targetDir , runNumber = rn}
         hardLinkRunFiles reg hfs hbio sourcePaths targetPaths
-        pure (runNumber targetPaths)
+        pure SnapshotRun {
+               snapRunNumber  = runNumber targetPaths,
+               snapRunCaching = Run.runDataCaching run,
+               snapRunIndex   = Run.runIndexType run
+             }
 
 {-# SPECIALISE openRuns ::
      ActionRegistry IO
   -> HasFS IO h
   -> HasBlockIO IO h
-  -> TableConfig
   -> UniqCounter IO
   -> NamedSnapshotDir
   -> ActiveDir
-  -> SnapLevels RunNumber
+  -> SnapLevels SnapshotRun
   -> IO (SnapLevels (Ref (Run IO h))) #-}
 -- | @'openRuns' _ _ _ _ uniqCounter sourceDir targetDir levels@ takes all run
 -- files that are referenced by @levels@, and hard links them from @sourceDir@
@@ -402,23 +422,19 @@ openRuns ::
   => ActionRegistry m
   -> HasFS m h
   -> HasBlockIO m h
-  -> TableConfig
   -> UniqCounter m
   -> NamedSnapshotDir
   -> ActiveDir
-  -> SnapLevels RunNumber
+  -> SnapLevels SnapshotRun
   -> m (SnapLevels (Ref (Run m h)))
-openRuns
-  reg hfs hbio TableConfig{..} uc
-  (NamedSnapshotDir sourceDir) (ActiveDir targetDir) (SnapLevels levels) = do
-    levels' <-
-      V.iforM levels $ \i level ->
-        let ln = LevelNo (i+1) in
-        let
-          caching   = diskCachePolicyForLevel confDiskCachePolicy ln
-          indexType = indexTypeForRun confFencePointerIndex
-        in
-        for level $ \runNum -> do
+openRuns reg hfs hbio uc (NamedSnapshotDir sourceDir) (ActiveDir targetDir)
+         levels =
+    for levels $
+      \SnapshotRun {
+         snapRunNumber  = runNum,
+         snapRunCaching = caching,
+         snapRunIndex   = indexType
+       } -> do
           let sourcePaths = RunFsPaths sourceDir runNum
           runNum' <- uniqueToRunNumber <$> incrUniqCounter uc
           let targetPaths = RunFsPaths targetDir runNum'
@@ -427,7 +443,6 @@ openRuns
           withRollback reg
             (Run.openFromDisk hfs hbio caching indexType targetPaths)
             releaseRef
-    pure (SnapLevels levels')
 
 {-# SPECIALISE releaseRuns ::
      ActionRegistry IO -> SnapLevels (Ref (Run IO h)) -> IO ()

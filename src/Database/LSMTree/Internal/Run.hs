@@ -14,15 +14,18 @@ module Database.LSMTree.Internal.Run (
   , sizeInPages
   , runFsPaths
   , runFsPathsNumber
+  , runDataCaching
+  , runIndexType
   , mkRawBlobRef
   , mkWeakBlobRef
     -- ** Run creation
   , fromMutable
   , fromWriteBuffer
   , RunParams (..)
-  , RunDataCaching (..)
     -- * Snapshot
   , openFromDisk
+  , RunDataCaching (..)
+  , IndexType (..)
   ) where
 
 import           Control.DeepSeq (NFData (..), rwhnf)
@@ -41,8 +44,8 @@ import qualified Database.LSMTree.Internal.BlobRef as BlobRef
 import           Database.LSMTree.Internal.BloomFilter (bloomFilterFromSBS)
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
-import           Database.LSMTree.Internal.Index (Index, IndexType)
-import qualified Database.LSMTree.Internal.Index as Index (fromSBS, sizeInPages)
+import           Database.LSMTree.Internal.Index (Index, IndexType (..))
+import qualified Database.LSMTree.Internal.Index as Index
 import           Database.LSMTree.Internal.Page (NumPages)
 import           Database.LSMTree.Internal.Paths as Paths
 import           Database.LSMTree.Internal.RunBuilder (RunBuilder,
@@ -112,6 +115,15 @@ runFsPaths (DeRef r) = runRunFsPaths r
 
 runFsPathsNumber :: Ref (Run m h) -> RunNumber
 runFsPathsNumber = Paths.runNumber . runFsPaths
+
+-- | See 'openFromDisk'
+runIndexType :: Ref (Run m h) -> IndexType
+runIndexType (DeRef r) = Index.indexToIndexType (runIndex r)
+
+-- | See 'openFromDisk'
+runDataCaching :: Ref (Run m h) -> RunDataCaching
+runDataCaching (DeRef r) = runRunDataCaching r
+
 
 -- | Helper function to make a 'WeakBlobRef' that points into a 'Run'.
 mkRawBlobRef :: Run m h -> BlobSpan -> RawBlobRef m h
@@ -237,6 +249,15 @@ fromWriteBuffer fs hbio params fsPaths buffer blobs = do
 --
 -- Exceptions will be raised when any of the file's contents don't match their
 -- checksum ('ChecksumError') or can't be parsed ('FileFormatError').
+--
+-- The 'RunDataCaching' and 'IndexType' parameters need to be saved and
+-- restored separately because these are not stored in the on-disk
+-- representation. Use 'runDataCaching' and 'runIndexType' to obtain these
+-- parameters from the open run before persisting to disk.
+--
+-- TODO: it may make more sense to persist these parameters with the run's
+-- on-disk representation.
+--
 openFromDisk ::
      forall m h.
      (MonadSTM m, MonadMask m, PrimMonad m)
