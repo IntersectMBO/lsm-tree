@@ -1,4 +1,7 @@
+{-# OPTIONS_HADDOCK not-home #-}
+
 -- | Encoders and decoders for snapshot metadata
+--
 module Database.LSMTree.Internal.Snapshot.Codec (
     -- * Versioning
     SnapshotVersion (..)

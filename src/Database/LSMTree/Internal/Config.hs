@@ -1,3 +1,5 @@
+{-# OPTIONS_HADDOCK not-home #-}
+
 module Database.LSMTree.Internal.Config (
     LevelNo (..)
     -- * Table configuration

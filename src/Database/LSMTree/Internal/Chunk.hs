@@ -1,3 +1,4 @@
+{-# OPTIONS_HADDOCK not-home #-}
 {- HLINT ignore "Avoid restricted alias" -}
 
 -- | Chunks of bytes, typically output during incremental index serialisation.

@@ -1,4 +1,5 @@
 {-# LANGUAGE DeriveFunctor #-}
+{-# OPTIONS_HADDOCK not-home #-}
 
 module Database.LSMTree.Internal.Range (
     Range (..)

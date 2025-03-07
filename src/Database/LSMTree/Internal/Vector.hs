@@ -1,6 +1,8 @@
 {-# LANGUAGE MagicHash           #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications    #-}
+{-# OPTIONS_HADDOCK not-home #-}
+
 module Database.LSMTree.Internal.Vector (
     mkPrimVector,
     byteVectorFromPrim,

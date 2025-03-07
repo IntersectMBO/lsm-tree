@@ -1,3 +1,4 @@
+{-# OPTIONS_HADDOCK not-home #-}
 module Database.LSMTree.Common (
     -- * IOLike
     IOLike
