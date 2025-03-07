@@ -1,3 +1,5 @@
+{-# LANGUAGE CPP #-}
+
 {- HLINT ignore "Avoid restricted alias" -}
 
 {-|
@@ -31,7 +33,7 @@ import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.Vector (byteVectorFromPrim)
 import           Database.LSMTree.Internal.Vector.Growing (GrowingVector)
 import qualified Database.LSMTree.Internal.Vector.Growing as Growing (append,
-                     freeze, new)
+                     freeze, new, readMaybeLast)
 
 {-|
     A general-purpose fence pointer index under incremental construction.
@@ -80,10 +82,15 @@ keyListElem (SerialisedKey' keyBytes) = [keySizeBytes, keyBytes] where
 appendSingle :: (SerialisedKey, SerialisedKey)
              -> IndexOrdinaryAcc s
              -> ST s (Maybe Chunk)
-appendSingle (_, key) (IndexOrdinaryAcc lastKeys baler)
-    = do
-          Growing.append lastKeys 1 key
-          feedBaler (keyListElem key) baler
+appendSingle (firstKey, lastKey) (IndexOrdinaryAcc lastKeys baler)
+    = assert (firstKey <= lastKey) $
+      do
+#ifdef NO_IGNORE_ASSERTS
+          maybeLastLastKey <- Growing.readMaybeLast lastKeys
+          assert (all (< firstKey) maybeLastLastKey) $ return ()
+#endif
+          Growing.append lastKeys 1 lastKey
+          feedBaler (keyListElem lastKey) baler
 
 {-|
     For a specification of this operation, see the documentation of [its
@@ -94,6 +101,10 @@ appendMulti :: (SerialisedKey, Word32)
             -> ST s [Chunk]
 appendMulti (key, overflowPageCount) (IndexOrdinaryAcc lastKeys baler)
     = do
+#ifdef NO_IGNORE_ASSERTS
+          maybeLastLastKey <- Growing.readMaybeLast lastKeys
+          assert (all (< key) maybeLastLastKey) $ return ()
+#endif
           Growing.append lastKeys pageCount key
           maybeToList <$> feedBaler keyListElems baler
     where
