@@ -8,11 +8,12 @@ module Database.LSMTree.Internal.Vector.Growing
     GrowingVector (GrowingVector),
     new,
     append,
-    freeze
+    freeze,
+    readMaybeLast
 )
 where
 
-import           Prelude hiding (init, last, length)
+import           Prelude hiding (init, last, length, read)
 
 import           Control.Monad (when)
 import           Control.Monad.ST.Strict (ST)
@@ -22,8 +23,8 @@ import           Data.STRef.Strict (STRef, newSTRef, readSTRef, writeSTRef)
 import           Data.Vector (Vector)
 import qualified Data.Vector as Mutable (freeze)
 import           Data.Vector.Mutable (MVector)
-import qualified Data.Vector.Mutable as Mutable (grow, length, new, set, slice,
-                     take)
+import qualified Data.Vector.Mutable as Mutable (grow, length, new, read, set,
+                     slice, take)
 
 {-|
     A vector with support for appending elements.
@@ -118,3 +119,13 @@ freeze (GrowingVector bufferRef lengthRef) = do
     buffer <- readSTRef bufferRef
     length <- readPrimVar lengthRef
     Mutable.freeze (Mutable.take length buffer)
+
+-- | Reads the last element of a growing vector if it exists.
+readMaybeLast :: GrowingVector s a -> ST s (Maybe a)
+readMaybeLast (GrowingVector bufferRef lengthRef) = do
+    length <- readPrimVar lengthRef
+    if length == 0
+        then return Nothing
+        else do
+                 buffer <- readSTRef bufferRef
+                 Just <$> Mutable.read buffer (pred length)
