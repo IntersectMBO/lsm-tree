@@ -200,7 +200,7 @@ library
       Database.LSMTree.Internal.BloomFilterQuery2
       Database.LSMTree.Internal.StrictArray
 
-    build-depends:   data-elevator ^>=0.1.0.2
+    build-depends:   data-elevator ^>=0.1.0.2 || ^>=0.2
 
 -- this exists due windows
 library xxhash

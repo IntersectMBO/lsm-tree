@@ -1,7 +1,7 @@
 index-state:
   -- Bump this if you need newer packages from Hackage
-  -- current date: ghc-9.12.1
-  , hackage.haskell.org 2025-02-12T00:16:58Z
+  -- current date: ghc-9.12 and data-elevator
+  , hackage.haskell.org 2025-03-10T07:49:31Z
 
 packages: .
 
@@ -21,12 +21,6 @@ constraints: bloomfilter <0
 -- possible to have conditionals on package flags in a project file. Otherwise,
 -- we could add a conditional on (+serialblockio) to remove this import automatically.
 import: cabal.project.blockio-uring
-
--- TODO: remove this once all packages have upgraded their dependencies for ghc-9.12
-allow-newer:
-    data-elevator:base
-  , cborg:base
-  , cborg:ghc-prim
 
 -- TODO: fix assembly error in text-2.1.2
 if (impl(ghc < 9.0) && os(windows))
