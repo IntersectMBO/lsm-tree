@@ -33,7 +33,11 @@ import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.Vector (byteVectorFromPrim)
 import           Database.LSMTree.Internal.Vector.Growing (GrowingVector)
 import qualified Database.LSMTree.Internal.Vector.Growing as Growing (append,
-                     freeze, new, readMaybeLast)
+                     freeze, new)
+#ifdef NO_IGNORE_ASSERTS
+import qualified Database.LSMTree.Internal.Vector.Growing as Growing
+                     (readMaybeLast)
+#endif
 
 {-|
     A general-purpose fence pointer index under incremental construction.
