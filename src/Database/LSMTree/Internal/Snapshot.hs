@@ -43,7 +43,7 @@ import           Control.Monad.Class.MonadThrow (MonadMask, bracket,
                      bracketOnError)
 import           Control.Monad.Primitive (PrimMonad)
 import           Control.RefCount
-import           Data.Foldable (sequenceA_)
+import           Data.Foldable (sequenceA_, traverse_)
 import           Data.Text (Text)
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Config
@@ -245,60 +245,91 @@ instance NFData r => NFData (SnapPreExistingRun r) where
 -------------------------------------------------------------------------------}
 
 {-# SPECIALISE fromSnapMergingTree ::
-     ActionRegistry IO
-  -> HasFS IO h
+     HasFS IO h
   -> HasBlockIO IO h
-  -> TableConfig
   -> UniqCounter IO
   -> ResolveSerialisedValue
   -> ActiveDir
+  -> ActionRegistry IO
   -> SnapMergingTree (Ref (Run IO h))
   -> IO (Ref (MT.MergingTree IO h))
   #-}
--- | Duplicates runs and re-creates merging runs.
+-- | Converts a snapshot of a merging tree of runs to a real merging tree.
+--
+-- Returns a new reference. Input runs remain owned by the caller.
 fromSnapMergingTree ::
      forall m h. (MonadMask m, MonadMVar m, MonadSTM m, MonadST m)
-  => ActionRegistry m
-  -> HasFS m h
+  => HasFS m h
   -> HasBlockIO m h
-  -> TableConfig
   -> UniqCounter m
   -> ResolveSerialisedValue
   -> ActiveDir
+  -> ActionRegistry m
   -> SnapMergingTree (Ref (Run m h))
   -> m (Ref (MT.MergingTree m h))
-fromSnapMergingTree reg hfs hbio conf uc resolve dir (SnapMergingTree snapTreeState) =
-    fromSnapTreeState snapTreeState
+fromSnapMergingTree hfs hbio uc resolve dir =
+    go
   where
-    -- Partially applied functions for convenience
-    recurrence :: SnapMergingTree (Ref (Run m h)) -> m (Ref (MT.MergingTree m h))
-    recurrence = fromSnapMergingTree reg hfs hbio conf uc resolve dir
+    -- Reference strategy:
+    -- * go returns a fresh reference
+    -- * go ensures the returned reference will be cleaned up on failure,
+    --   using withRollback
+    -- * All results from recursive calls must be released locally on the
+    --   happy path.
+    go :: ActionRegistry m
+       -> SnapMergingTree (Ref (Run m h))
+       -> m (Ref (MT.MergingTree m h))
 
-    getSnapMergingRunState
-      :: forall t.
-         MR.IsMergeType t
-      => SnapMergingRunState t (Ref (Run m h))
-      -> m (Ref (MR.MergingRun t m h))
-    getSnapMergingRunState = fromSnapMergingRunState hfs hbio uc resolve dir
+    go reg (SnapMergingTree (SnapCompletedTreeMerge run)) =
+      withRollback reg
+        (MT.newCompletedMerge run)
+        releaseRef
 
-    -- Conversion definitions
-    fromSnapTreeState :: SnapMergingTreeState (Ref (Run m h)) -> m (Ref (MT.MergingTree m h))
-    fromSnapTreeState (SnapCompletedTreeMerge run) =
-      MT.newPendingLevelMerge [MT.PreExistingRun run] Nothing
-    fromSnapTreeState (SnapPendingTreeMerge pMerge) = case pMerge of
-      SnapPendingLevelMerge peRuns maybeMergeTree -> do
-        peRuns' <- traverse fromSnapPreExistingRun peRuns
-        maybeMergeTree' <- traverse recurrence maybeMergeTree
-        MT.newPendingLevelMerge peRuns' maybeMergeTree'
-      SnapPendingUnionMerge mergeTrees ->
-        MT.newPendingUnionMerge =<< traverse recurrence mergeTrees
-    fromSnapTreeState (SnapOngoingTreeMerge smrs) =
-        MT.newOngoingMerge =<< getSnapMergingRunState smrs
+    go reg (SnapMergingTree (SnapPendingTreeMerge
+                              (SnapPendingLevelMerge prs mmt))) = do
+      prs' <- traverse (fromSnapPreExistingRun reg) prs
+      mmt' <- traverse (go reg) mmt
+      mt   <- withRollback reg
+                (MT.newPendingLevelMerge prs' mmt')
+                releaseRef
+      traverse_ (delayedCommit reg . releasePER) prs'
+      traverse_ (delayedCommit reg . releaseRef) mmt'
+      return mt
 
-    fromSnapPreExistingRun :: SnapPreExistingRun (Ref (Run m h)) -> m (MT.PreExistingRun m h)
-    fromSnapPreExistingRun (SnapPreExistingRun run) = pure $ MT.PreExistingRun run
-    fromSnapPreExistingRun (SnapPreExistingMergingRun smrs) =
-        MT.PreExistingMergingRun <$> getSnapMergingRunState smrs
+    go reg (SnapMergingTree (SnapPendingTreeMerge
+                              (SnapPendingUnionMerge mts))) = do
+      mts' <- traverse (go reg) mts
+      mt   <- withRollback reg
+                (MT.newPendingUnionMerge mts')
+                releaseRef
+      traverse_ (delayedCommit reg . releaseRef) mts'
+      return mt
+
+    go reg (SnapMergingTree (SnapOngoingTreeMerge smrs)) = do
+      mr <- withRollback reg
+               (fromSnapMergingRunState hfs hbio uc resolve dir smrs)
+               releaseRef
+      mt <- withRollback reg
+              (MT.newOngoingMerge mr)
+              releaseRef
+      delayedCommit reg (releaseRef mr)
+      return mt
+
+    -- Returns fresh refs, which must be released locally.
+    fromSnapPreExistingRun :: ActionRegistry m
+                           -> SnapPreExistingRun (Ref (Run m h))
+                           -> m (MT.PreExistingRun m h)
+    fromSnapPreExistingRun reg (SnapPreExistingRun run) =
+      MT.PreExistingRun <$>
+        withRollback reg (dupRef run) releaseRef
+    fromSnapPreExistingRun reg (SnapPreExistingMergingRun smrs) =
+      MT.PreExistingMergingRun <$>
+        withRollback reg
+          (fromSnapMergingRunState hfs hbio uc resolve dir smrs)
+          releaseRef
+
+    releasePER (MT.PreExistingRun         r) = releaseRef r
+    releasePER (MT.PreExistingMergingRun mr) = releaseRef mr
 
 {-------------------------------------------------------------------------------
   Conversion to merge tree snapshot format

@@ -1325,12 +1325,13 @@ openSnapshot sesh label tableType override snap resolve = do
               Nothing -> pure NoUnion
               Just mTree -> do
                 snapTree <- traverse (openRun hfs hbio uc reg snapDir activeDir) mTree
-                Union <$> fromSnapMergingTree reg hfs hbio conf uc resolve activeDir snapTree
+                mt <- fromSnapMergingTree hfs hbio uc resolve activeDir reg snapTree
+                traverse_ (delayedCommit reg . releaseRef) snapTree
+                pure (Union mt)
 
         -- Convert from the snapshot format, restoring merge progress in the process
         tableLevels <- fromSnapLevels hfs hbio uc conf resolve reg activeDir snapLevels'
         traverse_ (delayedCommit reg . releaseRef) snapLevels'
-        --TODO: also delayedCommit unionLevel
 
         tableCache <- mkLevelsCache reg tableLevels
         newWith reg sesh seshEnv conf' am $! TableContent {
