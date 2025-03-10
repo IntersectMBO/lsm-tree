@@ -1,17 +1,11 @@
-{-# LANGUAGE BangPatterns        #-}
-{-# LANGUAGE CPP                 #-}
-{-# LANGUAGE DeriveAnyClass      #-}
-{-# LANGUAGE DeriveFunctor       #-}
-{-# LANGUAGE DerivingStrategies  #-}
-{-# LANGUAGE FlexibleContexts    #-}
-{-# LANGUAGE NamedFieldPuns      #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TupleSections       #-}
+{-# LANGUAGE CPP #-}
 
 module Database.LSMTree.Internal.Lookup (
     ResolveSerialisedValue
   , ByteCountDiscrepancy (..)
+  , LookupAcc
   , lookupsIO
+  , lookupsIOWithoutWriteBuffer
     -- * Internal: exposed for tests and benchmarks
   , RunIx
   , KeyIx
@@ -33,7 +27,7 @@ import qualified Data.Vector.Unboxed as VU
 
 import           Control.Exception (Exception, assert)
 import           Control.Monad
-import           Control.Monad.Class.MonadST as Class
+import           Control.Monad.Class.MonadST as ST
 import           Control.Monad.Class.MonadThrow (MonadThrow (..))
 import           Control.Monad.Primitive
 import           Control.Monad.ST.Strict
@@ -154,6 +148,8 @@ data ByteCountDiscrepancy = ByteCountDiscrepancy {
   deriving stock (Show, Eq)
   deriving anyclass (Exception)
 
+type LookupAcc m h = V.Vector (Maybe (Entry SerialisedValue (WeakBlobRef m h)))
+
 {-# SPECIALIZE lookupsIO ::
        HasBlockIO IO h
     -> ArenaManager RealWorld
@@ -165,7 +161,7 @@ data ByteCountDiscrepancy = ByteCountDiscrepancy {
     -> V.Vector Index
     -> V.Vector (Handle h)
     -> V.Vector SerialisedKey
-    -> IO (V.Vector (Maybe (Entry SerialisedValue (WeakBlobRef IO h))))
+    -> IO (LookupAcc IO h)
   #-}
 -- | Batched lookups in I\/O.
 --
@@ -185,13 +181,56 @@ lookupsIO ::
   -> V.Vector Index -- ^ The indexes inside @rs@
   -> V.Vector (Handle h) -- ^ The file handles to the key\/value files inside @rs@
   -> V.Vector SerialisedKey
-  -> m (V.Vector (Maybe (Entry SerialisedValue (WeakBlobRef m h))))
+  -> m (LookupAcc m h)
 lookupsIO !hbio !mgr !resolveV !wb !wbblobs !rs !blooms !indexes !kopsFiles !ks =
     assert precondition $
     withArena mgr $ \arena -> do
-      (rkixs, ioops) <- Class.stToIO $ prepLookups arena blooms indexes kopsFiles ks
+      (rkixs, ioops) <- ST.stToIO $ prepLookups arena blooms indexes kopsFiles ks
       ioress <- submitIO hbio ioops
       intraPageLookups resolveV wb wbblobs rs ks rkixs ioops ioress
+  where
+    -- we check only that the lengths match, because checking the contents is
+    -- too expensive.
+    precondition =
+      assert (V.length rs == V.length blooms) $
+      assert (V.length rs == V.length indexes) $
+      assert (V.length rs == V.length kopsFiles) $
+      True
+
+{-# SPECIALIZE lookupsIOWithoutWriteBuffer ::
+       HasBlockIO IO h
+    -> ArenaManager RealWorld
+    -> ResolveSerialisedValue
+    -> V.Vector (Ref (Run IO h))
+    -> V.Vector (Bloom SerialisedKey)
+    -> V.Vector Index
+    -> V.Vector (Handle h)
+    -> V.Vector SerialisedKey
+    -> IO (LookupAcc IO h)
+  #-}
+-- | Batched lookups in I\/O.
+--
+-- See Note [Batched lookups, buffer strategy and restrictions]
+--
+-- PRECONDITION: the vectors of bloom filters, indexes and file handles
+-- should pointwise match with the vectors of runs.
+lookupsIOWithoutWriteBuffer ::
+     forall m h. (MonadThrow m, MonadST m)
+  => HasBlockIO m h
+  -> ArenaManager (PrimState m)
+  -> ResolveSerialisedValue
+  -> V.Vector (Ref (Run m h)) -- ^ Runs @rs@
+  -> V.Vector (Bloom SerialisedKey) -- ^ The bloom filters inside @rs@
+  -> V.Vector Index -- ^ The indexes inside @rs@
+  -> V.Vector (Handle h) -- ^ The file handles to the key\/value files inside @rs@
+  -> V.Vector SerialisedKey
+  -> m (LookupAcc m h)
+lookupsIOWithoutWriteBuffer !hbio !mgr !resolveV !rs !blooms !indexes !kopsFiles !ks =
+    assert precondition $
+    withArena mgr $ \arena -> do
+      (rkixs, ioops) <- ST.stToIO $ prepLookups arena blooms indexes kopsFiles ks
+      ioress <- submitIO hbio ioops
+      intraPageLookupsOn resolveV (V.map (const Nothing) ks) rs ks rkixs ioops ioress
   where
     -- we check only that the lengths match, because checking the contents is
     -- too expensive.
@@ -210,7 +249,7 @@ lookupsIO !hbio !mgr !resolveV !wb !wbblobs !rs !blooms !indexes !kopsFiles !ks 
     -> VP.Vector RunIxKeyIx
     -> V.Vector (IOOp RealWorld h)
     -> VU.Vector IOResult
-    -> IO (V.Vector (Maybe (Entry SerialisedValue (WeakBlobRef IO h))))
+    -> IO (LookupAcc IO h)
   #-}
 -- | Intra-page lookups, and combining lookup results from multiple runs and
 -- the write buffer.
@@ -229,7 +268,7 @@ intraPageLookups ::
   -> VP.Vector RunIxKeyIx
   -> V.Vector (IOOp (PrimState m) h)
   -> VU.Vector IOResult
-  -> m (V.Vector (Maybe (Entry SerialisedValue (WeakBlobRef m h))))
+  -> m (LookupAcc m h)
 intraPageLookups !resolveV !wb !wbblobs !rs !ks !rkixs !ioops !ioress = do
     -- We accumulate results into the 'res' vector. When there are several
     -- lookup hits for the same key then we combine the results. The combining
@@ -244,12 +283,59 @@ intraPageLookups !resolveV !wb !wbblobs !rs !ks !rkixs !ioops !ioress = do
     -- the surface API so that all the conversions can be done in one pass
     -- without intermediate allocations.
     --
-    res <- VM.generateM (V.length ks) $ \ki ->
-             case WB.lookup wb (V.unsafeIndex ks ki) of
-               Nothing -> pure Nothing
-               Just e  -> pure $! Just $! fmap (WBB.mkWeakBlobRef wbblobs) e
-                -- TODO:  ^^ we should be able to avoid this allocation by
-                -- combining the conversion with other later conversions.
+
+    acc0 <-
+      V.generateM (V.length ks) $ \ki ->
+        case WB.lookup wb (V.unsafeIndex ks ki) of
+          Nothing -> pure Nothing
+          Just e  -> pure $! Just $! fmap (WBB.mkWeakBlobRef wbblobs) e
+          -- TODO:  ^^ we should be able to avoid this allocation by
+          -- combining the conversion with other later conversions.
+    intraPageLookupsOn resolveV acc0 rs ks rkixs ioops ioress
+
+{-# SPECIALIZE intraPageLookupsOn ::
+       ResolveSerialisedValue
+    -> LookupAcc IO h
+    -> V.Vector (Ref (Run IO h))
+    -> V.Vector SerialisedKey
+    -> VP.Vector RunIxKeyIx
+    -> V.Vector (IOOp RealWorld h)
+    -> VU.Vector IOResult
+    -> IO (LookupAcc IO h)
+  #-}
+-- | Intra-page lookups, and combining lookup results from multiple runs and
+-- the write buffer.
+--
+-- This function assumes that @rkixs@ is ordered such that newer runs are
+-- handled first. The order matters for resolving cases where we find the same
+-- key in multiple runs.
+--
+intraPageLookupsOn ::
+     forall m h. (PrimMonad m, MonadThrow m)
+  => ResolveSerialisedValue
+  -> LookupAcc m h
+  -> V.Vector (Ref (Run m h))
+  -> V.Vector SerialisedKey
+  -> VP.Vector RunIxKeyIx
+  -> V.Vector (IOOp (PrimState m) h)
+  -> VU.Vector IOResult
+  -> m (LookupAcc m h)
+intraPageLookupsOn !resolveV !acc0 !rs !ks !rkixs !ioops !ioress =
+    assert (V.length acc0 == V.length ks) $ do
+    -- We accumulate results into the 'res' vector. When there are several
+    -- lookup hits for the same key then we combine the results. The combining
+    -- operator is associative but not commutative, so we must do this in the
+    -- right order. We start with the write buffer lookup results and then go
+    -- through the run lookup results in rkixs, which must be ordered by run.
+    --
+    -- TODO: reassess the representation of the result vector to try to reduce
+    -- intermediate allocations. For example use a less convenient
+    -- representation with several vectors (e.g. separate blob info) and
+    -- convert to the final convenient representation in a single pass near
+    -- the surface API so that all the conversions can be done in one pass
+    -- without intermediate allocations.
+    --
+    res <- V.unsafeThaw acc0
     loop res 0
     V.unsafeFreeze res
   where

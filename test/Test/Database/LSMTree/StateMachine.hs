@@ -1,28 +1,11 @@
-{-# LANGUAGE CPP                      #-}
-{-# LANGUAGE ConstraintKinds          #-}
-{-# LANGUAGE DataKinds                #-}
-{-# LANGUAGE DerivingStrategies       #-}
-{-# LANGUAGE EmptyDataDeriving        #-}
-{-# LANGUAGE FlexibleContexts         #-}
-{-# LANGUAGE FlexibleInstances        #-}
-{-# LANGUAGE GADTs                    #-}
-{-# LANGUAGE InstanceSigs             #-}
-{-# LANGUAGE LambdaCase               #-}
-{-# LANGUAGE MultiParamTypeClasses    #-}
-{-# LANGUAGE MultiWayIf               #-}
-{-# LANGUAGE NamedFieldPuns           #-}
-{-# LANGUAGE OverloadedStrings        #-}
-{-# LANGUAGE QuantifiedConstraints    #-}
-{-# LANGUAGE RankNTypes               #-}
-{-# LANGUAGE ScopedTypeVariables      #-}
-{-# LANGUAGE StandaloneDeriving       #-}
-{-# LANGUAGE StandaloneKindSignatures #-}
-{-# LANGUAGE TypeApplications         #-}
-{-# LANGUAGE TypeFamilies             #-}
-{-# LANGUAGE UndecidableInstances     #-}
+{-# LANGUAGE CPP                   #-}
+{-# LANGUAGE OverloadedStrings     #-}
+{-# LANGUAGE QuantifiedConstraints #-}
+{-# LANGUAGE TypeFamilies          #-}
+{-# LANGUAGE UndecidableInstances  #-}
 
 #if MIN_VERSION_GLASGOW_HASKELL(9,8,1,0)
-{-# LANGUAGE TypeAbstractions         #-}
+{-# LANGUAGE TypeAbstractions      #-}
 #endif
 
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -87,6 +70,7 @@ import           Data.Bifunctor (Bifunctor (..))
 import           Data.Constraint (Dict (..))
 import           Data.Either (partitionEithers)
 import           Data.Kind (Type)
+import           Data.List (partition)
 import           Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
 import           Data.Map.Strict (Map)
@@ -1718,17 +1702,19 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
             Map.member (Model.tableID t) (Model.tables st)
       ]
 
-    genUnionedTableVar = QC.elements (unionedTableVars Model.IsUnionDescendant)
-    genNonUnionedTableVar = QC.elements (unionedTableVars Model.IsNotUnionDescendant)
-
     -- | Variables for tables that are a (descendant of a) union table, or not.
-    unionedTableVars :: Model.IsUnionDescendant -> [Var h (WrapTable h IO k v b)]
-    unionedTableVars target =
-        [ v
-        | v <- tableVars
-        , case lookupVar ctx v of
-            MTable t -> Model.isUnionDescendant t == target
-        ]
+    --
+    -- We already want to enable unions, but some operations on tables don't
+    -- support unions yet. Therefore, we want to only run them on tables that
+    -- don't descend from a union.
+    unionedTableVars, nonUnionedTableVars :: [Var h (WrapTable h IO k v b)]
+    (unionedTableVars, nonUnionedTableVars) =
+        partition isUnionedTableVar tableVars
+
+    isUnionedTableVar :: Var h (WrapTable h IO k v b) -> Bool
+    isUnionedTableVar v =
+        case lookupVar ctx v of
+          MTable t -> Model.isUnionDescendant t == Model.IsUnionDescendant
 
     genCursorVar = QC.elements cursorVars
 
@@ -1810,8 +1796,9 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
         | let genErrors = pure Nothing -- TODO: generate errors
         ]
      ++ [ (5,  fmap Some $ (Action <$> genErrors <*>) $
-            RangeLookup <$> genRange <*> genTableVar)
+            RangeLookup <$> genRange <*> QC.elements nonUnionedTableVars)
         | let genErrors = pure Nothing -- TODO: generate errors
+        , not (null nonUnionedTableVars)  -- TODO: enable range lookup of unions
         ]
      ++ [ (10, fmap Some $ (Action <$> genErrors <*>) $
             Updates <$> genUpdates <*> genTableVar)
@@ -1830,12 +1817,17 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
         | let genErrors = pure Nothing -- TODO: generate errors
         ]
      ++ [ (3,  fmap Some $ (Action <$> genErrors <*>) $
-            NewCursor <$> QC.arbitrary <*> genTableVar)
+            NewCursor <$> QC.arbitrary <*> QC.elements nonUnionedTableVars)
         | length cursorVars <= 5 -- no more than 5 cursors at once
         , let genErrors = pure Nothing -- TODO: generate errors
+        , not (null nonUnionedTableVars)  -- TODO: enable cursors for unions
         ]
      ++ [ (2,  fmap Some $ (Action <$> genErrors <*>) $
-            CreateSnapshot <$> genCorruption <*> pure label <*> genUnusedSnapshotName <*> genTableVar)
+            CreateSnapshot
+              <$> genCorruption
+              <*> pure label
+              <*> genUnusedSnapshotName
+              <*> QC.elements nonUnionedTableVars)
         | not (null unusedSnapshotNames)
           -- TODO: should errors and corruption be generated at the same time,
           -- or should they be mutually exclusive?
@@ -1844,6 +1836,7 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
                   (3, pure Nothing)
                 , (1, Just <$> QC.arbitrary)
                 ]
+        , not (null nonUnionedTableVars)  -- TODO: enable snapshots of unions
         ]
      ++ [ (5,  fmap Some $ (Action <$> genErrors <*>) $
             Duplicate <$> genTableVar)
@@ -1853,18 +1846,24 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
 
     -- | Generate table actions that have to do with unions.
     genUnionActions :: [(Int, Gen (Any (LockstepAction (ModelState h))))]
-    genUnionActions =
+    genUnionActions
+      | null tableVars = []
+      | otherwise      =
         [ (2,  fmap Some $ (Action <$> genErrors <*>) $
             Union <$> genTableVar <*> genTableVar)
         | length tableVars <= 5 -- no more than 5 tables at once
         , let genErrors = pure Nothing -- TODO: generate errors
-        , False -- TODO: enable once table union is implemented
         ]
-     ++ [ (2,  fmap Some $ (Action <$> genErrors <*>) $
-            Unions <$> genUnionsTableVars)
+     ++ [ (2,  fmap Some $ (Action <$> genErrors <*>) $ do
+            -- Generate at least a 2-way union, and at most a 3-way union.
+            --
+            -- Tests for 0-way and 1-way unions are included in the UnitTests
+            -- module. n-way unions for n>3 lead to large unions, which are less
+            -- likely to be finished before the end of an action sequence.
+            n <- QC.chooseInt (2, 3)
+            Unions . NE.fromList <$> QC.vectorOf n genTableVar)
         | length tableVars <= 5 -- no more than 5 tables at once
         , let genErrors = pure Nothing -- TODO: generate errors
-        , False -- TODO: enable once table unions is implemented
         ]
      ++ [ (2,  fmap Some $ (Action <$> genErrors <*>) $
             RemainingUnionDebt <$> genTableVar')
@@ -1877,17 +1876,16 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
         , False -- TODO: enable once table unions is implemented
         ]
       where
+        -- For querying the union debt or supplying union credits, the
+        -- interesting cases to test for are when tables are union tables. For
+        -- non-union tables, these operations should just be no-ops, so we
+        -- generate them only rarely.
+        --
         -- TODO: tweak distribution once table unions are implemented
+        -- TODO: replace union actions on non-union tables with unit tests?
         genTableVar' = QC.frequency [
-            -- The interesting cases to test for are when tables are union
-            -- tables.
-            (9, genUnionedTableVar)
-            -- For non-union tables, querying the union debt or supplying union
-            -- credits are no-ops, so we generate such tables only rarely.
-            --
-            -- TODO: replace union actions on non-union tables with a few unit
-            -- tests?
-          , (1, genNonUnionedTableVar)
+            (9 * length unionedTableVars,    QC.elements unionedTableVars)
+          , (1 * length nonUnionedTableVars, QC.elements nonUnionedTableVars)
           ]
 
         -- TODO: tweak distribution once table unions are implemented
@@ -1956,20 +1954,6 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
 
     genBlob :: Gen (Maybe b)
     genBlob = QC.arbitrary
-
-    -- Generate at least a 2-way union, and at most a 3-way union.
-    --
-    -- Unit tests for 0-way and 1-way unions are included in the UnitTests
-    -- module. n-way unions for n>3 lead to larger unions, which are less likely
-    -- to be finished before the end of an action sequence.
-    genUnionsTableVars :: Gen (NonEmpty (Var h (WrapTable h IO k v b)))
-    genUnionsTableVars = do
-        tableVar1 <- genTableVar
-        tableVar2 <- genTableVar
-        mtableVar3 <- QC.liftArbitrary genTableVar
-        pure $ NE.fromList $ catMaybes [
-            Just tableVar1, Just tableVar2, mtableVar3
-          ]
 
 shrinkActionWithVars ::
      forall h a. (
