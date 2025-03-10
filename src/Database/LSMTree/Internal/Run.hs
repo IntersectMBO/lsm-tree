@@ -14,14 +14,18 @@ module Database.LSMTree.Internal.Run (
   , sizeInPages
   , runFsPaths
   , runFsPathsNumber
+  , runDataCaching
+  , runIndexType
   , mkRawBlobRef
   , mkWeakBlobRef
     -- ** Run creation
   , fromMutable
   , fromWriteBuffer
-  , RunDataCaching (..)
+  , RunParams (..)
     -- * Snapshot
   , openFromDisk
+  , RunDataCaching (..)
+  , IndexType (..)
   ) where
 
 import           Control.DeepSeq (NFData (..), rwhnf)
@@ -40,12 +44,12 @@ import qualified Database.LSMTree.Internal.BlobRef as BlobRef
 import           Database.LSMTree.Internal.BloomFilter (bloomFilterFromSBS)
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
-import           Database.LSMTree.Internal.Index (Index, IndexType)
-import qualified Database.LSMTree.Internal.Index as Index (fromSBS, sizeInPages)
+import           Database.LSMTree.Internal.Index (Index, IndexType (..))
+import qualified Database.LSMTree.Internal.Index as Index
 import           Database.LSMTree.Internal.Page (NumPages)
 import           Database.LSMTree.Internal.Paths as Paths
-import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc)
-import           Database.LSMTree.Internal.RunBuilder (RunBuilder)
+import           Database.LSMTree.Internal.RunBuilder (RunBuilder,
+                     RunDataCaching (..), RunParams (..))
 import qualified Database.LSMTree.Internal.RunBuilder as Builder
 import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.Serialise
@@ -112,6 +116,15 @@ runFsPaths (DeRef r) = runRunFsPaths r
 runFsPathsNumber :: Ref (Run m h) -> RunNumber
 runFsPathsNumber = Paths.runNumber . runFsPaths
 
+-- | See 'openFromDisk'
+runIndexType :: Ref (Run m h) -> IndexType
+runIndexType (DeRef r) = Index.indexToIndexType (runIndex r)
+
+-- | See 'openFromDisk'
+runDataCaching :: Ref (Run m h) -> RunDataCaching
+runDataCaching (DeRef r) = runRunDataCaching r
+
+
 -- | Helper function to make a 'WeakBlobRef' that points into a 'Run'.
 mkRawBlobRef :: Run m h -> BlobSpan -> RawBlobRef m h
 mkRawBlobRef Run{runBlobFile} blobspan =
@@ -147,14 +160,6 @@ finaliser hfs kopsFile blobFile fsPaths = do
     FS.removeFile hfs (runIndexPath fsPaths)
     FS.removeFile hfs (runChecksumsPath fsPaths)
 
--- | Should this run cache key\/ops data in memory?
-data RunDataCaching = CacheRunData | NoCacheRunData
-  deriving stock (Show, Eq)
-
-instance NFData RunDataCaching where
-  rnf CacheRunData   = ()
-  rnf NoCacheRunData = ()
-
 {-# SPECIALISE setRunDataCaching ::
      HasBlockIO IO h
   -> FS.Handle h
@@ -176,18 +181,18 @@ setRunDataCaching hbio runKOpsFile NoCacheRunData = do
     FS.hSetNoCache hbio runKOpsFile True
 
 {-# SPECIALISE fromMutable ::
-     RunDataCaching
-  -> RunBuilder IO h
+     RunBuilder IO h
   -> IO (Ref (Run IO h)) #-}
 -- TODO: make exception safe
 fromMutable ::
      (MonadST m, MonadSTM m, MonadMask m)
-  => RunDataCaching
-  -> RunBuilder m h
+  => RunBuilder m h
   -> m (Ref (Run m h))
-fromMutable runRunDataCaching builder = do
-    (runHasFS, runHasBlockIO, runRunFsPaths, runFilter, runIndex, runNumEntries) <-
-      Builder.unsafeFinalise (runRunDataCaching == NoCacheRunData) builder
+fromMutable builder = do
+    (runHasFS, runHasBlockIO,
+     runRunFsPaths, runFilter, runIndex,
+     RunParams {runParamCaching = runRunDataCaching}, runNumEntries) <-
+      Builder.unsafeFinalise builder
     runKOpsFile <- FS.hOpen runHasFS (runKOpsPath runRunFsPaths) FS.ReadMode
     -- TODO: openBlobFile should be called with exceptions masked
     runBlobFile <- openBlobFile runHasFS (runBlobPath runRunFsPaths) FS.ReadMode
@@ -198,9 +203,7 @@ fromMutable runRunDataCaching builder = do
 {-# SPECIALISE fromWriteBuffer ::
      HasFS IO h
   -> HasBlockIO IO h
-  -> RunDataCaching
-  -> RunBloomFilterAlloc
-  -> IndexType
+  -> RunParams
   -> RunFsPaths
   -> WriteBuffer
   -> Ref (WriteBufferBlobs IO h)
@@ -216,20 +219,17 @@ fromWriteBuffer ::
      (MonadST m, MonadSTM m, MonadMask m)
   => HasFS m h
   -> HasBlockIO m h
-  -> RunDataCaching
-  -> RunBloomFilterAlloc
-  -> IndexType
+  -> RunParams
   -> RunFsPaths
   -> WriteBuffer
   -> Ref (WriteBufferBlobs m h)
   -> m (Ref (Run m h))
-fromWriteBuffer fs hbio caching alloc indexType fsPaths buffer blobs = do
-    builder <- Builder.new fs hbio fsPaths (WB.numEntries buffer)
-                           alloc indexType
+fromWriteBuffer fs hbio params fsPaths buffer blobs = do
+    builder <- Builder.new fs hbio params fsPaths (WB.numEntries buffer)
     for_ (WB.toList buffer) $ \(k, e) ->
       Builder.addKeyOp builder k (fmap (WBB.mkRawBlobRef blobs) e)
       --TODO: the fmap entry here reallocates even when there are no blobs
-    fromMutable caching builder
+    fromMutable builder
 
 {-------------------------------------------------------------------------------
   Snapshot
@@ -249,6 +249,15 @@ fromWriteBuffer fs hbio caching alloc indexType fsPaths buffer blobs = do
 --
 -- Exceptions will be raised when any of the file's contents don't match their
 -- checksum ('ChecksumError') or can't be parsed ('FileFormatError').
+--
+-- The 'RunDataCaching' and 'IndexType' parameters need to be saved and
+-- restored separately because these are not stored in the on-disk
+-- representation. Use 'runDataCaching' and 'runIndexType' to obtain these
+-- parameters from the open run before persisting to disk.
+--
+-- TODO: it may make more sense to persist these parameters with the run's
+-- on-disk representation.
+--
 openFromDisk ::
      forall m h.
      (MonadSTM m, MonadMask m, PrimMonad m)

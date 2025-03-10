@@ -28,9 +28,7 @@ import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
 import           Database.LSMTree.Internal.MergingRun (MergingRun)
 import qualified Database.LSMTree.Internal.MergingRun as MR
 import           Database.LSMTree.Internal.Paths
-import           Database.LSMTree.Internal.Run (RunDataCaching (..))
 import qualified Database.LSMTree.Internal.Run as Run
-import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..))
 import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.UniqCounter
@@ -88,8 +86,8 @@ unsafeCreateMergingRun hfs hbio resolve indexType path counter = \case
         $ \runs -> do
           n <- incrUniqCounter counter
           let fsPaths = RunFsPaths path (RunNumber (uniqueToInt n))
-          MR.new hfs hbio resolve CacheRunData (RunAllocFixed 10) indexType
-            mergeType fsPaths (V.fromList runs)
+          MR.new hfs hbio resolve defaultRunParams mergeType
+                 fsPaths (V.fromList runs)
 
 {-------------------------------------------------------------------------------
   MergingRunData

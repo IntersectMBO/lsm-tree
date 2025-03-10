@@ -31,6 +31,7 @@ module Database.LSMTree.Internal.RunAcc (
   , PageAcc.entryWouldFitInPage
   ) where
 
+import           Control.DeepSeq (NFData (..))
 import           Control.Exception (assert)
 import           Control.Monad.ST.Strict
 import           Data.BloomFilter (Bloom, MBloom)
@@ -78,11 +79,16 @@ data RunAcc s = RunAcc {
 -- | See 'Database.LSMTree.Internal.BloomFilterAlloc'
 data RunBloomFilterAlloc =
     -- | Bits per element in a filter
-    RunAllocFixed Word64
-  | RunAllocRequestFPR Double
+    RunAllocFixed !Word64
+  | RunAllocRequestFPR !Double
     -- | Total number of bits for a filter
-  | RunAllocMonkey Word64
+  | RunAllocMonkey !Word64
   deriving stock (Show, Eq)
+
+instance NFData RunBloomFilterAlloc where
+    rnf (RunAllocFixed a)      = rnf a
+    rnf (RunAllocRequestFPR a) = rnf a
+    rnf (RunAllocMonkey a)     = rnf a
 
 -- | @'new' nentries@ starts an incremental run construction.
 --

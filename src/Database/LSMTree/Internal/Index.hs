@@ -25,6 +25,7 @@ module Database.LSMTree.Internal.Index
 (
     -- * Index types
     IndexType (Compact, Ordinary),
+    indexToIndexType,
 
     -- * Indexes
     Index (CompactIndex, OrdinaryIndex),
@@ -70,6 +71,11 @@ import           Database.LSMTree.Internal.Serialise (SerialisedKey)
 
 -- | The type of supported index types.
 data IndexType = Compact | Ordinary
+    deriving stock (Eq, Show)
+
+instance NFData IndexType where
+    rnf Compact  = ()
+    rnf Ordinary = ()
 
 -- * Indexes
 
@@ -80,9 +86,12 @@ data Index
     deriving stock (Eq, Show)
 
 instance NFData Index where
-
     rnf (CompactIndex  index) = rnf index
     rnf (OrdinaryIndex index) = rnf index
+
+indexToIndexType :: Index -> IndexType
+indexToIndexType CompactIndex{}  = Compact
+indexToIndexType OrdinaryIndex{} = Ordinary
 
 {-|
     Searches for a page span that contains a key–value pair with the given key.

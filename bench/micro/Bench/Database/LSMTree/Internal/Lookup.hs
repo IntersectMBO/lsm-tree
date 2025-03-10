@@ -19,16 +19,15 @@ import qualified Data.Vector as V
 import           Database.LSMTree.Extras.Orphans ()
 import           Database.LSMTree.Extras.Random (frequency, randomByteStringR,
                      sampleUniformWithReplacement, uniformWithoutReplacement)
+import           Database.LSMTree.Extras.RunData (defaultRunParams)
 import           Database.LSMTree.Extras.UTxO
 import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..))
-import qualified Database.LSMTree.Internal.Index as Index (IndexType (Compact))
 import           Database.LSMTree.Internal.Lookup (bloomQueries, indexSearches,
                      intraPageLookups, lookupsIO, prepLookups)
 import           Database.LSMTree.Internal.Page (getNumPages)
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..))
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
-import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..))
 import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.Serialise
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
@@ -192,7 +191,7 @@ lookupsInBatchesEnv Config {..} = do
     wbblobs <- WBB.new hasFS (FS.mkFsPath ["0.wbblobs"])
     wb <- WB.fromMap <$> traverse (traverse (WBB.addBlob hasFS wbblobs)) storedKeys
     let fsps = RunFsPaths (FS.mkFsPath []) (RunNumber 0)
-    r <- Run.fromWriteBuffer hasFS hasBlockIO caching (RunAllocFixed 10) Index.Compact fsps wb wbblobs
+    r <- Run.fromWriteBuffer hasFS hasBlockIO defaultRunParams fsps wb wbblobs
     let NumEntries nentriesReal = Run.size r
     assertEqual nentriesReal nentries $ pure ()
     -- 42 to 43 entries per page

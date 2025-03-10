@@ -21,7 +21,6 @@ import           Database.LSMTree.Internal.PageAcc (entryWouldFitInPage)
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..),
                      pathsForRunFiles)
 import qualified Database.LSMTree.Internal.Run as Run
-import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..))
 import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.UniqCounter
@@ -163,8 +162,8 @@ prop_AbortMerge fs hbio mergeType (Positive stepSize) (SmallList wbs) = do
     wbs' = fmap serialiseRunData wbs
 
     makeInProgressMerge path runs =
-      Merge.new fs hbio Run.CacheRunData (RunAllocFixed 10) Index.Compact
-               mergeType mappendValues path (V.fromList runs) >>= \case
+      Merge.new fs hbio defaultRunParams mergeType mappendValues
+                path (V.fromList runs) >>= \case
         Nothing -> return Nothing  -- not in progress
         Just merge -> do
           -- just do a few steps once, ideally not completing the merge
@@ -190,8 +189,8 @@ mergeRuns ::
      [Ref (Run.Run IO h)] ->
      IO (Int, Ref (Run.Run IO h))
 mergeRuns fs hbio mergeType (Positive stepSize) fsPath runs = do
-    Merge.new fs hbio Run.CacheRunData (RunAllocFixed 10) Index.Compact
-              mergeType mappendValues fsPath (V.fromList runs)
+    Merge.new fs hbio defaultRunParams mergeType mappendValues
+              fsPath (V.fromList runs)
       >>= \case
         Just m  -> Merge.stepsToCompletionCounted m stepSize
         Nothing -> (,) 0 <$> unsafeCreateRunAt fs hbio Index.Compact fsPath

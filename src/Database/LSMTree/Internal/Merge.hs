@@ -9,6 +9,7 @@ module Database.LSMTree.Internal.Merge (
   , TreeMergeType (..)
   , Mappend
   , MergeState (..)
+  , RunParams (..)
   , new
   , abort
   , complete
@@ -16,6 +17,7 @@ module Database.LSMTree.Internal.Merge (
   , stepsToCompletionCounted
   , StepResult (..)
   , steps
+  , mergeRunParams
   ) where
 
 import           Control.DeepSeq (NFData (..))
@@ -31,11 +33,9 @@ import           Data.Traversable (for)
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.BlobRef (RawBlobRef)
 import           Database.LSMTree.Internal.Entry
-import           Database.LSMTree.Internal.Index (IndexType)
-import           Database.LSMTree.Internal.Run (Run, RunDataCaching)
+import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
-import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..))
-import           Database.LSMTree.Internal.RunBuilder (RunBuilder)
+import           Database.LSMTree.Internal.RunBuilder (RunBuilder, RunParams)
 import qualified Database.LSMTree.Internal.RunBuilder as Builder
 import qualified Database.LSMTree.Internal.RunReader as Reader
 import           Database.LSMTree.Internal.RunReaders (Readers)
@@ -60,14 +60,15 @@ data Merge t m h = Merge {
     , mergeMappend     :: !Mappend
     , mergeReaders     :: {-# UNPACK #-} !(Readers m h)
     , mergeBuilder     :: !(RunBuilder m h)
-      -- | The caching policy to use for the output Run.
-    , mergeCaching     :: !RunDataCaching
       -- | The result of the latest call to 'steps'. This is used to determine
       -- whether a merge can be 'complete'd.
     , mergeState       :: !(MutVar (PrimState m) MergeState)
     , mergeHasFS       :: !(HasFS m h)
     , mergeHasBlockIO  :: !(HasBlockIO m h)
     }
+
+mergeRunParams :: Merge t m h -> RunParams
+mergeRunParams = Builder.runBuilderParams . mergeBuilder
 
 -- | The current state of the merge.
 data MergeState =
@@ -152,9 +153,7 @@ type Mappend = SerialisedValue -> SerialisedValue -> SerialisedValue
      IsMergeType t
   => HasFS IO h
   -> HasBlockIO IO h
-  -> RunDataCaching
-  -> RunBloomFilterAlloc
-  -> IndexType
+  -> RunParams
   -> t
   -> Mappend
   -> Run.RunFsPaths
@@ -166,21 +165,19 @@ new ::
      (IsMergeType t, MonadMask m, MonadSTM m, MonadST m)
   => HasFS m h
   -> HasBlockIO m h
-  -> RunDataCaching
-  -> RunBloomFilterAlloc
-  -> IndexType
+  -> RunParams
   -> t
   -> Mappend
   -> Run.RunFsPaths
   -> V.Vector (Ref (Run m h))
   -> m (Maybe (Merge t m h))
-new hfs hbio mergeCaching alloc indexType mergeType mergeMappend targetPaths runs = do
+new hfs hbio runParams mergeType mergeMappend targetPaths runs = do
     -- no offset, no write buffer
     mreaders <- Readers.new Readers.NoOffsetKey Nothing runs
     for mreaders $ \mergeReaders -> do
       -- calculate upper bounds based on input runs
       let numEntries = V.foldMap' Run.size runs
-      mergeBuilder <- Builder.new hfs hbio targetPaths numEntries alloc indexType
+      mergeBuilder <- Builder.new hfs hbio runParams targetPaths numEntries
       mergeState <- newMutVar $! Merging
       return Merge {
           mergeIsLastLevel = isLastLevel mergeType
@@ -239,7 +236,7 @@ complete Merge{..} = do
       Merging -> error "complete: Merge is not done"
       MergingDone -> do
         -- the readers are already drained, therefore closed
-        r <- Run.fromMutable mergeCaching mergeBuilder
+        r <- Run.fromMutable mergeBuilder
         writeMutVar mergeState $! Completed
         pure r
       Completed -> error "complete: Merge is already completed"

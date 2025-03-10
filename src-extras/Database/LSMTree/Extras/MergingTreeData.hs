@@ -74,17 +74,17 @@ unsafeCreateMergingTree ::
 unsafeCreateMergingTree hfs hbio resolve indexType path counter = go
   where
     go = \case
-      CompletedTreeMergeData rd -> do
+      CompletedTreeMergeData rd ->
         withRun hfs hbio indexType path counter rd $ \run ->
-          MT.mkMergingTree . MT.CompletedTreeMerge =<< dupRef run
-      OngoingTreeMergeData mrd -> do
+          MT.newCompletedMerge run
+      OngoingTreeMergeData mrd ->
         withMergingRun hfs hbio resolve indexType path counter mrd $ \mr ->
-          MT.mkMergingTree . MT.OngoingTreeMerge =<< dupRef mr
-      PendingLevelMergeData prds mtd -> do
+          MT.newOngoingMerge mr
+      PendingLevelMergeData prds mtd ->
         withPreExistingRuns prds $ \prs ->
           withMaybeTree mtd $ \mt ->
             MT.newPendingLevelMerge prs mt
-      PendingUnionMergeData mtds -> do
+      PendingUnionMergeData mtds ->
         withTrees mtds $ \mts ->
           MT.newPendingUnionMerge mts
 

@@ -23,7 +23,6 @@ import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..))
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
-import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..))
 import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.UniqCounter
@@ -264,8 +263,7 @@ merge ::
 merge fs hbio Config {..} targetPaths runs = do
     let f = fromMaybe const mergeMappend
     m <- fromMaybe (error "empty inputs, no merge created") <$>
-      Merge.new fs hbio Run.CacheRunData (RunAllocFixed 10) Index.Compact
-                mergeType f targetPaths runs
+      Merge.new fs hbio defaultRunParams mergeType f targetPaths runs
     Merge.stepsToCompletion m stepSize
 
 fsPath :: FS.FsPath
