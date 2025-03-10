@@ -2,15 +2,15 @@
 module Database.LSMTree.Internal.MergingTree (
     -- $mergingtrees
     MergingTree (..)
-  , newOngoingMerge
   , PreExistingRun (..)
+  , newCompletedMerge
+  , newOngoingMerge
   , newPendingLevelMerge
   , newPendingUnionMerge
   , isStructurallyEmpty
     -- * Internal state
   , MergingTreeState (..)
   , PendingMerge (..)
-  , mkMergingTree
   ) where
 
 import           Control.Concurrent.Class.MonadMVar.Strict
@@ -103,6 +103,12 @@ data PreExistingRun m h =
     PreExistingRun        !(Ref (Run m h))
   | PreExistingMergingRun !(Ref (MergingRun MR.LevelMergeType m h))
 
+newCompletedMerge ::
+     (MonadMVar m, PrimMonad m, MonadMask m)
+  => Ref (Run m h)
+  -> m (Ref (MergingTree m h))
+newCompletedMerge run = mkMergingTree . CompletedTreeMerge =<< dupRef run
+
 -- | Create a new 'MergingTree' representing the merge of an ongoing run.
 -- The usage of this function is primarily to facilitate the reloading of an
 -- ongoing merge from a persistent snapshot.
@@ -110,7 +116,7 @@ newOngoingMerge ::
      (MonadMVar m, PrimMonad m, MonadMask m)
   => Ref (MergingRun MR.TreeMergeType m h)
   -> m (Ref (MergingTree m h))
-newOngoingMerge = mkMergingTree . OngoingTreeMerge
+newOngoingMerge mr = mkMergingTree . OngoingTreeMerge =<< dupRef mr
 
 -- | Create a new 'MergingTree' representing the merge of a sequence of
 -- pre-existing runs (completed or ongoing, plus a optional final tree).
