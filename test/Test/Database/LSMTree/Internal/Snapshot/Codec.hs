@@ -381,16 +381,11 @@ deriving newtype instance Arbitrary r => Arbitrary (SnapMergingTree r)
 
 instance Arbitrary r => Arbitrary (SnapMergingTreeState r) where
   arbitrary = inductiveMergingTreeState inductiveLimit
-  shrink (SnapCompletedTreeMerge a) = SnapCompletedTreeMerge <$> shrink a
-  shrink (SnapPendingTreeMerge a)   = SnapPendingTreeMerge <$> shrink a
-  shrink (SnapOngoingTreeMerge a)   = SnapOngoingTreeMerge <$> shrink a
+  shrink = deductiveMergingTreeState
 
 instance Arbitrary r => Arbitrary (SnapPendingMerge r) where
   arbitrary = inductivePendingTreeMerge inductiveLimit
-  shrink (SnapPendingUnionMerge a) = SnapPendingUnionMerge <$> shrinkList shrink a
-  shrink (SnapPendingLevelMerge a b) =
-      [ SnapPendingLevelMerge a' b' | a' <- shrinkList shrink a, b' <- shrink b ]
-
+  shrink = deductivePendingTreeMerge
 
 instance Arbitrary r => Arbitrary (SnapPreExistingRun r) where
   arbitrary = oneof [
@@ -409,19 +404,26 @@ instance Arbitrary r => Arbitrary (SnapPreExistingRun r) where
 inductiveLimit :: Int
 inductiveLimit = 4
 
--- |
--- Generate an 'Arbitrary', "gas-limited" 'SnapMergingTree'.
+-- | Do not generate a number of direct child sub-trees greater than the this
+-- branching limit.
+branchingLimit :: Int
+branchingLimit = 2
+
+-- |  Generate an 'Arbitrary', "gas-limited" 'SnapMergingTree'.
 inductiveSized :: Arbitrary r => Int -> Gen (SnapMergingTree r)
 inductiveSized = fmap SnapMergingTree . inductiveMergingTreeState
 
--- |
--- Generate an 'Arbitrary', "gas-limited" 'SnapMergingTreeState'.
+-- | Generate an 'Arbitrary', "gas-limited" 'SnapMergingTreeState'.
 inductiveMergingTreeState :: Arbitrary a => Int -> Gen (SnapMergingTreeState a)
-inductiveMergingTreeState gas = oneof [
-        SnapCompletedTreeMerge <$> arbitrary
-      , SnapPendingTreeMerge <$> inductivePendingTreeMerge gas
-      , SnapOngoingTreeMerge <$> arbitrary
-      ]
+inductiveMergingTreeState gas =
+   let perpetualCase = [
+           SnapCompletedTreeMerge <$> arbitrary
+         , SnapOngoingTreeMerge <$> arbitrary
+         ]
+       recursiveCase
+         | gas == 0 = []
+         | otherwise = [ SnapPendingTreeMerge <$> inductivePendingTreeMerge gas ]
+   in  oneof $ perpetualCase <> recursiveCase
 
 -- |
 -- Generate an 'Arbitrary', "gas-limited" 'SnapPendingMerge'.
@@ -430,11 +432,73 @@ inductivePendingTreeMerge gas = oneof [
         SnapPendingLevelMerge <$> genPreExistings <*> genMaybeSubTree
       , SnapPendingUnionMerge <$> genListSubtrees
       ]
-    where
+  where
       subGen = inductiveSized . max 0 $ gas - 1
       -- Define custom generators to ensure that the sub-trees are less than
       -- or equal to the "gas" parameter.
       genPreExistings = genVectorsUpToBound gas arbitrary
-      genListSubtrees = genVectorsUpToBound gas subGen
-      genMaybeSubTree = oneof [ pure Nothing, Just <$> subGen ]
+      genListSubtrees = genVectorsUpToBound (min gas branchingLimit) subGen
+      genMaybeSubTree
+        | gas == 0 =  pure Nothing
+        | otherwise = oneof [ pure Nothing, Just <$> subGen ]
       genVectorsUpToBound x gen = oneof $ flip vectorOf gen <$> [ 0 .. x ]
+
+-- |
+-- Shrink an 'Arbitrary', "gas-limited" 'SnapMergingTreeState'.
+deductiveMergingTreeState
+  :: Arbitrary a
+  => SnapMergingTreeState a
+  -> [SnapMergingTreeState a]
+deductiveMergingTreeState = \case
+    SnapCompletedTreeMerge a -> SnapCompletedTreeMerge <$> shrink a
+    SnapOngoingTreeMerge   a -> SnapOngoingTreeMerge   <$> shrink a
+    SnapPendingTreeMerge   a -> SnapPendingTreeMerge   <$> deductivePendingTreeMerge a
+
+-- |
+-- Shrink a 'SnapPendingMerge' by cleverly pruning sub-trees.
+deductivePendingTreeMerge
+  :: Arbitrary a
+  => SnapPendingMerge a
+  -> [SnapPendingMerge a]
+deductivePendingTreeMerge input = case input of
+    SnapPendingUnionMerge subtrees -> SnapPendingUnionMerge <$> shrinkList leafPrune subtrees
+    SnapPendingLevelMerge pes mayTree ->
+      let -- Shrink the sub-tree explicitly using the pruneLeaf definition
+          nextTree = case mayTree of
+            Nothing -> Nothing
+            Just mt -> case leafPrune mt of
+              []  -> Nothing
+              x:_ -> Just x
+      in  -- Check if the node is "empty"
+          -- By empty, this means no direct sub-tree as well as no pre-existing values
+          case (nextTree, shrink pes) of
+            (Nothing, [])     -> []
+            (newTree, newPEs) -> flip SnapPendingLevelMerge newTree <$> newPEs
+  where
+      -- If the depth of the sub-tree is 0, prune the leaf node
+      -- Otherwise, recurse
+      leafPrune val@(SnapMergingTree st) = case subtreeSize val of
+           (0, _) -> []
+           _      -> SnapMergingTree <$> deductiveMergingTreeState st
+
+-- | Returns the maximum depth and the total number of nodes.
+subtreeSize :: SnapMergingTree a -> (Word, Word)
+subtreeSize (SnapMergingTree treeState) =
+  let subtreesCombine :: [(Word, Word)] -> (Word, Word)
+      subtreesCombine =
+          let f (d1, n1) (d2, n2) = (max d1 d2, n1 + n2)
+          in  foldr f (0,0)
+
+      sizePending = \case
+        SnapPendingUnionMerge trees -> subtreesCombine $ subtreeSize <$> trees
+        SnapPendingLevelMerge _pes maySubtree -> case maySubtree of
+          Nothing -> (0,0)
+          Just st -> let (d,n) = subtreeSize st in (d + 1, n)
+
+  in  -- Here is where we account of the current node and add it to any sub-tree .
+      case treeState of
+        SnapCompletedTreeMerge _ -> (0, 1)
+        SnapOngoingTreeMerge   _ -> (0, 1)
+        SnapPendingTreeMerge  pe -> case sizePending pe of
+          (_,0) -> (0, 1)
+          (d,n) -> (d + 1, n + 1)
