@@ -1900,8 +1900,10 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
         | let genErrors = pure Nothing -- TODO: generate errors
         ]
      ++ [ (5,  fmap Some $ (Action <$> genErrors <*>) $
-            RangeLookup <$> genRange <*> genTableVar)
+            RangeLookup <$> genRange <*> genNotUnionDescendantTableVar)
+            -- TODO: enable range lookups on tables with unions
         | let genErrors = pure Nothing -- TODO: generate errors
+        , not (null notUnionDescendantTableVars)
         ]
      ++ [ (10, fmap Some $ (Action <$> genErrors <*>) $
             Updates <$> genUpdates <*> genTableVar)
@@ -1920,9 +1922,11 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
         | let genErrors = pure Nothing -- TODO: generate errors
         ]
      ++ [ (3,  fmap Some $ (Action <$> genErrors <*>) $
-            NewCursor <$> QC.arbitrary <*> genTableVar)
+            NewCursor <$> QC.arbitrary <*> genNotUnionDescendantTableVar)
+            -- TODO: cursors for tables with unions
         | length cursorVars <= 5 -- no more than 5 cursors at once
         , let genErrors = pure Nothing -- TODO: generate errors
+        , not (null notUnionDescendantTableVars)
         ]
      ++ [ (2,  fmap Some $ (Action <$> genErrors <*>) $
             CreateSnapshot <$> genCorruption <*> pure label <*> genUnusedSnapshotName <*> genTableVar)
@@ -1950,10 +1954,6 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
             Union <$> genTableVar <*> genTableVar)
         | length tableVars <= 5 -- no more than 5 tables at once
         , let genErrors = pure Nothing -- TODO: generate errors
-          -- TODO: this is currently only enabled for the reference
-          -- implementation. Enable this unconditionally once table union is
-          -- implemented
-        , isJust (eqT @h @ModelIO.Table)
         ]
      ++ [ (2,  fmap Some $ (Action <$> genErrors <*>) $ do
             -- Generate at least a 2-way union, and at most a 3-way union.
@@ -1965,10 +1965,6 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
             Unions . NE.fromList <$> QC.vectorOf n genTableVar)
         | length tableVars <= 5 -- no more than 5 tables at once
         , let genErrors = pure Nothing -- TODO: generate errors
-          -- TODO: this is currently only enabled for the reference
-          -- implementation. Enable this unconditionally once table union is
-          -- implemented
-        , isJust (eqT @h @ModelIO.Table)
         ]
      ++ [ (2,  fmap Some $ (Action <$> genErrors <*>) $
             RemainingUnionDebt <$> genUnionTableVar)
