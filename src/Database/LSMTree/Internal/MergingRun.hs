@@ -36,6 +36,7 @@ module Database.LSMTree.Internal.MergingRun (
 
     -- * Internal state
   , pattern MergingRun
+  , mergeState
   , MergingRunState (..)
   , MergeKnownCompleted (..)
   , CreditsVar (..)
