@@ -2249,10 +2249,10 @@ data Stats = Stats {
     -- === Final tags (per action sequence, per table)
     -- | Number of actions per table (succesful or failing)
   , numActionsPerTable :: !(Map Model.TableID Int)
-    -- | The size of tables that were closed. This is used to augment the table
-    -- sizes from the final model state (which of course has only tables still
-    -- open in the final state).
-  , closedTableSizes   :: !(Map Model.TableID Int)
+    -- | The state of model tables at the point they were closed. This is used
+    -- to augment the tables from the final model state (which of course has
+    -- only tables still open in the final state).
+  , closedTables       :: !(Map Model.TableID Model.SomeTable)
     -- | The ultimate parents for each table. These are the 'TableId's of tables
     -- created using 'new' or 'open'.
   , parentTable        :: Map Model.TableID [Model.TableID]
@@ -2275,7 +2275,7 @@ initStats = Stats {
     , successActions = []
     , failActions = []
     , numActionsPerTable = Map.empty
-    , closedTableSizes   = Map.empty
+    , closedTables       = Map.empty
     , parentTable        = Map.empty
     , dupTableActionLog  = Map.empty
     }
@@ -2302,7 +2302,7 @@ updateStats action@(Action _merrs action') lookUp modelBefore _modelAfter result
     . updSuccessActions
     . updFailActions
     . updNumActionsPerTable
-    . updClosedTableSizes
+    . updClosedTables
     . updDupTableActionLog
     . updParentTable
   where
@@ -2437,15 +2437,14 @@ updateStats action@(Action _merrs action') lookUp modelBefore _modelAfter result
                                                     (numActionsPerTable stats)
               }
 
-    updClosedTableSizes stats = case (action', result) of
+    updClosedTables stats = case (action', result) of
         (Close tableVar, MEither (Right (MUnit ())))
           | MTable t <- lookUp tableVar
           , let tid          = Model.tableID t
             -- This lookup can fail if the table was already closed:
           , Just (_, table) <- Map.lookup tid (Model.tables modelBefore)
-          , let  tsize       = Model.withSomeTable Model.size table
           -> stats {
-               closedTableSizes = Map.insert tid tsize (closedTableSizes stats)
+               closedTables = Map.insert tid table (closedTables stats)
              }
         _ -> stats
 
@@ -2756,7 +2755,8 @@ tagFinalState' (getModel -> ModelState finalState finalStats) = concat [
         | let openSizes, closedSizes :: Map Model.TableID Int
               openSizes   = Model.withSomeTable Model.size . snd <$>
                               Model.tables finalState
-              closedSizes = closedTableSizes finalStats
+              closedSizes = Model.withSomeTable Model.size <$>
+                              closedTables finalStats
         , size <- Map.elems (openSizes `Map.union` closedSizes)
         ]
 
