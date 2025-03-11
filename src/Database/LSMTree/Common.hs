@@ -49,7 +49,8 @@ module Database.LSMTree.Common (
   ) where
 
 import           Control.Concurrent.Class.MonadMVar.Strict
-import           Control.Concurrent.Class.MonadSTM (MonadSTM, STM)
+import           Control.Concurrent.Class.MonadSTM (STM)
+import           Control.Monad.Class.MonadAsync
 import           Control.Monad.Class.MonadST
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Primitive (PrimMonad)
@@ -74,8 +75,8 @@ import           System.FS.IO (HandleIO)
 -------------------------------------------------------------------------------}
 
 -- | Utility class for grouping @io-classes@ constraints.
-class ( MonadMVar m, MonadSTM m, MonadThrow (STM m), MonadThrow m, MonadCatch m
-      , MonadMask m, PrimMonad m, MonadST m
+class ( MonadAsync m, MonadMVar m, MonadThrow (STM m), MonadThrow m
+      , MonadCatch m , MonadMask m, PrimMonad m, MonadST m
       ) => IOLike m
 
 instance IOLike IO

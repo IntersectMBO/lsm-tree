@@ -935,15 +935,16 @@ checkedUnionDebt tree debtRef = do
 
 type LookupAcc = Maybe Op
 
-mergeAcc :: [LookupAcc] -> LookupAcc
-mergeAcc = foldl (updateAcc combine) Nothing . catMaybes
-
-unionAcc :: [LookupAcc] -> LookupAcc
-unionAcc = foldl (updateAcc combineUnion) Nothing . catMaybes
-
 updateAcc :: (Op -> Op -> Op) -> LookupAcc -> Op -> LookupAcc
 updateAcc _ Nothing     old = Just old
 updateAcc f (Just new_) old = Just (f new_ old)  -- acc has more recent Op
+
+mergeAcc :: TreeMergeType -> [LookupAcc] -> LookupAcc
+mergeAcc mt = foldl (updateAcc com) Nothing . catMaybes
+  where
+    com = case mt of
+      MergeLevel -> combine
+      MergeUnion -> combineUnion
 
 -- | We handle lookups by accumulating results by going through the runs from
 -- most recent to least recent, starting with the write buffer.
@@ -957,8 +958,12 @@ doLookup wb runs ul k = do
       NoUnion ->
         return (convertAcc acc0)
       Union tree _ -> do
-        accTree <- lookupsTree k tree
-        return (convertAcc (mergeAcc [acc0, accTree]))
+        treeBatches <- buildLookupTree tree
+        let treeResults = lookupBatch Nothing k <$> treeBatches
+        return $ convertAcc $ foldLookupTree $
+          if null wb && null runs
+          then treeResults
+          else LookupNode MergeLevel [LookupBatch acc0, treeResults ]
   where
     convertAcc :: LookupAcc -> LookupResult Value Blob
     convertAcc = \case
@@ -976,6 +981,10 @@ lookupBatch acc k rs =
     let ops = [op | r <- rs, Just op <- [Map.lookup k r]]
     in foldl (updateAcc combine) acc ops
 
+data LookupTree a = LookupBatch a
+                  | LookupNode TreeMergeType [LookupTree a]
+  deriving stock Functor
+
 -- | Do lookups on runs at the leaves and recursively combine the resulting
 -- 'LookupAcc's, either using 'mergeAcc' or 'unionAcc' depending on the merge
 -- type.
@@ -989,32 +998,38 @@ lookupBatch acc k rs =
 -- have a union level) and then do lookups, two batches of lookups have to be
 -- performed (plus a batch for the table's regular levels if it has been updated
 -- after the union).
-lookupsTree :: Key -> MergingTree s -> ST s LookupAcc
-lookupsTree k = go
+--
+-- TODO: we can still improve the batching, for example combining the child of
+-- PendingLevelMerge with the pre-existing runs when it is already completed.
+buildLookupTree :: MergingTree s -> ST s (LookupTree [Run])
+buildLookupTree = go
   where
-    go :: MergingTree s -> ST s LookupAcc
+    go :: MergingTree s -> ST s (LookupTree [Run])
     go (MergingTree treeState) = readSTRef treeState >>= \case
         CompletedTreeMerge r ->
-          return $ lookupBatch' [r]
+          return $ LookupBatch [r]
         OngoingTreeMerge (MergingRun mt _ mergeState) ->
           readSTRef mergeState >>= \case
             CompletedMerge r ->
-              return $ lookupBatch' [r]
+              return $ LookupBatch [r]
             OngoingMerge _ rs _ -> case mt of
-              MergeLevel -> return $ lookupBatch' rs  -- combine into batch
-              MergeUnion -> return $ unionAcc (map (\r -> lookupBatch' [r]) rs)
-        PendingTreeMerge (PendingUnionMerge trees) -> do
-          unionAcc <$> traverse go trees
+              MergeLevel -> return $ LookupBatch rs  -- combine into batch
+              MergeUnion -> return $ LookupNode MergeUnion $ map (\r -> LookupBatch [r]) rs
         PendingTreeMerge (PendingLevelMerge prs tree) -> do
-          runs <- concat <$> traverse flattenPreExistingRun prs -- combine into batch
-          let acc0 = lookupBatch' runs
+          preExisting <- LookupBatch . concat <$>
+            traverse flattenPreExistingRun prs -- combine into batch
           case tree of
-            Nothing -> return acc0  -- only runs and merging level runs, done
+            Nothing -> return preExisting
             Just t  -> do
-              accTree <- go t
-              return (mergeAcc [acc0, accTree])
+              lTree <- go t
+              return (LookupNode MergeLevel [preExisting, lTree])
+        PendingTreeMerge (PendingUnionMerge trees) -> do
+          LookupNode MergeUnion <$> traverse go trees
 
-    lookupBatch' = lookupBatch Nothing k
+foldLookupTree :: LookupTree LookupAcc -> LookupAcc
+foldLookupTree = \case
+    LookupBatch acc        -> acc
+    LookupNode mt children -> mergeAcc mt (map foldLookupTree children)
 
 -------------------------------------------------------------------------------
 -- Nominal credits
