@@ -70,7 +70,7 @@ import           Data.Bifunctor (Bifunctor (..))
 import           Data.Constraint (Dict (..))
 import           Data.Either (partitionEithers)
 import           Data.Kind (Type)
-import           Data.List (partition)
+import           Data.List (foldl', nub, partition)
 import           Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
 import           Data.Map.Strict (Map)
@@ -2110,10 +2110,10 @@ data Stats = Stats {
   , closedTableSizes   :: !(Map Model.TableID Int)
     -- | The ultimate parent for each table. This is the 'TableId' of a table
     -- created using 'new' or 'open'.
-  , parentTable        :: Map Model.TableID Model.TableID
+  , parentTable        :: Map Model.TableID [Model.TableID]
     -- | Track the interleavings of operations via different but related tables.
     -- This is a map from the ultimate parent table to a summary log of which
-    -- tables (derived from that parent table via duplicate) have had
+    -- tables (derived from that parent table via duplicate or union) have had
     -- \"interesting\" actions performed on them. We record only the
     -- interleavings of different tables not multiple actions on the same table.
   , dupTableActionLog  :: Map Model.TableID [Model.TableID]
@@ -2306,15 +2306,11 @@ updateStats action@(Action _merrs action') lookUp modelBefore _modelAfter result
         (OpenSnapshot{}, MEither (Right (MTable tbl))) ->
           insertParentTableNew tbl stats
         (Duplicate ptblVar, MEither (Right (MTable tbl))) ->
-          insertParentTableDerived ptblVar tbl stats
-        (Union ptblVar _ptblVar2, MEither (Right (MTable tbl))) ->
-          insertParentTableDerived ptblVar tbl stats
-        (Unions (ptblVar :| _ptblVars), MEither (Right (MTable tbl))) ->
-          insertParentTableDerived ptblVar tbl stats
-        -- TODO: we're abitrarily picking the first parent as the parent (and
-        -- ignoring ptblVar2 and ptblVars above). Tables should be able to have
-        -- *multiple* ultimate parent tables, which is currently not possible:
-        --parentTable only stores a single ultimate parent table per table.
+          insertParentTableDerived [ptblVar] tbl stats
+        (Union ptblVar1 ptblVar2, MEither (Right (MTable tbl))) ->
+          insertParentTableDerived [ptblVar1, ptblVar2]  tbl stats
+        (Unions ptblVars, MEither (Right (MTable tbl))) ->
+          insertParentTableDerived (NE.toList ptblVars) tbl stats
         _ -> stats
 
     -- insert an entry into the parentTable for a completely new table
@@ -2322,22 +2318,25 @@ updateStats action@(Action _merrs action') lookUp modelBefore _modelAfter result
     insertParentTableNew tbl stats =
       stats {
         parentTable = Map.insert (Model.tableID tbl)
-                                 (Model.tableID tbl)
+                                 [Model.tableID tbl]
                                  (parentTable stats)
       }
 
     -- insert an entry into the parentTable for a table derived from a parent
     insertParentTableDerived :: forall k v b.
-                                GVar Op (WrapTable h IO k v b)
+                                [GVar Op (WrapTable h IO k v b)]
                              -> Model.Table k v b -> Stats -> Stats
-    insertParentTableDerived ptblVar tbl stats =
-      let -- immediate and ultimate parent table ids
-          iptblId, uptblId :: Model.TableID
-          iptblId = getTableId (lookUp ptblVar)
-          uptblId = parentTable stats Map.! iptblId
+    insertParentTableDerived ptblVars tbl stats =
+      let uptblIds :: [Model.TableID] -- the set of ultimate parent table ids
+          uptblIds = nub [ uptblId
+                         | ptblVar <- ptblVars
+                           -- immediate and ultimate parent table id:
+                         , let iptblId = getTableId (lookUp ptblVar)
+                         , uptblId <- parentTable stats Map.! iptblId
+                         ]
        in stats {
             parentTable = Map.insert (Model.tableID tbl)
-                                     uptblId
+                                     uptblIds
                                      (parentTable stats)
           }
 
@@ -2354,6 +2353,8 @@ updateStats action@(Action _merrs action') lookUp modelBefore _modelAfter result
           | not (null ins)        -> updateLastActionLog tableVar
         Deletes     ks   tableVar
           | not (null ks)         -> updateLastActionLog tableVar
+        Mupserts    upds tableVar
+          | not (null upds)       -> updateLastActionLog tableVar
         Close            tableVar -> updateLastActionLog tableVar
         _                         -> stats
       where
@@ -2361,18 +2362,19 @@ updateStats action@(Action _merrs action') lookUp modelBefore _modelAfter result
         -- not the latest one already
         updateLastActionLog :: GVar Op (WrapTable h IO k v b) -> Stats
         updateLastActionLog tableVar =
-          case Map.lookup pthid (dupTableActionLog stats) of
-            Just (thid' : _)
-              | thid == thid' -> stats -- the most recent action was via this table
-            malog ->
-              let alog = thid : fromMaybe [] malog
-               in stats {
-                    dupTableActionLog = Map.insert pthid alog
-                                                   (dupTableActionLog stats)
-                  }
+          stats {
+            dupTableActionLog = foldl' (flip (Map.alter extendLog))
+                                       (dupTableActionLog stats)
+                                       (parentTable stats Map.! thid)
+          }
           where
-            thid  = getTableId (lookUp tableVar)
-            pthid = parentTable stats Map.! thid
+            thid = getTableId (lookUp tableVar)
+
+            extendLog :: Maybe [Model.TableID] -> Maybe [Model.TableID]
+            extendLog (Just alog@(thid' : _)) | thid == thid'
+                                  = Just alog          -- action via same table
+            extendLog (Just alog) = Just (thid : alog) -- action via different table
+            extendLog Nothing     = Just (thid : [])   -- first action on table
 
         emptyRange (R.FromToExcluding l u) = l >= u
         emptyRange (R.FromToIncluding l u) = l >  u
@@ -2590,7 +2592,7 @@ tagFinalState' (getModel -> ModelState finalState finalStats) = concat [
         ]
 
     tagDupTableActionLog =
-        [ ("Interleaved actions on table duplicates",
+        [ ("Interleaved actions on table duplicates or unions",
            [DupTableActionLog (showPowersOf 2 n)])
         | (_, alog) <- Map.toList (dupTableActionLog finalStats)
         , let n = length alog
