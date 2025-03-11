@@ -4,16 +4,24 @@ version:            0.1.0.0
 synopsis:           Log-structured merge-tree
 description:        Log-structured merge-tree.
 license:            Apache-2.0
-license-file:       LICENSE
+license-file:       LICENSE NOTICE
 author:             Duncan Coutts, Joris Dral, Matthias Heinzel
 maintainer:         Duncan Coutts, Joris Dral, Matthias Heinzel
 copyright:          2023 Input Output Global Inc (IOG), INTERSECT 2023-2024
 category:           Database
 build-type:         Simple
-extra-doc-files:    CHANGELOG.md
-extra-source-files: README.md
 tested-with:
   GHC ==8.10 || ==9.2 || ==9.4 || ==9.6 || ==9.8 || ==9.10 || ==9.12
+
+extra-doc-files:    CHANGELOG.md
+extra-source-files:
+  README.md
+  xxhash/include/HsXXHash.h
+  xxhash/xxHash-0.8.2/xxhash.h
+
+license-files:
+  bloomfilter/LICENSE-bloomfilter
+  xxhash/xxHash-0.8.2/LICENSE-xxHash
 
 source-repository head
   type:     git
