@@ -27,9 +27,6 @@ jobs:
 
     runs-on: ubuntu-latest
 
-    strategy:
-      fail-fast: false
-
     env:
       ghc: "9.6.6"
       cabal: "3.12.1.0"
@@ -93,9 +90,6 @@ jobs:
     needs: build-documentation
 
     runs-on: ubuntu-latest
-
-    strategy:
-        fail-fast: false
 
     # https://github.com/actions/deploy-pages
     permissions:
