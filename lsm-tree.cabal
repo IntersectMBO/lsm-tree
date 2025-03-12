@@ -893,12 +893,11 @@ test-suite lsm-tree-test
     , quickcheck-classes
     , quickcheck-dynamic
     , quickcheck-instances
-    , quickcheck-lockstep
+    , quickcheck-lockstep     >=0.8
     , random
     , safe-wild-cards
     , semialign
     , split
-    , stm
     , tasty
     , tasty-golden
     , tasty-hunit
@@ -1208,7 +1207,7 @@ test-suite prototypes-test
     , primitive
     , QuickCheck
     , quickcheck-dynamic
-    , quickcheck-lockstep
+    , quickcheck-lockstep  >=0.8
     , tasty
     , tasty-hunit
     , tasty-quickcheck

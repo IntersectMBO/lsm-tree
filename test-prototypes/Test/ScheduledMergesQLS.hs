@@ -383,7 +383,7 @@ deriving stock instance Eq (ModelValue Model a)
 
 
 runActionIO :: Action (Lockstep Model) a
-            -> LookUp IO
+            -> LookUp
             -> ReaderT (PrimVar RealWorld TableId) IO a
 runActionIO action lookUp = ReaderT $ \tidVar -> do
   case action of
@@ -408,7 +408,7 @@ runActionIO action lookUp = ReaderT $ \tidVar -> do
     ADump      var      -> stToIO $ logicalValue (lookUpVar var)
   where
     lookUpVar :: ModelVar Model a -> a
-    lookUpVar = realLookupVar (Proxy :: Proxy IO) lookUp
+    lookUpVar = realLookupVar lookUp
 
     tr :: Tracer (ST RealWorld) Event
     tr = nullTracer
