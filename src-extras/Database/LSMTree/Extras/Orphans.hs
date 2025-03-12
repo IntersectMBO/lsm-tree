@@ -58,7 +58,6 @@ instance SerialiseValue Word256 where
   deserialiseValue (RawBytes (VP.Vector off len ba)) =
     requireBytesExactly "Word256" 32 len $
       indexWord8ArrayAsWord256 ba off
-  deserialiseValueN = deserialiseValue . mconcat -- TODO: optimise
 
 instance Arbitrary Word256 where
   arbitrary = Word256 <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
@@ -116,7 +115,6 @@ instance SerialiseValue Word128 where
   deserialiseValue (RawBytes (VP.Vector off len ba)) =
     requireBytesExactly "Word128" 16 len $
       indexWord8ArrayAsWord128 ba off
-  deserialiseValueN = deserialiseValue . mconcat -- TODO: optimise
 
 instance Arbitrary Word128 where
   arbitrary = Word128 <$> arbitrary <*> arbitrary
@@ -162,7 +160,6 @@ instance SerialiseKey RawBytes where
 instance SerialiseValue RawBytes where
   serialiseValue = id
   deserialiseValue = id
-  deserialiseValueN = mconcat
 
 {-------------------------------------------------------------------------------
   SerialisedKey/Value/Blob
