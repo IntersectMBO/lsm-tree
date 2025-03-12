@@ -177,7 +177,7 @@ testAll test = [
     , test (Proxy @RunBloomFilterAlloc)
     , test (Proxy @IndexType)
     , test (Proxy @RunParams)
-    , test (Proxy @(SnapMergingRunState LevelMergeType SnapshotRun))
+    , test (Proxy @(SnapMergingRun LevelMergeType SnapshotRun))
     , test (Proxy @MergeDebt)
     , test (Proxy @MergeCredits)
     , test (Proxy @NominalDebt)
@@ -298,14 +298,14 @@ deriving newtype instance Arbitrary RunNumber
 
 instance Arbitrary r => Arbitrary (SnapIncomingRun r) where
   arbitrary = oneof [
-        SnapMergingRun <$> arbitrary <*> arbitrary
-                       <*> arbitrary <*> arbitrary
-      , SnapSingleRun <$> arbitrary
+        SnapIncomingMergingRun <$> arbitrary <*> arbitrary
+                               <*> arbitrary <*> arbitrary
+      , SnapIncomingSingleRun <$> arbitrary
       ]
-  shrink (SnapMergingRun a b c d) =
-      [ SnapMergingRun a' b' c' d'
+  shrink (SnapIncomingMergingRun a b c d) =
+      [ SnapIncomingMergingRun a' b' c' d'
       | (a', b', c', d') <- shrink (a, b, c, d) ]
-  shrink (SnapSingleRun a)  = SnapSingleRun <$> shrink a
+  shrink (SnapIncomingSingleRun a)  = SnapIncomingSingleRun <$> shrink a
 
 deriving newtype instance Arbitrary NumRuns
 
@@ -313,7 +313,7 @@ instance Arbitrary MergePolicyForLevel where
   arbitrary = elements [LevelTiering, LevelLevelling]
   shrink _ = []
 
-instance (Arbitrary t, Arbitrary r) => Arbitrary (SnapMergingRunState t r) where
+instance (Arbitrary t, Arbitrary r) => Arbitrary (SnapMergingRun t r) where
   arbitrary = oneof [
         SnapCompletedMerge <$> arbitrary <*> arbitrary <*> arbitrary
       , SnapOngoingMerge <$> arbitrary <*> arbitrary
@@ -370,7 +370,7 @@ deriving stock instance Show SnapshotRun
 deriving stock instance Show r => Show (SnapLevels r)
 deriving stock instance Show r => Show (SnapLevel r)
 deriving stock instance Show r => Show (SnapIncomingRun r)
-deriving stock instance (Show t, Show r) => Show (SnapMergingRunState t r)
+deriving stock instance (Show t, Show r) => Show (SnapMergingRun t r)
 
 deriving stock instance Show r => Show (SnapMergingTree r)
 deriving stock instance Show r => Show (SnapMergingTreeState r)

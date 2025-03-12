@@ -236,21 +236,22 @@ enumerateSnapIncomingRun =
   let
       inSnaps =
         [ (fuseAnnotations ["R1", a, b],
-           SnapMergingRun policy nominalDebt nominalCredits sState)
+           SnapIncomingMergingRun policy nominalDebt nominalCredits sState)
         | (a, policy ) <- [("P0", LevelTiering), ("P1", LevelLevelling)]
         , nominalDebt    <- NominalDebt    <$> [ magicNumber2 ]
         , nominalCredits <- NominalCredits <$> [ magicNumber1 ]
-        , (b, sState ) <- enumerateSnapMergingRunState enumerateLevelMergeType
+        , (b, sState ) <- enumerateSnapMergingRun enumerateLevelMergeType
         ]
   in  fold
-      [ [(fuseAnnotations $ "R0" : replicate 4 blank, SnapSingleRun enumerateOpenRunInfo)]
+      [ [(fuseAnnotations $ "R0" : replicate 4 blank,
+          SnapIncomingSingleRun enumerateOpenRunInfo)]
       , inSnaps
       ]
 
-enumerateSnapMergingRunState ::
+enumerateSnapMergingRun ::
      [(ComponentAnnotation, t)]
-  -> [(ComponentAnnotation, SnapMergingRunState t SnapshotRun)]
-enumerateSnapMergingRunState mTypes =
+  -> [(ComponentAnnotation, SnapMergingRun t SnapshotRun)]
+enumerateSnapMergingRun mTypes =
     [ (fuseAnnotations ["C0", blank, blank],
        SnapCompletedMerge numRuns mergeDebt enumerateOpenRunInfo)
     | numRuns   <- NumRuns <$> [ magicNumber1 ]
@@ -302,7 +303,7 @@ enumerateSnapMergingTreeState expandable =
 
 enumerateSnapOngoingTreeMerge :: [(ComponentAnnotation, SnapMergingTreeState SnapshotRun)]
 enumerateSnapOngoingTreeMerge = do
-  (tagX, valX) <- enumerateSnapMergingRunState enumerateTreeMergeType
+  (tagX, valX) <- enumerateSnapMergingRun enumerateTreeMergeType
   let value = SnapOngoingTreeMerge valX
   pure ( fuseAnnotations $ ["G0", blank, tagX] <> replicate 5 blank, value )
 
@@ -328,7 +329,7 @@ enumerateSnapPreExistingRun :: [(ComponentAnnotation, SnapPreExistingRun Snapsho
 enumerateSnapPreExistingRun =
     ( fuseAnnotations ("E0" : replicate 3 blank), SnapPreExistingRun enumerateOpenRunInfo)
   : [ (fuseAnnotations ["E1", tagX], SnapPreExistingMergingRun valX)
-    | (tagX, valX) <- enumerateSnapMergingRunState enumerateLevelMergeType
+    | (tagX, valX) <- enumerateSnapMergingRun enumerateLevelMergeType
     ]
 
 enumerateTreeMergeType :: [(ComponentAnnotation, MR.TreeMergeType)]

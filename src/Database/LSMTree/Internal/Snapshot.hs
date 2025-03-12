@@ -7,7 +7,7 @@ module Database.LSMTree.Internal.Snapshot (
   , SnapLevels (..)
   , SnapLevel (..)
   , SnapIncomingRun (..)
-  , SnapMergingRunState (..)
+  , SnapMergingRun (..)
     -- * MergeTree snapshot format
   , SnapMergingTree(..)
   , SnapMergingTreeState(..)
@@ -170,18 +170,19 @@ instance NFData r => NFData (SnapLevel r) where
 -- both to zero).
 --
 data SnapIncomingRun r =
-    SnapMergingRun !MergePolicyForLevel
-                   !NominalDebt
-                   !NominalCredits -- ^ The nominal credits supplied, and that
-                                   -- need to be supplied on snapshot open.
-                   !(SnapMergingRunState MR.LevelMergeType r)
-  | SnapSingleRun !r
+    SnapIncomingMergingRun
+      !MergePolicyForLevel
+      !NominalDebt
+      !NominalCredits -- ^ The nominal credits supplied, and that
+                     -- need to be supplied on snapshot open.
+      !(SnapMergingRun MR.LevelMergeType r)
+  | SnapIncomingSingleRun !r
   deriving stock (Eq, Functor, Foldable, Traversable)
 
 instance NFData r => NFData (SnapIncomingRun r) where
-  rnf (SnapMergingRun a b c d) =
+  rnf (SnapIncomingMergingRun a b c d) =
       rnf a `seq` rnf b `seq` rnf c `seq` rnf d
-  rnf (SnapSingleRun a) = rnf a
+  rnf (SnapIncomingSingleRun a) = rnf a
 
 -- | The total number of supplied credits. This total is used on snapshot load
 -- to restore merging work that was lost when the snapshot was created.
@@ -189,12 +190,12 @@ newtype SuppliedCredits = SuppliedCredits { getSuppliedCredits :: Int }
   deriving stock (Eq, Read)
   deriving newtype NFData
 
-data SnapMergingRunState t r =
+data SnapMergingRun t r =
     SnapCompletedMerge !NumRuns !MergeDebt !r
   | SnapOngoingMerge   !RunParams !MergeCredits !(V.Vector r) !t
   deriving stock (Eq, Functor, Foldable, Traversable)
 
-instance (NFData t, NFData r) => NFData (SnapMergingRunState t r) where
+instance (NFData t, NFData r) => NFData (SnapMergingRun t r) where
   rnf (SnapCompletedMerge a b c)   = rnf a `seq` rnf b `seq` rnf c
   rnf (SnapOngoingMerge   a b c d) = rnf a `seq` rnf b `seq` rnf c `seq` rnf d
 
@@ -208,9 +209,8 @@ newtype SnapMergingTree r = SnapMergingTree (SnapMergingTreeState r)
 
 data SnapMergingTreeState r =
     SnapCompletedTreeMerge !r
-  | SnapPendingTreeMerge !(SnapPendingMerge r)
-  | SnapOngoingTreeMerge
-      !(SnapMergingRunState MR.TreeMergeType r)
+  | SnapPendingTreeMerge   !(SnapPendingMerge r)
+  | SnapOngoingTreeMerge   !(SnapMergingRun MR.TreeMergeType r)
   deriving stock (Eq, Functor, Foldable, Traversable)
 
 instance NFData r => NFData (SnapMergingTreeState r) where
@@ -231,9 +231,8 @@ instance NFData r => NFData (SnapPendingMerge r) where
   rnf (SnapPendingUnionMerge a)   = rnf a
 
 data SnapPreExistingRun r =
-    SnapPreExistingRun !r
-  | SnapPreExistingMergingRun
-      !(SnapMergingRunState MR.LevelMergeType r)
+    SnapPreExistingRun        !r
+  | SnapPreExistingMergingRun !(SnapMergingRun MR.LevelMergeType r)
   deriving stock (Eq, Functor, Foldable, Traversable)
 
 instance NFData r => NFData (SnapPreExistingRun r) where
@@ -307,7 +306,7 @@ fromSnapMergingTree hfs hbio uc resolve dir =
 
     go reg (SnapMergingTree (SnapOngoingTreeMerge smrs)) = do
       mr <- withRollback reg
-               (fromSnapMergingRunState hfs hbio uc resolve dir smrs)
+               (fromSnapMergingRun hfs hbio uc resolve dir smrs)
                releaseRef
       mt <- withRollback reg
               (MT.newOngoingMerge mr)
@@ -325,7 +324,7 @@ fromSnapMergingTree hfs hbio uc resolve dir =
     fromSnapPreExistingRun reg (SnapPreExistingMergingRun smrs) =
       MT.PreExistingMergingRun <$>
         withRollback reg
-          (fromSnapMergingRunState hfs hbio uc resolve dir smrs)
+          (fromSnapMergingRun hfs hbio uc resolve dir smrs)
           releaseRef
 
     releasePER (MT.PreExistingRun         r) = releaseRef r
@@ -351,7 +350,7 @@ toSnapMergingTreeState ::
 toSnapMergingTreeState (MT.CompletedTreeMerge r) = pure $ SnapCompletedTreeMerge r
 toSnapMergingTreeState (MT.PendingTreeMerge p) = SnapPendingTreeMerge <$> toSnapPendingMerge p
 toSnapMergingTreeState (MT.OngoingTreeMerge mergingRun) =
-  SnapOngoingTreeMerge <$> toSnapMergingRunState mergingRun
+  SnapOngoingTreeMerge <$> toSnapMergingRun mergingRun
 
 {-# SPECIALISE toSnapPendingMerge :: MT.PendingMerge IO h -> IO (SnapPendingMerge (Ref (Run IO h))) #-}
 toSnapPendingMerge ::
@@ -372,7 +371,7 @@ toSnapPreExistingRun ::
   -> m (SnapPreExistingRun (Ref (Run m h)))
 toSnapPreExistingRun (MT.PreExistingRun run) = pure $ SnapPreExistingRun run
 toSnapPreExistingRun (MT.PreExistingMergingRun peMergingRun) =
-  SnapPreExistingMergingRun <$> toSnapMergingRunState peMergingRun
+  SnapPreExistingMergingRun <$> toSnapMergingRun peMergingRun
 
 {-------------------------------------------------------------------------------
   Conversion to levels snapshot format
@@ -408,24 +407,24 @@ toSnapIncomingRun ::
 toSnapIncomingRun ir = do
     s <- snapshotIncomingRun ir
     case s of
-      Left r -> pure $! SnapSingleRun r
+      Left r -> pure $! SnapIncomingSingleRun r
       Right (mergePolicy,
              nominalDebt,
              nominalCredits,
              mergingRun) -> do
         -- We need to know how many credits were supplied so we can restore merge
         -- work on snapshot load.
-        smrs <- toSnapMergingRunState mergingRun
-        pure $! SnapMergingRun mergePolicy nominalDebt nominalCredits smrs
+        smrs <- toSnapMergingRun mergingRun
+        pure $! SnapIncomingMergingRun mergePolicy nominalDebt nominalCredits smrs
 
-{-# SPECIALISE toSnapMergingRunState ::
+{-# SPECIALISE toSnapMergingRun ::
      Ref (MR.MergingRun t IO h)
-  -> IO (SnapMergingRunState t (Ref (Run IO h))) #-}
-toSnapMergingRunState ::
+  -> IO (SnapMergingRun t (Ref (Run IO h))) #-}
+toSnapMergingRun ::
      (PrimMonad m, MonadMVar m)
   => Ref (MR.MergingRun t m h)
-  -> m (SnapMergingRunState t (Ref (Run m h)))
-toSnapMergingRunState !mr = do
+  -> m (SnapMergingRun t (Ref (Run m h)))
+toSnapMergingRun !mr = do
     -- TODO: MR.snapshot needs to return duplicated run references, and we
     -- need to arrange to release them when the snapshotting is done.
     (numRuns, mergeDebt, mergeCredits, state) <- MR.snapshot mr
@@ -680,47 +679,46 @@ fromSnapLevels hfs hbio uc conf resolve reg dir (SnapLevels levels) =
          LevelNo
       -> SnapIncomingRun (Ref (Run m h))
       -> m (IncomingRun m h)
-    fromSnapIncomingRun _ln (SnapSingleRun run) =
+    fromSnapIncomingRun _ln (SnapIncomingSingleRun run) =
         newIncomingSingleRun run
 
-    fromSnapIncomingRun ln (SnapMergingRun mergePolicy nominalDebt
-                                           nominalCredits smrs) =
+    fromSnapIncomingRun ln (SnapIncomingMergingRun mergePolicy nominalDebt
+                                                   nominalCredits smrs) =
       bracket
-        (fromSnapMergingRunState hfs hbio uc resolve dir smrs)
+        (fromSnapMergingRun hfs hbio uc resolve dir smrs)
         releaseRef $ \mr -> do
 
         ir <- newIncomingMergingRun mergePolicy nominalDebt mr
         -- This will set the correct nominal credits, but it will not do any
-        -- more merging work because fromSnapMergingRunState already supplies
+        -- more merging work because fromSnapMergingRun already supplies
         -- all the merging credits already.
         supplyCreditsIncomingRun conf ln ir nominalCredits
         return ir
 
-{-# SPECIALISE fromSnapMergingRunState ::
+{-# SPECIALISE fromSnapMergingRun ::
      MR.IsMergeType t
   => HasFS IO h
   -> HasBlockIO IO h
   -> UniqCounter IO
   -> ResolveSerialisedValue
   -> ActiveDir
-  -> SnapMergingRunState t (Ref (Run IO h))
+  -> SnapMergingRun t (Ref (Run IO h))
   -> IO (Ref (MR.MergingRun t IO h)) #-}
-fromSnapMergingRunState ::
+fromSnapMergingRun ::
      (MonadMask m, MonadMVar m, MonadSTM m, MonadST m, MR.IsMergeType t)
   => HasFS m h
   -> HasBlockIO m h
   -> UniqCounter m
   -> ResolveSerialisedValue
   -> ActiveDir
-  -> SnapMergingRunState t (Ref (Run m h))
+  -> SnapMergingRun t (Ref (Run m h))
   -> m (Ref (MR.MergingRun t m h))
-fromSnapMergingRunState _hfs _hbio _uc _resolve _dir
-                        (SnapCompletedMerge numRuns mergeDebt r) =
+fromSnapMergingRun _hfs _hbio _uc _resolve _dir
+                   (SnapCompletedMerge numRuns mergeDebt r) =
     MR.newCompleted numRuns mergeDebt r
 
-fromSnapMergingRunState hfs hbio uc resolve dir
-                        (SnapOngoingMerge runParams mergeCredits
-                                          rs mergeType) = do
+fromSnapMergingRun hfs hbio uc resolve dir
+                   (SnapOngoingMerge runParams mergeCredits rs mergeType) = do
     bracketOnError
       (do uniq <- incrUniqCounter uc
           let runPaths = runPath dir (uniqueToRunNumber uniq)
