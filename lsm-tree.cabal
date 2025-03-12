@@ -476,6 +476,7 @@ benchmark lsm-tree-micro-bench
   main-is:        Main.hs
   other-modules:
     Bench.Database.LSMTree.Internal.BloomFilter
+    Bench.Database.LSMTree.Internal.Index
     Bench.Database.LSMTree.Internal.Index.Compact
     Bench.Database.LSMTree.Internal.Lookup
     Bench.Database.LSMTree.Internal.Merge

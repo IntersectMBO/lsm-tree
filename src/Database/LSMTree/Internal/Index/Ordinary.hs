@@ -89,26 +89,32 @@ search key (IndexOrdinary lastKeys) = assert (pageCount > 0) result where
     !pageCount = length lastKeys
 
     result :: PageSpan
-    !result | protoStart < pageCount
-                = let
+    result | protoStart < pageCount
+               = let
 
-                      end :: Int
-                      !end = maybe (pred pageCount) (+ protoStart) $
-                             findIndex (/= lastKeys ! protoStart)  $
-                             drop (succ protoStart) lastKeys
+                     resultKey :: SerialisedKey
+                     !resultKey = lastKeys ! protoStart
 
-                  in PageSpan (PageNo $ protoStart)
-                              (PageNo $ end)
-            | otherwise
-                = let
+                     end :: Int
+                     !end = maybe (pred pageCount) (+ protoStart) $
+                            findIndex (/= resultKey) $
+                            drop (succ protoStart) lastKeys
 
-                      start :: Int
-                      !start = maybe 0 succ                  $
-                               findIndexR (/= last lastKeys) $
-                               lastKeys
+                 in PageSpan (PageNo $ protoStart)
+                             (PageNo $ end)
+           | otherwise
+               = let
 
-                  in PageSpan (PageNo $ start)
-                              (PageNo $ pred pageCount)
+                     resultKey :: SerialisedKey
+                     !resultKey = last lastKeys
+
+                     start :: Int
+                     !start = maybe 0 succ $
+                              findIndexR (/= resultKey) $
+                              lastKeys
+
+                 in PageSpan (PageNo $ start)
+                             (PageNo $ pred pageCount)
 
 {-|
     For a specification of this operation, see the documentation of [its
