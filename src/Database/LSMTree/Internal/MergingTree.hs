@@ -103,12 +103,18 @@ data PreExistingRun m h =
     PreExistingRun        !(Ref (Run m h))
   | PreExistingMergingRun !(Ref (MergingRun MR.LevelMergeType m h))
 
+{-# SPECIALISE newCompletedMerge ::
+     Ref (Run IO h)
+  -> IO (Ref (MergingTree IO h)) #-}
 newCompletedMerge ::
      (MonadMVar m, PrimMonad m, MonadMask m)
   => Ref (Run m h)
   -> m (Ref (MergingTree m h))
 newCompletedMerge run = mkMergingTree . CompletedTreeMerge =<< dupRef run
 
+{-# SPECIALISE newOngoingMerge ::
+     Ref (MergingRun MR.TreeMergeType IO h)
+  -> IO (Ref (MergingTree IO h)) #-}
 -- | Create a new 'MergingTree' representing the merge of an ongoing run.
 -- The usage of this function is primarily to facilitate the reloading of an
 -- ongoing merge from a persistent snapshot.
@@ -118,6 +124,10 @@ newOngoingMerge ::
   -> m (Ref (MergingTree m h))
 newOngoingMerge mr = mkMergingTree . OngoingTreeMerge =<< dupRef mr
 
+{-# SPECIALISE newPendingLevelMerge ::
+     [PreExistingRun IO h]
+  -> Maybe (Ref (MergingTree IO h))
+  -> IO (Ref (MergingTree IO h)) #-}
 -- | Create a new 'MergingTree' representing the merge of a sequence of
 -- pre-existing runs (completed or ongoing, plus a optional final tree).
 -- This is for merging the entire contents of a table down to a single run
@@ -178,6 +188,9 @@ newPendingLevelMerge prs mmt = do
         then return Nothing
         else Just <$!> dupRef mt
 
+{-# SPECIALISE newPendingUnionMerge ::
+     [Ref (MergingTree IO h)]
+  -> IO (Ref (MergingTree IO h)) #-}
 -- | Create a new 'MergingTree' representing the union of one or more merging
 -- trees. This is for unioning the content of multiple tables (represented
 -- themselves as merging trees).
@@ -207,6 +220,7 @@ newPendingUnionMerge mts = do
         -> return mt
       _ -> mkMergingTree (PendingTreeMerge (PendingUnionMerge mts''))
 
+{-# SPECIALISE isStructurallyEmpty :: Ref (MergingTree IO h) -> IO Bool #-}
 -- | Test if a 'MergingTree' is \"obviously\" empty by virtue of its structure.
 -- This is not the same as being empty due to a pending or ongoing merge
 -- happening to produce an empty run.
@@ -221,6 +235,9 @@ isStructurallyEmpty (DeRef MergingTree {mergeState}) =
     -- It may also turn out to be useful to consider CompletedTreeMerge with
     -- a zero length runs as empty.
 
+{-# SPECIALISE mkMergingTree ::
+     MergingTreeState IO h
+  -> IO (Ref (MergingTree IO h)) #-}
 -- | Constructor helper.
 --
 -- This adopts the references in the MergingTreeState, so callers should
@@ -239,6 +256,7 @@ mkMergingTree mergeTreeState = do
       , mergeRefCounter
       }
 
+{-# SPECIALISE finalise :: StrictMVar IO (MergingTreeState IO h) -> IO () #-}
 finalise :: (MonadMVar m, PrimMonad m, MonadMask m)
          => StrictMVar m (MergingTreeState m h) -> m ()
 finalise mergeState = releaseMTS =<< readMVar mergeState
