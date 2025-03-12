@@ -355,7 +355,7 @@ deriving stock instance Eq (ModelValue Model a)
 
 
 runActionIO :: Action (Lockstep Model) a
-            -> LookUp IO
+            -> LookUp
             -> IO a
 runActionIO action lookUp =
   stToIO $
@@ -375,7 +375,7 @@ runActionIO action lookUp =
     ADump      var      -> logicalValue (lookUpVar var)
   where
     lookUpVar :: ModelVar Model a -> a
-    lookUpVar = lookUpGVar (Proxy :: Proxy IO) lookUp
+    lookUpVar = lookUpGVar lookUp
 
     tr :: Tracer (ST RealWorld) Event
     tr = nullTracer

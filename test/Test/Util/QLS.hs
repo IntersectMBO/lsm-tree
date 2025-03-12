@@ -23,7 +23,7 @@ import           Test.QuickCheck.StateModel.Lockstep
 
 runActionsBracket ::
      ( RunLockstep state m
-     , e ~ Error (Lockstep state)
+     , e ~ Error (Lockstep state) m
      , forall a. IsPerformResult e a
      , Testable prop
      )

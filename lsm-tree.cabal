@@ -451,7 +451,6 @@ test-suite lsm-tree-test
     , safe-wild-cards
     , semialign
     , split
-    , stm
     , tasty
     , tasty-golden
     , tasty-hunit
