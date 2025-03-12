@@ -364,9 +364,6 @@ propLockstep_RealImpl_MockFS_IO tr cleanupFlag fsFlag refsFlag =
         )
       tagFinalState'
 
-foo :: Actions (Lockstep (ModelState (IOSim s1) R.Table)) -> Actions (Lockstep (ModelState (IOSim s2) R.Table))
-foo = unsafeCoerce
-
 -- We can not use @bracket@ inside @PropertyM@, so @acquire_RealImpl_MockFS@ and
 -- @release_RealImpl_MockFS@ are not run in a masked state and it is not
 -- guaranteed that the latter runs if the former succeeded. Therefore, if
@@ -376,18 +373,17 @@ foo = unsafeCoerce
 -- running the @IO@ version of this property with the failing seed, and compare
 -- the counterexamples to see which one is more interesting.
 propLockstep_RealImpl_MockFS_IOSim ::
-     forall s. Typeable s =>
      (forall s. Tracer (IOSim s) R.LSMTreeTrace)
   -> CheckCleanup
   -> CheckFS
   -> CheckRefs
-  -> Actions (Lockstep (ModelState (IOSim s) R.Table))
   -> QC.Property
-propLockstep_RealImpl_MockFS_IOSim tr cleanupFlag fsFlag refsFlag actions =
+propLockstep_RealImpl_MockFS_IOSim tr cleanupFlag fsFlag refsFlag =
     monadicIOSim_ prop
   where
-    prop :: forall s. PropertyM (IOSim s) Property
+    prop :: forall s. Typeable s => PropertyM (IOSim s) Property
     prop = do
+        actions <- QC.pick QC.arbitrary
         (fsVar, session, errsVar, logVar) <- QC.run (acquire_RealImpl_MockFS tr)
         faultsVar <- QC.run $ newMutVar []
         let
@@ -400,7 +396,7 @@ propLockstep_RealImpl_MockFS_IOSim tr cleanupFlag fsFlag refsFlag actions =
             , envInjectFaultResults = faultsVar
             }
         void $ QD.runPropertyReaderT
-                (QD.runActions @(Lockstep (ModelState (IOSim s) R.Table)) (foo actions))
+                (QD.runActions @(Lockstep (ModelState (IOSim s) R.Table)) actions)
                 env
         faults <- QC.run $ readMutVar faultsVar
         p <- QC.run $ propCleanup cleanupFlag $
@@ -2329,6 +2325,7 @@ updateStats ::
      , Eq (Class.TableConfig h)
      , Arbitrary (Class.TableConfig h)
      , Typeable h
+     , Typeable m
      )
   => LockstepAction (ModelState m h) a
   -> ModelLookUp (ModelState m h)
