@@ -294,7 +294,12 @@ arbitraryShortVector = do
     n <- chooseInt (0, 5)
     V.fromList <$> vector n
 
-deriving newtype instance Arbitrary RunNumber
+instance Arbitrary RunNumber where
+  arbitrary = RunNumber <$> arbitrarySizedNatural
+  shrink (RunNumber n) =
+       -- fewer shrinks
+       [RunNumber 0 | n > 0]
+    ++ [RunNumber (n `div` 2) | n >= 2]
 
 instance Arbitrary r => Arbitrary (SnapIncomingRun r) where
   arbitrary = oneof [
@@ -343,13 +348,11 @@ instance Arbitrary RunParams where
 
 instance Arbitrary RunDataCaching where
   arbitrary = elements [CacheRunData, NoCacheRunData]
-  shrink NoCacheRunData = [CacheRunData]
-  shrink _              = []
+  shrink _ = []
 
 instance Arbitrary IndexType where
   arbitrary = elements [Ordinary, Compact]
-  shrink Compact = [Ordinary]
-  shrink _       = []
+  shrink _ = []
 
 instance Arbitrary RunBloomFilterAlloc where
   arbitrary = oneof [
