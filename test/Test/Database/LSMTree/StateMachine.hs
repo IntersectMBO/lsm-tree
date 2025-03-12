@@ -83,6 +83,7 @@ import           Control.Monad.Class.MonadThrow (Exception (..), Handler (..),
 import           Control.Monad.IOSim
 import           Control.Monad.Primitive
 import           Control.Monad.Reader (ReaderT (..))
+import qualified Control.Monad.ST.Lazy as ST
 import           Control.RefCount (RefException, checkForgottenRefs,
                      ignoreForgottenRefs)
 import           Control.Tracer (Tracer, nullTracer)
@@ -151,7 +152,6 @@ import           Test.Util.QC (Choice)
 import qualified Test.Util.QLS as QLS
 import           Test.Util.TypeFamilyWrappers (WrapBlob (..), WrapBlobRef (..),
                      WrapCursor (..), WrapTable (..))
-import           Unsafe.Coerce (unsafeCoerce)
 
 {-------------------------------------------------------------------------------
   Test tree
@@ -379,7 +379,11 @@ propLockstep_RealImpl_MockFS_IOSim ::
   -> CheckRefs
   -> QC.Property
 propLockstep_RealImpl_MockFS_IOSim tr cleanupFlag fsFlag refsFlag =
-    monadicIOSim_ prop
+    flip QC.monadic prop $ \x -> QC.ioProperty $ do
+        trac <- ST.stToIO $ runSimTraceST x
+        case traceResult False trac of
+          Left e  -> pure $ QC.counterexample (show e) False
+          Right p -> pure p
   where
     prop :: forall s. Typeable s => PropertyM (IOSim s) Property
     prop = do
