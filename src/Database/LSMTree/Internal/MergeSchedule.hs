@@ -420,14 +420,14 @@ newIncomingSingleRun r = Single <$> dupRef r
 
 {-# INLINE newIncomingMergingRun #-}
 newIncomingMergingRun ::
-     PrimMonad m
+     (PrimMonad m, MonadThrow m)
   => MergePolicyForLevel
   -> NominalDebt
   -> Ref (MergingRun MR.LevelMergeType m h)
   -> m (IncomingRun m h)
 newIncomingMergingRun mergePolicy nominalDebt mr = do
     nominalCreditsVar <- newPrimVar (NominalCredits 0)
-    return (Merging mergePolicy nominalDebt nominalCreditsVar mr)
+    Merging mergePolicy nominalDebt nominalCreditsVar <$> dupRef mr
 
 {-# SPECIALISE supplyCreditsIncomingRun ::
      TableConfig
@@ -1029,12 +1029,12 @@ newIncomingRunAtLevel tr hfs hbio
       TraceNewMerge (V.map Run.size rs) (runNumber runPaths)
                     runParams mergePolicy mergeType
 
-    mr <- MR.new hfs hbio resolve runParams mergeType runPaths rs
-
-    assert (MR.totalMergeDebt mr <= maxMergeDebt conf mergePolicy ln) $ pure ()
-
-    let nominalDebt = nominalDebtForLevel conf ln
-    newIncomingMergingRun mergePolicy nominalDebt mr
+    bracket
+      (MR.new hfs hbio resolve runParams mergeType runPaths rs)
+      releaseRef $ \mr ->
+        assert (MR.totalMergeDebt mr <= maxMergeDebt conf mergePolicy ln) $
+        let nominalDebt = nominalDebtForLevel conf ln in
+        newIncomingMergingRun mergePolicy nominalDebt mr
 
 mergingRunParamsForLevel ::
      ActiveDir

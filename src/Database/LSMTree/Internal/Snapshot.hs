@@ -39,7 +39,8 @@ import           Control.Concurrent.Class.MonadSTM (MonadSTM)
 import           Control.DeepSeq (NFData (..))
 import           Control.Monad (void)
 import           Control.Monad.Class.MonadST (MonadST)
-import           Control.Monad.Class.MonadThrow (MonadMask, bracketOnError)
+import           Control.Monad.Class.MonadThrow (MonadMask, bracket,
+                     bracketOnError)
 import           Control.Monad.Primitive (PrimMonad)
 import           Control.RefCount
 import           Data.Foldable (sequenceA_)
@@ -652,14 +653,17 @@ fromSnapLevels hfs hbio uc conf resolve reg dir (SnapLevels levels) =
         newIncomingSingleRun run
 
     fromSnapIncomingRun ln (SnapMergingRun mergePolicy nominalDebt
-                                           nominalCredits smrs) = do
-      mr <- fromSnapMergingRunState hfs hbio uc resolve dir smrs
-      ir <- newIncomingMergingRun mergePolicy nominalDebt mr
-      -- This will set the correct nominal credits, but it will not do any more
-      -- merging work because fromSnapMergingRunState already supplies all the
-      -- merging credits already.
-      supplyCreditsIncomingRun conf ln ir nominalCredits
-      return ir
+                                           nominalCredits smrs) =
+      bracket
+        (fromSnapMergingRunState hfs hbio uc resolve dir smrs)
+        releaseRef $ \mr -> do
+
+        ir <- newIncomingMergingRun mergePolicy nominalDebt mr
+        -- This will set the correct nominal credits, but it will not do any
+        -- more merging work because fromSnapMergingRunState already supplies
+        -- all the merging credits already.
+        supplyCreditsIncomingRun conf ln ir nominalCredits
+        return ir
 
 {-# SPECIALISE fromSnapMergingRunState ::
      MR.IsMergeType t
