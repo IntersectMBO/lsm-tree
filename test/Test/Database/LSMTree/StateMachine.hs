@@ -2229,8 +2229,6 @@ instance InterpretOp Op (ModelValue (ModelState h)) where
   Statistics, labelling/tagging
 -------------------------------------------------------------------------------}
 
--- TODO: add tagging of interesting cases for union-related actions.
-
 data Stats = Stats {
     -- === Tags
     -- | Names for which snapshots exist
@@ -2262,6 +2260,12 @@ data Stats = Stats {
     -- \"interesting\" actions performed on them. We record only the
     -- interleavings of different tables not multiple actions on the same table.
   , dupTableActionLog  :: Map Model.TableID [Model.TableID]
+    -- | The subset of tables (open or closed) that were created as a result
+    -- of a union operation. This can be used for example to select subsets of
+    -- the other per-table tracking maps above, or the state from the model.
+    -- The map value is the size of the union table at the point it was created,
+    -- so we can distinguish trivial empty unions from non-trivial.
+  , unionTables        :: !(Map Model.TableID Int)
   }
   deriving stock Show
 
@@ -2278,6 +2282,7 @@ initStats = Stats {
     , closedTables       = Map.empty
     , parentTable        = Map.empty
     , dupTableActionLog  = Map.empty
+    , unionTables        = Map.empty
     }
 
 updateStats ::
@@ -2293,7 +2298,7 @@ updateStats ::
   -> Val h a
   -> Stats
   -> Stats
-updateStats action@(Action _merrs action') lookUp modelBefore _modelAfter result =
+updateStats action@(Action _merrs action') lookUp modelBefore modelAfter result =
       -- === Tags
       updSnapshotted
       -- === Final tags
@@ -2305,6 +2310,7 @@ updateStats action@(Action _merrs action') lookUp modelBefore _modelAfter result
     . updClosedTables
     . updDupTableActionLog
     . updParentTable
+    . updUnionTables
   where
     -- === Tags
 
@@ -2549,6 +2555,22 @@ updateStats action@(Action _merrs action') lookUp modelBefore _modelAfter result
 
     updDupTableActionLog stats = stats
 
+    updUnionTables stats = case action' of
+        Union{}  -> insertUnionTable
+        Unions{} -> insertUnionTable
+        _        -> stats
+      where
+        insertUnionTable
+          | MEither (Right (MTable t)) <- result
+          , let tid = Model.tableID t
+          , Just (_,tbl) <- Map.lookup tid (Model.tables modelAfter)
+          , let sz = Model.withSomeTable Model.size tbl
+          = stats {
+              unionTables = Map.insert tid sz (unionTables stats)
+            }
+          | otherwise
+          = stats
+
     getTableId :: ModelValue (ModelState h) (WrapTable h IO k v b)
                      -> Model.TableID
     getTableId (MTable t) = Model.tableID t
@@ -2705,6 +2727,8 @@ tagFinalState' (getModel -> ModelState finalState finalStats) = concat [
     , tagNumTableActions
     , tagTableSizes
     , tagDupTableActionLog
+    , tagNumUnionTables
+    , tagNumUnionTableActions
     ]
   where
     tagNumLookupsResults = [
@@ -2765,6 +2789,23 @@ tagFinalState' (getModel -> ModelState finalState finalStats) = concat [
            [DupTableActionLog (showPowersOf 2 n)])
         | (_, alog) <- Map.toList (dupTableActionLog finalStats)
         , let n = length alog
+        ]
+
+    tagNumUnionTables =
+        [ ("Number of union tables (empty)",
+           [NumTables (showPowersOf 2 (Map.size trivial))])
+        , ("Number of union tables (non-empty)",
+           [NumTables (showPowersOf 2 (Map.size nonTrivial))])
+        ]
+      where
+        (nonTrivial, trivial) = Map.partition (> 0) (unionTables finalStats)
+
+    tagNumUnionTableActions =
+        [ ("Number of actions per table with non-empty unions",
+           [ NumTableActions (showPowersOf 2 n) ])
+        | n <- Map.elems $ numActionsPerTable finalStats
+                             `Map.intersection`
+                           Map.filter (> 0) (unionTables finalStats)
         ]
 
 {-------------------------------------------------------------------------------
