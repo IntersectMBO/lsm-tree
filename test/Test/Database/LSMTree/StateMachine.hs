@@ -1827,7 +1827,7 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
               <$> genCorruption
               <*> pure label
               <*> genUnusedSnapshotName
-              <*> QC.elements nonUnionedTableVars)
+              <*> genTableVar)
         | not (null unusedSnapshotNames)
           -- TODO: should errors and corruption be generated at the same time,
           -- or should they be mutually exclusive?
@@ -1836,7 +1836,6 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
                   (3, pure Nothing)
                 , (1, Just <$> QC.arbitrary)
                 ]
-        , not (null nonUnionedTableVars)  -- TODO: enable snapshots of unions
         ]
      ++ [ (5,  fmap Some $ (Action <$> genErrors <*>) $
             Duplicate <$> genTableVar)
