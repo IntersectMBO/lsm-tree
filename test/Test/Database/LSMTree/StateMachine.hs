@@ -2433,6 +2433,8 @@ data Tag =
     -- | A snapshot failed to open because we detected that the snapshot was
     -- corrupt
   | OpenSnapshotDetectsCorruption R.SnapshotName
+    -- | Opened a snapshot for a table involving a union
+  | OpenSnapshotUnion
   deriving stock (Show, Eq, Ord)
 
 -- | This is run for after every action
@@ -2453,6 +2455,7 @@ tagStep' (ModelState _stateBefore statsBefore,
     , tagDeleteMissingSnapshot
     , tagCreateSnapshotCorruptedOrUncorrupted
     , tagOpenSnapshotDetectsCorruption
+    , tagOpenSnapshotUnion
     ]
   where
     tagSnapshotTwice
@@ -2503,6 +2506,14 @@ tagStep' (ModelState _stateBefore statsBefore,
       | OpenSnapshot _ _ name <- action'
       , MEither (Left (MErr (Model.ErrSnapshotCorrupted _))) <- result
       = Just (OpenSnapshotDetectsCorruption name)
+      | otherwise
+      = Nothing
+
+    tagOpenSnapshotUnion
+      | OpenSnapshot _ _ _ <- action'
+      , MEither (Right (MTable t)) <- result
+      , Model.isUnionDescendant t == Model.IsUnionDescendant
+      = Just OpenSnapshotUnion
       | otherwise
       = Nothing
 
