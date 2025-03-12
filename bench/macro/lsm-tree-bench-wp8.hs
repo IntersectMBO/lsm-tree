@@ -80,6 +80,14 @@ import           Database.LSMTree.Internal.ByteString (byteArrayToSBS)
 import qualified Database.LSMTree.Normal as LSM
 
 -------------------------------------------------------------------------------
+-- Table configuration
+-------------------------------------------------------------------------------
+
+benchTableConfig :: LSM.TableConfig
+benchTableConfig =
+    LSM.defaultTableConfig {LSM.confFencePointerIndex = LSM.CompactIndex}
+
+-------------------------------------------------------------------------------
 -- Keys and values
 -------------------------------------------------------------------------------
 
@@ -407,7 +415,7 @@ doSetup' gopts opts = do
         LSM.mkSnapshotName "bench"
 
     LSM.withSession (mkTracer gopts) hasFS hasBlockIO (FS.mkFsPath []) $ \session -> do
-        tbl <- LSM.new @IO @K @V @B session (mkTableConfigSetup gopts opts LSM.defaultTableConfig)
+        tbl <- LSM.new @IO @K @V @B session (mkTableConfigSetup gopts opts benchTableConfig)
 
         forM_ (groupsOfN 256 [ 0 .. initialSize gopts ]) $ \batch -> do
             -- TODO: this procedure simply inserts all the keys into initial lsm tree
@@ -576,7 +584,7 @@ doRun gopts opts = do
         -- reference version starts with empty (as it's not practical or
         -- necessary for testing to load the whole snapshot).
         tbl <- if check opts
-                then LSM.new  @IO @K @V @B session (mkTableConfigRun gopts LSM.defaultTableConfig)
+                then LSM.new  @IO @K @V @B session (mkTableConfigRun gopts benchTableConfig)
                 else LSM.openSnapshot @IO @K @V @B session (mkTableConfigOverride gopts) label name
 
         -- In checking mode, compare each output against a pure reference.

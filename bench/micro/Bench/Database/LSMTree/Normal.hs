@@ -65,7 +65,8 @@ newtype B2 = B2 ShortByteString
 
 benchConfig :: Common.TableConfig
 benchConfig = Common.defaultTableConfig {
-      Common.confWriteBufferAlloc = Common.AllocNumEntries (Common.NumEntries 20000)
+      Common.confWriteBufferAlloc  = Common.AllocNumEntries (Common.NumEntries 20000)
+    , Common.confFencePointerIndex = Common.CompactIndex
     }
 
 {-------------------------------------------------------------------------------
@@ -232,7 +233,7 @@ benchInsertBatches =
       !batchSize = 256
 
       _benchConfig :: Common.TableConfig
-      _benchConfig = Common.defaultTableConfig {
+      _benchConfig = benchConfig {
           Common.confWriteBufferAlloc = Common.AllocNumEntries (Common.NumEntries 1000)
         }
 

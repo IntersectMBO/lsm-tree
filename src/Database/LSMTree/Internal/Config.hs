@@ -92,7 +92,7 @@ defaultTableConfig =
       , confSizeRatio         = Four
       , confWriteBufferAlloc  = AllocNumEntries (NumEntries 20_000)
       , confBloomFilterAlloc  = defaultBloomFilterAlloc
-      , confFencePointerIndex = CompactIndex
+      , confFencePointerIndex = OrdinaryIndex
       , confDiskCachePolicy   = DiskCacheAll
       , confMergeSchedule     = defaultMergeSchedule
       }

@@ -169,7 +169,9 @@ basicSnapshotTableType :: (ComponentAnnotation, SnapshotTableType)
 basicSnapshotTableType = head enumerateSnapshotTableType
 
 basicTableConfig :: (ComponentAnnotation, TableConfig)
-basicTableConfig = ( fuseAnnotations $ "T0" : replicate 4 blank, defaultTableConfig)
+basicTableConfig = ( fuseAnnotations $ "T0" : replicate 4 blank
+                   , defaultTableConfig {confFencePointerIndex = CompactIndex}
+                   )
 
 basicRunNumber :: RunNumber
 basicRunNumber = enumerateRunNumbers
