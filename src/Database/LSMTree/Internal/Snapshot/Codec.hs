@@ -447,20 +447,14 @@ instance Encode BloomFilterAlloc where
          encodeListLen 2
       <> encodeWord 1
       <> encodeDouble x
-  encode (AllocMonkey numBytes numEntries) =
-         encodeListLen 3
-      <> encodeWord 2
-      <> encodeWord64 numBytes
-      <> encode numEntries
 
 instance DecodeVersioned BloomFilterAlloc where
-  decodeVersioned v@V0 = do
+  decodeVersioned V0 = do
       n <- decodeListLen
       tag <- decodeWord
       case (n, tag) of
         (2, 0) -> AllocFixed <$> decodeWord64
         (2, 1) -> AllocRequestFPR <$> decodeDouble
-        (3, 2) -> AllocMonkey <$> decodeWord64 <*> decodeVersioned v
         _ -> fail ("[BloomFilterAlloc] Unexpected combination of list length and tag: " <> show (n, tag))
 
 -- FencePointerIndex

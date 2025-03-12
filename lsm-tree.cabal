@@ -190,7 +190,6 @@ library
     , lsm-tree:bloomfilter
     , lsm-tree:control
     , lsm-tree:kmerge
-    , lsm-tree:monkey
     , primitive               ^>=0.9
     , text                    ^>=2.1.1
     , vector                  ^>=0.13

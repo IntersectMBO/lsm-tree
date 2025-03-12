@@ -29,6 +29,7 @@ module Database.LSMTree.Internal.RunAcc (
   , addLargeKeyOp
   , addLargeSerialisedKeyOp
   , PageAcc.entryWouldFitInPage
+  , numHashFunctions
   ) where
 
 import           Control.DeepSeq (NFData (..))
@@ -56,7 +57,6 @@ import           Database.LSMTree.Internal.RawPage (RawPage)
 import qualified Database.LSMTree.Internal.RawPage as RawPage
 import           Database.LSMTree.Internal.Serialise (SerialisedKey,
                      SerialisedValue)
-import qualified Monkey
 
 {-------------------------------------------------------------------------------
   Incremental, in-memory run construction
@@ -81,8 +81,6 @@ data RunBloomFilterAlloc =
     -- | Bits per element in a filter
     RunAllocFixed !Word64
   | RunAllocRequestFPR !Double
-    -- | Total number of bits for a filter
-  | RunAllocMonkey !Word64
   deriving stock (Show, Eq)
 
 instance NFData RunBloomFilterAlloc where
@@ -104,14 +102,10 @@ new (NumEntries nentries) alloc indexType = do
       RunAllocFixed !bitsPerEntry    ->
         let !nbits = fromIntegral bitsPerEntry * fromIntegral nentries
         in  MBloom.new
-              (fromIntegralChecked $ Monkey.numHashFunctions nbits (fromIntegralChecked nentries))
+              (fromIntegralChecked $ numHashFunctions nbits (fromIntegralChecked nentries))
               (fromIntegralChecked nbits)
       RunAllocRequestFPR !fpr ->
         Bloom.Easy.easyNew fpr nentries
-      RunAllocMonkey !nbits ->
-        MBloom.new
-          (fromIntegralChecked $ Monkey.numHashFunctions (fromIntegral nbits) (fromIntegral nentries))
-          nbits
     mindex <- Index.newWithDefaults indexType
     mpageacc <- PageAcc.newPageAcc
     entryCount <- newPrimVar 0
@@ -340,3 +334,15 @@ selectPagesAndChunks mpagemchunkPre page chunks =
     Just (pagePre, Nothing)       -> ([pagePre, page],          chunks)
     Just (pagePre, Just chunkPre) -> ([pagePre, page], chunkPre:chunks)
 
+-- | Computes the optimal number of hash functions that minimises the false
+-- positive rate for a bloom filter.
+--
+-- See Niv Dayan, Manos Athanassoulis, Stratos Idreos,
+-- /Optimal Bloom Filters and Adaptive Merging for LSM-Trees/,
+-- Footnote 2, page 6.
+numHashFunctions ::
+     Integer -- ^ Number of bits assigned to the bloom filter.
+  -> Integer -- ^ Number of entries inserted into the bloom filter.
+  -> Integer
+numHashFunctions nbits nentries = truncate @Double $ max 1 $
+    (fromIntegral nbits / fromIntegral nentries) * log 2
