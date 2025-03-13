@@ -72,9 +72,9 @@ import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..))
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
+import           GHC.Stack (HasCallStack)
 import           System.FS.API (HasFS)
 import           System.FS.BlockIO.API (HasBlockIO)
-import           GHC.Stack (HasCallStack)
 
 data MergingRun t m h = MergingRun {
       mergeNumRuns        :: !NumRuns
