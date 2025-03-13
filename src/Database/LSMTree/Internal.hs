@@ -113,6 +113,7 @@ import           Database.LSMTree.Internal.Lookup (ByteCountDiscrepancy,
 import           Database.LSMTree.Internal.MergeSchedule
 import qualified Database.LSMTree.Internal.MergingRun as MR
 import           Database.LSMTree.Internal.MergingTree
+import qualified Database.LSMTree.Internal.MergingTree as MT
 import qualified Database.LSMTree.Internal.MergingTree.Lookup as MT
 import           Database.LSMTree.Internal.Paths (SessionRoot (..),
                      SnapshotMetaDataChecksumFile (..),
@@ -1627,14 +1628,19 @@ newtype UnionDebt = UnionDebt Int
 
 {-# SPECIALISE remainingUnionDebt :: Table IO h -> IO UnionDebt #-}
 -- | See 'Database.LSMTree.Normal.remainingUnionDebt'.
-remainingUnionDebt :: (MonadSTM m, MonadThrow m) => Table m h -> m UnionDebt
+remainingUnionDebt ::
+     (MonadSTM m, MonadMVar m, MonadThrow m, PrimMonad m)
+  => Table m h -> m UnionDebt
 remainingUnionDebt t = do
     traceWith (tableTracer t) TraceRemainingUnionDebt
     withOpenTable t $ \tEnv -> do
-      RW.withReadAccess (tableContent tEnv) $ \tableContent ->
+      RW.withReadAccess (tableContent tEnv) $ \tableContent -> do
         case tableUnionLevel tableContent of
-          NoUnion -> pure (UnionDebt 0)
-          Union{} -> error "remainingUnionDebt: not yet implemented"
+          NoUnion ->
+            pure (UnionDebt 0)
+          Union mt -> do
+            (MergeDebt (MergeCredits c), _) <- MT.remainingMergeDebt mt
+            pure (UnionDebt c)
 
 -- | See 'Database.LSMTree.Normal.UnionCredits'.
 newtype UnionCredits = UnionCredits Int
