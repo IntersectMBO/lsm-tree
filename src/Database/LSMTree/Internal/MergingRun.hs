@@ -10,6 +10,7 @@ module Database.LSMTree.Internal.MergingRun (
   , newCompleted
   , duplicateRuns
   , remainingMergeDebt
+  , supplyChecked
   , supplyCreditsRelative
   , supplyCreditsAbsolute
   , expectCompleted
@@ -69,6 +70,7 @@ import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..))
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
+import           GHC.Stack (HasCallStack, callStack)
 import           System.FS.API (HasFS)
 import           System.FS.BlockIO.API (HasBlockIO)
 
@@ -763,6 +765,36 @@ remainingMergeDebt (DeRef mr) = do
         assert (debt >= 0) $ pure ()
         return (MergeDebt debt, size)
 
+{-# INLINE supplyChecked #-}
+-- | Helper function to assert common invariants for functions that supply
+-- credits.
+supplyChecked ::
+     forall m r s. (HasCallStack, Monad m)
+  => (r -> m (MergeDebt, s))  -- how to query current debt
+  -> (r -> MergeCredits -> m MergeCredits)  -- how to supply
+  -> (r -> MergeCredits -> m MergeCredits)
+supplyChecked _query supply x credits = do
+    assertM $ credits > 0   -- only call them when there are credits to supply
+#ifdef NO_IGNORE_ASSERTS
+    debt <- fst <$> _query x
+    assertM $ debt >= MergeDebt 0 -- debt can't be negative
+    leftovers <- supply x credits
+    assertM $ leftovers <= credits -- can't have more left than we started with
+    assertM $ leftovers >= 0       -- leftovers can't be negative
+    debt' <- fst <$> _query x
+    assertM $ debt' >= MergeDebt 0
+    -- the debt was reduced sufficiently (amount of credits spent)
+    assertM $ debt' <= let MergeDebt d = debt
+                       in MergeDebt (d - (credits - leftovers))
+    return leftovers
+#else
+    supply x credits
+#endif
+  where
+    assertM :: HasCallStack => Bool -> m ()
+    assertM p = let _ = callStack in assert p (pure ())
+    -- just uses callStack so the constraint is not redundant in release builds
+
 {-# INLINE supplyCreditsRelative #-}
 -- | Supply the given amount of credits to a merging run. This /may/ cause an
 -- ongoing merge to progress.
@@ -771,27 +803,24 @@ remainingMergeDebt (DeRef mr) = do
 -- supplied credits. See 'supplyCreditsAbsolute' to set the supplied credits
 -- to an absolute value.
 --
--- The result is:
---
---  1. The (absolute value of the) supplied credits beforehand.
---  2. The (absolute value of the) supplied credits afterwards.
---  3. The number of credits left over. This will be non-zero if the credits
---     supplied would take the total supplied credits over the total merge debt.
+-- The result is the number of credits left over. This will be non-zero if the
+-- credits supplied would take the total supplied credits over the total merge
+-- debt.
 --
 supplyCreditsRelative ::
      forall t m h. (MonadSTM m, MonadST m, MonadMVar m, MonadMask m)
   => Ref (MergingRun t m h)
   -> CreditThreshold
   -> MergeCredits
-  -> m (MergeCredits, MergeCredits, MergeCredits)
-       -- ^ (suppliedCredits, suppliedCredits', leftoverCredits)
-supplyCreditsRelative mr th c = do
-    r@(_suppliedCredits, suppliedCredits', leftoverCredits)
-      <- supplyCredits mr th (SupplyMergeCredits SupplyRelative c)
+  -> m MergeCredits
+supplyCreditsRelative = flip $ \th ->
+    supplyChecked remainingMergeDebt $ \mr c -> do
+      (_suppliedCredits, suppliedCredits', leftoverCredits)
+        <- supplyCredits mr th (SupplyMergeCredits SupplyRelative c)
 
-    assert (suppliedCredits' == mergeDebtAsCredits (totalMergeDebt mr)
-            || leftoverCredits == 0) $
-      pure r
+      assert (suppliedCredits' == mergeDebtAsCredits (totalMergeDebt mr)
+              || leftoverCredits == 0) $
+        pure leftoverCredits
 
 {-# INLINE supplyCreditsAbsolute #-}
 -- | Set the supplied credits to the given value, unless the current value is
