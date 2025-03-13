@@ -1,3 +1,5 @@
+{-# LANGUAGE PatternSynonyms #-}
+
 -- | An incremental merge of multiple runs, preserving a bracketing structure.
 module Database.LSMTree.Internal.MergingTree (
     -- $mergingtrees
@@ -8,6 +10,7 @@ module Database.LSMTree.Internal.MergingTree (
   , newPendingLevelMerge
   , newPendingUnionMerge
   , isStructurallyEmpty
+  , remainingMergeDebt
     -- * Internal state
   , MergingTreeState (..)
   , PendingMerge (..)
@@ -21,9 +24,12 @@ import           Control.RefCount
 import           Data.Foldable (traverse_)
 import           Data.Vector (Vector)
 import qualified Data.Vector as V
-import           Database.LSMTree.Internal.MergingRun (MergingRun)
+import           Database.LSMTree.Internal.Entry (NumEntries (..))
+import           Database.LSMTree.Internal.MergingRun (MergeDebt (..),
+                     MergingRun)
 import qualified Database.LSMTree.Internal.MergingRun as MR
 import           Database.LSMTree.Internal.Run (Run)
+import qualified Database.LSMTree.Internal.Run as Run
 
 -- $mergingtrees Semantically, tables are key-value stores like Haskell's
 -- @Map@. Table unions then behave like @Map.unionWith (<>)@. If one of the
@@ -98,6 +104,24 @@ data PendingMerge m h =
     -- | Each input is the entire content of a table (as a merging tree).
   | PendingUnionMerge
       !(Vector (Ref (MergingTree m h)))
+
+pendingContent ::
+     PendingMerge m h
+  -> ( MR.TreeMergeType
+     , Vector (PreExistingRun m h)
+     , Vector (Ref (MergingTree m h))
+     )
+pendingContent = \case
+    PendingLevelMerge prs t -> (MR.MergeLevel, prs, maybe V.empty V.singleton t)
+    PendingUnionMerge    ts -> (MR.MergeUnion, V.empty, ts)
+
+{-# COMPLETE PendingMerge #-}
+pattern PendingMerge ::
+     MR.TreeMergeType
+  -> Vector (PreExistingRun m h)
+  -> Vector (Ref (MergingTree m h))
+  -> PendingMerge m h
+pattern PendingMerge mt prs ts <- (pendingContent -> (mt, prs, ts))
 
 data PreExistingRun m h =
     PreExistingRun        !(Ref (Run m h))
@@ -272,3 +296,50 @@ finalise mergeState = releaseMTS =<< readMVar mergeState
     releasePER (PreExistingRun         r) = releaseRef r
     releasePER (PreExistingMergingRun mr) = releaseRef mr
 
+{-# SPECIALISE remainingMergeDebt ::
+     Ref (MergingTree IO h) -> IO (MergeDebt, NumEntries) #-}
+-- | Calculate an upper bound on the merge credits required to complete the
+-- merge, i.e. turn the tree into a 'CompletedTreeMerge'. For the recursive
+-- calculation, we also return an upper bound on the size of the resulting run.
+remainingMergeDebt ::
+     (MonadMVar m, PrimMonad m)
+  => Ref (MergingTree m h) -> m (MergeDebt, NumEntries)
+remainingMergeDebt (DeRef mt) = do
+    readMVar (mergeState mt) >>= \case
+      CompletedTreeMerge r -> return (MergeDebt 0, Run.size r)
+      OngoingTreeMerge mr  -> addDebtOne <$> MR.remainingMergeDebt mr
+      PendingTreeMerge ptm -> addDebtOne <$> remainingMergeDebtPendingMerge ptm
+  where
+    -- An ongoing merge should never have 0 debt, even if the 'MergingRun' in it
+    -- says it is completed. We still need to update it to 'CompletedTreeMerge'.
+    -- Similarly, a pending merge needs some work to complete it, even if all
+    -- its inputs are empty.
+    --
+    -- Note that we can't use @max 1@, as this would violate the property that
+    -- supplying N credits reduces the remaining debt by at least N.
+    addDebtOne (MergeDebt !debt, !size) = (MergeDebt (debt + 1), size)
+
+{-# SPECIALISE remainingMergeDebtPendingMerge ::
+     PendingMerge IO h -> IO (MergeDebt, NumEntries) #-}
+remainingMergeDebtPendingMerge ::
+     (MonadMVar m, PrimMonad m)
+  => PendingMerge m h -> m (MergeDebt, NumEntries)
+remainingMergeDebtPendingMerge (PendingMerge _ prs mts) = do
+    -- TODO: optimise to reduce allocations
+    debtsPre <- traverse remainingMergeDebtPreExistingRun prs
+    debtsChild <- traverse remainingMergeDebt mts
+    return (debtOfNestedMerge (debtsPre <> debtsChild))
+  where
+    remainingMergeDebtPreExistingRun = \case
+        PreExistingRun        r  -> return (MergeDebt 0, Run.size r)
+        PreExistingMergingRun mr -> MR.remainingMergeDebt mr
+
+debtOfNestedMerge :: Vector (MergeDebt, NumEntries) -> (MergeDebt, NumEntries)
+debtOfNestedMerge debts =
+    -- complete all children, then one merge of them all (so debt is their size)
+    (MergeDebt (c + MR.MergeCredits n), NumEntries n)
+  where
+    (MergeDebt c, NumEntries n) = foldl' add (MergeDebt 0, NumEntries 0) debts
+
+    add (MergeDebt !d1, NumEntries !n1) (MergeDebt !d2, NumEntries !n2) =
+        (MergeDebt (d1 + d2), NumEntries (n1 + n2))

@@ -9,6 +9,7 @@ module Database.LSMTree.Internal.MergingRun (
   , new
   , newCompleted
   , duplicateRuns
+  , remainingMergeDebt
   , supplyCreditsRelative
   , supplyCreditsAbsolute
   , expectCompleted
@@ -741,6 +742,26 @@ atomicSpendCredits (CreditsVar var) spend =
 {-------------------------------------------------------------------------------
   The main algorithms
 -------------------------------------------------------------------------------}
+
+{-# SPECIALISE remainingMergeDebt ::
+     Ref (MergingRun t IO h) -> IO (MergeDebt, NumEntries) #-}
+-- | Calculate an upper bound on the merge credits required to complete the
+-- merge, as well as an upper bound on the size of the resulting run.
+remainingMergeDebt ::
+     (MonadMVar m, PrimMonad m)
+  => Ref (MergingRun t m h) -> m (MergeDebt, NumEntries)
+remainingMergeDebt (DeRef mr) = do
+    readMVar (mergeState mr) >>= \case
+      CompletedMerge r -> do
+        return (MergeDebt 0, Run.size r)
+      OngoingMerge _ _ -> do
+        let MergeDebt totalDebt = mergeDebt mr
+        let size = let MergeCredits n = totalDebt in NumEntries n
+        (SpentCredits spent, UnspentCredits unspent) <-
+          atomicReadCredits (mergeCreditsVar mr)
+        let debt = totalDebt - (spent + unspent)
+        assert (debt >= 0) $ pure ()
+        return (MergeDebt debt, size)
 
 {-# INLINE supplyCreditsRelative #-}
 -- | Supply the given amount of credits to a merging run. This /may/ cause an
