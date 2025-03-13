@@ -2,6 +2,10 @@
 --
 module Database.LSMTree.Internal.RunBuilder (
     RunBuilder (..)
+  , RunParams (..)
+  , RunDataCaching (..)
+  , RunBloomFilterAlloc (..)
+  , IndexType (..)
   , new
   , addKeyOp
   , addLargeSerialisedKeyOp
@@ -9,6 +13,7 @@ module Database.LSMTree.Internal.RunBuilder (
   , close
   ) where
 
+import           Control.DeepSeq (NFData (..))
 import           Control.Monad (when)
 import           Control.Monad.Class.MonadST (MonadST (..))
 import qualified Control.Monad.Class.MonadST as ST
@@ -23,11 +28,12 @@ import           Database.LSMTree.Internal.BlobRef (RawBlobRef)
 import           Database.LSMTree.Internal.ChecksumHandle
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry
-import           Database.LSMTree.Internal.Index (Index, IndexType)
+import           Database.LSMTree.Internal.Index (Index, IndexType (..))
 import           Database.LSMTree.Internal.Paths
 import           Database.LSMTree.Internal.RawOverflowPage (RawOverflowPage)
 import           Database.LSMTree.Internal.RawPage (RawPage)
-import           Database.LSMTree.Internal.RunAcc (RunAcc, RunBloomFilterAlloc)
+import           Database.LSMTree.Internal.RunAcc (RunAcc,
+                     RunBloomFilterAlloc (..))
 import qualified Database.LSMTree.Internal.RunAcc as RunAcc
 import           Database.LSMTree.Internal.Serialise
 import qualified System.FS.API as FS
@@ -47,8 +53,10 @@ import           System.FS.BlockIO.API (HasBlockIO)
 -- __Not suitable for concurrent construction from multiple threads!__
 --
 data RunBuilder m h = RunBuilder {
+      runBuilderParams     :: !RunParams
+
       -- | The file system paths for all the files used by the run.
-      runBuilderFsPaths    :: !RunFsPaths
+    , runBuilderFsPaths    :: !RunFsPaths
 
       -- | The run accumulator. This is the representation used for the
       -- morally pure subset of the run cnstruction functionality. In
@@ -65,13 +73,30 @@ data RunBuilder m h = RunBuilder {
     , runBuilderHasBlockIO :: !(HasBlockIO m h)
     }
 
+data RunParams = RunParams {
+       runParamCaching :: !RunDataCaching,
+       runParamAlloc   :: !RunBloomFilterAlloc,
+       runParamIndex   :: !IndexType
+     }
+  deriving stock (Eq, Show)
+
+instance NFData RunParams where
+  rnf (RunParams a b c) = rnf a `seq` rnf b `seq` rnf c
+
+-- | Should this run cache key\/ops data in memory?
+data RunDataCaching = CacheRunData | NoCacheRunData
+  deriving stock (Show, Eq)
+
+instance NFData RunDataCaching where
+  rnf CacheRunData   = ()
+  rnf NoCacheRunData = ()
+
 {-# SPECIALISE new ::
      HasFS IO h
   -> HasBlockIO IO h
+  -> RunParams
   -> RunFsPaths
   -> NumEntries
-  -> RunBloomFilterAlloc
-  -> IndexType
   -> IO (RunBuilder IO h) #-}
 -- | Create an 'RunBuilder' to start building a run.
 --
@@ -80,19 +105,19 @@ new ::
      (MonadST m, MonadSTM m)
   => HasFS m h
   -> HasBlockIO m h
+  -> RunParams
   -> RunFsPaths
   -> NumEntries  -- ^ an upper bound of the number of entries to be added
-  -> RunBloomFilterAlloc
-  -> IndexType
   -> m (RunBuilder m h)
-new hfs hbio runBuilderFsPaths numEntries alloc indexType = do
-    runBuilderAcc <- ST.stToIO $ RunAcc.new numEntries alloc indexType
+new hfs hbio runBuilderParams@RunParams{..} runBuilderFsPaths numEntries = do
+    runBuilderAcc <- ST.stToIO $
+                       RunAcc.new numEntries runParamAlloc runParamIndex
     runBuilderBlobOffset <- newPrimVar 0
 
     runBuilderHandles <- traverse (makeHandle hfs) (pathsForRunFiles runBuilderFsPaths)
 
     let builder = RunBuilder { runBuilderHasFS = hfs, runBuilderHasBlockIO = hbio, .. }
-    writeIndexHeader hfs (forRunIndex runBuilderHandles) indexType
+    writeIndexHeader hfs (forRunIndex runBuilderHandles) runParamIndex
     return builder
 
 {-# SPECIALISE addKeyOp ::
@@ -165,9 +190,10 @@ addLargeSerialisedKeyOp RunBuilder{..} key page overflowPages = do
     for_ chunks $ writeIndexChunk runBuilderHasFS (forRunIndex runBuilderHandles)
 
 {-# SPECIALISE unsafeFinalise ::
-     Bool
-  -> RunBuilder IO h
-  -> IO (HasFS IO h, HasBlockIO IO h, RunFsPaths, Bloom SerialisedKey, Index, NumEntries) #-}
+     RunBuilder IO h
+  -> IO (HasFS IO h, HasBlockIO IO h,
+         RunFsPaths, Bloom SerialisedKey, Index,
+         RunParams, NumEntries) #-}
 -- | Finish construction of the run.
 -- Writes the filter and index to file and leaves all written files on disk.
 --
@@ -176,10 +202,12 @@ addLargeSerialisedKeyOp RunBuilder{..} key page overflowPages = do
 -- TODO: Ensure proper cleanup even in presence of exceptions.
 unsafeFinalise ::
      (MonadST m, MonadSTM m, MonadThrow m)
-  => Bool -- ^ drop caches
-  -> RunBuilder m h
-  -> m (HasFS m h, HasBlockIO m h, RunFsPaths, Bloom SerialisedKey, Index, NumEntries)
-unsafeFinalise dropCaches RunBuilder {..} = do
+  => RunBuilder m h
+  -> m (HasFS m h, HasBlockIO m h,
+        RunFsPaths, Bloom SerialisedKey, Index,
+        RunParams, NumEntries)
+-- TODO: consider introducing a type for this big tuple
+unsafeFinalise RunBuilder {..} = do
     -- write final bits
     (mPage, mChunk, runFilter, runIndex, numEntries) <-
       ST.stToIO (RunAcc.unsafeFinalise runBuilderAcc)
@@ -197,11 +225,13 @@ unsafeFinalise dropCaches RunBuilder {..} = do
     dropCache runBuilderHasBlockIO (forRunFilterRaw runBuilderHandles)
     dropCache runBuilderHasBlockIO (forRunIndexRaw runBuilderHandles)
     -- drop the KOps and blobs files from the cache if asked for
-    when dropCaches $ do
+    when (runParamCaching runBuilderParams == NoCacheRunData) $ do
       dropCache runBuilderHasBlockIO (forRunKOpsRaw runBuilderHandles)
       dropCache runBuilderHasBlockIO (forRunBlobRaw runBuilderHandles)
     mapM_ (closeHandle runBuilderHasFS) runBuilderHandles
-    return (runBuilderHasFS, runBuilderHasBlockIO, runBuilderFsPaths, runFilter, runIndex, numEntries)
+    return (runBuilderHasFS, runBuilderHasBlockIO,
+            runBuilderFsPaths, runFilter, runIndex,
+            runBuilderParams, numEntries)
 
 {-# SPECIALISE close :: RunBuilder IO h -> IO () #-}
 -- | Close a run that is being constructed (has not been finalised yet),

@@ -7,18 +7,28 @@ module Database.LSMTree.Internal.Snapshot (
   , SnapLevels (..)
   , SnapLevel (..)
   , SnapIncomingRun (..)
-  , SnapMergingRunState (..)
+  , SnapMergingRun (..)
+    -- * MergeTree snapshot format
+  , SnapMergingTree(..)
+  , SnapMergingTreeState(..)
+  , SnapPendingMerge(..)
+  , SnapPreExistingRun(..)
     -- * Conversion to levels snapshot format
   , toSnapLevels
+    -- * Conversion to merging tree snapshot format
+  , toSnapMergingTree
     -- * Write buffer
   , snapshotWriteBuffer
   , openWriteBuffer
-    -- * Runs
-  , snapshotRuns
-  , openRuns
-  , releaseRuns
-    -- * Opening from levels snapshot format
+    -- * Run
+  , SnapshotRun (..)
+  , snapshotRun
+  , openRun
+    -- * Opening snapshot formats
+    -- ** Levels format
   , fromSnapLevels
+    -- ** Merging Tree format
+  , fromSnapMergingTree
     -- * Hard links
   , hardLinkRunFiles
   ) where
@@ -29,13 +39,12 @@ import           Control.Concurrent.Class.MonadSTM (MonadSTM)
 import           Control.DeepSeq (NFData (..))
 import           Control.Monad (void)
 import           Control.Monad.Class.MonadST (MonadST)
-import           Control.Monad.Class.MonadThrow (MonadMask, bracketOnError)
+import           Control.Monad.Class.MonadThrow (MonadMask, bracket,
+                     bracketOnError)
 import           Control.Monad.Primitive (PrimMonad)
 import           Control.RefCount
-import           Control.Tracer (Tracer, nullTracer)
 import           Data.Foldable (sequenceA_, traverse_)
 import           Data.Text (Text)
-import           Data.Traversable (for)
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.CRC32C (checkCRC)
@@ -45,13 +54,14 @@ import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.MergeSchedule
 import           Database.LSMTree.Internal.MergingRun (NumRuns (..))
 import qualified Database.LSMTree.Internal.MergingRun as MR
+import qualified Database.LSMTree.Internal.MergingTree as MT
 import           Database.LSMTree.Internal.Paths (ActiveDir (..), ForBlob (..),
                      ForKOps (..), NamedSnapshotDir (..), RunFsPaths (..),
                      WriteBufferFsPaths (..),
                      fromChecksumsFileForWriteBufferFiles, pathsForRunFiles,
-                     runChecksumsPath, writeBufferBlobPath,
+                     runChecksumsPath, runPath, writeBufferBlobPath,
                      writeBufferChecksumsPath, writeBufferKOpsPath)
-import           Database.LSMTree.Internal.Run (Run)
+import           Database.LSMTree.Internal.Run (Run, RunParams)
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.UniqCounter (UniqCounter,
@@ -95,7 +105,7 @@ data SnapshotMetaData = SnapshotMetaData {
     --
     -- One could argue that the 'SnapshotName' could be used to to hold this
     -- type information, but the file name of snapshot metadata is not guarded
-    -- by a checksum, wherease the contents of the file are. Therefore using the
+    -- by a checksum, whereas the contents of the file are. Therefore using the
     -- 'SnapshotLabel' is safer.
     snapMetaLabel     :: !SnapshotLabel
     -- | Whether a table is normal or monoidal.
@@ -111,12 +121,16 @@ data SnapshotMetaData = SnapshotMetaData {
     -- | The write buffer.
   , snapWriteBuffer   :: !RunNumber
     -- | The shape of the levels of the LSM tree.
-  , snapMetaLevels    :: !(SnapLevels RunNumber)
+  , snapMetaLevels    :: !(SnapLevels SnapshotRun)
+    -- | The state of tree merging of the LSM tree.
+  , snapMergingTree   :: !(Maybe (SnapMergingTree SnapshotRun))
   }
   deriving stock Eq
 
 instance NFData SnapshotMetaData where
-  rnf (SnapshotMetaData a b c d e) = rnf a `seq` rnf b `seq` rnf c `seq` rnf d `seq` rnf e
+  rnf (SnapshotMetaData a b c d e f) =
+    rnf a `seq` rnf b `seq` rnf c `seq`
+    rnf d `seq` rnf e `seq` rnf f
 
 {-------------------------------------------------------------------------------
   Levels snapshot format
@@ -156,19 +170,19 @@ instance NFData r => NFData (SnapLevel r) where
 -- both to zero).
 --
 data SnapIncomingRun r =
-    SnapMergingRun !MergePolicyForLevel
-                   !NumRuns
-                   !MergeDebt     -- ^ The total merge debt.
-                   !NominalCredits -- ^ The nominal credits supplied, and that
-                                   -- need to be supplied on snapshot open.
-                   !(SnapMergingRunState MR.LevelMergeType r)
-  | SnapSingleRun !r
+    SnapIncomingMergingRun
+      !MergePolicyForLevel
+      !NominalDebt
+      !NominalCredits -- ^ The nominal credits supplied, and that
+                     -- need to be supplied on snapshot open.
+      !(SnapMergingRun MR.LevelMergeType r)
+  | SnapIncomingSingleRun !r
   deriving stock (Eq, Functor, Foldable, Traversable)
 
 instance NFData r => NFData (SnapIncomingRun r) where
-  rnf (SnapMergingRun a b c d e) =
-      rnf a `seq` rnf b `seq` rnf c `seq` rnf d `seq` rnf e
-  rnf (SnapSingleRun a) = rnf a
+  rnf (SnapIncomingMergingRun a b c d) =
+      rnf a `seq` rnf b `seq` rnf c `seq` rnf d
+  rnf (SnapIncomingSingleRun a) = rnf a
 
 -- | The total number of supplied credits. This total is used on snapshot load
 -- to restore merging work that was lost when the snapshot was created.
@@ -176,14 +190,188 @@ newtype SuppliedCredits = SuppliedCredits { getSuppliedCredits :: Int }
   deriving stock (Eq, Read)
   deriving newtype NFData
 
-data SnapMergingRunState t r =
-    SnapCompletedMerge !r
-  | SnapOngoingMerge !(V.Vector r) !t
+data SnapMergingRun t r =
+    SnapCompletedMerge !NumRuns !MergeDebt !r
+  | SnapOngoingMerge   !RunParams !MergeCredits !(V.Vector r) !t
   deriving stock (Eq, Functor, Foldable, Traversable)
 
-instance (NFData t, NFData r) => NFData (SnapMergingRunState t r) where
-  rnf (SnapCompletedMerge a) = rnf a
-  rnf (SnapOngoingMerge a b) = rnf a `seq` rnf b
+instance (NFData t, NFData r) => NFData (SnapMergingRun t r) where
+  rnf (SnapCompletedMerge a b c)   = rnf a `seq` rnf b `seq` rnf c
+  rnf (SnapOngoingMerge   a b c d) = rnf a `seq` rnf b `seq` rnf c `seq` rnf d
+
+{-------------------------------------------------------------------------------
+  Snapshot MergingTree
+-------------------------------------------------------------------------------}
+
+newtype SnapMergingTree r = SnapMergingTree (SnapMergingTreeState r)
+  deriving stock (Eq, Functor, Foldable, Traversable)
+  deriving newtype NFData
+
+data SnapMergingTreeState r =
+    SnapCompletedTreeMerge !r
+  | SnapPendingTreeMerge   !(SnapPendingMerge r)
+  | SnapOngoingTreeMerge   !(SnapMergingRun MR.TreeMergeType r)
+  deriving stock (Eq, Functor, Foldable, Traversable)
+
+instance NFData r => NFData (SnapMergingTreeState r) where
+  rnf (SnapCompletedTreeMerge a) = rnf a
+  rnf (SnapPendingTreeMerge a)   = rnf a
+  rnf (SnapOngoingTreeMerge a)   = rnf a
+
+data SnapPendingMerge r =
+    SnapPendingLevelMerge
+      ![SnapPreExistingRun r]
+      !(Maybe (SnapMergingTree r))
+  | SnapPendingUnionMerge
+      ![SnapMergingTree r]
+  deriving stock (Eq, Functor, Foldable, Traversable)
+
+instance NFData r => NFData (SnapPendingMerge r) where
+  rnf (SnapPendingLevelMerge a b) = rnf a `seq` rnf b
+  rnf (SnapPendingUnionMerge a)   = rnf a
+
+data SnapPreExistingRun r =
+    SnapPreExistingRun        !r
+  | SnapPreExistingMergingRun !(SnapMergingRun MR.LevelMergeType r)
+  deriving stock (Eq, Functor, Foldable, Traversable)
+
+instance NFData r => NFData (SnapPreExistingRun r) where
+  rnf (SnapPreExistingRun a)        = rnf a
+  rnf (SnapPreExistingMergingRun a) = rnf a
+
+{-------------------------------------------------------------------------------
+  Opening from merging tree snapshot format
+-------------------------------------------------------------------------------}
+
+{-# SPECIALISE fromSnapMergingTree ::
+     HasFS IO h
+  -> HasBlockIO IO h
+  -> UniqCounter IO
+  -> ResolveSerialisedValue
+  -> ActiveDir
+  -> ActionRegistry IO
+  -> SnapMergingTree (Ref (Run IO h))
+  -> IO (Ref (MT.MergingTree IO h))
+  #-}
+-- | Converts a snapshot of a merging tree of runs to a real merging tree.
+--
+-- Returns a new reference. Input runs remain owned by the caller.
+fromSnapMergingTree ::
+     forall m h. (MonadMask m, MonadMVar m, MonadSTM m, MonadST m)
+  => HasFS m h
+  -> HasBlockIO m h
+  -> UniqCounter m
+  -> ResolveSerialisedValue
+  -> ActiveDir
+  -> ActionRegistry m
+  -> SnapMergingTree (Ref (Run m h))
+  -> m (Ref (MT.MergingTree m h))
+fromSnapMergingTree hfs hbio uc resolve dir =
+    go
+  where
+    -- Reference strategy:
+    -- * go returns a fresh reference
+    -- * go ensures the returned reference will be cleaned up on failure,
+    --   using withRollback
+    -- * All results from recursive calls must be released locally on the
+    --   happy path.
+    go :: ActionRegistry m
+       -> SnapMergingTree (Ref (Run m h))
+       -> m (Ref (MT.MergingTree m h))
+
+    go reg (SnapMergingTree (SnapCompletedTreeMerge run)) =
+      withRollback reg
+        (MT.newCompletedMerge run)
+        releaseRef
+
+    go reg (SnapMergingTree (SnapPendingTreeMerge
+                              (SnapPendingLevelMerge prs mmt))) = do
+      prs' <- traverse (fromSnapPreExistingRun reg) prs
+      mmt' <- traverse (go reg) mmt
+      mt   <- withRollback reg
+                (MT.newPendingLevelMerge prs' mmt')
+                releaseRef
+      traverse_ (delayedCommit reg . releasePER) prs'
+      traverse_ (delayedCommit reg . releaseRef) mmt'
+      return mt
+
+    go reg (SnapMergingTree (SnapPendingTreeMerge
+                              (SnapPendingUnionMerge mts))) = do
+      mts' <- traverse (go reg) mts
+      mt   <- withRollback reg
+                (MT.newPendingUnionMerge mts')
+                releaseRef
+      traverse_ (delayedCommit reg . releaseRef) mts'
+      return mt
+
+    go reg (SnapMergingTree (SnapOngoingTreeMerge smrs)) = do
+      mr <- withRollback reg
+               (fromSnapMergingRun hfs hbio uc resolve dir smrs)
+               releaseRef
+      mt <- withRollback reg
+              (MT.newOngoingMerge mr)
+              releaseRef
+      delayedCommit reg (releaseRef mr)
+      return mt
+
+    -- Returns fresh refs, which must be released locally.
+    fromSnapPreExistingRun :: ActionRegistry m
+                           -> SnapPreExistingRun (Ref (Run m h))
+                           -> m (MT.PreExistingRun m h)
+    fromSnapPreExistingRun reg (SnapPreExistingRun run) =
+      MT.PreExistingRun <$>
+        withRollback reg (dupRef run) releaseRef
+    fromSnapPreExistingRun reg (SnapPreExistingMergingRun smrs) =
+      MT.PreExistingMergingRun <$>
+        withRollback reg
+          (fromSnapMergingRun hfs hbio uc resolve dir smrs)
+          releaseRef
+
+    releasePER (MT.PreExistingRun         r) = releaseRef r
+    releasePER (MT.PreExistingMergingRun mr) = releaseRef mr
+
+{-------------------------------------------------------------------------------
+  Conversion to merge tree snapshot format
+-------------------------------------------------------------------------------}
+
+{-# SPECIALISE toSnapMergingTree :: Ref (MT.MergingTree IO h) -> IO (SnapMergingTree (Ref (Run IO h))) #-}
+toSnapMergingTree ::
+     (PrimMonad m, MonadMVar m)
+  => Ref (MT.MergingTree m h)
+  -> m (SnapMergingTree (Ref (Run m h)))
+toSnapMergingTree (DeRef (MT.MergingTree mStateVar _mCounter)) =
+  withMVar mStateVar $ \mState -> SnapMergingTree <$> toSnapMergingTreeState mState
+
+{-# SPECIALISE toSnapMergingTreeState :: MT.MergingTreeState IO h -> IO (SnapMergingTreeState (Ref (Run IO h))) #-}
+toSnapMergingTreeState ::
+     (PrimMonad m, MonadMVar m)
+  => MT.MergingTreeState m h
+  -> m (SnapMergingTreeState (Ref (Run m h)))
+toSnapMergingTreeState (MT.CompletedTreeMerge r) = pure $ SnapCompletedTreeMerge r
+toSnapMergingTreeState (MT.PendingTreeMerge p) = SnapPendingTreeMerge <$> toSnapPendingMerge p
+toSnapMergingTreeState (MT.OngoingTreeMerge mergingRun) =
+  SnapOngoingTreeMerge <$> toSnapMergingRun mergingRun
+
+{-# SPECIALISE toSnapPendingMerge :: MT.PendingMerge IO h -> IO (SnapPendingMerge (Ref (Run IO h))) #-}
+toSnapPendingMerge ::
+     (PrimMonad m, MonadMVar m)
+  => MT.PendingMerge m h
+  -> m (SnapPendingMerge (Ref (Run m h)))
+toSnapPendingMerge (MT.PendingUnionMerge mts) =
+  SnapPendingUnionMerge <$> traverse toSnapMergingTree (V.toList mts)
+toSnapPendingMerge (MT.PendingLevelMerge pes mmt) = do
+  pes' <- traverse toSnapPreExistingRun pes
+  mmt' <- traverse toSnapMergingTree mmt
+  pure $ SnapPendingLevelMerge (V.toList pes') mmt'
+
+{-# SPECIALISE toSnapPreExistingRun :: MT.PreExistingRun IO h -> IO (SnapPreExistingRun (Ref (Run IO h))) #-}
+toSnapPreExistingRun ::
+     (PrimMonad m, MonadMVar m)
+  => MT.PreExistingRun m h
+  -> m (SnapPreExistingRun (Ref (Run m h)))
+toSnapPreExistingRun (MT.PreExistingRun run) = pure $ SnapPreExistingRun run
+toSnapPreExistingRun (MT.PreExistingMergingRun peMergingRun) =
+  SnapPreExistingMergingRun <$> toSnapMergingRun peMergingRun
 
 {-------------------------------------------------------------------------------
   Conversion to levels snapshot format
@@ -219,33 +407,36 @@ toSnapIncomingRun ::
 toSnapIncomingRun ir = do
     s <- snapshotIncomingRun ir
     case s of
-      Left r -> pure $! SnapSingleRun r
+      Left r -> pure $! SnapIncomingSingleRun r
       Right (mergePolicy,
-             numRuns,
-             _nominalDebt,  -- not stored
+             nominalDebt,
              nominalCredits,
-             mergeDebt,
-             _mergeCredits, -- not stored
-             mergingRunState) -> do
+             mergingRun) -> do
         -- We need to know how many credits were supplied so we can restore merge
         -- work on snapshot load.
-        -- TODO: MR.snapshot needs to return duplicated run references, and we
-        -- need to arrange to release them when the snapshoting is done.
-        let smrs = toSnapMergingRunState mergingRunState
-        pure $!
-          SnapMergingRun
-            mergePolicy
-            numRuns
-            mergeDebt
-            nominalCredits
-            smrs
+        smrs <- toSnapMergingRun mergingRun
+        pure $! SnapIncomingMergingRun mergePolicy nominalDebt nominalCredits smrs
 
-toSnapMergingRunState ::
-     MR.MergingRunState t m h
-  -> SnapMergingRunState t (Ref (Run m h))
-toSnapMergingRunState = \case
-    MR.CompletedMerge r  -> SnapCompletedMerge r
-    MR.OngoingMerge rs m -> SnapOngoingMerge rs (Merge.mergeType m)
+{-# SPECIALISE toSnapMergingRun ::
+     Ref (MR.MergingRun t IO h)
+  -> IO (SnapMergingRun t (Ref (Run IO h))) #-}
+toSnapMergingRun ::
+     (PrimMonad m, MonadMVar m)
+  => Ref (MR.MergingRun t m h)
+  -> m (SnapMergingRun t (Ref (Run m h)))
+toSnapMergingRun !mr = do
+    -- TODO: MR.snapshot needs to return duplicated run references, and we
+    -- need to arrange to release them when the snapshotting is done.
+    (numRuns, mergeDebt, mergeCredits, state) <- MR.snapshot mr
+    case state of
+      MR.CompletedMerge r  ->
+        pure $! SnapCompletedMerge numRuns mergeDebt r
+
+      MR.OngoingMerge rs m ->
+          pure $! SnapOngoingMerge runParams mergeCredits rs mergeType
+        where
+          runParams = Merge.mergeRunParams m
+          mergeType = Merge.mergeType m
 
 {-------------------------------------------------------------------------------
   Write Buffer
@@ -253,11 +444,11 @@ toSnapMergingRunState = \case
 
 {-# SPECIALISE
   snapshotWriteBuffer ::
-       ActionRegistry IO
-    -> HasFS IO h
+       HasFS IO h
     -> HasBlockIO IO h
     -> UniqCounter IO
     -> UniqCounter IO
+    -> ActionRegistry IO
     -> ActiveDir
     -> NamedSnapshotDir
     -> WriteBuffer
@@ -266,17 +457,17 @@ toSnapMergingRunState = \case
   #-}
 snapshotWriteBuffer ::
      (MonadMVar m, MonadSTM m, MonadST m, MonadMask m)
-  => ActionRegistry m
-  -> HasFS m h
+  => HasFS m h
   -> HasBlockIO m h
   -> UniqCounter m
   -> UniqCounter m
+  -> ActionRegistry m
   -> ActiveDir
   -> NamedSnapshotDir
   -> WriteBuffer
   -> Ref (WriteBufferBlobs m h)
   -> m WriteBufferFsPaths
-snapshotWriteBuffer reg hfs hbio activeUc snapUc activeDir snapDir wb wbb = do
+snapshotWriteBuffer hfs hbio activeUc snapUc reg activeDir snapDir wb wbb = do
   -- Write the write buffer and write buffer blobs to the active directory.
   activeWriteBufferNumber <- uniqueToRunNumber <$> incrUniqCounter activeUc
   let activeWriteBufferPaths = WriteBufferFsPaths (getActiveDir activeDir) activeWriteBufferNumber
@@ -291,13 +482,13 @@ snapshotWriteBuffer reg hfs hbio activeUc snapUc activeDir snapDir wb wbb = do
   -- Hard link the write buffer and write buffer blobs to the snapshot directory.
   snapWriteBufferNumber <- uniqueToRunNumber <$> incrUniqCounter snapUc
   let snapWriteBufferPaths = WriteBufferFsPaths (getNamedSnapshotDir snapDir) snapWriteBufferNumber
-  hardLink reg hfs hbio
+  hardLink hfs hbio reg
     (writeBufferKOpsPath activeWriteBufferPaths)
     (writeBufferKOpsPath snapWriteBufferPaths)
-  hardLink reg hfs hbio
+  hardLink hfs hbio reg
     (writeBufferBlobPath activeWriteBufferPaths)
     (writeBufferBlobPath snapWriteBufferPaths)
-  hardLink reg hfs hbio
+  hardLink hfs hbio reg
     (writeBufferChecksumsPath activeWriteBufferPaths)
     (writeBufferChecksumsPath snapWriteBufferPaths)
   pure snapWriteBufferPaths
@@ -336,7 +527,7 @@ openWriteBuffer reg resolve hfs hbio uc activeDir snapWriteBufferPaths = do
   activeWriteBufferNumber <- uniqueToInt <$> incrUniqCounter uc
   let activeWriteBufferBlobPath =
         getActiveDir activeDir </> FS.mkFsPath [show activeWriteBufferNumber] <.> "wbblobs"
-  copyFile reg hfs hbio (writeBufferBlobPath snapWriteBufferPaths) activeWriteBufferBlobPath
+  copyFile hfs reg (writeBufferBlobPath snapWriteBufferPaths) activeWriteBufferBlobPath
   writeBufferBlobs <-
     withRollback reg
       (WBB.open hfs activeWriteBufferBlobPath FS.AllowExisting)
@@ -352,101 +543,106 @@ openWriteBuffer reg resolve hfs hbio uc activeDir snapWriteBufferPaths = do
   Runs
 -------------------------------------------------------------------------------}
 
-{-# SPECIALISE snapshotRuns ::
-     ActionRegistry IO
-  -> UniqCounter IO
-  -> NamedSnapshotDir
-  -> SnapLevels (Ref (Run IO h))
-  -> IO (SnapLevels RunNumber) #-}
--- | @'snapshotRuns' _ _ snapUc targetDir levels@ creates hard links for all run
--- files associated with the runs in @levels@, and puts the new directory
--- entries in the @targetDir@ directory. The entries are renamed using @snapUc@.
-snapshotRuns ::
-     (MonadMask m, PrimMonad m)
-  => ActionRegistry m
-  -> UniqCounter m
-  -> NamedSnapshotDir
-  -> SnapLevels (Ref (Run m h))
-  -> m (SnapLevels RunNumber)
-snapshotRuns reg snapUc (NamedSnapshotDir targetDir) levels = do
-    for levels $ \run@(DeRef Run.Run {
-        Run.runHasFS = hfs,
-        Run.runHasBlockIO = hbio
-      }) -> do
-        rn <- uniqueToRunNumber <$> incrUniqCounter snapUc
-        let sourcePaths = Run.runFsPaths run
-        let targetPaths = sourcePaths { runDir = targetDir , runNumber = rn}
-        hardLinkRunFiles reg hfs hbio sourcePaths targetPaths
-        pure (runNumber targetPaths)
+-- | Information needed to open a 'Run' from disk using 'snapshotRun' and
+-- 'openRun'.
+--
+-- TODO: one could imagine needing only the 'RunNumber' to identify the files
+-- on disk, and the other parameters being stored with the run itself, rather
+-- than needing to be supplied.
+data SnapshotRun = SnapshotRun {
+       snapRunNumber  :: !RunNumber,
+       snapRunCaching :: !Run.RunDataCaching,
+       snapRunIndex   :: !Run.IndexType
+     }
+  deriving stock Eq
 
-{-# SPECIALISE openRuns ::
-     ActionRegistry IO
-  -> HasFS IO h
+instance NFData SnapshotRun where
+  rnf (SnapshotRun a b c) = rnf a `seq` rnf b `seq` rnf c
+
+{-# SPECIALISE snapshotRun ::
+     HasFS IO h
   -> HasBlockIO IO h
-  -> TableConfig
   -> UniqCounter IO
+  -> ActionRegistry IO
+  -> NamedSnapshotDir
+  -> Ref (Run IO h)
+  -> IO SnapshotRun #-}
+-- | @'snapshotRun' _ _ snapUc _ targetDir run@ creates hard links for all files
+-- associated with the @run@, and puts the new directory entries in the
+-- @targetDir@ directory. The entries are renamed using @snapUc@.
+snapshotRun ::
+     (MonadMask m, PrimMonad m)
+  => HasFS m h
+  -> HasBlockIO m h
+  -> UniqCounter m
+  -> ActionRegistry m
+  -> NamedSnapshotDir
+  -> Ref (Run m h)
+  -> m SnapshotRun
+snapshotRun hfs hbio snapUc reg (NamedSnapshotDir targetDir) run = do
+    rn <- uniqueToRunNumber <$> incrUniqCounter snapUc
+    let sourcePaths = Run.runFsPaths run
+    let targetPaths = sourcePaths { runDir = targetDir , runNumber = rn}
+    hardLinkRunFiles hfs hbio reg sourcePaths targetPaths
+    pure SnapshotRun {
+           snapRunNumber  = runNumber targetPaths,
+           snapRunCaching = Run.runDataCaching run,
+           snapRunIndex   = Run.runIndexType run
+         }
+
+{-# SPECIALISE openRun ::
+     HasFS IO h
+  -> HasBlockIO IO h
+  -> UniqCounter IO
+  -> ActionRegistry IO
   -> NamedSnapshotDir
   -> ActiveDir
-  -> SnapLevels RunNumber
-  -> IO (SnapLevels (Ref (Run IO h))) #-}
--- | @'openRuns' _ _ _ _ uniqCounter sourceDir targetDir levels@ takes all run
--- files that are referenced by @levels@, and hard links them from @sourceDir@
+  -> SnapshotRun
+  -> IO (Ref (Run IO h)) #-}
+-- | @'openRun' _ _ uniqCounter _ sourceDir targetDir snaprun@ takes all run
+-- files that are referenced by @snaprun@, and hard links them from @sourceDir@
 -- into @targetDir@ with new, unique names (using @uniqCounter@). Each set of
 -- (hard linked) files that represents a run is opened and verified, returning
--- 'Run's as a result.
+-- 'Run' as a result.
 --
--- The result must ultimately be released using 'releaseRuns'.
-openRuns ::
+-- The result must ultimately be released using 'releaseRef'.
+openRun ::
      (MonadMask m, MonadSTM m, MonadST m)
-  => ActionRegistry m
-  -> HasFS m h
+  => HasFS m h
   -> HasBlockIO m h
-  -> TableConfig
   -> UniqCounter m
+  -> ActionRegistry m
   -> NamedSnapshotDir
   -> ActiveDir
-  -> SnapLevels RunNumber
-  -> m (SnapLevels (Ref (Run m h)))
-openRuns
-  reg hfs hbio TableConfig{..} uc
-  (NamedSnapshotDir sourceDir) (ActiveDir targetDir) (SnapLevels levels) = do
-    levels' <-
-      V.iforM levels $ \i level ->
-        let ln = LevelNo (i+1) in
-        let
-          caching   = diskCachePolicyForLevel confDiskCachePolicy ln
-          indexType = indexTypeForRun confFencePointerIndex
-        in
-        for level $ \runNum -> do
-          let sourcePaths = RunFsPaths sourceDir runNum
-          runNum' <- uniqueToRunNumber <$> incrUniqCounter uc
-          let targetPaths = RunFsPaths targetDir runNum'
-          hardLinkRunFiles reg hfs hbio sourcePaths targetPaths
+  -> SnapshotRun
+  -> m (Ref (Run m h))
+openRun hfs hbio uc reg
+        (NamedSnapshotDir sourceDir) (ActiveDir targetDir)
+        SnapshotRun {
+          snapRunNumber  = runNum,
+          snapRunCaching = caching,
+          snapRunIndex   = indexType
+        } = do
+    let sourcePaths = RunFsPaths sourceDir runNum
+    runNum' <- uniqueToRunNumber <$> incrUniqCounter uc
+    let targetPaths = RunFsPaths targetDir runNum'
+    hardLinkRunFiles hfs hbio reg sourcePaths targetPaths
 
-          withRollback reg
-            (Run.openFromDisk hfs hbio caching indexType targetPaths)
-            releaseRef
-    pure (SnapLevels levels')
-
-{-# SPECIALISE releaseRuns ::
-     ActionRegistry IO -> SnapLevels (Ref (Run IO h)) -> IO ()
-  #-}
-releaseRuns ::
-     (MonadMask m, MonadST m)
-  => ActionRegistry m -> SnapLevels (Ref (Run m h)) -> m ()
-releaseRuns reg = traverse_ $ \r -> delayedCommit reg (releaseRef r)
+    withRollback reg
+      (Run.openFromDisk hfs hbio caching indexType targetPaths)
+      releaseRef
 
 {-------------------------------------------------------------------------------
   Opening from levels snapshot format
 -------------------------------------------------------------------------------}
 
 {-# SPECIALISE fromSnapLevels ::
-     ActionRegistry IO
-  -> HasFS IO h
+     HasFS IO h
   -> HasBlockIO IO h
-  -> TableConfig
   -> UniqCounter IO
+  -> TableConfig
   -> ResolveSerialisedValue
+  -> ActionRegistry IO
   -> ActiveDir
   -> SnapLevels (Ref (Run IO h))
   -> IO (Levels IO h)
@@ -454,21 +650,19 @@ releaseRuns reg = traverse_ $ \r -> delayedCommit reg (releaseRef r)
 -- | Duplicates runs and re-creates merging runs.
 fromSnapLevels ::
      forall m h. (MonadMask m, MonadMVar m, MonadSTM m, MonadST m)
-  => ActionRegistry m
-  -> HasFS m h
+  => HasFS m h
   -> HasBlockIO m h
-  -> TableConfig
   -> UniqCounter m
+  -> TableConfig
   -> ResolveSerialisedValue
+  -> ActionRegistry m
   -> ActiveDir
   -> SnapLevels (Ref (Run m h))
   -> m (Levels m h)
-fromSnapLevels reg hfs hbio conf uc resolve dir (SnapLevels levels) =
+fromSnapLevels hfs hbio uc conf resolve reg dir (SnapLevels levels) =
     V.iforM levels $ \i -> fromSnapLevel (LevelNo (i+1))
   where
     -- TODO: we may wish to trace the merges created during snapshot restore:
-    tr :: Tracer m (AtLevel MergeTrace)
-    tr = nullTracer
 
     fromSnapLevel :: LevelNo -> SnapLevel (Ref (Run m h)) -> m (Level m h)
     fromSnapLevel ln SnapLevel{snapIncoming, snapResidentRuns} = do
@@ -485,32 +679,69 @@ fromSnapLevels reg hfs hbio conf uc resolve dir (SnapLevels levels) =
          LevelNo
       -> SnapIncomingRun (Ref (Run m h))
       -> m (IncomingRun m h)
-    fromSnapIncomingRun ln (SnapSingleRun run) =
-        newIncomingSingleRun tr ln run
+    fromSnapIncomingRun _ln (SnapIncomingSingleRun run) =
+        newIncomingSingleRun run
 
-    fromSnapIncomingRun ln (SnapMergingRun mpfl nr md _nc
-                                           (SnapCompletedMerge r)) =
-      newIncomingCompletedMergingRun tr conf ln mpfl nr md r
+    fromSnapIncomingRun ln (SnapIncomingMergingRun mergePolicy nominalDebt
+                                                   nominalCredits smrs) =
+      bracket
+        (fromSnapMergingRun hfs hbio uc resolve dir smrs)
+        releaseRef $ \mr -> do
 
-    fromSnapIncomingRun ln (SnapMergingRun mpfl _nr _md nc
-                                           (SnapOngoingMerge rs mt)) = do
-      bracketOnError (newIncomingMergingRun tr hfs hbio dir uc
-                                  conf resolve
-                                  mpfl mt ln rs) releaseIncomingRun $ \ir -> do
+        ir <- newIncomingMergingRun mergePolicy nominalDebt mr
+        -- This will set the correct nominal credits, but it will not do any
+        -- more merging work because fromSnapMergingRun already supplies
+        -- all the merging credits already.
+        supplyCreditsIncomingRun conf ln ir nominalCredits
+        return ir
+
+{-# SPECIALISE fromSnapMergingRun ::
+     MR.IsMergeType t
+  => HasFS IO h
+  -> HasBlockIO IO h
+  -> UniqCounter IO
+  -> ResolveSerialisedValue
+  -> ActiveDir
+  -> SnapMergingRun t (Ref (Run IO h))
+  -> IO (Ref (MR.MergingRun t IO h)) #-}
+fromSnapMergingRun ::
+     (MonadMask m, MonadMVar m, MonadSTM m, MonadST m, MR.IsMergeType t)
+  => HasFS m h
+  -> HasBlockIO m h
+  -> UniqCounter m
+  -> ResolveSerialisedValue
+  -> ActiveDir
+  -> SnapMergingRun t (Ref (Run m h))
+  -> m (Ref (MR.MergingRun t m h))
+fromSnapMergingRun _hfs _hbio _uc _resolve _dir
+                   (SnapCompletedMerge numRuns mergeDebt r) =
+    MR.newCompleted numRuns mergeDebt r
+
+fromSnapMergingRun hfs hbio uc resolve dir
+                   (SnapOngoingMerge runParams mergeCredits rs mergeType) = do
+    bracketOnError
+      (do uniq <- incrUniqCounter uc
+          let runPaths = runPath dir (uniqueToRunNumber uniq)
+          MR.new hfs hbio resolve runParams mergeType runPaths rs)
+      releaseRef $ \mr -> do
         -- When a snapshot is created, merge progress is lost, so we have to
         -- redo merging work here. The MergeCredits in SnapMergingRun tracks
         -- how many credits were supplied before the snapshot was taken.
-        supplyCreditsIncomingRun conf ln ir nc
-        return ir
+
+        --TODO: the threshold should be stored with the MergingRun
+        -- here we want to supply the credits now, so we can use a threshold of 1
+        let thresh = MR.CreditThreshold (MR.UnspentCredits 1)
+        _ <- MR.supplyCreditsAbsolute mr thresh mergeCredits
+        return mr
 
 {-------------------------------------------------------------------------------
   Hard links
 -------------------------------------------------------------------------------}
 
 {-# SPECIALISE hardLinkRunFiles ::
-     ActionRegistry IO
-  -> HasFS IO h
+     HasFS IO h
   -> HasBlockIO IO h
+  -> ActionRegistry IO
   -> RunFsPaths
   -> RunFsPaths
   -> IO () #-}
@@ -519,38 +750,38 @@ fromSnapLevels reg hfs hbio conf uc resolve dir (SnapLevels levels) =
 -- name for the new directory entry.
 hardLinkRunFiles ::
      (MonadMask m, PrimMonad m)
-  => ActionRegistry m
-  -> HasFS m h
+  => HasFS m h
   -> HasBlockIO m h
+  -> ActionRegistry m
   -> RunFsPaths
   -> RunFsPaths
   -> m ()
-hardLinkRunFiles reg hfs hbio sourceRunFsPaths targetRunFsPaths = do
+hardLinkRunFiles hfs hbio reg sourceRunFsPaths targetRunFsPaths = do
     let sourcePaths = pathsForRunFiles sourceRunFsPaths
         targetPaths = pathsForRunFiles targetRunFsPaths
-    sequenceA_ (hardLink reg hfs hbio <$> sourcePaths <*> targetPaths)
-    hardLink reg hfs hbio (runChecksumsPath sourceRunFsPaths) (runChecksumsPath targetRunFsPaths)
+    sequenceA_ (hardLink hfs hbio reg <$> sourcePaths <*> targetPaths)
+    hardLink hfs hbio reg (runChecksumsPath sourceRunFsPaths) (runChecksumsPath targetRunFsPaths)
 
 {-# SPECIALISE
   hardLink ::
-       ActionRegistry IO
-    -> HasFS IO h
+       HasFS IO h
     -> HasBlockIO IO h
+    -> ActionRegistry IO
     -> FS.FsPath
     -> FS.FsPath
     -> IO ()
   #-}
--- | @'hardLink' reg hfs hbio sourcePath targetPath@ creates a hard link from
+-- | @'hardLink' hfs hbio reg sourcePath targetPath@ creates a hard link from
 -- @sourcePath@ to @targetPath@.
 hardLink ::
      (MonadMask m, PrimMonad m)
-  => ActionRegistry m
-  -> HasFS m h
+  => HasFS m h
   -> HasBlockIO m h
+  -> ActionRegistry m
   -> FS.FsPath
   -> FS.FsPath
   -> m ()
-hardLink reg hfs hbio sourcePath targetPath = do
+hardLink hfs hbio reg sourcePath targetPath = do
     withRollback_ reg
       (FS.createHardLink hbio sourcePath targetPath)
       (FS.removeFile hfs targetPath)
@@ -561,23 +792,21 @@ hardLink reg hfs hbio sourcePath targetPath = do
 
 {-# SPECIALISE
   copyFile ::
-       ActionRegistry IO
-    -> HasFS IO h
-    -> HasBlockIO IO h
+       HasFS IO h
+    -> ActionRegistry IO
     -> FS.FsPath
     -> FS.FsPath
     -> IO ()
   #-}
--- | @'copyFile' reg hfs hbio source target@ copies the @source@ path to the @target@ path.
+-- | @'copyFile' hfs reg source target@ copies the @source@ path to the @target@ path.
 copyFile ::
      (MonadMask m, PrimMonad m)
-  => ActionRegistry m
-  -> HasFS m h
-  -> HasBlockIO m h
+  => HasFS m h
+  -> ActionRegistry m
   -> FS.FsPath
   -> FS.FsPath
   -> m ()
-copyFile reg hfs _hbio sourcePath targetPath =
+copyFile hfs reg sourcePath targetPath =
     flip (withRollback_ reg) (FS.removeFile hfs targetPath) $
       FS.withFile hfs sourcePath FS.ReadMode $ \sourceHandle ->
         FS.withFile hfs targetPath (FS.WriteMode FS.MustBeNew) $ \targetHandle -> do

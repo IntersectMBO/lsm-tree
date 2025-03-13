@@ -214,8 +214,17 @@ deriving stock instance Generic (Run m h)
 deriving anyclass instance (Typeable m, Typeable (PrimState m), Typeable h)
                         => NoThunks (Run m h)
 
+deriving stock instance Generic RunParams
+deriving anyclass instance NoThunks RunParams
+
+deriving stock instance Generic RunBloomFilterAlloc
+deriving anyclass instance NoThunks RunBloomFilterAlloc
+
 deriving stock instance Generic RunDataCaching
 deriving anyclass instance NoThunks RunDataCaching
+
+deriving stock instance Generic IndexType
+deriving anyclass instance NoThunks IndexType
 
 {-------------------------------------------------------------------------------
   Paths

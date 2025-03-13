@@ -4,6 +4,7 @@ module Test.Database.LSMTree.Internal.Snapshot.Codec.Golden
 
 import           Codec.CBOR.Write (toLazyByteString)
 import           Control.Monad (when)
+import           Data.Bifunctor (second)
 import qualified Data.ByteString.Lazy as BSL (writeFile)
 import           Data.Foldable (fold)
 import qualified Data.List as List
@@ -15,9 +16,12 @@ import           Database.LSMTree.Common (BloomFilterAlloc (..),
 import           Database.LSMTree.Internal.Config (FencePointerIndex (..),
                      MergePolicy (..), MergeSchedule (..), SizeRatio (..))
 import           Database.LSMTree.Internal.MergeSchedule
-                     (MergePolicyForLevel (..), NominalCredits (..))
+                     (MergePolicyForLevel (..), NominalCredits (..),
+                     NominalDebt (..))
 import           Database.LSMTree.Internal.MergingRun (NumRuns (..))
 import qualified Database.LSMTree.Internal.MergingRun as MR
+import           Database.LSMTree.Internal.RunBuilder (IndexType (..),
+                     RunBloomFilterAlloc (..), RunDataCaching (..))
 import           Database.LSMTree.Internal.RunNumber (RunNumber (..))
 import           Database.LSMTree.Internal.Snapshot
 import           Database.LSMTree.Internal.Snapshot.Codec
@@ -37,6 +41,7 @@ tests =  handleOutputFiles . testGroup
     , testCodecSnapshotTableType
     , testCodecTableConfig
     , testCodecSnapLevels
+    , testCodecMergingTree
     ]
 
 -- | The mount point is defined as the location of the golden file data directory
@@ -45,7 +50,7 @@ goldenDataMountPoint :: MountPoint
 goldenDataMountPoint = MountPoint "test/golden-file-data/snapshot-codec"
 
 -- | Delete output files on test-case success.
--- Change the option here if this is undesireable.
+-- Change the option here if this is undesirable.
 handleOutputFiles :: TestTree -> TestTree
 handleOutputFiles = Tasty.localOption Au.OnPass
 
@@ -80,7 +85,7 @@ snapshotCodecTest name datum =
       outputAction = do
         -- Ensure that if the output file already exists, we remove it and
         -- re-write out the serialized data. This ensures that there are no
-        -- false-positives, false-negatives, or irrelavent I/O exceptions.
+        -- false-positives, false-negatives, or irrelevant I/O exceptions.
         removeIfExists snapshotFsPath
         BSL.writeFile snapshotHsPath . toLazyByteString $ encode datum
 
@@ -93,7 +98,8 @@ testCodecSnapshotLabel =
             (tagC, valC) = basicTableConfig
             valD = basicRunNumber
             (tagE, valE) = basicSnapLevels
-        in  (fuseAnnotations [tagA, tagB, tagC, tagE ], SnapshotMetaData valA valB valC valD valE)
+            (tagF, valF) = basicSnapMergingTree
+        in  (fuseAnnotations [tagA, tagB, tagC, tagE, tagF ], SnapshotMetaData valA valB valC valD valE valF)
   in  testCodecBuilder "SnapshotLabels" $ assembler <$> enumerateSnapshotLabel
 
 testCodecSnapshotTableType :: TestTree
@@ -103,7 +109,8 @@ testCodecSnapshotTableType =
             (tagC, valC) = basicTableConfig
             valD = basicRunNumber
             (tagE, valE) = basicSnapLevels
-        in  (fuseAnnotations [tagA, tagB, tagC, tagE ], SnapshotMetaData valA valB valC valD valE)
+            (tagF, valF) = basicSnapMergingTree
+        in  (fuseAnnotations [tagA, tagB, tagC, tagE, tagF ], SnapshotMetaData valA valB valC valD valE valF)
   in  testCodecBuilder "SnapshotTables" $ assembler <$> enumerateSnapshotTableType
 
 testCodecTableConfig :: TestTree
@@ -113,7 +120,8 @@ testCodecTableConfig =
             (tagB, valB) = basicSnapshotTableType
             valD = basicRunNumber
             (tagE, valE) = basicSnapLevels
-        in  (fuseAnnotations [tagA, tagB, tagC, tagE ], SnapshotMetaData valA valB valC valD valE)
+            (tagF, valF) = basicSnapMergingTree
+        in  (fuseAnnotations [tagA, tagB, tagC, tagE, tagF ], SnapshotMetaData valA valB valC valD valE valF)
   in  testCodecBuilder "SnapshotConfig" $ assembler <$> enumerateTableConfig
 
 testCodecSnapLevels :: TestTree
@@ -123,8 +131,20 @@ testCodecSnapLevels =
             (tagB, valB) = basicSnapshotTableType
             (tagC, valC) = basicTableConfig
             valD = basicRunNumber
-        in  (fuseAnnotations [tagA, tagB, tagC, tagE ], SnapshotMetaData valA valB valC valD valE)
+            (tagF, valF) = basicSnapMergingTree
+        in  (fuseAnnotations [tagA, tagB, tagC, tagE, tagF ], SnapshotMetaData valA valB valC valD valE valF)
   in  testCodecBuilder "SnapshotLevels" $ assembler <$> enumerateSnapLevels
+
+testCodecMergingTree :: TestTree
+testCodecMergingTree =
+  let assembler (tagF, valF) =
+        let (tagA, valA) = basicSnapshotLabel
+            (tagB, valB) = basicSnapshotTableType
+            (tagC, valC) = basicTableConfig
+            valD = basicRunNumber
+            (tagE, valE) = basicSnapLevels
+        in  (fuseAnnotations [tagA, tagB, tagC, tagE, tagF ], SnapshotMetaData valA valB valC valD valE valF)
+  in  testCodecBuilder "SnapshotMergingTree" $ assembler <$> enumerateSnapMergingTree
 
 testCodecBuilder :: TestName -> [(ComponentAnnotation, SnapshotMetaData)] -> TestTree
 testCodecBuilder tName metadata =
@@ -154,8 +174,11 @@ basicTableConfig = ( fuseAnnotations $ "T0" : replicate 4 blank, defaultTableCon
 basicRunNumber :: RunNumber
 basicRunNumber = enumerateRunNumbers
 
-basicSnapLevels :: (ComponentAnnotation, SnapLevels RunNumber)
+basicSnapLevels :: (ComponentAnnotation, SnapLevels SnapshotRun)
 basicSnapLevels = head enumerateSnapLevels
+
+basicSnapMergingTree :: (ComponentAnnotation, Maybe (SnapMergingTree SnapshotRun))
+basicSnapMergingTree = head enumerateSnapMergingTree
 
 {----------------
 Enumeration of SnapshotMetaData sub-components
@@ -195,42 +218,50 @@ enumerateTableConfig =
     , (g, merge ) <- [("G0", OneShot), ("G1", Incremental)]
     ]
 
-enumerateSnapLevels :: [(ComponentAnnotation, SnapLevels RunNumber)]
+enumerateSnapLevels :: [(ComponentAnnotation, SnapLevels SnapshotRun)]
 enumerateSnapLevels = fmap (SnapLevels . V.singleton) <$> enumerateSnapLevel
 
 {----------------
 Enumeration of SnapLevel sub-components
 ----------------}
 
-enumerateSnapLevel :: [(ComponentAnnotation, SnapLevel RunNumber)]
+enumerateSnapLevel :: [(ComponentAnnotation, SnapLevel SnapshotRun)]
 enumerateSnapLevel = do
   (a, run) <- enumerateSnapIncomingRun
-  (b, vec) <- enumerateVectorRunNumber
+  (b, vec) <- enumerateVectorRunInfo
   [( fuseAnnotations [ a, b ], SnapLevel run vec)]
 
-enumerateSnapIncomingRun :: [(ComponentAnnotation, SnapIncomingRun RunNumber)]
+enumerateSnapIncomingRun :: [(ComponentAnnotation, SnapIncomingRun SnapshotRun)]
 enumerateSnapIncomingRun =
   let
       inSnaps =
         [ (fuseAnnotations ["R1", a, b],
-           SnapMergingRun policy numRuns mergeDebt nominalCredits sState)
+           SnapIncomingMergingRun policy nominalDebt nominalCredits sState)
         | (a, policy ) <- [("P0", LevelTiering), ("P1", LevelLevelling)]
-        , numRuns <- NumRuns <$> [ magicNumber1 ]
-        , mergeDebt      <- MR.MergeDebt    <$> [ magicNumber2 ]
-        , nominalCredits <- NominalCredits <$>  [ magicNumber1 ]
-        , (b, sState ) <- enumerateSnapMergingRunState enumerateLevelMergeType
+        , nominalDebt    <- NominalDebt    <$> [ magicNumber2 ]
+        , nominalCredits <- NominalCredits <$> [ magicNumber1 ]
+        , (b, sState ) <- enumerateSnapMergingRun enumerateLevelMergeType
         ]
   in  fold
-      [ [(fuseAnnotations $ "R0" : replicate 4 blank, SnapSingleRun enumerateRunNumbers)]
+      [ [(fuseAnnotations $ "R0" : replicate 4 blank,
+          SnapIncomingSingleRun enumerateOpenRunInfo)]
       , inSnaps
       ]
 
-enumerateSnapMergingRunState ::
-     [(ComponentAnnotation, t)] -> [(ComponentAnnotation, SnapMergingRunState t RunNumber)]
-enumerateSnapMergingRunState mTypes =
-  (fuseAnnotations ["C0", blank, blank], SnapCompletedMerge enumerateRunNumbers) :
-    [ (fuseAnnotations ["C1", a, b], SnapOngoingMerge runVec mType)
-    | (a, runVec ) <- enumerateVectorRunNumber
+enumerateSnapMergingRun ::
+     [(ComponentAnnotation, t)]
+  -> [(ComponentAnnotation, SnapMergingRun t SnapshotRun)]
+enumerateSnapMergingRun mTypes =
+    [ (fuseAnnotations ["C0", blank, blank],
+       SnapCompletedMerge numRuns mergeDebt enumerateOpenRunInfo)
+    | numRuns   <- NumRuns <$> [ magicNumber1 ]
+    , mergeDebt <- (MR.MergeDebt. MR.MergeCredits) <$> [ magicNumber2 ]
+    ]
+ ++ [ (fuseAnnotations ["C1", a, b],
+       SnapOngoingMerge runParams mergeCredits runVec mType)
+    | let runParams = enumerateRunParams
+    , mergeCredits <- MR.MergeCredits <$> [ magicNumber2 ]
+    , (a, runVec ) <- enumerateVectorRunInfo
     , (b, mType  ) <- mTypes
     ]
 
@@ -238,12 +269,72 @@ enumerateLevelMergeType :: [(ComponentAnnotation, MR.LevelMergeType)]
 enumerateLevelMergeType =
   [("L0", MR.MergeMidLevel), ("L1", MR.MergeLastLevel)]
 
-enumerateVectorRunNumber :: [(ComponentAnnotation, Vector RunNumber)]
-enumerateVectorRunNumber =
+enumerateVectorRunInfo :: [(ComponentAnnotation, Vector SnapshotRun)]
+enumerateVectorRunInfo =
   [ ("V0", mempty)
-  , ("V1", V.fromList [RunNumber magicNumber1])
-  , ("V2", V.fromList [RunNumber magicNumber1, RunNumber magicNumber2 ])
+  , ("V1", V.fromList [enumerateOpenRunInfo])
+  , ("V2", V.fromList [enumerateOpenRunInfo,
+                       enumerateOpenRunInfo {
+                         snapRunNumber = RunNumber magicNumber2
+                       } ])
   ]
+
+{----------------
+Enumeration of SnapMergingTree sub-components
+----------------}
+
+enumerateSnapMergingTree :: [(ComponentAnnotation, Maybe (SnapMergingTree SnapshotRun))]
+enumerateSnapMergingTree =
+  let noneTrees = (fuseAnnotations $ "M0" : replicate 11 blank, Nothing)
+      someTrees = reannotate <$> enumerateSnapMergingTreeState True
+      reannotate (tag, val) = (fuseAnnotations ["M1", tag], Just val)
+  in  noneTrees : someTrees
+
+enumerateSnapMergingTreeState :: Bool -> [(ComponentAnnotation, SnapMergingTree SnapshotRun)]
+enumerateSnapMergingTreeState expandable =
+  let s0 = [ (fuseAnnotations $ "S0" : replicate 10 blank, SnapCompletedTreeMerge enumerateOpenRunInfo) ]
+      s1 = do
+          (tagX, valX) <- enumerateSnapPendingMerge expandable
+          [ (fuseAnnotations ["S1", tagX], SnapPendingTreeMerge valX) ]
+      s2 = do
+          (tagX, valX) <- enumerateSnapOngoingTreeMerge
+          [ (fuseAnnotations ["S2", tagX], valX) ]
+  in second SnapMergingTree <$> fold [ s0, s1, s2 ]
+
+enumerateSnapOngoingTreeMerge :: [(ComponentAnnotation, SnapMergingTreeState SnapshotRun)]
+enumerateSnapOngoingTreeMerge = do
+  (tagX, valX) <- enumerateSnapMergingRun enumerateTreeMergeType
+  let value = SnapOngoingTreeMerge valX
+  pure ( fuseAnnotations $ ["G0", blank, tagX] <> replicate 5 blank, value )
+
+enumerateSnapPendingMerge :: Bool -> [(ComponentAnnotation, SnapPendingMerge SnapshotRun)]
+enumerateSnapPendingMerge expandable =
+  let (tagTrees, subTrees)
+        | not expandable = ("M0", [])
+        | otherwise = ("M1", snd <$> enumerateSnapMergingTreeState False)
+      headMay []    = Nothing
+      headMay (x:_) = Just x
+      prefix = do
+        extra <- [False, True ]
+        (tagPre, valPre) <- enumerateSnapPreExistingRun
+        (tagExt, valExt) <-
+          if extra
+          then second pure <$> enumerateSnapPreExistingRun
+          else [(fuseAnnotations $ replicate 4 blank, [])]
+        let preValues = [ valPre ] <> valExt
+        pure (fuseAnnotations [ "P0", tagPre, tagExt, tagTrees], SnapPendingLevelMerge preValues $ headMay subTrees)
+  in  prefix <> [(fuseAnnotations $ fold [["P1"], replicate 8 blank, [tagTrees]], SnapPendingUnionMerge subTrees)]
+
+enumerateSnapPreExistingRun :: [(ComponentAnnotation, SnapPreExistingRun SnapshotRun)]
+enumerateSnapPreExistingRun =
+    ( fuseAnnotations ("E0" : replicate 3 blank), SnapPreExistingRun enumerateOpenRunInfo)
+  : [ (fuseAnnotations ["E1", tagX], SnapPreExistingMergingRun valX)
+    | (tagX, valX) <- enumerateSnapMergingRun enumerateLevelMergeType
+    ]
+
+enumerateTreeMergeType :: [(ComponentAnnotation, MR.TreeMergeType)]
+enumerateTreeMergeType =
+  [("T0", MR.MergeLevel), ("T1", MR.MergeUnion)]
 
 {----------------
 Enumeration of SnapshotMetaData sub-sub-components and so on...
@@ -265,6 +356,26 @@ enumerateDiskCachePolicy =
 
 enumerateRunNumbers :: RunNumber
 enumerateRunNumbers = RunNumber magicNumber2
+
+--TODO: use a proper enumeration, but don't cause a combinatorial explosion.
+enumerateRunParams :: MR.RunParams
+enumerateRunParams =
+    MR.RunParams {
+      MR.runParamCaching = NoCacheRunData,
+      MR.runParamAlloc   = RunAllocFixed 10,
+      MR.runParamIndex   = Compact
+    }
+
+--TODO: use a proper enumeration, but don't cause a combinatorial explosion of
+-- golden tests. Perhaps do all combos as a direct golden test, but then where
+-- it is embedded, just use one combo.
+enumerateOpenRunInfo :: SnapshotRun
+enumerateOpenRunInfo =
+    SnapshotRun {
+      snapRunNumber  = enumerateRunNumbers,
+      snapRunCaching = CacheRunData,
+      snapRunIndex   = Compact
+    }
 
 -- Randomly chosen numbers
 magicNumber1, magicNumber2, magicNumber3 :: Enum e => e

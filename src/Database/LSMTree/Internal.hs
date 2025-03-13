@@ -64,7 +64,7 @@ module Database.LSMTree.Internal (
   , openSnapshot
   , deleteSnapshot
   , listSnapshots
-    -- * Mutiple writable tables
+    -- * Multiple writable tables
   , duplicate
     -- * Table union
   , unions
@@ -323,7 +323,7 @@ data SessionState m h =
   | SessionClosed
 
 data SessionEnv m h = SessionEnv {
-    -- | The path to the directory in which this sesion is live. This is a path
+    -- | The path to the directory in which this session is live. This is a path
     -- relative to root of the 'HasFS' instance.
     --
     -- INVARIANT: the session root is never changed during the lifetime of a
@@ -1234,18 +1234,30 @@ createSnapshot snap label tableType t = do
         let wb = tableWriteBuffer content
         let wbb = tableWriteBufferBlobs content
         snapWriteBufferNumber <- Paths.writeBufferNumber <$>
-            snapshotWriteBuffer reg hfs hbio activeUc snapUc activeDir snapDir wb wbb
+            snapshotWriteBuffer hfs hbio activeUc snapUc reg activeDir snapDir wb wbb
 
         -- Convert to snapshot format
         snapLevels <- toSnapLevels (tableLevels content)
 
         -- Hard link runs into the named snapshot directory
-        snapLevels' <- snapshotRuns reg snapUc snapDir snapLevels
+        snapLevels' <- traverse (snapshotRun hfs hbio snapUc reg snapDir) snapLevels
 
-        -- Release the table content
+        -- If a merging tree exists, do the same hard-linking for the runs within
+        mTreeOpt <- case tableUnionLevel content of
+          NoUnion -> pure Nothing
+          Union mTreeRef -> do
+            mTree <- toSnapMergingTree mTreeRef
+            Just <$> traverse (snapshotRun hfs hbio snapUc reg snapDir) mTree
+
         releaseTableContent reg content
 
-        let snapMetaData = SnapshotMetaData label tableType (tableConfig t) snapWriteBufferNumber snapLevels'
+        let snapMetaData = SnapshotMetaData
+                label
+                tableType
+                (tableConfig t)
+                snapWriteBufferNumber
+                snapLevels'
+                mTreeOpt
             SnapshotMetaDataFile contentPath = Paths.snapshotMetaDataFile snapDir
             SnapshotMetaDataChecksumFile checksumPath = Paths.snapshotMetaDataChecksumFile snapDir
         writeFileSnapshotMetaData hfs contentPath checksumPath snapMetaData
@@ -1290,7 +1302,7 @@ openSnapshot sesh label tableType override snap resolve = do
           Left e  -> throwIO (ErrSnapshotDeserialiseFailure e snap)
           Right x -> pure x
 
-        let SnapshotMetaData label' tableType' conf snapWriteBuffer snapLevels = snapMetaData
+        let SnapshotMetaData label' tableType' conf snapWriteBuffer snapLevels mTreeOpt = snapMetaData
 
         unless (tableType == tableType') $
           throwIO (ErrSnapshotWrongTableType snap tableType tableType')
@@ -1308,11 +1320,18 @@ openSnapshot sesh label tableType override snap resolve = do
         (tableWriteBuffer, tableWriteBufferBlobs) <- openWriteBuffer reg resolve hfs hbio uc activeDir snapWriteBufferPaths
 
         -- Hard link runs into the active directory,
-        snapLevels' <- openRuns reg hfs hbio conf (sessionUniqCounter seshEnv) snapDir activeDir snapLevels
+        snapLevels' <- traverse (openRun hfs hbio uc reg snapDir activeDir) snapLevels
+        unionLevel <- case mTreeOpt of
+              Nothing -> pure NoUnion
+              Just mTree -> do
+                snapTree <- traverse (openRun hfs hbio uc reg snapDir activeDir) mTree
+                mt <- fromSnapMergingTree hfs hbio uc resolve activeDir reg snapTree
+                traverse_ (delayedCommit reg . releaseRef) snapTree
+                pure (Union mt)
 
         -- Convert from the snapshot format, restoring merge progress in the process
-        tableLevels <- fromSnapLevels reg hfs hbio conf (sessionUniqCounter seshEnv) resolve activeDir snapLevels'
-        releaseRuns reg snapLevels'
+        tableLevels <- fromSnapLevels hfs hbio uc conf resolve reg activeDir snapLevels'
+        traverse_ (delayedCommit reg . releaseRef) snapLevels'
 
         tableCache <- mkLevelsCache reg tableLevels
         newWith reg sesh seshEnv conf' am $! TableContent {
@@ -1320,7 +1339,7 @@ openSnapshot sesh label tableType override snap resolve = do
           , tableWriteBufferBlobs
           , tableLevels
           , tableCache
-          , tableUnionLevel = NoUnion  -- TODO: at some point also load union level from snapshot
+          , tableUnionLevel = unionLevel
           }
 
 {-# SPECIALISE deleteSnapshot ::
@@ -1370,7 +1389,7 @@ listSnapshots sesh = do
                else pure $ Nothing
 
 {-------------------------------------------------------------------------------
-  Mutiple writable tables
+  Multiple writable tables
 -------------------------------------------------------------------------------}
 
 {-# SPECIALISE duplicate :: Table IO h -> IO (Table IO h) #-}
@@ -1534,28 +1553,19 @@ writeBufferToNewRun SessionEnv {
                       sessionHasBlockIO  = hbio,
                       sessionUniqCounter = uc
                     }
-                    conf@TableConfig {
-                      confDiskCachePolicy,
-                      confFencePointerIndex
-                    }
+                    conf
                     TableContent{
                       tableWriteBuffer,
                       tableWriteBufferBlobs
                     }
   | WB.null tableWriteBuffer = pure Nothing
   | otherwise                = Just <$> do
-    !n <- incrUniqCounter uc
-    let !ln        = LevelNo 1
-        !cache     = diskCachePolicyForLevel confDiskCachePolicy ln
-        !alloc     = bloomFilterAllocForLevel conf ln
-        !indexType = indexTypeForRun confFencePointerIndex
-        !path      = Paths.runPath (Paths.activeDir root)
-                                   (uniqueToRunNumber n)
-    Run.fromWriteBuffer hfs hbio
-      cache
-      alloc
-      indexType
-      path
+    !uniq <- incrUniqCounter uc
+    let (!runParams, !runPaths) = mergingRunParamsForLevel
+                                   (Paths.activeDir root) conf uniq (LevelNo 1)
+    Run.fromWriteBuffer
+      hfs hbio
+      runParams runPaths
       tableWriteBuffer
       tableWriteBufferBlobs
 

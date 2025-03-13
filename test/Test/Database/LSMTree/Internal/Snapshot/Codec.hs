@@ -17,6 +17,8 @@ import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.MergeSchedule
 import           Database.LSMTree.Internal.MergingRun
+import           Database.LSMTree.Internal.RunBuilder (IndexType (..),
+                     RunBloomFilterAlloc (..), RunDataCaching (..))
 import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.Snapshot
 import           Database.LSMTree.Internal.Snapshot.Codec
@@ -152,6 +154,7 @@ testAll test = [
       test (Proxy @SnapshotMetaData)
     , test (Proxy @SnapshotLabel)
     , test (Proxy @SnapshotTableType)
+    , test (Proxy @SnapshotRun)
       -- TableConfig
     , test (Proxy @TableConfig)
     , test (Proxy @MergePolicy)
@@ -163,18 +166,28 @@ testAll test = [
     , test (Proxy @DiskCachePolicy)
     , test (Proxy @MergeSchedule)
       -- SnapLevels
-    , test (Proxy @(SnapLevels RunNumber))
-    , test (Proxy @(SnapLevel RunNumber))
-    , test (Proxy @(V.Vector RunNumber))
+    , test (Proxy @(SnapLevels SnapshotRun))
+    , test (Proxy @(SnapLevel SnapshotRun))
+    , test (Proxy @(V.Vector SnapshotRun))
     , test (Proxy @RunNumber)
-    , test (Proxy @(SnapIncomingRun RunNumber))
+    , test (Proxy @(SnapIncomingRun SnapshotRun))
     , test (Proxy @NumRuns)
     , test (Proxy @MergePolicyForLevel)
-    , test (Proxy @(SnapMergingRunState LevelMergeType RunNumber))
+    , test (Proxy @RunDataCaching)
+    , test (Proxy @RunBloomFilterAlloc)
+    , test (Proxy @IndexType)
+    , test (Proxy @RunParams)
+    , test (Proxy @(SnapMergingRun LevelMergeType SnapshotRun))
     , test (Proxy @MergeDebt)
+    , test (Proxy @MergeCredits)
+    , test (Proxy @NominalDebt)
     , test (Proxy @NominalCredits)
     , test (Proxy @LevelMergeType)
     , test (Proxy @TreeMergeType)
+    , test (Proxy @(SnapMergingTree SnapshotRun))
+    , test (Proxy @(SnapMergingTreeState SnapshotRun))
+    , test (Proxy @(SnapPendingMerge SnapshotRun))
+    , test (Proxy @(SnapPreExistingRun SnapshotRun))
     ]
 
 {-------------------------------------------------------------------------------
@@ -192,16 +205,24 @@ deriving newtype instance Arbitrary a => Arbitrary (Versioned a)
 -------------------------------------------------------------------------------}
 
 instance Arbitrary SnapshotMetaData where
-  arbitrary = SnapshotMetaData <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary  <*> arbitrary
-  shrink (SnapshotMetaData a b c d e) =
-      [ SnapshotMetaData a' b' c' d' e'
-      | (a', b', c', d', e') <- shrink (a, b, c, d, e)]
+  arbitrary = SnapshotMetaData <$>
+      arbitrary <*> arbitrary <*> arbitrary <*>
+      arbitrary <*> arbitrary <*> arbitrary
+  shrink (SnapshotMetaData a b c d e f) =
+      [ SnapshotMetaData a' b' c' d' e' f'
+      | (a', b', c', d', e', f') <- shrink (a, b, c, d, e, f)]
 
 deriving newtype instance Arbitrary SnapshotLabel
 
 instance Arbitrary SnapshotTableType where
   arbitrary = elements [SnapNormalTable, SnapMonoidalTable]
   shrink _ = []
+
+instance Arbitrary SnapshotRun where
+  arbitrary = SnapshotRun <$> arbitrary <*> arbitrary <*> arbitrary
+  shrink (SnapshotRun a b c) =
+      [ SnapshotRun a' b' c'
+      | (a', b', c') <- shrink (a, b, c)]
 
 {-------------------------------------------------------------------------------
   Arbitrary: TableConfig
@@ -258,13 +279,13 @@ instance Arbitrary MergeSchedule where
   Arbitrary: SnapLevels
 -------------------------------------------------------------------------------}
 
-instance Arbitrary (SnapLevels RunNumber) where
+instance Arbitrary r => Arbitrary (SnapLevels r) where
   arbitrary = do
     n <- chooseInt (0, 10)
     SnapLevels . V.fromList <$> vector n
   shrink (SnapLevels x) = SnapLevels . V.fromList <$> shrink (V.toList x)
 
-instance Arbitrary (SnapLevel RunNumber) where
+instance Arbitrary r => Arbitrary (SnapLevel r) where
   arbitrary = SnapLevel <$> arbitrary <*> arbitraryShortVector
   shrink (SnapLevel a b) = [SnapLevel a' b' | (a', b') <- shrink (a, b)]
 
@@ -273,18 +294,23 @@ arbitraryShortVector = do
     n <- chooseInt (0, 5)
     V.fromList <$> vector n
 
-deriving newtype instance Arbitrary RunNumber
+instance Arbitrary RunNumber where
+  arbitrary = RunNumber <$> arbitrarySizedNatural
+  shrink (RunNumber n) =
+       -- fewer shrinks
+       [RunNumber 0 | n > 0]
+    ++ [RunNumber (n `div` 2) | n >= 2]
 
-instance Arbitrary (SnapIncomingRun RunNumber) where
+instance Arbitrary r => Arbitrary (SnapIncomingRun r) where
   arbitrary = oneof [
-        SnapMergingRun <$> arbitrary <*> arbitrary <*> arbitrary
-                       <*> arbitrary <*> arbitrary
-      , SnapSingleRun <$> arbitrary
+        SnapIncomingMergingRun <$> arbitrary <*> arbitrary
+                               <*> arbitrary <*> arbitrary
+      , SnapIncomingSingleRun <$> arbitrary
       ]
-  shrink (SnapMergingRun a b c d e) =
-      [ SnapMergingRun a' b' c' d' e'
-      | (a', b', c', d', e') <- shrink (a, b, c, d, e) ]
-  shrink (SnapSingleRun a)  = SnapSingleRun <$> shrink a
+  shrink (SnapIncomingMergingRun a b c d) =
+      [ SnapIncomingMergingRun a' b' c' d'
+      | (a', b', c', d') <- shrink (a, b, c, d) ]
+  shrink (SnapIncomingSingleRun a)  = SnapIncomingSingleRun <$> shrink a
 
 deriving newtype instance Arbitrary NumRuns
 
@@ -292,28 +318,135 @@ instance Arbitrary MergePolicyForLevel where
   arbitrary = elements [LevelTiering, LevelLevelling]
   shrink _ = []
 
-instance Arbitrary t => Arbitrary (SnapMergingRunState t RunNumber) where
+instance (Arbitrary t, Arbitrary r) => Arbitrary (SnapMergingRun t r) where
   arbitrary = oneof [
-        SnapCompletedMerge <$> arbitrary
+        SnapCompletedMerge <$> arbitrary <*> arbitrary <*> arbitrary
       , SnapOngoingMerge <$> arbitrary <*> arbitrary
+                         <*> arbitrary <*> arbitrary
       ]
-  shrink (SnapCompletedMerge x) = SnapCompletedMerge <$> shrink x
-  shrink (SnapOngoingMerge x y) =
-      [ SnapOngoingMerge x' y' | (x', y') <- shrink (x, y) ]
+  shrink (SnapCompletedMerge a b c) =
+      [ SnapCompletedMerge  a' b' c'
+      | (a', b', c') <- shrink (a, b, c) ]
+  shrink (SnapOngoingMerge a b c d) =
+      [ SnapOngoingMerge  a' b' c' d'
+      | (a', b', c', d') <- shrink (a, b, c, d) ]
 
 deriving newtype instance Arbitrary MergeDebt
 deriving newtype instance Arbitrary MergeCredits
+deriving newtype instance Arbitrary NominalDebt
 deriving newtype instance Arbitrary NominalCredits
+
+{-------------------------------------------------------------------------------
+  RunParams
+-------------------------------------------------------------------------------}
+
+instance Arbitrary RunParams where
+  arbitrary = RunParams <$> arbitrary <*> arbitrary <*> arbitrary
+  shrink (RunParams a b c) =
+    [ RunParams  a' b' c'
+    | (a', b', c') <- shrink (a, b, c) ]
+
+instance Arbitrary RunDataCaching where
+  arbitrary = elements [CacheRunData, NoCacheRunData]
+  shrink _ = []
+
+instance Arbitrary IndexType where
+  arbitrary = elements [Ordinary, Compact]
+  shrink _ = []
+
+instance Arbitrary RunBloomFilterAlloc where
+  arbitrary = oneof [
+        RunAllocFixed      <$> arbitrary
+      , RunAllocRequestFPR <$> arbitrary
+      , RunAllocMonkey     <$> arbitrary
+      ]
+  shrink (RunAllocFixed x)      = RunAllocFixed <$> shrink x
+  shrink (RunAllocRequestFPR x) = RunAllocRequestFPR <$> shrink x
+  shrink (RunAllocMonkey x)     = RunAllocMonkey <$> shrink x
 
 {-------------------------------------------------------------------------------
   Show
 -------------------------------------------------------------------------------}
 
 deriving stock instance Show SnapshotMetaData
+deriving stock instance Show SnapshotRun
 deriving stock instance Show r => Show (SnapLevels r)
 deriving stock instance Show r => Show (SnapLevel r)
 deriving stock instance Show r => Show (SnapIncomingRun r)
-deriving stock instance (Show t, Show r) => Show (SnapMergingRunState t r)
+deriving stock instance (Show t, Show r) => Show (SnapMergingRun t r)
+
+deriving stock instance Show r => Show (SnapMergingTree r)
+deriving stock instance Show r => Show (SnapMergingTreeState r)
+deriving stock instance Show r => Show (SnapPendingMerge r)
+deriving stock instance Show r => Show (SnapPreExistingRun r)
+
 deriving stock instance Show MergeDebt
 deriving stock instance Show MergeCredits
+deriving stock instance Show NominalDebt
 deriving stock instance Show NominalCredits
+
+{-------------------------------------------------------------------------------
+  Arbitrary: SnapshotMetaData
+-------------------------------------------------------------------------------}
+
+deriving newtype instance Arbitrary r => Arbitrary (SnapMergingTree r)
+
+instance Arbitrary r => Arbitrary (SnapMergingTreeState r) where
+  arbitrary = inductiveMergingTreeState inductiveLimit
+  shrink (SnapCompletedTreeMerge a) = SnapCompletedTreeMerge <$> shrink a
+  shrink (SnapPendingTreeMerge a)   = SnapPendingTreeMerge <$> shrink a
+  shrink (SnapOngoingTreeMerge a)   = SnapOngoingTreeMerge <$> shrink a
+
+instance Arbitrary r => Arbitrary (SnapPendingMerge r) where
+  arbitrary = inductivePendingTreeMerge inductiveLimit
+  shrink (SnapPendingUnionMerge a) = SnapPendingUnionMerge <$> shrinkList shrink a
+  shrink (SnapPendingLevelMerge a b) =
+      [ SnapPendingLevelMerge a' b' | a' <- shrinkList shrink a, b' <- shrink b ]
+
+
+instance Arbitrary r => Arbitrary (SnapPreExistingRun r) where
+  arbitrary = oneof [
+        SnapPreExistingRun <$> arbitrary
+      , SnapPreExistingMergingRun <$> arbitrary
+      ]
+  shrink (SnapPreExistingRun a)        = SnapPreExistingRun <$> shrink a
+  shrink (SnapPreExistingMergingRun a) = SnapPreExistingMergingRun <$> shrink a
+
+-- | The 'SnapMergingTree' is an inductive data-type and therefore we must limit
+-- the recursive depth at which new 'Arbitrary' sub-trees are generated. Hence
+-- the need for this limit. This limit is the "gas" for the inductive functions.
+-- At reach recursive call, the "gas" value decremented until it reaches zero.
+-- Each inductive function ensures it never create a forest of sub-trees greater
+-- than the /monotonically decreasing/ gas parameter it received.
+inductiveLimit :: Int
+inductiveLimit = 4
+
+-- |
+-- Generate an 'Arbitrary', "gas-limited" 'SnapMergingTree'.
+inductiveSized :: Arbitrary r => Int -> Gen (SnapMergingTree r)
+inductiveSized = fmap SnapMergingTree . inductiveMergingTreeState
+
+-- |
+-- Generate an 'Arbitrary', "gas-limited" 'SnapMergingTreeState'.
+inductiveMergingTreeState :: Arbitrary a => Int -> Gen (SnapMergingTreeState a)
+inductiveMergingTreeState gas = oneof [
+        SnapCompletedTreeMerge <$> arbitrary
+      , SnapPendingTreeMerge <$> inductivePendingTreeMerge gas
+      , SnapOngoingTreeMerge <$> arbitrary
+      ]
+
+-- |
+-- Generate an 'Arbitrary', "gas-limited" 'SnapPendingMerge'.
+inductivePendingTreeMerge :: Arbitrary a => Int -> Gen (SnapPendingMerge a)
+inductivePendingTreeMerge gas = oneof [
+        SnapPendingLevelMerge <$> genPreExistings <*> genMaybeSubTree
+      , SnapPendingUnionMerge <$> genListSubtrees
+      ]
+    where
+      subGen = inductiveSized . max 0 $ gas - 1
+      -- Define custom generators to ensure that the sub-trees are less than
+      -- or equal to the "gas" parameter.
+      genPreExistings = genVectorsUpToBound gas arbitrary
+      genListSubtrees = genVectorsUpToBound gas subGen
+      genMaybeSubTree = oneof [ pure Nothing, Just <$> subGen ]
+      genVectorsUpToBound x gen = oneof $ flip vectorOf gen <$> [ 0 .. x ]

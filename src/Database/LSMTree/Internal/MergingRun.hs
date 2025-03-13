@@ -6,6 +6,7 @@ module Database.LSMTree.Internal.MergingRun (
     -- * Merging run
     MergingRun
   , NumRuns (..)
+  , RunParams (..)
   , new
   , newCompleted
   , duplicateRuns
@@ -61,16 +62,14 @@ import           Data.Primitive.PrimVar
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Assertions (assert)
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
-import           Database.LSMTree.Internal.Index (IndexType)
 import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
 import           Database.LSMTree.Internal.Merge (IsMergeType (..),
-                     LevelMergeType (..), Merge, StepResult (..),
-                     TreeMergeType (..))
+                     LevelMergeType (..), Merge, RunParams (..),
+                     StepResult (..), TreeMergeType (..))
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..))
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
-import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc)
 import           System.FS.API (HasFS)
 import           System.FS.BlockIO.API (HasBlockIO)
 
@@ -132,9 +131,7 @@ instance NFData MergeKnownCompleted where
   => HasFS IO h
   -> HasBlockIO IO h
   -> ResolveSerialisedValue
-  -> Run.RunDataCaching
-  -> RunBloomFilterAlloc
-  -> IndexType
+  -> RunParams
   -> t
   -> RunFsPaths
   -> V.Vector (Ref (Run IO h))
@@ -151,19 +148,17 @@ new ::
   => HasFS m h
   -> HasBlockIO m h
   -> ResolveSerialisedValue
-  -> Run.RunDataCaching
-  -> RunBloomFilterAlloc
-  -> IndexType
+  -> RunParams
   -> t
   -> RunFsPaths
   -> V.Vector (Ref (Run m h))
   -> m (Ref (MergingRun t m h))
-new hfs hbio resolve caching alloc indexType ty runPaths inputRuns =
+new hfs hbio resolve runParams ty runPaths inputRuns =
     -- If creating the Merge fails, we must release the references again.
     withActionRegistry $ \reg -> do
       runs <- V.mapM (\r -> withRollback reg (dupRef r) releaseRef) inputRuns
       merge <- fromMaybe (error "newMerge: merges can not be empty")
-        <$> Merge.new hfs hbio caching alloc indexType ty resolve runPaths runs
+        <$> Merge.new hfs hbio runParams ty resolve runPaths runs
       let numInputRuns = NumRuns $ V.length runs
       let mergeDebt = numEntriesToMergeDebt (V.foldMap' Run.size runs)
       unsafeNew
