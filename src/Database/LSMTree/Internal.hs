@@ -209,7 +209,7 @@ data LSMTreeError =
     -- the idempotent operation 'Database.LSMTree.Common.closeCursor'.
   | ErrCursorClosed
   | ErrSnapshotExists SnapshotName
-  | ErrSnapshotNotExists SnapshotName
+  | ErrSnapshotDoesNotExist SnapshotName
   | ErrSnapshotDeserialiseFailure DeserialiseFailure SnapshotName
   | ErrSnapshotWrongTableType
       SnapshotName
@@ -1294,7 +1294,7 @@ openSnapshot sesh label tableType override snap resolve = do
         -- Guard that the snapshot exists
         let snapDir = Paths.namedSnapshotDir (sessionRoot seshEnv) snap
         FS.doesDirectoryExist hfs (Paths.getNamedSnapshotDir snapDir) >>= \b ->
-          unless b $ throwIO (ErrSnapshotNotExists snap)
+          unless b $ throwIO (ErrSnapshotDoesNotExist snap)
 
         let SnapshotMetaDataFile contentPath = Paths.snapshotMetaDataFile snapDir
             SnapshotMetaDataChecksumFile checksumPath = Paths.snapshotMetaDataChecksumFile snapDir
@@ -1360,7 +1360,7 @@ deleteSnapshot sesh snap = do
       let snapDir = Paths.namedSnapshotDir (sessionRoot seshEnv) snap
       doesSnapshotExist <-
         FS.doesDirectoryExist (sessionHasFS seshEnv) (Paths.getNamedSnapshotDir snapDir)
-      unless doesSnapshotExist $ throwIO (ErrSnapshotNotExists snap)
+      unless doesSnapshotExist $ throwIO (ErrSnapshotDoesNotExist snap)
       FS.removeDirectoryRecursive hfs (Paths.getNamedSnapshotDir snapDir)
 
 {-# SPECIALISE listSnapshots :: Session IO h -> IO [SnapshotName] #-}

@@ -133,7 +133,7 @@ unit_snapshots =
     withSession nullTracer hfs hbio (FS.mkFsPath []) $ \sess -> do
       table <- new @_ @Key1 @Value1 @Blob1 sess defaultTableConfig
 
-      assertException (ErrSnapshotNotExists snap2) $
+      assertException (ErrSnapshotDoesNotExist snap2) $
         deleteSnapshot sess snap2
 
       createSnapshot label1 snap1 table
@@ -146,7 +146,7 @@ unit_snapshots =
         _ <- openSnapshot @_ @Key2 @Value2 @Blob2 sess configNoOverride label2 snap1
         return ()
 
-      assertException (ErrSnapshotNotExists snap2) $ do
+      assertException (ErrSnapshotDoesNotExist snap2) $ do
         _ <- openSnapshot @_ @Key1 @Value1 @Blob1 sess configNoOverride label2 snap2
         return ()
   where
