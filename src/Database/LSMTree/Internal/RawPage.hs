@@ -1,6 +1,7 @@
 {-# LANGUAGE BangPatterns   #-}
 {-# LANGUAGE DeriveFunctor  #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# OPTIONS_HADDOCK not-home #-}
 
 module Database.LSMTree.Internal.RawPage (
     RawPage (..),

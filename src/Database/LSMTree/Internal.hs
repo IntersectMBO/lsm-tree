@@ -191,23 +191,24 @@ instance NFData (MonoidalCursor m k v) where
 
 -- TODO: give this a nicer Show instance.
 data LSMTreeError =
+    -- | The session directory does not exist.
     SessionDirDoesNotExist FsErrorPath
-    -- | The session directory is already locked
-  | SessionDirLocked FsErrorPath
-    -- | The session directory is malformed: the layout of the session directory
+  | -- | The session directory is already locked
+    SessionDirLocked FsErrorPath
+  | -- | The session directory is malformed: the layout of the session directory
     -- contains unexpected files and/or directories.
-  | SessionDirMalformed FsErrorPath
-    -- | All operations on a closed session as well as tables or cursors within
+    SessionDirMalformed FsErrorPath
+  | -- | All operations on a closed session as well as tables or cursors within
     -- a closed session will throw this exception. There is one exception (pun
     -- intended) to this rule: the idempotent operation
     -- 'Database.LSMTree.Common.closeSession'.
-  | ErrSessionClosed
-    -- | All operations on a closed table will throw this exception, except for
+    ErrSessionClosed
+  | -- | All operations on a closed table will throw this exception, except for
     -- the idempotent operation 'Database.LSMTree.Common.close'.
-  | ErrTableClosed
-    -- | All operations on a closed cursor will throw this exception, except for
+    ErrTableClosed
+  | -- | All operations on a closed cursor will throw this exception, except for
     -- the idempotent operation 'Database.LSMTree.Common.closeCursor'.
-  | ErrCursorClosed
+    ErrCursorClosed
   | ErrSnapshotExists SnapshotName
   | ErrSnapshotDoesNotExist SnapshotName
   | ErrSnapshotDeserialiseFailure DeserialiseFailure SnapshotName
@@ -219,9 +220,9 @@ data LSMTreeError =
       SnapshotName
       SnapshotLabel -- ^ Expected label
       SnapshotLabel -- ^ Actual label
-    -- | Something went wrong during batch lookups.
-  | ErrLookup ByteCountDiscrepancy
-    -- | A 'BlobRef' used with 'retrieveBlobs' was invalid.
+  | -- | Something went wrong during batch lookups.
+    ErrLookup ByteCountDiscrepancy
+  | -- | A 'BlobRef' used with 'retrieveBlobs' was invalid.
     --
     -- 'BlobRef's are obtained from lookups in a 'Table', but they may be
     -- invalidated by subsequent changes in that 'Table'. In general the
@@ -232,16 +233,15 @@ data LSMTreeError =
     --
     -- The 'Int' index indicates which 'BlobRef' was invalid. Many may be
     -- invalid but only the first is reported.
-  | ErrBlobRefInvalid Int
-    -- | 'unions' was called on tables that are not of the same type.
-  | ErrUnionsTableTypeMismatch
+    ErrBlobRefInvalid Int
+  | -- | 'unions' was called on tables that are not of the same type.
+    ErrUnionsTableTypeMismatch
       Int -- ^ Vector index of table @t1@ involved in the mismatch
       Int -- ^ Vector index of table @t2@ involved in the mismatch
-    -- | 'unions' was called on tables that are not in the same session.
-  | ErrUnionsSessionMismatch
+  | -- | 'unions' was called on tables that are not in the same session.
+    ErrUnionsSessionMismatch
       Int -- ^ Vector index of table @t1@ involved in the mismatch
       Int -- ^ Vector index of table @t2@ involved in the mismatch
-    -- | 'unions' was called on tables that do not have the same configuration.
   deriving stock (Show, Eq)
   deriving anyclass (Exception)
 

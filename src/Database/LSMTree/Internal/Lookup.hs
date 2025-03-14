@@ -1,4 +1,5 @@
 {-# LANGUAGE CPP #-}
+{-# OPTIONS_HADDOCK not-home #-}
 
 module Database.LSMTree.Internal.Lookup (
     ResolveSerialisedValue

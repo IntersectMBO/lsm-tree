@@ -1,4 +1,6 @@
 {-# LANGUAGE PatternSynonyms #-}
+{-# OPTIONS_HADDOCK not-home #-}
+
 module Database.LSMTree.Internal.Paths (
     SessionRoot (..)
   , lockFile
