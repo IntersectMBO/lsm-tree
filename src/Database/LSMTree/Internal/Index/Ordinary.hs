@@ -234,7 +234,7 @@ fromSBS shortByteString@(SBS unliftedByteArray)
                           = Primitive.splitAt firstSize postFirstSizeBytes
 
                       first :: SerialisedKey
-                      first = SerialisedKey' (Primitive.force firstBytes)
+                      !first = SerialisedKey' (Primitive.force firstBytes)
 
                   others <- lastKeys othersBytes
                   return (first : others)
