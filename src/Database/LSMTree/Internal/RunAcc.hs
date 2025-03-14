@@ -86,7 +86,6 @@ data RunBloomFilterAlloc =
 instance NFData RunBloomFilterAlloc where
     rnf (RunAllocFixed a)      = rnf a
     rnf (RunAllocRequestFPR a) = rnf a
-    rnf (RunAllocMonkey a)     = rnf a
 
 -- | @'new' nentries@ starts an incremental run construction.
 --

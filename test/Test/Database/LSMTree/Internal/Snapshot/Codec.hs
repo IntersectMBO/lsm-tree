@@ -356,11 +356,9 @@ instance Arbitrary RunBloomFilterAlloc where
   arbitrary = oneof [
         RunAllocFixed      <$> arbitrary
       , RunAllocRequestFPR <$> arbitrary
-      , RunAllocMonkey     <$> arbitrary
       ]
   shrink (RunAllocFixed x)      = RunAllocFixed <$> shrink x
   shrink (RunAllocRequestFPR x) = RunAllocRequestFPR <$> shrink x
-  shrink (RunAllocMonkey x)     = RunAllocMonkey <$> shrink x
 
 {-------------------------------------------------------------------------------
   Show
