@@ -72,7 +72,12 @@ import           Data.Bifunctor (Bifunctor (..))
 import           Data.Constraint (Dict (..))
 import           Data.Either (partitionEithers)
 import           Data.Kind (Type)
+#if MIN_VERSION_base(4,20,0)
+import           Data.List (nub)
+#else
 import           Data.List (foldl', nub)
+                 -- foldl' is included in the Prelude from base 4.20 onwards
+#endif
 import           Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
 import           Data.Map.Strict (Map)
