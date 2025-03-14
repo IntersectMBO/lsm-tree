@@ -1969,42 +1969,36 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
         , let genErrors = pure Nothing -- TODO: generate errors
         ]
      ++ [ (2,  fmap Some $ (Action <$> genErrors <*>) $
-            RemainingUnionDebt <$> genUnionTableVar)
-        | let genErrors = pure Nothing -- TODO: generate errors
+            RemainingUnionDebt <$> genUnionDescendantTableVar)
+            -- Tables not derived from unions are covered in UnitTests.
+        | not (null unionDescendantTableVars)
+        , let genErrors = pure Nothing -- TODO: generate errors
           -- TODO: this is currently only enabled for the reference
           -- implementation. Enable this unconditionally once table union is
           -- implemented
         , isJust (eqT @h @ModelIO.Table)
         ]
      ++ [ (8, fmap Some $ (Action <$> genErrors <*>) $
-            SupplyUnionCredits <$> genUnionTableVar <*> genUnionCredits)
-        | let genErrors = pure Nothing -- TODO: generate errors
+            SupplyUnionCredits <$> genUnionDescendantTableVar <*> genUnionCredits)
+            -- Tables not derived from unions are covered in UnitTests.
+        | not (null unionDescendantTableVars)
+        , let genErrors = pure Nothing -- TODO: generate errors
           -- TODO: this is currently only enabled for the reference
           -- implementation. Enable this unconditionally once table union is
           -- implemented
         , isJust (eqT @h @ModelIO.Table)
         ]
       ++ [ (2, fmap Some $ (Action <$> genErrors <*>) $
-            SupplyPortionOfDebt <$> genUnionTableVar <*> genPortion)
-        | let genErrors  = pure Nothing -- TODO: generate errors
+            SupplyPortionOfDebt <$> genUnionDescendantTableVar <*> genPortion)
+            -- Tables not derived from unions are covered in UnitTests.
+        | not (null unionDescendantTableVars)
+        , let genErrors  = pure Nothing -- TODO: generate errors
           -- TODO: this is currently only enabled for the reference
           -- implementation. Enable this unconditionally once table union is
           -- implemented
         , isJust (eqT @h @ModelIO.Table)
         ]
       where
-        -- For querying the union debt or supplying union credits, the
-        -- interesting cases to test for are when tables are union tables. For
-        -- non-union tables, these operations should just be no-ops, so we
-        -- generate them only rarely.
-        --
-        -- TODO: tweak distribution once table unions are implemented
-        -- TODO: replace union actions on non-union tables with unit tests?
-        genUnionTableVar = QC.frequency [
-            (9 * length unionDescendantTableVars,    genUnionDescendantTableVar)
-          , (1 * length notUnionDescendantTableVars, genNotUnionDescendantTableVar)
-          ]
-
         -- TODO: tweak distribution once table unions are implemented
         genUnionCredits = QC.frequency [
             -- The typical, interesting case is to supply a positive number of
