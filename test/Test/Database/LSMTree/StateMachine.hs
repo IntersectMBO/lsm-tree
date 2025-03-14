@@ -1759,7 +1759,7 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
       concat
         [ genActionsSession
         , genActionsTables
-        , genUnionActions
+        , genActionsUnion
         , genActionsCursor
         , genActionsBlobRef
         ]
@@ -1946,8 +1946,8 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
         ]
 
     -- | Generate table actions that have to do with unions.
-    genUnionActions :: [(Int, Gen (Any (LockstepAction (ModelState h))))]
-    genUnionActions
+    genActionsUnion :: [(Int, Gen (Any (LockstepAction (ModelState h))))]
+    genActionsUnion
       | null tableVars = []
       | otherwise =
         [ (2,  fmap Some $ (Action <$> genErrors <*>) $
