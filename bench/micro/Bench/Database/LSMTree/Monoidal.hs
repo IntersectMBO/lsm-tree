@@ -55,7 +55,8 @@ instance Monoidal.ResolveValue V where
 
 benchConfig :: Common.TableConfig
 benchConfig = Common.defaultTableConfig {
-      Common.confWriteBufferAlloc = Common.AllocNumEntries (Common.NumEntries 20000)
+      Common.confWriteBufferAlloc  = Common.AllocNumEntries (Common.NumEntries 20000)
+    , Common.confFencePointerIndex = Common.CompactIndex
     }
 
 {-------------------------------------------------------------------------------
