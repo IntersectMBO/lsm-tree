@@ -44,6 +44,8 @@ import           Test.QuickCheck
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.HUnit (assertEqual, testCase)
 import           Test.Tasty.QuickCheck (testProperty)
+import           Test.Util.Arbitrary (noTags,
+                     prop_arbitraryAndShrinkPreserveInvariant)
 import           Test.Util.Orphans ()
 import           Text.Printf (printf)
 
@@ -58,12 +60,9 @@ tests = testGroup "Test.Database.LSMTree.Internal.Index.Compact" [
   , testProperty "prop_singlesEquivMulti" $
       prop_singlesEquivMulti @BiasedKeyForIndexCompact
   , testGroup "(De)serialisation" [
-        testGroup "test Chunks generator" [
-            testProperty "Arbitrary satisfies invariant" $
-              property . chunksInvariant
-          , testProperty "Shrinking satisfies invariant" $
-              property . all chunksInvariant . shrink @Chunks
-        ]
+        testGroup "Chunks generator" $
+          prop_arbitraryAndShrinkPreserveInvariant noTags chunksInvariant
+
       , testCase "index-2-clash" $ do
           let k1 = SerialisedKey' (VP.replicate 16 0x00)
           let k2 = SerialisedKey' (VP.replicate 16 0x11)
