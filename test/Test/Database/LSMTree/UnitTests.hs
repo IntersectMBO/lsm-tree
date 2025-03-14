@@ -200,7 +200,7 @@ unit_union_credit_0 =
     withTable @_ @Key1 @Value1 @Blob1 sess defaultTableConfig $ \table -> do
       inserts table [(Key1 17, Value1 42, Nothing)]
 
-      bracket (union table table) close $ \table' -> do
+      bracket (table `union` table) close $ \table' -> do
         -- Suppling 0 credits works and returns 0 leftovers.
         UnionCredits leftover <- supplyUnionCredits table' (UnionCredits 0)
         leftover @?= 0
