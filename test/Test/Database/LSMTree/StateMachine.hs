@@ -1958,8 +1958,8 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
      ++ [ (2,  fmap Some $ (Action <$> genErrors <*>) $ do
             -- Generate at least a 2-way union, and at most a 3-way union.
             --
-            -- Tests for 0-way and 1-way unions are included in the UnitTests
-            -- module. n-way unions for n>3 lead to large unions, which are less
+            -- Tests for 1-way unions are included in the UnitTests module.
+            -- n-way unions for n>3 lead to large unions, which are less
             -- likely to be finished before the end of an action sequence.
             n <- QC.chooseInt (2, 3)
             Unions . NE.fromList <$> QC.vectorOf n genTableVar)
