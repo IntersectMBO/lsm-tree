@@ -112,8 +112,8 @@ searchBenchmarkable index = whnf $ foldl' (\ _ key -> rnf (search key index)) ()
 -- ** Incremental construction
 
 -- | Constructs append operations to be used in index construction.
-incrementalConstructionAppends
-    :: Int      -- ^ Number of keys used in the construction
+incrementalConstructionAppends ::
+       Int      -- ^ Number of keys used in the construction
     -> [Append] -- ^ Constructed append operations
 incrementalConstructionAppends = appendsForIndexCompact
 

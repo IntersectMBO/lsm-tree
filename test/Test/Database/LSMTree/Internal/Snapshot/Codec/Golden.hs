@@ -55,8 +55,8 @@ handleOutputFiles :: TestTree -> TestTree
 handleOutputFiles = Tasty.localOption Au.OnPass
 
 -- | Internally, the function will infer the correct filepath names.
-snapshotCodecTest
-  :: String -- ^ Name of the test
+snapshotCodecTest ::
+     String -- ^ Name of the test
   -> SnapshotMetaData -- ^ Data to be serialized
   -> TestTree
 snapshotCodecTest name datum =

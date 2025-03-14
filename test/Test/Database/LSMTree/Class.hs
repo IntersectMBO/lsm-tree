@@ -24,6 +24,7 @@ import           Database.LSMTree.Common (mkSnapshotName)
 import           Database.LSMTree.Extras.Generators ()
 import qualified Database.LSMTree.Model.IO as ModelIO
 import qualified System.FS.API as FS
+import           Test.Database.LSMTree.StateMachine ()
 import           Test.QuickCheck.Monadic (monadicIO, monitor, run)
 import           Test.Tasty (TestName, TestTree, testGroup)
 import qualified Test.Tasty.QuickCheck as QC
@@ -36,19 +37,17 @@ tests = testGroup "Test.Database.LSMTree.Class"
     , testGroup "Real"  $ zipWith ($) (props tbl2) expectFailures2
     ]
   where
-    tbl1 :: Proxy ModelIO.Table
-    tbl1 = Setup {
-          testTableConfig = ModelIO.TableConfig
+    tbl1 :: RunSetup ModelIO.Table IO
+    tbl1 = RunSetup $ \conf -> Setup {
+          testTableConfig = conf
         , testWithSessionArgs = \action -> action ModelIO.NoSessionArgs
         }
 
     expectFailures1 = repeat False
 
-    tbl2 :: Proxy R.Table
-    tbl2 = Setup {
-          testTableConfig = R.defaultTableConfig {
-              R.confWriteBufferAlloc = R.AllocNumEntries (R.NumEntries 3)
-            }
+    tbl2 :: RunSetup R.Table IO
+    tbl2 = RunSetup $ \conf -> Setup {
+          testTableConfig = conf
         , testWithSessionArgs = \action ->
             FS.withTempIOHasBlockIO "R" $ \hfs hbio ->
               action (SessionArgs hfs hbio (FS.mkFsPath []))
@@ -83,33 +82,33 @@ tests = testGroup "Test.Database.LSMTree.Class"
       , True  -- merge
       ] ++ repeat False
 
-    props tbl =
-      [ testProperty' "lookup-insert" $ prop_lookupInsert tbl
-      , testProperty' "lookup-insert-else" $ prop_lookupInsertElse tbl
-      , testProperty' "lookup-insert-blob" $ prop_lookupInsertBlob tbl
-      , testProperty' "lookup-delete" $ prop_lookupDelete tbl
-      , testProperty' "lookup-delete-else" $ prop_lookupDeleteElse tbl
-      , testProperty' "insert-insert" $ prop_insertInsert tbl
-      , testProperty' "insert-insert-blob" $ prop_insertInsertBlob tbl
-      , testProperty' "insert-commutes" $ prop_insertCommutes tbl
-      , testProperty' "insert-commutes-blob" $ prop_insertCommutesBlob tbl
-      , testProperty' "invalidated-blob-references" $ prop_updatesMayInvalidateBlobRefs tbl
-      , testProperty' "dup-insert-insert" $ prop_dupInsertInsert tbl
-      , testProperty' "dup-insert-comm" $ prop_dupInsertCommutes tbl
-      , testProperty' "dup-nochanges" $ prop_dupNoChanges tbl
-      , testProperty' "lookupRange-like-lookups" $ prop_lookupRangeLikeLookups tbl
-      , testProperty' "lookupRange-insert" $ prop_insertLookupRange tbl
-      , testProperty' "readCursor-sorted" $ prop_readCursorSorted tbl
-      , testProperty' "readCursor-num-results" $ prop_readCursorNumResults tbl
-      , testProperty' "readCursor-insert" $ prop_readCursorInsert tbl
-      , testProperty' "readCursor-delete" $ prop_readCursorDelete tbl
-      , testProperty' "readCursor-delete-else" $ prop_readCursorDeleteElse tbl
-      , testProperty' "readCursor-stable-view" $ prop_readCursorStableView tbl
-      , testProperty' "readCursor-offset" $ prop_readCursorOffset tbl
-      , testProperty' "snapshot-nochanges" $ prop_snapshotNoChanges tbl
-      , testProperty' "snapshot-nochanges2" $ prop_snapshotNoChanges2 tbl
-      , testProperty' "lookup-mupsert" $ prop_lookupUpdate tbl
-      , testProperty' "union" $ prop_union tbl
+    props RunSetup {..} =
+      [ testProperty' "lookup-insert" $ prop_lookupInsert . runSetup
+      , testProperty' "lookup-insert-else" $ prop_lookupInsertElse . runSetup
+      , testProperty' "lookup-insert-blob" $ prop_lookupInsertBlob . runSetup
+      , testProperty' "lookup-delete" $ prop_lookupDelete . runSetup
+      , testProperty' "lookup-delete-else" $ prop_lookupDeleteElse . runSetup
+      , testProperty' "insert-insert" $ prop_insertInsert . runSetup
+      , testProperty' "insert-insert-blob" $ prop_insertInsertBlob . runSetup
+      , testProperty' "insert-commutes" $ prop_insertCommutes . runSetup
+      , testProperty' "insert-commutes-blob" $ prop_insertCommutesBlob . runSetup
+      , testProperty' "invalidated-blob-references" $ prop_updatesMayInvalidateBlobRefs . runSetup
+      , testProperty' "dup-insert-insert" $ prop_dupInsertInsert . runSetup
+      , testProperty' "dup-insert-comm" $ prop_dupInsertCommutes . runSetup
+      , testProperty' "dup-nochanges" $ prop_dupNoChanges . runSetup
+      , testProperty' "lookupRange-like-lookups" $ prop_lookupRangeLikeLookups . runSetup
+      , testProperty' "lookupRange-insert" $ prop_insertLookupRange . runSetup
+      , testProperty' "readCursor-sorted" $ prop_readCursorSorted . runSetup
+      , testProperty' "readCursor-num-results" $ prop_readCursorNumResults . runSetup
+      , testProperty' "readCursor-insert" $ prop_readCursorInsert . runSetup
+      , testProperty' "readCursor-delete" $ prop_readCursorDelete . runSetup
+      , testProperty' "readCursor-delete-else" $ prop_readCursorDeleteElse . runSetup
+      , testProperty' "readCursor-stable-view" $ prop_readCursorStableView . runSetup
+      , testProperty' "readCursor-offset" $ prop_readCursorOffset . runSetup
+      , testProperty' "snapshot-nochanges" $ prop_snapshotNoChanges . runSetup
+      , testProperty' "snapshot-nochanges2" $ prop_snapshotNoChanges2 . runSetup
+      , testProperty' "lookup-mupsert" $ prop_lookupUpdate . runSetup
+      , testProperty' "union" $ prop_union . runSetup
       ]
 
 testProperty' :: forall a. Testable a => TestName -> a -> Bool -> TestTree
@@ -137,6 +136,10 @@ label :: SnapshotLabel
 label = SnapshotLabel "Word64 ByteString ByteString"
 
 type Proxy h = Setup h IO
+
+newtype RunSetup h m = RunSetup {
+    runSetup :: TableConfig h -> Setup h m
+  }
 
 data Setup h m = Setup {
     testTableConfig     :: TableConfig h

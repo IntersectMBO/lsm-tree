@@ -80,7 +80,17 @@ toLastKeys (IndexOrdinary lastKeys) = lastKeys
     type-agnostic version]('Database.LSMTree.Internal.Index.search').
 -}
 search :: SerialisedKey -> IndexOrdinary -> PageSpan
-search key (IndexOrdinary lastKeys) = assert (pageCount > 0) result where
+search key (IndexOrdinary lastKeys)
+  -- TODO: ideally, we could assert that an index is never empty, but
+  -- unfortunately we can not currently do this. Runs (and thefeore indexes)
+  -- /can/ be empty if they were created by a last-level merge where all input
+  -- entries were deletes. Other parts of the @lsm-tree@ code won't fail as long
+  -- as we return @PageSpan 0 0@ when we search an empty ordinary index. The
+  -- ideal fix would be to remove empty runs from the levels entirely, but this
+  -- requires more involved changes to the merge schedule and until then we'll
+  -- just hack the @pageCount <= 0@ case in.
+  | pageCount <= 0 = PageSpan (PageNo 0) (PageNo 0)
+  | otherwise = assert (pageCount > 0) result where
 
     protoStart :: Int
     !protoStart = binarySearchL lastKeys key
@@ -224,7 +234,7 @@ fromSBS shortByteString@(SBS unliftedByteArray)
                           = Primitive.splitAt firstSize postFirstSizeBytes
 
                       first :: SerialisedKey
-                      first = SerialisedKey' (Primitive.force firstBytes)
+                      !first = SerialisedKey' (Primitive.force firstBytes)
 
                   others <- lastKeys othersBytes
                   return (first : others)
