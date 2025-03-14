@@ -1904,7 +1904,7 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
             RangeLookup <$> genRange <*> genNotUnionDescendantTableVar)
             -- TODO: enable range lookups on tables with unions
         | let genErrors = pure Nothing -- TODO: generate errors
-        , not (null notUnionDescendantTableVars)
+        , not (null notUnionDescendantTableVars) -- TODO: enable range lookups on tables with unions
         ]
      ++ [ (10, fmap Some $ (Action <$> genErrors <*>) $
             Updates <$> genUpdates <*> genTableVar)
@@ -1927,7 +1927,7 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
             -- TODO: cursors for tables with unions
         | length cursorVars <= 5 -- no more than 5 cursors at once
         , let genErrors = pure Nothing -- TODO: generate errors
-        , not (null notUnionDescendantTableVars)
+        , not (null notUnionDescendantTableVars) -- TODO: cursors for tables with unions
         ]
      ++ [ (2,  fmap Some $ (Action <$> genErrors <*>) $
             CreateSnapshot <$> genCorruption <*> pure label <*> genUnusedSnapshotName <*> genTableVar)
