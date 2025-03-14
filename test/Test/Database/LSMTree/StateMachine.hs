@@ -10,10 +10,6 @@
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-{- HLINT ignore "Evaluate" -}
-{- HLINT ignore "Use camelCase" -}
-{- HLINT ignore "Redundant fmap" -}
-
 {-
   TODO: improve generation and shrinking of dependencies. See
   https://github.com/IntersectMBO/lsm-tree/pull/4#discussion_r1334295154.
