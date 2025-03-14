@@ -215,6 +215,7 @@ instance Arbitrary SnapshotMetaData where
 deriving newtype instance Arbitrary SnapshotLabel
 
 instance Arbitrary SnapshotTableType where
+  -- TODO: add SnapSimpleTable and SnapFullTable
   arbitrary = elements [SnapNormalTable, SnapMonoidalTable]
   shrink _ = []
 
