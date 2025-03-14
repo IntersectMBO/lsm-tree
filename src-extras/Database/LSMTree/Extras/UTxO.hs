@@ -114,7 +114,6 @@ instance SerialiseValue UTxOValue where
                 (indexWord8ArrayAsWord128 ba (off + 32))
                 (indexWord8ArrayAsWord64  ba (off + 48))
                 (indexWord8ArrayAsWord32  ba (off + 56))
-  deserialiseValueN = deserialiseValue . mconcat -- TODO: optimise
 
 instance Arbitrary UTxOValue where
   arbitrary = UTxOValue <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
@@ -150,4 +149,3 @@ newtype UTxOBlob = UTxOBlob BS.ByteString
 instance SerialiseValue UTxOBlob where
   serialiseValue (UTxOBlob bs) = Class.serialiseValue bs
   deserialiseValue = error "deserialiseValue: UTxOBlob"
-  deserialiseValueN = error "deserialiseValueN: UTxOBlob"

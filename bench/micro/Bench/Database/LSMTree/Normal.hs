@@ -52,7 +52,6 @@ instance NFData V1 where
 instance SerialiseValue V1 where
   serialiseValue (V1 x s) = serialiseValue x <> serialiseValue s
   deserialiseValue rb = V1 (deserialiseValue $ RB.take 8 rb) (deserialiseValue $ RB.drop 8 rb)
-  deserialiseValueN _ = error "deserialiseValueN: unused"
 
 newtype B1 = B1 Void
   deriving newtype (Show, Eq, Ord, NFData, SerialiseValue)

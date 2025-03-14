@@ -8,12 +8,10 @@ import           Data.ByteString (ByteString)
 import           Data.ByteString.Lazy (LazyByteString)
 import           Data.ByteString.Short (ShortByteString)
 import           Data.Primitive (ByteArray)
-import           Data.Proxy (Proxy (Proxy))
 import           Data.WideWord (Word128, Word256)
 import           Data.Word
 import           Database.LSMTree.Extras.Generators ()
 import           Database.LSMTree.Extras.UTxO (UTxOKey, UTxOValue)
-import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.Serialise.Class
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
@@ -51,8 +49,6 @@ valueProperties =
         prop_roundtripSerialiseValue @a
     , testProperty "prop_roundtripSerialiseValueUpToSlicing" $
         prop_roundtripSerialiseValueUpToSlicing @a
-    , testProperty "prop_concatDistributesSerialiseValue" $
-        prop_concatDistributesSerialiseValue @a
     ]
 
 prop_roundtripSerialiseKey :: forall k. (Eq k, Show k, SerialiseKey k) => k -> Property
@@ -99,27 +95,3 @@ prop_roundtripSerialiseValueUpToSlicing prefix x suffix =
     v = serialiseValue x
     v' = packSlice prefix v suffix
     x' = deserialiseValue v'
-
-prop_concatDistributesSerialiseValue :: forall v. (Ord v, Show v, SerialiseValue v) => v -> Property
-prop_concatDistributesSerialiseValue v =
-    forAllShrink (genChunks bytes) shrinkChunks $ (. map (RB.pack)) $ \chs ->
-      counterexample ("from chunks: " <> show (deserialiseValueN @v chs)) $
-      counterexample ("from whole: " <> show (deserialiseValue @v (mconcat chs))) $
-        serialiseValueConcatDistributes (Proxy @v) chs
-  where
-    bytes = RB.unpack (serialiseValue v)
-
--- | Randomly splits the input list into non-empty chunks.
-genChunks :: [a] -> Gen [[a]]
-genChunks [] = pure []
-genChunks xs = do
-    n <- chooseInt (1, length xs)
-    let (pre, post) = splitAt n xs
-    (pre :) <$> genChunks post
-
--- | Shrinks by appending chunks where possible
-shrinkChunks :: [[a]] -> [[[a]]]
-shrinkChunks (x : y : ys) =
-      ((x <> y) : ys)
-    : map (x :) (shrinkChunks (y : ys))
-shrinkChunks _ = []

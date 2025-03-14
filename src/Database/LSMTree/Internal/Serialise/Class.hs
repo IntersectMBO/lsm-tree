@@ -8,7 +8,6 @@ module Database.LSMTree.Internal.Serialise.Class (
   , SerialiseValue (..)
   , serialiseValueIdentity
   , serialiseValueIdentityUpToSlicing
-  , serialiseValueConcatDistributes
   , RawBytes (..)
   , packSlice
     -- * Errors
@@ -21,7 +20,6 @@ import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ByteString.Short.Internal as SBS
 import           Data.Monoid (Sum (..))
 import qualified Data.Primitive as P
-import           Data.Proxy (Proxy)
 import qualified Data.Vector.Primitive as VP
 import           Data.Void (Void, absurd)
 import           Data.Word
@@ -80,14 +78,9 @@ serialiseKeyMinimalSize x = RB.size (serialiseKey x) >= 8
 --
 -- [Identity] @'deserialiseValue' ('serialiseValue' x) == x@
 -- [Identity up to slicing] @'deserialiseValue' ('packSlice' prefix ('serialiseValue' x) suffix) == x@
--- [Concat distributes] @'deserialiseValueN' xs == 'deserialiseValue' ('mconcat' xs)@
 class SerialiseValue v where
   serialiseValue :: v -> RawBytes
   deserialiseValue :: RawBytes -> v
-  -- | Deserialisation when bytes are split into multiple chunks.
-  --
-  -- TODO: Unused so far, we might not need it.
-  deserialiseValueN :: [RawBytes] -> v
 
 
 -- | An instance for 'Sum' which is transparent to the serialisation of @a@.
@@ -99,8 +92,6 @@ instance SerialiseValue a => SerialiseValue (Sum a) where
 
   deserialiseValue = Sum . deserialiseValue
 
-  deserialiseValueN = Sum . deserialiseValueN
-
 -- | Test the __Identity__ law for the 'SerialiseValue' class
 serialiseValueIdentity :: (Eq v, SerialiseValue v) => v -> Bool
 serialiseValueIdentity x = deserialiseValue (serialiseValue x) == x
@@ -111,10 +102,6 @@ serialiseValueIdentityUpToSlicing ::
   => RawBytes -> v -> RawBytes -> Bool
 serialiseValueIdentityUpToSlicing prefix x suffix =
     deserialiseValue (packSlice prefix (serialiseValue x) suffix) == x
-
--- | Test the __Concat distributes__ law for the 'SerialiseValue' class
-serialiseValueConcatDistributes :: forall v. (Eq v, SerialiseValue v) => Proxy v -> [RawBytes] -> Bool
-serialiseValueConcatDistributes _ xs = deserialiseValueN @v xs == deserialiseValue (mconcat xs)
 
 {-------------------------------------------------------------------------------
   RawBytes
@@ -159,7 +146,6 @@ instance SerialiseValue Word64 where
 
   deserialiseValue (RawBytes (VP.Vector off len ba)) =
     requireBytesExactly "Word64" 8 len $ indexWord8ArrayAsWord64 ba off
-  deserialiseValueN = deserialiseValue . mconcat
 
 {-------------------------------------------------------------------------------
   ByteString
@@ -178,14 +164,12 @@ instance SerialiseKey BS.ByteString where
 -- | Placeholder instance, not optimised
 instance SerialiseValue LBS.ByteString where
   serialiseValue = serialiseValue . LBS.toStrict
-  deserialiseValue = deserialiseValueN . pure
-  deserialiseValueN = B.toLazyByteString . foldMap RB.builder
+  deserialiseValue = B.toLazyByteString . RB.builder
 
 -- | Placeholder instance, not optimised
 instance SerialiseValue BS.ByteString where
   serialiseValue = RB.fromShortByteString . SBS.toShort
-  deserialiseValue = deserialiseValueN . pure
-  deserialiseValueN = LBS.toStrict . deserialiseValueN
+  deserialiseValue = LBS.toStrict . deserialiseValue
 
 {-------------------------------------------------------------------------------
  ShortByteString
@@ -198,7 +182,6 @@ instance SerialiseKey SBS.ShortByteString where
 instance SerialiseValue SBS.ShortByteString where
   serialiseValue = RB.fromShortByteString
   deserialiseValue = byteArrayToSBS . RB.force
-  deserialiseValueN = byteArrayToSBS . foldMap RB.force
 
 {-------------------------------------------------------------------------------
  ByteArray
@@ -210,7 +193,6 @@ instance SerialiseValue SBS.ShortByteString where
 instance SerialiseValue P.ByteArray where
   serialiseValue ba = RB.fromByteArray 0 (P.sizeofByteArray ba) ba
   deserialiseValue = RB.force
-  deserialiseValueN = foldMap RB.force
 
 {-------------------------------------------------------------------------------
 Void
@@ -222,4 +204,3 @@ Void
 instance SerialiseValue Void where
   serialiseValue = absurd
   deserialiseValue = error "panic"
-  deserialiseValueN = error "panic"
