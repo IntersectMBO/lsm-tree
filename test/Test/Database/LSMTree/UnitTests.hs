@@ -35,6 +35,7 @@ tests =
       , testCase      "unit_snapshots"      unit_snapshots
       , testCase      "unit_unions_1"       unit_unions_1
       , testCase      "unit_union_credits"  unit_union_credits
+      , testCase      "unit_union_credit_0" unit_union_credit_0
       ]
 
 unit_blobs :: (String -> IO ()) -> Assertion
@@ -190,6 +191,27 @@ unit_union_credits =
       -- and supplying credits returns them all as leftovers.
       UnionCredits leftover <- supplyUnionCredits table (UnionCredits 42)
       leftover @?= 42
+
+-- | Supplying zero or negative credits to union tables works, but does nothing.
+unit_union_credit_0 :: Assertion
+unit_union_credit_0 =
+    withTempIOHasBlockIO "test" $ \hfs hbio ->
+    withSession nullTracer hfs hbio (FS.mkFsPath []) $ \sess ->
+    withTable @_ @Key1 @Value1 @Blob1 sess defaultTableConfig $ \table -> do
+      inserts table [(Key1 17, Value1 42, Nothing)]
+
+      bracket (table `union` table) close $ \table' -> do
+        -- Supplying 0 credits works and returns 0 leftovers.
+        UnionCredits leftover <- supplyUnionCredits table' (UnionCredits 0)
+        leftover @?= 0
+
+        -- Supplying negative credits also works and returns 0 leftovers.
+        UnionCredits leftover' <- supplyUnionCredits table' (UnionCredits (-42))
+        leftover' @?= 0
+
+        -- And the table is still vaguely cromulent
+        r <- lookups table' [Key1 17]
+        V.map ignoreBlobRef r @?= [Found (Value1 42)]
 
 ignoreBlobRef :: Functor f => f (BlobRef m b) -> f ()
 ignoreBlobRef = fmap (const ())

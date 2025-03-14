@@ -1649,4 +1649,9 @@ supplyUnionCredits t credits = do
       RW.withWriteAccess (tableContent tEnv) $ \tableContent ->
         case tableUnionLevel tableContent of
           NoUnion -> pure (tableContent, credits) -- all leftovers
-          Union{} -> error "supplyUnionCredits: not yet implemented"
+          Union{}
+           | credits <= UnionCredits 0 -> pure (tableContent, UnionCredits 0)
+           --TODO: remove this 0 special case once the general case covers it.
+           -- We do not need to optimise the 0 case. It is just here to
+           -- simplify test coverage.
+           | otherwise -> error "supplyUnionCredits: not yet implemented"

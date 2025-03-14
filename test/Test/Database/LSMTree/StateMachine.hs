@@ -1999,15 +1999,10 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
         , isJust (eqT @h @ModelIO.Table)
         ]
       where
-        -- TODO: tweak distribution once table unions are implemented
-        genUnionCredits = QC.frequency [
-            -- The typical, interesting case is to supply a positive number of
-            -- union credits.
-            (9, R.UnionCredits . QC.getPositive <$> QC.arbitrary)
-            -- Supplying 0 or less credits is a no-op, so we generate it only
-            -- rarely.
-          , (1, R.UnionCredits <$> QC.arbitrary)
-          ]
+        -- The typical, interesting case is to supply a positive number of
+        -- union credits. Supplying 0 or less credits is a no-op. We cover
+        -- it in UnitTests so we don't have to cover it here.
+        genUnionCredits = R.UnionCredits . QC.getPositive <$> QC.arbitrary
 
         -- TODO: tweak distribution once table unions are implemented
         genPortion = Portion <$> QC.elements [1, 2, 3]
