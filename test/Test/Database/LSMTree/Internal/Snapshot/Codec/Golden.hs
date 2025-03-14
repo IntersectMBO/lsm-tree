@@ -346,7 +346,6 @@ enumerateBloomFilterAlloc :: [(ComponentAnnotation, BloomFilterAlloc)]
 enumerateBloomFilterAlloc =
   [ ("A0",AllocFixed magicNumber3)
   , ("A1",AllocRequestFPR pi)
-  , ("A2",AllocMonkey magicNumber3 . NumEntries $ magicNumber3 `div` 4)
   ]
 
 enumerateDiskCachePolicy :: [(ComponentAnnotation, DiskCachePolicy)]

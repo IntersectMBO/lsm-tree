@@ -252,11 +252,9 @@ instance Arbitrary BloomFilterAlloc where
   arbitrary = oneof [
         AllocFixed <$> arbitrary
       , AllocRequestFPR <$> arbitrary
-      , AllocMonkey <$> arbitrary <*> arbitrary
       ]
   shrink (AllocFixed x)      = AllocFixed <$> shrink x
   shrink (AllocRequestFPR x) = AllocRequestFPR <$> shrink x
-  shrink (AllocMonkey x y)   = [AllocMonkey x' y' | (x', y') <- shrink (x, y)]
 
 instance Arbitrary FencePointerIndex where
   arbitrary = elements [CompactIndex, OrdinaryIndex]
@@ -358,11 +356,9 @@ instance Arbitrary RunBloomFilterAlloc where
   arbitrary = oneof [
         RunAllocFixed      <$> arbitrary
       , RunAllocRequestFPR <$> arbitrary
-      , RunAllocMonkey     <$> arbitrary
       ]
   shrink (RunAllocFixed x)      = RunAllocFixed <$> shrink x
   shrink (RunAllocRequestFPR x) = RunAllocRequestFPR <$> shrink x
-  shrink (RunAllocMonkey x)     = RunAllocMonkey <$> shrink x
 
 {-------------------------------------------------------------------------------
   Show

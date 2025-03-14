@@ -34,15 +34,13 @@ import           Control.DeepSeq (NFData (..))
 import           Data.Maybe (fromMaybe)
 import           Data.Monoid (Last (..))
 import           Data.Word (Word64)
-import           Database.LSMTree.Internal.Assertions (assert,
-                     fromIntegralChecked)
+import           Database.LSMTree.Internal.Assertions (assert)
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
 import           Database.LSMTree.Internal.Index (IndexType)
 import qualified Database.LSMTree.Internal.Index as Index
                      (IndexType (Compact, Ordinary))
 import           Database.LSMTree.Internal.Run (RunDataCaching (..))
 import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..))
-import qualified Monkey
 
 newtype LevelNo = LevelNo Int
   deriving stock (Show, Eq)
@@ -220,28 +218,11 @@ data BloomFilterAlloc =
     -- false-positive rate. Do this for each bloom filter.
     AllocRequestFPR
       !Double -- ^ Requested FPR.
-  | -- | Allocate bits amongst all bloom filters according to the Monkey algorithm.
-    --
-    -- The allocation algorithm will never go over the memory budget. If more
-    -- levels are added that the algorithm did not account for, then bloom
-    -- filters on those levels will be empty. This can happen for a number of
-    -- reasons:
-    --
-    -- * The number of budgeted physical entries is exceeded
-    -- * Underfull runs causes levels to be underfull, which causes entries to
-    --   reside in larger levels
-    --
-    -- To combat this, make sure to budget for a generous number of physical
-    -- entries.
-    AllocMonkey
-      !Word64 -- ^ Total number of bytes that bloom filters can use collectively.
-      !NumEntries -- ^ Total number of /physical/ entries expected to be in the database.
   deriving stock (Show, Eq)
 
 instance NFData BloomFilterAlloc where
   rnf (AllocFixed n)        = rnf n
   rnf (AllocRequestFPR fpr) = rnf fpr
-  rnf (AllocMonkey a b)     = rnf a `seq` rnf b
 
 defaultBloomFilterAlloc :: BloomFilterAlloc
 defaultBloomFilterAlloc = AllocFixed 10
@@ -250,35 +231,8 @@ bloomFilterAllocForLevel :: TableConfig -> LevelNo -> RunBloomFilterAlloc
 bloomFilterAllocForLevel conf (LevelNo l) =
     assert (l > 0) $
     case confBloomFilterAlloc conf of
-      AllocFixed n -> RunAllocFixed n
+      AllocFixed n        -> RunAllocFixed n
       AllocRequestFPR fpr -> RunAllocRequestFPR fpr
-      AllocMonkey totalBits (NumEntries n) ->
-        let !sr = sizeRatioInt (confSizeRatio conf)
-            !m = case confWriteBufferAlloc conf of
-                    AllocNumEntries (NumEntries x) -> x
-            !levelCount = Monkey.numLevels (fromIntegral n) (fromIntegral m) (fromIntegral sr)
-            !allocPerLevel = Monkey.monkeyBits
-                                (fromIntegralChecked totalBits)
-                                (fromIntegralChecked n)
-                                (fromIntegralChecked sr)
-                                levelCount
-        in  -- TODO: monkey-style allocation does not currently work as
-            -- expected, so it is disabled for now.
-            error "boomFilterAllocForLevel: monkey allocation temporarily disabled" $
-            case allocPerLevel !? (l - 1) of
-              -- Default to an empty bloom filter in case the level wasn't
-              -- accounted for. See 'AllocMonkey'.
-              Nothing     -> RunAllocMonkey 0
-              Just (_, x) -> RunAllocMonkey (fromIntegralChecked x)
-  where
-    -- Copied from "Data.List"
-    {-# INLINABLE (!?) #-}
-    (!?) :: [a] -> Int -> Maybe a
-    xs !? n
-      | n < 0     = Nothing
-      | otherwise = foldr (\x r k -> case k of
-                                      0 -> Just x
-                                      _ -> r (k-1)) (const Nothing) xs n
 
 {-------------------------------------------------------------------------------
   Fence pointer index

@@ -28,9 +28,9 @@ import           Text.Printf (printf)
 import           Database.LSMTree.Extras.Orphans ()
 import           Database.LSMTree.Internal.Assertions (fromIntegralChecked)
 import qualified Database.LSMTree.Internal.BloomFilterQuery1 as Bloom1
+import           Database.LSMTree.Internal.RunAcc (numHashFunctions)
 import           Database.LSMTree.Internal.Serialise (SerialisedKey,
                      serialiseKey)
-import qualified Monkey
 
 #ifdef BLOOM_QUERY_FAST
 import qualified Database.LSMTree.Internal.BloomFilterQuery2 as Bloom2
@@ -201,7 +201,7 @@ lsmStyleBloomFilters l1 requestedBitsPerEntry =
         ++ replicate 8 (2^(l1+4),16)   -- 8 runs at level 3 (tiering)
         ++            [(2^(l1+8),256)] -- 1 run  at level 4 (leveling)
     , let nbits   = numEntries * requestedBitsPerEntry
-          nhashes = Monkey.numHashFunctions nbits numEntries
+          nhashes = numHashFunctions nbits numEntries
     ]
 
 totalNumEntries, totalNumBytes :: [BloomFilterSizeInfo] -> Integer

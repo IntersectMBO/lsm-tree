@@ -313,5 +313,5 @@ jobs:
     - name: 'Run HLint'
       uses: haskell-actions/hlint-run@v2
       with:
-        path: '[ "src/", "test/", "src-extras/", "src-fcntl-nocache/", "src-kmerge/", "src-mcg/", "src-monkey/", "src-rocksdb/" ]'
+        path: '[ "src/", "test/", "src-extras/", "src-fcntl-nocache/", "src-kmerge/", "src-mcg/", "src-rocksdb/" ]'
         fail-on: suggestion
