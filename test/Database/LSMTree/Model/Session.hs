@@ -846,7 +846,7 @@ supplyUnionCredits ::
 supplyUnionCredits t@Table{..} c@(UnionCredits credits)
   | credits <= 0 = do
       _ <- guardTableIsOpen t
-      pure c
+      pure (UnionCredits 0) -- always 0, not negative
   | otherwise = do
       (updc, table) <- guardTableIsOpen t
       when (isUnionDescendant == IsUnionDescendant) $
