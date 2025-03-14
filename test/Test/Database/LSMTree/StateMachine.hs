@@ -2667,7 +2667,7 @@ tagStep' (ModelState _stateBefore statsBefore,
       = Nothing
 
     tagOpenSnapshotUnion
-      | OpenSnapshot _ _ _ <- action'
+      | OpenSnapshot{} <- action'
       , MEither (Right (MTable t)) <- result
       , Model.isUnionDescendant t == Model.IsUnionDescendant
       = Just OpenSnapshotUnion
