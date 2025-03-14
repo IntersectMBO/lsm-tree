@@ -13,7 +13,6 @@
 {- HLINT ignore "Evaluate" -}
 {- HLINT ignore "Use camelCase" -}
 {- HLINT ignore "Redundant fmap" -}
-{- HLINT ignore "Short-circuited list comprehension" -} -- TODO: remove once table union is implemented
 
 {-
   TODO: improve generation and shrinking of dependencies. See
