@@ -34,6 +34,7 @@ tests =
       , testCase      "unit_twoTableTypes"  unit_twoTableTypes
       , testCase      "unit_snapshots"      unit_snapshots
       , testCase      "unit_unions_1"       unit_unions_1
+      , testCase      "unit_union_credits"  unit_union_credits
       ]
 
 unit_blobs :: (String -> IO ()) -> Assertion
@@ -174,6 +175,21 @@ unit_unions_1 =
           r'' <- lookups table'' [Key1 17]
           V.map ignoreBlobRef r'' @?= [Found (Value1 44)]
 
+-- | Querying or supplying union credits to non-union tables is trivial.
+unit_union_credits :: Assertion
+unit_union_credits =
+    withTempIOHasBlockIO "test" $ \hfs hbio ->
+    withSession nullTracer hfs hbio (FS.mkFsPath []) $ \sess ->
+    withTable @_ @Key1 @Value1 @Blob1 sess defaultTableConfig $ \table -> do
+      inserts table [(Key1 17, Value1 42, Nothing)]
+
+      -- The table is not the result of a union, so the debt is always 0,
+      UnionDebt debt <- remainingUnionDebt table
+      debt @?= 0
+
+      -- and supplying credits returns them all as leftovers.
+      UnionCredits leftover <- supplyUnionCredits table (UnionCredits 42)
+      leftover @?= 42
 
 ignoreBlobRef :: Functor f => f (BlobRef m b) -> f ()
 ignoreBlobRef = fmap (const ())
