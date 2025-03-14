@@ -437,7 +437,6 @@ test-suite lsm-tree-test
     , lsm-tree:bloomfilter
     , lsm-tree:control
     , lsm-tree:extras
-    , lsm-tree:monkey
     , lsm-tree:prototypes
     , mtl
     , nothunks
@@ -517,7 +516,6 @@ benchmark lsm-tree-bench-bloomfilter
     , lsm-tree
     , lsm-tree:bloomfilter
     , lsm-tree:extras
-    , lsm-tree:monkey
     , random
     , time
     , vector
@@ -639,14 +637,6 @@ library rocksdb
     , base
     , bytestring
     , indexed-traversable
-
-library monkey
-  import:          language, warnings, wno-x-partial
-  hs-source-dirs:  src-monkey
-  exposed-modules: Monkey
-  build-depends:
-    , ad    ^>=4.5.6
-    , base
 
 library kmerge
   import:          language, warnings, wno-x-partial

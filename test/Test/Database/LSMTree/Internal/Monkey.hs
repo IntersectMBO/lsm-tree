@@ -16,7 +16,6 @@ module Test.Database.LSMTree.Internal.Monkey (
     -- positive rates.
   , BloomMaker
   , mkBloomST
-  , mkBloomST_Monkey
   , mkBloomEasy
     -- * Verifying FPRs
   , measureApproximateFPR
@@ -36,8 +35,6 @@ import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Word (Word64)
 import           Database.LSMTree.Extras.Random
-import           Database.LSMTree.Internal.Assertions (fromIntegralChecked)
-import qualified Monkey
 import           System.Random
 import           Test.QuickCheck
 import           Test.Tasty (TestTree, testGroup)
@@ -49,13 +46,10 @@ tests = testGroup "Database.LSMTree.Internal.Monkey" [
       testGroup "No false negatives" [
         testProperty "mkBloomEasy"      $ prop_noFalseNegatives (Proxy @Word64) mkBloomEasy
       , testProperty "mkBloomST"        $ prop_noFalseNegatives (Proxy @Word64) mkBloomST
-      , testProperty "mkBloomST_Monkey" $ prop_noFalseNegatives (Proxy @Word64) mkBloomST_Monkey
       ]
     , testGroup "Verify FPR" [
           testProperty "mkBloomEasy"      $ prop_verifyFPR (Proxy @Word64) mkBloomEasy
         , testProperty "mkBloomST"        $ prop_verifyFPR (Proxy @Word64) mkBloomST
-        , testProperty "mkBloomST_Monkey" $ expectFailure -- TODO: see 'mkBloomST_Monkey'.
-                                          $ prop_verifyFPR (Proxy @Word64) mkBloomST_Monkey
         ]
     ]
 
@@ -261,29 +255,6 @@ mkBloomST requestedFPR xs = runST $ do
   where
     numEntries              = length xs
     (numBits, numHashFuncs) = Bloom.Easy.suggestSizing numEntries requestedFPR
-
--- | Create a bloom filter through the 'MBloom' interface. Tunes the bloom
--- filter a la Monkey.
---
--- === TODO
---
--- The measured FPR exceeds the requested FPR by a number of percentages.
--- Example: @withNewStdGen $ measureApproximateFPR (Proxy @Word64) (mkBloomST'
--- 0.37) 1000000@. I'm unsure why, but I have a number of ideas
---
--- * The FPR (and bits/hash functions) calculations are approximations.
--- * Rounding errors in the Haskell implementation of FPR calculations
--- * The Monkey tuning is incompatible with @bloomfilter@'s /next power of 2/
---   rounding of the bits.
-mkBloomST_Monkey :: Hashable a => Double -> BloomMaker a
-mkBloomST_Monkey requestedFPR xs = runST $ do
-    b <- MBloom.new (fromIntegralChecked nhashes) (fromIntegralChecked nbits)
-    mapM_ (MBloom.insert b) xs
-    Bloom.freeze b
-  where
-    nentries = fromIntegral $ length xs
-    nbits    = Monkey.numBits nentries requestedFPR
-    nhashes  = Monkey.numHashFunctions nbits nentries
 
 -- | Create a bloom filter through the "Data.BloomFilter.Easy" interface. Tunes
 -- the bloom filter using 'suggestSizing'.
