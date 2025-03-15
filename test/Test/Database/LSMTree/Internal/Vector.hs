@@ -9,8 +9,7 @@ import qualified Data.Vector.Unboxed as VU
 import qualified Data.Vector.Unboxed.Mutable as VUM
 import           Data.Word
 import           Database.LSMTree.Extras
-import           Database.LSMTree.Internal.Index.CompactAcc as Cons
-import           Prelude hiding (max, min, pi)
+import           Database.LSMTree.Internal.Index.CompactAcc
 import           Test.QuickCheck
 import           Test.QuickCheck.Instances ()
 import           Test.QuickCheck.Monadic (PropertyM, monadicST, run)
