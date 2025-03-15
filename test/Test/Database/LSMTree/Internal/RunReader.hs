@@ -8,12 +8,11 @@ module Test.Database.LSMTree.Internal.RunReader (
 import           Control.RefCount
 import           Data.Coerce (coerce)
 import qualified Data.Map as Map
-import           Database.LSMTree.Extras.Generators
-                     (BiasedKeyForIndexCompact (..))
+import           Database.LSMTree.Extras.Generators (BiasedKey (..))
 import           Database.LSMTree.Extras.RunData
 import           Database.LSMTree.Internal.BlobRef
 import           Database.LSMTree.Internal.Entry (Entry)
-import qualified Database.LSMTree.Internal.Index as Index (IndexType (Compact))
+import qualified Database.LSMTree.Internal.Index as Index (IndexType (Ordinary))
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.RunAcc as RunAcc
 import qualified Database.LSMTree.Internal.RunBuilder as RunBuilder
@@ -71,7 +70,7 @@ runParams =
     RunBuilder.RunParams {
       runParamCaching = RunBuilder.CacheRunData,
       runParamAlloc   = RunAcc.RunAllocFixed 10,
-      runParamIndex   = Index.Compact
+      runParamIndex   = Index.Ordinary
     }
 
 -- | Creating a run from a write buffer and reading from the run yields the
@@ -86,8 +85,8 @@ runParams =
 prop_readAtOffset ::
      FS.HasFS IO h
   -> FS.HasBlockIO IO h
-  -> RunData BiasedKeyForIndexCompact SerialisedValue SerialisedBlob
-  -> Maybe BiasedKeyForIndexCompact
+  -> RunData BiasedKey SerialisedValue SerialisedBlob
+  -> Maybe BiasedKey
   -> IO Property
 prop_readAtOffset fs hbio rd offsetKey =
     withRunAt fs hbio runParams (simplePath 42) rd' $ \run -> do
@@ -109,7 +108,7 @@ prop_readAtOffset fs hbio rd offsetKey =
 prop_readAtOffsetExisting ::
      FS.HasFS IO h
   -> FS.HasBlockIO IO h
-  -> RunData BiasedKeyForIndexCompact SerialisedValue SerialisedBlob
+  -> RunData BiasedKey SerialisedValue SerialisedBlob
   -> NonNegative Int
   -> IO Property
 prop_readAtOffsetExisting fs hbio rd (NonNegative index)
@@ -117,7 +116,7 @@ prop_readAtOffsetExisting fs hbio rd (NonNegative index)
   | otherwise =
       prop_readAtOffset fs hbio rd (Just (keys !! (index `mod` length keys)))
   where
-    keys :: [BiasedKeyForIndexCompact]
+    keys :: [BiasedKey]
     keys = coerce (fst <$> kops)
     kops = Map.toList (unRunData rd)
 
@@ -130,8 +129,8 @@ prop_readAtOffsetExisting fs hbio rd (NonNegative index)
 prop_readAtOffsetIdempotence ::
      FS.HasFS IO h
   -> FS.HasBlockIO IO h
-  -> RunData BiasedKeyForIndexCompact SerialisedValue SerialisedBlob
-  -> Maybe BiasedKeyForIndexCompact
+  -> RunData BiasedKey SerialisedValue SerialisedBlob
+  -> Maybe BiasedKey
   -> IO Property
 prop_readAtOffsetIdempotence fs hbio rd offsetKey =
     withRunAt fs hbio runParams (simplePath 42) rd' $ \run -> do
@@ -155,7 +154,7 @@ prop_readAtOffsetIdempotence fs hbio rd offsetKey =
 prop_readAtOffsetReadHead ::
      FS.HasFS IO h
   -> FS.HasBlockIO IO h
-  -> RunData BiasedKeyForIndexCompact SerialisedValue SerialisedBlob
+  -> RunData BiasedKey SerialisedValue SerialisedBlob
   -> IO Property
 prop_readAtOffsetReadHead fs hbio rd =
     withRunAt fs hbio runParams (simplePath 42) rd' $ \run -> do

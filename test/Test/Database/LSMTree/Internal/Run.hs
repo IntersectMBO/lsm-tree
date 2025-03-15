@@ -14,12 +14,11 @@ import           Data.Coerce (coerce)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromJust)
 import qualified Data.Primitive.ByteArray as BA
-import           Database.LSMTree.Extras.Generators (KeyForIndexCompact (..))
 import           Database.LSMTree.Extras.RunData
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry
-import qualified Database.LSMTree.Internal.Index as Index (IndexType (Compact))
+import qualified Database.LSMTree.Internal.Index as Index (IndexType (Ordinary))
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..),
                      WriteBufferFsPaths (..))
 import qualified Database.LSMTree.Internal.Paths as Paths
@@ -96,7 +95,7 @@ runParams =
     RunBuilder.RunParams {
       runParamCaching = RunBuilder.CacheRunData,
       runParamAlloc   = RunAcc.RunAllocFixed 10,
-      runParamIndex   = Index.Compact
+      runParamIndex   = Index.Ordinary
     }
 
 -- | Runs in IO, with a real file system.
@@ -186,7 +185,7 @@ readBlobFromBS bs (BlobSpan off sz) =
 prop_WriteNumEntries ::
      FS.HasFS IO h
   -> FS.HasBlockIO IO h
-  -> RunData KeyForIndexCompact SerialisedValue SerialisedBlob
+  -> RunData SerialisedKey SerialisedValue SerialisedBlob
   -> IO Property
 prop_WriteNumEntries fs hbio wb@(RunData m) =
     withRunAt fs hbio runParams (simplePath 42) wb' $ \run -> do
@@ -204,7 +203,7 @@ prop_WriteNumEntries fs hbio wb@(RunData m) =
 prop_WriteAndOpen ::
      FS.HasFS IO h
   -> FS.HasBlockIO IO h
-  -> RunData KeyForIndexCompact SerialisedValue SerialisedBlob
+  -> RunData SerialisedKey SerialisedValue SerialisedBlob
   -> IO Property
 prop_WriteAndOpen fs hbio wb =
     withRunAt fs hbio runParams (simplePath 1337) (serialiseRunData wb) $ \written ->
@@ -237,7 +236,7 @@ prop_WriteAndOpen fs hbio wb =
 prop_WriteAndOpenWriteBuffer ::
      FS.HasFS IO h
   -> FS.HasBlockIO IO h
-  -> RunData KeyForIndexCompact SerialisedValue SerialisedBlob
+  -> RunData SerialisedKey SerialisedValue SerialisedBlob
   -> IO Property
 prop_WriteAndOpenWriteBuffer hfs hbio rd = do
   -- Serialise run data as write buffer:
@@ -261,7 +260,7 @@ prop_WriteAndOpenWriteBuffer hfs hbio rd = do
 prop_WriteRunEqWriteWriteBuffer ::
      FS.HasFS IO h
   -> FS.HasBlockIO IO h
-  -> RunData KeyForIndexCompact SerialisedValue SerialisedBlob
+  -> RunData SerialisedKey SerialisedValue SerialisedBlob
   -> IO Property
 prop_WriteRunEqWriteWriteBuffer hfs hbio rd = do
   -- Serialise run data as run:

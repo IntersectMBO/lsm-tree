@@ -47,7 +47,7 @@ import           Database.LSMTree.Extras.RunData (RunData (..),
 import           Database.LSMTree.Internal.BlobRef
 import           Database.LSMTree.Internal.Entry as Entry
 import           Database.LSMTree.Internal.Index (Index, IndexType)
-import qualified Database.LSMTree.Internal.Index as Index (IndexType (Compact),
+import qualified Database.LSMTree.Internal.Index as Index (IndexType (Ordinary),
                      search)
 import           Database.LSMTree.Internal.Lookup
 import           Database.LSMTree.Internal.Page (PageNo (PageNo), PageSpan (..))
@@ -309,7 +309,7 @@ prop_roundtripFromWriteBufferLookupIO ::
 prop_roundtripFromWriteBufferLookupIO (SmallList dats) =
     ioProperty $
     withTempIOHasBlockIO "prop_roundtripFromWriteBufferLookupIO" $ \hfs hbio ->
-    withWbAndRuns hfs hbio Index.Compact dats $ \wb wbblobs runs -> do
+    withWbAndRuns hfs hbio Index.Ordinary dats $ \wb wbblobs runs -> do
     let model :: Map SerialisedKey (Entry SerialisedValue SerialisedBlob)
         model = Map.unionsWith (Entry.combine resolveV) (map runData dats)
         keys  = V.fromList [ k | InMemLookupData{lookups} <- dats
@@ -433,7 +433,7 @@ mkTestRun dat = (rawPages, b, ic)
 
     -- one-shot run construction
     (pages, b, ic) = runST $ do
-      racc <- Run.new nentries (RunAllocFixed 10) Index.Compact
+      racc <- Run.new nentries (RunAllocFixed 10) Index.Ordinary
       let kops = Map.toList dat
       psopss <- traverse (uncurry (Run.addKeyOp racc)) kops
       (mp, _ , b', ic', _) <- Run.unsafeFinalise racc

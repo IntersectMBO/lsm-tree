@@ -10,11 +10,10 @@ import qualified Data.Map.Strict as Map
 import           Data.Maybe (isJust)
 import qualified Data.Vector as V
 import           Database.LSMTree.Extras
-import           Database.LSMTree.Extras.Generators (KeyForIndexCompact)
 import           Database.LSMTree.Extras.RunData
 import qualified Database.LSMTree.Internal.BlobFile as BlobFile
 import qualified Database.LSMTree.Internal.Entry as Entry
-import qualified Database.LSMTree.Internal.Index as Index (IndexType (Compact))
+import qualified Database.LSMTree.Internal.Index as Index (IndexType (Ordinary))
 import           Database.LSMTree.Internal.Merge (MergeType (..))
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.PageAcc (entryWouldFitInPage)
@@ -65,7 +64,7 @@ runParams =
     RunBuilder.RunParams {
       runParamCaching = RunBuilder.CacheRunData,
       runParamAlloc   = RunAcc.RunAllocFixed 10,
-      runParamIndex   = Index.Compact
+      runParamIndex   = Index.Ordinary
     }
 
 -- | Creating multiple runs from write buffers and merging them leads to the
@@ -77,7 +76,7 @@ prop_MergeDistributes ::
      FS.HasBlockIO IO h ->
      MergeType ->
      StepSize ->
-     SmallList (RunData KeyForIndexCompact SerialisedValue SerialisedBlob) ->
+     SmallList (RunData SerialisedKey SerialisedValue SerialisedBlob) ->
      IO Property
 prop_MergeDistributes fs hbio mergeType stepSize (SmallList rds) = do
     let path = FS.mkFsPath []
@@ -153,7 +152,7 @@ prop_AbortMerge ::
      FS.HasBlockIO IO h ->
      MergeType ->
      StepSize ->
-     SmallList (RunData KeyForIndexCompact SerialisedValue SerialisedBlob) ->
+     SmallList (RunData SerialisedKey SerialisedValue SerialisedBlob) ->
      IO Property
 prop_AbortMerge fs hbio mergeType (Positive stepSize) (SmallList wbs) = do
     let path = FS.mkFsPath []

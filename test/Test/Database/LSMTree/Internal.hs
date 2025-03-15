@@ -17,7 +17,7 @@ import qualified Data.Map.Strict as Map
 import           Data.Maybe (isJust, mapMaybe)
 import qualified Data.Vector as V
 import           Data.Word
-import           Database.LSMTree.Extras.Generators (KeyForIndexCompact (..))
+import           Database.LSMTree.Extras.Generators ()
 import           Database.LSMTree.Internal
 import           Database.LSMTree.Internal.BlobRef
 import           Database.LSMTree.Internal.Config
@@ -132,9 +132,9 @@ showLeft x = \case
 --    == takeWhile ((<= ub) . key) . dropWhile ((< lb) . key)
 -- @
 prop_roundtripCursor ::
-     Maybe KeyForIndexCompact  -- ^ Inclusive lower bound
-  -> Maybe KeyForIndexCompact  -- ^ Inclusive upper bound
-  -> V.Vector (KeyForIndexCompact, Entry SerialisedValue SerialisedBlob)
+     Maybe SerialisedKey  -- ^ Inclusive lower bound
+  -> Maybe SerialisedKey  -- ^ Inclusive upper bound
+  -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob)
   -> Property
 prop_roundtripCursor lb ub kops = ioProperty $
     withTempIOHasBlockIO "prop_roundtripCursor" $ \hfs hbio -> do
@@ -171,7 +171,7 @@ prop_roundtripCursor lb ub kops = ioProperty $
       Mupdate v          -> Just (v, Nothing)
       Delete             -> Nothing
 
-    duplicates :: Map.Map KeyForIndexCompact Int
+    duplicates :: Map.Map SerialisedKey Int
     duplicates =
       Map.filter (> 1) $
         Map.fromListWith (+) . map (\(k, _) -> (k, 1)) $
@@ -179,9 +179,9 @@ prop_roundtripCursor lb ub kops = ioProperty $
 
 readCursorUntil ::
      ResolveSerialisedValue
-  -> Maybe KeyForIndexCompact  -- Inclusive upper bound
+  -> Maybe SerialisedKey  -- Inclusive upper bound
   -> Cursor IO h
-  -> IO (V.Vector (KeyForIndexCompact,
+  -> IO (V.Vector (SerialisedKey,
                    (SerialisedValue,
                     Maybe (WeakBlobRef IO h))))
 readCursorUntil resolve ub cursor = go V.empty

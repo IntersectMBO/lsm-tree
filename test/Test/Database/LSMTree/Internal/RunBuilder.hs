@@ -47,7 +47,7 @@ runParams =
     RunBuilder.RunParams {
       runParamCaching = RunBuilder.CacheRunData,
       runParamAlloc   = RunAcc.RunAllocFixed 10,
-      runParamIndex   = Index.Compact
+      runParamIndex   = Index.Ordinary
     }
 
 -- | 'new' in an existing directory should be succesfull.
