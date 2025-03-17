@@ -1,36 +1,14 @@
-{-# LANGUAGE CPP                      #-}
-{-# LANGUAGE ConstraintKinds          #-}
-{-# LANGUAGE DataKinds                #-}
-{-# LANGUAGE DerivingStrategies       #-}
-{-# LANGUAGE EmptyDataDeriving        #-}
-{-# LANGUAGE FlexibleContexts         #-}
-{-# LANGUAGE FlexibleInstances        #-}
-{-# LANGUAGE GADTs                    #-}
-{-# LANGUAGE InstanceSigs             #-}
-{-# LANGUAGE LambdaCase               #-}
-{-# LANGUAGE MultiParamTypeClasses    #-}
-{-# LANGUAGE MultiWayIf               #-}
-{-# LANGUAGE NamedFieldPuns           #-}
-{-# LANGUAGE OverloadedStrings        #-}
-{-# LANGUAGE QuantifiedConstraints    #-}
-{-# LANGUAGE RankNTypes               #-}
-{-# LANGUAGE ScopedTypeVariables      #-}
-{-# LANGUAGE StandaloneDeriving       #-}
-{-# LANGUAGE StandaloneKindSignatures #-}
-{-# LANGUAGE TypeApplications         #-}
-{-# LANGUAGE TypeFamilies             #-}
-{-# LANGUAGE UndecidableInstances     #-}
+{-# LANGUAGE CPP                   #-}
+{-# LANGUAGE OverloadedStrings     #-}
+{-# LANGUAGE QuantifiedConstraints #-}
+{-# LANGUAGE TypeFamilies          #-}
+{-# LANGUAGE UndecidableInstances  #-}
 
 #if MIN_VERSION_GLASGOW_HASKELL(9,8,1,0)
-{-# LANGUAGE TypeAbstractions         #-}
+{-# LANGUAGE TypeAbstractions      #-}
 #endif
 
 {-# OPTIONS_GHC -Wno-orphans #-}
-
-{- HLINT ignore "Evaluate" -}
-{- HLINT ignore "Use camelCase" -}
-{- HLINT ignore "Redundant fmap" -}
-{- HLINT ignore "Short-circuited list comprehension" -} -- TODO: remove once table union is implemented
 
 {-
   TODO: improve generation and shrinking of dependencies. See
@@ -90,6 +68,12 @@ import           Data.Bifunctor (Bifunctor (..))
 import           Data.Constraint (Dict (..))
 import           Data.Either (partitionEithers)
 import           Data.Kind (Type)
+#if MIN_VERSION_base(4,20,0)
+import           Data.List (nub)
+#else
+import           Data.List (foldl', nub)
+                 -- foldl' is included in the Prelude from base 4.20 onwards
+#endif
 import           Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
 import           Data.Map.Strict (Map)
@@ -1777,7 +1761,7 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
       concat
         [ genActionsSession
         , genActionsTables
-        , genUnionActions
+        , genActionsUnion
         , genActionsCursor
         , genActionsBlobRef
         ]
@@ -1822,8 +1806,11 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
             Map.member (Model.tableID t) (Model.tables st)
       ]
 
-    genUnionDescendantTableVars = QC.elements unionDescendantTableVars
-    genNotUnionDescendantTableVars = QC.elements notUnionDescendantTableVars
+    -- We already want to enable unions, but some operations on tables don't
+    -- support unions yet. Therefore, we want to only run them on tables that
+    -- don't descend from a union.
+    genUnionDescendantTableVar = QC.elements unionDescendantTableVars
+    genNotUnionDescendantTableVar = QC.elements notUnionDescendantTableVars
 
     unionDescendantTableVars, notUnionDescendantTableVars :: [Var h (WrapTable h IO k v b)]
     (unionDescendantTableVars, notUnionDescendantTableVars) = partitionEithers $
@@ -1915,8 +1902,10 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
         | let genErrors = pure Nothing -- TODO: generate errors
         ]
      ++ [ (5,  fmap Some $ (Action <$> genErrors <*>) $
-            RangeLookup <$> genRange <*> genTableVar)
+            RangeLookup <$> genRange <*> genNotUnionDescendantTableVar)
+            -- TODO: enable range lookups on tables with unions
         | let genErrors = pure Nothing -- TODO: generate errors
+        , not (null notUnionDescendantTableVars) -- TODO: enable range lookups on tables with unions
         ]
      ++ [ (10, fmap Some $ (Action <$> genErrors <*>) $
             Updates <$> genUpdates <*> genTableVar)
@@ -1935,9 +1924,11 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
         | let genErrors = pure Nothing -- TODO: generate errors
         ]
      ++ [ (3,  fmap Some $ (Action <$> genErrors <*>) $
-            NewCursor <$> QC.arbitrary <*> genTableVar)
+            NewCursor <$> QC.arbitrary <*> genNotUnionDescendantTableVar)
+            -- TODO: cursors for tables with unions
         | length cursorVars <= 5 -- no more than 5 cursors at once
         , let genErrors = pure Nothing -- TODO: generate errors
+        , not (null notUnionDescendantTableVars) -- TODO: cursors for tables with unions
         ]
      ++ [ (2,  fmap Some $ (Action <$> genErrors <*>) $
             CreateSnapshot <$> genCorruption <*> pure label <*> genUnusedSnapshotName <*> genTableVar)
@@ -1957,93 +1948,61 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
         ]
 
     -- | Generate table actions that have to do with unions.
-    genUnionActions :: [(Int, Gen (Any (LockstepAction (ModelState h))))]
-    genUnionActions
+    genActionsUnion :: [(Int, Gen (Any (LockstepAction (ModelState h))))]
+    genActionsUnion
       | null tableVars = []
       | otherwise =
         [ (2,  fmap Some $ (Action <$> genErrors <*>) $
             Union <$> genTableVar <*> genTableVar)
         | length tableVars <= 5 -- no more than 5 tables at once
         , let genErrors = pure Nothing -- TODO: generate errors
-          -- TODO: this is currently only enabled for the reference
-          -- implementation. Enable this unconditionally once table union is
-          -- implemented
-        , isJust (eqT @h @ModelIO.Table)
+        ]
+     ++ [ (2,  fmap Some $ (Action <$> genErrors <*>) $ do
+            -- Generate at least a 2-way union, and at most a 3-way union.
+            --
+            -- Tests for 1-way unions are included in the UnitTests module.
+            -- n-way unions for n>3 lead to large unions, which are less
+            -- likely to be finished before the end of an action sequence.
+            n <- QC.chooseInt (2, 3)
+            Unions . NE.fromList <$> QC.vectorOf n genTableVar)
+        | length tableVars <= 5 -- no more than 5 tables at once
+        , let genErrors = pure Nothing -- TODO: generate errors
         ]
      ++ [ (2,  fmap Some $ (Action <$> genErrors <*>) $
-            Unions <$> gen2or3TableVars)
-        | length tableVars <= 5 -- no more than 5 tables at once
+            RemainingUnionDebt <$> genUnionDescendantTableVar)
+            -- Tables not derived from unions are covered in UnitTests.
+        | not (null unionDescendantTableVars)
         , let genErrors = pure Nothing -- TODO: generate errors
           -- TODO: this is currently only enabled for the reference
           -- implementation. Enable this unconditionally once table union is
           -- implemented
         , isJust (eqT @h @ModelIO.Table)
         ]
-     ++ [ (2,  fmap Some $ (Action <$> genErrors <*>) $
-            RemainingUnionDebt <$> genUnionTableVar)
-        | let genErrors = pure Nothing -- TODO: generate errors
-          -- TODO: this is currently only enabled for the reference
-          -- implementation. Enable this unconditionally once table union is
-          -- implemented
-        , isJust (eqT @h @ModelIO.Table)
-
-        ]
      ++ [ (8, fmap Some $ (Action <$> genErrors <*>) $
-            SupplyUnionCredits <$> genUnionTableVar <*> genUnionCredits)
-        | let genErrors = pure Nothing -- TODO: generate errors
+            SupplyUnionCredits <$> genUnionDescendantTableVar <*> genUnionCredits)
+            -- Tables not derived from unions are covered in UnitTests.
+        | not (null unionDescendantTableVars)
+        , let genErrors = pure Nothing -- TODO: generate errors
           -- TODO: this is currently only enabled for the reference
           -- implementation. Enable this unconditionally once table union is
           -- implemented
         , isJust (eqT @h @ModelIO.Table)
         ]
       ++ [ (2, fmap Some $ (Action <$> genErrors <*>) $
-            SupplyPortionOfDebt <$> genUnionTableVar <*> genPortion)
-        | let genErrors  = pure Nothing -- TODO: generate errors
+            SupplyPortionOfDebt <$> genUnionDescendantTableVar <*> genPortion)
+            -- Tables not derived from unions are covered in UnitTests.
+        | not (null unionDescendantTableVars)
+        , let genErrors  = pure Nothing -- TODO: generate errors
           -- TODO: this is currently only enabled for the reference
           -- implementation. Enable this unconditionally once table union is
           -- implemented
         , isJust (eqT @h @ModelIO.Table)
         ]
       where
-        -- Generate at least a 2-way union, and at most a 3-way union.
-        --
-        -- Unit tests for 0-way and 1-way unions are included in the UnitTests
-        -- module. n-way unions for n>3 lead to larger unions, which are less likely
-        -- to be finished before the end of an action sequence.
-        gen2or3TableVars :: Gen (NonEmpty (Var h (WrapTable h IO k v b)))
-        gen2or3TableVars = do
-            tableVar1 <- genTableVar
-            tableVar2 <- genTableVar
-            mtableVar3 <- QC.oneof [pure Nothing, Just <$> genTableVar]
-            pure $ NE.fromList $ catMaybes [
-                Just tableVar1, Just tableVar2, mtableVar3
-              ]
-
-        -- TODO: tweak distribution once table unions are implemented
-        genUnionTableVar = QC.frequency $
-            -- The interesting cases to test for are when tables are union
-            -- tables.
-            [ (9, genUnionDescendantTableVars)
-            | not (null unionDescendantTableVars)
-            ]
-            -- For non-union tables, querying the union debt or supplying union
-            -- credits are no-ops, so we generate such tables only rarely.
-            --
-            -- TODO: replace union actions on non-union tables with a few unit
-            -- tests?
-         ++ [ (1, genNotUnionDescendantTableVars)
-            | not (null notUnionDescendantTableVars)
-            ]
-
-        -- TODO: tweak distribution once table unions are implemented
-        genUnionCredits = QC.frequency [
-            -- The typical, interesting case is to supply a positive number of
-            -- union credits.
-            (9, R.UnionCredits . QC.getPositive <$> QC.arbitrary)
-            -- Supplying 0 or less credits is a no-op, so we generate it only
-            -- rarely.
-          , (1, R.UnionCredits <$> QC.arbitrary)
-          ]
+        -- The typical, interesting case is to supply a positive number of
+        -- union credits. Supplying 0 or less credits is a no-op. We cover
+        -- it in UnitTests so we don't have to cover it here.
+        genUnionCredits = R.UnionCredits . QC.getPositive <$> QC.arbitrary
 
         -- TODO: tweak distribution once table unions are implemented
         genPortion = Portion <$> QC.elements [1, 2, 3]
@@ -2259,12 +2218,10 @@ instance InterpretOp Op (ModelValue (ModelState h)) where
   Statistics, labelling/tagging
 -------------------------------------------------------------------------------}
 
--- TODO: add tagging of interesting cases for union-related actions.
-
 data Stats = Stats {
     -- === Tags
     -- | Names for which snapshots exist
-    snapshotted        :: Set R.SnapshotName
+    snapshotted        :: !(Set R.SnapshotName)
     -- === Final tags (per action sequence, across all tables)
     -- | Number of succesful lookups and their results
   , numLookupsResults  :: {-# UNPACK #-} !(Int, Int, Int)
@@ -2279,19 +2236,25 @@ data Stats = Stats {
     -- === Final tags (per action sequence, per table)
     -- | Number of actions per table (succesful or failing)
   , numActionsPerTable :: !(Map Model.TableID Int)
-    -- | The size of tables that were closed. This is used to augment the table
-    -- sizes from the final model state (which of course has only tables still
-    -- open in the final state).
-  , closedTableSizes   :: !(Map Model.TableID Int)
-    -- | The ultimate parent for each table. This is the 'TableId' of a table
+    -- | The state of model tables at the point they were closed. This is used
+    -- to augment the tables from the final model state (which of course has
+    -- only tables still open in the final state).
+  , closedTables       :: !(Map Model.TableID Model.SomeTable)
+    -- | The ultimate parents for each table. These are the 'TableId's of tables
     -- created using 'new' or 'open'.
-  , parentTable        :: Map Model.TableID Model.TableID
+  , parentTable        :: !(Map Model.TableID [Model.TableID])
     -- | Track the interleavings of operations via different but related tables.
-    -- This is a map from the ultimate parent table to a summary log of which
-    -- tables (derived from that parent table via duplicate) have had
+    -- This is a map from each ultimate parent table to a summary log of which
+    -- tables (derived from that parent table via duplicate or union) have had
     -- \"interesting\" actions performed on them. We record only the
     -- interleavings of different tables not multiple actions on the same table.
-  , dupTableActionLog  :: Map Model.TableID [Model.TableID]
+  , dupTableActionLog  :: !(Map Model.TableID [Model.TableID])
+    -- | The subset of tables (open or closed) that were created as a result
+    -- of a union operation. This can be used for example to select subsets of
+    -- the other per-table tracking maps above, or the state from the model.
+    -- The map value is the size of the union table at the point it was created,
+    -- so we can distinguish trivial empty unions from non-trivial.
+  , unionTables        :: !(Map Model.TableID Int)
   }
   deriving stock Show
 
@@ -2305,9 +2268,10 @@ initStats = Stats {
     , successActions = []
     , failActions = []
     , numActionsPerTable = Map.empty
-    , closedTableSizes   = Map.empty
+    , closedTables       = Map.empty
     , parentTable        = Map.empty
     , dupTableActionLog  = Map.empty
+    , unionTables        = Map.empty
     }
 
 updateStats ::
@@ -2323,7 +2287,7 @@ updateStats ::
   -> Val h a
   -> Stats
   -> Stats
-updateStats action@(Action _merrs action') lookUp modelBefore _modelAfter result =
+updateStats action@(Action _merrs action') lookUp modelBefore modelAfter result =
       -- === Tags
       updSnapshotted
       -- === Final tags
@@ -2332,9 +2296,10 @@ updateStats action@(Action _merrs action') lookUp modelBefore _modelAfter result
     . updSuccessActions
     . updFailActions
     . updNumActionsPerTable
-    . updClosedTableSizes
+    . updClosedTables
     . updDupTableActionLog
     . updParentTable
+    . updUnionTables
   where
     -- === Tags
 
@@ -2467,15 +2432,14 @@ updateStats action@(Action _merrs action') lookUp modelBefore _modelAfter result
                                                     (numActionsPerTable stats)
               }
 
-    updClosedTableSizes stats = case (action', result) of
+    updClosedTables stats = case (action', result) of
         (Close tableVar, MEither (Right (MUnit ())))
           | MTable t <- lookUp tableVar
           , let tid          = Model.tableID t
             -- This lookup can fail if the table was already closed:
           , Just (_, table) <- Map.lookup tid (Model.tables modelBefore)
-          , let  tsize       = Model.withSomeTable Model.size table
           -> stats {
-               closedTableSizes = Map.insert tid tsize (closedTableSizes stats)
+               closedTables = Map.insert tid table (closedTables stats)
              }
         _ -> stats
 
@@ -2485,15 +2449,11 @@ updateStats action@(Action _merrs action') lookUp modelBefore _modelAfter result
         (OpenSnapshot{}, MEither (Right (MTable tbl))) ->
           insertParentTableNew tbl stats
         (Duplicate ptblVar, MEither (Right (MTable tbl))) ->
-          insertParentTableDerived ptblVar tbl stats
-        (Union ptblVar _ptblVar2, MEither (Right (MTable tbl))) ->
-          insertParentTableDerived ptblVar tbl stats
-        (Unions (ptblVar :| _ptblVars), MEither (Right (MTable tbl))) ->
-          insertParentTableDerived ptblVar tbl stats
-        -- TODO: we're abitrarily picking the first parent as the parent (and
-        -- ignoring ptblVar2 and ptblVars above). Tables should be able to have
-        -- *multiple* ultimate parent tables, which is currently not possible:
-        --parentTable only stores a single ultimate parent table per table.
+          insertParentTableDerived [ptblVar] tbl stats
+        (Union ptblVar1 ptblVar2, MEither (Right (MTable tbl))) ->
+          insertParentTableDerived [ptblVar1, ptblVar2]  tbl stats
+        (Unions ptblVars, MEither (Right (MTable tbl))) ->
+          insertParentTableDerived (NE.toList ptblVars) tbl stats
         _ -> stats
 
     -- insert an entry into the parentTable for a completely new table
@@ -2501,22 +2461,25 @@ updateStats action@(Action _merrs action') lookUp modelBefore _modelAfter result
     insertParentTableNew tbl stats =
       stats {
         parentTable = Map.insert (Model.tableID tbl)
-                                 (Model.tableID tbl)
+                                 [Model.tableID tbl]
                                  (parentTable stats)
       }
 
     -- insert an entry into the parentTable for a table derived from a parent
     insertParentTableDerived :: forall k v b.
-                                GVar Op (WrapTable h IO k v b)
+                                [GVar Op (WrapTable h IO k v b)]
                              -> Model.Table k v b -> Stats -> Stats
-    insertParentTableDerived ptblVar tbl stats =
-      let -- immediate and ultimate parent table ids
-          iptblId, uptblId :: Model.TableID
-          iptblId = getTableId (lookUp ptblVar)
-          uptblId = parentTable stats Map.! iptblId
+    insertParentTableDerived ptblVars tbl stats =
+      let uptblIds :: [Model.TableID] -- the set of ultimate parent table ids
+          uptblIds = nub [ uptblId
+                         | ptblVar <- ptblVars
+                           -- immediate and ultimate parent table id:
+                         , let iptblId = getTableId (lookUp ptblVar)
+                         , uptblId <- parentTable stats Map.! iptblId
+                         ]
        in stats {
             parentTable = Map.insert (Model.tableID tbl)
-                                     uptblId
+                                     uptblIds
                                      (parentTable stats)
           }
 
@@ -2562,23 +2525,40 @@ updateStats action@(Action _merrs action') lookUp modelBefore _modelAfter result
         -- not the latest one already
         updateLastActionLog :: GVar Op (WrapTable h IO k v b) -> Stats
         updateLastActionLog tableVar =
-          case Map.lookup pthid (dupTableActionLog stats) of
-            Just (thid' : _)
-              | thid == thid' -> stats -- the most recent action was via this table
-            malog ->
-              let alog = thid : fromMaybe [] malog
-               in stats {
-                    dupTableActionLog = Map.insert pthid alog
-                                                   (dupTableActionLog stats)
-                  }
+          stats {
+            dupTableActionLog = foldl' (flip (Map.alter extendLog))
+                                       (dupTableActionLog stats)
+                                       (parentTable stats Map.! thid)
+          }
           where
-            thid  = getTableId (lookUp tableVar)
-            pthid = parentTable stats Map.! thid
+            thid = getTableId (lookUp tableVar)
+
+            extendLog :: Maybe [Model.TableID] -> Maybe [Model.TableID]
+            extendLog (Just alog@(thid' : _)) | thid == thid'
+                                  = Just alog          -- action via same table
+            extendLog (Just alog) = Just (thid : alog) -- action via different table
+            extendLog Nothing     = Just (thid : [])   -- first action on table
 
         emptyRange (R.FromToExcluding l u) = l >= u
         emptyRange (R.FromToIncluding l u) = l >  u
 
     updDupTableActionLog stats = stats
+
+    updUnionTables stats = case action' of
+        Union{}  -> insertUnionTable
+        Unions{} -> insertUnionTable
+        _        -> stats
+      where
+        insertUnionTable
+          | MEither (Right (MTable t)) <- result
+          , let tid = Model.tableID t
+          , Just (_,tbl) <- Map.lookup tid (Model.tables modelAfter)
+          , let sz = Model.withSomeTable Model.size tbl
+          = stats {
+              unionTables = Map.insert tid sz (unionTables stats)
+            }
+          | otherwise
+          = stats
 
     getTableId :: ModelValue (ModelState h) (WrapTable h IO k v b)
                      -> Model.TableID
@@ -2609,6 +2589,8 @@ data Tag =
     -- | A snapshot failed to open because we detected that the snapshot was
     -- corrupt
   | OpenSnapshotDetectsCorruption R.SnapshotName
+    -- | Opened a snapshot (successfully) for a table involving a union
+  | OpenSnapshotUnion
   deriving stock (Show, Eq, Ord)
 
 -- | This is run for after every action
@@ -2629,6 +2611,7 @@ tagStep' (ModelState _stateBefore statsBefore,
     , tagDeleteMissingSnapshot
     , tagCreateSnapshotCorruptedOrUncorrupted
     , tagOpenSnapshotDetectsCorruption
+    , tagOpenSnapshotUnion
     ]
   where
     tagSnapshotTwice
@@ -2679,6 +2662,14 @@ tagStep' (ModelState _stateBefore statsBefore,
       | OpenSnapshot _ _ name <- action'
       , MEither (Left (MErr (Model.ErrSnapshotCorrupted _))) <- result
       = Just (OpenSnapshotDetectsCorruption name)
+      | otherwise
+      = Nothing
+
+    tagOpenSnapshotUnion
+      | OpenSnapshot{} <- action'
+      , MEither (Right (MTable t)) <- result
+      , Model.isUnionDescendant t == Model.IsUnionDescendant
+      = Just OpenSnapshotUnion
       | otherwise
       = Nothing
 
@@ -2736,6 +2727,8 @@ tagFinalState' (getModel -> ModelState finalState finalStats) = concat [
     , tagNumTableActions
     , tagTableSizes
     , tagDupTableActionLog
+    , tagNumUnionTables
+    , tagNumUnionTableActions
     ]
   where
     tagNumLookupsResults = [
@@ -2786,15 +2779,33 @@ tagFinalState' (getModel -> ModelState finalState finalStats) = concat [
         | let openSizes, closedSizes :: Map Model.TableID Int
               openSizes   = Model.withSomeTable Model.size . snd <$>
                               Model.tables finalState
-              closedSizes = closedTableSizes finalStats
+              closedSizes = Model.withSomeTable Model.size <$>
+                              closedTables finalStats
         , size <- Map.elems (openSizes `Map.union` closedSizes)
         ]
 
     tagDupTableActionLog =
-        [ ("Interleaved actions on table duplicates",
+        [ ("Interleaved actions on table duplicates or unions",
            [DupTableActionLog (showPowersOf 2 n)])
         | (_, alog) <- Map.toList (dupTableActionLog finalStats)
         , let n = length alog
+        ]
+
+    tagNumUnionTables =
+        [ ("Number of union tables (empty)",
+           [NumTables (showPowersOf 2 (Map.size trivial))])
+        , ("Number of union tables (non-empty)",
+           [NumTables (showPowersOf 2 (Map.size nonTrivial))])
+        ]
+      where
+        (nonTrivial, trivial) = Map.partition (> 0) (unionTables finalStats)
+
+    tagNumUnionTableActions =
+        [ ("Number of actions per table with non-empty unions",
+           [ NumTableActions (showPowersOf 2 n) ])
+        | n <- Map.elems $ numActionsPerTable finalStats
+                             `Map.intersection`
+                           Map.filter (> 0) (unionTables finalStats)
         ]
 
 {-------------------------------------------------------------------------------

@@ -18,10 +18,10 @@ import           Database.LSMTree as R
 
 import           Control.Exception (Exception, bracket, try)
 import           Database.LSMTree.Extras.Generators (KeyForIndexCompact)
-import qualified Test.QuickCheck as QC
+import qualified Test.QuickCheck.Arbitrary as QC
+import qualified Test.QuickCheck.Gen as QC
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.HUnit
-import           Test.Tasty.QuickCheck (Property, testProperty)
 import           Test.Util.FS (withTempIOHasBlockIO)
 
 
@@ -33,12 +33,9 @@ tests =
       , testCase      "unit_closed_cursor"  unit_closed_cursor
       , testCase      "unit_twoTableTypes"  unit_twoTableTypes
       , testCase      "unit_snapshots"      unit_snapshots
-
-        -- Properties
-
-      , testProperty "prop_unions_1" $
-          -- TODO: enable once unions are implemented
-          QC.expectFailure prop_unions_1
+      , testCase      "unit_unions_1"       unit_unions_1
+      , testCase      "unit_union_credits"  unit_union_credits
+      , testCase      "unit_union_credit_0" unit_union_credit_0
       ]
 
 unit_blobs :: (String -> IO ()) -> Assertion
@@ -155,9 +152,8 @@ unit_snapshots =
     snap2 = "table2"
 
 -- | Unions of 1 table are equivalent to duplicate
-prop_unions_1 :: Property
-prop_unions_1 =
-    QC.once $ QC.ioProperty $
+unit_unions_1 :: Assertion
+unit_unions_1 =
     withTempIOHasBlockIO "test" $ \hfs hbio ->
     withSession nullTracer hfs hbio (FS.mkFsPath []) $ \sess ->
     withTable @_ @Key1 @Value1 @Blob1 sess defaultTableConfig $ \table -> do
@@ -165,8 +161,8 @@ prop_unions_1 =
 
       bracket (unions $ table :| []) close $ \table' ->
         bracket (duplicate table) close $ \table'' -> do
-          inserts table [(Key1 17, Value1 43, Nothing)]
-          inserts table [(Key1 17, Value1 44, Nothing)]
+          inserts table' [(Key1 17, Value1 43, Nothing)]
+          inserts table'' [(Key1 17, Value1 44, Nothing)]
 
           -- The original table is unmodified
           r <- lookups table [Key1 17]
@@ -180,6 +176,42 @@ prop_unions_1 =
           r'' <- lookups table'' [Key1 17]
           V.map ignoreBlobRef r'' @?= [Found (Value1 44)]
 
+-- | Querying or supplying union credits to non-union tables is trivial.
+unit_union_credits :: Assertion
+unit_union_credits =
+    withTempIOHasBlockIO "test" $ \hfs hbio ->
+    withSession nullTracer hfs hbio (FS.mkFsPath []) $ \sess ->
+    withTable @_ @Key1 @Value1 @Blob1 sess defaultTableConfig $ \table -> do
+      inserts table [(Key1 17, Value1 42, Nothing)]
+
+      -- The table is not the result of a union, so the debt is always 0,
+      UnionDebt debt <- remainingUnionDebt table
+      debt @?= 0
+
+      -- and supplying credits returns them all as leftovers.
+      UnionCredits leftover <- supplyUnionCredits table (UnionCredits 42)
+      leftover @?= 42
+
+-- | Supplying zero or negative credits to union tables works, but does nothing.
+unit_union_credit_0 :: Assertion
+unit_union_credit_0 =
+    withTempIOHasBlockIO "test" $ \hfs hbio ->
+    withSession nullTracer hfs hbio (FS.mkFsPath []) $ \sess ->
+    withTable @_ @Key1 @Value1 @Blob1 sess defaultTableConfig $ \table -> do
+      inserts table [(Key1 17, Value1 42, Nothing)]
+
+      bracket (table `union` table) close $ \table' -> do
+        -- Supplying 0 credits works and returns 0 leftovers.
+        UnionCredits leftover <- supplyUnionCredits table' (UnionCredits 0)
+        leftover @?= 0
+
+        -- Supplying negative credits also works and returns 0 leftovers.
+        UnionCredits leftover' <- supplyUnionCredits table' (UnionCredits (-42))
+        leftover' @?= 0
+
+        -- And the table is still vaguely cromulent
+        r <- lookups table' [Key1 17]
+        V.map ignoreBlobRef r @?= [Found (Value1 42)]
 
 ignoreBlobRef :: Functor f => f (BlobRef m b) -> f ()
 ignoreBlobRef = fmap (const ())

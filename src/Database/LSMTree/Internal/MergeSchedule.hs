@@ -352,10 +352,7 @@ iforLevelM_ lvls k = V.iforM_ lvls $ \i lvl -> k (LevelNo (i + 1)) lvl
 -- of multiple runs, but a nested tree of merges.
 --
 -- TODO: So far, this is
--- * never created
--- * not stored in snapshots
--- * not loaded from snapshots
--- * ignored in lookups
+-- * not considered when creating cursors (also used for range lookups)
 -- * never made merge progress on (by supplying credits to it)
 -- * never merged into the regular levels
 data UnionLevel m h =

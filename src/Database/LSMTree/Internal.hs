@@ -1631,8 +1631,10 @@ remainingUnionDebt :: (MonadSTM m, MonadThrow m) => Table m h -> m UnionDebt
 remainingUnionDebt t = do
     traceWith (tableTracer t) TraceRemainingUnionDebt
     withOpenTable t $ \tEnv -> do
-      RW.withReadAccess (tableContent tEnv) $ \_tableContent -> do
-        error "remainingUnionDebt: not yet implemented"
+      RW.withReadAccess (tableContent tEnv) $ \tableContent ->
+        case tableUnionLevel tableContent of
+          NoUnion -> pure (UnionDebt 0)
+          Union{} -> error "remainingUnionDebt: not yet implemented"
 
 -- | See 'Database.LSMTree.Normal.UnionCredits'.
 newtype UnionCredits = UnionCredits Int
@@ -1645,5 +1647,12 @@ supplyUnionCredits t credits = do
     traceWith (tableTracer t) $ TraceSupplyUnionCredits credits
     withOpenTable t $ \tEnv -> do
       -- TODO: should this be acquiring read or write access?
-      RW.withWriteAccess (tableContent tEnv) $ \_tableContent -> do
-        error "supplyUnionCredits: not yet implemented"
+      RW.withWriteAccess (tableContent tEnv) $ \tableContent ->
+        case tableUnionLevel tableContent of
+          NoUnion -> pure (tableContent, credits) -- all leftovers
+          Union{}
+           | credits <= UnionCredits 0 -> pure (tableContent, UnionCredits 0)
+           --TODO: remove this 0 special case once the general case covers it.
+           -- We do not need to optimise the 0 case. It is just here to
+           -- simplify test coverage.
+           | otherwise -> error "supplyUnionCredits: not yet implemented"
