@@ -326,7 +326,7 @@ duplicateLevels ::
   -> m (Levels m h)
 duplicateLevels reg levels =
     forMStrict levels $ \Level {incomingRun, residentRuns} -> do
-      incomingRun'  <- duplicateIncomingRun reg incomingRun
+      incomingRun'  <- withRollback reg (duplicateIncomingRun incomingRun) releaseIncomingRun
       residentRuns' <- forMStrict residentRuns $ \r ->
                          withRollback reg (dupRef r) releaseRef
       return $! Level {
