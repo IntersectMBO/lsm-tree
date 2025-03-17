@@ -2253,7 +2253,7 @@ data Stats = Stats {
     -- sizes from the final model state (which of course has only tables still
     -- open in the final state).
   , closedTableSizes   :: !(Map Model.TableID Int)
-    -- | The ultimate parent for each table. This is the 'TableId' of a table
+    -- | The ultimate parents for each table. These are the 'TableId's of tables
     -- created using 'new' or 'open'.
   , parentTable        :: Map Model.TableID [Model.TableID]
     -- | Track the interleavings of operations via different but related tables.
