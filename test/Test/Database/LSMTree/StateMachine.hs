@@ -2221,7 +2221,7 @@ instance InterpretOp Op (ModelValue (ModelState h)) where
 data Stats = Stats {
     -- === Tags
     -- | Names for which snapshots exist
-    snapshotted        :: Set R.SnapshotName
+    snapshotted        :: !(Set R.SnapshotName)
     -- === Final tags (per action sequence, across all tables)
     -- | Number of succesful lookups and their results
   , numLookupsResults  :: {-# UNPACK #-} !(Int, Int, Int)
@@ -2242,13 +2242,13 @@ data Stats = Stats {
   , closedTables       :: !(Map Model.TableID Model.SomeTable)
     -- | The ultimate parents for each table. These are the 'TableId's of tables
     -- created using 'new' or 'open'.
-  , parentTable        :: Map Model.TableID [Model.TableID]
+  , parentTable        :: !(Map Model.TableID [Model.TableID])
     -- | Track the interleavings of operations via different but related tables.
     -- This is a map from each ultimate parent table to a summary log of which
     -- tables (derived from that parent table via duplicate or union) have had
     -- \"interesting\" actions performed on them. We record only the
     -- interleavings of different tables not multiple actions on the same table.
-  , dupTableActionLog  :: Map Model.TableID [Model.TableID]
+  , dupTableActionLog  :: !(Map Model.TableID [Model.TableID])
     -- | The subset of tables (open or closed) that were created as a result
     -- of a union operation. This can be used for example to select subsets of
     -- the other per-table tracking maps above, or the state from the model.
