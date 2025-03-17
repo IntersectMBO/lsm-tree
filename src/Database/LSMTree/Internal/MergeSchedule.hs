@@ -23,13 +23,7 @@ module Database.LSMTree.Internal.MergeSchedule (
     -- * Levels, runs and ongoing merges
   , Levels
   , Level (..)
-  , IncomingRun (..)
   , MergePolicyForLevel (..)
-  , newIncomingSingleRun
-  , newIncomingMergingRun
-  , releaseIncomingRun
-  , supplyCreditsIncomingRun
-  , snapshotIncomingRun
   , mergingRunParamsForLevel
     -- * Union level
   , UnionLevel (..)
@@ -710,6 +704,7 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels ul
               TraceCompletedMerge (Run.size r) (Run.runFsPathsNumber r)
 
       return ir
+
 {-# SPECIALISE newIncomingRunAtLevel ::
      Tracer IO (AtLevel MergeTrace)
   -> HasFS IO h
