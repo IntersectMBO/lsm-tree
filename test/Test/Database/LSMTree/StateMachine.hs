@@ -223,12 +223,13 @@ instance Arbitrary R.TableConfig where
         , (4, pure R.Incremental)
         ]
     confWriteBufferAlloc <- QC.arbitrary
+    confFencePointerIndex <- QC.arbitrary
     pure $ R.TableConfig {
         R.confMergePolicy       = R.MergePolicyLazyLevelling
       , R.confSizeRatio         = R.Four
       , confWriteBufferAlloc
       , R.confBloomFilterAlloc  = R.AllocFixed 10
-      , R.confFencePointerIndex = R.CompactIndex
+      , confFencePointerIndex
       , R.confDiskCachePolicy   = R.DiskCacheNone
       , confMergeSchedule
       }
@@ -236,9 +237,11 @@ instance Arbitrary R.TableConfig where
   shrink R.TableConfig{..} =
       [ R.TableConfig {
             confWriteBufferAlloc = confWriteBufferAlloc'
+          , confFencePointerIndex = confFencePointerIndex'
           , ..
           }
-      | confWriteBufferAlloc' <- QC.shrink confWriteBufferAlloc
+      | ( confWriteBufferAlloc', confFencePointerIndex')
+          <- QC.shrink (confWriteBufferAlloc, confFencePointerIndex)
       ]
 
 -- TODO: the current generator is suboptimal, and should be improved. There are
@@ -272,6 +275,13 @@ instance Arbitrary R.WriteBufferAlloc where
       [ R.AllocNumEntries (R.NumEntries x')
       | QC.Positive x' <- QC.shrink (QC.Positive x)
       ]
+
+deriving stock instance Enum R.FencePointerIndex
+deriving stock instance Bounded R.FencePointerIndex
+instance Arbitrary R.FencePointerIndex where
+  arbitrary = QC.arbitraryBoundedEnum
+  shrink R.OrdinaryIndex = []
+  shrink R.CompactIndex  = [R.OrdinaryIndex]
 
 propLockstep_RealImpl_RealFS_IO ::
      Tracer IO R.LSMTreeTrace

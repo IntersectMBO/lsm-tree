@@ -70,7 +70,7 @@ append (GrowingVector bufferRef lengthRef) count val
           length <- readPrimVar lengthRef
           makeRoom
           buffer' <- readSTRef bufferRef
-          Mutable.set (Mutable.slice length count buffer') val
+          Mutable.set (Mutable.slice length count buffer') $! val
     where
 
     makeRoom :: ST s ()

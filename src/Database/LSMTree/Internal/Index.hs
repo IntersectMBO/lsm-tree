@@ -154,8 +154,8 @@ fromSBS Ordinary input = second OrdinaryIndex <$> Ordinary.fromSBS input
     Incremental index construction is only guaranteed to work correctly when the
     supplied key ranges do not overlap and are given in ascending order.
 -}
-data IndexAcc s = CompactIndexAcc  (IndexCompactAcc  s)
-                | OrdinaryIndexAcc (IndexOrdinaryAcc s)
+data IndexAcc s = CompactIndexAcc  !(IndexCompactAcc  s)
+                | OrdinaryIndexAcc !(IndexOrdinaryAcc s)
 
 -- | Create a new index accumulator, using a default configuration.
 newWithDefaults :: IndexType -> ST s (IndexAcc s)

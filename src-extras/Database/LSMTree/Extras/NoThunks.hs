@@ -461,9 +461,31 @@ deriving anyclass instance Typeable s
   GrowingVector
 -------------------------------------------------------------------------------}
 
-deriving stock instance Generic (GrowingVector s a)
-deriving anyclass instance (Typeable s, Typeable a, NoThunks a)
-                        => NoThunks (GrowingVector s a)
+instance (NoThunks a, Typeable s, Typeable a) => NoThunks (GrowingVector s a) where
+  showTypeOf (p :: Proxy (GrowingVector s a)) = show $ typeRep p
+  wNoThunks ctx
+    (GrowingVector (a :: STRef s (VM.MVector s a)) (b :: PrimVar s Int))
+    = allNoThunks [
+          noThunks ctx b
+          -- Check that the STRef is in WHNF
+        , noThunks ctx $ OnlyCheckWhnf a
+          -- Check that the MVector is in WHNF
+        , do
+            mvec <- unsafeSTToIO $ readSTRef a
+            noThunks ctx' $ OnlyCheckWhnf mvec
+          -- Check that the vector elements contain no thunks. The vector
+          -- contains undefined elements after the first @n@ elements
+        , do
+            n <- unsafeSTToIO $ readPrimVar b
+            mvec <- unsafeSTToIO $ readSTRef a
+            allNoThunks [
+                unsafeSTToIO (VM.read mvec i) >>= \x -> noThunks ctx'' x
+              | i <- [0..n-1]
+              ]
+        ]
+    where
+      ctx' = showTypeOf (Proxy @(STRef s (VM.MVector s a))) : ctx
+      ctx'' = showTypeOf (Proxy @(VM.MVector s a)) : ctx'
 
 {-------------------------------------------------------------------------------
   Baler
@@ -663,15 +685,21 @@ instance (NoThunks a, Typeable s, Typeable a) => NoThunks (MutableHeap s a) wher
     (MH (a :: PrimVar s Int) (b :: SmallMutableArray s a))
     = allNoThunks [
           noThunks ctx a
-          -- the small array may contain bogus/undefined placeholder values
-          -- after the first @n@ elements in the heap
-        , noThunks ctx $! do
+          -- Check that the array is in WHNF
+        , noThunks ctx (OnlyCheckWhnf b)
+          -- Check that the array elements contain no thunks. The small array
+          -- may contain undefined placeholder values after the first @n@
+          -- elements in the array. The very first element of the array can also
+          -- be undefined.
+        , do
             n <- unsafeSTToIO (readPrimVar a)
             allNoThunks [
-                unsafeSTToIO (readSmallArray b i) >>= \x -> noThunks ctx x
-              | i <- [0..n-1]
+                unsafeSTToIO (readSmallArray b i) >>= \x -> noThunks ctx' x
+              | i <- [1..n-1]
               ]
         ]
+    where
+      ctx' = showTypeOf (Proxy @(SmallMutableArray s a)) : ctx
 
 {-------------------------------------------------------------------------------
   IOLike
