@@ -78,12 +78,12 @@ import           Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (catMaybes, fromMaybe, isJust)
+import           Data.Maybe (catMaybes, fromMaybe)
 import           Data.Monoid (First (..))
 import           Data.Primitive.MutVar
 import           Data.Set (Set)
 import qualified Data.Set as Set
-import           Data.Typeable (Proxy (..), Typeable, cast, eqT)
+import           Data.Typeable (Proxy (..), Typeable, cast)
 import qualified Data.Vector as V
 import qualified Database.LSMTree as R
 import           Database.LSMTree.Class (LookupResult (..), QueryResult (..))
@@ -1983,30 +1983,18 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
             -- Tables not derived from unions are covered in UnitTests.
         | not (null unionDescendantTableVars)
         , let genErrors = pure Nothing -- TODO: generate errors
-          -- TODO: this is currently only enabled for the reference
-          -- implementation. Enable this unconditionally once table union is
-          -- implemented
-        , isJust (eqT @h @ModelIO.Table)
         ]
      ++ [ (8, fmap Some $ (Action <$> genErrors <*>) $
             SupplyUnionCredits <$> genUnionDescendantTableVar <*> genUnionCredits)
             -- Tables not derived from unions are covered in UnitTests.
         | not (null unionDescendantTableVars)
         , let genErrors = pure Nothing -- TODO: generate errors
-          -- TODO: this is currently only enabled for the reference
-          -- implementation. Enable this unconditionally once table union is
-          -- implemented
-        , isJust (eqT @h @ModelIO.Table)
         ]
       ++ [ (2, fmap Some $ (Action <$> genErrors <*>) $
             SupplyPortionOfDebt <$> genUnionDescendantTableVar <*> genPortion)
             -- Tables not derived from unions are covered in UnitTests.
         | not (null unionDescendantTableVars)
         , let genErrors  = pure Nothing -- TODO: generate errors
-          -- TODO: this is currently only enabled for the reference
-          -- implementation. Enable this unconditionally once table union is
-          -- implemented
-        , isJust (eqT @h @ModelIO.Table)
         ]
       where
         -- The typical, interesting case is to supply a positive number of
