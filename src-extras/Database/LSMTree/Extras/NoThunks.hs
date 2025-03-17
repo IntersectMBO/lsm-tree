@@ -41,6 +41,7 @@ import           Database.LSMTree.Internal.Chunk
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.CRC32C
 import           Database.LSMTree.Internal.Entry
+import           Database.LSMTree.Internal.IncomingRun
 import           Database.LSMTree.Internal.Index
 import           Database.LSMTree.Internal.Index.Compact
 import           Database.LSMTree.Internal.Index.CompactAcc

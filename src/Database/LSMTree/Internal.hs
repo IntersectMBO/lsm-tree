@@ -106,6 +106,7 @@ import qualified Database.LSMTree.Internal.BlobRef as BlobRef
 import           Database.LSMTree.Internal.Config
 import qualified Database.LSMTree.Internal.Cursor as Cursor
 import           Database.LSMTree.Internal.Entry (Entry)
+import           Database.LSMTree.Internal.IncomingRun (IncomingRun (..))
 import           Database.LSMTree.Internal.Lookup (ByteCountDiscrepancy,
                      ResolveSerialisedValue, lookupsIO,
                      lookupsIOWithoutWriteBuffer)

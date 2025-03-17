@@ -25,7 +25,6 @@ module Database.LSMTree.Internal.IncomingRun (
   , immediatelyCompleteIncomingRun
   ) where
 
-import           Control.ActionRegistry
 import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.DeepSeq (NFData (..))
 import           Control.Monad.Class.MonadST (MonadST)
@@ -64,18 +63,17 @@ instance NFData MergePolicyForLevel where
   rnf LevelTiering   = ()
   rnf LevelLevelling = ()
 
-{-# SPECIALISE duplicateIncomingRun :: ActionRegistry IO -> IncomingRun IO h -> IO (IncomingRun IO h) #-}
+{-# SPECIALISE duplicateIncomingRun :: IncomingRun IO h -> IO (IncomingRun IO h) #-}
 duplicateIncomingRun ::
      (PrimMonad m, MonadMask m)
-  => ActionRegistry m
-  -> IncomingRun m h
+  => IncomingRun m h
   -> m (IncomingRun m h)
-duplicateIncomingRun reg (Single r) =
-    Single <$> withRollback reg (dupRef r) releaseRef
+duplicateIncomingRun (Single r) =
+    Single <$> dupRef r
 
-duplicateIncomingRun reg (Merging mp md mcv mr) =
+duplicateIncomingRun (Merging mp md mcv mr) =
     Merging mp md <$> (newPrimVar =<< readPrimVar mcv)
-                  <*> withRollback reg (dupRef mr) releaseRef
+                  <*> dupRef mr
 
 {-# SPECIALISE releaseIncomingRun :: IncomingRun IO h -> IO () #-}
 releaseIncomingRun ::
