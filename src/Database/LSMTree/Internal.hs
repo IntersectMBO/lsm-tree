@@ -63,6 +63,7 @@ module Database.LSMTree.Internal (
   , createSnapshot
   , openSnapshot
   , deleteSnapshot
+  , doesSnapshotExist
   , listSnapshots
     -- * Multiple writable tables
   , duplicate
@@ -1209,9 +1210,8 @@ createSnapshot snap label tableType t = do
 
         -- Guard that the snapshot does not exist already
         let snapDir = Paths.namedSnapshotDir (tableSessionRoot tEnv) snap
-        doesSnapshotExist <-
-          FS.doesDirectoryExist (tableHasFS tEnv) (Paths.getNamedSnapshotDir snapDir)
-        if doesSnapshotExist then
+        snapshotExists <- doesSnapshotDirExist snap (tableSessionEnv tEnv)
+        if snapshotExists then
           throwIO (ErrSnapshotExists snap)
         else
           -- we assume the snapshots directory already exists, so we just have
@@ -1342,6 +1342,24 @@ openSnapshot sesh label tableType override snap resolve = do
           , tableUnionLevel = unionLevel
           }
 
+{-# SPECIALISE doesSnapshotExist ::
+     Session IO h
+  -> SnapshotName
+  -> IO Bool #-}
+-- |  See 'Database.LSMTree.Common.doesSnapshotExist'.
+doesSnapshotExist ::
+     (MonadMask m, MonadSTM m)
+  => Session m h
+  -> SnapshotName
+  -> m Bool
+doesSnapshotExist sesh snap = withOpenSession sesh (doesSnapshotDirExist snap)
+
+-- | Internal helper: Variant of 'doesSnapshotExist' that does not take a session lock.
+doesSnapshotDirExist :: SnapshotName -> SessionEnv m h -> m Bool
+doesSnapshotDirExist snap seshEnv = do
+  let snapDir = Paths.namedSnapshotDir (sessionRoot seshEnv) snap
+  FS.doesDirectoryExist (sessionHasFS seshEnv) (Paths.getNamedSnapshotDir snapDir)
+
 {-# SPECIALISE deleteSnapshot ::
      Session IO h
   -> SnapshotName
@@ -1355,13 +1373,10 @@ deleteSnapshot ::
 deleteSnapshot sesh snap = do
     traceWith (sessionTracer sesh) $ TraceDeleteSnapshot snap
     withOpenSession sesh $ \seshEnv -> do
-      let hfs = sessionHasFS seshEnv
-
       let snapDir = Paths.namedSnapshotDir (sessionRoot seshEnv) snap
-      doesSnapshotExist <-
-        FS.doesDirectoryExist (sessionHasFS seshEnv) (Paths.getNamedSnapshotDir snapDir)
-      unless doesSnapshotExist $ throwIO (ErrSnapshotDoesNotExist snap)
-      FS.removeDirectoryRecursive hfs (Paths.getNamedSnapshotDir snapDir)
+      snapshotExists <- doesSnapshotDirExist snap seshEnv
+      unless snapshotExists $ throwIO (ErrSnapshotDoesNotExist snap)
+      FS.removeDirectoryRecursive (sessionHasFS seshEnv) (Paths.getNamedSnapshotDir snapDir)
 
 {-# SPECIALISE listSnapshots :: Session IO h -> IO [SnapshotName] #-}
 -- |  See 'Database.LSMTree.Common.listSnapshots'.
