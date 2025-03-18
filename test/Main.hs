@@ -19,7 +19,6 @@ import qualified Test.Database.LSMTree.Internal.Lookup
 import qualified Test.Database.LSMTree.Internal.Merge
 import qualified Test.Database.LSMTree.Internal.MergingRun
 import qualified Test.Database.LSMTree.Internal.MergingTree
-import qualified Test.Database.LSMTree.Internal.Monkey
 import qualified Test.Database.LSMTree.Internal.PageAcc
 import qualified Test.Database.LSMTree.Internal.PageAcc1
 import qualified Test.Database.LSMTree.Internal.RawBytes
@@ -27,6 +26,7 @@ import qualified Test.Database.LSMTree.Internal.RawOverflowPage
 import qualified Test.Database.LSMTree.Internal.RawPage
 import qualified Test.Database.LSMTree.Internal.Run
 import qualified Test.Database.LSMTree.Internal.RunAcc
+import qualified Test.Database.LSMTree.Internal.RunBloomFilterAlloc
 import qualified Test.Database.LSMTree.Internal.RunBuilder
 import qualified Test.Database.LSMTree.Internal.RunReader
 import qualified Test.Database.LSMTree.Internal.RunReaders
@@ -66,7 +66,6 @@ main = do
     , Test.Database.LSMTree.Internal.Merge.tests
     , Test.Database.LSMTree.Internal.MergingRun.tests
     , Test.Database.LSMTree.Internal.MergingTree.tests
-    , Test.Database.LSMTree.Internal.Monkey.tests
     , Test.Database.LSMTree.Internal.PageAcc.tests
     , Test.Database.LSMTree.Internal.PageAcc1.tests
     , Test.Database.LSMTree.Internal.RawBytes.tests
@@ -74,6 +73,7 @@ main = do
     , Test.Database.LSMTree.Internal.RawPage.tests
     , Test.Database.LSMTree.Internal.Run.tests
     , Test.Database.LSMTree.Internal.RunAcc.tests
+    , Test.Database.LSMTree.Internal.RunBloomFilterAlloc.tests
     , Test.Database.LSMTree.Internal.RunBuilder.tests
     , Test.Database.LSMTree.Internal.RunReader.tests
     , Test.Database.LSMTree.Internal.RunReaders.tests

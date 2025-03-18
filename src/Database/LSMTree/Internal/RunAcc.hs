@@ -6,7 +6,6 @@
 --
 module Database.LSMTree.Internal.RunAcc (
     RunAcc (..)
-  , RunBloomFilterAlloc (..)
   , new
   , unsafeFinalise
     -- * Adding key\/op pairs
@@ -29,7 +28,12 @@ module Database.LSMTree.Internal.RunAcc (
   , addLargeKeyOp
   , addLargeSerialisedKeyOp
   , PageAcc.entryWouldFitInPage
+    -- * Bloom filter allocation
+  , RunBloomFilterAlloc (..)
+    -- ** Exposed for testing
+  , newMBloom
   , numHashFunctions
+  , falsePositiveRate
   ) where
 
 import           Control.DeepSeq (NFData (..))
@@ -76,17 +80,6 @@ data RunAcc s = RunAcc {
     , entryCount :: !(PrimVar s Int)
     }
 
--- | See 'Database.LSMTree.Internal.BloomFilterAlloc'
-data RunBloomFilterAlloc =
-    -- | Bits per element in a filter
-    RunAllocFixed !Word64
-  | RunAllocRequestFPR !Double
-  deriving stock (Show, Eq)
-
-instance NFData RunBloomFilterAlloc where
-    rnf (RunAllocFixed a)      = rnf a
-    rnf (RunAllocRequestFPR a) = rnf a
-
 -- | @'new' nentries@ starts an incremental run construction.
 --
 -- @nentries@ should be an upper bound on the expected number of entries in the
@@ -96,15 +89,8 @@ new ::
   -> RunBloomFilterAlloc
   -> IndexType
   -> ST s (RunAcc s)
-new (NumEntries nentries) alloc indexType = do
-    mbloom <- case alloc of
-      RunAllocFixed !bitsPerEntry    ->
-        let !nbits = fromIntegral bitsPerEntry * fromIntegral nentries
-        in  MBloom.new
-              (fromIntegralChecked $ numHashFunctions nbits (fromIntegralChecked nentries))
-              (fromIntegralChecked nbits)
-      RunAllocRequestFPR !fpr ->
-        Bloom.Easy.easyNew fpr nentries
+new nentries alloc indexType = do
+    mbloom <- newMBloom nentries alloc
     mindex <- Index.newWithDefaults indexType
     mpageacc <- PageAcc.newPageAcc
     entryCount <- newPrimVar 0
@@ -333,6 +319,31 @@ selectPagesAndChunks mpagemchunkPre page chunks =
     Just (pagePre, Nothing)       -> ([pagePre, page],          chunks)
     Just (pagePre, Just chunkPre) -> ([pagePre, page], chunkPre:chunks)
 
+{-------------------------------------------------------------------------------
+  Bloom filter allocation
+-------------------------------------------------------------------------------}
+
+-- | See 'Database.LSMTree.Internal.Config.BloomFilterAlloc'
+data RunBloomFilterAlloc =
+    -- | Bits per element in a filter
+    RunAllocFixed !Word64
+  | RunAllocRequestFPR !Double
+  deriving stock (Show, Eq)
+
+instance NFData RunBloomFilterAlloc where
+    rnf (RunAllocFixed a)      = rnf a
+    rnf (RunAllocRequestFPR a) = rnf a
+
+newMBloom :: NumEntries -> RunBloomFilterAlloc -> ST s (MBloom s a)
+newMBloom (NumEntries nentries) = \case
+      RunAllocFixed !bitsPerEntry    ->
+        let !nbits = fromIntegral bitsPerEntry * fromIntegral nentries
+        in  MBloom.new
+              (fromIntegralChecked $ numHashFunctions nbits (fromIntegralChecked nentries))
+              (fromIntegralChecked nbits)
+      RunAllocRequestFPR !fpr ->
+        Bloom.Easy.easyNew fpr nentries
+
 -- | Computes the optimal number of hash functions that minimises the false
 -- positive rate for a bloom filter.
 --
@@ -345,3 +356,20 @@ numHashFunctions ::
   -> Integer
 numHashFunctions nbits nentries = truncate @Double $ max 1 $
     (fromIntegral nbits / fromIntegral nentries) * log 2
+
+-- | False positive rate
+--
+-- Assumes that the bloom filter uses 'numHashFunctions' hash functions.
+--
+-- See Niv Dayan, Manos Athanassoulis, Stratos Idreos,
+-- /Optimal Bloom Filters and Adaptive Merging for LSM-Trees/,
+-- Equation 2.
+falsePositiveRate ::
+       Floating a
+    => a  -- ^ entries
+    -> a  -- ^ bits
+    -> a
+falsePositiveRate entries bits = exp ((-(bits / entries)) * sq (log 2))
+
+sq :: Num a => a -> a
+sq x = x * x

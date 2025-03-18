@@ -372,7 +372,6 @@ test-suite lsm-tree-test
     Test.Database.LSMTree.Internal.Merge
     Test.Database.LSMTree.Internal.MergingRun
     Test.Database.LSMTree.Internal.MergingTree
-    Test.Database.LSMTree.Internal.Monkey
     Test.Database.LSMTree.Internal.PageAcc
     Test.Database.LSMTree.Internal.PageAcc1
     Test.Database.LSMTree.Internal.RawBytes
@@ -380,6 +379,7 @@ test-suite lsm-tree-test
     Test.Database.LSMTree.Internal.RawPage
     Test.Database.LSMTree.Internal.Run
     Test.Database.LSMTree.Internal.RunAcc
+    Test.Database.LSMTree.Internal.RunBloomFilterAlloc
     Test.Database.LSMTree.Internal.RunBuilder
     Test.Database.LSMTree.Internal.RunReader
     Test.Database.LSMTree.Internal.RunReaders
