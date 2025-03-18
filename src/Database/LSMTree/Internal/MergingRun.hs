@@ -147,17 +147,38 @@ new ::
   -> V.Vector (Ref (Run m h))
   -> m (Ref (MergingRun t m h))
 new hfs hbio resolve runParams ty runPaths inputRuns =
+    assert (V.length inputRuns > 0) $ do
+    -- there can be empty runs, which we don't want to include in the merge
+    -- TODO: making runs non-empty would involve introducing a constructor
+    -- @CompletedMergeEmpty@, but would simplify things and should be possible.
+    let nonEmptyRuns = V.filter (\r -> Run.size r > NumEntries 0) inputRuns
     -- If creating the Merge fails, we must release the references again.
     withActionRegistry $ \reg -> do
-      runs <- V.mapM (\r -> withRollback reg (dupRef r) releaseRef) inputRuns
-      merge <- fromMaybe (error "newMerge: merges can not be empty")
-        <$> Merge.new hfs hbio runParams ty resolve runPaths runs
-      let mergeDebt = numEntriesToMergeDebt (V.foldMap' Run.size runs)
-      unsafeNew
-        mergeDebt
-        (SpentCredits 0)
-        MergeMaybeCompleted
-        (OngoingMerge runs merge)
+      let dupRun r = withRollback reg (dupRef r) releaseRef
+      case V.length nonEmptyRuns of
+        0 -> do
+          -- we can't have an empty merge, but create a new empty run
+          --
+          -- potentially, we could have re-used one of the empty input runs (or
+          -- even re-used a single non-empty input run if there are no others),
+          -- as we do in the prototype. but that would mean that the result
+          -- doesn't follow the supplied @runParams@.
+          -- TODO: decide whether that optimisation is okay
+          r <- Run.newEmpty hfs hbio runParams runPaths
+          unsafeNew
+            (MergeDebt 0)
+            (SpentCredits 0)
+            MergeKnownCompleted
+            (CompletedMerge r)
+        _ -> do
+          rs <- V.mapM dupRun nonEmptyRuns
+          merge <- fromMaybe (error "newMerge: merges can not be empty")
+            <$> Merge.new hfs hbio runParams ty resolve runPaths rs
+          unsafeNew
+            (numEntriesToMergeDebt (V.foldMap' Run.size rs))
+            (SpentCredits 0)
+            MergeMaybeCompleted
+            (OngoingMerge rs merge)
 
 {-# SPECIALISE newCompleted ::
      MergeDebt

@@ -19,6 +19,7 @@ module Database.LSMTree.Internal.Run (
   , mkRawBlobRef
   , mkWeakBlobRef
     -- ** Run creation
+  , newEmpty
   , fromBuilder
   , fromWriteBuffer
   , RunParams (..)
@@ -180,6 +181,25 @@ setRunDataCaching hbio runKOpsFile NoCacheRunData = do
     -- do not use the page cache for disk I/O reads
     FS.hSetNoCache hbio runKOpsFile True
 
+{-# SPECIALISE newEmpty ::
+     HasFS IO h
+  -> HasBlockIO IO h
+  -> RunParams
+  -> RunFsPaths
+  -> IO (Ref (Run IO h)) #-}
+-- | This function should be run with asynchronous exceptions masked to prevent
+-- failing after internal resources have already been created.
+newEmpty ::
+     (MonadST m, MonadSTM m, MonadMask m)
+  => HasFS m h
+  -> HasBlockIO m h
+  -> RunParams
+  -> RunFsPaths
+  -> m (Ref (Run m h))
+newEmpty hfs hbio runParams runPaths = do
+    builder <- Builder.new hfs hbio runParams runPaths (NumEntries 0)
+    fromBuilder builder
+
 {-# SPECIALISE fromBuilder ::
      RunBuilder IO h
   -> IO (Ref (Run IO h)) #-}
@@ -215,6 +235,9 @@ fromBuilder builder = do
 -- TODO: As a possible optimisation, blobs could be written to a blob file
 -- immediately when they are added to the write buffer, avoiding the need to do
 -- it here.
+--
+-- This function should be run with asynchronous exceptions masked to prevent
+-- failing after internal resources have already been created.
 fromWriteBuffer ::
      (MonadST m, MonadSTM m, MonadMask m)
   => HasFS m h
