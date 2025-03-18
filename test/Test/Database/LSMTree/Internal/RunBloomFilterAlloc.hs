@@ -5,10 +5,10 @@
 {-# LANGUAGE NumericUnderscores         #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE TypeApplications           #-}
-{-# OPTIONS_GHC -Wno-orphans #-}
-{- HLINT ignore "Use camelCase" -}
 
-module Test.Database.LSMTree.Internal.Monkey (
+{-# OPTIONS_GHC -Wno-orphans #-}
+
+module Test.Database.LSMTree.Internal.RunBloomFilterAlloc (
     -- * Main test tree
     tests
     -- * Bloom filter construction
@@ -47,7 +47,7 @@ import           Test.Util.Arbitrary (noTags,
 import           Text.Printf (printf)
 
 tests :: TestTree
-tests = testGroup "Database.LSMTree.Internal.Monkey" [
+tests = testGroup "Database.LSMTree.Internal.RunBloomFilterAlloc" [
       testProperty "prop_noFalseNegatives" $ prop_noFalseNegatives (Proxy @Word64)
     , testProperty "prop_verifyFPR" $ prop_verifyFPR (Proxy @Word64)
     , testGroup "RunBloomFilterAlloc" $
