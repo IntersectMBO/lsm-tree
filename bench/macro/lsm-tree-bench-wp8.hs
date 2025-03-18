@@ -411,8 +411,7 @@ doSetup' gopts opts = do
 
     hasBlockIO <- FsIO.ioHasBlockIO hasFS FS.defaultIOCtxParams
 
-    name <- maybe (fail "invalid snapshot name") return $
-        LSM.mkSnapshotName "bench"
+    let name = LSM.toSnapshotName "bench"
 
     LSM.withSession (mkTracer gopts) hasFS hasBlockIO (FS.mkFsPath []) $ \session -> do
         tbl <- LSM.new @IO @K @V @B session (mkTableConfigSetup gopts opts benchTableConfig)
@@ -574,8 +573,7 @@ doRun gopts opts = do
 
     hasBlockIO <- FsIO.ioHasBlockIO hasFS FS.defaultIOCtxParams
 
-    name <- maybe (fail "invalid snapshot name") return $
-        LSM.mkSnapshotName "bench"
+    let name = LSM.toSnapshotName "bench"
 
     LSM.withSession (mkTracer gopts) hasFS hasBlockIO (FS.mkFsPath []) $ \session ->
       withLatencyHandle $ \h -> do

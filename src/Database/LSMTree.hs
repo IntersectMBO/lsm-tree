@@ -67,7 +67,7 @@ module Database.LSMTree (
 
     -- * Durability (snapshots)
   , SnapshotName
-  , Common.mkSnapshotName
+  , Common.toSnapshotName
   , Common.SnapshotLabel (..)
   , createSnapshot
   , openSnapshot

@@ -23,7 +23,7 @@ module Database.LSMTree.Common (
   , listSnapshots
     -- ** Snapshot names
   , Internal.SnapshotName
-  , Internal.mkSnapshotName
+  , Internal.toSnapshotName
     -- * Blob references
   , BlobRef (..)
     -- * Table configuration

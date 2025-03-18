@@ -8,7 +8,6 @@ import           Control.Monad.Class.MonadThrow
 import           Control.Monad.IOSim (runSimOrThrow)
 import           Control.Tracer
 import           Data.Bifunctor (Bifunctor (..))
-import           Data.Maybe (fromJust)
 import qualified Data.Vector as V
 import           Data.Word
 import           Database.LSMTree.Extras (showPowersOf10)
@@ -216,7 +215,7 @@ prop_flipSnapshotBit (Positive (Small bufferSize)) es pickFileBit =
     resolve (SerialisedValue x) (SerialisedValue y) =
         SerialisedValue (x <> y)
 
-    snapName = fromJust $ mkSnapshotName "snap"
+    snapName = toSnapshotName "snap"
     snapLabel = SnapshotLabel "label"
 
     createSnap t =
