@@ -5,7 +5,6 @@
 module Database.LSMTree.Internal.MergingRun (
     -- * Merging run
     MergingRun
-  , NumRuns (..)
   , RunParams (..)
   , new
   , newCompleted
@@ -14,7 +13,6 @@ module Database.LSMTree.Internal.MergingRun (
   , supplyCreditsAbsolute
   , expectCompleted
   , snapshot
-  , numRuns
   , totalMergeDebt
   , mergeType
 
@@ -74,12 +72,11 @@ import           System.FS.API (HasFS)
 import           System.FS.BlockIO.API (HasBlockIO)
 
 data MergingRun t m h = MergingRun {
-      mergeNumRuns        :: !NumRuns
 
       -- | The total merge debt.
       --
       -- This corresponds to the sum of the number of entries in the input runs.
-    , mergeDebt           :: !MergeDebt
+      mergeDebt           :: !MergeDebt
 
       -- See $credittracking
 
@@ -105,10 +102,6 @@ data MergingRun t m h = MergingRun {
 
 instance RefCounted m (MergingRun t m h) where
     getRefCounter = mergeRefCounter
-
-newtype NumRuns = NumRuns { unNumRuns :: Int }
-  deriving stock (Show, Eq)
-  deriving newtype NFData
 
 data MergingRunState t m h =
     CompletedMerge
@@ -159,18 +152,15 @@ new hfs hbio resolve runParams ty runPaths inputRuns =
       runs <- V.mapM (\r -> withRollback reg (dupRef r) releaseRef) inputRuns
       merge <- fromMaybe (error "newMerge: merges can not be empty")
         <$> Merge.new hfs hbio runParams ty resolve runPaths runs
-      let numInputRuns = NumRuns $ V.length runs
       let mergeDebt = numEntriesToMergeDebt (V.foldMap' Run.size runs)
       unsafeNew
-        numInputRuns
         mergeDebt
         (SpentCredits 0)
         MergeMaybeCompleted
         (OngoingMerge runs merge)
 
 {-# SPECIALISE newCompleted ::
-     NumRuns
-  -> MergeDebt
+     MergeDebt
   -> Ref (Run IO h)
   -> IO (Ref (MergingRun t IO h)) #-}
 -- | Create a merging run that is already in the completed state, returning a
@@ -182,16 +172,13 @@ new hfs hbio resolve runParams ty runPaths inputRuns =
 -- failing after internal resources have already been created.
 newCompleted ::
      (MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
-  => NumRuns   -- ^ Since there are no longer any input runs, we need to be
-               -- told how many there were.
-  -> MergeDebt -- ^ Since there are no longer any input runs, we need to be
+  => MergeDebt -- ^ Since there are no longer any input runs, we need to be
                -- told what the merge debt was.
   -> Ref (Run m h)
   -> m (Ref (MergingRun t m h))
-newCompleted numInputRuns mergeDebt inputRun = do
+newCompleted mergeDebt inputRun = do
     bracketOnError (dupRef inputRun) releaseRef $ \run ->
       unsafeNew
-        numInputRuns
         mergeDebt
         (SpentCredits (mergeDebtAsCredits mergeDebt)) -- since it is completed
         MergeKnownCompleted
@@ -200,17 +187,16 @@ newCompleted numInputRuns mergeDebt inputRun = do
 {-# INLINE unsafeNew #-}
 unsafeNew ::
      (MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
-  => NumRuns
-  -> MergeDebt
+  => MergeDebt
   -> SpentCredits
   -> MergeKnownCompleted
   -> MergingRunState t m h
   -> m (Ref (MergingRun t m h))
-unsafeNew _ (MergeDebt mergeDebt) _ _ _
+unsafeNew (MergeDebt mergeDebt) _ _ _
   | SpentCredits mergeDebt > maxBound
   = throwIO (ErrorCall "MergingRun.new: run size exceeds maximum of 2^40")
 
-unsafeNew mergeNumRuns mergeDebt (SpentCredits spentCredits)
+unsafeNew mergeDebt (SpentCredits spentCredits)
           knownCompleted state = do
     let !credits = CreditsPair (SpentCredits spentCredits) (UnspentCredits 0)
     mergeCreditsVar <- CreditsVar <$> newPrimVar credits
@@ -218,8 +204,7 @@ unsafeNew mergeNumRuns mergeDebt (SpentCredits spentCredits)
     mergeState <- newMVar $! state
     newRef (finalise mergeState) $ \mergeRefCounter ->
       MergingRun {
-        mergeNumRuns
-      , mergeDebt
+        mergeDebt
       , mergeCreditsVar
       , mergeKnownCompleted
       , mergeState
@@ -265,15 +250,13 @@ duplicateRuns (DeRef mr) =
 --
 {-# SPECIALISE snapshot ::
      Ref (MergingRun t IO h)
-  -> IO (NumRuns,
-         MergeDebt,
+  -> IO (MergeDebt,
          MergeCredits,
          MergingRunState t IO h) #-}
 snapshot ::
      (PrimMonad m, MonadMVar m)
   => Ref (MergingRun t m h)
-  -> m (NumRuns,
-        MergeDebt,
+  -> m (MergeDebt,
         MergeCredits,
         MergingRunState t m h)
 snapshot (DeRef MergingRun {..}) = do
@@ -281,10 +264,7 @@ snapshot (DeRef MergingRun {..}) = do
     (SpentCredits   spent,
      UnspentCredits unspent) <- atomicReadCredits mergeCreditsVar
     let supplied = spent + unspent
-    return (mergeNumRuns, mergeDebt, supplied, state)
-
-numRuns :: Ref (MergingRun t m h) -> NumRuns
-numRuns (DeRef MergingRun {mergeNumRuns}) = mergeNumRuns
+    return (mergeDebt, supplied, state)
 
 totalMergeDebt :: Ref (MergingRun t m h) -> MergeDebt
 totalMergeDebt (DeRef MergingRun {mergeDebt}) = mergeDebt

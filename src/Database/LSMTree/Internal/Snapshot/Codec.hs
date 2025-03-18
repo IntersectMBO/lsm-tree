@@ -32,7 +32,6 @@ import           Database.LSMTree.Internal.CRC32C
 import qualified Database.LSMTree.Internal.CRC32C as FS
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.MergeSchedule
-import           Database.LSMTree.Internal.MergingRun (NumRuns (..))
 import qualified Database.LSMTree.Internal.MergingRun as MR
 import           Database.LSMTree.Internal.RunBuilder (IndexType (..),
                      RunBloomFilterAlloc (..), RunDataCaching (..),
@@ -572,14 +571,6 @@ instance DecodeVersioned r => DecodeVersioned (SnapIncomingRun r) where
         (2, 1) -> SnapIncomingSingleRun <$> decodeVersioned v
         _ -> fail ("[SnapIncomingRun] Unexpected combination of list length and tag: " <> show (n, tag))
 
--- NumRuns
-
-instance Encode NumRuns where
-  encode (NumRuns x) = encodeInt x
-
-instance DecodeVersioned NumRuns where
-  decodeVersioned V0 = NumRuns <$> decodeInt
-
 -- MergePolicyForLevel
 
 instance Encode MergePolicyForLevel where
@@ -597,10 +588,9 @@ instance DecodeVersioned MergePolicyForLevel where
 -- SnapMergingRun
 
 instance (Encode t, Encode r) => Encode (SnapMergingRun t r) where
-  encode (SnapCompletedMerge nr md r) =
-         encodeListLen 4
+  encode (SnapCompletedMerge md r) =
+         encodeListLen 3
       <> encodeWord 0
-      <> encode nr
       <> encode md
       <> encode r
   encode (SnapOngoingMerge rp mc rs mt) =
@@ -616,8 +606,7 @@ instance (DecodeVersioned t, DecodeVersioned r) => DecodeVersioned (SnapMergingR
       n <- decodeListLen
       tag <- decodeWord
       case (n, tag) of
-        (4, 0) -> SnapCompletedMerge <$> decodeVersioned v
-                                     <*> decodeVersioned v
+        (3, 0) -> SnapCompletedMerge <$> decodeVersioned v
                                      <*> decodeVersioned v
         (5, 1) -> SnapOngoingMerge <$> decodeVersioned v <*> decodeVersioned v
                                    <*> decodeVersioned v <*> decodeVersioned v

@@ -361,9 +361,6 @@ deriving anyclass instance ( Typeable m, Typeable (PrimState m), Typeable h
                            , NoThunks t
                            ) => NoThunks (MergingRunState t m h)
 
-deriving stock instance Generic NumRuns
-deriving anyclass instance NoThunks NumRuns
-
 deriving stock instance Generic MergeDebt
 deriving anyclass instance NoThunks MergeDebt
 

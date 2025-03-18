@@ -75,11 +75,11 @@ unsafeCreateMergingRun ::
   -> SerialisedMergingRunData t
   -> IO (Ref (MergingRun t IO h))
 unsafeCreateMergingRun hfs hbio resolve indexType path counter = \case
-    CompletedMergeData _ numRuns rd -> do
+    CompletedMergeData _ rd -> do
       withRun hfs hbio indexType path counter rd $ \run -> do
         -- slightly hacky, generally it's larger
         let totalDebt = MR.numEntriesToMergeDebt (Run.size run)
-        MR.newCompleted numRuns totalDebt run
+        MR.newCompleted totalDebt run
 
     OngoingMergeData mergeType rds -> do
       withRuns hfs hbio indexType path counter (toRunData <$> rds)
@@ -103,21 +103,19 @@ unsafeCreateMergingRun hfs hbio resolve indexType path counter = \case
 -- TODO: Generate merge credits and supply them in 'unsafeCreateMergingRun',
 -- similarly to how @ScheduledMergesTest@ does it.
 data MergingRunData t k v b =
-    CompletedMergeData t MR.NumRuns (RunData k v b)
+    CompletedMergeData t (RunData k v b)
   | OngoingMergeData t [NonEmptyRunData k v b]  -- ^ at least 2 inputs
   deriving stock (Show, Eq)
 
 mergingRunDataMergeType :: MergingRunData t k v b -> t
 mergingRunDataMergeType = \case
-    CompletedMergeData mt _ _ -> mt
-    OngoingMergeData mt _     -> mt
+    CompletedMergeData mt _ -> mt
+    OngoingMergeData   mt _ -> mt
 
 -- | See @mergeInvariant@ in the prototype.
 mergingRunDataInvariant :: MergingRunData t k v b -> Either String ()
 mergingRunDataInvariant = \case
-    CompletedMergeData _ (MR.NumRuns n) _ ->
-      assertI "completed merges are non-trivial (at least two inputs)" $
-        n >= 2
+    CompletedMergeData _ _ -> Right ()
     OngoingMergeData _ rds -> do
       assertI "ongoing merges are non-trivial (at least two inputs)" $
         length rds >= 2
@@ -130,8 +128,8 @@ mapMergingRunData ::
   => (k -> k') -> (v -> v') -> (b -> b')
   -> MergingRunData t k v b -> MergingRunData t k' v' b'
 mapMergingRunData f g h = \case
-    CompletedMergeData t n r ->
-      CompletedMergeData t n $ mapRunData f g h r
+    CompletedMergeData t r ->
+      CompletedMergeData t $ mapRunData f g h r
     OngoingMergeData t rs ->
       OngoingMergeData t $ map (mapNonEmptyRunData f g h) rs
 
@@ -150,7 +148,7 @@ serialiseMergingRunData =
 
 labelMergingRunData ::
      Show t => SerialisedMergingRunData t -> Property -> Property
-labelMergingRunData (CompletedMergeData mt _ rd) =
+labelMergingRunData (CompletedMergeData mt rd) =
       tabulate "merging run state" ["CompletedMerge"]
     . tabulate "merge type" [show mt]
     . labelRunData rd
@@ -176,9 +174,8 @@ genMergingRunData genMergeType genKey genVal genBlob =
     QC.oneof
       [ do
           mt <- genMergeType
-          numRuns <- MR.NumRuns <$> QC.chooseInt (2, 8)
           rd <- genRunData genKey genVal genBlob
-          pure (CompletedMergeData mt numRuns rd)
+          pure (CompletedMergeData mt rd)
       , do
           s  <- QC.getSize
           mt <- genMergeType
@@ -202,13 +199,9 @@ shrinkMergingRunData ::
   -> MergingRunData t k v b
   -> [MergingRunData t k v b]
 shrinkMergingRunData shrinkKey shrinkVal shrinkBlob = \case
-    CompletedMergeData mt numRuns rd ->
-      [ CompletedMergeData mt numRuns' rd'
-      | (numRuns', rd') <-
-          liftShrink2
-            (fmap MR.NumRuns . filter (>= 2) . shrink . MR.unNumRuns)
-            (shrinkRunData shrinkKey shrinkVal shrinkBlob)
-            (numRuns, rd)
+    CompletedMergeData mt rd ->
+      [ CompletedMergeData mt rd'
+      | rd' <- shrinkRunData shrinkKey shrinkVal shrinkBlob rd
       ]
     OngoingMergeData mt rds ->
       [ OngoingMergeData mt rds'
