@@ -904,6 +904,7 @@ instance ( Eq (Class.TableConfig h)
     MSnapshotName :: R.SnapshotName -> Val h R.SnapshotName
     MUnionDebt :: R.UnionDebt -> Val h R.UnionDebt
     MUnionCredits :: R.UnionCredits -> Val h R.UnionCredits
+    MUnionCreditsPortion :: R.UnionCredits -> Val h R.UnionCredits
     MErr :: Model.Err -> Val h Model.Err
     -- combinators
     MUnit   :: () -> Val h ()
@@ -926,6 +927,8 @@ instance ( Eq (Class.TableConfig h)
                  -> Obs h (QueryResult k v (WrapBlobRef h IO b))
     OBlob :: (Show b, Typeable b, Eq b)
           => WrapBlob b -> Obs h (WrapBlob b)
+    OUnionCredits :: R.UnionCredits -> Obs h R.UnionCredits
+    OUnionCreditsPortion :: R.UnionCredits -> Obs h R.UnionCredits
     OId :: (Show a, Typeable a, Eq a) => a -> Obs h a
     -- combinators
     OPair   :: (Obs h a, Obs h b) -> Obs h (a, b)
@@ -935,21 +938,22 @@ instance ( Eq (Class.TableConfig h)
 
   observeModel :: Val h a -> Obs h a
   observeModel = \case
-      MTable _       -> OTable
-      MCursor _            -> OCursor
-      MBlobRef _           -> OBlobRef
-      MLookupResult x      -> OLookupResult $ fmap observeModel x
-      MQueryResult x       -> OQueryResult $ fmap observeModel x
-      MSnapshotName x      -> OId x
-      MBlob x              -> OBlob x
-      MUnionDebt x         -> OId x
-      MUnionCredits x      -> OId x
-      MErr x               -> OId x
-      MUnit x              -> OId x
-      MPair x              -> OPair $ bimap observeModel observeModel x
-      MEither x            -> OEither $ bimap observeModel observeModel x
-      MList x              -> OList $ map observeModel x
-      MVector x            -> OVector $ V.map observeModel x
+      MTable _               -> OTable
+      MCursor _              -> OCursor
+      MBlobRef _             -> OBlobRef
+      MLookupResult x        -> OLookupResult $ fmap observeModel x
+      MQueryResult x         -> OQueryResult $ fmap observeModel x
+      MSnapshotName x        -> OId x
+      MBlob x                -> OBlob x
+      MUnionDebt x           -> OId x
+      MUnionCredits x        -> OUnionCredits x
+      MUnionCreditsPortion x -> OUnionCreditsPortion x
+      MErr x                 -> OId x
+      MUnit x                -> OId x
+      MPair x                -> OPair $ bimap observeModel observeModel x
+      MEither x              -> OEither $ bimap observeModel observeModel x
+      MList x                -> OList $ map observeModel x
+      MVector x              -> OVector $ V.map observeModel x
 
   modelNextState ::  forall a.
        LockstepAction (ModelState h) a
@@ -1047,19 +1051,28 @@ instance Eq (Obs h a) where
         , Just Model.DefaultErrSnapshotCorrupted <- cast rhs
         -> True
 
+      -- RemainingUnionDebt
+      --
       -- Debt in the model is always 0, while debt in the real implementation
       -- may be larger than 0.
       (OEither (Right (OId lhs)), OEither (Right (OId rhs)))
         | Just (lhsDebt :: R.UnionDebt) <- cast lhs
         , Just (rhsDebt :: R.UnionDebt) <- cast rhs
-        -> lhsDebt >= rhsDebt
+        -> lhsDebt >= R.UnionDebt 0 && rhsDebt == R.UnionDebt 0
 
+      -- SupplyUnionCredits
+      --
       -- In the model, all supplied union credits are returned as leftovers,
-      -- whereas in the real implementation may use up some union credits.
-      (OEither (Right (OId lhs)), OEither (Right (OId rhs)))
-        | Just (lhsLeftovers :: R.UnionCredits) <- cast lhs
-        , Just (rhsLeftovers :: R.UnionCredits) <- cast rhs
+      -- whereas the real implementation may use up some union credits.
+      (OEither (Right (OUnionCredits lhsLeftovers)), OEither (Right (OUnionCredits rhsLeftovers)))
         -> lhsLeftovers <= rhsLeftovers
+
+      -- SupplyPortionOfDebt
+      --
+      -- In the model, a portion of the debt is always 0, whereas in the real
+      -- implementation the portion of the debt is non-negative.
+      (OEither (Right (OUnionCreditsPortion lhsLeftovers)), OEither (Right (OUnionCreditsPortion rhsLeftovers)))
+        -> lhsLeftovers >= rhsLeftovers
 
       -- default equalities
       (OTable, OTable) -> True
@@ -1068,6 +1081,8 @@ instance Eq (Obs h a) where
       (OLookupResult x, OLookupResult y) -> x == y
       (OQueryResult x, OQueryResult y) -> x == y
       (OBlob x, OBlob y) -> x == y
+      (OUnionCredits x, OUnionCredits y) -> x == y
+      (OUnionCreditsPortion x, OUnionCreditsPortion y) -> x == y
       (OId x, OId y) -> x == y
       (OPair x, OPair y) -> x == y
       (OEither x, OEither y) -> x == y
@@ -1083,6 +1098,8 @@ instance Eq (Obs h a) where
           OLookupResult{} -> ()
           OQueryResult{} -> ()
           OBlob{} -> ()
+          OUnionCredits{} -> ()
+          OUnionCreditsPortion{} -> ()
           OId{} -> ()
           OPair{} -> ()
           OEither{} -> ()
@@ -1175,8 +1192,8 @@ instance ( Eq (Class.TableConfig h)
       Union{}               -> OEither $ bimap OId (const OTable) result
       Unions{}              -> OEither $ bimap OId (const OTable) result
       RemainingUnionDebt{}  -> OEither $ bimap OId OId result
-      SupplyUnionCredits{}  -> OEither $ bimap OId OId result
-      SupplyPortionOfDebt{} -> OEither $ bimap OId OId result
+      SupplyUnionCredits{}  -> OEither $ bimap OId OUnionCredits result
+      SupplyPortionOfDebt{} -> OEither $ bimap OId OUnionCreditsPortion result
 
   showRealResponse ::
        Proxy (RealMonad h IO)
@@ -1241,8 +1258,8 @@ instance ( Eq (Class.TableConfig h)
       Union{}               -> OEither $ bimap OId (const OTable) result
       Unions{}              -> OEither $ bimap OId (const OTable) result
       RemainingUnionDebt{}  -> OEither $ bimap OId OId result
-      SupplyUnionCredits{}  -> OEither $ bimap OId OId result
-      SupplyPortionOfDebt{} -> OEither $ bimap OId OId result
+      SupplyUnionCredits{}  -> OEither $ bimap OId OUnionCredits result
+      SupplyPortionOfDebt{} -> OEither $ bimap OId OUnionCreditsPortion result
 
   showRealResponse ::
        Proxy (RealMonad h (IOSim s))
@@ -1418,7 +1435,7 @@ runModel lookUp (Action merrs action') = case action' of
           (Model.supplyUnionCredits (getTable $ lookUp tableVar) credits)
           (pure ()) -- TODO(err)
     SupplyPortionOfDebt tableVar portion ->
-      wrap MUnionCredits
+      wrap MUnionCreditsPortion
       . Model.runModelMWithInjectedErrors merrs
           (do let table = getTable $ lookUp tableVar
               debt <- Model.remainingUnionDebt table
@@ -1997,7 +2014,6 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
         , let genErrors  = pure Nothing -- TODO: generate errors
           -- TODO: the model always has remaining debt 0, so it will only supply
           -- 0, so it always has leftovers 0. This doesn't match the real impl.
-        , False
         ]
       where
         -- The typical, interesting case is to supply a positive number of
