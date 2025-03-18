@@ -31,7 +31,9 @@ module Database.LSMTree.Internal.RunAcc (
     -- * Bloom filter allocation
   , RunBloomFilterAlloc (..)
     -- ** Exposed for testing
+  , newMBloom
   , numHashFunctions
+  , falsePositiveRate
   ) where
 
 import           Control.DeepSeq (NFData (..))
@@ -354,3 +356,20 @@ numHashFunctions ::
   -> Integer
 numHashFunctions nbits nentries = truncate @Double $ max 1 $
     (fromIntegral nbits / fromIntegral nentries) * log 2
+
+-- | False positive rate
+--
+-- Assumes that the bloom filter uses 'numHashFunctions' hash functions.
+--
+-- See Niv Dayan, Manos Athanassoulis, Stratos Idreos,
+-- /Optimal Bloom Filters and Adaptive Merging for LSM-Trees/,
+-- Equation 2.
+falsePositiveRate ::
+       Floating a
+    => a  -- ^ entries
+    -> a  -- ^ bits
+    -> a
+falsePositiveRate entries bits = exp ((-(bits / entries)) * sq (log 2))
+
+sq :: Num a => a -> a
+sq x = x * x

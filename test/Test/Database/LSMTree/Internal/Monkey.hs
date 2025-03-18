@@ -5,6 +5,7 @@
 {-# LANGUAGE NumericUnderscores         #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE TypeApplications           #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 {- HLINT ignore "Use camelCase" -}
 
 module Test.Database.LSMTree.Internal.Monkey (
@@ -15,8 +16,7 @@ module Test.Database.LSMTree.Internal.Monkey (
     -- A common interface to bloom filter construction, based on expected false
     -- positive rates.
   , BloomMaker
-  , mkBloomST
-  , mkBloomEasy
+  , mkBloomFromAlloc
     -- * Verifying FPRs
   , measureApproximateFPR
   , measureExactFPR
@@ -26,7 +26,6 @@ import           Control.Exception (assert)
 import           Control.Monad.ST
 import           Data.BloomFilter (Bloom)
 import qualified Data.BloomFilter as Bloom
-import qualified Data.BloomFilter.Easy as Bloom.Easy
 import           Data.BloomFilter.Hash (Hashable)
 import qualified Data.BloomFilter.Mutable as MBloom
 import           Data.Foldable (Foldable (..))
@@ -35,22 +34,26 @@ import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Word (Word64)
 import           Database.LSMTree.Extras.Random
+import qualified Database.LSMTree.Internal.Entry as LSMT
+import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..),
+                     falsePositiveRate, newMBloom)
 import           System.Random
 import           Test.QuickCheck
+import           Test.QuickCheck.Gen
 import           Test.Tasty (TestTree, testGroup)
-import           Test.Tasty.QuickCheck (testProperty)
+import           Test.Tasty.QuickCheck
+import           Test.Util.Arbitrary (noTags,
+                     prop_arbitraryAndShrinkPreserveInvariant)
 import           Text.Printf (printf)
 
 tests :: TestTree
 tests = testGroup "Database.LSMTree.Internal.Monkey" [
-      testGroup "No false negatives" [
-        testProperty "mkBloomEasy"      $ prop_noFalseNegatives (Proxy @Word64) mkBloomEasy
-      , testProperty "mkBloomST"        $ prop_noFalseNegatives (Proxy @Word64) mkBloomST
-      ]
-    , testGroup "Verify FPR" [
-          testProperty "mkBloomEasy"      $ prop_verifyFPR (Proxy @Word64) mkBloomEasy
-        , testProperty "mkBloomST"        $ prop_verifyFPR (Proxy @Word64) mkBloomST
-        ]
+      testProperty "prop_noFalseNegatives" $ prop_noFalseNegatives (Proxy @Word64)
+    , testProperty "prop_verifyFPR" $ prop_verifyFPR (Proxy @Word64)
+    , testGroup "RunBloomFilterAlloc" $
+        prop_arbitraryAndShrinkPreserveInvariant noTags allocInvariant
+    , testGroup "NumEntries" $
+        prop_arbitraryAndShrinkPreserveInvariant noTags numEntriesInvariant
     ]
 
 {-------------------------------------------------------------------------------
@@ -59,47 +62,81 @@ tests = testGroup "Database.LSMTree.Internal.Monkey" [
 
 prop_noFalseNegatives :: forall a proxy. Hashable a
   => proxy a
-  -> (Double -> BloomMaker a)
-  -> FPR                      -- ^ Requested FPR
+  -> RunBloomFilterAlloc
   -> UniformWithoutReplacement a
   -> Property
-prop_noFalseNegatives _ mkBloom (FPR requestedFPR) (UniformWithoutReplacement xs) =
-    let xsBloom = mkBloom requestedFPR xs
+prop_noFalseNegatives _ alloc (UniformWithoutReplacement xs) =
+    let xsBloom = mkBloomFromAlloc alloc xs
     in  property $ all (`Bloom.elem` xsBloom) xs
 
 prop_verifyFPR ::
      (Ord a, Uniform a, Hashable a)
   => proxy a
-  -> (Double -> BloomMaker a)
-  -> FPR                      -- ^ Requested FPR
+  -> RunBloomFilterAlloc
   -> NumEntries               -- ^ @numEntries@
   -> Seed                     -- ^ 'StdGen' seed
   -> Property
-prop_verifyFPR p mkBloom (FPR requestedFPR) (NumEntries numEntries) (Seed seed) =
+prop_verifyFPR p alloc (NumEntries numEntries) (Seed seed) =
   let stdgen      = mkStdGen seed
-      measuredFPR = measureApproximateFPR p (mkBloom requestedFPR) numEntries stdgen
-      requestedFPR' = requestedFPR + 0.03 -- @requestedFPR@ with an error margin
-  in  counterexample (printf "expected %f <= %f" measuredFPR requestedFPR') $
-      FPR measuredFPR <= FPR requestedFPR'
+      measuredFPR = measureApproximateFPR p (mkBloomFromAlloc alloc) numEntries stdgen
+      expectedFPR = case alloc of
+        RunAllocFixed bits ->
+          falsePositiveRate (fromIntegral numEntries)
+                            (fromIntegral bits * fromIntegral numEntries)
+        RunAllocRequestFPR requestedFPR -> requestedFPR
+      -- error margins
+      lb = expectedFPR - 0.1
+      ub = expectedFPR + 0.03
+  in  assert (fprInvariant True measuredFPR) $ -- measured FPR is in the range [0,1]
+      assert (fprInvariant True expectedFPR) $ -- expected FPR is in the range [0,1]
+      counterexample (printf "expected $f <= %f <= %f" lb measuredFPR ub) $
+      lb <= measuredFPR .&&. measuredFPR <= ub
 
 {-------------------------------------------------------------------------------
   Modifiers
 -------------------------------------------------------------------------------}
 
 --
--- FPR
+-- Alloc
 --
 
-newtype FPR = FPR { getFPR :: Double }
-  deriving stock (Show, Eq, Ord)
-  deriving newtype (Num, Fractional, Floating)
+instance Arbitrary RunBloomFilterAlloc where
+  arbitrary = oneof [
+        RunAllocFixed <$> genFixed
+      , RunAllocRequestFPR <$> genFPR
+      ]
+  shrink (RunAllocFixed x)      = RunAllocFixed <$> shrinkFixed x
+  shrink (RunAllocRequestFPR x) = RunAllocRequestFPR <$> shrinkFPR x
 
-instance Arbitrary FPR where
-  arbitrary = FPR <$> arbitrary `suchThat` fprInvariant
-  shrink (FPR x) = [FPR x' | x' <- shrink x, fprInvariant x']
+allocInvariant :: RunBloomFilterAlloc -> Bool
+allocInvariant (RunAllocFixed x)      = fixedInvariant x
+allocInvariant (RunAllocRequestFPR x) = fprInvariant False x
 
-fprInvariant :: Double -> Bool
-fprInvariant x = x >= 0.01 && x <= 0.99
+genFixed :: Gen Word64
+genFixed = choose (fixedLB, fixedUB)
+
+shrinkFixed :: Word64 -> [Word64]
+shrinkFixed x = [ x' | x' <- shrink x, fixedInvariant x']
+
+fixedInvariant :: Word64 -> Bool
+fixedInvariant x = fixedLB <= x && x <= fixedUB
+
+fixedLB :: Word64
+fixedLB = 0
+
+fixedUB :: Word64
+fixedUB = 20
+
+genFPR :: Gen Double
+genFPR = genDouble `suchThat` fprInvariant False
+
+shrinkFPR :: Double -> [Double]
+shrinkFPR x = [ x' | x' <- shrink x, fprInvariant False x']
+
+fprInvariant :: Bool -> Double -> Bool
+fprInvariant incl x
+  | incl      = 0 <= x && x <= 1
+  | otherwise = 0 < x && x < 1
 
 --
 -- NumEntries
@@ -110,16 +147,21 @@ newtype NumEntries = NumEntries { getNumEntries :: Int }
 
 instance Arbitrary NumEntries where
   arbitrary = NumEntries <$> chooseInt (numEntriesLB, numEntriesUB)
-  shrink (NumEntries x) = [NumEntries x' | x' <- shrink x, numEntriesInvariant x']
+  shrink (NumEntries x) = [
+        x''
+      | x' <- shrink x
+      , let x'' = NumEntries x'
+      , numEntriesInvariant x''
+      ]
 
 numEntriesLB :: Int
-numEntriesLB = 10_000
+numEntriesLB = 50_000
 
 numEntriesUB :: Int
 numEntriesUB = 100_000
 
-numEntriesInvariant :: Int -> Bool
-numEntriesInvariant x = x >= numEntriesLB && x <= numEntriesUB
+numEntriesInvariant :: NumEntries -> Bool
+numEntriesInvariant (NumEntries x) = x >= numEntriesLB && x <= numEntriesUB
 
 --
 -- Seed
@@ -245,18 +287,12 @@ instance Monoid Counts where
 
 type BloomMaker a = [a] -> Bloom a
 
--- | Create a bloom filter through the 'MBloom' interface. Tunes the bloom
--- filter using 'suggestSizing'.
-mkBloomST :: Hashable a => Double -> BloomMaker a
-mkBloomST requestedFPR xs = runST $ do
-    b <- MBloom.new numHashFuncs numBits
-    mapM_ (MBloom.insert b) xs
-    Bloom.freeze b
+-- | Create a bloom filter through the 'newMBloom' interface. Tunes the bloom
+-- filter according to 'RunBloomFilterAlloc'.
+mkBloomFromAlloc :: Hashable a => RunBloomFilterAlloc -> BloomMaker a
+mkBloomFromAlloc alloc xs = runST $ do
+    mb <- newMBloom n alloc
+    mapM_ (MBloom.insert mb) xs
+    Bloom.unsafeFreeze mb
   where
-    numEntries              = length xs
-    (numBits, numHashFuncs) = Bloom.Easy.suggestSizing numEntries requestedFPR
-
--- | Create a bloom filter through the "Data.BloomFilter.Easy" interface. Tunes
--- the bloom filter using 'suggestSizing'.
-mkBloomEasy :: Hashable a => Double -> BloomMaker a
-mkBloomEasy = Bloom.Easy.easyList
+    n = LSMT.NumEntries $ length xs
