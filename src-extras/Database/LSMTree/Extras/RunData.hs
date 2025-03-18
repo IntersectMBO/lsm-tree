@@ -2,10 +2,8 @@
 -- from them. Tests and benchmarks should preferably use these utilities instead
 -- of (re-)defining their own.
 module Database.LSMTree.Extras.RunData (
-    -- * RunParams
-    defaultRunParams
     -- * Create runs
-  , withRun
+    withRun
   , withRunAt
   , withRuns
   , unsafeCreateRun
@@ -50,16 +48,13 @@ import qualified Data.Vector as V
 import           Database.LSMTree.Extras (showPowersOf10)
 import           Database.LSMTree.Extras.Generators ()
 import           Database.LSMTree.Internal.Entry
-import           Database.LSMTree.Internal.Index (IndexType (..))
 import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
 import           Database.LSMTree.Internal.MergeSchedule (addWriteBufferEntries)
 import           Database.LSMTree.Internal.Paths
 import qualified Database.LSMTree.Internal.Paths as Paths
-import           Database.LSMTree.Internal.Run (Run, RunDataCaching (..),
-                     RunParams (..))
+import           Database.LSMTree.Internal.Run (Run, RunParams (..))
 import qualified Database.LSMTree.Internal.Run as Run
-import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..),
-                     entryWouldFitInPage)
+import           Database.LSMTree.Internal.RunAcc (entryWouldFitInPage)
 import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.UniqCounter
@@ -73,14 +68,6 @@ import           System.FS.BlockIO.API (HasBlockIO)
 import           Test.QuickCheck
 
 
-defaultRunParams :: RunParams
-defaultRunParams =
-    RunParams {
-      runParamCaching = CacheRunData,
-      runParamAlloc   = RunAllocFixed 10,
-      runParamIndex   = Compact
-    }
-
 {-------------------------------------------------------------------------------
   Create runs
 -------------------------------------------------------------------------------}
@@ -89,29 +76,29 @@ defaultRunParams =
 withRun ::
      HasFS IO h
   -> HasBlockIO IO h
-  -> IndexType
+  -> RunParams
   -> FS.FsPath
   -> UniqCounter IO
   -> SerialisedRunData
   -> (Ref (Run IO h) -> IO a)
   -> IO a
-withRun hfs hbio indexType path counter rd = do
+withRun hfs hbio runParams path counter rd = do
     bracket
-      (unsafeCreateRun hfs hbio indexType path counter rd)
+      (unsafeCreateRun hfs hbio runParams path counter rd)
       releaseRef
 
 -- | Create a temporary 'Run' using 'unsafeCreateRunAt'.
 withRunAt ::
      HasFS IO h
   -> HasBlockIO IO h
-  -> IndexType
+  -> RunParams
   -> RunFsPaths
   -> SerialisedRunData
   -> (Ref (Run IO h) -> IO a)
   -> IO a
-withRunAt hfs hbio indexType path rd = do
+withRunAt hfs hbio runParams path rd = do
     bracket
-      (unsafeCreateRunAt hfs hbio indexType path rd)
+      (unsafeCreateRunAt hfs hbio runParams path rd)
       releaseRef
 
 {-# INLINABLE withRuns #-}
@@ -119,17 +106,17 @@ withRunAt hfs hbio indexType path rd = do
 withRuns ::
      HasFS IO h
   -> HasBlockIO IO h
-  -> IndexType
+  -> RunParams
   -> FS.FsPath
   -> UniqCounter IO
   -> [SerialisedRunData]
   -> ([Ref (Run IO h)] -> IO a)
   -> IO a
-withRuns hfs hbio indexType path counter = go
+withRuns hfs hbio runParams path counter = go
   where
     go []       act = act []
     go (rd:rds) act =
-      withRun hfs hbio indexType path counter rd $ \r ->
+      withRun hfs hbio runParams path counter rd $ \r ->
         go rds $ \rs ->
           act (r:rs)
 
@@ -138,15 +125,15 @@ withRuns hfs hbio indexType path counter = go
 unsafeCreateRun ::
      HasFS IO h
   -> HasBlockIO IO h
-  -> IndexType
+  -> RunParams
   -> FS.FsPath
   -> UniqCounter IO
   -> SerialisedRunData
   -> IO (Ref (Run IO h))
-unsafeCreateRun fs hbio indexType path counter rd = do
+unsafeCreateRun fs hbio runParams path counter rd = do
     n <- incrUniqCounter counter
     let fsPaths = RunFsPaths path (uniqueToRunNumber n)
-    unsafeCreateRunAt fs hbio indexType fsPaths rd
+    unsafeCreateRunAt fs hbio runParams fsPaths rd
 
 -- | Flush serialised run data to disk as if it were a write buffer.
 --
@@ -157,17 +144,15 @@ unsafeCreateRun fs hbio indexType path counter rd = do
 unsafeCreateRunAt ::
      HasFS IO h
   -> HasBlockIO IO h
-  -> IndexType
+  -> RunParams
   -> RunFsPaths
   -> SerialisedRunData
   -> IO (Ref (Run IO h))
-unsafeCreateRunAt fs hbio indexType fsPaths (RunData m) = do
+unsafeCreateRunAt fs hbio runParams fsPaths (RunData m) = do
     let blobpath = FS.addExtension (runBlobPath fsPaths) ".wb"
     bracket (WBB.new fs blobpath) releaseRef $ \wbblobs -> do
       wb <- WB.fromMap <$> traverse (traverse (WBB.addBlob fs wbblobs)) m
-      Run.fromWriteBuffer fs hbio
-                          defaultRunParams { runParamIndex = indexType }
-                          fsPaths wb wbblobs
+      Run.fromWriteBuffer fs hbio runParams fsPaths wb wbblobs
 
 -- | Create a 'RunFsPaths' using an empty 'FsPath'. The empty path corresponds
 -- to the "root" or "mount point" of a 'HasFS' instance.

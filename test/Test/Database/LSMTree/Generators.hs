@@ -21,6 +21,8 @@ import           Database.LSMTree.Internal.PageAcc (entryWouldFitInPage,
                      sizeofEntry)
 import           Database.LSMTree.Internal.RawBytes (RawBytes (..))
 import qualified Database.LSMTree.Internal.RawBytes as RB
+import qualified Database.LSMTree.Internal.RunAcc as RunAcc
+import qualified Database.LSMTree.Internal.RunBuilder as RunBuilder
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.UniqCounter
 import qualified System.FS.API as FS
@@ -106,6 +108,14 @@ tests = testGroup "Test.Database.LSMTree.Generators" [
         ]
     ]
 
+runParams :: Index.IndexType -> RunBuilder.RunParams
+runParams indexType =
+    RunBuilder.RunParams {
+      runParamCaching = RunBuilder.CacheRunData,
+      runParamAlloc   = RunAcc.RunAllocFixed 10,
+      runParamIndex   = indexType
+    }
+
 prop_packRawBytesPinnedOrUnpinned :: Bool -> [Word8] -> Bool
 prop_packRawBytesPinnedOrUnpinned pinned ws =
     packRawBytesPinnedOrUnpinned pinned ws == RawBytes (VP.fromList ws)
@@ -144,8 +154,8 @@ prop_withRunDoesntLeak ::
   -> SerialisedRunData
   -> IO Property
 prop_withRunDoesntLeak hfs hbio rd = do
-    let index = Index.Ordinary
-    withRunAt hfs hbio index (simplePath 0) rd $ \_run -> do
+    let indexType = Index.Ordinary
+    withRunAt hfs hbio (runParams indexType) (simplePath 0) rd $ \_run -> do
       return (QC.property True)
 
 prop_withMergingRunDoesntLeak ::
@@ -154,11 +164,12 @@ prop_withMergingRunDoesntLeak ::
   -> SerialisedMergingRunData MR.LevelMergeType
   -> IO Property
 prop_withMergingRunDoesntLeak hfs hbio mrd = do
-    let index = Index.Ordinary
+    let indexType = Index.Ordinary
     let path = FS.mkFsPath []
     counter <- newUniqCounter 0
-    withMergingRun hfs hbio resolveVal index path counter mrd $ \_mr -> do
-      return (QC.property True)
+    withMergingRun hfs hbio resolveVal (runParams indexType) path counter mrd $
+      \_mr -> do
+        return (QC.property True)
 
 -- TODO: This only tests the happy path. For everything else, we'd need to
 -- inject errors, e.g. with @simErrorHasBlockIO@.
@@ -168,11 +179,12 @@ prop_withMergingTreeDoesntLeak ::
   -> SerialisedMergingTreeData
   -> IO Property
 prop_withMergingTreeDoesntLeak hfs hbio mrd = do
-    let index = Index.Ordinary
+    let indexType = Index.Ordinary
     let path = FS.mkFsPath []
     counter <- newUniqCounter 0
-    withMergingTree hfs hbio resolveVal index path counter mrd $ \_tree -> do
-      return (QC.property True)
+    withMergingTree hfs hbio resolveVal (runParams indexType) path counter mrd $
+      \_tree -> do
+        return (QC.property True)
 
 resolveVal :: SerialisedValue -> SerialisedValue -> SerialisedValue
 resolveVal (SerialisedValue x) (SerialisedValue y) = SerialisedValue (x <> y)

@@ -24,6 +24,8 @@ import           Database.LSMTree.Internal.Entry
 import qualified Database.LSMTree.Internal.Index as Index (IndexType (Compact))
 import qualified Database.LSMTree.Internal.Paths as Paths
 import qualified Database.LSMTree.Internal.Run as Run
+import qualified Database.LSMTree.Internal.RunAcc as RunAcc
+import qualified Database.LSMTree.Internal.RunBuilder as RunBuilder
 import           Database.LSMTree.Internal.RunNumber
 import qualified Database.LSMTree.Internal.RunReader as Reader
 import           Database.LSMTree.Internal.RunReaders
@@ -63,6 +65,14 @@ tests = testGroup "Database.LSMTree.Internal.RunReaders"
           return $ prop
               .&&. counterexample "file handles" (MockFS.numOpenHandles mockFS === 0)
     ]
+
+runParams :: RunBuilder.RunParams
+runParams =
+    RunBuilder.RunParams {
+      runParamCaching = RunBuilder.CacheRunData,
+      runParamAlloc   = RunAcc.RunAllocFixed 10,
+      runParamIndex   = Index.Compact
+    }
 
 --------------------------------------------------------------------------------
 
@@ -337,7 +347,7 @@ runIO act lu = case act of
           wbs' = fmap serialiseRunData wbs
       runs <-
         zipWithM
-          (\p -> liftIO . unsafeCreateRunAt hfs hbio Index.Compact p)
+          (\p -> liftIO . unsafeCreateRunAt hfs hbio runParams p)
           (Paths.RunFsPaths (FS.mkFsPath []) . RunNumber <$> [numRuns ..])
           wbs'
       newReaders <- liftIO $ do

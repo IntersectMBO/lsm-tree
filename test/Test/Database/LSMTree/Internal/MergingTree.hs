@@ -21,6 +21,8 @@ import           Database.LSMTree.Internal.MergingRun
 import           Database.LSMTree.Internal.MergingTree
 import           Database.LSMTree.Internal.MergingTree.Lookup
 import qualified Database.LSMTree.Internal.Run as Run
+import qualified Database.LSMTree.Internal.RunAcc as RunAcc
+import qualified Database.LSMTree.Internal.RunBuilder as RunBuilder
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.UniqCounter
 import qualified System.FS.API as FS
@@ -39,6 +41,14 @@ tests = testGroup "Test.Database.LSMTree.Internal.MergingTree"
           withSimHasBlockIO propNoOpenHandles MockFS.empty $ \hfs hbio _ ->
             prop_lookupTree hfs hbio keys mtd
     ]
+
+runParams :: RunBuilder.RunParams
+runParams =
+    RunBuilder.RunParams {
+      runParamCaching = RunBuilder.CacheRunData,
+      runParamAlloc   = RunAcc.RunAllocFixed 10,
+      runParamIndex   = Index.Ordinary
+    }
 
 -- | Check that the merging tree constructor functions preserve the property
 -- that if the inputs are obviously empty, the output is also obviously empty.
@@ -103,10 +113,9 @@ prop_lookupTree ::
   -> MergingTreeData SerialisedKey SerialisedValue SerialisedBlob
   -> IO Property
 prop_lookupTree hfs hbio keys (serialiseMergingTreeData -> mtd) = do
-    let index = Index.Ordinary
     let path = FS.mkFsPath []
     counter <- newUniqCounter 0
-    withMergingTree hfs hbio resolveVal index path counter mtd $ \tree -> do
+    withMergingTree hfs hbio resolveVal runParams path counter mtd $ \tree -> do
       arenaManager <- newArenaManager
       withActionRegistry $ \reg -> do
         res <- fetchBlobs =<< lookupsIO reg arenaManager tree
