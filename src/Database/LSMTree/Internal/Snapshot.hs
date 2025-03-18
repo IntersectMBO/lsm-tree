@@ -54,7 +54,6 @@ import           Database.LSMTree.Internal.IncomingRun
 import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.MergeSchedule
-import           Database.LSMTree.Internal.MergingRun (NumRuns (..))
 import qualified Database.LSMTree.Internal.MergingRun as MR
 import qualified Database.LSMTree.Internal.MergingTree as MT
 import           Database.LSMTree.Internal.Paths (ActiveDir (..), ForBlob (..),
@@ -193,12 +192,12 @@ newtype SuppliedCredits = SuppliedCredits { getSuppliedCredits :: Int }
   deriving newtype NFData
 
 data SnapMergingRun t r =
-    SnapCompletedMerge !NumRuns !MergeDebt !r
+    SnapCompletedMerge !MergeDebt !r
   | SnapOngoingMerge   !RunParams !MergeCredits !(V.Vector r) !t
   deriving stock (Eq, Functor, Foldable, Traversable)
 
 instance (NFData t, NFData r) => NFData (SnapMergingRun t r) where
-  rnf (SnapCompletedMerge a b c)   = rnf a `seq` rnf b `seq` rnf c
+  rnf (SnapCompletedMerge a b)     = rnf a `seq` rnf b
   rnf (SnapOngoingMerge   a b c d) = rnf a `seq` rnf b `seq` rnf c `seq` rnf d
 
 {-------------------------------------------------------------------------------
@@ -429,10 +428,10 @@ toSnapMergingRun ::
 toSnapMergingRun !mr = do
     -- TODO: MR.snapshot needs to return duplicated run references, and we
     -- need to arrange to release them when the snapshotting is done.
-    (numRuns, mergeDebt, mergeCredits, state) <- MR.snapshot mr
+    ( mergeDebt, mergeCredits, state) <- MR.snapshot mr
     case state of
       MR.CompletedMerge r  ->
-        pure $! SnapCompletedMerge numRuns mergeDebt r
+        pure $! SnapCompletedMerge mergeDebt r
 
       MR.OngoingMerge rs m ->
           pure $! SnapOngoingMerge runParams mergeCredits rs mergeType
@@ -715,9 +714,8 @@ fromSnapMergingRun ::
   -> ActiveDir
   -> SnapMergingRun t (Ref (Run m h))
   -> m (Ref (MR.MergingRun t m h))
-fromSnapMergingRun _hfs _hbio _uc _resolve _dir
-                   (SnapCompletedMerge numRuns mergeDebt r) =
-    MR.newCompleted numRuns mergeDebt r
+fromSnapMergingRun _ _ _ _ _ (SnapCompletedMerge mergeDebt r) =
+    MR.newCompleted mergeDebt r
 
 fromSnapMergingRun hfs hbio uc resolve dir
                    (SnapOngoingMerge runParams mergeCredits rs mergeType) = do

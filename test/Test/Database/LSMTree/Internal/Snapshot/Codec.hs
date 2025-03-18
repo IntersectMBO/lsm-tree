@@ -172,7 +172,6 @@ testAll test = [
     , test (Proxy @(V.Vector SnapshotRun))
     , test (Proxy @RunNumber)
     , test (Proxy @(SnapIncomingRun SnapshotRun))
-    , test (Proxy @NumRuns)
     , test (Proxy @MergePolicyForLevel)
     , test (Proxy @RunDataCaching)
     , test (Proxy @RunBloomFilterAlloc)
@@ -320,21 +319,19 @@ instance Arbitrary r => Arbitrary (SnapIncomingRun r) where
       | (a', b', c', d') <- shrink (a, b, c, d) ]
   shrink (SnapIncomingSingleRun a)  = SnapIncomingSingleRun <$> shrink a
 
-deriving newtype instance Arbitrary NumRuns
-
 instance Arbitrary MergePolicyForLevel where
   arbitrary = elements [LevelTiering, LevelLevelling]
   shrink _ = []
 
 instance (Arbitrary t, Arbitrary r) => Arbitrary (SnapMergingRun t r) where
   arbitrary = oneof [
-        SnapCompletedMerge <$> arbitrary <*> arbitrary <*> arbitrary
+        SnapCompletedMerge <$> arbitrary <*> arbitrary
       , SnapOngoingMerge <$> arbitrary <*> arbitrary
                          <*> arbitraryShortVector <*> arbitrary
       ]
-  shrink (SnapCompletedMerge a b c) =
-      [ SnapCompletedMerge  a' b' c'
-      | (a', b', c') <- shrink (a, b, c) ]
+  shrink (SnapCompletedMerge a b) =
+      [ SnapCompletedMerge  a' b'
+      | (a', b') <- shrink (a, b) ]
   shrink (SnapOngoingMerge a b c d) =
       [ SnapOngoingMerge  a' b' c' d'
       | (a', b', c', d') <- shrink (a, b, c, d) ]

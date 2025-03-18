@@ -179,7 +179,7 @@ modelFoldMergingTree = goMergingTree
 
     goMergingRun :: IsMergeType t => SerialisedMergingRunData t -> Map SerialisedKey SerialisedEntry
     goMergingRun = \case
-        CompletedMergeData _ _ r -> unRunData r
+        CompletedMergeData _ r -> unRunData r
         OngoingMergeData mt rs -> modelMerge mt (map (unRunData . toRunData) rs)
 
 modelMerge :: (Ord k, IsMergeType t) => t -> [Map k SerialisedEntry] -> Map k SerialisedEntry

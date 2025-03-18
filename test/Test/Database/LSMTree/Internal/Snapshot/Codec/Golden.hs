@@ -18,7 +18,6 @@ import           Database.LSMTree.Internal.Config (FencePointerIndex (..),
 import           Database.LSMTree.Internal.MergeSchedule
                      (MergePolicyForLevel (..), NominalCredits (..),
                      NominalDebt (..))
-import           Database.LSMTree.Internal.MergingRun (NumRuns (..))
 import qualified Database.LSMTree.Internal.MergingRun as MR
 import           Database.LSMTree.Internal.RunBuilder (IndexType (..),
                      RunBloomFilterAlloc (..), RunDataCaching (..))
@@ -255,9 +254,8 @@ enumerateSnapMergingRun ::
   -> [(ComponentAnnotation, SnapMergingRun t SnapshotRun)]
 enumerateSnapMergingRun mTypes =
     [ (fuseAnnotations ["C0", blank, blank],
-       SnapCompletedMerge numRuns mergeDebt enumerateOpenRunInfo)
-    | numRuns   <- NumRuns <$> [ magicNumber1 ]
-    , mergeDebt <- (MR.MergeDebt. MR.MergeCredits) <$> [ magicNumber2 ]
+       SnapCompletedMerge mergeDebt enumerateOpenRunInfo)
+    | mergeDebt <- (MR.MergeDebt. MR.MergeCredits) <$> [ magicNumber2 ]
     ]
  ++ [ (fuseAnnotations ["C1", a, b],
        SnapOngoingMerge runParams mergeCredits runVec mType)
