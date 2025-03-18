@@ -154,19 +154,39 @@ new ::
   -> V.Vector (Ref (Run m h))
   -> m (Ref (MergingRun t m h))
 new hfs hbio resolve runParams ty runPaths inputRuns =
+    assert (V.length inputRuns > 0) $ do
+    -- there can be empty runs, which we don't want to include in the merge
+    let nonEmptyRuns = V.filter (\r -> Run.size r > NumEntries 0) inputRuns
     -- If creating the Merge fails, we must release the references again.
     withActionRegistry $ \reg -> do
-      runs <- V.mapM (\r -> withRollback reg (dupRef r) releaseRef) inputRuns
-      merge <- fromMaybe (error "newMerge: merges can not be empty")
-        <$> Merge.new hfs hbio runParams ty resolve runPaths runs
-      let numInputRuns = NumRuns $ V.length runs
-      let mergeDebt = numEntriesToMergeDebt (V.foldMap' Run.size runs)
-      unsafeNew
-        numInputRuns
-        mergeDebt
-        (SpentCredits 0)
-        MergeMaybeCompleted
-        (OngoingMerge runs merge)
+      let dupRun r = withRollback reg (dupRef r) releaseRef
+      case V.length nonEmptyRuns of
+        0 -> do
+          r <- dupRun (V.head inputRuns)
+          unsafeNew
+            (NumRuns (V.length inputRuns))  -- TODO: is this sensible?
+            (MergeDebt 0)
+            (SpentCredits 0)
+            MergeKnownCompleted
+            (CompletedMerge r)
+        1 -> do
+          r <- dupRun (V.head nonEmptyRuns)
+          unsafeNew
+            (NumRuns (V.length inputRuns))  -- TODO: is this sensible?
+            (MergeDebt 0)
+            (SpentCredits 0)
+            MergeKnownCompleted
+            (CompletedMerge r)
+        _ -> do
+          mergeRuns <- V.mapM dupRun nonEmptyRuns
+          merge <- fromMaybe (error "newMerge: merges can not be empty")
+            <$> Merge.new hfs hbio runParams ty resolve runPaths mergeRuns
+          unsafeNew
+            (NumRuns (V.length inputRuns))  -- TODO: is this sensible?
+            (numEntriesToMergeDebt (V.foldMap' Run.size mergeRuns))
+            (SpentCredits 0)
+            MergeMaybeCompleted
+            (OngoingMerge mergeRuns merge)
 
 {-# SPECIALISE newCompleted ::
      NumRuns
