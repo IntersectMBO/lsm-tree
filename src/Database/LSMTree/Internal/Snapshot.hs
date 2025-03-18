@@ -44,6 +44,7 @@ import           Control.Monad.Class.MonadThrow (MonadMask, bracket,
 import           Control.Monad.Primitive (PrimMonad)
 import           Control.RefCount
 import           Data.Foldable (sequenceA_, traverse_)
+import           Data.String (IsString (..))
 import           Data.Text (Text)
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Config
@@ -90,7 +91,7 @@ import           System.FS.BlockIO.API (HasBlockIO)
 -- is opened at the correct key\/value\/blob type.
 newtype SnapshotLabel = SnapshotLabel Text
   deriving stock (Show, Eq)
-  deriving newtype NFData
+  deriving newtype (NFData, IsString)
 
 -- TODO: revisit if we need three table types.
 data SnapshotTableType = SnapNormalTable | SnapMonoidalTable | SnapFullTable
