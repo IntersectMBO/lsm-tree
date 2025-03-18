@@ -42,17 +42,20 @@ module Database.LSMTree.Internal.MergingRun (
   , MergeKnownCompleted (..)
   , CreditsVar (..)
   , pattern CreditsPair
+
+    -- * Errors
+  , TableTooLargeError (..)
   ) where
 
 import           Control.ActionRegistry
 import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.DeepSeq (NFData (..))
-import           Control.Exception (ErrorCall (..))
 import           Control.Monad (when)
 import           Control.Monad.Class.MonadST (MonadST)
 import           Control.Monad.Class.MonadSTM (MonadSTM (..))
-import           Control.Monad.Class.MonadThrow (MonadCatch (bracketOnError),
-                     MonadMask, MonadThrow (throwIO))
+import           Control.Monad.Class.MonadThrow (Exception,
+                     MonadCatch (bracketOnError), MonadMask,
+                     MonadThrow (throwIO))
 import           Control.Monad.Primitive
 import           Control.RefCount
 import           Data.Bits
@@ -208,6 +211,12 @@ newCompleted mergeDebt inputRun = do
         MergeKnownCompleted
         (CompletedMerge run)
 
+-- | The table contains a run that has more than \(2^{40}\) physical entries.
+data TableTooLargeError
+    = ErrTableTooLarge
+    deriving stock (Show, Eq)
+    deriving anyclass (Exception)
+
 {-# INLINE unsafeNew #-}
 unsafeNew ::
      (MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
@@ -218,7 +227,7 @@ unsafeNew ::
   -> m (Ref (MergingRun t m h))
 unsafeNew (MergeDebt mergeDebt) _ _ _
   | SpentCredits mergeDebt > maxBound
-  = throwIO (ErrorCall "MergingRun.new: run size exceeds maximum of 2^40")
+  = throwIO ErrTableTooLarge
 
 unsafeNew mergeDebt (SpentCredits spentCredits)
           knownCompleted state = do
