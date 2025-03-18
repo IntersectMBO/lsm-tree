@@ -23,7 +23,22 @@
 --
 module Database.LSMTree.Normal (
     -- * Exceptions
-    Common.LSMTreeError (..)
+    Common.SessionDirDoesNotExistError (..)
+  , Common.SessionDirLockedError (..)
+  , Common.SessionDirCorruptedError (..)
+  , Common.SessionClosedError (..)
+  , Common.TableClosedError (..)
+  , Common.TableCorruptedError (..)
+  , Common.TableTooLargeError (..)
+  , Common.TableNotCompatibleError (..)
+  , Common.SnapshotExistsError (..)
+  , Common.SnapshotDoesNotExistError (..)
+  , Common.SnapshotCorruptedError (..)
+  , Common.SnapshotNotCompatibleError (..)
+  , Common.BlobRefInvalidError (..)
+  , Common.CursorClosedError (..)
+  , Common.FileFormat (..)
+  , Common.FileCorruptedError (..)
   , Common.InvalidSnapshotNameError (..)
 
     -- * Tracing
@@ -85,7 +100,7 @@ module Database.LSMTree.Normal (
   , retrieveBlobs
 
     -- * Durability (snapshots)
-  , SnapshotName
+  , Common.SnapshotName
   , Common.toSnapshotName
   , Common.isValidSnapshotName
   , Common.SnapshotLabel (..)
@@ -128,15 +143,14 @@ import           Data.List.NonEmpty (NonEmpty (..))
 import           Data.Typeable (Typeable, eqT, type (:~:) (Refl))
 import qualified Data.Vector as V
 import           Database.LSMTree.Common (BlobRef (BlobRef), IOLike, Range (..),
-                     SerialiseKey, SerialiseValue, Session, SnapshotName,
-                     UnionCredits (..), UnionDebt (..), closeSession,
-                     deleteSnapshot, listSnapshots, openSession, withSession)
+                     SerialiseKey, SerialiseValue, Session, UnionCredits (..),
+                     UnionDebt (..), closeSession, deleteSnapshot,
+                     listSnapshots, openSession, withSession)
 import qualified Database.LSMTree.Common as Common
 import qualified Database.LSMTree.Internal as Internal
 import qualified Database.LSMTree.Internal.BlobRef as Internal
 import qualified Database.LSMTree.Internal.Entry as Entry
 import qualified Database.LSMTree.Internal.Serialise as Internal
-import qualified Database.LSMTree.Internal.Snapshot as Internal
 import qualified Database.LSMTree.Internal.Vector as V
 import           GHC.Exts (Proxy#, proxy#)
 
@@ -647,7 +661,7 @@ retrieveBlobs (Internal.Session' (sesh :: Internal.Session m h)) refs =
 
 {-# SPECIALISE createSnapshot ::
      Common.SnapshotLabel
-  -> SnapshotName
+  -> Common.SnapshotName
   -> Table IO k v b
   -> IO () #-}
 -- | Make the current value of a table durable on-disk by taking a snapshot and
@@ -679,17 +693,17 @@ retrieveBlobs (Internal.Session' (sesh :: Internal.Session m h)) refs =
 createSnapshot :: forall m k v b.
      IOLike m
   => Common.SnapshotLabel
-  -> SnapshotName
+  -> Common.SnapshotName
   -> Table m k v b
   -> m ()
 createSnapshot label snap (Internal.NormalTable t) =
-    Internal.createSnapshot snap label Internal.SnapNormalTable t
+    Internal.createSnapshot snap label Common.SnapNormalTable t
 
 {-# SPECIALISE openSnapshot ::
      Session IO
   -> Common.TableConfigOverride
   -> Common.SnapshotLabel
-  -> SnapshotName
+  -> Common.SnapshotName
   -> IO (Table IO k v b ) #-}
 -- | Open a table from a named snapshot, returning a new table.
 --
@@ -718,14 +732,14 @@ openSnapshot :: forall m k v b.
   => Session m
   -> Common.TableConfigOverride -- ^ Optional config override
   -> Common.SnapshotLabel
-  -> SnapshotName
+  -> Common.SnapshotName
   -> m (Table m k v b)
 openSnapshot (Internal.Session' sesh) override label snap =
     Internal.NormalTable <$!>
       Internal.openSnapshot
         sesh
         label
-        Internal.SnapNormalTable
+        Common.SnapNormalTable
         override
         snap
         const
@@ -825,7 +839,7 @@ unions (t :| ts) =
       -> m (Internal.Table m h)
     checkTableType _ i (Internal.NormalTable (t' :: Internal.Table m h'))
       | Just Refl <- eqT @h @h' = pure t'
-      | otherwise = throwIO (Internal.ErrUnionsTableTypeMismatch 0 i)
+      | otherwise = throwIO (Common.ErrTableTypeMismatch 0 i)
 
 {-# SPECIALISE remainingUnionDebt :: Table IO k v b -> IO UnionDebt #-}
 -- | Return the current union debt. This debt can be reduced until it is paid

@@ -18,6 +18,7 @@ module Control.ActionRegistry (
   , ActionRegistry
   , ActionError
   , getActionError
+  , mapActionError
     -- * Runners
   , withActionRegistry
   , unsafeNewActionRegistry
@@ -227,6 +228,7 @@ type ActionError :: Type
 mkAction :: HasCallStackIfDebug => m () -> Action m
 mkActionError :: SomeException -> Action m -> ActionError
 getActionError :: ActionError -> SomeException
+mapActionError :: (SomeException -> SomeException) -> ActionError -> ActionError
 
 #ifdef NO_IGNORE_ASSERTS
 data Action m = Action {
@@ -251,6 +253,8 @@ mkAction a = Action a callStack
 mkActionError e a = ActionError e (actionCallStack a)
 
 getActionError (ActionError e _) = e
+
+mapActionError f (ActionError e s) = ActionError (f e) s
 #else
 newtype Action m = Action {
     runAction :: m ()
@@ -265,6 +269,8 @@ mkAction a = Action a
 mkActionError e _ = ActionError e
 
 getActionError (ActionError e) = e
+
+mapActionError f (ActionError e) = ActionError (f e)
 #endif
 
 {-------------------------------------------------------------------------------

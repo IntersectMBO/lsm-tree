@@ -5,6 +5,10 @@ module Database.LSMTree.Internal.Paths (
   , ActiveDir (..)
   , activeDir
   , runPath
+  , SnapshotName
+  , toSnapshotName
+  , isValidSnapshotName
+  , InvalidSnapshotNameError (..)
   , snapshotsDir
   , NamedSnapshotDir (..)
   , namedSnapshotDir
@@ -14,11 +18,6 @@ module Database.LSMTree.Internal.Paths (
   , snapshotMetaDataChecksumFile
     -- * Table paths
   , tableBlobPath
-    -- * Snapshot name
-  , SnapshotName
-  , isValidSnapshotName
-  , InvalidSnapshotNameError (..)
-  , toSnapshotName
     -- * Run paths
   , RunFsPaths (..)
   , pathsForRunFiles
@@ -54,7 +53,8 @@ module Database.LSMTree.Internal.Paths (
 
 import           Control.Applicative (Applicative (..))
 import           Control.DeepSeq (NFData (..))
-import           Control.Exception.Base (Exception, throw)
+import           Control.Exception.Base (throw)
+import           Control.Monad.Class.MonadThrow (Exception)
 import qualified Data.ByteString.Char8 as BS
 import           Data.Foldable (toList)
 import qualified Data.Map as Map
@@ -67,7 +67,6 @@ import           Prelude hiding (Applicative (..))
 import qualified System.FilePath.Posix
 import qualified System.FilePath.Windows
 import           System.FS.API
-
 
 
 newtype SessionRoot = SessionRoot { getSessionRoot :: FsPath }
@@ -84,30 +83,6 @@ activeDir (SessionRoot dir) = ActiveDir (dir </> mkFsPath ["active"])
 runPath :: ActiveDir -> RunNumber -> RunFsPaths
 runPath (ActiveDir dir) = RunFsPaths dir
 
-snapshotsDir :: SessionRoot -> FsPath
-snapshotsDir (SessionRoot dir) = dir </> mkFsPath ["snapshots"]
-
--- | The directory for a specific, /named/ snapshot.
---
--- Not to be confused with the snapshot/s/ directory, which holds all named
--- snapshot directories.
-newtype NamedSnapshotDir = NamedSnapshotDir { getNamedSnapshotDir :: FsPath }
-
-namedSnapshotDir :: SessionRoot -> SnapshotName -> NamedSnapshotDir
-namedSnapshotDir root (SnapshotName name) =
-    NamedSnapshotDir (snapshotsDir root </> mkFsPath [name])
-
-newtype SnapshotMetaDataFile = SnapshotMetaDataFile FsPath
-
-snapshotMetaDataFile :: NamedSnapshotDir -> SnapshotMetaDataFile
-snapshotMetaDataFile (NamedSnapshotDir dir) =
-    SnapshotMetaDataFile (dir </> mkFsPath ["metadata"])
-
-newtype SnapshotMetaDataChecksumFile = SnapshotMetaDataChecksumFile FsPath
-
-snapshotMetaDataChecksumFile :: NamedSnapshotDir -> SnapshotMetaDataChecksumFile
-snapshotMetaDataChecksumFile (NamedSnapshotDir dir) =
-    SnapshotMetaDataChecksumFile (dir </> mkFsPath ["metadata.checksum"])
 
 {-------------------------------------------------------------------------------
   Snapshot name
@@ -197,6 +172,31 @@ toSnapshotName :: String -> SnapshotName
 toSnapshotName str
   | isValidSnapshotName str = SnapshotName str
   | otherwise = throw (ErrSnapshotNameInvalid str)
+
+snapshotsDir :: SessionRoot -> FsPath
+snapshotsDir (SessionRoot dir) = dir </> mkFsPath ["snapshots"]
+
+-- | The directory for a specific, /named/ snapshot.
+--
+-- Not to be confused with the snapshot/s/ directory, which holds all named
+-- snapshot directories.
+newtype NamedSnapshotDir = NamedSnapshotDir { getNamedSnapshotDir :: FsPath }
+
+namedSnapshotDir :: SessionRoot -> SnapshotName -> NamedSnapshotDir
+namedSnapshotDir root (SnapshotName name) =
+    NamedSnapshotDir (snapshotsDir root </> mkFsPath [name])
+
+newtype SnapshotMetaDataFile = SnapshotMetaDataFile FsPath
+
+snapshotMetaDataFile :: NamedSnapshotDir -> SnapshotMetaDataFile
+snapshotMetaDataFile (NamedSnapshotDir dir) =
+    SnapshotMetaDataFile (dir </> mkFsPath ["metadata"])
+
+newtype SnapshotMetaDataChecksumFile = SnapshotMetaDataChecksumFile FsPath
+
+snapshotMetaDataChecksumFile :: NamedSnapshotDir -> SnapshotMetaDataChecksumFile
+snapshotMetaDataChecksumFile (NamedSnapshotDir dir) =
+    SnapshotMetaDataChecksumFile (dir </> mkFsPath ["metadata.checksum"])
 
 {-------------------------------------------------------------------------------
   Table paths

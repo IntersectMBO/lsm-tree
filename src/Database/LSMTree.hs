@@ -9,7 +9,22 @@
 -- Until then, the documentation on definitions in this module is omitted.
 module Database.LSMTree (
     -- * Exceptions
-    Common.LSMTreeError (..)
+    Common.SessionDirDoesNotExistError (..)
+  , Common.SessionDirLockedError (..)
+  , Common.SessionDirCorruptedError (..)
+  , Common.SessionClosedError (..)
+  , Common.TableClosedError (..)
+  , Common.TableCorruptedError (..)
+  , Common.TableTooLargeError (..)
+  , Common.TableNotCompatibleError (..)
+  , Common.SnapshotExistsError (..)
+  , Common.SnapshotDoesNotExistError (..)
+  , Common.SnapshotCorruptedError (..)
+  , Common.SnapshotNotCompatibleError (..)
+  , Common.BlobRefInvalidError (..)
+  , Common.CursorClosedError (..)
+  , Common.FileFormat (..)
+  , Common.FileCorruptedError (..)
   , Common.InvalidSnapshotNameError (..)
 
     -- * Tracing
@@ -67,7 +82,7 @@ module Database.LSMTree (
   , retrieveBlobs
 
     -- * Durability (snapshots)
-  , SnapshotName
+  , Common.SnapshotName
   , Common.isValidSnapshotName
   , Common.toSnapshotName
   , Common.SnapshotLabel (..)
@@ -117,16 +132,15 @@ import           Data.List.NonEmpty (NonEmpty (..))
 import           Data.Typeable (Proxy (..), Typeable, eqT, type (:~:) (Refl))
 import qualified Data.Vector as V
 import           Database.LSMTree.Common (BlobRef (BlobRef), IOLike, Range (..),
-                     SerialiseKey, SerialiseValue, Session, SnapshotName,
-                     UnionCredits (..), UnionDebt (..), closeSession,
-                     deleteSnapshot, listSnapshots, openSession, withSession)
+                     SerialiseKey, SerialiseValue, Session, UnionCredits (..),
+                     UnionDebt (..), closeSession, deleteSnapshot,
+                     listSnapshots, openSession, withSession)
 import qualified Database.LSMTree.Common as Common
 import qualified Database.LSMTree.Internal as Internal
 import qualified Database.LSMTree.Internal.BlobRef as Internal
 import qualified Database.LSMTree.Internal.Entry as Entry
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import qualified Database.LSMTree.Internal.Serialise as Internal
-import qualified Database.LSMTree.Internal.Snapshot as Internal
 import qualified Database.LSMTree.Internal.Vector as V
 import           Database.LSMTree.Monoidal (ResolveValue (..),
                      resolveDeserialised, resolveValueAssociativity,
@@ -476,24 +490,24 @@ retrieveBlobs (Internal.Session' (sesh :: Internal.Session m h)) refs =
 
 {-# SPECIALISE createSnapshot ::
      Common.SnapshotLabel
-  -> SnapshotName
+  -> Common.SnapshotName
   -> Table IO k v b
   -> IO () #-}
 createSnapshot :: forall m k v b.
      IOLike m
   => Common.SnapshotLabel
-  -> SnapshotName
+  -> Common.SnapshotName
   -> Table m k v b
   -> m ()
 createSnapshot label snap (Internal.Table' t) =
-    void $ Internal.createSnapshot snap label Internal.SnapFullTable t
+    void $ Internal.createSnapshot snap label Common.SnapFullTable t
 
 {-# SPECIALISE openSnapshot ::
      ResolveValue v
   => Session IO
   -> Common.TableConfigOverride
   -> Common.SnapshotLabel
-  -> SnapshotName
+  -> Common.SnapshotName
   -> IO (Table IO k v b ) #-}
 openSnapshot :: forall m k v b.
      ( IOLike m
@@ -502,10 +516,10 @@ openSnapshot :: forall m k v b.
   => Session m
   -> Common.TableConfigOverride -- ^ Optional config override
   -> Common.SnapshotLabel
-  -> SnapshotName
+  -> Common.SnapshotName
   -> m (Table m k v b)
 openSnapshot (Internal.Session' sesh) override label snap =
-    Internal.Table' <$!> Internal.openSnapshot sesh label Internal.SnapFullTable override snap (resolve (Proxy @v))
+    Internal.Table' <$!> Internal.openSnapshot sesh label Common.SnapFullTable override snap (resolve (Proxy @v))
 
 {-------------------------------------------------------------------------------
   Mutiple writable tables
@@ -556,7 +570,7 @@ unions (t :| ts) =
       -> m (Internal.Table m h)
     checkTableType _ i (Internal.Table' (t' :: Internal.Table m h'))
       | Just Refl <- eqT @h @h' = pure t'
-      | otherwise = throwIO (Internal.ErrUnionsTableTypeMismatch 0 i)
+      | otherwise = throwIO (Common.ErrTableTypeMismatch 0 i)
 
 {-# SPECIALISE remainingUnionDebt :: Table IO k v b -> IO UnionDebt #-}
 remainingUnionDebt :: IOLike m => Table m k v b -> m UnionDebt

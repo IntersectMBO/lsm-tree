@@ -293,7 +293,7 @@ openFromDisk ::
 -- TODO: make exception safe
 openFromDisk fs hbio runRunDataCaching indexType runRunFsPaths = do
     expectedChecksums <-
-       CRC.expectValidFile (runChecksumsPath runRunFsPaths) . fromChecksumsFile
+       CRC.expectValidFile (runChecksumsPath runRunFsPaths) CRC.FormatChecksumsFile . fromChecksumsFile
          =<< CRC.readChecksumsFile fs (runChecksumsPath runRunFsPaths)
 
     -- verify checksums of files we don't read yet
@@ -303,10 +303,10 @@ openFromDisk fs hbio runRunDataCaching indexType runRunFsPaths = do
 
     -- read and try parsing files
     runFilter <-
-      CRC.expectValidFile (forRunFilterRaw paths) . bloomFilterFromSBS
+      CRC.expectValidFile (forRunFilterRaw paths) CRC.FormatBloomFilterFile . bloomFilterFromSBS
         =<< readCRC (forRunFilterRaw expectedChecksums) (forRunFilterRaw paths)
     (runNumEntries, runIndex) <-
-      CRC.expectValidFile (forRunIndexRaw paths) . Index.fromSBS indexType
+      CRC.expectValidFile (forRunIndexRaw paths) CRC.FormatIndexFile . Index.fromSBS indexType
         =<< readCRC (forRunIndexRaw expectedChecksums) (forRunIndexRaw paths)
 
     runKOpsFile <- FS.hOpen fs (runKOpsPath runRunFsPaths) FS.ReadMode

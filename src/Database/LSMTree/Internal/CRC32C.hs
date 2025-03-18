@@ -38,18 +38,18 @@ module Database.LSMTree.Internal.CRC32C (
   -- $checksum-files
   ChecksumsFile,
   ChecksumsFileName(..),
-  ChecksumsFileFormatError (..),
+  getChecksum,
   readChecksumsFile,
   writeChecksumsFile,
   writeChecksumsFile',
 
   -- * Checksum checking
-  ChecksumError (..),
   checkCRC,
   expectChecksum,
 
   -- * File format errors
-  FileFormatError (..),
+  FileFormat (..),
+  FileCorruptedError (..),
   expectValidFile,
   ) where
 
@@ -77,8 +77,7 @@ import           System.FS.API.Lazy
 import           System.FS.BlockIO.API (Advice (..), ByteCount, HasBlockIO,
                      hAdviseAll, hDropCacheAll)
 
-
-newtype CRC32C = CRC32C Word32
+newtype CRC32C = CRC32C {unCRC32C :: Word32}
   deriving stock (Eq, Ord, Show)
   deriving newtype (Prim)
 
@@ -274,22 +273,44 @@ type ChecksumsFile = Map ChecksumsFileName CRC32C
 
 -- | File names must not include characters @'('@, @')'@ or @'\n'@.
 --
-newtype ChecksumsFileName = ChecksumsFileName BSC.ByteString
+newtype ChecksumsFileName = ChecksumsFileName {unChecksumsFileName :: BSC.ByteString}
   deriving stock (Eq, Ord, Show)
 
-data ChecksumsFileFormatError = ChecksumsFileFormatError FsPath BSC.ByteString
-  deriving stock Show
+{-# SPECIALISE
+  getChecksum ::
+     FsPath
+  -> ChecksumsFile
+  -> ChecksumsFileName
+  -> IO CRC32C
+  #-}
+getChecksum ::
+     MonadThrow m
+  => FsPath
+  -> ChecksumsFile
+  -> ChecksumsFileName
+  -> m CRC32C
+getChecksum fsPath checksumsFile checksumsFileName =
+  case Map.lookup checksumsFileName checksumsFile of
+    Just checksum ->
+      pure checksum
+    Nothing ->
+      throwIO . ErrFileFormatInvalid fsPath FormatChecksumsFile $
+        "could not find checksum for " <> show (unChecksumsFileName checksumsFileName)
 
-instance Exception ChecksumsFileFormatError
-
-{-# SPECIALISE readChecksumsFile :: HasFS IO h -> FsPath -> IO ChecksumsFile #-}
-readChecksumsFile :: MonadThrow m
-                  => HasFS m h -> FsPath -> m ChecksumsFile
+{-# SPECIALISE
+  readChecksumsFile ::
+       HasFS IO h
+    -> FsPath
+    -> IO ChecksumsFile
+    #-}
+readChecksumsFile ::
+     (MonadThrow m)
+  => HasFS m h
+  -> FsPath
+  -> m ChecksumsFile
 readChecksumsFile fs path = do
     str <- withFile fs path ReadMode (\h -> hGetAll fs h)
-    case parseChecksumsFile (BSL.toStrict str) of
-      Left  badline   -> throwIO (ChecksumsFileFormatError path badline)
-      Right checksums -> return checksums
+    expectValidFile path FormatChecksumsFile (parseChecksumsFile (BSL.toStrict str))
 
 {-# SPECIALISE writeChecksumsFile :: HasFS IO h -> FsPath -> ChecksumsFile -> IO () #-}
 writeChecksumsFile :: MonadThrow m
@@ -304,11 +325,11 @@ writeChecksumsFile' :: MonadThrow m
                     => HasFS m h -> Handle h -> ChecksumsFile -> m ()
 writeChecksumsFile' fs h checksums = void $ hPutAll fs h (formatChecksumsFile checksums)
 
-parseChecksumsFile :: BSC.ByteString -> Either BSC.ByteString ChecksumsFile
+parseChecksumsFile :: BSC.ByteString -> Either String ChecksumsFile
 parseChecksumsFile content =
     case partitionEithers (parseLines content) of
       ([], entries)    -> Right $! Map.fromList entries
-      ((badline:_), _) -> Left badline
+      ((badline:_), _) -> Left $! "could not parse '" <> BSC.unpack badline <> "'"
   where
     parseLines = map (\l -> maybe (Left l) Right (parseChecksumFileLine l))
                . filter (not . BSC.null)
@@ -358,15 +379,9 @@ formatChecksumsFile checksums =
           <> BS.char8 '\n'
         | (ChecksumsFileName name, CRC32C crc) <- Map.toList checksums ]
 
-
-
 {-------------------------------------------------------------------------------
   Checksum errors
 -------------------------------------------------------------------------------}
-
-data ChecksumError = ChecksumError FsPath CRC32C CRC32C
-  deriving stock Show
-  deriving anyclass Exception
 
 -- | Check the CRC32C checksum for a file.
 --
@@ -412,21 +427,58 @@ expectChecksum ::
   -> m ()
 expectChecksum fp expected checksum =
     when (expected /= checksum) $
-      throwIO $ ChecksumError fp expected checksum
+      throwIO $ ErrFileChecksumMismatch fp (unCRC32C expected) (unCRC32C checksum)
 
 
 {-------------------------------------------------------------------------------
-  File format errors
+  File Format Errors
 -------------------------------------------------------------------------------}
 
-data FileFormatError = FileFormatError FsPath String
-  deriving stock Show
-  deriving anyclass Exception
+data FileFormat
+    = FormatChecksumsFile
+    | FormatBloomFilterFile
+    | FormatIndexFile
+    | FormatWriteBufferFile
+    | FormatSnapshotMetaData
+    deriving stock (Show, Eq)
 
+-- | The file is corrupted.
+data FileCorruptedError
+    = -- | The file fails to parse.
+      ErrFileFormatInvalid
+        -- | File.
+        !FsPath
+        -- | File format.
+        !FileFormat
+        -- | Error message.
+        !String
+    | -- | The file CRC32 checksum is invalid.
+      ErrFileChecksumMismatch
+        -- | File.
+        !FsPath
+        -- | Expected checksum.
+        !Word32
+        -- | Actual checksum.
+        !Word32
+    deriving stock (Show, Eq)
+    deriving anyclass (Exception)
+
+{-# SPECIALISE
+  expectValidFile ::
+      (MonadThrow m)
+    => FsPath
+    -> FileFormat
+    -> Either String a
+    -> m a
+  #-}
 expectValidFile ::
-     MonadThrow f
+     (MonadThrow m)
   => FsPath
+  -> FileFormat
   -> Either String a
-  -> f a
-expectValidFile _  (Right x)  = pure x
-expectValidFile fp (Left err) = throwIO $ FileFormatError fp err
+  -> m a
+expectValidFile _file _format (Right x) =
+    pure x
+expectValidFile file format (Left msg) =
+    throwIO $ ErrFileFormatInvalid file format msg
+

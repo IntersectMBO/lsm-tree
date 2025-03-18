@@ -21,7 +21,23 @@ module Database.LSMTree.Internal (
   , MonoidalTable (..)
   , MonoidalCursor (..)
     -- * Exceptions
-  , LSMTreeError (..)
+  , SessionDirDoesNotExistError (..)
+  , SessionDirLockedError (..)
+  , SessionDirCorruptedError (..)
+  , SessionClosedError (..)
+  , TableClosedError (..)
+  , TableCorruptedError (..)
+  , TableTooLargeError (..)
+  , TableNotCompatibleError (..)
+  , SnapshotExistsError (..)
+  , SnapshotDoesNotExistError (..)
+  , SnapshotCorruptedError (..)
+  , SnapshotNotCompatibleError (..)
+  , BlobRefInvalidError (..)
+  , CursorClosedError (..)
+  , FileFormat (..)
+  , FileCorruptedError (..)
+  , Paths.InvalidSnapshotNameError (..)
     -- * Tracing
   , LSMTreeTrace (..)
   , TableTrace (..)
@@ -75,7 +91,6 @@ module Database.LSMTree.Internal (
   , supplyUnionCredits
   ) where
 
-import           Codec.CBOR.Read
 import           Control.ActionRegistry
 import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Concurrent.Class.MonadSTM (MonadSTM (..))
@@ -97,20 +112,24 @@ import           Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (catMaybes, maybeToList)
+import           Data.Maybe (catMaybes, fromMaybe, maybeToList)
+import           Data.Monoid (First (..))
 import qualified Data.Set as Set
 import           Data.Typeable
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.BlobRef (WeakBlobRef (..))
 import qualified Database.LSMTree.Internal.BlobRef as BlobRef
 import           Database.LSMTree.Internal.Config
+import           Database.LSMTree.Internal.CRC32C (FileCorruptedError (..),
+                     FileFormat (..))
 import qualified Database.LSMTree.Internal.Cursor as Cursor
 import           Database.LSMTree.Internal.Entry (Entry, NumEntries (..))
 import           Database.LSMTree.Internal.IncomingRun (IncomingRun (..))
-import           Database.LSMTree.Internal.Lookup (ByteCountDiscrepancy,
-                     ResolveSerialisedValue, lookupsIO,
+import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue,
+                     TableCorruptedError (..), lookupsIO,
                      lookupsIOWithoutWriteBuffer)
 import           Database.LSMTree.Internal.MergeSchedule
+import           Database.LSMTree.Internal.MergingRun (TableTooLargeError (..))
 import qualified Database.LSMTree.Internal.MergingRun as MR
 import           Database.LSMTree.Internal.MergingTree
 import qualified Database.LSMTree.Internal.MergingTree as MT
@@ -187,66 +206,6 @@ data MonoidalCursor m k v = forall h. Typeable h =>
 
 instance NFData (MonoidalCursor m k v) where
   rnf (MonoidalCursor c) = rnf c
-
-{-------------------------------------------------------------------------------
-  Exceptions
--------------------------------------------------------------------------------}
-
--- TODO: give this a nicer Show instance.
-data LSMTreeError =
-    -- | The session directory does not exist.
-    SessionDirDoesNotExist FsErrorPath
-  | -- | The session directory is already locked
-    SessionDirLocked FsErrorPath
-  | -- | The session directory is malformed: the layout of the session directory
-    -- contains unexpected files and/or directories.
-    SessionDirMalformed FsErrorPath
-  | -- | All operations on a closed session as well as tables or cursors within
-    -- a closed session will throw this exception. There is one exception (pun
-    -- intended) to this rule: the idempotent operation
-    -- 'Database.LSMTree.Common.closeSession'.
-    ErrSessionClosed
-  | -- | All operations on a closed table will throw this exception, except for
-    -- the idempotent operation 'Database.LSMTree.Common.close'.
-    ErrTableClosed
-  | -- | All operations on a closed cursor will throw this exception, except for
-    -- the idempotent operation 'Database.LSMTree.Common.closeCursor'.
-    ErrCursorClosed
-  | ErrSnapshotExists SnapshotName
-  | ErrSnapshotDoesNotExist SnapshotName
-  | ErrSnapshotDeserialiseFailure DeserialiseFailure SnapshotName
-  | ErrSnapshotWrongTableType
-      SnapshotName
-      SnapshotTableType -- ^ Expected type
-      SnapshotTableType -- ^ Actual type
-  | ErrSnapshotWrongLabel
-      SnapshotName
-      SnapshotLabel -- ^ Expected label
-      SnapshotLabel -- ^ Actual label
-  | -- | Something went wrong during batch lookups.
-    ErrLookup ByteCountDiscrepancy
-  | -- | A 'BlobRef' used with 'retrieveBlobs' was invalid.
-    --
-    -- 'BlobRef's are obtained from lookups in a 'Table', but they may be
-    -- invalidated by subsequent changes in that 'Table'. In general the
-    -- reliable way to retrieve blobs is not to change the 'Table' before
-    -- retrieving the blobs. To allow later retrievals, duplicate the table
-    -- before making modifications and keep the table open until all blob
-    -- retrievals are complete.
-    --
-    -- The 'Int' index indicates which 'BlobRef' was invalid. Many may be
-    -- invalid but only the first is reported.
-    ErrBlobRefInvalid Int
-  | -- | 'unions' was called on tables that are not of the same type.
-    ErrUnionsTableTypeMismatch
-      Int -- ^ Vector index of table @t1@ involved in the mismatch
-      Int -- ^ Vector index of table @t2@ involved in the mismatch
-  | -- | 'unions' was called on tables that are not in the same session.
-    ErrUnionsSessionMismatch
-      Int -- ^ Vector index of table @t1@ involved in the mismatch
-      Int -- ^ Vector index of table @t2@ involved in the mismatch
-  deriving stock (Show, Eq)
-  deriving anyclass (Exception)
 
 {-------------------------------------------------------------------------------
   Traces
@@ -359,6 +318,12 @@ data SessionEnv m h = SessionEnv {
   , sessionOpenCursors :: !(StrictMVar m (Map CursorId (Cursor m h)))
   }
 
+-- | The session is closed.
+data SessionClosedError
+    = ErrSessionClosed
+    deriving stock (Show, Eq)
+    deriving anyclass (Exception)
+
 {-# INLINE withOpenSession #-}
 {-# SPECIALISE withOpenSession ::
      Session IO h
@@ -399,6 +364,24 @@ withSession ::
   -> m a
 withSession tr hfs hbio dir = bracket (openSession tr hfs hbio dir) closeSession
 
+-- | The session directory does not exist.
+data SessionDirDoesNotExistError
+    = ErrSessionDirDoesNotExist !FsErrorPath
+    deriving stock (Show, Eq)
+    deriving anyclass (Exception)
+
+-- | The session directory is locked by another active session.
+data SessionDirLockedError
+    = ErrSessionDirLocked !FsErrorPath
+    deriving stock (Show, Eq)
+    deriving anyclass (Exception)
+
+-- | The session directory is corrupted, e.g., it misses required files or contains unexpected files.
+data SessionDirCorruptedError
+    = ErrSessionDirCorrupted !FsErrorPath
+    deriving stock (Show, Eq)
+    deriving anyclass (Exception)
+
 {-# SPECIALISE openSession ::
      Tracer IO LSMTreeTrace
   -> HasFS IO h
@@ -423,7 +406,7 @@ openSession tr hfs hbio dir =
       traceWith tr (TraceOpenSession dir)
       dirExists <- FS.doesDirectoryExist hfs dir
       unless dirExists $
-        throwIO (SessionDirDoesNotExist (FS.mkFsErrorPath hfs dir))
+        throwIO (ErrSessionDirDoesNotExist (FS.mkFsErrorPath hfs dir))
       -- List directory contents /before/ trying to acquire a file lock, so that
       -- that the lock file does not show up in the listed contents.
       dirContents <- FS.listDirectory hfs dir
@@ -443,9 +426,9 @@ openSession tr hfs hbio dir =
           | FS.FsResourceAlreadyInUse <- FS.fsErrorType e
           , fsep@(FsErrorPath _ fsp) <- FS.fsErrorPath e
           , fsp == lockFilePath
-          -> throwIO (SessionDirLocked fsep)
+          -> throwIO (ErrSessionDirLocked fsep)
         Left  e -> throwIO e -- rethrow unexpected errors
-        Right Nothing -> throwIO (SessionDirLocked (FS.mkFsErrorPath hfs lockFilePath))
+        Right Nothing -> throwIO (ErrSessionDirLocked (FS.mkFsErrorPath hfs lockFilePath))
         Right (Just sessionFileLock) ->
           if Set.null dirContents then newSession reg sessionFileLock
                                   else restoreSession reg sessionFileLock
@@ -506,14 +489,14 @@ openSession tr hfs hbio dir =
     -- check.
     checkTopLevelDirLayout = do
       FS.doesDirectoryExist hfs activeDirPath >>= \b ->
-        unless b $ throwIO (SessionDirMalformed (FS.mkFsErrorPath hfs activeDirPath))
+        unless b $ throwIO (ErrSessionDirCorrupted (FS.mkFsErrorPath hfs activeDirPath))
       FS.doesDirectoryExist hfs snapshotsDirPath >>= \b ->
-        unless b $ throwIO (SessionDirMalformed (FS.mkFsErrorPath hfs snapshotsDirPath))
+        unless b $ throwIO (ErrSessionDirCorrupted (FS.mkFsErrorPath hfs snapshotsDirPath))
 
     -- The active directory should be empty
     checkActiveDirLayout = do
         contents <- FS.listDirectory hfs activeDirPath
-        unless (Set.null contents) $ throwIO (SessionDirMalformed (FS.mkFsErrorPath hfs activeDirPath))
+        unless (Set.null contents) $ throwIO (ErrSessionDirCorrupted (FS.mkFsErrorPath hfs activeDirPath))
 
     -- Nothing to check: snapshots are verified when they are loaded, not when a
     -- session is restored.
@@ -658,6 +641,12 @@ tableSessionUniqCounter = sessionUniqCounter . tableSessionEnv
 tableSessionUntrackTable :: MonadMVar m => TableId -> TableEnv m h -> m ()
 tableSessionUntrackTable tableId tEnv =
     modifyMVar_ (sessionOpenTables (tableSessionEnv tEnv)) $ pure . Map.delete tableId
+
+-- | The table is closed.
+data TableClosedError
+    = ErrTableClosed
+    deriving stock (Show, Eq)
+    deriving anyclass (Exception)
 
 -- | 'withOpenTable' ensures that the table stays open for the duration of the
 -- provided continuation.
@@ -949,6 +938,21 @@ updates resolve es t = do
   Blobs
 -------------------------------------------------------------------------------}
 
+{- | A 'BlobRef' used with 'retrieveBlobs' was invalid.
+
+'BlobRef's are obtained from lookups in a 'Table', but they may be
+invalidated by subsequent changes in that 'Table'. In general the
+reliable way to retrieve blobs is not to change the 'Table' before
+retrieving the blobs. To allow later retrievals, duplicate the table
+before making modifications and keep the table open until all blob
+retrievals are complete.
+-}
+data BlobRefInvalidError
+    = -- | The 'Int' index indicates the first invalid 'BlobRef'.
+      ErrBlobRefInvalid !Int
+    deriving stock (Show, Eq)
+    deriving anyclass (Exception)
+
 {-# SPECIALISE retrieveBlobs ::
      Session IO h
   -> V.Vector (WeakBlobRef IO h)
@@ -1142,6 +1146,12 @@ readCursor ::
 readCursor resolve n cursor fromEntry =
     readCursorWhile resolve (const True) n cursor fromEntry
 
+-- | The cursor is closed.
+data CursorClosedError
+    = ErrCursorClosed
+    deriving stock (Show, Eq)
+    deriving anyclass (Exception)
+
 {-# SPECIALISE readCursorWhile ::
      ResolveSerialisedValue
   -> (SerialisedKey -> Bool)
@@ -1187,6 +1197,12 @@ readCursorWhile resolve keyIsWanted n Cursor {..} fromEntry = do
 {-------------------------------------------------------------------------------
   Snapshots
 -------------------------------------------------------------------------------}
+
+-- | The named snapshot already exists.
+data SnapshotExistsError
+    = ErrSnapshotExists !SnapshotName
+    deriving stock (Show, Eq)
+    deriving anyclass (Exception)
 
 {-# SPECIALISE createSnapshot ::
      SnapshotName
@@ -1267,6 +1283,40 @@ createSnapshot snap label tableType t = do
         -- Make the directory and its contents durable.
         FS.synchroniseDirectoryRecursive hfs hbio (Paths.getNamedSnapshotDir snapDir)
 
+-- | The named snapshot does not exist.
+data SnapshotDoesNotExistError
+    = ErrSnapshotDoesNotExist !SnapshotName
+    deriving stock (Show, Eq)
+    deriving anyclass (Exception)
+
+-- | The named snapshot is corrupted.
+data SnapshotCorruptedError
+    = ErrSnapshotCorrupted
+        !SnapshotName
+        !FileCorruptedError
+    deriving stock (Show, Eq)
+    deriving anyclass (Exception)
+
+-- | The named snapshot is not compatible with the expected type.
+data SnapshotNotCompatibleError
+    = -- | The named snapshot is not compatible with the current public API module.
+      --   For instance, the snapshot was created using the simple API, but was opened using the full API.
+      ErrSnapshotWrongTableType
+        !SnapshotName
+        -- | Expected type
+        !SnapshotTableType
+        -- | Actual type
+        !SnapshotTableType
+    | -- | The named snapshot is not compatible with the given label.
+      ErrSnapshotWrongLabel
+        !SnapshotName
+        -- | Expected label
+        !SnapshotLabel
+        -- | Actual label
+        !SnapshotLabel
+    deriving stock (Show, Eq)
+    deriving anyclass (Exception)
+
 {-# SPECIALISE openSnapshot ::
      Session IO h
   -> SnapshotLabel
@@ -1285,7 +1335,8 @@ openSnapshot ::
   -> SnapshotName
   -> ResolveSerialisedValue
   -> m (Table m h)
-openSnapshot sesh label tableType override snap resolve = do
+openSnapshot sesh label tableType override snap resolve =
+  wrapFileCorruptedErrorAsSnapshotCorruptedError snap $ do
     traceWith (sessionTracer sesh) $ TraceOpenSnapshot snap override
     withOpenSession sesh $ \seshEnv -> do
       withActionRegistry $ \reg -> do
@@ -1300,9 +1351,8 @@ openSnapshot sesh label tableType override snap resolve = do
 
         let SnapshotMetaDataFile contentPath = Paths.snapshotMetaDataFile snapDir
             SnapshotMetaDataChecksumFile checksumPath = Paths.snapshotMetaDataChecksumFile snapDir
-        snapMetaData <- readFileSnapshotMetaData hfs contentPath checksumPath >>= \case
-          Left e  -> throwIO (ErrSnapshotDeserialiseFailure e snap)
-          Right x -> pure x
+
+        snapMetaData <- readFileSnapshotMetaData hfs contentPath checksumPath
 
         let SnapshotMetaData label' tableType' conf snapWriteBuffer snapLevels mTreeOpt = snapMetaData
 
@@ -1319,7 +1369,8 @@ openSnapshot sesh label tableType override snap resolve = do
 
         -- Read write buffer
         let snapWriteBufferPaths = Paths.WriteBufferFsPaths (Paths.getNamedSnapshotDir snapDir) snapWriteBuffer
-        (tableWriteBuffer, tableWriteBufferBlobs) <- openWriteBuffer reg resolve hfs hbio uc activeDir snapWriteBufferPaths
+        (tableWriteBuffer, tableWriteBufferBlobs) <-
+          openWriteBuffer reg resolve hfs hbio uc activeDir snapWriteBufferPaths
 
         -- Hard link runs into the active directory,
         snapLevels' <- traverse (openRun hfs hbio uc reg snapDir activeDir) snapLevels
@@ -1343,6 +1394,57 @@ openSnapshot sesh label tableType override snap resolve = do
           , tableCache
           , tableUnionLevel = unionLevel
           }
+
+{-# SPECIALISE wrapFileCorruptedErrorAsSnapshotCorruptedError ::
+       SnapshotName
+    -> IO a
+    -> IO a
+    #-}
+wrapFileCorruptedErrorAsSnapshotCorruptedError ::
+       forall m a.
+       (MonadCatch m)
+    => SnapshotName
+    -> m a
+    -> m a
+wrapFileCorruptedErrorAsSnapshotCorruptedError snapshotName action =
+    action `catches` handlers
+    where
+        handlers :: [Handler m a]
+        handlers =
+            [ Handler $ throwIO . wrapFileCorruptedError
+            , Handler $ throwIO . wrapAbortActionRegistryError
+            , Handler $ throwIO . wrapCommitActionRegistryError
+            ]
+
+        -- TODO: This erases the `ExceptionContext` of the underlying `FileCorruptedError`,
+        --       `AbortActionRegistryError`, or `CommitActionRegistryError`.
+        --       Unfortunately, the API exposed by `io-classes` does not currently expose
+        --       any primitives that could be used to preserve the `ExceptionContext`.
+        wrapSomeException :: SomeException -> SomeException
+        wrapSomeException e =
+            fromMaybe e . getFirst . mconcat . fmap First $
+                [ toException . wrapFileCorruptedError <$> fromException e
+                , toException . wrapAbortActionRegistryError <$> fromException e
+                , toException . wrapCommitActionRegistryError <$> fromException e
+                ]
+
+        wrapFileCorruptedError :: FileCorruptedError -> SnapshotCorruptedError
+        wrapFileCorruptedError = ErrSnapshotCorrupted snapshotName
+
+        wrapAbortActionRegistryError :: AbortActionRegistryError -> AbortActionRegistryError
+        wrapAbortActionRegistryError = \case
+            AbortActionRegistryError reason es ->
+                AbortActionRegistryError (wrapAbortActionRegistryReason reason) (mapActionError wrapSomeException <$> es)
+
+        wrapAbortActionRegistryReason :: AbortActionRegistryReason -> AbortActionRegistryReason
+        wrapAbortActionRegistryReason = \case
+            ReasonExitCaseException e -> ReasonExitCaseException (wrapSomeException e)
+            ReasonExitCaseAbort -> ReasonExitCaseAbort
+
+        wrapCommitActionRegistryError :: CommitActionRegistryError -> CommitActionRegistryError
+        wrapCommitActionRegistryError = \case
+            CommitActionRegistryError es ->
+                CommitActionRegistryError (mapActionError wrapSomeException <$> es)
 
 {-# SPECIALISE doesSnapshotExist ::
      Session IO h
@@ -1437,6 +1539,25 @@ duplicate t@Table{..} = do
    Table union
 -------------------------------------------------------------------------------}
 
+-- | An operation was called with two tables that are not compatible.
+data TableNotCompatibleError
+    = -- | An operation was called with two tables that are not of the same type.
+      --
+      --   TODO: This error is no longer used by 'unions'.
+      ErrTableTypeMismatch
+        -- | Vector index of table @t1@ involved in the mismatch
+        Int
+        -- | Vector index of table @t2@ involved in the mismatch
+        Int
+    | -- | An operation was called with two tables that are not in the same session.
+      ErrTableSessionMismatch
+        -- | Vector index of table @t1@ involved in the mismatch
+        Int
+        -- | Vector index of table @t2@ involved in the mismatch
+        Int
+    deriving stock (Show, Eq)
+    deriving anyclass (Exception)
+
 {-# SPECIALISE unions :: NonEmpty (Table IO h) -> IO (Table IO h) #-}
 -- | See 'Database.LSMTree.Normal.unions'.
 unions ::
@@ -1446,7 +1567,7 @@ unions ::
 unions ts = do
     sesh <-
       matchSessions ts >>= \case
-        Left (i, j) -> throwIO $ ErrUnionsSessionMismatch i j
+        Left (i, j) -> throwIO $ ErrTableSessionMismatch i j
         Right sesh  -> pure sesh
 
     traceWith (sessionTracer sesh) $ TraceUnions (NE.map tableId ts)

@@ -33,7 +33,10 @@ module Database.LSMTree.Model.Session (
   , runModelM
   , runModelMWithInjectedErrors
     -- ** Errors
-  , Err (.., DefaultErrDiskFault, DefaultErrSnapshotCorrupted)
+  , Err (..)
+  , isDiskFault
+  , isSnapshotCorrupted
+  , isOther
     -- * Tables
   , Table
   , TableConfig (..)
@@ -94,20 +97,21 @@ import           Control.Monad.State.Strict (MonadState (..), StateT (..), gets,
                      modify)
 import           Data.Data
 import           Data.Dynamic
+import qualified Data.List as L
 import           Data.List.NonEmpty (NonEmpty (..))
+import qualified Data.List.NonEmpty as NE
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromJust)
 import qualified Data.Vector as V
 import           Data.Word
 import           Database.LSMTree.Common (SerialiseKey (..),
-                     SerialiseValue (..), SnapshotLabel, SnapshotName,
+                     SerialiseValue (..), SnapshotLabel (..), SnapshotName,
                      UnionCredits (..), UnionDebt (..))
 import           Database.LSMTree.Model.Table (LookupResult (..),
                      QueryResult (..), Range (..), ResolveSerialisedValue (..),
                      Update (..), getResolve, noResolve)
 import qualified Database.LSMTree.Model.Table as Model
-import           GHC.Show (appPrec)
 
 {-------------------------------------------------------------------------------
   Model
@@ -246,59 +250,62 @@ runModelMWithInjectedErrors ::
 runModelMWithInjectedErrors Nothing onNoErrors _ st =
     runModelM onNoErrors st
 runModelMWithInjectedErrors (Just _) _ onErrors st =
-    runModelM (onErrors >> throwError DefaultErrDiskFault) st
+    runModelM (onErrors >> throwError ModelErrDiskFault) st
 
 -- | The default 'ErrDiskFault' that model operations will throw.
-pattern DefaultErrDiskFault :: Err
-pattern DefaultErrDiskFault = ErrDiskFault "default"
+pattern ModelErrDiskFault :: Err
+pattern ModelErrDiskFault = ErrDiskFault "model does not produce an error message"
 
--- | The default 'ErrSnapshotCorrupted' that model operations will throw.
-pattern DefaultErrSnapshotCorrupted :: Err
-pattern DefaultErrSnapshotCorrupted = ErrSnapshotCorrupted "default"
-
---
+-----
 -- Errors
 --
 
-data Err =
-    ErrTableClosed
-  | ErrSnapshotExists
-  | ErrSnapshotDoesNotExist
-  | ErrSnapshotWrongType
-  | ErrBlobRefInvalidated
+data Err
+  = ErrSessionDirDoesNotExist
+  | ErrSessionDirLocked
+  | ErrSessionDirCorrupted
+  | ErrSessionClosed
+  | ErrTableClosed
+  | ErrTableCorrupted
+  | ErrTableTypeMismatch
+  | ErrTableSessionMismatch
+  | ErrSnapshotExists !SnapshotName
+  | ErrSnapshotDoesNotExist !SnapshotName
+  | ErrSnapshotCorrupted !SnapshotName
+  | ErrSnapshotWrongTableType !SnapshotName
+  | ErrSnapshotWrongLabel !SnapshotName
+  | ErrBlobRefInvalid
   | ErrCursorClosed
-    -- | Something went wrong with the file system.
-  | ErrSnapshotCorrupted String
-  | ErrDiskFault String
-  | ErrOther String
-  deriving stock Eq
+  | ErrDiskFault !String
+  | ErrFsError !String
+  | ErrCommitActionRegistry !(NonEmpty Err)
+  | ErrAbortActionRegistry !(Maybe Err) !(NonEmpty Err)
+  | ErrOther !String
+  deriving stock (Eq, Show)
 
-instance Show Err where
-  showsPrec d = \case
-      ErrTableClosed ->
-        showString "ErrTableClosed"
-      ErrSnapshotExists ->
-        showString "ErrSnapshotExists"
-      ErrSnapshotDoesNotExist ->
-        showString "ErrSnapshotDoesNotExist"
-      ErrSnapshotWrongType ->
-        showString "ErrSnapshotWrongType"
-      ErrBlobRefInvalidated ->
-        showString "ErrBlobRefInvalidated"
-      ErrCursorClosed ->
-        showString "ErrCursorClosed"
-      ErrSnapshotCorrupted s ->
-        showParen (d > appPrec) $
-        showString "ErrSnapshotCorrupted " .
-        showParen True (showString s)
-      ErrDiskFault s ->
-        showParen (d > appPrec) $
-        showString "ErrDiskFault " .
-        showParen True (showString s)
-      ErrOther s ->
-        showParen (d > appPrec) $
-        showString "ErrOther " .
-        showParen True (showString s)
+isSnapshotCorrupted :: Err -> Bool
+isSnapshotCorrupted (ErrSnapshotCorrupted _)      = True
+isSnapshotCorrupted (ErrFsError _)                = True
+isSnapshotCorrupted (ErrCommitActionRegistry es)  = firstNotOtherSatisfies isSnapshotCorrupted es
+isSnapshotCorrupted (ErrAbortActionRegistry e es) = firstNotOtherSatisfies isSnapshotCorrupted (maybe id NE.cons e es)
+isSnapshotCorrupted _                             = False
+
+isDiskFault :: Err -> Bool
+isDiskFault (ErrDiskFault _)              = True
+isDiskFault (ErrFsError _)                = True
+isDiskFault (ErrCommitActionRegistry es)  = firstNotOtherSatisfies isDiskFault es
+isDiskFault (ErrAbortActionRegistry e es) = firstNotOtherSatisfies isDiskFault (maybe id NE.cons e es)
+isDiskFault _                             = False
+
+isOther :: Err -> Bool
+isOther (ErrOther _)                  = True
+isOther (ErrCommitActionRegistry es)  = all isOther es
+isOther (ErrAbortActionRegistry e es) = all isOther (maybe id NE.cons e es)
+isOther _                             = False
+
+firstNotOtherSatisfies :: (Err -> Bool) -> NonEmpty Err -> Bool
+firstNotOtherSatisfies p =
+  maybe False (p . fst) . L.uncons . NE.dropWhile isOther
 
 {-------------------------------------------------------------------------------
   Tables
@@ -527,7 +534,7 @@ retrieveBlobs refs = Model.retrieveBlobs <$> V.mapM guard refs
               Just _  -> pure innerBlob
 
     errInvalid :: m a
-    errInvalid = throwError ErrBlobRefInvalidated
+    errInvalid = throwError ErrBlobRefInvalid
 
 data SomeHandleID b where
   SomeTableID  :: !UpdateCounter -> !TableID -> SomeHandleID b
@@ -584,7 +591,7 @@ createSnapshot label name t@Table{..} = do
     (_updc, table) <- guardTableIsOpen t
     snaps <- gets snapshots
     when (Map.member name snaps) $
-      throwError ErrSnapshotExists
+      throwError $ ErrSnapshotExists name
     let snap =
           Snapshot
             config label
@@ -607,12 +614,12 @@ openSnapshot label name = do
     snaps <- gets snapshots
     case Map.lookup name snaps of
       Nothing ->
-        throwError ErrSnapshotDoesNotExist
+        throwError $ ErrSnapshotDoesNotExist name
       Just (Snapshot conf label' tbl snapshotIsUnion corrupted) -> do
         when corrupted $
-          throwError DefaultErrSnapshotCorrupted
+          throwError $ ErrSnapshotCorrupted name
         when (label /= label') $
-          throwError ErrSnapshotWrongType
+          throwError $ ErrSnapshotWrongLabel name
         case fromSomeTable tbl of
           Nothing ->
             -- The label should contain enough information to type snapshots,
@@ -635,7 +642,7 @@ corruptSnapshot ::
 corruptSnapshot name = do
   snapshots <- gets snapshots
   if Map.notMember name snapshots
-    then throwError ErrSnapshotDoesNotExist
+    then throwError $ ErrSnapshotDoesNotExist name
     else modify $ \m -> m {snapshots = Map.adjust corruptSnapshotEntry name snapshots}
   where
     corruptSnapshotEntry (Snapshot c l t u _) = Snapshot c l t u True
@@ -648,7 +655,7 @@ deleteSnapshot name = do
     snaps <- gets snapshots
     case Map.lookup name snaps of
       Nothing ->
-        throwError ErrSnapshotDoesNotExist
+        throwError $ ErrSnapshotDoesNotExist name
       Just _ ->
         modify (\m -> m {
             snapshots = Map.delete name snaps
