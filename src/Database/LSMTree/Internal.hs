@@ -1395,6 +1395,7 @@ listSnapshots sesh = do
       pure $ catMaybes snaps
   where
     checkSnapshot hfs root s = do
+      -- TODO: rethrow 'ErrSnapshotNameInvalid' as 'ErrSnapshotDirCorrupted'
       let snap = Paths.toSnapshotName s
       -- check that it is a directory
       b <- FS.doesDirectoryExist hfs
