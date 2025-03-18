@@ -25,6 +25,7 @@
 module Database.LSMTree.Monoidal (
     -- * Exceptions
     Common.LSMTreeError (..)
+  , Common.InvalidSnapshotNameError (..)
 
     -- * Tracing
   , Common.LSMTreeTrace (..)
@@ -85,6 +86,7 @@ module Database.LSMTree.Monoidal (
     -- * Durability (snapshots)
   , SnapshotName
   , Common.toSnapshotName
+  , Common.isValidSnapshotName
   , Common.SnapshotLabel (..)
   , createSnapshot
   , openSnapshot

@@ -17,6 +17,7 @@ module Database.LSMTree.Internal.Paths (
     -- * Snapshot name
   , SnapshotName
   , isValidSnapshotName
+  , InvalidSnapshotNameError (..)
   , toSnapshotName
     -- * Run paths
   , RunFsPaths (..)

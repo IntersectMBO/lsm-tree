@@ -3,6 +3,7 @@ module Database.LSMTree.Common (
     IOLike
     -- * Exceptions
   , Internal.LSMTreeError (..)
+  , Internal.InvalidSnapshotNameError (..)
     -- * Tracing
   , Internal.LSMTreeTrace (..)
   , Internal.TableTrace (..)
@@ -24,6 +25,7 @@ module Database.LSMTree.Common (
     -- ** Snapshot names
   , Internal.SnapshotName
   , Internal.toSnapshotName
+  , Internal.isValidSnapshotName
     -- * Blob references
   , BlobRef (..)
     -- * Table configuration

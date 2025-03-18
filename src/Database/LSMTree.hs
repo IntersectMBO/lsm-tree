@@ -10,6 +10,7 @@
 module Database.LSMTree (
     -- * Exceptions
     Common.LSMTreeError (..)
+  , Common.InvalidSnapshotNameError (..)
 
     -- * Tracing
   , Common.LSMTreeTrace (..)
@@ -67,6 +68,7 @@ module Database.LSMTree (
 
     -- * Durability (snapshots)
   , SnapshotName
+  , Common.isValidSnapshotName
   , Common.toSnapshotName
   , Common.SnapshotLabel (..)
   , createSnapshot
