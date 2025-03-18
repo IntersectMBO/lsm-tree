@@ -761,8 +761,8 @@ data Action' h a where
   -- 'SupplyUnionCredits' gets no information about union debt, so the union
   -- credits we generate are arbitrary, and it would require precarious, manual
   -- tuning to make sure the debt is ever paid off by an action sequence.
-  -- 'SupplyUnionCredits' supplies a portion (if not al) of the current debt, so
-  -- that unions are more likely to finish during a sequence of actions.
+  -- 'SupplyUnionCredits' supplies a portion (if not all) of the current debt,
+  -- so that unions are more likely to finish during a sequence of actions.
   SupplyPortionOfDebt ::
        C k v b
     => Var h (WrapTable h IO k v b)
@@ -1995,6 +1995,9 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
             -- Tables not derived from unions are covered in UnitTests.
         | not (null unionDescendantTableVars)
         , let genErrors  = pure Nothing -- TODO: generate errors
+          -- TODO: the model always has remaining debt 0, so it will only supply
+          -- 0, so it always has leftovers 0. This doesn't match the real impl.
+        , False
         ]
       where
         -- The typical, interesting case is to supply a positive number of
@@ -2181,7 +2184,7 @@ shrinkAction'WithVars _ctx _st a = case a of
     -- the union debt is larger.
     SupplyPortionOfDebt tableVar (Portion x) -> [
         Some $ SupplyUnionCredits tableVar (R.UnionCredits x')
-      | x' <- [2 ^ i - 1 | (i :: Int) <- [0..63]]
+      | x' <- [2 ^ i - 1 | (i :: Int) <- [0..20]]
       , assert (x' >= 0) True
       ] ++ [
         Some $ SupplyPortionOfDebt tableVar (Portion x')
