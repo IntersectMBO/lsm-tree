@@ -1,5 +1,5 @@
 {-# OPTIONS_GHC -Wno-incomplete-uni-patterns #-}
-
+{-# OPTIONS_HADDOCK not-home #-}
 {- HLINT ignore "Avoid restricted alias" -}
 
 -- | Vectors with support for appending elements.

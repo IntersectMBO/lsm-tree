@@ -1,3 +1,5 @@
+{-# OPTIONS_HADDOCK not-home #-}
+
 module Database.LSMTree.Internal.Snapshot (
     -- * Snapshot metadata
     SnapshotMetaData (..)
@@ -93,10 +95,15 @@ newtype SnapshotLabel = SnapshotLabel Text
   deriving newtype (NFData, IsString)
 
 -- TODO: revisit if we need three table types.
-data SnapshotTableType = SnapNormalTable | SnapMonoidalTable | SnapFullTable
+data SnapshotTableType
+  = SnapSimpleTable
+  | SnapNormalTable
+  | SnapMonoidalTable
+  | SnapFullTable
   deriving stock (Eq, Show)
 
 instance NFData SnapshotTableType where
+  rnf SnapSimpleTable   = ()
   rnf SnapNormalTable   = ()
   rnf SnapMonoidalTable = ()
   rnf SnapFullTable     = ()

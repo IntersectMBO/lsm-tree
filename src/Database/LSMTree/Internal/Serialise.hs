@@ -1,8 +1,10 @@
 {-# LANGUAGE DerivingStrategies         #-}
 {-# LANGUAGE GeneralisedNewtypeDeriving #-}
 {-# LANGUAGE PatternSynonyms            #-}
+{-# OPTIONS_HADDOCK not-home #-}
 
 -- | Newtype wrappers and utilities for serialised keys, values and blobs.
+--
 module Database.LSMTree.Internal.Serialise (
     -- * Re-exports
     SerialiseKey

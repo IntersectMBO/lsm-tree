@@ -1,4 +1,7 @@
+{-# OPTIONS_HADDOCK not-home #-}
+
 -- | Encoders and decoders for snapshot metadata
+--
 module Database.LSMTree.Internal.Snapshot.Codec (
     -- * Versioning
     SnapshotVersion (..)
@@ -254,6 +257,7 @@ instance Encode SnapshotTableType where
   encode SnapNormalTable   = encodeWord 0
   encode SnapMonoidalTable = encodeWord 1
   encode SnapFullTable     = encodeWord 2
+  encode SnapSimpleTable   = encodeWord 3
 
 instance DecodeVersioned SnapshotTableType where
   decodeVersioned V0 = do
@@ -262,6 +266,7 @@ instance DecodeVersioned SnapshotTableType where
         0 -> pure SnapNormalTable
         1 -> pure SnapMonoidalTable
         2 -> pure SnapFullTable
+        3 -> pure SnapSimpleTable
         _ -> fail ("[SnapshotTableType] Unexpected tag: " <> show tag)
 
 instance Encode SnapshotRun where

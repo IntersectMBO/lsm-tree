@@ -1,6 +1,14 @@
 {-# LANGUAGE MagicHash #-}
-
--- | On disk key-value tables, implemented as Log Structured Merge (LSM) trees.
+--------------------------------------------------------------------------------
+-- |
+-- Module      : Database.LSMTree.Normal
+-- Copyright   : (c) 2023, Input Output Global, Inc. (IOG)
+--               (c) 2023-2025, INTERSECT
+-- License     : Apache-2.0
+-- Stability   : experimental
+-- Portability : portable
+--
+-- On disk key-value tables, implemented as Log Structured Merge (LSM) trees.
 --
 -- This module is the API for \"normal\" tables, as opposed to \"monoidal\"
 -- tables (that support monoidal updates and unions).
@@ -21,6 +29,7 @@
 --
 -- > import qualified Database.LSMTree.Normal as LSMT
 --
+--------------------------------------------------------------------------------
 module Database.LSMTree.Normal (
     -- * Exceptions
     Common.LSMTreeError (..)

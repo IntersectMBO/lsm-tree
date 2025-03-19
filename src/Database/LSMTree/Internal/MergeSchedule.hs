@@ -1,6 +1,7 @@
 {-# LANGUAGE CPP           #-}
 {-# LANGUAGE MagicHash     #-}
 {-# LANGUAGE UnboxedTuples #-}
+{-# OPTIONS_HADDOCK not-home #-}
 
 #if !(MIN_VERSION_GLASGOW_HASKELL(9,0,0,0))
 -- Fix for ghc 8.10.x with deriving newtype Prim

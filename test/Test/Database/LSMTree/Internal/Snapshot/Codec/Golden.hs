@@ -193,6 +193,7 @@ enumerateSnapshotLabel =
 
 enumerateSnapshotTableType :: [(ComponentAnnotation, SnapshotTableType)]
 enumerateSnapshotTableType =
+  -- TODO: add SnapSimpleTable
   [ ("N0", SnapNormalTable)
   , ("N1", SnapMonoidalTable)
   , ("N2", SnapFullTable)

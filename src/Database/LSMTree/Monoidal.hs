@@ -1,6 +1,15 @@
 {-# LANGUAGE MagicHash #-}
-
--- | On disk key-value tables, implemented as Log Structured Merge (LSM) trees.
+--------------------------------------------------------------------------------
+-- |
+-- Module      : Database.LSMTree.Monoidal
+-- Copyright   : (c) 2023, Input Output Global, Inc. (IOG)
+--               (c) 2023-2025, INTERSECT
+-- License     : Apache-2.0
+-- Maintainer  : TODO: MAINTAINER EMAIL
+-- Stability   : experimental
+-- Portability : portable
+--
+-- On disk key-value tables, implemented as Log Structured Merge (LSM) trees.
 --
 -- This module is the API for \"monoidal\" tables, as opposed to \"normal\"
 -- tables (that do not support monoidal updates and unions).
@@ -22,6 +31,7 @@
 --
 -- > import qualified Database.LSMTree.Monoidal as LSMT
 --
+--------------------------------------------------------------------------------
 module Database.LSMTree.Monoidal (
     -- * Exceptions
     Common.LSMTreeError (..)

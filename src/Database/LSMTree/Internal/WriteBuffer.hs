@@ -1,7 +1,9 @@
 {-# LANGUAGE DerivingStrategies         #-}
 {-# LANGUAGE GeneralisedNewtypeDeriving #-}
+{-# OPTIONS_HADDOCK not-home #-}
 
 -- | The in-memory LSM level 0.
+--
 module Database.LSMTree.Internal.WriteBuffer (
     WriteBuffer,
     empty,
