@@ -1,7 +1,7 @@
 {-# OPTIONS_HADDOCK not-home #-}
--- | This module exports 'MBloom'' internals.
+-- | This module exports 'MBloom' internals.
 module Data.BloomFilter.Mutable.Internal (
-    MBloom'(..),
+    MBloom(..),
 ) where
 
 import qualified Data.BloomFilter.BitVec64 as V
@@ -12,13 +12,13 @@ import           Prelude hiding (div, divMod, elem, length, mod, notElem, rem,
                      (*), (/))
 
 -- | A mutable Bloom filter, for use within the 'ST' monad.
-type MBloom' :: Type -> (Type -> Type) -> Type -> Type
-data MBloom' s h a = MBloom {
+type MBloom :: Type -> Type -> Type
+data MBloom s a = MBloom {
       hashesN  :: {-# UNPACK #-} !Int
     , size     :: {-# UNPACK #-} !Word64  -- ^ size is non-zero
     , bitArray :: {-# UNPACK #-} !(V.MBitVec64 s)
     }
-type role MBloom' nominal nominal nominal
+type role MBloom nominal nominal
 
-instance Show (MBloom' s h a) where
+instance Show (MBloom s a) where
     show mb = "MBloom { " ++ show (size mb) ++ " bits } "
