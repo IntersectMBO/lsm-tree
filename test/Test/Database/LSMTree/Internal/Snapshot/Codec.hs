@@ -384,7 +384,6 @@ deriving stock instance Show r => Show (SnapPendingMerge r)
 deriving stock instance Show r => Show (SnapPreExistingRun r)
 
 deriving stock instance Show MergeDebt
-deriving stock instance Show MergeCredits
 deriving stock instance Show NominalDebt
 deriving stock instance Show NominalCredits
 

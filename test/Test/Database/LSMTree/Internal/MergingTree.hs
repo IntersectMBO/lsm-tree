@@ -1,3 +1,5 @@
+{-# OPTIONS_GHC -Wno-orphans #-}
+
 module Test.Database.LSMTree.Internal.MergingTree (tests) where
 
 import           Control.ActionRegistry
@@ -5,9 +7,12 @@ import           Control.Exception (bracket)
 import           Control.Monad.Class.MonadAsync as Async
 import           Control.RefCount
 import           Data.Arena (newArenaManager)
+import           Data.Coerce (coerce)
 import           Data.Foldable (toList)
+import           Data.List.NonEmpty (NonEmpty)
 import           Data.Map (Map)
 import qualified Data.Map as Map
+import           Data.Traversable (for)
 import qualified Data.Vector as V
 import           Database.LSMTree.Extras.MergingRunData
 import           Database.LSMTree.Extras.MergingTreeData
@@ -17,9 +22,10 @@ import           Database.LSMTree.Internal.Entry (Entry)
 import qualified Database.LSMTree.Internal.Entry as Entry
 import qualified Database.LSMTree.Internal.Index as Index
 import qualified Database.LSMTree.Internal.Lookup as Lookup
-import           Database.LSMTree.Internal.MergingRun
+import qualified Database.LSMTree.Internal.MergingRun as MR
 import           Database.LSMTree.Internal.MergingTree
 import           Database.LSMTree.Internal.MergingTree.Lookup
+import qualified Database.LSMTree.Internal.Paths as Paths
 import qualified Database.LSMTree.Internal.Run as Run
 import qualified Database.LSMTree.Internal.RunAcc as RunAcc
 import qualified Database.LSMTree.Internal.RunBuilder as RunBuilder
@@ -40,6 +46,10 @@ tests = testGroup "Test.Database.LSMTree.Internal.MergingTree"
         ioProperty $
           withSimHasBlockIO propNoOpenHandles MockFS.empty $ \hfs hbio _ ->
             prop_lookupTree hfs hbio keys mtd
+    , testProperty "prop_supplyCredits" $ \threshold credits mtd ->
+        ioProperty $
+          withSimHasBlockIO propNoOpenHandles MockFS.empty $ \hfs hbio _ ->
+            prop_supplyCredits hfs hbio threshold credits mtd
     ]
 
 runParams :: RunBuilder.RunParams
@@ -112,7 +122,7 @@ prop_lookupTree ::
   -> V.Vector SerialisedKey
   -> MergingTreeData SerialisedKey SerialisedValue SerialisedBlob
   -> IO Property
-prop_lookupTree hfs hbio keys (serialiseMergingTreeData -> mtd) = do
+prop_lookupTree hfs hbio keys mtd = do
     let path = FS.mkFsPath []
     counter <- newUniqCounter 0
     withMergingTree hfs hbio resolveVal runParams path counter mtd $ \tree -> do
@@ -178,24 +188,67 @@ modelFoldMergingTree = goMergingTree
         OngoingTreeMergeData mr ->
           goMergingRun mr
         PendingLevelMergeData prs t ->
-          modelMerge MergeLevel (map goPreExistingRun prs <> map goMergingTree (toList t))
+          modelMerge MR.MergeLevel (map goPreExistingRun prs <> map goMergingTree (toList t))
         PendingUnionMergeData ts ->
-          modelMerge MergeUnion (map goMergingTree ts)
+          modelMerge MR.MergeUnion (map goMergingTree ts)
 
     goPreExistingRun = \case
         PreExistingRunData r -> unRunData r
         PreExistingMergingRunData mr -> goMergingRun mr
 
-    goMergingRun :: IsMergeType t => SerialisedMergingRunData t -> Map SerialisedKey SerialisedEntry
+    goMergingRun :: MR.IsMergeType t => SerialisedMergingRunData t -> Map SerialisedKey SerialisedEntry
     goMergingRun = \case
         CompletedMergeData _ r -> unRunData r
         OngoingMergeData mt rs -> modelMerge mt (map (unRunData . toRunData) rs)
 
-modelMerge :: (Ord k, IsMergeType t) => t -> [Map k SerialisedEntry] -> Map k SerialisedEntry
+modelMerge :: (Ord k, MR.IsMergeType t) => t -> [Map k SerialisedEntry] -> Map k SerialisedEntry
 modelMerge mt = handleDeletes . Map.unionsWith (combine resolveVal)
   where
-    handleDeletes = if isLastLevel mt then Map.filter (/= Entry.Delete) else id
-    combine = if isUnion mt then Entry.combineUnion else Entry.combine
+    handleDeletes = if MR.isLastLevel mt then Map.filter (/= Entry.Delete) else id
+    combine = if MR.isUnion mt then Entry.combineUnion else Entry.combine
 
 resolveVal :: SerialisedValue -> SerialisedValue -> SerialisedValue
 resolveVal (SerialisedValue x) (SerialisedValue y) = SerialisedValue (x <> y)
+
+{-------------------------------------------------------------------------------
+  Supplying Credits
+-------------------------------------------------------------------------------}
+
+prop_supplyCredits ::
+     forall h.
+     FS.HasFS IO h
+  -> FS.HasBlockIO IO h
+  -> MR.CreditThreshold
+  -> NonEmpty MR.MergeCredits
+  -> MergingTreeData SerialisedKey SerialisedValue SerialisedBlob
+  -> IO Property
+prop_supplyCredits hfs hbio threshold credits mtd = do
+    FS.createDirectory hfs setupPath
+    FS.createDirectory hfs (FS.mkFsPath ["active"])
+    counter <- newUniqCounter 0
+    withMergingTree hfs hbio resolveVal runParams setupPath counter mtd $ \tree -> do
+      props <- for credits $ \c -> do
+        (MR.MergeDebt debt, _) <- remainingMergeDebt tree
+        leftovers <-
+          supplyCredits hfs hbio resolveVal runParams threshold root counter tree c
+        (MR.MergeDebt debt', _) <- remainingMergeDebt tree
+        return $
+          counterexample (show (debt, leftovers, debt')) $ conjoin [
+              counterexample "negative values" $
+                debt >= 0 && leftovers >= 0 && debt' >= 0
+            , counterexample "did not reduce debt sufficiently" $
+                debt' <= debt - (c - leftovers)
+            ]
+      return (conjoin (toList props))
+  where
+    root = Paths.SessionRoot (FS.mkFsPath [])
+    setupPath = FS.mkFsPath ["setup"]  -- separate dir, so it doesn't clash
+
+instance Arbitrary MR.MergeCredits where
+  arbitrary = MR.MergeCredits . getPositive <$> arbitrary
+  shrink (MR.MergeCredits c) = [MR.MergeCredits c' | c' <- shrink c, c' > 0]
+
+instance Arbitrary MR.CreditThreshold where
+  arbitrary = coerce (arbitrary @MR.MergeCredits)
+  shrink = coerce (shrink @MR.MergeCredits)
+  -- TODO: does this make sense? in a way a larger threshold is "simpler".

@@ -174,6 +174,9 @@ new ::
 new hfs hbio runParams mergeType mergeMappend targetPaths runs = do
     -- no offset, no write buffer
     mreaders <- Readers.new Readers.NoOffsetKey Nothing runs
+    -- TODO: Exception safety! If Readers.new fails after already creating some
+    -- run readers, or Builder.new fails, the run readers will stay open,
+    -- holding handles of the input runs' files.
     for mreaders $ \mergeReaders -> do
       -- calculate upper bounds based on input runs
       let numEntries = V.foldMap' Run.size runs

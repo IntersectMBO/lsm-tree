@@ -388,7 +388,7 @@ might not finish in time, which will mess up the shape of the levels tree.
 -}
 
 newtype MergeCredits = MergeCredits Int
-  deriving stock (Eq, Ord)
+  deriving stock (Eq, Ord, Show)
   deriving newtype (Num, Real, Enum, Integral, NFData)
 
 newtype MergeDebt = MergeDebt MergeCredits
@@ -414,13 +414,14 @@ numEntriesToMergeDebt (NumEntries n) = MergeDebt (MergeCredits n)
 -- co-prime so that merge work at different levels is not synchronised.
 --
 newtype CreditThreshold = CreditThreshold UnspentCredits
+  deriving stock Show
 
 -- | The spent credits are supplied credits that have been spent on performing
 -- merging steps plus the supplied credits that are in the process of being
 -- spent (by some thread calling 'supplyCredits').
 --
 newtype SpentCredits = SpentCredits MergeCredits
-  deriving newtype (Eq, Ord)
+  deriving newtype (Eq, Ord, Show)
 
 -- | 40 bit unsigned number
 instance Bounded SpentCredits where
@@ -436,7 +437,7 @@ instance Bounded SpentCredits where
 -- current unspent credits being negative for a time.
 --
 newtype UnspentCredits = UnspentCredits MergeCredits
-  deriving newtype (Eq, Ord)
+  deriving newtype (Eq, Ord, Show)
 
 -- | 24 bit signed number
 instance Bounded UnspentCredits where
