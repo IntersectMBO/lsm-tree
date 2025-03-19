@@ -19,7 +19,7 @@ module Database.LSMTree.Internal.Run (
   , mkRawBlobRef
   , mkWeakBlobRef
     -- ** Run creation
-  , fromMutable
+  , fromBuilder
   , fromWriteBuffer
   , RunParams (..)
     -- * Snapshot
@@ -180,15 +180,15 @@ setRunDataCaching hbio runKOpsFile NoCacheRunData = do
     -- do not use the page cache for disk I/O reads
     FS.hSetNoCache hbio runKOpsFile True
 
-{-# SPECIALISE fromMutable ::
+{-# SPECIALISE fromBuilder ::
      RunBuilder IO h
   -> IO (Ref (Run IO h)) #-}
 -- TODO: make exception safe
-fromMutable ::
+fromBuilder ::
      (MonadST m, MonadSTM m, MonadMask m)
   => RunBuilder m h
   -> m (Ref (Run m h))
-fromMutable builder = do
+fromBuilder builder = do
     (runHasFS, runHasBlockIO,
      runRunFsPaths, runFilter, runIndex,
      RunParams {runParamCaching = runRunDataCaching}, runNumEntries) <-
@@ -229,7 +229,7 @@ fromWriteBuffer fs hbio params fsPaths buffer blobs = do
     for_ (WB.toList buffer) $ \(k, e) ->
       Builder.addKeyOp builder k (fmap (WBB.mkRawBlobRef blobs) e)
       --TODO: the fmap entry here reallocates even when there are no blobs
-    fromMutable builder
+    fromBuilder builder
 
 {-------------------------------------------------------------------------------
   Snapshot

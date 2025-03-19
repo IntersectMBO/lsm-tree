@@ -902,7 +902,7 @@ completeMerge mergeVar mergeKnownCompletedVar = do
       (OngoingMerge rs m) -> do
         -- first try to complete the merge before performing other side effects,
         -- in case the completion fails
-        --TODO: Run.fromMutable (used in Merge.complete) claims not to be
+        --TODO: Run.fromBuilder (used in Merge.complete) claims not to be
         -- exception safe so we should probably be using the resource registry
         -- and test for exception safety.
         r <- Merge.complete m

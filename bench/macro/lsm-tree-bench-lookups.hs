@@ -377,7 +377,7 @@ lookupsEnv runSizes keyRng0 hfs hbio caching = do
     putStr "DONE"
 
     -- return runs
-    runs <- V.fromList <$> mapM Run.fromMutable rbs
+    runs <- V.fromList <$> mapM Run.fromBuilder rbs
     let blooms  = V.map (\(DeRef r) -> Run.runFilter   r) runs
         indexes = V.map (\(DeRef r) -> Run.runIndex    r) runs
         handles = V.map (\(DeRef r) -> Run.runKOpsFile r) runs

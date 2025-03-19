@@ -236,7 +236,7 @@ complete Merge{..} = do
       Merging -> error "complete: Merge is not done"
       MergingDone -> do
         -- the readers are already drained, therefore closed
-        r <- Run.fromMutable mergeBuilder
+        r <- Run.fromBuilder mergeBuilder
         writeMutVar mergeState $! Completed
         pure r
       Completed -> error "complete: Merge is already completed"
