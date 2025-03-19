@@ -78,7 +78,7 @@ import           Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (catMaybes, fromJust, fromMaybe, isJust)
+import           Data.Maybe (catMaybes, fromMaybe, isJust)
 import           Data.Monoid (First (..))
 import           Data.Primitive.MutVar
 import           Data.Set (Set)
@@ -1866,7 +1866,7 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
             then Left  snapshotname -- used
             else Right snapshotname -- unused
         | name <- ["snap1", "snap2", "snap3" ]
-        , let snapshotname = fromJust (R.mkSnapshotName name)
+        , let snapshotname = R.toSnapshotName name
         ]
 
     genActionsSession :: [(Int, Gen (Any (LockstepAction (ModelState h))))]

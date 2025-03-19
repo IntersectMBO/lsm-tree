@@ -13,14 +13,13 @@ import           Data.Foldable (toList)
 import           Data.Functor.Compose (Compose (..))
 import qualified Data.List as List
 import qualified Data.List.NonEmpty as NE
-import           Data.Maybe (fromMaybe)
 import qualified Data.Proxy as Proxy
 import qualified Data.Vector as V
 import qualified Data.Vector.Algorithms.Merge as VA
 import           Data.Word (Word64)
 import qualified Database.LSMTree as R
 import           Database.LSMTree.Class
-import           Database.LSMTree.Common (mkSnapshotName)
+import           Database.LSMTree.Common (toSnapshotName)
 import           Database.LSMTree.Extras.Generators ()
 import qualified Database.LSMTree.Model.IO as ModelIO
 import qualified System.FS.API as FS
@@ -682,7 +681,7 @@ prop_snapshotNoChanges h ups ups' testKeys = ioProperty $ do
 
       res <- lookupsWithBlobs tbl1 ses $ V.fromList testKeys
 
-      let name = fromMaybe (error "invalid name") $ mkSnapshotName "foo"
+      let name = toSnapshotName "foo"
 
       createSnapshot label name tbl1
       updates tbl1 (V.fromList ups')
@@ -701,7 +700,7 @@ prop_snapshotNoChanges2 :: forall h.
     -> [(Key, Update Value Blob)] -> [Key] -> Property
 prop_snapshotNoChanges2 h ups ups' testKeys = ioProperty $ do
     withSessionAndTableNew h ups $ \sess tbl0 -> do
-      let name = fromMaybe (error "invalid name") $ mkSnapshotName "foo"
+      let name = toSnapshotName "foo"
       createSnapshot label name tbl0
 
       withTableFromSnapshot @h sess label name $ \tbl1 ->

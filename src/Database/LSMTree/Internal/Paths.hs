@@ -16,7 +16,9 @@ module Database.LSMTree.Internal.Paths (
   , tableBlobPath
     -- * Snapshot name
   , SnapshotName
-  , mkSnapshotName
+  , isValidSnapshotName
+  , InvalidSnapshotNameError (..)
+  , toSnapshotName
     -- * Run paths
   , RunFsPaths (..)
   , pathsForRunFiles
@@ -52,10 +54,10 @@ module Database.LSMTree.Internal.Paths (
 
 import           Control.Applicative (Applicative (..))
 import           Control.DeepSeq (NFData (..))
+import           Control.Exception.Base (Exception, throw)
 import qualified Data.ByteString.Char8 as BS
 import           Data.Foldable (toList)
 import qualified Data.Map as Map
-import           Data.Maybe (fromMaybe)
 import           Data.String (IsString (..))
 import           Data.Traversable (for)
 import qualified Database.LSMTree.Internal.CRC32C as CRC
@@ -92,7 +94,7 @@ snapshotsDir (SessionRoot dir) = dir </> mkFsPath ["snapshots"]
 newtype NamedSnapshotDir = NamedSnapshotDir { getNamedSnapshotDir :: FsPath }
 
 namedSnapshotDir :: SessionRoot -> SnapshotName -> NamedSnapshotDir
-namedSnapshotDir root (MkSnapshotName name) =
+namedSnapshotDir root (SnapshotName name) =
     NamedSnapshotDir (snapshotsDir root </> mkFsPath [name])
 
 newtype SnapshotMetaDataFile = SnapshotMetaDataFile FsPath
@@ -111,47 +113,90 @@ snapshotMetaDataChecksumFile (NamedSnapshotDir dir) =
   Snapshot name
 -------------------------------------------------------------------------------}
 
-newtype SnapshotName = MkSnapshotName FilePath
+newtype SnapshotName = SnapshotName FilePath
   deriving stock (Eq, Ord)
 
 instance Show SnapshotName where
-  showsPrec d (MkSnapshotName p) = showsPrec d p
+  showsPrec d (SnapshotName p) = showsPrec d p
 
--- | This instance uses 'mkSnapshotName', so all the restrictions on snap shot names apply here too. An invalid snapshot name will lead to an error.
+-- | The given string must satsify 'isValidSnapshotName'.
+--   Otherwise, 'fromString' throws an 'InvalidSnapshotNameError'.
 instance IsString SnapshotName where
-  fromString s = fromMaybe bad (mkSnapshotName s)
-    where
-      bad = error ("SnapshotName.fromString: invalid name " ++ show s)
+  fromString :: String -> SnapshotName
+  fromString = toSnapshotName
+
+data InvalidSnapshotNameError
+  = ErrSnapshotNameInvalid !String
+  deriving stock (Show)
+  deriving anyclass (Exception)
+
+-- | Check if a 'String' would be a valid snapshot name.
+--
+-- Snapshot names consist of lowercase characters, digits, dashes @-@,
+-- and underscores @_@, and must be between 1 and 64 characters long.
+-- >>> isValidSnapshotName "main"
+-- True
+--
+-- >>> isValidSnapshotName "temporary-123-test_"
+-- True
+--
+-- >>> isValidSnapshotName "UPPER"
+-- False
+-- >>> isValidSnapshotName "dir/dot.exe"
+-- False
+-- >>> isValidSnapshotName ".."
+-- False
+-- >>> isValidSnapshotName "\\"
+-- False
+-- >>> isValidSnapshotName ""
+-- False
+-- >>> isValidSnapshotName (replicate 100 'a')
+-- False
+--
+-- Snapshot names must be valid directory on both POSIX and Windows.
+-- This rules out the following reserved file and directory names on Windows:
+--
+-- >>> isValidSnapshotName "con"
+-- False
+-- >>> isValidSnapshotName "prn"
+-- False
+-- >>> isValidSnapshotName "aux"
+-- False
+-- >>> isValidSnapshotName "nul"
+-- False
+-- >>> isValidSnapshotName "com1" -- "com2", "com3", etc.
+-- False
+-- >>> isValidSnapshotName "lpt1" -- "lpt2", "lpt3", etc.
+-- False
+--
+-- See, e.g., [the VBA docs for the "Bad file name or number" error](https://learn.microsoft.com/en-us/office/vba/language/reference/user-interface-help/bad-file-name-or-number-error-52).
+isValidSnapshotName :: String -> Bool
+isValidSnapshotName str =
+    and [ all isValidChar str
+        , strLength >= 1
+        , strLength <= 64
+        , System.FilePath.Posix.isValid str
+        , System.FilePath.Windows.isValid str
+        ]
+  where
+    strLength :: Int
+    strLength = length str
+    isValidChar :: Char -> Bool
+    isValidChar c = ('a' <= c && c <= 'z') || ('0' <= c && c <= '9' ) || c `elem` "-_"
 
 -- | Create snapshot name.
 --
--- The name may consist of lowercase characters, digits, dashes @-@ and underscores @_@.
--- It must be non-empty and less than 65 characters long.
--- It may not be a special filepath name.
+-- The given string must satsify 'isValidSnapshotName'.
 --
--- >>> mkSnapshotName "main"
--- Just "main"
+-- Throws the following exceptions:
 --
--- >>> mkSnapshotName "temporary-123-test_"
--- Just "temporary-123-test_"
+-- ['InvalidSnapshotNameError']:
+--   If the given string is not a valid snapshot name.
 --
--- >>> map mkSnapshotName ["UPPER", "dir/dot.exe", "..", "\\", "com1", "", replicate 100 'a']
--- [Nothing,Nothing,Nothing,Nothing,Nothing,Nothing,Nothing]
---
-mkSnapshotName :: String -> Maybe SnapshotName
-mkSnapshotName s
-  | all isValid s
-  , len > 0
-  , len < 65
-  , System.FilePath.Posix.isValid s
-  , System.FilePath.Windows.isValid s
-  = Just (MkSnapshotName s)
-
-  | otherwise
-  = Nothing
-  where
-    len = length s
-    isValid c = ('a' <= c && c <= 'z') || ('0' <= c && c <= '9' ) || c `elem` "-_"
+toSnapshotName :: String -> SnapshotName
+toSnapshotName str
+  | isValidSnapshotName str = SnapshotName str
+  | otherwise = throw (ErrSnapshotNameInvalid str)
 
 {-------------------------------------------------------------------------------
   Table paths

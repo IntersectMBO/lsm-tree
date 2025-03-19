@@ -1394,15 +1394,14 @@ listSnapshots sesh = do
       snaps <- mapM (checkSnapshot hfs root) $ Set.toList contents
       pure $ catMaybes snaps
   where
-    checkSnapshot hfs root s =
-      case Paths.mkSnapshotName s of
-        Nothing   -> pure Nothing
-        Just snap -> do
-          -- check that it is a directory
-          b <- FS.doesDirectoryExist hfs
-                (Paths.getNamedSnapshotDir $ Paths.namedSnapshotDir root snap)
-          if b then pure $ Just snap
-               else pure $ Nothing
+    checkSnapshot hfs root s = do
+      -- TODO: rethrow 'ErrSnapshotNameInvalid' as 'ErrSnapshotDirCorrupted'
+      let snap = Paths.toSnapshotName s
+      -- check that it is a directory
+      b <- FS.doesDirectoryExist hfs
+            (Paths.getNamedSnapshotDir $ Paths.namedSnapshotDir root snap)
+      if b then pure $ Just snap
+            else pure $ Nothing
 
 {-------------------------------------------------------------------------------
   Multiple writable tables
