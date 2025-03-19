@@ -26,7 +26,7 @@ module Data.BloomFilter.Mutable (
 
     -- * Types
     Hash,
-    MBloom,
+    MBloom (..),
     CheapHashes,
     -- * Mutable Bloom filters
 
@@ -45,12 +45,24 @@ import           Control.Monad (liftM)
 import           Control.Monad.ST (ST)
 import           Data.BloomFilter.Hash (CheapHashes, Hash, Hashable, evalHashes,
                      makeHashes)
-import           Data.BloomFilter.Mutable.Internal
+import           Data.Kind (Type)
 import           Data.Word (Word64)
 
 import qualified Data.BloomFilter.BitVec64 as V
 
 import           Prelude hiding (elem, length)
+
+type MBloom :: Type -> Type -> Type
+-- | A mutable Bloom filter, for use within the 'ST' monad.
+data MBloom s a = MBloom {
+      hashesN  :: {-# UNPACK #-} !Int
+    , size     :: {-# UNPACK #-} !Word64  -- ^ size is non-zero
+    , bitArray :: {-# UNPACK #-} !(V.MBitVec64 s)
+    }
+type role MBloom nominal nominal
+
+instance Show (MBloom s a) where
+    show mb = "MBloom { " ++ show (size mb) ++ " bits } "
 
 -- | Create a new mutable Bloom filter.
 --

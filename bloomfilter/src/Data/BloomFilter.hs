@@ -62,7 +62,7 @@ import           Data.BloomFilter.Hash (CheapHashes, Hash, Hashable, evalHashes,
                      makeHashes)
 import           Data.BloomFilter.Internal (Bloom (..), bloomInvariant)
 import           Data.BloomFilter.Mutable (MBloom, insert, new)
-import qualified Data.BloomFilter.Mutable.Internal as MB
+import qualified Data.BloomFilter.Mutable as MB
 import           Data.Word (Word64)
 
 import           Prelude hiding (elem, length, notElem)

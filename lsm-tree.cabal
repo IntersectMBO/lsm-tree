@@ -426,7 +426,6 @@ library bloomfilter
     Data.BloomFilter.Hash
     Data.BloomFilter.Internal
     Data.BloomFilter.Mutable
-    Data.BloomFilter.Mutable.Internal
 
   ghc-options:     -O2 -Wall
 
