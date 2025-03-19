@@ -26,6 +26,8 @@ import qualified Database.LSMTree.Internal.Paths as Paths
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.RawPage
 import           Database.LSMTree.Internal.Run as Run
+import           Database.LSMTree.Internal.RunAcc as RunAcc
+import           Database.LSMTree.Internal.RunBuilder as RunBuilder
 import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.Snapshot
@@ -89,6 +91,14 @@ tests = testGroup "Database.LSMTree.Internal.Run"
     mkVal = SerialisedValue . RB.fromByteString
     mkBlob = SerialisedBlob . RB.fromByteString
 
+runParams :: RunBuilder.RunParams
+runParams =
+    RunBuilder.RunParams {
+      runParamCaching = RunBuilder.CacheRunData,
+      runParamAlloc   = RunAcc.RunAllocFixed 10,
+      runParamIndex   = Index.Compact
+    }
+
 -- | Runs in IO, with a real file system.
 testSingleInsert :: FilePath -> SerialisedKey -> SerialisedValue -> Maybe SerialisedBlob -> IO ()
 testSingleInsert sessionRoot key val mblob =
@@ -97,7 +107,7 @@ testSingleInsert sessionRoot key val mblob =
     -- flush write buffer
     let e = case mblob of Nothing -> Insert val; Just blob -> InsertWithBlob val blob
         wb = Map.singleton key e
-    withRunAt fs hbio Index.Compact (simplePath 42) (RunData wb) $ \_ -> do
+    withRunAt fs hbio runParams (simplePath 42) (RunData wb) $ \_ -> do
       -- check all files have been written
       let activeDir = sessionRoot
       bsKOps <- BS.readFile (activeDir </> "42.keyops")
@@ -179,7 +189,7 @@ prop_WriteNumEntries ::
   -> RunData KeyForIndexCompact SerialisedValue SerialisedBlob
   -> IO Property
 prop_WriteNumEntries fs hbio wb@(RunData m) =
-    withRunAt fs hbio Index.Compact (simplePath 42) wb' $ \run -> do
+    withRunAt fs hbio runParams (simplePath 42) wb' $ \run -> do
       let !runSize = Run.size run
 
       return . labelRunData wb' $
@@ -197,12 +207,13 @@ prop_WriteAndOpen ::
   -> RunData KeyForIndexCompact SerialisedValue SerialisedBlob
   -> IO Property
 prop_WriteAndOpen fs hbio wb =
-    withRunAt fs hbio Index.Compact (simplePath 1337) (serialiseRunData wb) $ \written ->
+    withRunAt fs hbio runParams (simplePath 1337) (serialiseRunData wb) $ \written ->
     withActionRegistry $ \reg -> do
       let paths = Run.runFsPaths written
           paths' = paths { runNumber = RunNumber 17}
       hardLinkRunFiles fs hbio reg paths paths'
-      loaded <- openFromDisk fs hbio CacheRunData Index.Compact (simplePath 17)
+      loaded <- openFromDisk fs hbio (runParamCaching runParams)
+                             (runParamIndex runParams) (simplePath 17)
 
       Run.size written @=? Run.size loaded
       withRef written $ \written' ->
@@ -258,7 +269,7 @@ prop_WriteRunEqWriteWriteBuffer hfs hbio rd = do
   let rdPaths = simplePath 1337
   let rdKOpsFile = Paths.runKOpsPath rdPaths
   let rdBlobFile = Paths.runBlobPath rdPaths
-  withRunAt hfs hbio Index.Compact rdPaths srd $ \_run -> do
+  withRunAt hfs hbio runParams rdPaths srd $ \_run -> do
     -- Serialise run data as write buffer:
     let f (SerialisedValue x) (SerialisedValue y) = SerialisedValue (x <> y)
     let inPaths = WrapRunFsPaths $ simplePath 1111

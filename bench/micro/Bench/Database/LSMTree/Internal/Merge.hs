@@ -23,6 +23,8 @@ import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..))
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
+import qualified Database.LSMTree.Internal.RunAcc as RunAcc
+import qualified Database.LSMTree.Internal.RunBuilder as RunBuilder
 import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.UniqCounter
@@ -218,6 +220,14 @@ benchmarks = bgroup "Bench.Database.LSMTree.Internal.Merge" [
          | w <- weights
          ]
 
+runParams :: RunBuilder.RunParams
+runParams =
+    RunBuilder.RunParams {
+      runParamCaching = RunBuilder.CacheRunData,
+      runParamAlloc   = RunAcc.RunAllocFixed 10,
+      runParamIndex   = Index.Compact
+    }
+
 benchMerge :: Config -> Benchmark
 benchMerge conf@Config{name} =
     withEnv $ \ ~(_dir, hasFS, hasBlockIO, runs) ->
@@ -263,7 +273,7 @@ merge ::
 merge fs hbio Config {..} targetPaths runs = do
     let f = fromMaybe const mergeMappend
     m <- fromMaybe (error "empty inputs, no merge created") <$>
-      Merge.new fs hbio defaultRunParams mergeType f targetPaths runs
+      Merge.new fs hbio runParams mergeType f targetPaths runs
     Merge.stepsToCompletion m stepSize
 
 fsPath :: FS.FsPath
@@ -388,7 +398,7 @@ randomRuns ::
 randomRuns hasFS hasBlockIO config@Config {..} rng0 = do
     counter <- inputRunPathsCounter
     fmap V.fromList $
-      mapM (unsafeCreateRun hasFS hasBlockIO Index.Compact fsPath counter) $
+      mapM (unsafeCreateRun hasFS hasBlockIO runParams fsPath counter) $
         zipWith
           (randomRunData config)
           nentries

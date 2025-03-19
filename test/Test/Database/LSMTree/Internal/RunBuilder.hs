@@ -4,9 +4,10 @@ module Test.Database.LSMTree.Internal.RunBuilder (tests) where
 
 import           Control.Monad.Class.MonadThrow
 import           Data.Foldable (traverse_)
-import           Database.LSMTree.Extras.RunData (defaultRunParams)
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
+import qualified Database.LSMTree.Internal.Index as Index
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..))
+import qualified Database.LSMTree.Internal.RunAcc as RunAcc
 import qualified Database.LSMTree.Internal.RunBuilder as RunBuilder
 import           Database.LSMTree.Internal.RunNumber
 import qualified System.FS.API as FS
@@ -41,13 +42,21 @@ tests = testGroup "Test.Database.LSMTree.Internal.RunBuilder" [
         ]
     ]
 
+runParams :: RunBuilder.RunParams
+runParams =
+    RunBuilder.RunParams {
+      runParamCaching = RunBuilder.CacheRunData,
+      runParamAlloc   = RunAcc.RunAllocFixed 10,
+      runParamIndex   = Index.Compact
+    }
+
 -- | 'new' in an existing directory should be succesfull.
 prop_newInExistingDir :: HasFS IO h -> FS.HasBlockIO IO h -> IO Property
 prop_newInExistingDir hfs hbio = do
     let runDir = FS.mkFsPath ["a", "b", "c"]
     FS.createDirectoryIfMissing hfs True runDir
     bracket
-      (try (RunBuilder.new hfs hbio defaultRunParams (RunFsPaths runDir (RunNumber 17)) (NumEntries 0)))
+      (try (RunBuilder.new hfs hbio runParams (RunFsPaths runDir (RunNumber 17)) (NumEntries 0)))
       (traverse_ RunBuilder.close) $ pure . \case
         Left e@FS.FsError{} ->
           counterexample ("expected a success, but got: " <> show e) $ property False
@@ -58,7 +67,7 @@ prop_newInNonExistingDir :: HasFS IO h -> FS.HasBlockIO IO h -> IO Property
 prop_newInNonExistingDir hfs hbio = do
     let runDir = FS.mkFsPath ["a", "b", "c"]
     bracket
-      (try (RunBuilder.new hfs hbio defaultRunParams (RunFsPaths runDir (RunNumber 17)) (NumEntries 0)))
+      (try (RunBuilder.new hfs hbio runParams (RunFsPaths runDir (RunNumber 17)) (NumEntries 0)))
       (traverse_ RunBuilder.close) $ pure . \case
         Left FS.FsError{} -> property True
         Right _  ->
@@ -72,10 +81,10 @@ prop_newTwice :: HasFS IO h -> FS.HasBlockIO IO h -> IO Property
 prop_newTwice hfs hbio = do
     let runDir = FS.mkFsPath []
     bracket
-      (RunBuilder.new hfs hbio defaultRunParams (RunFsPaths runDir (RunNumber 17)) (NumEntries 0))
+      (RunBuilder.new hfs hbio runParams (RunFsPaths runDir (RunNumber 17)) (NumEntries 0))
       RunBuilder.close $ \_ ->
         bracket
-          (try (RunBuilder.new hfs hbio defaultRunParams (RunFsPaths runDir (RunNumber 17)) (NumEntries 0)))
+          (try (RunBuilder.new hfs hbio runParams (RunFsPaths runDir (RunNumber 17)) (NumEntries 0)))
           (traverse_ RunBuilder.close) $ pure . \case
             Left FS.FsError{} -> property True
             Right _  ->

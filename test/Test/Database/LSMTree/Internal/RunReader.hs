@@ -15,6 +15,8 @@ import           Database.LSMTree.Internal.BlobRef
 import           Database.LSMTree.Internal.Entry (Entry)
 import qualified Database.LSMTree.Internal.Index as Index (IndexType (Compact))
 import           Database.LSMTree.Internal.Run (Run)
+import qualified Database.LSMTree.Internal.RunAcc as RunAcc
+import qualified Database.LSMTree.Internal.RunBuilder as RunBuilder
 import qualified Database.LSMTree.Internal.RunReader as Reader
 import           Database.LSMTree.Internal.Serialise
 import qualified System.FS.API as FS
@@ -64,6 +66,14 @@ tests = testGroup "Database.LSMTree.Internal.RunReader"
         ]
     ]
 
+runParams :: RunBuilder.RunParams
+runParams =
+    RunBuilder.RunParams {
+      runParamCaching = RunBuilder.CacheRunData,
+      runParamAlloc   = RunAcc.RunAllocFixed 10,
+      runParamIndex   = Index.Compact
+    }
+
 -- | Creating a run from a write buffer and reading from the run yields the
 -- original elements.
 --
@@ -80,7 +90,7 @@ prop_readAtOffset ::
   -> Maybe BiasedKeyForIndexCompact
   -> IO Property
 prop_readAtOffset fs hbio rd offsetKey =
-    withRunAt fs hbio Index.Compact (simplePath 42) rd' $ \run -> do
+    withRunAt fs hbio runParams (simplePath 42) rd' $ \run -> do
       rhs <- readKOps (coerce offsetKey) run
 
       return . labelRunData rd' $
@@ -124,7 +134,7 @@ prop_readAtOffsetIdempotence ::
   -> Maybe BiasedKeyForIndexCompact
   -> IO Property
 prop_readAtOffsetIdempotence fs hbio rd offsetKey =
-    withRunAt fs hbio Index.Compact (simplePath 42) rd' $ \run -> do
+    withRunAt fs hbio runParams (simplePath 42) rd' $ \run -> do
     lhs <- readKOps (coerce offsetKey) run
     rhs <- readKOps (coerce offsetKey) run
 
@@ -148,7 +158,7 @@ prop_readAtOffsetReadHead ::
   -> RunData BiasedKeyForIndexCompact SerialisedValue SerialisedBlob
   -> IO Property
 prop_readAtOffsetReadHead fs hbio rd =
-    withRunAt fs hbio Index.Compact (simplePath 42) rd' $ \run -> do
+    withRunAt fs hbio runParams (simplePath 42) rd' $ \run -> do
       lhs <- readKOps Nothing run
       rhs <- case lhs of
         []        -> return []

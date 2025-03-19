@@ -56,6 +56,8 @@ import           Database.LSMTree.Internal.RawOverflowPage
 import           Database.LSMTree.Internal.RawPage
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunAcc as Run
+import           Database.LSMTree.Internal.RunBuilder
+                     (RunDataCaching (CacheRunData), RunParams (RunParams))
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.Serialise.Class
 import           Database.LSMTree.Internal.UniqCounter
@@ -110,6 +112,14 @@ tests = testGroup "Test.Database.LSMTree.Internal.Lookup" [
   where
     genNoMultiPage = liftArbitrary2 arbitrary arbitrary
     shrinkNoMultiPage = liftShrink2 shrink shrink
+
+runParams :: Index.IndexType -> RunParams
+runParams indexType =
+    RunParams {
+      runParamCaching = CacheRunData,
+      runParamAlloc   = RunAllocFixed 10,
+      runParamIndex   = indexType
+    }
 
 {-------------------------------------------------------------------------------
   Models
@@ -354,8 +364,9 @@ withWbAndRuns hfs hbio indexType (wbdat:rundats) action =
       let wb = WB.fromMap wbkops
       let rds = map (RunData . runData) rundats
       counter <- newUniqCounter 1
-      withRuns hfs hbio indexType (FS.mkFsPath []) counter rds $ \runs ->
-        action wb wbblobs (V.fromList runs)
+      withRuns hfs hbio (runParams indexType) (FS.mkFsPath []) counter rds $
+        \runs ->
+          action wb wbblobs (V.fromList runs)
 
 {-------------------------------------------------------------------------------
   Utils
