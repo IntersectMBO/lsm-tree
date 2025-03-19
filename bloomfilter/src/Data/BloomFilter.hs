@@ -32,10 +32,7 @@ module Data.BloomFilter (
     Hash,
     Bloom,
     MBloom,
-    Bloom',
-    MBloom',
     CheapHashes,
-    RealHashes,
 
     -- * Immutable Bloom filters
 
@@ -61,19 +58,16 @@ module Data.BloomFilter (
 import           Control.Exception (assert)
 import           Control.Monad (forM_, liftM)
 import           Control.Monad.ST (ST, runST)
-import           Data.BloomFilter.Hash (CheapHashes, Hash, Hashable,
-                     Hashes (..), RealHashes)
-import           Data.BloomFilter.Internal (Bloom' (..), bloomInvariant)
-import           Data.BloomFilter.Mutable (MBloom, MBloom', insert, new)
+import           Data.BloomFilter.Hash (CheapHashes, Hash, Hashable, evalHashes,
+                     makeHashes)
+import           Data.BloomFilter.Internal (Bloom (..), bloomInvariant)
+import           Data.BloomFilter.Mutable (MBloom, insert, new)
 import qualified Data.BloomFilter.Mutable.Internal as MB
 import           Data.Word (Word64)
 
 import           Prelude hiding (elem, length, notElem)
 
 import qualified Data.BloomFilter.BitVec64 as V
-
--- | Bloom filter using 'CheapHashes' hashing scheme.
-type Bloom = Bloom' CheapHashes
 
 -- | Create an immutable Bloom filter, using the given setup function
 -- which executes in the 'ST' monad.
@@ -92,8 +86,8 @@ type Bloom = Bloom' CheapHashes
 -- Note that the result of the setup function is not used.
 create :: Int        -- ^ number of hash functions to use
         -> Word64                 -- ^ number of bits in filter
-        -> (forall s. (MBloom' s h a -> ST s ()))  -- ^ setup function
-        -> Bloom' h a
+        -> (forall s. (MBloom s a -> ST s ()))  -- ^ setup function
+        -> Bloom a
 {-# INLINE create #-}
 create hash numBits body = runST $ do
     mb <- new hash numBits
@@ -102,7 +96,7 @@ create hash numBits body = runST $ do
 
 -- | Create an immutable Bloom filter from a mutable one.  The mutable
 -- filter may be modified afterwards.
-freeze :: MBloom' s h a -> ST s (Bloom' h a)
+freeze :: MBloom s a -> ST s (Bloom a)
 freeze mb = do
     ba <- V.freeze (MB.bitArray mb)
     let !bf = Bloom (MB.hashesN mb) (MB.size mb) ba
@@ -111,7 +105,7 @@ freeze mb = do
 -- | Create an immutable Bloom filter from a mutable one.  The mutable
 -- filter /must not/ be modified afterwards, or a runtime crash may
 -- occur.  For a safer creation interface, use 'freeze' or 'create'.
-unsafeFreeze :: MBloom' s h a -> ST s (Bloom' h a)
+unsafeFreeze :: MBloom s a -> ST s (Bloom a)
 unsafeFreeze mb = do
     ba <- V.unsafeFreeze (MB.bitArray mb)
     let !bf = Bloom (MB.hashesN mb) (MB.size mb) ba
@@ -119,33 +113,32 @@ unsafeFreeze mb = do
 
 -- | Copy an immutable Bloom filter to create a mutable one.  There is
 -- no non-copying equivalent.
-thaw :: Bloom' h a -> ST s (MBloom' s h a)
+thaw :: Bloom a -> ST s (MBloom s a)
 thaw ub = MB.MBloom (hashesN ub) (size ub) `liftM` V.thaw (bitArray ub)
 
 -- | Create an empty Bloom filter.
 empty :: Int                    -- ^ number of hash functions to use
       -> Word64                 -- ^ number of bits in filter
-      -> Bloom' h a
+      -> Bloom a
 {-# INLINE [1] empty #-}
 empty hash numBits = create hash numBits (\_ -> return ())
 
 -- | Create a Bloom filter with a single element.
-singleton :: (Hashes h, Hashable a)
+singleton :: Hashable a
           => Int               -- ^ number of hash functions to use
           -> Word64            -- ^ number of bits in filter
           -> a                 -- ^ element to insert
-          -> Bloom' h a
+          -> Bloom a
 singleton hash numBits elt = create hash numBits (\mb -> insert mb elt)
 
 -- | Query an immutable Bloom filter for membership.  If the value is
 -- present, return @True@.  If the value is not present, there is
 -- /still/ some possibility that @True@ will be returned.
-elem :: (Hashes h, Hashable a) => a -> Bloom' h a -> Bool
+elem :: Hashable a => a -> Bloom a -> Bool
 elem elt ub = elemHashes (makeHashes elt) ub
-{-# SPECIALISE elem :: Hashable a => a -> Bloom a -> Bool #-}
 
 -- | Query an immutable Bloom filter for membership using already constructed 'Hashes' value.
-elemHashes :: Hashes h => h a -> Bloom' h a -> Bool
+elemHashes :: CheapHashes a -> Bloom a -> Bool
 elemHashes !ch !ub = go 0 where
     go :: Int -> Bool
     go !i | i >= hashesN ub
@@ -160,20 +153,19 @@ elemHashes !ch !ub = go 0 where
             if V.unsafeIndex (bitArray ub) idx
               then go (i + 1)
               else False
-{-# SPECIALISE elemHashes :: CheapHashes a -> Bloom a -> Bool #-}
 
 -- | Query an immutable Bloom filter for non-membership.  If the value
 -- /is/ present, return @False@.  If the value is not present, there
 -- is /still/ some possibility that @False@ will be returned.
-notElem :: (Hashes h, Hashable a) => a -> Bloom' h a -> Bool
+notElem :: Hashable a => a -> Bloom a -> Bool
 notElem elt ub = notElemHashes (makeHashes elt) ub
 
 -- | Query an immutable Bloom filter for non-membership using already constructed 'Hashes' value.
-notElemHashes :: Hashes h => h a -> Bloom' h a -> Bool
+notElemHashes :: CheapHashes a -> Bloom a -> Bool
 notElemHashes !ch !ub = not (elemHashes ch ub)
 
 -- | Return the size of an immutable Bloom filter, in bits.
-length :: Bloom' h a -> Word64
+length :: Bloom a -> Word64
 length = size
 
 -- | Build an immutable Bloom filter from a seed value.  The seeding
@@ -184,15 +176,16 @@ length = size
 --
 --   * If it returns @'Just' (a,b)@, @a@ is added to the filter and
 --     @b@ is used as a new seed.
-unfold :: forall a b h. (Hashes h, Hashable a)
+unfold :: forall a b.
+          Hashable a
        => Int                       -- ^ number of hash functions to use
        -> Word64                    -- ^ number of bits in filter
        -> (b -> Maybe (a, b))       -- ^ seeding function
        -> b                         -- ^ initial seed
-       -> Bloom' h a
+       -> Bloom a
 {-# INLINE unfold #-}
 unfold hs numBits f k = create hs numBits (loop k)
-  where loop :: forall s. b -> MBloom' s h a -> ST s ()
+  where loop :: forall s. b -> MBloom s a -> ST s ()
         loop j mb = case f j of
                       Just (a, j') -> insert mb a >> loop j' mb
                       _            -> return ()
@@ -207,11 +200,11 @@ unfold hs numBits f k = create hs numBits (loop k)
 -- @
 -- filt = fromList 3 1024 [\"foo\", \"bar\", \"quux\"]
 -- @
-fromList :: (Hashes h, Hashable a)
+fromList :: Hashable a
          => Int                -- ^ number of hash functions to use
          -> Word64             -- ^ number of bits in filter
          -> [a]                -- ^ values to populate with
-         -> Bloom' h a
+         -> Bloom a
 fromList hs numBits list = create hs numBits $ forM_ list . insert
 
 -- $overview

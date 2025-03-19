@@ -1,7 +1,7 @@
 {-# OPTIONS_HADDOCK not-home #-}
 -- | This module exports 'Bloom'' definition.
 module Data.BloomFilter.Internal (
-    Bloom'(..),
+    Bloom(..),
     bloomInvariant,
 ) where
 
@@ -13,15 +13,15 @@ import           Data.Primitive.ByteArray (sizeofByteArray)
 import qualified Data.Vector.Primitive as VP
 import           Data.Word (Word64)
 
-type Bloom' :: (Type -> Type) -> Type -> Type
-data Bloom' h a = Bloom {
+type Bloom :: Type -> Type
+data Bloom a = Bloom {
       hashesN  :: {-# UNPACK #-} !Int
     , size     :: {-# UNPACK #-} !Word64 -- ^ size is non-zero
     , bitArray :: {-# UNPACK #-} !V.BitVec64
     }
-type role Bloom' nominal nominal
+type role Bloom nominal
 
-bloomInvariant :: Bloom' h a -> Bool
+bloomInvariant :: Bloom a -> Bool
 bloomInvariant (Bloom _ s (V.BV64 (VP.Vector off len ba))) =
        s > 0
     && s <= 2^(48 :: Int)
@@ -31,7 +31,7 @@ bloomInvariant (Bloom _ s (V.BV64 (VP.Vector off len ba))) =
   where
     ceilDiv64 x = unsafeShiftR (x + 63) 6
 
-instance Eq (Bloom' h a) where
+instance Eq (Bloom a) where
     -- We support arbitrary sized bitvectors,
     -- therefore an equality is a bit involved:
     -- we need to be careful when comparing the last bits of bitArray.
@@ -49,8 +49,8 @@ instance Eq (Bloom' h a) where
         x = VP.unsafeIndex v w
         x' = VP.unsafeIndex v' w
 
-instance Show (Bloom' h a) where
+instance Show (Bloom a) where
     show mb = "Bloom { " ++ show (size mb) ++ " bits } "
 
-instance NFData (Bloom' h a) where
+instance NFData (Bloom a) where
     rnf !_ = ()

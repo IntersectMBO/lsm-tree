@@ -95,7 +95,7 @@ bloomQueries !blooms !ks
     !ksN = V.length ks
 
     hs :: VP.Vector (Bloom.CheapHashes SerialisedKey)
-    !hs  = VP.generate ksN $ \i -> Bloom.makeCheapHashes (V.unsafeIndex ks i)
+    !hs  = VP.generate ksN $ \i -> Bloom.makeHashes (V.unsafeIndex ks i)
 
     -- Loop over all run indexes
     loop1 ::

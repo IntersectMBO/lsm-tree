@@ -15,13 +15,10 @@ module Data.BloomFilter.Hash (
     Incremental (..),
     HashState,
     incrementalHash,
-    -- * Hashing
-    Hashes (..),
-    RealHashes (..),
     -- * Compute a family of hash values
     CheapHashes (..),
-    evalCheapHashes,
-    makeCheapHashes,
+    evalHashes,
+    makeHashes,
 ) where
 
 import           Control.Monad (forM_)
@@ -144,23 +141,6 @@ incrementalHash seed f = runST $ do
     XXH3.xxh3_64bit_digest s
 
 -------------------------------------------------------------------------------
--- Hashes
--------------------------------------------------------------------------------
-
--- | A type class abstracting over different hashing schemes.b
-class Hashes h where
-    makeHashes :: Hashable a => a -> h a
-
-    evalHashes :: h a -> Int -> Hash
-
--- | A closure of real hashing function.
-newtype RealHashes a = RealHashes (Word64 -> Hash)
-
-instance Hashes RealHashes where
-    makeHashes x = RealHashes (\salt -> hashSalt64 salt x)
-    evalHashes (RealHashes f) i = f (fromIntegral i)
-
--------------------------------------------------------------------------------
 -- CheapHashes
 -------------------------------------------------------------------------------
 
@@ -170,12 +150,6 @@ instance Hashes RealHashes where
 data CheapHashes a = CheapHashes !Hash !Hash
   deriving Show
 type role CheapHashes nominal
-
-instance Hashes CheapHashes where
-    makeHashes = makeCheapHashes
-    {-# INLINE makeHashes #-}
-    evalHashes = evalCheapHashes
-    {-# INLINE evalHashes #-}
 
 instance Prim (CheapHashes a) where
     sizeOfType# _ = 16#
@@ -285,13 +259,13 @@ https://github.com/facebook/rocksdb/blob/096fb9b67d19a9a180e7c906b4a0cdb2b2d0c1f
 -- g_i = h_0 + \left\lfloor h_1 / 2^i \right\rfloor
 -- \]
 --
-evalCheapHashes :: CheapHashes a -> Int -> Hash
-evalCheapHashes (CheapHashes h1 h2) i = h1 + (h2 `unsafeShiftR` i)
+evalHashes :: CheapHashes a -> Int -> Hash
+evalHashes (CheapHashes h1 h2) i = h1 + (h2 `unsafeShiftR` i)
 
 -- | Create 'CheapHashes' structure.
 --
 -- It's simply hashes the value twice using seed 0 and 1.
-makeCheapHashes :: Hashable a => a -> CheapHashes a
-makeCheapHashes v = CheapHashes (hashSalt64 0 v) (hashSalt64 1 v)
-{-# SPECIALISE makeCheapHashes :: BS.ByteString -> CheapHashes BS.ByteString #-}
-{-# INLINEABLE makeCheapHashes #-}
+makeHashes :: Hashable a => a -> CheapHashes a
+makeHashes v = CheapHashes (hashSalt64 0 v) (hashSalt64 1 v)
+{-# SPECIALISE makeHashes :: BS.ByteString -> CheapHashes BS.ByteString #-}
+{-# INLINEABLE makeHashes #-}
