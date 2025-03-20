@@ -715,7 +715,8 @@ remainingUnionDebt (Internal.MonoidalTable t) =
     (\(Internal.UnionDebt x) -> UnionDebt x) <$>
       Internal.remainingUnionDebt t
 
-{-# SPECIALISE supplyUnionCredits :: Table IO k v -> UnionCredits -> IO UnionCredits #-}
+{-# SPECIALISE supplyUnionCredits ::
+     ResolveValue v => Table IO k v -> UnionCredits -> IO UnionCredits #-}
 -- | Supply union credits to reduce union debt.
 --
 -- Supplying union credits leads to union merging work being performed in
@@ -728,13 +729,16 @@ remainingUnionDebt (Internal.MonoidalTable t) =
 -- a union has finished. In particular, if the returned number of credits is
 -- non-negative, then the union is finished.
 supplyUnionCredits ::
-     IOLike m
+     forall m k v. (IOLike m, ResolveValue v)
   => Table m k v
   -> UnionCredits
   -> m UnionCredits
 supplyUnionCredits (Internal.MonoidalTable t) (UnionCredits credits) =
     (\(Internal.UnionCredits x) -> UnionCredits x) <$>
-      Internal.supplyUnionCredits t (Internal.UnionCredits credits)
+      Internal.supplyUnionCredits
+        (resolve @v Proxy)
+        t
+        (Internal.UnionCredits credits)
 
 {-------------------------------------------------------------------------------
   Monoidal value resolution

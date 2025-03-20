@@ -1483,8 +1483,9 @@ supplyCreditsPendingMerge = checked remainingDebtPendingMerge $ \credits -> \cas
     -- approximately equal, being more precise would require more iterations
     splitEqually :: (Credit -> a -> ST s Credit) -> [a] -> Credit -> ST s Credit
     splitEqually f xs credits =
-        -- first give each tree k = ceil(1/n) credits (last ones might get less)
-        -- any remainders go left to right
+        -- first give each tree k = ceil(1/n) credits (last ones might get less).
+        -- it's important we fold here to collect leftovers.
+        -- any remainders go left to right.
         foldM supply credits xs >>= leftToRight f xs
       where
         !n = length xs

@@ -105,7 +105,7 @@ import           Database.LSMTree.Internal.BlobRef (WeakBlobRef (..))
 import qualified Database.LSMTree.Internal.BlobRef as BlobRef
 import           Database.LSMTree.Internal.Config
 import qualified Database.LSMTree.Internal.Cursor as Cursor
-import           Database.LSMTree.Internal.Entry (Entry)
+import           Database.LSMTree.Internal.Entry (Entry, NumEntries (..))
 import           Database.LSMTree.Internal.IncomingRun (IncomingRun (..))
 import           Database.LSMTree.Internal.Lookup (ByteCountDiscrepancy,
                      ResolveSerialisedValue, lookupsIO,
@@ -1645,19 +1645,38 @@ remainingUnionDebt t = do
 newtype UnionCredits = UnionCredits Int
   deriving newtype (Show, Eq, Ord, Num)
 
-{-# SPECIALISE supplyUnionCredits :: Table IO h -> UnionCredits -> IO UnionCredits #-}
+{-# SPECIALISE supplyUnionCredits ::
+     ResolveSerialisedValue -> Table IO h -> UnionCredits -> IO UnionCredits #-}
 -- | See 'Database.LSMTree.Normal.supplyUnionCredits'.
-supplyUnionCredits :: (MonadSTM m, MonadCatch m) => Table m h -> UnionCredits -> m UnionCredits
-supplyUnionCredits t credits = do
+supplyUnionCredits ::
+     (MonadST m, MonadSTM m, MonadMVar m, MonadMask m)
+  => ResolveSerialisedValue -> Table m h -> UnionCredits -> m UnionCredits
+supplyUnionCredits resolve t credits = do
     traceWith (tableTracer t) $ TraceSupplyUnionCredits credits
     withOpenTable t $ \tEnv -> do
-      -- TODO: should this be acquiring read or write access?
-      RW.withWriteAccess (tableContent tEnv) $ \tableContent ->
+      -- No need to mutate the table content here. In the rare case that we want
+      -- to move a completed union level into the regular levels, we can still
+      -- take the write lock for that.
+      RW.withReadAccess (tableContent tEnv) $ \tableContent -> do
         case tableUnionLevel tableContent of
-          NoUnion -> pure (tableContent, credits) -- all leftovers
-          Union{}
-           | credits <= UnionCredits 0 -> pure (tableContent, UnionCredits 0)
-           --TODO: remove this 0 special case once the general case covers it.
-           -- We do not need to optimise the 0 case. It is just here to
-           -- simplify test coverage.
-           | otherwise -> error "supplyUnionCredits: not yet implemented"
+          NoUnion ->
+            pure (max 0 credits)  -- all leftovers (but never negative)
+          Union mt -> do
+            let conf = tableConfig t
+            let AllocNumEntries (NumEntries x) = confWriteBufferAlloc conf
+            -- We simply use the write buffer size as merge credit threshold, as
+            -- the regular level merges also do.
+            -- TODO: pick a more suitable threshold or make configurable?
+            let thresh = MR.CreditThreshold (MR.UnspentCredits (MergeCredits x))
+            MergeCredits leftovers <-
+              MT.supplyCredits
+                (tableHasFS tEnv)
+                (tableHasBlockIO tEnv)
+                resolve
+                (runParamsForLevel conf UnionLevel)
+                thresh
+                (tableSessionRoot tEnv)
+                (tableSessionUniqCounter tEnv)
+                mt
+                (let UnionCredits c = credits in MergeCredits c)
+            pure (UnionCredits leftovers)

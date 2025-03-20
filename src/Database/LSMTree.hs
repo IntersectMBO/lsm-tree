@@ -564,15 +564,19 @@ remainingUnionDebt (Internal.Table' t) =
     (\(Internal.UnionDebt x) -> UnionDebt x) <$>
       Internal.remainingUnionDebt t
 
-{-# SPECIALISE supplyUnionCredits :: Table IO k v b -> UnionCredits -> IO UnionCredits #-}
+{-# SPECIALISE supplyUnionCredits ::
+     ResolveValue v => Table IO k v b -> UnionCredits -> IO UnionCredits #-}
 supplyUnionCredits ::
-     IOLike m
+     forall m k v b. (IOLike m, ResolveValue v)
   => Table m k v b
   -> UnionCredits
   -> m UnionCredits
 supplyUnionCredits (Internal.Table' t) (UnionCredits credits) =
     (\(Internal.UnionCredits x) -> UnionCredits x) <$>
-      Internal.supplyUnionCredits t (Internal.UnionCredits credits)
+      Internal.supplyUnionCredits
+        (resolve (Proxy @v))
+        t
+        (Internal.UnionCredits credits)
 
 {-------------------------------------------------------------------------------
   Monoidal value resolution

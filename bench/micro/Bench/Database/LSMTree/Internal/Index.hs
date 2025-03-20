@@ -7,8 +7,9 @@ import           Control.DeepSeq (rnf)
 import           Control.Monad.ST.Strict (runST)
 import           Criterion.Main (Benchmark, Benchmarkable, bench, bgroup, env,
                      whnf)
-#if __GLASGOW_HASKELL__ < 910
+#if !MIN_VERSION_base(4,20,0)
 import           Data.List (foldl')
+                 -- foldl' is included in the Prelude from base 4.20 onwards
 #endif
 import           Database.LSMTree.Extras.Generators (getKeyForIndexCompact,
                      mkPages, toAppends)

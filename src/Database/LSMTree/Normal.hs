@@ -854,4 +854,4 @@ supplyUnionCredits ::
   -> m UnionCredits
 supplyUnionCredits (Internal.NormalTable t) (UnionCredits credits) =
     (\(Internal.UnionCredits x) -> UnionCredits x) <$>
-      Internal.supplyUnionCredits t (Internal.UnionCredits credits)
+      Internal.supplyUnionCredits const t (Internal.UnionCredits credits)
