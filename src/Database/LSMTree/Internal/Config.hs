@@ -3,6 +3,8 @@ module Database.LSMTree.Internal.Config (
     -- * Table configuration
   , TableConfig (..)
   , defaultTableConfig
+  , RunLevelNo (..)
+  , runParamsForLevel
     -- * Table configuration override
   , TableConfigOverride
   , applyOverride
@@ -34,16 +36,16 @@ import           Control.DeepSeq (NFData (..))
 import           Data.Maybe (fromMaybe)
 import           Data.Monoid (Last (..))
 import           Data.Word (Word64)
-import           Database.LSMTree.Internal.Assertions (assert)
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
 import           Database.LSMTree.Internal.Index (IndexType)
 import qualified Database.LSMTree.Internal.Index as Index
                      (IndexType (Compact, Ordinary))
 import           Database.LSMTree.Internal.Run (RunDataCaching (..))
 import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..))
+import           Database.LSMTree.Internal.RunBuilder (RunParams (..))
 
 newtype LevelNo = LevelNo Int
-  deriving stock (Show, Eq)
+  deriving stock (Show, Eq, Ord)
   deriving newtype (Enum, NFData)
 
 {-------------------------------------------------------------------------------
@@ -93,6 +95,16 @@ defaultTableConfig =
       , confFencePointerIndex = OrdinaryIndex
       , confDiskCachePolicy   = DiskCacheAll
       , confMergeSchedule     = defaultMergeSchedule
+      }
+
+data RunLevelNo = RegularLevel LevelNo | UnionLevel
+
+runParamsForLevel :: TableConfig -> RunLevelNo -> RunParams
+runParamsForLevel conf@TableConfig {..} levelNo =
+    RunParams
+      { runParamCaching = diskCachePolicyForLevel confDiskCachePolicy levelNo
+      , runParamAlloc   = bloomFilterAllocForLevel conf levelNo
+      , runParamIndex   = indexTypeForRun confFencePointerIndex
       }
 
 {-------------------------------------------------------------------------------
@@ -227,9 +239,8 @@ instance NFData BloomFilterAlloc where
 defaultBloomFilterAlloc :: BloomFilterAlloc
 defaultBloomFilterAlloc = AllocFixed 10
 
-bloomFilterAllocForLevel :: TableConfig -> LevelNo -> RunBloomFilterAlloc
-bloomFilterAllocForLevel conf (LevelNo l) =
-    assert (l > 0) $
+bloomFilterAllocForLevel :: TableConfig -> RunLevelNo -> RunBloomFilterAlloc
+bloomFilterAllocForLevel conf _levelNo =
     case confBloomFilterAlloc conf of
       AllocFixed n        -> RunAllocFixed n
       AllocRequestFPR fpr -> RunAllocRequestFPR fpr
@@ -326,15 +337,16 @@ instance NFData DiskCachePolicy where
 -- | Interpret the 'DiskCachePolicy' for a level: should we cache data in runs
 -- at this level.
 --
-diskCachePolicyForLevel :: DiskCachePolicy -> LevelNo -> RunDataCaching
-diskCachePolicyForLevel policy (LevelNo ln) =
+diskCachePolicyForLevel :: DiskCachePolicy -> RunLevelNo -> RunDataCaching
+diskCachePolicyForLevel policy levelNo =
   case policy of
-    DiskCacheAll               -> CacheRunData
-    DiskCacheNone              -> NoCacheRunData
-    DiskCacheLevelsAtOrBelow n
-      | ln <= n                -> CacheRunData
-      | otherwise              -> NoCacheRunData
-
+    DiskCacheAll  -> CacheRunData
+    DiskCacheNone -> NoCacheRunData
+    DiskCacheLevelsAtOrBelow n ->
+      case levelNo of
+        RegularLevel l | l <= LevelNo n -> CacheRunData
+                       | otherwise      -> NoCacheRunData
+        UnionLevel                      -> NoCacheRunData
 
 {-------------------------------------------------------------------------------
   Merge schedule

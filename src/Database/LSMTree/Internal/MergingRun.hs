@@ -9,6 +9,8 @@ module Database.LSMTree.Internal.MergingRun (
   , new
   , newCompleted
   , duplicateRuns
+  , remainingMergeDebt
+  , supplyChecked
   , supplyCreditsRelative
   , supplyCreditsAbsolute
   , expectCompleted
@@ -68,6 +70,7 @@ import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..))
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
+import           GHC.Stack (HasCallStack, callStack)
 import           System.FS.API (HasFS)
 import           System.FS.BlockIO.API (HasBlockIO)
 
@@ -147,17 +150,38 @@ new ::
   -> V.Vector (Ref (Run m h))
   -> m (Ref (MergingRun t m h))
 new hfs hbio resolve runParams ty runPaths inputRuns =
+    assert (V.length inputRuns > 0) $ do
+    -- there can be empty runs, which we don't want to include in the merge
+    -- TODO: making runs non-empty would involve introducing a constructor
+    -- @CompletedMergeEmpty@, but would simplify things and should be possible.
+    let nonEmptyRuns = V.filter (\r -> Run.size r > NumEntries 0) inputRuns
     -- If creating the Merge fails, we must release the references again.
     withActionRegistry $ \reg -> do
-      runs <- V.mapM (\r -> withRollback reg (dupRef r) releaseRef) inputRuns
-      merge <- fromMaybe (error "newMerge: merges can not be empty")
-        <$> Merge.new hfs hbio runParams ty resolve runPaths runs
-      let mergeDebt = numEntriesToMergeDebt (V.foldMap' Run.size runs)
-      unsafeNew
-        mergeDebt
-        (SpentCredits 0)
-        MergeMaybeCompleted
-        (OngoingMerge runs merge)
+      let dupRun r = withRollback reg (dupRef r) releaseRef
+      case V.length nonEmptyRuns of
+        0 -> do
+          -- we can't have an empty merge, but create a new empty run
+          --
+          -- potentially, we could have re-used one of the empty input runs (or
+          -- even re-used a single non-empty input run if there are no others),
+          -- as we do in the prototype. but that would mean that the result
+          -- doesn't follow the supplied @runParams@.
+          -- TODO: decide whether that optimisation is okay
+          r <- Run.newEmpty hfs hbio runParams runPaths
+          unsafeNew
+            (MergeDebt 0)
+            (SpentCredits 0)
+            MergeKnownCompleted
+            (CompletedMerge r)
+        _ -> do
+          rs <- V.mapM dupRun nonEmptyRuns
+          merge <- fromMaybe (error "newMerge: merges can not be empty")
+            <$> Merge.new hfs hbio runParams ty resolve runPaths rs
+          unsafeNew
+            (numEntriesToMergeDebt (V.foldMap' Run.size rs))
+            (SpentCredits 0)
+            MergeMaybeCompleted
+            (OngoingMerge rs merge)
 
 {-# SPECIALISE newCompleted ::
      MergeDebt
@@ -364,7 +388,7 @@ might not finish in time, which will mess up the shape of the levels tree.
 -}
 
 newtype MergeCredits = MergeCredits Int
-  deriving stock (Eq, Ord)
+  deriving stock (Eq, Ord, Show)
   deriving newtype (Num, Real, Enum, Integral, NFData)
 
 newtype MergeDebt = MergeDebt MergeCredits
@@ -390,13 +414,14 @@ numEntriesToMergeDebt (NumEntries n) = MergeDebt (MergeCredits n)
 -- co-prime so that merge work at different levels is not synchronised.
 --
 newtype CreditThreshold = CreditThreshold UnspentCredits
+  deriving stock Show
 
 -- | The spent credits are supplied credits that have been spent on performing
 -- merging steps plus the supplied credits that are in the process of being
 -- spent (by some thread calling 'supplyCredits').
 --
 newtype SpentCredits = SpentCredits MergeCredits
-  deriving newtype (Eq, Ord)
+  deriving newtype (Eq, Ord, Show)
 
 -- | 40 bit unsigned number
 instance Bounded SpentCredits where
@@ -412,7 +437,7 @@ instance Bounded SpentCredits where
 -- current unspent credits being negative for a time.
 --
 newtype UnspentCredits = UnspentCredits MergeCredits
-  deriving newtype (Eq, Ord)
+  deriving newtype (Eq, Ord, Show)
 
 -- | 24 bit signed number
 instance Bounded UnspentCredits where
@@ -721,6 +746,56 @@ atomicSpendCredits (CreditsVar var) spend =
   The main algorithms
 -------------------------------------------------------------------------------}
 
+{-# SPECIALISE remainingMergeDebt ::
+     Ref (MergingRun t IO h) -> IO (MergeDebt, NumEntries) #-}
+-- | Calculate an upper bound on the merge credits required to complete the
+-- merge, as well as an upper bound on the size of the resulting run.
+remainingMergeDebt ::
+     (MonadMVar m, PrimMonad m)
+  => Ref (MergingRun t m h) -> m (MergeDebt, NumEntries)
+remainingMergeDebt (DeRef mr) = do
+    readMVar (mergeState mr) >>= \case
+      CompletedMerge r -> do
+        return (MergeDebt 0, Run.size r)
+      OngoingMerge _ _ -> do
+        let MergeDebt totalDebt = mergeDebt mr
+        let size = let MergeCredits n = totalDebt in NumEntries n
+        (SpentCredits spent, UnspentCredits unspent) <-
+          atomicReadCredits (mergeCreditsVar mr)
+        let debt = totalDebt - (spent + unspent)
+        assert (debt >= 0) $ pure ()
+        return (MergeDebt debt, size)
+
+{-# INLINE supplyChecked #-}
+-- | Helper function to assert common invariants for functions that supply
+-- credits.
+supplyChecked ::
+     forall m r s. (HasCallStack, Monad m)
+  => (r -> m (MergeDebt, s))  -- how to query current debt
+  -> (r -> MergeCredits -> m MergeCredits)  -- how to supply
+  -> (r -> MergeCredits -> m MergeCredits)
+supplyChecked _query supply x credits = do
+    assertM $ credits > 0   -- only call them when there are credits to supply
+#ifdef NO_IGNORE_ASSERTS
+    debt <- fst <$> _query x
+    assertM $ debt >= MergeDebt 0 -- debt can't be negative
+    leftovers <- supply x credits
+    assertM $ leftovers <= credits -- can't have more left than we started with
+    assertM $ leftovers >= 0       -- leftovers can't be negative
+    debt' <- fst <$> _query x
+    assertM $ debt' >= MergeDebt 0
+    -- the debt was reduced sufficiently (amount of credits spent)
+    assertM $ debt' <= let MergeDebt d = debt
+                       in MergeDebt (d - (credits - leftovers))
+    return leftovers
+#else
+    supply x credits
+#endif
+  where
+    assertM :: HasCallStack => Bool -> m ()
+    assertM p = let _ = callStack in assert p (pure ())
+    -- just uses callStack so the constraint is not redundant in release builds
+
 {-# INLINE supplyCreditsRelative #-}
 -- | Supply the given amount of credits to a merging run. This /may/ cause an
 -- ongoing merge to progress.
@@ -729,27 +804,24 @@ atomicSpendCredits (CreditsVar var) spend =
 -- supplied credits. See 'supplyCreditsAbsolute' to set the supplied credits
 -- to an absolute value.
 --
--- The result is:
---
---  1. The (absolute value of the) supplied credits beforehand.
---  2. The (absolute value of the) supplied credits afterwards.
---  3. The number of credits left over. This will be non-zero if the credits
---     supplied would take the total supplied credits over the total merge debt.
+-- The result is the number of credits left over. This will be non-zero if the
+-- credits supplied would take the total supplied credits over the total merge
+-- debt.
 --
 supplyCreditsRelative ::
      forall t m h. (MonadSTM m, MonadST m, MonadMVar m, MonadMask m)
   => Ref (MergingRun t m h)
   -> CreditThreshold
   -> MergeCredits
-  -> m (MergeCredits, MergeCredits, MergeCredits)
-       -- ^ (suppliedCredits, suppliedCredits', leftoverCredits)
-supplyCreditsRelative mr th c = do
-    r@(_suppliedCredits, suppliedCredits', leftoverCredits)
-      <- supplyCredits mr th (SupplyMergeCredits SupplyRelative c)
+  -> m MergeCredits
+supplyCreditsRelative = flip $ \th ->
+    supplyChecked remainingMergeDebt $ \mr c -> do
+      (_suppliedCredits, suppliedCredits', leftoverCredits)
+        <- supplyCredits mr th (SupplyMergeCredits SupplyRelative c)
 
-    assert (suppliedCredits' == mergeDebtAsCredits (totalMergeDebt mr)
-            || leftoverCredits == 0) $
-      pure r
+      assert (suppliedCredits' == mergeDebtAsCredits (totalMergeDebt mr)
+              || leftoverCredits == 0) $
+        pure leftoverCredits
 
 {-# INLINE supplyCreditsAbsolute #-}
 -- | Set the supplied credits to the given value, unless the current value is
@@ -902,7 +974,7 @@ completeMerge mergeVar mergeKnownCompletedVar = do
       (OngoingMerge rs m) -> do
         -- first try to complete the merge before performing other side effects,
         -- in case the completion fails
-        --TODO: Run.fromMutable (used in Merge.complete) claims not to be
+        --TODO: Run.fromBuilder (used in Merge.complete) claims not to be
         -- exception safe so we should probably be using the resource registry
         -- and test for exception safety.
         r <- Merge.complete m

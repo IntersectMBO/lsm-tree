@@ -149,6 +149,9 @@ unsafeCreateRunAt ::
   -> SerialisedRunData
   -> IO (Ref (Run IO h))
 unsafeCreateRunAt fs hbio runParams fsPaths (RunData m) = do
+    -- the WBB file path doesn't have to be at a specific place relative to
+    -- the run we want to create, but fsPaths should already point to a unique
+    -- location, so we just append something to not conflict with that.
     let blobpath = FS.addExtension (runBlobPath fsPaths) ".wb"
     bracket (WBB.new fs blobpath) releaseRef $ \wbblobs -> do
       wb <- WB.fromMap <$> traverse (traverse (WBB.addBlob fs wbblobs)) m

@@ -52,34 +52,7 @@ tests = testGroup "Test.Database.LSMTree.Class"
               action (SessionArgs hfs hbio (FS.mkFsPath []))
         }
 
-    expectFailures2 = [
-        False
-      , False
-      , False
-      , False
-      , False
-      , False
-      , False
-      , False
-      , False
-      , False
-      , False
-      , False
-      , False
-      , False
-      , False
-      , False
-      , False
-      , False
-      , False
-      , False
-      , False
-      , False
-      , False
-      , False
-      , False
-      , True  -- merge
-      ] ++ repeat False
+    expectFailures2 = repeat False
 
     props RunSetup {..} =
       [ testProperty' "lookup-insert" $ prop_lookupInsert . runSetup

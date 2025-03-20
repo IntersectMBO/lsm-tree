@@ -1371,8 +1371,17 @@ remainingDebtMergingTree :: MergingTree s -> ST s (Debt, Size)
 remainingDebtMergingTree (MergingTree ref) =
     readSTRef ref >>= \case
       CompletedTreeMerge r -> return (0, runSize r)
-      OngoingTreeMerge mr  -> remainingDebtMergingRun mr
-      PendingTreeMerge pm  -> remainingDebtPendingMerge pm
+      OngoingTreeMerge mr  -> addDebtOne <$> remainingDebtMergingRun mr
+      PendingTreeMerge pm  -> addDebtOne <$> remainingDebtPendingMerge pm
+  where
+    -- An ongoing merge should never have 0 debt, even if the 'MergingRun' in it
+    -- says it is completed. We still need to update it to 'CompletedTreeMerge'.
+    -- Similarly, a pending merge needs some work to complete it, even if all
+    -- its inputs are empty.
+    --
+    -- Note that we can't use @max 1@, as this would violate the property that
+    -- supplying N credits reduces the remaining debt by at least N.
+    addDebtOne (debt, size) = (debt + 1, size)
 
 remainingDebtPendingMerge :: PendingMerge s -> ST s (Debt, Size)
 remainingDebtPendingMerge (PendingMerge _ prs trees) = do
@@ -1381,11 +1390,7 @@ remainingDebtPendingMerge (PendingMerge _ prs trees) = do
         , traverse remainingDebtMergingTree trees
         ]
     let totalSize = sum sizes
-    -- A pending merge should never have 0 remaining debt. It needs some work to
-    -- complete it, even if all its inputs are empty. It's not enought to use
-    -- @max 1@, as this would violate the property that supplying N credits
-    -- reduces the remaining debt by at least N.
-    let totalDebt = sum debts + totalSize + 1
+    let totalDebt = sum debts + totalSize
     return (totalDebt, totalSize)
   where
     remainingDebtPreExistingRun = \case
@@ -1478,8 +1483,9 @@ supplyCreditsPendingMerge = checked remainingDebtPendingMerge $ \credits -> \cas
     -- approximately equal, being more precise would require more iterations
     splitEqually :: (Credit -> a -> ST s Credit) -> [a] -> Credit -> ST s Credit
     splitEqually f xs credits =
-        -- first give each tree k = ceil(1/n) credits (last ones might get less)
-        -- any remainders go left to right
+        -- first give each tree k = ceil(1/n) credits (last ones might get less).
+        -- it's important we fold here to collect leftovers.
+        -- any remainders go left to right.
         foldM supply credits xs >>= leftToRight f xs
       where
         !n = length xs

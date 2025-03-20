@@ -19,10 +19,12 @@ import qualified Database.LSMTree.Internal.Index as Index
 import qualified Database.LSMTree.Internal.MergingRun as MR
 import           Database.LSMTree.Internal.PageAcc (entryWouldFitInPage,
                      sizeofEntry)
+import           Database.LSMTree.Internal.Paths (RunFsPaths (..))
 import           Database.LSMTree.Internal.RawBytes (RawBytes (..))
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import qualified Database.LSMTree.Internal.RunAcc as RunAcc
 import qualified Database.LSMTree.Internal.RunBuilder as RunBuilder
+import           Database.LSMTree.Internal.RunNumber (RunNumber (..))
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.UniqCounter
 import qualified System.FS.API as FS
@@ -155,7 +157,10 @@ prop_withRunDoesntLeak ::
   -> IO Property
 prop_withRunDoesntLeak hfs hbio rd = do
     let indexType = Index.Ordinary
-    withRunAt hfs hbio (runParams indexType) (simplePath 0) rd $ \_run -> do
+    let path = FS.mkFsPath ["something-1"]
+    let fsPaths = RunFsPaths path (RunNumber 0)
+    FS.createDirectory hfs path
+    withRunAt hfs hbio (runParams indexType) fsPaths rd $ \_run -> do
       return (QC.property True)
 
 prop_withMergingRunDoesntLeak ::
@@ -165,7 +170,8 @@ prop_withMergingRunDoesntLeak ::
   -> IO Property
 prop_withMergingRunDoesntLeak hfs hbio mrd = do
     let indexType = Index.Ordinary
-    let path = FS.mkFsPath []
+    let path = FS.mkFsPath ["something-2"]
+    FS.createDirectory hfs path
     counter <- newUniqCounter 0
     withMergingRun hfs hbio resolveVal (runParams indexType) path counter mrd $
       \_mr -> do
@@ -180,7 +186,8 @@ prop_withMergingTreeDoesntLeak ::
   -> IO Property
 prop_withMergingTreeDoesntLeak hfs hbio mrd = do
     let indexType = Index.Ordinary
-    let path = FS.mkFsPath []
+    let path = FS.mkFsPath ["something-3"]
+    FS.createDirectory hfs path
     counter <- newUniqCounter 0
     withMergingTree hfs hbio resolveVal (runParams indexType) path counter mrd $
       \_tree -> do

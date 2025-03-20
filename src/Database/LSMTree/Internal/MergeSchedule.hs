@@ -762,18 +762,10 @@ mergingRunParamsForLevel ::
   -> Unique
   -> LevelNo
   -> (RunParams, RunFsPaths)
-mergingRunParamsForLevel dir
-                         conf@TableConfig {
-                                confDiskCachePolicy,
-                                confFencePointerIndex
-                         }
-                         unique ln =
-    (RunParams {..}, runPaths)
+mergingRunParamsForLevel dir conf unique ln =
+    (runParamsForLevel conf (RegularLevel ln), runPaths)
   where
-    !runParamCaching = diskCachePolicyForLevel confDiskCachePolicy ln
-    !runParamAlloc   = bloomFilterAllocForLevel conf ln
-    !runParamIndex   = indexTypeForRun confFencePointerIndex
-    !runPaths        = Paths.runPath dir (uniqueToRunNumber unique)
+    !runPaths = Paths.runPath dir (uniqueToRunNumber unique)
 
 -- | We use levelling on the last level, unless that is also the first level.
 mergePolicyForLevel ::

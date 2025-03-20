@@ -37,10 +37,6 @@ prop_CreditsPair spentCredits unspentCredits =
 deriving newtype instance Enum SpentCredits
 deriving newtype instance Enum UnspentCredits
 
-deriving stock instance Show MergeCredits
-deriving stock instance Show SpentCredits
-deriving stock instance Show UnspentCredits
-
 instance Arbitrary SpentCredits where
   arbitrary =
     frequency [ (1, pure minBound)

@@ -1,3 +1,6 @@
+{-# LANGUAGE CPP             #-}
+{-# LANGUAGE PatternSynonyms #-}
+
 -- | An incremental merge of multiple runs, preserving a bracketing structure.
 module Database.LSMTree.Internal.MergingTree (
     -- $mergingtrees
@@ -8,22 +11,41 @@ module Database.LSMTree.Internal.MergingTree (
   , newPendingLevelMerge
   , newPendingUnionMerge
   , isStructurallyEmpty
+  , remainingMergeDebt
+  , supplyCredits
     -- * Internal state
   , MergingTreeState (..)
   , PendingMerge (..)
   ) where
 
+import           Control.ActionRegistry
 import           Control.Concurrent.Class.MonadMVar.Strict
-import           Control.Monad ((<$!>))
+import           Control.Exception (assert)
+import           Control.Monad (foldM, (<$!>))
+import           Control.Monad.Class.MonadST (MonadST)
+import           Control.Monad.Class.MonadSTM (MonadSTM (..))
 import           Control.Monad.Class.MonadThrow (MonadMask)
 import           Control.Monad.Primitive
 import           Control.RefCount
-import           Data.Foldable (traverse_)
+import           Data.Foldable (toList, traverse_)
+#if !MIN_VERSION_base(4,20,0)
+import           Data.List (foldl')
+                 -- foldl' is included in the Prelude from base 4.20 onwards
+#endif
 import           Data.Vector (Vector)
 import qualified Data.Vector as V
-import           Database.LSMTree.Internal.MergingRun (MergingRun)
+import           Database.LSMTree.Internal.Entry (NumEntries (..))
+import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
+import           Database.LSMTree.Internal.MergingRun (MergeDebt (..),
+                     MergingRun)
 import qualified Database.LSMTree.Internal.MergingRun as MR
+import           Database.LSMTree.Internal.Paths (SessionRoot)
+import qualified Database.LSMTree.Internal.Paths as Paths
 import           Database.LSMTree.Internal.Run (Run)
+import qualified Database.LSMTree.Internal.Run as Run
+import           Database.LSMTree.Internal.UniqCounter
+import           System.FS.API (HasFS)
+import           System.FS.BlockIO.API (HasBlockIO)
 
 -- $mergingtrees Semantically, tables are key-value stores like Haskell's
 -- @Map@. Table unions then behave like @Map.unionWith (<>)@. If one of the
@@ -98,6 +120,24 @@ data PendingMerge m h =
     -- | Each input is the entire content of a table (as a merging tree).
   | PendingUnionMerge
       !(Vector (Ref (MergingTree m h)))
+
+pendingContent ::
+     PendingMerge m h
+  -> ( MR.TreeMergeType
+     , Vector (PreExistingRun m h)
+     , Vector (Ref (MergingTree m h))
+     )
+pendingContent = \case
+    PendingLevelMerge prs t -> (MR.MergeLevel, prs, maybe V.empty V.singleton t)
+    PendingUnionMerge    ts -> (MR.MergeUnion, V.empty, ts)
+
+{-# COMPLETE PendingMerge #-}
+pattern PendingMerge ::
+     MR.TreeMergeType
+  -> Vector (PreExistingRun m h)
+  -> Vector (Ref (MergingTree m h))
+  -> PendingMerge m h
+pattern PendingMerge mt prs ts <- (pendingContent -> (mt, prs, ts))
 
 data PreExistingRun m h =
     PreExistingRun        !(Ref (Run m h))
@@ -227,11 +267,13 @@ newPendingUnionMerge mts = do
 --
 isStructurallyEmpty :: MonadMVar m => Ref (MergingTree m h) -> m Bool
 isStructurallyEmpty (DeRef MergingTree {mergeState}) =
-    isEmpty <$> readMVar mergeState
-  where
-    isEmpty (PendingTreeMerge (PendingLevelMerge prs Nothing)) = V.null prs
-    isEmpty (PendingTreeMerge (PendingUnionMerge mts))         = V.null mts
-    isEmpty _                                                  = False
+    isStructurallyEmptyState <$> readMVar mergeState
+
+isStructurallyEmptyState :: MergingTreeState m h -> Bool
+isStructurallyEmptyState = \case
+    PendingTreeMerge (PendingLevelMerge prs Nothing) -> V.null prs
+    PendingTreeMerge (PendingUnionMerge mts)         -> V.null mts
+    _                                                -> False
     -- It may also turn out to be useful to consider CompletedTreeMerge with
     -- a zero length runs as empty.
 
@@ -272,3 +314,228 @@ finalise mergeState = releaseMTS =<< readMVar mergeState
     releasePER (PreExistingRun         r) = releaseRef r
     releasePER (PreExistingMergingRun mr) = releaseRef mr
 
+{-# SPECIALISE remainingMergeDebt ::
+     Ref (MergingTree IO h) -> IO (MergeDebt, NumEntries) #-}
+-- | Calculate an upper bound on the merge credits required to complete the
+-- merge, i.e. turn the tree into a 'CompletedTreeMerge'. For the recursive
+-- calculation, we also return an upper bound on the size of the resulting run.
+remainingMergeDebt ::
+     (MonadMVar m, PrimMonad m)
+  => Ref (MergingTree m h) -> m (MergeDebt, NumEntries)
+remainingMergeDebt (DeRef mt) = do
+    readMVar (mergeState mt) >>= \case
+      CompletedTreeMerge r -> return (MergeDebt 0, Run.size r)
+      OngoingTreeMerge mr  -> addDebtOne <$> MR.remainingMergeDebt mr
+      PendingTreeMerge ptm -> addDebtOne <$> remainingMergeDebtPendingMerge ptm
+  where
+    -- An ongoing merge should never have 0 debt, even if the 'MergingRun' in it
+    -- says it is completed. We still need to update it to 'CompletedTreeMerge'.
+    -- Similarly, a pending merge needs some work to complete it, even if all
+    -- its inputs are empty.
+    --
+    -- Note that we can't use @max 1@, as this would violate the property that
+    -- supplying N credits reduces the remaining debt by at least N.
+    addDebtOne (MergeDebt !debt, !size) = (MergeDebt (debt + 1), size)
+
+{-# SPECIALISE remainingMergeDebtPendingMerge ::
+     PendingMerge IO h -> IO (MergeDebt, NumEntries) #-}
+remainingMergeDebtPendingMerge ::
+     (MonadMVar m, PrimMonad m)
+  => PendingMerge m h -> m (MergeDebt, NumEntries)
+remainingMergeDebtPendingMerge (PendingMerge _ prs mts) = do
+    -- TODO: optimise to reduce allocations
+    debtsPre <- traverse remainingMergeDebtPreExistingRun prs
+    debtsChild <- traverse remainingMergeDebt mts
+    return (debtOfNestedMerge (debtsPre <> debtsChild))
+  where
+    remainingMergeDebtPreExistingRun = \case
+        PreExistingRun        r  -> return (MergeDebt 0, Run.size r)
+        PreExistingMergingRun mr -> MR.remainingMergeDebt mr
+
+debtOfNestedMerge :: Vector (MergeDebt, NumEntries) -> (MergeDebt, NumEntries)
+debtOfNestedMerge debts =
+    -- complete all children, then one merge of them all (so debt is their size)
+    (MergeDebt (c + MR.MergeCredits n), NumEntries n)
+  where
+    (MergeDebt c, NumEntries n) = foldl' add (MergeDebt 0, NumEntries 0) debts
+
+    add (MergeDebt !d1, NumEntries !n1) (MergeDebt !d2, NumEntries !n2) =
+        (MergeDebt (d1 + d2), NumEntries (n1 + n2))
+
+{-# SPECIALISE supplyCredits ::
+     HasFS IO h
+  -> HasBlockIO IO h
+  -> ResolveSerialisedValue
+  -> Run.RunParams
+  -> MR.CreditThreshold
+  -> SessionRoot
+  -> UniqCounter IO
+  -> Ref (MergingTree IO h)
+  -> MR.MergeCredits
+  -> IO MR.MergeCredits #-}
+supplyCredits ::
+     forall m h.
+     (MonadMVar m, MonadST m, MonadSTM m, MonadMask m)
+  => HasFS m h
+  -> HasBlockIO m h
+  -> ResolveSerialisedValue
+  -> Run.RunParams
+  -> MR.CreditThreshold
+  -> SessionRoot
+  -> UniqCounter m
+  -> Ref (MergingTree m h)
+  -> MR.MergeCredits
+  -> m MR.MergeCredits
+supplyCredits hfs hbio resolve runParams threshold root uc = \mt0 c0 -> do
+    if c0 <= 0
+      then return 0
+      else supplyTree mt0 c0
+  where
+    mkFreshRunPaths = do
+        runNumber <- uniqueToRunNumber <$> incrUniqCounter uc
+        return (Paths.runPath (Paths.activeDir root) runNumber)
+
+    supplyTree =
+        MR.supplyChecked remainingMergeDebt $ \(DeRef mt) credits ->
+          -- TODO: This locks the tree for everyone, for the entire call.
+          -- Lookups have to wait until supplyCredits is done.
+          -- It should be enough to take the lock only to turn a pending into
+          -- an ongoing or ongoing into completed tree, very briefly.
+          modifyWithActionRegistry
+            (takeMVar (mergeState mt))
+            (putMVar (mergeState mt))
+            (\reg state -> supplyState reg state credits)
+
+    supplyState reg state credits =
+        case state of
+          CompletedTreeMerge _ ->
+            return (state, credits)
+
+          OngoingTreeMerge mr -> do
+            leftovers <- MR.supplyCreditsRelative mr threshold credits
+            if leftovers <= 0
+              then
+                return (state, 0)
+              else do
+                -- complete ongoing merge
+                r <- withRollback reg (MR.expectCompleted mr) releaseRef
+                delayedCommit reg (releaseRef mr)
+                -- all work is done, we can't spend any more credits
+                return (CompletedTreeMerge r, leftovers)
+
+          PendingTreeMerge _
+            | isStructurallyEmptyState state -> do
+            -- make a completely fresh empty run. this can only happen at the
+            -- root. the structurally empty tree still has debt 1, so we want to
+            -- merge it into a single run.
+            -- we handle this as a special case here since in several places
+            -- below we require the list of children to be non-empty.
+            runPaths <- mkFreshRunPaths
+            run <-
+              withRollback reg
+                -- TODO: the builder's handles aren't cleaned up if we fail
+                -- before fromBuilder closes them
+                (Run.newEmpty hfs hbio runParams runPaths)
+                releaseRef
+            return (CompletedTreeMerge run, credits)
+
+          PendingTreeMerge pm -> do
+            leftovers <- supplyPending pm credits
+            if leftovers <= 0
+              then
+                -- still remaining work in children, we can't do more for now
+                return (state, leftovers)
+              else do
+                -- all children must be done, create new merge!
+                state' <- startPendingMerge reg pm
+                -- use any remaining credits to progress the new merge
+                supplyState reg state' leftovers
+
+    supplyPending ::
+         PendingMerge m h -> MR.MergeCredits -> m MR.MergeCredits
+    supplyPending =
+        MR.supplyChecked remainingMergeDebtPendingMerge $ \pm credits -> do
+          case pm of
+            PendingLevelMerge prs mt ->
+              leftToRight supplyPreExisting (V.toList prs) credits
+                >>= leftToRight (flip supplyTree) (toList mt)
+            PendingUnionMerge mts ->
+              splitEqually (flip supplyTree) (V.toList mts) credits
+
+    supplyPreExisting c = \case
+        PreExistingRun _r        -> return c  -- no work to do, all leftovers
+        PreExistingMergingRun mr -> MR.supplyCreditsRelative mr threshold c
+
+    -- supply credits left to right until they are used up
+    leftToRight ::
+         (MR.MergeCredits -> a -> m MR.MergeCredits)
+      -> [a] -> MR.MergeCredits -> m MR.MergeCredits
+    leftToRight _ _      0 = return 0
+    leftToRight _ []     c = return c
+    leftToRight f (x:xs) c = f c x >>= leftToRight f xs
+
+    -- approximately equal, being more precise would require more iterations
+    splitEqually ::
+         (MR.MergeCredits -> a -> m MR.MergeCredits)
+      -> [a] -> MR.MergeCredits -> m MR.MergeCredits
+    splitEqually f xs (MR.MergeCredits credits) =
+        -- first give each tree k = ceil(1/n) credits (last ones might get less).
+        -- it's important we fold here to collect leftovers.
+        -- any remainders go left to right.
+        foldM supplyNth (MR.MergeCredits credits) xs >>= leftToRight f xs
+      where
+        !n = length xs
+        !k = MR.MergeCredits ((credits + (n - 1)) `div` n)
+
+        supplyNth 0 _ = return 0
+        supplyNth c t = do
+            let creditsToSpend = min k c
+            leftovers <- f creditsToSpend t
+            return (c - creditsToSpend + leftovers)
+
+    startPendingMerge reg pm = do
+        (mergeType, rs) <- expectCompletedChildren reg pm
+        assert (V.length rs > 0) $ pure ()
+        runPaths <- mkFreshRunPaths
+        mr <-
+          withRollback reg
+            (MR.new hfs hbio resolve runParams mergeType runPaths rs)
+            releaseRef
+        -- no need for the runs anymore, 'MR.new' made duplicates
+        traverse_ (\r -> delayedCommit reg (releaseRef r)) rs
+        return (OngoingTreeMerge mr)
+
+    -- Child references are released using 'delayedCommit', so they get released
+    -- if the whole supply operation runs successfully (so the pending merge
+    -- is replaced).
+    --
+    -- Returned references are registered in the ActionRegistry, so they will
+    -- get released in case of an exception.
+    expectCompletedChildren ::
+         ActionRegistry m
+      -> PendingMerge m h
+      -> m (MR.TreeMergeType, Vector (Ref (Run m h)))
+    expectCompletedChildren reg (PendingMerge ty prs mts) = do
+        rs1 <- V.forM prs $ \case
+          PreExistingRun r -> do
+            delayedCommit reg (releaseRef r)  -- only released at the end
+            withRollback reg (dupRef r) releaseRef
+          PreExistingMergingRun mr -> do
+            delayedCommit reg (releaseRef mr)  -- only released at the end
+            withRollback reg (MR.expectCompleted mr) releaseRef
+        rs2 <- V.forM mts $ \mt -> do
+          delayedCommit reg (releaseRef mt)  -- only released at the end
+          withRollback reg (expectCompleted mt) releaseRef
+        return (ty, rs1 <> rs2)
+
+-- | This does /not/ release the reference, but allocates a new reference for
+-- the returned run, which must be released at some point.
+expectCompleted ::
+     (MonadMVar m, MonadSTM m, MonadST m, MonadMask m)
+  => Ref (MergingTree m h) -> m (Ref (Run m h))
+expectCompleted (DeRef MergingTree {..}) = do
+    withMVar mergeState $ \case
+      CompletedTreeMerge r -> dupRef r  -- return a fresh reference to the run
+      OngoingTreeMerge mr  -> MR.expectCompleted mr
+      PendingTreeMerge{}   ->
+        error "expectCompleted: expected a completed merging tree, but found a pending one"

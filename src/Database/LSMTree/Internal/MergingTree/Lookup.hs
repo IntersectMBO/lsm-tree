@@ -62,7 +62,6 @@ mergeLookupAcc ::
   -> V.Vector (LookupAcc m h)
   -> LookupAcc m h
 mergeLookupAcc resolve mt accs =
-    -- TODO assert (not (null accs)) $
     assert (V.length accs > 1) $
     assert (V.all ((== V.length (V.head accs)) . V.length) accs) $
       foldl1 (V.zipWith updateEntry) accs
