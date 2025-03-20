@@ -97,7 +97,6 @@ lookups ::
   -> V.Vector (Maybe (Entry SerialisedValue BlobSpan))
 lookups (WB !m) !ks = V.mapStrict (`Map.lookup` m) ks
 
--- | TODO: update once blob references are implemented
 lookup ::
      WriteBuffer
   -> SerialisedKey

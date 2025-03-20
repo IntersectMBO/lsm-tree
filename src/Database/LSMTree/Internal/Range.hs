@@ -11,8 +11,6 @@ import           Control.DeepSeq (NFData (..))
 -------------------------------------------------------------------------------}
 
 -- | A range of keys.
---
--- TODO: consider adding key prefixes to the range type.
 data Range k =
     -- | Inclusive lower bound, exclusive upper bound
     FromToExcluding k k

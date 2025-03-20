@@ -97,10 +97,7 @@ indexSearches !arena !indexes !kopsFiles !ks !rkixs = V.generateM n $ \i -> do
         !k           = ks `V.unsafeIndex` kix
         !pspan       = Index.search k c
         !size        = pageSpanSize pspan
-    -- The current allocation strategy is to allocate a new pinned
-    -- byte array for each 'IOOp'. One optimisation we are planning to
-    -- do is to use a cache of re-usable buffers, in which case we
-    -- decrease the GC load. TODO: re-usable buffers.
+    -- Acquire a reusable buffer
     (!off, !buf) <- allocateFromArena arena (getNumPages size * 4096) 4096
     pure $! IOOpRead
               h
@@ -110,32 +107,6 @@ indexSearches !arena !indexes !kopsFiles !ks !rkixs = V.generateM n $ \i -> do
               (getNumPages size * 4096)
   where
     !n = VP.length rkixs
-
-{-
-  Note [Batched lookups, buffer strategy and restrictions]
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-  As a first implementation, we use a simple buffering strategy for batched
-  lookups: allocate fresh buffers, and GC them once they are no longer used. In
-  a later phase of development, we will look into more elaborate buffer
-  strategies, for example using a cache of page buffers, which reduces the
-  number of blocks of memory that we allocate/free.
-
-  When we implement a reusable buffer strategy, we will have to take extra care
-  to copy bytes from raw pages when necessary. 'rawPageLookup' slices serialised
-  values from pages without copying bytes. If the serialised value survives
-  after the reusable buffer is returned to the cache, accessing that serialised
-  value's bytes has undefined behaviour __unless__ we ensure that we copy from
-  the raw page instead of or in addition to slicing.
-
-  There are currently no alignment constraints on the buffers, but there will be
-  in the future. The plan is to optimise file access by having key\/operation
-  files opened with the @O_DIRECT@ flag, which requires buffers to be aligned to
-  the filesystem block size (typically 4096 bytes). We expect to benefit from
-  this flag in the UTxO use case, because UTxO keys are uniformly distributed
-  hashes, which means that there is little to no spatial locality when
-  performing lookups, and so we can skip looking at the page cache.
--}
 
 -- | Value resolve function: what to do when resolving two @Mupdate@s
 type ResolveSerialisedValue = SerialisedValue -> SerialisedValue -> SerialisedValue

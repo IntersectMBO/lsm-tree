@@ -164,12 +164,7 @@ data MergePolicy =
     -- This makes it easier for delete operations to disappear on the last
     -- level.
     MergePolicyLazyLevelling
-{- TODO: disabled for now. Would we ever want to provide pure tiering?
-  | MergePolicyTiering
--}
-{- TODO: disabled for now
-  | MergePolicyLevelling
--}
+    -- TODO: add other merge policies, like tiering and levelling.
   deriving stock (Eq, Show)
 
 instance NFData MergePolicy where
@@ -200,13 +195,6 @@ data WriteBufferAlloc =
     -- NOTE: if the sizes of values vary greatly, this can lead to wonky runs on
     -- disk, and therefore unpredictable performance.
     AllocNumEntries !NumEntries
-{- TODO: disabled for now
-  | -- | Total number of bytes that the write buffer can use.
-    --
-    -- The maximum is 4GiB, which should be more than enough for realistic
-    -- applications.
-    AllocTotalBytes !Word32
--}
   deriving stock (Show, Eq)
 
 instance NFData WriteBufferAlloc where

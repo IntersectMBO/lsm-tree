@@ -36,7 +36,6 @@ module Database.LSMTree.Internal.MergeSchedule (
   , MergeDebt (..)
   , MergeCredits (..)
   , supplyCredits
-  , creditThresholdForLevel
   , NominalDebt (..)
   , NominalCredits (..)
   , nominalDebtAsCredits
@@ -353,7 +352,6 @@ iforLevelM_ lvls k = V.iforM_ lvls $ \i lvl -> k (LevelNo (i + 1)) lvl
 --
 -- TODO: So far, this is
 -- * not considered when creating cursors (also used for range lookups)
--- * never made merge progress on (by supplying credits to it)
 -- * never merged into the regular levels
 data UnionLevel m h =
     NoUnion
@@ -939,10 +937,3 @@ nominalDebtForLevel TableConfig {
                       confSizeRatio
                     } ln =
     NominalDebt (maxRunSizeTiering (sizeRatioInt confSizeRatio) bufferSize ln)
-
--- TODO: the thresholds for doing merge work should be different for each level,
--- maybe co-prime?
-creditThresholdForLevel :: TableConfig -> LevelNo -> MR.CreditThreshold
-creditThresholdForLevel conf (LevelNo _i) =
-    let AllocNumEntries (NumEntries x) = confWriteBufferAlloc conf
-    in  MR.CreditThreshold (MR.UnspentCredits (MergeCredits x))

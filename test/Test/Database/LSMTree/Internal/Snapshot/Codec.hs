@@ -27,8 +27,6 @@ import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.Arbitrary
 
--- TODO: we should add golden tests for the CBOR encoders. This should prevent
--- accidental breakage in the format.
 tests :: TestTree
 tests = testGroup "Test.Database.LSMTree.Internal.Snapshot.Codec" [
       testGroup "SnapshotVersion" [
