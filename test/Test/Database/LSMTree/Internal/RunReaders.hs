@@ -16,12 +16,11 @@ import qualified Data.Map.Strict as Map
 import           Data.Proxy (Proxy (..))
 import qualified Data.Vector as V
 import           Database.LSMTree.Extras (showPowersOf)
-import           Database.LSMTree.Extras.Generators
-                     (BiasedKeyForIndexCompact (..))
+import           Database.LSMTree.Extras.Generators (BiasedKey (..))
 import           Database.LSMTree.Extras.RunData
 import           Database.LSMTree.Internal.BlobRef
 import           Database.LSMTree.Internal.Entry
-import qualified Database.LSMTree.Internal.Index as Index (IndexType (Compact))
+import qualified Database.LSMTree.Internal.Index as Index (IndexType (Ordinary))
 import qualified Database.LSMTree.Internal.Paths as Paths
 import qualified Database.LSMTree.Internal.Run as Run
 import qualified Database.LSMTree.Internal.RunAcc as RunAcc
@@ -71,7 +70,7 @@ runParams =
     RunBuilder.RunParams {
       runParamCaching = RunBuilder.CacheRunData,
       runParamAlloc   = RunAcc.RunAllocFixed 10,
-      runParamIndex   = Index.Compact
+      runParamIndex   = Index.Ordinary
     }
 
 --------------------------------------------------------------------------------
@@ -94,7 +93,7 @@ size :: MockReaders -> Int
 size (MockReaders xs) = length xs
 
 newMock :: Maybe SerialisedKey
-        -> [RunData BiasedKeyForIndexCompact SerialisedValue SerialisedBlob]
+        -> [RunData BiasedKey SerialisedValue SerialisedBlob]
         -> MockReaders
 newMock offset =
       MockReaders . Map.assocs . Map.unions
@@ -143,9 +142,9 @@ deriving stock instance Eq   (Action (Lockstep ReadersState) a)
 
 instance StateModel (Lockstep ReadersState) where
   data Action (Lockstep ReadersState) a where
-    New          :: Maybe BiasedKeyForIndexCompact  -- ^ optional offset
-                 -> Maybe (RunData BiasedKeyForIndexCompact SerialisedValue SerialisedBlob)
-                 -> [RunData BiasedKeyForIndexCompact SerialisedValue SerialisedBlob]
+    New          :: Maybe BiasedKey  -- ^ optional offset
+                 -> Maybe (RunData BiasedKey SerialisedValue SerialisedBlob)
+                 -> [RunData BiasedKey SerialisedValue SerialisedBlob]
                  -> ReadersAct ()
     PeekKey      :: ReadersAct SerialisedKey
     Pop          :: Int  -- allow popping many at once to drain faster

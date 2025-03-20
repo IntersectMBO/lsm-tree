@@ -70,7 +70,7 @@ dl_example = do
         , confSizeRatio = Four
         , confWriteBufferAlloc = AllocNumEntries (NumEntries 4)
         , confBloomFilterAlloc = AllocFixed 10
-        , confFencePointerIndex = CompactIndex
+        , confFencePointerIndex = OrdinaryIndex
         , confDiskCachePolicy = DiskCacheNone
         , confMergeSchedule = OneShot })
     let kvs :: Map.Map Key Value

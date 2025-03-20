@@ -3,7 +3,7 @@ module Test.Database.LSMTree.Generators (
   ) where
 
 import           Data.Bifoldable (bifoldMap)
-import           Data.Coerce (coerce)
+import           Data.Coerce (Coercible, coerce)
 import qualified Data.Map.Strict as Map
 import qualified Data.Vector.Primitive as VP
 import           Data.Word (Word64, Word8)
@@ -70,8 +70,15 @@ tests = testGroup "Test.Database.LSMTree.Generators" [
         prop_arbitraryAndShrinkPreserveInvariant noTags $
           isKeyForIndexCompact . getBiasedKeyForIndexCompact
     , testGroup "lists of key/op pairs" $
-        prop_arbitraryAndShrinkPreserveInvariant labelTestKOps $
-          deepseqInvariant
+        [ testGroup "BiasedKey" $
+            prop_arbitraryAndShrinkPreserveInvariant
+              (labelTestKOps @BiasedKey)
+              deepseqInvariant
+        , testGroup "BiasedKeyForIndexCompact" $
+            prop_arbitraryAndShrinkPreserveInvariant
+              (labelTestKOps @BiasedKeyForIndexCompact)
+              deepseqInvariant
+        ]
     , testGroup "helpers"
         [ testProperty "prop_shrinkVec" $ \vec ->
             shrinkVec (QC.shrink @Int) vec === map VP.fromList (QC.shrink (VP.toList vec))
@@ -127,9 +134,13 @@ labelRawBytes rb =
     QC.tabulate "size" [showPowersOf 2 (RB.size rb)]
 
 type TestEntry = Entry SerialisedValue BlobSpan
-type TestKOp = (BiasedKeyForIndexCompact, TestEntry)
+type TestKOp k = (k, TestEntry)
 
-labelTestKOps :: [TestKOp] -> Property -> Property
+labelTestKOps ::
+     Coercible k SerialisedKey
+  => [TestKOp k]
+  -> Property
+  -> Property
 labelTestKOps kops' =
       QC.tabulate "key occurrences (>1 is collision)" (map (show . snd) (Map.assocs keyCounts))
     . QC.tabulate "key sizes" (map (showPowersOf 4 . sizeofKey) keys)

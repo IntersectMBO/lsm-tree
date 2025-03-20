@@ -36,6 +36,7 @@ module Database.LSMTree.Extras.Generators (
   , LargeRawBytes (..)
   , isKeyForIndexCompact
   , KeyForIndexCompact (..)
+  , BiasedKey (..)
   , BiasedKeyForIndexCompact (..)
     -- * helpers
   , shrinkVec
@@ -564,26 +565,40 @@ instance Arbitrary KeyForIndexCompact where
 
 deriving newtype instance SerialiseKey KeyForIndexCompact
 
+-- we try to make collisions and close keys more likely (very crudely)
+arbitraryBiasedKey :: (RawBytes -> k) -> Gen RawBytes -> Gen k
+arbitraryBiasedKey fromRB genUnbiased = fromRB <$> frequency
+    [ (6, genUnbiased)
+    , (1, do
+        lastByte <- QC.sized $ skewedWithMax . fromIntegral
+        return (RB.pack ([1,3,3,7,0,1,7] <> [lastByte]))
+      )
+    ]
+    where
+      -- generates a value in range from 0 to ub, but skewed towards low end
+      skewedWithMax ub0 = do
+        ub1 <- QC.chooseBoundedIntegral (0, ub0)
+        ub2 <- QC.chooseBoundedIntegral (0, ub1)
+        QC.chooseBoundedIntegral (0, ub2)
+
+newtype BiasedKey = BiasedKey { getBiasedKey :: RawBytes }
+  deriving stock (Eq, Ord, Show)
+  deriving newtype NFData
+
+instance Arbitrary BiasedKey where
+  arbitrary = arbitraryBiasedKey BiasedKey arbitrary
+
+  shrink (BiasedKey rb) = [BiasedKey rb' | rb' <- shrink rb]
+
+deriving newtype instance SerialiseKey BiasedKey
+
 newtype BiasedKeyForIndexCompact =
     BiasedKeyForIndexCompact { getBiasedKeyForIndexCompact :: RawBytes }
   deriving stock (Eq, Ord, Show)
   deriving newtype NFData
 
 instance Arbitrary BiasedKeyForIndexCompact where
-  -- we try to make collisions and close keys more likely (very crudely)
-  arbitrary = BiasedKeyForIndexCompact <$> frequency
-      [ (6, genKeyForIndexCompact)
-      , (1, do
-          lastByte <- QC.sized $ skewedWithMax . fromIntegral
-          return (RB.pack ([1,3,3,7,0,1,7] <> [lastByte]))
-        )
-      ]
-      where
-        -- generates a value in range from 0 to ub, but skewed towards low end
-        skewedWithMax ub0 = do
-          ub1 <- QC.chooseBoundedIntegral (0, ub0)
-          ub2 <- QC.chooseBoundedIntegral (0, ub1)
-          QC.chooseBoundedIntegral (0, ub2)
+  arbitrary = arbitraryBiasedKey BiasedKeyForIndexCompact genKeyForIndexCompact
 
   shrink (BiasedKeyForIndexCompact rb) =
       [ BiasedKeyForIndexCompact rb'

@@ -17,7 +17,8 @@ import qualified System.FS.API as FS
 import           Database.LSMTree as R
 
 import           Control.Exception (Exception, bracket, try)
-import           Database.LSMTree.Extras.Generators (KeyForIndexCompact)
+import           Database.LSMTree.Extras.Generators ()
+import           Database.LSMTree.Internal.Serialise (SerialisedKey)
 import qualified Test.QuickCheck.Arbitrary as QC
 import qualified Test.QuickCheck.Gen as QC
 import           Test.Tasty (TestTree, testGroup)
@@ -242,7 +243,7 @@ newtype Blob1  = Blob1 Word64
 label1 :: SnapshotLabel
 label1 = SnapshotLabel "Key1 Value1 Blob1"
 
-newtype Key2 = Key2 KeyForIndexCompact
+newtype Key2 = Key2 SerialisedKey
   deriving stock (Show, Eq, Ord)
   deriving newtype (QC.Arbitrary, SerialiseKey)
 
