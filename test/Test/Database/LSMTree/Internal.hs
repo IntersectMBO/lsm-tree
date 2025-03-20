@@ -2,10 +2,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
 
-{- HLINT ignore "Use <=<" -}
-
--- TODO: generalise tests in this module for IOSim, not just IO. Do this once we
--- add proper support for IOSim for fault testing.
 module Test.Database.LSMTree.Internal (tests) where
 
 import           Control.Exception

@@ -768,8 +768,6 @@ data Action' h a where
     => Var h (WrapTable h IO k v b)
     -> Portion
     -> Act' h R.UnionCredits
-  -- TODO: we should assert that debt decreases monotonically as credits are
-  -- supplied.
 
 portionOf :: Portion -> R.UnionDebt -> R.UnionCredits
 portionOf (Portion denominator) (R.UnionDebt debt)
@@ -1317,7 +1315,7 @@ instance ( Eq (Class.TableConfig h)
   Interpreter for the model
 -------------------------------------------------------------------------------}
 
--- TODO: there are a bunch of TODO(err) in 'runMode;' on the last argument to
+-- TODO: there are a bunch of TODO(err) in 'runModel' on the last argument to
 -- 'Model.runModelMWithInjectedErrors'. This last argument defines how the model
 -- should respond to injected errors. Since we don't generate injected errors
 -- for most of these actions yet, they are left open. We will fill these in as
@@ -2591,12 +2589,6 @@ data Tag =
   | DeleteExistingSnapshot
     -- | Delete a missing snapshot
   | DeleteMissingSnapshot
-    -- | Open a snapshot with the wrong label
-  | OpenSnapshotWrongLabel -- TODO: implement
-    -- | A merge happened on level @n@
-  | MergeOnLevel Int -- TODO: implement
-    -- | A table was closed twice
-  | TableCloseTwice String -- TODO: implement
     -- | A corrupted snapshot was created successfully
   | CreateSnapshotCorrupted R.SnapshotName
     -- | An /un/corrupted snapshot was created successfully
@@ -2718,8 +2710,6 @@ data FinalTag =
   | ActionSuccess String
     -- | Which actions failed
   | ActionFail String Model.Err
-    -- | Total number of flushes
-  | NumFlushes String -- TODO: implement
     -- | Number of tables created (new, open or duplicate)
   | NumTables String
     -- | Number of actions on each table

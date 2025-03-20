@@ -130,7 +130,6 @@ sameOp = go
 instance Eq (Op a b)  where
   (==) = sameOp
 
--- TODO: parentheses
 instance Show (Op a b) where
   showsPrec :: Int -> Op a b -> ShowS
   showsPrec p = \op -> case op of
