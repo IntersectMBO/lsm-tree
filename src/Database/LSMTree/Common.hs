@@ -77,11 +77,10 @@ import           System.FS.IO (HandleIO)
 -------------------------------------------------------------------------------}
 
 -- | Utility class for grouping @io-classes@ constraints.
-class ( MonadAsync m, MonadMVar m, MonadThrow (STM m), MonadThrow m
-      , MonadCatch m , MonadMask m, PrimMonad m, MonadST m
-      ) => IOLike m
-
-instance IOLike IO
+type IOLike m = (
+      MonadAsync m, MonadMVar m, MonadThrow (STM m), MonadThrow m
+    , MonadCatch m , MonadMask m, PrimMonad m, MonadST m
+    )
 
 {-------------------------------------------------------------------------------
   Sessions

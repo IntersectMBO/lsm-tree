@@ -20,7 +20,7 @@ import           Control.Monad ((<=<))
 import           Control.Monad.IOSim (IOSim)
 import           Data.Kind (Type)
 import           Database.LSMTree (Cursor, LookupResult, QueryResult, Table)
-import           Database.LSMTree.Common (BlobRef, IOLike, SerialiseValue)
+import           Database.LSMTree.Common (BlobRef, SerialiseValue)
 import           Database.LSMTree.Internal.Serialise (SerialiseKey)
 import           Test.QuickCheck.Modifiers (Small (..))
 import           Test.QuickCheck.StateModel (Realized)
@@ -33,8 +33,6 @@ import           Test.Util.TypeFamilyWrappers (WrapBlob (..), WrapBlobRef (..),
 {-------------------------------------------------------------------------------
   IOSim
 -------------------------------------------------------------------------------}
-
-instance IOLike (IOSim s)
 
 type instance Realized (IOSim s) a = RealizeIOSim s a
 
