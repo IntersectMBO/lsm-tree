@@ -4,11 +4,14 @@
 
 module Test.Database.LSMTree.Internal (tests) where
 
+import           Control.Concurrent.Class.MonadMVar (MonadMVar)
+import           Control.Concurrent.Class.MonadSTM (MonadSTM)
 import           Control.Exception
+import           Control.Monad.Class.MonadThrow (MonadMask)
+import           Control.Monad.Primitive (PrimMonad)
 import           Control.Tracer
 import           Data.Bifunctor (Bifunctor (..))
 import           Data.Coerce (coerce)
-import           Data.Foldable (traverse_)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (isJust, mapMaybe)
 import qualified Data.Vector as V
@@ -31,8 +34,8 @@ tests = testGroup "Test.Database.LSMTree.Internal" [
       testGroup "Session" [
           testProperty "newSession" newSession
         , testProperty "restoreSession" restoreSession
-        , testProperty "twiceOpenSession" twiceOpenSession
-        , testCase "sessionDirLayoutMismatch" sessionDirLayoutMismatch
+        , testProperty "sessionDirLocked" sessionDirLocked
+        , testCase "sessionDirCorrupted" sessionDirCorrupted
         , testCase "sessionDirDoesNotExist" sessionDirDoesNotExist
         ]
     , testGroup "Cursor" [
@@ -80,34 +83,37 @@ restoreSession (Positive (Small bufferSize)) es =
       }
     es' = fmap (bimap serialiseKey (bimap serialiseValue serialiseBlob)) es
 
-twiceOpenSession :: Property
-twiceOpenSession = ioProperty $
-    withTempIOHasBlockIO "twiceOpenSession" $ \hfs hbio -> do
-      bracket (openSession nullTracer hfs hbio (FS.mkFsPath []))
-              closeSession $ \_ ->
-        bracket (try @LSMTreeError (openSession nullTracer hfs hbio (FS.mkFsPath [])))
-                (traverse_ closeSession) $ \case
-          Left (SessionDirLocked _) -> pure ()
+sessionDirLocked :: Property
+sessionDirLocked = ioProperty $
+    withTempIOHasBlockIO "sessionDirLocked" $ \hfs hbio -> do
+      bracket (openSession nullTracer hfs hbio (FS.mkFsPath [])) closeSession $ \_sesh1 ->
+        bracket (try @SessionDirLockedError $ openSession nullTracer hfs hbio (FS.mkFsPath [])) tryCloseSession $ \case
+          Left (ErrSessionDirLocked _dir) -> pure ()
           x -> assertFailure $ "Opening a session twice in the same directory \
-                              \should fail with an SessionDirLocked error, but \
+                              \should fail with an ErrSessionDirLocked error, but \
                               \it returned this instead: " <> showLeft "Session" x
 
-sessionDirLayoutMismatch :: Assertion
-sessionDirLayoutMismatch = withTempIOHasBlockIO "sessionDirLayoutMismatch" $ \hfs hbio -> do
+sessionDirCorrupted :: Assertion
+sessionDirCorrupted =
+  withTempIOHasBlockIO "sessionDirCorrupted" $ \hfs hbio -> do
     FS.createDirectory hfs (FS.mkFsPath ["unexpected-directory"])
-    try @LSMTreeError (openSession nullTracer hfs hbio (FS.mkFsPath [])) >>= \case
-      Left (SessionDirMalformed _) -> pure ()
+    bracket (try @SessionDirCorruptedError (openSession nullTracer hfs hbio (FS.mkFsPath []))) tryCloseSession $ \case
+      Left (ErrSessionDirCorrupted _dir) -> pure ()
       x -> assertFailure $ "Restoring a session in a directory with a wrong \
-                           \layout should fail with a SessionDirMalformed, but \
+                           \layout should fail with a ErrSessionDirCorrupted, but \
                            \it returned this instead: " <> showLeft "Session" x
 
 sessionDirDoesNotExist :: Assertion
 sessionDirDoesNotExist = withTempIOHasBlockIO "sessionDirDoesNotExist" $ \hfs hbio -> do
-    try @LSMTreeError (openSession nullTracer hfs hbio (FS.mkFsPath ["missing-dir"])) >>= \case
-      Left (SessionDirDoesNotExist _) -> pure ()
+  bracket (try @SessionDirDoesNotExistError (openSession nullTracer hfs hbio (FS.mkFsPath ["missing-dir"]))) tryCloseSession $ \case
+      Left (ErrSessionDirDoesNotExist _dir) -> pure ()
       x -> assertFailure $ "Opening a session in a non-existent directory should \
-                           \fail with a SessionDirDoesNotExist error, but it \
+                           \fail with a ErrSessionDirDoesNotExist error, but it \
                            \returned this instead: " <> showLeft "Session" x
+
+-- | Internal helper: close a session opened with 'try'.
+tryCloseSession :: (MonadMask m, MonadSTM m, MonadMVar m, PrimMonad m) => Either e (Session m h) -> m ()
+tryCloseSession = either (const $ pure ()) closeSession
 
 showLeft :: Show a => String -> Either a b -> String
 showLeft x = \case

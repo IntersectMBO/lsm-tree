@@ -1,8 +1,8 @@
 module Database.LSMTree.Internal.Snapshot (
     -- * Snapshot metadata
-    SnapshotMetaData (..)
-  , SnapshotLabel (..)
+    SnapshotLabel (..)
   , SnapshotTableType (..)
+  , SnapshotMetaData (..)
     -- * Levels snapshot format
   , SnapLevels (..)
   , SnapLevel (..)
@@ -44,7 +44,7 @@ import           Control.Monad.Class.MonadThrow (MonadMask, bracket,
 import           Control.Monad.Primitive (PrimMonad)
 import           Control.RefCount
 import           Data.Foldable (sequenceA_, traverse_)
-import           Data.String (IsString (..))
+import           Data.String (IsString)
 import           Data.Text (Text)
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Config
@@ -520,7 +520,7 @@ openWriteBuffer reg resolve hfs hbio uc activeDir snapWriteBufferPaths = do
   -- TODO: This reads the blobfile twice: once to check the CRC and once more
   --       to copy it from the snapshot directory to the active directory.
   (expectedChecksumForKOps, expectedChecksumForBlob) <-
-    CRC.expectValidFile (writeBufferChecksumsPath snapWriteBufferPaths) . fromChecksumsFileForWriteBufferFiles
+    CRC.expectValidFile (writeBufferChecksumsPath snapWriteBufferPaths) CRC.FormatWriteBufferFile . fromChecksumsFileForWriteBufferFiles
       =<< CRC.readChecksumsFile hfs (writeBufferChecksumsPath snapWriteBufferPaths)
   checkCRC hfs hbio False (unForKOps expectedChecksumForKOps) (writeBufferKOpsPath snapWriteBufferPaths)
   checkCRC hfs hbio False (unForBlob expectedChecksumForBlob) (writeBufferBlobPath snapWriteBufferPaths)

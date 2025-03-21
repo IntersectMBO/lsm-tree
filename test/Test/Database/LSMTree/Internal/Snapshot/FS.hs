@@ -3,7 +3,6 @@
 -- | Tests for snapshots and their interaction with the file system
 module Test.Database.LSMTree.Internal.Snapshot.FS (tests) where
 
-import           Codec.CBOR.Read (DeserialiseFailure)
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.IOSim (runSimOrThrow)
 import           Control.Tracer
@@ -14,7 +13,6 @@ import           Database.LSMTree.Extras (showPowersOf10)
 import           Database.LSMTree.Extras.Generators ()
 import           Database.LSMTree.Internal
 import           Database.LSMTree.Internal.Config
-import           Database.LSMTree.Internal.CRC32C
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.Paths
 import           Database.LSMTree.Internal.Serialise
@@ -47,14 +45,15 @@ tests = testGroup "Test.Database.LSMTree.Internal.Snapshot.FS" [
 -- separate, so that there are fewer cases to account for (like @allNull@
 -- errors) in prop_fault_fsRoundtripSnapshotMetaData
 prop_fsRoundtripSnapshotMetaData :: SnapshotMetaData -> Property
-prop_fsRoundtripSnapshotMetaData metaData =
+prop_fsRoundtripSnapshotMetaData metadata =
     ioProperty $
     withTempIOHasFS "temp" $ \hfs -> do
-      writeFileSnapshotMetaData hfs contentPath checksumPath metaData
-      eMetaData' <- readFileSnapshotMetaData hfs contentPath checksumPath
-      pure $ case eMetaData' of
+      writeFileSnapshotMetaData hfs contentPath checksumPath metadata
+      snapshotMetaData' <-
+        try @_ @FileCorruptedError (readFileSnapshotMetaData hfs contentPath checksumPath)
+      pure $ case snapshotMetaData' of
         Left e          -> counterexample (show e) False
-        Right metaData' -> metaData === metaData'
+        Right metadata' -> metadata === metadata'
   where
     contentPath  = mkFsPath ["content"]
     checksumPath = mkFsPath ["checksum"]
@@ -89,8 +88,8 @@ prop_fault_fsRoundtripSnapshotMetaData testErrs metadata =
         -- equal to the metadata that was written to disk.
         prop =
           case readResult of
-            Right (Right metadata') -> metadata === metadata'
-            _                       -> property True
+            Right metadata' -> metadata === metadata'
+            _               -> property True
 
       pure $
         -- TODO: there are some scenarios that we never hit, like deserialise
@@ -113,7 +112,7 @@ prop_fault_fsRoundtripSnapshotMetaData testErrs metadata =
     -- contents are not printed.
     mkLabel ::
          Either FsError ()
-      -> Either SomeException (Either DeserialiseFailure SnapshotMetaData)
+      -> Either SomeException SnapshotMetaData
       -> String
     mkLabel writeResult readResult =
         "("  <> mkLabelWriteResult writeResult <>
@@ -126,22 +125,20 @@ prop_fault_fsRoundtripSnapshotMetaData testErrs metadata =
         Right ()       -> "Right ()"
 
     mkLabelReadResult ::
-         Either SomeException (Either DeserialiseFailure SnapshotMetaData)
+         Either SomeException SnapshotMetaData
       -> String
     mkLabelReadResult = \case
         Left e
           | Just FsError{} <- fromException e ->
               "Left FSError"
-          | Just FileFormatError{} <- fromException e ->
-              "Left FileFormatError"
-          | Just ChecksumsFileFormatError{} <- fromException e ->
-              "Left ChecksumsFileFormatError"
+          | Just ErrFileFormatInvalid{} <- fromException e ->
+              "Left ErrFileFormatInvalid"
+          | Just ErrFileChecksumMismatch{} <- fromException e ->
+              "Left ErrFileChecksumMismatch"
           | otherwise ->
               error ("impossible: " <> show e)
-        Right (Left (_ :: DeserialiseFailure)) ->
-          "Right (Left DeserialiseFailure)"
-        Right (Right (_ :: SnapshotMetaData)) ->
-          "Right (Right SnapshotMetaData)"
+        Right (_ :: SnapshotMetaData) ->
+          "Right SnapshotMetaData"
 
 data TestErrors = TestErrors {
     writeErrors :: Errors
