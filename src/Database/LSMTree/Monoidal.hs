@@ -105,9 +105,7 @@ module Database.LSMTree.Monoidal (
   , Common.SnapshotLabel (..)
   , createSnapshot
   , openSnapshot
-  , Common.TableConfigOverride
-  , Common.configNoOverride
-  , Common.configOverrideDiskCachePolicy
+  , Common.OverrideDiskCachePolicy (..)
   , deleteSnapshot
   , listSnapshots
 
@@ -161,6 +159,7 @@ import qualified Database.LSMTree.Internal as Internal
 import qualified Database.LSMTree.Internal.Entry as Entry
 import           Database.LSMTree.Internal.RawBytes (RawBytes)
 import qualified Database.LSMTree.Internal.Serialise as Internal
+import qualified Database.LSMTree.Internal.Snapshot as Internal
 import qualified Database.LSMTree.Internal.Vector as V
 import           GHC.Exts (Proxy#, proxy#)
 
@@ -578,12 +577,12 @@ createSnapshot :: forall m k v.
   -> Table m k v
   -> m ()
 createSnapshot label snap (Internal.MonoidalTable t) =
-    Internal.createSnapshot snap label Common.SnapMonoidalTable t
+    Internal.createSnapshot snap label Internal.SnapMonoidalTable t
 
 {-# SPECIALISE openSnapshot ::
      ResolveValue v
   => Session IO
-  -> Common.TableConfigOverride
+  -> Common.OverrideDiskCachePolicy
   -> Common.SnapshotLabel
   -> Common.SnapshotName
   -> IO (Table IO k v) #-}
@@ -610,17 +609,17 @@ openSnapshot :: forall m k v.
      , ResolveValue v
      )
   => Session m
-  -> Common.TableConfigOverride -- ^ Optional config override
+  -> Common.OverrideDiskCachePolicy
   -> Common.SnapshotLabel
   -> Common.SnapshotName
   -> m (Table m k v)
-openSnapshot (Internal.Session' sesh) override label snap =
+openSnapshot (Internal.Session' sesh) policyOverride label snap =
     Internal.MonoidalTable <$>
       Internal.openSnapshot
         sesh
+        policyOverride
         label
-        Common.SnapMonoidalTable
-        override
+        Internal.SnapMonoidalTable
         snap
         (resolve @v Proxy)
 

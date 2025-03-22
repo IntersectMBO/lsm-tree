@@ -112,8 +112,8 @@ unit_twoTableTypes =
 
       createSnapshot label1 snap1 table1
       createSnapshot label2 snap2 table2
-      table1' <- openSnapshot @_ @Key1 @Value1 @Blob1 sess configNoOverride label1 snap1
-      table2' <- openSnapshot @_ @Key2 @Value2 @Blob2 sess configNoOverride label2 snap2
+      table1' <- openSnapshot @_ @Key1 @Value1 @Blob1 sess NoOverrideDiskCachePolicy label1 snap1
+      table2' <- openSnapshot @_ @Key2 @Value2 @Blob2 sess NoOverrideDiskCachePolicy label2 snap2
 
       vs1 <- lookups table1' ((\(k,_,_)->k) <$> ins1)
       vs2 <- lookups table2' ((\(k,_,_)->k) <$> ins2)
@@ -141,11 +141,11 @@ unit_snapshots =
       assertException (ErrSnapshotWrongLabel snap1
                         (SnapshotLabel "Key2 Value2 Blob2")
                         (SnapshotLabel "Key1 Value1 Blob1")) $ do
-        _ <- openSnapshot @_ @Key2 @Value2 @Blob2 sess configNoOverride label2 snap1
+        _ <- openSnapshot @_ @Key2 @Value2 @Blob2 sess NoOverrideDiskCachePolicy label2 snap1
         return ()
 
       assertException (ErrSnapshotDoesNotExist snap2) $ do
-        _ <- openSnapshot @_ @Key1 @Value1 @Blob1 sess configNoOverride label2 snap2
+        _ <- openSnapshot @_ @Key1 @Value1 @Blob1 sess NoOverrideDiskCachePolicy label2 snap2
         return ()
   where
     snap1, snap2 :: SnapshotName

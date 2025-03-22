@@ -289,7 +289,7 @@ instance IsTable R.Table where
 
     createSnapshot = R.createSnapshot
     corruptSnapshot = rCorruptSnapshot
-    openSnapshot sesh snap = R.openSnapshot sesh R.configNoOverride snap
+    openSnapshot sesh snap = R.openSnapshot sesh R.NoOverrideDiskCachePolicy snap
 
     duplicate = R.duplicate
 

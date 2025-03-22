@@ -35,7 +35,6 @@ module Database.LSMTree.Common (
   , Internal.Range (..)
     -- * Snapshots
   , Internal.SnapshotLabel (..)
-  , Internal.SnapshotTableType (..)
   , deleteSnapshot
   , listSnapshots
     -- ** Snapshot names
@@ -57,10 +56,8 @@ module Database.LSMTree.Common (
   , Internal.DiskCachePolicy (..)
   , Internal.MergeSchedule (..)
   , Internal.defaultMergeSchedule
-    -- * Table configuration override
-  , Internal.TableConfigOverride
-  , Internal.configNoOverride
-  , Internal.configOverrideDiskCachePolicy
+    -- ** Override
+  , Internal.OverrideDiskCachePolicy (..)
     -- * Unions
   , UnionDebt (..)
   , UnionCredits (..)
@@ -78,6 +75,7 @@ import           Data.Typeable (Typeable)
 import qualified Database.LSMTree.Internal as Internal
 import qualified Database.LSMTree.Internal.BlobRef as Internal
 import qualified Database.LSMTree.Internal.Config as Internal
+import qualified Database.LSMTree.Internal.Config.Override as Internal
 import qualified Database.LSMTree.Internal.Entry as Internal
 import qualified Database.LSMTree.Internal.MergeSchedule as Internal
 import           Database.LSMTree.Internal.Paths (SnapshotName)
