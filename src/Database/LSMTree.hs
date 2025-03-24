@@ -126,7 +126,6 @@ import qualified Database.LSMTree.Internal.BlobRef as Internal
 import qualified Database.LSMTree.Internal.Entry as Entry
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import qualified Database.LSMTree.Internal.Serialise as Internal
-import qualified Database.LSMTree.Internal.Snapshot as Internal
 import qualified Database.LSMTree.Internal.Vector as V
 import           Database.LSMTree.Monoidal (ResolveValue (..),
                      resolveDeserialised, resolveValueAssociativity,
@@ -486,7 +485,7 @@ createSnapshot :: forall m k v b.
   -> Table m k v b
   -> m ()
 createSnapshot label snap (Internal.Table' t) =
-    void $ Internal.createSnapshot snap label Internal.SnapFullTable t
+    void $ Internal.createSnapshot snap label t
 
 {-# SPECIALISE openSnapshot ::
      ResolveValue v
@@ -505,7 +504,7 @@ openSnapshot :: forall m k v b.
   -> SnapshotName
   -> m (Table m k v b)
 openSnapshot (Internal.Session' sesh) override label snap =
-    Internal.Table' <$!> Internal.openSnapshot sesh label Internal.SnapFullTable override snap (resolve (Proxy @v))
+    Internal.Table' <$!> Internal.openSnapshot sesh label override snap (resolve (Proxy @v))
 
 {-------------------------------------------------------------------------------
   Mutiple writable tables
