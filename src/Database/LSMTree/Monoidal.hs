@@ -146,7 +146,6 @@ import qualified Database.LSMTree.Internal as Internal
 import qualified Database.LSMTree.Internal.Entry as Entry
 import           Database.LSMTree.Internal.RawBytes (RawBytes)
 import qualified Database.LSMTree.Internal.Serialise as Internal
-import qualified Database.LSMTree.Internal.Snapshot as Internal
 import qualified Database.LSMTree.Internal.Vector as V
 import           GHC.Exts (Proxy#, proxy#)
 
@@ -564,7 +563,7 @@ createSnapshot :: forall m k v.
   -> Table m k v
   -> m ()
 createSnapshot label snap (Internal.MonoidalTable t) =
-    Internal.createSnapshot snap label Internal.SnapMonoidalTable t
+    Internal.createSnapshot snap label t
 
 {-# SPECIALISE openSnapshot ::
      ResolveValue v
@@ -605,7 +604,6 @@ openSnapshot (Internal.Session' sesh) override label snap =
       Internal.openSnapshot
         sesh
         label
-        Internal.SnapMonoidalTable
         override
         snap
         (resolve @v Proxy)

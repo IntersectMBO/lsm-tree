@@ -215,10 +215,6 @@ data LSMTreeError =
   | ErrSnapshotExists SnapshotName
   | ErrSnapshotDoesNotExist SnapshotName
   | ErrSnapshotDeserialiseFailure DeserialiseFailure SnapshotName
-  | ErrSnapshotWrongTableType
-      SnapshotName
-      SnapshotTableType -- ^ Expected type
-      SnapshotTableType -- ^ Actual type
   | ErrSnapshotWrongLabel
       SnapshotName
       SnapshotLabel -- ^ Expected label
@@ -1191,7 +1187,6 @@ readCursorWhile resolve keyIsWanted n Cursor {..} fromEntry = do
 {-# SPECIALISE createSnapshot ::
      SnapshotName
   -> SnapshotLabel
-  -> SnapshotTableType
   -> Table IO h
   -> IO () #-}
 -- |  See 'Database.LSMTree.Normal.createSnapshot''.
@@ -1199,10 +1194,9 @@ createSnapshot ::
      (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => SnapshotName
   -> SnapshotLabel
-  -> SnapshotTableType
   -> Table m h
   -> m ()
-createSnapshot snap label tableType t = do
+createSnapshot snap label t = do
     traceWith (tableTracer t) $ TraceSnapshot snap
     withOpenTable t $ \tEnv ->
       withActionRegistry $ \reg -> do -- TODO: use the action registry for all side effects
@@ -1255,7 +1249,6 @@ createSnapshot snap label tableType t = do
 
         let snapMetaData = SnapshotMetaData
                 label
-                tableType
                 (tableConfig t)
                 snapWriteBufferNumber
                 snapLevels'
@@ -1270,7 +1263,6 @@ createSnapshot snap label tableType t = do
 {-# SPECIALISE openSnapshot ::
      Session IO h
   -> SnapshotLabel
-  -> SnapshotTableType
   -> TableConfigOverride
   -> SnapshotName
   -> ResolveSerialisedValue
@@ -1280,12 +1272,11 @@ openSnapshot ::
      (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => Session m h
   -> SnapshotLabel -- ^ Expected label
-  -> SnapshotTableType -- ^ Expected table type
   -> TableConfigOverride -- ^ Optional config override
   -> SnapshotName
   -> ResolveSerialisedValue
   -> m (Table m h)
-openSnapshot sesh label tableType override snap resolve = do
+openSnapshot sesh label override snap resolve = do
     traceWith (sessionTracer sesh) $ TraceOpenSnapshot snap override
     withOpenSession sesh $ \seshEnv -> do
       withActionRegistry $ \reg -> do
@@ -1304,10 +1295,7 @@ openSnapshot sesh label tableType override snap resolve = do
           Left e  -> throwIO (ErrSnapshotDeserialiseFailure e snap)
           Right x -> pure x
 
-        let SnapshotMetaData label' tableType' conf snapWriteBuffer snapLevels mTreeOpt = snapMetaData
-
-        unless (tableType == tableType') $
-          throwIO (ErrSnapshotWrongTableType snap tableType tableType')
+        let SnapshotMetaData label' conf snapWriteBuffer snapLevels mTreeOpt = snapMetaData
 
         unless (label == label') $
           throwIO (ErrSnapshotWrongLabel snap label label')

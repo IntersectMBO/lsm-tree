@@ -485,7 +485,6 @@ lsmTreeErrorHandler = Handler $ pure . handler'
     handler' ErrCursorClosed              = Just Model.ErrCursorClosed
     handler' (ErrSnapshotDoesNotExist _snap) = Just Model.ErrSnapshotDoesNotExist
     handler' (ErrSnapshotExists _snap)    = Just Model.ErrSnapshotExists
-    handler' ErrSnapshotWrongTableType{}  = Just Model.ErrSnapshotWrongType
     handler' (ErrBlobRefInvalid _)        = Just Model.ErrBlobRefInvalidated
     handler' e                            = Just (Model.ErrOther (displayException e))
 
