@@ -284,6 +284,17 @@ test-suite bloomfilter-tests
     , tasty-quickcheck
     , vector
 
+benchmark bloomfilter-bench
+  import:         language
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: bloomfilter/bench
+  main-is:        bloomfilter-bench.hs
+  build-depends:
+    , base
+    , lsm-tree:bloomfilter
+    , criterion
+    , random
+
 test-suite bloomfilter-primes
   import:         language
   type:           exitcode-stdio-1.0
