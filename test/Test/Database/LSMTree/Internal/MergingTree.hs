@@ -138,8 +138,9 @@ prop_lookupTree hfs hbio keys mtd = do
       -> IO (V.Vector (Maybe (Entry v SerialisedBlob)))
     fetchBlobs = traverse (traverse (traverse (readWeakBlobRef hfs)))
 
-    -- trees are always in the last level, there is no distinction between
-    -- (Nothing and Just Delete), (Insert and Mupsert)
+    -- the lookup accs might be different between implementation and model
+    -- (Nothing vs. Just Delete, Insert vs. Mupsert), but this doesn't matter
+    -- for the final result of the lookup
     normalise = V.map toLookupResult
 
     toLookupResult Nothing  = Nothing
@@ -156,13 +157,14 @@ prop_lookupTree hfs hbio keys mtd = do
             return $ V.map (const Nothing) keys
           False -> do
             batches <- buildLookupTree reg tree
-            releaseLookupTree reg batches  -- only happens at the end
             results <- traverse (performLookups mgr) batches
-            foldLookupTree resolveVal results
+            acc <- foldLookupTree resolveVal results
+            releaseLookupTree reg batches
+            return acc
 
     performLookups mgr runs =
         Async.async $
-          Lookup.lookupsIOWithoutWriteBuffer
+          Lookup.lookupsIO
             hbio
             mgr
             resolveVal

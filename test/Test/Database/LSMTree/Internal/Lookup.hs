@@ -319,7 +319,7 @@ prop_roundtripFromWriteBufferLookupIO (SmallList dats) =
     arenaManager <- newArenaManager
     realres <-
       fetchBlobs hfs =<< -- retrieve blobs to match type of model result
-      lookupsIO
+      lookupsIOWithWriteBuffer
         hbio
         arenaManager
         resolveV
@@ -339,8 +339,9 @@ prop_roundtripFromWriteBufferLookupIO (SmallList dats) =
     fetchBlobs hfs = traverse (traverse (traverse (readWeakBlobRef hfs)))
 
 -- | Given a bunch of 'InMemLookupData', prepare the data into the form needed
--- for 'lookupsIO': a write buffer (and blobs) and a vector of on-disk runs.
--- Also passes the model and the keys to look up to the inner action.
+-- for 'lookupsIOWithWriteBuffer': a write buffer (and blobs) and a vector of
+-- on-disk runs. Also passes the model and the keys to look up to the inner
+-- action.
 --
 withWbAndRuns :: FS.HasFS IO h
          -> FS.HasBlockIO IO h

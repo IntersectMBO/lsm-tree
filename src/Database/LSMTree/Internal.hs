@@ -127,7 +127,7 @@ import           Database.LSMTree.Internal.Entry (Entry, NumEntries (..))
 import           Database.LSMTree.Internal.IncomingRun (IncomingRun (..))
 import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue,
                      TableCorruptedError (..), lookupsIO,
-                     lookupsIOWithoutWriteBuffer)
+                     lookupsIOWithWriteBuffer)
 import           Database.LSMTree.Internal.MergeSchedule
 import           Database.LSMTree.Internal.MergingRun (TableTooLargeError (..))
 import qualified Database.LSMTree.Internal.MergingRun as MR
@@ -838,7 +838,7 @@ lookups resolve ks t = do
   where
     regularLevelLookups tEnv tableContent = do
         let !cache = tableCache tableContent
-        lookupsIO
+        lookupsIOWithWriteBuffer
           (tableHasBlockIO tEnv)
           (tableArenaManager t)
           resolve
@@ -851,7 +851,7 @@ lookups resolve ks t = do
           ks
 
     treeBatchLookups tEnv runs =
-        lookupsIOWithoutWriteBuffer
+        lookupsIO
           (tableHasBlockIO tEnv)
           (tableArenaManager t)
           resolve

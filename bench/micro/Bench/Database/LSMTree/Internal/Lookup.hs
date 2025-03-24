@@ -23,7 +23,8 @@ import           Database.LSMTree.Extras.UTxO
 import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..))
 import           Database.LSMTree.Internal.Index as Index
 import           Database.LSMTree.Internal.Lookup (bloomQueries, indexSearches,
-                     intraPageLookups, lookupsIO, prepLookups)
+                     intraPageLookupsWithWriteBuffer, lookupsIOWithWriteBuffer,
+                     prepLookups)
 import           Database.LSMTree.Internal.Page (getNumPages)
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..))
 import           Database.LSMTree.Internal.Run (Run)
@@ -132,17 +133,18 @@ benchLookups conf@Config{name} =
                 )
                 (\(_, _, _, arena) -> closeArena arenaManager arena)
                 (\ ~(rkixs, ioops, ioress, _) -> do
-                  !_ <- intraPageLookups resolveV WB.empty wbblobs
-                                         rs ks rkixs ioops ioress
+                  !_ <- intraPageLookupsWithWriteBuffer
+                          resolveV WB.empty wbblobs rs ks rkixs ioops ioress
                   pure ())
             -- The whole shebang: lookup preparation, doing the IO, and then
             -- performing intra-page-lookups. Again, we evaluate the result to
-            -- WHNF because it is the same result that intraPageLookups produces
-            -- (see above).
+            -- WHNF because it is the same result that
+            -- intraPageLookupsWithWriteBuffer produces (see above).
           , bench "Lookups in IO" $
-              whnfAppIO (\ks' -> lookupsIO hasBlockIO arenaManager resolveV
-                                           WB.empty wbblobs
-                                           rs blooms indexes kopsFiles ks') ks
+              whnfAppIO (\ks' -> lookupsIOWithWriteBuffer
+                                   hasBlockIO arenaManager resolveV
+                                   WB.empty wbblobs
+                                   rs blooms indexes kopsFiles ks') ks
           ]
           -- TODO: consider adding benchmarks that also use the write buffer
           -- (then we can't just use 'WB.empty', but must take it from the env)
