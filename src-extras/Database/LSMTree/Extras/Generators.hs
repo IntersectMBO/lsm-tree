@@ -184,24 +184,24 @@ instance Arbitrary2 Entry where
 --
 -- Also useful for failing tests that have keys as inputs, because the printed
 -- 'WithSerialised' values will show both keys and their serialised form.
-data WithSerialised k = TestKey k SerialisedKey
+data WithSerialised k = WithSerialised k SerialisedKey
   deriving stock Show
 
 instance Eq k => Eq (WithSerialised k) where
-  TestKey k1 _ == TestKey k2 _ = k1 == k2
+  WithSerialised k1 _ == WithSerialised k2 _ = k1 == k2
 
 instance Ord k => Ord (WithSerialised k) where
-  TestKey k1 _ `compare` TestKey k2 _ = k1 `compare` k2
+  WithSerialised k1 _ `compare` WithSerialised k2 _ = k1 `compare` k2
 
 instance (Arbitrary k, SerialiseKey k) => Arbitrary (WithSerialised k) where
   arbitrary = do
     x <- arbitrary
-    pure $ TestKey x (serialiseKey x)
-  shrink (TestKey k _) = [TestKey k' (serialiseKey k') | k' <- shrink k]
+    pure $ WithSerialised x (serialiseKey x)
+  shrink (WithSerialised k _) = [WithSerialised k' (serialiseKey k') | k' <- shrink k]
 
 instance SerialiseKey k => SerialiseKey (WithSerialised k) where
-  serialiseKey (TestKey _ (SerialisedKey bytes)) = bytes
-  deserialiseKey bytes = TestKey (S.Class.deserialiseKey bytes) (SerialisedKey bytes)
+  serialiseKey (WithSerialised _ (SerialisedKey bytes)) = bytes
+  deserialiseKey bytes = WithSerialised (S.Class.deserialiseKey bytes) (SerialisedKey bytes)
 
 {-------------------------------------------------------------------------------
   Other number newtypes
