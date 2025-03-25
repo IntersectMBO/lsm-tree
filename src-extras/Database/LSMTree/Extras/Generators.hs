@@ -256,9 +256,14 @@ toAppend (MultiPageOneKey k n)   = AppendMultiPage k n
 shrinkLogicalPageSummary :: Arbitrary k => LogicalPageSummary k -> [LogicalPageSummary k]
 shrinkLogicalPageSummary = \case
     OnePageOneKey k       -> OnePageOneKey <$> shrink k
-    OnePageManyKeys k1 k2 -> OnePageManyKeys <$> shrink k1 <*> shrink k2
-    MultiPageOneKey k n   -> [MultiPageOneKey k' n | k' <- shrink k]
-                          <> [MultiPageOneKey k n' | n' <- shrink n]
+    OnePageManyKeys k1 k2 -> [
+        OnePageManyKeys k1' k2'
+      | (k1', k2') <- shrink (k1, k2)
+      ]
+    MultiPageOneKey k n   -> [
+        MultiPageOneKey k' n'
+      | (k', n') <- shrink (k, n)
+      ]
 
 {-------------------------------------------------------------------------------
   Sequences of (logical\/true) pages
