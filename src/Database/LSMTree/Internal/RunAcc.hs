@@ -41,7 +41,6 @@ import           Control.Exception (assert)
 import           Control.Monad.ST.Strict
 import           Data.BloomFilter (Bloom, MBloom)
 import qualified Data.BloomFilter as Bloom
-import qualified Data.BloomFilter.Easy as Bloom.Easy
 import qualified Data.BloomFilter.Mutable as MBloom
 import           Data.Primitive.PrimVar (PrimVar, modifyPrimVar, newPrimVar,
                      readPrimVar)
@@ -342,7 +341,10 @@ newMBloom (NumEntries nentries) = \case
               (fromIntegralChecked $ numHashFunctions nbits (fromIntegralChecked nentries))
               (fromIntegralChecked nbits)
       RunAllocRequestFPR !fpr ->
-        Bloom.Easy.easyNew fpr nentries
+        let !nbits = numBits (fromIntegral nentries) fpr
+        in  MBloom.new
+              (fromIntegralChecked $ numHashFunctions nbits (fromIntegralChecked nentries))
+              (fromIntegralChecked nbits)
 
 -- | Computes the optimal number of hash functions that minimises the false
 -- positive rate for a bloom filter.
@@ -370,6 +372,20 @@ falsePositiveRate ::
     -> a  -- ^ bits
     -> a
 falsePositiveRate entries bits = exp ((-(bits / entries)) * sq (log 2))
+
+-- | Compute the number of bits in a bloom filter.
+--
+-- Assumes that the bloom filter uses 'numHashFunctions' hash functions.
+--
+-- See Niv Dayan, Manos Athanassoulis, Stratos Idreos,
+-- /Optimal Bloom Filters and Adaptive Merging for LSM-Trees/,
+-- Equation 2, rewritten in terms of @bits@ on page 11.
+numBits ::
+     Integer -- ^ Number of entries inserted into the bloom filter.
+  -> Double  -- ^ False positive rate.
+  -> Integer
+numBits numEntries fpr = round $ max 1 $
+    (- fromIntegral numEntries) * (log fpr / (sq (log 2)))
 
 sq :: Num a => a -> a
 sq x = x * x

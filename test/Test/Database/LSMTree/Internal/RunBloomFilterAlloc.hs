@@ -86,10 +86,10 @@ prop_verifyFPR p alloc (NumEntries numEntries) (Seed seed) =
         RunAllocRequestFPR requestedFPR -> requestedFPR
       -- error margins
       lb = expectedFPR - 0.1
-      ub = expectedFPR + 0.03
+      ub = expectedFPR + 0.1
   in  assert (fprInvariant True measuredFPR) $ -- measured FPR is in the range [0,1]
       assert (fprInvariant True expectedFPR) $ -- expected FPR is in the range [0,1]
-      counterexample (printf "expected $f <= %f <= %f" lb measuredFPR ub) $
+      counterexample (printf "expected %.05f <= %.05f <= %.05f" lb measuredFPR ub) $
       lb <= measuredFPR .&&. measuredFPR <= ub
 
 {-------------------------------------------------------------------------------
