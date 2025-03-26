@@ -13,7 +13,7 @@ import           Control.Tracer
 import qualified Data.Map.Strict as Map
 import qualified Data.Vector as V
 import           Database.LSMTree as R
-import qualified Database.LSMTree.Model.Session as Model (fromSomeTable, tables)
+import qualified Database.LSMTree.Model.Session as Model
 import qualified Database.LSMTree.Model.Table as Model (values)
 import           Prelude
 import           SafeWildCards
@@ -23,7 +23,9 @@ import qualified System.FS.Sim.Stream as Stream
 import           System.FS.Sim.Stream (Stream)
 import           Test.Database.LSMTree.StateMachine hiding (tests)
 import           Test.Database.LSMTree.StateMachine.Op
-import           Test.QuickCheck as QC hiding (label)
+import qualified Test.QuickCheck as QC hiding (label)
+import           Test.QuickCheck (Arbitrary (..), Gen, NonNegative (..),
+                     Property, liftArbitrary, liftArbitrary2)
 import           Test.QuickCheck.DynamicLogic
 import qualified Test.QuickCheck.Gen as QC
 import qualified Test.QuickCheck.Random as QC
@@ -33,11 +35,13 @@ import           Test.QuickCheck.StateModel.Variables
 import           Test.Tasty (TestTree, testGroup, withResource)
 import qualified Test.Tasty.QuickCheck as QC
 import           Test.Util.PrettyProxy
+import           Test.Util.TypeFamilyWrappers (WrapTable (..))
 
 tests :: TestTree
 tests = testGroup "Test.Database.LSMTree.StateMachine.DL" [
       QC.testProperty "prop_example" prop_example
     , test_noSwallowedExceptions
+    , QC.testProperty "prop_blobRefsNotInvalidated" prop_blobRefsNotInvalidated
     ]
 
 instance DynLogicModel (Lockstep (ModelState R.Table))
@@ -232,7 +236,7 @@ arbitraryErrors = do
         pure (errorType, maybePutCorruption)
 
     genPutCorruption :: Gen PutCorruption
-    genPutCorruption = oneof [
+    genPutCorruption = QC.oneof [
           PartialWrite <$> arbitrary
         , SubstituteWithJunk <$> arbitrary
         ]
@@ -290,5 +294,48 @@ deriving stock instance Enum FsErrorType
 deriving stock instance Bounded FsErrorType
 
 instance Arbitrary FsErrorType where
-  arbitrary = arbitraryBoundedEnum
-  shrink = shrinkBoundedEnum
+  arbitrary = QC.arbitraryBoundedEnum
+  shrink = QC.shrinkBoundedEnum
+
+-- | An example of how dynamic logic formulas can be run.
+--
+-- 'dl_example' is a manually created formula, but the same method of running a
+-- formula also applies to counterexamples produced by a state machine property
+-- test, such as 'propLockstep_RealImpl_RealFS_IO'. Such counterexamples are
+-- (often almost) valid 'DL' expression. They can be copy-pasted into a Haskell
+-- module with minor tweaks to make the compiler accept the copied code, and
+-- then they can be run as any other 'DL' expression.
+prop_blobRefsNotInvalidated :: Property
+prop_blobRefsNotInvalidated = forAllDL dl_blobRefsNotInvalidated runner
+  where
+    -- disable all file system and reference checks
+    runner = propLockstep_RealImpl_MockFS_IO tr NoCheckCleanup NoCheckFS NoCheckRefs
+    tr = nullTracer
+
+-- | Create an initial "large" table
+dl_blobRefsNotInvalidated :: DL (Lockstep (ModelState R.Table)) ()
+dl_blobRefsNotInvalidated = do
+    -- Run any number of actions as normal
+    anyActions_
+
+    -- pick two tables and union them
+    t1 <- forAllVar @(Either Model.Err (WrapTable R.Table IO Key Value Blob))
+    t2 <- forAllVar @(Either Model.Err (WrapTable R.Table IO Key Value Blob))
+    t3 <- action $ Action Nothing $ Union
+      (unsafeMkGVar t1 (OpFromRight `OpComp` OpId))
+      (unsafeMkGVar t2 (OpFromRight `OpComp` OpId))
+
+    -- do lookups on the union table (the result contains blob refs)
+    ks <- V.fromList <$> forAllQ arbitraryQ
+    res <- action $ Action Nothing $ Lookups ks
+      (unsafeMkGVar t3 (OpFromRight `OpComp` OpId))
+
+    -- TODO: progress t1 and t2 (supplying merge credits would be most direct)
+
+    -- resolve the blob refs we obtained earlier
+    _blobs <- action $ Action Nothing $ RetrieveBlobs
+      (unsafeMkGVar res (OpComp OpLookupResults (OpFromRight `OpComp` OpId)))
+
+    pure ()
+
+deriving via HasNoVariables Key instance HasVariables Key

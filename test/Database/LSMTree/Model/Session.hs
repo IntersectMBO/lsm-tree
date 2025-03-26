@@ -444,6 +444,8 @@ updates r ups t@Table{..} = do
   (updc, table) <- guardTableIsOpen t
   let table' = Model.updates r ups table
   modify (\m -> m {
+      -- TODO: currently, this could also invalida blob refs in the union level
+      -- of other tables
       tables = Map.insert tableID (updc + 1, toSomeTable table') (tables m)
     })
 

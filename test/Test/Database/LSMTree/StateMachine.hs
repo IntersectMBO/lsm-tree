@@ -2057,6 +2057,7 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
     genRange :: Gen (R.Range k)
     genRange = QC.arbitrary
 
+    -- TODO pull out
     genUpdates :: Gen (V.Vector (k, R.Update v b))
     genUpdates = QC.liftArbitrary ((,) <$> QC.arbitrary <*> QC.oneof [
           R.Insert <$> QC.arbitrary <*> genBlob
