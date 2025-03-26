@@ -42,11 +42,9 @@ module Data.BloomFilter (
     unsafeFreeze,
 
     -- ** Creation
+    create,
     unfold,
-
     fromList,
-    empty,
-    singleton,
 
     -- ** Accessors
     length,
@@ -115,21 +113,6 @@ unsafeFreeze mb = do
 -- no non-copying equivalent.
 thaw :: Bloom a -> ST s (MBloom s a)
 thaw ub = MB.MBloom (hashesN ub) (size ub) `liftM` V.thaw (bitArray ub)
-
--- | Create an empty Bloom filter.
-empty :: Int                    -- ^ number of hash functions to use
-      -> Word64                 -- ^ number of bits in filter
-      -> Bloom a
-{-# INLINE [1] empty #-}
-empty hash numBits = create hash numBits (\_ -> return ())
-
--- | Create a Bloom filter with a single element.
-singleton :: Hashable a
-          => Int               -- ^ number of hash functions to use
-          -> Word64            -- ^ number of bits in filter
-          -> a                 -- ^ element to insert
-          -> Bloom a
-singleton hash numBits elt = create hash numBits (\mb -> insert mb elt)
 
 -- | Query an immutable Bloom filter for membership.  If the value is
 -- present, return @True@.  If the value is not present, there is
