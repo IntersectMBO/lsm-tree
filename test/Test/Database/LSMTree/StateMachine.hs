@@ -48,9 +48,8 @@ module Test.Database.LSMTree.StateMachine (
   ) where
 
 import           Control.ActionRegistry (AbortActionRegistryError (..),
-                     ActionError, CommitActionRegistryError (..),
-                     getActionError, getReasonExitCaseException)
-import           Control.Applicative (Alternative (..))
+                     CommitActionRegistryError (..), getActionError,
+                     getReasonExitCaseException)
 import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Concurrent.Class.MonadSTM.Strict
 import           Control.Exception (assert)
@@ -88,13 +87,18 @@ import qualified Data.Vector as V
 import qualified Database.LSMTree as R
 import           Database.LSMTree.Class (LookupResult (..), QueryResult (..))
 import qualified Database.LSMTree.Class as Class
+import           Database.LSMTree.Common (BlobRefInvalidError (..),
+                     CursorClosedError (..), SessionClosedError (..),
+                     SessionDirCorruptedError (..),
+                     SessionDirDoesNotExistError (..),
+                     SessionDirLockedError (..), SnapshotCorruptedError (..),
+                     SnapshotDoesNotExistError (..), SnapshotExistsError (..),
+                     SnapshotNotCompatibleError (..), TableClosedError (..),
+                     TableCorruptedError (..), TableNotCompatibleError (..))
 import           Database.LSMTree.Extras (showPowersOf)
 import           Database.LSMTree.Extras.Generators (KeyForIndexCompact)
 import           Database.LSMTree.Extras.NoThunks (propNoThunks)
-import           Database.LSMTree.Internal (LSMTreeError (..))
 import qualified Database.LSMTree.Internal as R.Internal
-import           Database.LSMTree.Internal.CRC32C (ChecksumError (..),
-                     ChecksumsFileFormatError (..), FileFormatError (..))
 import           Database.LSMTree.Internal.Serialise (SerialisedBlob,
                      SerialisedValue)
 import qualified Database.LSMTree.Model.IO as ModelIO
@@ -465,97 +469,99 @@ createSystemTempDirectory prefix = do
   Error handlers
 -------------------------------------------------------------------------------}
 
-realErrorHandlers :: Monad m => [Handler m (Maybe Model.Err)]
-realErrorHandlers = [
-      lsmTreeErrorHandler
-    , commitActionRegistryErrorHandler
-    , abortActionRegistryErrorHandler
-    , fsErrorHandler
-    , fileFormatErrorHandler
-    , checksumsFileFormatErrorHandler
-    , checksumErrorHandler
-    , catchAllErrorHandler
+realErrorHandlers :: Applicative f => [Handler f (Maybe Model.Err)]
+realErrorHandlers = [Handler $ pure . Just . handleSomeException]
+
+handleSomeException :: SomeException -> Model.Err
+handleSomeException e =
+  fromMaybe (Model.ErrOther $ displayException e) . getFirst . mconcat . fmap First $
+    [ handleCommitActionRegistryError <$> fromException e
+    , handleAbortActionRegistryError <$> fromException e
+    , handleSessionDirDoesNotExistError <$> fromException e
+    , handleSessionDirLockedError <$> fromException e
+    , handleSessionDirCorruptedError <$> fromException e
+    , handleSessionClosedError <$> fromException e
+    , handleTableClosedError <$> fromException e
+    , handleTableCorruptedError <$> fromException e
+    , handleTableNotCompatibleError <$> fromException e
+    , handleSnapshotExistsError <$> fromException e
+    , handleSnapshotDoesNotExistError <$> fromException e
+    , handleSnapshotCorruptedError <$> fromException e
+    , handleSnapshotNotCompatibleError <$> fromException e
+    , handleBlobRefInvalidError <$> fromException e
+    , handleCursorClosedError <$> fromException e
+    , handleFsError <$> fromException e
     ]
 
-lsmTreeErrorHandler :: Monad m => Handler m (Maybe Model.Err)
-lsmTreeErrorHandler = Handler $ pure . handler'
-  where
-    handler' :: LSMTreeError -> Maybe Model.Err
-    handler' ErrTableClosed               = Just Model.ErrTableClosed
-    handler' ErrCursorClosed              = Just Model.ErrCursorClosed
-    handler' (ErrSnapshotDoesNotExist _snap) = Just Model.ErrSnapshotDoesNotExist
-    handler' (ErrSnapshotExists _snap)    = Just Model.ErrSnapshotExists
-    handler' ErrSnapshotWrongTableType{}  = Just Model.ErrSnapshotWrongType
-    handler' (ErrBlobRefInvalid _)        = Just Model.ErrBlobRefInvalidated
-    handler' e                            = Just (Model.ErrOther (displayException e))
+handleCommitActionRegistryError :: CommitActionRegistryError -> Model.Err
+handleCommitActionRegistryError = \case
+  CommitActionRegistryError actionErrors ->
+    Model.ErrCommitActionRegistry $
+      handleSomeException <$> (getActionError <$> actionErrors)
 
-commitActionRegistryErrorHandler :: Monad m => Handler m (Maybe Model.Err)
-commitActionRegistryErrorHandler = Handler $ \(e :: CommitActionRegistryError) ->
-  pure (classifyException (toException e))
+handleAbortActionRegistryError :: AbortActionRegistryError -> Model.Err
+handleAbortActionRegistryError = \case
+  AbortActionRegistryError abortReason actionErrors ->
+    Model.ErrAbortActionRegistry
+      (handleSomeException <$> getReasonExitCaseException abortReason)
+      (handleSomeException . getActionError <$> actionErrors)
 
-abortActionRegistryErrorHandler :: Monad m => Handler m (Maybe Model.Err)
-abortActionRegistryErrorHandler = Handler $ \(e :: AbortActionRegistryError) ->
-  pure (classifyException (toException e))
+handleSessionDirDoesNotExistError :: SessionDirDoesNotExistError -> Model.Err
+handleSessionDirDoesNotExistError = \case
+  ErrSessionDirDoesNotExist _dir -> Model.ErrSessionDirDoesNotExist
 
--- | Some exceptions contain other exceptions, which we classify recursively.
-classifyException :: SomeException -> Maybe Model.Err
-classifyException e =
-  Just . fromMaybe (Model.ErrOther (displayException e)) $ classifyException' e
+handleSessionDirLockedError :: SessionDirLockedError -> Model.Err
+handleSessionDirLockedError = \case
+  ErrSessionDirLocked _dir -> Model.ErrSessionDirLocked
 
--- | When classifying exceptions recursively, we prefer 'Model.ErrDiskFault'
---   and 'Model.ErrSnapshotCorrupted' as explanations over 'Model.ErrOther'.
-classifyException' :: SomeException -> Maybe Model.Err
-classifyException' e
-  | Just (CommitActionRegistryError es) <- fromException e
-  = classifyExceptions' es
-  | Just (AbortActionRegistryError reason es) <- fromException e
-  = (classifyException' =<< getReasonExitCaseException reason) <|> classifyExceptions' es
-  | Just (e' :: ActionError) <- fromException e
-  = classifyException' (getActionError e')
-  | Just FsError{} <- fromException e
-  = Just (Model.ErrDiskFault (displayException e))
-  | Just FileFormatError{} <- fromException e
-  = Just (Model.ErrSnapshotCorrupted (displayException e))
-  | Just ChecksumsFileFormatError{} <- fromException e
-  = Just (Model.ErrSnapshotCorrupted (displayException e))
-  | Just ChecksumError{} <- fromException e
-  = Just (Model.ErrSnapshotCorrupted (displayException e))
-  | otherwise
-  = Nothing
+handleSessionDirCorruptedError :: SessionDirCorruptedError -> Model.Err
+handleSessionDirCorruptedError = \case
+  ErrSessionDirCorrupted _dir -> Model.ErrSessionDirCorrupted
 
-classifyExceptions' :: (Foldable t, Exception e) => t e -> Maybe Model.Err
-classifyExceptions' = getFirst . foldMap (First . classifyException' . toException)
+handleSessionClosedError :: SessionClosedError -> Model.Err
+handleSessionClosedError = \case
+  ErrSessionClosed -> Model.ErrSessionClosed
 
-fsErrorHandler :: Monad m => Handler m (Maybe Model.Err)
-fsErrorHandler = Handler $ pure . handler'
-  where
-    handler' :: FsError -> Maybe Model.Err
-    handler' e = Just (Model.ErrDiskFault (displayException e))
+handleTableClosedError :: TableClosedError -> Model.Err
+handleTableClosedError = \case
+  ErrTableClosed -> Model.ErrTableClosed
 
-fileFormatErrorHandler :: Monad m => Handler m (Maybe Model.Err)
-fileFormatErrorHandler = Handler $ pure . handler'
-  where
-    handler' :: FileFormatError -> Maybe Model.Err
-    handler' e = Just (Model.ErrSnapshotCorrupted (displayException e))
+handleTableCorruptedError :: TableCorruptedError -> Model.Err
+handleTableCorruptedError = \case
+  ErrLookupByteCountDiscrepancy _ _ -> Model.ErrTableCorrupted
 
-checksumsFileFormatErrorHandler :: Monad m => Handler m (Maybe Model.Err)
-checksumsFileFormatErrorHandler = Handler $ pure . handler'
-  where
-    handler' :: ChecksumsFileFormatError -> Maybe Model.Err
-    handler' e = Just (Model.ErrSnapshotCorrupted (displayException e))
+handleTableNotCompatibleError :: TableNotCompatibleError -> Model.Err
+handleTableNotCompatibleError = \case
+  ErrTableTypeMismatch _ _ -> Model.ErrTableTypeMismatch
+  ErrTableSessionMismatch _ _ -> Model.ErrTableSessionMismatch
 
-checksumErrorHandler :: Monad m => Handler m (Maybe Model.Err)
-checksumErrorHandler = Handler $ pure . handler'
-  where
-    handler' :: ChecksumError -> Maybe Model.Err
-    handler' e = Just (Model.ErrSnapshotCorrupted (displayException e))
+handleSnapshotExistsError :: SnapshotExistsError -> Model.Err
+handleSnapshotExistsError = \case
+  ErrSnapshotExists name -> Model.ErrSnapshotExists name
 
--- | When combined with other handlers, 'catchAllErrorHandler' has to go last
--- because it matches on 'SomeException', and no other handlers are run after
--- that. See the use of 'catches' in 'catchErr'.
-catchAllErrorHandler :: Monad m => Handler m (Maybe Model.Err)
-catchAllErrorHandler = Handler $ \(e :: SomeException) ->
-    pure $ Just (Model.ErrOther (displayException e))
+handleSnapshotDoesNotExistError :: SnapshotDoesNotExistError -> Model.Err
+handleSnapshotDoesNotExistError = \case
+  ErrSnapshotDoesNotExist name -> Model.ErrSnapshotDoesNotExist name
+
+handleSnapshotCorruptedError :: SnapshotCorruptedError -> Model.Err
+handleSnapshotCorruptedError = \case
+  ErrSnapshotCorrupted name _ -> Model.ErrSnapshotCorrupted name
+
+handleSnapshotNotCompatibleError :: SnapshotNotCompatibleError -> Model.Err
+handleSnapshotNotCompatibleError = \case
+  ErrSnapshotWrongTableType name _ _ -> Model.ErrSnapshotWrongTableType name
+  ErrSnapshotWrongLabel name _ _ -> Model.ErrSnapshotWrongLabel name
+
+handleBlobRefInvalidError :: BlobRefInvalidError -> Model.Err
+handleBlobRefInvalidError = \case
+  ErrBlobRefInvalid _ -> Model.ErrBlobRefInvalid
+
+handleCursorClosedError :: CursorClosedError -> Model.Err
+handleCursorClosedError = \case
+  ErrCursorClosed -> Model.ErrCursorClosed
+
+handleFsError :: FsError -> Model.Err
+handleFsError = Model.ErrFsError . displayException
 
 {-------------------------------------------------------------------------------
   Key and value types
@@ -1023,7 +1029,7 @@ instance Eq (Obs h a) where
       -- returns a blob, then that's okay. If both return a blob or both return
       -- an error, then those must match exactly.
       (OEither (Right (OVector vec)), OEither (Left (OId y)))
-        | Just Model.ErrBlobRefInvalidated <- cast y ->
+        | Just Model.ErrBlobRefInvalid <- cast y ->
             flip all vec $ \case
               OBlob (WrapBlob _) -> True
               _ -> False
@@ -1035,18 +1041,17 @@ instance Eq (Obs h a) where
       -- 'runRealWithInjectedErrors'.
       (OEither (Left (OId lhs)), OEither (Left (OId rhs)))
         | Just (e :: Model.Err) <- cast lhs
-        , case e of
-            Model.ErrOther _ -> False
-            _                -> True
-        , Just Model.DefaultErrDiskFault <- cast rhs
+        , not $ Model.isOther e
+        , Just (Model.ErrDiskFault _) <- cast rhs
         -> True
 
       -- When snapshots are corrupted, the model only knows that the snapshot
       -- was corrupted, but not how, but the SUT can throw much more specific
       -- errors. We allow this.
       (OEither (Left (OId lhs)), OEither (Left (OId rhs)))
-        | Just (Model.ErrSnapshotCorrupted _) <- cast lhs
-        , Just Model.DefaultErrSnapshotCorrupted <- cast rhs
+        | Just (e :: Model.Err) <- cast lhs
+        , not $ Model.isOther e
+        , Just (Model.ErrSnapshotCorrupted _) <- cast rhs
         -> True
 
       -- RemainingUnionDebt
@@ -1720,14 +1725,14 @@ runRealWithInjectedErrors s env merrs k rollback =
       eith <- catchErr handlers $ FSSim.withErrors errsVar errs k
       errsLog <- readTVarIO logVar
       case eith of
-        Left e@(Model.ErrDiskFault _) -> do
+        Left e | Model.isDiskFault e -> do
           modifyMutVar faultsVar (InjectFaultInducedError s :)
           if countNoisyErrors errsLog == 0 then
             pure $ Left $ Model.ErrOther $
               -- If we injected 0 disk faults, but we still found an
               -- ErrDiskFault, then there is a bug in our code. ErrDiskFaults
               -- should not occur on the happy path.
-              "Found an ErrDiskFault error, but no disk faults were injected: " <> show e
+              "Found a disk fault error, but no disk faults were injected: " <> show e
           else
             pure eith
         Left e -> do
@@ -1736,7 +1741,7 @@ runRealWithInjectedErrors s env merrs k rollback =
               -- If we injected 1 or more disk faults, but we did not find an
               -- ErrDiskFault, then there is a bug in our code. An injected disk
               -- fault should always lead to an ErrDiskFault.
-              "Found a non-ErrDiskFault error, but disk faults were injected: " <> show e
+              "Found an error that isn't a disk fault error, but disk faults were injected: " <> show e
           else
             pure eith
         Right x -> do
@@ -2915,4 +2920,3 @@ checkRefsM :: (PrimMonad m, MonadCatch m) => CheckRefs -> m (Either RefException
 checkRefsM flag = case flag of
     CheckRefs   -> try checkForgottenRefs
     NoCheckRefs -> Right <$> ignoreForgottenRefs
-

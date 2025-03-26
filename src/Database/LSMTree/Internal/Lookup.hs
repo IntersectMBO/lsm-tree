@@ -2,10 +2,11 @@
 
 module Database.LSMTree.Internal.Lookup (
     ResolveSerialisedValue
-  , ByteCountDiscrepancy (..)
   , LookupAcc
   , lookupsIO
   , lookupsIOWithoutWriteBuffer
+    -- * Errors
+  , TableCorruptedError (..)
     -- * Internal: exposed for tests and benchmarks
   , RunIx
   , KeyIx
@@ -25,10 +26,10 @@ import qualified Data.Vector.Mutable as VM
 import qualified Data.Vector.Primitive as VP
 import qualified Data.Vector.Unboxed as VU
 
-import           Control.Exception (Exception, assert)
+import           Control.Exception (assert)
 import           Control.Monad
 import           Control.Monad.Class.MonadST as ST
-import           Control.Monad.Class.MonadThrow (MonadThrow (..))
+import           Control.Monad.Class.MonadThrow (Exception, MonadThrow (..))
 import           Control.Monad.Primitive
 import           Control.Monad.ST.Strict
 import           Control.RefCount
@@ -110,14 +111,6 @@ indexSearches !arena !indexes !kopsFiles !ks !rkixs = V.generateM n $ \i -> do
 
 -- | Value resolve function: what to do when resolving two @Mupdate@s
 type ResolveSerialisedValue = SerialisedValue -> SerialisedValue -> SerialisedValue
-
--- | An 'IOOp' read/wrote fewer or more bytes than expected
-data ByteCountDiscrepancy = ByteCountDiscrepancy {
-    expected :: !ByteCount
-  , actual   :: !ByteCount
-  }
-  deriving stock (Show, Eq)
-  deriving anyclass (Exception)
 
 type LookupAcc m h = V.Vector (Maybe (Entry SerialisedValue (WeakBlobRef m h)))
 
@@ -264,6 +257,16 @@ intraPageLookups !resolveV !wb !wbblobs !rs !ks !rkixs !ioops !ioress = do
           -- combining the conversion with other later conversions.
     intraPageLookupsOn resolveV acc0 rs ks rkixs ioops ioress
 
+-- | The table data is corrupted.
+data TableCorruptedError
+    = ErrLookupByteCountDiscrepancy
+        -- | Expected byte count.
+        !ByteCount
+        -- | Actual byte count.
+        !ByteCount
+    deriving stock (Show, Eq)
+    deriving anyclass (Exception)
+
 {-# SPECIALIZE intraPageLookupsOn ::
        ResolveSerialisedValue
     -> LookupAcc IO h
@@ -355,8 +358,8 @@ intraPageLookupsOn !resolveV !acc0 !rs !ks !rkixs !ioops !ioress =
     -- contain the correct number of disk-page bytes, so we throw an exception.
     checkIOResult :: IOOp (PrimState m) h -> IOResult -> m ()
     checkIOResult ioop (IOResult m) =
-        unless (expected == m) $
-          throwIO ByteCountDiscrepancy {expected, actual = m}
+        unless (expected == m) . throwIO $
+          ErrLookupByteCountDiscrepancy expected m
       where expected = ioopByteCount ioop
 
     -- Force a serialised value to not retain any memory by copying the

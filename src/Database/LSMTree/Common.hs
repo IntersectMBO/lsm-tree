@@ -2,7 +2,22 @@ module Database.LSMTree.Common (
     -- * IOLike
     IOLike
     -- * Exceptions
-  , Internal.LSMTreeError (..)
+  , Internal.SessionDirDoesNotExistError (..)
+  , Internal.SessionDirLockedError (..)
+  , Internal.SessionDirCorruptedError (..)
+  , Internal.SessionClosedError (..)
+  , Internal.TableClosedError (..)
+  , Internal.TableCorruptedError (..)
+  , Internal.TableTooLargeError (..)
+  , Internal.TableNotCompatibleError (..)
+  , Internal.SnapshotExistsError (..)
+  , Internal.SnapshotDoesNotExistError (..)
+  , Internal.SnapshotCorruptedError (..)
+  , Internal.SnapshotNotCompatibleError (..)
+  , Internal.BlobRefInvalidError (..)
+  , Internal.CursorClosedError (..)
+  , Internal.FileFormat (..)
+  , Internal.FileCorruptedError (..)
   , Internal.InvalidSnapshotNameError (..)
     -- * Tracing
   , Internal.LSMTreeTrace (..)
@@ -19,11 +34,12 @@ module Database.LSMTree.Common (
     -- * Small types
   , Internal.Range (..)
     -- * Snapshots
-  , SnapshotLabel (..)
+  , Internal.SnapshotLabel (..)
+  , Internal.SnapshotTableType (..)
   , deleteSnapshot
   , listSnapshots
     -- ** Snapshot names
-  , Internal.SnapshotName
+  , SnapshotName
   , Internal.toSnapshotName
   , Internal.isValidSnapshotName
     -- * Blob references
@@ -64,10 +80,11 @@ import qualified Database.LSMTree.Internal.BlobRef as Internal
 import qualified Database.LSMTree.Internal.Config as Internal
 import qualified Database.LSMTree.Internal.Entry as Internal
 import qualified Database.LSMTree.Internal.MergeSchedule as Internal
+import           Database.LSMTree.Internal.Paths (SnapshotName)
 import qualified Database.LSMTree.Internal.Paths as Internal
 import qualified Database.LSMTree.Internal.Range as Internal
 import           Database.LSMTree.Internal.Serialise.Class
-import           Database.LSMTree.Internal.Snapshot (SnapshotLabel (..))
+import qualified Database.LSMTree.Internal.Snapshot as Internal
 import           System.FS.API (FsPath, HasFS)
 import           System.FS.BlockIO.API (HasBlockIO)
 import           System.FS.IO (HandleIO)
@@ -193,7 +210,7 @@ closeSession (Internal.Session' sesh) = Internal.closeSession sesh
 
 {-# SPECIALISE deleteSnapshot ::
      Session IO
-  -> Internal.SnapshotName
+  -> SnapshotName
   -> IO () #-}
 -- | Delete a named snapshot.
 --
@@ -205,18 +222,18 @@ closeSession (Internal.Session' sesh) = Internal.closeSession sesh
 deleteSnapshot ::
      IOLike m
   => Session m
-  -> Internal.SnapshotName
+  -> SnapshotName
   -> m ()
 deleteSnapshot (Internal.Session' sesh) = Internal.deleteSnapshot sesh
 
 {-# SPECIALISE listSnapshots ::
      Session IO
-  -> IO [Internal.SnapshotName] #-}
+  -> IO [SnapshotName] #-}
 -- | List snapshots by name.
 listSnapshots ::
      IOLike m
   => Session m
-  -> m [Internal.SnapshotName]
+  -> m [SnapshotName]
 listSnapshots (Internal.Session' sesh) = Internal.listSnapshots sesh
 
 {-------------------------------------------------------------------------------

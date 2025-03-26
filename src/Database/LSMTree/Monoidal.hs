@@ -24,7 +24,22 @@
 --
 module Database.LSMTree.Monoidal (
     -- * Exceptions
-    Common.LSMTreeError (..)
+    Common.SessionDirDoesNotExistError (..)
+  , Common.SessionDirLockedError (..)
+  , Common.SessionDirCorruptedError (..)
+  , Common.SessionClosedError (..)
+  , Common.TableClosedError (..)
+  , Common.TableCorruptedError (..)
+  , Common.TableTooLargeError (..)
+  , Common.TableNotCompatibleError (..)
+  , Common.SnapshotExistsError (..)
+  , Common.SnapshotDoesNotExistError (..)
+  , Common.SnapshotCorruptedError (..)
+  , Common.SnapshotNotCompatibleError (..)
+  , Common.BlobRefInvalidError (..)
+  , Common.CursorClosedError (..)
+  , Common.FileFormat (..)
+  , Common.FileCorruptedError (..)
   , Common.InvalidSnapshotNameError (..)
 
     -- * Tracing
@@ -84,7 +99,7 @@ module Database.LSMTree.Monoidal (
   , Update (..)
 
     -- * Durability (snapshots)
-  , SnapshotName
+  , Common.SnapshotName
   , Common.toSnapshotName
   , Common.isValidSnapshotName
   , Common.SnapshotLabel (..)
@@ -138,15 +153,14 @@ import           Data.Proxy (Proxy (Proxy))
 import           Data.Typeable (Typeable, eqT, type (:~:) (Refl))
 import qualified Data.Vector as V
 import           Database.LSMTree.Common (IOLike, Range (..), SerialiseKey,
-                     SerialiseValue (..), Session, SnapshotName,
-                     UnionCredits (..), UnionDebt (..), closeSession,
-                     deleteSnapshot, listSnapshots, openSession, withSession)
+                     SerialiseValue (..), Session, UnionCredits (..),
+                     UnionDebt (..), closeSession, deleteSnapshot,
+                     listSnapshots, openSession, withSession)
 import qualified Database.LSMTree.Common as Common
 import qualified Database.LSMTree.Internal as Internal
 import qualified Database.LSMTree.Internal.Entry as Entry
 import           Database.LSMTree.Internal.RawBytes (RawBytes)
 import qualified Database.LSMTree.Internal.Serialise as Internal
-import qualified Database.LSMTree.Internal.Snapshot as Internal
 import qualified Database.LSMTree.Internal.Vector as V
 import           GHC.Exts (Proxy#, proxy#)
 
@@ -532,7 +546,7 @@ mupserts t = updates t . fmap (second Mupsert)
 
 {-# SPECIALISE createSnapshot ::
      Common.SnapshotLabel
-  -> SnapshotName
+  -> Common.SnapshotName
   -> Table IO k v
   -> IO () #-}
 -- | Make the current value of a table durable on-disk by taking a snapshot and
@@ -560,18 +574,18 @@ mupserts t = updates t . fmap (second Mupsert)
 createSnapshot :: forall m k v.
      IOLike m
   => Common.SnapshotLabel
-  -> SnapshotName
+  -> Common.SnapshotName
   -> Table m k v
   -> m ()
 createSnapshot label snap (Internal.MonoidalTable t) =
-    Internal.createSnapshot snap label Internal.SnapMonoidalTable t
+    Internal.createSnapshot snap label Common.SnapMonoidalTable t
 
 {-# SPECIALISE openSnapshot ::
      ResolveValue v
   => Session IO
   -> Common.TableConfigOverride
   -> Common.SnapshotLabel
-  -> SnapshotName
+  -> Common.SnapshotName
   -> IO (Table IO k v) #-}
 -- | Open a table from a named snapshot, returning a new table.
 --
@@ -598,14 +612,14 @@ openSnapshot :: forall m k v.
   => Session m
   -> Common.TableConfigOverride -- ^ Optional config override
   -> Common.SnapshotLabel
-  -> SnapshotName
+  -> Common.SnapshotName
   -> m (Table m k v)
 openSnapshot (Internal.Session' sesh) override label snap =
     Internal.MonoidalTable <$>
       Internal.openSnapshot
         sesh
         label
-        Internal.SnapMonoidalTable
+        Common.SnapMonoidalTable
         override
         snap
         (resolve @v Proxy)
@@ -705,7 +719,7 @@ unions (t :| ts) =
       -> m (Internal.Table m h)
     checkTableType _ i (Internal.MonoidalTable (t' :: Internal.Table m h'))
       | Just Refl <- eqT @h @h' = pure t'
-      | otherwise = throwIO (Internal.ErrUnionsTableTypeMismatch 0 i)
+      | otherwise = throwIO (Common.ErrTableTypeMismatch 0 i)
 
 {-# SPECIALISE remainingUnionDebt :: Table IO k v -> IO UnionDebt #-}
 -- | Return the current union debt. This debt can be reduced until it is paid

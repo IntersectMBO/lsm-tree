@@ -8,7 +8,6 @@ module Database.LSMTree.Internal.Snapshot.Codec (
   , writeFileSnapshotMetaData
   , readFileSnapshotMetaData
   , encodeSnapshotMetaData
-  , decodeSnapshotMetaData
     -- * Encoding and decoding
   , Encode (..)
   , Decode (..)
@@ -21,8 +20,9 @@ import           Codec.CBOR.Encoding
 import           Codec.CBOR.Read
 import           Codec.CBOR.Write
 import           Control.Monad (when)
-import           Control.Monad.Class.MonadThrow (MonadThrow (..))
-import           Data.Bifunctor
+import           Control.Monad.Class.MonadThrow (Exception (displayException),
+                     MonadThrow (..))
+import           Data.Bifunctor (Bifunctor (..))
 import qualified Data.ByteString.Char8 as BSC
 import           Data.ByteString.Lazy (ByteString)
 import qualified Data.Map.Strict as Map
@@ -106,48 +106,41 @@ writeFileSnapshotMetaData hfs contentPath checksumPath snapMetaData = do
         checksumFile = Map.singleton checksumFileName checksum
     writeChecksumsFile hfs checksumPath checksumFile
 
+encodeSnapshotMetaData :: SnapshotMetaData -> ByteString
+encodeSnapshotMetaData = toLazyByteString . encode . Versioned
+
 {-# SPECIALIZE
   readFileSnapshotMetaData ::
        HasFS IO h
     -> FsPath
     -> FsPath
-    -> IO (Either DeserialiseFailure SnapshotMetaData)
+    -> IO SnapshotMetaData
   #-}
 -- | Read from 'SnapshotMetaDataFile' and attempt to decode it to
 -- 'SnapshotMetaData'.
 readFileSnapshotMetaData ::
-     MonadThrow m
+     (MonadThrow m)
   => HasFS m h
   -> FsPath -- ^ Source file for snapshot metadata
   -> FsPath -- ^ Source file for checksum
-  -> m (Either DeserialiseFailure SnapshotMetaData)
+  -> m SnapshotMetaData
 readFileSnapshotMetaData hfs contentPath checksumPath = do
     checksumFile <- readChecksumsFile hfs checksumPath
     let checksumFileName = ChecksumsFileName (BSC.pack "metadata")
 
-    expectedChecksum <-
-      case Map.lookup checksumFileName checksumFile of
-        Nothing ->
-          throwIO $ FileFormatError
-                      checksumPath
-                      ("key not found: " <> show checksumFileName)
-        Just checksum -> pure checksum
+    expectedChecksum <- getChecksum checksumPath checksumFile checksumFileName
 
     (lbs, actualChecksum) <- FS.withFile hfs contentPath FS.ReadMode $ \h -> do
       n <- FS.hGetSize hfs h
       FS.hGetExactlyCRC32C hfs h n initialCRC32C
 
-    when (expectedChecksum /= actualChecksum) $
-      throwIO $ ChecksumError contentPath expectedChecksum actualChecksum
+    when (expectedChecksum /= actualChecksum) . throwIO $
+      ErrFileChecksumMismatch contentPath (unCRC32C expectedChecksum) (unCRC32C actualChecksum)
 
-    pure $ decodeSnapshotMetaData lbs
+    expectValidFile contentPath FormatSnapshotMetaData (decodeSnapshotMetaData lbs)
 
-encodeSnapshotMetaData :: SnapshotMetaData -> ByteString
-encodeSnapshotMetaData = toLazyByteString . encode . Versioned
-
-decodeSnapshotMetaData :: ByteString -> Either DeserialiseFailure SnapshotMetaData
-decodeSnapshotMetaData bs = second (getVersioned . snd) (deserialiseFromBytes decode bs)
-
+decodeSnapshotMetaData :: ByteString -> Either String SnapshotMetaData
+decodeSnapshotMetaData lbs = bimap displayException (getVersioned . snd) (deserialiseFromBytes decode lbs)
 
 {-------------------------------------------------------------------------------
   Encoding and decoding
