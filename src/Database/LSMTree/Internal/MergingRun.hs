@@ -761,8 +761,8 @@ atomicSpendCredits (CreditsVar var) spend =
 
 {-# SPECIALISE remainingMergeDebt ::
      Ref (MergingRun t IO h) -> IO (MergeDebt, NumEntries) #-}
--- | Calculate an upper bound on the merge credits required to complete the
--- merge, as well as an upper bound on the size of the resulting run.
+-- | Calculate the merge credits required to complete the merge, as well as an
+-- upper bound on the size of the resulting run.
 remainingMergeDebt ::
      (MonadMVar m, PrimMonad m)
   => Ref (MergingRun t m h) -> m (MergeDebt, NumEntries)
