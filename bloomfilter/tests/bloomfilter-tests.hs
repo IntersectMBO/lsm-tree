@@ -1,23 +1,21 @@
-{-# LANGUAGE NumericUnderscores #-}
-module Main where
+module Main (main) where
 
-import           Control.Monad (forM_)
+import qualified Data.BloomFilter as B
 import qualified Data.BloomFilter.BitVec64 as BV64
 import qualified Data.BloomFilter.Easy as B
 import           Data.BloomFilter.Hash (Hashable (..), hash64)
 import qualified Data.BloomFilter.Internal as BI
+
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
-import           Data.Int (Int16, Int32, Int64, Int8)
+import           Data.Int (Int64)
 import qualified Data.Vector.Primitive as VP
 import           Data.Word (Word32, Word64)
-import           System.IO (BufferMode (..), hSetBuffering, stdout)
+
+import           Test.QuickCheck.Instances ()
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
-
-import           QCSupport (P (..))
-
 
 main :: IO ()
 main = defaultMain tests
@@ -55,8 +53,8 @@ tests = testGroup "bloomfilter"
 -- Element is in a Bloom filter
 -------------------------------------------------------------------------------
 
-prop_pai :: (Hashable a) => a -> a -> [a] -> P -> Property
-prop_pai _ x xs (P q) = let bf = B.easyList q (x:xs) in
+prop_pai :: (Hashable a) => a -> a -> [a] -> FPR -> Property
+prop_pai _ x xs (FPR q) = let bf = B.easyList q (x:xs) in
     B.elem x bf .&&. not (B.notElem x bf)
 
 -------------------------------------------------------------------------------
@@ -84,3 +82,19 @@ prop_rechunked f s =
 
 prop_rechunked_eq :: LBS.ByteString -> Property
 prop_rechunked_eq = prop_rechunked hash64
+
+-------------------------------------------------------------------------------
+-- QC generators
+-------------------------------------------------------------------------------
+
+newtype FPR = FPR Double
+  deriving stock Show
+
+instance Arbitrary FPR where
+  -- The most significant effect of the FPR is from its (negative) exponent,
+  -- which influences both filter bits and number of hashes. So we generate
+  -- values with an exponent from 10^0 to 10^-6
+  arbitrary = do
+      m <- choose (1, 9.99) -- not less than 1 or it's a different exponent
+      e <- choose (1, 6)
+      pure (FPR (m * 10 ** (-e)))

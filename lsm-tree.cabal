@@ -430,18 +430,15 @@ library bloomfilter
   ghc-options:     -O2 -Wall
 
 test-suite bloomfilter-tests
-  import:         language
+  import:         language, warnings
   type:           exitcode-stdio-1.0
   hs-source-dirs: bloomfilter/tests
   main-is:        bloomfilter-tests.hs
-  other-modules:  QCSupport
   build-depends:
     , base                  <5
     , bytestring
     , lsm-tree:bloomfilter
-    , QuickCheck
     , quickcheck-instances
-    , random
     , tasty
     , tasty-quickcheck
     , vector
