@@ -33,12 +33,14 @@ import qualified Database.LSMTree.Internal.Chunk as Chunk (toByteVector)
 import           Database.LSMTree.Internal.Entry (NumEntries (NumEntries))
 import           Database.LSMTree.Internal.Index.Ordinary
                      (IndexOrdinary (IndexOrdinary), finalLBS, fromSBS,
-                     headerLBS, search, toLastKeys)
+                     headerLBS, search, toUnslicedLastKeys)
 import           Database.LSMTree.Internal.Index.OrdinaryAcc (new, unsafeEnd)
 import           Database.LSMTree.Internal.Page (PageNo (PageNo),
                      PageSpan (PageSpan))
 import           Database.LSMTree.Internal.Serialise
                      (SerialisedKey (SerialisedKey'))
+import           Database.LSMTree.Internal.Unsliced (Unsliced, fromUnslicedKey,
+                     makeUnslicedKey)
 import           Database.LSMTree.Internal.Vector (byteVectorFromPrim)
 import           Test.Database.LSMTree.Internal.Chunk ()
 import           Test.QuickCheck (Arbitrary (arbitrary, shrink), Gen,
@@ -120,11 +122,11 @@ testedTypeAndVersion = 0x0101
 -- ** Simple index construction
 
 {-|
-    Constructs an index from a list of keys. The keys have the same meaning as
-    in the vector given to the 'IndexOrdinary' data constructor.
+    Constructs an index from a list of unsliced keys. The keys have the same
+    meaning as in the vector given to the 'IndexOrdinary' data constructor.
 -}
-indexFromLastKeyList :: [SerialisedKey] -> IndexOrdinary
-indexFromLastKeyList = IndexOrdinary . fromList
+indexFromUnslicedLastKeyList :: [Unsliced SerialisedKey] -> IndexOrdinary
+indexFromUnslicedLastKeyList = IndexOrdinary . fromList
 
 -- ** Partitioning according to search
 
@@ -135,27 +137,30 @@ indexFromLastKeyList = IndexOrdinary . fromList
     respectively.
 -}
 searchPartitioning ::
-       SerialisedKey
+       Unsliced SerialisedKey
     -> IndexOrdinary
-    -> (Vector SerialisedKey, Vector SerialisedKey, Vector SerialisedKey)
-searchPartitioning key index@(IndexOrdinary lastKeys)
+    -> (,,) (Vector (Unsliced SerialisedKey))
+            (Vector (Unsliced SerialisedKey))
+            (Vector (Unsliced SerialisedKey))
+searchPartitioning unslicedKey index@(IndexOrdinary unslicedLastKeys)
     = (prefix, selection, suffix)
     where
 
     start, end :: Int
-    PageSpan (PageNo start) (PageNo end) = search key index
+    PageSpan (PageNo start) (PageNo end) = search (fromUnslicedKey unslicedKey)
+                                                  index
 
-    prefix, selection, suffix :: Vector SerialisedKey
+    prefix, selection, suffix :: Vector (Unsliced SerialisedKey)
     ((prefix, selection), suffix) = first (splitAt start) $
                                     splitAt (succ end)    $
-                                    lastKeys
+                                    unslicedLastKeys
 
 -- | Adds a search partitioning to a counterexample.
 searchPartitioningCounterexample ::
        Testable prop
-    => Vector SerialisedKey
-    -> Vector SerialisedKey
-    -> Vector SerialisedKey
+    => Vector (Unsliced SerialisedKey)
+    -> Vector (Unsliced SerialisedKey)
+    -> Vector (Unsliced SerialisedKey)
     -> prop
     -> Property
 searchPartitioningCounterexample prefix selection suffix
@@ -202,13 +207,13 @@ testedTypeAndVersionBlock = byteVectorFromPrim testedTypeAndVersion
     Constructs blocks that constitute the serialisation of the key list of an
     index.
 -}
-lastKeysBlocks :: [SerialisedKey] -> [Primitive.Vector Word8]
-lastKeysBlocks lastKeys = concatMap lastKeyBlocks lastKeys where
+lastKeysBlocks :: [Unsliced SerialisedKey] -> [Primitive.Vector Word8]
+lastKeysBlocks unslicedLastKeys = concatMap lastKeyBlocks unslicedLastKeys where
 
-    lastKeyBlocks :: SerialisedKey -> [Primitive.Vector Word8]
-    lastKeyBlocks (SerialisedKey' lastKeyBlock)
-        = [lastKeySizeBlock, lastKeyBlock]
-        where
+    lastKeyBlocks :: Unsliced SerialisedKey -> [Primitive.Vector Word8]
+    lastKeyBlocks unslicedLastKey = [lastKeySizeBlock, lastKeyBlock] where
+
+        SerialisedKey' lastKeyBlock = fromUnslicedKey unslicedLastKey
 
         lastKeySizeBlock :: Primitive.Vector Word8
         lastKeySizeBlock = byteVectorFromPrim lastKeySizeAsWord16 where
@@ -227,27 +232,32 @@ entryCountBlock (NumEntries entryCount)
     entryCountAsWord64 = fromIntegral entryCount
 
 -- | Constructs a correct serialised index.
-serialisedIndex :: NumEntries -> [SerialisedKey] -> ShortByteString
-serialisedIndex entryCount lastKeys
+serialisedIndex :: NumEntries -> [Unsliced SerialisedKey] -> ShortByteString
+serialisedIndex entryCount unslicedLastKeys
     = potentialSerialisedIndex testedTypeAndVersionBlock
-                               (lastKeysBlocks lastKeys)
+                               (lastKeysBlocks unslicedLastKeys)
                                (entryCountBlock entryCount)
 
 -- ** Construction via appending
 
 -- | Yields the keys that an append operation adds to an index.
-appendedKeys :: Append -> [SerialisedKey]
+appendedKeys :: Append -> [Unsliced SerialisedKey]
 appendedKeys (AppendSinglePage _ lastKey)
-    = [lastKey]
+    = [makeUnslicedKey lastKey]
 appendedKeys (AppendMultiPage key overflowPageCount)
-    = key : genericReplicate overflowPageCount key
+    = unslicedKey : genericReplicate overflowPageCount unslicedKey
+    where
+
+    unslicedKey :: Unsliced SerialisedKey
+    unslicedKey = makeUnslicedKey key
 
 {-|
     Yields the index that results from performing a sequence of append
     operations, starting with no keys.
 -}
 indexFromAppends :: [Append] -> IndexOrdinary
-indexFromAppends appends = indexFromLastKeyList (concatMap appendedKeys appends)
+indexFromAppends appends = indexFromUnslicedLastKeyList $
+                           concatMap appendedKeys appends
 
 {-|
     Yields the serialized key list that results from performing a sequence of
@@ -256,11 +266,11 @@ indexFromAppends appends = indexFromLastKeyList (concatMap appendedKeys appends)
 lastKeysBlockFromAppends :: [Append] -> Primitive.Vector Word8
 lastKeysBlockFromAppends appends = lastKeysBlock where
 
-    lastKeys :: [SerialisedKey]
-    lastKeys = concatMap appendedKeys appends
+    unslicedLastKeys :: [Unsliced SerialisedKey]
+    unslicedLastKeys = concatMap appendedKeys appends
 
     lastKeysBlock :: Primitive.Vector Word8
-    lastKeysBlock = Primitive.concat (lastKeysBlocks lastKeys)
+    lastKeysBlock = Primitive.concat (lastKeysBlocks unslicedLastKeys)
 
 {-|
     Incrementally constructs an index, using the functions 'new', 'append', and
@@ -305,62 +315,64 @@ prop_searchForMentionedKeyWorks :: NonNegative (Small Int)
 prop_searchForMentionedKeyWorks (NonNegative (Small pageNo))
                                 (SearchableIndex index)
     = searchPartitioningCounterexample prefix selection suffix $
-      pageNo < length lastKeys ==> all (<  key) prefix    .&&.
-                                   all (== key) selection .&&.
-                                   all (>  key) suffix
+      pageNo < length unslicedLastKeys ==> all (<  unslicedKey) prefix    .&&.
+                                           all (== unslicedKey) selection .&&.
+                                           all (>  unslicedKey) suffix
     where
 
-    lastKeys :: Vector SerialisedKey
-    lastKeys = toLastKeys index
+    unslicedLastKeys :: Vector (Unsliced SerialisedKey)
+    unslicedLastKeys = toUnslicedLastKeys index
 
-    key :: SerialisedKey
-    key = lastKeys ! pageNo
+    unslicedKey :: Unsliced SerialisedKey
+    unslicedKey = unslicedLastKeys ! pageNo
 
-    prefix, selection, suffix :: Vector SerialisedKey
-    (prefix, selection, suffix) = searchPartitioning key index
+    prefix, selection, suffix :: Vector (Unsliced SerialisedKey)
+    (prefix, selection, suffix) = searchPartitioning unslicedKey index
 
-prop_searchForUnmentionedKeyInRangeWorks :: SerialisedKey
+prop_searchForUnmentionedKeyInRangeWorks :: Unsliced SerialisedKey
                                          -> SearchableIndex
                                          -> Property
-prop_searchForUnmentionedKeyInRangeWorks key (SearchableIndex index)
+prop_searchForUnmentionedKeyInRangeWorks unslicedKey (SearchableIndex index)
     = searchPartitioningCounterexample prefix selection suffix $
-      key `notElem` lastKeys && key <= last lastKeys ==>
-      key < selectionHead                     .&&.
-      all (<  key)           prefix           .&&.
+      unslicedKey `notElem` unslicedLastKeys &&
+      unslicedKey <= last unslicedLastKeys   ==>
+      unslicedKey < selectionHead             .&&.
+      all (<  unslicedKey)   prefix           .&&.
       all (== selectionHead) (tail selection) .&&.
       all (>  selectionHead) suffix
     where
 
-    lastKeys :: Vector SerialisedKey
-    lastKeys = toLastKeys index
+    unslicedLastKeys :: Vector (Unsliced SerialisedKey)
+    unslicedLastKeys = toUnslicedLastKeys index
 
-    prefix, selection, suffix :: Vector SerialisedKey
-    (prefix, selection, suffix) = searchPartitioning key index
+    prefix, selection, suffix :: Vector (Unsliced SerialisedKey)
+    (prefix, selection, suffix) = searchPartitioning unslicedKey index
 
-    selectionHead :: SerialisedKey
+    selectionHead :: Unsliced SerialisedKey
     selectionHead = head selection
 
-prop_searchForUnmentionedKeyBeyondRangeWorks :: SerialisedKey
+prop_searchForUnmentionedKeyBeyondRangeWorks :: Unsliced SerialisedKey
                                              -> SearchableIndex
                                              -> Property
-prop_searchForUnmentionedKeyBeyondRangeWorks key (SearchableIndex index)
+prop_searchForUnmentionedKeyBeyondRangeWorks unslicedKey (SearchableIndex index)
     = searchPartitioningCounterexample prefix selection suffix $
-      not (null lesserLastKeys) ==> all (<  selectionHead) prefix           .&&.
-                                    all (== selectionHead) (tail selection) .&&.
-                                    all (>  selectionHead) suffix
+      not (null lesserUnslicedLastKeys) ==>
+      all (<  selectionHead) prefix           .&&.
+      all (== selectionHead) (tail selection) .&&.
+      all (>  selectionHead) suffix
     where
 
-    lastKeys :: Vector SerialisedKey
-    lastKeys = toLastKeys index
+    unslicedLastKeys :: Vector (Unsliced SerialisedKey)
+    unslicedLastKeys = toUnslicedLastKeys index
 
-    lesserLastKeys :: Vector SerialisedKey
-    lesserLastKeys = takeWhile (< key) lastKeys
+    lesserUnslicedLastKeys :: Vector (Unsliced SerialisedKey)
+    lesserUnslicedLastKeys = takeWhile (< unslicedKey) unslicedLastKeys
 
-    prefix, selection, suffix :: Vector SerialisedKey
-    (prefix, selection, suffix) = searchPartitioning key $
-                                  IndexOrdinary lesserLastKeys
+    prefix, selection, suffix :: Vector (Unsliced SerialisedKey)
+    (prefix, selection, suffix) = searchPartitioning unslicedKey $
+                                  IndexOrdinary lesserUnslicedLastKeys
 
-    selectionHead :: SerialisedKey
+    selectionHead :: Unsliced SerialisedKey
     selectionHead = head selection
 
 -- ** Header and footer construction
@@ -380,39 +392,44 @@ prop_footerConstructionWorks entryCount index
 -- ** Deserialisation
 
 prop_numberOfEntriesFromSerialisedIndexWorks :: NumEntries
-                                             -> [SerialisedKey]
+                                             -> [Unsliced SerialisedKey]
                                              -> Property
-prop_numberOfEntriesFromSerialisedIndexWorks entryCount lastKeys
+prop_numberOfEntriesFromSerialisedIndexWorks entryCount unslicedLastKeys
     = errorMsgOrEntryCount === noErrorMsgButCorrectEntryCount
     where
 
     errorMsgOrEntryCount :: Either String NumEntries
-    errorMsgOrEntryCount = fst <$> fromSBS (serialisedIndex entryCount lastKeys)
+    errorMsgOrEntryCount = fst <$>
+                           fromSBS (serialisedIndex entryCount unslicedLastKeys)
 
     noErrorMsgButCorrectEntryCount :: Either String NumEntries
     noErrorMsgButCorrectEntryCount = Right entryCount
 
-prop_indexFromSerialisedIndexWorks :: NumEntries -> [SerialisedKey] -> Property
-prop_indexFromSerialisedIndexWorks entryCount lastKeys
+prop_indexFromSerialisedIndexWorks :: NumEntries
+                                   -> [Unsliced SerialisedKey]
+                                   -> Property
+prop_indexFromSerialisedIndexWorks entryCount unslicedLastKeys
     = errorMsgOrIndex === noErrorMsgButCorrectIndex
     where
 
     errorMsgOrIndex :: Either String IndexOrdinary
-    errorMsgOrIndex = snd <$> fromSBS (serialisedIndex entryCount lastKeys)
+    errorMsgOrIndex = snd <$>
+                      fromSBS (serialisedIndex entryCount unslicedLastKeys)
 
     noErrorMsgButCorrectIndex :: Either String IndexOrdinary
-    noErrorMsgButCorrectIndex = Right (indexFromLastKeyList lastKeys)
+    noErrorMsgButCorrectIndex = Right $
+                                indexFromUnslicedLastKeyList unslicedLastKeys
 
 prop_tooShortInputMakesDeserialisationFail :: TooShortByteString -> Bool
 prop_tooShortInputMakesDeserialisationFail
     = isLeft . fromSBS . fromTooShortByteString
 
 prop_typeAndVersionErrorMakesDeserialisationFail :: Word32
-                                                 -> [SerialisedKey]
+                                                 -> [Unsliced SerialisedKey]
                                                  -> NumEntries
                                                  -> Property
 prop_typeAndVersionErrorMakesDeserialisationFail typeAndVersion
-                                                 lastKeys
+                                                 unslicedLastKeys
                                                  entryCount
     = typeAndVersion /= testedTypeAndVersion ==> isLeft errorMsgOrResult
     where
@@ -421,29 +438,33 @@ prop_typeAndVersionErrorMakesDeserialisationFail typeAndVersion
     errorMsgOrResult
         = fromSBS $
           potentialSerialisedIndex (byteVectorFromPrim typeAndVersion)
-                                   (lastKeysBlocks lastKeys)
+                                   (lastKeysBlocks unslicedLastKeys)
                                    (entryCountBlock entryCount)
 
-prop_partialKeySizeBlockMakesDeserialisationFail :: [SerialisedKey]
+prop_partialKeySizeBlockMakesDeserialisationFail :: [Unsliced SerialisedKey]
                                                  -> Word8
                                                  -> NumEntries
                                                  -> Bool
-prop_partialKeySizeBlockMakesDeserialisationFail lastKeys
+prop_partialKeySizeBlockMakesDeserialisationFail unslicedLastKeys
                                                  partialKeySizeByte
                                                  entryCount
     = isLeft $
       fromSBS $
       potentialSerialisedIndex
           testedTypeAndVersionBlock
-          (lastKeysBlocks lastKeys ++ [Primitive.singleton partialKeySizeByte])
+          (correctBlocks ++ [Primitive.singleton partialKeySizeByte])
           (entryCountBlock entryCount)
+    where
 
-prop_partialKeyBlockMakesDeserialisationFail :: [SerialisedKey]
+    correctBlocks :: [Primitive.Vector Word8]
+    correctBlocks = lastKeysBlocks unslicedLastKeys
+
+prop_partialKeyBlockMakesDeserialisationFail :: [Unsliced SerialisedKey]
                                              -> Small Word16
                                              -> Primitive.Vector Word8
                                              -> NumEntries
                                              -> Property
-prop_partialKeyBlockMakesDeserialisationFail lastKeys
+prop_partialKeyBlockMakesDeserialisationFail unslicedLastKeys
                                              (Small statedSize)
                                              partialKeyBlock
                                              entryCount
@@ -451,13 +472,16 @@ prop_partialKeyBlockMakesDeserialisationFail lastKeys
       isLeft (fromSBS input)
     where
 
+    correctBlocks :: [Primitive.Vector Word8]
+    correctBlocks = lastKeysBlocks unslicedLastKeys
+
     statedSizeBlock :: Primitive.Vector Word8
     statedSizeBlock = byteVectorFromPrim statedSize
 
     input :: ShortByteString
     input = potentialSerialisedIndex
                 testedTypeAndVersionBlock
-                (lastKeysBlocks lastKeys ++ [statedSizeBlock, partialKeyBlock])
+                (correctBlocks ++ [statedSizeBlock, partialKeyBlock])
                 (entryCountBlock entryCount)
 
 -- ** Incremental construction
@@ -483,43 +507,47 @@ prop_incrementalSerialisedKeyListConstructionWorks logicalPageSummaries
 -- * Test case generation and shrinking
 
 {-
-    For 'NumEntries' and 'SerialisedKey', we use the 'Arbitrary' instantiations
-    from "Database.LSMTree.Extras.Generators". For the correctness of the above
-    tests, we need to assume the following properties of said instantiations,
-    which are not strictly guaranteed:
+    For 'NumEntries' and 'Unsliced SerialisedKey', we use the 'Arbitrary'
+    instantiations from "Database.LSMTree.Extras.Generators". For the
+    correctness of the above tests, we need to assume the following properties
+    of said instantiations, which are not strictly guaranteed:
 
       * Generated 'NumEntry' values are smaller than @2 ^ 64@.
-      * The lengths of generated 'SerialisedKey' values are smaller than
-        @2 ^ 16@.
+      * The lengths of generated 'Unsliced SerialisedKey' values are smaller
+        than @2 ^ 16@.
 -}
 
 instance Arbitrary IndexOrdinary where
 
     arbitrary = IndexOrdinary <$> fromList <$> arbitrary
 
-    shrink = shrinkMap (IndexOrdinary . fromList) (toList . toLastKeys)
+    shrink = shrinkMap (IndexOrdinary . fromList) (toList . toUnslicedLastKeys)
 
 newtype SearchableIndex = SearchableIndex IndexOrdinary deriving stock Show
 
 instance Arbitrary SearchableIndex where
 
     arbitrary = do
-        availableLastKeys <- (getSorted <$> arbitrary) `suchThat` (not . null)
-        lastKeys <- concat <$>
-                    mapM ((<$> genKeyCount) . flip replicate) availableLastKeys
-        return $ SearchableIndex (indexFromLastKeyList lastKeys)
+        availableUnslicedLastKeys
+            <- (getSorted <$> arbitrary) `suchThat` (not . null)
+        unslicedLastKeys
+            <- concat <$>
+               mapM ((<$> genKeyCount) . flip replicate)
+                    availableUnslicedLastKeys
+        return $ SearchableIndex (indexFromUnslicedLastKeyList unslicedLastKeys)
         where
 
         genKeyCount :: Gen Int
         genKeyCount = frequency $
                       [(4, pure 1), (1, getSmall <$> getPositive <$> arbitrary)]
 
-    shrink (SearchableIndex (IndexOrdinary lastKeysVec))
+    shrink (SearchableIndex (IndexOrdinary unslicedLastKeysVec))
         = [
-              SearchableIndex (indexFromLastKeyList lastKeys') |
-                  lastKeys' <- shrink (toList lastKeysVec),
-                  not (null lastKeys'),
-                  and (zipWith (<=) lastKeys' (List.tail lastKeys'))
+              SearchableIndex (indexFromUnslicedLastKeyList unslicedLastKeys') |
+                  unslicedLastKeys' <- shrink (toList unslicedLastKeysVec),
+                  not (null unslicedLastKeys'),
+                  and $
+                  zipWith (<=) unslicedLastKeys' (List.tail unslicedLastKeys')
           ]
 
 -- | A byte string that is too short to be a serialised index.
