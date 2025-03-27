@@ -66,19 +66,10 @@ tests = testGroup "Test.Database.LSMTree.Generators" [
     , testGroup "KeyForIndexCompact" $
         prop_arbitraryAndShrinkPreserveInvariant noTags $
           isKeyForIndexCompact . getKeyForIndexCompact
-    , testGroup "BiasedKeyForIndexCompact" $
-        prop_arbitraryAndShrinkPreserveInvariant noTags $
-          isKeyForIndexCompact . getBiasedKeyForIndexCompact
-    , testGroup "lists of key/op pairs" $
-        [ testGroup "BiasedKey" $
-            prop_arbitraryAndShrinkPreserveInvariant
-              (labelTestKOps @BiasedKey)
-              deepseqInvariant
-        , testGroup "BiasedKeyForIndexCompact" $
-            prop_arbitraryAndShrinkPreserveInvariant
-              (labelTestKOps @BiasedKeyForIndexCompact)
-              deepseqInvariant
-        ]
+    , testGroup "BiasedKey" $
+          prop_arbitraryAndShrinkPreserveInvariant
+            (labelTestKOps @BiasedKey)
+            deepseqInvariant
     , testGroup "helpers"
         [ testProperty "prop_shrinkVec" $ \vec ->
             shrinkVec (QC.shrink @Int) vec === map VP.fromList (QC.shrink (VP.toList vec))

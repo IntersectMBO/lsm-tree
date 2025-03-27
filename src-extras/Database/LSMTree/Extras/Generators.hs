@@ -37,7 +37,6 @@ module Database.LSMTree.Extras.Generators (
   , isKeyForIndexCompact
   , KeyForIndexCompact (..)
   , BiasedKey (..)
-  , BiasedKeyForIndexCompact (..)
     -- * helpers
   , shrinkVec
   ) where
@@ -596,22 +595,6 @@ instance Arbitrary BiasedKey where
   shrink (BiasedKey rb) = [BiasedKey rb' | rb' <- shrink rb]
 
 deriving newtype instance SerialiseKey BiasedKey
-
-newtype BiasedKeyForIndexCompact =
-    BiasedKeyForIndexCompact { getBiasedKeyForIndexCompact :: RawBytes }
-  deriving stock (Eq, Ord, Show)
-  deriving newtype NFData
-
-instance Arbitrary BiasedKeyForIndexCompact where
-  arbitrary = arbitraryBiasedKey BiasedKeyForIndexCompact genKeyForIndexCompact
-
-  shrink (BiasedKeyForIndexCompact rb) =
-      [ BiasedKeyForIndexCompact rb'
-      | rb' <- shrink rb
-      , isKeyForIndexCompact rb'
-      ]
-
-deriving newtype instance SerialiseKey BiasedKeyForIndexCompact
 
 {-------------------------------------------------------------------------------
   Unsliced
