@@ -16,6 +16,7 @@ module Database.LSMTree.Internal.Unsliced (
 
 import           Control.DeepSeq (NFData)
 import           Control.Exception (assert)
+import           Data.ByteString.Short (ShortByteString (SBS))
 import           Data.Primitive.ByteArray
 import qualified Data.Vector.Primitive as VP
 import           Database.LSMTree.Internal.RawBytes (RawBytes (..))
@@ -69,7 +70,13 @@ instance Show (Unsliced SerialisedKey) where
   show x = show (fromUnslicedKey x)
 
 instance Eq (Unsliced SerialisedKey) where
-  x == y = fromUnslicedKey x == fromUnslicedKey y
+  Unsliced ba1 == Unsliced ba2 = SBS ba1' == SBS ba2'
+    where
+      !(ByteArray ba1') = ba1
+      !(ByteArray ba2') = ba2
 
 instance Ord (Unsliced SerialisedKey) where
-  x <= y = fromUnslicedKey x <= fromUnslicedKey y
+  compare (Unsliced ba1) (Unsliced ba2) = compare (SBS ba1') (SBS ba2')
+    where
+      !(ByteArray ba1') = ba1
+      !(ByteArray ba2') = ba2
