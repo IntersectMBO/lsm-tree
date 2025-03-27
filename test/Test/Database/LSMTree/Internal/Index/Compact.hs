@@ -27,10 +27,9 @@ import qualified Data.Vector.Unboxed as VU
 import qualified Data.Vector.Unboxed.Base as VU
 import           Data.Word
 import           Database.LSMTree.Extras
-import           Database.LSMTree.Extras.Generators (BiasedKeyForIndexCompact,
-                     ChunkSize (..), LogicalPageSummaries,
-                     LogicalPageSummary (..), Pages (..), genRawBytes,
-                     isKeyForIndexCompact, labelPages, toAppends)
+import           Database.LSMTree.Extras.Generators (ChunkSize (..),
+                     LogicalPageSummaries, LogicalPageSummary (..), Pages (..),
+                     genRawBytes, isKeyForIndexCompact, labelPages, toAppends)
 import           Database.LSMTree.Extras.Index (Append (..), appendToCompact)
 import           Database.LSMTree.Internal.BitMath
 import           Database.LSMTree.Internal.Chunk as Chunk (toByteString)
@@ -58,14 +57,14 @@ tests :: TestTree
 tests = testGroup "Test.Database.LSMTree.Internal.Index.Compact" [
     testGroup "TestKey" $
       prop_arbitraryAndShrinkPreserveInvariant @TestKey noTags isTestKey
-  , testProperty "prop_distribution @BiasedKeyForIndexCompact" $
-      prop_distribution @BiasedKeyForIndexCompact
+  , testProperty "prop_distribution @TestKey" $
+      prop_distribution @TestKey
   , testProperty "prop_searchMinMaxKeysAfterConstruction" $
-      prop_searchMinMaxKeysAfterConstruction @BiasedKeyForIndexCompact 100
+      prop_searchMinMaxKeysAfterConstruction @TestKey 100
   , testProperty "prop_differentChunkSizesSameResults" $
-      prop_differentChunkSizesSameResults @BiasedKeyForIndexCompact
+      prop_differentChunkSizesSameResults @TestKey
   , testProperty "prop_singlesEquivMulti" $
-      prop_singlesEquivMulti @BiasedKeyForIndexCompact
+      prop_singlesEquivMulti @TestKey
   , testGroup "(De)serialisation" [
         testGroup "Chunks generator" $
           prop_arbitraryAndShrinkPreserveInvariant noTags chunksInvariant
@@ -126,7 +125,7 @@ tests = testGroup "Test.Database.LSMTree.Internal.Index.Compact" [
       , testProperty "prop_roundtrip_chunks" $
           prop_roundtrip_chunks
       , testProperty "prop_roundtrip" $
-          prop_roundtrip @BiasedKeyForIndexCompact
+          prop_roundtrip @TestKey
       , testProperty "prop_total_deserialisation" $ withMaxSuccess 10000
           prop_total_deserialisation
       , testProperty "prop_total_deserialisation_whitebox" $ withMaxSuccess 10000
