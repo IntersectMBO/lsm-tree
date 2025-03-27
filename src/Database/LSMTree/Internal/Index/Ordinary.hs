@@ -1,3 +1,4 @@
+{-# OPTIONS_HADDOCK not-home #-}
 {- HLINT ignore "Avoid restricted alias" -}
 
 {-|

@@ -1,4 +1,7 @@
+{-# OPTIONS_HADDOCK not-home #-}
+
 -- | Page accumulator.
+--
 module Database.LSMTree.Internal.PageAcc (
     -- * Incrementally accumulating a single page.
     PageAcc (..),

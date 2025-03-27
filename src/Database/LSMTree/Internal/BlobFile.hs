@@ -1,4 +1,6 @@
 {-# LANGUAGE TypeFamilies #-}
+{-# OPTIONS_HADDOCK not-home #-}
+
 module Database.LSMTree.Internal.BlobFile (
     BlobFile (..)
   , BlobSpan (..)

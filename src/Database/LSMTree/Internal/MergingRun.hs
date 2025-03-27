@@ -1,5 +1,6 @@
 {-# LANGUAGE CPP             #-}
 {-# LANGUAGE PatternSynonyms #-}
+{-# OPTIONS_HADDOCK not-home #-}
 
 -- | An incremental merge of multiple runs.
 module Database.LSMTree.Internal.MergingRun (

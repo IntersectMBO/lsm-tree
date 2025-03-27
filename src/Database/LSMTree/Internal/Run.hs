@@ -3,6 +3,7 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DerivingVia        #-}
 {-# LANGUAGE RecordWildCards    #-}
+{-# OPTIONS_HADDOCK not-home #-}
 
 -- | Runs of sorted key\/value data.
 module Database.LSMTree.Internal.Run (

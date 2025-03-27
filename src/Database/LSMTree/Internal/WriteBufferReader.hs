@@ -1,3 +1,5 @@
+{-# OPTIONS_HADDOCK not-home #-}
+
 -- | A write buffer that is being read incrementally.
 --
 module Database.LSMTree.Internal.WriteBufferReader (

@@ -3,6 +3,7 @@
 {-# LANGUAGE MagicHash          #-}
 {-# LANGUAGE TypeFamilies       #-}
 {-# LANGUAGE UnboxedTuples      #-}
+{-# OPTIONS_HADDOCK not-home #-}
 {- HLINT ignore "Redundant lambda" -}
 
 #ifndef __HLINT__

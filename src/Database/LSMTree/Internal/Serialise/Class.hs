@@ -1,4 +1,7 @@
+{-# OPTIONS_HADDOCK not-home #-}
+
 -- | Public API for serialisation of keys, blobs and values
+--
 module Database.LSMTree.Internal.Serialise.Class (
     SerialiseKey (..)
   , serialiseKeyIdentity
