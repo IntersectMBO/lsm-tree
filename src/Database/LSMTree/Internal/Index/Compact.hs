@@ -418,7 +418,7 @@ search k IndexCompact{..} =
                 bitIndexFromToRev (BoundInclusive 0) (BoundInclusive i) (Bit False) icClashes
               -- The TB map is consulted to find the closest key smaller than k.
               !i2 = maybe (PageNo 0) snd $
-                Map.lookupLE (unsafeNoAssertMakeUnslicedKey k) icTieBreaker
+                Map.lookupLE (makeUnslicedKey k) icTieBreaker
               -- If i2 < i1, then it means the clashing pages were all just part
               -- of the same larger-than-page value. Entries are only included
               -- in the TB map if the clash was a *proper* clash.

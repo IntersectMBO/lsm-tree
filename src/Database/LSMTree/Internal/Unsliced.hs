@@ -11,7 +11,6 @@ module Database.LSMTree.Internal.Unsliced (
   , makeUnslicedKey
   , unsafeMakeUnslicedKey
   , fromUnslicedKey
-  , unsafeNoAssertMakeUnslicedKey
   ) where
 
 import           Control.DeepSeq (NFData)
@@ -43,9 +42,6 @@ makeUnsliced bytes
 unsafeMakeUnsliced :: RawBytes -> Unsliced RawBytes
 unsafeMakeUnsliced bytes = assert (precondition bytes) (Unsliced (getByteArray bytes))
 
-unsafeNoAssertMakeUnsliced :: RawBytes -> Unsliced RawBytes
-unsafeNoAssertMakeUnsliced bytes = Unsliced (getByteArray bytes)
-
 fromUnsliced :: Unsliced RawBytes -> RawBytes
 fromUnsliced (Unsliced ba) = RawBytes (mkPrimVector 0 (sizeofByteArray ba) ba)
 
@@ -64,9 +60,6 @@ makeUnslicedKey (SerialisedKey rb) = from (makeUnsliced rb)
 
 unsafeMakeUnslicedKey :: SerialisedKey -> Unsliced SerialisedKey
 unsafeMakeUnslicedKey (SerialisedKey rb) = from (unsafeMakeUnsliced rb)
-
-unsafeNoAssertMakeUnslicedKey :: SerialisedKey -> Unsliced SerialisedKey
-unsafeNoAssertMakeUnslicedKey (SerialisedKey rb) = from (unsafeNoAssertMakeUnsliced rb)
 
 fromUnslicedKey :: Unsliced SerialisedKey -> SerialisedKey
 fromUnslicedKey x = SerialisedKey (fromUnsliced (to x))
