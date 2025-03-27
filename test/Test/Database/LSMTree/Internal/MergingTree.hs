@@ -6,7 +6,6 @@ import           Control.ActionRegistry
 import           Control.Exception (bracket)
 import           Control.Monad.Class.MonadAsync as Async
 import           Control.RefCount
-import           Data.Arena (newArenaManager)
 import           Data.Coerce (coerce)
 import           Data.Foldable (toList)
 import           Data.List.NonEmpty (NonEmpty)
@@ -18,6 +17,7 @@ import           Database.LSMTree.Extras (showPowersOf10)
 import           Database.LSMTree.Extras.MergingRunData
 import           Database.LSMTree.Extras.MergingTreeData
 import           Database.LSMTree.Extras.RunData
+import           Database.LSMTree.Internal.Arena (newArenaManager)
 import           Database.LSMTree.Internal.BlobRef
 import           Database.LSMTree.Internal.Entry (Entry)
 import qualified Database.LSMTree.Internal.Entry as Entry

@@ -19,7 +19,6 @@ module Database.LSMTree.Internal.Lookup (
   , intraPageLookupsOn
   ) where
 
-import           Data.Arena (Arena, ArenaManager, allocateFromArena, withArena)
 import           Data.Bifunctor
 import           Data.BloomFilter (Bloom)
 import           Data.Primitive.ByteArray
@@ -27,6 +26,8 @@ import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as VM
 import qualified Data.Vector.Primitive as VP
 import qualified Data.Vector.Unboxed as VU
+import           Database.LSMTree.Internal.Arena (Arena, ArenaManager,
+                     allocateFromArena, withArena)
 
 import           Control.Exception (assert)
 import           Control.Monad

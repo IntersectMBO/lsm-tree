@@ -1,18 +1,18 @@
 {-# LANGUAGE CPP #-}
-module Test.Data.Arena (
+module Test.Database.LSMTree.Internal.Arena (
     tests,
 ) where
 
 import           Control.Monad.ST (runST)
-import           Data.Arena
 import           Data.Primitive.ByteArray
 import           Data.Word (Word8)
+import           Database.LSMTree.Internal.Arena
 import           GHC.Exts (toList)
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.HUnit (testCaseSteps, (@?=))
 
 tests :: TestTree
-tests = testGroup "Test.Data.Arena"
+tests = testGroup "Test.Database.LSMTree.Internal.Arena"
     [ testCaseSteps "safe" $ \_info -> do
         let !ba = runST $ withUnmanagedArena $ \arena -> do
                 (off', mba) <- allocateFromArena arena 32 8

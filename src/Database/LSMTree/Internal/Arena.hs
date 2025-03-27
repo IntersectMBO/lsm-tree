@@ -1,7 +1,8 @@
 {-# LANGUAGE CPP             #-}
 {-# LANGUAGE LambdaCase      #-}
 {-# LANGUAGE RecordWildCards #-}
-module Data.Arena (
+{-# OPTIONS_HADDOCK not-home #-}
+module Database.LSMTree.Internal.Arena (
     ArenaManager,
     newArenaManager,
     Arena,
