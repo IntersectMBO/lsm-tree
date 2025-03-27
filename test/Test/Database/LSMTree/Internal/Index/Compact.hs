@@ -376,11 +376,15 @@ fromListSingles maxcsize apps = runST $ do
 
 labelIndex :: IndexCompact -> (Property -> Property)
 labelIndex ic =
-      QC.tabulate "# Clashes" [showPowersOf10 nclashes]
-    . QC.tabulate "# Contiguous clash runs" [showPowersOf10 (length nscontig)]
-    . QC.tabulate "Length of contiguous clash runs" (fmap (showPowersOf10 . snd) nscontig)
+      checkCoverage
+    . QC.tabulate "# Clashes" [showPowersOf 2 nclashes]
+    . QC.cover 0.7 (nclashes > 0) "Has clashes"
+    . QC.tabulate "# Contiguous clash runs" [showPowersOf 2 (length nscontig)]
+    . QC.cover 0.3 (not (null nscontig)) "Has contiguous clash runs"
+    . QC.tabulate "Length of contiguous clash runs" (fmap (showPowersOf 2 . snd) nscontig)
     . QC.tabulate "Contiguous clashes contain multi-page values" (fmap (show . fst) nscontig)
-    . QC.classify (multiPageValuesClash ic) "Has clashing multi-page values"
+    . QC.cover 0.05 (any fst nscontig) "Has contiguous clashes that contain multi-page values"
+    . QC.cover 0.01 (multiPageValuesClash ic) "Has clashing multi-page values"
   where nclashes       = countClashes ic
         nscontig       = countContiguousClashes ic
 
