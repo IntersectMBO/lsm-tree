@@ -9,7 +9,7 @@
 module Database.LSMTree.Internal.Index.Ordinary
 (
     IndexOrdinary (IndexOrdinary),
-    toLastKeys,
+    toUnslicedLastKeys,
     search,
     sizeInPages,
     headerLBS,
@@ -41,6 +41,7 @@ import           Database.LSMTree.Internal.Page (NumPages (NumPages),
                      PageNo (PageNo), PageSpan (PageSpan))
 import           Database.LSMTree.Internal.Serialise
                      (SerialisedKey (SerialisedKey'))
+import           Database.LSMTree.Internal.Unsliced (Unsliced, makeUnslicedKey)
 import           Database.LSMTree.Internal.Vector (binarySearchL, mkPrimVector)
 
 {-|
@@ -66,22 +67,22 @@ supportedTypeAndVersion = 0x0101
     ascending order and must comprise at least one page for 'search' to be able
     to return a valid page span.
 -}
-newtype IndexOrdinary = IndexOrdinary (Vector SerialisedKey)
+newtype IndexOrdinary = IndexOrdinary (Vector (Unsliced SerialisedKey))
     deriving stock (Eq, Show)
 
 instance NFData IndexOrdinary where
 
-    rnf (IndexOrdinary lastKeys) = rnf lastKeys
+    rnf (IndexOrdinary unslicedLastKeys) = rnf unslicedLastKeys
 
-toLastKeys :: IndexOrdinary -> Vector SerialisedKey
-toLastKeys (IndexOrdinary lastKeys) = lastKeys
+toUnslicedLastKeys :: IndexOrdinary -> Vector (Unsliced SerialisedKey)
+toUnslicedLastKeys (IndexOrdinary unslicedLastKeys) = unslicedLastKeys
 
 {-|
     For a specification of this operation, see the documentation of [its
     type-agnostic version]('Database.LSMTree.Internal.Index.search').
 -}
 search :: SerialisedKey -> IndexOrdinary -> PageSpan
-search key (IndexOrdinary lastKeys)
+search key (IndexOrdinary unslicedLastKeys)
   -- TODO: ideally, we could assert that an index is never empty, but
   -- unfortunately we can not currently do this. Runs (and thefeore indexes)
   -- /can/ be empty if they were created by a last-level merge where all input
@@ -94,35 +95,35 @@ search key (IndexOrdinary lastKeys)
   | otherwise = assert (pageCount > 0) result where
 
     protoStart :: Int
-    !protoStart = binarySearchL lastKeys key
+    !protoStart = binarySearchL unslicedLastKeys (makeUnslicedKey key)
 
     pageCount :: Int
-    !pageCount = length lastKeys
+    !pageCount = length unslicedLastKeys
 
     result :: PageSpan
     result | protoStart < pageCount
                = let
 
-                     resultKey :: SerialisedKey
-                     !resultKey = lastKeys ! protoStart
+                     unslicedResultKey :: Unsliced SerialisedKey
+                     !unslicedResultKey = unslicedLastKeys ! protoStart
 
                      end :: Int
                      !end = maybe (pred pageCount) (+ protoStart) $
-                            findIndex (/= resultKey) $
-                            drop (succ protoStart) lastKeys
+                            findIndex (/= unslicedResultKey) $
+                            drop (succ protoStart) unslicedLastKeys
 
                  in PageSpan (PageNo $ protoStart)
                              (PageNo $ end)
            | otherwise
                = let
 
-                     resultKey :: SerialisedKey
-                     !resultKey = last lastKeys
+                     unslicedResultKey :: Unsliced SerialisedKey
+                     !unslicedResultKey = last unslicedLastKeys
 
                      start :: Int
                      !start = maybe 0 succ $
-                              findIndexR (/= resultKey) $
-                              lastKeys
+                              findIndexR (/= unslicedResultKey) $
+                              unslicedLastKeys
 
                  in PageSpan (PageNo $ start)
                              (PageNo $ pred pageCount)
@@ -132,7 +133,8 @@ search key (IndexOrdinary lastKeys)
     type-agnostic version]('Database.LSMTree.Internal.Index.sizeInPages').
 -}
 sizeInPages :: IndexOrdinary -> NumPages
-sizeInPages (IndexOrdinary lastKeys) = NumPages $ fromIntegral (length lastKeys)
+sizeInPages (IndexOrdinary unslicedLastKeys)
+    = NumPages $ fromIntegral (length unslicedLastKeys)
 
 {-|
     For a specification of this operation, see the documentation of [its
@@ -203,10 +205,11 @@ fromSBS shortByteString@(SBS unliftedByteArray)
         Primitive.Vector _ _ entryCountRep = Primitive.force entryCountBytes
 
     index :: Either String IndexOrdinary
-    index = IndexOrdinary <$> fromList <$> lastKeys lastKeysBytes
+    index = IndexOrdinary <$> fromList <$> unslicedLastKeys lastKeysBytes
 
-    lastKeys :: Primitive.Vector Word8 -> Either String [SerialisedKey]
-    lastKeys bytes
+    unslicedLastKeys :: Primitive.Vector Word8
+                     -> Either String [Unsliced SerialisedKey]
+    unslicedLastKeys bytes
         | Primitive.null bytes
             = Right []
         | otherwise
@@ -234,8 +237,8 @@ fromSBS shortByteString@(SBS unliftedByteArray)
                       (firstBytes, othersBytes)
                           = Primitive.splitAt firstSize postFirstSizeBytes
 
-                      first :: SerialisedKey
-                      !first = SerialisedKey' (Primitive.force firstBytes)
+                      first :: Unsliced SerialisedKey
+                      !first = makeUnslicedKey (SerialisedKey' firstBytes)
 
-                  others <- lastKeys othersBytes
+                  others <- unslicedLastKeys othersBytes
                   return (first : others)
