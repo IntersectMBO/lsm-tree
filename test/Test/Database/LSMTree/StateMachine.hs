@@ -280,9 +280,9 @@ instance Arbitrary R.WriteBufferAlloc where
       | QC.Positive x' <- QC.shrink (QC.Positive x)
       ]
 
-deriving stock instance Enum R.FencePointerIndex
-deriving stock instance Bounded R.FencePointerIndex
-instance Arbitrary R.FencePointerIndex where
+deriving stock instance Enum R.FencePointerIndexType
+deriving stock instance Bounded R.FencePointerIndexType
+instance Arbitrary R.FencePointerIndexType where
   arbitrary = QC.arbitraryBoundedEnum
   shrink R.OrdinaryIndex = []
   shrink R.CompactIndex  = [R.OrdinaryIndex]

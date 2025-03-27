@@ -632,8 +632,8 @@ deriving anyclass instance NoThunks WriteBufferAlloc
 deriving stock instance Generic BloomFilterAlloc
 deriving anyclass instance NoThunks BloomFilterAlloc
 
-deriving stock instance Generic FencePointerIndex
-deriving anyclass instance NoThunks FencePointerIndex
+deriving stock instance Generic FencePointerIndexType
+deriving anyclass instance NoThunks FencePointerIndexType
 
 deriving stock instance Generic DiskCachePolicy
 deriving anyclass instance NoThunks DiskCachePolicy

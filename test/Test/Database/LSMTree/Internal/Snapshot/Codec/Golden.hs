@@ -13,7 +13,7 @@ import qualified Data.Vector as V
 import           Database.LSMTree.Common (BloomFilterAlloc (..),
                      DiskCachePolicy (..), NumEntries (..), TableConfig (..),
                      WriteBufferAlloc (..), defaultTableConfig)
-import           Database.LSMTree.Internal.Config (FencePointerIndex (..),
+import           Database.LSMTree.Internal.Config (FencePointerIndexType (..),
                      MergePolicy (..), MergeSchedule (..), SizeRatio (..))
 import           Database.LSMTree.Internal.MergeSchedule
                      (MergePolicyForLevel (..), NominalCredits (..),

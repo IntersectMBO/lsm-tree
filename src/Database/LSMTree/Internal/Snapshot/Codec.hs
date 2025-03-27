@@ -447,19 +447,19 @@ instance DecodeVersioned BloomFilterAlloc where
         (2, 1) -> AllocRequestFPR <$> decodeDouble
         _ -> fail ("[BloomFilterAlloc] Unexpected combination of list length and tag: " <> show (n, tag))
 
--- FencePointerIndex
+-- FencePointerIndexType
 
-instance Encode FencePointerIndex where
+instance Encode FencePointerIndexType where
   encode CompactIndex  = encodeWord 0
   encode OrdinaryIndex = encodeWord 1
 
-instance DecodeVersioned FencePointerIndex where
+instance DecodeVersioned FencePointerIndexType where
    decodeVersioned V0 = do
       tag <- decodeWord
       case tag of
         0 -> pure CompactIndex
         1 -> pure OrdinaryIndex
-        _ -> fail ("[FencePointerIndex] Unexpected tag: " <> show tag)
+        _ -> fail ("[FencePointerIndexType] Unexpected tag: " <> show tag)
 
 -- DiskCachePolicy
 
