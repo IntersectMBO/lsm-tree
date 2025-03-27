@@ -4,12 +4,12 @@ module Test.Database.LSMTree.Internal.Vector (tests) where
 
 import           Control.Monad (forM_)
 import           Control.Monad.ST
-import           Data.Map.Range
 import qualified Data.Vector.Unboxed as VU
 import qualified Data.Vector.Unboxed.Mutable as VUM
 import           Data.Word
 import           Database.LSMTree.Extras
 import           Database.LSMTree.Internal.Index.CompactAcc
+import           Database.LSMTree.Internal.Map.Range
 import           Test.QuickCheck
 import           Test.QuickCheck.Instances ()
 import           Test.QuickCheck.Monadic (PropertyM, monadicST, run)

@@ -119,7 +119,6 @@ library
   hs-source-dirs:  src
   exposed-modules:
     Data.Arena
-    Data.Map.Range
     Database.LSMTree
     Database.LSMTree.Common
     Database.LSMTree.Internal
@@ -143,6 +142,7 @@ library
     Database.LSMTree.Internal.Index.Ordinary
     Database.LSMTree.Internal.Index.OrdinaryAcc
     Database.LSMTree.Internal.Lookup
+    Database.LSMTree.Internal.Map.Range
     Database.LSMTree.Internal.Merge
     Database.LSMTree.Internal.MergeSchedule
     Database.LSMTree.Internal.MergingRun
