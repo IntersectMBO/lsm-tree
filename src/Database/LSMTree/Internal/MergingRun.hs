@@ -258,6 +258,10 @@ unsafeNew mergeDebt (SpentCredits spentCredits)
 
 -- | Create references to the runs that should be queried for lookups.
 -- In particular, if the merge is not complete, these are the input runs.
+--
+-- TODO: This interface doesn't work well with the action registry. Just doing
+-- @withRollback reg (duplicateRuns mr) (mapM_ releaseRef)@ isn't exception-safe
+-- since if one of the @releaseRef@ calls fails, the following ones aren't run.
 {-# SPECIALISE duplicateRuns ::
      Ref (MergingRun t IO h) -> IO (V.Vector (Ref (Run IO h))) #-}
 duplicateRuns ::
@@ -757,8 +761,8 @@ atomicSpendCredits (CreditsVar var) spend =
 
 {-# SPECIALISE remainingMergeDebt ::
      Ref (MergingRun t IO h) -> IO (MergeDebt, NumEntries) #-}
--- | Calculate an upper bound on the merge credits required to complete the
--- merge, as well as an upper bound on the size of the resulting run.
+-- | Calculate the merge credits required to complete the merge, as well as an
+-- upper bound on the size of the resulting run.
 remainingMergeDebt ::
      (MonadMVar m, PrimMonad m)
   => Ref (MergingRun t m h) -> m (MergeDebt, NumEntries)

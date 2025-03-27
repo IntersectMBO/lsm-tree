@@ -14,6 +14,7 @@ import           Data.Map (Map)
 import qualified Data.Map as Map
 import           Data.Traversable (for)
 import qualified Data.Vector as V
+import           Database.LSMTree.Extras (showPowersOf10)
 import           Database.LSMTree.Extras.MergingRunData
 import           Database.LSMTree.Extras.MergingTreeData
 import           Database.LSMTree.Extras.RunData
@@ -138,8 +139,9 @@ prop_lookupTree hfs hbio keys mtd = do
       -> IO (V.Vector (Maybe (Entry v SerialisedBlob)))
     fetchBlobs = traverse (traverse (traverse (readWeakBlobRef hfs)))
 
-    -- trees are always in the last level, there is no distinction between
-    -- (Nothing and Just Delete), (Insert and Mupsert)
+    -- the lookup accs might be different between implementation and model
+    -- (Nothing vs. Just Delete, Insert vs. Mupsert), but this doesn't matter
+    -- for the final result of the lookup
     normalise = V.map toLookupResult
 
     toLookupResult Nothing  = Nothing
@@ -156,13 +158,14 @@ prop_lookupTree hfs hbio keys mtd = do
             return $ V.map (const Nothing) keys
           False -> do
             batches <- buildLookupTree reg tree
-            releaseLookupTree reg batches  -- only happens at the end
             results <- traverse (performLookups mgr) batches
-            foldLookupTree resolveVal results
+            acc <- foldLookupTree resolveVal results
+            releaseLookupTree reg batches
+            return acc
 
     performLookups mgr runs =
         Async.async $
-          Lookup.lookupsIOWithoutWriteBuffer
+          Lookup.lookupsIO
             hbio
             mgr
             resolveVal
@@ -227,22 +230,38 @@ prop_supplyCredits hfs hbio threshold credits mtd = do
     FS.createDirectory hfs (FS.mkFsPath ["active"])
     counter <- newUniqCounter 0
     withMergingTree hfs hbio resolveVal runParams setupPath counter mtd $ \tree -> do
+      (MR.MergeDebt initialDebt, _) <- remainingMergeDebt tree
       props <- for credits $ \c -> do
         (MR.MergeDebt debt, _) <- remainingMergeDebt tree
-        leftovers <-
-          supplyCredits hfs hbio resolveVal runParams threshold root counter tree c
-        (MR.MergeDebt debt', _) <- remainingMergeDebt tree
-        return $
-          counterexample (show (debt, leftovers, debt')) $ conjoin [
-              counterexample "negative values" $
-                debt >= 0 && leftovers >= 0 && debt' >= 0
-            , counterexample "did not reduce debt sufficiently" $
-                debt' <= debt - (c - leftovers)
-            ]
-      return (conjoin (toList props))
+        if debt <= 0
+          then
+            return $ property True
+          else do
+            leftovers <-
+              supplyCredits hfs hbio resolveVal runParams threshold root counter tree c
+            (MR.MergeDebt debt', _) <- remainingMergeDebt tree
+            return $
+              -- semi-useful, but mainly tells us in how many steps we supplied
+              tabulate "supplied credits" [showPowersOf10 (fromIntegral c)] $
+              counterexample (show (debt, leftovers, debt')) $ conjoin [
+                  counterexample "negative values" $
+                    debt >= 0 && leftovers >= 0 && debt' >= 0
+                , counterexample "did not reduce debt sufficiently" $
+                    debt' <= debt - (c - leftovers)
+                ]
+      (MR.MergeDebt finalDebt, _) <- remainingMergeDebt tree
+      return $
+        labelDebt initialDebt finalDebt $
+          conjoin (toList props)
   where
     root = Paths.SessionRoot (FS.mkFsPath [])
-    setupPath = FS.mkFsPath ["setup"]  -- separate dir, so it doesn't clash
+    setupPath = FS.mkFsPath ["setup"]  -- separate dir, so file paths in errors
+                                       -- are identifiable as created in setup
+                                       --
+    labelDebt initial final
+      | initial == 0 = label "trivial"
+      | final   == 0 = label "completed"
+      | otherwise    = label "incomplete"
 
 instance Arbitrary MR.MergeCredits where
   arbitrary = MR.MergeCredits . getPositive <$> arbitrary

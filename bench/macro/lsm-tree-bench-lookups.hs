@@ -486,7 +486,8 @@ benchLookupsIO !hbio !arenaManager !resolve !wb !wbblobs !rs !bs !ics !hs =
       | n <= 0    = pure ()
       | otherwise = do
           let (!ks, !keyRng') = genLookupBatch keyRng benchmarkGenBatchSize
-          !_ <- lookupsIO hbio arenaManager resolve wb wbblobs rs bs ics hs ks
+          !_ <- lookupsIOWithWriteBuffer
+                  hbio arenaManager resolve wb wbblobs rs bs ics hs ks
           go keyRng' (n-benchmarkGenBatchSize)
 
 {-------------------------------------------------------------------------------

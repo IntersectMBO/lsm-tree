@@ -81,9 +81,6 @@ mergeLookupAcc resolve mt accs =
 --
 -- This function duplicates the references to all the tree's runs.
 -- These references later need to be released using 'releaseLookupTree'.
---
--- This function should be run with asynchronous exceptions masked to prevent
--- failing after internal resources have already been created.
 {-# SPECIALISE buildLookupTree ::
      ActionRegistry IO
   -> Ref (MT.MergingTree IO h)

@@ -3,8 +3,8 @@
 module Database.LSMTree.Internal.Lookup (
     ResolveSerialisedValue
   , LookupAcc
+  , lookupsIOWithWriteBuffer
   , lookupsIO
-  , lookupsIOWithoutWriteBuffer
     -- * Errors
   , TableCorruptedError (..)
     -- * Internal: exposed for tests and benchmarks
@@ -14,7 +14,8 @@ module Database.LSMTree.Internal.Lookup (
   , prepLookups
   , bloomQueries
   , indexSearches
-  , intraPageLookups
+  , intraPageLookupsWithWriteBuffer
+  , intraPageLookupsOn
   ) where
 
 import           Data.Arena (Arena, ArenaManager, allocateFromArena, withArena)
@@ -114,7 +115,7 @@ type ResolveSerialisedValue = SerialisedValue -> SerialisedValue -> SerialisedVa
 
 type LookupAcc m h = V.Vector (Maybe (Entry SerialisedValue (WeakBlobRef m h)))
 
-{-# SPECIALIZE lookupsIO ::
+{-# SPECIALIZE lookupsIOWithWriteBuffer ::
        HasBlockIO IO h
     -> ArenaManager RealWorld
     -> ResolveSerialisedValue
@@ -127,13 +128,8 @@ type LookupAcc m h = V.Vector (Maybe (Entry SerialisedValue (WeakBlobRef m h)))
     -> V.Vector SerialisedKey
     -> IO (LookupAcc IO h)
   #-}
--- | Batched lookups in I\/O.
---
--- See Note [Batched lookups, buffer strategy and restrictions]
---
--- PRECONDITION: the vectors of bloom filters, indexes and file handles
--- should pointwise match with the vectors of runs.
-lookupsIO ::
+-- | Like 'lookupsIO', but takes a write buffer into account.
+lookupsIOWithWriteBuffer ::
      forall m h. (MonadThrow m, MonadST m)
   => HasBlockIO m h
   -> ArenaManager (PrimState m)
@@ -146,12 +142,12 @@ lookupsIO ::
   -> V.Vector (Handle h) -- ^ The file handles to the key\/value files inside @rs@
   -> V.Vector SerialisedKey
   -> m (LookupAcc m h)
-lookupsIO !hbio !mgr !resolveV !wb !wbblobs !rs !blooms !indexes !kopsFiles !ks =
+lookupsIOWithWriteBuffer !hbio !mgr !resolveV !wb !wbblobs !rs !blooms !indexes !kopsFiles !ks =
     assert precondition $
     withArena mgr $ \arena -> do
       (rkixs, ioops) <- ST.stToIO $ prepLookups arena blooms indexes kopsFiles ks
       ioress <- submitIO hbio ioops
-      intraPageLookups resolveV wb wbblobs rs ks rkixs ioops ioress
+      intraPageLookupsWithWriteBuffer resolveV wb wbblobs rs ks rkixs ioops ioress
   where
     -- we check only that the lengths match, because checking the contents is
     -- too expensive.
@@ -161,7 +157,7 @@ lookupsIO !hbio !mgr !resolveV !wb !wbblobs !rs !blooms !indexes !kopsFiles !ks 
       assert (V.length rs == V.length kopsFiles) $
       True
 
-{-# SPECIALIZE lookupsIOWithoutWriteBuffer ::
+{-# SPECIALIZE lookupsIO ::
        HasBlockIO IO h
     -> ArenaManager RealWorld
     -> ResolveSerialisedValue
@@ -174,11 +170,9 @@ lookupsIO !hbio !mgr !resolveV !wb !wbblobs !rs !blooms !indexes !kopsFiles !ks 
   #-}
 -- | Batched lookups in I\/O.
 --
--- See Note [Batched lookups, buffer strategy and restrictions]
---
 -- PRECONDITION: the vectors of bloom filters, indexes and file handles
 -- should pointwise match with the vectors of runs.
-lookupsIOWithoutWriteBuffer ::
+lookupsIO ::
      forall m h. (MonadThrow m, MonadST m)
   => HasBlockIO m h
   -> ArenaManager (PrimState m)
@@ -189,7 +183,7 @@ lookupsIOWithoutWriteBuffer ::
   -> V.Vector (Handle h) -- ^ The file handles to the key\/value files inside @rs@
   -> V.Vector SerialisedKey
   -> m (LookupAcc m h)
-lookupsIOWithoutWriteBuffer !hbio !mgr !resolveV !rs !blooms !indexes !kopsFiles !ks =
+lookupsIO !hbio !mgr !resolveV !rs !blooms !indexes !kopsFiles !ks =
     assert precondition $
     withArena mgr $ \arena -> do
       (rkixs, ioops) <- ST.stToIO $ prepLookups arena blooms indexes kopsFiles ks
@@ -204,7 +198,7 @@ lookupsIOWithoutWriteBuffer !hbio !mgr !resolveV !rs !blooms !indexes !kopsFiles
       assert (V.length rs == V.length kopsFiles) $
       True
 
-{-# SPECIALIZE intraPageLookups ::
+{-# SPECIALIZE intraPageLookupsWithWriteBuffer ::
        ResolveSerialisedValue
     -> WB.WriteBuffer
     -> Ref (WBB.WriteBufferBlobs IO h)
@@ -215,14 +209,10 @@ lookupsIOWithoutWriteBuffer !hbio !mgr !resolveV !rs !blooms !indexes !kopsFiles
     -> VU.Vector IOResult
     -> IO (LookupAcc IO h)
   #-}
--- | Intra-page lookups, and combining lookup results from multiple runs and
--- the write buffer.
+-- | Like 'intraPageLookupsOn', but uses the write buffer as the initial
+-- accumulator.
 --
--- This function assumes that @rkixs@ is ordered such that newer runs are
--- handled first. The order matters for resolving cases where we find the same
--- key in multiple runs.
---
-intraPageLookups ::
+intraPageLookupsWithWriteBuffer ::
      forall m h. (PrimMonad m, MonadThrow m)
   => ResolveSerialisedValue
   -> WB.WriteBuffer
@@ -233,21 +223,9 @@ intraPageLookups ::
   -> V.Vector (IOOp (PrimState m) h)
   -> VU.Vector IOResult
   -> m (LookupAcc m h)
-intraPageLookups !resolveV !wb !wbblobs !rs !ks !rkixs !ioops !ioress = do
-    -- We accumulate results into the 'res' vector. When there are several
-    -- lookup hits for the same key then we combine the results. The combining
-    -- operator is associative but not commutative, so we must do this in the
-    -- right order. We start with the write buffer lookup results and then go
-    -- through the run lookup results in rkixs, which must be ordered by run.
-    --
-    -- TODO: reassess the representation of the result vector to try to reduce
-    -- intermediate allocations. For example use a less convenient
-    -- representation with several vectors (e.g. separate blob info) and
-    -- convert to the final convenient representation in a single pass near
-    -- the surface API so that all the conversions can be done in one pass
-    -- without intermediate allocations.
-    --
-
+intraPageLookupsWithWriteBuffer !resolveV !wb !wbblobs !rs !ks !rkixs !ioops !ioress = do
+    -- The most recent values are in the write buffer, so we use it to
+    -- initialise the accumulator.
     acc0 <-
       V.generateM (V.length ks) $ \ki ->
         case WB.lookup wb (V.unsafeIndex ks ki) of
@@ -278,7 +256,7 @@ data TableCorruptedError
     -> IO (LookupAcc IO h)
   #-}
 -- | Intra-page lookups, and combining lookup results from multiple runs and
--- the write buffer.
+-- a potential initial accumulator (e.g. from the write buffer).
 --
 -- This function assumes that @rkixs@ is ordered such that newer runs are
 -- handled first. The order matters for resolving cases where we find the same
@@ -287,7 +265,7 @@ data TableCorruptedError
 intraPageLookupsOn ::
      forall m h. (PrimMonad m, MonadThrow m)
   => ResolveSerialisedValue
-  -> LookupAcc m h
+  -> LookupAcc m h  -- initial acc
   -> V.Vector (Ref (Run m h))
   -> V.Vector SerialisedKey
   -> VP.Vector RunIxKeyIx
