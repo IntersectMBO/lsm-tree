@@ -8,7 +8,6 @@ import           Control.Monad.Class.MonadST
 import           Control.Monad.Primitive
 import           Control.Monad.ST.Strict (ST, runST)
 import           Control.RefCount
-import           Data.Arena (ArenaManager, newArenaManager, withArena)
 import           Data.Bits ((.&.))
 import           Data.BloomFilter (Bloom)
 import qualified Data.BloomFilter as Bloom
@@ -23,6 +22,8 @@ import qualified Data.Vector.Unboxed.Mutable as VUM
 import           Data.Word (Word64)
 import           Database.LSMTree.Extras.Orphans ()
 import           Database.LSMTree.Extras.UTxO
+import           Database.LSMTree.Internal.Arena (ArenaManager, newArenaManager,
+                     withArena)
 import           Database.LSMTree.Internal.Entry (Entry (Insert),
                      NumEntries (..))
 import           Database.LSMTree.Internal.Index (Index)

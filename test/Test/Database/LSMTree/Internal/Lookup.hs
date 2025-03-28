@@ -23,7 +23,6 @@ import           Control.DeepSeq
 import           Control.Exception
 import           Control.Monad.ST.Strict
 import           Control.RefCount
-import           Data.Arena (newArenaManager, withUnmanagedArena)
 import           Data.Bifunctor
 import           Data.BloomFilter (Bloom)
 import qualified Data.BloomFilter as Bloom
@@ -44,6 +43,8 @@ import           Database.LSMTree.Extras
 import           Database.LSMTree.Extras.Generators
 import           Database.LSMTree.Extras.RunData (RunData (..),
                      liftArbitrary2Map, liftShrink2Map, withRuns)
+import           Database.LSMTree.Internal.Arena (newArenaManager,
+                     withUnmanagedArena)
 import           Database.LSMTree.Internal.BlobRef
 import           Database.LSMTree.Internal.Entry as Entry
 import           Database.LSMTree.Internal.Index (Index, IndexType)

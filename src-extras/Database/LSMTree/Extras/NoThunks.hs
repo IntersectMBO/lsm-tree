@@ -20,7 +20,6 @@ import           Control.Monad.Primitive
 import           Control.Monad.ST.Unsafe (unsafeIOToST, unsafeSTToIO)
 import           Control.RefCount
 import           Control.Tracer
-import           Data.Arena
 import           Data.Bit
 import           Data.BloomFilter
 import           Data.Map.Strict
@@ -34,6 +33,7 @@ import qualified Data.Vector.Primitive as VP
 import qualified Data.Vector.Unboxed.Mutable as VUM
 import           Data.Word
 import           Database.LSMTree.Internal as Internal
+import           Database.LSMTree.Internal.Arena
 import           Database.LSMTree.Internal.BlobFile
 import           Database.LSMTree.Internal.BlobRef
 import           Database.LSMTree.Internal.ChecksumHandle

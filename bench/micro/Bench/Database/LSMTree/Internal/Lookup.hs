@@ -7,8 +7,6 @@ import           Control.Monad.ST.Strict (stToIO)
 import           Control.RefCount
 import           Criterion.Main (Benchmark, bench, bgroup, env, envWithCleanup,
                      perRunEnv, perRunEnvWithCleanup, whnf, whnfAppIO)
-import           Data.Arena (ArenaManager, closeArena, newArena,
-                     newArenaManager, withArena)
 import           Data.Bifunctor (Bifunctor (..))
 import           Data.ByteString (ByteString)
 import qualified Data.List as List
@@ -20,6 +18,8 @@ import           Database.LSMTree.Extras.Orphans ()
 import           Database.LSMTree.Extras.Random (frequency, randomByteStringR,
                      sampleUniformWithReplacement, uniformWithoutReplacement)
 import           Database.LSMTree.Extras.UTxO
+import           Database.LSMTree.Internal.Arena (ArenaManager, closeArena,
+                     newArena, newArenaManager, withArena)
 import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..))
 import           Database.LSMTree.Internal.Index as Index
 import           Database.LSMTree.Internal.Lookup (bloomQueries, indexSearches,

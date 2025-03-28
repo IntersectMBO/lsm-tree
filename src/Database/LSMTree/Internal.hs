@@ -104,7 +104,6 @@ import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Primitive
 import           Control.RefCount
 import           Control.Tracer
-import           Data.Arena (ArenaManager, newArenaManager)
 import           Data.Either (fromRight)
 import           Data.Foldable
 import           Data.Kind
@@ -117,6 +116,7 @@ import           Data.Monoid (First (..))
 import qualified Data.Set as Set
 import           Data.Typeable
 import qualified Data.Vector as V
+import           Database.LSMTree.Internal.Arena (ArenaManager, newArenaManager)
 import           Database.LSMTree.Internal.BlobRef (WeakBlobRef (..))
 import qualified Database.LSMTree.Internal.BlobRef as BlobRef
 import           Database.LSMTree.Internal.Config
