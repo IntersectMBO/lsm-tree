@@ -221,6 +221,7 @@ instance Arbitrary SnapshotLabel where
   shrink (SnapshotLabel txt) = SnapshotLabel <$> shrink txt
 
 instance Arbitrary SnapshotTableType where
+  -- TODO: add SnapSimpleTable and SnapFullTable
   arbitrary = elements [SnapNormalTable, SnapMonoidalTable]
   shrink _ = []
 
