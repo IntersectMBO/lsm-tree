@@ -45,7 +45,6 @@ import qualified Test.Database.LSMTree.StateMachine
 import qualified Test.Database.LSMTree.StateMachine.DL
 import qualified Test.Database.LSMTree.UnitTests
 import qualified Test.FS
-import qualified Test.System.Posix.Fcntl.NoCache
 import           Test.Tasty
 
 main :: IO ()
@@ -92,7 +91,6 @@ main = do
     , Test.Database.LSMTree.StateMachine.tests
     , Test.Database.LSMTree.StateMachine.DL.tests
     , Test.FS.tests
-    , Test.System.Posix.Fcntl.NoCache.tests
     ]
   Control.RefCount.checkForgottenRefs
   -- This use of checkForgottenRefs is a last resort. Refs that are forgotten
