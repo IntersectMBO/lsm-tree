@@ -267,8 +267,8 @@ data Err
   | ErrSessionClosed
   | ErrTableClosed
   | ErrTableCorrupted
-  | ErrTableTypeMismatch
-  | ErrTableSessionMismatch
+  | ErrTableUnionHandleTypeMismatch
+  | ErrTableUnionSessionMismatch
   | ErrSnapshotExists !SnapshotName
   | ErrSnapshotDoesNotExist !SnapshotName
   | ErrSnapshotCorrupted !SnapshotName

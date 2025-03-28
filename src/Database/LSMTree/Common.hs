@@ -9,7 +9,7 @@ module Database.LSMTree.Common (
   , Internal.TableClosedError (..)
   , Internal.TableCorruptedError (..)
   , Internal.TableTooLargeError (..)
-  , Internal.TableNotCompatibleError (..)
+  , Internal.TableUnionNotCompatibleError (..)
   , Internal.SnapshotExistsError (..)
   , Internal.SnapshotDoesNotExistError (..)
   , Internal.SnapshotCorruptedError (..)
