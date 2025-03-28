@@ -31,7 +31,7 @@ module Database.LSMTree.Monoidal (
   , Common.TableClosedError (..)
   , Common.TableCorruptedError (..)
   , Common.TableTooLargeError (..)
-  , Common.TableNotCompatibleError (..)
+  , Common.TableUnionNotCompatibleError (..)
   , Common.SnapshotExistsError (..)
   , Common.SnapshotDoesNotExistError (..)
   , Common.SnapshotCorruptedError (..)
@@ -149,8 +149,8 @@ import           Data.Coerce (coerce)
 import           Data.Kind (Type)
 import           Data.List.NonEmpty (NonEmpty (..))
 import           Data.Monoid (Sum (..))
-import           Data.Proxy (Proxy (Proxy))
-import           Data.Typeable (Typeable, eqT, type (:~:) (Refl))
+import           Data.Typeable (Proxy (..), Typeable, eqT, type (:~:) (Refl),
+                     typeRep)
 import qualified Data.Vector as V
 import           Database.LSMTree.Common (IOLike, Range (..), SerialiseKey,
                      SerialiseValue (..), Session, UnionCredits (..),
@@ -719,7 +719,7 @@ unions (t :| ts) =
       -> m (Internal.Table m h)
     checkTableType _ i (Internal.MonoidalTable (t' :: Internal.Table m h'))
       | Just Refl <- eqT @h @h' = pure t'
-      | otherwise = throwIO (Common.ErrTableTypeMismatch 0 i)
+      | otherwise = throwIO $ Common.ErrTableUnionHandleTypeMismatch 0 (typeRep $ Proxy @h) i (typeRep $ Proxy @h')
 
 {-# SPECIALISE remainingUnionDebt :: Table IO k v -> IO UnionDebt #-}
 -- | Return the current union debt. This debt can be reduced until it is paid

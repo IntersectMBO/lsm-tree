@@ -30,7 +30,7 @@ module Database.LSMTree.Normal (
   , Common.TableClosedError (..)
   , Common.TableCorruptedError (..)
   , Common.TableTooLargeError (..)
-  , Common.TableNotCompatibleError (..)
+  , Common.TableUnionNotCompatibleError (..)
   , Common.SnapshotExistsError (..)
   , Common.SnapshotDoesNotExistError (..)
   , Common.SnapshotCorruptedError (..)
@@ -140,7 +140,8 @@ import           Control.Monad.Class.MonadThrow
 import           Data.Bifunctor (Bifunctor (..))
 import           Data.Kind (Type)
 import           Data.List.NonEmpty (NonEmpty (..))
-import           Data.Typeable (Typeable, eqT, type (:~:) (Refl))
+import           Data.Typeable (Proxy (..), Typeable, eqT, type (:~:) (Refl),
+                     typeRep)
 import qualified Data.Vector as V
 import           Database.LSMTree.Common (BlobRef (BlobRef), IOLike, Range (..),
                      SerialiseKey, SerialiseValue, Session, UnionCredits (..),
@@ -839,7 +840,7 @@ unions (t :| ts) =
       -> m (Internal.Table m h)
     checkTableType _ i (Internal.NormalTable (t' :: Internal.Table m h'))
       | Just Refl <- eqT @h @h' = pure t'
-      | otherwise = throwIO (Common.ErrTableTypeMismatch 0 i)
+      | otherwise = throwIO $ Common.ErrTableUnionHandleTypeMismatch 0 (typeRep $ Proxy @h) i (typeRep $ Proxy @h')
 
 {-# SPECIALISE remainingUnionDebt :: Table IO k v b -> IO UnionDebt #-}
 -- | Return the current union debt. This debt can be reduced until it is paid

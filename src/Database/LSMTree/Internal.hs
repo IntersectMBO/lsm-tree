@@ -28,7 +28,7 @@ module Database.LSMTree.Internal (
   , TableClosedError (..)
   , TableCorruptedError (..)
   , TableTooLargeError (..)
-  , TableNotCompatibleError (..)
+  , TableUnionNotCompatibleError (..)
   , SnapshotExistsError (..)
   , SnapshotDoesNotExistError (..)
   , SnapshotCorruptedError (..)
@@ -1534,27 +1534,30 @@ duplicate t@Table{..} = do
             tableArenaManager
             content
 
-
 {-------------------------------------------------------------------------------
    Table union
 -------------------------------------------------------------------------------}
 
--- | An operation was called with two tables that are not compatible.
-data TableNotCompatibleError
-    = -- | An operation was called with two tables that are not of the same type.
-      --
-      --   TODO: This error is no longer used by 'unions'.
-      ErrTableTypeMismatch
-        -- | Vector index of table @t1@ involved in the mismatch
-        Int
-        -- | Vector index of table @t2@ involved in the mismatch
-        Int
-    | -- | An operation was called with two tables that are not in the same session.
-      ErrTableSessionMismatch
-        -- | Vector index of table @t1@ involved in the mismatch
-        Int
-        -- | Vector index of table @t2@ involved in the mismatch
-        Int
+-- | A table union was constructed with two tables that are not compatible.
+data TableUnionNotCompatibleError
+    = ErrTableUnionHandleTypeMismatch
+        -- | The index of the first table.
+        !Int
+        -- | The type of the filesystem handle of the first table.
+        !TypeRep
+        -- | The index of the second table.
+        !Int
+        -- | The type of the filesystem handle of the second table.
+        !TypeRep
+    | ErrTableUnionSessionMismatch
+        -- | The index of the first table.
+        !Int
+        -- | The session directory of the first table.
+        !FsErrorPath
+        -- | The index of the second table.
+        !Int
+        -- | The session directory of the second table.
+        !FsErrorPath
     deriving stock (Show, Eq)
     deriving anyclass (Exception)
 
@@ -1565,10 +1568,7 @@ unions ::
   => NonEmpty (Table m h)
   -> m (Table m h)
 unions ts = do
-    sesh <-
-      matchSessions ts >>= \case
-        Left (i, j) -> throwIO $ ErrTableSessionMismatch i j
-        Right sesh  -> pure sesh
+    sesh <- ensureSessionsMatch ts
 
     traceWith (sessionTracer sesh) $ TraceUnions (NE.map tableId ts)
 
@@ -1706,37 +1706,34 @@ writeBufferToNewRun SessionEnv {
       tableWriteBuffer
       tableWriteBufferBlobs
 
--- | Check that all tables in the session match. If so, return the matched
--- session. If there is a mismatch, return the list indices of the mismatching
--- tables.
---
--- TODO: compare LockFileHandle instead of SessionRoot (?). We can write an Eq
--- instance for LockFileHandle based on pointer equality, just like base does
--- for Handle.
-matchSessions ::
+{-# SPECIALISE ensureSessionsMatch ::
+     NonEmpty (Table IO h)
+  -> IO (Session IO h) #-}
+-- | Check if all tables have the same session.
+--   If so, return the session.
+--   Otherwise, throw a 'TableUnionNotCompatibleError'.
+ensureSessionsMatch ::
      (MonadSTM m, MonadThrow m)
   => NonEmpty (Table m h)
-  -> m (Either (Int, Int) (Session m h))
-matchSessions = \(t :| ts) ->
-    withSessionRoot t $ \root -> do
-      eith <- go root 1 ts
-      pure $ case eith of
-        Left i   -> Left (0, i)
-        Right () -> Right (tableSession t)
-  where
+  -> m (Session m h)
+ensureSessionsMatch (t :| ts) = do
+  let sesh = tableSession t
+  withOpenSession sesh $ \seshEnv -> do
+    let root = FS.mkFsErrorPath (sessionHasFS seshEnv) (getSessionRoot (sessionRoot seshEnv))
     -- Check that the session roots for all tables are the same. There can only
     -- be one *open/active* session per directory because of cooperative file
     -- locks, so each unique *open* session has a unique session root. We check
     -- that all the table's sessions are open at the same time while comparing
     -- the session roots.
-    go _ _ [] = pure (Right ())
-    go root !i (t':ts') =
-        withSessionRoot t' $ \root' ->
-          if root == root'
-            then go root (i+1) ts'
-            else pure (Left i)
-
-    withSessionRoot t k =  withOpenSession (tableSession t) $ k . sessionRoot
+    for_ (zip [1..] ts) $ \(i, t') -> do
+      let sesh' = tableSession t'
+      withOpenSession sesh' $ \seshEnv' -> do
+        let root' = FS.mkFsErrorPath (sessionHasFS seshEnv') (getSessionRoot (sessionRoot seshEnv'))
+        -- TODO: compare LockFileHandle instead of SessionRoot (?).
+        -- We can write an Eq instance for LockFileHandle based on pointer equality,
+        -- just like base does for Handle.
+        unless (root == root') $ throwIO $ ErrTableUnionSessionMismatch 0 root i root'
+    pure sesh
 
 {-------------------------------------------------------------------------------
   Table union: debt and credit
