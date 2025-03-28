@@ -53,7 +53,7 @@ module Database.LSMTree.Common (
   , Internal.NumEntries (..)
   , Internal.BloomFilterAlloc (..)
   , Internal.defaultBloomFilterAlloc
-  , Internal.FencePointerIndex (..)
+  , Internal.FencePointerIndexType (..)
   , Internal.DiskCachePolicy (..)
   , Internal.MergeSchedule (..)
   , Internal.defaultMergeSchedule

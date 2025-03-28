@@ -161,7 +161,7 @@ testAll test = [
     , test (Proxy @WriteBufferAlloc)
     , test (Proxy @NumEntries)
     , test (Proxy @BloomFilterAlloc)
-    , test (Proxy @FencePointerIndex)
+    , test (Proxy @FencePointerIndexType)
     , test (Proxy @DiskCachePolicy)
     , test (Proxy @MergeSchedule)
       -- SnapLevels
@@ -262,7 +262,7 @@ instance Arbitrary BloomFilterAlloc where
   shrink (AllocFixed x)      = AllocFixed <$> shrink x
   shrink (AllocRequestFPR x) = AllocRequestFPR <$> shrink x
 
-instance Arbitrary FencePointerIndex where
+instance Arbitrary FencePointerIndexType where
   arbitrary = elements [CompactIndex, OrdinaryIndex]
   shrink _ = []
 

@@ -24,7 +24,7 @@ module Database.LSMTree.Internal.Config (
   , defaultBloomFilterAlloc
   , bloomFilterAllocForLevel
     -- * Fence pointer index
-  , FencePointerIndex (..)
+  , FencePointerIndexType (..)
   , indexTypeForRun
     -- * Disk cache policy
   , DiskCachePolicy (..)
@@ -71,7 +71,7 @@ data TableConfig = TableConfig {
     -- applications.
   , confWriteBufferAlloc  :: !WriteBufferAlloc
   , confBloomFilterAlloc  :: !BloomFilterAlloc
-  , confFencePointerIndex :: !FencePointerIndex
+  , confFencePointerIndex :: !FencePointerIndexType
     -- | The policy for caching key\/value data from disk in memory.
   , confDiskCachePolicy   :: !DiskCachePolicy
   , confMergeSchedule     :: !MergeSchedule
@@ -240,7 +240,7 @@ bloomFilterAllocForLevel conf _levelNo =
 -------------------------------------------------------------------------------}
 
 -- | Configure the type of fence pointer index.
-data FencePointerIndex =
+data FencePointerIndexType =
     -- | Use a compact fence pointer index.
     --
     -- Compact indexes are designed to work with keys that are large (for
@@ -263,11 +263,11 @@ data FencePointerIndex =
   | OrdinaryIndex
   deriving stock (Eq, Show)
 
-instance NFData FencePointerIndex where
+instance NFData FencePointerIndexType where
   rnf CompactIndex  = ()
   rnf OrdinaryIndex = ()
 
-indexTypeForRun :: FencePointerIndex -> IndexType
+indexTypeForRun :: FencePointerIndexType -> IndexType
 indexTypeForRun CompactIndex  = Index.Compact
 indexTypeForRun OrdinaryIndex = Index.Ordinary
 
