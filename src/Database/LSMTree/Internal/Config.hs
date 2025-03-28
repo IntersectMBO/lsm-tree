@@ -7,11 +7,6 @@ module Database.LSMTree.Internal.Config (
   , defaultTableConfig
   , RunLevelNo (..)
   , runParamsForLevel
-    -- * Table configuration override
-  , TableConfigOverride
-  , applyOverride
-  , configNoOverride
-  , configOverrideDiskCachePolicy
     -- * Merge policy
   , MergePolicy (..)
     -- * Size ratio
@@ -35,8 +30,6 @@ module Database.LSMTree.Internal.Config (
   ) where
 
 import           Control.DeepSeq (NFData (..))
-import           Data.Maybe (fromMaybe)
-import           Data.Monoid (Last (..))
 import           Data.Word (Word64)
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
 import           Database.LSMTree.Internal.Index (IndexType)
@@ -108,54 +101,6 @@ runParamsForLevel conf@TableConfig {..} levelNo =
       , runParamAlloc   = bloomFilterAllocForLevel conf levelNo
       , runParamIndex   = indexTypeForRun confFencePointerIndex
       }
-
-{-------------------------------------------------------------------------------
-  Table configuration override
--------------------------------------------------------------------------------}
-
--- | Override configuration options in 'TableConfig' that can be changed dynamically.
---
--- Some parts of the 'TableConfig' are considered fixed after a table is
--- created. That is, these options should (i) should stay the same over the
--- lifetime of a table, and (ii) these options should not be changed when a
--- snapshot is created or loaded. Other options can be changed dynamically
--- without sacrificing correctness.
---
--- This type has 'Semigroup' and 'Monoid' instances for composing override
--- options.
-data TableConfigOverride = TableConfigOverride {
-      -- | Override for 'confDiskCachePolicy'
-      confOverrideDiskCachePolicy  :: Last DiskCachePolicy
-    }
-    deriving stock Show
-
--- | Behaves like a point-wise 'Last' instance
-instance Semigroup TableConfigOverride where
-  override1 <> override2 = TableConfigOverride {
-        confOverrideDiskCachePolicy =
-          confOverrideDiskCachePolicy override1 <>
-          confOverrideDiskCachePolicy override2
-      }
-
--- | Behaves like a point-wise 'Last' instance
-instance Monoid TableConfigOverride where
-  mempty = configNoOverride
-
-applyOverride :: TableConfigOverride -> TableConfig -> TableConfig
-applyOverride TableConfigOverride{..} conf = conf {
-      confDiskCachePolicy =
-        fromMaybe (confDiskCachePolicy conf) (getLast confOverrideDiskCachePolicy)
-    }
-
-configNoOverride :: TableConfigOverride
-configNoOverride = TableConfigOverride {
-      confOverrideDiskCachePolicy = Last Nothing
-    }
-
-configOverrideDiskCachePolicy :: DiskCachePolicy -> TableConfigOverride
-configOverrideDiskCachePolicy pol = TableConfigOverride {
-      confOverrideDiskCachePolicy = Last (Just pol)
-    }
 
 {-------------------------------------------------------------------------------
   Merge policy
@@ -279,7 +224,7 @@ indexTypeForRun OrdinaryIndex = Index.Ordinary
 --
 -- Caching data in memory can improve performance if the access pattern has
 -- good access locality or if the overall data size fits within memory. On the
--- other hand, caching is determental to performance and wastes memory if the
+-- other hand, caching is detrimental to performance and wastes memory if the
 -- access pattern has poor spatial or temporal locality.
 --
 -- This implementation is designed to have good performance using a cacheless

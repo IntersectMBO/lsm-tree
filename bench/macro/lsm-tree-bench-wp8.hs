@@ -183,9 +183,8 @@ mkTableConfigRun GlobalOpts{diskCachePolicy} conf = conf {
       LSM.confDiskCachePolicy = diskCachePolicy
     }
 
-mkTableConfigOverride :: GlobalOpts -> LSM.TableConfigOverride
-mkTableConfigOverride GlobalOpts{diskCachePolicy} =
-    LSM.configOverrideDiskCachePolicy diskCachePolicy
+mkTableConfigOverride :: GlobalOpts -> Maybe LSM.DiskCachePolicy
+mkTableConfigOverride GlobalOpts{diskCachePolicy} = Just diskCachePolicy
 
 mkTracer :: GlobalOpts -> Tracer IO LSM.LSMTreeTrace
 mkTracer gopts

@@ -35,7 +35,6 @@ module Database.LSMTree.Common (
   , Internal.Range (..)
     -- * Snapshots
   , Internal.SnapshotLabel (..)
-  , Internal.SnapshotTableType (..)
   , deleteSnapshot
   , listSnapshots
     -- ** Snapshot names
@@ -57,10 +56,6 @@ module Database.LSMTree.Common (
   , Internal.DiskCachePolicy (..)
   , Internal.MergeSchedule (..)
   , Internal.defaultMergeSchedule
-    -- * Table configuration override
-  , Internal.TableConfigOverride
-  , Internal.configNoOverride
-  , Internal.configOverrideDiskCachePolicy
     -- * Unions
   , UnionDebt (..)
   , UnionCredits (..)
