@@ -37,7 +37,6 @@ module Database.LSMTree.Extras.Generators (
   , isKeyForIndexCompact
   , KeyForIndexCompact (..)
   , BiasedKey (..)
-  , BiasedKeyForIndexCompact (..)
     -- * helpers
   , shrinkVec
   ) where
@@ -184,24 +183,24 @@ instance Arbitrary2 Entry where
 --
 -- Also useful for failing tests that have keys as inputs, because the printed
 -- 'WithSerialised' values will show both keys and their serialised form.
-data WithSerialised k = TestKey k SerialisedKey
+data WithSerialised k = WithSerialised k SerialisedKey
   deriving stock Show
 
 instance Eq k => Eq (WithSerialised k) where
-  TestKey k1 _ == TestKey k2 _ = k1 == k2
+  WithSerialised k1 _ == WithSerialised k2 _ = k1 == k2
 
 instance Ord k => Ord (WithSerialised k) where
-  TestKey k1 _ `compare` TestKey k2 _ = k1 `compare` k2
+  WithSerialised k1 _ `compare` WithSerialised k2 _ = k1 `compare` k2
 
 instance (Arbitrary k, SerialiseKey k) => Arbitrary (WithSerialised k) where
   arbitrary = do
     x <- arbitrary
-    pure $ TestKey x (serialiseKey x)
-  shrink (TestKey k _) = [TestKey k' (serialiseKey k') | k' <- shrink k]
+    pure $ WithSerialised x (serialiseKey x)
+  shrink (WithSerialised k _) = [WithSerialised k' (serialiseKey k') | k' <- shrink k]
 
 instance SerialiseKey k => SerialiseKey (WithSerialised k) where
-  serialiseKey (TestKey _ (SerialisedKey bytes)) = bytes
-  deserialiseKey bytes = TestKey (S.Class.deserialiseKey bytes) (SerialisedKey bytes)
+  serialiseKey (WithSerialised _ (SerialisedKey bytes)) = bytes
+  deserialiseKey bytes = WithSerialised (S.Class.deserialiseKey bytes) (SerialisedKey bytes)
 
 {-------------------------------------------------------------------------------
   Other number newtypes
@@ -256,9 +255,14 @@ toAppend (MultiPageOneKey k n)   = AppendMultiPage k n
 shrinkLogicalPageSummary :: Arbitrary k => LogicalPageSummary k -> [LogicalPageSummary k]
 shrinkLogicalPageSummary = \case
     OnePageOneKey k       -> OnePageOneKey <$> shrink k
-    OnePageManyKeys k1 k2 -> OnePageManyKeys <$> shrink k1 <*> shrink k2
-    MultiPageOneKey k n   -> [MultiPageOneKey k' n | k' <- shrink k]
-                          <> [MultiPageOneKey k n' | n' <- shrink n]
+    OnePageManyKeys k1 k2 -> [
+        OnePageManyKeys k1' k2'
+      | (k1', k2') <- shrink (k1, k2)
+      ]
+    MultiPageOneKey k n   -> [
+        MultiPageOneKey k' n'
+      | (k', n') <- shrink (k, n)
+      ]
 
 {-------------------------------------------------------------------------------
   Sequences of (logical\/true) pages
@@ -591,22 +595,6 @@ instance Arbitrary BiasedKey where
   shrink (BiasedKey rb) = [BiasedKey rb' | rb' <- shrink rb]
 
 deriving newtype instance SerialiseKey BiasedKey
-
-newtype BiasedKeyForIndexCompact =
-    BiasedKeyForIndexCompact { getBiasedKeyForIndexCompact :: RawBytes }
-  deriving stock (Eq, Ord, Show)
-  deriving newtype NFData
-
-instance Arbitrary BiasedKeyForIndexCompact where
-  arbitrary = arbitraryBiasedKey BiasedKeyForIndexCompact genKeyForIndexCompact
-
-  shrink (BiasedKeyForIndexCompact rb) =
-      [ BiasedKeyForIndexCompact rb'
-      | rb' <- shrink rb
-      , isKeyForIndexCompact rb'
-      ]
-
-deriving newtype instance SerialiseKey BiasedKeyForIndexCompact
 
 {-------------------------------------------------------------------------------
   Unsliced

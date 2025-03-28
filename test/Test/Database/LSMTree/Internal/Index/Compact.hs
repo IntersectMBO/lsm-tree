@@ -27,7 +27,9 @@ import qualified Data.Vector.Unboxed as VU
 import qualified Data.Vector.Unboxed.Base as VU
 import           Data.Word
 import           Database.LSMTree.Extras
-import           Database.LSMTree.Extras.Generators as Gen
+import           Database.LSMTree.Extras.Generators (ChunkSize (..),
+                     LogicalPageSummaries, LogicalPageSummary (..), Pages (..),
+                     genRawBytes, isKeyForIndexCompact, labelPages, toAppends)
 import           Database.LSMTree.Extras.Index (Append (..), appendToCompact)
 import           Database.LSMTree.Internal.BitMath
 import           Database.LSMTree.Internal.Chunk as Chunk (toByteString)
@@ -36,6 +38,8 @@ import           Database.LSMTree.Internal.Index.Compact
 import           Database.LSMTree.Internal.Index.CompactAcc
 import           Database.LSMTree.Internal.Page (PageNo (PageNo), PageSpan,
                      multiPage, singlePage)
+import           Database.LSMTree.Internal.RawBytes (RawBytes (..))
+import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.Serialise
 import           Numeric (showHex)
 import           Prelude hiding (max, min, pi)
@@ -51,14 +55,16 @@ import           Text.Printf (printf)
 
 tests :: TestTree
 tests = testGroup "Test.Database.LSMTree.Internal.Index.Compact" [
-    testProperty "prop_distribution @BiasedKeyForIndexCompact" $
-      prop_distribution @BiasedKeyForIndexCompact
+    testGroup "TestKey" $
+      prop_arbitraryAndShrinkPreserveInvariant @TestKey noTags isTestKey
+  , testProperty "prop_distribution @TestKey" $
+      prop_distribution @TestKey
   , testProperty "prop_searchMinMaxKeysAfterConstruction" $
-      prop_searchMinMaxKeysAfterConstruction @BiasedKeyForIndexCompact 100
+      prop_searchMinMaxKeysAfterConstruction @TestKey 100
   , testProperty "prop_differentChunkSizesSameResults" $
-      prop_differentChunkSizesSameResults @BiasedKeyForIndexCompact
+      prop_differentChunkSizesSameResults @TestKey
   , testProperty "prop_singlesEquivMulti" $
-      prop_singlesEquivMulti @BiasedKeyForIndexCompact
+      prop_singlesEquivMulti @TestKey
   , testGroup "(De)serialisation" [
         testGroup "Chunks generator" $
           prop_arbitraryAndShrinkPreserveInvariant noTags chunksInvariant
@@ -119,13 +125,64 @@ tests = testGroup "Test.Database.LSMTree.Internal.Index.Compact" [
       , testProperty "prop_roundtrip_chunks" $
           prop_roundtrip_chunks
       , testProperty "prop_roundtrip" $
-          prop_roundtrip @BiasedKeyForIndexCompact
+          prop_roundtrip @TestKey
       , testProperty "prop_total_deserialisation" $ withMaxSuccess 10000
           prop_total_deserialisation
       , testProperty "prop_total_deserialisation_whitebox" $ withMaxSuccess 10000
           prop_total_deserialisation_whitebox
       ]
   ]
+
+{-------------------------------------------------------------------------------
+  Test key
+-------------------------------------------------------------------------------}
+
+-- | Key type for compact index tests
+--
+-- Tests outside this module don't have to worry about generating clashing keys.
+-- We can assume that the compact index handles clashes correctly, because we
+-- test this extensively in this module already.
+newtype TestKey = TestKey RawBytes
+  deriving stock (Show, Eq, Ord)
+  deriving newtype SerialiseKey
+
+-- | Generate keys with a non-neglible probability of clashes. This generates
+-- sliced keys too.
+--
+-- Note: recall that keys /clash/ only if their primary bits (first 8 bytes)
+-- match. It does not matter whether the other bytes do not match.
+instance Arbitrary TestKey where
+  arbitrary = do
+      -- Generate primary bits from a relatively small distribution. This
+      -- ensures that we get clashes between keys with a non-negligible
+      -- probability.
+      primBits <- do
+        lastPrefixByte <- QC.getSmall <$> arbitrary
+        pure $ RB.pack ([0,0,0,0,0,0,0] <> [lastPrefixByte])
+      -- The rest of the bits after the primary bits can be anything
+      restBits <- genRawBytes
+      -- The compact index should store keys without retaining unused memory.
+      -- Therefore, we generate slices of keys too.
+      prefix <- elements [RB.pack [], RB.pack [0]]
+      suffix <- elements [RB.pack [], RB.pack [0]]
+      -- Combine the bytes and make sure to take out only the slice we need.
+      let bytes = prefix <> primBits <> restBits <> suffix
+          n = RB.size primBits + RB.size restBits
+          bytes' = RB.take n $ RB.drop (RB.size prefix) bytes
+      pure $ TestKey bytes'
+
+  -- Shrink keys extensively: most failures will occur in small counterexamples,
+  -- so we don't have to limit the number of shrinks as much.
+  shrink (TestKey bytes) = [
+        TestKey bytes'
+      | let RawBytes vec = bytes
+      , vec' <- VP.fromList <$> shrink (VP.toList vec)
+      , let bytes' = RawBytes vec'
+      , isKeyForIndexCompact bytes'
+      ]
+
+isTestKey :: TestKey -> Bool
+isTestKey (TestKey bytes) = isKeyForIndexCompact bytes
 
 {-------------------------------------------------------------------------------
   Properties
@@ -319,11 +376,15 @@ fromListSingles maxcsize apps = runST $ do
 
 labelIndex :: IndexCompact -> (Property -> Property)
 labelIndex ic =
-      QC.tabulate "# Clashes" [showPowersOf10 nclashes]
-    . QC.tabulate "# Contiguous clash runs" [showPowersOf10 (length nscontig)]
-    . QC.tabulate "Length of contiguous clash runs" (fmap (showPowersOf10 . snd) nscontig)
+      checkCoverage
+    . QC.tabulate "# Clashes" [showPowersOf 2 nclashes]
+    . QC.cover 60 (nclashes > 0) "Has clashes"
+    . QC.tabulate "# Contiguous clash runs" [showPowersOf 2 (length nscontig)]
+    . QC.cover 30 (not (null nscontig)) "Has contiguous clash runs"
+    . QC.tabulate "Length of contiguous clash runs" (fmap (showPowersOf 2 . snd) nscontig)
     . QC.tabulate "Contiguous clashes contain multi-page values" (fmap (show . fst) nscontig)
-    . QC.classify (multiPageValuesClash ic) "Has clashing multi-page values"
+    . QC.cover 3 (any fst nscontig) "Has contiguous clashes that contain multi-page values"
+    . QC.cover 0.1 (multiPageValuesClash ic) "Has clashing multi-page values"
   where nclashes       = countClashes ic
         nscontig       = countContiguousClashes ic
 
