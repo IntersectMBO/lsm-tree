@@ -49,7 +49,6 @@ import qualified Data.ByteString as BS
 import           Data.Kind (Type)
 import           Data.List.NonEmpty (NonEmpty (..))
 import           Data.Map (Map)
-import qualified Data.Map.Range as Map.R
 import qualified Data.Map.Strict as Map
 import           Data.Proxy (Proxy (Proxy))
 import           Data.Semigroup (First (..))
@@ -58,6 +57,7 @@ import           Database.LSMTree (LookupResult (..), QueryResult (..),
                      ResolveValue (..), Update (..))
 import           Database.LSMTree.Common (Range (..), SerialiseKey (..),
                      SerialiseValue (..))
+import qualified Database.LSMTree.Internal.Map.Range as Map.R
 import           Database.LSMTree.Internal.RawBytes (RawBytes)
 import           GHC.Exts (IsList (..))
 

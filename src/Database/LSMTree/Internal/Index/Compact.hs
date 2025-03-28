@@ -33,7 +33,6 @@ import qualified Data.ByteString.Builder as BB
 import qualified Data.ByteString.Builder.Extra as BB
 import qualified Data.ByteString.Lazy as LBS
 import           Data.ByteString.Short (ShortByteString (..))
-import           Data.Map.Range (Bound (..))
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromMaybe)
@@ -51,6 +50,7 @@ import           Database.LSMTree.Internal.ByteString (byteArrayFromTo)
 import           Database.LSMTree.Internal.Chunk (Chunk (Chunk))
 import qualified Database.LSMTree.Internal.Chunk as Chunk (toByteString)
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
+import           Database.LSMTree.Internal.Map.Range (Bound (..))
 import           Database.LSMTree.Internal.Page
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.Unsliced

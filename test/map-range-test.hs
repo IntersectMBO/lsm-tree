@@ -5,7 +5,8 @@ module Main (main) where
 import           Data.ByteString (ByteString)
 import           Data.Map (Map)
 import qualified Data.Map as Map
-import           Data.Map.Range (Bound (..), Clusive (..), rangeLookup)
+import           Database.LSMTree.Internal.Map.Range (Bound (..), Clusive (..),
+                     rangeLookup)
 import           Test.QuickCheck (Arbitrary (..), Property, elements, frequency,
                      (===))
 import           Test.Tasty (defaultMain, testGroup)

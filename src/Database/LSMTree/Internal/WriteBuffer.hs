@@ -20,12 +20,12 @@ module Database.LSMTree.Internal.WriteBuffer (
 ) where
 
 import           Control.DeepSeq (NFData (..))
-import qualified Data.Map.Range as Map.R
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.BlobRef (BlobSpan)
 import           Database.LSMTree.Internal.Entry
+import qualified Database.LSMTree.Internal.Map.Range as Map.R
 import           Database.LSMTree.Internal.Range (Range (..))
 import           Database.LSMTree.Internal.Serialise
 import qualified Database.LSMTree.Internal.Vector as V

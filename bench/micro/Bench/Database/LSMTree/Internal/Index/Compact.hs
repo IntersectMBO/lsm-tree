@@ -17,7 +17,6 @@ import qualified Data.Foldable as Fold
 import qualified Data.List as List
 import           Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
-import           Data.Map.Range
 import qualified Data.Vector.Unboxed.Mutable as VUM
 import           Data.Word
 import           Database.LSMTree.Extras
@@ -27,6 +26,7 @@ import           Database.LSMTree.Extras.Random
 import           Database.LSMTree.Extras.UTxO
 import           Database.LSMTree.Internal.Index.Compact
 import           Database.LSMTree.Internal.Index.CompactAcc
+import           Database.LSMTree.Internal.Map.Range
 import           Database.LSMTree.Internal.Serialise (SerialisedKey,
                      serialiseKey)
 import           System.Random

@@ -35,7 +35,6 @@ import           Control.Monad.ST.Strict
 import           Data.Bit hiding (flipBit)
 import           Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
-import           Data.Map.Range (Bound (..))
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Primitive.ByteArray (newPinnedByteArray, setByteArray)
@@ -48,6 +47,7 @@ import           Data.Word
 import           Database.LSMTree.Internal.BitMath
 import           Database.LSMTree.Internal.Chunk (Chunk)
 import           Database.LSMTree.Internal.Index.Compact
+import           Database.LSMTree.Internal.Map.Range (Bound (..))
 import           Database.LSMTree.Internal.Page
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.Unsliced

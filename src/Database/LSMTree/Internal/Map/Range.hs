@@ -1,7 +1,8 @@
 {-# LANGUAGE BangPatterns        #-}
 {-# LANGUAGE PatternSynonyms     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-module Data.Map.Range (
+{-# OPTIONS_HADDOCK not-home     #-}
+module Database.LSMTree.Internal.Map.Range (
     Bound (.., BoundExclusive, BoundInclusive)
   , Clusive (..)
   , rangeLookup
