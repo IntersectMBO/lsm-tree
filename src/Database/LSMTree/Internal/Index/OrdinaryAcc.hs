@@ -30,11 +30,13 @@ import           Database.LSMTree.Internal.Index.Ordinary
                      (IndexOrdinary (IndexOrdinary))
 import           Database.LSMTree.Internal.Serialise
                      (SerialisedKey (SerialisedKey'))
+import           Database.LSMTree.Internal.Unsliced (Unsliced, makeUnslicedKey)
 import           Database.LSMTree.Internal.Vector (byteVectorFromPrim)
 import           Database.LSMTree.Internal.Vector.Growing (GrowingVector)
 import qualified Database.LSMTree.Internal.Vector.Growing as Growing (append,
                      freeze, new)
 #ifdef NO_IGNORE_ASSERTS
+import           Database.LSMTree.Internal.Unsliced (fromUnslicedKey)
 import qualified Database.LSMTree.Internal.Vector.Growing as Growing
                      (readMaybeLast)
 #endif
@@ -42,12 +44,12 @@ import qualified Database.LSMTree.Internal.Vector.Growing as Growing
 {-|
     A general-purpose fence pointer index under incremental construction.
 
-    A value @IndexOrdinaryAcc lastKeys baler@ denotes a partially constructed
-    index that assigns keys to pages according to @lastKeys@ and uses @baler@
-    for incremental output of the serialised key list.
+    A value @IndexOrdinaryAcc unslicedLastKeys baler@ denotes a partially
+    constructed index that assigns keys to pages according to @unslicedLastKeys@
+    and uses @baler@ for incremental output of the serialised key list.
 -}
 data IndexOrdinaryAcc s = IndexOrdinaryAcc
-                              !(GrowingVector s SerialisedKey)
+                              !(GrowingVector s (Unsliced SerialisedKey))
                               !(Baler s)
 
 -- | Creates a new, initially empty, index.
@@ -65,7 +67,7 @@ new initialKeyBufferSize minChunkSize = IndexOrdinaryAcc                 <$>
 newWithDefaults :: ST s (IndexOrdinaryAcc s)
 newWithDefaults = new 1024 4096
 
--- Yields the serialisation of an element of a key list.
+-- | Yields the serialisation of an element of a key list.
 keyListElem :: SerialisedKey -> [Primitive.Vector Word8]
 keyListElem (SerialisedKey' keyBytes) = [keySizeBytes, keyBytes] where
 
@@ -86,14 +88,16 @@ keyListElem (SerialisedKey' keyBytes) = [keySizeBytes, keyBytes] where
 appendSingle :: (SerialisedKey, SerialisedKey)
              -> IndexOrdinaryAcc s
              -> ST s (Maybe Chunk)
-appendSingle (firstKey, lastKey) (IndexOrdinaryAcc lastKeys baler)
+appendSingle (firstKey, lastKey) (IndexOrdinaryAcc unslicedLastKeys baler)
     = assert (firstKey <= lastKey) $
       do
 #ifdef NO_IGNORE_ASSERTS
-          maybeLastLastKey <- Growing.readMaybeLast lastKeys
-          assert (all (< firstKey) maybeLastLastKey) $ return ()
+          maybeLastUnslicedLastKey <- Growing.readMaybeLast unslicedLastKeys
+          assert
+              (all (< firstKey) (fromUnslicedKey <$> maybeLastUnslicedLastKey))
+              (return ())
 #endif
-          Growing.append lastKeys 1 lastKey
+          Growing.append unslicedLastKeys 1 (makeUnslicedKey lastKey)
           feedBaler (keyListElem lastKey) baler
 
 {-|
@@ -103,13 +107,14 @@ appendSingle (firstKey, lastKey) (IndexOrdinaryAcc lastKeys baler)
 appendMulti :: (SerialisedKey, Word32)
             -> IndexOrdinaryAcc s
             -> ST s [Chunk]
-appendMulti (key, overflowPageCount) (IndexOrdinaryAcc lastKeys baler)
+appendMulti (key, overflowPageCount) (IndexOrdinaryAcc unslicedLastKeys baler)
     = do
 #ifdef NO_IGNORE_ASSERTS
-          maybeLastLastKey <- Growing.readMaybeLast lastKeys
-          assert (all (< key) maybeLastLastKey) $ return ()
+          maybeLastUnslicedLastKey <- Growing.readMaybeLast unslicedLastKeys
+          assert (all (< key) (fromUnslicedKey <$> maybeLastUnslicedLastKey))
+                 (return ())
 #endif
-          Growing.append lastKeys pageCount key
+          Growing.append unslicedLastKeys pageCount (makeUnslicedKey key)
           maybeToList <$> feedBaler keyListElems baler
     where
 
@@ -124,7 +129,7 @@ appendMulti (key, overflowPageCount) (IndexOrdinaryAcc lastKeys baler)
     type-agnostic version]('Database.LSMTree.Internal.Index.unsafeEnd').
 -}
 unsafeEnd :: IndexOrdinaryAcc s -> ST s (Maybe Chunk, IndexOrdinary)
-unsafeEnd (IndexOrdinaryAcc lastKeys baler) = do
-    keys <- Growing.freeze lastKeys
+unsafeEnd (IndexOrdinaryAcc unslicedLastKeys baler) = do
+    frozenUnslicedLastKeys <- Growing.freeze unslicedLastKeys
     remnant <- unsafeEndBaler baler
-    return (remnant, IndexOrdinary keys)
+    return (remnant, IndexOrdinary frozenUnslicedLastKeys)
