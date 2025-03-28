@@ -30,13 +30,13 @@ import           Database.LSMTree.Internal.Index.Ordinary
                      (IndexOrdinary (IndexOrdinary))
 import           Database.LSMTree.Internal.Serialise
                      (SerialisedKey (SerialisedKey'))
-import           Database.LSMTree.Internal.Unsliced (Unsliced, fromUnslicedKey,
-                     makeUnslicedKey)
+import           Database.LSMTree.Internal.Unsliced (Unsliced, makeUnslicedKey)
 import           Database.LSMTree.Internal.Vector (byteVectorFromPrim)
 import           Database.LSMTree.Internal.Vector.Growing (GrowingVector)
 import qualified Database.LSMTree.Internal.Vector.Growing as Growing (append,
                      freeze, new)
 #ifdef NO_IGNORE_ASSERTS
+import           Database.LSMTree.Internal.Unsliced (fromUnslicedKey)
 import qualified Database.LSMTree.Internal.Vector.Growing as Growing
                      (readMaybeLast)
 #endif
