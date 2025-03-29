@@ -269,7 +269,9 @@ flag bloom-query-fast
 
 common bloom-query-fast
   if (flag(bloom-query-fast) && impl(ghc >=9.4))
-    cpp-options: -DBLOOM_QUERY_FAST
+
+--TODO: temporarily disabled:
+--cpp-options: -DBLOOM_QUERY_FAST
 
 library
   import:          language, warnings, wno-x-partial, bloom-query-fast
@@ -360,10 +362,10 @@ library
 
   if (flag(bloom-query-fast) && impl(ghc >=9.4))
     -- The bulk bloom filter query uses some fancy stuff
-    exposed-modules:
-      Database.LSMTree.Internal.BloomFilterQuery2
-      Database.LSMTree.Internal.StrictArray
+    exposed-modules: Database.LSMTree.Internal.StrictArray
 
+    --TODO: temporarily disabled
+    --  Database.LSMTree.Internal.BloomFilterQuery2
     build-depends:   data-elevator ^>=0.1.0.2 || ^>=0.2
 
 -- this exists due windows
