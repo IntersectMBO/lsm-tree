@@ -13,8 +13,8 @@ import qualified Data.BloomFilter.Internal as BF
 import qualified Data.ByteString.Builder.Extra as B
 import qualified Data.ByteString.Lazy as LBS
 import           Data.ByteString.Short (ShortByteString (SBS))
-import qualified Data.Primitive as P
-import           Data.Primitive.ByteArray (ByteArray (ByteArray))
+import qualified Data.Primitive.ByteArray as P
+import qualified Data.Primitive.PrimArray as P
 import qualified Data.Vector.Primitive as VP
 import           Data.Word (Word32, Word64, byteSwap32)
 import           Database.LSMTree.Internal.BitMath (ceilDiv64, mul8)
@@ -30,20 +30,20 @@ bloomFilterVersion :: Word32
 bloomFilterVersion = 1
 
 bloomFilterToLBS :: BF.Bloom a -> LBS.ByteString
-bloomFilterToLBS b@(BF.Bloom _ _ bv) =
-    header <> LBS.fromStrict (bitVec bv)
+bloomFilterToLBS bf =
+    let (size, ba, off, len) = BF.serialise bf
+     in header size <> byteArrayToLBS ba off len
   where
-    header =
+    header BF.BloomSize { bloomNumBits, bloomNumHashes } =
         -- creates a single 16 byte chunk
         B.toLazyByteStringWith (B.safeStrategy 16 B.smallChunkSize) mempty $
              B.word32Host bloomFilterVersion
           <> B.word32Host (fromIntegral bloomNumHashes)
           <> B.word64Host (fromIntegral bloomNumBits)
-      where
-        BF.BloomSize { bloomNumBits, bloomNumHashes } = BF.size b
 
-    bitVec (BV64.BV64 (VP.Vector off len ba)) =
-        byteArrayToByteString (mul8 off) (mul8 len) ba
+    byteArrayToLBS :: P.ByteArray -> Int -> Int -> LBS.ByteString
+    byteArrayToLBS ba off len =
+      LBS.fromStrict (byteArrayToByteString off len ba)
 
 -- deserialising
 -----------------------------------------------------------
@@ -92,8 +92,8 @@ bloomFilterFromSBS (SBS ba') = do
                 }
     assert (BF.bloomInvariant bloom) $ return bloom
   where
-    ba :: ByteArray
-    ba = ByteArray ba'
+    ba :: P.ByteArray
+    ba = P.ByteArray ba'
 
     word32pa :: P.PrimArray Word32
     word32pa = P.PrimArray ba'
