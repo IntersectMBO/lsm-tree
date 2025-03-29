@@ -35,47 +35,50 @@ module Data.BloomFilter.Mutable (
     new,
 
     -- ** Accessors
-    length,
+    size,
     elem,
 
     -- ** Mutation
     insert,
 ) where
 
-import           Control.Monad (liftM)
 import           Control.Monad.ST (ST)
 import           Data.Kind (Type)
-import           Data.Word (Word64)
 
 import qualified Data.BloomFilter.BitVec64 as V
 import           Data.BloomFilter.Calc (BloomSize (..))
 import           Data.BloomFilter.Hash (CheapHashes, Hash, Hashable, evalHashes,
                      makeHashes)
 
-import           Prelude hiding (elem, length)
+import           Prelude hiding (elem)
 
 type MBloom :: Type -> Type -> Type
 -- | A mutable Bloom filter, for use within the 'ST' monad.
 data MBloom s a = MBloom {
-      hashesN  :: {-# UNPACK #-} !Int
-    , size     :: {-# UNPACK #-} !Word64  -- ^ size is non-zero
-    , bitArray :: {-# UNPACK #-} !(V.MBitVec64 s)
+      numBits   :: {-# UNPACK #-} !Int  -- ^ non-zero
+    , numHashes :: {-# UNPACK #-} !Int
+    , bitArray  :: {-# UNPACK #-} !(V.MBitVec64 s)
     }
 type role MBloom nominal nominal
 
 instance Show (MBloom s a) where
-    show mb = "MBloom { " ++ show (size mb) ++ " bits } "
+    show mb = "MBloom { " ++ show (numBits mb) ++ " bits } "
 
 -- | Create a new mutable Bloom filter.
 --
 -- The size is ceiled at $2^48$. Tell us if you need bigger bloom filters.
 --
 new :: BloomSize -> ST s (MBloom s a)
-new BloomSize {bloomNumBits = numBits, bloomNumHashes = hash} =
-    MBloom hash numBits' `liftM` V.new numBits'
+new BloomSize { bloomNumBits = numBits, bloomNumHashes } = do
+    bitArray <- V.new (fromIntegral numBits')
+    pure MBloom {
+      numBits   = numBits',
+      numHashes = bloomNumHashes,
+      bitArray
+    }
   where numBits' | numBits == 0                = 1
                  | numBits >= 0xffff_ffff_ffff = 0x1_0000_0000_0000
-                 | otherwise                   = fromIntegral numBits
+                 | otherwise                   = numBits
 
 -- | Insert a value into a mutable Bloom filter.  Afterwards, a
 -- membership query for the same value is guaranteed to return @True@.
@@ -83,10 +86,11 @@ insert :: Hashable a => MBloom s a -> a -> ST s ()
 insert !mb !x = insertHashes mb (makeHashes x)
 
 insertHashes :: MBloom s a -> CheapHashes a -> ST s ()
-insertHashes (MBloom k m v) !h = go 0
+insertHashes MBloom { numBits = m, numHashes = k, bitArray = v } !h =
+    go 0
   where
     go !i | i >= k = return ()
-          | otherwise = let !idx = evalHashes h i `rem` m
+          | otherwise = let !idx = evalHashes h i `rem` fromIntegral m
                         in V.unsafeWrite v idx True >> go (i + 1)
 
 -- | Query a mutable Bloom filter for membership.  If the value is
@@ -96,19 +100,25 @@ elem :: Hashable a => a -> MBloom s a -> ST s Bool
 elem elt mb = elemHashes (makeHashes elt) mb
 
 elemHashes :: forall s a. CheapHashes a -> MBloom s a -> ST s Bool
-elemHashes !ch (MBloom k m v) = go 0 where
+elemHashes !ch MBloom { numBits = m, numHashes = k, bitArray = v } =
+    go 0
+  where
     go :: Int -> ST s Bool
     go !i | i >= k    = return True
           | otherwise = do let !idx' = evalHashes ch i
-                           let !idx = idx' `rem` m
+                           let !idx = idx' `rem` fromIntegral m
                            b <- V.unsafeRead v idx
                            if b
                            then go (i + 1)
-                           else return False
 
--- | Return the size of a mutable Bloom filter, in bits.
-length :: MBloom s a -> Word64
-length = size
+                           else return False
+-- | Return the size of the Bloom filter.
+size :: MBloom s a -> BloomSize
+size MBloom { numBits, numHashes } =
+    BloomSize {
+      bloomNumBits   = numBits,
+      bloomNumHashes = numHashes
+    }
 
 -- $overview
 --

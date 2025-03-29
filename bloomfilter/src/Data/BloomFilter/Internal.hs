@@ -11,18 +11,17 @@ import qualified Data.BloomFilter.BitVec64 as V
 import           Data.Kind (Type)
 import           Data.Primitive.ByteArray (sizeofByteArray)
 import qualified Data.Vector.Primitive as VP
-import           Data.Word (Word64)
 
 type Bloom :: Type -> Type
 data Bloom a = Bloom {
-      hashesN  :: {-# UNPACK #-} !Int
-    , size     :: {-# UNPACK #-} !Word64 -- ^ size is non-zero
-    , bitArray :: {-# UNPACK #-} !V.BitVec64
+      numBits   :: {-# UNPACK #-} !Int  -- ^ non-zero
+    , numHashes :: {-# UNPACK #-} !Int
+    , bitArray  :: {-# UNPACK #-} !V.BitVec64
     }
 type role Bloom nominal
 
 bloomInvariant :: Bloom a -> Bool
-bloomInvariant (Bloom _ s (V.BV64 (VP.Vector off len ba))) =
+bloomInvariant Bloom { numBits = s, bitArray = V.BV64 (VP.Vector off len ba) } =
        s > 0
     && s <= 2^(48 :: Int)
     && off >= 0
@@ -35,7 +34,8 @@ instance Eq (Bloom a) where
     -- We support arbitrary sized bitvectors,
     -- therefore an equality is a bit involved:
     -- we need to be careful when comparing the last bits of bitArray.
-    Bloom k n (V.BV64 v) == Bloom k' n' (V.BV64 v') =
+    (==) Bloom { numBits = n,  numHashes = k,  bitArray = V.BV64 v  }
+         Bloom { numBits = n', numHashes = k', bitArray = V.BV64 v' } =
         k == k' &&
         n == n' &&
         VP.take w v == VP.take w v' && -- compare full words
@@ -50,7 +50,7 @@ instance Eq (Bloom a) where
         x' = VP.unsafeIndex v' w
 
 instance Show (Bloom a) where
-    show mb = "Bloom { " ++ show (size mb) ++ " bits } "
+    show mb = "Bloom { " ++ show (numBits mb) ++ " bits } "
 
 instance NFData (Bloom a) where
     rnf !_ = ()

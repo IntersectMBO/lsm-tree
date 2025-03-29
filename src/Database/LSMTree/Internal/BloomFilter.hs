@@ -31,14 +31,16 @@ bloomFilterVersion = 1
 
 bloomFilterToLBS :: BF.Bloom a -> LBS.ByteString
 bloomFilterToLBS b@(BF.Bloom _ _ bv) =
-    header b <> LBS.fromStrict (bitVec bv)
+    header <> LBS.fromStrict (bitVec bv)
   where
-    header (BF.Bloom hashesN len _) =
+    header =
         -- creates a single 16 byte chunk
         B.toLazyByteStringWith (B.safeStrategy 16 B.smallChunkSize) mempty $
              B.word32Host bloomFilterVersion
-          <> B.word32Host (fromIntegral hashesN)
-          <> B.word64Host len
+          <> B.word32Host (fromIntegral bloomNumHashes)
+          <> B.word64Host (fromIntegral bloomNumBits)
+      where
+        BF.BloomSize { bloomNumBits, bloomNumHashes } = BF.size b
 
     bitVec (BV64.BV64 (VP.Vector off len ba)) =
         byteArrayToByteString (mul8 off) (mul8 len) ba
@@ -83,7 +85,11 @@ bloomFilterFromSBS (SBS ba') = do
     let vec64 :: VP.Vector Word64
         vec64 = mkPrimVector 2 len64 ba
 
-    let bloom = BF.Bloom (fromIntegral hsn) len (BV64.BV64 vec64)
+    let bloom = BF.Bloom {
+                  numBits   = fromIntegral len,
+                  numHashes = fromIntegral hsn,
+                  bitArray  = BV64.BV64 vec64
+                }
     assert (BF.bloomInvariant bloom) $ return bloom
   where
     ba :: ByteArray
