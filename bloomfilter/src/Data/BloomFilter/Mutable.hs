@@ -31,6 +31,7 @@ module Data.BloomFilter.Mutable (
     -- * Mutable Bloom filters
 
     -- ** Creation
+    BloomSize (..),
     new,
 
     -- ** Accessors
@@ -43,12 +44,13 @@ module Data.BloomFilter.Mutable (
 
 import           Control.Monad (liftM)
 import           Control.Monad.ST (ST)
-import           Data.BloomFilter.Hash (CheapHashes, Hash, Hashable, evalHashes,
-                     makeHashes)
 import           Data.Kind (Type)
 import           Data.Word (Word64)
 
 import qualified Data.BloomFilter.BitVec64 as V
+import           Data.BloomFilter.Calc (BloomSize (..))
+import           Data.BloomFilter.Hash (CheapHashes, Hash, Hashable, evalHashes,
+                     makeHashes)
 
 import           Prelude hiding (elem, length)
 
@@ -68,13 +70,12 @@ instance Show (MBloom s a) where
 --
 -- The size is ceiled at $2^48$. Tell us if you need bigger bloom filters.
 --
-new :: Int                    -- ^ number of hash functions to use
-    -> Word64                 -- ^ number of bits in filter
-    -> ST s (MBloom s a)
-new hash numBits = MBloom hash numBits' `liftM` V.new numBits'
+new :: BloomSize -> ST s (MBloom s a)
+new BloomSize {bloomNumBits = numBits, bloomNumHashes = hash} =
+    MBloom hash numBits' `liftM` V.new numBits'
   where numBits' | numBits == 0                = 1
                  | numBits >= 0xffff_ffff_ffff = 0x1_0000_0000_0000
-                 | otherwise                   = numBits
+                 | otherwise                   = fromIntegral numBits
 
 -- | Insert a value into a mutable Bloom filter.  Afterwards, a
 -- membership query for the same value is guaranteed to return @True@.
