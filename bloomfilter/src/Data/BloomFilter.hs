@@ -33,6 +33,7 @@ module Data.BloomFilter (
     Bloom,
     MBloom,
     CheapHashes,
+    BloomSize (..),
 
     -- * Immutable Bloom filters
 
@@ -59,7 +60,7 @@ import           Control.Monad.ST (ST, runST)
 import           Data.BloomFilter.Hash (CheapHashes, Hash, Hashable, evalHashes,
                      makeHashes)
 import           Data.BloomFilter.Internal (Bloom (..), bloomInvariant)
-import           Data.BloomFilter.Mutable (MBloom, insert, new)
+import           Data.BloomFilter.Mutable (BloomSize (..), MBloom)
 import qualified Data.BloomFilter.Mutable as MB
 import           Data.Word (Word64)
 
@@ -73,24 +74,21 @@ import qualified Data.BloomFilter.BitVec64 as V
 -- Example:
 --
 -- @
--- TODO
---import "Data.BloomFilter.Hash" (cheapHashes)
---
---filter = create (cheapHashes 3) 1024 $ \mf -> do
---           insertMB mf \"foo\"
---           insertMB mf \"bar\"
+--filter = create (BloomSize 1024 3) $ \mf -> do
+--           insert mf \"foo\"
+--           insert mf \"bar\"
 -- @
 --
 -- Note that the result of the setup function is not used.
-create :: Int        -- ^ number of hash functions to use
-        -> Word64                 -- ^ number of bits in filter
-        -> (forall s. (MBloom s a -> ST s ()))  -- ^ setup function
-        -> Bloom a
+create :: BloomSize
+       -> (forall s. (MBloom s a -> ST s ()))  -- ^ setup function
+       -> Bloom a
 {-# INLINE create #-}
-create hash numBits body = runST $ do
-    mb <- new hash numBits
-    body mb
-    unsafeFreeze mb
+create bloomsize body =
+    runST $ do
+      mb <- MB.new bloomsize
+      body mb
+      unsafeFreeze mb
 
 -- | Create an immutable Bloom filter from a mutable one.  The mutable
 -- filter may be modified afterwards.
@@ -161,16 +159,15 @@ length = size
 --     @b@ is used as a new seed.
 unfold :: forall a b.
           Hashable a
-       => Int                       -- ^ number of hash functions to use
-       -> Word64                    -- ^ number of bits in filter
+       => BloomSize
        -> (b -> Maybe (a, b))       -- ^ seeding function
        -> b                         -- ^ initial seed
        -> Bloom a
 {-# INLINE unfold #-}
-unfold hs numBits f k = create hs numBits (loop k)
+unfold bloomsize f k = create bloomsize (loop k)
   where loop :: forall s. b -> MBloom s a -> ST s ()
         loop j mb = case f j of
-                      Just (a, j') -> insert mb a >> loop j' mb
+                      Just (a, j') -> MB.insert mb a >> loop j' mb
                       _            -> return ()
 
 -- | Create an immutable Bloom filter, populating it from a list of
@@ -184,11 +181,10 @@ unfold hs numBits f k = create hs numBits (loop k)
 -- filt = fromList 3 1024 [\"foo\", \"bar\", \"quux\"]
 -- @
 fromList :: Hashable a
-         => Int                -- ^ number of hash functions to use
-         -> Word64             -- ^ number of bits in filter
+         => BloomSize
          -> [a]                -- ^ values to populate with
          -> Bloom a
-fromList hs numBits list = create hs numBits $ forM_ list . insert
+fromList bloomsize list = create bloomsize $ forM_ list . MB.insert
 
 -- $overview
 --
