@@ -14,12 +14,14 @@ module Data.BloomFilter.BitVec64 (
     unsafeFreeze,
     thaw,
     unsafeRemWord64,
+    serialise,
+    deserialise,
 ) where
 
 import           Control.Monad.ST (ST)
 import           Data.Bits
 import           Data.Primitive.ByteArray (ByteArray (ByteArray),
-                     newPinnedByteArray, setByteArray)
+                     MutableByteArray, newPinnedByteArray, setByteArray)
 import qualified Data.Vector.Primitive as VP
 import qualified Data.Vector.Primitive.Mutable as VPM
 import           Data.Word (Word64, Word8)
@@ -79,6 +81,23 @@ new s
   where
     !numWords = w2i (roundUpTo64 s)
     !numBytes = unsafeShiftL numWords 3 -- * 8
+
+serialise :: BitVec64 -> (ByteArray, Int, Int)
+serialise = asByteArray
+  where
+    asByteArray (BV64 (VP.Vector off len ba)) =
+      (ba, off * 8, len * 8)
+
+-- | Do an inplace overwrite of the byte array representing the bit block.
+deserialise :: MBitVec64 s
+            -> (MutableByteArray s -> Int -> Int -> m ())
+            -> m ()
+deserialise bitArray fill =
+    let (ba, off, len) = asMutableByteArray bitArray
+     in fill ba off len
+  where
+    asMutableByteArray (MBV64 (VP.MVector off len mba)) =
+      (mba, off * 8, len * 8)
 
 unsafeWrite :: MBitVec64 s -> Word64 -> Bool -> ST s ()
 unsafeWrite (MBV64 mbv) i x = do

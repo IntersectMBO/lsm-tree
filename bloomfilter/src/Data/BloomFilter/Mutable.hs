@@ -40,10 +40,13 @@ module Data.BloomFilter.Mutable (
 
     -- ** Mutation
     insert,
+    deserialise,
 ) where
 
+import           Control.Monad.Primitive (PrimState)
 import           Control.Monad.ST (ST)
 import           Data.Kind (Type)
+import           Data.Primitive.ByteArray (MutableByteArray)
 
 import qualified Data.BloomFilter.BitVec64 as V
 import           Data.BloomFilter.Calc (BloomSize (..))
@@ -79,6 +82,15 @@ new BloomSize { bloomNumBits = numBits, bloomNumHashes } = do
   where numBits' | numBits == 0                = 1
                  | numBits >= 0xffff_ffff_ffff = 0x1_0000_0000_0000
                  | otherwise                   = numBits
+
+-- | Modify the filter's bit array. The callback is expected to read (exactly)
+-- the given number of bytes into the given byte array buffer.
+--
+deserialise :: MBloom (PrimState m) a
+            -> (MutableByteArray (PrimState m) -> Int -> Int -> m ())
+            -> m ()
+deserialise MBloom {bitArray} fill =
+    V.deserialise bitArray fill
 
 -- | Insert a value into a mutable Bloom filter.  Afterwards, a
 -- membership query for the same value is guaranteed to return @True@.
