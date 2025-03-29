@@ -46,27 +46,32 @@ module Data.BloomFilter (
     create,
     unfold,
     fromList,
+    deserialise,
 
     -- ** Accessors
     size,
     elem,
     elemHashes,
     notElem,
+    serialise,
 ) where
 
 import           Control.Exception (assert)
 import           Control.Monad (forM_)
+import           Control.Monad.Primitive (PrimMonad, PrimState, RealWorld,
+                     stToPrim)
 import           Control.Monad.ST (ST, runST)
+import           Data.Primitive.ByteArray (ByteArray, MutableByteArray)
+import           Data.Word (Word64)
+
+import qualified Data.BloomFilter.BitVec64 as V
 import           Data.BloomFilter.Hash (CheapHashes, Hash, Hashable, evalHashes,
                      makeHashes)
 import           Data.BloomFilter.Internal (Bloom (..), bloomInvariant)
 import           Data.BloomFilter.Mutable (BloomSize (..), MBloom)
 import qualified Data.BloomFilter.Mutable as MB
-import           Data.Word (Word64)
 
 import           Prelude hiding (elem, notElem)
-
-import qualified Data.BloomFilter.BitVec64 as V
 
 -- | Create an immutable Bloom filter, using the given setup function
 -- which executes in the 'ST' monad.
@@ -205,6 +210,24 @@ fromList :: Hashable a
          -> [a]                -- ^ values to populate with
          -> Bloom a
 fromList bloomsize list = create bloomsize $ forM_ list . MB.insert
+
+serialise :: Bloom a -> (BloomSize, ByteArray, Int, Int)
+serialise b@Bloom{bitArray} =
+    (size b, ba, off, len)
+  where
+    (ba, off, len) = V.serialise bitArray
+
+{-# SPECIALISE deserialise :: BloomSize
+                           -> (MutableByteArray RealWorld -> Int -> Int -> IO ())
+                           -> IO (Bloom a) #-}
+deserialise :: PrimMonad m
+            => BloomSize
+            -> (MutableByteArray (PrimState m) -> Int -> Int -> m ())
+            -> m (Bloom a)
+deserialise bloomsize fill = do
+    mbloom <- stToPrim $ MB.new bloomsize
+    MB.deserialise mbloom fill
+    stToPrim $ unsafeFreeze mbloom
 
 -- $overview
 --
