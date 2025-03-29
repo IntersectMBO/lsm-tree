@@ -48,14 +48,14 @@ module Data.BloomFilter (
     fromList,
 
     -- ** Accessors
-    length,
+    size,
     elem,
     elemHashes,
     notElem,
 ) where
 
 import           Control.Exception (assert)
-import           Control.Monad (forM_, liftM)
+import           Control.Monad (forM_)
 import           Control.Monad.ST (ST, runST)
 import           Data.BloomFilter.Hash (CheapHashes, Hash, Hashable, evalHashes,
                      makeHashes)
@@ -64,7 +64,7 @@ import           Data.BloomFilter.Mutable (BloomSize (..), MBloom)
 import qualified Data.BloomFilter.Mutable as MB
 import           Data.Word (Word64)
 
-import           Prelude hiding (elem, length, notElem)
+import           Prelude hiding (elem, notElem)
 
 import qualified Data.BloomFilter.BitVec64 as V
 
@@ -93,24 +93,38 @@ create bloomsize body =
 -- | Create an immutable Bloom filter from a mutable one.  The mutable
 -- filter may be modified afterwards.
 freeze :: MBloom s a -> ST s (Bloom a)
-freeze mb = do
-    ba <- V.freeze (MB.bitArray mb)
-    let !bf = Bloom (MB.hashesN mb) (MB.size mb) ba
+freeze MB.MBloom { numBits, numHashes, bitArray } = do
+    bitArray' <- V.freeze bitArray
+    let !bf = Bloom {
+                numHashes,
+                numBits,
+                bitArray = bitArray'
+              }
     assert (bloomInvariant bf) $ pure bf
 
 -- | Create an immutable Bloom filter from a mutable one.  The mutable
 -- filter /must not/ be modified afterwards, or a runtime crash may
 -- occur.  For a safer creation interface, use 'freeze' or 'create'.
 unsafeFreeze :: MBloom s a -> ST s (Bloom a)
-unsafeFreeze mb = do
-    ba <- V.unsafeFreeze (MB.bitArray mb)
-    let !bf = Bloom (MB.hashesN mb) (MB.size mb) ba
+unsafeFreeze MB.MBloom { numBits, numHashes, bitArray } = do
+    bitArray' <- V.unsafeFreeze bitArray
+    let !bf = Bloom {
+                numHashes,
+                numBits,
+                bitArray = bitArray'
+              }
     assert (bloomInvariant bf) $ pure bf
 
 -- | Copy an immutable Bloom filter to create a mutable one.  There is
 -- no non-copying equivalent.
 thaw :: Bloom a -> ST s (MBloom s a)
-thaw ub = MB.MBloom (hashesN ub) (size ub) `liftM` V.thaw (bitArray ub)
+thaw Bloom { numBits, numHashes, bitArray } = do
+    bitArray' <- V.thaw bitArray
+    pure MB.MBloom {
+      numBits,
+      numHashes,
+      bitArray = bitArray'
+    }
 
 -- | Query an immutable Bloom filter for membership.  If the value is
 -- present, return @True@.  If the value is not present, there is
@@ -120,18 +134,20 @@ elem elt ub = elemHashes (makeHashes elt) ub
 
 -- | Query an immutable Bloom filter for membership using already constructed 'Hashes' value.
 elemHashes :: CheapHashes a -> Bloom a -> Bool
-elemHashes !ch !ub = go 0 where
+elemHashes !ch Bloom { numBits, numHashes, bitArray } =
+    go 0
+  where
     go :: Int -> Bool
-    go !i | i >= hashesN ub
+    go !i | i >= numHashes
           = True
     go !i = let idx' :: Word64
                 !idx' = evalHashes ch i in
             let idx :: Int
-                !idx = fromIntegral (idx' `V.unsafeRemWord64` size ub) in
+                !idx = fromIntegral (idx' `V.unsafeRemWord64` fromIntegral numBits) in
             -- While the idx' can cover the full Word64 range,
             -- after taking the remainder, it now must fit in
             -- and Int because it's less than the filter size.
-            if V.unsafeIndex (bitArray ub) idx
+            if V.unsafeIndex bitArray idx
               then go (i + 1)
               else False
 
@@ -145,9 +161,13 @@ notElem elt ub = notElemHashes (makeHashes elt) ub
 notElemHashes :: CheapHashes a -> Bloom a -> Bool
 notElemHashes !ch !ub = not (elemHashes ch ub)
 
--- | Return the size of an immutable Bloom filter, in bits.
-length :: Bloom a -> Word64
-length = size
+-- | Return the size of the Bloom filter.
+size :: Bloom a -> BloomSize
+size Bloom { numBits, numHashes } =
+    BloomSize {
+      bloomNumBits   = numBits,
+      bloomNumHashes = numHashes
+    }
 
 -- | Build an immutable Bloom filter from a seed value.  The seeding
 -- function populates the filter as follows.

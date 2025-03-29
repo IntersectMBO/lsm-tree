@@ -103,7 +103,8 @@ prop_MergeDistributes fs hbio mergeType stepSize (SmallList rds) = do
               (lhsSize === rhsSize)
           .&&. -- we can't just test bloom filter equality, their sizes may differ.
               counterexample "runFilter"
-              (Bloom.length lhsFilter >= Bloom.length rhsFilter)
+              (   Bloom.bloomNumBits (Bloom.size lhsFilter)
+               >= Bloom.bloomNumBits (Bloom.size rhsFilter))
           .&&. -- the index is equal, but only because range finder precision is
               -- always 0 for the numbers of entries we are dealing with.
               counterexample "runIndex"

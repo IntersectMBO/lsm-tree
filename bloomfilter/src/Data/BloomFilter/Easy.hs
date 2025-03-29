@@ -5,7 +5,7 @@ module Data.BloomFilter.Easy (
     easyList,
     B.elem,
     B.notElem,
-    B.length,
+    B.size,
 
     -- * Mutable bloom filter
     MBloom,
