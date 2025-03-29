@@ -241,7 +241,10 @@ elemManyEnv filterSizes rng0 =
   stToIO $ do
     -- create the filters
     mbs <- sequence
-             [ MBloom.new (fromIntegralChecked numHashFuncs) (fromIntegralChecked numBits)
+             [ MBloom.new MBloom.BloomSize {
+                 bloomNumBits   = fromIntegralChecked numBits,
+                 bloomNumHashes = fromIntegralChecked numHashFuncs
+               }
              | (_, _, numBits, numHashFuncs) <- filterSizes ]
     -- add elements
     foldM_

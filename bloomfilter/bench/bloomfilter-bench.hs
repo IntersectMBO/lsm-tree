@@ -27,8 +27,7 @@ main =
 
 constructBloom :: Int -> Double -> StdGen -> B.Bloom Word64
 constructBloom n fpr g0 =
-    let (bits, hashes) = B.suggestSizing n fpr in
-    B.unfold hashes bits nextElement (g0, 0)
+    B.unfold (B.suggestSizing n fpr) nextElement (g0, 0)
   where
     nextElement :: (StdGen, Int) -> Maybe (Word64, (StdGen, Int))
     nextElement (!g, !i)

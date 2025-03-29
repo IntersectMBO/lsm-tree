@@ -53,7 +53,9 @@ roundtrip_prop (Positive (Small hfN)) (limitBits -> bits) ws =
     counterexample (show sbs) $
     Right lhs === rhs
   where
-    lhs = BF.fromList hfN bits ws
+    sz  = BF.BloomSize { bloomNumBits   = fromIntegral bits,
+                         bloomNumHashes = hfN }
+    lhs = BF.fromList sz ws
     sbs = SBS.toShort (LBS.toStrict (bloomFilterToLBS lhs))
     rhs = bloomFilterFromSBS sbs
 

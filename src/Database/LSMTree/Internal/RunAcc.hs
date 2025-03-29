@@ -336,10 +336,13 @@ instance NFData RunBloomFilterAlloc where
 newMBloom :: NumEntries -> RunBloomFilterAlloc -> ST s (MBloom s a)
 newMBloom (NumEntries nentries) = \case
       RunAllocFixed !bitsPerEntry    ->
-        let !nbits = fromIntegral bitsPerEntry * fromIntegral nentries
+        let nbits :: Int
+            !nbits = fromIntegral bitsPerEntry * nentries
         in  MBloom.new
-              (fromIntegralChecked $ numHashFunctions nbits (fromIntegralChecked nentries))
-              (fromIntegralChecked nbits)
+              Bloom.BloomSize {
+                bloomNumBits   = nbits,
+                bloomNumHashes = fromIntegralChecked $ numHashFunctions (fromIntegral nbits) (fromIntegralChecked nentries)
+              }
       RunAllocRequestFPR !fpr ->
         Bloom.Easy.easyNew fpr nentries
 

@@ -30,7 +30,6 @@ import           Data.BloomFilter.Hash (Hashable)
 import           Data.BloomFilter.Mutable (MBloom)
 import qualified Data.BloomFilter.Mutable as MB
 import qualified Data.ByteString as SB
-import           Data.Word (Word64)
 
 -------------------------------------------------------------------------------
 -- Easy interface
@@ -44,21 +43,18 @@ easyList :: Hashable a
          -> [a]                 -- ^ values to populate with
          -> Bloom a
 {-# SPECIALISE easyList :: Double -> [SB.ByteString] -> Bloom SB.ByteString #-}
-easyList errRate xs = B.fromList numHashes numBits xs
+easyList errRate xs =
+    B.fromList (suggestSizing capacity errRate) xs
   where
     capacity = length xs
-    (numBits, numHashes)
-        | capacity > 0 = suggestSizing capacity errRate
-        | otherwise    = (1, 1)
 
 -- | Create a Bloom filter with the desired false positive rate, /ε/
 -- and expected maximum size, /n/.
 easyNew :: Double    -- ^ desired false positive rate (0 < /ε/ < 1)
         -> Int       -- ^ expected maximum size, /n/
         -> ST s (MBloom s a)
-easyNew errRate capacity = MB.new numHashes numBits
-  where
-    (numBits, numHashes) = suggestSizing capacity errRate
+easyNew errRate capacity =
+    MB.new (suggestSizing capacity errRate)
 
 -------------------------------------------------------------------------------
 -- Size suggestions
@@ -89,20 +85,22 @@ easyNew errRate capacity = MB.new numHashes numBits
 safeSuggestSizing ::
        Int              -- ^ expected maximum capacity
     -> Double           -- ^ desired false positive rate (0 < /e/ < 1)
-    -> Either String (Word64, Int)
+    -> Either String BloomSize
 safeSuggestSizing capacity errRate
-    | capacity <= 0                = Right (1, 1)
-    | errRate <= 0 || errRate >= 1 = Left "invalid error rate"
-    | otherwise                    = Right (fromIntegral bloomNumBits, bloomNumHashes)
-  where
-    BloomSize { bloomNumBits, bloomNumHashes } =
-      bloomSizeForPolicy (bloomPolicyForFPR errRate) capacity
+    | capacity <= 0 = Right BloomSize {
+                         bloomNumBits   = 1,
+                         bloomNumHashes = 1
+                      }
+    | errRate <= 0 ||
+      errRate >= 1  = Left "invalid error rate"
+    | otherwise     = Right $ bloomSizeForPolicy (bloomPolicyForFPR errRate)
+                                                 capacity
 
 -- | Behaves as 'safeSuggestSizing', but calls 'error' if given
 -- invalid or out-of-range inputs.
 suggestSizing :: Int            -- ^ expected maximum capacity
               -> Double         -- ^ desired false positive rate (0 < /e/ < 1)
-              -> (Word64, Int)
+              -> BloomSize
 suggestSizing cap errs = either fatal id (safeSuggestSizing cap errs)
   where fatal = error . ("Data.BloomFilter.Util.suggestSizing: " ++)
 
